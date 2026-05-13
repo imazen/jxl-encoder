@@ -183,99 +183,131 @@ pub fn count_zero_coefficients(
     xsize_blocks: usize,
     ysize_blocks: usize,
 ) -> Vec<Vec<Vec<i64>>> {
-    // Initialize: 13 buckets x 3 channels x max_size
-    let mut counts: Vec<Vec<Vec<i64>>> = (0..NUM_ORDER_BUCKETS)
-        .map(|_| vec![Vec::new(); 3])
-        .collect();
-
-    // Pre-allocate for buckets we use
-    // Bucket 0: DCT8, size 64
-    for ch in &mut counts[0] {
-        *ch = vec![0i64; 64];
+    fn init_buckets() -> Vec<Vec<Vec<i64>>> {
+        let mut counts: Vec<Vec<Vec<i64>>> = (0..NUM_ORDER_BUCKETS)
+            .map(|_| vec![Vec::new(); 3])
+            .collect();
+        // Pre-allocate for buckets we use (sized to each strategy's coeff count).
+        for ch in &mut counts[0] {
+            *ch = vec![0i64; 64];
+        }
+        for ch in &mut counts[2] {
+            *ch = vec![0i64; 256];
+        }
+        for ch in &mut counts[3] {
+            *ch = vec![0i64; 1024];
+        }
+        for ch in &mut counts[4] {
+            *ch = vec![0i64; 128];
+        }
+        for ch in &mut counts[5] {
+            *ch = vec![0i64; 256];
+        }
+        for ch in &mut counts[6] {
+            *ch = vec![0i64; 512];
+        }
+        for ch in &mut counts[7] {
+            *ch = vec![0i64; 4096];
+        }
+        for ch in &mut counts[8] {
+            *ch = vec![0i64; 2048];
+        }
+        counts
     }
-    // Bucket 2: DCT16x16, size 256
-    for ch in &mut counts[2] {
-        *ch = vec![0i64; 256];
-    }
-    // Bucket 3: DCT32x32, size 1024
-    for ch in &mut counts[3] {
-        *ch = vec![0i64; 1024];
-    }
-    // Bucket 4: DCT8x16/DCT16x8, size 128
-    for ch in &mut counts[4] {
-        *ch = vec![0i64; 128];
-    }
-    // Bucket 5: DCT32x8/DCT8x32, size 256 — not implemented, but pre-allocate for safety
-    for ch in &mut counts[5] {
-        *ch = vec![0i64; 256];
-    }
-    // Bucket 6: DCT32x16/DCT16x32, size 512
-    for ch in &mut counts[6] {
-        *ch = vec![0i64; 512];
-    }
-    // Bucket 7: DCT64x64, size 4096
-    for ch in &mut counts[7] {
-        *ch = vec![0i64; 4096];
-    }
-    // Bucket 8: DCT64x32/DCT32x64, size 2048
-    for ch in &mut counts[8] {
-        *ch = vec![0i64; 2048];
-    }
-
-    for by in 0..ysize_blocks {
-        for bx in 0..xsize_blocks {
-            if !ac_strategy.is_first(bx, by) {
-                continue;
-            }
-
-            let raw_strategy = ac_strategy.raw_strategy(bx, by);
-            let strategy_code = super::ac_strategy::STRATEGY_CODE_LUT[raw_strategy as usize];
-            // strategy_bucket expects bitstream strategy code
-            let bucket = strategy_bucket(strategy_code) as usize;
-            // ac_strategy_info expects raw strategy codes (0-6)
-            let (_, _, covered_blocks, _, _) = ac_strategy_info(raw_strategy);
-            let size = covered_blocks * DCT_BLOCK_SIZE;
-
-            // Ensure count vector is large enough
-            for ch in &mut counts[bucket] {
-                if ch.len() < size {
-                    ch.resize(size, 0);
+    // Accumulate zeros for a horizontal band of rows into a freshly
+    // allocated counts grid. Each band's grid is independent so the
+    // bands can run in parallel and merge associatively at the end.
+    let accumulate_band = |y0: usize, y1: usize| -> Vec<Vec<Vec<i64>>> {
+        let mut counts = init_buckets();
+        for by in y0..y1 {
+            for bx in 0..xsize_blocks {
+                if !ac_strategy.is_first(bx, by) {
+                    continue;
                 }
-            }
-
-            for c in 0..3 {
-                // Pre-slice count array to eliminate per-element triple-indexing
-                let cnt = &mut counts[bucket][c];
-                if covered_blocks == 1 {
-                    // DCT8: coefficients are in quant_ac[c][by][bx]
-                    let block = &quant_ac[c][by][bx];
-                    let cnt_slice = &mut cnt[..DCT_BLOCK_SIZE];
-                    for k in 0..DCT_BLOCK_SIZE {
-                        if block[k] == 0 {
-                            cnt_slice[k] += 1;
-                        }
+                let raw_strategy = ac_strategy.raw_strategy(bx, by);
+                let strategy_code = super::ac_strategy::STRATEGY_CODE_LUT[raw_strategy as usize];
+                let bucket = strategy_bucket(strategy_code) as usize;
+                let (_, _, covered_blocks, _, _) = ac_strategy_info(raw_strategy);
+                let size = covered_blocks * DCT_BLOCK_SIZE;
+                for ch in &mut counts[bucket] {
+                    if ch.len() < size {
+                        ch.resize(size, 0);
                     }
-                } else {
-                    // Multi-block: iterate by sub-block with nested loops
-                    let covered_x_local = super::ac_strategy::COVERED_X[raw_strategy as usize];
-                    let covered_y_local = super::ac_strategy::COVERED_Y[raw_strategy as usize];
-                    let mut base_idx = 0;
-                    for slot_dy in 0..covered_y_local {
-                        for slot_dx in 0..covered_x_local {
-                            let block = &quant_ac[c][by + slot_dy][bx + slot_dx];
-                            let cnt_slice = &mut cnt[base_idx..base_idx + DCT_BLOCK_SIZE];
-                            for k in 0..DCT_BLOCK_SIZE {
-                                if block[k] == 0 {
-                                    cnt_slice[k] += 1;
-                                }
+                }
+                for c in 0..3 {
+                    let cnt = &mut counts[bucket][c];
+                    if covered_blocks == 1 {
+                        let block = &quant_ac[c][by][bx];
+                        let cnt_slice = &mut cnt[..DCT_BLOCK_SIZE];
+                        for k in 0..DCT_BLOCK_SIZE {
+                            if block[k] == 0 {
+                                cnt_slice[k] += 1;
                             }
-                            base_idx += DCT_BLOCK_SIZE;
+                        }
+                    } else {
+                        let covered_x_local = super::ac_strategy::COVERED_X[raw_strategy as usize];
+                        let covered_y_local = super::ac_strategy::COVERED_Y[raw_strategy as usize];
+                        let mut base_idx = 0;
+                        for slot_dy in 0..covered_y_local {
+                            for slot_dx in 0..covered_x_local {
+                                let block = &quant_ac[c][by + slot_dy][bx + slot_dx];
+                                let cnt_slice = &mut cnt[base_idx..base_idx + DCT_BLOCK_SIZE];
+                                for k in 0..DCT_BLOCK_SIZE {
+                                    if block[k] == 0 {
+                                        cnt_slice[k] += 1;
+                                    }
+                                }
+                                base_idx += DCT_BLOCK_SIZE;
+                            }
                         }
                     }
                 }
             }
         }
+        counts
+    };
+
+    fn merge_into(dst: &mut Vec<Vec<Vec<i64>>>, src: Vec<Vec<Vec<i64>>>) {
+        for (bucket_idx, src_bucket) in src.into_iter().enumerate() {
+            for (ch, src_ch) in src_bucket.into_iter().enumerate() {
+                if src_ch.is_empty() {
+                    continue;
+                }
+                let dst_ch = &mut dst[bucket_idx][ch];
+                if dst_ch.len() < src_ch.len() {
+                    dst_ch.resize(src_ch.len(), 0);
+                }
+                for (d, s) in dst_ch.iter_mut().zip(src_ch.iter()) {
+                    *d += *s;
+                }
+            }
+        }
     }
+
+    let mut counts = if ysize_blocks <= 1 {
+        accumulate_band(0, ysize_blocks)
+    } else {
+        // Multi-band parallel reduce. Bands are horizontal strips —
+        // safe because multi-block strategies' is_first only matches
+        // at the top-left sub-block, and the loop reads sub-blocks
+        // strictly below/right of that anchor (so a band that starts
+        // mid-strategy will skip is_first and not double-count).
+        let n_bands = ysize_blocks.min(16);
+        let band_size = ysize_blocks.div_ceil(n_bands);
+        let bands: Vec<(usize, usize)> = (0..n_bands)
+            .map(|i| (i * band_size, ((i + 1) * band_size).min(ysize_blocks)))
+            .filter(|(a, b)| a < b)
+            .collect();
+        let per_band: Vec<Vec<Vec<Vec<i64>>>> =
+            crate::parallel::parallel_map(bands.len(), |i| {
+                accumulate_band(bands[i].0, bands[i].1)
+            });
+        let mut counts = init_buckets();
+        for band in per_band {
+            merge_into(&mut counts, band);
+        }
+        counts
+    };
 
     // Mark LLF positions with -1 so they sort first (ascending).
     // Done once per bucket after all blocks are processed, instead of per-block.
