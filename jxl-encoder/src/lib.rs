@@ -152,6 +152,7 @@ pub mod __pre_quantized {
     /// quality (Newton-Raphson fit; matches libjxl
     /// `enc_chroma_from_luma.cc` at `speed_tier <= kSquirrel`).
     pub use crate::vardct::chroma_from_luma::compute_cfl_map;
+    pub use crate::vardct::common::DCT_BLOCK_SIZE;
     pub use crate::vardct::encoder::VarDctEncoder;
     /// `DistanceParams` carries the per-distance scaling constants
     /// (notably `inv_scale`) needed to convert a float quant field to
