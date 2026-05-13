@@ -385,6 +385,11 @@ impl VarDctEncoder {
     /// Quantize AC coefficients with thresholding and store in quant_ac slots.
     /// When error_diffusion is true, processes coefficients in zigzag order
     /// and propagates quantization error to subsequent coefficients.
+    ///
+    /// `quant_ac` is a flat per-channel slice of `[i32; 64]` blocks
+    /// indexed as `quant_ac[ly * width + lx]`. `width` is the per-group
+    /// row stride in blocks. (Was `&mut [Vec<[i32; 64]>]` before — the
+    /// flat shape eliminates the per-row Vec headers and one indirection.)
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn quantize_ac_block(
         dct_coeffs: &[f32],
@@ -401,7 +406,8 @@ impl VarDctEncoder {
         _raw_strategy: u8,
         bx: usize,
         by: usize,
-        quant_ac: &mut [Vec<[i32; DCT_BLOCK_SIZE]>],
+        quant_ac: &mut [[i32; DCT_BLOCK_SIZE]],
+        width: usize,
         error_diffusion: bool,
         zigzag_order: Option<&[u32]>,
         error_scratch: Option<&mut Vec<f32>>,
@@ -427,7 +433,7 @@ impl VarDctEncoder {
                 let coeffs: &[f32; 64] = as_array_ref(dct_coeffs, 0);
                 let w: &[f32; 64] = as_array_ref(weights, 0);
                 let qac_qm = qac * qm_multiplier;
-                jxl_simd::quantize_block_dct8(coeffs, w, qac_qm, thresholds, &mut quant_ac[by][bx]);
+                jxl_simd::quantize_block_dct8(coeffs, w, qac_qm, thresholds, &mut quant_ac[by * width + bx]);
                 return;
             }
 
@@ -466,7 +472,7 @@ impl VarDctEncoder {
                             (slot_y, slot_x)
                         };
 
-                        quant_ac[by + phys_row_off][bx + phys_col_off]
+                        quant_ac[(by + phys_row_off) * width + (bx + phys_col_off)]
                             [pos_base..pos_base + BLOCK_DIM]
                             .copy_from_slice(&flat[src_off..src_off + BLOCK_DIM]);
                     }
@@ -522,7 +528,7 @@ impl VarDctEncoder {
                 } else {
                     (coef_slot_y, coef_slot_x)
                 };
-                quant_ac[by + phys_row_off][bx + phys_col_off][pos_in_8x8] = qval;
+                quant_ac[(by + phys_row_off) * width + (bx + phys_col_off)][pos_in_8x8] = qval;
             }
             #[cfg(feature = "debug-tokens")]
             if _raw_strategy == 4 && bx == 0 && by == 0 {
@@ -593,7 +599,7 @@ impl VarDctEncoder {
                     } else {
                         (coef_slot_y, coef_slot_x)
                     };
-                    quant_ac[by + phys_row_off][bx + phys_col_off][pos_in_8x8] = 0;
+                    quant_ac[(by + phys_row_off) * width + (bx + phys_col_off)][pos_in_8x8] = 0;
                     continue;
                 }
 
@@ -640,7 +646,7 @@ impl VarDctEncoder {
                 } else {
                     (coef_slot_y, coef_slot_x)
                 };
-                quant_ac[by + phys_row_off][bx + phys_col_off][pos_in_8x8] = qval;
+                quant_ac[(by + phys_row_off) * width + (bx + phys_col_off)][pos_in_8x8] = qval;
             }
         }
     }
