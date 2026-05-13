@@ -165,6 +165,14 @@ pub mod __pre_quantized {
     pub fn quant_weights_dct8(channel: usize) -> &'static [f32] {
         crate::vardct::quant::quant_weights(0, channel)
     }
+    /// Diagnostic-only re-export: the per-channel CPU transform
+    /// output `transform_and_quantize` produces. Used by the
+    /// `__pre_quantized` parity test to isolate "is the entry point
+    /// correct?" from "is the GPU producer correct?". Feed an
+    /// instance of this directly into `encode_from_pre_quantized_ac`
+    /// and compare its bitstream output to `encode_from_precomputed`.
+    pub use crate::vardct::transform::TransformOutput;
+
     /// Default dead-zone thresholds for DCT8 (covered_x=covered_y=1)
     /// per channel. Mirrors `VarDctEncoder::default_thresholds`.
     pub fn default_thresholds_dct8(channel: usize) -> [f32; 4] {
