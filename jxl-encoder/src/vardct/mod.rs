@@ -66,7 +66,7 @@ pub(crate) mod quant;
 pub(crate) mod quantize;
 pub(crate) mod reconstruct;
 mod static_codes;
-mod transform;
+pub mod transform;
 pub(crate) mod xyb;
 
 pub use encoder::{VarDctEncoder, VarDctOutput};

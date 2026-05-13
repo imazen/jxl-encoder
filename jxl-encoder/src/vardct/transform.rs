@@ -35,7 +35,10 @@ use alloc::sync::Arc;
 /// Pre-allocated output buffers for `transform_and_quantize`.
 ///
 /// Reuse across butteraugli iterations to avoid re-allocating Vec<Vec<>> arrays.
-pub(crate) struct TransformOutput {
+// Visibility: `pub` so the `__pre_quantized` test path can call
+// `transform_and_quantize_for_test` and inspect/forward the
+// produced data. Internal callers continue to use the same fields.
+pub struct TransformOutput {
     pub quant_dc: [Vec<Vec<i16>>; 3],
     pub quant_ac: [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
     pub nzeros: [Vec<Vec<u8>>; 3],
@@ -1097,6 +1100,33 @@ impl VarDctEncoder {
     ///
     /// Groups are processed in parallel; results are scattered into the output.
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    /// Diagnostic-only wrapper around `transform_and_quantize` that
+    /// returns the raw `TransformOutput`. Used by the
+    /// `__pre_quantized` test path to feed CPU-produced
+    /// transform output into `encode_from_pre_quantized_ac` and
+    /// isolate "is the entry point itself correct?" from "is the
+    /// GPU producer correct?".
+    #[cfg(feature = "__pre_quantized")]
+    pub fn transform_and_quantize_for_test(
+        &self,
+        precomputed: &super::precomputed::EncoderPrecomputed,
+        quant_field: &mut [u8],
+        params: &DistanceParams,
+    ) -> Result<TransformOutput> {
+        self.transform_and_quantize(
+            &precomputed.xyb_x,
+            &precomputed.xyb_y,
+            &precomputed.xyb_b,
+            precomputed.padded_width,
+            precomputed.xsize_blocks,
+            precomputed.ysize_blocks,
+            params,
+            quant_field,
+            &precomputed.cfl_map,
+            &precomputed.ac_strategy,
+        )
+    }
+
     pub(crate) fn transform_and_quantize(
         &self,
         xyb_x: &[f32],
