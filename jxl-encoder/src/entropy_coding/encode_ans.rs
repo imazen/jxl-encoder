@@ -126,6 +126,53 @@ impl AccumulatedAnsData {
     }
 }
 
+/// Parallel map-reduce: build an accumulator per group on a worker
+/// thread, then merge into one. Falls through to a sequential loop
+/// when the `parallel` feature is disabled or there is only one group.
+#[cfg(feature = "parallel")]
+fn accumulate_groups_parallel(
+    groups: &[&[Token]],
+    num_contexts: usize,
+    lz77: Option<&Lz77Params>,
+) -> AccumulatedAnsData {
+    use rayon::prelude::*;
+    if groups.len() <= 1 {
+        let mut acc = AccumulatedAnsData::new(num_contexts);
+        for group in groups {
+            acc.add_tokens(group, lz77);
+        }
+        return acc;
+    }
+    groups
+        .par_iter()
+        .map(|group| {
+            let mut acc = AccumulatedAnsData::new(num_contexts);
+            acc.add_tokens(group, lz77);
+            acc
+        })
+        .reduce(
+            || AccumulatedAnsData::new(num_contexts),
+            |mut a, b| {
+                a.merge(&b);
+                a
+            },
+        )
+}
+
+/// Sequential fallback for [`accumulate_groups_parallel`].
+#[cfg(not(feature = "parallel"))]
+fn accumulate_groups_parallel(
+    groups: &[&[Token]],
+    num_contexts: usize,
+    lz77: Option<&Lz77Params>,
+) -> AccumulatedAnsData {
+    let mut acc = AccumulatedAnsData::new(num_contexts);
+    for group in groups {
+        acc.add_tokens(group, lz77);
+    }
+    acc
+}
+
 /// Build an ANS entropy code from accumulated histogram data.
 ///
 /// This is Phase B of the two-phase approach: takes pre-accumulated statistics
@@ -199,44 +246,42 @@ pub fn build_entropy_code_from_accumulated_ans(
         optimize_uint_configs_fast_from_freqs(&merged_value_freqs, lz77)
     };
 
-    // Build ANS histograms and distributions with the optimized configs.
-    let mut ans_histograms = Vec::with_capacity(num_histograms);
-    let mut ans_distributions = Vec::with_capacity(num_histograms);
+    // Build ANS histograms with the optimized configs. Per-histogram
+    // independent: each iteration reads merged_value_freqs[h],
+    // merged_lz77_freqs[h], uint_configs[h] and the read-only
+    // allowed_cache. Parallelizes cleanly via parallel_map.
     let allowed_cache = super::ans::AllowedCountsCache::new();
-
-    for h in 0..num_histograms {
-        let config = &uint_configs[h];
-        let mut counts: Vec<u32> = Vec::new();
-        for (&val, &freq) in &merged_value_freqs[h] {
-            let (tok, _, _) = config.encode(val);
-            let sym = tok as usize;
-            if sym >= counts.len() {
-                counts.resize(sym + 1, 0);
+    let ans_histograms: Vec<ANSEncodingHistogram> =
+        crate::parallel::parallel_map(num_histograms, |h| {
+            let config = &uint_configs[h];
+            let mut counts: Vec<u32> = Vec::new();
+            for (&val, &freq) in &merged_value_freqs[h] {
+                let (tok, _, _) = config.encode(val);
+                let sym = tok as usize;
+                if sym >= counts.len() {
+                    counts.resize(sym + 1, 0);
+                }
+                counts[sym] += freq;
             }
-            counts[sym] += freq;
-        }
-        for (&sym, &freq) in &merged_lz77_freqs[h] {
-            let s = sym as usize;
-            if s >= counts.len() {
-                counts.resize(s + 1, 0);
+            for (&sym, &freq) in &merged_lz77_freqs[h] {
+                let s = sym as usize;
+                if s >= counts.len() {
+                    counts.resize(s + 1, 0);
+                }
+                counts[s] += freq;
             }
-            counts[s] += freq;
-        }
-        if counts.is_empty() {
-            counts.push(0);
-        }
-
-        let i32_counts: Vec<i32> = counts.iter().map(|&c| c as i32).collect();
-        let histo = EnhancedHistogram::from_counts(&i32_counts);
-
-        let ans_histo = ANSEncodingHistogram::from_histogram_cached(
-            &histo,
-            ANSHistogramStrategy::Precise,
-            &allowed_cache,
-        )
-        .expect("ANS histogram normalization failed");
-        ans_histograms.push(ans_histo);
-    }
+            if counts.is_empty() {
+                counts.push(0);
+            }
+            let i32_counts: Vec<i32> = counts.iter().map(|&c| c as i32).collect();
+            let histo = EnhancedHistogram::from_counts(&i32_counts);
+            ANSEncodingHistogram::from_histogram_cached(
+                &histo,
+                ANSHistogramStrategy::Precise,
+                &allowed_cache,
+            )
+            .expect("ANS histogram normalization failed")
+        });
 
     // Compute global log_alpha_size
     let max_alphabet_size = ans_histograms
@@ -257,14 +302,16 @@ pub fn build_entropy_code_from_accumulated_ans(
         min_bits.clamp(5, 8)
     };
 
-    for ans_histo in &ans_histograms {
-        let ans_dist = AnsDistribution::from_normalized_counts_with_log_alpha(
-            &ans_histo.counts,
-            log_alpha_size,
-        )
-        .expect("ANS distribution building failed");
-        ans_distributions.push(ans_dist);
-    }
+    // Build ANS distributions per histogram (also independent — each
+    // pass-and-build uses one ans_histograms[h] entry).
+    let ans_distributions: Vec<AnsDistribution> =
+        crate::parallel::parallel_map(ans_histograms.len(), |h| {
+            AnsDistribution::from_normalized_counts_with_log_alpha(
+                &ans_histograms[h].counts,
+                log_alpha_size,
+            )
+            .expect("ANS distribution building failed")
+        });
 
     OwnedAnsEntropyCode {
         context_map,
@@ -326,10 +373,9 @@ pub fn build_entropy_code_ans_from_token_groups(
     total_pixel_hint: Option<usize>,
 ) -> OwnedAnsEntropyCode {
     // Phase A: Accumulate per-context histograms and value frequencies.
-    let mut accumulated = AccumulatedAnsData::new(num_contexts);
-    for group in groups {
-        accumulated.add_tokens(group, lz77);
-    }
+    // Per-group accumulators are independent and merge associatively;
+    // run a parallel map-reduce over the groups.
+    let accumulated = accumulate_groups_parallel(groups, num_contexts, lz77);
 
     // Phase B: Build entropy code from accumulated data.
     let code = build_entropy_code_from_accumulated_ans(
