@@ -1907,6 +1907,102 @@ impl VarDctEncoder {
         }
         res
     }
+
+    /// Pre-quantized AC entry point. Skips `transform_and_quantize`
+    /// (forward DCT + quantize + nzeros) and goes straight to
+    /// `encode_two_pass` (entropy coding). The caller is responsible
+    /// for producing per-channel `quant_dc` / `quant_ac` / `nzeros` /
+    /// `raw_nzeros` / `float_dc` matching the shape `transform_and_quantize`
+    /// would have emitted on this `precomputed` input.
+    ///
+    /// Designed for the GPU encoder fast path where DCT + quantize
+    /// run on the GPU and only the small per-block coefficient buffers
+    /// need to cross the wire. Saves ~50 ms at 12 MP / d=1.0 on
+    /// rayon-parallel CPU vs running `transform_and_quantize` again.
+    ///
+    /// Quant field adjustments (multi-block transform `adjust_quant_field_with_distance`)
+    /// are applied internally — caller passes the **un-adjusted** per-block
+    /// `u8` quant field.
+    #[cfg(feature = "__pre_quantized")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_from_pre_quantized_ac(
+        &self,
+        precomputed: &super::precomputed::EncoderPrecomputed,
+        quant_field: &[u8],
+        quant_dc: &[alloc::vec::Vec<alloc::vec::Vec<i16>>; 3],
+        quant_ac: &[alloc::vec::Vec<alloc::vec::Vec<[i32; super::common::DCT_BLOCK_SIZE]>>; 3],
+        nzeros: &[alloc::vec::Vec<alloc::vec::Vec<u8>>; 3],
+        raw_nzeros: &[alloc::vec::Vec<alloc::vec::Vec<u16>>; 3],
+    ) -> Result<Vec<u8>> {
+        let width = precomputed.width;
+        let height = precomputed.height;
+        let xsize_blocks = precomputed.xsize_blocks;
+        let ysize_blocks = precomputed.ysize_blocks;
+        let _ = xsize_blocks;
+        let _ = ysize_blocks;
+
+        let xsize_groups = div_ceil(width, GROUP_DIM);
+        let ysize_groups = div_ceil(height, GROUP_DIM);
+        let xsize_dc_groups = div_ceil(width, DC_GROUP_DIM);
+        let ysize_dc_groups = div_ceil(height, DC_GROUP_DIM);
+        let num_groups = xsize_groups * ysize_groups;
+        let num_dc_groups = xsize_dc_groups * ysize_dc_groups;
+        let num_sections = 2 + num_dc_groups + num_groups;
+
+        // Apply multi-block quant field adjustment. Same step
+        // `transform_and_quantize` would have applied internally before
+        // calling encode_two_pass.
+        let mut quant_field = quant_field.to_vec();
+        adjust_quant_field_with_distance(&precomputed.ac_strategy, &mut quant_field, self.distance);
+
+        let mut params = match self.original_distance {
+            Some(orig) if orig > self.distance => {
+                DistanceParams::compute_for_profile_with_original(
+                    self.distance,
+                    orig,
+                    &self.profile,
+                )
+            }
+            _ => DistanceParams::compute_for_profile(self.distance, &self.profile),
+        };
+        if let Some(rescale) = self.quant_ac_rescale {
+            params.apply_quant_ac_rescale(rescale);
+        }
+        if self.profile.chromacity_adjustment {
+            params.apply_chromacity_adjustment(
+                precomputed.chromacity_x_pixelized,
+                precomputed.chromacity_b_pixelized,
+            );
+        }
+
+        self.encode_two_pass(
+            width,
+            height,
+            &params,
+            precomputed.xsize_blocks,
+            precomputed.ysize_blocks,
+            xsize_groups,
+            ysize_groups,
+            xsize_dc_groups,
+            ysize_dc_groups,
+            num_groups,
+            num_dc_groups,
+            num_sections,
+            quant_dc,
+            quant_ac,
+            nzeros,
+            raw_nzeros,
+            &quant_field,
+            &precomputed.cfl_map,
+            &precomputed.ac_strategy,
+            &precomputed.noise_params,
+            None,
+            &[],
+            None,
+            None,
+            None,
+        )
+    }
 }
 
 #[cfg(test)]
