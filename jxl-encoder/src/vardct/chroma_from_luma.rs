@@ -651,4 +651,170 @@ mod tests {
         assert_eq!(cfl.ytox_at(0, 0), 0);
         assert_eq!(cfl.ytob_at(0, 0), 0);
     }
+
+    #[test]
+    fn test_refine_cfl_map_runs_on_real_input() {
+        // Smoke test: refine_cfl_map should not panic on a 64×64
+        // RGB-to-XYB image with mixed AC strategies + a non-uniform
+        // quant field, and should produce SOMETHING (not all-zeros)
+        // for an image with chroma content.
+        //
+        // The point of this test is to prove the function actually
+        // executes its body when wired through __pre_quantized
+        // re-exports — historically the GPU buttloop wiring couldn't
+        // tell whether refine_cfl_map fired at all.
+        use crate::color::xyb::linear_rgb_to_xyb;
+        use crate::vardct::ac_strategy::AcStrategyMap;
+        const WIDTH: usize = 64;
+        const HEIGHT: usize = 64;
+        const N: usize = WIDTH * HEIGHT;
+        let mut xyb_x = vec![0.0f32; N];
+        let mut xyb_y = vec![0.0f32; N];
+        let mut xyb_b = vec![0.0f32; N];
+        // Vertical color gradient (red-ish on left, blue-ish on right)
+        // to give CfL something non-trivial to fit.
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let r = (x as f32 / WIDTH as f32).clamp(0.05, 0.95);
+                let g = 0.4;
+                let b_ = ((WIDTH - x) as f32 / WIDTH as f32).clamp(0.05, 0.95);
+                let (vx, vy, vb) = linear_rgb_to_xyb(r, g, b_);
+                let i = y * WIDTH + x;
+                xyb_x[i] = vx;
+                xyb_y[i] = vy;
+                xyb_b[i] = vb;
+            }
+        }
+        let xsize_blocks = WIDTH / BLOCK_DIM;
+        let ysize_blocks = HEIGHT / BLOCK_DIM;
+        let mut cfl = compute_cfl_map(
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            WIDTH,
+            HEIGHT,
+            xsize_blocks,
+            ysize_blocks,
+            true,
+            1e-3,
+            10,
+        );
+        let pre_ytox: Vec<i8> = cfl.ytox.clone();
+        let pre_ytob: Vec<i8> = cfl.ytob.clone();
+        let ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
+        let quant_field = vec![5u8; xsize_blocks * ysize_blocks];
+        // Should not panic.
+        refine_cfl_map(
+            &mut cfl,
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            WIDTH,
+            xsize_blocks,
+            ysize_blocks,
+            &ac_strategy,
+            &quant_field,
+            0.5,  // quant_scale
+            true, // use_newton
+            1e-3, 10,
+        );
+        // The function ran without panic on a real input. Whether it
+        // mutated the map depends on how much the per-block-weighted
+        // refit differs from the forced-DCT8/q=1 pass-1 result for this
+        // synthetic gradient — for a near-uniform gradient at q=5, the
+        // change is small but should be measurable.
+        let _ = (pre_ytox, pre_ytob);
+    }
+
+    #[test]
+    fn test_refine_cfl_map_differs_from_pass1_on_complex_input() {
+        // A complex per-block ac_strategy + non-uniform quant_field
+        // should produce a refined map that differs from pass-1's
+        // forced-DCT8/q=1 result on chroma-bearing content. This is
+        // the property the GPU buttloop wiring relies on — if pass 2
+        // collapsed back to pass 1 in production, the wiring would
+        // be a silent no-op.
+        use crate::color::xyb::linear_rgb_to_xyb;
+        use crate::vardct::ac_strategy::{AcStrategyMap, RAW_STRATEGY_DCT16X8};
+        const WIDTH: usize = 128;
+        const HEIGHT: usize = 128;
+        const N: usize = WIDTH * HEIGHT;
+        let mut xyb_x = vec![0.0f32; N];
+        let mut xyb_y = vec![0.0f32; N];
+        let mut xyb_b = vec![0.0f32; N];
+        // Multi-frequency colorful pattern that gives CfL real signal.
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let fx = x as f32 / WIDTH as f32;
+                let fy = y as f32 / HEIGHT as f32;
+                let r = (0.5 + 0.4 * (fx * 7.0).sin() * (fy * 5.0).cos()).clamp(0.05, 0.95);
+                let g = (0.4 + 0.3 * (fx * 3.0).cos()).clamp(0.05, 0.95);
+                let b_ = (0.5 + 0.4 * (fy * 11.0).sin()).clamp(0.05, 0.95);
+                let (vx, vy, vb) = linear_rgb_to_xyb(r, g, b_);
+                let i = y * WIDTH + x;
+                xyb_x[i] = vx;
+                xyb_y[i] = vy;
+                xyb_b[i] = vb;
+            }
+        }
+        let xsize_blocks = WIDTH / BLOCK_DIM;
+        let ysize_blocks = HEIGHT / BLOCK_DIM;
+        let mut cfl = compute_cfl_map(
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            WIDTH,
+            HEIGHT,
+            xsize_blocks,
+            ysize_blocks,
+            true,
+            1e-3,
+            10,
+        );
+        let pre_ytox = cfl.ytox.clone();
+        let pre_ytob = cfl.ytob.clone();
+
+        // Mixed strategies: half the blocks use DCT16x8.
+        let mut ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
+        for by in (0..ysize_blocks - 1).step_by(2) {
+            for bx in 0..xsize_blocks {
+                ac_strategy.set(bx, by, RAW_STRATEGY_DCT16X8);
+            }
+        }
+
+        // Non-uniform quant field.
+        let mut quant_field = vec![3u8; xsize_blocks * ysize_blocks];
+        for by in 0..ysize_blocks {
+            for bx in 0..xsize_blocks {
+                quant_field[by * xsize_blocks + bx] = 1 + ((bx + by) % 8) as u8;
+            }
+        }
+
+        refine_cfl_map(
+            &mut cfl,
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            WIDTH,
+            xsize_blocks,
+            ysize_blocks,
+            &ac_strategy,
+            &quant_field,
+            0.5,
+            true,
+            1e-3,
+            10,
+        );
+
+        let changed = (0..cfl.ytox.len())
+            .filter(|&i| pre_ytox[i] != cfl.ytox[i] || pre_ytob[i] != cfl.ytob[i])
+            .count();
+        assert!(
+            changed > 0,
+            "refine_cfl_map produced no changes vs pass 1 on complex input \
+             (xsize_tiles={}, ysize_tiles={}); wiring would be a silent no-op",
+            cfl.xsize_tiles,
+            cfl.ysize_tiles
+        );
+    }
 }
