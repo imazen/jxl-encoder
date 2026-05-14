@@ -299,9 +299,7 @@ pub fn count_zero_coefficients(
             .filter(|(a, b)| a < b)
             .collect();
         let per_band: Vec<Vec<Vec<Vec<i64>>>> =
-            crate::parallel::parallel_map(bands.len(), |i| {
-                accumulate_band(bands[i].0, bands[i].1)
-            });
+            crate::parallel::parallel_map(bands.len(), |i| accumulate_band(bands[i].0, bands[i].1));
         let mut counts = init_buckets();
         for band in per_band {
             merge_into(&mut counts, band);
