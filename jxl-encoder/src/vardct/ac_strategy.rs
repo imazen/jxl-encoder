@@ -21,8 +21,8 @@ use super::afv::afv_transform_from_pixels;
 use super::block_extract::*;
 use super::chroma_from_luma::{CflMap, ytob_ratio, ytox_ratio};
 use super::common::{
-    BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, as_array_mut, as_array_ref, ceil_log2_nonzero,
-    uninit_buf,
+    BLOCK_DIM, DCT_BLOCK_SIZE, GROUP_DIM_IN_BLOCKS, TILE_DIM_IN_BLOCKS, as_array_mut, as_array_ref,
+    ceil_log2_nonzero, uninit_buf,
 };
 use super::dct::{
     dct_4x4_full, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_16x32,
@@ -196,17 +196,45 @@ impl AcStrategyMap {
     pub fn set(&mut self, bx: usize, by: usize, raw_strategy: u8) {
         let cx = COVERED_X[raw_strategy as usize];
         let cy = COVERED_Y[raw_strategy as usize];
-        // Debug: check group boundary crossing
+
+        // The downstream group-transform pipeline assumes every
+        // multi-block AC strategy fits inside a single 32×32-block
+        // pass-group AND inside the image grid. The in-tree per-tile
+        // strategy search satisfies this naturally (tiles align with
+        // groups, search bounds clamp to the image), but downstream
+        // callers of `__pre_quantized::EncoderPrecomputed::from_parts`
+        // (notably jxl-encoder-gpu's strat-search injector) can supply
+        // an `AcStrategyMap` whose multi-block entries cross either
+        // boundary. Without an explicit guard this used to OOB silently
+        // in release mode at `vardct/transform.rs` — e.g. line 544 for
+        // DCT64x64 DC writes — with a confusing
+        // `index out of bounds: the len is 1024 but the index is 1048`.
+        //
+        // In debug mode we keep the assertion so first-party callers
+        // surface the bug at the source. In release mode we silently
+        // downgrade to "leave the touched blocks alone" — they retain
+        // whatever value was there (DCT8 from `new_dct8`) — so
+        // untrusted producers can't crash the encoder.
+        let crosses_group = {
+            let gx = bx % GROUP_DIM_IN_BLOCKS;
+            let gy = by % GROUP_DIM_IN_BLOCKS;
+            gx + cx > GROUP_DIM_IN_BLOCKS || gy + cy > GROUP_DIM_IN_BLOCKS
+        };
+        let crosses_image = bx + cx > self.xsize_blocks || by + cy > self.ysize_blocks;
         debug_assert!(
-            {
-                let gx = bx % 32;
-                let gy = by % 32;
-                gx + cx <= 32 && gy + cy <= 32
-            },
+            !crosses_group,
             "varblock crosses pass group border: bx={bx}, by={by}, raw_strategy={raw_strategy}, cx={cx}, cy={cy}, gx={}, gy={}",
-            bx % 32,
-            by % 32
+            bx % GROUP_DIM_IN_BLOCKS,
+            by % GROUP_DIM_IN_BLOCKS
         );
+        debug_assert!(
+            !crosses_image,
+            "varblock extends past image grid: bx={bx}, by={by}, raw_strategy={raw_strategy}, cx={cx}, cy={cy}, xsize_blocks={}, ysize_blocks={}",
+            self.xsize_blocks, self.ysize_blocks
+        );
+        if crosses_group || crosses_image {
+            return;
+        }
         for iy in 0..cy {
             for ix in 0..cx {
                 let is_first = (iy | ix) == 0;
