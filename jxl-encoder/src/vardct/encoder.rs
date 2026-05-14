@@ -1850,12 +1850,91 @@ impl VarDctEncoder {
             );
         }
 
+        // Patches detection: detect on PRE-gaborish XYB, subtract from
+        // pre-gaborish XYB, then re-apply gaborish_inverse on the
+        // patched buffer for the DCT. This matches libjxl's encoder
+        // pipeline order:
+        //   raw XYB → noise → patches detect/subtract → gaborish_inverse → DCT
+        // and the decoder's reverse:
+        //   IDCT → gaborish → EPF → ChannelUpsampling → add patches
+        // (libjxl/lib/jxl/dec_cache.cc:148-194 confirms patches stage runs
+        // AFTER gaborish in the render pipeline.)
+        //
+        // Detecting on POST-gaborish XYB and subtracting from POST-
+        // gaborish XYB does NOT roundtrip — the 5x5 sharpening leaves
+        // bright halos around every detected glyph after the decoder
+        // adds patches back to its gaborish-blurred reconstruction
+        // (measured: butteraugli 0.5 → 8.3 on terminal.png at d=0.5
+        // — see /tmp/bisect/ measurements).
+        //
+        // The pre-gaborish XYB is held in `precomputed.xyb_pre_gaborish`
+        // when the upstream pipeline preserves it (CPU rate-control via
+        // `compute_with_budget`, and the GPU encoder via the new
+        // `from_parts_with_pre_gaborish_xyb` slot). When unavailable
+        // (legacy `from_parts` callers), patches stay off here and the
+        // caller's path takes the no-patches hit on screenshots — the
+        // CPU `encode()` path detects pre-gab itself and is unaffected.
+        let _t_patches = std::time::Instant::now();
+        let mut patches_data = if self.enable_patches
+            && let Some(pre_gab) = precomputed.xyb_pre_gaborish.as_ref()
+        {
+            super::patches::find_and_build(
+                [&pre_gab[0], &pre_gab[1], &pre_gab[2]],
+                width,
+                height,
+                padded_width,
+            )
+        } else {
+            None
+        };
+        if matches!(self.encoder_mode, crate::api::EncoderMode::Experimental)
+            && let Some(ref pd) = patches_data
+            && !pd.is_cost_effective(self.distance, self.use_ans)
+        {
+            patches_data = None;
+        }
+        if let Some(ref mut pd) = patches_data {
+            pd.quantize_ref_image();
+        }
+        // Materialize a gaborish_inverse'd patched XYB triple if patches
+        // were found. Subtraction happens on pre-gab; gaborish_inverse
+        // re-runs to produce the DCT input. Otherwise reference
+        // precomputed.xyb_* directly (already post-gab, zero-copy).
+        let patched_xyb: Option<[Vec<f32>; 3]> =
+            match (&patches_data, &precomputed.xyb_pre_gaborish) {
+                (Some(pd), Some(pre_gab)) => {
+                    let mut xyb = [pre_gab[0].clone(), pre_gab[1].clone(), pre_gab[2].clone()];
+                    super::patches::subtract_patches(&mut xyb, padded_width, pd);
+                    if precomputed.gaborish_enabled {
+                        let [mut x, mut y, mut b] = xyb;
+                        super::gaborish::gaborish_inverse(
+                            &mut x,
+                            &mut y,
+                            &mut b,
+                            padded_width,
+                            precomputed.padded_height,
+                            self.budget.as_ref(),
+                        )?;
+                        Some([x, y, b])
+                    } else {
+                        Some(xyb)
+                    }
+                }
+                _ => None,
+            };
+        let (xyb_x_for_dct, xyb_y_for_dct, xyb_b_for_dct): (&[f32], &[f32], &[f32]) =
+            match &patched_xyb {
+                Some([x, y, b]) => (x, y, b),
+                None => (&precomputed.xyb_x, &precomputed.xyb_y, &precomputed.xyb_b),
+            };
+        let _ms_patches = _t_patches.elapsed().as_secs_f64() * 1000.0;
+
         // Perform DCT and quantization using precomputed XYB data
         let _t_xform = std::time::Instant::now();
         let transform_out = self.transform_and_quantize(
-            &precomputed.xyb_x,
-            &precomputed.xyb_y,
-            &precomputed.xyb_b,
+            xyb_x_for_dct,
+            xyb_y_for_dct,
+            xyb_b_for_dct,
             padded_width,
             xsize_blocks,
             ysize_blocks,
@@ -1935,15 +2014,15 @@ impl VarDctEncoder {
             &precomputed.ac_strategy,
             &precomputed.noise_params,
             sharpness_map.as_deref(),
-            &[],  // TODO: thread extras (alpha + others) through butteraugli path
-            None, // patches
+            &[], // TODO: thread extras (alpha + others) through butteraugli path
+            patches_data.as_ref(),
             None, // splines
             None, // float_dc
         );
         let _ms_two = _t_two.elapsed().as_secs_f64() * 1000.0;
         if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
             eprintln!(
-                "encode_from_precomputed: transform_and_quantize={_ms_xform:.1} ms, sharpness={_ms_sharp:.1} ms, encode_two_pass={_ms_two:.1} ms",
+                "encode_from_precomputed: patches={_ms_patches:.1} ms, transform_and_quantize={_ms_xform:.1} ms, sharpness={_ms_sharp:.1} ms, encode_two_pass={_ms_two:.1} ms",
             );
         }
         res
