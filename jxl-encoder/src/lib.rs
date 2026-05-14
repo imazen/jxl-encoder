@@ -214,11 +214,6 @@ pub mod __pre_quantized {
         let _ = &mut t;
         t
     }
-    /// `DistanceParams` carries the per-distance scaling constants
-    /// (notably `inv_scale`) needed to convert a float quant field to
-    /// `u8`. Construct via `DistanceParams::compute_for_profile(distance,
-    /// &EffortProfile)`.
-    pub use crate::vardct::frame::DistanceParams;
     /// Multi-block transform quant-field adjustment. Mirrors what
     /// `encode_from_precomputed` runs internally on its `quant_field`
     /// argument (and what `encode_image_lossy` runs pre-buttloop in
@@ -230,6 +225,11 @@ pub mod __pre_quantized {
     /// but the safe pattern is to hand it the raw `quantize_quant_field`
     /// output and only adjust a separate copy for `refine_cfl_map`.
     pub use crate::vardct::ac_strategy::adjust_quant_field_with_distance;
+    /// `DistanceParams` carries the per-distance scaling constants
+    /// (notably `inv_scale`) needed to convert a float quant field to
+    /// `u8`. Construct via `DistanceParams::compute_for_profile(distance,
+    /// &EffortProfile)`.
+    pub use crate::vardct::frame::DistanceParams;
     pub use crate::vardct::noise::NoiseParams;
     pub use crate::vardct::precomputed::EncoderPrecomputed;
 }

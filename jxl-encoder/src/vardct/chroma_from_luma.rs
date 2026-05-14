@@ -716,7 +716,8 @@ mod tests {
             &quant_field,
             0.5,  // quant_scale
             true, // use_newton
-            1e-3, 10,
+            1e-3,
+            10,
         );
         // The function ran without panic on a real input. Whether it
         // mutated the map depends on how much the per-block-weighted
