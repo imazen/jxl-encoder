@@ -1870,6 +1870,47 @@ impl VarDctEncoder {
         let nzeros = &transform_out.nzeros;
         let raw_nzeros = &transform_out.raw_nzeros;
 
+        // Compute per-block EPF sharpness map when EPF is active.
+        // Mirrors the CPU path at `encode_image_lossy` (vardct/encoder.rs:1329-1362).
+        // Dynamic sharpness gated at effort >= 6 (speed_tier <= kWombat) matching libjxl.
+        // Without this the bitstream emits uniform sharpness=4, costing bytes on
+        // content that benefits from per-block tuning.
+        let _t_sharp = std::time::Instant::now();
+        let padded_height = precomputed.padded_height;
+        let sharpness_map =
+            if params.epf_iters > 0 && self.distance >= 0.5 && self.profile.epf_dynamic_sharpness {
+                let mask_fallback;
+                let mask: &[f32] = match &precomputed.mask1x1 {
+                    Some(m) => m,
+                    None => {
+                        mask_fallback = super::adaptive_quant::compute_mask1x1_with_budget(
+                            &precomputed.xyb_y,
+                            padded_width,
+                            padded_height,
+                            self.budget.as_ref(),
+                        )?;
+                        &mask_fallback
+                    }
+                };
+                Some(super::epf::compute_epf_sharpness(
+                    [&precomputed.xyb_x, &precomputed.xyb_y, &precomputed.xyb_b],
+                    quant_dc,
+                    quant_ac,
+                    &quant_field,
+                    mask,
+                    &params,
+                    &precomputed.cfl_map,
+                    &precomputed.ac_strategy,
+                    self.enable_gaborish,
+                    xsize_blocks,
+                    ysize_blocks,
+                    self.budget.as_ref(),
+                )?)
+            } else {
+                None
+            };
+        let _ms_sharp = _t_sharp.elapsed().as_secs_f64() * 1000.0;
+
         // Use two-pass mode for rate control (required for ANS)
         let _t_two = std::time::Instant::now();
         let res = self.encode_two_pass(
@@ -1893,7 +1934,7 @@ impl VarDctEncoder {
             &precomputed.cfl_map,
             &precomputed.ac_strategy,
             &precomputed.noise_params,
-            None, // TODO: compute sharpness_map for rate control path
+            sharpness_map.as_deref(),
             &[],  // TODO: thread extras (alpha + others) through butteraugli path
             None, // patches
             None, // splines
@@ -1902,7 +1943,7 @@ impl VarDctEncoder {
         let _ms_two = _t_two.elapsed().as_secs_f64() * 1000.0;
         if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
             eprintln!(
-                "encode_from_precomputed: transform_and_quantize={_ms_xform:.1} ms, encode_two_pass={_ms_two:.1} ms",
+                "encode_from_precomputed: transform_and_quantize={_ms_xform:.1} ms, sharpness={_ms_sharp:.1} ms, encode_two_pass={_ms_two:.1} ms",
             );
         }
         res
