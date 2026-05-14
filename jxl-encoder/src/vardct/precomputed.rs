@@ -69,6 +69,31 @@ pub struct EncoderPrecomputed {
     pub chromacity_x_pixelized: u32,
     /// B channel pixel chromacity (from pre-gaborish XYB Y/B).
     pub chromacity_b_pixelized: u32,
+
+    /// Pre-gaborish XYB planes [X, Y, B], padded.
+    ///
+    /// When `Some`, patches detection in `encode_from_precomputed` runs
+    /// on these planes (matching libjxl's pipeline order: noise → patches
+    /// → gaborish → DCT). The encoder subtracts patches from this
+    /// pre-gaborish XYB, re-applies gaborish_inverse, and DCTs the
+    /// result; the patches reference frame stores the original
+    /// pre-gaborish patch values, which the decoder adds back to its
+    /// gaborish-blurred + EPF-filtered reconstruction (decoder pipeline
+    /// per libjxl/lib/jxl/dec_cache.cc:148-194).
+    ///
+    /// When `None`, patches are disabled in `encode_from_precomputed`
+    /// — detecting on post-gaborish XYB and subtracting from
+    /// post-gaborish XYB does NOT roundtrip (sharpening halos around
+    /// every glyph leave catastrophic butteraugli, e.g. 0.5 → 8.3 on
+    /// terminal.png at d=0.5).
+    ///
+    /// `compute_with_budget` populates this field before running
+    /// gaborish so the rate-control path picks up screenshot wins
+    /// automatically. Callers using `from_parts` (jxl-encoder-gpu's
+    /// precomputed paths) should populate via
+    /// [`Self::with_xyb_pre_gaborish`] before handing the struct to
+    /// `encode_from_precomputed`.
+    pub xyb_pre_gaborish: Option<[Vec<f32>; 3]>,
 }
 
 impl EncoderPrecomputed {
@@ -211,6 +236,30 @@ impl EncoderPrecomputed {
             (0, 0)
         };
 
+        // Snapshot pre-gaborish XYB so the rate-control path's
+        // `encode_from_precomputed` can run patches detection against
+        // it. Patches MUST be detected on the unsharpened XYB to
+        // roundtrip correctly through the decoder's
+        // `IDCT → gaborish → EPF → patches` pipeline (see field doc on
+        // `xyb_pre_gaborish` and the matching block in
+        // `vardct/encoder.rs::encode_from_precomputed`).
+        //
+        // The clone is ~3 × `padded_width × padded_height × 4` bytes
+        // (~16 MB at 12 MP). Skipped when gaborish is off because
+        // post-gaborish == pre-gaborish in that case (encoder uses
+        // `precomputed.xyb_*` directly when this field is `None`).
+        let xyb_pre_gaborish: Option<[Vec<f32>; 3]> = if enable_gaborish {
+            crate::budget::MemoryBudget::reserve_permanent_opt(
+                budget,
+                (padded_width as u64)
+                    .saturating_mul(padded_height as u64)
+                    .saturating_mul(4 * 3),
+            )?;
+            Some([xyb_x.clone(), xyb_y.clone(), xyb_b.clone()])
+        } else {
+            None
+        };
+
         // Apply gaborish inverse (5x5 sharpening) before adaptive quant
         if enable_gaborish {
             gaborish_inverse(
@@ -327,6 +376,7 @@ impl EncoderPrecomputed {
             base_distance: distance,
             chromacity_x_pixelized,
             chromacity_b_pixelized,
+            xyb_pre_gaborish,
         })
     }
 
@@ -403,7 +453,39 @@ impl EncoderPrecomputed {
             base_distance,
             chromacity_x_pixelized,
             chromacity_b_pixelized,
+            xyb_pre_gaborish: None,
         }
+    }
+
+    /// Attach the pre-gaborish XYB triple so
+    /// [`super::encoder::VarDctEncoder::encode_from_precomputed`] can
+    /// run patches detection against it.
+    ///
+    /// The three planes MUST each have `padded_width * padded_height`
+    /// entries laid out the same way `xyb_x` is — they're literally the
+    /// values the upstream pipeline had on hand BEFORE running the
+    /// 5x5 gaborish_inverse sharpening filter. When unset, patches are
+    /// silently disabled in `encode_from_precomputed` (callers
+    /// constructing via `from_parts` who don't carry pre-gab XYB take
+    /// the no-patches hit on screenshot content; closing the gap
+    /// requires either preserving pre-gab on the GPU side or a separate
+    /// host-side download just for patches detection).
+    ///
+    /// Building only the Y channel is not allowed — patches detection
+    /// needs all three (the L1 distance metric in
+    /// `find_text_like_patches` reads X and B for color similarity).
+    ///
+    /// Gated behind the `__pre_quantized` cargo feature for the same
+    /// reason as `from_parts` — `#[doc(hidden)]` and not part of the
+    /// stable API.
+    #[cfg(feature = "__pre_quantized")]
+    #[doc(hidden)]
+    pub fn with_xyb_pre_gaborish(mut self, xyb: [Vec<f32>; 3]) -> Self {
+        debug_assert_eq!(xyb[0].len(), self.padded_width * self.padded_height);
+        debug_assert_eq!(xyb[1].len(), self.padded_width * self.padded_height);
+        debug_assert_eq!(xyb[2].len(), self.padded_width * self.padded_height);
+        self.xyb_pre_gaborish = Some(xyb);
+        self
     }
 }
 
