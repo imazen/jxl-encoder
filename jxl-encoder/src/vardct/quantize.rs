@@ -433,7 +433,13 @@ impl VarDctEncoder {
                 let coeffs: &[f32; 64] = as_array_ref(dct_coeffs, 0);
                 let w: &[f32; 64] = as_array_ref(weights, 0);
                 let qac_qm = qac * qm_multiplier;
-                jxl_simd::quantize_block_dct8(coeffs, w, qac_qm, thresholds, &mut quant_ac[by * width + bx]);
+                jxl_simd::quantize_block_dct8(
+                    coeffs,
+                    w,
+                    qac_qm,
+                    thresholds,
+                    &mut quant_ac[by * width + bx],
+                );
                 return;
             }
 

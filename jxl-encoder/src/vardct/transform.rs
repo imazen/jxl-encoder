@@ -124,9 +124,7 @@ impl GroupTransformResult {
             width,
             height,
             quant_dc: core::array::from_fn(|_| vec![0i16; n].into_boxed_slice()),
-            quant_ac: core::array::from_fn(|_| {
-                vec![[0i32; DCT_BLOCK_SIZE]; n].into_boxed_slice()
-            }),
+            quant_ac: core::array::from_fn(|_| vec![[0i32; DCT_BLOCK_SIZE]; n].into_boxed_slice()),
             nzeros: core::array::from_fn(|_| vec![0u8; n].into_boxed_slice()),
             raw_nzeros: core::array::from_fn(|_| vec![0u16; n].into_boxed_slice()),
             float_dc: core::array::from_fn(|_| vec![0.0f32; n].into_boxed_slice()),
@@ -575,23 +573,27 @@ impl VarDctEncoder {
                         RAW_STRATEGY_DCT4X8 => {
                             let dc = dc_from_dct_4x8_full(as_array_ref::<64>(&dct_coeffs[1], 0));
                             float_dc[1][(by - yoff) * width + (bx - xoff)] = dc;
-                            quant_dc[1][(by - yoff) * width + (bx - xoff)] = (dc * inv_factor).round() as i16;
+                            quant_dc[1][(by - yoff) * width + (bx - xoff)] =
+                                (dc * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_DCT8X4 => {
                             let dc = dc_from_dct_8x4_full(as_array_ref::<64>(&dct_coeffs[1], 0));
                             float_dc[1][(by - yoff) * width + (bx - xoff)] = dc;
-                            quant_dc[1][(by - yoff) * width + (bx - xoff)] = (dc * inv_factor).round() as i16;
+                            quant_dc[1][(by - yoff) * width + (bx - xoff)] =
+                                (dc * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_DCT4X4 => {
                             let dc = dc_from_dct_4x4_full(as_array_ref::<64>(&dct_coeffs[1], 0));
                             float_dc[1][(by - yoff) * width + (bx - xoff)] = dc;
-                            quant_dc[1][(by - yoff) * width + (bx - xoff)] = (dc * inv_factor).round() as i16;
+                            quant_dc[1][(by - yoff) * width + (bx - xoff)] =
+                                (dc * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2
                         | RAW_STRATEGY_AFV3 => {
                             let dc = dc_from_afv(as_array_ref::<64>(&dct_coeffs[1], 0));
                             float_dc[1][(by - yoff) * width + (bx - xoff)] = dc;
-                            quant_dc[1][(by - yoff) * width + (bx - xoff)] = (dc * inv_factor).round() as i16;
+                            quant_dc[1][(by - yoff) * width + (bx - xoff)] =
+                                (dc * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_IDENTITY | RAW_STRATEGY_DCT2X2 => {
                             // IDENTITY/DCT2X2: 1×1 coverage, DC at position [0]
@@ -844,7 +846,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_16x8(as_array_ref::<128>(&dct_coeffs[c], 0));
                             for iy in 0..2 {
                                 float_dc[c][(by - yoff + iy) * width + (bx - xoff)] = dcs[iy];
-                                let y_dc = quant_dc[1][(by - yoff + iy) * width + (bx - xoff)] as f32;
+                                let y_dc =
+                                    quant_dc[1][(by - yoff + iy) * width + (bx - xoff)] as f32;
                                 quant_dc[c][(by - yoff + iy) * width + (bx - xoff)] =
                                     (dcs[iy] * inv_factor - y_dc * dc_cfl_factor).round() as i16;
                             }
@@ -853,7 +856,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_8x16(as_array_ref::<128>(&dct_coeffs[c], 0));
                             for ix in 0..2 {
                                 float_dc[c][(by - yoff) * width + (bx - xoff + ix)] = dcs[ix];
-                                let y_dc = quant_dc[1][(by - yoff) * width + (bx - xoff + ix)] as f32;
+                                let y_dc =
+                                    quant_dc[1][(by - yoff) * width + (bx - xoff + ix)] as f32;
                                 quant_dc[c][(by - yoff) * width + (bx - xoff + ix)] =
                                     (dcs[ix] * inv_factor - y_dc * dc_cfl_factor).round() as i16;
                             }
@@ -864,7 +868,9 @@ impl VarDctEncoder {
                                 for ix in 0..2 {
                                     float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 2 + ix];
-                                    let y_dc = quant_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] as f32;
+                                    let y_dc = quant_dc[1]
+                                        [(by - yoff + iy) * width + (bx - xoff + ix)]
+                                        as f32;
                                     quant_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         (dcs[iy * 2 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
@@ -877,7 +883,9 @@ impl VarDctEncoder {
                                 for ix in 0..4 {
                                     float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 4 + ix];
-                                    let y_dc = quant_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] as f32;
+                                    let y_dc = quant_dc[1]
+                                        [(by - yoff + iy) * width + (bx - xoff + ix)]
+                                        as f32;
                                     quant_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         (dcs[iy * 4 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
@@ -890,7 +898,9 @@ impl VarDctEncoder {
                                 for ix in 0..2 {
                                     float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 2 + ix];
-                                    let y_dc = quant_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] as f32;
+                                    let y_dc = quant_dc[1]
+                                        [(by - yoff + iy) * width + (bx - xoff + ix)]
+                                        as f32;
                                     quant_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         (dcs[iy * 2 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
@@ -903,7 +913,9 @@ impl VarDctEncoder {
                                 for ix in 0..4 {
                                     float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 4 + ix];
-                                    let y_dc = quant_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] as f32;
+                                    let y_dc = quant_dc[1]
+                                        [(by - yoff + iy) * width + (bx - xoff + ix)]
+                                        as f32;
                                     quant_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         (dcs[iy * 4 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
@@ -916,7 +928,9 @@ impl VarDctEncoder {
                                 for ix in 0..8 {
                                     float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 8 + ix];
-                                    let y_dc = quant_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] as f32;
+                                    let y_dc = quant_dc[1]
+                                        [(by - yoff + iy) * width + (bx - xoff + ix)]
+                                        as f32;
                                     quant_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         (dcs[iy * 8 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
@@ -929,7 +943,9 @@ impl VarDctEncoder {
                                 for ix in 0..4 {
                                     float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 4 + ix];
-                                    let y_dc = quant_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] as f32;
+                                    let y_dc = quant_dc[1]
+                                        [(by - yoff + iy) * width + (bx - xoff + ix)]
+                                        as f32;
                                     quant_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         (dcs[iy * 4 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
@@ -942,7 +958,9 @@ impl VarDctEncoder {
                                 for ix in 0..8 {
                                     float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 8 + ix];
-                                    let y_dc = quant_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] as f32;
+                                    let y_dc = quant_dc[1]
+                                        [(by - yoff + iy) * width + (bx - xoff + ix)]
+                                        as f32;
                                     quant_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         (dcs[iy * 8 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
@@ -1058,9 +1076,8 @@ impl VarDctEncoder {
                                     } else {
                                         (coef_slot_y, coef_slot_x)
                                     };
-                                    let row = &quant_ac[c]
-                                        [(by - yoff + phys_row_off) * width
-                                            + (bx - xoff + phys_col_off)];
+                                    let row = &quant_ac[c][(by - yoff + phys_row_off) * width
+                                        + (bx - xoff + phys_col_off)];
                                     for pos_x in 0..BLOCK_DIM {
                                         let x = coef_slot_x * BLOCK_DIM + pos_x;
                                         fb_row[x] = row[pos_y * BLOCK_DIM + pos_x];
