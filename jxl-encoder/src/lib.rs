@@ -152,6 +152,33 @@ pub mod __pre_quantized {
     /// quality (Newton-Raphson fit; matches libjxl
     /// `enc_chroma_from_luma.cc` at `speed_tier <= kSquirrel`).
     pub use crate::vardct::chroma_from_luma::compute_cfl_map;
+    /// CfL pass 2 refinement. Recomputes the CfL map using the
+    /// per-block actual AC strategy and the per-block quantization
+    /// factor (versus pass 1's forced-DCT8, q=1 fit). Mutates
+    /// `cfl_map` in place. Required for parity with libjxl
+    /// `enc_chroma_from_luma.cc` at `speed_tier <= kSquirrel` (i.e.
+    /// effort >= 7) and the CPU encoder's `cfl_two_pass` profile gate.
+    ///
+    /// Inputs:
+    /// - `cfl_map`: pass-1 result (e.g. from `compute_cfl_map`).
+    /// - `xyb_x/y/b`: same XYB planes pass 1 used (gaborish-applied if
+    ///   the encoder enabled it).
+    /// - `stride`: padded width matching the XYB planes.
+    /// - `xsize_blocks` / `ysize_blocks`: image block dims (CPU grid).
+    /// - `ac_strategy`: final per-block strategy assignments.
+    /// - `quant_field`: final per-block `u8` quant field (post
+    ///   `quantize_quant_field` + `adjust_quant_field_with_distance`).
+    /// - `quant_scale`: `DistanceParams::scale` matching the
+    ///   `quant_field` / `inv_scale` pair (i.e. `1.0 / inv_scale`).
+    /// - `use_newton` / `newton_eps` / `newton_max_iters`: same knobs
+    ///   `compute_cfl_map` takes; pull from the same `EffortProfile`
+    ///   (`cfl_newton`, `cfl_newton_eps`, `cfl_newton_max_iters`).
+    ///
+    /// Call after AC strategy + quant field are finalized and
+    /// before `encode_from_precomputed`. Replace
+    /// `EncoderPrecomputed::cfl_map` with the refined map (or call
+    /// in place on the same `CflMap` instance).
+    pub use crate::vardct::chroma_from_luma::refine_cfl_map;
     pub use crate::vardct::common::DCT_BLOCK_SIZE;
     pub use crate::vardct::encoder::VarDctEncoder;
     /// libjxl `INV_DC_QUANT[c]` — per-channel DC scale factor.
