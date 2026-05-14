@@ -219,6 +219,17 @@ pub mod __pre_quantized {
     /// `u8`. Construct via `DistanceParams::compute_for_profile(distance,
     /// &EffortProfile)`.
     pub use crate::vardct::frame::DistanceParams;
+    /// Multi-block transform quant-field adjustment. Mirrors what
+    /// `encode_from_precomputed` runs internally on its `quant_field`
+    /// argument (and what `encode_image_lossy` runs pre-buttloop in
+    /// the CPU encoder, `vardct/encoder.rs:1146`). Downstream callers
+    /// who need the *adjusted* u8 quant field for an out-of-band step
+    /// (notably `refine_cfl_map`) can run it manually on a copy
+    /// without doing it twice — `encode_from_precomputed` is
+    /// idempotent on already-adjusted fields under most conditions
+    /// but the safe pattern is to hand it the raw `quantize_quant_field`
+    /// output and only adjust a separate copy for `refine_cfl_map`.
+    pub use crate::vardct::ac_strategy::adjust_quant_field_with_distance;
     pub use crate::vardct::noise::NoiseParams;
     pub use crate::vardct::precomputed::EncoderPrecomputed;
 }
