@@ -450,8 +450,9 @@ pub fn refine_cfl_map(
         let mut dct_b = vec![0.0f32; MAX_COEFF_AREA];
 
         let mut num_ac = 0usize;
+        let buf_cap = coeffs_yx.len();
 
-        for by in tile_by0..tile_by1 {
+        'tile_loop: for by in tile_by0..tile_by1 {
             for bx in tile_bx0..tile_bx1 {
                 if !ac_strategy.is_first(bx, by) {
                     continue;
@@ -491,7 +492,23 @@ pub fn refine_cfl_map(
                 let qw_b = quant::quant_weights(raw_strategy as usize, 2);
 
                 let num_coeffs = cx * cy * DCT_BLOCK_SIZE;
-                for i in 0..num_coeffs {
+                // Bound by accumulator buffer size. libjxl's heuristic at
+                // enc_chroma_from_luma.cc:304-306 (`covered + x0 > x1`)
+                // uses the TILE ORIGIN as the reference, not the current
+                // block's `bx`/`by`, so a multi-block first-block whose
+                // (bx, by) sits near the tile-end edge isn't filtered out
+                // — its coefficient contribution is fully counted in
+                // *this* tile (libjxl does the same). In pathological
+                // ac_strategy configurations the sum can exceed the
+                // accumulator (`kColorTileDim * kColorTileDim = 4096`).
+                // libjxl writes past it via SIMD stores and treats the
+                // tail as undefined; we clamp here to keep release builds
+                // panic-free for downstream callers (notably the GPU
+                // strat-search injector) that can construct ac_strategy
+                // configurations the in-tree CPU strategy search wouldn't.
+                let buf_remaining = buf_cap.saturating_sub(num_ac);
+                let take = num_coeffs.min(buf_remaining);
+                for i in 0..take {
                     let qqm_x = q / qw_x[i];
                     let qqm_b = q / qw_b[i];
                     coeffs_yx[num_ac + i] = dct_y[i] * qqm_x;
@@ -499,7 +516,10 @@ pub fn refine_cfl_map(
                     coeffs_yb[num_ac + i] = dct_y[i] * qqm_b;
                     coeffs_b[num_ac + i] = dct_b[i] * qqm_b;
                 }
-                num_ac += num_coeffs;
+                num_ac += take;
+                if num_ac >= buf_cap {
+                    break 'tile_loop;
+                }
             }
         }
 
