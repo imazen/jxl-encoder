@@ -4,7 +4,7 @@
 
 ### Added
 
-- **`__internal_recon_hook` cargo feature** (Layer-1 drift invariant):
+- **`__internal_recon_hook` cargo feature** (f73765ff, Layer-1 drift invariant):
   process-global hook on the butteraugli loop's final-iteration internal
   reconstruction (planar linear RGB the loop measures butteraugli against,
   cropped to image dims). Re-exported as `vardct::__recon_hook` with
