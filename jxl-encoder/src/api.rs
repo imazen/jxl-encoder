@@ -868,6 +868,15 @@ pub struct AnimationParams {
     pub tps_denominator: u32,
     /// Number of loops: 0 = infinite (default), >0 = play N times.
     pub num_loops: u32,
+    /// Input frame RGB is already multiplied by alpha (associated /
+    /// premultiplied alpha). Default `false` (straight alpha). When
+    /// `true`, the encoder unpremultiplies before XYB conversion and
+    /// signals `alpha_associated=true` in the codestream so the decoder
+    /// re-premultiplies on output. Mirrors
+    /// [`EncodeRequest::with_premultiplied_alpha`] for the animation
+    /// path. Closes the lossy portion of the animation audit's
+    /// "doesn't unpremultiply alpha" finding.
+    pub premultiplied_alpha: bool,
 }
 
 impl Default for AnimationParams {
@@ -876,6 +885,7 @@ impl Default for AnimationParams {
             tps_numerator: 100,
             tps_denominator: 1,
             num_loops: 0,
+            premultiplied_alpha: false,
         }
     }
 }
@@ -6080,6 +6090,12 @@ fn encode_animation_lossy(
     }
     enc.non_finite_action = cfg.non_finite_action;
     enc.budget = Some(alloc::sync::Arc::clone(&budget));
+    // Premultiplied-alpha signaling for animation (mirrors the still
+    // image lossy path's `enc.alpha_associated = self.premultiplied_alpha`
+    // at api.rs:3877). Per-frame the linear RGB is unpremultiplied
+    // before XYB conversion below; the codestream header signals
+    // `alpha_associated=true` so the decoder re-premultiplies on output.
+    enc.alpha_associated = animation.premultiplied_alpha;
 
     // Detect alpha and 16-bit from layout
     let has_alpha = layout.has_alpha();
@@ -6224,6 +6240,45 @@ fn encode_animation_lossy(
                 (rgb, Some(alpha))
             }
         };
+
+        // Mirror of the still-image lossy pre-passes at api.rs:3776-3807.
+        // Order is load-bearing: unpremultiply FIRST so SimplifyInvisible
+        // operates on straight-alpha RGB, matching libjxl
+        // `enc_frame.cc:1588-1597` which gates SimplifyInvisible on
+        // `!alpha_eci->alpha_associated`. After unpremultiplication the
+        // input is straight-alpha and the simplify pass is enabled even
+        // when the caller signalled premultiplied alpha. The codestream
+        // header still gets `alpha_associated=true` (set above) so the
+        // decoder re-premultiplies on output.
+        let mut linear_rgb = linear_rgb;
+        if animation.premultiplied_alpha
+            && let Some(ref alpha_buf) = alpha
+        {
+            unpremultiply_alpha_inplace(&mut linear_rgb, alpha_buf);
+        }
+
+        // SimplifyInvisible pre-pass (closes #10) — mirrors the
+        // one-shot still-image path at api.rs:3795-3807. Smear color
+        // values in alpha=0 pixels to a weighted average of visible
+        // neighbors, reducing high-frequency DCT energy from arbitrary
+        // garbage in transparent regions. libjxl `enc_frame.cc:511`
+        // (default-on for lossy). Sprites/icons benefit (5-20% smaller);
+        // photos with mostly-opaque alpha pay only the cheap
+        // `has_any_invisible_pixels` predicate (single linear scan with
+        // early-exit on the first zero).
+        if cfg.simplify_invisible
+            && !animation.premultiplied_alpha
+            && let Some(ref alpha_buf) = alpha
+            && crate::vardct::simplify_invisible::has_any_invisible_pixels(alpha_buf)
+        {
+            crate::vardct::simplify_invisible::simplify_invisible_rgb(
+                &mut linear_rgb,
+                alpha_buf,
+                frame_w,
+                frame_h,
+                false, // lossless = false (smear, not zero)
+            );
+        }
 
         let frame_options = FrameOptions {
             have_animation: true,
