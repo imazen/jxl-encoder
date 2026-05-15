@@ -178,6 +178,7 @@ pub(crate) struct PatchInfo {
 }
 
 /// Position of a unique patch within the reference frame.
+#[derive(Clone)]
 pub(crate) struct PatchReferencePosition {
     /// Reference frame slot (always `PATCH_FRAME_REFERENCE_ID`).
     ref_id: u32,
@@ -192,6 +193,7 @@ pub(crate) struct PatchReferencePosition {
 }
 
 /// A single patch occurrence in the image.
+#[derive(Clone)]
 pub(crate) struct PatchPosition {
     /// Position in the image.
     x: u32,
@@ -201,6 +203,7 @@ pub(crate) struct PatchPosition {
 }
 
 /// All patches data for a frame: positions, references, and the reference image.
+#[derive(Clone)]
 pub(crate) struct PatchesData {
     /// All patch occurrences, grouped by reference position.
     pub positions: Vec<PatchPosition>,

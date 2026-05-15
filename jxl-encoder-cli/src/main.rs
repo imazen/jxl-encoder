@@ -811,10 +811,14 @@ fn main() {
             tiny.ac_strategy_enabled = args.effort >= 3;
             tiny.enable_noise = args.noise || args.denoise;
             tiny.enable_denoise = args.denoise;
+            // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281).
+            // Mirror the LossyConfig::encode wiring at api.rs:3842 so the
+            // rate-control CLI path produces the same gaborish state as
+            // the default API path for the same distance.
             tiny.enable_gaborish = if args.no_gaborish {
                 false
             } else {
-                args.effort >= 3
+                args.effort >= 3 && distance > 0.5
             };
             tiny.error_diffusion = args.error_diffusion;
             tiny.pixel_domain_loss = if args.no_pixel_domain_loss {

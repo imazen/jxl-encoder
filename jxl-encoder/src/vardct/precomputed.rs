@@ -11,6 +11,7 @@ use super::ac_strategy::AcStrategyMap;
 use super::chroma_from_luma::CflMap;
 use super::common::*;
 use super::noise::NoiseParams;
+use super::patches::PatchesData;
 
 /// Precomputed encoder state that can be reused across rate control iterations.
 ///
@@ -94,6 +95,27 @@ pub struct EncoderPrecomputed {
     /// [`Self::with_xyb_pre_gaborish`] before handing the struct to
     /// `encode_from_precomputed`.
     pub xyb_pre_gaborish: Option<[Vec<f32>; 3]>,
+
+    /// Pre-detected patches dictionary, computed on the patches-subtracted
+    /// pre-gaborish XYB (matches libjxl `enc_heuristics.cc:1057-1065`:
+    /// patches detected after splines, before InitialQuantField → Gaborish
+    /// → CfL → ACS).
+    ///
+    /// When `Some`, all subsequent precomputed state (`quant_field_float`,
+    /// `masking`, `cfl_map`, `mask1x1`, `ac_strategy`) was fitted to the
+    /// patches-subtracted XYB — `xyb_x` / `xyb_y` / `xyb_b` already have
+    /// patches subtracted. `encode_from_precomputed` writes these patches
+    /// into the bitstream and skips its own internal patches detection.
+    ///
+    /// When `None`, no patches were detected (or patches detection was
+    /// disabled). `encode_from_precomputed` falls back to its
+    /// `xyb_pre_gaborish` based detection for backwards compatibility
+    /// with `from_parts` callers (jxl-encoder-gpu) that haven't yet
+    /// migrated to host-side patches detection.
+    ///
+    /// `pub(crate)` because `PatchesData` itself is internal — outside
+    /// callers cannot construct or inspect it.
+    pub(crate) patches_data: Option<PatchesData>,
 }
 
 impl EncoderPrecomputed {
@@ -110,6 +132,9 @@ impl EncoderPrecomputed {
     /// - AC strategy selection
     ///
     /// Public entry point. Equivalent to [`Self::compute_with_budget`] with no allocation cap.
+    ///
+    /// Patches detection is disabled in this entry point (no `enable_patches` parameter).
+    /// Callers that want patches must use the internal `compute_with_budget` variant.
     #[allow(clippy::too_many_arguments)]
     pub fn compute(
         width: usize,
@@ -137,6 +162,9 @@ impl EncoderPrecomputed {
             enable_noise,
             enable_denoise,
             enable_gaborish,
+            /* enable_patches */ false,
+            /* use_ans */ true,
+            crate::api::EncoderMode::Reference,
             force_strategy,
             profile,
             color_encoding,
@@ -146,6 +174,17 @@ impl EncoderPrecomputed {
 
     /// Internal-only variant that accounts allocations against an optional
     /// per-encode [`MemoryBudget`].
+    ///
+    /// `enable_patches` enables patches detection in the precompute pipeline.
+    /// When patches are detected, they are subtracted from the pre-gaborish
+    /// XYB BEFORE quant_field / mask / gaborish / CfL / AC strategy are
+    /// computed. This matches libjxl's pipeline order
+    /// (`enc_heuristics.cc:1057-1194`) and is required for correct
+    /// rate-distortion behavior on screenshot content.
+    ///
+    /// `use_ans` and `encoder_mode` are forwarded to the patches
+    /// `is_cost_effective` gate (mirroring the logic in
+    /// `vardct/encoder.rs::encode_inner`).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn compute_with_budget(
         width: usize,
@@ -158,6 +197,9 @@ impl EncoderPrecomputed {
         enable_noise: bool,
         enable_denoise: bool,
         enable_gaborish: bool,
+        enable_patches: bool,
+        use_ans: bool,
+        encoder_mode: crate::api::EncoderMode,
         force_strategy: Option<u8>,
         profile: &crate::effort::EffortProfile,
         color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
@@ -218,24 +260,6 @@ impl EncoderPrecomputed {
             None
         };
 
-        // Compute pixel chromacity stats BEFORE gaborish (matching libjxl's pipeline order).
-        // Gated at effort >= 7 to skip the full-image gradient scan at low effort.
-        let (chromacity_x_pixelized, chromacity_b_pixelized) = if profile.chromacity_adjustment {
-            let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
-                &xyb_x,
-                &xyb_y,
-                &xyb_b,
-                padded_width,
-                padded_height,
-            );
-            (
-                pixel_stats.how_much_is_x_channel_pixelized(),
-                pixel_stats.how_much_is_b_channel_pixelized(),
-            )
-        } else {
-            (0, 0)
-        };
-
         // Snapshot pre-gaborish XYB so the rate-control path's
         // `encode_from_precomputed` can run patches detection against
         // it. Patches MUST be detected on the unsharpened XYB to
@@ -260,20 +284,88 @@ impl EncoderPrecomputed {
             None
         };
 
-        // Apply gaborish inverse (5x5 sharpening) before adaptive quant
-        if enable_gaborish {
-            gaborish_inverse(
-                &mut xyb_x,
-                &mut xyb_y,
-                &mut xyb_b,
-                padded_width,
-                padded_height,
-                budget,
-            )?;
+        // Patches detection on PRE-gaborish XYB. libjxl pipeline order
+        // (enc_heuristics.cc:1057-1194):
+        //   noise → splines → patches detect/subtract → InitialQuantField
+        //   → GaborishInverse → CfL pass 1 → AC strategy → CfL pass 2 → DCT
+        //
+        // Patches MUST be detected and subtracted BEFORE quant_field /
+        // mask / gaborish / CfL / AC strategy so that ALL downstream
+        // computations see the patches-subtracted XYB. Without this, on
+        // screenshot content (text, UI) the quant_field is fitted to
+        // sharp text edges that PATCHES will absorb — producing
+        // over-aggressive quantization when the actual residual is
+        // smooth, and CfL is fitted to the dominant low-frequency luma
+        // that patches will remove — producing chroma residuals that
+        // don't match the actual encoded geometry.
+        //
+        // The decoder pipeline (dec_cache.cc:148-194) reverses this:
+        //   IDCT → gaborish → EPF → ChannelUpsampling → add patches
+        // — patches are added back AFTER gaborish, so the patches
+        // reference frame must store the PRE-gaborish patch values
+        // (which is what `find_and_build` extracts from the
+        // pre-gaborish XYB here).
+        let mut patches_data = if enable_patches {
+            super::patches::find_and_build([&xyb_x, &xyb_y, &xyb_b], width, height, padded_width)
+        } else {
+            None
+        };
+        // Cost-benefit gating for experimental mode only — libjxl uses
+        // patches unconditionally when detected, so reference mode
+        // skips this to match (mirrors `encode_inner` line ~750).
+        if matches!(encoder_mode, crate::api::EncoderMode::Experimental)
+            && let Some(ref pd) = patches_data
+            && !pd.is_cost_effective(distance, use_ans)
+        {
+            patches_data = None;
+        }
+        if let Some(ref mut pd) = patches_data {
+            pd.quantize_ref_image();
+        }
+        if let Some(ref pd) = patches_data {
+            let mut xyb = [
+                core::mem::take(&mut xyb_x),
+                core::mem::take(&mut xyb_y),
+                core::mem::take(&mut xyb_b),
+            ];
+            super::patches::subtract_patches(&mut xyb, padded_width, pd);
+            let [x, y, b] = xyb;
+            xyb_x = x;
+            xyb_y = y;
+            xyb_b = b;
         }
 
-        // Compute adaptive per-block quantization field and masking
-        // When gaborish is off, scale distance by 0.62 for the quant field
+        // Compute pixel chromacity stats AFTER patches subtract, BEFORE
+        // gaborish (mirrors `encode_inner` ordering at vardct/encoder.rs
+        // line ~850 — chromacity is on the patches-subtracted PRE-gab
+        // XYB so the X/B channel pixelization metric reflects the
+        // chroma the encoder will actually quantize). Gated at effort
+        // >= 7 to skip the full-image gradient scan at low effort.
+        let (chromacity_x_pixelized, chromacity_b_pixelized) = if profile.chromacity_adjustment {
+            let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+            );
+            (
+                pixel_stats.how_much_is_x_channel_pixelized(),
+                pixel_stats.how_much_is_b_channel_pixelized(),
+            )
+        } else {
+            (0, 0)
+        };
+
+        // Compute adaptive per-block quantization field and masking on
+        // PRE-gaborish XYB. libjxl computes InitialQuantField BEFORE
+        // GaborishInverse (`enc_heuristics.cc:1117-1142`, comment:
+        // "relies on pre-gaborish values"). Gaborish sharpening
+        // inflates gradients which inflates masking → smaller quant
+        // values → finer quantization → more bits.
+        //
+        // When gaborish is off, scale distance by 0.62 for the quant
+        // field (matches libjxl `enc_heuristics.cc:1119`).
         let distance_for_iqf = if enable_gaborish {
             distance
         } else {
@@ -294,7 +386,34 @@ impl EncoderPrecomputed {
                 budget,
             )?;
 
-        // Compute CfL map
+        // Compute per-pixel mask for pixel-domain loss on PRE-gaborish
+        // XYB (matches libjxl `InitialQuantField` which produces
+        // `initial_quant_masking1x1` before `GaborishInverse`).
+        let mask1x1 = if ac_strategy_enabled && pixel_domain_loss {
+            Some(super::adaptive_quant::compute_mask1x1_with_budget(
+                &xyb_y,
+                padded_width,
+                padded_height,
+                budget,
+            )?)
+        } else {
+            None
+        };
+
+        // Apply gaborish inverse (5x5 sharpening) on patches-subtracted
+        // XYB AFTER quant_field / mask1x1.
+        if enable_gaborish {
+            gaborish_inverse(
+                &mut xyb_x,
+                &mut xyb_y,
+                &mut xyb_b,
+                padded_width,
+                padded_height,
+                budget,
+            )?;
+        }
+
+        // Compute CfL map on POST-gaborish patches-subtracted XYB.
         let cfl_map = if cfl_enabled {
             compute_cfl_map(
                 &xyb_x,
@@ -313,18 +432,6 @@ impl EncoderPrecomputed {
                 div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS),
                 div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS),
             )
-        };
-
-        // Compute per-pixel mask for pixel-domain loss
-        let mask1x1 = if ac_strategy_enabled && pixel_domain_loss {
-            Some(super::adaptive_quant::compute_mask1x1_with_budget(
-                &xyb_y,
-                padded_width,
-                padded_height,
-                budget,
-            )?)
-        } else {
-            None
         };
 
         // Compute AC strategy
@@ -377,6 +484,7 @@ impl EncoderPrecomputed {
             chromacity_x_pixelized,
             chromacity_b_pixelized,
             xyb_pre_gaborish,
+            patches_data,
         })
     }
 
@@ -454,6 +562,7 @@ impl EncoderPrecomputed {
             chromacity_x_pixelized,
             chromacity_b_pixelized,
             xyb_pre_gaborish: None,
+            patches_data: None,
         }
     }
 
