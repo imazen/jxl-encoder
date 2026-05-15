@@ -4,6 +4,18 @@
 
 ### Added
 
+- **`__internal_recon_hook` cargo feature** (Layer-1 drift invariant):
+  process-global hook on the butteraugli loop's final-iteration internal
+  reconstruction (planar linear RGB the loop measures butteraugli against,
+  cropped to image dims). Re-exported as `vardct::__recon_hook` with
+  `set_capture_enabled` / `take_last` / `InternalRecon`. Backs the new
+  `tests/buttloop_recon_parity.rs` Layer-1 test that compares the
+  buttloop's internal recon vs jxl-rs decode of the SHIPPED bitstream;
+  initial run shows max-abs-diff = 0.183 in linear RGB on a CID22 photo
+  at d=2.0 e8 (threshold 1e-3, fails by 184×). Test is `#[ignore]` —
+  documents the e8 quality-targeting drift root cause from
+  memory/quality_drift_investigation_2026-05-15.md, ships green CI.
+  Off by default; not stable; debug instrumentation only.
 - **Dot detection** (closes #19, 8bff5247 + 6dec363d + 14872a54 +
   6c667f6b + 98adc2d4 + 05dd7695): full port of libjxl's
   `enc_detect_dots.cc` star-field / specular-highlight detector.

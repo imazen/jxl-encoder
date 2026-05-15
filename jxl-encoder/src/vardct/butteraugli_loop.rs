@@ -235,6 +235,36 @@ impl VarDctEncoder {
                 padded_pixels,
             );
 
+            // Debug hook (Layer-1 invariant for the quality-drift investigation):
+            // capture the buttloop's INTERNAL reconstruction at the FINAL iter,
+            // cropped to (width, height) — this is the linear-RGB image the loop
+            // measures butteraugli against. The drift hypothesis is that this
+            // diverges from what the user-facing decoder produces from the SHIPPED
+            // bitstream (jxl-rs / jxl-oxide). Comparing the two pinpoints the bug.
+            // See memory/quality_drift_investigation_2026-05-15.md.
+            #[cfg(feature = "__internal_recon_hook")]
+            if iter == iters && recon_hook::capture_enabled() {
+                let mut cropped_r = alloc::vec![0.0f32; width * height];
+                let mut cropped_g = alloc::vec![0.0f32; width * height];
+                let mut cropped_b = alloc::vec![0.0f32; width * height];
+                for y in 0..height {
+                    let dst = y * width;
+                    let src = y * padded_width;
+                    cropped_r[dst..dst + width].copy_from_slice(&recon_r[src..src + width]);
+                    cropped_g[dst..dst + width].copy_from_slice(&recon_g[src..src + width]);
+                    cropped_b[dst..dst + width].copy_from_slice(&recon_b[src..src + width]);
+                }
+                recon_hook::store(recon_hook::InternalRecon {
+                    width,
+                    height,
+                    r: cropped_r,
+                    g: cropped_g,
+                    b: cropped_b,
+                    iter,
+                    iters,
+                });
+            }
+
             // Step 5: Butteraugli comparison
             let result =
                 match reference.compare_linear_planar(&recon_r, &recon_g, &recon_b, padded_width) {
@@ -477,5 +507,73 @@ impl VarDctEncoder {
         quant_field.copy_from_slice(&qf_vec);
 
         Ok(final_params)
+    }
+}
+
+/// Debug hook for capturing the buttloop's internal reconstruction at the
+/// final iteration. Off by default; gated by `feature = "__internal_recon_hook"`.
+///
+/// The hook is single-threaded by design (a global `Mutex<Option<...>>`) — it's
+/// only meant for the Layer-1 drift-investigation test, which runs one encode
+/// at a time. Concurrent encodes with capture enabled will race and one will
+/// overwrite the other's recon.
+///
+/// The recon stored here is exactly what the buttloop measures butteraugli
+/// against on its last iteration: planar linear RGB, cropped to (width, height),
+/// AFTER reconstruct_xyb → gab_smooth → EPF → add_patches → add_splines →
+/// xyb_to_linear_rgb_planar. If this diverges from what the user-facing decoder
+/// produces from the shipped bitstream, the buttloop is targeting an image the
+/// decoder never delivers — that's the drift root cause.
+#[cfg(feature = "__internal_recon_hook")]
+pub mod recon_hook {
+    use alloc::vec::Vec;
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+
+    /// Captured internal reconstruction: the exact planar linear RGB image the
+    /// buttloop compared against the original on its final iteration.
+    ///
+    /// `r`, `g`, `b` are each `width * height` f32 in linear RGB (NOT sRGB).
+    /// Values are NOT clamped to [0, 1] — the encoder operates on linear-light
+    /// floats and may produce values slightly outside that range near saturation.
+    #[derive(Clone)]
+    pub struct InternalRecon {
+        pub width: usize,
+        pub height: usize,
+        pub r: Vec<f32>,
+        pub g: Vec<f32>,
+        pub b: Vec<f32>,
+        pub iter: usize,
+        pub iters: usize,
+    }
+
+    static CAPTURE_ENABLED: AtomicBool = AtomicBool::new(false);
+    static LAST_RECON: Mutex<Option<InternalRecon>> = Mutex::new(None);
+
+    /// Enable or disable capture. Defaults to disabled — even with the feature
+    /// compiled in, no recon is captured unless this is set to `true`.
+    pub fn set_capture_enabled(enabled: bool) {
+        CAPTURE_ENABLED.store(enabled, Ordering::SeqCst);
+    }
+
+    /// Returns the current capture-enabled state. Called by the buttloop on
+    /// every final iteration; cheap relaxed load.
+    pub fn capture_enabled() -> bool {
+        CAPTURE_ENABLED.load(Ordering::Relaxed)
+    }
+
+    /// Store the recon from the buttloop's final iteration. Overwrites any
+    /// prior recon — pair with `take_last` to drain between encodes.
+    pub fn store(recon: InternalRecon) {
+        let mut guard = LAST_RECON.lock().expect("recon_hook mutex poisoned");
+        *guard = Some(recon);
+    }
+
+    /// Take (consume) the last captured recon, leaving `None` behind.
+    /// Returns `None` if no encode has captured a recon since the last take
+    /// (or since process start).
+    pub fn take_last() -> Option<InternalRecon> {
+        let mut guard = LAST_RECON.lock().expect("recon_hook mutex poisoned");
+        guard.take()
     }
 }

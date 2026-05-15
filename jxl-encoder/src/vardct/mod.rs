@@ -75,5 +75,17 @@ pub use precomputed::EncoderPrecomputed;
 #[cfg(feature = "rate-control")]
 pub use rate_control::RateControlConfig;
 
+/// Debug hook for capturing the butteraugli loop's internal reconstruction at
+/// the final iteration. **Not part of the stable API** — for the drift-investigation
+/// Layer-1 test only. Gated by `feature = "__internal_recon_hook"`.
+///
+/// See [`crate::vardct::butteraugli_loop`] module docs for the rationale and
+/// memory/quality_drift_investigation_2026-05-15.md for the bug context.
+#[cfg(feature = "__internal_recon_hook")]
+#[doc(hidden)]
+pub mod __recon_hook {
+    pub use super::butteraugli_loop::recon_hook::*;
+}
+
 #[cfg(test)]
 mod tests;
