@@ -186,6 +186,11 @@ fn compute_mask_for_ac_strategy_use(out_val: f32) -> f32 {
 /// # Returns
 /// Per-pixel mask field of size `width * height`, row-major layout.
 /// After computing the raw mask, applies libjxl's Symmetric5 blur.
+//
+// Re-exported under `__pre_quantized` (see `crate::__pre_quantized::compute_mask1x1`).
+// Default-features non-test builds have no internal caller — the budgeted variant
+// `compute_mask1x1_with_budget` carries the production path.
+#[cfg_attr(not(any(test, feature = "__pre_quantized")), allow(dead_code))]
 pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
     compute_mask1x1_with_budget(xyb_y, width, height, None)
         .expect("compute_mask1x1: unbudgeted call should never fail")

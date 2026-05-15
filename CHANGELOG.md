@@ -274,6 +274,26 @@
 
 ### Fixed
 
+- **CI clippy/lint cleanup from the `__pre_quantized` API expansion this
+  week** (refs e23a1b2, 7bfbeb1, 348a467, 6e25844, e03cff1, f41d59c):
+  five workspace clippy errors broke `cargo clippy --workspace -- -D warnings`
+  on main. `TransformOutput::new` exposed `pub(crate) MemoryBudget` in
+  its `pub` signature (`private_interfaces`); now `pub(crate)` — the
+  struct itself stays `pub` for `__pre_quantized` re-export and downstream
+  callers obtain instances via `transform_and_quantize_for_test`.
+  `compute_mask1x1` is `pub` for `__pre_quantized` re-export but has no
+  default-features non-test caller; gated with
+  `#[cfg_attr(not(any(test, feature = "__pre_quantized")), allow(dead_code))]`.
+  `coeff_order::merge_into`'s outer `&mut Vec<Vec<Vec<i64>>>` parameter
+  is index-only (no resize/push/pop on the outer Vec); changed to
+  `&mut [Vec<Vec<i64>>]`. `GroupTransformResult` doc had a `+` continuation
+  the new clippy parsed as a list item; reworded to "plus" so the
+  paragraph reads cleanly without indent gymnastics. `transform_and_quantize`
+  takes 11 args; added `#[allow(clippy::too_many_arguments)]` with a comment
+  explaining why packing into a struct would force per-call unpacking on
+  the per-group parallel reduce (internal hot path, three call sites all
+  in this crate).
+
 - **`--features __pre_quantized` build regression**:
   `compute_quant_field_float_free` and `EncoderPrecomputed::from_parts`
   were re-exported from `pub mod __pre_quantized` (commit 83253aa)

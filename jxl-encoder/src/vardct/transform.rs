@@ -35,9 +35,12 @@ use alloc::sync::Arc;
 /// Pre-allocated output buffers for `transform_and_quantize`.
 ///
 /// Reuse across butteraugli iterations to avoid re-allocating Vec<Vec<>> arrays.
+//
 // Visibility: `pub` so the `__pre_quantized` test path can call
 // `transform_and_quantize_for_test` and inspect/forward the
-// produced data. Internal callers continue to use the same fields.
+// produced data. The constructor (`new`) is `pub(crate)` because
+// it takes a `pub(crate) MemoryBudget`; downstream callers obtain
+// instances from `transform_and_quantize_for_test`.
 pub struct TransformOutput {
     pub quant_dc: [Vec<Vec<i16>>; 3],
     pub quant_ac: [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
@@ -52,7 +55,7 @@ pub struct TransformOutput {
 }
 
 impl TransformOutput {
-    pub fn new(
+    pub(crate) fn new(
         xsize_blocks: usize,
         ysize_blocks: usize,
         budget: Option<&Arc<MemoryBudget>>,
@@ -93,7 +96,7 @@ impl TransformOutput {
 /// `Vec<Vec<T>>` shape required.
 ///
 /// At 12 MP this drops per-group allocations from ~400 (one outer Vec
-/// + 32 inner Vecs × 5 fields × 3 channels) to 16 (one Box per field
+/// plus 32 inner Vecs × 5 fields × 3 channels) to 16 (one Box per field
 /// per channel + one quant_adjustments Vec). Across 204 groups that's
 /// ~80,000 → ~3,300 allocations per encode — a meaningful win on
 /// allocator-sensitive platforms (Windows in particular).
@@ -1144,6 +1147,11 @@ impl VarDctEncoder {
         )
     }
 
+    // Internal hot-path entry: factoring these into a struct
+    // would force per-call packing/unpacking on the per-group
+    // parallel reduce. All call sites are within this crate; the
+    // signature is exercised by butteraugli/ssim2/zensim loops.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn transform_and_quantize(
         &self,
         xyb_x: &[f32],
