@@ -1383,3 +1383,114 @@ fn test_animation_lossy_premultiplied_alpha_matches_straight() {
          See api.rs:6256-6266."
     );
 }
+
+// ── Animation lossy: noise-source priority order (B3 audit fix A) ──────────
+//
+// Pre-fix, the animation lossy path at
+// `vardct/bitstream.rs::encode_frame_to_writer` only honoured `cfg.noise`.
+// Both `cfg.photon_noise_iso` (caller-supplied ISO grain via
+// `simulate_photon_noise`) and `cfg.manual_noise_lut` (caller-supplied
+// 8-point LUT) were silently dropped on the animation path even though
+// `encode_animation_lossy` already wired them to
+// `enc.{photon_noise_iso,manual_noise_lut}` (api.rs:6051-6052).
+//
+// The still-image path at `vardct/encoder.rs:677-737` (and libjxl
+// `enc_frame.cc:680-689`) uses the priority order:
+//   1. photon_noise_iso  — bypass content estimation
+//   2. manual_noise_lut  — bypass everything else
+//   3. enable_noise      — content estimation (+ optional Wiener denoise)
+//   4. None              — no noise synthesis
+//
+// The fix mirrors that order verbatim in encode_frame_to_writer.
+
+/// Regression test for the missing photon_noise_iso wiring on the animation
+/// lossy path.
+///
+/// Strategy: encode the same single-frame animation twice — once with
+/// `with_photon_noise_iso(Some(800.0))` and once without (default,
+/// `noise = false`). Pre-fix the two encodes are byte-identical because
+/// the photon-noise path never reaches `write_noise_params`. Post-fix
+/// the with-noise encode has the noise header (8 × 10 bits = 80 payload
+/// bits + small framing).
+#[test]
+fn test_animation_lossy_photon_noise_iso_emits_noise_header() {
+    let pixels = solid_rgb(128, 128, 128);
+    let frames = [AnimationFrame {
+        pixels: &pixels,
+        duration: 1,
+    }];
+    let animation = AnimationParams::default();
+
+    let no_noise = LossyConfig::new(1.0)
+        .with_butteraugli_iters(0)
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .unwrap_or_else(|e| panic!("encode_animation (no noise) failed: {e:?}"));
+
+    let with_photon = LossyConfig::new(1.0)
+        .with_photon_noise_iso(Some(800.0))
+        .with_butteraugli_iters(0)
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .unwrap_or_else(|e| panic!("encode_animation (photon noise) failed: {e:?}"));
+
+    eprintln!(
+        "[photon-noise-regression] no_noise={} with_photon_iso800={} delta={}",
+        no_noise.len(),
+        with_photon.len(),
+        with_photon.len() as i64 - no_noise.len() as i64,
+    );
+
+    assert_ne!(
+        no_noise, with_photon,
+        "with_photon_noise_iso(Some(800.0)) produced byte-identical output to \
+         no-noise encode. The photon-noise header was not emitted — \
+         encode_frame_to_writer silently dropped the photon_noise_iso \
+         setting (animation lossy path B3 audit fix A)."
+    );
+
+    let (w, h, frames_out) = decode_animation_oxide(&with_photon);
+    assert_eq!((w, h, frames_out.len()), (64, 64, 1));
+}
+
+/// Same regression as `test_animation_lossy_photon_noise_iso_emits_noise_header`
+/// but for `manual_noise_lut`. Pre-fix the animation path silently dropped
+/// caller-supplied 8-point LUTs; post-fix the LUT is clamped and emitted
+/// like the still-image path at `vardct/encoder.rs:696-705`.
+#[test]
+fn test_animation_lossy_manual_noise_lut_emits_noise_header() {
+    let pixels = solid_rgb(128, 128, 128);
+    let frames = [AnimationFrame {
+        pixels: &pixels,
+        duration: 1,
+    }];
+    let animation = AnimationParams::default();
+
+    let no_noise = LossyConfig::new(1.0)
+        .with_butteraugli_iters(0)
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .unwrap_or_else(|e| panic!("encode_animation (no noise) failed: {e:?}"));
+
+    let lut = [0.0_f32, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35];
+    let with_manual = LossyConfig::new(1.0)
+        .with_manual_noise_lut(Some(lut))
+        .with_butteraugli_iters(0)
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .unwrap_or_else(|e| panic!("encode_animation (manual noise lut) failed: {e:?}"));
+
+    eprintln!(
+        "[manual-noise-lut-regression] no_noise={} with_manual_lut={} delta={}",
+        no_noise.len(),
+        with_manual.len(),
+        with_manual.len() as i64 - no_noise.len() as i64,
+    );
+
+    assert_ne!(
+        no_noise, with_manual,
+        "with_manual_noise_lut produced byte-identical output to no-noise \
+         encode. The noise header was not emitted — encode_frame_to_writer \
+         silently dropped the manual_noise_lut setting (animation lossy \
+         path B3 audit fix A)."
+    );
+
+    let (w, h, frames_out) = decode_animation_oxide(&with_manual);
+    assert_eq!((w, h, frames_out.len()), (64, 64, 1));
+}

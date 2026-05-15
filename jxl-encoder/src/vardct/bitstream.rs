@@ -1248,7 +1248,40 @@ impl VarDctEncoder {
             &mut xyb_b,
         )?;
 
-        let noise_params = if self.enable_noise {
+        // Noise parameters. Four sources, in priority order — mirrors the
+        // still-image entry point at `vardct/encoder.rs:677-737` (libjxl
+        // `enc_frame.cc:680-689`). The animation path was previously only
+        // wired for `enable_noise`, silently dropping `photon_noise_iso`
+        // (caller-supplied ISO grain) and `manual_noise_lut` (caller-supplied
+        // 8-point LUT) — divergence from the still-image path.
+        // 1. `photon_noise_iso`: caller-supplied ISO value, bypasses
+        //    content estimation. Matches libjxl --photon_noise.
+        // 2. `manual_noise_lut`: caller-supplied 8-point LUT. Bypasses
+        //    everything else.
+        // 3. `enable_noise` + content estimation: scan flat patches,
+        //    fit an 8-point LUT via SCG optimisation. Optional Wiener
+        //    denoise pre-filter follows.
+        // 4. None of the above: no noise synthesis.
+        let noise_params = if let Some(iso) = self.photon_noise_iso
+            && iso > 0.0
+        {
+            // The decoder regenerates noise during rendering from the
+            // 10-bit-per-point LUT; the encoder just emits the LUT
+            // here. No content estimation, no denoise pre-filter — we
+            // *add* synthetic grain, not preserve real noise.
+            let params = super::noise::simulate_photon_noise(width, height, iso);
+            if params.has_any() { Some(params) } else { None }
+        } else if let Some(lut) = self.manual_noise_lut {
+            // Caller-supplied LUT — clamp to the encodable range
+            // [0, NOISE_LUT_MAX ≈ 0.9995] so write_noise_params can't
+            // panic on the 10-bit-quantise debug_assert. has_any()
+            // gates trivial all-zero LUTs out.
+            let mut params = super::noise::NoiseParams::default();
+            for (dst, src) in params.lut.iter_mut().zip(lut.iter()) {
+                *dst = src.clamp(0.0, 0.9995);
+            }
+            if params.has_any() { Some(params) } else { None }
+        } else if self.enable_noise {
             let quality_coef = super::noise::noise_quality_coef(self.distance);
             let params = super::noise::estimate_noise_params(
                 &xyb_x,
