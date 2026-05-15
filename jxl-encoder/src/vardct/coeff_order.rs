@@ -267,7 +267,7 @@ pub fn count_zero_coefficients(
         counts
     };
 
-    fn merge_into(dst: &mut Vec<Vec<Vec<i64>>>, src: Vec<Vec<Vec<i64>>>) {
+    fn merge_into(dst: &mut [Vec<Vec<i64>>], src: Vec<Vec<Vec<i64>>>) {
         for (bucket_idx, src_bucket) in src.into_iter().enumerate() {
             for (ch, src_ch) in src_bucket.into_iter().enumerate() {
                 if src_ch.is_empty() {
