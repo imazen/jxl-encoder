@@ -89,6 +89,17 @@ __internals = []
 # emit. Off by default; not stable; mirrors `__internals` shape — items
 # may move or change at any time.
 __pre_quantized = []
+# Debug hook for capturing the butteraugli loop's INTERNAL reconstruction
+# (the planar linear RGB the loop measures butteraugli against, after the
+# final SetQuantField → transform → quantize → reconstruct → gab → EPF
+# → patches → splines → xyb_to_linear pipeline at iter == iters). Backed
+# by a global Mutex<Option<...>>. The drift-investigation Layer-1 test
+# enables this feature to compare the buttloop's internal recon against
+# what jxl-rs decodes from the SHIPPED bitstream — divergence > a tight
+# threshold pinpoints the quality-targeting drift identified in
+# memory/quality_drift_investigation_2026-05-15.md. Off by default; not
+# stable; pure debug instrumentation. Requires `butteraugli-loop`.
+__internal_recon_hook = ["butteraugli-loop"]
 # Corpus-dependent tests. When enabled, tests under
 # `#[cfg_attr(not(feature = "corpus-tests"), ignore = "...")]` run; otherwise
 # they're marked as #[ignore] so the skip decision is visible at the test
