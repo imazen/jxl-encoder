@@ -63,7 +63,13 @@ fn decode_jxl_linear(bytes: &[u8]) -> Option<(usize, usize, Vec<f32>)> {
 /// Encode via the public `LossyConfig` API path (mirrors what end users get).
 /// This applies the gaborish gate (`distance > 0.5`) and other effort-aware
 /// profile defaults; a direct `VarDctEncoder::new` call would NOT.
-fn encode_with_cjxl_rs(rgb_u8: &[u8], w: u32, h: u32, d: f32, effort: u8) -> Result<Vec<u8>, String> {
+fn encode_with_cjxl_rs(
+    rgb_u8: &[u8],
+    w: u32,
+    h: u32,
+    d: f32,
+    effort: u8,
+) -> Result<Vec<u8>, String> {
     use jxl_encoder::{LossyConfig, PixelLayout};
     let cfg = LossyConfig::new(d).with_effort(effort);
     cfg.encode(rgb_u8, w, h, PixelLayout::Rgb8)
@@ -177,7 +183,9 @@ fn main() {
         "# Quality drift investigation: cjxl-rs efforts={:?} vs cjxl (e{}) at SAME --distance",
         efforts_to_test, effort_cjxl
     );
-    println!("# Both decoded with jxl-oxide in linear sRGB; metrics: Rust butteraugli + Rust ssim2");
+    println!(
+        "# Both decoded with jxl-oxide in linear sRGB; metrics: Rust butteraugli + Rust ssim2"
+    );
     println!("# Cjxl version: {}", cjxl_version_string());
     println!(
         "image\tclass\tdistance\tencoder\tbytes\tbutteraugli\tssim2\tbfly_ratio_us_over_cjxl\tsize_ratio_us_over_cjxl\tssim2_delta_us_minus_cjxl"
@@ -292,14 +300,31 @@ fn main() {
                 let ssim2_delta = rs_m.ssim2 - cj_m.ssim2;
                 eprintln!(
                     "  d={:.2} cjxl-rs e{}: bfly={:.4} ssim2={:.3} bytes={}  |  cjxl-e{} bfly={:.4} ssim2={:.3} bytes={}  | bfly_ratio={:.3} size_ratio={:.3} ssim2_delta={:.3}",
-                    d, eff, rs_m.butteraugli, rs_m.ssim2, rs_m.bytes,
-                    effort_cjxl, cj_m.butteraugli, cj_m.ssim2, cj_m.bytes,
-                    bfly_ratio, size_ratio, ssim2_delta
+                    d,
+                    eff,
+                    rs_m.butteraugli,
+                    rs_m.ssim2,
+                    rs_m.bytes,
+                    effort_cjxl,
+                    cj_m.butteraugli,
+                    cj_m.ssim2,
+                    cj_m.bytes,
+                    bfly_ratio,
+                    size_ratio,
+                    ssim2_delta
                 );
                 println!(
                     "{}\t{}\t{}\tcjxl-rs-e{}\t{}\t{:.6}\t{:.4}\t{:.4}\t{:.4}\t{:.4}",
-                    src.label, src.class, d, eff, rs_m.bytes, rs_m.butteraugli, rs_m.ssim2,
-                    bfly_ratio, size_ratio, ssim2_delta
+                    src.label,
+                    src.class,
+                    d,
+                    eff,
+                    rs_m.bytes,
+                    rs_m.butteraugli,
+                    rs_m.ssim2,
+                    bfly_ratio,
+                    size_ratio,
+                    ssim2_delta
                 );
             }
         }
@@ -311,7 +336,11 @@ fn cjxl_version_string() -> String {
         .arg("--version")
         .output()
         .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok().or_else(|| String::from_utf8(o.stderr).ok()))
+        .and_then(|o| {
+            String::from_utf8(o.stdout)
+                .ok()
+                .or_else(|| String::from_utf8(o.stderr).ok())
+        })
         .map(|s| s.lines().next().unwrap_or("?").to_string())
         .unwrap_or_else(|| String::from("?"))
 }

@@ -44,12 +44,12 @@
 
 #![cfg(feature = "__pre_quantized")]
 
-use jxl_encoder::EncoderMode;
 use jxl_encoder::__pre_quantized::{
     DistanceParams, EffortProfile, EncoderPrecomputed, VarDctEncoder, compute_ac_strategy,
     compute_cfl_map, compute_mask1x1, compute_quant_field_float_free, find_and_build_patches,
     gaborish_inverse, quantize_quant_field, subtract_patches,
 };
+use jxl_encoder::EncoderMode;
 use jxl_encoder::color::xyb::linear_rgb_to_xyb;
 
 /// Build a "screenshot-like" image: solid background + a small text-glyph
@@ -129,7 +129,8 @@ fn linear_rgb_to_xyb_padded(
     for y in 0..height {
         for x in 0..width {
             let i = (y * width + x) * 3;
-            let (xv, yv, bv) = linear_rgb_to_xyb(linear_rgb[i], linear_rgb[i + 1], linear_rgb[i + 2]);
+            let (xv, yv, bv) =
+                linear_rgb_to_xyb(linear_rgb[i], linear_rgb[i + 1], linear_rgb[i + 2]);
             let dst = y * padded_width + x;
             xyb_x[dst] = xv;
             xyb_y[dst] = yv;
@@ -236,8 +237,14 @@ fn build_precomputed(
     let mask1x1 = compute_mask1x1(&xyb_y, padded_width, padded_height);
 
     // Apply gaborish_inverse (sharpening) — encoder DCT operates on this.
-    gaborish_inverse(&mut xyb_x, &mut xyb_y, &mut xyb_b, padded_width, padded_height)
-        .expect("gaborish_inverse");
+    gaborish_inverse(
+        &mut xyb_x,
+        &mut xyb_y,
+        &mut xyb_b,
+        padded_width,
+        padded_height,
+    )
+    .expect("gaborish_inverse");
 
     // CfL pass 1 on POST-gaborish patches-subtracted XYB.
     let cfl_map = compute_cfl_map(
@@ -427,8 +434,13 @@ fn with_patches_data_case1_vs_case2_distinct_bitstreams_decode_roundtrip() {
     let linear_rgb = make_screenshot(width, height);
 
     // Case 1: caller pre-attaches the PatchesData via `with_patches_data`.
-    let (pc1, qf1, vardct1, found1) =
-        build_precomputed(width, height, &linear_rgb, distance, /*use_case1=*/ true);
+    let (pc1, qf1, vardct1, found1) = build_precomputed(
+        width,
+        height,
+        &linear_rgb,
+        distance,
+        /*use_case1=*/ true,
+    );
     assert!(
         found1,
         "synthetic screenshot must trigger patches detection — \
@@ -441,8 +453,13 @@ fn with_patches_data_case1_vs_case2_distinct_bitstreams_decode_roundtrip() {
 
     // Case 2: same content, but caller does NOT attach PatchesData.
     // Encoder runs detection itself via `xyb_pre_gaborish`.
-    let (pc2, qf2, vardct2, _found2) =
-        build_precomputed(width, height, &linear_rgb, distance, /*use_case1=*/ false);
+    let (pc2, qf2, vardct2, _found2) = build_precomputed(
+        width,
+        height,
+        &linear_rgb,
+        distance,
+        /*use_case1=*/ false,
+    );
     let bytes2 = vardct2
         .encode_from_precomputed(&pc2, &qf2)
         .expect("encode_from_precomputed (case 2, no with_patches_data)");
