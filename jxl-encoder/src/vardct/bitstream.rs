@@ -1457,7 +1457,7 @@ impl VarDctEncoder {
             )?;
         }
 
-        let cfl_map = if self.cfl_enabled {
+        let mut cfl_map = if self.cfl_enabled {
             super::chroma_from_luma::compute_cfl_map(
                 &xyb_x,
                 &xyb_y,
@@ -1510,6 +1510,38 @@ impl VarDctEncoder {
             &mut quant_field_float,
             self.distance,
         );
+
+        // CfL pass 2: recompute CfL map using actual AC strategies and per-block
+        // quantization weighting. Uses the same FindBestMultiplier as pass 1 but
+        // with strategy-specific DCTs and quant-weighted coefficients.
+        // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl.
+        //
+        // ORDERING: CfL pass 2 must run BEFORE the butteraugli loop so the
+        // loop's internal recon and the shipped bitstream both see the same
+        // post-pass-2 cfl_map. Mirrors libjxl `enc_heuristics.cc:1190-1193`
+        // (CfL2) → `:1250-1252` (FindBestQuantizer/buttloop) and the
+        // still-image fix in commit d5e55c8a (drift investigation chunk-3,
+        // 2026-05-15). Pre-fix the animation path skipped pass-2 entirely
+        // even when `profile.cfl_two_pass` was true, so the shipped cfl_map
+        // diverged from the still-image path's by the same per-block
+        // refinement libjxl applies in `enc_heuristics.cc::CfL2`.
+        if self.profile.cfl_two_pass && self.cfl_enabled {
+            super::chroma_from_luma::refine_cfl_map(
+                &mut cfl_map,
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                xsize_blocks,
+                ysize_blocks,
+                &ac_strategy,
+                &quant_field,
+                params.scale,
+                self.profile.cfl_newton,
+                self.profile.cfl_newton_eps,
+                self.profile.cfl_newton_max_iters,
+            );
+        }
 
         #[cfg(feature = "butteraugli-loop")]
         if self.butteraugli_iters > 0 {
