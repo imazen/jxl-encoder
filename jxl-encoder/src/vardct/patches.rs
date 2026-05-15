@@ -203,18 +203,26 @@ pub(crate) struct PatchPosition {
 }
 
 /// All patches data for a frame: positions, references, and the reference image.
+///
+/// Visibility is `pub` so the type can be re-exported through
+/// `__pre_quantized` (downstream callers like jxl-encoder-gpu hand a
+/// pre-detected `PatchesData` to
+/// [`super::precomputed::EncoderPrecomputed::with_patches_data`] to hit
+/// the libjxl-parity case-1 path in `encode_from_precomputed`). All
+/// fields stay `pub(crate)` so external code holds the value as an
+/// opaque token — only sibling encoder modules read it.
 #[derive(Clone)]
-pub(crate) struct PatchesData {
+pub struct PatchesData {
     /// All patch occurrences, grouped by reference position.
-    pub positions: Vec<PatchPosition>,
+    pub(crate) positions: Vec<PatchPosition>,
     /// Unique patch reference positions in the reference frame.
-    pub ref_positions: Vec<PatchReferencePosition>,
+    pub(crate) ref_positions: Vec<PatchReferencePosition>,
     /// Reference frame pixel data (3 XYB channels, row-major).
-    pub ref_image: [Vec<f32>; 3],
+    pub(crate) ref_image: [Vec<f32>; 3],
     /// Reference frame width.
-    pub ref_width: usize,
+    pub(crate) ref_width: usize,
     /// Reference frame height.
-    pub ref_height: usize,
+    pub(crate) ref_height: usize,
 }
 
 impl PatchesData {
@@ -1384,7 +1392,16 @@ pub(crate) fn build_patches_data(mut infos: Vec<PatchInfo>) -> Option<PatchesDat
 ///   `xyb[c][y][x] -= ref[c][ref_y][ref_x]`
 ///
 /// The decoder will add them back using blend mode kAdd.
-pub(crate) fn subtract_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patches: &PatchesData) {
+///
+/// Visibility `pub` so `__pre_quantized` callers (jxl-encoder-gpu) can
+/// subtract patches from their host XYB buffers ahead of handing the
+/// patches-subtracted XYB + the `PatchesData` to `EncoderPrecomputed`
+/// — required to satisfy the case-1 contract that `xyb_x/y/b` and
+/// downstream precomputed state are all fitted to patches-subtracted
+/// XYB. Apply to BOTH pre-gaborish and post-gaborish XYB planes (the
+/// post-gab subtract avoids re-running the 5x5 gaborish filter on a
+/// freshly subtracted pre-gab triple).
+pub fn subtract_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patches: &PatchesData) {
     debug_rect!(
         "patches/subtract",
         0,
@@ -1573,7 +1590,20 @@ pub(crate) fn encode_patches_section(
 /// The detection algorithm's own filters (kMinPeak, kMinPatchOccurrences,
 /// kMinMaxPatchSize, coverage filter) are sufficient to avoid degenerate cases.
 /// libjxl has no additional cost-benefit check.
-pub(crate) fn find_and_build(
+///
+/// Inputs MUST be PRE-gaborish XYB planes (the values BEFORE the 5x5
+/// `gaborish_inverse` sharpening filter ran). The decoder pipeline
+/// adds patches AFTER its inverse-gaborish step, so detecting on
+/// post-gaborish XYB and subtracting them produces sharpening halos
+/// around every glyph after the decoder add-patches step (measured:
+/// butteraugli 0.5 → 8.3 on `terminal.png` at d=0.5).
+///
+/// Visibility: `pub` so jxl-encoder-gpu (and other downstream
+/// `__pre_quantized` callers) can run patches detection on host-side
+/// pre-gab XYB and pass the result to
+/// [`super::precomputed::EncoderPrecomputed::with_patches_data`].
+/// Returned [`PatchesData`] is opaque — fields are `pub(crate)`.
+pub fn find_and_build(
     xyb: [&[f32]; 3],
     width: usize,
     height: usize,

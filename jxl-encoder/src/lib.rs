@@ -131,7 +131,35 @@ pub mod __internals {
 #[cfg(feature = "__pre_quantized")]
 #[doc(hidden)]
 pub mod __pre_quantized {
+    /// libjxl `EffortProfile` — controls AC strategy search, CfL
+    /// passes, k_ac_quant, and other per-effort knobs. Pull
+    /// `EffortProfile::for_effort(7)` (or whatever effort the GPU
+    /// pipeline targets) and pass it to `compute_ac_strategy` and
+    /// `compute_quant_field_float_free` so host-side recompute
+    /// matches `EncoderPrecomputed::compute_with_budget` exactly.
+    pub use crate::effort::EffortProfile;
     pub use crate::vardct::ac_strategy::AcStrategyMap;
+    /// Compute per-tile AC strategy selections from XYB + the
+    /// previously-computed quant_field / masking / cfl_map / mask1x1.
+    /// Operates on POST-gaborish XYB; for case-1 parity all inputs
+    /// MUST already be fitted to patches-subtracted XYB.
+    pub use crate::vardct::ac_strategy::compute_ac_strategy;
+    /// Per-pixel masking field used by the pixel-domain loss term in
+    /// AC strategy selection (only computed when both pixel-domain
+    /// loss and ac-strategy search are enabled — see
+    /// [`EncoderPrecomputed::compute_with_budget`] gating).
+    ///
+    /// Operates on the Y channel of the (PRE-gaborish, ideally
+    /// patches-subtracted) XYB. Returned `Vec` length is
+    /// `padded_width * padded_height`. Pair with
+    /// [`EncoderPrecomputed::from_parts`] (the `mask1x1` arg).
+    ///
+    /// Re-exported so `__pre_quantized` callers can recompute mask1x1
+    /// on host after running host-side patches subtract — required
+    /// for libjxl-parity case-1 (the encoder's case-1 contract is
+    /// that `mask1x1` is fitted to patches-subtracted PRE-gab Y, same
+    /// as quant_field).
+    pub use crate::vardct::adaptive_quant::compute_mask1x1;
     /// Compute the float quant field + masking from XYB planes.
     /// Returns `(quant_field_float, masking)`. Pair with
     /// `quantize_quant_field` to get the `u8` field for
@@ -231,7 +259,64 @@ pub mod __pre_quantized {
     /// &EffortProfile)`.
     pub use crate::vardct::frame::DistanceParams;
     pub use crate::vardct::noise::NoiseParams;
+    /// Opaque pre-detected patches container — construct via
+    /// [`find_and_build_patches`], hand to
+    /// [`EncoderPrecomputed::with_patches_data`]. Fields are private;
+    /// outside callers cannot inspect or modify (apart from the
+    /// `quantize_ref_image` method).
+    pub use crate::vardct::patches::PatchesData;
+    /// Detect repeated text-like patches on PRE-gaborish XYB planes.
+    ///
+    /// Returns `None` when no patches survive the encoder's filters
+    /// (most photo content). When `Some`, the caller MUST:
+    /// 1. Call [`PatchesData::quantize_ref_image`] on the result.
+    /// 2. Call [`subtract_patches`] on BOTH the pre-gaborish and the
+    ///    post-gaborish XYB planes the precomputed will hold.
+    /// 3. Recompute `cfl_map` (and ideally quant_field / masking /
+    ///    ac_strategy) on the patches-subtracted XYB.
+    /// 4. Pass the result to
+    ///    [`EncoderPrecomputed::with_patches_data`].
+    ///
+    /// `xyb` lengths MUST be `stride * height_padded` (the same
+    /// padding rules `from_parts` enforces). `width` / `height` are
+    /// the real image dims; `stride` is the padded width.
+    ///
+    /// Wrapper around the internal `find_and_build` function;
+    /// re-exported here so jxl-encoder-gpu can run patches detection
+    /// on the pre-gaborish XYB it downloads from the device, ahead of
+    /// `from_parts`.
+    pub use crate::vardct::patches::find_and_build as find_and_build_patches;
+    /// Subtract a [`PatchesData`] from a triple of XYB planes in
+    /// place. Apply to the PRE-gaborish XYB only — see
+    /// [`EncoderPrecomputed::with_patches_data`] for the full case-1
+    /// contract (the post-gaborish XYB is derived from the
+    /// patches-subtracted pre-gaborish via [`gaborish_inverse`], NOT
+    /// by also subtracting from post-gab; gaborish is a non-trivial
+    /// 5x5 filter so the two are not equivalent).
+    pub use crate::vardct::patches::subtract_patches;
     pub use crate::vardct::precomputed::EncoderPrecomputed;
+    /// libjxl `GaborishInverse`: 5x5 sharpening pre-filter that the
+    /// encoder applies before DCT (the decoder inverts via a 3x3
+    /// blur). Operates in place on the three XYB channels.
+    ///
+    /// Re-exported for `__pre_quantized` callers (jxl-encoder-gpu)
+    /// who need to materialize the patches-subtracted post-gaborish
+    /// XYB on host: subtract patches from pre-gab via
+    /// [`subtract_patches`], then run this on the subtracted planes
+    /// to get the post-gab XYB the bitstream emit path will DCT.
+    /// Mirrors what `EncoderPrecomputed::compute_with_budget` does on
+    /// the rate-control / default-API CPU path
+    /// (`vardct/precomputed.rs:405-414`).
+    pub fn gaborish_inverse(
+        x: &mut [f32],
+        y: &mut [f32],
+        b: &mut [f32],
+        padded_width: usize,
+        padded_height: usize,
+    ) -> Result<(), crate::api::EncodeError> {
+        crate::vardct::gaborish::gaborish_inverse(x, y, b, padded_width, padded_height, None)
+            .map_err(crate::api::EncodeError::from)
+    }
 }
 
 #[cfg(test)]

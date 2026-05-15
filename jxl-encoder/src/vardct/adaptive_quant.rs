@@ -186,8 +186,7 @@ fn compute_mask_for_ac_strategy_use(out_val: f32) -> f32 {
 /// # Returns
 /// Per-pixel mask field of size `width * height`, row-major layout.
 /// After computing the raw mask, applies libjxl's Symmetric5 blur.
-#[cfg(test)]
-pub(crate) fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
+pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
     compute_mask1x1_with_budget(xyb_y, width, height, None)
         .expect("compute_mask1x1: unbudgeted call should never fail")
 }
