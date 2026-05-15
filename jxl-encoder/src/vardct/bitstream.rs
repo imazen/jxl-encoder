@@ -1200,8 +1200,53 @@ impl VarDctEncoder {
         let padded_width = xsize_blocks * BLOCK_DIM;
         let padded_height = ysize_blocks * BLOCK_DIM;
 
+        // Validate linear-RGB at intake. Mirrors the still-image entry point at
+        // `vardct/encoder.rs:620-664`. The `forward_xyb` SIMD kernel uses
+        // `mixed.max(0.0)` per channel, which silently coerces NaN to `0.0`
+        // (IEEE-754 ordered max returns the non-NaN operand). That means a
+        // caller-supplied NaN linear-RGB never reaches the XYB output. To
+        // surface caller bugs (Error mode) or actively scrub them (Sanitize
+        // mode) we must check / fix here, before forward_xyb runs.
+        //
+        // Without this scrub, float-input animation frames (RgbLinearF32,
+        // RgbaLinearF32, GrayLinearF32, GrayAlphaLinearF32, …) carrying NaN /
+        // ±Inf would silently encode wrong pixels — a divergence from the
+        // still-image path where the same input would either error or sanitize.
+        let sanitized_linear_rgb_storage: Option<alloc::vec::Vec<f32>> =
+            match self.non_finite_action {
+                crate::api::NonFiniteAction::Error => {
+                    if !jxl_simd::is_finite_plane(linear_rgb) {
+                        return Err(crate::error::Error::InvalidInput(
+                            "non-finite (NaN / ±Inf) value detected in linear-RGB input. \
+                             Use LossyConfig::with_non_finite_action(NonFiniteAction::Sanitize) \
+                             to silently scrub non-finite values to 0.0 instead."
+                                .into(),
+                        ));
+                    }
+                    None
+                }
+                crate::api::NonFiniteAction::Sanitize => {
+                    let mut owned: alloc::vec::Vec<f32> = linear_rgb.to_vec();
+                    let _ = jxl_simd::sanitize_finite(&mut owned);
+                    Some(owned)
+                }
+            };
+        let linear_rgb: &[f32] = sanitized_linear_rgb_storage
+            .as_deref()
+            .unwrap_or(linear_rgb);
+
         let (mut xyb_x, mut xyb_y, mut xyb_b) =
             self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb)?;
+
+        // Defense-in-depth XYB scan. Mirrors `vardct/encoder.rs:675`. Catches
+        // downstream-bug non-finite values that should never appear on the
+        // encode-fresh path because forward_xyb is finite-output-for-finite-input.
+        super::encoder::validate_xyb_planes(
+            self.non_finite_action,
+            &mut xyb_x,
+            &mut xyb_y,
+            &mut xyb_b,
+        )?;
 
         let noise_params = if self.enable_noise {
             let quality_coef = super::noise::noise_quality_coef(self.distance);

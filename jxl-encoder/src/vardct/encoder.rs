@@ -51,7 +51,7 @@ pub(crate) use super::entropy_code::{BuiltEntropyCode, force_strategy_map};
 /// - [`NonFiniteAction::Sanitize`]: runs the read-modify-write
 ///   `sanitize_finite` SIMD kernel (~12.5 GB/s) and replaces non-finite
 ///   values with `0.0`. Encoding continues.
-fn validate_xyb_planes(
+pub(crate) fn validate_xyb_planes(
     action: crate::api::NonFiniteAction,
     x: &mut [f32],
     y: &mut [f32],
