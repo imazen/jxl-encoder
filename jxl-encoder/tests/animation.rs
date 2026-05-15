@@ -1494,3 +1494,125 @@ fn test_animation_lossy_manual_noise_lut_emits_noise_header() {
     let (w, h, frames_out) = decode_animation_oxide(&with_manual);
     assert_eq!((w, h, frames_out.len()), (64, 64, 1));
 }
+
+// ── Animation lossy: CfL pass 2 (B3 audit fix B) ───────────────────────────
+
+/// 256x256 RGB image with strong vertical chroma bands (red/green/blue/yellow,
+/// 32-pixel-wide stripes) and a vertical luma gradient inside each band.
+/// Designed to exercise CfL pass-2 refinement: lots of saturated chroma →
+/// lots of per-block multipliers worth refining after AC-strategy selection.
+fn chroma_band_256() -> Vec<u8> {
+    let w = 256usize;
+    let h = 256usize;
+    let mut pixels = vec![0u8; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let i = (y * w + x) * 3;
+            let band = (x / 32) % 4;
+            let lum = ((y * 200) / h) as u8;
+            match band {
+                0 => {
+                    pixels[i] = 240;
+                    pixels[i + 1] = 30;
+                    pixels[i + 2] = lum;
+                }
+                1 => {
+                    pixels[i] = 30;
+                    pixels[i + 1] = 240;
+                    pixels[i + 2] = lum;
+                }
+                2 => {
+                    pixels[i] = lum;
+                    pixels[i + 1] = 30;
+                    pixels[i + 2] = 240;
+                }
+                _ => {
+                    pixels[i] = 200;
+                    pixels[i + 1] = 200;
+                    pixels[i + 2] = 60;
+                }
+            }
+        }
+    }
+    pixels
+}
+
+/// Regression test for the animation-frame-path missing CfL pass-2 bug
+/// (`vardct/bitstream.rs::encode_frame_to_writer` pre-fix).
+///
+/// Pre-fix, the animation lossy path computed `cfl_map` once
+/// (`compute_cfl_map`) and then went straight into the butteraugli loop +
+/// transform — even when `profile.cfl_two_pass` was true (default at
+/// effort >= 7, libjxl `enc_heuristics.cc::CfL2`).
+///
+/// The still-image path at `vardct/encoder.rs:1149-1176` (commit d5e55c8a,
+/// drift investigation chunk-3) calls `refine_cfl_map` BEFORE the
+/// butteraugli loop so the loop's internal recon and the shipped bitstream
+/// both see the same post-pass-2 cfl_map. This second pass uses the actual
+/// AC-strategy selection and per-block quantization weighting to refine
+/// each tile's chroma-from-luma multiplier; libjxl applies it as part of
+/// `enc_heuristics.cc:1190-1193`.
+///
+/// Effect of the bug: callers using `LossyConfig::encode_animation` got a
+/// `cfl_map` based purely on the initial pass-1 estimates. On chroma-rich
+/// content the pass-2 refinement would have noticeably changed the per-tile
+/// multipliers (and therefore the reconstructed B/X channel residuals).
+///
+/// Strategy: encode a chroma-band image both as a 1-frame "animation" and
+/// as a still image at d=1.0 e7 (cfl_two_pass on by default). Pre-fix the
+/// animation byte count diverges from the still by ~180 bytes (~3.5% of
+/// the still total). Post-fix the divergence shrinks to ~100 bytes (~2%),
+/// because both paths now refine the cfl_map identically; the residual
+/// delta is the AnimationHeader / FrameOptions overhead and a small
+/// number of bits from per-frame framing that don't align with the still
+/// path's single-frame emission.
+///
+/// We assert |delta| <= 130 bytes — empirically post-fix |delta| is 103,
+/// pre-fix it's 181. Threshold 130 fails pre-fix and passes post-fix
+/// with comfortable margin on either side. Both encodes use
+/// butteraugli-iters=0 to keep the test deterministic and fast.
+#[test]
+fn test_animation_lossy_runs_cfl_pass_2() {
+    let pixels = chroma_band_256();
+    let frames = [AnimationFrame {
+        pixels: &pixels,
+        duration: 1,
+    }];
+    let animation = AnimationParams::default();
+    let distance = 1.0_f32;
+
+    let anim = LossyConfig::new(distance)
+        .with_butteraugli_iters(0)
+        .encode_animation(256, 256, PixelLayout::Rgb8, &animation, &frames)
+        .unwrap_or_else(|e| panic!("anim encode failed: {e:?}"));
+    let still = LossyConfig::new(distance)
+        .with_butteraugli_iters(0)
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .unwrap_or_else(|e| panic!("still encode failed: {e:?}"));
+
+    let delta = anim.len() as i64 - still.len() as i64;
+    eprintln!(
+        "[cfl-pass2-regression] anim={} still={} delta={}",
+        anim.len(),
+        still.len(),
+        delta,
+    );
+
+    // Pre-fix this delta is ~181 bytes; post-fix ~103. Threshold 130
+    // catches the missing pass-2 cleanly with margin on both sides.
+    assert!(
+        delta.abs() <= 130,
+        "animation byte count diverges from still by {delta} bytes \
+         (anim={}, still={}). Pre-fix the divergence was ~181 bytes \
+         on this content because encode_frame_to_writer skipped the \
+         CfL pass-2 refinement that the still-image path runs at \
+         vardct/encoder.rs:1149-1176 (commit d5e55c8a). Animation \
+         lossy path B3 audit fix B.",
+        anim.len(),
+        still.len()
+    );
+
+    // Sanity: animation must decode without error.
+    let (w, h, decoded) = decode_animation_oxide(&anim);
+    assert_eq!((w, h, decoded.len()), (256, 256, 1));
+}
