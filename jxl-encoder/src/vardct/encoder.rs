@@ -2178,6 +2178,10 @@ impl VarDctEncoder {
     /// Quant field adjustments (multi-block transform `adjust_quant_field_with_distance`)
     /// are applied internally — caller passes the **un-adjusted** per-block
     /// `u8` quant field.
+    ///
+    /// Color-only entry point (no extra channels). For RGBA / depth /
+    /// spot color / selection mask / thermal / CFA see
+    /// [`Self::encode_from_pre_quantized_ac_with_extras`].
     #[cfg(feature = "__pre_quantized")]
     #[allow(clippy::too_many_arguments)]
     pub fn encode_from_pre_quantized_ac(
@@ -2189,12 +2193,96 @@ impl VarDctEncoder {
         nzeros: &[alloc::vec::Vec<alloc::vec::Vec<u8>>; 3],
         raw_nzeros: &[alloc::vec::Vec<alloc::vec::Vec<u16>>; 3],
     ) -> Result<Vec<u8>> {
+        self.encode_from_pre_quantized_ac_with_extras(
+            precomputed,
+            quant_field,
+            quant_dc,
+            quant_ac,
+            nzeros,
+            raw_nzeros,
+            &[],
+        )
+    }
+
+    /// Pre-quantized AC entry point that additionally writes a list of
+    /// extra channels (alpha, depth, spot color, selection mask, thermal,
+    /// CFA, …) as a modular sub-bitstream alongside the VarDCT color
+    /// data.
+    ///
+    /// Same fast path as [`Self::encode_from_pre_quantized_ac`] (skips
+    /// `transform_and_quantize` and goes straight to `encode_two_pass`)
+    /// but threads `extras` through to the bitstream emit so the file
+    /// header carries each extra's
+    /// [`crate::headers::extra_channels::ExtraChannelInfo`] and the
+    /// per-section modular sub-bitstream pulls
+    /// `channel_width * channel_height` samples per channel in the
+    /// order they were passed in.
+    ///
+    /// **Current scope** (mirrors
+    /// [`Self::encode_from_precomputed_with_extras`]):
+    /// - `dim_shift` must be `0` on every extra (full-resolution
+    ///   channels).
+    /// - Single-group (≤256×256) supports any number of extras.
+    /// - Multi-group supports any number of extras at `dim_shift = 0`.
+    ///
+    /// Other combinations return [`crate::Error::InvalidInput`] so the
+    /// wire format stays correct as those paths are filled in.
+    ///
+    /// **Pre-quantized AC contract**: the GPU encoder runs DCT + quant
+    /// on the **color** planes only. Extras are not part of the
+    /// pre-quantized AC pipeline — they are passed through unchanged to
+    /// the final bitstream emit, the same way
+    /// [`Self::encode_from_precomputed_with_extras`] threads them past
+    /// the buttloop. Without this, an RGBA encode that goes through the
+    /// GPU pre-quantized fast path would silently shed its alpha
+    /// channel.
+    #[cfg(feature = "__pre_quantized")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_from_pre_quantized_ac_with_extras(
+        &self,
+        precomputed: &super::precomputed::EncoderPrecomputed,
+        quant_field: &[u8],
+        quant_dc: &[alloc::vec::Vec<alloc::vec::Vec<i16>>; 3],
+        quant_ac: &[alloc::vec::Vec<alloc::vec::Vec<[i32; super::common::DCT_BLOCK_SIZE]>>; 3],
+        nzeros: &[alloc::vec::Vec<alloc::vec::Vec<u8>>; 3],
+        raw_nzeros: &[alloc::vec::Vec<alloc::vec::Vec<u16>>; 3],
+        extras: &[crate::api::ExtraChannel<'_>],
+    ) -> Result<Vec<u8>> {
         let width = precomputed.width;
         let height = precomputed.height;
         let xsize_blocks = precomputed.xsize_blocks;
         let ysize_blocks = precomputed.ysize_blocks;
         let _ = xsize_blocks;
         let _ = ysize_blocks;
+
+        // Validate extras at the entry boundary (dim_shift = 0,
+        // sample-count = width * height) before any encoding work runs.
+        // Mirrors `encode_from_precomputed_with_extras` so error
+        // messages and behavior stay consistent across the two
+        // pre-quantized entry points.
+        let mut extras_views: Vec<super::extras::VardctExtra<'_>> =
+            Vec::with_capacity(extras.len());
+        for (idx, ec) in extras.iter().enumerate() {
+            if ec.info().dim_shift != 0 {
+                return Err(Error::InvalidInput(format!(
+                    "extras[{idx}]: dim_shift = {} not yet supported in lossy encode (dim_shift > 0 \
+                     for VarDCT extras is a follow-up)",
+                    ec.info().dim_shift
+                )));
+            }
+            let expected = width.checked_mul(height).ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: 1,
+            })?;
+            let got = ec.data().len();
+            if got != expected {
+                return Err(Error::InvalidInput(format!(
+                    "extras[{idx}]: expected {expected} samples for {width}x{height}, got {got}"
+                )));
+            }
+            extras_views.push(super::extras::VardctExtra::from_api(ec));
+        }
 
         let xsize_groups = div_ceil(width, GROUP_DIM);
         let ysize_groups = div_ceil(height, GROUP_DIM);
@@ -2252,7 +2340,7 @@ impl VarDctEncoder {
             &precomputed.ac_strategy,
             &precomputed.noise_params,
             None,
-            &[],
+            &extras_views,
             None,
             None,
             None,
