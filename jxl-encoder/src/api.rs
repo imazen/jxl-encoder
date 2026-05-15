@@ -6060,6 +6060,10 @@ fn encode_animation_lossy(
     enc.enable_lz77 = cfg.lz77;
     enc.lz77_method = cfg.lz77_method;
     enc.force_strategy = cfg.force_strategy;
+    enc.enable_patches = cfg.patches;
+    enc.enable_dot_detection = cfg.dot_detection;
+    enc.encoder_mode = cfg.mode;
+    enc.splines = cfg.splines.clone();
     enc.progressive = cfg.progressive;
     enc.use_lf_frame = cfg.lf_frame;
     #[cfg(feature = "butteraugli-loop")]
