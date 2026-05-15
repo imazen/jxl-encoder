@@ -1802,6 +1802,10 @@ impl VarDctEncoder {
     /// It skips XYB conversion, CfL, masking, and AC strategy computation,
     /// using the values from `precomputed` instead.
     ///
+    /// Color-only entry point (no extra channels). For RGBA / depth /
+    /// spot color / selection mask / thermal / CFA see
+    /// [`Self::encode_from_precomputed_with_extras`].
+    ///
     /// Requires the `rate-control` OR `__pre_quantized` feature. The
     /// latter is the unstable downstream-callable path used by
     /// jxl-encoder-gpu (or any other pre-quantized caller) to feed
@@ -1814,6 +1818,91 @@ impl VarDctEncoder {
         &self,
         precomputed: &super::precomputed::EncoderPrecomputed,
         quant_field: &[u8],
+    ) -> Result<Vec<u8>> {
+        self.encode_from_precomputed_with_extras(precomputed, quant_field, &[])
+    }
+
+    /// Encode from precomputed state with a specific quant field plus
+    /// an arbitrary list of extra channels (alpha, depth, spot color,
+    /// selection mask, thermal, CFA, …).
+    ///
+    /// Same fast path as [`Self::encode_from_precomputed`] (skips XYB
+    /// conversion, CfL, masking, AC strategy search, and butteraugli
+    /// refinement) but additionally writes a modular sub-bitstream
+    /// carrying each extra channel alongside the VarDCT color data.
+    /// Each extra's [`crate::headers::extra_channels::ExtraChannelInfo`]
+    /// goes into the file-header metadata; the writer pulls
+    /// `channel_width * channel_height` samples per channel out of the
+    /// shared sub-bitstream in the same order they were passed in.
+    ///
+    /// **Current scope** (mirrors [`Self::encode_with_extras`]):
+    /// - `dim_shift` must be `0` on every extra (full-resolution
+    ///   channels).
+    /// - Single-group (≤256×256) supports any number of extras.
+    /// - Multi-group supports any number of extras at `dim_shift = 0`.
+    ///
+    /// Other combinations return [`crate::Error::InvalidInput`] so the
+    /// wire format stays correct as those paths are filled in.
+    ///
+    /// **Butteraugli loop integration**: the buttloop only consumes
+    /// the three color planes — extras are passed through unchanged to
+    /// the final bitstream emit. Since the buttloop only refines
+    /// `quant_field` (not extras), extras are forwarded after loop
+    /// convergence; the GPU encoder / rate-control path produces the
+    /// final `quant_field` first, then this entry threads the extras
+    /// into the bitstream.
+    ///
+    /// Requires the `rate-control` OR `__pre_quantized` feature.
+    #[cfg(any(feature = "rate-control", feature = "__pre_quantized"))]
+    pub fn encode_from_precomputed_with_extras(
+        &self,
+        precomputed: &super::precomputed::EncoderPrecomputed,
+        quant_field: &[u8],
+        extras: &[crate::api::ExtraChannel<'_>],
+    ) -> Result<Vec<u8>> {
+        // Validate extras at the entry boundary (dim_shift = 0,
+        // sample-count = width * height) before any encoding work runs.
+        // Mirrors `encode_with_extras` so error messages and behavior
+        // stay consistent across the two entry points. We need the
+        // validated `VardctExtra` views for the final `encode_two_pass`
+        // call below, so build them here once and reuse.
+        let width = precomputed.width;
+        let height = precomputed.height;
+        let mut extras_views: Vec<super::extras::VardctExtra<'_>> =
+            Vec::with_capacity(extras.len());
+        for (idx, ec) in extras.iter().enumerate() {
+            if ec.info().dim_shift != 0 {
+                return Err(Error::InvalidInput(format!(
+                    "extras[{idx}]: dim_shift = {} not yet supported in lossy encode (dim_shift > 0 \
+                     for VarDCT extras is a follow-up)",
+                    ec.info().dim_shift
+                )));
+            }
+            let expected = width.checked_mul(height).ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: 1,
+            })?;
+            let got = ec.data().len();
+            if got != expected {
+                return Err(Error::InvalidInput(format!(
+                    "extras[{idx}]: expected {expected} samples for {width}x{height}, got {got}"
+                )));
+            }
+            extras_views.push(super::extras::VardctExtra::from_api(ec));
+        }
+        self.encode_from_precomputed_inner(precomputed, quant_field, &extras_views)
+    }
+
+    /// Shared body for [`Self::encode_from_precomputed`] and
+    /// [`Self::encode_from_precomputed_with_extras`]. Takes already-
+    /// validated `extras` as the internal `VardctExtra` view.
+    #[cfg(any(feature = "rate-control", feature = "__pre_quantized"))]
+    fn encode_from_precomputed_inner(
+        &self,
+        precomputed: &super::precomputed::EncoderPrecomputed,
+        quant_field: &[u8],
+        extras: &[super::extras::VardctExtra<'_>],
     ) -> Result<Vec<u8>> {
         let width = precomputed.width;
         let height = precomputed.height;
@@ -2060,7 +2149,7 @@ impl VarDctEncoder {
             &precomputed.ac_strategy,
             &precomputed.noise_params,
             sharpness_map.as_deref(),
-            &[], // TODO: thread extras (alpha + others) through butteraugli path
+            extras,
             patches_data.as_ref(),
             None, // splines
             None, // float_dc
