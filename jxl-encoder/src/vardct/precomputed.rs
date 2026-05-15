@@ -596,6 +596,53 @@ impl EncoderPrecomputed {
         self.xyb_pre_gaborish = Some(xyb);
         self
     }
+
+    /// Attach a pre-detected, pre-quantized [`super::patches::PatchesData`]
+    /// so [`super::encoder::VarDctEncoder::encode_from_precomputed`]
+    /// hits the case-1 path: it writes patches into the bitstream
+    /// directly and skips its in-function re-detection (which would
+    /// otherwise force a CfL pass-1 recompute on a mismatched
+    /// `ac_strategy`).
+    ///
+    /// Contract for case-1 parity (mirrors what `compute_with_budget`
+    /// does on the rate-control path):
+    /// 1. Detect patches on the PRE-gaborish XYB via
+    ///    [`super::patches::find_and_build`].
+    /// 2. `quantize_ref_image()` on the resulting `PatchesData` so the
+    ///    encoder's subtract matches the decoder's add bit-for-bit.
+    /// 3. `subtract_patches(...)` on BOTH the pre-gaborish XYB and the
+    ///    post-gaborish XYB (gaborish is linear; subtracting the same
+    ///    quantized values from both planes after a 5x5 gaborish_inverse
+    ///    is equivalent to subtracting from pre-gab and re-running the
+    ///    filter, but avoids the redundant convolution).
+    /// 4. Recompute `cfl_map` (and ideally `quant_field` / `masking` /
+    ///    `ac_strategy`) on the patches-subtracted XYB so all
+    ///    downstream precomputed state matches what the bitstream
+    ///    decode will see. At minimum, recompute `cfl_map` — the
+    ///    encoder's case-2 fallback path does this much, so case 1
+    ///    must do at least as much.
+    /// 5. Hand the patches-subtracted post-gab XYB / new `cfl_map` to
+    ///    [`Self::from_parts`], call this method with the
+    ///    `PatchesData` from step 1, then optionally
+    ///    [`Self::with_xyb_pre_gaborish`] (the encoder ignores
+    ///    `xyb_pre_gaborish` once `patches_data` is set, but supplying
+    ///    it keeps the precomputed self-consistent for any future
+    ///    invariants).
+    ///
+    /// **No validation** beyond non-empty positions — wrong inputs
+    /// produce a corrupt bitstream. Gated behind `__pre_quantized` for
+    /// the same reason as [`Self::from_parts`].
+    #[cfg(feature = "__pre_quantized")]
+    #[doc(hidden)]
+    pub fn with_patches_data(mut self, patches: super::patches::PatchesData) -> Self {
+        debug_assert!(
+            !patches.positions.is_empty(),
+            "with_patches_data: PatchesData must have at least one position; \
+             pass `None` (don't call this method) if no patches were detected"
+        );
+        self.patches_data = Some(patches);
+        self
+    }
 }
 
 /// Convert linear RGB to XYB color space with padding to block boundaries.
