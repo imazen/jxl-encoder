@@ -457,6 +457,18 @@
   changed the byte count from 636 to 638 without updating
   `hash_lock_expected.txt`. CI's "Build native (Linux)" + "Coverage"
   jobs were silently failing; appended the new hash entry.
+- **Regression test for `--rate-control` gaborish gate**
+  (`jxl-encoder-cli/tests/rate_control_gaborish_gate.rs`, e03c4947):
+  invokes the actual `cjxl-rs` binary on a center-crop of the
+  committed `frymire.png` fixture and asserts that
+  `bytes(--rate-control -d 0.4)` equals
+  `bytes(--rate-control -d 0.4 --no-gaborish)` (gate forces gaborish
+  off internally below d=0.5, making `--no-gaborish` a no-op).
+  Discriminating against the pre-f41d59c "always on at effort >= 3"
+  state — verified by reverting the gate locally and observing the
+  new test fail at d=0.4. Adds `image = "0.25"` (default-features =
+  false, png) as a `dev-dependency` on `jxl-encoder-cli` for runtime
+  PNG cropping.
 
 ## [0.3.2] - 2026-05-06
 
