@@ -176,6 +176,10 @@ path = "examples/bench_lossy_palette_dump.rs"
 name = "libjxl_parity_knobs"
 path = "examples/libjxl_parity_knobs.rs"
 
+[[example]]
+name = "quality_drift_investigation"
+path = "examples/quality_drift_investigation.rs"
+
 # Picker oracle calibration harnesses (lossless_pareto_calibrate /
 # lossy_pareto_calibrate) live under examples/ but are NOT registered as
 # cargo examples — they depend on a sibling-repo `zenanalyze` path that
