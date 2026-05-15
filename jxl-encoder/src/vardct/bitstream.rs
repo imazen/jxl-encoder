@@ -1276,6 +1276,54 @@ impl VarDctEncoder {
             None
         };
 
+        // Detect and subtract patches on PRE-gaborish XYB. Mirrors the
+        // still-image path at `vardct/encoder.rs:739-771`. Patches work in
+        // the XYB domain: detect repeated rectangular elements, store unique
+        // patterns in a reference frame, subtract from the image. Without
+        // this, animation frames carrying screenshot/UI content (text glyphs,
+        // icons, repeated buttons) emit the same template once per occurrence
+        // — for typical UI-heavy GIF/APNG-style content this is a 30-50%
+        // size penalty vs. the still-image path.
+        //
+        // Detection runs on PRE-gaborish XYB to match libjxl: the decoder
+        // pipeline is IDCT → gaborish → EPF → patches add-back, so the
+        // encoder must subtract patterns from the same XYB the decoder will
+        // reconstruct (see `~/work/jxl-efforts/libjxl/lib/jxl/dec_cache.cc`
+        // line 148-194 and the gpu encoder finding documented in
+        // `MEMORY.md::screenshot_patches_landed_2026-05-15`).
+        //
+        // Cost-benefit gate is the same as the still-image path: only
+        // applied in `EncoderMode::Experimental`. Reference mode follows
+        // libjxl and uses patches unconditionally when detected.
+        let mut patches_data = if self.enable_patches {
+            super::patches::find_and_build([&xyb_x, &xyb_y, &xyb_b], width, height, padded_width)
+        } else {
+            None
+        };
+        if matches!(self.encoder_mode, crate::api::EncoderMode::Experimental)
+            && let Some(ref pd) = patches_data
+            && !pd.is_cost_effective(self.distance, self.use_ans)
+        {
+            patches_data = None;
+        }
+        // Quantize ref_image so subtract/add use the same values the decoder
+        // will reconstruct.
+        if let Some(ref mut pd) = patches_data {
+            pd.quantize_ref_image();
+        }
+        if let Some(ref pd) = patches_data {
+            let mut xyb = [
+                core::mem::take(&mut xyb_x),
+                core::mem::take(&mut xyb_y),
+                core::mem::take(&mut xyb_b),
+            ];
+            super::patches::subtract_patches(&mut xyb, padded_width, pd);
+            let [x, y, b] = xyb;
+            xyb_x = x;
+            xyb_y = y;
+            xyb_b = b;
+        }
+
         let (chromacity_x, chromacity_b) = if self.profile.chromacity_adjustment {
             let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
                 &xyb_x,
@@ -1450,8 +1498,8 @@ impl VarDctEncoder {
                 &initial_qf_float,
                 &cfl_map,
                 &ac_strategy,
-                None, // No patches in this code path
-                None, // No splines in this code path
+                patches_data.as_ref(),
+                None, // No splines in animation frames
             )?;
         }
 
@@ -1499,6 +1547,29 @@ impl VarDctEncoder {
 
         let strategy_counts = ac_strategy.strategy_histogram();
 
+        // If patches were detected, write the reference frame BEFORE the
+        // main per-animation-frame VarDCT frame. The reference frame is a
+        // modular FrameType::ReferenceOnly frame that stores unique patch
+        // templates in the file's `save_as_reference` slot. The main frame
+        // then references it via the patches block in LfGlobal.
+        //
+        // Mirrors the ordering in `encode_two_pass` (still-image entry
+        // point) at the patches branch around line 1592 — but that path
+        // also writes the file header itself. The animation entry point
+        // already wrote the file header in `encode_animation_lossy`
+        // (api.rs around line 6107) before the per-frame loop, so we only
+        // emit the reference frame here.
+        if let Some(ref pd) = patches_data {
+            super::patches::encode_reference_frame(
+                pd,
+                self.use_ans,
+                self.profile.patch_ref_tree_learning,
+                writer,
+                self.budget.as_ref(),
+            )?;
+            writer.zero_pad_to_byte();
+        }
+
         self.encode_two_pass_to_writer(
             width,
             height,
@@ -1523,7 +1594,7 @@ impl VarDctEncoder {
             sharpness_map.as_deref(),
             extras,
             Some(frame_options),
-            None, // No patches in animation frames
+            patches_data.as_ref(),
             None, // No splines in animation frames
             None, // No LfFrame in animation frames
             writer,
