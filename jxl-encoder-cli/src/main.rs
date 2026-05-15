@@ -365,6 +365,9 @@ fn main() {
                     tps_numerator,
                     tps_denominator,
                     num_loops,
+                    // CLI never receives premultiplied input — APNG is
+                    // straight alpha; matches still-image CLI default.
+                    premultiplied_alpha: false,
                 };
 
                 // Build frames with durations

@@ -155,6 +155,7 @@ fn test_lossless_animation_roundtrip_oxide() {
         tps_numerator: 10,
         tps_denominator: 1,
         num_loops: 0,
+        premultiplied_alpha: false,
     };
 
     let data = LosslessConfig::new()
@@ -233,6 +234,7 @@ fn test_lossless_animation_roundtrip_jxlrs() {
         tps_numerator: 10,
         tps_denominator: 1,
         num_loops: 0,
+        premultiplied_alpha: false,
     };
 
     let data = LosslessConfig::new()
@@ -286,6 +288,7 @@ fn test_lossy_animation_roundtrip_oxide() {
         tps_numerator: 100,
         tps_denominator: 1,
         num_loops: 0,
+        premultiplied_alpha: false,
     };
 
     let data = LossyConfig::new(1.0)
@@ -413,6 +416,7 @@ fn test_lossless_crop_partial_change() {
         tps_numerator: 10,
         tps_denominator: 1,
         num_loops: 0,
+        premultiplied_alpha: false,
     };
 
     let frames = [
@@ -535,6 +539,7 @@ fn test_lossless_crop_identical_frames() {
         tps_numerator: 10,
         tps_denominator: 1,
         num_loops: 0,
+        premultiplied_alpha: false,
     };
 
     let frames = [
@@ -630,6 +635,7 @@ fn test_lossy_crop_partial_change() {
         tps_numerator: 10,
         tps_denominator: 1,
         num_loops: 0,
+        premultiplied_alpha: false,
     };
 
     let frames = [
@@ -697,6 +703,7 @@ fn test_crop_regression_all_different() {
         tps_numerator: 10,
         tps_denominator: 1,
         num_loops: 0,
+        premultiplied_alpha: false,
     };
 
     let frames = [
@@ -1095,5 +1102,284 @@ fn test_animation_patches_fires_on_synthetic_screenshot() {
         (r_np - r_wp).abs() < 0.10,
         "patches-on vs patches-off center pixel R-channel diverges: \
          no_patches={r_np:.4}, with_patches={r_wp:.4}",
+    );
+}
+
+// ── Animation lossy: simplify_invisible + premultiplied alpha ───────────────
+//
+// Both pre-passes (`unpremultiply_alpha_inplace` followed by
+// `simplify_invisible_rgb`) must mirror the still-image lossy path at
+// `api.rs:3776-3807` / `:4576-4600`. Pre-fix, `encode_animation_lossy`
+// silently ignored `cfg.simplify_invisible` AND failed to unpremultiply
+// premultiplied input. Both regressions are caught below.
+
+/// 64x64 RGBA frame: visible center stripe with random-ish color noise
+/// in the alpha=0 region. Without the SimplifyInvisible pass the encoder
+/// has to spend bits encoding that high-frequency garbage; with the pass
+/// the colors of invisible pixels are smeared toward the visible center,
+/// removing the energy.
+fn rgba_invisible_noise_64() -> Vec<u8> {
+    let mut pixels = Vec::with_capacity(64 * 64 * 4);
+    for y in 0..64 {
+        for x in 0..64 {
+            // Center 32-row stripe is fully visible (alpha=255) with a
+            // smooth red→blue gradient. Outer rows are alpha=0 with a
+            // noisy color pattern that should be smeared away.
+            let visible = (16..48).contains(&y);
+            let alpha = if visible { 255 } else { 0 };
+            let r;
+            let g;
+            let b;
+            if visible {
+                let t = (x as f32) / 63.0;
+                r = ((1.0 - t) * 255.0) as u8;
+                g = 0;
+                b = (t * 255.0) as u8;
+            } else {
+                // Pseudo-random noise (deterministic) — high-frequency
+                // garbage in the invisible region. xorshift mix on
+                // (x, y) keeps the test reproducible.
+                let mut s: u32 = ((y as u32) << 16) ^ (x as u32) ^ 0xA5A5_5A5A;
+                s ^= s << 13;
+                s ^= s >> 17;
+                s ^= s << 5;
+                r = (s & 0xFF) as u8;
+                g = ((s >> 8) & 0xFF) as u8;
+                b = ((s >> 16) & 0xFF) as u8;
+            }
+            pixels.push(r);
+            pixels.push(g);
+            pixels.push(b);
+            pixels.push(alpha);
+        }
+    }
+    pixels
+}
+
+/// Encode a single-frame RGBA animation with `simplify_invisible`
+/// enabled (default) and again with it disabled. Asserts the
+/// simplify-on byte count is strictly smaller — proves the pre-pass is
+/// actually wired into `encode_animation_lossy`.
+#[test]
+fn test_animation_lossy_simplify_invisible_shrinks_bytes() {
+    let pixels = rgba_invisible_noise_64();
+    let frames = [AnimationFrame {
+        pixels: &pixels,
+        duration: 10,
+    }];
+    let animation = AnimationParams::default();
+
+    // simplify_invisible is the LossyConfig default (true). Encode
+    // with it on, then explicitly off.
+    let with_simplify = LossyConfig::new(1.0)
+        .encode_animation(64, 64, PixelLayout::Rgba8, &animation, &frames)
+        .expect("simplify_invisible=true encode failed");
+    let without_simplify = LossyConfig::new(1.0)
+        .with_simplify_invisible(false)
+        .encode_animation(64, 64, PixelLayout::Rgba8, &animation, &frames)
+        .expect("simplify_invisible=false encode failed");
+
+    let saved = without_simplify.len() as i64 - with_simplify.len() as i64;
+    eprintln!(
+        "[anim-simplify-invisible] off={} on={} saved={}",
+        without_simplify.len(),
+        with_simplify.len(),
+        saved
+    );
+
+    // Sanity: both decode.
+    let (aw, ah, decoded) = decode_animation_oxide(&with_simplify);
+    assert_eq!((aw, ah, decoded.len()), (64, 64, 1));
+
+    // The simplified encode MUST be strictly smaller — pre-fix this
+    // failed because `encode_animation_lossy` silently ignored the
+    // `simplify_invisible` flag.
+    assert!(
+        with_simplify.len() < without_simplify.len(),
+        "simplify_invisible should shrink bytes: with={} >= without={}, saved={saved}. \
+         If this assertion fails, the pre-pass at api.rs:6256-6277 is not running.",
+        with_simplify.len(),
+        without_simplify.len(),
+    );
+}
+
+/// 32x32 RGBA frame, straight-alpha source. Returns (straight_pixels,
+/// premultiplied_pixels). The premultiplied buffer multiplies in
+/// **linear-light** space (the convention the encoder expects:
+/// `linear_premul_rgb = linear_straight_rgb * a`, re-encoded as sRGB
+/// bytes). The encoder's unpremultiply pre-pass operates in linear
+/// space and inverts this transform.
+fn rgba_pair_for_premul_test() -> (Vec<u8>, Vec<u8>) {
+    fn srgb_to_linear(c: u8) -> f32 {
+        let v = c as f32 / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    fn linear_to_srgb(v: f32) -> u8 {
+        let v = v.clamp(0.0, 1.0);
+        let s = if v <= 0.0031308 {
+            v * 12.92
+        } else {
+            1.055 * v.powf(1.0 / 2.4) - 0.055
+        };
+        (s * 255.0).round().clamp(0.0, 255.0) as u8
+    }
+    let mut straight = Vec::with_capacity(32 * 32 * 4);
+    for y in 0..32 {
+        for x in 0..32 {
+            // Smooth diagonal alpha so we exercise both opaque and
+            // semi-transparent pixels. RGB is a recognisable gradient
+            // so it's obvious if the decode comes back wrong.
+            let r = (x * 8) as u8;
+            let g = (y * 8) as u8;
+            let b = (((x + y) * 4) as u32).min(255) as u8;
+            // Alpha sweeps 64..=255 so we always have a usable signal
+            // after the round-trip (very small alpha amplifies error).
+            let a = (64 + (x + y) * 3) as u8;
+            straight.push(r);
+            straight.push(g);
+            straight.push(b);
+            straight.push(a);
+        }
+    }
+    let premul: Vec<u8> = straight
+        .chunks_exact(4)
+        .flat_map(|px| {
+            let af = px[3] as f32 / 255.0;
+            // Premultiply in linear space then re-encode to sRGB
+            // bytes. This is what real associated-alpha pipelines do
+            // (linear-light is the only correct domain for compositing
+            // multiplications) and what `unpremultiply_alpha_inplace`
+            // is designed to invert.
+            let mul = |c: u8| linear_to_srgb(srgb_to_linear(c) * af);
+            [mul(px[0]), mul(px[1]), mul(px[2]), px[3]]
+        })
+        .collect();
+    (straight, premul)
+}
+
+/// Encode a premultiplied-alpha frame with the new
+/// `AnimationParams::premultiplied_alpha=true` flag, then encode the
+/// equivalent straight-alpha source with `false`. The encoder must
+/// (a) unpremultiply the input pixels before XYB conversion, and
+/// (b) signal `alpha_associated=true` so the decoder re-premultiplies
+/// on output. Both decoded buffers should reconstruct close to the
+/// same straight-alpha source.
+///
+/// Pre-fix the premultiplied path treated already-premultiplied bytes
+/// as if they were straight alpha — the encoded RGB stayed dim
+/// everywhere alpha was low, producing visible colour shifts in
+/// semi-transparent regions.
+#[test]
+fn test_animation_lossy_premultiplied_alpha_matches_straight() {
+    let (straight, premul) = rgba_pair_for_premul_test();
+
+    // Straight-alpha animation (the reference encode).
+    let straight_anim = AnimationParams::default();
+    assert!(!straight_anim.premultiplied_alpha);
+    let straight_frames = [AnimationFrame {
+        pixels: &straight,
+        duration: 5,
+    }];
+    let straight_data = LossyConfig::new(1.0)
+        // remove the smear so the comparison only measures the
+        // unpremultiply pre-pass behaviour
+        .with_simplify_invisible(false)
+        .encode_animation(32, 32, PixelLayout::Rgba8, &straight_anim, &straight_frames)
+        .expect("straight encode failed");
+
+    // Premultiplied-alpha animation with the new flag.
+    let premul_anim = AnimationParams {
+        premultiplied_alpha: true,
+        ..AnimationParams::default()
+    };
+    let premul_frames = [AnimationFrame {
+        pixels: &premul,
+        duration: 5,
+    }];
+    let premul_data = LossyConfig::new(1.0)
+        .with_simplify_invisible(false)
+        .encode_animation(32, 32, PixelLayout::Rgba8, &premul_anim, &premul_frames)
+        .expect("premultiplied encode failed");
+
+    // Both decodes return the linear-light reconstruction in the same
+    // shape (jxl-oxide returns the rendered single-frame image; for a
+    // first frame with no base, blending is a copy regardless of the
+    // alpha_associated flag — what matters is that the encoder stored
+    // the correct (straight) RGB in the codestream and signalled
+    // alpha_associated=true so downstream consumers know whether to
+    // re-multiply).
+    let (sw, sh, straight_decoded) = decode_animation_oxide(&straight_data);
+    let (pw, ph, premul_decoded) = decode_animation_oxide(&premul_data);
+    assert_eq!((sw, sh), (32, 32));
+    assert_eq!((pw, ph), (32, 32));
+    assert_eq!(straight_decoded.len(), 1);
+    assert_eq!(premul_decoded.len(), 1);
+
+    let straight_pixels = &straight_decoded[0].0;
+    let premul_pixels = &premul_decoded[0].0;
+
+    // Sanity: the decoded buffer for the premultiplied path must
+    // signal `alpha_associated=true`. We probe via jxl-rs basic_info.
+    let info_premul = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&premul_data))
+        .expect("decode header failed");
+    let info_straight = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&straight_data))
+        .expect("decode header failed");
+    let alpha_assoc_premul = info_premul.image_header().metadata.ec_info[0].alpha_associated();
+    let alpha_assoc_straight = info_straight.image_header().metadata.ec_info[0].alpha_associated();
+    assert_eq!(
+        alpha_assoc_premul,
+        Some(true),
+        "premultiplied codestream did not signal alpha_associated=true \
+         (header.ec_info[0].alpha_associated() = {alpha_assoc_premul:?}). \
+         The encoder did not propagate AnimationParams::premultiplied_alpha \
+         to enc.alpha_associated."
+    );
+    assert_eq!(
+        alpha_assoc_straight,
+        Some(false),
+        "straight codestream alpha_associated mismatch: {alpha_assoc_straight:?}; \
+         expected Some(false)."
+    );
+
+    // Compare reconstructions. Pre-fix, the premultiplied path stored
+    // already-multiplied RGB → after lossy decode we'd see colours that
+    // are way too dark wherever alpha was low; max_diff over the
+    // semi-transparent half of the image is 0.3+ in linear light. With
+    // the unpremultiply pre-pass both encodes start from straight RGB
+    // and the decoded buffers stay close (modulo lossy noise + a single
+    // byte-quantised premultiply→unpremultiply round-trip).
+    let mut max_diff: f32 = 0.0;
+    let mut sum_diff: f64 = 0.0;
+    let mut n_compared = 0u32;
+    for (s_px, p_px) in straight_pixels.chunks(4).zip(premul_pixels.chunks(4)) {
+        // Compare RGB only — alpha is lossless so always matches.
+        for c in 0..3 {
+            let d = (s_px[c] - p_px[c]).abs();
+            if d > max_diff {
+                max_diff = d;
+            }
+            sum_diff += d as f64;
+            n_compared += 1;
+        }
+    }
+    let mean = sum_diff / n_compared as f64;
+    eprintln!("[anim-premul] max_diff={max_diff} mean_diff={mean}");
+
+    // Tolerance: 0.10 absolute on linear-light f32 channels. Pre-fix
+    // we observed >0.3 because the encoded RGB was the dim
+    // already-multiplied byte values. Post-fix the encoder
+    // unpremultiplies, so both encodes start from the same straight
+    // RGB and only differ by the byte-quantised round-trip noise.
+    assert!(
+        max_diff < 0.10,
+        "premultiplied vs straight decode diverges by {max_diff:.4} (mean {mean:.4}). \
+         If this fails the encoder did not unpremultiply premultiplied input. \
+         See api.rs:6256-6266."
     );
 }
