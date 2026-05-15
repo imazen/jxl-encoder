@@ -191,6 +191,11 @@ path = "examples/libjxl_parity_knobs.rs"
 name = "quality_drift_investigation"
 path = "examples/quality_drift_investigation.rs"
 
+[[example]]
+name = "drift_block_map"
+path = "examples/drift_block_map.rs"
+required-features = ["__internal_recon_hook", "butteraugli-loop"]
+
 # Picker oracle calibration harnesses (lossless_pareto_calibrate /
 # lossy_pareto_calibrate) live under examples/ but are NOT registered as
 # cargo examples — they depend on a sibling-repo `zenanalyze` path that
