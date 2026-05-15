@@ -16,6 +16,20 @@
   documents the e8 quality-targeting drift root cause from
   memory/quality_drift_investigation_2026-05-15.md, ships green CI.
   Off by default; not stable; debug instrumentation only.
+- **Layer-2 buttloop target-distance parity test** (Chunk 2 of the drift
+  investigation): `tests/buttloop_target_parity.rs` asserts that for each
+  (image, distance) cell at effort 8, the measured Rust butteraugli of
+  (encode → jxl-rs decode → linearize → compare) is within +10% of the
+  requested `--distance` (libjxl's calibration intent: distance N means
+  "max butteraugli ≈ N"). Sweeps the same 3 photos × 4 distances grid as
+  the Layer-1 test (clic2025/02809272, cid22/1025469, gb82-sc/graph at
+  d=0.5/1.0/2.0/4.0). Initial run: 7 of 12 cells exceed the +10% bound
+  (worst: smooth_photo @ d=0.5 measured 0.80 vs target 0.55, ratio 1.6).
+  Failure pattern matches the Layer-1 internal-recon divergence: low-d
+  cells fail hardest (the buttloop's optimism translates directly into
+  bit under-investment). Test is `#[ignore]` — CI passes; the failure
+  is the regression target for Chunk 3's fix. Gated behind the default
+  `butteraugli-loop` feature; no production behavior change.
 - **Dot detection** (closes #19, 8bff5247 + 6dec363d + 14872a54 +
   6c667f6b + 98adc2d4 + 05dd7695): full port of libjxl's
   `enc_detect_dots.cc` star-field / specular-highlight detector.
