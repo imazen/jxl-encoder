@@ -794,6 +794,55 @@ fn gradient_rgb_128() -> Vec<u8> {
     pixels
 }
 
+/// Regression: animation lossy path must validate non-finite linear-RGB
+/// (NaN / ±Inf) the same way the still-image path does.
+///
+/// Float pixel layouts (RgbLinearF32, RgbaLinearF32, GrayLinearF32,
+/// GrayAlphaLinearF32, RgbLinearF16 …) carry user-supplied f32 / f16 values
+/// directly. NaN / ±Inf in the input is silently coerced by `forward_xyb`'s
+/// `mixed.max(0.0)` (IEEE-754 ordered max returns the non-NaN operand) so a
+/// caller bug never reaches the XYB output.
+///
+/// The still-image path at `vardct/encoder.rs:638-664` runs `is_finite_plane`
+/// at intake (`Error` mode rejects, `Sanitize` mode rewrites in-place to 0.0)
+/// then a defense-in-depth XYB scan after `convert_to_xyb_padded`. Pre-fix the
+/// animation path at `vardct/bitstream.rs::encode_frame_to_writer` skipped
+/// both — caller-supplied NaN silently produced wrong pixels.
+///
+/// This test passes a single-frame animation with a NaN in the input and
+/// asserts that the default (`NonFiniteAction::Error`) returns
+/// `EncodeError::Encode(InvalidInput)` rather than producing a JXL with
+/// silently-coerced pixels.
+#[test]
+fn test_animation_rejects_non_finite_input_by_default() {
+    use jxl_encoder::EncodeError;
+
+    let mut floats: Vec<f32> = vec![0.5; 64 * 64 * 3];
+    // Plant a NaN in the middle of the buffer.
+    floats[(32 * 64 + 32) * 3] = f32::NAN;
+    let bytes: &[u8] = bytemuck::cast_slice(&floats);
+
+    let frames = [AnimationFrame {
+        pixels: bytes,
+        duration: 1,
+    }];
+    let animation = AnimationParams::default();
+
+    let err = LossyConfig::new(1.0)
+        .encode_animation(64, 64, PixelLayout::RgbLinearF32, &animation, &frames)
+        .expect_err("animation with NaN linear-RGB must be rejected by default");
+
+    match err.error() {
+        EncodeError::InvalidInput { message } => {
+            assert!(
+                message.contains("non-finite") || message.contains("NaN"),
+                "expected non-finite / NaN message, got: {message}"
+            );
+        }
+        other => panic!("expected InvalidInput for NaN input, got: {other:?}"),
+    }
+}
+
 /// Regression test for the animation-frame-path gaborish ordering bug
 /// (`vardct/bitstream.rs:1250` pre-fix).
 ///
