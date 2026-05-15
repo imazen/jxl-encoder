@@ -1247,17 +1247,20 @@ impl VarDctEncoder {
             (0, 0)
         };
 
-        if self.enable_gaborish {
-            super::gaborish::gaborish_inverse(
-                &mut xyb_x,
-                &mut xyb_y,
-                &mut xyb_b,
-                padded_width,
-                padded_height,
-                self.budget.as_ref(),
-            )?;
-        }
-
+        // Compute adaptive per-block quantization field and masking on
+        // PRE-gaborish XYB. libjxl computes InitialQuantField BEFORE
+        // GaborishInverse (`enc_heuristics.cc:1117-1142`, comment:
+        // "relies on pre-gaborish values"). Gaborish sharpening inflates
+        // gradients which inflates masking → smaller quant values →
+        // finer quantization → more bits.
+        //
+        // When gaborish is off, scale distance by 0.62 for the quant
+        // field (matches libjxl `enc_heuristics.cc:1119`).
+        //
+        // Mirror of still-image ordering at vardct/encoder.rs:866 and
+        // vardct/precomputed.rs:360. Previously this path applied
+        // gaborish_inverse BEFORE compute_quant_field_float_with_budget,
+        // matching neither libjxl nor our other still-image entry points.
         let distance_for_iqf = if self.enable_gaborish {
             self.distance
         } else {
@@ -1298,6 +1301,36 @@ impl VarDctEncoder {
         let mut quant_field =
             super::adaptive_quant::quantize_quant_field(&quant_field_float, params.inv_scale);
 
+        // Compute per-pixel mask for pixel-domain loss on PRE-gaborish XYB
+        // (matches libjxl `InitialQuantField` which produces
+        // `initial_quant_masking1x1` before `GaborishInverse`).
+        let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss {
+            Some(super::adaptive_quant::compute_mask1x1_with_budget(
+                &xyb_y,
+                padded_width,
+                padded_height,
+                self.budget.as_ref(),
+            )?)
+        } else {
+            None
+        };
+
+        // Apply gaborish inverse (5x5 sharpening) AFTER quant_field /
+        // mask1x1 (computed on pre-gaborish XYB), but BEFORE CfL and AC
+        // strategy. This matches libjxl `enc_heuristics.cc:1117-1142`
+        // and the still-image paths at vardct/encoder.rs:973 and
+        // vardct/precomputed.rs:403.
+        if self.enable_gaborish {
+            super::gaborish::gaborish_inverse(
+                &mut xyb_x,
+                &mut xyb_y,
+                &mut xyb_b,
+                padded_width,
+                padded_height,
+                self.budget.as_ref(),
+            )?;
+        }
+
         let cfl_map = if self.cfl_enabled {
             super::chroma_from_luma::compute_cfl_map(
                 &xyb_x,
@@ -1316,17 +1349,6 @@ impl VarDctEncoder {
                 div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS),
                 div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS),
             )
-        };
-
-        let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss {
-            Some(super::adaptive_quant::compute_mask1x1_with_budget(
-                &xyb_y,
-                padded_width,
-                padded_height,
-                self.budget.as_ref(),
-            )?)
-        } else {
-            None
         };
 
         let ac_strategy = if let Some(forced) = self.force_strategy {

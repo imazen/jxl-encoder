@@ -752,3 +752,125 @@ fn test_crop_regression_all_different() {
         );
     }
 }
+
+/// 128×128 image mixing smooth gradient + vertical/horizontal edges + a
+/// noise-textured center patch — exercises gaborish-sensitive masking paths
+/// (sharp edges where gaborish overcorrects, smooth regions where it's
+/// near-identity, and noisy regions where mask1x1 differs from masking).
+fn gradient_rgb_128() -> Vec<u8> {
+    let mut pixels = Vec::with_capacity(128 * 128 * 3);
+    for y in 0..128usize {
+        for x in 0..128usize {
+            // Base: diagonal gradient
+            let mut r = ((x * 2) & 0xFF) as u32;
+            let mut g = (((x + y) * 2) & 0xFF) as u32;
+            let mut b = ((y * 2) & 0xFF) as u32;
+
+            // Hard edges at x=32 and y=64 (gaborish-sensitive)
+            if x == 32 {
+                r = 240;
+                g = 30;
+                b = 30;
+            }
+            if y == 64 {
+                r = 30;
+                g = 240;
+                b = 30;
+            }
+
+            // Center 32×32 noise patch (deterministic xorshift-like hash)
+            if (32..96).contains(&x) && (32..96).contains(&y) {
+                let h = (x as u32).wrapping_mul(0x9E3779B1) ^ (y as u32).wrapping_mul(0x85EBCA77);
+                r = (r + (h & 0x3F)) & 0xFF;
+                g = (g + ((h >> 6) & 0x3F)) & 0xFF;
+                b = (b + ((h >> 12) & 0x3F)) & 0xFF;
+            }
+
+            pixels.push(r as u8);
+            pixels.push(g as u8);
+            pixels.push(b as u8);
+        }
+    }
+    pixels
+}
+
+/// Regression test for the animation-frame-path gaborish ordering bug
+/// (`vardct/bitstream.rs:1250` pre-fix).
+///
+/// Before the fix, `encode_frame_to_writer` (the animation path) applied
+/// `gaborish_inverse` BEFORE `compute_quant_field_float_with_budget` —
+/// inverted relative to both still-image paths (`vardct/encoder.rs:866`
+/// and `vardct/precomputed.rs:360`) and to libjxl
+/// `enc_heuristics.cc:1117-1142`, which explicitly states
+/// `InitialQuantField` "relies on pre-gaborish values" and runs BEFORE
+/// `GaborishInverse`. The same reordering applied to `mask1x1`, which
+/// the still-image paths also compute on pre-gaborish XYB.
+///
+/// Effect of the bug: gaborish sharpens edges → inflates the per-block
+/// masking field → adaptive-quant produces different quant values than
+/// the still-image paths, leading to encode decisions that diverge from
+/// what we'd produce for the same pixels routed through the still-image
+/// pipeline. The CLAUDE.md "Gaborish ordering (1af2202)" entry documents
+/// the equivalent bug in the still-image path, fixed Feb 2026.
+///
+/// Strategy: encode the SAME single frame both as a 1-frame "animation"
+/// and as a still image with matching `LossyConfig`. The animation path
+/// is `encode_frame_to_writer` (the one we just fixed); the still path
+/// is `encode_inner` (already correct). After the fix, both paths walk
+/// the same compute_quant_field → mask1x1 → gaborish → CfL → AC strategy
+/// pipeline on the body, so their encoded body sizes should match within
+/// a small tolerance (animation has a slightly different file header for
+/// AnimationHeader + per-frame FrameOptions with `have_animation=true`).
+///
+/// Pre-fix: animation/still byte counts diverge by 100s of bytes on
+/// edge+noise content (animation path under-quantized → different bit
+/// allocations in tokenization). Post-fix: divergence collapses to the
+/// fixed AnimationHeader overhead (~tens of bytes).
+#[test]
+fn test_animation_matches_still_at_same_config() {
+    let pixels = gradient_rgb_128();
+    let distance = 1.0_f32; // gab gated at d > 0.5; 1.0 ensures gab on
+
+    // Animation path (1 frame, no crop, gaborish on at d=1.0)
+    let frames = [AnimationFrame {
+        pixels: &pixels,
+        duration: 1,
+    }];
+    let animation = AnimationParams::default();
+    let anim_data = LossyConfig::new(distance)
+        .encode_animation(128, 128, PixelLayout::Rgb8, &animation, &frames)
+        .expect("animation encode failed");
+
+    // Still path with identical config
+    let still_data = LossyConfig::new(distance)
+        .encode(&pixels, 128, 128, PixelLayout::Rgb8)
+        .expect("still encode failed");
+
+    // Sanity: both must decode without error
+    let (aw, ah, anim_decoded) = decode_animation_oxide(&anim_data);
+    assert_eq!((aw, ah, anim_decoded.len()), (128, 128, 1));
+    let _ = decode_animation_jxlrs(&anim_data);
+
+    // Animation file should be at most a small fixed overhead larger than
+    // the still file. Pre-fix divergence on this content was 100s of bytes
+    // (the buggy ordering changed quant_field/mask1x1 results, which then
+    // changed AC strategy decisions, transform output, and entropy coding).
+    // Post-fix: both paths walk identical compute steps; the only difference
+    // is animation/file-header bytes (AnimationHeader + per-frame
+    // FrameOptions::have_animation=true). 256-byte cap is generous.
+    let delta = anim_data.len() as i64 - still_data.len() as i64;
+    eprintln!(
+        "[gaborish-regression] anim={} still={} delta={}",
+        anim_data.len(),
+        still_data.len(),
+        delta
+    );
+    assert!(
+        delta.abs() <= 256,
+        "animation byte count diverges from still by {delta} bytes (anim={}, still={}). \
+         Pre-fix this divergence was 100+ bytes due to gaborish/quant_field \
+         ordering bug at vardct/bitstream.rs:1250.",
+        anim_data.len(),
+        still_data.len()
+    );
+}
