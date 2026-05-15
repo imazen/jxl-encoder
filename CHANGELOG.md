@@ -284,6 +284,154 @@
   (c82e05c): exposes selected internal types for jxl-encoder-gpu's
   pre-quantized AC entry points and equivalent crates.
 
+- **`VarDctEncoder::encode_from_precomputed_with_extras`** (8322ab9):
+  new public method on `VarDctEncoder` (gated `__pre_quantized`) that
+  threads caller-supplied alpha / depth / spot color / selection mask /
+  thermal / CFA channels through the precomputed-AC entry point.
+  Validates `dim_shift = 0` and `sample-count = width * height` at the
+  boundary. The legacy `encode_from_precomputed` now delegates with
+  `&[]` for source-compatibility. Closes the long-standing TODO at
+  `vardct/encoder.rs:2063` where the precomputed entry silently dropped
+  any caller-supplied extras.
+
+- **`VarDctEncoder::encode_from_pre_quantized_ac_with_extras`**
+  (b32ed29): companion to `encode_from_precomputed_with_extras` for
+  the deeper GPU fast path where DCT + quantize run on the GPU and
+  only the per-block coefficient buffers cross the wire. Same boundary
+  validation; the legacy `encode_from_pre_quantized_ac` delegates with
+  `&[]`. Gated `__pre_quantized`.
+
+- **`VarDctEncoder::encode_from_pre_quantized_ac` entry point**
+  (9cdd29e): new top-level entry that skips `transform_and_quantize`
+  (forward DCT + quantize + nzeros + float_dc) and goes straight to
+  `encode_two_pass`. Caller is responsible for producing per-channel
+  `TransformOutput`-shaped data matching what `transform_and_quantize`
+  would have emitted. Designed for the GPU encoder fast path; saves
+  ~50 ms at 12 MP / d=1.0 vs running `transform_and_quantize` again on
+  the CPU. Adds `DCT_BLOCK_SIZE` to `__pre_quantized` exports. Gated
+  `__pre_quantized`.
+
+- **`__pre_quantized`: `INV_DC_QUANT`, `quant_weights_dct8`,
+  `default_thresholds_dct8`** (1802b31): re-exports for the GPU
+  pre-quantized AC producer to build per-channel constants without
+  reimplementing libjxl tables. Gated `__pre_quantized`.
+
+- **`__pre_quantized`: `TransformOutput` + `transform_and_quantize_for_test`**
+  (7bfbeb1): re-exports the per-group transform-output struct and a
+  test helper that drives `transform_and_quantize` end-to-end, so
+  downstream callers can produce parity-test fixtures without
+  reimplementing the inner pipeline. Gated `__pre_quantized`.
+
+- **`__pre_quantized`: `refine_cfl_map`** (e03cff1): re-export of the
+  per-tile CfL refinement helper for downstream pipelines (notably
+  jxl-encoder-gpu) that compute encode-side CfL on the GPU and want
+  the second-pass refinement on the host. Gated `__pre_quantized`.
+
+- **`__pre_quantized`: `adjust_quant_field_with_distance`** (6e25844):
+  re-export of the post-`AdjustQuantBlockAC` quant-field rescaler so
+  downstream callers can match the CPU `compute_quant_field_float`
+  →`adjust_quant_field_with_distance` two-step exactly. Gated
+  `__pre_quantized`.
+
+- **`__pre_quantized`: patches detection + `EncoderPrecomputed::with_patches_data`**
+  (e23a1b2): exposes the libjxl-parity patches detect/subtract pipeline
+  (`find_and_build_patches`, `PatchesData`) and a setter on
+  `EncoderPrecomputed` to attach pre-built patches data when the GPU
+  pipeline runs detection on the host (case-1 routing per libjxl
+  `enc_frame.cc`). Gated `__pre_quantized`.
+
+- **EPF dynamic sharpness wired into `encode_from_precomputed`**
+  (16d4356): the GPU pre-quantized entry was passing `None` for
+  `sharpness_map`, leaving the bitstream emitting uniform `sharpness=4`
+  on the GPU fast path. Now mirrors the CPU `encode_image_lossy`
+  path — gated on `params.epf_iters > 0 && distance >= 0.5 &&
+  profile.epf_dynamic_sharpness`, falls back to `compute_mask1x1`
+  when `EncoderPrecomputed.mask1x1` is `None`. Closes Gap B from the
+  GPU buttloop RD-gap chase. CPU bitstream byte-identical.
+
+- **Patches detect/subtract on PRE-gaborish XYB in
+  `compute_with_budget` + `encode_from_precomputed`** (f41d59c +
+  0c463ec): patches detection now runs on pre-gaborish XYB so the
+  detected pattern roundtrips correctly through the decoder pipeline
+  (IDCT → gaborish → EPF → patches per libjxl `dec_cache.cc:148-194`).
+  Bonus rate-control CLI gaborish gate fix mirrors `api.rs:3842`'s
+  `distance > 0.5` check. Screenshot ratios at d=0.5: terminal
+  1.327→1.094, codec_wiki 0.927→0.857, windows95 1.354→1.136, imac_g3
+  0.574→0.551 — all BEAT the default API path. Default-path bitstream
+  byte-identical (hash_lock 36/36 green); RD regression 18/18 photos
+  pass.
+
+- **`ExtraChannel::with_dim_shift`** (ddb07b9): builder method to
+  declare an extra channel at a downsampled resolution (depth maps at
+  1/2, 1/4, …). `dim_shift` enters the bitstream as the channel's
+  per-channel resolution shift; the lossless modular path serialises
+  the channel at the matching dimensions.
+
+- **16-bit extra channels** (54ae465): new `ExtraChannelBuf` enum
+  (`U8(&[u8])` / `U16(&[u16])`), `ExtraChannel::depth_u16` constructor,
+  and `ModularImage::push_extra_channel_u16` so depth / spot / thermal
+  / CFA extras can carry full 16-bit precision instead of being capped
+  at 8 bits. Lossless modular path threads `u16` end-to-end.
+
+- **CLI: 6 libjxl-parity knobs surfaced on `cjxl-rs`** (4a8b876 +
+  391058f): new flags wire the new API additions into the CLI.
+  - `--photon-noise-iso ISO` → `with_photon_noise_iso`
+  - `--original-distance D` → `with_original_distance`
+  - `--quant-ac-rescale R` → `with_quant_ac_rescale`
+  - `--force-rct {none|ycocg|…}` → `with_force_rct`
+  - `--no-perceptual-optimizations` → `with_perceptual_optimizations(false)`
+  - `--tree-learning-sample-fraction F` →
+    `with_tree_learning_sample_fraction`
+  Threaded through both lossless animation and one-shot paths.
+
+### Performance
+
+- **Parallel DC + AC entropy code build via `rayon::join`** (ade20b4):
+  the DC entropy code build and the per-pass AC entropy code builds in
+  `encode_two_pass_to_writer` are independent (disjoint token streams,
+  distinct outputs) but ran sequentially. Wraps both into closures
+  joined by `rayon::join` (sequential fallback when `parallel` is off).
+  Adds `parallel_join` helper to `crate::parallel` and env-var-gated
+  phase timing (`__JXL_ENC_PHASE_TIMING`). Measured at 12 MP / d=1.0:
+  `build_codes` ~84→68 ms, u8 path median 572→491 ms (-81 ms).
+
+- **Parallel-reduce token accumulation across groups** (4da4039):
+  `build_entropy_code_ans_from_token_groups` Phase A (per-context
+  histogram + value-frequency accumulation) was sequential over input
+  token groups (~30-40 ms single-threaded at 12 MP). Now `par_iter`s
+  over groups, builds a per-group accumulator on each worker, and
+  reduce-merges via the existing associative `AccumulatedAnsData::merge`.
+  Sequential fallback when `parallel` is off or there's only one group.
+  Measured at 12 MP / d=1.0: `build_codes` ~68→30 ms (-38 ms),
+  end-to-end median 486→450 ms.
+
+- **Horizontal-band parallel reduce of `count_zero_coefficients`**
+  (55ef5ba): the per-encode coefficient-zero counter was a sequential
+  double loop over `xsize_blocks × ysize_blocks` (~20 ms single-threaded
+  at 12 MP). Now splits the y-axis into up to 16 horizontal bands;
+  per-band accumulate into a fresh counts grid; reduce-merge at the end.
+  Safe to split on arbitrary y boundaries because `is_first` only
+  matches at the top-left sub-block of a multi-block strategy. Measured
+  at 12 MP / d=1.0: phase 20→5 ms, encode_two_pass total 70→55 ms,
+  u8 end-to-end median 450→444 ms.
+
+- **Flat `Box<[T]>` per-group result storage in transform**
+  (348a467): `GroupTransformResult` previously held `[Vec<Vec<T>>; 3]`
+  for `quant_dc` / `quant_ac` / `nzeros` / `raw_nzeros` — ~400 mallocs
+  per 32×32 group at full size, ~80 000 small allocations per encode at
+  12 MP. Now `[Box<[T]>; 3]` flat-indexed as `[ly * width + lx]` —
+  one allocation per field per channel per group, ~5× fewer mallocs
+  total. Allocator pressure drops materially. Updates 30+ access sites
+  in `transform.rs` and `quantize_ac_block`.
+
+- **`scalarmath` uses inherent `f32` methods under `std`** (7dda253):
+  the no-`std` `libm` veneer added in #38 (`f15b90c`) had been
+  routing `floor` / `sqrt` / `mul_add` / `round` / `round_ties_even`
+  through `libm` even on `std` builds, missing hardware FMA on x86_64
+  / aarch64. Now dispatches via cargo features: `std` builds use the
+  inherent methods (LLVM emits `vfmadd*` etc.); `no_std` keeps `libm`.
+  Zero behaviour change; measurable speedup in the SIMD math hot paths.
+
 ### Fixed
 
 - **CI clippy/lint cleanup from the `__pre_quantized` API expansion this
@@ -306,7 +454,56 @@
   the per-group parallel reduce (internal hot path, three call sites all
   in this crate).
 
-- **`--features __pre_quantized` build regression**:
+- **Gaborish ordering in animation-frame path** (fb26368): the
+  animation-frame entry point `encode_frame_to_writer` in
+  `vardct/bitstream.rs` applied `gaborish_inverse` BEFORE
+  `compute_quant_field_float_with_budget`, opposite of both
+  still-image paths and of libjxl `enc_heuristics.cc:1117-1142`.
+  Effect: gaborish sharpens edges → inflates per-block masking →
+  adaptive-quant produces different quant values than the still-image
+  paths, so animation-frame encodes diverged from same-pixel
+  still-image encodes. Reordered to mirror the still-image paths
+  exactly: `compute_quant_field_float_with_budget` on PRE-gaborish XYB
+  (with `distance_for_iqf = distance * 0.62` when gab is off),
+  `quantize_quant_field`, then `gaborish_inverse`. CLAUDE.md "Gaborish
+  ordering (1af2202)" had documented the equivalent still-image bug;
+  only the animation path had been missed.
+
+- **Cross-group AC strategy OOB panic in
+  `vardct/transform.rs`** (6001b74): `AcStrategyMap::set` silently
+  wrote multi-block strategies (DCT64×64, DCT32×32, …) past 32×32-block
+  pass-group boundaries in release builds — the existing
+  `debug_assert` was a no-op outside debug. The group transform
+  pipeline then OOB'd at `transform.rs:544` with `index out of bounds:
+  the len is 1024 but the index is 1048` when writing per-block DC
+  values. The in-tree per-tile strategy search satisfies the invariant
+  naturally (tiles align with groups), but downstream callers of
+  `__pre_quantized::EncoderPrecomputed::from_parts` (e.g.
+  jxl-encoder-gpu's strat-search injector) can supply an
+  `AcStrategyMap` whose entries straddle a group / image boundary, and
+  untrusted producers shouldn't crash the encoder. Repro at
+  `tests/transform_oob_repro.rs` hand-crafts a DCT64×64 placement at
+  `(bx=25, by=25)` on a 64×64-block grid (= 2×2 groups).
+
+- **`refine_cfl_map` accumulator OOB clamp** (4400284): the per-tile
+  coefficient accumulator (`coeffs_yx` / `coeffs_x` / `coeffs_yb` /
+  `coeffs_b`) is sized at `TILE_DIM_IN_BLOCKS² × DCT_BLOCK_SIZE = 4096`
+  floats — same as libjxl's `kColorTileDim²`. The libjxl heuristic
+  that gates on cumulative size (`enc_chroma_from_luma.cc:304`) checks
+  `covered + tile_origin > tile_end` against the TILE start, not the
+  current block's `(bx, by)`. Multi-block first-blocks near the
+  tile-end edge therefore aren't filtered out and contribute their
+  full `(covered_x × covered_y × 64)` coefficients to *this* tile.
+  In pathological `ac_strategy` configurations the cumulative sum
+  exceeds 4096 — libjxl writes past via SIMD stores and treats the
+  tail as undefined; we panic in release with `index out of bounds:
+  the len is 4096 but the index is 4096`. Found while wiring CfL
+  pass 2 into the GPU buttloop. Fix: clamp writes to remaining
+  capacity, label the outer block-loop and break out once full. CfL
+  is a least-squares fit; dropping the small tail past the
+  accumulator is benign relative to the panic.
+
+- **`--features __pre_quantized` build regression** (acc7502):
   `compute_quant_field_float_free` and `EncoderPrecomputed::from_parts`
   were re-exported from `pub mod __pre_quantized` (commit 83253aa)
   but the underlying functions only lived on the unmerged
