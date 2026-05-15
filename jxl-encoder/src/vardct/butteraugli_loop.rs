@@ -254,6 +254,19 @@ impl VarDctEncoder {
                     cropped_g[dst..dst + width].copy_from_slice(&recon_g[src..src + width]);
                     cropped_b[dst..dst + width].copy_from_slice(&recon_b[src..src + width]);
                 }
+                // Snapshot per-block strategy + per-tile CfL for chunk-2's
+                // diff-map correlation. These are cheap (a few bytes per block,
+                // 2 i8 per tile) and only allocated when capture is enabled.
+                let nblocks = xsize_blocks * ysize_blocks;
+                let mut raw_strategy_v = alloc::vec![0u8; nblocks];
+                let mut is_first_block = alloc::vec![false; nblocks];
+                for by in 0..ysize_blocks {
+                    for bx in 0..xsize_blocks {
+                        let idx = by * xsize_blocks + bx;
+                        raw_strategy_v[idx] = ac_strategy.raw_strategy(bx, by);
+                        is_first_block[idx] = ac_strategy.is_first(bx, by);
+                    }
+                }
                 recon_hook::store(recon_hook::InternalRecon {
                     width,
                     height,
@@ -262,6 +275,15 @@ impl VarDctEncoder {
                     b: cropped_b,
                     iter,
                     iters,
+                    xsize_blocks,
+                    ysize_blocks,
+                    raw_strategy: raw_strategy_v,
+                    is_first_block,
+                    quant_field_u8: quant_field.to_vec(),
+                    xsize_tiles: cfl_map.xsize_tiles,
+                    ysize_tiles: cfl_map.ysize_tiles,
+                    cfl_ytox: cfl_map.ytox.clone(),
+                    cfl_ytob: cfl_map.ytob.clone(),
                 });
             }
 
@@ -545,6 +567,19 @@ pub mod recon_hook {
         pub b: Vec<f32>,
         pub iter: usize,
         pub iters: usize,
+        // Per-block strategy info for chunk-2 diff-map correlation.
+        // Length: xsize_blocks * ysize_blocks, row-major.
+        pub xsize_blocks: usize,
+        pub ysize_blocks: usize,
+        pub raw_strategy: Vec<u8>,
+        pub is_first_block: Vec<bool>,
+        pub quant_field_u8: Vec<u8>,
+        // Per-tile CfL state used by the buttloop's reconstruction.
+        // Length: xsize_tiles * ysize_tiles, row-major.
+        pub xsize_tiles: usize,
+        pub ysize_tiles: usize,
+        pub cfl_ytox: Vec<i8>,
+        pub cfl_ytob: Vec<i8>,
     }
 
     static CAPTURE_ENABLED: AtomicBool = AtomicBool::new(false);
