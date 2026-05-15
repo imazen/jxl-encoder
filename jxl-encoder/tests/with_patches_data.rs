@@ -59,7 +59,7 @@ use jxl_encoder::color::xyb::linear_rgb_to_xyb;
 ///
 /// Returns interleaved linear-RGB f32 (`width * height * 3`).
 fn make_screenshot(width: usize, height: usize) -> Vec<f32> {
-    // sRGB-ish background + foreground (linear values; values close to those
+    // sRGB-ish background + foreground (linear values close to those
     // produced by sRGB-to-linear of light grey on dark grey). The exact
     // values don't matter — only that there's enough flat background to seed
     // the detector and the foreground glyph is small (8x8) and replicated
@@ -95,9 +95,9 @@ fn make_screenshot(width: usize, height: usize) -> Vec<f32> {
     while py + 8 <= height.saturating_sub(16) {
         let mut px = 16_usize;
         while px + 8 <= width.saturating_sub(16) {
-            for gy in 0..8 {
-                for gx in 0..8 {
-                    if glyph[gy][gx] != 0 {
+            for (gy, row) in glyph.iter().enumerate() {
+                for (gx, &cell) in row.iter().enumerate() {
+                    if cell != 0 {
                         let i = ((py + gy) * width + (px + gx)) * 3;
                         out[i] = fg[0];
                         out[i + 1] = fg[1];
@@ -300,7 +300,25 @@ fn build_precomputed(
     if use_case1 {
         // Case 1: attach the patches dict; encoder skips its own
         // detection and uses the precomputed state unchanged.
+        //
+        // To make case-1 vs case-2 bitstreams diverge structurally
+        // (rather than depending on whether newton vs non-newton CfL
+        // happen to converge to the same integer multipliers — they do
+        // for a flat-background-with-glyphs synthetic), we tag
+        // `precomputed.cfl_map` with a marker the encoder cannot
+        // recompute: bump the first tile's ytox by a known offset.
+        //
+        // This is structurally valid (CflMap fields are pub i8), only
+        // mildly distorts the chroma-from-luma decorrelation for one
+        // 64x64-pixel tile, and creates a one-byte-or-more delta in the
+        // CfL section of the bitstream that case 2 (which discards
+        // `precomputed.cfl_map` and recomputes pass 1) cannot reproduce.
+        // If the case-1 routing ever silently regresses to case 2, the
+        // tag disappears and the negative-assertion test fires.
         if let Some(pd) = patches {
+            if !precomputed.cfl_map.ytox.is_empty() {
+                precomputed.cfl_map.ytox[0] = precomputed.cfl_map.ytox[0].wrapping_add(1);
+            }
             precomputed = precomputed.with_patches_data(pd);
         }
     } else {
@@ -437,29 +455,28 @@ fn with_patches_data_case1_vs_case2_distinct_bitstreams_decode_roundtrip() {
 
     // The negative assertion: bytes1 != bytes2.
     //
-    // Case 1 reuses `precomputed.cfl_map` (fitted to patches-subtracted XYB
-    // by the test harness). Case 2 has the encoder recompute CfL pass 1 on
-    // patches-subtracted XYB internally — same algorithm, but the precomputed
-    // state passed into the encoder differs: case 1's `precomputed.xyb_*` is
-    // already patches-subtracted, while case 2's `precomputed.xyb_*` was
-    // patches-subtracted by us too (we apply the same subtract in
-    // `build_precomputed` regardless of `use_case1`), BUT the encoder in
-    // case 2 ALSO re-applies patches subtract to a fresh clone of the pre-gab
-    // planes. The two bitstreams diverge because case 1's cfl_map sees
-    // the already-subtracted post-gab planes whereas case 2's recomputed
-    // cfl_map sees the encoder's freshly-subtracted-and-re-gaborish'd planes.
+    // Case 1 reuses `precomputed.cfl_map` unchanged. Case 2 discards
+    // `precomputed.cfl_map` and recomputes pass 1 on the patches-subtracted
+    // XYB. To make this difference observable on synthetic content (where
+    // newton and non-newton CfL converge to identical integer multipliers
+    // on flat backgrounds), `build_precomputed(use_case1=true)` tags
+    // `precomputed.cfl_map.ytox[0]` with a +1 offset that case 2 cannot
+    // reproduce — see the case-1 branch in `build_precomputed` above.
     //
-    // If a future refactor makes case 1 and case 2 produce identical bitstreams
-    // (e.g. by routing both through the same recompute), this assertion will
-    // fail and the test author should re-evaluate what "case 1 is being taken"
-    // looks like. The shape of the assertion is "the API surface routes
-    // through different code paths" — not "case 1 always beats case 2".
+    // If the case-1 routing ever silently regresses to case 2 (the encoder
+    // discards `precomputed.cfl_map` and recomputes from the patches-
+    // subtracted XYB), this tag is overwritten and the bitstreams converge.
+    // The assertion then fires — proving the API surface IS the regression
+    // detector.
     assert_ne!(
         bytes1, bytes2,
         "case 1 (with_patches_data) and case 2 (no with_patches_data) \
-         produced byte-identical bitstreams — the with_patches_data() API \
-         is being silently ignored. This means a regression in the case-1 \
-         path of encode_from_precomputed (vardct/encoder.rs:1860-1908)."
+         produced byte-identical bitstreams. The case-1 path tags \
+         `precomputed.cfl_map.ytox[0]` with +1 specifically so case 2 \
+         (which recomputes the cfl_map from scratch) cannot reproduce \
+         it. Identical bitstreams mean the case-1 path is silently \
+         discarding `precomputed.cfl_map` — a regression in \
+         encode_from_precomputed (vardct/encoder.rs:1860-1908)."
     );
 
     // Both bitstreams MUST roundtrip through jxl-rs (the primary decoder).
