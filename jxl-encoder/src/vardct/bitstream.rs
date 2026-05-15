@@ -1477,7 +1477,11 @@ impl VarDctEncoder {
             )
         };
 
-        let ac_strategy = if let Some(forced) = self.force_strategy {
+        // `ac_strategy` may be refined by the zensim loop below, which
+        // splits large transforms with high perceptual error. The `mut`
+        // is unused when the `zensim-loop` cargo feature is disabled.
+        #[cfg_attr(not(feature = "zensim-loop"), allow(unused_mut))]
+        let mut ac_strategy = if let Some(forced) = self.force_strategy {
             super::encoder::force_strategy_map(xsize_blocks, ysize_blocks, forced)
         } else if !self.ac_strategy_enabled {
             AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks)
@@ -1543,6 +1547,16 @@ impl VarDctEncoder {
             );
         }
 
+        // Quantization loops: iteratively refine quant_field using perceptual
+        // distance feedback. Butteraugli, ssim2 and zensim loops can stack:
+        // butteraugli handles global convergence, ssim2 adds SSIM-aware spatial
+        // fine-tuning, zensim refines AC strategy by splitting large transforms
+        // with high perceptual error. Mirrors the still-image path at
+        // `vardct/encoder.rs:1178-1259`. Pre-fix the animation path only honoured
+        // `butteraugli_iters` — `ssim2_iters` and `zensim_iters` were silently
+        // dropped. All three are wired through `encode_animation_lossy` to
+        // `enc.{butteraugli,ssim2,zensim}_iters` (api.rs:6065-6076) so the
+        // bug was a divergence between the wiring layer and the encoder body.
         #[cfg(feature = "butteraugli-loop")]
         if self.butteraugli_iters > 0 {
             let initial_qf_float = quant_field_float.clone();
@@ -1563,6 +1577,63 @@ impl VarDctEncoder {
                 &initial_qf_float,
                 &cfl_map,
                 &ac_strategy,
+                patches_data.as_ref(),
+                None, // No splines in animation frames
+            )?;
+        }
+
+        // SSIM2 quantization loop: alternative to butteraugli using SSIM2 +
+        // per-block RMSE. Same structure as butteraugli loop but faster per
+        // iteration. Mirrors `vardct/encoder.rs:1208-1232`.
+        #[cfg(feature = "ssim2-loop")]
+        if self.ssim2_iters > 0 {
+            let initial_qf_float = quant_field_float.clone();
+            params = self.ssim2_refine_quant_field(
+                linear_rgb,
+                width,
+                height,
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                xsize_blocks,
+                ysize_blocks,
+                &params,
+                &mut quant_field,
+                &mut quant_field_float,
+                &initial_qf_float,
+                &cfl_map,
+                &ac_strategy,
+                patches_data.as_ref(),
+                None, // No splines in animation frames
+            )?;
+        }
+
+        // Zensim quantization loop: uses zensim psychovisual metric +
+        // per-pixel diffmap. Also refines AC strategy by splitting large
+        // transforms with high perceptual error (hence `&mut ac_strategy`).
+        // Mirrors `vardct/encoder.rs:1234-1259`.
+        #[cfg(feature = "zensim-loop")]
+        if self.zensim_iters > 0 {
+            let initial_qf_float = quant_field_float.clone();
+            params = self.zensim_refine_quant_field(
+                linear_rgb,
+                width,
+                height,
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                xsize_blocks,
+                ysize_blocks,
+                &params,
+                &mut quant_field,
+                &mut quant_field_float,
+                &initial_qf_float,
+                &cfl_map,
+                &mut ac_strategy,
                 patches_data.as_ref(),
                 None, // No splines in animation frames
             )?;

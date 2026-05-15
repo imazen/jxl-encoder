@@ -1616,3 +1616,157 @@ fn test_animation_lossy_runs_cfl_pass_2() {
     let (w, h, decoded) = decode_animation_oxide(&anim);
     assert_eq!((w, h, decoded.len()), (256, 256, 1));
 }
+
+// ── Animation lossy: ssim2 / zensim refinement loops (B3 audit fix C) ──────
+
+/// 64x64 RGB image with edges + smooth gradients + chroma noise — gives the
+/// quantization refinement loops something meaningful to refine. Smaller than
+/// `chroma_band_256` to keep the loop tests fast.
+#[cfg(any(feature = "ssim2-loop", feature = "zensim-loop"))]
+fn refine_friendly_64() -> Vec<u8> {
+    let w = 64usize;
+    let h = 64usize;
+    let mut pixels = vec![0u8; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let i = (y * w + x) * 3;
+            // Diagonal gradient base
+            let r = ((x * 4) & 0xFF) as u8;
+            let g = (((x + y) * 3) & 0xFF) as u8;
+            let b = ((y * 4) & 0xFF) as u8;
+            pixels[i] = r;
+            pixels[i + 1] = g;
+            pixels[i + 2] = b;
+            // Hard edges at 1/4 and 1/2 — quant loops treat these very
+            // differently from the smooth regions
+            if x == 16 || y == 32 {
+                pixels[i] = 240;
+                pixels[i + 1] = 30;
+                pixels[i + 2] = 240;
+            }
+            // Chroma noise patch in centre
+            if (24..40).contains(&x) && (24..40).contains(&y) {
+                let h = (x as u32).wrapping_mul(0x9E3779B1) ^ (y as u32).wrapping_mul(0x85EBCA77);
+                pixels[i + 1] = ((pixels[i + 1] as u32 + (h & 0x7F)) & 0xFF) as u8;
+                pixels[i + 2] = ((pixels[i + 2] as u32 + ((h >> 7) & 0x7F)) & 0xFF) as u8;
+            }
+        }
+    }
+    pixels
+}
+
+/// Regression test for the animation-frame-path missing SSIM2 refinement loop
+/// (`vardct/bitstream.rs::encode_frame_to_writer` pre-fix).
+///
+/// Pre-fix, the animation lossy path only honoured `cfg.butteraugli_iters` —
+/// `cfg.ssim2_iters` and `cfg.zensim_iters` were silently dropped even though
+/// they were already wired through `encode_animation_lossy` to
+/// `enc.{ssim2,zensim}_iters` (api.rs:6065-6076). The still-image path at
+/// `vardct/encoder.rs:1208-1232` (ssim2) and `:1234-1259` (zensim) chains
+/// these refinement loops after the butteraugli loop so each can fine-tune
+/// the float quant_field that the bitstream then quantizes from.
+///
+/// Effect of the bug: callers using
+/// `LossyConfig::with_ssim2_iters(N).encode_animation(...)` got the same
+/// bitstream as if they had passed 0 iterations — the SSIM2 perceptual
+/// refinement never ran, the float quant_field stayed at the post-buttloop
+/// (or post-initial) values, and no per-block adjustments from SSIM2 +
+/// per-block linear-RGB RMSE feedback were applied.
+///
+/// Strategy: encode the same single-frame animation twice — once with
+/// `with_ssim2_iters(1)` and once with `with_ssim2_iters(0)` (both with
+/// butteraugli loop disabled to isolate the SSIM2 effect). Pre-fix the two
+/// encodes are byte-identical because the SSIM2 path never reaches
+/// `ssim2_refine_quant_field`. Post-fix the iter=1 encode differs because
+/// the loop refined the float quant_field, which changed downstream
+/// quantization decisions.
+#[cfg(feature = "ssim2-loop")]
+#[test]
+fn test_animation_lossy_ssim2_iters_refines_quant_field() {
+    let pixels = refine_friendly_64();
+    let frames = [AnimationFrame {
+        pixels: &pixels,
+        duration: 1,
+    }];
+    let animation = AnimationParams::default();
+
+    let no_ssim2 = LossyConfig::new(2.0)
+        .with_butteraugli_iters(0)
+        .with_ssim2_iters(0)
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .unwrap_or_else(|e| panic!("encode_animation (ssim2_iters=0) failed: {e:?}"));
+
+    let with_ssim2 = LossyConfig::new(2.0)
+        .with_butteraugli_iters(0)
+        .with_ssim2_iters(1)
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .unwrap_or_else(|e| panic!("encode_animation (ssim2_iters=1) failed: {e:?}"));
+
+    eprintln!(
+        "[ssim2-iters-regression] no_ssim2={} with_ssim2={} delta={}",
+        no_ssim2.len(),
+        with_ssim2.len(),
+        with_ssim2.len() as i64 - no_ssim2.len() as i64,
+    );
+
+    assert_ne!(
+        no_ssim2, with_ssim2,
+        "with_ssim2_iters(1) produced byte-identical output to ssim2_iters(0). \
+         The SSIM2 refinement loop was not invoked — encode_frame_to_writer \
+         silently dropped the ssim2_iters setting (animation lossy path B3 \
+         audit fix C)."
+    );
+
+    let (w, h, decoded) = decode_animation_oxide(&with_ssim2);
+    assert_eq!((w, h, decoded.len()), (64, 64, 1));
+}
+
+/// Regression test for the animation-frame-path missing zensim refinement loop
+/// (`vardct/bitstream.rs::encode_frame_to_writer` pre-fix). Mirror of
+/// `test_animation_lossy_ssim2_iters_refines_quant_field` for the zensim
+/// loop: same wiring failure, same canonical fix (mirror
+/// `vardct/encoder.rs:1234-1259`).
+///
+/// The zensim loop also refines `ac_strategy` (splits large transforms with
+/// high perceptual error), so this test specifically exercises the
+/// `&mut ac_strategy` thread the fix added.
+#[cfg(feature = "zensim-loop")]
+#[test]
+fn test_animation_lossy_zensim_iters_refines_quant_field() {
+    let pixels = refine_friendly_64();
+    let frames = [AnimationFrame {
+        pixels: &pixels,
+        duration: 1,
+    }];
+    let animation = AnimationParams::default();
+
+    let no_zensim = LossyConfig::new(2.0)
+        .with_butteraugli_iters(0)
+        .with_zensim_iters(0)
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .unwrap_or_else(|e| panic!("encode_animation (zensim_iters=0) failed: {e:?}"));
+
+    let with_zensim = LossyConfig::new(2.0)
+        .with_butteraugli_iters(0)
+        .with_zensim_iters(1)
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .unwrap_or_else(|e| panic!("encode_animation (zensim_iters=1) failed: {e:?}"));
+
+    eprintln!(
+        "[zensim-iters-regression] no_zensim={} with_zensim={} delta={}",
+        no_zensim.len(),
+        with_zensim.len(),
+        with_zensim.len() as i64 - no_zensim.len() as i64,
+    );
+
+    assert_ne!(
+        no_zensim, with_zensim,
+        "with_zensim_iters(1) produced byte-identical output to zensim_iters(0). \
+         The zensim refinement loop was not invoked — encode_frame_to_writer \
+         silently dropped the zensim_iters setting (animation lossy path B3 \
+         audit fix C)."
+    );
+
+    let (w, h, decoded) = decode_animation_oxide(&with_zensim);
+    assert_eq!((w, h, decoded.len()), (64, 64, 1));
+}
