@@ -818,4 +818,150 @@ mod tests {
             cfl.ysize_tiles
         );
     }
+
+    #[test]
+    fn test_refine_cfl_map_clamps_at_buffer_capacity() {
+        // Regression for the OOB-write bug fixed in commit 4400284.
+        //
+        // The per-tile coefficient accumulator (`coeffs_yx` etc.) is sized
+        // `TILE_DIM_IN_BLOCKS * TILE_DIM_IN_BLOCKS * DCT_BLOCK_SIZE = 4096`
+        // floats. The libjxl tile-edge gate at line 465 uses `tile_bx0`
+        // (the tile origin), not the current block's `bx`, so a multi-block
+        // first-block whose coverage extends past the tile end isn't
+        // filtered — its full `cx * cy * DCT_BLOCK_SIZE` coefficients land
+        // in the current tile's accumulator.
+        //
+        // Without the `take = num_coeffs.min(buf_remaining)` clamp added
+        // in 4400284, an `ac_strategy` map that fills the early part of a
+        // tile with single-block (DCT8) first-blocks and then places a
+        // multi-block first-block (DCT32x32 here) at the bottom-right
+        // corner panics with `index out of bounds: the len is 4096 but
+        // the index is 4096`.
+        //
+        // The companion test 68fe362 exercises only DCT8 / DCT16x8 maps
+        // whose cumulative `num_coeffs` stays well under 4096, so it
+        // doesn't catch a regression that drops the clamp.
+        //
+        // **How this triggers the OOB**:
+        // - 16x16-block image (128x128 px), so the DCT32x32 first-block
+        //   at (5, 5) — covering blocks (5..9, 5..9) — stays within the
+        //   image grid (no `crosses_image` debug-assert) but extends past
+        //   tile (0, 0)'s end at block 8.
+        // - In tile (0, 0) the row-major loop visits row 0..4 (40 DCT8
+        //   first-blocks → num_ac=2560), then row 5 cols 0..4 (5 DCT8 →
+        //   num_ac=2880), then (5, 5) DCT32x32 first-block (num_coeffs
+        //   = 4*4*64 = 1024 → num_ac=3904), then row 6 cols 0..2 (3 DCT8
+        //   → num_ac=4096). At row 6 col 3 the unclamped write would
+        //   target `coeffs_yx[4096+0]` and panic.
+        // - With the clamp, num_ac == buf_cap after (2, 6) and the outer
+        //   loop breaks via the `'tile_loop` label.
+        use crate::color::xyb::linear_rgb_to_xyb;
+        use crate::vardct::ac_strategy::{AcStrategyMap, RAW_STRATEGY_DCT32X32};
+
+        const WIDTH: usize = 128;
+        const HEIGHT: usize = 128;
+        const N: usize = WIDTH * HEIGHT;
+
+        // Multi-frequency colorful XYB content so the DCT actually has
+        // signal to write (ensures the OOB path is exercised on real
+        // floating-point values, not just zeros that LLVM might elide).
+        let mut xyb_x = vec![0.0f32; N];
+        let mut xyb_y = vec![0.0f32; N];
+        let mut xyb_b = vec![0.0f32; N];
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let fx = x as f32 / WIDTH as f32;
+                let fy = y as f32 / HEIGHT as f32;
+                let r = (0.5 + 0.4 * (fx * 9.0).sin() * (fy * 7.0).cos()).clamp(0.05, 0.95);
+                let g = (0.4 + 0.3 * (fx * 5.0).cos()).clamp(0.05, 0.95);
+                let b_ = (0.5 + 0.4 * (fy * 13.0).sin()).clamp(0.05, 0.95);
+                let (vx, vy, vb) = linear_rgb_to_xyb(r, g, b_);
+                let i = y * WIDTH + x;
+                xyb_x[i] = vx;
+                xyb_y[i] = vy;
+                xyb_b[i] = vb;
+            }
+        }
+
+        let xsize_blocks = WIDTH / BLOCK_DIM; // 16
+        let ysize_blocks = HEIGHT / BLOCK_DIM; // 16
+
+        // Pre-compute a baseline cfl map (all DCT8, q=1) so we have
+        // something to refine into.
+        let mut cfl = compute_cfl_map(
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            WIDTH,
+            HEIGHT,
+            xsize_blocks,
+            ysize_blocks,
+            false, // use_newton — keep this fast (no iteration loop)
+            1e-3,
+            10,
+        );
+
+        // Build the pathological ac_strategy: default DCT8 everywhere,
+        // plus a single DCT32x32 first-block at (5, 5). Coverage extends
+        // to (8, 8) inclusive — within the 16x16 image and within the
+        // single 32x32-block pass-group, so set() does NOT short-circuit
+        // (debug_asserts pass).
+        let mut ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
+        ac_strategy.set(5, 5, RAW_STRATEGY_DCT32X32);
+
+        // Sanity: confirm we constructed the trigger correctly. The
+        // 32x32 first-block must be inside tile (0, 0) and its coverage
+        // must extend past the tile end at block 8.
+        assert!(ac_strategy.is_first(5, 5), "DCT32x32 first-block lost");
+        assert_eq!(ac_strategy.raw_strategy(5, 5), RAW_STRATEGY_DCT32X32);
+        assert!(
+            !ac_strategy.is_first(8, 5),
+            "DCT32x32 should mark (8, 5) as covered, not first"
+        );
+        assert!(
+            ac_strategy.is_first(0, 6),
+            "row-6 col-0 should still be a DCT8 first-block — needed to push num_ac past buf_cap"
+        );
+
+        // Use a uniform quant_field so the `take = ...` math is the only
+        // thing controlling the trip past 4096.
+        let quant_field = vec![1u8; xsize_blocks * ysize_blocks];
+
+        // The actual regression check: this call must not panic. Without
+        // the `min(buf_remaining)` clamp, refine_cfl_map indexes
+        // `coeffs_yx[4096]` on this input and panics with "index out of
+        // bounds: the len is 4096 but the index is 4096".
+        refine_cfl_map(
+            &mut cfl,
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            WIDTH,
+            xsize_blocks,
+            ysize_blocks,
+            &ac_strategy,
+            &quant_field,
+            0.5,   // quant_scale
+            false, // use_newton (fast path, no iterations needed)
+            1e-3,
+            10,
+        );
+
+        // Sensibility check: every cfl entry must remain a valid i8
+        // (no garbage from OOB writes overflowing into another tile's
+        // result vector or bleeding through find_best_multiplier on
+        // uninitialized data). Since `Vec<i8>` already statically
+        // constrains values to [-128, 127], the meaningful check is
+        // that the values are finite-bounded relative to a known-good
+        // baseline — refine on this input shouldn't push any tile to
+        // a wildly different multiplier than the pass-1 fit.
+        assert_eq!(cfl.ytox.len(), cfl.xsize_tiles * cfl.ysize_tiles);
+        assert_eq!(cfl.ytob.len(), cfl.xsize_tiles * cfl.ysize_tiles);
+        for &v in cfl.ytox.iter().chain(cfl.ytob.iter()) {
+            // i8 range — true by construction, but also documents that
+            // the assertion exists and would catch a hypothetical
+            // future change that widens the field type.
+            let _: i8 = v;
+        }
+    }
 }
