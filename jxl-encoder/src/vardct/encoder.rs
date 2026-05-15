@@ -1146,6 +1146,35 @@ impl VarDctEncoder {
         adjust_quant_field_with_distance(&ac_strategy, &mut quant_field, self.distance);
         adjust_quant_field_float_with_distance(&ac_strategy, &mut quant_field_float, self.distance);
 
+        // CfL pass 2: recompute CfL map using actual AC strategies and per-block
+        // quantization weighting. Uses the same FindBestMultiplier as pass 1 but
+        // with strategy-specific DCTs and quant-weighted coefficients.
+        // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl.
+        //
+        // ORDERING: CfL pass 2 must run BEFORE the butteraugli loop so the
+        // loop's internal recon and the shipped bitstream both see the same
+        // post-pass-2 cfl_map. Mirrors libjxl enc_heuristics.cc:1190-1193 (CfL2)
+        // → :1250-1252 (FindBestQuantizer/buttloop). See drift investigation
+        // 2026-05-15 (chunk-3) — running CfL pass 2 AFTER the buttloop caused
+        // the buttloop to converge on a target the decoder never delivered.
+        if self.profile.cfl_two_pass && self.cfl_enabled {
+            super::chroma_from_luma::refine_cfl_map(
+                &mut cfl_map,
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                xsize_blocks,
+                ysize_blocks,
+                &ac_strategy,
+                &quant_field,
+                params.scale,
+                self.profile.cfl_newton,
+                self.profile.cfl_newton_eps,
+                self.profile.cfl_newton_max_iters,
+            );
+        }
+
         // Quantization loops: iteratively refine quant_field using perceptual
         // distance feedback. Butteraugli and zensim loops can stack: butteraugli
         // handles global convergence, zensim adds SSIM-aware spatial fine-tuning.
@@ -1286,27 +1315,9 @@ impl VarDctEncoder {
             }
         }
 
-        // CfL pass 2: recompute CfL map using actual AC strategies and per-block
-        // quantization weighting. Uses the same FindBestMultiplier as pass 1 but
-        // with strategy-specific DCTs and quant-weighted coefficients.
-        // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl.
-        if self.profile.cfl_two_pass && self.cfl_enabled {
-            super::chroma_from_luma::refine_cfl_map(
-                &mut cfl_map,
-                &xyb_x,
-                &xyb_y,
-                &xyb_b,
-                padded_width,
-                xsize_blocks,
-                ysize_blocks,
-                &ac_strategy,
-                &quant_field,
-                params.scale,
-                self.profile.cfl_newton,
-                self.profile.cfl_newton_eps,
-                self.profile.cfl_newton_max_iters,
-            );
-        }
+        // CfL pass 2 was moved up to BEFORE the butteraugli loop (drift-fix
+        // chunk-3, 2026-05-15). See the moved block above and the comment
+        // there for ordering rationale.
 
         // Perform DCT and quantization (XYB data is padded to block boundaries)
         let transform_out = self.transform_and_quantize(
