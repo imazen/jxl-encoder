@@ -25,24 +25,24 @@
 #[cfg(feature = "profile-phases")]
 mod inner {
     use std::collections::BTreeMap;
-    use std::sync::Mutex;
+    use std::sync::{Mutex, OnceLock};
     use std::time::Instant;
 
-    use once_cell::sync::Lazy;
-
-    static ACC: Lazy<Mutex<BTreeMap<&'static str, u128>>> =
-        Lazy::new(|| Mutex::new(BTreeMap::new()));
+    fn acc() -> &'static Mutex<BTreeMap<&'static str, u128>> {
+        static ACC: OnceLock<Mutex<BTreeMap<&'static str, u128>>> = OnceLock::new();
+        ACC.get_or_init(|| Mutex::new(BTreeMap::new()))
+    }
 
     /// Add a duration in nanoseconds to the accumulator for the given phase.
     pub fn record(phase: &'static str, ns: u128) {
-        if let Ok(mut m) = ACC.lock() {
+        if let Ok(mut m) = acc().lock() {
             *m.entry(phase).or_insert(0) += ns;
         }
     }
 
     /// Drain the accumulator and return phase -> total nanoseconds.
     pub fn take_snapshot() -> Vec<(&'static str, u128)> {
-        if let Ok(mut m) = ACC.lock() {
+        if let Ok(mut m) = acc().lock() {
             let out: Vec<_> = m.iter().map(|(k, v)| (*k, *v)).collect();
             m.clear();
             out
@@ -53,7 +53,7 @@ mod inner {
 
     /// Reset the accumulator without returning the snapshot.
     pub fn reset() {
-        if let Ok(mut m) = ACC.lock() {
+        if let Ok(mut m) = acc().lock() {
             m.clear();
         }
     }
