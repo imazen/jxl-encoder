@@ -89,6 +89,10 @@ __internals = []
 # emit. Off by default; not stable; mirrors `__internals` shape — items
 # may move or change at any time.
 __pre_quantized = []
+# Re-exports the chunk-1 SplitTreeSamples primitive (modular::tree_learn_split)
+# for the in-crate microbench (benches/tree_learn_split_read_pattern.rs).
+# Off by default; not stable; pure re-export with no behavior change. Issue #40.
+__bench_internals = []
 # Debug hook for capturing the butteraugli loop's INTERNAL reconstruction
 # (the planar linear RGB the loop measures butteraugli against, after the
 # final SetQuantField → transform → quantize → reconstruct → gab → EPF
@@ -131,6 +135,10 @@ imgref = "1.12"
 rgb = "0.8"
 walkdir = "2.5"
 sha2 = "0.11.0"
+# Microbench harness for the chunk-1 SplitTreeSamples primitive (issue #40).
+# zenbench is the workspace-standard benchmarking tool — interleaved sampling
+# and paired statistics give cleaner signal than criterion's isolated rounds.
+zenbench = "0.1.8"
 # archmage is already a regular dep (`default-features = false, features = ["macros"]`);
 # the test suite needs `std` for `archmage::testing::for_each_token_permutation`
 # (used by `tests/nonfinite_xyb_repro.rs` to exercise scalar / SSE / AVX2 / etc.
@@ -218,6 +226,16 @@ path = "examples/lossless_e7_fraction_sweep.rs"
 #       --example lossless_pareto_calibrate --features __expert
 # after editing this file to add a [[example]] entry plus the path dep
 # (see git history pre-2026-05-02 for the previous wiring).
+
+# Microbench for the chunk-1 SplitTreeSamples primitive (issue #40). Compares
+# the random-read access pattern (today's find_best_split `collect` step) vs
+# contiguous reads (what the in-place permutation enables) across sample-count
+# sweeps. See jxl-encoder/CLAUDE.md for the issue #40 context.
+[[bench]]
+name = "tree_learn_split_read_pattern"
+path = "benches/tree_learn_split_read_pattern.rs"
+harness = false
+required-features = ["__bench_internals"]
 
 [lints]
 workspace = true

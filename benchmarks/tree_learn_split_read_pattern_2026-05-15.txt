@@ -1,0 +1,60 @@
+    Finished `bench` profile [optimized + debuginfo] target(s) in 0.11s
+     Running benches/tree_learn_split_read_pattern.rs (target/release/deps/tree_learn_split_read_pattern-6ea624c59e4bc4f0)
+[zenbench] calibration: int=0.33ns/iter mem_bw=116.5GiB/s mem_lat=10.7ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.19ns/iter, TSC: 4.491 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1778910718-17cc.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1778910718-17cc
+  git: a23dd2d55440d126422984c961e33bfac887840d
+═══════════════════════════════════════════════════════════════
+
+  collect_n=10K  4 rounds × 33 calls ⚠ only 4 rounds
+                                   mean ±mad µs  95% CI vs base         ops/s
+  ├─ indexed_random_reads          11.6 ±0.8µs  [9.2–15.7]µs            861M [1]
+  ├─ contiguous_reads               7.0 ±0.3µs  [-38.1%–-18.2%]        1.44G [2]
+  ├─ partition_in_place_then_c…   219.0 ±1.6µs  [+1306.5%–+2674.7%]    45.7M [3] [4]
+  ╰─ partition_in_place_only      168.4 ±3.6µs  [+1281.2%–+1437.8%]    59.4M [5]
+
+  contiguous_reads            ██████████████████████████████████████ 1.44 Gops/s
+  indexed_random_reads        ███████████████████████ 861 Mops/s
+  partition_in_place_only     ██ 59.4 Mops/s
+  partition_in_place_then_c…  █ 45.7 Mops/s
+  [1] CV=36%
+  [2] drift r=1.00 — later rounds slower
+  [3] drift r=-0.80 — later rounds faster
+  [4] CV=46%
+  [5] drift r=-1.00 — later rounds faster
+
+  collect_n=100K  4 rounds × 2 calls ⚠ only 4 rounds
+                                      mean ±mad µs  95% CI vs base        ops/s
+  ├─ indexed_random_reads           238.2 ±42.6µs  [196.5–278.5]µs        420M
+  ├─ contiguous_reads                 71.0 ±3.6µs  [-84.1%–-54.6%]       1.41G [1]
+  ├─ partition_in_place_then_c…   2005.4 ±177.8µs  [+676.9%–+837.6%]     49.9M
+  ╰─ partition_in_place_only      2341.3 ±466.0µs  [+741.1%–+1017.1%]    42.7M
+
+  contiguous_reads            ██████████████████████████████████████ 1.41 Gops/s
+  indexed_random_reads        ███████████ 420 Mops/s
+  partition_in_place_then_c…  █ 49.9 Mops/s
+  partition_in_place_only     █ 42.7 Mops/s
+  [1] drift r=-0.80 — later rounds faster
+
+  collect_n=1M  4 rounds × 1 calls ⚠ only 4 rounds
+                                 mean ±mad ms  95% CI vs base       ops/s
+  ├─ indexed_random_reads          4.6 ±0.4ms  [3.8–5.9]ms           216M [1]
+  ├─ contiguous_reads              0.8 ±0.1ms  [-92.4%–-72.7%]      1.29G
+  ├─ partition_in_place_then_c…   33.0 ±2.4ms  [+474.3%–+837.6%]    30.3M [2]
+  ╰─ partition_in_place_only      33.2 ±8.0ms  [+426.2%–+854.8%]    30.1M [3] [4]
+
+  contiguous_reads            ██████████████████████████████████████ 1.29 Gops/s
+  indexed_random_reads        ██████ 216 Mops/s
+  partition_in_place_then_c…  █ 30.3 Mops/s
+  partition_in_place_only     █ 30.1 Mops/s
+  [1] CV=29%
+  [2] CV=37%
+  [3] drift r=1.00 — later rounds slower
+  [4] CV=33%
+
+  total: 377.2s  (360 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

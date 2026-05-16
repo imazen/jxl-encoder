@@ -21,6 +21,7 @@ pub(crate) mod section;
 pub(crate) mod squeeze;
 pub(crate) mod tree;
 pub(crate) mod tree_learn;
+pub(crate) mod tree_learn_split;
 
 pub use channel::{Channel, ModularImage};
 pub use encode::{
