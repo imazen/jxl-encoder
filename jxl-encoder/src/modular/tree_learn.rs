@@ -1295,8 +1295,14 @@ fn dedup_samples_streaming(
     for pred in 0..num_pred {
         let old_tokens = &samples.residual_tokens[pred];
         let old_ebits = &samples.extra_bits[pred];
-        let new_tokens: Vec<u8> = unique_indices.iter().map(|&i| old_tokens[i as usize]).collect();
-        let new_ebits: Vec<u8> = unique_indices.iter().map(|&i| old_ebits[i as usize]).collect();
+        let new_tokens: Vec<u8> = unique_indices
+            .iter()
+            .map(|&i| old_tokens[i as usize])
+            .collect();
+        let new_ebits: Vec<u8> = unique_indices
+            .iter()
+            .map(|&i| old_ebits[i as usize])
+            .collect();
         samples.residual_tokens[pred] = new_tokens;
         samples.extra_bits[pred] = new_ebits;
     }
@@ -1306,7 +1312,10 @@ fn dedup_samples_streaming(
         if old_props.is_empty() {
             continue;
         }
-        let new_props: Vec<i32> = unique_indices.iter().map(|&i| old_props[i as usize]).collect();
+        let new_props: Vec<i32> = unique_indices
+            .iter()
+            .map(|&i| old_props[i as usize])
+            .collect();
         samples.props[prop_idx] = new_props;
     }
     for prop_idx in 0..total_props {
