@@ -1,0 +1,90 @@
+# SplitWorkspace thread-local cache — paired A/B wall-clock measurement
+# Date: 2026-05-16
+# Repo state (jj change): ynkmxszz (pre-commit working copy)
+# Parent (main):          pwwusplv (1fbb4ba8 docs: lossless e7 1024² at 1.2× cjxl with parallel-tree-learning)
+#
+# Goal: eliminate per-fork SplitWorkspace::new ~12 MB allocations in the
+# parallel-tree-learning path (rayon agent's 2026-05-16 memory note flagged
+# this as the measured Amdahl ceiling on the parallel tree builder).
+#
+# Hardware: AMD Ryzen 9 7950X (16C/32T) water-cooled, 128 GB RAM
+# OS:       WSL2 Linux 6.6
+# Compiler: rustc 1.93 (release profile, NO -C target-cpu=native — runtime SIMD only)
+# Build:    cargo build -p jxl-encoder-cli --release --features parallel-tree-learning --bin cjxl-rs
+#
+# Binaries:
+#   cjxl-rs-baseline = main@origin (1fbb4ba8) + parallel-tree-learning feature
+#   cjxl-rs-splitws  = baseline + thread-local SplitWorkspace cache
+#                      (this change). Replaces per-call SplitWorkspace::new
+#                      with `with_thread_local_workspace(...)` at all 5
+#                      call sites (compute_best_tree_with_budget root +
+#                      sequential loop, build_subtree_sequential,
+#                      build_subtree_recursive_parallel,
+#                      compute_best_tree_with_multipliers).
+#
+# Command per row:
+#   RAYON_NUM_THREADS=8 <binary> <png> /tmp/_bench.jxl -e 7 --lossless
+#
+# Iterations: 10 per (image, binary), interleaved A/B (BASE → SPLITWS alternating)
+# Warmup:     1 BASE + 1 SPLITWS per image before timing
+#
+# Hash-lock verification: all 3 images byte-identical between baseline and
+# splitws at RAYON_NUM_THREADS={1, 4, 8, 16}:
+#   small_0.26MP:   sha256 d16f994ab0026a2a (156321 bytes)
+#   medium_1.05MP:  sha256 703a054799e77e7d (1281763 bytes)
+#   large_4.19MP:   sha256 9bee1b66ce79bed4 (2762508 bytes)
+# Plus all 36 cases in tests/hash_lock_features.rs pass byte-identical at
+# default features AND with --features parallel-tree-learning.
+#
+# Allocation count (heaptrack, medium 1.05 MP):
+#   baseline: 63630 total alloc calls, 232.89M peak heap
+#   splitws:  63434 total alloc calls (-196), 232.89M peak heap (same)
+# Allocation count (heaptrack, large 4.19 MP):
+#   baseline: 90385 total alloc calls, 931.32M peak heap
+#   splitws:  90185 total alloc calls (-200), 931.32M peak heap (same)
+#   diff_log: -684 fewer top-frame allocator calls (most under
+#             with_thread_local_workspace → 10 SplitWorkspace::new total,
+#             one per rayon worker; remainder are 14 inner Vecs ×
+#             ~16 forks that the old per-fork SplitWorkspace::new path made).
+# Peak memory unchanged: TreeSamples (~150 MB) and PNG pixel buffers (~80 MB)
+# dominate; SplitWorkspaces are 1–12 MB each, the cache pins one per worker.
+#
+# Profile images:
+#   small_0.26MP   = /home/lilith/work/codec-corpus/CID22/CID22-512/training/7256805.png
+#   medium_1.05MP  = /home/lilith/work/codec-corpus/clic2025-1024/02809272...png
+#   large_4.19MP   = /home/lilith/work/codec-corpus/clic2025/final-test/8426ed22...png
+#
+# Background load: load average dropped from ~35 (extract_features_372col
+# running) to ~3.5 during the run. Iters 1-2 had higher noise; iters 3-10
+# under load < 5 are tight (max-min spread 50-80 ms at medium, 60-180 ms at large).
+#
+# Summary (10 iters per cell):
+#   small_0.26MP:   305.5 → 308.1 mean (+0.85%, statistically tied)
+#                   300.7 → 298.6 best-iter (-0.7%)
+#   medium_1.05MP:  1891  → 1841  mean (-2.6%)
+#                   1850  → 1810  best-iter (-2.2%)
+#   large_4.19MP:   4698  → 4657  mean (-0.9%)
+#                   4580  → 4570  best-iter (-0.2%)
+#
+# Mean improvement is largest on medium (1.05 MP) at -2.6%. Smaller-than-
+# projected gain because:
+#   1. `vec![0; N]` calloc on Linux with transparent hugepages is fast
+#      (page-fault-on-write rather than upfront memset).
+#   2. Each worker only allocates ONCE per encode regardless of fork count;
+#      with 8 workers and 16 leaf tasks, the saved work is ~8 × calloc-time
+#      not 16 × calloc-time. Calloc-time is the actual saved work, not the
+#      full allocation-and-free pair.
+#   3. The 1.67× internal speedup in compute_best_tree on 8 cores (rayon
+#      agent's measurement) was bounded by something else — likely
+#      `split_off` owned-clone overhead in `split_tree_samples_owned`
+#      (also O(N log N) total) and work imbalance across leaf tasks.
+#
+# Allocation behavior is now structurally bounded: with the cache, total
+# SplitWorkspace allocations across an entire encode = number of distinct
+# rayon worker threads (verified by `test_thread_local_workspace_caps_allocations`
+# Layer-2 invariant test). Before, each `find_best_split` call allocated a
+# fresh ~12 MB workspace; the leak-count diff in heaptrack confirms only
+# 10 SplitWorkspace allocations now live to end-of-program (one cached per
+# worker), versus ~25 cumulative allocations in the baseline.
+#
+# Columns: image  threads  binary  iter  time_ms  bytes

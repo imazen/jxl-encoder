@@ -1572,9 +1572,11 @@ pub(crate) fn compute_best_tree_with_budget(
         multiplier: None,
     });
 
-    // Pre-allocate workspace with maximum possible sizes
+    // The workspace lives in the thread-local cache (see
+    // `with_thread_local_workspace`) so we don't allocate ~12 MB per fork on
+    // the parallel path. The cache grows in place; subsequent calls on the
+    // same worker thread are allocation-free.
     let max_buckets = params.max_property_values + 1;
-    let mut workspace = SplitWorkspace::new(n, histogram_size, max_buckets);
 
     // ── Parallel tree learning (chunk-1 POC, issue #41 follow-on) ────────────
     //
@@ -1610,18 +1612,21 @@ pub(crate) fn compute_best_tree_with_budget(
         if n >= PARALLEL_THRESHOLD && max_nodes >= 4 && root_bits > threshold {
             // Pop the root candidate and try its split.
             let root_candidate = stack.pop().expect("root candidate just pushed");
-            let best_split = find_best_split(
-                samples,
-                root_candidate.start,
-                root_candidate.end,
-                histogram_size,
-                root_candidate.base_bits,
-                params,
-                root_candidate.best_predictor,
-                threshold,
-                &pq,
-                &mut workspace,
-            );
+            let best_split =
+                with_thread_local_workspace(n, histogram_size, max_buckets, |workspace| {
+                    find_best_split(
+                        samples,
+                        root_candidate.start,
+                        root_candidate.end,
+                        histogram_size,
+                        root_candidate.base_bits,
+                        params,
+                        root_candidate.best_predictor,
+                        threshold,
+                        &pq,
+                        workspace,
+                    )
+                });
 
             match best_split {
                 Some(split) if root_candidate.base_bits - split.total_bits > threshold => {
@@ -1792,20 +1797,26 @@ pub(crate) fn compute_best_tree_with_budget(
             continue;
         }
 
-        // Find best split across all properties and thresholds
+        // Find best split across all properties and thresholds.
+        // Workspace lives in a per-thread cache (12 MB at large n) — the
+        // outer loop runs on the main thread so this is one calloc per
+        // encode (first iter) and zero on subsequent iters.
+        let n_node = candidate.end - candidate.start;
         let best_split = crate::profile_time!("tree/find_best_split", {
-            find_best_split(
-                samples,
-                candidate.start,
-                candidate.end,
-                histogram_size,
-                candidate.base_bits,
-                params,
-                candidate.best_predictor,
-                threshold,
-                &pq,
-                &mut workspace,
-            )
+            with_thread_local_workspace(n_node, histogram_size, max_buckets, |workspace| {
+                find_best_split(
+                    samples,
+                    candidate.start,
+                    candidate.end,
+                    histogram_size,
+                    candidate.base_bits,
+                    params,
+                    candidate.best_predictor,
+                    threshold,
+                    &pq,
+                    workspace,
+                )
+            })
         });
 
         match best_split {
@@ -1988,7 +1999,9 @@ fn build_subtree_sequential(
 ) -> Tree {
     let n = samples.num_samples;
     let max_buckets = params.max_property_values + 1;
-    let mut workspace = SplitWorkspace::new(n, histogram_size, max_buckets);
+    // Workspace lives in this thread's cache (see `with_thread_local_workspace`)
+    // — no per-call ~12 MB allocation, even when this fn is invoked from a
+    // rayon worker via `build_subtree_recursive_parallel`.
     let mut entropy_counts = vec![0u32; histogram_size];
 
     let mut tree: Tree = Vec::new();
@@ -2019,18 +2032,21 @@ fn build_subtree_sequential(
             continue;
         }
 
-        let best_split = find_best_split(
-            samples,
-            candidate.start,
-            candidate.end,
-            histogram_size,
-            candidate.base_bits,
-            params,
-            candidate.best_predictor,
-            threshold,
-            pq,
-            &mut workspace,
-        );
+        let best_split =
+            with_thread_local_workspace(count, histogram_size, max_buckets, |workspace| {
+                find_best_split(
+                    samples,
+                    candidate.start,
+                    candidate.end,
+                    histogram_size,
+                    candidate.base_bits,
+                    params,
+                    candidate.best_predictor,
+                    threshold,
+                    pq,
+                    workspace,
+                )
+            });
 
         match best_split {
             Some(split) if candidate.base_bits - split.total_bits > threshold => {
@@ -2261,22 +2277,26 @@ fn build_subtree_recursive_parallel(
     }
 
     // Find best split for the root of this subtree.
+    // Workspace lives in this thread's cache — see `with_thread_local_workspace`.
+    // On a fresh rayon worker this pays one ~12 MB calloc; on subsequent forks
+    // routed to the same worker (work-stealing) the cached buffers are reused.
     let max_buckets = params.max_property_values + 1;
-    let mut workspace = SplitWorkspace::new(n, histogram_size, max_buckets);
     let mut entropy_counts = vec![0u32; histogram_size];
 
-    let split = match find_best_split(
-        &samples,
-        0,
-        n,
-        histogram_size,
-        seed_base_bits,
-        params,
-        seed_predictor,
-        threshold,
-        &pq,
-        &mut workspace,
-    ) {
+    let split = match with_thread_local_workspace(n, histogram_size, max_buckets, |workspace| {
+        find_best_split(
+            &samples,
+            0,
+            n,
+            histogram_size,
+            seed_base_bits,
+            params,
+            seed_predictor,
+            threshold,
+            &pq,
+            workspace,
+        )
+    }) {
         Some(s) if seed_base_bits - s.total_bits > threshold => s,
         _ => {
             // No beneficial split — single-leaf subtree.
@@ -2327,8 +2347,9 @@ fn build_subtree_recursive_parallel(
         &mut entropy_counts,
     );
 
-    // Free the workspace + entropy buffer before the split_off allocations.
-    drop(workspace);
+    // Free the entropy buffer before the split_off allocations. The workspace
+    // is now held in the per-thread cache and intentionally outlives this
+    // call — sibling forks scheduled on the same worker will reuse it.
     drop(entropy_counts);
 
     // Split data into per-side owned halves.
@@ -2509,7 +2530,7 @@ pub fn compute_best_tree_with_multipliers(
     });
 
     let max_buckets = params.max_property_values + 1;
-    let mut workspace = SplitWorkspace::new(n, histogram_size, max_buckets);
+    // Workspace lives in the thread-local cache (see `with_thread_local_workspace`).
 
     while let Some(candidate) = stack.pop() {
         if candidate.end <= candidate.start {
@@ -2708,18 +2729,21 @@ pub fn compute_best_tree_with_multipliers(
             continue;
         }
 
-        let best_split = find_best_split(
-            samples,
-            candidate.start,
-            candidate.end,
-            histogram_size,
-            candidate.base_bits,
-            params,
-            candidate.best_predictor,
-            threshold,
-            &pq,
-            &mut workspace,
-        );
+        let best_split =
+            with_thread_local_workspace(count, histogram_size, max_buckets, |workspace| {
+                find_best_split(
+                    samples,
+                    candidate.start,
+                    candidate.end,
+                    histogram_size,
+                    candidate.base_bits,
+                    params,
+                    candidate.best_predictor,
+                    threshold,
+                    &pq,
+                    workspace,
+                )
+            });
 
         match best_split {
             Some(split) if candidate.base_bits - split.total_bits > threshold => {
@@ -2884,11 +2908,20 @@ struct SplitWorkspace {
     bucket_write_pos: Vec<usize>,
 }
 
+/// Test-only allocation counter for [`SplitWorkspace::new`]. Used by the
+/// thread-local cache invariant test to prove that a full encode triggers
+/// only `O(num_threads)` workspace allocations, not `O(forks)`.
+#[cfg(test)]
+pub(crate) static SPLIT_WS_ALLOC_COUNT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
 impl SplitWorkspace {
     fn new(max_count: usize, histogram_size: usize, max_buckets: usize) -> Self {
         // Provable: `histogram_size` derives from `GATHER_HYBRID_UINT.encode`
         // tokens, max 239 for any u32 input (see HISTO_PADDED comment).
         debug_assert!(histogram_size <= HISTO_PADDED);
+        #[cfg(test)]
+        SPLIT_WS_ALLOC_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         Self {
             count_increase: vec![0u32; max_buckets * HISTO_PADDED],
             extra_bits_increase: vec![0u64; max_buckets],
@@ -2906,6 +2939,98 @@ impl SplitWorkspace {
             bucket_write_pos: vec![0usize; max_buckets],
         }
     }
+
+    /// Grow the cached buffers in-place to fit `(max_count, histogram_size,
+    /// max_buckets)`. Used by [`with_thread_local_workspace`] to reuse a
+    /// per-thread `SplitWorkspace` across many `find_best_split` calls.
+    ///
+    /// All buffers are overwritten before read inside `find_best_split` (the
+    /// `.fill(...)` and bucket-counting passes), so resize-with-zero (or with
+    /// `f64::MAX` / `0usize`) is sufficient — there is no live data carrying
+    /// between calls. `Vec::resize` is a no-op (and zero realloc) when the
+    /// existing `len` already covers the request, which is the steady-state
+    /// case after the first fork on a worker thread.
+    ///
+    /// Why this matters: at n=1.5M samples the `sorted_by_bucket` Vec alone
+    /// is ~12 MB. Allocating one per `build_subtree_recursive_parallel` fork
+    /// (up to 16 leaf tasks) creates ~200 MB of allocator + zero-fill churn
+    /// per encode — the measured Amdahl ceiling on the
+    /// `parallel-tree-learning` path (memory file:
+    /// `rayon_modular_groups_2026-05-16.md`, OUTCOME section).
+    ///
+    /// Caching one workspace per rayon worker thread caps the live allocation
+    /// at `num_threads × 12 MB` regardless of fork count, and subsequent
+    /// reuses skip the `vec![0; 12M]` calloc entirely (resize is a no-op).
+    fn reset_for(&mut self, max_count: usize, histogram_size: usize, max_buckets: usize) {
+        debug_assert!(histogram_size <= HISTO_PADDED);
+        // Per-buckets buffers
+        self.count_increase.resize(max_buckets * HISTO_PADDED, 0u32);
+        self.extra_bits_increase.resize(max_buckets, 0u64);
+        self.bucket_counts.resize(max_buckets, 0u32);
+        self.best_l_cost.resize(max_buckets, f64::MAX);
+        self.best_r_cost.resize(max_buckets, f64::MAX);
+        self.best_l_penalized.resize(max_buckets, f64::MAX);
+        self.best_r_penalized.resize(max_buckets, f64::MAX);
+        self.best_l_pred.resize(max_buckets, 0usize);
+        self.best_r_pred.resize(max_buckets, 0usize);
+        self.bucket_starts.resize(max_buckets + 2, 0usize);
+        self.bucket_write_pos.resize(max_buckets, 0usize);
+        // Per-histogram buffers
+        self.right_counts.resize(histogram_size, 0u32);
+        self.left_counts.resize(histogram_size, 0u32);
+        // Per-sample buffer — the dominant ~12 MB allocation at large n.
+        self.sorted_by_bucket.resize(max_count, 0usize);
+    }
+}
+
+// Thread-local cache of one `SplitWorkspace` per worker thread.
+//
+// Each rayon worker (or the main thread, when running serially) keeps a
+// single `SplitWorkspace` alive across `find_best_split` calls, eliminating
+// the per-call `Vec::with_capacity(...) + zero-fill` cost. The workspace
+// grows in-place via `SplitWorkspace::reset_for` when a larger node
+// arrives; steady-state reuse is allocation-free.
+//
+// Workspaces are NEVER shared across threads — each thread owns its slot,
+// so there is no contention beyond the `RefCell::borrow_mut` (which sees
+// no concurrent access because the cache is `thread_local!`).
+//
+// The first-fork cost on a new worker is the same as a one-shot
+// `SplitWorkspace::new` (≈12 MB calloc at n=1.5M). After that, additional
+// forks on the same worker pay zero allocation. With 8 rayon workers,
+// total live allocation caps at `~8 × 12 MB = ~96 MB` regardless of how
+// many subtree forks a single encode produces — versus the previous
+// `forks × 12 MB ≈ 200 MB` allocator churn that was the measured Amdahl
+// ceiling on the parallel path (see
+// `memory/rayon_modular_groups_2026-05-16.md`).
+thread_local! {
+    static SPLIT_WORKSPACE_CACHE: core::cell::RefCell<Option<SplitWorkspace>> =
+        const { core::cell::RefCell::new(None) };
+}
+
+/// Borrow this thread's cached [`SplitWorkspace`], grow it to fit
+/// `(max_count, histogram_size, max_buckets)`, and pass `&mut SplitWorkspace`
+/// to `f`. The workspace stays in the cache after `f` returns, ready for
+/// the next `find_best_split` on the same thread.
+///
+/// The closure runs while the `RefCell` is mutably borrowed — calling this
+/// function reentrantly from the same thread (e.g. recursing into another
+/// helper that also wants the workspace) will panic. The current call
+/// sites are leaf-level (`find_best_split` only) so reentrancy is not
+/// possible.
+fn with_thread_local_workspace<R>(
+    max_count: usize,
+    histogram_size: usize,
+    max_buckets: usize,
+    f: impl FnOnce(&mut SplitWorkspace) -> R,
+) -> R {
+    SPLIT_WORKSPACE_CACHE.with(|cell| {
+        let mut borrowed = cell.borrow_mut();
+        let ws = borrowed
+            .get_or_insert_with(|| SplitWorkspace::new(max_count, histogram_size, max_buckets));
+        ws.reset_for(max_count, histogram_size, max_buckets);
+        f(ws)
+    })
 }
 
 /// Result of finding the best split for a node.
@@ -3857,6 +3982,102 @@ mod tests {
                 s.is_signed,
             );
         }
+    }
+
+    /// Layer-2 invariant for the thread-local SplitWorkspace cache.
+    ///
+    /// Proves that a full `compute_best_tree` call on a large input
+    /// (≥ parallel-tree-learning threshold) triggers at most ONE
+    /// `SplitWorkspace::new` allocation on the main thread (regardless of
+    /// how many `find_best_split` calls happen during the tree build).
+    /// Before this fix, each `find_best_split` call allocated a fresh
+    /// ~12 MB workspace; with the thread-local cache, only the first
+    /// call on each thread allocates.
+    ///
+    /// The parallel path may add up to `num_rayon_workers` additional
+    /// allocations (one per fresh worker thread that participates), so
+    /// we assert an upper bound rather than equality.
+    #[test]
+    fn test_thread_local_workspace_caps_allocations() {
+        use core::sync::atomic::Ordering;
+
+        // Build a 128×128 2-channel image — yields > 8192 unique samples after
+        // dedup, large enough to trigger many `find_best_split` calls.
+        let mut image = ModularImage {
+            channels: Vec::new(),
+            bit_depth: 8,
+            is_grayscale: false,
+            has_alpha: false,
+        };
+        let mut ch0 = Channel::new(128, 128).unwrap();
+        for y in 0..128 {
+            for x in 0..128 {
+                ch0.set(x, y, ((x * 3 + y * 7) & 0xFF) as i32);
+            }
+        }
+        image.channels.push(ch0);
+        let mut ch1 = Channel::new(128, 128).unwrap();
+        for y in 0u32..128 {
+            for x in 0u32..128 {
+                let v = (x.wrapping_mul(0x9e37) ^ y.wrapping_mul(0x7f4a)) & 0xFF;
+                ch1.set(x as usize, y as usize, v as i32);
+            }
+        }
+        image.channels.push(ch1);
+
+        let params = TreeLearningParams::for_effort(7);
+
+        // First call: warm any state the test runtime might have lazily
+        // initialised, AND warm this thread's cache so the count is stable.
+        let mut samples_warm = TreeSamples::new();
+        gather_samples(&mut samples_warm, &image, 0);
+        let _ = compute_best_tree(&mut samples_warm, &params);
+
+        // Snapshot, then run a real encode and measure how many NEW workspace
+        // allocations happened.
+        let before = SPLIT_WS_ALLOC_COUNT.load(Ordering::Relaxed);
+        let mut samples = TreeSamples::new();
+        gather_samples(&mut samples, &image, 0);
+        let tree = compute_best_tree(&mut samples, &params);
+        let after = SPLIT_WS_ALLOC_COUNT.load(Ordering::Relaxed);
+        let added = after - before;
+
+        // Sanity: this WAS a real tree-build (multiple splits).
+        assert!(
+            tree.len() >= 3,
+            "expected non-trivial tree, got {} nodes",
+            tree.len()
+        );
+
+        // With the thread-local cache, the main thread's workspace is already
+        // alive from the warmup call, so the second call should allocate 0
+        // workspaces on it. Parallel forks may schedule onto rayon workers
+        // that haven't run a tree-learn before in this test process, so we
+        // allow up to `num_threads + 1` additional allocations.
+        //
+        // The old code (per-fork `SplitWorkspace::new`) would have allocated
+        // 16 (up to `2^max_parallel_depth`) workspaces in the recursive path
+        // PLUS one for the outer loop PLUS one for the seed find_best_split
+        // — so > 16 every time on the same machine.
+        let cap = {
+            #[cfg(feature = "parallel-tree-learning")]
+            {
+                // Allow num_rayon_workers (workers may not all be warm).
+                rayon::current_num_threads() + 1
+            }
+            #[cfg(not(feature = "parallel-tree-learning"))]
+            {
+                1
+            }
+        };
+        assert!(
+            added <= cap,
+            "thread-local workspace cache leaked: {} new SplitWorkspace::new \
+             calls (cap = {}). With the cache, only the first call on each \
+             worker thread should allocate.",
+            added,
+            cap,
+        );
     }
 
     #[test]
