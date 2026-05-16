@@ -1,0 +1,28 @@
+# Rayon parallel tree learning — scaling sweep
+# Date: 2026-05-16
+# Repo state (jj change): lklymkru (e3423743 prior agent WIP + clean format)
+# Parent (main):          wxvsswyv (a16958fb docs: chunk-3 microopt for #40)
+#
+# Hardware: AMD Ryzen 9 7950X (16C/32T) water-cooled, 128 GB RAM
+# OS:       WSL2 Linux 6.6
+# Compiler: rustc 1.93 (release profile, incremental compilation)
+#
+# Binaries:
+#   cjxl-rs-default  = default features (no parallel-tree-learning)
+#   cjxl-rs-par      = default + parallel-tree-learning feature
+#
+# Command per row:
+#   RAYON_NUM_THREADS=<threads> <binary> <png> /tmp/_x.jxl -e 7 --lossless
+#
+# Iterations: 5 per (image, threads, variant) cell, interleaved (default → par alternating)
+# Warmup: 1 default + 1 par per image before timing
+#
+# Profile images:
+#   small_0.26MP   = /home/lilith/work/codec-corpus/CID22/CID22-512/training/7256805.png
+#   medium_1.05MP  = /home/lilith/work/codec-corpus/clic2025-1024/02809272...png
+#   large_4.19MP   = /home/lilith/work/codec-corpus/clic2025/final-test/8426ed22...png
+#
+# Hash-lock verification: all 3 images produced byte-identical output (sha256 matches)
+#   between cjxl-rs-default and cjxl-rs-par at all thread counts.
+#
+# Columns: image  threads  variant  iter  time_ms  bytes

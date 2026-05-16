@@ -33,6 +33,12 @@ ssim2-loop = ["jxl_encoder/ssim2-loop"]
 zensim-loop = ["jxl_encoder/zensim-loop"]
 # Enable parallel group encoding with rayon
 parallel = ["jxl_encoder/parallel"]
+# Enable rayon-parallel tree learning in lossless modular path.
+# After dedup, the root split is parallelized via rayon::join with owned
+# per-side TreeSamples + PreQuantizedProps clones; recursive subtree builds
+# may fork further (depth-capped) until subtree size or budget exhaustion.
+# Default-off pending hash-lock verification on the broader test corpus.
+parallel-tree-learning = ["jxl_encoder/parallel-tree-learning", "parallel"]
 
 [dependencies]
 jxl_encoder = { package = "jxl-encoder", path = "../jxl-encoder", version = "0.3.0", default-features = false }
