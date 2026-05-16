@@ -237,5 +237,14 @@ path = "benches/tree_learn_split_read_pattern.rs"
 harness = false
 required-features = ["__bench_internals"]
 
+# Microbench for dedup_samples strategy comparison (issue #40 follow-on).
+# Compares production sort_unstable_by + walk against packed-key sort and
+# hashmap dedup at real-photo sample counts (200K/1.35M/3.2M unique).
+[[bench]]
+name = "dedup_samples_strategies"
+path = "benches/dedup_samples_strategies.rs"
+harness = false
+required-features = ["__bench_internals"]
+
 [lints]
 workspace = true

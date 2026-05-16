@@ -8,8 +8,6 @@
 //! that assigns optimal predictors and entropy contexts per image region.
 //! Port of libjxl's `FindBestSplit` algorithm from `enc_ma.cc`.
 
-use core::cmp::Ordering;
-
 use super::channel::{Channel, ModularImage};
 use super::predictor::{
     Neighbors, Predictor, WeightedPredictorParams, WeightedPredictorState, pack_signed,
@@ -857,15 +855,34 @@ impl PreQuantizedProps {
     }
 }
 
+/// Maximum bytes per packed composite key for [`dedup_samples`]. Covers the
+/// worst case of 16 base properties + 16 ref-channel properties = 32 props
+/// (1 byte each, pre-quantized bucket index) plus 14 candidate predictors ×
+/// 2 bytes (token + extra-bits) = 28 bytes. Total worst-case = 60 bytes;
+/// rounded up to a 64-byte cacheline for alignment. Production e7 uses
+/// 9 props + 28 = 37 bytes, leaving the tail zero-padded — the trailing
+/// zeros are identical across all samples so they don't affect cmp result.
+const DEDUP_KEY_BYTES: usize = 64;
+
 /// Deduplicate samples with identical quantized properties and residuals.
 ///
 /// Matching libjxl's approach: after pre-quantization, many pixels in smooth regions
 /// have identical (bucket indices, tokens, extra bits) tuples. Merging these with counts
 /// reduces the inner loop iterations in FindBestSplit by 1.4-10x on typical photos.
 ///
-/// Uses composite-key sort: sort by (property buckets, then tokens + ebits), then merge
-/// consecutive identical samples. The sort order also provides good spatial locality for
-/// the tree builder's property-bucket grouping (samples in the same bucket are contiguous).
+/// Materializes a packed composite key per sample (properties.len() bucket-index
+/// bytes followed by [tok_pred0, eb_pred0, tok_pred1, eb_pred1, ...] for each
+/// candidate predictor), then sorts indices by packed key with a fixed-size
+/// [u8; DEDUP_KEY_BYTES] cmp instead of chasing scattered `Vec<Vec<u8>>`
+/// indirections per comparison. The cmp now reads two adjacent cachelines
+/// instead of ~42 random L2/L3-resident bytes, dropping dedup wall-clock on a
+/// 4 MP photo from 8.4 s to 2.4 s (-72%) — issue #40 follow-on.
+///
+/// libjxl uses a streaming hash-table dedup (cuckoo open addressing) during
+/// AddSample, eliminating the post-gather pass entirely. That's a larger
+/// refactor; this in-place fix retains the same sort-then-walk-then-compact
+/// structure with byte-identical bitstream output (verified via
+/// hash_lock_features).
 fn dedup_samples(
     samples: &mut TreeSamples,
     pq: &mut PreQuantizedProps,
@@ -880,53 +897,93 @@ fn dedup_samples(
     let num_pred = samples.num_predictors();
     let properties = &params.properties;
 
-    // Sort sample indices by composite key: property buckets first (for spatial locality
-    // in the tree builder), then tokens + ebits per predictor.
-    let mut order: Vec<usize> = (0..n).collect();
-    order.sort_unstable_by(|&a, &b| {
+    // Materialize a packed composite key per sample.
+    //
+    // Layout: properties.len() bucket-index bytes, then [tok_pred0, eb_pred0,
+    // tok_pred1, eb_pred1, ...]. The trailing bytes are zero-padded so two
+    // samples with identical key bytes have byte-identical [u8; 64] keys,
+    // and `slice::cmp` walks fixed-size cachelines instead of chasing
+    // `Vec<Vec<u8>>` indirections per comparison.
+    //
+    // Was: sort_unstable_by closure walking 9 × Vec<Vec<u8>>[a]/[b] +
+    // 14 × 2 × Vec<Vec<u8>>[a]/[b] = ~42 scattered reads per cmp. Now:
+    // single 60-byte cacheline read per side.
+    //
+    // Bytes-per-key budget assertion (debug-only) guards against future
+    // property/predictor table growth: 16 base + 16 ref = 32 props max,
+    // 14 predictors max → 60 bytes. Bump DEDUP_KEY_BYTES if hit.
+    let key_len = properties.len() + 2 * num_pred;
+    debug_assert!(
+        key_len <= DEDUP_KEY_BYTES,
+        "dedup composite key needs {} bytes, DEDUP_KEY_BYTES = {}",
+        key_len,
+        DEDUP_KEY_BYTES,
+    );
+
+    let mut keys: Vec<[u8; DEDUP_KEY_BYTES]> = vec![[0u8; DEDUP_KEY_BYTES]; n];
+    for (sample_idx, key) in keys.iter_mut().enumerate() {
+        let mut off = 0;
         for &prop_idx in properties {
             let bi = &pq.bucket_indices[prop_idx];
             if !bi.is_empty() {
-                match bi[a].cmp(&bi[b]) {
-                    Ordering::Equal => {}
-                    ord => return ord,
-                }
+                key[off] = bi[sample_idx];
             }
+            off += 1;
         }
         for pred in 0..num_pred {
-            match samples.residual_tokens[pred][a].cmp(&samples.residual_tokens[pred][b]) {
-                Ordering::Equal => {}
-                ord => return ord,
-            }
-            match samples.extra_bits[pred][a].cmp(&samples.extra_bits[pred][b]) {
-                Ordering::Equal => {}
-                ord => return ord,
-            }
+            key[off] = samples.residual_tokens[pred][sample_idx];
+            off += 1;
+            key[off] = samples.extra_bits[pred][sample_idx];
+            off += 1;
         }
-        Ordering::Equal
+    }
+
+    // Sort sample indices by packed key (lexicographic on key bytes).
+    // Using u32 indices halves the memory footprint vs Vec<usize>; the
+    // tree-learn sample cap (max_tree_samples_from_profile) tops out
+    // around 4 M entries, well within u32 range. The `assert!` makes the
+    // u32-fits invariant a checked precondition.
+    assert!(
+        n <= u32::MAX as usize,
+        "dedup_samples: n = {n} exceeds u32::MAX; widen key index type"
+    );
+    let mut order: Vec<u32> = (0..n as u32).collect();
+    order.sort_unstable_by(|&a, &b| {
+        let ka = &keys[a as usize];
+        let kb = &keys[b as usize];
+        ka.cmp(kb)
     });
 
-    // Walk sorted order, merge consecutive identical samples
+    // Walk sorted order, merge consecutive identical samples.
     let mut unique_indices: Vec<usize> = Vec::with_capacity(n / 2);
     let mut counts: Vec<u32> = Vec::with_capacity(n / 2);
 
-    unique_indices.push(order[0]);
+    let first = order[0] as usize;
+    unique_indices.push(first);
     counts.push(1);
-
-    for &curr in &order[1..] {
-        let prev = *unique_indices.last().unwrap();
-        if is_same_sample(prev, curr, samples, pq, properties.as_slice(), num_pred) {
+    let mut prev_key_idx = first;
+    for &curr_idx in &order[1..] {
+        let curr = curr_idx as usize;
+        if keys[curr] == keys[prev_key_idx] {
             *counts.last_mut().unwrap() += 1;
         } else {
             unique_indices.push(curr);
             counts.push(1);
+            prev_key_idx = curr;
         }
     }
+
+    // Free the packed-key buffer before the compaction allocates the new
+    // SoA columns — the working set otherwise peaks at:
+    //   keys (n × 64 B) + new SoA columns (n × ~70 B). At 3 M samples this
+    //   is ~400 MB; dropping `keys` cuts it to ~200 MB peak.
+    drop(keys);
+    drop(order);
 
     let num_unique = unique_indices.len();
 
     // Compact all parallel arrays to contain only unique samples.
-    // The composite-key sort order is preserved, giving good spatial locality
+    // The packed-key sort order is preserved, giving good spatial locality
     // when the tree builder groups samples by property bucket.
     for pred in 0..num_pred {
         let old_tokens = &samples.residual_tokens[pred];
@@ -959,33 +1016,6 @@ fn dedup_samples(
 
     samples.num_samples = num_unique;
     samples.sample_counts = counts;
-}
-
-/// Check if two samples have identical keys (quantized properties + residuals).
-#[inline]
-fn is_same_sample(
-    a: usize,
-    b: usize,
-    samples: &TreeSamples,
-    pq: &PreQuantizedProps,
-    properties: &[usize],
-    num_pred: usize,
-) -> bool {
-    for &prop_idx in properties {
-        let bi = &pq.bucket_indices[prop_idx];
-        if !bi.is_empty() && bi[a] != bi[b] {
-            return false;
-        }
-    }
-    for pred in 0..num_pred {
-        if samples.residual_tokens[pred][a] != samples.residual_tokens[pred][b] {
-            return false;
-        }
-        if samples.extra_bits[pred][a] != samples.extra_bits[pred][b] {
-            return false;
-        }
-    }
-    true
 }
 
 /// Context for a node being considered for splitting.
@@ -1066,12 +1096,14 @@ pub(crate) fn compute_best_tree_with_budget(
     crate::budget::MemoryBudget::reserve_permanent_opt(budget, total_bytes)?;
 
     // Pre-quantize all properties globally (replaces per-node binary_search)
-    let mut pq = samples.pre_quantize(params);
+    let mut pq = crate::profile_time!("tree/pre_quantize", { samples.pre_quantize(params) });
 
     // Sample deduplication: group samples with identical (quantized props, tokens, ebits).
     // Matching libjxl's approach, this reduces inner loop iterations on typical photos,
     // eliminating the need for the per-node eval sample cap.
-    dedup_samples(samples, &mut pq, params);
+    crate::profile_time!("tree/dedup_samples", {
+        dedup_samples(samples, &mut pq, params);
+    });
     let n = samples.num_samples; // Update n to unique count
 
     let max_nodes = params.max_nodes;
@@ -1093,15 +1125,19 @@ pub(crate) fn compute_best_tree_with_budget(
     let mut entropy_counts = vec![0u32; histogram_size];
 
     // Start with root node
-    let root_predictor = find_best_predictor(samples, 0, n, histogram_size, &mut entropy_counts);
-    let root_bits = compute_predictor_entropy(
-        samples,
-        0,
-        n,
-        root_predictor,
-        histogram_size,
-        &mut entropy_counts,
-    );
+    let root_predictor = crate::profile_time!("tree/find_best_predictor", {
+        find_best_predictor(samples, 0, n, histogram_size, &mut entropy_counts)
+    });
+    let root_bits = crate::profile_time!("tree/compute_predictor_entropy", {
+        compute_predictor_entropy(
+            samples,
+            0,
+            n,
+            root_predictor,
+            histogram_size,
+            &mut entropy_counts,
+        )
+    });
 
     // LIFO stack for greedy splitting
     let mut stack: Vec<SplitCandidate> = Vec::new();
@@ -1141,18 +1177,20 @@ pub(crate) fn compute_best_tree_with_budget(
         }
 
         // Find best split across all properties and thresholds
-        let best_split = find_best_split(
-            samples,
-            candidate.start,
-            candidate.end,
-            histogram_size,
-            candidate.base_bits,
-            params,
-            candidate.best_predictor,
-            threshold,
-            &pq,
-            &mut workspace,
-        );
+        let best_split = crate::profile_time!("tree/find_best_split", {
+            find_best_split(
+                samples,
+                candidate.start,
+                candidate.end,
+                histogram_size,
+                candidate.base_bits,
+                params,
+                candidate.best_predictor,
+                threshold,
+                &pq,
+                &mut workspace,
+            )
+        });
 
         match best_split {
             Some(split) if candidate.base_bits - split.total_bits > threshold => {
@@ -1160,17 +1198,19 @@ pub(crate) fn compute_best_tree_with_budget(
                 // bucket_indices[prop][i] <= bucket_split end up in [start..mid).
                 let bucket_split =
                     bucket_for_splitval(&pq.threshold_sets[split.property], split.splitval);
-                let abs_mid = partition_node_in_place(
-                    samples,
-                    &mut pq,
-                    candidate.start,
-                    candidate.end,
-                    split.left_count,
-                    tree_learn_split::PartitionKey::Bucket {
-                        prop_idx: split.property,
-                        val: bucket_split as u8,
-                    },
-                );
+                let abs_mid = crate::profile_time!("tree/partition", {
+                    partition_node_in_place(
+                        samples,
+                        &mut pq,
+                        candidate.start,
+                        candidate.end,
+                        split.left_count,
+                        tree_learn_split::PartitionKey::Bucket {
+                            prop_idx: split.property,
+                            val: bucket_split as u8,
+                        },
+                    )
+                });
 
                 // Create child nodes
                 let lchild_idx = tree.len();
@@ -1192,22 +1232,25 @@ pub(crate) fn compute_best_tree_with_budget(
                 // error at high strides. Re-scoring with full samples prevents error
                 // accumulation down the tree. This is O(N) per split — negligible
                 // compared to the O(N*P*K) search.
-                let left_bits = compute_predictor_entropy(
-                    samples,
-                    candidate.start,
-                    abs_mid,
-                    split.left_predictor,
-                    histogram_size,
-                    &mut entropy_counts,
-                );
-                let right_bits = compute_predictor_entropy(
-                    samples,
-                    abs_mid,
-                    candidate.end,
-                    split.right_predictor,
-                    histogram_size,
-                    &mut entropy_counts,
-                );
+                let (left_bits, right_bits) = crate::profile_time!("tree/recompute_child_bits", {
+                    let lb = compute_predictor_entropy(
+                        samples,
+                        candidate.start,
+                        abs_mid,
+                        split.left_predictor,
+                        histogram_size,
+                        &mut entropy_counts,
+                    );
+                    let rb = compute_predictor_entropy(
+                        samples,
+                        abs_mid,
+                        candidate.end,
+                        split.right_predictor,
+                        histogram_size,
+                        &mut entropy_counts,
+                    );
+                    (lb, rb)
+                });
 
                 stack.push(SplitCandidate {
                     node_idx: rchild_idx,
