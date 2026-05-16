@@ -319,14 +319,16 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         .chain(images.iter())
         .flat_map(|img| img.channels.iter())
         .collect();
-    let wp_params = if profile.wp_num_param_sets > 0 {
-        // Collect channel references for cost estimation
-        let channels_for_wp: Vec<super::channel::Channel> =
-            all_channels.iter().map(|c| (*c).clone()).collect();
-        super::predictor::find_best_wp_params(&channels_for_wp, profile.wp_num_param_sets)
-    } else {
-        WeightedPredictorParams::default()
-    };
+    let wp_params = crate::profile_time!("modular/wp_params_search", {
+        if profile.wp_num_param_sets > 0 {
+            // Collect channel references for cost estimation
+            let channels_for_wp: Vec<super::channel::Channel> =
+                all_channels.iter().map(|c| (*c).clone()).collect();
+            super::predictor::find_best_wp_params(&channels_for_wp, profile.wp_num_param_sets)
+        } else {
+            WeightedPredictorParams::default()
+        }
+    });
 
     // Step 1: Gather samples from all groups (with subsampling for large images)
     let total_pixels: usize = meta_image
@@ -348,29 +350,31 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         mr
     };
     let mut samples = TreeSamples::new_with_ref_channels(num_refs);
-    // Gather meta-channel samples first (channel_offset=0, group_id=0)
-    if let Some(meta) = meta_image {
-        gather_samples_strided(&mut samples, meta, 0, 0, stride, &wp_params);
-    }
-    // Gather per-group samples (channel_offset=0: per-group images use 0-based
-    // channel indices, matching the decoder which builds per-group images with
-    // only the non-meta channels. The tree distinguishes meta from per-group
-    // via group_id property, not channel_idx offset.)
-    //
-    // When meta-channels exist in the global section (group_id=0), per-group
-    // channels use group_id = 1 + group_idx to avoid collision. This lets the
-    // tree split on group_id > 0 to separate meta from per-group data.
     let per_group_id_offset = if meta_image.is_some() { 1u32 } else { 0u32 };
-    for (group_idx, group_image) in images.iter().enumerate() {
-        gather_samples_strided(
-            &mut samples,
-            group_image,
-            group_idx as u32 + per_group_id_offset,
-            0,
-            stride,
-            &wp_params,
-        );
-    }
+    crate::profile_time!("modular/gather_samples", {
+        // Gather meta-channel samples first (channel_offset=0, group_id=0)
+        if let Some(meta) = meta_image {
+            gather_samples_strided(&mut samples, meta, 0, 0, stride, &wp_params);
+        }
+        // Gather per-group samples (channel_offset=0: per-group images use 0-based
+        // channel indices, matching the decoder which builds per-group images with
+        // only the non-meta channels. The tree distinguishes meta from per-group
+        // via group_id property, not channel_idx offset.)
+        //
+        // When meta-channels exist in the global section (group_id=0), per-group
+        // channels use group_id = 1 + group_idx to avoid collision. This lets the
+        // tree split on group_id > 0 to separate meta from per-group data.
+        for (group_idx, group_image) in images.iter().enumerate() {
+            gather_samples_strided(
+                &mut samples,
+                group_image,
+                group_idx as u32 + per_group_id_offset,
+                0,
+                stride,
+                &wp_params,
+            );
+        }
+    });
 
     // Step 2: Learn tree with effort-dependent parameters
     let pixel_fraction = if total_pixels > 0 {
@@ -382,7 +386,9 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         .with_ref_properties(num_refs, profile.effort)
         .with_pixel_fraction(pixel_fraction)
         .with_total_pixels(total_pixels);
-    let tree = compute_best_tree(&mut samples, &params);
+    let tree = crate::profile_time!("modular/compute_best_tree", {
+        compute_best_tree(&mut samples, &params)
+    });
     let num_contexts = count_contexts(&tree) as usize;
 
     crate::trace::debug_eprintln!(
@@ -399,25 +405,28 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
 
     // Step 3: Collect residuals from all groups with tree
     let mut all_tokens = Vec::new();
-    // Collect meta-channel residuals first (channel_offset=0, group_id=0)
-    let nb_meta_tokens = if let Some(meta) = meta_image {
-        let meta_tokens = collect_residuals_with_tree(meta, &tree, 0, &wp_params);
-        let n = meta_tokens.len();
-        all_tokens.extend(meta_tokens);
-        n
-    } else {
-        0
-    };
-    // Collect per-group residuals (channel_offset=0, group_id offset matches gather above)
-    for (group_idx, group_image) in images.iter().enumerate() {
-        let group_tokens = collect_residuals_with_tree(
-            group_image,
-            &tree,
-            group_idx as u32 + per_group_id_offset,
-            &wp_params,
-        );
-        all_tokens.extend(group_tokens);
-    }
+    let nb_meta_tokens = crate::profile_time!("modular/collect_residuals_global", {
+        // Collect meta-channel residuals first (channel_offset=0, group_id=0)
+        let nb_meta_tokens = if let Some(meta) = meta_image {
+            let meta_tokens = collect_residuals_with_tree(meta, &tree, 0, &wp_params);
+            let n = meta_tokens.len();
+            all_tokens.extend(meta_tokens);
+            n
+        } else {
+            0
+        };
+        // Collect per-group residuals (channel_offset=0, group_id offset matches gather above)
+        for (group_idx, group_image) in images.iter().enumerate() {
+            let group_tokens = collect_residuals_with_tree(
+                group_image,
+                &tree,
+                group_idx as u32 + per_group_id_offset,
+                &wp_params,
+            );
+            all_tokens.extend(group_tokens);
+        }
+        nb_meta_tokens
+    });
 
     // Note: LZ77 is NOT applied in this path. The per-group sections
     // (write_group_modular_section) re-collect tokens independently without LZ77.
@@ -433,14 +442,16 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     };
 
     // Step 4: Build multi-context ANS code with enhanced clustering
-    let code = build_entropy_code_ans_with_options(
-        &all_tokens,
-        ans_num_contexts,
-        true, // enhanced clustering (pair-merge refinement)
-        true, // optimize uint configs
-        lz77_params.as_ref(),
-        Some(total_pixels),
-    );
+    let code = crate::profile_time!("modular/build_ans_code", {
+        build_entropy_code_ans_with_options(
+            &all_tokens,
+            ans_num_contexts,
+            true, // enhanced clustering (pair-merge refinement)
+            true, // optimize uint configs
+            lz77_params.as_ref(),
+            Some(total_pixels),
+        )
+    });
 
     eprintln!(
         "DIAG tree: {} nodes, {} contexts, {} samples, {} total_tokens, \
@@ -711,13 +722,17 @@ pub fn write_group_modular_section_idx(
             // Collect residuals using the learned tree (multi-context).
             // Per-group images use 0-based channel indices (matching the decoder,
             // which builds per-group images with only non-meta channels).
-            let tokens = super::tree_learn::collect_residuals_with_tree(
-                group_image,
-                tree,
-                group_idx,
-                wp_params,
-            );
-            write_tokens_ans(&tokens, code, None, writer)?;
+            let tokens = crate::profile_time!("modular/collect_residuals_per_group", {
+                super::tree_learn::collect_residuals_with_tree(
+                    group_image,
+                    tree,
+                    group_idx,
+                    wp_params,
+                )
+            });
+            crate::profile_time!("modular/write_tokens_per_group", {
+                write_tokens_ans(&tokens, code, None, writer)?;
+            });
         }
     }
 

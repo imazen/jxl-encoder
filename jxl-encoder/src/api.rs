@@ -3355,13 +3355,15 @@ impl<'a> EncodeRequest<'a> {
         let can_use_patches =
             cfg.patches && !image.is_grayscale && image.bit_depth <= 8 && num_channels >= 3;
         let patches_data = if can_use_patches {
-            crate::vardct::patches::find_and_build_lossless(
-                detection_pixels,
-                w,
-                h,
-                num_channels,
-                image.bit_depth,
-            )
+            crate::profile_time!("modular/patches_detect", {
+                crate::vardct::patches::find_and_build_lossless(
+                    detection_pixels,
+                    w,
+                    h,
+                    num_channels,
+                    image.bit_depth,
+                )
+            })
         } else {
             None
         };

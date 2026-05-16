@@ -560,18 +560,20 @@ impl FrameEncoder {
             compact_info = info;
         } else {
             // No ChannelCompact — standard RCT-only path
-            if has_rct {
-                let (selected_rct, rct_image) = super::encode::select_best_rct(
-                    image,
-                    self.options.profile.nb_rcts_to_try,
-                    self.options.profile.forced_rct,
-                );
-                rct_type = Some(selected_rct);
-                source_image_owned = rct_image;
-            } else {
-                rct_type = None;
-                source_image_owned = image.clone();
-            }
+            crate::profile_time!("modular/rct_select", {
+                if has_rct {
+                    let (selected_rct, rct_image) = super::encode::select_best_rct(
+                        image,
+                        self.options.profile.nb_rcts_to_try,
+                        self.options.profile.forced_rct,
+                    );
+                    rct_type = Some(selected_rct);
+                    source_image_owned = rct_image;
+                } else {
+                    rct_type = None;
+                    source_image_owned = image.clone();
+                }
+            });
             meta_image = None;
             compact_info = Vec::new();
         };

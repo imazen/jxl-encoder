@@ -1,0 +1,92 @@
+# lossless cliff profile (issue #23)
+# generated 2026-05-16T02:11:34Z
+# samples per cell: 2
+# threads: 1
+# efforts: [3, 5, 7]
+# profile-phases feature: true
+
+## summary table
+image	width	height	megapixels	effort	bytes	best_ms	median_ms	worst_ms	ms_per_mp
+7256805.png	512	512	0.26	3	215753	23.6	25.8	25.8	90
+7256805.png	512	512	0.26	5	211822	46.1	47.8	47.8	176
+7256805.png	512	512	0.26	7	156317	896.0	899.5	899.5	3418
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	1024	1024	1.05	3	1581992	116.2	133.7	133.7	111
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	1024	1024	1.05	5	1571819	287.6	287.8	287.8	274
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	1024	1024	1.05	7	1281759	6176.0	6205.0	6205.0	5890
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png	2048	2048	4.19	3	3411919	358.3	366.4	366.4	85
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png	2048	2048	4.19	5	3390115	785.4	796.8	796.8	187
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png	2048	2048	4.19	7	2762504	19450.1	19548.6	19548.6	4637
+
+## phase breakdown (mean across samples)
+
+7256805.png @ e3: 24.7 ms wall-clock per encode
+  phases (summed across 2 samples, divide by samples to get per-encode):
+    modular/rct_select                                2.7 ms (  5.6%)
+    [other / unaccounted]                            46.7 ms ( 94.4%)
+
+7256805.png @ e5: 47.0 ms wall-clock per encode
+  phases (summed across 2 samples, divide by samples to get per-encode):
+    modular/patches_detect                           10.2 ms ( 10.8%)
+    modular/rct_select                               47.9 ms ( 50.9%)
+    [other / unaccounted]                            36.0 ms ( 38.3%)
+
+7256805.png @ e7: 897.8 ms wall-clock per encode
+  phases (summed across 2 samples, divide by samples to get per-encode):
+    modular/build_ans_code                           33.3 ms (  1.9%)
+    modular/collect_residuals_global                107.2 ms (  6.0%)
+    modular/collect_residuals_per_group             112.8 ms (  6.3%)
+    modular/compute_best_tree                      1263.3 ms ( 70.4%)
+    modular/gather_samples                          133.3 ms (  7.4%)
+    modular/patches_detect                           13.7 ms (  0.8%)
+    modular/rct_select                               84.5 ms (  4.7%)
+    modular/wp_params_search                          0.0 ms (  0.0%)
+    modular/write_tokens_per_group                   17.1 ms (  1.0%)
+    [other / unaccounted]                            30.3 ms (  1.7%)
+
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png @ e3: 125.0 ms wall-clock per encode
+  phases (summed across 2 samples, divide by samples to get per-encode):
+    modular/rct_select                               16.0 ms (  6.4%)
+    [other / unaccounted]                           233.9 ms ( 93.6%)
+
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png @ e5: 287.7 ms wall-clock per encode
+  phases (summed across 2 samples, divide by samples to get per-encode):
+    modular/patches_detect                           99.0 ms ( 17.2%)
+    modular/rct_select                              247.0 ms ( 42.9%)
+    [other / unaccounted]                           229.3 ms ( 39.9%)
+
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png @ e7: 6190.5 ms wall-clock per encode
+  phases (summed across 2 samples, divide by samples to get per-encode):
+    modular/build_ans_code                          166.0 ms (  1.3%)
+    modular/collect_residuals_global                549.7 ms (  4.4%)
+    modular/collect_residuals_per_group             533.9 ms (  4.3%)
+    modular/compute_best_tree                      9934.3 ms ( 80.2%)
+    modular/gather_samples                          565.1 ms (  4.6%)
+    modular/patches_detect                           78.9 ms (  0.6%)
+    modular/rct_select                              375.9 ms (  3.0%)
+    modular/wp_params_search                          0.0 ms (  0.0%)
+    modular/write_tokens_per_group                   81.5 ms (  0.7%)
+    [other / unaccounted]                            95.7 ms (  0.8%)
+
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png @ e3: 362.3 ms wall-clock per encode
+  phases (summed across 2 samples, divide by samples to get per-encode):
+    modular/rct_select                               25.0 ms (  3.5%)
+    [other / unaccounted]                           699.7 ms ( 96.5%)
+
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png @ e5: 791.1 ms wall-clock per encode
+  phases (summed across 2 samples, divide by samples to get per-encode):
+    modular/patches_detect                           15.6 ms (  1.0%)
+    modular/rct_select                              805.9 ms ( 50.9%)
+    [other / unaccounted]                           760.7 ms ( 48.1%)
+
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png @ e7: 19499.3 ms wall-clock per encode
+  phases (summed across 2 samples, divide by samples to get per-encode):
+    modular/build_ans_code                          269.0 ms (  0.7%)
+    modular/collect_residuals_global               2357.6 ms (  6.0%)
+    modular/collect_residuals_per_group            2220.4 ms (  5.7%)
+    modular/compute_best_tree                     29533.1 ms ( 75.7%)
+    modular/gather_samples                         2596.3 ms (  6.7%)
+    modular/patches_detect                           15.4 ms (  0.0%)
+    modular/rct_select                             1433.3 ms (  3.7%)
+    modular/wp_params_search                          0.0 ms (  0.0%)
+    modular/write_tokens_per_group                  273.7 ms (  0.7%)
+    [other / unaccounted]                           299.9 ms (  0.8%)

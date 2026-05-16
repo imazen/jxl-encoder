@@ -33,6 +33,7 @@ pub mod image;
 pub mod jpeg;
 pub mod modular;
 pub(crate) mod parallel;
+pub mod profile_phases;
 pub mod trace;
 pub mod validation;
 #[cfg(test)]
