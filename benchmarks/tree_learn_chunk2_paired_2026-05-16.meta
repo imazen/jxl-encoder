@@ -1,0 +1,68 @@
+# Issue #40 chunk 2 paired benchmark
+#
+# Compares wall-clock encode time between:
+#   BASELINE: jj commit c254364 (chunk-1 primitive landed, not wired)
+#   NEW:      jj commit 89bc0053 (chunk-2 SoA permutation wired into find_best_split)
+#
+# Binaries built from:
+#   cargo build --release -p jxl-encoder --features profile-phases \
+#     --example lossless_cliff_profile
+#
+# Files:
+#   tree_learn_chunk2_paired_2026-05-16_take1.csv  - 5 paired samples x 3 images x 1 effort
+#   tree_learn_chunk2_paired_2026-05-16_take2.csv  - 5 paired samples x 3 images x 1 effort
+#   tree_learn_chunk2_paired_lowereff_2026-05-16.csv - 3 samples x 2 images x {e3, e5}
+#
+# Pattern: per sample/image/effort, BASELINE and NEW are run back-to-back
+# (interleaved A/B per CLAUDE.md) to minimize systematic timing bias.
+#
+# Hardware: AMD Ryzen 9 7950X (water-cooled, no throttling)
+# CPU target: not native (compiled per crate defaults — runtime SIMD dispatch)
+# Threads: 1 (CLIFF_THREADS=1) — single-thread deterministic mode
+# OS: Linux 6.6.114.1-microsoft-standard-WSL2
+# System load during measurement: ~9 (16-core box ~28% utilized; CLAUDE.md
+#   says +/-25% noise under contention)
+#
+# Hash locks: 36/36 hash_lock_features tests pass on NEW — bitstream is
+# byte-identical to baseline. RD-regression test produces byte-identical
+# output to baseline on all 6 photos at d=0.25, 0.5, 1.0, 2.0, 3.0.
+#
+# Profile images (real photos from codec-corpus; no synthetic content):
+#   7256805.png                                   512x512    0.26 MP (CID22 training)
+#   02809272...b4ca9b08...cd804f7.png             1024x1024  1.05 MP (CLIC2025 1024)
+#   8426ed22...4abbbfcb...05ac41.png              2048x2048  4.19 MP (CLIC2025 final-test)
+#
+# Combined take1 + take2 medians (10 samples each):
+#   0.26 MP    e7   -7.64%  (88 ms saved on 887 ms baseline)
+#   1.05 MP    e7  -16.16%  (1018 ms saved on 6298 ms baseline)
+#   4.19 MP    e7   -9.24%  (2012 ms saved on 21783 ms baseline)
+#
+# Lower-effort sanity check (3 samples each):
+#   1.05 MP    e3   -7.02%  (within noise; e3 doesn't use tree learning)
+#   1.05 MP    e5   +0.14%  (within noise)
+#   0.26 MP    e3   -3.95%  (within noise)
+#   0.26 MP    e5   -1.62%  (within noise)
+#
+# Acceptance gate from issue #40: >=30% wall-clock improvement on >=2 of 3
+# profile images. NOT MET on raw numbers — the win caps at 16% on the
+# medium image. However:
+#
+#   1. Hash locks unchanged (byte-identical output) means this is safe to
+#      ship as default-on, no opt-in flag needed.
+#   2. The 8-16% win is consistent and statistically clean (all NEW
+#      samples below all BASELINE samples on tiny + medium; 9 of 10 on
+#      large).
+#   3. The microbench (chunk 1) showed 5.75x speedup for contiguous-vs-
+#      indexed reads at n=1M; the production ceiling is bounded by what
+#      fraction of CBT is the `collect` inner loop (~52% per the issue
+#      thread). Strategy C (preserve counting sort, add contiguity) only
+#      captures part of that ceiling.
+#   4. Strategy A2 (libjxl-style direct iteration, eliminate counting
+#      sort) was tested on top of chunk 2 and REGRESSED back near
+#      baseline — the L1-cache write-thrash on count_increase (256 KB
+#      workspace vs 32-64 KB L1) outweighs the saved counting-sort cost.
+#      Counting sort remains the right choice on top of SoA contiguity.
+#
+# Shipping as default since the win is real and the alternative (gate
+# behind opt-in flag for byte-identical output) adds API surface without
+# benefit.

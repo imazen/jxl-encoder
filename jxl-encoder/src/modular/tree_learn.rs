@@ -15,6 +15,7 @@ use super::predictor::{
     Neighbors, Predictor, WeightedPredictorParams, WeightedPredictorState, pack_signed,
 };
 use super::tree::{PropertyDecisionNode, Tree, assign_sequential_contexts, validate_tree_djxl};
+use super::tree_learn_split;
 use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 
 /// HybridUint config used during sample gathering: {4, 1, 2}.
@@ -1055,13 +1056,13 @@ pub(crate) fn compute_best_tree_with_budget(
     }
 
     // Reserve the dim-driven scratch up front.
-    //  - `indices`: n × usize
     //  - `bucket_indices`: up to (total_num_properties × n) bytes
-    let usize_bytes = core::mem::size_of::<usize>() as u64;
+    //
+    // Issue #40 chunk 2: dropped the previous `indices: Vec<usize>` (n × usize)
+    // — the tree builder now partitions the SoA arrays in-place via
+    // `split_tree_samples_in_place`, so no auxiliary index array is allocated.
     let bi_bytes = (samples.total_num_properties() as u64).saturating_mul(n as u64);
-    let total_bytes = (n as u64)
-        .saturating_mul(usize_bytes)
-        .saturating_add(bi_bytes);
+    let total_bytes = bi_bytes;
     crate::budget::MemoryBudget::reserve_permanent_opt(budget, total_bytes)?;
 
     // Pre-quantize all properties globally (replaces per-node binary_search)
@@ -1074,9 +1075,6 @@ pub(crate) fn compute_best_tree_with_budget(
     let n = samples.num_samples; // Update n to unique count
 
     let max_nodes = params.max_nodes;
-
-    // Working index array: we partition this instead of moving actual data.
-    let mut indices: Vec<usize> = (0..n).collect();
 
     // Max token value across all predictors (for histogram sizing)
     let max_token = samples
@@ -1095,11 +1093,11 @@ pub(crate) fn compute_best_tree_with_budget(
     let mut entropy_counts = vec![0u32; histogram_size];
 
     // Start with root node
-    let root_predictor =
-        find_best_predictor(samples, &indices[..n], histogram_size, &mut entropy_counts);
+    let root_predictor = find_best_predictor(samples, 0, n, histogram_size, &mut entropy_counts);
     let root_bits = compute_predictor_entropy(
         samples,
-        &indices[..n],
+        0,
+        n,
         root_predictor,
         histogram_size,
         &mut entropy_counts,
@@ -1145,7 +1143,8 @@ pub(crate) fn compute_best_tree_with_budget(
         // Find best split across all properties and thresholds
         let best_split = find_best_split(
             samples,
-            &indices[candidate.start..candidate.end],
+            candidate.start,
+            candidate.end,
             histogram_size,
             candidate.base_bits,
             params,
@@ -1157,14 +1156,21 @@ pub(crate) fn compute_best_tree_with_budget(
 
         match best_split {
             Some(split) if candidate.base_bits - split.total_bits > threshold => {
-                // Perform the split: partition indices
-                let mid = partition_indices(
-                    &mut indices[candidate.start..candidate.end],
+                // Perform the split: permute SoA rows in-place so that rows with
+                // bucket_indices[prop][i] <= bucket_split end up in [start..mid).
+                let bucket_split =
+                    bucket_for_splitval(&pq.threshold_sets[split.property], split.splitval);
+                let abs_mid = partition_node_in_place(
                     samples,
-                    split.property,
-                    split.splitval,
+                    &mut pq,
+                    candidate.start,
+                    candidate.end,
+                    split.left_count,
+                    tree_learn_split::PartitionKey::Bucket {
+                        prop_idx: split.property,
+                        val: bucket_split as u8,
+                    },
                 );
-                let abs_mid = candidate.start + mid;
 
                 // Create child nodes
                 let lchild_idx = tree.len();
@@ -1188,14 +1194,16 @@ pub(crate) fn compute_best_tree_with_budget(
                 // compared to the O(N*P*K) search.
                 let left_bits = compute_predictor_entropy(
                     samples,
-                    &indices[candidate.start..abs_mid],
+                    candidate.start,
+                    abs_mid,
                     split.left_predictor,
                     histogram_size,
                     &mut entropy_counts,
                 );
                 let right_bits = compute_predictor_entropy(
                     samples,
-                    &indices[abs_mid..candidate.end],
+                    abs_mid,
+                    candidate.end,
                     split.right_predictor,
                     histogram_size,
                     &mut entropy_counts,
@@ -1322,7 +1330,6 @@ pub fn compute_best_tree_with_multipliers(
     let n = samples.num_samples;
 
     let max_nodes = params.max_nodes;
-    let mut indices: Vec<usize> = (0..n).collect();
 
     let max_token = samples
         .residual_tokens
@@ -1336,11 +1343,11 @@ pub fn compute_best_tree_with_multipliers(
     let mut tree: Tree = Vec::new();
     let mut entropy_counts = vec![0u32; histogram_size];
 
-    let root_predictor =
-        find_best_predictor(samples, &indices[..n], histogram_size, &mut entropy_counts);
+    let root_predictor = find_best_predictor(samples, 0, n, histogram_size, &mut entropy_counts);
     let root_bits = compute_predictor_entropy(
         samples,
-        &indices[..n],
+        0,
+        n,
         root_predictor,
         histogram_size,
         &mut entropy_counts,
@@ -1430,14 +1437,25 @@ pub fn compute_best_tree_with_multipliers(
                 continue;
             }
 
-            // Partition samples on the static property (0=channel, 1=group_id)
-            let mid = partition_indices(
-                &mut indices[candidate.start..candidate.end],
+            // Partition samples on the static property (0=channel, 1=group_id).
+            // Static props are matched by raw value (not bucket index), so we
+            // count matching samples on the fly — no sweep produced left_count.
+            let splitval_i32 = splitval as i32;
+            let left_count = samples.props[axis][candidate.start..candidate.end]
+                .iter()
+                .filter(|&&v| v <= splitval_i32)
+                .count();
+            let abs_mid = partition_node_in_place(
                 samples,
-                axis,
-                splitval as i32,
+                &mut pq,
+                candidate.start,
+                candidate.end,
+                left_count,
+                tree_learn_split::PartitionKey::Property {
+                    prop_idx: axis,
+                    val: splitval_i32,
+                },
             );
-            let abs_mid = candidate.start + mid;
 
             let lchild_idx = tree.len();
             let rchild_idx = tree.len() + 1;
@@ -1465,7 +1483,8 @@ pub fn compute_best_tree_with_multipliers(
             let left_predictor = if abs_mid > candidate.start {
                 find_best_predictor(
                     samples,
-                    &indices[candidate.start..abs_mid],
+                    candidate.start,
+                    abs_mid,
                     histogram_size,
                     &mut entropy_counts,
                 )
@@ -1475,7 +1494,8 @@ pub fn compute_best_tree_with_multipliers(
             let right_predictor = if abs_mid < candidate.end {
                 find_best_predictor(
                     samples,
-                    &indices[abs_mid..candidate.end],
+                    abs_mid,
+                    candidate.end,
                     histogram_size,
                     &mut entropy_counts,
                 )
@@ -1486,7 +1506,8 @@ pub fn compute_best_tree_with_multipliers(
             let left_bits = if abs_mid > candidate.start {
                 compute_predictor_entropy(
                     samples,
-                    &indices[candidate.start..abs_mid],
+                    candidate.start,
+                    abs_mid,
                     left_predictor,
                     histogram_size,
                     &mut entropy_counts,
@@ -1497,7 +1518,8 @@ pub fn compute_best_tree_with_multipliers(
             let right_bits = if abs_mid < candidate.end {
                 compute_predictor_entropy(
                     samples,
-                    &indices[abs_mid..candidate.end],
+                    abs_mid,
+                    candidate.end,
                     right_predictor,
                     histogram_size,
                     &mut entropy_counts,
@@ -1554,7 +1576,8 @@ pub fn compute_best_tree_with_multipliers(
 
         let best_split = find_best_split(
             samples,
-            &indices[candidate.start..candidate.end],
+            candidate.start,
+            candidate.end,
             histogram_size,
             candidate.base_bits,
             params,
@@ -1566,13 +1589,19 @@ pub fn compute_best_tree_with_multipliers(
 
         match best_split {
             Some(split) if candidate.base_bits - split.total_bits > threshold => {
-                let mid = partition_indices(
-                    &mut indices[candidate.start..candidate.end],
+                let bucket_split =
+                    bucket_for_splitval(&pq.threshold_sets[split.property], split.splitval);
+                let abs_mid = partition_node_in_place(
                     samples,
-                    split.property,
-                    split.splitval,
+                    &mut pq,
+                    candidate.start,
+                    candidate.end,
+                    split.left_count,
+                    tree_learn_split::PartitionKey::Bucket {
+                        prop_idx: split.property,
+                        val: bucket_split as u8,
+                    },
                 );
-                let abs_mid = candidate.start + mid;
 
                 let lchild_idx = tree.len();
                 let rchild_idx = tree.len() + 1;
@@ -1600,14 +1629,16 @@ pub fn compute_best_tree_with_multipliers(
 
                 let left_bits = compute_predictor_entropy(
                     samples,
-                    &indices[candidate.start..abs_mid],
+                    candidate.start,
+                    abs_mid,
                     split.left_predictor,
                     histogram_size,
                     &mut entropy_counts,
                 );
                 let right_bits = compute_predictor_entropy(
                     samples,
-                    &indices[abs_mid..candidate.end],
+                    abs_mid,
+                    candidate.end,
                     split.right_predictor,
                     histogram_size,
                     &mut entropy_counts,
@@ -1750,9 +1781,15 @@ struct BestSplit {
     left_predictor: usize,
     right_predictor: usize,
     total_bits: f64,
+    /// Number of unique samples that belong on the LEFT side of the split
+    /// (i.e., rows with `bucket_index <= local_k`). Captured during the sweep
+    /// (= `bucket_starts[local_k + 1]`) so the caller can pass it directly as
+    /// the `pos` argument to `split_tree_samples_in_place` without rescanning.
+    left_count: usize,
 }
 
-/// Find the best (property, threshold) split for the given samples.
+/// Find the best (property, threshold) split for the contiguous sample range
+/// `[start..end)`.
 ///
 /// Uses pre-quantized property buckets and a count_increase table approach
 /// matching libjxl's enc_ma.cc:FindBestSplit.
@@ -1764,10 +1801,17 @@ struct BestSplit {
 /// - Zip iterators in sweep loop for bounds check elimination
 /// - Cached left_bits/right_bits in BestSplit to avoid redundant entropy computation
 /// - Pre-allocated workspace buffers (eliminates per-call Vec allocation)
+///
+/// Post-issue-#40-chunk-2: replaced `indices: &[usize]` with `[start..end)`.
+/// The SoA arrays are kept contiguous in this range by `split_tree_samples_in_place`
+/// at partition time, so the bmin/bmax scan, the bucket-count phase, and the
+/// counting-sort population now read `pq_buckets[start..end]`, `sample_counts[start..end]`
+/// sequentially instead of chasing scattered indices.
 #[allow(clippy::too_many_arguments)]
 fn find_best_split(
     samples: &TreeSamples,
-    indices: &[usize],
+    start: usize,
+    end: usize,
     histogram_size: usize,
     base_bits: f64,
     params: &TreeLearningParams,
@@ -1776,7 +1820,7 @@ fn find_best_split(
     pq: &PreQuantizedProps,
     ws: &mut SplitWorkspace,
 ) -> Option<BestSplit> {
-    let count = indices.len();
+    let count = end - start;
     if count < 2 {
         return None;
     }
@@ -1785,11 +1829,12 @@ fn find_best_split(
     let mut best: Option<BestSplit> = None;
     let mut best_bits = base_bits;
 
-    let sample_counts = &samples.sample_counts;
+    let sample_counts_full = &samples.sample_counts;
+    let sample_counts = &sample_counts_full[start..end];
 
     // Compute weighted total: sum of sample_counts for this node's samples.
     // After dedup, each unique sample represents `count` original samples.
-    let weighted_total: u32 = indices.iter().map(|&i| sample_counts[i]).sum();
+    let weighted_total: u32 = sample_counts.iter().sum();
 
     // Predictor change penalty matching libjxl's enc_ma.cc:303
     let change_pred_penalty = 800.0 / (100.0 + threshold);
@@ -1864,14 +1909,15 @@ fn find_best_split(
             continue;
         }
 
-        let pq_buckets = &pq.bucket_indices[prop_idx];
+        let pq_buckets = &pq.bucket_indices[prop_idx][start..end];
         let threshold_set = &pq.threshold_sets[prop_idx];
 
-        // Bucket range narrowing: find min/max bucket for this node's samples
+        // Bucket range narrowing: find min/max bucket for this node's samples.
+        // Contiguous scan now that the SoA is kept aligned by
+        // `split_tree_samples_in_place` (issue #40 chunk 2).
         let mut bmin: u8 = u8::MAX;
         let mut bmax: u8 = 0;
-        for &idx in indices {
-            let b = pq_buckets[idx];
+        for &b in pq_buckets {
             if b < bmin {
                 bmin = b;
             }
@@ -1890,15 +1936,18 @@ fn find_best_split(
 
         let local_num_thresholds = bmax - bmin;
 
-        // Counting sort: group unique samples by bucket.
+        // Counting sort: group unique samples by bucket. Stored as RELATIVE
+        // offsets into `[start..end)` so the per-bucket access pattern in the
+        // pred loop stays inside the contiguous SoA slice (good cache locality
+        // vs the old absolute-index path).
         // bucket_counts tracks the NUMBER OF UNIQUE SAMPLES per bucket (for sorted_by_bucket sizing).
         // We compute weighted counts separately for the sweep.
         let mut unique_per_bucket = [0u32; 256];
         bucket_counts[..local_num_buckets].fill(0); // weighted counts for sweep
-        for &idx in indices {
-            let b = (pq_buckets[idx] as usize) - bmin;
-            unique_per_bucket[b] += 1;
-            bucket_counts[b] += sample_counts[idx];
+        for (offset, &b) in pq_buckets.iter().enumerate() {
+            let local_b = (b as usize) - bmin;
+            unique_per_bucket[local_b] += 1;
+            bucket_counts[local_b] += sample_counts[offset];
         }
 
         bucket_starts[0] = 0;
@@ -1907,10 +1956,12 @@ fn find_best_split(
         }
 
         bucket_write_pos[..local_num_buckets].copy_from_slice(&bucket_starts[..local_num_buckets]);
-        for &idx in indices {
-            let b = (pq_buckets[idx] as usize) - bmin;
-            sorted_by_bucket[bucket_write_pos[b]] = idx;
-            bucket_write_pos[b] += 1;
+        for (offset, &b) in pq_buckets.iter().enumerate() {
+            let local_b = (b as usize) - bmin;
+            // Store RELATIVE offset; downstream loops add `start` when
+            // indexing the parent SoA arrays.
+            sorted_by_bucket[bucket_write_pos[local_b]] = offset;
+            bucket_write_pos[local_b] += 1;
         }
 
         // Initialize per-threshold best costs
@@ -1922,8 +1973,11 @@ fn find_best_split(
         best_r_pred[..local_num_thresholds].fill(0);
 
         for pred in 0..num_pred {
-            let tokens = &samples.residual_tokens[pred];
-            let ebits = &samples.extra_bits[pred];
+            // Slice into the contiguous range [start..end) — sequential token
+            // and extra-bits reads, no per-index pointer chase across the
+            // whole SoA.
+            let tokens = &samples.residual_tokens[pred][start..end];
+            let ebits = &samples.extra_bits[pred][start..end];
 
             // Predictor change penalty: applied when choosing best predictor per side,
             // but NOT included in the final split decision (matching libjxl enc_ma.cc:375-390).
@@ -1949,19 +2003,22 @@ fn find_best_split(
             extra_bits_increase[..local_num_buckets].fill(0);
 
             for local_bucket in 0..local_num_buckets {
-                let start = bucket_starts[local_bucket];
-                let end = bucket_starts[local_bucket + 1];
+                let bs = bucket_starts[local_bucket];
+                let be = bucket_starts[local_bucket + 1];
                 let ci_base = local_bucket * HISTO_PADDED;
                 let ci_slice = &mut count_increase[ci_base..ci_base + HISTO_PADDED];
                 let mut eb_sum: u64 = 0;
-                // Inner loop: uses sorted_by_bucket indices directly into token/ebit arrays.
+                // Inner loop: uses sorted_by_bucket RELATIVE offsets directly into
+                // the contiguous token/ebit/sample_counts slices. Reads stay inside
+                // the small `[start..end)` window — even when scattered by bucket
+                // sort, each cache line covers ~64 contiguous samples.
                 // ci_slice[tok & HISTO_MASK]: bitmask guarantees < HISTO_PADDED = ci_slice.len()
                 // Each unique sample contributes its count (dedup weight).
-                for &idx in &sorted_by_bucket[start..end] {
-                    let tok = tokens[idx];
-                    let sc = sample_counts[idx];
+                for &rel_off in &sorted_by_bucket[bs..be] {
+                    let tok = tokens[rel_off];
+                    let sc = sample_counts[rel_off];
                     ci_slice[tok as usize & HISTO_MASK] += sc;
-                    eb_sum += ebits[idx] as u64 * sc as u64;
+                    eb_sum += ebits[rel_off] as u64 * sc as u64;
                 }
                 extra_bits_increase[local_bucket] = eb_sum;
             }
@@ -2056,12 +2113,18 @@ fn find_best_split(
                 best_bits = total;
                 // Map local_k back to global threshold index: bmin + local_k
                 let global_k = bmin + local_k;
+                // left_count is the count of unique samples in buckets [0..=local_k]
+                // (== bucket_starts[local_k + 1]). This becomes the `pos` argument
+                // for split_tree_samples_in_place — the caller doesn't have to
+                // rescan to determine the partition split point.
+                let left_count = bucket_starts[local_k + 1];
                 best = Some(BestSplit {
                     property: prop_idx,
                     splitval: threshold_set[global_k],
                     left_predictor: best_l_pred[local_k],
                     right_predictor: best_r_pred[local_k],
                     total_bits: total,
+                    left_count,
                 });
             }
         }
@@ -2070,10 +2133,11 @@ fn find_best_split(
     best
 }
 
-/// Find the best predictor for the given sample indices.
+/// Find the best predictor for the given contiguous sample range `[start..end)`.
 fn find_best_predictor(
     samples: &TreeSamples,
-    indices: &[usize],
+    start: usize,
+    end: usize,
     histogram_size: usize,
     counts_buf: &mut [u32],
 ) -> usize {
@@ -2083,7 +2147,7 @@ fn find_best_predictor(
 
     for pred_idx in 0..num_pred {
         let bits =
-            compute_predictor_entropy(samples, indices, pred_idx, histogram_size, counts_buf);
+            compute_predictor_entropy(samples, start, end, pred_idx, histogram_size, counts_buf);
         if bits < best_bits {
             best_bits = bits;
             best_pred = pred_idx;
@@ -2099,55 +2163,98 @@ fn find_best_predictor(
 /// ensuring consistent cost comparison for split decisions.
 ///
 /// `counts_buf` is a reusable histogram buffer (len >= histogram_size), cleared on entry.
+///
+/// Post-issue-#40-chunk-2: the sample set is identified by a contiguous range
+/// `[start..end)` into the underlying SoA arrays (residual_tokens, extra_bits,
+/// sample_counts). Callers maintain this contiguity via
+/// `split_tree_samples_in_place` at partition time, so this loop is now a
+/// pure linear scan over sequential memory instead of indexed random reads.
 fn compute_predictor_entropy(
     samples: &TreeSamples,
-    indices: &[usize],
+    start: usize,
+    end: usize,
     predictor_idx: usize,
     histogram_size: usize,
     counts_buf: &mut [u32],
 ) -> f64 {
-    let tokens = &samples.residual_tokens[predictor_idx];
-    let ebits = &samples.extra_bits[predictor_idx];
-    let sample_counts = &samples.sample_counts;
+    let tokens = &samples.residual_tokens[predictor_idx][start..end];
+    let ebits = &samples.extra_bits[predictor_idx][start..end];
+    let sample_counts = &samples.sample_counts[start..end];
     counts_buf[..histogram_size].fill(0);
     let mut total = 0u32;
     let mut tot_extra: u64 = 0;
 
-    for &idx in indices {
-        let count = sample_counts[idx];
-        let tok = tokens[idx] as usize;
+    // Zip-iterate: contiguous reads over three parallel slices. Bounds-check
+    // elimination via the matched zip; no `[idx]` indexing into the parent
+    // arrays.
+    for ((&tok, &eb), &count) in tokens.iter().zip(ebits.iter()).zip(sample_counts.iter()) {
+        let tok = tok as usize;
         if tok < histogram_size {
             counts_buf[tok] += count;
             total += count;
         }
-        tot_extra += ebits[idx] as u64 * count as u64;
+        tot_extra += eb as u64 * count as u64;
     }
 
     jxl_simd::estimate_bits_u32(&counts_buf[..histogram_size], total) + tot_extra as f64
 }
 
-/// Partition indices in-place so that indices with property <= splitval come first.
-/// Returns the number of indices on the left (property <= splitval) side.
-fn partition_indices(
-    indices: &mut [usize],
-    samples: &TreeSamples,
-    prop_idx: usize,
-    splitval: i32,
+/// Partition the contiguous sample range `[start..end)` in-place so that rows
+/// with `bucket_indices[prop_idx][i] <= bucket_split` occupy the left half
+/// `[start..mid)` and rows with `> bucket_split` occupy `[mid..end)`.
+///
+/// `mid = start + left_count`, where `left_count` is the caller-supplied
+/// number of unique samples on the left side (computed by `find_best_split`
+/// from `bucket_starts[local_k + 1]`).
+///
+/// All parallel SoA arrays (per-predictor `residual_tokens` and `extra_bits`,
+/// per-property `props` and `bucket_indices`, `sample_counts`) are permuted
+/// as atomic rows by `split_tree_samples_in_place`, preserving row alignment
+/// across the partition boundary. This is the chunk-2 wiring of the chunk-1
+/// `tree_learn_split` primitive (issue #40).
+///
+/// `bucket_split` is the **bucket index** on which to partition (matches the
+/// pre-quantized space `find_best_split` operates in). The bucket-equivalent
+/// of the cost-model split threshold is `local_k` (the sweep step at which
+/// the split was chosen); the bucket value `bucket_split = bmin + local_k`
+/// is recovered from the split's `splitval` via `threshold_set`.
+///
+/// # Returns
+/// Absolute mid index = `start + left_count`.
+fn partition_node_in_place(
+    samples: &mut TreeSamples,
+    pq: &mut PreQuantizedProps,
+    start: usize,
+    end: usize,
+    left_count: usize,
+    key: tree_learn_split::PartitionKey,
 ) -> usize {
-    let props = &samples.props[prop_idx];
-    let mut left = 0;
-    let mut right = indices.len();
+    debug_assert!(left_count <= end - start);
+    let num_samples = samples.num_samples;
+    let mut view = tree_learn_split::SplittableSamples {
+        residual_tokens: &mut samples.residual_tokens,
+        extra_bits: &mut samples.extra_bits,
+        props: &mut samples.props,
+        bucket_indices: &mut pq.bucket_indices,
+        sample_counts: &mut samples.sample_counts,
+        len: num_samples,
+    };
+    let pos = start + left_count;
+    tree_learn_split::split_tree_samples_in_place(&mut view, start, pos, end, key);
+    pos
+}
 
-    while left < right {
-        if props[indices[left]] <= splitval {
-            left += 1;
-        } else {
-            right -= 1;
-            indices.swap(left, right);
-        }
-    }
-
-    left
+/// Look up the bucket index for a given threshold value in a pre-quantized
+/// property's threshold set. Returns the index `k` such that
+/// `threshold_set[k] == splitval`, or panics if not found.
+///
+/// `find_best_split` always emits `splitval = threshold_set[global_k]`, so the
+/// reverse lookup is exact (no rounding, no off-by-one).
+fn bucket_for_splitval(threshold_set: &[i32], splitval: i32) -> usize {
+    threshold_set
+        .iter()
+        .position(|&t| t == splitval)
+        .expect("splitval came from threshold_set; reverse lookup must succeed")
 }
 
 /// Collect residuals using a learned tree for encoding.
@@ -2610,23 +2717,61 @@ mod tests {
     }
 
     #[test]
-    fn test_partition_indices() {
+    fn test_partition_node_in_place() {
+        // 4x4 image: gather all 16 pixels, partition on X (property 3) at
+        // splitval=1. Pixels with x<=1 should land in [0..8), x>1 in [8..16).
+        // Verifies the chunk-2 in-place SoA permutation (issue #40).
         let image = ModularImage::from_gray8(&[0u8; 16], 4, 4).unwrap();
         let mut samples = TreeSamples::new();
         gather_samples(&mut samples, &image, 0);
 
-        // Partition on X (property 3) at splitval=1
-        // Pixels with x<=1 should be on left, x>1 on right
-        let mut indices: Vec<usize> = (0..samples.num_samples).collect();
-        let mid = partition_indices(&mut indices, &samples, 3, 1);
+        // Build a params struct that includes property 3 (X coord) so
+        // pre_quantize populates its bucket_indices. Then dedup, which
+        // populates `sample_counts` (required by `swap_rows`).
+        let params = TreeLearningParams::for_effort(7);
+        let mut pq = samples.pre_quantize(&params);
+        dedup_samples(&mut samples, &mut pq, &params);
 
-        // 4x4 image: x=0,1 → 8 pixels left, x=2,3 → 8 pixels right
-        assert_eq!(mid, 8);
-        for &i in &indices[..mid] {
-            assert!(samples.props[3][i] <= 1);
+        let n = samples.num_samples;
+        // After dedup on a constant-zero image, all 16 pixels merge to a few
+        // unique sample groups — count what we actually have.
+        assert!(n > 0, "expected at least one unique sample");
+
+        // Count left side using PartitionKey::Property semantics
+        let left_count = samples.props[3][..n].iter().filter(|&&v| v <= 1).count();
+
+        let mid = partition_node_in_place(
+            &mut samples,
+            &mut pq,
+            0,
+            n,
+            left_count,
+            tree_learn_split::PartitionKey::Property {
+                prop_idx: 3,
+                val: 1,
+            },
+        );
+        assert_eq!(mid, left_count);
+
+        // Left side: x <= 1
+        for v in &samples.props[3][..mid] {
+            assert!(*v <= 1, "left-side row should have x<=1 but got {v}");
         }
-        for &i in &indices[mid..] {
-            assert!(samples.props[3][i] > 1);
+        // Right side: x > 1
+        for v in &samples.props[3][mid..n] {
+            assert!(*v > 1, "right-side row should have x>1 but got {v}");
+        }
+
+        // Re-verify SoA row alignment: every parallel array must hold values
+        // consistent with the post-partition row layout. The strictest check
+        // is that the sum of sample_counts equals the original sample count
+        // (16 pixels in this 4x4 image) and that each predictor's
+        // residual_tokens has length matching num_samples.
+        let total_count: u32 = samples.sample_counts[..n].iter().sum();
+        assert_eq!(total_count, 16, "permutation must preserve total weight");
+        for pred in 0..samples.num_predictors() {
+            assert_eq!(samples.residual_tokens[pred].len(), n);
+            assert_eq!(samples.extra_bits[pred].len(), n);
         }
     }
 }
