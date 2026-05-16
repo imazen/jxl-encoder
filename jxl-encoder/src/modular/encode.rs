@@ -1147,36 +1147,47 @@ pub(crate) fn select_best_rct(
         return (RctType::YCOCG, transformed);
     }
 
+    let num_to_try = nb_rcts_to_try.min(RCT_CANDIDATES.len());
+
+    // Each RCT trial is independent: clone the image, forward_rct (mutates
+    // the clone only), estimate_cost (pure read). Fan out across trials,
+    // then reduce in trial order to preserve the deterministic tie-break
+    // ("first wins" on equal cost, matching the previous serial logic).
+    let trial_results: Vec<Option<(f64, ModularImage)>> =
+        crate::parallel::parallel_map(num_to_try, |i| {
+            let rct_val = RCT_CANDIDATES[i];
+            let rct_type = RctType(rct_val);
+
+            if rct_type.is_noop() {
+                let cost = estimate_cost(image);
+                Some((cost, image.clone()))
+            } else {
+                let mut transformed = image.clone();
+                if forward_rct(&mut transformed.channels, 0, rct_type).is_ok() {
+                    let cost = estimate_cost(&transformed);
+                    Some((cost, transformed))
+                } else {
+                    None
+                }
+            }
+        });
+
     let mut best_cost = f64::MAX;
     let mut best_rct = RctType::YCOCG;
     let mut best_image = None;
-
-    for (i, &rct_val) in RCT_CANDIDATES.iter().enumerate() {
-        if i >= nb_rcts_to_try {
-            break;
-        }
+    for (i, result) in trial_results.into_iter().enumerate() {
+        let Some((cost, transformed)) = result else {
+            continue;
+        };
+        let rct_val = RCT_CANDIDATES[i];
         let rct_type = RctType(rct_val);
-
-        if rct_type.is_noop() {
-            // Identity: estimate cost of the original image
-            let cost = estimate_cost(image);
-            crate::trace::debug_eprintln!("  RCT {:2}: cost={:.0}", rct_val, cost);
-            if cost < best_cost {
-                best_cost = cost;
-                best_rct = rct_type;
-                best_image = Some(image.clone());
-            }
-        } else {
-            let mut transformed = image.clone();
-            if forward_rct(&mut transformed.channels, 0, rct_type).is_ok() {
-                let cost = estimate_cost(&transformed);
-                crate::trace::debug_eprintln!("  RCT {:2}: cost={:.0}", rct_val, cost);
-                if cost < best_cost {
-                    best_cost = cost;
-                    best_rct = rct_type;
-                    best_image = Some(transformed);
-                }
-            }
+        crate::trace::debug_eprintln!("  RCT {:2}: cost={:.0}", rct_val, cost);
+        // Strict `<` preserves "first wins" tie-break since we iterate
+        // candidates in their original order.
+        if cost < best_cost {
+            best_cost = cost;
+            best_rct = rct_type;
+            best_image = Some(transformed);
         }
     }
 
@@ -1190,7 +1201,7 @@ pub(crate) fn select_best_rct(
         "RCT_SELECT: best={} (cost={:.0}), tried {} variants",
         best_rct.0,
         best_cost,
-        nb_rcts_to_try.min(RCT_CANDIDATES.len()),
+        num_to_try,
     );
 
     (best_rct, work_image)
@@ -1222,45 +1233,49 @@ pub(crate) fn select_best_rct_at(
         return (RctType::YCOCG, transformed);
     }
 
+    let num_to_try = nb_rcts_to_try.min(RCT_CANDIDATES.len());
+
+    // Each RCT trial is independent (clone + forward_rct + estimate_cost).
+    // Fan out across trials and reduce in trial order to keep the
+    // deterministic "first wins" tie-break on equal cost.
+    let trial_results: Vec<Option<(f64, ModularImage)>> =
+        crate::parallel::parallel_map(num_to_try, |i| {
+            let rct_val = RCT_CANDIDATES[i];
+            let rct_type = RctType(rct_val);
+
+            if rct_type.is_noop() {
+                let cost = estimate_cost(image);
+                Some((cost, image.clone()))
+            } else {
+                let mut transformed = image.clone();
+                if forward_rct(&mut transformed.channels, begin_c, rct_type).is_ok() {
+                    let cost = estimate_cost(&transformed);
+                    Some((cost, transformed))
+                } else {
+                    None
+                }
+            }
+        });
+
     let mut best_cost = f64::MAX;
     let mut best_rct = RctType::YCOCG;
     let mut best_image = None;
-
-    for (i, &rct_val) in RCT_CANDIDATES.iter().enumerate() {
-        if i >= nb_rcts_to_try {
-            break;
-        }
+    for (i, result) in trial_results.into_iter().enumerate() {
+        let Some((cost, transformed)) = result else {
+            continue;
+        };
+        let rct_val = RCT_CANDIDATES[i];
         let rct_type = RctType(rct_val);
-
-        if rct_type.is_noop() {
-            let cost = estimate_cost(image);
-            crate::trace::debug_eprintln!(
-                "  RCT {:2} (begin_c={}): cost={:.0}",
-                rct_val,
-                begin_c,
-                cost
-            );
-            if cost < best_cost {
-                best_cost = cost;
-                best_rct = rct_type;
-                best_image = Some(image.clone());
-            }
-        } else {
-            let mut transformed = image.clone();
-            if forward_rct(&mut transformed.channels, begin_c, rct_type).is_ok() {
-                let cost = estimate_cost(&transformed);
-                crate::trace::debug_eprintln!(
-                    "  RCT {:2} (begin_c={}): cost={:.0}",
-                    rct_val,
-                    begin_c,
-                    cost
-                );
-                if cost < best_cost {
-                    best_cost = cost;
-                    best_rct = rct_type;
-                    best_image = Some(transformed);
-                }
-            }
+        crate::trace::debug_eprintln!(
+            "  RCT {:2} (begin_c={}): cost={:.0}",
+            rct_val,
+            begin_c,
+            cost
+        );
+        if cost < best_cost {
+            best_cost = cost;
+            best_rct = rct_type;
+            best_image = Some(transformed);
         }
     }
 
@@ -1274,7 +1289,7 @@ pub(crate) fn select_best_rct_at(
         "RCT_SELECT: best={} (cost={:.0}), tried {} variants, begin_c={}",
         best_rct.0,
         best_cost,
-        nb_rcts_to_try.min(RCT_CANDIDATES.len()),
+        num_to_try,
         begin_c,
     );
 
