@@ -361,27 +361,41 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     let mut samples = TreeSamples::new_with_ref_channels(num_refs);
     let per_group_id_offset = if meta_image.is_some() { 1u32 } else { 0u32 };
     crate::profile_time!("modular/gather_samples", {
-        // Gather meta-channel samples first (channel_offset=0, group_id=0)
+        // Gather meta-channel samples first (channel_offset=0, group_id=0).
+        // Single image, so sequential — only one task's worth of work.
         if let Some(meta) = meta_image {
             gather_samples_strided(&mut samples, meta, 0, 0, stride, &wp_params);
         }
-        // Gather per-group samples (channel_offset=0: per-group images use 0-based
-        // channel indices, matching the decoder which builds per-group images with
-        // only the non-meta channels. The tree distinguishes meta from per-group
-        // via group_id property, not channel_idx offset.)
+        // Per-group sample gather is embarrassingly parallel: each call
+        // mutates its OWN TreeSamples (no shared state), and merge is a
+        // deterministic concatenate in group-index order via `append_from`.
         //
-        // When meta-channels exist in the global section (group_id=0), per-group
-        // channels use group_id = 1 + group_idx to avoid collision. This lets the
-        // tree split on group_id > 0 to separate meta from per-group data.
-        for (group_idx, group_image) in images.iter().enumerate() {
-            gather_samples_strided(
-                &mut samples,
-                group_image,
-                group_idx as u32 + per_group_id_offset,
-                0,
-                stride,
-                &wp_params,
-            );
+        // (channel_offset=0: per-group images use 0-based channel indices,
+        // matching the decoder which builds per-group images with only the
+        // non-meta channels. The tree distinguishes meta from per-group via
+        // group_id property, not channel_idx offset. When meta-channels
+        // exist in the global section, per-group channels use
+        // group_id = 1 + group_idx to avoid collision so the tree can split
+        // on group_id > 0 to separate meta from per-group data.)
+        let per_group_samples: Vec<TreeSamples> =
+            crate::parallel::parallel_map(images.len(), |group_idx| {
+                let mut local = TreeSamples::new_with_ref_channels(num_refs);
+                gather_samples_strided(
+                    &mut local,
+                    &images[group_idx],
+                    group_idx as u32 + per_group_id_offset,
+                    0,
+                    stride,
+                    &wp_params,
+                );
+                local
+            });
+        // Reserve total capacity up-front to avoid Vec growth during merge,
+        // then concatenate in deterministic group-index order.
+        let total_extra: usize = per_group_samples.iter().map(|s| s.num_samples).sum();
+        samples.reserve(total_extra);
+        for local in per_group_samples {
+            samples.append_from(local);
         }
     });
 

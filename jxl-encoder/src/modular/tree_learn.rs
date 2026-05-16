@@ -388,6 +388,54 @@ impl TreeSamples {
         self.candidate_predictors.len()
     }
 
+    /// Reserve capacity in all parallel SoA arrays for `additional` more samples.
+    ///
+    /// Optional micro-optimization for callers that know the total sample count
+    /// up-front — avoids `Vec` reallocations during the gather hot loop.
+    pub(crate) fn reserve(&mut self, additional: usize) {
+        for v in &mut self.residual_tokens {
+            v.reserve(additional);
+        }
+        for v in &mut self.extra_bits {
+            v.reserve(additional);
+        }
+        for v in &mut self.props {
+            v.reserve(additional);
+        }
+    }
+
+    /// Append all samples from `other` into `self`. Both must have the same
+    /// predictor list and reference-channel count (the gather call site
+    /// guarantees this; we debug-assert it).
+    ///
+    /// Used by parallel gather: each task builds an isolated `TreeSamples`,
+    /// then the main thread merges them in deterministic index order. Concat
+    /// is the right merge because gather happens BEFORE dedup, so
+    /// `sample_counts` is still empty and the parallel SoA arrays are simply
+    /// extended.
+    pub(crate) fn append_from(&mut self, mut other: TreeSamples) {
+        debug_assert_eq!(self.num_ref_channels, other.num_ref_channels);
+        debug_assert_eq!(
+            self.candidate_predictors.len(),
+            other.candidate_predictors.len()
+        );
+        debug_assert!(self.sample_counts.is_empty() && other.sample_counts.is_empty());
+        for (dst, src) in self
+            .residual_tokens
+            .iter_mut()
+            .zip(other.residual_tokens.iter_mut())
+        {
+            dst.append(src);
+        }
+        for (dst, src) in self.extra_bits.iter_mut().zip(other.extra_bits.iter_mut()) {
+            dst.append(src);
+        }
+        for (dst, src) in self.props.iter_mut().zip(other.props.iter_mut()) {
+            dst.append(src);
+        }
+        self.num_samples += other.num_samples;
+    }
+
     /// Pre-quantize all property values into bucket indices.
     /// This is done once before tree building, replacing per-node binary_search
     /// and threshold_set allocation with a single upfront pass.
