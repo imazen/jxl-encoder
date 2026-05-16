@@ -1118,10 +1118,30 @@ impl LosslessConfig {
     /// at e7 gives a smoother time/size trade between e6 (no tree)
     /// and e7-default (tree at 0.5).
     ///
+    /// # Calibrated values for e7
+    ///
+    /// Sweep on 5 real photos (0.26 / 1.05 / 4.19 MP), single-thread
+    /// release build, source data
+    /// [`benchmarks/lossless_e7_sample_fraction_sweep_2026-05-15.tsv`]:
+    ///
+    /// | fraction | bytes vs e7 default | encode time vs e7 default |
+    /// |---------:|--------------------:|--------------------------:|
+    /// | 0.10     | +0.40 to +2.30 %    | -60 to -69 %              |
+    /// | 0.15     | +0.36 to +1.43 %    | -54 to -61 %              |
+    /// | 0.20     | -0.01 to +1.43 %    | -48 to -55 %              |
+    /// | 0.25     | +0.11 to +1.12 %    | -29 to -41 %              |
+    /// | 0.35     | +0.14 to +0.88 %    | -18 to -30 % (≤1 MP)      |
+    /// | 0.50     | baseline (0 %)      | baseline                  |
+    ///
+    /// **Recommendation**: start at `f = 0.25` for an "e7-lite" tier —
+    /// average -36 % wall-clock and ≤ +0.6 % bytes on photos. Use
+    /// `0.10..=0.20` for the most aggressive "fast e7" trade (size
+    /// regresses up to ~2 % on small images, but encode-time drops
+    /// ~50–70 %).
+    ///
     /// Range `[0.0, 1.0]`; `f.clamp(0.0, 1.0)` is applied so a stray
     /// caller can't trip the validator. No-op when `tree_learning` is
-    /// disabled. Use `f = 0.10..=0.20` for a "tree-learning lite"
-    /// effort-7 setting.
+    /// disabled.
     pub fn with_tree_learning_sample_fraction(mut self, f: f32) -> Self {
         self.tree_sample_fraction_override = Some(f.clamp(0.0, 1.0));
         self

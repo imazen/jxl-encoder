@@ -114,7 +114,10 @@ fn main() {
     println!("# samples per cell: {}", samples);
     println!("# threads: {}", threads);
     println!("# efforts: {:?}", efforts);
-    println!("# profile-phases feature: {}", cfg!(feature = "profile-phases"));
+    println!(
+        "# profile-phases feature: {}",
+        cfg!(feature = "profile-phases")
+    );
     println!();
     println!("## summary table");
     println!(
