@@ -106,6 +106,12 @@ __internal_recon_hook = ["butteraugli-loop"]
 # attribute level (caller-controlled), not buried inside the test body.
 # CI must enable this feature explicitly when corpus is staged.
 corpus-tests = []
+# Per-phase wall-clock instrumentation for diagnosing the lossless e3->e7
+# encode-time cliff (issue #23). Records sample-gather, tree-learn, residual-
+# collect, histogram-cluster, and ANS/LZ77 emit times to a thread-local
+# accumulator that the lossless_cliff_profile example reads back. Zero cost
+# when feature is disabled. Only used by maintainer profiling; not stable.
+profile-phases = ["std"]
 default = ["std", "butteraugli-loop"]
 
 [dev-dependencies]
@@ -195,6 +201,10 @@ path = "examples/quality_drift_investigation.rs"
 name = "drift_block_map"
 path = "examples/drift_block_map.rs"
 required-features = ["__internal_recon_hook", "butteraugli-loop"]
+
+[[example]]
+name = "lossless_cliff_profile"
+path = "examples/lossless_cliff_profile.rs"
 
 # Picker oracle calibration harnesses (lossless_pareto_calibrate /
 # lossy_pareto_calibrate) live under examples/ but are NOT registered as
