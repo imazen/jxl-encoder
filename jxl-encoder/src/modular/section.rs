@@ -227,6 +227,15 @@ pub fn write_global_modular_section(
         writer.write(1, 1)?; // wp_params.default_wp = true
         write_global_transforms_full(writer, &transforms)?;
 
+        // Empty ANS stream terminator for the global modular sub-bitstream.
+        // libjxl writes the same 32-bit initial state via `WriteTokens` even when
+        // the LfGlobal carries no tokens — pre-fix jxl-oxide unconditionally calls
+        // `Decoder::begin()` (which reads 32 bits) before checking buffer dims. djxl
+        // and jxl-rs short-circuit before this read when no channels are decodable in
+        // this section, so the extra 4 bytes are simply padding to them. See
+        // `imazen/jxl-oxide@fd4e2c3` for the matching decoder fix.
+        write_tokens_ans(&[], &code, None, writer)?;
+
         // Byte-align at end of global section
         writer.zero_pad_to_byte();
         crate::trace::debug_eprintln!(
@@ -500,10 +509,17 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
 
     // Write meta-channel tokens (palette data) in the global section, after GroupHeader.
     // These are part of the global modular image — they stay whole (not split across groups).
-    if nb_meta_tokens > 0 {
-        let meta_token_slice = &all_tokens[..nb_meta_tokens];
-        write_tokens_ans(meta_token_slice, &code, None, writer)?;
-    }
+    //
+    // Even when nb_meta_tokens == 0, we still emit a 32-bit ANS initial state so the
+    // section forms a valid (empty) ANS stream. Pre-fix jxl-oxide always calls
+    // `decoder.begin()` here regardless of buffers — without these bits we'd EOF
+    // mid-LfGlobal. libjxl is bug-compatible by writing the same 32 bits via its
+    // `WriteTokens`/`ANSCoder::Flush` codepath. djxl and jxl-rs short-circuit before
+    // reading the state when there are no decodable channels in this section (the
+    // `num_chans == 0` / `is_empty` early-returns), so the extra 4 bytes are simply
+    // padding to them. See `imazen/jxl-oxide@fd4e2c3` for the matching decoder fix.
+    let meta_token_slice = &all_tokens[..nb_meta_tokens];
+    write_tokens_ans(meta_token_slice, &code, None, writer)?;
 
     let total_lf_global_bits = writer.bits_written() - bits_before;
     eprintln!(

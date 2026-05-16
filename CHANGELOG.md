@@ -448,6 +448,34 @@
 
 ### Fixed
 
+- **Empty modular sub-bitstream EOF in multi-group VarDCT/patches frames**
+  (mirrors `imazen/jxl-oxide@fd4e2c3`): when a modular section had no
+  decodable channels (every non-meta channel deferred to PassGroups by the
+  `max_chan_size` filter), `jxl-encoder` ended the section without the
+  32-bit ANS initial state. libjxl is bug-compatible by *always* emitting
+  those 32 bits via `WriteTokens` even with zero tokens — its
+  `Decoder::begin()` reads them unconditionally before checking buffer
+  dims. djxl and jxl-rs short-circuit before that read (via the
+  `num_chans == 0` / `is_empty` early-returns in
+  `modular/encoding/encoding.cc:587` and `decode_modular_subbitstream`),
+  so they accepted the pre-fix bitstream; **stock jxl-oxide 0.12.5
+  rejected it with `UnexpectedEof`**. Two trigger configurations are
+  fixed:
+  1. Multi-group VarDCT with an extra channel (alpha) larger than
+     `group_dim` (`vardct/bitstream.rs` `write_modular_empty_global`):
+     now writes `use_global_tree=1` + 32-bit ANS initial state instead
+     of an isolated 4-bit GroupHeader.
+  2. Multi-group modular (patches reference frame, lossless) whose
+     channels are deferred to PassGroups (`modular/section.rs`
+     `write_global_modular_section` / `write_global_modular_section_with_tree_dc_quant`):
+     unconditionally emit the 32-bit ANS initial state after the global
+     ModularHeader instead of skipping when `nb_meta_tokens == 0`.
+  Cost: +4 bytes per affected LfGlobal section. Regression test added in
+  `tests/empty_modular_section_roundtrip.rs` (Layer 3 — encoder roundtrip
+  via jxl-rs and in-process jxl-oxide; stock 0.12.5 verified manually).
+  The `[patch.crates-io]` pin to the imazen jxl-oxide fork stays in
+  place as defense-in-depth for bitstreams from third-party encoders.
+
 - **CI clippy/lint cleanup from the `__pre_quantized` API expansion this
   week** (refs e23a1b2, 7bfbeb1, 348a467, 6e25844, e03cff1, f41d59c):
   five workspace clippy errors broke `cargo clippy --workspace -- -D warnings`

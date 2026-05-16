@@ -2666,10 +2666,13 @@ impl VarDctEncoder {
     /// an empty buffer list (alpha assigned to HfGroups), which returns immediately.
     /// Only the GroupHeader is needed.
     fn write_modular_empty_global(writer: &mut BitWriter) -> Result<()> {
-        // GroupHeader: use_global_tree=0, wp_params default=1, nb_transforms=0
-        writer.write(1, 0)?; // use_global_tree = false
+        // GroupHeader: use_global_tree=1, wp_params default=1, nb_transforms=0
+        // Then 32-bit ANS initial state (no data follows)
+        writer.write(1, 1)?; // use_global_tree = true
         writer.write(1, 1)?; // wp_params all_default = true
         writer.write(2, 0)?; // nb_transforms = 0
+        // Initial ANS state: ANS_SIGNATURE << 16 = 0x130000
+        writer.write(32, 0x130000)?;
         Ok(())
     }
 
