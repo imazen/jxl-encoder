@@ -1,0 +1,234 @@
+   Compiling jxl-encoder-simd v0.3.2 (/home/lilith/work/zen/jxl-encoder/jxl-encoder-simd)
+   Compiling jxl-encoder v0.3.2 (/home/lilith/work/zen/jxl-encoder/jxl-encoder)
+
+    Finished `release` profile [optimized + debuginfo] target(s) in 49.79s
+.section .text.jxl_encoder_simd::entropy::__arcane_estimate_bits_u32_avx2,"ax",@progbits
+	.p2align	4
+.type	jxl_encoder_simd::entropy::__arcane_estimate_bits_u32_avx2,@function
+jxl_encoder_simd::entropy::__arcane_estimate_bits_u32_avx2:
+	.cfi_startproc
+	sub rsp, 136
+	.cfi_def_cfa_offset 144
+	mov ecx, edx
+	vcvtsi2ss xmm0, xmm15, rcx
+	mov rdx, rsi
+	vmovss xmm1, dword ptr [rip + .LCPI629_0]
+	vdivss xmm0, xmm1, xmm0
+	vbroadcastss ymm0, xmm0
+	vmovups ymmword ptr [rsp], ymm0
+	mov r8, rsi
+	shr r8, 3
+	cmp rsi, 16
+	jb .LBB629_1
+	mov esi, 8
+	xor r9d, r9d
+	vbroadcastss ymm0, dword ptr [rip + .LCPI629_2]
+	vmovups ymmword ptr [rsp + 64], ymm0
+	vbroadcastss ymm0, dword ptr [rip + .LCPI629_3]
+	vmovups ymmword ptr [rsp + 32], ymm0
+	vxorps xmm2, xmm2, xmm2
+	vxorps xmm0, xmm0, xmm0
+	vmovdqu ymm7, ymmword ptr [rsp + 64]
+	vbroadcastss ymm10, dword ptr [rip + .LCPI629_4]
+	vbroadcastss ymm12, dword ptr [rip + .LCPI629_5]
+	vbroadcastss ymm11, dword ptr [rip + .LCPI629_7]
+	.p2align	4
+.LBB629_7:
+	cmp rsi, rdx
+	ja .LBB629_17
+	lea rax, [rsi + 8]
+	cmp rax, rdx
+	ja .LBB629_18
+	vcvtdq2ps ymm3, ymmword ptr [rdi + 4*rsi - 32]
+	vcvtdq2ps ymm15, ymmword ptr [rdi + 4*rsi]
+	vxorps xmm5, xmm5, xmm5
+	vcmpgt_oqps ymm4, ymm3, ymm5
+	vbroadcastss ymm8, dword ptr [rip + .LCPI629_0]
+	vblendvps ymm4, ymm8, ymm3, ymm4
+	vcmpgt_oqps ymm5, ymm15, ymm5
+	vblendvps ymm5, ymm8, ymm15, ymm5
+	vmovups ymmword ptr [rsp + 96], ymm0
+	vmovups ymm0, ymmword ptr [rsp]
+	vmulps ymm4, ymm0, ymm4
+	vmulps ymm5, ymm0, ymm5
+	vbroadcastss ymm8, dword ptr [rip + .LCPI629_1]
+	vmaxps ymm4, ymm4, ymm8
+	vmaxps ymm5, ymm5, ymm8
+	vpaddd ymm8, ymm4, ymm7
+	vmovdqu ymm1, ymmword ptr [rsp + 32]
+	vpand ymm9, ymm8, ymm1
+	vpsubd ymm4, ymm4, ymm9
+	vaddps ymm4, ymm10, ymm4
+	vbroadcastss ymm14, dword ptr [rip + .LCPI629_6]
+	vmovaps ymm9, ymm14
+	vfmadd213ps ymm9, ymm4, ymm12
+	vfmadd213ps ymm9, ymm4, ymm11
+	vbroadcastss ymm6, dword ptr [rip + .LCPI629_9]
+	vmovaps ymm13, ymm6
+	vbroadcastss ymm0, dword ptr [rip + .LCPI629_8]
+	vfmadd213ps ymm13, ymm4, ymm0
+	vbroadcastss ymm0, dword ptr [rip + .LCPI629_10]
+	vfmadd213ps ymm13, ymm4, ymm0
+	vdivps ymm4, ymm9, ymm13
+	vpsrad ymm8, ymm8, 23
+	vcvtdq2ps ymm8, ymm8
+	vaddps ymm4, ymm8, ymm4
+	vpaddd ymm8, ymm5, ymm7
+	vpand ymm9, ymm8, ymm1
+	vpsubd ymm5, ymm5, ymm9
+	vaddps ymm5, ymm10, ymm5
+	vfmadd213ps ymm14, ymm5, ymm12
+	vfmadd213ps ymm14, ymm5, ymm11
+	vbroadcastss ymm0, dword ptr [rip + .LCPI629_8]
+	vfmadd213ps ymm6, ymm5, ymm0
+	vmovups ymm0, ymmword ptr [rsp + 96]
+	vbroadcastss ymm1, dword ptr [rip + .LCPI629_10]
+	vfmadd213ps ymm6, ymm5, ymm1
+	vdivps ymm5, ymm14, ymm6
+	vpsrad ymm8, ymm8, 23
+	vcvtdq2ps ymm8, ymm8
+	vaddps ymm5, ymm8, ymm5
+	vmulps ymm3, ymm4, ymm3
+	vsubps ymm2, ymm2, ymm3
+	vmulps ymm3, ymm15, ymm5
+	vsubps ymm0, ymm0, ymm3
+	lea rax, [r9 + 2]
+	add r9, 3
+	add rsi, 16
+	cmp r9, r8
+	mov r9, rax
+	jb .LBB629_7
+	sub r8, rax
+	ja .LBB629_3
+	jmp .LBB629_11
+.LBB629_1:
+	vxorps xmm0, xmm0, xmm0
+	xor eax, eax
+	vxorps xmm2, xmm2, xmm2
+	sub r8, rax
+	jbe .LBB629_11
+.LBB629_3:
+	shl rax, 3
+	vxorps xmm1, xmm1, xmm1
+	vpbroadcastd ymm6, dword ptr [rip + .LCPI629_2]
+	vpbroadcastd ymm7, dword ptr [rip + .LCPI629_3]
+	vbroadcastss ymm9, dword ptr [rip + .LCPI629_5]
+	vbroadcastss ymm10, dword ptr [rip + .LCPI629_6]
+	vbroadcastss ymm11, dword ptr [rip + .LCPI629_7]
+	vbroadcastss ymm12, dword ptr [rip + .LCPI629_8]
+	vbroadcastss ymm8, dword ptr [rip + .LCPI629_9]
+	vbroadcastss ymm14, dword ptr [rip + .LCPI629_10]
+	.p2align	4
+.LBB629_4:
+	lea rsi, [rax + 8]
+	cmp rsi, rdx
+	ja .LBB629_5
+	vcvtdq2ps ymm15, ymmword ptr [rdi + 4*rax]
+	vcmpgt_oqps ymm3, ymm15, ymm1
+	vbroadcastss ymm4, dword ptr [rip + .LCPI629_0]
+	vblendvps ymm3, ymm4, ymm15, ymm3
+	vmulps ymm3, ymm3, ymmword ptr [rsp]
+	vbroadcastss ymm4, dword ptr [rip + .LCPI629_1]
+	vmaxps ymm3, ymm3, ymm4
+	vpaddd ymm4, ymm3, ymm6
+	vpand ymm5, ymm4, ymm7
+	vpsubd ymm3, ymm3, ymm5
+	vbroadcastss ymm5, dword ptr [rip + .LCPI629_4]
+	vaddps ymm3, ymm3, ymm5
+	vmovaps ymm5, ymm10
+	vfmadd213ps ymm5, ymm3, ymm9
+	vfmadd213ps ymm5, ymm3, ymm11
+	vmovaps ymm13, ymm8
+	vfmadd213ps ymm13, ymm3, ymm12
+	vfmadd213ps ymm13, ymm3, ymm14
+	vdivps ymm3, ymm5, ymm13
+	vpsrad ymm4, ymm4, 23
+	vcvtdq2ps ymm4, ymm4
+	vaddps ymm3, ymm3, ymm4
+	vmulps ymm3, ymm15, ymm3
+	vsubps ymm2, ymm2, ymm3
+	mov rax, rsi
+	dec r8
+	jne .LBB629_4
+.LBB629_11:
+	vaddps ymm0, ymm0, ymm2
+	vextractf128 xmm1, ymm0, 1
+	vaddps xmm0, xmm0, xmm1
+	vhaddps xmm0, xmm0, xmm0
+	vmovshdup xmm1, xmm0
+	vaddss xmm0, xmm0, xmm1
+	vcvtss2sd xmm0, xmm0, xmm0
+	lea eax, [4*rdx]
+	and eax, 28
+	je .LBB629_15
+	vxorps xmm7, xmm7, xmm7
+	vcvtsi2sd xmm1, xmm7, rcx
+	and edx, 504
+	lea rcx, [rdi + 4*rdx]
+	xor edx, edx
+	vmovsd xmm2, qword ptr [rip + .LCPI629_11]
+	vmovss xmm3, dword ptr [rip + .LCPI629_4]
+	vmovsd xmm4, qword ptr [rip + .LCPI629_15]
+	vmovsd xmm5, qword ptr [rip + .LCPI629_16]
+	vmovsd xmm6, qword ptr [rip + .LCPI629_17]
+	jmp .LBB629_13
+	.p2align	4
+.LBB629_14:
+	add rdx, 4
+	cmp rax, rdx
+	je .LBB629_15
+.LBB629_13:
+	mov esi, dword ptr [rcx + rdx]
+	test esi, esi
+	je .LBB629_14
+	mov esi, esi
+	vxorps xmm11, xmm11, xmm11
+	vcvtsi2sd xmm7, xmm11, rsi
+	vdivsd xmm8, xmm7, xmm1
+	vmaxsd xmm8, xmm8, xmm2
+	vcvtsd2ss xmm8, xmm8, xmm8
+	vmovd esi, xmm8
+	lea edi, [rsi - 1059760811]
+	mov r8d, edi
+	sar r8d, 23
+	and edi, -8388608
+	sub esi, edi
+	vmovd xmm8, esi
+	vxorps xmm11, xmm11, xmm11
+	vcvtsi2ss xmm9, xmm11, r8d
+	vaddss xmm8, xmm8, xmm3
+	vbroadcastss xmm8, xmm8
+	vmulps xmm10, xmm8, xmm4
+	vaddps xmm10, xmm10, xmm5
+	vmulps xmm8, xmm8, xmm10
+	vaddps xmm8, xmm8, xmm6
+	vmovshdup xmm10, xmm8
+	vdivss xmm8, xmm8, xmm10
+	vaddss xmm8, xmm8, xmm9
+	vcvtss2sd xmm8, xmm8, xmm8
+	vmulsd xmm7, xmm8, xmm7
+	vsubsd xmm0, xmm0, xmm7
+	jmp .LBB629_14
+.LBB629_15:
+	add rsp, 136
+	.cfi_def_cfa_offset 8
+	vzeroupper
+	ret
+.LBB629_17:
+	.cfi_def_cfa_offset 144
+	lea rdi, [rsi - 8]
+	lea rcx, [rip + .Lanon.f8ad87f78ae98c88ca71a18999c10c7d.2058]
+	vzeroupper
+	call qword ptr [rip + core::slice::index::slice_index_fail@GOTPCREL]
+.LBB629_5:
+	lea rsi, [rax + 8]
+	lea rcx, [rip + .Lanon.f8ad87f78ae98c88ca71a18999c10c7d.2057]
+	mov rdi, rax
+	vzeroupper
+	call qword ptr [rip + core::slice::index::slice_index_fail@GOTPCREL]
+.LBB629_18:
+	lea rcx, [rip + .Lanon.f8ad87f78ae98c88ca71a18999c10c7d.2059]
+	mov rdi, rsi
+	mov rsi, rax
+	vzeroupper
+	call qword ptr [rip + core::slice::index::slice_index_fail@GOTPCREL]

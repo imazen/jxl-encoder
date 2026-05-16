@@ -822,27 +822,20 @@ fn gather_channel_samples(
     Ok(())
 }
 
-/// Size of the precomputed n*log2(n) lookup table.
-/// 8192 entries × 8 bytes = 64KB, fits in L1+L2 cache.
+/// libjxl-style EstimateBits cost over a histogram (probability-floor formula).
+///
 /// Uses log2 with a probability floor of 1/4096, matching libjxl's EstimateBits
 /// (enc_ma.cc:54-71). Used for BOTH parent node and sweep child cost estimation,
 /// ensuring the split criterion compares costs from the same formula.
+///
+/// Production callers (find_best_split / compute_predictor_entropy) call
+/// [`jxl_simd::estimate_bits_u32`] directly for the SIMD path. This scalar
+/// wrapper is retained as the unit-test reference and as a documentation
+/// anchor for the cost formula.
 #[inline]
+#[allow(dead_code)]
 pub fn estimate_bits(counts: &[u32], total: u32) -> f64 {
-    if total == 0 {
-        return 0.0;
-    }
-    let total_f = total as f64;
-    // Floor probability at 1/4096 (ANS precision is 12 bits)
-    let min_prob = 1.0 / 4096.0;
-    let mut bits = 0.0;
-    for &c in counts {
-        if c > 0 {
-            let p = (c as f64 / total_f).max(min_prob);
-            bits -= c as f64 * jxl_simd::fast_log2f(p as f32) as f64;
-        }
-    }
-    bits
+    jxl_simd::estimate_bits_scalar_f64(counts, total)
 }
 
 /// Pre-quantized property data for all properties across all samples.
@@ -2022,10 +2015,17 @@ fn find_best_split(
 
                 // Recompute costs using estimate_bits with probability floor,
                 // matching libjxl's EstimateBits at each threshold position.
+                // SIMD path: see jxl-encoder-simd/src/entropy.rs (≥4× win over
+                // scalar in the find_best_split sweep — Phase-A asm showed the
+                // scalar `subsd` dep chain serialized the inner loop at ~25
+                // cycles/iter; SIMD breaks it into 2 independent f32 lanes
+                // and hides the fast_log2f latency).
                 let l_bits =
-                    estimate_bits(&left_counts[..effective_histo], left_total) + left_extra as f64;
-                let r_bits = estimate_bits(&right_counts[..effective_histo], right_total)
-                    + right_extra as f64;
+                    jxl_simd::estimate_bits_u32(&left_counts[..effective_histo], left_total)
+                        + left_extra as f64;
+                let r_bits =
+                    jxl_simd::estimate_bits_u32(&right_counts[..effective_histo], right_total)
+                        + right_extra as f64;
 
                 // Predictor selection uses penalized cost (matching libjxl).
                 // Raw cost stored separately for the final split decision.
@@ -2123,7 +2123,7 @@ fn compute_predictor_entropy(
         tot_extra += ebits[idx] as u64 * count as u64;
     }
 
-    estimate_bits(&counts_buf[..histogram_size], total) + tot_extra as f64
+    jxl_simd::estimate_bits_u32(&counts_buf[..histogram_size], total) + tot_extra as f64
 }
 
 /// Partition indices in-place so that indices with property <= splitval come first.

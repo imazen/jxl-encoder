@@ -1,0 +1,231 @@
+    Finished
+ `release` profile [optimized + debuginfo] target(s) in 0.13s
+.section .text.jxl_encoder::modular::tree_learn::find_best_split,"ax",@progbits
+	.p2align	4
+.type	jxl_encoder::modular::tree_learn::find_best_split,@function
+jxl_encoder::modular::tree_learn::find_best_split:
+		// jxl-encoder/src/modular/tree_learn.rs:1775
+		fn find_best_split(
+	.cfi_startproc
+	push rbp
+	jae .LBB434_229
+	mov r13, qword ptr [rsp + 312]
+	add dword ptr [r13 + 4*rdi], r10d
+		// jxl-encoder/src/modular/tree_learn.rs:2011
+		right_counts[i] -= ci;
+	cmp rdi, qword ptr [rsp + 168]
+	jae .LBB434_165
+	sub dword ptr [rbp + 4*rdi], r10d
+		// jxl-encoder/src/modular/tree_learn.rs:2009
+		if ci > 0 {
+	jmp .LBB434_147
+	.p2align	4
+.LBB434_148:
+		// jxl-encoder/src/modular/tree_learn.rs:2014
+		left_extra += extra_bits_increase[local_k];
+	cmp r12, qword ptr [rsp + 104]
+	jae .LBB434_226
+	mov rsi, qword ptr [rsp + 112]
+	mov rsi, qword ptr [rsi + 8*r12]
+	add rdx, rsi
+		// jxl-encoder/src/modular/tree_learn.rs:2015
+		right_extra -= extra_bits_increase[local_k];
+	sub r15, rsi
+		// jxl-encoder/src/modular/tree_learn.rs:2017
+		right_total -= bc;
+	sub r8d, r9d
+		// jxl-encoder/src/modular/tree_learn.rs:2019
+		if left_total == 0 || right_total == 0 {
+	add ecx, r9d
+	je .LBB434_161
+	test r8d, r8d
+	je .LBB434_161
+		// jxl-encoder/src/modular/tree_learn.rs:835
+		let total_f = total as f64;
+	mov esi, ecx
+	xorps xmm1, xmm1
+	cvtsi2sd xmm1, rsi
+	pxor xmm0, xmm0
+	xor esi, esi
+	jmp .LBB434_152
+	.p2align	4
+.LBB434_153:
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1720
+		self.as_ptr() == other.as_ptr()
+	add rsi, 4
+	cmp qword ptr [rsp + 56], rsi
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/iter/macros.rs:180
+		if ptr == crate::intrinsics::transmute::<$ptr, NonNull<T>>(end_or_len) {
+	je .LBB434_154
+.LBB434_152:
+	mov rdi, qword ptr [rsp + 312]
+		// jxl-encoder/src/modular/tree_learn.rs:839
+		for &c in counts {
+	mov edi, dword ptr [rdi + rsi]
+		// jxl-encoder/src/modular/tree_learn.rs:840
+		if c > 0 {
+	test edi, edi
+	je .LBB434_153
+		// jxl-encoder/src/modular/tree_learn.rs:841
+		let p = (c as f64 / total_f).max(min_prob);
+	mov edi, edi
+	xorps xmm2, xmm2
+	cvtsi2sd xmm2, rdi
+	movapd xmm3, xmm2
+	divsd xmm3, xmm1
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/f64.rs:1010
+		intrinsics::maxnumf64(self, other)
+	maxsd xmm3, xmm7
+		// jxl-encoder/src/modular/tree_learn.rs:842
+		bits -= c as f64 * jxl_simd::fast_log2f(p as f32) as f64;
+	cvtsd2ss xmm3, xmm3
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/f32.rs:1183
+		unsafe { mem::transmute(self) }
+	movd edi, xmm3
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/int_macros.rs:2137
+		intrinsics::wrapping_sub(self, rhs)
+	lea r9d, [rdi - 1059760811]
+		// jxl-encoder-simd/src/entropy.rs:557
+		let exp_shifted = exp_bits >> 23;
+	mov r10d, r9d
+	sar r10d, 23
+		// jxl-encoder-simd/src/entropy.rs:558
+		let mantissa = f32::from_bits((x_bits.wrapping_sub(exp_shifted << 23)) as u32);
+	and r9d, -8388608
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/int_macros.rs:2137
+		intrinsics::wrapping_sub(self, rhs)
+	sub edi, r9d
+		// jxl-encoder-simd/src/entropy.rs:559
+		let exp_val = exp_shifted as f32;
+	xorps xmm3, xmm3
+	cvtsi2ss xmm3, r10d
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/f32.rs:1230
+		unsafe { mem::transmute(v) }
+	movd xmm4, edi
+		// jxl-encoder-simd/src/entropy.rs:560
+		let frac = mantissa - 1.0;
+	addss xmm4, xmm8
+		// jxl-encoder-simd/src/entropy.rs:561
+		let num = LOG2_P0 + frac * (LOG2_P1 + frac * LOG2_P2);
+	shufps xmm4, xmm4, 0
+	movaps xmm5, xmm4
+	mulps xmm5, xmm9
+	addps xmm5, xmm10
+	mulps xmm5, xmm4
+	addps xmm5, xmm11
+		// jxl-encoder-simd/src/entropy.rs:563
+		num / den + exp_val
+	movaps xmm4, xmm5
+	shufps xmm4, xmm5, 85
+	divss xmm5, xmm4
+	addss xmm5, xmm3
+		// jxl-encoder/src/modular/tree_learn.rs:842
+		bits -= c as f64 * jxl_simd::fast_log2f(p as f32) as f64;
+	xorps xmm3, xmm3
+	cvtss2sd xmm3, xmm5
+	mulsd xmm3, xmm2
+	subsd xmm0, xmm3
+		// jxl-encoder/src/modular/tree_learn.rs:840
+		if c > 0 {
+	jmp .LBB434_153
+	.p2align	4
+.LBB434_154:
+		// jxl-encoder/src/modular/tree_learn.rs:835
+		let total_f = total as f64;
+	mov esi, r8d
+	xorps xmm2, xmm2
+	cvtsi2sd xmm2, rsi
+	xorpd xmm1, xmm1
+	xor esi, esi
+	jmp .LBB434_155
+	.p2align	4
+.LBB434_156:
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1720
+		self.as_ptr() == other.as_ptr()
+	add rsi, 4
+	cmp qword ptr [rsp + 56], rsi
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/iter/macros.rs:180
+		if ptr == crate::intrinsics::transmute::<$ptr, NonNull<T>>(end_or_len) {
+	je .LBB434_157
+.LBB434_155:
+		// jxl-encoder/src/modular/tree_learn.rs:839
+		for &c in counts {
+	mov edi, dword ptr [rbp + rsi]
+		// jxl-encoder/src/modular/tree_learn.rs:840
+		if c > 0 {
+	test edi, edi
+	je .LBB434_156
+		// jxl-encoder/src/modular/tree_learn.rs:841
+		let p = (c as f64 / total_f).max(min_prob);
+	mov edi, edi
+	xorps xmm3, xmm3
+	cvtsi2sd xmm3, rdi
+	movapd xmm4, xmm3
+	divsd xmm4, xmm2
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/f64.rs:1010
+		intrinsics::maxnumf64(self, other)
+	maxsd xmm4, xmm7
+		// jxl-encoder/src/modular/tree_learn.rs:842
+		bits -= c as f64 * jxl_simd::fast_log2f(p as f32) as f64;
+	cvtsd2ss xmm4, xmm4
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/f32.rs:1183
+		unsafe { mem::transmute(self) }
+	movd edi, xmm4
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/int_macros.rs:2137
+		intrinsics::wrapping_sub(self, rhs)
+	lea r9d, [rdi - 1059760811]
+		// jxl-encoder-simd/src/entropy.rs:557
+		let exp_shifted = exp_bits >> 23;
+	mov r10d, r9d
+	sar r10d, 23
+		// jxl-encoder-simd/src/entropy.rs:558
+		let mantissa = f32::from_bits((x_bits.wrapping_sub(exp_shifted << 23)) as u32);
+	and r9d, -8388608
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/int_macros.rs:2137
+		intrinsics::wrapping_sub(self, rhs)
+	sub edi, r9d
+		// jxl-encoder-simd/src/entropy.rs:559
+		let exp_val = exp_shifted as f32;
+	xorps xmm4, xmm4
+	cvtsi2ss xmm4, r10d
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/f32.rs:1230
+		unsafe { mem::transmute(v) }
+	movd xmm5, edi
+		// jxl-encoder-simd/src/entropy.rs:560
+		let frac = mantissa - 1.0;
+	addss xmm5, xmm8
+		// jxl-encoder-simd/src/entropy.rs:561
+		let num = LOG2_P0 + frac * (LOG2_P1 + frac * LOG2_P2);
+	shufps xmm5, xmm5, 0
+	movaps xmm6, xmm5
+	mulps xmm6, xmm9
+	addps xmm6, xmm10
+	mulps xmm6, xmm5
+	addps xmm6, xmm11
+		// jxl-encoder-simd/src/entropy.rs:563
+		num / den + exp_val
+	movaps xmm5, xmm6
+	shufps xmm5, xmm6, 85
+	divss xmm6, xmm5
+	addss xmm6, xmm4
+		// jxl-encoder/src/modular/tree_learn.rs:842
+		bits -= c as f64 * jxl_simd::fast_log2f(p as f32) as f64;
+	xorps xmm4, xmm4
+	cvtss2sd xmm4, xmm6
+	mulsd xmm4, xmm3
+	subsd xmm1, xmm4
+		// jxl-encoder/src/modular/tree_learn.rs:840
+		if c > 0 {
+	jmp .LBB434_156
+	.p2align	4
+.LBB434_157:
+		// jxl-encoder/src/modular/tree_learn.rs:2026
+		estimate_bits(&left_counts[..effective_histo], left_total) + left_extra as f64;
+	movq xmm2, rdx
+	punpckldq xmm2, xmmword ptr [rip + .LCPI434_10]
+	subpd xmm2, xmmword ptr [rip + .LCPI434_11]
+	movapd xmm3, xmm2
+	unpckhpd xmm3, xmm2
+	addsd xmm3, xmm2
+	addsd xmm0, xmm3
+	movsd xmm2, qword ptr [rsp + 32]

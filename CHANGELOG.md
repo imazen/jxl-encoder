@@ -400,6 +400,25 @@
 
 ### Performance
 
+- **SIMD-vectorized `estimate_bits` for tree-learning `find_best_split`**
+  (refs #23): new `jxl_simd::estimate_bits_u32` AVX2/NEON/WASM128 path
+  replaces the scalar inner loop in `tree_learn::find_best_split` and
+  `compute_predictor_entropy`, where the libjxl-style 1/4096-probability-
+  floored Shannon cost is called 22k+ times per node. Pre-SIMD asm
+  (`benchmarks/find_best_split_asm_hot_loop_2026-05-15.txt`) showed a
+  serialized `subsd` accumulator dep chain + scalar `fast_log2f` (~25
+  cycles/iter); SIMD path uses 8 lanes × 2 independent accumulators and
+  FMA polynomial, hiding the log2 latency. Measured at effort 7 single-
+  thread on CLIC photos (commit-time, AMD 7950X):
+  | image | size | wall-clock Δ | compute_best_tree Δ |
+  |---|---:|---:|---:|
+  | CID22 photo (0.26 MP) | 156 KB | −8.9% | −11.8% |
+  | CLIC 1 MP photo | 1.28 MB | −8.0% | −10.2% |
+  | CLIC 4.2 MP photo | 2.76 MB | −5.1% | −6.5% |
+  Output bytes are byte-identical to baseline on all three images;
+  all 13 `lossless_*` hash-locked tests pass unchanged. Full numbers +
+  asm dumps under `benchmarks/find_best_split_post_simd_2026-05-15.tsv`.
+
 - **Parallel DC + AC entropy code build via `rayon::join`** (ade20b4):
   the DC entropy code build and the per-pass AC entropy code builds in
   `encode_two_pass_to_writer` are independent (disjoint token streams,
