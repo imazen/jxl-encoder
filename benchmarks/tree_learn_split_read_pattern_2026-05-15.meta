@@ -1,0 +1,45 @@
+issue: #40 (https://github.com/imazen/jxl-encoder/issues/40)
+chunk: 1 of N (SplitTreeSamples in-place permutation primitive)
+date_utc: 2026-05-16
+host: water-cooled AMD Ryzen 9 7950X, 128 GB RAM (per CLAUDE.md "Environment")
+parent_commit: a23dd2d55440d126422984c961e33bfac887840d
+harness: zenbench 0.1.8
+command: cargo bench -p jxl-encoder --bench tree_learn_split_read_pattern --features __bench_internals
+build: release, no -C target-cpu=native (per CLAUDE.md "Performance Optimization")
+sample_counts: 10_000, 100_000, 1_000_000
+variants:
+  indexed_random_reads:
+    Simulates today's find_best_split `collect` step (tree_learn.rs:1951-1967):
+    iterates a pseudo-random index permutation and reads tokens[idx], ebits[idx],
+    sample_counts[idx]. One (predictor, property) pass equivalent.
+  contiguous_reads:
+    Simulates the post-permutation state: iterates rows 0..n linearly, no
+    indices array, sequential reads of the same SoA arrays.
+  partition_in_place_only:
+    Cost of split_tree_samples_in_place() alone (14 predictors + 16 props +
+    bucket indices + sample_counts swap). Amortized across all (predictor *
+    property) reads of the same partitioned region in chunk 2.
+  partition_in_place_then_contiguous_reads:
+    End-to-end: partition once + one contiguous read pass. Lower bound on
+    chunk-2 cost for a node with one (predictor, property) iteration.
+
+key_finding:
+  Random-vs-contiguous speedup grows with sample count:
+    n=10K:  1.66x faster contiguous (11.6us -> 7.0us)
+    n=100K: 3.35x faster contiguous (238us -> 71us)
+    n=1M:   5.75x faster contiguous (4.6ms -> 0.8ms)
+  Partition cost breakeven (partition_only / contiguous):
+    n=10K:  24x  (need >24 collect passes after partition to win)
+    n=100K: 33x
+    n=1M:   41x
+  Production find_best_split inner loop: up to 16 props * 14 predictors = 224
+  collect passes per node at the root. 224 >> 41, so chunk-2 amortization
+  should win at every sample scale.
+
+caveats:
+  - Synthetic SoA: real props/buckets in production have data-dependent layout.
+    Cache footprint per-row in production is comparable (~63 bytes per swap).
+  - Partition cost in chunk 2 is per-NODE not per-pass; the bench measures
+    one partition. Tree depth N -> N partitions per leaf path.
+  - Single-thread measurement. Production tree learning runs single-thread per
+    group; rayon-parallel across groups (no contention on the partition cost).

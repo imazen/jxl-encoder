@@ -106,6 +106,23 @@ pub mod test_helpers;
 /// Naming convention: `pub use crate::path::to::Symbol;` — pure re-exports,
 /// no wrapping logic. Wrapper functions (e.g., for `pub(crate)` impl methods
 /// that can't be `pub use`d directly) live in `crate::vardct::__internals_wrappers`.
+/// Re-exports of the chunk-1 SplitTreeSamples primitive for the in-crate
+/// microbench (`benches/tree_learn_split_read_pattern.rs`).
+///
+/// **Not part of the stable API.** Gated behind the `__bench_internals`
+/// cargo feature; off by default. Tracks issue #40
+/// (https://github.com/imazen/jxl-encoder/issues/40).
+#[cfg(feature = "__bench_internals")]
+#[doc(hidden)]
+pub mod __bench_internals {
+    /// Re-export of `crate::modular::tree_learn_split` for the bench harness.
+    pub mod tree_learn_split {
+        pub use crate::modular::tree_learn_split::{
+            PartitionKey, SplittableSamples, split_tree_samples_in_place,
+        };
+    }
+}
+
 #[cfg(feature = "__internals")]
 #[doc(hidden)]
 pub mod __internals {
