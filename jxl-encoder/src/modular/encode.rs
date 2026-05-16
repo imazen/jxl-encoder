@@ -1371,7 +1371,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
         compute_best_tree_with_multipliers, compute_gather_stride_from_profile,
-        gather_samples_strided, max_ref_channels,
+        gather_samples_strided, gather_samples_strided_with_dedup, max_ref_channels,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -1608,11 +1608,40 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
         max_ref_channels(&work_image)
     };
     let mut samples = TreeSamples::new_with_ref_channels(num_refs);
-    gather_samples_strided(&mut samples, &work_image, 0, 0, stride, &wp_params);
+    // Phase 2 of issue #41: thread the same property list the tree
+    // learner will use into the gather-time dedup hash so the merge
+    // stays at-or-below the post-sort dedup in aggressiveness.
+    let dedup_properties: Vec<usize> = if profile.gather_dedup {
+        TreeLearningParams::from_profile(profile)
+            .with_ref_properties(num_refs, profile.effort)
+            .properties
+            .clone()
+    } else {
+        Vec::new()
+    };
+    if profile.gather_dedup {
+        let _ = gather_samples_strided_with_dedup(
+            &mut samples,
+            &work_image,
+            0,
+            0,
+            stride,
+            &wp_params,
+            None,
+            true,
+            &dedup_properties,
+        );
+    } else {
+        gather_samples_strided(&mut samples, &work_image, 0, 0, stride, &wp_params);
+    }
 
     // Step 2: Learn tree with effort-dependent parameters
+    //
+    // Pixel fraction must reflect the *gathered* sample count
+    // (`total_gathered_weight()` recovers it whether or not gather-time
+    // dedup ran — see section.rs).
     let pixel_fraction = if total_pixels > 0 {
-        samples.num_samples as f64 / total_pixels as f64
+        samples.total_gathered_weight() as f64 / total_pixels as f64
     } else {
         1.0
     };
@@ -1787,7 +1816,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
         compute_best_tree_with_multipliers, compute_gather_stride_from_profile,
-        gather_samples_strided,
+        gather_samples_strided, gather_samples_strided_with_dedup,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -1805,11 +1834,31 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
         .sum();
     let stride = compute_gather_stride_from_profile(total_pixels, profile);
     let mut samples = TreeSamples::new();
-    gather_samples_strided(&mut samples, image, 0, 0, stride, &wp_params);
+    let dedup_properties: Vec<usize> = if profile.gather_dedup {
+        TreeLearningParams::from_profile(profile).properties.clone()
+    } else {
+        Vec::new()
+    };
+    if profile.gather_dedup {
+        let _ = gather_samples_strided_with_dedup(
+            &mut samples,
+            image,
+            0,
+            0,
+            stride,
+            &wp_params,
+            None,
+            true,
+            &dedup_properties,
+        );
+    } else {
+        gather_samples_strided(&mut samples, image, 0, 0, stride, &wp_params);
+    }
 
-    // Step 2: Learn tree with forced splits for multiplier info
+    // Step 2: Learn tree with forced splits for multiplier info.
+    // See section.rs for the gather-time dedup pixel_fraction rationale.
     let pixel_fraction = if total_pixels > 0 {
-        samples.num_samples as f64 / total_pixels as f64
+        samples.total_gathered_weight() as f64 / total_pixels as f64
     } else {
         1.0
     };
@@ -1942,6 +1991,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
         compute_gather_stride_from_profile, gather_samples_strided,
+        gather_samples_strided_with_dedup,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -1998,12 +2048,34 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         .sum();
     let stride = compute_gather_stride_from_profile(total_pixels, profile);
     let mut samples = TreeSamples::new_for_squeeze();
-    gather_samples_strided(&mut samples, &transformed, 0, 0, stride, &wp_params);
+    let dedup_properties: Vec<usize> = if profile.gather_dedup {
+        TreeLearningParams::from_profile_squeeze(profile)
+            .properties
+            .clone()
+    } else {
+        Vec::new()
+    };
+    if profile.gather_dedup {
+        let _ = gather_samples_strided_with_dedup(
+            &mut samples,
+            &transformed,
+            0,
+            0,
+            stride,
+            &wp_params,
+            None,
+            true,
+            &dedup_properties,
+        );
+    } else {
+        gather_samples_strided(&mut samples, &transformed, 0, 0, stride, &wp_params);
+    }
 
     // Step 4: Learn tree with effort-dependent parameters
     // Use squeeze-specific property order (libjxl enc_modular.cc:538-541).
+    // See section.rs for the gather-time dedup pixel_fraction rationale.
     let pixel_fraction = if total_pixels > 0 {
-        samples.num_samples as f64 / total_pixels as f64
+        samples.total_gathered_weight() as f64 / total_pixels as f64
     } else {
         1.0
     };

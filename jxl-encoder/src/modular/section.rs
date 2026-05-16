@@ -316,7 +316,8 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_gather_stride_from_profile, gather_samples_strided, max_ref_channels,
+        compute_gather_stride_from_profile, gather_samples_strided,
+        gather_samples_strided_with_dedup, max_ref_channels,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -360,11 +361,46 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     };
     let mut samples = TreeSamples::new_with_ref_channels(num_refs);
     let per_group_id_offset = if meta_image.is_some() { 1u32 } else { 0u32 };
+    // Phase 2 of issue #41: when the profile asks for gather-time dedup,
+    // every per-group task gets its own `GatherDedupTable`. Concatenation
+    // via `append_from` joins the per-task sample_counts; the post-gather
+    // sort dedup then collapses cross-task duplicates (and any bucket-
+    // equivalence collisions the raw-value hash missed).
+    //
+    // The dedup hash mirrors `params.properties` (post-y/x skip) so the
+    // merge is provably at-or-below the post-sort merge in
+    // aggressiveness — every gather-time match would also have collapsed
+    // under the bucket-key sort, just possibly with other rows.
+    let enable_gather_dedup = profile.gather_dedup;
+    let dedup_properties: Vec<usize> = if enable_gather_dedup {
+        // Borrow the same property list `compute_best_tree` will build
+        // from this profile so the gather hash uses the same slot set.
+        TreeLearningParams::from_profile(profile)
+            .with_ref_properties(num_refs, profile.effort)
+            .properties
+            .clone()
+    } else {
+        Vec::new()
+    };
     crate::profile_time!("modular/gather_samples", {
         // Gather meta-channel samples first (channel_offset=0, group_id=0).
         // Single image, so sequential — only one task's worth of work.
         if let Some(meta) = meta_image {
-            gather_samples_strided(&mut samples, meta, 0, 0, stride, &wp_params);
+            if enable_gather_dedup {
+                let _ = gather_samples_strided_with_dedup(
+                    &mut samples,
+                    meta,
+                    0,
+                    0,
+                    stride,
+                    &wp_params,
+                    None,
+                    true,
+                    &dedup_properties,
+                );
+            } else {
+                gather_samples_strided(&mut samples, meta, 0, 0, stride, &wp_params);
+            }
         }
         // Per-group sample gather is embarrassingly parallel: each call
         // mutates its OWN TreeSamples (no shared state), and merge is a
@@ -380,14 +416,28 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         let per_group_samples: Vec<TreeSamples> =
             crate::parallel::parallel_map(images.len(), |group_idx| {
                 let mut local = TreeSamples::new_with_ref_channels(num_refs);
-                gather_samples_strided(
-                    &mut local,
-                    &images[group_idx],
-                    group_idx as u32 + per_group_id_offset,
-                    0,
-                    stride,
-                    &wp_params,
-                );
+                if enable_gather_dedup {
+                    let _ = gather_samples_strided_with_dedup(
+                        &mut local,
+                        &images[group_idx],
+                        group_idx as u32 + per_group_id_offset,
+                        0,
+                        stride,
+                        &wp_params,
+                        None,
+                        true,
+                        &dedup_properties,
+                    );
+                } else {
+                    gather_samples_strided(
+                        &mut local,
+                        &images[group_idx],
+                        group_idx as u32 + per_group_id_offset,
+                        0,
+                        stride,
+                        &wp_params,
+                    );
+                }
                 local
             });
         // Reserve total capacity up-front to avoid Vec growth during merge,
@@ -400,8 +450,15 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     });
 
     // Step 2: Learn tree with effort-dependent parameters
+    //
+    // Pixel fraction must reflect the *gathered* sample count, not the
+    // deduplicated unique count. With gather-time dedup
+    // (Phase 2 of issue #41), `samples.num_samples` is already the
+    // post-dedup unique count; `samples.total_gathered_weight()`
+    // recovers the original total. Without it, num_samples IS the
+    // gathered total and the accessor returns it.
     let pixel_fraction = if total_pixels > 0 {
-        samples.num_samples as f64 / total_pixels as f64
+        samples.total_gathered_weight() as f64 / total_pixels as f64
     } else {
         1.0
     };

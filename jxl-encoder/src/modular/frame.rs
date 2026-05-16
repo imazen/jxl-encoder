@@ -1454,9 +1454,9 @@ impl FrameEncoder {
         use super::squeeze::{apply_squeeze, default_squeeze_params};
         use super::tree::count_contexts;
         use super::tree_learn::{
-            TreeLearningParams, TreeSamples, collect_residuals_with_tree_with_budget,
-            compute_best_tree_with_budget, compute_gather_stride_from_profile,
-            gather_samples_strided_with_budget,
+            GatherDedupTable, TreeLearningParams, TreeSamples,
+            collect_residuals_with_tree_with_budget, compute_best_tree_with_budget,
+            compute_gather_stride_from_profile, gather_samples_strided_with_budget_inner,
         };
         use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
         use crate::entropy_coding::encode::{write_entropy_code_ans, write_tokens_ans};
@@ -1531,6 +1531,30 @@ impl FrameEncoder {
 
         let mut samples = TreeSamples::new();
 
+        // Phase 2 of issue #41: when the profile asks for gather-time
+        // dedup, all three gather phases (global / LfGroup / PassGroup)
+        // share one cuckoo table so cross-section duplicates merge into
+        // the same unique row. Size from the global pixel count to keep
+        // load < 2/3 throughout — channels in LfGroup/PassGroup are
+        // already covered by the same estimate (squeezed total).
+        //
+        // The hash uses `params.properties` (post-y/x skip) so the
+        // gather-time merge mirrors what the post-sort dedup would
+        // collapse anyway. This squeeze path uses
+        // `TreeLearningParams::from_profile` (NOT `_squeeze`) — squeeze
+        // training happens inside the same routine but `from_profile`
+        // matches what we feed to `compute_best_tree_with_budget`
+        // downstream.
+        let mut shared_dedup_table = if self.options.profile.gather_dedup {
+            let est_samples = total_pixels.div_ceil(stride.max(1)).max(1);
+            let props = TreeLearningParams::from_profile(&self.options.profile)
+                .properties
+                .clone();
+            Some(GatherDedupTable::new_with_properties(est_samples, &props))
+        } else {
+            None
+        };
+
         // Compute stream_id values matching the decoder's ModularStreamId formula.
         // The decoder assigns stream_id = property[1] during tree traversal:
         //   GlobalData:    0
@@ -1549,7 +1573,7 @@ impl FrameEncoder {
             has_alpha: false,
         };
         // group_id=0 for global section, channel_offset=0
-        gather_samples_strided_with_budget(
+        gather_samples_strided_with_budget_inner(
             &mut samples,
             &global_sub,
             0,
@@ -1557,6 +1581,7 @@ impl FrameEncoder {
             stride,
             &wp_params,
             self.budget.as_ref(),
+            shared_dedup_table.as_mut(),
         )?;
 
         // 3b: LfGroup channels — crop to each LfGroup rect
@@ -1622,7 +1647,7 @@ impl FrameEncoder {
                 has_alpha: false,
             };
             // stream_id for LfGroup: ModularLF(lg) = 1 + num_lf_groups + lg
-            gather_samples_strided_with_budget(
+            gather_samples_strided_with_budget_inner(
                 &mut samples,
                 &sub_image,
                 (stream_id_lf_base + lg) as u32,
@@ -1630,6 +1655,7 @@ impl FrameEncoder {
                 stride,
                 &wp_params,
                 self.budget.as_ref(),
+                shared_dedup_table.as_mut(),
             )?;
         }
 
@@ -1659,7 +1685,7 @@ impl FrameEncoder {
                 has_alpha: false,
             };
             // stream_id for PassGroup: ModularHF(pass=0, group=g) = 1 + 3*num_lf_groups + 17 + g
-            gather_samples_strided_with_budget(
+            gather_samples_strided_with_budget_inner(
                 &mut samples,
                 &sub_image,
                 (stream_id_hf_base + g) as u32,
@@ -1667,12 +1693,15 @@ impl FrameEncoder {
                 stride,
                 &wp_params,
                 self.budget.as_ref(),
+                shared_dedup_table.as_mut(),
             )?;
         }
 
-        // Step 4: Learn tree
+        // Step 4: Learn tree. See section.rs for the gather-time dedup
+        // pixel_fraction rationale (`total_gathered_weight()` recovers
+        // the pre-dedup gathered count when sample_counts is populated).
         let pixel_fraction = if total_pixels > 0 {
-            samples.num_samples as f64 / total_pixels as f64
+            samples.total_gathered_weight() as f64 / total_pixels as f64
         } else {
             1.0
         };

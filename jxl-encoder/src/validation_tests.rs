@@ -375,6 +375,7 @@ mod expert {
             tree_sample_fraction: Some(0.5),
             tree_max_samples_fixed: Some(0),
             use_streaming_dedup: Some(false),
+            gather_dedup: Some(false),
         };
         assert!(p.validate().is_ok());
     }
