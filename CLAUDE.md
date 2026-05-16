@@ -1327,7 +1327,7 @@ than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true
 - cjxl-rs total: 7,930KB (avg 991KB/image)
 - vs cjxl e7: **-0.7%** (7 of 8 images equal or smaller)
 - Per-image range: -5.7% to +1.2% vs cjxl e7
-- Encode time: **~5.3s per 1024x1024 image** (release build, lossless tree learning, post-SplitTreeSamples chunk 2 as of `f5ea70f`; cjxl reference ~1.56s, gap **~3.5×**). The `collect`-stage random-reads bottleneck has been addressed via SoA contiguity (jxl-encoder#40 chunks 1-2). Remaining `find_best_split` ceiling is ~20-30% from L1 working-set bounds; further 2-3× gap to cjxl is likely in `pre_quantize` / `dedup_samples` / `gather_samples` / per-predictor entropy estimator, not in `find_best_split`'s structure.
+- Encode time: **~1.9-2.4s per 1024x1024 image** at 8 threads with `--features parallel-tree-learning` (release build; cjxl reference ~1.56s, gap **~1.2-1.6×** depending on system load; best-iter at low-load reaches 1.2× target). Single-thread default is ~5.3s. Path: SIMD `estimate_bits` (`6011f10`) + SplitTreeSamples in-place permutation (`f5ea70f`) + packed-key sort dedup (`6112987`) + rayon parallel `compute_best_tree` (`8588e0c`) + parallel serial portions (`177cd65` collect_residuals_global, `0fae6cb` gather_samples, `4c04abc` rct_select, `1c003ae` pre_quantize, `d541c86` dedup_samples_packed_sort). Streaming hash-dedup (`3f4b135`) shipped opt-in; regressed end-to-end vs packed-key sort. Remaining future work: SplitWorkspace allocator pressure, hash-table-at-gather (true libjxl pattern), pre_quantize SIMD inner loop. See jxl-encoder#40, #41 for tracked follow-ups.
 
 **Optimization history** (gap reduction on 8 CLIC 1024x1024 photos):
 1. Tree learning sample cap (65K): +28.5% → +7.7%
