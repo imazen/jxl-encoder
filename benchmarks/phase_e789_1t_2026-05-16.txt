@@ -1,0 +1,281 @@
+# lossless cliff profile (issue #23)
+# generated 2026-05-16T22:55:35Z
+# samples per cell: 3
+# threads: 1
+# efforts: [7, 8, 9]
+# profile-phases feature: true
+
+## summary table
+image	width	height	megapixels	effort	bytes	best_ms	median_ms	worst_ms	ms_per_mp
+DIAG tree: 681 nodes, 341 contexts, 0 samples, 786432 total_tokens, max_nodes=787456, threshold=117.0, pixel_frac=0.500
+DIAG code: 90 histograms (from 341 contexts), rct=Some(RctType(26)), compact=0
+DIAG LfGlobal: tree=7424 bits (928 B), histo=26539 bits (3317 B), meta_tokens=0, total=34016 bits (4252 B)
+DIAG tree: 681 nodes, 341 contexts, 0 samples, 786432 total_tokens, max_nodes=787456, threshold=117.0, pixel_frac=0.500
+DIAG code: 90 histograms (from 341 contexts), rct=Some(RctType(26)), compact=0
+DIAG LfGlobal: tree=7424 bits (928 B), histo=26539 bits (3317 B), meta_tokens=0, total=34016 bits (4252 B)
+DIAG tree: 681 nodes, 341 contexts, 0 samples, 786432 total_tokens, max_nodes=787456, threshold=117.0, pixel_frac=0.500
+DIAG code: 90 histograms (from 341 contexts), rct=Some(RctType(26)), compact=0
+DIAG LfGlobal: tree=7424 bits (928 B), histo=26539 bits (3317 B), meta_tokens=0, total=34016 bits (4252 B)
+DIAG tree: 681 nodes, 341 contexts, 0 samples, 786432 total_tokens, max_nodes=787456, threshold=117.0, pixel_frac=0.500
+DIAG code: 90 histograms (from 341 contexts), rct=Some(RctType(26)), compact=0
+DIAG LfGlobal: tree=7424 bits (928 B), histo=26539 bits (3317 B), meta_tokens=0, total=34016 bits (4252 B)
+7256805.png	512	512	0.26	7	156321	293.4	293.5	300.3	1119
+DIAG tree: 863 nodes, 432 contexts, 0 samples, 786432 total_tokens, max_nodes=787456, threshold=103.0, pixel_frac=0.500
+DIAG code: 91 histograms (from 432 contexts), rct=Some(RctType(26)), compact=0
+DIAG LfGlobal: tree=9640 bits (1205 B), histo=28084 bits (3510 B), meta_tokens=0, total=37828 bits (4728 B)
+DIAG tree: 863 nodes, 432 contexts, 0 samples, 786432 total_tokens, max_nodes=787456, threshold=103.0, pixel_frac=0.500
+DIAG code: 91 histograms (from 432 contexts), rct=Some(RctType(26)), compact=0
+DIAG LfGlobal: tree=9640 bits (1205 B), histo=28084 bits (3510 B), meta_tokens=0, total=37828 bits (4728 B)
+DIAG tree: 863 nodes, 432 contexts, 0 samples, 786432 total_tokens, max_nodes=787456, threshold=103.0, pixel_frac=0.500
+DIAG code: 91 histograms (from 432 contexts), rct=Some(RctType(26)), compact=0
+DIAG LfGlobal: tree=9640 bits (1205 B), histo=28084 bits (3510 B), meta_tokens=0, total=37828 bits (4728 B)
+DIAG tree: 863 nodes, 432 contexts, 0 samples, 786432 total_tokens, max_nodes=787456, threshold=103.0, pixel_frac=0.500
+DIAG code: 91 histograms (from 432 contexts), rct=Some(RctType(26)), compact=0
+DIAG LfGlobal: tree=9640 bits (1205 B), histo=28084 bits (3510 B), meta_tokens=0, total=37828 bits (4728 B)
+7256805.png	512	512	0.26	8	155272	744.7	762.3	805.3	2841
+DIAG tree: 1071 nodes, 536 contexts, 0 samples, 786432 total_tokens, max_nodes=787456, threshold=89.0, pixel_frac=0.500
+DIAG code: 106 histograms (from 536 contexts), rct=Some(RctType(26)), compact=0
+DIAG LfGlobal: tree=12118 bits (1514 B), histo=28840 bits (3605 B), meta_tokens=0, total=41062 bits (5132 B)
+DIAG tree: 1071 nodes, 536 contexts, 0 samples, 786432 total_tokens, max_nodes=787456, threshold=89.0, pixel_frac=0.500
+DIAG code: 106 histograms (from 536 contexts), rct=Some(RctType(26)), compact=0
+DIAG LfGlobal: tree=12118 bits (1514 B), histo=28840 bits (3605 B), meta_tokens=0, total=41062 bits (5132 B)
+DIAG tree: 1071 nodes, 536 contexts, 0 samples, 786432 total_tokens, max_nodes=787456, threshold=89.0, pixel_frac=0.500
+DIAG code: 106 histograms (from 536 contexts), rct=Some(RctType(26)), compact=0
+DIAG LfGlobal: tree=12118 bits (1514 B), histo=28840 bits (3605 B), meta_tokens=0, total=41062 bits (5132 B)
+DIAG tree: 1071 nodes, 536 contexts, 0 samples, 786432 total_tokens, max_nodes=787456, threshold=89.0, pixel_frac=0.500
+DIAG code: 106 histograms (from 536 contexts), rct=Some(RctType(26)), compact=0
+DIAG LfGlobal: tree=12118 bits (1514 B), histo=28840 bits (3605 B), meta_tokens=0, total=41062 bits (5132 B)
+7256805.png	512	512	0.26	9	147842	1729.9	1736.8	1749.1	6599
+DIAG tree: 2425 nodes, 1213 contexts, 0 samples, 3145728 total_tokens, max_nodes=1048576, threshold=117.0, pixel_frac=0.500
+DIAG code: 124 histograms (from 1213 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=26846 bits (3355 B), histo=66799 bits (8349 B), meta_tokens=0, total=93698 bits (11712 B)
+DIAG tree: 2425 nodes, 1213 contexts, 0 samples, 3145728 total_tokens, max_nodes=1048576, threshold=117.0, pixel_frac=0.500
+DIAG code: 124 histograms (from 1213 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=26846 bits (3355 B), histo=66799 bits (8349 B), meta_tokens=0, total=93698 bits (11712 B)
+DIAG tree: 2425 nodes, 1213 contexts, 0 samples, 3145728 total_tokens, max_nodes=1048576, threshold=117.0, pixel_frac=0.500
+DIAG code: 124 histograms (from 1213 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=26846 bits (3355 B), histo=66799 bits (8349 B), meta_tokens=0, total=93698 bits (11712 B)
+DIAG tree: 2425 nodes, 1213 contexts, 0 samples, 3145728 total_tokens, max_nodes=1048576, threshold=117.0, pixel_frac=0.500
+DIAG code: 124 histograms (from 1213 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=26846 bits (3355 B), histo=66799 bits (8349 B), meta_tokens=0, total=93698 bits (11712 B)
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	1024	1024	1.05	7	1281763	1861.5	1887.5	1933.2	1775
+DIAG tree: 3149 nodes, 1575 contexts, 0 samples, 3145728 total_tokens, max_nodes=1048576, threshold=103.0, pixel_frac=0.500
+DIAG code: 125 histograms (from 1575 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=34989 bits (4373 B), histo=64773 bits (8096 B), meta_tokens=0, total=99866 bits (12483 B)
+DIAG tree: 3149 nodes, 1575 contexts, 0 samples, 3145728 total_tokens, max_nodes=1048576, threshold=103.0, pixel_frac=0.500
+DIAG code: 125 histograms (from 1575 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=34989 bits (4373 B), histo=64773 bits (8096 B), meta_tokens=0, total=99866 bits (12483 B)
+DIAG tree: 3149 nodes, 1575 contexts, 0 samples, 3145728 total_tokens, max_nodes=1048576, threshold=103.0, pixel_frac=0.500
+DIAG code: 125 histograms (from 1575 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=34989 bits (4373 B), histo=64773 bits (8096 B), meta_tokens=0, total=99866 bits (12483 B)
+DIAG tree: 3149 nodes, 1575 contexts, 0 samples, 3145728 total_tokens, max_nodes=1048576, threshold=103.0, pixel_frac=0.500
+DIAG code: 125 histograms (from 1575 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=34989 bits (4373 B), histo=64773 bits (8096 B), meta_tokens=0, total=99866 bits (12483 B)
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	1024	1024	1.05	8	1269020	3376.8	3552.1	3628.8	3220
+DIAG tree: 5277 nodes, 2639 contexts, 0 samples, 3145728 total_tokens, max_nodes=1048576, threshold=89.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 2639 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=59476 bits (7434 B), histo=69238 bits (8654 B), meta_tokens=0, total=128818 bits (16102 B)
+DIAG tree: 5277 nodes, 2639 contexts, 0 samples, 3145728 total_tokens, max_nodes=1048576, threshold=89.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 2639 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=59476 bits (7434 B), histo=69238 bits (8654 B), meta_tokens=0, total=128818 bits (16102 B)
+DIAG tree: 5277 nodes, 2639 contexts, 0 samples, 3145728 total_tokens, max_nodes=1048576, threshold=89.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 2639 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=59476 bits (7434 B), histo=69238 bits (8654 B), meta_tokens=0, total=128818 bits (16102 B)
+DIAG tree: 5277 nodes, 2639 contexts, 0 samples, 3145728 total_tokens, max_nodes=1048576, threshold=89.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 2639 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=59476 bits (7434 B), histo=69238 bits (8654 B), meta_tokens=0, total=128818 bits (16102 B)
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	1024	1024	1.05	9	1261969	5278.0	5474.0	5566.4	5033
+DIAG tree: 2709 nodes, 1355 contexts, 0 samples, 12582912 total_tokens, max_nodes=1048576, threshold=117.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 1355 contexts), rct=Some(RctType(12)), compact=0
+DIAG LfGlobal: tree=25781 bits (3222 B), histo=29954 bits (3744 B), meta_tokens=0, total=55788 bits (6973 B)
+DIAG tree: 2709 nodes, 1355 contexts, 0 samples, 12582912 total_tokens, max_nodes=1048576, threshold=117.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 1355 contexts), rct=Some(RctType(12)), compact=0
+DIAG LfGlobal: tree=25781 bits (3222 B), histo=29954 bits (3744 B), meta_tokens=0, total=55788 bits (6973 B)
+DIAG tree: 2709 nodes, 1355 contexts, 0 samples, 12582912 total_tokens, max_nodes=1048576, threshold=117.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 1355 contexts), rct=Some(RctType(12)), compact=0
+DIAG LfGlobal: tree=25781 bits (3222 B), histo=29954 bits (3744 B), meta_tokens=0, total=55788 bits (6973 B)
+DIAG tree: 2709 nodes, 1355 contexts, 0 samples, 12582912 total_tokens, max_nodes=1048576, threshold=117.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 1355 contexts), rct=Some(RctType(12)), compact=0
+DIAG LfGlobal: tree=25781 bits (3222 B), histo=29954 bits (3744 B), meta_tokens=0, total=55788 bits (6973 B)
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png	2048	2048	4.19	7	2762508	5063.5	5878.5	6224.2	1207
+DIAG tree: 3665 nodes, 1833 contexts, 0 samples, 12582912 total_tokens, max_nodes=1048576, threshold=103.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 1833 contexts), rct=Some(RctType(12)), compact=0
+DIAG LfGlobal: tree=34388 bits (4298 B), histo=30693 bits (3836 B), meta_tokens=0, total=65185 bits (8148 B)
+DIAG tree: 3665 nodes, 1833 contexts, 0 samples, 12582912 total_tokens, max_nodes=1048576, threshold=103.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 1833 contexts), rct=Some(RctType(12)), compact=0
+DIAG LfGlobal: tree=34388 bits (4298 B), histo=30693 bits (3836 B), meta_tokens=0, total=65185 bits (8148 B)
+DIAG tree: 3665 nodes, 1833 contexts, 0 samples, 12582912 total_tokens, max_nodes=1048576, threshold=103.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 1833 contexts), rct=Some(RctType(12)), compact=0
+DIAG LfGlobal: tree=34388 bits (4298 B), histo=30693 bits (3836 B), meta_tokens=0, total=65185 bits (8148 B)
+DIAG tree: 3665 nodes, 1833 contexts, 0 samples, 12582912 total_tokens, max_nodes=1048576, threshold=103.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 1833 contexts), rct=Some(RctType(12)), compact=0
+DIAG LfGlobal: tree=34388 bits (4298 B), histo=30693 bits (3836 B), meta_tokens=0, total=65185 bits (8148 B)
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png	2048	2048	4.19	8	2733738	11515.9	11857.6	12617.6	2746
+DIAG tree: 6329 nodes, 3165 contexts, 0 samples, 12582912 total_tokens, max_nodes=1048576, threshold=89.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 3165 contexts), rct=Some(RctType(12)), compact=0
+DIAG LfGlobal: tree=60078 bits (7509 B), histo=39282 bits (4910 B), meta_tokens=0, total=99464 bits (12433 B)
+DIAG tree: 6329 nodes, 3165 contexts, 0 samples, 12582912 total_tokens, max_nodes=1048576, threshold=89.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 3165 contexts), rct=Some(RctType(12)), compact=0
+DIAG LfGlobal: tree=60078 bits (7509 B), histo=39282 bits (4910 B), meta_tokens=0, total=99464 bits (12433 B)
+DIAG tree: 6329 nodes, 3165 contexts, 0 samples, 12582912 total_tokens, max_nodes=1048576, threshold=89.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 3165 contexts), rct=Some(RctType(12)), compact=0
+DIAG LfGlobal: tree=60078 bits (7509 B), histo=39282 bits (4910 B), meta_tokens=0, total=99464 bits (12433 B)
+DIAG tree: 6329 nodes, 3165 contexts, 0 samples, 12582912 total_tokens, max_nodes=1048576, threshold=89.0, pixel_frac=0.500
+DIAG code: 128 histograms (from 3165 contexts), rct=Some(RctType(12)), compact=0
+DIAG LfGlobal: tree=60078 bits (7509 B), histo=39282 bits (4910 B), meta_tokens=0, total=99464 bits (12433 B)
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png	2048	2048	4.19	9	2655653	27461.7	27638.1	28147.1	6547
+
+## phase breakdown (mean across samples)
+
+7256805.png @ e7: 295.7 ms wall-clock per encode
+  phases (summed across 3 samples, divide by samples to get per-encode):
+    modular/build_ans_code                           51.3 ms (  5.8%)
+    modular/collect_residuals_global                 56.0 ms (  6.3%)
+    modular/collect_residuals_per_group             163.3 ms ( 18.4%)
+    modular/compute_best_tree                       532.7 ms ( 60.0%)
+    modular/gather_samples                          116.5 ms ( 13.1%)
+    modular/patches_detect                           26.4 ms (  3.0%)
+    modular/rct_select                               25.5 ms (  2.9%)
+    modular/wp_params_search                          0.0 ms (  0.0%)
+    modular/write_tokens_per_group                   20.3 ms (  2.3%)
+    tree/compute_predictor_entropy                    0.4 ms (  0.0%)
+    tree/dedup_samples                               96.0 ms ( 10.8%)
+    tree/find_best_predictor                          4.6 ms (  0.5%)
+    tree/pre_quantize                                14.9 ms (  1.7%)
+    [other / unaccounted]                             0.0 ms (  0.0%)
+
+7256805.png @ e8: 770.8 ms wall-clock per encode
+  phases (summed across 3 samples, divide by samples to get per-encode):
+    modular/build_ans_code                           45.3 ms (  2.0%)
+    modular/collect_residuals_global                 57.3 ms (  2.5%)
+    modular/collect_residuals_per_group             175.5 ms (  7.6%)
+    modular/compute_best_tree                      1878.7 ms ( 81.3%)
+    modular/gather_samples                          128.5 ms (  5.6%)
+    modular/patches_detect                           17.0 ms (  0.7%)
+    modular/rct_select                               22.4 ms (  1.0%)
+    modular/wp_params_search                         82.1 ms (  3.6%)
+    modular/write_tokens_per_group                   18.8 ms (  0.8%)
+    tree/compute_predictor_entropy                    0.8 ms (  0.0%)
+    tree/dedup_samples                              121.9 ms (  5.3%)
+    tree/find_best_predictor                         12.0 ms (  0.5%)
+    tree/pre_quantize                                16.9 ms (  0.7%)
+    [other / unaccounted]                             0.0 ms (  0.0%)
+
+7256805.png @ e9: 1738.6 ms wall-clock per encode
+  phases (summed across 3 samples, divide by samples to get per-encode):
+    modular/build_ans_code                           45.7 ms (  0.9%)
+    modular/collect_residuals_global                 56.0 ms (  1.1%)
+    modular/collect_residuals_per_group             173.6 ms (  3.3%)
+    modular/compute_best_tree                      4671.4 ms ( 89.6%)
+    modular/gather_samples                          113.0 ms (  2.2%)
+    modular/patches_detect                           17.6 ms (  0.3%)
+    modular/rct_select                               21.6 ms (  0.4%)
+    modular/wp_params_search                        208.9 ms (  4.0%)
+    modular/write_tokens_per_group                   21.4 ms (  0.4%)
+    tree/compute_predictor_entropy                    0.9 ms (  0.0%)
+    tree/dedup_samples                              111.2 ms (  2.1%)
+    tree/find_best_predictor                         12.3 ms (  0.2%)
+    tree/pre_quantize                                20.2 ms (  0.4%)
+    [other / unaccounted]                             0.0 ms (  0.0%)
+
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png @ e7: 1894.0 ms wall-clock per encode
+  phases (summed across 3 samples, divide by samples to get per-encode):
+    modular/build_ans_code                          227.8 ms (  4.0%)
+    modular/collect_residuals_global                107.7 ms (  1.9%)
+    modular/collect_residuals_per_group             911.7 ms ( 16.0%)
+    modular/compute_best_tree                      4552.9 ms ( 80.1%)
+    modular/gather_samples                          376.8 ms (  6.6%)
+    modular/patches_detect                          118.0 ms (  2.1%)
+    modular/rct_select                              109.4 ms (  1.9%)
+    modular/wp_params_search                          0.0 ms (  0.0%)
+    modular/write_tokens_per_group                  100.5 ms (  1.8%)
+    tree/compute_predictor_entropy                    1.9 ms (  0.0%)
+    tree/dedup_samples                              453.7 ms (  8.0%)
+    tree/find_best_predictor                         30.4 ms (  0.5%)
+    tree/pre_quantize                                67.3 ms (  1.2%)
+    [other / unaccounted]                             0.0 ms (  0.0%)
+
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png @ e8: 3519.3 ms wall-clock per encode
+  phases (summed across 3 samples, divide by samples to get per-encode):
+    modular/build_ans_code                          230.8 ms (  2.2%)
+    modular/collect_residuals_global                116.3 ms (  1.1%)
+    modular/collect_residuals_per_group             947.7 ms (  9.0%)
+    modular/compute_best_tree                      9063.1 ms ( 85.8%)
+    modular/gather_samples                          374.0 ms (  3.5%)
+    modular/patches_detect                          117.6 ms (  1.1%)
+    modular/rct_select                               95.5 ms (  0.9%)
+    modular/wp_params_search                        374.4 ms (  3.5%)
+    modular/write_tokens_per_group                  100.5 ms (  1.0%)
+    tree/compute_predictor_entropy                    2.7 ms (  0.0%)
+    tree/dedup_samples                              486.9 ms (  4.6%)
+    tree/find_best_predictor                         36.0 ms (  0.3%)
+    tree/pre_quantize                                78.0 ms (  0.7%)
+    [other / unaccounted]                             0.0 ms (  0.0%)
+
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png @ e9: 5439.5 ms wall-clock per encode
+  phases (summed across 3 samples, divide by samples to get per-encode):
+    modular/build_ans_code                          258.4 ms (  1.6%)
+    modular/collect_residuals_global                103.1 ms (  0.6%)
+    modular/collect_residuals_per_group            1250.3 ms (  7.7%)
+    modular/compute_best_tree                     14124.6 ms ( 86.6%)
+    modular/gather_samples                          443.8 ms (  2.7%)
+    modular/patches_detect                          128.5 ms (  0.8%)
+    modular/rct_select                               98.5 ms (  0.6%)
+    modular/wp_params_search                        937.7 ms (  5.7%)
+    modular/write_tokens_per_group                  116.2 ms (  0.7%)
+    tree/compute_predictor_entropy                    2.5 ms (  0.0%)
+    tree/dedup_samples                              386.1 ms (  2.4%)
+    tree/find_best_predictor                         38.9 ms (  0.2%)
+    tree/pre_quantize                                90.0 ms (  0.6%)
+    [other / unaccounted]                             0.0 ms (  0.0%)
+
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png @ e7: 5722.1 ms wall-clock per encode
+  phases (summed across 3 samples, divide by samples to get per-encode):
+    modular/build_ans_code                          474.1 ms (  2.8%)
+    modular/collect_residuals_global                401.4 ms (  2.3%)
+    modular/collect_residuals_per_group            5561.9 ms ( 32.4%)
+    modular/compute_best_tree                     13572.2 ms ( 79.1%)
+    modular/gather_samples                         1609.3 ms (  9.4%)
+    modular/patches_detect                           46.2 ms (  0.3%)
+    modular/rct_select                              425.7 ms (  2.5%)
+    modular/wp_params_search                          0.0 ms (  0.0%)
+    modular/write_tokens_per_group                  420.7 ms (  2.5%)
+    tree/compute_predictor_entropy                    5.5 ms (  0.0%)
+    tree/dedup_samples                             2011.9 ms ( 11.7%)
+    tree/find_best_predictor                         79.4 ms (  0.5%)
+    tree/pre_quantize                               284.5 ms (  1.7%)
+    [other / unaccounted]                             0.0 ms (  0.0%)
+
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png @ e8: 11997.0 ms wall-clock per encode
+  phases (summed across 3 samples, divide by samples to get per-encode):
+    modular/build_ans_code                          507.4 ms (  1.4%)
+    modular/collect_residuals_global                376.7 ms (  1.0%)
+    modular/collect_residuals_per_group            4877.9 ms ( 13.6%)
+    modular/compute_best_tree                     31187.8 ms ( 86.7%)
+    modular/gather_samples                         1563.3 ms (  4.3%)
+    modular/patches_detect                           24.3 ms (  0.1%)
+    modular/rct_select                              410.9 ms (  1.1%)
+    modular/wp_params_search                       1312.4 ms (  3.6%)
+    modular/write_tokens_per_group                  391.3 ms (  1.1%)
+    tree/compute_predictor_entropy                   12.1 ms (  0.0%)
+    tree/dedup_samples                             2430.8 ms (  6.8%)
+    tree/find_best_predictor                        169.9 ms (  0.5%)
+    tree/pre_quantize                               232.1 ms (  0.6%)
+    [other / unaccounted]                             0.0 ms (  0.0%)
+
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png @ e9: 27749.0 ms wall-clock per encode
+  phases (summed across 3 samples, divide by samples to get per-encode):
+    modular/build_ans_code                          538.7 ms (  0.6%)
+    modular/collect_residuals_global                412.4 ms (  0.5%)
+    modular/collect_residuals_per_group            5555.1 ms (  6.7%)
+    modular/compute_best_tree                     76255.6 ms ( 91.6%)
+    modular/gather_samples                         1559.5 ms (  1.9%)
+    modular/patches_detect                           25.4 ms (  0.0%)
+    modular/rct_select                              433.7 ms (  0.5%)
+    modular/wp_params_search                       3379.7 ms (  4.1%)
+    modular/write_tokens_per_group                  428.0 ms (  0.5%)
+    tree/compute_predictor_entropy                   16.6 ms (  0.0%)
+    tree/dedup_samples                             1548.3 ms (  1.9%)
+    tree/find_best_predictor                        192.6 ms (  0.2%)
+    tree/pre_quantize                               395.0 ms (  0.5%)
+    [other / unaccounted]                             0.0 ms (  0.0%)
