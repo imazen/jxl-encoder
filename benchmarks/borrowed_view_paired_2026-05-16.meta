@@ -1,0 +1,42 @@
+# borrowed-view parallel-tree-learning A/B bench
+# commit:       fe2d3a27 (perf(tree_learn): borrowed-view parallel path)
+# vs baseline:  90b68279 (docs(CLAUDE): strict 1.20x cjxl target hit)
+# hardware:     AMD Ryzen 9 7950X (16C/32T water-cooled)
+# build:        cargo build --release -p jxl-encoder --features 'profile-phases parallel parallel-tree-learning'
+#               NO -C target-cpu=native (per CLAUDE.md benchmark rules)
+# threads:      8 (CLIFF_THREADS=8 from lossless_cliff_profile harness)
+# effort:       7 (lossless)
+# date:         2026-05-16T17:25Z
+# system load:  ~5 during bench (concurrent agent encoding workload)
+#
+# Method: paired interleaved A/B per iter; random order each iter to amortize
+# thermal/load bias. Each iter runs ONE encode through lossless_cliff_profile
+# (CLIFF_SAMPLES=1), captures best_ms (=only_ms) and the
+# modular/compute_best_tree phase.
+#
+# Files:
+#   borrowed_view_paired_medium_t8_2026-05-16.tsv         (1.05 MP wall, n=20)
+#   borrowed_view_paired_phases_small_t8_2026-05-16.tsv   (0.26 MP wall+cbt, n=10)
+#   borrowed_view_paired_phases_medium_t8_2026-05-16.tsv  (1.05 MP wall+cbt, n=10)
+#   borrowed_view_paired_phases_large_t8_2026-05-16.tsv   (4.19 MP wall+cbt, n=8)
+#
+# Profile images (real-photo only per CLAUDE.md no-synthetic rule):
+#   0.26 MP: /home/lilith/work/codec-corpus/CID22/CID22-512/training/7256805.png
+#   1.05 MP: /home/lilith/work/codec-corpus/clic2025-1024/02809272...png
+#   4.19 MP: /home/lilith/work/codec-corpus/clic2025/final-test/8426ed22...png
+#
+# Byte-identity (vs main@90b68279, 3 images x 4 thread counts {1,4,8,16}):
+#   0.26 MP all threads: d16f994ab0026a2a... (baseline == changed)
+#   1.05 MP all threads: 703a054799e77e7d... (baseline == changed)
+#   4.19 MP all threads: 9bee1b66ce79bed4... (baseline == changed)
+#
+# Summary:
+#   image    | wall best | wall mean | cbt best | cbt mean
+#   0.26 MP  | +1.7%     | +6.2%     | -1.1%    | +3.2%
+#   1.05 MP  | -8.1%     | -7.5%     | -10.2%   | -9.1%
+#   4.19 MP  | -4.5%     | -7.2%     | -4.4%    | -8.9%
+#
+# 1.05 MP wall n=20 (separate cliff_paired run with deeper iter count):
+#   baseline: best=1830.1 median=1928.7 mean=1963.3 worst=2199.2
+#   changed:  best=1708.7 median=1788.9 mean=1822.5 worst=2077.0
+#   delta:    best -6.6%  median -7.2%  mean -7.2%

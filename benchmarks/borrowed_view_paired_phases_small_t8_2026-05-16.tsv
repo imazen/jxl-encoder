@@ -1,0 +1,26 @@
+iter	bin	compute_best_tree_ms	wall_ms
+1	changed	197.0	314.0
+1	baseline	170.3	286.8
+2	baseline	196.8	311.4
+2	changed	189.8	331.5
+3	changed	180.0	302.0
+3	baseline	190.0	308.1
+4	baseline	184.5	306.8
+4	changed	166.0	291.2
+5	changed	179.4	309.6
+5	baseline	188.1	303.9
+6	baseline	211.2	323.0
+6	changed	192.3	323.4
+7	changed	200.1	342.9
+7	baseline	207.5	345.7
+8	changed	196.3	318.0
+8	baseline	174.0	288.2
+9	baseline	172.9	286.3
+9	changed	182.4	307.4
+10	baseline	167.9	289.4
+10	changed	238.7	398.3
+# Summary
+compute_best_tree (mean): baseline=186.3  changed=192.2  delta=+5.9 ms (+3.2%)
+compute_best_tree (best): baseline=167.9  changed=166.0  delta=-1.9 ms (-1.1%)
+wall_ms (mean): baseline=305.0  changed=323.8  delta=+18.9 ms (+6.2%)
+wall_ms (best): baseline=286.3  changed=291.2  delta=+4.9 ms (+1.7%)
