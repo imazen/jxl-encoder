@@ -253,8 +253,8 @@ pub use dct32::{dct_16x32, dct_32x16, dct_32x32};
 pub use dct64::{dct_32x64, dct_64x32, dct_64x64};
 pub use dequant::dequant_block_dct8;
 pub use entropy::{
-    EntropyCoeffResult, entropy_estimate_coeffs, fast_log2f, fast_pow2f, fast_powf,
-    shannon_entropy_bits,
+    EntropyCoeffResult, entropy_estimate_coeffs, estimate_bits_scalar_f64, estimate_bits_u32,
+    fast_log2f, fast_pow2f, fast_powf, shannon_entropy_bits,
 };
 pub use epf::{epf_step1, epf_step2, pad_plane};
 pub use fused_dct8::fused_dct8_entropy;

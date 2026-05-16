@@ -1,0 +1,63 @@
+# find_best_split SIMD vectorization win (issue #23)
+# generated 2026-05-16 (commit pending)
+# baseline: 9c120a78 (scalar estimate_bits with serialized fast_log2f dep chain)
+# this commit: SIMD jxl_simd::estimate_bits_u32 (AVX2 8-wide × 2 accumulators)
+# harness: cargo run --release -p jxl-encoder --features profile-phases --example lossless_cliff_profile
+# samples per cell: 2 (median reported)
+# threads: 1
+# effort: 7
+# CPU: AMD Ryzen 9 7950X (Zen 4), AVX2 + AVX-512 capable
+# Note: benchmarks ran WITHOUT -C target-cpu=native (runtime dispatch only)
+#
+# Related asm dumps (in this directory):
+#   find_best_split_asm_hot_loop_2026-05-15.txt     — pre-SIMD inner loop only
+#   find_best_split_post_simd_asm_hot_loop_2026-05-15.txt — post-SIMD inner loop only
+#   estimate_bits_u32_avx2_asm_2026-05-15.txt       — the YMM-wide SIMD function
+#
+# Full asm dumps (2K+ lines each) are NOT committed per project size policy.
+# Reproduce: cargo asm --lib -p jxl-encoder --release find_best_split --rust
+#
+# Wall-clock speedup is dominated by compute_best_tree reduction (the only
+# phase that calls find_best_split / compute_predictor_entropy).
+#
+image	width	height	megapixels	bytes	baseline_wall_ms	simd_wall_ms	wall_delta_pct	baseline_tree_ms	simd_tree_ms	tree_delta_pct
+7256805.png	512	512	0.26	156317	897.8	818.3	-8.9	631.7	556.8	-11.8
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	1024	1024	1.05	1281759	6190.5	5694.2	-8.0	4967.2	4459.9	-10.2
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png	2048	2048	4.19	2762504	19499.3	18504.5	-5.1	14766.6	13802.4	-6.5
+#
+# Bytes: identical (hash-locked, see jxl-encoder/tests/hash_lock_features.rs)
+#   - lossless_with_tree_learning: PASS
+#   - lossless_tree_learning_and_squeeze: PASS
+#   - all 13 lossless hash_lock_features tests: PASS
+#
+# Why it wins (vs the reverted Feb-17 nlog2n lookup + the reverted branchless
+# bucket-shift sweep, see Phase-C in the commit message):
+#
+# 1. Old scalar inner loop (find_best_split asm @ baseline 9c120a78, line 1336+):
+#      .LBB434_152:
+#          mov edi, dword ptr [rdi + rsi]
+#          test edi, edi             ; mispredicts when zero/nonzero
+#          je  .LBB434_153            ; branchy
+#          cvtsi2sd xmm2, rdi         ; serial f64 conversion
+#          divsd xmm3, xmm1           ; ~14-cycle latency
+#          maxsd xmm3, xmm7           ; floor
+#          ... fast_log2f scalar (shufps+divss on 4 SSE lanes for 1 result)
+#          subsd xmm0, xmm3           ; SERIAL accumulator dep chain
+#          jmp .LBB434_153            ; tight back-edge
+#
+# 2. New SIMD inner loop (jxl_encoder_simd::entropy::__arcane_estimate_bits_u32_avx2):
+#      .LBB629_7:
+#          vcvtdq2ps ymm3, ymmword ptr [rdi + 4*rsi - 32]  ; 8 i32→f32 in parallel
+#          vcvtdq2ps ymm15, ymmword ptr [rdi + 4*rsi]       ; another 8 (2× unroll)
+#          vmulps ymm4, ymm0, ymm4                          ; 8 mul-by-inv_total
+#          vmaxps ymm4, ymm4, ymm8                          ; 8 floors
+#          vfmadd213ps ymm9, ymm4, ymm12                    ; 8 FMA polynomial
+#          vfmadd213ps ymm9, ymm4, ymm11
+#          vdivps ymm4, ymm9, ymm13                         ; 8 polynomial dives
+#          vmulps ymm3, ymm4, ymm3                          ; 8 c * log2(p)
+#          vsubps ymm2, ymm2, ymm3                          ; 8-wide accumulator
+#          vmulps ymm3, ymm15, ymm5                         ; (second accumulator)
+#          vsubps ymm0, ymm0, ymm3                          ; ymm0 dep chain runs in parallel with ymm2
+#
+# 16 contributions per loop body (8 lanes × 2 accumulators) → ~8-10× ILP.
+# fast_log2f's ~15-cycle latency is hidden in the SIMD pipeline.

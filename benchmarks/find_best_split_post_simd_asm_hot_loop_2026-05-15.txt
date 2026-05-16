@@ -1,0 +1,121 @@
+   Compiling jxl-encoder v0.3.2 (/home/lilith/work/zen/jxl-encoder/jxl-encoder)
+
+    Finished `release` profile [optimized + debuginfo] target(s) in 51.70s
+.section .text.jxl_encoder::modular::tree_learn::find_best_split,"ax",@progbits
+	.p2align	4
+.type	jxl_encoder::modular::tree_learn::find_best_split,@function
+jxl_encoder::modular::tree_learn::find_best_split:
+		// jxl-encoder/src/modular/tree_learn.rs:1768
+		fn find_best_split(
+	.cfi_startproc
+		left_counts[i] += ci;
+	cmp rdi, r8
+	jae .LBB434_239
+	add dword ptr [r11 + 4*rdi], edx
+		// jxl-encoder/src/modular/tree_learn.rs:2004
+		right_counts[i] -= ci;
+	cmp rdi, r10
+	jae .LBB434_176
+	sub dword ptr [rbp + 4*rdi], edx
+		// jxl-encoder/src/modular/tree_learn.rs:2002
+		if ci > 0 {
+	jmp .LBB434_150
+	.p2align	4
+.LBB434_151:
+		// jxl-encoder/src/modular/tree_learn.rs:2007
+		left_extra += extra_bits_increase[local_k];
+	cmp rbx, qword ptr [rsp + 120]
+	jae .LBB434_236
+	mov rcx, qword ptr [rsp + 128]
+	mov rcx, qword ptr [rcx + 8*rbx]
+	add qword ptr [rsp + 488], rcx
+		// jxl-encoder/src/modular/tree_learn.rs:2008
+		right_extra -= extra_bits_increase[local_k];
+	sub qword ptr [rsp + 208], rcx
+		// jxl-encoder/src/modular/tree_learn.rs:2010
+		right_total -= bc;
+	sub r13d, eax
+		// jxl-encoder/src/modular/tree_learn.rs:2012
+		if left_total == 0 || right_total == 0 {
+	add dword ptr [rsp + 84], eax
+	mov rdi, qword ptr [rsp + 32]
+	je .LBB434_172
+	test r13d, r13d
+	je .LBB434_172
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/sync/atomic.rs:3890
+		Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+	mov rax, qword ptr [rip + archmage::tokens::generated::x86::X64_V3_CACHE@GOTPCREL]
+	movzx eax, byte ptr [rax]
+		// ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/archmage-0.9.23/src/tokens/generated/x86.rs:874
+		match X64_V3_CACHE.load(Ordering::Relaxed) {
+	cmp al, 1
+	je .LBB434_158
+	movzx eax, al
+	cmp eax, 2
+	jne .LBB434_156
+.LBB434_157:
+		// jxl-encoder-simd/src/entropy.rs:991
+		#[archmage::arcane]
+	mov rdi, r11
+	mov rsi, r14
+	mov edx, dword ptr [rsp + 84]
+	call jxl_encoder_simd::entropy::__arcane_estimate_bits_u32_avx2
+	movsd xmm10, qword ptr [rip + .LCPI434_15]
+	movsd xmm9, qword ptr [rip + .LCPI434_14]
+	movsd xmm8, qword ptr [rip + .LCPI434_13]
+	movss xmm7, dword ptr [rip + .LCPI434_6]
+	movsd xmm6, qword ptr [rip + .LCPI434_5]
+	mov rdi, qword ptr [rsp + 32]
+	mov r11, qword ptr [rsp + 24]
+	movdqa xmm11, xmm0
+.LBB434_161:
+		// jxl-encoder/src/modular/tree_learn.rs:2026
+		) + left_extra as f64;
+	movsd xmm12, qword ptr [rsp + 488]
+	unpcklps xmm12, xmmword ptr [rip + .LCPI434_10]
+	subpd xmm12, xmmword ptr [rip + .LCPI434_11]
+		// ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/sync/atomic.rs:3890
+		Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+	mov rax, qword ptr [rip + archmage::tokens::generated::x86::X64_V3_CACHE@GOTPCREL]
+	movzx eax, byte ptr [rax]
+		// ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/archmage-0.9.23/src/tokens/generated/x86.rs:874
+		match X64_V3_CACHE.load(Ordering::Relaxed) {
+	cmp al, 1
+	je .LBB434_165
+	movzx eax, al
+	cmp eax, 2
+	movsd qword ptr [rsp + 448], xmm11
+	movapd xmmword ptr [rsp + 640], xmm12
+	jne .LBB434_163
+.LBB434_164:
+		// jxl-encoder-simd/src/entropy.rs:991
+		#[archmage::arcane]
+	mov rdi, rbp
+	mov rsi, r14
+	mov edx, r13d
+	call jxl_encoder_simd::entropy::__arcane_estimate_bits_u32_avx2
+	movapd xmm12, xmmword ptr [rsp + 640]
+	movsd xmm11, qword ptr [rsp + 448]
+	movsd xmm10, qword ptr [rip + .LCPI434_15]
+	movsd xmm9, qword ptr [rip + .LCPI434_14]
+	movsd xmm8, qword ptr [rip + .LCPI434_13]
+	movss xmm7, dword ptr [rip + .LCPI434_6]
+	movsd xmm6, qword ptr [rip + .LCPI434_5]
+	mov r11, qword ptr [rsp + 24]
+	mov r9, qword ptr [rsp + 48]
+	mov r10, qword ptr [rsp + 96]
+	mov r8, qword ptr [rsp + 184]
+.LBB434_168:
+	movapd xmm1, xmm12
+	unpckhpd xmm1, xmm12
+	addsd xmm1, xmm12
+	addsd xmm11, xmm1
+		// jxl-encoder/src/modular/tree_learn.rs:2030
+		) + right_extra as f64;
+	movsd xmm1, qword ptr [rsp + 208]
+	unpcklps xmm1, xmmword ptr [rip + .LCPI434_10]
+	subpd xmm1, xmmword ptr [rip + .LCPI434_11]
+	movsd xmm2, qword ptr [rsp + 56]
+		// jxl-encoder/src/modular/tree_learn.rs:2034
+		if l_bits + penalty < best_l_penalized[local_k] {
+	addsd xmm2, xmm11
