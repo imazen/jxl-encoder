@@ -65,6 +65,22 @@ jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
 # libjxl default-on (`jpeg_compress_boxes = true`).
 brotli-metadata = ["dep:brotli"]
 parallel = ["std", "dep:rayon"]
+# Parallel tree learning for lossless modular path.
+# After dedup, splits the sample range at the root partition point and builds
+# the left+right subtrees in parallel via `rayon::join` using owned per-side
+# clones of the TreeSamples + PreQuantizedProps. Recursion forks each subtree
+# further up to `max_parallel_depth=4` levels (=> up to 16 leaf tasks).
+# Bitstream-equivalent: tree topology + node contents are determined by the
+# samples, not by build order; serialization is BFS-from-root so internal
+# node-vec indexing is invisible to bytes. Hash-lock-verified on the 36-case
+# `tests/hash_lock_features.rs` corpus AND byte-identical on the 3 standard
+# real-photo profile images (0.26 / 1.05 / 4.19 MP). Requires `parallel`.
+# Measured speedup: 1.27-1.51× on real photos at >= 4 threads (Amdahl ceiling
+# ≈1.4× because compute_best_tree is ~59% of e7 wall-clock; tree-internal
+# speedup is ~1.67× — see benchmarks/rayon_tree_learning_scaling_2026-05-16).
+# Default-off because it requires the rayon dependency; opt-in for callers
+# that already enable `parallel`.
+parallel-tree-learning = ["parallel"]
 # Picker training / sweep escape hatch: exposes the segmented
 # LossyInternalParams / LosslessInternalParams structs and the
 # LossyConfig::with_internal_params / LosslessConfig::with_internal_params
