@@ -30,7 +30,8 @@ mod inner {
 
     use once_cell::sync::Lazy;
 
-    static ACC: Lazy<Mutex<BTreeMap<&'static str, u128>>> = Lazy::new(|| Mutex::new(BTreeMap::new()));
+    static ACC: Lazy<Mutex<BTreeMap<&'static str, u128>>> =
+        Lazy::new(|| Mutex::new(BTreeMap::new()));
 
     /// Add a duration in nanoseconds to the accumulator for the given phase.
     pub fn record(phase: &'static str, ns: u128) {

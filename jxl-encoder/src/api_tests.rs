@@ -8404,6 +8404,97 @@ fn test_lossless_tree_learning_lite_round_trip() {
     let _render = image.render_frame(0).expect("render tree-lite output");
 }
 
+/// Refs #23 phase 3: lock in the calibration table from
+/// `with_tree_learning_sample_fraction` doc comment. Asserts that bytes
+/// stay monotonically non-decreasing as fraction *decreases* (smaller
+/// fraction = fewer samples for tree learning = potentially worse tree
+/// = same-or-larger bytes). This is the algorithmic contract the doc
+/// table relies on.
+///
+/// Uses a real-photo source from `~/work/codec-corpus`. Gated behind
+/// the `corpus-tests` feature so CI environments without the corpus
+/// surface the skip via `#[ignore]` (per CLAUDE.md "no graceful skips
+/// in tests").
+#[test]
+#[cfg_attr(
+    not(feature = "corpus-tests"),
+    ignore = "needs codec-corpus; enable feature `corpus-tests` to run"
+)]
+fn test_lossless_e7_sample_fraction_monotonic_bytes() {
+    use crate::test_helpers::corpus_dir;
+
+    // Use one CLIC 1024x1024 photo from the issue-23 calibration sweep.
+    // Skip gracefully if codec-corpus isn't present *outside* the
+    // gated feature so we still surface as ignored.
+    let path = corpus_dir()
+        .join("clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png");
+    if !path.exists() {
+        // Fallback to a smaller corpus image so the test still has
+        // SOMETHING to run on if clic2025-1024 isn't staged.
+        let alt = corpus_dir().join("CID22/CID22-512/training/7256805.png");
+        assert!(
+            alt.exists(),
+            "neither calibration image nor fallback exists in corpus_dir(); \
+             stage codec-corpus before running"
+        );
+    }
+    let real_path = if path.exists() {
+        path
+    } else {
+        corpus_dir().join("CID22/CID22-512/training/7256805.png")
+    };
+    let img = image::open(&real_path)
+        .expect("open calibration photo")
+        .to_rgb8();
+    let (w, h) = img.dimensions();
+    let pixels = img.into_raw();
+
+    // Encode at three fractions used in the doc table.
+    let encode = |f: f32| -> usize {
+        LosslessConfig::new()
+            .with_effort(7)
+            .with_threads(1)
+            .with_tree_learning_sample_fraction(f)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .encode(&pixels)
+            .expect("encode lossless rgb e7 + lite fraction")
+            .len()
+    };
+
+    let bytes_010 = encode(0.10);
+    let bytes_025 = encode(0.25);
+    let bytes_050 = encode(0.50);
+
+    // Algorithmic invariant: smaller sample fraction is allowed to
+    // produce same-or-larger bytes (worse tree, same encoder pipeline).
+    // Allow a small slack (10 bytes) for tied / boundary cases where
+    // the tree happens to be identical or fractionally different.
+    let slack: usize = 10;
+    assert!(
+        bytes_010 + slack >= bytes_025,
+        "f=0.10 ({}) should not produce smaller-by->slack bytes than f=0.25 ({})",
+        bytes_010,
+        bytes_025,
+    );
+    assert!(
+        bytes_025 + slack >= bytes_050,
+        "f=0.25 ({}) should not produce smaller-by->slack bytes than f=0.50 ({})",
+        bytes_025,
+        bytes_050,
+    );
+
+    // Doc claim: f=0.25 should be within +1.2% of f=0.50 on photos.
+    // The sweep TSV measured +0.2% on this exact image; allow +1.5%
+    // to absorb future encoder changes that nudge the absolute
+    // numbers.
+    let pct_overhead = 100.0 * (bytes_025 as f64 - bytes_050 as f64) / (bytes_050 as f64);
+    assert!(
+        pct_overhead <= 1.5,
+        "doc table claims f=0.25 within ~1% of f=0.50 on photos; \
+         measured {pct_overhead:.2}% (bytes_025={bytes_025} bytes_050={bytes_050})",
+    );
+}
+
 /// Refs photon-noise parity: `simulate_photon_noise` should produce
 /// a finite, non-zero LUT for reasonable ISO values.
 #[test]

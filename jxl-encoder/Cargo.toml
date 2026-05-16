@@ -206,6 +206,10 @@ required-features = ["__internal_recon_hook", "butteraugli-loop"]
 name = "lossless_cliff_profile"
 path = "examples/lossless_cliff_profile.rs"
 
+[[example]]
+name = "lossless_e7_fraction_sweep"
+path = "examples/lossless_e7_fraction_sweep.rs"
+
 # Picker oracle calibration harnesses (lossless_pareto_calibrate /
 # lossy_pareto_calibrate) live under examples/ but are NOT registered as
 # cargo examples — they depend on a sibling-repo `zenanalyze` path that
