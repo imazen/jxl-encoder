@@ -48,11 +48,11 @@
 //! the SoA invariant. Per-sample cost is `O(num_predictors * 2 + num_props *
 //! 2 + 1)` per swap.
 
-// Chunk 1: primitive ships unused in production. The dead_code allow lifts
-// the warning until chunk 2 wires it into find_best_split. Removing it then
-// will trigger a hard error if the integration is ever reverted, which is the
-// right failure mode.
-#![allow(dead_code)]
+// Chunk 2 (commit pending): primitive is wired into find_best_split via
+// `compute_best_tree` and `compute_best_tree_with_multipliers`. The `Property`
+// variant of `PartitionKey` and the standalone view-style API remain available
+// for direct callers and tests; nothing else in production reaches for them
+// today, so quiet the dead-code warning on the unused arms.
 
 use alloc::vec::Vec;
 
@@ -93,6 +93,13 @@ impl<'a> SplittableSamples<'a> {
     ///
     /// `a == b` is a no-op. Both indices must be `< len` (debug-checked).
     ///
+    /// Empty parallel arrays are skipped silently. Production [`TreeSamples`]
+    /// may carry `props[i] = Vec::new()` for property indices that weren't
+    /// gathered, and [`PreQuantizedProps::bucket_indices`] holds empty rows
+    /// for property indices not in `params.properties`. Both are common —
+    /// skipping them lets the caller pass the raw production vectors without
+    /// pre-filtering.
+    ///
     /// # Cost
     /// `O(num_predictors * 2 + num_props * 2 + 1)` byte/word swaps. With 14
     /// predictors and 16 base properties (plus per-property bucket indices),
@@ -116,16 +123,24 @@ impl<'a> SplittableSamples<'a> {
             self.len
         );
         for row in self.residual_tokens.iter_mut() {
-            row.swap(a, b);
+            if !row.is_empty() {
+                row.swap(a, b);
+            }
         }
         for row in self.extra_bits.iter_mut() {
-            row.swap(a, b);
+            if !row.is_empty() {
+                row.swap(a, b);
+            }
         }
         for row in self.props.iter_mut() {
-            row.swap(a, b);
+            if !row.is_empty() {
+                row.swap(a, b);
+            }
         }
         for row in self.bucket_indices.iter_mut() {
-            row.swap(a, b);
+            if !row.is_empty() {
+                row.swap(a, b);
+            }
         }
         self.sample_counts.swap(a, b);
     }
