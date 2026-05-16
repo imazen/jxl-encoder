@@ -1671,38 +1671,25 @@ pub(crate) fn compute_best_tree_with_budget(
                     let split_property = split.property as i32;
                     let split_splitval = split.splitval;
 
-                    // Clone samples + pq into two owned halves at abs_mid.
-                    // `samples_owned` consumes the per-side data via split_off.
-                    let samples_taken = core::mem::replace(
-                        samples,
-                        TreeSamples::with_predictors_and_refs(
-                            samples.candidate_predictors,
-                            samples.num_ref_channels,
-                        ),
-                    );
-                    let pq_taken = core::mem::replace(
-                        &mut pq,
-                        PreQuantizedProps {
-                            threshold_sets: Vec::new(),
-                            bucket_indices: Vec::new(),
-                        },
-                    );
-
-                    let (left_samples, right_samples) =
-                        split_tree_samples_owned(samples_taken, abs_mid);
-                    let (left_pq, right_pq) = split_pq_owned(pq_taken, abs_mid);
+                    // Borrow samples + pq as a single view with mutable slice
+                    // refs (issue #41 follow-on, 2026-05-16). The original
+                    // `split_tree_samples_owned` + `split_pq_owned` cloned
+                    // ~13 MB at the top fork via 52 Vec::split_off calls.
+                    // The borrowed view splits each underlying Vec in half
+                    // via `split_at_mut` for zero memcpy and zero allocator
+                    // pressure.
+                    let view = BorrowedSamples::from_owned(samples, &mut pq);
+                    let (left_view, right_view) = view.split_at_mut(abs_mid);
 
                     if std::env::var("JXL_DBG_PARALLEL_TREE").is_ok() {
                         eprintln!(
                             "PARALLEL_TREE: root split → left={} right={} (imbalance={:.2}x)",
-                            left_samples.num_samples,
-                            right_samples.num_samples,
-                            if left_samples.num_samples > right_samples.num_samples {
-                                left_samples.num_samples as f64
-                                    / right_samples.num_samples.max(1) as f64
+                            left_view.len,
+                            right_view.len,
+                            if left_view.len > right_view.len {
+                                left_view.len as f64 / right_view.len.max(1) as f64
                             } else {
-                                right_samples.num_samples as f64
-                                    / left_samples.num_samples.max(1) as f64
+                                right_view.len as f64 / left_view.len.max(1) as f64
                             },
                         );
                     }
@@ -1720,9 +1707,8 @@ pub(crate) fn compute_best_tree_with_budget(
 
                     let (left_tree, right_tree) = crate::parallel::parallel_join(
                         || {
-                            build_subtree_recursive_parallel(
-                                left_samples,
-                                left_pq,
+                            build_subtree_recursive_parallel_borrowed(
+                                left_view,
                                 params,
                                 threshold,
                                 per_side_budget,
@@ -1733,9 +1719,8 @@ pub(crate) fn compute_best_tree_with_budget(
                             )
                         },
                         || {
-                            build_subtree_recursive_parallel(
-                                right_samples,
-                                right_pq,
+                            build_subtree_recursive_parallel_borrowed(
+                                right_view,
                                 params,
                                 threshold,
                                 per_side_budget,
@@ -1986,6 +1971,7 @@ const PARALLEL_RECURSION_FLOOR: usize = 16384;
 /// caller must compute it as `parent.max_nodes - parent.tree.len()` minus a
 /// safety margin (e.g. divide by 2 to leave room for the sibling subtree).
 #[cfg(feature = "parallel-tree-learning")]
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn build_subtree_sequential(
     samples: &mut TreeSamples,
@@ -2000,8 +1986,9 @@ fn build_subtree_sequential(
     let n = samples.num_samples;
     let max_buckets = params.max_property_values + 1;
     // Workspace lives in this thread's cache (see `with_thread_local_workspace`)
-    // — no per-call ~12 MB allocation, even when this fn is invoked from a
-    // rayon worker via `build_subtree_recursive_parallel`.
+    // — no per-call ~12 MB allocation. Only used by the layer-2 invariant test
+    // `test_parallel_tree_matches_sequential` as a Vec-based reference; the
+    // production parallel path uses `build_subtree_sequential_borrowed`.
     let mut entropy_counts = vec![0u32; histogram_size];
 
     let mut tree: Tree = Vec::new();
@@ -2120,82 +2107,6 @@ fn build_subtree_sequential(
     tree
 }
 
-/// Split a [`TreeSamples`] into two owned halves at `mid`.
-/// The original is consumed; left half holds rows `[0..mid)`, right holds
-/// rows `[mid..n)`. Each side keeps the same parallel-array layout (same
-/// number of predictors, properties, num_ref_channels).
-#[cfg(feature = "parallel-tree-learning")]
-fn split_tree_samples_owned(mut samples: TreeSamples, mid: usize) -> (TreeSamples, TreeSamples) {
-    let n = samples.num_samples;
-    debug_assert!(mid <= n);
-
-    let num_pred = samples.residual_tokens.len();
-    let num_props = samples.props.len();
-
-    let mut right_residual_tokens: Vec<Vec<u8>> = Vec::with_capacity(num_pred);
-    let mut right_extra_bits: Vec<Vec<u8>> = Vec::with_capacity(num_pred);
-    let mut right_props: Vec<Vec<i32>> = Vec::with_capacity(num_props);
-
-    for v in &mut samples.residual_tokens {
-        if v.is_empty() {
-            right_residual_tokens.push(Vec::new());
-        } else {
-            right_residual_tokens.push(v.split_off(mid));
-        }
-    }
-    for v in &mut samples.extra_bits {
-        if v.is_empty() {
-            right_extra_bits.push(Vec::new());
-        } else {
-            right_extra_bits.push(v.split_off(mid));
-        }
-    }
-    for v in &mut samples.props {
-        if v.is_empty() {
-            right_props.push(Vec::new());
-        } else {
-            right_props.push(v.split_off(mid));
-        }
-    }
-    let right_sample_counts = samples.sample_counts.split_off(mid);
-
-    let right_n = n - mid;
-    samples.num_samples = mid;
-
-    let right = TreeSamples {
-        num_samples: right_n,
-        candidate_predictors: samples.candidate_predictors,
-        residual_tokens: right_residual_tokens,
-        extra_bits: right_extra_bits,
-        props: right_props,
-        sample_counts: right_sample_counts,
-        num_ref_channels: samples.num_ref_channels,
-    };
-
-    (samples, right)
-}
-
-/// Split a [`PreQuantizedProps`] into two owned halves at `mid`.
-/// `threshold_sets` is shared (cloned) — it's read-only during tree building
-/// and small (16 props × ≤256 i32 = ~16 KB).
-#[cfg(feature = "parallel-tree-learning")]
-fn split_pq_owned(mut pq: PreQuantizedProps, mid: usize) -> (PreQuantizedProps, PreQuantizedProps) {
-    let num_props = pq.bucket_indices.len();
-    let mut right_bi: Vec<Vec<u8>> = Vec::with_capacity(num_props);
-    for v in &mut pq.bucket_indices {
-        if v.is_empty() {
-            right_bi.push(Vec::new());
-        } else {
-            right_bi.push(v.split_off(mid));
-        }
-    }
-    let right = PreQuantizedProps {
-        threshold_sets: pq.threshold_sets.clone(),
-        bucket_indices: right_bi,
-    };
-    (pq, right)
-}
-
 /// Splice a subtree's nodes into the parent tree, remapping child indices to
 /// the parent's allocation offset. Returns the parent-tree index of the
 /// subtree's root.
@@ -2213,28 +2124,784 @@ fn splice_subtree(parent: &mut Tree, subtree: Tree) -> usize {
     offset
 }
 
-/// Recursive divide-and-conquer subtree builder. At each split, optionally
-/// forks both child subtree builds via `parallel_join` (when the range is
-/// large enough to amortize rayon task overhead AND there's parallel budget
-/// left to spend).
+// ─── Borrowed-view parallel path (issue #41 follow-on, 2026-05-16) ─────────────
+//
+// `split_tree_samples_owned` / `split_pq_owned` clone the SoA arrays via
+// `Vec::split_off` at every fork. On 1.05 MP at 8 threads that's ~13 MB of
+// memcpy at the top fork and ~52 allocator calls (one per parallel array
+// per fork). Cumulative across the recursion: ~25 MB copied and 30+ forks
+// per encode.
+//
+// This code path replaces those clones with slice borrows. The parent fork
+// calls `partition_node_in_place` (which already permutes the SoA arrays so
+// the left subtree's data is contiguous in `[0..mid)` and the right's in
+// `[mid..len)`), then `split_at_mut`s every parallel array at `mid` and
+// constructs two `BorrowedSamples<'a>` views. Each view holds non-overlapping
+// `&'a mut [u8]` slices. Both child views are handed to `rayon::join`'s
+// closures, which can mutate their own halves independently. Total allocation
+// per fork: zero (the small per-view `Vec<&mut [u8]>` containers reuse the
+// same predictor/property count and live on the stack-allocated frame's
+// thread-local Vec backing).
+//
+// Bitstream equivalence: the SoA permutation done inside the borrowed path
+// is identical to the owned-clone path (same `partition_node_in_place`
+// primitive operates on the same rows). The split-point math, find-best-split
+// inner loop, and tree topology are all data-determined.
+
+/// A borrowed view into the SoA arrays of `TreeSamples + PreQuantizedProps`,
+/// holding mutable slice references rather than owning the data.
 ///
-/// `parallel_budget` is the number of recursion levels still permitted to
-/// fork. Starts at `max_parallel_depth` and decrements at each fork. Once
-/// it hits zero, descend sequentially. This bounds the total number of
-/// rayon tasks to `2^max_parallel_depth` regardless of tree shape, keeping
-/// the task fanout under control.
+/// Used by the parallel-tree-learning path so each fork operates on its own
+/// disjoint sub-range without cloning. The parent constructs this view from
+/// the top-level `TreeSamples + PreQuantizedProps` (after the root partition),
+/// then splits it in half at each fork via [`Self::split_at_mut`].
 ///
-/// `max_nodes_budget` is the same hard cap as in [`build_subtree_sequential`].
+/// Field invariants:
+/// - Every non-empty inner slice has length == `len`.
+/// - Empty inner slices represent properties/predictors not gathered
+///   (production [`TreeSamples`] carries empty `props[i]` for properties
+///   outside `params.properties`, and [`PreQuantizedProps::bucket_indices`]
+///   holds empty rows in the same slots).
+/// - All non-empty arrays use the same row indexing: row `i` is sample `i`.
+#[cfg(feature = "parallel-tree-learning")]
+struct BorrowedSamples<'a> {
+    /// Per-predictor residual tokens: `residual_tokens[pred][sample]`.
+    residual_tokens: alloc::vec::Vec<&'a mut [u8]>,
+    /// Per-predictor extra bits: `extra_bits[pred][sample]`.
+    extra_bits: alloc::vec::Vec<&'a mut [u8]>,
+    /// Per-property quantized values: `props[prop][sample]`. May be empty
+    /// for properties outside `params.properties`.
+    props: alloc::vec::Vec<&'a mut [i32]>,
+    /// Per-property bucket indices: `bucket_indices[prop][sample]`. May be
+    /// empty for properties outside `params.properties`.
+    bucket_indices: alloc::vec::Vec<&'a mut [u8]>,
+    /// Dedup weights: `sample_counts[sample]`.
+    sample_counts: &'a mut [u32],
+    /// Read-only threshold sets, shared across all forks (immutable for the
+    /// duration of tree building).
+    threshold_sets: &'a [alloc::vec::Vec<i32>],
+    /// Candidate predictor list; mirrors `TreeSamples::candidate_predictors`.
+    candidate_predictors: &'static [Predictor],
+    /// Logical sample count (== slice length for non-empty parallel arrays).
+    len: usize,
+}
+
+#[cfg(feature = "parallel-tree-learning")]
+impl<'a> BorrowedSamples<'a> {
+    /// Build a borrowed view over the entire live range of a
+    /// `TreeSamples + PreQuantizedProps` pair.
+    fn from_owned(samples: &'a mut TreeSamples, pq: &'a mut PreQuantizedProps) -> Self {
+        let len = samples.num_samples;
+        let candidate_predictors = samples.candidate_predictors;
+
+        // Slice each parallel array to `[..len]`. Empty arrays stay empty.
+        let residual_tokens: alloc::vec::Vec<&'a mut [u8]> = samples
+            .residual_tokens
+            .iter_mut()
+            .map(|v| {
+                if v.is_empty() {
+                    &mut v[..]
+                } else {
+                    &mut v[..len]
+                }
+            })
+            .collect();
+        let extra_bits: alloc::vec::Vec<&'a mut [u8]> = samples
+            .extra_bits
+            .iter_mut()
+            .map(|v| {
+                if v.is_empty() {
+                    &mut v[..]
+                } else {
+                    &mut v[..len]
+                }
+            })
+            .collect();
+        let props: alloc::vec::Vec<&'a mut [i32]> = samples
+            .props
+            .iter_mut()
+            .map(|v| {
+                if v.is_empty() {
+                    &mut v[..]
+                } else {
+                    &mut v[..len]
+                }
+            })
+            .collect();
+        let bucket_indices: alloc::vec::Vec<&'a mut [u8]> = pq
+            .bucket_indices
+            .iter_mut()
+            .map(|v| {
+                if v.is_empty() {
+                    &mut v[..]
+                } else {
+                    &mut v[..len]
+                }
+            })
+            .collect();
+        let sample_counts = &mut samples.sample_counts[..len];
+
+        Self {
+            residual_tokens,
+            extra_bits,
+            props,
+            bucket_indices,
+            sample_counts,
+            threshold_sets: &pq.threshold_sets,
+            candidate_predictors,
+            len,
+        }
+    }
+
+    /// Consume this view and produce two non-overlapping child views split
+    /// at `mid`. The left child covers rows `[0..mid)`, the right `[mid..len)`.
+    ///
+    /// All parallel array slices are split via `split_at_mut`. The disjoint
+    /// borrows can be sent to separate threads.
+    fn split_at_mut(self, mid: usize) -> (BorrowedSamples<'a>, BorrowedSamples<'a>) {
+        debug_assert!(mid <= self.len);
+        let right_len = self.len - mid;
+
+        // Unzip per-array splits into left/right halves.
+        let mut left_residual_tokens = alloc::vec::Vec::with_capacity(self.residual_tokens.len());
+        let mut right_residual_tokens = alloc::vec::Vec::with_capacity(self.residual_tokens.len());
+        for slice in self.residual_tokens {
+            if slice.is_empty() {
+                left_residual_tokens.push(&mut [][..]);
+                right_residual_tokens.push(&mut [][..]);
+            } else {
+                let (l, r) = slice.split_at_mut(mid);
+                left_residual_tokens.push(l);
+                right_residual_tokens.push(r);
+            }
+        }
+
+        let mut left_extra_bits = alloc::vec::Vec::with_capacity(self.extra_bits.len());
+        let mut right_extra_bits = alloc::vec::Vec::with_capacity(self.extra_bits.len());
+        for slice in self.extra_bits {
+            if slice.is_empty() {
+                left_extra_bits.push(&mut [][..]);
+                right_extra_bits.push(&mut [][..]);
+            } else {
+                let (l, r) = slice.split_at_mut(mid);
+                left_extra_bits.push(l);
+                right_extra_bits.push(r);
+            }
+        }
+
+        let mut left_props = alloc::vec::Vec::with_capacity(self.props.len());
+        let mut right_props = alloc::vec::Vec::with_capacity(self.props.len());
+        for slice in self.props {
+            if slice.is_empty() {
+                left_props.push(&mut [][..]);
+                right_props.push(&mut [][..]);
+            } else {
+                let (l, r) = slice.split_at_mut(mid);
+                left_props.push(l);
+                right_props.push(r);
+            }
+        }
+
+        let mut left_bucket_indices = alloc::vec::Vec::with_capacity(self.bucket_indices.len());
+        let mut right_bucket_indices = alloc::vec::Vec::with_capacity(self.bucket_indices.len());
+        for slice in self.bucket_indices {
+            if slice.is_empty() {
+                left_bucket_indices.push(&mut [][..]);
+                right_bucket_indices.push(&mut [][..]);
+            } else {
+                let (l, r) = slice.split_at_mut(mid);
+                left_bucket_indices.push(l);
+                right_bucket_indices.push(r);
+            }
+        }
+
+        let (left_sample_counts, right_sample_counts) = self.sample_counts.split_at_mut(mid);
+
+        let left = BorrowedSamples {
+            residual_tokens: left_residual_tokens,
+            extra_bits: left_extra_bits,
+            props: left_props,
+            bucket_indices: left_bucket_indices,
+            sample_counts: left_sample_counts,
+            threshold_sets: self.threshold_sets,
+            candidate_predictors: self.candidate_predictors,
+            len: mid,
+        };
+        let right = BorrowedSamples {
+            residual_tokens: right_residual_tokens,
+            extra_bits: right_extra_bits,
+            props: right_props,
+            bucket_indices: right_bucket_indices,
+            sample_counts: right_sample_counts,
+            threshold_sets: self.threshold_sets,
+            candidate_predictors: self.candidate_predictors,
+            len: right_len,
+        };
+        (left, right)
+    }
+
+    fn num_predictors(&self) -> usize {
+        self.candidate_predictors.len()
+    }
+
+    fn num_thresholds(&self, prop_idx: usize) -> usize {
+        self.threshold_sets[prop_idx].len()
+    }
+}
+
+/// Borrowed-view counterpart to [`find_best_split`]. Operates on the live
+/// range `[start..end)` of a [`BorrowedSamples`].
 ///
-/// Owned-clone strategy: at each fork, `split_off`s detach the per-side data
-/// into fresh allocations. This costs O(N) memcpy per level but each level
-/// halves N, so total split cost is O(N log N) (well below the O(N log² N)
-/// tree-search cost).
+/// Algorithm is byte-identical to [`find_best_split`]: same predictor pruning,
+/// same property pruning, same bucket sweep, same predictor-change penalty,
+/// same split decision. Only the input access path differs.
 #[cfg(feature = "parallel-tree-learning")]
 #[allow(clippy::too_many_arguments)]
-fn build_subtree_recursive_parallel(
-    mut samples: TreeSamples,
-    mut pq: PreQuantizedProps,
+fn find_best_split_borrowed(
+    samples: &BorrowedSamples<'_>,
+    start: usize,
+    end: usize,
+    histogram_size: usize,
+    base_bits: f64,
+    params: &TreeLearningParams,
+    parent_predictor: usize,
+    threshold: f64,
+    ws: &mut SplitWorkspace,
+) -> Option<BestSplit> {
+    let count = end - start;
+    if count < 2 {
+        return None;
+    }
+
+    let total_num_pred = samples.num_predictors();
+    let mut best: Option<BestSplit> = None;
+    let mut best_bits = base_bits;
+
+    let sample_counts = &samples.sample_counts[start..end];
+
+    let weighted_total: u32 = sample_counts.iter().sum();
+
+    let change_pred_penalty = 800.0 / (100.0 + threshold);
+
+    let weighted_idx = samples
+        .candidate_predictors
+        .iter()
+        .position(|&p| p == Predictor::Weighted)
+        .unwrap_or(usize::MAX);
+    let zero_idx = CANDIDATE_PREDICTORS
+        .iter()
+        .position(|&p| p == Predictor::Zero)
+        .unwrap_or(usize::MAX);
+
+    let num_pred = (if weighted_total >= 2048 {
+        total_num_pred
+    } else if weighted_total >= 512 {
+        10
+    } else if weighted_total >= 64 {
+        7
+    } else {
+        4
+    })
+    .min(total_num_pred);
+
+    let effective_histo = histogram_size;
+    if effective_histo == 0 {
+        return None;
+    }
+
+    let count_increase = ws.count_increase.as_mut_slice();
+    let extra_bits_increase = ws.extra_bits_increase.as_mut_slice();
+    let bucket_counts = ws.bucket_counts.as_mut_slice();
+    let right_counts = ws.right_counts.as_mut_slice();
+    let left_counts = ws.left_counts.as_mut_slice();
+    let best_l_cost = ws.best_l_cost.as_mut_slice();
+    let best_r_cost = ws.best_r_cost.as_mut_slice();
+    let best_l_penalized = ws.best_l_penalized.as_mut_slice();
+    let best_r_penalized = ws.best_r_penalized.as_mut_slice();
+    let best_l_pred = ws.best_l_pred.as_mut_slice();
+    let best_r_pred = ws.best_r_pred.as_mut_slice();
+    let sorted_by_bucket = ws.sorted_by_bucket.as_mut_slice();
+    let bucket_starts = ws.bucket_starts.as_mut_slice();
+    let bucket_write_pos = ws.bucket_write_pos.as_mut_slice();
+
+    let num_props = if weighted_total >= 256 {
+        params.properties.len()
+    } else if weighted_total >= 32 {
+        params.properties.len().min(4)
+    } else {
+        params.properties.len().min(2)
+    };
+
+    for &prop_idx in &params.properties[..num_props] {
+        let num_thresholds = samples.num_thresholds(prop_idx);
+        if num_thresholds == 0 {
+            continue;
+        }
+
+        let pq_buckets = &samples.bucket_indices[prop_idx][start..end];
+        let threshold_set = &samples.threshold_sets[prop_idx];
+
+        let mut bmin: u8 = u8::MAX;
+        let mut bmax: u8 = 0;
+        for &b in pq_buckets {
+            if b < bmin {
+                bmin = b;
+            }
+            if b > bmax {
+                bmax = b;
+            }
+        }
+        if bmin == bmax {
+            continue;
+        }
+        let bmin = bmin as usize;
+        let bmax = bmax as usize;
+
+        let local_num_buckets = bmax - bmin + 1;
+        let local_num_thresholds = bmax - bmin;
+
+        let mut unique_per_bucket = [0u32; 256];
+        bucket_counts[..local_num_buckets].fill(0);
+        for (offset, &b) in pq_buckets.iter().enumerate() {
+            let local_b = (b as usize) - bmin;
+            unique_per_bucket[local_b] += 1;
+            bucket_counts[local_b] += sample_counts[offset];
+        }
+
+        bucket_starts[0] = 0;
+        for b in 0..local_num_buckets {
+            bucket_starts[b + 1] = bucket_starts[b] + unique_per_bucket[b] as usize;
+        }
+
+        bucket_write_pos[..local_num_buckets].copy_from_slice(&bucket_starts[..local_num_buckets]);
+        for (offset, &b) in pq_buckets.iter().enumerate() {
+            let local_b = (b as usize) - bmin;
+            sorted_by_bucket[bucket_write_pos[local_b]] = offset;
+            bucket_write_pos[local_b] += 1;
+        }
+
+        best_l_cost[..local_num_thresholds].fill(f64::MAX);
+        best_r_cost[..local_num_thresholds].fill(f64::MAX);
+        best_l_penalized[..local_num_thresholds].fill(f64::MAX);
+        best_r_penalized[..local_num_thresholds].fill(f64::MAX);
+        best_l_pred[..local_num_thresholds].fill(0);
+        best_r_pred[..local_num_thresholds].fill(0);
+
+        for pred in 0..num_pred {
+            let tokens = &samples.residual_tokens[pred][start..end];
+            let ebits = &samples.extra_bits[pred][start..end];
+
+            let mut penalty: f64 = 0.0;
+            if pred != parent_predictor && parent_predictor != weighted_idx {
+                penalty = change_pred_penalty;
+            }
+            if pred == weighted_idx {
+                penalty += 1e-8;
+            } else if pred == zero_idx {
+                penalty -= 1e-8;
+            }
+
+            for b in 0..local_num_buckets {
+                count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo].fill(0);
+            }
+            extra_bits_increase[..local_num_buckets].fill(0);
+
+            for local_bucket in 0..local_num_buckets {
+                let bs = bucket_starts[local_bucket];
+                let be = bucket_starts[local_bucket + 1];
+                let ci_base = local_bucket * HISTO_PADDED;
+                let ci_slice = &mut count_increase[ci_base..ci_base + HISTO_PADDED];
+                let mut eb_sum: u64 = 0;
+                for &rel_off in &sorted_by_bucket[bs..be] {
+                    let tok = tokens[rel_off];
+                    let sc = sample_counts[rel_off];
+                    ci_slice[tok as usize & HISTO_MASK] += sc;
+                    eb_sum += ebits[rel_off] as u64 * sc as u64;
+                }
+                extra_bits_increase[local_bucket] = eb_sum;
+            }
+
+            right_counts[..effective_histo].fill(0);
+            let mut right_extra: u64 = 0;
+            let mut right_total: u32 = weighted_total;
+            for (local_bucket, &eb) in extra_bits_increase[..local_num_buckets].iter().enumerate() {
+                let ci_base = local_bucket * HISTO_PADDED;
+                let ci_row = &count_increase[ci_base..ci_base + effective_histo];
+                for (rc, &ci) in right_counts[..effective_histo]
+                    .iter_mut()
+                    .zip(ci_row.iter())
+                {
+                    *rc += ci;
+                }
+                right_extra += eb;
+            }
+
+            left_counts[..effective_histo].fill(0);
+            let mut left_extra: u64 = 0;
+            let mut left_total: u32 = 0;
+
+            for local_k in 0..local_num_thresholds {
+                let bc = bucket_counts[local_k];
+                if bc == 0 {
+                    continue;
+                }
+
+                let ci_base = local_k * HISTO_PADDED;
+                let ci_row = &count_increase[ci_base..ci_base + effective_histo];
+                for (i, &ci) in ci_row.iter().enumerate() {
+                    if ci > 0 {
+                        left_counts[i] += ci;
+                        right_counts[i] -= ci;
+                    }
+                }
+                left_extra += extra_bits_increase[local_k];
+                right_extra -= extra_bits_increase[local_k];
+                left_total += bc;
+                right_total -= bc;
+
+                if left_total == 0 || right_total == 0 {
+                    continue;
+                }
+
+                let l_bits =
+                    jxl_simd::estimate_bits_u32(&left_counts[..effective_histo], left_total)
+                        + left_extra as f64;
+                let r_bits =
+                    jxl_simd::estimate_bits_u32(&right_counts[..effective_histo], right_total)
+                        + right_extra as f64;
+
+                if l_bits + penalty < best_l_penalized[local_k] {
+                    best_l_penalized[local_k] = l_bits + penalty;
+                    best_l_cost[local_k] = l_bits;
+                    best_l_pred[local_k] = pred;
+                }
+                if r_bits + penalty < best_r_penalized[local_k] {
+                    best_r_penalized[local_k] = r_bits + penalty;
+                    best_r_cost[local_k] = r_bits;
+                    best_r_pred[local_k] = pred;
+                }
+            }
+        }
+
+        for local_k in 0..local_num_thresholds {
+            if best_l_cost[local_k] == f64::MAX || best_r_cost[local_k] == f64::MAX {
+                continue;
+            }
+
+            let total = best_l_cost[local_k] + best_r_cost[local_k];
+
+            if total < best_bits {
+                best_bits = total;
+                let global_k = bmin + local_k;
+                let left_count = bucket_starts[local_k + 1];
+                best = Some(BestSplit {
+                    property: prop_idx,
+                    splitval: threshold_set[global_k],
+                    left_predictor: best_l_pred[local_k],
+                    right_predictor: best_r_pred[local_k],
+                    total_bits: total,
+                    left_count,
+                });
+            }
+        }
+    }
+
+    best
+}
+
+/// Borrowed-view counterpart to [`compute_predictor_entropy`].
+#[cfg(feature = "parallel-tree-learning")]
+fn compute_predictor_entropy_borrowed(
+    samples: &BorrowedSamples<'_>,
+    start: usize,
+    end: usize,
+    predictor_idx: usize,
+    histogram_size: usize,
+    counts_buf: &mut [u32],
+) -> f64 {
+    let tokens = &samples.residual_tokens[predictor_idx][start..end];
+    let ebits = &samples.extra_bits[predictor_idx][start..end];
+    let sample_counts = &samples.sample_counts[start..end];
+    counts_buf[..histogram_size].fill(0);
+    let mut total = 0u32;
+    let mut tot_extra: u64 = 0;
+
+    for ((&tok, &eb), &count) in tokens.iter().zip(ebits.iter()).zip(sample_counts.iter()) {
+        let tok = tok as usize;
+        if tok < histogram_size {
+            counts_buf[tok] += count;
+            total += count;
+        }
+        tot_extra += eb as u64 * count as u64;
+    }
+
+    jxl_simd::estimate_bits_u32(&counts_buf[..histogram_size], total) + tot_extra as f64
+}
+
+/// Borrowed-view counterpart to [`find_best_predictor`]. Currently unused
+/// in the production path — the root predictor is computed once before the
+/// parallel fork and runs against the Vec-based [`TreeSamples`]. Kept for
+/// future use (e.g. if the root predictor selection moves into the parallel
+/// path or for tests).
+#[cfg(feature = "parallel-tree-learning")]
+#[allow(dead_code)]
+fn find_best_predictor_borrowed(
+    samples: &BorrowedSamples<'_>,
+    start: usize,
+    end: usize,
+    histogram_size: usize,
+    counts_buf: &mut [u32],
+) -> usize {
+    let num_pred = samples.num_predictors();
+    let mut best_pred = 0;
+    let mut best_bits = f64::MAX;
+
+    for pred_idx in 0..num_pred {
+        let bits = compute_predictor_entropy_borrowed(
+            samples,
+            start,
+            end,
+            pred_idx,
+            histogram_size,
+            counts_buf,
+        );
+        if bits < best_bits {
+            best_bits = bits;
+            best_pred = pred_idx;
+        }
+    }
+
+    best_pred
+}
+
+/// Borrowed-view counterpart to [`partition_node_in_place`]. Permutes rows
+/// in-place across all parallel array slices held by `samples`.
+#[cfg(feature = "parallel-tree-learning")]
+fn partition_node_in_place_borrowed(
+    samples: &mut BorrowedSamples<'_>,
+    start: usize,
+    end: usize,
+    left_count: usize,
+    prop_idx: usize,
+    bucket_split: u8,
+) -> usize {
+    debug_assert!(left_count <= end - start);
+    let pos = start + left_count;
+    swap_partition_borrowed(samples, start, pos, end, prop_idx, bucket_split);
+    pos
+}
+
+/// Hoare-style in-place partition over a [`BorrowedSamples`]. Mirrors
+/// [`tree_learn_split::split_tree_samples_in_place`] but operates on borrowed
+/// slices instead of a `SplittableSamples` view bundling `&mut Vec<...>`.
+///
+/// All parallel array slices are permuted as atomic rows; row alignment
+/// across the partition boundary is preserved.
+#[cfg(feature = "parallel-tree-learning")]
+fn swap_partition_borrowed(
+    samples: &mut BorrowedSamples<'_>,
+    begin: usize,
+    pos: usize,
+    end: usize,
+    prop_idx: usize,
+    bucket_split: u8,
+) {
+    debug_assert!(begin <= pos);
+    debug_assert!(pos <= end);
+    debug_assert!(end <= samples.len);
+
+    let mut begin_pos = begin;
+    let mut end_pos = pos;
+
+    loop {
+        // Skip rows already on the correct left side.
+        while begin_pos < pos && samples.bucket_indices[prop_idx][begin_pos] <= bucket_split {
+            begin_pos += 1;
+        }
+        // Skip rows already on the correct right side.
+        while end_pos < end && samples.bucket_indices[prop_idx][end_pos] > bucket_split {
+            end_pos += 1;
+        }
+        if begin_pos < pos && end_pos < end {
+            swap_rows_borrowed(samples, begin_pos, end_pos);
+        }
+        begin_pos += 1;
+        end_pos += 1;
+        if begin_pos >= pos || end_pos >= end {
+            break;
+        }
+    }
+}
+
+/// Swap row `a` with row `b` across every non-empty parallel array slice.
+#[cfg(feature = "parallel-tree-learning")]
+fn swap_rows_borrowed(samples: &mut BorrowedSamples<'_>, a: usize, b: usize) {
+    if a == b {
+        return;
+    }
+    for row in samples.residual_tokens.iter_mut() {
+        if !row.is_empty() {
+            row.swap(a, b);
+        }
+    }
+    for row in samples.extra_bits.iter_mut() {
+        if !row.is_empty() {
+            row.swap(a, b);
+        }
+    }
+    for row in samples.props.iter_mut() {
+        if !row.is_empty() {
+            row.swap(a, b);
+        }
+    }
+    for row in samples.bucket_indices.iter_mut() {
+        if !row.is_empty() {
+            row.swap(a, b);
+        }
+    }
+    samples.sample_counts.swap(a, b);
+}
+
+/// Borrowed-view counterpart to [`build_subtree_sequential`]. Identical
+/// algorithm; only the data access path differs.
+#[cfg(feature = "parallel-tree-learning")]
+#[allow(clippy::too_many_arguments)]
+fn build_subtree_sequential_borrowed(
+    samples: &mut BorrowedSamples<'_>,
+    params: &TreeLearningParams,
+    threshold: f64,
+    max_nodes_budget: usize,
+    histogram_size: usize,
+    seed_predictor: usize,
+    seed_base_bits: f64,
+) -> Tree {
+    let n = samples.len;
+    let max_buckets = params.max_property_values + 1;
+    let mut entropy_counts = alloc::vec![0u32; histogram_size];
+
+    let mut tree: Tree = alloc::vec::Vec::new();
+    tree.push(PropertyDecisionNode::default());
+
+    let mut stack: alloc::vec::Vec<SplitCandidate> = alloc::vec::Vec::new();
+    stack.push(SplitCandidate {
+        node_idx: 0,
+        start: 0,
+        end: n,
+        best_predictor: seed_predictor,
+        base_bits: seed_base_bits,
+        multiplier: None,
+    });
+
+    while let Some(candidate) = stack.pop() {
+        if tree.len() + 2 > max_nodes_budget {
+            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+            continue;
+        }
+        let count = candidate.end - candidate.start;
+        if count < 2 {
+            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+            continue;
+        }
+        if candidate.base_bits <= threshold {
+            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+            continue;
+        }
+
+        let best_split =
+            with_thread_local_workspace(count, histogram_size, max_buckets, |workspace| {
+                find_best_split_borrowed(
+                    samples,
+                    candidate.start,
+                    candidate.end,
+                    histogram_size,
+                    candidate.base_bits,
+                    params,
+                    candidate.best_predictor,
+                    threshold,
+                    workspace,
+                )
+            });
+
+        match best_split {
+            Some(split) if candidate.base_bits - split.total_bits > threshold => {
+                let bucket_split =
+                    bucket_for_splitval(&samples.threshold_sets[split.property], split.splitval);
+                let abs_mid = partition_node_in_place_borrowed(
+                    samples,
+                    candidate.start,
+                    candidate.end,
+                    split.left_count,
+                    split.property,
+                    bucket_split as u8,
+                );
+
+                let lchild_idx = tree.len();
+                let rchild_idx = tree.len() + 1;
+                tree.push(PropertyDecisionNode::default());
+                tree.push(PropertyDecisionNode::default());
+
+                tree[candidate.node_idx] = PropertyDecisionNode {
+                    property: split.property as i32,
+                    splitval: split.splitval,
+                    lchild: lchild_idx,
+                    rchild: rchild_idx,
+                    ..Default::default()
+                };
+
+                let lb = compute_predictor_entropy_borrowed(
+                    samples,
+                    candidate.start,
+                    abs_mid,
+                    split.left_predictor,
+                    histogram_size,
+                    &mut entropy_counts,
+                );
+                let rb = compute_predictor_entropy_borrowed(
+                    samples,
+                    abs_mid,
+                    candidate.end,
+                    split.right_predictor,
+                    histogram_size,
+                    &mut entropy_counts,
+                );
+
+                stack.push(SplitCandidate {
+                    node_idx: rchild_idx,
+                    start: abs_mid,
+                    end: candidate.end,
+                    best_predictor: split.right_predictor,
+                    base_bits: rb,
+                    multiplier: None,
+                });
+                stack.push(SplitCandidate {
+                    node_idx: lchild_idx,
+                    start: candidate.start,
+                    end: abs_mid,
+                    best_predictor: split.left_predictor,
+                    base_bits: lb,
+                    multiplier: None,
+                });
+            }
+            _ => {
+                finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+            }
+        }
+    }
+
+    tree
+}
+
+/// Borrowed-view counterpart to [`build_subtree_recursive_parallel`].
+///
+/// Owned-clone path called `split_tree_samples_owned` + `split_pq_owned` at
+/// every fork — ~52 `Vec::split_off`s totalling 10s of MB of memcpy. The
+/// borrowed-view path consumes the parent `BorrowedSamples` and splits it
+/// via [`BorrowedSamples::split_at_mut`], which costs only N slice splits
+/// (one per parallel array) — no memcpy, no allocator pressure.
+#[cfg(feature = "parallel-tree-learning")]
+#[allow(clippy::too_many_arguments)]
+fn build_subtree_recursive_parallel_borrowed(
+    mut samples: BorrowedSamples<'_>,
     params: &TreeLearningParams,
     threshold: f64,
     max_nodes_budget: usize,
@@ -2243,14 +2910,11 @@ fn build_subtree_recursive_parallel(
     seed_base_bits: f64,
     parallel_budget: u32,
 ) -> Tree {
-    let n = samples.num_samples;
+    let n = samples.len;
 
-    // Recursion floor: small subtrees go through the simpler iterative
-    // sequential path with no further parallel forks.
     if parallel_budget == 0 || n < PARALLEL_RECURSION_FLOOR {
-        return build_subtree_sequential(
+        return build_subtree_sequential_borrowed(
             &mut samples,
-            &mut pq,
             params,
             threshold,
             max_nodes_budget,
@@ -2260,9 +2924,8 @@ fn build_subtree_recursive_parallel(
         );
     }
 
-    // Leaf-now gates.
     if n < 2 || seed_base_bits <= threshold || max_nodes_budget < 4 {
-        let mut tree: Tree = Vec::new();
+        let mut tree: Tree = alloc::vec::Vec::new();
         let leaf_candidate = SplitCandidate {
             node_idx: 0,
             start: 0,
@@ -2276,15 +2939,11 @@ fn build_subtree_recursive_parallel(
         return tree;
     }
 
-    // Find best split for the root of this subtree.
-    // Workspace lives in this thread's cache — see `with_thread_local_workspace`.
-    // On a fresh rayon worker this pays one ~12 MB calloc; on subsequent forks
-    // routed to the same worker (work-stealing) the cached buffers are reused.
     let max_buckets = params.max_property_values + 1;
-    let mut entropy_counts = vec![0u32; histogram_size];
+    let mut entropy_counts = alloc::vec![0u32; histogram_size];
 
     let split = match with_thread_local_workspace(n, histogram_size, max_buckets, |workspace| {
-        find_best_split(
+        find_best_split_borrowed(
             &samples,
             0,
             n,
@@ -2293,14 +2952,12 @@ fn build_subtree_recursive_parallel(
             params,
             seed_predictor,
             threshold,
-            &pq,
             workspace,
         )
     }) {
         Some(s) if seed_base_bits - s.total_bits > threshold => s,
         _ => {
-            // No beneficial split — single-leaf subtree.
-            let mut tree: Tree = Vec::new();
+            let mut tree: Tree = alloc::vec::Vec::new();
             let leaf_candidate = SplitCandidate {
                 node_idx: 0,
                 start: 0,
@@ -2315,22 +2972,17 @@ fn build_subtree_recursive_parallel(
         }
     };
 
-    // Partition in-place to separate left/right.
-    let bucket_split = bucket_for_splitval(&pq.threshold_sets[split.property], split.splitval);
-    let abs_mid = partition_node_in_place(
+    let bucket_split = bucket_for_splitval(&samples.threshold_sets[split.property], split.splitval);
+    let abs_mid = partition_node_in_place_borrowed(
         &mut samples,
-        &mut pq,
         0,
         n,
         split.left_count,
-        tree_learn_split::PartitionKey::Bucket {
-            prop_idx: split.property,
-            val: bucket_split as u8,
-        },
+        split.property,
+        bucket_split as u8,
     );
 
-    // Recompute child base bits using the split's predictors.
-    let left_bits = compute_predictor_entropy(
+    let left_bits = compute_predictor_entropy_borrowed(
         &samples,
         0,
         abs_mid,
@@ -2338,7 +2990,7 @@ fn build_subtree_recursive_parallel(
         histogram_size,
         &mut entropy_counts,
     );
-    let right_bits = compute_predictor_entropy(
+    let right_bits = compute_predictor_entropy_borrowed(
         &samples,
         abs_mid,
         n,
@@ -2347,14 +2999,12 @@ fn build_subtree_recursive_parallel(
         &mut entropy_counts,
     );
 
-    // Free the entropy buffer before the split_off allocations. The workspace
-    // is now held in the per-thread cache and intentionally outlives this
-    // call — sibling forks scheduled on the same worker will reuse it.
     drop(entropy_counts);
 
-    // Split data into per-side owned halves.
-    let (left_samples, right_samples) = split_tree_samples_owned(samples, abs_mid);
-    let (left_pq, right_pq) = split_pq_owned(pq, abs_mid);
+    // Split the borrowed view into two non-overlapping child views at
+    // abs_mid. Zero allocations beyond the per-side Vec<&mut [_]> containers
+    // (small: one entry per predictor/property, ~30 total).
+    let (left_samples, right_samples) = samples.split_at_mut(abs_mid);
 
     let left_predictor = split.left_predictor;
     let right_predictor = split.right_predictor;
@@ -2364,21 +3014,16 @@ fn build_subtree_recursive_parallel(
     let per_side_budget = (max_nodes_budget - 1) / 2;
     let next_parallel_budget = parallel_budget - 1;
 
-    // Decide whether to actually fork. If one side is tiny, don't bother
-    // paying rayon task overhead — let it run on this thread sequentially
-    // before recursing into the larger side. We still hand both sides to
-    // parallel_join when both are big enough to amortize the spawn.
-    let left_size = left_samples.num_samples;
-    let right_size = right_samples.num_samples;
+    let left_size = left_samples.len;
+    let right_size = right_samples.len;
     let both_big_enough =
         left_size >= PARALLEL_RECURSION_FLOOR && right_size >= PARALLEL_RECURSION_FLOOR;
 
     let (left_tree, right_tree) = if both_big_enough {
         crate::parallel::parallel_join(
             || {
-                build_subtree_recursive_parallel(
+                build_subtree_recursive_parallel_borrowed(
                     left_samples,
-                    left_pq,
                     params,
                     threshold,
                     per_side_budget,
@@ -2389,9 +3034,8 @@ fn build_subtree_recursive_parallel(
                 )
             },
             || {
-                build_subtree_recursive_parallel(
+                build_subtree_recursive_parallel_borrowed(
                     right_samples,
-                    right_pq,
                     params,
                     threshold,
                     per_side_budget,
@@ -2403,12 +3047,8 @@ fn build_subtree_recursive_parallel(
             },
         )
     } else {
-        // At least one side is small — do them sequentially (no rayon spawn).
-        // The larger side may still benefit from internal parallel recursion;
-        // pass `next_parallel_budget` through.
-        let l = build_subtree_recursive_parallel(
+        let l = build_subtree_recursive_parallel_borrowed(
             left_samples,
-            left_pq,
             params,
             threshold,
             per_side_budget,
@@ -2417,9 +3057,8 @@ fn build_subtree_recursive_parallel(
             left_bits,
             next_parallel_budget,
         );
-        let r = build_subtree_recursive_parallel(
+        let r = build_subtree_recursive_parallel_borrowed(
             right_samples,
-            right_pq,
             params,
             threshold,
             per_side_budget,
@@ -2431,9 +3070,8 @@ fn build_subtree_recursive_parallel(
         (l, r)
     };
 
-    // Assemble the result tree: root split node + spliced subtrees.
-    let mut tree: Tree = Vec::new();
-    tree.push(PropertyDecisionNode::default()); // root, index 0
+    let mut tree: Tree = alloc::vec::Vec::new();
+    tree.push(PropertyDecisionNode::default());
     let lchild_idx = splice_subtree(&mut tree, left_tree);
     let rchild_idx = splice_subtree(&mut tree, right_tree);
     tree[0] = PropertyDecisionNode {
