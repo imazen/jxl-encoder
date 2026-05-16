@@ -446,97 +446,114 @@ impl TreeSamples {
         let mut threshold_sets = vec![Vec::new(); total_props];
         let mut bucket_indices = vec![Vec::new(); total_props];
 
-        for &prop_idx in &params.properties {
-            let props = &self.props[prop_idx];
+        // Per-property pre-quantization is independent: each prop_idx reads
+        // its own `self.props[prop_idx]` slice and writes its own slot in
+        // `threshold_sets[prop_idx]` + `bucket_indices[prop_idx]`. Properties
+        // not in `params.properties` get an empty slot (already initialized
+        // to `Vec::new()` above), so we only fan out across the requested
+        // property list and stitch results back into the right slots.
+        //
+        // At effort 7 this fans out over 7 properties (one per tree-learning
+        // candidate), with per-prop work O(n) for n up to ~1.5M samples on
+        // 4.19 MP — each task is large enough to amortize rayon spawn cost.
+        let per_prop: Vec<(Vec<i32>, Vec<u8>)> =
+            crate::parallel::parallel_map(params.properties.len(), |i| {
+                let prop_idx = params.properties[i];
+                let props = &self.props[prop_idx];
 
-            // Find min/max across ALL samples
-            let mut min_val = i32::MAX;
-            let mut max_val = i32::MIN;
-            for &v in &props[..n] {
-                if v < min_val {
-                    min_val = v;
-                }
-                if v > max_val {
-                    max_val = v;
-                }
-            }
-            if min_val == max_val {
-                // Constant property — empty threshold set, all bucket 0
-                bucket_indices[prop_idx] = vec![0u8; n];
-                continue;
-            }
-
-            // Build threshold set from unique values
-            let range = max_val as i64 - min_val as i64 + 1;
-            let ts: Vec<i32>;
-
-            if range <= (max_buckets * 4) as i64 {
-                let range_usize = range as usize;
-                let mut present = vec![false; range_usize];
-                for i in 0..n {
-                    present[(props[i] - min_val) as usize] = true;
-                }
-                let mut unique_vals: Vec<i32> = present
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, p)| **p)
-                    .map(|(i, _)| min_val + i as i32)
-                    .collect();
-                if unique_vals.len() <= 1 {
-                    bucket_indices[prop_idx] = vec![0u8; n];
-                    continue;
-                }
-                unique_vals.pop();
-                ts = if unique_vals.len() <= max_buckets {
-                    unique_vals
-                } else {
-                    let step = unique_vals.len().div_ceil(max_buckets);
-                    unique_vals
-                        .iter()
-                        .step_by(step.max(1))
-                        .take(max_buckets)
-                        .copied()
-                        .collect()
-                };
-            } else {
-                let mut sample_vals: Vec<i32> = props[..n].to_vec();
-                sample_vals.sort_unstable();
-                sample_vals.dedup();
-                if sample_vals.len() <= 1 {
-                    bucket_indices[prop_idx] = vec![0u8; n];
-                    continue;
-                }
-                sample_vals.pop();
-                ts = if sample_vals.len() <= max_buckets {
-                    sample_vals
-                } else {
-                    let step = sample_vals.len() / max_buckets;
-                    sample_vals
-                        .iter()
-                        .step_by(step.max(1))
-                        .take(max_buckets)
-                        .copied()
-                        .collect()
-                };
-            }
-
-            // Assign each sample to a bucket using binary search
-            let num_thresholds = ts.len();
-            let mut bi = vec![0u8; n];
-            for (bi_val, &v) in bi.iter_mut().zip(props[..n].iter()) {
-                let bucket = match ts.binary_search(&v) {
-                    Ok(pos) => pos,
-                    Err(pos) => {
-                        if pos == 0 {
-                            0
-                        } else {
-                            pos
-                        }
+                // Find min/max across ALL samples
+                let mut min_val = i32::MAX;
+                let mut max_val = i32::MIN;
+                for &v in &props[..n] {
+                    if v < min_val {
+                        min_val = v;
                     }
-                };
-                *bi_val = bucket.min(num_thresholds) as u8;
-            }
+                    if v > max_val {
+                        max_val = v;
+                    }
+                }
+                if min_val == max_val {
+                    // Constant property — empty threshold set, all bucket 0
+                    return (Vec::new(), vec![0u8; n]);
+                }
 
+                // Build threshold set from unique values
+                let range = max_val as i64 - min_val as i64 + 1;
+                let ts: Vec<i32>;
+
+                if range <= (max_buckets * 4) as i64 {
+                    let range_usize = range as usize;
+                    let mut present = vec![false; range_usize];
+                    for i in 0..n {
+                        present[(props[i] - min_val) as usize] = true;
+                    }
+                    let mut unique_vals: Vec<i32> = present
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, p)| **p)
+                        .map(|(i, _)| min_val + i as i32)
+                        .collect();
+                    if unique_vals.len() <= 1 {
+                        return (Vec::new(), vec![0u8; n]);
+                    }
+                    unique_vals.pop();
+                    ts = if unique_vals.len() <= max_buckets {
+                        unique_vals
+                    } else {
+                        let step = unique_vals.len().div_ceil(max_buckets);
+                        unique_vals
+                            .iter()
+                            .step_by(step.max(1))
+                            .take(max_buckets)
+                            .copied()
+                            .collect()
+                    };
+                } else {
+                    let mut sample_vals: Vec<i32> = props[..n].to_vec();
+                    sample_vals.sort_unstable();
+                    sample_vals.dedup();
+                    if sample_vals.len() <= 1 {
+                        return (Vec::new(), vec![0u8; n]);
+                    }
+                    sample_vals.pop();
+                    ts = if sample_vals.len() <= max_buckets {
+                        sample_vals
+                    } else {
+                        let step = sample_vals.len() / max_buckets;
+                        sample_vals
+                            .iter()
+                            .step_by(step.max(1))
+                            .take(max_buckets)
+                            .copied()
+                            .collect()
+                    };
+                }
+
+                // Assign each sample to a bucket using binary search
+                let num_thresholds = ts.len();
+                let mut bi = vec![0u8; n];
+                for (bi_val, &v) in bi.iter_mut().zip(props[..n].iter()) {
+                    let bucket = match ts.binary_search(&v) {
+                        Ok(pos) => pos,
+                        Err(pos) => {
+                            if pos == 0 {
+                                0
+                            } else {
+                                pos
+                            }
+                        }
+                    };
+                    *bi_val = bucket.min(num_thresholds) as u8;
+                }
+
+                (ts, bi)
+            });
+
+        // Stitch per-property results back into the global slots. Properties
+        // not in `params.properties` remain empty `Vec::new()`, matching the
+        // pre-parallel behavior.
+        for (i, (ts, bi)) in per_prop.into_iter().enumerate() {
+            let prop_idx = params.properties[i];
             threshold_sets[prop_idx] = ts;
             bucket_indices[prop_idx] = bi;
         }
