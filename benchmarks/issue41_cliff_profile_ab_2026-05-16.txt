@@ -1,0 +1,59 @@
+# lossless cliff profile A/B for issue #41 (streaming hash dedup)
+# generated 2026-05-16T19:07:17Z
+# methodology: same-load back-to-back measurement
+#   A = baseline (a16958f docs(bench): document chunk-3 microopt failures)
+#   B = oxtutzks (3d0ec103 perf(tree_learn): streaming hash-table dedup)
+#   C = oxtutzks after refactor (dispatcher; default = sort path)
+# samples: 3 per cell, single-thread, e7 lossless
+# hardware: AMD Ryzen 9 7950X
+
+=== A: BASELINE (a16958f, sort path) ===
+7256805.png	512	512	0.26	7	156321	690.8	707.0	716.1	2635
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	1024	1024	1.05	7	1281763	4624.6	4659.7	4760.6	4410
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png	2048	2048	4.19	7	2762508	12186.3	12487.9	12906.1	2905
+7256805.png @ e7: 704.6 ms wall-clock per encode
+    modular/compute_best_tree                      1296.0 ms ( 61.3%)
+    tree/dedup_samples                              226.1 ms ( 10.7%)
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png @ e7: 4681.7 ms wall-clock per encode
+    modular/compute_best_tree                     10159.4 ms ( 72.3%)
+    tree/dedup_samples                             1349.1 ms (  9.6%)
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png @ e7: 12526.7 ms wall-clock per encode
+    modular/compute_best_tree                     23468.8 ms ( 62.4%)
+    tree/dedup_samples                             5772.0 ms ( 15.4%)
+
+=== B: WIP streaming-only (oxtutzks pre-refactor, streaming path forced) ===
+7256805.png	512	512	0.26	7	156321	712.6	716.0	728.7	2718
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	1024	1024	1.05	7	1281763	4828.3	4964.3	5189.5	4605
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png	2048	2048	4.19	7	2762508	13118.5	13303.1	13497.7	3128
+7256805.png @ e7: 719.1 ms wall-clock per encode
+    modular/compute_best_tree                      1371.3 ms ( 63.6%)
+    tree/dedup_samples                              241.9 ms ( 11.2%)
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png @ e7: 4994.1 ms wall-clock per encode
+    modular/compute_best_tree                     11332.7 ms ( 75.6%)
+    tree/dedup_samples                             1711.3 ms ( 11.4%)
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png @ e7: 13306.4 ms wall-clock per encode
+    modular/compute_best_tree                     26070.3 ms ( 65.3%)
+    tree/dedup_samples                             6798.1 ms ( 17.0%)
+
+=== C: FINAL (oxtutzks post-refactor, default = sort path) ===
+7256805.png	512	512	0.26	7	156321	687.8	688.0	696.8	2624
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	1024	1024	1.05	7	1281763	4477.0	4500.9	4556.9	4270
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png	2048	2048	4.19	7	2762508	12090.7	12151.5	12201.3	2883
+7256805.png @ e7: 690.8 ms wall-clock per encode
+    modular/compute_best_tree                      1271.4 ms ( 61.3%)
+    tree/dedup_samples                              223.6 ms ( 10.8%)
+02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png @ e7: 4511.6 ms wall-clock per encode
+    modular/compute_best_tree                      9817.3 ms ( 72.5%)
+    tree/dedup_samples                             1249.2 ms (  9.2%)
+8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png @ e7: 12147.8 ms wall-clock per encode
+    modular/compute_best_tree                     22602.4 ms ( 62.0%)
+    tree/dedup_samples                             5375.3 ms ( 14.7%)
+
+=== WALL-CLOCK DELTAS (best ms, n=3 per cell) ===
+image                   | A (sort)  | B (stream) | C (final-sort) | B vs A     | C vs A
+0.26 MP (7256805)       | 690.8 ms  | 712.6 ms   | 687.8 ms       | +3.2%      | -0.4%
+1.05 MP (02809272)      | 4624.6 ms | 4828.3 ms  | 4477.0 ms      | +4.4%      | -3.2%
+4.19 MP (8426ed22)      | 12186.3   | 13118.5    | 12090.7        | +7.6%      | -0.8%
+
+Verdict: streaming dedup regresses end-to-end wall-clock on real CLIC photos;
+the default-on sort path is at parity (within run-to-run noise) post-refactor.

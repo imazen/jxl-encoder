@@ -1,0 +1,93 @@
+# dedup_samples_strategies microbench (issue #41)
+# generated 2026-05-16T19:07:17Z
+# commit (baseline): a16958f
+# samples: 4 rounds per cell (load average ~3-9)
+# zenbench: bench_dedup with n in {200K, 1.35M, 3.2M}, dup_fraction 0.30
+# hardware: AMD Ryzen 9 7950X (water-cooled, 128 GB RAM)
+
+    Finished `bench` profile [optimized + debuginfo] target(s) in 0.09s
+     Running benches/dedup_samples_strategies.rs (target/release/deps/dedup_samples_strategies-420a4fbaa9a833f8)
+[zenbench] calibration: int=0.23ns/iter mem_bw=97.7GiB/s mem_lat=9.8ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.36ns/iter, TSC: 4.491 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1778956589-b427d.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1778956589-b427d
+  git: a16958fb990fff69ca6b52879f220a6fa8a82006
+═══════════════════════════════════════════════════════════════
+
+  dedup_full_n=200K_dup300  4 rounds × 1 calls ⚠ only 4 rounds
+                            mean ±mad ms  95% CI vs base     ops/s
+  ├─ current_sort_indirect   31.5 ±1.4ms  [28.3–33.9]ms      6.34M
+  ├─ packed_key_sort         24.1 ±2.3ms  [-35.1%–-11.9%]    8.31M
+  ├─ hashmap_dedup           34.5 ±2.0ms  [-0.7%–+19.7%]     5.79M [1]
+  ╰─ two_hash_cuckoo         30.9 ±1.6ms  [-8.8%–+6.4%]      6.46M [2] [3]
+
+  packed_key_sort        ███████████████████████████████████████████ 8.31 Mops/s
+  two_hash_cuckoo        █████████████████████████████████ 6.46 Mops/s
+  current_sort_indirect  █████████████████████████████████ 6.34 Mops/s
+  hashmap_dedup          ██████████████████████████████ 5.79 Mops/s
+  [1] CI crosses zero
+  [2] CI crosses zero
+  [3] drift r=-0.80 — later rounds faster
+
+  dedup_only_n=200K_dup300  4 rounds × 1 calls ⚠ only 4 rounds
+                            mean ±mad ms  95% CI vs base     ops/s
+  ├─ current_sort_indirect   22.5 ±0.9ms  [21.2–23.6]ms      8.88M
+  ├─ packed_key_sort         18.4 ±1.3ms  [-27.4%–-9.4%]     10.9M
+  ├─ hashmap_dedup           30.5 ±3.7ms  [+19.0%–+50.0%]    6.55M [1]
+  ╰─ two_hash_cuckoo         26.7 ±0.5ms  [+13.5%–+23.3%]    7.50M [2]
+
+  packed_key_sort        ███████████████████████████████████████████ 10.9 Mops/s
+  current_sort_indirect  ███████████████████████████████████ 8.88 Mops/s
+  two_hash_cuckoo        ██████████████████████████████ 7.50 Mops/s
+  hashmap_dedup          ██████████████████████████ 6.55 Mops/s
+  [1] drift r=0.80 — later rounds slower
+  [2] drift r=-0.60 — later rounds faster
+
+  dedup_full_n=1.35M_dup300  4 rounds × 1 calls ⚠ only 4 rounds
+                              mean ±mad ms  95% CI vs base     ops/s
+  ├─ current_sort_indirect   377.4 ±23.2ms  [344.5–420.9]ms    3.58M
+  ├─ packed_key_sort         349.6 ±24.5ms  [-22.2%–+7.4%]     3.86M [1] [2]
+  ├─ hashmap_dedup           334.2 ±10.2ms  [-11.0%–-0.6%]     4.04M [3]
+  ╰─ two_hash_cuckoo         324.8 ±34.5ms  [-23.6%–-0.8%]     4.16M [4] [5]
+
+  two_hash_cuckoo        ███████████████████████████████████████████ 4.16 Mops/s
+  hashmap_dedup          ██████████████████████████████████████████ 4.04 Mops/s
+  packed_key_sort        ████████████████████████████████████████ 3.86 Mops/s
+  current_sort_indirect  █████████████████████████████████████ 3.58 Mops/s
+  [1] CI crosses zero
+  [2] drift r=-0.80 — later rounds faster
+  [3] CI crosses zero
+  [4] CI crosses zero
+  [5] drift r=-1.00 — later rounds faster
+
+  dedup_only_n=1.35M_dup300  4 rounds × 1 calls ⚠ only 4 rounds
+                              mean ±mad ms  95% CI vs base     ops/s
+  ├─ current_sort_indirect   322.6 ±31.2ms  [278.4–384.2]ms    4.18M
+  ├─ packed_key_sort          249.4 ±3.7ms  [-23.6%–-5.3%]     5.41M [1]
+  ├─ hashmap_dedup           294.1 ±45.6ms  [-23.6%–+6.3%]     4.59M [2]
+  ╰─ two_hash_cuckoo         288.4 ±35.9ms  [-15.2%–-6.0%]     4.68M
+
+  packed_key_sort        ███████████████████████████████████████████ 5.41 Mops/s
+  two_hash_cuckoo        █████████████████████████████████████ 4.68 Mops/s
+  hashmap_dedup          ████████████████████████████████████ 4.59 Mops/s
+  current_sort_indirect  █████████████████████████████████ 4.18 Mops/s
+  [1] drift r=1.00 — later rounds slower
+  [2] CI crosses zero
+
+  dedup_full_n=3.2M_dup300  4 rounds × 1 calls ⚠ only 4 rounds
+                             mean ±mad s  95% CI vs base     ops/s
+  ├─ current_sort_indirect   1.46 ±0.07s  [1.35–1.61]s       2.19M
+  ├─ packed_key_sort         0.99 ±0.04s  [-34.7%–-22.8%]    3.23M
+  ├─ hashmap_dedup           0.83 ±0.01s  [-58.1%–-28.3%]    3.85M
+  ╰─ two_hash_cuckoo         0.96 ±0.03s  [-34.5%–-24.1%]    3.33M
+
+  hashmap_dedup          ███████████████████████████████████████████ 3.85 Mops/s
+  two_hash_cuckoo        █████████████████████████████████████ 3.33 Mops/s
+  packed_key_sort        ████████████████████████████████████ 3.23 Mops/s
+  current_sort_indirect  ████████████████████████ 2.19 Mops/s
+error: bench failed, to rerun pass `-p jxl-encoder --bench dedup_samples_strategies`
+
+Caused by:
+  process didn't exit successfully: `/home/lilith/work/zen/jxl-encoder/target/release/deps/dedup_samples_strategies-420a4fbaa9a833f8 --bench` (signal: 15, SIGTERM: termination signal)

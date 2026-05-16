@@ -389,6 +389,19 @@ pub struct EffortProfile {
     /// to densify sampling on large images at moderate effort, or thin
     /// sampling for fast sweeps at high effort.
     pub tree_sample_fraction: f32,
+    /// Use the streaming two-hash cuckoo dedup (libjxl `AddSample` parity,
+    /// `enc_ma.cc:602-655`) instead of the default packed-key sort during
+    /// tree-sample deduplication.
+    ///
+    /// Default `false` at every effort. The streaming path **regresses**
+    /// end-to-end wall-clock by +3 % to +8 % at e7 on CLIC photos because
+    /// `pack_sample_key` random-accesses parallel SoA arrays per sample
+    /// (no cache locality) and the sort path exploits spatial coherence
+    /// the hash path cannot. Retained as an opt-in for experimentation
+    /// toward issue #41 Phase 2 — integrating dedup into the gather pass
+    /// itself, where libjxl gets its actual win because keys land once
+    /// during ingest.
+    pub use_streaming_dedup: bool,
 }
 
 impl EffortProfile {
@@ -533,6 +546,9 @@ impl EffortProfile {
             tree_max_samples_fixed: if effort <= 4 { 65_000 } else { 0 },
             // Effort-scaled nb_repeats matching libjxl PR #4236
             tree_sample_fraction: Self::tree_sample_fraction_for(effort),
+            // Default OFF: streaming dedup regresses end-to-end wall-clock
+            // on real photos (issue #41) in our post-gather pipeline.
+            use_streaming_dedup: false,
         }
     }
 
@@ -631,6 +647,9 @@ impl EffortProfile {
             tree_max_samples_fixed: if effort <= 4 { 65_000 } else { 0 },
             // Effort-scaled nb_repeats matching libjxl PR #4236
             tree_sample_fraction: Self::tree_sample_fraction_for(effort),
+            // Default OFF: streaming dedup regresses end-to-end wall-clock
+            // on real photos (issue #41) in our post-gather pipeline.
+            use_streaming_dedup: false,
         }
     }
 
@@ -865,6 +884,20 @@ pub struct LosslessInternalParams {
     /// to [`Self::tree_sample_fraction`].
     /// Effort interaction: 65,000 at e<=4, 0 at e>=5.
     pub tree_max_samples_fixed: Option<u32>,
+
+    /// Switch the tree-sample dedup backend.
+    ///
+    /// `Some(true)` enables the streaming two-hash cuckoo path
+    /// (`dedup_samples_streaming`, libjxl `AddSample` parity). `Some(false)`
+    /// keeps the default packed-key sort path
+    /// (`dedup_samples_packed_sort`). `None` leaves the effort profile
+    /// default (always `false` today; see [`EffortProfile::use_streaming_dedup`]).
+    ///
+    /// The streaming path **regresses** wall-clock by +3 % to +8 % at e7
+    /// on real CLIC photos (issue #41 measurement, 2026-05-16). Retained
+    /// for experimentation toward issue #41 Phase 2 (gather-integrated
+    /// dedup); not recommended for production sweeps.
+    pub use_streaming_dedup: Option<bool>,
 }
 
 #[cfg(feature = "__expert")]
@@ -941,6 +974,7 @@ impl LosslessInternalParams {
             tree_threshold_base,
             tree_sample_fraction,
             tree_max_samples_fixed,
+            use_streaming_dedup,
         } = self;
         if let Some(v) = nb_rcts_to_try {
             profile.nb_rcts_to_try = v;
@@ -965,6 +999,9 @@ impl LosslessInternalParams {
         }
         if let Some(v) = tree_max_samples_fixed {
             profile.tree_max_samples_fixed = v;
+        }
+        if let Some(v) = use_streaming_dedup {
+            profile.use_streaming_dedup = v;
         }
     }
 }
