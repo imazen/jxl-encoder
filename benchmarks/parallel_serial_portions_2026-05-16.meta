@@ -1,0 +1,45 @@
+# Parallel serial portions — 5-commit campaign on top of rayon parallel tree
+# Date: 2026-05-16
+# Repo state (jj change): rwprrxqy / kzutnonp main d541c861
+# Parent (post-rayon baseline): oxtutzks 3f4b1357 (perf(tree_learn): streaming hash-dedup)
+#
+# Hardware: AMD Ryzen 9 7950X (16C/32T) water-cooled, 128 GB RAM
+# OS:       WSL2 Linux 6.6
+# Compiler: rustc 1.93 (release profile, incremental compilation)
+# Build:    cargo build --release --features parallel-tree-learning --bin cjxl-rs
+#           (NO `-C target-cpu=native` — runtime SIMD dispatch only)
+#
+# Binaries:
+#   cjxl-rs-rayon-baseline  = post 3f4b1357 (rayon parallel-tree-learning only)
+#   cjxl-rs-final           = post d541c861 (this 5-commit campaign + above)
+#
+# Commits in this campaign (in order):
+#   177cd65b  perf(modular): parallel collect_residuals_global over per-group fan-out
+#   0fae6cb8  perf(modular): parallel gather_samples over per-group fan-out
+#   4c04abc4  perf(modular): parallel RCT candidate trials in select_best_rct[_at]
+#   1c003ae2  perf(tree_learn): parallel per-property pre_quantize
+#   d541c861  perf(tree_learn): parallelize three serial sub-phases of dedup_samples_packed_sort
+#
+#   Plus side fix: 7bd9aa7e  fix(profile_phases): use std OnceLock instead of once_cell::sync
+#
+# Command per row:
+#   RAYON_NUM_THREADS=8 <binary> <png> /tmp/_x.jxl -e 7 --lossless
+#
+# Iterations: 5 per (image, binary) cell, interleaved A/B (BASE -> FINAL alternating)
+#
+# Hash-lock verification: all 3 images produced byte-identical output
+#   (sha256 matches) between cjxl-rs-rayon-baseline and cjxl-rs-final at
+#   RAYON_NUM_THREADS={1,8} (verified manually with `sha256sum`).
+#
+# Profile images:
+#   small_0.26MP   = /home/lilith/work/codec-corpus/CID22/CID22-512/training/7256805.png
+#   medium_1.05MP  = /home/lilith/work/codec-corpus/clic2025-1024/02809272...png
+#   large_4.19MP   = /home/lilith/work/codec-corpus/clic2025/final-test/8426ed22...png
+#
+# Background load: a `extract_features_372col` process from a separate session
+# was using ~7 cores during these runs (load avg 30+). Interleaved A/B order
+# means both arms see the same contention, so relative deltas are robust.
+# Absolute numbers under load are about 1.3x the values we get when load < 2;
+# the same-load comparison is what matters for the campaign-level conclusion.
+#
+# Columns: image  binary  iter  time_ms
