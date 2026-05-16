@@ -412,29 +412,47 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         params.split_threshold * (pixel_fraction * 0.9 + 0.1),
     );
 
-    // Step 3: Collect residuals from all groups with tree
-    let mut all_tokens = Vec::new();
-    let nb_meta_tokens = crate::profile_time!("modular/collect_residuals_global", {
-        // Collect meta-channel residuals first (channel_offset=0, group_id=0)
-        let nb_meta_tokens = if let Some(meta) = meta_image {
-            let meta_tokens = collect_residuals_with_tree(meta, &tree, 0, &wp_params);
-            let n = meta_tokens.len();
+    // Step 3: Collect residuals from all groups with tree.
+    //
+    // Each `collect_residuals_with_tree` call is pure (reads `image`, `tree`,
+    // `wp_params` by reference; allocates a fresh `Vec<Token>`). The per-group
+    // calls are independent, so we run them in parallel via `parallel_map`
+    // and concatenate in order afterwards (meta first, then per-group).
+    //
+    // The concatenated `all_tokens` stream is later split at `nb_meta_tokens`
+    // for the LfGlobal write (meta) and consumed by the per-group writers, so
+    // ordering must remain stable.
+    let (all_tokens, nb_meta_tokens) = crate::profile_time!("modular/collect_residuals_global", {
+        // Per-group residuals — parallel over groups.
+        let per_group_tokens: Vec<Vec<crate::entropy_coding::token::Token>> =
+            crate::parallel::parallel_map(images.len(), |group_idx| {
+                collect_residuals_with_tree(
+                    &images[group_idx],
+                    &tree,
+                    group_idx as u32 + per_group_id_offset,
+                    &wp_params,
+                )
+            });
+
+        // Meta-channel residuals first (channel_offset=0, group_id=0). When
+        // present this is a single call so we run it sequentially after the
+        // per-group fan-out completes — could be parallel with the fan-out
+        // but the wall-clock impact is marginal (one extra task vs N groups).
+        let meta_tokens_opt =
+            meta_image.map(|meta| collect_residuals_with_tree(meta, &tree, 0, &wp_params));
+        let nb_meta_tokens = meta_tokens_opt.as_ref().map(|t| t.len()).unwrap_or(0);
+
+        // Concatenate: meta first, then per-group in index order.
+        let total_len: usize =
+            nb_meta_tokens + per_group_tokens.iter().map(|t| t.len()).sum::<usize>();
+        let mut all_tokens = Vec::<crate::entropy_coding::token::Token>::with_capacity(total_len);
+        if let Some(meta_tokens) = meta_tokens_opt {
             all_tokens.extend(meta_tokens);
-            n
-        } else {
-            0
-        };
-        // Collect per-group residuals (channel_offset=0, group_id offset matches gather above)
-        for (group_idx, group_image) in images.iter().enumerate() {
-            let group_tokens = collect_residuals_with_tree(
-                group_image,
-                &tree,
-                group_idx as u32 + per_group_id_offset,
-                &wp_params,
-            );
-            all_tokens.extend(group_tokens);
         }
-        nb_meta_tokens
+        for tokens in per_group_tokens {
+            all_tokens.extend(tokens);
+        }
+        (all_tokens, nb_meta_tokens)
     });
 
     // Note: LZ77 is NOT applied in this path. The per-group sections
