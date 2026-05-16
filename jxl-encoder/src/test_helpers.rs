@@ -420,8 +420,11 @@ pub fn decode_with_djxl(data: &[u8]) -> Result<DecodedImage> {
 
 /// Decode JXL data using jxl-oxide (SECONDARY decoder).
 ///
-/// WARNING: jxl-oxide has a multi-group VarDCT decoder bug.
-/// For images >256x256, use decode_with_djxl() instead.
+/// The previous "multi-group VarDCT decoder bug" (UnexpectedEof when our encoder
+/// produced an empty modular global section for a multi-group VarDCT alpha
+/// extra channel or patches reference frame) is fixed in the imazen/jxl-oxide
+/// fork pinned via the workspace `[patch.crates-io]`. jxl-rs is still the
+/// primary roundtrip decoder per CLAUDE.md.
 #[cfg(test)]
 pub fn decode_with_jxl_oxide(data: &[u8]) -> Result<DecodedImage> {
     let mut image = jxl_oxide::JxlImage::builder()

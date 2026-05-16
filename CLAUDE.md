@@ -304,8 +304,13 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   ~0.5% average savings on large images, verified with jxl-rs and djxl)
 - Context map encoding: simple vs non-simple cost comparison (matches libjxl EncodeContextMap,
   saves bits when context map is large and repetitive with few histograms)
-- jxl-oxide 0.12.5 has a known limitation with ANS in multi-group modular frames
-  (unexpected EOF). djxl and jxl-rs decode correctly. Tests use jxl-rs as primary.
+- jxl-oxide 0.12.5 used to error with `UnexpectedEof` in modular sub-bitstreams
+  whose section had no decodable channels (e.g. multi-group VarDCT alpha extra
+  channel, multi-group patches reference frame). Fixed in
+  `imazen/jxl-oxide@fd4e2c3` (forked from `tirr-c/jxl-oxide`). The workspace
+  `[patch.crates-io]` in `Cargo.toml` pins the fork until the change lands in
+  a published jxl-oxide release. djxl and jxl-rs were always able to decode
+  these bitstreams; tests still use jxl-rs as the primary roundtrip decoder.
 
 **E. Effort 8+ Features**
 - **Butteraugli quantization loop** (effort 8+): IMPLEMENTED, FLOAT-DOMAIN.

@@ -966,9 +966,10 @@ mod decoder_validation {
 
     /// Validates lossless roundtrip: encode -> decode -> compare pixels exactly.
     ///
-    /// Uses jxl-rs as primary decoder (per CLAUDE.md). Falls back to jxl-oxide
-    /// for single-group images where both work. jxl-oxide has a known limitation
-    /// with ANS entropy coding in multi-group modular frames.
+    /// Uses jxl-rs as primary decoder (per CLAUDE.md). Also runs jxl-oxide via
+    /// the imazen fork pinned in the workspace `[patch.crates-io]`; the fork
+    /// fixes the previous UnexpectedEof on multi-group modular frames whose
+    /// global section had no decodable channels.
     ///
     /// Returns the decoded pixel data on success.
     fn validate_lossless_roundtrip_rgb(
