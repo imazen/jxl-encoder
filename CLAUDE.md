@@ -1327,7 +1327,7 @@ than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true
 - cjxl-rs total: 7,930KB (avg 991KB/image)
 - vs cjxl e7: **-0.7%** (7 of 8 images equal or smaller)
 - Per-image range: -5.7% to +1.2% vs cjxl e7
-- Encode time: ~14s per 1024x1024 image (release build, lossless tree learning, after 86x speedup)
+- Encode time: ~6.2s per 1024x1024 image (release build, lossless tree learning, post-SIMD as of `6011f10`; cjxl reference ~1.56s, gap ~4×). Dominant remaining cost is `collect`-stage random reads in `find_best_split` (51.9% of wall-clock). Fix path documented in jxl-encoder#40: in-place sample permutation mirroring libjxl `SplitTreeSamples` (`enc_ma.cc:119-138`), estimated 2-4× CBT speedup, multi-day refactor.
 
 **Optimization history** (gap reduction on 8 CLIC 1024x1024 photos):
 1. Tree learning sample cap (65K): +28.5% → +7.7%
