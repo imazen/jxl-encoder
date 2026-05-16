@@ -35,3 +35,22 @@ repository = "https://github.com/imazen/jxl-encoder"
 homepage = "https://github.com/imazen/jxl-encoder"
 authors = ["Lilith River"]
 rust-version = "1.89"
+
+# Use imazen/jxl-oxide fork until the fix in commit fd4e2c3 lands upstream.
+# The fork carries a patch that lets jxl-oxide accept multi-group VarDCT/patches
+# bitstreams whose modular global section is empty — the same bitstreams djxl
+# and jxl-rs already accept.
+[patch.crates-io]
+jxl-oxide = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-color = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-image = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-bitstream = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-coding = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-frame = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-grid = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-modular = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-render = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-vardct = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-threadpool = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-jbr = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
