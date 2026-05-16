@@ -165,6 +165,22 @@ pub struct TreeLearningParams {
     /// experimentation toward issue #41 Phase 2 (integrate dedup into the
     /// gather pass itself, eliminating the random-access pattern).
     pub use_streaming_dedup: bool,
+    /// Integrate the two-hash cuckoo dedup *into* the gather loop itself
+    /// (libjxl `AddSample` parity, `enc_ma.cc:711`).
+    ///
+    /// This is the true Phase 2 of issue #41: each pushed sample is
+    /// immediately probed against a per-thread [`GatherDedupTable`] and
+    /// either merged (pop_back + count++) or retained. No post-pass over
+    /// `pack_sample_key`, so the cold-cache SoA reads that doomed Phase 1
+    /// disappear. Output is **not** byte-identical to the sort-dedup
+    /// default because gather-time dedup hashes on raw i32 property values
+    /// (pre-quantization is run later, on the already-deduplicated set).
+    ///
+    /// Default `false`. Callers opt in via
+    /// [`crate::api::LosslessConfig`] `__expert` overrides and re-bake
+    /// the hash-lock sidecars; the sort path remains the byte-identical
+    /// default.
+    pub gather_dedup: bool,
 }
 
 impl TreeLearningParams {
@@ -223,6 +239,7 @@ impl TreeLearningParams {
             max_nodes: 1 << 22,
             pixel_fraction: 1.0,
             use_streaming_dedup: profile.use_streaming_dedup,
+            gather_dedup: profile.gather_dedup,
         }
     }
 
@@ -256,6 +273,7 @@ impl TreeLearningParams {
             max_nodes: 1 << 22,
             pixel_fraction: 1.0,
             use_streaming_dedup: false,
+            gather_dedup: false,
         }
     }
 
@@ -388,6 +406,19 @@ impl TreeSamples {
         self.candidate_predictors.len()
     }
 
+    /// Total gathered weight across all samples. Equals `num_samples`
+    /// when no dedup has run yet (sample_counts empty), otherwise the
+    /// sum of per-row counts. Used by `pixel_fraction` callers so the
+    /// threshold scaling stays correct when gather-time dedup
+    /// (Phase 2 of issue #41) is enabled.
+    pub(crate) fn total_gathered_weight(&self) -> usize {
+        if self.sample_counts.is_empty() {
+            self.num_samples
+        } else {
+            self.sample_counts.iter().map(|&c| c as usize).sum()
+        }
+    }
+
     /// Reserve capacity in all parallel SoA arrays for `additional` more samples.
     ///
     /// Optional micro-optimization for callers that know the total sample count
@@ -419,7 +450,21 @@ impl TreeSamples {
             self.candidate_predictors.len(),
             other.candidate_predictors.len()
         );
-        debug_assert!(self.sample_counts.is_empty() && other.sample_counts.is_empty());
+        // sample_counts may be populated by gather-time dedup (Phase 2 of
+        // issue #41). Both sides must agree: either both empty (no
+        // gather dedup) or both lengths equal to their respective
+        // num_samples. Concatenating mixed regimes would desync the
+        // weight array vs the SoA columns.
+        debug_assert!(
+            (self.sample_counts.is_empty() && other.sample_counts.is_empty())
+                || (self.sample_counts.len() == self.num_samples
+                    && other.sample_counts.len() == other.num_samples),
+            "TreeSamples::append_from: sample_counts mismatch — left has {}/{}, right has {}/{}",
+            self.sample_counts.len(),
+            self.num_samples,
+            other.sample_counts.len(),
+            other.num_samples,
+        );
         for (dst, src) in self
             .residual_tokens
             .iter_mut()
@@ -433,6 +478,7 @@ impl TreeSamples {
         for (dst, src) in self.props.iter_mut().zip(other.props.iter_mut()) {
             dst.append(src);
         }
+        self.sample_counts.append(&mut other.sample_counts);
         self.num_samples += other.num_samples;
     }
 
@@ -705,6 +751,102 @@ pub(crate) fn gather_samples_strided_with_budget(
     wp_params: &WeightedPredictorParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<()> {
+    gather_samples_strided_with_budget_inner(
+        samples,
+        image,
+        group_id,
+        channel_offset,
+        stride,
+        wp_params,
+        budget,
+        None,
+    )
+}
+
+/// `gather_samples_strided_with_budget` plus a flag that controls
+/// whether gather-time dedup runs (Phase 2 of issue #41, libjxl
+/// `AddSample` parity).
+///
+/// When `enable_gather_dedup` is `true`, a per-call [`GatherDedupTable`]
+/// is constructed (sized from the channel pixel-count / stride estimate)
+/// and threaded through every channel of `image`. Cross-channel
+/// duplicates merge into the same unique row. When `false`, the call is
+/// identical to [`gather_samples_strided_with_budget`].
+///
+/// `dedup_properties` constrains which property slots feed the hash
+/// (production callers thread `params.properties` here so the
+/// gather-time merge stays at-or-below the post-sort merge in
+/// aggressiveness). Pass an empty slice for the legacy "hash all
+/// non-y/x properties" mode.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn gather_samples_strided_with_dedup(
+    samples: &mut TreeSamples,
+    image: &ModularImage,
+    group_id: u32,
+    channel_offset: u32,
+    stride: usize,
+    wp_params: &WeightedPredictorParams,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    enable_gather_dedup: bool,
+    dedup_properties: &[usize],
+) -> crate::error::Result<()> {
+    if !enable_gather_dedup {
+        return gather_samples_strided_with_budget_inner(
+            samples,
+            image,
+            group_id,
+            channel_offset,
+            stride,
+            wp_params,
+            budget,
+            None,
+        );
+    }
+    // Upper-bound estimate of gathered samples for this image: sum of
+    // channel pixel counts divided by stride (rounded up). The cuckoo
+    // table is sized to keep load < 2/3 throughout.
+    let total_pixels: usize = image
+        .channels
+        .iter()
+        .map(|c| c.width().saturating_mul(c.height()))
+        .sum();
+    let est_samples = total_pixels.div_ceil(stride.max(1)).max(1);
+    let mut table = if dedup_properties.is_empty() {
+        GatherDedupTable::new(est_samples)
+    } else {
+        GatherDedupTable::new_with_properties(est_samples, dedup_properties)
+    };
+    gather_samples_strided_with_budget_inner(
+        samples,
+        image,
+        group_id,
+        channel_offset,
+        stride,
+        wp_params,
+        budget,
+        Some(&mut table),
+    )
+}
+
+/// `gather_samples_strided_with_budget` plus an optional gather-time
+/// dedup table (Phase 2 of issue #41, libjxl `AddSample` parity).
+///
+/// The table is threaded through every channel so cross-channel
+/// duplicates merge into the same unique row. Sized by the caller
+/// (`GatherDedupTable::new`) from an upper-bound sample estimate; the
+/// caller is responsible for picking a power-of-two cap large enough
+/// to keep load < 2/3 throughout the gather.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn gather_samples_strided_with_budget_inner(
+    samples: &mut TreeSamples,
+    image: &ModularImage,
+    group_id: u32,
+    channel_offset: u32,
+    stride: usize,
+    wp_params: &WeightedPredictorParams,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    mut dedup_table: Option<&mut GatherDedupTable>,
+) -> crate::error::Result<()> {
     for (ch_idx, channel) in image.channels.iter().enumerate() {
         // Find reference channels for this channel (preceding channels with matching dims)
         let ref_channel_indices = if samples.num_ref_channels > 0 {
@@ -723,6 +865,7 @@ pub(crate) fn gather_samples_strided_with_budget(
             image,
             &ref_channel_indices,
             budget,
+            dedup_table.as_deref_mut(),
         )?;
     }
     Ok(())
@@ -765,6 +908,13 @@ pub fn compute_gather_stride_from_profile(
 ///
 /// `ref_channel_indices` contains indices into `image.channels` of preceding channels
 /// with matching dimensions. For each ref channel, 4 properties are computed per pixel.
+///
+/// `dedup_table`: when `Some(_)`, each pushed sample is immediately probed
+/// against the table; duplicates are popped back from the SoA columns and
+/// the existing unique sample's `sample_counts` entry is bumped. The table
+/// is passed by `&mut` because it accumulates state across all channels
+/// gathered into the same `TreeSamples` (libjxl `AddSample` parity,
+/// `enc_ma.cc:711`).
 #[allow(clippy::too_many_arguments)]
 fn gather_channel_samples(
     samples: &mut TreeSamples,
@@ -776,6 +926,7 @@ fn gather_channel_samples(
     image: &ModularImage,
     ref_channel_indices: &[usize],
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    dedup_table: Option<&mut GatherDedupTable>,
 ) -> crate::error::Result<()> {
     let width = channel.width();
     let height = channel.height();
@@ -794,6 +945,26 @@ fn gather_channel_samples(
     let mut subsample_counter: usize = 0;
 
     let max_refs = samples.num_ref_channels;
+
+    // Cache field-counts referenced from the inner loop's dedup probe.
+    let num_pred = samples.num_predictors();
+    let total_props = samples.total_num_properties();
+    // Detach the optional borrow so each `add` step can decide whether to
+    // call `try_merge_last` without re-asking for the option.
+    let mut dedup_table = dedup_table;
+
+    // Stack scratch for accumulating per-sample fields before the SoA
+    // push. Lets the dedup hash read from registers / L1 instead of
+    // chasing the `samples.residual_tokens[pred][last_idx]` pointer
+    // chain just to re-read what we computed one cycle earlier.
+    //
+    // 14 candidate predictors (max), 16 base properties + 4 * max_refs
+    // for ref-channel properties. We pad the ref-prop array to 32
+    // (max_refs <= 8 in practice; we debug_assert below).
+    const MAX_CAND_PRED: usize = 16; // > 14 candidates, leaves headroom
+    const MAX_REF_PROPS: usize = 32; // 4 props * 8 ref channels
+    debug_assert!(num_pred <= MAX_CAND_PRED);
+    debug_assert!(4 * max_refs <= MAX_REF_PROPS);
 
     for y in 0..height {
         prev_gradient = 0;
@@ -823,6 +994,9 @@ fn gather_channel_samples(
                 // Update prev_gradient for next pixel
                 prev_gradient = props[9]; // gradient = W + N - NW
 
+                // Stack scratch for predictor outputs. Filled below.
+                let mut local_tokens = [0u8; MAX_CAND_PRED];
+                let mut local_ebits = [0u8; MAX_CAND_PRED];
                 // Compute residual for each candidate predictor
                 for (pred_idx, &predictor) in samples.candidate_predictors.iter().enumerate() {
                     let prediction = if predictor == Predictor::Weighted {
@@ -833,29 +1007,19 @@ fn gather_channel_samples(
                     let residual = pixel - prediction;
                     let packed = pack_signed(residual);
                     let (token, _extra_bits, num_extra) = GATHER_HYBRID_UINT.encode(packed);
-                    samples.residual_tokens[pred_idx].push(token as u8);
-                    samples.extra_bits[pred_idx].push(num_extra as u8);
+                    local_tokens[pred_idx] = token as u8;
+                    local_ebits[pred_idx] = num_extra as u8;
                 }
 
-                // Store base property values (0..16)
-                for (prop_list, &val) in samples
-                    .props
-                    .iter_mut()
-                    .zip(props.iter())
-                    .take(NUM_PROPERTIES)
-                {
-                    prop_list.push(val);
-                }
-
-                // Store reference channel properties (16+)
-                // For each ref channel: |ref|, ref, |ref - gradient(ref)|, ref - gradient(ref)
-                // Matches libjxl context_predict.h:411-443 PrecomputeReferences
+                // Compute reference channel properties into a local
+                // buffer. Same layout as the SoA push below:
+                // [|ref0|, ref0, |ref0-gradient0|, ref0-gradient0,
+                //  |ref1|, ref1, ..., 0, 0, 0, 0 (zero-pad)]
+                let mut local_ref_props = [0i32; MAX_REF_PROPS];
                 if max_refs > 0 {
                     for (r, &ref_ch_idx) in ref_channel_indices.iter().enumerate() {
                         let ref_ch = &image.channels[ref_ch_idx];
                         let v = ref_ch.get(x, y);
-
-                        // Compute clamped gradient prediction for reference channel
                         let ref_left = if x > 0 { ref_ch.get(x - 1, y) } else { 0 };
                         let ref_top = if y > 0 {
                             ref_ch.get(x, y - 1)
@@ -872,24 +1036,80 @@ fn gather_channel_samples(
                             ref_left,
                             ref_topleft,
                         );
-
-                        let base = NUM_PROPERTIES + r * 4;
-                        samples.props[base].push(v.wrapping_abs()); // |ref|
-                        samples.props[base + 1].push(v); // ref
-                        samples.props[base + 2].push(v.wrapping_sub(ref_predicted).wrapping_abs()); // |ref - gradient|
-                        samples.props[base + 3].push(v.wrapping_sub(ref_predicted)); // ref - gradient
+                        let off = r * 4;
+                        local_ref_props[off] = v.wrapping_abs();
+                        local_ref_props[off + 1] = v;
+                        local_ref_props[off + 2] = v.wrapping_sub(ref_predicted).wrapping_abs();
+                        local_ref_props[off + 3] = v.wrapping_sub(ref_predicted);
                     }
-                    // Zero-pad for channels with fewer ref channels than the max
-                    for r in ref_channel_indices.len()..max_refs {
-                        let base = NUM_PROPERTIES + r * 4;
-                        samples.props[base].push(0);
-                        samples.props[base + 1].push(0);
-                        samples.props[base + 2].push(0);
-                        samples.props[base + 3].push(0);
-                    }
+                    // Slots beyond ref_channel_indices.len() stay 0 by
+                    // local_ref_props initialisation.
                 }
 
+                // Phase 2 of issue #41: probe the dedup table BEFORE
+                // pushing to SoA columns. The hash reads from registers
+                // (the just-computed local arrays), not from the heap
+                // — that's the cache-cost difference Phase 1 missed.
+                // On a hit we still need to compare against the existing
+                // unique row (cold reads of one historical row, which
+                // amortises across many merges as the cuckoo table
+                // points repeat-pattern samples to the same slot).
+                if let Some(ref mut tbl) = dedup_table
+                    && let Some(existing) = tbl.try_merge_local(
+                        samples,
+                        &local_tokens[..num_pred],
+                        &local_ebits[..num_pred],
+                        &props,
+                        &local_ref_props[..4 * max_refs],
+                    )
+                {
+                    // Hit: bump the existing unique row's count and
+                    // skip the SoA push entirely.
+                    samples.sample_counts[existing as usize] += 1;
+                    subsample_counter = stride - 1;
+                    continue;
+                }
+
+                // No dedup or miss: push everything to SoA columns.
+                for pred_idx in 0..num_pred {
+                    samples.residual_tokens[pred_idx].push(local_tokens[pred_idx]);
+                    samples.extra_bits[pred_idx].push(local_ebits[pred_idx]);
+                }
+                for (prop_list, &val) in samples
+                    .props
+                    .iter_mut()
+                    .zip(props.iter())
+                    .take(NUM_PROPERTIES)
+                {
+                    prop_list.push(val);
+                }
+                if max_refs > 0 {
+                    for r in 0..max_refs {
+                        let base = NUM_PROPERTIES + r * 4;
+                        let off = r * 4;
+                        samples.props[base].push(local_ref_props[off]);
+                        samples.props[base + 1].push(local_ref_props[off + 1]);
+                        samples.props[base + 2].push(local_ref_props[off + 2]);
+                        samples.props[base + 3].push(local_ref_props[off + 3]);
+                    }
+                }
                 samples.num_samples += 1;
+                // Seed the new unique row's count when dedup is active.
+                if dedup_table.is_some() {
+                    samples.sample_counts.push(1);
+                    // Insert the just-pushed sample into the table so
+                    // future samples can probe against it. Reads are
+                    // cache-hot (we just pushed).
+                    if let Some(ref mut tbl) = dedup_table {
+                        tbl.insert_last(samples, num_pred, total_props);
+                    }
+                }
+                // Sanity (paranoia, debug only): when dedup is OFF, the
+                // hash table never inserts and sample_counts stays
+                // empty; when dedup is ON, both stay in lockstep.
+                debug_assert!(
+                    dedup_table.is_none() || samples.sample_counts.len() == samples.num_samples,
+                );
 
                 subsample_counter = stride - 1;
             } else {
@@ -956,6 +1176,24 @@ const DEDUP_EMPTY: u32 = u32::MAX;
 /// (cuckoo-style open addressing).
 const HASH1_CONST: u64 = 0x1e35a7bd;
 const HASH2_CONST: u64 = 0x1e35a7bd1e35a7bd;
+
+/// Property slots that gather-time dedup deliberately skips, even
+/// when they appear in `params.properties`. Property 2 = y, 3 = x
+/// have raw values unique per pixel — hashing on them blocks every
+/// merge. The post-gather sort dedup quantizes these into a small
+/// number of coordinate buckets, but gather-time dedup runs before
+/// thresholds are known so we can't replicate that here. libjxl
+/// applies `QuantizeStaticProperty` to (y, x) before hashing in
+/// `AddSample`, achieving the same goal differently.
+///
+/// Channel (prop 0) and group_id (prop 1) are categorical — they
+/// take only a handful of distinct values across the whole image,
+/// so hashing on raw values still allows merges within each
+/// channel/group cohort.
+#[inline]
+fn skip_prop_for_gather_dedup(prop_idx: usize) -> bool {
+    prop_idx == 2 || prop_idx == 3
+}
 
 /// Open-addressing dedup table with two-hash cuckoo placement, ported from
 /// libjxl `TreeSamples::AddToTableAndMerge` (`enc_ma.cc:602-655`).
@@ -1094,6 +1332,457 @@ fn pack_sample_key(
     key
 }
 
+/// Inline gather-time dedup table — direct translation of libjxl's
+/// `dedup_table_` (`enc_ma.h:151-153`) + `AddSample` /
+/// `AddToTableAndMerge` (`enc_ma.cc:602-655`, `enc_ma.cc:711`).
+///
+/// Unlike [`StreamingDedupTable`], this table is consumed *during* the
+/// gather pass: each new sample is pushed to every SoA column, then this
+/// table is queried with the just-written index. On hit, the SoA columns
+/// are popped back (counterpart of libjxl's `pop_back` cascade) and the
+/// existing unique sample's count is bumped. On miss, the new sample is
+/// retained and inserted into the table for future merges.
+///
+/// Reading from `samples.residual_tokens[*].last()` /
+/// `samples.props[*].last()` is cache-hot because those positions were
+/// just written. That is the structural fix Phase 1 missed: the
+/// post-pass [`dedup_samples_streaming`] reads SoA columns at arbitrary
+/// indices after gather has moved on, taking a full miss-stride per
+/// `pack_sample_key`; the gather-time variant pays for the writes only.
+///
+/// Layout/size matches [`StreamingDedupTable`] — pow-2 cap with mask,
+/// `DEDUP_EMPTY` sentinel, two hash positions per entry. Sized once at
+/// construction from an upper-bound sample estimate (`expected_samples`)
+/// so probes stay branch-stable; the cap is never grown mid-gather.
+///
+/// Hash inputs: per-predictor `(tok, nbits)` byte pairs followed by raw
+/// (non-bucket) i32 property values for the **content-dependent**
+/// properties only (`PROPS_START_FOR_GATHER_DEDUP..total_num_properties`).
+/// The four static properties — channel, group_id, y, x — are
+/// deliberately skipped because their raw values are unique per pixel
+/// and would prevent any merges. libjxl's `AddSample` hashes on
+/// `QuantizeStaticProperty(...)` outputs that collapse adjacent
+/// pixels' (y, x) into the same bucket; we approximate by ignoring
+/// those slots entirely. The neighbour-derived properties (|N|, |W|,
+/// N, W, gradient differences, wp_max_error) are what actually drive
+/// merges on smooth regions / screenshots where adjacent pixels
+/// produce identical neighbour patterns.
+///
+/// Two samples whose neighbour rows differ will not merge here; the
+/// post-gather sort dedup may still collapse them once thresholds are
+/// known (it hashes on bucket indices and tolerates equivalent values
+/// within a bucket). The end result is a strict superset of the
+/// post-gather unique set, so wiring is gated behind
+/// [`TreeLearningParams::gather_dedup`] and hash-locks regenerated only
+/// when callers opt in.
+pub(crate) struct GatherDedupTable {
+    /// Slot → unique-sample index, or `DEDUP_EMPTY`.
+    slots: Box<[u32]>,
+    /// `slots.len() - 1`; `&` mask for pow-2 indexing.
+    mask: u32,
+    /// Pre-computed property indices the hash + IsSameSample check
+    /// walks. Built once at construction so the hot loop avoids
+    /// re-deriving the (post-y/x-skip) sequence per sample. Production
+    /// callers populate from `params.properties`; legacy callers get
+    /// the all-but-(y,x) default. Stored as u8 because every spec
+    /// property index fits (NUM_PROPERTIES + 4 * max_refs < 256).
+    properties: Vec<u8>,
+}
+
+impl GatherDedupTable {
+    /// Create a table sized for `expected_samples` and configured to
+    /// hash on the given property list (post-`skip_prop_for_gather_dedup`
+    /// filter). Production callers pass `params.properties`; the table
+    /// drops y/x to keep the merge non-trivial.
+    pub(crate) fn new_with_properties(expected_samples: usize, properties: &[usize]) -> Self {
+        let target = expected_samples.saturating_mul(3).div_ceil(2).max(16);
+        let cap = target.next_power_of_two();
+        let slots = vec![DEDUP_EMPTY; cap].into_boxed_slice();
+        // Filter and downcast to u8: every spec property index fits in
+        // a byte (NUM_PROPERTIES + 4 * max_refs is < 256 for any sane
+        // ref-channel count).
+        let mut props_kept: Vec<u8> = Vec::with_capacity(properties.len());
+        for &p in properties {
+            if !skip_prop_for_gather_dedup(p) {
+                debug_assert!(p < 256, "property index {p} exceeds u8 range");
+                props_kept.push(p as u8);
+            }
+        }
+        Self {
+            slots,
+            mask: (cap - 1) as u32,
+            properties: props_kept,
+        }
+    }
+
+    /// Backwards-compatible constructor that hashes on the legacy
+    /// all-but-(y,x) default property set up to a generous upper bound
+    /// (`MAX_LEGACY_PROPS`). Retained for callers that haven't yet
+    /// threaded `params.properties` through. Production sites use
+    /// `new_with_properties`.
+    pub(crate) fn new(expected_samples: usize) -> Self {
+        // Match the historical NUM_PROPERTIES + 4 * max_refs layout
+        // with a generous max_refs bound (8 ⇒ 16 + 32 = 48 slots).
+        // Tests / fallback callers rarely have many ref channels; this
+        // upper bound just ensures we don't truncate.
+        const MAX_LEGACY_PROPS: usize = 48;
+        let mut properties: Vec<u8> = Vec::with_capacity(MAX_LEGACY_PROPS);
+        for p in 0..MAX_LEGACY_PROPS {
+            if !skip_prop_for_gather_dedup(p) {
+                properties.push(p as u8);
+            }
+        }
+        let cap = expected_samples
+            .saturating_mul(3)
+            .div_ceil(2)
+            .max(16)
+            .next_power_of_two();
+        Self {
+            slots: vec![DEDUP_EMPTY; cap].into_boxed_slice(),
+            mask: (cap - 1) as u32,
+            properties,
+        }
+    }
+
+    /// Hash residual-token bytes then raw property i32 bytes for the
+    /// pre-computed property slots. Mirrors libjxl `Hash1` —
+    /// multiply-add fold with `0x1e35a7bd`.
+    #[inline]
+    fn hash1(&self, samples: &TreeSamples, idx: usize, num_pred: usize, total_props: usize) -> u32 {
+        let mut h: u64 = HASH1_CONST;
+        for pred in 0..num_pred {
+            h = h
+                .wrapping_mul(HASH1_CONST)
+                .wrapping_add(samples.residual_tokens[pred][idx] as u64);
+            h = h
+                .wrapping_mul(HASH1_CONST)
+                .wrapping_add(samples.extra_bits[pred][idx] as u64);
+        }
+        for &prop in &self.properties {
+            let prop = prop as usize;
+            if prop >= total_props {
+                break;
+            }
+            let v = samples.props[prop].get(idx).copied().unwrap_or(0) as i64 as u64;
+            h = h.wrapping_mul(HASH1_CONST).wrapping_add(v);
+        }
+        ((h >> 16) as u32) & self.mask
+    }
+
+    /// libjxl `Hash2`: same fold with the 64-bit constant + XOR.
+    #[inline]
+    fn hash2(&self, samples: &TreeSamples, idx: usize, num_pred: usize, total_props: usize) -> u32 {
+        let mut h: u64 = HASH2_CONST;
+        for &prop in &self.properties {
+            let prop = prop as usize;
+            if prop >= total_props {
+                break;
+            }
+            let v = samples.props[prop].get(idx).copied().unwrap_or(0) as i64 as u64;
+            h = h.wrapping_mul(HASH2_CONST) ^ v;
+        }
+        for pred in 0..num_pred {
+            h = h.wrapping_mul(HASH2_CONST) ^ (samples.residual_tokens[pred][idx] as u64);
+            h = h.wrapping_mul(HASH2_CONST) ^ (samples.extra_bits[pred][idx] as u64);
+        }
+        ((h >> 16) as u32) & self.mask
+    }
+
+    /// libjxl `IsSameSample` (`enc_ma.cc:688-708`): branch-free compare
+    /// of two samples across the SoA columns considered by the hash —
+    /// residual tokens, extra-bit counts, and the configured property
+    /// slots.
+    #[inline]
+    fn is_same_sample(
+        &self,
+        samples: &TreeSamples,
+        a: usize,
+        b: usize,
+        num_pred: usize,
+        total_props: usize,
+    ) -> bool {
+        for pred in 0..num_pred {
+            if samples.residual_tokens[pred][a] != samples.residual_tokens[pred][b] {
+                return false;
+            }
+            if samples.extra_bits[pred][a] != samples.extra_bits[pred][b] {
+                return false;
+            }
+        }
+        for &prop in &self.properties {
+            let prop = prop as usize;
+            if prop >= total_props {
+                break;
+            }
+            let pa = &samples.props[prop];
+            // Defensive: skip prop slots that were never populated.
+            // gather_channel_samples touches every slot up to
+            // total_num_properties(), so this branch is dead code on
+            // production paths but keeps tests / future call sites safe.
+            if pa.is_empty() {
+                continue;
+            }
+            if pa[a] != pa[b] {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Hash from local stack arrays (computed by the gather loop just
+    /// before the SoA push). Eliminates the pre-push-then-read SoA
+    /// chase that costs cache misses on every probe — the input is
+    /// already in registers / L1.
+    ///
+    /// `local_props` is the 16-element base property array;
+    /// `local_ref_props` is the 4 * num_refs ref-property buffer in
+    /// the same layout as `samples.props[NUM_PROPERTIES..]`.
+    #[inline]
+    fn hash1_local(
+        &self,
+        local_tokens: &[u8],
+        local_ebits: &[u8],
+        local_props: &[i32; NUM_PROPERTIES],
+        local_ref_props: &[i32],
+    ) -> u32 {
+        let mut h: u64 = HASH1_CONST;
+        for (&t, &e) in local_tokens.iter().zip(local_ebits.iter()) {
+            h = h.wrapping_mul(HASH1_CONST).wrapping_add(t as u64);
+            h = h.wrapping_mul(HASH1_CONST).wrapping_add(e as u64);
+        }
+        for &prop in &self.properties {
+            let prop = prop as usize;
+            let v = if prop < NUM_PROPERTIES {
+                local_props[prop] as i64 as u64
+            } else {
+                let off = prop - NUM_PROPERTIES;
+                if off < local_ref_props.len() {
+                    local_ref_props[off] as i64 as u64
+                } else {
+                    0
+                }
+            };
+            h = h.wrapping_mul(HASH1_CONST).wrapping_add(v);
+        }
+        ((h >> 16) as u32) & self.mask
+    }
+
+    #[inline]
+    fn hash2_local(
+        &self,
+        local_tokens: &[u8],
+        local_ebits: &[u8],
+        local_props: &[i32; NUM_PROPERTIES],
+        local_ref_props: &[i32],
+    ) -> u32 {
+        let mut h: u64 = HASH2_CONST;
+        for &prop in &self.properties {
+            let prop = prop as usize;
+            let v = if prop < NUM_PROPERTIES {
+                local_props[prop] as i64 as u64
+            } else {
+                let off = prop - NUM_PROPERTIES;
+                if off < local_ref_props.len() {
+                    local_ref_props[off] as i64 as u64
+                } else {
+                    0
+                }
+            };
+            h = h.wrapping_mul(HASH2_CONST) ^ v;
+        }
+        for (&t, &e) in local_tokens.iter().zip(local_ebits.iter()) {
+            h = h.wrapping_mul(HASH2_CONST) ^ (t as u64);
+            h = h.wrapping_mul(HASH2_CONST) ^ (e as u64);
+        }
+        ((h >> 16) as u32) & self.mask
+    }
+
+    /// Branch-free compare between the *local* (just-computed) row and
+    /// an *existing* (cold) row at `samples.*[b]`. Counterpart of
+    /// `is_same_sample` that lets the caller skip writing to SoA on a
+    /// hit.
+    #[inline]
+    fn is_same_local(
+        &self,
+        local_tokens: &[u8],
+        local_ebits: &[u8],
+        local_props: &[i32; NUM_PROPERTIES],
+        local_ref_props: &[i32],
+        samples: &TreeSamples,
+        b: usize,
+    ) -> bool {
+        let num_pred = local_tokens.len();
+        for pred in 0..num_pred {
+            if local_tokens[pred] != samples.residual_tokens[pred][b] {
+                return false;
+            }
+            if local_ebits[pred] != samples.extra_bits[pred][b] {
+                return false;
+            }
+        }
+        for &prop in &self.properties {
+            let prop = prop as usize;
+            let pa = &samples.props[prop];
+            if pa.is_empty() {
+                continue;
+            }
+            let vb = pa[b];
+            let va = if prop < NUM_PROPERTIES {
+                local_props[prop]
+            } else {
+                let off = prop - NUM_PROPERTIES;
+                if off < local_ref_props.len() {
+                    local_ref_props[off]
+                } else {
+                    0
+                }
+            };
+            if va != vb {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Probe the table with the local (about-to-be-pushed) values.
+    /// Returns `Some(existing_idx)` when the caller should skip the SoA
+    /// push and bump `sample_counts[existing_idx]`. Returns `None` when
+    /// the row is new — the caller pushes it to SoA, then calls
+    /// `insert_last` to seed the table for future probes.
+    ///
+    /// Note: when this returns `None` we deliberately do NOT update the
+    /// slot table here — the caller hasn't pushed yet, so the index
+    /// the table would store is not yet `samples.num_samples - 1`.
+    /// Doing the insert post-push lets the caller short-circuit on
+    /// hits without touching the SoA columns at all.
+    #[inline]
+    fn try_merge_local(
+        &mut self,
+        samples: &TreeSamples,
+        local_tokens: &[u8],
+        local_ebits: &[u8],
+        local_props: &[i32; NUM_PROPERTIES],
+        local_ref_props: &[i32],
+    ) -> Option<u32> {
+        let pos1 =
+            self.hash1_local(local_tokens, local_ebits, local_props, local_ref_props) as usize;
+        let s1 = self.slots[pos1];
+        if s1 != DEDUP_EMPTY
+            && self.is_same_local(
+                local_tokens,
+                local_ebits,
+                local_props,
+                local_ref_props,
+                samples,
+                s1 as usize,
+            )
+        {
+            return Some(s1);
+        }
+        let pos2 =
+            self.hash2_local(local_tokens, local_ebits, local_props, local_ref_props) as usize;
+        let s2 = self.slots[pos2];
+        if s2 != DEDUP_EMPTY
+            && self.is_same_local(
+                local_tokens,
+                local_ebits,
+                local_props,
+                local_ref_props,
+                samples,
+                s2 as usize,
+            )
+        {
+            return Some(s2);
+        }
+        None
+    }
+
+    /// Mirror of libjxl `AddToTable` — insert the just-pushed row's
+    /// index into the first empty cuckoo slot. Both probe slots
+    /// occupied = silent drop (libjxl behaviour at `enc_ma.cc:632`);
+    /// future identical rows simply won't merge, costing at worst one
+    /// extra unique row.
+    #[inline]
+    fn insert_last(&mut self, samples: &TreeSamples, num_pred: usize, total_props: usize) {
+        debug_assert!(samples.num_samples >= 1);
+        let a = samples.num_samples - 1;
+        let pos1 = self.hash1(samples, a, num_pred, total_props) as usize;
+        if self.slots[pos1] == DEDUP_EMPTY {
+            self.slots[pos1] = a as u32;
+            return;
+        }
+        let pos2 = self.hash2(samples, a, num_pred, total_props) as usize;
+        if self.slots[pos2] == DEDUP_EMPTY {
+            self.slots[pos2] = a as u32;
+        }
+    }
+
+    /// libjxl `AddToTableAndMerge` (`enc_ma.cc:603-630`) called with the
+    /// just-pushed sample index. Returns `Some(existing_idx)` when the
+    /// caller should pop_back and bump `sample_counts[existing_idx]`, or
+    /// `None` when the sample stays and the table is updated with its
+    /// index (after the caller pushes 1 to `sample_counts`).
+    #[inline]
+    #[allow(dead_code)] // kept for the test that exercises the post-push variant
+    fn try_merge_last(
+        &mut self,
+        samples: &TreeSamples,
+        num_pred: usize,
+        total_props: usize,
+    ) -> Option<u32> {
+        debug_assert!(samples.num_samples >= 1);
+        let a = samples.num_samples - 1;
+        let pos1 = self.hash1(samples, a, num_pred, total_props) as usize;
+        let s1 = self.slots[pos1];
+        if s1 != DEDUP_EMPTY && self.is_same_sample(samples, a, s1 as usize, num_pred, total_props)
+        {
+            return Some(s1);
+        }
+        let pos2 = self.hash2(samples, a, num_pred, total_props) as usize;
+        let s2 = self.slots[pos2];
+        if s2 != DEDUP_EMPTY && self.is_same_sample(samples, a, s2 as usize, num_pred, total_props)
+        {
+            return Some(s2);
+        }
+        // Miss: insert `a` into the first empty slot (libjxl `AddToTable`,
+        // `enc_ma.cc:632-640`). If both are occupied, the new sample is
+        // unreachable from future probes — that costs one missed merge
+        // (extra row in the unique set, still byte-correct downstream).
+        let a32 = a as u32;
+        if s1 == DEDUP_EMPTY {
+            self.slots[pos1] = a32;
+        } else if s2 == DEDUP_EMPTY {
+            self.slots[pos2] = a32;
+        }
+        None
+    }
+
+    /// Pop the just-pushed sample from every SoA column. Mirror of
+    /// libjxl's pop_back cascade in `AddSample` (`enc_ma.cc:731-736`).
+    /// Caller is responsible for bumping the existing unique sample's
+    /// count and **not** pushing to `sample_counts` for the popped row.
+    ///
+    /// Used by the test-only push-then-merge path; production gather
+    /// short-circuits before the SoA push via `try_merge_local` so
+    /// nothing needs popping.
+    #[inline]
+    #[allow(dead_code)]
+    fn pop_last_sample(samples: &mut TreeSamples) {
+        for v in &mut samples.residual_tokens {
+            v.pop();
+        }
+        for v in &mut samples.extra_bits {
+            v.pop();
+        }
+        for v in &mut samples.props {
+            if !v.is_empty() {
+                v.pop();
+            }
+        }
+        samples.num_samples -= 1;
+    }
+}
+
 /// Deduplicate samples with identical quantized properties and residuals.
 ///
 /// Matching libjxl's approach: after pre-quantization, many pixels in smooth
@@ -1160,9 +1849,21 @@ fn dedup_samples_packed_sort(
 ) {
     let n = samples.num_samples;
     if n <= 1 {
-        samples.sample_counts = vec![1; n];
+        // Preserve a pre-populated `sample_counts` (Phase 2 gather-time
+        // dedup writes it during gather); otherwise seed with 1s.
+        if samples.sample_counts.len() != n {
+            samples.sample_counts = vec![1; n];
+        }
         return;
     }
+    // If the upstream gather already produced sample_counts (Phase 2 of
+    // issue #41), use those as the initial multiplicity instead of the
+    // unconditional `+= 1` per sorted run.
+    let preexisting_counts: Option<Vec<u32>> = if samples.sample_counts.len() == n {
+        Some(core::mem::take(&mut samples.sample_counts))
+    } else {
+        None
+    };
 
     let num_pred = samples.num_predictors();
     let properties = &params.properties;
@@ -1233,15 +1934,16 @@ fn dedup_samples_packed_sort(
 
     let first = order[0] as usize;
     unique_indices.push(first);
-    counts.push(1);
+    counts.push(preexisting_counts.as_ref().map(|c| c[first]).unwrap_or(1));
     let mut prev_key_idx = first;
     for &curr_idx in &order[1..] {
         let curr = curr_idx as usize;
+        let weight = preexisting_counts.as_ref().map(|c| c[curr]).unwrap_or(1);
         if keys[curr] == keys[prev_key_idx] {
-            *counts.last_mut().unwrap() += 1;
+            *counts.last_mut().unwrap() += weight;
         } else {
             unique_indices.push(curr);
-            counts.push(1);
+            counts.push(weight);
             prev_key_idx = curr;
         }
     }
@@ -1337,9 +2039,18 @@ fn dedup_samples_streaming(
 ) {
     let n = samples.num_samples;
     if n <= 1 {
-        samples.sample_counts = vec![1; n];
+        if samples.sample_counts.len() != n {
+            samples.sample_counts = vec![1; n];
+        }
         return;
     }
+    // Mirror the sort path: respect any pre-existing sample_counts so
+    // gather-time dedup composes cleanly with the streaming backend too.
+    let preexisting_counts: Option<Vec<u32>> = if samples.sample_counts.len() == n {
+        Some(core::mem::take(&mut samples.sample_counts))
+    } else {
+        None
+    };
 
     let num_pred = samples.num_predictors();
     let properties = &params.properties;
@@ -1377,11 +2088,15 @@ fn dedup_samples_streaming(
     for sample_idx in 0..n {
         let key = pack_sample_key(sample_idx, properties, pq, samples, num_pred);
         let next_idx = unique_indices.len() as u32;
+        let weight = preexisting_counts
+            .as_ref()
+            .map(|c| c[sample_idx])
+            .unwrap_or(1);
         if let Some(existing) = table.lookup_or_insert(&key, &unique_keys, next_idx) {
-            counts[existing as usize] += 1;
+            counts[existing as usize] += weight;
         } else {
             unique_indices.push(sample_idx as u32);
-            counts.push(1);
+            counts.push(weight);
             unique_keys.push(key);
         }
     }
@@ -1517,9 +2232,29 @@ pub(crate) fn compute_best_tree_with_budget(
     // Pre-quantize all properties globally (replaces per-node binary_search)
     let mut pq = crate::profile_time!("tree/pre_quantize", { samples.pre_quantize(params) });
 
+    // When `params.gather_dedup` was set, the gather loop already
+    // populated `sample_counts`. Either: counts.len() == num_samples
+    // (gather-time dedup ran) OR counts is empty (call site did not
+    // honor the flag — fall back to the post-pass dedup default).
+    debug_assert!(
+        !params.gather_dedup
+            || samples.sample_counts.is_empty()
+            || samples.sample_counts.len() == samples.num_samples,
+        "gather_dedup=true but sample_counts.len()={} != num_samples={}",
+        samples.sample_counts.len(),
+        samples.num_samples,
+    );
+
     // Sample deduplication: group samples with identical (quantized props, tokens, ebits).
-    // Matching libjxl's approach, this reduces inner loop iterations on typical photos,
-    // eliminating the need for the per-node eval sample cap.
+    // Matching libjxl's approach, this reduces inner loop iterations in
+    // FindBestSplit by 1.4-10x on typical photos.
+    //
+    // When gather-time dedup populated `sample_counts` already, the
+    // post-pass sort still has a residual role: it merges
+    // bucket-equivalent rows whose raw values differed (so the gather
+    // hash kept them apart). Skipping it would leave those collisions
+    // unmerged — find_best_split would then evaluate more unique rows
+    // than necessary. We keep it but pass the pre-computed counts.
     crate::profile_time!("tree/dedup_samples", {
         dedup_samples(samples, &mut pq, params);
     });
@@ -4979,5 +5714,145 @@ mod tests {
         let total_stream: u32 = multiset_stream.values().sum();
         assert_eq!(total_sort, 768, "sort dedup must conserve total weight");
         assert_eq!(total_stream, 768, "stream dedup must conserve total weight");
+    }
+
+    /// Phase 2 of issue #41: gather-time dedup conserves the total
+    /// gathered-weight invariant. Sum of `sample_counts` after a
+    /// gather-with-dedup pass must equal the count of pixels actually
+    /// gathered (channels × width × height when stride = 1), regardless
+    /// of how many merges happen inside the cuckoo table.
+    #[test]
+    fn test_gather_dedup_conserves_total_weight() {
+        // Use a constant 32x32 RGB image — every pixel has identical
+        // (token, ebits, props), so the gather-time merge collapses
+        // them all into 3 unique rows (one per channel). This is the
+        // tightest possible invariant exercise.
+        let pixels = vec![128u8; 32 * 32 * 3];
+        let image = ModularImage::from_rgb8(&pixels, 32, 32).unwrap();
+
+        // Baseline: no gather-time dedup.
+        let mut baseline = TreeSamples::new();
+        gather_samples(&mut baseline, &image, 0);
+        let baseline_total = baseline.num_samples as u32;
+        assert_eq!(
+            baseline_total,
+            32 * 32 * 3,
+            "constant 32x32 RGB sequential gather expects 3072"
+        );
+
+        // With gather-time dedup using the e7 property set
+        // (production callers thread `params.properties` here).
+        let params = TreeLearningParams::for_effort(7);
+        let mut deduped = TreeSamples::new();
+        gather_samples_strided_with_dedup(
+            &mut deduped,
+            &image,
+            0,
+            0,
+            1,
+            &WeightedPredictorParams::default(),
+            None,
+            true,
+            &params.properties,
+        )
+        .unwrap();
+
+        assert_eq!(
+            deduped.sample_counts.len(),
+            deduped.num_samples,
+            "gather-time dedup must keep sample_counts in lockstep with num_samples",
+        );
+        let dedup_total: u32 = deduped.sample_counts.iter().sum();
+        assert_eq!(
+            dedup_total, baseline_total,
+            "gather-time dedup must conserve gathered-weight total",
+        );
+        // A constant image collapses to a tiny number of unique rows
+        // (one per channel × neighbour-class) — definitely many merges.
+        assert!(
+            deduped.num_samples < baseline_total as usize / 4,
+            "expected aggressive merging on a constant image; got num_samples={} vs total {}",
+            deduped.num_samples,
+            baseline_total,
+        );
+    }
+
+    /// End-to-end: with `gather_dedup` on, the unique-set multiset still
+    /// agrees with the sort-only path AFTER the post-gather sort pass.
+    /// This is the byte-equivalent invariant: the bucket-equivalence
+    /// dedup is the final arbiter, and gather-time dedup is a (lossless)
+    /// strict subset that the final sort pass collapses correctly.
+    #[test]
+    fn test_gather_dedup_then_sort_matches_sort_only() {
+        let mut pixels = [0u8; 16 * 16 * 3];
+        for y in 0..16u8 {
+            for x in 0..16u8 {
+                let base = (y * 16 + x) as usize * 3;
+                pixels[base] = (x & 0b1100) << 2;
+                pixels[base + 1] = (y & 0b1100) << 2;
+                pixels[base + 2] = ((x ^ y) & 0b0111) << 4;
+            }
+        }
+        let image = ModularImage::from_rgb8(&pixels, 16, 16).unwrap();
+
+        let collect_multiset = |samples: &TreeSamples,
+                                pq: &PreQuantizedProps,
+                                params: &TreeLearningParams|
+         -> std::collections::BTreeMap<Vec<u8>, u32> {
+            let n = samples.num_samples;
+            let num_pred = samples.num_predictors();
+            let mut multiset: std::collections::BTreeMap<Vec<u8>, u32> =
+                std::collections::BTreeMap::new();
+            for i in 0..n {
+                let mut key = Vec::with_capacity(params.properties.len() + 2 * num_pred);
+                for &prop_idx in &params.properties {
+                    let bi = &pq.bucket_indices[prop_idx];
+                    key.push(if bi.is_empty() { 0 } else { bi[i] });
+                }
+                for pred in 0..num_pred {
+                    key.push(samples.residual_tokens[pred][i]);
+                    key.push(samples.extra_bits[pred][i]);
+                }
+                *multiset.entry(key).or_insert(0) += samples.sample_counts[i];
+            }
+            multiset
+        };
+
+        // Path A: sort-only (existing default).
+        let params_sort = TreeLearningParams::for_effort(7);
+        let mut samples_a = TreeSamples::new();
+        gather_samples(&mut samples_a, &image, 0);
+        let mut pq_a = samples_a.pre_quantize(&params_sort);
+        dedup_samples(&mut samples_a, &mut pq_a, &params_sort);
+        let multiset_a = collect_multiset(&samples_a, &pq_a, &params_sort);
+
+        // Path B: gather-time dedup + post-gather sort.
+        let mut params_b = TreeLearningParams::for_effort(7);
+        params_b.gather_dedup = true;
+        let mut samples_b = TreeSamples::new();
+        gather_samples_strided_with_dedup(
+            &mut samples_b,
+            &image,
+            0,
+            0,
+            1,
+            &WeightedPredictorParams::default(),
+            None,
+            true,
+            &params_b.properties,
+        )
+        .unwrap();
+        let mut pq_b = samples_b.pre_quantize(&params_b);
+        dedup_samples(&mut samples_b, &mut pq_b, &params_b);
+        let multiset_b = collect_multiset(&samples_b, &pq_b, &params_b);
+
+        assert_eq!(
+            multiset_a, multiset_b,
+            "gather-time dedup followed by sort dedup must reproduce the sort-only unique multiset",
+        );
+        let total_a: u32 = multiset_a.values().sum();
+        let total_b: u32 = multiset_b.values().sum();
+        assert_eq!(total_a, total_b, "total weight must match between paths");
+        assert_eq!(total_a, 768, "16x16 RGB single-stride gather expects 768");
     }
 }

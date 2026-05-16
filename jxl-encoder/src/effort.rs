@@ -402,6 +402,19 @@ pub struct EffortProfile {
     /// itself, where libjxl gets its actual win because keys land once
     /// during ingest.
     pub use_streaming_dedup: bool,
+    /// Integrate the two-hash cuckoo dedup into the gather loop itself
+    /// (libjxl `AddSample` parity, `enc_ma.cc:711`). This is Phase 2 of
+    /// issue #41 — see
+    /// [`crate::modular::tree_learn::TreeLearningParams::gather_dedup`].
+    ///
+    /// Default `false` at every effort: output is **not** byte-identical
+    /// to the sort path because gather-time dedup hashes on raw i32
+    /// property values rather than post-quantization bucket indices, so
+    /// the unique set is a strict superset (the post-`pre_quantize` sort
+    /// pass would have collapsed bucket-equivalent rows that gather-time
+    /// kept separate). Callers opt in via the `__expert` lossless
+    /// override; sweep harnesses re-bake hash-locks when they do.
+    pub gather_dedup: bool,
 }
 
 impl EffortProfile {
@@ -549,6 +562,12 @@ impl EffortProfile {
             // Default OFF: streaming dedup regresses end-to-end wall-clock
             // on real photos (issue #41) in our post-gather pipeline.
             use_streaming_dedup: false,
+            // Default OFF: gather-time dedup ships bytes that don't match
+            // the sort-path hash-locks (raw vs bucket-quantized property
+            // hashing — see TreeLearningParams::gather_dedup). Opt-in
+            // via the __expert lossless override when sweep harnesses
+            // are ready to re-bake hash_lock sidecars.
+            gather_dedup: false,
         }
     }
 
@@ -650,6 +669,12 @@ impl EffortProfile {
             // Default OFF: streaming dedup regresses end-to-end wall-clock
             // on real photos (issue #41) in our post-gather pipeline.
             use_streaming_dedup: false,
+            // Default OFF: gather-time dedup ships bytes that don't match
+            // the sort-path hash-locks (raw vs bucket-quantized property
+            // hashing — see TreeLearningParams::gather_dedup). Opt-in
+            // via the __expert lossless override when sweep harnesses
+            // are ready to re-bake hash_lock sidecars.
+            gather_dedup: false,
         }
     }
 
@@ -898,6 +923,23 @@ pub struct LosslessInternalParams {
     /// for experimentation toward issue #41 Phase 2 (gather-integrated
     /// dedup); not recommended for production sweeps.
     pub use_streaming_dedup: Option<bool>,
+
+    /// Enable libjxl-parity gather-time dedup (Phase 2 of issue #41).
+    ///
+    /// `Some(true)` runs each gathered sample through a two-hash cuckoo
+    /// table inside `gather_channel_samples`, merging duplicates *during*
+    /// the gather pass. The post-gather `dedup_samples_packed_sort` then
+    /// operates on a much smaller surviving set. `Some(false)` keeps the
+    /// existing post-pass dedup-only flow. `None` leaves the
+    /// effort-profile default (always `false` today; see
+    /// [`EffortProfile::gather_dedup`]).
+    ///
+    /// **Bytes are not byte-identical to the sort-only path.** Gather-time
+    /// dedup hashes on raw i32 property values (pre-quantization runs
+    /// later), so the surviving unique set is a strict superset of the
+    /// bucket-equivalence set the sort path collapses to. Hash-locks must
+    /// be re-baked when sweep harnesses enable this.
+    pub gather_dedup: Option<bool>,
 }
 
 #[cfg(feature = "__expert")]
@@ -975,6 +1017,7 @@ impl LosslessInternalParams {
             tree_sample_fraction,
             tree_max_samples_fixed,
             use_streaming_dedup,
+            gather_dedup,
         } = self;
         if let Some(v) = nb_rcts_to_try {
             profile.nb_rcts_to_try = v;
@@ -1002,6 +1045,9 @@ impl LosslessInternalParams {
         }
         if let Some(v) = use_streaming_dedup {
             profile.use_streaming_dedup = v;
+        }
+        if let Some(v) = gather_dedup {
+            profile.gather_dedup = v;
         }
     }
 }
