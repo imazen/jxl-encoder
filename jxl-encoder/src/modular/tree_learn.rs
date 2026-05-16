@@ -149,6 +149,22 @@ pub struct TreeLearningParams {
     /// Matches libjxl's `required_cost = pixel_fraction * 0.9 + 0.1` in LearnTree().
     /// Set to 1.0 if all pixels are sampled (no subsampling).
     pub pixel_fraction: f64,
+    /// Use the streaming hash-table dedup (libjxl `AddSample` parity) instead
+    /// of the default packed-key sort. Default `false` (sort path).
+    ///
+    /// The streaming path ports libjxl `AddToTableAndMerge` / `AddSample`
+    /// (`enc_ma.cc:602-655`, `enc_ma.cc:711`) and avoids the O(n log n) sort
+    /// over `n × 64 B` packed keys. In libjxl's source-tree layout the win is
+    /// substantial because keys are built once during the gather pass.
+    ///
+    /// In our post-gather pipeline the streaming path **regresses** wall-clock
+    /// by +3 % to +8 % on real CLIC photos at e7 (issue #41) — `pack_sample_key`
+    /// random-accesses parallel SoA arrays per sample, defeating cache
+    /// locality, and the sort path benefits from packed-key spatial coherence
+    /// that the hash path cannot exploit. The streaming knob is retained for
+    /// experimentation toward issue #41 Phase 2 (integrate dedup into the
+    /// gather pass itself, eliminating the random-access pattern).
+    pub use_streaming_dedup: bool,
 }
 
 impl TreeLearningParams {
@@ -206,6 +222,7 @@ impl TreeLearningParams {
             // with_total_pixels() further tightens this to the per-frame limit.
             max_nodes: 1 << 22,
             pixel_fraction: 1.0,
+            use_streaming_dedup: profile.use_streaming_dedup,
         }
     }
 
@@ -238,6 +255,7 @@ impl TreeLearningParams {
             split_threshold: threshold_base,
             max_nodes: 1 << 22,
             pixel_fraction: 1.0,
+            use_streaming_dedup: false,
         }
     }
 
@@ -864,26 +882,213 @@ impl PreQuantizedProps {
 /// zeros are identical across all samples so they don't affect cmp result.
 const DEDUP_KEY_BYTES: usize = 64;
 
+/// Empty-slot sentinel for [`StreamingDedupTable`]. Matches libjxl
+/// `kDedupEntryUnused` (`lib/jxl/modular/encoding/enc_ma.h:153`).
+const DEDUP_EMPTY: u32 = u32::MAX;
+
+/// Multiplicative-hash constants from libjxl `enc_ma.cc:658,673`.
+/// Two distinct constants give two independent hash positions per key
+/// (cuckoo-style open addressing).
+const HASH1_CONST: u64 = 0x1e35a7bd;
+const HASH2_CONST: u64 = 0x1e35a7bd1e35a7bd;
+
+/// Open-addressing dedup table with two-hash cuckoo placement, ported from
+/// libjxl `TreeSamples::AddToTableAndMerge` (`enc_ma.cc:602-655`).
+///
+/// Each composite key (`[u8; DEDUP_KEY_BYTES]`) is hashed into two slots
+/// (`Hash1`, `Hash2`); a sample is considered a duplicate if either slot
+/// already contains a unique sample whose key bytes equal the candidate.
+///
+/// Capacity is sized to `next_pow2(n * 3 / 2)` so the table stays at most
+/// 2/3 full at the end of the dedup pass, keeping the expected probe count
+/// at 1-2 hits per insert (load factor matching libjxl
+/// `PrepareForSamples` at `enc_ma.cc:653`).
+struct StreamingDedupTable {
+    /// Slot → unique-sample index, or `DEDUP_EMPTY`.
+    slots: Box<[u32]>,
+    /// `slots.len() - 1`; `&` mask for pow-2 indexing.
+    mask: u32,
+}
+
+impl StreamingDedupTable {
+    fn new(expected_samples: usize) -> Self {
+        // Size ≈ 1.5 × n, rounded up to the next power of two so probing
+        // can use & (mask) instead of %. Floor at 16 to avoid pathological
+        // microscopic tables for tiny tile/group sample counts.
+        let target = expected_samples.saturating_mul(3).div_ceil(2).max(16);
+        let cap = target.next_power_of_two();
+        // 4 GB ceiling — well above any sane modular-tree sample count.
+        // u32 indices into unique_keys means `cap` must fit; the floor of
+        // expected_samples <= u32::MAX is enforced upstream in dedup_samples.
+        let slots = vec![DEDUP_EMPTY; cap].into_boxed_slice();
+        Self {
+            slots,
+            mask: (cap - 1) as u32,
+        }
+    }
+
+    /// libjxl `Hash1` (`enc_ma.cc:657-671`): multiply-add fold over key
+    /// bytes with `0x1e35a7bd`, then `>> 16 & mask`. We hash bytes pairwise
+    /// (token,ebits) and bucket-indices in order, matching the libjxl
+    /// per-array iteration. The key layout in this Rust port already packs
+    /// all those bytes contiguously, so iterating the bytes in slot order
+    /// is equivalent.
+    #[inline]
+    fn hash1(&self, key: &[u8; DEDUP_KEY_BYTES]) -> u32 {
+        let mut h: u64 = HASH1_CONST;
+        for &b in key.iter() {
+            h = h.wrapping_mul(HASH1_CONST).wrapping_add(b as u64);
+        }
+        ((h >> 16) as u32) & self.mask
+    }
+
+    /// libjxl `Hash2` (`enc_ma.cc:672-686`): same fold but with the
+    /// `0x1e35a7bd1e35a7bd` 64-bit constant and XOR instead of ADD so the
+    /// two functions decorrelate.
+    #[inline]
+    fn hash2(&self, key: &[u8; DEDUP_KEY_BYTES]) -> u32 {
+        let mut h: u64 = HASH2_CONST;
+        for &b in key.iter() {
+            h = h.wrapping_mul(HASH2_CONST) ^ (b as u64);
+        }
+        ((h >> 16) as u32) & self.mask
+    }
+
+    /// libjxl `AddToTableAndMerge` (`enc_ma.cc:603-630`): probe both hash
+    /// slots; on match return `Some(unique_idx)` (caller bumps count); on
+    /// miss insert into the first empty slot and return `None`.
+    ///
+    /// `unique_keys[idx]` gives the canonical key for an already-deduped
+    /// sample at unique-sample index `idx`. We compare full keys because
+    /// hash collisions are real (cuckoo-style with only two positions can
+    /// have false-positive hash matches; eq on the packed key bytes is the
+    /// final arbiter).
+    #[inline]
+    fn lookup_or_insert(
+        &mut self,
+        key: &[u8; DEDUP_KEY_BYTES],
+        unique_keys: &[[u8; DEDUP_KEY_BYTES]],
+        next_unique_idx: u32,
+    ) -> Option<u32> {
+        let h1 = self.hash1(key) as usize;
+        let s1 = self.slots[h1];
+        if s1 != DEDUP_EMPTY && &unique_keys[s1 as usize] == key {
+            return Some(s1);
+        }
+        let h2 = self.hash2(key) as usize;
+        let s2 = self.slots[h2];
+        if s2 != DEDUP_EMPTY && &unique_keys[s2 as usize] == key {
+            return Some(s2);
+        }
+        // Miss: insert into the first empty slot. If both are occupied
+        // (rare at load factor ≤ 2/3), the new sample is unreachable from
+        // future lookups — this is the libjxl behavior (`AddToTable` at
+        // `enc_ma.cc:632`). The penalty is one extra unique entry that
+        // could have been merged; output bytes are unaffected because
+        // identical samples both produce the same residual tokens.
+        if s1 == DEDUP_EMPTY {
+            self.slots[h1] = next_unique_idx;
+        } else if s2 == DEDUP_EMPTY {
+            self.slots[h2] = next_unique_idx;
+        }
+        None
+    }
+}
+
+/// Build a packed composite key for `sample_idx` from the parallel SoA
+/// arrays.
+///
+/// Layout matches the previous sort-based path so the same `DEDUP_KEY_BYTES`
+/// budget applies: `properties.len()` bucket-index bytes followed by
+/// `[tok_pred0, eb_pred0, tok_pred1, eb_pred1, ...]` for each candidate
+/// predictor. Trailing bytes stay zero-padded so two samples with identical
+/// field values produce byte-identical `[u8; 64]` keys.
+#[inline]
+fn pack_sample_key(
+    sample_idx: usize,
+    properties: &[usize],
+    pq: &PreQuantizedProps,
+    samples: &TreeSamples,
+    num_pred: usize,
+) -> [u8; DEDUP_KEY_BYTES] {
+    let mut key = [0u8; DEDUP_KEY_BYTES];
+    let mut off = 0;
+    for &prop_idx in properties {
+        let bi = &pq.bucket_indices[prop_idx];
+        if !bi.is_empty() {
+            key[off] = bi[sample_idx];
+        }
+        off += 1;
+    }
+    for pred in 0..num_pred {
+        key[off] = samples.residual_tokens[pred][sample_idx];
+        off += 1;
+        key[off] = samples.extra_bits[pred][sample_idx];
+        off += 1;
+    }
+    key
+}
+
 /// Deduplicate samples with identical quantized properties and residuals.
 ///
-/// Matching libjxl's approach: after pre-quantization, many pixels in smooth regions
-/// have identical (bucket indices, tokens, extra bits) tuples. Merging these with counts
-/// reduces the inner loop iterations in FindBestSplit by 1.4-10x on typical photos.
+/// Matching libjxl's approach: after pre-quantization, many pixels in smooth
+/// regions have identical (bucket indices, tokens, extra bits) tuples. Merging
+/// these with counts reduces the inner loop iterations in FindBestSplit by
+/// 1.4-10x on typical photos.
 ///
-/// Materializes a packed composite key per sample (properties.len() bucket-index
-/// bytes followed by [tok_pred0, eb_pred0, tok_pred1, eb_pred1, ...] for each
-/// candidate predictor), then sorts indices by packed key with a fixed-size
-/// [u8; DEDUP_KEY_BYTES] cmp instead of chasing scattered `Vec<Vec<u8>>`
-/// indirections per comparison. The cmp now reads two adjacent cachelines
-/// instead of ~42 random L2/L3-resident bytes, dropping dedup wall-clock on a
-/// 4 MP photo from 8.4 s to 2.4 s (-72%) — issue #40 follow-on.
+/// Dispatches between two backends based on
+/// [`TreeLearningParams::use_streaming_dedup`]:
 ///
-/// libjxl uses a streaming hash-table dedup (cuckoo open addressing) during
-/// AddSample, eliminating the post-gather pass entirely. That's a larger
-/// refactor; this in-place fix retains the same sort-then-walk-then-compact
-/// structure with byte-identical bitstream output (verified via
-/// hash_lock_features).
+/// - [`dedup_samples_packed_sort`] (default, `use_streaming_dedup = false`):
+///   materialize all packed composite keys, sort indices by key, walk + merge
+///   consecutive runs, then compact SoA columns by gather. O(n log n).
+///
+/// - [`dedup_samples_streaming`] (`use_streaming_dedup = true`): port of
+///   libjxl `AddSample` (`enc_ma.cc:711`) — pack each sample's key inline and
+///   look it up in a two-hash cuckoo open-addressing table; either bump the
+///   existing unique count or push a new unique slot. O(n) expected.
+///
+/// **Both paths produce byte-identical bitstreams** (`hash_lock_features`
+/// verifies). The streaming path retains *first-seen* order; the sort path
+/// retains composite-key-sorted order. `find_best_split` only sees sample
+/// values + bucket indices, not row order, so the tree-learning result is
+/// invariant to the ordering choice.
+///
+/// **Default rationale (issue #41):** On our post-gather SoA pipeline the
+/// streaming path actually **regresses** end-to-end wall-clock by +3 % to
+/// +8 % at e7 on real CLIC photos (0.26 / 1.05 / 4.19 MP). The microbench
+/// (`dedup_samples_strategies`) suggests parity, but
+/// `dedup_samples_streaming` random-accesses the parallel SoA arrays in
+/// `pack_sample_key` (one sample at a time), defeating cache locality. The
+/// sort path benefits from spatial coherence — adjacent samples on a photo
+/// often share quantized buckets, so packed-key comparisons short-circuit
+/// fast. The streaming path cannot exploit that. The opt-in stays in place
+/// for issue #41 Phase 2 (integrate dedup into the gather pass itself,
+/// where libjxl gets the actual win).
 fn dedup_samples(
+    samples: &mut TreeSamples,
+    pq: &mut PreQuantizedProps,
+    params: &TreeLearningParams,
+) {
+    if params.use_streaming_dedup {
+        dedup_samples_streaming(samples, pq, params);
+    } else {
+        dedup_samples_packed_sort(samples, pq, params);
+    }
+}
+
+/// Default dedup backend: packed-key sort + walk-and-merge + gather-compact.
+///
+/// Materializes a packed composite key per sample (`properties.len()`
+/// bucket-index bytes followed by `[tok_pred0, eb_pred0, tok_pred1, eb_pred1,
+/// ...]` for each candidate predictor), sorts indices by packed key with a
+/// fixed-size `[u8; DEDUP_KEY_BYTES]` cmp, walks the sorted run to merge
+/// consecutive identical entries, then gathers the unique rows into compact
+/// SoA arrays. The cmp reads two adjacent cachelines instead of ~42 scattered
+/// `Vec<Vec<u8>>` bytes per side, dropping dedup wall-clock on a 4 MP photo
+/// from 8.4 s to 2.4 s (-72 %) vs the pre-packed-key closure path — issue #40
+/// follow-on (commit 61129874).
+fn dedup_samples_packed_sort(
     samples: &mut TreeSamples,
     pq: &mut PreQuantizedProps,
     params: &TreeLearningParams,
@@ -897,21 +1102,6 @@ fn dedup_samples(
     let num_pred = samples.num_predictors();
     let properties = &params.properties;
 
-    // Materialize a packed composite key per sample.
-    //
-    // Layout: properties.len() bucket-index bytes, then [tok_pred0, eb_pred0,
-    // tok_pred1, eb_pred1, ...]. The trailing bytes are zero-padded so two
-    // samples with identical key bytes have byte-identical [u8; 64] keys,
-    // and `slice::cmp` walks fixed-size cachelines instead of chasing
-    // `Vec<Vec<u8>>` indirections per comparison.
-    //
-    // Was: sort_unstable_by closure walking 9 × Vec<Vec<u8>>[a]/[b] +
-    // 14 × 2 × Vec<Vec<u8>>[a]/[b] = ~42 scattered reads per cmp. Now:
-    // single 60-byte cacheline read per side.
-    //
-    // Bytes-per-key budget assertion (debug-only) guards against future
-    // property/predictor table growth: 16 base + 16 ref = 32 props max,
-    // 14 predictors max → 60 bytes. Bump DEDUP_KEY_BYTES if hit.
     let key_len = properties.len() + 2 * num_pred;
     debug_assert!(
         key_len <= DEDUP_KEY_BYTES,
@@ -938,14 +1128,12 @@ fn dedup_samples(
         }
     }
 
-    // Sort sample indices by packed key (lexicographic on key bytes).
     // Using u32 indices halves the memory footprint vs Vec<usize>; the
     // tree-learn sample cap (max_tree_samples_from_profile) tops out
-    // around 4 M entries, well within u32 range. The `assert!` makes the
-    // u32-fits invariant a checked precondition.
+    // around 4 M entries, well within u32 range.
     assert!(
         n <= u32::MAX as usize,
-        "dedup_samples: n = {n} exceeds u32::MAX; widen key index type"
+        "dedup_samples_packed_sort: n = {n} exceeds u32::MAX; widen key index type"
     );
     let mut order: Vec<u32> = (0..n as u32).collect();
     order.sort_unstable_by(|&a, &b| {
@@ -973,18 +1161,17 @@ fn dedup_samples(
         }
     }
 
-    // Free the packed-key buffer before the compaction allocates the new
-    // SoA columns — the working set otherwise peaks at:
-    //   keys (n × 64 B) + new SoA columns (n × ~70 B). At 3 M samples this
-    //   is ~400 MB; dropping `keys` cuts it to ~200 MB peak.
+    // Free the packed-key buffer before compaction allocates new SoA
+    // columns — peak working set: keys (n × 64 B) + new SoA columns
+    // (n × ~70 B) = ~400 MB at 3 M samples; dropping `keys` cuts to ~200 MB.
     drop(keys);
     drop(order);
 
     let num_unique = unique_indices.len();
 
     // Compact all parallel arrays to contain only unique samples.
-    // The packed-key sort order is preserved, giving good spatial locality
-    // when the tree builder groups samples by property bucket.
+    // Packed-key sort order is preserved, giving spatial locality when the
+    // tree builder groups samples by property bucket.
     for pred in 0..num_pred {
         let old_tokens = &samples.residual_tokens[pred];
         let old_ebits = &samples.extra_bits[pred];
@@ -1011,6 +1198,126 @@ fn dedup_samples(
             continue;
         }
         let new_bi: Vec<u8> = unique_indices.iter().map(|&i| old_bi[i]).collect();
+        pq.bucket_indices[prop_idx] = new_bi;
+    }
+
+    samples.num_samples = num_unique;
+    samples.sample_counts = counts;
+}
+
+/// Opt-in dedup backend: streaming two-hash cuckoo open addressing.
+///
+/// Ports libjxl's `AddSample` / `AddToTableAndMerge` (`enc_ma.cc:602-655`,
+/// `enc_ma.cc:711`). Each sample's packed composite key is looked up in a
+/// pow-2-sized hash table with two hash positions per key; on hit, bump the
+/// unique sample's count; on miss, allocate a new unique-sample slot. No
+/// post-pass sort, no walk-and-merge — compaction runs once over the
+/// unique-row representatives.
+///
+/// Memory: peak working set is `n × 64 B` for `unique_keys` (canonical
+/// per-unique-sample packed keys, retained for collision verification) plus
+/// the slot table (`next_pow2(n * 3 / 2) × 4 B`). At 3 M samples both fit
+/// in ~200 MB, equal to the sort path's peak.
+///
+/// **Wall-clock regression vs `dedup_samples_packed_sort`**: +3 % to +8 %
+/// end-to-end at e7 on CLIC photos (issue #41 measurement, 2026-05-16).
+/// Cause: `pack_sample_key` random-accesses the parallel SoA arrays per
+/// sample (column-strided reads with no locality), and the sort path
+/// benefits from spatial coherence of adjacent photo pixels that the hash
+/// path cannot exploit. Retained for experimentation toward issue #41
+/// Phase 2 (gather-integrated dedup), where libjxl gets its actual win
+/// because keys are built once during sample ingestion.
+fn dedup_samples_streaming(
+    samples: &mut TreeSamples,
+    pq: &mut PreQuantizedProps,
+    params: &TreeLearningParams,
+) {
+    let n = samples.num_samples;
+    if n <= 1 {
+        samples.sample_counts = vec![1; n];
+        return;
+    }
+
+    let num_pred = samples.num_predictors();
+    let properties = &params.properties;
+
+    let key_len = properties.len() + 2 * num_pred;
+    debug_assert!(
+        key_len <= DEDUP_KEY_BYTES,
+        "dedup composite key needs {} bytes, DEDUP_KEY_BYTES = {}",
+        key_len,
+        DEDUP_KEY_BYTES,
+    );
+
+    assert!(
+        n <= u32::MAX as usize,
+        "dedup_samples_streaming: n = {n} exceeds u32::MAX; widen key index type"
+    );
+
+    // Hash table sized for the worst case (all n unique). Real photos
+    // dedup to roughly 60-90 % unique, so the table stays well-loaded but
+    // not pathologically full.
+    let mut table = StreamingDedupTable::new(n);
+
+    // unique_keys[u] = canonical packed key for unique-sample index u.
+    // Reserve worst-case capacity to avoid reallocation during the streaming
+    // pass — peak memory matches the sort path's `keys` allocation.
+    let mut unique_keys: Vec<[u8; DEDUP_KEY_BYTES]> = Vec::with_capacity(n);
+
+    // unique_indices[u] = first sample index that mapped to unique u
+    // (a representative, for compacting SoA arrays).
+    let mut unique_indices: Vec<u32> = Vec::with_capacity(n / 2 + 1);
+    let mut counts: Vec<u32> = Vec::with_capacity(n / 2 + 1);
+
+    // Streaming dedup: walk samples in scan order, hash composite key,
+    // either bump count or push a new unique entry.
+    for sample_idx in 0..n {
+        let key = pack_sample_key(sample_idx, properties, pq, samples, num_pred);
+        let next_idx = unique_indices.len() as u32;
+        if let Some(existing) = table.lookup_or_insert(&key, &unique_keys, next_idx) {
+            counts[existing as usize] += 1;
+        } else {
+            unique_indices.push(sample_idx as u32);
+            counts.push(1);
+            unique_keys.push(key);
+        }
+    }
+
+    // Free the hash table + unique_keys before compaction allocates the
+    // new SoA columns — these are the largest working buffers.
+    drop(table);
+    drop(unique_keys);
+
+    let num_unique = unique_indices.len();
+
+    // Compact all parallel arrays to contain only unique samples, in
+    // first-seen order.
+    for pred in 0..num_pred {
+        let old_tokens = &samples.residual_tokens[pred];
+        let old_ebits = &samples.extra_bits[pred];
+        let new_tokens: Vec<u8> = unique_indices.iter().map(|&i| old_tokens[i as usize]).collect();
+        let new_ebits: Vec<u8> = unique_indices.iter().map(|&i| old_ebits[i as usize]).collect();
+        samples.residual_tokens[pred] = new_tokens;
+        samples.extra_bits[pred] = new_ebits;
+    }
+    let total_props = samples.total_num_properties();
+    for prop_idx in 0..total_props {
+        let old_props = &samples.props[prop_idx];
+        if old_props.is_empty() {
+            continue;
+        }
+        let new_props: Vec<i32> = unique_indices.iter().map(|&i| old_props[i as usize]).collect();
+        samples.props[prop_idx] = new_props;
+    }
+    for prop_idx in 0..total_props {
+        if prop_idx >= pq.bucket_indices.len() {
+            break;
+        }
+        let old_bi = &pq.bucket_indices[prop_idx];
+        if old_bi.is_empty() {
+            continue;
+        }
+        let new_bi: Vec<u8> = unique_indices.iter().map(|&i| old_bi[i as usize]).collect();
         pq.bucket_indices[prop_idx] = new_bi;
     }
 
@@ -3631,5 +3938,75 @@ mod tests {
             assert_eq!(samples.residual_tokens[pred].len(), n);
             assert_eq!(samples.extra_bits[pred].len(), n);
         }
+    }
+
+    /// Invariant test (issue #41): both dedup backends must produce the same
+    /// unique-sample set with the same multiplicities.
+    ///
+    /// Row order differs (sort path = composite-key-sorted, streaming path =
+    /// first-seen), so we compare *multisets* of canonical packed keys
+    /// weighted by `sample_counts`. The tree learner is order-invariant in
+    /// the sample axis (it groups by property bucket, not row position) — so
+    /// this multiset equality is necessary and sufficient for bitstream
+    /// identity, which `hash_lock_features` separately confirms for the
+    /// default (sort) backend.
+    #[test]
+    fn test_dedup_backends_agree_on_unique_set() {
+        let mut pixels = [0u8; 16 * 16 * 3];
+        // Non-trivial pattern with real duplicates so both paths exercise
+        // their dedup logic. ~30-40 % unique colors on this 16×16.
+        for y in 0..16u8 {
+            for x in 0..16u8 {
+                let base = (y * 16 + x) as usize * 3;
+                pixels[base] = (x & 0b1100) << 2;
+                pixels[base + 1] = (y & 0b1100) << 2;
+                pixels[base + 2] = ((x ^ y) & 0b0111) << 4;
+            }
+        }
+        let image = ModularImage::from_rgb8(&pixels, 16, 16).unwrap();
+
+        let collect = |params: &TreeLearningParams| -> std::collections::BTreeMap<Vec<u8>, u32> {
+            let mut samples = TreeSamples::new();
+            gather_samples(&mut samples, &image, 0);
+            let mut pq = samples.pre_quantize(params);
+            dedup_samples(&mut samples, &mut pq, params);
+
+            let n = samples.num_samples;
+            let num_pred = samples.num_predictors();
+            let mut multiset: std::collections::BTreeMap<Vec<u8>, u32> =
+                std::collections::BTreeMap::new();
+            for i in 0..n {
+                let mut key = Vec::with_capacity(params.properties.len() + 2 * num_pred);
+                for &prop_idx in &params.properties {
+                    let bi = &pq.bucket_indices[prop_idx];
+                    key.push(if bi.is_empty() { 0 } else { bi[i] });
+                }
+                for pred in 0..num_pred {
+                    key.push(samples.residual_tokens[pred][i]);
+                    key.push(samples.extra_bits[pred][i]);
+                }
+                *multiset.entry(key).or_insert(0) += samples.sample_counts[i];
+            }
+            multiset
+        };
+
+        let mut params_sort = TreeLearningParams::for_effort(7);
+        params_sort.use_streaming_dedup = false;
+        let multiset_sort = collect(&params_sort);
+
+        let mut params_stream = TreeLearningParams::for_effort(7);
+        params_stream.use_streaming_dedup = true;
+        let multiset_stream = collect(&params_stream);
+
+        assert_eq!(
+            multiset_sort, multiset_stream,
+            "packed-sort and streaming dedup must agree on the unique-sample multiset",
+        );
+        // 16×16 RGB = 256 pixels × 3 channels = 768 gathered samples,
+        // regardless of dedup unique count.
+        let total_sort: u32 = multiset_sort.values().sum();
+        let total_stream: u32 = multiset_stream.values().sum();
+        assert_eq!(total_sort, 768, "sort dedup must conserve total weight");
+        assert_eq!(total_stream, 768, "stream dedup must conserve total weight");
     }
 }

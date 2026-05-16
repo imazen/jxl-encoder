@@ -19,10 +19,22 @@
 //   `current` - production dedup_samples
 //   `packed_key_sort` - sort by packed composite-key bytes
 //   `hashmap_dedup` - rustc_hash FxHashMap on composite key
+//   `two_hash_cuckoo` - libjxl `AddSample` two-hash open-addressing
 //
 // Real-photo-scale sample counts: 200K (~0.26 MP image), 1.35M (~1.05
 // MP image), 3.2M (~4.19 MP image). These match the e7 numbers from the
 // lossless_cliff_profile harness (commit pxnzysqk:e3cea6f0).
+//
+// NOTE (issue #41 calibration): in this microbench `two_hash_cuckoo`
+// materializes all packed keys up front (same cost as `packed_key_sort`)
+// so the comparison isolates the dedup *algorithm*, not key construction.
+// The shipping streaming dedup (`dedup_samples_streaming` in
+// `modular/tree_learn.rs`) constructs keys one sample at a time via
+// `pack_sample_key`, which random-accesses parallel SoA arrays per
+// sample — that per-sample cache miss is the dominant cost in the prod
+// path and is *not* reflected in this microbench. The prod streaming
+// path measured +3 % to +8 % wall-clock vs the sort path at e7 on
+// CLIC photos, hence the default is `false` (issue #41, 2026-05-16).
 
 use core::hint::black_box;
 
@@ -267,6 +279,107 @@ fn dedup_packed_key_sort(samples: &Samples) -> (Vec<usize>, Vec<u32>) {
     (unique_indices, counts)
 }
 
+/// TWO-HASH CUCKOO dedup: faithful port of libjxl
+/// `TreeSamples::AddToTableAndMerge` (`enc_ma.cc:602-655`). Uses a hand-rolled
+/// open-addressing table with two hash functions per key (cuckoo placement).
+/// Probes are O(1) per insert at ≤2/3 load factor.
+///
+/// Same data setup as `dedup_hashmap` so the apples-to-apples comparison
+/// isolates the table implementation (hashbrown vs hand-rolled libjxl-style).
+#[inline(never)]
+fn dedup_two_hash_cuckoo(samples: &Samples) -> (Vec<usize>, Vec<u32>) {
+    const HASH1_CONST: u64 = 0x1e35a7bd;
+    const HASH2_CONST: u64 = 0x1e35a7bd1e35a7bd;
+    const EMPTY: u32 = u32::MAX;
+
+    let n = samples.num_samples;
+    let num_pred = samples.num_pred;
+    let properties = &samples.properties;
+
+    // Materialize packed keys (same cost as packed-key sort / hashmap_dedup
+    // for fair comparison — the prod path also has this materialization).
+    let mut keys: Vec<[u8; PACKED_KEY_BYTES]> = vec![[0u8; PACKED_KEY_BYTES]; n];
+    for i in 0..n {
+        let k = &mut keys[i];
+        let mut off = 0;
+        for &prop_idx in properties {
+            let bi = &samples.bucket_indices[prop_idx];
+            if !bi.is_empty() {
+                k[off] = bi[i];
+            }
+            off += 1;
+        }
+        for pred in 0..num_pred {
+            k[off] = samples.residual_tokens[pred][i];
+            off += 1;
+            k[off] = samples.extra_bits[pred][i];
+            off += 1;
+        }
+    }
+
+    // Table sized for worst case (all n unique), next power of two so probe
+    // is `& mask`. Load factor stays ≤2/3 per libjxl's PrepareForSamples
+    // (`enc_ma.cc:653`).
+    let target = n.saturating_mul(3).div_ceil(2).max(16);
+    let cap = target.next_power_of_two();
+    let mut slots: Vec<u32> = vec![EMPTY; cap];
+    let mask = (cap - 1) as u32;
+
+    // unique_keys[u] = canonical packed key for unique-sample index u,
+    // retained for collision verification.
+    let mut unique_keys: Vec<[u8; PACKED_KEY_BYTES]> = Vec::with_capacity(n / 2);
+    let mut unique_indices: Vec<usize> = Vec::with_capacity(n / 2);
+    let mut counts: Vec<u32> = Vec::with_capacity(n / 2);
+
+    let hash1 = |key: &[u8; PACKED_KEY_BYTES]| -> u32 {
+        let mut h: u64 = HASH1_CONST;
+        for &b in key.iter() {
+            h = h.wrapping_mul(HASH1_CONST).wrapping_add(b as u64);
+        }
+        ((h >> 16) as u32) & mask
+    };
+    let hash2 = |key: &[u8; PACKED_KEY_BYTES]| -> u32 {
+        let mut h: u64 = HASH2_CONST;
+        for &b in key.iter() {
+            h = h.wrapping_mul(HASH2_CONST) ^ (b as u64);
+        }
+        ((h >> 16) as u32) & mask
+    };
+
+    for i in 0..n {
+        let key = keys[i];
+        let h1 = hash1(&key) as usize;
+        let s1 = slots[h1];
+        let mut hit = false;
+        if s1 != EMPTY && unique_keys[s1 as usize] == key {
+            counts[s1 as usize] += 1;
+            hit = true;
+        } else {
+            let h2 = hash2(&key) as usize;
+            let s2 = slots[h2];
+            if s2 != EMPTY && unique_keys[s2 as usize] == key {
+                counts[s2 as usize] += 1;
+                hit = true;
+            } else {
+                let next_idx = unique_indices.len() as u32;
+                if s1 == EMPTY {
+                    slots[h1] = next_idx;
+                } else if s2 == EMPTY {
+                    slots[h2] = next_idx;
+                }
+                // (If both occupied, libjxl simply doesn't insert — see
+                // AddToTable enc_ma.cc:632. Unique sample is unreachable
+                // from future lookups but still emitted; bytes unaffected.)
+                unique_keys.push(key);
+                unique_indices.push(i);
+                counts.push(1);
+            }
+        }
+        let _ = hit;
+    }
+    (unique_indices, counts)
+}
+
 /// HASHMAP dedup: libjxl-style streaming hash dedup. Each sample's key
 /// hashes to a slot; matching key bumps counts, new key gets a new
 /// position. O(n) expected, no sort.
@@ -341,6 +454,12 @@ fn full_hashmap(samples: &Samples) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<Vec<u8>>,
     (t, e, b, counts)
 }
 
+fn full_two_hash(samples: &Samples) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u32>) {
+    let (unique_indices, counts) = dedup_two_hash_cuckoo(samples);
+    let (t, e, b) = compact_arrays(samples, &unique_indices);
+    (t, e, b, counts)
+}
+
 fn bench_for_count<const N: usize, const DUP_BPM: u32>(suite: &mut Suite, label: &str) {
     // DUP_BPM = parts per 1000 (since const generics can't be f32). dup_frac =
     // DUP_BPM / 1000.0. e.g. 300 -> 30% duplicates.
@@ -370,6 +489,15 @@ fn bench_for_count<const N: usize, const DUP_BPM: u32>(suite: &mut Suite, label:
             b.with_input(|| make_samples(N, DUP_BPM as f32 / 1000.0))
                 .run(|samples| {
                     let out = full_hashmap(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
+        g.bench("two_hash_cuckoo", |b| {
+            b.with_input(|| make_samples(N, DUP_BPM as f32 / 1000.0))
+                .run(|samples| {
+                    let out = full_two_hash(&samples);
                     black_box(out);
                     samples
                 })
@@ -405,6 +533,15 @@ fn bench_for_count<const N: usize, const DUP_BPM: u32>(suite: &mut Suite, label:
             b.with_input(|| make_samples(N, DUP_BPM as f32 / 1000.0))
                 .run(|samples| {
                     let out = dedup_hashmap(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
+        g.bench("two_hash_cuckoo", |b| {
+            b.with_input(|| make_samples(N, DUP_BPM as f32 / 1000.0))
+                .run(|samples| {
+                    let out = dedup_two_hash_cuckoo(&samples);
                     black_box(out);
                     samples
                 })

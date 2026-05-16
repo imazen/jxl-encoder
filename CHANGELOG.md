@@ -400,6 +400,24 @@
 
 ### Performance
 
+- **Streaming hash-table dedup backend (opt-in, issue #41)**: ported
+  libjxl's `AddSample` / `AddToTableAndMerge` two-hash cuckoo
+  open-addressing dedup (`enc_ma.cc:602-655`, `enc_ma.cc:711`) as a
+  drop-in sibling to the existing packed-key sort dedup
+  (`dedup_samples_packed_sort`). Enabled via
+  `LosslessInternalParams { use_streaming_dedup: Some(true), .. }`
+  (requires `__expert` feature). Default `false` at every effort. Both
+  backends produce byte-identical bitstreams (hash_lock_features 36/36
+  unchanged; new `test_dedup_backends_agree_on_unique_set` invariant
+  test verifies unique-sample multiset equality on real-pattern pixel
+  data). **The streaming path regresses end-to-end wall-clock by +3% to
+  +8% at e7 on CLIC photos (0.26 / 1.05 / 4.19 MP), so it ships off** —
+  `pack_sample_key` random-accesses the parallel SoA arrays per sample
+  with no cache locality, and the sort path exploits adjacent-pixel
+  spatial coherence the hash path cannot. The win libjxl gets requires
+  building keys *during* the gather pass (issue #41 Phase 2, future
+  work), not on top of an already-gathered SoA buffer. Retained as an
+  opt-in so the Phase-2 rework has a tested kernel to integrate.
 - **SIMD-vectorized `estimate_bits` for tree-learning `find_best_split`**
   (refs #23): new `jxl_simd::estimate_bits_u32` AVX2/NEON/WASM128 path
   replaces the scalar inner loop in `tree_learn::find_best_split` and
