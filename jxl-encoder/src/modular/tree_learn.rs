@@ -1175,8 +1175,11 @@ fn dedup_samples_packed_sort(
         DEDUP_KEY_BYTES,
     );
 
-    let mut keys: Vec<[u8; DEDUP_KEY_BYTES]> = vec![[0u8; DEDUP_KEY_BYTES]; n];
-    for (sample_idx, key) in keys.iter_mut().enumerate() {
+    // Per-sample key build is embarrassingly parallel — each task reads
+    // a fixed offset from the parallel SoA arrays and writes a single
+    // 64-byte key. Use parallel_map to fan out over the n samples.
+    let keys: Vec<[u8; DEDUP_KEY_BYTES]> = crate::parallel::parallel_map(n, |sample_idx| {
+        let mut key = [0u8; DEDUP_KEY_BYTES];
         let mut off = 0;
         for &prop_idx in properties {
             let bi = &pq.bucket_indices[prop_idx];
@@ -1191,7 +1194,8 @@ fn dedup_samples_packed_sort(
             key[off] = samples.extra_bits[pred][sample_idx];
             off += 1;
         }
-    }
+        key
+    });
 
     // Using u32 indices halves the memory footprint vs Vec<usize>; the
     // tree-learn sample cap (max_tree_samples_from_profile) tops out
@@ -1201,11 +1205,27 @@ fn dedup_samples_packed_sort(
         "dedup_samples_packed_sort: n = {n} exceeds u32::MAX; widen key index type"
     );
     let mut order: Vec<u32> = (0..n as u32).collect();
-    order.sort_unstable_by(|&a, &b| {
-        let ka = &keys[a as usize];
-        let kb = &keys[b as usize];
-        ka.cmp(kb)
-    });
+    // Use rayon's par_sort_unstable_by when the parallel feature is on —
+    // dropping into the standard sort path otherwise. The cmp reads two
+    // adjacent 64-byte keys (sequential memory accesses, no shared
+    // mutable state) so rayon's pdqsort backend parallelizes cleanly.
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::slice::ParallelSliceMut;
+        order.par_sort_unstable_by(|&a, &b| {
+            let ka = &keys[a as usize];
+            let kb = &keys[b as usize];
+            ka.cmp(kb)
+        });
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        order.sort_unstable_by(|&a, &b| {
+            let ka = &keys[a as usize];
+            let kb = &keys[b as usize];
+            ka.cmp(kb)
+        });
+    }
 
     // Walk sorted order, merge consecutive identical samples.
     let mut unique_indices: Vec<usize> = Vec::with_capacity(n / 2);
@@ -1237,33 +1257,51 @@ fn dedup_samples_packed_sort(
     // Compact all parallel arrays to contain only unique samples.
     // Packed-key sort order is preserved, giving spatial locality when the
     // tree builder groups samples by property bucket.
-    for pred in 0..num_pred {
+    //
+    // Each predictor's (tokens, ebits) compaction and each property's
+    // compaction are independent O(num_unique) gathers. Fan out across
+    // predictors/properties, then assign the new Vecs back sequentially
+    // (sequential because samples / pq are `&mut`).
+    let new_per_pred: Vec<(Vec<u8>, Vec<u8>)> = crate::parallel::parallel_map(num_pred, |pred| {
         let old_tokens = &samples.residual_tokens[pred];
         let old_ebits = &samples.extra_bits[pred];
         let new_tokens: Vec<u8> = unique_indices.iter().map(|&i| old_tokens[i]).collect();
         let new_ebits: Vec<u8> = unique_indices.iter().map(|&i| old_ebits[i]).collect();
+        (new_tokens, new_ebits)
+    });
+    for (pred, (new_tokens, new_ebits)) in new_per_pred.into_iter().enumerate() {
         samples.residual_tokens[pred] = new_tokens;
         samples.extra_bits[pred] = new_ebits;
     }
+
     let total_props = samples.total_num_properties();
-    for prop_idx in 0..total_props {
+    let new_props_per_idx: Vec<Vec<i32>> = crate::parallel::parallel_map(total_props, |prop_idx| {
         let old_props = &samples.props[prop_idx];
         if old_props.is_empty() {
-            continue;
+            Vec::new()
+        } else {
+            unique_indices.iter().map(|&i| old_props[i]).collect()
         }
-        let new_props: Vec<i32> = unique_indices.iter().map(|&i| old_props[i]).collect();
-        samples.props[prop_idx] = new_props;
+    });
+    for (prop_idx, new_props) in new_props_per_idx.into_iter().enumerate() {
+        if !samples.props[prop_idx].is_empty() {
+            samples.props[prop_idx] = new_props;
+        }
     }
-    for prop_idx in 0..total_props {
-        if prop_idx >= pq.bucket_indices.len() {
-            break;
-        }
+
+    let bi_total = pq.bucket_indices.len().min(total_props);
+    let new_bi_per_idx: Vec<Vec<u8>> = crate::parallel::parallel_map(bi_total, |prop_idx| {
         let old_bi = &pq.bucket_indices[prop_idx];
         if old_bi.is_empty() {
-            continue;
+            Vec::new()
+        } else {
+            unique_indices.iter().map(|&i| old_bi[i]).collect()
         }
-        let new_bi: Vec<u8> = unique_indices.iter().map(|&i| old_bi[i]).collect();
-        pq.bucket_indices[prop_idx] = new_bi;
+    });
+    for (prop_idx, new_bi) in new_bi_per_idx.into_iter().enumerate() {
+        if !pq.bucket_indices[prop_idx].is_empty() {
+            pq.bucket_indices[prop_idx] = new_bi;
+        }
     }
 
     samples.num_samples = num_unique;
