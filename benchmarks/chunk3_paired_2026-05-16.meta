@@ -1,0 +1,137 @@
+# Issue #40 chunk 3 paired benchmarks — all three subchunks did NOT meet gate
+#
+# Per-subchunk plan and reference:
+#   https://github.com/imazen/jxl-encoder/issues/40#issuecomment-4466097630
+#
+# BASELINE for all three subchunks: jj commit e3cea6f0 (= chunk-2 landed at
+# f5ea70f, plus only-docs change c82e05c). Tip of jxl-encoder/main on
+# 2026-05-16, with the SplittableSamples in-place permutation wired into
+# `find_best_split`.
+#
+# Profile images (same 3 as chunks 1-2):
+#   7256805.png                                   512x512   0.26 MP (CID22)
+#   02809272...cd804f7.png                        1024x1024 1.05 MP (CLIC2025 1024)
+#   8426ed22...05ac41.png                         2048x2048 4.19 MP (CLIC2025 final-test)
+#
+# Pattern (CLAUDE.md): paired interleaved A/B per sample, 5 samples per take,
+# 2 takes (10 samples per cell total). CLIFF_THREADS=1, CLIFF_SAMPLES=1 (so
+# the cliff harness writes 1 timing per invocation), no `-C target-cpu=native`.
+#
+# Hardware: AMD Ryzen 9 7950X (water-cooled), Linux 6.6 WSL2.
+# System load during measurement: ~10-12 (high — same as chunk 2's "load ~9").
+#
+# Gate (from user's standing rules for chunk 3):
+#   >= 5% wall-clock improvement on >= 2 of 3 profile images.
+#
+# All three subchunks (3a, 3b, 3c) fall below the gate. None shipped.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Subchunk 3a: Hoist per-pred slice setup outside property loop
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Files: chunk3a_paired_2026-05-16_take{1,2}.csv
+#
+# Implementation: cache `&samples.residual_tokens[pred][start..end]`,
+# `&samples.extra_bits[pred][start..end]`, and the predictor change-penalty
+# in a per-call array indexed by `pred`, computed once before the property
+# loop. Removes ~num_props × num_pred redundant slice operations + penalty
+# arithmetic per `find_best_split` invocation.
+#
+# Hash locks: 36/36 byte-identical (verified).
+#
+# Combined 10-sample paired medians:
+#   0.26 MP    e7   -2.79%  (no win — below 5% gate)
+#   1.05 MP    e7   -0.63%  (essentially noise)
+#   4.19 MP    e7   +1.77%  (essentially noise; mean -0.00%)
+#
+# Hypothesis (post-mortem): LLVM's LICM already hoists trivially loop-
+# invariant slices on its own, and the penalty arithmetic is only ~224 f64
+# ops per node — under a microsecond out of seconds of work. The manual
+# hoist saves the same work the compiler was already doing.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Subchunk 3b: Fused clear+fill+right-init pass (was "block-fold Strategy A2")
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Files: chunk3b_paired_2026-05-16_take{1,2}.csv
+#
+# Implementation: fuse the three separate traversals of count_increase
+# (clear → fill from sorted_by_bucket → sum into right_counts) into a single
+# per-bucket inner loop that clears, fills, and folds into right_counts in
+# one pass — keeping each bucket row hot in L1 across all three operations.
+#
+# Note: this is a different shape from the literal "block-fold Strategy A2"
+# in the chunk-2 agent's note (which would eliminate counting sort entirely
+# and process samples in cache-line blocks). A2-without-counting-sort was
+# already shown to regress; the fused-pass variant here preserves counting
+# sort but reduces count_increase traversals from 3 to ~1.5.
+#
+# Hash locks: 36/36 byte-identical (verified).
+#
+# Combined 10-sample paired medians:
+#   0.26 MP    e7   -1.56%  (median;  mean -4.06% — below 5% gate)
+#   1.05 MP    e7   -0.63%  (median;  mean -2.12% — below 5% gate)
+#   4.19 MP    e7   +2.45%  (median;  mean -0.06% — noise)
+#
+# Hypothesis (post-mortem): the chunk-2 layout already keeps each bucket's
+# count_increase row hot during fill (same bucket → same cache line until
+# bucket boundary). The 3-pass structure was a theoretical concern only —
+# the data was still hot when the right-init pass arrived. Savings exist
+# but are too small to clear the gate.
+#
+# Note: not the literal block-fold-A2 variant from the chunk-2 agent's
+# plan. The aggressive variant (eliminate counting sort, process in cache-
+# line blocks, track touched buckets) is materially more complex and the
+# agent's own note marked it "May or may not work — measure and document."
+# Time-budgeting moved on to subchunk 3c without that experiment.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Subchunk 3c: Skip props i32 swap during partition on lossless main path
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Files: chunk3c_paired_2026-05-16_take{1,2}.csv
+#
+# Implementation: added `skip_props_swap: bool` to `SplittableSamples`.
+# `compute_best_tree_with_budget` (lossless main path) consumes
+# `samples.props` once in `pre_quantize` and never reads it again — the
+# tree builder only touches `pq.bucket_indices`. Skip the per-property
+# Vec<i32> swaps (16+ Vec swaps per row swap) on this path. The
+# `compute_best_tree_with_multipliers` path still swaps props because its
+# static-prop axes use `PartitionKey::Property` which reads `props[i]` to
+# evaluate the predicate.
+#
+# Hash locks: 36/36 byte-identical (verified).
+#
+# Combined 10-sample paired medians:
+#   0.26 MP    e7   -1.34%  (median;  mean -3.08% — below 5% gate)
+#   1.05 MP    e7   -1.96%  (median;  mean -3.03% — below 5% gate)
+#   4.19 MP    e7   -0.91%  (median;  mean +7.71% — driven by 34s outlier)
+#
+# Paired diff analysis (per-sample NEW vs BASELINE):
+#   0.26 MP: 10/10 paired wins, median -0.83%, mean -2.78%
+#   1.05 MP: 10/10 paired wins, median -1.79%, mean -2.93%
+#   4.19 MP: 6/10 paired wins, median -1.84%, mean +8.88% (one 34s outlier
+#            in take 2 sample 3; without it, mean ~-2%)
+#
+# Hypothesis (post-mortem): partition is not the bottleneck. The chunk-2
+# agent's pre-estimate ("<2% wall-clock — partition is not the bottleneck
+# per chunk-1 microbench's amortization math") proved accurate. The change
+# is clean (10/10 paired wins on small + medium, byte-identical output),
+# but the magnitude is below the 5% gate.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Conclusion
+# ─────────────────────────────────────────────────────────────────────────
+#
+# None of the three subchunks reached the 5% × 2 of 3 wall-clock gate.
+# Cumulative paired improvement on the medium image (1.05 MP) summed
+# across 3a + 3b + 3c is ~5-6% — below the 15% "worth shipping" threshold
+# the user's instructions sketched. All three reverted.
+#
+# The chunk-2 agent's prediction has been confirmed: the architectural
+# ceiling on `find_best_split` micro-ops is ~20-30%; we are now ~5% above
+# the wall-clock floor those micro-ops can reach. The remaining 2-3x gap
+# to libjxl is elsewhere — likely `pre_quantize`, `dedup_samples`,
+# `gather_samples`, or the per-pred entropy estimator itself.
+#
+# Updated CBT vs cjxl gap: unchanged at ~3.5× (per chunk-2's measurement).
