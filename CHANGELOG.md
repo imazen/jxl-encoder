@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Roundtrip tests for the four `PixelLayout::*LinearF16` input variants**
+  (A1 audit "Pixel formats / extras" PARTIAL item). `RgbLinearF16`,
+  `RgbaLinearF16`, `GrayLinearF16`, and `GrayAlphaLinearF16` enum
+  variants + dispatch arms + helper functions (`f16_to_linear_f32_rgb`,
+  `f16_gray_to_linear_f32_rgb`, `extract_alpha_f16`) were already wired
+  in `api.rs`, but no integration test covered the encode → decode →
+  pixel-compare loop. New `tests/f16_input_roundtrip.rs` builds a 16×16
+  synthetic image from values that quantize exactly through f16,
+  encodes lossy at d=0.5 via the public `LossyConfig` path, and verifies
+  the decoded RGB matches via both `jxl-rs` (primary) and `jxl-oxide`
+  (secondary linear-sRGB decode). Max measured channel diff: 0.033 on
+  [0,1] linear, well under the 0.07 wiring tolerance. Closes the
+  Float16 portion of #18.
+
 ### Refactor
 
 - **`kAvoidEntropyOfTransforms` formula extracted into named helpers** in
