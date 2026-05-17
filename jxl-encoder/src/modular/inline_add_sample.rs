@@ -116,9 +116,15 @@
 
 use super::inline_dedup_table::KEY_BYTES;
 
+// HASH1_CONST / HASH2_CONST are referenced by the FusedHashKeyBuilder
+// (below) and by the `dedup_samples_strategies` microbench (which mirrors
+// the constants under `#[cfg(feature = "__bench_internals")]`). Default
+// clippy does not build the bench, so flag them as allow(dead_code).
 /// libjxl `Hash1` multiplier (`enc_ma.cc:658`).
+#[allow(dead_code)]
 const HASH1_CONST: u64 = 0x1e35a7bd;
 /// libjxl `Hash2` multiplier (`enc_ma.cc:673`).
+#[allow(dead_code)]
 const HASH2_CONST: u64 = 0x1e35a7bd1e35a7bd;
 
 /// Fused canonical-key + hash builder for the Phase 4 gather-time
@@ -151,6 +157,11 @@ const HASH2_CONST: u64 = 0x1e35a7bd1e35a7bd;
 ///
 /// The Chunk 2 wiring will use the pre-check pattern so the overflow
 /// branch never fires in production.
+///
+/// Phase 4 chunk-1 primitive — exposed via `__bench_internals` for the
+/// `dedup_samples_strategies` microbench (issue #41). Not yet wired into
+/// production gather (default-features clippy reports it as unused).
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub struct FusedHashKeyBuilder {
     /// Running libjxl `Hash1` accumulator. Seed = `HASH1_CONST`.
@@ -170,6 +181,9 @@ pub struct FusedHashKeyBuilder {
 /// [`FusedHashKeyBuilder::add_prop_i32`] when the canonical-key buffer
 /// would overflow [`KEY_BYTES`]. See the [`FusedHashKeyBuilder`] docs
 /// for the contract.
+///
+/// Phase 4 chunk-1 primitive (see `FusedHashKeyBuilder`) — bench-only.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BuilderOverflow;
 
@@ -179,6 +193,9 @@ pub struct BuilderOverflow;
 /// table size) so the caller can derive both the slot positions
 /// (`(h >> 16) & mask`) and the 64-bit fingerprint (XOR of `h1` and
 /// `h2.rotate_left(32)`) without re-walking the canonical key.
+///
+/// Phase 4 chunk-1 primitive (see `FusedHashKeyBuilder`) — bench-only.
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub struct FinalizedKey {
     /// Canonical packed key, byte-identical to Phase 3's
@@ -201,6 +218,7 @@ impl Default for FusedHashKeyBuilder {
     }
 }
 
+#[allow(dead_code)] // Phase 4 chunk-1 primitive — bench-only (`__bench_internals`).
 impl FusedHashKeyBuilder {
     /// Initialize a fresh builder. Seeds match libjxl `Hash1`/`Hash2`
     /// (`enc_ma.cc:659, 674`).

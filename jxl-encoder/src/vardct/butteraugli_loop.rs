@@ -355,7 +355,7 @@ impl VarDctEncoder {
         let winner = outcomes.swap_remove(winner_idx);
         quant_field.copy_from_slice(&winner.quant_field);
         quant_field_float.copy_from_slice(&winner.quant_field_float);
-        return Ok(winner.params);
+        Ok(winner.params)
     }
 
     /// Inner per-seed body of the butteraugli quantization loop.

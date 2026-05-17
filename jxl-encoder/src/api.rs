@@ -1516,8 +1516,8 @@ pub struct LosslessConfig {
     /// fallback gate. `None` keeps the default (auto-on for inputs
     /// below 1 MP); `Some(false)` forces the gate off (pre-`fe2d3a2`
     /// + pre-`cb5e202` behaviour); `Some(true)` forces the gate on
-    /// regardless of image size. Intended for A/B benches; production
-    /// callers should leave this `None`.
+    ///   regardless of image size. Intended for A/B benches; production
+    ///   callers should leave this `None`.
     small_image_fallback_override: Option<bool>,
     /// Zero the RGB samples in pixels whose alpha=0 before lossless
     /// modular encoding (libjxl `SimplifyInvisible` lossless mode,
@@ -1826,9 +1826,9 @@ impl LosslessConfig {
         let mut p = self.effective_profile();
         // Small-image fallback gate (audit item #10): default OFF (None),
         // opt-in via `with_small_image_fallback_override(Some(true))`.
-        match self.small_image_fallback_override {
-            Some(true) => p.adapt_small_image_fallback(pixels),
-            Some(false) | None => {} // default: gate stays off
+        // `Some(false)` / `None` leave the gate off (default behaviour).
+        if let Some(true) = self.small_image_fallback_override {
+            p.adapt_small_image_fallback(pixels);
         }
         // Always-on tree_max_buckets dispatch (audit item #3): drops
         // bucket cap from 256 → 192 at large+e9 cells only. Hash-locks

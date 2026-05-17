@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Clippy `-D warnings` CI red** — 13 lints introduced by the recent
+  e10/e11 multi-seed and Phase 4 inline-dedup work were failing the
+  `Clippy (x64)` and `Clippy (aarch64)` CI jobs (no other jobs affected).
+  Seven dead-code items (`HASH1_CONST`, `HASH2_CONST`,
+  `FusedHashKeyBuilder`, `BuilderOverflow`, `FinalizedKey` + impl
+  methods, `InlineDedupTable::{capacity, len, is_empty, lookup_only,
+  unique_keys}`, `gather_samples_strided_with_dedup`,
+  `select_best_tree_multi_seed`) flagged `#[allow(dead_code)]` with
+  comments — all are real code (used by the `dedup_samples_strategies`
+  microbench under `__bench_internals`, or reserved for e10/e11
+  multi-seed paths the default-features clippy build doesn't exercise).
+  Five trivial lints fixed in place: doc-lazy-continuation indentation,
+  `match` → `if let Some(true)`, `let_and_return` collapse in CLI,
+  needless `return`. `cargo clippy --workspace -- -D warnings` and
+  `--features zensim-loop` both green; `cargo build --workspace` and
+  `cargo check --features __bench_internals` both clean.
+
 ### Added
 
 - **`--ec_resampling N` CLI flag + `downsample_channel_u8` API**

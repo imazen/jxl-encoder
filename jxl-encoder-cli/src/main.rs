@@ -1462,7 +1462,7 @@ fn main() {
             std::process::exit(1);
         }
 
-        let encoded = if ec_resampling_active {
+        if ec_resampling_active {
             // Split: bpp = 4 for RGBA/BGRA, bpp = 2 for GrayAlpha.
             let (bpp, color_layout, color_bpp) = match layout {
                 PixelLayout::Rgba8 => (4, PixelLayout::Rgb8, 3),
@@ -1521,8 +1521,7 @@ fn main() {
                 req = req.with_brotli_metadata(q);
             }
             req.encode(&data)
-        };
-        encoded
+        }
     };
 
     let encoded = match encoded {
