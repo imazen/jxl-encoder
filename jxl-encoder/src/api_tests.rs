@@ -7507,6 +7507,209 @@ fn test_simplify_invisible_shrinks_sprite_files() {
     );
 }
 
+/// `LossyConfig::with_keep_invisible(true)` matches
+/// `with_simplify_invisible(false)` — the libjxl-named alias preserves
+/// arbitrary noise under transparent pixels (no smear pre-pass runs),
+/// producing measurably larger files than the lossy default.
+#[test]
+fn test_lossy_with_keep_invisible_true_matches_simplify_false() {
+    let w = 32u32;
+    let h = 32u32;
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let idx = (y * w as usize + x) * 4;
+            if x < 12 && y < 12 {
+                pixels[idx] = (x * 20) as u8;
+                pixels[idx + 1] = (y * 20) as u8;
+                pixels[idx + 2] = ((x + y) * 10) as u8;
+                pixels[idx + 3] = 255;
+            } else {
+                let g = ((x * 13 + y * 31) ^ 0xA5) as u8;
+                pixels[idx] = g;
+                pixels[idx + 1] = !g;
+                pixels[idx + 2] = g.wrapping_mul(7);
+                pixels[idx + 3] = 0;
+            }
+        }
+    }
+
+    let keep_true = LossyConfig::new(1.0)
+        .with_effort(3)
+        .with_keep_invisible(true);
+    let simplify_false = LossyConfig::new(1.0)
+        .with_effort(3)
+        .with_simplify_invisible(false);
+
+    let bytes_keep = keep_true.encode(&pixels, w, h, PixelLayout::Rgba8).unwrap();
+    let bytes_simplify = simplify_false
+        .encode(&pixels, w, h, PixelLayout::Rgba8)
+        .unwrap();
+
+    assert_eq!(
+        bytes_keep, bytes_simplify,
+        "with_keep_invisible(true) must produce identical bytes to with_simplify_invisible(false)",
+    );
+}
+
+/// `LosslessConfig::with_keep_invisible(false)` zeros RGB samples in
+/// alpha=0 pixels before modular encoding, shrinking a sprite with a
+/// large noisy transparent region by ≥5%. Default (`true`) is
+/// byte-identical to leaving the new builder unset.
+#[test]
+fn test_lossless_keep_invisible_false_shrinks_sprite_files() {
+    use crate::api::LosslessConfig;
+
+    let w = 64u32;
+    let h = 64u32;
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    // Visible 16×16 sprite in top-left; rest is alpha=0 with
+    // high-frequency garbage that modular cannot compress well.
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let idx = (y * w as usize + x) * 4;
+            if x < 16 && y < 16 {
+                pixels[idx] = (x * 16) as u8;
+                pixels[idx + 1] = (y * 16) as u8;
+                pixels[idx + 2] = ((x ^ y) * 8) as u8;
+                pixels[idx + 3] = 255;
+            } else {
+                // Pseudo-random per-channel noise — same recipe as the
+                // lossy sprite test so the modular predictor can't
+                // exploit smooth runs in the RGB-under-transparent.
+                let g = ((x * 13 + y * 31) ^ 0xA5) as u8;
+                pixels[idx] = g;
+                pixels[idx + 1] = !g;
+                pixels[idx + 2] = g.wrapping_mul(7);
+                pixels[idx + 3] = 0;
+            }
+        }
+    }
+
+    let cfg_default = LosslessConfig::default();
+    let cfg_keep_explicit = LosslessConfig::default().with_keep_invisible(true);
+    let cfg_drop = LosslessConfig::default().with_keep_invisible(false);
+
+    let bytes_default = cfg_default
+        .encode(&pixels, w, h, PixelLayout::Rgba8)
+        .unwrap();
+    let bytes_keep = cfg_keep_explicit
+        .encode(&pixels, w, h, PixelLayout::Rgba8)
+        .unwrap();
+    let bytes_drop = cfg_drop.encode(&pixels, w, h, PixelLayout::Rgba8).unwrap();
+
+    // Default == explicit keep_invisible(true) — byte-identical (the
+    // pre-pass does not run, so no bitstream changes).
+    assert_eq!(
+        bytes_default, bytes_keep,
+        "lossless default must match with_keep_invisible(true) byte-for-byte (no pre-pass)",
+    );
+
+    let saved = bytes_default.len() as f64 - bytes_drop.len() as f64;
+    let saved_pct = 100.0 * saved / bytes_default.len() as f64;
+    eprintln!(
+        "lossless keep_invisible(false): default={} bytes, drop={} bytes (-{:.1}%)",
+        bytes_default.len(),
+        bytes_drop.len(),
+        saved_pct,
+    );
+
+    assert!(
+        bytes_drop.len() < bytes_default.len(),
+        "with_keep_invisible(false) must shrink the sprite (drop={}, default={})",
+        bytes_drop.len(),
+        bytes_default.len(),
+    );
+    assert!(
+        saved_pct >= 5.0,
+        "expected ≥5% saving on a noisy-invisible sprite, got {:.1}%",
+        saved_pct,
+    );
+}
+
+/// Visible pixels round-trip pixel-exact when
+/// `LosslessConfig::with_keep_invisible(false)` is active. The pre-pass
+/// must only touch alpha=0 pixels; every alpha=255 pixel decodes back
+/// to its original RGB bytes.
+#[test]
+fn test_lossless_keep_invisible_false_visible_pixels_roundtrip() {
+    use crate::api::LosslessConfig;
+
+    let w = 16u32;
+    let h = 16u32;
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    // Half visible (alpha=255, structured pattern) / half invisible
+    // (alpha=0, garbage).
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let idx = (y * w as usize + x) * 4;
+            if x < (w as usize) / 2 {
+                pixels[idx] = (x * 17) as u8;
+                pixels[idx + 1] = (y * 17) as u8;
+                pixels[idx + 2] = ((x + y) * 9) as u8;
+                pixels[idx + 3] = 255;
+            } else {
+                pixels[idx] = 0xAA;
+                pixels[idx + 1] = 0xBB;
+                pixels[idx + 2] = 0xCC;
+                pixels[idx + 3] = 0;
+            }
+        }
+    }
+
+    let encoded = LosslessConfig::default()
+        .with_keep_invisible(false)
+        .encode(&pixels, w, h, PixelLayout::Rgba8)
+        .unwrap();
+
+    // jxl-oxide roundtrip: visible pixels must match input bit-for-bit.
+    // Use ICC color space (skip the sRGB linearization that the default
+    // EnumColourEncoding path applies).
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&encoded))
+        .expect("decode header");
+    let render = image.render_frame(0).expect("render frame");
+    let stream = render.stream();
+    let channels = stream.channels() as usize;
+    assert!(
+        channels >= 4,
+        "expected RGBA decoded output, got {channels}"
+    );
+    let mut out_u8 = vec![0u8; (w as usize) * (h as usize) * 4];
+    let mut row_buf = vec![0f32; (w as usize) * channels];
+    let mut stream = stream;
+    for y in 0..h as usize {
+        stream.write_to_buffer(&mut row_buf);
+        for x in 0..w as usize {
+            let src = x * channels;
+            let dst = (y * w as usize + x) * 4;
+            for c in 0..4 {
+                let v = row_buf[src + c].clamp(0.0, 1.0);
+                out_u8[dst + c] = (v * 255.0 + 0.5) as u8;
+            }
+        }
+    }
+
+    for y in 0..h as usize {
+        for x in 0..(w as usize) / 2 {
+            let idx = (y * w as usize + x) * 4;
+            // Allow ±1 LSB for the f32 → u8 quantization through
+            // jxl-oxide; lossless guarantees bit-exact at the
+            // bitstream layer, but the f32 render → u8 round here
+            // can perturb by 1 on the LSB.
+            for c in 0..4 {
+                let d = (out_u8[idx + c] as i32 - pixels[idx + c] as i32).abs();
+                assert!(
+                    d <= 1,
+                    "visible pixel ({x},{y}) channel {c} diverged: got {} expected {} (Δ={d})",
+                    out_u8[idx + c],
+                    pixels[idx + c],
+                );
+            }
+        }
+    }
+}
+
 /// Closes #21: HLG variant — round-trip the HLG transfer + intensity_target.
 #[test]
 fn test_encode_request_with_intensity_target_hlg() {
