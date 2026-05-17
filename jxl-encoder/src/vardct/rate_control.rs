@@ -72,7 +72,11 @@ pub fn encode_with_rate_control(
     let target = encoder.distance;
 
     // Compute distance params from effort profile
-    let params = DistanceParams::compute_for_profile(target, &encoder.profile);
+    let mut params = DistanceParams::compute_for_profile(target, &encoder.profile);
+    // libjxl --epf override: when the caller pinned a level, it wins
+    // over the distance-derived `epf_iters` (enc_frame.cc:284-285).
+    encoder.apply_epf_level_override(&mut params);
+    let params = params;
 
     // Initialize quant field
     let mut quant_field = quantize_quant_field(&precomputed.quant_field_float, params.inv_scale);

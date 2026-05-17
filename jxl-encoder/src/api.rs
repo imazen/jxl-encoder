@@ -2196,6 +2196,20 @@ pub struct LossyConfig {
     /// `true` means the user-set [`Self::patches`] wins outright.
     /// Default `false`. See [`Self::with_patches`].
     patches_explicit: bool,
+    /// Edge-preserving filter (EPF) iteration count override.
+    ///
+    /// `-1` (default) = encoder chooses based on butteraugli distance
+    /// (the libjxl-parity thresholds `[0.7, 1.5, 4.0]`: 0 iters below
+    /// 0.7, 1 at \[0.7,1.5), 2 at \[1.5,4.0), 3 at >=4.0).
+    /// `0` = forced off — the decoder skips EPF entirely.
+    /// `1`/`2`/`3` = forced iteration count (1 = Step 2 only, 2 =
+    /// Step 1+2, 3 = Step 0+1+2). Higher = heavier smoothing,
+    /// slower decode. Mirrors libjxl `cjxl --epf` and the
+    /// `JXL_ENC_FRAME_SETTING_EPF` C API knob
+    /// (`enc_frame.cc:284-285`).
+    ///
+    /// See [`Self::with_epf_level`].
+    epf_level: i8,
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -2278,6 +2292,7 @@ impl LossyConfig {
             canonicalize_input: false,
             content_class: None,
             patches_explicit: false,
+            epf_level: -1,
         }
     }
 
@@ -2434,6 +2449,30 @@ impl LossyConfig {
     /// Enable/disable gaborish inverse pre-filter (default: true).
     pub fn with_gaborish(mut self, enable: bool) -> Self {
         self.gaborish = enable;
+        self
+    }
+
+    /// Override the edge-preserving filter (EPF) iteration count.
+    ///
+    /// Mirrors libjxl `cjxl --epf -1..3` and the
+    /// `JXL_ENC_FRAME_SETTING_EPF` C API knob
+    /// (`enc_frame.cc:284-285`). The encoder runs the filter for the
+    /// requested iteration count and signals it in the frame header
+    /// (`LoopFilter.epf_iters`); the decoder applies the matching
+    /// number of passes.
+    ///
+    /// - `-1` (default) — encoder chooses based on butteraugli distance
+    ///   (libjxl thresholds `[0.7, 1.5, 4.0]`).
+    /// - `0` — forced off; decoder skips EPF entirely.
+    /// - `1`/`2`/`3` — forced iteration count (1 = Step 2 only, 2 =
+    ///   Step 1+2, 3 = Step 0+1+2). Higher iteration counts smooth
+    ///   harder at the cost of decode time.
+    ///
+    /// Values outside `-1..=3` are clamped to that range. Setting `0`
+    /// also disables the per-block dynamic sharpness search, since
+    /// there is no filter to tune.
+    pub fn with_epf_level(mut self, level: i8) -> Self {
+        self.epf_level = level.clamp(-1, 3);
         self
     }
 
@@ -3142,6 +3181,14 @@ impl LossyConfig {
     /// Whether gaborish inverse pre-filter is enabled.
     pub fn gaborish(&self) -> bool {
         self.gaborish
+    }
+
+    /// Configured edge-preserving filter override.
+    ///
+    /// `-1` (default) = encoder chooses by distance; `0` = forced off;
+    /// `1`/`2`/`3` = forced iteration count. See [`Self::with_epf_level`].
+    pub fn epf_level(&self) -> i8 {
+        self.epf_level
     }
 
     /// Whether noise synthesis is enabled.
@@ -5148,6 +5195,13 @@ impl<'a> EncodeRequest<'a> {
         enc.enable_denoise = cfg.denoise;
         // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
         enc.enable_gaborish = cfg.gaborish && effective_distance > 0.5;
+        // libjxl `--epf -1..3` override (enc_frame.cc:284-285). `-1` =
+        // encoder chooses by distance; otherwise force the given count.
+        enc.epf_level_override = if cfg.epf_level < 0 {
+            None
+        } else {
+            Some(cfg.epf_level as u32)
+        };
         enc.error_diffusion = cfg.error_diffusion;
         enc.pixel_domain_loss = cfg.pixel_domain_loss;
         enc.enable_lz77 = cfg.lz77;
@@ -6102,6 +6156,14 @@ impl LossyEncoder {
             enc.original_distance = cfg.original_distance;
             enc.enable_denoise = cfg.denoise;
             enc.enable_gaborish = cfg.gaborish && effective_distance > 0.5;
+            // libjxl `--epf -1..3` override (enc_frame.cc:284-285). `-1`
+            // = encoder chooses by distance; otherwise force the given
+            // count.
+            enc.epf_level_override = if cfg.epf_level < 0 {
+                None
+            } else {
+                Some(cfg.epf_level as u32)
+            };
             enc.error_diffusion = cfg.error_diffusion;
             enc.pixel_domain_loss = cfg.pixel_domain_loss;
             enc.enable_lz77 = cfg.lz77;
@@ -7591,6 +7653,13 @@ fn encode_animation_lossy(
     enc.enable_denoise = cfg.denoise;
     // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
     enc.enable_gaborish = cfg.gaborish && cfg.distance > 0.5;
+    // libjxl `--epf -1..3` override (enc_frame.cc:284-285). `-1` =
+    // encoder chooses by distance; otherwise force the given count.
+    enc.epf_level_override = if cfg.epf_level < 0 {
+        None
+    } else {
+        Some(cfg.epf_level as u32)
+    };
     enc.error_diffusion = cfg.error_diffusion;
     enc.pixel_domain_loss = cfg.pixel_domain_loss;
     enc.enable_lz77 = cfg.lz77;
@@ -9029,6 +9098,23 @@ mod tests {
         assert_eq!(cfg.effort(), 3);
         assert!(!cfg.gaborish());
         assert!(cfg.noise());
+    }
+
+    #[test]
+    fn test_lossy_config_epf_level_default_and_override() {
+        // Default is -1 (encoder chooses).
+        let cfg = LossyConfig::new(1.0);
+        assert_eq!(cfg.epf_level(), -1);
+
+        // Forced levels round-trip 0..=3.
+        for level in [0i8, 1, 2, 3] {
+            let cfg = LossyConfig::new(1.0).with_epf_level(level);
+            assert_eq!(cfg.epf_level(), level);
+        }
+
+        // Values outside the libjxl `-1..=3` band are clamped.
+        assert_eq!(LossyConfig::new(1.0).with_epf_level(-5).epf_level(), -1);
+        assert_eq!(LossyConfig::new(1.0).with_epf_level(7).epf_level(), 3);
     }
 
     #[test]

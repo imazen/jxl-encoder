@@ -1431,6 +1431,9 @@ impl VarDctEncoder {
         if let Some(rescale) = self.quant_ac_rescale {
             params.apply_quant_ac_rescale(rescale);
         }
+        // libjxl --epf override: when the caller pinned a level, it wins
+        // over the distance-derived `epf_iters` (enc_frame.cc:284-285).
+        self.apply_epf_level_override(&mut params);
         if self.profile.chromacity_adjustment {
             params.apply_chromacity_adjustment(chromacity_x, chromacity_b);
         }

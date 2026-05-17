@@ -4,6 +4,24 @@
 
 ### Added
 
+- **`LossyConfig::with_epf_level(level: i8)`** and matching CLI flag
+  `--epf -1..3` — caller-pinned edge-preserving filter strength,
+  mirroring libjxl `cjxl --epf` and the `JXL_ENC_FRAME_SETTING_EPF`
+  C API knob (`enc_frame.cc:284-285`). `-1` (default) keeps the
+  distance-derived `epf_iters` selection (libjxl thresholds
+  `[0.7, 1.5, 4.0]`); `0` forces the filter off and skips the
+  per-block dynamic sharpness search; `1`/`2`/`3` force the matching
+  iteration count. Plumbed through every `DistanceParams::compute_*`
+  call site (`vardct/encoder.rs` three sites, `vardct/bitstream.rs`,
+  `vardct/rate_control.rs`) via the new `VarDctEncoder::epf_level_override:
+  Option<u32>` field and `apply_epf_level_override(&mut params)`
+  helper. Default (`-1`) is byte-identical to prior behaviour (all
+  36 `hash_lock_features` fixtures pass). Layer-3 invariant in
+  `jxl-encoder/tests/epf_force_level.rs` (3 jxl-rs roundtrips:
+  default decodes, each `-1..=3` level decodes, and `auto`/`off`/`max`
+  produce three distinct bitstreams). A1 audit parity item:
+  PARTIAL → IN.
+
 - **Roundtrip tests for the four `PixelLayout::*LinearF16` input variants**
   (A1 audit "Pixel formats / extras" PARTIAL item). `RgbLinearF16`,
   `RgbaLinearF16`, `GrayLinearF16`, and `GrayAlphaLinearF16` enum
