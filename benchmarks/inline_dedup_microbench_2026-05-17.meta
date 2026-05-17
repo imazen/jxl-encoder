@@ -1,0 +1,34 @@
+# Phase 3 inline-fingerprint dedup microbench — issue #41 Chunk 1
+#
+# Compares the new `InlineDedupTable` primitive against the Phase 1
+# `dedup_samples_streaming` (two_hash_cuckoo with indices-only slots)
+# and the production packed-key sort default.
+#
+# Bench: jxl-encoder/benches/dedup_samples_strategies.rs
+# Primitive: jxl-encoder/src/modular/inline_dedup_table.rs
+# Run: cargo bench -p jxl-encoder --features __bench_internals \
+#                  --bench dedup_samples_strategies -- --group=<group>
+#
+# Bench harness was extended with three new bench paths:
+#   * inline_dedup_prebuilt   — algorithm-only (keys built up front)
+#   * gather_sim_phase1       — Phase 1 cache pattern (lazy key build,
+#                                indices-only slots, SoA chase verify)
+#   * gather_sim_phase3       — Phase 3 cache pattern (lazy key build,
+#                                fingerprint-cache slots, compact
+#                                unique_keys verify)
+#
+# Hardware: AMD Ryzen 9 7950X (water-cooled, no thermal throttling)
+# Toolchain: rustc 1.95.0 stable, default codegen, no target-cpu=native
+# Build: cargo build --release (jxl-encoder/.cargo/config defaults)
+# Features used: __bench_internals
+#
+# Raw bench output: inline_dedup_microbench_2026-05-17.txt
+#
+# Key takeaway: gather_sim_phase3 beats gather_sim_phase1 by +11 % to
+# +19 % across all tested (n, dup-ratio) cells. Phase 3 still trails
+# the packed-key post-pass sort because the bench's `make_samples`
+# generates uncorrelated random keys (no spatial clustering); on real
+# photo data the production sort path benefits more from packed-key
+# spatial coherence than this synthetic input shows. The win Chunk 2
+# captures is "gather-time dedup at gather speed," not "replacement
+# of the sort path."

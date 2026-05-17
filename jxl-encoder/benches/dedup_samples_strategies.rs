@@ -14,31 +14,36 @@
 //   per-cmp cache misses from ~42 to ~K/cacheline.
 // - `hashmap_dedup`: libjxl-style hash-table dedup. Single pass over
 //   samples, hash composite key, lookup-or-insert. O(n) expected.
-//
-// Output formats:
-//   `current` - production dedup_samples
-//   `packed_key_sort` - sort by packed composite-key bytes
-//   `hashmap_dedup` - rustc_hash FxHashMap on composite key
-//   `two_hash_cuckoo` - libjxl `AddSample` two-hash open-addressing
+// - `two_hash_cuckoo`: libjxl `AddSample` two-hash open-addressing, with
+//   keys materialized up front (same shape as Phase 1's
+//   `StreamingDedupTable`).
+// - `inline_dedup_keys_prebuilt`: Phase 3 `InlineDedupTable`, keys
+//   built once up front. Isolates the *algorithm* win — slot-inline
+//   keys eliminate the SoA chase on the compare side.
+// - `gather_sim_phase1`: production-realistic — keys built lazily per
+//   sample via random-access SoA reads (`pack_sample_key`). This is
+//   what Phase 1 measured +3-8 % wall-clock for.
+// - `gather_sim_phase3`: production-realistic — keys built inline
+//   from local stack arrays (cache-hot), probed against
+//   `InlineDedupTable`. This is Phase 3's intended hot loop.
 //
 // Real-photo-scale sample counts: 200K (~0.26 MP image), 1.35M (~1.05
 // MP image), 3.2M (~4.19 MP image). These match the e7 numbers from the
 // lossless_cliff_profile harness (commit pxnzysqk:e3cea6f0).
 //
-// NOTE (issue #41 calibration): in this microbench `two_hash_cuckoo`
-// materializes all packed keys up front (same cost as `packed_key_sort`)
-// so the comparison isolates the dedup *algorithm*, not key construction.
-// The shipping streaming dedup (`dedup_samples_streaming` in
-// `modular/tree_learn.rs`) constructs keys one sample at a time via
-// `pack_sample_key`, which random-accesses parallel SoA arrays per
-// sample — that per-sample cache miss is the dominant cost in the prod
-// path and is *not* reflected in this microbench. The prod streaming
-// path measured +3 % to +8 % wall-clock vs the sort path at e7 on
-// CLIC photos, hence the default is `false` (issue #41, 2026-05-16).
+// NOTE (issue #41 calibration, updated for Phase 3 on 2026-05-17):
+// The `*_prebuilt` benches isolate the dedup *algorithm* — all
+// implementations operate on identical pre-built keys, so the only
+// difference is probe / compare cost.  The `gather_sim_*` benches
+// model the *full prod loop*: how the algorithm composes with the
+// per-sample key-build cost.  Phase 3 wins on `gather_sim_*` because
+// the inline-key slot layout means hash-and-probe never touches the
+// caller's SoA arrays.
 
 use core::hint::black_box;
 
 use hashbrown::HashMap;
+use jxl_encoder::__bench_internals::inline_dedup_table::{InlineDedupTable, KEY_BYTES};
 use zenbench::Throughput;
 use zenbench::prelude::*;
 
@@ -380,6 +385,260 @@ fn dedup_two_hash_cuckoo(samples: &Samples) -> (Vec<usize>, Vec<u32>) {
     (unique_indices, counts)
 }
 
+/// PHASE 3 INLINE DEDUP (keys pre-built up front, like all other
+/// `*_prebuilt` variants). Materializes packed keys at 64-byte width
+/// (`KEY_BYTES`) to match [`jxl_encoder::modular::inline_dedup_table`],
+/// then probes via [`InlineDedupTable::lookup_or_insert`]. The slot
+/// table stores the canonical key adjacent to the index, so the
+/// duplicate-check compare is one fixed-size memcmp against memory
+/// the probe just touched — no SoA chase, no separate `unique_keys`
+/// array lookup.
+#[inline(never)]
+fn dedup_inline_keys_prebuilt(samples: &Samples) -> (Vec<usize>, Vec<u32>) {
+    let n = samples.num_samples;
+    let num_pred = samples.num_pred;
+    let properties = &samples.properties;
+
+    // Materialize 64-byte keys (same prefix as the 40-byte keys; the
+    // extra 24 bytes are zero-padded so dedup behaviour matches).
+    let mut keys: Vec<[u8; KEY_BYTES]> = vec![[0u8; KEY_BYTES]; n];
+    for i in 0..n {
+        let k = &mut keys[i];
+        let mut off = 0;
+        for &prop_idx in properties {
+            let bi = &samples.bucket_indices[prop_idx];
+            if !bi.is_empty() {
+                k[off] = bi[i];
+            }
+            off += 1;
+        }
+        for pred in 0..num_pred {
+            k[off] = samples.residual_tokens[pred][i];
+            off += 1;
+            k[off] = samples.extra_bits[pred][i];
+            off += 1;
+        }
+    }
+
+    let mut table = InlineDedupTable::new(n);
+    let mut unique_indices: Vec<usize> = Vec::with_capacity(n / 2);
+    let mut counts: Vec<u32> = Vec::with_capacity(n / 2);
+    for i in 0..n {
+        // `next_index` is advisory; the table maintains its own
+        // indexing. We pass `unique_indices.len()` so the debug
+        // assertion (must not be SLOT_EMPTY) holds.
+        let next_idx = unique_indices.len() as u32;
+        match table.lookup_or_insert(&keys[i], next_idx) {
+            Some(existing) => {
+                counts[existing as usize] += 1;
+            }
+            None => {
+                unique_indices.push(i);
+                counts.push(1);
+            }
+        }
+    }
+    (unique_indices, counts)
+}
+
+/// PHASE 1 GATHER SIM: builds a packed key per sample lazily by
+/// reading from the parallel SoA arrays (production prod `pack_sample_key`
+/// pattern), then probes a 2-hash cuckoo table that stores only indices.
+/// Each duplicate check requires a SoA read of the historical sample.
+/// This is the cache pattern that doomed Phase 1 — +3-8 % wall-clock
+/// on real CLIC photos at e7 (issue #41 commit 3f4b135).
+#[inline(never)]
+fn dedup_gather_sim_phase1(samples: &Samples) -> (Vec<usize>, Vec<u32>) {
+    const HASH1_CONST: u64 = 0x1e35a7bd;
+    const HASH2_CONST: u64 = 0x1e35a7bd1e35a7bd;
+    const EMPTY: u32 = u32::MAX;
+
+    let n = samples.num_samples;
+    let num_pred = samples.num_pred;
+    let properties = &samples.properties;
+
+    let target = n.saturating_mul(3).div_ceil(2).max(16);
+    let cap = target.next_power_of_two();
+    let mut slots: Vec<u32> = vec![EMPTY; cap];
+    let mask = (cap - 1) as u32;
+
+    // Slot table stores only indices into the SoA columns (Phase 1's
+    // structural problem); comparisons must read SoA at the stored idx.
+    let mut unique_keys: Vec<[u8; KEY_BYTES]> = Vec::with_capacity(n / 2);
+    let mut unique_indices: Vec<usize> = Vec::with_capacity(n / 2);
+    let mut counts: Vec<u32> = Vec::with_capacity(n / 2);
+
+    // Lazy key-build closure — reads scattered SoA bytes per sample.
+    let pack_key_lazy = |i: usize| -> [u8; KEY_BYTES] {
+        let mut k = [0u8; KEY_BYTES];
+        let mut off = 0;
+        for &prop_idx in properties {
+            let bi = &samples.bucket_indices[prop_idx];
+            if !bi.is_empty() {
+                k[off] = bi[i];
+            }
+            off += 1;
+        }
+        for pred in 0..num_pred {
+            k[off] = samples.residual_tokens[pred][i];
+            off += 1;
+            k[off] = samples.extra_bits[pred][i];
+            off += 1;
+        }
+        k
+    };
+
+    let hash1 = |key: &[u8; KEY_BYTES]| -> u32 {
+        let mut h: u64 = HASH1_CONST;
+        for &b in key.iter() {
+            h = h.wrapping_mul(HASH1_CONST).wrapping_add(b as u64);
+        }
+        ((h >> 16) as u32) & mask
+    };
+    let hash2 = |key: &[u8; KEY_BYTES]| -> u32 {
+        let mut h: u64 = HASH2_CONST;
+        for &b in key.iter() {
+            h = h.wrapping_mul(HASH2_CONST) ^ (b as u64);
+        }
+        ((h >> 16) as u32) & mask
+    };
+
+    for i in 0..n {
+        // Each iteration: read SoA arrays to build the key (cache misses
+        // per byte), then probe slots, then on probe-hit re-read the
+        // canonical key from `unique_keys` to verify.
+        let key = pack_key_lazy(i);
+        let h1 = hash1(&key) as usize;
+        let s1 = slots[h1];
+        let mut hit_idx: Option<u32> = None;
+        if s1 != EMPTY && unique_keys[s1 as usize] == key {
+            hit_idx = Some(s1);
+        } else {
+            let h2 = hash2(&key) as usize;
+            let s2 = slots[h2];
+            if s2 != EMPTY && unique_keys[s2 as usize] == key {
+                hit_idx = Some(s2);
+            } else {
+                let next_idx = unique_indices.len() as u32;
+                if s1 == EMPTY {
+                    slots[h1] = next_idx;
+                } else if s2 == EMPTY {
+                    slots[h2] = next_idx;
+                }
+                unique_keys.push(key);
+                unique_indices.push(i);
+                counts.push(1);
+            }
+        }
+        if let Some(idx) = hit_idx {
+            counts[idx as usize] += 1;
+        }
+    }
+    (unique_indices, counts)
+}
+
+/// PHASE 3 GATHER SIM: same lazy key build as Phase 1 (the prod gather
+/// loop computes per-pixel residuals + props anyway, so this models the
+/// per-sample cost we *cannot* avoid), but the probe uses
+/// [`InlineDedupTable`] — the slot stores its own key, so the
+/// duplicate-check compare is one in-slot memcmp, never a separate SoA
+/// or `unique_keys[]` read.
+#[inline(never)]
+fn dedup_gather_sim_phase3(samples: &Samples) -> (Vec<usize>, Vec<u32>) {
+    let n = samples.num_samples;
+    let num_pred = samples.num_pred;
+    let properties = &samples.properties;
+
+    let pack_key_lazy = |i: usize| -> [u8; KEY_BYTES] {
+        let mut k = [0u8; KEY_BYTES];
+        let mut off = 0;
+        for &prop_idx in properties {
+            let bi = &samples.bucket_indices[prop_idx];
+            if !bi.is_empty() {
+                k[off] = bi[i];
+            }
+            off += 1;
+        }
+        for pred in 0..num_pred {
+            k[off] = samples.residual_tokens[pred][i];
+            off += 1;
+            k[off] = samples.extra_bits[pred][i];
+            off += 1;
+        }
+        k
+    };
+
+    let mut table = InlineDedupTable::new(n);
+    let mut unique_indices: Vec<usize> = Vec::with_capacity(n / 2);
+    let mut counts: Vec<u32> = Vec::with_capacity(n / 2);
+    for i in 0..n {
+        let key = pack_key_lazy(i);
+        let next_idx = unique_indices.len() as u32;
+        match table.lookup_or_insert(&key, next_idx) {
+            Some(existing) => {
+                counts[existing as usize] += 1;
+            }
+            None => {
+                unique_indices.push(i);
+                counts.push(1);
+            }
+        }
+    }
+    (unique_indices, counts)
+}
+
+/// Sanity check: PHASE 3 gather sim with the slot table sized for the
+/// *expected unique count* (n * 0.7 at 30 % dup) instead of the raw
+/// input count. Catches the false-Phase-1-loss case where over-sizing
+/// the slot table blew the L2/L3 cache.
+#[inline(never)]
+#[allow(dead_code)]
+fn dedup_gather_sim_phase3_sized(
+    samples: &Samples,
+    expected_unique: usize,
+) -> (Vec<usize>, Vec<u32>) {
+    let n = samples.num_samples;
+    let num_pred = samples.num_pred;
+    let properties = &samples.properties;
+
+    let pack_key_lazy = |i: usize| -> [u8; KEY_BYTES] {
+        let mut k = [0u8; KEY_BYTES];
+        let mut off = 0;
+        for &prop_idx in properties {
+            let bi = &samples.bucket_indices[prop_idx];
+            if !bi.is_empty() {
+                k[off] = bi[i];
+            }
+            off += 1;
+        }
+        for pred in 0..num_pred {
+            k[off] = samples.residual_tokens[pred][i];
+            off += 1;
+            k[off] = samples.extra_bits[pred][i];
+            off += 1;
+        }
+        k
+    };
+
+    let mut table = InlineDedupTable::new(expected_unique);
+    let mut unique_indices: Vec<usize> = Vec::with_capacity(expected_unique);
+    let mut counts: Vec<u32> = Vec::with_capacity(expected_unique);
+    for i in 0..n {
+        let key = pack_key_lazy(i);
+        let next_idx = unique_indices.len() as u32;
+        match table.lookup_or_insert(&key, next_idx) {
+            Some(existing) => {
+                counts[existing as usize] += 1;
+            }
+            None => {
+                unique_indices.push(i);
+                counts.push(1);
+            }
+        }
+    }
+    (unique_indices, counts)
+}
+
 /// HASHMAP dedup: libjxl-style streaming hash dedup. Each sample's key
 /// hashes to a slot; matching key bumps counts, new key gets a new
 /// position. O(n) expected, no sort.
@@ -460,6 +719,24 @@ fn full_two_hash(samples: &Samples) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<Vec<u8>>
     (t, e, b, counts)
 }
 
+fn full_inline_prebuilt(samples: &Samples) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u32>) {
+    let (unique_indices, counts) = dedup_inline_keys_prebuilt(samples);
+    let (t, e, b) = compact_arrays(samples, &unique_indices);
+    (t, e, b, counts)
+}
+
+fn full_gather_phase1(samples: &Samples) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u32>) {
+    let (unique_indices, counts) = dedup_gather_sim_phase1(samples);
+    let (t, e, b) = compact_arrays(samples, &unique_indices);
+    (t, e, b, counts)
+}
+
+fn full_gather_phase3(samples: &Samples) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u32>) {
+    let (unique_indices, counts) = dedup_gather_sim_phase3(samples);
+    let (t, e, b) = compact_arrays(samples, &unique_indices);
+    (t, e, b, counts)
+}
+
 fn bench_for_count<const N: usize, const DUP_BPM: u32>(suite: &mut Suite, label: &str) {
     // DUP_BPM = parts per 1000 (since const generics can't be f32). dup_frac =
     // DUP_BPM / 1000.0. e.g. 300 -> 30% duplicates.
@@ -503,8 +780,38 @@ fn bench_for_count<const N: usize, const DUP_BPM: u32>(suite: &mut Suite, label:
                 })
         });
 
+        g.bench("inline_dedup_prebuilt", |b| {
+            b.with_input(|| make_samples(N, DUP_BPM as f32 / 1000.0))
+                .run(|samples| {
+                    let out = full_inline_prebuilt(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
+        g.bench("gather_sim_phase1", |b| {
+            b.with_input(|| make_samples(N, DUP_BPM as f32 / 1000.0))
+                .run(|samples| {
+                    let out = full_gather_phase1(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
+        g.bench("gather_sim_phase3", |b| {
+            b.with_input(|| make_samples(N, DUP_BPM as f32 / 1000.0))
+                .run(|samples| {
+                    let out = full_gather_phase3(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
         g.baseline("current_sort_indirect");
-        g.config().sort_by_speed(true);
+        g.config()
+            .sort_by_speed(true)
+            .min_rounds(10)
+            .max_time(core::time::Duration::from_secs(8));
     });
 
     let dedup_only_group = format!("dedup_only_{label}_dup{DUP_BPM}");
@@ -547,8 +854,38 @@ fn bench_for_count<const N: usize, const DUP_BPM: u32>(suite: &mut Suite, label:
                 })
         });
 
+        g.bench("inline_dedup_prebuilt", |b| {
+            b.with_input(|| make_samples(N, DUP_BPM as f32 / 1000.0))
+                .run(|samples| {
+                    let out = dedup_inline_keys_prebuilt(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
+        g.bench("gather_sim_phase1", |b| {
+            b.with_input(|| make_samples(N, DUP_BPM as f32 / 1000.0))
+                .run(|samples| {
+                    let out = dedup_gather_sim_phase1(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
+        g.bench("gather_sim_phase3", |b| {
+            b.with_input(|| make_samples(N, DUP_BPM as f32 / 1000.0))
+                .run(|samples| {
+                    let out = dedup_gather_sim_phase3(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
         g.baseline("current_sort_indirect");
-        g.config().sort_by_speed(true);
+        g.config()
+            .sort_by_speed(true)
+            .min_rounds(10)
+            .max_time(core::time::Duration::from_secs(8));
     });
 }
 
@@ -557,10 +894,24 @@ fn bench_dedup(suite: &mut Suite) {
     //   0.26 MP -> ~200K samples
     //   1.05 MP -> ~1.35M samples
     //   4.19 MP -> ~3.2M samples
-    // DUP_BPM = 300 -> 30% duplicates (unique = ~70% of input). Photos
-    // dedup to roughly pixel_fraction × total_pixels unique.
+    //
+    // DUP_BPM = parts per 1000. Production-realistic numbers per
+    // 2026-05-16 lossless_cliff_profile measurements:
+    //   - dup300  (30 % dup, low):  synthetic; tests algorithm at
+    //     near-worst case for any dedup table (mostly unique inputs,
+    //     so the probe phase is almost all misses + inserts).
+    //   - dup600  (60 % dup, mid):  matches photos with moderate
+    //     redundancy (smooth gradients, sky regions).
+    //   - dup800  (80 % dup, high): matches photos with large
+    //     uniform regions or repeated patterns; this is the regime
+    //     where gather-time dedup is most beneficial in production
+    //     (issue #41 e7 measurement: 3.2 M samples → ~700 K unique).
     bench_for_count::<200_000, 300>(suite, "n=200K");
+    bench_for_count::<200_000, 600>(suite, "n=200K");
+    bench_for_count::<200_000, 800>(suite, "n=200K");
     bench_for_count::<1_350_000, 300>(suite, "n=1.35M");
+    bench_for_count::<1_350_000, 600>(suite, "n=1.35M");
+    bench_for_count::<1_350_000, 800>(suite, "n=1.35M");
     bench_for_count::<3_200_000, 300>(suite, "n=3.2M");
 }
 
