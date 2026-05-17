@@ -376,6 +376,9 @@ mod expert {
             tree_max_samples_fixed: Some(0),
             use_streaming_dedup: Some(false),
             gather_dedup: Some(false),
+            tree_parallel_max_depth: Some(4),
+            tree_parallel_floor: Some(16384),
+            tree_parallel_root_threshold: Some(8192),
         };
         assert!(p.validate().is_ok());
     }
