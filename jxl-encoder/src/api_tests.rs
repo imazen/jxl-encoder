@@ -7055,6 +7055,166 @@ fn test_encode_request_hlg_u16_uses_hlg_eotf() {
     );
 }
 
+/// JUMBF (C2PA / Content Authenticity Initiative) pass-through:
+/// caller-provided JUMBF superbox bytes land in a `jumb` ISOBMFF box
+/// appended after `Exif`/`xml `. We don't validate the payload — it's
+/// pass-through — but the box header and verbatim contents must round-
+/// trip through the container. Closes the JUMBF top-10 audit item.
+#[test]
+fn test_encode_request_with_jumbf() {
+    let w = 32u32;
+    let h = 32;
+    let pixels: Vec<u8> = vec![64u8; (w * h * 3) as usize];
+    // Synthetic JUMBF-shaped payload: outer box header (size + `jumd`
+    // description marker) + opaque content bytes. We don't parse it.
+    let jumbf_payload: Vec<u8> = {
+        let mut p = Vec::new();
+        // 16-byte JUMBF description box header (size=16, type=jumd,
+        // type=c2pa) + a 16-byte content box (size=16, type=cbor,
+        // payload).
+        p.extend_from_slice(&16u32.to_be_bytes());
+        p.extend_from_slice(b"jumd");
+        p.extend_from_slice(b"c2pa\x00\x00\x00\x00");
+        p.extend_from_slice(&16u32.to_be_bytes());
+        p.extend_from_slice(b"cbor");
+        p.extend_from_slice(&[0xA1, 0x63, b'k', b'e', b'y', 0x65, b'v', b'a', b'l']);
+        p
+    };
+    let meta = crate::ImageMetadata::default().with_jumbf(&jumbf_payload);
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_metadata(&meta)
+        .encode(&pixels)
+        .expect("encode with jumbf failed");
+
+    // 1. Container present (jumbf forces container wrap even without exif/xmp).
+    assert_eq!(
+        &bytes[..12],
+        &[
+            0x00, 0x00, 0x00, 0x0C, b'J', b'X', b'L', b' ', 0x0D, 0x0A, 0x87, 0x0A
+        ],
+        "JUMBF should force container wrap",
+    );
+
+    // 2. Locate the `jumb` box, verify size + payload bit-equality.
+    let mut jumb_offset = None;
+    for i in 0..bytes.len().saturating_sub(8) {
+        if &bytes[i + 4..i + 8] == b"jumb" {
+            jumb_offset = Some(i);
+            break;
+        }
+    }
+    let jumb_offset = jumb_offset.expect("no jumb box found");
+    let box_size = u32::from_be_bytes([
+        bytes[jumb_offset],
+        bytes[jumb_offset + 1],
+        bytes[jumb_offset + 2],
+        bytes[jumb_offset + 3],
+    ]) as usize;
+    assert_eq!(box_size, 8 + jumbf_payload.len(), "jumb box size mismatch");
+    let payload_start = jumb_offset + 8;
+    let payload_end = jumb_offset + box_size;
+    assert_eq!(
+        &bytes[payload_start..payload_end],
+        jumbf_payload.as_slice(),
+        "jumb payload must round-trip byte-for-byte",
+    );
+
+    // 3. Decoder accepts the file — unknown metadata boxes must not
+    // break decode.
+    let img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide rejected JUMBF-bearing container");
+    assert_eq!(img.image_header().size.width, w);
+    assert_eq!(img.image_header().size.height, h);
+}
+
+/// Hash-lock invariant: omitting JUMBF must produce byte-identical
+/// output to the same encode without `with_jumbf` ever being called.
+/// Without this, the default-None case could regress the corpus
+/// hash_lock sidecar.
+#[test]
+fn test_encode_request_without_jumbf_is_byte_identical_baseline() {
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i & 0xFF) as u8).collect();
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let baseline = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .unwrap();
+    // Same encode with an ImageMetadata that has every JUMBF-adjacent
+    // knob still defaulted to None: must be byte-identical.
+    let empty_meta = crate::ImageMetadata::default();
+    let with_default_meta = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_metadata(&empty_meta)
+        .encode(&pixels)
+        .unwrap();
+    assert_eq!(baseline, with_default_meta);
+}
+
+/// Streaming `LossyEncoder::with_jumbf` parity with the one-shot
+/// path. Same encode, same JUMBF bytes ⇒ same jumb box at the tail.
+#[test]
+fn test_streaming_lossy_with_jumbf() {
+    let w = 32u32;
+    let h = 32;
+    let pixels: Vec<u8> = vec![64u8; (w * h * 3) as usize];
+    let jumbf_payload: Vec<u8> = b"\x00\x00\x00\x0Cjumdc2pa".to_vec();
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let mut enc = cfg
+        .encoder(w, h, PixelLayout::Rgb8)
+        .unwrap()
+        .with_jumbf(&jumbf_payload);
+    enc.push_rows(&pixels, h).unwrap();
+    let bytes = enc.finish().unwrap();
+    let found = bytes.windows(4).any(|w| w == b"jumb");
+    assert!(found, "streaming encoder should emit a jumb box");
+}
+
+/// Streaming `LosslessEncoder::with_jumbf` parity.
+#[test]
+fn test_streaming_lossless_with_jumbf() {
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i & 0xFF) as u8).collect();
+    let jumbf_payload: Vec<u8> = b"\x00\x00\x00\x0Cjumdc2pa".to_vec();
+    let cfg = LosslessConfig::new();
+    let mut enc = cfg
+        .encoder(w, h, PixelLayout::Rgb8)
+        .unwrap()
+        .with_jumbf(&jumbf_payload);
+    enc.push_rows(&pixels, h).unwrap();
+    let bytes = enc.finish().unwrap();
+    let found = bytes.windows(4).any(|w| w == b"jumb");
+    assert!(found, "streaming lossless encoder should emit a jumb box");
+}
+
+/// Empty JUMBF payload is rejected at validation time — a zero-payload
+/// `jumb` box (8-byte header alone) is unparseable by any JUMBF reader.
+#[test]
+fn test_jumbf_empty_payload_rejected() {
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = vec![0u8; (w * h * 3) as usize];
+    let empty: &[u8] = &[];
+    let meta = crate::ImageMetadata::default().with_jumbf(empty);
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let err = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_metadata(&meta)
+        .encode(&pixels)
+        .expect_err("empty JUMBF should be rejected");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("JUMBF"),
+        "error should mention JUMBF; got {msg}"
+    );
+}
+
 /// Closes #15 API wire-up: `EncodeRequest::with_brotli_metadata`
 /// routes through `wrap_in_container_with_brob`. The encoded
 /// container should contain a `brob` box (not a plain `xml ` box)

@@ -763,12 +763,17 @@ fn interp_quality(table: &[(f32, f32)], x: f32) -> f32 {
 
 // ── Supporting types ────────────────────────────────────────────────────────
 
-/// Image metadata (ICC, EXIF, XMP, tone mapping) to embed in the JXL file.
+/// Image metadata (ICC, EXIF, XMP, JUMBF, tone mapping) to embed in the JXL file.
 #[derive(Clone, Debug, Default)]
 pub struct ImageMetadata<'a> {
     icc_profile: Option<&'a [u8]>,
     exif: Option<&'a [u8]>,
     xmp: Option<&'a [u8]>,
+    /// JUMBF (JPEG Universal Metadata Box Format, ISO 19566-5) payload,
+    /// emitted as a `jumb` ISOBMFF box appended after `Exif`/`xml `.
+    /// Used by C2PA / Content Authenticity Initiative tooling. The
+    /// encoder passes the bytes through verbatim — no validation.
+    jumbf: Option<&'a [u8]>,
     /// Peak display luminance in nits (cd/m²). `None` uses the JXL default (255.0 = SDR).
     intensity_target: Option<f32>,
     /// Minimum display luminance in nits. `None` uses the JXL default (0.0).
@@ -801,6 +806,19 @@ impl<'a> ImageMetadata<'a> {
         self
     }
 
+    /// Attach a JUMBF (JPEG Universal Metadata Box Format) payload.
+    ///
+    /// The bytes are written verbatim into a `jumb` ISOBMFF box appended
+    /// after the standard `Exif`/`xml ` boxes. Used by C2PA / Content
+    /// Authenticity Initiative tooling for provenance metadata; the
+    /// caller produces the JUMBF superbox (typically via the `c2pa`
+    /// crate) and we pass it through without inspection. Mirrors
+    /// libjxl's `JxlEncoderAddBox(enc, "jumb", ...)` API.
+    pub fn with_jumbf(mut self, data: &'a [u8]) -> Self {
+        self.jumbf = Some(data);
+        self
+    }
+
     /// Get the ICC color profile, if set.
     pub fn icc_profile(&self) -> Option<&[u8]> {
         self.icc_profile
@@ -814,6 +832,11 @@ impl<'a> ImageMetadata<'a> {
     /// Get the XMP data, if set.
     pub fn xmp(&self) -> Option<&[u8]> {
         self.xmp
+    }
+
+    /// Get the JUMBF payload, if set.
+    pub fn jumbf(&self) -> Option<&[u8]> {
+        self.jumbf
     }
 
     /// Set the peak display luminance in nits (cd/m²) for HDR content.
@@ -3568,6 +3591,7 @@ impl<'a> EncodeRequest<'a> {
             self.metadata.and_then(|m| m.icc_profile),
             self.metadata.and_then(|m| m.exif),
             self.metadata.and_then(|m| m.xmp),
+            self.metadata.and_then(|m| m.jumbf),
         )?;
         // Tone-mapping numeric range checks. Request-level overrides
         // win over metadata-level values (`encode_lossy` line ~3018);
@@ -3672,20 +3696,27 @@ impl<'a> EncodeRequest<'a> {
             });
         let level = compute_required_level(self.width, self.height, num_ec, has_black, icc_size)?;
 
-        // Wrap in container if metadata (EXIF/XMP) is present OR if
-        // the level requires a container (level != 5 means a `jxll`
+        // Wrap in container if metadata (EXIF/XMP/JUMBF) is present OR
+        // if the level requires a container (level != 5 means a `jxll`
         // box must precede the codestream — mirrors libjxl
         // `MustUseContainer`).
         let has_meta = self
             .metadata
-            .map(|m| m.exif.is_some() || m.xmp.is_some())
+            .map(|m| m.exif.is_some() || m.xmp.is_some() || m.jumbf.is_some())
             .unwrap_or(false);
         let output = if has_meta || crate::container::level_requires_container(level) {
-            let (exif, xmp) = match self.metadata {
-                Some(m) => (m.exif, m.xmp),
-                None => (None, None),
+            let (exif, xmp, jumbf) = match self.metadata {
+                Some(m) => (m.exif, m.xmp, m.jumbf),
+                None => (None, None, None),
             };
-            wrap_metadata_container(&codestream, exif, xmp, self.brotli_metadata_quality, level)
+            wrap_metadata_container(
+                &codestream,
+                exif,
+                xmp,
+                jumbf,
+                self.brotli_metadata_quality,
+                level,
+            )
         } else {
             codestream
         };
@@ -4953,6 +4984,9 @@ pub struct LossyEncoder {
     icc_profile: Option<Vec<u8>>,
     exif: Option<Vec<u8>>,
     xmp: Option<Vec<u8>>,
+    /// JUMBF (ISO 19566-5, C2PA) superbox payload, emitted verbatim
+    /// into a `jumb` box appended after `Exif`/`xml `.
+    jumbf: Option<Vec<u8>>,
     source_gamma: Option<f32>,
     color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
     intensity_target: f32,
@@ -4993,6 +5027,15 @@ impl LossyEncoder {
     /// Attach XMP data.
     pub fn with_xmp(mut self, data: &[u8]) -> Self {
         self.xmp = Some(data.to_vec());
+        self
+    }
+
+    /// Attach a JUMBF payload (C2PA / Content Authenticity Initiative
+    /// metadata, ISO 19566-5). Bytes are emitted verbatim into a `jumb`
+    /// ISOBMFF box appended after `Exif`/`xml `. Mirrors the
+    /// [`ImageMetadata::with_jumbf`] field on the one-shot path.
+    pub fn with_jumbf(mut self, data: &[u8]) -> Self {
+        self.jumbf = Some(data.to_vec());
         self
     }
 
@@ -5484,6 +5527,7 @@ impl LossyEncoder {
             self.icc_profile.as_deref(),
             self.exif.as_deref(),
             self.xmp.as_deref(),
+            self.jumbf.as_deref(),
         )?;
         // Tone-mapping numeric range checks. Stored as plain f32 on
         // the encoder; pass `Some(_)` only when set away from the
@@ -5711,18 +5755,19 @@ impl LossyEncoder {
 
         stats.codestream_size = codestream.len();
 
-        // Streaming LossyEncoder doesn't accept extra channels beyond
+        // Streaming LossyEncoder does not accept extra channels beyond
         // alpha; count alpha from layout.
         let icc_size = self.icc_profile.as_deref().map_or(0u64, |i| i.len() as u64);
         let num_ec = u32::from(self.layout.has_alpha());
         let level = compute_required_level(self.width, self.height, num_ec, false, icc_size)?;
 
-        let has_meta = self.exif.is_some() || self.xmp.is_some();
+        let has_meta = self.exif.is_some() || self.xmp.is_some() || self.jumbf.is_some();
         let output = if has_meta || crate::container::level_requires_container(level) {
             wrap_metadata_container(
                 &codestream,
                 self.exif.as_deref(),
                 self.xmp.as_deref(),
+                self.jumbf.as_deref(),
                 self.brotli_metadata_quality,
                 level,
             )
@@ -5839,6 +5884,7 @@ fn validate_metadata_sizes(
     icc: Option<&[u8]>,
     exif: Option<&[u8]>,
     xmp: Option<&[u8]>,
+    jumbf: Option<&[u8]>,
 ) -> core::result::Result<(), EncodeError> {
     if let Some(icc) = icc {
         if icc.is_empty() {
@@ -5874,6 +5920,23 @@ fn validate_metadata_sizes(
                 xmp.len()
             ),
         });
+    }
+    if let Some(jumbf) = jumbf {
+        if jumbf.is_empty() {
+            // Empty payload would produce a zero-payload `jumb` box
+            // (8-byte header only) which no JUMBF reader can parse.
+            return Err(EncodeError::InvalidInput {
+                message: "JUMBF payload must not be empty".into(),
+            });
+        }
+        if jumbf.len() > METADATA_SIZE_LIMIT {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "JUMBF metadata too large: {} bytes (max {METADATA_SIZE_LIMIT})",
+                    jumbf.len()
+                ),
+            });
+        }
     }
     Ok(())
 }
@@ -6011,6 +6074,7 @@ impl LossyConfig {
             icc_profile: None,
             exif: None,
             xmp: None,
+            jumbf: None,
             source_gamma: None,
             color_encoding: None,
             intensity_target: 255.0,
@@ -6060,6 +6124,9 @@ pub struct LosslessEncoder {
     icc_profile: Option<Vec<u8>>,
     exif: Option<Vec<u8>>,
     xmp: Option<Vec<u8>>,
+    /// JUMBF (ISO 19566-5, C2PA) superbox payload, emitted verbatim
+    /// into a `jumb` box appended after `Exif`/`xml `.
+    jumbf: Option<Vec<u8>>,
     source_gamma: Option<f32>,
     color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
     intensity_target: f32,
@@ -6102,6 +6169,15 @@ impl LosslessEncoder {
     /// Attach XMP data.
     pub fn with_xmp(mut self, data: &[u8]) -> Self {
         self.xmp = Some(data.to_vec());
+        self
+    }
+
+    /// Attach a JUMBF payload (C2PA / Content Authenticity Initiative
+    /// metadata, ISO 19566-5). Bytes are emitted verbatim into a `jumb`
+    /// ISOBMFF box appended after `Exif`/`xml `. Mirrors the
+    /// [`ImageMetadata::with_jumbf`] field on the one-shot path.
+    pub fn with_jumbf(mut self, data: &[u8]) -> Self {
+        self.jumbf = Some(data.to_vec());
         self
     }
 
@@ -6397,6 +6473,7 @@ impl LosslessEncoder {
             self.icc_profile.as_deref(),
             self.exif.as_deref(),
             self.xmp.as_deref(),
+            self.jumbf.as_deref(),
         )?;
         // Tone-mapping numeric range checks. See the lossy-encoder
         // mirror above for the `Some(_) iff non-default` shape.
@@ -6627,18 +6704,19 @@ impl LosslessEncoder {
 
         stats.codestream_size = codestream.len();
 
-        // Streaming LosslessEncoder doesn't accept extra channels
+        // Streaming LosslessEncoder does not accept extra channels
         // beyond alpha; count alpha from layout.
         let icc_size = self.icc_profile.as_deref().map_or(0u64, |i| i.len() as u64);
         let num_ec = u32::from(self.layout.has_alpha());
         let level = compute_required_level(self.width, self.height, num_ec, false, icc_size)?;
 
-        let has_meta = self.exif.is_some() || self.xmp.is_some();
+        let has_meta = self.exif.is_some() || self.xmp.is_some() || self.jumbf.is_some();
         let output = if has_meta || crate::container::level_requires_container(level) {
             wrap_metadata_container(
                 &codestream,
                 self.exif.as_deref(),
                 self.xmp.as_deref(),
+                self.jumbf.as_deref(),
                 self.brotli_metadata_quality,
                 level,
             )
@@ -6700,6 +6778,7 @@ impl LosslessConfig {
             icc_profile: None,
             exif: None,
             xmp: None,
+            jumbf: None,
             source_gamma: None,
             color_encoding: None,
             intensity_target: 255.0,
@@ -8073,19 +8152,20 @@ fn wrap_metadata_container(
     codestream: &[u8],
     exif: Option<&[u8]>,
     xmp: Option<&[u8]>,
+    jumbf: Option<&[u8]>,
     brotli_quality: Option<u32>,
     level: u8,
 ) -> Vec<u8> {
     #[cfg(feature = "brotli-metadata")]
     {
         if let Some(q) = brotli_quality {
-            return crate::container::wrap_in_container_with_brob_and_level(
-                codestream, exif, xmp, q, level,
+            return crate::container::wrap_in_container_with_brob_and_level_and_jumbf(
+                codestream, exif, xmp, jumbf, q, level,
             );
         }
     }
     let _ = brotli_quality;
-    crate::container::wrap_in_container_with_level(codestream, exif, xmp, level)
+    crate::container::wrap_in_container_with_level_and_jumbf(codestream, exif, xmp, level, jumbf)
 }
 
 /// Pick the codestream level required for an image with the given
@@ -8094,7 +8174,7 @@ fn wrap_metadata_container(
 /// `None` (unencodable) case into [`EncodeError::InvalidInput`].
 ///
 /// `num_extra_channels` MUST already include the alpha channel when
-/// the pixel layout carries alpha — the level-5 cap is `≤ 4` extras
+/// the pixel layout carries alpha — the level-5 cap is `<= 4` extras
 /// *including* alpha, matching libjxl `VerifyLevelSettings` which
 /// reads `m.num_extra_channels` (alpha is one of them).
 fn compute_required_level(

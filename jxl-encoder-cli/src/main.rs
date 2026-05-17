@@ -299,6 +299,14 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     xmp: Option<PathBuf>,
 
+    /// JUMBF (ISO 19566-5, C2PA / Content Authenticity Initiative)
+    /// payload file to embed in the output JXL container as a `jumb`
+    /// box. The file must contain a valid JUMBF superbox (typically
+    /// produced by the `c2pa` tooling); we pass the bytes through
+    /// verbatim without validation.
+    #[arg(long, value_name = "FILE")]
+    jumbf: Option<PathBuf>,
+
     /// ICC profile file to embed in the JXL codestream
     #[arg(long, value_name = "FILE")]
     icc: Option<PathBuf>,
@@ -817,6 +825,12 @@ fn main() {
             std::process::exit(1);
         })
     });
+    let jumbf_data = args.jumbf.as_ref().map(|p| {
+        std::fs::read(p).unwrap_or_else(|e| {
+            eprintln!("Error reading JUMBF file {}: {}", p.display(), e);
+            std::process::exit(1);
+        })
+    });
     let icc_data = args.icc.as_ref().map(|p| {
         std::fs::read(p).unwrap_or_else(|e| {
             eprintln!("Error reading ICC file {}: {}", p.display(), e);
@@ -824,13 +838,20 @@ fn main() {
         })
     });
 
-    let metadata = if exif_data.is_some() || xmp_data.is_some() || icc_data.is_some() {
+    let metadata = if exif_data.is_some()
+        || xmp_data.is_some()
+        || jumbf_data.is_some()
+        || icc_data.is_some()
+    {
         let mut meta = jxl_encoder::ImageMetadata::new();
         if let Some(ref exif) = exif_data {
             meta = meta.with_exif(exif);
         }
         if let Some(ref xmp) = xmp_data {
             meta = meta.with_xmp(xmp);
+        }
+        if let Some(ref jumbf) = jumbf_data {
+            meta = meta.with_jumbf(jumbf);
         }
         if let Some(ref icc) = icc_data {
             meta = meta.with_icc_profile(icc);
