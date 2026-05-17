@@ -113,6 +113,15 @@ struct Args {
     #[arg(long, value_name = "F")]
     tree_learning_sample_fraction: Option<f32>,
 
+    /// Per-image smart-fanout for parallel tree learning (lossless only).
+    /// Re-tunes `tree_parallel_max_depth` / `tree_parallel_floor` based
+    /// on input pixel count instead of effort alone. Bitstream-equivalent;
+    /// only changes rayon fanout shape. Wins 5-18% wall-clock on
+    /// small/medium photos at e7/e8/e9; large+e9 is unchanged (per
+    /// `smart_fanout_sweep_2026-05-17`).
+    #[arg(long)]
+    smart_fanout: bool,
+
     /// Disable gaborish inverse pre-filter (on by default).
     /// Without gaborish, the decoder skips its 3x3 blur post-filter.
     #[arg(long)]
@@ -521,6 +530,9 @@ fn main() {
                         }
                         if let Some(f) = args.tree_learning_sample_fraction {
                             lcfg = lcfg.with_tree_learning_sample_fraction(f);
+                        }
+                        if args.smart_fanout {
+                            lcfg = lcfg.with_smart_fanout(true);
                         }
                         if args.experimental {
                             lcfg = lcfg.with_mode(jxl_encoder::EncoderMode::Experimental);
@@ -951,6 +963,9 @@ fn main() {
         }
         if let Some(f) = args.tree_learning_sample_fraction {
             cfg = cfg.with_tree_learning_sample_fraction(f);
+        }
+        if args.smart_fanout {
+            cfg = cfg.with_smart_fanout(true);
         }
         if args.experimental {
             cfg = cfg.with_mode(jxl_encoder::EncoderMode::Experimental);

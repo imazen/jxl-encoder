@@ -167,6 +167,12 @@ codec-corpus = "1.0.1"
 rayon = "1.10"
 # Deterministic RNG for picker oracle scalar sampling.
 fastrand = "2.4.1"
+# NOTE on `zenanalyze` (sibling path dep) — required by
+# `examples/smart_fanout_sweep.rs` (chunk 1 of the smart-fanout investigation,
+# memory/zenanalyze_tree_size_correlation_2026-05-17.md) and the picker-oracle
+# calibration harnesses. Out of CI; re-add locally with:
+#   zenanalyze = { path = "../../zenanalyze", features = ["experimental"] }
+# alongside a [[example]] block for the sweep, then revert before pushing.
 
 # Standard examples (autoexamples is disabled above; list each explicitly).
 [[example]]
@@ -251,6 +257,15 @@ required-features = ["__expert"]
 name = "lossless_e9_buckets_sweep"
 path = "examples/lossless_e9_buckets_sweep.rs"
 required-features = ["__expert"]
+
+# NOTE: smart_fanout_sweep.rs lives under examples/ alongside the picker
+# oracle harnesses below — same deal: depends on the sibling zenanalyze
+# path dep and is NOT a registered cargo example. Run locally with:
+#   cargo run --release --no-default-features \
+#     --features 'std parallel-tree-learning __expert' \
+#     --example smart_fanout_sweep -- --output sweep.tsv --features-output features.tsv
+# (you must temporarily add a [[example]] block + path = "examples/smart_fanout_sweep.rs"
+# matching the pattern below, then revert before pushing).
 
 # Picker oracle calibration harnesses (lossless_pareto_calibrate /
 # lossy_pareto_calibrate / rct_per_image_sweep) live under examples/ but
