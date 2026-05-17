@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`EffortProfile::auto_splines_default(effort: u8) -> bool` and
+  `LossyConfig::auto_splines_explicit()` getter** (follow-on to W6-2 +
+  W7-4 chunk 3). The function centralises the per-effort default for
+  the chunk-3 ridge detector; `with_auto_splines(b)` now flips
+  `auto_splines_explicit = true` so a caller's choice survives
+  subsequent `with_effort()` calls. The function currently returns
+  `false` at every effort (see below). A new
+  `examples/auto_splines_corpus_bench.rs` A/B harness drives 8 real
+  images plus 3 synthetic ridges across e7/e8/e9 for future re-bench
+  passes. Hash-locks 36/36 byte-identical; all 6 `tests/auto_splines.rs`
+  integration tests pass (incl. `auto_splines_default_is_off`,
+  `auto_splines_chunk3_multi_line_decreases_bytes`).
+
+### Investigated
+
+- **Auto-splines default-on at e8+: rejected after bench
+  (`benchmarks/auto_splines_bench_2026-05-17.{tsv,meta}`).** Photo
+  no-regression invariant holds (10/10 byte-identical), but the chunk-3
+  detector's trial-encode cost gate rejects every candidate on every
+  tested image at e8 plus e9 — including the multi-line power-line
+  synthetics the detector was designed to win on at e7. At e7 the
+  detector still nets -138 / -557 bytes on 4-line / 8-line ridges
+  (+118 on the 1-line edge case) via `with_auto_splines(true)`.
+  Flipping default-on at e8+ would ship CPU overhead (Sobel + NMS +
+  Hessian + polyline trace + per-candidate trial encode) for zero
+  byte change across the corpus. Default stays `false` at every
+  effort. When the detector evolves to win at e8+, only
+  `EffortProfile::auto_splines_default` needs updating.
+
 ### Changed
 
 - **Lossy alpha pipeline now fires on mixed-extras frames** (W8-2,

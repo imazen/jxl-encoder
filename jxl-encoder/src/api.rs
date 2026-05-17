@@ -2751,11 +2751,20 @@ pub struct LossyConfig {
     /// add back in the decoder. Mirrors libjxl `enc_heuristics.cc:1048-1054`
     /// (`speed_tier <= kSquirrel`).
     ///
-    /// Default `false`. Chunk 1 (this commit) ships the API + wiring with
-    /// a stub detector that returns an empty vec — produces byte-identical
-    /// output to the default path. Chunk 2 (separate commit) lands a real
-    /// ridge-following detector. See [`Self::with_auto_splines`].
+    /// Default derived from effort via
+    /// [`crate::effort::EffortProfile::auto_splines_default`]
+    /// (`effort >= 8`). When the caller explicitly opts in/out via
+    /// [`Self::with_auto_splines`], [`Self::auto_splines_explicit`]
+    /// flips and the explicit value wins outright (mirroring the
+    /// `patches_explicit` / `butteraugli_iters_explicit` pattern).
     auto_splines: bool,
+    /// Tracks whether the caller has explicitly set `auto_splines`
+    /// via [`Self::with_auto_splines`]. Mirrors the
+    /// `patches_explicit` / `butteraugli_iters_explicit` pattern.
+    /// `false` means the auto-splines enable state derives from the
+    /// per-effort profile default; `true` means the user-set
+    /// [`Self::auto_splines`] wins outright.
+    auto_splines_explicit: bool,
     progressive: ProgressiveMode,
     lf_frame: bool,
     #[cfg(feature = "butteraugli-loop")]
@@ -2935,7 +2944,10 @@ impl LossyConfig {
             auto_resampling: true,
             already_downsampled: false,
             splines: None,
-            auto_splines: false,
+            // Default derived from effort. `with_auto_splines` flips
+            // `auto_splines_explicit = true` and pins the value.
+            auto_splines: crate::effort::EffortProfile::auto_splines_default(profile.effort),
+            auto_splines_explicit: false,
             progressive: ProgressiveMode::Single,
             lf_frame: false,
             #[cfg(feature = "butteraugli-loop")]
@@ -3107,7 +3119,14 @@ impl LossyConfig {
         new.force_strategy = self.force_strategy;
         new.max_strategy_size = self.max_strategy_size;
         new.splines = self.splines;
-        new.auto_splines = self.auto_splines;
+        // Preserve explicit auto_splines setting across with_effort.
+        // Otherwise let the effort-derived default in `new` win, so
+        // that `LossyConfig::new(d).with_effort(8)` flips on the
+        // chunk-3 detector while `with_effort(7)` flips it off.
+        if self.auto_splines_explicit {
+            new.auto_splines = self.auto_splines;
+            new.auto_splines_explicit = true;
+        }
         new.progressive = self.progressive;
         // Preserve explicit butteraugli override
         #[cfg(feature = "butteraugli-loop")]
@@ -3906,19 +3925,28 @@ impl LossyConfig {
     /// reconstruction. Mirrors libjxl `enc_heuristics.cc:1048-1054`
     /// (`speed_tier <= kSquirrel`).
     ///
-    /// **Chunk 1 (this release) ships a stub detector.** The flag is fully
-    /// wired and the gate is active, but
-    /// [`crate::vardct::splines::find_splines`] currently returns an
-    /// empty vec — matching libjxl's own
-    /// `FindSplines` stub at `lib/jxl/enc_splines.cc:104-107`. Enabling
-    /// the flag today is a no-op and produces byte-identical output to
-    /// the default path. A real ridge-following detector lands in chunk 2.
+    /// **Default `false` at every effort level.** A flip-on-at-e8+
+    /// proposal was investigated and rejected: the chunk-3 detector's
+    /// trial-encode cost gate rejects every candidate on every tested
+    /// image at e8 plus e9 (10 / 10 byte-identical, including the multi-line
+    /// power-line synthetics the detector was designed to win on at e7).
+    /// Default-on would ship CPU overhead (Sobel, NMS, Hessian,
+    /// polyline trace, trial-encode) for zero byte change. See
+    /// [`crate::effort::EffortProfile::auto_splines_default`] and
+    /// `benchmarks/auto_splines_bench_2026-05-17.tsv` for the data.
+    ///
+    /// Opt-in usage: `with_auto_splines(true)` at e7 admits the chunk-3
+    /// detector and wins 138 / 557 bytes saved on the 4-line / 8-line
+    /// synthetic ridges (118 bytes cost on the 1-line edge case). Photo
+    /// content stays byte-identical because the gate rejects all
+    /// candidates. Calling this method pins the value across subsequent
+    /// [`Self::with_effort`] calls.
     ///
     /// A manual [`Self::with_splines`] call always wins outright — the
     /// auto-detector is only consulted when no manual splines are set.
-    /// Default `false`.
     pub fn with_auto_splines(mut self, enable: bool) -> Self {
         self.auto_splines = enable;
+        self.auto_splines_explicit = true;
         self
     }
 
@@ -3926,6 +3954,14 @@ impl LossyConfig {
     /// [`Self::with_auto_splines`].
     pub fn auto_splines(&self) -> bool {
         self.auto_splines
+    }
+
+    /// Whether [`Self::auto_splines`] was set explicitly via
+    /// [`Self::with_auto_splines`] (rather than derived from the
+    /// effort-based default in
+    /// [`crate::effort::EffortProfile::auto_splines_default`]).
+    pub fn auto_splines_explicit(&self) -> bool {
+        self.auto_splines_explicit
     }
 
     /// Set progressive encoding mode (default: Single = no progressive).

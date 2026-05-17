@@ -232,6 +232,10 @@ name = "splines_chunk3_bench"
 path = "examples/splines_chunk3_bench.rs"
 
 [[example]]
+name = "auto_splines_corpus_bench"
+path = "examples/auto_splines_corpus_bench.rs"
+
+[[example]]
 name = "patches_gate_bench"
 path = "examples/patches_gate_bench.rs"
 
