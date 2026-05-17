@@ -6393,4 +6393,176 @@ mod tests {
         assert_eq!(total_a, total_b, "total weight must match between paths");
         assert_eq!(total_a, 768, "16x16 RGB single-stride gather expects 768");
     }
+
+    /// Phase 3 of issue #41: dispatching through
+    /// [`gather_samples_strided_with_dedup_backend`] with
+    /// `enable_phase3 = true` must conserve the total gathered weight
+    /// just like Phase 2 does, and produce a unique-sample multiset that
+    /// — after the post-`pre_quantize` sort dedup — agrees with the
+    /// Phase 2 backend on the bucket-equivalence partition.
+    ///
+    /// This is the Layer 1 invariant test for Chunk 2: it doesn't measure
+    /// performance, just bitstream-determining correctness of the new
+    /// dispatch path. The end-to-end real-photo bench owns the perf side.
+    #[test]
+    fn test_gather_dedup_phase3_dispatch_conserves_weight() {
+        let mut pixels = [0u8; 16 * 16 * 3];
+        for y in 0..16u8 {
+            for x in 0..16u8 {
+                let base = (y * 16 + x) as usize * 3;
+                // Same low-entropy pattern used by
+                // test_gather_dedup_then_sort_matches_sort_only — produces
+                // a healthy mix of duplicate and unique samples that
+                // exercises both the Phase 3 fingerprint hit and miss
+                // paths.
+                pixels[base] = (x & 0b1100) << 2;
+                pixels[base + 1] = (y & 0b1100) << 2;
+                pixels[base + 2] = ((x ^ y) & 0b0111) << 4;
+            }
+        }
+        let image = ModularImage::from_rgb8(&pixels, 16, 16).unwrap();
+        let params = TreeLearningParams::for_effort(7);
+
+        // Path A: Phase 2 backend (existing gather-time dedup).
+        let mut samples_p2 = TreeSamples::new();
+        gather_samples_strided_with_dedup_backend(
+            &mut samples_p2,
+            &image,
+            0,
+            0,
+            1,
+            &WeightedPredictorParams::default(),
+            None,
+            true,
+            false, // enable_phase3
+            &params.properties,
+        )
+        .unwrap();
+        let p2_total: u32 = samples_p2.sample_counts.iter().sum();
+        assert_eq!(
+            p2_total, 768,
+            "Phase 2 dispatch must conserve total weight (16x16 RGB stride=1)"
+        );
+        assert_eq!(
+            samples_p2.sample_counts.len(),
+            samples_p2.num_samples,
+            "Phase 2 sample_counts must stay in lockstep with num_samples",
+        );
+
+        // Path B: Phase 3 backend (new InlineDedupTable dispatch).
+        let mut samples_p3 = TreeSamples::new();
+        gather_samples_strided_with_dedup_backend(
+            &mut samples_p3,
+            &image,
+            0,
+            0,
+            1,
+            &WeightedPredictorParams::default(),
+            None,
+            true,
+            true, // enable_phase3
+            &params.properties,
+        )
+        .unwrap();
+        let p3_total: u32 = samples_p3.sample_counts.iter().sum();
+        assert_eq!(
+            p3_total, 768,
+            "Phase 3 dispatch must conserve total weight (16x16 RGB stride=1)"
+        );
+        assert_eq!(
+            samples_p3.sample_counts.len(),
+            samples_p3.num_samples,
+            "Phase 3 sample_counts must stay in lockstep with num_samples",
+        );
+
+        // Phase 3 should also collapse some duplicate rows — same
+        // smoke-test as the conservation test for Phase 2.
+        assert!(
+            samples_p3.num_samples < 768,
+            "Phase 3 expected to collapse at least some duplicates on a low-entropy pattern (got num_samples={})",
+            samples_p3.num_samples,
+        );
+
+        // Post-`pre_quantize` sort dedup arbitration: both backends must
+        // produce the same bucket-equivalence multiset. This is the
+        // invariant that lets hash-locks stay byte-identical.
+        let mut params_b2 = TreeLearningParams::for_effort(7);
+        params_b2.gather_dedup = true;
+        let mut pq_p2 = samples_p2.pre_quantize(&params_b2);
+        dedup_samples(&mut samples_p2, &mut pq_p2, &params_b2);
+        let mut pq_p3 = samples_p3.pre_quantize(&params_b2);
+        dedup_samples(&mut samples_p3, &mut pq_p3, &params_b2);
+
+        let collect_multiset = |samples: &TreeSamples,
+                                pq: &PreQuantizedProps,
+                                params: &TreeLearningParams|
+         -> std::collections::BTreeMap<Vec<u8>, u32> {
+            let n = samples.num_samples;
+            let num_pred = samples.num_predictors();
+            let mut multiset: std::collections::BTreeMap<Vec<u8>, u32> =
+                std::collections::BTreeMap::new();
+            for i in 0..n {
+                let mut key = Vec::with_capacity(params.properties.len() + 2 * num_pred);
+                for &prop_idx in &params.properties {
+                    let bi = &pq.bucket_indices[prop_idx];
+                    key.push(if bi.is_empty() { 0 } else { bi[i] });
+                }
+                for pred in 0..num_pred {
+                    key.push(samples.residual_tokens[pred][i]);
+                    key.push(samples.extra_bits[pred][i]);
+                }
+                *multiset.entry(key).or_insert(0) += samples.sample_counts[i];
+            }
+            multiset
+        };
+
+        let multiset_p2 = collect_multiset(&samples_p2, &pq_p2, &params_b2);
+        let multiset_p3 = collect_multiset(&samples_p3, &pq_p3, &params_b2);
+        assert_eq!(
+            multiset_p2, multiset_p3,
+            "Phase 2 and Phase 3 backends must produce the same post-sort bucket-equivalence multiset",
+        );
+    }
+
+    /// `phase3_packing_fits` is the construction-time precondition test
+    /// the dispatcher uses to decide whether [`crate::modular::inline_dedup_table::InlineDedupTable`]
+    /// can be activated for the configured (num_pred, num_props) combination.
+    /// Pinned cases to keep the boundary explicit.
+    #[test]
+    fn test_phase3_packing_fits_pinned_cases() {
+        use crate::modular::inline_dedup_table::KEY_BYTES;
+        assert_eq!(KEY_BYTES, 64, "test pinned to KEY_BYTES = 64");
+
+        // e7 RGB: 14 candidate predictors × 2 = 28 bytes, 9 props × 4 = 36 bytes.
+        // Total 64 bytes — exact fit.
+        assert!(
+            phase3_packing_fits(14, 9),
+            "e7 RGB (14 pred, 9 props) must fit"
+        );
+
+        // e9 RGB: 14 × 2 + 24 × 4 = 28 + 96 = 124. Overflow.
+        assert!(
+            !phase3_packing_fits(14, 24),
+            "e9 RGB (14 pred, 24 props) must overflow → Phase 2 fallback"
+        );
+
+        // Edge cases.
+        assert!(
+            phase3_packing_fits(0, 16),
+            "0 pred + 16 props × 4 = 64 bytes exactly"
+        );
+        assert!(
+            !phase3_packing_fits(0, 17),
+            "0 pred + 17 props × 4 = 68 bytes overflow"
+        );
+        assert!(
+            phase3_packing_fits(32, 0),
+            "32 pred × 2 = 64 bytes exactly"
+        );
+        assert!(
+            !phase3_packing_fits(33, 0),
+            "33 pred × 2 = 66 bytes overflow"
+        );
+        assert!(phase3_packing_fits(0, 0), "empty configuration trivially fits");
+    }
 }
