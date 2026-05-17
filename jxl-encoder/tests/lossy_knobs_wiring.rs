@@ -151,15 +151,11 @@ fn group_order_zero_disables_center_first() {
 }
 
 #[test]
-fn alpha_distance_lossless_path_byte_identical_today() {
-    // alpha_distance is stored on the config and threaded to
-    // VarDctEncoder, but the alpha extras subimage is still emitted
-    // losslessly (gradient predictor + LZ77 RLE). Until the lossy
-    // alpha pipeline lands, alpha_distance must be a no-op on bytes.
-    //
-    // This test guards the documented contract on
-    // LossyConfig::with_alpha_distance so a future change to the
-    // alpha path can flip this test deliberately rather than silently.
+fn alpha_distance_unset_and_zero_are_lossless_byte_identical() {
+    // `None` and `Some(0.0)` both mean "lossless alpha"; they MUST
+    // emit identical bytes (default path, byte-for-byte equal to the
+    // pre-pipeline lossless baseline). Guards the documented contract
+    // on `LossyConfig::with_alpha_distance`.
     let w = 32u32;
     let h = 32u32;
     let buf = rgba8_buf(w, h);
@@ -171,21 +167,52 @@ fn alpha_distance_lossless_path_byte_identical_today() {
         .with_alpha_distance(Some(0.0))
         .encode(&buf, w, h, PixelLayout::Rgba8)
         .unwrap();
-    let nonzero = LossyConfig::new(1.0)
-        .with_alpha_distance(Some(2.0))
-        .encode(&buf, w, h, PixelLayout::Rgba8)
-        .unwrap();
 
     assert_eq!(
         unset, zero,
         "alpha_distance=None and alpha_distance=Some(0.0) must produce \
          identical bytes (both mean lossless alpha)"
     );
-    assert_eq!(
-        unset, nonzero,
-        "alpha_distance=Some(2.0) is recorded on the encoder but the \
-         lossy alpha pipeline is not yet wired (see encoder docs); \
-         bytes must be identical to the lossless baseline today. \
-         When the lossy alpha path lands, flip this assertion to assert_ne!."
+}
+
+#[test]
+fn alpha_distance_nonzero_changes_bytes() {
+    // alpha_distance > 0 with a single alpha extra channel must engage
+    // the lossy alpha pipeline (separate modular multiplier on the
+    // alpha sub-bitstream, matching libjxl
+    // `enc_modular.cc:973-1027 + QuantizeChannel`). Bytes must differ
+    // from the lossless baseline; this is the wiring proof for the
+    // follow-on to W4-2-r.
+    let w = 32u32;
+    let h = 32u32;
+    let buf = rgba8_buf(w, h);
+
+    let lossless = LossyConfig::new(1.0)
+        .encode(&buf, w, h, PixelLayout::Rgba8)
+        .unwrap();
+    // d=2 yields q ≈ 3 at 8-bit (libjxl formula: 0.025 * 2 * 1 *
+    // 0.35 * 1.1 * 163.84 ≈ 3.15 → floor 3) so the tree carries
+    // mul_bits=2, mul_log=0 and residuals divide by 3.
+    let lossy_low = LossyConfig::new(1.0)
+        .with_alpha_distance(Some(2.0))
+        .encode(&buf, w, h, PixelLayout::Rgba8)
+        .unwrap();
+    // d=10 yields q ≈ 15 — definitely visible.
+    let lossy_high = LossyConfig::new(1.0)
+        .with_alpha_distance(Some(10.0))
+        .encode(&buf, w, h, PixelLayout::Rgba8)
+        .unwrap();
+
+    assert_ne!(
+        lossless, lossy_low,
+        "alpha_distance=Some(2.0) must engage the lossy alpha tree \
+         leaf (mul_bits=2, mul_log=0) and produce bytes different \
+         from the lossless baseline"
+    );
+    assert_ne!(
+        lossless, lossy_high,
+        "alpha_distance=Some(10.0) must engage the lossy alpha tree \
+         leaf (mul_bits=14, mul_log=0) and produce bytes different \
+         from the lossless baseline"
     );
 }

@@ -69,6 +69,99 @@ pub(crate) fn write_tree_histogram_for_gradient(
     write_tree_histogram_for_predictor_impl(writer, true, 5)
 }
 
+/// Write a tree histogram for a single-leaf Gradient-predictor tree that
+/// also carries a non-unit multiplier `(mul_log, mul_bits)` such that
+/// the decoder reconstructs `pixel = val * multiplier + prediction`
+/// with `multiplier = (mul_bits + 1) << mul_log`.
+///
+/// This is the lossy alpha-extras path (libjxl `QuantizeChannel` +
+/// `ModularMultiplierInfo`). Histogram alphabet is widened to cover the
+/// extra symbols produced by `mul_log` / `mul_bits` so the Huffman codes
+/// emitted here match the tokens written by
+/// [`write_gradient_tree_tokens_lossy`].
+pub(crate) fn write_tree_histogram_for_gradient_lossy(
+    writer: &mut BitWriter,
+    mul_log: u32,
+    mul_bits: u32,
+) -> Result<(Vec<u8>, Vec<u16>)> {
+    // Tree tokens are [property=0, predictor=5, offset=0, mul_log, mul_bits].
+    // Counts per symbol: symbol 0 appears once for property and once for
+    // offset (=2), symbol 5 appears once for predictor, plus one each for
+    // mul_log and mul_bits (which may coincide with each other or with
+    // symbol 0 / 5). At extreme alpha distances `mul_bits` can be much
+    // larger than 5 (e.g. q=39 → mul_log=0, mul_bits=38), so size the
+    // histogram by max(mul_log, mul_bits, 5).
+    let max_symbol = mul_log.max(mul_bits).max(5) as u16;
+    let used = (max_symbol as usize) + 1;
+    let mut tree_histogram = vec![0u32; used];
+    tree_histogram[0] += 2; // property + offset
+    tree_histogram[5] += 1; // predictor = 5 (Gradient)
+    tree_histogram[mul_log as usize] += 1;
+    tree_histogram[mul_bits as usize] += 1;
+    let tree_histogram = &tree_histogram[..];
+
+    // lz77.enabled = 0
+    writer.write(1, 0)?;
+    // Context map: is_simple=1, bits_per_entry=0
+    writer.write(1, 1)?;
+    writer.write(2, 0)?;
+    // use_prefix_code = 1
+    writer.write(1, 1)?;
+
+    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    write_integer_config(
+        writer,
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX,
+        0,
+        0,
+    )?;
+    write_varlen_u16(writer, max_symbol)?;
+
+    let (depths, codes) = if used > 1 {
+        let table = build_and_store_huffman_tree(tree_histogram, writer)?;
+        (table.depths, table.codes)
+    } else {
+        (vec![0u8; used], vec![0u16; used])
+    };
+
+    Ok((depths, codes))
+}
+
+/// Write a single-leaf Gradient-predictor tree's tokens with a
+/// non-unit multiplier. Pairs with
+/// [`write_tree_histogram_for_gradient_lossy`].
+pub(crate) fn write_gradient_tree_tokens_lossy(
+    writer: &mut BitWriter,
+    depths: &[u8],
+    codes: &[u16],
+    mul_log: u32,
+    mul_bits: u32,
+) -> Result<()> {
+    // Tokens: property=0, predictor=5, offset=0, mul_log, mul_bits
+    let tokens = [0u32, 5, 0, mul_log, mul_bits];
+    for &token in &tokens {
+        let depth = depths.get(token as usize).copied().unwrap_or(0);
+        let code = codes.get(token as usize).copied().unwrap_or(0);
+        if depth > 0 {
+            writer.write(depth as usize, code as u64)?;
+        }
+    }
+    Ok(())
+}
+
+/// Decompose `q >= 1` into `(mul_log, mul_bits)` such that
+/// `q == (mul_bits + 1) << mul_log`. Mirrors
+/// [`super::tree::decompose_multiplier`] but is exposed for the lossy
+/// alpha encoder.
+pub(crate) fn decompose_multiplier_pub(q: u32) -> (u32, u32) {
+    let q = q.max(1);
+    let trailing = q.trailing_zeros();
+    let mul_log = trailing;
+    let mul_bits = (q >> trailing) - 1;
+    (mul_log, mul_bits)
+}
+
 /// Write a tree histogram for a single-leaf tree with Zero predictor.
 /// Returns (depths, codes) for use in encoding tree tokens.
 pub(crate) fn write_tree_histogram_for_zero(writer: &mut BitWriter) -> Result<(Vec<u8>, Vec<u16>)> {

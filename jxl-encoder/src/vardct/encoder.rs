@@ -370,19 +370,22 @@ pub struct VarDctEncoder {
     /// `cparams.center_y` (`JXL_ENC_FRAME_SETTING_GROUP_ORDER_CENTER_Y`).
     pub center_y: Option<u32>,
     /// Optional separate butteraugli distance for the alpha extra
-    /// channel (CLI passthrough — libjxl
-    /// `cjxl --alpha_distance`, `enc_params.h:alpha_distance`). `None`
-    /// (default) keeps the existing pipeline behaviour: the alpha
-    /// extra channel is encoded losslessly via the modular extras
-    /// writer (gradient predictor + LZ77 RLE).
+    /// channel (CLI passthrough — libjxl `cjxl --alpha_distance`,
+    /// `enc_params.h:alpha_distance`). `None` (default) and
+    /// `Some(0.0)` keep the lossless alpha path (gradient predictor
+    /// + LZ77 RLE).
     ///
-    /// `Some(0.0)` is treated identically to `None` (explicit lossless).
-    /// `Some(d)` where `d > 0.0` is currently recorded on the encoder
-    /// for downstream wiring — the lossy alpha path itself (separate
-    /// quantisation matrix for the alpha modular subimage) is queued
-    /// follow-on; today the alpha bytes are still emitted losslessly
-    /// regardless of `d`. This matches the staged plumbing approach
-    /// documented on [`crate::api::LossyConfig::with_alpha_distance`].
+    /// `Some(d)` with `d > 0.0` engages the lossy alpha pipeline:
+    /// computes an integer pixel quantizer via
+    /// [`Self::compute_alpha_pixel_quantizer`] (libjxl no-squeeze
+    /// formula, `enc_modular.cc:973-1027`), pre-quantizes each alpha
+    /// pixel to the nearest multiple of `q`, and emits the modular
+    /// extras tree's single leaf with `(mul_log, mul_bits)` carrying
+    /// that multiplier so the decoder reconstructs
+    /// `pixel = prediction + val * q`
+    /// (`modular/encoding/encoding.cc:186-191`). Only applied when
+    /// there is exactly one extra channel — mixed-extras inputs stay
+    /// lossless until per-channel multiplier dispatch lands.
     pub alpha_distance: Option<f32>,
     /// Policy for non-finite XYB values at the conversion→pipeline
     /// boundary. See [`crate::api::NonFiniteAction`].
@@ -543,6 +546,74 @@ impl VarDctEncoder {
         if let Some(level) = self.epf_level_override {
             params.epf_iters = level;
         }
+    }
+
+    /// Compute the integer pixel quantizer `q` to apply to a single
+    /// alpha extra channel from [`Self::alpha_distance`] and the
+    /// extras' bit depth, mirroring libjxl's lossy-modular
+    /// `quantizers[component] * squeeze_quality_factor *
+    /// squeeze_luma_factor * squeeze_luma_qtable[shift]` at
+    /// `shift = 0` and `responsive = false`
+    /// (`enc_modular.cc:973-1027`):
+    ///
+    /// - `quantizer = 0.25 * 0.1 = 0.025` (no-squeeze, "just color quantization")
+    /// - `bitdepth_correction = (2^bits - 1) / 255`
+    /// - `q_float = quantizer * dist * bitdepth_correction
+    ///            * squeeze_quality_factor (0.35) * squeeze_luma_factor (1.1)
+    ///            * squeeze_luma_qtable[0] (163.84)`
+    /// - `q = max(1, floor(q_float))`
+    ///
+    /// Returns `1` whenever the value resolves to lossless: `None`,
+    /// `Some(d)` with `d <= 0.0`, or any input that yields `q < 1`
+    /// after the libjxl truncation. `q == 1` keeps the bitstream
+    /// byte-for-byte identical to the pre-pipeline lossless path.
+    /// `extras_count > 1` also returns `1` because the current shared
+    /// extras tree carries one multiplier for all channels; mixed
+    /// extras stay lossless until per-channel multiplier dispatch
+    /// lands.
+    pub(crate) fn compute_alpha_pixel_quantizer(
+        &self,
+        extras_bits: u32,
+        extras_count: usize,
+    ) -> u32 {
+        let Some(dist) = self.alpha_distance else {
+            return 1;
+        };
+        if dist <= 0.0 || extras_count != 1 {
+            return 1;
+        }
+        // libjxl clamps non-zero alpha_distance to [0.01, 25.0] at the
+        // public API boundary (encode.cc:1558). Mirror the lower clamp
+        // here so callers writing `Some(0.001)` don't silently regress
+        // to lossless.
+        let dist = dist.clamp(0.01, 25.0);
+        let ec_maxval = if extras_bits >= 32 {
+            // i32::MAX would overflow the (1<<bits)-1 calc; libjxl
+            // treats it as 0 (no correction). Treat the same way.
+            0u64
+        } else {
+            (1u64 << extras_bits) - 1
+        };
+        let bitdepth_correction = if ec_maxval == 0 {
+            1.0
+        } else {
+            (ec_maxval as f32) / 255.0
+        };
+        const QUANTIZER: f32 = 0.025; // 0.25 * 0.1 (no responsive/squeeze)
+        const SQUEEZE_QUALITY_FACTOR: f32 = 0.35;
+        const SQUEEZE_LUMA_FACTOR: f32 = 1.1;
+        const SQUEEZE_LUMA_QTABLE_0: f32 = 163.84;
+        let q_float = QUANTIZER
+            * dist
+            * bitdepth_correction
+            * SQUEEZE_QUALITY_FACTOR
+            * SQUEEZE_LUMA_FACTOR
+            * SQUEEZE_LUMA_QTABLE_0;
+        // libjxl truncates float→int via implicit conversion (C++
+        // `int q = ...`), so we match with `floor`. Anything < 1
+        // clamps to 1 (lossless).
+        let q = q_float.floor() as i64;
+        if q < 1 { 1 } else { q as u32 }
     }
 
     /// Encode an image in linear sRGB format, optionally with an alpha channel.
