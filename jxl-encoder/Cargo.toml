@@ -247,6 +247,13 @@ name = "drift_block_map"
 path = "examples/drift_block_map.rs"
 required-features = ["__internal_recon_hook", "butteraugli-loop"]
 
+# RFC#45 chunk 1: e10/e11 paired A/B/C bench.
+# Needs the butteraugli-loop feature to enable e10/e11 iter extensions.
+[[example]]
+name = "e10_e11_paired_ab"
+path = "examples/e10_e11_paired_ab.rs"
+required-features = ["butteraugli-loop"]
+
 [[example]]
 name = "lossless_cliff_profile"
 path = "examples/lossless_cliff_profile.rs"

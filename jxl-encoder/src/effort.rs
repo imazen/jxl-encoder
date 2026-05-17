@@ -500,8 +500,13 @@ pub struct EffortProfile {
 
 impl EffortProfile {
     /// Create an effort profile for lossy (VarDCT) encoding.
+    ///
+    /// Accepts effort in `1..=11`. e10/e11 are our extensions beyond libjxl's
+    /// kTortoise=9 ceiling: longer search budgets (more butteraugli iters at
+    /// e10/e11, multi-seed tree learning at e10+ in a follow-on chunk). The
+    /// bitstream remains 100% spec-valid — only encoder search effort changes.
     pub fn lossy(effort: u8, mode: EncoderMode) -> Self {
-        let effort = effort.clamp(1, 10);
+        let effort = effort.clamp(1, 11);
         match mode {
             EncoderMode::Reference => Self::lossy_reference(effort),
             EncoderMode::Experimental => Self::lossy_experimental(effort),
@@ -509,8 +514,12 @@ impl EffortProfile {
     }
 
     /// Create an effort profile for lossless (modular) encoding.
+    ///
+    /// Accepts effort in `1..=11`. e10/e11 reserve future multi-seed tree
+    /// learning (chunk 2 of RFC#45 pick #1). Today they fall through to the
+    /// e9 (kTortoise) lossless code paths.
     pub fn lossless(effort: u8, mode: EncoderMode) -> Self {
-        let effort = effort.clamp(1, 10);
+        let effort = effort.clamp(1, 11);
         match mode {
             EncoderMode::Reference => Self::lossless_reference(effort),
             EncoderMode::Experimental => Self::lossless_experimental(effort),
@@ -562,9 +571,17 @@ impl EffortProfile {
                 // encoding. Gated at speed_tier <= kKitten (effort >= 8) in libjxl
                 // (enc_adaptive_quantization.cc:1282). kDefaultButteraugliIters=2,
                 // kMaxButteraugliIters=4 for kTortoise (effort 9+).
+                //
+                // RFC#45 chunk 1: e10/e11 extend the budget past libjxl's cap.
+                // The loop already structurally bounds itself at
+                // `MAX_QUANT_LOOP_ITERS=16` (see butteraugli_loop.rs:151), so
+                // `_ => 16` is the natural saturation point — no infinite-loop
+                // risk even if a future effort level requests more.
                 0..=7 => 0,
                 8 => 2,
-                _ => 4,
+                9 => 4,
+                10 => 8,
+                _ => 16,
             },
 
             // ── AC strategy search ──
@@ -1587,14 +1604,38 @@ mod tests {
     fn test_effort_clamp() {
         let p = EffortProfile::lossy(0, EncoderMode::Reference);
         assert_eq!(p.effort, 1);
+        // RFC#45 chunk 1: clamp bumped 10 → 11 to admit e10/e11.
         let p = EffortProfile::lossy(99, EncoderMode::Reference);
-        assert_eq!(p.effort, 10);
+        assert_eq!(p.effort, 11);
+    }
+
+    #[test]
+    fn test_butteraugli_iters_e10_e11_extended() {
+        // RFC#45 chunk 1: longer butteraugli search budgets at e10/e11.
+        // e9 = libjxl kTortoise max (4 iters), e10 = 8, e11 = 16
+        // (saturated at MAX_QUANT_LOOP_ITERS = ITER_MAX = 16).
+        let p9 = EffortProfile::lossy(9, EncoderMode::Reference);
+        let p10 = EffortProfile::lossy(10, EncoderMode::Reference);
+        let p11 = EffortProfile::lossy(11, EncoderMode::Reference);
+        assert_eq!(p9.butteraugli_iters, 4, "e9 = libjxl kTortoise default");
+        assert_eq!(p10.butteraugli_iters, 8, "e10 = 2× e9 budget");
+        assert_eq!(
+            p11.butteraugli_iters, 16,
+            "e11 = 4× e9, saturated at MAX_QUANT_LOOP_ITERS"
+        );
+        // Sanity: stays at saturation cap even if effort overshoots.
+        // (The lossy() clamp pins at 11; verify the table never returns
+        // anything above the loop's structural cap.)
+        assert!(
+            p11.butteraugli_iters as u32 <= crate::api::MAX_QUANT_LOOP_ITERS,
+            "butteraugli_iters must not exceed MAX_QUANT_LOOP_ITERS"
+        );
     }
 
     #[test]
     fn test_experimental_diverges_from_reference() {
         // Experimental should share effort/feature-flag structure with reference
-        for effort in 1..=10 {
+        for effort in 1..=11 {
             let r = EffortProfile::lossy(effort, EncoderMode::Reference);
             let e = EffortProfile::lossy(effort, EncoderMode::Experimental);
             assert_eq!(r.effort, e.effort);

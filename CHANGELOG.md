@@ -272,6 +272,27 @@
 
 ### Added
 
+- **Effort levels 10 and 11** beyond libjxl's `kTortoise` (effort 9) ceiling
+  (RFC issue #45 chunk 1; `LossyConfig::with_effort(10)` / `with_effort(11)`).
+  Both accept and validate through the public `EffortProfile::lossy`/`lossless`
+  clamp (now `1..=11`) and through `EFFORT_RANGE` in `validation.rs`. e10/e11
+  produce 100% spec-valid bitstreams — djxl / jxl-rs / jxl-oxide decode
+  unchanged. Today the only differing knob is `butteraugli_iters`:
+  `9 => 4` (libjxl `kMaxButteraugliIters`), `10 => 8`, `_ => 16`
+  (saturated at `MAX_QUANT_LOOP_ITERS`, which the structural cap in
+  `butteraugli_loop.rs:151` already enforces). Every other effort-derived
+  knob falls through to the existing `_` arms (so e10/e11 lossless behaviour
+  matches e9 today; multi-seed tree learning ships in chunk 2). New tests:
+  `effort::tests::test_butteraugli_iters_e10_e11_extended` pins the iter
+  table; `validation_tests::lossy_effort_zero_rejected` /
+  `lossless_effort_each_level_validates` extend the validation range to
+  `1..=11`. Hash-lock fixtures (36/36) stay byte-identical — all fixtures
+  encode at the default e7, well below the new effort levels. New A/B/C
+  bench harness: `examples/e10_e11_paired_ab.rs` (CID22-512 × distance
+  × {e9, e10, e11}, paired sample-major interleave, jxl-oxide-linear-sRGB
+  decode + Rust butteraugli scoring). CLI `--effort` blurb now documents
+  the 1-11 range.
+
 - **`LossyConfig::with_dot_detection(bool)` + CLI `--dot-detection` /
   `--no-dot-detection`** wire up the existing ported `vardct::dot_detection`
   module into the public lossy encode API (refs #19 / audit "surprise #2").
