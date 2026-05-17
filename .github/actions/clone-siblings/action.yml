@@ -14,6 +14,9 @@ description: >
       `load_8x8(block)` signature and our magetypes ^0.9.23 floor requires
       `load_8x8(token, block)`. The 0.8.4 fix is unpublished pending a
       coordinated zenjpeg release.
+    - imazen/zenanalyze → ../zenanalyze (zenjpeg's workspace Cargo.toml
+      declares `zenanalyze = { path = "../zenanalyze", version = "0.1" }`,
+      so Cargo can't even parse zenjpeg's manifest without it on disk).
 
 runs:
   using: composite
@@ -23,8 +26,12 @@ runs:
       run: |
         set -euxo pipefail
         # Layout (relative to GITHUB_WORKSPACE):
-        #   ../zenjpeg -> imazen/zenjpeg (workspace Cargo.toml path-patches
-        #                                 ../zenjpeg/zenjpeg)
+        #   ../zenjpeg    -> imazen/zenjpeg (workspace Cargo.toml path-patches
+        #                                    ../zenjpeg/zenjpeg)
+        #   ../zenanalyze -> imazen/zenanalyze (zenjpeg's workspace Cargo.toml
+        #                                       declares a `path = "../zenanalyze"`
+        #                                       dep, required for Cargo to parse
+        #                                       zenjpeg's manifest)
         parent="$(dirname "$GITHUB_WORKSPACE")"
         clone_if_missing() {
           local url="$1" dst="$2" branch="${3:-}"
@@ -39,6 +46,7 @@ runs:
           fi
         }
         clone_if_missing https://github.com/imazen/zenjpeg "$parent/zenjpeg"
+        clone_if_missing https://github.com/imazen/zenanalyze "$parent/zenanalyze"
 
     - name: Append sibling-clone pre-build hook to Cross.toml
       shell: bash
@@ -68,13 +76,16 @@ runs:
         printf '%s\n' '' \
           '# BEGIN clone-siblings pre-build hook' \
           '# Appended by .github/actions/clone-siblings during CI.' \
-          '# Clones imazen/zenjpeg into /zenjpeg so the workspace' \
-          '# `[patch.crates-io]` `path = "../zenjpeg/zenjpeg"` resolves' \
-          '# inside the cross-rs container (workspace is mounted at /project).' \
+          '# Clones imazen/zenjpeg + imazen/zenanalyze into /zenjpeg' \
+          '# and /zenanalyze so the workspace `[patch.crates-io]`' \
+          '# `path = "../zenjpeg/zenjpeg"` AND zenjpegs nested' \
+          '# `path = "../zenanalyze"` both resolve inside the cross-rs' \
+          '# container (workspace is mounted at /project).' \
           '[build]' \
           'pre-build = [' \
           '    "apt-get update && apt-get install -y --no-install-recommends git ca-certificates",' \
           '    "git clone --depth 1 https://github.com/imazen/zenjpeg /zenjpeg",' \
+          '    "git clone --depth 1 https://github.com/imazen/zenanalyze /zenanalyze",' \
           ']' \
           '# END clone-siblings pre-build hook' \
           >> "$cross_toml"
