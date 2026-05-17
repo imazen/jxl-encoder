@@ -69,6 +69,7 @@ pub use api::{
 #[doc(hidden)]
 pub use effort::EffortProfile;
 pub use effort::EntropyMulTable;
+pub use effort::ImageContentClass;
 #[cfg(feature = "__expert")]
 pub use effort::{LosslessInternalParams, LossyInternalParams};
 pub use headers::color_encoding::{

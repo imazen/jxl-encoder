@@ -1075,6 +1075,87 @@ impl EffortProfile {
             self.try_dct64 = false;
         }
     }
+
+    /// Content-class-aware per-image adapter (RFC #45 pick #4 chunk 1).
+    ///
+    /// Specializes encoder defaults based on a coarse content class
+    /// (`Photo` vs `Screenshot` vs `Other` vs `Unknown`). Designed to be
+    /// called *after* [`Self::adapt_to_image_lossy`] /
+    /// [`Self::adapt_to_image`] so the size-dependent gates run first.
+    ///
+    /// **Current dispatch rule (chunk 1)** — `Screenshot`-class content
+    /// at lossy effort 5 / 6 with `pixels >= CONTENT_CLASS_MIN_PIXELS`
+    /// (256 × 256 = 65 536) and `distance > 0.0` flips
+    /// `self.patches = true`. The libjxl default keeps patches off until
+    /// effort 7 for VarDCT; on screenshots the per-corpus measured
+    /// savings (≈ 37 % on GB82-SC at e7) justify enabling them one or two
+    /// effort levels earlier. Photos and unknown-class inputs are
+    /// untouched, so hash-locks on the standard fixtures stay byte-
+    /// identical (those fixtures are all sub-256² synthetic test images,
+    /// well below the `CONTENT_CLASS_MIN_PIXELS` gate).
+    ///
+    /// All other content classes / effort levels are no-ops; the dispatch
+    /// surface is extensible and future chunks can add more rules
+    /// (per-class `tree_max_buckets`, per-class `try_dct4x8_afv`, etc.)
+    /// without breaking callers.
+    ///
+    /// **Spec-compliance**: every dispatched change leaves the bitstream
+    /// 100 % spec-valid (patches is a normal encoder feature, libjxl
+    /// decoder reads it natively).
+    ///
+    /// **Effort gate rationale**: the dispatch fires at e ∈ {5, 6} because
+    /// (a) e7 already has patches on by default and (b) e ≤ 4 disables
+    /// most VarDCT machinery that patches piggybacks on (AC strategy
+    /// search). The pixel gate excludes synthetic fixtures (the largest
+    /// hash-lock fixture is 48 × 48 = 2 304 px, three orders of magnitude
+    /// below 65 536).
+    pub fn adapt_to_image_content(
+        &mut self,
+        pixels: u64,
+        distance: f32,
+        content_class: ImageContentClass,
+    ) {
+        if pixels < CONTENT_CLASS_MIN_PIXELS {
+            return;
+        }
+        if content_class == ImageContentClass::Screenshot
+            && distance > 0.0
+            && (self.effort == 5 || self.effort == 6)
+            && !self.patches
+        {
+            self.patches = true;
+        }
+    }
+}
+
+/// Coarse content class used by [`EffortProfile::adapt_to_image_content`].
+///
+/// Computed externally (typically via the optional `zenanalyze` integration
+/// in [`crate::api`]); the [`EffortProfile`] surface intentionally
+/// does not depend on the feature-extraction crate. Callers that don't have
+/// classification available should pass [`Self::Unknown`] — every dispatch
+/// rule treats it as "no change".
+///
+/// **Stability**: the variant set is `#[non_exhaustive]`; future chunks may
+/// add classes (e.g., `Illustration`, `Document`, `LineArt`) without a
+/// breaking change. Match arms must use `_` for the catch-all.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImageContentClass {
+    /// No classification available (default). Every dispatch rule treats
+    /// this as "leave profile alone".
+    #[default]
+    Unknown,
+    /// Natural photograph — high `edge_density`, low
+    /// `flat_color_block_ratio`, non-zero `skin_tone_fraction` on portraits.
+    Photo,
+    /// Screen content — UI / document / terminal capture. High
+    /// `flat_color_block_ratio` and `uniformity`, low `chroma_complexity`.
+    /// Drives `patches` enablement at lower effort levels.
+    Screenshot,
+    /// Other / mixed content that fits none of the above buckets cleanly.
+    /// No dispatch rules fire on this class today.
+    Other,
 }
 
 /// Pixel-count threshold below which the parallel-tree-learning path
@@ -1102,6 +1183,12 @@ pub const LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD: u64 = 500_000;
 /// adapter disables the DCT64 strategy class on small images.
 /// See [`EffortProfile::adapt_to_image_lossy`].
 pub const LOSSY_LOW_DISTANCE_THRESHOLD: f32 = 2.0;
+
+/// Minimum pixel count for content-class dispatch to consider firing.
+/// Below this the classifier is unreliable (synthetic / thumbnail content)
+/// and the per-fixture hash-locks are well below the threshold.
+/// See [`EffortProfile::adapt_to_image_content`].
+pub const CONTENT_CLASS_MIN_PIXELS: u64 = 65_536;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public expert surface — segmented Lossy / Lossless internal-param structs
@@ -2063,5 +2150,86 @@ mod tests {
             !p.try_dct64,
             "lossy experimental e7 small + low-d: adapter still fires"
         );
+    }
+
+    /// RFC #45 pick #4 chunk 1 — `adapt_to_image_content` must flip
+    /// `patches = true` on Screenshot-class content at e ∈ {5, 6} with
+    /// `pixels >= CONTENT_CLASS_MIN_PIXELS`. All other (class, effort,
+    /// pixels, distance) tuples must be no-ops.
+    #[test]
+    fn test_adapt_to_image_content_screenshot_enables_patches_at_e5_e6() {
+        // 1. Screenshot at e5/e6, above pixel + distance threshold: fires.
+        for effort in [5u8, 6] {
+            for &pixels in &[CONTENT_CLASS_MIN_PIXELS, 262_144, 1_048_576, 4_194_304] {
+                for &distance in &[0.5_f32, 1.0, 2.0, 5.0] {
+                    let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+                    assert!(
+                        !p.patches,
+                        "baseline e{effort}: patches must be false (gate is e>=7)"
+                    );
+                    p.adapt_to_image_content(pixels, distance, ImageContentClass::Screenshot);
+                    assert!(
+                        p.patches,
+                        "e{effort} pixels={pixels} d={distance} Screenshot: \
+                         patches must flip to true"
+                    );
+                }
+            }
+        }
+
+        // 2. Other content classes: no fire at e5/e6.
+        for class in [
+            ImageContentClass::Unknown,
+            ImageContentClass::Photo,
+            ImageContentClass::Other,
+        ] {
+            for effort in [5u8, 6] {
+                let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+                p.adapt_to_image_content(262_144, 1.0, class);
+                assert!(
+                    !p.patches,
+                    "e{effort} class={class:?}: patches must stay false"
+                );
+            }
+        }
+
+        // 3. Below pixel threshold: no fire even on Screenshot.
+        for &pixels in &[0u64, 1, 1024, 65_535] {
+            let mut p = EffortProfile::lossy(5, EncoderMode::Reference);
+            p.adapt_to_image_content(pixels, 1.0, ImageContentClass::Screenshot);
+            assert!(
+                !p.patches,
+                "pixels={pixels} Screenshot: pixel gate must hold"
+            );
+        }
+
+        // 4. distance == 0.0: no fire (lossless-equivalent reserved path).
+        let mut p = EffortProfile::lossy(5, EncoderMode::Reference);
+        p.adapt_to_image_content(262_144, 0.0, ImageContentClass::Screenshot);
+        assert!(!p.patches, "distance=0.0 Screenshot: must stay false");
+
+        // 5. Effort 7+ (patches already on) — adapter is a no-op flag-wise.
+        for effort in 7u8..=10 {
+            let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert!(p.patches, "baseline e{effort}: patches must be true");
+            p.adapt_to_image_content(262_144, 1.0, ImageContentClass::Screenshot);
+            assert!(p.patches, "e{effort} Screenshot: patches must remain true");
+        }
+
+        // 6. Effort < 5: adapter must NOT enable patches (libjxl path
+        //    needs AC strategy search which is off at e<5).
+        for effort in 1u8..=4 {
+            let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert!(!p.patches, "baseline e{effort}: patches must be false");
+            p.adapt_to_image_content(262_144, 1.0, ImageContentClass::Screenshot);
+            assert!(
+                !p.patches,
+                "e{effort} Screenshot: must respect effort floor"
+            );
+        }
+
+        // 7. Default ImageContentClass is Unknown.
+        let default_class: ImageContentClass = Default::default();
+        assert_eq!(default_class, ImageContentClass::Unknown);
     }
 }

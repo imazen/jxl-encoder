@@ -184,8 +184,9 @@ rayon = "1.10"
 fastrand = "2.4.1"
 # NOTE on `zenanalyze` (sibling path dep) — required by
 # `examples/smart_fanout_sweep.rs` (chunk 1 of the smart-fanout investigation,
-# memory/zenanalyze_tree_size_correlation_2026-05-17.md) and the picker-oracle
-# calibration harnesses. Out of CI; re-add locally with:
+# memory/zenanalyze_tree_size_correlation_2026-05-17.md),
+# `examples/content_class_dispatch_ab.rs` (RFC #45 pick #4 chunk 1, this dispatch),
+# and the picker-oracle calibration harnesses. Out of CI; re-add locally with:
 #   zenanalyze = { path = "../../zenanalyze", features = ["experimental"] }
 # alongside a [[example]] block for the sweep, then revert before pushing.
 
