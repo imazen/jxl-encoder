@@ -181,6 +181,20 @@ pub struct TreeLearningParams {
     /// the hash-lock sidecars; the sort path remains the byte-identical
     /// default.
     pub gather_dedup: bool,
+    /// Maximum depth of parallel recursion in the borrowed-view subtree
+    /// builder (`build_subtree_recursive_parallel_borrowed`).
+    /// `2^depth` is the upper bound on parallel leaf tasks.
+    /// Read by the parallel-tree-learning gated path; ignored when the
+    /// feature is disabled.
+    pub parallel_max_depth: u32,
+    /// Minimum subtree size below which further parallel fork is skipped
+    /// and the iterative sequential builder runs instead.
+    /// Read by the parallel-tree-learning gated path; ignored otherwise.
+    pub parallel_recursion_floor: usize,
+    /// Minimum total sample count required before attempting the parallel
+    /// root split. Below this the sequential loop is faster overall.
+    /// Read by the parallel-tree-learning gated path; ignored otherwise.
+    pub parallel_root_threshold: usize,
 }
 
 impl TreeLearningParams {
@@ -240,6 +254,9 @@ impl TreeLearningParams {
             pixel_fraction: 1.0,
             use_streaming_dedup: profile.use_streaming_dedup,
             gather_dedup: profile.gather_dedup,
+            parallel_max_depth: profile.tree_parallel_max_depth,
+            parallel_recursion_floor: profile.tree_parallel_floor,
+            parallel_root_threshold: profile.tree_parallel_root_threshold,
         }
     }
 
@@ -266,6 +283,15 @@ impl TreeLearningParams {
         let threshold_base = 75.0 + 14.0 * speed_tier as f64;
         let num_props = num_props.min(order.len());
 
+        // Match `lossless_reference` schedule: e>=8 takes the deeper /
+        // lower-floor parallel knobs; e<=7 keeps the e7-tuned values.
+        let (parallel_max_depth, parallel_recursion_floor, parallel_root_threshold) = if effort >= 8
+        {
+            (5u32, 8_192usize, 4_096usize)
+        } else {
+            (4u32, 16_384usize, 8_192usize)
+        };
+
         Self {
             properties: order[..num_props].to_vec(),
             max_property_values,
@@ -274,6 +300,9 @@ impl TreeLearningParams {
             pixel_fraction: 1.0,
             use_streaming_dedup: false,
             gather_dedup: false,
+            parallel_max_depth,
+            parallel_recursion_floor,
+            parallel_root_threshold,
         }
     }
 
@@ -2330,21 +2359,30 @@ pub(crate) fn compute_best_tree_with_budget(
     // tree-build that follows.
     #[cfg(feature = "parallel-tree-learning")]
     {
-        const PARALLEL_THRESHOLD: usize = 8192;
+        // Effort-tuned via `params.parallel_root_threshold` (see
+        // `EffortProfile::tree_parallel_root_threshold_for`). Default
+        // schedule: 8192 at effort ≤ 7, 4096 at effort ≥ 8 — the larger
+        // e8/e9 trees benefit from a lower gate so the root-split
+        // amortises across more downstream work.
+        let parallel_root_threshold = params.parallel_root_threshold;
         if std::env::var("JXL_DBG_PARALLEL_TREE").is_ok() {
             eprintln!(
-                "PARALLEL_TREE: n={}, max_nodes={}, root_bits={:.1}, threshold={:.1}, gate={}",
+                "PARALLEL_TREE: n={}, max_nodes={}, root_bits={:.1}, threshold={:.1}, \
+                 root_thresh={}, max_depth={}, floor={}, gate={}",
                 n,
                 max_nodes,
                 root_bits,
                 threshold,
-                n >= PARALLEL_THRESHOLD && max_nodes >= 4 && root_bits > threshold
+                parallel_root_threshold,
+                params.parallel_max_depth,
+                params.parallel_recursion_floor,
+                n >= parallel_root_threshold && max_nodes >= 4 && root_bits > threshold
             );
         }
         // Only attempt parallel root split when there's enough work AND we
         // haven't been told to stop early (max_nodes <= 3 means root + 2
         // children is already the budget; sequential path is fine).
-        if n >= PARALLEL_THRESHOLD && max_nodes >= 4 && root_bits > threshold {
+        if n >= parallel_root_threshold && max_nodes >= 4 && root_bits > threshold {
             // Pop the root candidate and try its split.
             let root_candidate = stack.pop().expect("root candidate just pushed");
             let best_split =
@@ -2433,12 +2471,15 @@ pub(crate) fn compute_best_tree_with_budget(
                     // node itself accounted for in the parent.
                     let per_side_budget = (max_nodes - 1) / 2;
 
-                    // Recursive parallel decomposition. Budget = 4 means up to
-                    // 2^4 = 16 leaf tasks, sufficient to saturate an 8-16 core
-                    // CPU and amortize the rayon spawn cost. Deeper recursion
-                    // gives diminishing returns as subtrees shrink below
-                    // PARALLEL_RECURSION_FLOOR.
-                    let max_parallel_depth: u32 = 4;
+                    // Recursive parallel decomposition. Effort-tuned via
+                    // `params.parallel_max_depth` (see
+                    // `EffortProfile::tree_parallel_max_depth_for`). Default
+                    // schedule: 4 at effort ≤ 7 (16 leaf tasks), 5 at effort
+                    // ≥ 8 (32 leaf tasks — deeper e8/e9 trees have enough
+                    // per-leaf work to amortise the extra spawns). Deeper
+                    // recursion gives diminishing returns once subtrees shrink
+                    // below `params.parallel_recursion_floor`.
+                    let max_parallel_depth: u32 = params.parallel_max_depth;
 
                     let (left_tree, right_tree) = crate::parallel::parallel_join(
                         || {
@@ -2682,11 +2723,20 @@ fn finalize_leaf(tree: &mut Tree, candidate: &SplitCandidate, predictors: &[Pred
     };
 }
 
-/// Below this sample count, build the subtree sequentially (no further
-/// parallel forks). Rayon task overhead (~10-50 µs per spawn + workspace
-/// allocation) exceeds the savings for small subtrees.
-#[cfg(feature = "parallel-tree-learning")]
-const PARALLEL_RECURSION_FLOOR: usize = 16384;
+// The pre-chunk-2 hardcoded constants
+// (`PARALLEL_THRESHOLD=8192`, `max_parallel_depth=4`,
+// `PARALLEL_RECURSION_FLOOR=16384`) now live on
+// [`TreeLearningParams::parallel_root_threshold`],
+// [`TreeLearningParams::parallel_max_depth`], and
+// [`TreeLearningParams::parallel_recursion_floor`], wired from
+// [`crate::effort::EffortProfile`] so the picker / sweep harness can
+// retune them per effort without touching tree_learn.rs.
+//
+// At effort ≤ 7 the defaults match the original constants exactly
+// (byte-identical output gated by the parallelism path). At effort ≥ 8
+// the defaults are halved (depth = 5, floor = 8192, root_threshold = 4096)
+// to expose finer-grained fanout for the deeper trees produced at
+// Kitten/Tortoise speed tiers.
 
 /// Greedy DFS subtree builder. Runs the same logic as the main loop in
 /// [`compute_best_tree_with_budget`], but on an isolated `(samples, pq)` pair
@@ -3647,7 +3697,7 @@ fn build_subtree_recursive_parallel_borrowed(
 ) -> Tree {
     let n = samples.len;
 
-    if parallel_budget == 0 || n < PARALLEL_RECURSION_FLOOR {
+    if parallel_budget == 0 || n < params.parallel_recursion_floor {
         return build_subtree_sequential_borrowed(
             &mut samples,
             params,
@@ -3751,8 +3801,8 @@ fn build_subtree_recursive_parallel_borrowed(
 
     let left_size = left_samples.len;
     let right_size = right_samples.len;
-    let both_big_enough =
-        left_size >= PARALLEL_RECURSION_FLOOR && right_size >= PARALLEL_RECURSION_FLOOR;
+    let parallel_floor = params.parallel_recursion_floor;
+    let both_big_enough = left_size >= parallel_floor && right_size >= parallel_floor;
 
     let (left_tree, right_tree) = if both_big_enough {
         crate::parallel::parallel_join(
