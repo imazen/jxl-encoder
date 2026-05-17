@@ -1006,6 +1006,58 @@ impl EffortProfile {
             self.tree_max_buckets = LARGE_E9_TREE_MAX_BUCKETS;
         }
     }
+
+    /// Pixel-count + distance gate for the lossy VarDCT
+    /// `try_dct64` evaluation. Always-on (NOT opt-in) — purely a
+    /// wall-clock win on the small + low-distance cell.
+    ///
+    /// When `pixels < LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD` (500_000)
+    /// AND `distance < LOSSY_LOW_DISTANCE_THRESHOLD` (2.0), drops
+    /// `try_dct64` from the effort default (`true` at effort ≥ 7) to
+    /// `false`. Skips the entire
+    /// [`crate::vardct::ac_strategy_search::find_best_64x64_transform`]
+    /// pipeline (DCT64x64, 2×DCT64x32, 2×DCT32x64 candidates plus their
+    /// 4×`find_best_32x32_transform` reuse path).
+    ///
+    /// **Rationale**: DCT64-class transforms cover 64×64 pixels. On a
+    /// small image at low distance the cost-model entropy_mul
+    /// (`2.25` for DCT64x64/DCT64x32 in pixel-domain mode) heavily
+    /// penalises the 4096-coefficient block. On 512×512 (8×8 of 64×64
+    /// tiles) at `d ≤ 1.0` they are essentially never picked —
+    /// the per-tile cost gate in `find_best_64x64_transform` falls
+    /// through to four recursive `find_best_32x32_transform` calls.
+    /// The wasted work is the upfront DCT64x64 + 4 DCT64x32 +
+    /// 4 DCT32x64 entropy estimates per 64×64 tile.
+    ///
+    /// **Hash-locks**: byte-identical at the gated cells (the skipped
+    /// strategies were not winning at those sizes anyway — verified by
+    /// the per-effort hash_lock sidecars at 13×17 / 32×32 / 48×48,
+    /// none of which can evaluate a 64×64 block to begin with).
+    ///
+    /// **Threshold rationale**:
+    /// - `pixels < 500_000`: covers the bench harness's `small_0.26MP`
+    ///   cell (512×512 = 262_144 px). At ≥ 1 MP the corpus_regression
+    ///   bench shows DCT64 starts winning on smooth regions, so the
+    ///   gate stops short of medium.
+    /// - `distance < 2.0`: matches the conservative gate documented in
+    ///   `dropped_optimizations_for_parity_2026-05-15.md` (item #1
+    ///   neighbourhood — DCT64 is "gated to d≥3.0" in the cost model
+    ///   notes, and at d ∈ [2.0, 3.0] some images do pick DCT64).
+    ///
+    /// **Effort gate**: only applies when `try_dct64` is already on
+    /// (`effort ≥ 7`). At effort < 7 this is a no-op.
+    ///
+    /// Bench provenance: paired A/B in
+    /// `jxl-encoder/examples/vardct_ac_dispatch_paired_ab.rs`, results
+    /// in `benchmarks/vardct_ac_dispatch_paired_2026-05-17.tsv`.
+    pub fn adapt_to_image_lossy(&mut self, pixels: u64, distance: f32) {
+        if pixels < LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD
+            && distance < LOSSY_LOW_DISTANCE_THRESHOLD
+            && self.try_dct64
+        {
+            self.try_dct64 = false;
+        }
+    }
 }
 
 /// Pixel-count threshold below which the parallel-tree-learning path
@@ -1023,6 +1075,16 @@ pub const LARGE_IMAGE_PIXEL_THRESHOLD: u64 = 4_000_000;
 /// `tree_max_buckets` value at large+e9 cells. Replaces the e9 default
 /// of 256. See [`EffortProfile::adapt_tree_max_buckets_for_image`].
 pub const LARGE_E9_TREE_MAX_BUCKETS: u16 = 192;
+
+/// Pixel-count threshold below which the lossy VarDCT
+/// `adapt_to_image_lossy` adapter disables the DCT64 strategy class
+/// at low distance. See [`EffortProfile::adapt_to_image_lossy`].
+pub const LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD: u64 = 500_000;
+
+/// Distance below which the lossy VarDCT `adapt_to_image_lossy`
+/// adapter disables the DCT64 strategy class on small images.
+/// See [`EffortProfile::adapt_to_image_lossy`].
+pub const LOSSY_LOW_DISTANCE_THRESHOLD: f32 = 2.0;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public expert surface — segmented Lossy / Lossless internal-param structs
@@ -1883,5 +1945,82 @@ mod tests {
                 "lossy e{effort} large: dispatch must apply"
             );
         }
+    }
+
+    /// Chunk 1 VarDCT AC strategy dispatch: `adapt_to_image_lossy`
+    /// must flip `try_dct64` to `false` only on the
+    /// (`pixels < LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD`,
+    ///  `distance < LOSSY_LOW_DISTANCE_THRESHOLD`) cell, and only when
+    /// effort already had `try_dct64 = true` (effort >= 7).
+    #[test]
+    fn test_adapt_to_image_lossy_dct64_gate() {
+        // 1. Small + low-d at e7+: dispatch fires.
+        for effort in 7u8..=10 {
+            for &pixels in &[1u64, 1024, 262_144, 499_999] {
+                for &distance in &[0.1_f32, 0.5, 1.0, 1.5, 1.999] {
+                    let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+                    assert!(p.try_dct64, "baseline e{effort}: try_dct64 must be true");
+                    p.adapt_to_image_lossy(pixels, distance);
+                    assert!(
+                        !p.try_dct64,
+                        "e{effort} pixels={pixels} d={distance}: \
+                         try_dct64 must drop to false"
+                    );
+                }
+            }
+        }
+
+        // 2. Above pixel threshold: no fire.
+        for &pixels in &[
+            LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD,
+            1_048_576,
+            4_194_304,
+            16_777_216,
+        ] {
+            for &distance in &[0.5_f32, 1.0, 1.5] {
+                let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
+                p.adapt_to_image_lossy(pixels, distance);
+                assert!(
+                    p.try_dct64,
+                    "pixels={pixels} d={distance}: must stay true (pixel gate)"
+                );
+            }
+        }
+
+        // 3. At or above distance threshold: no fire.
+        for &distance in &[LOSSY_LOW_DISTANCE_THRESHOLD, 2.5_f32, 3.0, 5.0, 10.0] {
+            for &pixels in &[1u64, 262_144, 499_999] {
+                let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
+                p.adapt_to_image_lossy(pixels, distance);
+                assert!(
+                    p.try_dct64,
+                    "pixels={pixels} d={distance}: must stay true (distance gate)"
+                );
+            }
+        }
+
+        // 4. Effort < 7: baseline try_dct64 already false — adapter
+        //    must not flip it to true and must not panic.
+        for effort in 1u8..=6 {
+            let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert!(
+                !p.try_dct64,
+                "baseline e{effort}: try_dct64 should be false"
+            );
+            p.adapt_to_image_lossy(262_144, 1.0);
+            assert!(
+                !p.try_dct64,
+                "e{effort}: adapter must not flip false → true"
+            );
+        }
+
+        // 5. Lossy "experimental" mode also covered (try_dct64
+        //    follows the same effort schedule).
+        let mut p = EffortProfile::lossy(7, EncoderMode::Experimental);
+        p.adapt_to_image_lossy(262_144, 1.0);
+        assert!(
+            !p.try_dct64,
+            "lossy experimental e7 small + low-d: adapter still fires"
+        );
     }
 }

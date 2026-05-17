@@ -25,6 +25,39 @@
 
 ### Changed (performance)
 
+- **Always-on VarDCT `try_dct64` per-image dispatch on small + low-d cells**
+  (chunk 1 of the VarDCT speed push, follows the lossless smart-fanout /
+  small-image-fallback / bucket-dispatch family pattern). New
+  `EffortProfile::adapt_to_image_lossy(pixels, distance)` adapter plus
+  `LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD = 500_000` (u64) and
+  `LOSSY_LOW_DISTANCE_THRESHOLD = 2.0` (f32) constants. When `pixels < 500_000`
+  AND `distance < 2.0`, drops `try_dct64` from the effort-7+ default `true`
+  to `false`. Skips the entire
+  `vardct::ac_strategy_search::find_best_64x64_transform` pipeline (DCT64x64
+  + 2×DCT64x32 + 2×DCT32x64 candidates plus their 4× `find_best_32x32_transform`
+  reuse path) — about 9 expensive entropy-estimate evaluations per 64×64 tile
+  that essentially never win on small low-distance content. New
+  `LossyConfig::effective_profile_for_image(pixels)` mirrors the lossless
+  signature and is called from the three lossy entry points in `api.rs`
+  (`encode_lossy`, `LossyEncoder::finish_inner`, `encode_animation_lossy`).
+  Override-respect: when the caller has supplied a `__expert`
+  `LossyConfig::with_internal_params(...)` override, the adapter is skipped so
+  sweep harnesses keep their pinned `try_dct64` value (mirrors
+  `LosslessConfig::effective_profile_for_image`). Hash-locks
+  (`tests/hash_lock_features.rs` 36/36) stay byte-identical — every lossy
+  fixture is at most 48×48, too small for any 64×64-aligned position so the
+  adapter is a no-op even on the gated tier. RD regression
+  (`tests/clic2025.rs::test_rd_regression`, CID22-512 small photos at
+  d=0.25/0.50/1.0): all 18 image×distance cells produce 0.0–0.5% **smaller**
+  output (matching the dispatch's "DCT64 is wasted work here" hypothesis), all
+  butteraugli/ssim2 within the existing thresholds. Companion paired A/B at 1T
+  (`benchmarks/vardct_ac_dispatch_paired_2026-05-17.tsv`, 4 images × 3
+  distances × 10 paired samples, sample-major interleaved): non-gated cells
+  (medium 1.05 MP and large 2.78 MP at every distance, plus every image at
+  d=2.0) all produce **byte-identical output sample-pairwise**, confirming the
+  adapter only fires on its gated cell. Companion sweep harness:
+  `examples/vardct_ac_dispatch_paired_ab` (registered under `__expert`).
+
 - **Always-on `tree_max_buckets` per-image dispatch at large+e9 cells**
   (audit conditional-value catalog item #3 —
   `rejected_optimizations_conditional_value_2026-05-17.md`; resurrects the

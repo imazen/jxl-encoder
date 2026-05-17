@@ -1,0 +1,83 @@
+# Paired A/B bench metadata — VarDCT AC dispatch (chunk 1 of VarDCT speed push)
+
+bench_name: vardct_ac_dispatch_paired_ab
+chunk: chunk 1 of VarDCT speed push (commits planned to follow lossless smart-fanout / small-image-fallback / bucket-dispatch pattern)
+date_utc: 2026-05-17
+host: lilith (Linux 6.6.114.1-microsoft-standard-WSL2)
+cpu: AMD Ryzen 9 7950X (32 threads, water-cooled)
+rustc: 1.95.0 (59807616e 2026-04-14)
+
+git_parent: f510908b (bench(cumulative): append 2 more cells (L1 e8, M5 e9 also re-verified))
+features_built: std parallel butteraugli-loop __expert
+profile: release (no -C target-cpu=native — runtime SIMD dispatch is what users get)
+
+# Bench design
+samples_per_cell: 7  (paired A/B, sample-major interleaved)
+threads: 1           (single-thread amplifies VarDCT AC strategy search cost)
+distances: 0.5, 1.0, 2.0
+effort: 7
+cells: 4 images × 3 distances = 12 cells × 2 variants × 7 samples = 168 encode invocations + warmups
+
+images:
+  tiny_0.07MP:   /home/lilith/work/codec-corpus/CID22/CID22-512/training/7256805.png (center-cropped to 256×256)
+  small_0.26MP:  /home/lilith/work/codec-corpus/CID22/CID22-512/training/7256805.png (native 512×512)
+  medium_1.05MP: /home/lilith/work/codec-corpus/clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png (1024×1024)
+  large_2.78MP:  /home/lilith/work/codec-corpus/clic2025/final-test/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png (1360×2048)
+
+# Variant definitions
+variant_A: dispatch ON (new default).
+           LossyConfig::effective_profile_for_image(pixels) calls
+           EffortProfile::adapt_to_image_lossy(pixels, distance).
+           At (pixels < 500_000 && distance < 2.0 && try_dct64==true), drops try_dct64 -> false.
+           Skips the entire find_best_64x64_transform pipeline at the gated cells.
+variant_B: dispatch OFF.
+           __expert override: LossyInternalParams::try_dct64 = Some(true).
+           effective_profile_for_image skips the adapter when profile_override.is_some().
+           Reproduces the pre-dispatch baseline (try_dct64 always true at effort 7+).
+
+# Acceptance gates (per task brief)
+gate_small_d05_wallclock: small + d=0.5 must show ≥ 3% wall-clock improvement
+gate_gated_cells_bytes:   bytes within +0.5% of variant B at gated cells (tiny/small × d=0.5/1.0)
+gate_nongated_cells:      bytes identical (sha256 prefix match) at all non-gated cells
+                          (medium/large × any d, or any size × d=2.0)
+gate_nongated_wallclock:  variance only (no expected delta — dispatch does not fire)
+
+# Source references
+dispatch_pattern_precedents:
+  - 1c4691f0 (smart-fanout opt-in adapter for lossless tree_parallel_*)
+  - 142ef4f6 (small-image-fallback opt-in adapter — also reads effort + pixels)
+  - 488cc68d (tree_max_buckets always-on dispatch — same override-respect logic)
+  - this commit (always-on VarDCT try_dct64 dispatch on small + low-d)
+
+# Implementation
+adapter: EffortProfile::adapt_to_image_lossy (effort.rs)
+   constants: LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD = 500_000
+              LOSSY_LOW_DISTANCE_THRESHOLD = 2.0
+   gate logic: pixels < 500_000 && distance < 2.0 && self.try_dct64
+   action: self.try_dct64 = false
+
+wire-up:
+   LossyConfig::effective_profile_for_image (api.rs) — mirrors lossless
+   call sites in api.rs: encode_lossy (3-arg request path),
+                          LossyEncoder::finish_inner (streaming),
+                          encode_animation_lossy (animation)
+
+# Columns
+column_image:          basename of the .png input (corpus path)
+column_label:          short cell label (tiny/small/medium/large + MP)
+column_width:          input image width in pixels (post-crop for tiny cell)
+column_height:         input image height in pixels (post-crop for tiny cell)
+column_megapixels:     w × h / 1_000_000
+column_distance:       lossy distance parameter (0.5, 1.0, 2.0)
+column_effort:         lossy effort level (fixed 7)
+column_sample:         1-based sample index (paired with the corresponding B for the same s)
+column_variant:        A (dispatch ON) | B (dispatch OFF)
+column_bytes:          output JXL bitstream length
+column_encode_ms:      encode wall-clock in milliseconds
+column_sha256_prefix:  first 64 bits of SHA256(output) for byte-identity check
+
+# Repro
+reproduce: cargo run --release -p jxl-encoder \
+             --features 'std parallel butteraugli-loop __expert' \
+             --example vardct_ac_dispatch_paired_ab \
+             > benchmarks/vardct_ac_dispatch_paired_2026-05-17.tsv

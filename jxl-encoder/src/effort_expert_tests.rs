@@ -154,10 +154,21 @@ fn lossy_override_try_dct32() {
 
 #[test]
 fn lossy_override_try_dct64() {
+    // NOTE: at the test fixture's 256×256 + d=1.5 cell the
+    // `EffortProfile::adapt_to_image_lossy` dispatch already drops
+    // `try_dct64` to `false` on the no-override (plain) path
+    // (`pixels < LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD` AND `distance <
+    // LOSSY_LOW_DISTANCE_THRESHOLD`). Going `try_dct64: Some(false)`
+    // would equal the dispatched plain bytes — assertion noise, not
+    // a real coverage win. Use `try_dct64: Some(true)` instead: it
+    // forces the override path to skip the dispatch (per the
+    // `profile_override.is_none()` gate in
+    // `LossyConfig::effective_profile_for_image`) so the bitstream
+    // *gains* the DCT64 candidates that the plain path skips.
     assert_lossy_field_changes_output(
         "try_dct64",
         LossyInternalParams {
-            try_dct64: Some(false),
+            try_dct64: Some(true),
             ..Default::default()
         },
     );
@@ -414,11 +425,18 @@ fn default_params_lossy_match_plain() {
     // no-override path at the same effort + distance. The setter still
     // builds an `EffortProfile` and stores it, but every field equals what
     // the encoder would have built itself.
-    let cfg_override = LossyConfig::new(1.5)
+    //
+    // Pinned at d=2.0 so the `adapt_to_image_lossy` dispatch
+    // (`distance < LOSSY_LOW_DISTANCE_THRESHOLD`) does not fire on the
+    // plain path. Otherwise the dispatch would drop `try_dct64=false`
+    // on the plain path while the override path skips the dispatch
+    // (`profile_override.is_none()` is false), making the two cfgs
+    // legitimately differ at this 256×256 test fixture's size cell.
+    let cfg_override = LossyConfig::new(2.0)
         .with_effort(7)
         .with_threads(1)
         .with_internal_params(LossyInternalParams::default());
-    let cfg_plain = LossyConfig::new(1.5).with_effort(7).with_threads(1);
+    let cfg_plain = LossyConfig::new(2.0).with_effort(7).with_threads(1);
 
     let bytes_override = encode_lossy(&cfg_override);
     let bytes_plain = encode_lossy(&cfg_plain);
