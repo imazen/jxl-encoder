@@ -479,7 +479,6 @@ fn encode_dc_group_section(
 
 /// Encode a single AC group section to bytes (for a specific pass).
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn encode_ac_group_section(
     ac_tokens: &[Token],
     ac_built_code: &BuiltEntropyCode<'_>,
