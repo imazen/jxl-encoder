@@ -23,6 +23,47 @@
 
 ### Added
 
+- **Real spline auto-detection pipeline** (A1 audit "VarDCT cost
+  model" PARTIAL item, chunk 2; follow-on to chunk 1's stub). The
+  `find_splines_at_distance` entry replaces the chunk-1 stub with the
+  full seven-stage pipeline sketched in the chunk-1 docstring:
+  Sobel-magnitude ridge candidates, 1D non-max suppression along the
+  gradient direction, 2x2 Hessian-eigenvalue ratio test (`λ_large /
+  λ_small ≥ 5`, ridge-like only), direction-biased 8-connected
+  polyline trace with seed-strength ordering, arc-length-uniform
+  subsampling to 8 Catmull-Rom control points, per-channel DCT-II fit
+  for X/Y/B colour (32 coefficients each, scaled to recover the
+  decoder's continuous-IDCT convention) + DC-only sigma fit, and a
+  per-spline cost-benefit gate (`COST_BENEFIT_MARGIN = 2×` patches-
+  style margin, distance-aware, with empirically-anchored encoded-
+  bytes and savings-per-pixel constants). The gate is intentionally
+  conservative — it admits zero candidates on photo-like / smoothly-
+  varying content (verified in
+  `auto_splines_on_photo_is_byte_identical_to_default` and
+  `test_find_splines_rejects_smooth_gradient`), and only fires on
+  long high-contrast thin ridges. **Known limitation**: on synthetic
+  flat-background single-line content the gate's theoretical savings
+  estimate overshoots the realized win — the chunk-2 detector ships
+  a DC-only sigma fit and nearest-pixel colour sampling, so the
+  spline approximation leaves enough residual that VarDCT still
+  encodes the ridge; chunk 3 will refine with a true
+  `trial_encode_splines_section` gate mirror of
+  `vardct/patches::trial_encode_ref_frame_bytes`. Default-config
+  output remains byte-identical (`auto_splines` defaults to `false`,
+  all 36 `hash_lock_features` fixtures unchanged). New tests pin the
+  pipeline stages: `test_sobel_vertical_edge`,
+  `test_hessian_rejects_corner`,
+  `test_hessian_accepts_horizontal_ridge`,
+  `test_subsample_polyline_endpoints`,
+  `test_find_splines_returns_empty_for_constant_image`,
+  `test_find_splines_finds_horizontal_ridge`,
+  `test_find_splines_rejects_smooth_gradient`. Integration tests:
+  `auto_splines_power_line_changes_bitstream` (bytes differ when the
+  detector fires on a 1024×256 ridge),
+  `auto_splines_on_photo_is_byte_identical_to_default` (cost gate
+  rejects all candidates on noisy ramp content),
+  `auto_splines_below_effort_gate_is_byte_identical`.
+
 - **`LossyConfig::with_auto_splines(bool)` API surface and encoder wiring
   for automatic spline detection** (A1 audit "VarDCT cost model" PARTIAL
   item, chunk 1). Mirrors libjxl `enc_heuristics.cc:1048-1054` which
