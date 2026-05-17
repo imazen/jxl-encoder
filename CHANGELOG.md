@@ -429,6 +429,43 @@
   lb-skip into the parallel branch to capture the e7 wins. Full TSV +
   meta at `benchmarks/predictor_prune_ab_2026-05-17.{tsv,meta}`.
 
+- **Predictor-pruning lb-skip extended into the parallel branch**
+  (issue #23, chunk 3; algorithmic change shipped via `23f22d22`'s
+  inadvertent file-bundling — see `benchmarks/predictor_prune_c3_ab_2026-05-17.meta`
+  for the full attribution story). `find_best_predictor`'s
+  `parallel_map` fan-out (`tree_learn.rs:4916-5022`) now carries a
+  shared `AtomicU64` running best (`f64::to_bits()`); each worker
+  pre-computes its extra-bits lower bound, reads the atomic, and
+  emits `f64::INFINITY` instead of running `compute_predictor_entropy`
+  when `lb >= best`. CAS update on full-eval completion is strict-`<`,
+  matching the sequential tie-break. The post-fanout reduction reuses
+  the existing strict-`<` minimum scalar — `INFINITY` slots lose every
+  comparison, preserving the lowest-index winner. Byte-identical to the
+  chunk-2 baseline (hash_lock_features 36/36; sha256 verified on a real
+  photo at e7/e8/e9 against `52f8e816`-built CLI binary). Paired A/B at
+  8T (CID22 0.26 MP / CLIC 1.05 MP / CLIC 4.19 MP × e7/e8/e9, 12 paired
+  iters; large_4.19MP@e9 captured only 1 iter pair due to harness shell
+  termination — see meta):
+  | image            | e7              | e8              | e9              |
+  |------------------|----------------:|----------------:|----------------:|
+  | small_0.26MP     | −1.4% / −2.0%   | +0.3% / +0.8%   | +1.0% / +0.4%   |
+  | medium_1.05MP    | −0.5% / +0.4%   | −0.1% / −0.8%   | +3.0% / +2.8%   |
+  | large_4.19MP     | **−7.5% / −0.0%** | **−8.2% / −4.1%** | −5.9% (n=1)   |
+  Format: median paired pairwise Δ / 10-90 trimmed mean Δ (preferred over
+  min/avg on this heavily loaded run). Large 4.19 MP cell at e7/e8
+  recovers the chunk-1 microbench's predicted savings (-7 % to -8 %
+  pairwise); medium 1.05 MP @ e7 lands at the noise floor (-0.5 %
+  median, brief target of ≥3 % NOT MET); medium e9 +3 % regression is
+  the early-worker race-window structural cap (all 14 workers see
+  `f64::MAX` and run full eval before any can post a real cost to the
+  atomic). Two interventions documented in the meta but not shipped this
+  chunk: (a) seed-first hybrid — serialize the lowest-LB eval before
+  dispatching the parallel fan-out so the atomic is populated when
+  concurrent workers start; (b) Strategy A — sorted-by-LB sequential
+  eval, loses parallelism but guarantees the microbench savings on
+  small per-call ranges. Full TSV + meta at
+  `benchmarks/predictor_prune_c3_ab_2026-05-17.{tsv,meta}`.
+
 - **Streaming hash-table dedup backend (opt-in, issue #41)**: ported
   libjxl's `AddSample` / `AddToTableAndMerge` two-hash cuckoo
   open-addressing dedup (`enc_ma.cc:602-655`, `enc_ma.cc:711`) as a

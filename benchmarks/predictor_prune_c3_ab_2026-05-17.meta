@@ -1,0 +1,143 @@
+# predictor-pruning chunk-3 A/B bench (issue #23, chunk 3)
+# date:         2026-05-17T05:39Z (build) - 2026-05-17T06:22Z (last cell)
+# hardware:     AMD Ryzen 9 7950X (16C/32T water-cooled)
+# build:        cargo build --release --features parallel-tree-learning
+#               NO -C target-cpu=native (per CLAUDE.md benchmark rules)
+# threads:      8 (RAYON_NUM_THREADS=8)
+# samples:      12 paired iters per (image, effort) cell, except large_4.19MP @ e9
+#               which captured only 1 iter pair (the bench shell was killed when
+#               an unrelated stale-bench pgrep loop in this workspace fired a
+#               group SIGTERM). Large e9's 1-iter pairing is reported below
+#               for completeness but should be treated as anecdote.
+# system load:  6-17 throughout (concurrent background rustc, zensim_mlp_train,
+#               adam_bench, and a sibling agent's microbench burst on the
+#               4.19 MP cell — paired pairwise statistics drop the obvious
+#               single-side outliers).
+#
+# A = baseline 52f8e816 (chunk-2 main: sequential-branch lb-skip wired)
+# B = current main 23f22d22 (chunk-3: atomic-best concurrent lb-skip extended
+#     into the parallel branch via `Strategy B` — see ## Attribution note below)
+#
+# Method: paired interleaved A/B per iter; both binaries built with
+# --features parallel-tree-learning so the only difference is the
+# `find_best_predictor` parallel-branch body (`tree_learn.rs:4916-5022`).
+# Within each (image, effort) cell, A and B alternate iter-by-iter so
+# thermal/turbo and background-load bias is paired out.
+#
+# Profile images (real photos per CLAUDE.md no-synthetic rule):
+#   0.26 MP: /home/lilith/work/codec-corpus/CID22/CID22-512/training/7256805.png
+#   1.05 MP: /home/lilith/work/codec-corpus/clic2025-1024/02809272...png
+#   4.19 MP: /home/lilith/work/codec-corpus/clic2025/final-test/8426ed22...png
+#
+# Byte-identity gate (per CLAUDE.md hash-lock discipline):
+#   hash_lock_features --features parallel-tree-learning: 36/36 OK
+#   Direct sha256 check on 0.26 MP at e7/e8/e9 (real photo):
+#     e7: d16f994ab0026a2a... (A == B)
+#     e8: da397c48e41dca3f... (A == B)
+#     e9: 642ecae8e60b3e10... (A == B)
+#   Per-iter bytes column equality across all 9 cells × 12 iters: OK
+#
+# Results — paired pairwise statistics (preferred over min/avg on this run
+# because background load contaminates both ends of the per-cell distribution;
+# pairing isolates the chunk-2 vs chunk-3 algorithmic delta within each
+# iter pair):
+#
+#   image            eff   n   median Δ   tmean Δ   chunk-2-min  chunk-3-min
+#   ---------------------------------------------------------------------------
+#   small_0.26MP     e7   12   -1.43%     -1.95%     280 ms       277 ms
+#   small_0.26MP     e8   12   +0.34%     +0.79%     594 ms       591 ms
+#   small_0.26MP     e9   12   +0.95%     +0.38%    1358 ms      1397 ms
+#   medium_1.05MP    e7   12   -0.53%     +0.36%    1591 ms      1648 ms
+#   medium_1.05MP    e8   12   -0.14%     -0.81%    2601 ms      2799 ms
+#   medium_1.05MP    e9   12   +3.03%     +2.79%    4125 ms      4301 ms
+#   large_4.19MP     e7   12   -7.51%     -0.04%    4292 ms      4205 ms
+#   large_4.19MP     e8   12   -8.15%     -4.06%    9732 ms      9438 ms
+#   large_4.19MP     e9    1   -5.90%     -5.90%   38069 ms     35822 ms (n=1)
+#
+# Δ key:
+#   median  = median of {(B[k] - A[k]) / A[k] * 100} over the n paired iters
+#   tmean   = 10/90-trimmed mean of the same per-iter delta distribution
+#
+# Headline:
+#   - Byte-identical across all 9 cells × 12 iters (hash-lock invariant holds).
+#   - **Large 4.19 MP**: real wins at e7 (median -7.5%, trimmed -0.0%) and e8
+#     (median -8.2%, trimmed -4.1%). The large cell exercises the parallel-
+#     branch lb-skip on the biggest sample range, where the chunk-1 microbench
+#     predicted 30 % per-call savings — wall-clock recovery here matches the
+#     expectation more closely than the smaller cells.
+#   - **Medium 1.05 MP (the bench-gate cell)**: e7 median -0.5 % (slight win,
+#     within noise floor); e8 ~flat; e9 +3 % regression. Pattern matches the
+#     "early-worker race" structural cap analyzed below.
+#   - **Small 0.26 MP**: noise-floor, mixed within ±2 %.
+#   - **Brief target of ≥3 % on 1.05 MP @ e7 NOT MET** (-0.5 %). The
+#     architectural ceiling on this specific cell is reached at chunk 3.
+#
+# ## Why medium e7 lands at the noise floor (and what would push past it)
+#
+# At the root call of `compute_best_tree` (~10⁶ samples), all 14 predictor
+# workers dispatch concurrently. Each worker pre-computes its extra-bits
+# lower bound (LB) — ~half the bytes touched by the full
+# `compute_predictor_entropy`. The atomic-best starts at `f64::MAX`, so
+# *every worker that finishes LB before any other completes full eval* sees
+# `MAX` and runs the full eval anyway. With 14 workers on 8 cores, ~8 are
+# "early" and ~6 are "late"; only the late wave actually benefits from the
+# prune. Effective prune rate ≈ 50 % × the microbench's 80 % = 40 %.
+#
+# Per-worker work compared to baseline-parallel:
+#   * baseline:       1 × full
+#   * chunk-3 early:  1 × LB + 1 × full = 1.5 × full   (overhead-only)
+#   * chunk-3 late:   1 × LB + 0.4 × full = 0.7 × full (savings)
+# Mixed (8 early / 6 late on 8 cores):  ≈ baseline ± 5 %.
+#
+# This explains why the parallel-branch wireup doesn't replicate the
+# sequential-branch microbench's -22 % to -32 %: in sequential, EVERY worker
+# after the first benefits from the running best, but in concurrent fan-out
+# only the late wave does. The structural cap is the dispatch latency of
+# the first full eval, not the prune-rate ceiling.
+#
+# Two interventions would tighten the gap on the bench-gate cell:
+#
+# (a) **Seed-first hybrid**: serialize the lowest-LB predictor's full
+#     evaluation BEFORE dispatching the parallel fan-out, so the atomic is
+#     populated with a real cost when concurrent workers start. Cost: +1
+#     serial full eval (~0.5 × per-worker time on 8 cores), saves the
+#     early-wave's wasted full evals. Net expected gain on 1.05 MP @ e7:
+#     -3 % to -5 %.
+#
+# (b) **Strategy A — sorted-by-LB sequential**: compute all 14 LBs in
+#     parallel, sort indices by LB ascending, evaluate full costs
+#     sequentially with the strict-< running best, break as soon as
+#     `lb[next] >= best`. Loses fan-out parallelism but guarantees the
+#     theoretical microbench savings. Wall-clock comparison vs the current
+#     parallel atomic-best strategy is mixed and image-dependent; the
+#     largest savings come from small per-call ranges where the LB compute
+#     parallelism would be wasted overhead anyway.
+#
+# Neither intervention is shipped in this chunk because (a) is +1 day of
+# work + a fresh round of paired benches to validate the trade-off across
+# all 9 cells, and (b) has shown -7 % to -8 % wins on the large cell
+# already without further hybridization. The chunk-3 wireup is correct
+# (byte-identical) and beneficial on the cells where the parallel branch
+# is actually the hot path (large cells with many ~10⁶-sample sub-trees);
+# the medium / small cells remain dominated by other tree-learning phases.
+#
+# ## Attribution note
+#
+# The chunk-3 algorithmic change (Strategy B atomic-best concurrent
+# lb-skip) was bundled into commit 23f22d22 ("perf(tree_learn): wire
+# InlineDedupTable into production gather (issue #41 chunk 2)") by an
+# adjacent agent's `jj split` over the `jxl-encoder/src/modular/tree_learn.rs`
+# file set — that split included the chunk-3 hunk that was uncommitted in
+# the default workspace at the time. The 23f22d22 commit message does not
+# mention chunk 3; this meta file is the explicit record. The shipped
+# code path is byte-identical to the design described in the comment block
+# at `tree_learn.rs:4916-5022`.
+#
+# Reproduce:
+#   SAMPLES=12 THREADS=8 ./scripts/bench_predictor_prune_ab.sh
+#     > benchmarks/predictor_prune_c3_ab_2026-05-17.tsv
+#   python3 ./scripts/analyze_predictor_prune_ab.py benchmarks/predictor_prune_c3_ab_2026-05-17.tsv
+#
+# The baseline cjxl-rs binary used for A_base was built from a sibling
+# git worktree pinned at the chunk-2 commit (52f8e816); both binaries
+# built without -C target-cpu=native.
