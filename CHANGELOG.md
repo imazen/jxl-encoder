@@ -25,6 +25,34 @@
 
 ### Changed (performance)
 
+- **Predictor-pruning seed-first hybrid for the parallel branch of
+  `find_best_predictor`** (issue #23 chunk 4 — completes the multi-chunk
+  predictor-pruning port; see `predictor_prune_c4_ab_2026-05-17.{tsv,meta}`).
+  Splits the parallel branch into four phases: compute all 14 extra-bits
+  lower bounds in parallel → pick lowest-LB seed (lowest-index tie-break)
+  → run the seed predictor's full eval **sequentially** → dispatch the
+  remaining 13 workers in parallel with the atomic seeded by the real
+  seed cost. The chunk-3 wireup (52f8e816 / 685244b) capped at ~40 %
+  effective prune because the early wave of workers raced against an
+  empty `f64::MAX` seed; the seed-first hybrid populates the atomic with
+  a tight real cost before fan-out so every worker — not just the late
+  wave — benefits from the prune. New `costs[i] = current_best_bits`
+  on skip (instead of `f64::INFINITY`) closes a theoretical tie-break
+  hazard with the non-MAX seed; full byte-identity proof in the comment
+  block at `tree_learn.rs:5293-5366`. Paired A/B at 8T (12 paired iters
+  × 3 images × 3 efforts, sample-major interleaved): **medium 1.05 MP @
+  e7 median Δ −5.70 %** (the brief's gate cell — chunk-3 was at −0.5 %
+  here), **large 4.19 MP @ e9 median Δ −13.75 %** (chunk-3 had only an
+  n=1 anecdote at this cell), **medium 1.05 MP @ e9 +0.32 % median**
+  (chunk-3 +3.03 % regression now erased). Large 4.19 MP @ e7 regresses
+  +1.27 % median — the deliberate trade-off for the win at the brief's
+  gate cell and the large+e9 cell; the per-worker full eval at large-e7
+  is short enough that the +1 serial seed eval costs more critical-path
+  latency than the prune saves on the remaining 13 workers. Hash-locks
+  `--features parallel-tree-learning`: 36/36 byte-identical; direct
+  sha256 verification on 5 (image, effort) cells of real photos:
+  byte-identical. Issue: imazen/jxl-encoder#23.
+
 - **Always-on VarDCT `try_dct64` per-image dispatch on small + low-d cells**
   (chunk 1 of the VarDCT speed push, follows the lossless smart-fanout /
   small-image-fallback / bucket-dispatch family pattern). New
@@ -57,7 +85,6 @@
   d=2.0) all produce **byte-identical output sample-pairwise**, confirming the
   adapter only fires on its gated cell. Companion sweep harness:
   `examples/vardct_ac_dispatch_paired_ab` (registered under `__expert`).
-
 - **Always-on `tree_max_buckets` per-image dispatch at large+e9 cells**
   (audit conditional-value catalog item #3 —
   `rejected_optimizations_conditional_value_2026-05-17.md`; resurrects the
