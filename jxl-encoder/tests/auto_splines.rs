@@ -146,6 +146,64 @@ fn auto_splines_on_photo_is_byte_identical_to_default() {
     );
 }
 
+/// Chunk-3 contract: on a multi-line "power-grid" synthetic (a wider
+/// canvas with several parallel ridges) the trial-encode gate's per-
+/// spline overhead is amortised enough that bytes-on STRICTLY DECREASE
+/// vs bytes-off. This is the chunk-2 → chunk-3 progress signal:
+/// chunk 2 paid +199 bytes net even on the single-line 1024×256
+/// because the per-spline-section overhead exceeded the realised
+/// VarDCT savings; the chunk-3 fidelity improvements (per-CP
+/// Hessian-derived sigma + bilinear colour sampling + near-coincident-
+/// candidate dedup + measured-energy trial-encode gate) flip the sign
+/// once multiple thin features share the per-image splines-section
+/// fixed overhead.
+#[test]
+fn auto_splines_chunk3_multi_line_decreases_bytes() {
+    const W: usize = 1024;
+    const H: usize = 512;
+    const N_LINES: usize = 4;
+
+    let mut rgb = alloc_rgb_grey(W, H);
+    for k in 0..N_LINES {
+        let y = ((k + 1) * H) / (N_LINES + 1);
+        for x in 4..W - 4 {
+            let i = (y * W + x) * 3;
+            rgb[i] = 240;
+            rgb[i + 1] = 240;
+            rgb[i + 2] = 240;
+        }
+    }
+
+    let bytes_off = LossyConfig::new(1.0)
+        .with_effort(7)
+        .encode_request(W as u32, H as u32, PixelLayout::Rgb8)
+        .encode(&rgb)
+        .expect("default-config multi-line encode must succeed");
+
+    let bytes_on = LossyConfig::new(1.0)
+        .with_effort(7)
+        .with_auto_splines(true)
+        .encode_request(W as u32, H as u32, PixelLayout::Rgb8)
+        .encode(&rgb)
+        .expect("auto-splines-on multi-line encode must succeed");
+
+    assert!(
+        bytes_on.len() < bytes_off.len(),
+        "chunk-3: on a multi-line power-grid synthetic the trial-encode \
+         gate must net-save bytes vs default — off len={} on len={} \
+         delta={:+} (chunk 2 was +199 on the single-line variant; \
+         chunk 3 must flip the sign once multiple ridges amortise the \
+         splines-section fixed overhead)",
+        bytes_off.len(),
+        bytes_on.len(),
+        bytes_on.len() as i64 - bytes_off.len() as i64,
+    );
+}
+
+fn alloc_rgb_grey(w: usize, h: usize) -> Vec<u8> {
+    vec![80u8; w * h * 3]
+}
+
 /// Below the libjxl `speed_tier <= kSquirrel` gate (effort < 7),
 /// auto-splines must not fire even when set.
 #[test]

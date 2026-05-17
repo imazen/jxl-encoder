@@ -59,6 +59,48 @@
 
 ### Added
 
+- **Splines auto-detect chunk 3 — fidelity improvements that flip
+  multi-line bytes net-negative** (A1 audit "VarDCT cost model"
+  PARTIAL item, follow-on to chunk 2's `24f0787`). Three fidelity
+  refinements close the residual gap that left chunk 2 paying +199
+  bytes net on the 1024×256 single-line power-line synthetic:
+  (1) **Per-control-point Hessian-derived sigma**
+  (`hessian_lambda_large`, `vardct/splines.rs`) — sigma is now fit
+  per arc-length sample as `1 / sqrt(|λ_large|)` of the local 2×2
+  image-Hessian (clamped to `[SIGMA_MIN=0.6, SIGMA_MAX=4.0]`), then
+  DCT-fit alongside the colour channels; sharp 1-px ridges get tight
+  Gaussians, soft ridges get wider ones (was DC-only sigma in chunk 2).
+  (2) **Bilinear colour sampling** (`bilinear_sample`) — replaces the
+  chunk-2 nearest-pixel lookup, which under-represented ridge intensity
+  by up to 50% when the ridge sat between integer pixels.
+  (3) **Trial-encode cost gate** (`spline_passes_trial_encode_gate`)
+  — replaces chunk 2's analytical estimate with a real
+  `encode_splines_section` byte count (exact bytes for the candidate's
+  splines section) plus a measured XYB residual energy reduction in
+  the spline's bbox; mirrors the
+  `vardct/patches::trial_encode_ref_frame_bytes` pattern at
+  `vardct/patches.rs:2255`. (4) **Near-coincident-candidate dedup** —
+  drops the second of a pair whose start AND end control points are
+  both within `DUP_RADIUS_PX = 4.0`, suppressing the 8-connected
+  tracer's habit of emitting both sides of a ridge as separate seeds.
+  Realised effect at `distance=1.0, effort=7` (see
+  `examples/splines_chunk3_bench.rs`):
+    - `power_line 1024x256` (1 line, W6-2 test) — chunk 2: +199 bytes;
+      chunk 3: **+118** (-81). Single-line still net-cost because VarDCT
+      already encodes one isolated ridge cheaply and the per-image
+      splines-section fixed overhead (~80 bytes) dominates.
+    - `power_line 1024x512` (4 lines) — **-138 bytes** (net win).
+    - `power_line 2048x1024` (8 lines) — **-557 bytes** (net win).
+  Photo-like noisy-ramp content still produces zero admitted splines
+  (`auto_splines_on_photo_is_byte_identical_to_default` unchanged).
+  Default-config output remains byte-identical (`auto_splines` defaults
+  to `false`; all 36 `hash_lock_features` fixtures unchanged). New
+  tests: `test_bilinear_sample_interpolates_and_clamps`,
+  `test_hessian_lambda_large_on_ridge_vs_flat`,
+  `test_dedup_keeps_single_horizontal_ridge`; integration test
+  `auto_splines_chunk3_multi_line_decreases_bytes` pins the
+  strictly-decreases multi-line win.
+
 - **Real spline auto-detection pipeline** (A1 audit "VarDCT cost
   model" PARTIAL item, chunk 2; follow-on to chunk 1's stub). The
   `find_splines_at_distance` entry replaces the chunk-1 stub with the

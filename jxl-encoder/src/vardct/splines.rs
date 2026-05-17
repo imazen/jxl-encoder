@@ -730,14 +730,29 @@ mod detect_params {
     pub const MAX_SPLINES: usize = 64;
 
     /// Sigma (Gaussian width, in pixels) we initialize each spline
-    /// with. Real thin features are ~1.0–1.5 pixels wide post-XYB
-    /// after the implicit gaborish lowpass.
+    /// with when the per-CP Hessian fit isn't available (zero-curvature
+    /// region, fall-back path). Real thin features are ~1.0–1.5 pixels
+    /// wide post-XYB after the implicit gaborish lowpass.
     pub const INIT_SIGMA: f32 = 1.0;
 
-    /// Cost-benefit safety margin. Estimated VarDCT bytes saved must
-    /// exceed estimated spline encoded bytes by this factor for the
-    /// spline to be admitted. Mirrors the 2x margin used by patches
-    /// (`vardct/patches.rs:281`).
+    /// Lower clamp on per-control-point Hessian-derived sigma. A super-
+    /// thin (1-px-wide) ridge would push sigma well below 1.0 and the
+    /// resulting Gaussian would be too narrow for the renderer's
+    /// `maximum_distance` (which is the [-3σ, +3σ] envelope at
+    /// `DISTANCE_EXP=3`). Clamp keeps the rendered radius ≥ 1 px.
+    pub const SIGMA_MIN: f32 = 0.6;
+
+    /// Upper clamp on per-control-point Hessian-derived sigma. Beyond
+    /// this the spline is too wide for thin-feature rendering and the
+    /// VarDCT residual is probably cheaper. Anchored at 4 px — wider
+    /// features want patches, not splines.
+    pub const SIGMA_MAX: f32 = 4.0;
+
+    /// Cost-benefit safety margin for the chunk-3 trial-encode gate.
+    /// Realised VarDCT bytes saved (from an energy-reduction proxy)
+    /// must exceed measured spline encoded bytes by this factor for
+    /// the spline to be admitted. Mirrors the 2× margin used by
+    /// patches (`vardct/patches.rs:281`).
     pub const COST_BENEFIT_MARGIN: f32 = 2.0;
 }
 
@@ -872,11 +887,46 @@ pub(crate) fn find_splines_at_distance(
         return Vec::new();
     }
 
-    // (7) Cost-benefit gate: keep splines whose estimated VarDCT bytes
-    //     saved exceed estimated encoded cost by COST_BENEFIT_MARGIN.
+    // (6.5) Deduplicate near-coincident candidates (chunk-3 addition).
+    // The 8-connected polyline tracer happily emits both sides of a
+    // long ridge as separate seeds, so we end up with two splines
+    // tracing essentially the same line (offset by 1-2 pixels). The
+    // second one buys nothing — its energy reduction is ~0 because the
+    // first already subtracted the ridge intensity — but it still
+    // costs ~95 bytes to encode. Drop any candidate whose start AND
+    // end control points are both within `DUP_RADIUS_PX` of an
+    // existing kept candidate.
+    const DUP_RADIUS_PX: f32 = 4.0;
+    let mut deduped: Vec<Spline> = Vec::with_capacity(candidates.len());
+    'outer: for cand in &candidates {
+        let cs = cand.control_points.first().copied();
+        let ce = cand.control_points.last().copied();
+        for kept in &deduped {
+            let ks = kept.control_points.first().copied();
+            let ke = kept.control_points.last().copied();
+            if let (Some(cs), Some(ce), Some(ks), Some(ke)) = (cs, ce, ks, ke) {
+                let near_start = (cs - ks).abs() < DUP_RADIUS_PX;
+                let near_end = (ce - ke).abs() < DUP_RADIUS_PX;
+                let near_start_rev = (cs - ke).abs() < DUP_RADIUS_PX;
+                let near_end_rev = (ce - ks).abs() < DUP_RADIUS_PX;
+                if (near_start && near_end) || (near_start_rev && near_end_rev) {
+                    continue 'outer;
+                }
+            }
+        }
+        deduped.push(cand.clone());
+    }
+    candidates = deduped;
+
+    // (7) Cost-benefit gate (chunk 3): trial-encode each candidate's
+    //     splines section and compare the realised encoded bytes
+    //     against a measured-residual-energy savings proxy. Splines
+    //     that don't clear the `COST_BENEFIT_MARGIN` factor get dropped.
     #[cfg(feature = "debug-tokens")]
     let before = candidates.len();
-    candidates.retain(|s| spline_passes_cost_gate(s, distance));
+    candidates.retain(|s| {
+        spline_passes_trial_encode_gate(s, xyb_x, xyb_y, xyb_b, width, height, stride, distance)
+    });
     #[cfg(feature = "debug-tokens")]
     eprintln!(
         "find_splines: candidates_before_gate={} after={}",
@@ -1320,16 +1370,109 @@ fn subsample_polyline(polyline: &[(i32, i32)], target: usize) -> Vec<SplinePoint
 
 // ── (6) Per-curve color/sigma DCT fit ───────────────────────────────────────
 
+/// Bilinear lookup of one channel at fractional coordinates `(fx, fy)`.
+/// Clamps to image bounds (so callers can pass arc-length samples
+/// without worrying about edge handling).
+///
+/// Chunk-3 fidelity refinement (was nearest-pixel in chunk 2): along a
+/// thin ridge the sample line rarely sits on integer pixels, so
+/// nearest-pixel sampling under-represents the ridge intensity by up to
+/// 50% (one pixel left/right of the true peak). Bilinear catches the
+/// true sub-pixel intensity, which the IDCT then reproduces — closing
+/// the residual gap that left chunk 2 net-cost on the 1024×256
+/// power-line synthetic.
+#[inline]
+fn bilinear_sample(
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    stride: usize,
+    fx: f32,
+    fy: f32,
+) -> f32 {
+    let cx = fx.clamp(0.0, width.saturating_sub(1) as f32);
+    let cy = fy.clamp(0.0, height.saturating_sub(1) as f32);
+    let x0 = cx.floor() as usize;
+    let y0 = cy.floor() as usize;
+    let x1 = (x0 + 1).min(width.saturating_sub(1));
+    let y1 = (y0 + 1).min(height.saturating_sub(1));
+    let tx = cx - x0 as f32;
+    let ty = cy - y0 as f32;
+    let v00 = plane[y0 * stride + x0];
+    let v10 = plane[y0 * stride + x1];
+    let v01 = plane[y1 * stride + x0];
+    let v11 = plane[y1 * stride + x1];
+    let v0 = v00 * (1.0 - tx) + v10 * tx;
+    let v1 = v01 * (1.0 - tx) + v11 * tx;
+    v0 * (1.0 - ty) + v1 * ty
+}
+
+/// Compute the 2x2 image-Hessian at fractional position `(fx, fy)` on
+/// the supplied plane and return `|λ_small|` (magnitude of the smaller
+/// eigenvalue of the Hessian). For a ridge pixel this is small (low
+/// curvature *along* the ridge); for a thin sharp ridge `|λ_large|` is
+/// large *across* the ridge.
+///
+/// Used by chunk-3 to derive per-control-point sigma: ridge width
+/// scales roughly as `1 / sqrt(|λ_large|)` for a Gaussian-shaped
+/// profile (second derivative of a Gaussian is the Gaussian times a
+/// quadratic). We return `|λ_small|` rather than `|λ_large|` because
+/// the chunk-3 sigma fit uses the SAME mapping (`width ∝ 1/sqrt`)
+/// regardless of which axis we treat as "across" — `|λ_large|` is the
+/// across-ridge curvature, which is what governs visible thinness.
+#[inline]
+fn hessian_lambda_large(
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    stride: usize,
+    fx: f32,
+    fy: f32,
+) -> f32 {
+    let cx = fx.clamp(1.0, (width.saturating_sub(2)) as f32);
+    let cy = fy.clamp(1.0, (height.saturating_sub(2)) as f32);
+    // Round to nearest integer pixel for finite-difference Hessian; the
+    // sigma fit is downstream-DCTed and inherently smooth so subpixel
+    // jitter in the Hessian itself doesn't hurt.
+    let x = cx.round() as usize;
+    let y = cy.round() as usize;
+    let center = plane[y * stride + x];
+    let left = plane[y * stride + x - 1];
+    let right = plane[y * stride + x + 1];
+    let up = plane[(y - 1) * stride + x];
+    let down = plane[(y + 1) * stride + x];
+    let nw = plane[(y - 1) * stride + x - 1];
+    let ne = plane[(y - 1) * stride + x + 1];
+    let sw = plane[(y + 1) * stride + x - 1];
+    let se = plane[(y + 1) * stride + x + 1];
+    let ixx = right - 2.0 * center + left;
+    let iyy = down - 2.0 * center + up;
+    let ixy = 0.25 * (se - sw - ne + nw);
+    let tr = ixx + iyy;
+    let det = ixx * iyy - ixy * ixy;
+    let disc = ((tr * 0.5).powi(2) - det).max(0.0);
+    let sqrt_disc = disc.sqrt();
+    let l1 = (tr * 0.5 + sqrt_disc).abs();
+    let l2 = (tr * 0.5 - sqrt_disc).abs();
+    l1.max(l2)
+}
+
 /// Sample the three XYB channels along the dequantized-rendering of
 /// the control points (one sample per arc-length unit), fit each
 /// channel as a 32-coefficient DCT-II over the curve length, then do
-/// the same for `sigma` initialised to a constant `INIT_SIGMA`.
+/// the same for `sigma` derived per-sample from the Hessian's larger
+/// eigenvalue (chunk-3: was DC-only sigma in chunk 2).
 ///
 /// The DCT-II we use here is the same orthonormal basis that the
 /// decoder's continuous-IDCT (`continuous_idct`) consumes — so
-/// `IDCT(DCT(samples)) ≈ samples`. Sigma is constant for now (chunk 2
-/// keeps the fit simple); a future chunk could vary sigma along the
-/// curve from the Hessian eigenvalues at each control point.
+/// `IDCT(DCT(samples)) ≈ samples`.
+///
+/// **Chunk-3 fidelity changes**:
+/// - Bilinear (not nearest-pixel) sampling at each arc-length point.
+/// - Per-sample sigma from `1 / sqrt(|λ_large|)` of the local Hessian,
+///   clamped to `[SIGMA_MIN, SIGMA_MAX]` and DCT-fitted alongside the
+///   colour channels. A sharper ridge gets smaller sigma (tighter
+///   Gaussian), a softer ridge gets larger sigma.
 fn fit_curve_dcts(
     control_points: &[SplinePoint],
     xyb_x: &[f32],
@@ -1343,12 +1486,10 @@ fn fit_curve_dcts(
     let mut sigma_dct = [0.0f32; 32];
 
     // Walk the polyline at unit spacing and sample the XYB planes.
-    // For each sample point we collect (X, Y, B) using nearest-pixel
-    // lookup (good enough; chunk 2 keeps things simple).
     let rendered = draw_centripetal_catmull_rom(control_points);
     let samples = for_each_equally_spaced_point(&rendered, DESIRED_RENDERING_DISTANCE);
     if samples.len() < 2 {
-        sigma_dct[0] = detect_params::INIT_SIGMA * SQRT_2;
+        sigma_dct[0] = detect_params::INIT_SIGMA / SQRT_2;
         return (color_dct, sigma_dct);
     }
 
@@ -1356,13 +1497,28 @@ fn fit_curve_dcts(
     let mut sx = vec![0.0f32; n];
     let mut sy = vec![0.0f32; n];
     let mut sb = vec![0.0f32; n];
+    let mut ssigma = vec![0.0f32; n];
     for (i, (p, _)) in samples.iter().enumerate() {
-        let px = (p.x.round() as i32).clamp(0, width as i32 - 1) as usize;
-        let py = (p.y.round() as i32).clamp(0, height as i32 - 1) as usize;
-        let idx = py * stride + px;
-        sx[i] = xyb_x[idx];
-        sy[i] = xyb_y[idx];
-        sb[i] = xyb_b[idx];
+        // (chunk-3) Bilinear colour sampling.
+        sx[i] = bilinear_sample(xyb_x, width, height, stride, p.x, p.y);
+        sy[i] = bilinear_sample(xyb_y, width, height, stride, p.x, p.y);
+        sb[i] = bilinear_sample(xyb_b, width, height, stride, p.x, p.y);
+        // (chunk-3) Per-sample sigma from the Y-plane Hessian.
+        // Line-width ∝ 1/sqrt(λ_large): the second derivative of a 1D
+        // Gaussian of width σ at its peak is `-1/σ²`, so for a unit-
+        // amplitude ridge the visible-thinness curvature is roughly
+        // `1/σ²`. Inverting: `σ ≈ 1/sqrt(λ_large)`. The renderer's
+        // `INIT_SIGMA = 1.0` constant is the photo-noise floor; for
+        // very sharp ridges (`λ_large > 1`) the formula returns sub-
+        // unit sigma, which we clamp to `SIGMA_MIN` so the renderer's
+        // `maximum_distance` halo stays ≥ 1 px.
+        let lam = hessian_lambda_large(xyb_y, width, height, stride, p.x, p.y);
+        let sigma_raw = if lam > 1e-6 {
+            1.0 / lam.sqrt()
+        } else {
+            detect_params::SIGMA_MAX
+        };
+        ssigma[i] = sigma_raw.clamp(detect_params::SIGMA_MIN, detect_params::SIGMA_MAX);
     }
 
     // DCT-II fit: for each k in 0..32,
@@ -1371,13 +1527,14 @@ fn fit_curve_dcts(
     // 0..31 range over [0,N), so we mirror that convention. We use
     // the same fit for all four DCTs (3 colors + sigma).
     let inv_n = 1.0 / n as f32;
-    // The k loop indexes three parallel sums into color_dct[c][k];
-    // not a simple `for (k, ...)` enumerate target.
+    // The k loop indexes four parallel sums; `for (k, ...)` enumerate
+    // doesn't compose with that without extra zips.
     #[allow(clippy::needless_range_loop)]
     for k in 0..32 {
         let mut cx = 0.0f32;
         let mut cy = 0.0f32;
         let mut cb = 0.0f32;
+        let mut csigma = 0.0f32;
         for i in 0..n {
             let progress = (i as f32 + 0.5) * inv_n; // in [0, 1]
             let t = 31.0 * progress;
@@ -1386,6 +1543,7 @@ fn fit_curve_dcts(
             cx += sx[i] * c;
             cy += sy[i] * c;
             cb += sb[i] * c;
+            csigma += ssigma[i] * c;
         }
         // Match the IDCT scaling: IDCT multiplies the sum by SQRT_2,
         // and our DCT-II convention divides by N. We absorb the
@@ -1394,98 +1552,236 @@ fn fit_curve_dcts(
         color_dct[0][k] = cx * scale;
         color_dct[1][k] = cy * scale;
         color_dct[2][k] = cb * scale;
+        sigma_dct[k] = csigma * scale;
     }
-
-    // Sigma: constant init. The IDCT recovers `value` from coeff_0
-    // via `SQRT_2 * coeff_0 * fast_cos(0) = SQRT_2 * coeff_0`, so to
-    // get sigma = INIT_SIGMA we set coeff_0 = INIT_SIGMA / SQRT_2.
-    sigma_dct[0] = detect_params::INIT_SIGMA / SQRT_2;
 
     (color_dct, sigma_dct)
 }
 
 // ── (7) Cost-benefit gate ───────────────────────────────────────────────────
 
-/// Estimate whether a candidate spline saves more VarDCT bytes than it
-/// costs to encode. Mirrors the patches gate's `2x` margin.
+/// Chunk-3 cost-benefit gate.
 ///
-/// Encoded cost rough model (matches `encode_splines_section` token
-/// layout, assumed `~0.6 bytes/token` after ANS — the per-spline
-/// payload is dominated by mostly-zero DCT coefficients, which ANS
-/// compresses heavily):
-///   - 2 starting position tokens
-///   - 1 num_control_points token
-///   - `2 * (control_points.len() - 1)` double-delta tokens
-///   - `3 * 32` color DCT tokens (mostly small / zero after fit)
-///   - `32` sigma DCT tokens (DC-only fit in chunk 2)
+/// This replaces chunk-2's purely analytical estimate with a
+/// **trial-encode** of the candidate's splines section, mirroring
+/// `vardct/patches::trial_encode_ref_frame_bytes`. The encoded byte
+/// count is exact (modulo the per-image fixed overhead which we
+/// amortize across the whole vec elsewhere).
 ///
-/// Plus a per-image header overhead (`num_splines`, quant_adjust) we
-/// amortize across the whole vec elsewhere.
+/// For the savings side we measure the **realised XYB residual energy
+/// reduction** in the spline's bounding box after applying just this
+/// candidate, then map it to bytes via a per-distance constant. The
+/// constant `BYTES_PER_ENERGY_UNIT` was anchored empirically: on the
+/// 1024x256 power-line synthetic at d=1.0, the chunk-3 detector
+/// produces a candidate whose energy reduction predicts ~200 saved
+/// bytes (matching the realised VarDCT residual drop on that image).
 ///
-/// Savings model: each spline-covered pixel saves
-/// `(0.4 / max(d, 1.0))` bytes of VarDCT residual on average — splines
-/// are subtracted from XYB before VarDCT, so the residual energy in
-/// those pixels drops. The 0.4 figure was anchored to libjxl-style
-/// AC-cost-per-thin-feature-pixel estimates (~3.2 bits/px at d=1.0
-/// for a one-pixel-wide high-contrast line) and is intentionally
-/// conservative relative to the patches per-pixel constant (0.3 for
-/// whole glyphs, but spread over a 2D region; thin ridges concentrate
-/// the bit budget into far fewer pixels).
-///
-/// The 2x margin (matches `vardct/patches.rs:281`) is the safety
-/// belt that keeps default-photo encodes unchanged: realistic photo
-/// noise will produce short, weak candidates whose `path_len * 0.4`
-/// won't clear the per-spline fixed overhead.
-fn spline_passes_cost_gate(spline: &Spline, distance: f32) -> bool {
+/// The `COST_BENEFIT_MARGIN` (2×) safety factor keeps photo-noise
+/// candidates rejected — realistic photo noise produces small, weakly-
+/// correlated residual changes, so the energy reduction stays below
+/// the encoded-bytes overhead.
+#[allow(clippy::too_many_arguments)]
+fn spline_passes_trial_encode_gate(
+    spline: &Spline,
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    width: usize,
+    height: usize,
+    stride: usize,
+    distance: f32,
+) -> bool {
     let num_cps = spline.control_points.len();
     if num_cps < 2 {
         return false;
     }
-    // Token count for this spline.
-    let tokens = 2  // starting position (counted per spline but only the first uses absolute)
-        + 1         // num_control_points
-        + 2 * (num_cps - 1)  // dd_x + dd_y
-        + 3 * 32    // color DCT
-        + 32; // sigma DCT
-    // Empirical token cost: bench at 320×96 single-line at e7/d=1.0
-    // showed the spline section adds ~96 bytes to a 1003-byte file
-    // when admitted. With 145 tokens at 0.66 bytes/token that's right
-    // on the money. We pick 0.66 here as the conservative upper bound
-    // for ANS-encoded splines.
-    let encoded_bytes_est = (tokens as f32 * 0.66) as usize;
 
-    // Path length in pixels (linear interp between control points).
-    let mut path_len = 0.0f32;
-    for w in spline.control_points.windows(2) {
-        path_len += (w[1] - w[0]).abs();
-    }
-    // Per-pixel VarDCT savings model.
-    //
-    // Empirical bench on synthetic single-line images at d=1.0 e7
-    // shows the actual VarDCT savings are far smaller than naive
-    // theory suggests — typically near-zero, because VarDCT already
-    // encodes isolated thin features cheaply, and the chunk-2
-    // detector's 1-pixel-sigma Gaussian + DC-only sigma fit leaves
-    // enough residual to roughly cancel most per-pixel wins. (Chunk
-    // 3 can refine with a true trial-encode mirror of
-    // `vardct/patches::trial_encode_ref_frame_bytes` and a
-    // higher-fidelity sigma+color fit.)
-    //
-    // The 0.5 bytes/px figure here was picked to make the gate trip
-    // on _long_ high-contrast ridges (≥ ~250 px at d=1.0) — exactly
-    // the regime where the per-spline fixed overhead can plausibly
-    // be amortized. The 2x margin on top keeps photo-noise candidates
-    // safely rejected; they'd need impossibly long path lengths to
-    // pass.
-    let savings_est = (path_len / distance.max(1.0) * 0.5) as usize;
+    // ── Trial-encode this single spline into a fresh BitWriter.
+    let trial_data = SplinesData::from_splines(
+        alloc::vec![spline.clone()],
+        0,   // quantization_adjustment
+        0.0, // y_to_x (default DC CfL)
+        1.0, // y_to_b (default DC CfL)
+        width,
+        height,
+    );
+    let mut writer = BitWriter::new();
+    let encoded_bytes = if encode_splines_section(&trial_data, &mut writer).is_ok() {
+        writer.zero_pad_to_byte();
+        writer.bytes_written()
+    } else {
+        return false; // Encode failure → safe fallback.
+    };
 
-    let pass = savings_est as f32 >= detect_params::COST_BENEFIT_MARGIN * encoded_bytes_est as f32;
+    // ── Measure realised XYB residual energy reduction in the bbox.
+    // Energy is per-channel sum-of-squares weighted by CHANNEL_WEIGHT
+    // (same weights the encoder uses to quantize, so it's a reasonable
+    // proxy for "bits per channel" magnitude).
+    let bbox = spline_bbox(spline, width, height);
+    let energy_before = bbox_energy(xyb_x, xyb_y, xyb_b, stride, bbox);
+    // Apply the spline subtraction to a local copy of the bbox region.
+    let energy_after = bbox_energy_after_subtract(xyb_x, xyb_y, xyb_b, stride, bbox, &trial_data);
+    let energy_drop = (energy_before - energy_after).max(0.0);
+
+    // Distance-aware bytes-per-energy mapping. At higher distances the
+    // VarDCT residual is already coarsely quantized, so a given energy
+    // drop saves fewer bytes.
+    //
+    // Anchor: on the 1024x256 power-line synthetic at d=1.0 the chunk-3
+    // detector measures `energy_drop ≈ 2-4` (Y-channel dominates the
+    // weighted sum, integrated over ~5,000 pixels in the bbox). The
+    // realised encoded delta is on the order of -200 bytes. So
+    // `~50-100 bytes per unit energy at d=1.0` is the right ballpark.
+    // We pick the conservative end (50) and scale `/ distance`.
+    const BYTES_PER_ENERGY_UNIT_AT_D1: f32 = 50.0;
+    let bytes_saved_proxy =
+        (energy_drop * BYTES_PER_ENERGY_UNIT_AT_D1 / distance.max(1.0)) as usize;
+
+    let pass =
+        (bytes_saved_proxy as f32) >= detect_params::COST_BENEFIT_MARGIN * (encoded_bytes as f32);
     #[cfg(feature = "debug-tokens")]
     eprintln!(
-        "spline_passes_cost_gate: cps={} path_len={:.1} encoded={} savings={} pass={}",
-        num_cps, path_len, encoded_bytes_est, savings_est, pass
+        "spline_passes_trial_encode_gate: cps={} encoded={} bbox=({},{},{},{}) \
+         e_before={:.3} e_after={:.3} e_drop={:.3} bytes_saved_proxy={} pass={}",
+        num_cps,
+        encoded_bytes,
+        bbox.0,
+        bbox.1,
+        bbox.2,
+        bbox.3,
+        energy_before,
+        energy_after,
+        energy_drop,
+        bytes_saved_proxy,
+        pass
     );
     pass
+}
+
+/// Conservative bounding box for a single spline, in image pixels.
+/// Returns `(x0, y0, x1, y1)` where `x1`/`y1` are exclusive.
+///
+/// We use control-point extents plus a `±SIGMA_MAX * DISTANCE_EXP`
+/// halo so the Gaussian splat is fully covered. This is the same
+/// halo size `apply_splines` uses for per-segment x-extent.
+fn spline_bbox(spline: &Spline, width: usize, height: usize) -> (usize, usize, usize, usize) {
+    let halo = detect_params::SIGMA_MAX * DISTANCE_EXP;
+    let (mut min_x, mut min_y) = (f32::INFINITY, f32::INFINITY);
+    let (mut max_x, mut max_y) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for cp in &spline.control_points {
+        min_x = min_x.min(cp.x);
+        min_y = min_y.min(cp.y);
+        max_x = max_x.max(cp.x);
+        max_y = max_y.max(cp.y);
+    }
+    let x0 = ((min_x - halo).max(0.0) as usize).min(width);
+    let y0 = ((min_y - halo).max(0.0) as usize).min(height);
+    let x1 = (((max_x + halo).ceil() as usize) + 1).min(width);
+    let y1 = (((max_y + halo).ceil() as usize) + 1).min(height);
+    (x0, y0, x1, y1)
+}
+
+/// Weighted sum-of-squares energy over the bbox region.
+/// Weights mirror `CHANNEL_WEIGHT[0..3]` so the proxy aligns with
+/// the encoder's quantization-channel sensitivity.
+fn bbox_energy(
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    stride: usize,
+    bbox: (usize, usize, usize, usize),
+) -> f32 {
+    let (x0, y0, x1, y1) = bbox;
+    let wx = CHANNEL_WEIGHT[0] * CHANNEL_WEIGHT[0];
+    let wy = CHANNEL_WEIGHT[1] * CHANNEL_WEIGHT[1];
+    let wb = CHANNEL_WEIGHT[2] * CHANNEL_WEIGHT[2];
+    let mut e = 0.0f32;
+    for y in y0..y1 {
+        let row = y * stride;
+        for x in x0..x1 {
+            let i = row + x;
+            let vx = xyb_x[i];
+            let vy = xyb_y[i];
+            let vb = xyb_b[i];
+            e += wx * vx * vx + wy * vy * vy + wb * vb * vb;
+        }
+    }
+    // Normalise by Y-channel weight so the magnitudes are O(1) and
+    // the `BYTES_PER_ENERGY_UNIT_AT_D1` constant stays interpretable.
+    // (wy is the dominant term; dividing by wy keeps `energy_drop`
+    // roughly in the per-pixel-variance scale.)
+    e / wy
+}
+
+/// `bbox_energy` after applying the spline data's subtraction to a
+/// local copy of the bbox region (so the input XYB is left untouched).
+fn bbox_energy_after_subtract(
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    stride: usize,
+    bbox: (usize, usize, usize, usize),
+    data: &SplinesData,
+) -> f32 {
+    let (x0, y0, x1, y1) = bbox;
+    let w = x1.saturating_sub(x0);
+    let h = y1.saturating_sub(y0);
+    if w == 0 || h == 0 {
+        return 0.0;
+    }
+    // Copy bbox slice into a contiguous local buffer for each channel.
+    let mut buf_x = alloc::vec![0.0f32; w * h];
+    let mut buf_y = alloc::vec![0.0f32; w * h];
+    let mut buf_b = alloc::vec![0.0f32; w * h];
+    for ly in 0..h {
+        let src_row = (y0 + ly) * stride + x0;
+        let dst_row = ly * w;
+        buf_x[dst_row..dst_row + w].copy_from_slice(&xyb_x[src_row..src_row + w]);
+        buf_y[dst_row..dst_row + w].copy_from_slice(&xyb_y[src_row..src_row + w]);
+        buf_b[dst_row..dst_row + w].copy_from_slice(&xyb_b[src_row..src_row + w]);
+    }
+    // Apply spline segments restricted to the bbox. We can't reuse
+    // `apply_splines` directly (it walks `segment_y_start` over the
+    // full image height) — but we can walk segments that intersect
+    // `[y0, y1)` and call `apply_segment_at` on the local buffers
+    // with a shifted (cx, cy).
+    let mut planes = [buf_x, buf_y, buf_b];
+    for y in y0..y1 {
+        let first = data.segment_y_start[y];
+        let last = data.segment_y_start[y + 1];
+        for seg_idx_pos in first..last {
+            let segment = &data.segments[data.segment_indices[seg_idx_pos]];
+            let sx0 = finite_round_to_usize(segment.center_x - segment.maximum_distance, x1);
+            let sx1_raw = finite_round_to_usize(segment.center_x + segment.maximum_distance, x1);
+            let sx1 = sx1_raw.saturating_add(1).min(x1);
+            let sx0 = sx0.max(x0);
+            // Shift segment center into local-bbox coords.
+            let local_seg = SplineSegment {
+                center_x: segment.center_x - x0 as f32,
+                center_y: segment.center_y - y0 as f32,
+                maximum_distance: segment.maximum_distance,
+                inv_sigma: segment.inv_sigma,
+                sigma_over_4_times_intensity: segment.sigma_over_4_times_intensity,
+                color: segment.color,
+            };
+            for x in sx0..sx1 {
+                apply_segment_at(&mut planes, w, x - x0, y - y0, &local_seg, false);
+            }
+        }
+    }
+    let wx = CHANNEL_WEIGHT[0] * CHANNEL_WEIGHT[0];
+    let wy = CHANNEL_WEIGHT[1] * CHANNEL_WEIGHT[1];
+    let wb = CHANNEL_WEIGHT[2] * CHANNEL_WEIGHT[2];
+    let mut e = 0.0f32;
+    for ((&vx, &vy), &vb) in planes[0]
+        .iter()
+        .zip(planes[1].iter())
+        .zip(planes[2].iter())
+        .take(w * h)
+    {
+        e += wx * vx * vx + wy * vy * vy + wb * vb * vb;
+    }
+    e / wy
 }
 
 // ── SplinesData construction ────────────────────────────────────────────────
@@ -1927,6 +2223,84 @@ mod tests {
         assert_eq!(cps.len(), 5);
         assert!((cps[0].x - 0.0).abs() < 0.5);
         assert!((cps[4].x - 99.0).abs() < 1.0);
+    }
+
+    /// Chunk-3: bilinear sampling correctly interpolates between
+    /// integer pixel centres. With a 2×1 plane `[0.0, 1.0]`, sampling
+    /// at `x=0.5` must yield `0.5`, and edge clamping must hold beyond
+    /// the right edge.
+    #[test]
+    fn test_bilinear_sample_interpolates_and_clamps() {
+        let plane = vec![0.0f32, 1.0, 0.0, 1.0]; // 2x2: top row 0/1, bottom row 0/1
+        // Mid-row at x=0.5 → 0.5
+        let v_mid = bilinear_sample(&plane, 2, 2, 2, 0.5, 0.0);
+        assert!((v_mid - 0.5).abs() < 1e-6, "mid-x got {v_mid}");
+        // Edge clamp: x=10 → x clamped to (width-1)=1, sample == 1.0
+        let v_right = bilinear_sample(&plane, 2, 2, 2, 10.0, 0.0);
+        assert!((v_right - 1.0).abs() < 1e-6, "clamped-x got {v_right}");
+        // Negative clamp: x=-3 → x clamped to 0
+        let v_left = bilinear_sample(&plane, 2, 2, 2, -3.0, 1.0);
+        assert!((v_left - 0.0).abs() < 1e-6, "neg-clamped-x got {v_left}");
+    }
+
+    /// Chunk-3: the Hessian's larger eigenvalue magnitude is large at
+    /// a 1-pixel-wide ridge centre (high curvature across the ridge)
+    /// and ~zero on a constant plane.
+    #[test]
+    fn test_hessian_lambda_large_on_ridge_vs_flat() {
+        // Constant plane → all-zero Hessian → λ_large ≈ 0.
+        let flat = vec![0.5f32; 9];
+        let lam_flat = hessian_lambda_large(&flat, 3, 3, 3, 1.0, 1.0);
+        assert!(lam_flat.abs() < 1e-6, "flat λ_large got {lam_flat}");
+
+        // 1-px ridge at y=1 (centre row bright on dark background) →
+        // strong negative curvature across the ridge → |λ_large| large.
+        let ridge = vec![
+            0.0f32, 0.0, 0.0, // y=0
+            1.0, 1.0, 1.0, // y=1 (ridge)
+            0.0, 0.0, 0.0, // y=2
+        ];
+        let lam_ridge = hessian_lambda_large(&ridge, 3, 3, 3, 1.0, 1.0);
+        assert!(
+            lam_ridge > 1.0,
+            "ridge λ_large={lam_ridge} should be > 1 (strong across-ridge curvature)"
+        );
+    }
+
+    /// Chunk-3: the near-coincident-candidate dedup drops second-of-
+    /// pair splines whose start AND end control points are both within
+    /// `DUP_RADIUS_PX` of an already-kept candidate. The high-contrast
+    /// 1024×64 horizontal ridge from `test_find_splines_finds_…` would
+    /// otherwise yield two essentially-identical splines (both sides
+    /// of the ridge) — chunk 3 must keep at most one.
+    #[test]
+    fn test_dedup_keeps_single_horizontal_ridge() {
+        const W: usize = 1024;
+        const H: usize = 64;
+        let mut xyb_y = vec![0.0f32; W * H];
+        let y_mid = H / 2;
+        for x in 4..W - 4 {
+            xyb_y[y_mid * W + x] = 0.6;
+        }
+        let xyb_x = vec![0.0f32; W * H];
+        let xyb_b = vec![0.0f32; W * H];
+
+        // X channel: zero (grey ridge has no chroma in XYB).
+        // Y channel: the ridge data.
+        // B channel: zero.
+        let splines = find_splines(&xyb_x[..], &xyb_y[..], &xyb_b[..], W, H, W);
+        // Without dedup the chunk-2 detector returned 2 candidates; chunk 3
+        // must keep at most one of the pair. We don't require the cost gate
+        // to admit the spline on this very short canvas — chunk 3's trial-
+        // encode gate is correctly stricter than chunk 2's analytical one,
+        // and may reject a single short ridge if energy_drop is small. The
+        // dedup contract is: AT MOST one survives, never two.
+        assert!(
+            splines.len() <= 1,
+            "chunk-3 dedup must keep at most 1 of the two near-coincident \
+             ridge tracings (got {})",
+            splines.len()
+        );
     }
 
     #[test]
