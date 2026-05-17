@@ -963,6 +963,49 @@ impl EffortProfile {
             self.tree_parallel_small_image_fallback = true;
         }
     }
+
+    /// Pixel-count + effort gate for the `tree_max_buckets` dispatch
+    /// (audit item #3, conditional-value catalog
+    /// `rejected_optimizations_conditional_value_2026-05-17.md`).
+    /// Always-on (NOT opt-in) — bytes change at large+e9 only, where
+    /// the dispatch saves wall-clock at near-zero byte cost.
+    ///
+    /// When `pixels >= LARGE_IMAGE_PIXEL_THRESHOLD` (4 MP) AND
+    /// `effort >= 9`, drops `tree_max_buckets` from the effort default
+    /// (256 at e9) to [`LARGE_E9_TREE_MAX_BUCKETS`] (192).
+    ///
+    /// **Pareto evidence**
+    /// (commit `4572790` Pareto sweep, `benchmarks/tree_max_buckets_pareto_2026-05-17.tsv`,
+    /// 5 samples × 3 profile images × 6 bucket values @ effort 9,
+    /// `RAYON_NUM_THREADS=8`, release build with `parallel-tree-learning`):
+    ///
+    /// | buckets | small_0.26MP   | medium_1.05MP  | large_4.19MP        |
+    /// |---------|----------------|----------------|---------------------|
+    /// | **192** | +1.79% / -4.9% | +0.10% / +1.9% | **+0.09% / -12.1%** |
+    /// | 256     | baseline       | baseline       | baseline            |
+    ///
+    /// 192 is the only candidate where bytes stay in the noise floor on
+    /// large (+0.09%) AND wall-clock wins are real (-12.1%). The
+    /// per-property bucket-sweep in `find_best_split` scales roughly
+    /// linearly with the bucket cap; the savings amortise only when
+    /// the tree is deep enough — i.e. at the largest tier (≥4 MP at
+    /// the most-expensive effort).
+    ///
+    /// Hash-locks: change at large+e9 cells (+0.09% byte cost is
+    /// intentional). All other (size, effort) cells stay byte-identical
+    /// because the dispatch does not fire.
+    ///
+    /// Threshold rationale: the same `pixels >= 4_000_000` boundary as
+    /// [`Self::adapt_to_image`] (smart-fanout's large carve-out) and
+    /// the audit's "≥3 MP" guidance. Effort gate is `>= 9` because the
+    /// Pareto sweep was run only at e9 — at e7/e8 the win was not
+    /// measured (`tree_max_buckets_for` returns 96/128 at e7/e8, so
+    /// 192 would be an INCREASE, never measured).
+    pub fn adapt_tree_max_buckets_for_image(&mut self, pixels: u64) {
+        if pixels >= LARGE_IMAGE_PIXEL_THRESHOLD && self.effort >= 9 {
+            self.tree_max_buckets = LARGE_E9_TREE_MAX_BUCKETS;
+        }
+    }
 }
 
 /// Pixel-count threshold below which the parallel-tree-learning path
@@ -971,6 +1014,15 @@ impl EffortProfile {
 /// fan-out remain enabled — only the workspace allocation strategy
 /// changes. See [`EffortProfile::adapt_small_image_fallback`].
 pub const SMALL_IMAGE_PIXEL_THRESHOLD: u64 = 1_000_000;
+
+/// Pixel-count threshold at or above which the `tree_max_buckets`
+/// dispatch fires (at effort >= 9). See
+/// [`EffortProfile::adapt_tree_max_buckets_for_image`].
+pub const LARGE_IMAGE_PIXEL_THRESHOLD: u64 = 4_000_000;
+
+/// `tree_max_buckets` value at large+e9 cells. Replaces the e9 default
+/// of 256. See [`EffortProfile::adapt_tree_max_buckets_for_image`].
+pub const LARGE_E9_TREE_MAX_BUCKETS: u16 = 192;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public expert surface — segmented Lossy / Lossless internal-param structs
@@ -1730,6 +1782,105 @@ mod tests {
                 !p.tree_parallel_small_image_fallback,
                 "fallback must be OFF at effort={effort} for 0.26 MP \
                  (cache helps at high effort — per-call alloc dominates)"
+            );
+        }
+    }
+
+    /// `adapt_tree_max_buckets_for_image` is the always-on per-image
+    /// dispatch (audit item #3) that drops `tree_max_buckets` from 256
+    /// to [`LARGE_E9_TREE_MAX_BUCKETS`] (192) on large+e9 cells only.
+    /// Verifies the gate boundaries on both sides (pixels, effort) and
+    /// confirms the rule never fires at e7/e8 or below 4 MP.
+    #[test]
+    fn test_adapt_tree_max_buckets_for_image_threshold() {
+        // Pre-dispatch baseline values (matches tree_max_buckets_for).
+        let baseline = |effort: u8| -> u16 {
+            match effort {
+                0..=4 => 32,
+                5 => 48,
+                6 => 64,
+                7 => 96,
+                8 => 128,
+                _ => 256,
+            }
+        };
+
+        // 1. e9 large (>= 4 MP): rule fires, buckets drop to 192.
+        for &pixels in &[
+            LARGE_IMAGE_PIXEL_THRESHOLD,
+            4_194_304,
+            8_000_000,
+            16_777_216,
+        ] {
+            let mut p = EffortProfile::lossless(9, EncoderMode::Reference);
+            assert_eq!(p.tree_max_buckets, 256, "e9 baseline buckets=256");
+            p.adapt_tree_max_buckets_for_image(pixels);
+            assert_eq!(
+                p.tree_max_buckets, LARGE_E9_TREE_MAX_BUCKETS,
+                "e9 pixels={pixels}: must drop to 192"
+            );
+        }
+        // e10 large: same dispatch fires.
+        let mut p = EffortProfile::lossless(10, EncoderMode::Reference);
+        p.adapt_tree_max_buckets_for_image(8_000_000);
+        assert_eq!(p.tree_max_buckets, LARGE_E9_TREE_MAX_BUCKETS, "e10 large");
+
+        // 2. e9 below threshold (< 4 MP): rule does NOT fire, buckets stay 256.
+        for &pixels in &[1u64, 1_024, 262_144, 1_048_576, 3_999_999] {
+            let mut p = EffortProfile::lossless(9, EncoderMode::Reference);
+            p.adapt_tree_max_buckets_for_image(pixels);
+            assert_eq!(
+                p.tree_max_buckets, 256,
+                "e9 pixels={pixels} (< {LARGE_IMAGE_PIXEL_THRESHOLD}): must stay 256"
+            );
+        }
+
+        // 3. e7/e8 large: rule does NOT fire (effort gate), keep effort default.
+        for effort in 1u8..=8 {
+            for &pixels in &[
+                LARGE_IMAGE_PIXEL_THRESHOLD,
+                4_194_304,
+                8_000_000,
+                16_777_216,
+            ] {
+                let mut p = EffortProfile::lossless(effort, EncoderMode::Reference);
+                let want = baseline(effort);
+                p.adapt_tree_max_buckets_for_image(pixels);
+                assert_eq!(
+                    p.tree_max_buckets, want,
+                    "effort={effort} pixels={pixels}: \
+                     must stay at baseline {want} (effort < 9)"
+                );
+            }
+        }
+
+        // 4. Cross-product spot check: all (effort, pixels) cells outside
+        //    the (effort>=9 AND pixels>=4MP) box leave the profile unchanged.
+        for effort in 1u8..=10 {
+            for &pixels in &[262_144u64, 1_048_576, 3_999_999] {
+                let mut p = EffortProfile::lossless(effort, EncoderMode::Reference);
+                let want = baseline(effort);
+                p.adapt_tree_max_buckets_for_image(pixels);
+                assert_eq!(
+                    p.tree_max_buckets, want,
+                    "effort={effort} pixels={pixels}: no dispatch fire"
+                );
+            }
+        }
+    }
+
+    /// Lossy profile must also honour the dispatch (lossy patches /
+    /// reference frames go through tree learning too — the constants
+    /// must stay consistent so a single canonical schedule applies).
+    #[test]
+    fn test_adapt_tree_max_buckets_lossy_profile_parity() {
+        for effort in 9u8..=10 {
+            let mut pl = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert_eq!(pl.tree_max_buckets, 256);
+            pl.adapt_tree_max_buckets_for_image(8_000_000);
+            assert_eq!(
+                pl.tree_max_buckets, LARGE_E9_TREE_MAX_BUCKETS,
+                "lossy e{effort} large: dispatch must apply"
             );
         }
     }

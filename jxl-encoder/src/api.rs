@@ -1077,6 +1077,16 @@ impl LosslessConfig {
             Some(true) => p.adapt_small_image_fallback(pixels),
             Some(false) | None => {} // default: gate stays off
         }
+        // Always-on tree_max_buckets dispatch (audit item #3): drops
+        // bucket cap from 256 → 192 at large+e9 cells only. Hash-locks
+        // shift at those cells (+0.09% bytes) in exchange for ~12% wall-
+        // clock. All other (size, effort) cells stay byte-identical.
+        // Skipped only if the caller has supplied an explicit override
+        // via `with_internal_params` (profile_override), to avoid
+        // silently re-overriding a sweep harness's pinned value.
+        if self.profile_override.is_none() {
+            p.adapt_tree_max_buckets_for_image(pixels);
+        }
         // Opt-in smart-fanout re-tuning.
         if self.tree_parallel_smart {
             p.adapt_to_image(pixels);
@@ -7312,6 +7322,65 @@ mod tests {
         for v in &linear0 {
             assert!(v.abs() < 1e-6, "PQ(0) should be 0; got {v}");
         }
+    }
+
+    /// Audit item #3: `effective_profile_for_image` must drop
+    /// `tree_max_buckets` from 256 → 192 ONLY at the (pixels >= 4 MP,
+    /// effort >= 9) cell. Every other cell must keep the effort-only
+    /// default so hash-locks stay stable.
+    #[test]
+    fn test_effective_profile_for_image_tree_max_buckets_dispatch() {
+        // e9 + large: dispatch fires.
+        let cfg = LosslessConfig::new().with_effort(9);
+        let p = cfg.effective_profile_for_image(4_194_304);
+        assert_eq!(
+            p.tree_max_buckets,
+            crate::effort::LARGE_E9_TREE_MAX_BUCKETS,
+            "e9 large: buckets must drop to 192"
+        );
+
+        // e9 + medium (< 4 MP): no dispatch.
+        let p = cfg.effective_profile_for_image(1_048_576);
+        assert_eq!(p.tree_max_buckets, 256, "e9 medium: buckets stay 256");
+
+        // e7 + large: no dispatch (effort gate).
+        let cfg = LosslessConfig::new().with_effort(7);
+        let p = cfg.effective_profile_for_image(8_000_000);
+        assert_eq!(
+            p.tree_max_buckets, 96,
+            "e7 large: buckets stay 96 (default)"
+        );
+
+        // e10 + large: dispatch fires (effort >= 9).
+        let cfg = LosslessConfig::new().with_effort(10);
+        let p = cfg.effective_profile_for_image(8_000_000);
+        assert_eq!(
+            p.tree_max_buckets,
+            crate::effort::LARGE_E9_TREE_MAX_BUCKETS,
+            "e10 large: buckets drop to 192"
+        );
+    }
+
+    /// When the caller has supplied an explicit `__expert`
+    /// profile_override (e.g. a sweep harness pinning a specific
+    /// `tree_max_buckets`), the always-on dispatch must NOT silently
+    /// stomp it.
+    #[cfg(feature = "__expert")]
+    #[test]
+    fn test_effective_profile_for_image_respects_internal_params_override() {
+        let params = crate::effort::LosslessInternalParams {
+            tree_max_buckets: Some(128),
+            ..Default::default()
+        };
+        let cfg = LosslessConfig::new()
+            .with_effort(9)
+            .with_internal_params(params);
+        let p = cfg.effective_profile_for_image(8_000_000);
+        // Override wins — dispatch did not fire.
+        assert_eq!(
+            p.tree_max_buckets, 128,
+            "sweep override must survive the dispatch"
+        );
     }
 
     #[test]
