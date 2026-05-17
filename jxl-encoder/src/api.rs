@@ -1230,6 +1230,118 @@ impl Default for AnimationFrame<'_> {
     }
 }
 
+// ── Shared knob enums (LossyConfig + LosslessConfig) ───────────────────────
+
+/// Container-wrap policy for the encoded JXL output.
+///
+/// Mirrors libjxl `cjxl --container 0|1`. The default ([`Auto`]) wraps
+/// the codestream in a JXL container (`JXL ` signature box +
+/// `jxlc`/`jxlp` data boxes + any metadata boxes) **only** when
+/// required — i.e., the codestream uses a level that requires the
+/// container box (libjxl `MustUseContainer`), or the caller attached
+/// EXIF / XMP / JUMBF / colr / hCdR metadata.
+///
+/// [`Always`] forces a container wrapper even when the bare codestream
+/// would have been spec-valid on its own — useful for downstream tools
+/// that always expect the ISOBMFF framing. [`Never`] skips the
+/// container even when metadata is present (the metadata is silently
+/// dropped); this fails the encode (returns
+/// [`EncodeError::InvalidInput`]) if the codestream level requires a
+/// container, since the result would be unreadable.
+///
+/// [`Auto`]: ContainerMode::Auto
+/// [`Always`]: ContainerMode::Always
+/// [`Never`]: ContainerMode::Never
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ContainerMode {
+    /// **Default.** Wrap in a container box only when required
+    /// (metadata present, or `codestream_level != 5`). Matches libjxl's
+    /// `MustUseContainer` semantics.
+    #[default]
+    Auto,
+    /// Always emit the container wrapper, even for bare-codestream-OK
+    /// encodes. Equivalent to libjxl `--container 1`.
+    Always,
+    /// Never wrap; emit the bare codestream. Drops attached EXIF / XMP
+    /// / JUMBF / colr / hCdR silently (they have nowhere to go without
+    /// the container). Returns [`EncodeError::InvalidInput`] when the
+    /// codestream level requires a container (e.g. level 10).
+    /// Equivalent to libjxl `--container 0`.
+    Never,
+}
+
+/// Premultiplied (associated) alpha policy for inputs with an alpha
+/// channel.
+///
+/// Mirrors libjxl `cjxl --premultiply -1|0|1`.
+///
+/// - [`Off`]: input alpha is straight (unassociated). Color samples
+///   were captured without alpha pre-multiplication. **Default.**
+/// - [`On`]: input alpha is premultiplied (associated). Color samples
+///   were already multiplied by alpha. Standard for GPU pipelines
+///   (Skia, Cairo, Metal, Vulkan, Direct2D, Wayland, CompositorAPI).
+/// - [`Auto`]: detect from pixels at encode time. The encoder scans
+///   the buffer once: if every color sample is ≤ its alpha sample,
+///   the data is treated as premultiplied; otherwise straight. The
+///   scan is O(N) and runs before the encode loop; for trusted inputs
+///   prefer the explicit [`Off`]/[`On`] forms.
+///
+/// On the [`LossyConfig`] path the encoder requires the
+/// unpremultiplication pre-pass (#13) — calling `finish()` on a lossy
+/// encode with [`On`] (or [`Auto`] that resolves to premultiplied)
+/// returns [`EncodeError::InvalidInput`]. On the [`LosslessConfig`]
+/// path the pixels are preserved bit-exactly and the
+/// `alpha_associated` header bit is set so the decoder interprets the
+/// stored values correctly.
+///
+/// [`Auto`]: PremultipliedAlphaMode::Auto
+/// [`Off`]: PremultipliedAlphaMode::Off
+/// [`On`]: PremultipliedAlphaMode::On
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PremultipliedAlphaMode {
+    /// **Default.** Straight (unassociated) alpha. Equivalent to
+    /// libjxl `--premultiply 0`.
+    #[default]
+    Off,
+    /// Premultiplied (associated) alpha. Equivalent to libjxl
+    /// `--premultiply 1`.
+    On,
+    /// Detect from pixels at encode time. Equivalent to libjxl
+    /// `--premultiply -1`. Adds a single O(N) scan over the input
+    /// before encoding.
+    Auto,
+}
+
+impl PremultipliedAlphaMode {
+    /// Convert from the libjxl `--premultiply` integer encoding.
+    /// `< 0` = [`Auto`](Self::Auto), `0` = [`Off`](Self::Off), `> 0` =
+    /// [`On`](Self::On).
+    pub const fn from_i8(v: i8) -> Self {
+        if v < 0 {
+            Self::Auto
+        } else if v == 0 {
+            Self::Off
+        } else {
+            Self::On
+        }
+    }
+}
+
+/// Maximum value for [`LossyConfig::with_faster_decoding`] /
+/// [`LosslessConfig::with_faster_decoding`]. Matches libjxl
+/// `cjxl --faster_decoding 0..4`.
+pub const MAX_FASTER_DECODING: u8 = 4;
+
+/// Maximum value for [`LossyConfig::with_progressive_dc`]. Matches
+/// libjxl `cjxl --progressive_dc 0..2`.
+///
+/// 0 = no progressive DC.
+/// 1 = one [`LfFrame`](crate::LossyConfig::with_lf_frame) ahead of the
+/// main VarDCT frame.
+/// 2 = two nested LfFrames (libjxl path; our encoder currently emits a
+/// single LfFrame and warns).
+pub const MAX_PROGRESSIVE_DC: u8 = 2;
+
 // ── LosslessConfig ──────────────────────────────────────────────────────────
 
 /// Lossless (modular) encoding configuration.
@@ -1356,6 +1468,19 @@ pub struct LosslessConfig {
     /// not consume previous-channel properties.
     /// See [`Self::with_modular_nb_prev_channels`].
     modular_nb_prev_channels: Option<i32>,
+    /// Decoding-speed tier (libjxl `--faster_decoding 0..4`). Higher
+    /// values bias the modular encode toward simpler bitstreams that
+    /// decode faster, at the cost of compression. Default `0`
+    /// (compression-priority). Mirrors libjxl
+    /// `cparams.decoding_speed_tier` and feeds into
+    /// [`crate::effort::LosslessFasterDecoding`] knobs. See
+    /// [`Self::with_faster_decoding`].
+    faster_decoding: u8,
+    /// Container-wrap policy (libjxl `--container 0|1`). Default
+    /// [`ContainerMode::Auto`] keeps the existing behaviour (wrap only
+    /// when metadata or level demands it). See
+    /// [`Self::with_container_mode`].
+    container_mode: ContainerMode,
 }
 
 impl Default for LosslessConfig {
@@ -1392,6 +1517,8 @@ impl LosslessConfig {
             modular_channel_colors_global_percent: None,
             modular_channel_colors_group_percent: None,
             modular_nb_prev_channels: None,
+            faster_decoding: 0,
+            container_mode: ContainerMode::Auto,
         }
     }
 
@@ -1413,6 +1540,58 @@ impl LosslessConfig {
     pub fn with_smart_fanout(mut self, on: bool) -> Self {
         self.tree_parallel_smart = on;
         self
+    }
+
+    /// Bias the modular encode toward simpler bitstreams that decode
+    /// faster, at the cost of compression. Mirrors libjxl
+    /// `cjxl --faster_decoding 0..4`
+    /// ([`cparams.decoding_speed_tier`][libjxl-cparams]).
+    ///
+    /// Values are clamped to `0..=`[`MAX_FASTER_DECODING`]. The default
+    /// `0` keeps the existing behaviour (no speed bias).
+    ///
+    /// Per-tier effect on the modular path
+    /// ([libjxl `enc_modular.cc:469-516`][libjxl-modular],
+    /// [`enc_frame.cc:340`][libjxl-frame]):
+    ///
+    /// - `1`: disables the Weighted predictor in tree learning;
+    ///   `fast_decode_multiplier = 1.005` lifts the split-cost threshold
+    ///   so the tree stays shallower.
+    /// - `2`: same as tier 1 plus `modular_group_size_shift = 0`
+    ///   (small groups for multithreaded decode);
+    ///   `fast_decode_multiplier = 1.015`. Also clamps modular ANS
+    ///   `max_histograms = 12`.
+    /// - `3`: forces the Gradient predictor only and skips the MA tree
+    ///   learner entirely (libjxl `kGradientOnly`).
+    /// - `4`: tier 3 plus `nb_repeats = 0` (no MA tree at all). Also
+    ///   disables the DC-frame patches pass.
+    ///
+    /// [libjxl-cparams]: https://github.com/libjxl/libjxl/blob/main/lib/jxl/enc_params.h
+    /// [libjxl-modular]: https://github.com/libjxl/libjxl/blob/main/lib/jxl/enc_modular.cc
+    /// [libjxl-frame]: https://github.com/libjxl/libjxl/blob/main/lib/jxl/enc_frame.cc
+    pub fn with_faster_decoding(mut self, tier: u8) -> Self {
+        self.faster_decoding = tier.min(MAX_FASTER_DECODING);
+        self
+    }
+
+    /// Currently-configured decoding-speed tier (`0..=4`).
+    pub fn faster_decoding(&self) -> u8 {
+        self.faster_decoding
+    }
+
+    /// Container-wrap policy. Mirrors libjxl `cjxl --container 0|1`.
+    /// Default [`ContainerMode::Auto`] wraps the codestream only when
+    /// metadata is attached or the codestream level requires it.
+    ///
+    /// See [`ContainerMode`] for the per-variant semantics.
+    pub fn with_container_mode(mut self, mode: ContainerMode) -> Self {
+        self.container_mode = mode;
+        self
+    }
+
+    /// Currently-configured container-wrap policy.
+    pub fn container_mode(&self) -> ContainerMode {
+        self.container_mode
     }
 
     /// Resolve the effective [`EffortProfile`]: the override if set,
@@ -1989,6 +2168,7 @@ impl LosslessConfig {
             intensity_target: None,
             min_nits: None,
             premultiplied_alpha: false,
+            premultiplied_alpha_mode: None,
             bits_per_sample: None,
             brotli_metadata_quality: None,
             row_stride: None,
@@ -2432,6 +2612,25 @@ pub struct LossyConfig {
     /// default upsampling for the active `with_resampling` factor.
     /// See [`Self::with_upsampling_mode`].
     upsampling_mode: Option<i32>,
+    /// Decoding-speed tier (libjxl `--faster_decoding 0..4`). Higher
+    /// values bias the VarDCT encode toward simpler bitstreams that
+    /// decode faster, at the cost of compression. Default `0`
+    /// (compression-priority). Mirrors libjxl
+    /// `cparams.decoding_speed_tier`; see
+    /// [`Self::with_faster_decoding`] for the per-tier effects.
+    faster_decoding: u8,
+    /// Container-wrap policy (libjxl `--container 0|1`). Default
+    /// [`ContainerMode::Auto`] keeps the existing behaviour (wrap only
+    /// when metadata or level demands it). See
+    /// [`Self::with_container_mode`].
+    container_mode: ContainerMode,
+    /// Explicit progressive-DC level (libjxl `--progressive_dc 0..2`).
+    /// `0` = no progressive DC (default); `1` = one LfFrame ahead of
+    /// the main VarDCT frame (equivalent to
+    /// [`Self::with_lf_frame(true)`]); `2` = two nested LfFrames
+    /// (libjxl path; our encoder currently emits a single LfFrame and
+    /// warns). See [`Self::with_progressive_dc`].
+    progressive_dc: u8,
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -2520,6 +2719,9 @@ impl LossyConfig {
             center_x: None,
             center_y: None,
             upsampling_mode: None,
+            faster_decoding: 0,
+            container_mode: ContainerMode::Auto,
+            progressive_dc: 0,
         }
     }
 
@@ -3425,6 +3627,86 @@ impl LossyConfig {
         self
     }
 
+    /// Explicit `progressive_dc` level. Mirrors libjxl
+    /// `cjxl --progressive_dc 0..2`.
+    ///
+    /// - `0`: no progressive DC (default).
+    /// - `1`: one LfFrame ahead of the main VarDCT frame (same as
+    ///   [`Self::with_lf_frame(true)`]).
+    /// - `2`: two nested LfFrames (libjxl path; our encoder currently
+    ///   emits a single LfFrame and warns — the value is stored and
+    ///   surfaced via [`Self::progressive_dc`] for forward compatibility).
+    ///
+    /// Values are clamped to `0..=`[`MAX_PROGRESSIVE_DC`]. Setting
+    /// any non-zero level implies [`Self::with_lf_frame(true)`].
+    pub fn with_progressive_dc(mut self, level: u8) -> Self {
+        let lvl = level.min(MAX_PROGRESSIVE_DC);
+        self.progressive_dc = lvl;
+        if lvl >= 1 {
+            self.lf_frame = true;
+        }
+        self
+    }
+
+    /// Currently-configured `progressive_dc` level (`0..=2`).
+    pub fn progressive_dc(&self) -> u8 {
+        self.progressive_dc
+    }
+
+    /// Bias the VarDCT encode toward simpler bitstreams that decode
+    /// faster, at the cost of compression. Mirrors libjxl
+    /// `cjxl --faster_decoding 0..4`
+    /// ([`cparams.decoding_speed_tier`][libjxl-cparams]).
+    ///
+    /// Values are clamped to `0..=`[`MAX_FASTER_DECODING`]. The default
+    /// `0` keeps the existing behaviour (no speed bias).
+    ///
+    /// Per-tier effect on the VarDCT path (libjxl
+    /// [`enc_frame.cc:280`][libjxl-frame],
+    /// [`enc_ac_strategy.cc:884`][libjxl-acs],
+    /// [`enc_ans.cc:1372`][libjxl-ans]):
+    ///
+    /// - `1`: cluster all AC blocks into a single block-context map
+    ///   (simpler entropy contexts); cap VarDCT histograms at 6 (the
+    ///   AC pass) / 12 (the modular fallback pass); skip the patches
+    ///   pre-pass.
+    /// - `2`: same as tier 1 plus tighter group-size shift for
+    ///   multithreaded decode.
+    /// - `3`: skip EPF (the lowest threshold drops out — only `>= 1.5`
+    ///   and `>= 4.0` butteraugli distances still enable any EPF
+    ///   iters).
+    /// - `4`: gaborish is forced off; AC strategy search prunes
+    ///   anything larger than 32x32; DCT32x32 itself is disabled.
+    ///
+    /// [libjxl-cparams]: https://github.com/libjxl/libjxl/blob/main/lib/jxl/enc_params.h
+    /// [libjxl-frame]: https://github.com/libjxl/libjxl/blob/main/lib/jxl/enc_frame.cc
+    /// [libjxl-acs]: https://github.com/libjxl/libjxl/blob/main/lib/jxl/enc_ac_strategy.cc
+    /// [libjxl-ans]: https://github.com/libjxl/libjxl/blob/main/lib/jxl/enc_ans.cc
+    pub fn with_faster_decoding(mut self, tier: u8) -> Self {
+        self.faster_decoding = tier.min(MAX_FASTER_DECODING);
+        self
+    }
+
+    /// Currently-configured decoding-speed tier (`0..=4`).
+    pub fn faster_decoding(&self) -> u8 {
+        self.faster_decoding
+    }
+
+    /// Container-wrap policy. Mirrors libjxl `cjxl --container 0|1`.
+    /// Default [`ContainerMode::Auto`] wraps the codestream only when
+    /// metadata is attached or the codestream level requires it.
+    ///
+    /// See [`ContainerMode`] for the per-variant semantics.
+    pub fn with_container_mode(mut self, mode: ContainerMode) -> Self {
+        self.container_mode = mode;
+        self
+    }
+
+    /// Currently-configured container-wrap policy.
+    pub fn container_mode(&self) -> ContainerMode {
+        self.container_mode
+    }
+
     /// Set butteraugli quantization loop iterations explicitly.
     ///
     /// Overrides the automatic effort-based default (effort 7: 0, effort 8: 2, effort 9+: 4).
@@ -3684,6 +3966,7 @@ impl LossyConfig {
             intensity_target: None,
             min_nits: None,
             premultiplied_alpha: false,
+            premultiplied_alpha_mode: None,
             bits_per_sample: None,
             brotli_metadata_quality: None,
             row_stride: None,
@@ -3788,6 +4071,14 @@ pub struct EncodeRequest<'a> {
     intensity_target: Option<f32>,
     min_nits: Option<f32>,
     premultiplied_alpha: bool,
+    /// Premultiplied-alpha policy when the caller wants explicit auto
+    /// detection (libjxl `--premultiply -1|0|1`). When `Some(_)` this
+    /// overrides the boolean [`Self::with_premultiplied_alpha`] flag.
+    /// `Some(Auto)` triggers a one-pass scan of the input pixels at
+    /// encode time; `Some(On)`/`Some(Off)` are equivalent to passing
+    /// `true`/`false` to [`Self::with_premultiplied_alpha`]. See
+    /// [`Self::with_premultiplied_alpha_mode`].
+    premultiplied_alpha_mode: Option<PremultipliedAlphaMode>,
     /// Optional input precision override for u16 layouts. `None` →
     /// full 16-bit (input divisor 65535). `Some(N)` → input divisor
     /// `(1 << N) - 1` and codestream `BitDepth.bits_per_sample = N`.
@@ -4135,6 +4426,61 @@ impl<'a> EncodeRequest<'a> {
     pub fn with_premultiplied_alpha(mut self, enable: bool) -> Self {
         self.premultiplied_alpha = enable;
         self
+    }
+
+    /// Explicit premultiplied-alpha mode (libjxl `--premultiply -1|0|1`).
+    ///
+    /// Setting this overrides any prior
+    /// [`Self::with_premultiplied_alpha`] call. The three accepted modes
+    /// are:
+    ///
+    /// - [`PremultipliedAlphaMode::Off`] — straight alpha (libjxl `0`).
+    /// - [`PremultipliedAlphaMode::On`] — premultiplied alpha (libjxl `1`).
+    /// - [`PremultipliedAlphaMode::Auto`] — detect at encode time by
+    ///   scanning the input pixels once (libjxl `-1`). The scan is O(N)
+    ///   and runs before the encode loop; for trusted inputs prefer the
+    ///   explicit forms above.
+    ///
+    /// `On`/`Off` map directly onto
+    /// [`Self::with_premultiplied_alpha(true|false)`]. `Auto` records
+    /// the policy on the request; the encoder samples the input once
+    /// before the encode loop and resolves it to `On` or `Off`. Lossy
+    /// resolution to `On` still returns
+    /// [`EncodeError::InvalidInput`] until the unpremultiplication
+    /// pre-pass (#13) lands.
+    pub fn with_premultiplied_alpha_mode(mut self, mode: PremultipliedAlphaMode) -> Self {
+        self.premultiplied_alpha_mode = Some(mode);
+        match mode {
+            PremultipliedAlphaMode::On => {
+                self.premultiplied_alpha = true;
+            }
+            PremultipliedAlphaMode::Off => {
+                self.premultiplied_alpha = false;
+            }
+            PremultipliedAlphaMode::Auto => {
+                // Resolved at encode time by the input-scanning pre-pass.
+                // The boolean flag retains its previous value as a
+                // fallback if the scanner is not enabled (e.g. lossy
+                // encode where Auto resolves to On).
+            }
+        }
+        self
+    }
+
+    /// Currently configured premultiplied-alpha mode.
+    ///
+    /// Returns the explicit mode set via
+    /// [`Self::with_premultiplied_alpha_mode`] if any, otherwise
+    /// reflects the boolean
+    /// [`Self::with_premultiplied_alpha`] flag (Off if `false`, On if
+    /// `true`).
+    pub fn premultiplied_alpha_mode(&self) -> PremultipliedAlphaMode {
+        self.premultiplied_alpha_mode
+            .unwrap_or(if self.premultiplied_alpha {
+                PremultipliedAlphaMode::On
+            } else {
+                PremultipliedAlphaMode::Off
+            })
     }
 
     /// Override the input precision for u16 layouts (closes
@@ -10158,6 +10504,116 @@ mod tests {
                 bytes_with_override, bytes_e9_plain,
                 "override should persist across with_effort()"
             );
+        }
+    }
+
+    // ─── Shared knob enums (libjxl `cjxl` parity) ─────────────────
+
+    #[test]
+    fn test_container_mode_default_auto() {
+        assert_eq!(LossyConfig::new(1.0).container_mode(), ContainerMode::Auto);
+        assert_eq!(LosslessConfig::new().container_mode(), ContainerMode::Auto);
+    }
+
+    #[test]
+    fn test_container_mode_round_trip() {
+        let cfg = LossyConfig::new(1.0).with_container_mode(ContainerMode::Always);
+        assert_eq!(cfg.container_mode(), ContainerMode::Always);
+        let cfg = cfg.with_container_mode(ContainerMode::Never);
+        assert_eq!(cfg.container_mode(), ContainerMode::Never);
+    }
+
+    #[test]
+    fn test_faster_decoding_clamp() {
+        // Out-of-range values clamp to MAX_FASTER_DECODING.
+        let cfg = LossyConfig::new(1.0).with_faster_decoding(99);
+        assert_eq!(cfg.faster_decoding(), MAX_FASTER_DECODING);
+        // 0 is the default (no speed bias).
+        let cfg = LossyConfig::new(1.0);
+        assert_eq!(cfg.faster_decoding(), 0);
+        // In-range values pass through.
+        for tier in 0..=MAX_FASTER_DECODING {
+            assert_eq!(
+                LossyConfig::new(1.0)
+                    .with_faster_decoding(tier)
+                    .faster_decoding(),
+                tier,
+            );
+            assert_eq!(
+                LosslessConfig::new()
+                    .with_faster_decoding(tier)
+                    .faster_decoding(),
+                tier,
+            );
+        }
+    }
+
+    #[test]
+    fn test_progressive_dc_clamp_and_lf_frame_implication() {
+        let cfg = LossyConfig::new(1.0);
+        assert_eq!(cfg.progressive_dc(), 0);
+        assert!(!cfg.lf_frame());
+
+        // level 1 implies lf_frame=true.
+        let cfg = LossyConfig::new(1.0).with_progressive_dc(1);
+        assert_eq!(cfg.progressive_dc(), 1);
+        assert!(cfg.lf_frame(), "progressive_dc>=1 should imply lf_frame");
+
+        // level 2 also implies lf_frame=true.
+        let cfg = LossyConfig::new(1.0).with_progressive_dc(2);
+        assert_eq!(cfg.progressive_dc(), 2);
+        assert!(cfg.lf_frame());
+
+        // Out-of-range clamps to MAX_PROGRESSIVE_DC.
+        let cfg = LossyConfig::new(1.0).with_progressive_dc(255);
+        assert_eq!(cfg.progressive_dc(), MAX_PROGRESSIVE_DC);
+    }
+
+    #[test]
+    fn test_premultiplied_alpha_mode_from_i8() {
+        assert_eq!(
+            PremultipliedAlphaMode::from_i8(-1),
+            PremultipliedAlphaMode::Auto
+        );
+        assert_eq!(
+            PremultipliedAlphaMode::from_i8(-127),
+            PremultipliedAlphaMode::Auto
+        );
+        assert_eq!(
+            PremultipliedAlphaMode::from_i8(0),
+            PremultipliedAlphaMode::Off
+        );
+        assert_eq!(
+            PremultipliedAlphaMode::from_i8(1),
+            PremultipliedAlphaMode::On
+        );
+        assert_eq!(
+            PremultipliedAlphaMode::from_i8(127),
+            PremultipliedAlphaMode::On
+        );
+    }
+
+    #[test]
+    fn test_premultiplied_alpha_mode_builder_round_trip() {
+        let cfg = LossyConfig::new(1.0);
+        {
+            let req = cfg.encode_request(8, 8, PixelLayout::Rgba8);
+            // Default: Off (matches the boolean `false` default).
+            assert_eq!(req.premultiplied_alpha_mode(), PremultipliedAlphaMode::Off);
+        }
+
+        {
+            let req = cfg
+                .encode_request(8, 8, PixelLayout::Rgba8)
+                .with_premultiplied_alpha_mode(PremultipliedAlphaMode::On);
+            assert_eq!(req.premultiplied_alpha_mode(), PremultipliedAlphaMode::On);
+        }
+
+        {
+            let req = cfg
+                .encode_request(8, 8, PixelLayout::Rgba8)
+                .with_premultiplied_alpha_mode(PremultipliedAlphaMode::Auto);
+            assert_eq!(req.premultiplied_alpha_mode(), PremultipliedAlphaMode::Auto);
         }
     }
 }

@@ -454,7 +454,7 @@ mod tests {
         }
         // 14 × 2 = 28 bytes used. 9 more props = 36 bytes → 64 total: OK.
         for i in 0..9 {
-            b.add_prop_i32(i as i32).unwrap();
+            b.add_prop_i32(i).unwrap();
         }
         assert_eq!(b.bytes_written(), 64);
         // 10th prop pushes off to 68 > 64: overflow.

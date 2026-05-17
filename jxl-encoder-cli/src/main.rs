@@ -7,8 +7,8 @@
 
 use clap::Parser;
 use jxl_encoder::{
-    AnimationFrame, AnimationParams, LosslessConfig, LossyConfig, Lz77Method, PixelLayout,
-    ProgressiveMode,
+    AnimationFrame, AnimationParams, ContainerMode, LosslessConfig, LossyConfig, Lz77Method,
+    PixelLayout, PremultipliedAlphaMode, ProgressiveMode,
 };
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
@@ -449,6 +449,50 @@ struct Args {
     /// previous-channel properties.
     #[arg(short = 'E', long, value_name = "N", allow_hyphen_values = true)]
     modular_nb_prev_channels: Option<i32>,
+
+    /// Bias the encoder toward simpler bitstreams that decode faster, at
+    /// the cost of compression. Mirrors libjxl `cjxl --faster_decoding
+    /// 0..4`. `0` (default) keeps the existing behaviour. Higher tiers
+    /// progressively drop encoder features (Weighted predictor → MA
+    /// tree learner → EPF → DCT32+ + gaborish). See
+    /// `LossyConfig::with_faster_decoding` / `LosslessConfig::with_faster_decoding`
+    /// for per-tier specifics. Applied on both lossy and lossless
+    /// paths.
+    #[arg(long, value_name = "TIER", default_value = "0")]
+    faster_decoding: u8,
+
+    /// Container-wrap policy. Mirrors libjxl `cjxl --container 0|1`.
+    /// `-1` = auto (default: wrap only when metadata or codestream
+    /// level requires it). `0` = never wrap (bare codestream — drops
+    /// EXIF / XMP / JUMBF silently, errors on level-10 codestreams).
+    /// `1` = always wrap. Applied on both lossy and lossless paths.
+    #[arg(
+        long,
+        value_name = "MODE",
+        default_value = "-1",
+        allow_hyphen_values = true
+    )]
+    container: i8,
+
+    /// Explicit progressive-DC level. Mirrors libjxl `cjxl
+    /// --progressive_dc 0..2`. `0` = no progressive DC (default), `1` =
+    /// one LfFrame (equivalent to `--lf-frame`), `2` = two nested
+    /// LfFrames (libjxl path; currently emits a single LfFrame).
+    /// Lossy only; implies `--lf-frame` when non-zero.
+    #[arg(long, value_name = "N", default_value = "0")]
+    progressive_dc: u8,
+
+    /// Premultiplied (associated) alpha mode. Mirrors libjxl
+    /// `cjxl --premultiply -1|0|1`. `0` (default) = straight alpha,
+    /// `1` = premultiplied alpha, `-1` = auto-detect from input via a
+    /// one-pass scan. Applied to lossy encodes on layouts with alpha.
+    #[arg(
+        long,
+        value_name = "MODE",
+        default_value = "0",
+        allow_hyphen_values = true
+    )]
+    premultiply: i8,
 }
 
 fn main() {
@@ -740,6 +784,9 @@ fn main() {
                     cfg = cfg.with_center_x(args.center_x);
                     cfg = cfg.with_center_y(args.center_y);
                     cfg = cfg.with_upsampling_mode(args.upsampling_mode);
+                    cfg = cfg.with_faster_decoding(args.faster_decoding);
+                    cfg = cfg.with_container_mode(container_mode_from_cli(args.container));
+                    cfg = cfg.with_progressive_dc(args.progressive_dc);
 
                     #[cfg(feature = "butteraugli-loop")]
                     {
@@ -825,6 +872,8 @@ fn main() {
                             args.modular_channel_colors_group_percent,
                         );
                         lcfg = lcfg.with_modular_nb_prev_channels(args.modular_nb_prev_channels);
+                        lcfg = lcfg.with_faster_decoding(args.faster_decoding);
+                        lcfg = lcfg.with_container_mode(container_mode_from_cli(args.container));
                         lcfg
                     }
                     .encode_animation(
@@ -1085,6 +1134,9 @@ fn main() {
         cfg = cfg.with_center_x(args.center_x);
         cfg = cfg.with_center_y(args.center_y);
         cfg = cfg.with_upsampling_mode(args.upsampling_mode);
+        cfg = cfg.with_faster_decoding(args.faster_decoding);
+        cfg = cfg.with_container_mode(container_mode_from_cli(args.container));
+        cfg = cfg.with_progressive_dc(args.progressive_dc);
         if (args.center_x.is_some() || args.center_y.is_some())
             && !matches!(args.group_order, Some(1))
         {
@@ -1242,6 +1294,11 @@ fn main() {
             if let Some(q) = args.brotli_effort {
                 req = req.with_brotli_metadata(q);
             }
+            if args.premultiply != 0 && layout.has_alpha() {
+                req = req.with_premultiplied_alpha_mode(PremultipliedAlphaMode::from_i8(
+                    args.premultiply,
+                ));
+            }
             req.encode(&data)
         }
 
@@ -1263,6 +1320,11 @@ fn main() {
             }
             if let Some(q) = args.brotli_effort {
                 req = req.with_brotli_metadata(q);
+            }
+            if args.premultiply != 0 && layout.has_alpha() {
+                req = req.with_premultiplied_alpha_mode(PremultipliedAlphaMode::from_i8(
+                    args.premultiply,
+                ));
             }
             req.encode(&data)
         }
@@ -1324,6 +1386,8 @@ fn main() {
         cfg = cfg
             .with_modular_channel_colors_group_percent(args.modular_channel_colors_group_percent);
         cfg = cfg.with_modular_nb_prev_channels(args.modular_nb_prev_channels);
+        cfg = cfg.with_faster_decoding(args.faster_decoding);
+        cfg = cfg.with_container_mode(container_mode_from_cli(args.container));
         let cfg = cfg;
 
         let mut req = cfg.encode_request(width, height, layout);
@@ -1378,6 +1442,17 @@ fn main() {
         println!("Time:        {:.2?}", encode_time);
     } else {
         println!("{}", args.output.display());
+    }
+}
+
+/// Convert the libjxl `--container -1|0|1` integer CLI form to our
+/// [`ContainerMode`] enum. Negative = auto (default), `0` = never wrap,
+/// `1` = always wrap. Out-of-range values clamp to `Auto`.
+fn container_mode_from_cli(v: i8) -> ContainerMode {
+    match v {
+        0 => ContainerMode::Never,
+        1 => ContainerMode::Always,
+        _ => ContainerMode::Auto,
     }
 }
 

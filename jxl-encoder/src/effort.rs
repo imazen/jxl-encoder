@@ -1913,7 +1913,7 @@ mod tests {
         // (The lossy() clamp pins at 11; verify the table never returns
         // anything above the loop's structural cap.)
         assert!(
-            p11.butteraugli_iters as u32 <= crate::api::MAX_QUANT_LOOP_ITERS,
+            p11.butteraugli_iters <= crate::api::MAX_QUANT_LOOP_ITERS,
             "butteraugli_iters must not exceed MAX_QUANT_LOOP_ITERS"
         );
     }
