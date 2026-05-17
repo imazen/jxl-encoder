@@ -811,6 +811,23 @@
   changed the byte count from 636 to 638 without updating
   `hash_lock_expected.txt`. CI's "Build native (Linux)" + "Coverage"
   jobs were silently failing; appended the new hash entry.
+- **RCT smart-picker investigation (chunk 1, 2026-05-17)**: new
+  `jxl-encoder/examples/rct_per_image_sweep.rs` (unregistered,
+  zenanalyze-dependent) sweeps 490 corpus images × 7 RCT candidates
+  via `with_force_rct(Some(RctType(N)))` to identify the
+  ground-truth best RCT per image, then fits a 33-feature random
+  forest. 5-fold CV top-2 accuracy = 74.7% — under the 80% ship
+  threshold. New `jxl-encoder/examples/rct_picker_wall_ab.rs`
+  (unregistered, public-API-only) confirms wall-clock savings from
+  trial reduction are within noise under 8-thread rayon (the
+  `select_best_rct` `parallel_map` makes the 7-trial cost
+  effectively free); single-thread shows 1.8-10.1% wall savings.
+  Sweep data: `benchmarks/rct_per_image_full_2026-05-17_512px.tsv`.
+  Side finding (not yet landed): the `nb_rcts_to_try=0` fallback
+  currently picks YCoCg (RCT 6); RCT-10 (GBR+SubGR) beats it by
+  1.19% bytes on the 490-image corpus with no predictor needed.
+  Full chronology in
+  `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/zenanalyze_rct_predictor_2026-05-17.md`.
 - **Regression test for `--rate-control` gaborish gate**
   (`jxl-encoder-cli/tests/rate_control_gaborish_gate.rs`, e03c4947):
   invokes the actual `cjxl-rs` binary on a center-crop of the
