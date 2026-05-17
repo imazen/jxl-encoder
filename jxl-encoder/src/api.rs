@@ -2164,7 +2164,30 @@ impl LossyConfig {
         self
     }
 
-    /// Enable/disable noise synthesis (default: false).
+    /// Enable/disable content-estimated noise synthesis (default: false).
+    ///
+    /// When `true`, the encoder scans flat XYB patches, fits an 8-point
+    /// noise LUT via SCG optimisation, and emits a noise header.
+    ///
+    /// # Gate / silent-drop conditions
+    ///
+    /// Lowest-priority noise source. Both [`Self::with_photon_noise_iso`]
+    /// and [`Self::with_manual_noise_lut`] override this when set.
+    /// Order matches libjxl `enc_frame.cc:680-689`:
+    ///
+    /// 1. `photon_noise_iso` (highest)
+    /// 2. `manual_noise_lut`
+    /// 3. `with_noise(true)` + content estimation (this)
+    /// 4. No noise
+    ///
+    /// Bitstream emission gate (vardct/encoder.rs:709, bitstream.rs:1284):
+    ///
+    /// - `estimate_noise_params` returns `None` when no flat patches
+    ///   are detected — header is silently skipped. This is normal on
+    ///   noise-free synthetic content (gradients, solid fills, UI).
+    /// - [`Self::with_denoise(true)`](Self::with_denoise) implies this
+    ///   (`with_denoise` sets `noise = true` automatically).
+    /// - Lossy-only (no field on [`LosslessConfig`]).
     pub fn with_noise(mut self, enable: bool) -> Self {
         self.noise = enable;
         self
@@ -2190,6 +2213,25 @@ impl LossyConfig {
     ///
     /// `None` disables the override; the encoder falls back to the
     /// next-priority noise source.
+    ///
+    /// # Gate / silent-drop conditions
+    ///
+    /// Wired through all three encode entry points (since the
+    /// 2026-05-17 photon-noise audit): one-shot
+    /// [`EncodeRequest::encode`] (api.rs:4540), streaming
+    /// [`LossyEncoder::finish`] (api.rs:5424), and animation
+    /// [`AnimationRequest::encode`] (api.rs:6901). The bitstream
+    /// emission gate is in `VarDctEncoder::encode`
+    /// (vardct/encoder.rs:699) and `bitstream::write_animation_frame`
+    /// (vardct/bitstream.rs:1274):
+    ///
+    /// - Caller LUT is clamped per-entry to `[0.0, ~0.9995]` before
+    ///   emission (10-bit-quantise assert guard).
+    /// - All-zero post-clamp LUT → no noise header. (The clamp can
+    ///   silently zero entries that were `< 0.0`; an entire negative
+    ///   LUT therefore drops.)
+    /// - Effort / XYB gating: same as
+    ///   [`Self::with_photon_noise_iso`] (no effort gate, lossy-only).
     pub fn with_manual_noise_lut(mut self, lut: Option<[f32; 8]>) -> Self {
         self.manual_noise_lut = lut;
         self
@@ -2277,6 +2319,26 @@ impl LossyConfig {
     /// header). Negative or non-finite ISO values are ignored.
     ///
     /// Closes the libjxl `--photon_noise` feature parity gap.
+    ///
+    /// # Gate / silent-drop conditions
+    ///
+    /// Always wired through all three encode entry points: one-shot
+    /// [`EncodeRequest::encode`] (api.rs:4539), streaming
+    /// [`LossyEncoder::finish`] (api.rs:5422), and animation
+    /// [`AnimationRequest::encode`] (api.rs:6900). The bitstream
+    /// emission gate is in `VarDctEncoder::encode` (vardct/encoder.rs:690)
+    /// and `bitstream::write_animation_frame` (vardct/bitstream.rs:1265):
+    ///
+    /// - If `simulate_photon_noise(w, h, iso).has_any()` is `false`
+    ///   (all-zero LUT — happens at very low ISO on very small images),
+    ///   no noise header is emitted. The caller's intent is honoured
+    ///   only when the LUT carries non-zero energy.
+    /// - Effort gating: does **not** depend on effort level. Photon
+    ///   noise emits at every effort 1-10.
+    /// - XYB gating: noise synthesis requires XYB transform (lossy
+    ///   path); the lossless [`LosslessConfig`] has no noise field.
+    /// - Decoder must support libjxl Level 5 noise headers (every
+    ///   JPEG-XL conformant decoder does).
     pub fn with_photon_noise_iso(mut self, iso: Option<f32>) -> Self {
         self.photon_noise_iso = iso.filter(|v| v.is_finite() && *v > 0.0);
         self
@@ -5266,6 +5328,18 @@ impl LossyEncoder {
             enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
             enc.enable_noise = cfg.noise;
             enc.photon_noise_iso = cfg.photon_noise_iso;
+            // Streaming LossyEncoder must mirror the non-streaming
+            // `EncodeRequest::encode_lossy` wire-up (api.rs:4531-4569)
+            // and the animation `encode_animation_lossy` wire-up
+            // (api.rs:6892-6929). Forgetting any of these fields here
+            // is a silent-drop gate: the caller sets it on the
+            // `LossyConfig`, the `with_*` setter accepts the value, and
+            // the streaming `finish*()` path quietly ignores it. Audit
+            // 2026-05-17 surfaced `manual_noise_lut` (photon-noise
+            // siblings #2 audit) and four others.
+            enc.manual_noise_lut = cfg.manual_noise_lut;
+            enc.quant_ac_rescale = cfg.quant_ac_rescale;
+            enc.original_distance = cfg.original_distance;
             enc.enable_denoise = cfg.denoise;
             enc.enable_gaborish = cfg.gaborish && effective_distance > 0.5;
             enc.error_diffusion = cfg.error_diffusion;
@@ -5283,6 +5357,14 @@ impl LossyEncoder {
             #[cfg(feature = "butteraugli-loop")]
             {
                 enc.butteraugli_iters = cfg.butteraugli_iters;
+            }
+            #[cfg(feature = "ssim2-loop")]
+            {
+                enc.ssim2_iters = cfg.ssim2_iters;
+            }
+            #[cfg(feature = "zensim-loop")]
+            {
+                enc.zensim_iters = cfg.zensim_iters;
             }
             enc.bit_depth_16 = self.bit_depth_16;
             enc.source_gamma = self.source_gamma;

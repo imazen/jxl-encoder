@@ -20,6 +20,28 @@
   All 36 `hash_lock` fixtures stay byte-identical. djxl decodes the new
   `windows95.png` @ d=1.0 output cleanly.
 
+### Fixed
+
+- **Streaming `LossyEncoder` silently dropped five `LossyConfig` fields**
+  (A1 audit top-10 #2, photon-noise CLI/API audit). The one-shot
+  `EncodeRequest::encode_lossy` (api.rs:4531) and animation
+  `encode_animation_lossy` (api.rs:6892) paths wired every field
+  through; the streaming `LossyConfig::encoder() → LossyEncoder::finish*`
+  path (api.rs:5414) only wired `photon_noise_iso` and quietly ignored:
+  `manual_noise_lut`, `quant_ac_rescale`, `original_distance`,
+  `ssim2_iters`, `zensim_iters`. Setters accepted the values and the
+  `LossyConfig` carried them, but the streaming finalizer never read
+  them — a textbook silent-drop gate. CLI was unaffected (uses one-shot
+  path). Layer-1 regression test in
+  `jxl-encoder/tests/streaming_noise_gate.rs` (3 paired byte-diff
+  cases — `manual_noise_lut`, `quant_ac_rescale`, plus the already-wired
+  `photon_noise_iso` as a control). Audit also added explicit
+  `# Gate / silent-drop conditions` doc sections to `with_noise`,
+  `with_photon_noise_iso`, and `with_manual_noise_lut` documenting the
+  three priority levels, the all-zero-LUT drop, and that noise is
+  lossy-only. Hash-lock: 36/36 byte-identical, no bitstream change for
+  the previously-working paths.
+
 ### Added
 
 - **JPEG XL codestream Level 10 signaling** (`jxll` container box,
