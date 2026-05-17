@@ -1044,10 +1044,10 @@ pub fn estimate_bits_u32_avx2(token: archmage::X64V3Token, counts: &[u32], total
         let base1 = (chunk + 1) * 8;
         // u32 → i32 bitcast → f32 convert. Valid counts are << 2^31.
         let c0_f = magetypes::simd::u32x8::from_slice(token, &counts[base0..base0 + 8])
-            .bitcast_to_i32()
+            .bitcast_i32x8()
             .to_f32x8();
         let c1_f = magetypes::simd::u32x8::from_slice(token, &counts[base1..base1 + 8])
-            .bitcast_to_i32()
+            .bitcast_i32x8()
             .to_f32x8();
 
         let nz0 = c0_f.simd_gt(zero_f);
@@ -1071,7 +1071,7 @@ pub fn estimate_bits_u32_avx2(token: archmage::X64V3Token, counts: &[u32], total
     while chunk < chunks {
         let base = chunk * 8;
         let c_f = magetypes::simd::u32x8::from_slice(token, &counts[base..base + 8])
-            .bitcast_to_i32()
+            .bitcast_i32x8()
             .to_f32x8();
         let nz = c_f.simd_gt(zero_f);
         let safe = f32x8::blend(nz, c_f, one);
@@ -1153,10 +1153,10 @@ pub fn estimate_bits_u32_neon(token: archmage::NeonToken, counts: &[u32], total:
         let base0 = chunk * 4;
         let base1 = (chunk + 1) * 4;
         let c0_f = magetypes::simd::u32x4::from_slice(token, &counts[base0..base0 + 4])
-            .bitcast_to_i32()
+            .bitcast_i32x4()
             .to_f32x4();
         let c1_f = magetypes::simd::u32x4::from_slice(token, &counts[base1..base1 + 4])
-            .bitcast_to_i32()
+            .bitcast_i32x4()
             .to_f32x4();
         let nz0 = c0_f.simd_gt(zero_f);
         let nz1 = c1_f.simd_gt(zero_f);
@@ -1173,7 +1173,7 @@ pub fn estimate_bits_u32_neon(token: archmage::NeonToken, counts: &[u32], total:
     while chunk < chunks {
         let base = chunk * 4;
         let c_f = magetypes::simd::u32x4::from_slice(token, &counts[base..base + 4])
-            .bitcast_to_i32()
+            .bitcast_i32x4()
             .to_f32x4();
         let nz = c_f.simd_gt(zero_f);
         let safe = f32x4::blend(nz, c_f, one);
@@ -1248,7 +1248,7 @@ pub fn estimate_bits_u32_wasm128(token: archmage::Wasm128Token, counts: &[u32], 
     for chunk in 0..chunks {
         let base = chunk * 4;
         let c_f = magetypes::simd::u32x4::from_slice(token, &counts[base..base + 4])
-            .bitcast_to_i32()
+            .bitcast_i32x4()
             .to_f32x4();
         let nz = c_f.simd_gt(zero_f);
         let safe = f32x4::blend(nz, c_f, one);
