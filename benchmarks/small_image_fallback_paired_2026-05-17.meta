@@ -1,0 +1,67 @@
+Small-image parallel-tree-learning fallback paired A/B bench
+============================================================
+
+Date: 2026-05-17
+Commit: (recorded after commit lands)
+Hardware: AMD Ryzen 9 7950X (32 threads, water-cooled), 128 GB RAM
+Bench script: scripts/bench_small_image_fallback_inline.sh
+Analyzer:     scripts/analyze_small_image_fallback.py
+Samples:      10 paired iterations per cell
+Threads:      8 (RAYON_NUM_THREADS=8)
+
+Cells: 3 images × 3 efforts × 2 variants × 10 samples = 180 rows
+
+Images:
+- small_0.26MP   = /home/lilith/work/codec-corpus/CID22/CID22-512/training/7256805.png
+- medium_1.05MP  = /home/lilith/work/codec-corpus/clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png
+- large_4.19MP   = /home/lilith/work/codec-corpus/clic2025/final-test/8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png
+
+Variants (as recorded in the TSV — built against the pre-rename CLI):
+- default     = original auto-on default (fallback ENABLED for <1 MP at e<=7,
+                cache bypassed via with_workspace_dispatched)
+- nofallback  = `--no-small-image-fallback` (cache always on — pre-audit default)
+
+Variant semantics post the 2026-05-17 default flip (this commit ships fallback
+as opt-in, so the on-disk CLI is now `--small-image-fallback` and the binary
+default is "fallback OFF / cache always on"):
+- the TSV's `default` variant corresponds to what the new CLI does WITH
+  `--small-image-fallback` passed (i.e., the opt-in `fallback` variant)
+- the TSV's `nofallback` variant corresponds to the new CLI's default
+  (no flag passed, cache always on)
+The data still measures the cache-bypass-vs-cache-on comparison correctly;
+only the label convention shifted.
+
+Build:
+  cargo build --release -p jxl-encoder-cli --features parallel-tree-learning
+
+What the fallback does (when opt-in via `--small-image-fallback`):
+  When pixels < 1_000_000 AND effort <= 7,
+  `LosslessConfig::effective_profile_for_image` flips
+  `EffortProfile::tree_parallel_small_image_fallback = true`. This
+  flag flows through `TreeLearningParams` into `compute_best_tree`,
+  where every `find_best_split` call routes through
+  `with_workspace_dispatched(bypass_cache=true, ...)` instead of the
+  default `with_thread_local_workspace`. The cache layer's
+  `RefCell::borrow_mut` indirection is bypassed in favour of a fresh
+  `SplitWorkspace::new` per call (matching pre-`cb5e202` behaviour).
+
+  The parallel root-split and borrowed-view recursive fan-out remain
+  ENABLED — those paths are still the single largest wall-clock win
+  on the lossless e7 pipeline regardless of image size.
+
+Why opt-in (not default-on):
+  The audit-claimed cb5e202 small-image regression (+0.85% mean at e7)
+  no longer reproduces on top of chunk-3c (this bench's parent). Across
+  9 paired cells (3 images × 3 efforts × 10 samples) on 8 threads, the
+  cache-on default is at parity or slightly winning vs the cache-bypass
+  fallback. The infrastructure ships behind the opt-in for future
+  investigation if the regression re-emerges, or for picker-driven
+  dispatch when the cache cost-curve shifts.
+
+Bitstream-equivalent: hash_lock 36/36 byte-identical; sha256 matches on
+small + medium profile images across default vs fallback variants.
+
+Companion follow-up: imazen/jxl-encoder#42 tracks resurrection of the
+owned-clone parallel path for the +6.2% borrowed-view small-image
+regression (audit item #9). That fix requires reimplementing ~250 lines
+of code deleted in `fe2d3a27` and was deferred per the task spec.

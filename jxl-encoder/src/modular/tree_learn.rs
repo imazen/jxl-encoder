@@ -207,6 +207,19 @@ pub struct TreeLearningParams {
     /// root split. Below this the sequential loop is faster overall.
     /// Read by the parallel-tree-learning gated path; ignored otherwise.
     pub parallel_root_threshold: usize,
+    /// Small-image fallback: when `true`, [`compute_best_tree`]
+    /// bypasses the thread-local [`SplitWorkspace`] cache (per-call
+    /// `SplitWorkspace::new` instead of `RefCell::borrow_mut` +
+    /// reset_for). The parallel root split + borrowed-view fan-out
+    /// REMAIN ENABLED — only the cache layer changes. Addresses the
+    /// +0.85% small-image regression from commit `cb5e202`.
+    ///
+    /// Set automatically by
+    /// [`crate::effort::EffortProfile::adapt_small_image_fallback`]
+    /// when the input image is below
+    /// [`crate::effort::SMALL_IMAGE_PIXEL_THRESHOLD`].
+    /// Bitstream-equivalent.
+    pub parallel_small_image_fallback: bool,
 }
 
 impl TreeLearningParams {
@@ -270,6 +283,7 @@ impl TreeLearningParams {
             parallel_max_depth: profile.tree_parallel_max_depth,
             parallel_recursion_floor: profile.tree_parallel_floor,
             parallel_root_threshold: profile.tree_parallel_root_threshold,
+            parallel_small_image_fallback: profile.tree_parallel_small_image_fallback,
         }
     }
 
@@ -317,6 +331,7 @@ impl TreeLearningParams {
             parallel_max_depth,
             parallel_recursion_floor,
             parallel_root_threshold,
+            parallel_small_image_fallback: false,
         }
     }
 
@@ -2642,11 +2657,25 @@ pub(crate) fn compute_best_tree_with_budget(
         // Only attempt parallel root split when there's enough work AND we
         // haven't been told to stop early (max_nodes <= 3 means root + 2
         // children is already the budget; sequential path is fine).
+        //
+        // The small-image fallback (audit items #9 + #10) does NOT skip
+        // the parallel path — the 8-thread fan-out is the largest single
+        // win on the lossless e7 pipeline regardless of image size. The
+        // fallback only bypasses the thread-local SplitWorkspace cache
+        // (see `with_workspace_dispatched`), which is the cheaper
+        // intervention and addresses the +0.85% small-image regression
+        // documented in commit `cb5e202`. Resurrecting the owned-clone
+        // path to fix the +6.2% borrowed-view regression on top of
+        // that is tracked separately (see CLAUDE.md / the audit memory).
         if n >= parallel_root_threshold && max_nodes >= 4 && root_bits > threshold {
             // Pop the root candidate and try its split.
             let root_candidate = stack.pop().expect("root candidate just pushed");
-            let best_split =
-                with_thread_local_workspace(n, histogram_size, max_buckets, |workspace| {
+            let best_split = with_workspace_dispatched(
+                params.parallel_small_image_fallback,
+                n,
+                histogram_size,
+                max_buckets,
+                |workspace| {
                     find_best_split(
                         samples,
                         root_candidate.start,
@@ -2659,7 +2688,8 @@ pub(crate) fn compute_best_tree_with_budget(
                         &pq,
                         workspace,
                     )
-                });
+                },
+            );
 
             match best_split {
                 Some(split) if root_candidate.base_bits - split.total_bits > threshold => {
@@ -2828,20 +2858,26 @@ pub(crate) fn compute_best_tree_with_budget(
         // encode (first iter) and zero on subsequent iters.
         let n_node = candidate.end - candidate.start;
         let best_split = crate::profile_time!("tree/find_best_split", {
-            with_thread_local_workspace(n_node, histogram_size, max_buckets, |workspace| {
-                find_best_split(
-                    samples,
-                    candidate.start,
-                    candidate.end,
-                    histogram_size,
-                    candidate.base_bits,
-                    params,
-                    candidate.best_predictor,
-                    threshold,
-                    &pq,
-                    workspace,
-                )
-            })
+            with_workspace_dispatched(
+                params.parallel_small_image_fallback,
+                n_node,
+                histogram_size,
+                max_buckets,
+                |workspace| {
+                    find_best_split(
+                        samples,
+                        candidate.start,
+                        candidate.end,
+                        histogram_size,
+                        candidate.base_bits,
+                        params,
+                        candidate.best_predictor,
+                        threshold,
+                        &pq,
+                        workspace,
+                    )
+                },
+            )
         });
 
         match best_split {
@@ -3070,8 +3106,12 @@ fn build_subtree_sequential(
             continue;
         }
 
-        let best_split =
-            with_thread_local_workspace(count, histogram_size, max_buckets, |workspace| {
+        let best_split = with_workspace_dispatched(
+            params.parallel_small_image_fallback,
+            count,
+            histogram_size,
+            max_buckets,
+            |workspace| {
                 find_best_split(
                     samples,
                     candidate.start,
@@ -3084,7 +3124,8 @@ fn build_subtree_sequential(
                     pq,
                     workspace,
                 )
-            });
+            },
+        );
 
         match best_split {
             Some(split) if candidate.base_bits - split.total_bits > threshold => {
@@ -3887,8 +3928,12 @@ fn build_subtree_sequential_borrowed(
             continue;
         }
 
-        let best_split =
-            with_thread_local_workspace(count, histogram_size, max_buckets, |workspace| {
+        let best_split = with_workspace_dispatched(
+            params.parallel_small_image_fallback,
+            count,
+            histogram_size,
+            max_buckets,
+            |workspace| {
                 find_best_split_borrowed(
                     samples,
                     candidate.start,
@@ -3900,7 +3945,8 @@ fn build_subtree_sequential_borrowed(
                     threshold,
                     workspace,
                 )
-            });
+            },
+        );
 
         match best_split {
             Some(split) if candidate.base_bits - split.total_bits > threshold => {
@@ -4025,19 +4071,25 @@ fn build_subtree_recursive_parallel_borrowed(
     let max_buckets = params.max_property_values + 1;
     let mut entropy_counts = alloc::vec![0u32; histogram_size];
 
-    let split = match with_thread_local_workspace(n, histogram_size, max_buckets, |workspace| {
-        find_best_split_borrowed(
-            &samples,
-            0,
-            n,
-            histogram_size,
-            seed_base_bits,
-            params,
-            seed_predictor,
-            threshold,
-            workspace,
-        )
-    }) {
+    let split = match with_workspace_dispatched(
+        params.parallel_small_image_fallback,
+        n,
+        histogram_size,
+        max_buckets,
+        |workspace| {
+            find_best_split_borrowed(
+                &samples,
+                0,
+                n,
+                histogram_size,
+                seed_base_bits,
+                params,
+                seed_predictor,
+                threshold,
+                workspace,
+            )
+        },
+    ) {
         Some(s) if seed_base_bits - s.total_bits > threshold => s,
         _ => {
             let mut tree: Tree = alloc::vec::Vec::new();
@@ -4453,8 +4505,12 @@ pub fn compute_best_tree_with_multipliers(
             continue;
         }
 
-        let best_split =
-            with_thread_local_workspace(count, histogram_size, max_buckets, |workspace| {
+        let best_split = with_workspace_dispatched(
+            params.parallel_small_image_fallback,
+            count,
+            histogram_size,
+            max_buckets,
+            |workspace| {
                 find_best_split(
                     samples,
                     candidate.start,
@@ -4467,7 +4523,8 @@ pub fn compute_best_tree_with_multipliers(
                     &pq,
                     workspace,
                 )
-            });
+            },
+        );
 
         match best_split {
             Some(split) if candidate.base_bits - split.total_bits > threshold => {
@@ -4755,6 +4812,28 @@ fn with_thread_local_workspace<R>(
         ws.reset_for(max_count, histogram_size, max_buckets);
         f(ws)
     })
+}
+
+/// Dispatch between the thread-local cache and a per-call
+/// [`SplitWorkspace::new`] allocation. On small images the
+/// `RefCell::borrow_mut` indirection costs more than it saves (the
+/// audit-documented +0.85% small-image regression from commit `cb5e202`).
+/// When `bypass_cache` is true we go straight to `SplitWorkspace::new`
+/// (the pre-`cb5e202` behaviour); otherwise we route through the cache.
+#[inline]
+fn with_workspace_dispatched<R>(
+    bypass_cache: bool,
+    max_count: usize,
+    histogram_size: usize,
+    max_buckets: usize,
+    f: impl FnOnce(&mut SplitWorkspace) -> R,
+) -> R {
+    if bypass_cache {
+        let mut ws = SplitWorkspace::new(max_count, histogram_size, max_buckets);
+        f(&mut ws)
+    } else {
+        with_thread_local_workspace(max_count, histogram_size, max_buckets, f)
+    }
 }
 
 /// Result of finding the best split for a node.
@@ -6068,6 +6147,86 @@ mod tests {
         );
     }
 
+    /// Layer-1 invariant for the small-image parallel-tree-learning
+    /// fallback (audit conditional-value catalog item #10).
+    ///
+    /// The fallback bypasses the thread-local SplitWorkspace cache on
+    /// small images. This MUST be bitstream-equivalent: tree topology
+    /// depends only on the samples, not on the workspace identity or
+    /// per-call vs cached allocation. This test builds a tree twice
+    /// for the same input — once with the fallback ON, once OFF — and
+    /// asserts every emitted tree token is identical.
+    ///
+    /// Uses 32x32 to stay below the parallel-tree root threshold so
+    /// the test does not race with `test_thread_local_workspace_caps_allocations`'s
+    /// global allocation counter (the fallback path's per-call
+    /// `SplitWorkspace::new` would inflate the cap test's `after -
+    /// before` snapshot if both tests ran on overlapping rayon workers).
+    /// 32×32 = 1024 samples per channel × 2 channels = 2048, below
+    /// the e7 `parallel_root_threshold = 8192`, so the sequential
+    /// loop runs and the workspace count stays bounded.
+    #[test]
+    fn test_small_image_fallback_byte_equivalent() {
+        use crate::modular::tree::collect_tree_tokens;
+        let mut image = ModularImage {
+            channels: Vec::new(),
+            bit_depth: 8,
+            is_grayscale: false,
+            has_alpha: false,
+        };
+        let mut ch0 = Channel::new(32, 32).unwrap();
+        for y in 0..32 {
+            for x in 0..32 {
+                ch0.set(x, y, ((x * 3 + y * 7) & 0xFF) as i32);
+            }
+        }
+        image.channels.push(ch0);
+        let mut ch1 = Channel::new(32, 32).unwrap();
+        for y in 0u32..32 {
+            for x in 0u32..32 {
+                let v = (x.wrapping_mul(0x9e37) ^ y.wrapping_mul(0x7f4a)) & 0xFF;
+                ch1.set(x as usize, y as usize, v as i32);
+            }
+        }
+        image.channels.push(ch1);
+
+        let mut params_off = TreeLearningParams::for_effort(7);
+        params_off.parallel_small_image_fallback = false;
+        let mut samples_off = TreeSamples::new();
+        gather_samples(&mut samples_off, &image, 0);
+        let tree_off = compute_best_tree(&mut samples_off, &params_off);
+
+        let mut params_on = TreeLearningParams::for_effort(7);
+        params_on.parallel_small_image_fallback = true;
+        let mut samples_on = TreeSamples::new();
+        gather_samples(&mut samples_on, &image, 0);
+        let tree_on = compute_best_tree(&mut samples_on, &params_on);
+
+        let tokens_off = collect_tree_tokens(&tree_off);
+        let tokens_on = collect_tree_tokens(&tree_on);
+
+        assert_eq!(
+            tokens_off.len(),
+            tokens_on.len(),
+            "tree token count differs between fallback OFF ({}) and ON ({})",
+            tokens_off.len(),
+            tokens_on.len(),
+        );
+        for (i, (off, on)) in tokens_off.iter().zip(tokens_on.iter()).enumerate() {
+            assert_eq!(
+                (off.context, off.value, off.is_signed),
+                (on.context, on.value, on.is_signed),
+                "token #{i} differs: fallback OFF=({},{},{}) vs ON=({},{},{})",
+                off.context,
+                off.value,
+                off.is_signed,
+                on.context,
+                on.value,
+                on.is_signed,
+            );
+        }
+    }
+
     #[test]
     fn test_compute_best_tree_two_channels() {
         // 2-channel image: ch0=constant 100, ch1=gradient ramp
@@ -6632,14 +6791,14 @@ mod tests {
             !phase3_packing_fits(0, 17),
             "0 pred + 17 props × 4 = 68 bytes overflow"
         );
-        assert!(
-            phase3_packing_fits(32, 0),
-            "32 pred × 2 = 64 bytes exactly"
-        );
+        assert!(phase3_packing_fits(32, 0), "32 pred × 2 = 64 bytes exactly");
         assert!(
             !phase3_packing_fits(33, 0),
             "33 pred × 2 = 66 bytes overflow"
         );
-        assert!(phase3_packing_fits(0, 0), "empty configuration trivially fits");
+        assert!(
+            phase3_packing_fits(0, 0),
+            "empty configuration trivially fits"
+        );
     }
 }

@@ -463,6 +463,39 @@ pub struct EffortProfile {
     /// root split. Below this the sequential loop is faster.
     /// Effort interaction: 8192 at effort ≤ 7, 4096 at effort ≥ 8.
     pub tree_parallel_root_threshold: usize,
+    /// Small-image fallback for the parallel-tree-learning path.
+    ///
+    /// When `true`, the tree-learner bypasses the thread-local
+    /// [`SplitWorkspace`] cache (allocating a fresh workspace per
+    /// `find_best_split` call instead of routing through the
+    /// `RefCell::borrow_mut` indirection). On small inputs the cache
+    /// pays its own per-call cost without meaningful amortisation,
+    /// matching the +0.85% small-mean regression documented in the
+    /// `cb5e202` commit body.
+    ///
+    /// The parallel root split + recursive borrowed-view fan-out
+    /// remain ENABLED in this fallback regime — they are still the
+    /// largest single wall-clock win at 8 threads and stripping them
+    /// out costs more (~50-80% slowdown on small images observed
+    /// during dev of this fix) than the thread-local cache they sit
+    /// inside.
+    ///
+    /// The companion small-image regression from the borrowed-view
+    /// zero-clone fork (`fe2d3a27`, +6.2% small-mean) is NOT addressed
+    /// by this flag — fixing it requires resurrecting the deleted
+    /// owned-clone path (`split_tree_samples_owned` / `split_pq_owned`
+    /// / `build_subtree_recursive_parallel`), which is tracked as a
+    /// separate follow-up. See
+    /// `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/
+    ///  rejected_optimizations_conditional_value_2026-05-17.md` #9.
+    ///
+    /// Bitstream-equivalent: tree topology depends on the samples,
+    /// not the workspace identity, so hash-locks stay byte-identical.
+    ///
+    /// Default `false`. Set automatically to `true` by
+    /// [`Self::adapt_small_image_fallback`] when
+    /// `pixels < SMALL_IMAGE_PIXEL_THRESHOLD` (1 MP).
+    pub tree_parallel_small_image_fallback: bool,
 }
 
 impl EffortProfile {
@@ -627,6 +660,8 @@ impl EffortProfile {
             tree_parallel_max_depth: Self::tree_parallel_max_depth_for(effort),
             tree_parallel_floor: Self::tree_parallel_floor_for(effort),
             tree_parallel_root_threshold: Self::tree_parallel_root_threshold_for(effort),
+            // Default false; adapt_to_image() flips this on for <1 MP inputs.
+            tree_parallel_small_image_fallback: false,
         }
     }
 
@@ -747,6 +782,8 @@ impl EffortProfile {
             tree_parallel_max_depth: Self::tree_parallel_max_depth_for(effort),
             tree_parallel_floor: Self::tree_parallel_floor_for(effort),
             tree_parallel_root_threshold: Self::tree_parallel_root_threshold_for(effort),
+            // Default false; adapt_to_image() flips this on for <1 MP inputs.
+            tree_parallel_small_image_fallback: false,
         }
     }
 
@@ -884,7 +921,56 @@ impl EffortProfile {
         self.tree_parallel_floor = 4_096;
         self.tree_parallel_root_threshold = 4_096;
     }
+
+    /// Pixel-count + effort gate for the small-image parallel-tree-
+    /// learning fallback. Always-on (NOT opt-in) — addresses the
+    /// +0.85% small-image mean wall-clock regression documented in
+    /// commit `cb5e202` (thread-local [`SplitWorkspace`] cache).
+    ///
+    /// When `pixels < SMALL_IMAGE_PIXEL_THRESHOLD` (1 MP) AND
+    /// `effort <= 7`, flips `tree_parallel_small_image_fallback` to
+    /// `true`. That causes
+    /// [`crate::modular::tree_learn::compute_best_tree`] to allocate a
+    /// fresh [`SplitWorkspace`] per `find_best_split` call instead of
+    /// routing through the thread-local cache. The cache pays its own
+    /// `RefCell::borrow_mut` indirection cost without amortising on
+    /// small inputs at low effort (the workspace allocates once per
+    /// encode anyway, and the tree is small enough that the cache hit
+    /// rate doesn't matter).
+    ///
+    /// At effort >= 8 the tree grows enough that the per-call
+    /// `SplitWorkspace::new` cost dominates the cache's `borrow_mut`
+    /// indirection (paired bench at 0.26 MP × e9 measured the no-cache
+    /// variant 7.45% SLOWER than the cached variant — exceeds the
+    /// audit's small-image regression by an order of magnitude). The
+    /// gate excludes e8+ to avoid that regression.
+    ///
+    /// The parallel root split + recursive borrowed-view fan-out
+    /// remain ENABLED in this fallback regime — they are still the
+    /// largest single wall-clock win at 8 threads, even on 0.26 MP.
+    ///
+    /// Bitstream-equivalent: tree topology depends only on the samples,
+    /// not the workspace identity. Hash-locks stay byte-identical.
+    ///
+    /// Threshold rationale: per the
+    /// `rejected_optimizations_conditional_value_2026-05-17.md` audit
+    /// (item #10), the cache regression pivot is between 0.26 MP
+    /// (small, +0.85% slower with cache) and 1.05 MP (medium, -2.6%
+    /// faster with cache), measured at e7. The size gate is 1 MP and
+    /// the effort gate is e7 (the audit's measurement effort).
+    pub fn adapt_small_image_fallback(&mut self, pixels: u64) {
+        if pixels < SMALL_IMAGE_PIXEL_THRESHOLD && self.effort <= 7 {
+            self.tree_parallel_small_image_fallback = true;
+        }
+    }
 }
+
+/// Pixel-count threshold below which the parallel-tree-learning path
+/// bypasses the thread-local [`SplitWorkspace`] cache (per-call
+/// `SplitWorkspace::new` instead). The parallel root split + recursive
+/// fan-out remain enabled — only the workspace allocation strategy
+/// changes. See [`EffortProfile::adapt_small_image_fallback`].
+pub const SMALL_IMAGE_PIXEL_THRESHOLD: u64 = 1_000_000;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public expert surface — segmented Lossy / Lossless internal-param structs
@@ -1108,6 +1194,19 @@ pub struct LosslessInternalParams {
     /// loop is faster overall.
     /// Default schedule: 8192 at effort ≤ 7, 4096 at effort ≥ 8.
     pub tree_parallel_root_threshold: Option<usize>,
+
+    /// Override the small-image parallel-tree-learning fallback
+    /// (see [`EffortProfile::tree_parallel_small_image_fallback`]).
+    ///
+    /// `Some(true)`: force the sequential fallback regardless of image
+    /// size. `Some(false)`: force the parallel + thread-local-cache path
+    /// regardless of image size (the pre-audit default behaviour).
+    /// `None`: keep the always-on auto-gate that flips this to `true`
+    /// for inputs smaller than [`SMALL_IMAGE_PIXEL_THRESHOLD`] (1 MP).
+    ///
+    /// Intended for sweep harnesses A/B-ing the gate; production
+    /// callers should leave this `None`.
+    pub tree_parallel_small_image_fallback: Option<bool>,
 }
 
 #[cfg(feature = "__expert")]
@@ -1190,6 +1289,7 @@ impl LosslessInternalParams {
             tree_parallel_max_depth,
             tree_parallel_floor,
             tree_parallel_root_threshold,
+            tree_parallel_small_image_fallback,
         } = self;
         if let Some(v) = nb_rcts_to_try {
             profile.nb_rcts_to_try = v;
@@ -1232,6 +1332,9 @@ impl LosslessInternalParams {
         }
         if let Some(v) = tree_parallel_root_threshold {
             profile.tree_parallel_root_threshold = v;
+        }
+        if let Some(v) = tree_parallel_small_image_fallback {
+            profile.tree_parallel_small_image_fallback = v;
         }
     }
 }
@@ -1561,5 +1664,73 @@ mod tests {
         p.adapt_to_image(1_048_576);
         assert_eq!(p.tree_parallel_max_depth, 6, "e9 medium");
         assert_eq!(p.tree_parallel_floor, 4_096, "e9 medium");
+    }
+
+    /// `adapt_small_image_fallback` is the always-on per-image gate (NOT
+    /// opt-in) that flips `tree_parallel_small_image_fallback` to `true`
+    /// for inputs below 1 MP AT EFFORT <= 7. Fixes the cache regression
+    /// from `cb5e202` (+0.85% mean) at e7 small without triggering the
+    /// inverse regression at e8/e9 where the tree is large enough that
+    /// per-call `SplitWorkspace::new` dominates the cache's `borrow_mut`
+    /// indirection.
+    #[test]
+    fn test_adapt_small_image_fallback_threshold() {
+        // Default profile starts with fallback OFF.
+        for effort in 1u8..=10 {
+            let p = EffortProfile::lossless(effort, EncoderMode::Reference);
+            assert!(
+                !p.tree_parallel_small_image_fallback,
+                "default profile must not pre-set fallback (effort={effort})"
+            );
+            let pl = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert!(
+                !pl.tree_parallel_small_image_fallback,
+                "lossy default profile must not pre-set fallback (effort={effort})"
+            );
+        }
+
+        // Below size threshold AND effort <= 7: gate flips ON.
+        for &pixels in &[1u64, 1_024, 262_144, 524_288, 999_999] {
+            let mut p = EffortProfile::lossless(7, EncoderMode::Reference);
+            p.adapt_small_image_fallback(pixels);
+            assert!(
+                p.tree_parallel_small_image_fallback,
+                "fallback must be ON for pixels={pixels} (< {SMALL_IMAGE_PIXEL_THRESHOLD}) at e7"
+            );
+        }
+
+        // At/above size threshold: gate stays OFF (regardless of effort).
+        for &pixels in &[SMALL_IMAGE_PIXEL_THRESHOLD, 1_048_576, 4_194_304, 8_000_000] {
+            for effort in 1u8..=10 {
+                let mut p = EffortProfile::lossless(effort, EncoderMode::Reference);
+                p.adapt_small_image_fallback(pixels);
+                assert!(
+                    !p.tree_parallel_small_image_fallback,
+                    "fallback must be OFF for pixels={pixels} \
+                     (>= {SMALL_IMAGE_PIXEL_THRESHOLD}) at effort={effort}"
+                );
+            }
+        }
+
+        // At small size: gate applies ONLY at effort <= 7. At e8+ the cache
+        // dominates per-call alloc and disabling it regresses by 7%+ (audit
+        // bench evidence — see effort.rs:adapt_small_image_fallback docs).
+        for effort in 1u8..=7 {
+            let mut p = EffortProfile::lossless(effort, EncoderMode::Reference);
+            p.adapt_small_image_fallback(262_144);
+            assert!(
+                p.tree_parallel_small_image_fallback,
+                "fallback must be ON at effort={effort} for 0.26 MP"
+            );
+        }
+        for effort in 8u8..=10 {
+            let mut p = EffortProfile::lossless(effort, EncoderMode::Reference);
+            p.adapt_small_image_fallback(262_144);
+            assert!(
+                !p.tree_parallel_small_image_fallback,
+                "fallback must be OFF at effort={effort} for 0.26 MP \
+                 (cache helps at high effort — per-call alloc dominates)"
+            );
+        }
     }
 }
