@@ -1,0 +1,62 @@
+warning: fields `parallel_max_depth`, `parallel_recursion_floor`, and `parallel_root_threshold` are never read
+   --> jxl-encoder/src/modular/tree_learn.rs:189:9
+    |
+132 | pub struct TreeLearningParams {
+    |            ------------------ fields in this struct
+...
+189 |     pub parallel_max_depth: u32,
+    |         ^^^^^^^^^^^^^^^^^^
+...
+193 |     pub parallel_recursion_floor: usize,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+197 |     pub parallel_root_threshold: usize,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `jxl-encoder` (lib) generated 1 warning
+    Finished `bench` profile [optimized + debuginfo] target(s) in 0.07s
+     Running benches/predictor_prune_microbench.rs (target/release/deps/predictor_prune_microbench-1d3cf2e025569d00)
+--- predictor-prune parity + prune rate ---
+  n=   200000: best_pred= 0, best_cost=     2749310.8, skipped 11/14 predictors (78.6%)
+  n=  1350000: best_pred= 0, best_cost=    18567476.3, skipped 11/14 predictors (78.6%)
+  n=  3200000: best_pred= 0, best_cost=    43974123.9, skipped 12/14 predictors (85.7%)
+--- end parity report ---
+[zenbench] calibration: int=0.21ns/iter mem_bw=125.1GiB/s mem_lat=8.7ns
+[zenbench] timer resolution: 9ns, loop overhead: 0.33ns/iter, TSC: 4.899 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1778992974-323f2.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1778992974-323f2
+  git: 457279014fe5e1bc5ff65197f251e6654f692db9
+═══════════════════════════════════════════════════════════════
+
+  find_best_pred_n=200K  4 rounds × 4 calls ⚠ only 4 rounds
+                    mean ±mad ms  95% CI vs base     ops/s
+  ├─ unconditional   1.3 ±0.1ms  [1.2–1.4]ms        2.24G
+  ╰─ with_lb_skip    0.9 ±0.1ms  [-25.7%–-19.9%]    3.04G
+
+  with_lb_skip   ███████████████████████████████████████████████████ 3.04 Gops/s
+  unconditional  ██████████████████████████████████████ 2.24 Gops/s
+
+  find_best_pred_n=1.35M  4 rounds × 1 calls ⚠ only 4 rounds
+                    mean ±mad ms  95% CI vs base     ops/s
+  ├─ unconditional   7.9 ±0.1ms  [7.9–7.9]ms        2.39G
+  ╰─ with_lb_skip    5.9 ±0.1ms  [-26.0%–-24.7%]    3.21G
+
+  with_lb_skip   ███████████████████████████████████████████████████ 3.21 Gops/s
+  unconditional  ██████████████████████████████████████ 2.39 Gops/s
+
+  find_best_pred_n=3.2M  4 rounds × 1 calls ⚠ only 4 rounds
+                    mean ±mad ms  95% CI vs base     ops/s
+  ├─ unconditional   19.0 ±0.1ms  [18.8–19.2]ms      2.36G
+  ╰─ with_lb_skip    12.9 ±0.4ms  [-33.4%–-30.2%]    3.47G [1]
+
+  with_lb_skip   ███████████████████████████████████████████████████ 3.47 Gops/s
+  unconditional  ███████████████████████████████████ 2.36 Gops/s
+  [1] drift r=1.00 — later rounds slower
+
+  total: 372.6s  (361 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

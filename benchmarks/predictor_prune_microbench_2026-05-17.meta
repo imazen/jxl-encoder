@@ -1,0 +1,74 @@
+predictor_prune_microbench_2026-05-17
+================================================================
+
+Issue: #23 chunk 1 (multi-day predictor-pruning port)
+Git commit at run time: 457279014fe5e1bc5ff65197f251e6654f692db9 (parent of
+                        chunk-1 commit; bench measures the *primitive* in
+                        isolation, not production wiring).
+Host: AMD Ryzen 9 7950X (Linux 6.6, WSL2), 128 GB RAM (water-cooled, no
+                        thermal throttling per CLAUDE.md global rules).
+
+Command used to produce this file:
+  cargo bench -p jxl-encoder --bench predictor_prune_microbench \
+              --features __bench_internals 2>&1 \
+              | tee benchmarks/predictor_prune_microbench_2026-05-17.txt
+
+What is measured
+----------------
+Two strategies for the modular tree-learning root predictor selection:
+
+  unconditional - call full `compute_predictor_entropy` for every one of
+                  14 candidate predictors. This mirrors the production
+                  code path in `jxl-encoder/src/modular/tree_learn.rs`
+                  (`find_best_predictor`, lines ~4859-4948).
+
+  with_lb_skip  - for each candidate, first compute the extra-bits-only
+                  lower bound (the primitive shipped in chunk 1:
+                  `modular::predictor_prune::predictor_extra_bits_lower_bound`).
+                  Skip the full evaluation when `lb >= best_cost_so_far`.
+
+Three sample counts mirror the dedup-strategies bench grid and the e7
+real-photo profile (2026-05-16 lossless_cliff_profile):
+  200K   ~ 0.26 MP image
+  1.35M  ~ 1.05 MP image
+  3.2M   ~ 4.19 MP image
+
+Synthetic predictor cost profile: predictor 0 (Weighted-shaped) is best;
+later candidates have monotonically higher mean extra-bits and flatter
+histograms. This shape reflects what we see on real CLIC photos —
+Weighted typically wins at the root and most of the other 13 candidates
+have lower bounds at or above the Weighted total cost.
+
+Parity guarantee (printed to stderr before benches run):
+  best_pred chosen by `with_lb_skip` MUST equal the one chosen by
+  `unconditional`, and `best_cost` bit-patterns MUST match. Asserted
+  inside `print_parity_and_prune_stats`. No false skips.
+
+Results summary
+---------------
+Prune rate (skipped predictors / 14):
+  n=200K:   11/14 = 78.6 %
+  n=1.35M:  11/14 = 78.6 %
+  n=3.2M:   12/14 = 85.7 %
+
+Wall-clock speedup on `find_best_predictor` (mean):
+  n=200K:   1.3 ms → 0.9 ms   (-22.8 %, +35 % throughput)
+  n=1.35M:  7.9 ms → 5.9 ms   (-25.3 %, +34 % throughput)
+  n=3.2M:  19.0 ms → 12.9 ms  (-31.8 %, +47 % throughput)
+
+Scaling: speedup widens with N because the histogram-build dominates
+`compute_predictor_entropy` and the extra-bits-only lower bound is roughly
+half the bytes touched. At N=3.2M, eliding 12 of 14 full evaluations
+shaves ~6 ms per root call — meaningful at e9 where the root call is
+on the multi-million-sample post-dedup set.
+
+Chunk 2 plan (NOT in this commit)
+---------------------------------
+Wire the primitive into the sequential branch of
+`find_best_predictor` (`tree_learn.rs:4878-4894` and the
+`cfg(not(parallel-tree-learning))` mirror at `:4937-4945`). The parallel
+branch (lines ~4900-4920) needs a different approach (the futures
+materialize all costs before reducing); chunk 2 will sketch a
+shared-atomic-best variant if the parallel-path savings are worth it.
+The byte-identical-bitstream invariant is hash_lock_features.rs (36/36)
+plus the corpus_regression test.

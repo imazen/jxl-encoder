@@ -272,5 +272,14 @@ path = "benches/dedup_samples_strategies.rs"
 harness = false
 required-features = ["__bench_internals"]
 
+# Microbench for predictor-prune lower-bound primitive (issue #23, chunk 1).
+# Compares unconditional 14-predictor evaluation against extra-bits-lower-bound
+# early-skip at real-photo sample counts (200K/1.35M/3.2M post-dedup samples).
+[[bench]]
+name = "predictor_prune_microbench"
+path = "benches/predictor_prune_microbench.rs"
+harness = false
+required-features = ["__bench_internals"]
+
 [lints]
 workspace = true
