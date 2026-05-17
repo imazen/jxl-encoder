@@ -664,6 +664,136 @@ pub fn append_jumbf_box(jxl_data: &[u8], jumbf_payload: &[u8]) -> Vec<u8> {
     }
 }
 
+/// Build a `colr` box payload using the `nclx` (named-colour, on-screen)
+/// subtype defined by ISO/IEC 14496-12.
+///
+/// Returns the 11-byte payload that should be passed to
+/// [`append_colr_box`]:
+/// ```text
+/// colour_type        : 4 bytes ASCII "nclx"
+/// colour_primaries   : u16 BE  (CICP, ITU-T H.273 §8.1)
+/// transfer_chars     : u16 BE  (CICP, ITU-T H.273 §8.2)
+/// matrix_coefficients: u16 BE  (CICP, ITU-T H.273 §8.3)
+/// full_range_flag    : 1 bit (MSB of last byte)
+/// reserved           : 7 bits (= 0)
+/// ```
+///
+/// JPEG XL signals its primary colour information in-codestream via
+/// [`crate::headers::color_encoding::ColourEncoding`]. This box is an
+/// **alternative** descriptor that ISOBMFF-aware tools (HEIF/AVIF
+/// readers, container-level metadata extractors) can read without
+/// parsing the JXL codestream. Per JPEG XL spec clause 5, decoders MUST
+/// ignore boxes with unrecognised types — so emitting this box never
+/// affects in-band decode, it only enriches container-level inspection.
+///
+/// CICP enum values (subset, ITU-T H.273):
+/// - `colour_primaries = 1` BT.709, `9` BT.2020, `12` Display-P3
+/// - `transfer_chars   = 1` BT.709, `13` sRGB, `16` PQ (BT.2100), `18` HLG (BT.2100)
+/// - `matrix_coefficients = 0` Identity (RGB), `1` BT.709, `9` BT.2020-NCL
+/// - `full_range = true` for full-swing / sYCC; `false` for studio-swing
+#[must_use]
+pub fn colr_nclx_payload(
+    colour_primaries: u16,
+    transfer_characteristics: u16,
+    matrix_coefficients: u16,
+    full_range: bool,
+) -> [u8; 11] {
+    let cp = colour_primaries.to_be_bytes();
+    let tc = transfer_characteristics.to_be_bytes();
+    let mc = matrix_coefficients.to_be_bytes();
+    let flags = if full_range { 0x80 } else { 0x00 };
+    [
+        b'n', b'c', b'l', b'x', cp[0], cp[1], tc[0], tc[1], mc[0], mc[1], flags,
+    ]
+}
+
+/// Append a `colr` box (ISOBMFF ColourInformationBox, ISO/IEC 14496-12) to
+/// JXL data.
+///
+/// `colr_payload` is the raw box contents — the first 4 bytes are the
+/// colour_type FourCC (`nclx`, `rICC`, `prof`, …) and the remainder is
+/// the subtype-specific payload. Use [`colr_nclx_payload`] to build a
+/// conformant nclx payload from CICP enum values, or supply raw ICC
+/// profile bytes prefixed with `b"rICC"` / `b"prof"` for ICC variants.
+///
+/// JXL's in-codestream
+/// [`crate::headers::color_encoding::ColourEncoding`] is the primary
+/// colour source; the `colr` box here is an **alternative descriptor**
+/// that ISOBMFF-aware tooling (HEIF/AVIF inspectors, metadata
+/// extractors) can read without parsing the codestream. Per JPEG XL spec
+/// clause 5, decoders MUST ignore boxes with unrecognised types — so
+/// emitting this box never alters decoded pixels.
+///
+/// If `jxl_data` is already a container (starts with the 12-byte JXL
+/// signature), the `colr` box is appended at the end. If `jxl_data` is a
+/// bare codestream (starts with `0xFF 0x0A`), it is first wrapped in a
+/// container (signature + ftyp + jxlc), then the `colr` box is
+/// appended.
+#[must_use]
+pub fn append_colr_box(jxl_data: &[u8], colr_payload: &[u8]) -> Vec<u8> {
+    append_aux_box(jxl_data, b"colr", colr_payload)
+}
+
+/// Append an `hCdR` box (HDR content-description metadata) to JXL data.
+///
+/// `hcdr_payload` is the raw box contents — a typical layout (matching
+/// the ITU-T / SMPTE ST 2086 + CTA-861.3 MaxCLL/MaxFALL conventions
+/// used by other ISOBMFF carriers) is:
+/// ```text
+/// display_primaries[3][2] : 6 × u16 BE (Rxy, Gxy, Bxy in 0.00002 units)
+/// white_point[2]          : 2 × u16 BE (Wxy in 0.00002 units)
+/// max_display_luminance   : u32 BE     (in 0.0001 cd/m²)
+/// min_display_luminance   : u32 BE     (in 0.0001 cd/m²)
+/// max_content_light       : u16 BE     (MaxCLL, cd/m²)
+/// max_pic_average_light   : u16 BE     (MaxFALL, cd/m²)
+/// ```
+/// The encoder does not validate or interpret the payload — callers
+/// that know which HDR metadata schema their downstream tooling expects
+/// supply the bytes verbatim.
+///
+/// JXL signals peak / min display luminance in the in-codestream
+/// [`crate::headers::color_encoding::ToneMapping`] (`intensity_target`,
+/// `min_nits`). This box is an **alternative descriptor** for
+/// ISOBMFF-aware HDR tooling. Per JPEG XL spec clause 5, decoders MUST
+/// ignore boxes with unrecognised types — so emitting this box never
+/// alters decoded pixels.
+///
+/// If `jxl_data` is already a container, the `hCdR` box is appended at
+/// the end. If `jxl_data` is a bare codestream, it is first wrapped in
+/// a container (signature + ftyp + jxlc), then the `hCdR` box is
+/// appended.
+#[must_use]
+pub fn append_hcdr_box(jxl_data: &[u8], hcdr_payload: &[u8]) -> Vec<u8> {
+    append_aux_box(jxl_data, b"hCdR", hcdr_payload)
+}
+
+/// Shared implementation for appending an auxiliary metadata box to
+/// either an existing container or a bare codestream. Used by
+/// [`append_colr_box`] and [`append_hcdr_box`] — same control flow as
+/// [`append_jumbf_box`] / [`append_gain_map_box`], factored out to
+/// avoid copy-paste drift.
+fn append_aux_box(jxl_data: &[u8], box_type: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+    if is_container(jxl_data) {
+        let aux_box_size = 8 + payload.len();
+        let mut out = Vec::with_capacity(jxl_data.len() + aux_box_size);
+        out.extend_from_slice(jxl_data);
+        write_box(&mut out, box_type, payload);
+        out
+    } else {
+        let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len();
+        let jxlc_size = 8 + jxl_data.len();
+        let aux_box_size = 8 + payload.len();
+        let total = header_size + jxlc_size + aux_box_size;
+
+        let mut out = Vec::with_capacity(total);
+        out.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
+        out.extend_from_slice(&FTYP_BOX);
+        write_box(&mut out, b"jxlc", jxl_data);
+        write_box(&mut out, box_type, payload);
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1110,5 +1240,153 @@ mod tests {
         assert_eq!(&result[32..36], &[0, 0, 0, 0x09]);
         assert_eq!(&result[36..40], b"jxll");
         assert_eq!(result[40], 10);
+    }
+
+    // ─── `colr` / `hCdR` alternative descriptor boxes ─────────────
+
+    #[test]
+    fn test_colr_nclx_payload_layout() {
+        // BT.2100 PQ, full range: CP=9, TC=16, MC=9, full=true.
+        let payload = colr_nclx_payload(9, 16, 9, true);
+        // 4-byte "nclx" + 3 × u16 BE + 1 byte flags = 11 bytes
+        assert_eq!(payload.len(), 11);
+        assert_eq!(&payload[0..4], b"nclx");
+        // u16 BE: 0x0009 → 0x00 0x09
+        assert_eq!(&payload[4..6], &[0x00, 0x09]); // primaries
+        assert_eq!(&payload[6..8], &[0x00, 0x10]); // transfer = 16
+        assert_eq!(&payload[8..10], &[0x00, 0x09]); // matrix
+        assert_eq!(payload[10], 0x80); // full_range flag set (MSB)
+
+        // sRGB studio range: CP=1, TC=13, MC=1, full=false.
+        let payload2 = colr_nclx_payload(1, 13, 1, false);
+        assert_eq!(&payload2[4..6], &[0x00, 0x01]);
+        assert_eq!(&payload2[6..8], &[0x00, 0x0D]);
+        assert_eq!(&payload2[8..10], &[0x00, 0x01]);
+        assert_eq!(payload2[10], 0x00);
+    }
+
+    #[test]
+    fn test_append_colr_box_to_bare_codestream() {
+        let codestream = b"\xFF\x0A\x00\x01\x02\x03";
+        let payload = colr_nclx_payload(9, 16, 9, true); // BT.2100 PQ, full range
+        let result = append_colr_box(codestream, &payload);
+
+        // Result is a container.
+        assert!(is_container(&result));
+        assert_eq!(&result[12..32], &FTYP_BOX);
+        // jxlc box at offset 32.
+        let jxlc_size = u32::from_be_bytes([result[32], result[33], result[34], result[35]]);
+        assert_eq!(jxlc_size as usize, 8 + codestream.len());
+        assert_eq!(&result[36..40], b"jxlc");
+        assert_eq!(&result[40..40 + codestream.len()], codestream);
+        // colr box follows jxlc.
+        let colr_offset = 40 + codestream.len();
+        let colr_size = u32::from_be_bytes([
+            result[colr_offset],
+            result[colr_offset + 1],
+            result[colr_offset + 2],
+            result[colr_offset + 3],
+        ]);
+        assert_eq!(colr_size as usize, 8 + payload.len());
+        assert_eq!(&result[colr_offset + 4..colr_offset + 8], b"colr");
+        assert_eq!(&result[colr_offset + 8..], &payload);
+    }
+
+    #[test]
+    fn test_append_colr_box_to_existing_container() {
+        // Build a minimal container.
+        let codestream = b"\xFF\x0A\x00";
+        let mut container = Vec::new();
+        container.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
+        container.extend_from_slice(&FTYP_BOX);
+        write_box(&mut container, b"jxlc", codestream);
+
+        // Raw ICC variant: 4-byte "prof" + payload.
+        let mut payload = Vec::from(*b"prof");
+        payload.extend_from_slice(b"fake-icc-bytes");
+        let result = append_colr_box(&container, &payload);
+
+        assert_eq!(&result[..container.len()], container.as_slice());
+        let colr_offset = container.len();
+        assert_eq!(&result[colr_offset + 4..colr_offset + 8], b"colr");
+        assert_eq!(&result[colr_offset + 8..], payload.as_slice());
+    }
+
+    #[test]
+    fn test_append_hcdr_box_to_bare_codestream() {
+        let codestream = b"\xFF\x0A\x12\x34";
+        // Synthetic HDR metadata blob: 6×u16 primaries + 2×u16 white +
+        // 2×u32 luminance + 2×u16 light = 28 bytes.
+        let payload: [u8; 28] = [
+            0x80, 0x00, 0x33, 0x33, // Rxy
+            0x1F, 0x40, 0xC3, 0x50, // Gxy
+            0x21, 0x34, 0x08, 0x6A, // Bxy
+            0x3D, 0x13, 0x40, 0x42, // Wxy
+            0x00, 0x98, 0x96, 0x80, // max_lum = 10000000 (1000 nits in 0.0001)
+            0x00, 0x00, 0x00, 0x32, // min_lum = 50
+            0x03, 0xE8, 0x01, 0x90, // MaxCLL=1000, MaxFALL=400
+        ];
+        let result = append_hcdr_box(codestream, &payload);
+
+        assert!(is_container(&result));
+        let jxlc_size = u32::from_be_bytes([result[32], result[33], result[34], result[35]]);
+        assert_eq!(jxlc_size as usize, 8 + codestream.len());
+        let hcdr_offset = 40 + codestream.len();
+        let hcdr_size = u32::from_be_bytes([
+            result[hcdr_offset],
+            result[hcdr_offset + 1],
+            result[hcdr_offset + 2],
+            result[hcdr_offset + 3],
+        ]);
+        assert_eq!(hcdr_size as usize, 8 + payload.len());
+        // Case-sensitive FourCC: capital C and R.
+        assert_eq!(&result[hcdr_offset + 4..hcdr_offset + 8], b"hCdR");
+        assert_eq!(&result[hcdr_offset + 8..], &payload);
+    }
+
+    #[test]
+    fn test_append_hcdr_box_to_existing_container() {
+        let codestream = b"\xFF\x0A";
+        let mut container = Vec::new();
+        container.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
+        container.extend_from_slice(&FTYP_BOX);
+        write_box(&mut container, b"jxlc", codestream);
+
+        let payload = b"\x00\x01\x02\x03\x04\x05\x06\x07";
+        let result = append_hcdr_box(&container, payload);
+
+        assert_eq!(&result[..container.len()], container.as_slice());
+        let hcdr_offset = container.len();
+        assert_eq!(&result[hcdr_offset + 4..hcdr_offset + 8], b"hCdR");
+        assert_eq!(&result[hcdr_offset + 8..], payload);
+    }
+
+    #[test]
+    fn test_colr_then_hcdr_both_present_after_chained_append() {
+        // Chained appends survive — both boxes findable in the output.
+        let codestream = b"\xFF\x0A\x00\x00";
+        let colr = colr_nclx_payload(9, 16, 9, true);
+        let hcdr = b"\x12\x34\x56\x78";
+
+        let step1 = append_colr_box(codestream, &colr);
+        let step2 = append_hcdr_box(&step1, hcdr);
+
+        // Both FourCCs present.
+        let mut found_colr = false;
+        let mut found_hcdr = false;
+        for i in 0..step2.len().saturating_sub(4) {
+            if &step2[i..i + 4] == b"colr" {
+                found_colr = true;
+            }
+            if &step2[i..i + 4] == b"hCdR" {
+                found_hcdr = true;
+            }
+        }
+        assert!(found_colr, "expected colr box in chained output");
+        assert!(found_hcdr, "expected hCdR box in chained output");
+        // hCdR appears strictly after colr (append order preserved).
+        let colr_pos = step2.windows(4).position(|w| w == b"colr").unwrap();
+        let hcdr_pos = step2.windows(4).position(|w| w == b"hCdR").unwrap();
+        assert!(colr_pos < hcdr_pos);
     }
 }

@@ -775,6 +775,17 @@ pub struct ImageMetadata<'a> {
     /// Used by C2PA / Content Authenticity Initiative tooling. The
     /// encoder passes the bytes through verbatim — no validation.
     jumbf: Option<&'a [u8]>,
+    /// Alternative colour-descriptor box payload (ISOBMFF `colr`, ISO/IEC
+    /// 14496-12), appended after all other metadata boxes. Pass-through
+    /// only — the encoder does not interpret. Use
+    /// [`crate::container::colr_nclx_payload`] to build a conformant nclx
+    /// payload from CICP enum values.
+    colr_payload: Option<&'a [u8]>,
+    /// HDR content-description box payload (`hCdR`), appended after all
+    /// other metadata boxes. Pass-through only — caller assembles the
+    /// schema-specific bytes (e.g. SMPTE ST 2086 + CTA-861.3
+    /// MaxCLL/MaxFALL). The encoder does not validate.
+    hcdr_payload: Option<&'a [u8]>,
     /// Peak display luminance in nits (cd/m²). `None` uses the JXL default (255.0 = SDR).
     intensity_target: Option<f32>,
     /// Minimum display luminance in nits. `None` uses the JXL default (0.0).
@@ -838,6 +849,62 @@ impl<'a> ImageMetadata<'a> {
     /// Get the JUMBF payload, if set.
     pub fn jumbf(&self) -> Option<&[u8]> {
         self.jumbf
+    }
+
+    /// Attach an alternative colour-descriptor box (`colr`,
+    /// ISO/IEC 14496-12 ColourInformationBox).
+    ///
+    /// `data` is the raw box content — the first 4 bytes are the
+    /// `colour_type` FourCC (`nclx`, `rICC`, `prof`, …) and the rest is
+    /// the subtype-specific payload. Use
+    /// [`crate::container::colr_nclx_payload`] to construct an nclx
+    /// payload from CICP enum values.
+    ///
+    /// JPEG XL signals its primary colour information in-codestream via
+    /// [`crate::headers::color_encoding::ColourEncoding`]; this box is
+    /// an **alternative descriptor** for ISOBMFF-aware tooling
+    /// (HEIF/AVIF metadata inspectors). Per JPEG XL spec clause 5,
+    /// decoders MUST ignore boxes with unrecognised types — so emitting
+    /// this box never alters decoded pixels.
+    ///
+    /// Only honoured on the one-shot [`EncodeRequest`] path. Streaming
+    /// encoders (`LossyEncoder` / `LosslessEncoder`) do not surface
+    /// `ImageMetadata` and silently drop this field.
+    pub fn with_colr_payload(mut self, data: &'a [u8]) -> Self {
+        self.colr_payload = Some(data);
+        self
+    }
+
+    /// Get the `colr` payload, if set.
+    pub fn colr_payload(&self) -> Option<&[u8]> {
+        self.colr_payload
+    }
+
+    /// Attach an HDR content-description box (`hCdR`) payload.
+    ///
+    /// `data` is the raw box content. The encoder does not validate or
+    /// interpret it — callers assemble the schema-specific bytes for
+    /// their downstream tooling (e.g. SMPTE ST 2086 mastering display
+    /// volume + CTA-861.3 MaxCLL/MaxFALL).
+    ///
+    /// JPEG XL signals peak/min display luminance in-codestream via
+    /// [`crate::headers::color_encoding::ToneMapping`]
+    /// (`intensity_target`, `min_nits`). This box is an **alternative
+    /// descriptor** for ISOBMFF-aware HDR tooling. Per JPEG XL spec
+    /// clause 5, decoders MUST ignore boxes with unrecognised types —
+    /// so emitting this box never alters decoded pixels.
+    ///
+    /// Only honoured on the one-shot [`EncodeRequest`] path. Streaming
+    /// encoders (`LossyEncoder` / `LosslessEncoder`) do not surface
+    /// `ImageMetadata` and silently drop this field.
+    pub fn with_hcdr_payload(mut self, data: &'a [u8]) -> Self {
+        self.hcdr_payload = Some(data);
+        self
+    }
+
+    /// Get the `hCdR` payload, if set.
+    pub fn hcdr_payload(&self) -> Option<&[u8]> {
+        self.hcdr_payload
     }
 
     /// Set the peak display luminance in nits (cd/m²) for HDR content.
@@ -3930,30 +3997,46 @@ impl<'a> EncodeRequest<'a> {
             });
         let level = compute_required_level(self.width, self.height, num_ec, has_black, icc_size)?;
 
-        // Wrap in container if metadata (EXIF/XMP/JUMBF) is present OR
-        // if the level requires a container (level != 5 means a `jxll`
-        // box must precede the codestream — mirrors libjxl
-        // `MustUseContainer`).
+        // Wrap in container if metadata (EXIF/XMP/JUMBF/colr/hCdR) is
+        // present OR if the level requires a container (level != 5
+        // means a `jxll` box must precede the codestream — mirrors
+        // libjxl `MustUseContainer`).
+        let colr = self.metadata.and_then(|m| m.colr_payload);
+        let hcdr = self.metadata.and_then(|m| m.hcdr_payload);
         let has_meta = self
             .metadata
             .map(|m| m.exif.is_some() || m.xmp.is_some() || m.jumbf.is_some())
             .unwrap_or(false);
-        let output = if has_meta || crate::container::level_requires_container(level) {
-            let (exif, xmp, jumbf) = match self.metadata {
-                Some(m) => (m.exif, m.xmp, m.jumbf),
-                None => (None, None, None),
+        let has_aux_boxes = colr.is_some() || hcdr.is_some();
+        let mut output =
+            if has_meta || has_aux_boxes || crate::container::level_requires_container(level) {
+                let (exif, xmp, jumbf) = match self.metadata {
+                    Some(m) => (m.exif, m.xmp, m.jumbf),
+                    None => (None, None, None),
+                };
+                wrap_metadata_container(
+                    &codestream,
+                    exif,
+                    xmp,
+                    jumbf,
+                    self.brotli_metadata_quality,
+                    level,
+                )
+            } else {
+                codestream
             };
-            wrap_metadata_container(
-                &codestream,
-                exif,
-                xmp,
-                jumbf,
-                self.brotli_metadata_quality,
-                level,
-            )
-        } else {
-            codestream
-        };
+        // Append `colr` (alternative colour descriptor) and `hCdR` (HDR
+        // metadata) boxes last. They are pass-through extras for
+        // ISOBMFF-aware tooling; per JPEG XL spec clause 5 a decoder
+        // MUST ignore unrecognised boxes so this never alters decoded
+        // pixels. Appended after standard metadata so legacy readers
+        // that stop at the first unknown box still see the codestream.
+        if let Some(payload) = colr {
+            output = crate::container::append_colr_box(&output, payload);
+        }
+        if let Some(payload) = hcdr {
+            output = crate::container::append_hcdr_box(&output, payload);
+        }
 
         stats.output_size = output.len();
 
