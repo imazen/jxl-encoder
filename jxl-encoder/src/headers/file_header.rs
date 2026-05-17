@@ -211,6 +211,22 @@ pub struct FileHeader {
     pub height: u32,
     /// Image metadata.
     pub metadata: ImageMetadata,
+    /// Decoder upsampling LUT selection for the active frame-header
+    /// `upsampling` factor (libjxl
+    /// `JxlEncoderSetUpsamplingMode(_, factor, mode)`):
+    ///
+    /// - `None` (default) / `Some(-1)` — fancy default upsampling.
+    ///   `CustomTransformData` stays at `all_default = true`.
+    /// - `Some(0)` — nearest-neighbour LUT for the matching factor.
+    /// - `Some(1)` — "pixel dots" (nearest with cut corners). Only
+    ///   meaningful for `upsampling_factor` 4 / 8; for factor 2 it
+    ///   behaves as nearest because the libjxl table is empty there.
+    pub upsampling_mode: Option<i32>,
+    /// Upsampling factor (1, 2, 4, or 8) the encoder will emit in the
+    /// frame header (libjxl `frame_header.upsampling`). Tracked here
+    /// so [`Self::write`] can select the right LUT slot when
+    /// [`Self::upsampling_mode`] is set.
+    pub upsampling_factor: u32,
 }
 
 impl FileHeader {
@@ -220,6 +236,8 @@ impl FileHeader {
             width,
             height,
             metadata: ImageMetadata::default(),
+            upsampling_mode: None,
+            upsampling_factor: 1,
         }
     }
 
@@ -374,15 +392,73 @@ impl FileHeader {
     }
 
     /// Writes the CustomTransformData bundle.
-    /// For basic encoding (no custom transform settings), this is just all_default=true (1 bit).
+    ///
+    /// Wire format (jxl-rs `CustomTransformData`,
+    /// libjxl `image_metadata.cc:VisitFields`):
+    /// 1. `all_default` (1 bit).
+    /// 2. If `!all_default && xyb_encoded`: `OpsinInverseMatrix` block.
+    ///    We always emit `OpsinInverseMatrix.all_default = true` (1 bit)
+    ///    because our encoder does not yet expose a non-default opsin
+    ///    matrix.
+    /// 3. `custom_weights_mask` (3 bits).
+    /// 4. If `(mask & 1)`: 15 F16 weights for upsampling factor 2.
+    /// 5. If `(mask & 2)`: 55 F16 weights for upsampling factor 4.
+    /// 6. If `(mask & 4)`: 210 F16 weights for upsampling factor 8.
+    ///
+    /// We take the all_default fast path (1 bit) when
+    /// [`Self::upsampling_mode`] is `None` / `Some(-1)`, OR when
+    /// [`Self::upsampling_factor`] <= 1. In that case the decoder picks
+    /// the default fancy-upsampling kernels.
     fn write_transform_data(&self, writer: &mut BitWriter) -> Result<()> {
-        // CustomTransformData.all_default = true
-        // This is the default case - no custom upsampling weights or opsin matrix
+        let factor = self.upsampling_factor;
+        let mode = self.upsampling_mode.unwrap_or(-1);
+        let emit_custom = factor > 1 && mode >= 0 && matches!(factor, 2 | 4 | 8);
+        if !emit_custom {
+            crate::trace::debug_eprintln!(
+                "XFRM [bit {}]: transform_data.all_default = true",
+                writer.bits_written()
+            );
+            writer.write_bit(true)?;
+            return Ok(());
+        }
+
+        // !all_default
         crate::trace::debug_eprintln!(
-            "XFRM [bit {}]: transform_data.all_default = true",
+            "XFRM [bit {}]: transform_data.all_default = false (custom upsampling LUT)",
             writer.bits_written()
         );
-        writer.write_bit(true)?;
+        writer.write_bit(false)?;
+
+        // OpsinInverseMatrix (conditional on xyb_encoded) — always
+        // default for now.
+        if self.metadata.xyb_encoded {
+            crate::trace::debug_eprintln!(
+                "XFRM [bit {}]: opsin_inverse_matrix.all_default = true",
+                writer.bits_written()
+            );
+            writer.write_bit(true)?;
+        }
+
+        // custom_weights_mask (3 bits). Only the bit matching the
+        // active factor flips on; the other factors stay default.
+        let mask_bit: u32 = match factor {
+            2 => 1,
+            4 => 2,
+            8 => 4,
+            _ => 0,
+        };
+        crate::trace::debug_eprintln!(
+            "XFRM [bit {}]: custom_weights_mask = {}",
+            writer.bits_written(),
+            mask_bit
+        );
+        writer.write(3, mask_bit as u64)?;
+
+        // Compute the requested weights as f32, then emit as F16.
+        let weights = upsampling_lut_weights(factor, mode);
+        for w in weights {
+            crate::f16::write_f16(w, writer)?;
+        }
         Ok(())
     }
 
@@ -553,6 +629,73 @@ impl FileHeader {
     fn is_metadata_default(&self) -> bool {
         false
     }
+}
+
+/// Build the upsampling LUT weights for the given factor + mode.
+///
+/// Mirrors libjxl `JxlEncoderSetUpsamplingMode` (encode.cc:1393).
+///
+/// - `factor` must be `2`, `4`, or `8` (caller has already gated).
+/// - `mode == 0`: nearest-neighbour. Single 1.0 impulse at the LUT
+///   slot the libjxl table picks for the factor; everything else 0.
+/// - `mode == 1`: "pixel dots" — starts from nearest then zeros /
+///   halves a small set of slots. For factor 2 the pixel-dots branch
+///   is empty in libjxl (no edits), so the LUT degenerates to nearest;
+///   we preserve that behaviour for byte parity.
+/// - Any other mode: returns the nearest LUT (caller is responsible
+///   for rejecting out-of-range modes upstream).
+///
+/// LUT lengths from libjxl:
+///   factor 2 → 15 weights
+///   factor 4 → 55 weights
+///   factor 8 → 210 weights
+fn upsampling_lut_weights(factor: u32, mode: i32) -> Vec<f32> {
+    let count = match factor {
+        2 => 15usize,
+        4 => 55usize,
+        8 => 210usize,
+        _ => return Vec::new(),
+    };
+    let mut w = vec![0f32; count];
+    // Nearest-neighbour base (mode 0): single 1.0 impulse(s)
+    // matching libjxl encode.cc:1417-1429.
+    match factor {
+        2 => {
+            w[9] = 1.0;
+        }
+        4 => {
+            for &i in &[19usize, 24, 49] {
+                w[i] = 1.0;
+            }
+        }
+        8 => {
+            for &i in &[39usize, 44, 49, 54, 119, 124, 129, 174, 179, 204] {
+                w[i] = 1.0;
+            }
+        }
+        _ => {}
+    }
+    // Pixel-dots mode adjustments (libjxl encode.cc:1430-1439).
+    // Builds on top of nearest. For factor 2 the table is empty,
+    // i.e. pixel-dots == nearest.
+    if mode == 1 {
+        match factor {
+            4 => {
+                w[19] = 0.0;
+                w[24] = 0.5;
+            }
+            8 => {
+                for &i in &[39usize, 44, 49, 119] {
+                    w[i] = 0.0;
+                }
+                for &i in &[54usize, 124] {
+                    w[i] = 0.5;
+                }
+            }
+            _ => {}
+        }
+    }
+    w
 }
 
 impl BitDepth {

@@ -603,6 +603,13 @@ impl VarDctEncoder {
                 intrinsic_height: self.intrinsic_size.map_or(0, |(_, h)| h),
                 ..ImageMetadata::default()
             },
+            // Plumb the caller-selected upsampling mode + factor so
+            // `FileHeader::write` can emit the matching `custom_weight`
+            // LUT (libjxl `JxlEncoderSetUpsamplingMode`). Only takes
+            // effect when `upsampling_factor > 1` AND a non-None /
+            // non-(-1) mode was supplied.
+            upsampling_mode: self.upsampling_mode,
+            upsampling_factor: self.upsampling,
         }
     }
 
@@ -2626,8 +2633,17 @@ impl VarDctEncoder {
             if self.center_first && num_groups > 1 && num_passes == 1 {
                 use crate::vardct::coeff_order::compute_center_first_ac_permutation;
                 use crate::vardct::frame::write_toc_with_permutation;
-                let cx = (width as u32) / 2;
-                let cy = (height as u32) / 2;
+                // Caller-supplied center_x / center_y (libjxl
+                // `cparams.center_x` / `center_y`); fall back to image
+                // centre when unset.
+                let cx = self
+                    .center_x
+                    .map(|x| x.min(width.saturating_sub(1) as u32))
+                    .unwrap_or((width as u32) / 2);
+                let cy = self
+                    .center_y
+                    .map(|y| y.min(height.saturating_sub(1) as u32))
+                    .unwrap_or((height as u32) / 2);
                 let ac_group_order =
                     compute_center_first_ac_permutation(xsize_groups, _ysize_groups, cx, cy);
                 let mut inv_ac = vec![0u32; num_groups];
