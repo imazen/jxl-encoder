@@ -558,6 +558,56 @@
 
 ### Added
 
+- **Sample-fraction jitter + predictor-order shuffle for e10/e11
+  multi-seed tree learning** (RFC#45 pick #1 chunk 4 — follow-on to
+  chunk 3 `a8fbd360`). Two additional variance dimensions on top of
+  chunk 3's three perturbations: (1) per-seed `tree_sample_fraction`
+  cycled by `seed % 4` over `[None, Some(0.40), Some(0.60),
+  Some(0.70)]` — seed 0 keeps the canonical profile fraction
+  (`None` → byte-identical); higher seeds map an absolute target
+  fraction onto a gather stride via the new
+  `stride_for_seeded_sample_fraction(total_pixels, frac)` helper,
+  which takes precedence over chunk-3's `derive_seeded_stride`. The
+  triplet straddles the canonical 0.50 default with one substantially
+  denser sample (0.70) that captures rare-bucket splits the canonical
+  run misses. (2) Per-seed permutation of the 14 `CANDIDATE_PREDICTORS`
+  array via the new `derive_seeded_predictor_order(seed)` →
+  `[canonical, strong-first (Gradient/Weighted lead), directional-first
+  (TopRight/TopLeft/Average1..4 lead), full reverse]`. This affects
+  greedy ID3's strict-`<` tie-break in `find_best_predictor`, so the
+  per-leaf predictor flips on equal-entropy ties — surfacing trees with
+  different leaf predictors. Set equality is preserved (all 4 perms
+  contain the same 14 predictors) so every per-seed tree remains
+  spec-valid and the chunk-2 `estimate_token_cost` picker chooses
+  among them on equal terms. Seed-0 byte-identicality enforced by a
+  unit test (`test_new_with_predictor_order_for_seed_seed_zero_matches_
+  default`); 7 new unit tests in total
+  (`test_derive_seeded_sample_fraction_*`,
+  `test_stride_for_seeded_sample_fraction_*`,
+  `test_derive_seeded_predictor_order_*`). New helpers in
+  `modular::tree_learn`: `derive_seeded_sample_fraction(u64) ->
+  Option<f32>`, `derive_seeded_predictor_order(u64) -> &'static
+  [Predictor]`, `stride_for_seeded_sample_fraction(usize, f32) ->
+  usize`, `TreeSamples::new_with_predictor_order_for_seed(num_refs,
+  seed)`. Bench harness: `examples/e10_e11_multiseed_chunk4_ab.rs`
+  (5 CID22-512 photos × {e9, e10, e11} × 2 paired samples).
+  Hash-locks: `hash_lock_features` 36/36 byte-identical at e ≤ 9.
+  **Honest A/B vs chunk 3 on this 5-image corpus (deferred for
+  larger-corpus validation):** chunk 4 regresses at e11 by +0.39%
+  (4834 bytes worse, 5 images) and is a wash at e10 (+0.008%). Only
+  one cell (1418519@e11) improves vs chunk 3 (-0.137%); two regress
+  (1044329@e11 +1.07%, 1189261@e11 +0.48%). Likely cause: the 4-seed
+  budget at e11 is fixed, so adding more variance dimensions cycles
+  through a *different* 4 candidate trees, not *more* — chunk-3's
+  threshold-jitter + property-rotation perturbations happened to hit
+  better minima on 2/5 images than chunk-4's recombined set. Logged
+  as RFC#45 #45 follow-on; possible resolutions: (a) reserve chunk-3
+  perturbations for seeds 0..3 and apply chunk-4 perturbations only
+  beyond seed 3 (requires expanded budget at a new effort tier);
+  (b) expand to 6 or 8 seeds at e11; (c) per-image dispatch. Bench
+  TSV + meta archived at `benchmarks/e10_e11_multiseed_chunk4_ab_
+  2026-05-17.{tsv,meta}`.
+
 - **Broader seed variance for e10/e11 multi-seed tree learning**
   (RFC#45 pick #1 chunk 3 — follow-on to chunk 2 `d4f2e282`). The
   chunk-2 dispatch only varied gather `start_offset`, which produced

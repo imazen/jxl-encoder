@@ -1,0 +1,129 @@
+# RFC#45 chunk 4: sample-fraction jitter + predictor-order shuffle A/B/C
+# samples=2, threads=8
+# commit_pending
+image	effort	sample	bytes	sha	wall_ms
+encoding 1025469.png (512×512, 786432 bytes RGB)
+DIAG tree: 1203 nodes, 602 contexts, 786432 total_tokens (seeds=1)
+DIAG code: 95 histograms (from 602 contexts), rct=Some(RctType(6)), compact=0
+DIAG LfGlobal: tree=13486 bits (1685 B), histo=31269 bits (3908 B), meta_tokens=0, total=44853 bits (5606 B)
+1025469.png	e9	0	231695	f5fd73e9	1367.47
+DIAG tree: 1491 nodes, 746 contexts, 786432 total_tokens (seeds=2)
+DIAG code: 100 histograms (from 746 contexts), rct=Some(RctType(6)), compact=0
+DIAG LfGlobal: tree=16823 bits (2102 B), histo=33462 bits (4182 B), meta_tokens=0, total=50383 bits (6297 B)
+1025469.png	e10	0	231461	53fa19be	2517.38
+DIAG tree: 1491 nodes, 746 contexts, 786432 total_tokens (seeds=4)
+DIAG code: 100 histograms (from 746 contexts), rct=Some(RctType(6)), compact=0
+DIAG LfGlobal: tree=16823 bits (2102 B), histo=33462 bits (4182 B), meta_tokens=0, total=50383 bits (6297 B)
+1025469.png	e11	0	231461	53fa19be	5156.98
+DIAG tree: 1203 nodes, 602 contexts, 786432 total_tokens (seeds=1)
+DIAG code: 95 histograms (from 602 contexts), rct=Some(RctType(6)), compact=0
+DIAG LfGlobal: tree=13486 bits (1685 B), histo=31269 bits (3908 B), meta_tokens=0, total=44853 bits (5606 B)
+1025469.png	e9	1	231695	f5fd73e9	1411.05
+DIAG tree: 1491 nodes, 746 contexts, 786432 total_tokens (seeds=2)
+DIAG code: 100 histograms (from 746 contexts), rct=Some(RctType(6)), compact=0
+DIAG LfGlobal: tree=16823 bits (2102 B), histo=33462 bits (4182 B), meta_tokens=0, total=50383 bits (6297 B)
+1025469.png	e10	1	231461	53fa19be	2399.90
+DIAG tree: 1491 nodes, 746 contexts, 786432 total_tokens (seeds=4)
+DIAG code: 100 histograms (from 746 contexts), rct=Some(RctType(6)), compact=0
+DIAG LfGlobal: tree=16823 bits (2102 B), histo=33462 bits (4182 B), meta_tokens=0, total=50383 bits (6297 B)
+1025469.png	e11	1	231461	53fa19be	4878.73
+encoding 1044329.png (512×512, 786432 bytes RGB)
+DIAG tree: 2937 nodes, 1469 contexts, 786432 total_tokens (seeds=1)
+DIAG code: 124 histograms (from 1469 contexts), rct=Some(RctType(40)), compact=0
+DIAG LfGlobal: tree=33940 bits (4242 B), histo=68198 bits (8524 B), meta_tokens=0, total=102242 bits (12780 B)
+1044329.png	e9	0	330198	7ca04836	1454.71
+DIAG tree: 3827 nodes, 1914 contexts, 786432 total_tokens (seeds=2)
+DIAG code: 117 histograms (from 1914 contexts), rct=Some(RctType(40)), compact=0
+DIAG LfGlobal: tree=44516 bits (5564 B), histo=66037 bits (8254 B), meta_tokens=0, total=110657 bits (13832 B)
+1044329.png	e10	0	330499	7b833e23	2864.64
+DIAG tree: 3827 nodes, 1914 contexts, 786432 total_tokens (seeds=4)
+DIAG code: 117 histograms (from 1914 contexts), rct=Some(RctType(40)), compact=0
+DIAG LfGlobal: tree=44516 bits (5564 B), histo=66037 bits (8254 B), meta_tokens=0, total=110657 bits (13832 B)
+1044329.png	e11	0	330499	7b833e23	4700.19
+DIAG tree: 2937 nodes, 1469 contexts, 786432 total_tokens (seeds=1)
+DIAG code: 124 histograms (from 1469 contexts), rct=Some(RctType(40)), compact=0
+DIAG LfGlobal: tree=33940 bits (4242 B), histo=68198 bits (8524 B), meta_tokens=0, total=102242 bits (12780 B)
+1044329.png	e9	1	330198	7ca04836	1345.00
+DIAG tree: 3827 nodes, 1914 contexts, 786432 total_tokens (seeds=2)
+DIAG code: 117 histograms (from 1914 contexts), rct=Some(RctType(40)), compact=0
+DIAG LfGlobal: tree=44516 bits (5564 B), histo=66037 bits (8254 B), meta_tokens=0, total=110657 bits (13832 B)
+1044329.png	e10	1	330499	7b833e23	2176.60
+DIAG tree: 3827 nodes, 1914 contexts, 786432 total_tokens (seeds=4)
+DIAG code: 117 histograms (from 1914 contexts), rct=Some(RctType(40)), compact=0
+DIAG LfGlobal: tree=44516 bits (5564 B), histo=66037 bits (8254 B), meta_tokens=0, total=110657 bits (13832 B)
+1044329.png	e11	1	330499	7b833e23	4981.02
+encoding 1189261.png (512×512, 786432 bytes RGB)
+DIAG tree: 1643 nodes, 822 contexts, 786432 total_tokens (seeds=1)
+DIAG code: 84 histograms (from 822 contexts), rct=Some(RctType(40)), compact=0
+DIAG LfGlobal: tree=18533 bits (2316 B), histo=43920 bits (5490 B), meta_tokens=0, total=62557 bits (7819 B)
+1189261.png	e9	0	303156	769a0f46	1603.84
+DIAG tree: 2275 nodes, 1138 contexts, 786432 total_tokens (seeds=2)
+DIAG code: 81 histograms (from 1138 contexts), rct=Some(RctType(40)), compact=0
+DIAG LfGlobal: tree=25874 bits (3234 B), histo=43887 bits (5485 B), meta_tokens=0, total=69865 bits (8733 B)
+1189261.png	e10	0	303864	90635847	2891.80
+DIAG tree: 2275 nodes, 1138 contexts, 786432 total_tokens (seeds=4)
+DIAG code: 81 histograms (from 1138 contexts), rct=Some(RctType(40)), compact=0
+DIAG LfGlobal: tree=25874 bits (3234 B), histo=43887 bits (5485 B), meta_tokens=0, total=69865 bits (8733 B)
+1189261.png	e11	0	303864	90635847	5955.84
+DIAG tree: 1643 nodes, 822 contexts, 786432 total_tokens (seeds=1)
+DIAG code: 84 histograms (from 822 contexts), rct=Some(RctType(40)), compact=0
+DIAG LfGlobal: tree=18533 bits (2316 B), histo=43920 bits (5490 B), meta_tokens=0, total=62557 bits (7819 B)
+1189261.png	e9	1	303156	769a0f46	1367.65
+DIAG tree: 2275 nodes, 1138 contexts, 786432 total_tokens (seeds=2)
+DIAG code: 81 histograms (from 1138 contexts), rct=Some(RctType(40)), compact=0
+DIAG LfGlobal: tree=25874 bits (3234 B), histo=43887 bits (5485 B), meta_tokens=0, total=69865 bits (8733 B)
+1189261.png	e10	1	303864	90635847	2527.23
+DIAG tree: 2275 nodes, 1138 contexts, 786432 total_tokens (seeds=4)
+DIAG code: 81 histograms (from 1138 contexts), rct=Some(RctType(40)), compact=0
+DIAG LfGlobal: tree=25874 bits (3234 B), histo=43887 bits (5485 B), meta_tokens=0, total=69865 bits (8733 B)
+1189261.png	e11	1	303864	90635847	5453.35
+encoding 1279330.png (512×512, 786432 bytes RGB)
+DIAG tree: 769 nodes, 385 contexts, 786432 total_tokens (seeds=1)
+DIAG code: 84 histograms (from 385 contexts), rct=Some(RctType(5)), compact=0
+DIAG LfGlobal: tree=8103 bits (1012 B), histo=22216 bits (2777 B), meta_tokens=0, total=30421 bits (3802 B)
+1279330.png	e9	0	208471	28e207af	1053.12
+DIAG tree: 2629 nodes, 1315 contexts, 786432 total_tokens (seeds=2)
+DIAG code: 70 histograms (from 1315 contexts), rct=Some(RctType(5)), compact=0
+DIAG LfGlobal: tree=27136 bits (3392 B), histo=23971 bits (2996 B), meta_tokens=0, total=51209 bits (6401 B)
+1279330.png	e10	0	207123	b9ec0b39	1866.72
+DIAG tree: 2629 nodes, 1315 contexts, 786432 total_tokens (seeds=4)
+DIAG code: 70 histograms (from 1315 contexts), rct=Some(RctType(5)), compact=0
+DIAG LfGlobal: tree=27136 bits (3392 B), histo=23971 bits (2996 B), meta_tokens=0, total=51209 bits (6401 B)
+1279330.png	e11	0	207123	b9ec0b39	3961.21
+DIAG tree: 769 nodes, 385 contexts, 786432 total_tokens (seeds=1)
+DIAG code: 84 histograms (from 385 contexts), rct=Some(RctType(5)), compact=0
+DIAG LfGlobal: tree=8103 bits (1012 B), histo=22216 bits (2777 B), meta_tokens=0, total=30421 bits (3802 B)
+1279330.png	e9	1	208471	28e207af	1026.87
+DIAG tree: 2629 nodes, 1315 contexts, 786432 total_tokens (seeds=2)
+DIAG code: 70 histograms (from 1315 contexts), rct=Some(RctType(5)), compact=0
+DIAG LfGlobal: tree=27136 bits (3392 B), histo=23971 bits (2996 B), meta_tokens=0, total=51209 bits (6401 B)
+1279330.png	e10	1	207123	b9ec0b39	1871.79
+DIAG tree: 2629 nodes, 1315 contexts, 786432 total_tokens (seeds=4)
+DIAG code: 70 histograms (from 1315 contexts), rct=Some(RctType(5)), compact=0
+DIAG LfGlobal: tree=27136 bits (3392 B), histo=23971 bits (2996 B), meta_tokens=0, total=51209 bits (6401 B)
+1279330.png	e11	1	207123	b9ec0b39	3739.95
+encoding 1418519.png (512×512, 786432 bytes RGB)
+DIAG tree: 793 nodes, 397 contexts, 786432 total_tokens (seeds=1)
+DIAG code: 73 histograms (from 397 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=8535 bits (1066 B), histo=17022 bits (2127 B), meta_tokens=0, total=25661 bits (3207 B)
+1418519.png	e9	0	165481	c86c4b91	1912.25
+DIAG tree: 1061 nodes, 531 contexts, 786432 total_tokens (seeds=2)
+DIAG code: 75 histograms (from 531 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=11528 bits (1441 B), histo=17363 bits (2170 B), meta_tokens=0, total=28995 bits (3624 B)
+1418519.png	e10	0	165275	63c53d78	3049.89
+DIAG tree: 1023 nodes, 512 contexts, 786432 total_tokens (seeds=4)
+DIAG code: 73 histograms (from 512 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=10969 bits (1371 B), histo=17160 bits (2145 B), meta_tokens=0, total=28233 bits (3529 B)
+1418519.png	e11	0	163908	3dd23816	6461.37
+DIAG tree: 793 nodes, 397 contexts, 786432 total_tokens (seeds=1)
+DIAG code: 73 histograms (from 397 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=8535 bits (1066 B), histo=17022 bits (2127 B), meta_tokens=0, total=25661 bits (3207 B)
+1418519.png	e9	1	165481	c86c4b91	1906.40
+DIAG tree: 1061 nodes, 531 contexts, 786432 total_tokens (seeds=2)
+DIAG code: 75 histograms (from 531 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=11528 bits (1441 B), histo=17363 bits (2170 B), meta_tokens=0, total=28995 bits (3624 B)
+1418519.png	e10	1	165275	63c53d78	3057.01
+DIAG tree: 1023 nodes, 512 contexts, 786432 total_tokens (seeds=4)
+DIAG code: 73 histograms (from 512 contexts), rct=Some(RctType(10)), compact=0
+DIAG LfGlobal: tree=10969 bits (1371 B), histo=17160 bits (2145 B), meta_tokens=0, total=28233 bits (3529 B)
+1418519.png	e11	1	163908	3dd23816	6571.32

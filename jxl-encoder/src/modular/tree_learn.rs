@@ -51,6 +51,95 @@ const CANDIDATE_PREDICTORS: &[Predictor] = &[
     Predictor::Average4,
 ];
 
+/// Per-seed predictor permutations for the multi-seed tree-learning loop
+/// (RFC#45 chunk 4 — predictor-evaluation-order variance).
+///
+/// `find_best_predictor` iterates `samples.candidate_predictors` in array
+/// order and applies a strict-`<` tie-break (lowest index wins on equal
+/// cost). Re-ordering the array therefore changes which predictor wins
+/// every tied comparison — typically the cheap `Zero` / `Left` / `Top`
+/// predictors that dominate flat regions, and the strong `Gradient` /
+/// `Weighted` predictors that dominate textured regions.
+///
+/// Index 0 = canonical libjxl order (seed 0 / e ≤ 9 path).
+/// Index 1 = strong-first (Gradient, Weighted promoted before Zero).
+/// Index 2 = directional-first (TopLeft, TopRight, Average1..4 promoted).
+/// Index 3 = full reverse.
+///
+/// All four arrays contain the same 14 predictors as a set — only the
+/// order varies — so every per-seed tree is spec-valid and the chunk-2
+/// `estimate_token_cost` picker still chooses among them on equal terms.
+const CANDIDATE_PREDICTORS_PERMS: [&[Predictor]; 4] = [
+    // 0: canonical (matches CANDIDATE_PREDICTORS exactly).
+    &[
+        Predictor::Zero,
+        Predictor::Left,
+        Predictor::Top,
+        Predictor::Average0,
+        Predictor::Select,
+        Predictor::Gradient,
+        Predictor::Weighted,
+        Predictor::TopRight,
+        Predictor::TopLeft,
+        Predictor::LeftLeft,
+        Predictor::Average1,
+        Predictor::Average2,
+        Predictor::Average3,
+        Predictor::Average4,
+    ],
+    // 1: strong-first — Gradient + Weighted lead, so on ties they win.
+    &[
+        Predictor::Gradient,
+        Predictor::Weighted,
+        Predictor::Zero,
+        Predictor::Left,
+        Predictor::Top,
+        Predictor::Average0,
+        Predictor::Select,
+        Predictor::TopRight,
+        Predictor::TopLeft,
+        Predictor::LeftLeft,
+        Predictor::Average1,
+        Predictor::Average2,
+        Predictor::Average3,
+        Predictor::Average4,
+    ],
+    // 2: directional-first — TopRight/TopLeft + the Average1..4 family lead.
+    &[
+        Predictor::TopRight,
+        Predictor::TopLeft,
+        Predictor::Average1,
+        Predictor::Average2,
+        Predictor::Average3,
+        Predictor::Average4,
+        Predictor::LeftLeft,
+        Predictor::Zero,
+        Predictor::Left,
+        Predictor::Top,
+        Predictor::Average0,
+        Predictor::Select,
+        Predictor::Gradient,
+        Predictor::Weighted,
+    ],
+    // 3: full reverse of canonical.
+    &[
+        Predictor::Average4,
+        Predictor::Average3,
+        Predictor::Average2,
+        Predictor::Average1,
+        Predictor::LeftLeft,
+        Predictor::TopLeft,
+        Predictor::TopRight,
+        Predictor::Weighted,
+        Predictor::Gradient,
+        Predictor::Select,
+        Predictor::Average0,
+        Predictor::Top,
+        Predictor::Left,
+        Predictor::Zero,
+    ],
+];
+
 /// Full non-squeeze property order, matching libjxl's enc_modular.cc:544.
 /// 16 elements with group_id at index 1. Used at effort 9+ (speed_tier <= kTortoise)
 /// where libjxl does NOT erase group_id.
@@ -437,6 +526,23 @@ impl TreeSamples {
     /// No reference channels: squeeze creates channels with different dimensions.
     pub fn new_for_squeeze() -> Self {
         Self::with_predictors_and_refs(CANDIDATE_PREDICTORS_SQUEEZE, 0)
+    }
+
+    /// Creates an empty TreeSamples whose candidate-predictor list is the
+    /// chunk-4 permutation for `seed` (RFC#45). Seed 0 is identical to
+    /// [`Self::new_with_ref_channels`] and therefore preserves the e ≤ 9
+    /// byte-identical hash-locks (e ≤ 9 has `tree_learn_seeds = 1` so the
+    /// canonical seed-0 path is the only path taken).
+    ///
+    /// Different permutations produce different trees only when
+    /// [`find_best_predictor`]'s strict-`<` tie-break flips at equal
+    /// histogram entropies — typically on flat / synthetic regions where
+    /// several cheap predictors share the same residual distribution. On
+    /// photographic content the bytes-saving signal is small per cell
+    /// but cumulative across 1 to 8 K-node trees.
+    pub fn new_with_predictor_order_for_seed(num_ref_channels: usize, seed: u64) -> Self {
+        let order = derive_seeded_predictor_order(seed);
+        Self::with_predictors_and_refs(order, num_ref_channels)
     }
 
     /// Creates an empty TreeSamples with a custom predictor list and ref channel count.
@@ -6174,6 +6280,79 @@ pub fn derive_seeded_stride(base_stride: usize, seed: u64) -> usize {
     candidates[(seed as usize) % candidates.len()].max(1)
 }
 
+/// Per-seed `tree_sample_fraction` override for the multi-seed tree-learning
+/// loop (RFC#45 chunk 4 — sample-fraction variance follow-on to chunk 3).
+///
+/// Returns the absolute sample fraction the gather should target for this
+/// seed, or `None` to leave the canonical profile fraction untouched.
+///
+/// Cycled by `seed % 4`:
+///   - seed 0 → `None`           (canonical profile fraction, byte-identical)
+///   - seed 1 → `Some(0.40)`     (sparser sample set, faster gather)
+///   - seed 2 → `Some(0.60)`     (denser than canonical 0.50)
+///   - seed 3 → `Some(0.70)`     (densest, most expensive)
+///
+/// The 0.40 / 0.60 / 0.70 triplet straddles the canonical 0.50 default
+/// (set by [`EffortProfile::tree_sample_fraction_for`] at effort ≥ 7) and
+/// adds one substantially denser sample (0.70) that captures rare-bucket
+/// splits the canonical run misses. Density only matters when the gather
+/// stride changes — at small images the stride is already 1 and the
+/// override is effectively a no-op.
+///
+/// Seed 0 is `None` to preserve the chunk-2 / chunk-3 invariant that
+/// seed 0 = the legacy single-pass pipeline. e ≤ 9 has
+/// `tree_learn_seeds = 1` so this helper is never called outside e10/e11.
+#[must_use]
+pub fn derive_seeded_sample_fraction(seed: u64) -> Option<f32> {
+    const FRACTIONS: [Option<f32>; 4] = [None, Some(0.40), Some(0.60), Some(0.70)];
+    FRACTIONS[(seed as usize) % FRACTIONS.len()]
+}
+
+/// Per-seed predictor evaluation order for the multi-seed tree-learning
+/// loop (RFC#45 chunk 4 — predictor-order variance follow-on to chunk 3).
+///
+/// Returns one of the four [`CANDIDATE_PREDICTORS_PERMS`] arrays cycled
+/// by `seed % 4`. Seed 0 returns the canonical libjxl order — identical
+/// to the static [`CANDIDATE_PREDICTORS`] — so the e ≤ 9 byte-identical
+/// hash-locks are preserved.
+///
+/// Reason: [`find_best_predictor`] (and the parallel hybrid variant)
+/// iterates the candidate list in array order and applies a strict-`<`
+/// tie-break. Different orders therefore resolve ties differently and
+/// can promote `Gradient` / `Weighted` (strong-first), the directional
+/// `Average1..4` family (directional-first), or the cheap-residual
+/// predictors (reverse) ahead of the canonical lowest-index winner.
+///
+/// All permutations contain the same 14 predictors as a set, so every
+/// per-seed tree remains spec-valid and the chunk-2 picker still chooses
+/// among them on equal terms.
+#[must_use]
+pub fn derive_seeded_predictor_order(seed: u64) -> &'static [Predictor] {
+    CANDIDATE_PREDICTORS_PERMS[(seed as usize) % CANDIDATE_PREDICTORS_PERMS.len()]
+}
+
+/// Convert an absolute target sample fraction into a gather stride for a
+/// channel pool of `total_pixels` (RFC#45 chunk 4 helper).
+///
+/// Returns the stride that subsamples roughly `(total_pixels * fraction)`
+/// pixels, clamped to the same 65 K-sample floor enforced by
+/// [`max_tree_samples_from_profile`]. Returns `1` when the floor would
+/// already cover the whole pool (no subsampling needed).
+///
+/// Used by the multi-seed section.rs loop to apply
+/// [`derive_seeded_sample_fraction`] without mutating the shared
+/// [`EffortProfile`]. Seed 0 still uses the canonical
+/// [`compute_gather_stride_from_profile`] path.
+#[must_use]
+pub fn stride_for_seeded_sample_fraction(total_pixels: usize, fraction: f32) -> usize {
+    let target = ((total_pixels as f32 * fraction) as usize).max(65_536);
+    if total_pixels > target {
+        total_pixels.div_ceil(target)
+    } else {
+        1
+    }
+}
+
 /// Multi-seed tree-learning fan-out (RFC#45 chunk 2 — pick #1).
 ///
 /// Runs `gather_fn` once per seed in `0..seeds`, hands the resulting
@@ -7413,6 +7592,123 @@ mod tests {
         // All strides must be >= 1 (clamp invariant).
         for s in &strides {
             assert!(*s >= 1, "stride must be >= 1");
+        }
+    }
+
+    // ---- RFC#45 chunk 4 helpers (sample-fraction jitter + predictor order) ----
+
+    #[test]
+    fn test_derive_seeded_sample_fraction_seed_zero_is_none() {
+        // Seed 0 must return None so the canonical profile fraction
+        // (set by EffortProfile::tree_sample_fraction_for) is used
+        // verbatim — preserves seed-0 byte-identicality.
+        assert_eq!(derive_seeded_sample_fraction(0), None);
+    }
+
+    #[test]
+    fn test_derive_seeded_sample_fraction_nonzero_returns_distinct_values() {
+        // Seeds 1..=3 must each return a Some(_) with the expected
+        // values (0.40 / 0.60 / 0.70). Seeds wrap by mod 4 so seed 4
+        // cycles back to seed 0 (None).
+        assert_eq!(derive_seeded_sample_fraction(1), Some(0.40));
+        assert_eq!(derive_seeded_sample_fraction(2), Some(0.60));
+        assert_eq!(derive_seeded_sample_fraction(3), Some(0.70));
+        assert_eq!(derive_seeded_sample_fraction(4), None);
+        // Distinct: 3 non-None values.
+        let vals: std::collections::BTreeSet<u32> = (1u64..=3)
+            .map(|s| (derive_seeded_sample_fraction(s).unwrap() * 100.0) as u32)
+            .collect();
+        assert_eq!(
+            vals.len(),
+            3,
+            "seeds 1..=3 must produce 3 distinct fractions"
+        );
+    }
+
+    #[test]
+    fn test_stride_for_seeded_sample_fraction_under_floor() {
+        // total_pixels well under the 65_536 floor → stride must be 1.
+        // (max(65_536, 0) = 65_536 ≥ 1_000 → stride = 1)
+        assert_eq!(stride_for_seeded_sample_fraction(1_000, 0.40), 1);
+        assert_eq!(stride_for_seeded_sample_fraction(1_000, 0.70), 1);
+    }
+
+    #[test]
+    fn test_stride_for_seeded_sample_fraction_above_floor() {
+        // total_pixels = 1_000_000, fraction = 0.40 → target = 400_000,
+        // stride = ceil(1_000_000 / 400_000) = 3.
+        assert_eq!(stride_for_seeded_sample_fraction(1_000_000, 0.40), 3);
+        // fraction = 0.70 → target = 700_000, stride = 2.
+        assert_eq!(stride_for_seeded_sample_fraction(1_000_000, 0.70), 2);
+        // fraction = 0.50 → target = 500_000, stride = 2.
+        assert_eq!(stride_for_seeded_sample_fraction(1_000_000, 0.50), 2);
+    }
+
+    #[test]
+    fn test_derive_seeded_predictor_order_seed_zero_is_canonical() {
+        // Seed 0 must return a slice with the canonical predictor order
+        // (matches CANDIDATE_PREDICTORS element-for-element).
+        let order0 = derive_seeded_predictor_order(0);
+        assert_eq!(order0.len(), CANDIDATE_PREDICTORS.len());
+        for (a, b) in order0.iter().zip(CANDIDATE_PREDICTORS.iter()) {
+            assert_eq!(
+                a, b,
+                "seed-0 predictor order must equal CANDIDATE_PREDICTORS"
+            );
+        }
+    }
+
+    #[test]
+    fn test_derive_seeded_predictor_order_nonzero_perturbs() {
+        // Seeds 1..=3 must each produce a permutation that differs from
+        // the canonical order in at least one position.
+        let canonical = derive_seeded_predictor_order(0);
+        for seed in 1u64..=3 {
+            let perm = derive_seeded_predictor_order(seed);
+            assert_eq!(perm.len(), canonical.len());
+            let differs = perm.iter().zip(canonical.iter()).any(|(a, b)| a != b);
+            assert!(
+                differs,
+                "seed {} predictor order must differ from canonical",
+                seed
+            );
+        }
+    }
+
+    #[test]
+    fn test_derive_seeded_predictor_order_preserves_predictor_set() {
+        // Each permutation must contain exactly the same 14 predictors
+        // (set equality) as CANDIDATE_PREDICTORS — only the order varies.
+        let canonical_set: std::collections::BTreeSet<u32> =
+            CANDIDATE_PREDICTORS.iter().map(|p| *p as u32).collect();
+        for seed in 0u64..=3 {
+            let perm = derive_seeded_predictor_order(seed);
+            let perm_set: std::collections::BTreeSet<u32> =
+                perm.iter().map(|p| *p as u32).collect();
+            assert_eq!(
+                perm_set, canonical_set,
+                "seed {} permutation must contain the same predictor set",
+                seed
+            );
+            assert_eq!(perm.len(), CANDIDATE_PREDICTORS.len());
+        }
+    }
+
+    #[test]
+    fn test_new_with_predictor_order_for_seed_seed_zero_matches_default() {
+        // The chunk-4 constructor with seed=0 must produce a TreeSamples
+        // whose candidate_predictors are pointer-equal-ish to the
+        // canonical CANDIDATE_PREDICTORS (set+order equality).
+        let s0 = TreeSamples::new_with_predictor_order_for_seed(0, 0);
+        assert_eq!(s0.num_predictors(), CANDIDATE_PREDICTORS.len());
+        let base = TreeSamples::new_with_ref_channels(0);
+        assert_eq!(s0.num_predictors(), base.num_predictors());
+        // Element-wise equality with the canonical list.
+        for (i, c) in CANDIDATE_PREDICTORS.iter().enumerate() {
+            assert_eq!(
+                s0.candidate_predictors[i] as u32, *c as u32,
+                "seed-0 constructor must preserve canonical predictor order at idx {i}"
+            );
         }
     }
 }
