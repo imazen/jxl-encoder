@@ -50,6 +50,15 @@ pub struct FrameOptions {
     /// Optional `save_as_reference` override (0–3). `None` keeps the default
     /// (1 for non-last animated frames so crops can composite on the canvas).
     pub save_as_reference: Option<u32>,
+    /// Encode this frame as `FrameType::ReferenceOnly` — written into the
+    /// codestream and saved to its `save_as_reference` slot but NOT
+    /// presented as a displayable frame. Subsequent regular frames
+    /// composite against the saved canvas via `BlendingInfo::source`.
+    ///
+    /// The spec disallows `ReferenceOnly` on the last frame (the file
+    /// must end with a displayable frame). The animation entry points
+    /// reject this combination with [`crate::EncodeError::InvalidInput`].
+    pub reference_only: bool,
     /// Optional frame name (libjxl `FrameHeader::name`). `None` writes no name.
     pub name: Option<String>,
     /// Optional SMPTE timecode for this frame. Only written when

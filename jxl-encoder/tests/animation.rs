@@ -2032,3 +2032,238 @@ fn test_animation_timecode_roundtrip() {
     // header would surface here as a decode error).
     let _ = decode_animation_jxlrs(&data);
 }
+
+// ── ReferenceOnly frame tests ──────────────────────────────────────────────
+
+/// Three-frame animation:
+///   - Frame 0 (displayable): solid red, becomes the displayed canvas
+///     and is saved to reference slot 1 by the encoder default.
+///   - Frame 1 (ReferenceOnly): solid blue, written into reference
+///     slot 2 but NOT shown to the viewer. Decoders skip it during
+///     playback. The frame is encoded but never appears as a
+///     keyframe — its sole purpose is to populate the reference slot
+///     so the next frame's `blend_source=2` resolves to the saved
+///     canvas.
+///   - Frame 2 (displayable): the final keyframe. Uses
+///     `BlendMode::Add` + `blend_source=2` so the decoder reads the
+///     reference layer from slot 2 and adds the green pixels on top.
+///     This proves the cross-frame reference resolution actually
+///     reaches the saved canvas (frame 1's blue is in slot 2 — the
+///     encoder default `save_as_reference=1` for frame 0 puts red in
+///     slot 1, which is NOT what this frame references).
+///
+/// Verifies:
+///   1. The codestream round-trips through `jxl-rs` (the project's
+///      PRIMARY decoder per CLAUDE.md) AND `jxl-oxide` — proving the
+///      `frame_type=ReferenceOnly` field sits at the right bit
+///      position and all gated fields (no is_last, no duration, no
+///      blending_info, but `save_as_reference` + `save_before_ct` ARE
+///      written) line up.
+///   2. The decoder only exposes TWO keyframes (frame 0 and frame 2)
+///      — the ReferenceOnly middle frame is not displayed.
+///   3. The ReferenceOnly frame is visible via the
+///      `num_loaded_frames` counter (not the keyframe counter).
+///   4. The final frame's bitstream-level `blend_source` is set to
+///      slot 2 (the ReferenceOnly frame's save slot) — proving the
+///      cross-frame reference wire-up is preserved through encode +
+///      decode.
+#[test]
+fn test_animation_reference_only_lossless_jxlrs() {
+    use jxl_encoder::BlendMode;
+
+    let red = solid_rgb(255, 0, 0);
+    let blue = solid_rgb(0, 0, 255);
+    let green = solid_rgb(0, 255, 0);
+
+    let frames = [
+        // Displayable base frame, encoder saves to slot 1 by default.
+        AnimationFrame::new(&red, 10).with_name("base"),
+        // Hidden background, parked at slot 2 for the next frame to
+        // composite against. `with_reference_only(true)` flips
+        // `frame_type` to `ReferenceOnly`; the encoder also sets
+        // `is_last=false` and `save_before_ct=true` automatically.
+        AnimationFrame::new(&blue, 10)
+            .with_reference_only(true)
+            .with_save_as_reference(2)
+            .with_name("reference_blue"),
+        // Final displayable frame: `BlendMode::Add` + `blend_source=2`
+        // forces the decoder to look up slot 2 (the ReferenceOnly
+        // frame's pixels) and add the green sample on top. This is the
+        // only configuration where the bitstream actually carries a
+        // `source` field — `BlendMode::Replace` on a full frame elides
+        // the source per spec (`resets_canvas` predicate at
+        // frame_header.rs:524).
+        AnimationFrame::new(&green, 10)
+            .with_blend_mode(BlendMode::Add)
+            .with_blend_source(2)
+            .with_name("final_from_ref"),
+    ];
+
+    let animation = AnimationParams::default();
+
+    let data = LosslessConfig::new()
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .unwrap_or_else(|e| panic!("encode_animation failed: {e:?}"));
+
+    std::fs::write(
+        jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "animation")
+            .join("reference_only_3frame.jxl"),
+        &data,
+    )
+    .ok();
+
+    // ── jxl-rs ── try first so we surface bitstream errors at the
+    // primary reference decoder before any oxide-specific quirks.
+    let decoded_jxlrs = decode_animation_jxlrs(&data);
+    // jxl-rs returns one decoded buffer per frame loop iteration,
+    // including ReferenceOnly. We don't inspect pixel values here
+    // (compositing is the application's job per CLAUDE.md's blend
+    // overlay test pattern); end-to-end success at the bitstream
+    // level proves spec compliance.
+    assert!(
+        !decoded_jxlrs.is_empty(),
+        "jxl-rs returned 0 frames — codestream malformed"
+    );
+
+    // ── jxl-oxide ── exposes keyframe count separately from total
+    // frame count. ReferenceOnly frame must not be a keyframe.
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&data))
+        .unwrap_or_else(|e| panic!("jxl-oxide decode failed: {e:?}"));
+    // Drive jxl-oxide so reference / final frames load into the
+    // keyframe / total-frame counters. `render_frame(i)` advances the
+    // decoder up to keyframe `i`, loading any reference frames that
+    // sit between keyframes along the way.
+    let mut next_kf = 0usize;
+    while !image.is_loading_done() {
+        if image.render_frame(next_kf).is_err() {
+            break;
+        }
+        next_kf += 1;
+    }
+    let total_frames = image.num_loaded_frames();
+    let keyframes = image.num_loaded_keyframes();
+    assert_eq!(
+        keyframes, 2,
+        "expected 2 displayable keyframes, got {keyframes} (total frames: {total_frames})"
+    );
+    assert_eq!(
+        total_frames, 3,
+        "expected 3 total frames (ReferenceOnly counted as frame, not keyframe), got {total_frames}"
+    );
+
+    // Walk frame-by-frame and confirm the ReferenceOnly sits between
+    // the two keyframes, the save slots match what the API was asked
+    // to write, and the final frame's blend_source resolved to 2
+    // (the ReferenceOnly's slot).
+    let f0 = image.frame(0).expect("frame 0").header();
+    let f1 = image.frame(1).expect("frame 1").header();
+    let f2 = image.frame(2).expect("frame 2").header();
+    assert_eq!(
+        f1.frame_type,
+        jxl_oxide::frame::FrameType::ReferenceOnly,
+        "frame 1 should be ReferenceOnly, got {:?}",
+        f1.frame_type
+    );
+    assert_eq!(
+        f0.frame_type,
+        jxl_oxide::frame::FrameType::RegularFrame,
+        "frame 0 should be Regular"
+    );
+    assert_eq!(
+        f2.frame_type,
+        jxl_oxide::frame::FrameType::RegularFrame,
+        "frame 2 should be Regular"
+    );
+    assert_eq!(
+        f1.save_as_reference, 2,
+        "ReferenceOnly frame should save to slot 2, got {}",
+        f1.save_as_reference
+    );
+    assert_eq!(
+        f2.blending_info.source, 2,
+        "final frame should resolve blend_source to slot 2 (the ReferenceOnly's slot), got {}",
+        f2.blending_info.source
+    );
+    assert!(
+        !f1.is_last,
+        "ReferenceOnly frame must NOT be is_last (the file must end on a displayable frame)"
+    );
+    assert!(f2.is_last, "final frame should be is_last");
+}
+
+/// Rejection test: ReferenceOnly cannot be the last frame.
+/// The codestream must end on a displayable (Regular / SkipProgressive)
+/// frame — otherwise there's nothing for the decoder to present.
+#[test]
+fn test_animation_reference_only_last_frame_rejected() {
+    let red = solid_rgb(255, 0, 0);
+    let blue = solid_rgb(0, 0, 255);
+
+    let frames = [
+        AnimationFrame::new(&red, 10),
+        // Last frame as ReferenceOnly is invalid per spec.
+        AnimationFrame::new(&blue, 10).with_reference_only(true),
+    ];
+
+    let animation = AnimationParams::default();
+
+    let err = LosslessConfig::new()
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .expect_err("should reject ReferenceOnly on last frame");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("ReferenceOnly") || msg.contains("reference"),
+        "error should mention ReferenceOnly: {msg}"
+    );
+
+    // Lossy path should also reject.
+    let err = LossyConfig::new(1.0)
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .expect_err("lossy: should reject ReferenceOnly on last frame");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("ReferenceOnly") || msg.contains("reference"),
+        "lossy error should mention ReferenceOnly: {msg}"
+    );
+}
+
+/// Lossy version of the ReferenceOnly roundtrip. Same structure as
+/// the lossless test but encodes with VarDCT so we exercise the
+/// `vardct/bitstream.rs` ReferenceOnly path independently.
+#[test]
+fn test_animation_reference_only_lossy_oxide() {
+    let red = solid_rgb(255, 0, 0);
+    let blue = solid_rgb(0, 0, 255);
+    let green = solid_rgb(0, 255, 0);
+
+    let frames = [
+        AnimationFrame::new(&red, 10).with_name("base"),
+        AnimationFrame::new(&blue, 10)
+            .with_reference_only(true)
+            .with_save_as_reference(2)
+            .with_name("ref_layer"),
+        AnimationFrame::new(&green, 10)
+            .with_blend_source(2)
+            .with_name("final"),
+    ];
+
+    let animation = AnimationParams::default();
+
+    let data = LossyConfig::new(1.0)
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .unwrap_or_else(|e| panic!("lossy encode_animation failed: {e:?}"));
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&data))
+        .unwrap_or_else(|e| panic!("jxl-oxide lossy decode failed: {e:?}"));
+    assert_eq!(
+        image.num_loaded_keyframes(),
+        2,
+        "lossy: expected 2 displayable keyframes"
+    );
+    assert!(
+        image.num_loaded_frames() >= 3,
+        "lossy: expected at least 3 total frames"
+    );
+}
