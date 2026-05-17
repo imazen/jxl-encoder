@@ -4,6 +4,22 @@
 
 ### Added
 
+- **JPEG XL codestream Level 10 signaling** (`jxll` container box,
+  audit item #1). Encoder now computes the required codestream level
+  per libjxl `VerifyLevelSettings` (`lib/jxl/encode.cc:550`) from
+  image dimensions, ICC size, and extra-channel count, and emits a
+  `jxll` (level) box directly after `ftyp` when any level-5 cap is
+  exceeded. Container is forced even without EXIF/XMP at level 10
+  (mirrors libjxl `MustUseContainer`). Unblocks encoding of images
+  beyond the Level 5 envelope (> 262 144 per axis, > 2²⁸ pixels,
+  > 4 extra channels, CMYK, or ICC > 4 MB). Public surface:
+  `container::compute_codestream_level`,
+  `container::wrap_in_container_with_level`, and `_with_brob_and_level`,
+  `_with_jbrd_and_level`, `_jxlp_with_level` siblings. All existing
+  `wrap_in_container*` entry points keep their level-5 behaviour, so
+  byte layout for normal-sized images is unchanged (hash-locks
+  byte-identical: 36/36).
+
 - **`hdr-gainmap` feature: typed `GainMapBundle` serializer + end-to-end
   `HdrFromSdrRequest` Ultra HDR encoder API** (issue #46, A3 chunks 3+4).
   New `jxl_encoder::hdr` module gated behind the optional `hdr-gainmap`
