@@ -37,6 +37,14 @@ impl RctType {
     /// Simple G-R, G-B decorrelation.
     pub const SUBTRACT_GREEN: RctType = RctType(3);
 
+    /// GBR permutation + Subtract-Green decorrelation (perm=1, type=3).
+    /// Best single-RCT default on a diverse 490-image corpus (1.19% bytes
+    /// savings vs YCoCg as the `nb_rcts_to_try=0` fallback). Used as the
+    /// fallback in [`select_best_rct`]/[`select_best_rct_at`] when no full
+    /// RCT search is performed. See the chunk-1 RCT-picker investigation
+    /// commit `287d915` for the sweep that justified this default.
+    pub const GBR_SUBGR: RctType = RctType(10);
+
     /// Get the permutation index (0-5).
     pub fn permutation(&self) -> usize {
         (self.0 / 7) as usize
