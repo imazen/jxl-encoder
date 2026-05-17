@@ -1371,7 +1371,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
         compute_best_tree_with_multipliers, compute_gather_stride_from_profile,
-        gather_samples_strided, gather_samples_strided_with_dedup, max_ref_channels,
+        gather_samples_strided, gather_samples_strided_with_dedup_backend, max_ref_channels,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -1620,7 +1620,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
         Vec::new()
     };
     if profile.gather_dedup {
-        let _ = gather_samples_strided_with_dedup(
+        let _ = gather_samples_strided_with_dedup_backend(
             &mut samples,
             &work_image,
             0,
@@ -1629,6 +1629,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
             &wp_params,
             None,
             true,
+            profile.gather_dedup_phase3,
             &dedup_properties,
         );
     } else {
@@ -1816,7 +1817,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
         compute_best_tree_with_multipliers, compute_gather_stride_from_profile,
-        gather_samples_strided, gather_samples_strided_with_dedup,
+        gather_samples_strided, gather_samples_strided_with_dedup_backend,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -1840,7 +1841,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
         Vec::new()
     };
     if profile.gather_dedup {
-        let _ = gather_samples_strided_with_dedup(
+        let _ = gather_samples_strided_with_dedup_backend(
             &mut samples,
             image,
             0,
@@ -1849,6 +1850,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
             &wp_params,
             None,
             true,
+            profile.gather_dedup_phase3,
             &dedup_properties,
         );
     } else {
@@ -1991,7 +1993,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
         compute_gather_stride_from_profile, gather_samples_strided,
-        gather_samples_strided_with_dedup,
+        gather_samples_strided_with_dedup_backend,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -2056,7 +2058,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         Vec::new()
     };
     if profile.gather_dedup {
-        let _ = gather_samples_strided_with_dedup(
+        let _ = gather_samples_strided_with_dedup_backend(
             &mut samples,
             &transformed,
             0,
@@ -2065,6 +2067,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
             &wp_params,
             None,
             true,
+            profile.gather_dedup_phase3,
             &dedup_properties,
         );
     } else {

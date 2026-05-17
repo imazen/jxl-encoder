@@ -385,6 +385,92 @@ impl InlineDedupTable {
     }
 }
 
+/// Decision returned from [`pack_local_key_phase3`] when the configured
+/// (`num_pred`, property list) combination cannot be encoded inside the
+/// fixed [`KEY_BYTES`] budget without losing precision.
+///
+/// The gather-time dispatcher consults this before flipping into Phase 3
+/// mode: when [`Self::Overflow`] is returned, the caller transparently
+/// falls back to Phase 2's [`crate::modular::tree_learn::GatherDedupTable`]
+/// for the offending image so we never widen merges beyond the strict
+/// "at-or-below the post-sort bucket-equivalence set" contract.
+pub enum LocalKeyPackResult {
+    /// Key fits inside [`KEY_BYTES`]; safe to dispatch to Phase 3.
+    Packed([u8; KEY_BYTES]),
+    /// `2 * num_pred + 4 * num_props` exceeded [`KEY_BYTES`]; Phase 3
+    /// cannot represent the sample without losing precision (which would
+    /// over-merge and break Phase 2's "subset of bucket-equivalence" guarantee).
+    Overflow,
+}
+
+/// Layout the gather-time packed key for [`InlineDedupTable`] from the
+/// local stack arrays that `gather_channel_samples` already builds before
+/// the SoA push.
+///
+/// Layout:
+///   * 2 bytes per candidate predictor: `[token, extra_bits]` × `num_pred`.
+///   * 4 bytes per hashed property (little-endian i32, full precision)
+///     for each entry in `properties_to_hash` — the post-y/x-skip
+///     property list the caller (`GatherDedupTable::new_with_properties`
+///     in Phase 2) would have selected. Property indices < [`NUM_PROPERTIES`]
+///     are read from `local_props`; indices ≥ [`NUM_PROPERTIES`] are read
+///     from `local_ref_props` at `idx - NUM_PROPERTIES`.
+///   * Zero-padded tail (unused bytes stay 0).
+///
+/// Returns [`LocalKeyPackResult::Overflow`] when
+/// `2 * num_pred + 4 * properties_to_hash.len()` exceeds [`KEY_BYTES`].
+/// In that case the caller falls back to Phase 2 to avoid silently
+/// over-merging bit-different samples.
+///
+/// `NUM_PROPERTIES` is the base-property width of `local_props` — keep
+/// in sync with [`crate::modular::tree_learn::NUM_PROPERTIES`].
+#[inline]
+pub fn pack_local_key_phase3(
+    local_tokens: &[u8],
+    local_ebits: &[u8],
+    local_props: &[i32],
+    local_ref_props: &[i32],
+    properties_to_hash: &[u8],
+    num_properties_base: usize,
+) -> LocalKeyPackResult {
+    debug_assert_eq!(local_tokens.len(), local_ebits.len());
+    let num_pred = local_tokens.len();
+    let num_props_hashed = properties_to_hash.len();
+    let bytes_needed = 2usize.saturating_mul(num_pred)
+        + 4usize.saturating_mul(num_props_hashed);
+    if bytes_needed > KEY_BYTES {
+        return LocalKeyPackResult::Overflow;
+    }
+    let mut key = [0u8; KEY_BYTES];
+    let mut off = 0usize;
+    // Predictor residual tokens: (token, ebits) pairs in predictor-index
+    // order. Cache-hot because the caller just computed these.
+    for i in 0..num_pred {
+        key[off] = local_tokens[i];
+        key[off + 1] = local_ebits[i];
+        off += 2;
+    }
+    // Properties: full i32 little-endian. Source slice depends on whether
+    // the property index falls in base (< num_properties_base) or
+    // ref-channel (>=) range — same dispatch Phase 2's hash1_local uses.
+    for &p in properties_to_hash {
+        let p = p as usize;
+        let v: i32 = if p < num_properties_base {
+            local_props.get(p).copied().unwrap_or(0)
+        } else {
+            let r = p - num_properties_base;
+            local_ref_props.get(r).copied().unwrap_or(0)
+        };
+        let b = v.to_le_bytes();
+        key[off] = b[0];
+        key[off + 1] = b[1];
+        key[off + 2] = b[2];
+        key[off + 3] = b[3];
+        off += 4;
+    }
+    LocalKeyPackResult::Packed(key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
