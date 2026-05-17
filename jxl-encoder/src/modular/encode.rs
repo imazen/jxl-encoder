@@ -387,9 +387,46 @@ pub fn write_modular_stream_with_palette(
     begin_c: usize,
     num_c: usize,
 ) -> Result<()> {
+    write_modular_stream_with_palette_knobs(
+        image,
+        writer,
+        use_ans,
+        begin_c,
+        num_c,
+        &super::palette::ModularKnobs::default(),
+    )
+}
+
+/// Knob-aware variant of [`write_modular_stream_with_palette`].
+///
+/// Honours [`super::palette::ModularKnobs::palette_colors`] (libjxl
+/// `--modular_palette_colors`). When `knobs.palette_colors_or_default()`
+/// returns `None` (caller set `palette_colors = Some(0)`), palette
+/// detection is disabled and the function falls through to the
+/// RCT / simple modular paths exactly as the default `analyze_palette`
+/// rejection path would.
+pub fn write_modular_stream_with_palette_knobs(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+    begin_c: usize,
+    num_c: usize,
+    knobs: &super::palette::ModularKnobs,
+) -> Result<()> {
     use super::palette::{analyze_palette, apply_palette};
 
-    let max_colors = super::palette::MAX_PALETTE_COLORS;
+    let max_colors = match knobs.palette_colors_or_default() {
+        Some(n) => n,
+        None => {
+            // Caller explicitly disabled palette via knob; fall through to
+            // the same path `analyze_palette` would take on rejection.
+            if image.channels.len() >= 3 {
+                return write_modular_stream_with_rct_only(image, writer, use_ans);
+            } else {
+                return write_simple_modular_stream(image, writer, use_ans);
+            }
+        }
+    };
     let analysis = analyze_palette(image, begin_c, num_c, max_colors);
 
     if !analysis.use_palette {
@@ -741,9 +778,35 @@ pub fn write_modular_stream_with_rct(
     writer: &mut BitWriter,
     use_ans: bool,
 ) -> Result<()> {
-    // Check if palette is more beneficial than RCT
-    if let Some((begin_c, num_c)) = super::palette::should_use_palette(image) {
-        return write_modular_stream_with_palette(image, writer, use_ans, begin_c, num_c);
+    write_modular_stream_with_rct_knobs(
+        image,
+        writer,
+        use_ans,
+        &super::palette::ModularKnobs::default(),
+    )
+}
+
+/// Knob-aware variant of [`write_modular_stream_with_rct`].
+///
+/// Threads [`super::palette::ModularKnobs`] into the palette short-circuit
+/// (and any nested palette write) so CLI overrides
+/// (`--modular_palette_colors=0` disables palette detection,
+/// `--modular_palette_colors=N` caps the search) take effect on the RCT
+/// entry point too.
+pub fn write_modular_stream_with_rct_knobs(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+    knobs: &super::palette::ModularKnobs,
+) -> Result<()> {
+    // Check if palette is more beneficial than RCT (respecting the
+    // `palette_colors` override — `Some(0)` skips the check entirely).
+    if knobs.palette_colors_or_default().is_some()
+        && let Some((begin_c, num_c)) = super::palette::should_use_palette(image)
+    {
+        return write_modular_stream_with_palette_knobs(
+            image, writer, use_ans, begin_c, num_c, knobs,
+        );
     }
 
     write_modular_stream_with_rct_only(image, writer, use_ans)
@@ -1335,6 +1398,36 @@ pub fn write_modular_stream_with_tree(
     )
 }
 
+/// Knob-aware variant of [`write_modular_stream_with_tree`].
+///
+/// Threads [`super::palette::ModularKnobs`] (libjxl `cjxl -P`,
+/// `--modular_palette_colors`, `--modular_channel_colors_global_percent`,
+/// `-E N`) into the tree-learning + palette + channel-compact pipeline.
+/// `None` knobs (the default) gives byte-identical output to
+/// [`write_modular_stream_with_tree`].
+pub fn write_modular_stream_with_tree_knobs(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    rct: bool,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    knobs: &super::palette::ModularKnobs,
+) -> Result<()> {
+    write_modular_stream_with_tree_dc_quant_knobs(
+        image,
+        writer,
+        profile,
+        rct,
+        use_lz77,
+        lz77_method,
+        None,
+        None, // no lossy modular options
+        true, // enable palette detection
+        knobs,
+    )
+}
+
 /// Options for lossy modular encoding (Squeeze + quantization + tree leaf multipliers).
 ///
 /// When enabled, the encoder:
@@ -1372,6 +1465,42 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     lossy_options: Option<LossyModularOptions>,
     palette: bool,
 ) -> Result<()> {
+    write_modular_stream_with_tree_dc_quant_knobs(
+        image,
+        writer,
+        profile,
+        rct,
+        use_lz77,
+        lz77_method,
+        dc_quant_custom,
+        lossy_options,
+        palette,
+        &super::palette::ModularKnobs::default(),
+    )
+}
+
+/// Knob-aware variant of [`write_modular_stream_with_tree_dc_quant`].
+///
+/// Honours [`super::palette::ModularKnobs::palette_colors`] (caps the
+/// multi-channel palette colour search and disables it entirely when
+/// `Some(0)`), `channel_colors_global_percent` (overrides the global /
+/// single-group channel-compact threshold, libjxl
+/// `enc_params.h:channel_colors_pre_transform_percent`), and
+/// `nb_prev_channels` (caps `max_ref_channels` for tree-learner reference
+/// properties, libjxl `options.max_properties`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    rct: bool,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    dc_quant_custom: Option<[f32; 3]>,
+    lossy_options: Option<LossyModularOptions>,
+    palette: bool,
+    knobs: &super::palette::ModularKnobs,
+) -> Result<()> {
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
@@ -1387,12 +1516,20 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     // Check if multi-channel palette is beneficial (only for lossless, non-lossy images).
     // When palette is active, it replaces RCT for the color channels — palette
     // already decorrelates them by converting to a single index channel.
-    let palette_info = if palette && !is_lossy && image.channels.len() >= 2 {
-        if let Some((begin_c, num_c)) = super::palette::should_use_palette(image) {
-            let max_colors = super::palette::MAX_PALETTE_COLORS;
-            let analysis = super::palette::analyze_palette(image, begin_c, num_c, max_colors);
-            if analysis.use_palette {
-                Some((begin_c, num_c, analysis))
+    //
+    // `knobs.palette_colors_or_default()` returns `None` when the caller
+    // disabled palette via `--modular_palette_colors=0` — in that case
+    // we skip detection entirely. Otherwise it returns the cap (default
+    // `MAX_PALETTE_COLORS`, or the caller-supplied override).
+    let palette_info = if let Some(max_colors) = knobs.palette_colors_or_default() {
+        if palette && !is_lossy && image.channels.len() >= 2 {
+            if let Some((begin_c, num_c)) = super::palette::should_use_palette(image) {
+                let analysis = super::palette::analyze_palette(image, begin_c, num_c, max_colors);
+                if analysis.use_palette {
+                    Some((begin_c, num_c, analysis))
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -1407,27 +1544,31 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     // Applied when multi-channel palette didn't fire (too many unique RGB colors,
     // but individual channels may be sparse — common in screenshots).
     // Matches libjxl enc_modular.cc:395-438 with channel_colors_pre_transform_percent=95.
-    let compact_analyses: Vec<(usize, super::palette::PaletteAnalysis)> =
-        if palette_info.is_none() && !is_lossy && palette && image.channels.len() >= 2 {
-            // Color channels = base color set (1 gray or 3 RGB).
-            // Everything beyond is extra (alpha, depth, spot, …) and
-            // ChannelCompact must skip them. The previous formula
-            // `len - 1 if has_alpha` was wrong for >1 extras (refs #9):
-            // it would treat the spot/depth/etc as a color channel and
-            // try to compact it alongside RGB, blowing the layout.
-            let num_color_channels = if image.is_grayscale { 1 } else { 3 };
-            (0..num_color_channels.min(image.channels.len()))
-                .filter_map(|i| {
-                    super::palette::analyze_channel_compact(
-                        &image.channels[i],
-                        super::palette::CHANNEL_COLORS_PERCENT,
-                    )
+    //
+    // Honours `--modular_channel_colors_global_percent` override; falls
+    // back to `CHANNEL_COLORS_PERCENT` (95.0).
+    let channel_colors_percent = knobs.channel_colors_global_percent_or_default();
+    let compact_analyses: Vec<(usize, super::palette::PaletteAnalysis)> = if palette_info.is_none()
+        && !is_lossy
+        && palette
+        && image.channels.len() >= 2
+    {
+        // Color channels = base color set (1 gray or 3 RGB).
+        // Everything beyond is extra (alpha, depth, spot, …) and
+        // ChannelCompact must skip them. The previous formula
+        // `len - 1 if has_alpha` was wrong for >1 extras (refs #9):
+        // it would treat the spot/depth/etc as a color channel and
+        // try to compact it alongside RGB, blowing the layout.
+        let num_color_channels = if image.is_grayscale { 1 } else { 3 };
+        (0..num_color_channels.min(image.channels.len()))
+            .filter_map(|i| {
+                super::palette::analyze_channel_compact(&image.channels[i], channel_colors_percent)
                     .map(|a| (i, a))
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     // Apply transforms: multi-channel palette, ChannelCompact + RCT, or RCT only.
     // compact_info tracks ChannelCompact transforms for the bitstream:
@@ -1610,7 +1751,10 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     let num_refs = if is_lossy {
         0
     } else {
-        max_ref_channels(&work_image)
+        // Cap `max_ref_channels` to honour `--modular_nb_prev_channels`
+        // (libjxl `options.max_properties`). `None` (default) keeps the
+        // natural image-derived maximum.
+        knobs.nb_prev_channels_cap(max_ref_channels(&work_image))
     };
     let mut samples = TreeSamples::new_with_ref_channels(num_refs);
     // Phase 2 of issue #41: thread the same property list the tree

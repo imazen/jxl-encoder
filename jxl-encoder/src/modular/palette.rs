@@ -24,6 +24,107 @@ pub const MAX_PALETTE_COLORS: usize = 1024;
 /// `enc_params.h:118` (`channel_colors_pre_transform_percent = 95.0`).
 pub const CHANNEL_COLORS_PERCENT: f32 = 95.0;
 
+/// Per-group channel-colours percentage default. Matches libjxl
+/// `enc_params.h:120` (`channel_colors_percent = 80.0`).
+///
+/// Used by the multi-group modular path's per-group channel compaction
+/// pass. Distinct from [`CHANNEL_COLORS_PERCENT`] (the global / single-group
+/// threshold) because the per-group path runs after global RCT and the
+/// distribution it sees is narrower (residuals, not raw pixels).
+pub const CHANNEL_COLORS_GROUP_PERCENT: f32 = 80.0;
+
+/// Override knobs for modular encoding tuning, mirroring libjxl's
+/// `cjxl -P` / `--modular_palette_colors` /
+/// `--modular_channel_colors_global_percent` /
+/// `--modular_channel_colors_group_percent` / `-E` flags.
+///
+/// Every field is `Option`: `None` keeps the built-in default for that
+/// knob. The encoder reads via [`Self::palette_colors_or_default`] etc.,
+/// which fall back to the module constants above when no override is set.
+///
+/// Threaded through the modular encoder via
+/// [`crate::modular::frame::FrameEncoderOptions::modular_knobs`] from the
+/// public [`crate::api::LosslessConfig`] surface (see `with_modular_*`
+/// builders).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ModularKnobs {
+    /// Optional forced fixed predictor for the no-tree-learning fallback
+    /// path (libjxl `cjxl -P N` / `--modular_predictor`,
+    /// `enc_params.h:options.predictor`).
+    ///
+    /// `Some(n)` for `n in 0..=13` corresponds to
+    /// [`crate::modular::Predictor`] variants `Zero..Average4`. The tree
+    /// learner path still selects per-leaf predictors (libjxl
+    /// `Predictor::Variable` behaviour); the override is stored on the
+    /// knobs so callers can inspect it, but only the non-tree path
+    /// (Gradient default) honours it today. `n in 14..=15` (`Best` /
+    /// `Variable`) is accepted and clamped per
+    /// [`crate::api::LosslessConfig::with_modular_predictor`].
+    pub modular_predictor: Option<u8>,
+    /// Override the multi-channel palette colour cap (libjxl
+    /// `cjxl --modular_palette_colors`, `enc_params.h:palette_colors`).
+    /// `None` keeps [`MAX_PALETTE_COLORS`] (1024). `Some(0)` disables
+    /// palette detection. `Some(n)` for `n > 0` caps the search.
+    pub palette_colors: Option<i64>,
+    /// Override the global / single-group channel-colours percentage
+    /// (libjxl `cjxl --modular_channel_colors_global_percent`,
+    /// `enc_params.h:channel_colors_pre_transform_percent`).
+    /// `None` keeps [`CHANNEL_COLORS_PERCENT`] (95.0).
+    pub channel_colors_global_percent: Option<f32>,
+    /// Override the per-group channel-colours percentage (libjxl
+    /// `cjxl --modular_channel_colors_group_percent`,
+    /// `enc_params.h:channel_colors_percent`).
+    /// `None` keeps [`CHANNEL_COLORS_GROUP_PERCENT`] (80.0).
+    pub channel_colors_group_percent: Option<f32>,
+    /// Cap on the number of previous-channel reference properties offered
+    /// to the MA tree learner (libjxl `cjxl -E N` /
+    /// `--modular_nb_prev_channels`, `enc_modular.cc:options.max_properties`).
+    /// `None` keeps the encoder's auto-computed
+    /// [`crate::modular::tree_learn::max_ref_channels`] for the image.
+    /// `Some(n)` for `n >= 0` caps it via
+    /// `num_refs = min(max_ref_channels(image), n)`.
+    pub nb_prev_channels: Option<i32>,
+}
+
+impl ModularKnobs {
+    /// Resolved palette-colour cap. `None` means "feature off"; `Some(n)`
+    /// caps the multi-channel palette search at `n`. Default cap matches
+    /// libjxl's `palette_colors = 1 << 10` ([`MAX_PALETTE_COLORS`]).
+    pub fn palette_colors_or_default(&self) -> Option<usize> {
+        match self.palette_colors {
+            None => Some(MAX_PALETTE_COLORS),
+            Some(0) => None,
+            Some(n) if n < 0 => None,
+            Some(n) => Some(n as usize),
+        }
+    }
+
+    /// Resolved global / single-group channel-colours percentage.
+    /// Falls back to [`CHANNEL_COLORS_PERCENT`].
+    pub fn channel_colors_global_percent_or_default(&self) -> f32 {
+        self.channel_colors_global_percent
+            .unwrap_or(CHANNEL_COLORS_PERCENT)
+    }
+
+    /// Resolved per-group channel-colours percentage.
+    /// Falls back to [`CHANNEL_COLORS_GROUP_PERCENT`].
+    pub fn channel_colors_group_percent_or_default(&self) -> f32 {
+        self.channel_colors_group_percent
+            .unwrap_or(CHANNEL_COLORS_GROUP_PERCENT)
+    }
+
+    /// Resolved `num_refs` for [`crate::modular::tree_learn::TreeSamples`]
+    /// construction given the image's natural `max_ref_channels` upper
+    /// bound. Caps to [`Self::nb_prev_channels`] when set.
+    pub fn nb_prev_channels_cap(&self, natural_max: usize) -> usize {
+        match self.nb_prev_channels {
+            None => natural_max,
+            Some(n) if n < 0 => natural_max,
+            Some(n) => natural_max.min(n as usize),
+        }
+    }
+}
+
 // ── Delta palette constants (72 entries, from libjxl palette.h) ──────────────
 
 /// 72 built-in delta palette entries. Each is [R, G, B].
@@ -1330,5 +1431,91 @@ mod tests {
                 assert_eq!((r, g, b), (orig_r, orig_g, orig_b));
             }
         }
+    }
+
+    #[test]
+    fn modular_knobs_default_round_trips_to_builtin_constants() {
+        let knobs = ModularKnobs::default();
+        assert_eq!(
+            knobs.palette_colors_or_default(),
+            Some(MAX_PALETTE_COLORS),
+            "default knobs should select MAX_PALETTE_COLORS"
+        );
+        assert_eq!(
+            knobs.channel_colors_global_percent_or_default(),
+            CHANNEL_COLORS_PERCENT,
+        );
+        assert_eq!(
+            knobs.channel_colors_group_percent_or_default(),
+            CHANNEL_COLORS_GROUP_PERCENT,
+        );
+        assert_eq!(knobs.nb_prev_channels_cap(7), 7);
+        assert_eq!(knobs.nb_prev_channels_cap(0), 0);
+    }
+
+    #[test]
+    fn modular_knobs_palette_zero_disables_detection() {
+        let knobs = ModularKnobs {
+            palette_colors: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(
+            knobs.palette_colors_or_default(),
+            None,
+            "Some(0) should disable palette detection"
+        );
+    }
+
+    #[test]
+    fn modular_knobs_palette_negative_disables_detection() {
+        // Defensive: negative cap also means "off"; matches libjxl's
+        // `palette_colors == 0` short-circuit semantics.
+        let knobs = ModularKnobs {
+            palette_colors: Some(-5),
+            ..Default::default()
+        };
+        assert_eq!(knobs.palette_colors_or_default(), None);
+    }
+
+    #[test]
+    fn modular_knobs_palette_positive_caps() {
+        let knobs = ModularKnobs {
+            palette_colors: Some(42),
+            ..Default::default()
+        };
+        assert_eq!(knobs.palette_colors_or_default(), Some(42));
+    }
+
+    #[test]
+    fn modular_knobs_channel_colors_overrides() {
+        let knobs = ModularKnobs {
+            channel_colors_global_percent: Some(73.0),
+            channel_colors_group_percent: Some(11.5),
+            ..Default::default()
+        };
+        assert_eq!(knobs.channel_colors_global_percent_or_default(), 73.0);
+        assert_eq!(knobs.channel_colors_group_percent_or_default(), 11.5);
+    }
+
+    #[test]
+    fn modular_knobs_nb_prev_channels_caps_below_natural() {
+        let knobs = ModularKnobs {
+            nb_prev_channels: Some(2),
+            ..Default::default()
+        };
+        // Cap below natural → use the cap.
+        assert_eq!(knobs.nb_prev_channels_cap(7), 2);
+        // Cap above natural → use the natural max (no upscaling).
+        assert_eq!(knobs.nb_prev_channels_cap(1), 1);
+    }
+
+    #[test]
+    fn modular_knobs_nb_prev_channels_negative_passes_through() {
+        let knobs = ModularKnobs {
+            nb_prev_channels: Some(-1),
+            ..Default::default()
+        };
+        // Negative values are treated as "unset" (defensive).
+        assert_eq!(knobs.nb_prev_channels_cap(4), 4);
     }
 }

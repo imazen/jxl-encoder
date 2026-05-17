@@ -10057,3 +10057,178 @@ fn test_layout_pq_hlg_bt709_f32_metadata() {
     );
     assert_eq!(PixelLayout::Rgb8.implied_transfer_function(), None);
 }
+
+// ── Modular knob wiring (LosslessConfig::with_modular_*) ──────────────
+//
+// Layer-3 integration tests for the W3-6 follow-on chunk. The CLI smoke
+// tests in `jxl-encoder-cli/tests/cli_passthrough_smoke.rs` exercise the
+// same knobs via the cjxl-rs binary. These tests pin the API-level
+// contract: each knob has a measurable bitstream-byte effect on a
+// synthetic palette-friendly image, and defaults produce byte-identical
+// output to the un-knobbed call.
+
+/// Build a 256x256 RGB image with 32 unique colours laid out in 8x8
+/// tiles. Wide enough that the multi-channel palette path fires by
+/// default (32 unique colours <= MAX_PALETTE_COLORS) and unique colours
+/// are below the channel-colours threshold too.
+fn make_palette_friendly_rgb_256() -> Vec<u8> {
+    let mut pixels = Vec::with_capacity(256 * 256 * 3);
+    // 32 distinct colours in an 8x4 grid, repeated.
+    let palette: Vec<[u8; 3]> = (0..32)
+        .map(|i| {
+            let r = ((i * 8) & 0xFF) as u8;
+            let g = (((i * 7) + 50) & 0xFF) as u8;
+            let b = (((i * 13) + 100) & 0xFF) as u8;
+            [r, g, b]
+        })
+        .collect();
+    for y in 0..256 {
+        for x in 0..256 {
+            let idx = ((y / 8) * 32 + (x / 8)) % 32;
+            let c = palette[idx];
+            pixels.push(c[0]);
+            pixels.push(c[1]);
+            pixels.push(c[2]);
+        }
+    }
+    pixels
+}
+
+#[test]
+fn modular_knobs_default_byte_identical_to_unset_lossless() {
+    // Skeleton-knobs (all `None`) MUST produce byte-identical output to
+    // a stock LosslessConfig. This is the hash-lock invariant at the
+    // API level — guards against accidental default changes.
+    let pixels = make_palette_friendly_rgb_256();
+    let plain = LosslessConfig::new()
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("plain encode");
+    let knobbed = LosslessConfig::new()
+        .with_modular_predictor(None)
+        .with_modular_palette_colors(None)
+        .with_modular_channel_colors_global_percent(None)
+        .with_modular_channel_colors_group_percent(None)
+        .with_modular_nb_prev_channels(None)
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("knobbed encode");
+    assert_eq!(plain, knobbed, "default knobs must not change bytes");
+}
+
+#[test]
+fn modular_knobs_palette_zero_disables_palette_path_lossless() {
+    // `with_modular_palette_colors(Some(0))` short-circuits the palette
+    // detection in both single-group and multi-group paths. On a
+    // palette-friendly image, this MUST change the bitstream (palette
+    // is a strong default compression lever).
+    let pixels = make_palette_friendly_rgb_256();
+    let with_palette = LosslessConfig::new()
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("palette-on encode");
+    let no_palette = LosslessConfig::new()
+        .with_modular_palette_colors(Some(0))
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("palette-off encode");
+    assert_ne!(
+        with_palette, no_palette,
+        "Some(0) must disable palette detection on a palette-friendly image"
+    );
+    // Direction check: palette-off should be larger on this image since
+    // the synthetic content was designed to favour palette encoding.
+    assert!(
+        no_palette.len() > with_palette.len(),
+        "palette-off bytes ({}) should exceed palette-on baseline ({}) on a few-colour image",
+        no_palette.len(),
+        with_palette.len(),
+    );
+}
+
+#[test]
+fn modular_knobs_palette_cap_smaller_than_image_unique_colors() {
+    // Cap to 2 — far below the 32 unique colours in the fixture. The
+    // multi-channel palette analyser rejects when unique-count > cap, so
+    // bytes should diverge from the default-1024 baseline.
+    let pixels = make_palette_friendly_rgb_256();
+    let default = LosslessConfig::new()
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("default encode");
+    let capped = LosslessConfig::new()
+        .with_modular_palette_colors(Some(2))
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("capped encode");
+    assert_ne!(
+        default, capped,
+        "palette cap=2 must change behaviour vs default=1024 on a 32-colour image"
+    );
+}
+
+#[test]
+fn modular_knobs_channel_colors_global_pct_changes_bytes_when_compact_path_runs() {
+    // ChannelCompact only fires when multi-channel palette is rejected
+    // AND tree-learning is on. We disable palette to force the path,
+    // and tree-learning is on by default at effort 7+.
+    let pixels = make_palette_friendly_rgb_256();
+    let cfg = || {
+        LosslessConfig::new()
+            .with_effort(7)
+            .with_modular_palette_colors(Some(0))
+    };
+    let baseline = cfg()
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("baseline encode");
+    let tight = cfg()
+        .with_modular_channel_colors_global_percent(Some(1.0))
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("tight encode");
+    assert_ne!(
+        baseline, tight,
+        "global pct=1.0 must change ChannelCompact behaviour vs default 95.0"
+    );
+}
+
+#[test]
+fn modular_knobs_nb_prev_channels_cap_changes_tree_path() {
+    // Tree-learner reference-channel properties drop out entirely at
+    // cap=0. On a 3-channel RGB image with tree learning + palette
+    // disabled (forces the tree-learn path through encode.rs:1751-1758),
+    // bytes must diverge from the default (natural max = 2 for RGB).
+    let pixels = make_palette_friendly_rgb_256();
+    let cfg = || {
+        LosslessConfig::new()
+            .with_effort(7)
+            .with_modular_palette_colors(Some(0))
+    };
+    let baseline = cfg()
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("baseline encode");
+    let zero_refs = cfg()
+        .with_modular_nb_prev_channels(Some(0))
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("zero-refs encode");
+    assert_ne!(
+        baseline, zero_refs,
+        "nb_prev_channels=0 must change tree-learner ref properties vs default (natural max=2)"
+    );
+}
+
+#[test]
+fn modular_knobs_predictor_stored_but_does_not_override_tree_learner() {
+    // Documented partial-wire: the `modular_predictor` value is stored
+    // on the knobs but the MA tree learner still selects per-leaf
+    // predictors (libjxl `Predictor::Variable` semantics). This test
+    // documents the current behaviour so future agents wiring full
+    // forced-predictor support land a deliberate, CHANGELOG-noted
+    // bitstream change.
+    let pixels = make_palette_friendly_rgb_256();
+    let default = LosslessConfig::new()
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("default encode");
+    let forced_gradient = LosslessConfig::new()
+        .with_modular_predictor(Some(5)) // 5 = Gradient
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("forced-gradient encode");
+    assert_eq!(
+        default, forced_gradient,
+        "modular_predictor is stored but not yet wired to bypass tree learner — \
+         flipping this assertion requires a CHANGELOG entry"
+    );
+}

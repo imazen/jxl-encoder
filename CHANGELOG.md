@@ -21,6 +21,65 @@
   harnesses (`__expert` feature). Bench:
   `benchmarks/lossy_multiseed_isolate_ab_2026-05-17.{tsv,meta}`.
 
+- **Modular skeleton-flag wiring** — follow-on to the W3-6 CLI passthrough
+  bundle (`c8d3752c`). Wires four of the five `--modular-*` flags
+  through `LosslessConfig` → `FrameEncoderOptions::modular_knobs` →
+  the modular encode pipeline so each knob produces a measurable
+  bitstream effect when set:
+  - `--modular-palette-colors N` overrides the multi-channel palette
+    colour cap (libjxl `enc_params.h:121` `palette_colors = 1 << 10`).
+    `0` disables palette detection entirely (single-group + multi-group +
+    tree-learn path + RCT path + lossy-palette path). Layer-3 byte-divergence
+    invariant in `api_tests::modular_knobs_palette_zero_disables_palette_path_lossless`.
+  - `--modular-channel-colors-global-percent P` overrides the global /
+    single-group ChannelCompact threshold (libjxl
+    `enc_params.h:118` `channel_colors_pre_transform_percent`, default
+    95.0). Wired through `write_modular_stream_with_tree_dc_quant_knobs`.
+    Layer-3 invariant in `api_tests::modular_knobs_channel_colors_global_pct_changes_bytes_when_compact_path_runs`.
+  - `--modular-channel-colors-group-percent P` overrides the per-group
+    ChannelCompact threshold (libjxl `enc_params.h:120`
+    `channel_colors_percent`, libjxl default 80.0). Wired through
+    `encode_modular_multi_group_inner`. Default behaviour unchanged
+    (continues to use 95.0 for bitstream stability — set the flag
+    explicitly for libjxl 80.0 parity).
+  - `--modular-nb-prev-channels N` caps `max_ref_channels` for the MA
+    tree learner's previous-channel reference properties (libjxl
+    `modular/options.h:76` `max_properties`). `0` disables ref-channel
+    properties entirely. Layer-3 invariant in
+    `api_tests::modular_knobs_nb_prev_channels_cap_changes_tree_path`.
+  - `--modular-predictor N` is stored on `ModularKnobs::modular_predictor`
+    but does NOT yet override the per-leaf tree-learned predictor (libjxl
+    `Predictor::Variable` semantics — our default tree-learn already runs
+    Variable mode). Documented as partial-wire in
+    `api_tests::modular_knobs_predictor_stored_but_does_not_override_tree_learner`;
+    flipping that assertion requires deliberate forced-predictor wiring
+    through every non-tree-learn modular path and a CHANGELOG entry.
+
+  New surface: `ModularKnobs` struct in `modular/palette.rs`
+  (`palette_colors_or_default()`, `channel_colors_global_percent_or_default()`,
+  `channel_colors_group_percent_or_default()`, `nb_prev_channels_cap()`),
+  threaded into `FrameEncoderOptions::modular_knobs` and consumed by
+  three new `_knobs` variants of the modular stream writers
+  (`write_modular_stream_with_palette_knobs`,
+  `write_modular_stream_with_rct_knobs`,
+  `write_modular_stream_with_tree_knobs` +
+  `write_modular_stream_with_tree_dc_quant_knobs`). New
+  `CHANNEL_COLORS_GROUP_PERCENT = 80.0` constant matching libjxl
+  `enc_params.h:120` for callers who want libjxl-faithful per-group
+  thresholds.
+
+  Tests: 7 new unit tests in `modular::palette::tests::modular_knobs_*`
+  pin the resolver semantics, 6 new API integration tests in
+  `api_tests::modular_knobs_*` prove byte-divergence on a 32-colour
+  synthetic palette-friendly image, 5 updated CLI smoke cases in
+  `jxl-encoder-cli/tests/cli_passthrough_smoke.rs` exercise the
+  bytes-change behaviour via the cjxl-rs binary.
+
+  Hash-lock: 36/36 byte-identical at default. RD-regression 18/18 within
+  thresholds (0.0%–0.3% size delta — non-zero deltas trace to upstream
+  changes between this branch's parent and prior baselines, not these
+  knobs).
+
 - **CLI passthrough bundle — A1 audit `cjxl` parity flags** (CLI parity
   section). Adds `cjxl-rs` flags that round out the libjxl `cjxl` parity
   surface so existing benchmark / sweep scripts can shell out without
@@ -44,11 +103,11 @@
     `--modular-channel-colors-global-percent`,
     `--modular-channel-colors-group-percent`,
     `--modular-nb-prev-channels` → stored on `LosslessConfig` via
-    parallel `with_modular_*` builders + getters. All skeleton-only
-    today (the values are advisory while the encoder-side wiring is
-    landed incrementally — `MAX_PALETTE_COLORS` /
-    `CHANNEL_COLORS_PERCENT` in `modular/palette.rs` and predictor
-    selection in `modular/encode.rs` are the next targets).
+    parallel `with_modular_*` builders + getters. Initially skeleton-only.
+    **Encoder-side wiring** for the four non-predictor flags landed in a
+    follow-on (see "Modular skeleton-flag wiring" above). The predictor
+    flag remains stored-only pending a deliberate forced-predictor pass
+    through the non-tree modular paths.
 
   Hash-lock: 36/36 byte-identical. New smoke tests in
   `jxl-encoder-cli/tests/cli_passthrough_smoke.rs` (12 cases) cover
