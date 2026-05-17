@@ -8,7 +8,6 @@ use super::channel::{Channel, ModularImage};
 use super::encode::{
     build_histogram_from_residuals, collect_all_residuals, select_best_rct_at,
     write_global_modular_section, write_group_modular_section_idx, write_improved_modular_stream,
-    write_modular_stream_with_tree,
 };
 use super::palette::{CHANNEL_COLORS_PERCENT, analyze_channel_compact};
 use super::section::write_global_modular_section_with_tree;
@@ -67,6 +66,16 @@ pub struct FrameEncoderOptions {
     pub name: Option<String>,
     /// Optional SMPTE timecode (requires `have_timecodes=true`). `None` writes `0`.
     pub timecode: Option<u32>,
+    /// Optional modular-encoder tuning knobs (libjxl `cjxl -P`,
+    /// `--modular_palette_colors`, `--modular_channel_colors_*`,
+    /// `-E N` parity). All fields default to `None`; in that state the
+    /// encoder uses the built-in libjxl-faithful constants
+    /// ([`super::palette::MAX_PALETTE_COLORS`],
+    /// [`super::palette::CHANNEL_COLORS_PERCENT`],
+    /// [`super::palette::CHANNEL_COLORS_GROUP_PERCENT`]). Wired through
+    /// from [`crate::api::LosslessConfig`] by the public encode entry
+    /// points in `api.rs`.
+    pub modular_knobs: super::palette::ModularKnobs,
 }
 
 impl Default for FrameEncoderOptions {
@@ -93,6 +102,7 @@ impl Default for FrameEncoderOptions {
             save_as_reference: None,
             name: None,
             timecode: None,
+            modular_knobs: super::palette::ModularKnobs::default(),
         }
     }
 }
@@ -255,7 +265,13 @@ impl FrameEncoder {
                 && !super::squeeze::default_squeeze_params(image).is_empty();
 
             if self.options.lossy_palette && image.channels.len() >= 3 {
-                let max_colors = 1usize << image.bit_depth.min(12);
+                // Honour `--modular_palette_colors` override; fall back
+                // to the bit-depth-derived default (libjxl parity).
+                let max_colors = self
+                    .options
+                    .modular_knobs
+                    .palette_colors_or_default()
+                    .unwrap_or(1usize << image.bit_depth.min(12));
                 super::encode::write_modular_stream_with_lossy_palette_budget(
                     image,
                     &mut section_writer,
@@ -281,19 +297,21 @@ impl FrameEncoder {
                 )?;
             } else if self.options.use_tree_learning && self.options.use_ans {
                 // Tree learning: handles palette internally when beneficial
-                write_modular_stream_with_tree(
+                super::encode::write_modular_stream_with_tree_knobs(
                     image,
                     &mut section_writer,
                     &self.options.profile,
                     image.channels.len() >= 3,
                     self.options.enable_lz77,
                     self.options.lz77_method,
+                    &self.options.modular_knobs,
                 )?;
             } else if image.channels.len() >= 3 {
-                super::encode::write_modular_stream_with_rct(
+                super::encode::write_modular_stream_with_rct_knobs(
                     image,
                     &mut section_writer,
                     self.options.use_ans,
+                    &self.options.modular_knobs,
                 )?;
             } else {
                 write_improved_modular_stream(image, &mut section_writer, self.options.use_ans)?;
@@ -345,8 +363,14 @@ impl FrameEncoder {
                 && !super::squeeze::default_squeeze_params(image).is_empty();
 
             if self.options.lossy_palette && image.channels.len() >= 3 {
-                // Lossy delta palette: near-lossless with error diffusion
-                let max_colors = 1usize << image.bit_depth.min(12);
+                // Lossy delta palette: near-lossless with error diffusion.
+                // Honour `--modular_palette_colors` override; fall back to
+                // the bit-depth-derived default (libjxl parity).
+                let max_colors = self
+                    .options
+                    .modular_knobs
+                    .palette_colors_or_default()
+                    .unwrap_or(1usize << image.bit_depth.min(12));
                 super::encode::write_modular_stream_with_lossy_palette_budget(
                     image,
                     &mut section_writer,
@@ -374,19 +398,21 @@ impl FrameEncoder {
                 )?;
             } else if self.options.use_tree_learning && self.options.use_ans {
                 // Tree learning: handles palette internally when beneficial
-                write_modular_stream_with_tree(
+                super::encode::write_modular_stream_with_tree_knobs(
                     image,
                     &mut section_writer,
                     &self.options.profile,     // effort-dependent tree params
                     image.channels.len() >= 3, // RCT for RGB
                     self.options.enable_lz77,
                     self.options.lz77_method,
+                    &self.options.modular_knobs,
                 )?;
             } else if image.channels.len() >= 3 {
-                super::encode::write_modular_stream_with_rct(
+                super::encode::write_modular_stream_with_rct_knobs(
                     image,
                     &mut section_writer,
                     self.options.use_ans,
+                    &self.options.modular_knobs,
                 )?;
             } else {
                 write_improved_modular_stream(image, &mut section_writer, self.options.use_ans)?;
@@ -487,10 +513,22 @@ impl FrameEncoder {
             // tree quality dilution across many groups). Require density <= 50%
             // (i.e. range >= 2x unique), which means >= 1 bit/pixel entropy savings.
             // Below this threshold, savings are eaten by per-group overhead.
+            //
+            // Honour `--modular_channel_colors_group_percent` override
+            // when set, otherwise keep the historical
+            // `CHANNEL_COLORS_PERCENT` default (95.0). libjxl's
+            // `enc_params.h:channel_colors_percent` defaults to 80.0 for
+            // the per-group pass; we ship the global 95.0 here for
+            // bitstream stability with the existing hash-locks and let
+            // callers dial down via the CLI override.
+            let group_percent = self
+                .options
+                .modular_knobs
+                .channel_colors_group_percent
+                .unwrap_or(CHANNEL_COLORS_PERCENT);
             (0..num_color_channels)
                 .filter_map(|ch_idx| {
-                    let analysis =
-                        analyze_channel_compact(&image.channels[ch_idx], CHANNEL_COLORS_PERCENT)?;
+                    let analysis = analyze_channel_compact(&image.channels[ch_idx], group_percent)?;
                     // Reject if unique values use >50% of the range (< 1 bit/pixel savings)
                     let ch = &image.channels[ch_idx];
                     let mut min_v = i32::MAX;
@@ -2070,19 +2108,21 @@ impl FrameEncoder {
 
             let use_rct = image.channels.len() >= 3 && !self.options.skip_rct;
             if self.options.use_tree_learning && self.options.use_ans {
-                write_modular_stream_with_tree(
+                super::encode::write_modular_stream_with_tree_knobs(
                     image,
                     &mut section_writer,
                     &self.options.profile,
                     use_rct,
                     self.options.enable_lz77,
                     self.options.lz77_method,
+                    &self.options.modular_knobs,
                 )?;
             } else if use_rct {
-                super::encode::write_modular_stream_with_rct(
+                super::encode::write_modular_stream_with_rct_knobs(
                     image,
                     &mut section_writer,
                     self.options.use_ans,
+                    &self.options.modular_knobs,
                 )?;
             } else {
                 write_improved_modular_stream(image, &mut section_writer, self.options.use_ans)?;

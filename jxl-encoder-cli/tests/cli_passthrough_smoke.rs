@@ -66,8 +66,8 @@ fn write_cropped_fixture(name: &str) -> PathBuf {
     let y0 = (h - CROP) / 2;
     let crop = image::imageops::crop_imm(&img, x0, y0, CROP, CROP).to_image();
 
-    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../target/tests-tmp/cli_passthrough_smoke");
+    let out_dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/tests-tmp/cli_passthrough_smoke");
     std::fs::create_dir_all(&out_dir).expect("create_dir_all");
     let out_path = out_dir.join(format!("{name}.png"));
     crop.save(&out_path).expect("save crop");
@@ -78,8 +78,8 @@ fn write_cropped_fixture(name: &str) -> PathBuf {
 /// and return the encoded bytes. Panics on non-zero exit so the test
 /// captures stderr verbatim.
 fn run_cjxl(input_png: &Path, label: &str, extra_args: &[&str]) -> Vec<u8> {
-    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../target/tests-tmp/cli_passthrough_smoke");
+    let out_dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/tests-tmp/cli_passthrough_smoke");
     std::fs::create_dir_all(&out_dir).expect("create_dir_all");
     let out_path = out_dir.join(format!("{label}.jxl"));
     if out_path.exists() {
@@ -109,11 +109,18 @@ fn run_cjxl(input_png: &Path, label: &str, extra_args: &[&str]) -> Vec<u8> {
 
     let bytes = std::fs::read(&out_path)
         .unwrap_or_else(|e| panic!("read({}) failed: {e}", out_path.display()));
-    assert!(bytes.len() > 12, "encoded {label} too small ({} bytes)", bytes.len());
+    assert!(
+        bytes.len() > 12,
+        "encoded {label} too small ({} bytes)",
+        bytes.len()
+    );
     // JXL container or codestream signature.
     let is_container = &bytes[..12] == b"\x00\x00\x00\x0CJXL \r\n\x87\n";
     let is_codestream = bytes[0] == 0xFF && bytes[1] == 0x0A;
-    assert!(is_container || is_codestream, "{label}: missing JXL signature");
+    assert!(
+        is_container || is_codestream,
+        "{label}: missing JXL signature"
+    );
     bytes
 }
 
@@ -125,56 +132,128 @@ fn modular_predictor_flag_accepted_lossless_path() {
     // Lossless path: -d 0 routes through LosslessConfig where the
     // modular_predictor field lives. Default and forced-predictor
     // builds should both succeed and produce valid bytes.
+    //
+    // The predictor knob is stored on the ModularKnobs but does NOT
+    // override per-leaf tree-learned predictors (libjxl
+    // `Predictor::Variable` semantics). The MA tree learner still
+    // selects predictors per leaf, so default-path bytes are unchanged.
+    // This is the documented partial-wire state — the field is on the
+    // config surface so callers can begin migrating, with full
+    // forced-predictor wiring queued as follow-on work.
     let baseline = run_cjxl(&png, "predictor_default", &["-d", "0"]);
     let forced = run_cjxl(
         &png,
         "predictor_forced",
         &["-d", "0", "--modular-predictor", "5"],
     );
-    // Skeleton-only wiring: the value is stored but not yet honoured
-    // by the encoder, so bytes should match the baseline today. When
-    // encoder-side wiring lands, this assertion will need to flip
-    // (and a CHANGELOG entry will explain why).
     assert_eq!(
         fingerprint(&baseline),
         fingerprint(&forced),
-        "modular_predictor is skeleton-only — wiring would surface as bitstream divergence"
+        "modular_predictor is stored-only today — full no-tree-path wiring queued"
     );
 }
 
 #[test]
-fn modular_palette_colors_flag_accepted_lossless_path() {
+fn modular_palette_colors_flag_disables_palette_detection() {
     let png = write_cropped_fixture("palette_colors");
+    // The 128x128 frymire crop has enough unique colours that the
+    // ModularKnobs::palette_colors_or_default() path with `Some(0)`
+    // disables palette detection entirely. With detection on, palette
+    // typically fires on the screenshot-style content; with it off the
+    // encoder falls through to RCT / improved modular. The bitstreams
+    // should differ.
     let baseline = run_cjxl(&png, "palette_default", &["-d", "0"]);
-    let capped = run_cjxl(
+    let disabled = run_cjxl(
         &png,
-        "palette_capped",
+        "palette_disabled",
         &["-d", "0", "--modular-palette-colors", "0"],
     );
-    assert_eq!(
+    assert_ne!(
+        fingerprint(&baseline),
+        fingerprint(&disabled),
+        "--modular-palette-colors 0 must disable palette detection (encoder-side wiring)"
+    );
+    // Also verify bytes increase: disabling palette on a few-colour
+    // screenshot region removes a major compression lever. (Equal-or-
+    // larger guards against test flake on borderline content.)
+    assert!(
+        disabled.len() >= baseline.len(),
+        "palette-disabled bytes ({}) should be >= palette-on baseline ({})",
+        disabled.len(),
+        baseline.len(),
+    );
+}
+
+#[test]
+fn modular_palette_colors_capped_still_decodes() {
+    // Cap to a small palette (2 colours) — different from both default
+    // (1024) and disabled (0). The cap is honoured by `analyze_palette`,
+    // so most images won't satisfy the palette use-case and will fall
+    // through to RCT. Bytes should differ from the default.
+    let png = write_cropped_fixture("palette_cap2");
+    let baseline = run_cjxl(&png, "palette_cap2_default", &["-d", "0"]);
+    let capped = run_cjxl(
+        &png,
+        "palette_cap2_capped",
+        &["-d", "0", "--modular-palette-colors", "2"],
+    );
+    assert_ne!(
         fingerprint(&baseline),
         fingerprint(&capped),
-        "modular_palette_colors is skeleton-only today"
+        "--modular-palette-colors 2 should differ from default 1024 on a few-colour crop"
     );
 }
 
 #[test]
 fn modular_channel_colors_global_pct_flag_accepted_lossless_path() {
     let png = write_cropped_fixture("ccgp");
-    let _ = run_cjxl(
+    // ChannelCompact only fires inside
+    // `write_modular_stream_with_tree_dc_quant_knobs`, which is reached
+    // when tree-learning is on (default at effort >= 7; the shared
+    // run_cjxl helper bakes in `--effort 3`). We force the path via
+    // `--tree-learning`, and disable palette so the multi-channel
+    // palette short-circuit cannot fire — leaving ChannelCompact as the
+    // remaining decorrelation step that the knob can affect.
+    let baseline = run_cjxl(
         &png,
-        "ccgp",
+        "ccgp_default",
         &[
             "-d",
             "0",
-            "--modular-channel-colors-global-percent",
-            "50",
+            "--tree-learning",
+            "--modular-palette-colors",
+            "0",
         ],
+    );
+    let tight = run_cjxl(
+        &png,
+        "ccgp_tight",
+        &[
+            "-d",
+            "0",
+            "--tree-learning",
+            "--modular-palette-colors",
+            "0",
+            "--modular-channel-colors-global-percent",
+            "1",
+        ],
+    );
+    assert_ne!(
+        fingerprint(&baseline),
+        fingerprint(&tight),
+        "--modular-channel-colors-global-percent 1 must change channel-compact behaviour \
+         (tree-learning + palette disabled to force ChannelCompact path)"
     );
 }
 
 #[test]
 fn modular_channel_colors_group_pct_flag_accepted_lossless_path() {
+    // The group-percent override only affects the multi-group
+    // ChannelCompact pass (frame.rs:493). 128x128 fixture is single-
+    // group so this test only proves the CLI parses + the bytes are a
+    // valid JXL bitstream. A multi-group bytes-divergence test would
+    // need a >=512x512 crop; deferred until corpus-regression covers
+    // this knob.
     let png = write_cropped_fixture("ccgrp");
     let _ = run_cjxl(
         &png,
@@ -186,10 +265,45 @@ fn modular_channel_colors_group_pct_flag_accepted_lossless_path() {
 #[test]
 fn modular_nb_prev_channels_flag_accepted_lossless_path() {
     let png = write_cropped_fixture("npc");
-    let _ = run_cjxl(
+    // Cap the previous-channel ref count to 0 — this disables ref-channel
+    // properties in the MA tree learner. On a 3-channel RGB image with
+    // tree learning, this materially changes the tree → bytes should
+    // diverge from the default (which uses image-natural max_ref_channels).
+    //
+    // The shared run_cjxl helper bakes in `--effort 3`, which does NOT
+    // route through the tree-learning + palette path that consumes
+    // `nb_prev_channels`. We force the tree path on via tree-learning +
+    // palette disabled so `write_modular_stream_with_tree_dc_quant_knobs`
+    // sees both knobs and exercises the `num_refs` cap. (`--no-patches`
+    // keeps frame.rs from short-circuiting via patches detection.)
+    let baseline = run_cjxl(
         &png,
-        "npc",
-        &["-d", "0", "--modular-nb-prev-channels", "-1"],
+        "npc_default",
+        &[
+            "-d",
+            "0",
+            "--tree-learning",
+            "--modular-palette-colors",
+            "0",
+        ],
+    );
+    let zero_refs = run_cjxl(
+        &png,
+        "npc_zero",
+        &[
+            "-d",
+            "0",
+            "--tree-learning",
+            "--modular-palette-colors",
+            "0",
+            "--modular-nb-prev-channels",
+            "0",
+        ],
+    );
+    assert_ne!(
+        fingerprint(&baseline),
+        fingerprint(&zero_refs),
+        "--modular-nb-prev-channels 0 must change tree-learner ref properties"
     );
 }
 

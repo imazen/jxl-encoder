@@ -1852,6 +1852,19 @@ impl LosslessConfig {
         self.modular_nb_prev_channels
     }
 
+    /// Build a [`crate::modular::palette::ModularKnobs`] snapshot from
+    /// the current `modular_*` overrides. Internal helper used to thread
+    /// the knobs into [`crate::modular::frame::FrameEncoderOptions`].
+    pub(crate) fn modular_knobs(&self) -> crate::modular::palette::ModularKnobs {
+        crate::modular::palette::ModularKnobs {
+            modular_predictor: self.modular_predictor,
+            palette_colors: self.modular_palette_colors,
+            channel_colors_global_percent: self.modular_channel_colors_global_percent,
+            channel_colors_group_percent: self.modular_channel_colors_group_percent,
+            nb_prev_channels: self.modular_nb_prev_channels,
+        }
+    }
+
     /// Set thread count for parallel encoding.
     ///
     /// - `0` (default): use the ambient rayon pool. The caller can control
@@ -5017,6 +5030,7 @@ impl<'a> EncodeRequest<'a> {
                 lossy_palette: cfg.lossy_palette,
                 encoder_mode: cfg.mode,
                 profile: smart_profile,
+                modular_knobs: cfg.modular_knobs(),
                 ..Default::default()
             },
         )
@@ -7503,6 +7517,7 @@ impl LosslessEncoder {
                     lossy_palette: cfg.lossy_palette,
                     encoder_mode: cfg.mode,
                     profile: smart_profile,
+                    modular_knobs: cfg.modular_knobs(),
                     ..Default::default()
                 },
             )
@@ -7888,6 +7903,7 @@ fn encode_animation_lossless(
                 save_as_reference: frame.save_as_reference,
                 name: frame.name.clone(),
                 timecode: frame.timecode,
+                modular_knobs: cfg.modular_knobs(),
             },
         )
         .with_budget(alloc::sync::Arc::clone(&budget));
