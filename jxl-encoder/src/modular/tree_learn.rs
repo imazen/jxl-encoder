@@ -871,7 +871,12 @@ pub(crate) fn gather_samples_strided_with_budget(
 ///
 /// Defers to [`gather_samples_strided_with_dedup_backend`] with
 /// `enable_phase3 = false` (Phase 2 backend selected unconditionally).
+///
+/// Phase 2 entry wrapper retained for tests / fallback wiring; production
+/// callers go straight to the `_backend` variant with an explicit
+/// `enable_phase3` flag. Flagged dead-code in default-features clippy.
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub(crate) fn gather_samples_strided_with_dedup(
     samples: &mut TreeSamples,
     image: &ModularImage,
@@ -6197,6 +6202,15 @@ pub fn derive_seeded_stride(base_stride: usize, seed: u64) -> usize {
 /// Bitstream-validity: every candidate tree is a normal, spec-valid
 /// JXL tree; the picker just chooses among them. djxl / jxl-rs / jxl-oxide
 /// decode every candidate identically.
+///
+/// Public API helper exposed for downstream multi-seed wiring (RFC#45
+/// chunk 2). The current `section.rs` / `encode.rs` callers use an
+/// inline multi-seed loop with cost-tracked entropy estimation; this
+/// helper offers the simpler "pick best by token cost" path for
+/// experimental harnesses and e10/e11 multi-seed experiments. Default
+/// clippy reports it as unused because production routes through the
+/// inline loop.
+#[allow(dead_code)]
 pub fn select_best_tree_multi_seed<F>(
     seeds: u8,
     image: &ModularImage,

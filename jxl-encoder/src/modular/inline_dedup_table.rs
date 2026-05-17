@@ -212,18 +212,22 @@ impl InlineDedupTable {
 
     /// Number of slots in the table (the pow-2-rounded capacity, not
     /// the live occupied count). Used by the microbench / tests.
+    // Exposed via `__bench_internals`; default-features clippy reports unused.
+    #[allow(dead_code)]
     #[inline]
     pub fn capacity(&self) -> usize {
         self.slots.len()
     }
 
     /// Number of unique keys currently stored.
+    #[allow(dead_code)] // bench-only (`__bench_internals`)
     #[inline]
     pub fn len(&self) -> usize {
         self.unique_keys.len()
     }
 
     /// Whether the table currently holds zero entries.
+    #[allow(dead_code)] // bench-only (`__bench_internals`)
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.unique_keys.is_empty()
@@ -352,6 +356,7 @@ impl InlineDedupTable {
     /// Probe-only counterpart of [`Self::lookup_or_insert`]. Returns
     /// `Some(index)` if the key is already present, `None` otherwise.
     /// Does not mutate the table. Used by tests and debug assertions.
+    #[allow(dead_code)] // bench-only (`__bench_internals`)
     #[inline]
     pub fn lookup_only(&self, key: &[u8; KEY_BYTES]) -> Option<u32> {
         let raw_h1 = Self::raw_hash1(key);
@@ -379,6 +384,7 @@ impl InlineDedupTable {
     /// Borrow the canonical packed keys for unique samples 0..len. The
     /// caller can index by the value returned from `lookup_or_insert`
     /// (on miss → new_idx == prev_len) to fetch the merged-into key.
+    #[allow(dead_code)] // bench-only (`__bench_internals`)
     #[inline]
     pub fn unique_keys(&self) -> &[[u8; KEY_BYTES]] {
         &self.unique_keys
