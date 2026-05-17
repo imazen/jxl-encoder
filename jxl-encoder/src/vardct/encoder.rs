@@ -819,14 +819,25 @@ impl VarDctEncoder {
         // before this gate. At d>=1.0 the chunk 1 relaxation pays off
         // (`windows95 @ d=1.0`: -53 B; `@ d=2.0`: -43 B), so above the
         // threshold we keep the looser detector.
+        // Distance-aware kMinPeak (W3-1 / commit 4fb0f52): libjxl
+        // parity (=2) below d=1.0, W2-5 chunk 1 relaxation (=1) at
+        // d>=1.0. RFC#45 chunk 3 layered a per-patch cost gate on top
+        // (inside `find_and_build_with_per_patch_gate`) but did NOT
+        // change `min_peak`: attempting `min_peak=1` at d<1.0 brought
+        // back the +465 B windows95 regression that W3-1 closed. The
+        // per-patch gate is a refinement, not a replacement for the
+        // detector-side `min_peak` threshold — it captures patches
+        // already detected, not ones the detector rejected.
         let min_peak = if self.distance < 1.0 { 2 } else { 1 };
         let mut patches_data = if self.enable_patches {
-            super::patches::find_and_build_with_min_peak(
+            super::patches::find_and_build_with_per_patch_gate(
                 [&xyb_x, &xyb_y, &xyb_b],
                 width,
                 height,
                 padded_width,
                 min_peak,
+                Some(self.distance),
+                self.use_ans,
             )
         } else {
             None
@@ -2092,13 +2103,17 @@ impl VarDctEncoder {
             {
                 // Same distance-aware kMinPeak as `encode_inner` (~line 745):
                 // libjxl parity at d<1.0, W2-5 chunk 1 relaxation at d>=1.0.
+                // RFC#45 pick #5 chunk 3 per-patch cost gate — mirrors
+                // `encode_inner` ~line 745 (see comment there).
                 let min_peak = if self.distance < 1.0 { 2 } else { 1 };
-                let mut pd = super::patches::find_and_build_with_min_peak(
+                let mut pd = super::patches::find_and_build_with_per_patch_gate(
                     [&pre_gab[0], &pre_gab[1], &pre_gab[2]],
                     width,
                     height,
                     padded_width,
                     min_peak,
+                    Some(self.distance),
+                    self.use_ans,
                 );
                 if matches!(self.encoder_mode, crate::api::EncoderMode::Experimental)
                     && let Some(ref p) = pd
