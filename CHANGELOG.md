@@ -400,6 +400,35 @@
 
 ### Performance
 
+- **Predictor-pruning lower-bound skip wired into `find_best_predictor`
+  sequential paths** (issue #23, chunk 2; chunk 1 shipped the primitive
+  at `c579cbd1`): both the `cfg(feature = "parallel-tree-learning")`
+  small-range sequential fallback (`tree_learn.rs:4878-4914`) and the
+  `cfg(not(feature = "parallel-tree-learning"))` mirror
+  (`tree_learn.rs:4946-4979`) now call
+  `predictor_extra_bits_lower_bound` + `decide_predictor` before each
+  `compute_predictor_entropy`. Strict-`<` tie-break preserves the
+  byte-identical bitstream invariant: hash_lock_features 36/36 unchanged
+  under both cfg flavors; sha256-identity verified on a real photo at
+  e7/e8/e9. Paired-A/B 9-cell bench at 8T (CID22 0.26 MP / CLIC 1.05 MP
+  / CLIC 4.19 MP × e7/e8/e9, 8 paired iters):
+  | image            | e7      | e8      | e9      |
+  |------------------|--------:|--------:|--------:|
+  | small_0.26MP     | −0.7%   | −0.8%   | −0.2%   |
+  | medium_1.05MP    | −0.3%   | −0.8%   | **−4.0%** |
+  | large_4.19MP     | −0.0%   | +0.3%   | +0.7%   |
+  Headline: byte-identical across all cells; medium e9 clears 3%; other
+  cells within ±1% of noise. Wireup targets the wrong code path under
+  `--features parallel-tree-learning` at e7 — lossless callers go through
+  the parallel branch (lines 4900-4920) on the root call (range >> 1024),
+  so the sequential lb-skip never fires there. The wireup is correct and
+  beneficial for (a) `--no-default-features` / non-parallel builds,
+  (b) `compute_best_tree_with_multipliers` per-child calls (lossy
+  modular / LfFrame DC) where range can dip under 1024, and (c) e9
+  deep-subtree paths (the −4.0% on medium e9). Chunk 3 will extend
+  lb-skip into the parallel branch to capture the e7 wins. Full TSV +
+  meta at `benchmarks/predictor_prune_ab_2026-05-17.{tsv,meta}`.
+
 - **Streaming hash-table dedup backend (opt-in, issue #41)**: ported
   libjxl's `AddSample` / `AddToTableAndMerge` two-hash cuckoo
   open-addressing dedup (`enc_ma.cc:602-655`, `enc_ma.cc:711`) as a

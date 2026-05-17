@@ -12,6 +12,9 @@ use super::channel::{Channel, ModularImage};
 use super::predictor::{
     Neighbors, Predictor, WeightedPredictorParams, WeightedPredictorState, pack_signed,
 };
+use super::predictor_prune::{
+    PredictorDecision, decide_predictor, predictor_extra_bits_lower_bound,
+};
 use super::tree::{PropertyDecisionNode, Tree, assign_sequential_contexts, validate_tree_djxl};
 use super::tree_learn_split;
 use crate::entropy_coding::hybrid_uint::HybridUintConfig;
@@ -4875,9 +4878,25 @@ fn find_best_predictor(
     if num_pred <= 1 || range < PARALLEL_PRED_THRESHOLD {
         // Sequential fallback — also covers `cfg(not(parallel))` callers
         // when this feature isn't even built.
+        //
+        // Issue #23 chunk 2: skip predictors whose extra-bits lower bound
+        // already meets-or-exceeds the best total cost seen so far. The
+        // bound is provably sound (`compute_predictor_entropy = entropy +
+        // extra_bits`, both non-negative), and `decide_predictor`'s strict
+        // `<` matches this loop's tie-break so the lowest-index winner on
+        // equal cost is preserved — byte-identical bitstream output.
         let mut best_pred = 0;
         let mut best_bits = f64::MAX;
         for pred_idx in 0..num_pred {
+            let lb = predictor_extra_bits_lower_bound(
+                &samples.extra_bits[pred_idx],
+                &samples.sample_counts,
+                start,
+                end,
+            );
+            if decide_predictor(lb, best_bits) == PredictorDecision::Skip {
+                continue;
+            }
             let bits = compute_predictor_entropy(
                 samples,
                 start,
@@ -4935,7 +4954,19 @@ fn find_best_predictor(
     let mut best_pred = 0;
     let mut best_bits = f64::MAX;
 
+    // Issue #23 chunk 2: extra-bits lower-bound early-skip. See the
+    // sequential branch above for the soundness proof + tie-break rationale.
+    // Byte-identical to the unconditional loop.
     for pred_idx in 0..num_pred {
+        let lb = predictor_extra_bits_lower_bound(
+            &samples.extra_bits[pred_idx],
+            &samples.sample_counts,
+            start,
+            end,
+        );
+        if decide_predictor(lb, best_bits) == PredictorDecision::Skip {
+            continue;
+        }
         let bits =
             compute_predictor_entropy(samples, start, end, pred_idx, histogram_size, counts_buf);
         if bits < best_bits {

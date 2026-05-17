@@ -1,0 +1,94 @@
+# predictor-pruning chunk-2 A/B bench (issue #23, chunk 2)
+# date:         2026-05-17T05:13Z (bench start) - 05:45Z (bench end)
+# hardware:     AMD Ryzen 9 7950X (16C/32T water-cooled)
+# build:        cargo build --release --features parallel-tree-learning
+#               NO -C target-cpu=native (per CLAUDE.md benchmark rules)
+# threads:      8 (RAYON_NUM_THREADS=8)
+# samples:      8 paired iters per (image, effort) cell
+# system load:  4-15 during bench (concurrent sibling agent running microbenches
+#               in a separate workspace; mostly single-core noise that inflates
+#               avg but spares min)
+#
+# A = baseline c579cbd1 (chunk-1 primitive shipped, NOT wired)
+# B = this branch  (chunk-2: lb-skip wired into both sequential cfg paths)
+#
+# Method: paired interleaved A/B per iter; both binaries built with
+# --features parallel-tree-learning so the only difference is the
+# find_best_predictor body. Within each (image, effort) cell, A and B
+# alternate iter-by-iter so thermal/turbo bias is paired out. Min is the
+# preferred statistic because the avg is polluted by sibling-agent
+# microbench bursts (visible as ~10-30% spikes on isolated iters).
+#
+# Profile images (real photos per CLAUDE.md no-synthetic rule):
+#   0.26 MP: /home/lilith/work/codec-corpus/CID22/CID22-512/training/7256805.png
+#   1.05 MP: /home/lilith/work/codec-corpus/clic2025-1024/02809272...png
+#   4.19 MP: /home/lilith/work/codec-corpus/clic2025/final-test/8426ed22...png
+#
+# Byte-identity gate (per CLAUDE.md hash-lock discipline):
+#   hash_lock_features --features parallel-tree-learning: 36/36 OK
+#   hash_lock_features (no feature):                       36/36 OK
+#   Direct sha256 check on 0.26 MP at e7/e8/e9 (real photo):
+#     e7: d16f994ab0026a2a... (A == B)
+#     e8: da397c48e41dca3f... (A == B)
+#     e9: 642ecae8e60b3e10... (A == B)
+#   Per-iter bytes column equality across all 9 cells × 8 iters: OK
+#
+# Results (min ms, paired Δ vs A):
+#
+#   image            eff    A_min    B_min    Δmin
+#   ---------------------------------------------------
+#   small_0.26MP     e7       270      269    -0.68%
+#   small_0.26MP     e8       576      572    -0.79%
+#   small_0.26MP     e9      1310     1307    -0.24%
+#   medium_1.05MP    e7      1550     1545    -0.29%
+#   medium_1.05MP    e8      2489     2470    -0.77%
+#   medium_1.05MP    e9      3974     3815    -3.99%  ←  best cell
+#   large_4.19MP     e7      3952     3952    -0.01%
+#   large_4.19MP     e8      7684     7708    +0.32%
+#   large_4.19MP     e9     20381    20531    +0.74%
+#
+# Headline:
+#   - Hash-locks: BYTE-IDENTICAL across all 9 cells × 8 iters (verified).
+#   - Brief target (≥3% on 1.05 MP @ e7): NOT MET (-0.29%).
+#   - Only medium_1.05MP @ e9 clears 3% (-3.99% min).
+#   - small / large at every effort, and medium at e7/e8: within ±1%
+#     (signal indistinguishable from sibling-agent noise + thermal jitter).
+#
+# Root cause of the small e7 wall-clock delta:
+#   The wired lb-skip lives in the SEQUENTIAL branches of
+#   find_best_predictor (cfg gate + the small-range fallback at
+#   range < PARALLEL_PRED_THRESHOLD=1024). Under
+#   --features parallel-tree-learning, the lossless root call
+#   (range = N samples, always >> 1024) takes the parallel branch
+#   (compute_predictor_entropy fanned out via parallel_map) and lb-skip
+#   never fires. The wireup is correct — it just targets paths that
+#   are off the lossless hot path at the bench config:
+#
+#     * compute_best_tree (lossless): one root find_best_predictor call,
+#       range = N → parallel branch → no lb-skip.
+#     * compute_best_tree_with_multipliers (lossy modular only — LfFrame DC):
+#       per-child find_best_predictor calls (tree_learn.rs:4065/4076) MAY
+#       fall below the 1024 threshold and DO benefit. Not exercised by
+#       the lossless bench config.
+#     * non-parallel-tree-learning cfg path: any caller, any range → ALL
+#       benefit. Not the default bench config.
+#
+# The medium e9 −3.99% min likely reflects deeper sub-1024 sub-tree calls
+# at high effort (more nodes, more shallow per-child evals).
+#
+# Chunk 3 plan (to capture e7 wins):
+#   Extend lb-skip to the parallel branch. Two viable shapes:
+#     (a) Pre-compute all 14 LBs in parallel (cheap), sort ascending, then
+#         sequentially evaluate in LB order, skipping any LB >= best-so-far.
+#         Total work cap: 14 × LB + (14 × eval × (1 - prune_rate)).
+#     (b) Atomic-shared best with per-task LB-then-eval; concurrent updates
+#         allowed, strict-< tie-break via final scalar reduction (same
+#         pattern as the existing parallel branch).
+#   Option (a) is simpler and matches libjxl's "TryPredictor sorted by
+#   lower bound" pattern; preferred. Microbench harness already exists
+#   (predictor_prune_microbench.rs) — extend with a parallel variant.
+#
+# Reproduce:
+#   SAMPLES=8 THREADS=8 ./scripts/bench_predictor_prune_ab.sh
+#     > benchmarks/predictor_prune_ab_2026-05-17.tsv
+#   python3 ./scripts/analyze_predictor_prune_ab.py benchmarks/predictor_prune_ab_2026-05-17.tsv
