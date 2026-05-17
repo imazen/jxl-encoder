@@ -23,6 +23,38 @@
 
 ### Added
 
+- **Lossy alpha pipeline (`LossyConfig::with_alpha_distance` >
+  0.0)** — follow-on to W4-2-r (`62fc60e`) which staged the
+  storage but kept the alpha extras sub-bitstream lossless. The
+  encoder now mirrors libjxl `enc_modular.cc:973-1027` +
+  `QuantizeChannel` (`enc_modular.cc:141`): for a single alpha
+  extra at `dim_shift = 0`, computes an integer pixel quantizer
+  `q = floor(0.025 * dist * bitdepth_correction * 0.35 * 1.1 *
+  163.84)` (clamped to ≥1), snaps each alpha pixel to the nearest
+  multiple of `q` (libjxl round-half-up by absolute value), and
+  writes a single-leaf gradient tree whose `(mul_log, mul_bits)`
+  carry the multiplier so the decoder reconstructs `pixel =
+  prediction + val * q` (matches `ModularMultiplierInfo` +
+  `make_pixel(val, multiplier, offset)` in
+  `modular/encoding/encoding.cc:186-191`). `q == 1` (including
+  `None` and `Some(0.0)`) keeps the lossless path
+  byte-for-byte identical — hash-locks 36/36 unchanged. Mixed-extras
+  inputs (count > 1) stay lossless until per-channel multiplier
+  dispatch lands. Wiring proof in
+  `tests/lossy_knobs_wiring.rs::alpha_distance_nonzero_changes_bytes`
+  (d=2.0 → q=3, d=10.0 → q=15) and roundtrip proof in
+  `tests/lossy_alpha_roundtrip.rs::alpha_distance_high_loses_alpha_precision`
+  (jxl-rs decode confirms alpha MAE > 1 at d=10.0 while RGB stays
+  byte-identical — alpha_distance does not leak into the VarDCT
+  color path). djxl 0.12.0 also decodes the lossy-alpha bitstream
+  cleanly. Implementation:
+  `vardct/encoder.rs::compute_alpha_pixel_quantizer` (libjxl
+  formula),
+  `modular/encode_tree.rs::write_tree_histogram_for_gradient_lossy`
+  +`write_gradient_tree_tokens_lossy` (lossy tree leaf),
+  `vardct/bitstream.rs::write_modular_extras_subbitstream` (pre-quantize
+  + divide-by-q residuals).
+
 - **`--ec_resampling N` CLI flag + `downsample_channel_u8` API**
   (A1 audit "Pixel formats / extras"; mirrors libjxl `cjxl
   --ec_resampling`). Pre-downsamples the alpha plane on the

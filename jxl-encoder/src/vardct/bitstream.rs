@@ -479,6 +479,7 @@ fn encode_dc_group_section(
 
 /// Encode a single AC group section to bytes (for a specific pass).
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn encode_ac_group_section(
     ac_tokens: &[Token],
     ac_built_code: &BuiltEntropyCode<'_>,
@@ -491,6 +492,8 @@ fn encode_ac_group_section(
     xsize_groups: usize,
     width: usize,
     height: usize,
+    // Lossy alpha quantizer (1 = lossless byte-identical path).
+    extras_alpha_q: u32,
 ) -> Result<Vec<u8>> {
     let blocks_per_ac_group = (256 / 8) * (256 / 8);
     let mut ac_group_writer = BitWriter::with_capacity(blocks_per_ac_group * 100);
@@ -503,7 +506,7 @@ fn encode_ac_group_section(
         let y0 = group_y * GROUP_DIM;
         let gw = GROUP_DIM.min(width - x0);
         let gh = GROUP_DIM.min(height - y0);
-        VarDctEncoder::write_modular_extras_group(
+        VarDctEncoder::write_modular_extras_group_with_quant(
             extras,
             width,
             height,
@@ -511,6 +514,7 @@ fn encode_ac_group_section(
             y0,
             gw,
             gh,
+            extras_alpha_q,
             &mut ac_group_writer,
         )?;
     }
@@ -2492,7 +2496,19 @@ impl VarDctEncoder {
             // in the modular global sub-bitstream within the DC global
             // section, after the VarDCT DC entropy code.
             if !extras.is_empty() {
-                Self::write_modular_extras_global(extras, width, height, &mut dc_global)?;
+                // Compute the lossy alpha quantizer (libjxl parity).
+                // `q == 1` keeps the lossless bit-identical path, so
+                // the default `alpha_distance = None` is byte-for-byte
+                // identical to the pre-pipeline behaviour.
+                let extras_bits = extras[0].info.bit_depth.bits_per_sample;
+                let q = self.compute_alpha_pixel_quantizer(extras_bits, extras.len());
+                Self::write_modular_extras_global_with_quant(
+                    extras,
+                    width,
+                    height,
+                    q,
+                    &mut dc_global,
+                )?;
             }
 
             let mut dc_group = BitWriter::with_capacity(num_blocks * 10);
@@ -2598,6 +2614,18 @@ impl VarDctEncoder {
 
             // AC groups: Section order is pass-major, group-minor — parallelizable
             // Section index = 2 + num_dc_groups + pass * num_groups + group
+            //
+            // Lossy alpha quantizer (libjxl parity, `q == 1` keeps the
+            // lossless byte-identical path). Computed once for the
+            // whole frame so all HF groups carry the same multiplier;
+            // matches libjxl's per-channel `quants_[ch_id]` for the
+            // single-extra (alpha) shape.
+            let extras_alpha_q = if extras.is_empty() {
+                1
+            } else {
+                let extras_bits = extras[0].info.bit_depth.bits_per_sample;
+                self.compute_alpha_pixel_quantizer(extras_bits, extras.len())
+            };
             for pass in 0..num_passes {
                 let is_last_pass = pass == num_passes - 1;
                 let ac_group_sections: Vec<Vec<u8>> =
@@ -2612,6 +2640,7 @@ impl VarDctEncoder {
                             xsize_groups,
                             width,
                             height,
+                            extras_alpha_q,
                         )
                     })?;
                 sections.extend(ac_group_sections);
@@ -2722,13 +2751,21 @@ impl VarDctEncoder {
     /// in one sub-bitstream:
     ///   GroupHeader → (use_global_tree=0 → local tree) →
     ///   entropy code → channel-0 pixels → channel-1 pixels → …
-    fn write_modular_extras_global(
+    /// Write the single-group extras sub-bitstream into the DC global
+    /// section. Applies the lossy alpha integer pixel quantizer `q`
+    /// when `q > 1`; `q == 1` preserves the lossless path bit-for-bit.
+    /// Currently only used for single-extra (alpha) lossy encoding;
+    /// callers must enforce that constraint upstream.
+    fn write_modular_extras_global_with_quant(
         extras: &[super::extras::VardctExtra<'_>],
         width: usize,
         height: usize,
+        q: u32,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        Self::write_modular_extras_subbitstream(extras, width, height, 0, 0, width, height, writer)
+        Self::write_modular_extras_subbitstream(
+            extras, width, height, 0, 0, width, height, q, writer,
+        )
     }
 
     /// Write an empty modular global sub-bitstream for multi-group VarDCT frames with alpha.
@@ -2776,13 +2813,15 @@ impl VarDctEncoder {
         y0: usize,
         region_width: usize,
         region_height: usize,
+        alpha_quantizer: u32,
         writer: &mut BitWriter,
     ) -> Result<()> {
         use crate::modular::encode::{
             K_LZ77_MIN_LENGTH, K_LZ77_MIN_SYMBOL, Token, build_sparse_histogram,
-            encode_hybrid_uint_000, encode_hybrid_uint_lz77_length, write_gradient_tree_tokens,
+            decompose_multiplier_pub, encode_hybrid_uint_000, encode_hybrid_uint_lz77_length,
+            write_gradient_tree_tokens, write_gradient_tree_tokens_lossy,
             write_hybrid_data_histogram, write_sparse_lz77_histogram,
-            write_tree_histogram_for_gradient,
+            write_tree_histogram_for_gradient, write_tree_histogram_for_gradient_lossy,
         };
         use crate::modular::predictor::pack_signed;
 
@@ -2791,9 +2830,20 @@ impl VarDctEncoder {
         writer.write(1, 1)?; // wp_params all_default = true
         writer.write(2, 0)?; // nb_transforms = 0
 
-        // Local tree: gradient prediction, single context
-        let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
-        write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+        // Local tree: gradient prediction, single context.
+        // For lossy alpha (alpha_quantizer > 1) we widen the leaf so the
+        // decoder applies `pixel = val * q + prediction` (matches libjxl
+        // `ModularMultiplierInfo` + `QuantizeChannel`, enc_modular.cc:141
+        // / 1107). q == 1 keeps the lossless byte-identical path.
+        let q = alpha_quantizer.max(1);
+        if q == 1 {
+            let (d, c) = write_tree_histogram_for_gradient(writer)?;
+            write_gradient_tree_tokens(writer, &d, &c)?;
+        } else {
+            let (mul_log, mul_bits) = decompose_multiplier_pub(q);
+            let (d, c) = write_tree_histogram_for_gradient_lossy(writer, mul_log, mul_bits)?;
+            write_gradient_tree_tokens_lossy(writer, &d, &c, mul_log, mul_bits)?;
+        }
 
         // Collect residuals with LZ77 RLE detection.
         //
@@ -2842,24 +2892,53 @@ impl VarDctEncoder {
             // a uniform end-of-prev-channel doesn't run into the next.
             last_value = u32::MAX;
 
+            // Lossy alpha: pre-quantize the channel region into a
+            // contiguous scratch buffer so prediction sees quantized
+            // neighbours (decoder semantics: `pixel = prediction +
+            // val * q`, with prediction computed from already-quantized
+            // pixels). Matches libjxl `QuantizeChannel` (enc_modular.cc:141):
+            // round-half-up by absolute value, then snap to nearest
+            // multiple of q. Lossless path (`q == 1`) leaves the
+            // buffer empty and falls back to direct `ec.data.sample`.
+            let qi = q as i32;
+            let half = qi / 2;
+            let mut quantized: alloc::vec::Vec<i32> = alloc::vec::Vec::new();
+            if q > 1 {
+                quantized.reserve(ch_rw.saturating_mul(ch_rh));
+                for y in 0..ch_rh {
+                    for x in 0..ch_rw {
+                        let s = ec.data.sample((ch_y0 + y) * ch_w + (ch_x0 + x));
+                        let snapped = if s >= 0 {
+                            ((s + half) / qi) * qi
+                        } else {
+                            -(((-s) + half) / qi) * qi
+                        };
+                        quantized.push(snapped);
+                    }
+                }
+            }
+            let read = |ry: usize, rx: usize| -> i32 {
+                if q > 1 {
+                    quantized[ry * ch_rw + rx]
+                } else {
+                    ec.data.sample((ch_y0 + ry) * ch_w + (ch_x0 + rx))
+                }
+            };
+
             for y in 0..ch_rh {
                 for x in 0..ch_rw {
-                    let pixel = ec.data.sample((ch_y0 + y) * ch_w + (ch_x0 + x));
+                    let pixel = read(y, x);
 
                     let left = if x > 0 {
-                        ec.data.sample((ch_y0 + y) * ch_w + (ch_x0 + x - 1))
+                        read(y, x - 1)
                     } else if y > 0 {
-                        ec.data.sample((ch_y0 + y - 1) * ch_w + ch_x0)
+                        read(y - 1, 0)
                     } else {
                         0
                     };
-                    let top = if y > 0 {
-                        ec.data.sample((ch_y0 + y - 1) * ch_w + (ch_x0 + x))
-                    } else {
-                        left
-                    };
+                    let top = if y > 0 { read(y - 1, x) } else { left };
                     let topleft = if x > 0 && y > 0 {
-                        ec.data.sample((ch_y0 + y - 1) * ch_w + (ch_x0 + x - 1))
+                        read(y - 1, x - 1)
                     } else {
                         left
                     };
@@ -2867,7 +2946,16 @@ impl VarDctEncoder {
                     // ClampedGradient prediction
                     let grad = left + top - topleft;
                     let prediction = grad.clamp(left.min(top), left.max(top));
-                    let residual = pixel - prediction;
+                    // For lossy: `pixel` and `prediction` are both
+                    // multiples of q, so the residual is exactly
+                    // divisible. Divide so the decoder reconstructs
+                    // `prediction + val * q == pixel`.
+                    let raw_residual = pixel - prediction;
+                    let residual = if q == 1 {
+                        raw_residual
+                    } else {
+                        raw_residual / qi
+                    };
                     let packed = pack_signed(residual);
 
                     // LZ77 RLE: copies the last residual value
@@ -3001,8 +3089,12 @@ impl VarDctEncoder {
     /// with a fresh GroupHeader, local tree, and entropy code. All
     /// extras share the one entropy code; the decoder pulls each
     /// channel's per-group region in turn.
+    /// Write one HF-group extras sub-bitstream for a multi-group
+    /// VarDCT frame. Threads an integer pixel quantizer `q` for lossy
+    /// alpha encoding; `q == 1` preserves the lossless multi-group
+    /// path bit-for-bit.
     #[allow(clippy::too_many_arguments)]
-    fn write_modular_extras_group(
+    fn write_modular_extras_group_with_quant(
         extras: &[super::extras::VardctExtra<'_>],
         image_width: usize,
         image_height: usize,
@@ -3010,6 +3102,7 @@ impl VarDctEncoder {
         y0: usize,
         region_width: usize,
         region_height: usize,
+        q: u32,
         writer: &mut BitWriter,
     ) -> Result<()> {
         Self::write_modular_extras_subbitstream(
@@ -3020,6 +3113,7 @@ impl VarDctEncoder {
             y0,
             region_width,
             region_height,
+            q,
             writer,
         )
     }

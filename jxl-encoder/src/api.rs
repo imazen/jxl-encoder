@@ -3549,12 +3549,17 @@ impl LossyConfig {
     /// Set a separate butteraugli distance for the alpha extra channel
     /// (CLI passthrough — mirrors libjxl `cjxl --alpha_distance`).
     ///
-    /// `None` (default) keeps the existing pipeline behaviour — alpha
-    /// is encoded losslessly when the layout carries it. `Some(d)`
-    /// stores the requested distance; encoder-side wiring of a
-    /// separately-quantised lossy alpha channel is queued follow-on
-    /// work (the value is currently advisory only — the alpha plane
-    /// still rides through the lossless modular sub-bitstream).
+    /// `None` (default) and `Some(0.0)` keep the lossless alpha path
+    /// (gradient predictor + LZ77 RLE). `Some(d)` with `d > 0.0`
+    /// engages the lossy alpha pipeline: an integer pixel quantizer
+    /// derived from libjxl's no-squeeze formula
+    /// (`enc_modular.cc:973-1027`) snaps each alpha pixel to the
+    /// nearest multiple of `q` and the decoder reconstructs via the
+    /// modular-tree leaf's `(mul_log, mul_bits)` multiplier. `d` is
+    /// clamped to `[0.01, 25.0]` (matches libjxl `encode.cc:1552`).
+    /// Only applied when there is exactly one extra channel — mixed
+    /// extras stay lossless. Sample yields at 8-bit alpha: `d=1.0`
+    /// → `q=1` (still lossless), `d=2.0` → `q=3`, `d=10.0` → `q=15`.
     pub fn with_alpha_distance(mut self, d: Option<f32>) -> Self {
         self.alpha_distance = d;
         self
@@ -6159,11 +6164,11 @@ impl<'a> EncodeRequest<'a> {
         // `upsampling > 1` AND the mode is `Some(0)` / `Some(1)`.
         enc.upsampling_mode = cfg.upsampling_mode;
         // Alpha extra channel butteraugli distance (CLI passthrough —
-        // libjxl `cjxl --alpha_distance`). `None` keeps the
-        // existing lossless path. A non-zero value is recorded on the
-        // encoder for now; a separately-quantised lossy alpha pipeline
-        // is queued follow-on (the current modular extras writer is
-        // lossless gradient+LZ77).
+        // libjxl `cjxl --alpha_distance`). `None` and `Some(0.0)`
+        // keep the lossless path. A non-zero value engages the lossy
+        // alpha pipeline (pre-quantize + modular-tree multiplier);
+        // see [`crate::vardct::VarDctEncoder::compute_alpha_pixel_quantizer`]
+        // for the libjxl-parity formula.
         enc.alpha_distance = cfg.alpha_distance;
 
         // Tone mapping and intrinsic size from metadata
