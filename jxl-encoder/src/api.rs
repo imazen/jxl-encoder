@@ -1481,6 +1481,16 @@ pub struct LosslessConfig {
     /// when metadata or level demands it). See
     /// [`Self::with_container_mode`].
     container_mode: ContainerMode,
+    /// Optional modular group-size override (libjxl `cjxl -g 0..3`,
+    /// `cparams.modular_group_size_shift`). `None` (default) keeps the
+    /// existing 256-pixel group dimension (shift = 1) so output bytes
+    /// are unchanged. `Some(n)` for `n in 0..=3` maps to group
+    /// dimensions `128 << n` = {128, 256, 512, 1024}. Affects both the
+    /// frame-header signal and the modular encoder's per-group
+    /// partitioning. VarDCT is unaffected (libjxl + this encoder both
+    /// fix VarDCT groups at 256). See
+    /// [`Self::with_modular_group_size`].
+    modular_group_size_shift: Option<u8>,
 }
 
 impl Default for LosslessConfig {
@@ -1519,7 +1529,55 @@ impl LosslessConfig {
             modular_nb_prev_channels: None,
             faster_decoding: 0,
             container_mode: ContainerMode::Auto,
+            modular_group_size_shift: None,
         }
+    }
+
+    /// Sets the modular group-size knob (libjxl `cjxl -g 0..3`,
+    /// [`cparams.modular_group_size_shift`][libjxl-cparams]).
+    ///
+    /// The value is the `group_size_shift` signalled in the frame
+    /// header, mapping to a group dimension of `128 << shift` pixels:
+    ///
+    /// | `shift` | group dim |
+    /// |---------|-----------|
+    /// | `0`     | 128       |
+    /// | `1`     | 256 (default) |
+    /// | `2`     | 512       |
+    /// | `3`     | 1024      |
+    ///
+    /// `None` (default) keeps the current 256-pixel partitioning so
+    /// bitstreams are byte-identical to before this knob existed.
+    ///
+    /// `Some(n)` for `n > 3` is clamped to `3` by the encoder; values
+    /// outside `0..=3` are not representable in the 2-bit
+    /// `group_size_shift` field.
+    ///
+    /// **What this affects:** the modular (lossless) encoder's group
+    /// partitioning + the frame-header signal that tells the decoder
+    /// what group dimension to use. Smaller groups (`-g 0`, 128 px)
+    /// give a denser TOC and more parallel decode at the cost of
+    /// per-group entropy-coder overhead. Larger groups (`-g 2`/`-g 3`)
+    /// reduce TOC + global-state overhead and can compress better on
+    /// small/medium images that would otherwise be split into many
+    /// near-empty 256-px groups, at the cost of less parallelism on
+    /// the decode side.
+    ///
+    /// **What this does NOT affect:** VarDCT (lossy) encoding. libjxl
+    /// and this encoder both fix VarDCT groups at 256 pixels; the
+    /// `group_size_shift` field is only emitted when the frame
+    /// `encoding == Modular`.
+    ///
+    /// [libjxl-cparams]: https://github.com/libjxl/libjxl/blob/main/lib/jxl/enc_params.h
+    pub fn with_modular_group_size(mut self, shift: Option<u8>) -> Self {
+        self.modular_group_size_shift = shift.map(|s| s.min(3));
+        self
+    }
+
+    /// Currently-configured modular group-size shift. `None` keeps the
+    /// 256-pixel default; `Some(n)` overrides per [`Self::with_modular_group_size`].
+    pub fn modular_group_size(&self) -> Option<u8> {
+        self.modular_group_size_shift
     }
 
     /// Opt-in: enable per-image smart-fanout for parallel tree learning.
@@ -5377,6 +5435,7 @@ impl<'a> EncodeRequest<'a> {
                 encoder_mode: cfg.mode,
                 profile: smart_profile,
                 modular_knobs: cfg.modular_knobs(),
+                modular_group_size_shift: cfg.modular_group_size_shift,
                 ..Default::default()
             },
         )
@@ -7883,6 +7942,7 @@ impl LosslessEncoder {
                     encoder_mode: cfg.mode,
                     profile: smart_profile,
                     modular_knobs: cfg.modular_knobs(),
+                    modular_group_size_shift: cfg.modular_group_size_shift,
                     ..Default::default()
                 },
             )
@@ -8269,6 +8329,7 @@ fn encode_animation_lossless(
                 name: frame.name.clone(),
                 timecode: frame.timecode,
                 modular_knobs: cfg.modular_knobs(),
+                modular_group_size_shift: cfg.modular_group_size_shift,
             },
         )
         .with_budget(alloc::sync::Arc::clone(&budget));

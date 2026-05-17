@@ -4,6 +4,21 @@
 
 ### Added
 
+- **Modular group-size knob — `LosslessConfig::with_modular_group_size` /
+  `cjxl-rs -g 0..3`** (A1 audit "Modular" PARTIAL item). Mirrors
+  libjxl `cjxl -g` / `cparams.modular_group_size_shift`. `None`
+  (default) keeps the existing 256-pixel group dimension (shift = 1)
+  so output bytes are unchanged — hash-locks remain green. `Some(n)`
+  for `n in 0..=3` maps to group dimensions `128 << n` =
+  {128, 256, 512, 1024} and is forwarded into both the frame-header
+  `group_size_shift` field and the modular encoder's per-group
+  partitioning / global-vs-grouped channel cutoff. VarDCT is
+  unaffected (libjxl + this encoder both fix VarDCT groups at 256).
+  Verified pixel-exact via jxl-rs + djxl roundtrip across all four
+  shifts on a 600×600 mixed-gradient. New test:
+  `jxl-encoder/tests/modular_group_size_knob.rs` (4 cases — default
+  matches shift=1 byte-identical, pairwise distinct bitstreams,
+  pixel-exact roundtrip per shift, large-vs-small grid size delta).
 - **Four `cjxl` parity knobs: `--faster-decoding`, `--container`,
   `--progressive-dc`, `--premultiply`** (W4-3 A1 audit). New builders
   on `LossyConfig` / `LosslessConfig` (and `EncodeRequest` for

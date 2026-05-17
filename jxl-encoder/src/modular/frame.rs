@@ -11,7 +11,6 @@ use super::encode::{
 };
 use super::palette::{CHANNEL_COLORS_PERCENT, analyze_channel_compact};
 use super::section::write_global_modular_section_with_tree;
-use crate::GROUP_DIM;
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::lz77::Lz77Method;
 use crate::error::Result;
@@ -76,6 +75,15 @@ pub struct FrameEncoderOptions {
     /// from [`crate::api::LosslessConfig`] by the public encode entry
     /// points in `api.rs`.
     pub modular_knobs: super::palette::ModularKnobs,
+    /// Modular group-size shift (libjxl `cjxl -g 0..3`,
+    /// `cparams.modular_group_size_shift`). `None` keeps the current
+    /// 256-pixel default (shift = 1). `Some(n)` for `n in 0..=3`
+    /// maps to group dimensions `128 << n` = {128, 256, 512, 1024}.
+    /// Affects both the frame-header signal and the modular encoder's
+    /// per-group partitioning. VarDCT is unaffected (libjxl + this
+    /// encoder both fix VarDCT groups at 256). See
+    /// [`crate::api::LosslessConfig::with_modular_group_size`].
+    pub modular_group_size_shift: Option<u8>,
 }
 
 impl Default for FrameEncoderOptions {
@@ -103,6 +111,7 @@ impl Default for FrameEncoderOptions {
             name: None,
             timecode: None,
             modular_knobs: super::palette::ModularKnobs::default(),
+            modular_group_size_shift: None,
         }
     }
 }
@@ -243,6 +252,7 @@ impl FrameEncoder {
             fh.flags |= PATCHES_FLAG;
             fh.ec_upsampling = vec![1; num_extra_channels];
             fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
+            fh.group_size_shift = self.modular_group_size_shift() as u32;
             self.apply_animation_to_header(&mut fh);
             fh.write(writer)?;
         }
@@ -350,6 +360,7 @@ impl FrameEncoder {
             let mut fh = FrameHeader::lossless();
             fh.ec_upsampling = vec![1; num_extra_channels];
             fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
+            fh.group_size_shift = self.modular_group_size_shift() as u32;
             self.apply_animation_to_header(&mut fh);
             fh.write(writer)?;
         }
@@ -1141,7 +1152,8 @@ impl FrameEncoder {
 
         let num_groups = self.num_groups();
         let num_lf_groups = self.num_lf_groups();
-        let lf_group_dim = GROUP_DIM * 8; // 2048
+        let group_dim = self.group_dim();
+        let lf_group_dim = group_dim * 8;
 
         // Step 1: Apply RCT (YCoCg) before squeeze for RGB images, then squeeze
         let squeeze_params = default_squeeze_params(image);
@@ -1180,14 +1192,14 @@ impl FrameEncoder {
         let global_cutoff = squeezed
             .channels
             .iter()
-            .position(|c| c.width() > GROUP_DIM || c.height() > GROUP_DIM)
+            .position(|c| c.width() > group_dim || c.height() > group_dim)
             .unwrap_or(squeezed.channels.len());
 
         crate::trace::debug_eprintln!(
             "SQUEEZE_MULTI: {} global channels (<={}x{}), {} group channels",
             global_cutoff,
-            GROUP_DIM,
-            GROUP_DIM,
+            group_dim,
+            group_dim,
             squeezed.channels.len() - global_cutoff,
         );
 
@@ -1282,7 +1294,7 @@ impl FrameEncoder {
             {
                 let gx = g % num_groups_x;
                 let gy = g / num_groups_x;
-                if let Some(cropped) = ch.extract_grid_cell(gx, gy, GROUP_DIM) {
+                if let Some(cropped) = ch.extract_grid_cell(gx, gy, group_dim) {
                     let residuals = collect_channel_residuals(&cropped);
                     all_residuals.extend(&residuals);
                     g_channels.push(residuals);
@@ -1543,7 +1555,8 @@ impl FrameEncoder {
 
         let num_groups = self.num_groups();
         let num_lf_groups = self.num_lf_groups();
-        let lf_group_dim = GROUP_DIM * 8; // 2048
+        let group_dim = self.group_dim();
+        let lf_group_dim = group_dim * 8;
 
         // Step 1: Apply RCT (YCoCg) before squeeze for RGB images, then squeeze
         let squeeze_params = default_squeeze_params(image);
@@ -1567,7 +1580,7 @@ impl FrameEncoder {
         let global_cutoff = squeezed
             .channels
             .iter()
-            .position(|c| c.width() > GROUP_DIM || c.height() > GROUP_DIM)
+            .position(|c| c.width() > group_dim || c.height() > group_dim)
             .unwrap_or(squeezed.channels.len());
 
         let mut lf_channel_indices: Vec<usize> = Vec::new();
@@ -1747,7 +1760,7 @@ impl FrameEncoder {
             for (g, g_channels) in pass_group_sub_images.iter_mut().enumerate() {
                 let gx = g % num_groups_x;
                 let gy = g / num_groups_x;
-                if let Some(cropped) = ch.extract_grid_cell(gx, gy, GROUP_DIM) {
+                if let Some(cropped) = ch.extract_grid_cell(gx, gy, group_dim) {
                     g_channels.push(cropped);
                 }
             }
@@ -2197,27 +2210,49 @@ impl FrameEncoder {
         Ok(())
     }
 
+    /// Returns the modular group dimension in pixels.
+    ///
+    /// Maps the optional `modular_group_size_shift` knob (libjxl
+    /// `cjxl -g 0..3`) to a pixel dimension. When `None`, returns the
+    /// historical 256-pixel default (shift = 1) so existing callers
+    /// keep byte-identical output.
+    ///
+    /// Shift → dim mapping (matches libjxl
+    /// `frame_dim.Set(..., group_size_shift, ...)`):
+    /// `0 → 128`, `1 → 256`, `2 → 512`, `3 → 1024`.
+    pub fn group_dim(&self) -> usize {
+        let shift = self.modular_group_size_shift() as usize;
+        128usize << shift
+    }
+
+    /// Returns the effective `group_size_shift` (0..=3) for this frame.
+    /// Defaults to `1` (256 pixels) when the knob is unset.
+    pub fn modular_group_size_shift(&self) -> u8 {
+        self.options
+            .modular_group_size_shift
+            .map(|s| s.min(3))
+            .unwrap_or(1)
+    }
+
     /// Returns the number of groups in this frame.
     pub fn num_groups(&self) -> usize {
-        let num_groups_x = self.width.div_ceil(GROUP_DIM);
-        let num_groups_y = self.height.div_ceil(GROUP_DIM);
-        num_groups_x * num_groups_y
+        self.num_groups_x() * self.num_groups_y()
     }
 
     /// Returns the number of groups in X direction.
     pub fn num_groups_x(&self) -> usize {
-        self.width.div_ceil(GROUP_DIM)
+        self.width.div_ceil(self.group_dim())
     }
 
     /// Returns the number of groups in Y direction.
     pub fn num_groups_y(&self) -> usize {
-        self.height.div_ceil(GROUP_DIM)
+        self.height.div_ceil(self.group_dim())
     }
 
     /// Returns the number of LF groups (DC groups).
-    /// LF groups are 8x the size of regular groups (2048x2048 pixels).
+    /// LF groups are 8x the size of regular modular groups.
     pub fn num_lf_groups(&self) -> usize {
-        let lf_group_dim = GROUP_DIM * 8; // 2048
+        let lf_group_dim = self.group_dim() * 8;
         let lf_groups_x = self.width.div_ceil(lf_group_dim);
         let lf_groups_y = self.height.div_ceil(lf_group_dim);
         lf_groups_x * lf_groups_y
@@ -2239,13 +2274,14 @@ impl FrameEncoder {
     /// Returns (x_start, y_start, x_end, y_end).
     pub fn group_bounds(&self, group_idx: usize) -> (usize, usize, usize, usize) {
         let num_groups_x = self.num_groups_x();
+        let group_dim = self.group_dim();
         let gx = group_idx % num_groups_x;
         let gy = group_idx / num_groups_x;
 
-        let x_start = gx * GROUP_DIM;
-        let y_start = gy * GROUP_DIM;
-        let x_end = (x_start + GROUP_DIM).min(self.width);
-        let y_end = (y_start + GROUP_DIM).min(self.height);
+        let x_start = gx * group_dim;
+        let y_start = gy * group_dim;
+        let x_end = (x_start + group_dim).min(self.width);
+        let y_end = (y_start + group_dim).min(self.height);
 
         (x_start, y_start, x_end, y_end)
     }

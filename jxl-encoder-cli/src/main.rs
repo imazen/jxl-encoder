@@ -461,6 +461,17 @@ struct Args {
     #[arg(long, value_name = "TIER", default_value = "0")]
     faster_decoding: u8,
 
+    /// Modular group-size override (lossless / modular path only).
+    /// Mirrors libjxl `cjxl -g 0..3` / `cparams.modular_group_size_shift`.
+    /// The value is the `group_size_shift` written into the frame
+    /// header; group dimension = `128 << shift` pixels:
+    /// `0`=128, `1`=256 (default), `2`=512, `3`=1024.
+    /// `None` (omitted flag) keeps the existing 256-pixel default so
+    /// bitstreams are unchanged. Ignored on VarDCT (lossy) encodes —
+    /// libjxl and this encoder both fix VarDCT groups at 256 pixels.
+    #[arg(short = 'g', long, value_name = "SHIFT", value_parser = clap::value_parser!(u8).range(0..=3))]
+    modular_group_size: Option<u8>,
+
     /// Container-wrap policy. Mirrors libjxl `cjxl --container 0|1`.
     /// `-1` = auto (default: wrap only when metadata or codestream
     /// level requires it). `0` = never wrap (bare codestream — drops
@@ -873,6 +884,7 @@ fn main() {
                         );
                         lcfg = lcfg.with_modular_nb_prev_channels(args.modular_nb_prev_channels);
                         lcfg = lcfg.with_faster_decoding(args.faster_decoding);
+                        lcfg = lcfg.with_modular_group_size(args.modular_group_size);
                         lcfg = lcfg.with_container_mode(container_mode_from_cli(args.container));
                         lcfg
                     }
@@ -1387,6 +1399,7 @@ fn main() {
             .with_modular_channel_colors_group_percent(args.modular_channel_colors_group_percent);
         cfg = cfg.with_modular_nb_prev_channels(args.modular_nb_prev_channels);
         cfg = cfg.with_faster_decoding(args.faster_decoding);
+        cfg = cfg.with_modular_group_size(args.modular_group_size);
         cfg = cfg.with_container_mode(container_mode_from_cli(args.container));
         let cfg = cfg;
 
