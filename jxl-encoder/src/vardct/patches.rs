@@ -292,45 +292,42 @@ impl PatchesData {
     ///
     /// # Calibration of the per-pixel savings constant
     ///
-    /// The model is `savings_est = total_patch_pixels * C / max(distance, 1.0)`
+    /// The model is `savings_est = total_patch_pixels * C / sqrt(max(distance, 1.0))`
     /// where `C` is the empirical bytes-per-pixel savings constant.
     ///
     /// The W5-5 bench (RFC#45 pick #5 chunk 3, commit `f230dd1`) found that
-    /// the previous `C = 0.3` value UNDER-estimated actual savings by 3-5×.
-    /// Concrete example: `windows95.png` at d=0.5 has total_patch_pixels =
-    /// 22851 and the model predicted 22851 / 1.0 * 0.3 = 6855 B of saving,
-    /// yet patches-on vs patches-off measured 25693 B (~3.75× more). With
-    /// the `2× safety margin` baked in (`effective` requires `savings_est >=
-    /// 2 * total_overhead`), `C = 0.3` rejected every truly-winning case
-    /// where the ref-frame overhead crossed ~3-4 KB.
+    /// the previous `C = 0.3` value with the `1/max(d,1.0)` divisor
+    /// UNDER-estimated actual savings by 3-5×. Concrete example:
+    /// `windows95.png` at d=0.5 has total_patch_pixels = 22851 and the
+    /// model predicted 22851 / 1.0 * 0.3 = 6855 B of saving, yet
+    /// patches-on vs patches-off measured 25693 B (~3.75× more). With
+    /// the `2× safety margin` baked in (`effective` requires
+    /// `savings_est >= 2 * total_overhead`), `C = 0.3` rejected every
+    /// truly-winning case where the ref-frame overhead crossed ~3-4 KB.
     ///
-    /// RFC#45 chunk 4 (this commit) re-fit `C` from a paired
-    /// patches-on/off trial-encode sweep over 5 screenshots × 4 distances
-    /// (gb82-sc: `windows95.png`, `terminal.png`, `codec_wiki.png`,
-    /// `imac_g3.png`, `windows.png`; distances {0.5, 1.0, 2.0, 4.0}),
-    /// computing `empirical_bpp_d_clamped = actual_savings *
-    /// max(d, 1.0) / total_patch_pixels` on each cell. See
-    /// `examples/patches_savings_calibrate.rs` for the harness and
-    /// `benchmarks/patches_savings_calibrate_2026-05-17.{tsv,meta}` for
-    /// the raw numbers.
+    /// RFC#45 chunk 4 (commit `420eb43`) re-fit `C` to 1.0 keeping the
+    /// `1/max(d,1.0)` shape. That fixed admission at low/mid distances
+    /// but exposed a model-shape mismatch at high d: actual
+    /// `empirical_bpp_d_clamped` (which would be flat under a pure `1/d`
+    /// model) rises with d on every gb82-sc screenshot — savings fall
+    /// off slower than `1/d`. Means by distance: d=0.5 → 0.97,
+    /// d=1.0 → 0.90, d=2.0 → 1.30, d=4.0 → 1.64. The chunk-4 gate
+    /// still rejected every d=4.0 cell despite real wins.
     ///
-    /// Distribution of the 20 measured cells:
-    /// `min = 0.459` (codec_wiki d=1.0), `p25 = 0.634`, `median = 0.948`,
-    /// `mean = 1.200`, `p75 = 1.647`, `max = 3.584` (windows95 d=4.0).
-    /// The geometric-mean best fit for the current `1 / max(d, 1.0)`
-    /// model shape is `C = 1.014`; we round to `C = 1.0`.
+    /// RFC#45 chunk 5 (this commit) switches the divisor to
+    /// `sqrt(max(d, 1.0))`. Under that shape we refit the geometric mean
+    /// over the same 20-cell sweep (5 screenshots × 4 distances): the
+    /// new empirical bytes-per-pixel-per-sqrt(d_clamped) constant is
+    /// `geomean(actual_savings * sqrt(max(d,1.0)) / pixels) = 0.78`.
+    /// We round to **`C = 0.78`**.
     ///
-    /// Why not the worst-case lower bound (`C = 0.5`)? The `2×` factor in
-    /// `savings_est >= 2 * total_overhead` already encodes a "predicted
-    /// savings ≥ 2× overhead" safety margin. With `C = 1.0`, the gate
-    /// admits when `pixels / d_clamp >= 2 * overhead`; even at the worst
-    /// observed empirical `bpp_d_clamped = 0.46`, actual savings are
-    /// `pixels * 0.46 / d_clamp >= 2 * 0.46 * overhead = 0.92 * overhead`
-    /// — borderline-positive instead of the 3-4× under-margin the old
-    /// `C = 0.3` produced. The single empirically losing case in the
-    /// 20-cell sweep would still get the benefit of the trial-encoded
-    /// `ref_overhead` (not pessimistic) being accurate; on photos the
-    /// detector returns `None` upstream so the gate never fires there.
+    /// Distribution of the 20 measured cells under the new shape:
+    /// `min = 0.27` (codec_wiki d=4.0), `p25 = 0.54`, `median = 0.68`,
+    /// `mean = 0.90`, `p75 = 1.34`, `max = 1.79` (windows95 d=4.0).
+    /// Both the old (`C=1.0, 1/d`) and new (`C=0.78, 1/sqrt(d)`) models
+    /// have near-zero R² vs a pure constant predictor across the
+    /// per-image variance; the new model's win is shape (no high-d
+    /// under-prediction) not residual variance.
     ///
     /// # Notes
     ///
@@ -339,18 +336,19 @@ impl PatchesData {
     ///   the default `EncoderMode::Reference` path runs the per-patch
     ///   gate (`apply_per_patch_cost_gate`) instead. See RFC#45 chunk 3
     ///   doc-comment on that function for the per-patch calibration.
-    /// * The divisor `max(distance, 1.0)` clamps low-d behaviour — the
-    ///   quantizer at d=0.5 is already fine enough that the per-pixel
-    ///   savings does not double vs d=1.0 the way a literal `1/d` model
-    ///   would predict (empirical d=0.5 mean is 0.97 bpp; d=1.0 mean is
-    ///   0.90 bpp — essentially flat, then the divisor takes over from
-    ///   d=2.0 onward).
-    /// * The model under-fits at high d (actual `bpp_d_clamped` rises
-    ///   from 0.95 at d=1.0 to 1.64 at d=4.0 — savings fall off slower
-    ///   than `1/d`). A `1/sqrt(d)` divisor fits slightly better
-    ///   (geomean C=0.78, R²=0.34 vs current R²<0), but keeping the
-    ///   current shape avoids re-litigating the W3-1 low-d regression
-    ///   path. Future work: replace with `1 / sqrt(max(d, 1.0))`.
+    /// * The divisor `sqrt(max(distance, 1.0))` keeps the low-d clamp
+    ///   (the quantizer at d=0.5 is already fine enough that per-pixel
+    ///   savings do not double vs d=1.0) while admitting patches at high
+    ///   d where the chunk-4 `1/d` divisor was over-pessimistic. At
+    ///   d=4.0 the new model estimates `pixels * 0.78 / 2 = pixels *
+    ///   0.39` bytes of saving (chunk-4 estimated `pixels * 1.0 / 4 =
+    ///   pixels * 0.25`), a 56% lift exactly where chunk-4 was rejecting
+    ///   real wins.
+    /// * The geomean-fit `C = 0.78` is intentionally lower than the
+    ///   chunk-4 `C = 1.0` because the `1/sqrt(d)` divisor itself is
+    ///   larger than `1/d` everywhere above d=1.0; the product
+    ///   `C/sqrt(d)` ends up close to the actual bpp curve where
+    ///   chunk-4's `1.0/d` was diverging downward.
     pub fn is_cost_effective(&self, distance: f32, use_ans: bool) -> bool {
         let ref_overhead = trial_encode_ref_frame_bytes(self, use_ans);
         if ref_overhead == usize::MAX {
@@ -368,16 +366,19 @@ impl PatchesData {
                 (rp.xsize as usize) * (rp.ysize as usize)
             })
             .sum();
-        // C = 1.0 bytes per patch-pixel (RFC#45 chunk 4 recalibration —
-        // see doc-comment above). Geometric-mean fit of measured
-        // patches-on vs patches-off byte deltas over 5 screenshots × 4
-        // distances; median observed `empirical_bpp_d_clamped` = 0.95.
-        // Previous `C = 0.3` under-estimated by ~3.16× (median ratio) and
-        // up to 12× on the highest-savings cells, defeating the 2× safety
-        // margin and rejecting every winning case where overhead > 3-4 KB.
-        const SAVINGS_BYTES_PER_PIXEL: f64 = 1.0;
-        let savings_est = (total_patch_pixels as f64 / (distance.max(1.0) as f64)
-            * SAVINGS_BYTES_PER_PIXEL) as usize;
+        // C = 0.78 bytes per patch-pixel under the `1/sqrt(d_clamped)`
+        // shape (RFC#45 chunk 5 recalibration — see doc-comment above).
+        // Geometric-mean fit `actual_savings * sqrt(max(d,1.0)) / pixels`
+        // over the same 20-cell sweep used in chunk 4
+        // (`benchmarks/patches_savings_calibrate_2026-05-17.tsv`).
+        // Chunk 4's `C=1.0` with `1/d` divisor under-estimated savings at
+        // d>=2.0 (empirical bpp_d_clamped rises from 0.90 at d=1.0 to
+        // 1.64 at d=4.0, so a pure `1/d` divisor under-shoots by
+        // increasing margin); `1/sqrt(d)` tracks the empirical curve.
+        const SAVINGS_BYTES_PER_PIXEL: f64 = 0.78;
+        let d_clamped = (distance.max(1.0) as f64).sqrt();
+        let savings_est =
+            (total_patch_pixels as f64 / d_clamped * SAVINGS_BYTES_PER_PIXEL) as usize;
         let effective = savings_est >= 2 * total_overhead;
         #[cfg(feature = "debug-tokens")]
         eprintln!(
