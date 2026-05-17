@@ -415,6 +415,29 @@ pub struct EffortProfile {
     /// kept separate). Callers opt in via the `__expert` lossless
     /// override; sweep harnesses re-bake hash-locks when they do.
     pub gather_dedup: bool,
+    /// Phase 3 of issue #41 — switch gather-time dedup to the
+    /// inline-fingerprint cuckoo table
+    /// (`crate::modular::inline_dedup_table::InlineDedupTable`) instead of
+    /// Phase 2's [`Self::gather_dedup`] SoA-indexed table.
+    ///
+    /// Only meaningful when [`Self::gather_dedup`] is also `true`: the
+    /// switch happens inside `gather_samples_strided_with_dedup`, where
+    /// Phase 2 builds a `GatherDedupTable` and Phase 3 builds an
+    /// `InlineDedupTable` instead. Both produce the same unique-set
+    /// semantics (strict superset of the post-sort merge); the
+    /// post-`pre_quantize` sort pass collapses the difference downstream.
+    /// Hash-locks therefore stay the same as Phase 2's locked variant —
+    /// the post-sort arbiter remains the final byte-determinant.
+    ///
+    /// Default `false`. Callers opt in via the `__expert` lossless
+    /// override (`LosslessInternalParams::gather_dedup_phase3`).
+    ///
+    /// The microbench (`benches/dedup_samples_strategies.rs`,
+    /// `benchmarks/inline_dedup_microbench_2026-05-17.txt`) shows
+    /// +36 %-53 % gather-throughput vs Phase 1 on high-duplication
+    /// streams; real-photo gather payoff depends on spatial duplication
+    /// ratios and is decided by Chunk 2's end-to-end A/B at e7 / 1.05 MP.
+    pub gather_dedup_phase3: bool,
 
     // ─── Parallel tree-learning tuning ────────────────────────────────────
     // Read by `modular/tree_learn.rs` (gated on
@@ -593,6 +616,11 @@ impl EffortProfile {
             // via the __expert lossless override when sweep harnesses
             // are ready to re-bake hash_lock sidecars.
             gather_dedup: false,
+            // Default OFF: Phase 3 inline-fingerprint dedup is opt-in
+            // (the post-sort arbiter keeps hash-locks stable, but the
+            // gather-time table layout switch is still a perf-only
+            // override decided by Chunk 2's end-to-end A/B).
+            gather_dedup_phase3: false,
 
             // Parallel-tree-learning fanout (only used on the lossless
             // path, but set on the lossy profile too for shape parity).
@@ -706,6 +734,11 @@ impl EffortProfile {
             // via the __expert lossless override when sweep harnesses
             // are ready to re-bake hash_lock sidecars.
             gather_dedup: false,
+            // Default OFF: Phase 3 inline-fingerprint dedup is opt-in
+            // (the post-sort arbiter keeps hash-locks stable, but the
+            // gather-time table layout switch is still a perf-only
+            // override decided by Chunk 2's end-to-end A/B).
+            gather_dedup_phase3: false,
 
             // Parallel-tree-learning fanout. e8/e9 trees are larger and
             // the per-leaf work is heavier — deeper fanout + lower floor
@@ -1000,6 +1033,26 @@ pub struct LosslessInternalParams {
     /// be re-baked when sweep harnesses enable this.
     pub gather_dedup: Option<bool>,
 
+    /// Phase 3 of issue #41 — when [`Self::gather_dedup`] is `Some(true)`,
+    /// route the gather-time dedup through
+    /// `crate::modular::inline_dedup_table::InlineDedupTable` instead of
+    /// Phase 2's [`crate::modular::tree_learn::GatherDedupTable`].
+    ///
+    /// `Some(true)` enables the inline-fingerprint cuckoo table; `Some(false)`
+    /// stays on the Phase 2 (SoA-indexed) table; `None` leaves the
+    /// effort-profile default (always `false` today; see
+    /// [`EffortProfile::gather_dedup_phase3`]).
+    ///
+    /// Has no effect unless [`Self::gather_dedup`] also routes traffic into
+    /// the gather-time dedup path; gather-time dedup is a prerequisite.
+    ///
+    /// Hash-locks behave identically to Phase 2 (the post-`pre_quantize`
+    /// sort path remains the byte-determining arbiter), so flipping this
+    /// switch on top of an already-enabled `gather_dedup` does NOT require
+    /// re-baking hash_lock sidecars — but it DOES change end-to-end
+    /// wall-clock, which is the only reason to use it.
+    pub gather_dedup_phase3: Option<bool>,
+
     /// Maximum depth of parallel recursion in the tree learner
     /// (`tree_learn.rs` `build_subtree_recursive_parallel_borrowed`).
     /// `2^depth` is the upper bound on parallel leaf tasks.
@@ -1096,6 +1149,7 @@ impl LosslessInternalParams {
             tree_max_samples_fixed,
             use_streaming_dedup,
             gather_dedup,
+            gather_dedup_phase3,
             tree_parallel_max_depth,
             tree_parallel_floor,
             tree_parallel_root_threshold,
@@ -1129,6 +1183,9 @@ impl LosslessInternalParams {
         }
         if let Some(v) = gather_dedup {
             profile.gather_dedup = v;
+        }
+        if let Some(v) = gather_dedup_phase3 {
+            profile.gather_dedup_phase3 = v;
         }
         if let Some(v) = tree_parallel_max_depth {
             profile.tree_parallel_max_depth = v;

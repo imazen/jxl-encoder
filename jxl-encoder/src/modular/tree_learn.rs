@@ -184,6 +184,15 @@ pub struct TreeLearningParams {
     /// the hash-lock sidecars; the sort path remains the byte-identical
     /// default.
     pub gather_dedup: bool,
+    /// Phase 3 of issue #41 — when [`Self::gather_dedup`] is also `true`,
+    /// route the gather-time dedup table through
+    /// [`crate::modular::inline_dedup_table::InlineDedupTable`] instead of
+    /// [`GatherDedupTable`]. The post-sort arbiter (`dedup_samples`) still
+    /// runs, so bitstream hash-locks stay byte-identical to Phase 2's
+    /// gather-dedup baseline.
+    ///
+    /// Default `false`. Has no effect when `gather_dedup` is `false`.
+    pub gather_dedup_phase3: bool,
     /// Maximum depth of parallel recursion in the borrowed-view subtree
     /// builder (`build_subtree_recursive_parallel_borrowed`).
     /// `2^depth` is the upper bound on parallel leaf tasks.
@@ -257,6 +266,7 @@ impl TreeLearningParams {
             pixel_fraction: 1.0,
             use_streaming_dedup: profile.use_streaming_dedup,
             gather_dedup: profile.gather_dedup,
+            gather_dedup_phase3: profile.gather_dedup_phase3,
             parallel_max_depth: profile.tree_parallel_max_depth,
             parallel_recursion_floor: profile.tree_parallel_floor,
             parallel_root_threshold: profile.tree_parallel_root_threshold,
@@ -303,6 +313,7 @@ impl TreeLearningParams {
             pixel_fraction: 1.0,
             use_streaming_dedup: false,
             gather_dedup: false,
+            gather_dedup_phase3: false,
             parallel_max_depth,
             parallel_recursion_floor,
             parallel_root_threshold,
@@ -810,6 +821,9 @@ pub(crate) fn gather_samples_strided_with_budget(
 /// gather-time merge stays at-or-below the post-sort merge in
 /// aggressiveness). Pass an empty slice for the legacy "hash all
 /// non-y/x properties" mode.
+///
+/// Defers to [`gather_samples_strided_with_dedup_backend`] with
+/// `enable_phase3 = false` (Phase 2 backend selected unconditionally).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn gather_samples_strided_with_dedup(
     samples: &mut TreeSamples,
@@ -820,6 +834,48 @@ pub(crate) fn gather_samples_strided_with_dedup(
     wp_params: &WeightedPredictorParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     enable_gather_dedup: bool,
+    dedup_properties: &[usize],
+) -> crate::error::Result<()> {
+    gather_samples_strided_with_dedup_backend(
+        samples,
+        image,
+        group_id,
+        channel_offset,
+        stride,
+        wp_params,
+        budget,
+        enable_gather_dedup,
+        false,
+        dedup_properties,
+    )
+}
+
+/// Backend-selectable variant of [`gather_samples_strided_with_dedup`].
+///
+/// `enable_phase3` chooses [`InlineDedupTable`] (Phase 3 of issue #41)
+/// over [`GatherDedupTable`] (Phase 2). Has no effect when
+/// `enable_gather_dedup` is `false` (no gather-time dedup runs at all).
+///
+/// The Phase 3 table only activates when the local-key packing fits the
+/// [`crate::modular::inline_dedup_table::KEY_BYTES`] budget
+/// (`2 * num_pred + 4 * num_properties_hashed`). At e7 RGB this is
+/// `28 + 4 * 9 = 64` bytes — exact fit. At e9 RGB this would be
+/// `28 + 4 * 24 = 124` bytes (overflow), so the dispatcher falls back to
+/// Phase 2 at construction time to avoid silently over-merging
+/// bit-different samples. The runtime probe also re-checks the budget
+/// per-sample for the squeeze / ref-channel-heavy paths where the
+/// upper-bound estimate may not be tight.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn gather_samples_strided_with_dedup_backend(
+    samples: &mut TreeSamples,
+    image: &ModularImage,
+    group_id: u32,
+    channel_offset: u32,
+    stride: usize,
+    wp_params: &WeightedPredictorParams,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    enable_gather_dedup: bool,
+    enable_phase3: bool,
     dedup_properties: &[usize],
 ) -> crate::error::Result<()> {
     if !enable_gather_dedup {
@@ -843,21 +899,113 @@ pub(crate) fn gather_samples_strided_with_dedup(
         .map(|c| c.width().saturating_mul(c.height()))
         .sum();
     let est_samples = total_pixels.div_ceil(stride.max(1)).max(1);
-    let mut table = if dedup_properties.is_empty() {
-        GatherDedupTable::new(est_samples)
+
+    // Phase 3 fits the inline-key budget only when
+    //   2 * max_num_predictors + 4 * num_properties_hashed <= KEY_BYTES.
+    // num_predictors is the candidate-list length on `samples`; the
+    // property list passed in is what each channel's gather will hash.
+    // When the upper bound overflows we silently fall back to Phase 2 —
+    // the post-sort arbiter still produces correct bitstream output, so
+    // the only consequence is "no Phase 3 win on this image".
+    let num_pred_max = samples.num_predictors();
+    // Phase 3 hashes the same y/x-skipped property subset Phase 2 uses;
+    // the construction filters at `new_with_properties` (Phase 2) and at
+    // `properties_kept_for_phase3` (Phase 3) so both backends see the
+    // same hashed-property count.
+    let num_props_hashed = properties_kept_for_phase3(dedup_properties).len();
+    let phase3_fits = phase3_packing_fits(num_pred_max, num_props_hashed);
+    let use_phase3 = enable_phase3 && phase3_fits;
+
+    if use_phase3 {
+        let mut table =
+            crate::modular::inline_dedup_table::InlineDedupTable::new(est_samples);
+        let hashed_props: Vec<u8> = properties_kept_for_phase3(dedup_properties);
+        gather_samples_strided_with_budget_inner_backend(
+            samples,
+            image,
+            group_id,
+            channel_offset,
+            stride,
+            wp_params,
+            budget,
+            Some(GatherDedupBackend::Phase3 {
+                table: &mut table,
+                properties: &hashed_props,
+            }),
+        )
     } else {
-        GatherDedupTable::new_with_properties(est_samples, dedup_properties)
-    };
-    gather_samples_strided_with_budget_inner(
-        samples,
-        image,
-        group_id,
-        channel_offset,
-        stride,
-        wp_params,
-        budget,
-        Some(&mut table),
-    )
+        let mut table = if dedup_properties.is_empty() {
+            GatherDedupTable::new(est_samples)
+        } else {
+            GatherDedupTable::new_with_properties(est_samples, dedup_properties)
+        };
+        gather_samples_strided_with_budget_inner_backend(
+            samples,
+            image,
+            group_id,
+            channel_offset,
+            stride,
+            wp_params,
+            budget,
+            Some(GatherDedupBackend::Phase2(&mut table)),
+        )
+    }
+}
+
+/// Filter `dedup_properties` the same way [`GatherDedupTable::new_with_properties`]
+/// does — drop slots that `skip_prop_for_gather_dedup` rejects (the static
+/// y/x coordinates) and downcast to `u8`. Built once per gather call so
+/// the hot loop's match arm reads from this slice rather than re-running
+/// the filter per sample.
+#[inline]
+fn properties_kept_for_phase3(properties: &[usize]) -> Vec<u8> {
+    let mut kept = Vec::with_capacity(properties.len());
+    for &p in properties {
+        if !skip_prop_for_gather_dedup(p) {
+            debug_assert!(p < 256, "property index {p} exceeds u8 range");
+            kept.push(p as u8);
+        }
+    }
+    kept
+}
+
+/// Pure-function precondition test for Phase 3 inline-key packing
+/// (issue #41). Returns `true` when the per-sample key
+/// `2 * num_pred + 4 * num_props_hashed` bytes fits the
+/// [`crate::modular::inline_dedup_table::KEY_BYTES`] budget. Used at
+/// `gather_samples_strided_with_dedup_backend` construction time to pick
+/// the backend; mirrored at runtime per-sample by `pack_local_key_phase3`'s
+/// `LocalKeyPackResult::Overflow`.
+#[inline]
+fn phase3_packing_fits(num_pred: usize, num_props_hashed: usize) -> bool {
+    let bytes_needed = num_pred
+        .saturating_mul(2)
+        .saturating_add(num_props_hashed.saturating_mul(4));
+    bytes_needed <= crate::modular::inline_dedup_table::KEY_BYTES
+}
+
+/// Backend dispatch enum for [`gather_channel_samples`]. Holds a mutable
+/// reference to either Phase 2's [`GatherDedupTable`] or Phase 3's
+/// [`crate::modular::inline_dedup_table::InlineDedupTable`] along with
+/// the property list Phase 3 needs to pack its inline key.
+///
+/// Lifetime `'a` is tied to the per-call table allocated in
+/// [`gather_samples_strided_with_dedup_backend`]; both arms are short-lived
+/// and exist only for the duration of the gather pass.
+///
+/// Hot-loop dispatch cost: one byte-tag match per sample (well-predicted
+/// branch, single cmov on x86-64). Effectively free compared to the cuckoo
+/// probe inside each arm.
+pub(crate) enum GatherDedupBackend<'a> {
+    /// Phase 2 backend (commit 63e5ea2): SoA-indexed two-hash cuckoo table.
+    Phase2(&'a mut GatherDedupTable),
+    /// Phase 3 backend (commit 36a7a73): fingerprint-cached inline-key
+    /// cuckoo table. `properties` is the y/x-skipped property list the
+    /// inline key packs (matches Phase 2's `GatherDedupTable.properties`).
+    Phase3 {
+        table: &'a mut crate::modular::inline_dedup_table::InlineDedupTable,
+        properties: &'a [u8],
+    },
 }
 
 /// `gather_samples_strided_with_budget` plus an optional gather-time
@@ -868,6 +1016,9 @@ pub(crate) fn gather_samples_strided_with_dedup(
 /// (`GatherDedupTable::new`) from an upper-bound sample estimate; the
 /// caller is responsible for picking a power-of-two cap large enough
 /// to keep load < 2/3 throughout the gather.
+///
+/// Thin wrapper over [`gather_samples_strided_with_budget_inner_backend`]
+/// that wraps the Phase 2 table in [`GatherDedupBackend::Phase2`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn gather_samples_strided_with_budget_inner(
     samples: &mut TreeSamples,
@@ -877,7 +1028,33 @@ pub(crate) fn gather_samples_strided_with_budget_inner(
     stride: usize,
     wp_params: &WeightedPredictorParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
-    mut dedup_table: Option<&mut GatherDedupTable>,
+    dedup_table: Option<&mut GatherDedupTable>,
+) -> crate::error::Result<()> {
+    gather_samples_strided_with_budget_inner_backend(
+        samples,
+        image,
+        group_id,
+        channel_offset,
+        stride,
+        wp_params,
+        budget,
+        dedup_table.map(GatherDedupBackend::Phase2),
+    )
+}
+
+/// Backend-aware variant of [`gather_samples_strided_with_budget_inner`]
+/// that dispatches into either Phase 2 or Phase 3 of issue #41 based on
+/// the [`GatherDedupBackend`] variant supplied.
+#[allow(clippy::too_many_arguments)]
+fn gather_samples_strided_with_budget_inner_backend(
+    samples: &mut TreeSamples,
+    image: &ModularImage,
+    group_id: u32,
+    channel_offset: u32,
+    stride: usize,
+    wp_params: &WeightedPredictorParams,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    mut dedup_backend: Option<GatherDedupBackend<'_>>,
 ) -> crate::error::Result<()> {
     for (ch_idx, channel) in image.channels.iter().enumerate() {
         // Find reference channels for this channel (preceding channels with matching dims)
@@ -897,7 +1074,19 @@ pub(crate) fn gather_samples_strided_with_budget_inner(
             image,
             &ref_channel_indices,
             budget,
-            dedup_table.as_deref_mut(),
+            // Re-borrow the backend per-channel so it threads through
+            // every channel in the image. The Phase 2 and Phase 3 tables
+            // both accumulate state across channels so cross-channel
+            // duplicates merge into the same unique row.
+            dedup_backend.as_mut().map(|b| match b {
+                GatherDedupBackend::Phase2(t) => GatherDedupBackend::Phase2(t),
+                GatherDedupBackend::Phase3 { table, properties } => {
+                    GatherDedupBackend::Phase3 {
+                        table,
+                        properties,
+                    }
+                }
+            }),
         )?;
     }
     Ok(())
@@ -941,12 +1130,22 @@ pub fn compute_gather_stride_from_profile(
 /// `ref_channel_indices` contains indices into `image.channels` of preceding channels
 /// with matching dimensions. For each ref channel, 4 properties are computed per pixel.
 ///
-/// `dedup_table`: when `Some(_)`, each pushed sample is immediately probed
+/// `dedup_backend`: when `Some(_)`, each pushed sample is immediately probed
 /// against the table; duplicates are popped back from the SoA columns and
 /// the existing unique sample's `sample_counts` entry is bumped. The table
 /// is passed by `&mut` because it accumulates state across all channels
 /// gathered into the same `TreeSamples` (libjxl `AddSample` parity,
 /// `enc_ma.cc:711`).
+///
+/// The backend enum chooses between Phase 2 ([`GatherDedupTable`] —
+/// SoA-indexed cuckoo, default when [`TreeLearningParams::gather_dedup`]
+/// is on) and Phase 3 ([`InlineDedupTable`] — fingerprint-cached inline-key
+/// cuckoo, opt-in via [`TreeLearningParams::gather_dedup_phase3`]). See
+/// [`GatherDedupBackend`] for the full contract — both variants produce a
+/// strict superset of the post-sort bucket-equivalence set, so the
+/// `dedup_samples` arbiter that runs after gather still owns the final
+/// byte-determining unique set and hash-locks stay byte-identical when
+/// the knob defaults are unchanged.
 #[allow(clippy::too_many_arguments)]
 fn gather_channel_samples(
     samples: &mut TreeSamples,
@@ -958,7 +1157,7 @@ fn gather_channel_samples(
     image: &ModularImage,
     ref_channel_indices: &[usize],
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
-    dedup_table: Option<&mut GatherDedupTable>,
+    dedup_backend: Option<GatherDedupBackend<'_>>,
 ) -> crate::error::Result<()> {
     let width = channel.width();
     let height = channel.height();
@@ -983,7 +1182,7 @@ fn gather_channel_samples(
     let total_props = samples.total_num_properties();
     // Detach the optional borrow so each `add` step can decide whether to
     // call `try_merge_last` without re-asking for the option.
-    let mut dedup_table = dedup_table;
+    let mut dedup_backend = dedup_backend;
 
     // Stack scratch for accumulating per-sample fields before the SoA
     // push. Lets the dedup hash read from registers / L1 instead of
@@ -1078,25 +1277,83 @@ fn gather_channel_samples(
                     // local_ref_props initialisation.
                 }
 
-                // Phase 2 of issue #41: probe the dedup table BEFORE
-                // pushing to SoA columns. The hash reads from registers
-                // (the just-computed local arrays), not from the heap
-                // — that's the cache-cost difference Phase 1 missed.
-                // On a hit we still need to compare against the existing
-                // unique row (cold reads of one historical row, which
-                // amortises across many merges as the cuckoo table
-                // points repeat-pattern samples to the same slot).
-                if let Some(ref mut tbl) = dedup_table
-                    && let Some(existing) = tbl.try_merge_local(
+                // Probe the dedup backend BEFORE pushing to SoA columns.
+                // The hash reads from registers (the just-computed local
+                // arrays), not from the heap — that's the cache-cost
+                // difference Phase 1 missed. On a hit we still need to
+                // compare against the existing unique row (cold reads of
+                // one historical row, which amortises across many merges
+                // as the cuckoo table points repeat-pattern samples to
+                // the same slot).
+                //
+                // Backend dispatch (issue #41, Phase 2 vs Phase 3):
+                //   * [`GatherDedupBackend::Phase2`]: Phase 2's
+                //     [`GatherDedupTable`] — SoA-indexed cuckoo; the
+                //     verify on cuckoo-slot collision chases SoA columns.
+                //   * [`GatherDedupBackend::Phase3`]: Phase 3's
+                //     [`InlineDedupTable`] — fingerprint-cached cuckoo
+                //     with canonical key stored inline; the verify reads
+                //     only `unique_keys[i]` (single cacheline) instead of
+                //     chasing the parallel SoA arrays.
+                //
+                // Both produce a strict superset of the post-sort
+                // bucket-equivalence set (the post-`pre_quantize` arbiter
+                // collapses any extra rows); hash-locks therefore stay
+                // stable when either knob flips.
+                let merge_hit = match dedup_backend.as_mut() {
+                    Some(GatherDedupBackend::Phase2(tbl)) => tbl.try_merge_local(
                         samples,
                         &local_tokens[..num_pred],
                         &local_ebits[..num_pred],
                         &props,
                         &local_ref_props[..4 * max_refs],
-                    )
-                {
+                    ),
+                    Some(GatherDedupBackend::Phase3 { table, properties }) => {
+                        match super::inline_dedup_table::pack_local_key_phase3(
+                            &local_tokens[..num_pred],
+                            &local_ebits[..num_pred],
+                            &props,
+                            &local_ref_props[..4 * max_refs],
+                            properties,
+                            NUM_PROPERTIES,
+                        ) {
+                            super::inline_dedup_table::LocalKeyPackResult::Packed(key) => {
+                                // `next_index` here is purely a sentinel
+                                // check — the table assigns its own
+                                // canonical-key indices. We pass
+                                // `samples.num_samples` so debug builds
+                                // catch the SLOT_EMPTY-as-fresh-id edge.
+                                let probe_idx =
+                                    (samples.num_samples as u32).min(u32::MAX - 1);
+                                table.lookup_or_insert(&key, probe_idx)
+                            }
+                            super::inline_dedup_table::LocalKeyPackResult::Overflow => {
+                                // Phase 3 packing budget exceeded; treat
+                                // as miss (no merge). The post-sort
+                                // dedup still collapses bucket-equivalent
+                                // rows downstream, so output stays
+                                // correct — just no gather-time merge
+                                // for this row. The `gather_samples_strided_with_dedup`
+                                // dispatcher prevents this from being a
+                                // hot path by falling back to Phase 2 at
+                                // construction time when the worst-case
+                                // packing wouldn't fit.
+                                None
+                            }
+                        }
+                    }
+                    None => None,
+                };
+                if let Some(existing) = merge_hit {
                     // Hit: bump the existing unique row's count and
                     // skip the SoA push entirely.
+                    //
+                    // Phase 2 indexes `sample_counts` by the SoA row
+                    // index it stored in the cuckoo slot. Phase 3 returns
+                    // an index into its own canonical-key array, which is
+                    // identical to the SoA row index because both grow
+                    // in lockstep with `num_samples` (and we never
+                    // pop_back in the local-probe path).
                     samples.sample_counts[existing as usize] += 1;
                     subsample_counter = stride - 1;
                     continue;
@@ -1127,12 +1384,17 @@ fn gather_channel_samples(
                 }
                 samples.num_samples += 1;
                 // Seed the new unique row's count when dedup is active.
-                if dedup_table.is_some() {
+                // For Phase 3 the table already pushed the canonical key
+                // on the inner `lookup_or_insert` miss (no extra work);
+                // for Phase 2 we explicitly call `insert_last` to wire
+                // the cuckoo slot to the SoA row index we just pushed.
+                if dedup_backend.is_some() {
                     samples.sample_counts.push(1);
-                    // Insert the just-pushed sample into the table so
-                    // future samples can probe against it. Reads are
-                    // cache-hot (we just pushed).
-                    if let Some(ref mut tbl) = dedup_table {
+                    if let Some(GatherDedupBackend::Phase2(ref mut tbl)) = dedup_backend {
+                        // Reads are cache-hot (we just pushed). Phase 3
+                        // does NOT need this — the canonical key was
+                        // already stored on the miss path inside
+                        // `lookup_or_insert`.
                         tbl.insert_last(samples, num_pred, total_props);
                     }
                 }
@@ -1140,7 +1402,8 @@ fn gather_channel_samples(
                 // hash table never inserts and sample_counts stays
                 // empty; when dedup is ON, both stay in lockstep.
                 debug_assert!(
-                    dedup_table.is_none() || samples.sample_counts.len() == samples.num_samples,
+                    dedup_backend.is_none()
+                        || samples.sample_counts.len() == samples.num_samples,
                 );
 
                 subsample_counter = stride - 1;
@@ -4916,19 +5179,105 @@ fn find_best_predictor(
     // Fan out across the `num_pred` candidates. Each task allocates its own
     // histogram buffer; reductions stay associative because we materialise
     // all costs and then pick the lowest-index minimum scalarly.
+    //
+    // Issue #23 chunk 3: extend predictor-pruning lb-skip into the parallel
+    // branch. A shared `AtomicU64` carries the best full cost seen by any
+    // worker so far (encoded as `f64::to_bits()`). Each worker:
+    //   (1) computes its extra-bits lower bound (cheap linear scan);
+    //   (2) reads the shared best (relaxed); skips the full eval if
+    //       `lb >= best`;
+    //   (3) otherwise runs `compute_predictor_entropy` and CAS-updates the
+    //       shared best with a strict-`<` discipline.
+    // Skipped slots emit `f64::INFINITY`, which loses every strict-`<`
+    // comparison in the post-fanout reduction below — so the lowest-index
+    // tie-break behavior of the sequential path is preserved exactly.
+    //
+    // ## Byte-identity argument
+    //
+    // The sequential reduction iterates `i in 0..num_pred` with strict `<`,
+    // i.e. winner = lowest index achieving the global min cost. Suppose a
+    // worker `i` is skipped here. The skip implies `lb[i] >= best_seen`,
+    // where `best_seen` is some full cost computed by a previously-completed
+    // worker `j` (possibly `j > i`). Since `lb[i] <= full[i]`, we have
+    // `full[i] >= best_seen`. Two sub-cases for the global min `m`:
+    //   * `full[i] > m`: `i` was never the winner anyway, so omission is safe.
+    //   * `full[i] == m`: then `best_seen <= m` AND `best_seen >= full[i] == m`,
+    //     so `best_seen == m`. Worker `j` therefore evaluated and recorded
+    //     cost `m`. If `j < i`, then `j` strictly beats `i` in the sequential
+    //     tie-break — winner unchanged. If `j > i`, then sequentially `i`
+    //     would have been visited first and won the tie-break. But the
+    //     atomic only carries `m` if some worker actually computed `m`
+    //     before `i` started its skip check; that worker has `full == m`
+    //     and `lb <= m`. Sequentially, if any index `k < i` also has
+    //     `full[k] == m`, then `pred = k` after step `k`, and `i`'s loop
+    //     pass with strict-`<` would not flip it — so the winner is `k`,
+    //     also `< i`, also in results (`k` is never skipped because the
+    //     atomic was MAX when `k` started). If no such `k` exists, then
+    //     sequentially `pred` first becomes `i`; for parallel to disagree
+    //     would require some `j > i` with `full[j] == m` to have stored
+    //     before `i` ran. But sequentially `j > i` does not update `pred`
+    //     under strict-`<`, so the answer is still `i`. The race that
+    //     skips `i` requires `full[j] < m` (impossible: `m` is the min) or
+    //     a `k < i` with `full[k] == m` (handled above) — so the only way
+    //     `i` is skipped is when a `k < i` already populated the atomic
+    //     with `m`, and `k < i` wins the tie-break in both orderings.
+    //
+    // ## Cost
+    //
+    // Atomic ops are relaxed loads + CAS; no fences. Each worker pays at
+    // most one CAS retry loop, bounded by the number of concurrent winners
+    // (typically 1-2). The LB compute is ~half the bytes of the full
+    // entropy compute — a worthwhile early-exit when the prune fires.
+    use core::sync::atomic::{AtomicU64, Ordering};
+    let best_atomic = AtomicU64::new(f64::MAX.to_bits());
     let costs: Vec<f64> = crate::parallel::parallel_map(num_pred, |pred_idx| {
+        let lb = predictor_extra_bits_lower_bound(
+            &samples.extra_bits[pred_idx],
+            &samples.sample_counts,
+            start,
+            end,
+        );
+        let current_best = f64::from_bits(best_atomic.load(Ordering::Relaxed));
+        if decide_predictor(lb, current_best) == PredictorDecision::Skip {
+            return f64::INFINITY;
+        }
         let mut local_counts = vec![0u32; histogram_size];
-        compute_predictor_entropy(
+        let bits = compute_predictor_entropy(
             samples,
             start,
             end,
             pred_idx,
             histogram_size,
             &mut local_counts,
-        )
+        );
+        // Strict-`<` CAS update so future workers can prune. The retry
+        // loop terminates when either (a) we successfully install our
+        // value, or (b) we observe a value `<= bits` and step aside.
+        let mut current_bits = best_atomic.load(Ordering::Relaxed);
+        loop {
+            let current = f64::from_bits(current_bits);
+            if bits >= current {
+                break;
+            }
+            match best_atomic.compare_exchange_weak(
+                current_bits,
+                bits.to_bits(),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current_bits = actual,
+            }
+        }
+        bits
     });
 
     // Tie-break: lowest index wins (strict `<`, same as the original loop).
+    // `f64::INFINITY` for skipped slots is `>= any finite cost`, so strict-`<`
+    // ensures it never wins. At least one worker always evaluates: the very
+    // first worker sees the sentinel `f64::MAX`, and any finite `lb < MAX`
+    // — including `lb == 0` — passes the strict-`<` check inside
+    // `decide_predictor`.
     let mut best_pred = 0;
     let mut best_bits = f64::MAX;
     for (i, &c) in costs.iter().enumerate() {

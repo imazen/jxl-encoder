@@ -317,7 +317,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
         compute_gather_stride_from_profile, gather_samples_strided,
-        gather_samples_strided_with_dedup, max_ref_channels,
+        gather_samples_strided_with_dedup_backend, max_ref_channels,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -372,6 +372,12 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     // aggressiveness — every gather-time match would also have collapsed
     // under the bucket-key sort, just possibly with other rows.
     let enable_gather_dedup = profile.gather_dedup;
+    // Phase 3 of issue #41: switch the gather-time dedup table to
+    // [`InlineDedupTable`]. Only meaningful when `enable_gather_dedup` is
+    // also `true` — the backend wrapper falls back to Phase 2 at
+    // construction time when the inline-key packing budget can't hold
+    // the configured property × predictor count.
+    let enable_phase3 = profile.gather_dedup_phase3;
     let dedup_properties: Vec<usize> = if enable_gather_dedup {
         // Borrow the same property list `compute_best_tree` will build
         // from this profile so the gather hash uses the same slot set.
@@ -387,7 +393,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         // Single image, so sequential — only one task's worth of work.
         if let Some(meta) = meta_image {
             if enable_gather_dedup {
-                let _ = gather_samples_strided_with_dedup(
+                let _ = gather_samples_strided_with_dedup_backend(
                     &mut samples,
                     meta,
                     0,
@@ -396,6 +402,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
                     &wp_params,
                     None,
                     true,
+                    enable_phase3,
                     &dedup_properties,
                 );
             } else {
@@ -417,7 +424,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
             crate::parallel::parallel_map(images.len(), |group_idx| {
                 let mut local = TreeSamples::new_with_ref_channels(num_refs);
                 if enable_gather_dedup {
-                    let _ = gather_samples_strided_with_dedup(
+                    let _ = gather_samples_strided_with_dedup_backend(
                         &mut local,
                         &images[group_idx],
                         group_idx as u32 + per_group_id_offset,
@@ -426,6 +433,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
                         &wp_params,
                         None,
                         true,
+                        enable_phase3,
                         &dedup_properties,
                     );
                 } else {
