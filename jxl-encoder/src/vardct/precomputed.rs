@@ -305,8 +305,18 @@ impl EncoderPrecomputed {
         // reference frame must store the PRE-gaborish patch values
         // (which is what `find_and_build` extracts from the
         // pre-gaborish XYB here).
+        // Distance-aware kMinPeak: libjxl parity (=2) below d=1.0,
+        // W2-5 chunk 1 relaxation (=1) at d>=1.0. See `vardct/encoder.rs`
+        // `encode_inner` (~line 745) for the regression that motivated this.
+        let min_peak = if distance < 1.0 { 2 } else { 1 };
         let mut patches_data = if enable_patches {
-            super::patches::find_and_build([&xyb_x, &xyb_y, &xyb_b], width, height, padded_width)
+            super::patches::find_and_build_with_min_peak(
+                [&xyb_x, &xyb_y, &xyb_b],
+                width,
+                height,
+                padded_width,
+                min_peak,
+            )
         } else {
             None
         };

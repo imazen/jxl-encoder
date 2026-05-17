@@ -1,0 +1,32 @@
+Bench: patches_kminpeak_low_d_2026-05-17
+Purpose: RFC#45 pick #5 chunk 2 — close the +465 byte regression W2-5 chunk 1 (7b8c06e) introduced on windows95.png @ d=0.5, while keeping the wins it produced at d=1.0/2.0.
+
+Date: 2026-05-17 (UTC)
+Host: lilith (AMD Ryzen 9 7950X, 128 GB RAM, water-cooled)
+Branch: jj patches-gate-fix workspace
+Base commit: b784c08394d3ba4318fbcd43467f669bd182dbcd (main@origin at commit time, "feat(container): colr alt color descriptor + hCdR HDR metadata boxes (A1 audit)")
+  Initial measurement was done against d0e4783804c77749d26d448883ca86d1b4d33755 ("feat(api): expand AnimationFrame ..."). The bench was reproduced byte-identical on the newer base.
+W2-5 chunk 1 reference: 7b8c06e08550578d118fd66f84527c72a24f1341
+
+Sweep grid:
+  Class: screenshot, photo (5 each)
+  Screenshots (gb82-sc): windows95, terminal, codec_wiki, imac_g3, windows
+  Photos (CID22 validation): 1025469, 1044329, 1189261, 1279330, 1418519
+  Distances: 0.5, 1.0, 2.0, 4.0
+  Encoder: jxl-encoder LossyConfig::new(d), default mode (Reference), default effort (7)
+
+Harness: jxl_encoder/examples/patches_gate_bench.rs (build: cargo run --release --example patches_gate_bench)
+
+Fix: jxl_encoder/src/vardct/patches.rs adds `find_text_like_patches_with_min_peak` and `find_and_build_with_min_peak` taking explicit `min_peak: i32`. Call sites in vardct/encoder.rs (two), vardct/bitstream.rs, and vardct/precomputed.rs pass `if distance < 1.0 { 2 } else { 1 }` — libjxl parity at low distance, W2-5 chunk 1 relaxation at d>=1.0.
+
+Result:
+  - windows95.png @ d=0.5: -465 bytes (-0.95%) — exactly closes the W2-5 chunk 1 regression
+  - windows.png @ d=0.5: -45 bytes (-0.013%) — bonus
+  - All photos (20/20 cells): byte-identical
+  - All d >= 1.0 cells (30/30): byte-identical (W2-5 chunk 1 wins preserved)
+
+Validation:
+  - hash_lock_features: 36/36 byte-identical
+  - jxl-encoder lib tests: 1037 passed
+  - All patches-related tests pass
+  - cargo build --release: clean
