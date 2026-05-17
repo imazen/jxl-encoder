@@ -258,6 +258,14 @@ name = "lossless_e9_buckets_sweep"
 path = "examples/lossless_e9_buckets_sweep.rs"
 required-features = ["__expert"]
 
+# Paired A/B for the tree_max_buckets per-image dispatch (audit item #3).
+# Variant A = dispatch ON (new default). Variant B = dispatch OFF (force
+# effort-default via __expert override). Interleaved sample-major.
+[[example]]
+name = "bucket_dispatch_paired_ab"
+path = "examples/bucket_dispatch_paired_ab.rs"
+required-features = ["__expert"]
+
 # NOTE: smart_fanout_sweep.rs lives under examples/ alongside the picker
 # oracle harnesses below — same deal: depends on the sibling zenanalyze
 # path dep and is NOT a registered cargo example. Run locally with:

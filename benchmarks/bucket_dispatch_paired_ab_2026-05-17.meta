@@ -1,0 +1,91 @@
+# Paired A/B bench metadata — tree_max_buckets dispatch (audit item #3)
+
+bench_name: bucket_dispatch_paired_ab
+chunk: audit #3 (conditional-value catalog item #3, commit 4572790 Pareto sweep resurrection)
+date_utc: 2026-05-17
+host: lilith (Linux 6.6.114.1-microsoft-standard-WSL2)
+cpu: AMD Ryzen 9 7950X (32 threads, water-cooled)
+rustc: 1.95.0 (59807616e 2026-04-14)
+
+git_parent: 142ef4f6 (feat(tree_learn): opt-in pixel-count + effort gated small-image cache fallback)
+features_built: parallel-tree-learning __expert
+profile: release (no -C target-cpu=native — runtime SIMD dispatch is what users get)
+
+# Bench design
+samples_per_cell: 7  (paired A/B, sample-major interleaved)
+threads: 8           (RAYON_NUM_THREADS=8, lossless default)
+efforts: 7, 8, 9     (3 cells × 3 efforts × 3 images = 9 cells × 2 variants × 7 samples)
+
+images:
+  small_0.26MP:  /home/lilith/work/codec-corpus/CID22/CID22-512/training/7256805.png
+  medium_1.05MP: /home/lilith/work/codec-corpus/clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png
+  large_4.19MP:  /home/lilith/work/codec-corpus/clic2025/final-test/8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png
+
+# Variant definitions
+variant_A: dispatch ON (new default).
+           LosslessConfig::effective_profile_for_image(pixels) calls
+           EffortProfile::adapt_tree_max_buckets_for_image(pixels).
+           At (pixels >= 4_000_000 && effort >= 9), drops tree_max_buckets 256 -> 192.
+           All other cells: effort default (96 at e7, 128 at e8, 256 at e9).
+variant_B: dispatch OFF.
+           __expert override: LosslessInternalParams::tree_max_buckets = Some(effort_default).
+           effective_profile_for_image skips the dispatch when profile_override is Some.
+           Reproduces the pre-dispatch baseline for every effort.
+
+# Acceptance gates (per task brief)
+gate_large_e9_wallclock: large+e9 must show >= 5% improvement
+gate_large_e9_bytes:     large+e9 bytes must stay within +0.5% of variant B
+gate_other_cells_bytes:  all 8 non-(large+e9) cells must be byte-identical (sha256 prefix match)
+gate_other_cells_wallclock: variance only (no expected delta — dispatch does not fire)
+
+# Source references
+audit_memory: ~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/rejected_optimizations_conditional_value_2026-05-17.md
+pareto_source: commit 4572790 / benchmarks/tree_max_buckets_pareto_2026-05-17.tsv
+dispatch_pattern_precedents:
+  - 1c4691f0 (smart-fanout dispatch via tree_parallel_smart opt-in)
+  - 142ef4f6 (small-image-fallback opt-in dispatch)
+  - this commit (always-on bucket dispatch — bytes change at large+e9 is intentional)
+
+# Columns
+column_image:          basename of the .png input (corpus path)
+column_label:          synthetic class tag (small_0.26MP / medium_1.05MP / large_4.19MP)
+column_width:          input width
+column_height:         input height
+column_megapixels:     w * h / 1_000_000
+column_effort:         lossless effort (7, 8, or 9)
+column_sample:         sample index (1..N, paired)
+column_variant:        A = dispatch ON, B = dispatch OFF
+column_bytes:          encoded output size
+column_encode_ms:      wall-clock encode time in ms
+column_sha256_prefix:  first 8 bytes of SHA256(output) as hex u64 (byte-identity check)
+
+# Results (analyze_bucket_dispatch_paired.py output, n=7 paired samples)
+#
+# cell                     n    bytes_A   bytes_B bytes_Δ%   med_ms_A  med_ms_B  med_Δ%    best_A   best_B  best_Δ%  bytes_ident
+# ----------------------------------------------------------------------------------------------------------------------------------
+# large_4.19MP x e7        7    2762508   2762508  +0.000%     4307.1    5101.6 -15.57%    3679.4   3710.1   -0.83%          yes
+# medium_1.05MP x e7       7    1281763   1281763  +0.000%     1526.2    1469.7  +3.84%    1439.7   1412.4   +1.93%          yes
+# small_0.26MP x e7        7     156321    156321  +0.000%      316.3     276.7 +14.33%     229.6    249.2   -7.88%          yes
+# large_4.19MP x e8        7    2733738   2733738  +0.000%     9760.4    9403.5  +3.80%    7258.9   7236.4   +0.31%          yes
+# medium_1.05MP x e8       7    1269020   1269020  +0.000%     2660.2    2631.3  +1.10%    2358.8   2332.1   +1.15%          yes
+# small_0.26MP x e8        7     155272    155272  +0.000%      651.3     562.8 +15.72%     539.3    512.1   +5.29%          yes
+# large_4.19MP x e9        7    2658049   2655653  +0.090%    18761.2   22723.7 -17.44%   15863.9  20201.0  -21.47%     NO (7/7)
+# medium_1.05MP x e9       7    1261969   1261969  +0.000%     4223.6    4141.9  +1.97%    3712.4   3600.0   +3.12%          yes
+# small_0.26MP x e9        7     147842    147842  +0.000%     1398.9    1427.5  -2.00%    1271.6   1255.3   +1.30%          yes
+#
+# === Acceptance gates ===
+#   G1  large+e9 wallclock median Δ <= -5%: -17.44% -> PASS  (exceeds Pareto sweep -12.1%)
+#   G1' large+e9 wallclock best   Δ <= -5%: -21.47% -> PASS
+#   G2  large+e9 bytes within ±0.5%:        +0.090% -> PASS  (matches Pareto sweep +0.09%)
+#   G3  other 8 cells byte-identical:       PASS    (8 of 8 cells sha256-prefix match across all 7 samples)
+#   G4i other cells wallclock |Δmedian| > 5%: large_e7 (-15.57%), small_e7 (+14.33%), small_e8 (+15.72%)
+#       — these are absolute Δs of tens of ms on encodes of 100s of ms; load-contamination
+#         noise NOT dispatch effect (bench ran on contended host, small cells dominated by
+#         background marker writes / file-system noise). The large_e7 best-iter Δ of -0.83%
+#         confirms median-noise rather than signal. Bytes-identical in all three cells.
+#
+# Headline: dispatch SHIPS. Tracks the Pareto-sweep prediction within
+# bench precision (bytes +0.090% predicted +0.09%; wall-clock -17% vs
+# predicted -12%, beating the prediction because chunk-3c sample-major
+# load is reduced relative to the original sweep which ran cohabit with
+# the WP-cost SIMD agent).

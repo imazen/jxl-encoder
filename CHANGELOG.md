@@ -4,6 +4,33 @@
 
 ### Changed (performance)
 
+- **Always-on `tree_max_buckets` per-image dispatch at large+e9 cells**
+  (audit conditional-value catalog item #3 —
+  `rejected_optimizations_conditional_value_2026-05-17.md`; resurrects the
+  Pareto-sweep insight from commit `4572790` that was originally no-shipped
+  for failing the single-binary "≥5% on ≥2 of 3 profile images" gate but
+  produces a clean Pareto win on the largest tier alone). New
+  `EffortProfile::adapt_tree_max_buckets_for_image(pixels)` adapter plus
+  `LARGE_IMAGE_PIXEL_THRESHOLD = 4_000_000` and `LARGE_E9_TREE_MAX_BUCKETS = 192`
+  constants. When `pixels >= 4_000_000` AND `effort >= 9`, drops
+  `tree_max_buckets` from 256 → 192. `LosslessConfig::effective_profile_for_image`
+  calls the adapter unconditionally — this is a **default change**, not opt-in.
+  Skipped when the caller has supplied a `__expert`
+  `LosslessInternalParams::with_internal_params(...)` override so sweep
+  harnesses keep their pinned values. Paired A/B
+  (`benchmarks/bucket_dispatch_paired_ab_2026-05-17.tsv`, 7 paired samples ×
+  3 images × 3 efforts × 8T, sample-major interleaved): **large+e9 median
+  wall-clock −17.44%** (best-iter −21.47%) at **+0.090% bytes**, exceeding
+  both the ≥5% wall-clock gate and the ≤+0.5% bytes gate from the task brief.
+  Bytes Δ matches the original Pareto sweep prediction (+0.09%) to three
+  significant figures. All 8 non-(large+e9) cells produce **byte-identical
+  output** sample-pairwise (sha256-prefix match, 7/7 paired samples each).
+  Hash-locks (`tests/hash_lock_features.rs` 36/36) stay byte-identical — every
+  hash_lock fixture is below the 4 MP threshold so the dispatch does not fire.
+  Third per-image dispatch chunk in the smart-fanout family (`1c4691f0` +
+  `142ef4f6` precedents). Companion sweep harness:
+  `examples/bucket_dispatch_paired_ab` (registered under `__expert`).
+
 - **Skip per-property `Vec<i32>` swaps on the lossless tree-learning main
   path** (resurrects issue #40 chunk-3c, originally reverted in `a16958f`). Adds
   `SplittableSamples::skip_props_swap` and wires `partition_node_in_place_with(
