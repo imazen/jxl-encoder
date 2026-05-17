@@ -4,6 +4,25 @@
 
 ### Added
 
+- **`--ec_resampling N` CLI flag + `downsample_channel_u8` API**
+  (A1 audit "Pixel formats / extras"; mirrors libjxl `cjxl
+  --ec_resampling`). Pre-downsamples the alpha plane on the
+  lossless RGBA / BGRA / GrayAlpha 8-bit path with the same
+  box filter libjxl uses (`lib/jxl/image_ops.cc::DoDownsampleImage`),
+  then attaches it as an extra channel with
+  `dim_shift = log2(N)`. Accepts `N ∈ {1, 2, 4, 8}`. Public
+  helper `jxl_encoder::downsample_channel_u8` lets API
+  callers run the same downsample on any u8 channel; pair
+  with `ExtraChannel::with_dim_shift(log2(N))`. Single-group
+  only (≤256×256) — multi-group bitstreams with
+  `dim_shift > 0` extras fail libjxl djxl until the
+  per-group writer is updated; the CLI rejects multi-group
+  inputs at this knob rather than silently emitting broken
+  output. Hash-locks 36/36 unchanged at default
+  (`ec_resampling=1`). Roundtrip verified with jxl-oxide
+  (`tests/api_tests.rs::test_lossless_rgb_with_ec_resampling_half_res_alpha`)
+  and djxl on the 32×32 RGBA fixture.
+
 - **ReferenceOnly animation frames + `save_as_reference` cross-frame
   compositing** (W4-A1 audit follow-on). `AnimationFrame::with_reference_only(bool)`
   flips the frame to `FrameType::ReferenceOnly` — the codestream writes

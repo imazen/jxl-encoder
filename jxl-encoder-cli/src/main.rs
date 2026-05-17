@@ -333,6 +333,27 @@ struct Args {
     #[arg(long, value_name = "N", default_value = "0")]
     threads: usize,
 
+    /// Downsample extra channels (alpha, depth, …) by this factor
+    /// before encoding. Accepts `{1, 2, 4, 8}` (mirrors libjxl
+    /// `cjxl --ec_resampling`). `1` is the default (no
+    /// downsampling). Box-filter; output dimensions follow
+    /// `width.div_ceil(N) × height.div_ceil(N)`. Currently applies
+    /// only to RGBA input on the lossless path — alpha is sliced
+    /// out, downsampled with [`jxl_encoder::downsample_channel_u8`],
+    /// and attached as an extra channel with
+    /// `dim_shift = log2(N)`. Lossy + extras > alpha follow when
+    /// the lossy `dim_shift > 0` guard lifts.
+    ///
+    /// Both `--ec_resampling` (libjxl style) and `--ec-resampling`
+    /// (clap default) are accepted.
+    #[arg(
+        long = "ec_resampling",
+        alias = "ec-resampling",
+        value_name = "N",
+        default_value = "1"
+    )]
+    ec_resampling: u32,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -1403,21 +1424,105 @@ fn main() {
         cfg = cfg.with_container_mode(container_mode_from_cli(args.container));
         let cfg = cfg;
 
-        let mut req = cfg.encode_request(width, height, layout);
-        if let Some(ref meta) = metadata {
-            req = req.with_metadata(meta);
+        // `--ec_resampling N` (libjxl parity): pre-downsample the
+        // alpha plane on the lossless RGBA path and re-encode RGB
+        // + a half/quarter/eighth-res alpha extra channel. Mirrors
+        // libjxl `enc_frame.cc:1620` (`DownsampleImage(ec, factor)`).
+        let ec_factor = args.ec_resampling;
+        let ec_resampling_active = ec_factor > 1
+            && matches!(
+                layout,
+                PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::GrayAlpha8
+            );
+        if ec_factor != 1 && !matches!(ec_factor, 2 | 4 | 8) {
+            eprintln!("Error: --ec_resampling must be one of {{1, 2, 4, 8}}, got {ec_factor}");
+            std::process::exit(1);
         }
-        if let Some(gamma) = source_gamma {
-            req = req.with_source_gamma(gamma);
+        if ec_factor > 1 && !ec_resampling_active && !args.quiet {
+            eprintln!(
+                "Warning: --ec_resampling={ec_factor} ignored — only 8-bit \
+                 RGBA / BGRA / Gray+Alpha lossless input is wired today \
+                 (got {layout:?})."
+            );
         }
-        // ── A1 passthrough — wire intensity_target + brotli_effort ──
-        if let Some(it) = args.intensity_target {
-            req = req.with_intensity_target(it);
+        // Multi-group encoder paths don't currently downsample
+        // extras in their per-group writers — the produced bitstream
+        // decodes in jxl-oxide but fails libjxl djxl. Refuse rather
+        // than silently emit broken output. Tracked alongside the
+        // lossy `dim_shift > 0` guard in vardct/encoder.rs.
+        // Groups are 256×256; a width or height exceeding 256 means
+        // the image is multi-group.
+        if ec_resampling_active && (width > 256 || height > 256) {
+            eprintln!(
+                "Error: --ec_resampling > 1 currently requires single-group \
+                 input (both width and height <= 256); got {width}x{height}. \
+                 The multi-group writer for half-res extras is queued; until \
+                 then, use cjxl --ec_resampling for >256-pixel images."
+            );
+            std::process::exit(1);
         }
-        if let Some(q) = args.brotli_effort {
-            req = req.with_brotli_metadata(q);
-        }
-        req.encode(&data)
+
+        let encoded = if ec_resampling_active {
+            // Split: bpp = 4 for RGBA/BGRA, bpp = 2 for GrayAlpha.
+            let (bpp, color_layout, color_bpp) = match layout {
+                PixelLayout::Rgba8 => (4, PixelLayout::Rgb8, 3),
+                PixelLayout::Bgra8 => (4, PixelLayout::Bgr8, 3),
+                PixelLayout::GrayAlpha8 => (2, PixelLayout::Gray8, 1),
+                _ => unreachable!(),
+            };
+            let n = (width * height) as usize;
+            let mut color = Vec::with_capacity(n * color_bpp);
+            let mut alpha_full = Vec::with_capacity(n);
+            for px in data.chunks_exact(bpp) {
+                color.extend_from_slice(&px[..color_bpp]);
+                alpha_full.push(px[bpp - 1]);
+            }
+            let alpha_ds = jxl_encoder::downsample_channel_u8(
+                &alpha_full,
+                width as usize,
+                height as usize,
+                ec_factor,
+            );
+            let log2_factor = ec_factor.trailing_zeros(); // 1→0, 2→1, 4→2, 8→3
+            let extras = [
+                jxl_encoder::api::ExtraChannel::from_alpha_buf(&alpha_ds, false)
+                    .with_dim_shift(log2_factor),
+            ];
+            let mut req = cfg
+                .encode_request(width, height, color_layout)
+                .with_extra_channels(&extras);
+            if let Some(ref meta) = metadata {
+                req = req.with_metadata(meta);
+            }
+            if let Some(gamma) = source_gamma {
+                req = req.with_source_gamma(gamma);
+            }
+            // ── A1 passthrough — wire intensity_target + brotli_effort ──
+            if let Some(it) = args.intensity_target {
+                req = req.with_intensity_target(it);
+            }
+            if let Some(q) = args.brotli_effort {
+                req = req.with_brotli_metadata(q);
+            }
+            req.encode(&color)
+        } else {
+            let mut req = cfg.encode_request(width, height, layout);
+            if let Some(ref meta) = metadata {
+                req = req.with_metadata(meta);
+            }
+            if let Some(gamma) = source_gamma {
+                req = req.with_source_gamma(gamma);
+            }
+            // ── A1 passthrough — wire intensity_target + brotli_effort ──
+            if let Some(it) = args.intensity_target {
+                req = req.with_intensity_target(it);
+            }
+            if let Some(q) = args.brotli_effort {
+                req = req.with_brotli_metadata(q);
+            }
+            req.encode(&data)
+        };
+        encoded
     };
 
     let encoded = match encoded {
