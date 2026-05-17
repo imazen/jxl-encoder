@@ -1,0 +1,35 @@
+### dedup_photo_full_n=200K_dup300
+  ├─ current_sort_indirect    37.7 ±3.2ms  [+24.6%–+52.4%]      5.30M
+  ├─ packed_key_sort          27.0 ±2.8ms  [24.5–29.8]ms        7.40M
+  ├─ gather_sim_phase1       54.7 ±11.6ms  [+80.0%–+129.1%]     3.66M
+  ├─ gather_sim_phase3        45.3 ±5.0ms  [+46.8%–+87.7%]      4.41M
+  ╰─ gather_sim_phase4        55.1 ±4.9ms  [+103.9%–+111.6%]    3.63M
+
+### dedup_photo_full_n=200K_dup800
+  ├─ current_sort_indirect   45.6 ±5.1ms  [+24.1%–+36.9%]     4.39M
+  ├─ packed_key_sort         35.2 ±7.3ms  [28.7–41.6]ms       5.69M [1]
+  ├─ gather_sim_phase1       62.4 ±8.2ms  [+54.0%–+112.1%]    3.20M [2]
+  ├─ gather_sim_phase3       50.4 ±3.3ms  [+33.6%–+55.9%]     3.97M
+  ╰─ gather_sim_phase4       62.4 ±4.4ms  [+66.5%–+90.8%]     3.20M
+
+### dedup_photo_full_n=1.35M_dup300
+  ├─ current_sort_indirect    378.8 ±27.0ms  [+7.0%–+14.3%]      3.56M
+  ├─ packed_key_sort          360.3 ±66.0ms  [315.7–404.9]ms     3.75M
+  ├─ gather_sim_phase1       635.4 ±156.2ms  [+40.4%–+108.2%]    2.12M [1] [2]
+  ├─ gather_sim_phase3        467.0 ±54.0ms  [+21.6%–+37.7%]     2.89M [3]
+  ╰─ gather_sim_phase4        486.6 ±84.8ms  [+24.2%–+50.4%]     2.77M [4]
+
+### dedup_photo_full_n=1.35M_dup600
+  ├─ current_sort_indirect    344.2 ±3.8ms  [+2.3%–+10.0%]      3.92M [1]
+  ├─ packed_key_sort          327.2 ±3.5ms  [316.0–334.5]ms     4.13M
+  ├─ gather_sim_phase1       611.1 ±44.9ms  [+91.3%–+110.8%]    2.21M
+  ├─ gather_sim_phase3       408.9 ±20.2ms  [+21.8%–+28.4%]     3.30M
+  ╰─ gather_sim_phase4        497.2 ±7.5ms  [+36.9%–+78.2%]     2.72M
+
+### dedup_photo_full_n=1.35M_dup800
+  ├─ current_sort_indirect   336.0 ±21.0ms  [+4.5%–+13.4%]      4.02M
+  ├─ packed_key_sort         307.9 ±29.2ms  [288.1–327.7]ms     4.38M
+  ├─ gather_sim_phase1       600.3 ±33.6ms  [+98.6%–+109.9%]    2.25M
+  ├─ gather_sim_phase3       392.9 ±24.6ms  [+19.6%–+35.6%]     3.44M
+  ╰─ gather_sim_phase4       461.3 ±25.6ms  [+40.3%–+58.6%]     2.93M
+

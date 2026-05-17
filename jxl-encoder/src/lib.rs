@@ -126,6 +126,14 @@ pub mod __bench_internals {
     pub mod inline_dedup_table {
         pub use crate::modular::inline_dedup_table::{InlineDedupTable, KEY_BYTES};
     }
+    /// Re-export of `crate::modular::inline_add_sample` for the dedup
+    /// strategy microbench (issue #41 Phase 4, 2026-05-17). Chunk 1
+    /// primitive only — not yet wired into production gather.
+    pub mod inline_add_sample {
+        pub use crate::modular::inline_add_sample::{
+            BuilderOverflow, FinalizedKey, FusedHashKeyBuilder,
+        };
+    }
 }
 
 #[cfg(feature = "__internals")]

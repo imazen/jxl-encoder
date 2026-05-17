@@ -43,6 +43,7 @@
 use core::hint::black_box;
 
 use hashbrown::HashMap;
+use jxl_encoder::__bench_internals::inline_add_sample::FusedHashKeyBuilder;
 use jxl_encoder::__bench_internals::inline_dedup_table::{InlineDedupTable, KEY_BYTES};
 use zenbench::Throughput;
 use zenbench::prelude::*;
@@ -103,6 +104,153 @@ fn make_samples(n: usize, dup_fraction: f32) -> Samples {
     // Property indices used at e7 lossless (PROP_ORDER_NO_SQUEEZE_NO_GID first 7 + 2 ref).
     let properties: Vec<usize> = vec![0, 15, 9, 10, 11, 12, 13, 14, 16];
     // bucket_indices size: 16 base + maybe ref. Make sure indexes are in range.
+    let mut bi = bucket_indices;
+    while bi.len() <= 16 {
+        bi.push(Vec::with_capacity(n));
+        let new_idx = bi.len() - 1;
+        let mut h: u64 = (new_idx as u64).wrapping_mul(0xdeadbeef);
+        for _ in 0..n {
+            h = h.wrapping_mul(0x100000001b3);
+            bi[new_idx].push((h >> 16) as u8);
+        }
+    }
+
+    Samples {
+        residual_tokens,
+        extra_bits,
+        bucket_indices: bi,
+        properties,
+        num_pred: NUM_PREDICTORS,
+        num_samples: n,
+        num_active_props: NUM_PROPERTIES_ACTIVE,
+    }
+}
+
+/// Real-photo-like sample generator (issue #41 Phase 4, 2026-05-17).
+///
+/// `make_samples` (above) draws each sample's bytes from an independent
+/// hash chain; that gives near-uniform byte distributions which:
+///
+///   * Spread the cuckoo-table probes uniformly across slots (high probe
+///     locality wins because adjacent slots stay hot in L1).
+///   * Make every key cmp do a full memcmp — no early-exit short-circuit
+///     on the first cmp byte because the first byte is uniform.
+///
+/// Real photos look NOTHING like that. Adjacent pixels share predictor
+/// outputs and properties; consecutive samples in the gather order
+/// differ in 1-3 byte positions (the predictor with highest residual
+/// flips its token byte, properties drift by ±1 bucket). The empirical
+/// shape is best modelled as:
+///
+///   * **Clusters of ~16-64 spatially-adjacent samples** that share
+///     most token/ebits bytes; one or two bytes per sample drift by
+///     small deltas as you walk across smoothly varying image
+///     content.
+///   * **Cluster transitions** every 16-64 samples that swap several
+///     bytes at once (edges, texture changes, region boundaries).
+///   * **Repeats within a cluster** — at high duplicate density (e.g.
+///     uniform sky regions in photos), the same canonical key appears
+///     many times in a row, giving the gather-time dedup its biggest
+///     wins.
+///
+/// This generator produces that shape: each sample drifts a few bytes
+/// from its predecessor (with `cluster_size` controlling how often we
+/// reseed to a new cluster center), and `dup_fraction` controls how
+/// often the drift is "zero drift" (= exact duplicate of previous).
+fn make_samples_photo_like(n: usize, dup_fraction: f32, cluster_size: usize) -> Samples {
+    let mut residual_tokens: Vec<Vec<u8>> =
+        (0..NUM_PREDICTORS).map(|_| Vec::with_capacity(n)).collect();
+    let mut extra_bits: Vec<Vec<u8>> = (0..NUM_PREDICTORS).map(|_| Vec::with_capacity(n)).collect();
+    let mut bucket_indices: Vec<Vec<u8>> = (0..NUM_PROPERTIES_TOTAL)
+        .map(|_| Vec::with_capacity(n))
+        .collect();
+
+    // Current cluster center — re-rolled every `cluster_size` samples.
+    let mut center_tokens = [0u8; NUM_PREDICTORS];
+    let mut center_ebits = [0u8; NUM_PREDICTORS];
+    let mut center_props = [0u8; NUM_PROPERTIES_TOTAL];
+    let mut cluster_seed: u64 = 0xc0ffee;
+
+    // PRNG state for per-sample drifts. Splitmix-style 64-bit LCG.
+    let mut prng: u64 = 0xdeadbeef;
+
+    let mut prev_tokens = [0u8; NUM_PREDICTORS];
+    let mut prev_ebits = [0u8; NUM_PREDICTORS];
+    let mut prev_props = [0u8; NUM_PROPERTIES_TOTAL];
+
+    let dup_threshold = (dup_fraction * (u32::MAX as f32)) as u32;
+
+    for i in 0..n {
+        // New cluster every `cluster_size` samples.
+        if i % cluster_size == 0 {
+            cluster_seed = cluster_seed
+                .wrapping_mul(0x9e3779b97f4a7c15)
+                .wrapping_add(1);
+            let mut h = cluster_seed;
+            for pred in 0..NUM_PREDICTORS {
+                h = h.wrapping_mul(0x100000001b3).wrapping_add(pred as u64);
+                center_tokens[pred] = ((h >> 24) as u8) & 0x3f; // token alphabet ~64
+                h = h.wrapping_mul(0x100000001b3);
+                center_ebits[pred] = ((h >> 24) as u8) & 0x0f; // ebits ~16
+            }
+            for prop in 0..NUM_PROPERTIES_TOTAL {
+                h = h.wrapping_mul(0x100000001b3).wrapping_add(prop as u64);
+                center_props[prop] = (h >> 24) as u8;
+            }
+            prev_tokens = center_tokens;
+            prev_ebits = center_ebits;
+            prev_props = center_props;
+        }
+
+        prng = prng.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(1);
+        let roll = (prng >> 32) as u32;
+
+        // With probability `dup_fraction`, emit an exact copy of the
+        // previous sample (consecutive duplicates). Otherwise drift 1-3
+        // bytes from the cluster center.
+        let (tokens, ebits, props);
+        if roll < dup_threshold {
+            tokens = prev_tokens;
+            ebits = prev_ebits;
+            props = prev_props;
+        } else {
+            let mut t = center_tokens;
+            let mut e = center_ebits;
+            let mut p = center_props;
+            // 1-3 small drifts per sample.
+            let num_drifts = 1 + ((prng >> 28) & 0x3) as usize; // 1..=4
+            for k in 0..num_drifts {
+                let pos =
+                    ((prng >> (k * 4)) as usize) % (NUM_PREDICTORS * 2 + NUM_PROPERTIES_TOTAL);
+                let delta = ((prng >> (k * 5)) as u8 & 0x07).wrapping_sub(3); // -3..=4
+                if pos < NUM_PREDICTORS {
+                    t[pos] = t[pos].wrapping_add(delta) & 0x3f;
+                } else if pos < NUM_PREDICTORS * 2 {
+                    e[pos - NUM_PREDICTORS] = e[pos - NUM_PREDICTORS].wrapping_add(delta) & 0x0f;
+                } else {
+                    let pi = pos - NUM_PREDICTORS * 2;
+                    p[pi] = p[pi].wrapping_add(delta);
+                }
+            }
+            tokens = t;
+            ebits = e;
+            props = p;
+        }
+
+        for pred in 0..NUM_PREDICTORS {
+            residual_tokens[pred].push(tokens[pred]);
+            extra_bits[pred].push(ebits[pred]);
+        }
+        for prop in 0..NUM_PROPERTIES_TOTAL {
+            bucket_indices[prop].push(props[prop]);
+        }
+
+        prev_tokens = tokens;
+        prev_ebits = ebits;
+        prev_props = props;
+    }
+
+    let properties: Vec<usize> = vec![0, 15, 9, 10, 11, 12, 13, 14, 16];
     let mut bi = bucket_indices;
     while bi.len() <= 16 {
         bi.push(Vec::with_capacity(n));
@@ -587,6 +735,62 @@ fn dedup_gather_sim_phase3(samples: &Samples) -> (Vec<usize>, Vec<u32>) {
     (unique_indices, counts)
 }
 
+/// PHASE 4 GATHER SIM (issue #41, 2026-05-17): fold the canonical key
+/// bytes into the hash AS THEY ARE COMPUTED. Eliminates Phase 3's
+/// separate `pack_key_lazy` walk that re-reads bytes the caller just
+/// produced.
+///
+/// In the production gather loop the bytes come from per-pixel residual
+/// computation; here we model that by reading from the SoA arrays one
+/// byte at a time and feeding the [`FusedHashKeyBuilder`] in lockstep.
+/// The compare-side `unique_keys[i]` verify is handled inside
+/// `InlineDedupTable::lookup_or_insert` exactly as in Phase 3 — only
+/// the gather-time key-build path changes.
+#[inline(never)]
+fn dedup_gather_sim_phase4(samples: &Samples) -> (Vec<usize>, Vec<u32>) {
+    let n = samples.num_samples;
+    let num_pred = samples.num_pred;
+    let properties = &samples.properties;
+
+    let mut table = InlineDedupTable::new(n);
+    let mut unique_indices: Vec<usize> = Vec::with_capacity(n / 2);
+    let mut counts: Vec<u32> = Vec::with_capacity(n / 2);
+
+    for i in 0..n {
+        let mut builder = FusedHashKeyBuilder::new();
+        // Property bytes first (matches `pack_local_key_phase3` order
+        // when prop indices are static). We use add_prop_i32 with
+        // sign-extended u8 → i32 to keep the canonical layout identical
+        // to Phase 3's prop-as-i32 packing.
+        //
+        // Note: in production the prop is already an i32; the cast is
+        // free. This bench reads a u8 SoA column and sign-extends to
+        // match the layout.
+        for &prop_idx in properties {
+            let bi = &samples.bucket_indices[prop_idx];
+            let v = if bi.is_empty() { 0i32 } else { bi[i] as i32 };
+            builder.add_prop_i32(v).unwrap();
+        }
+        for pred in 0..num_pred {
+            let t = samples.residual_tokens[pred][i];
+            let e = samples.extra_bits[pred][i];
+            builder.add_token_pair(t, e).unwrap();
+        }
+        let f = builder.finalize();
+        let next_idx = unique_indices.len() as u32;
+        match table.lookup_or_insert(&f.canonical_key, next_idx) {
+            Some(existing) => {
+                counts[existing as usize] += 1;
+            }
+            None => {
+                unique_indices.push(i);
+                counts.push(1);
+            }
+        }
+    }
+    (unique_indices, counts)
+}
+
 /// Sanity check: PHASE 3 gather sim with the slot table sized for the
 /// *expected unique count* (n * 0.7 at 30 % dup) instead of the raw
 /// input count. Catches the false-Phase-1-loss case where over-sizing
@@ -737,6 +941,12 @@ fn full_gather_phase3(samples: &Samples) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<Vec
     (t, e, b, counts)
 }
 
+fn full_gather_phase4(samples: &Samples) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u32>) {
+    let (unique_indices, counts) = dedup_gather_sim_phase4(samples);
+    let (t, e, b) = compact_arrays(samples, &unique_indices);
+    (t, e, b, counts)
+}
+
 fn bench_for_count<const N: usize, const DUP_BPM: u32>(suite: &mut Suite, label: &str) {
     // DUP_BPM = parts per 1000 (since const generics can't be f32). dup_frac =
     // DUP_BPM / 1000.0. e.g. 300 -> 30% duplicates.
@@ -802,6 +1012,15 @@ fn bench_for_count<const N: usize, const DUP_BPM: u32>(suite: &mut Suite, label:
             b.with_input(|| make_samples(N, DUP_BPM as f32 / 1000.0))
                 .run(|samples| {
                     let out = full_gather_phase3(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
+        g.bench("gather_sim_phase4", |b| {
+            b.with_input(|| make_samples(N, DUP_BPM as f32 / 1000.0))
+                .run(|samples| {
+                    let out = full_gather_phase4(&samples);
                     black_box(out);
                     samples
                 })
@@ -881,7 +1100,92 @@ fn bench_for_count<const N: usize, const DUP_BPM: u32>(suite: &mut Suite, label:
                 })
         });
 
+        g.bench("gather_sim_phase4", |b| {
+            b.with_input(|| make_samples(N, DUP_BPM as f32 / 1000.0))
+                .run(|samples| {
+                    let out = dedup_gather_sim_phase4(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
         g.baseline("current_sort_indirect");
+        g.config()
+            .sort_by_speed(true)
+            .min_rounds(10)
+            .max_time(core::time::Duration::from_secs(8));
+    });
+}
+
+/// Real-photo-like bench group (issue #41 Phase 4): drives the dedup
+/// strategies with [`make_samples_photo_like`] instead of the uniform
+/// `make_samples` helper. The photo-like generator creates spatial
+/// clusters of correlated samples (~32 samples sharing most bytes,
+/// drifting 1-3 bytes per sample, with `dup_fraction` controlling
+/// exact-duplicate density inside the cluster), which matches what
+/// the production gather loop sees on real photo content.
+///
+/// We focus on the gather-sim benches (the ones that build keys lazily
+/// from SoA arrays) because that's the prod-realistic shape — the
+/// `*_prebuilt` variants tell us the algorithm's intrinsic speed but
+/// not what production will see.
+fn bench_for_count_photo_like<const N: usize, const DUP_BPM: u32>(suite: &mut Suite, label: &str) {
+    let group_name = format!("dedup_photo_full_{label}_dup{DUP_BPM}");
+    suite.group(&group_name, |g| {
+        g.throughput(Throughput::Elements(N as u64));
+
+        // Cluster size 32: matches the empirical run length of
+        // smoothly-correlated samples in CLIC photos (gradients,
+        // sky, blurred backgrounds). Smaller clusters increase
+        // distinct-key density; larger increases duplicate density.
+        const CLUSTER_SIZE: usize = 32;
+
+        g.bench("current_sort_indirect", |b| {
+            b.with_input(|| make_samples_photo_like(N, DUP_BPM as f32 / 1000.0, CLUSTER_SIZE))
+                .run(|samples| {
+                    let out = full_current(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
+        g.bench("packed_key_sort", |b| {
+            b.with_input(|| make_samples_photo_like(N, DUP_BPM as f32 / 1000.0, CLUSTER_SIZE))
+                .run(|samples| {
+                    let out = full_packed(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
+        g.bench("gather_sim_phase1", |b| {
+            b.with_input(|| make_samples_photo_like(N, DUP_BPM as f32 / 1000.0, CLUSTER_SIZE))
+                .run(|samples| {
+                    let out = full_gather_phase1(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
+        g.bench("gather_sim_phase3", |b| {
+            b.with_input(|| make_samples_photo_like(N, DUP_BPM as f32 / 1000.0, CLUSTER_SIZE))
+                .run(|samples| {
+                    let out = full_gather_phase3(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
+        g.bench("gather_sim_phase4", |b| {
+            b.with_input(|| make_samples_photo_like(N, DUP_BPM as f32 / 1000.0, CLUSTER_SIZE))
+                .run(|samples| {
+                    let out = full_gather_phase4(&samples);
+                    black_box(out);
+                    samples
+                })
+        });
+
+        g.baseline("packed_key_sort");
         g.config()
             .sort_by_speed(true)
             .min_rounds(10)
@@ -913,6 +1217,22 @@ fn bench_dedup(suite: &mut Suite) {
     bench_for_count::<1_350_000, 600>(suite, "n=1.35M");
     bench_for_count::<1_350_000, 800>(suite, "n=1.35M");
     bench_for_count::<3_200_000, 300>(suite, "n=3.2M");
+
+    // Phase 4 real-photo-like cells: spatial-cluster sample distribution
+    // (issue #41 Phase 4, 2026-05-17). The uniform random `make_samples`
+    // hides per-pixel correlation that dominates real photo gather cost.
+    // The photo-like cells use cluster_size=32 (typical CLIC photo run
+    // length for smoothly-correlated samples) with the same n / dup
+    // grid as the synthetic cells above. We skip the 3.2M dup800 cell
+    // because the photo-like generator's drift state is dominated by
+    // duplicates at high dup_fraction and the algorithm signal is
+    // already clear at smaller sizes.
+    bench_for_count_photo_like::<200_000, 300>(suite, "n=200K");
+    bench_for_count_photo_like::<200_000, 600>(suite, "n=200K");
+    bench_for_count_photo_like::<200_000, 800>(suite, "n=200K");
+    bench_for_count_photo_like::<1_350_000, 300>(suite, "n=1.35M");
+    bench_for_count_photo_like::<1_350_000, 600>(suite, "n=1.35M");
+    bench_for_count_photo_like::<1_350_000, 800>(suite, "n=1.35M");
 }
 
 zenbench::main!(bench_dedup);
