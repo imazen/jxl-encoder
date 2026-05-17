@@ -221,6 +221,9 @@ pub(crate) fn estimate_peak_memory_bytes_lossless(
         | PixelLayout::Bgra8 => 4,
         PixelLayout::RgbLinearF16 | PixelLayout::RgbaLinearF16 => 4,
         PixelLayout::GrayLinearF16 | PixelLayout::GrayAlphaLinearF16 => 2,
+        // A3 chunk 1b: f32 PQ/HLG/BT.709 RGB(A) (issue #46).
+        PixelLayout::RgbPqF32 | PixelLayout::RgbHlgF32 | PixelLayout::RgbBt709F32 => 3,
+        PixelLayout::RgbaPqF32 | PixelLayout::RgbaHlgF32 | PixelLayout::RgbaBt709F32 => 4,
     };
 
     // (1) Channel planes: i32 per pixel per channel.
@@ -395,6 +398,28 @@ pub enum PixelLayout {
     GrayLinearF16,
     /// Linear IEEE 754 binary16 grayscale + alpha, 4 bytes per pixel.
     GrayAlphaLinearF16,
+    /// PQ-encoded (SMPTE ST 2084) f32 RGB, 12 bytes per pixel. Same
+    /// storage shape as [`Self::RgbLinearF32`] but the f32 values are
+    /// interpreted as PQ-encoded `[0, 1]` and run through the inverse
+    /// PQ EOTF before XYB. Use for HDR GPU/Vulkan/Metal pipelines that
+    /// emit PQ floats directly. Closes A3 chunk 1b (issue #46).
+    RgbPqF32,
+    /// PQ-encoded f32 RGBA, 16 bytes per pixel. See [`Self::RgbPqF32`].
+    RgbaPqF32,
+    /// HLG-encoded (BT.2100 / ARIB STD-B67) f32 RGB, 12 bytes per
+    /// pixel. f32 values are interpreted as HLG-encoded `[0, 1]` and
+    /// run through the inverse HLG OETF (scene-light) before XYB.
+    /// Closes A3 chunk 1b (issue #46).
+    RgbHlgF32,
+    /// HLG-encoded f32 RGBA, 16 bytes per pixel. See [`Self::RgbHlgF32`].
+    RgbaHlgF32,
+    /// BT.709 (Rec. ITU-R BT.709-6) gamma-encoded f32 RGB, 12 bytes
+    /// per pixel. f32 values are interpreted as BT.709-encoded `[0, 1]`
+    /// and run through the inverse BT.709 OETF before XYB. Closes A3
+    /// chunk 1b (issue #46).
+    RgbBt709F32,
+    /// BT.709-encoded f32 RGBA, 16 bytes per pixel. See [`Self::RgbBt709F32`].
+    RgbaBt709F32,
 }
 
 impl PixelLayout {
@@ -417,6 +442,12 @@ impl PixelLayout {
             Self::RgbaLinearF16 => 8,
             Self::GrayLinearF16 => 2,
             Self::GrayAlphaLinearF16 => 4,
+            // A3 chunk 1b: f32 HDR/SDR-encoded variants (issue #46).
+            // Same byte width as RgbLinearF32 / RgbaLinearF32; the
+            // transfer function lives in the layout name, not the
+            // storage size.
+            Self::RgbPqF32 | Self::RgbHlgF32 | Self::RgbBt709F32 => 12,
+            Self::RgbaPqF32 | Self::RgbaHlgF32 | Self::RgbaBt709F32 => 16,
         }
     }
 
@@ -451,6 +482,12 @@ impl PixelLayout {
                 | Self::RgbaLinearF32
                 | Self::GrayLinearF32
                 | Self::GrayAlphaLinearF32
+                | Self::RgbPqF32
+                | Self::RgbaPqF32
+                | Self::RgbHlgF32
+                | Self::RgbaHlgF32
+                | Self::RgbBt709F32
+                | Self::RgbaBt709F32
         )
     }
 
@@ -479,6 +516,9 @@ impl PixelLayout {
                 | Self::GrayAlphaLinearF32
                 | Self::RgbaLinearF16
                 | Self::GrayAlphaLinearF16
+                | Self::RgbaPqF32
+                | Self::RgbaHlgF32
+                | Self::RgbaBt709F32
         )
     }
 
@@ -495,6 +535,41 @@ impl PixelLayout {
                 | Self::GrayLinearF16
                 | Self::GrayAlphaLinearF16
         )
+    }
+
+    /// The transfer function implied by this layout, if any.
+    ///
+    /// Layouts whose names carry an explicit transfer function (PQ /
+    /// HLG / BT.709 f32 input — A3 chunk 1b, issue #46) return
+    /// `Some(...)`; sRGB-default and linear layouts return `None`
+    /// (caller may still override with [`LossyConfig::with_color_encoding`] /
+    /// [`LosslessConfig::with_color_encoding`]).
+    ///
+    /// The encoder consults this when the caller did NOT set an
+    /// explicit `with_color_encoding(...)` so that PQ / HLG / BT.709
+    /// f32 input is signaled correctly in the codestream without
+    /// requiring callers to wire a `ColorEncoding` separately.
+    pub(crate) fn implied_transfer_function(
+        self,
+    ) -> Option<crate::headers::color_encoding::TransferFunction> {
+        use crate::headers::color_encoding::TransferFunction;
+        match self {
+            Self::RgbPqF32 | Self::RgbaPqF32 => Some(TransferFunction::Pq),
+            Self::RgbHlgF32 | Self::RgbaHlgF32 => Some(TransferFunction::Hlg),
+            Self::RgbBt709F32 | Self::RgbaBt709F32 => Some(TransferFunction::Bt709),
+            // Linear-named float layouts imply `Linear`. The existing
+            // u8 / u16 / sRGB-named layouts do NOT carry an implied TF
+            // (caller-controlled via `with_color_encoding`).
+            Self::RgbLinearF32
+            | Self::RgbaLinearF32
+            | Self::GrayLinearF32
+            | Self::GrayAlphaLinearF32
+            | Self::RgbLinearF16
+            | Self::RgbaLinearF16
+            | Self::GrayLinearF16
+            | Self::GrayAlphaLinearF16 => Some(TransferFunction::Linear),
+            _ => None,
+        }
     }
 }
 
@@ -3867,6 +3942,10 @@ impl<'a> EncodeRequest<'a> {
         // Currently wired only for the u16 RGB(A) layouts — broader
         // coverage (u8 / Gray / BT.709, lossless) is the remainder
         // of #17.
+        //
+        // A3 chunk 1b (issue #46): for the dedicated f32 PQ/HLG/BT.709
+        // layouts the dispatch fires unconditionally inside the layout
+        // arms — these helpers don't consult `source_is_*`.
         let source_is_pq = gamma.is_none()
             && self.color_encoding.as_ref().is_some_and(|ce| {
                 ce.transfer_function == crate::headers::color_encoding::TransferFunction::Pq
@@ -4063,6 +4142,40 @@ impl<'a> EncodeRequest<'a> {
                 let alpha = extract_alpha_f16(pixels, 2, 1);
                 (rgb, Some(alpha), false)
             }
+            // A3 chunk 1b: f32 PQ/HLG/BT.709 RGB(A) (issue #46). The
+            // layout name carries the transfer function; no
+            // color_encoding override is required for linearization to
+            // fire. We still run the f32-domain inverse EOTF here.
+            PixelLayout::RgbPqF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                (pq_f32_to_linear_f32_rgb(floats, 3), None, false)
+            }
+            PixelLayout::RgbaPqF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let rgb = pq_f32_to_linear_f32_rgb(floats, 4);
+                let alpha = extract_alpha_f32(floats, 4, 3);
+                (rgb, Some(alpha), false)
+            }
+            PixelLayout::RgbHlgF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                (hlg_f32_to_linear_f32_rgb(floats, 3), None, false)
+            }
+            PixelLayout::RgbaHlgF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let rgb = hlg_f32_to_linear_f32_rgb(floats, 4);
+                let alpha = extract_alpha_f32(floats, 4, 3);
+                (rgb, Some(alpha), false)
+            }
+            PixelLayout::RgbBt709F32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                (bt709_f32_to_linear_f32_rgb(floats, 3), None, false)
+            }
+            PixelLayout::RgbaBt709F32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let rgb = bt709_f32_to_linear_f32_rgb(floats, 4);
+                let alpha = extract_alpha_f32(floats, 4, 3);
+                (rgb, Some(alpha), false)
+            }
         };
 
         let mut profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
@@ -4171,7 +4284,30 @@ impl<'a> EncodeRequest<'a> {
 
         enc.bit_depth_16 = bit_depth_16;
         enc.source_gamma = self.source_gamma;
-        enc.color_encoding = self.color_encoding.clone();
+        // A3 chunk 1b (issue #46): if the caller didn't set an
+        // explicit color encoding but the layout name carries an
+        // implied transfer function (PQ / HLG / BT.709 f32), auto-set
+        // a matching ColorEncoding so the codestream signals the
+        // correct TF. PQ + HLG also imply BT.2100 primaries (the only
+        // gamut these TFs are spec'd against); BT.709 stays on sRGB
+        // primaries (BT.709 + sRGB primaries are interchangeable for
+        // gamut, only the TF differs). source_gamma still wins.
+        enc.color_encoding = self.color_encoding.clone().or_else(|| {
+            if self.source_gamma.is_some() {
+                return None;
+            }
+            use crate::headers::color_encoding::{ColorEncoding, TransferFunction};
+            match self.layout.implied_transfer_function() {
+                Some(TransferFunction::Pq) => Some(ColorEncoding::bt2100_pq()),
+                Some(TransferFunction::Hlg) => Some(ColorEncoding::bt2100_hlg()),
+                Some(TransferFunction::Bt709) => Some(ColorEncoding {
+                    transfer_function: TransferFunction::Bt709,
+                    ..ColorEncoding::srgb()
+                }),
+                Some(TransferFunction::Linear) => Some(ColorEncoding::linear_srgb()),
+                _ => None,
+            }
+        });
         enc.non_finite_action = cfg.non_finite_action;
         enc.budget = Some(alloc::sync::Arc::clone(budget));
         // Lossy portion of #13: signal premultiplied alpha in the
@@ -4738,6 +4874,32 @@ impl LossyEncoder {
             PixelLayout::RgbaLinearF16 => f16_to_linear_f32_rgb(pixels, 4),
             PixelLayout::GrayLinearF16 => f16_gray_to_linear_f32_rgb(pixels, 1),
             PixelLayout::GrayAlphaLinearF16 => f16_gray_to_linear_f32_rgb(pixels, 2),
+            // A3 chunk 1b: f32 PQ/HLG/BT.709 streaming input (issue #46).
+            // Same linearization helpers as the one-shot path.
+            PixelLayout::RgbPqF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                pq_f32_to_linear_f32_rgb(floats, 3)
+            }
+            PixelLayout::RgbaPqF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                pq_f32_to_linear_f32_rgb(floats, 4)
+            }
+            PixelLayout::RgbHlgF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                hlg_f32_to_linear_f32_rgb(floats, 3)
+            }
+            PixelLayout::RgbaHlgF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                hlg_f32_to_linear_f32_rgb(floats, 4)
+            }
+            PixelLayout::RgbBt709F32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                bt709_f32_to_linear_f32_rgb(floats, 3)
+            }
+            PixelLayout::RgbaBt709F32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                bt709_f32_to_linear_f32_rgb(floats, 4)
+            }
         };
         self.linear_rgb.extend_from_slice(&new_linear);
 
@@ -4789,6 +4951,16 @@ impl LossyEncoder {
             }
             PixelLayout::GrayAlphaLinearF16 => {
                 let new_alpha = extract_alpha_f16(pixels, 2, 1);
+                self.alpha
+                    .get_or_insert_with(Vec::new)
+                    .extend_from_slice(&new_alpha);
+            }
+            // A3 chunk 1b (issue #46): alpha is linear in [0, 1]
+            // regardless of color transfer function — the inverse EOTF
+            // applies only to RGB.
+            PixelLayout::RgbaPqF32 | PixelLayout::RgbaHlgF32 | PixelLayout::RgbaBt709F32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let new_alpha = extract_alpha_f32(floats, 4, 3);
                 self.alpha
                     .get_or_insert_with(Vec::new)
                     .extend_from_slice(&new_alpha);
@@ -4982,7 +5154,26 @@ impl LossyEncoder {
             }
             enc.bit_depth_16 = self.bit_depth_16;
             enc.source_gamma = self.source_gamma;
-            enc.color_encoding = self.color_encoding.clone();
+            // A3 chunk 1b (issue #46): mirrors EncodeRequest::encode_lossy
+            // — auto-derive a ColorEncoding from the layout's implied
+            // transfer function when the caller didn't set one
+            // explicitly. See that site for the full rationale.
+            enc.color_encoding = self.color_encoding.clone().or_else(|| {
+                if self.source_gamma.is_some() {
+                    return None;
+                }
+                use crate::headers::color_encoding::{ColorEncoding, TransferFunction};
+                match self.layout.implied_transfer_function() {
+                    Some(TransferFunction::Pq) => Some(ColorEncoding::bt2100_pq()),
+                    Some(TransferFunction::Hlg) => Some(ColorEncoding::bt2100_hlg()),
+                    Some(TransferFunction::Bt709) => Some(ColorEncoding {
+                        transfer_function: TransferFunction::Bt709,
+                        ..ColorEncoding::srgb()
+                    }),
+                    Some(TransferFunction::Linear) => Some(ColorEncoding::linear_srgb()),
+                    _ => None,
+                }
+            });
             enc.intensity_target = self.intensity_target;
             enc.min_nits = self.min_nits;
             enc.intrinsic_size = self.intrinsic_size;
@@ -6551,6 +6742,37 @@ fn encode_animation_lossy(
                 let alpha = extract_alpha_f16(src_pixels, 2, 1);
                 (rgb, Some(alpha))
             }
+            // A3 chunk 1b: f32 PQ/HLG/BT.709 RGB(A) (issue #46).
+            PixelLayout::RgbPqF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                (pq_f32_to_linear_f32_rgb(floats, 3), None)
+            }
+            PixelLayout::RgbaPqF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let rgb = pq_f32_to_linear_f32_rgb(floats, 4);
+                let alpha = extract_alpha_f32(floats, 4, 3);
+                (rgb, Some(alpha))
+            }
+            PixelLayout::RgbHlgF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                (hlg_f32_to_linear_f32_rgb(floats, 3), None)
+            }
+            PixelLayout::RgbaHlgF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let rgb = hlg_f32_to_linear_f32_rgb(floats, 4);
+                let alpha = extract_alpha_f32(floats, 4, 3);
+                (rgb, Some(alpha))
+            }
+            PixelLayout::RgbBt709F32 => {
+                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                (bt709_f32_to_linear_f32_rgb(floats, 3), None)
+            }
+            PixelLayout::RgbaBt709F32 => {
+                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let rgb = bt709_f32_to_linear_f32_rgb(floats, 4);
+                let alpha = extract_alpha_f32(floats, 4, 3);
+                (rgb, Some(alpha))
+            }
         };
 
         // Mirror of the still-image lossy pre-passes at api.rs:3776-3807.
@@ -7210,6 +7432,54 @@ fn bt709_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f32) ->
         .flat_map(|px| {
             let v = bt709_to_linear_f(px[0] as f32 / u16_max);
             [v, v, v]
+        })
+        .collect()
+}
+
+/// PQ-encoded f32 → linear f32 RGB. Input is interleaved
+/// `stride`-channels-per-pixel where each channel is a PQ-encoded
+/// `[0, 1]` value. Output is linear `[0, 1]` (where 1.0 = peak
+/// luminance per the encoder's `intensity_target`).
+///
+/// A3 chunk 1b (issue #46). No LUT — input is already float, so the
+/// per-pixel `powf` cost is unavoidable. Use the u8/u16 helpers for
+/// quantized input.
+fn pq_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f32> {
+    data.chunks(stride)
+        .flat_map(|px| {
+            [
+                pq_to_linear_f(px[0]),
+                pq_to_linear_f(px[1]),
+                pq_to_linear_f(px[2]),
+            ]
+        })
+        .collect()
+}
+
+/// HLG-encoded f32 → linear (scene-light) f32 RGB. See
+/// [`pq_f32_to_linear_f32_rgb`] for shape. A3 chunk 1b (issue #46).
+fn hlg_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f32> {
+    data.chunks(stride)
+        .flat_map(|px| {
+            [
+                hlg_to_linear_f(px[0]),
+                hlg_to_linear_f(px[1]),
+                hlg_to_linear_f(px[2]),
+            ]
+        })
+        .collect()
+}
+
+/// BT.709-encoded f32 → linear f32 RGB. See
+/// [`pq_f32_to_linear_f32_rgb`] for shape. A3 chunk 1b (issue #46).
+fn bt709_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f32> {
+    data.chunks(stride)
+        .flat_map(|px| {
+            [
+                bt709_to_linear_f(px[0]),
+                bt709_to_linear_f(px[1]),
+                bt709_to_linear_f(px[2]),
+            ]
         })
         .collect()
 }
