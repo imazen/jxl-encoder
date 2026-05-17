@@ -742,8 +742,24 @@ impl VarDctEncoder {
         // Detect and subtract patches (before gaborish, after noise).
         // Patches work in the XYB domain: detect repeated rectangular elements,
         // store unique patterns in a reference frame, subtract from image.
+        //
+        // Distance-aware kMinPeak: below d=1.0 we revert to libjxl's
+        // `kMinPeak = 2` because the W2-5 chunk 1 relaxation (commit
+        // 7b8c06e) admits low-magnitude text patches that do not
+        // amortize their ref-frame overhead at low distance — measured
+        // `windows95.png @ d=0.5` regressed by +465 bytes (+0.96 %)
+        // before this gate. At d>=1.0 the chunk 1 relaxation pays off
+        // (`windows95 @ d=1.0`: -53 B; `@ d=2.0`: -43 B), so above the
+        // threshold we keep the looser detector.
+        let min_peak = if self.distance < 1.0 { 2 } else { 1 };
         let mut patches_data = if self.enable_patches {
-            super::patches::find_and_build([&xyb_x, &xyb_y, &xyb_b], width, height, padded_width)
+            super::patches::find_and_build_with_min_peak(
+                [&xyb_x, &xyb_y, &xyb_b],
+                width,
+                height,
+                padded_width,
+                min_peak,
+            )
         } else {
             None
         };
@@ -1990,11 +2006,15 @@ impl VarDctEncoder {
             } else if self.enable_patches
                 && let Some(pre_gab) = precomputed.xyb_pre_gaborish.as_ref()
             {
-                let mut pd = super::patches::find_and_build(
+                // Same distance-aware kMinPeak as `encode_inner` (~line 745):
+                // libjxl parity at d<1.0, W2-5 chunk 1 relaxation at d>=1.0.
+                let min_peak = if self.distance < 1.0 { 2 } else { 1 };
+                let mut pd = super::patches::find_and_build_with_min_peak(
                     [&pre_gab[0], &pre_gab[1], &pre_gab[2]],
                     width,
                     height,
                     padded_width,
+                    min_peak,
                 );
                 if matches!(self.encoder_mode, crate::api::EncoderMode::Experimental)
                     && let Some(ref p) = pd

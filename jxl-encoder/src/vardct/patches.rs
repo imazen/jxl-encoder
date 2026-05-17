@@ -243,6 +243,19 @@ impl PatchesData {
     ///
     /// At high distances (d>=3), VarDCT savings per pixel drop while ref frame
     /// overhead stays constant, causing patches to hurt rather than help.
+    ///
+    /// At low distances (d<1), the previous `0.3/max(0.5, d)` model over-estimated
+    /// the per-pixel savings: the VarDCT quantizer is already fine enough at low d
+    /// that text edges code efficiently, so subtracting them into a ref frame does
+    /// not free up nearly `0.6 bytes/pixel` of bitstream as the model claimed.
+    /// libjxl has no equivalent gate — they admit all detected patches — but we
+    /// detect more candidates than libjxl (`kMinPeak = 1` since W2-5 chunk 1,
+    /// commit 7b8c06e) and rely on this gate to keep cost-additive admits out.
+    ///
+    /// The current model clamps the divisor at 1.0 so d in [0.0, 1.0] all get the
+    /// d=1.0 per-pixel estimate (0.3 bytes/pixel) instead of the run-away 0.6
+    /// bytes/pixel that admitted regressing patches on windows95 at d=0.5.
+    /// Behavior at d >= 1.0 is unchanged.
     pub fn is_cost_effective(&self, distance: f32, use_ans: bool) -> bool {
         let ref_overhead = trial_encode_ref_frame_bytes(self, use_ans);
         if ref_overhead == usize::MAX {
@@ -260,8 +273,11 @@ impl PatchesData {
                 (rp.xsize as usize) * (rp.ysize as usize)
             })
             .sum();
-        // Each patch pixel saves roughly (0.3 / distance) bytes of VarDCT data
-        let savings_est = (total_patch_pixels as f64 / (distance.max(0.5) as f64) * 0.3) as usize;
+        // Each patch pixel saves roughly (0.3 / max(d, 1.0)) bytes of VarDCT data.
+        // The clamp at 1.0 (rather than 0.5) reflects that per-pixel savings
+        // saturate as d shrinks — the quantizer at d=0.5 is already fine enough
+        // that text patches don't free up 2x the bits per pixel that d=1.0 would.
+        let savings_est = (total_patch_pixels as f64 / (distance.max(1.0) as f64) * 0.3) as usize;
         let effective = savings_est >= 2 * total_overhead;
         #[cfg(feature = "debug-tokens")]
         eprintln!(
@@ -503,12 +519,35 @@ fn is_flat_block(xyb: &[&[f32]; 3], stride: usize, bx: usize, by: usize) -> bool
 /// `stride` is the row pitch of the plane buffers (may be larger than `width`
 /// due to padding). `width` and `height` define the actual image area to scan.
 /// `is_xyb` selects XYB colorspace constants (true) or RGB constants (false).
+///
+/// Uses the crate-level [`MIN_PEAK`] for the kMinPeak filter. Callers that
+/// need distance-aware tightening (e.g. low-distance lossy encoding where
+/// the W2-5 chunk 1 relaxation to `kMinPeak = 1` admits non-amortizing
+/// patches) should use [`find_text_like_patches_with_min_peak`].
 pub(crate) fn find_text_like_patches(
     xyb: [&[f32]; 3],
     width: usize,
     height: usize,
     stride: usize,
     is_xyb: bool,
+) -> Vec<PatchInfo> {
+    find_text_like_patches_with_min_peak(xyb, width, height, stride, is_xyb, MIN_PEAK)
+}
+
+/// Variant of [`find_text_like_patches`] that lets the caller override the
+/// kMinPeak filter threshold per-call. Patches whose quantized magnitudes
+/// are all strictly less than `min_peak` (in absolute value) are rejected.
+///
+/// `min_peak == 2` matches libjxl `enc_patch_dictionary.cc` exactly
+/// (drops all-{-1, 0, +1} patches). `min_peak == 1` matches W2-5 chunk 1
+/// (accepts low-contrast anti-aliased glyph edges).
+pub(crate) fn find_text_like_patches_with_min_peak(
+    xyb: [&[f32]; 3],
+    width: usize,
+    height: usize,
+    stride: usize,
+    is_xyb: bool,
+    min_peak: i32,
 ) -> Vec<PatchInfo> {
     let cs = if is_xyb {
         PatchColorspaceInfo::xyb()
@@ -920,8 +959,9 @@ pub(crate) fn find_text_like_patches(
                         }
                         qpixels[c][dst_i] = q.clamp(-128, 127) as i8;
                         // Use boolean check instead of abs() to avoid i32::MIN panic
-                        // (libjxl 2f10c05)
-                        is_small &= q < MIN_PEAK && q > -MIN_PEAK;
+                        // (libjxl 2f10c05). `min_peak` is the caller-supplied
+                        // kMinPeak override (see `find_text_like_patches_with_min_peak`).
+                        is_small &= q < min_peak && q > -min_peak;
                     }
                 }
             }
@@ -932,7 +972,7 @@ pub(crate) fn find_text_like_patches(
                 continue;
             }
 
-            // kMinPeak check: reject patches where all quantized magnitudes < MIN_PEAK
+            // kMinPeak check: reject patches where all quantized magnitudes < min_peak
             if is_small {
                 stat_reject_low_peak += 1;
                 debug_rect!(
@@ -941,7 +981,7 @@ pub(crate) fn find_text_like_patches(
                     min_y,
                     cc_w,
                     cc_h,
-                    "CC rejected: all values < {MIN_PEAK}"
+                    "CC rejected: all values < {min_peak}"
                 );
                 continue;
             }
@@ -1612,13 +1652,40 @@ pub(crate) fn encode_patches_section(
 /// pre-gab XYB and pass the result to
 /// [`super::precomputed::EncoderPrecomputed::with_patches_data`].
 /// Returned [`PatchesData`] is opaque — fields are `pub(crate)`.
+///
+/// Uses the crate-level [`MIN_PEAK`] for the kMinPeak filter. Callers that
+/// know the encoder distance and want to suppress the W2-5 chunk 1 detector
+/// relaxation at low distance should call
+/// [`find_and_build_with_min_peak`] with `min_peak = 2` (libjxl parity)
+/// when `distance < 1.0`.
 pub fn find_and_build(
     xyb: [&[f32]; 3],
     width: usize,
     height: usize,
     stride: usize,
 ) -> Option<PatchesData> {
-    let infos = find_text_like_patches(xyb, width, height, stride, true);
+    find_and_build_with_min_peak(xyb, width, height, stride, MIN_PEAK)
+}
+
+/// Variant of [`find_and_build`] that lets the caller override the
+/// kMinPeak filter threshold for this single detection. See
+/// [`find_text_like_patches_with_min_peak`] for the meaning of `min_peak`.
+///
+/// At low encoder distance (`distance < 1.0`) the W2-5 chunk 1 detector
+/// relaxation (`MIN_PEAK = 1`) admits low-magnitude text patches that do
+/// not amortize their ref-frame overhead — measured `windows95.png @ d=0.5`
+/// regressed by +465 bytes (+0.96 %) on the gb82-sc corpus. Callers in
+/// the lossy still-image path use this entry to pass `min_peak = 2`
+/// (libjxl parity) below `distance = 1.0`. At higher distances the chunk
+/// 1 relaxation pays off (-53 B / -43 B on the same image at d=1.0 / 2.0).
+pub fn find_and_build_with_min_peak(
+    xyb: [&[f32]; 3],
+    width: usize,
+    height: usize,
+    stride: usize,
+    min_peak: i32,
+) -> Option<PatchesData> {
+    let infos = find_text_like_patches_with_min_peak(xyb, width, height, stride, true, min_peak);
     if infos.is_empty() {
         debug_rect!("patches/detect", 0, 0, width, height, "no patches detected");
         return None;

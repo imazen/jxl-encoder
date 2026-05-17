@@ -228,6 +228,10 @@ name = "wasm_bench"
 path = "examples/wasm_bench.rs"
 
 [[example]]
+name = "patches_gate_bench"
+path = "examples/patches_gate_bench.rs"
+
+[[example]]
 name = "bench_lossy_palette"
 path = "examples/bench_lossy_palette.rs"
 
@@ -254,12 +258,6 @@ required-features = ["__internal_recon_hook", "butteraugli-loop"]
 name = "e10_e11_paired_ab"
 path = "examples/e10_e11_paired_ab.rs"
 required-features = ["butteraugli-loop"]
-
-# RFC#45 chunk 2: e10/e11 multi-seed lossless tree-learning A/B/C bench.
-# No butteraugli-loop needed (lossless path).
-[[example]]
-name = "e10_e11_multiseed_ab"
-path = "examples/e10_e11_multiseed_ab.rs"
 
 [[example]]
 name = "lossless_cliff_profile"
