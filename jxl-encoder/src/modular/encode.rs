@@ -43,8 +43,10 @@ pub(crate) fn write_num_transforms(writer: &mut BitWriter, num_transforms: u32) 
     Ok(())
 }
 
-/// Collect residuals using gradient prediction and identify LZ77 runs.
-fn collect_residuals_with_prediction(image: &ModularImage) -> Vec<Token> {
+/// Collect residuals using the given fixed `predictor_id` and identify
+/// LZ77 runs. The default `predictor_id == 5` (Gradient) keeps the
+/// legacy bytestream that hash-locks are pinned to.
+fn collect_residuals_with_prediction_id(image: &ModularImage, predictor_id: u8) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut current_run = 0usize;
     let mut num_decoded = 0usize; // Track how many values we've output (for LZ77 validity)
@@ -74,17 +76,8 @@ fn collect_residuals_with_prediction(image: &ModularImage) -> Vec<Token> {
             for x in 0..width {
                 let pixel = channel.get(x, y);
 
-                // Get neighbors (matching JXL decoder and write_simple_modular_stream)
-                let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
-                let top = if y > 0 { channel.get(x, y - 1) } else { left };
-                let topleft = if x > 0 && y > 0 {
-                    channel.get(x - 1, y - 1)
-                } else {
-                    left
-                };
-
-                // Predict using ClampedGradient (predictor 5)
-                let prediction = predict_gradient(left, top, topleft);
+                // Predict using the requested predictor (default: ClampedGradient = 5)
+                let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
                 let residual = pixel - prediction;
                 let packed = pack_signed(residual);
 
@@ -154,12 +147,31 @@ fn collect_residuals_with_prediction(image: &ModularImage) -> Vec<Token> {
 ///
 /// For VarDCT subbitstreams, set `skip_group_header = true` since the GroupHeader
 /// is written separately before calling this function.
+#[allow(dead_code)] // public wrapper retained for API stability;
+// internal callers route through `write_improved_modular_stream_with_predictor`
 pub fn write_improved_modular_stream(
     image: &ModularImage,
     writer: &mut BitWriter,
     use_ans: bool,
 ) -> Result<()> {
-    write_improved_modular_stream_inner(image, writer, false, use_ans)
+    write_improved_modular_stream_inner(image, writer, false, use_ans, 5)
+}
+
+/// Knob-aware variant of [`write_improved_modular_stream`] that honours
+/// [`super::palette::ModularKnobs::modular_predictor`]. Routes
+/// `predictor_id == 6` (Weighted) to
+/// [`write_modular_stream_with_weighted`] (the simple LZ77 path has no
+/// per-channel WP state).
+pub(crate) fn write_improved_modular_stream_with_predictor(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+    predictor_id: u8,
+) -> Result<()> {
+    if predictor_id == 6 {
+        return write_modular_stream_with_weighted(image, writer, use_ans);
+    }
+    write_improved_modular_stream_inner(image, writer, false, use_ans, predictor_id)
 }
 
 fn write_improved_modular_stream_inner(
@@ -167,9 +179,10 @@ fn write_improved_modular_stream_inner(
     writer: &mut BitWriter,
     _skip_group_header: bool,
     use_ans: bool,
+    predictor_id: u8,
 ) -> Result<()> {
-    // Collect residuals with gradient prediction
-    let tokens = collect_residuals_with_prediction(image);
+    // Collect residuals using the requested predictor (5 = Gradient default).
+    let tokens = collect_residuals_with_prediction_id(image, predictor_id);
 
     // Build sparse histogram [0..18] + [224..256]
     let sparse_counts = build_sparse_histogram(&tokens);
@@ -195,18 +208,26 @@ fn write_improved_modular_stream_inner(
         num_lz77_runs
     );
 
-    // If no LZ77 runs, fall back to simple encoding
+    // If no LZ77 runs, fall back to simple encoding (carry predictor through).
     if num_lz77_runs == 0 {
-        return write_simple_modular_stream(image, writer, use_ans);
+        return write_simple_modular_stream_with_predictor(image, writer, use_ans, predictor_id);
     }
 
     // === Global section (LfGlobal) ===
     writer.write(1, 1)?; // dc_quant.all_default = true
     writer.write(1, 1)?; // has_tree = true
 
-    // Tree histogram for single-leaf tree with Gradient predictor
-    let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
-    write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+    // Tree histogram for single-leaf tree with the requested predictor.
+    let (tree_depths, tree_codes) = if predictor_id == 5 {
+        write_tree_histogram_for_gradient(writer)?
+    } else {
+        write_tree_histogram_for_predictor(writer, predictor_id)?
+    };
+    if predictor_id == 5 {
+        write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+    } else {
+        write_predictor_tree_tokens(writer, &tree_depths, &tree_codes, predictor_id)?;
+    }
 
     // Data histogram with LZ77 (sparse alphabet)
     let (depths, codes) = write_sparse_lz77_histogram(writer, &sparse_counts)?;
@@ -294,9 +315,93 @@ fn predict_gradient(left: i32, top: i32, topleft: i32) -> i32 {
     if topleft > max { min } else { grad_clamp_max }
 }
 
+/// Predict a single pixel using a fixed `predictor_id` in `0..=13`.
+///
+/// Use [`predict_pixel_with_id`] for the no-tree-learning modular paths
+/// that honour [`super::palette::ModularKnobs::modular_predictor`].
+///
+/// `predictor_id == 6` (Weighted) is **not** real weighted prediction —
+/// it falls back to clamped gradient, matching
+/// [`super::predictor::Predictor::Weighted::predict_from_neighbors`]'s
+/// placeholder. Callers that need true Weighted prediction must use
+/// [`write_modular_stream_with_weighted`] (which carries
+/// [`super::predictor::WeightedPredictorState`] through every pixel).
+/// Unknown ids fall back to clamped gradient too.
+#[inline]
+pub(crate) fn predict_pixel_with_id(
+    channel: &Channel,
+    x: usize,
+    y: usize,
+    predictor_id: u8,
+) -> i32 {
+    use super::predictor::{Neighbors, Predictor};
+    // Fast-path the default (gradient) case to keep the
+    // `--modular-predictor` flag off the hot loop when unset.
+    if predictor_id == 5 || Predictor::from_id(predictor_id).is_none() {
+        let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
+        let top = if y > 0 { channel.get(x, y - 1) } else { left };
+        let topleft = if x > 0 && y > 0 {
+            channel.get(x - 1, y - 1)
+        } else {
+            left
+        };
+        return predict_gradient(left, top, topleft);
+    }
+    let neighbors = Neighbors::gather(channel, x, y);
+    // Safe: from_id checked above.
+    Predictor::from_id(predictor_id)
+        .unwrap()
+        .predict_from_neighbors(&neighbors)
+}
+
 // Set to true to use Zero predictor for debugging
 // Try: false = gradient tree path, true = zero tree path (works)
 const USE_ZERO_PREDICTOR: bool = false;
+
+/// Resolve the fixed predictor that the no-tree-learning modular paths
+/// should use, given a [`super::palette::ModularKnobs`] snapshot.
+///
+/// Returns `5` (Gradient — the legacy default) when:
+/// - `modular_predictor` is `None`,
+/// - the requested id is out of range,
+/// - the requested id is `14` (libjxl `Best`) or `15` (libjxl `Variable`)
+///   — both encoder-only meta-modes that imply tree learning, which the
+///   non-tree paths don't perform; the fixed Gradient fallback keeps
+///   the byte output stable across these surface-only inputs.
+///
+/// Otherwise returns the raw `0..=13` id.
+#[inline]
+pub(crate) fn resolve_fixed_predictor(knobs: &super::palette::ModularKnobs) -> u8 {
+    match knobs.modular_predictor {
+        None => 5,
+        Some(id) if id <= 13 => id,
+        Some(_) => 5,
+    }
+}
+
+/// Same as [`resolve_fixed_predictor`] but additionally folds Weighted
+/// (id `6`) down to Gradient (id `5`) for paths that don't carry per-
+/// channel [`super::predictor::WeightedPredictorState`].
+///
+/// Used by the palette and lossy-palette stream writers, the squeeze
+/// multi-group path, and the multi-group non-tree-learn path — these
+/// all compute residuals via [`predict_pixel_with_id`] which has only a
+/// scalar (gradient-equivalent) Weighted placeholder. Emitting tree
+/// token `6` while using gradient-equivalent residuals would diverge
+/// from the decoder; falling back to `5` keeps the bitstream
+/// self-consistent.
+///
+/// The dedicated weighted writers ([`write_modular_stream_with_weighted`],
+/// [`write_modular_stream_with_rct_weighted`]) carry the WP state
+/// themselves and so honour the raw id 6 — the simpler writers route to
+/// those when [`super::palette::ModularKnobs::modular_predictor`] is `Some(6)`.
+#[inline]
+pub(crate) fn resolve_fixed_predictor_for_simple_path(knobs: &super::palette::ModularKnobs) -> u8 {
+    match resolve_fixed_predictor(knobs) {
+        6 => 5,
+        id => id,
+    }
+}
 
 /// Simpler stream without LZ77 but with gradient prediction.
 pub fn write_simple_modular_stream(
@@ -304,7 +409,27 @@ pub fn write_simple_modular_stream(
     writer: &mut BitWriter,
     use_ans: bool,
 ) -> Result<()> {
-    // Collect residuals with gradient prediction
+    write_simple_modular_stream_with_predictor(image, writer, use_ans, 5)
+}
+
+/// Knob-aware variant of [`write_simple_modular_stream`] that honours
+/// [`super::palette::ModularKnobs::modular_predictor`] (libjxl `cjxl -P`
+/// / `--modular_predictor`). Routes `predictor_id == 6` (Weighted) to
+/// [`write_modular_stream_with_weighted`] so the on-pixel prediction
+/// uses the full [`super::predictor::WeightedPredictorState`] (the
+/// simple-stream path otherwise carries no per-channel WP state and
+/// would diverge from the decoder).
+pub(crate) fn write_simple_modular_stream_with_predictor(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+    predictor_id: u8,
+) -> Result<()> {
+    if predictor_id == 6 {
+        return write_modular_stream_with_weighted(image, writer, use_ans);
+    }
+
+    // Collect residuals using the requested predictor (5 = Gradient default).
     let mut residuals = Vec::new();
 
     for channel in &image.channels {
@@ -318,14 +443,7 @@ pub fn write_simple_modular_stream(
                 let prediction = if USE_ZERO_PREDICTOR {
                     0
                 } else {
-                    let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
-                    let top = if y > 0 { channel.get(x, y - 1) } else { left };
-                    let topleft = if x > 0 && y > 0 {
-                        channel.get(x - 1, y - 1)
-                    } else {
-                        left
-                    };
-                    predict_gradient(left, top, topleft)
+                    predict_pixel_with_id(channel, x, y, predictor_id)
                 };
 
                 let residual = pixel - prediction;
@@ -341,9 +459,14 @@ pub fn write_simple_modular_stream(
 
     if USE_ZERO_PREDICTOR {
         write_zero_tree_complete(writer)?;
-    } else {
+    } else if predictor_id == 5 {
+        // Default path — keep the byte-identical helpers so hash-locks
+        // stay green when `modular_predictor` is unset.
         let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
         write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+    } else {
+        let (tree_depths, tree_codes) = write_tree_histogram_for_predictor(writer, predictor_id)?;
+        write_predictor_tree_tokens(writer, &tree_depths, &tree_codes, predictor_id)?;
     }
 
     if use_ans {
@@ -415,15 +538,31 @@ pub fn write_modular_stream_with_palette_knobs(
 ) -> Result<()> {
     use super::palette::{analyze_palette, apply_palette};
 
+    // Resolve forced predictor. Fall-through paths route via the full
+    // resolver (so id 6 keeps WP semantics), but the in-palette
+    // residual emission folds 6 → 5 (this path has no per-channel WP
+    // state; see resolve_fixed_predictor_for_simple_path).
+    let fallback_predictor_id = resolve_fixed_predictor(knobs);
+
     let max_colors = match knobs.palette_colors_or_default() {
         Some(n) => n,
         None => {
             // Caller explicitly disabled palette via knob; fall through to
             // the same path `analyze_palette` would take on rejection.
             if image.channels.len() >= 3 {
-                return write_modular_stream_with_rct_only(image, writer, use_ans);
+                return write_modular_stream_with_rct_only_with_predictor(
+                    image,
+                    writer,
+                    use_ans,
+                    fallback_predictor_id,
+                );
             } else {
-                return write_simple_modular_stream(image, writer, use_ans);
+                return write_simple_modular_stream_with_predictor(
+                    image,
+                    writer,
+                    use_ans,
+                    fallback_predictor_id,
+                );
             }
         }
     };
@@ -434,11 +573,25 @@ pub fn write_modular_stream_with_palette_knobs(
         // IMPORTANT: call write_modular_stream_with_rct_only (not _with_rct) to avoid
         // re-entering should_use_palette → write_modular_stream_with_palette → infinite recursion.
         if image.channels.len() >= 3 {
-            return write_modular_stream_with_rct_only(image, writer, use_ans);
+            return write_modular_stream_with_rct_only_with_predictor(
+                image,
+                writer,
+                use_ans,
+                fallback_predictor_id,
+            );
         } else {
-            return write_simple_modular_stream(image, writer, use_ans);
+            return write_simple_modular_stream_with_predictor(
+                image,
+                writer,
+                use_ans,
+                fallback_predictor_id,
+            );
         }
     }
+
+    // We're committed to the in-palette residual path now — fold 6 → 5
+    // because this path lacks per-channel WP state.
+    let predictor_id = resolve_fixed_predictor_for_simple_path(knobs);
 
     // Apply palette transform
     let mut transformed = image.clone();
@@ -451,7 +604,7 @@ pub fn write_modular_stream_with_palette_knobs(
         nb_colors
     );
 
-    // Collect residuals with gradient prediction on transformed channels
+    // Collect residuals on the transformed channels with the requested predictor.
     let mut residuals = Vec::new();
 
     for channel in &transformed.channels {
@@ -462,14 +615,7 @@ pub fn write_modular_stream_with_palette_knobs(
             for x in 0..width {
                 let pixel = channel.get(x, y);
 
-                let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
-                let top = if y > 0 { channel.get(x, y - 1) } else { left };
-                let topleft = if x > 0 && y > 0 {
-                    channel.get(x - 1, y - 1)
-                } else {
-                    left
-                };
-                let prediction = predict_gradient(left, top, topleft);
+                let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
 
                 let residual = pixel - prediction;
                 let packed = pack_signed(residual);
@@ -483,8 +629,16 @@ pub fn write_modular_stream_with_palette_knobs(
     writer.write(1, 1)?; // dc_quant.all_default = true
     writer.write(1, 1)?; // has_tree = true
 
-    let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
-    write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+    let (tree_depths, tree_codes) = if predictor_id == 5 {
+        write_tree_histogram_for_gradient(writer)?
+    } else {
+        write_tree_histogram_for_predictor(writer, predictor_id)?
+    };
+    if predictor_id == 5 {
+        write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+    } else {
+        write_predictor_tree_tokens(writer, &tree_depths, &tree_codes, predictor_id)?;
+    }
 
     if use_ans {
         let (tokens, code) = build_ans_modular_code(&residuals);
@@ -557,7 +711,38 @@ pub(crate) fn write_modular_stream_with_lossy_palette_budget(
     max_palette_colors: usize,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
+    write_modular_stream_with_lossy_palette_budget_knobs(
+        image,
+        writer,
+        use_ans,
+        begin_c,
+        num_c,
+        max_palette_colors,
+        budget,
+        &super::palette::ModularKnobs::default(),
+    )
+}
+
+/// Knob-aware variant of
+/// [`write_modular_stream_with_lossy_palette_budget`]. Honours
+/// [`super::palette::ModularKnobs::modular_predictor`] for the residual
+/// pass and tree-token emission. The palette transform itself still
+/// uses the libjxl two-pass discovery; only the post-palette residual
+/// encoding is affected.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_modular_stream_with_lossy_palette_budget_knobs(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+    begin_c: usize,
+    num_c: usize,
+    max_palette_colors: usize,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    knobs: &super::palette::ModularKnobs,
+) -> Result<()> {
     use super::palette::apply_lossy_palette_with_budget;
+
+    let fallback_predictor_id = resolve_fixed_predictor(knobs);
 
     let mut transformed = image.clone();
     let result = apply_lossy_palette_with_budget(
@@ -572,13 +757,22 @@ pub(crate) fn write_modular_stream_with_lossy_palette_budget(
         Some(r) => r,
         None => {
             // Lossy palette not beneficial, fall back to lossless RCT
+            // (honouring the predictor override on the way down).
             if image.channels.len() >= 3 {
-                return write_modular_stream_with_rct(image, writer, use_ans);
+                return write_modular_stream_with_rct_knobs(image, writer, use_ans, knobs);
             } else {
-                return write_simple_modular_stream(image, writer, use_ans);
+                return write_simple_modular_stream_with_predictor(
+                    image,
+                    writer,
+                    use_ans,
+                    fallback_predictor_id,
+                );
             }
         }
     };
+
+    // In-palette residual path lacks per-channel WP state — fold 6 → 5.
+    let predictor_id = resolve_fixed_predictor_for_simple_path(knobs);
 
     let nb_colors = result.nb_colors;
     let nb_deltas = result.nb_deltas;
@@ -592,7 +786,7 @@ pub(crate) fn write_modular_stream_with_lossy_palette_budget(
         num_c,
     );
 
-    // Collect residuals with gradient prediction on transformed channels
+    // Collect residuals using the requested predictor on transformed channels.
     let mut residuals = Vec::new();
     for channel in &transformed.channels {
         let width = channel.width();
@@ -600,14 +794,7 @@ pub(crate) fn write_modular_stream_with_lossy_palette_budget(
         for y in 0..height {
             for x in 0..width {
                 let pixel = channel.get(x, y);
-                let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
-                let top = if y > 0 { channel.get(x, y - 1) } else { left };
-                let topleft = if x > 0 && y > 0 {
-                    channel.get(x - 1, y - 1)
-                } else {
-                    left
-                };
-                let prediction = predict_gradient(left, top, topleft);
+                let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
                 let residual = pixel - prediction;
                 let packed = pack_signed(residual);
                 residuals.push(packed);
@@ -619,8 +806,16 @@ pub(crate) fn write_modular_stream_with_lossy_palette_budget(
     writer.write(1, 1)?; // dc_quant.all_default = true
     writer.write(1, 1)?; // has_tree = true
 
-    let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
-    write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+    let (tree_depths, tree_codes) = if predictor_id == 5 {
+        write_tree_histogram_for_gradient(writer)?
+    } else {
+        write_tree_histogram_for_predictor(writer, predictor_id)?
+    };
+    if predictor_id == 5 {
+        write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+    } else {
+        write_predictor_tree_tokens(writer, &tree_depths, &tree_codes, predictor_id)?;
+    }
 
     if use_ans {
         let (tokens, code) = build_ans_modular_code(&residuals);
@@ -809,20 +1004,29 @@ pub fn write_modular_stream_with_rct_knobs(
         );
     }
 
-    write_modular_stream_with_rct_only(image, writer, use_ans)
+    let predictor_id = resolve_fixed_predictor(knobs);
+    write_modular_stream_with_rct_only_with_predictor(image, writer, use_ans, predictor_id)
 }
 
 /// Write modular stream with RCT (YCoCg), without checking palette.
 /// Used as a fallback from `write_modular_stream_with_palette` to avoid
-/// infinite recursion through `should_use_palette`.
-fn write_modular_stream_with_rct_only(
+/// infinite recursion through `should_use_palette`. Honours
+/// [`super::palette::ModularKnobs::modular_predictor`] when called via
+/// [`write_modular_stream_with_rct_knobs`]. Routes `predictor_id == 6`
+/// (Weighted) to [`write_modular_stream_with_rct_weighted`].
+fn write_modular_stream_with_rct_only_with_predictor(
     image: &ModularImage,
     writer: &mut BitWriter,
     use_ans: bool,
+    predictor_id: u8,
 ) -> Result<()> {
+    if predictor_id == 6 {
+        return write_modular_stream_with_rct_weighted(image, writer, use_ans);
+    }
+
     // Only apply RCT to RGB images (3+ channels)
     if image.channels.len() < 3 {
-        return write_simple_modular_stream(image, writer, use_ans);
+        return write_simple_modular_stream_with_predictor(image, writer, use_ans, predictor_id);
     }
 
     // Clone the image and apply forward RCT (YCoCg)
@@ -835,7 +1039,7 @@ fn write_modular_stream_with_rct_only(
         transformed.channels.len()
     );
 
-    // Collect residuals with gradient prediction on transformed channels
+    // Collect residuals using the requested predictor on transformed channels.
     let mut residuals = Vec::new();
     let mut max_residual: u32 = 0;
 
@@ -847,14 +1051,7 @@ fn write_modular_stream_with_rct_only(
             for x in 0..width {
                 let pixel = channel.get(x, y);
 
-                let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
-                let top = if y > 0 { channel.get(x, y - 1) } else { left };
-                let topleft = if x > 0 && y > 0 {
-                    channel.get(x - 1, y - 1)
-                } else {
-                    left
-                };
-                let prediction = predict_gradient(left, top, topleft);
+                let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
 
                 let residual = pixel - prediction;
                 let packed = pack_signed(residual);
@@ -869,8 +1066,16 @@ fn write_modular_stream_with_rct_only(
     writer.write(1, 1)?; // dc_quant.all_default = true
     writer.write(1, 1)?; // has_tree = true
 
-    let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
-    write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+    let (tree_depths, tree_codes) = if predictor_id == 5 {
+        write_tree_histogram_for_gradient(writer)?
+    } else {
+        write_tree_histogram_for_predictor(writer, predictor_id)?
+    };
+    if predictor_id == 5 {
+        write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+    } else {
+        write_predictor_tree_tokens(writer, &tree_depths, &tree_codes, predictor_id)?;
+    }
 
     if use_ans {
         let (tokens, code) = build_ans_modular_code(&residuals);

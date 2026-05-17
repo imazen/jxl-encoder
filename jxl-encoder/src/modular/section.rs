@@ -9,8 +9,9 @@
 
 use super::channel::ModularImage;
 use super::encode::{
-    write_gradient_tree_tokens, write_hybrid_data_histogram, write_palette_transform,
-    write_rct_transform, write_tree_histogram_for_gradient,
+    predict_pixel_with_id, write_gradient_tree_tokens, write_hybrid_data_histogram,
+    write_palette_transform, write_predictor_tree_tokens, write_rct_transform,
+    write_tree_histogram_for_gradient, write_tree_histogram_for_predictor,
 };
 use super::predictor::pack_signed;
 use super::rct::RctType;
@@ -30,17 +31,18 @@ const MODULAR_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
     lsb_in_token: 0,
 };
 
-/// Gradient prediction (ClampedGradient).
-#[inline]
-fn predict_gradient(left: i32, top: i32, topleft: i32) -> i32 {
-    let grad = left + top - topleft;
-    // Clamp to [min(left, top), max(left, top)]
-    let min = left.min(top);
-    let max = left.max(top);
-    grad.clamp(min, max)
+pub fn collect_all_residuals(image: &ModularImage) -> (Vec<u32>, u32) {
+    collect_all_residuals_with_predictor(image, 5)
 }
 
-pub fn collect_all_residuals(image: &ModularImage) -> (Vec<u32>, u32) {
+/// Knob-aware variant of [`collect_all_residuals`] that honours the
+/// libjxl `--modular_predictor` override. `predictor_id == 5` (Gradient)
+/// matches the legacy hash-locked output. See
+/// [`super::encode::resolve_fixed_predictor`].
+pub(crate) fn collect_all_residuals_with_predictor(
+    image: &ModularImage,
+    predictor_id: u8,
+) -> (Vec<u32>, u32) {
     let mut residuals = Vec::new();
     let mut max_residual: u32 = 0;
 
@@ -52,17 +54,7 @@ pub fn collect_all_residuals(image: &ModularImage) -> (Vec<u32>, u32) {
             for x in 0..width {
                 let pixel = channel.get(x, y);
 
-                // Get neighbors (matching JXL decoder)
-                let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
-                let top = if y > 0 { channel.get(x, y - 1) } else { left };
-                let topleft = if x > 0 && y > 0 {
-                    channel.get(x - 1, y - 1)
-                } else {
-                    left
-                };
-
-                // Predict using ClampedGradient (predictor 5)
-                let prediction = predict_gradient(left, top, topleft);
+                let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
                 let residual = pixel - prediction;
                 let packed = pack_signed(residual);
 
@@ -105,11 +97,17 @@ pub enum GlobalModularState {
         codes: Vec<u16>,
         /// Maximum HybridUint token value.
         max_token: u32,
+        /// Fixed predictor id (libjxl `cjxl -P`); `5` (Gradient) is the
+        /// legacy default that hash-locks pin against.
+        predictor_id: u8,
     },
     /// ANS entropy coding state (single-context gradient tree).
     Ans {
         /// The ANS entropy code (distributions, context map, etc.)
         code: OwnedAnsEntropyCode,
+        /// Fixed predictor id used for per-group residual collection.
+        /// `5` (Gradient) is the legacy default.
+        predictor_id: u8,
     },
     /// ANS entropy coding with learned MA tree (multi-context).
     AnsWithTree {
@@ -199,6 +197,29 @@ pub fn write_global_modular_section(
     use_ans: bool,
     transforms: GlobalTransforms,
 ) -> Result<GlobalModularState> {
+    write_global_modular_section_with_predictor(
+        all_residuals,
+        histogram,
+        max_token,
+        writer,
+        use_ans,
+        transforms,
+        5,
+    )
+}
+
+/// Knob-aware variant of [`write_global_modular_section`] that honours
+/// `predictor_id` (libjxl `cjxl -P`). Default `5` (Gradient) keeps the
+/// hash-locked output bit-identical.
+pub fn write_global_modular_section_with_predictor(
+    all_residuals: &[u32],
+    histogram: &[u32],
+    max_token: u32,
+    writer: &mut BitWriter,
+    use_ans: bool,
+    transforms: GlobalTransforms,
+    predictor_id: u8,
+) -> Result<GlobalModularState> {
     crate::trace::debug_eprintln!(
         "GLOBAL_MODULAR [bit {}]: Starting global section (ans={})",
         writer.bits_written(),
@@ -210,9 +231,17 @@ pub fn write_global_modular_section(
     // has_tree = true
     writer.write(1, 1)?;
 
-    // Tree histogram (supports symbols 0-5 for Gradient predictor)
-    let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
-    write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+    // Tree histogram + tokens for the requested predictor.
+    let (tree_depths, tree_codes) = if predictor_id == 5 {
+        write_tree_histogram_for_gradient(writer)?
+    } else {
+        write_tree_histogram_for_predictor(writer, predictor_id)?
+    };
+    if predictor_id == 5 {
+        write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+    } else {
+        write_predictor_tree_tokens(writer, &tree_depths, &tree_codes, predictor_id)?;
+    }
 
     if use_ans {
         // Build ANS code from all residuals across all groups
@@ -243,7 +272,7 @@ pub fn write_global_modular_section(
             writer.bits_written()
         );
 
-        Ok(GlobalModularState::Ans { code })
+        Ok(GlobalModularState::Ans { code, predictor_id })
     } else {
         // Data histogram with HybridUint {4,2,0} + Huffman
         let (depths, codes) = write_hybrid_data_histogram(writer, histogram, max_token)?;
@@ -264,6 +293,7 @@ pub fn write_global_modular_section(
             depths,
             codes,
             max_token,
+            predictor_id,
         })
     }
 }
@@ -739,7 +769,17 @@ fn write_global_transforms_full(
 }
 
 /// Collect packed residuals from a group image using gradient prediction.
+#[allow(dead_code)] // legacy wrapper retained for hash-lock parity
 fn collect_group_residuals(group_image: &ModularImage) -> Vec<u32> {
+    collect_group_residuals_with_predictor(group_image, 5)
+}
+
+/// Knob-aware variant of [`collect_group_residuals`] that honours the
+/// libjxl `--modular_predictor` override.
+fn collect_group_residuals_with_predictor(
+    group_image: &ModularImage,
+    predictor_id: u8,
+) -> Vec<u32> {
     let mut residuals = Vec::new();
     for channel in &group_image.channels {
         let width = channel.width();
@@ -747,14 +787,7 @@ fn collect_group_residuals(group_image: &ModularImage) -> Vec<u32> {
         for y in 0..height {
             for x in 0..width {
                 let pixel = channel.get(x, y);
-                let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
-                let top = if y > 0 { channel.get(x, y - 1) } else { left };
-                let topleft = if x > 0 && y > 0 {
-                    channel.get(x - 1, y - 1)
-                } else {
-                    left
-                };
-                let prediction = predict_gradient(left, top, topleft);
+                let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
                 let residual = pixel - prediction;
                 residuals.push(pack_signed(residual));
             }
@@ -846,22 +879,18 @@ pub fn write_group_modular_section_idx(
             depths,
             codes,
             max_token: _,
+            predictor_id,
         } => {
-            // Encode residuals with HybridUint {4,2,0} + Huffman
+            // Encode residuals with HybridUint {4,2,0} + Huffman, honouring
+            // the global section's forced predictor (libjxl `cjxl -P`).
+            let predictor_id = *predictor_id;
             for channel in &group_image.channels {
                 let width = channel.width();
                 let height = channel.height();
                 for y in 0..height {
                     for x in 0..width {
                         let pixel = channel.get(x, y);
-                        let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
-                        let top = if y > 0 { channel.get(x, y - 1) } else { left };
-                        let topleft = if x > 0 && y > 0 {
-                            channel.get(x - 1, y - 1)
-                        } else {
-                            left
-                        };
-                        let prediction = predict_gradient(left, top, topleft);
+                        let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
                         let residual = pixel - prediction;
                         let packed = pack_signed(residual);
 
@@ -878,9 +907,9 @@ pub fn write_group_modular_section_idx(
                 }
             }
         }
-        GlobalModularState::Ans { code } => {
+        GlobalModularState::Ans { code, predictor_id } => {
             // Collect residuals for this group and encode with ANS
-            let residuals = collect_group_residuals(group_image);
+            let residuals = collect_group_residuals_with_predictor(group_image, *predictor_id);
             let tokens: Vec<AnsToken> = residuals.iter().map(|&r| AnsToken::new(0, r)).collect();
             write_tokens_ans(&tokens, code, None, writer)?;
         }
