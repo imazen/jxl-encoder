@@ -5939,21 +5939,34 @@ impl<'a> EncodeRequest<'a> {
                 let alpha = extract_alpha_f32(floats, 4, 3);
                 (rgb, Some(alpha), false)
             }
-            // Lossy CMYK (chunk 2 follow-on to f2deff72). The C/M/Y
-            // planes are routed through the VarDCT (XYB) pipeline by
-            // reinterpreting them as if they were sRGB-encoded R/G/B
-            // bytes, and the K plane is split off and attached as an
+            // Lossy CMYK. The C/M/Y planes are routed through the
+            // VarDCT (XYB) pipeline via a 1-CMY × (1-K) subtractive
+            // → linear-RGB transform (chunk 3, follow-on to 1b222af),
+            // and the K plane is split off and attached as an
             // `ExtraChannelType::Black` extra below (handled by the
             // existing alpha+extras flow). This is the same wire shape
             // libjxl uses for lossy CMYK — three colour planes carrying
-            // CMY in XYB plus a Black extra carrying K
-            // (lib/jxl/enc_image_bundle.cc:57). The CMY→XYB mapping is
-            // not perceptually correct (CMY is subtractive and not
-            // related to sRGB primaries) — chunk 3 will address that.
+            // colour in XYB plus a Black extra carrying K
+            // (lib/jxl/enc_image_bundle.cc:57).
+            //
+            // The 1-CMY × (1-K) mapping is the naive uncalibrated
+            // subtractive model: each ink absorbs its complementary
+            // primary, K darkens uniformly. It is NOT colorimetric —
+            // a future chunk can wire either the caller-supplied
+            // CMYK ICC profile (option A) or a hardcoded SWOP/FOGRA
+            // matrix (option B). What it does provide is gamut-
+            // direction correctness: pure cyan input now encodes as
+            // a cyan-ish XYB sample (no red leak), so the perceptual
+            // quantiser allocates bits sensibly. Chunk 2 (1b222af)
+            // shipped a placeholder that treated CMY bytes as if they
+            // were sRGB-encoded R/G/B — a fully-saturated cyan ink
+            // encoded as bright red, an obvious wrong gamut sector.
+            //
             // The K plane survives the round-trip losslessly because
             // it travels as a modular extra channel, not through XYB.
-            //
-            // Synthesised K is stashed in the per-arm locals
+            // Caller gamma + ICC are ignored on the CMY input — they
+            // would only make sense once chunk A/B colour management
+            // lands. Synthesised K is stashed in the per-arm locals
             // `synthesised_black_u8` / `synthesised_black_u16` and
             // picked up by the extras-list construction further down.
             PixelLayout::Cmyk8 => {
@@ -5969,9 +5982,8 @@ impl<'a> EncodeRequest<'a> {
                         ),
                     });
                 }
-                // Deinterleave CMYK → 3-channel CMY (treated as RGB
-                // for the sRGB → linear path) + separate K plane. One
-                // pass over the input.
+                // Deinterleave CMYK → 3-channel CMY + separate K plane.
+                // One pass over the input.
                 let mut cmy = Vec::with_capacity(n * 3);
                 let mut k = Vec::with_capacity(n);
                 for i in 0..n {
@@ -5981,12 +5993,8 @@ impl<'a> EncodeRequest<'a> {
                     cmy.push(pixels[base + 2]);
                     k.push(pixels[base + 3]);
                 }
+                let linear = cmyk_u8_to_linear_f32_rgb(&cmy, &k);
                 synthesised_black_u8 = Some(k);
-                let linear = if let Some(g) = gamma {
-                    gamma_u8_to_linear_f32(&cmy, 3, g)
-                } else {
-                    srgb_u8_to_linear_f32(&cmy, 3)
-                };
                 (linear, None, false)
             }
             PixelLayout::Cmyk16 => {
@@ -6014,12 +6022,8 @@ impl<'a> EncodeRequest<'a> {
                     let k_hi = pixels[base + 7];
                     k.push(u16::from_ne_bytes([k_lo, k_hi]));
                 }
+                let linear = cmyk_u16_to_linear_f32_rgb(&cmy, &k, u16_max);
                 synthesised_black_u16 = Some(k);
-                let linear = if let Some(g) = gamma {
-                    gamma_u16_to_linear_f32(&cmy, 3, g, u16_max)
-                } else {
-                    srgb_u16_to_linear_f32(&cmy, 3, u16_max)
-                };
                 (linear, None, true)
             }
         };
@@ -9386,6 +9390,58 @@ fn gamma_u16_to_linear_f32(data: &[u8], channels: usize, gamma: f32, u16_max: f3
             ]
         })
         .collect()
+}
+
+/// CMY u8 + K u8 → linear-light f32 RGB via the naive uncalibrated
+/// subtractive model: `R = (1 - C/255) * (1 - K/255)` etc., where
+/// each ink absorbs its complementary primary in linear light.
+///
+/// This is the chunk-3 follow-on to the chunk-2 placeholder that
+/// treated CMY as if it were sRGB-encoded RGB bytes (which had no
+/// physical basis at all — a fully-saturated cyan ink would encode
+/// as bright red in XYB and decode to an entirely wrong colour
+/// family). The 1-CMY model is still an approximation: it ignores
+/// per-ink chromaticity, dot-gain, illuminant, and printer profile,
+/// so output won't match a colorimetric CMYK→sRGB conversion done
+/// through an ICC profile. But it puts the colours in the right
+/// half of the gamut — a pure cyan input now encodes as cyan-ish
+/// (no red component), which the XYB perceptual model can quantise
+/// sensibly. A future chunk can wire the caller's CMYK ICC profile
+/// (option A) or a hardcoded SWOP/FOGRA matrix (option B) for
+/// colorimetric accuracy.
+///
+/// `K` is also kept as a modular extra channel further down the
+/// pipeline so the K plane round-trips losslessly — the CMY→RGB
+/// transform here is purely for perceptual quantisation of the
+/// colour content.
+fn cmyk_u8_to_linear_f32_rgb(cmy: &[u8], k: &[u8]) -> Vec<f32> {
+    debug_assert_eq!(cmy.len(), k.len() * 3);
+    let inv = 1.0f32 / 255.0;
+    let mut out = Vec::with_capacity(k.len() * 3);
+    for (px, &kv) in cmy.chunks_exact(3).zip(k.iter()) {
+        let one_minus_k = 1.0 - (kv as f32) * inv;
+        out.push((1.0 - (px[0] as f32) * inv) * one_minus_k);
+        out.push((1.0 - (px[1] as f32) * inv) * one_minus_k);
+        out.push((1.0 - (px[2] as f32) * inv) * one_minus_k);
+    }
+    out
+}
+
+/// CMY u16 + K u16 → linear-light f32 RGB. Same 1-CMY × (1-K) model
+/// as the 8-bit variant; `u16_max` is the bit-depth normaliser (e.g.
+/// `65535.0` for full-precision 16-bit input).
+fn cmyk_u16_to_linear_f32_rgb(cmy: &[u8], k: &[u16], u16_max: f32) -> Vec<f32> {
+    let cmy_u16: &[u16] = bytemuck::cast_slice(cmy);
+    debug_assert_eq!(cmy_u16.len(), k.len() * 3);
+    let inv = 1.0f32 / u16_max;
+    let mut out = Vec::with_capacity(k.len() * 3);
+    for (px, &kv) in cmy_u16.chunks_exact(3).zip(k.iter()) {
+        let one_minus_k = 1.0 - (kv as f32) * inv;
+        out.push((1.0 - (px[0] as f32) * inv) * one_minus_k);
+        out.push((1.0 - (px[1] as f32) * inv) * one_minus_k);
+        out.push((1.0 - (px[2] as f32) * inv) * one_minus_k);
+    }
+    out
 }
 
 /// Gamma u8 grayscale → linear f32 RGB (gray→R=G=B). `linear = (encoded/255)^(1/gamma)`
