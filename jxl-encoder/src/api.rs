@@ -2003,6 +2003,27 @@ pub struct LossyConfig {
     /// `EffortProfile` everywhere the encoder asks for one. See
     /// [`Self::with_effort_profile_override`].
     profile_override: Option<crate::effort::EffortProfile>,
+    /// Input canonicalization pre-pass (drop opaque alpha,
+    /// near-grayscale collapse, 16→8 downcast when safe). Default
+    /// `false` to keep existing hash-locks byte-identical. See
+    /// [`Self::with_canonicalize_input`].
+    canonicalize_input: bool,
+    /// RFC #45 pick #4 chunk 1 — content-class dispatch override /
+    /// opt-in. When `Some(class)` the caller has pre-computed the
+    /// content class (e.g. via zenanalyze or any other classifier);
+    /// [`Self::effective_profile_for_image`] will route it through
+    /// [`crate::effort::EffortProfile::adapt_to_image_content`].
+    /// `None` (default) keeps every existing hash-lock byte-identical.
+    /// See [`Self::with_content_class`].
+    content_class: Option<crate::effort::ImageContentClass>,
+    /// Tracks whether the caller has explicitly set `patches` via
+    /// [`Self::with_patches`]. Mirrors the
+    /// `butteraugli_iters_explicit` / `resampling_explicit` pattern.
+    /// `false` means the patches enable state derives from the
+    /// per-image profile (effort default + content-class dispatch);
+    /// `true` means the user-set [`Self::patches`] wins outright.
+    /// Default `false`. See [`Self::with_patches`].
+    patches_explicit: bool,
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -2082,6 +2103,9 @@ impl LossyConfig {
             threads: 0,
             non_finite_action: NonFiniteAction::default(),
             profile_override: None,
+            canonicalize_input: false,
+            content_class: None,
+            patches_explicit: false,
         }
     }
 
@@ -2115,6 +2139,14 @@ impl LossyConfig {
         // a sweep harness's pinned value.
         if self.profile_override.is_none() {
             p.adapt_to_image_lossy(pixels, self.distance);
+            // RFC #45 pick #4 chunk 1 — content-class dispatch.
+            // Fires only when the caller has explicitly set the class
+            // via `with_content_class` (default `None` keeps every
+            // hash-lock fixture byte-identical, because the dispatch
+            // surface itself is opt-in at the API level for chunk 1).
+            if let Some(class) = self.content_class {
+                p.adapt_to_image_content(pixels, self.distance, class);
+            }
         }
         p
     }
@@ -2197,6 +2229,13 @@ impl LossyConfig {
             new.zensim_iters = self.zensim_iters;
         }
         new.profile_override = self.profile_override;
+        new.canonicalize_input = self.canonicalize_input;
+        new.content_class = self.content_class;
+        // Preserve explicit patches setting across with_effort.
+        if self.patches_explicit {
+            new.patches = self.patches;
+            new.patches_explicit = true;
+        }
         new
     }
 
@@ -2475,6 +2514,9 @@ impl LossyConfig {
         // Defaults mirror libjxl's enabled state when on.
         self.gaborish = enable;
         self.patches = enable;
+        // Convenience setter pins patches — opting out via this method
+        // suppresses the content-class dispatch too.
+        self.patches_explicit = true;
         self.dot_detection = enable; // libjxl `Override::kDefault`; in-encoder effort/distance gates make this niche-only
         self.noise = false; // off by default in libjxl too
         self.pixel_domain_loss = enable;
@@ -2515,9 +2557,18 @@ impl LossyConfig {
     }
 
     /// Enable/disable patches (dictionary-based repeated pattern detection).
-    /// Default: true. Huge wins on screenshots, zero cost on photos.
+    /// Default: true at effort ≥ 7 (libjxl-parity). Huge wins on
+    /// screenshots, zero cost on photos.
+    ///
+    /// Calling this method pins the value — it suppresses the
+    /// content-class dispatch
+    /// ([`crate::effort::EffortProfile::adapt_to_image_content`])
+    /// so an explicit `with_patches(false)` is respected even when a
+    /// `Screenshot` class has been set via
+    /// [`Self::with_content_class`].
     pub fn with_patches(mut self, enable: bool) -> Self {
         self.patches = enable;
+        self.patches_explicit = true;
         self
     }
 
@@ -2592,6 +2643,87 @@ impl LossyConfig {
     pub fn with_keep_invisible(mut self, keep: bool) -> Self {
         self.simplify_invisible = !keep;
         self
+    }
+
+    /// Enable/disable input canonicalization pre-pass (default: `false`).
+    ///
+    /// When enabled, the encoder scans the input pixels once before
+    /// encoding and applies the following lossless transforms when
+    /// safe:
+    ///
+    /// 1. **Drop opaque alpha** — if every alpha sample equals the
+    ///    layout's max value (`0xFF` for 8-bit, `0xFFFF` for 16-bit),
+    ///    strip the alpha plane and downgrade the layout
+    ///    (`Rgba8 → Rgb8`, `Bgra8 → Bgr8`, `Rgba16 → Rgb16`,
+    ///    `GrayAlpha8 → Gray8`, `GrayAlpha16 → Gray16`).
+    ///
+    /// 2. **Near-grayscale collapse** — if `R == G == B` (within
+    ///    ±1 LSB tolerance at 16-bit, exact at 8-bit) for ≥ 99.5 %
+    ///    of pixels, downgrade RGB(A) → Gray(Alpha). The green
+    ///    channel is preserved as the gray value.
+    ///
+    /// 3. **16→8 downcast** — if every 16-bit sample is
+    ///    byte-replicated (`high == low`, the canonical
+    ///    `* 0x0101` zero-extension), downcast to the matching
+    ///    8-bit layout.
+    ///
+    /// Each step is a no-op (single-pass O(pixels) scan, no
+    /// allocation) when its precondition fails. Outputs are
+    /// strictly smaller-or-equal and preserve every pixel value
+    /// bit-exactly within the new layout. Best suited for
+    /// accidentally-padded inputs from upstream pipelines (RGBA
+    /// with fully-opaque alpha, 16-bit storage of 8-bit content,
+    /// RGB storage of grayscale scans).
+    ///
+    /// **Default is `false`** so existing hash-locks remain
+    /// byte-identical. Enable to recover -25 % to -66 % bytes on
+    /// padded inputs; real-photo inputs see no change.
+    pub fn with_canonicalize_input(mut self, enable: bool) -> Self {
+        self.canonicalize_input = enable;
+        self
+    }
+
+    /// Whether input canonicalization pre-pass is enabled.
+    pub fn canonicalize_input(&self) -> bool {
+        self.canonicalize_input
+    }
+
+    /// **RFC #45 pick #4 chunk 1 — content-class dispatch.**
+    ///
+    /// Inform the encoder of a pre-computed coarse content class
+    /// ([`crate::effort::ImageContentClass`]). When set, the per-image
+    /// adapter [`crate::effort::EffortProfile::adapt_to_image_content`]
+    /// runs and may flip effort-derived defaults based on the class
+    /// (currently: `Screenshot` enables `patches` one or two effort
+    /// levels earlier than libjxl's e ≥ 7 default).
+    ///
+    /// Defaults to `None` (no dispatch). Pass `None` explicitly to
+    /// clear a previously-set class.
+    ///
+    /// Callers typically derive the class from
+    /// [`zenanalyze`](https://lib.rs/crates/zenanalyze) Tier 1 features
+    /// (cheap stripe-sampled scan). The encoder intentionally does NOT
+    /// depend on zenanalyze; classification is the caller's
+    /// responsibility so the encoder stays no-default-features for
+    /// CI / wasm builds.
+    ///
+    /// **Hash-lock impact**: default `None` keeps every existing
+    /// hash-lock fixture byte-identical. The dispatch fires only when
+    /// (a) `with_content_class(Some(class))` is explicitly set AND
+    /// (b) the per-class rule matches the (effort, distance, pixels)
+    /// of the encode.
+    pub fn with_content_class(
+        mut self,
+        class: Option<crate::effort::ImageContentClass>,
+    ) -> Self {
+        self.content_class = class;
+        self
+    }
+
+    /// Currently-set [`crate::effort::ImageContentClass`] (or `None` if
+    /// unset). See [`Self::with_content_class`].
+    pub fn content_class(&self) -> Option<crate::effort::ImageContentClass> {
+        self.content_class
     }
 
     /// Reorder AC groups in the multi-group TOC by concentric-square
@@ -4739,7 +4871,15 @@ impl<'a> EncodeRequest<'a> {
         enc.enable_lz77 = cfg.lz77;
         enc.lz77_method = cfg.lz77_method;
         enc.force_strategy = cfg.force_strategy;
-        enc.enable_patches = cfg.patches;
+        // RFC #45 pick #4 — when the caller has explicitly pinned `cfg.patches`
+        // via `with_patches`, that wins; otherwise read the per-image
+        // dispatched profile (the content-class adapter may have flipped
+        // patches on for Screenshot content at e5/e6).
+        enc.enable_patches = if cfg.patches_explicit {
+            cfg.patches
+        } else {
+            enc.profile.patches
+        };
         enc.enable_dot_detection = cfg.dot_detection;
         enc.encoder_mode = cfg.mode;
         enc.splines = cfg.splines.clone();
@@ -5651,7 +5791,15 @@ impl LossyEncoder {
             enc.enable_lz77 = cfg.lz77;
             enc.lz77_method = cfg.lz77_method;
             enc.force_strategy = cfg.force_strategy;
-            enc.enable_patches = cfg.patches;
+            // RFC #45 pick #4 — when the caller has explicitly pinned `cfg.patches`
+            // via `with_patches`, that wins; otherwise read the per-image
+            // dispatched profile (the content-class adapter may have flipped
+            // patches on for Screenshot content at e5/e6).
+            enc.enable_patches = if cfg.patches_explicit {
+                cfg.patches
+            } else {
+                enc.profile.patches
+            };
             enc.enable_dot_detection = cfg.dot_detection;
             enc.encoder_mode = cfg.mode;
             enc.splines = cfg.splines.clone();
@@ -7126,7 +7274,15 @@ fn encode_animation_lossy(
     enc.enable_lz77 = cfg.lz77;
     enc.lz77_method = cfg.lz77_method;
     enc.force_strategy = cfg.force_strategy;
-    enc.enable_patches = cfg.patches;
+    // RFC #45 pick #4 — when the caller has explicitly pinned `cfg.patches`
+    // via `with_patches`, that wins; otherwise read the per-image
+    // dispatched profile (the content-class adapter may have flipped
+    // patches on for Screenshot content at e5/e6).
+    enc.enable_patches = if cfg.patches_explicit {
+        cfg.patches
+    } else {
+        enc.profile.patches
+    };
     enc.enable_dot_detection = cfg.dot_detection;
     enc.encoder_mode = cfg.mode;
     enc.splines = cfg.splines.clone();
