@@ -1,0 +1,209 @@
+warning: constant `HASH1_CONST` is never used
+   --> jxl-encoder/src/modular/inline_add_sample.rs:120:7
+    |
+120 | const HASH1_CONST: u64 = 0x1e35a7bd;
+    |       ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `HASH2_CONST` is never used
+   --> jxl-encoder/src/modular/inline_add_sample.rs:122:7
+    |
+122 | const HASH2_CONST: u64 = 0x1e35a7bd1e35a7bd;
+    |       ^^^^^^^^^^^
+
+warning: struct `FusedHashKeyBuilder` is never constructed
+   --> jxl-encoder/src/modular/inline_add_sample.rs:155:12
+    |
+155 | pub struct FusedHashKeyBuilder {
+    |            ^^^^^^^^^^^^^^^^^^^
+
+warning: struct `BuilderOverflow` is never constructed
+   --> jxl-encoder/src/modular/inline_add_sample.rs:174:12
+    |
+174 | pub struct BuilderOverflow;
+    |            ^^^^^^^^^^^^^^^
+
+warning: struct `FinalizedKey` is never constructed
+   --> jxl-encoder/src/modular/inline_add_sample.rs:183:12
+    |
+183 | pub struct FinalizedKey {
+    |            ^^^^^^^^^^^^
+
+warning: associated items `new`, `add_token_pair`, `add_prop_i32`, `bytes_written`, and `finalize` are never used
+   --> jxl-encoder/src/modular/inline_add_sample.rs:208:18
+    |
+204 | impl FusedHashKeyBuilder {
+    | ------------------------ associated items in this implementation
+...
+208 |     pub const fn new() -> Self {
+    |                  ^^^
+...
+224 |     pub fn add_token_pair(&mut self, token: u8, ebits: u8) -> Result<(), BuilderOverflow> {
+    |            ^^^^^^^^^^^^^^
+...
+247 |     pub fn add_prop_i32(&mut self, value: i32) -> Result<(), BuilderOverflow> {
+    |            ^^^^^^^^^^^^
+...
+274 |     pub fn bytes_written(&self) -> usize {
+    |            ^^^^^^^^^^^^^
+...
+307 |     pub fn finalize(mut self) -> FinalizedKey {
+    |            ^^^^^^^^
+
+warning: methods `capacity`, `len`, `is_empty`, `lookup_only`, and `unique_keys` are never used
+   --> jxl-encoder/src/modular/inline_dedup_table.rs:216:12
+    |
+186 | impl InlineDedupTable {
+    | --------------------- methods in this implementation
+...
+216 |     pub fn capacity(&self) -> usize {
+    |            ^^^^^^^^
+...
+222 |     pub fn len(&self) -> usize {
+    |            ^^^
+...
+228 |     pub fn is_empty(&self) -> bool {
+    |            ^^^^^^^^
+...
+356 |     pub fn lookup_only(&self, key: &[u8; KEY_BYTES]) -> Option<u32> {
+    |            ^^^^^^^^^^^
+...
+383 |     pub fn unique_keys(&self) -> &[[u8; KEY_BYTES]] {
+    |            ^^^^^^^^^^^
+
+warning: fields `gather_dedup_phase3`, `parallel_max_depth`, `parallel_recursion_floor`, and `parallel_root_threshold` are never read
+   --> jxl-encoder/src/modular/tree_learn.rs:195:9
+    |
+135 | pub struct TreeLearningParams {
+    |            ------------------ fields in this struct
+...
+195 |     pub gather_dedup_phase3: bool,
+    |         ^^^^^^^^^^^^^^^^^^^
+...
+201 |     pub parallel_max_depth: u32,
+    |         ^^^^^^^^^^^^^^^^^^
+...
+205 |     pub parallel_recursion_floor: usize,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+209 |     pub parallel_root_threshold: usize,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `gather_samples_strided_with_dedup` is never used
+   --> jxl-encoder/src/modular/tree_learn.rs:875:15
+    |
+875 | pub(crate) fn gather_samples_strided_with_dedup(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `select_best_tree_multi_seed` is never used
+    --> jxl-encoder/src/modular/tree_learn.rs:6083:8
+     |
+6083 | pub fn select_best_tree_multi_seed<F>(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `jxl-encoder` (lib) generated 10 warnings
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.08s
+     Running `target/release/examples/e10_e11_paired_ab`
+# e10/e11 paired A/B/C (RFC#45 chunk 1)
+# distances: [1.0, 2.0, 4.0]
+# images: 5
+# samples per cell (paired): 2
+# threads: 8
+# RFC#45 chunk 1: e10/e11 paired A/B/C bench
+# A = e9  (baseline, libjxl kTortoise, 4 butteraugli iters)
+# B = e10 (8 butteraugli iters)
+# C = e11 (16 butteraugli iters)
+# samples per cell (paired): 2
+# threads: 8
+image	distance	effort	sample	variant	bytes	encode_ms	butteraugli	sha256_prefix	width	height
+1025469	1.00	9	1	A	36514	186.82	1.1435	ad28b4a1afff966f	512	512
+1025469	1.00	10	1	B	36514	429.92	1.1435	ad28b4a1afff966f	512	512
+1025469	1.00	11	1	C	36907	1333.67	1.1633	1ddc6a53279dbd1f	512	512
+1025469	2.00	9	1	A	22149	175.23	2.1423	ffb2333bc1a0ca1c	512	512
+1025469	2.00	10	1	B	22149	438.18	2.1423	ffb2333bc1a0ca1c	512	512
+1025469	2.00	11	1	C	22149	1457.05	2.1423	ffb2333bc1a0ca1c	512	512
+1025469	4.00	9	1	A	12438	209.62	4.0022	d5f97ddc04748430	512	512
+1025469	4.00	10	1	B	12438	552.83	4.0022	d5f97ddc04748430	512	512
+1025469	4.00	11	1	C	12438	1831.89	4.0022	d5f97ddc04748430	512	512
+1044329	1.00	9	1	A	99301	249.51	1.1511	2bf2f1b5a41ec7ef	512	512
+1044329	1.00	10	1	B	99078	499.12	1.0764	68fdcd35bd0751ad	512	512
+1044329	1.00	11	1	C	99524	1454.94	1.0510	d5a5797d869e586b	512	512
+1044329	2.00	9	1	A	63417	226.67	2.4892	f31e605a1230ccde	512	512
+1044329	2.00	10	1	B	62827	515.04	2.4444	0a75e25376d29729	512	512
+1044329	2.00	11	1	C	62827	1544.23	2.4444	0a75e25376d29729	512	512
+1044329	4.00	9	1	A	37020	243.95	4.6563	6300a89609464174	512	512
+1044329	4.00	10	1	B	37020	572.44	4.6563	6300a89609464174	512	512
+1044329	4.00	11	1	C	37535	1905.52	4.1159	2da9f2728a13ff5e	512	512
+1189261	1.00	9	1	A	65120	218.65	1.2180	8b0a0974f714671b	512	512
+1189261	1.00	10	1	B	64580	460.07	1.1129	3c26ac82be0e026d	512	512
+1189261	1.00	11	1	C	64580	1422.12	1.1129	3c26ac82be0e026d	512	512
+1189261	2.00	9	1	A	40430	202.20	2.3275	234d22f7d769e1dd	512	512
+1189261	2.00	10	1	B	39703	470.74	2.2858	d39d8338633f3692	512	512
+1189261	2.00	11	1	C	40981	1473.05	2.1806	6a44651048547a70	512	512
+1189261	4.00	9	1	A	22621	215.98	4.1319	f0b1584b49f4f391	512	512
+1189261	4.00	10	1	B	22621	552.71	4.1319	f0b1584b49f4f391	512	512
+1189261	4.00	11	1	C	22883	1806.60	3.7439	492e031cf91ab0f2	512	512
+1418519	1.00	9	1	A	22788	155.70	1.0644	f7bedba6e6406b86	512	512
+1418519	1.00	10	1	B	22561	396.82	1.0600	a270f83acc3a09bc	512	512
+1418519	1.00	11	1	C	23009	1342.71	1.0502	7a0f1cd8bbf66c60	512	512
+1418519	2.00	9	1	A	13782	168.65	2.0585	3dfd7e842205c410	512	512
+1418519	2.00	10	1	B	13782	428.57	2.0585	3dfd7e842205c410	512	512
+1418519	2.00	11	1	C	13782	1434.37	2.0585	3dfd7e842205c410	512	512
+1418519	4.00	9	1	A	8723	202.50	3.7703	9f3b183bc519af05	512	512
+1418519	4.00	10	1	B	8723	540.73	3.7703	9f3b183bc519af05	512	512
+1418519	4.00	11	1	C	8807	1886.36	3.6893	6c79b8cc02e8f5d0	512	512
+2079234	1.00	9	1	A	46343	174.48	1.1602	e4b3c67d85cfdacd	512	512
+2079234	1.00	10	1	B	45867	422.52	1.1006	63ae232732b9df17	512	512
+2079234	1.00	11	1	C	45867	1412.26	1.1006	63ae232732b9df17	512	512
+2079234	2.00	9	1	A	30110	190.41	2.0332	6efd8b2ef33693df	512	512
+2079234	2.00	10	1	B	30110	512.74	2.0332	6efd8b2ef33693df	512	512
+2079234	2.00	11	1	C	30406	1701.97	2.0393	86a2f5484a702d09	512	512
+2079234	4.00	9	1	A	18368	238.67	3.6517	6524fe20619342ee	512	512
+2079234	4.00	10	1	B	18368	612.97	3.6517	6524fe20619342ee	512	512
+2079234	4.00	11	1	C	18612	2084.80	3.7762	1dd3948c630a7ae6	512	512
+1025469	1.00	9	2	A	36514	264.14	1.1435	ad28b4a1afff966f	512	512
+1025469	1.00	10	2	B	36514	593.24	1.1435	ad28b4a1afff966f	512	512
+1025469	1.00	11	2	C	36907	1715.78	1.1633	1ddc6a53279dbd1f	512	512
+1025469	2.00	9	2	A	22149	192.80	2.1423	ffb2333bc1a0ca1c	512	512
+1025469	2.00	10	2	B	22149	472.21	2.1423	ffb2333bc1a0ca1c	512	512
+1025469	2.00	11	2	C	22149	1515.01	2.1423	ffb2333bc1a0ca1c	512	512
+1025469	4.00	9	2	A	12438	205.95	4.0022	d5f97ddc04748430	512	512
+1025469	4.00	10	2	B	12438	559.56	4.0022	d5f97ddc04748430	512	512
+1025469	4.00	11	2	C	12438	1919.73	4.0022	d5f97ddc04748430	512	512
+1044329	1.00	9	2	A	99301	253.94	1.1511	2bf2f1b5a41ec7ef	512	512
+1044329	1.00	10	2	B	99078	525.12	1.0764	68fdcd35bd0751ad	512	512
+1044329	1.00	11	2	C	99524	1511.03	1.0510	d5a5797d869e586b	512	512
+1044329	2.00	9	2	A	63417	227.06	2.4892	f31e605a1230ccde	512	512
+1044329	2.00	10	2	B	62827	499.39	2.4444	0a75e25376d29729	512	512
+1044329	2.00	11	2	C	62827	1760.90	2.4444	0a75e25376d29729	512	512
+1044329	4.00	9	2	A	37020	677.16	4.6563	6300a89609464174	512	512
+1044329	4.00	10	2	B	37020	672.90	4.6563	6300a89609464174	512	512
+1044329	4.00	11	2	C	37535	1983.53	4.1159	2da9f2728a13ff5e	512	512
+1189261	1.00	9	2	A	65120	233.20	1.2180	8b0a0974f714671b	512	512
+1189261	1.00	10	2	B	64580	477.23	1.1129	3c26ac82be0e026d	512	512
+1189261	1.00	11	2	C	64580	1417.64	1.1129	3c26ac82be0e026d	512	512
+1189261	2.00	9	2	A	40430	196.89	2.3275	234d22f7d769e1dd	512	512
+1189261	2.00	10	2	B	39703	488.06	2.2858	d39d8338633f3692	512	512
+1189261	2.00	11	2	C	40981	1548.71	2.1806	6a44651048547a70	512	512
+1189261	4.00	9	2	A	22621	227.29	4.1319	f0b1584b49f4f391	512	512
+1189261	4.00	10	2	B	22621	540.54	4.1319	f0b1584b49f4f391	512	512
+1189261	4.00	11	2	C	22883	1950.76	3.7439	492e031cf91ab0f2	512	512
+1418519	1.00	9	2	A	22788	162.30	1.0644	f7bedba6e6406b86	512	512
+1418519	1.00	10	2	B	22561	425.79	1.0600	a270f83acc3a09bc	512	512
+1418519	1.00	11	2	C	23009	1432.22	1.0502	7a0f1cd8bbf66c60	512	512
+1418519	2.00	9	2	A	13782	167.90	2.0585	3dfd7e842205c410	512	512
+1418519	2.00	10	2	B	13782	466.33	2.0585	3dfd7e842205c410	512	512
+1418519	2.00	11	2	C	13782	1498.01	2.0585	3dfd7e842205c410	512	512
+1418519	4.00	9	2	A	8723	244.54	3.7703	9f3b183bc519af05	512	512
+1418519	4.00	10	2	B	8723	607.91	3.7703	9f3b183bc519af05	512	512
+1418519	4.00	11	2	C	8807	2034.26	3.6893	6c79b8cc02e8f5d0	512	512
+2079234	1.00	9	2	A	46343	207.22	1.1602	e4b3c67d85cfdacd	512	512
+2079234	1.00	10	2	B	45867	472.02	1.1006	63ae232732b9df17	512	512
+2079234	1.00	11	2	C	45867	1543.57	1.1006	63ae232732b9df17	512	512
+2079234	2.00	9	2	A	30110	201.56	2.0332	6efd8b2ef33693df	512	512
+2079234	2.00	10	2	B	30110	516.46	2.0332	6efd8b2ef33693df	512	512
+2079234	2.00	11	2	C	30406	1692.70	2.0393	86a2f5484a702d09	512	512
+2079234	4.00	9	2	A	18368	239.83	3.6517	6524fe20619342ee	512	512
+2079234	4.00	10	2	B	18368	597.18	3.6517	6524fe20619342ee	512	512
+2079234	4.00	11	2	C	18612	2114.50	3.7762	1dd3948c630a7ae6	512	512
