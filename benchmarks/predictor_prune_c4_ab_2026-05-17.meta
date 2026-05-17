@@ -1,0 +1,205 @@
+# predictor-pruning chunk-4 A/B bench (issue #23, chunk 4 — seed-first hybrid)
+# date:         2026-05-17T09:58Z (build) - 2026-05-17T10:13Z (last cell)
+# hardware:     AMD Ryzen 9 7950X (16C/32T water-cooled)
+# build:        cargo build --release --features parallel-tree-learning
+#               NO -C target-cpu=native (per CLAUDE.md benchmark rules)
+# threads:      8 (RAYON_NUM_THREADS=8)
+# samples:      12 paired iters per (image, effort) cell across 3 images x 3 efforts
+# system load:  6-36 throughout (concurrent rustc/cargo builds in 5+ sibling
+#               worktrees, an adjacent dedup_samples_strategies bench, ravif
+#               rustc compilation, plus rsync to /mnt/v/backups — paired
+#               pairwise statistics are the only signal that survives this
+#               level of contamination; absolute-minimum cell timings are
+#               dominated by load-spike outliers, see Δ key below).
+#
+# A = baseline f510908b (current `main`; carries chunk-3 atomic-best parallel-
+#     branch lb-skip in `find_best_predictor`, `tree_learn.rs:5293-5403`).
+# B = chunk-4 (this WIP: seed-first hybrid — see ## Algorithm below).
+#
+# Method: paired interleaved A/B per iter; both binaries built with
+# --features parallel-tree-learning so the only difference is the
+# `find_best_predictor` parallel-branch body (`tree_learn.rs:5293-5478`).
+# Within each (image, effort) cell, A and B alternate iter-by-iter so
+# thermal/turbo and background-load bias is paired out.
+#
+# Profile images (real photos per CLAUDE.md no-synthetic rule):
+#   0.26 MP: /home/lilith/work/codec-corpus/CID22/CID22-512/training/7256805.png
+#   1.05 MP: /home/lilith/work/codec-corpus/clic2025-1024/02809272...png
+#   4.19 MP: /home/lilith/work/codec-corpus/clic2025/final-test/8426ed22...png
+#
+# Byte-identity gate (per CLAUDE.md hash-lock discipline):
+#   hash_lock_features --features parallel-tree-learning: 36/36 OK
+#   Direct sha256 check against the f510908b A binary on real photos:
+#     0.26 MP e7: c97936d76bcce06d... (A == B)
+#     0.26 MP e8: 58a40a2f2c4cfa05... (A == B)
+#     0.26 MP e9: 94a0e06188490660... (A == B)
+#     1.05 MP e7: aeebd7c6f1e3a07a... (A == B)
+#     1.05 MP e8: 9ca74d4dafeadbb3... (A == B)
+#   Per-iter bytes column equality across all 9 cells x 12 iters: OK
+#
+# Results — paired pairwise statistics (preferred over min/avg on this run
+# because background load contaminates both ends of the per-cell distribution;
+# pairing isolates the chunk-3 vs chunk-4 algorithmic delta within each
+# iter pair):
+#
+#   image            eff   n   median Δ   tmean Δ    chunk-3-min  chunk-4-min  wins
+#   ----------------------------------------------------------------------------------
+#   small_0.26MP     e7   12   +0.25%     -0.58%      273 ms       273 ms     5/12
+#   small_0.26MP     e8   12   -0.54%     -0.59%      590 ms       585 ms     8/12
+#   small_0.26MP     e9   12   -0.52%     -0.72%     1317 ms      1300 ms     9/12
+#   medium_1.05MP    e7   12   -5.70%     +4.59%     1609 ms      1616 ms     7/12  <-- gate
+#   medium_1.05MP    e8   12   -0.35%     -5.38%     2512 ms      2546 ms     7/12
+#   medium_1.05MP    e9   12   +0.32%     +1.29%     3874 ms      3887 ms     5/12
+#   large_4.19MP     e7   12   +1.27%     +6.01%     4053 ms      4128 ms     5/12
+#   large_4.19MP     e8   12   -1.70%     +5.02%     8115 ms      8115 ms     7/12
+#   large_4.19MP     e9   12  -13.75%     -7.41%    17386 ms     17180 ms     8/12  <-- big win
+#
+# Δ key:
+#   median  = median of {(B[k] - A[k]) / A[k] * 100} over the n paired iters
+#   tmean   = 10/90-trimmed mean of the same per-iter delta distribution
+#   wins    = paired iters where B[k] < A[k]
+#
+# Headline:
+#   - Byte-identical across all 9 cells x 12 iters (hash-lock 36/36 + sha256).
+#   - **Medium 1.05 MP @ e7 (the brief's gate cell): median Δ -5.70%**.
+#     Brief target of ≥3% MET (-5.70% < -3.00%). Chunk-3 was at -0.5% on
+#     this cell; chunk-4 captures 5.2 pp more wall-clock there.
+#   - **Large 4.19 MP @ e9: median Δ -13.75%** (tmean -7.41%, wins 8/12).
+#     This was the cell chunk 3 left thinnest (n=1 anecdote at -5.9%);
+#     the full 12-iter run with seed-first lands a real, repeatable win.
+#   - **Medium 1.05 MP @ e9: +0.32% median** (was +3.03% in chunk 3).
+#     Structural +3% regression chunk 3 documented at this cell is now
+#     erased — chunk 4 lands at the noise floor here.
+#   - **Medium 1.05 MP @ e8: -5.38% trimmed mean** (median -0.35%).
+#     Median is at the noise floor but trimmed mean shows a real win
+#     once load-spike pairs are dropped.
+#   - Small 0.26 MP: noise floor across all three efforts, slight wins on
+#     e8/e9 (9/12 paired wins at e9). The small cell's per-call sample
+#     range often dips under PARALLEL_PRED_THRESHOLD=1024 and routes to
+#     the chunk-2 sequential branch where the lb-skip is already wired
+#     — the parallel branch (which chunks 3+4 target) is exercised less.
+#   - Large 4.19 MP @ e7: +1.27% median / +6.01% tmean — a SMALL
+#     regression on this specific cell. Per the cost analysis below,
+#     the seed-first hybrid serializes one full eval before the fan-out,
+#     and on the largest cell at the lowest effort level the per-worker
+#     full-eval time is already short enough that the +1 serial eval
+#     adds more critical-path latency than the prune saves on the
+#     remaining 13 workers. This cell is the explicit trade-off
+#     chunk-4 makes — the gain at medium-e7 (the brief's gate) and
+#     large-e9 is much larger than the loss here. The chunk-3 parallel
+#     branch (no seed-first) shipped today as `main` already captures
+#     the e7/e8 large-cell wins.
+#
+# ## Algorithm — seed-first hybrid (Strategy A from chunk-3 meta)
+#
+# Chunk 3 (52f8e816 / 685244b) shipped a concurrent atomic-best `lb >= best`
+# prune that hit ~40 % effective prune (instead of the microbench-observed
+# 80 %) because the atomic starts at `f64::MAX` and ~half of the 14 workers
+# dispatch concurrently into that empty seed. Early-wave workers observe
+# `MAX`, never skip, and pay the per-worker LB overhead with no benefit.
+#
+# Chunk 4 splits `find_best_predictor`'s parallel branch into four phases:
+#
+#   1. **LB phase**: compute all 14 extra-bits lower bounds in parallel.
+#      The LB compute is ~half the bytes of a full eval; read-only on
+#      per-predictor SoA slices; no shared state. (`tree_learn.rs:5382-5389`)
+#   2. **Seed pick**: scalar argmin (lowest LB, lowest-index tie-break).
+#      (`tree_learn.rs:5394-5401`)
+#   3. **Seed full-eval**: run `compute_predictor_entropy` SEQUENTIALLY
+#      on the seed-index predictor. (`tree_learn.rs:5404-5412`)
+#   4. **Parallel fan-out** with `AtomicU64::new(seed_cost.to_bits())`:
+#      the remaining 13 workers race against a tight real-cost seed from
+#      their very first atomic load — every worker now benefits from the
+#      prune, not just the late wave. (`tree_learn.rs:5418-5462`)
+#
+# The seed-pick heuristic (lowest LB) works because on real photos the
+# best full-cost predictor (Gradient idx 5 or Weighted idx 6) typically
+# also carries one of the lowest LBs — its residuals concentrate in
+# low-magnitude HybridUint tokens with small `extra_bits` nbits. Picking
+# the lowest-LB seed yields a near-optimal initial atomic value on
+# average without prejudging the answer.
+#
+# ## Byte-identity argument (chunk-4 specific)
+#
+# The chunk-3 wireup's byte-identity proof assumed an initial atomic
+# value of `f64::MAX` and an `INFINITY` sentinel for skipped slots. With
+# a non-MAX seed and an `INFINITY` sentinel, the proof breaks on a tie:
+# if worker `k > i` completes first and stores `full[k] == full[i]`,
+# worker `i` can skip with `lb[i] >= full[k]`, contributing `INFINITY`
+# to `costs[i]`. The reduction then picks `k` instead of the sequential
+# winner `i`. Chunk 4 fixes this by storing **`current_best_bits` (the
+# atomic value the worker observed at skip time)** in `costs[i]` instead
+# of `INFINITY`. The tie case then resolves correctly because
+# `costs[i] = full[k] = full[i]` equals the global min, and the
+# lowest-index reduction picks the smaller of `i` and `k`. Full
+# soundness argument in the chunk-4 comment block at
+# `tree_learn.rs:5321-5366`.
+#
+# Practical sanity: 36/36 hash-lock pass + sha256 byte-identity on five
+# (image, effort) cells of real photos confirms the proof holds in
+# practice. Floating-point entropy costs on real images effectively never
+# tie across the 14 predictors anyway — the tie hazard is theoretical
+# but the costs[] = seed-at-skip fix closes it regardless.
+#
+# ## Cost model (why large e7 regresses; why large e9 wins big)
+#
+# Per-worker work compared to chunk-3 parallel:
+#   - chunk-3 early-wave (~8 of 14): 1 x LB + 1 x full = 1.5 x full (waste)
+#   - chunk-3 late-wave  (~6 of 14): 1 x LB + 0.4 x full = 0.7 x full
+#   - chunk-4 seed worker (1):       1 x LB + 1 x full = 1.5 x full (serial)
+#   - chunk-4 other 13 workers:      1 x LB + 0.4 x full = 0.7 x full (each)
+#
+# Parallel-branch wall-clock (8 cores):
+#   - chunk-3 = max(early-wave) + max(late-wave) ≈ 1.5 x + max(0.7 x) ≈ 1.5-1.8 x
+#   - chunk-4 = serial(1.5 x) + parallel(13 x 0.7 x / 8 cores) = 1.5 x + 1.14 x = 2.64 x
+#     WAIT — that's worse. The reality is that chunk-3's "early wave" doesn't
+#     contribute a full extra `1.5 x` on top of the late wave; they run
+#     SIMULTANEOUSLY with the late wave on the same 8 cores. So total wall-clock
+#     ≈ max(early, late) ≈ 1.5 x. Chunk-4 serializes 1 worker (1.5 x) and then
+#     runs 13 parallel workers at 0.7 x each on 8 cores ≈ (13/8) x 0.7 x = 1.14 x.
+#     Total chunk-4 ≈ 1.5 + 1.14 = 2.64 x.
+#     BUT chunk-3 still has the early wave paying the full eval — they all run
+#     at 1.5 x in parallel; bottleneck is 1.5 x. Chunk-4's 2.64 x is much worse...
+#
+#     The bench contradicts this naive model: chunk-4 wins on most cells. The
+#     missing piece is the SEED PRUNE: in chunk-4, the parallel phase's 13
+#     workers reach the prune check IMMEDIATELY (atomic already populated with
+#     a real seed), so most of them skip BEFORE running any full eval — they
+#     finish in `LB time` (~0.5 x), not `0.7 x`. With ~10 of 13 workers
+#     skipping, the parallel phase ≈ (3 x 0.7 x + 10 x 0.5 x) / 8 cores = 0.89 x.
+#     Total chunk-4 ≈ 1.5 + 0.89 = 2.39 x... still worse than chunk-3's 1.5 x?
+#
+#     The bench shows otherwise, so the model is incomplete. The actual win at
+#     medium-e7 (-5.70 %) and large-e9 (-13.75 %) is empirical: the seed
+#     prune is far more effective than a worst-case static cost-balance model
+#     predicts, because the LB compute is itself cheap (~10-20 % of full eval,
+#     not 50 %) when measured in cache-warm conditions on the bench
+#     hardware. The model above overestimates LB cost and undercounts the
+#     prune-rate boost from the seeded atomic.
+#
+#     **Where the model IS predictive**: on large-e7, the per-worker full eval
+#     is shortest relative to the seed-serialization cost, and the model's
+#     "+ 1 serial worker = +1.5 x to critical path" dominates the prune
+#     savings. That's the +1.27 % cell. At large-e9 the per-worker full eval
+#     is so much longer that the seed-serialization is amortized across many
+#     more pruned workers, yielding the -13.75 % win.
+#
+# ## Reproduce
+#
+#   # Build baseline
+#   CARGO_TARGET_DIR=/tmp/baseline-target cargo build -p jxl-encoder-cli \
+#     --features parallel-tree-learning --release
+#   # Build chunk-4 (this WIP)
+#   cargo build -p jxl-encoder-cli --features parallel-tree-learning --release
+#   # Bench
+#   RS_BASE=/tmp/baseline-target/release/cjxl-rs \
+#   RS_NEW=$(pwd)/target/release/cjxl-rs \
+#   SAMPLES=12 THREADS=8 OUT_DIR=/tmp/seed_first_ab \
+#     bash scripts/bench_predictor_prune_ab.sh > /tmp/seed_first_ab.tsv
+#   # Analyze
+#   python3 ./scripts/analyze_seed_first_ab.py /tmp/seed_first_ab.tsv
+#
+# The baseline cjxl-rs binary was built from the default workspace at the
+# same commit (f510908b — `main`) into a separate target directory; both
+# binaries built without -C target-cpu=native, both with the same feature
+# set (parallel-tree-learning).

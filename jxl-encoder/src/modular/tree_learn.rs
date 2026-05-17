@@ -5294,66 +5294,141 @@ fn find_best_predictor(
     // histogram buffer; reductions stay associative because we materialise
     // all costs and then pick the lowest-index minimum scalarly.
     //
-    // Issue #23 chunk 3: extend predictor-pruning lb-skip into the parallel
-    // branch. A shared `AtomicU64` carries the best full cost seen by any
-    // worker so far (encoded as `f64::to_bits()`). Each worker:
-    //   (1) computes its extra-bits lower bound (cheap linear scan);
-    //   (2) reads the shared best (relaxed); skips the full eval if
-    //       `lb >= best`;
-    //   (3) otherwise runs `compute_predictor_entropy` and CAS-updates the
-    //       shared best with a strict-`<` discipline.
-    // Skipped slots emit `f64::INFINITY`, which loses every strict-`<`
-    // comparison in the post-fanout reduction below — so the lowest-index
-    // tie-break behavior of the sequential path is preserved exactly.
+    // Issue #23 chunk 4: seed-first hybrid. Chunk 3 (52f8e816 / 685244b)
+    // shipped a concurrent atomic-best `lb >= best` prune that capped at
+    // ~40 % effective prune (instead of the microbench-observed 80 %)
+    // because the atomic starts at `f64::MAX` and ~half of the 14 workers
+    // dispatch concurrently into that empty seed — early-wave workers
+    // observe `MAX`, never skip, and pay the LB overhead.
+    //
+    // The hybrid first computes ALL LBs in parallel (cheap; ~half the bytes
+    // of a full eval each), picks the predictor with the lowest LB
+    // (lowest-index tie-break), evaluates its full cost SEQUENTIALLY before
+    // the fan-out, and seeds the atomic with that real cost. The remaining
+    // `num_pred - 1` workers then race against a tight seed from the very
+    // first read, so the early wave benefits from the prune as well.
+    //
+    // ## Why the seed predictor is "lowest LB"
+    //
+    // The LB equals the worker's full cost if its histogram cost is zero
+    // (perfectly skewed residuals). For real photos the best full-cost
+    // predictor (typically Gradient/Weighted) tends to also have one of
+    // the lowest LBs because its residuals concentrate in low-magnitude
+    // tokens with small `extra_bits` HybridUint nbits. Picking the
+    // lowest-LB predictor as the seed therefore yields a near-optimal
+    // seed value on average without prejudging the answer.
     //
     // ## Byte-identity argument
     //
-    // The sequential reduction iterates `i in 0..num_pred` with strict `<`,
-    // i.e. winner = lowest index achieving the global min cost. Suppose a
-    // worker `i` is skipped here. The skip implies `lb[i] >= best_seen`,
-    // where `best_seen` is some full cost computed by a previously-completed
-    // worker `j` (possibly `j > i`). Since `lb[i] <= full[i]`, we have
-    // `full[i] >= best_seen`. Two sub-cases for the global min `m`:
-    //   * `full[i] > m`: `i` was never the winner anyway, so omission is safe.
-    //   * `full[i] == m`: then `best_seen <= m` AND `best_seen >= full[i] == m`,
-    //     so `best_seen == m`. Worker `j` therefore evaluated and recorded
-    //     cost `m`. If `j < i`, then `j` strictly beats `i` in the sequential
-    //     tie-break — winner unchanged. If `j > i`, then sequentially `i`
-    //     would have been visited first and won the tie-break. But the
-    //     atomic only carries `m` if some worker actually computed `m`
-    //     before `i` started its skip check; that worker has `full == m`
-    //     and `lb <= m`. Sequentially, if any index `k < i` also has
-    //     `full[k] == m`, then `pred = k` after step `k`, and `i`'s loop
-    //     pass with strict-`<` would not flip it — so the winner is `k`,
-    //     also `< i`, also in results (`k` is never skipped because the
-    //     atomic was MAX when `k` started). If no such `k` exists, then
-    //     sequentially `pred` first becomes `i`; for parallel to disagree
-    //     would require some `j > i` with `full[j] == m` to have stored
-    //     before `i` ran. But sequentially `j > i` does not update `pred`
-    //     under strict-`<`, so the answer is still `i`. The race that
-    //     skips `i` requires `full[j] < m` (impossible: `m` is the min) or
-    //     a `k < i` with `full[k] == m` (handled above) — so the only way
-    //     `i` is skipped is when a `k < i` already populated the atomic
-    //     with `m`, and `k < i` wins the tie-break in both orderings.
+    // The sequential reduction is `winner = argmin_lowest_i full[i]` under
+    // strict-`<` tie-break. To preserve this from the parallel fan-out:
+    //
+    // 1. The seed worker `s` always evaluates and contributes
+    //    `costs[s] = full[s]` — it never participates in the prune.
+    // 2. Every other worker `i` either evaluates (contributing `full[i]`)
+    //    or skips. When skipping, we store `costs[i] = seed_at_skip_read`
+    //    — the atomic value the worker observed at the skip decision.
+    //    `seed_at_skip_read = full[k]` for some worker `k` that already
+    //    completed a full eval (initially `k = s`, possibly updated by a
+    //    later CAS to some other `k`). The skip condition is
+    //    `lb[i] >= seed_at_skip_read`, which implies
+    //    `full[i] >= seed_at_skip_read = full[k]`.
+    //
+    // The reduction picks lowest-index `i` with the smallest `costs[i]`
+    // under strict-`<`. The sequential argmin is `winner_seq`. Two cases:
+    //
+    //   * `costs[winner_seq] == full[winner_seq]` (winner_seq evaluated):
+    //     reduction sees the true cost. No skipped slot beats it because
+    //     skipped `costs[i] = full[k] >= full[winner_seq]` (the global
+    //     min). Tie-break among slots equal to the min uses lowest index,
+    //     matching sequential.
+    //   * `costs[winner_seq] = full[k]` (winner_seq skipped):
+    //     `full[winner_seq] >= full[k]` and `winner_seq` is sequential
+    //     argmin ⇒ `full[winner_seq] == full[k]` (else `k` would beat
+    //     it sequentially when `k <= winner_seq`, or `winner_seq` wouldn't
+    //     be the argmin when `k > winner_seq`). Then `costs[winner_seq] =
+    //     full[k] = full[winner_seq]` — equal to the global min. The
+    //     other slots are either `>= global_min` (skipped, equality
+    //     possible) or `>= global_min` (evaluated, equality possible
+    //     only at indices with `full == global_min`). Lowest-index
+    //     reduction picks the same `winner_seq` because either:
+    //       - `k < winner_seq`: sequential would have `k` win (lower
+    //         index with full[k] == global_min visited first under
+    //         strict-<). Contradiction with our premise that `winner_seq`
+    //         is the sequential argmin. So this case is impossible.
+    //       - `k > winner_seq`: sequential picks `winner_seq` (visited
+    //         first under strict-<). Parallel picks lowest-index slot
+    //         with `costs == global_min`. Both `winner_seq` and `k` are
+    //         candidates; lowest-index wins → `winner_seq`. Match.
+    //       - `k == winner_seq`: trivially matches (the seed itself
+    //         doesn't skip).
+    //
+    // Therefore the parallel argmin always equals the sequential argmin.
     //
     // ## Cost
     //
-    // Atomic ops are relaxed loads + CAS; no fences. Each worker pays at
-    // most one CAS retry loop, bounded by the number of concurrent winners
-    // (typically 1-2). The LB compute is ~half the bytes of the full
-    // entropy compute — a worthwhile early-exit when the prune fires.
+    // - LB phase: `num_pred` cheap LB computes, embarrassingly parallel.
+    //   Each LB is ~half the bytes of a full eval; total work ≈ `num_pred * 0.5`
+    //   full-eval-equivalents, spread across worker threads.
+    // - Seed phase: 1 sequential full eval. Adds one serial step to the
+    //   critical path but eliminates the early-wave waste.
+    // - Parallel phase: `num_pred - 1` workers; on real photos the prune
+    //   typically fires for ~10 of them (extra_bits dominates entropy for
+    //   weak predictors with high-magnitude residuals).
     use core::sync::atomic::{AtomicU64, Ordering};
-    let best_atomic = AtomicU64::new(f64::MAX.to_bits());
-    let costs: Vec<f64> = crate::parallel::parallel_map(num_pred, |pred_idx| {
-        let lb = predictor_extra_bits_lower_bound(
+
+    // Phase 1: compute all LBs in parallel. The LB compute is read-only on
+    // the per-predictor SoA slices and uses no shared state.
+    let lbs: Vec<f64> = crate::parallel::parallel_map(num_pred, |pred_idx| {
+        predictor_extra_bits_lower_bound(
             &samples.extra_bits[pred_idx],
             &samples.sample_counts,
             start,
             end,
-        );
-        let current_best = f64::from_bits(best_atomic.load(Ordering::Relaxed));
+        )
+    });
+
+    // Phase 2: pick the seed predictor (lowest LB, lowest-index tie-break).
+    // `num_pred >= 1` is guaranteed by the early-return branch above
+    // (`num_pred <= 1` falls through to the sequential path).
+    let mut seed_idx = 0usize;
+    let mut seed_lb = lbs[0];
+    for (i, &lb) in lbs.iter().enumerate().skip(1) {
+        if lb < seed_lb {
+            seed_lb = lb;
+            seed_idx = i;
+        }
+    }
+
+    // Phase 3: evaluate the seed predictor's full cost sequentially.
+    let mut seed_counts = vec![0u32; histogram_size];
+    let seed_cost = compute_predictor_entropy(
+        samples,
+        start,
+        end,
+        seed_idx,
+        histogram_size,
+        &mut seed_counts,
+    );
+
+    // Phase 4: dispatch the remaining `num_pred - 1` workers in parallel
+    // with the atomic seeded by the real `seed_cost`. The fan-out covers
+    // all indices `0..num_pred`; the seed index short-circuits to the
+    // pre-computed cost without re-evaluating.
+    let best_atomic = AtomicU64::new(seed_cost.to_bits());
+    let costs: Vec<f64> = crate::parallel::parallel_map(num_pred, |pred_idx| {
+        if pred_idx == seed_idx {
+            return seed_cost;
+        }
+        let lb = lbs[pred_idx];
+        // Read the atomic ONCE; reuse the same `current_best` for both the
+        // skip decision and the skipped-slot cost record. This guarantees
+        // `costs[i]` on skip equals the seed value that triggered the
+        // skip, which is required for the byte-identity argument above.
+        let current_best_bits = best_atomic.load(Ordering::Relaxed);
+        let current_best = f64::from_bits(current_best_bits);
         if decide_predictor(lb, current_best) == PredictorDecision::Skip {
-            return f64::INFINITY;
+            return current_best;
         }
         let mut local_counts = vec![0u32; histogram_size];
         let bits = compute_predictor_entropy(
@@ -5387,11 +5462,10 @@ fn find_best_predictor(
     });
 
     // Tie-break: lowest index wins (strict `<`, same as the original loop).
-    // `f64::INFINITY` for skipped slots is `>= any finite cost`, so strict-`<`
-    // ensures it never wins. At least one worker always evaluates: the very
-    // first worker sees the sentinel `f64::MAX`, and any finite `lb < MAX`
-    // — including `lb == 0` — passes the strict-`<` check inside
-    // `decide_predictor`.
+    // Skipped slots carry `seed_at_skip_read` (the atomic value observed at
+    // skip time), not `f64::INFINITY`. This keeps the lowest-index tie-break
+    // sound when the seed predictor's full cost ties with the global min
+    // computed by a later worker — see the byte-identity argument above.
     let mut best_pred = 0;
     let mut best_bits = f64::MAX;
     for (i, &c) in costs.iter().enumerate() {
