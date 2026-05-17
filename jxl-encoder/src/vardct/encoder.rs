@@ -260,12 +260,15 @@ pub struct VarDctEncoder {
     /// On by default for lossy encoding.
     pub enable_patches: bool,
     /// Enable libjxl-style **dot detection** (refs #19). When true and
-    /// effort >= 7 and distance >= 3.0, the encoder runs the
-    /// star-field / specular-highlight detector
-    /// ([`super::dot_detection::detect_gaussian_ellipses`]) and (in a
-    /// follow-up tick) appends the detected Gaussian ellipses to the
-    /// patch dictionary. Off by default — niche feature, only fires on
-    /// astronomy / specular-on-dark content.
+    /// effort >= 7 and distance >= 3.0 and no text-like patches were
+    /// found, the encoder runs the star-field / specular-highlight
+    /// detector ([`super::dot_detection::detect_gaussian_ellipses`])
+    /// and folds the detected Gaussian ellipses into the patch
+    /// dictionary via [`super::patches::PatchesData::from_dots`].
+    /// Default on internally is `false` so existing callers that
+    /// build a `VarDctEncoder` directly preserve their behaviour; the
+    /// public [`crate::LossyConfig`] defaults this to `true` to
+    /// match libjxl's `Override::kDefault` (`enc_patch_dictionary.cc:632`).
     pub enable_dot_detection: bool,
     /// Encoder mode: Reference (match libjxl) or Experimental (own improvements).
     pub encoder_mode: crate::api::EncoderMode,
@@ -381,7 +384,7 @@ impl Default for VarDctEncoder {
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
-            enable_dot_detection: false, // refs #19; off by default — wire-up in progress
+            enable_dot_detection: false, // refs #19; LossyConfig flips this to true by default
             encoder_mode: crate::api::EncoderMode::Reference,
             splines: None,
             is_grayscale: false,
@@ -437,7 +440,7 @@ impl VarDctEncoder {
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
-            enable_dot_detection: false, // refs #19; off by default — wire-up in progress
+            enable_dot_detection: false, // refs #19; LossyConfig flips this to true by default
             encoder_mode: crate::api::EncoderMode::Reference,
             splines: None,
             is_grayscale: false,

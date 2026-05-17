@@ -175,6 +175,24 @@ struct Args {
     #[arg(long)]
     no_patches: bool,
 
+    /// Force-enable libjxl-style dot detection (refs #19). On by default,
+    /// mirroring libjxl's `cjxl --dots` "encoder chooses" semantics. The
+    /// detector is internally gated to effort >= 7, distance >= 3.0, and
+    /// no text-like patches in the same image, so it's a no-op outside
+    /// the niche star-field / specular-highlight content range. Passing
+    /// this flag is equivalent to the default; provided for symmetry with
+    /// `--no-dot-detection`.
+    #[arg(long)]
+    dot_detection: bool,
+
+    /// Force-disable dot detection. Mirrors libjxl `cjxl --dots=0`.
+    /// Use when you want bit-exact reproducibility on content that
+    /// could otherwise trip the detector (astronomy, specular highlights),
+    /// or when running picker / cost-model sweeps without perceptual
+    /// confounds.
+    #[arg(long, conflicts_with = "dot_detection")]
+    no_dot_detection: bool,
+
     /// Enable LZ77 backward references (on by default at effort 9+).
     #[arg(long)]
     lz77: bool,
@@ -449,6 +467,11 @@ fn main() {
                     }
                     if args.no_patches {
                         cfg = cfg.with_patches(false);
+                    }
+                    if args.no_dot_detection {
+                        cfg = cfg.with_dot_detection(false);
+                    } else if args.dot_detection {
+                        cfg = cfg.with_dot_detection(true);
                     }
                     if args.lz77 {
                         cfg = cfg.with_lz77(true);
@@ -756,6 +779,11 @@ fn main() {
         }
         if args.no_patches {
             cfg = cfg.with_patches(false);
+        }
+        if args.no_dot_detection {
+            cfg = cfg.with_dot_detection(false);
+        } else if args.dot_detection {
+            cfg = cfg.with_dot_detection(true);
         }
         if args.lz77 {
             cfg = cfg.with_lz77(true);

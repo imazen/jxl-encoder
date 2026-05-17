@@ -231,6 +231,21 @@
 
 ### Added
 
+- **`LossyConfig::with_dot_detection(bool)` + CLI `--dot-detection` /
+  `--no-dot-detection`** wire up the existing ported `vardct::dot_detection`
+  module into the public lossy encode API (refs #19 / audit "surprise #2").
+  Default is **on**, mirroring libjxl's `Override::kDefault` semantics for
+  `cjxl --dots` — the in-encoder gates (effort ≥ 7 + distance ≥ 3.0 + no
+  text-like patches for the same frame, matching
+  `enc_patch_dictionary.cc:632-643`) make this a no-op outside the niche
+  star-field / specular-highlight content range. When the gates fire, the
+  detector promotes each surviving Gaussian dot into a patch dictionary
+  entry via `PatchesData::from_dots`. `with_perceptual_optimizations(true|false)`
+  now toggles the new knob in step (previously left it off-by-default
+  regardless). Hash-locks (36/36) byte-identical — no fixture content trips
+  the gates. On `gb82/night-lossless.png` at d=3.0 e=7: +27 bytes (24701 vs
+  24674) for 1 detected candidate dot. djxl + jxl-rs roundtrip clean.
+
 - **`ColorEncoding::from_cicp(cp, tc, mc, full_range)` CICP lookup helper**
   (HDR plan chunk 2, issue #46). Maps the most common ITU-T H.273 / ISO/IEC
   23091-2 CICP 4-tuples to JXL's internal `ColorEncoding` — the wire-format
