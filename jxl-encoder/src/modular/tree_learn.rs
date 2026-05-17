@@ -1234,11 +1234,7 @@ fn gather_channel_samples(
     // learning) to draw a different pixel subset per seed without
     // touching WP state continuity. WP error tracking still updates on
     // every pixel; only the sample-push gate shifts.
-    let mut subsample_counter: usize = if stride > 0 {
-        start_offset % stride
-    } else {
-        0
-    };
+    let mut subsample_counter: usize = if stride > 0 { start_offset % stride } else { 0 };
 
     let max_refs = samples.num_ref_channels;
 
@@ -6052,6 +6048,127 @@ pub fn estimate_token_cost(tokens: &[crate::entropy_coding::token::Token]) -> f6
     bits
 }
 
+/// Per-seed parameter variance for the multi-seed tree-learning loop
+/// (RFC#45 chunk 3 — broader seed variance follow-on to chunk 2).
+///
+/// Chunk 2 only varied `start_offset` (which pixels feed
+/// [`gather_samples_strided_with_offset`]). On 3 CID22 photos that turned
+/// out to be too narrow — seed 0 always won because the sample subsets
+/// were highly correlated. This helper widens the candidate space by
+/// jittering two greedy-ID3 knobs that materially change which splits
+/// survive the threshold gate:
+///
+/// 1. **`split_threshold` jitter**: per-seed multiplier in
+///    `{1.0, 0.7, 1.3, 0.85}` (cycled by `seed % 4`). Lower thresholds
+///    accept marginal splits the canonical run would reject; higher
+///    thresholds force a smaller / shallower tree that may compress
+///    better when the corpus is noisy.
+/// 2. **Property-order shuffle**: cycles a small deterministic
+///    permutation past the structural prefix (`Channel`, optionally
+///    `GroupId`). Greedy ID3 evaluates properties in `params.properties`
+///    order — re-ordering changes tie-breaks at split selection and
+///    surfaces trees built around different "first cut" properties.
+///
+/// `seed == 0` is **always** a no-op: returns a clone of `base`. This
+/// preserves the chunk-2 invariant that seed 0 equals the legacy
+/// single-pass pipeline, which keeps e ≤ 9 hash-locks byte-identical
+/// (e ≤ 9 has `tree_learn_seeds = 1` and therefore never enters this
+/// helper).
+///
+/// Greedy-ID3 still picks the lowest-cost split at every node, so each
+/// seed produces a *spec-valid* tree. The chunk-2 [`estimate_token_cost`]
+/// picker then chooses the cheapest among all candidates.
+#[must_use]
+pub fn derive_seeded_params(base: &TreeLearningParams, seed: u64) -> TreeLearningParams {
+    let clone_params = |b: &TreeLearningParams| -> TreeLearningParams {
+        TreeLearningParams {
+            properties: b.properties.clone(),
+            max_property_values: b.max_property_values,
+            split_threshold: b.split_threshold,
+            max_nodes: b.max_nodes,
+            pixel_fraction: b.pixel_fraction,
+            use_streaming_dedup: b.use_streaming_dedup,
+            gather_dedup: b.gather_dedup,
+            gather_dedup_phase3: b.gather_dedup_phase3,
+            parallel_max_depth: b.parallel_max_depth,
+            parallel_recursion_floor: b.parallel_recursion_floor,
+            parallel_root_threshold: b.parallel_root_threshold,
+            parallel_small_image_fallback: b.parallel_small_image_fallback,
+        }
+    };
+    if seed == 0 {
+        return clone_params(base);
+    }
+    let mut out = clone_params(base);
+
+    // 1. split_threshold jitter (seed % 4).
+    //    [1.0, 0.7, 1.3, 0.85] — multipliers chosen to span ±30% around
+    //    baseline while keeping seed 0 unchanged. Lower → accept more
+    //    splits → deeper tree; higher → reject more → shallower tree.
+    const THRESHOLD_MUL: [f64; 4] = [1.0, 0.7, 1.3, 0.85];
+    let mul = THRESHOLD_MUL[(seed as usize) % THRESHOLD_MUL.len()];
+    out.split_threshold = base.split_threshold * mul;
+
+    // 2. Property-order shuffle.
+    //    Structural prefix stays put (`Channel` at index 0, optionally
+    //    `GroupId` at index 1) — those carry the stream-multiplexing
+    //    semantics every well-formed tree needs early. Past that, we
+    //    apply a deterministic per-seed rotation: rotate the tail left
+    //    by `(seed * 3) % tail.len()`. Rotation (rather than full
+    //    shuffle) preserves locality between related gradient-difference
+    //    properties (9..14) while still changing the first non-structural
+    //    property the greedy split picks.
+    let structural_prefix = if !out.properties.is_empty() && out.properties[0] == 0 {
+        if out.properties.len() >= 2 && out.properties[1] == 1 {
+            2 // Channel + GroupId
+        } else {
+            1 // Channel only
+        }
+    } else {
+        0
+    };
+    if out.properties.len() > structural_prefix + 1 {
+        let tail_len = out.properties.len() - structural_prefix;
+        let rot = ((seed as usize).wrapping_mul(3)) % tail_len;
+        if rot > 0 {
+            let tail = &mut out.properties[structural_prefix..];
+            tail.rotate_left(rot);
+        }
+    }
+
+    out
+}
+
+/// Per-seed stride perturbation for the multi-seed tree-learning loop
+/// (RFC#45 chunk 3).
+///
+/// Returns a stride for the given seed derived from the canonical
+/// `base_stride`. Different strides change the *density* of the sample
+/// pool (not just the offset within it), exposing the greedy ID3 builder
+/// to a different ratio of unique-vs-duplicate samples — which in turn
+/// changes which splits clear the `pixel_fraction`-scaled threshold gate.
+///
+/// `seed == 0` returns `base_stride` unchanged (preserves seed-0
+/// bit-identicality with chunk 2). Higher seeds cycle through
+/// `{base, base+1, base-1 (>=1), base*2}` while clamping to `>= 1`. The
+/// `+1`/`-1` neighbors capture small density perturbations cheaply; the
+/// `*2` variant doubles stride for a much sparser sample subset (faster
+/// gather, more "skipped" pixels — surfaces a different split set on
+/// highly-textured images).
+#[must_use]
+pub fn derive_seeded_stride(base_stride: usize, seed: u64) -> usize {
+    if seed == 0 || base_stride == 0 {
+        return base_stride.max(1);
+    }
+    let candidates: [usize; 4] = [
+        base_stride,
+        base_stride.saturating_add(1),
+        base_stride.saturating_sub(1).max(1),
+        base_stride.saturating_mul(2),
+    ];
+    candidates[(seed as usize) % candidates.len()].max(1)
+}
+
 /// Multi-seed tree-learning fan-out (RFC#45 chunk 2 — pick #1).
 ///
 /// Runs `gather_fn` once per seed in `0..seeds`, hands the resulting
@@ -7091,9 +7208,7 @@ mod tests {
         // per-context header term must make the multi-context stream cost
         // strictly more.
         let single_ctx: Vec<Token> = (0..40).map(|_| Token::new(0, 5)).collect();
-        let multi_ctx: Vec<Token> = (0..40)
-            .map(|i| Token::new(i as u32 / 10, 5))
-            .collect();
+        let multi_ctx: Vec<Token> = (0..40).map(|i| Token::new(i as u32 / 10, 5)).collect();
         let c_single = estimate_token_cost(&single_ctx);
         let c_multi = estimate_token_cost(&multi_ctx);
         assert!(
@@ -7148,7 +7263,11 @@ mod tests {
         let mut ch = Channel::new(64, 64).unwrap();
         for y in 0..64 {
             for x in 0..64 {
-                ch.set(x, y, ((x.wrapping_mul(13) ^ y.wrapping_mul(17)) & 0xFF) as i32);
+                ch.set(
+                    x,
+                    y,
+                    ((x.wrapping_mul(13) ^ y.wrapping_mul(17)) & 0xFF) as i32,
+                );
             }
         }
         image.channels.push(ch);
@@ -7165,5 +7284,121 @@ mod tests {
             s0.residual_tokens != s1.residual_tokens || s0.props != s1.props,
             "offset 1 must select a different sample subset than offset 0",
         );
+    }
+
+    // ── RFC#45 chunk 3 — broader seed variance tests ──
+
+    #[test]
+    fn test_derive_seeded_params_seed_zero_is_clone() {
+        // Seed 0 must be a faithful no-op clone (preserves the chunk-2
+        // invariant that hash-locks at e ≤ 9 stay byte-identical).
+        let base = TreeLearningParams::for_effort(9);
+        let s0 = derive_seeded_params(&base, 0);
+        assert_eq!(s0.properties, base.properties);
+        assert_eq!(s0.split_threshold, base.split_threshold);
+        assert_eq!(s0.max_property_values, base.max_property_values);
+        assert_eq!(s0.max_nodes, base.max_nodes);
+    }
+
+    #[test]
+    fn test_derive_seeded_params_nonzero_perturbs_threshold() {
+        // Seeds 1, 2, 3 must each yield a split_threshold different from
+        // base. The four multipliers [1.0, 0.7, 1.3, 0.85] guarantee
+        // distinct values for seeds 1..=3.
+        let base = TreeLearningParams::for_effort(9);
+        let s1 = derive_seeded_params(&base, 1);
+        let s2 = derive_seeded_params(&base, 2);
+        let s3 = derive_seeded_params(&base, 3);
+        assert!(
+            (s1.split_threshold - base.split_threshold).abs() > 1e-6,
+            "seed 1 split_threshold must differ from base",
+        );
+        assert!(
+            (s2.split_threshold - base.split_threshold).abs() > 1e-6,
+            "seed 2 split_threshold must differ from base",
+        );
+        assert!(
+            (s3.split_threshold - base.split_threshold).abs() > 1e-6,
+            "seed 3 split_threshold must differ from base",
+        );
+        // All three must be distinct from each other.
+        assert!((s1.split_threshold - s2.split_threshold).abs() > 1e-6);
+        assert!((s2.split_threshold - s3.split_threshold).abs() > 1e-6);
+        assert!((s1.split_threshold - s3.split_threshold).abs() > 1e-6);
+    }
+
+    #[test]
+    fn test_derive_seeded_params_preserves_structural_prefix() {
+        // The property-order rotation must NOT disturb the structural
+        // prefix (Channel at index 0, GroupId at index 1 when present).
+        let base = TreeLearningParams::for_effort(9);
+        // for_effort(9) uses PROP_ORDER_NO_SQUEEZE which has Channel + GroupId
+        // as the first two entries.
+        assert_eq!(base.properties[0], 0, "base must start with Channel");
+        assert_eq!(base.properties[1], 1, "base must have GroupId at index 1");
+
+        for seed in 1..=8 {
+            let p = derive_seeded_params(&base, seed);
+            assert_eq!(
+                p.properties[0], 0,
+                "seed {seed}: Channel must remain at index 0",
+            );
+            assert_eq!(
+                p.properties[1], 1,
+                "seed {seed}: GroupId must remain at index 1",
+            );
+            assert_eq!(
+                p.properties.len(),
+                base.properties.len(),
+                "seed {seed}: rotation must preserve length",
+            );
+        }
+    }
+
+    #[test]
+    fn test_derive_seeded_params_property_order_varies_across_seeds() {
+        // At least one of seeds 1..=4 must produce a property order
+        // different from base (since `rot = (seed * 3) % tail_len` is
+        // non-zero for some seed in 1..=4).
+        let base = TreeLearningParams::for_effort(9);
+        let any_changed =
+            (1u64..=4).any(|seed| derive_seeded_params(&base, seed).properties != base.properties);
+        assert!(
+            any_changed,
+            "at least one seed in 1..=4 must perturb property order",
+        );
+    }
+
+    #[test]
+    fn test_derive_seeded_stride_seed_zero_returns_base() {
+        // Seed 0 must always return base_stride (preserves chunk-2
+        // byte-identicality on the canonical first seed).
+        assert_eq!(derive_seeded_stride(1, 0), 1);
+        assert_eq!(derive_seeded_stride(3, 0), 3);
+        assert_eq!(derive_seeded_stride(7, 0), 7);
+        // base_stride == 0 is clamped to >= 1.
+        assert_eq!(derive_seeded_stride(0, 0), 1);
+    }
+
+    #[test]
+    fn test_derive_seeded_stride_nonzero_perturbs_density() {
+        // Higher seeds must produce a different (or at least not
+        // monotonically equal) stride than base when base > 1.
+        let base = 5;
+        let s0 = derive_seeded_stride(base, 0);
+        let strides: Vec<usize> = (1u64..=4)
+            .map(|seed| derive_seeded_stride(base, seed))
+            .collect();
+        assert_eq!(s0, base, "seed 0 must equal base stride");
+        // At least two distinct values across seeds 1..=4.
+        let distinct: std::collections::BTreeSet<usize> = strides.iter().copied().collect();
+        assert!(
+            distinct.len() >= 2,
+            "seeds 1..=4 must cover at least 2 distinct strides (got {strides:?})",
+        );
+        // All strides must be >= 1 (clamp invariant).
+        for s in &strides {
+            assert!(*s >= 1, "stride must be >= 1");
+        }
     }
 }
