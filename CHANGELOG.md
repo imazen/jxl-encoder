@@ -160,6 +160,19 @@
 
 ### Added
 
+- **`ColorEncoding::from_cicp(cp, tc, mc, full_range)` CICP lookup helper**
+  (HDR plan chunk 2, issue #46). Maps the most common ITU-T H.273 / ISO/IEC
+  23091-2 CICP 4-tuples to JXL's internal `ColorEncoding` — the wire-format
+  used by MP4/Matroska/HEIC/AV1/Ultra HDR. Supports `cp ∈ {1, 9, 11, 12}`
+  (sRGB / BT.2100 / DCI-P3 / Display P3), `tc ∈ {1, 8, 13, 16, 17, 18}`
+  (BT.709 / Linear / sRGB / PQ / DCI / HLG); rejects `mc != 0` and
+  `full_range == false` with descriptive `&'static str` errors. Mapping
+  matches libjxl's `ApplyCICP` (`lib/jxl/cms/jxl_cms.cc:928`) exactly,
+  including the `cp=12` → `(WhitePoint::D65, Primaries::P3)` and
+  `cp=11` → `(WhitePoint::DCI, Primaries::P3)` split. 15 new unit tests
+  covering common HDR tuples, error paths, and jxl-rs roundtrip for
+  CICP-derived sRGB and BT.2100 PQ.
+
 - **Opt-in pixel-count + effort gated small-image fallback for the
   parallel-tree-learning thread-local SplitWorkspace cache** (audit
   conditional-value catalog item #10 —

@@ -391,6 +391,117 @@ impl ColorEncoding {
         }
     }
 
+    /// Builds a `ColorEncoding` from a CICP 4-tuple
+    /// `(colour_primaries, transfer_characteristics, matrix_coefficients, full_range_flag)`.
+    ///
+    /// CICP (ITU-T H.273 / ISO/IEC 23091-2) is the wire-format used by Matroska,
+    /// ISO BMFF, MP4, AV1, HEIC, and Ultra HDR. This helper maps the most common
+    /// `(cp, tc, mc, full_range)` combinations to JXL's internal `ColorEncoding`.
+    ///
+    /// # Supported CICP values
+    ///
+    /// **Colour primaries** (`cp`):
+    /// - `1` — BT.709 / sRGB (D65)
+    /// - `9` — BT.2100 (D65, also used for BT.2020)
+    /// - `11` — DCI-P3 (DCI white point, P3 primaries — SMPTE RP 431-2 movie projector)
+    /// - `12` — Display P3 (D65 white point, P3 primaries — Apple's display gamut)
+    ///
+    /// **Transfer characteristics** (`tc`):
+    /// - `1` — BT.709
+    /// - `8` — Linear
+    /// - `13` — sRGB (IEC 61966-2-1)
+    /// - `16` — PQ (SMPTE ST 2084)
+    /// - `17` — DCI gamma 2.6 (SMPTE ST 428-1)
+    /// - `18` — HLG (BT.2100)
+    ///
+    /// **Matrix coefficients** (`mc`): must be `0` (Identity / RGB). JXL does not
+    /// accept YCbCr at the encoder boundary; the caller must RGB-convert first.
+    ///
+    /// **Full range** (`full_range`): must be `true`. JXL's encoder works on
+    /// full-range values; the caller is responsible for narrow→full conversion.
+    ///
+    /// Mapping matches libjxl's `ApplyCICP` in `lib/jxl/cms/jxl_cms.cc:928`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(&'static str)` with a descriptive message when:
+    /// - `mc != 0` (non-RGB matrix coefficients — convert to RGB first)
+    /// - `!full_range` (limited / narrow range — convert to full range first)
+    /// - `cp` is not one of `{1, 9, 11, 12}`
+    /// - `tc` is not one of `{1, 8, 13, 16, 17, 18}`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use jxl_encoder::headers::color_encoding::ColorEncoding;
+    /// // sRGB
+    /// let srgb = ColorEncoding::from_cicp(1, 13, 0, true).unwrap();
+    /// assert!(srgb.is_srgb());
+    ///
+    /// // BT.2100 PQ HDR
+    /// let pq = ColorEncoding::from_cicp(9, 16, 0, true).unwrap();
+    /// assert_eq!(pq.transfer_function as u8, 16);
+    /// ```
+    pub fn from_cicp(
+        cp: u8,
+        tc: u8,
+        mc: u8,
+        full_range: bool,
+    ) -> core::result::Result<Self, &'static str> {
+        // libjxl ApplyCICP: matrix_coefficients must be 0 (Identity / RGB).
+        if mc != 0 {
+            return Err("CICP matrix_coefficients != 0 (YCbCr) is not supported; \
+                 convert pixels to RGB before encoding");
+        }
+        // libjxl ApplyCICP: full_range must be 1.
+        if !full_range {
+            return Err(
+                "CICP video_full_range_flag == 0 (limited range) is not supported; \
+                 convert pixels to full range before encoding",
+            );
+        }
+
+        // Transfer characteristics → TransferFunction (matches libjxl enum values).
+        let transfer_function = match tc {
+            1 => TransferFunction::Bt709,
+            8 => TransferFunction::Linear,
+            13 => TransferFunction::Srgb,
+            16 => TransferFunction::Pq,
+            17 => TransferFunction::Dci,
+            18 => TransferFunction::Hlg,
+            _ => return Err("CICP transfer_characteristics not in {1, 8, 13, 16, 17, 18}"),
+        };
+
+        // Colour primaries → (Primaries, WhitePoint).
+        //
+        // Per libjxl ApplyCICP:
+        // - cp == 11 (Primaries::kP3 in libjxl's enum) → WhitePoint::DCI + Primaries::P3
+        //   (i.e., DCI-P3 movie projector)
+        // - cp == 12 (kColorPrimariesP3_D65, not a libjxl Primaries enum value) →
+        //   WhitePoint::D65 + Primaries::P3 (i.e., Apple Display P3)
+        // - cp == 1 → WhitePoint::D65 + Primaries::Srgb
+        // - cp == 9 → WhitePoint::D65 + Primaries::Bt2100
+        let (white_point, primaries) = match cp {
+            1 => (WhitePoint::D65, Primaries::Srgb),
+            9 => (WhitePoint::D65, Primaries::Bt2100),
+            11 => (WhitePoint::Dci, Primaries::P3),
+            12 => (WhitePoint::D65, Primaries::P3),
+            _ => return Err("CICP colour_primaries not in {1, 9, 11, 12}"),
+        };
+
+        Ok(Self {
+            color_space: ColorSpace::Rgb,
+            white_point,
+            custom_white_point: None,
+            primaries,
+            custom_primaries: None,
+            transfer_function,
+            rendering_intent: RenderingIntent::Perceptual,
+            want_icc: false,
+            gamma: None,
+        })
+    }
+
     /// Returns true if this matches the JXL default color encoding.
     /// (sRGB with Perceptual rendering intent, no ICC)
     ///
@@ -1225,6 +1336,232 @@ mod tests {
 
         let decoded = crate::test_helpers::decode_with_jxl_rs(&encoded)
             .expect("jxl-rs should decode custom WP + primaries");
+        assert_eq!(decoded.width, width as usize);
+        assert_eq!(decoded.height, height as usize);
+    }
+
+    // ---- CICP `from_cicp` lookup tests ----
+
+    #[test]
+    fn test_from_cicp_srgb() {
+        // CICP (1, 13, 0, true) = sRGB
+        let ce = ColorEncoding::from_cicp(1, 13, 0, true).expect("sRGB CICP should parse");
+        assert_eq!(ce.color_space, ColorSpace::Rgb);
+        assert_eq!(ce.white_point, WhitePoint::D65);
+        assert_eq!(ce.primaries, Primaries::Srgb);
+        assert_eq!(ce.transfer_function, TransferFunction::Srgb);
+        assert_eq!(ce.rendering_intent, RenderingIntent::Perceptual);
+        assert!(!ce.want_icc);
+        assert!(ce.is_srgb(), "CICP (1,13,0,1) must be exactly sRGB default");
+    }
+
+    #[test]
+    fn test_from_cicp_bt709() {
+        // CICP (1, 1, 0, true) = BT.709 primaries + BT.709 transfer
+        let ce = ColorEncoding::from_cicp(1, 1, 0, true).expect("BT.709 CICP should parse");
+        assert_eq!(ce.color_space, ColorSpace::Rgb);
+        assert_eq!(ce.white_point, WhitePoint::D65);
+        assert_eq!(ce.primaries, Primaries::Srgb); // BT.709 shares sRGB primaries
+        assert_eq!(ce.transfer_function, TransferFunction::Bt709);
+        assert!(!ce.is_srgb()); // Different TF from sRGB
+    }
+
+    #[test]
+    fn test_from_cicp_bt2100_pq() {
+        // CICP (9, 16, 0, true) = Rec.2100 PQ
+        let ce = ColorEncoding::from_cicp(9, 16, 0, true).expect("BT.2100 PQ should parse");
+        assert_eq!(ce.color_space, ColorSpace::Rgb);
+        assert_eq!(ce.white_point, WhitePoint::D65);
+        assert_eq!(ce.primaries, Primaries::Bt2100);
+        assert_eq!(ce.transfer_function, TransferFunction::Pq);
+        // Equivalent to the existing preset constructor
+        let preset = ColorEncoding::bt2100_pq();
+        assert_eq!(ce.color_space, preset.color_space);
+        assert_eq!(ce.white_point, preset.white_point);
+        assert_eq!(ce.primaries, preset.primaries);
+        assert_eq!(ce.transfer_function, preset.transfer_function);
+    }
+
+    #[test]
+    fn test_from_cicp_bt2100_hlg() {
+        // CICP (9, 18, 0, true) = Rec.2100 HLG
+        let ce = ColorEncoding::from_cicp(9, 18, 0, true).expect("BT.2100 HLG should parse");
+        assert_eq!(ce.color_space, ColorSpace::Rgb);
+        assert_eq!(ce.white_point, WhitePoint::D65);
+        assert_eq!(ce.primaries, Primaries::Bt2100);
+        assert_eq!(ce.transfer_function, TransferFunction::Hlg);
+        let preset = ColorEncoding::bt2100_hlg();
+        assert_eq!(ce.color_space, preset.color_space);
+        assert_eq!(ce.white_point, preset.white_point);
+        assert_eq!(ce.primaries, preset.primaries);
+        assert_eq!(ce.transfer_function, preset.transfer_function);
+    }
+
+    #[test]
+    fn test_from_cicp_dci_p3_with_dci_tf() {
+        // CICP (12, 17, 0, true) — Apple Display P3 primaries (cp=12 = P3+D65),
+        // with DCI gamma 2.6 transfer (tc=17). Matches libjxl ApplyCICP exactly:
+        // cp=12 → kColorPrimariesP3_D65 → (WhitePoint::D65, Primaries::P3).
+        let ce = ColorEncoding::from_cicp(12, 17, 0, true).expect("CP=12, TC=17 should parse");
+        assert_eq!(ce.color_space, ColorSpace::Rgb);
+        assert_eq!(ce.white_point, WhitePoint::D65);
+        assert_eq!(ce.primaries, Primaries::P3);
+        assert_eq!(ce.transfer_function, TransferFunction::Dci);
+    }
+
+    #[test]
+    fn test_from_cicp_dci_p3_movie_projector() {
+        // CICP (11, 17, 0, true) — true DCI-P3 movie projector:
+        // cp=11 → (WhitePoint::DCI, Primaries::P3), tc=17 (DCI gamma 2.6).
+        let ce = ColorEncoding::from_cicp(11, 17, 0, true).expect("DCI-P3 should parse");
+        assert_eq!(ce.color_space, ColorSpace::Rgb);
+        assert_eq!(ce.white_point, WhitePoint::Dci);
+        assert_eq!(ce.primaries, Primaries::P3);
+        assert_eq!(ce.transfer_function, TransferFunction::Dci);
+    }
+
+    #[test]
+    fn test_from_cicp_display_p3_with_srgb_tf() {
+        // CICP (12, 13, 0, true) = Display P3 (Apple): P3 primaries + D65 WP + sRGB TF.
+        // Equivalent to `display_p3()` preset.
+        let ce = ColorEncoding::from_cicp(12, 13, 0, true).expect("Display P3 should parse");
+        let preset = ColorEncoding::display_p3();
+        assert_eq!(ce.color_space, preset.color_space);
+        assert_eq!(ce.white_point, preset.white_point);
+        assert_eq!(ce.primaries, preset.primaries);
+        assert_eq!(ce.transfer_function, preset.transfer_function);
+    }
+
+    #[test]
+    fn test_from_cicp_linear_srgb() {
+        // CICP (1, 8, 0, true) = sRGB primaries with Linear transfer.
+        let ce = ColorEncoding::from_cicp(1, 8, 0, true).expect("Linear sRGB should parse");
+        assert_eq!(ce.transfer_function, TransferFunction::Linear);
+        let preset = ColorEncoding::linear_srgb();
+        assert_eq!(ce.color_space, preset.color_space);
+        assert_eq!(ce.white_point, preset.white_point);
+        assert_eq!(ce.primaries, preset.primaries);
+        assert_eq!(ce.transfer_function, preset.transfer_function);
+    }
+
+    #[test]
+    fn test_from_cicp_rejects_ycbcr() {
+        // matrix_coefficients != 0 means YCbCr (or some other non-RGB matrix).
+        // JXL does not accept YCbCr at the encoder boundary.
+        let err =
+            ColorEncoding::from_cicp(1, 13, 1, true).expect_err("mc=1 (BT.709 YCbCr) must reject");
+        assert!(
+            err.contains("matrix_coefficients"),
+            "error should mention matrix_coefficients, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_from_cicp_rejects_limited_range() {
+        // full_range=false means narrow-range / video-range pixels.
+        let err =
+            ColorEncoding::from_cicp(1, 13, 0, false).expect_err("full_range=false must reject");
+        assert!(
+            err.contains("full_range") || err.contains("limited range"),
+            "error should mention full_range, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_from_cicp_rejects_unknown_primaries() {
+        // cp=2 is "unspecified" in CICP, cp=4 is BT.470M (not supported by JXL).
+        for unsupported_cp in [0u8, 2, 3, 4, 5, 6, 7, 8, 10, 13, 22, 255] {
+            let err = ColorEncoding::from_cicp(unsupported_cp, 13, 0, true)
+                .expect_err("unsupported colour_primaries must reject");
+            assert!(
+                err.contains("colour_primaries"),
+                "cp={unsupported_cp}: error should mention colour_primaries, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_cicp_rejects_unknown_transfer() {
+        // tc=2 is "unspecified", tc=4 is BT.470M gamma 2.2 (we use the gamma path).
+        for unsupported_tc in [0u8, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 14, 15, 19, 255] {
+            let err = ColorEncoding::from_cicp(1, unsupported_tc, 0, true)
+                .expect_err("unsupported transfer_characteristics must reject");
+            assert!(
+                err.contains("transfer_characteristics"),
+                "tc={unsupported_tc}: error should mention transfer_characteristics, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_cicp_roundtrips_through_bitstream() {
+        // Every supported CICP combo must serialize to a valid color_encoding bitstream.
+        // This is the layer-2 invariant: from_cicp() output must encode without error.
+        let cases: &[(u8, u8, &str)] = &[
+            (1, 13, "sRGB"),
+            (1, 1, "BT.709"),
+            (1, 8, "Linear sRGB"),
+            (9, 16, "BT.2100 PQ"),
+            (9, 18, "BT.2100 HLG"),
+            (9, 13, "BT.2100 + sRGB TF (unusual but valid)"),
+            (9, 8, "BT.2100 + Linear TF"),
+            (11, 17, "DCI-P3 movie projector"),
+            (11, 13, "DCI-P3 primaries + sRGB TF"),
+            (12, 13, "Display P3 (Apple)"),
+            (12, 16, "Display P3 + PQ (HDR with P3 gamut)"),
+            (12, 17, "Display P3 primaries + DCI TF"),
+        ];
+        for (cp, tc, name) in cases {
+            let ce = ColorEncoding::from_cicp(*cp, *tc, 0, true)
+                .unwrap_or_else(|e| panic!("CICP ({cp},{tc},0,1) [{name}] failed: {e}"));
+            let mut writer = BitWriter::new();
+            ce.write(&mut writer)
+                .unwrap_or_else(|e| panic!("CICP ({cp},{tc},0,1) [{name}] bitstream failed: {e}"));
+            assert!(
+                writer.bits_written() > 0,
+                "CICP ({cp},{tc},0,1) [{name}] wrote zero bits"
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_cicp_roundtrip_srgb_with_jxl_rs() {
+        // Encode a small image with CICP-derived sRGB encoding, decode with jxl-rs.
+        let width = 16u32;
+        let height = 16u32;
+        let pixels: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
+
+        let ce = ColorEncoding::from_cicp(1, 13, 0, true).unwrap();
+        let encoded = crate::LosslessConfig::new()
+            .encode_request(width, height, crate::PixelLayout::Rgb8)
+            .with_color_encoding(ce)
+            .encode(&pixels)
+            .expect("CICP-derived sRGB encoding should succeed");
+
+        let decoded = crate::test_helpers::decode_with_jxl_rs(&encoded)
+            .expect("jxl-rs should decode CICP-derived sRGB");
+        assert_eq!(decoded.width, width as usize);
+        assert_eq!(decoded.height, height as usize);
+    }
+
+    #[test]
+    fn test_from_cicp_roundtrip_bt2100_pq_with_jxl_rs() {
+        // Encode a small image with BT.2100 PQ via CICP, decode with jxl-rs.
+        let width = 16u32;
+        let height = 16u32;
+        let pixels: Vec<u8> = (0..width * height * 3)
+            .map(|i| ((i * 7) % 256) as u8)
+            .collect();
+
+        let ce = ColorEncoding::from_cicp(9, 16, 0, true).unwrap();
+        let encoded = crate::LosslessConfig::new()
+            .encode_request(width, height, crate::PixelLayout::Rgb8)
+            .with_color_encoding(ce)
+            .encode(&pixels)
+            .expect("CICP-derived BT.2100 PQ should succeed");
+
+        let decoded = crate::test_helpers::decode_with_jxl_rs(&encoded)
+            .expect("jxl-rs should decode CICP-derived BT.2100 PQ");
         assert_eq!(decoded.width, width as usize);
         assert_eq!(decoded.height, height as usize);
     }
