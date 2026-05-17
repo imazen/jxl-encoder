@@ -121,6 +121,11 @@ pub mod __bench_internals {
             PartitionKey, SplittableSamples, split_tree_samples_in_place,
         };
     }
+    /// Re-export of `crate::modular::inline_dedup_table` for the dedup
+    /// strategy microbench (issue #41 Phase 3, 2026-05-17).
+    pub mod inline_dedup_table {
+        pub use crate::modular::inline_dedup_table::{InlineDedupTable, KEY_BYTES};
+    }
 }
 
 #[cfg(feature = "__internals")]
