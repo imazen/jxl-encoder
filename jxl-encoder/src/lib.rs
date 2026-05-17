@@ -56,7 +56,8 @@ pub use api::{
     EncodeRequest, EncodeResult, EncodeStats, EncoderMode, ImageMetadata, Limits, LosslessConfig,
     LosslessEncoder, LossyConfig, LossyEncoder, Lz77Method, MAX_FASTER_DECODING,
     MAX_PROGRESSIVE_DC, NonFiniteAction, PixelLayout, PremultipliedAlphaMode, ProgressiveMode,
-    Quality, ResultAtExt, Stop, Unstoppable, at, calibrated_jxl_quality, quality_to_distance,
+    Quality, ResultAtExt, Stop, Unstoppable, at, calibrated_jxl_quality, downsample_channel_u8,
+    quality_to_distance,
 };
 // `EffortProfile` was re-exported at the crate root in 0.3.0; it is now an
 // **internal** type that drives the encoder's effort-derived decisions.

@@ -762,6 +762,80 @@ fn interp_quality(table: &[(f32, f32)], x: f32) -> f32 {
     table[table.len() - 1].1
 }
 
+/// Box-filter downsample a u8 channel by `factor` (mirrors libjxl
+/// `DoDownsampleImage` in `lib/jxl/image_ops.cc`). Companion to
+/// [`ExtraChannel::with_dim_shift`] for the
+/// `--ec_resampling`-style workflow where the caller owns
+/// full-resolution channel data (e.g., alpha plane sliced out of
+/// RGBA8 input) but wants to store it at lower resolution.
+///
+/// Output dimensions are `(width.div_ceil(factor),
+/// height.div_ceil(factor))`. Edge cells average only the
+/// in-bounds samples (partial 2×2 / 4×4 / 8×8 patches), matching
+/// the libjxl behaviour.
+///
+/// `factor` should be one of `{1, 2, 4, 8}` to match libjxl's
+/// `--ec_resampling N` accepted values; passing `factor == 0`
+/// returns an empty `Vec` and `factor == 1` returns a clone of the
+/// input.
+///
+/// # Example
+///
+/// ```ignore
+/// use jxl_encoder::api::{downsample_channel_u8, ExtraChannel};
+/// let alpha_half = downsample_channel_u8(&alpha_fullres, w, h, 2);
+/// let extras = [ExtraChannel::from_alpha_buf(&alpha_half, false)
+///     .with_dim_shift(1)];
+/// ```
+#[must_use]
+pub fn downsample_channel_u8(src: &[u8], width: usize, height: usize, factor: u32) -> Vec<u8> {
+    if factor == 0 {
+        return Vec::new();
+    }
+    if factor == 1 {
+        return src.to_vec();
+    }
+    debug_assert_eq!(
+        src.len(),
+        width * height,
+        "downsample_channel_u8: src len {} != width*height {}",
+        src.len(),
+        width * height,
+    );
+    let factor = factor as usize;
+    let out_w = width.div_ceil(factor);
+    let out_h = height.div_ceil(factor);
+    let mut out = Vec::with_capacity(out_w * out_h);
+    for oy in 0..out_h {
+        let y0 = oy * factor;
+        for ox in 0..out_w {
+            let x0 = ox * factor;
+            let mut sum: u32 = 0;
+            let mut cnt: u32 = 0;
+            for iy in 0..factor {
+                let y = y0 + iy;
+                if y >= height {
+                    break;
+                }
+                let row_off = y * width;
+                for ix in 0..factor {
+                    let x = x0 + ix;
+                    if x >= width {
+                        break;
+                    }
+                    sum += src[row_off + x] as u32;
+                    cnt += 1;
+                }
+            }
+            // cnt is guaranteed > 0 because oy < out_h, ox < out_w
+            // imply at least the (y0, x0) sample is in-bounds.
+            let avg = (sum + cnt / 2) / cnt; // round-to-nearest
+            out.push(avg.min(255) as u8);
+        }
+    }
+    out
+}
+
 // ── Supporting types ────────────────────────────────────────────────────────
 
 /// Image metadata (ICC, EXIF, XMP, JUMBF, tone mapping) to embed in the JXL file.
@@ -4394,6 +4468,10 @@ impl<'a> ExtraChannel<'a> {
     /// `dim_shift ∈ {0, 3, 4} ∪ 1..=8` via the size coder. Most
     /// usage is `dim_shift = 0` (full resolution); `dim_shift = 2`
     /// gives a 1/4-resolution depth map. Refs #9.
+    ///
+    /// Use [`downsample_channel_u8`] to pre-downsample a full-res
+    /// buffer with the same box filter libjxl uses on the
+    /// `--ec_resampling` path; pair it with `with_dim_shift(log2(factor))`.
     pub fn with_dim_shift(mut self, n: u32) -> Self {
         self.info.dim_shift = n;
         self
@@ -9665,6 +9743,77 @@ fn extract_alpha_f16(bytes: &[u8], stride: usize, alpha_offset: usize) -> Vec<u8
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── ec_resampling helper (A1 audit "Pixel formats / extras") ──
+
+    /// Box filter at factor=1 is a passthrough.
+    #[test]
+    fn test_downsample_channel_u8_factor1_is_passthrough() {
+        let src = [10u8, 20, 30, 40, 50, 60, 70, 80, 90];
+        let got = downsample_channel_u8(&src, 3, 3, 1);
+        assert_eq!(got, src);
+    }
+
+    /// 2×2 box filter on a 4×4 uniform region averages each quadrant.
+    #[test]
+    fn test_downsample_channel_u8_factor2_uniform_quadrants() {
+        // 4×4 image where each 2×2 quadrant has a distinct value.
+        let src: [u8; 16] = [
+            10, 10, 20, 20, 10, 10, 20, 20, 30, 30, 40, 40, 30, 30, 40, 40,
+        ];
+        let got = downsample_channel_u8(&src, 4, 4, 2);
+        assert_eq!(got, vec![10, 20, 30, 40]);
+    }
+
+    /// Partial edge cells (image dim not divisible by factor) only average
+    /// in-bounds samples — matches libjxl `DoDownsampleImage`.
+    #[test]
+    fn test_downsample_channel_u8_factor2_partial_edges() {
+        // 3×3 image, downsample by 2 → 2×2 output. Output cell (1, 1)
+        // averages only the single in-bounds sample at (2, 2).
+        let src: [u8; 9] = [10, 20, 30, 40, 50, 60, 70, 80, 90];
+        let got = downsample_channel_u8(&src, 3, 3, 2);
+        // (0,0): avg of (10,20,40,50) = 120/4 = 30
+        // (0,1): avg of (30,60) = 90/2 = 45
+        // (1,0): avg of (70,80) = 150/2 = 75
+        // (1,1): avg of (90) = 90
+        assert_eq!(got, vec![30, 45, 75, 90]);
+    }
+
+    /// Factor=4 over an 8×8 image with a vertical gradient.
+    #[test]
+    fn test_downsample_channel_u8_factor4_8x8() {
+        // 8 rows × 8 cols, value = row*16 → [0, 16, 32, 48, 64, 80, 96, 112].
+        let mut src = vec![0u8; 64];
+        for y in 0..8 {
+            for x in 0..8 {
+                src[y * 8 + x] = (y * 16) as u8;
+            }
+        }
+        let got = downsample_channel_u8(&src, 8, 8, 4);
+        // 4×4 box top-left: rows 0..4 → values [0,16,32,48], mean = 24.
+        // Bottom-left: rows 4..8 → [64,80,96,112], mean = 88.
+        assert_eq!(got, vec![24, 24, 88, 88]);
+    }
+
+    /// Dimensions output match libjxl's `DivCeil(d, factor)`.
+    #[test]
+    fn test_downsample_channel_u8_output_dims() {
+        let src = vec![42u8; 13 * 17];
+        // 13 div_ceil 4 = 4; 17 div_ceil 4 = 5 → 20 samples.
+        let got = downsample_channel_u8(&src, 13, 17, 4);
+        assert_eq!(got.len(), 20);
+        // Uniform input must produce uniform output.
+        assert!(got.iter().all(|&v| v == 42));
+    }
+
+    /// factor=0 returns empty (defensive — caller usually validates).
+    #[test]
+    fn test_downsample_channel_u8_factor0_returns_empty() {
+        let src = [1u8, 2, 3, 4];
+        let got = downsample_channel_u8(&src, 2, 2, 0);
+        assert!(got.is_empty());
+    }
 
     // ─── PQ EOTF (closes PQ portion of #17) ───────────────────────
 
