@@ -955,6 +955,13 @@ pub struct LosslessConfig {
     /// defaults. Bitstream-equivalent — only changes rayon fanout shape.
     /// See [`crate::effort::EffortProfile::adapt_to_image`].
     tree_parallel_smart: bool,
+    /// Override the always-on small-image parallel-tree-learning
+    /// fallback gate. `None` keeps the default (auto-on for inputs
+    /// below 1 MP); `Some(false)` forces the gate off (pre-`fe2d3a2`
+    /// + pre-`cb5e202` behaviour); `Some(true)` forces the gate on
+    /// regardless of image size. Intended for A/B benches; production
+    /// callers should leave this `None`.
+    small_image_fallback_override: Option<bool>,
 }
 
 impl Default for LosslessConfig {
@@ -981,6 +988,7 @@ impl LosslessConfig {
             forced_rct: None,
             profile_override: None,
             tree_parallel_smart: false,
+            small_image_fallback_override: None,
         }
     }
 
@@ -1022,11 +1030,54 @@ impl LosslessConfig {
         p
     }
 
+    /// Override the small-image parallel-tree-learning fallback gate.
+    /// See [`Self::small_image_fallback_override`].
+    ///
+    /// `None` (the default) keeps the gate **OFF** — the bench data
+    /// gathered during landing of this knob (paired 10× on top of
+    /// chunk-3c `79ff70ed`) showed the audit-claimed +0.85% cb5e202
+    /// regression no longer reproduces (def 255.74 ms vs nofallback
+    /// 254.73 ms, median Δ -0.40% at 0.26 MP × e7 × 8T). The cache
+    /// is at parity or slightly winning across all measured cells.
+    /// The infrastructure stays in place behind this opt-in for
+    /// future investigation if the regression re-emerges.
+    ///
+    /// `Some(true)` forces the auto-gate ON (flips the fallback for
+    /// inputs below 1 MP AT EFFORT ≤ 7). `Some(false)` forces the
+    /// gate OFF regardless of size/effort (same as `None`).
+    ///
+    /// Intended for sweep harnesses + A/B benches; not stable.
+    #[doc(hidden)]
+    pub fn with_small_image_fallback_override(mut self, val: Option<bool>) -> Self {
+        self.small_image_fallback_override = val;
+        self
+    }
+
     /// Variant of [`Self::effective_profile`] that applies the
-    /// smart-fanout per-image adapter when `tree_parallel_smart`
-    /// is on. Pass the input image's pixel count.
+    /// per-image adapters. Pass the input image's pixel count.
+    ///
+    /// Small-image fallback: OPT-IN via
+    /// [`Self::with_small_image_fallback_override`]. Default `None`
+    /// keeps the gate off because the audit-claimed cb5e202 regression
+    /// no longer reproduces post-chunk3c. See the
+    /// `with_small_image_fallback_override` doc for the bench data.
+    /// When opt-in is on (`Some(true)`),
+    /// [`crate::effort::EffortProfile::adapt_small_image_fallback`]
+    /// flips `tree_parallel_small_image_fallback` to `true` when
+    /// `pixels < SMALL_IMAGE_PIXEL_THRESHOLD` (1 MP) AND effort ≤ 7.
+    ///
+    /// Opt-in adapter (when `tree_parallel_smart` is on):
+    /// [`crate::effort::EffortProfile::adapt_to_image`] re-tunes the
+    /// rayon fanout depth/floor/threshold for the image size.
     pub(crate) fn effective_profile_for_image(&self, pixels: u64) -> crate::effort::EffortProfile {
         let mut p = self.effective_profile();
+        // Small-image fallback gate (audit item #10): default OFF (None),
+        // opt-in via `with_small_image_fallback_override(Some(true))`.
+        match self.small_image_fallback_override {
+            Some(true) => p.adapt_small_image_fallback(pixels),
+            Some(false) | None => {} // default: gate stays off
+        }
+        // Opt-in smart-fanout re-tuning.
         if self.tree_parallel_smart {
             p.adapt_to_image(pixels);
         }
@@ -1088,6 +1139,8 @@ impl LosslessConfig {
         new.mode = self.mode;
         new.squeeze = self.squeeze;
         new.profile_override = self.profile_override;
+        new.tree_parallel_smart = self.tree_parallel_smart;
+        new.small_image_fallback_override = self.small_image_fallback_override;
         new
     }
 

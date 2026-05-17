@@ -30,6 +30,38 @@
 
 ### Added
 
+- **Opt-in pixel-count + effort gated small-image fallback for the
+  parallel-tree-learning thread-local SplitWorkspace cache** (audit
+  conditional-value catalog item #10 —
+  `rejected_optimizations_conditional_value_2026-05-17.md`). New
+  `EffortProfile::tree_parallel_small_image_fallback` (bool) +
+  `SMALL_IMAGE_PIXEL_THRESHOLD = 1_000_000` (u64) +
+  `EffortProfile::adapt_small_image_fallback(pixels)`. Wired into
+  `LosslessConfig::effective_profile_for_image(pixels)` as an
+  **opt-in** per-image adapter that flips the flag for inputs below
+  1 MP AT EFFORT ≤ 7 when the caller opts in via
+  `LosslessConfig::with_small_image_fallback_override(Some(true))`
+  (or CLI `--small-image-fallback`).
+  When the flag is on, `compute_best_tree` bypasses the thread-local
+  `SplitWorkspace` cache (commit `cb5e202`) by routing through a new
+  `with_workspace_dispatched` helper that allocates a fresh
+  `SplitWorkspace::new` per `find_best_split` call.
+  **Default: OFF** — paired bench data
+  (`benchmarks/small_image_fallback_paired_2026-05-17.tsv`) on top of
+  chunk-3c (`79ff70ed`) shows the audit-claimed cb5e202 cache
+  regression no longer reproduces: small_0.26MP × e7 × 8T median Δ
+  -0.40% (default vs `nofallback`), within noise. Infrastructure
+  ships behind the opt-in for future investigation if the regression
+  re-emerges. The parallel root-split and borrowed-view fan-out are
+  unconditionally on. Bitstream-equivalent: hash_lock 36/36
+  byte-identical; sha256 matches on 0.26 MP / 1.05 MP profile images.
+  New expert knob:
+  `LosslessInternalParams::tree_parallel_small_image_fallback: Option<bool>`.
+  Second instance of the `EffortProfile::adapt_*` per-image dispatch
+  pattern established by smart-fanout (`1c4691f0`).
+  Companion follow-up: imazen/jxl-encoder#42 tracks the larger
+  +6.2% borrowed-view regression (audit item #9 — deferred per task).
+
 - **`__internal_recon_hook` cargo feature** (f73765ff, Layer-1 drift invariant):
   process-global hook on the butteraugli loop's final-iteration internal
   reconstruction (planar linear RGB the loop measures butteraugli against,

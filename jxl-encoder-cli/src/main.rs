@@ -122,6 +122,20 @@ struct Args {
     #[arg(long)]
     smart_fanout: bool,
 
+    /// Enable the opt-in small-image parallel-tree-learning fallback
+    /// (lossless only). When enabled, the fallback bypasses the
+    /// thread-local SplitWorkspace cache for inputs smaller than 1 MP
+    /// at effort ≤ 7, while keeping the parallel root-split and
+    /// borrowed-view fan-out on. Bitstream-equivalent — flipping
+    /// this only changes the workspace allocation strategy.
+    /// Default: OFF — the audit-claimed cb5e202 cache regression no
+    /// longer reproduces on top of chunk-3c (paired bench data in
+    /// `benchmarks/small_image_fallback_paired_2026-05-17.tsv`).
+    /// Kept as opt-in for future investigation. See audit item #10:
+    /// `rejected_optimizations_conditional_value_2026-05-17.md`.
+    #[arg(long)]
+    small_image_fallback: bool,
+
     /// Disable gaborish inverse pre-filter (on by default).
     /// Without gaborish, the decoder skips its 3x3 blur post-filter.
     #[arg(long)]
@@ -533,6 +547,9 @@ fn main() {
                         }
                         if args.smart_fanout {
                             lcfg = lcfg.with_smart_fanout(true);
+                        }
+                        if args.small_image_fallback {
+                            lcfg = lcfg.with_small_image_fallback_override(Some(true));
                         }
                         if args.experimental {
                             lcfg = lcfg.with_mode(jxl_encoder::EncoderMode::Experimental);
@@ -966,6 +983,9 @@ fn main() {
         }
         if args.smart_fanout {
             cfg = cfg.with_smart_fanout(true);
+        }
+        if args.small_image_fallback {
+            cfg = cfg.with_small_image_fallback_override(Some(true));
         }
         if args.experimental {
             cfg = cfg.with_mode(jxl_encoder::EncoderMode::Experimental);
