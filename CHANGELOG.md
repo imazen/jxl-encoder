@@ -577,6 +577,38 @@
   original byte values. New `canonicalize` module at
   `jxl-encoder/src/canonicalize.rs` (13 unit tests).
 
+- **CMYK lossy perceptual CMY→XYB transform** (A1 audit item #6
+  chunk 3, follow-on to `1b222af`). Chunk 2 wired `Cmyk8`/`Cmyk16`
+  through the lossy VarDCT path by reinterpreting the C/M/Y bytes
+  as if they were sRGB-encoded R/G/B — a placeholder with no
+  physical basis (a fully-saturated cyan ink encoded as bright red
+  in XYB, decoding to the wrong gamut sector). Chunk 3 replaces
+  that mapping with the naive uncalibrated subtractive model:
+  `R_linear = (1 - C/255) · (1 - K/255)`, analogues for G/B from M
+  and Y. New helpers `cmyk_u8_to_linear_f32_rgb` and
+  `cmyk_u16_to_linear_f32_rgb` (api.rs) consume both the CMY and
+  the deinterleaved K plane to produce linear-light RGB directly,
+  bypassing the sRGB-decode LUT entirely. K still ships separately
+  as the modular `ExtraChannelType::Black` extra so ink coverage
+  round-trips bit-exact through the lossless modular path. The
+  transform is **not colorimetric** — it ignores ink chromaticity,
+  dot gain, illuminant, and printer profile — but it places the
+  colour in the correct gamut sector so the XYB perceptual
+  quantiser allocates bits sensibly. A future chunk can wire
+  either the caller-supplied CMYK ICC profile (option A) or a
+  hardcoded SWOP/FOGRA matrix (option B) for true colorimetric
+  conversion. New test `test_lossy_cmyk8_chunk3_gamut_direction`
+  encodes pure C/M/Y/K swatches and asserts each decodes within
+  the correct gamut octant (cyan ink → low R, high G+B; magenta
+  → low G, high R+B; yellow → low B, high R+G; black → near zero).
+  The chunk-2 `test_lossy_cmyk8_roundtrip` test was updated to
+  invert the subtractive transform before comparing CMY: bounds
+  widened to ±128 max / ±64 avg per channel because the inversion
+  `C = 1 - R/(1-K)` amplifies VarDCT error inversely with `1-K`
+  on a high-contrast block-edge gradient; the gamut-direction
+  test is the real perceptual check. Hash-locks: 36/36
+  byte-identical (`Cmyk*` layouts are opt-in).
+
 - **CMYK lossy encode** (A1 audit item #6 chunk 2, follow-on to
   `f2deff72`). `PixelLayout::Cmyk8` and `PixelLayout::Cmyk16` now
   route through the lossy (`VarDCT/XYB`) one-shot path in addition
