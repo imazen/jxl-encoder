@@ -1,0 +1,69 @@
+# auto_splines default-on flip: skip decision (2026-05-17)
+
+## Provenance
+
+- Commit at investigation: `wip(splines): default-on at e8+ — follow-on to W6-2 + W7-4`
+- Reference commits: `24f0787` (chunk 2), `f76cbe63` (chunk 3)
+- Workspace: `~/work/zen/jxl-encoder--splines-default-on`
+- Harness: `jxl-encoder/examples/auto_splines_corpus_bench.rs`
+- Default features (includes `butteraugli-loop`)
+- Build: release profile, `target/release/examples/auto_splines_corpus_bench`
+
+## Corpus
+
+5 CLIC2025-1024 photos (from `/home/lilith/work/codec-corpus/clic2025-1024/`):
+- 02809272…b6cd804f7.png
+- 0369d229…6b4df14.png
+- 07b9f93f…200fb4e5b.png
+- 097cb426…4fcc4c.png
+- 0c49a5cce…1e90ba.png
+
+3 GB82-SC screenshots (from `/home/lilith/work/codec-corpus/gb82-sc/`):
+- terminal.png, codec_wiki.png, imac_g3.png
+
+2 synthetic power-line / multi-line images (deterministic, in-process):
+- synth_1line_1024x256, synth_4lines_1024x512
+- synth_8lines_2048x1024 (added in second pass)
+
+All encoded at distance=1.0 via `LossyConfig::new(1.0).with_effort(N)` then
+`with_auto_splines(true)` for the "on" row. PixelLayout::Rgb8.
+
+## Files
+
+- `auto_splines_bench_2026-05-17.tsv` — consolidated. 3 synthetics × {e7, e8,
+  e9} + 5 photos × {e8, e9} + 3 screenshots × {e8, e9} = 25 rows. Photos and
+  screenshots only at e8/e9 (the flip target); synthetics at e7 too to
+  baseline the chunk-3 detector's intended wins.
+
+## Decision: SKIP THE FLIP
+
+Acceptance criteria from W6-2 + W7-4 spec:
+1. Photo no-regression at e8+: **HOLDS** (10/10 byte-identical)
+2. Power-line wins persist at e8+: **FAILS** (3/3 synthetics 0 byte delta at e8+)
+
+At e7 the chunk-3 detector behaves as designed:
+| Image                     | off bytes | on bytes | delta   |
+|---------------------------|-----------|----------|---------|
+| synth_1line_1024x256      | 2318      | 2436     | +118 (cost) |
+| synth_4lines_1024x512     | 4919      | 4781     | -138 (win) |
+| synth_8lines_2048x1024    | 17924     | 17367    | -557 (win) |
+
+At e8 and e9 every tested image is byte-identical (delta = +0 across the
+board). Root cause is plausibly that the trial-encode cost gate
+(`spline_passes_trial_encode_gate`) sees a smaller measured residual-energy
+savings proxy on the buttloop-converged XYB and falls below the 2x
+COST_BENEFIT_MARGIN, dropping every candidate. Diagnosing this further is
+out of scope for the flip decision; the bench data alone is conclusive.
+
+Flipping default-on at e8+ would pay the detector's CPU cost
+(Sobel + NMS + Hessian + polyline trace + per-candidate trial encode) on
+every default-effort-8/9 encode for **zero byte change**. Default stays
+`false`. The infrastructure flip (auto_splines_explicit field,
+`EffortProfile::auto_splines_default(effort)`) ships anyway — when the
+detector evolves to win at e8+, only that one function needs updating.
+
+## Hash locks
+
+`cargo test --release --test hash_lock_features` → 36/36 pass.
+`cargo test --release auto_splines` → 6/6 pass (incl. default_is_off,
+chunk3_multi_line_decreases_bytes).

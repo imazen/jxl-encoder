@@ -1006,6 +1006,36 @@ impl EffortProfile {
         }
     }
 
+    /// Default for [`crate::api::LossyConfig::auto_splines`] when the
+    /// caller hasn't explicitly opted in/out via
+    /// [`crate::api::LossyConfig::with_auto_splines`].
+    ///
+    /// **Currently returns `false` at every effort level.** The
+    /// chunk-3 ridge-following detector (commit `f76cbe6`) is guarded
+    /// by a trial-encode + measured-energy cost gate
+    /// ([`crate::vardct::splines::spline_passes_trial_encode_gate`])
+    /// and near-coincident-candidate dedup, so photo content reliably
+    /// produces zero admitted splines.
+    ///
+    /// A default-on-at-e8+ flip was investigated and rejected based on
+    /// `benchmarks/auto_splines_bench_2026-05-17.tsv` (10 images at e7
+    /// plus e8 plus e9, sweep harness `examples/auto_splines_corpus_bench`).
+    /// At e7 the chunk-3 multi-line synthetics net-win
+    /// (138 / 557 bytes saved on 4-line / 8-line ridges, 118 bytes cost on the
+    /// 1-line edge case). At e8 plus e9 the cost gate rejects every
+    /// candidate on every tested image (10 / 10 byte-identical): the
+    /// detection cost is paid (Sobel, NMS, Hessian, polyline trace,
+    /// per-candidate trial encode) for zero byte change. The flip
+    /// would ship CPU overhead with no compression benefit.
+    ///
+    /// libjxl ships its own `enc_splines.cc:104-107` `FindSplines` as
+    /// a stub at `speed_tier <= kSquirrel` (effort >= 7); the real
+    /// detector landing on a future libjxl release would let us
+    /// revisit this default with a properly compared algorithm.
+    pub fn auto_splines_default(_effort: u8) -> bool {
+        false
+    }
+
     /// Smart per-image fanout adapter (opt-in via
     /// [`crate::api::LosslessConfig::with_smart_fanout`]).
     ///
