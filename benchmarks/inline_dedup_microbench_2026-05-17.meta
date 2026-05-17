@@ -23,12 +23,26 @@
 # Features used: __bench_internals
 #
 # Raw bench output: inline_dedup_microbench_2026-05-17.txt
+# Clean re-run (after killing orphan bench process that locked the
+# first run's small-N groups): inline_dedup_microbench_clean_2026-05-17.txt
 #
-# Key takeaway: gather_sim_phase3 beats gather_sim_phase1 by +11 % to
-# +19 % across all tested (n, dup-ratio) cells. Phase 3 still trails
-# the packed-key post-pass sort because the bench's `make_samples`
-# generates uncorrelated random keys (no spatial clustering); on real
-# photo data the production sort path benefits more from packed-key
-# spatial coherence than this synthetic input shows. The win Chunk 2
-# captures is "gather-time dedup at gather speed," not "replacement
-# of the sort path."
+# Clean-run results (gather_sim Phase 3 vs Phase 1, Mops/s):
+#
+#   group              | phase1 | phase3 | delta
+#   -------------------|--------|--------|------
+#   200K_dup600        |  4.79  |  5.03  |  +5 %
+#   200K_dup800        |  2.88  |  3.89  | +35 %
+#   1.35M_dup300       |  2.42  |  3.70  | +53 %
+#   1.35M_dup600       |  2.53  |  3.53  | +40 %
+#   1.35M_dup800       |  2.75  |  3.73  | +36 %
+#
+# Acceptance gate ("phase3 > phase1") met by +5 % to +53 % across all
+# tested (n, dup-ratio) cells, with the larger wins concentrated at
+# realistic sample counts and dup ratios (where the SoA chase cost
+# Phase 1 paid dominates probe wall-clock).
+#
+# Phase 3 still trails the packed-key sort post-pass on the synthetic
+# uncorrelated-byte input — the bench's make_samples produces no
+# spatial-locality clustering, which the sort path exploits via
+# packed-key cmp short-circuit. Chunk 2's production wiring is what
+# captures the gather-time win on real photo data.
