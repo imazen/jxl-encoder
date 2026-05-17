@@ -61,6 +61,12 @@ pub struct FrameEncoderOptions {
     /// Optional `save_as_reference` override (0–3). `None` keeps the encoder default
     /// (1 for non-last animated frames).
     pub save_as_reference: Option<u32>,
+    /// Encode as `FrameType::ReferenceOnly`. The frame is written into
+    /// its `save_as_reference` slot but is NOT a displayable keyframe;
+    /// later regular frames can composite against it via
+    /// `BlendingInfo::source`. Rejected by the public API on the last
+    /// frame of an animation.
+    pub reference_only: bool,
     /// Optional frame name. `None` writes no name.
     pub name: Option<String>,
     /// Optional SMPTE timecode (requires `have_timecodes=true`). `None` writes `0`.
@@ -108,6 +114,7 @@ impl Default for FrameEncoderOptions {
             blend_mode: None,
             blend_source: None,
             save_as_reference: None,
+            reference_only: false,
             name: None,
             timecode: None,
             modular_knobs: super::palette::ModularKnobs::default(),
@@ -219,6 +226,34 @@ impl FrameEncoder {
         }
         if let Some(slot) = self.options.save_as_reference {
             fh.save_as_reference = slot;
+        }
+
+        // Reference-only frames are written to a save slot but NOT
+        // presented as displayable keyframes. The decoder skips them
+        // during playback. The spec forbids them as the last frame —
+        // the public animation entry points reject that combination
+        // (api.rs::validate_animation_input). Force `is_last=false`
+        // and clear `have_animation` so the spec's "no duration / no
+        // is_last for ReferenceOnly" bitstream layout is respected by
+        // FrameHeader::write (frame_header.rs:386-419, normal_frame
+        // gate).
+        if self.options.reference_only {
+            fh.frame_type = crate::headers::frame_header::FrameType::ReferenceOnly;
+            fh.is_last = false;
+            // Default to slot 1 if the caller didn't pick one (matches
+            // the "non-last animated frame" default above, but applies
+            // even when the slot wasn't set explicitly via
+            // `with_save_as_reference`).
+            if self.options.save_as_reference.is_none() && fh.save_as_reference == 0 {
+                fh.save_as_reference = 1;
+            }
+            // ReferenceOnly frames always write `save_before_ct`
+            // (frame_header.rs:428). Default to `true` so the decoder
+            // stores the pre-color-transform data — what libjxl uses
+            // for `kReferenceOnly + xyb_encoded=true` animation
+            // backgrounds (matches the patches path at
+            // patches.rs:1941).
+            fh.save_before_ct = true;
         }
     }
 

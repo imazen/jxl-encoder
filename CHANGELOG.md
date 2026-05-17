@@ -4,6 +4,30 @@
 
 ### Added
 
+- **ReferenceOnly animation frames + `save_as_reference` cross-frame
+  compositing** (W4-A1 audit follow-on). `AnimationFrame::with_reference_only(bool)`
+  flips the frame to `FrameType::ReferenceOnly` — the codestream writes
+  the frame into its `save_as_reference` slot but decoders skip it
+  during playback. Subsequent regular frames composite against the
+  saved canvas via `with_blend_source(slot)` + a non-`Replace`
+  `BlendMode`. The encoder auto-sets `is_last=false`, defaults the save
+  slot to 1 when unset, and writes `save_before_ct=true` (mirroring
+  libjxl's reference-frame defaults at `enc_frame.cc:446` +
+  `enc_patch_dictionary.cc`). Public API rejects `reference_only=true`
+  on the last animation frame (`EncodeError::InvalidInput`) — the file
+  must end on a displayable frame. ReferenceOnly frames are written
+  full-size (crop detection skipped) and don't advance the diff base
+  for the next regular frame. Three new tests in `tests/animation.rs`:
+  `test_animation_reference_only_lossless_jxlrs` (3-frame red →
+  ReferenceOnly blue at slot 2 → Add/blend_source=2 green, validated
+  via jxl-rs and jxl-oxide), `test_animation_reference_only_lossy_oxide`
+  (VarDCT path), `test_animation_reference_only_last_frame_rejected`
+  (rejection invariant). Zero impact on hash-locks (36/36
+  byte-identical) — opt-in builder. Implementation in
+  `headers/frame_header.rs::FrameOptions`, `api.rs::AnimationFrame`,
+  `modular/frame.rs::apply_animation_to_header`,
+  `vardct/bitstream.rs::encode_frame_to_writer`.
+
 - **Modular group-size knob — `LosslessConfig::with_modular_group_size` /
   `cjxl-rs -g 0..3`** (A1 audit "Modular" PARTIAL item). Mirrors
   libjxl `cjxl -g` / `cparams.modular_group_size_shift`. `None`

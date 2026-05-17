@@ -2438,6 +2438,27 @@ impl VarDctEncoder {
                 if let Some(slot) = opts.save_as_reference {
                     fh.save_as_reference = slot;
                 }
+                // Reference-only frames are stored to a save slot but
+                // NOT displayed during playback. The bitstream writer
+                // (`headers/frame_header.rs::write`) gates duration /
+                // is_last / x0,y0 / blending_info on the `normal_frame`
+                // predicate (Regular or SkipProgressive), so simply
+                // flipping `frame_type = ReferenceOnly` here is enough
+                // to emit the correct bitstream layout. We also force
+                // `is_last = false` (the spec disallows ReferenceOnly
+                // as the last frame — public-API validation rejects
+                // that combination), default the save slot to `1` when
+                // the caller didn't pick one, and set
+                // `save_before_ct = true` to match libjxl's
+                // patches-frame defaults (patches.rs:1941).
+                if opts.reference_only {
+                    fh.frame_type = crate::headers::frame_header::FrameType::ReferenceOnly;
+                    fh.is_last = false;
+                    if opts.save_as_reference.is_none() && fh.save_as_reference == 0 {
+                        fh.save_as_reference = 1;
+                    }
+                    fh.save_before_ct = true;
+                }
             }
 
             fh.write(writer)?;

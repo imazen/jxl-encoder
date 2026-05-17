@@ -1162,6 +1162,22 @@ pub struct AnimationFrame<'a> {
     /// blend over the persistent canvas. `Some(0)` explicitly disables
     /// saving (typical for the last frame).
     pub save_as_reference: Option<u32>,
+    /// Encode this frame as a `ReferenceOnly` frame (libjxl
+    /// `FrameType::kReferenceOnly`). The codestream stores the frame and
+    /// writes it into the `save_as_reference` slot, but it is NOT
+    /// counted as a displayable keyframe — decoders skip it during
+    /// playback. Subsequent regular frames composite against the stored
+    /// canvas via [`Self::with_blend_source`].
+    ///
+    /// Combine with [`Self::with_save_as_reference`] to pick the target
+    /// slot (default `1`). The animation entry points reject
+    /// `reference_only=true` on the last frame
+    /// ([`EncodeError::InvalidInput`]) — the codestream must end with a
+    /// displayable frame.
+    ///
+    /// `duration` is ignored for reference-only frames; the field is
+    /// suppressed in the bitstream by the spec.
+    pub reference_only: bool,
     /// Optional frame name (libjxl `FrameHeader::name`). `None` writes no
     /// name. Useful for tooling that wants per-frame labels (layer titles,
     /// animation key names). Maximum 1019 bytes per the spec.
@@ -1184,6 +1200,7 @@ impl<'a> AnimationFrame<'a> {
             blend_mode: None,
             blend_source: None,
             save_as_reference: None,
+            reference_only: false,
             name: None,
             timecode: None,
         }
@@ -1207,6 +1224,28 @@ impl<'a> AnimationFrame<'a> {
     /// default of `1` for non-last animated frames).
     pub fn with_save_as_reference(mut self, slot: u32) -> Self {
         self.save_as_reference = Some(slot);
+        self
+    }
+
+    /// Mark this frame as `ReferenceOnly` (libjxl
+    /// `FrameType::kReferenceOnly`). The frame is encoded and saved to
+    /// its target reference slot but NOT presented as a displayable
+    /// keyframe — decoders skip it during playback. Useful for
+    /// composing a "background" or "layer source" that later regular
+    /// frames blend on top of via [`Self::with_blend_source`].
+    ///
+    /// Combine with [`Self::with_save_as_reference`] to choose the
+    /// target slot (default `1`). Pair with `[Self::with_blend_source]`
+    /// on a later frame to composite against the saved canvas.
+    ///
+    /// Constraints (enforced by [`crate::LossyConfig::encode_animation`]
+    /// / [`crate::LosslessConfig::encode_animation`]):
+    /// - Reference-only frames may NOT be the last frame in the
+    ///   animation. The file must end on a displayable frame.
+    /// - `duration` is ignored: the spec suppresses the duration field
+    ///   for ReferenceOnly frames.
+    pub fn with_reference_only(mut self, reference_only: bool) -> Self {
+        self.reference_only = reference_only;
         self
     }
 
@@ -8133,6 +8172,7 @@ fn validate_animation_input(
             message: format!("image {width}x{height} too large for encoder working buffers"),
         });
     }
+    let num_frames = frames.len();
     for (i, frame) in frames.iter().enumerate() {
         if frame.pixels.len() != expected_size {
             return Err(EncodeError::InvalidInput {
@@ -8141,6 +8181,41 @@ fn validate_animation_input(
                     i,
                     frame.pixels.len()
                 ),
+            });
+        }
+        // Reference-only frames are stored to a save slot but NOT
+        // presented as a displayable keyframe — decoders skip them
+        // during playback. The codestream MUST end on a displayable
+        // (Regular / SkipProgressive) frame; the spec gates
+        // `is_last`, `duration`, and the blending fields on
+        // `frame_type ∈ {Regular, SkipProgressive}` (FrameHeader::write
+        // `normal_frame` predicate, headers/frame_header.rs:386).
+        // Marking the last frame as ReferenceOnly would emit a
+        // codestream that no decoder can present as the final image.
+        if frame.reference_only && i == num_frames - 1 {
+            return Err(EncodeError::InvalidInput {
+                message: "last animation frame cannot be ReferenceOnly: the file must end on a \
+                     displayable frame. Add a final regular AnimationFrame after the \
+                     reference layer(s)."
+                    .into(),
+            });
+        }
+        // `save_as_reference` (and ReferenceOnly's implicit slot) only
+        // accept values 0..=3 (2 bits in the bitstream).
+        if let Some(slot) = frame.save_as_reference
+            && slot > 3
+        {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "frame {i}: save_as_reference slot {slot} out of range (must be 0..=3)"
+                ),
+            });
+        }
+        if let Some(src) = frame.blend_source
+            && src > 3
+        {
+            return Err(EncodeError::InvalidInput {
+                message: format!("frame {i}: blend_source {src} out of range (must be 0..=3)"),
             });
         }
     }
@@ -8243,9 +8318,14 @@ fn encode_animation_lossless(
     let mut prev_pixels: Option<&[u8]> = None;
 
     for (i, frame) in frames.iter().enumerate() {
-        // Detect crop: compare current frame against previous.
-        // Only use crop when it's smaller than the full frame.
-        let crop = if let Some(prev) = prev_pixels {
+        // Reference-only frames must be written full-size — they ARE
+        // the canvas later regular frames composite against. Skip crop
+        // detection; the diff base for the next regular frame stays
+        // pinned to the last *displayed* frame (we don't update
+        // `prev_pixels` after a reference-only frame, below).
+        let crop = if frame.reference_only {
+            None
+        } else if let Some(prev) = prev_pixels {
             match detect_frame_crop(prev, frame.pixels, w, h, bpp, false) {
                 Some(crop) if (crop.width as usize) < w || (crop.height as usize) < h => Some(crop),
                 Some(_) => None, // Crop covers full frame — no benefit
@@ -8326,6 +8406,7 @@ fn encode_animation_lossless(
                 blend_mode: frame.blend_mode,
                 blend_source: frame.blend_source,
                 save_as_reference: frame.save_as_reference,
+                reference_only: frame.reference_only,
                 name: frame.name.clone(),
                 timecode: frame.timecode,
                 modular_knobs: cfg.modular_knobs(),
@@ -8337,7 +8418,13 @@ fn encode_animation_lossless(
             .encode_modular(&image, &color_encoding, &mut writer)
             .map_err(EncodeError::from)?;
 
-        prev_pixels = Some(frame.pixels);
+        // ReferenceOnly frames are not the displayed canvas — keep
+        // `prev_pixels` pinned to the previous displayed frame so the
+        // next regular frame's crop-detection diffs against what the
+        // viewer actually sees.
+        if !frame.reference_only {
+            prev_pixels = Some(frame.pixels);
+        }
     }
 
     Ok(writer.finish_with_padding())
@@ -8504,9 +8591,16 @@ fn encode_animation_lossy(
     let mut prev_pixels: Option<&[u8]> = None;
 
     for (i, frame) in frames.iter().enumerate() {
-        // Detect crop on raw input pixels (before linear conversion).
-        // Only use crop when it's smaller than the full frame.
-        let crop = if let Some(prev) = prev_pixels {
+        // Reference-only frames are written full-size into a save slot
+        // — they ARE the canvas that subsequent regular frames composite
+        // against, so cropping them would discard the area outside the
+        // diff bounding box. Skip crop detection entirely; the diff
+        // base for the NEXT regular frame stays pinned to the last
+        // *displayed* frame (we don't update `prev_pixels` after a
+        // reference-only frame, below).
+        let crop = if frame.reference_only {
+            None
+        } else if let Some(prev) = prev_pixels {
             match detect_frame_crop(prev, frame.pixels, w, h, bpp, true) {
                 Some(crop) if (crop.width as usize) < w || (crop.height as usize) < h => Some(crop),
                 Some(_) => None, // Crop covers full frame — no benefit
@@ -8694,6 +8788,7 @@ fn encode_animation_lossy(
             blend_mode: frame.blend_mode,
             blend_source: frame.blend_source,
             save_as_reference: frame.save_as_reference,
+            reference_only: frame.reference_only,
             name: frame.name.clone(),
             timecode: frame.timecode,
         };
@@ -8727,7 +8822,13 @@ fn encode_animation_lossy(
         )
         .map_err(EncodeError::from)?;
 
-        prev_pixels = Some(frame.pixels);
+        // ReferenceOnly frames are not the displayed canvas — keep
+        // `prev_pixels` pinned to the previous displayed frame so the
+        // next regular frame's crop-detection diffs against what the
+        // viewer actually sees.
+        if !frame.reference_only {
+            prev_pixels = Some(frame.pixels);
+        }
     }
 
     Ok(writer.finish_with_padding())
