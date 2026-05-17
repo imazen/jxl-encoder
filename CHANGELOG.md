@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`LossyConfig::with_keep_invisible(bool)` + `LosslessConfig::with_keep_invisible(bool)`**
+  — libjxl-named alias for the `SimplifyInvisible` pre-pass
+  (`cparams.keep_invisible` at `enc_params.h:83`,
+  `ApplyOverride(_, IsLossless())` at `enc_frame.cc:1590`). Defaults match
+  libjxl: lossy runs the smear pass (default `keep_invisible = false`,
+  i.e. `simplify_invisible = true`); lossless preserves all RGB bytes
+  (default `keep_invisible = true`, i.e. `simplify_invisible = false`).
+  On lossless, opting in with `with_keep_invisible(false)` zeros RGB
+  samples in pixels whose alpha=0 before modular encoding — modular's
+  predictor + LZ77 then compresses long zero runs for **5-20% smaller
+  files on sprites / icons / UI assets** with large transparent regions
+  (a 64×64 noisy-invisible synthetic sprite shrank by **83.3% — 5427 →
+  906 bytes**). Visible pixels round-trip bit-exact. Default behavior
+  byte-identical (hash_lock_features 36/36 unchanged). Closes A1
+  coverage audit Top-10 item #4. `LossyConfig::with_keep_invisible`
+  delegates to the existing `with_simplify_invisible` with inverted
+  semantics — both names are available so callers porting from `cjxl`
+  can use libjxl terminology.
+
 ### Investigated (negative result, primitive shipped under `__bench_internals`)
 
 - **Phase 4 fused `AddSample` primitive** (`FusedHashKeyBuilder` in
