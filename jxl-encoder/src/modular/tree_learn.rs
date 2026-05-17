@@ -4816,6 +4816,93 @@ fn find_best_split(
 }
 
 /// Find the best predictor for the given contiguous sample range `[start..end)`.
+///
+/// The 14 candidate predictors are evaluated independently — each builds a
+/// fresh residual histogram from its own per-predictor SoA columns
+/// (`samples.residual_tokens[pred_idx]`, `samples.extra_bits[pred_idx]`), so
+/// the loop is embarrassingly parallel.
+///
+/// With the `parallel-tree-learning` feature on, evaluations fan out across
+/// rayon worker threads via [`crate::parallel::parallel_map`]. Each task
+/// allocates its own histogram buffer (cheap relative to the O(n) entropy
+/// scan). Reduction preserves the sequential tie-break: on equal cost we
+/// keep the lowest predictor index, matching the original `<` (strict) loop
+/// — required for byte-identical bitstream output.
+///
+/// A `range_size >= PARALLEL_PRED_THRESHOLD` gate keeps deep-recursion
+/// per-node calls on the sequential path, where the histogram-buf alloc
+/// would dominate the per-task work. The root call (full sample range,
+/// typically ~10⁵–10⁶ samples) always exceeds the gate; the optional
+/// `compute_best_tree_with_multipliers` per-child calls may not.
+#[cfg(feature = "parallel-tree-learning")]
+fn find_best_predictor(
+    samples: &TreeSamples,
+    start: usize,
+    end: usize,
+    histogram_size: usize,
+    counts_buf: &mut [u32],
+) -> usize {
+    let num_pred = samples.num_predictors();
+    let range = end - start;
+
+    /// Below this range size, parallel fan-out costs more than it saves
+    /// (per-task `Vec<u32>` histogram alloc dominates the entropy scan).
+    /// Root calls are millions of samples — well above the gate. Per-node
+    /// calls in `compute_best_tree_with_multipliers` may fall below.
+    const PARALLEL_PRED_THRESHOLD: usize = 1024;
+
+    if num_pred <= 1 || range < PARALLEL_PRED_THRESHOLD {
+        // Sequential fallback — also covers `cfg(not(parallel))` callers
+        // when this feature isn't even built.
+        let mut best_pred = 0;
+        let mut best_bits = f64::MAX;
+        for pred_idx in 0..num_pred {
+            let bits = compute_predictor_entropy(
+                samples,
+                start,
+                end,
+                pred_idx,
+                histogram_size,
+                counts_buf,
+            );
+            if bits < best_bits {
+                best_bits = bits;
+                best_pred = pred_idx;
+            }
+        }
+        return best_pred;
+    }
+
+    // Fan out across the `num_pred` candidates. Each task allocates its own
+    // histogram buffer; reductions stay associative because we materialise
+    // all costs and then pick the lowest-index minimum scalarly.
+    let costs: Vec<f64> = crate::parallel::parallel_map(num_pred, |pred_idx| {
+        let mut local_counts = vec![0u32; histogram_size];
+        compute_predictor_entropy(
+            samples,
+            start,
+            end,
+            pred_idx,
+            histogram_size,
+            &mut local_counts,
+        )
+    });
+
+    // Tie-break: lowest index wins (strict `<`, same as the original loop).
+    let mut best_pred = 0;
+    let mut best_bits = f64::MAX;
+    for (i, &c) in costs.iter().enumerate() {
+        if c < best_bits {
+            best_bits = c;
+            best_pred = i;
+        }
+    }
+    best_pred
+}
+
+/// Sequential fallback for builds without the `parallel-tree-learning`
+/// feature. Identical to the in-feature sequential branch.
+#[cfg(not(feature = "parallel-tree-learning"))]
 fn find_best_predictor(
     samples: &TreeSamples,
     start: usize,

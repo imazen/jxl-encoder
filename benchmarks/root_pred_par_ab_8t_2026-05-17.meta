@@ -1,0 +1,30 @@
+# Paired A/B bench: parallelize root find_best_predictor (14 predictors → rayon fan-out)
+# Generated: 2026-05-17T03:04Z
+# Host: water-cooled AMD Ryzen 9 7950X, 128 GB RAM
+# Compiler: rustc 1.93+ (no -C target-cpu=native)
+# Build: cargo build -p jxl-encoder-cli --features parallel-tree-learning --release
+#
+# A_base = main @ e116702 (baseline; sequential 14-predictor loop)
+# B_new  = same workspace + this commit (rayon fan-out over 14 candidates, ≥1024-sample gate)
+#
+# Both binaries use --features parallel-tree-learning so the only difference is
+# find_best_predictor's predictor evaluation: sequential for-loop (A) vs
+# parallel_map fan-out (B). Tie-break preserved (lowest predictor index wins
+# on equal cost) so output is byte-identical (verified: 18/18 SHA-256 match
+# across {small,medium,large} × {e7,e8,e9} × {1T,8T}; hash_lock_features 36/36).
+#
+# Bench script: scripts/bench_root_pred_par_ab.sh (paired interleaved per iter)
+# Analyzer:     scripts/analyze_root_pred_par.py
+#
+# CAVEAT: Host load was elevated (other agent running concurrent SIMD bench in
+# primary workspace) so trimmed-mean numbers are noised. Best-iter (least
+# affected by contention) is the most reliable comparison column.
+#
+# CAVEAT: Per pre-existing benchmarks/phase_e789_8t_2026-05-16.txt, the
+# `tree/find_best_predictor` phase is only 0.2-0.5% of total wall-clock at
+# e7-e9 (smaller than the originating BorrowedSamples-agent estimate of
+# 10-15% of compute_best_tree). Amdahl ceiling for this optimization
+# alone is well under 1% of total — best-iter deltas of -0.7% on medium
+# e7 are at the ceiling for the call site as measured.
+#
+# Columns: image, variant, effort, threads, iter, time_ms, bytes
