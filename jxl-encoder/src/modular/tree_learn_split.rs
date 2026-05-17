@@ -86,6 +86,27 @@ pub struct SplittableSamples<'a> {
     pub sample_counts: &'a mut Vec<u32>,
     /// Logical sample count (rows 0..len are live).
     pub len: usize,
+    /// Issue #40 chunk-3c resurrection: when `true`, [`swap_rows`] skips
+    /// the per-property `Vec<i32>` swaps in `props`. Safe ONLY on call paths
+    /// that:
+    /// 1. Use [`PartitionKey::Bucket`] exclusively (so the partition predicate
+    ///    reads `bucket_indices`, not `props`), AND
+    /// 2. Never read `samples.props` again after entering the tree-build loop
+    ///    (since props will fall out of alignment with the other SoA arrays).
+    ///
+    /// The lossless main path (`compute_best_tree_with_budget`) satisfies
+    /// both conditions — it consumes `samples.props` once in `pre_quantize`
+    /// (which builds `bucket_indices`) and `dedup_samples` (which gathers
+    /// compact), then never touches it again. The multipliers path
+    /// (`compute_best_tree_with_multipliers`) does NOT satisfy condition 1:
+    /// its static-prop axes use [`PartitionKey::Property`] which reads
+    /// `samples.props[i]` to evaluate the predicate. Setting this to `true`
+    /// on the multipliers path would silently corrupt static-prop splits.
+    ///
+    /// Per-row savings: ~16-30 `Vec::swap` calls per row swap (one per
+    /// populated property — base properties plus per-reference props). At
+    /// 1.05 MP e7 with deep trees this is consistently 1-2% wall-clock.
+    pub skip_props_swap: bool,
 }
 
 impl<'a> SplittableSamples<'a> {
@@ -132,9 +153,13 @@ impl<'a> SplittableSamples<'a> {
                 row.swap(a, b);
             }
         }
-        for row in self.props.iter_mut() {
-            if !row.is_empty() {
-                row.swap(a, b);
+        // Issue #40 chunk-3c: skip per-property props swaps on lossless-only
+        // call paths. See `skip_props_swap` doc on `SplittableSamples`.
+        if !self.skip_props_swap {
+            for row in self.props.iter_mut() {
+                if !row.is_empty() {
+                    row.swap(a, b);
+                }
             }
         }
         for row in self.bucket_indices.iter_mut() {
@@ -174,7 +199,17 @@ impl PartitionKey {
     #[inline]
     fn matches(&self, samples: &SplittableSamples<'_>, row: usize) -> bool {
         match *self {
-            PartitionKey::Property { prop_idx, val } => samples.props[prop_idx][row] <= val,
+            PartitionKey::Property { prop_idx, val } => {
+                // Issue #40 chunk-3c: `Property` partition reads `props`,
+                // so it MUST see swapped-in-sync values. Skipping the props
+                // swap with a `Property` key would partition stale rows.
+                debug_assert!(
+                    !samples.skip_props_swap,
+                    "PartitionKey::Property requires aligned `samples.props`; \
+                     caller set skip_props_swap=true (use PartitionKey::Bucket instead)"
+                );
+                samples.props[prop_idx][row] <= val
+            }
             PartitionKey::Bucket { prop_idx, val } => samples.bucket_indices[prop_idx][row] <= val,
         }
     }
@@ -321,6 +356,7 @@ mod tests {
                 bucket_indices: &mut self.bucket_indices,
                 sample_counts: &mut self.sample_counts,
                 len,
+                skip_props_swap: false,
             }
         }
 
@@ -668,6 +704,7 @@ mod tests {
                 bucket_indices: &mut bucket_indices,
                 sample_counts: &mut sample_counts,
                 len: n,
+                skip_props_swap: false,
             };
             // Make the layout non-trivial: reverse the order so the partition
             // does real work.
@@ -753,6 +790,7 @@ mod tests {
                 bucket_indices: &mut bucket_indices,
                 sample_counts: &mut sample_counts,
                 len: n,
+                skip_props_swap: false,
             };
             split_tree_samples_in_place(
                 &mut view,
@@ -777,5 +815,132 @@ mod tests {
                 "row {i} should be right of split but props[0]={v}"
             );
         }
+    }
+
+    /// Issue #40 chunk-3c: `skip_props_swap=true` must:
+    /// 1. Leave `props` in its pre-permutation order (every prop stays at its
+    ///    original row index — no swaps happened).
+    /// 2. Still permute `bucket_indices`, `residual_tokens`, `extra_bits`, and
+    ///    `sample_counts` in lockstep so the bucket partition is correct.
+    #[test]
+    fn skip_props_swap_partitions_bucket_indices_and_leaves_props_untouched() {
+        // 16 rows, props[0][i] = i (canary), bucket_indices[0][i] = i % 2.
+        // Partition by bucket value <= 0 (matches even rows). pos = 8.
+        // After partition: bucket_indices[0][..8] all 0, [8..] all 1.
+        // props[0] MUST still equal 0..16 in order (no swaps).
+        let n = 16usize;
+        let mut residual_tokens: Vec<Vec<u8>> = vec![(0..n).map(|i| i as u8).collect()];
+        let mut extra_bits: Vec<Vec<u8>> =
+            vec![(0..n).map(|i| (i.wrapping_mul(7)) as u8).collect()];
+        let mut props: Vec<Vec<i32>> = vec![(0..n as i32).collect()];
+        let mut bucket_indices: Vec<Vec<u8>> = vec![(0..n).map(|i| (i & 1) as u8).collect()];
+        let mut sample_counts: Vec<u32> = (0..n).map(|i| i as u32 + 1).collect();
+
+        let props_snapshot = props[0].clone();
+
+        let returned = {
+            let mut view = SplittableSamples {
+                residual_tokens: &mut residual_tokens,
+                extra_bits: &mut extra_bits,
+                props: &mut props,
+                bucket_indices: &mut bucket_indices,
+                sample_counts: &mut sample_counts,
+                len: n,
+                skip_props_swap: true,
+            };
+            split_tree_samples_in_place(
+                &mut view,
+                0,
+                8,
+                n,
+                PartitionKey::Bucket {
+                    prop_idx: 0,
+                    val: 0,
+                },
+            )
+        };
+        assert_eq!(returned, 8);
+
+        // bucket_indices partitioned correctly.
+        for (i, &b) in bucket_indices[0][..8].iter().enumerate() {
+            assert_eq!(b, 0, "left row {i} should have bucket=0 but is {b}");
+        }
+        for (offset, &b) in bucket_indices[0][8..].iter().enumerate() {
+            let i = 8 + offset;
+            assert_eq!(b, 1, "right row {i} should have bucket=1 but is {b}");
+        }
+
+        // props was NOT swapped — still in pre-permutation order.
+        assert_eq!(
+            props[0], props_snapshot,
+            "props must be untouched when skip_props_swap=true"
+        );
+
+        // residual_tokens / extra_bits / sample_counts moved in lockstep
+        // with bucket_indices (so the row content for each post-partition
+        // index matches the row content of the pre-partition source row).
+        // For our canary: residual_tokens[0][i] == original-row-index, so
+        // even rows (originally 0,2,4,6,8,10,12,14) should now land in [0..8).
+        let mut left_origin: Vec<u8> = residual_tokens[0][..8].to_vec();
+        let mut right_origin: Vec<u8> = residual_tokens[0][8..].to_vec();
+        left_origin.sort_unstable();
+        right_origin.sort_unstable();
+        assert_eq!(left_origin, vec![0u8, 2, 4, 6, 8, 10, 12, 14]);
+        assert_eq!(right_origin, vec![1u8, 3, 5, 7, 9, 11, 13, 15]);
+
+        // Cross-array consistency check: for every row, sample_counts[i]
+        // must match the (original_row_index + 1) where original_row_index
+        // is recoverable from residual_tokens[0][i].
+        for i in 0..n {
+            let orig = residual_tokens[0][i] as usize;
+            assert_eq!(
+                sample_counts[i],
+                orig as u32 + 1,
+                "sample_counts row {i} (orig {orig}) misaligned",
+            );
+            assert_eq!(
+                extra_bits[0][i],
+                orig.wrapping_mul(7) as u8,
+                "extra_bits row {i} (orig {orig}) misaligned",
+            );
+        }
+    }
+
+    /// Issue #40 chunk-3c: `skip_props_swap=true` with [`PartitionKey::Property`]
+    /// is an API misuse — props are not swapped, so a Property predicate would
+    /// read stale row content. Caught by debug-assert at partition time.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "PartitionKey::Property requires aligned `samples.props`")]
+    fn skip_props_swap_with_property_key_panics_in_debug() {
+        let n = 8usize;
+        let mut residual_tokens: Vec<Vec<u8>> = vec![(0..n).map(|i| i as u8).collect()];
+        let mut extra_bits: Vec<Vec<u8>> = vec![(0..n).map(|i| i as u8).collect()];
+        let mut props: Vec<Vec<i32>> = vec![(0..n as i32).collect()];
+        let mut bucket_indices: Vec<Vec<u8>> = vec![(0..n).map(|i| i as u8).collect()];
+        let mut sample_counts: Vec<u32> = (0..n as u32).collect();
+        let mut view = SplittableSamples {
+            residual_tokens: &mut residual_tokens,
+            extra_bits: &mut extra_bits,
+            props: &mut props,
+            bucket_indices: &mut bucket_indices,
+            sample_counts: &mut sample_counts,
+            len: n,
+            skip_props_swap: true,
+        };
+        // Use a non-already-partitioned layout so the predicate is actually
+        // evaluated (otherwise the Hoare scan would exit before any call to
+        // `matches`).
+        view.swap_rows(0, 7);
+        split_tree_samples_in_place(
+            &mut view,
+            0,
+            4,
+            n,
+            PartitionKey::Property {
+                prop_idx: 0,
+                val: 3,
+            },
+        );
     }
 }

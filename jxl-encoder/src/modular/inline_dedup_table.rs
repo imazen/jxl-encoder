@@ -436,8 +436,7 @@ pub fn pack_local_key_phase3(
     debug_assert_eq!(local_tokens.len(), local_ebits.len());
     let num_pred = local_tokens.len();
     let num_props_hashed = properties_to_hash.len();
-    let bytes_needed = 2usize.saturating_mul(num_pred)
-        + 4usize.saturating_mul(num_props_hashed);
+    let bytes_needed = 2usize.saturating_mul(num_pred) + 4usize.saturating_mul(num_props_hashed);
     if bytes_needed > KEY_BYTES {
         return LocalKeyPackResult::Overflow;
     }

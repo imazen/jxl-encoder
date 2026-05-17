@@ -917,8 +917,7 @@ pub(crate) fn gather_samples_strided_with_dedup_backend(
     let use_phase3 = enable_phase3 && phase3_fits;
 
     if use_phase3 {
-        let mut table =
-            crate::modular::inline_dedup_table::InlineDedupTable::new(est_samples);
+        let mut table = crate::modular::inline_dedup_table::InlineDedupTable::new(est_samples);
         let hashed_props: Vec<u8> = properties_kept_for_phase3(dedup_properties);
         gather_samples_strided_with_budget_inner_backend(
             samples,
@@ -1081,10 +1080,7 @@ fn gather_samples_strided_with_budget_inner_backend(
             dedup_backend.as_mut().map(|b| match b {
                 GatherDedupBackend::Phase2(t) => GatherDedupBackend::Phase2(t),
                 GatherDedupBackend::Phase3 { table, properties } => {
-                    GatherDedupBackend::Phase3 {
-                        table,
-                        properties,
-                    }
+                    GatherDedupBackend::Phase3 { table, properties }
                 }
             }),
         )?;
@@ -1323,8 +1319,7 @@ fn gather_channel_samples(
                                 // canonical-key indices. We pass
                                 // `samples.num_samples` so debug builds
                                 // catch the SLOT_EMPTY-as-fresh-id edge.
-                                let probe_idx =
-                                    (samples.num_samples as u32).min(u32::MAX - 1);
+                                let probe_idx = (samples.num_samples as u32).min(u32::MAX - 1);
                                 table.lookup_or_insert(&key, probe_idx)
                             }
                             super::inline_dedup_table::LocalKeyPackResult::Overflow => {
@@ -1402,8 +1397,7 @@ fn gather_channel_samples(
                 // hash table never inserts and sample_counts stays
                 // empty; when dedup is ON, both stay in lockstep.
                 debug_assert!(
-                    dedup_backend.is_none()
-                        || samples.sample_counts.len() == samples.num_samples,
+                    dedup_backend.is_none() || samples.sample_counts.len() == samples.num_samples,
                 );
 
                 subsample_counter = stride - 1;
@@ -2671,7 +2665,10 @@ pub(crate) fn compute_best_tree_with_budget(
                 Some(split) if root_candidate.base_bits - split.total_bits > threshold => {
                     let bucket_split =
                         bucket_for_splitval(&pq.threshold_sets[split.property], split.splitval);
-                    let abs_mid = partition_node_in_place(
+                    // Issue #40 chunk-3c: lossless path uses Bucket partition
+                    // exclusively and never reads `samples.props` after this
+                    // point — skip the per-property Vec<i32> swaps.
+                    let abs_mid = partition_node_in_place_with(
                         samples,
                         &mut pq,
                         root_candidate.start,
@@ -2681,6 +2678,7 @@ pub(crate) fn compute_best_tree_with_budget(
                             prop_idx: split.property,
                             val: bucket_split as u8,
                         },
+                        true,
                     );
 
                     // Compute per-side base bits before splitting (uses the
@@ -2852,8 +2850,9 @@ pub(crate) fn compute_best_tree_with_budget(
                 // bucket_indices[prop][i] <= bucket_split end up in [start..mid).
                 let bucket_split =
                     bucket_for_splitval(&pq.threshold_sets[split.property], split.splitval);
+                // Issue #40 chunk-3c: lossless path — see `partition_node_in_place_with`.
                 let abs_mid = crate::profile_time!("tree/partition", {
-                    partition_node_in_place(
+                    partition_node_in_place_with(
                         samples,
                         &mut pq,
                         candidate.start,
@@ -2863,6 +2862,7 @@ pub(crate) fn compute_best_tree_with_budget(
                             prop_idx: split.property,
                             val: bucket_split as u8,
                         },
+                        true,
                     )
                 });
 
@@ -3727,6 +3727,10 @@ fn find_best_predictor_borrowed(
 
 /// Borrowed-view counterpart to [`partition_node_in_place`]. Permutes rows
 /// in-place across all parallel array slices held by `samples`.
+///
+/// Issue #40 chunk-3c: the lossless parallel-tree-learning path is also
+/// Bucket-only and never reads `samples.props` after pre-quantize — pass
+/// `skip_props_swap=true` to elide the per-property `Vec<i32>` swaps.
 #[cfg(feature = "parallel-tree-learning")]
 fn partition_node_in_place_borrowed(
     samples: &mut BorrowedSamples<'_>,
@@ -3735,10 +3739,22 @@ fn partition_node_in_place_borrowed(
     left_count: usize,
     prop_idx: usize,
     bucket_split: u8,
+    skip_props_swap: bool,
 ) -> usize {
     debug_assert!(left_count <= end - start);
     let pos = start + left_count;
-    swap_partition_borrowed(samples, start, pos, end, prop_idx, bucket_split);
+    // Process-cached env-var override (`JXL_DISABLE_CHUNK3C=1`) — see
+    // `chunk3c_skip_is_disabled` doc for rationale.
+    let skip_props_swap = skip_props_swap && !chunk3c_skip_is_disabled();
+    swap_partition_borrowed(
+        samples,
+        start,
+        pos,
+        end,
+        prop_idx,
+        bucket_split,
+        skip_props_swap,
+    );
     pos
 }
 
@@ -3756,6 +3772,7 @@ fn swap_partition_borrowed(
     end: usize,
     prop_idx: usize,
     bucket_split: u8,
+    skip_props_swap: bool,
 ) {
     debug_assert!(begin <= pos);
     debug_assert!(pos <= end);
@@ -3774,7 +3791,7 @@ fn swap_partition_borrowed(
             end_pos += 1;
         }
         if begin_pos < pos && end_pos < end {
-            swap_rows_borrowed(samples, begin_pos, end_pos);
+            swap_rows_borrowed(samples, begin_pos, end_pos, skip_props_swap);
         }
         begin_pos += 1;
         end_pos += 1;
@@ -3785,8 +3802,18 @@ fn swap_partition_borrowed(
 }
 
 /// Swap row `a` with row `b` across every non-empty parallel array slice.
+///
+/// Issue #40 chunk-3c: when `skip_props_swap` is `true`, the per-property
+/// `&mut [i32]` swaps are elided. Same safety conditions as
+/// [`tree_learn_split::SplittableSamples::skip_props_swap`] — the caller
+/// must guarantee no downstream consumer reads `samples.props`.
 #[cfg(feature = "parallel-tree-learning")]
-fn swap_rows_borrowed(samples: &mut BorrowedSamples<'_>, a: usize, b: usize) {
+fn swap_rows_borrowed(
+    samples: &mut BorrowedSamples<'_>,
+    a: usize,
+    b: usize,
+    skip_props_swap: bool,
+) {
     if a == b {
         return;
     }
@@ -3800,9 +3827,11 @@ fn swap_rows_borrowed(samples: &mut BorrowedSamples<'_>, a: usize, b: usize) {
             row.swap(a, b);
         }
     }
-    for row in samples.props.iter_mut() {
-        if !row.is_empty() {
-            row.swap(a, b);
+    if !skip_props_swap {
+        for row in samples.props.iter_mut() {
+            if !row.is_empty() {
+                row.swap(a, b);
+            }
         }
     }
     for row in samples.bucket_indices.iter_mut() {
@@ -3877,6 +3906,8 @@ fn build_subtree_sequential_borrowed(
             Some(split) if candidate.base_bits - split.total_bits > threshold => {
                 let bucket_split =
                     bucket_for_splitval(&samples.threshold_sets[split.property], split.splitval);
+                // Issue #40 chunk-3c: borrowed lossless path — see
+                // `partition_node_in_place_borrowed` doc.
                 let abs_mid = partition_node_in_place_borrowed(
                     samples,
                     candidate.start,
@@ -3884,6 +3915,7 @@ fn build_subtree_sequential_borrowed(
                     split.left_count,
                     split.property,
                     bucket_split as u8,
+                    true,
                 );
 
                 let lchild_idx = tree.len();
@@ -4024,6 +4056,8 @@ fn build_subtree_recursive_parallel_borrowed(
     };
 
     let bucket_split = bucket_for_splitval(&samples.threshold_sets[split.property], split.splitval);
+    // Issue #40 chunk-3c: borrowed lossless root-split — see
+    // `partition_node_in_place_borrowed` doc.
     let abs_mid = partition_node_in_place_borrowed(
         &mut samples,
         0,
@@ -4031,6 +4065,7 @@ fn build_subtree_recursive_parallel_borrowed(
         split.left_count,
         split.property,
         bucket_split as u8,
+        true,
     );
 
     let left_bits = compute_predictor_entropy_borrowed(
@@ -5399,8 +5434,49 @@ fn partition_node_in_place(
     left_count: usize,
     key: tree_learn_split::PartitionKey,
 ) -> usize {
+    partition_node_in_place_with(samples, pq, start, end, left_count, key, false)
+}
+
+/// Issue #40 chunk-3c: env-var override `JXL_DISABLE_CHUNK3C=1` forces the
+/// props-swapping path even when the caller asked to skip it. Used by the
+/// paired A/B bench harness to compare BASELINE (props swap) vs NEW (skip)
+/// using the same binary. Cached after first lookup so production pays one
+/// `std::env::var` call per process, not per partition.
+#[cfg(feature = "std")]
+#[inline]
+fn chunk3c_skip_is_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("JXL_DISABLE_CHUNK3C")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(not(feature = "std"))]
+#[inline]
+fn chunk3c_skip_is_disabled() -> bool {
+    false
+}
+
+/// Issue #40 chunk-3c: variant of [`partition_node_in_place`] that takes the
+/// `skip_props_swap` flag explicitly. Callers on the lossless main path pass
+/// `true` to elide the per-property `Vec<i32>` swaps. See
+/// [`tree_learn_split::SplittableSamples::skip_props_swap`] for safety
+/// conditions.
+fn partition_node_in_place_with(
+    samples: &mut TreeSamples,
+    pq: &mut PreQuantizedProps,
+    start: usize,
+    end: usize,
+    left_count: usize,
+    key: tree_learn_split::PartitionKey,
+    skip_props_swap: bool,
+) -> usize {
     debug_assert!(left_count <= end - start);
     let num_samples = samples.num_samples;
+    let skip_props_swap = skip_props_swap && !chunk3c_skip_is_disabled();
     let mut view = tree_learn_split::SplittableSamples {
         residual_tokens: &mut samples.residual_tokens,
         extra_bits: &mut samples.extra_bits,
@@ -5408,6 +5484,7 @@ fn partition_node_in_place(
         bucket_indices: &mut pq.bucket_indices,
         sample_counts: &mut samples.sample_counts,
         len: num_samples,
+        skip_props_swap,
     };
     let pos = start + left_count;
     tree_learn_split::split_tree_samples_in_place(&mut view, start, pos, end, key);

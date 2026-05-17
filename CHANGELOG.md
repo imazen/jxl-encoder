@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Changed (performance)
+
+- **Skip per-property `Vec<i32>` swaps on the lossless tree-learning main
+  path** (resurrects issue #40 chunk-3c, originally reverted in `a16958f`). Adds
+  `SplittableSamples::skip_props_swap` and wires `partition_node_in_place_with(
+  ..., skip_props_swap=true)` from `compute_best_tree_with_budget` and
+  `build_subtree_sequential_borrowed` — the lossless paths that use
+  `PartitionKey::Bucket` exclusively and never read `samples.props` after
+  `pre_quantize`. Elides ~16-30 `Vec::swap` calls per row swap in
+  `split_tree_samples_in_place`. Paired A/B at 8T (15 samples/cell,
+  `bench_chunk3c_resurrect_ab.sh`): -2.5 to -10% wall-clock on 7/7
+  evaluated cells (small/medium/large × e7/e8/e9), every sample
+  byte-identical. Best-iter on 1024² e7 with `parallel-tree-learning`:
+  1.64× → 1.53× cjxl. **Not** wired into
+  `compute_best_tree_with_multipliers` whose static-prop axes use
+  `PartitionKey::Property` and read `samples.props[axis]` at evaluation
+  time; a `debug_assert!` in `PartitionKey::matches` catches the misuse.
+  Env-var `JXL_DISABLE_CHUNK3C=1` forces the props-swap path for paired
+  A/B (process-cached via `OnceLock`). Hash locks 36/36 byte-identical in
+  both default and `parallel-tree-learning` feature configurations. The
+  earlier `a16958f` chunk-3c attempt (doc-only revert) had failed the 5%
+  gate at load 10-12; this resurrection ships at the lower 1% gate
+  characterised in the rejected-optimizations audit memory because the
+  path-conditional dispatch has zero opportunity cost on the multipliers
+  path.
+
 ### Added
 
 - **`__internal_recon_hook` cargo feature** (f73765ff, Layer-1 drift invariant):
