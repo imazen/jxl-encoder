@@ -75,7 +75,6 @@
 /// is `>=` the current best cost. Because the lower bound is provably tight
 /// (see module docs), `Skip` never hides a predictor that would have been
 /// strictly better.
-#[allow(dead_code)] // chunk 1: primitive proven by unit tests + microbench; wired in chunk 2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PredictorDecision {
     /// The candidate cannot beat `best_cost`; histogram build can be elided.
@@ -110,7 +109,6 @@ pub(crate) enum PredictorDecision {
 /// allocation. Roughly half the bytes touched by
 /// `compute_predictor_entropy` (which additionally builds the histogram
 /// and runs `estimate_bits_u32`).
-#[allow(dead_code)] // chunk 1: primitive proven by unit tests + microbench; wired in chunk 2.
 #[inline]
 pub(crate) fn predictor_extra_bits_lower_bound(
     extra_bits: &[u8],
@@ -159,7 +157,6 @@ pub(crate) fn predictor_extra_bits_lower_bound(
 /// computation overflows (it cannot; `u64` accumulation is bounded by
 /// `n * 255 * u32::MAX < 2^64` for any plausible `n`). Defensive
 /// handling included for completeness.
-#[allow(dead_code)] // chunk 1: primitive proven by unit tests + microbench; wired in chunk 2.
 #[inline]
 pub(crate) fn decide_predictor(extra_bits_lb: f64, best_cost: f64) -> PredictorDecision {
     if extra_bits_lb.is_nan() || best_cost.is_nan() {
