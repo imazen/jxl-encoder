@@ -318,6 +318,24 @@ struct Args {
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
+
+    /// Force JPEG → JXL lossless transcoding for the input file (mirrors
+    /// cjxl `--lossless_jpeg=1`). Requires the `jpeg-reencoding` cargo
+    /// feature. When the feature is enabled, `.jpg` / `.jpeg` inputs are
+    /// also auto-detected by extension and routed through the transcode
+    /// path unless `--no-lossless-jpeg` is passed. The resulting JXL
+    /// container holds a JBRD reconstruction box, so
+    /// `djxl out.jxl out.jpg --reconstruct_jpeg` reproduces the exact
+    /// original JPEG bytes.
+    #[arg(long)]
+    lossless_jpeg: bool,
+
+    /// Disable the automatic JPEG → JXL transcode path even when the
+    /// input has a `.jpg` / `.jpeg` extension. Useful for re-encoding
+    /// JPEG content as a fresh lossy VarDCT JXL (via pixel decode), or
+    /// for testing the non-transcode code path on JPEG inputs.
+    #[arg(long)]
+    no_lossless_jpeg: bool,
 }
 
 fn main() {
@@ -370,9 +388,104 @@ fn main() {
         .unwrap_or("")
         .to_lowercase();
     let is_pnm = matches!(ext.as_str(), "pnm" | "ppm" | "pgm" | "pfm" | "pam");
+    let is_jpeg_ext = matches!(ext.as_str(), "jpg" | "jpeg" | "jpe" | "jfif");
+
+    let start = Instant::now();
+
+    // ── JPEG → JXL lossless transcoding ────────────────────────────────
+    //
+    // Routes through `LosslessConfig::encode_jpeg_transcode` whenever
+    // either:
+    //   (a) the user explicitly passed `--lossless-jpeg`, OR
+    //   (b) the input has a `.jpg` / `.jpeg` / `.jpe` / `.jfif`
+    //       extension AND `--no-lossless-jpeg` was NOT passed.
+    //
+    // Output is a JXL container (signature box + codestream + JBRD
+    // reconstruction box). The JBRD box lets `djxl --reconstruct_jpeg`
+    // reproduce the original JPEG byte-for-byte.
+    //
+    // Only available when the `jpeg-reencoding` cargo feature is on.
+    // When the feature is off, a `.jpg` input falls through to the
+    // (failing) PNG path so users get a clear "not a PNG" error rather
+    // than silently producing garbage.
+    #[cfg(feature = "jpeg-reencoding")]
+    {
+        let want_jpeg_transcode = args.lossless_jpeg || (is_jpeg_ext && !args.no_lossless_jpeg);
+        if want_jpeg_transcode {
+            let jpeg_bytes = match std::fs::read(&args.input) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("Error reading JPEG input: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            // Sniff signature so we don't try to transcode a mis-extensioned PNG.
+            if !jxl_encoder::jpeg::is_jpeg_signature(&jpeg_bytes) {
+                eprintln!(
+                    "Error: {} does not look like a JPEG file (no SOI marker). \
+                     Skip JPEG transcoding with --no-lossless-jpeg.",
+                    args.input.display()
+                );
+                std::process::exit(1);
+            }
+            if !args.quiet {
+                println!(
+                    "JPEG → JXL lossless transcoding (input {} bytes)",
+                    jpeg_bytes.len()
+                );
+            }
+            let cfg = LosslessConfig::new()
+                .with_effort(args.effort)
+                .with_threads(args.threads);
+            let encoded = match cfg.encode_jpeg_transcode(&jpeg_bytes) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("JPEG transcode failed: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let encode_time = start.elapsed();
+            if let Err(e) = write_output(&args.output, &encoded) {
+                eprintln!("Error writing output: {}", e);
+                std::process::exit(1);
+            }
+            let input_size = jpeg_bytes.len() as u64;
+            let output_size = encoded.len() as u64;
+            if !args.quiet {
+                println!();
+                println!("Input size:  {} bytes (JPEG)", input_size);
+                println!(
+                    "Output size: {} bytes (JXL container, JBRD box included)",
+                    output_size
+                );
+                println!(
+                    "Ratio:       {:.2}x ({:.1}% of original JPEG)",
+                    output_size as f64 / input_size as f64,
+                    output_size as f64 / input_size as f64 * 100.0
+                );
+                println!("Time:        {:.2?}", encode_time);
+                println!();
+                println!(
+                    "Reconstruct original JPEG: djxl {} <out.jpg> --reconstruct_jpeg",
+                    args.output.display()
+                );
+            } else {
+                println!("{}", args.output.display());
+            }
+            return;
+        }
+    }
+    #[cfg(not(feature = "jpeg-reencoding"))]
+    {
+        // Feature off — silence the unused-args warning for the JPEG knobs.
+        let _ = (args.lossless_jpeg, args.no_lossless_jpeg, is_jpeg_ext);
+        if args.lossless_jpeg {
+            eprintln!("Error: --lossless-jpeg requires the `jpeg-reencoding` cargo feature.");
+            std::process::exit(1);
+        }
+    }
 
     // Check for APNG (animated PNG) — handle before single-frame path
-    let start = Instant::now();
     if !is_pnm {
         match read_apng(&args.input) {
             Ok(Some(apng)) => {

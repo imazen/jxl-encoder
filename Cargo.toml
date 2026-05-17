@@ -54,3 +54,9 @@ jxl-vardct = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" 
 jxl-threadpool = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
 jxl-jbr = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
 jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+# zenjpeg 0.7.1 / 0.8.3 (latest crates.io) calls `magetypes::mf32x8::load_8x8(block)`
+# but magetypes 0.9.16+ requires the token-passing signature
+# `load_8x8(token, block)`. The local workspace at ~/work/zen/zenjpeg/zenjpeg
+# (version 0.8.4 unpublished) carries the fix. Path-patch until published.
+# Required for the `jpeg-reencoding` feature to build.
+zenjpeg = { path = "../zenjpeg/zenjpeg" }
