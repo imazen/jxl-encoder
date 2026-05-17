@@ -1,0 +1,45 @@
+Bench: patches_per_patch_gate_2026-05-17
+Purpose: RFC#45 pick #5 chunk 3 — per-patch cost decision. Layered on top of W3-1's distance-aware kMinPeak (commit 4fb0f52), this introduces a per-template cost gate inside `find_and_build_with_per_patch_gate` so individual detected patches can be admitted or dropped based on their per-template savings vs marginal overhead, rather than the existing all-or-nothing per-set `is_cost_effective` gate (which is only active in EncoderMode::Experimental).
+
+Date: 2026-05-17 (UTC)
+Host: lilith (AMD Ryzen 9 7950X, 128 GB RAM, water-cooled)
+Branch: jj patches-chunk3 workspace
+Base commit: 62fc60eb (main@origin: "feat(lossy): wire alpha_distance/group_order/center_x/y/upsampling_mode")
+W3-1 reference (chunk 2): 4fb0f52e (distance-aware kMinPeak: =2 below d=1.0, =1 at d>=1.0)
+W2-5 chunk 1 reference: 7b8c06e0 (lowered MIN_PEAK 2→1, regressed windows95 @ d=0.5)
+
+Sweep grid:
+  Class: screenshot, photo (5 each)
+  Screenshots (gb82-sc): windows95, terminal, codec_wiki, imac_g3, windows
+  Photos (CID22 validation): 1025469, 1044329, 1189261, 1279330, 1418519
+  Distances: 0.5, 1.0, 2.0, 4.0
+  Encoder: jxl-encoder LossyConfig::new(d), default mode (Reference), default effort (7)
+
+Harness: jxl_encoder/examples/patches_gate_bench.rs (build: cargo run --release --example patches_gate_bench)
+
+Implementation:
+  - `vardct/patches.rs::find_and_build_with_per_patch_gate(xyb, w, h, stride, min_peak, distance, use_ans)` runs the existing detection + build pipeline, then calls `apply_per_patch_cost_gate` which decides per unique template:
+      keep if `pixels * occurrences * 3.0 >= pixels * 0.05 + occurrences * 5`
+    PLUS unconditional auto-keep when `occurrences >= 20` (high-occurrence text-edge patches whose savings the linear `pixels * occ * 0.3` model under-counts by an order of magnitude).
+  - Dropped templates trigger a rebuild via `build_patches_data` so the ref frame is re-bin-packed to the survivors.
+  - `vardct/encoder.rs` (2 sites), `vardct/precomputed.rs`, `vardct/bitstream.rs` updated to call the new entry; `min_peak` stays distance-aware (W3-1 keeps the +465 B windows95 d=0.5 regression closed — `min_peak=1` at d<1.0 with the per-patch gate brought the regression back, confirming the gate cannot replace the detector-side threshold).
+
+Honest finding (RFC#45 chunk 3, primary deliverable):
+  - The per-set `is_cost_effective` savings model UNDER-estimates actual savings by 3-5x on screenshot content (measured: windows95 d=0.5 model says save 6.8 KB, observed admit-all-vs-no-patches delta is ~26 KB).
+  - As a consequence, both per-set and per-patch derivative cost gates with the existing 0.3 bytes/pixel savings constant over-reject patches that empirically win.
+  - The narrow space where per-patch decisions still help: very low-pixel-count, low-occurrence templates whose drop is approximately byte-neutral. The auto-keep-on-occurrences>=20 rule preserves the high-value 1x1 anti-aliased text edge patches (single-pixel deltas appearing 30-100+ times) that are the actual win of patches on text-heavy screenshots.
+  - Net effect: byte-neutral to small-win on all measured cells, no regressions >0.08%.
+
+Result (5 screenshots × 5 photos × {0.5, 1.0, 2.0, 4.0} = 40 cells):
+  - 25/40 cells: byte-identical
+  - 11/40 cells: wins (max -218 B, -0.082 %)
+  - 4/40 cells: regressions (max +270 B, +0.079 %)
+  - Photos: 20/20 byte-identical (no patches detected — gate is a no-op)
+  - All screenshots within ±0.08 % of W3-1 baseline
+
+Validation:
+  - hash_lock_features: 36/36 byte-identical
+  - jxl-encoder lib tests: 1081 passed, 0 failed, 29 ignored
+  - patches unit tests pass
+
+Reference data: w3_1_bytes column = W3-1 (commit 4fb0f52) admit-all baseline; w3_3_bytes = this commit's per-patch-gate output. Delta column is per-cell signed bytes (negative = win).
