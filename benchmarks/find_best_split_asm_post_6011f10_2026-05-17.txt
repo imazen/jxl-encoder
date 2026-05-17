@@ -1,0 +1,218 @@
+# Cargo-asm dump of `jxl_encoder::modular::tree_learn::find_best_split`
+# AFTER 6011f10 (SIMD estimate_bits) shipped but BEFORE the 2026-05-17
+# investigation of additional right-init SIMD.
+#
+# Source: cargo asm --release --lib -p jxl-encoder --rust \
+#         'jxl_encoder::modular::tree_learn::find_best_split'
+# Build: rustc stable 1.93+, --release --features=default (no
+#        parallel-tree-learning, no -C target-cpu=native).
+# Toolchain hash: see Cargo.lock at e116702e.
+#
+# Hot-loop excerpts only. Full 2,409-line dump regenerable from the
+# cargo-asm command above on commit e116702e.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Region 1: bucket min/max scan (tree_learn.rs:4602-4609)
+# ─────────────────────────────────────────────────────────────────────────
+# LLVM auto-vectorized to SSE2 pminub/pmaxub (16-wide u8 ops) —
+# already optimal. No further SIMD opportunity.
+#
+		// src/modular/tree_learn.rs:4602
+		for &b in pq_buckets {
+	movdqu xmm4, xmmword ptr [rcx + rdx - 16]
+	movdqu xmm5, xmmword ptr [rcx + rdx]
+		// src/modular/tree_learn.rs:4603
+		if b < bmin {
+	pminub xmm2, xmm4
+	pminub xmm3, xmm5
+		// src/modular/tree_learn.rs:4606
+		if b > bmax {
+	pmaxub xmm0, xmm4
+	pmaxub xmm1, xmm5
+	add rdx, 32
+		// (loop tail; horizontal reduction follows)
+	cmp rdi, rdx
+	jne .LBB435_43
+	pminub xmm2, xmm3
+	pshufd xmm3, xmm2, 238
+	pminub xmm3, xmm2
+	pshufd xmm2, xmm3, 85
+	pminub xmm2, xmm3
+	movdqa xmm3, xmm2
+	psrld xmm3, 16
+	pminub xmm3, xmm2
+	movdqa xmm2, xmm3
+	psrlw xmm2, 8
+	pminub xmm2, xmm3
+	movd ecx, xmm2
+
+# ─────────────────────────────────────────────────────────────────────────
+# Region 2: bucket counting / sorted_by_bucket scatter (tree_learn.rs:4629-4647)
+# ─────────────────────────────────────────────────────────────────────────
+# Scalar (gather/scatter pattern). No safe SIMD without gather/scatter
+# intrinsics, which are slow on AVX2.
+#
+		// src/modular/tree_learn.rs:4629
+		for (offset, &b) in pq_buckets.iter().enumerate() {
+	movzx edi, byte ptr [rbx + rax]
+		// src/modular/tree_learn.rs:4630
+		let local_b = (b as usize) - bmin;
+	sub rdi, qword ptr [rsp + 240]
+		// src/modular/tree_learn.rs:4631
+		unique_per_bucket[local_b] += 1;
+	cmp rdi, 256
+	jae .LBB435_243
+	inc dword ptr [rsp + 4*rdi + 680]
+		// src/modular/tree_learn.rs:4632
+		bucket_counts[local_b] += sample_counts[offset];
+	cmp rbp, rax
+	je .LBB435_244
+	cmp rdi, rsi
+	jae .LBB435_245
+	mov rcx, qword ptr [rsp + 456]
+	mov ecx, dword ptr [rcx + 4*rax]
+	add dword ptr [r14 + 4*rdi], ecx
+	inc rax
+	cmp rbp, rax
+	jne .LBB435_56
+
+# ─────────────────────────────────────────────────────────────────────────
+# Region 3: per-pred inner accumulator (tree_learn.rs:4699-4704)
+# ─────────────────────────────────────────────────────────────────────────
+# Scalar — data-dependent scatter on `tok & HISTO_MASK` index, plus an
+# imul for eb_sum. Can't SIMD safely.
+#
+		// src/modular/tree_learn.rs:4699
+		for &rel_off in &sorted_by_bucket[bs..be] {
+	mov rcx, qword ptr [rsp + 512]
+	mov rcx, qword ptr [rcx + rax]
+		// src/modular/tree_learn.rs:4700
+		let tok = tokens[rel_off];
+	cmp rcx, r13
+	jae .LBB435_266
+	movzx r10d, byte ptr [rbx + rcx]
+	mov r11, qword ptr [rsp + 648]
+		// src/modular/tree_learn.rs:4701
+		let sc = sample_counts[rel_off];
+	mov r11d, dword ptr [r11 + 4*rcx]
+		// src/modular/tree_learn.rs:4702
+		ci_slice[tok as usize & HISTO_MASK] += sc;
+	add dword ptr [r9 + 4*r10], r11d
+		// src/modular/tree_learn.rs:4703
+		eb_sum += ebits[rel_off] as u64 * sc as u64;
+	movzx ecx, byte ptr [r14 + rcx]
+	imul rcx, r11
+	add rdx, rcx
+	add rax, 8
+	cmp rsi, rax
+	jne .LBB435_227
+
+# ─────────────────────────────────────────────────────────────────────────
+# Region 4: RIGHT-INIT FOLD (tree_learn.rs:4712-4722) -- the candidate
+# ─────────────────────────────────────────────────────────────────────────
+# Auto-vectorized to SSE2 movdqu/paddd (4-wide u32 × 2-unroll).
+# Could theoretically be lifted to AVX2 8-wide vpaddd via an
+# #[archmage::arcane] entry point — but the absolute cost is too
+# small to matter (see benchmarks/fbs_simd_ab_2026-05-17.meta for the
+# full why-not breakdown).
+#
+		// src/modular/tree_learn.rs:4713
+		let ci_base = local_bucket * HISTO_PADDED;
+	mov rdi, r14
+	shl rdi, 8
+		// src/modular/tree_learn.rs:4714
+		let ci_row = &count_increase[ci_base..ci_base + effective_histo];
+	mov rsi, rdi
+	add rsi, rbp
+	jb .LBB435_173
+	cmp rsi, qword ptr [rsp + 40]
+	ja .LBB435_173
+	mov rsi, qword ptr [r8]
+	cmp rbp, 8
+	setb dil
+	or dil, byte ptr [rsp + 15]
+	je .LBB435_211
+	xor r9d, r9d
+	jmp .LBB435_214
+.LBB435_211:
+	xor edi, edi
+.LBB435_212:
+		// src/modular/tree_learn.rs:4715
+		for (rc, &ci) in right_counts[..effective_histo]
+	movdqu xmm0, xmmword ptr [rcx + 4*rdi - 16]
+	movdqu xmm1, xmmword ptr [rcx + 4*rdi]
+		// src/modular/tree_learn.rs:4719
+		*rc += ci;
+	movdqu xmm2, xmmword ptr [r15 + 4*rdi]
+	paddd xmm2, xmm0
+	movdqu xmm0, xmmword ptr [r15 + 4*rdi + 16]
+	paddd xmm0, xmm1
+	movdqu xmmword ptr [r15 + 4*rdi], xmm2
+	movdqu xmmword ptr [r15 + 4*rdi + 16], xmm0
+	add rdi, 8
+	cmp r10, rdi
+	jne .LBB435_212
+
+# ─────────────────────────────────────────────────────────────────────────
+# Region 5: move-bucket-right-to-left (tree_learn.rs:4740-4745)
+# ─────────────────────────────────────────────────────────────────────────
+# Scalar with `if ci > 0` branch — well-predicted on sparse buckets.
+# Chunk-3b (benchmarks/chunk3_paired_2026-05-16.meta) confirmed
+# branchless SIMD here REGRESSES at 4 MP due to L1 cache pressure
+# (wasted RMW writes evicting left/right counts). LEAVE SCALAR.
+#
+		// src/modular/tree_learn.rs:4732
+		let bc = bucket_counts[local_k];
+	mov eax, dword ptr [r11 + 4*r13]
+		// src/modular/tree_learn.rs:4733
+		if bc == 0 {
+	test eax, eax
+	je .LBB435_204
+		// src/modular/tree_learn.rs:4738
+		let ci_base = local_k * HISTO_PADDED;
+	mov rdi, r13
+	shl rdi, 8
+.LBB435_180:
+		// src/modular/tree_learn.rs:4740
+		for (i, &ci) in ci_row.iter().enumerate() {
+	mov edx, dword ptr [r14 + 4*rdi]
+		// src/modular/tree_learn.rs:4741
+		if ci > 0 {
+	test edx, edx
+	je .LBB435_181
+		// src/modular/tree_learn.rs:4742
+		left_counts[i] += ci;
+	cmp rdi, r10
+	jae .LBB435_264
+	add dword ptr [r12 + 4*rdi], edx
+		// src/modular/tree_learn.rs:4743
+		right_counts[i] -= ci;
+	cmp rdi, r9
+	jae .LBB435_208
+	sub dword ptr [r15 + 4*rdi], edx
+	jmp .LBB435_181
+
+# ─────────────────────────────────────────────────────────────────────────
+# Region 6: estimate_bits dispatch (tree_learn.rs:4762-4767)
+# ─────────────────────────────────────────────────────────────────────────
+# Already routed to jxl_encoder_simd::entropy::__arcane_estimate_bits_u32_avx2
+# by commit 6011f10. This is the dominant hot work inside find_best_split
+# (~739k cycles per node-split vs ~5.3k cycles for the right-init fold).
+#
+		// src/modular/tree_learn.rs:4762
+		let l_bits =
+		    jxl_simd::estimate_bits_u32(&left_counts[..effective_histo], left_total)
+	mov rax, qword ptr [rip + archmage::tokens::generated::x86::X64_V3_CACHE@GOTPCREL]
+	movzx eax, byte ptr [rax]
+	cmp al, 1
+	je .LBB435_189
+	movzx eax, al
+	cmp eax, 2
+	jne .LBB435_187
+.LBB435_188:
+		// jxl-encoder-simd/src/entropy.rs:991
+		#[archmage::arcane]
+	mov rdi, r12
+	mov rsi, rbp
+	mov edx, dword ptr [rsp + 92]
+	call jxl_encoder_simd::entropy::__arcane_estimate_bits_u32_avx2

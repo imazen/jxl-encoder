@@ -4705,7 +4705,28 @@ fn find_best_split(
                 extra_bits_increase[local_bucket] = eb_sum;
             }
 
-            // Build initial right histogram (all local buckets on the right side)
+            // Build initial right histogram (all local buckets on the right
+            // side). LLVM auto-vectorizes this loop to SSE2 movdqu/paddd
+            // (4-wide u32 with 2× unroll) — see
+            // benchmarks/find_best_split_asm_post_6011f10_2026-05-17.txt
+            // lines 1320-1339 for the cargo-asm dump of the SSE2 codegen.
+            //
+            // Forcing AVX2 8-wide via a #[archmage::arcane] entry point
+            // (column-major iteration, dst held in ymm across all rows)
+            // was tried 2026-05-17 and asm-verified to use vpaddd ymm.
+            // Wall-clock impact at the gate cell (1.05 MP @ e9) was
+            // **zero**: median delta -0.2%, min delta 0.0% across 7
+            // paired samples (benchmarks/fbs_simd_ab_2026-05-17.{tsv,meta}).
+            //
+            // Root cause: this fold runs num_pred × num_props ≈ 176 times
+            // per node-split processing ~768 u32-adds each ≈ 5,280 cycles
+            // total — vs estimate_bits at ~739,200 cycles per split. The
+            // right-init fold is <1% of find_best_split's CPU; even
+            // infinite speedup is invisible at wall-clock scope. The next
+            // actionable gap lives in OTHER functions (find_best_predictor,
+            // compute_best_tree fan-out depth, pre_quantize, gather_samples,
+            // dedup_samples). See benchmarks/fbs_simd_ab_2026-05-17.meta
+            // for the full asm-evidenced post-mortem.
             right_counts[..effective_histo].fill(0);
             let mut right_extra: u64 = 0;
             let mut right_total: u32 = weighted_total;
