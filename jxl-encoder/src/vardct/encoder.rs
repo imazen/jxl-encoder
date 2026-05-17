@@ -1019,13 +1019,19 @@ impl VarDctEncoder {
             // explicitly disable by passing `vec![]`).
             Some(splines.clone())
         } else if self.auto_splines && self.effort >= 7 {
-            Some(super::splines::find_splines(
+            // Pass distance through so the per-spline cost-benefit gate
+            // can scale the "VarDCT bytes saved per spline pixel"
+            // estimate. The gate model assumes ~5 bits/pixel of AC
+            // residual at d=1.0 and clamps the divisor at 1.0 — see
+            // `spline_passes_cost_gate` in `vardct/splines.rs`.
+            Some(super::splines::find_splines_at_distance(
                 &xyb_x,
                 &xyb_y,
                 &xyb_b,
                 width,
                 height,
                 padded_width,
+                self.distance,
             ))
         } else {
             None
