@@ -266,6 +266,15 @@ name = "bucket_dispatch_paired_ab"
 path = "examples/bucket_dispatch_paired_ab.rs"
 required-features = ["__expert"]
 
+# Paired A/B for the VarDCT `adapt_to_image_lossy` per-image dispatch
+# (chunk-1 of the VarDCT speed push). Variant A = dispatch ON (new
+# default; drops try_dct64=false on small + low-d cells). Variant B =
+# dispatch OFF (force try_dct64=true via __expert override).
+[[example]]
+name = "vardct_ac_dispatch_paired_ab"
+path = "examples/vardct_ac_dispatch_paired_ab.rs"
+required-features = ["__expert"]
+
 # NOTE: smart_fanout_sweep.rs lives under examples/ alongside the picker
 # oracle harnesses below — same deal: depends on the sibling zenanalyze
 # path dep and is NOT a registered cargo example. Run locally with:

@@ -1780,6 +1780,32 @@ impl LossyConfig {
             .unwrap_or_else(|| crate::effort::EffortProfile::lossy(self.effort, self.mode))
     }
 
+    /// Resolve the per-image effective [`EffortProfile`] for the lossy
+    /// VarDCT path. Layered on top of [`Self::effective_profile`] with
+    /// the always-on
+    /// [`crate::effort::EffortProfile::adapt_to_image_lossy`]
+    /// adapter, which drops `try_dct64` to `false` on the
+    /// `pixels < LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD` AND
+    /// `distance < LOSSY_LOW_DISTANCE_THRESHOLD` cell.
+    ///
+    /// **Override-skipping**: when the caller has supplied an explicit
+    /// `__expert` profile_override via [`Self::with_internal_params`],
+    /// the adapter is skipped — sweep harnesses that pin
+    /// `try_dct64 = Some(true)` survive the dispatch.
+    ///
+    /// Mirrors the lossless [`LosslessConfig::effective_profile_for_image`]
+    /// (audit item #3 / chunk 1 `1c4691f`).
+    pub(crate) fn effective_profile_for_image(&self, pixels: u64) -> crate::effort::EffortProfile {
+        let mut p = self.effective_profile();
+        // Always-on per-image adapter — skipped only when an explicit
+        // `__expert` override is in play, to avoid silently re-flipping
+        // a sweep harness's pinned value.
+        if self.profile_override.is_none() {
+            p.adapt_to_image_lossy(pixels, self.distance);
+        }
+        p
+    }
+
     /// Apply picker / sweep override knobs scoped to the **lossy (VarDCT)**
     /// encode path.
     ///
@@ -3894,7 +3920,7 @@ impl<'a> EncodeRequest<'a> {
             }
         };
 
-        let mut profile = cfg.effective_profile();
+        let mut profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
 
         let mut linear_rgb = linear_rgb;
 
@@ -4764,7 +4790,7 @@ impl LossyEncoder {
         }
 
         let (codestream, mut stats) = run_with_threads(cfg.threads, || {
-            let mut profile = cfg.effective_profile();
+            let mut profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
             if let Some(max_size) = cfg.max_strategy_size {
                 if max_size < 16 {
                     profile.try_dct16 = false;
@@ -6160,7 +6186,7 @@ fn encode_animation_lossy(
     }
 
     // Set up VarDCT encoder
-    let mut profile = cfg.effective_profile();
+    let mut profile = cfg.effective_profile_for_image((width as u64) * (height as u64));
 
     // Apply max_strategy_size to profile flags
     if let Some(max_size) = cfg.max_strategy_size {
@@ -7380,6 +7406,86 @@ mod tests {
         assert_eq!(
             p.tree_max_buckets, 128,
             "sweep override must survive the dispatch"
+        );
+    }
+
+    /// Chunk 1 VarDCT AC dispatch (`adapt_to_image_lossy`): drop
+    /// `try_dct64` to `false` ONLY when the image is small (< 500_000
+    /// pixels) AND distance is low (< 2.0). Every other cell keeps the
+    /// effort-only default so corpus_regression bytes stay stable.
+    #[test]
+    fn test_lossy_effective_profile_for_image_dct64_dispatch() {
+        // small + low-d at effort 7: dispatch fires (try_dct64 → false).
+        let cfg = LossyConfig::new(1.0).with_effort(7);
+        let p = cfg.effective_profile_for_image(256 * 256);
+        assert!(
+            !p.try_dct64,
+            "small_0.07MP + d=1.0 + e7: try_dct64 must drop to false"
+        );
+
+        // small_0.26MP (512×512) + d=1.0 + e7: still small + low-d.
+        let cfg = LossyConfig::new(1.0).with_effort(7);
+        let p = cfg.effective_profile_for_image(512 * 512);
+        assert!(
+            !p.try_dct64,
+            "small_0.26MP + d=1.0 + e7: try_dct64 must drop to false"
+        );
+
+        // medium (1 MP) + d=1.0: no dispatch (pixel-count gate).
+        let cfg = LossyConfig::new(1.0).with_effort(7);
+        let p = cfg.effective_profile_for_image(1024 * 1024);
+        assert!(
+            p.try_dct64,
+            "medium_1.0MP: try_dct64 stays true (pixel gate excludes ≥500k)"
+        );
+
+        // small + d=2.0: no dispatch (distance gate is strict <).
+        let cfg = LossyConfig::new(2.0).with_effort(7);
+        let p = cfg.effective_profile_for_image(256 * 256);
+        assert!(
+            p.try_dct64,
+            "small + d=2.0: try_dct64 stays true (distance gate is strict <2.0)"
+        );
+
+        // small + d=5.0: no dispatch (distance gate).
+        let cfg = LossyConfig::new(5.0).with_effort(7);
+        let p = cfg.effective_profile_for_image(256 * 256);
+        assert!(p.try_dct64, "small + d=5.0: try_dct64 stays true");
+
+        // small + low-d + effort 5: no dispatch (effort < 7 means
+        // try_dct64 is already false in the default profile — adapter
+        // is a no-op, no false-flip-to-true).
+        let cfg = LossyConfig::new(1.0).with_effort(5);
+        let p = cfg.effective_profile_for_image(256 * 256);
+        assert!(
+            !p.try_dct64,
+            "small + d=1.0 + e5: try_dct64 already false at effort < 7"
+        );
+
+        // large + low-d at e7: no dispatch (pixel gate).
+        let cfg = LossyConfig::new(0.5).with_effort(7);
+        let p = cfg.effective_profile_for_image(4_194_304);
+        assert!(p.try_dct64, "large_4MP + d=0.5 + e7: try_dct64 stays true");
+    }
+
+    /// `__expert` sweep override pinning `try_dct64=Some(true)` must
+    /// survive the per-image dispatch — mirrors the lossless override-
+    /// respecting behaviour.
+    #[cfg(feature = "__expert")]
+    #[test]
+    fn test_lossy_effective_profile_for_image_respects_internal_params_override() {
+        let params = crate::effort::LossyInternalParams {
+            try_dct64: Some(true),
+            ..Default::default()
+        };
+        let cfg = LossyConfig::new(1.0)
+            .with_effort(7)
+            .with_internal_params(params);
+        let p = cfg.effective_profile_for_image(256 * 256);
+        // Override wins — dispatch did not fire.
+        assert!(
+            p.try_dct64,
+            "sweep override try_dct64=Some(true) must survive the dispatch"
         );
     }
 
