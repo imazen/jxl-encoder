@@ -4,6 +4,41 @@
 
 ### Added
 
+- **`hdr-gainmap` feature: typed `GainMapBundle` serializer + end-to-end
+  `HdrFromSdrRequest` Ultra HDR encoder API** (issue #46, A3 chunks 3+4).
+  New `jxl_encoder::hdr` module gated behind the optional `hdr-gainmap`
+  cargo feature. Two surfaces:
+  - `hdr::GainMapBundle` mirrors libjxl's `JxlGainMapBundle` struct
+    (`gain_map.h:38`) with owned `Vec<u8>` fields. `GainMapBundle::serialize`
+    produces a `jhgm` box payload that matches `JxlGainMapWriteBundle`
+    (`gain_map.cc:83-153`) byte-for-byte: `jhgm_version (u8)` +
+    `gain_map_metadata_size (u16 BE)` + metadata + `color_encoding_size
+    (u8)` + color-encoding bits (via our `ColorEncoding::write` →
+    `BitWriter::finish_with_padding`) + `alt_icc_size (u32 BE)` + alt ICC
+    + raw gain-map codestream. Wrap with `hdr::append_gain_map_bundle`
+    (thin convenience over the existing `container::append_gain_map_box`).
+  - `hdr::HdrFromSdrRequest::new(width, height, sdr_image, hdr_image,
+    hdr_intensity_target).encode()` derives the gain map via
+    `ultrahdr_core::gainmap::compute_gainmap_slice`, encodes the SDR base
+    via `LossyConfig` (default distance 1.0, callable
+    `with_lossy_config`), encodes the gain-map plane losslessly via
+    `LosslessConfig`, serializes the ISO 21496-1 metadata via
+    `ultrahdr_core::serialize_iso21496_fmt(.., Iso21496Format::JxlJhgm)`,
+    and returns a single JXL container with the `jhgm` box appended.
+    Includes `HdrImage<'a>` / `HdrColorEncoding` / `HdrPixelLayout` value
+    types so the constructor stays under the clippy
+    `too_many_arguments` ceiling.
+  - Dep: `ultrahdr-core = "0.5.0"` with `default-features = false,
+    features = ["std"]` (skips the `tonemap` feature so we do not
+    transitively pull `zentone`). The crate is already in the
+    `imazen/ultrahdr` workspace and pulls only `zenpixels` + `zencodec`
+    as new transitive deps — no `zenjpeg` pull-in.
+  - 11 new tests cover the wire-format layout (BE size fields, tail
+    placement of the gain-map codestream, color-encoding padding) and
+    the end-to-end pipeline (8×8 synthetic SDR+HDR pair encodes
+    successfully and produces a container starting with the JXL
+    signature and containing both `jxlc` and `jhgm` boxes).
+
 - **`LossyConfig::with_keep_invisible(bool)` + `LosslessConfig::with_keep_invisible(bool)`**
   — libjxl-named alias for the `SimplifyInvisible` pre-pass
   (`cparams.keep_invisible` at `enc_params.h:83`,
@@ -44,7 +79,6 @@
   wired into the production gather loop**. See
   `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/lossless_phase4_inline_addsample_2026-05-17.md`
   for the chunk 2+ decision tree.
-
 ### Investigated (kept opt-in)
 
 - **`LosslessConfig::with_smart_fanout` default-on decision: KEEP OPT-IN**

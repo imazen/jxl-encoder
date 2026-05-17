@@ -33,6 +33,13 @@ pub mod image;
 pub mod jpeg;
 pub mod modular;
 pub(crate) mod parallel;
+
+/// Ultra HDR gain-map encoding for JPEG XL containers (feature
+/// `hdr-gainmap`).
+///
+/// See [`hdr::HdrFromSdrRequest`] for the end-to-end API.
+#[cfg(feature = "hdr-gainmap")]
+pub mod hdr;
 pub mod profile_phases;
 pub mod trace;
 pub mod validation;

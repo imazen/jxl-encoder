@@ -37,9 +37,24 @@ imgref = { version = "1.12", optional = true }
 rgb = { version = "0.8", optional = true }
 fast-ssim2 = { version = "0.7.1", features = ["imgref"], optional = true }
 zensim = { version = "0.2", optional = true }
+# Ultra HDR gain map math + ISO 21496-1 serializer.
+# `default-features = false` skips the `tonemap` feature (which transitively
+# pulls zentone); we only need the gain-map compute path + the ISO 21496-1
+# serializer (re-exported from zencodec). `std` is enabled for std-only
+# error types and allocation paths. Mandatory deps still include zenpixels
+# + zencodec (already in the dep tree of ultrahdr-core 0.5+).
+ultrahdr-core = { version = "0.5.0", default-features = false, features = ["std"], optional = true }
 
 [features]
 std = ["thiserror/std", "archmage/std", "jxl_simd/std"]
+# Ultra HDR gain map encoding: typed `GainMapBundle` serializer that matches
+# libjxl `JxlGainMapBundle` byte-for-byte (jhgm box payload), plus an
+# `HdrFromSdrRequest` end-to-end API that takes an SDR + HDR pair, computes
+# the gain map via `ultrahdr_core::gainmap::compute_gainmap`, encodes the SDR
+# base image as a JXL codestream, and muxes the gain map into a single JXL
+# container so capable decoders reconstruct the HDR while standard decoders
+# display the SDR. Requires `std`. Issue #46 (A3 chunks 3+4).
+hdr-gainmap = ["std", "dep:ultrahdr-core"]
 trace-bitstream = []
 # Verbose debug output for token encoding (DC, AC, entropy codes)
 debug-tokens = []
