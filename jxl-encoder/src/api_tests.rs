@@ -8467,11 +8467,14 @@ fn test_lossy_extras_with_resampling_rejected() {
     );
 }
 
-/// Refs #19: dot detection off by default — same input should
-/// encode identically regardless of `with_dot_detection(false)` vs
-/// no call at all. Verifies the new builder really is gated.
+/// Refs #19: dot detection is on by default (mirrors libjxl
+/// `Override::kDefault`) — so `with_dot_detection(true)` should
+/// encode identically to no call at all. On flat content the
+/// detector still runs (effort=7, d=3.0 trip the gates) but finds
+/// nothing, so both bitstreams are byte-identical. Verifies the
+/// builder reflects the new default.
 #[test]
-fn test_lossy_with_dot_detection_off_is_default() {
+fn test_lossy_with_dot_detection_on_is_default() {
     let w = 32u32;
     let h = 32u32;
     let pixels = vec![128u8; (w * h * 3) as usize];
@@ -8480,16 +8483,42 @@ fn test_lossy_with_dot_detection_off_is_default() {
         .encode_request(w, h, PixelLayout::Rgb8)
         .encode(&pixels)
         .expect("baseline");
-    let bytes_off = LossyConfig::new(3.0)
+    let bytes_on = LossyConfig::new(3.0)
         .with_effort(7)
-        .with_dot_detection(false)
+        .with_dot_detection(true)
         .encode_request(w, h, PixelLayout::Rgb8)
         .encode(&pixels)
-        .expect("explicit off");
+        .expect("explicit on");
     assert_eq!(
-        bytes_default, bytes_off,
-        "with_dot_detection(false) must match the default",
+        bytes_default, bytes_on,
+        "with_dot_detection(true) must match the (now-on) default",
     );
+}
+
+/// Refs #19: `with_dot_detection(false)` must short-circuit the
+/// detector even when the effort/distance gates would otherwise
+/// trigger it. On flat content this still produces a byte-identical
+/// bitstream to default (the detector finds nothing on a solid
+/// color), but the contract is that the call disables the path.
+#[test]
+fn test_lossy_with_dot_detection_off_disables_path() {
+    let w = 32u32;
+    let h = 32u32;
+    let pixels = vec![128u8; (w * h * 3) as usize];
+    let cfg_off = LossyConfig::new(3.0)
+        .with_effort(7)
+        .with_dot_detection(false);
+    assert!(!cfg_off.dot_detection(), "explicit off");
+    let bytes_off = cfg_off
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("encode with dots off");
+    // Smoke check: bitstream is parseable.
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes_off))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
 }
 
 /// Refs #11 (streaming): `estimate_peak_memory_bytes` should give a
@@ -9134,8 +9163,8 @@ fn test_lossy_already_downsampled_default_downsamples() {
 }
 
 /// `with_perceptual_optimizations(false)` should disable gaborish,
-/// patches, and pixel_domain_loss. dot_detection and noise stay off
-/// since both default off in libjxl.
+/// patches, pixel_domain_loss, and dot detection. Noise stays off
+/// because libjxl defaults it off too.
 #[test]
 fn test_lossy_perceptual_optimizations_off() {
     let cfg = LossyConfig::new(2.0).with_perceptual_optimizations(false);
@@ -9143,11 +9172,16 @@ fn test_lossy_perceptual_optimizations_off() {
     assert!(!cfg.patches());
     assert!(!cfg.pixel_domain_loss());
     assert!(!cfg.noise());
+    assert!(
+        !cfg.dot_detection(),
+        "perceptual_optimizations(false) must disable dot detection"
+    );
 }
 
 /// `with_perceptual_optimizations(true)` should turn the major
 /// perceptual heuristics back on (gaborish + patches + pixel-domain
-/// loss). Useful as an "undo" for the convenience disable.
+/// loss + dot detection). Useful as an "undo" for the convenience
+/// disable.
 #[test]
 fn test_lossy_perceptual_optimizations_on() {
     let cfg = LossyConfig::new(2.0)
@@ -9156,6 +9190,10 @@ fn test_lossy_perceptual_optimizations_on() {
     assert!(cfg.gaborish());
     assert!(cfg.patches());
     assert!(cfg.pixel_domain_loss());
+    assert!(
+        cfg.dot_detection(),
+        "perceptual_optimizations(true) must re-enable dot detection (libjxl Override::kDefault)"
+    );
 }
 
 /// Caller-supplied per-knob settings called *after* the convenience

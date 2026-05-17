@@ -1678,8 +1678,13 @@ pub struct LossyConfig {
     force_strategy: Option<u8>,
     max_strategy_size: Option<u8>,
     patches: bool,
-    /// libjxl-style dot detection (refs #19). Default `false`. Only
-    /// fires when both effort >= 7 and distance >= 3.0.
+    /// libjxl-style dot detection (refs #19). Default `true` to
+    /// mirror libjxl's `Override::kDefault` semantics — the in-encoder
+    /// gates (effort >= 7, distance >= 3.0, no text-like patches in
+    /// the same image) make this effectively a no-op outside its
+    /// niche content range, matching `cjxl`'s "encoder chooses"
+    /// default for `--dots`. Disable explicitly via
+    /// [`Self::with_dot_detection`] / `--no-dot-detection`.
     dot_detection: bool,
     /// Smear color values in alpha=0 pixels to a weighted average of
     /// visible neighbors (libjxl `SimplifyInvisible` lossy mode,
@@ -1793,7 +1798,7 @@ impl LossyConfig {
             force_strategy: None,
             max_strategy_size: None,
             patches: profile.patches,
-            dot_detection: false, // refs #19; off by default
+            dot_detection: true, // refs #19; default-on to mirror libjxl Override::kDefault (gated effort>=7 && d>=3.0)
             simplify_invisible: true,
             center_first: false,
             resampling: 1,
@@ -2116,8 +2121,9 @@ impl LossyConfig {
     ///
     /// Calling `with_perceptual_optimizations(true)` resets each of
     /// those to the libjxl-faithful defaults (gaborish on, patches
-    /// on, dot detection still off — matching its niche-content
-    /// gating, noise off, pixel-domain loss on).
+    /// on, dot detection on — gated internally to effort>=7 && d>=3.0,
+    /// matching libjxl `Override::kDefault`; noise off, pixel-domain
+    /// loss on).
     ///
     /// Use cases:
     /// - **Decoder testing / spec strict mode**: caller wants to
@@ -2138,7 +2144,7 @@ impl LossyConfig {
         // Defaults mirror libjxl's enabled state when on.
         self.gaborish = enable;
         self.patches = enable;
-        self.dot_detection = false; // still off-by-default even when on
+        self.dot_detection = enable; // libjxl `Override::kDefault`; in-encoder effort/distance gates make this niche-only
         self.noise = false; // off by default in libjxl too
         self.pixel_domain_loss = enable;
         self
@@ -2184,20 +2190,31 @@ impl LossyConfig {
         self
     }
 
-    /// Enable libjxl-style **dot detection** (refs #19). Default `false`.
+    /// Enable libjxl-style **dot detection** (refs #19). Default `true`,
+    /// mirroring libjxl's `Override::kDefault` semantics for `--dots`
+    /// (`tools/cjxl_main.cc:363-367` + `enc_patch_dictionary.cc:632-643`).
     ///
-    /// When enabled and the encode runs at effort ≥ 7 and distance ≥ 3.0,
-    /// the encoder runs a star-field / specular-highlight detector that
-    /// finds isolated bright Gaussian-shaped pixels too small to survive
-    /// VarDCT quantization at high distances. Each surviving dot is (in
-    /// a follow-up tick) appended to the patch dictionary so the
-    /// decoder reconstructs it exactly.
+    /// When enabled, the encoder will run a star-field / specular-highlight
+    /// detector **only** if all of the following hold (matching libjxl's
+    /// internal gates exactly):
     ///
-    /// **Niche feature** — only fires on astronomy images, specular
-    /// highlights on dark backgrounds, certain noise patterns. Has no
-    /// effect on typical photographic content. libjxl ports the
-    /// algorithm in `enc_detect_dots.cc`; we mirror its gating + the
-    /// 7-neighbor flood-fill bug for bit-parity.
+    /// * effort ≥ 7 (`speed_tier <= kSquirrel`)
+    /// * distance ≥ 3.0 (`kMinButteraugliForDots`)
+    /// * no text-like patches were found for this frame
+    ///
+    /// When the gates fire, the detector finds isolated bright
+    /// Gaussian-shaped pixels too small to survive VarDCT quantization
+    /// at high distances. Each surviving dot is appended to the patch
+    /// dictionary so the decoder reconstructs it exactly.
+    ///
+    /// **Niche feature** — outside its gates the call is a no-op. Even
+    /// inside, it only fires on astronomy images, specular highlights on
+    /// dark backgrounds, certain noise patterns. Has no effect on typical
+    /// photographic content. libjxl ports the algorithm in
+    /// `enc_detect_dots.cc`; we mirror its gating + the 7-neighbor
+    /// flood-fill bug for bit-parity.
+    ///
+    /// Pass `false` to force-disable (mirrors `cjxl --dots=0`).
     pub fn with_dot_detection(mut self, enable: bool) -> Self {
         self.dot_detection = enable;
         self
