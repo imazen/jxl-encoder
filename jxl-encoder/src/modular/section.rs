@@ -314,10 +314,12 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     use super::encode::write_wp_header;
     use super::predictor::WeightedPredictorParams;
     use super::tree::count_contexts;
+    use super::tree::Tree;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_gather_stride_from_profile, gather_samples_strided,
-        gather_samples_strided_with_dedup_backend, max_ref_channels,
+        compute_gather_stride_from_profile, estimate_token_cost, gather_samples_strided,
+        gather_samples_strided_with_dedup_backend, gather_samples_strided_with_offset,
+        max_ref_channels,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -359,7 +361,6 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         }
         mr
     };
-    let mut samples = TreeSamples::new_with_ref_channels(num_refs);
     let per_group_id_offset = if meta_image.is_some() { 1u32 } else { 0u32 };
     // Phase 2 of issue #41: when the profile asks for gather-time dedup,
     // every per-group task gets its own `GatherDedupTable`. Concatenation
@@ -388,11 +389,25 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     } else {
         Vec::new()
     };
-    crate::profile_time!("modular/gather_samples", {
-        // Gather meta-channel samples first (channel_offset=0, group_id=0).
-        // Single image, so sequential — only one task's worth of work.
+
+    // Closure: gather samples for a given seed (start_offset shifts which
+    // pixels in scan order are sampled). Seed 0 is the legacy path
+    // (start_offset = 0) and is byte-identical to the pre-RFC#45-chunk-2
+    // gather. Higher seeds shift the offset by `(seed % stride)` so each
+    // seed draws a different sample subset.
+    let gather_for_seed = |seed: u64| -> TreeSamples {
+        let start_offset = if stride > 1 {
+            (seed as usize) % stride
+        } else {
+            0
+        };
+        let mut samples = TreeSamples::new_with_ref_channels(num_refs);
+        // Meta channels first.
         if let Some(meta) = meta_image {
-            if enable_gather_dedup {
+            if enable_gather_dedup && start_offset == 0 {
+                // Gather-time dedup only honors the legacy zero-offset path.
+                // Non-zero offsets (seed >= 1) skip dedup — the post-sort
+                // arbiter still collapses bucket-equivalent rows downstream.
                 let _ = gather_samples_strided_with_dedup_backend(
                     &mut samples,
                     meta,
@@ -405,25 +420,25 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
                     enable_phase3,
                     &dedup_properties,
                 );
-            } else {
+            } else if start_offset == 0 {
                 gather_samples_strided(&mut samples, meta, 0, 0, stride, &wp_params);
+            } else {
+                gather_samples_strided_with_offset(
+                    &mut samples,
+                    meta,
+                    0,
+                    0,
+                    stride,
+                    start_offset,
+                    &wp_params,
+                );
             }
         }
-        // Per-group sample gather is embarrassingly parallel: each call
-        // mutates its OWN TreeSamples (no shared state), and merge is a
-        // deterministic concatenate in group-index order via `append_from`.
-        //
-        // (channel_offset=0: per-group images use 0-based channel indices,
-        // matching the decoder which builds per-group images with only the
-        // non-meta channels. The tree distinguishes meta from per-group via
-        // group_id property, not channel_idx offset. When meta-channels
-        // exist in the global section, per-group channels use
-        // group_id = 1 + group_idx to avoid collision so the tree can split
-        // on group_id > 0 to separate meta from per-group data.)
+        // Per-group gather — embarrassingly parallel across groups.
         let per_group_samples: Vec<TreeSamples> =
             crate::parallel::parallel_map(images.len(), |group_idx| {
                 let mut local = TreeSamples::new_with_ref_channels(num_refs);
-                if enable_gather_dedup {
+                if enable_gather_dedup && start_offset == 0 {
                     let _ = gather_samples_strided_with_dedup_backend(
                         &mut local,
                         &images[group_idx],
@@ -436,13 +451,23 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
                         enable_phase3,
                         &dedup_properties,
                     );
-                } else {
+                } else if start_offset == 0 {
                     gather_samples_strided(
                         &mut local,
                         &images[group_idx],
                         group_idx as u32 + per_group_id_offset,
                         0,
                         stride,
+                        &wp_params,
+                    );
+                } else {
+                    gather_samples_strided_with_offset(
+                        &mut local,
+                        &images[group_idx],
+                        group_idx as u32 + per_group_id_offset,
+                        0,
+                        stride,
+                        start_offset,
                         &wp_params,
                     );
                 }
@@ -455,84 +480,107 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         for local in per_group_samples {
             samples.append_from(local);
         }
-    });
-
-    // Step 2: Learn tree with effort-dependent parameters
-    //
-    // Pixel fraction must reflect the *gathered* sample count, not the
-    // deduplicated unique count. With gather-time dedup
-    // (Phase 2 of issue #41), `samples.num_samples` is already the
-    // post-dedup unique count; `samples.total_gathered_weight()`
-    // recovers the original total. Without it, num_samples IS the
-    // gathered total and the accessor returns it.
-    let pixel_fraction = if total_pixels > 0 {
-        samples.total_gathered_weight() as f64 / total_pixels as f64
-    } else {
-        1.0
+        samples
     };
-    let params = TreeLearningParams::from_profile(profile)
-        .with_ref_properties(num_refs, profile.effort)
-        .with_pixel_fraction(pixel_fraction)
-        .with_total_pixels(total_pixels);
-    let tree = crate::profile_time!("modular/compute_best_tree", {
-        compute_best_tree(&mut samples, &params)
-    });
-    let num_contexts = count_contexts(&tree) as usize;
 
-    crate::trace::debug_eprintln!(
-        "GLOBAL_MODULAR_TREE: {} nodes, {} leaves/contexts from {} samples \
-         (pixel_fraction={:.3}, threshold={:.1}*{:.3}={:.1})",
-        tree.len(),
-        num_contexts,
-        samples.num_samples,
-        pixel_fraction,
-        params.split_threshold,
-        pixel_fraction * 0.9 + 0.1,
-        params.split_threshold * (pixel_fraction * 0.9 + 0.1),
-    );
+    // Multi-seed dispatch — RFC#45 chunk 2 pick #1.
+    //
+    // At e ≤ 9 `tree_learn_seeds = 1` (libjxl-equivalent, byte-identical
+    // hash-locks). At e10/e11 we fan out 2 / 4 seeded gather→tree runs and
+    // pick the tree whose tokens have the lowest entropy cost.
+    let seeds = profile.tree_learn_seeds.max(1);
+    let mut best: Option<(Vec<crate::entropy_coding::token::Token>, usize, Tree, f64)> = None;
 
-    // Step 3: Collect residuals from all groups with tree.
-    //
-    // Each `collect_residuals_with_tree` call is pure (reads `image`, `tree`,
-    // `wp_params` by reference; allocates a fresh `Vec<Token>`). The per-group
-    // calls are independent, so we run them in parallel via `parallel_map`
-    // and concatenate in order afterwards (meta first, then per-group).
-    //
-    // The concatenated `all_tokens` stream is later split at `nb_meta_tokens`
-    // for the LfGlobal write (meta) and consumed by the per-group writers, so
-    // ordering must remain stable.
-    let (all_tokens, nb_meta_tokens) = crate::profile_time!("modular/collect_residuals_global", {
-        // Per-group residuals — parallel over groups.
-        let per_group_tokens: Vec<Vec<crate::entropy_coding::token::Token>> =
-            crate::parallel::parallel_map(images.len(), |group_idx| {
-                collect_residuals_with_tree(
-                    &images[group_idx],
-                    &tree,
-                    group_idx as u32 + per_group_id_offset,
-                    &wp_params,
-                )
+    for seed in 0..(seeds as u64) {
+        // Gather + tree-learn for this seed.
+        let mut samples = crate::profile_time!("modular/gather_samples", {
+            gather_for_seed(seed)
+        });
+        eprintln!(
+            "DBG seed={} num_samples={} (seeds={})",
+            seed, samples.num_samples, seeds
+        );
+
+        let pixel_fraction = if total_pixels > 0 {
+            samples.total_gathered_weight() as f64 / total_pixels as f64
+        } else {
+            1.0
+        };
+        let params = TreeLearningParams::from_profile(profile)
+            .with_ref_properties(num_refs, profile.effort)
+            .with_pixel_fraction(pixel_fraction)
+            .with_total_pixels(total_pixels);
+        let tree = crate::profile_time!("modular/compute_best_tree", {
+            compute_best_tree(&mut samples, &params)
+        });
+
+        crate::trace::debug_eprintln!(
+            "GLOBAL_MODULAR_TREE seed={}/{}: {} nodes from {} samples \
+             (pixel_fraction={:.3})",
+            seed,
+            seeds,
+            tree.len(),
+            samples.num_samples,
+            pixel_fraction,
+        );
+
+        // Collect residuals for this candidate tree.
+        let (all_tokens, nb_meta_tokens) =
+            crate::profile_time!("modular/collect_residuals_global", {
+                let per_group_tokens: Vec<Vec<crate::entropy_coding::token::Token>> =
+                    crate::parallel::parallel_map(images.len(), |group_idx| {
+                        collect_residuals_with_tree(
+                            &images[group_idx],
+                            &tree,
+                            group_idx as u32 + per_group_id_offset,
+                            &wp_params,
+                        )
+                    });
+                let meta_tokens_opt = meta_image
+                    .map(|meta| collect_residuals_with_tree(meta, &tree, 0, &wp_params));
+                let nb_meta_tokens = meta_tokens_opt.as_ref().map(|t| t.len()).unwrap_or(0);
+                let total_len: usize =
+                    nb_meta_tokens + per_group_tokens.iter().map(|t| t.len()).sum::<usize>();
+                let mut all_tokens =
+                    Vec::<crate::entropy_coding::token::Token>::with_capacity(total_len);
+                if let Some(meta_tokens) = meta_tokens_opt {
+                    all_tokens.extend(meta_tokens);
+                }
+                for tokens in per_group_tokens {
+                    all_tokens.extend(tokens);
+                }
+                (all_tokens, nb_meta_tokens)
             });
 
-        // Meta-channel residuals first (channel_offset=0, group_id=0). When
-        // present this is a single call so we run it sequentially after the
-        // per-group fan-out completes — could be parallel with the fan-out
-        // but the wall-clock impact is marginal (one extra task vs N groups).
-        let meta_tokens_opt =
-            meta_image.map(|meta| collect_residuals_with_tree(meta, &tree, 0, &wp_params));
-        let nb_meta_tokens = meta_tokens_opt.as_ref().map(|t| t.len()).unwrap_or(0);
+        // Score: skip cost estimate entirely when seeds == 1 (the legacy
+        // single-pass path doesn't need to know the cost). For seeds > 1
+        // we compute the entropy cost (with per-context header term,
+        // see `estimate_token_cost`) and keep the cheapest candidate.
+        if seeds == 1 {
+            best = Some((all_tokens, nb_meta_tokens, tree, 0.0));
+            break;
+        }
+        let cost = estimate_token_cost(&all_tokens);
+        eprintln!(
+            "MULTI_SEED_TREE_PICK seed={}/{} cost={:.0} bits ({} tokens, {} nodes)",
+            seed,
+            seeds,
+            cost,
+            all_tokens.len(),
+            tree.len(),
+        );
+        match best {
+            None => best = Some((all_tokens, nb_meta_tokens, tree, cost)),
+            Some((_, _, _, prev_cost)) if cost < prev_cost => {
+                best = Some((all_tokens, nb_meta_tokens, tree, cost));
+            }
+            _ => {}
+        }
+    }
 
-        // Concatenate: meta first, then per-group in index order.
-        let total_len: usize =
-            nb_meta_tokens + per_group_tokens.iter().map(|t| t.len()).sum::<usize>();
-        let mut all_tokens = Vec::<crate::entropy_coding::token::Token>::with_capacity(total_len);
-        if let Some(meta_tokens) = meta_tokens_opt {
-            all_tokens.extend(meta_tokens);
-        }
-        for tokens in per_group_tokens {
-            all_tokens.extend(tokens);
-        }
-        (all_tokens, nb_meta_tokens)
-    });
+    let (all_tokens, nb_meta_tokens, tree, _final_cost) =
+        best.expect("seeds >= 1 guarantees at least one candidate");
+    let num_contexts = count_contexts(&tree) as usize;
 
     // Note: LZ77 is NOT applied in this path. The per-group sections
     // (write_group_modular_section) re-collect tokens independently without LZ77.
@@ -559,16 +607,14 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         )
     });
 
+    // Per-seed diagnostics are emitted inside the loop via the
+    // `MULTI_SEED_TREE_PICK` trace; here we just summarise the picked tree.
     eprintln!(
-        "DIAG tree: {} nodes, {} contexts, {} samples, {} total_tokens, \
-         max_nodes={}, threshold={:.1}, pixel_frac={:.3}",
+        "DIAG tree: {} nodes, {} contexts, {} total_tokens (seeds={})",
         tree.len(),
         num_contexts,
-        samples.num_samples,
         all_tokens.len(),
-        params.max_nodes,
-        params.split_threshold,
-        pixel_fraction,
+        seeds,
     );
     eprintln!(
         "DIAG code: {} histograms (from {} contexts), rct={:?}, compact={}",

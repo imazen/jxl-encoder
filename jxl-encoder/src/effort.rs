@@ -496,6 +496,28 @@ pub struct EffortProfile {
     /// [`Self::adapt_small_image_fallback`] when
     /// `pixels < SMALL_IMAGE_PIXEL_THRESHOLD` (1 MP).
     pub tree_parallel_small_image_fallback: bool,
+
+    /// Number of random-seeded tree-learning runs to perform per encode,
+    /// keeping the tree whose tokens have the lowest entropy cost.
+    ///
+    /// libjxl's `FindBestSplit` is greedy ID3 — locally optimal at each
+    /// split but sensitive to which pixels were sampled. Running gather→
+    /// tree with multiple stride offsets (or RNG seeds in the future)
+    /// and picking the cheapest-encoding tree closes part of that gap.
+    ///
+    /// Effort interaction (set by `Self::tree_learn_seeds_for`):
+    /// - effort ≤ 9: `1` (single run — libjxl-equivalent, byte-identical
+    ///   to the pre-RFC#45-chunk-2 baseline)
+    /// - effort = 10: `2`
+    /// - effort = 11: `4`
+    ///
+    /// Bitstream-valid: each seed produces a normal, spec-valid tree;
+    /// the picker just chooses among them. Bytes change only when
+    /// `seeds > 1` (e10/e11) — no hash-lock churn at e ≤ 9.
+    ///
+    /// `0` is treated as `1` (defensive). Read by
+    /// `modular/tree_learn.rs::select_best_tree_multi_seed`.
+    pub tree_learn_seeds: u8,
 }
 
 impl EffortProfile {
@@ -679,6 +701,10 @@ impl EffortProfile {
             tree_parallel_root_threshold: Self::tree_parallel_root_threshold_for(effort),
             // Default false; adapt_to_image() flips this on for <1 MP inputs.
             tree_parallel_small_image_fallback: false,
+
+            // RFC#45 chunk 2: 1 at e ≤ 9 (libjxl-equivalent, byte-identical),
+            // 2 at e10, 4 at e11.
+            tree_learn_seeds: Self::tree_learn_seeds_for(effort),
         }
     }
 
@@ -801,6 +827,10 @@ impl EffortProfile {
             tree_parallel_root_threshold: Self::tree_parallel_root_threshold_for(effort),
             // Default false; adapt_to_image() flips this on for <1 MP inputs.
             tree_parallel_small_image_fallback: false,
+
+            // RFC#45 chunk 2: 1 at e ≤ 9 (libjxl-equivalent, byte-identical),
+            // 2 at e10, 4 at e11.
+            tree_learn_seeds: Self::tree_learn_seeds_for(effort),
         }
     }
 
@@ -900,6 +930,18 @@ impl EffortProfile {
     /// Total-sample threshold to attempt the parallel root split.
     fn tree_parallel_root_threshold_for(effort: u8) -> usize {
         if effort >= 8 { 4_096 } else { 8_192 }
+    }
+
+    /// Number of multi-seed tree-learning runs by effort (RFC#45 pick #1
+    /// chunk 2). e ≤ 9 keeps the single-pass libjxl behaviour
+    /// (byte-identical hash-locks); e10/e11 fan out 2 / 4 seeded runs and
+    /// pick the cheapest-encoding tree.
+    fn tree_learn_seeds_for(effort: u8) -> u8 {
+        match effort {
+            0..=9 => 1,
+            10 => 2,
+            _ => 4,
+        }
     }
 
     /// Smart per-image fanout adapter (opt-in via
@@ -1425,6 +1467,21 @@ pub struct LosslessInternalParams {
     /// Intended for sweep harnesses A/B-ing the gate; production
     /// callers should leave this `None`.
     pub tree_parallel_small_image_fallback: Option<bool>,
+
+    /// Override the number of multi-seed tree-learning runs
+    /// (see [`EffortProfile::tree_learn_seeds`]).
+    ///
+    /// `Some(1)` forces single-pass tree learning (libjxl-equivalent,
+    /// byte-identical to the pre-RFC#45-chunk-2 default at any effort).
+    /// `Some(N)` with `N >= 2` runs gather→tree `N` times with different
+    /// stride offsets and keeps the tree whose tokens have the lowest
+    /// entropy cost. `None` keeps the effort-derived default (1 at
+    /// e ≤ 9, 2 at e10, 4 at e11).
+    ///
+    /// Output is bitstream-valid for any `N`. Sweep harnesses re-baking
+    /// hash_lock sidecars should be aware that `N >= 2` *can* change the
+    /// chosen tree per (image, distance) cell.
+    pub tree_learn_seeds: Option<u8>,
 }
 
 #[cfg(feature = "__expert")]
@@ -1508,6 +1565,7 @@ impl LosslessInternalParams {
             tree_parallel_floor,
             tree_parallel_root_threshold,
             tree_parallel_small_image_fallback,
+            tree_learn_seeds,
         } = self;
         if let Some(v) = nb_rcts_to_try {
             profile.nb_rcts_to_try = v;
@@ -1553,6 +1611,9 @@ impl LosslessInternalParams {
         }
         if let Some(v) = tree_parallel_small_image_fallback {
             profile.tree_parallel_small_image_fallback = v;
+        }
+        if let Some(v) = tree_learn_seeds {
+            profile.tree_learn_seeds = v;
         }
     }
 }

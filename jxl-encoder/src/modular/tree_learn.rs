@@ -795,6 +795,38 @@ pub fn gather_samples_strided(
     .expect("budget-less gather_samples_strided must not return AllocationLimit")
 }
 
+/// Gather samples with stride-based subsampling plus a `start_offset` that
+/// shifts which pixels are sampled.
+///
+/// `start_offset = 0` is byte-identical to [`gather_samples_strided`].
+/// Non-zero offsets (0..stride) draw a different pixel subset — used by
+/// RFC#45 chunk 2's multi-seed tree learning (e10/e11). WP error state
+/// updates per-pixel regardless, so prediction quality is unaffected.
+///
+/// Has no effect when `stride <= 1` (every pixel is sampled).
+pub fn gather_samples_strided_with_offset(
+    samples: &mut TreeSamples,
+    image: &ModularImage,
+    group_id: u32,
+    channel_offset: u32,
+    stride: usize,
+    start_offset: usize,
+    wp_params: &WeightedPredictorParams,
+) {
+    gather_samples_strided_with_budget_inner_backend(
+        samples,
+        image,
+        group_id,
+        channel_offset,
+        stride,
+        start_offset,
+        wp_params,
+        None,
+        None,
+    )
+    .expect("budget-less gather_samples_strided_with_offset must not return AllocationLimit")
+}
+
 /// `gather_samples_strided` with explicit allocation budget.
 ///
 /// Per-channel `WeightedPredictorState` scratch (`(width + 2) * 2` errors
@@ -940,6 +972,7 @@ pub(crate) fn gather_samples_strided_with_dedup_backend(
             group_id,
             channel_offset,
             stride,
+            0,
             wp_params,
             budget,
             Some(GatherDedupBackend::Phase3 {
@@ -959,6 +992,7 @@ pub(crate) fn gather_samples_strided_with_dedup_backend(
             group_id,
             channel_offset,
             stride,
+            0,
             wp_params,
             budget,
             Some(GatherDedupBackend::Phase2(&mut table)),
@@ -1050,6 +1084,7 @@ pub(crate) fn gather_samples_strided_with_budget_inner(
         group_id,
         channel_offset,
         stride,
+        0,
         wp_params,
         budget,
         dedup_table.map(GatherDedupBackend::Phase2),
@@ -1059,6 +1094,12 @@ pub(crate) fn gather_samples_strided_with_budget_inner(
 /// Backend-aware variant of [`gather_samples_strided_with_budget_inner`]
 /// that dispatches into either Phase 2 or Phase 3 of issue #41 based on
 /// the [`GatherDedupBackend`] variant supplied.
+///
+/// `start_offset` (0..stride) shifts which pixels in scan order are
+/// gathered — `0` matches the legacy behaviour, non-zero is used by
+/// RFC#45 chunk 2's multi-seed tree learning to draw a different
+/// pixel subset per seed. WP error state is unaffected (always updates
+/// per pixel).
 #[allow(clippy::too_many_arguments)]
 fn gather_samples_strided_with_budget_inner_backend(
     samples: &mut TreeSamples,
@@ -1066,6 +1107,7 @@ fn gather_samples_strided_with_budget_inner_backend(
     group_id: u32,
     channel_offset: u32,
     stride: usize,
+    start_offset: usize,
     wp_params: &WeightedPredictorParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     mut dedup_backend: Option<GatherDedupBackend<'_>>,
@@ -1084,6 +1126,7 @@ fn gather_samples_strided_with_budget_inner_backend(
             ch_idx as u32 + channel_offset,
             group_id,
             stride,
+            start_offset,
             wp_params,
             image,
             &ref_channel_indices,
@@ -1164,6 +1207,7 @@ fn gather_channel_samples(
     channel_idx: u32,
     group_id: u32,
     stride: usize,
+    start_offset: usize,
     wp_params: &WeightedPredictorParams,
     image: &ModularImage,
     ref_channel_indices: &[usize],
@@ -1183,8 +1227,18 @@ fn gather_channel_samples(
     // Property 8 = W - prev_gradient. At the start of each row, prev_gradient = 0.
     let mut prev_gradient: i32;
 
-    // Counter for subsampling: only gather when counter == 0
-    let mut subsample_counter: usize = 0;
+    // Counter for subsampling: only gather when counter == 0.
+    //
+    // `start_offset` (0..stride) skips the first `start_offset` candidate
+    // samples in scan order — used by RFC#45 chunk 2 (multi-seed tree
+    // learning) to draw a different pixel subset per seed without
+    // touching WP state continuity. WP error tracking still updates on
+    // every pixel; only the sample-push gate shifts.
+    let mut subsample_counter: usize = if stride > 0 {
+        start_offset % stride
+    } else {
+        0
+    };
 
     let max_refs = samples.num_ref_channels;
 
@@ -5921,6 +5975,152 @@ fn traverse_with_props<'a>(tree: &'a Tree, props: &[i32]) -> &'a PropertyDecisio
     }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// RFC#45 chunk 2 — multi-seed tree learning (e10/e11)
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Estimate the encoded bit cost of a token stream produced by
+/// [`collect_residuals_with_tree`], for the purposes of comparing trees.
+///
+/// Per-context histograms are built over the HybridUint{4,2,0}-encoded
+/// `token` of each [`crate::entropy_coding::token::Token`]. Cost is the
+/// libjxl-parity `estimate_bits` (probability floor 1/4096) plus the
+/// extra bits encoded outside the histogram.
+///
+/// Includes a coarse per-context header term (`~50 bits` per non-empty
+/// context — the rough average ANS-histogram header size in our
+/// production builds) to discourage trees that pile up many small
+/// contexts. Without this the picker would happily choose deeper trees
+/// that lower per-token entropy but bloat the ANS header.
+///
+/// This is the same cost model `compute_best_tree` uses internally for
+/// its split decisions, with the header term added. It is a proxy for
+/// the eventual ANS bitstream size — accurate to within a few percent
+/// in our measurements on CLIC photos.
+pub fn estimate_token_cost(tokens: &[crate::entropy_coding::token::Token]) -> f64 {
+    use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+    const MODULAR_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
+        split_exponent: 4,
+        split: 16,
+        msb_in_token: 2,
+        lsb_in_token: 0,
+    };
+    /// Rough per-context ANS-histogram header cost (libjxl encodes flat
+    /// histograms in ~8 bits, but typical post-clustering histograms run
+    /// 30–80 bits + ~8 bits context-map entry). 50 is a compromise that
+    /// kills false-positive picks where two trees differ only in
+    /// trivial leaf splits.
+    const HEADER_BITS_PER_CONTEXT: f64 = 50.0;
+
+    if tokens.is_empty() {
+        return 0.0;
+    }
+
+    // Per-context histograms keyed by context index.
+    // Token range for HybridUint{4,2,0} is small (<= ~55 for typical
+    // 8-bit residuals); we let Vec grow on demand rather than fixing
+    // a max.
+    let mut per_context: Vec<Vec<u32>> = Vec::new();
+    let mut per_context_total: Vec<u32> = Vec::new();
+    let mut extra_bits_total: u64 = 0;
+
+    for tok in tokens {
+        let (sym, _bits, nbits) = MODULAR_HYBRID_UINT.encode(tok.value);
+        let ctx = tok.context() as usize;
+        if ctx >= per_context.len() {
+            per_context.resize(ctx + 1, Vec::new());
+            per_context_total.resize(ctx + 1, 0);
+        }
+        let sym_u = sym as usize;
+        if sym_u >= per_context[ctx].len() {
+            per_context[ctx].resize(sym_u + 1, 0);
+        }
+        per_context[ctx][sym_u] += 1;
+        per_context_total[ctx] += 1;
+        extra_bits_total += nbits as u64;
+    }
+
+    let mut bits = extra_bits_total as f64;
+    let mut nonempty_contexts: u64 = 0;
+    for (counts, &total) in per_context.iter().zip(per_context_total.iter()) {
+        if total > 0 {
+            bits += jxl_simd::estimate_bits_scalar_f64(counts, total);
+            nonempty_contexts += 1;
+        }
+    }
+    bits += nonempty_contexts as f64 * HEADER_BITS_PER_CONTEXT;
+    bits
+}
+
+/// Multi-seed tree-learning fan-out (RFC#45 chunk 2 — pick #1).
+///
+/// Runs `gather_fn` once per seed in `0..seeds`, hands the resulting
+/// [`TreeSamples`] to [`compute_best_tree`], then encodes residuals
+/// with [`collect_residuals_with_tree`] on `image` to score the
+/// candidate tree by [`estimate_token_cost`]. Returns the
+/// `(tree, tokens, cost)` tuple of the cheapest candidate.
+///
+/// `seeds <= 1` short-circuits to a single run — byte-equivalent to
+/// calling `gather_fn(0)` + `compute_best_tree` + `collect_residuals_with_tree`
+/// directly. e ≤ 9 keeps `tree_learn_seeds = 1` (see
+/// [`crate::effort::EffortProfile::tree_learn_seeds`]), so the default
+/// path stays bit-identical to the pre-chunk-2 hash-locks.
+///
+/// The picker is greedy: each seed's full pipeline runs sequentially.
+/// At `seeds = 4` (e11) wall-clock is roughly 4× the e9 tree-learning
+/// budget — acceptable for the "longest-search" effort levels.
+///
+/// `gather_fn` signature: `Fn(seed: u64) -> TreeSamples`. It is
+/// responsible for gathering with the appropriate per-seed stride
+/// offset (or other seed-derived variation). The default
+/// section.rs / encode.rs callers wire it to
+/// [`gather_samples_strided_with_offset`] with
+/// `start_offset = (seed as usize) % stride.max(1)`.
+///
+/// Bitstream-validity: every candidate tree is a normal, spec-valid
+/// JXL tree; the picker just chooses among them. djxl / jxl-rs / jxl-oxide
+/// decode every candidate identically.
+pub fn select_best_tree_multi_seed<F>(
+    seeds: u8,
+    image: &ModularImage,
+    group_id: u32,
+    wp_params: &WeightedPredictorParams,
+    params: &TreeLearningParams,
+    gather_fn: F,
+) -> (Tree, Vec<crate::entropy_coding::token::Token>, f64)
+where
+    F: Fn(u64) -> TreeSamples,
+{
+    let n = seeds.max(1) as u64;
+    let mut best: Option<(Tree, Vec<crate::entropy_coding::token::Token>, f64)> = None;
+
+    for seed in 0..n {
+        let mut samples = gather_fn(seed);
+        let tree = compute_best_tree(&mut samples, params);
+        let tokens = collect_residuals_with_tree(image, &tree, group_id, wp_params);
+        let cost = estimate_token_cost(&tokens);
+
+        crate::trace::debug_eprintln!(
+            "MULTI_SEED_TREE seed={}/{} cost={:.0} bits ({} tokens, {} nodes)",
+            seed,
+            n,
+            cost,
+            tokens.len(),
+            tree.len(),
+        );
+
+        match best {
+            None => best = Some((tree, tokens, cost)),
+            Some((_, _, prev_cost)) if cost < prev_cost => {
+                best = Some((tree, tokens, cost));
+            }
+            _ => {}
+        }
+    }
+
+    best.expect("seeds >= 1 guarantees at least one candidate")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6873,6 +7073,97 @@ mod tests {
         assert!(
             phase3_packing_fits(0, 0),
             "empty configuration trivially fits"
+        );
+    }
+
+    // ── RFC#45 chunk 2 — multi-seed scaffolding tests ──
+
+    #[test]
+    fn test_estimate_token_cost_empty_is_zero() {
+        assert_eq!(estimate_token_cost(&[]), 0.0);
+    }
+
+    #[test]
+    fn test_estimate_token_cost_grows_with_context_count() {
+        use crate::entropy_coding::token::Token;
+        // Two streams: same N tokens, same single-symbol value, but one uses
+        // a single context, the other uses 4 different contexts. The
+        // per-context header term must make the multi-context stream cost
+        // strictly more.
+        let single_ctx: Vec<Token> = (0..40).map(|_| Token::new(0, 5)).collect();
+        let multi_ctx: Vec<Token> = (0..40)
+            .map(|i| Token::new(i as u32 / 10, 5))
+            .collect();
+        let c_single = estimate_token_cost(&single_ctx);
+        let c_multi = estimate_token_cost(&multi_ctx);
+        assert!(
+            c_multi > c_single,
+            "multi-context cost {c_multi} must exceed single-context cost {c_single} \
+             via the per-context header term",
+        );
+    }
+
+    #[test]
+    fn test_gather_with_offset_zero_matches_legacy() {
+        // start_offset = 0 must produce byte-identical TreeSamples to the
+        // legacy `gather_samples_strided`. Regression guard for the seeds=1
+        // path that all e ≤ 9 callers hit.
+        let mut image = ModularImage {
+            channels: Vec::new(),
+            bit_depth: 8,
+            is_grayscale: false,
+            has_alpha: false,
+        };
+        let mut ch = Channel::new(32, 32).unwrap();
+        for y in 0..32 {
+            for x in 0..32 {
+                ch.set(x, y, ((x * 7 + y * 11) & 0xFF) as i32);
+            }
+        }
+        image.channels.push(ch);
+
+        let wp = WeightedPredictorParams::default();
+        let mut legacy = TreeSamples::new();
+        gather_samples_strided(&mut legacy, &image, 0, 0, 3, &wp);
+
+        let mut offset0 = TreeSamples::new();
+        gather_samples_strided_with_offset(&mut offset0, &image, 0, 0, 3, 0, &wp);
+
+        assert_eq!(legacy.num_samples, offset0.num_samples);
+        assert_eq!(legacy.residual_tokens, offset0.residual_tokens);
+        assert_eq!(legacy.extra_bits, offset0.extra_bits);
+        assert_eq!(legacy.props, offset0.props);
+    }
+
+    #[test]
+    fn test_gather_with_offset_nonzero_differs() {
+        // start_offset > 0 must yield a different sample set than offset 0
+        // for a stride > 1. This is the seed-variance guarantee.
+        let mut image = ModularImage {
+            channels: Vec::new(),
+            bit_depth: 8,
+            is_grayscale: false,
+            has_alpha: false,
+        };
+        let mut ch = Channel::new(64, 64).unwrap();
+        for y in 0..64 {
+            for x in 0..64 {
+                ch.set(x, y, ((x.wrapping_mul(13) ^ y.wrapping_mul(17)) & 0xFF) as i32);
+            }
+        }
+        image.channels.push(ch);
+
+        let wp = WeightedPredictorParams::default();
+        let mut s0 = TreeSamples::new();
+        gather_samples_strided_with_offset(&mut s0, &image, 0, 0, 4, 0, &wp);
+        let mut s1 = TreeSamples::new();
+        gather_samples_strided_with_offset(&mut s1, &image, 0, 0, 4, 1, &wp);
+
+        // Same count (both gather every 4th candidate), but different rows.
+        assert_eq!(s0.num_samples, s1.num_samples);
+        assert!(
+            s0.residual_tokens != s1.residual_tokens || s0.props != s1.props,
+            "offset 1 must select a different sample subset than offset 0",
         );
     }
 }
