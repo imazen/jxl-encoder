@@ -4,6 +4,36 @@
 
 ### Changed
 
+- **`--modular-predictor 0..13` now wires through to all
+  no-tree-learning modular paths** (W4-1 follow-on; W4-1 stored the
+  knob on `LosslessConfig` but only the tree-learn path consumed it).
+  The override mirrors libjxl `cjxl -P N` / `--modular_predictor`:
+  `0=Zero, 1=Left, 2=Top, 3=Average, 4=Select, 5=Gradient (default),
+  6=Weighted, 7=NorthEast, 8=NorthWest, 9=WestWest,
+  10=AverageWestAndNorthWest, 11=AverageNorthAndNorthWest,
+  12=AverageNorthAndNorthEast, 13=AverageAll`. Ids 14 (`Best`) and 15
+  (`Variable`) are libjxl encoder-only meta-modes that imply tree
+  learning — the non-tree paths fold them to Gradient (id 5) so the
+  bitstream stays self-consistent. The MA tree learner (default at
+  effort ≥ 7) is libjxl's `Predictor::Variable` mode and ignores the
+  knob by design. Wiring covers: `write_improved_modular_stream`
+  (LZ77), `write_simple_modular_stream`, `write_modular_stream_with_
+  rct_only`, `write_modular_stream_with_palette_knobs`,
+  `write_modular_stream_with_lossy_palette_budget_knobs`, the
+  squeeze multi-group LfGlobal residual pass, the lossy-palette
+  multi-group LfGlobal residual pass, and the multi-group
+  non-tree-learn standard path (via new
+  `write_global_modular_section_with_predictor` +
+  `collect_all_residuals_with_predictor`). Id 6 (Weighted) routes to
+  the dedicated `write_modular_stream_with_(rct_)weighted` writers
+  when the path is simple enough to delegate, otherwise folds to
+  Gradient (paths without per-channel `WeightedPredictorState` can't
+  emit consistent weighted residuals — `resolve_fixed_predictor_for_
+  simple_path` documents this). All 14 predictor ids verified
+  pixel-exact roundtrip via jxl-rs in
+  `modular_knobs_predictor_all_ids_roundtrip_via_jxl_rs`. Default-
+  config output remains byte-identical (`hash_lock_features` 36/36
+  green, RD-regression 18/18 within thresholds).
 - **`--faster_decoding 0..4` now wires through to encoder choices**
   (follow-on to W4-3's storage-only landing). The knob mirrors libjxl
   `cparams.decoding_speed_tier` and biases the bitstream toward simpler

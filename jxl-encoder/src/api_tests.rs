@@ -10404,13 +10404,15 @@ fn modular_knobs_nb_prev_channels_cap_changes_tree_path() {
 }
 
 #[test]
-fn modular_knobs_predictor_stored_but_does_not_override_tree_learner() {
-    // Documented partial-wire: the `modular_predictor` value is stored
-    // on the knobs but the MA tree learner still selects per-leaf
-    // predictors (libjxl `Predictor::Variable` semantics). This test
-    // documents the current behaviour so future agents wiring full
-    // forced-predictor support land a deliberate, CHANGELOG-noted
-    // bitstream change.
+fn modular_knobs_predictor_does_not_override_tree_learner() {
+    // The MA tree learner (libjxl `Predictor::Variable` mode) still
+    // selects per-leaf predictors regardless of `modular_predictor`
+    // when tree learning is on — by design, matching libjxl. The
+    // override only applies to the no-tree-learning modular paths
+    // (write_improved_modular_stream, RCT, palette, lossy palette,
+    // multi-group non-tree-learn). When tree learning is enabled
+    // (default effort >= 7), forcing Gradient via the knob produces
+    // byte-identical output to the unset default.
     let pixels = make_palette_friendly_rgb_256();
     let default = LosslessConfig::new()
         .encode(&pixels, 256, 256, PixelLayout::Rgb8)
@@ -10421,7 +10423,119 @@ fn modular_knobs_predictor_stored_but_does_not_override_tree_learner() {
         .expect("forced-gradient encode");
     assert_eq!(
         default, forced_gradient,
-        "modular_predictor is stored but not yet wired to bypass tree learner — \
-         flipping this assertion requires a CHANGELOG entry"
+        "modular_predictor is ignored on the tree-learning path (libjxl \
+         Predictor::Variable semantics); flipping this assertion requires a CHANGELOG entry"
+    );
+}
+
+#[test]
+fn modular_knobs_predictor_changes_bytes_non_tree_learn() {
+    // With tree learning OFF (matches low-effort modular path),
+    // `modular_predictor` IS honoured. Forcing predictor 1 (Left) vs
+    // the default 5 (Gradient) MUST produce a different bitstream —
+    // both the per-leaf tree token AND the residuals collected on a
+    // different predictor.
+    let pixels = make_palette_friendly_rgb_256();
+    let gradient = LosslessConfig::new()
+        .with_tree_learning(false)
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("default (Gradient) encode");
+    let left = LosslessConfig::new()
+        .with_tree_learning(false)
+        .with_modular_predictor(Some(1)) // 1 = Left
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("forced-Left encode");
+    assert_ne!(
+        gradient, left,
+        "with tree-learning OFF, --modular-predictor 1 (Left) must change the bitstream vs default 5 (Gradient)"
+    );
+}
+
+#[test]
+fn modular_knobs_predictor_default_byte_identical_non_tree_learn() {
+    // No knob set vs explicit `Some(5)` (Gradient default) must be
+    // byte-identical on the non-tree-learning path. Pins the
+    // resolve_fixed_predictor None→5 invariant.
+    let pixels = make_palette_friendly_rgb_256();
+    let baseline = LosslessConfig::new()
+        .with_tree_learning(false)
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("baseline (None) encode");
+    let forced_default = LosslessConfig::new()
+        .with_tree_learning(false)
+        .with_modular_predictor(Some(5))
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("forced-Gradient encode");
+    assert_eq!(
+        baseline, forced_default,
+        "modular_predictor=None must produce identical bytes to Some(5) (Gradient default)"
+    );
+}
+
+#[test]
+fn modular_knobs_predictor_all_ids_roundtrip_via_jxl_rs() {
+    // Force each predictor id (0..=13) on the non-tree-learn path and
+    // confirm jxl-rs (project's primary decoder) decodes it
+    // pixel-exact. Catches any tree-token / histogram-emission bug
+    // when the predictor id is not the legacy Gradient=5 default.
+    //
+    // Predictor 6 (Weighted) routes to write_modular_stream_with_weighted
+    // which carries proper WP state — must also roundtrip pixel-exact.
+    let pixels = make_palette_friendly_rgb_256();
+    for predictor_id in 0u8..=13 {
+        let encoded = LosslessConfig::new()
+            .with_tree_learning(false)
+            .with_modular_predictor(Some(predictor_id))
+            .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+            .unwrap_or_else(|e| panic!("encode failed for predictor={}: {:?}", predictor_id, e));
+        let decoded = crate::test_helpers::decode_with_jxl_rs(&encoded).unwrap_or_else(|e| {
+            panic!(
+                "jxl-rs decode failed for predictor={}: {:?}",
+                predictor_id, e
+            )
+        });
+        assert_eq!(decoded.width, 256, "predictor={}", predictor_id);
+        assert_eq!(decoded.height, 256, "predictor={}", predictor_id);
+        let decoded_u8: Vec<u8> = decoded
+            .pixels
+            .iter()
+            .map(|&v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
+            .collect();
+        assert_eq!(
+            decoded_u8, pixels,
+            "lossless --modular-predictor {} must roundtrip pixel-exact via jxl-rs",
+            predictor_id
+        );
+    }
+}
+
+#[test]
+fn modular_knobs_predictor_meta_modes_fall_back_to_gradient() {
+    // Predictor ids 14 (`Best`) and 15 (`Variable`) are libjxl
+    // encoder-only meta-modes that imply tree learning. With
+    // tree-learning OFF, the non-tree paths fall back to Gradient (id
+    // 5) and produce byte-identical output to an explicit `Some(5)`.
+    // This pins the resolve_fixed_predictor 14/15→5 invariant.
+    let pixels = make_palette_friendly_rgb_256();
+    let cfg = || LosslessConfig::new().with_tree_learning(false);
+    let gradient = cfg()
+        .with_modular_predictor(Some(5))
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("Some(5)");
+    let best = cfg()
+        .with_modular_predictor(Some(14))
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("Some(14) Best");
+    let variable = cfg()
+        .with_modular_predictor(Some(15))
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("Some(15) Variable");
+    assert_eq!(
+        gradient, best,
+        "predictor=14 (Best) must fall back to Gradient on non-tree path"
+    );
+    assert_eq!(
+        gradient, variable,
+        "predictor=15 (Variable) must fall back to Gradient on non-tree path"
     );
 }

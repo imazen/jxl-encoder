@@ -48,6 +48,34 @@ impl Predictor {
     /// Number of simple predictors (excluding weighted/variable).
     pub const NUM_SIMPLE: usize = 14;
 
+    /// Map a libjxl predictor id (`cjxl -P N` / `--modular_predictor`)
+    /// to a [`Predictor`] variant.
+    ///
+    /// Accepts `0..=13` directly. `14` (libjxl `Best`) and `15`
+    /// (libjxl `Variable`) are encoder-only meta-modes that fall back
+    /// to the per-leaf tree-learner path; this helper returns `None`
+    /// for those so callers can route them separately.
+    /// Out-of-range ids (`>= 16`) also return `None`.
+    pub fn from_id(id: u8) -> Option<Predictor> {
+        match id {
+            0 => Some(Predictor::Zero),
+            1 => Some(Predictor::Left),
+            2 => Some(Predictor::Top),
+            3 => Some(Predictor::Average0),
+            4 => Some(Predictor::Select),
+            5 => Some(Predictor::Gradient),
+            6 => Some(Predictor::Weighted),
+            7 => Some(Predictor::TopRight),
+            8 => Some(Predictor::TopLeft),
+            9 => Some(Predictor::LeftLeft),
+            10 => Some(Predictor::Average1),
+            11 => Some(Predictor::Average2),
+            12 => Some(Predictor::Average3),
+            13 => Some(Predictor::Average4),
+            _ => None,
+        }
+    }
+
     /// Returns all simple predictors.
     pub fn all_simple() -> &'static [Predictor] {
         &[

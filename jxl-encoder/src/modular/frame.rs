@@ -6,8 +6,7 @@
 
 use super::channel::{Channel, ModularImage};
 use super::encode::{
-    build_histogram_from_residuals, collect_all_residuals, select_best_rct_at,
-    write_global_modular_section, write_group_modular_section_idx, write_improved_modular_stream,
+    build_histogram_from_residuals, select_best_rct_at, write_group_modular_section_idx,
 };
 use super::palette::{CHANNEL_COLORS_PERCENT, analyze_channel_compact};
 use super::section::write_global_modular_section_with_tree;
@@ -317,7 +316,7 @@ impl FrameEncoder {
                     .modular_knobs
                     .palette_colors_or_default()
                     .unwrap_or(1usize << image.bit_depth.min(12));
-                super::encode::write_modular_stream_with_lossy_palette_budget(
+                super::encode::write_modular_stream_with_lossy_palette_budget_knobs(
                     image,
                     &mut section_writer,
                     self.options.use_ans,
@@ -325,6 +324,7 @@ impl FrameEncoder {
                     image.channels.len().min(3),
                     max_colors,
                     self.budget.as_ref(),
+                    &self.options.modular_knobs,
                 )?;
             } else if has_squeeze && self.options.use_tree_learning && self.options.use_ans {
                 super::encode::write_modular_stream_with_squeeze_and_tree(
@@ -359,7 +359,14 @@ impl FrameEncoder {
                     &self.options.modular_knobs,
                 )?;
             } else {
-                write_improved_modular_stream(image, &mut section_writer, self.options.use_ans)?;
+                let predictor_id =
+                    super::encode::resolve_fixed_predictor(&self.options.modular_knobs);
+                super::encode::write_improved_modular_stream_with_predictor(
+                    image,
+                    &mut section_writer,
+                    self.options.use_ans,
+                    predictor_id,
+                )?;
             }
 
             let section_data = section_writer.finish();
@@ -417,7 +424,7 @@ impl FrameEncoder {
                     .modular_knobs
                     .palette_colors_or_default()
                     .unwrap_or(1usize << image.bit_depth.min(12));
-                super::encode::write_modular_stream_with_lossy_palette_budget(
+                super::encode::write_modular_stream_with_lossy_palette_budget_knobs(
                     image,
                     &mut section_writer,
                     self.options.use_ans,
@@ -425,6 +432,7 @@ impl FrameEncoder {
                     image.channels.len().min(3),
                     max_colors,
                     self.budget.as_ref(),
+                    &self.options.modular_knobs,
                 )?;
             } else if has_squeeze && self.options.use_tree_learning && self.options.use_ans {
                 // Combined squeeze + tree learning: best compression
@@ -461,7 +469,14 @@ impl FrameEncoder {
                     &self.options.modular_knobs,
                 )?;
             } else {
-                write_improved_modular_stream(image, &mut section_writer, self.options.use_ans)?;
+                let predictor_id =
+                    super::encode::resolve_fixed_predictor(&self.options.modular_knobs);
+                super::encode::write_improved_modular_stream_with_predictor(
+                    image,
+                    &mut section_writer,
+                    self.options.use_ans,
+                    predictor_id,
+                )?;
             }
 
             let section_data = section_writer.finish();
@@ -743,11 +758,16 @@ impl FrameEncoder {
                 meta_image.as_ref(),
             )?
         } else {
-            // Standard path: collect residuals with gradient predictor
+            // Standard path: collect residuals using the requested predictor
+            // (libjxl `cjxl -P` / `--modular_predictor`). No per-channel WP
+            // state in this path — fold id 6 → 5 for self-consistency.
+            let predictor_id =
+                super::encode::resolve_fixed_predictor_for_simple_path(&self.options.modular_knobs);
             let mut all_residuals = Vec::new();
             let mut max_residual: u32 = 0;
             for group_image in &group_images {
-                let (group_residuals, group_max) = collect_all_residuals(group_image);
+                let (group_residuals, group_max) =
+                    super::section::collect_all_residuals_with_predictor(group_image, predictor_id);
                 all_residuals.extend(group_residuals);
                 max_residual = max_residual.max(group_max);
             }
@@ -762,13 +782,14 @@ impl FrameEncoder {
                 histogram.iter().filter(|&&c| c > 0).count()
             );
 
-            write_global_modular_section(
+            super::section::write_global_modular_section_with_predictor(
                 &all_residuals,
                 &histogram,
                 max_token,
                 &mut lf_global_writer,
                 self.options.use_ans,
                 global_transforms,
+                predictor_id,
             )?
         };
         let lf_global_data = lf_global_writer.finish();
@@ -879,8 +900,9 @@ impl FrameEncoder {
         writer: &mut BitWriter,
     ) -> Result<()> {
         use super::encode::{
-            write_gradient_tree_tokens, write_hybrid_data_histogram,
-            write_tree_histogram_for_gradient,
+            predict_pixel_with_id, resolve_fixed_predictor_for_simple_path,
+            write_gradient_tree_tokens, write_hybrid_data_histogram, write_predictor_tree_tokens,
+            write_tree_histogram_for_gradient, write_tree_histogram_for_predictor,
         };
         use super::encode_transforms::write_palette_transform;
         use super::predictor::pack_signed;
@@ -894,6 +916,10 @@ impl FrameEncoder {
             msb_in_token: 2,
             lsb_in_token: 0,
         };
+
+        // Multi-group lossy palette has no per-channel WP state for the
+        // index/palette residual pass — fold predictor id 6 → 5.
+        let predictor_id = resolve_fixed_predictor_for_simple_path(&self.options.modular_knobs);
 
         let num_groups = self.num_groups();
         let num_lf_groups = self.num_lf_groups();
@@ -949,11 +975,7 @@ impl FrameEncoder {
         }
 
         // Step 3: Collect ALL residuals (palette_meta + all groups) for histogram
-        let predict_gradient = |left: i32, top: i32, topleft: i32| -> i32 {
-            let grad = left + top - topleft;
-            grad.clamp(left.min(top), left.max(top))
-        };
-
+        // Honours `--modular-predictor` for the no-tree-learning fallback path.
         let collect_channel_residuals = |channel: &super::channel::Channel| -> Vec<u32> {
             let w = channel.width();
             let h = channel.height();
@@ -961,14 +983,7 @@ impl FrameEncoder {
             for y in 0..h {
                 for x in 0..w {
                     let pixel = channel.get(x, y);
-                    let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
-                    let top = if y > 0 { channel.get(x, y - 1) } else { left };
-                    let topleft = if x > 0 && y > 0 {
-                        channel.get(x - 1, y - 1)
-                    } else {
-                        left
-                    };
-                    let prediction = predict_gradient(left, top, topleft);
+                    let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
                     residuals.push(pack_signed(pixel - prediction));
                 }
             }
@@ -1001,9 +1016,22 @@ impl FrameEncoder {
         // has_tree = true
         lf_global_writer.write(1, 1)?;
 
-        // Tree histogram + tokens (gradient predictor)
-        let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(&mut lf_global_writer)?;
-        write_gradient_tree_tokens(&mut lf_global_writer, &tree_depths, &tree_codes)?;
+        // Tree histogram + tokens for the requested predictor (5=Gradient default).
+        let (tree_depths, tree_codes) = if predictor_id == 5 {
+            write_tree_histogram_for_gradient(&mut lf_global_writer)?
+        } else {
+            write_tree_histogram_for_predictor(&mut lf_global_writer, predictor_id)?
+        };
+        if predictor_id == 5 {
+            write_gradient_tree_tokens(&mut lf_global_writer, &tree_depths, &tree_codes)?;
+        } else {
+            write_predictor_tree_tokens(
+                &mut lf_global_writer,
+                &tree_depths,
+                &tree_codes,
+                predictor_id,
+            )?;
+        }
 
         // Build entropy coding state
         let use_ans = self.options.use_ans;
@@ -1168,8 +1196,10 @@ impl FrameEncoder {
         writer: &mut BitWriter,
     ) -> Result<()> {
         use super::encode::{
-            write_gradient_tree_tokens, write_rct_transform, write_squeeze_transform,
-            write_tree_histogram_for_gradient,
+            predict_pixel_with_id, resolve_fixed_predictor_for_simple_path,
+            write_gradient_tree_tokens, write_predictor_tree_tokens, write_rct_transform,
+            write_squeeze_transform, write_tree_histogram_for_gradient,
+            write_tree_histogram_for_predictor,
         };
         use super::predictor::pack_signed;
         use super::rct::{RctType, forward_rct};
@@ -1184,6 +1214,10 @@ impl FrameEncoder {
             msb_in_token: 2,
             lsb_in_token: 0,
         };
+
+        // Squeeze multi-group has no per-channel WP state for residual
+        // pass — fold predictor id 6 → 5.
+        let predictor_id = resolve_fixed_predictor_for_simple_path(&self.options.modular_knobs);
 
         let num_groups = self.num_groups();
         let num_lf_groups = self.num_lf_groups();
@@ -1262,11 +1296,7 @@ impl FrameEncoder {
         );
 
         // Step 3: Collect residuals from ALL channels for histogram building
-        let predict_gradient = |left: i32, top: i32, topleft: i32| -> i32 {
-            let grad = left + top - topleft;
-            grad.clamp(left.min(top), left.max(top))
-        };
-
+        // Honours `--modular-predictor` for the squeeze multi-group fallback.
         let collect_channel_residuals = |channel: &super::channel::Channel| -> Vec<u32> {
             let w = channel.width();
             let h = channel.height();
@@ -1274,14 +1304,7 @@ impl FrameEncoder {
             for y in 0..h {
                 for x in 0..w {
                     let pixel = channel.get(x, y);
-                    let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
-                    let top = if y > 0 { channel.get(x, y - 1) } else { left };
-                    let topleft = if x > 0 && y > 0 {
-                        channel.get(x - 1, y - 1)
-                    } else {
-                        left
-                    };
-                    let prediction = predict_gradient(left, top, topleft);
+                    let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
                     residuals.push(pack_signed(pixel - prediction));
                 }
             }
@@ -1352,9 +1375,22 @@ impl FrameEncoder {
         // has_tree = true
         lf_global_writer.write(1, 1)?;
 
-        // Tree histogram + tokens (gradient predictor)
-        let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(&mut lf_global_writer)?;
-        write_gradient_tree_tokens(&mut lf_global_writer, &tree_depths, &tree_codes)?;
+        // Tree histogram + tokens for the requested predictor (5=Gradient default).
+        let (tree_depths, tree_codes) = if predictor_id == 5 {
+            write_tree_histogram_for_gradient(&mut lf_global_writer)?
+        } else {
+            write_tree_histogram_for_predictor(&mut lf_global_writer, predictor_id)?
+        };
+        if predictor_id == 5 {
+            write_gradient_tree_tokens(&mut lf_global_writer, &tree_depths, &tree_codes)?;
+        } else {
+            write_predictor_tree_tokens(
+                &mut lf_global_writer,
+                &tree_depths,
+                &tree_codes,
+                predictor_id,
+            )?;
+        }
 
         // Data histogram (Huffman or ANS) — covers ALL channels across ALL sections
         let use_ans = self.options.use_ans;
@@ -2173,7 +2209,14 @@ impl FrameEncoder {
                     &self.options.modular_knobs,
                 )?;
             } else {
-                write_improved_modular_stream(image, &mut section_writer, self.options.use_ans)?;
+                let predictor_id =
+                    super::encode::resolve_fixed_predictor(&self.options.modular_knobs);
+                super::encode::write_improved_modular_stream_with_predictor(
+                    image,
+                    &mut section_writer,
+                    self.options.use_ans,
+                    predictor_id,
+                )?;
             }
 
             let section_data = section_writer.finish();

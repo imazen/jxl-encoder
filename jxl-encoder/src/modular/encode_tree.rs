@@ -69,6 +69,24 @@ pub(crate) fn write_tree_histogram_for_gradient(
     write_tree_histogram_for_predictor_impl(writer, true, 5)
 }
 
+/// Write a tree histogram for a single-leaf tree using the given fixed
+/// `predictor_id` (libjxl `cjxl -P N` / `--modular_predictor`).
+///
+/// `predictor_id` must be in `0..=13` (see [`super::predictor::Predictor`]).
+/// Returns `(depths, codes)` for encoding the matching tree tokens via
+/// [`write_predictor_tree_tokens`].
+///
+/// This is the generic counterpart of [`write_tree_histogram_for_gradient`]
+/// (`predictor_id == 5`) and [`write_tree_histogram_for_zero`]
+/// (`predictor_id == 0`) — those wrappers stay for byte-identical
+/// hash-lock parity at the default settings.
+pub(crate) fn write_tree_histogram_for_predictor(
+    writer: &mut BitWriter,
+    predictor_id: u8,
+) -> Result<(Vec<u8>, Vec<u16>)> {
+    write_tree_histogram_for_predictor_impl(writer, true, predictor_id as u32)
+}
+
 /// Write a tree histogram for a single-leaf Gradient-predictor tree that
 /// also carries a non-unit multiplier `(mul_log, mul_bits)` such that
 /// the decoder reconstructs `pixel = val * multiplier + prediction`
@@ -214,26 +232,28 @@ fn write_tree_histogram_for_predictor_impl(
     // HOWEVER, jxl-oxide seems to interpret property=0 specially, treating it as a leaf.
     // Using property=0 works with current decoders; property=1 causes decode failures.
     //
-    // For TREE_PREDICTOR=5 (Gradient): tokens [0, 5, 0, 0, 0]
+    // For TREE_PREDICTOR=p: tokens [0, p, 0, 0, 0]
     //   - property = 0 (works with jxl-oxide as leaf marker)
-    //   - predictor = 5 (Gradient)
+    //   - predictor = p
     //   - offset = 0
     //   - mul_log = 0
     //   - mul_bits = 0
-    // Histogram: symbol 0 appears 4 times, symbol 5 appears 1 time
-    let max_symbol = if predictor_id == 0 {
-        0u16
+    // Histogram: symbol 0 appears 4 times, symbol p appears 1 time
+    // (for predictor_id == 0 they collide → symbol 0 appears 5 times).
+    let max_symbol = predictor_id as u16;
+    let _hist_storage_zero: [u32; 1] = [5];
+    let _hist_storage_general: Vec<u32> = if predictor_id != 0 {
+        let mut v = vec![0u32; (predictor_id as usize) + 1];
+        v[0] = 4;
+        v[predictor_id as usize] = 1;
+        v
     } else {
-        predictor_id as u16
+        Vec::new()
     };
     let tree_histogram: &[u32] = if predictor_id == 0 {
-        // For Zero predictor: tokens [0, 0, 0, 0, 0]
-        // symbol 0 appears 5 times
-        &[5u32]
+        &_hist_storage_zero
     } else {
-        // For Gradient predictor: tokens [0, 5, 0, 0, 0]
-        // symbol 0 appears 4 times, symbol 5 appears 1 time
-        &[4u32, 0, 0, 0, 0, 1]
+        &_hist_storage_general
     };
 
     // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
@@ -305,6 +325,20 @@ pub(crate) fn write_gradient_tree_tokens(
     codes: &[u16],
 ) -> Result<()> {
     write_single_leaf_tree_tokens(writer, depths, codes, 5)
+}
+
+/// Write tree tokens for a single leaf using the given fixed `predictor_id`.
+///
+/// Pair with [`write_tree_histogram_for_predictor`] (must use the same
+/// `predictor_id`). Encodes the libjxl `[property=0, predictor, offset=0,
+/// mul_log=0, mul_bits=0]` token sequence.
+pub(crate) fn write_predictor_tree_tokens(
+    writer: &mut BitWriter,
+    depths: &[u8],
+    codes: &[u16],
+    predictor_id: u8,
+) -> Result<()> {
+    write_single_leaf_tree_tokens(writer, depths, codes, predictor_id as u32)
 }
 
 /// Write tree tokens for a single leaf with the given predictor ID.
