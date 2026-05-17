@@ -33,6 +33,48 @@
   defaults, builder round-trip, and the `progressive_dc>=1 =>
   lf_frame` implication.
 
+- **Lossy skeleton-flag wiring** — W4-2 follow-on to the W3-6 CLI passthrough
+  bundle (`c8d3752c`) and the W4-1 modular skeleton wiring (`b7c1cb5a`).
+  Wires four `LossyConfig` knobs through to the `VarDctEncoder` and the
+  `FileHeader` so each affects encoded bytes when set:
+  - `--upsampling_mode N` (libjxl `JxlEncoderSetUpsamplingMode`, `encode.cc:1393`)
+    selects the decoder upsampling LUT for the active upsampling factor.
+    `-1` / `None` keeps the default fancy upsampling (file header takes
+    the `all_default=true` 1-bit fast path). `0` emits the nearest-neighbour
+    LUT, `1` emits the "pixel dots" LUT. Only meaningful at `upsampling > 1`;
+    only factors 2/4/8 carry an LUT (factor 2's pixel-dots LUT degenerates
+    to nearest per libjxl). LUT bytes are written via
+    `FileHeader::write_transform_data` after a new `upsampling_lut_weights`
+    helper in `headers/file_header.rs` that mirrors
+    `JxlEncoderSetUpsamplingMode`'s slot tables byte-for-byte.
+    Layer-3 byte-divergence invariants in
+    `tests/lossy_knobs_wiring.rs::upsampling_mode_changes_bytes_factor{2,4_pixel_dots}`.
+  - `--group_order N` (0..2) (libjxl `cparams.group_order` /
+    `JXL_ENC_FRAME_SETTING_GROUP_ORDER`). `Some(0)` = explicit scanline,
+    `Some(1)` = center-first (wires the existing `center_first` flag so
+    the concentric-square AC group permutation activates), `Some(2)` is
+    stored as a no-op for forward compatibility. Invariants in
+    `tests/lossy_knobs_wiring.rs::group_order_one_implies_center_first`
+    and `group_order_zero_disables_center_first`.
+  - `--center_x X` / `--center_y Y` (libjxl `cparams.center_x` / `center_y`)
+    override the AC group permutation centre used when `group_order = 1`.
+    `None` falls back to `width / 2` / `height / 2` (libjxl's `size_t(-1)`
+    sentinel). Layer-3 invariant in
+    `tests/lossy_knobs_wiring.rs::center_x_center_y_change_bytes_on_multigroup`.
+  - `--alpha_distance D` (libjxl `cjxl --alpha_distance`,
+    `enc_params.h:alpha_distance`) is stored on the encoder and reaches
+    `VarDctEncoder::alpha_distance`. The alpha extras subimage is
+    **still emitted losslessly** (gradient predictor + LZ77 RLE) at all
+    `D` values — the lossy alpha pipeline (separate quantisation matrix
+    for the alpha modular subimage) is queued follow-on. The
+    `alpha_distance_lossless_path_byte_identical_today` test guards this
+    contract so a future lossy-alpha change has to flip the assertion
+    deliberately rather than silently. Default behaviour unchanged.
+
+  All defaults preserved: 36/36 `hash_lock_features` byte-identical.
+  1077/1077 lib tests pass. New `tests/lossy_knobs_wiring.rs` adds 6
+  integration tests proving each knob plumbs through.
+
 - **Multi-seed lossy butteraugli sweep at e10/e11** (RFC#45 pick #1 chunk 3).
   New `EffortProfile::lossy_search_seeds` field (1 at e ≤ 9, 2 at e10, 4 at e11)
   drives [`vardct::butteraugli_loop`]: at seeds > 1 we run the full

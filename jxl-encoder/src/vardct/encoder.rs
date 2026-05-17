@@ -346,6 +346,44 @@ pub struct VarDctEncoder {
     ///
     /// Used by [`crate::api::LossyConfig::with_resampling`] (refs #12).
     pub upsampling: u32,
+    /// Decoder upsampling mode (libjxl
+    /// `JxlEncoderSetUpsamplingMode(enc, factor, mode)`,
+    /// `enc_modular.cc` etc.). Only emitted when [`Self::upsampling`] > 1
+    /// (the spec ties the LUTs to the upsampling factor).
+    ///
+    /// - `None` (default) / `Some(-1)` — fancy default upsampling
+    ///   (`custom_weight_mask=0`, no custom LUT in the file header).
+    /// - `Some(0)` — nearest-neighbour upsampling for the active
+    ///   `upsampling` factor: emits a zeroed LUT with a single 1.0
+    ///   impulse, matching libjxl `JxlEncoderSetUpsamplingMode(_, _, 0)`.
+    /// - `Some(1)` — "pixel dots" upsampling (nearest with cut corners).
+    ///   Only meaningful for `upsampling == 4` or `upsampling == 8`;
+    ///   silently behaves as nearest for `upsampling == 2` (matches
+    ///   libjxl's per-factor table).
+    pub upsampling_mode: Option<i32>,
+    /// Center X for [`Self::center_first`] AC group reorder. `None`
+    /// (default) uses `width / 2`. Mirrors libjxl
+    /// `cparams.center_x` (`JXL_ENC_FRAME_SETTING_GROUP_ORDER_CENTER_X`).
+    pub center_x: Option<u32>,
+    /// Center Y for [`Self::center_first`] AC group reorder. `None`
+    /// (default) uses `height / 2`. Mirrors libjxl
+    /// `cparams.center_y` (`JXL_ENC_FRAME_SETTING_GROUP_ORDER_CENTER_Y`).
+    pub center_y: Option<u32>,
+    /// Optional separate butteraugli distance for the alpha extra
+    /// channel (CLI passthrough — libjxl
+    /// `cjxl --alpha_distance`, `enc_params.h:alpha_distance`). `None`
+    /// (default) keeps the existing pipeline behaviour: the alpha
+    /// extra channel is encoded losslessly via the modular extras
+    /// writer (gradient predictor + LZ77 RLE).
+    ///
+    /// `Some(0.0)` is treated identically to `None` (explicit lossless).
+    /// `Some(d)` where `d > 0.0` is currently recorded on the encoder
+    /// for downstream wiring — the lossy alpha path itself (separate
+    /// quantisation matrix for the alpha modular subimage) is queued
+    /// follow-on; today the alpha bytes are still emitted losslessly
+    /// regardless of `d`. This matches the staged plumbing approach
+    /// documented on [`crate::api::LossyConfig::with_alpha_distance`].
+    pub alpha_distance: Option<f32>,
     /// Policy for non-finite XYB values at the conversion→pipeline
     /// boundary. See [`crate::api::NonFiniteAction`].
     pub non_finite_action: crate::api::NonFiniteAction,
@@ -408,6 +446,10 @@ impl Default for VarDctEncoder {
             bits_per_sample_override: None,
             center_first: false,
             upsampling: 1,
+            upsampling_mode: None,
+            center_x: None,
+            center_y: None,
+            alpha_distance: None,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
         }
@@ -465,6 +507,10 @@ impl VarDctEncoder {
             bits_per_sample_override: None,
             center_first: false,
             upsampling: 1,
+            upsampling_mode: None,
+            center_x: None,
+            center_y: None,
+            alpha_distance: None,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
         }
@@ -1728,8 +1774,18 @@ impl VarDctEncoder {
             // to reorder).
             if self.center_first && num_groups > 1 {
                 use crate::vardct::coeff_order::compute_center_first_ac_permutation;
-                let cx = (width as u32) / 2;
-                let cy = (height as u32) / 2;
+                // Caller-supplied center_x / center_y (libjxl
+                // `cparams.center_x` / `center_y`); fall back to image
+                // centre when unset, matching libjxl's
+                // `size_t(-1) → width/2` behaviour at enc_frame.cc.
+                let cx = self
+                    .center_x
+                    .map(|x| x.min(width.saturating_sub(1) as u32))
+                    .unwrap_or((width as u32) / 2);
+                let cy = self
+                    .center_y
+                    .map(|y| y.min(height.saturating_sub(1) as u32))
+                    .unwrap_or((height as u32) / 2);
                 let ac_group_order =
                     compute_center_first_ac_permutation(xsize_groups, ysize_groups, cx, cy);
                 // Build inverse mapping: inv[orig_idx] = on_disk_pos.

@@ -146,6 +146,8 @@ fn measure_file_header_len(
             xyb_encoded,
             ..ImageMetadata::default()
         },
+        upsampling_mode: None,
+        upsampling_factor: 1,
     };
 
     let mut writer = BitWriter::new();

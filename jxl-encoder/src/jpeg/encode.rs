@@ -599,6 +599,8 @@ fn build_jpeg_file_header(width: usize, height: usize, is_gray: bool) -> FileHea
             xyb_encoded: false, // JPEG is NOT in XYB
             ..ImageMetadata::default()
         },
+        upsampling_mode: None,
+        upsampling_factor: 1,
     }
 }
 

@@ -5963,6 +5963,12 @@ impl<'a> EncodeRequest<'a> {
         enc.bits_per_sample_override = self.bits_per_sample;
         // Center-first AC group permutation (#14).
         enc.center_first = cfg.center_first;
+        // Caller-supplied center point for `group_order = center-first`
+        // (CLI passthrough — libjxl `cparams.center_x` / `center_y`).
+        // Clamp to u32 and pass through; `None` falls back to image
+        // centre downstream.
+        enc.center_x = cfg.center_x.map(|v| v.max(0).min(u32::MAX as i64) as u32);
+        enc.center_y = cfg.center_y.map(|v| v.max(0).min(u32::MAX as i64) as u32);
         // Decoder upsampling factor (refs #12). Caller-supplied
         // (width, height) and pixel buffers are downsampled below
         // before reaching the encoder; the encoder operates entirely
@@ -5970,6 +5976,19 @@ impl<'a> EncodeRequest<'a> {
         // upsample after rendering. The file-header dims still report
         // the original (pre-downsample) size.
         enc.upsampling = effective_resampling;
+        // Custom upsampling LUT selection (libjxl
+        // `JxlEncoderSetUpsamplingMode`). The encoder records the
+        // mode on the file-header builder; the LUT itself is emitted
+        // in `FileHeader::write_transform_data` only when
+        // `upsampling > 1` AND the mode is `Some(0)` / `Some(1)`.
+        enc.upsampling_mode = cfg.upsampling_mode;
+        // Alpha extra channel butteraugli distance (CLI passthrough —
+        // libjxl `cjxl --alpha_distance`). `None` keeps the
+        // existing lossless path. A non-zero value is recorded on the
+        // encoder for now; a separately-quantised lossy alpha pipeline
+        // is queued follow-on (the current modular extras writer is
+        // lossless gradient+LZ77).
+        enc.alpha_distance = cfg.alpha_distance;
 
         // Tone mapping and intrinsic size from metadata
         if let Some(meta) = self.metadata {
