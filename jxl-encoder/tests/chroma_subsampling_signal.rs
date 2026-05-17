@@ -213,9 +213,19 @@ fn assert_invalid_config_with_tag(err: &At<EncodeError>, tag: &str) {
         msg.contains(tag),
         "InvalidConfig message must name the chroma tag ({tag}); got: {msg}",
     );
+    // The rejection message has evolved across chunks:
+    //   - chunk 1 (#47):   "not yet implemented (chunk 1 of #47 …)"
+    //   - chunk 2:         "not yet wired end-to-end. Chunk 2 of #47 …
+    //                       chunk 3 wires them through …"
+    // Both forms are valid for this regression test; chunk-3 will
+    // delete the rejection entirely for Sub420 (and likely Sub422 /
+    // Sub440 in turn) so the wording must remain flexible until then.
     assert!(
-        msg.contains("not yet implemented") || msg.contains("chunk 1"),
-        "InvalidConfig message must mention chunk-1 status; got: {msg}",
+        msg.contains("not yet implemented")
+            || msg.contains("not yet wired")
+            || msg.contains("chunk 1")
+            || msg.contains("Chunk 2"),
+        "InvalidConfig message must mention chunk-N status; got: {msg}",
     );
     match inner {
         EncodeError::InvalidConfig { .. } => {}

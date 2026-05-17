@@ -66,8 +66,8 @@ fn write_cropped_fixture(name: &str) -> PathBuf {
     let y0 = (h - CROP) / 2;
     let crop = image::imageops::crop_imm(&img, x0, y0, CROP, CROP).to_image();
 
-    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../target/tests-tmp/cli_passthrough_smoke");
+    let out_dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/tests-tmp/cli_passthrough_smoke");
     std::fs::create_dir_all(&out_dir).expect("create_dir_all");
     let out_path = out_dir.join(format!("{name}.png"));
     crop.save(&out_path).expect("save crop");
@@ -78,8 +78,8 @@ fn write_cropped_fixture(name: &str) -> PathBuf {
 /// and return the encoded bytes. Panics on non-zero exit so the test
 /// captures stderr verbatim.
 fn run_cjxl(input_png: &Path, label: &str, extra_args: &[&str]) -> Vec<u8> {
-    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../target/tests-tmp/cli_passthrough_smoke");
+    let out_dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/tests-tmp/cli_passthrough_smoke");
     std::fs::create_dir_all(&out_dir).expect("create_dir_all");
     let out_path = out_dir.join(format!("{label}.jxl"));
     if out_path.exists() {
@@ -109,11 +109,18 @@ fn run_cjxl(input_png: &Path, label: &str, extra_args: &[&str]) -> Vec<u8> {
 
     let bytes = std::fs::read(&out_path)
         .unwrap_or_else(|e| panic!("read({}) failed: {e}", out_path.display()));
-    assert!(bytes.len() > 12, "encoded {label} too small ({} bytes)", bytes.len());
+    assert!(
+        bytes.len() > 12,
+        "encoded {label} too small ({} bytes)",
+        bytes.len()
+    );
     // JXL container or codestream signature.
     let is_container = &bytes[..12] == b"\x00\x00\x00\x0CJXL \r\n\x87\n";
     let is_codestream = bytes[0] == 0xFF && bytes[1] == 0x0A;
-    assert!(is_container || is_codestream, "{label}: missing JXL signature");
+    assert!(
+        is_container || is_codestream,
+        "{label}: missing JXL signature"
+    );
     bytes
 }
 
@@ -164,12 +171,7 @@ fn modular_channel_colors_global_pct_flag_accepted_lossless_path() {
     let _ = run_cjxl(
         &png,
         "ccgp",
-        &[
-            "-d",
-            "0",
-            "--modular-channel-colors-global-percent",
-            "50",
-        ],
+        &["-d", "0", "--modular-channel-colors-global-percent", "50"],
     );
 }
 

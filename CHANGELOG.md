@@ -4,6 +4,53 @@
 
 ### Added
 
+- **YCbCr colour-pipeline helpers (issue #47 chunk 2)** — follow-on to
+  the chunk-1 `ChromaSubsampling` API surface (`8eb7ea4f`). Lands the
+  foundational building blocks the eventual end-to-end Sub420 / Sub422
+  / Sub440 lossy pipeline needs, all unit-tested in isolation. Default
+  encode paths still use XYB; chunk 3 wires these helpers through the
+  VarDCT pipeline.
+  - New `vardct::chroma_subsampling` module:
+    - `rgb_to_ycbcr_pixel` / `ycbcr_to_rgb_pixel` — full-range BT.601
+      / JFIF Clause 7 forward and inverse colour transforms. The
+      inverse exactly matches libjxl's `kYCbCrStage::ProcessRow`
+      (`render_pipeline/stage_ycbcr.cc:24-39`); the forward is its
+      analytic inverse. Round-trip identity verified to f32 precision
+      across in- and out-of-gamut probes.
+    - `rgb_to_ycbcr_planar` — interleaved-RGB → planar (Y, Cb, Cr)
+      conversion.
+    - `box_downsample_2x_both` / `_horizontal` / `_vertical` —
+      box-filter chroma downsamplers for 4:2:0 / 4:2:2 / 4:4:0. Odd
+      edges average the in-bounds samples only (no duplicate-pixel
+      bias).
+    - `jpeg_upsampling_for(mode)` — returns the libjxl
+      `channel_mode_[c]` triple `[Cb, Y, Cr]` to stamp into
+      `FrameHeader::jpeg_upsampling`. Subtle: this is the *raw mode
+      index*, not the per-channel actual shift; the actual shift
+      (`HShift(c) = max(kHShift[…]) − kHShift[mode_c]`) is what
+      `ChromaSubsampling::h_shifts` / `v_shifts` from chunk 1
+      advertise. A regression test
+      (`test_jpeg_upsampling_round_trips_to_h_v_shifts`) pins both
+      views consistent for all four modes.
+    - `channel_shifts_for(mode)` — per-channel `(h_shift, v_shift)`
+      triple sized to libjxl's max-relative formula. Chunk 3 uses
+      this to size per-channel block grids.
+    - `build_ycbcr_vardct_frame_header(mode)` — non-JPEG-transcode
+      builder that stamps `encoding = VarDct`, `xyb_encoded = false`,
+      `do_ycbcr = true`, and the correct `jpeg_upsampling` triple.
+      Mirrors `build_jpeg_frame_header` in
+      `jxl-encoder/src/jpeg/encode.rs:636-652`.
+  - 16 unit tests in `vardct::chroma_subsampling::tests` cover the
+    pixel transform, planar conversion, three downsamplers (basic +
+    odd-width + odd-height edges), per-mode `jpeg_upsampling_for`,
+    `channel_shifts_for`, the frame-header builder, layout
+    consistency, and a Full444 pipeline-roundtrip-on-RGB invariant.
+  - `EncodeError::InvalidConfig` message at both lossy entry points
+    (`api.rs:5222`, `api.rs:6521`) updated to point at the new
+    helpers and the chunk-3 wiring plan.
+  - Hash-lock 36/36 byte-identical at default (`Full444`); zero
+    clippy warnings introduced by this chunk.
+
 - **`ChromaSubsampling` API surface (issue #47 chunk 1)** — A1 audit "VarDCT
   cost model" OUT item. Ships the smallest viable signal-only POC for
   chroma 4:2:0 / 4:2:2 / 4:4:0:

@@ -2225,28 +2225,52 @@ pub enum ProgressiveMode {
 /// | `Sub420`   | 1               | 1               | quarter (H+V halved) |
 /// | `Sub440`   | 0               | 1               | half vertical        |
 ///
-/// # Current status (chunk 1)
+/// # Current status (chunk 2)
 ///
-/// **API surface only.** Only [`ChromaSubsampling::Full444`] (the
-/// default) is currently honoured end-to-end. Setting any other mode
-/// causes the encoder to return [`EncodeError::InvalidConfig`] with a
-/// message explaining the JXL spec constraint that ties chroma
-/// subsampling to `ColorTransform::kYCbCr` (libjxl
-/// `enc_frame.cc:373-387`) — and our VarDCT pipeline currently emits
-/// `ColorTransform::kXYB`, which forbids non-4:4:4 chroma per the JXL
-/// codestream spec.
+/// **API surface + colour-pipeline helpers landed; encoder not yet
+/// wired.** Only [`ChromaSubsampling::Full444`] (the default) is
+/// currently honoured end-to-end. Setting any other mode still causes
+/// the encoder to return [`EncodeError::InvalidConfig`] — but the
+/// message now points at the foundational helpers added in chunk 2.
 ///
-/// Real chroma-downsampled encoding (chunk 2+) needs:
+/// The JXL codestream spec ties chroma subsampling to
+/// `ColorTransform::kYCbCr` (libjxl `enc_frame.cc:381-387`), and our
+/// VarDCT pipeline currently emits `ColorTransform::kXYB`, which
+/// forbids non-4:4:4 chroma per the JXL codestream spec.
 ///
-/// 1. A switchable colour pipeline (XYB → YCbCr selection per frame).
-/// 2. Box-filter downsample of Cb/Cr before VarDCT.
-/// 3. `FrameHeader::do_ycbcr=true` + `jpeg_upsampling=[hs,0,vs]` wire format
-///    — the existing [`crate::headers::frame_header::FrameHeader`] field is
-///    already in place from JPEG-transcode plumbing.
-/// 4. Decoder-side upsampling verification across djxl / jxl-rs / jxl-oxide.
+/// **Chunk-2 deliverables** (in `vardct::chroma_subsampling`):
+///
+/// 1. [`vardct::chroma_subsampling::rgb_to_ycbcr_pixel`] /
+///    [`vardct::chroma_subsampling::rgb_to_ycbcr_planar`] — full-range
+///    BT.601 / JFIF Clause 7 forward colour transform.
+/// 2. [`vardct::chroma_subsampling::box_downsample_2x_both`] /
+///    `_horizontal` / `_vertical` — chroma downsamplers for 4:2:0 /
+///    4:2:2 / 4:4:0.
+/// 3. [`vardct::chroma_subsampling::build_ycbcr_vardct_frame_header`] —
+///    non-JPEG frame-header builder that stamps `xyb_encoded=false`,
+///    `do_ycbcr=true`, and the correct `jpeg_upsampling=[Cb,0,Cr]`
+///    triple.
+/// 4. [`vardct::chroma_subsampling::channel_shifts_for`] — per-channel
+///    `(h_shift, v_shift)` used by chunk-3 block-dimension code.
+///
+/// **Chunk-3 plan** (queued):
+///
+/// 1. Branch in [`crate::vardct::encoder::VarDctEncoder::encode_inner`]
+///    on `ChromaSubsampling`: XYB path stays the default; YCbCr path
+///    calls the chunk-2 helpers and routes each channel through the
+///    quantiser at its own block resolution (mirroring the JPEG
+///    transcode entry point at `jxl-encoder/src/jpeg/encode.rs:74-108`).
+/// 2. Decoder-side roundtrip verification across djxl / jxl-rs /
+///    jxl-oxide.
 ///
 /// See [issue #47](https://github.com/imazen/jxl-encoder/issues/47) for
 /// the multi-chunk implementation plan.
+///
+/// [`vardct::chroma_subsampling::rgb_to_ycbcr_pixel`]: crate::vardct::chroma_subsampling::rgb_to_ycbcr_pixel
+/// [`vardct::chroma_subsampling::rgb_to_ycbcr_planar`]: crate::vardct::chroma_subsampling::rgb_to_ycbcr_planar
+/// [`vardct::chroma_subsampling::box_downsample_2x_both`]: crate::vardct::chroma_subsampling::box_downsample_2x_both
+/// [`vardct::chroma_subsampling::build_ycbcr_vardct_frame_header`]: crate::vardct::chroma_subsampling::build_ycbcr_vardct_frame_header
+/// [`vardct::chroma_subsampling::channel_shifts_for`]: crate::vardct::chroma_subsampling::channel_shifts_for
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ChromaSubsampling {
     /// **Default.** Full-resolution chroma (4:4:4). Y, Cb, Cr each sampled
@@ -5211,23 +5235,29 @@ impl<'a> EncodeRequest<'a> {
         pixels: &[u8],
         budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
     ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
-        // Chunk 1 of issue #47 — fail fast for any non-default chroma
-        // subsampling mode. Only `Full444` is end-to-end honoured. The
-        // JXL codestream spec ties chroma subsampling to
-        // `ColorTransform::kYCbCr` (libjxl `enc_frame.cc:373-387`); our
-        // VarDCT pipeline currently always emits `ColorTransform::kXYB`,
-        // so signaling 4:2:0 / 4:2:2 / 4:4:0 would produce an invalid
-        // bitstream. Real chroma-downsampled encoding requires a
-        // switchable colour pipeline (queued for chunks 2+).
+        // Issue #47 chunk-2 status: the foundational helpers
+        // (RGB→YCbCr forward transform, box-filter chroma
+        // downsamplers, non-JPEG `do_ycbcr=true` frame-header builder)
+        // landed in `vardct::chroma_subsampling`. Chunk 3 wires those
+        // helpers through `VarDctEncoder::encode_inner` so 4:2:0 /
+        // 4:2:2 / 4:4:0 produce a valid kYCbCr-mode bitstream instead
+        // of the rejection below. Until that lands, only `Full444` is
+        // honoured end-to-end — libjxl `enc_frame.cc:381-387` rejects
+        // VarDCT with non-444 chroma unless the colour transform is
+        // already kYCbCr (i.e. JPEG transcode); our regular encode
+        // path still emits kXYB.
         if !cfg.chroma_subsampling.is_full() {
             return Err(EncodeError::InvalidConfig {
                 message: format!(
-                    "chroma_subsampling = {} not yet implemented (chunk 1 \
-                     of #47 ships the API surface; chunks 2+ wire the \
-                     YCbCr colour pipeline + Cb/Cr downsample). \
-                     The JXL codestream spec only permits non-4:4:4 chroma \
-                     with ColorTransform::kYCbCr (libjxl enc_frame.cc:373-387). \
-                     Our VarDCT pipeline currently emits ColorTransform::kXYB.",
+                    "chroma_subsampling = {} not yet wired end-to-end. \
+                     Chunk 2 of #47 landed the YCbCr forward transform + \
+                     box-filter chroma downsamplers + non-JPEG kYCbCr \
+                     frame-header builder in `vardct::chroma_subsampling`; \
+                     chunk 3 wires them through the VarDCT encoder \
+                     (encode_inner). The JXL codestream spec only permits \
+                     non-4:4:4 chroma with ColorTransform::kYCbCr (libjxl \
+                     enc_frame.cc:381-387) and our regular encode path \
+                     still emits ColorTransform::kXYB.",
                     cfg.chroma_subsampling.tag(),
                 ),
             });
@@ -6515,18 +6545,22 @@ impl LossyEncoder {
         // counts, mutual exclusivity). Mirrors
         // `EncodeRequest::encode_inner`.
         self.cfg.validate()?;
-        // Chunk 1 of issue #47 — mirror the one-shot
-        // `encode_lossy` guard. Only `Full444` is end-to-end honoured;
-        // any other mode signals not-yet-implemented.
+        // Issue #47 chunk-2 status: same rejection as the one-shot
+        // `encode_lossy` guard above. The foundational helpers are now
+        // in `vardct::chroma_subsampling`; chunk 3 wires them through
+        // the streaming pipeline.
         if !self.cfg.chroma_subsampling.is_full() {
             return Err(EncodeError::InvalidConfig {
                 message: format!(
-                    "chroma_subsampling = {} not yet implemented (chunk 1 \
-                     of #47 ships the API surface; chunks 2+ wire the \
-                     YCbCr colour pipeline + Cb/Cr downsample). \
-                     The JXL codestream spec only permits non-4:4:4 chroma \
-                     with ColorTransform::kYCbCr (libjxl enc_frame.cc:373-387). \
-                     Our VarDCT pipeline currently emits ColorTransform::kXYB.",
+                    "chroma_subsampling = {} not yet wired end-to-end. \
+                     Chunk 2 of #47 landed the YCbCr forward transform + \
+                     box-filter chroma downsamplers + non-JPEG kYCbCr \
+                     frame-header builder in `vardct::chroma_subsampling`; \
+                     chunk 3 wires them through the VarDCT encoder \
+                     (encode_inner). The JXL codestream spec only permits \
+                     non-4:4:4 chroma with ColorTransform::kYCbCr (libjxl \
+                     enc_frame.cc:381-387) and our regular encode path \
+                     still emits ColorTransform::kXYB.",
                     self.cfg.chroma_subsampling.tag(),
                 ),
             });

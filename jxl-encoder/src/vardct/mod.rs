@@ -23,6 +23,13 @@ mod block_extract;
 #[cfg(feature = "butteraugli-loop")]
 pub(crate) mod butteraugli_loop;
 pub(crate) mod chroma_from_luma;
+// Follow-on to PR #47 (`ChromaSubsampling` API surface). This module
+// holds the RGB→YCbCr forward colour transform, the box-filter chroma
+// downsamplers, and the non-JPEG `do_ycbcr=true` frame-header builder.
+// Chunk 3 wires these helpers through `encoder::encode_inner` so the
+// Sub420 lossy entry-point produces a valid bitstream instead of
+// returning `EncodeError::InvalidConfig`.
+pub(crate) mod chroma_subsampling;
 pub(crate) mod cluster;
 mod coeff_order;
 pub(crate) mod common;
