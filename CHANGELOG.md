@@ -129,6 +129,28 @@
 
 ### Added
 
+- **Broader seed variance for e10/e11 multi-seed tree learning**
+  (RFC#45 pick #1 chunk 3 — follow-on to chunk 2 `d4f2e282`). The
+  chunk-2 dispatch only varied gather `start_offset`, which produced
+  highly correlated sample subsets — on 3 CID22 photos the canonical
+  seed 0 always won. Chunk 3 widens the per-seed candidate space via
+  three deterministic, seed-0-preserving perturbations:
+  (1) `split_threshold` jitter (per-seed multiplier from
+  `[1.0, 0.7, 1.3, 0.85]`); (2) property-order rotation past the
+  structural `Channel` + optional `GroupId` prefix; (3) per-seed
+  stride from `[base, base+1, base-1, base*2]`. Seed 0 is a clone of
+  the canonical `TreeLearningParams` for all three knobs — preserves
+  chunk-2's byte-identical seed-0 path and keeps e ≤ 9 hash-locks at
+  36/36. On 5 CID22-512 photos at default settings, e11 strictly
+  beats e9 in 5/5 cells (avg -0.46% bytes, best -0.97%); e10 wins
+  3/5 (60%). New helpers in `modular::tree_learn`:
+  `derive_seeded_params(&TreeLearningParams, u64)` and
+  `derive_seeded_stride(usize, u64)`. Bench harness:
+  `examples/e10_e11_multiseed_chunk3_ab.rs` (5 photos × 3 efforts ×
+  N samples). Six new unit tests cover seed-0 cloning, threshold
+  jitter, structural prefix preservation, property-order variance,
+  stride clamping, and density perturbation.
+
 - **Multi-seed lossless tree learning at e10/e11** (RFC#45 pick #1 chunk 2).
   At effort 10/11 the global modular tree-learning path now runs the
   gather→`compute_best_tree`→`collect_residuals_with_tree` pipeline 2

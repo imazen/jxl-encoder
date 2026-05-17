@@ -1,28 +1,29 @@
-//! Paired A/B/C bench for RFC#45 chunk 2: multi-seed lossless tree
-//! learning at e10/e11 vs e9 baseline.
+//! Paired A/B/C bench for RFC#45 chunk 3: broader seed variance for
+//! multi-seed lossless tree learning at e10/e11.
+//!
+//! Chunk 2 (`d4f2e282`) wired up the multi-seed dispatch but only varied
+//! gather start_offset — on 3 CID22 photos the canonical seed always won.
+//! Chunk 3 adds split_threshold jitter, property-order rotation, and
+//! per-seed stride perturbation to broaden the candidate space.
 //!
 //! Per-cell A/B/C (lossless):
 //!   A = e9  (baseline; libjxl kTortoise, single-seed tree learning)
 //!   B = e10 (2-seed pick on the global modular tree)
 //!   C = e11 (4-seed pick)
 //!
-//! Sample-major interleave keeps paired (A,B,C) thermally close at every
-//! sample (zenbench-style randomized round-robin discipline).
-//!
-//! Acceptance gate (per RFC#45 chunk-2 plan):
-//!   e10 must produce ≤ e9 bytes on ≥ 50% of cells (the rest may be
-//!   byte-identical when seeds agree). e11 similarly vs e10.
+//! Acceptance gate: ≥ 30-40 % of (image, effort >= 10) cells must satisfy
+//! `bytes(seed_pick) < bytes(e9)` for chunk 3 to be worth shipping.
 //!
 //! Usage:
 //!   cargo run -p jxl-encoder --release \
 //!     --features 'std parallel' \
-//!     --example e10_e11_multiseed_ab \
-//!     > benchmarks/e10_e11_multiseed_ab_$(date +%Y-%m-%d).tsv
+//!     --example e10_e11_multiseed_chunk3_ab \
+//!     > benchmarks/e10_e11_multiseed_chunk3_ab_$(date +%Y-%m-%d).tsv
 //!
 //! Environment:
-//!   SAMPLES=3         (default: 3; per-cell sample count, paired)
+//!   SAMPLES=2         (default: 2; per-cell sample count, paired)
 //!   THREADS=8         (default: 8)
-//!   IMAGES="a.png,b.png,c.png"  (default: 3 CID22-512 photos)
+//!   IMAGES="a.png,b.png,c.png"  (default: 5 CID22-512 photos)
 //!   CORPUS_DIR        (default: /home/lilith/work/codec-corpus)
 
 use jxl_encoder::api::{LosslessConfig, PixelLayout};
@@ -34,6 +35,8 @@ const DEFAULT_IMAGES: &[&str] = &[
     "CID22/CID22-512/validation/1025469.png",
     "CID22/CID22-512/validation/1044329.png",
     "CID22/CID22-512/validation/1189261.png",
+    "CID22/CID22-512/validation/1279330.png",
+    "CID22/CID22-512/validation/1418519.png",
 ];
 
 fn parse_usize(name: &str, default: usize) -> usize {
@@ -63,7 +66,7 @@ fn short_sha(bytes: &[u8]) -> String {
     let mut h = sha2::Sha256::new();
     h.update(bytes);
     let d = h.finalize();
-    format!("{:02x}{:02x}{:02x}{:02x}", d[0], d[1], d[2], d[3],)
+    format!("{:02x}{:02x}{:02x}{:02x}", d[0], d[1], d[2], d[3])
 }
 
 fn encode_at_effort(
@@ -84,7 +87,7 @@ fn encode_at_effort(
 }
 
 fn main() {
-    let samples = parse_usize("SAMPLES", 3);
+    let samples = parse_usize("SAMPLES", 2);
     let threads = parse_usize("THREADS", 8);
     let corpus_dir = std::env::var("CORPUS_DIR")
         .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string());
@@ -93,7 +96,7 @@ fn main() {
 
     // TSV header
     println!(
-        "# RFC#45 chunk 2: multi-seed lossless tree learning A/B/C\n\
+        "# RFC#45 chunk 3: broader seed variance A/B/C\n\
          # samples={samples}, threads={threads}\n\
          # commit_pending\n\
          image\teffort\tsample\tbytes\tsha\twall_ms"
@@ -110,9 +113,9 @@ fn main() {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "unknown".to_string());
-        eprintln!("encoding {img_name} ({w}×{h}, {} bytes RGB)", pixels.len(),);
+        eprintln!("encoding {img_name} ({w}×{h}, {} bytes RGB)", pixels.len());
 
-        // Sample-major interleave: (A,B,C) per sample
+        // Sample-major interleave: (A,B,C) per sample.
         for sample_idx in 0..samples {
             for &effort in &efforts {
                 let (bytes, dt) = encode_at_effort(&pixels, w, h, effort, threads);

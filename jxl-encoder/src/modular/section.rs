@@ -313,13 +313,13 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     use super::encode::write_tree;
     use super::encode::write_wp_header;
     use super::predictor::WeightedPredictorParams;
-    use super::tree::count_contexts;
     use super::tree::Tree;
+    use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_gather_stride_from_profile, estimate_token_cost, gather_samples_strided,
-        gather_samples_strided_with_dedup_backend, gather_samples_strided_with_offset,
-        max_ref_channels,
+        compute_gather_stride_from_profile, derive_seeded_params, derive_seeded_stride,
+        estimate_token_cost, gather_samples_strided, gather_samples_strided_with_dedup_backend,
+        gather_samples_strided_with_offset, max_ref_channels,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -390,30 +390,30 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         Vec::new()
     };
 
-    // Closure: gather samples for a given seed (start_offset shifts which
-    // pixels in scan order are sampled). Seed 0 is the legacy path
-    // (start_offset = 0) and is byte-identical to the pre-RFC#45-chunk-2
-    // gather. Higher seeds shift the offset by `(seed % stride)` so each
-    // seed draws a different sample subset.
-    let gather_for_seed = |seed: u64| -> TreeSamples {
-        let start_offset = if stride > 1 {
-            (seed as usize) % stride
+    // Closure: gather samples for a given seed, with optional per-seed
+    // stride override (RFC#45 chunk 3). Seed 0 always uses the canonical
+    // `stride` + `start_offset = 0` so seed-0 is byte-identical to the
+    // pre-RFC#45-chunk-2 gather. Higher seeds shift the offset and may
+    // use a perturbed `seed_stride` (different sample density).
+    let gather_for_seed = |seed: u64, seed_stride: usize| -> TreeSamples {
+        let start_offset = if seed_stride > 1 {
+            (seed as usize) % seed_stride
         } else {
             0
         };
         let mut samples = TreeSamples::new_with_ref_channels(num_refs);
         // Meta channels first.
         if let Some(meta) = meta_image {
-            if enable_gather_dedup && start_offset == 0 {
-                // Gather-time dedup only honors the legacy zero-offset path.
-                // Non-zero offsets (seed >= 1) skip dedup — the post-sort
-                // arbiter still collapses bucket-equivalent rows downstream.
+            if enable_gather_dedup && seed == 0 {
+                // Gather-time dedup only honors the canonical seed-0 path.
+                // Higher seeds skip dedup — the post-sort arbiter still
+                // collapses bucket-equivalent rows downstream.
                 let _ = gather_samples_strided_with_dedup_backend(
                     &mut samples,
                     meta,
                     0,
                     0,
-                    stride,
+                    seed_stride,
                     &wp_params,
                     None,
                     true,
@@ -421,14 +421,14 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
                     &dedup_properties,
                 );
             } else if start_offset == 0 {
-                gather_samples_strided(&mut samples, meta, 0, 0, stride, &wp_params);
+                gather_samples_strided(&mut samples, meta, 0, 0, seed_stride, &wp_params);
             } else {
                 gather_samples_strided_with_offset(
                     &mut samples,
                     meta,
                     0,
                     0,
-                    stride,
+                    seed_stride,
                     start_offset,
                     &wp_params,
                 );
@@ -438,13 +438,13 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         let per_group_samples: Vec<TreeSamples> =
             crate::parallel::parallel_map(images.len(), |group_idx| {
                 let mut local = TreeSamples::new_with_ref_channels(num_refs);
-                if enable_gather_dedup && start_offset == 0 {
+                if enable_gather_dedup && seed == 0 {
                     let _ = gather_samples_strided_with_dedup_backend(
                         &mut local,
                         &images[group_idx],
                         group_idx as u32 + per_group_id_offset,
                         0,
-                        stride,
+                        seed_stride,
                         &wp_params,
                         None,
                         true,
@@ -457,7 +457,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
                         &images[group_idx],
                         group_idx as u32 + per_group_id_offset,
                         0,
-                        stride,
+                        seed_stride,
                         &wp_params,
                     );
                 } else {
@@ -466,7 +466,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
                         &images[group_idx],
                         group_idx as u32 + per_group_id_offset,
                         0,
-                        stride,
+                        seed_stride,
                         start_offset,
                         &wp_params,
                     );
@@ -483,45 +483,56 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         samples
     };
 
-    // Multi-seed dispatch — RFC#45 chunk 2 pick #1.
+    // Multi-seed dispatch — RFC#45 chunk 2 (start-offset variance) plus
+    // chunk 3 (broader variance: stride / split_threshold / property-order).
     //
     // At e ≤ 9 `tree_learn_seeds = 1` (libjxl-equivalent, byte-identical
     // hash-locks). At e10/e11 we fan out 2 / 4 seeded gather→tree runs and
     // pick the tree whose tokens have the lowest entropy cost.
+    //
+    // Chunk 3 widens the per-seed variance via [`derive_seeded_stride`]
+    // (density perturbation) and [`derive_seeded_params`] (split-threshold
+    // jitter + property-order rotation). Seed 0 stays the canonical run
+    // — it returns the legacy stride and an unmodified params clone.
     let seeds = profile.tree_learn_seeds.max(1);
     let mut best: Option<(Vec<crate::entropy_coding::token::Token>, usize, Tree, f64)> = None;
 
+    // Baseline params shared across seeds. derive_seeded_params clones and
+    // mutates per-seed; the with_pixel_fraction call is per-seed because
+    // pixel_fraction depends on the actual gathered weight, which varies
+    // with stride.
+    let base_params = TreeLearningParams::from_profile(profile)
+        .with_ref_properties(num_refs, profile.effort)
+        .with_total_pixels(total_pixels);
+
     for seed in 0..(seeds as u64) {
+        let seed_stride = derive_seeded_stride(stride, seed);
         // Gather + tree-learn for this seed.
         let mut samples = crate::profile_time!("modular/gather_samples", {
-            gather_for_seed(seed)
+            gather_for_seed(seed, seed_stride)
         });
-        eprintln!(
-            "DBG seed={} num_samples={} (seeds={})",
-            seed, samples.num_samples, seeds
-        );
 
         let pixel_fraction = if total_pixels > 0 {
             samples.total_gathered_weight() as f64 / total_pixels as f64
         } else {
             1.0
         };
-        let params = TreeLearningParams::from_profile(profile)
-            .with_ref_properties(num_refs, profile.effort)
-            .with_pixel_fraction(pixel_fraction)
-            .with_total_pixels(total_pixels);
+        // Per-seed parameter variance — seed 0 is a no-op clone.
+        let params = derive_seeded_params(&base_params, seed).with_pixel_fraction(pixel_fraction);
         let tree = crate::profile_time!("modular/compute_best_tree", {
             compute_best_tree(&mut samples, &params)
         });
 
         crate::trace::debug_eprintln!(
             "GLOBAL_MODULAR_TREE seed={}/{}: {} nodes from {} samples \
-             (pixel_fraction={:.3})",
+             (pixel_fraction={:.3}, stride={}, split_threshold={:.2})",
             seed,
             seeds,
             tree.len(),
             samples.num_samples,
             pixel_fraction,
+            seed_stride,
+            params.split_threshold,
         );
 
         // Collect residuals for this candidate tree.
@@ -536,8 +547,8 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
                             &wp_params,
                         )
                     });
-                let meta_tokens_opt = meta_image
-                    .map(|meta| collect_residuals_with_tree(meta, &tree, 0, &wp_params));
+                let meta_tokens_opt =
+                    meta_image.map(|meta| collect_residuals_with_tree(meta, &tree, 0, &wp_params));
                 let nb_meta_tokens = meta_tokens_opt.as_ref().map(|t| t.len()).unwrap_or(0);
                 let total_len: usize =
                     nb_meta_tokens + per_group_tokens.iter().map(|t| t.len()).sum::<usize>();
@@ -561,7 +572,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
             break;
         }
         let cost = estimate_token_cost(&all_tokens);
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "MULTI_SEED_TREE_PICK seed={}/{} cost={:.0} bits ({} tokens, {} nodes)",
             seed,
             seeds,
