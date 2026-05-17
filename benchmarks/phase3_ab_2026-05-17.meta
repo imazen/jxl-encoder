@@ -1,0 +1,50 @@
+# Phase 3 (InlineDedupTable) vs Phase 2 (GatherDedupTable) A/B
+# Issue: imazen/jxl-encoder#41 Chunk 2
+# Generated: 2026-05-17
+# Repo commit (this branch): 23f22d22 perf(tree_learn): wire InlineDedupTable into production gather (issue #41 chunk 2)
+# Parent main: 52f8e8166cd6 perf(tree_learn): wire predictor-pruning lb-skip into find_best_predictor (issue #23 chunk 2)
+# Hostname: lilith (water-cooled AMD Ryzen 9 7950X, 128 GB RAM)
+# Run conditions: shared with another agent running predictor_prune_c3 benches
+#                 (load average ~15 during this run). The paired-statistics
+#                 design averages out the shared noise — single-run absolute
+#                 numbers are higher than a quiet baseline, but A/B deltas
+#                 within the same paired iter are still informative.
+# Command:
+#   GD_EFFORTS=7,8,9 GD_SAMPLES=6 GD_WARMUP=2 GD_THREADS=8 \
+#     cargo run --release -p jxl-encoder --features '__expert parallel-tree-learning' \
+#       --example gather_dedup_phase3_ab
+# Both arms have gather_dedup = true; only gather_dedup_phase3 differs.
+# A = GatherDedupTable (Phase 2, SoA-indexed cuckoo)
+# B = InlineDedupTable (Phase 3, fingerprint-cached cuckoo)
+#
+# Acceptance criterion (per Chunk 2 brief):
+#   >= +5% wall-clock win on 1.05 MP @ e7 (8 threads) -> ship Phase 3 default-on.
+#   Otherwise keep default-off, leave knob as opt-in.
+#
+# Result: NOT MET on 1.05 MP @ e7. Phase 3 is *slower* by +8.18% (median)
+# / +6.54% (best-iter) at that exact cell. Decision: keep default-off,
+# document the knob as opt-in for users on synthetic / high-dup workloads
+# where the microbench's +36% to +53% gather-throughput translates to
+# end-to-end wins.
+#
+# Bytes are byte-identical (a_bytes == b_bytes) at every cell, confirming
+# the post-pre_quantize sort dedup remains the byte-determining arbiter
+# regardless of which gather-time backend ran. Hash-locks therefore stay
+# stable (verified separately by `cargo test --release --features
+# parallel-tree-learning --test hash_lock_features` -> 36/36 pass).
+#
+# Columns:
+#   image           - source file basename
+#   megapixels      - image MP
+#   effort          - encoder effort (lossless modular)
+#   n               - paired samples per cell (warmup excluded)
+#   a_med_ms        - Phase 2 (A) median wall-clock ms
+#   b_med_ms        - Phase 3 (B) median wall-clock ms
+#   delta_med_ms    - median(B-A) in ms (negative = Phase 3 faster)
+#   delta_pct_med   - median(100*(B-A)/A) (negative = Phase 3 faster)
+#   delta_pct_best  - 100*(min(B)-min(A))/min(A) (best-iter delta, less polluted by load spikes)
+#   a_best_ms       - Phase 2 best (min) wall-clock ms
+#   b_best_ms       - Phase 3 best (min) wall-clock ms
+#   a_bytes         - Phase 2 output size
+#   b_bytes         - Phase 3 output size
+#   byte_delta_pct  - 100*(B-A)/A bytes (should be 0.0 for all cells)

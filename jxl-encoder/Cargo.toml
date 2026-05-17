@@ -239,6 +239,14 @@ name = "gather_dedup_ab"
 path = "examples/gather_dedup_ab.rs"
 required-features = ["__expert"]
 
+# Phase 3 of issue #41 — A/B harness comparing the new InlineDedupTable
+# backend vs the existing Phase 2 GatherDedupTable backend. Both arms
+# always have gather_dedup = true; only gather_dedup_phase3 differs.
+[[example]]
+name = "gather_dedup_phase3_ab"
+path = "examples/gather_dedup_phase3_ab.rs"
+required-features = ["__expert"]
+
 [[example]]
 name = "lossless_e9_buckets_sweep"
 path = "examples/lossless_e9_buckets_sweep.rs"
