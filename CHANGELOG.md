@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Investigated (kept opt-in)
+
+- **`LosslessConfig::with_smart_fanout` default-on decision: KEEP OPT-IN**
+  (this session, cumulative-state bench
+  `benchmarks/cumulative_state_2026-05-17.tsv` + `.meta`). Re-validated
+  the smart-fanout dispatch (shipped as opt-in in `1c4691f0`) against a
+  broader 20-image corpus (5 small + 5 medium + 5 large + 5 screenshots)
+  × 3 efforts × 3 paired samples × {smart_off, smart_on} variants
+  (bitstream-equivalent claim verified on every cell via sha256).
+  Aggregate best-iter wins are large (-5 to -8% across e7/e8/e9), but
+  one cell (`medium_M4_e0d8e29c` e9) shows a +4-5% paired regression
+  that exceeds the task brief's strict `≥+3%` flip gate. The bench was
+  run under concurrent-agent load (1-min load 4.5-8.5 throughout), so
+  the regression may be load-induced noise on the median rather than a
+  signal — but the gate is strict, so the opt-in stays. The shipped
+  `with_smart_fanout(true)` / `--smart-fanout` knob continues to deliver
+  the demonstrated 5-15% wall-clock wins on small/medium photos at zero
+  byte cost (sha256 byte-identical on every measured cell). A re-bench
+  on a quiesced host (load < 1.0) is needed before flipping the default.
+  See the meta file for the full per-cell table + analyzer scripts.
+
 ### Changed (performance)
 
 - **Always-on `tree_max_buckets` per-image dispatch at large+e9 cells**
