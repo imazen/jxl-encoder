@@ -186,6 +186,14 @@ pub struct VarDctEncoder {
     /// to compensate, reducing blocking artifacts.
     /// Matches the libjxl VarDCT encoder default.
     pub enable_gaborish: bool,
+    /// Override the edge-preserving filter (EPF) iteration count.
+    ///
+    /// `None` (default) = use the distance-derived `epf_iters` from
+    /// [`DistanceParams`] (libjxl thresholds `[0.7, 1.5, 4.0]`).
+    /// `Some(0..=3)` = force the given count; `0` disables EPF and
+    /// skips the dynamic sharpness search. Mirrors libjxl
+    /// `cparams.epf` (`enc_frame.cc:284-285`).
+    pub epf_level_override: Option<u32>,
     /// Enable error diffusion in AC quantization.
     /// When true, spreads quantization error to neighboring coefficients in
     /// zigzag order, helping preserve smooth gradients at high compression.
@@ -370,6 +378,7 @@ impl Default for VarDctEncoder {
             original_distance: None,
             enable_denoise: false,
             enable_gaborish: true,
+            epf_level_override: None,
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
             enable_lz77: false,      // LZ77 has known interactions with DCT2x2/IDENTITY strategies
@@ -426,6 +435,7 @@ impl VarDctEncoder {
             original_distance: None,
             enable_denoise: false,
             enable_gaborish: true,
+            epf_level_override: None,
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
             enable_lz77: false,     // LZ77 has known interactions with DCT2x2/IDENTITY strategies
@@ -475,6 +485,18 @@ impl VarDctEncoder {
     ) -> Self {
         self.budget = Some(budget);
         self
+    }
+
+    /// Apply [`Self::epf_level_override`] to a freshly computed
+    /// [`DistanceParams`], if the caller pinned one. Matches libjxl
+    /// `enc_frame.cc:284-285`: any non-default value overrides the
+    /// distance-derived `epf_iters` (including `0`, which forces EPF
+    /// off and skips the dynamic sharpness search downstream).
+    #[inline]
+    pub(crate) fn apply_epf_level_override(&self, params: &mut DistanceParams) {
+        if let Some(level) = self.epf_level_override {
+            params.epf_iters = level;
+        }
     }
 
     /// Encode an image in linear sRGB format, optionally with an alpha channel.
@@ -950,6 +972,9 @@ impl VarDctEncoder {
         if let Some(rescale) = self.quant_ac_rescale {
             params.apply_quant_ac_rescale(rescale);
         }
+        // libjxl --epf override: when the caller pinned a level, it wins
+        // over the distance-derived `epf_iters` (enc_frame.cc:284-285).
+        self.apply_epf_level_override(&mut params);
 
         // Apply pixel-level chromacity adjustments using pre-gaborish stats
         // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl
@@ -1967,6 +1992,9 @@ impl VarDctEncoder {
         if let Some(rescale) = self.quant_ac_rescale {
             params.apply_quant_ac_rescale(rescale);
         }
+        // libjxl --epf override: when the caller pinned a level, it wins
+        // over the distance-derived `epf_iters` (enc_frame.cc:284-285).
+        self.apply_epf_level_override(&mut params);
 
         // Apply pixel-level chromacity adjustments using pre-gaborish stats
         if self.profile.chromacity_adjustment {
@@ -2345,6 +2373,9 @@ impl VarDctEncoder {
         if let Some(rescale) = self.quant_ac_rescale {
             params.apply_quant_ac_rescale(rescale);
         }
+        // libjxl --epf override: when the caller pinned a level, it wins
+        // over the distance-derived `epf_iters` (enc_frame.cc:284-285).
+        self.apply_epf_level_override(&mut params);
         if self.profile.chromacity_adjustment {
             params.apply_chromacity_adjustment(
                 precomputed.chromacity_x_pixelized,

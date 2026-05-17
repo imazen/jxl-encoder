@@ -144,6 +144,13 @@ struct Args {
     #[arg(long)]
     no_gaborish: bool,
 
+    /// Edge-preserving filter strength override (mirrors libjxl `cjxl --epf`).
+    /// `-1` (default) = encoder chooses by distance; `0` = off;
+    /// `1`/`2`/`3` = forced iteration count (heavier smoothing).
+    /// Values outside `-1..=3` are clamped to that range.
+    #[arg(long, value_name = "LEVEL", allow_hyphen_values = true, default_value_t = -1)]
+    epf: i8,
+
     /// Force DCT8 only (disable AC strategy selection)
     #[arg(long)]
     dct8_only: bool,
@@ -572,6 +579,9 @@ fn main() {
                     if args.no_gaborish {
                         cfg = cfg.with_gaborish(false);
                     }
+                    if args.epf != -1 {
+                        cfg = cfg.with_epf_level(args.epf);
+                    }
                     if args.noise || args.denoise {
                         cfg = cfg.with_noise(true);
                     }
@@ -897,6 +907,9 @@ fn main() {
         if args.no_gaborish {
             cfg = cfg.with_gaborish(false);
         }
+        if args.epf != -1 {
+            cfg = cfg.with_epf_level(args.epf);
+        }
         if args.noise || args.denoise {
             cfg = cfg.with_noise(true);
         }
@@ -1018,6 +1031,12 @@ fn main() {
                 false
             } else {
                 args.effort >= 3 && distance > 0.5
+            };
+            // libjxl `--epf -1..3` override (enc_frame.cc:284-285).
+            tiny.epf_level_override = if args.epf < 0 {
+                None
+            } else {
+                Some(args.epf.clamp(0, 3) as u32)
             };
             tiny.error_diffusion = args.error_diffusion;
             tiny.pixel_domain_loss = if args.no_pixel_domain_loss {
