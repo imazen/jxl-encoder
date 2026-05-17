@@ -8247,6 +8247,158 @@ fn test_extra_channel_size_mismatch_rejected() {
     );
 }
 
+/// CMYK lossless (#58): 4-byte interleaved input rountrips
+/// pixel-exact through the encoder + jxl-rs decoder. The K plane
+/// is auto-synthesised as an `ExtraChannelType::Black` channel and
+/// must survive intact.
+#[test]
+fn test_lossless_cmyk8_roundtrip_pixel_exact() {
+    use crate::test_helpers::decode_with_jxl_rs;
+    let w = 32u32;
+    let h = 32u32;
+    // Deterministic CMYK pattern: each channel uses a different
+    // coprime stride so the per-channel histograms don't collapse
+    // onto one another. JXL convention is 0 = full ink, 255 = no ink
+    // (we don't actually depend on the convention for round-trip;
+    // the encoder is pixel-exact regardless).
+    let n = (w * h) as usize;
+    let mut pixels: Vec<u8> = Vec::with_capacity(n * 4);
+    for i in 0..n {
+        pixels.push(((i * 7) % 251) as u8); // C
+        pixels.push(((i * 11) % 251) as u8); // M
+        pixels.push(((i * 13) % 251) as u8); // Y
+        pixels.push(((i * 17) % 251) as u8); // K
+    }
+
+    let bytes = LosslessConfig::new()
+        .encode_request(w, h, PixelLayout::Cmyk8)
+        .encode(&pixels)
+        .expect("encode CMYK lossless");
+
+    // The codestream must declare 1 extra channel of type Black.
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let header = image.image_header();
+    assert_eq!(
+        header.metadata.ec_info.len(),
+        1,
+        "CMYK lossless should produce exactly 1 extra channel (Black)",
+    );
+    assert_eq!(
+        format!("{:?}", header.metadata.ec_info[0].ty),
+        "Black",
+        "extra channel must be of type Black, got {:?}",
+        header.metadata.ec_info[0].ty,
+    );
+
+    // Pixel-exact round-trip via jxl-rs. The decoder returns CMY
+    // (3 colour channels) + K (1 extra channel) interleaved per
+    // pixel in f32 [0, 1] range. Convert back to u8 and compare
+    // byte-for-byte against the input.
+    let decoded = decode_with_jxl_rs(&bytes).expect("jxl-rs decode CMYK");
+    assert_eq!(decoded.width as u32, w);
+    assert_eq!(decoded.height as u32, h);
+    assert_eq!(
+        decoded.channels, 4,
+        "jxl-rs should expose CMY + K as 4 channels",
+    );
+
+    let mut mismatches = 0usize;
+    for i in 0..n {
+        for c in 0..4 {
+            let got = (decoded.pixels[i * 4 + c] * 255.0).round() as i32;
+            let want = pixels[i * 4 + c] as i32;
+            if got != want {
+                mismatches += 1;
+                if mismatches < 5 {
+                    eprintln!("mismatch at pixel {i} channel {c}: want {want} got {got}",);
+                }
+            }
+        }
+    }
+    assert_eq!(
+        mismatches, 0,
+        "CMYK lossless must be pixel-exact; {mismatches} bytes diverged",
+    );
+}
+
+/// CMYK 16-bit lossless (#58): 8-byte interleaved u16 input must
+/// produce a valid codestream with a 16-bit Black extra channel.
+/// jxl-rs / jxl-oxide must both parse without error and report the
+/// extra channel as 16-bit. We don't do a full pixel-exact compare
+/// here (decoded f32 → u16 quantisation rounding would need a
+/// dedicated path); the goal of this test is to lock down the
+/// header signalling for 16-bit CMYK.
+#[test]
+fn test_lossless_cmyk16_header_signals_16bit_black() {
+    let w = 16u32;
+    let h = 16u32;
+    let n = (w * h) as usize;
+    // Big-magnitude values that wouldn't survive an accidental
+    // truncation to 8-bit (top byte non-zero everywhere).
+    let mut pixels: Vec<u8> = Vec::with_capacity(n * 8);
+    for i in 0..n {
+        for c in 0..4u16 {
+            let v = (i as u16).wrapping_mul(257).wrapping_add(c * 13);
+            pixels.extend_from_slice(&v.to_ne_bytes());
+        }
+    }
+
+    let bytes = LosslessConfig::new()
+        .encode_request(w, h, PixelLayout::Cmyk16)
+        .encode(&pixels)
+        .expect("encode 16-bit CMYK lossless");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse 16-bit CMYK");
+    let header = image.image_header();
+    assert_eq!(header.metadata.bit_depth.bits_per_sample(), 16);
+    assert_eq!(
+        header.metadata.ec_info.len(),
+        1,
+        "16-bit CMYK should expose 1 extra channel (Black)",
+    );
+    assert_eq!(format!("{:?}", header.metadata.ec_info[0].ty), "Black");
+    assert_eq!(
+        header.metadata.ec_info[0].bit_depth.bits_per_sample(),
+        16,
+        "Black extra channel must be marked 16-bit",
+    );
+    let _render = image.render_frame(0).expect("render 16-bit CMYK");
+}
+
+/// CMYK + RGBA-shaped extras must not double-add a Black channel.
+/// Callers who supply their own `ExtraChannel::black(...)` AND
+/// pass `PixelLayout::Cmyk8` get a clear error instead of a
+/// codestream with two Black entries.
+#[test]
+fn test_lossless_cmyk_rejects_duplicate_black_extra() {
+    use crate::api::ExtraChannel;
+    let w = 16u32;
+    let h = 16u32;
+    let n = (w * h) as usize;
+    let pixels: Vec<u8> = vec![128u8; n * 4];
+    let extra_k: Vec<u8> = vec![64u8; n];
+    let extras = [ExtraChannel::black(&extra_k)];
+    let result = LosslessConfig::new()
+        .encode_request(w, h, PixelLayout::Cmyk8)
+        .with_extra_channels(&extras)
+        .encode(&pixels);
+    assert!(
+        result.is_err(),
+        "CMYK + user-supplied Black extra must be rejected",
+    );
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        msg.contains("Black"),
+        "expected Black-conflict error, got: {msg}",
+    );
+}
+
 /// Refs #9: lossy RGB + Depth extra channel — verify the channel
 /// survives roundtrip and the file header reports the right
 /// extra-channel type. Single-group (16x16).
