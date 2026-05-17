@@ -128,6 +128,54 @@ const HAS_SIMILAR_RADIUS: usize = 2;
 /// Threshold for has_similar check.
 const HAS_SIMILAR_THRESHOLD: f32 = 0.03;
 
+// ── Calibration Stats Sink ────────────────────────────────────────────────────
+//
+// Thread-local snapshot of the last patches-detection on this thread. Set by
+// `find_and_build_with_per_patch_gate` (and the no-gate variants that route
+// through it) right after `build_patches_data`, before any drop / rebuild.
+// Used by the `patches_savings_calibrate` example to derive an empirical
+// bytes-per-patch-pixel savings constant for the per-set `is_cost_effective`
+// gate (RFC#45 chunk 4 — see `is_cost_effective` doc-comment). Read via
+// [`take_last_patches_stats`]; reset to `None` on read.
+//
+// `#[doc(hidden)]` + thread-local so it costs nothing in release builds and
+// cannot be observed by stable callers.
+
+#[doc(hidden)]
+#[derive(Copy, Clone, Debug)]
+pub struct LastPatchesStats {
+    /// Sum over all occurrences of `pixels` (patch w*h * occurrences).
+    pub total_patch_pixels: usize,
+    /// Number of unique patch templates BEFORE per-patch gating.
+    pub unique_refs_before_gate: usize,
+    /// Number of unique patch templates AFTER per-patch gating.
+    pub unique_refs_after_gate: usize,
+    /// Reference-frame pixel count AFTER gating (`ref_width * ref_height`).
+    pub ref_frame_pixels_after_gate: usize,
+    /// Total occurrences (positions count) AFTER gating.
+    pub total_occurrences_after_gate: usize,
+}
+
+thread_local! {
+    static LAST_PATCHES_STATS: core::cell::Cell<Option<LastPatchesStats>> =
+        const { core::cell::Cell::new(None) };
+}
+
+/// Take the most recent [`LastPatchesStats`] snapshot for this thread,
+/// clearing the slot. Returns `None` if no patch detection has run since
+/// the last call (or since thread start).
+///
+/// Calibration / instrumentation hook only — `#[doc(hidden)]`, not part
+/// of the stable API.
+#[doc(hidden)]
+pub fn take_last_patches_stats() -> Option<LastPatchesStats> {
+    LAST_PATCHES_STATS.with(|c| c.take())
+}
+
+fn set_last_patches_stats(stats: LastPatchesStats) {
+    LAST_PATCHES_STATS.with(|c| c.set(Some(stats)));
+}
+
 // ── Data Structures ────────────────────────────────────────────────────────────
 
 /// A patch quantized to i8 per channel, plus the original float pixels.
@@ -237,25 +285,72 @@ pub struct PatchesData {
 impl PatchesData {
     /// Check whether patches are cost-effective at the given distance.
     ///
-    /// Trial-encodes the reference frame to measure actual overhead, then estimates
-    /// VarDCT savings from patch subtraction. Returns false if overhead exceeds
-    /// estimated savings (with 2x safety margin).
+    /// Trial-encodes the reference frame to measure actual overhead, then
+    /// estimates VarDCT savings from patch subtraction. Returns false if
+    /// overhead exceeds estimated savings (with 2× safety margin baked into
+    /// the comparison).
     ///
-    /// At high distances (d>=3), VarDCT savings per pixel drop while ref frame
-    /// overhead stays constant, causing patches to hurt rather than help.
+    /// # Calibration of the per-pixel savings constant
     ///
-    /// At low distances (d<1), the previous `0.3/max(0.5, d)` model over-estimated
-    /// the per-pixel savings: the VarDCT quantizer is already fine enough at low d
-    /// that text edges code efficiently, so subtracting them into a ref frame does
-    /// not free up nearly `0.6 bytes/pixel` of bitstream as the model claimed.
-    /// libjxl has no equivalent gate — they admit all detected patches — but we
-    /// detect more candidates than libjxl (`kMinPeak = 1` since W2-5 chunk 1,
-    /// commit 7b8c06e) and rely on this gate to keep cost-additive admits out.
+    /// The model is `savings_est = total_patch_pixels * C / max(distance, 1.0)`
+    /// where `C` is the empirical bytes-per-pixel savings constant.
     ///
-    /// The current model clamps the divisor at 1.0 so d in [0.0, 1.0] all get the
-    /// d=1.0 per-pixel estimate (0.3 bytes/pixel) instead of the run-away 0.6
-    /// bytes/pixel that admitted regressing patches on windows95 at d=0.5.
-    /// Behavior at d >= 1.0 is unchanged.
+    /// The W5-5 bench (RFC#45 pick #5 chunk 3, commit `f230dd1`) found that
+    /// the previous `C = 0.3` value UNDER-estimated actual savings by 3-5×.
+    /// Concrete example: `windows95.png` at d=0.5 has total_patch_pixels =
+    /// 22851 and the model predicted 22851 / 1.0 * 0.3 = 6855 B of saving,
+    /// yet patches-on vs patches-off measured 25693 B (~3.75× more). With
+    /// the `2× safety margin` baked in (`effective` requires `savings_est >=
+    /// 2 * total_overhead`), `C = 0.3` rejected every truly-winning case
+    /// where the ref-frame overhead crossed ~3-4 KB.
+    ///
+    /// RFC#45 chunk 4 (this commit) re-fit `C` from a paired
+    /// patches-on/off trial-encode sweep over 5 screenshots × 4 distances
+    /// (gb82-sc: `windows95.png`, `terminal.png`, `codec_wiki.png`,
+    /// `imac_g3.png`, `windows.png`; distances {0.5, 1.0, 2.0, 4.0}),
+    /// computing `empirical_bpp_d_clamped = actual_savings *
+    /// max(d, 1.0) / total_patch_pixels` on each cell. See
+    /// `examples/patches_savings_calibrate.rs` for the harness and
+    /// `benchmarks/patches_savings_calibrate_2026-05-17.{tsv,meta}` for
+    /// the raw numbers.
+    ///
+    /// Distribution of the 20 measured cells:
+    /// `min = 0.459` (codec_wiki d=1.0), `p25 = 0.634`, `median = 0.948`,
+    /// `mean = 1.200`, `p75 = 1.647`, `max = 3.584` (windows95 d=4.0).
+    /// The geometric-mean best fit for the current `1 / max(d, 1.0)`
+    /// model shape is `C = 1.014`; we round to `C = 1.0`.
+    ///
+    /// Why not the worst-case lower bound (`C = 0.5`)? The `2×` factor in
+    /// `savings_est >= 2 * total_overhead` already encodes a "predicted
+    /// savings ≥ 2× overhead" safety margin. With `C = 1.0`, the gate
+    /// admits when `pixels / d_clamp >= 2 * overhead`; even at the worst
+    /// observed empirical `bpp_d_clamped = 0.46`, actual savings are
+    /// `pixels * 0.46 / d_clamp >= 2 * 0.46 * overhead = 0.92 * overhead`
+    /// — borderline-positive instead of the 3-4× under-margin the old
+    /// `C = 0.3` produced. The single empirically losing case in the
+    /// 20-cell sweep would still get the benefit of the trial-encoded
+    /// `ref_overhead` (not pessimistic) being accurate; on photos the
+    /// detector returns `None` upstream so the gate never fires there.
+    ///
+    /// # Notes
+    ///
+    /// * libjxl has no equivalent per-set gate — they admit all detected
+    ///   patches. This gate fires only in `EncoderMode::Experimental`;
+    ///   the default `EncoderMode::Reference` path runs the per-patch
+    ///   gate (`apply_per_patch_cost_gate`) instead. See RFC#45 chunk 3
+    ///   doc-comment on that function for the per-patch calibration.
+    /// * The divisor `max(distance, 1.0)` clamps low-d behaviour — the
+    ///   quantizer at d=0.5 is already fine enough that the per-pixel
+    ///   savings does not double vs d=1.0 the way a literal `1/d` model
+    ///   would predict (empirical d=0.5 mean is 0.97 bpp; d=1.0 mean is
+    ///   0.90 bpp — essentially flat, then the divisor takes over from
+    ///   d=2.0 onward).
+    /// * The model under-fits at high d (actual `bpp_d_clamped` rises
+    ///   from 0.95 at d=1.0 to 1.64 at d=4.0 — savings fall off slower
+    ///   than `1/d`). A `1/sqrt(d)` divisor fits slightly better
+    ///   (geomean C=0.78, R²=0.34 vs current R²<0), but keeping the
+    ///   current shape avoids re-litigating the W3-1 low-d regression
+    ///   path. Future work: replace with `1 / sqrt(max(d, 1.0))`.
     pub fn is_cost_effective(&self, distance: f32, use_ans: bool) -> bool {
         let ref_overhead = trial_encode_ref_frame_bytes(self, use_ans);
         if ref_overhead == usize::MAX {
@@ -273,11 +368,16 @@ impl PatchesData {
                 (rp.xsize as usize) * (rp.ysize as usize)
             })
             .sum();
-        // Each patch pixel saves roughly (0.3 / max(d, 1.0)) bytes of VarDCT data.
-        // The clamp at 1.0 (rather than 0.5) reflects that per-pixel savings
-        // saturate as d shrinks — the quantizer at d=0.5 is already fine enough
-        // that text patches don't free up 2x the bits per pixel that d=1.0 would.
-        let savings_est = (total_patch_pixels as f64 / (distance.max(1.0) as f64) * 0.3) as usize;
+        // C = 1.0 bytes per patch-pixel (RFC#45 chunk 4 recalibration —
+        // see doc-comment above). Geometric-mean fit of measured
+        // patches-on vs patches-off byte deltas over 5 screenshots × 4
+        // distances; median observed `empirical_bpp_d_clamped` = 0.95.
+        // Previous `C = 0.3` under-estimated by ~3.16× (median ratio) and
+        // up to 12× on the highest-savings cells, defeating the 2× safety
+        // margin and rejecting every winning case where overhead > 3-4 KB.
+        const SAVINGS_BYTES_PER_PIXEL: f64 = 1.0;
+        let savings_est = (total_patch_pixels as f64 / (distance.max(1.0) as f64)
+            * SAVINGS_BYTES_PER_PIXEL) as usize;
         let effective = savings_est >= 2 * total_overhead;
         #[cfg(feature = "debug-tokens")]
         eprintln!(
@@ -1802,6 +1902,12 @@ pub fn find_and_build_with_per_patch_gate(
         patches_data.positions.len()
     );
 
+    // RFC#45 chunk 4 calibration sink: record pre-gate state so the
+    // calibration harness can compute actual-bytes-per-pixel without
+    // re-running detection. See `LastPatchesStats` doc-comment for the
+    // dual-snapshot (before/after gate) rationale.
+    let unique_refs_before_gate = patches_data.ref_positions.len();
+
     // RFC#45 pick #5 chunk 3: per-patch cost decision. Trial-encode the
     // full reference frame once to derive an empirical bytes-per-pixel
     // for the ref frame, then evaluate each unique patch template
@@ -1813,6 +1919,14 @@ pub fn find_and_build_with_per_patch_gate(
     } else {
         patches_data
     };
+
+    set_last_patches_stats(LastPatchesStats {
+        total_patch_pixels,
+        unique_refs_before_gate,
+        unique_refs_after_gate: patches_data.ref_positions.len(),
+        ref_frame_pixels_after_gate: patches_data.ref_width * patches_data.ref_height,
+        total_occurrences_after_gate: patches_data.positions.len(),
+    });
 
     debug_rect!(
         "patches/decision",

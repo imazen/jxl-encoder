@@ -1,0 +1,128 @@
+Bench: patches_savings_calibrate_2026-05-17
+Purpose: RFC#45 pick #5 chunk 4 — empirically recalibrate the per-pixel
+savings constant in `PatchesData::is_cost_effective`. Follow-on to W5-5
+(commit f230dd1) which surfaced the hard finding that the previous
+`C = 0.3 bytes/pixel` constant under-estimates actual screenshot
+savings by 3-5×, defeating the gate's built-in 2× safety margin and
+causing it to reject every truly-winning patches admission in
+`EncoderMode::Experimental`.
+
+Date: 2026-05-17 (UTC)
+Host: lilith (AMD Ryzen 9 7950X, 128 GB RAM, water-cooled)
+Branch: jj patches-chunk4-recalibrate workspace
+Base commit: f230dd1d (chunk 3 — per-patch cost gate)
+
+Sweep grid:
+  Class: screenshot, photo (5 each)
+  Screenshots (gb82-sc): windows95, terminal, codec_wiki, imac_g3, windows
+  Photos (CID22 validation): 1025469, 1044329, 1189261, 1279330, 1418519
+  Distances: 0.5, 1.0, 2.0, 4.0
+  Encoder: jxl-encoder LossyConfig::new(d), default mode (Reference),
+    default effort (7), paired patches-on (`with_patches(true)`) vs
+    patches-off (`with_patches(false)`).
+
+Harness: jxl-encoder/examples/patches_savings_calibrate.rs
+  Build: cargo run --release -p jxl-encoder --features __internals \
+    --example patches_savings_calibrate
+  Requires the `__internals` feature for access to the
+  `LastPatchesStats` thread-local snapshot recorded by
+  `find_and_build_with_per_patch_gate`.
+
+Instrumentation:
+  - New `LastPatchesStats` struct in `vardct/patches.rs` records the
+    pre-gate `total_patch_pixels` plus the after-gate `unique_refs`,
+    `ref_frame_pixels`, and `occurrences` from each call to
+    `find_and_build_with_per_patch_gate`. Re-exported through
+    `jxl_encoder::__internals::{take_last_patches_stats, LastPatchesStats}`.
+  - The harness takes both snapshots (patches-on and patches-off) and
+    computes `actual_savings_B = bytes_off - bytes_on`, then derives
+    the empirical bytes-per-pixel: `empirical_bpp_d_clamped =
+    actual_savings * max(distance, 1.0) / total_patch_pixels`.
+
+Distribution of the 20 measured cells (screenshots only; photos all
+have `total_patch_pixels = 0` because the detector returns `None` on
+photo content, so they are excluded from the fit):
+
+  min = 0.459 (codec_wiki d=1.0)
+  p25 = 0.634
+  median = 0.948
+  mean = 1.200
+  p75 = 1.647
+  max = 3.584 (windows95 d=4.0)
+
+Multiplier vs the previous `C = 0.3` constant:
+  median = 3.16×
+  mean = 4.00×
+
+Geometric-mean best fit for the current `C / max(d, 1.0)` model shape:
+  C = 1.014  →  rounded to C = 1.0
+
+Distance-dependence of empirical bpp_d_clamped:
+  d=0.5: mean 0.97, median 0.86
+  d=1.0: mean 0.90, median 0.68
+  d=2.0: mean 1.29, median 0.95
+  d=4.0: mean 1.64, median 1.19
+  → Savings INCREASE with distance (not decrease as `1/d` predicts);
+    a `1/sqrt(d)` divisor fits better (R²=0.34 vs current R²<0) but
+    keeping the `1/max(d, 1.0)` shape avoids re-litigating the W3-1
+    low-d regression closure. Future work: replace divisor with
+    `1 / sqrt(max(d, 1.0))`.
+
+Action taken: `is_cost_effective` constant updated from `0.3` to `1.0`
+in `vardct/patches.rs`. Default Reference-mode path is unaffected
+(the gate is `EncoderMode::Experimental`-only); verified via the
+existing `patches_gate_bench` which is byte-identical to W5-5 across
+all 40 cells.
+
+Verification of effect on Experimental mode:
+  Harness: jxl-encoder/examples/patches_gate_experimental_ab.rs
+  Output: `patches_gate_experimental_ab_2026-05-17.tsv`
+  Compares `Experimental(default)` vs `Experimental(--no-patches)`:
+
+  Screenshots — patches admission delta (negative = patches save bytes):
+    windows95 d=0.5: -35,098 B (-43%)
+    windows95 d=1.0: -34,032 B (-40%)
+    windows95 d=2.0: 0 B (gate rejects — model under-predicts savings at high d)
+    windows95 d=4.0: 0 B (gate rejects)
+    terminal d=0.5: -104,912 B (-64%)
+    terminal d=1.0: -86,020 B (-59%)
+    terminal d=2.0: -59,971 B (-56%)
+    terminal d=4.0: 0 B (gate rejects)
+    codec_wiki d=0.5: -35,880 B (-22%)
+    codec_wiki d=1.0: -27,640 B (-19%)
+    codec_wiki d=2.0: -17,387 B (-16%)
+    codec_wiki d=4.0: 0 B (gate rejects)
+    imac_g3 d=0.5: -365,828 B (-56%)
+    imac_g3 d=1.0: -318,724 B (-55%)
+    imac_g3 d=2.0: -233,477 B (-53%)
+    imac_g3 d=4.0: 0 B (gate rejects)
+    windows d=0.5: -240,217 B (-41%)
+    windows d=1.0: -198,186 B (-42%)
+    windows d=2.0: 0 B (gate rejects)
+    windows d=4.0: 0 B (gate rejects)
+
+  Photos: all 20 cells byte-identical with vs without `with_patches(false)`
+    (no patches detected — gate not invoked — chunk 4 has zero photo impact).
+
+  Pre-chunk-4 state would have shown 0 admission across ALL 20 screenshot
+  cells (every cell rejected by the `C = 0.3` gate).
+
+Validation:
+  - hash_lock_features: 36/36 byte-identical (default Reference path
+    unchanged; the constant change is invisible there).
+  - jxl-encoder lib tests (serial): 1090 passed, 0 failed, 29 ignored
+    (1 flaky-only-in-parallel test, unrelated, passes serially).
+  - jxl-encoder integration tests: all passing including with_patches_data
+    and patches OOB regression.
+
+TSV columns (patches_savings_calibrate_2026-05-17.tsv):
+  class, image, width, height, distance, bytes_off, bytes_on,
+  actual_savings_B, total_patch_pixels, unique_refs,
+  ref_frame_pixels, occurrences, empirical_bpp_d_clamped
+
+TSV columns (patches_gate_experimental_ab_2026-05-17.tsv):
+  class, image, width, height, distance, exp_with_patches,
+  exp_no_patches, delta_B
+
+Reference data: `patches_per_patch_gate_2026-05-17.tsv` (W5-5 baseline,
+also byte-identical to chunk-4 Reference-mode output across all cells).

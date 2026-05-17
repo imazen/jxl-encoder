@@ -156,6 +156,11 @@ pub mod __internals {
     // can't be `pub use`d directly.
     pub use crate::vardct::ac_strategy::compute_scaled_constants_free;
     pub use crate::vardct::epf::epf_step0_strip_free;
+    /// Thread-local snapshot of the most recent patches-detection on
+    /// this thread, recorded by `find_and_build_with_per_patch_gate`.
+    /// Calibration / instrumentation hook only — see
+    /// [`crate::vardct::patches`] doc-comment.
+    pub use crate::vardct::patches::{LastPatchesStats, take_last_patches_stats};
     pub use crate::vardct::quantize::adjust_quant_block_ac_free;
 }
 

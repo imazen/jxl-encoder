@@ -231,6 +231,23 @@ path = "examples/wasm_bench.rs"
 name = "patches_gate_bench"
 path = "examples/patches_gate_bench.rs"
 
+# RFC#45 chunk 4 calibration harness — fits the per-pixel savings
+# constant in `PatchesData::is_cost_effective` from paired
+# patches-on/off trial encodes. Uses the `__internals`-gated
+# `LastPatchesStats` thread-local snapshot.
+[[example]]
+name = "patches_savings_calibrate"
+path = "examples/patches_savings_calibrate.rs"
+required-features = ["__internals"]
+
+# RFC#45 chunk 4 verification — shows that the recalibrated
+# `is_cost_effective` constant re-activates patches admission on
+# `EncoderMode::Experimental` (which is the only path the per-set gate
+# fires on; default Reference mode is unchanged).
+[[example]]
+name = "patches_gate_experimental_ab"
+path = "examples/patches_gate_experimental_ab.rs"
+
 [[example]]
 name = "bench_lossy_palette"
 path = "examples/bench_lossy_palette.rs"
