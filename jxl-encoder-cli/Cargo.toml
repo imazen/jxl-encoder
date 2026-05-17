@@ -39,6 +39,14 @@ parallel = ["jxl_encoder/parallel"]
 # may fork further (depth-capped) until subtree size or budget exhaustion.
 # Default-off pending hash-lock verification on the broader test corpus.
 parallel-tree-learning = ["jxl_encoder/parallel-tree-learning", "parallel"]
+# Enable JPEG → JXL lossless transcoding. When this feature is on, the
+# CLI auto-detects `.jpg` / `.jpeg` input (or accepts `--lossless-jpeg`
+# to force the path) and routes through
+# `LosslessConfig::encode_jpeg_transcode`. Output is a JXL container
+# with the JBRD reconstruction box, so
+# `djxl out.jxl out.jpg --reconstruct_jpeg` reproduces the original
+# JPEG byte-for-byte. Pulls in zenjpeg + brotli through jxl-encoder.
+jpeg-reencoding = ["jxl_encoder/jpeg-reencoding"]
 
 [dependencies]
 jxl_encoder = { package = "jxl-encoder", path = "../jxl-encoder", version = "0.3.0", default-features = false }

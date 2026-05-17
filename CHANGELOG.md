@@ -74,6 +74,47 @@
   semantics — both names are available so callers porting from `cjxl`
   can use libjxl terminology.
 
+- **Public JPEG → JXL lossless transcoding API** (issue #44, this
+  session). The pre-existing internal `jpeg-reencoding`-gated module
+  (`jxl-encoder/src/jpeg/`, 2,253 LoC, 52 integration tests) is now
+  exposed through the public API surface. New entry points (all gated
+  behind the `jpeg-reencoding` cargo feature):
+    - `LosslessConfig::encode_jpeg_transcode(jpeg_bytes: &[u8]) -> Result<Vec<u8>>` —
+      parses an existing JPEG and emits a JXL container with the JBRD
+      reconstruction box, so `djxl out.jxl out.jpg --reconstruct_jpeg`
+      reproduces the original JPEG byte-for-byte. Pixel-identical
+      decode through any JXL decoder.
+    - `LosslessConfig::encode_jpeg_transcode_codestream(jpeg_bytes: &[u8])` —
+      bare codestream variant (no container, no JBRD). Smaller output
+      bytes, but cannot reconstruct the original JPEG.
+    - `jxl_encoder::jpeg::is_jpeg_signature(bytes)` — lightweight
+      `0xFF 0xD8 0xFF` sniff for routing decisions.
+    - `EncodeError::JpegParse { message }` — new error variant for
+      malformed JPEG input (returned by both transcode methods).
+  CLI integration in `jxl-encoder-cli` (also feature-gated):
+    - `--lossless-jpeg` — force the JPEG transcode path for the input.
+    - `--no-lossless-jpeg` — disable the auto-detect path even on
+      `.jpg` / `.jpeg` / `.jpe` / `.jfif` extensions.
+    - Auto-detection by extension is on by default when the
+      `jpeg-reencoding` feature is enabled. The CLI sniffs the SOI
+      marker before routing so a mis-extensioned PNG fails loudly.
+  Bumped `zenjpeg` dep to `^0.8.4` (the published `0.7.1` calls
+  `magetypes::mf32x8::load_8x8(block)` with the pre-0.9.16 single-arg
+  signature, incompatible with the current `magetypes ^0.9.23` floor
+  pulled in by `zensim`/`butteraugli`/`fast-ssim2`). The `0.8.4` floor
+  pulls in the token-passing API and clears the broken-build state
+  that existed on `main` with `jpeg-reencoding` on.
+  Coverage: 7 new public-API integration tests in
+  `tests/jpeg_public_api.rs` (signature sniff, container with JBRD,
+  bare codestream, non-JPEG rejection, jxl-rs pixel roundtrip — all
+  passing). Pre-existing `tests/jpeg_reencoding.rs` (52 tests covering
+  4:4:4/4:2:0/4:2:2/4:4:0/grayscale, JBRD parse via jxl-jbr, etc.)
+  unchanged. The `djxl --reconstruct_jpeg` byte-exact reconstruction
+  has known pre-existing edge cases on some fixtures (tracked in the
+  existing `test_jbrd_roundtrip_*` tests, which are tolerant of
+  djxl-side failures); this chunk does NOT change the JBRD payload —
+  it only exposes the existing transcode path through the public API.
+
 ### Investigated (negative result, primitive shipped under `__bench_internals`)
 
 - **Phase 4 fused `AddSample` primitive** (`FusedHashKeyBuilder` in

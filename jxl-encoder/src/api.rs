@@ -46,6 +46,19 @@ pub enum EncodeError {
     Io(std::io::Error),
     /// Internal encoder error (should not happen — file a bug).
     Internal { message: String },
+    /// JPEG input could not be parsed for lossless transcoding.
+    ///
+    /// Raised by [`LosslessConfig::encode_jpeg_transcode`] and the bare
+    /// [`LosslessConfig::encode_jpeg_transcode_codestream`] variant when
+    /// the supplied bytes are not a valid baseline-sequential JPEG, when
+    /// the JPEG uses a feature unsupported by the transcoder (e.g.,
+    /// arithmetic coding), or when the embedded decoder fails to extract
+    /// quantized DCT coefficients. The message is plain-text and safe to
+    /// surface to end users.
+    ///
+    /// Only constructible when the `jpeg-reencoding` cargo feature is
+    /// enabled.
+    JpegParse { message: String },
 }
 
 impl core::fmt::Display for EncodeError {
@@ -62,6 +75,7 @@ impl core::fmt::Display for EncodeError {
             #[cfg(feature = "std")]
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::Internal { message } => write!(f, "internal error: {message}"),
+            Self::JpegParse { message } => write!(f, "JPEG parse error: {message}"),
         }
     }
 }
@@ -132,6 +146,15 @@ impl From<crate::validation::ValidationError> for EncodeError {
 impl From<enough::StopReason> for EncodeError {
     fn from(_: enough::StopReason) -> Self {
         Self::Cancelled
+    }
+}
+
+#[cfg(feature = "jpeg-reencoding")]
+impl From<crate::jpeg::JpegError> for EncodeError {
+    fn from(e: crate::jpeg::JpegError) -> Self {
+        Self::JpegParse {
+            message: format!("{e}"),
+        }
     }
 }
 
@@ -1624,6 +1647,104 @@ impl LosslessConfig {
     ) -> Result<Vec<u8>> {
         encode_animation_lossless(self, width, height, layout, animation, frames, Some(limits))
             .map_err(at)
+    }
+
+    // ── JPEG → JXL lossless transcoding ─────────────────────────────────
+    //
+    // Parses an existing JPEG file and re-encodes its quantized DCT
+    // coefficients into a JXL bitstream. Pixel-identical to the original
+    // (no re-quantization, no perceptual changes) AND — when called via
+    // [`Self::encode_jpeg_transcode`] — byte-exact JPEG reconstruction
+    // via the JBRD box in the JXL container. Typical ratio: ~80% of the
+    // original JPEG bytes on photographic content.
+    //
+    // This is **the** flagship JXL feature for serving smaller JPEG-like
+    // bytes without re-decoding/re-encoding through pixels. The transcoded
+    // JXL can be decoded directly OR reconstructed back to the exact
+    // original JPEG via `djxl --reconstruct_jpeg`.
+    //
+    // Currently only baseline-sequential JPEGs with 1 or 3 components
+    // (grayscale, YCbCr 4:4:4/4:2:0/4:2:2/4:4:0, RGB) are supported.
+    // Progressive JPEGs and arithmetic-coded JPEGs are unsupported — they
+    // return [`EncodeError::JpegParse`] / [`EncodeError::InvalidInput`].
+    //
+    // The [`LosslessConfig`] effort / mode / per-knob settings do NOT
+    // currently affect the transcode path (JPEG → JXL is a deterministic
+    // bit-level recoding). The config argument is taken for forwards
+    // compatibility — future versions may use it to gate the JPEG-CfL
+    // search effort, JBRD Brotli effort, or related tuning knobs.
+
+    /// Losslessly transcode a JPEG file into JXL with JBRD container for
+    /// byte-exact JPEG reconstruction.
+    ///
+    /// Parses `jpeg_bytes`, extracts the quantized DCT coefficients, and
+    /// emits a JXL container that:
+    /// 1. Decodes to pixel-identical output as the original JPEG
+    ///    (via any JXL decoder: djxl, jxl-rs, jxl-oxide, ...).
+    /// 2. Reconstructs the original JPEG byte-for-byte via
+    ///    `djxl --reconstruct_jpeg out.jxl out.jpg` (or any decoder that
+    ///    honors the JBRD reconstruction box).
+    ///
+    /// Returns the complete JXL container bytes (signature box + codestream
+    /// + JBRD box). Typical ratio: ~80% of the original JPEG bytes for
+    /// photographic content; gains depend on the source quantization
+    /// quality and chroma subsampling shape.
+    ///
+    /// Requires the `jpeg-reencoding` cargo feature.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError::JpegParse`] if the input is not a valid
+    /// baseline-sequential JPEG or uses an unsupported feature (arithmetic
+    /// coding, hierarchical mode, etc.). Returns
+    /// [`EncodeError::InvalidInput`] for JPEGs whose component count is
+    /// not 1 or 3.
+    ///
+    /// ```rust,no_run
+    /// # #[cfg(feature = "jpeg-reencoding")]
+    /// # fn main() -> Result<(), jxl_encoder::At<jxl_encoder::EncodeError>> {
+    /// let jpeg_bytes = std::fs::read("photo.jpg").unwrap();
+    /// let jxl = jxl_encoder::LosslessConfig::new()
+    ///     .encode_jpeg_transcode(&jpeg_bytes)?;
+    /// std::fs::write("photo.jxl", &jxl).unwrap();
+    /// // To reconstruct the exact original JPEG:
+    /// //   djxl photo.jxl photo_reconstructed.jpg --reconstruct_jpeg
+    /// # Ok(())
+    /// # }
+    /// # #[cfg(not(feature = "jpeg-reencoding"))]
+    /// # fn main() {}
+    /// ```
+    #[cfg(feature = "jpeg-reencoding")]
+    #[track_caller]
+    pub fn encode_jpeg_transcode(&self, jpeg_bytes: &[u8]) -> Result<Vec<u8>> {
+        // Config is currently unused — see module-level comment above.
+        let _ = self;
+        let jpeg = crate::jpeg::read_jpeg(jpeg_bytes).map_err(|e| at(EncodeError::from(e)))?;
+        crate::jpeg::encode_jpeg_to_jxl_container(&jpeg).map_err(|e| at(EncodeError::from(e)))
+    }
+
+    /// Losslessly transcode a JPEG file into a bare JXL codestream
+    /// (no container, no JBRD box).
+    ///
+    /// Same pixel-identical guarantee as
+    /// [`Self::encode_jpeg_transcode`], but produces only the raw JXL
+    /// codestream — no container wrapping, no JBRD reconstruction box.
+    /// The resulting JXL bytes are smaller (no JBRD overhead) but the
+    /// original JPEG cannot be reconstructed byte-for-byte. Use this
+    /// when you only need to display / decode the image and don't need
+    /// to round-trip back to the original JPEG bytes.
+    ///
+    /// Requires the `jpeg-reencoding` cargo feature.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::encode_jpeg_transcode`].
+    #[cfg(feature = "jpeg-reencoding")]
+    #[track_caller]
+    pub fn encode_jpeg_transcode_codestream(&self, jpeg_bytes: &[u8]) -> Result<Vec<u8>> {
+        let _ = self;
+        let jpeg = crate::jpeg::read_jpeg(jpeg_bytes).map_err(|e| at(EncodeError::from(e)))?;
+        crate::jpeg::encode_jpeg_to_jxl(&jpeg).map_err(|e| at(EncodeError::from(e)))
     }
 }
 
