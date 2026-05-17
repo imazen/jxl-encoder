@@ -41,6 +41,20 @@ pub struct FrameOptions {
     pub is_last: bool,
     /// Optional crop rectangle for this frame (None = full frame).
     pub crop: Option<FrameCrop>,
+    /// Optional per-frame blend mode override. `None` keeps the default
+    /// (`Replace` for full-frame, `Replace` for crops with `blend_source=1`).
+    pub blend_mode: Option<BlendMode>,
+    /// Optional per-frame `blend_source` override (0–3). `None` keeps the default
+    /// (1 when this frame has a crop, 0 otherwise).
+    pub blend_source: Option<u32>,
+    /// Optional `save_as_reference` override (0–3). `None` keeps the default
+    /// (1 for non-last animated frames so crops can composite on the canvas).
+    pub save_as_reference: Option<u32>,
+    /// Optional frame name (libjxl `FrameHeader::name`). `None` writes no name.
+    pub name: Option<String>,
+    /// Optional SMPTE timecode for this frame. Only written when
+    /// `have_timecodes` is true. `None` writes timecode `0`.
+    pub timecode: Option<u32>,
 }
 
 /// Frame type.
@@ -476,54 +490,95 @@ impl FrameHeader {
     }
 
     /// Writes blending information for the main frame.
+    ///
+    /// Order MUST match libjxl `BlendingInfo::VisitFields`:
+    /// mode → (alpha_channel + clamp if Blend/AlphaWeightedAdd / Mul) → source.
+    /// Reversing alpha_channel/clamp and source breaks decoding: the bits
+    /// after `mode` line up by position in the bitstream, not by field
+    /// name.
     fn write_blending_info(&self, writer: &mut BitWriter) -> Result<()> {
         writer.write_u32_coder(self.blend_mode as u32, 0, 1, 2, 3, 2)?;
 
-        // source: only when not (full_frame && Replace)
-        // Full frame is the default (no crop), so source is written for non-Replace modes.
+        let has_extras = !self.ec_blend_modes.is_empty();
+
+        // alpha_channel: only when extras > 0 AND (Blend || AlphaWeightedAdd).
+        // Matches the decoder gate at jxl-rs frame_header.rs:124.
+        if has_extras
+            && (self.blend_mode == BlendMode::Blend
+                || self.blend_mode == BlendMode::AlphaWeightedAdd)
+        {
+            writer.write_u32_coder(self.alpha_blend_channel, 0, 1, 2, 3, 3)?;
+        }
+        // clamp: extras > 0 AND (Blend || AlphaWeightedAdd) OR mode == Mul.
+        if (has_extras
+            && (self.blend_mode == BlendMode::Blend
+                || self.blend_mode == BlendMode::AlphaWeightedAdd))
+            || self.blend_mode == BlendMode::Mul
+        {
+            writer.write_bit(false)?; // clamp = false
+        }
+
+        // source: only when not (full_frame && Replace) — same as the
+        // decoder's `resets_canvas` predicate.
         let full_frame = self.x0 == 0 && self.y0 == 0 && self.width == 0 && self.height == 0;
         if !(full_frame && self.blend_mode == BlendMode::Replace) {
             writer.write(2, self.blend_source as u64)?;
-        }
-
-        if self.blend_mode == BlendMode::Blend || self.blend_mode == BlendMode::AlphaWeightedAdd {
-            writer.write_u32_coder(self.alpha_blend_channel, 0, 1, 2, 3, 3)?;
-            writer.write_bit(false)?; // clamp = false
         }
 
         Ok(())
     }
 
     /// Writes blending information for an extra channel.
+    /// Same field order as `write_blending_info`.
     fn write_ec_blending_info(&self, mode: BlendMode, writer: &mut BitWriter) -> Result<()> {
         writer.write_u32_coder(mode as u32, 0, 1, 2, 3, 2)?;
+
+        let has_extras = !self.ec_blend_modes.is_empty();
+
+        if has_extras && (mode == BlendMode::Blend || mode == BlendMode::AlphaWeightedAdd) {
+            writer.write_u32_coder(0, 0, 1, 2, 3, 3)?; // alpha channel = 0
+        }
+        if (has_extras && (mode == BlendMode::Blend || mode == BlendMode::AlphaWeightedAdd))
+            || mode == BlendMode::Mul
+        {
+            writer.write_bit(false)?; // clamp = false
+        }
 
         let full_frame = self.x0 == 0 && self.y0 == 0 && self.width == 0 && self.height == 0;
         if !(full_frame && mode == BlendMode::Replace) {
             writer.write(2, 0)?; // source = 0
         }
 
-        if mode == BlendMode::Blend || mode == BlendMode::AlphaWeightedAdd {
-            writer.write_u32_coder(0, 0, 1, 2, 3, 3)?; // alpha channel = 0
-            writer.write_bit(false)?; // clamp = false
-        }
-
         Ok(())
     }
 
     /// Writes the frame name.
+    ///
+    /// Length codec is `U32(Val(0), Bits(4), 16 + Bits(5), 48 + Bits(10))`
+    /// — matches libjxl `FrameHeader::VisitFields` and the decoder side of
+    /// `String::read_unconditional` in jxl-rs / jxl-oxide. Ranges:
+    /// - selector 0: length 0 (no name bytes follow)
+    /// - selector 1: 4-bit length 0..=15 (only used for non-empty names ≤ 15 bytes)
+    /// - selector 2: 5-bit length 16..=47
+    /// - selector 3: 10-bit length 48..=1071
     fn write_name(&self, writer: &mut BitWriter) -> Result<()> {
         let name_len = self.name.len() as u32;
         if name_len == 0 {
             writer.write(2, 0)?; // selector 0 = length 0
-        } else if name_len < 4 {
-            writer.write(2, 0)?; // selector 0 (length encoded as 0, but name bytes follow)
-        } else if name_len < 20 {
+        } else if name_len <= 15 {
+            writer.write(2, 1)?;
+            writer.write(4, name_len as u64)?;
+        } else if name_len <= 47 {
             writer.write(2, 2)?;
-            writer.write(4, (name_len - 4) as u64)?;
+            writer.write(5, (name_len - 16) as u64)?;
         } else {
+            debug_assert!(
+                name_len <= 1071,
+                "frame name too long ({} bytes, max 1071)",
+                name_len
+            );
             writer.write(2, 3)?;
-            writer.write(10, (name_len - 20) as u64)?;
+            writer.write(10, (name_len - 48) as u64)?;
         }
         for byte in self.name.bytes() {
             writer.write(8, byte as u64)?;

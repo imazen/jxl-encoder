@@ -44,6 +44,40 @@
 
 ### Added
 
+- **`AnimationFrame` per-frame override fields + public `BlendMode` re-export**
+  (audit item #3, "Animation API expansion"). The animation header has
+  always carried per-frame blend mode / blend source / save-as-reference /
+  name / timecode (libjxl `FrameHeader::blending_info` /
+  `save_as_reference` / `name` / `timecode`), but the high-level
+  `encode_animation*` API only exposed `pixels` + `duration` — multi-layer
+  animations with overlay/blend semantics were unreachable from Rust
+  callers. New `AnimationFrame::{new, with_blend_mode, with_blend_source,
+  with_save_as_reference, with_name, with_timecode}` constructors and
+  matching `Option<_>` public fields thread the override into both
+  lossless modular and lossy VarDCT animation paths. Setting `timecode`
+  on any frame auto-flips the file-level `have_timecodes` flag.
+  `BlendMode` (Replace / Add / Blend / AlphaWeightedAdd / Mul) is now
+  re-exported from the crate root. Defaults preserve the existing
+  encoder behavior bit-for-bit (`hash_lock_features` 36/36, all 21
+  pre-existing animation tests still pass).
+
+  This change also fixed two pre-existing bugs that were never exercised
+  before:
+  - `FrameHeader::write_blending_info` wrote `source` *before*
+    `alpha_channel` / `clamp`, while libjxl + jxl-rs (and the spec) put
+    `source` *last*. Reversed for parity; only the previously-unused
+    Blend / AlphaWeightedAdd / Mul paths are affected.
+  - `FrameHeader::write_name` used wrong selector ranges
+    (`Bits(4)+4`, `Bits(10)+20`) instead of the spec's
+    `U32(Val(0), Bits(4), 16 + Bits(5), 48 + Bits(10))`. Names of any
+    length now write per spec.
+
+  Roundtrip tests in `tests/animation.rs`:
+  `test_animation_blend_overlay_lossless_jxlrs` (Blend mode + name + EC
+  alpha + reference-slot semantics through jxl-rs) and
+  `test_animation_timecode_roundtrip` (timecode roundtrip through
+  jxl-rs + jxl-oxide).
+
 - **JUMBF (`jumb`) container box pass-through** — A1 audit top-10 item #3.
   Caller-supplied JUMBF (JPEG Universal Metadata Box Format, ISO 19566-5;
   the container used by C2PA / Content Authenticity Initiative for
@@ -61,6 +95,25 @@
   payloads are rejected at validation time. Mirrors libjxl's
   `JxlEncoderAddBox(enc, "jumb", ...)` API
   (`lib/jxl/encode.cc:2211-2216`).
+
+- **`LossyConfig::with_canonicalize_input` /
+  `LosslessConfig::with_canonicalize_input`** (RFC #45 pick #2 chunk 1).
+  Opt-in single-pass input canonicalization that drops opaque alpha,
+  collapses near-grayscale RGB(A) to Gray(Alpha), and downcasts
+  byte-replicated 16-bit to 8-bit. Each step is a no-op when its
+  precondition fails. Outputs are strictly smaller-or-equal and preserve
+  every pixel value bit-exactly within the new layout. Default `false`
+  to keep existing hash-locks byte-identical. Bench on synthetic padded
+  inputs (256×256, `examples/canonicalize_input_ab.rs`): lossless
+  −50.5% on opaque-RGBA-grayscale, −67.6% on byte-replicated Rgb16. No
+  byte regression on CLIC real photos (paired Δ = 0). All 36
+  `hash_lock_features` cases byte-identical at default-off. Roundtrip
+  decoder validation (jxl-rs + jxl-oxide) in
+  `tests/canonicalize_input_roundtrip.rs` confirms semantic
+  equivalence: dropped-alpha decodes to α=255 everywhere, collapsed
+  grayscale decodes to R==G==B exactly, 16→8 downcast decodes to the
+  original byte values. New `canonicalize` module at
+  `jxl-encoder/src/canonicalize.rs` (13 unit tests).
 
 - **CMYK lossless encode** (A1 audit item #6, issue #58). New
   `PixelLayout::Cmyk8` (4 bytes/pixel: C, M, Y, K) and
