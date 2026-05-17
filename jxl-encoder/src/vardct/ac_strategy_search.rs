@@ -34,6 +34,39 @@ fn set_entropy_for_transform(
     entropy_estimate[oy * 8 + ox] = entropy;
 }
 
+/// libjxl `kFavor2X2AtHighQuality` weighting factor: returns `((5-d)/5)^2` at `d < 5`, else `0`.
+/// See `enc_ac_strategy.cc::FindBest8x8Transform` (line 585-590).
+#[inline]
+pub(super) fn favor_2x2_weight(distance: f32) -> f32 {
+    if distance < 5.0 {
+        ((5.0 - distance) / 5.0_f32).powi(2)
+    } else {
+        0.0
+    }
+}
+
+/// libjxl `kAvoidEntropyOfTransforms` multiplier: `(12-4)/(d-4)` at `4 < d < 12`,
+/// `1.0` at `d >= 12`, and `0.0` (the penalty is OFF) at `d <= 4`.
+///
+/// Returned value is multiplied by `k_avoid_transforms_base` (libjxl: 0.5) and ADDED
+/// to the entropy_mul of every non-DCT8 / non-DCT2X2 / non-IDENTITY 8×8-class
+/// strategy (DCT4X4, DCT4X8, DCT8X4, AFV0-3).
+///
+/// See `enc_ac_strategy.cc::FindBest8x8Transform` (line 592-601).
+///
+/// Returning `0.0` below `d=4` (rather than the raw formula value) preserves the
+/// libjxl semantics that the penalty is gated by `butteraugli_target > 4.0`.
+#[inline]
+pub(super) fn avoid_entropy_of_transforms_mul(distance: f32) -> f32 {
+    if distance <= 4.0 {
+        0.0
+    } else if distance < 12.0 {
+        (12.0 - 4.0) / (distance - 4.0)
+    } else {
+        1.0
+    }
+}
+
 /// Dispatch wrapper: selects SIMD or scalar path for the entire search function.
 /// When SIMD is available, the #[arcane] wrapper runs under #[target_feature], enabling
 /// LLVM to inline estimate_entropy_with_mask → estimate_entropy_full_impl and optimize
@@ -379,24 +412,12 @@ fn find_best_16x16_transform_impl(
 
     // kFavor2X2AtHighQuality: bonus for IDENTITY/DCT2X2 at distance < 5.0.
     // Matches libjxl enc_ac_strategy.cc:585-590.
-    let favor_weight = if distance < 5.0 {
-        ((5.0 - distance) / 5.0_f32).powi(2)
-    } else {
-        0.0
-    };
-    let favor_2x2_adjust = profile.k_favor_2x2 * favor_weight;
+    let favor_2x2_adjust = profile.k_favor_2x2 * favor_2x2_weight(distance);
 
-    // kAvoidEntropyOfTransforms: penalty for non-DCT/non-2x2/non-IDENTITY at distance > 4.0
-    let avoid_transforms_adjust = if distance > 4.0 {
-        let mul = if distance < 12.0 {
-            (12.0 - 4.0) / (distance - 4.0)
-        } else {
-            1.0
-        };
-        profile.k_avoid_transforms_base * mul
-    } else {
-        0.0
-    };
+    // kAvoidEntropyOfTransforms: penalty for non-DCT/non-2x2/non-IDENTITY at distance > 4.0.
+    // Matches libjxl enc_ac_strategy.cc:592-601.
+    let avoid_transforms_adjust =
+        profile.k_avoid_transforms_base * avoid_entropy_of_transforms_mul(distance);
 
     let abs_bx = bx0 + cx;
     let abs_by = by0 + cy;
@@ -2401,22 +2422,9 @@ fn find_best_32x32_transform_impl(
         // entropy_estimate[] values. Without them, DCT2x2/IDENTITY sub-costs are
         // inflated, making merge candidates relatively cheaper and causing
         // over-merging on borderline blocks (e.g. 1025469 d=2.0 hotspot).
-        let favor_weight = if distance < 5.0 {
-            ((5.0 - distance) / 5.0_f32).powi(2)
-        } else {
-            0.0
-        };
-        let favor_2x2_adjust = profile.k_favor_2x2 * favor_weight;
-        let avoid_transforms_adjust = if distance > 4.0 {
-            let mul = if distance < 12.0 {
-                (12.0 - 4.0) / (distance - 4.0)
-            } else {
-                1.0
-            };
-            profile.k_avoid_transforms_base * mul
-        } else {
-            0.0
-        };
+        let favor_2x2_adjust = profile.k_favor_2x2 * favor_2x2_weight(distance);
+        let avoid_transforms_adjust =
+            profile.k_avoid_transforms_base * avoid_entropy_of_transforms_mul(distance);
 
         for iy in 0..4 {
             for ix in 0..4 {
@@ -3060,22 +3068,11 @@ fn find_best_64x64_transform_impl(
         }
     } else {
         // Re-evaluate sub-costs from ac_strategy map (coefficient-domain fallback).
-        let favor_weight = if distance < 5.0 {
-            ((5.0 - distance) / 5.0_f32).powi(2)
-        } else {
-            0.0
-        };
-        let favor_2x2_adjust = profile.k_favor_2x2 * favor_weight;
-        let avoid_transforms_adjust = if distance > 4.0 {
-            let mul = if distance < 12.0 {
-                (12.0 - 4.0) / (distance - 4.0)
-            } else {
-                1.0
-            };
-            profile.k_avoid_transforms_base * mul
-        } else {
-            0.0
-        };
+        // Apply the same entropy_mul adjustments libjxl bakes into entropy_estimate[]
+        // during FindBest8x8Transform (enc_ac_strategy.cc:585-601).
+        let favor_2x2_adjust = profile.k_favor_2x2 * favor_2x2_weight(distance);
+        let avoid_transforms_adjust =
+            profile.k_avoid_transforms_base * avoid_entropy_of_transforms_mul(distance);
 
         for iy in 0..8 {
             for ix in 0..8 {
@@ -3202,5 +3199,96 @@ fn find_best_64x64_transform_impl(
         if entropy_32x64_1 < sub_bottom {
             ac_strategy.set(abs_bx, abs_by + 4, RAW_STRATEGY_DCT32X64);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Lock the `kAvoidEntropyOfTransforms` formula against libjxl
+    /// `enc_ac_strategy.cc::FindBest8x8Transform` (line 592-601):
+    ///
+    /// ```cpp
+    /// if ((tx.type != DCT && tx.type != DCT2X2 && tx.type != IDENTITY) &&
+    ///     butteraugli_target > 4.0) {
+    ///   static const float kAvoidEntropyOfTransforms = 0.5;
+    ///   float mul = 1.0;
+    ///   if (butteraugli_target < 12.0) {
+    ///     mul *= (12.0 - 4.0) / (butteraugli_target - 4.0);
+    ///   }
+    ///   entropy_mul += kAvoidEntropyOfTransforms * mul;
+    /// }
+    /// ```
+    #[test]
+    fn test_avoid_entropy_of_transforms_mul_libjxl_parity() {
+        // d <= 4.0: penalty is OFF (returns 0)
+        assert_eq!(avoid_entropy_of_transforms_mul(0.5), 0.0);
+        assert_eq!(avoid_entropy_of_transforms_mul(1.0), 0.0);
+        assert_eq!(avoid_entropy_of_transforms_mul(2.0), 0.0);
+        assert_eq!(avoid_entropy_of_transforms_mul(4.0), 0.0);
+
+        // 4 < d < 12: penalty multiplier = 8 / (d - 4)
+        // Just above 4.0: very large multiplier (4.1 → 80x).
+        let v = avoid_entropy_of_transforms_mul(4.1);
+        assert!((v - 80.0).abs() < 1e-4, "d=4.1 expected ~80, got {v}");
+
+        // d = 5.0 → 8 / 1 = 8.0
+        let v = avoid_entropy_of_transforms_mul(5.0);
+        assert!((v - 8.0).abs() < 1e-5, "d=5 expected 8.0, got {v}");
+
+        // d = 6.0 → 8 / 2 = 4.0
+        let v = avoid_entropy_of_transforms_mul(6.0);
+        assert!((v - 4.0).abs() < 1e-5, "d=6 expected 4.0, got {v}");
+
+        // d = 8.0 → 8 / 4 = 2.0
+        let v = avoid_entropy_of_transforms_mul(8.0);
+        assert!((v - 2.0).abs() < 1e-5, "d=8 expected 2.0, got {v}");
+
+        // d = 12.0: boundary — formula switches to mul = 1.0
+        let v = avoid_entropy_of_transforms_mul(12.0);
+        assert!((v - 1.0).abs() < 1e-5, "d=12 expected 1.0, got {v}");
+
+        // d > 12: mul = 1.0
+        assert_eq!(avoid_entropy_of_transforms_mul(15.0), 1.0);
+        assert_eq!(avoid_entropy_of_transforms_mul(100.0), 1.0);
+    }
+
+    /// Lock the `kFavor2X2AtHighQuality` weight against libjxl
+    /// `enc_ac_strategy.cc::FindBest8x8Transform` (line 585-590):
+    ///
+    /// ```cpp
+    /// if ((tx.type == DCT2X2 || tx.type == IDENTITY) &&
+    ///     butteraugli_target < 5.0) {
+    ///   float weight = pow((5.0f - butteraugli_target) / 5.0f, 2.0f);
+    ///   entropy_mul -= kFavor2X2AtHighQuality * weight;
+    /// }
+    /// ```
+    #[test]
+    fn test_favor_2x2_weight_libjxl_parity() {
+        // d = 0: weight = (5/5)^2 = 1.0
+        assert!((favor_2x2_weight(0.0) - 1.0).abs() < 1e-6);
+        // d = 1: weight = (4/5)^2 = 0.64
+        assert!((favor_2x2_weight(1.0) - 0.64).abs() < 1e-6);
+        // d = 2.5: weight = (2.5/5)^2 = 0.25
+        assert!((favor_2x2_weight(2.5) - 0.25).abs() < 1e-6);
+        // d = 5: cutoff — weight = 0
+        assert_eq!(favor_2x2_weight(5.0), 0.0);
+        // d > 5: weight = 0
+        assert_eq!(favor_2x2_weight(7.0), 0.0);
+    }
+
+    /// Full libjxl `entropy_mul` adjustment with both penalties combined.
+    /// Applied to DCT4X4 (a non-DCT/non-2x2/non-IDENTITY transform) at d=6.0.
+    ///
+    /// In libjxl entry: `entropy_mul_DCT4X4 = 1.08 / 0.8 = 1.35`.
+    /// With kAvoidEntropyOfTransforms at d=6: `+= 0.5 * 4.0 = +2.0`.
+    /// Final mul: 1.35 + 2.0 = 3.35.
+    #[test]
+    fn test_avoid_entropy_dct4x4_at_d6() {
+        let base = 1.08_f32 / 0.8;
+        let adjust = 0.5 * avoid_entropy_of_transforms_mul(6.0);
+        let final_mul = base + adjust;
+        assert!((final_mul - 3.35).abs() < 1e-4, "got {final_mul}");
     }
 }

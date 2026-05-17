@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Refactor
+
+- **`kAvoidEntropyOfTransforms` formula extracted into named helpers** in
+  `jxl-encoder/src/vardct/ac_strategy_search.rs`. The
+  `kAvoidEntropyOfTransforms` and `kFavor2X2AtHighQuality` adjustments
+  (libjxl `enc_ac_strategy.cc::FindBest8x8Transform` line 585-601) were
+  already implemented and applied at all three evaluation sites (initial
+  8×8 selection, 32×32 merge sub-cost re-evaluation, 64×64 merge sub-cost
+  re-evaluation) — see commit `88aad38` (Feb 21, 2026). This change
+  extracts the formula into `avoid_entropy_of_transforms_mul(distance)`
+  and `favor_2x2_weight(distance)` free functions with libjxl source-line
+  citations, and adds three regression unit tests pinning the formulas
+  to libjxl's exact values across the distance range. Bit-identical
+  output: all 36 `hash_lock_features` tests pass. The A1-audit "OUT"
+  label and the `dropped_optimizations_for_parity_2026-05-15.md` entry
+  for kAvoidEntropyOfTransforms applied to the **GPU** encoder's
+  cost model, not the CPU encoder.
+
 ### Changed
 
 - **More aggressive text-like patch detection** (RFC#45 pick #5 chunk 1).
