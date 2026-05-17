@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Investigated (negative result, primitive shipped under `__bench_internals`)
+
+- **Phase 4 fused `AddSample` primitive** (`FusedHashKeyBuilder` in
+  `jxl-encoder/src/modular/inline_add_sample.rs`, issue #41 chunk 1).
+  Streaming hash-and-write builder that folds canonical-key bytes into
+  libjxl `Hash1`/`Hash2` accumulators as they are computed, eliminating
+  Phase 3's separate `pack_local_key_phase3` walk. Primitive is correct
+  (10 unit tests + cross-check against Phase 3's `pack_local_key_phase3`
+  + `InlineDedupTable::lookup_or_insert` on 16 real-photo seeds, all
+  byte-equivalent). **However, microbench shows it is 10-25% SLOWER than
+  Phase 3 on every cell measured** (8 cells: 200K/1.35M samples × dup
+  300/600/800 × photo-like + synthetic distributions); see
+  `benchmarks/inline_addsample_microbench_2026-05-17.{txt,meta}`. Root
+  causes (hypothesized): (a) loss of LLVM auto-vectorization when
+  byte-write and hash-fold interleave inside the same loop body; (b)
+  trailing zero-byte fold in `finalize()` adds 8-32 muls per sample
+  for `InlineDedupTable::raw_hash1`/2 fingerprint parity. Primitive
+  ships gated behind `__bench_internals` for measurement only; **NOT
+  wired into the production gather loop**. See
+  `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/lossless_phase4_inline_addsample_2026-05-17.md`
+  for the chunk 2+ decision tree.
+
 ### Investigated (kept opt-in)
 
 - **`LosslessConfig::with_smart_fanout` default-on decision: KEEP OPT-IN**
