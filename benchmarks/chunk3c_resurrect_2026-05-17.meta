@@ -1,0 +1,158 @@
+# Issue #40 chunk-3c resurrection — paired A/B benchmarks
+#
+# Resurrects the chunk-3c "skip props swap on lossless path" optimization
+# (originally implemented and reverted on 2026-05-16 in commit a16958f,
+# doc-only revert; 10/10 paired wins on small + medium but failed the
+# 5% gate at load 10-12).
+#
+# Reference: https://github.com/imazen/jxl-encoder/issues/40
+# Audit memory: ~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/
+#               rejected_optimizations_conditional_value_2026-05-17.md
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Implementation
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Added `skip_props_swap: bool` to `SplittableSamples` (the SoA view used by
+# `split_tree_samples_in_place`). When true, `swap_rows` skips the per-property
+# `Vec<i32>` swaps. With 14 candidate predictors and ~16 base properties +
+# per-reference props, this elides ~16-30 Vec::swap calls per row swap.
+#
+# Wired into both lossless paths:
+#   - `compute_best_tree_with_budget` (sequential & root-split sites)
+#   - `build_subtree_sequential_borrowed` (parallel-tree-learning subtrees)
+#   - parallel root-split site in `compute_best_tree_with_budget`
+#
+# NOT wired into `compute_best_tree_with_multipliers` — that path uses
+# `PartitionKey::Property` for static-prop axes (channel, group_id) which
+# reads `samples.props[axis]` to evaluate the predicate. Skipping props
+# swap there would silently corrupt static-prop splits. A debug-assert in
+# `PartitionKey::matches` panics on this misuse.
+#
+# Env-var override `JXL_DISABLE_CHUNK3C=1` forces the old props-swapping
+# path for paired A/B testing. Process-cached via OnceLock so production
+# pays one `std::env::var` call per process.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Layer-1 invariants (tests in `tree_learn_split.rs`)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# - `skip_props_swap_partitions_bucket_indices_and_leaves_props_untouched`:
+#   asserts bucket_indices/residual_tokens/extra_bits/sample_counts are
+#   permuted in lockstep AND props is bit-identical to pre-permutation.
+# - `skip_props_swap_with_property_key_panics_in_debug` (debug-only):
+#   asserts API misuse (Property key + skip_props_swap=true) panics with
+#   a clear message via the debug-assert in `PartitionKey::matches`.
+#
+# Hash locks: 36/36 byte-identical in BOTH variants (with and without
+# `JXL_DISABLE_CHUNK3C=1`), under both default and parallel-tree-learning
+# feature flags. Tree-learning + chunk-3c produces the same bitstream.
+#
+# RD-regression: 18/18 within thresholds (lossy VarDCT, unchanged by this
+# optimization which only affects modular tree-learning).
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Why this is conditional (lossless-only)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Path discriminator is the entry function, not a content feature:
+#   - `compute_best_tree_with_budget`: lossless main path. After `pre_quantize`
+#     populates `pq.bucket_indices`, `samples.props` is NEVER read again.
+#     The tree builder traverses only `pq.bucket_indices`, `samples.residual_tokens`,
+#     `samples.extra_bits`, and `samples.sample_counts`. Skipping props swap
+#     is safe — props falling out of alignment with the other SoA arrays is
+#     invisible because nothing reads it.
+#   - `compute_best_tree_with_multipliers`: lossy path with multipliers (used
+#     by squeeze + lossy modular). Its static-prop axes split on raw values
+#     via `PartitionKey::Property { prop_idx, val }`, reading `samples.props`
+#     at evaluation time. Props alignment is load-bearing here.
+#
+# This is exactly the "conditional value" gating the audit catalog called
+# out: ship as default on the lossless path only, no zenanalyze feature
+# infrastructure required.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Bench design
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Same paired interleaved A/B pattern as the original chunk-3c bench:
+#   - 3 profile images: 0.26 MP (7256805), 1.05 MP (02809272), 4.19 MP (8426ed22)
+#   - 3 efforts: e7, e8, e9
+#   - 1 thread count: 8T (production-tuned)
+#   - 15 samples per cell × 2 variants (BASELINE + NEW)
+#   - Sample order: BASELINE -> NEW -> BASELINE -> NEW -> ... (paired)
+#   - Same binary, env-var-gated (JXL_DISABLE_CHUNK3C=1 = BASELINE)
+#
+# Hardware: AMD Ryzen 9 7950X (water-cooled), Linux 6.6 WSL2, 128 GB RAM.
+# CPU governor: performance. No `-C target-cpu=native`.
+#
+# Acceptance gate (per task brief): >=1% wall-clock improvement on >=2 of
+# 3 profile images at e7. Lower than the original 5% gate because:
+#   1. The audit characterized this as 1.5-2.5% corpus-wide.
+#   2. Path-conditional dispatch means no opportunity cost on multipliers
+#      path (no need to be globally compelling).
+#   3. Byte-identical output and ~30 lines of code make the risk low.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Results — take 1 (2026-05-17, 8T, 15 samples/cell, paired interleaved)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# CSV: chunk3c_resurrect_ab_2026-05-17_take1.csv
+# Analysis: scripts/analyze_chunk3c_resurrect_ab.py
+# System load during bench: fluctuated 1.2-9 (other agents running in
+#   parallel for the first ~75% of the run; quiet load 1.2-2.5 for the
+#   final large_e7 cell).
+#
+# All seven completed cells show NEW (skip_props_swap) faster than BASELINE
+# (props swap retained), and ALL bytes paired-identical (byte_ok=OK on every
+# sample). Full per-cell summary:
+#
+#   image              eff  T   n  wins      bw_med    nw_med  med_pct       mean_pct
+#   ─────────────────  ───  ──  ──  ─────  ─────────  ────────  ─────────  ──────────
+#   small_0.26MP         7   8  15  15/15      464.2     448.3  -3.43%     -4.38%
+#   small_0.26MP         8   8  15  13/15     1194.1    1160.2  -2.84%     -2.41%
+#   small_0.26MP         9   8  15  10/15     2617.1    2550.9  -2.53%     -1.36%
+#   medium_1.05MP        7   8  15  13/15     3371.8    3023.2 -10.34%    -18.96%
+#   medium_1.05MP        8   8  15  11/15     5733.9    5545.0  -3.29%    -11.61%
+#   medium_1.05MP        9   8  15   9/15    14127.6   12825.8  -9.21%     -3.83%
+#   large_4.19MP         7   8  15  13/15     6765.2    6324.6  -6.51%    -10.01%
+#   ──────────────────────────────────────────────────────────────────────────
+#   Cells with NEW faster (median):  7/7
+#   Cells with NEW >=1% faster:      7/7
+#   Cells with NEW >=5% faster:      4/7
+#   All bytes identical:             True
+#
+# Cells skipped (bench killed at this point to ship; remaining cells would
+# have added ~45 min and the acceptance gate is already met):
+#   - large_4.19MP e8, e9
+#
+# (Some median wins are likely amplified by load fluctuation. Even discounting
+# the load-amplified mediums, every cell paired-wins more often than it
+# loses, and the small image — least affected by load due to short encode
+# time — shows the cleanest signal: 15/15 paired wins at e7, 13/15 at e8,
+# 10/15 at e9.)
+#
+# Acceptance gate (task brief): >=1% improvement on >=2 of 3 profile images
+# at e7. MET on all 3 images at e7:
+#   - small e7:    -3.43% median (15/15 paired wins)
+#   - medium e7:  -10.34% median (13/15)
+#   - large e7:    -6.51% median (13/15)
+#
+# Bonus: quiet-load best-iter measurement (10 runs each, system load 1-2,
+# with `parallel-tree-learning` feature flag for both arms):
+#   - cjxl libjxl e7 1024² best-iter:        ~970 ms (varies 941-1281)
+#   - cjxl-rs NEW best-iter:                 1484 ms (= 1.53x cjxl)
+#   - cjxl-rs BASELINE best-iter:            1591 ms (= 1.64x cjxl)
+#   - NEW vs BASELINE best-iter:             -6.7% (107 ms saved)
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Decision: SHIP default-on for lossless main path.
+# ─────────────────────────────────────────────────────────────────────────
+#
+# - 7/7 cells paired-faster, every paired sample byte-identical.
+# - e7 gate met on all three images (-3.4%, -10.3%, -6.5%).
+# - Best-iter on 1024² e7 1.64x -> 1.53x cjxl (=> 6.7% closer to cjxl).
+# - Optimization is ~30 LOC of behavior + ~140 LOC of tests/comments;
+#   debug-assert in PartitionKey::matches prevents future misuse.
+# - No multipliers-path opportunity cost (the optimization is path-gated;
+#   compute_best_tree_with_multipliers continues swapping props).
