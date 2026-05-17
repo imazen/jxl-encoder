@@ -1,0 +1,51 @@
+# RFC#45 chunk 5 — `1/sqrt(d)` divisor for `PatchesData::is_cost_effective`
+
+Commit:           HEAD (to be set)
+Host:             $(hostname)
+Reference path:   ~/work/zen/jxl-encoder--patches-chunk5-sqrt-d
+Codec-corpus:     ~/work/codec-corpus/gb82-sc + CID22-512/validation
+Encoder mode:     Experimental (EncoderMode::Experimental)
+Build:            cargo run --release -p jxl-encoder --example patches_gate_experimental_ab
+
+## Model change
+
+- Chunk 4 (commit 420eb438): `savings_est = pixels * 1.0 / max(d, 1.0)`
+- Chunk 5 (this commit):     `savings_est = pixels * 0.78 / sqrt(max(d, 1.0))`
+
+## Geomean refit (20-cell sweep — patches_savings_calibrate_2026-05-17.tsv)
+
+Distribution of empirical `actual_savings * sqrt(max(d,1.0)) / pixels`:
+  min    = 0.265 (codec_wiki d=4.0)
+  p25    = 0.544
+  median = 0.676
+  mean   = 0.901
+  p75    = 1.339
+  max    = 1.792 (windows95 d=4.0)
+  geomean = 0.782 → rounded to C = 0.78
+
+R² of constant predictor vs measured per-image variance:
+  Old model (C=1.0, 1/d):       -0.067 (near-zero — per-image variance dominates)
+  New model (C=0.78, 1/sqrt(d)): -0.065 (~same)
+  Improvement is in shape (no high-d under-prediction), not residual variance.
+
+## Bytes delta (negative = patches save bytes; 0 = gate rejected)
+
+Compared to chunk-4 baseline (benchmarks/patches_gate_experimental_ab_2026-05-17.tsv):
+
+Screenshot       d=0.5        d=1.0        d=2.0        d=4.0
+windows95         0            0            0            0
+terminal          0            0            0           -39,549  ← NEW WIN
+codec_wiki        0            0            0            0
+imac_g3           0            0            0            0
+windows           0            0            0            0
+
+Total newly-admitted savings: -39,549 B (terminal.png d=4.0; -34% of patches-off bytes)
+
+## Hash-locks
+
+cargo test -p jxl-encoder --release --test hash_lock_features
+  -> 36/36 passed (Reference mode bitstream byte-identical)
+
+## Photos (all 5×4 = 20 cells)
+
+delta_B = 0 on every photo cell — detector returns None upstream, gate not invoked.
