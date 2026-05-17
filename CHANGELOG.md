@@ -44,6 +44,24 @@
 
 ### Added
 
+- **JUMBF (`jumb`) container box pass-through** — A1 audit top-10 item #3.
+  Caller-supplied JUMBF (JPEG Universal Metadata Box Format, ISO 19566-5;
+  the container used by C2PA / Content Authenticity Initiative for
+  provenance metadata) bytes are emitted verbatim into a `jumb` ISOBMFF
+  box appended after the standard `Exif`/`xml ` boxes. Available on all
+  three API layers: `ImageMetadata::with_jumbf(bytes)` for one-shot
+  encodes, `LossyEncoder::with_jumbf` / `LosslessEncoder::with_jumbf` for
+  streaming, and `cjxl-rs --jumbf <FILE>` on the CLI. Routes through the
+  Brotli path when `brotli-metadata` + `EncodeRequest::with_brotli_metadata`
+  are enabled (new `wrap_in_container_with_brob_and_jumbf` helper). Bare
+  appender `container::append_jumbf_box(jxl_data, jumbf_bytes)` also
+  exposed for callers that need to attach JUMBF to a previously-encoded
+  codestream. Hash-lock fixtures stay byte-identical (36/36); the new
+  field defaults to `None` so existing call sites are unaffected. Empty
+  payloads are rejected at validation time. Mirrors libjxl's
+  `JxlEncoderAddBox(enc, "jumb", ...)` API
+  (`lib/jxl/encode.cc:2211-2216`).
+
 - **CMYK lossless encode** (A1 audit item #6, issue #58). New
   `PixelLayout::Cmyk8` (4 bytes/pixel: C, M, Y, K) and
   `PixelLayout::Cmyk16` (8 bytes/pixel, native-endian u16) variants

@@ -123,7 +123,7 @@ fn write_level_box(out: &mut Vec<u8>, level: u8) {
 /// goes into a `jxlc` box, EXIF into an `Exif` box (with 4-byte Tiff offset
 /// prefix), and XMP into an `xml ` box.
 pub fn wrap_in_container(codestream: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Vec<u8> {
-    wrap_in_container_with_jbrd_and_level(codestream, None, exif, xmp, 5)
+    wrap_in_container_with_jbrd_and_level_and_jumbf(codestream, None, exif, xmp, 5, None)
 }
 
 /// Like [`wrap_in_container`] but emits a `jxll` (codestream level) box
@@ -135,7 +135,33 @@ pub fn wrap_in_container_with_level(
     xmp: Option<&[u8]>,
     level: u8,
 ) -> Vec<u8> {
-    wrap_in_container_with_jbrd_and_level(codestream, None, exif, xmp, level)
+    wrap_in_container_with_jbrd_and_level_and_jumbf(codestream, None, exif, xmp, level, None)
+}
+
+/// Wraps a JXL codestream in a container with optional EXIF, XMP, and JUMBF
+/// metadata. The JUMBF payload (ISO 19566-5, used by C2PA / Content
+/// Authenticity Initiative) lands in a `jumb` box appended after the
+/// `Exif`/`xml ` boxes. Caller supplies the JUMBF superbox contents
+/// verbatim — no ISO BMFF header included.
+pub fn wrap_in_container_with_jumbf(
+    codestream: &[u8],
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    jumbf: Option<&[u8]>,
+) -> Vec<u8> {
+    wrap_in_container_with_jbrd_and_level_and_jumbf(codestream, None, exif, xmp, 5, jumbf)
+}
+
+/// Like [`wrap_in_container_with_jumbf`] but also emits a `jxll`
+/// codestream-level box when `level != 5`.
+pub fn wrap_in_container_with_level_and_jumbf(
+    codestream: &[u8],
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    level: u8,
+    jumbf: Option<&[u8]>,
+) -> Vec<u8> {
+    wrap_in_container_with_jbrd_and_level_and_jumbf(codestream, None, exif, xmp, level, jumbf)
 }
 
 /// Wraps a JXL codestream like [`wrap_in_container`], but Brotli-compresses
@@ -158,7 +184,7 @@ pub fn wrap_in_container_with_brob(
     xmp: Option<&[u8]>,
     brotli_quality: u32,
 ) -> Vec<u8> {
-    wrap_in_container_with_brob_and_level(codestream, exif, xmp, brotli_quality, 5)
+    wrap_in_container_with_brob_and_level_and_jumbf(codestream, exif, xmp, None, brotli_quality, 5)
 }
 
 /// Like [`wrap_in_container_with_brob`] but emits a `jxll` (codestream
@@ -168,6 +194,49 @@ pub fn wrap_in_container_with_brob_and_level(
     codestream: &[u8],
     exif: Option<&[u8]>,
     xmp: Option<&[u8]>,
+    brotli_quality: u32,
+    level: u8,
+) -> Vec<u8> {
+    wrap_in_container_with_brob_and_level_and_jumbf(
+        codestream,
+        exif,
+        xmp,
+        None,
+        brotli_quality,
+        level,
+    )
+}
+
+/// Like [`wrap_in_container_with_brob`] but also routes an optional JUMBF
+/// (`jumb`) box through the same brob compress-if-smaller path. JUMBF
+/// payloads carrying C2PA manifests can be sizable (XMP-shaped XML +
+/// embedded cose signatures), so brob savings are worth attempting.
+#[cfg(feature = "brotli-metadata")]
+pub fn wrap_in_container_with_brob_and_jumbf(
+    codestream: &[u8],
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    jumbf: Option<&[u8]>,
+    brotli_quality: u32,
+) -> Vec<u8> {
+    wrap_in_container_with_brob_and_level_and_jumbf(
+        codestream,
+        exif,
+        xmp,
+        jumbf,
+        brotli_quality,
+        5,
+    )
+}
+
+/// Full-fat brob path: accepts JUMBF + a non-default codestream level.
+/// All other `wrap_in_container_with_brob*` entry points delegate here.
+#[cfg(feature = "brotli-metadata")]
+pub fn wrap_in_container_with_brob_and_level_and_jumbf(
+    codestream: &[u8],
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    jumbf: Option<&[u8]>,
     brotli_quality: u32,
     level: u8,
 ) -> Vec<u8> {
@@ -181,11 +250,12 @@ pub fn wrap_in_container_with_brob_and_level(
     let jxlc_size = 8 + codestream.len();
     // Worst-case sizes for pre-allocation: assume each metadata blob
     // either compresses (8 + 4 + payload.len) or stays uncompressed
-    // (8 + 4 + payload.len for exif, 8 + payload.len for xmp). The
-    // uncompressed Exif size already includes the 4-byte Tiff prefix.
+    // (8 + 4 + payload.len for exif, 8 + payload.len for xmp/jumb).
+    // The uncompressed Exif size already includes the 4-byte Tiff prefix.
     let exif_size = exif.map_or(0, |e| 8 + 4 + e.len());
     let xmp_size = xmp.map_or(0, |x| 8 + x.len());
-    let total = header_size + jxlc_size + exif_size + xmp_size;
+    let jumbf_size = jumbf.map_or(0, |j| 8 + j.len());
+    let total = header_size + jxlc_size + exif_size + xmp_size + jumbf_size;
     let mut out = Vec::with_capacity(total);
 
     out.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
@@ -211,6 +281,15 @@ pub fn wrap_in_container_with_brob_and_level(
     {
         write_box(&mut out, b"xml ", xmp_data);
     }
+    // JUMBF: payload is the raw JUMBF superbox bytes; original type is
+    // `jumb`. Nested brob inside jumb is forbidden per spec, but the
+    // outer wrap of jumb in brob is allowed (libjxl emits it via the
+    // same JxlEncoderAddBox/compress_box path).
+    if let Some(jumbf_data) = jumbf
+        && !try_write_brob_box(&mut out, b"jumb", jumbf_data, brotli_quality)
+    {
+        write_box(&mut out, b"jumb", jumbf_data);
+    }
     out
 }
 
@@ -225,7 +304,7 @@ pub fn wrap_in_container_with_jbrd(
     exif: Option<&[u8]>,
     xmp: Option<&[u8]>,
 ) -> Vec<u8> {
-    wrap_in_container_with_jbrd_and_level(codestream, jbrd, exif, xmp, 5)
+    wrap_in_container_with_jbrd_and_level_and_jumbf(codestream, jbrd, exif, xmp, 5, None)
 }
 
 /// Like [`wrap_in_container_with_jbrd`] but emits a `jxll` (codestream
@@ -236,6 +315,25 @@ pub fn wrap_in_container_with_jbrd_and_level(
     exif: Option<&[u8]>,
     xmp: Option<&[u8]>,
     level: u8,
+) -> Vec<u8> {
+    wrap_in_container_with_jbrd_and_level_and_jumbf(codestream, jbrd, exif, xmp, level, None)
+}
+
+/// Wraps a JXL codestream with optional JBRD, EXIF, XMP, and JUMBF
+/// boxes, plus a `jxll` codestream-level box when `level != 5`.
+///
+/// Box order: signature, ftyp, jxll? (level != 5), jxlc, jbrd?, Exif?,
+/// xml?, jumb?. Matches libjxl's ordering — JUMBF (C2PA / Content
+/// Authenticity Initiative, ISO 19566-5) is appended after the standard
+/// metadata boxes so legacy readers that stop at the first unknown box
+/// still see the codestream.
+pub fn wrap_in_container_with_jbrd_and_level_and_jumbf(
+    codestream: &[u8],
+    jbrd: Option<&[u8]>,
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    level: u8,
+    jumbf: Option<&[u8]>,
 ) -> Vec<u8> {
     // Calculate total size for pre-allocation
     let level_size = if level == 5 {
@@ -248,7 +346,8 @@ pub fn wrap_in_container_with_jbrd_and_level(
     let jbrd_size = jbrd.map_or(0, |j| 8 + j.len());
     let exif_size = exif.map_or(0, |e| 8 + 4 + e.len()); // 4-byte Tiff header offset prefix
     let xmp_size = xmp.map_or(0, |x| 8 + x.len());
-    let total = header_size + jxlc_size + jbrd_size + exif_size + xmp_size;
+    let jumbf_size = jumbf.map_or(0, |j| 8 + j.len());
+    let total = header_size + jxlc_size + jbrd_size + exif_size + xmp_size + jumbf_size;
 
     let mut out = Vec::with_capacity(total);
 
@@ -273,6 +372,14 @@ pub fn wrap_in_container_with_jbrd_and_level(
     // xml box (raw XMP data)
     if let Some(xmp_data) = xmp {
         write_box(&mut out, b"xml ", xmp_data);
+    }
+
+    // jumb box (JUMBF / C2PA metadata, ISO 19566-5). Caller-provided
+    // payload is the JUMBF superbox contents verbatim; we do not
+    // validate or interpret it (third-party libraries like c2pa-rs
+    // produce conformant payloads).
+    if let Some(jumbf_data) = jumbf {
+        write_box(&mut out, b"jumb", jumbf_data);
     }
 
     out
@@ -526,6 +633,44 @@ pub fn append_gain_map_box(jxl_data: &[u8], jhgm_payload: &[u8]) -> Vec<u8> {
     }
 }
 
+/// Append a `jumb` box (JUMBF / C2PA superbox, ISO 19566-5) to JXL data.
+///
+/// `jumbf_payload` is the raw JUMBF superbox bytes provided by the caller
+/// (e.g. produced by the `c2pa` crate). The encoder does not validate or
+/// interpret the payload — it is the caller's responsibility to provide
+/// a conformant JUMBF blob.
+///
+/// If `jxl_data` is already a container (starts with the 12-byte JXL
+/// signature), the `jumb` box is appended at the end. If `jxl_data` is a
+/// bare codestream (starts with `0xFF 0x0A`), it is first wrapped in a
+/// container (signature + ftyp + jxlc), then the `jumb` box is appended.
+/// Matches libjxl's box ordering when JUMBF is added via
+/// `JxlEncoderAddBox(enc, "jumb", ...)` (see libjxl `encode.cc:2214`).
+#[must_use]
+pub fn append_jumbf_box(jxl_data: &[u8], jumbf_payload: &[u8]) -> Vec<u8> {
+    if is_container(jxl_data) {
+        // Already a container — append jumb box at the end.
+        let jumb_box_size = 8 + jumbf_payload.len();
+        let mut out = Vec::with_capacity(jxl_data.len() + jumb_box_size);
+        out.extend_from_slice(jxl_data);
+        write_box(&mut out, b"jumb", jumbf_payload);
+        out
+    } else {
+        // Bare codestream — wrap in container first, then append jumb.
+        let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len();
+        let jxlc_size = 8 + jxl_data.len();
+        let jumb_box_size = 8 + jumbf_payload.len();
+        let total = header_size + jxlc_size + jumb_box_size;
+
+        let mut out = Vec::with_capacity(total);
+        out.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
+        out.extend_from_slice(&FTYP_BOX);
+        write_box(&mut out, b"jxlc", jxl_data);
+        write_box(&mut out, b"jumb", jumbf_payload);
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,6 +867,127 @@ mod tests {
         }
         assert!(!found_brob, "tiny XMP should NOT use brob");
         assert!(found_xml, "tiny XMP should fall back to plain `xml ` box");
+    }
+
+    // ─── JUMBF (jumb) box pass-through ───────────────────────────
+
+    #[test]
+    fn test_wrap_in_container_with_jumbf_only() {
+        let codestream = b"\xFF\x0A\x00\x01";
+        // Minimal synthetic JUMBF: outer box header (8 bytes) +
+        // payload. The encoder doesn't interpret this — pass-through
+        // only.
+        let jumbf = b"\x00\x00\x00\x10jumdc2pa\x00\x00\x00\x00";
+        let result = wrap_in_container_with_jumbf(codestream, None, None, Some(jumbf));
+        // Header (32) + jxlc (8 + 4) + jumb (8 + 16)
+        assert_eq!(result.len(), 32 + 12 + 24);
+        let jumb_start = 32 + 12;
+        let jumb_size = u32::from_be_bytes([
+            result[jumb_start],
+            result[jumb_start + 1],
+            result[jumb_start + 2],
+            result[jumb_start + 3],
+        ]);
+        assert_eq!(jumb_size as usize, 8 + jumbf.len());
+        assert_eq!(&result[jumb_start + 4..jumb_start + 8], b"jumb");
+        assert_eq!(&result[jumb_start + 8..jumb_start + 8 + jumbf.len()], jumbf);
+    }
+
+    #[test]
+    fn test_wrap_in_container_with_exif_and_jumbf() {
+        let codestream = b"\xFF\x0A";
+        let exif = b"MM\x00\x2a\x00\x00\x00\x08";
+        let jumbf = b"\x00\x00\x00\x0Cjumdc2pa";
+        let result = wrap_in_container_with_jumbf(codestream, Some(exif), None, Some(jumbf));
+        // Order: header (32) + jxlc (8+2) + Exif (8+4+exif.len) + jumb (8+jumbf.len)
+        let expected = 32 + 10 + (8 + 4 + exif.len()) + (8 + jumbf.len());
+        assert_eq!(result.len(), expected);
+        // Find jumb at the tail.
+        let jumb_offset = 32 + 10 + 8 + 4 + exif.len();
+        assert_eq!(&result[jumb_offset + 4..jumb_offset + 8], b"jumb");
+        assert_eq!(&result[jumb_offset + 8..], jumbf);
+    }
+
+    #[test]
+    fn test_wrap_in_container_jumbf_none_is_no_op() {
+        // Sanity: wrap_in_container_with_jumbf with jumbf=None must
+        // produce byte-identical output to plain wrap_in_container.
+        // Pins the default-None hash-lock invariant.
+        let codestream = b"\xFF\x0A\x12\x34";
+        let exif = b"Exif data";
+        let xmp = b"<x:xmpmeta/>";
+        let baseline = wrap_in_container(codestream, Some(exif), Some(xmp));
+        let with_no_jumbf = wrap_in_container_with_jumbf(codestream, Some(exif), Some(xmp), None);
+        assert_eq!(baseline, with_no_jumbf);
+    }
+
+    #[test]
+    fn test_append_jumbf_box_to_bare_codestream() {
+        let codestream = b"\xFF\x0A\x00\x01\x02\x03";
+        let jumbf = b"\x00\x00\x00\x10jumdc2pa\xDE\xAD\xBE\xEF";
+        let result = append_jumbf_box(codestream, jumbf);
+        // Result is a container starting with the signature + ftyp.
+        assert!(is_container(&result));
+        assert_eq!(&result[12..32], &FTYP_BOX);
+        // jxlc box at offset 32.
+        let jxlc_size = u32::from_be_bytes([result[32], result[33], result[34], result[35]]);
+        assert_eq!(jxlc_size as usize, 8 + codestream.len());
+        assert_eq!(&result[36..40], b"jxlc");
+        assert_eq!(&result[40..40 + codestream.len()], codestream);
+        // jumb box follows jxlc.
+        let jumb_offset = 40 + codestream.len();
+        let jumb_size = u32::from_be_bytes([
+            result[jumb_offset],
+            result[jumb_offset + 1],
+            result[jumb_offset + 2],
+            result[jumb_offset + 3],
+        ]);
+        assert_eq!(jumb_size as usize, 8 + jumbf.len());
+        assert_eq!(&result[jumb_offset + 4..jumb_offset + 8], b"jumb");
+        assert_eq!(&result[jumb_offset + 8..], jumbf);
+    }
+
+    #[test]
+    fn test_append_jumbf_box_to_existing_container() {
+        // Build a minimal container.
+        let codestream = b"\xFF\x0A\x00";
+        let mut container = Vec::new();
+        container.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
+        container.extend_from_slice(&FTYP_BOX);
+        write_box(&mut container, b"jxlc", codestream);
+
+        let jumbf = b"\x00\x00\x00\x0Cjumdc2pa";
+        let result = append_jumbf_box(&container, jumbf);
+
+        // Original container bytes preserved.
+        assert_eq!(&result[..container.len()], container.as_slice());
+        // jumb box appended at the end.
+        let jumb_offset = container.len();
+        assert_eq!(&result[jumb_offset + 4..jumb_offset + 8], b"jumb");
+        assert_eq!(&result[jumb_offset + 8..], jumbf);
+    }
+
+    #[cfg(feature = "brotli-metadata")]
+    #[test]
+    fn test_brob_compresses_large_jumbf() {
+        // C2PA JUMBF blobs in the wild are typically several KB of
+        // CBOR + XML — brob should be a clear win on synthetic data
+        // of that shape.
+        let codestream = b"\xFF\x0A";
+        let jumbf_blob = b"\x00\x00\x00\x20jumdc2pa\x00\x00\x00\x00manifest-bytes--".repeat(64);
+        let result =
+            wrap_in_container_with_brob_and_jumbf(codestream, None, None, Some(&jumbf_blob), 4);
+        let mut found_brob_jumb = false;
+        for i in 0..result.len().saturating_sub(8) {
+            if &result[i..i + 4] == b"brob" && &result[i + 4..i + 8] == b"jumb" {
+                found_brob_jumb = true;
+                break;
+            }
+        }
+        assert!(
+            found_brob_jumb,
+            "expected brob box with original_type=jumb for repetitive JUMBF payload"
+        );
     }
 
     #[cfg(feature = "brotli-metadata")]
