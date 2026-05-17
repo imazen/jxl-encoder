@@ -4,6 +4,40 @@
 
 ### Added
 
+- **CLI passthrough bundle — A1 audit `cjxl` parity flags** (CLI parity
+  section). Adds `cjxl-rs` flags that round out the libjxl `cjxl` parity
+  surface so existing benchmark / sweep scripts can shell out without
+  flag-mapping shims. Eleven new flags:
+  - `--intensity-target NITS` → `EncodeRequest::with_intensity_target`,
+    writes `ToneMapping.intensity_target` in the file header. Fully
+    wired (regression: `tests/cli_passthrough_smoke.rs::
+    intensity_target_flag_changes_bitstream_lossy_path`).
+  - `--brotli-effort Q` → `EncodeRequest::with_brotli_metadata`. Wired
+    when the new `brotli-metadata` CLI feature is enabled; silently
+    accepted otherwise so scripts stay portable.
+  - `--alpha-distance D`, `--group-order N`, `--center-x X`,
+    `--center-y Y`, `--upsampling-mode N` → stored on `LossyConfig`
+    via new `with_alpha_distance` / `with_group_order` /
+    `with_center_x` / `with_center_y` / `with_upsampling_mode`
+    builders + matching getters. `--group-order 1` mirrors the
+    existing `center_first` flag through to the AC group reorder;
+    the other four are skeleton-only today (value stored, encoder-side
+    wiring queued as follow-on work).
+  - `--modular-predictor`, `--modular-palette-colors`,
+    `--modular-channel-colors-global-percent`,
+    `--modular-channel-colors-group-percent`,
+    `--modular-nb-prev-channels` → stored on `LosslessConfig` via
+    parallel `with_modular_*` builders + getters. All skeleton-only
+    today (the values are advisory while the encoder-side wiring is
+    landed incrementally — `MAX_PALETTE_COLORS` /
+    `CHANNEL_COLORS_PERCENT` in `modular/palette.rs` and predictor
+    selection in `modular/encode.rs` are the next targets).
+
+  Hash-lock: 36/36 byte-identical. New smoke tests in
+  `jxl-encoder-cli/tests/cli_passthrough_smoke.rs` (12 cases) cover
+  each flag's CLI parse path and prove `intensity-target` produces
+  divergent bytes vs default.
+
 - **`LossyConfig::with_epf_level(level: i8)`** and matching CLI flag
   `--epf -1..3` — caller-pinned edge-preserving filter strength,
   mirroring libjxl `cjxl --epf` and the `JXL_ENC_FRAME_SETTING_EPF`
@@ -35,7 +69,6 @@
   (secondary linear-sRGB decode). Max measured channel diff: 0.033 on
   [0,1] linear, well under the 0.07 wiring tolerance. Closes the
   Float16 portion of #18.
-
 ### Refactor
 
 - **`kAvoidEntropyOfTransforms` formula extracted into named helpers** in

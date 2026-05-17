@@ -1303,6 +1303,59 @@ pub struct LosslessConfig {
     /// for 5-20% smaller files on sprites / UI assets. Set via
     /// [`Self::with_keep_invisible`].
     simplify_invisible: bool,
+    /// Optional forced modular predictor override (CLI passthrough —
+    /// mirrors libjxl `cjxl -P` / `--modular_predictor`,
+    /// `enc_params.h:options.predictor`). `None` (default) lets the
+    /// tree learner choose. `Some(n)` for `n in 0..=13` corresponds to
+    /// [`crate::modular::Predictor`] variants `Zero..Average4`. `Some(14)`
+    /// reserved for libjxl `Predictor::Best`, `Some(15)` for
+    /// `Predictor::Variable` — both stored on the config for surface
+    /// completeness; encoder-side fixed-predictor wiring is queued
+    /// follow-on work (current behaviour: tree learner / weighted /
+    /// gradient defaults remain in effect even when set).
+    /// See [`Self::with_modular_predictor`].
+    modular_predictor: Option<u8>,
+    /// Optional override of the palette-transform colour cap (CLI
+    /// passthrough — mirrors libjxl `cjxl --modular_palette_colors`,
+    /// `enc_params.h:palette_colors`). `None` (default) keeps the
+    /// built-in [`crate::modular::palette::MAX_PALETTE_COLORS`] (1024).
+    /// `Some(0)` disables palette detection. `Some(n)` caps the
+    /// palette-colour search at `n`. Stored on the config; wiring
+    /// through the palette-search call sites in `modular/encode.rs`
+    /// is queued follow-on work — current behaviour uses the built-in
+    /// constant. See [`Self::with_modular_palette_colors`].
+    modular_palette_colors: Option<i64>,
+    /// Optional override of the global channel-colours percentage
+    /// (CLI passthrough — mirrors libjxl `cjxl
+    /// --modular_channel_colors_global_percent`,
+    /// `enc_params.h:channel_colors_pre_transform_percent`). `None`
+    /// (default) keeps the built-in
+    /// [`crate::modular::palette::CHANNEL_COLORS_PERCENT`] (95.0).
+    /// `Some(p)` for `p in 0.0..=100.0` overrides the cap used when
+    /// the global pre-RCT channel-compact pass evaluates per-channel
+    /// palette beneficence. Stored on the config; wiring through
+    /// `modular/encode.rs` is queued follow-on work.
+    /// See [`Self::with_modular_channel_colors_global_percent`].
+    modular_channel_colors_global_percent: Option<f32>,
+    /// Optional override of the per-group channel-colours percentage
+    /// (CLI passthrough — mirrors libjxl `cjxl
+    /// --modular_channel_colors_group_percent`,
+    /// `enc_params.h:channel_colors_percent`). `None` (default) keeps
+    /// the libjxl default (80.0). Stored on the config; per-group
+    /// channel-compact wiring is queued follow-on work.
+    /// See [`Self::with_modular_channel_colors_group_percent`].
+    modular_channel_colors_group_percent: Option<f32>,
+    /// Optional override of the previous-channel context properties
+    /// limit for tree learning (CLI passthrough — mirrors libjxl
+    /// `cjxl -E` / `--modular_nb_prev_channels`,
+    /// `enc_params.h:max_properties`). `None` (default) keeps the
+    /// effort-derived behaviour. `Some(n)` for `n in 0..=11` would
+    /// cap the count of additional previous-channel properties offered
+    /// to the MA tree learner. Stored on the config; tree-learning
+    /// wiring is queued follow-on work — our current learner does
+    /// not consume previous-channel properties.
+    /// See [`Self::with_modular_nb_prev_channels`].
+    modular_nb_prev_channels: Option<i32>,
 }
 
 impl Default for LosslessConfig {
@@ -1334,6 +1387,11 @@ impl LosslessConfig {
             // `ApplyOverride(_, IsLossless()) == true`, i.e. NO simplify
             // pass. Caller opts in via `with_keep_invisible(false)`.
             simplify_invisible: false,
+            modular_predictor: None,
+            modular_palette_colors: None,
+            modular_channel_colors_global_percent: None,
+            modular_channel_colors_group_percent: None,
+            modular_nb_prev_channels: None,
         }
     }
 
@@ -1684,6 +1742,114 @@ impl LosslessConfig {
         // branch is a single boolean read on the hot path.
         self.simplify_invisible = !keep;
         self
+    }
+
+    /// Force a fixed modular predictor (CLI passthrough — mirrors libjxl
+    /// `cjxl -P` / `--modular_predictor`).
+    ///
+    /// `None` (default) lets the MA tree learner pick. `Some(n)` for
+    /// `n in 0..=13` corresponds to [`crate::modular::Predictor`]
+    /// variants `Zero..Average4` (see the enum in
+    /// `jxl-encoder/src/modular/predictor.rs`). `Some(14)` / `Some(15)`
+    /// are reserved for libjxl's `Best` / `Variable` modes and are
+    /// currently stored but not honoured by our encoder (the per-leaf
+    /// tree-learned predictor still wins). Values outside `0..=15` are
+    /// clamped silently.
+    ///
+    /// Encoder-side wiring of the forced predictor through the
+    /// no-tree-learning modular path is queued follow-on work.
+    pub fn with_modular_predictor(mut self, p: Option<u8>) -> Self {
+        self.modular_predictor = p.map(|v| v.min(15));
+        self
+    }
+
+    /// Currently-set modular predictor override (or `None` if unset).
+    pub fn modular_predictor(&self) -> Option<u8> {
+        self.modular_predictor
+    }
+
+    /// Override the palette-transform colour cap (CLI passthrough —
+    /// mirrors libjxl `cjxl --modular_palette_colors`).
+    ///
+    /// `None` (default) keeps the built-in
+    /// [`crate::modular::palette::MAX_PALETTE_COLORS`] (1024). `Some(0)`
+    /// disables palette detection. `Some(n)` for `n > 0` caps the
+    /// palette-colour search.
+    ///
+    /// Encoder-side wiring through the palette-search call sites in
+    /// `modular/encode.rs` is queued follow-on work. The value is
+    /// stored on the config for surface completeness.
+    pub fn with_modular_palette_colors(mut self, n: Option<i64>) -> Self {
+        self.modular_palette_colors = n;
+        self
+    }
+
+    /// Currently-set modular palette colours cap (or `None` if unset).
+    pub fn modular_palette_colors(&self) -> Option<i64> {
+        self.modular_palette_colors
+    }
+
+    /// Override the global channel-colours percentage cap (CLI
+    /// passthrough — mirrors libjxl `cjxl
+    /// --modular_channel_colors_global_percent`).
+    ///
+    /// `None` (default) keeps the built-in
+    /// [`crate::modular::palette::CHANNEL_COLORS_PERCENT`] (95.0).
+    /// `Some(p)` for `p in 0.0..=100.0` overrides. Values outside that
+    /// range are clamped silently.
+    ///
+    /// Encoder-side wiring is queued follow-on work.
+    pub fn with_modular_channel_colors_global_percent(mut self, p: Option<f32>) -> Self {
+        self.modular_channel_colors_global_percent = p.map(|v| v.clamp(0.0, 100.0));
+        self
+    }
+
+    /// Currently-set global channel-colours percentage (or `None` if
+    /// unset).
+    pub fn modular_channel_colors_global_percent(&self) -> Option<f32> {
+        self.modular_channel_colors_global_percent
+    }
+
+    /// Override the per-group channel-colours percentage cap (CLI
+    /// passthrough — mirrors libjxl `cjxl
+    /// --modular_channel_colors_group_percent`).
+    ///
+    /// `None` (default) keeps the libjxl default (80.0). `Some(p)` for
+    /// `p in 0.0..=100.0` overrides. Values outside that range are
+    /// clamped silently.
+    ///
+    /// Encoder-side wiring is queued follow-on work.
+    pub fn with_modular_channel_colors_group_percent(mut self, p: Option<f32>) -> Self {
+        self.modular_channel_colors_group_percent = p.map(|v| v.clamp(0.0, 100.0));
+        self
+    }
+
+    /// Currently-set per-group channel-colours percentage (or `None`
+    /// if unset).
+    pub fn modular_channel_colors_group_percent(&self) -> Option<f32> {
+        self.modular_channel_colors_group_percent
+    }
+
+    /// Override the previous-channel context-properties limit (CLI
+    /// passthrough — mirrors libjxl `cjxl -E` /
+    /// `--modular_nb_prev_channels`).
+    ///
+    /// `None` (default) keeps the effort-derived behaviour. `Some(n)`
+    /// for `n in 0..=11` would cap the count of additional
+    /// previous-channel properties offered to the MA tree learner.
+    /// `Some(-1)` mirrors libjxl's "use default" sentinel. Stored on
+    /// the config; tree-learning wiring is queued follow-on work —
+    /// our current learner does not consume previous-channel
+    /// properties.
+    pub fn with_modular_nb_prev_channels(mut self, n: Option<i32>) -> Self {
+        self.modular_nb_prev_channels = n;
+        self
+    }
+
+    /// Currently-set previous-channel context-properties cap (or
+    /// `None` if unset).
+    pub fn modular_nb_prev_channels(&self) -> Option<i32> {
+        self.modular_nb_prev_channels
     }
 
     /// Set thread count for parallel encoding.
@@ -2210,6 +2376,49 @@ pub struct LossyConfig {
     ///
     /// See [`Self::with_epf_level`].
     epf_level: i8,
+    /// Optional separate butteraugli distance for the alpha extra
+    /// channel (CLI passthrough — mirrors libjxl `cjxl --alpha_distance`,
+    /// `enc_params.h:alpha_distance`). `None` (default) keeps the
+    /// existing pipeline behaviour (alpha encoded losslessly when the
+    /// layout has alpha). `Some(d)` is stored on the config; encoder-side
+    /// wiring of a separately-quantised lossy alpha channel is queued
+    /// follow-on work — the value is currently advisory only.
+    /// See [`Self::with_alpha_distance`].
+    alpha_distance: Option<f32>,
+    /// Optional modular group-encoding order (CLI passthrough — mirrors
+    /// libjxl `cjxl --group_order` / `JXL_ENC_FRAME_SETTING_GROUP_ORDER`).
+    /// `None` (default) = scanline order. `Some(0)` = scanline. `Some(1)`
+    /// = center-first (equivalent to [`Self::with_center_first(true)`]).
+    /// `Some(2)` is reserved for future encoder modes. When set to 1 the
+    /// encoder mirrors `center_first` so the existing center-first
+    /// reorder kicks in; the explicit `group_order` setting also flips
+    /// the `center_first` flag for downstream pipeline parity.
+    /// See [`Self::with_group_order`].
+    group_order: Option<u8>,
+    /// Optional centre-pixel X coordinate for the center-first AC group
+    /// reorder (CLI passthrough — mirrors libjxl `cjxl --center_x` /
+    /// `JXL_ENC_FRAME_SETTING_GROUP_ORDER_CENTER_X`). `None` (default)
+    /// uses the image centre. Stored on the config; encoder-side
+    /// honouring of a non-default centre is queued follow-on work
+    /// (the existing center-first reorder anchors at image centre).
+    /// See [`Self::with_center_x`].
+    center_x: Option<i64>,
+    /// Optional centre-pixel Y coordinate for the center-first AC group
+    /// reorder (CLI passthrough — mirrors libjxl `cjxl --center_y` /
+    /// `JXL_ENC_FRAME_SETTING_GROUP_ORDER_CENTER_Y`). `None` (default)
+    /// uses the image centre. Stored on the config; encoder-side
+    /// honouring of a non-default centre is queued follow-on work.
+    /// See [`Self::with_center_y`].
+    center_y: Option<i64>,
+    /// Optional decoder upsampling mode (CLI passthrough — mirrors
+    /// libjxl `cjxl --upsampling_mode`, `enc_params.h:upsampling_mode`).
+    /// `None` / `Some(-1)` = non-separable (libjxl default). `Some(0)`
+    /// = nearest neighbour (pixel-art). `Some(1)` = reserved. Stored on
+    /// the config; emitting the custom upsampling LUT in `FrameHeader`
+    /// is queued follow-on work — current behaviour uses the JXL spec's
+    /// default upsampling for the active `with_resampling` factor.
+    /// See [`Self::with_upsampling_mode`].
+    upsampling_mode: Option<i32>,
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -2293,6 +2502,11 @@ impl LossyConfig {
             content_class: None,
             patches_explicit: false,
             epf_level: -1,
+            alpha_distance: None,
+            group_order: None,
+            center_x: None,
+            center_y: None,
+            upsampling_mode: None,
         }
     }
 
@@ -2422,6 +2636,18 @@ impl LossyConfig {
         if self.patches_explicit {
             new.patches = self.patches;
             new.patches_explicit = true;
+        }
+        // Preserve CLI-passthrough knobs across with_effort (they're
+        // never effort-derived; opt-in / pure forwarding).
+        new.alpha_distance = self.alpha_distance;
+        new.group_order = self.group_order;
+        new.center_x = self.center_x;
+        new.center_y = self.center_y;
+        new.upsampling_mode = self.upsampling_mode;
+        // If group_order was set to 1 (center-first), keep center_first
+        // wired through with_effort too.
+        if matches!(self.group_order, Some(1)) {
+            new.center_first = true;
         }
         new
     }
@@ -2932,6 +3158,100 @@ impl LossyConfig {
     /// unset). See [`Self::with_content_class`].
     pub fn content_class(&self) -> Option<crate::effort::ImageContentClass> {
         self.content_class
+    }
+
+    /// Set a separate butteraugli distance for the alpha extra channel
+    /// (CLI passthrough — mirrors libjxl `cjxl --alpha_distance`).
+    ///
+    /// `None` (default) keeps the existing pipeline behaviour — alpha
+    /// is encoded losslessly when the layout carries it. `Some(d)`
+    /// stores the requested distance; encoder-side wiring of a
+    /// separately-quantised lossy alpha channel is queued follow-on
+    /// work (the value is currently advisory only — the alpha plane
+    /// still rides through the lossless modular sub-bitstream).
+    pub fn with_alpha_distance(mut self, d: Option<f32>) -> Self {
+        self.alpha_distance = d;
+        self
+    }
+
+    /// Currently-set alpha-channel distance (or `None` if unset).
+    pub fn alpha_distance(&self) -> Option<f32> {
+        self.alpha_distance
+    }
+
+    /// Set the modular-group encoding order (CLI passthrough — mirrors
+    /// libjxl `cjxl --group_order`).
+    ///
+    /// `None` (default) = scanline order. `Some(0)` = explicit scanline.
+    /// `Some(1)` = center-first; mirrors
+    /// [`Self::with_center_first(true)`](Self::with_center_first) and
+    /// flips that flag so the existing center-first reorder kicks in.
+    /// `Some(2)` is reserved for future encoder modes (stored, no-op).
+    pub fn with_group_order(mut self, order: Option<u8>) -> Self {
+        self.group_order = order;
+        if matches!(order, Some(1)) {
+            self.center_first = true;
+        } else if matches!(order, Some(0)) {
+            self.center_first = false;
+        }
+        self
+    }
+
+    /// Currently-set modular group order (or `None` if unset).
+    pub fn group_order(&self) -> Option<u8> {
+        self.group_order
+    }
+
+    /// Set a custom centre X coordinate for the center-first AC group
+    /// reorder (CLI passthrough — mirrors libjxl `cjxl --center_x`).
+    ///
+    /// `None` (default) anchors the reorder at the image centre. Stored
+    /// on the config; encoder-side honouring of a non-default centre
+    /// is queued follow-on work. Negative values are interpreted by
+    /// libjxl as "use image centre"; we follow the same convention.
+    pub fn with_center_x(mut self, x: Option<i64>) -> Self {
+        self.center_x = x;
+        self
+    }
+
+    /// Currently-set centre X (or `None` if unset).
+    pub fn center_x(&self) -> Option<i64> {
+        self.center_x
+    }
+
+    /// Set a custom centre Y coordinate for the center-first AC group
+    /// reorder (CLI passthrough — mirrors libjxl `cjxl --center_y`).
+    /// See [`Self::with_center_x`] for semantics.
+    pub fn with_center_y(mut self, y: Option<i64>) -> Self {
+        self.center_y = y;
+        self
+    }
+
+    /// Currently-set centre Y (or `None` if unset).
+    pub fn center_y(&self) -> Option<i64> {
+        self.center_y
+    }
+
+    /// Set the decoder upsampling mode (CLI passthrough — mirrors
+    /// libjxl `cjxl --upsampling_mode`).
+    ///
+    /// Values follow libjxl conventions:
+    /// - `None` or `Some(-1)` = non-separable upsampling (libjxl default).
+    /// - `Some(0)` = nearest neighbour (pixel-art preservation).
+    /// - `Some(1)` = reserved.
+    ///
+    /// Stored on the config; emitting a custom upsampling LUT in the
+    /// `FrameHeader` is queued follow-on work — current behaviour uses
+    /// the spec-default upsampling for the active
+    /// [`Self::with_resampling`] factor.
+    pub fn with_upsampling_mode(mut self, mode: Option<i32>) -> Self {
+        self.upsampling_mode = mode;
+        self
+    }
+
+    /// Currently-set upsampling mode (or `None` if unset).
+    pub fn upsampling_mode(&self) -> Option<i32> {
+        self.upsampling_mode
     }
 
     /// Reorder AC groups in the multi-group TOC by concentric-square
