@@ -1,0 +1,95 @@
+# RFC#45 chunk 4 — multi-seed tree learning at e10/e11
+# Sample-fraction jitter + predictor-order shuffle (paired A/B/C bench)
+#
+# Change ID (jj):                          zvnwxrmqxyyklozswtmqkzqskquovqml
+# (commit hash visible via `git log` after push; see CHANGELOG.md entry too)
+# Rebase parent (origin/main):             16a521a3a5d2
+# Chunk-3 baseline reference:              a8fbd36020e8
+# Chunk-2 (multi-seed wiring):             d4f2e2822600
+#
+# Workspace:    jxl-encoder--e10-chunk4 (jj-colocated sibling of main repo)
+# Bench host:   AMD Ryzen 9 7950X (16C/32T, 128 GB), Linux 6.6 WSL2
+# Build:        cargo build -p jxl-encoder --release --features 'std parallel parallel-tree-learning' --example e10_e11_multiseed_chunk4_ab
+# Run cmd:      SAMPLES=2 THREADS=8 ./target/release/examples/e10_e11_multiseed_chunk4_ab
+# Corpus:       /home/lilith/work/codec-corpus/CID22/CID22-512/validation/
+# Images:       1025469.png, 1044329.png, 1189261.png, 1279330.png, 1418519.png
+# Efforts:      e9 (single-seed), e10 (2 seeds), e11 (4 seeds)
+# Samples:      2 per (image, effort) cell (paired sample-major interleave)
+#
+# Variance dimensions added on top of chunk 3:
+#   1. derive_seeded_sample_fraction(seed) - per-seed absolute tree_sample_fraction
+#      cycled by seed%4 over [None, Some(0.40), Some(0.60), Some(0.70)].
+#      Seed 0 keeps the canonical profile fraction (None -> byte-identical).
+#      Applied via stride_for_seeded_sample_fraction() so it composes cleanly
+#      with chunk-3's derive_seeded_stride (chunk-4 takes precedence).
+#   2. derive_seeded_predictor_order(seed) - per-seed permutation of the 14
+#      CANDIDATE_PREDICTORS array (canonical / strong-first / directional-first
+#      / full-reverse). Affects greedy ID3's strict-< tie-break in
+#      find_best_predictor. Set equality preserved -> every per-seed tree
+#      remains spec-valid; the chunk-2 token-cost picker chooses among them
+#      on equal terms.
+#
+# Hash-lock invariant: 36/36 hash_lock_features tests pass at e <= 9
+# (tree_learn_seeds = 1 for e <= 9 -> seed-0-only path, byte-identical).
+#
+# Bench format (TSV):
+#   image    effort    sample_idx    bytes    sha-4    wall_ms
+#
+# A/B/C bytes summary (per-image, mean over 2 samples; deterministic encoder so
+# samples are identical bytes within a cell):
+#
+#   image           e9        e10       e11       delta10%  delta11%
+#   1025469.png     231695    231461    231461    -0.10     -0.10
+#   1044329.png     330198    330499    330499    +0.09     +0.09
+#   1189261.png     303156    303864    303864    +0.23     +0.23
+#   1279330.png     208471    207123    207123    -0.65     -0.65
+#   1418519.png     165481    165275    163908    -0.12     -0.95
+#   --------------------------------------------------------------
+#   TOTAL           1239001   1238222   1236855   -0.06%    -0.17%
+#
+# Honest chunk-3 -> chunk-4 comparison (per-image bytes, same 5-image corpus):
+#
+#   image           effort    chunk3_B  chunk4_B  delta_B   delta%
+#   1025469.png     e9        231695    231695    +0        +0.000
+#   1025469.png     e10       231461    231461    +0        +0.000
+#   1025469.png     e11       231461    231461    +0        +0.000
+#   1044329.png     e9        330198    330198    +0        +0.000
+#   1044329.png     e10       330499    330499    +0        +0.000
+#   1044329.png     e11       327001    330499    +3498     +1.070
+#   1189261.png     e9        303156    303156    +0        +0.000
+#   1189261.png     e10       303864    303864    +0        +0.000
+#   1189261.png     e11       302399    303864    +1465     +0.484
+#   1279330.png     e9        208471    208471    +0        +0.000
+#   1279330.png     e10       207027    207123    +96       +0.046
+#   1279330.png     e11       207027    207123    +96       +0.046
+#   1418519.png     e9        165481    165481    +0        +0.000
+#   1418519.png     e10       165275    165275    +0        +0.000
+#   1418519.png     e11       164133    163908    -225      -0.137
+#
+#   TOTAL @e9       1239001   1239001   +0        +0.000%
+#   TOTAL @e10      1238126   1238222   +96       +0.008%
+#   TOTAL @e11      1232021   1236855   +4834     +0.392%
+#
+# Net finding (HONEST): chunk-4 REGRESSES at e11 by +0.39% on this 5-image
+# corpus vs chunk-3, despite adding two more variance dimensions. At e10
+# the net is a wash (+0.008%). The new sample-fraction / predictor-order
+# perturbations displace some of chunk-3's winning split-threshold +
+# property-order perturbations on 1044329 and 1189261 at e11. Only one
+# cell (1418519@e11) improves over chunk-3 (-0.137%).
+#
+# Interpretation:
+#   - Variance dimensions are NOT additive on this 5-image subset.
+#   - With 4 seeds at e11 the budget is fixed; adding more variance dimensions
+#     and cycling them mod-4 changes WHICH 4 candidate trees are evaluated,
+#     not how many. Chunk-3's 4 perturbations happened to hit better minima
+#     on 2/5 images than chunk-4's recombined set.
+#   - Possible follow-ons: (a) restore the chunk-3 dimensions and add chunk-4
+#     dimensions only at seed indices beyond 3 (requires >4 seed budget,
+#     i.e., a new effort tier or env-gated tuning); (b) factor-of-2 expansion
+#     to 6 or 8 seeds at e11 to fit all variance dimensions independently;
+#     (c) per-image dispatch — accept chunk-3 won where chunk-4 lost.
+#   - Larger corpus sweep needed before promoting chunk-4 over chunk-3.
+#
+# Hash-lock outcome: PASS — 36/36 hash_lock_features tests at e <= 9.
+#                    Bytes byte-identical at e <= 9 vs origin/main and vs
+#                    chunk-3 a8fbd36020e8 (all 5 images, both efforts).

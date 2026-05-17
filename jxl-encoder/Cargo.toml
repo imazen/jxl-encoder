@@ -292,6 +292,14 @@ path = "examples/e10_e11_multiseed_ab.rs"
 name = "e10_e11_multiseed_chunk3_ab"
 path = "examples/e10_e11_multiseed_chunk3_ab.rs"
 
+# RFC#45 chunk 4 (lossless): two extra variance dimensions on top of chunk 3
+# — sample-fraction jitter (tree_sample_fraction ∈ {0.40, 0.60, 0.70}) and
+# predictor-evaluation-order shuffle (4 permutations of CANDIDATE_PREDICTORS).
+# 5-image default corpus.
+[[example]]
+name = "e10_e11_multiseed_chunk4_ab"
+path = "examples/e10_e11_multiseed_chunk4_ab.rs"
+
 # RFC#45 chunk 3 (lossy): multi-seed butteraugli sweep isolation A/B.
 # Toggles `lossy_search_seeds` to isolate the chunk-3 contribution
 # from chunk-1's extended-iter contribution. Requires __expert so the

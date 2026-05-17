@@ -347,9 +347,10 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_gather_stride_from_profile, derive_seeded_params, derive_seeded_stride,
-        estimate_token_cost, gather_samples_strided, gather_samples_strided_with_dedup_backend,
-        gather_samples_strided_with_offset, max_ref_channels,
+        compute_gather_stride_from_profile, derive_seeded_params, derive_seeded_sample_fraction,
+        derive_seeded_stride, estimate_token_cost, gather_samples_strided,
+        gather_samples_strided_with_dedup_backend, gather_samples_strided_with_offset,
+        max_ref_channels, stride_for_seeded_sample_fraction,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -421,17 +422,25 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     };
 
     // Closure: gather samples for a given seed, with optional per-seed
-    // stride override (RFC#45 chunk 3). Seed 0 always uses the canonical
-    // `stride` + `start_offset = 0` so seed-0 is byte-identical to the
-    // pre-RFC#45-chunk-2 gather. Higher seeds shift the offset and may
-    // use a perturbed `seed_stride` (different sample density).
+    // stride override (RFC#45 chunk 3 + chunk 4). Seed 0 always uses the
+    // canonical `stride` + `start_offset = 0` and the canonical
+    // `CANDIDATE_PREDICTORS` order so seed-0 is byte-identical to the
+    // pre-RFC#45-chunk-2 gather. Higher seeds shift the offset, may use
+    // a perturbed `seed_stride` (different sample density), and pick a
+    // per-seed predictor permutation (chunk-4 evaluation-order variance).
     let gather_for_seed = |seed: u64, seed_stride: usize| -> TreeSamples {
         let start_offset = if seed_stride > 1 {
             (seed as usize) % seed_stride
         } else {
             0
         };
-        let mut samples = TreeSamples::new_with_ref_channels(num_refs);
+        // Chunk 4: predictor-order shuffle — seed 0 yields the canonical
+        // `CANDIDATE_PREDICTORS`, higher seeds rotate through 3 alternate
+        // permutations. All TreeSamples merged via `append_from` MUST use
+        // the SAME predictor order (the assert at append_from line 506-510
+        // checks lengths; the SoA columns are predictor-indexed so they
+        // must agree).
+        let mut samples = TreeSamples::new_with_predictor_order_for_seed(num_refs, seed);
         // Meta channels first.
         if let Some(meta) = meta_image {
             if enable_gather_dedup && seed == 0 {
@@ -467,7 +476,8 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         // Per-group gather — embarrassingly parallel across groups.
         let per_group_samples: Vec<TreeSamples> =
             crate::parallel::parallel_map(images.len(), |group_idx| {
-                let mut local = TreeSamples::new_with_ref_channels(num_refs);
+                // Same per-seed predictor order as the meta init above.
+                let mut local = TreeSamples::new_with_predictor_order_for_seed(num_refs, seed);
                 if enable_gather_dedup && seed == 0 {
                     let _ = gather_samples_strided_with_dedup_backend(
                         &mut local,
@@ -513,8 +523,9 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         samples
     };
 
-    // Multi-seed dispatch — RFC#45 chunk 2 (start-offset variance) plus
-    // chunk 3 (broader variance: stride / split_threshold / property-order).
+    // Multi-seed dispatch — RFC#45 chunk 2 (start-offset variance), chunk 3
+    // (broader variance: stride / split_threshold / property-order), and
+    // chunk 4 (sample-fraction jitter + predictor-evaluation-order shuffle).
     //
     // At e ≤ 9 `tree_learn_seeds = 1` (libjxl-equivalent, byte-identical
     // hash-locks). At e10/e11 we fan out 2 / 4 seeded gather→tree runs and
@@ -522,8 +533,14 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     //
     // Chunk 3 widens the per-seed variance via [`derive_seeded_stride`]
     // (density perturbation) and [`derive_seeded_params`] (split-threshold
-    // jitter + property-order rotation). Seed 0 stays the canonical run
-    // — it returns the legacy stride and an unmodified params clone.
+    // jitter + property-order rotation). Chunk 4 adds
+    // [`derive_seeded_sample_fraction`] (an absolute target sample
+    // fraction, applied via [`stride_for_seeded_sample_fraction`] in place
+    // of the chunk-3 stride perturbation when present) and
+    // [`derive_seeded_predictor_order`] (a per-seed permutation of the
+    // [`CANDIDATE_PREDICTORS`] list, baked into `TreeSamples` at
+    // construction). Seed 0 stays the canonical run for all five
+    // dimensions.
     let seeds = profile.tree_learn_seeds.max(1);
     let mut best: Option<(Vec<crate::entropy_coding::token::Token>, usize, Tree, f64)> = None;
 
@@ -536,7 +553,15 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         .with_total_pixels(total_pixels);
 
     for seed in 0..(seeds as u64) {
-        let seed_stride = derive_seeded_stride(stride, seed);
+        // Chunk 4: per-seed sample-fraction override takes precedence
+        // over chunk-3's stride perturbation. Seed 0 returns None → fall
+        // through to the chunk-3 path. Higher seeds with Some(frac) map
+        // an absolute target fraction onto a stride; the override is a
+        // no-op when total_pixels already fits under the 65 K floor.
+        let seed_stride = match derive_seeded_sample_fraction(seed) {
+            Some(frac) => stride_for_seeded_sample_fraction(total_pixels, frac),
+            None => derive_seeded_stride(stride, seed),
+        };
         // Gather + tree-learn for this seed.
         let mut samples = crate::profile_time!("modular/gather_samples", {
             gather_for_seed(seed, seed_stride)
