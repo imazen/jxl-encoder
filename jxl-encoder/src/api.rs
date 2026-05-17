@@ -247,6 +247,9 @@ pub(crate) fn estimate_peak_memory_bytes_lossless(
         // A3 chunk 1b: f32 PQ/HLG/BT.709 RGB(A) (issue #46).
         PixelLayout::RgbPqF32 | PixelLayout::RgbHlgF32 | PixelLayout::RgbBt709F32 => 3,
         PixelLayout::RgbaPqF32 | PixelLayout::RgbaHlgF32 | PixelLayout::RgbaBt709F32 => 4,
+        // CMYK lossless: 3 colour planes + 1 Black extra channel
+        // (same i32 plane layout as RGBA).
+        PixelLayout::Cmyk8 | PixelLayout::Cmyk16 => 4,
     };
 
     // (1) Channel planes: i32 per pixel per channel.
@@ -443,6 +446,29 @@ pub enum PixelLayout {
     RgbBt709F32,
     /// BT.709-encoded f32 RGBA, 16 bytes per pixel. See [`Self::RgbBt709F32`].
     RgbaBt709F32,
+    /// 8-bit CMYK, 4 bytes per pixel (C, M, Y, K). The C/M/Y planes
+    /// are encoded as the frame's 3 color channels; the K (Black)
+    /// plane is encoded as an [`ExtraChannelType::Black`] extra
+    /// channel. JXL convention is **`0 = full ink, 255 = no ink`**
+    /// for all four planes (libjxl `enc_image_bundle.cc:65`); callers
+    /// must pre-invert any "0 = no ink" CMYK input before encoding.
+    ///
+    /// For a colour-managed CMYK workflow attach a CMYK ICC profile
+    /// via [`LosslessConfig::with_metadata`] →
+    /// [`ImageMetadata::icc_profile`]; without an ICC the decoder will
+    /// fall back to interpreting the CMY planes as sRGB and the K
+    /// plane as an opaque extra channel. Lossless-only in this
+    /// chunk; lossy CMYK is not yet wired (would route C/M/Y through
+    /// VarDCT in XYB, which loses CMYK semantics). Closes #58.
+    ///
+    /// Bumps codestream level to 10 (level 5 forbids the Black
+    /// extra channel; see `compute_codestream_level`).
+    Cmyk8,
+    /// 16-bit CMYK, 8 bytes per pixel — native-endian u16 per channel
+    /// (C, M, Y, K). Same `0 = full ink, 65535 = no ink` convention
+    /// as [`Self::Cmyk8`]; same lossless-only restriction. The Black
+    /// channel is signaled as 16-bit in the extra-channel header.
+    Cmyk16,
 }
 
 impl PixelLayout {
@@ -471,6 +497,12 @@ impl PixelLayout {
             // storage size.
             Self::RgbPqF32 | Self::RgbHlgF32 | Self::RgbBt709F32 => 12,
             Self::RgbaPqF32 | Self::RgbaHlgF32 | Self::RgbaBt709F32 => 16,
+            // CMYK is C, M, Y, K interleaved — 4 bytes (8-bit) or
+            // 8 bytes (16-bit). The K plane is split off and encoded
+            // as a Black extra channel; the on-disk codestream still
+            // carries 3 colour channels.
+            Self::Cmyk8 => 4,
+            Self::Cmyk16 => 8,
         }
     }
 
@@ -493,8 +525,15 @@ impl PixelLayout {
     pub const fn is_16bit(self) -> bool {
         matches!(
             self,
-            Self::Rgb16 | Self::Rgba16 | Self::Gray16 | Self::GrayAlpha16
+            Self::Rgb16 | Self::Rgba16 | Self::Gray16 | Self::GrayAlpha16 | Self::Cmyk16
         )
+    }
+
+    /// Whether this layout is CMYK (3 colour channels + Black extra
+    /// channel). Encoded losslessly only; lossy CMYK would have to
+    /// pass C/M/Y through XYB and is not yet wired.
+    pub const fn is_cmyk(self) -> bool {
+        matches!(self, Self::Cmyk8 | Self::Cmyk16)
     }
 
     /// Whether this layout uses f32 samples.
@@ -3173,6 +3212,46 @@ impl<'a> ExtraChannel<'a> {
         }
     }
 
+    /// Attach a Black (K) channel (`ExtraChannelType::Black`) — the
+    /// fourth plane of a CMYK encode. `data` is `width * height`
+    /// bytes of u8 ink coverage; JXL convention is
+    /// **`0 = full ink, 255 = no ink`** (libjxl
+    /// `enc_image_bundle.cc:65`). Forces codestream level 10 because
+    /// the Black extra channel is forbidden at level 5
+    /// (`compute_codestream_level`).
+    ///
+    /// In practice callers should prefer [`PixelLayout::Cmyk8`] which
+    /// splits interleaved CMYK input into 3 colour planes + an
+    /// automatically-synthesised Black extra channel. Exposed for
+    /// callers that already keep their CMY and K planes separate
+    /// (e.g. print-pipeline producers that store K as a separate buffer).
+    pub fn black(data: &'a [u8]) -> Self {
+        Self {
+            info: crate::headers::extra_channels::ExtraChannelInfo {
+                ec_type: crate::headers::extra_channels::ExtraChannelType::Black,
+                ..Default::default()
+            },
+            data: ExtraChannelBuf::U8(data),
+        }
+    }
+
+    /// Attach a 16-bit Black (K) channel. Same `0 = full ink,
+    /// 65535 = no ink` convention as [`Self::black`]; the channel
+    /// info is marked as 16-bit so the decoder preserves the full
+    /// precision. Pairs with [`PixelLayout::Cmyk16`] when callers
+    /// keep their K plane separate from C/M/Y.
+    pub fn black_u16(data: &'a [u16]) -> Self {
+        let mut info = crate::headers::extra_channels::ExtraChannelInfo {
+            ec_type: crate::headers::extra_channels::ExtraChannelType::Black,
+            ..Default::default()
+        };
+        info.bit_depth = crate::headers::file_header::BitDepth::uint16();
+        Self {
+            info,
+            data: ExtraChannelBuf::U16(data),
+        }
+    }
+
     /// Attach a selection-mask channel
     /// (`ExtraChannelType::SelectionMask`). `data` is `width * height`
     /// bytes. Editing tools can use this to round-trip Photoshop-style
@@ -3580,11 +3659,17 @@ impl<'a> EncodeRequest<'a> {
             .metadata
             .and_then(|m| m.icc_profile)
             .map_or(0u64, |icc| icc.len() as u64);
-        let num_ec = self.extra_channels.len() as u32 + u32::from(self.layout.has_alpha());
-        let has_black = self
-            .extra_channels
-            .iter()
-            .any(|ec| ec.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black);
+        // CMYK layouts auto-synthesise a Black extra channel inside
+        // `encode_lossless` — count it here so the level computation
+        // (which forbids the Black channel at level 5) bumps to 10
+        // before the codestream is wrapped.
+        let num_ec = self.extra_channels.len() as u32
+            + u32::from(self.layout.has_alpha())
+            + u32::from(self.layout.is_cmyk());
+        let has_black = self.layout.is_cmyk()
+            || self.extra_channels.iter().any(|ec| {
+                ec.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black
+            });
         let level = compute_required_level(self.width, self.height, num_ec, has_black, icc_size)?;
 
         // Wrap in container if metadata (EXIF/XMP) is present OR if
@@ -3825,21 +3910,136 @@ impl<'a> EncodeRequest<'a> {
         // shape but route through legacy constructors; the up-front
         // working-set check in `encode_inner` already gates them.
         let budget_opt = Some(budget);
+        // CMYK layouts split into 3 colour planes (CMY) + a separately
+        // emitted Black extra channel. We deinterleave once here to
+        // avoid bouncing the same bytes through two passes downstream;
+        // the K plane is kept on the side and injected as the FIRST
+        // extra channel further down (so it always lives at ec index
+        // 0 regardless of any user-supplied extras).
+        let synthesised_black_u8: Option<Vec<u8>>;
+        let synthesised_black_u16: Option<Vec<u16>>;
         let mut image = match self.layout {
-            PixelLayout::Rgb8 => ModularImage::from_rgb8_with_budget(pixels, w, h, budget_opt),
-            PixelLayout::Rgba8 => ModularImage::from_rgba8_with_budget(pixels, w, h, budget_opt),
+            PixelLayout::Rgb8 => {
+                synthesised_black_u8 = None;
+                synthesised_black_u16 = None;
+                ModularImage::from_rgb8_with_budget(pixels, w, h, budget_opt)
+            }
+            PixelLayout::Rgba8 => {
+                synthesised_black_u8 = None;
+                synthesised_black_u16 = None;
+                ModularImage::from_rgba8_with_budget(pixels, w, h, budget_opt)
+            }
             PixelLayout::Bgr8 => {
+                synthesised_black_u8 = None;
+                synthesised_black_u16 = None;
                 ModularImage::from_rgb8_with_budget(&bgr_to_rgb(pixels, 3), w, h, budget_opt)
             }
             PixelLayout::Bgra8 => {
+                synthesised_black_u8 = None;
+                synthesised_black_u16 = None;
                 ModularImage::from_rgba8_with_budget(&bgr_to_rgb(pixels, 4), w, h, budget_opt)
             }
-            PixelLayout::Gray8 => ModularImage::from_gray8(pixels, w, h),
-            PixelLayout::GrayAlpha8 => ModularImage::from_grayalpha8(pixels, w, h),
-            PixelLayout::Rgb16 => ModularImage::from_rgb16_native(pixels, w, h),
-            PixelLayout::Rgba16 => ModularImage::from_rgba16_native(pixels, w, h),
-            PixelLayout::Gray16 => ModularImage::from_gray16_native(pixels, w, h),
-            PixelLayout::GrayAlpha16 => ModularImage::from_grayalpha16_native(pixels, w, h),
+            PixelLayout::Gray8 => {
+                synthesised_black_u8 = None;
+                synthesised_black_u16 = None;
+                ModularImage::from_gray8(pixels, w, h)
+            }
+            PixelLayout::GrayAlpha8 => {
+                synthesised_black_u8 = None;
+                synthesised_black_u16 = None;
+                ModularImage::from_grayalpha8(pixels, w, h)
+            }
+            PixelLayout::Rgb16 => {
+                synthesised_black_u8 = None;
+                synthesised_black_u16 = None;
+                ModularImage::from_rgb16_native(pixels, w, h)
+            }
+            PixelLayout::Rgba16 => {
+                synthesised_black_u8 = None;
+                synthesised_black_u16 = None;
+                ModularImage::from_rgba16_native(pixels, w, h)
+            }
+            PixelLayout::Gray16 => {
+                synthesised_black_u8 = None;
+                synthesised_black_u16 = None;
+                ModularImage::from_gray16_native(pixels, w, h)
+            }
+            PixelLayout::GrayAlpha16 => {
+                synthesised_black_u8 = None;
+                synthesised_black_u16 = None;
+                ModularImage::from_grayalpha16_native(pixels, w, h)
+            }
+            PixelLayout::Cmyk8 => {
+                // Reject if the caller already provided their own
+                // Black extra channel — the file header would carry
+                // two Black entries and the second K plane would
+                // never reach the decoder.
+                if self.extra_channels.iter().any(|ec| {
+                    ec.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black
+                }) {
+                    return Err(EncodeError::InvalidInput {
+                        message: "PixelLayout::Cmyk8 already synthesises a Black extra \
+                                  channel; remove the user-supplied ExtraChannel::black(...)"
+                            .into(),
+                    });
+                }
+                // Deinterleave CMYK → 3-channel CMY + separate K buffer.
+                // Two passes over the input but a single allocation
+                // per output buffer; total work matches a memcpy of
+                // the source.
+                let n = w * h;
+                let mut cmy = Vec::with_capacity(n * 3);
+                let mut k = Vec::with_capacity(n);
+                for i in 0..n {
+                    let base = i * 4;
+                    cmy.push(pixels[base]);
+                    cmy.push(pixels[base + 1]);
+                    cmy.push(pixels[base + 2]);
+                    k.push(pixels[base + 3]);
+                }
+                synthesised_black_u8 = Some(k);
+                synthesised_black_u16 = None;
+                ModularImage::from_rgb8_with_budget(&cmy, w, h, budget_opt)
+            }
+            PixelLayout::Cmyk16 => {
+                if self.extra_channels.iter().any(|ec| {
+                    ec.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black
+                }) {
+                    return Err(EncodeError::InvalidInput {
+                        message: "PixelLayout::Cmyk16 already synthesises a Black extra \
+                                  channel; remove the user-supplied ExtraChannel::black_u16(...)"
+                            .into(),
+                    });
+                }
+                // 16-bit CMYK input is interleaved native-endian u16
+                // (8 bytes/pixel). Reinterpret the byte slice as u16
+                // via a copying deinterleave (avoids an unsafe cast
+                // and absorbs unaligned input).
+                let n = w * h;
+                if pixels.len() != n * 8 {
+                    return Err(EncodeError::InvalidInput {
+                        message: format!(
+                            "Cmyk16 expects {} bytes ({}x{} × 8), got {}",
+                            n * 8,
+                            w,
+                            h,
+                            pixels.len(),
+                        ),
+                    });
+                }
+                let mut cmy = Vec::with_capacity(n * 3 * 2);
+                let mut k = Vec::with_capacity(n);
+                for i in 0..n {
+                    let base = i * 8;
+                    cmy.extend_from_slice(&pixels[base..base + 6]);
+                    let k_lo = pixels[base + 6];
+                    let k_hi = pixels[base + 7];
+                    k.push(u16::from_ne_bytes([k_lo, k_hi]));
+                }
+                synthesised_black_u8 = None;
+                synthesised_black_u16 = Some(k);
+                ModularImage::from_rgb16_native(&cmy, w, h)
+            }
             other => return Err(EncodeError::UnsupportedPixelLayout(other)),
         }
         .map_err(EncodeError::from)?;
@@ -3883,6 +4083,26 @@ impl<'a> EncodeRequest<'a> {
             }
         }
 
+        // CMYK: inject the synthesised Black plane as the FIRST extra
+        // channel. We push to `image.channels` here so the encoder
+        // pipeline sees a `[C, M, Y, K]` layout; the matching
+        // `ExtraChannelInfo::black()` is inserted at the head of
+        // `file_header.metadata.extra_channels` further down (after
+        // the FileHeader is constructed). Keeping the K plane at ec
+        // index 0 mirrors libjxl's `enc_image_bundle.cc:57` CMYK
+        // pipeline and matches what the libjxl `EncoderTest.CMYK`
+        // round-trip writes (`encode_test.cc:2070`).
+        if let Some(ref k_u8) = synthesised_black_u8 {
+            image
+                .push_extra_channel_u8(k_u8, w, h)
+                .map_err(EncodeError::from)?;
+        }
+        if let Some(ref k_u16) = synthesised_black_u16 {
+            image
+                .push_extra_channel_u16(k_u16, w, h)
+                .map_err(EncodeError::from)?;
+        }
+
         // Append extra channels (refs #9 — Depth, SpotColor, etc.).
         // Each `ExtraChannel` carries an 8-bit or 16-bit plane at
         // its own dimensions, which may be smaller than the image
@@ -3910,10 +4130,17 @@ impl<'a> EncodeRequest<'a> {
             .map_err(EncodeError::from)?;
         }
 
-        // Detect patches for lossless mode (RGB 8-bit only, non-grayscale)
+        // Detect patches for lossless mode (RGB 8-bit only, non-grayscale).
+        // CMYK is excluded: the patches detector assumes RGB-like
+        // perceptual colour and operates on the first 3 channels
+        // (which are CMY, not RGB) — false matches would inject
+        // bogus subtractive-colour patches into the codestream.
         let num_channels = self.layout.bytes_per_pixel();
-        let can_use_patches =
-            cfg.patches && !image.is_grayscale && image.bit_depth <= 8 && num_channels >= 3;
+        let can_use_patches = cfg.patches
+            && !image.is_grayscale
+            && image.bit_depth <= 8
+            && num_channels >= 3
+            && !self.layout.is_cmyk();
         let patches_data = if can_use_patches {
             crate::profile_time!("modular/patches_detect", {
                 crate::vardct::patches::find_and_build_lossless(
@@ -3941,6 +4168,23 @@ impl<'a> EncodeRequest<'a> {
             for ec in &mut file_header.metadata.extra_channels {
                 ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
             }
+        }
+        // CMYK: prepend the Black extra-channel header entry to match
+        // the K plane we pushed onto `image.channels` above. Must go
+        // BEFORE the user-extras loop so K ends up at ec index 0 (the
+        // decoder finds it by walking `ec_info` and matching on
+        // `ec_type == Black`; libjxl `image_bundle.h:187`). 16-bit
+        // CMYK marks the K-plane info as 16-bit so the decoder
+        // preserves the full precision.
+        if self.layout.is_cmyk() {
+            let mut k_info = crate::headers::extra_channels::ExtraChannelInfo {
+                ec_type: crate::headers::extra_channels::ExtraChannelType::Black,
+                ..Default::default()
+            };
+            if self.layout == PixelLayout::Cmyk16 {
+                k_info.bit_depth = crate::headers::file_header::BitDepth::uint16();
+            }
+            file_header.metadata.extra_channels.insert(0, k_info);
         }
         // Append extra-channel metadata (refs #9). The corresponding
         // pixel data was added to `image.channels` above.
@@ -4369,6 +4613,14 @@ impl<'a> EncodeRequest<'a> {
                 let rgb = bt709_f32_to_linear_f32_rgb(floats, 4);
                 let alpha = extract_alpha_f32(floats, 4, 3);
                 (rgb, Some(alpha), false)
+            }
+            // Lossy CMYK is not yet wired — passing C/M/Y through
+            // XYB would lose CMYK semantics (and there's no defined
+            // mapping for the K plane through the VarDCT pipeline).
+            // Lossless CMYK lives in `encode_lossless`; callers must
+            // use `LosslessConfig::encode_request` for now.
+            PixelLayout::Cmyk8 | PixelLayout::Cmyk16 => {
+                return Err(EncodeError::UnsupportedPixelLayout(self.layout));
             }
         };
 
@@ -5093,6 +5345,14 @@ impl LossyEncoder {
             PixelLayout::RgbaBt709F32 => {
                 let floats: &[f32] = bytemuck::cast_slice(pixels);
                 bt709_f32_to_linear_f32_rgb(floats, 4)
+            }
+            // Streaming CMYK is not yet wired — only the one-shot
+            // lossless path (`LosslessConfig::encode`) handles CMYK
+            // input. The streaming lossy encoder would also need a
+            // C/M/Y → XYB mapping (see comment on `Cmyk8` in the
+            // first match site).
+            PixelLayout::Cmyk8 | PixelLayout::Cmyk16 => {
+                return Err(EncodeError::UnsupportedPixelLayout(self.layout));
             }
         };
         self.linear_rgb.extend_from_slice(&new_linear);
@@ -6987,6 +7247,11 @@ fn encode_animation_lossy(
                 let alpha = extract_alpha_f32(floats, 4, 3);
                 (rgb, Some(alpha))
             }
+            // Animated CMYK (multi-frame lossy) is not yet wired — only
+            // the one-shot lossless path handles CMYK input.
+            PixelLayout::Cmyk8 | PixelLayout::Cmyk16 => {
+                return Err(EncodeError::UnsupportedPixelLayout(layout));
+            }
         };
 
         // Mirror of the still-image lossy pre-passes at api.rs:3776-3807.
@@ -8256,6 +8521,19 @@ mod tests {
         assert!(PixelLayout::GrayAlphaLinearF32.is_grayscale());
         assert!(!PixelLayout::Rgb16.is_grayscale());
         assert!(!PixelLayout::RgbLinearF32.is_grayscale());
+        // CMYK (#58) — 4-byte/8-byte, no alpha, not grayscale,
+        // is_cmyk() flagged, Cmyk16 is also 16-bit.
+        assert_eq!(PixelLayout::Cmyk8.bytes_per_pixel(), 4);
+        assert_eq!(PixelLayout::Cmyk16.bytes_per_pixel(), 8);
+        assert!(PixelLayout::Cmyk8.is_cmyk());
+        assert!(PixelLayout::Cmyk16.is_cmyk());
+        assert!(!PixelLayout::Rgb8.is_cmyk());
+        assert!(!PixelLayout::Rgba8.is_cmyk());
+        assert!(!PixelLayout::Cmyk8.has_alpha());
+        assert!(!PixelLayout::Cmyk16.has_alpha());
+        assert!(!PixelLayout::Cmyk8.is_grayscale());
+        assert!(PixelLayout::Cmyk16.is_16bit());
+        assert!(!PixelLayout::Cmyk8.is_16bit());
     }
 
     #[test]

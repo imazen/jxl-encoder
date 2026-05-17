@@ -44,6 +44,28 @@
 
 ### Added
 
+- **CMYK lossless encode** (A1 audit item #6, issue #58). New
+  `PixelLayout::Cmyk8` (4 bytes/pixel: C, M, Y, K) and
+  `PixelLayout::Cmyk16` (8 bytes/pixel, native-endian u16) variants
+  on the lossless one-shot path. The K plane is auto-synthesised as
+  an `ExtraChannelType::Black` extra channel at ec index 0 (matching
+  libjxl's `EncoderTest.CMYK` round-trip in
+  `lib/jxl/encode_test.cc:2070`); the codestream level auto-bumps to
+  10 because the Black extra channel is forbidden at level 5
+  (`compute_codestream_level`). Pixel-exact round-trip verified via
+  jxl-rs and jxl-oxide on synthetic 32x32 CMYK input. Two new
+  `ExtraChannel` constructors — `ExtraChannel::black(&[u8])` and
+  `ExtraChannel::black_u16(&[u16])` — let callers who already keep
+  K separate from C/M/Y attach the plane manually (e.g., paired with
+  `PixelLayout::Rgb8`); supplying both `Cmyk*` layout and a manual
+  Black extra is now a clear `InvalidInput` error rather than a
+  silent double-Black bitstream. Patches detection is disabled for
+  CMYK input because the CMY planes are not perceptually RGB-like.
+  Lossy CMYK (CMY through VarDCT/XYB) is not yet wired; streaming
+  CMYK push-rows also defers to a future chunk. Callers who need
+  colour-managed CMYK should attach a CMYK ICC via
+  `LosslessConfig::with_metadata` → `ImageMetadata::icc_profile`.
+
 - **JPEG XL codestream Level 10 signaling** (`jxll` container box,
   audit item #1). Encoder now computes the required codestream level
   per libjxl `VerifyLevelSettings` (`lib/jxl/encode.cc:550`) from
