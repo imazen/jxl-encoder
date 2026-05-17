@@ -62,6 +62,22 @@
 
 ### Added
 
+- **Multi-seed lossless tree learning at e10/e11** (RFC#45 pick #1 chunk 2).
+  At effort 10/11 the global modular tree-learning path now runs the
+  gather→`compute_best_tree`→`collect_residuals_with_tree` pipeline 2
+  (e10) or 4 (e11) times with different stride offsets, scores each
+  candidate tree by `estimate_token_cost` (libjxl-parity per-context
+  entropy + extra bits + per-context header term), and keeps the
+  cheapest. Each seed shifts `subsample_counter` initial value within
+  `[0, stride)` so different pixel subsets feed the greedy ID3 split
+  selection — closing part of the "single-pass libjxl tree" greedy
+  gap. e ≤ 9 stays single-seed and byte-identical (hash-locks 36/36
+  unchanged). New `tree_learn_seeds: u8` field on `EffortProfile` +
+  matching `LosslessInternalParams::tree_learn_seeds: Option<u8>`
+  `__expert` override. Bench harness at
+  `examples/e10_e11_multiseed_ab.rs` (3 photos × 3 efforts × N samples,
+  byte/wall-clock TSV).
+
 - **`AnimationFrame` per-frame override fields + public `BlendMode` re-export**
   (audit item #3, "Animation API expansion"). The animation header has
   always carried per-frame blend mode / blend source / save-as-reference /
