@@ -1,0 +1,105 @@
+# Disassembly of jxl_encoder_simd::histogram::__arcane_fold_rows_u32_avx2
+# from the trial cjxl-rs build BEFORE the wiring + module were reverted.
+#
+# Retained as proof that the AVX2 codegen worked as designed — the
+# call-site dispatch + the inner 16-wide vpaddd hot loop are visible
+# below. The wiring was reverted because the SIMD primitive landed on
+# a loop that's <1% of find_best_split's CPU; see
+# benchmarks/fbs_simd_ab_2026-05-17.meta for the full bench evidence.
+#
+# Source: objdump --disassemble target/release/cjxl-rs filtered to the
+# symbol __arcane_fold_rows_u32_avx2.
+# Build: rustc stable 1.93+, --release --features parallel-tree-learning.
+# Date: 2026-05-17.
+# Commit (trial, not shipped): 96e087d2 (subsequently rewound).
+#
+# Function prologue:
+#
+0000000000328c00 <_ZN16jxl_encoder_simd9histogram27__arcane_fold_rows_u32_avx217ha141111283af2fc7E>:
+  328c00:	55                   	push   %rbp
+  328c01:	41 57                	push   %r15
+  328c03:	41 56                	push   %r14
+  328c05:	41 55                	push   %r13
+  328c07:	41 54                	push   %r12
+  328c09:	53                   	push   %rbx
+  328c0a:	48 83 ec 18          	sub    $0x18,%rsp
+  328c0e:	49 39 f1             	cmp    %rsi,%r9       ; bounds check
+  328c11:	0f 87 f9 04 00 00    	ja     <out-of-bounds>
+  328c17:	49 83 f9 10          	cmp    $0x10,%r9      ; width >= 16?
+  328c1b:	48 89 54 24 08       	mov    %rdx,0x8(%rsp)
+  328c20:	73 17                	jae    <16wide-path>
+
+#  ─── 16-wide unroll outer loop entry (width >= 16 path) ───
+#
+  328c39:	4d 85 c0             	test   %r8,%r8        ; num_rows == 0?
+  328c3c:	0f 84 fa 00 00 00    	je     <skip>
+  328c42:	4c 8d 72 20          	lea    0x20(%rdx),%r14
+  328c46:	41 ba 10 00 00 00    	mov    $0x10,%r10d
+  328c4c:	48 c7 c3 f0 ff ff ff 	mov    $0xfffffffffffffff0,%rbx
+  328c53:	41 bf 0f 00 00 00    	mov    $0xf,%r15d
+  328c59:	41 bc 08 00 00 00    	mov    $0x8,%r12d
+  328c5f:	31 c0                	xor    %eax,%eax
+  328c61:	45 31 ed             	xor    %r13d,%r13d
+
+#  ─── per-column-chunk: load dst[i..i+16] into ymm0+ymm1 ───
+#  328c8d ── 328c92
+#
+  328c8d:	c5 fe 6f 04 87       	vmovdqu (%rdi,%rax,4),%ymm0     ; acc0 = dst[i..i+8]
+  328c92:	c4 a1 7e 6f 0c 97    	vmovdqu (%rdi,%r10,4),%ymm1     ; acc1 = dst[i+8..i+16]
+
+#  ─── HOT INNER LOOP: per-bucket vpaddd accumulation ───
+#  328cb0 ── 328ce1  --  18 bytes per iteration, 2x 8-wide vpaddd per pass
+#
+  328cb0:	4f 8d 1c 14          	lea    (%r12,%r10,1),%r11
+  328cb4:	49 39 cb             	cmp    %rcx,%r11
+  328cb7:	0f 87 c0 03 00 00    	ja     <bounds-check-fail>
+  328cbd:	4f 8d 04 17          	lea    (%r15,%r10,1),%r8
+  328cc1:	49 39 c8             	cmp    %rcx,%r8
+  328cc4:	0f 83 d2 03 00 00    	jae    <bounds-check-fail>
+  328cca:	c4 81 7d fe 44 96 e0 	vpaddd -0x20(%r14,%r10,4),%ymm0,%ymm0  ; acc0 += src_row[i..i+8]
+  328cd1:	c4 81 75 fe 0c 96    	vpaddd      (%r14,%r10,4),%ymm1,%ymm1  ; acc1 += src_row[i+8..i+16]
+  328cd7:	49 81 c2 00 01 00 00 	add    $0x100,%r10                  ; row_stride * 4 bytes = HISTO_PADDED * 4
+  328cde:	48 ff cd             	dec    %rbp                         ; --num_rows_remaining
+  328ce1:	75 cd                	jne    <328cb0>                     ; loop until all rows folded
+
+#  ─── store acc0,acc1 back to dst[i..i+16], advance i by 16 ───
+#
+  328ce3:	c5 fe 7f 04 87       	vmovdqu %ymm0,(%rdi,%rax,4)
+  328ce8:	c5 fe 7f 4c 87 20    	vmovdqu %ymm1,0x20(%rdi,%rax,4)
+  328cee:	4c 8d 56 10          	lea    0x10(%rsi),%r10              ; i += 16
+
+#  ─── 8-wide tail (width % 16 in [8..16)) ───
+#  328d83 ── 328dbe
+#
+  328d83:	c5 fe 6f 04 b7       	vmovdqu (%rdi,%rsi,4),%ymm0         ; acc = dst[i..i+8]
+  328d88:	4d 85 c0             	test   %r8,%r8                      ; num_rows == 0?
+  328d8b:	4c 8b 74 24 08       	mov    0x8(%rsp),%r14
+  328d90:	74 2c                	je     328dbe
+  328d92:	48 89 f0             	mov    %rsi,%rax
+  328d95:	4c 89 c2             	mov    %r8,%rdx
+#  ─── tail inner loop ───
+  328da0:	4c 8d 50 08          	lea    0x8(%rax),%r10
+  328da4:	49 39 ca             	cmp    %rcx,%r10
+  328da7:	0f 87 0e 03 00 00    	ja     <bounds-check-fail>
+  328dad:	c4 c1 7d fe 04 86    	vpaddd (%r14,%rax,4),%ymm0,%ymm0    ; acc += src_row[i..i+8]
+  328db3:	48 05 00 01 00 00    	add    $0x100,%rax                  ; advance to next row
+  328db9:	48 ff ca             	dec    %rdx
+  328dbc:	75 e2                	jne    328da0
+  328dbe:	c5 fe 7f 04 b7       	vmovdqu %ymm0,(%rdi,%rsi,4)         ; store acc to dst[i..i+8]
+
+#  (scalar tail for width % 8 in [0..8) follows, omitted for brevity)
+#
+# Performance per inner loop body (16-wide unrolled, hot path):
+#   2 × vpaddd ymm (mem operand)  = 2 × 1 cycle throughput on Zen4
+#   2 × address computation (lea) = 0 cycle (port 1/8)
+#   1 × add (loop counter)         = 0.25 cycle
+#   1 × dec + jne (branch)         = 0.25 cycle
+#   Total: ~2.5 cycles per 16 u32-adds.
+#
+# Vs scalar SSE2 (pre-fix asm dump, region 4 of
+# find_best_split_asm_post_6011f10_2026-05-17.txt):
+#   4 × movdqu / paddd / movdqu  = ~4 cycles per 8 u32-adds.
+#
+# Theoretical speedup: 2× per fold body. Measured wall-clock impact at
+# the gate cell (1.05 MP @ e9): 0%. Because the right-init fold is
+# <1% of find_best_split CPU, the per-instruction speedup is invisible.

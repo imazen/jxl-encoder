@@ -624,6 +624,32 @@ SSIM2 = -40 (catastrophic). Root cause: the decoder's `DequantBlock` calls
 DC-derived values. Coefficient-level CfL on LLF is discarded. DC CfL uses
 dc_cfl_factor (0.5) separately. Our AC-only approach is correct for this decoder.
 
+### find_best_split Right-Init Fold SIMD Was a No-Op (May 17, 2026)
+
+The right-init histogram fold inside `find_best_split` / `find_best_split_borrowed`
+(tree_learn.rs:4708-4722) was investigated as a follow-on to commit 6011f10
+(SIMD `estimate_bits`). Pre-fix asm
+(benchmarks/find_best_split_asm_post_6011f10_2026-05-17.txt) confirmed LLVM
+auto-vectorized only to SSE2 movdqu/paddd (4-wide u32 × 2-unroll) because the
+function isn't `#[target_feature]`-annotated. An AVX2 8-wide column-major
+implementation was prototyped, asm-verified to use `vpaddd ymm`
+(benchmarks/fold_rows_u32_avx2_asm_2026-05-17.txt), and benched paired A/B at
+8 threads on 3 images × 3 efforts × 7 samples
+(benchmarks/fbs_simd_ab_2026-05-17.{tsv,meta}).
+
+**Wall-clock impact: zero on every cell.** At the gate cell (1.05 MP @ e9):
+median delta -0.2%, min delta 0.0%. The fold runs ~176 times per node-split
+processing ~768 u32-adds each ≈ 5,280 cycles total — vs `estimate_bits` at
+~739,200 cycles per split. The right-init fold is **<1% of find_best_split's CPU**;
+even infinite speedup is invisible.
+
+Both the SIMD primitive and the wiring were reverted. The asm dumps + bench
+TSV + meta were retained so future agents do not re-investigate this loop.
+The next actionable gap moves to OTHER functions (find_best_predictor,
+compute_best_tree fan-out, pre_quantize, gather_samples, dedup_samples) per
+the e9 baseline agent's ranked chunks
+(`~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/lossless_e8_e9_cliff_2026-05-16.md`).
+
 ## Build Commands
 
 ```bash

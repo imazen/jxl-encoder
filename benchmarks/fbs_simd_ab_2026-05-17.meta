@@ -1,0 +1,160 @@
+# Paired A/B bench for SIMD vectorization of find_best_split right-init fold
+# (issue #40 chunk 4 / closes the e7 gap remainder + reduces e9 cost).
+#
+# Hypothesis (asm-driven, NOT speculation):
+#   benchmarks/find_best_split_asm_post_6011f10_2026-05-17.txt
+#   (the cargo-asm dump of jxl_encoder::modular::tree_learn::find_best_split,
+#   built post-commit 6011f10 SIMD estimate_bits) shows the "Build initial
+#   right histogram" loop (tree_learn.rs:4712-4722) compiles to SSE2-only
+#   movdqu/paddd 4-wide u32 with 2x unroll — see lines 1320-1339:
+#
+#     movdqu xmm0, xmmword ptr [rcx + 4*rdi - 16]
+#     movdqu xmm1, xmmword ptr [rcx + 4*rdi]
+#     movdqu xmm2, xmmword ptr [r15 + 4*rdi]
+#     paddd  xmm2, xmm0
+#     movdqu xmm0, xmmword ptr [r15 + 4*rdi + 16]
+#     paddd  xmm0, xmm1
+#     movdqu xmmword ptr [r15 + 4*rdi], xmm2
+#     movdqu xmmword ptr [r15 + 4*rdi + 16], xmm0
+#
+#   Because find_best_split is not target_feature-annotated, LLVM cannot
+#   emit AVX2 vpaddd / vmovdqu (ymm 8-wide).
+#
+# Approach: route the inner fold through a new SIMD primitive
+# `fold_rows_u32` (#[archmage::arcane], in jxl-encoder-simd) that:
+#   - On x86_64 hosts with AVX2: 8-wide vpaddd with 16-wide unroll (2
+#     independent acc lanes).
+#   - On aarch64 hosts: 4-wide NEON with 8-wide unroll.
+#   - On wasm32 hosts: 4-wide WASM SIMD.
+#   - Otherwise: scalar fallback.
+#
+#   The iteration order is also flipped: instead of
+#     for b in 0..L: for i in 0..H: dst[i] += src[b*stride + i]
+#   the SIMD path does
+#     for i_chunk: load dst[i..i+16] to acc; for b in 0..L: acc += src; store dst
+#   so each dst cache line is RMW'd once per column chunk regardless of
+#   how many input rows are folded — minimizing dst traffic on top of the
+#   AVX2 width gain.
+#
+# Numerical contract: pure u32 add. Result is bit-identical to scalar
+# (verified by the 36/36 hash_lock_features tests, which gate
+# byte-identical bitstream output across all encoding modes).
+#
+# Verified output asm: benchmarks/fold_rows_u32_avx2_asm_2026-05-17.txt
+# (objdump --disassemble target/release/cjxl-rs filtered to the
+# __arcane_fold_rows_u32_avx2 symbol from the trial build before
+# wiring was reverted). The hot body shows:
+#
+#     vpaddd -0x20(%r14,%r10,4),%ymm0,%ymm0
+#     vpaddd      (%r14,%r10,4),%ymm1,%ymm1
+#
+# — 2 × 8-wide u32 adds per inner-loop body (16 contributions per pass),
+# vs the scalar SSE2 4 contributions per pass × 2 unroll = 8.
+#
+# Bench command:
+#   PRE_BIN=/tmp/cjxl-rs-pre-fbs-simd-2026-05-17 \
+#   POST_BIN=/tmp/cjxl-rs-post-fbs-simd-2026-05-17 \
+#   SAMPLES=7 THREADS=8 OUT_DIR=/tmp/fbs_simd_ab \
+#   bash scripts/bench_e8_e9_depth_ab.sh > benchmarks/fbs_simd_ab_2026-05-17.tsv
+#
+# Profile images (same 3 as chunks 1-3, the e9 baseline agent's choice):
+#   small_0.26MP  7256805.png                                512x512   (CID22)
+#   medium_1.05MP 02809272...cd804f7.png                     1024x1024 (CLIC2025 1024)
+#   large_4.19MP  8426ed22...05ac41.png                      2048x2048 (CLIC2025 final-test)
+#
+# Pattern: paired interleaved A/B per cell — cjxl (noise anchor, 32 threads)
+# then PRE (8 threads, baseline binary), then POST (8 threads, SIMD binary),
+# repeated SAMPLES=7 times per (image, effort). Total = 3 × 3 × 7 × 3 = 189
+# invocations. Cjxl serves as a noise anchor; its timing should be roughly
+# constant if our (pre,post) measurements are uncorrelated with system load.
+#
+# Hardware: AMD Ryzen 9 7950X (water-cooled), Linux 6.6 WSL2.
+# Build: stable Rust, --release --features parallel-tree-learning.
+# Toolchain: rustc 1.93+, no -C target-cpu=native (CLAUDE.md rule).
+# Baseline commit: e116702e (chunk-2 effort-tune parallel fanout).
+# Post commit: this change (407658ff).
+#
+# Pass gate: >= 5% wall-clock improvement on 1.05 MP at e9 (per user's
+# task description — the cell that needs the most help relative to the
+# 1.27× cjxl ratio).
+
+# ─────────────────────────────────────────────────────────────────────────
+# RESULT (combined 7-sample paired medians, bench finished 2026-05-17 03:11Z)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# image           eff   pre_med   post_med   delta_pct  bytes_eq
+# large_4.19MP    e7    4832.2    4839.6    +0.2%      OK
+# large_4.19MP    e8   10073.2    9726.4    -3.4%      OK
+# large_4.19MP    e9   23519.2   24167.3    +2.8%      OK
+# medium_1.05MP   e7    1670.2    1660.9    -0.6%      OK
+# medium_1.05MP   e8    2924.2    2978.8    +1.9%      OK
+# medium_1.05MP   e9    4551.7    4543.4    -0.2%      OK    <-- gate cell
+# small_0.26MP    e7     277.0     275.3    -0.6%      OK
+# small_0.26MP    e8     592.9     591.5    -0.2%      OK
+# small_0.26MP    e9    1344.4    1356.4    +0.9%      OK
+#
+# Per-min (more sensitive to bias, less to outliers):
+# large_4.19MP    e7: -1.6%  e8: -6.8%  e9: +3.6%
+# medium_1.05MP   e7: +0.9%  e8: -1.8%  e9:  0.0%      <-- gate cell
+# small_0.26MP    e7: -0.3%  e8: -1.6%  e9: -1.1%
+#
+# bytes_eq: OK on all 9 cells (byte-identical bitstream — SIMD path is
+# correct, change purely affects timing).
+#
+# Gate (>= 5% improvement on 1.05 MP at e9): NOT MET.
+#   median delta -0.2%, min delta 0.0% — both within noise.
+#
+# Wall-clock impact: NONE measurable across all 9 cells.
+#
+# WHY (root-cause analysis, NOT speculation):
+#
+# The right-init fold runs once per (predictor, property) pair inside
+# find_best_split. Typical workload (1.05 MP photo at e9):
+#   - num_pred ≈ 11 candidate predictors
+#   - num_props ≈ 16 active properties
+#   - local_num_buckets ≈ 16 effective buckets after min/max narrowing
+#   - effective_histo ≈ 48 (max_token + 1 on typical photos)
+#
+# Per right-init fold: local_num_buckets × effective_histo = 16 × 48 =
+# 768 u32-adds. With AVX2 8-wide: 96 vpaddd instructions ≈ 30 cycles
+# (3-cycle latency, 1/cycle throughput, 2 acc lanes for ILP).
+#
+# Per node-split: num_pred × num_props × 30 cy = 11 × 16 × 30 = 5,280 cy
+# (excluding the function call/dispatch overhead of ~80 cy each, +14k cy
+# = ~20k cy total).
+#
+# Compare to estimate_bits (already SIMD'd by 6011f10):
+#   - Called num_pred × num_props × local_num_thresholds × 2 (left + right)
+#     = 11 × 16 × 15 × 2 = 5,280 calls per split
+#   - Each call processes ~48 u32 entries → ~6 vpaddd + 6 vfmadd + vdivps
+#     (Padé div) ≈ 120 cy + ~20 cy dispatch = 140 cy
+#   - Total per split: 5,280 × 140 = 739,200 cycles ≈ 246 μs at 3 GHz
+#
+# Pre-SIMD scalar right-init was ~125 cy per fold (SSE2 4-wide × 2-unroll
+# + dst RMW per row). Difference per split: 1,100 cy ≈ 0.4 μs.
+# Difference per encode (~5,000 node-splits): 2 ms. That's 0.04% of a
+# 4,550 ms encode — well below the wall-clock noise floor (~80 ms = 1.7%).
+#
+# Conclusion: right-init fold is a real auto-vectorizable loop, but its
+# absolute cost is 600× smaller than estimate_bits inside find_best_split.
+# Even a 100× speedup of right-init is invisible at wall-clock scope. The
+# chunk-2 agent's prediction ("~20-30% architectural ceiling on
+# find_best_split micro-ops, we're already at ~5% above floor") is
+# confirmed once more.
+#
+# The 1.16× e7 floor and 1.27× e9 ceiling now require bigger leverage —
+# the remaining 27% of find_best_split's CPU lives in estimate_bits
+# (already SIMD'd) and the move-bucket loop (chunk-3b confirmed
+# SIMD-hostile due to L1 cache pressure). The actionable gap moves to
+# OTHER functions: predictor.rs find_best_predictor (the parallel agent
+# is working on it), compute_best_tree's outer rayon fan-out depth,
+# pre_quantize, gather_samples, or dedup_samples.
+#
+# This SIMD path is **NOT shipped** — the call-site wiring and the
+# `fold_rows_u32` primitive were both removed after the bench result.
+# Asm evidence (find_best_split_asm_post_6011f10_2026-05-17.txt) and
+# bench evidence (this file + fbs_simd_ab_2026-05-17.tsv) are retained
+# so future agents do not re-investigate this loop. The
+# fold_rows_u32_avx2_asm_2026-05-17.txt was kept as proof that the
+# AVX2 codegen worked as designed (correctness, not performance, was
+# the reason for shelving — the loop is too small to matter).
