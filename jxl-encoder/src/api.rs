@@ -3286,16 +3286,35 @@ impl<'a> EncodeRequest<'a> {
 
         stats.codestream_size = codestream.len();
 
-        // Wrap in container if metadata (EXIF/XMP) is present
-        let output = if let Some(meta) = self.metadata
-            && (meta.exif.is_some() || meta.xmp.is_some())
-        {
-            wrap_metadata_container(
-                &codestream,
-                meta.exif,
-                meta.xmp,
-                self.brotli_metadata_quality,
-            )
+        // Pick the codestream level: 5 for baseline-fits images, 10
+        // when any cap is exceeded (> 262144 dim, > 2²⁸ pixels, >4 EC,
+        // CMYK, large ICC). Mirrors libjxl `VerifyLevelSettings`.
+        // Alpha-bearing layouts count as +1 extra channel.
+        let icc_size = self
+            .metadata
+            .and_then(|m| m.icc_profile)
+            .map_or(0u64, |icc| icc.len() as u64);
+        let num_ec = self.extra_channels.len() as u32 + u32::from(self.layout.has_alpha());
+        let has_black = self
+            .extra_channels
+            .iter()
+            .any(|ec| ec.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black);
+        let level = compute_required_level(self.width, self.height, num_ec, has_black, icc_size)?;
+
+        // Wrap in container if metadata (EXIF/XMP) is present OR if
+        // the level requires a container (level != 5 means a `jxll`
+        // box must precede the codestream — mirrors libjxl
+        // `MustUseContainer`).
+        let has_meta = self
+            .metadata
+            .map(|m| m.exif.is_some() || m.xmp.is_some())
+            .unwrap_or(false);
+        let output = if has_meta || crate::container::level_requires_container(level) {
+            let (exif, xmp) = match self.metadata {
+                Some(m) => (m.exif, m.xmp),
+                None => (None, None),
+            };
+            wrap_metadata_container(&codestream, exif, xmp, self.brotli_metadata_quality, level)
         } else {
             codestream
         };
@@ -5010,12 +5029,20 @@ impl LossyEncoder {
 
         stats.codestream_size = codestream.len();
 
-        let output = if self.exif.is_some() || self.xmp.is_some() {
+        // Streaming LossyEncoder doesn't accept extra channels beyond
+        // alpha; count alpha from layout.
+        let icc_size = self.icc_profile.as_deref().map_or(0u64, |i| i.len() as u64);
+        let num_ec = u32::from(self.layout.has_alpha());
+        let level = compute_required_level(self.width, self.height, num_ec, false, icc_size)?;
+
+        let has_meta = self.exif.is_some() || self.xmp.is_some();
+        let output = if has_meta || crate::container::level_requires_container(level) {
             wrap_metadata_container(
                 &codestream,
                 self.exif.as_deref(),
                 self.xmp.as_deref(),
                 self.brotli_metadata_quality,
+                level,
             )
         } else {
             codestream
@@ -5918,12 +5945,20 @@ impl LosslessEncoder {
 
         stats.codestream_size = codestream.len();
 
-        let output = if self.exif.is_some() || self.xmp.is_some() {
+        // Streaming LosslessEncoder doesn't accept extra channels
+        // beyond alpha; count alpha from layout.
+        let icc_size = self.icc_profile.as_deref().map_or(0u64, |i| i.len() as u64);
+        let num_ec = u32::from(self.layout.has_alpha());
+        let level = compute_required_level(self.width, self.height, num_ec, false, icc_size)?;
+
+        let has_meta = self.exif.is_some() || self.xmp.is_some();
+        let output = if has_meta || crate::container::level_requires_container(level) {
             wrap_metadata_container(
                 &codestream,
                 self.exif.as_deref(),
                 self.xmp.as_deref(),
                 self.brotli_metadata_quality,
+                level,
             )
         } else {
             codestream
@@ -7263,20 +7298,60 @@ fn unpack_strided_pixels(
 /// `wrap_in_container`. Centralizing the dispatch keeps the 3 call
 /// sites (encode_inner, LossyEncoder::finish_inner,
 /// LosslessEncoder::finish_inner) aligned.
+///
+/// `level` is the codestream level (5 or 10). When `level != 5` a
+/// `jxll` (level) box is emitted directly after `ftyp`. For level 5
+/// the byte layout is byte-identical to the historical wrap. See
+/// [`crate::container::compute_codestream_level`].
 fn wrap_metadata_container(
     codestream: &[u8],
     exif: Option<&[u8]>,
     xmp: Option<&[u8]>,
     brotli_quality: Option<u32>,
+    level: u8,
 ) -> Vec<u8> {
     #[cfg(feature = "brotli-metadata")]
     {
         if let Some(q) = brotli_quality {
-            return crate::container::wrap_in_container_with_brob(codestream, exif, xmp, q);
+            return crate::container::wrap_in_container_with_brob_and_level(
+                codestream, exif, xmp, q, level,
+            );
         }
     }
     let _ = brotli_quality;
-    crate::container::wrap_in_container(codestream, exif, xmp)
+    crate::container::wrap_in_container_with_level(codestream, exif, xmp, level)
+}
+
+/// Pick the codestream level required for an image with the given
+/// dimensions, ICC size, and extra channels. Wraps
+/// [`crate::container::compute_codestream_level`] and translates the
+/// `None` (unencodable) case into [`EncodeError::InvalidInput`].
+///
+/// `num_extra_channels` MUST already include the alpha channel when
+/// the pixel layout carries alpha — the level-5 cap is `≤ 4` extras
+/// *including* alpha, matching libjxl `VerifyLevelSettings` which
+/// reads `m.num_extra_channels` (alpha is one of them).
+fn compute_required_level(
+    width: u32,
+    height: u32,
+    num_extra_channels: u32,
+    has_black_channel: bool,
+    icc_size: u64,
+) -> core::result::Result<u8, EncodeError> {
+    crate::container::compute_codestream_level(
+        width,
+        height,
+        num_extra_channels,
+        has_black_channel,
+        icc_size,
+    )
+    .ok_or_else(|| EncodeError::InvalidInput {
+        message: format!(
+            "image {width}x{height} ({} px), {num_extra_channels} extra channels, \
+             {icc_size}-byte ICC exceeds JPEG XL level 10 limits",
+            u64::from(width).saturating_mul(u64::from(height)),
+        ),
+    })
 }
 
 /// Divide premultiplied (associated) linear RGB values by alpha so the

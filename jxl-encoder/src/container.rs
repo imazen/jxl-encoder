@@ -33,13 +33,109 @@ const FTYP_BOX: [u8; 20] = [
     b'j', b'x', b'l', b' ', // compatible brand
 ];
 
+/// `jxll` (level) box — fixed 9 bytes: 4-byte BE size (0x09) +
+/// 4-byte type (`jxll`) + 1 byte payload (the codestream level).
+/// Mirrors `kLevelBoxHeader` in libjxl `lib/jxl/encode_internal.h:150`.
+const JXLL_BOX_HEADER: [u8; 8] = [
+    0x00, 0x00, 0x00, 0x09, // box size = 9 (header + 1 byte payload)
+    b'j', b'x', b'l', b'l',
+];
+
+/// JPEG XL codestream level required by an image with the given
+/// properties. Returns `5` for baseline-compatible inputs, `10` for
+/// inputs that exceed any level-5 cap but stay within the level-10
+/// caps, and `None` for inputs that overflow level 10 (currently
+/// unencodable).
+///
+/// Mirrors libjxl `VerifyLevelSettings` in `lib/jxl/encode.cc:550`.
+/// `has_black_channel` is `true` when one of the extra channels is a
+/// CMYK `Black` plane (level-5 forbids it). The encoder does not yet
+/// surface 32-bit modular buffers, so the corresponding level-5 cap
+/// is left to the encoder.
+#[must_use]
+pub fn compute_codestream_level(
+    width: u32,
+    height: u32,
+    num_extra_channels: u32,
+    has_black_channel: bool,
+    icc_size: u64,
+) -> Option<u8> {
+    let w = u64::from(width);
+    let h = u64::from(height);
+
+    // Level 10 hard caps (encode.cc:563-575).
+    if w > (1u64 << 30) || h > (1u64 << 30) {
+        return None;
+    }
+    if w.saturating_mul(h) > (1u64 << 40) {
+        return None;
+    }
+    if icc_size > (1u64 << 28) {
+        return None;
+    }
+    if num_extra_channels > 256 {
+        return None;
+    }
+
+    // Level 5 caps (encode.cc:579-601). Any single violation bumps
+    // to level 10.
+    if w > (1u64 << 18) || h > (1u64 << 18) {
+        return Some(10);
+    }
+    if w.saturating_mul(h) > (1u64 << 28) {
+        return Some(10);
+    }
+    if icc_size > (1u64 << 22) {
+        return Some(10);
+    }
+    if num_extra_channels > 4 {
+        return Some(10);
+    }
+    if has_black_channel {
+        return Some(10);
+    }
+
+    Some(5)
+}
+
+/// True when the level forces a container wrapper (level != 5).
+/// Mirrors the `codestream_level` clause of libjxl `MustUseContainer`
+/// in `encode_internal.h:662-665`.
+#[must_use]
+pub fn level_requires_container(level: u8) -> bool {
+    level != 5
+}
+
+/// Push the `jxll` (level) box (9 bytes) onto `out` when `level != 5`.
+/// Level 5 is the baseline — no box is emitted so the byte layout for
+/// the overwhelming majority of images is unchanged.
+fn write_level_box(out: &mut Vec<u8>, level: u8) {
+    if level == 5 {
+        return;
+    }
+    out.extend_from_slice(&JXLL_BOX_HEADER);
+    out.push(level);
+}
+
 /// Wraps a JXL codestream in a container with optional EXIF and XMP metadata.
 ///
 /// Returns bare codestream bytes wrapped in ISOBMFF boxes. The codestream
 /// goes into a `jxlc` box, EXIF into an `Exif` box (with 4-byte Tiff offset
 /// prefix), and XMP into an `xml ` box.
 pub fn wrap_in_container(codestream: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Vec<u8> {
-    wrap_in_container_with_jbrd(codestream, None, exif, xmp)
+    wrap_in_container_with_jbrd_and_level(codestream, None, exif, xmp, 5)
+}
+
+/// Like [`wrap_in_container`] but emits a `jxll` (codestream level) box
+/// directly after `ftyp` when `level != 5`. Use [`compute_codestream_level`]
+/// to derive `level` from image dimensions, ICC size, and extra channels.
+pub fn wrap_in_container_with_level(
+    codestream: &[u8],
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    level: u8,
+) -> Vec<u8> {
+    wrap_in_container_with_jbrd_and_level(codestream, None, exif, xmp, level)
 }
 
 /// Wraps a JXL codestream like [`wrap_in_container`], but Brotli-compresses
@@ -62,7 +158,26 @@ pub fn wrap_in_container_with_brob(
     xmp: Option<&[u8]>,
     brotli_quality: u32,
 ) -> Vec<u8> {
-    let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len();
+    wrap_in_container_with_brob_and_level(codestream, exif, xmp, brotli_quality, 5)
+}
+
+/// Like [`wrap_in_container_with_brob`] but emits a `jxll` (codestream
+/// level) box directly after `ftyp` when `level != 5`.
+#[cfg(feature = "brotli-metadata")]
+pub fn wrap_in_container_with_brob_and_level(
+    codestream: &[u8],
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    brotli_quality: u32,
+    level: u8,
+) -> Vec<u8> {
+    let header_size = JXL_CONTAINER_SIGNATURE.len()
+        + FTYP_BOX.len()
+        + if level == 5 {
+            0
+        } else {
+            JXLL_BOX_HEADER.len() + 1
+        };
     let jxlc_size = 8 + codestream.len();
     // Worst-case sizes for pre-allocation: assume each metadata blob
     // either compresses (8 + 4 + payload.len) or stays uncompressed
@@ -75,6 +190,7 @@ pub fn wrap_in_container_with_brob(
 
     out.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
     out.extend_from_slice(&FTYP_BOX);
+    write_level_box(&mut out, level);
     write_box(&mut out, b"jxlc", codestream);
 
     // Exif: build the Exif payload (4-byte Tiff offset + EXIF data),
@@ -109,8 +225,25 @@ pub fn wrap_in_container_with_jbrd(
     exif: Option<&[u8]>,
     xmp: Option<&[u8]>,
 ) -> Vec<u8> {
+    wrap_in_container_with_jbrd_and_level(codestream, jbrd, exif, xmp, 5)
+}
+
+/// Like [`wrap_in_container_with_jbrd`] but emits a `jxll` (codestream
+/// level) box directly after `ftyp` when `level != 5`.
+pub fn wrap_in_container_with_jbrd_and_level(
+    codestream: &[u8],
+    jbrd: Option<&[u8]>,
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    level: u8,
+) -> Vec<u8> {
     // Calculate total size for pre-allocation
-    let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len(); // 32
+    let level_size = if level == 5 {
+        0
+    } else {
+        JXLL_BOX_HEADER.len() + 1
+    };
+    let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len() + level_size; // 32 (+9)
     let jxlc_size = 8 + codestream.len();
     let jbrd_size = jbrd.map_or(0, |j| 8 + j.len());
     let exif_size = exif.map_or(0, |e| 8 + 4 + e.len()); // 4-byte Tiff header offset prefix
@@ -122,6 +255,7 @@ pub fn wrap_in_container_with_jbrd(
     // Container header
     out.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
     out.extend_from_slice(&FTYP_BOX);
+    write_level_box(&mut out, level);
 
     // jxlc box (codestream)
     write_box(&mut out, b"jxlc", codestream);
@@ -160,7 +294,26 @@ pub fn wrap_in_container_jxlp(
     exif: Option<&[u8]>,
     xmp: Option<&[u8]>,
 ) -> Vec<u8> {
-    let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len(); // 32
+    wrap_in_container_jxlp_with_level(cs_part1, cs_part2, jbrd, exif, xmp, 5)
+}
+
+/// Like [`wrap_in_container_jxlp`] but emits a `jxll` (codestream
+/// level) box directly after `ftyp` when `level != 5`.
+#[cfg(feature = "jpeg-reencoding")]
+pub fn wrap_in_container_jxlp_with_level(
+    cs_part1: &[u8],
+    cs_part2: &[u8],
+    jbrd: &[u8],
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    level: u8,
+) -> Vec<u8> {
+    let level_size = if level == 5 {
+        0
+    } else {
+        JXLL_BOX_HEADER.len() + 1
+    };
+    let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len() + level_size;
     // jxlp box: 8-byte box header + 4-byte counter + payload
     let jxlp1_size = 8 + 4 + cs_part1.len();
     let jxlp2_size = 8 + 4 + cs_part2.len();
@@ -174,6 +327,7 @@ pub fn wrap_in_container_jxlp(
     // Container header
     out.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
     out.extend_from_slice(&FTYP_BOX);
+    write_level_box(&mut out, level);
 
     // First jxlp box: file header (counter = 0, not last)
     write_jxlp_box(&mut out, 0, false, cs_part1);
@@ -587,5 +741,115 @@ mod tests {
             }
         }
         assert!(found_brob_exif, "expected brob box with original_type=Exif");
+    }
+
+    // ─── Codestream level (jxll box) ──────────────────────────────
+
+    #[test]
+    fn test_compute_level_baseline_fits_level5() {
+        // Typical web-sized images (≤ 262 144 per axis, ≤ 2²⁸ pixels,
+        // small ICC, ≤ 4 extras, no CMYK) → level 5.
+        assert_eq!(compute_codestream_level(1024, 1024, 0, false, 0), Some(5));
+        assert_eq!(
+            compute_codestream_level(1024, 1024, 4, false, 1 << 22),
+            Some(5)
+        );
+        assert_eq!(compute_codestream_level(262_144, 1, 0, false, 0), Some(5));
+        // 16384 × 16384 = 2²⁸ pixels, exactly the level-5 ceiling.
+        assert_eq!(
+            compute_codestream_level(16_384, 16_384, 0, false, 0),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn test_compute_level_exceeding_level5_bumps_to_10() {
+        // > 262 144 per axis bumps to level 10.
+        assert_eq!(compute_codestream_level(262_145, 1, 0, false, 0), Some(10));
+        // > 2²⁸ total pixels bumps to level 10.
+        assert_eq!(
+            compute_codestream_level(16_385, 16_385, 0, false, 0),
+            Some(10)
+        );
+        // ICC > 2²² bumps to level 10.
+        assert_eq!(
+            compute_codestream_level(1024, 1024, 0, false, (1 << 22) + 1),
+            Some(10)
+        );
+        // 5+ extra channels bumps to level 10.
+        assert_eq!(compute_codestream_level(1024, 1024, 5, false, 0), Some(10));
+        // CMYK (`Black`) extra channel bumps to level 10.
+        assert_eq!(compute_codestream_level(1024, 1024, 1, true, 0), Some(10));
+    }
+
+    #[test]
+    fn test_compute_level_overflow_returns_none() {
+        // Beyond the level-10 caps: not encodable.
+        assert_eq!(compute_codestream_level(u32::MAX, 1, 0, false, 0), None);
+        assert_eq!(
+            compute_codestream_level(1, 1, 0, false, (1 << 28) + 1),
+            None
+        );
+        assert_eq!(compute_codestream_level(1, 1, 257, false, 0), None);
+    }
+
+    #[test]
+    fn test_level_requires_container() {
+        assert!(!level_requires_container(5));
+        assert!(level_requires_container(10));
+    }
+
+    #[test]
+    fn test_wrap_with_level5_byte_identical() {
+        // Level 5 ≡ no jxll box ≡ existing baseline byte layout.
+        let codestream = b"\xFF\x0A\x00\x00";
+        let baseline = wrap_in_container(codestream, None, None);
+        let with_level = wrap_in_container_with_level(codestream, None, None, 5);
+        assert_eq!(baseline, with_level);
+    }
+
+    #[test]
+    fn test_wrap_with_level10_emits_jxll_box() {
+        let codestream = b"\xFF\x0A\x00\x00";
+        let result = wrap_in_container_with_level(codestream, None, None, 10);
+        // 32 (signature + ftyp) + 9 (jxll) + 12 (jxlc 8 + 4 payload).
+        assert_eq!(result.len(), 32 + 9 + 12);
+        // jxll box header sits directly after ftyp (offset 32).
+        assert_eq!(&result[32..36], &[0, 0, 0, 0x09]); // size = 9
+        assert_eq!(&result[36..40], b"jxll");
+        assert_eq!(result[40], 10); // level byte
+        // jxlc box follows.
+        assert_eq!(&result[41..45], &[0, 0, 0, 0x0C]); // size = 12
+        assert_eq!(&result[45..49], b"jxlc");
+        assert_eq!(&result[49..53], codestream);
+    }
+
+    #[test]
+    fn test_wrap_with_level10_and_metadata() {
+        // jxll box still sits between ftyp and jxlc; Exif follows jxlc.
+        let codestream = b"\xFF\x0A";
+        let exif = b"MM\x00\x2a\x00\x00";
+        let result = wrap_in_container_with_level(codestream, Some(exif), None, 10);
+        // 32 + 9 + (8 + 2) jxlc + (8 + 4 + 6) Exif
+        assert_eq!(result.len(), 32 + 9 + 10 + 18);
+        assert_eq!(&result[32..36], &[0, 0, 0, 0x09]);
+        assert_eq!(&result[36..40], b"jxll");
+        assert_eq!(result[40], 10);
+        assert_eq!(&result[41..45], &[0, 0, 0, 0x0A]); // jxlc size 10
+        assert_eq!(&result[45..49], b"jxlc");
+        // Exif starts at 32 + 9 + 10 = 51.
+        assert_eq!(&result[51 + 4..51 + 8], b"Exif");
+    }
+
+    #[test]
+    fn test_wrap_with_jbrd_and_level10() {
+        let codestream = b"\xFF\x0A\x00";
+        let jbrd = b"jbrdpayload";
+        let result = wrap_in_container_with_jbrd_and_level(codestream, Some(jbrd), None, None, 10);
+        // signature(12) + ftyp(20) + jxll(9) + jxlc(8+3) + jbrd(8+11)
+        assert_eq!(result.len(), 12 + 20 + 9 + 11 + 19);
+        assert_eq!(&result[32..36], &[0, 0, 0, 0x09]);
+        assert_eq!(&result[36..40], b"jxll");
+        assert_eq!(result[40], 10);
     }
 }
