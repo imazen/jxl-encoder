@@ -415,6 +415,31 @@ pub struct EffortProfile {
     /// kept separate). Callers opt in via the `__expert` lossless
     /// override; sweep harnesses re-bake hash-locks when they do.
     pub gather_dedup: bool,
+
+    // ─── Parallel tree-learning tuning ────────────────────────────────────
+    // Read by `modular/tree_learn.rs` (gated on
+    // `feature = "parallel-tree-learning"`). These control the rayon
+    // fan-out shape in the divide-and-conquer subtree builder. The
+    // original constants (depth=4, floor=16384, root_threshold=8192) were
+    // tuned on e7 trees (~2,425 nodes on a 1024² photo). At e8/e9 the
+    // tree is +30%/+118% larger and the per-fork work is heavier, so
+    // deeper fanout + lower floor saturate more cores. See chunk-2 of
+    // `lossless_e8_e9_cliff_2026-05-16.md`.
+    /// Maximum depth of parallel recursion in the borrowed-view subtree
+    /// builder. `2^depth` is the upper bound on parallel leaf tasks.
+    /// Effort interaction: 4 at effort ≤ 7 (16 leaf tasks), 5 at effort ≥ 8
+    /// (32 leaf tasks). Picker may override; raising costs nothing at
+    /// small inputs because the floor terminates fanout early.
+    pub tree_parallel_max_depth: u32,
+    /// Minimum subtree size below which further parallel fork is skipped
+    /// and the iterative sequential builder runs instead. Below this
+    /// rayon::join + workspace setup exceeds the parallel savings.
+    /// Effort interaction: 16384 at effort ≤ 7, 8192 at effort ≥ 8.
+    pub tree_parallel_floor: usize,
+    /// Minimum total sample count required before attempting the parallel
+    /// root split. Below this the sequential loop is faster.
+    /// Effort interaction: 8192 at effort ≤ 7, 4096 at effort ≥ 8.
+    pub tree_parallel_root_threshold: usize,
 }
 
 impl EffortProfile {
@@ -568,6 +593,12 @@ impl EffortProfile {
             // via the __expert lossless override when sweep harnesses
             // are ready to re-bake hash_lock sidecars.
             gather_dedup: false,
+
+            // Parallel-tree-learning fanout (only used on the lossless
+            // path, but set on the lossy profile too for shape parity).
+            tree_parallel_max_depth: Self::tree_parallel_max_depth_for(effort),
+            tree_parallel_floor: Self::tree_parallel_floor_for(effort),
+            tree_parallel_root_threshold: Self::tree_parallel_root_threshold_for(effort),
         }
     }
 
@@ -675,6 +706,14 @@ impl EffortProfile {
             // via the __expert lossless override when sweep harnesses
             // are ready to re-bake hash_lock sidecars.
             gather_dedup: false,
+
+            // Parallel-tree-learning fanout. e8/e9 trees are larger and
+            // the per-leaf work is heavier — deeper fanout + lower floor
+            // saturate more cores. See chunk-2 of
+            // `lossless_e8_e9_cliff_2026-05-16.md`.
+            tree_parallel_max_depth: Self::tree_parallel_max_depth_for(effort),
+            tree_parallel_floor: Self::tree_parallel_floor_for(effort),
+            tree_parallel_root_threshold: Self::tree_parallel_root_threshold_for(effort),
         }
     }
 
@@ -754,6 +793,26 @@ impl EffortProfile {
             8 => 128,    // Kitten
             _ => 256,    // Tortoise
         }
+    }
+
+    /// Parallel-tree-learning fanout depth by effort.
+    ///
+    /// e8/e9 trees are 30-118% larger than e7 (`lossless_e8_e9_cliff_2026-05-16.md`),
+    /// and each per-leaf subtree-build call is heavier. Doubling the leaf-task
+    /// budget at high effort lets rayon saturate idle workers; at low effort
+    /// the floor terminates fanout early so the extra budget is harmless.
+    fn tree_parallel_max_depth_for(effort: u8) -> u32 {
+        if effort >= 8 { 5 } else { 4 }
+    }
+
+    /// Subtree-size floor below which parallel fork is skipped.
+    fn tree_parallel_floor_for(effort: u8) -> usize {
+        if effort >= 8 { 8_192 } else { 16_384 }
+    }
+
+    /// Total-sample threshold to attempt the parallel root split.
+    fn tree_parallel_root_threshold_for(effort: u8) -> usize {
+        if effort >= 8 { 4_096 } else { 8_192 }
     }
 }
 
@@ -940,6 +999,25 @@ pub struct LosslessInternalParams {
     /// bucket-equivalence set the sort path collapses to. Hash-locks must
     /// be re-baked when sweep harnesses enable this.
     pub gather_dedup: Option<bool>,
+
+    /// Maximum depth of parallel recursion in the tree learner
+    /// (`tree_learn.rs` `build_subtree_recursive_parallel_borrowed`).
+    /// `2^depth` is the upper bound on parallel leaf tasks.
+    /// Default schedule: 4 at effort ≤ 7 (16 leaf tasks), 5 at effort ≥ 8
+    /// (32 leaf tasks — deeper e8/e9 trees benefit from finer-grained fanout).
+    pub tree_parallel_max_depth: Option<u32>,
+
+    /// Minimum subtree size below which recursive parallel fork is skipped
+    /// (`tree_learn.rs` `PARALLEL_RECURSION_FLOOR`). Below this sample
+    /// count rayon task overhead exceeds the parallel savings.
+    /// Default schedule: 16384 at effort ≤ 7, 8192 at effort ≥ 8.
+    pub tree_parallel_floor: Option<usize>,
+
+    /// Minimum total sample count to even attempt the parallel root split
+    /// (`tree_learn.rs` `PARALLEL_THRESHOLD`). Below this the sequential
+    /// loop is faster overall.
+    /// Default schedule: 8192 at effort ≤ 7, 4096 at effort ≥ 8.
+    pub tree_parallel_root_threshold: Option<usize>,
 }
 
 #[cfg(feature = "__expert")]
@@ -1018,6 +1096,9 @@ impl LosslessInternalParams {
             tree_max_samples_fixed,
             use_streaming_dedup,
             gather_dedup,
+            tree_parallel_max_depth,
+            tree_parallel_floor,
+            tree_parallel_root_threshold,
         } = self;
         if let Some(v) = nb_rcts_to_try {
             profile.nb_rcts_to_try = v;
@@ -1048,6 +1129,15 @@ impl LosslessInternalParams {
         }
         if let Some(v) = gather_dedup {
             profile.gather_dedup = v;
+        }
+        if let Some(v) = tree_parallel_max_depth {
+            profile.tree_parallel_max_depth = v;
+        }
+        if let Some(v) = tree_parallel_floor {
+            profile.tree_parallel_floor = v;
+        }
+        if let Some(v) = tree_parallel_root_threshold {
+            profile.tree_parallel_root_threshold = v;
         }
     }
 }
@@ -1304,5 +1394,43 @@ mod tests {
         assert_eq!(p.tree_threshold_base, 75.0 + 14.0 * 1.0); // speed_tier=1
         let p = EffortProfile::lossy(5, EncoderMode::Reference);
         assert_eq!(p.tree_threshold_base, 75.0 + 14.0 * 5.0); // speed_tier=5
+    }
+
+    /// chunk-2 (`lossless_e8_e9_cliff_2026-05-16.md`): effort-tune the rayon
+    /// fanout shape for the parallel tree learner. At e ≤ 7 the schedule
+    /// matches the pre-chunk-2 hardcoded constants exactly so the e7 hash
+    /// lock and bytes are byte-identical. At e ≥ 8 the deeper trees +
+    /// heavier per-leaf work benefit from a deeper fanout + lower floor.
+    #[test]
+    fn test_tree_parallel_schedule_lossless() {
+        for effort in [1u8, 5, 7] {
+            let p = EffortProfile::lossless(effort, EncoderMode::Reference);
+            assert_eq!(p.tree_parallel_max_depth, 4, "e{}", effort);
+            assert_eq!(p.tree_parallel_floor, 16_384, "e{}", effort);
+            assert_eq!(p.tree_parallel_root_threshold, 8_192, "e{}", effort);
+        }
+        for effort in [8u8, 9, 10] {
+            let p = EffortProfile::lossless(effort, EncoderMode::Reference);
+            assert_eq!(p.tree_parallel_max_depth, 5, "e{}", effort);
+            assert_eq!(p.tree_parallel_floor, 8_192, "e{}", effort);
+            assert_eq!(p.tree_parallel_root_threshold, 4_096, "e{}", effort);
+        }
+    }
+
+    #[test]
+    fn test_tree_parallel_schedule_lossy_matches_lossless() {
+        // Lossy and lossless both surface the parallel-tree-learning knobs
+        // (lossy uses tree learning for patch reference frames). The defaults
+        // must match so a picker sees one canonical schedule per effort.
+        for effort in 1u8..=10 {
+            let l = EffortProfile::lossless(effort, EncoderMode::Reference);
+            let v = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert_eq!(l.tree_parallel_max_depth, v.tree_parallel_max_depth);
+            assert_eq!(l.tree_parallel_floor, v.tree_parallel_floor);
+            assert_eq!(
+                l.tree_parallel_root_threshold,
+                v.tree_parallel_root_threshold
+            );
+        }
     }
 }
