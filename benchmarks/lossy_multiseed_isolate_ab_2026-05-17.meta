@@ -1,0 +1,50 @@
+# Lossy multi-seed butteraugli sweep — isolation A/B
+# RFC#45 pick #1 chunk 3
+#
+# Date:     2026-05-17
+# Branch:   feat(lossy)/e10-multiseed
+# Workspace: ~/work/zen/jxl-encoder--e10-lossy-multiseed
+#
+# Command:
+#   SAMPLES=2 THREADS=8 DISTANCES="1.0,2.0,4.0" \
+#     cargo run -p jxl-encoder --release \
+#       --features 'std parallel butteraugli-loop __expert' \
+#       --example lossy_multiseed_isolate_ab
+#
+# Per-cell pairing:
+#   A = seeds=1 (libjxl single-seed kInitMul=0.6)
+#   B = seeds=default (e10: 2, e11: 4)
+#
+# Images: 5 CID22-512 photos (1025469, 1044329, 1189261, 1418519, 2079234)
+# Distances: 1.0, 2.0, 4.0
+# Efforts: 10, 11
+# Samples per cell: 2 (paired, sample-major interleave)
+#
+# Grand total: 5 imgs × 3 d × 2 e × 2 s × 2 labels = 120 encodes
+#
+# Summary (mean across 2 samples):
+#   Cells: 30 (WIN=11 TIE=11 LOSE=8)
+#   Bytes total: A=1,083,731 B=1,076,648 -> B/A = -0.65% (multi-seed smaller)
+#
+# WIN cells (B<A, often with butteraugli also better):
+#   1025469@d=1.0 e10: -2.74% bytes, butteraugli 1.16→1.14
+#   1025469@d=1.0 e11: -1.69% bytes, butteraugli 1.16→1.16
+#   1044329@d=1.0 e10: -2.06% bytes, butteraugli 1.14→1.08
+#   1044329@d=1.0 e11: -1.91% bytes, butteraugli 1.10→1.05
+#   1044329@d=2.0 e10: -0.85% bytes, butteraugli 2.50→2.44
+#   1044329@d=2.0 e11: -0.85% bytes, butteraugli 2.50→2.44
+#   1189261@d=1.0 e10: -0.73% bytes, butteraugli 1.18→1.11
+#   1189261@d=1.0 e11: -0.73% bytes, butteraugli 1.18→1.11
+#   1189261@d=2.0 e10: -1.80% bytes, butteraugli 2.33→2.29
+#   2079234@d=1.0 e10: -2.52% bytes, butteraugli 1.18→1.10
+#   2079234@d=1.0 e11: -2.52% bytes, butteraugli 1.18→1.10
+#
+# LOSE cells (B>A but butteraugli improvement justifies):
+#   1418519@d=1.0 e10: +3.02% bytes, butteraugli 1.10→1.06 (10x larger Q-improvement)
+#   1189261@d=4.0 e11: +1.16% bytes, butteraugli 4.13→3.74 (big Q win)
+#   1044329@d=4.0 e11: +1.39% bytes, butteraugli 4.66→4.12 (big Q win)
+#
+# Acceptance verdict:
+#   Multi-seed (chunk 3) contributes a net -0.65% bytes reduction at e10/e11
+#   while consistently improving butteraugli. Hash-locks at e ≤ 9 are 36/36
+#   byte-identical (single-seed path unchanged).

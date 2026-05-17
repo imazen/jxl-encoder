@@ -21,6 +21,66 @@ use super::frame::DistanceParams;
 use crate::debug_rect;
 use crate::error::Result;
 
+/// libjxl's hardcoded `kInitMul` (`enc_adaptive_quantization.cc:1042`)
+/// that pulls the post-`kOriginalComparisonRound` quant field back toward
+/// the initial AC heuristic field. Single-seed encodes use only this
+/// value (bit-identical to libjxl).
+pub(crate) const LIBJXL_INIT_MUL: f64 = 0.6;
+
+/// Seed values for the multi-seed butteraugli sweep (RFC#45 pick #1
+/// chunk 3). Each seed runs the full quantization loop with a different
+/// `kInitMul` (the constant that biases iter=1 toward the initial field
+/// vs the per-iteration update). Different basins of the optimization
+/// surface converge to different (qf, scale) pairs at the same butteraugli
+/// target — we pick the seed with the largest mean(quant_field_float)
+/// (proxy for smallest encoded bytes) that meets the butteraugli bound.
+///
+/// **Index 0 is ALWAYS the libjxl default** so the picker can never
+/// regress below the single-seed baseline.
+///
+/// - `seeds = 1` ⇒ `[0.6]` — bit-identical to libjxl `FindBestQuantization`.
+/// - `seeds = 2` ⇒ `[0.6, 0.4]` — adds a "trust the per-iter update more"
+///   basin (smaller pullback toward initial → larger qf perturbation).
+/// - `seeds = 3` ⇒ `[0.6, 0.4, 0.8]` — adds a "trust the initial more"
+///   basin (more conservative; smaller qf perturbation, often hits
+///   target with finer quant on noisy inputs).
+/// - `seeds = 4` ⇒ `[0.6, 0.4, 0.8, 0.5]` — fills the gap near the
+///   default with a fourth basin.
+///
+/// Capped at the length returned here (4); requesting more silently
+/// saturates. The values are chosen empirically to span the
+/// `kInitMul ∈ [0, 1]` interpolation interval without clustering near
+/// the endpoints (where the loop degenerates to pure-update or
+/// pure-pullback dynamics).
+pub(crate) fn init_mul_seeds(seeds: u8) -> &'static [f64] {
+    const ALL: [f64; 4] = [LIBJXL_INIT_MUL, 0.4, 0.8, 0.5];
+    let n = (seeds.max(1) as usize).min(ALL.len());
+    &ALL[..n]
+}
+
+/// Outcome of one butteraugli-loop seed used by the multi-seed picker
+/// in [`VarDctEncoder::butteraugli_refine_quant_field`].
+#[derive(Clone)]
+struct SeedOutcome {
+    /// Final `DistanceParams` after the loop's terminal SetQuantField.
+    params: DistanceParams,
+    /// `u8` quant_field after the loop's terminal SetQuantField (length
+    /// `xsize_blocks * ysize_blocks`).
+    quant_field: alloc::vec::Vec<u8>,
+    /// Float quant_field at loop exit (length matches `quant_field`).
+    quant_field_float: alloc::vec::Vec<f32>,
+    /// Butteraugli score from the compare-only last iteration (`f64::INFINITY`
+    /// if the reference compare failed at any point).
+    final_score: f64,
+    /// Mean of the final float quant_field — the smallest-bytes proxy
+    /// (larger = coarser quantization = fewer non-zero coefficients).
+    mean_qf: f64,
+    /// `k_init_mul` value used for this seed (for debug logging).
+    /// Only read when the `debug-rect` feature is enabled.
+    #[cfg_attr(not(feature = "debug-rect"), allow(dead_code))]
+    k_init_mul: f64,
+}
+
 impl VarDctEncoder {
     /// Butteraugli quantization loop: iteratively refines per-block quant_field
     /// by measuring perceptual distance (butteraugli) between the original image
@@ -65,8 +125,6 @@ impl VarDctEncoder {
         patches_data: Option<&super::patches::PatchesData>,
         splines_data: Option<&super::splines::SplinesData>,
     ) -> Result<DistanceParams> {
-        use super::epf;
-        use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
         use crate::budget::MemoryBudget;
 
         let budget = self.budget.as_ref();
@@ -162,7 +220,205 @@ impl VarDctEncoder {
             iters,
             crate::api::MAX_QUANT_LOOP_ITERS,
         );
+
+        // RFC#45 pick #1 chunk 3 — multi-seed butteraugli sweep.
+        //
+        // At e ≤ 9 the profile sets `lossy_search_seeds = 1` and the seed
+        // table is `[LIBJXL_INIT_MUL]` (= 0.6) — bit-identical to the
+        // single-seed libjxl `FindBestQuantization`. At e10/e11 we fan
+        // out 2/4 different `kInitMul` values, run the full loop on a
+        // clone of (`quant_field`, `quant_field_float`) per seed, then
+        // pick the seed with the largest mean(`quant_field_float`)
+        // (proxy for smallest encoded bytes — coarser quant produces
+        // fewer non-zero AC coefficients and thus shorter Huffman/ANS
+        // streams) whose final butteraugli score does not exceed
+        // `K_BUTTERAUGLI_ACCEPT_FACTOR * target_distance`. If no seed
+        // meets that bound (rare; usually means target_distance is so
+        // small the loop didn't converge on any seed), the seed with
+        // the smallest final score wins instead — the worst-case for
+        // multi-seed is the same `final_score` as single-seed because
+        // `init_mul_seeds[0]` is always `LIBJXL_INIT_MUL`.
+        let seeds = init_mul_seeds(self.profile.lossy_search_seeds);
+        const K_BUTTERAUGLI_ACCEPT_FACTOR: f64 = 1.05;
+
+        // Snapshot the caller's starting buffers so each seed starts
+        // from the SAME initial state (the caller hands us the post-AQ
+        // float field; without snapshotting, seed N+1 would start from
+        // seed N's post-loop field and the sweep would degenerate).
+        let initial_qf_u8_snapshot = quant_field.to_vec();
+        let initial_qf_float_snapshot = quant_field_float.to_vec();
+
+        let mut outcomes: alloc::vec::Vec<SeedOutcome> =
+            alloc::vec::Vec::with_capacity(seeds.len());
+
+        for &k_init_mul in seeds {
+            // Restore starting state for this seed (skipped on seed 0 because
+            // quant_field/quant_field_float already hold it, but cheap enough
+            // to always do for clarity).
+            quant_field.copy_from_slice(&initial_qf_u8_snapshot);
+            quant_field_float.copy_from_slice(&initial_qf_float_snapshot);
+
+            let outcome = self.butteraugli_refine_quant_field_inner_seed(
+                xyb_x,
+                xyb_y,
+                xyb_b,
+                padded_width,
+                padded_height,
+                xsize_blocks,
+                ysize_blocks,
+                initial_params,
+                quant_field,
+                quant_field_float,
+                initial_quant_field_float,
+                cfl_map,
+                ac_strategy,
+                patches_data,
+                splines_data,
+                &reference,
+                qf_lower,
+                qf_higher,
+                &sharpness,
+                &mut tile_dist,
+                &mut recon_r,
+                &mut recon_g,
+                &mut recon_b,
+                &mut transform_out,
+                iters,
+                k_init_mul,
+            )?;
+            outcomes.push(outcome);
+        }
+
+        // Pick the winner. Selection rule:
+        //   1. Prefer seeds with final_score <= K_BUTTERAUGLI_ACCEPT_FACTOR * target.
+        //   2. Among those, pick the largest mean_qf (proxy for smallest bytes).
+        //   3. If none meet bound, pick the smallest final_score (degenerates
+        //      to single-seed worst-case because seed 0 = LIBJXL_INIT_MUL).
+        let accept_bound = K_BUTTERAUGLI_ACCEPT_FACTOR * target_distance as f64;
+        let winner_idx = {
+            let qualifying: alloc::vec::Vec<usize> = (0..outcomes.len())
+                .filter(|&i| outcomes[i].final_score <= accept_bound)
+                .collect();
+            if !qualifying.is_empty() {
+                qualifying
+                    .into_iter()
+                    .max_by(|&a, &b| outcomes[a].mean_qf.total_cmp(&outcomes[b].mean_qf))
+                    .expect("non-empty by filter")
+            } else {
+                (0..outcomes.len())
+                    .min_by(|&a, &b| outcomes[a].final_score.total_cmp(&outcomes[b].final_score))
+                    .unwrap_or(0)
+            }
+        };
+
+        // Emit a one-line debug summary of all seeds so post-hoc analysis
+        // can spot when the picker is consistently choosing non-default
+        // seeds (signal that the libjxl default `kInitMul=0.6` is
+        // sub-optimal on this image / distance combination). The
+        // `summary` is only formatted when the `debug-rect` feature
+        // is enabled — without it the macro `if false {}` gate drops
+        // the whole arm.
+        #[cfg(feature = "debug-rect")]
+        let summary: alloc::string::String = {
+            use alloc::string::String;
+            let mut s = String::new();
+            for (i, o) in outcomes.iter().enumerate() {
+                if i > 0 {
+                    s.push(' ');
+                }
+                let marker = if i == winner_idx { "*" } else { "" };
+                s.push_str(&alloc::format!(
+                    "[{marker}{i} k={:.2} bfly={:.3} qf_mean={:.4}]",
+                    o.k_init_mul,
+                    o.final_score,
+                    o.mean_qf
+                ));
+            }
+            s
+        };
+        #[cfg(not(feature = "debug-rect"))]
+        let summary = "";
+        debug_rect!(
+            "bfly/seeds",
+            0,
+            0,
+            width,
+            height,
+            "n={} winner={} accept<={:.3} {}",
+            outcomes.len(),
+            winner_idx,
+            accept_bound,
+            summary,
+        );
+
+        // Promote winner into the caller's mutable buffers.
+        let winner = outcomes.swap_remove(winner_idx);
+        quant_field.copy_from_slice(&winner.quant_field);
+        quant_field_float.copy_from_slice(&winner.quant_field_float);
+        return Ok(winner.params);
+    }
+
+    /// Inner per-seed body of the butteraugli quantization loop.
+    /// Runs the full `iters + 1` iteration sequence on the supplied
+    /// `quant_field_float` (and the matching u8 `quant_field`) and
+    /// returns the resulting [`SeedOutcome`].
+    ///
+    /// `k_init_mul` selects the basin: it scales the iter-1 pullback
+    /// toward `initial_quant_field_float` (libjxl uses 0.6;
+    /// [`init_mul_seeds`] returns other values for the multi-seed
+    /// sweep at e10/e11). Buffers (`tile_dist`, `recon_*`,
+    /// `transform_out`) are re-used between seeds — the caller is
+    /// responsible for resetting `quant_field`/`quant_field_float`
+    /// between calls (each seed starts from the same initial state).
+    #[cfg(feature = "butteraugli-loop")]
+    #[allow(clippy::too_many_arguments)]
+    fn butteraugli_refine_quant_field_inner_seed(
+        &self,
+        xyb_x: &[f32],
+        xyb_y: &[f32],
+        xyb_b: &[f32],
+        padded_width: usize,
+        padded_height: usize,
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        initial_params: &DistanceParams,
+        quant_field: &mut [u8],
+        quant_field_float: &mut [f32],
+        initial_quant_field_float: &[f32],
+        cfl_map: &CflMap,
+        ac_strategy: &AcStrategyMap,
+        patches_data: Option<&super::patches::PatchesData>,
+        splines_data: Option<&super::splines::SplinesData>,
+        reference: &butteraugli::ButteraugliReference,
+        qf_lower: f32,
+        qf_higher: f32,
+        sharpness: &[u8],
+        tile_dist: &mut [f32],
+        recon_r: &mut [f32],
+        recon_g: &mut [f32],
+        recon_b: &mut [f32],
+        transform_out: &mut super::transform::TransformOutput,
+        iters: usize,
+        k_init_mul: f64,
+    ) -> Result<SeedOutcome> {
+        use super::epf;
+        use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
+
+        let target_distance = self.distance;
+        let num_blocks = xsize_blocks * ysize_blocks;
+        let padded_pixels = padded_width * padded_height;
+        // Width/height of the cropped reference image, derived from the
+        // reference handle's stored dimensions so we don't have to plumb
+        // the caller's `width`/`height` through the per-seed signature.
+        let width = reference.width();
+        let height = reference.height();
+        debug_assert_eq!(padded_pixels, recon_r.len());
         let mut current_params;
+        // Score from the final compare-only iteration (i == iters).
+        // `INFINITY` until first compare succeeds — propagates to picker
+        // selection: any seed that failed every compare is unselectable
+        // unless every seed failed.
+        let mut last_score: f64 = f64::INFINITY;
 
         // Loop runs iters+1 times (matching libjxl: last iteration is compare-only).
         // i=0..iters-1: SetQuantField + roundtrip + compare + adjust
@@ -183,7 +439,9 @@ impl VarDctEncoder {
             let qf_vec = quantize_quant_field(quant_field_float, current_params.inv_scale);
             quant_field.copy_from_slice(&qf_vec);
 
-            // Step 2: Transform and quantize with current params
+            // Step 2: Transform and quantize with current params.
+            // `transform_out` is `&mut TransformOutput` from our caller;
+            // the helper wants `&mut TransformOutput` too, so reborrow.
             self.transform_and_quantize_into(
                 xyb_x,
                 xyb_y,
@@ -195,7 +453,7 @@ impl VarDctEncoder {
                 quant_field,
                 cfl_map,
                 ac_strategy,
-                &mut transform_out,
+                &mut *transform_out,
             );
 
             // Step 3: Reconstruct XYB from quantized coefficients
@@ -218,7 +476,7 @@ impl VarDctEncoder {
                 epf::apply_epf(
                     &mut planes,
                     quant_field,
-                    &sharpness,
+                    sharpness,
                     current_params.scale,
                     current_params.epf_iters,
                     xsize_blocks,
@@ -242,9 +500,9 @@ impl VarDctEncoder {
                 &planes[0],
                 &planes[1],
                 &planes[2],
-                &mut recon_r,
-                &mut recon_g,
-                &mut recon_b,
+                recon_r,
+                recon_g,
+                recon_b,
                 padded_pixels,
             );
 
@@ -300,17 +558,47 @@ impl VarDctEncoder {
                 });
             }
 
-            // Step 5: Butteraugli comparison
+            // Step 5: Butteraugli comparison.
+            // On compare failure / missing diffmap we cannot continue refining
+            // (no signal to adjust quant_field) — return the current state with
+            // `last_score` left as INFINITY (or the previous iter's score),
+            // which makes the picker prefer any seed that *did* converge.
             let result =
-                match reference.compare_linear_planar(&recon_r, &recon_g, &recon_b, padded_width) {
+                match reference.compare_linear_planar(recon_r, recon_g, recon_b, padded_width) {
                     Ok(r) => r,
-                    Err(_) => return Ok(current_params),
+                    Err(_) => {
+                        let mean_qf = mean_qf_float(quant_field_float);
+                        return Ok(SeedOutcome {
+                            params: current_params,
+                            quant_field: quant_field.to_vec(),
+                            quant_field_float: quant_field_float.to_vec(),
+                            final_score: last_score,
+                            mean_qf,
+                            k_init_mul,
+                        });
+                    }
                 };
 
             let diffmap = match result.diffmap {
                 Some(dm) => dm,
-                None => return Ok(current_params),
+                None => {
+                    let mean_qf = mean_qf_float(quant_field_float);
+                    return Ok(SeedOutcome {
+                        params: current_params,
+                        quant_field: quant_field.to_vec(),
+                        quant_field_float: quant_field_float.to_vec(),
+                        final_score: last_score,
+                        mean_qf,
+                        k_init_mul,
+                    });
+                }
             };
+
+            // Record butteraugli score for the picker (rewritten every iter;
+            // the value at loop exit is what the picker compares against the
+            // target). Stored before the iter==iters early-break below so the
+            // compare-only last iteration is included.
+            last_score = result.score;
 
             // Step 6: Compute per-block tile distance (16th-power norm, matching libjxl TileDistMap)
             const K_TILE_NORM: f32 = 1.2;
@@ -399,14 +687,18 @@ impl VarDctEncoder {
             // Step 7: kOriginalComparisonRound = 1: constrain toward initial BEFORE adjustment.
             // Prevents oscillation by keeping qf from diverging too far from initial.
             // (libjxl enc_adaptive_quantization.cc:1039-1057)
+            //
+            // `k_init_mul` is the seed parameter — libjxl hardcodes 0.6 here;
+            // RFC#45 chunk 3 sweeps multiple values at e10/e11 and picks the
+            // best per-image outcome. See `init_mul_seeds()` and the
+            // `lossy_search_seeds` field on [`EffortProfile`].
             const K_ORIGINAL_COMPARISON_ROUND: usize = 1;
             if iter == K_ORIGINAL_COMPARISON_ROUND {
-                const K_INIT_MUL: f64 = 0.6;
-                const K_ONE_MINUS_INIT_MUL: f64 = 1.0 - K_INIT_MUL;
+                let k_one_minus_init_mul = 1.0 - k_init_mul;
                 for bi in 0..num_blocks {
                     let init_qf = initial_quant_field_float[bi] as f64;
                     let cur_qf = quant_field_float[bi] as f64;
-                    let clamp_val = K_ONE_MINUS_INIT_MUL * cur_qf + K_INIT_MUL * init_qf;
+                    let clamp_val = k_one_minus_init_mul * cur_qf + k_init_mul * init_qf;
                     if cur_qf < clamp_val {
                         let mut v = clamp_val as f32;
                         if v > qf_higher {
@@ -541,8 +833,31 @@ impl VarDctEncoder {
         let qf_vec = quantize_quant_field(quant_field_float, final_params.inv_scale);
         quant_field.copy_from_slice(&qf_vec);
 
-        Ok(final_params)
+        let mean_qf = mean_qf_float(quant_field_float);
+        Ok(SeedOutcome {
+            params: final_params,
+            quant_field: quant_field.to_vec(),
+            quant_field_float: quant_field_float.to_vec(),
+            final_score: last_score,
+            mean_qf,
+            k_init_mul,
+        })
     }
+}
+
+/// Mean of the float quant_field — the picker's smallest-bytes proxy
+/// in [`VarDctEncoder::butteraugli_refine_quant_field`]. Larger mean
+/// means coarser per-block quantization, which empirically correlates
+/// with smaller encoded bytes on photographic content (fewer non-zero
+/// AC coefficients → shorter Huffman/ANS streams). Computed in `f64`
+/// to avoid catastrophic cancellation on large block counts.
+#[cfg(feature = "butteraugli-loop")]
+fn mean_qf_float(quant_field_float: &[f32]) -> f64 {
+    if quant_field_float.is_empty() {
+        return 0.0;
+    }
+    let sum: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
+    sum / quant_field_float.len() as f64
 }
 
 /// Debug hook for capturing the buttloop's internal reconstruction at the

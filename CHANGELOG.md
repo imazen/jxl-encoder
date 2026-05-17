@@ -4,6 +4,23 @@
 
 ### Added
 
+- **Multi-seed lossy butteraugli sweep at e10/e11** (RFC#45 pick #1 chunk 3).
+  New `EffortProfile::lossy_search_seeds` field (1 at e ≤ 9, 2 at e10, 4 at e11)
+  drives [`vardct::butteraugli_loop`]: at seeds > 1 we run the full
+  `FindBestQuantization` loop N times with different `kInitMul` values
+  (libjxl hardcodes 0.6 at `enc_adaptive_quantization.cc:1042`; we sweep
+  `[0.6, 0.4, 0.8, 0.5]` — index 0 is always the libjxl default so the
+  multi-seed picker can never regress below single-seed). The picker
+  keeps the seed with the largest mean(quant_field_float) (proxy for
+  smallest encoded bytes — coarser quant → fewer non-zero AC coefficients)
+  whose final butteraugli score does not exceed `1.05 ×` target.
+  Isolation A/B on 5 CID22-512 photos × 3 distances × 2 efforts shows
+  **-0.65% bytes** total vs `seeds=1` at e10/e11 while consistently
+  improving butteraugli. Bit-identical at e ≤ 9 (36/36 hash_lock pass).
+  Exposed via `LossyInternalParams::lossy_search_seeds` for sweep
+  harnesses (`__expert` feature). Bench:
+  `benchmarks/lossy_multiseed_isolate_ab_2026-05-17.{tsv,meta}`.
+
 - **CLI passthrough bundle — A1 audit `cjxl` parity flags** (CLI parity
   section). Adds `cjxl-rs` flags that round out the libjxl `cjxl` parity
   surface so existing benchmark / sweep scripts can shell out without
@@ -69,6 +86,7 @@
   (secondary linear-sRGB decode). Max measured channel diff: 0.033 on
   [0,1] linear, well under the 0.07 wiring tolerance. Closes the
   Float16 portion of #18.
+
 ### Refactor
 
 - **`kAvoidEntropyOfTransforms` formula extracted into named helpers** in

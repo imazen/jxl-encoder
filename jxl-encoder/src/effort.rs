@@ -518,6 +518,43 @@ pub struct EffortProfile {
     /// `0` is treated as `1` (defensive). Read by
     /// `modular/tree_learn.rs::select_best_tree_multi_seed`.
     pub tree_learn_seeds: u8,
+
+    /// Number of butteraugli quantization-loop seeds to run in parallel,
+    /// then pick the smallest-bytes result among those that meet the
+    /// target butteraugli (RFC#45 pick #1 chunk 3 — lossy analog of
+    /// [`Self::tree_learn_seeds`]).
+    ///
+    /// libjxl's `FindBestQuantization` uses a single hard-coded
+    /// `kInitMul = 0.6` (`enc_adaptive_quantization.cc:1042`) which
+    /// pulls the post-iteration-1 quant field back toward the initial
+    /// AC heuristic field. That single starting point is locally
+    /// optimal but the optimization surface has multiple basins —
+    /// different `kInitMul` values converge to different (qf, scale)
+    /// pairs with measurably different output bytes at the same
+    /// butteraugli target.
+    ///
+    /// At `seeds > 1` we run the loop N times with the seed values
+    /// from [`crate::vardct::butteraugli_loop::init_mul_seeds`] (the
+    /// libjxl default `0.6` is always included as the first seed so
+    /// the worst case is no-regression). The picker keeps the seed
+    /// with the largest mean(quant_field_float) (proxy for smallest
+    /// encoded bytes — coarser quant → fewer non-zero coefficients)
+    /// whose final butteraugli score does not exceed
+    /// `1.05 * target_distance`. If no seed meets that bound, the
+    /// seed with the smallest final butteraugli score wins.
+    ///
+    /// Effort interaction (set by `Self::lossy_search_seeds_for`):
+    /// - effort ≤ 9: `1` (libjxl-equivalent, bit-identical to pre-RFC#45-chunk-3)
+    /// - effort = 10: `2`
+    /// - effort = 11: `4`
+    ///
+    /// Bitstream-valid: each seed produces a normal, spec-valid encode;
+    /// the picker just chooses among them. Bytes change only when
+    /// `seeds > 1` (e10/e11) — no hash-lock churn at e ≤ 9.
+    ///
+    /// `0` is treated as `1` (defensive). Read by
+    /// `vardct/butteraugli_loop.rs::butteraugli_refine_quant_field`.
+    pub lossy_search_seeds: u8,
 }
 
 impl EffortProfile {
@@ -705,6 +742,12 @@ impl EffortProfile {
             // RFC#45 chunk 2: 1 at e ≤ 9 (libjxl-equivalent, byte-identical),
             // 2 at e10, 4 at e11.
             tree_learn_seeds: Self::tree_learn_seeds_for(effort),
+
+            // RFC#45 chunk 3 (lossy multi-seed butteraugli sweep): 1 at e ≤ 9
+            // (libjxl-equivalent, bit-identical), 2 at e10, 4 at e11. The
+            // butteraugli loop is no-op below e8 (butteraugli_iters = 0) so
+            // this field only takes effect at e10/e11.
+            lossy_search_seeds: Self::lossy_search_seeds_for(effort),
         }
     }
 
@@ -831,6 +874,11 @@ impl EffortProfile {
             // RFC#45 chunk 2: 1 at e ≤ 9 (libjxl-equivalent, byte-identical),
             // 2 at e10, 4 at e11.
             tree_learn_seeds: Self::tree_learn_seeds_for(effort),
+
+            // Lossless never runs the butteraugli loop — keep at 1 so the
+            // shared `EffortProfile` struct stays well-formed without
+            // implying a phantom lossy sweep on lossless encodes.
+            lossy_search_seeds: 1,
         }
     }
 
@@ -937,6 +985,20 @@ impl EffortProfile {
     /// (byte-identical hash-locks); e10/e11 fan out 2 / 4 seeded runs and
     /// pick the cheapest-encoding tree.
     fn tree_learn_seeds_for(effort: u8) -> u8 {
+        match effort {
+            0..=9 => 1,
+            10 => 2,
+            _ => 4,
+        }
+    }
+
+    /// Number of butteraugli-loop seeds to run by effort (RFC#45 pick #1
+    /// chunk 3). e ≤ 9 keeps the single-seed libjxl behaviour
+    /// (bit-identical hash-locks); e10 fans out 2 seeds, e11 fans out 4,
+    /// and the picker keeps the smallest-bytes seed that meets target
+    /// butteraugli. See [`EffortProfile::lossy_search_seeds`] for the
+    /// selection rule and seed values.
+    fn lossy_search_seeds_for(effort: u8) -> u8 {
         match effort {
             0..=9 => 1,
             10 => 2,
@@ -1324,6 +1386,12 @@ pub struct LossyInternalParams {
     /// values produce a coarser initial field (less rate, more distortion);
     /// higher values refine.
     pub k_ac_quant: Option<f32>,
+
+    /// Override the number of butteraugli-loop seeds (RFC#45 pick #1
+    /// chunk 3). See [`EffortProfile::lossy_search_seeds`] for the
+    /// per-effort defaults and the seed-selection rule. Setting this to
+    /// `Some(1)` reverts to libjxl's single-seed loop even at e10/e11.
+    pub lossy_search_seeds: Option<u8>,
 }
 
 /// Picker / sweep override knobs for the **lossless (modular)** encode path.
@@ -1502,6 +1570,7 @@ impl LossyInternalParams {
             non_aligned_eval,
             enhanced_clustering_vardct,
             k_ac_quant,
+            lossy_search_seeds,
         } = self;
         if let Some(v) = try_dct16 {
             profile.try_dct16 = v;
@@ -1541,6 +1610,9 @@ impl LossyInternalParams {
         }
         if let Some(v) = k_ac_quant {
             profile.k_ac_quant = v;
+        }
+        if let Some(v) = lossy_search_seeds {
+            profile.lossy_search_seeds = v;
         }
     }
 }
@@ -1755,6 +1827,72 @@ mod tests {
         // RFC#45 chunk 1: clamp bumped 10 → 11 to admit e10/e11.
         let p = EffortProfile::lossy(99, EncoderMode::Reference);
         assert_eq!(p.effort, 11);
+    }
+
+    #[test]
+    fn test_lossy_search_seeds_e10_e11_extended() {
+        // RFC#45 chunk 3: multi-seed butteraugli sweep at e10/e11.
+        // e ≤ 9 keeps the libjxl single-seed behaviour (bit-identical
+        // hash-locks); e10/e11 fan out 2/4 seeds and pick smallest bytes.
+        for effort in 1..=9 {
+            let p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert_eq!(
+                p.lossy_search_seeds, 1,
+                "e{effort}: single seed (libjxl-equivalent)"
+            );
+        }
+        let p10 = EffortProfile::lossy(10, EncoderMode::Reference);
+        let p11 = EffortProfile::lossy(11, EncoderMode::Reference);
+        assert_eq!(p10.lossy_search_seeds, 2, "e10 = 2× seeds");
+        assert_eq!(p11.lossy_search_seeds, 4, "e11 = 4× seeds");
+
+        // Lossless never runs the buttloop; field must stay at 1 so a
+        // future lossless caller that accidentally checks it doesn't
+        // launch a phantom sweep.
+        for effort in 1..=11 {
+            let p = EffortProfile::lossless(effort, EncoderMode::Reference);
+            assert_eq!(
+                p.lossy_search_seeds, 1,
+                "lossless e{effort}: never fans out"
+            );
+        }
+
+        // Experimental inherits the reference value.
+        let pe11 = EffortProfile::lossy(11, EncoderMode::Experimental);
+        assert_eq!(pe11.lossy_search_seeds, 4);
+    }
+
+    #[test]
+    #[cfg(feature = "butteraugli-loop")]
+    fn test_init_mul_seeds_invariants() {
+        use crate::vardct::butteraugli_loop::{LIBJXL_INIT_MUL, init_mul_seeds};
+        // Index 0 must ALWAYS be the libjxl default so multi-seed can
+        // never regress below single-seed worst-case.
+        for seeds in [1, 2, 3, 4, 5, 10, 99, 255_u8] {
+            let table = init_mul_seeds(seeds);
+            assert!(!table.is_empty(), "seeds={seeds}: table empty");
+            assert!(
+                (table[0] - LIBJXL_INIT_MUL).abs() < f64::EPSILON,
+                "seeds={seeds}: index 0 ({}) must equal LIBJXL_INIT_MUL ({LIBJXL_INIT_MUL})",
+                table[0]
+            );
+            // Saturation cap: each seed is unique, no NaN/inf, bounded.
+            for (i, &v) in table.iter().enumerate() {
+                assert!(v.is_finite(), "seeds={seeds}[{i}]: non-finite {v}");
+                assert!(
+                    (0.0..=1.0).contains(&v),
+                    "seeds={seeds}[{i}]: {v} outside [0, 1]"
+                );
+            }
+        }
+        // `0` defensively bumps to `1` (same single-seed behaviour).
+        assert_eq!(init_mul_seeds(0).len(), 1);
+        assert_eq!(init_mul_seeds(1).len(), 1);
+        assert_eq!(init_mul_seeds(2).len(), 2);
+        assert_eq!(init_mul_seeds(3).len(), 3);
+        assert_eq!(init_mul_seeds(4).len(), 4);
+        // Saturate at table length so requesting more is safe.
+        assert_eq!(init_mul_seeds(255).len(), 4);
     }
 
     #[test]

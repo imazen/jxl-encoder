@@ -21,7 +21,7 @@ mod afv;
 mod bitstream;
 mod block_extract;
 #[cfg(feature = "butteraugli-loop")]
-mod butteraugli_loop;
+pub(crate) mod butteraugli_loop;
 pub(crate) mod chroma_from_luma;
 pub(crate) mod cluster;
 mod coeff_order;
