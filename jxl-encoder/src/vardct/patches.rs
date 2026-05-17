@@ -111,7 +111,16 @@ const NUM_PATCH_CONTEXTS: usize = 10;
 const SCREENSHOT_FLAT_NEIGHBOR_RATIO: usize = 8;
 
 /// Minimum quantized value peak for a valid patch.
-const MIN_PEAK: i32 = 2;
+///
+/// libjxl uses `kMinPeak = 2` (rejects patches whose quantized magnitudes are all
+/// in {-1, 0, +1}). RFC#45 pick #5 chunk 1 lowers this to 1 so the detector
+/// accepts patches built from low-contrast glyphs / anti-aliased text edges —
+/// content where the per-pixel error is small but the perceptual loss of
+/// leaving it to VarDCT is large. The downstream `is_cost_effective` gate
+/// (trial-encodes the reference frame, requires 2× savings/overhead ratio) is
+/// what actually prevents the looser threshold from regressing photo content
+/// where the extra accepted patches would not amortize their overhead.
+const MIN_PEAK: i32 = 1;
 
 /// Radius for has_similar spatial consistency check.
 const HAS_SIMILAR_RADIUS: usize = 2;
