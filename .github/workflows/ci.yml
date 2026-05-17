@@ -37,6 +37,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Clone sibling path-dep repos
+        uses: ./.github/actions/clone-siblings
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -80,6 +83,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Clone sibling path-dep repos
+        uses: ./.github/actions/clone-siblings
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -111,6 +117,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Clone sibling path-dep repos
+        uses: ./.github/actions/clone-siblings
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -150,6 +159,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Clone sibling path-dep repos
+        uses: ./.github/actions/clone-siblings
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -185,6 +197,9 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
+
+      - name: Clone sibling path-dep repos
+        uses: ./.github/actions/clone-siblings
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -226,6 +241,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Clone sibling path-dep repos
+        uses: ./.github/actions/clone-siblings
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -251,6 +269,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Clone sibling path-dep repos
+        uses: ./.github/actions/clone-siblings
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -264,6 +285,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Clone sibling path-dep repos
+        uses: ./.github/actions/clone-siblings
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
