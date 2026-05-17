@@ -253,13 +253,17 @@ path = "examples/lossless_e9_buckets_sweep.rs"
 required-features = ["__expert"]
 
 # Picker oracle calibration harnesses (lossless_pareto_calibrate /
-# lossy_pareto_calibrate) live under examples/ but are NOT registered as
-# cargo examples — they depend on a sibling-repo `zenanalyze` path that
-# isn't present on CI. Run them locally with:
+# lossy_pareto_calibrate / rct_per_image_sweep) live under examples/ but
+# are NOT registered as cargo examples — they depend on a sibling-repo
+# `zenanalyze` path that isn't present on CI. Run them locally with:
 #   cargo run --release --manifest-path jxl-encoder/Cargo.toml \
 #       --example lossless_pareto_calibrate --features __expert
 # after editing this file to add a [[example]] entry plus the path dep
 # (see git history pre-2026-05-02 for the previous wiring).
+#
+# `rct_picker_wall_ab` does NOT need zenanalyze (uses only the public
+# `with_force_rct` API) but is left unregistered alongside the RCT
+# investigation chunk for symmetry.
 
 # Microbench for the chunk-1 SplitTreeSamples primitive (issue #40). Compares
 # the random-read access pattern (today's find_best_split `collect` step) vs
