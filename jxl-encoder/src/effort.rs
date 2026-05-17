@@ -847,6 +847,43 @@ impl EffortProfile {
     fn tree_parallel_root_threshold_for(effort: u8) -> usize {
         if effort >= 8 { 4_096 } else { 8_192 }
     }
+
+    /// Smart per-image fanout adapter (opt-in via
+    /// [`crate::api::LosslessConfig::with_smart_fanout`]).
+    ///
+    /// Re-tunes the three `tree_parallel_*` fields based on the input
+    /// image's pixel count, not just effort. Per the
+    /// `smart_fanout_sweep_2026-05-17` (8-image × 3-effort × 6-cell)
+    /// investigation, depth=6 + floor=4096 wins or ties the
+    /// effort-only defaults on every (image, effort) cell measured,
+    /// EXCEPT large + e9 where the per-leaf subtree-build is enormous
+    /// (~21 s sequential) and the current depth=5 is already optimal.
+    ///
+    /// Rule (post-sweep):
+    /// - `pixels >= 4_000_000` and `effort >= 9`: keep effort default
+    ///   (depth=5, floor=8192) — large e9 ceiling is the per-leaf
+    ///   subtree, not parallel granularity.
+    /// - otherwise: bump to depth=6, floor=4096, root_threshold=4096.
+    ///
+    /// Parallelism does not change the bitstream — the tree topology
+    /// is determined by the samples, not the build order — so
+    /// hash_lock sidecars stay byte-identical. This is purely a
+    /// wall-clock knob.
+    ///
+    /// Investigation memory file:
+    /// `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/
+    ///  zenanalyze_tree_size_correlation_2026-05-17.md`.
+    pub fn adapt_to_image(&mut self, pixels: u64) {
+        let effort = self.effort;
+        let large = pixels >= 4_000_000;
+        if large && effort >= 9 {
+            // Keep effort-only default (already tuned for the huge-tree case).
+            return;
+        }
+        self.tree_parallel_max_depth = 6;
+        self.tree_parallel_floor = 4_096;
+        self.tree_parallel_root_threshold = 4_096;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1489,5 +1526,40 @@ mod tests {
                 v.tree_parallel_root_threshold
             );
         }
+    }
+
+    /// `adapt_to_image` is the per-image smart-fanout rule shipped with the
+    /// `smart_fanout_sweep_2026-05-17` chunk-1 investigation. For all
+    /// `(effort, pixels)` combos EXCEPT large+e9 (where the per-leaf
+    /// subtree-build ceiling dominates) it bumps the schedule to
+    /// depth=6 / floor=4096 / root_threshold=4096. Large+e9 keeps the
+    /// effort-only schedule.
+    #[test]
+    fn test_adapt_to_image_smart_fanout_rule() {
+        // Small / medium / large @ e7: rule should kick in for all.
+        for &pixels in &[262_144u64, 1_048_576, 4_194_304] {
+            let mut p = EffortProfile::lossless(7, EncoderMode::Reference);
+            p.adapt_to_image(pixels);
+            assert_eq!(p.tree_parallel_max_depth, 6, "e7 pixels={pixels}");
+            assert_eq!(p.tree_parallel_floor, 4_096, "e7 pixels={pixels}");
+            assert_eq!(p.tree_parallel_root_threshold, 4_096, "e7 pixels={pixels}");
+        }
+        // e8: same as e7 (rule applies to all sizes).
+        for &pixels in &[262_144u64, 1_048_576, 4_194_304] {
+            let mut p = EffortProfile::lossless(8, EncoderMode::Reference);
+            p.adapt_to_image(pixels);
+            assert_eq!(p.tree_parallel_max_depth, 6, "e8 pixels={pixels}");
+            assert_eq!(p.tree_parallel_floor, 4_096, "e8 pixels={pixels}");
+        }
+        // e9 large: keep effort-only (depth=5 / floor=8192).
+        let mut p = EffortProfile::lossless(9, EncoderMode::Reference);
+        p.adapt_to_image(8_000_000);
+        assert_eq!(p.tree_parallel_max_depth, 5, "e9 large");
+        assert_eq!(p.tree_parallel_floor, 8_192, "e9 large");
+        // e9 medium: rule still kicks in.
+        let mut p = EffortProfile::lossless(9, EncoderMode::Reference);
+        p.adapt_to_image(1_048_576);
+        assert_eq!(p.tree_parallel_max_depth, 6, "e9 medium");
+        assert_eq!(p.tree_parallel_floor, 4_096, "e9 medium");
     }
 }

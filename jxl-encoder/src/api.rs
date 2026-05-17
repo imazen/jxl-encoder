@@ -950,6 +950,11 @@ pub struct LosslessConfig {
     /// `EffortProfile` everywhere the encoder asks for one. See
     /// [`Self::with_effort_profile_override`].
     profile_override: Option<crate::effort::EffortProfile>,
+    /// Opt-in: re-tune `tree_parallel_max_depth` / `tree_parallel_floor`
+    /// per-image (based on pixel count) instead of using the effort-only
+    /// defaults. Bitstream-equivalent — only changes rayon fanout shape.
+    /// See [`crate::effort::EffortProfile::adapt_to_image`].
+    tree_parallel_smart: bool,
 }
 
 impl Default for LosslessConfig {
@@ -975,7 +980,28 @@ impl LosslessConfig {
             tree_sample_fraction_override: None,
             forced_rct: None,
             profile_override: None,
+            tree_parallel_smart: false,
         }
+    }
+
+    /// Opt-in: enable per-image smart-fanout for parallel tree learning.
+    ///
+    /// When enabled, the encoder re-tunes the rayon fanout depth /
+    /// recursion floor / root threshold for the input image's pixel
+    /// count. See [`crate::effort::EffortProfile::adapt_to_image`]
+    /// for the rule.
+    ///
+    /// **Bitstream-equivalent** — the tree topology is determined by
+    /// the samples, not the build order, so output bytes are identical
+    /// with the smart-fanout knob on or off. This is purely a wall-clock
+    /// knob.
+    ///
+    /// Not stable; the rule may change in patch releases as the
+    /// sweep-correlation evidence grows.
+    #[doc(hidden)]
+    pub fn with_smart_fanout(mut self, on: bool) -> Self {
+        self.tree_parallel_smart = on;
+        self
     }
 
     /// Resolve the effective [`EffortProfile`]: the override if set,
@@ -992,6 +1018,17 @@ impl LosslessConfig {
         }
         if self.forced_rct.is_some() {
             p.forced_rct = self.forced_rct;
+        }
+        p
+    }
+
+    /// Variant of [`Self::effective_profile`] that applies the
+    /// smart-fanout per-image adapter when `tree_parallel_smart`
+    /// is on. Pass the input image's pixel count.
+    pub(crate) fn effective_profile_for_image(&self, pixels: u64) -> crate::effort::EffortProfile {
+        let mut p = self.effective_profile();
+        if self.tree_parallel_smart {
+            p.adapt_to_image(pixels);
         }
         p
     }
@@ -3503,6 +3540,7 @@ impl<'a> EncodeRequest<'a> {
 
         // Encode frame
         let use_tree_learning = cfg.tree_learning;
+        let smart_profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
         let frame_encoder = FrameEncoder::new(
             w,
             h,
@@ -3516,7 +3554,7 @@ impl<'a> EncodeRequest<'a> {
                 lz77_method: cfg.lz77_method,
                 lossy_palette: cfg.lossy_palette,
                 encoder_mode: cfg.mode,
-                profile: cfg.effective_profile(),
+                profile: smart_profile,
                 have_animation: false,
                 duration: 0,
                 is_last: true,
@@ -5620,6 +5658,7 @@ impl LosslessEncoder {
             }
 
             // Encode frame
+            let smart_profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
             let frame_encoder = FrameEncoder::new(
                 w,
                 h,
@@ -5633,7 +5672,7 @@ impl LosslessEncoder {
                     lz77_method: cfg.lz77_method,
                     lossy_palette: cfg.lossy_palette,
                     encoder_mode: cfg.mode,
-                    profile: cfg.effective_profile(),
+                    profile: smart_profile,
                     have_animation: false,
                     duration: 0,
                     is_last: true,
@@ -5983,6 +6022,7 @@ fn encode_animation_lossless(
         .map_err(EncodeError::from)?;
 
         let use_tree_learning = cfg.tree_learning;
+        let smart_profile = cfg.effective_profile_for_image((frame_w as u64) * (frame_h as u64));
         let frame_encoder = FrameEncoder::new(
             frame_w,
             frame_h,
@@ -5996,7 +6036,7 @@ fn encode_animation_lossless(
                 lz77_method: cfg.lz77_method,
                 lossy_palette: cfg.lossy_palette,
                 encoder_mode: cfg.mode,
-                profile: cfg.effective_profile(),
+                profile: smart_profile,
                 have_animation: true,
                 duration: frame.duration,
                 is_last: i == num_frames - 1,
