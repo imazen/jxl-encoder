@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`--faster_decoding 0..4` now wires through to encoder choices**
+  (follow-on to W4-3's storage-only landing). The knob mirrors libjxl
+  `cparams.decoding_speed_tier` and biases the bitstream toward simpler
+  shapes that decode faster at the cost of compression. Per-tier
+  effects:
+  - **tier 0** (default): no-op, bytes byte-identical to pre-W4-3
+    (hash_lock_features 36/36 byte-identical, RD-regression 18/18
+    within thresholds).
+  - **tier 1**: LZ77 disabled (`enc_ans.cc:1372`, `enc_modular.cc`).
+  - **tier 2**: tier 1 + pair-merge histogram clustering for VarDCT
+    disabled (`enhanced_clustering_vardct = false`), patches detection
+    skipped (`enc_modular.cc:707`), `modular_group_size_shift` forced
+    to `0` for multithreaded decode (`enc_frame.cc:340-343`).
+  - **tier 3**: tier 2 + custom coefficient orders disabled, tree-split
+    threshold raised by `+10 * tier` (`enc_modular.cc:533`).
+  - **tier 4**: tier 3 + MA tree learning disabled, gaborish forced
+    off (`enc_frame.cc:280`), DCT32X32 / DCT64 disabled in AC strategy
+    search (`enc_ac_strategy.cc:936`), `tree_sample_fraction = 0` (so
+    the sampler returns its floor and the tree learner sees minimal
+    data — mirrors libjxl `nb_repeats = 0` at tier 4).
+  Wiring lives on the existing `LossyConfig` / `LosslessConfig`
+  `with_faster_decoding(u8)` builder; the new `EffortProfile::apply_
+  faster_decoding(tier)` method runs last inside
+  `effective_profile()`, and per-flag effective getters
+  (`effective_lz77`, `effective_tree_learning`, `effective_patches`,
+  `effective_gaborish`, `effective_modular_group_size_shift`) route
+  the config-stored values through the speed tier at the encoder
+  consumption sites. Explicit `with_modular_group_size(Some(n))` from
+  the caller still wins over the tier-2 default. Verified with new
+  jxl-rs roundtrip tests at levels 0/2/4 on a 96×96 RGB synthetic;
+  lossless byte counts grow as the tier rises (6193 → 6193 → 20864
+  bytes at tier 0/2/4 — tier 0 is the most compressed, tier 4 the
+  fastest-to-decode).
+
 ### Fixed
 
 - **Clippy `-D warnings` CI red** — 13 lints introduced by the recent

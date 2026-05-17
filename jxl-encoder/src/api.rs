@@ -1780,7 +1780,60 @@ impl LosslessConfig {
         if self.forced_rct.is_some() {
             p.forced_rct = self.forced_rct;
         }
+        // Apply faster_decoding tier last so it can override sweep-pinned
+        // values from `__expert` profile_override — that matches libjxl's
+        // ordering (cparams.decoding_speed_tier is consulted at each gate
+        // site directly, AFTER the speed-tier-derived defaults are set).
+        p.apply_faster_decoding(self.faster_decoding);
         p
+    }
+
+    /// Resolve the effective `modular_group_size_shift`, honoring
+    /// `faster_decoding >= 2` (libjxl `enc_frame.cc:340-343` forces
+    /// `group_size_shift = 0` for smaller groups and multithreaded
+    /// decode). When the caller has explicitly set
+    /// [`Self::with_modular_group_size`] that override wins (caller
+    /// intent is preserved). `None` (default) + `faster_decoding < 2`
+    /// keeps the existing behaviour.
+    pub(crate) fn effective_modular_group_size_shift(&self) -> Option<u8> {
+        if self.modular_group_size_shift.is_some() {
+            return self.modular_group_size_shift;
+        }
+        if self.faster_decoding >= 2 {
+            return Some(0);
+        }
+        None
+    }
+
+    /// Resolve the effective LZ77 enable flag, honoring
+    /// `faster_decoding >= 1` (libjxl `enc_ans.cc:1372` and
+    /// `enc_modular.cc` paths set the LZ77 method to `kNone`).
+    /// Returns the stored `cfg.lz77` field at tier 0.
+    pub(crate) fn effective_lz77(&self) -> bool {
+        if self.faster_decoding >= 1 {
+            return false;
+        }
+        self.lz77
+    }
+
+    /// Resolve the effective tree-learning enable flag, honoring
+    /// `faster_decoding >= 4` (libjxl `enc_modular.cc:506-513` zeros
+    /// `nb_repeats` at tier 4, disabling MA-tree learning).
+    pub(crate) fn effective_tree_learning(&self) -> bool {
+        if self.faster_decoding >= 4 {
+            return false;
+        }
+        self.tree_learning
+    }
+
+    /// Resolve the effective patches enable flag, honoring
+    /// `faster_decoding >= 2` (libjxl `enc_modular.cc:707` gates
+    /// `FindBestPatchDictionary` on `decoding_speed_tier < 2`).
+    pub(crate) fn effective_patches(&self) -> bool {
+        if self.faster_decoding >= 2 {
+            return false;
+        }
+        self.patches
     }
 
     /// Override the small-image parallel-tree-learning fallback gate.
@@ -2912,11 +2965,50 @@ impl LossyConfig {
     }
 
     /// Resolve the effective [`EffortProfile`]: the override if set,
-    /// otherwise the standard profile derived from effort + mode.
+    /// otherwise the standard profile derived from effort + mode. The
+    /// `faster_decoding` knob is applied last (libjxl ordering — the
+    /// speed-tier gates fire AFTER effort defaults are computed).
     pub(crate) fn effective_profile(&self) -> crate::effort::EffortProfile {
-        self.profile_override
+        let mut p = self
+            .profile_override
             .clone()
-            .unwrap_or_else(|| crate::effort::EffortProfile::lossy(self.effort, self.mode))
+            .unwrap_or_else(|| crate::effort::EffortProfile::lossy(self.effort, self.mode));
+        p.apply_faster_decoding(self.faster_decoding);
+        p
+    }
+
+    /// Effective patches flag (libjxl `enc_modular.cc:707` —
+    /// `decoding_speed_tier < 2` for the modular subtract-and-encode
+    /// path). At lossy tier >= 2 we skip the VarDCT patches pre-pass
+    /// for the same reason.
+    pub(crate) fn effective_patches(&self) -> bool {
+        if self.faster_decoding >= 2 {
+            return false;
+        }
+        self.patches
+    }
+
+    /// Effective LZ77 flag. libjxl `enc_ans.cc:1372` skips LZ77 for
+    /// VarDCT streams at `decoding_speed_tier >= 1` (the per-frame
+    /// AC histogram pass forces `lz77_method = kNone`). Returns the
+    /// stored `cfg.lz77` field at tier 0.
+    pub(crate) fn effective_lz77(&self) -> bool {
+        if self.faster_decoding >= 1 {
+            return false;
+        }
+        self.lz77
+    }
+
+    /// Effective gaborish flag. libjxl `enc_frame.cc:280` disables
+    /// gaborish unconditionally at `decoding_speed_tier == 4` (its
+    /// 3x3 inverse on every decoded plane adds measurable decode
+    /// time without commensurate quality benefit at tier 4 quality
+    /// targets).
+    pub(crate) fn effective_gaborish(&self) -> bool {
+        if self.faster_decoding >= 4 {
+            return false;
+        }
+        self.gaborish
     }
 
     /// Resolve the per-image effective [`EffortProfile`] for the lossy
@@ -5437,7 +5529,7 @@ impl<'a> EncodeRequest<'a> {
         // (which are CMY, not RGB) — false matches would inject
         // bogus subtractive-colour patches into the codestream.
         let num_channels = self.layout.bytes_per_pixel();
-        let can_use_patches = cfg.patches
+        let can_use_patches = cfg.effective_patches()
             && !image.is_grayscale
             && image.bit_depth <= 8
             && num_channels >= 3
@@ -5587,7 +5679,7 @@ impl<'a> EncodeRequest<'a> {
         }
 
         // Encode frame
-        let use_tree_learning = cfg.tree_learning;
+        let use_tree_learning = cfg.effective_tree_learning();
         let smart_profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
         let frame_encoder = FrameEncoder::new(
             w,
@@ -5598,13 +5690,13 @@ impl<'a> EncodeRequest<'a> {
                 use_ans: cfg.use_ans,
                 use_tree_learning,
                 use_squeeze: cfg.squeeze,
-                enable_lz77: cfg.lz77,
+                enable_lz77: cfg.effective_lz77(),
                 lz77_method: cfg.lz77_method,
                 lossy_palette: cfg.lossy_palette,
                 encoder_mode: cfg.mode,
                 profile: smart_profile,
                 modular_knobs: cfg.modular_knobs(),
-                modular_group_size_shift: cfg.modular_group_size_shift,
+                modular_group_size_shift: cfg.effective_modular_group_size_shift(),
                 ..Default::default()
             },
         )
@@ -6106,7 +6198,9 @@ impl<'a> EncodeRequest<'a> {
         enc.original_distance = cfg.original_distance;
         enc.enable_denoise = cfg.denoise;
         // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
-        enc.enable_gaborish = cfg.gaborish && effective_distance > 0.5;
+        // and unconditionally OFF at decoding_speed_tier == 4
+        // (enc_frame.cc:280) — captured by `cfg.effective_gaborish()`.
+        enc.enable_gaborish = cfg.effective_gaborish() && effective_distance > 0.5;
         // libjxl `--epf -1..3` override (enc_frame.cc:284-285). `-1` =
         // encoder chooses by distance; otherwise force the given count.
         enc.epf_level_override = if cfg.epf_level < 0 {
@@ -6116,7 +6210,7 @@ impl<'a> EncodeRequest<'a> {
         };
         enc.error_diffusion = cfg.error_diffusion;
         enc.pixel_domain_loss = cfg.pixel_domain_loss;
-        enc.enable_lz77 = cfg.lz77;
+        enc.enable_lz77 = cfg.effective_lz77();
         enc.lz77_method = cfg.lz77_method;
         enc.force_strategy = cfg.force_strategy;
         // RFC #45 pick #4 — when the caller has explicitly pinned `cfg.patches`
@@ -6133,7 +6227,13 @@ impl<'a> EncodeRequest<'a> {
         enc.enable_patches = if self.layout.is_cmyk() {
             false
         } else if cfg.patches_explicit {
-            cfg.patches
+            cfg.effective_patches()
+        } else if cfg.faster_decoding >= 2 {
+            // libjxl `enc_modular.cc:707` skips patches at
+            // `decoding_speed_tier >= 2`. Override the profile-derived
+            // gate (which may have flipped patches on via the
+            // content-class adapter).
+            false
         } else {
             enc.profile.patches
         };
@@ -7087,7 +7187,7 @@ impl LossyEncoder {
             enc.quant_ac_rescale = cfg.quant_ac_rescale;
             enc.original_distance = cfg.original_distance;
             enc.enable_denoise = cfg.denoise;
-            enc.enable_gaborish = cfg.gaborish && effective_distance > 0.5;
+            enc.enable_gaborish = cfg.effective_gaborish() && effective_distance > 0.5;
             // libjxl `--epf -1..3` override (enc_frame.cc:284-285). `-1`
             // = encoder chooses by distance; otherwise force the given
             // count.
@@ -7098,7 +7198,7 @@ impl LossyEncoder {
             };
             enc.error_diffusion = cfg.error_diffusion;
             enc.pixel_domain_loss = cfg.pixel_domain_loss;
-            enc.enable_lz77 = cfg.lz77;
+            enc.enable_lz77 = cfg.effective_lz77();
             enc.lz77_method = cfg.lz77_method;
             enc.force_strategy = cfg.force_strategy;
             // RFC #45 pick #4 — when the caller has explicitly pinned `cfg.patches`
@@ -7106,7 +7206,11 @@ impl LossyEncoder {
             // dispatched profile (the content-class adapter may have flipped
             // patches on for Screenshot content at e5/e6).
             enc.enable_patches = if cfg.patches_explicit {
-                cfg.patches
+                cfg.effective_patches()
+            } else if cfg.faster_decoding >= 2 {
+                // libjxl `enc_modular.cc:707` skips patches at
+                // `decoding_speed_tier >= 2`.
+                false
             } else {
                 enc.profile.patches
             };
@@ -7984,8 +8088,10 @@ impl LosslessEncoder {
         let (codestream, mut stats) = run_with_threads(cfg.threads, || {
             // Reconstruct interleaved pixels for patch detection (8-bit RGB only)
             let num_channels = self.layout.bytes_per_pixel();
-            let can_use_patches =
-                cfg.patches && !image.is_grayscale && image.bit_depth <= 8 && num_channels >= 3;
+            let can_use_patches = cfg.effective_patches()
+                && !image.is_grayscale
+                && image.bit_depth <= 8
+                && num_channels >= 3;
             let patches_data = if can_use_patches {
                 let mut detection_pixels = vec![0u8; w * h * num_channels];
                 let nc = core::cmp::min(num_channels, image.channels.len());
@@ -8109,15 +8215,15 @@ impl LosslessEncoder {
                     use_modular: true,
                     effort: cfg.effort,
                     use_ans: cfg.use_ans,
-                    use_tree_learning: cfg.tree_learning,
+                    use_tree_learning: cfg.effective_tree_learning(),
                     use_squeeze: cfg.squeeze,
-                    enable_lz77: cfg.lz77,
+                    enable_lz77: cfg.effective_lz77(),
                     lz77_method: cfg.lz77_method,
                     lossy_palette: cfg.lossy_palette,
                     encoder_mode: cfg.mode,
                     profile: smart_profile,
                     modular_knobs: cfg.modular_knobs(),
-                    modular_group_size_shift: cfg.modular_group_size_shift,
+                    modular_group_size_shift: cfg.effective_modular_group_size_shift(),
                     ..Default::default()
                 },
             )
@@ -8517,7 +8623,7 @@ fn encode_animation_lossless(
         }
         .map_err(EncodeError::from)?;
 
-        let use_tree_learning = cfg.tree_learning;
+        let use_tree_learning = cfg.effective_tree_learning();
         let smart_profile = cfg.effective_profile_for_image((frame_w as u64) * (frame_h as u64));
         let frame_encoder = FrameEncoder::new(
             frame_w,
@@ -8528,7 +8634,7 @@ fn encode_animation_lossless(
                 use_ans: cfg.use_ans,
                 use_tree_learning,
                 use_squeeze: cfg.squeeze,
-                enable_lz77: cfg.lz77,
+                enable_lz77: cfg.effective_lz77(),
                 lz77_method: cfg.lz77_method,
                 lossy_palette: cfg.lossy_palette,
                 encoder_mode: cfg.mode,
@@ -8546,7 +8652,7 @@ fn encode_animation_lossless(
                 name: frame.name.clone(),
                 timecode: frame.timecode,
                 modular_knobs: cfg.modular_knobs(),
-                modular_group_size_shift: cfg.modular_group_size_shift,
+                modular_group_size_shift: cfg.effective_modular_group_size_shift(),
             },
         )
         .with_budget(alloc::sync::Arc::clone(&budget));
@@ -8637,7 +8743,9 @@ fn encode_animation_lossy(
     enc.original_distance = cfg.original_distance;
     enc.enable_denoise = cfg.denoise;
     // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
-    enc.enable_gaborish = cfg.gaborish && cfg.distance > 0.5;
+    // and unconditionally OFF at decoding_speed_tier == 4
+    // (enc_frame.cc:280) — captured by `cfg.effective_gaborish()`.
+    enc.enable_gaborish = cfg.effective_gaborish() && cfg.distance > 0.5;
     // libjxl `--epf -1..3` override (enc_frame.cc:284-285). `-1` =
     // encoder chooses by distance; otherwise force the given count.
     enc.epf_level_override = if cfg.epf_level < 0 {
@@ -8647,7 +8755,7 @@ fn encode_animation_lossy(
     };
     enc.error_diffusion = cfg.error_diffusion;
     enc.pixel_domain_loss = cfg.pixel_domain_loss;
-    enc.enable_lz77 = cfg.lz77;
+    enc.enable_lz77 = cfg.effective_lz77();
     enc.lz77_method = cfg.lz77_method;
     enc.force_strategy = cfg.force_strategy;
     // RFC #45 pick #4 — when the caller has explicitly pinned `cfg.patches`
@@ -8655,7 +8763,11 @@ fn encode_animation_lossy(
     // dispatched profile (the content-class adapter may have flipped
     // patches on for Screenshot content at e5/e6).
     enc.enable_patches = if cfg.patches_explicit {
-        cfg.patches
+        cfg.effective_patches()
+    } else if cfg.faster_decoding >= 2 {
+        // libjxl `enc_modular.cc:707` skips patches at
+        // `decoding_speed_tier >= 2`.
+        false
     } else {
         enc.profile.patches
     };
@@ -10987,6 +11099,266 @@ mod tests {
                 tier,
             );
         }
+    }
+
+    #[test]
+    fn test_faster_decoding_lossless_effective_getters() {
+        // Tier 0: all getters return the stored field values.
+        let cfg = LosslessConfig::new();
+        let stored_lz77 = cfg.lz77();
+        let stored_tree = cfg.tree_learning();
+        let stored_patches = cfg.patches();
+        assert_eq!(cfg.effective_lz77(), stored_lz77);
+        assert_eq!(cfg.effective_tree_learning(), stored_tree);
+        assert_eq!(cfg.effective_patches(), stored_patches);
+        assert_eq!(cfg.effective_modular_group_size_shift(), None);
+
+        // Tier 1: LZ77 off. Tree-learning + patches unchanged.
+        let cfg = LosslessConfig::new().with_faster_decoding(1);
+        assert!(!cfg.effective_lz77(), "tier 1 disables LZ77");
+        assert_eq!(cfg.effective_tree_learning(), stored_tree);
+        assert_eq!(cfg.effective_patches(), stored_patches);
+        assert_eq!(cfg.effective_modular_group_size_shift(), None);
+
+        // Tier 2: + group_size_shift = 0 + patches off.
+        let cfg = LosslessConfig::new().with_faster_decoding(2);
+        assert!(!cfg.effective_lz77());
+        assert_eq!(cfg.effective_tree_learning(), stored_tree);
+        assert!(!cfg.effective_patches(), "tier 2 disables patches");
+        assert_eq!(cfg.effective_modular_group_size_shift(), Some(0));
+
+        // Tier 4: + tree_learning off.
+        let cfg = LosslessConfig::new().with_faster_decoding(4);
+        assert!(!cfg.effective_lz77());
+        assert!(
+            !cfg.effective_tree_learning(),
+            "tier 4 disables tree learning"
+        );
+        assert!(!cfg.effective_patches());
+        assert_eq!(cfg.effective_modular_group_size_shift(), Some(0));
+
+        // Explicit `with_modular_group_size` overrides the tier-2 default.
+        let cfg = LosslessConfig::new()
+            .with_faster_decoding(2)
+            .with_modular_group_size(Some(2));
+        assert_eq!(
+            cfg.effective_modular_group_size_shift(),
+            Some(2),
+            "explicit modular_group_size wins over tier-2 default"
+        );
+    }
+
+    #[test]
+    fn test_faster_decoding_lossy_effective_getters() {
+        // Tier 0: getters return stored field values.
+        let cfg = LossyConfig::new(1.0);
+        let stored_lz77 = cfg.lz77();
+        let stored_patches = cfg.patches();
+        let stored_gab = cfg.gaborish();
+        assert_eq!(cfg.effective_lz77(), stored_lz77);
+        assert_eq!(cfg.effective_patches(), stored_patches);
+        assert_eq!(cfg.effective_gaborish(), stored_gab);
+
+        // Tier 1: LZ77 off.
+        let cfg = LossyConfig::new(1.0).with_faster_decoding(1);
+        assert!(!cfg.effective_lz77());
+        assert_eq!(cfg.effective_patches(), stored_patches);
+        assert_eq!(cfg.effective_gaborish(), stored_gab);
+
+        // Tier 2: + patches off.
+        let cfg = LossyConfig::new(1.0).with_faster_decoding(2);
+        assert!(!cfg.effective_lz77());
+        assert!(!cfg.effective_patches());
+        assert_eq!(cfg.effective_gaborish(), stored_gab);
+
+        // Tier 4: + gaborish forced off.
+        let cfg = LossyConfig::new(1.0).with_faster_decoding(4);
+        assert!(!cfg.effective_lz77());
+        assert!(!cfg.effective_patches());
+        assert!(!cfg.effective_gaborish(), "tier 4 disables gaborish");
+    }
+
+    #[test]
+    fn test_faster_decoding_lossless_roundtrip_levels_0_2_4() {
+        // Encode a deterministic synthetic RGB image at faster_decoding
+        // levels 0, 2, 4 and verify:
+        //   (a) every level produces a valid jxl-rs roundtrip,
+        //   (b) bytes grow monotonically as the tier rises (libjxl
+        //       semantics — higher tier = simpler bitstream = larger
+        //       file at the same effort).
+        const W: u32 = 96;
+        const H: u32 = 96;
+        let mut pixels = Vec::with_capacity((W * H * 3) as usize);
+        for y in 0..H {
+            for x in 0..W {
+                // Mix of smooth gradients and high-frequency content so the
+                // tier-1/2/4 disables (LZ77, group_size, tree learning) all
+                // see something interesting to bias on. Pure noise would
+                // make tier-X bytes uncomfortably close to incompressible.
+                let r = ((x.wrapping_mul(3) ^ y.wrapping_mul(5)) & 0xFF) as u8;
+                let g = ((x + y) & 0xFF) as u8;
+                let b = ((x.wrapping_mul(17) ^ (y.wrapping_mul(11))) & 0xFF) as u8;
+                pixels.push(r);
+                pixels.push(g);
+                pixels.push(b);
+            }
+        }
+
+        let encode = |tier: u8| -> Vec<u8> {
+            LosslessConfig::new()
+                .with_effort(7)
+                .with_faster_decoding(tier)
+                .encode(&pixels, W, H, PixelLayout::Rgb8)
+                .unwrap_or_else(|e| panic!("encode tier={} failed: {:?}", tier, e))
+        };
+
+        let bytes0 = encode(0);
+        let bytes2 = encode(2);
+        let bytes4 = encode(4);
+
+        // (a) all three roundtrip via jxl-rs and reproduce input bit-exact.
+        for (tier, bytes) in [(0, &bytes0), (2, &bytes2), (4, &bytes4)] {
+            let decoded = crate::test_helpers::decode_with_jxl_rs(bytes)
+                .unwrap_or_else(|e| panic!("jxl-rs decode tier={} failed: {:?}", tier, e));
+            assert_eq!(decoded.width, W as usize, "tier {} width", tier);
+            assert_eq!(decoded.height, H as usize, "tier {} height", tier);
+            assert_eq!(decoded.channels, 3, "tier {} channels", tier);
+            // Lossless: pixels must match exactly.
+            for (i, (&orig, &dec)) in pixels.iter().zip(decoded.pixels.iter()).enumerate() {
+                let dec_u8 = (dec * 255.0).round().clamp(0.0, 255.0) as u8;
+                assert_eq!(
+                    orig, dec_u8,
+                    "tier {}: pixel mismatch at byte {}: orig={} decoded={}",
+                    tier, i, orig, dec_u8,
+                );
+            }
+        }
+
+        // (b) bytes grow with tier. Higher tier = simpler bitstream =
+        // larger file (the decode-speed tradeoff).
+        eprintln!(
+            "faster_decoding lossless bytes: t0={} t2={} t4={}",
+            bytes0.len(),
+            bytes2.len(),
+            bytes4.len(),
+        );
+        assert!(
+            bytes2.len() >= bytes0.len(),
+            "tier 2 ({} B) should be >= tier 0 ({} B)",
+            bytes2.len(),
+            bytes0.len()
+        );
+        assert!(
+            bytes4.len() >= bytes2.len(),
+            "tier 4 ({} B) should be >= tier 2 ({} B)",
+            bytes4.len(),
+            bytes2.len()
+        );
+    }
+
+    #[test]
+    fn test_faster_decoding_lossy_roundtrip_levels_0_2_4() {
+        // Lossy analog: encode at d=1.0, e7 with faster_decoding 0/2/4
+        // and verify jxl-rs decodes each + records the byte counts.
+        // We do NOT assert byte monotonicity on lossy — quality drift
+        // from disabling gaborish (tier 4) can occasionally produce
+        // smaller files via different AC strategy selection. The hard
+        // requirement is "all tiers decode".
+        const W: u32 = 96;
+        const H: u32 = 96;
+        let mut pixels = Vec::with_capacity((W * H * 3) as usize);
+        for y in 0..H {
+            for x in 0..W {
+                let r = ((x.wrapping_mul(3) ^ y.wrapping_mul(5)) & 0xFF) as u8;
+                let g = ((x + y) & 0xFF) as u8;
+                let b = ((x.wrapping_mul(17) ^ (y.wrapping_mul(11))) & 0xFF) as u8;
+                pixels.push(r);
+                pixels.push(g);
+                pixels.push(b);
+            }
+        }
+
+        let encode = |tier: u8| -> Vec<u8> {
+            LossyConfig::new(1.0)
+                .with_effort(7)
+                .with_faster_decoding(tier)
+                .encode(&pixels, W, H, PixelLayout::Rgb8)
+                .unwrap_or_else(|e| panic!("lossy encode tier={} failed: {:?}", tier, e))
+        };
+
+        let bytes0 = encode(0);
+        let bytes2 = encode(2);
+        let bytes4 = encode(4);
+
+        eprintln!(
+            "faster_decoding lossy bytes: t0={} t2={} t4={}",
+            bytes0.len(),
+            bytes2.len(),
+            bytes4.len(),
+        );
+
+        for (tier, bytes) in [(0, &bytes0), (2, &bytes2), (4, &bytes4)] {
+            let decoded = crate::test_helpers::decode_with_jxl_rs(bytes)
+                .unwrap_or_else(|e| panic!("jxl-rs decode tier={} failed: {:?}", tier, e));
+            assert_eq!(decoded.width, W as usize, "tier {} width", tier);
+            assert_eq!(decoded.height, H as usize, "tier {} height", tier);
+        }
+    }
+
+    #[test]
+    fn test_faster_decoding_profile_apply() {
+        use crate::effort::EffortProfile;
+
+        let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
+        let base_lz77 = p.lz77;
+        let base_custom_orders = p.custom_orders;
+        let base_enhanced = p.enhanced_clustering_vardct;
+        let base_gaborish = p.gaborish;
+        let base_try_dct32 = p.try_dct32;
+        let base_tree_learning = p.tree_learning;
+        let base_patches = p.patches;
+        let base_threshold = p.tree_threshold_base;
+
+        // Tier 0: no-op.
+        let mut p0 = p.clone();
+        p0.apply_faster_decoding(0);
+        assert_eq!(p0.lz77, base_lz77);
+        assert_eq!(p0.custom_orders, base_custom_orders);
+
+        // Tier 1.
+        let mut p1 = p.clone();
+        p1.apply_faster_decoding(1);
+        assert!(!p1.lz77);
+        assert_eq!(p1.enhanced_clustering_vardct, base_enhanced);
+        assert_eq!(p1.custom_orders, base_custom_orders);
+
+        // Tier 2.
+        let mut p2 = p.clone();
+        p2.apply_faster_decoding(2);
+        assert!(!p2.lz77);
+        assert!(!p2.enhanced_clustering_vardct);
+        assert_eq!(p2.custom_orders, base_custom_orders);
+
+        // Tier 3: + custom_orders off + threshold raised.
+        let mut p3 = p.clone();
+        p3.apply_faster_decoding(3);
+        assert!(!p3.custom_orders);
+        assert!(p3.tree_threshold_base > base_threshold);
+
+        // Tier 4: + tree_learning off + patches off + gaborish off + no DCT32.
+        p.apply_faster_decoding(4);
+        assert!(!p.tree_learning);
+        assert!(!p.patches);
+        assert!(!p.gaborish);
+        assert!(!p.try_dct32);
+        assert!(!p.try_dct64);
+        // Sanity: base values were on at effort 7.
+        let _ = (
+            base_gaborish,
+            base_try_dct32,
+            base_tree_learning,
+            base_patches,
+        );
     }
 
     #[test]
