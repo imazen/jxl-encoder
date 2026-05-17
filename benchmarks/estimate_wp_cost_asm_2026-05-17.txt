@@ -1,0 +1,503 @@
+	mov qword ptr [rdi + 48], r9
+	lea rsi, [rcx + r15]
+	mov r11d, dword ptr [rdi + 88]
+	mov r8d, dword ptr [rdi + 92]
+	imul r11, rsi
+	sar r11, 5
+	mov r10, r13
+	sub r10, r11
+	mov qword ptr [rdi + 56], r10
+	add rcx, r12
+	imul r8, rcx
+	sar r8, 5
+	mov qword ptr [rsp + 32], rbp
+	mov rsi, rbp
+	sub rsi, r8
+	mov qword ptr [rdi + 64], rsi
+	mov ecx, dword ptr [rdi + 100]
+	imul rcx, r14
+	mov r8d, dword ptr [rdi + 104]
+	mov qword ptr [rsp + 8], r15
+	imul r8, r15
+	add r8, rcx
+	mov ecx, dword ptr [rdi + 96]
+	mov qword ptr [rsp + 48], r12
+	imul rcx, r12
+	add r8, rcx
+	mov r11, qword ptr [rsp + 16]
+	sub r11, rax
+	mov ecx, dword ptr [rdi + 108]
+	imul rcx, r11
+	mov r15, qword ptr [rsp + 80]
+	add r15d, 4
+	mov r12, qword ptr [rsp + 72]
+	add r12d, 4
+	mov ebp, dword ptr [rsp + 28]
+	add ebp, 4
+	add ebx, 4
+	mov rax, qword ptr [rsp + 64]
+	sub rax, qword ptr [rsp + 56]
+	mov r11d, dword ptr [rdi + 112]
+	imul r11, rax
+	add r11, rcx
+	lea rax, [r8 + 8*r11]
+	mov r11, r13
+	sar rax, 5
+	sub r13, rax
+	mov eax, r15d
+	mov ecx, r12d
+	add rcx, rax
+	mov eax, ebp
+	mov r8d, ebx
+	add r8, rax
+	mov qword ptr [rdi + 72], r13
+	add r8, rcx
+	mov eax, 127
+	bsr rax, r8
+	not eax
+	mov cl, 27
+	sub cl, al
+	shr r15d, cl
+	shr r12d, cl
+	shr ebp, cl
+	shr ebx, cl
+	lea ecx, [r12 + r15]
+	add ecx, ebp
+	lea eax, [rbx + rcx]
+	dec eax
+	cmp eax, 64
+	jae .LBB547_10
+	add ecx, ebx
+	mov r8d, ebx
+	imul r13, r8
+	mov r8d, ebp
+	imul rsi, r8
+	mov r8d, r12d
+	imul r10, r8
+	add r10, rsi
+	mov esi, r15d
+	imul r9, rsi
+	add r9, r13
+	shr ecx
+	dec ecx
+	add rcx, r9
+	add rcx, r10
+	lea rsi, [rip + .Lanon.b3fc135ed3d108d5c72fb292c16e0c96.1905]
+	mov eax, dword ptr [rsi + 4*rax]
+	imul rax, rcx
+	sar rax, 24
+	mov rcx, rdx
+	xor rcx, r14
+	mov r10, qword ptr [rsp + 48]
+	mov rsi, r10
+	xor rsi, r14
+	or rsi, rcx
+	jg .LBB547_18
+	mov rsi, qword ptr [rsp + 40]
+	cmp r11, rsi
+	mov rcx, rsi
+	cmovg rcx, r11
+	cmovl rsi, r11
+	mov r8, qword ptr [rsp + 32]
+	cmp rcx, r8
+	cmovle rcx, r8
+	cmp rsi, r8
+	cmovge rsi, r8
+	cmp rax, rcx
+	cmovl rcx, rax
+	cmp rcx, rsi
+	cmovle rcx, rsi
+	mov rax, rcx
+.LBB547_18:
+	mov r9, qword ptr [rsp + 8]
+	mov qword ptr [rdi + 80], rax
+	mov rcx, r9
+	neg rcx
+	cmovs rcx, r9
+	mov rsi, r10
+	neg rsi
+	cmovs rsi, r10
+	mov rdi, r14
+	neg rdi
+	cmovs rdi, r14
+	mov r8, rdx
+	neg r8
+	cmovs r8, rdx
+	cmp edi, r8d
+	cmova rdx, r14
+	mov rdi, rdx
+	neg rdi
+	cmovs rdi, rdx
+	cmp esi, edi
+	cmova rdx, r10
+	mov rsi, rdx
+	neg rsi
+	cmovs rsi, rdx
+	cmp ecx, esi
+	cmova edx, r9d
+	add rax, 3
+	sar rax, 3
+	add rsp, 88
+	.cfi_def_cfa_offset 56
+	pop rbx
+	.cfi_def_cfa_offset 48
+	pop r12
+	.cfi_def_cfa_offset 40
+	pop r13
+	.cfi_def_cfa_offset 32
+	pop r14
+	.cfi_def_cfa_offset 24
+	pop r15
+	.cfi_def_cfa_offset 16
+	pop rbp
+	.cfi_def_cfa_offset 8
+	ret
+.LBB547_30:
+	.cfi_def_cfa_offset 144
+	mov r9, qword ptr [rdi + 32]
+	xor edx, edx
+	cmp r11, rcx
+	jb .LBB547_7
+.LBB547_14:
+	lea rdx, [rip + .Lanon.b3fc135ed3d108d5c72fb292c16e0c96.1911]
+	mov rdi, r11
+	mov rsi, rcx
+	call qword ptr [rip + core::panicking::panic_bounds_check@GOTPCREL]
+.LBB547_31:
+	lea rsi, [r14 + 4]
+	lea rcx, [rip + .Lanon.b3fc135ed3d108d5c72fb292c16e0c96.1909]
+	mov rdi, r14
+	call qword ptr [rip + core::slice::index::slice_index_fail@GOTPCREL]
+.LBB547_32:
+	lea rsi, [r11 + 4]
+	lea rcx, [rip + .Lanon.b3fc135ed3d108d5c72fb292c16e0c96.1909]
+	mov rdi, r11
+	call qword ptr [rip + core::slice::index::slice_index_fail@GOTPCREL]
+.LBB547_33:
+	lea rsi, [rbx + 4]
+	lea rcx, [rip + .Lanon.b3fc135ed3d108d5c72fb292c16e0c96.1909]
+	mov rdi, rbx
+	call qword ptr [rip + core::slice::index::slice_index_fail@GOTPCREL]
+.LBB547_15:
+	lea rdx, [rip + .Lanon.b3fc135ed3d108d5c72fb292c16e0c96.1912]
+	mov rdi, r10
+	mov rsi, rcx
+	call qword ptr [rip + core::panicking::panic_bounds_check@GOTPCREL]
+.LBB547_34:
+	lea rdx, [rip + .Lanon.b3fc135ed3d108d5c72fb292c16e0c96.1913]
+	mov rdi, rsi
+	mov rsi, rcx
+	call qword ptr [rip + core::panicking::panic_bounds_check@GOTPCREL]
+.LBB547_10:
+	lea rdx, [rip + .Lanon.b3fc135ed3d108d5c72fb292c16e0c96.1907]
+	mov esi, 64
+	mov rdi, rax
+	call qword ptr [rip + core::panicking::panic_bounds_check@GOTPCREL]
+.LBB547_12:
+	lea rdx, [rip + .Lanon.b3fc135ed3d108d5c72fb292c16e0c96.1910]
+	mov rdi, rsi
+	mov rsi, rcx
+	call qword ptr [rip + core::panicking::panic_bounds_check@GOTPCREL]
+---
+find_best_wp_params (caller, contains inlined estimate_wp_cost outer loop):
+---
+	jae .LBB544_39
+	movdqu xmm1, xmmword ptr [rsp + 320]
+	movdqu xmm0, xmmword ptr [rsp + 304]
+	movq xmm2, r14
+	pshufd xmm2, xmm2, 68
+	psllq xmm2, 3
+	psubq xmm0, xmm2
+	psubq xmm1, xmm2
+	pshufd xmm2, xmm1, 245
+	psrad xmm2, 31
+	pxor xmm1, xmm2
+	psubq xmm1, xmm2
+	pshufd xmm2, xmm0, 245
+	psrad xmm2, 31
+	pxor xmm0, xmm2
+	psubq xmm0, xmm2
+	movdqa xmm2, xmmword ptr [rip + .LCPI544_0]
+	paddq xmm0, xmm2
+	paddq xmm1, xmm2
+	psrlq xmm1, 3
+	psrlq xmm0, 3
+	shufps xmm0, xmm1, 136
+	mov rdi, qword ptr [rsp + 264]
+	mov rcx, qword ptr [rsp + 232]
+	add rcx, rdi
+	movups xmmword ptr [rcx + 4*r15], xmm0
+	mov rcx, qword ptr [rsp + 240]
+	add rcx, r15
+	add rcx, 8
+	je .LBB544_40
+	cmp rcx, rdx
+	ja .LBB544_40
+	inc r13
+	add qword ptr [rsp + 64], rax
+	mov rax, qword ptr [rsp + 224]
+	add rax, rdi
+	movdqu xmm1, xmmword ptr [rax + 4*r15 + 16]
+	paddd xmm1, xmm0
+	movdqu xmmword ptr [rax + 4*r15 + 16], xmm1
+	add r15, 4
+	cmp rbp, r13
+	jne .LBB544_14
+	add qword ptr [rsp + 80], rbp
+	mov rax, qword ptr [rsp + 24]
+	add rax, qword ptr [rsp + 184]
+	mov qword ptr [rsp + 24], rax
+	mov rax, qword ptr [rsp + 208]
+	mov r12, rax
+	cmp rax, qword ptr [rsp + 56]
+	jne .LBB544_13
+	mov rsi, qword ptr [rsp + 256]
+	test rsi, rsi
+	lea rbp, [rip + .Lswitch.table.jxl_encoder::modular::predictor::find_best_wp_params.3196]
+	mov r12, qword ptr [rsp + 64]
+	je .LBB544_25
+	shl rsi, 2
+	mov edx, 4
+	call qword ptr [rip + __rustc::__rust_dealloc@GOTPCREL]
+.LBB544_25:
+	mov rsi, qword ptr [rsp + 280]
+	test rsi, rsi
+	lea r14, [rip + .Lswitch.table.jxl_encoder::modular::predictor::find_best_wp_params.3193]
+	lea r15, [rip + .Lswitch.table.jxl_encoder::modular::predictor::find_best_wp_params.3194]
+	lea r13, [rip + .Lswitch.table.jxl_encoder::modular::predictor::find_best_wp_params.3195]
+	je .LBB544_27
+	shl rsi, 2
+	mov edx, 4
+	mov rdi, rbx
+	call qword ptr [rip + __rustc::__rust_dealloc@GOTPCREL]
+.LBB544_27:
+	mov rbx, qword ptr [rsp + 152]
+	jmp .LBB544_7
+	.p2align	4
+.LBB544_28:
+	test rbx, rbx
+	je .LBB544_29
+	movq xmm0, rbx
+	punpckldq xmm0, xmmword ptr [rip + .LCPI544_1]
+	subpd xmm0, xmmword ptr [rip + .LCPI544_2]
+	movapd xmm1, xmm0
+	unpckhpd xmm1, xmm0
+	addsd xmm1, xmm0
+	xorpd xmm0, xmm0
+	xor eax, eax
+	jmp .LBB544_43
+	.p2align	4
+.LBB544_44:
+	add rax, 4
+	cmp rax, 1024
+	je .LBB544_45
+.LBB544_43:
+	mov ecx, dword ptr [rsp + rax + 424]
+	test ecx, ecx
+	je .LBB544_44
+	mov ecx, ecx
+	xorps xmm2, xmm2
+	cvtsi2sd xmm2, rcx
+	divsd xmm2, xmm1
+	xorps xmm3, xmm3
+	cvtsd2ss xmm3, xmm2
+	movd ecx, xmm3
+	lea edx, [rcx - 1059760811]
+	mov esi, edx
+	sar esi, 23
+	and edx, -8388608
+	sub ecx, edx
+	xorps xmm3, xmm3
+	cvtsi2ss xmm3, esi
+	movd xmm4, ecx
+	addss xmm4, dword ptr [rip + .LCPI544_3]
+	shufps xmm4, xmm4, 0
+	movaps xmm5, xmm4
+	mulps xmm5, xmmword ptr [rip + .LCPI544_4]
+	addps xmm5, xmmword ptr [rip + .LCPI544_5]
+	mulps xmm5, xmm4
+	addps xmm5, xmmword ptr [rip + .LCPI544_6]
+	movaps xmm4, xmm5
+	shufps xmm4, xmm5, 85
+	divss xmm5, xmm4
+	addss xmm5, xmm3
+	xorps xmm3, xmm3
+	cvtss2sd xmm3, xmm5
+	mulsd xmm3, xmm2
+	subsd xmm0, xmm3
+	jmp .LBB544_44
+	.p2align	4
+.LBB544_45:
+	mulsd xmm0, xmm1
+	movq xmm2, r12
+	punpckldq xmm2, xmmword ptr [rip + .LCPI544_1]
+	subpd xmm2, xmmword ptr [rip + .LCPI544_2]
+	movapd xmm1, xmm2
+	unpckhpd xmm1, xmm2
+	addsd xmm1, xmm2
+	addsd xmm1, xmm0
+	jmp .LBB544_46
+	.p2align	4
+.LBB544_29:
+	xorpd xmm1, xmm1
+.LBB544_46:
+	mov rax, qword ptr [rsp + 8]
+	mov rcx, qword ptr [rsp + 40]
+	movsd qword ptr [rax + 8*rcx], xmm1
+	mov rax, qword ptr [rsp + 176]
+	mov r12, rax
+	cmp rax, qword ptr [rsp + 160]
+	jne .LBB544_3
+	mov rdx, qword ptr [rsp + 8]
+	movsd xmm0, qword ptr [rdx]
+	minsd xmm0, qword ptr [rip + .LCPI544_7]
+	movsd xmm1, qword ptr [rdx + 8]
+	xor ecx, ecx
+	ucomisd xmm0, xmm1
+	seta al
+	mov esi, dword ptr [rsp + 36]
+	cmp sil, 2
+	je .LBB544_51
+	minsd xmm1, xmm0
+	movsd xmm0, qword ptr [rdx + 16]
+	ucomisd xmm1, xmm0
+	mov cl, al
+	mov eax, 2
+	cmovbe eax, ecx
+	cmp sil, 3
+	je .LBB544_51
+	minsd xmm0, xmm1
+	movsd xmm1, qword ptr [rdx + 24]
+	ucomisd xmm0, xmm1
+	movzx ecx, al
+	mov eax, 3
+	cmovbe eax, ecx
+	cmp sil, 4
+	je .LBB544_51
+	minsd xmm1, xmm0
+	ucomisd xmm1, qword ptr [rdx + 32]
+	movzx ecx, al
+	mov eax, 4
+	cmovbe eax, ecx
+.LBB544_51:
+	cmp al, 3
+	ja .LBB544_52
+	movzx ebx, al
+	shl ebx, 2
+	mov esi, dword ptr [rbx + r14]
+	mov edi, dword ptr [rbx + r15]
+	mov edx, dword ptr [rbx + r13]
+	mov r8d, dword ptr [rbx + rbp]
+	lea rax, [rip + .Lswitch.table.jxl_encoder::modular::predictor::find_best_wp_params.3197]
+	mov r9d, dword ptr [rbx + rax]
+	lea rax, [rip + .Lswitch.table.jxl_encoder::modular::predictor::find_best_wp_params.3198]
+	mov ecx, dword ptr [rbx + rax]
+	lea rax, [rip + .Lswitch.table.jxl_encoder::modular::predictor::find_best_wp_params.3199]
+	mov eax, dword ptr [rbx + rax]
+	lea r10, [rip + .Lswitch.table.jxl_encoder::modular::predictor::find_best_wp_params.3200]
+	mov r10d, dword ptr [rbx + r10]
+	lea r11, [rip + .Lswitch.table.jxl_encoder::modular::predictor::find_best_wp_params.3201]
+	mov r11d, dword ptr [rbx + r11]
+	lea r14, [rip + .Lswitch.table.jxl_encoder::modular::predictor::find_best_wp_params.3202]
+	mov ebx, dword ptr [rbx + r14]
+	jmp .LBB544_57
+.LBB544_39:
+	mov rax, qword ptr [rsp + 88]
+	lea rdi, [r15 + 4*rax]
+	lea rsi, [r15 + 4*rax]
+	add rsi, 4
+	jmp .LBB544_41
+.LBB544_40:
+	mov rax, qword ptr [rsp + 192]
+	lea rsi, [r15 + 4*rax]
+	add rsi, 8
+	lea rdi, [r15 + 4*rax]
+	add rdi, 4
+.LBB544_41:
+	lea rcx, [rip + .Lanon.b3fc135ed3d108d5c72fb292c16e0c96.1914]
+	call qword ptr [rip + core::slice::index::slice_index_fail@GOTPCREL]
+	jmp .LBB544_37
+.LBB544_52:
+	mov eax, 4
+	mov ecx, 12
+	mov edx, 5
+	mov esi, 10
+	mov edi, 10
+	mov r8d, 5
+	mov r9d, 5
+	mov r10d, 12
+	mov r11d, 12
+	mov ebx, 12
+.LBB544_57:
+	mov r14, qword ptr [rsp + 144]
+	mov dword ptr [r14], esi
+	mov dword ptr [r14 + 4], edi
+	mov dword ptr [r14 + 8], edx
+	mov dword ptr [r14 + 12], r8d
+	mov dword ptr [r14 + 16], r9d
+	mov dword ptr [r14 + 20], ecx
+	mov dword ptr [r14 + 24], eax
+	mov dword ptr [r14 + 28], 13
+	mov dword ptr [r14 + 32], r10d
+	mov dword ptr [r14 + 36], r11d
+	mov dword ptr [r14 + 40], ebx
+	mov edx, 8
+	mov rdi, qword ptr [rsp + 8]
+	mov rsi, qword ptr [rsp]
+	add rsp, 1448
+	.cfi_def_cfa_offset 56
+	pop rbx
+	.cfi_def_cfa_offset 48
+	pop r12
+	.cfi_def_cfa_offset 40
+	pop r13
+	.cfi_def_cfa_offset 32
+	pop r14
+	.cfi_def_cfa_offset 24
+	pop r15
+	.cfi_def_cfa_offset 16
+	pop rbp
+	.cfi_def_cfa_offset 8
+	jmp qword ptr [rip + __rustc::__rust_dealloc@GOTPCREL]
+.LBB544_36:
+	.cfi_def_cfa_offset 1504
+	lea rdx, [rip + .Lanon.b3fc135ed3d108d5c72fb292c16e0c96.1181]
+	mov rsi, qword ptr [rsp + 72]
+	call qword ptr [rip + core::panicking::panic_bounds_check@GOTPCREL]
+	jmp .LBB544_37
+.LBB544_38:
+	lea rdx, [rip + .Lanon.b3fc135ed3d108d5c72fb292c16e0c96.1908]
+	call qword ptr [rip + core::panicking::panic_bounds_check@GOTPCREL]
+.LBB544_37:
+	ud2
+.LBB544_58:
+	mov edi, 8
+	mov rsi, qword ptr [rsp]
+	call qword ptr [rip + alloc::raw_vec::handle_error@GOTPCREL]
+	mov rbx, rax
+	jmp .LBB544_54
+	jmp .LBB544_32
+.LBB544_32:
+	mov rbx, rax
+	mov rsi, qword ptr [rsp + 256]
+	test rsi, rsi
+	je .LBB544_34
+	mov rdi, qword ptr [rsp + 264]
+	shl rsi, 2
+	mov edx, 4
+	call qword ptr [rip + __rustc::__rust_dealloc@GOTPCREL]
+.LBB544_34:
+	mov rsi, qword ptr [rsp + 280]
+	test rsi, rsi
+	je .LBB544_54
+	mov rdi, qword ptr [rsp + 288]
+	shl rsi, 2
+	mov edx, 4
+	call qword ptr [rip + __rustc::__rust_dealloc@GOTPCREL]
+.LBB544_54:
+	mov rsi, qword ptr [rsp]
+	mov edx, 8
+	mov rdi, qword ptr [rsp + 8]
+	call qword ptr [rip + __rustc::__rust_dealloc@GOTPCREL]
+	mov rdi, rbx
+	call _Unwind_Resume@PLT
