@@ -52,10 +52,10 @@ pub mod convenience;
 
 // Re-export new API as primary
 pub use api::{
-    AnimationFrame, AnimationParams, At, EncodeError, EncodeMode, EncodeRequest, EncodeResult,
-    EncodeStats, EncoderMode, ImageMetadata, Limits, LosslessConfig, LosslessEncoder, LossyConfig,
-    LossyEncoder, Lz77Method, NonFiniteAction, PixelLayout, ProgressiveMode, Quality, ResultAtExt,
-    Stop, Unstoppable, at, calibrated_jxl_quality, quality_to_distance,
+    AnimationFrame, AnimationParams, At, BlendMode, EncodeError, EncodeMode, EncodeRequest,
+    EncodeResult, EncodeStats, EncoderMode, ImageMetadata, Limits, LosslessConfig, LosslessEncoder,
+    LossyConfig, LossyEncoder, Lz77Method, NonFiniteAction, PixelLayout, ProgressiveMode, Quality,
+    ResultAtExt, Stop, Unstoppable, at, calibrated_jxl_quality, quality_to_distance,
 };
 // `EffortProfile` was re-exported at the crate root in 0.3.0; it is now an
 // **internal** type that drives the encoder's effort-derived decisions.

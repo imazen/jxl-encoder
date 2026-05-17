@@ -140,14 +140,17 @@ fn test_lossless_animation_roundtrip_oxide() {
         AnimationFrame {
             pixels: &red,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &green,
             duration: 2,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &blue,
             duration: 3,
+            ..Default::default()
         },
     ];
 
@@ -219,14 +222,17 @@ fn test_lossless_animation_roundtrip_jxlrs() {
         AnimationFrame {
             pixels: &red,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &green,
             duration: 2,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &blue,
             duration: 3,
+            ..Default::default()
         },
     ];
 
@@ -273,14 +279,17 @@ fn test_lossy_animation_roundtrip_oxide() {
         AnimationFrame {
             pixels: &red,
             duration: 10,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &green,
             duration: 10,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &blue,
             duration: 10,
+            ..Default::default()
         },
     ];
 
@@ -341,6 +350,7 @@ fn test_animation_single_frame() {
     let frames = [AnimationFrame {
         pixels: &red,
         duration: 5,
+        ..Default::default()
     }];
 
     let animation = AnimationParams::default();
@@ -423,14 +433,17 @@ fn test_lossless_crop_partial_change() {
         AnimationFrame {
             pixels: &frame0,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &frame1,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &frame2,
             duration: 1,
+            ..Default::default()
         },
     ];
 
@@ -451,14 +464,17 @@ fn test_lossless_crop_partial_change() {
         AnimationFrame {
             pixels: &frame0,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &frame0,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &frame0,
             duration: 1,
+            ..Default::default()
         },
     ];
     let full_baseline = LosslessConfig::new()
@@ -546,14 +562,17 @@ fn test_lossless_crop_identical_frames() {
         AnimationFrame {
             pixels: &frame0,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &frame1,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &frame2,
             duration: 1,
+            ..Default::default()
         },
     ];
 
@@ -574,14 +593,17 @@ fn test_lossless_crop_identical_frames() {
         AnimationFrame {
             pixels: &frame0,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &frame1,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &frame2_diff,
             duration: 1,
+            ..Default::default()
         },
     ];
     let diff_data = LosslessConfig::new()
@@ -642,14 +664,17 @@ fn test_lossy_crop_partial_change() {
         AnimationFrame {
             pixels: &frame0,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &frame1,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &frame2,
             duration: 1,
+            ..Default::default()
         },
     ];
 
@@ -710,14 +735,17 @@ fn test_crop_regression_all_different() {
         AnimationFrame {
             pixels: &red,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &green,
             duration: 1,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &blue,
             duration: 1,
+            ..Default::default()
         },
     ];
 
@@ -832,6 +860,7 @@ fn test_animation_rejects_non_finite_input_by_default() {
     let frames = [AnimationFrame {
         pixels: bytes,
         duration: 1,
+        ..Default::default()
     }];
     let animation = AnimationParams::default();
 
@@ -891,6 +920,7 @@ fn test_animation_matches_still_at_same_config() {
     let frames = [AnimationFrame {
         pixels: &pixels,
         duration: 1,
+        ..Default::default()
     }];
     let animation = AnimationParams::default();
     let anim_data = LossyConfig::new(distance)
@@ -1026,6 +1056,7 @@ fn test_animation_patches_fires_on_synthetic_screenshot() {
     let frames = [AnimationFrame {
         pixels: &pixels,
         duration: 1,
+        ..Default::default()
     }];
     let animation = AnimationParams::default();
 
@@ -1166,6 +1197,7 @@ fn test_animation_lossy_simplify_invisible_shrinks_bytes() {
     let frames = [AnimationFrame {
         pixels: &pixels,
         duration: 10,
+        ..Default::default()
     }];
     let animation = AnimationParams::default();
 
@@ -1283,6 +1315,7 @@ fn test_animation_lossy_premultiplied_alpha_matches_straight() {
     let straight_frames = [AnimationFrame {
         pixels: &straight,
         duration: 5,
+        ..Default::default()
     }];
     let straight_data = LossyConfig::new(1.0)
         // remove the smear so the comparison only measures the
@@ -1299,6 +1332,7 @@ fn test_animation_lossy_premultiplied_alpha_matches_straight() {
     let premul_frames = [AnimationFrame {
         pixels: &premul,
         duration: 5,
+        ..Default::default()
     }];
     let premul_data = LossyConfig::new(1.0)
         .with_simplify_invisible(false)
@@ -1418,6 +1452,7 @@ fn test_animation_lossy_photon_noise_iso_emits_noise_header() {
     let frames = [AnimationFrame {
         pixels: &pixels,
         duration: 1,
+        ..Default::default()
     }];
     let animation = AnimationParams::default();
 
@@ -1461,6 +1496,7 @@ fn test_animation_lossy_manual_noise_lut_emits_noise_header() {
     let frames = [AnimationFrame {
         pixels: &pixels,
         duration: 1,
+        ..Default::default()
     }];
     let animation = AnimationParams::default();
 
@@ -1577,6 +1613,7 @@ fn test_animation_lossy_runs_cfl_pass_2() {
     let frames = [AnimationFrame {
         pixels: &pixels,
         duration: 1,
+        ..Default::default()
     }];
     let animation = AnimationParams::default();
     let distance = 1.0_f32;
@@ -1687,6 +1724,7 @@ fn test_animation_lossy_ssim2_iters_refines_quant_field() {
     let frames = [AnimationFrame {
         pixels: &pixels,
         duration: 1,
+        ..Default::default()
     }];
     let animation = AnimationParams::default();
 
@@ -1737,6 +1775,7 @@ fn test_animation_lossy_zensim_iters_refines_quant_field() {
     let frames = [AnimationFrame {
         pixels: &pixels,
         duration: 1,
+        ..Default::default()
     }];
     let animation = AnimationParams::default();
 
@@ -1769,4 +1808,227 @@ fn test_animation_lossy_zensim_iters_refines_quant_field() {
 
     let (w, h, decoded) = decode_animation_oxide(&with_zensim);
     assert_eq!((w, h, decoded.len()), (64, 64, 1));
+}
+// ── Per-frame API expansion (BlendMode / name / timecode / save_as_reference) ──
+
+/// Build a 64x64 solid-color RGBA frame.
+fn solid_rgba(r: u8, g: u8, b: u8, a: u8) -> Vec<u8> {
+    let mut pixels = Vec::with_capacity(64 * 64 * 4);
+    for _ in 0..64 * 64 {
+        pixels.push(r);
+        pixels.push(g);
+        pixels.push(b);
+        pixels.push(a);
+    }
+    pixels
+}
+
+/// Build a 64x64 RGBA frame whose top-left 32x32 quadrant is `(r,g,b,a_in)`
+/// and the rest is transparent (`alpha=0`, RGB=0). Useful for testing
+/// per-frame `BlendMode::Blend`: with the second frame composited over a
+/// solid base, the top-left quadrant blends and the rest stays the base color.
+fn quadrant_rgba(r: u8, g: u8, b: u8, a_in: u8) -> Vec<u8> {
+    let mut pixels = vec![0u8; 64 * 64 * 4];
+    for y in 0..32 {
+        for x in 0..32 {
+            let i = (y * 64 + x) * 4;
+            pixels[i] = r;
+            pixels[i + 1] = g;
+            pixels[i + 2] = b;
+            pixels[i + 3] = a_in;
+        }
+    }
+    pixels
+}
+
+/// Roundtrip test for the expanded `AnimationFrame` API: per-frame
+/// `BlendMode::Blend` + `name`. Uses jxl-rs (the project's PRIMARY
+/// decoder per CLAUDE.md). Note: the current `jxl-oxide` release
+/// (and our pinned fork at fd4e2c3) gates the per-EC `source` field on
+/// the *main* frame's blend mode rather than the EC's own mode
+/// (jxl-oxide-frame `header.rs:158`); libjxl and jxl-rs gate on the
+/// EC's own mode, which is what our encoder writes.
+///
+/// Verifies:
+///   1. jxl-rs accepts the bitstream end-to-end (header parse + frame
+///      decode), proving the per-frame BlendMode lands at the correct
+///      bit position in the frame header. The decoder errors on any
+///      bit alignment / field misorder.
+///   2. The decoded raw frame data of frame 1 matches the overlay's
+///      pixels (blue in the alpha quadrant, transparent black where
+///      alpha=0) — proving the encoder wrote the alpha extra channel
+///      correctly through the Blend path. The decoder API returns raw
+///      per-frame pixels (compositing is the application's job), so
+///      "blend semantics applied" is asserted at the bitstream level
+///      via the round-trip success, not via composited pixels.
+///   3. The frame name roundtrips through the bitstream and is exposed
+///      by jxl-rs's `frame_header().name`.
+#[test]
+fn test_animation_blend_overlay_lossless_jxlrs() {
+    use jxl::api::{
+        JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+        JxlPixelFormat, ProcessingResult, states,
+    };
+    use jxl::image::{Image, Rect};
+    use jxl_encoder::BlendMode;
+
+    let base = solid_rgba(255, 0, 0, 255);
+    let overlay = quadrant_rgba(0, 0, 255, 255);
+
+    // The base frame is saved to reference slot 1 (encoder default for
+    // non-last animated frames). The overlay points at slot 1 via
+    // `with_blend_source(1)` so the decoder blends it over the base.
+    let frames = [
+        AnimationFrame::new(&base, 10).with_name("base"),
+        AnimationFrame::new(&overlay, 10)
+            .with_blend_mode(BlendMode::Blend)
+            .with_blend_source(1)
+            .with_name("overlay"),
+    ];
+
+    let animation = AnimationParams::default();
+
+    let data = LosslessConfig::new()
+        .encode_animation(64, 64, PixelLayout::Rgba8, &animation, &frames)
+        .unwrap_or_else(|e| panic!("encode_animation failed: {e:?}"));
+
+    std::fs::write(
+        jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "animation")
+            .join("blend_overlay_rgba.jxl"),
+        &data,
+    )
+    .ok();
+
+    // Walk frames via the jxl-rs decoder, harvest names + raw pixels.
+    let mut input = data.as_slice();
+    let options = JxlDecoderOptions::default();
+    let decoder = JxlDecoder::<states::Initialized>::new(options);
+    let mut decoder_init = decoder;
+    let mut decoder = loop {
+        match decoder_init.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => decoder_init = fallback,
+            Err(e) => panic!("header decode error: {e:?}"),
+        }
+    };
+    let basic_info = decoder.basic_info().clone();
+    let (width, height) = basic_info.size;
+    let format = JxlPixelFormat {
+        color_type: JxlColorType::Rgba,
+        color_data_format: Some(JxlDataFormat::f32()),
+        extra_channel_format: vec![None; basic_info.extra_channels.len()],
+    };
+    decoder.set_pixel_format(format);
+
+    let mut decoded_names = Vec::<String>::new();
+    let mut decoded_frames = Vec::<Vec<f32>>::new();
+    loop {
+        let mut decoder_frame = loop {
+            match decoder.process(&mut input) {
+                Ok(ProcessingResult::Complete { result }) => break result,
+                Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => decoder = fallback,
+                Err(e) => panic!("frame info error: {e:?}"),
+            }
+        };
+        decoded_names.push(decoder_frame.frame_header().name.clone());
+
+        let mut out = Image::<f32>::new((width * 4, height)).expect("failed to create RGBA buffer");
+        let mut bufs = vec![JxlOutputBuffer::from_image_rect_mut(
+            out.get_rect_mut(Rect {
+                origin: (0, 0),
+                size: (width * 4, height),
+            })
+            .into_raw(),
+        )];
+        decoder = loop {
+            match decoder_frame.process(&mut input, &mut bufs) {
+                Ok(ProcessingResult::Complete { result }) => break result,
+                Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => decoder_frame = fallback,
+                Err(e) => panic!("frame decode error: {e:?}"),
+            }
+        };
+        let mut pixels = Vec::with_capacity(width * height * 4);
+        for y in 0..height {
+            pixels.extend_from_slice(out.row(y));
+        }
+        decoded_frames.push(pixels);
+
+        if !decoder.has_more_frames() {
+            break;
+        }
+    }
+
+    // (1) The decoder advanced through both frames without bit-stream
+    // errors — proves per-frame blend_mode, blend_source, and name fields
+    // sit at the correct bit positions.
+    assert_eq!(decoded_frames.len(), 2);
+
+    // (2) Names roundtrip.
+    assert_eq!(decoded_names[0], "base", "frame 0 name preserved");
+    assert_eq!(decoded_names[1], "overlay", "frame 1 name preserved");
+
+    // (3) Frame 1 raw pixels match the encoded overlay (alpha quadrant blue,
+    // rest transparent). The jxl-rs decoder API returns raw per-frame
+    // pixels; compositing is the application's job and not what we're
+    // testing here. If the encoder had dropped the alpha channel or mixed
+    // up the channel order in the Blend path, the pixel values below
+    // would be wrong.
+    let stride = 64 * 4;
+    let f1 = &decoded_frames[1];
+    let topleft = (f1[0], f1[1], f1[2], f1[3]);
+    let botright = {
+        let i = 63 * stride + 63 * 4;
+        (f1[i], f1[i + 1], f1[i + 2], f1[i + 3])
+    };
+    assert!(
+        topleft.0.abs() < 0.05
+            && topleft.1.abs() < 0.05
+            && (topleft.2 - 1.0).abs() < 0.05
+            && (topleft.3 - 1.0).abs() < 0.05,
+        "frame 1 top-left raw pixel should be (0,0,1,1) for overlay alpha=255 blue, got {:?}",
+        topleft,
+    );
+    assert!(
+        botright.0.abs() < 0.05
+            && botright.1.abs() < 0.05
+            && botright.2.abs() < 0.05
+            && botright.3.abs() < 0.05,
+        "frame 1 bottom-right raw pixel should be (0,0,0,0) for overlay alpha=0, got {:?}",
+        botright,
+    );
+}
+
+/// Verifies that setting a per-frame `timecode` flips the file-level
+/// `have_timecodes` flag and that the bitstream round-trips through both
+/// reference decoders (jxl-rs, jxl-oxide). Per-frame timecode values are
+/// also read back via jxl-oxide which exposes the field on `FrameHeader`.
+#[test]
+fn test_animation_timecode_roundtrip() {
+    let red = solid_rgb(255, 0, 0);
+    let green = solid_rgb(0, 255, 0);
+
+    let frames = [
+        AnimationFrame::new(&red, 1).with_timecode(0x1234_5678),
+        AnimationFrame::new(&green, 1).with_timecode(0x8765_4321),
+    ];
+
+    let animation = AnimationParams::default();
+
+    let data = LosslessConfig::new()
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .unwrap_or_else(|e| panic!("encode_animation failed: {e:?}"));
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&data))
+        .unwrap_or_else(|e| panic!("jxl-oxide decode failed: {e:?}"));
+
+    let fh0 = image.frame_header(0).expect("frame 0 header");
+    let fh1 = image.frame_header(1).expect("frame 1 header");
+    assert_eq!(fh0.timecode, 0x1234_5678, "frame 0 timecode preserved");
+    assert_eq!(fh1.timecode, 0x8765_4321, "frame 1 timecode preserved");
+
+    // jxl-rs end-to-end too (proves spec compliance — jxl-rs validates
+    // every field's bit position, so a misordered field anywhere in the
+    // header would surface here as a decode error).
+    let _ = decode_animation_jxlrs(&data);
 }

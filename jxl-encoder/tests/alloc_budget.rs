@@ -336,10 +336,12 @@ fn animation_lossless_with_limits_denies_oversized() {
         AnimationFrame {
             pixels: &frame_pixels,
             duration: 10,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &frame_pixels,
             duration: 10,
+            ..Default::default()
         },
     ];
     let cfg = jxl_encoder::LosslessConfig::new();
@@ -371,10 +373,12 @@ fn animation_lossy_with_limits_denies_oversized() {
         AnimationFrame {
             pixels: &frame_pixels,
             duration: 10,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &frame_pixels,
             duration: 10,
+            ..Default::default()
         },
     ];
     let cfg = LossyConfig::new(1.0);
@@ -414,10 +418,12 @@ fn animation_lossless_with_limits_under_cap_succeeds() {
         AnimationFrame {
             pixels: &a,
             duration: 10,
+            ..Default::default()
         },
         AnimationFrame {
             pixels: &b,
             duration: 10,
+            ..Default::default()
         },
     ];
     let cfg = jxl_encoder::LosslessConfig::new();

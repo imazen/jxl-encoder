@@ -44,6 +44,9 @@ pub struct FrameEncoderOptions {
     pub profile: crate::effort::EffortProfile,
     /// Whether this frame is part of an animation (enables duration field in header).
     pub have_animation: bool,
+    /// Whether the file-level animation header signals `have_timecodes`.
+    /// When true, an extra 32-bit timecode field is emitted for animated frames.
+    pub have_timecodes: bool,
     /// Duration of this frame in ticks (only used when have_animation is true).
     pub duration: u32,
     /// Whether this is the last frame in the image/animation.
@@ -52,6 +55,18 @@ pub struct FrameEncoderOptions {
     pub crop: Option<FrameCrop>,
     /// Skip RCT even for 3-channel images (e.g., XYB channels already decorrelated).
     pub skip_rct: bool,
+    /// Optional per-frame blend mode override. `None` keeps the encoder default
+    /// (Replace + blend_source=1 when a crop is set, otherwise Replace + 0).
+    pub blend_mode: Option<BlendMode>,
+    /// Optional `blend_source` override (0–3). `None` keeps the encoder default.
+    pub blend_source: Option<u32>,
+    /// Optional `save_as_reference` override (0–3). `None` keeps the encoder default
+    /// (1 for non-last animated frames).
+    pub save_as_reference: Option<u32>,
+    /// Optional frame name. `None` writes no name.
+    pub name: Option<String>,
+    /// Optional SMPTE timecode (requires `have_timecodes=true`). `None` writes `0`.
+    pub timecode: Option<u32>,
 }
 
 impl Default for FrameEncoderOptions {
@@ -68,10 +83,16 @@ impl Default for FrameEncoderOptions {
             encoder_mode: crate::api::EncoderMode::Reference,
             profile: crate::effort::EffortProfile::lossless(7, crate::api::EncoderMode::Reference),
             have_animation: false,
+            have_timecodes: false,
             duration: 0,
             is_last: true,
             crop: None,
             skip_rct: false,
+            blend_mode: None,
+            blend_source: None,
+            save_as_reference: None,
+            name: None,
+            timecode: None,
         }
     }
 }
@@ -134,6 +155,54 @@ impl FrameEncoder {
         self
     }
 
+    /// Apply the animation / per-frame override fields from
+    /// [`FrameEncoderOptions`] to the in-progress `FrameHeader`.
+    ///
+    /// Centralises the (have_animation, have_timecodes, duration,
+    /// is_last, crop, blend_mode, blend_source, save_as_reference,
+    /// name, timecode) logic so the three modular header-building call
+    /// sites (encode_modular, encode_modular_with_patches,
+    /// multi-group inner) stay in sync.
+    fn apply_animation_to_header(&self, fh: &mut FrameHeader) {
+        fh.have_animation = self.options.have_animation;
+        fh.have_timecodes = self.options.have_timecodes;
+        fh.duration = self.options.duration;
+        fh.is_last = self.options.is_last;
+        if let Some(tc) = self.options.timecode {
+            fh.timecode = tc;
+        }
+        if let Some(ref name) = self.options.name {
+            fh.name = name.clone();
+        }
+
+        // Crop sets blend_mode/blend_source defaults; per-frame
+        // overrides win below.
+        if let Some(ref crop) = self.options.crop {
+            fh.x0 = crop.x0;
+            fh.y0 = crop.y0;
+            fh.width = crop.width;
+            fh.height = crop.height;
+            fh.blend_mode = BlendMode::Replace;
+            fh.blend_source = 1;
+        }
+        if let Some(mode) = self.options.blend_mode {
+            fh.blend_mode = mode;
+        }
+        if let Some(source) = self.options.blend_source {
+            fh.blend_source = source;
+        }
+
+        // Default: non-last animated frames save to reference slot 1
+        // so successor crop frames can composite over the canvas.
+        // An explicit per-frame `save_as_reference` always wins.
+        if self.options.have_animation && !self.options.is_last {
+            fh.save_as_reference = 1;
+        }
+        if let Some(slot) = self.options.save_as_reference {
+            fh.save_as_reference = slot;
+        }
+    }
+
     /// Encodes a modular image into a frame with optional patches.
     ///
     /// When patches are provided, sets PATCHES_FLAG in the frame header and
@@ -164,20 +233,7 @@ impl FrameEncoder {
             fh.flags |= PATCHES_FLAG;
             fh.ec_upsampling = vec![1; num_extra_channels];
             fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
-            fh.have_animation = self.options.have_animation;
-            fh.duration = self.options.duration;
-            fh.is_last = self.options.is_last;
-            if let Some(ref crop) = self.options.crop {
-                fh.x0 = crop.x0;
-                fh.y0 = crop.y0;
-                fh.width = crop.width;
-                fh.height = crop.height;
-                fh.blend_mode = BlendMode::Replace;
-                fh.blend_source = 1;
-            }
-            if self.options.have_animation && !self.options.is_last {
-                fh.save_as_reference = 1;
-            }
+            self.apply_animation_to_header(&mut fh);
             fh.write(writer)?;
         }
 
@@ -276,22 +332,7 @@ impl FrameEncoder {
             let mut fh = FrameHeader::lossless();
             fh.ec_upsampling = vec![1; num_extra_channels];
             fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
-            fh.have_animation = self.options.have_animation;
-            fh.duration = self.options.duration;
-            fh.is_last = self.options.is_last;
-            if let Some(ref crop) = self.options.crop {
-                fh.x0 = crop.x0;
-                fh.y0 = crop.y0;
-                fh.width = crop.width;
-                fh.height = crop.height;
-                fh.blend_mode = BlendMode::Replace;
-                fh.blend_source = 1;
-            }
-            // For animation, save non-last frames to reference slot 1
-            // so crop frames can composite onto the previous canvas.
-            if self.options.have_animation && !self.options.is_last {
-                fh.save_as_reference = 1;
-            }
+            self.apply_animation_to_header(&mut fh);
             fh.write(writer)?;
         }
 

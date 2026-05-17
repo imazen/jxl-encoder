@@ -539,13 +539,15 @@ fn main() {
                 let anim_frames: Vec<AnimationFrame<'_>> = apng
                     .frames
                     .iter()
-                    .map(|f| AnimationFrame {
-                        pixels: &f.pixels,
-                        duration: if args.fps.is_some() {
-                            1 // 1 tick per frame when fps is explicit
-                        } else {
-                            f.delay_ms // millisecond ticks
-                        },
+                    .map(|f| {
+                        AnimationFrame::new(
+                            &f.pixels,
+                            if args.fps.is_some() {
+                                1 // 1 tick per frame when fps is explicit
+                            } else {
+                                f.delay_ms // millisecond ticks
+                            },
+                        )
                     })
                     .collect();
 

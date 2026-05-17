@@ -219,14 +219,7 @@ pub fn wrap_in_container_with_brob_and_jumbf(
     jumbf: Option<&[u8]>,
     brotli_quality: u32,
 ) -> Vec<u8> {
-    wrap_in_container_with_brob_and_level_and_jumbf(
-        codestream,
-        exif,
-        xmp,
-        jumbf,
-        brotli_quality,
-        5,
-    )
+    wrap_in_container_with_brob_and_level_and_jumbf(codestream, exif, xmp, jumbf, brotli_quality, 5)
 }
 
 /// Full-fat brob path: accepts JUMBF + a non-default codestream level.

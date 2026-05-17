@@ -2387,6 +2387,12 @@ impl VarDctEncoder {
                 fh.have_timecodes = opts.have_timecodes;
                 fh.duration = opts.duration;
                 fh.is_last = opts.is_last;
+                if let Some(tc) = opts.timecode {
+                    fh.timecode = tc;
+                }
+                if let Some(ref name) = opts.name {
+                    fh.name = name.clone();
+                }
                 if let Some(ref crop) = opts.crop {
                     fh.x0 = crop.x0;
                     fh.y0 = crop.y0;
@@ -2395,10 +2401,21 @@ impl VarDctEncoder {
                     fh.blend_mode = BlendMode::Replace;
                     fh.blend_source = 1;
                 }
+                // Per-frame blend override wins over the crop default.
+                if let Some(mode) = opts.blend_mode {
+                    fh.blend_mode = mode;
+                }
+                if let Some(source) = opts.blend_source {
+                    fh.blend_source = source;
+                }
                 // For animation, save non-last frames to reference slot 1
                 // so crop frames can composite onto the previous canvas.
                 if opts.have_animation && !opts.is_last {
                     fh.save_as_reference = 1;
+                }
+                // Per-frame override wins last.
+                if let Some(slot) = opts.save_as_reference {
+                    fh.save_as_reference = slot;
                 }
             }
 
