@@ -78,6 +78,24 @@
   `examples/e10_e11_multiseed_ab.rs` (3 photos × 3 efforts × N samples,
   byte/wall-clock TSV).
 
+- **`colr` (alternative colour descriptor) and `hCdR` (HDR content
+  description) container boxes** (A1 audit "Container/boxes" OUT items,
+  effort S each). Pass-through ISOBMFF box appenders added to
+  `jxl_encoder::container`: `append_colr_box(jxl_data, &[u8])` and
+  `append_hcdr_box(jxl_data, &[u8])`. A typed helper
+  `colr_nclx_payload(cp, tc, mc, full_range) -> [u8; 11]` builds the
+  ISO/IEC 14496-12 `nclx` sub-payload from CICP enum values (ITU-T
+  H.273). Wired into the one-shot `EncodeRequest` path via two new
+  `ImageMetadata` fields and builders: `with_colr_payload(&[u8])` and
+  `with_hcdr_payload(&[u8])`. JXL spec clause 5 requires decoders to
+  ignore unrecognised boxes, so emitting these boxes never alters
+  decoded pixels — they exist for ISOBMFF-aware inspectors (HEIF/AVIF
+  metadata extractors, HDR pipelines) that would otherwise have to
+  parse the codestream. Streaming encoders silently drop these fields
+  (documented). Hash-lock fixtures stay byte-identical (36/36) — both
+  fields default to `None`. 5 new container unit tests + 4 end-to-end
+  integration tests in `tests/colr_hcdr_boxes.rs`.
+
 - **`AnimationFrame` per-frame override fields + public `BlendMode` re-export**
   (audit item #3, "Animation API expansion"). The animation header has
   always carried per-frame blend mode / blend source / save-as-reference /
