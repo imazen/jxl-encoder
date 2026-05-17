@@ -2212,6 +2212,104 @@ pub enum ProgressiveMode {
     DcVlfLfAc,
 }
 
+/// Chroma subsampling mode for lossy VarDCT encoding.
+///
+/// Mirrors libjxl's four `YCbCrChromaSubsampling` modes
+/// (`frame_header.h:81`). Each mode is described by the
+/// (horizontal, vertical) shift applied to the Cb/Cr channels:
+///
+/// | Mode       | Cb / Cr H-shift | Cb / Cr V-shift | Cb/Cr sample density |
+/// |------------|-----------------|-----------------|----------------------|
+/// | `Full444`  | 0               | 0               | full resolution      |
+/// | `Sub422`   | 1               | 0               | half horizontal      |
+/// | `Sub420`   | 1               | 1               | quarter (H+V halved) |
+/// | `Sub440`   | 0               | 1               | half vertical        |
+///
+/// # Current status (chunk 1)
+///
+/// **API surface only.** Only [`ChromaSubsampling::Full444`] (the
+/// default) is currently honoured end-to-end. Setting any other mode
+/// causes the encoder to return [`EncodeError::InvalidConfig`] with a
+/// message explaining the JXL spec constraint that ties chroma
+/// subsampling to `ColorTransform::kYCbCr` (libjxl
+/// `enc_frame.cc:373-387`) — and our VarDCT pipeline currently emits
+/// `ColorTransform::kXYB`, which forbids non-4:4:4 chroma per the JXL
+/// codestream spec.
+///
+/// Real chroma-downsampled encoding (chunk 2+) needs:
+///
+/// 1. A switchable colour pipeline (XYB → YCbCr selection per frame).
+/// 2. Box-filter downsample of Cb/Cr before VarDCT.
+/// 3. `FrameHeader::do_ycbcr=true` + `jpeg_upsampling=[hs,0,vs]` wire format
+///    — the existing [`crate::headers::frame_header::FrameHeader`] field is
+///    already in place from JPEG-transcode plumbing.
+/// 4. Decoder-side upsampling verification across djxl / jxl-rs / jxl-oxide.
+///
+/// See [issue #47](https://github.com/imazen/jxl-encoder/issues/47) for
+/// the multi-chunk implementation plan.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChromaSubsampling {
+    /// **Default.** Full-resolution chroma (4:4:4). Y, Cb, Cr each sampled
+    /// at every pixel. Largest files; highest chroma fidelity. The only
+    /// mode currently honoured by the encoder.
+    #[default]
+    Full444,
+    /// 4:2:2 — chroma halved horizontally, full vertical.
+    /// (Cb/Cr H-shift = 1, V-shift = 0.)
+    Sub422,
+    /// 4:2:0 — chroma halved both horizontally and vertically.
+    /// (Cb/Cr H-shift = 1, V-shift = 1.) The classic JPEG default.
+    Sub420,
+    /// 4:4:0 — chroma halved vertically, full horizontal.
+    /// (Cb/Cr H-shift = 0, V-shift = 1.) Rare in practice.
+    Sub440,
+}
+
+impl ChromaSubsampling {
+    /// Returns the per-channel horizontal shift in libjxl channel order
+    /// (Y=index 1, Cb=index 0, Cr=index 2). Bit pattern matches libjxl
+    /// `YCbCrChromaSubsampling::kHShift` indexed by `channel_mode_`.
+    ///
+    /// All modes return `0` for the Y channel (Y is never subsampled in
+    /// JXL — only Cb/Cr can be).
+    pub const fn h_shifts(self) -> [u8; 3] {
+        match self {
+            // Order is (Cb, Y, Cr) — matches FrameHeader.jpeg_upsampling layout.
+            Self::Full444 => [0, 0, 0],
+            Self::Sub422 => [1, 0, 1],
+            Self::Sub420 => [1, 0, 1],
+            Self::Sub440 => [0, 0, 0],
+        }
+    }
+
+    /// Returns the per-channel vertical shift. See [`Self::h_shifts`] for
+    /// channel ordering.
+    pub const fn v_shifts(self) -> [u8; 3] {
+        match self {
+            Self::Full444 => [0, 0, 0],
+            Self::Sub422 => [0, 0, 0],
+            Self::Sub420 => [1, 0, 1],
+            Self::Sub440 => [1, 0, 1],
+        }
+    }
+
+    /// Returns `true` when this mode is full-resolution chroma (4:4:4).
+    pub const fn is_full(self) -> bool {
+        matches!(self, Self::Full444)
+    }
+
+    /// Short tag string used in error messages and logs: `"4:4:4"`,
+    /// `"4:2:2"`, `"4:2:0"`, `"4:4:0"`.
+    pub const fn tag(self) -> &'static str {
+        match self {
+            Self::Full444 => "4:4:4",
+            Self::Sub422 => "4:2:2",
+            Self::Sub420 => "4:2:0",
+            Self::Sub440 => "4:4:0",
+        }
+    }
+}
+
 // ── LossyConfig ─────────────────────────────────────────────────────────────
 
 /// Lossy (VarDCT) encoding configuration.
@@ -2419,6 +2517,13 @@ pub struct LossyConfig {
     /// default upsampling for the active `with_resampling` factor.
     /// See [`Self::with_upsampling_mode`].
     upsampling_mode: Option<i32>,
+    /// Chroma subsampling mode (A1 audit "VarDCT cost model" OUT item,
+    /// chunk 1 of issue #47). Default [`ChromaSubsampling::Full444`].
+    /// Only `Full444` is end-to-end honoured in chunk 1; any other
+    /// value triggers an [`EncodeError::InvalidConfig`] from the lossy
+    /// encode path. See the [`ChromaSubsampling`] doc for the
+    /// implementation roadmap.
+    chroma_subsampling: ChromaSubsampling,
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -2507,6 +2612,7 @@ impl LossyConfig {
             center_x: None,
             center_y: None,
             upsampling_mode: None,
+            chroma_subsampling: ChromaSubsampling::Full444,
         }
     }
 
@@ -2644,6 +2750,10 @@ impl LossyConfig {
         new.center_x = self.center_x;
         new.center_y = self.center_y;
         new.upsampling_mode = self.upsampling_mode;
+        // Chroma subsampling is opt-in and never effort-derived. Carry
+        // it across `with_effort` so `LossyConfig::new(d).with_chroma_subsampling(...).with_effort(e)`
+        // is order-independent (issue #47 chunk 1).
+        new.chroma_subsampling = self.chroma_subsampling;
         // If group_order was set to 1 (center-first), keep center_first
         // wired through with_effort too.
         if matches!(self.group_order, Some(1)) {
@@ -3252,6 +3362,39 @@ impl LossyConfig {
     /// Currently-set upsampling mode (or `None` if unset).
     pub fn upsampling_mode(&self) -> Option<i32> {
         self.upsampling_mode
+    }
+
+    /// Set the chroma subsampling mode (A1 audit "VarDCT cost model"
+    /// OUT item, chunk 1 of issue #47). Defaults to
+    /// [`ChromaSubsampling::Full444`] (4:4:4).
+    ///
+    /// # Current status (chunk 1)
+    ///
+    /// API surface only. Only [`ChromaSubsampling::Full444`] is currently
+    /// honoured end-to-end. Setting any other mode causes [`Self::encode`]
+    /// / [`Self::encode_into`] / [`Self::encode_to`] to return
+    /// [`EncodeError::InvalidConfig`] with a message that explains the
+    /// JXL spec constraint (chroma subsampling is only valid with
+    /// `ColorTransform::kYCbCr`; our VarDCT pipeline currently emits
+    /// `ColorTransform::kXYB`, see libjxl `enc_frame.cc:373-387`).
+    ///
+    /// The full implementation (chunks 2+) wires:
+    /// 1. YCbCr colour pipeline selection per frame.
+    /// 2. Box-filter chroma downsample before VarDCT.
+    /// 3. `FrameHeader.do_ycbcr=true` + `jpeg_upsampling` plumbing
+    ///    (header field is already in place from JPEG-transcode work).
+    /// 4. Decoder roundtrip across djxl / jxl-rs / jxl-oxide.
+    ///
+    /// See [`ChromaSubsampling`] for the per-mode H/V shift table.
+    pub fn with_chroma_subsampling(mut self, mode: ChromaSubsampling) -> Self {
+        self.chroma_subsampling = mode;
+        self
+    }
+
+    /// Currently-set chroma subsampling mode. Defaults to
+    /// [`ChromaSubsampling::Full444`].
+    pub fn chroma_subsampling(&self) -> ChromaSubsampling {
+        self.chroma_subsampling
     }
 
     /// Reorder AC groups in the multi-group TOC by concentric-square
@@ -5068,6 +5211,27 @@ impl<'a> EncodeRequest<'a> {
         pixels: &[u8],
         budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
     ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
+        // Chunk 1 of issue #47 — fail fast for any non-default chroma
+        // subsampling mode. Only `Full444` is end-to-end honoured. The
+        // JXL codestream spec ties chroma subsampling to
+        // `ColorTransform::kYCbCr` (libjxl `enc_frame.cc:373-387`); our
+        // VarDCT pipeline currently always emits `ColorTransform::kXYB`,
+        // so signaling 4:2:0 / 4:2:2 / 4:4:0 would produce an invalid
+        // bitstream. Real chroma-downsampled encoding requires a
+        // switchable colour pipeline (queued for chunks 2+).
+        if !cfg.chroma_subsampling.is_full() {
+            return Err(EncodeError::InvalidConfig {
+                message: format!(
+                    "chroma_subsampling = {} not yet implemented (chunk 1 \
+                     of #47 ships the API surface; chunks 2+ wire the \
+                     YCbCr colour pipeline + Cb/Cr downsample). \
+                     The JXL codestream spec only permits non-4:4:4 chroma \
+                     with ColorTransform::kYCbCr (libjxl enc_frame.cc:373-387). \
+                     Our VarDCT pipeline currently emits ColorTransform::kXYB.",
+                    cfg.chroma_subsampling.tag(),
+                ),
+            });
+        }
         let w = self.width as usize;
         let h = self.height as usize;
 
@@ -6351,6 +6515,22 @@ impl LossyEncoder {
         // counts, mutual exclusivity). Mirrors
         // `EncodeRequest::encode_inner`.
         self.cfg.validate()?;
+        // Chunk 1 of issue #47 — mirror the one-shot
+        // `encode_lossy` guard. Only `Full444` is end-to-end honoured;
+        // any other mode signals not-yet-implemented.
+        if !self.cfg.chroma_subsampling.is_full() {
+            return Err(EncodeError::InvalidConfig {
+                message: format!(
+                    "chroma_subsampling = {} not yet implemented (chunk 1 \
+                     of #47 ships the API surface; chunks 2+ wire the \
+                     YCbCr colour pipeline + Cb/Cr downsample). \
+                     The JXL codestream spec only permits non-4:4:4 chroma \
+                     with ColorTransform::kYCbCr (libjxl enc_frame.cc:373-387). \
+                     Our VarDCT pipeline currently emits ColorTransform::kXYB.",
+                    self.cfg.chroma_subsampling.tag(),
+                ),
+            });
+        }
         // Defensive caps on caller-supplied metadata buffers (mirrors
         // EncodeRequest::encode_inner).
         validate_metadata_sizes(

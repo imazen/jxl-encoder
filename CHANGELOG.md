@@ -4,6 +4,35 @@
 
 ### Added
 
+- **`ChromaSubsampling` API surface (issue #47 chunk 1)** — A1 audit "VarDCT
+  cost model" OUT item. Ships the smallest viable signal-only POC for
+  chroma 4:2:0 / 4:2:2 / 4:4:0:
+  - New [`ChromaSubsampling`] enum (`Full444` / `Sub422` / `Sub420` /
+    `Sub440`) mirroring libjxl's `YCbCrChromaSubsampling::kHShift` /
+    `kVShift` tables (`frame_header.h:81`). Per-mode `h_shifts()` /
+    `v_shifts()` / `is_full()` / `tag()` accessors.
+  - New [`LossyConfig::with_chroma_subsampling`] builder + matching
+    `chroma_subsampling()` getter. Default is `ChromaSubsampling::Full444`
+    so every existing bitstream stays byte-identical (hash-lock 36/36).
+  - Field carried across `LossyConfig::with_effort()` so the builder
+    chain `LossyConfig::new(d).with_chroma_subsampling(Sub420).with_effort(5)`
+    is order-independent. Regression test
+    `chroma_subsampling_signal::with_chroma_subsampling_survives_with_effort`
+    pins this invariant.
+  - Fast-fail guard in both the one-shot lossy encode path and the
+    streaming `LossyEncoder::finish` path: any non-`Full444` value
+    returns [`EncodeError::InvalidConfig`] with a message that names the
+    JXL spec constraint (chroma subsampling is only valid with
+    `ColorTransform::kYCbCr`; our VarDCT pipeline emits
+    `ColorTransform::kXYB`, libjxl `enc_frame.cc:373-387`).
+  - 11-case integration test
+    `jxl-encoder/tests/chroma_subsampling_signal.rs` covers the enum
+    surface, default, libjxl shift-table parity, `Full444` jxl-rs
+    roundtrip, and `InvalidConfig` for each non-default mode.
+  - Real chroma-downsampled encoding (Cb/Cr box-filter downsample,
+    YCbCr colour pipeline selection per frame, `FrameHeader.do_ycbcr` +
+    `jpeg_upsampling` wire format) is queued for chunks 2+ on issue #47.
+
 - **Multi-seed lossy butteraugli sweep at e10/e11** (RFC#45 pick #1 chunk 3).
   New `EffortProfile::lossy_search_seeds` field (1 at e ≤ 9, 2 at e10, 4 at e11)
   drives [`vardct::butteraugli_loop`]: at seeds > 1 we run the full
