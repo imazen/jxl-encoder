@@ -47,6 +47,12 @@ parallel-tree-learning = ["jxl_encoder/parallel-tree-learning", "parallel"]
 # `djxl out.jxl out.jpg --reconstruct_jpeg` reproduces the original
 # JPEG byte-for-byte. Pulls in zenjpeg + brotli through jxl-encoder.
 jpeg-reencoding = ["jxl_encoder/jpeg-reencoding"]
+# Enable Brotli-compressed (`brob`) metadata container boxes for
+# EXIF / XMP / JUMBF. Passes the CLI's `--brotli-effort` knob through
+# to `EncodeRequest::with_brotli_metadata`. When this feature is off
+# the CLI still accepts the flag (so scripts stay portable) but the
+# value is ignored — plain `Exif` / `xml ` / `jumb` boxes are written.
+brotli-metadata = ["jxl_encoder/brotli-metadata"]
 
 [dependencies]
 jxl_encoder = { package = "jxl-encoder", path = "../jxl-encoder", version = "0.3.0", default-features = false }

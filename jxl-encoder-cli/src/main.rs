@@ -354,6 +354,101 @@ struct Args {
     /// for testing the non-transcode code path on JPEG inputs.
     #[arg(long)]
     no_lossless_jpeg: bool,
+
+    // ── A1 CLI passthrough — libjxl `cjxl` parity flags ──────────────
+    //
+    // These flags forward through to `LossyConfig` / `LosslessConfig`
+    // builders added in the matching commit. Several are stored on the
+    // config and acted on opportunistically; full encoder-side wiring
+    // is queued as follow-on work per CLI passthrough audit.
+    /// Peak display luminance in nits (cd/m²) for HDR content. Mirrors
+    /// libjxl `cjxl --intensity_target`. Written to the JXL codestream
+    /// `ToneMapping.intensity_target` field. Default keeps the file
+    /// header's existing value (255.0 = SDR for typical sRGB inputs).
+    /// Typical: 4000 / 10000 for PQ HDR.
+    #[arg(long, value_name = "NITS")]
+    intensity_target: Option<f32>,
+
+    /// Brotli effort (0-11) for `brob` (Brotli-compressed) container
+    /// metadata boxes. Mirrors libjxl `cjxl --brotli_effort`. Higher =
+    /// smaller container, slower encode. Default `None` = plain
+    /// `Exif`/`xml ` boxes. Requires the `brotli-metadata` cargo
+    /// feature; ignored otherwise. libjxl default quality is 4.
+    #[arg(long, value_name = "Q")]
+    brotli_effort: Option<u32>,
+
+    /// Separate butteraugli distance for the alpha extra channel.
+    /// Mirrors libjxl `cjxl -a` / `--alpha_distance`. `0` = lossless
+    /// alpha (libjxl default behaviour). Stored on the config; alpha
+    /// is still encoded losslessly until the lossy-alpha pipeline
+    /// lands.
+    #[arg(short = 'a', long, value_name = "D")]
+    alpha_distance: Option<f32>,
+
+    /// Modular group encoding order. Mirrors libjxl `cjxl
+    /// --group_order`. `0` = scanline order (default), `1` =
+    /// center-first (equivalent to the existing center-first AC group
+    /// reorder), `2` = reserved.
+    #[arg(long, value_name = "N")]
+    group_order: Option<u8>,
+
+    /// Centre X coordinate for the center-first AC group reorder.
+    /// Mirrors libjxl `cjxl --center_x`. `-1` = image centre (default).
+    /// Requires `--group-order 1`; ignored otherwise. Stored on the
+    /// config — non-default centre honouring is queued follow-on work.
+    #[arg(long, value_name = "X", allow_hyphen_values = true)]
+    center_x: Option<i64>,
+
+    /// Centre Y coordinate for the center-first AC group reorder.
+    /// Mirrors libjxl `cjxl --center_y`. `-1` = image centre (default).
+    /// Requires `--group-order 1`; ignored otherwise.
+    #[arg(long, value_name = "Y", allow_hyphen_values = true)]
+    center_y: Option<i64>,
+
+    /// Decoder upsampling mode. Mirrors libjxl `cjxl --upsampling_mode`.
+    /// `-1` = non-separable (default), `0` = nearest neighbour
+    /// (pixel-art), `1` = reserved. Stored on the config; emission of
+    /// a custom upsampling LUT is queued follow-on work.
+    #[arg(long, value_name = "N", allow_hyphen_values = true)]
+    upsampling_mode: Option<i32>,
+
+    /// Force a fixed modular predictor (lossless path). Mirrors libjxl
+    /// `cjxl -P` / `--modular_predictor`. `0..=13` = the corresponding
+    /// `jxl_encoder::modular::Predictor` variant
+    /// (Zero..Average4); `14` = Best, `15` = Variable. Stored on the
+    /// config; encoder-side wiring of the no-tree-learning path is
+    /// queued follow-on work.
+    #[arg(short = 'P', long, value_name = "N")]
+    modular_predictor: Option<u8>,
+
+    /// Override the palette-transform colour cap (lossless path).
+    /// Mirrors libjxl `cjxl --modular_palette_colors`. `0` disables
+    /// palette detection. Default keeps the built-in `MAX_PALETTE_COLORS`
+    /// constant (1024).
+    #[arg(long, value_name = "N", allow_hyphen_values = true)]
+    modular_palette_colors: Option<i64>,
+
+    /// Override the global channel-colours percentage cap (lossless
+    /// path). Mirrors libjxl `cjxl
+    /// --modular_channel_colors_global_percent`. `0..=100`. Default
+    /// keeps the built-in `CHANNEL_COLORS_PERCENT` constant (95.0).
+    #[arg(long, value_name = "P")]
+    modular_channel_colors_global_percent: Option<f32>,
+
+    /// Override the per-group channel-colours percentage cap (lossless
+    /// path). Mirrors libjxl `cjxl
+    /// --modular_channel_colors_group_percent`. `0..=100`. Default
+    /// keeps the libjxl default (80.0).
+    #[arg(long, value_name = "P")]
+    modular_channel_colors_group_percent: Option<f32>,
+
+    /// Override the previous-channel context-properties limit for tree
+    /// learning (lossless path). Mirrors libjxl `cjxl -E` /
+    /// `--modular_nb_prev_channels`. `-1` = libjxl default sentinel.
+    /// Stored on the config; our tree learner does not yet consume
+    /// previous-channel properties.
+    #[arg(short = 'E', long, value_name = "N", allow_hyphen_values = true)]
+    modular_nb_prev_channels: Option<i32>,
 }
 
 fn main() {
@@ -639,6 +734,13 @@ fn main() {
                         cfg = cfg.with_max_strategy_size(Some(s));
                     }
 
+                    // ── A1 passthrough — libjxl cjxl parity knobs ─────
+                    cfg = cfg.with_alpha_distance(args.alpha_distance);
+                    cfg = cfg.with_group_order(args.group_order);
+                    cfg = cfg.with_center_x(args.center_x);
+                    cfg = cfg.with_center_y(args.center_y);
+                    cfg = cfg.with_upsampling_mode(args.upsampling_mode);
+
                     #[cfg(feature = "butteraugli-loop")]
                     {
                         if args.no_butteraugli {
@@ -713,6 +815,16 @@ fn main() {
                         if args.experimental {
                             lcfg = lcfg.with_mode(jxl_encoder::EncoderMode::Experimental);
                         }
+                        // ── A1 passthrough — libjxl cjxl modular knobs ─
+                        lcfg = lcfg.with_modular_predictor(args.modular_predictor);
+                        lcfg = lcfg.with_modular_palette_colors(args.modular_palette_colors);
+                        lcfg = lcfg.with_modular_channel_colors_global_percent(
+                            args.modular_channel_colors_global_percent,
+                        );
+                        lcfg = lcfg.with_modular_channel_colors_group_percent(
+                            args.modular_channel_colors_group_percent,
+                        );
+                        lcfg = lcfg.with_modular_nb_prev_channels(args.modular_nb_prev_channels);
                         lcfg
                     }
                     .encode_animation(
@@ -967,6 +1079,22 @@ fn main() {
             cfg = cfg.with_max_strategy_size(Some(s));
         }
 
+        // ── A1 passthrough — libjxl cjxl parity knobs ─────────────
+        cfg = cfg.with_alpha_distance(args.alpha_distance);
+        cfg = cfg.with_group_order(args.group_order);
+        cfg = cfg.with_center_x(args.center_x);
+        cfg = cfg.with_center_y(args.center_y);
+        cfg = cfg.with_upsampling_mode(args.upsampling_mode);
+        if (args.center_x.is_some() || args.center_y.is_some())
+            && !matches!(args.group_order, Some(1))
+        {
+            eprintln!(
+                "Warning: --center-x / --center-y require --group-order 1 \
+                 (center-first); the values will be stored but the AC group \
+                 reorder will not engage. Mirrors libjxl cjxl behaviour."
+            );
+        }
+
         #[cfg(feature = "butteraugli-loop")]
         {
             if args.no_butteraugli {
@@ -1108,6 +1236,12 @@ fn main() {
             if let Some(gamma) = source_gamma {
                 req = req.with_source_gamma(gamma);
             }
+            if let Some(it) = args.intensity_target {
+                req = req.with_intensity_target(it);
+            }
+            if let Some(q) = args.brotli_effort {
+                req = req.with_brotli_metadata(q);
+            }
             req.encode(&data)
         }
 
@@ -1123,6 +1257,12 @@ fn main() {
             }
             if let Some(gamma) = source_gamma {
                 req = req.with_source_gamma(gamma);
+            }
+            if let Some(it) = args.intensity_target {
+                req = req.with_intensity_target(it);
+            }
+            if let Some(q) = args.brotli_effort {
+                req = req.with_brotli_metadata(q);
             }
             req.encode(&data)
         }
@@ -1176,6 +1316,14 @@ fn main() {
         if args.experimental {
             cfg = cfg.with_mode(jxl_encoder::EncoderMode::Experimental);
         }
+        // ── A1 passthrough — libjxl cjxl modular knobs ──────────────
+        cfg = cfg.with_modular_predictor(args.modular_predictor);
+        cfg = cfg.with_modular_palette_colors(args.modular_palette_colors);
+        cfg = cfg
+            .with_modular_channel_colors_global_percent(args.modular_channel_colors_global_percent);
+        cfg = cfg
+            .with_modular_channel_colors_group_percent(args.modular_channel_colors_group_percent);
+        cfg = cfg.with_modular_nb_prev_channels(args.modular_nb_prev_channels);
         let cfg = cfg;
 
         let mut req = cfg.encode_request(width, height, layout);
@@ -1184,6 +1332,13 @@ fn main() {
         }
         if let Some(gamma) = source_gamma {
             req = req.with_source_gamma(gamma);
+        }
+        // ── A1 passthrough — wire intensity_target + brotli_effort ──
+        if let Some(it) = args.intensity_target {
+            req = req.with_intensity_target(it);
+        }
+        if let Some(q) = args.brotli_effort {
+            req = req.with_brotli_metadata(q);
         }
         req.encode(&data)
     };
