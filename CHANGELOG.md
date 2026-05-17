@@ -23,6 +23,29 @@
 
 ### Added
 
+- **`LossyConfig::with_auto_splines(bool)` API surface and encoder wiring
+  for automatic spline detection** (A1 audit "VarDCT cost model" PARTIAL
+  item, chunk 1). Mirrors libjxl `enc_heuristics.cc:1048-1054` which
+  gates auto-splines at `speed_tier <= kSquirrel` (effort >= 7) when no
+  manual `cparams.custom_splines` are set. The detector hook lives at
+  `vardct::splines::find_splines(xyb_x, xyb_y, xyb_b, w, h, stride) ->
+  Vec<Spline>`. **Chunk 1 ships a stub detector that returns `vec![]`**,
+  matching the `// TODO(user): implement spline detection.` stub upstream
+  in libjxl `enc_splines.cc:104-107` — the encoder short-circuits the
+  empty path so default-config output remains byte-identical (all 36
+  `hash_lock_features` fixtures unchanged). The flag is preserved across
+  `with_effort`, defaults to `false`, and is fully no-op until chunk 2
+  lands a real ridge-following detector (see `find_splines` docstring
+  for the chunk-2 algorithm sketch). Manual `with_splines(vec)` always
+  wins outright when both are set. New tests:
+  `auto_splines::auto_splines_default_is_off`,
+  `auto_splines::auto_splines_preserved_across_with_effort`,
+  `auto_splines::auto_splines_with_stub_is_byte_identical_to_default`,
+  `auto_splines::auto_splines_below_effort_gate_is_byte_identical`,
+  plus two unit tests pinning the stub contract
+  (`test_find_splines_stub_returns_empty_for_constant_image`,
+  `test_find_splines_stub_ignores_ridge`).
+
 - **Lossy alpha pipeline (`LossyConfig::with_alpha_distance` >
   0.0)** — follow-on to W4-2-r (`62fc60e`) which staged the
   storage but kept the alpha extras sub-bitstream lossless. The

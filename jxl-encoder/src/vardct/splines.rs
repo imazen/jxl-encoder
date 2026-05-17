@@ -687,6 +687,68 @@ pub(crate) fn add_splines(
     apply_splines(planes, stride, width, height, data, true);
 }
 
+// ── Auto-detection ──────────────────────────────────────────────────────────
+
+/// Automatic spline detection from XYB pixel planes.
+///
+/// **Chunk 1 (this commit): stub that returns no splines.** Mirrors the
+/// `FindSplines` stub upstream in libjxl
+/// (`lib/jxl/enc_splines.cc:104-107`), which also returns an empty
+/// `Splines{}` with a `// TODO(user): implement spline detection.`
+/// comment. libjxl's encode pipeline still wires the gate
+/// (`enc_heuristics.cc:1048-1054`: `speed_tier <= kSquirrel` ≡ effort ≥ 7),
+/// and the helper falls through to a no-op — exactly the shape we ship
+/// here.
+///
+/// The stub keeps default behaviour byte-identical (returns `vec![]`,
+/// then `VarDctEncoder::encode` short-circuits the empty path), letting
+/// us land the API surface (`LossyConfig::with_auto_splines`), the
+/// effort + manual-override + streaming gates, and the encoder wiring
+/// in a single chunk that adds zero hash-lock changes and zero perf
+/// risk. Chunk 2 lands a real detector: thin-feature gradient ridge
+/// finder (1D scanline scan → Hessian eigenvalue confirmation →
+/// non-max suppression → polyline → centripetal Catmull-Rom control
+/// points → per-curve color/sigma DCT fit), tested on power-line and
+/// hair imagery where libjxl never could.
+///
+/// # Parameters
+/// - `xyb_x` / `xyb_y` / `xyb_b`: post-XYB-conversion planes
+///   (post-patches-subtract, pre-gaborish — mirroring libjxl's
+///   `FindSplines(*opsin)` call site after `PatchDictionaryEncoder::SubtractFrom`)
+/// - `width` / `height`: image dimensions in pixels
+/// - `stride`: row stride of the plane buffers
+///
+/// # Returns
+/// `Vec<Spline>` of detected splines (empty in chunk 1).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn find_splines(
+    _xyb_x: &[f32],
+    _xyb_y: &[f32],
+    _xyb_b: &[f32],
+    _width: usize,
+    _height: usize,
+    _stride: usize,
+) -> Vec<Spline> {
+    // TODO(chunk 2): port a real spline detector. Sketch from RFC issue
+    // #46 / audit item "Splines auto-detect":
+    //   1. Per-channel Y plane: 3x3 Sobel for (gx, gy), |∇| magnitude.
+    //   2. Local maxima of |∇| along the gradient-perpendicular direction
+    //      (non-max suppression) → ridge pixels.
+    //   3. Hessian (Ixx, Iyy, Ixy) eigenvalue ratio test: keep pixels
+    //      where λ1/λ2 > τ (narrow ridge, not a flat region).
+    //   4. 8-connected polyline tracing through ridge pixels with
+    //      strong-ridge endpoints — produces ≤256 control points each.
+    //   5. Subsample to centripetal Catmull-Rom control point count
+    //      (libjxl spec: each spline draws ≤ ~64 samples per segment;
+    //      4–8 control points is a sweet spot for power-line shapes).
+    //   6. Fit color along curve → 32-coeff DCT per channel (X/Y/B).
+    //   7. Fit sigma along curve → 32-coeff DCT (start narrow, drift).
+    //   8. Cost-benefit: skip splines whose encoded cost > XYB residual
+    //      bits they save (mirror the patches/dots gate in
+    //      `enc_patch_dictionary.cc`).
+    Vec::new()
+}
+
 // ── SplinesData construction ────────────────────────────────────────────────
 
 impl SplinesData {
@@ -990,6 +1052,42 @@ mod tests {
         assert_eq!(qs.control_points[0], (10, 0));
         assert_eq!(qs.control_points[1], (0, 5));
         assert_eq!(qs.control_points[2], (0, 5));
+    }
+
+    /// Chunk 1: stub detector must return an empty vec for any input,
+    /// matching libjxl `enc_splines.cc:104-107` `FindSplines` TODO.
+    /// When chunk 2 lands a real detector this test is rewritten with
+    /// crafted ridge inputs to assert non-empty output.
+    #[test]
+    fn test_find_splines_stub_returns_empty_for_constant_image() {
+        let (w, h, stride) = (64usize, 64usize, 64usize);
+        let plane = vec![0.0f32; stride * h];
+        let out = find_splines(&plane, &plane, &plane, w, h, stride);
+        assert!(
+            out.is_empty(),
+            "chunk 1 stub must return empty Vec; got {} splines",
+            out.len()
+        );
+    }
+
+    /// Even a synthetic horizontal ridge in Y must not coax the stub
+    /// into returning splines — it has no detection logic. This nails
+    /// the chunk-1 contract so we don't accidentally invent splines
+    /// before the real detector lands.
+    #[test]
+    fn test_find_splines_stub_ignores_ridge() {
+        let (w, h, stride) = (128usize, 64usize, 128usize);
+        let mut y_plane = vec![0.0f32; stride * h];
+        // Bright horizontal line at row 32.
+        for x in 0..w {
+            y_plane[32 * stride + x] = 1.0;
+        }
+        let zero = vec![0.0f32; stride * h];
+        let out = find_splines(&y_plane, &zero, &zero, w, h, stride);
+        assert!(
+            out.is_empty(),
+            "chunk 1 stub must not return splines for any input"
+        );
     }
 
     #[test]

@@ -282,6 +282,22 @@ pub struct VarDctEncoder {
     pub encoder_mode: crate::api::EncoderMode,
     /// Manual splines to overlay on the image (opt-in, None by default).
     pub splines: Option<Vec<crate::vardct::splines::Spline>>,
+    /// Enable automatic spline detection from the input XYB planes.
+    ///
+    /// When `true` **and** [`Self::splines`] is `None` **and** [`Self::effort`]
+    /// is ≥ 7, the encoder calls [`crate::vardct::splines::find_splines`]
+    /// after the patches-subtract step (mirroring libjxl
+    /// `enc_heuristics.cc:1048-1054`: `speed_tier <= kSquirrel`).
+    ///
+    /// Chunk 1 (this commit) ships the API + wiring with a stub detector
+    /// that returns an empty vec — produces byte-identical output to the
+    /// default path. Chunk 2 lands the real ridge-following detector;
+    /// see [`crate::vardct::splines::find_splines`] for the algorithm sketch.
+    ///
+    /// A user-supplied non-empty [`Self::splines`] always wins over
+    /// auto-detection — the manual API stays the source of truth when
+    /// both are set.
+    pub auto_splines: bool,
     /// Whether the input is grayscale. When true, the file header signals
     /// ColorSpace::Gray instead of RGB. VarDCT still operates in XYB (3 channels)
     /// internally — this only affects the output colorspace the decoder targets.
@@ -437,6 +453,7 @@ impl Default for VarDctEncoder {
             enable_dot_detection: false, // refs #19; LossyConfig flips this to true by default
             encoder_mode: crate::api::EncoderMode::Reference,
             splines: None,
+            auto_splines: false, // Opt-in (chunk 1 ships stub; default-off keeps hash-locks)
             is_grayscale: false,
             progressive: crate::api::ProgressiveMode::Single,
             use_lf_frame: false,
@@ -498,6 +515,7 @@ impl VarDctEncoder {
             enable_dot_detection: false, // refs #19; LossyConfig flips this to true by default
             encoder_mode: crate::api::EncoderMode::Reference,
             splines: None,
+            auto_splines: false, // Opt-in (chunk 1 ships stub; default-off keeps hash-locks)
             is_grayscale: false,
             progressive: crate::api::ProgressiveMode::Single,
             use_lf_frame: false,
@@ -983,7 +1001,36 @@ impl VarDctEncoder {
         // Build and subtract splines (after patches, before gaborish).
         // Splines are additive overlays: encoder subtracts, decoder adds back.
         // Uses default DC CfL params (y_to_x=0.0, y_to_b=1.0) since we write default DC cmap.
-        let splines_data = if let Some(ref splines) = self.splines {
+        //
+        // Resolution order, mirroring libjxl `enc_heuristics.cc:1044-1055`:
+        //   1. Manual non-empty `self.splines` always wins (libjxl
+        //      `cparams.custom_splines.HasAny()`).
+        //   2. Else, when `self.auto_splines` is set AND effort ≥ 7
+        //      (libjxl `speed_tier <= kSquirrel`), call `find_splines()`
+        //      on the post-patches XYB planes.
+        //   3. Else, no splines.
+        //
+        // Chunk 1: `find_splines` is a stub that returns `vec![]`,
+        // matching libjxl's `enc_splines.cc:104-107` TODO. The empty
+        // branch below short-circuits to `None`, leaving every
+        // default-config encode byte-identical.
+        let effective_splines = if let Some(ref splines) = self.splines {
+            // Manual override always wins, even if empty (caller may
+            // explicitly disable by passing `vec![]`).
+            Some(splines.clone())
+        } else if self.auto_splines && self.effort >= 7 {
+            Some(super::splines::find_splines(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                width,
+                height,
+                padded_width,
+            ))
+        } else {
+            None
+        };
+        let splines_data = if let Some(ref splines) = effective_splines {
             if !splines.is_empty() {
                 let sd = super::splines::SplinesData::from_splines(
                     splines.clone(),

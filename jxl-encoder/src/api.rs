@@ -2689,6 +2689,20 @@ pub struct LossyConfig {
     /// `cparams.already_downsampled`. No-op when `resampling == 1`.
     already_downsampled: bool,
     splines: Option<Vec<crate::vardct::splines::Spline>>,
+    /// Enable automatic spline detection from the input XYB planes.
+    ///
+    /// When `true` AND [`Self::splines`] is unset AND the effective
+    /// [`Self::effort`] is ≥ 7, the encoder asks
+    /// [`crate::vardct::splines::find_splines`] for thin-feature curves
+    /// (power lines, horizons, hair) to subtract before VarDCT and
+    /// add back in the decoder. Mirrors libjxl `enc_heuristics.cc:1048-1054`
+    /// (`speed_tier <= kSquirrel`).
+    ///
+    /// Default `false`. Chunk 1 (this commit) ships the API + wiring with
+    /// a stub detector that returns an empty vec — produces byte-identical
+    /// output to the default path. Chunk 2 (separate commit) lands a real
+    /// ridge-following detector. See [`Self::with_auto_splines`].
+    auto_splines: bool,
     progressive: ProgressiveMode,
     lf_frame: bool,
     #[cfg(feature = "butteraugli-loop")]
@@ -2868,6 +2882,7 @@ impl LossyConfig {
             auto_resampling: true,
             already_downsampled: false,
             splines: None,
+            auto_splines: false,
             progressive: ProgressiveMode::Single,
             lf_frame: false,
             #[cfg(feature = "butteraugli-loop")]
@@ -3000,6 +3015,7 @@ impl LossyConfig {
         new.force_strategy = self.force_strategy;
         new.max_strategy_size = self.max_strategy_size;
         new.splines = self.splines;
+        new.auto_splines = self.auto_splines;
         new.progressive = self.progressive;
         // Preserve explicit butteraugli override
         #[cfg(feature = "butteraugli-loop")]
@@ -3783,6 +3799,37 @@ impl LossyConfig {
     pub fn with_splines(mut self, splines: Vec<crate::vardct::splines::Spline>) -> Self {
         self.splines = Some(splines);
         self
+    }
+
+    /// Enable automatic spline detection from the input image.
+    ///
+    /// When enabled AND [`Self::with_splines`] has not been called AND the
+    /// effective effort is ≥ 7, the encoder runs a thin-feature detector
+    /// (power lines, horizons, hair) and subtracts the resulting curves
+    /// from XYB before VarDCT. The decoder adds them back after
+    /// reconstruction. Mirrors libjxl `enc_heuristics.cc:1048-1054`
+    /// (`speed_tier <= kSquirrel`).
+    ///
+    /// **Chunk 1 (this release) ships a stub detector.** The flag is fully
+    /// wired and the gate is active, but
+    /// [`crate::vardct::splines::find_splines`] currently returns an
+    /// empty vec — matching libjxl's own
+    /// `FindSplines` stub at `lib/jxl/enc_splines.cc:104-107`. Enabling
+    /// the flag today is a no-op and produces byte-identical output to
+    /// the default path. A real ridge-following detector lands in chunk 2.
+    ///
+    /// A manual [`Self::with_splines`] call always wins outright — the
+    /// auto-detector is only consulted when no manual splines are set.
+    /// Default `false`.
+    pub fn with_auto_splines(mut self, enable: bool) -> Self {
+        self.auto_splines = enable;
+        self
+    }
+
+    /// Whether automatic spline detection is enabled. See
+    /// [`Self::with_auto_splines`].
+    pub fn auto_splines(&self) -> bool {
+        self.auto_splines
     }
 
     /// Set progressive encoding mode (default: Single = no progressive).
@@ -6089,6 +6136,7 @@ impl<'a> EncodeRequest<'a> {
         enc.enable_dot_detection = cfg.dot_detection;
         enc.encoder_mode = cfg.mode;
         enc.splines = cfg.splines.clone();
+        enc.auto_splines = cfg.auto_splines;
         enc.is_grayscale = self.layout.is_grayscale();
         enc.progressive = cfg.progressive;
         enc.use_lf_frame = cfg.lf_frame;
@@ -7061,6 +7109,7 @@ impl LossyEncoder {
             enc.enable_dot_detection = cfg.dot_detection;
             enc.encoder_mode = cfg.mode;
             enc.splines = cfg.splines.clone();
+            enc.auto_splines = cfg.auto_splines;
             enc.is_grayscale = self.layout.is_grayscale();
             enc.progressive = cfg.progressive;
             enc.use_lf_frame = cfg.lf_frame;
@@ -8609,6 +8658,7 @@ fn encode_animation_lossy(
     enc.enable_dot_detection = cfg.dot_detection;
     enc.encoder_mode = cfg.mode;
     enc.splines = cfg.splines.clone();
+    enc.auto_splines = cfg.auto_splines;
     enc.progressive = cfg.progressive;
     enc.use_lf_frame = cfg.lf_frame;
     #[cfg(feature = "butteraugli-loop")]
