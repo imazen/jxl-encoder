@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **More aggressive text-like patch detection** (RFC#45 pick #5 chunk 1).
+  Lower the `kMinPeak` threshold in `vardct::patches::find_text_like_patches`
+  from 2 to 1, so the detector accepts patches whose quantized magnitudes
+  include at least one `±1` value (previously required at least one `≥|2|`
+  value). Targets low-contrast glyphs and anti-aliased text edges. The
+  downstream `is_cost_effective` gate (trial-encodes the reference frame,
+  requires a 2× savings-vs-overhead ratio) keeps photo content from
+  regressing. Measured impact at e7 on 5 screenshots × {d0.5, d1.0, d2.0}
+  and 5 CLIC photos × same: 12 of 15 photo cells byte-identical (all 15
+  unchanged), 12 of 15 screenshot cells byte-identical, 1 saves -53 B,
+  1 saves -43 B, 1 regresses +465 B (`windows95.png` @ d=0.5, where the
+  cost estimator's `0.3/distance` per-pixel savings model over-estimates
+  low-d savings — known limitation, follow-up tracking in #45 chunk 2).
+  All 36 `hash_lock` fixtures stay byte-identical. djxl decodes the new
+  `windows95.png` @ d=1.0 output cleanly.
+
 ### Added
 
 - **JPEG XL codestream Level 10 signaling** (`jxll` container box,
