@@ -4740,6 +4740,32 @@ impl<'a> EncodeRequest<'a> {
             && self.color_encoding.as_ref().is_some_and(|ce| {
                 ce.transfer_function == crate::headers::color_encoding::TransferFunction::Bt709
             });
+        // CMYK arms (Cmyk8/Cmyk16) deinterleave the K plane and stash
+        // it here for the extras-list construction further down. Set
+        // by the matching layout arm; consumed where the extras Vec
+        // is built. Mutually exclusive with the input check that
+        // rejects a caller-supplied Black extra when the layout
+        // already synthesises one.
+        let mut synthesised_black_u8: Option<Vec<u8>> = None;
+        let mut synthesised_black_u16: Option<Vec<u16>> = None;
+        // Reject a caller-supplied Black extra when the layout already
+        // synthesises one — otherwise the codestream would carry two
+        // Black entries and the second K plane would never reach the
+        // decoder. Same guard as the lossless one-shot path
+        // (api.rs:4242-4248, f2deff72).
+        if self.layout.is_cmyk()
+            && self.extra_channels.iter().any(|ec| {
+                ec.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black
+            })
+        {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "PixelLayout::{:?} already synthesises a Black extra channel; \
+                     remove the user-supplied ExtraChannel::black(...)",
+                    self.layout,
+                ),
+            });
+        }
         let (linear_rgb, alpha, bit_depth_16) = match self.layout {
             PixelLayout::Rgb8 => {
                 let linear = if let Some(g) = gamma {
@@ -4958,13 +4984,88 @@ impl<'a> EncodeRequest<'a> {
                 let alpha = extract_alpha_f32(floats, 4, 3);
                 (rgb, Some(alpha), false)
             }
-            // Lossy CMYK is not yet wired — passing C/M/Y through
-            // XYB would lose CMYK semantics (and there's no defined
-            // mapping for the K plane through the VarDCT pipeline).
-            // Lossless CMYK lives in `encode_lossless`; callers must
-            // use `LosslessConfig::encode_request` for now.
-            PixelLayout::Cmyk8 | PixelLayout::Cmyk16 => {
-                return Err(EncodeError::UnsupportedPixelLayout(self.layout));
+            // Lossy CMYK (chunk 2 follow-on to f2deff72). The C/M/Y
+            // planes are routed through the VarDCT (XYB) pipeline by
+            // reinterpreting them as if they were sRGB-encoded R/G/B
+            // bytes, and the K plane is split off and attached as an
+            // `ExtraChannelType::Black` extra below (handled by the
+            // existing alpha+extras flow). This is the same wire shape
+            // libjxl uses for lossy CMYK — three colour planes carrying
+            // CMY in XYB plus a Black extra carrying K
+            // (lib/jxl/enc_image_bundle.cc:57). The CMY→XYB mapping is
+            // not perceptually correct (CMY is subtractive and not
+            // related to sRGB primaries) — chunk 3 will address that.
+            // The K plane survives the round-trip losslessly because
+            // it travels as a modular extra channel, not through XYB.
+            //
+            // Synthesised K is stashed in the per-arm locals
+            // `synthesised_black_u8` / `synthesised_black_u16` and
+            // picked up by the extras-list construction further down.
+            PixelLayout::Cmyk8 => {
+                let n = w * h;
+                if pixels.len() != n * 4 {
+                    return Err(EncodeError::InvalidInput {
+                        message: format!(
+                            "Cmyk8 expects {} bytes ({}x{} × 4), got {}",
+                            n * 4,
+                            w,
+                            h,
+                            pixels.len(),
+                        ),
+                    });
+                }
+                // Deinterleave CMYK → 3-channel CMY (treated as RGB
+                // for the sRGB → linear path) + separate K plane. One
+                // pass over the input.
+                let mut cmy = Vec::with_capacity(n * 3);
+                let mut k = Vec::with_capacity(n);
+                for i in 0..n {
+                    let base = i * 4;
+                    cmy.push(pixels[base]);
+                    cmy.push(pixels[base + 1]);
+                    cmy.push(pixels[base + 2]);
+                    k.push(pixels[base + 3]);
+                }
+                synthesised_black_u8 = Some(k);
+                let linear = if let Some(g) = gamma {
+                    gamma_u8_to_linear_f32(&cmy, 3, g)
+                } else {
+                    srgb_u8_to_linear_f32(&cmy, 3)
+                };
+                (linear, None, false)
+            }
+            PixelLayout::Cmyk16 => {
+                let n = w * h;
+                if pixels.len() != n * 8 {
+                    return Err(EncodeError::InvalidInput {
+                        message: format!(
+                            "Cmyk16 expects {} bytes ({}x{} × 8), got {}",
+                            n * 8,
+                            w,
+                            h,
+                            pixels.len(),
+                        ),
+                    });
+                }
+                // Deinterleave 16-bit CMYK → 6 bytes of CMY u16 +
+                // separate K u16 plane. Native-endian, matches the
+                // lossless Cmyk16 arm.
+                let mut cmy = Vec::with_capacity(n * 3 * 2);
+                let mut k = Vec::with_capacity(n);
+                for i in 0..n {
+                    let base = i * 8;
+                    cmy.extend_from_slice(&pixels[base..base + 6]);
+                    let k_lo = pixels[base + 6];
+                    let k_hi = pixels[base + 7];
+                    k.push(u16::from_ne_bytes([k_lo, k_hi]));
+                }
+                synthesised_black_u16 = Some(k);
+                let linear = if let Some(g) = gamma {
+                    gamma_u16_to_linear_f32(&cmy, 3, g, u16_max)
+                } else {
+                    srgb_u16_to_linear_f32(&cmy, 3, u16_max)
+                };
+                (linear, None, true)
             }
         };
 
@@ -5056,7 +5157,16 @@ impl<'a> EncodeRequest<'a> {
         // via `with_patches`, that wins; otherwise read the per-image
         // dispatched profile (the content-class adapter may have flipped
         // patches on for Screenshot content at e5/e6).
-        enc.enable_patches = if cfg.patches_explicit {
+        //
+        // CMYK exception (chunk 2): the patches detector assumes
+        // RGB-like perceptual colour and operates on the first 3
+        // channels — which are CMY here, not RGB — so it would inject
+        // bogus subtractive-colour patches into the codestream. Same
+        // exclusion the lossless one-shot path applies at
+        // api.rs:4404-4408.
+        enc.enable_patches = if self.layout.is_cmyk() {
+            false
+        } else if cfg.patches_explicit {
             cfg.patches
         } else {
             enc.profile.patches
@@ -5188,17 +5298,26 @@ impl<'a> EncodeRequest<'a> {
                 (linear_rgb, alpha, w, h)
             };
 
-        // Build the extras list passed to VarDctEncoder. Alpha (when
-        // present) comes first, then any caller-supplied non-alpha
-        // extras (depth, spot color, …) from `self.extra_channels`.
+        // Build the extras list passed to VarDctEncoder. The wire
+        // order is: synthesised Black (CMYK only) first so K lands at
+        // ec index 0, then alpha (when the layout carries it), then
+        // any caller-supplied non-alpha extras (depth, spot color, …)
+        // from `self.extra_channels`. Keeping K at ec index 0 mirrors
+        // libjxl's `enc_image_bundle.cc:57` CMYK pipeline and matches
+        // the lossless one-shot path (api.rs:4444-4452).
         //
         // Extras flow only when the resampling factor is 1 — at
         // `resampling > 1` we already downsample RGB+alpha to the
-        // encoded dims, and downsampling arbitrary extras is a
-        // follow-up. Reject explicitly so a caller can't accidentally
-        // ship a file whose extras are sized for the original dims
-        // while the file header advertises the downsampled dims.
-        let extras_vec: Vec<crate::api::ExtraChannel<'_>> = if !self.extra_channels.is_empty() {
+        // encoded dims, and downsampling arbitrary extras (including
+        // the synthesised K plane) is a follow-up. Reject explicitly
+        // so a caller can't accidentally ship a file whose extras are
+        // sized for the original dims while the file header advertises
+        // the downsampled dims.
+        let has_synthesised_black =
+            synthesised_black_u8.is_some() || synthesised_black_u16.is_some();
+        let extras_vec: Vec<crate::api::ExtraChannel<'_>> = if !self.extra_channels.is_empty()
+            || has_synthesised_black
+        {
             if effective_resampling > 1 {
                 return Err(EncodeError::InvalidInput {
                     message: format!(
@@ -5206,8 +5325,23 @@ impl<'a> EncodeRequest<'a> {
                     ),
                 });
             }
-            let mut v: Vec<crate::api::ExtraChannel<'_>> =
-                Vec::with_capacity(self.extra_channels.len() + usize::from(encode_alpha.is_some()));
+            let mut v: Vec<crate::api::ExtraChannel<'_>> = Vec::with_capacity(
+                self.extra_channels.len()
+                    + usize::from(encode_alpha.is_some())
+                    + usize::from(has_synthesised_black),
+            );
+            // Synthesised K plane (CMYK only). Lives at ec index 0
+            // so the decoder finds it first when walking
+            // `ec_info` looking for `ec_type == Black`. Black
+            // forbidden at level 5 → the shared level computation
+            // (api.rs:3920) bumps to level 10 when
+            // `self.layout.is_cmyk()` is true.
+            if let Some(ref k_u8) = synthesised_black_u8 {
+                v.push(crate::api::ExtraChannel::black(k_u8));
+            }
+            if let Some(ref k_u16) = synthesised_black_u16 {
+                v.push(crate::api::ExtraChannel::black_u16(k_u16));
+            }
             if let Some(ref buf) = encode_alpha {
                 v.push(crate::api::ExtraChannel::from_alpha_buf(
                     buf,
@@ -5225,7 +5359,7 @@ impl<'a> EncodeRequest<'a> {
                     if encode_alpha.is_some() {
                         return Err(EncodeError::InvalidInput {
                             message: "Alpha extra channel conflicts with the pixel layout's alpha \
-                                 (use a non-Alpha layout or omit the extra)"
+                                     (use a non-Alpha layout or omit the extra)"
                                 .to_string(),
                         });
                     }
@@ -5234,8 +5368,9 @@ impl<'a> EncodeRequest<'a> {
             }
             v
         } else {
-            // Fast path: no caller-supplied extras. Build just an alpha
-            // entry when the layout carries alpha.
+            // Fast path: no caller-supplied extras and no synthesised
+            // K plane. Build just an alpha entry when the layout
+            // carries alpha.
             if let Some(ref buf) = encode_alpha {
                 vec![crate::api::ExtraChannel::from_alpha_buf(
                     buf,

@@ -183,6 +183,31 @@
   original byte values. New `canonicalize` module at
   `jxl-encoder/src/canonicalize.rs` (13 unit tests).
 
+- **CMYK lossy encode** (A1 audit item #6 chunk 2, follow-on to
+  `f2deff72`). `PixelLayout::Cmyk8` and `PixelLayout::Cmyk16` now
+  route through the lossy (`VarDCT/XYB`) one-shot path in addition
+  to the lossless one. The C/M/Y planes flow through XYB by being
+  reinterpreted as if they were sRGB-encoded R/G/B bytes (a
+  perceptually-coarse mapping that chunk 3 will replace with a
+  CMY-aware transform); the K plane is split off and attached as a
+  modular `ExtraChannelType::Black` extra channel at ec index 0, so
+  the ink coverage survives the lossy round-trip bit-exact (within
+  the f32→u8 decoder rounding). Mirrors libjxl's wire shape for
+  lossy CMYK (`lib/jxl/enc_image_bundle.cc:57`: three colour planes
+  in XYB plus a Black extra). Patches detection is disabled for
+  CMYK input (same reason as the lossless path — the detector
+  assumes RGB-like perceptual colour). Caller-supplied Black
+  extras are still rejected with a clear `InvalidInput` error to
+  prevent silent double-Black bitstreams. Three new tests —
+  `test_lossy_cmyk8_roundtrip` (jxl-rs decode, gradient pattern at
+  d=1.0 e5, K bit-exact + CMY within ±48 byte / ≤12 avg per
+  channel), `test_lossy_cmyk16_header_signals_16bit_black`
+  (16-bit CMYK header signaling + jxl-oxide render), and
+  `test_lossy_cmyk_rejects_duplicate_black_extra` (guard test).
+  Hash-locks: 36/36 byte-identical (Cmyk\* layouts are opt-in).
+  Streaming CMYK push-rows still defers to a future chunk;
+  animated CMYK is out of scope.
+
 - **CMYK lossless encode** (A1 audit item #6, issue #58). New
   `PixelLayout::Cmyk8` (4 bytes/pixel: C, M, Y, K) and
   `PixelLayout::Cmyk16` (8 bytes/pixel, native-endian u16) variants
@@ -200,9 +225,8 @@
   Black extra is now a clear `InvalidInput` error rather than a
   silent double-Black bitstream. Patches detection is disabled for
   CMYK input because the CMY planes are not perceptually RGB-like.
-  Lossy CMYK (CMY through VarDCT/XYB) is not yet wired; streaming
-  CMYK push-rows also defers to a future chunk. Callers who need
-  colour-managed CMYK should attach a CMYK ICC via
+  Streaming CMYK push-rows defers to a future chunk. Callers who
+  need colour-managed CMYK should attach a CMYK ICC via
   `LosslessConfig::with_metadata` → `ImageMetadata::icc_profile`.
 
 - **JPEG XL codestream Level 10 signaling** (`jxll` container box,
