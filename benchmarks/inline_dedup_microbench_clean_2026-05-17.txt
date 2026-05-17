@@ -1,0 +1,196 @@
+=== CLEAN RE-RUN — bench binary: /home/lilith/work/zen/jxl-encoder--phase3-inline-dedup-c1/target/release/deps/dedup_samples_strategies-ca278b6f7b5ce457
+=== started at: 2026-05-17T05:21:08Z
+
+### group: dedup_full_n=200K_dup600
+[zenbench] calibration: int=0.20ns/iter mem_bw=125.7GiB/s mem_lat=9.6ns
+[zenbench] timer resolution: 9ns, loop overhead: 0.17ns/iter, TSC: 4.900 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1778995268-3d159.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1778995268-3d159
+  git: c579cbd1a56e998c161b5d256ded39d87b71ab9c
+═══════════════════════════════════════════════════════════════
+
+  dedup_full_n=200K_dup600  4 rounds × 1 calls ⚠ only 4 rounds
+                             mean ±mad ms  95% CI vs base     ops/s
+  ├─ current_sort_indirect    31.0 ±3.7ms  [27.8–34.0]ms      6.44M
+  ├─ packed_key_sort          24.9 ±3.7ms  [-18.9%–-14.9%]    8.04M
+  ├─ hashmap_dedup            35.0 ±0.9ms  [-12.5%–+49.6%]    5.72M [1] [2]
+  ├─ two_hash_cuckoo         39.2 ±10.9ms  [+7.7%–+44.7%]     5.11M [3] [4]
+  ├─ inline_dedup_prebuilt    46.4 ±7.7ms  [+16.2%–+82.8%]    4.31M [5]
+  ├─ gather_sim_phase1        41.7 ±4.5ms  [+24.2%–+48.9%]    4.79M
+  ╰─ gather_sim_phase3       39.8 ±12.5ms  [-0.8%–+60.4%]     5.03M [6] [7] [8]
+
+  packed_key_sort        ███████████████████████████████████████████ 8.04 Mops/s
+  current_sort_indirect  ██████████████████████████████████ 6.44 Mops/s
+  hashmap_dedup          ███████████████████████████████ 5.72 Mops/s
+  two_hash_cuckoo        ███████████████████████████ 5.11 Mops/s
+  gather_sim_phase3      ███████████████████████████ 5.03 Mops/s
+  gather_sim_phase1      ██████████████████████████ 4.79 Mops/s
+  inline_dedup_prebuilt  ███████████████████████ 4.31 Mops/s
+  [1] CI crosses zero
+  [2] CV=42%
+  [3] drift r=-0.60 — later rounds faster
+  [4] CV=26%
+  [5] CV=31%
+  [6] CI crosses zero
+  [7] drift r=-0.60 — later rounds faster
+  [8] CV=37%
+
+  total: 128.4s  (124 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+
+### group: dedup_full_n=200K_dup800
+[zenbench] calibration: int=0.24ns/iter mem_bw=122.4GiB/s mem_lat=9.2ns
+[zenbench] timer resolution: 9ns, loop overhead: 0.18ns/iter, TSC: 4.899 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1778995408-3db77.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1778995408-3db77
+  git: c579cbd1a56e998c161b5d256ded39d87b71ab9c
+═══════════════════════════════════════════════════════════════
+
+  dedup_full_n=200K_dup800  4 rounds × 1 calls ⚠ only 4 rounds
+                             mean ±mad ms  95% CI vs base      ops/s
+  ├─ current_sort_indirect   40.0 ±12.4ms  [31.3–48.7]ms       5.00M [1]
+  ├─ packed_key_sort         40.2 ±16.1ms  [-23.6%–+43.2%]     4.97M [2] [3] [4]
+  ├─ hashmap_dedup           48.6 ±19.2ms  [-6.3%–+66.2%]      4.11M [5] [6] [7]
+  ├─ two_hash_cuckoo         54.0 ±32.1ms  [-9.4%–+79.4%]      3.70M [8] [9] [10]
+  ├─ inline_dedup_prebuilt   64.7 ±24.9ms  [+32.1%–+97.8%]     3.09M [11] [12]
+  ├─ gather_sim_phase1       69.4 ±34.6ms  [+19.1%–+135.4%]    2.88M [13] [14]
+  ╰─ gather_sim_phase3        51.4 ±9.2ms  [+11.7%–+50.8%]     3.89M [15]
+
+  current_sort_indirect  ███████████████████████████████████████████ 5.00 Mops/s
+  packed_key_sort        ███████████████████████████████████████████ 4.97 Mops/s
+  hashmap_dedup          ███████████████████████████████████ 4.11 Mops/s
+  gather_sim_phase3      █████████████████████████████████ 3.89 Mops/s
+  two_hash_cuckoo        ████████████████████████████████ 3.70 Mops/s
+  inline_dedup_prebuilt  ███████████████████████████ 3.09 Mops/s
+  gather_sim_phase1      █████████████████████████ 2.88 Mops/s
+  [1] CV=25%
+  [2] CI crosses zero
+  [3] drift r=0.60 — later rounds slower
+  [4] CV=61%
+  [5] CI crosses zero
+  [6] drift r=0.60 — later rounds slower
+  [7] CV=53%
+  [8] CI crosses zero
+  [9] drift r=0.80 — later rounds slower
+  [10] CV=59%
+  [11] drift r=0.60 — later rounds slower
+  [12] CV=39%
+  [13] drift r=0.60 — later rounds slower
+  [14] CV=55%
+  [15] CV=29%
+
+  total: 129.1s  (124 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+
+### group: dedup_full_n=1.35M_dup300
+[zenbench] calibration: int=0.26ns/iter mem_bw=119.7GiB/s mem_lat=10.7ns
+[zenbench] timer resolution: 9ns, loop overhead: 0.27ns/iter, TSC: 4.895 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1778995549-3e35b.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1778995549-3e35b
+  git: c579cbd1a56e998c161b5d256ded39d87b71ab9c
+═══════════════════════════════════════════════════════════════
+
+  dedup_full_n=1.35M_dup300  4 rounds × 1 calls ⚠ only 4 rounds
+                               mean ±mad ms  95% CI vs base     ops/s
+  ├─ current_sort_indirect   456.1 ±138.9ms  [341.7–570.5]ms    2.96M [1]
+  ├─ packed_key_sort          350.5 ±33.0ms  [-40.7%–-5.7%]     3.85M
+  ├─ hashmap_dedup            324.7 ±36.7ms  [-47.2%–-10.5%]    4.16M
+  ├─ two_hash_cuckoo          327.7 ±64.6ms  [-45.1%–-12.2%]    4.12M
+  ├─ inline_dedup_prebuilt    385.3 ±22.8ms  [-36.8%–+5.7%]     3.50M [2]
+  ├─ gather_sim_phase1        557.2 ±70.8ms  [+8.8%–+35.5%]     2.42M
+  ╰─ gather_sim_phase3        364.6 ±36.6ms  [-40.7%–-0.5%]     3.70M [3]
+
+  hashmap_dedup          ███████████████████████████████████████████ 4.16 Mops/s
+  two_hash_cuckoo        ███████████████████████████████████████████ 4.12 Mops/s
+  packed_key_sort        ████████████████████████████████████████ 3.85 Mops/s
+  gather_sim_phase3      ██████████████████████████████████████ 3.70 Mops/s
+  inline_dedup_prebuilt  ████████████████████████████████████ 3.50 Mops/s
+  current_sort_indirect  ███████████████████████████████ 2.96 Mops/s
+  gather_sim_phase1      █████████████████████████ 2.42 Mops/s
+  [1] CV=32%
+  [2] CI crosses zero
+  [3] CI crosses zero
+
+  total: 144.7s  (123 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+
+### group: dedup_full_n=1.35M_dup600
+[zenbench] calibration: int=0.21ns/iter mem_bw=128.1GiB/s mem_lat=8.8ns
+[zenbench] timer resolution: 9ns, loop overhead: 0.17ns/iter, TSC: 4.898 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1778995706-3ec8d.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1778995706-3ec8d
+  git: c579cbd1a56e998c161b5d256ded39d87b71ab9c
+═══════════════════════════════════════════════════════════════
+
+  dedup_full_n=1.35M_dup600  4 rounds × 1 calls ⚠ only 4 rounds
+                               mean ±mad ms  95% CI vs base     ops/s
+  ├─ current_sort_indirect   540.7 ±113.3ms  [424.2–684.6]ms    2.50M [1]
+  ├─ packed_key_sort          370.4 ±45.6ms  [-52.2%–-12.4%]    3.65M
+  ├─ hashmap_dedup            337.7 ±34.1ms  [-52.9%–-24.0%]    4.00M
+  ├─ two_hash_cuckoo          376.7 ±39.5ms  [-53.3%–-6.9%]     3.58M
+  ├─ inline_dedup_prebuilt    408.7 ±29.6ms  [-40.2%–-9.8%]     3.30M
+  ├─ gather_sim_phase1       532.8 ±136.7ms  [-13.1%–+10.2%]    2.53M [2] [3]
+  ╰─ gather_sim_phase3        382.5 ±29.5ms  [-48.6%–-13.5%]    3.53M
+
+  hashmap_dedup          ███████████████████████████████████████████ 4.00 Mops/s
+  packed_key_sort        ███████████████████████████████████████ 3.65 Mops/s
+  two_hash_cuckoo        ███████████████████████████████████████ 3.58 Mops/s
+  gather_sim_phase3      ██████████████████████████████████████ 3.53 Mops/s
+  inline_dedup_prebuilt  ████████████████████████████████████ 3.30 Mops/s
+  gather_sim_phase1      ███████████████████████████ 2.53 Mops/s
+  current_sort_indirect  ███████████████████████████ 2.50 Mops/s
+  [1] CV=30%
+  [2] CI crosses zero
+  [3] CV=21%
+
+  total: 146.9s  (123 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+
+### group: dedup_full_n=1.35M_dup800
+[zenbench] calibration: int=0.19ns/iter mem_bw=128.0GiB/s mem_lat=8.8ns
+[zenbench] timer resolution: 9ns, loop overhead: 0.17ns/iter, TSC: 4.900 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1778995867-3f759.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1778995867-3f759
+  git: c579cbd1a56e998c161b5d256ded39d87b71ab9c
+═══════════════════════════════════════════════════════════════
+
+  dedup_full_n=1.35M_dup800  4 rounds × 1 calls ⚠ only 4 rounds
+                              mean ±mad ms  95% CI vs base     ops/s
+  ├─ current_sort_indirect   471.9 ±19.2ms  [415.3–571.5]ms    2.86M [1]
+  ├─ packed_key_sort          331.7 ±9.8ms  [-27.3%–-22.6%]    4.07M [2]
+  ├─ hashmap_dedup            296.6 ±6.2ms  [-36.1%–-28.8%]    4.55M [3]
+  ├─ two_hash_cuckoo         320.2 ±33.2ms  [-42.9%–-23.5%]    4.22M
+  ├─ inline_dedup_prebuilt   390.7 ±42.5ms  [-16.9%–-1.6%]     3.46M
+  ├─ gather_sim_phase1       490.4 ±55.0ms  [-2.2%–+10.2%]     2.75M [4]
+  ╰─ gather_sim_phase3       361.9 ±11.1ms  [-19.9%–-14.4%]    3.73M
+
+  hashmap_dedup          ███████████████████████████████████████████ 4.55 Mops/s
+  two_hash_cuckoo        ████████████████████████████████████████ 4.22 Mops/s
+  packed_key_sort        ██████████████████████████████████████ 4.07 Mops/s
+  gather_sim_phase3      ███████████████████████████████████ 3.73 Mops/s
+  inline_dedup_prebuilt  █████████████████████████████████ 3.46 Mops/s
+  current_sort_indirect  ███████████████████████████ 2.86 Mops/s
+  gather_sim_phase1      ██████████████████████████ 2.75 Mops/s
+  [1] CV=21%
+  [2] drift r=-1.00 — later rounds faster
+  [3] drift r=-1.00 — later rounds faster
+  [4] CI crosses zero
+
+  total: 146.5s  (123 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+=== completed at: 2026-05-17T05:33:46Z
