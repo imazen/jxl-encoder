@@ -239,6 +239,11 @@ name = "gather_dedup_ab"
 path = "examples/gather_dedup_ab.rs"
 required-features = ["__expert"]
 
+[[example]]
+name = "lossless_e9_buckets_sweep"
+path = "examples/lossless_e9_buckets_sweep.rs"
+required-features = ["__expert"]
+
 # Picker oracle calibration harnesses (lossless_pareto_calibrate /
 # lossy_pareto_calibrate) live under examples/ but are NOT registered as
 # cargo examples — they depend on a sibling-repo `zenanalyze` path that

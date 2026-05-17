@@ -1,0 +1,65 @@
+tree_max_buckets Pareto sweep at e9 — chunk-4 of e8/e9 cliff plan
+=================================================================
+
+Date:        2026-05-17
+Workspace:   /home/lilith/work/zen/jxl-encoder--bucket-sweep
+Parent:      34d58e2b (docs(bench): right-init SIMD lift was a no-op …)
+Hardware:    AMD Ryzen 9 7950X (16C/32T), 128 GB RAM
+Binary:      cargo run --release --features 'parallel-tree-learning __expert'
+             --example lossless_e9_buckets_sweep
+Threads:     RAYON_NUM_THREADS=8 (per cell)
+Samples:     n=5, take min (per CLAUDE.md "min on contended loads")
+cjxl ref:    v0.12.0 (not in this TSV — see baseline tsv from chunk-2)
+
+Profile images:
+  small_0.26MP  = CID22/CID22-512/training/7256805.png        (512×512)
+  medium_1.05MP = clic2025-1024/02809272…cd804f7.png          (1024×1024)
+  large_4.19MP  = clic2025/final-test/8426ed22…05ac41.png     (2048×2048)
+
+Bucket grid: 64, 96, 128, 192, 224, 256 (baseline = 256, current e9 default).
+
+Acceptance gate (per task brief):
+  bytes ≤ +0.5%  AND  wall-clock ≤ −5%  on ≥ 2 of 3 images
+  (best case if any value passes → ship; else keep baseline)
+
+Min ms / bytes Δ vs baseline (256):
+                                    bytes_Δ      time_Δ       gate?
+  buckets= 64    small=+3.37%/-27.6%   medium=+0.38%/ -9.7%   large=+2.38%/-31.1%   1/3
+  buckets= 96    small=+3.01%/-28.0%   medium=+0.46%/ +0.5%   large=+2.17%/-34.3%   0/3
+  buckets=128    small=+3.04%/ -4.5%   medium=+0.39%/+16.7%   large=+1.70%/-25.3%   0/3
+  buckets=192    small=+1.79%/ -4.9%   medium=+0.10%/ +1.9%   large=+0.09%/-12.1%   1/3
+  buckets=224    small=+1.82%/ -2.3%   medium=+0.17%/+26.2%   large=+0.02%/ -1.6%   0/3
+  buckets=256    BASELINE                                                          n/a
+
+  (For each cell: bytes_Δ% / time_Δ% vs the 256 baseline; lower=better.)
+
+Decision: DO NOT SHIP — keep tree_max_buckets=256 for e9.
+
+Reasoning:
+  - NO bucket value passes the strict ≤+0.5% bytes AND ≥5% time gate on
+    ≥2 of 3 images.
+  - 192 is the only candidate with byte cost in noise on medium+large
+    (+0.10% / +0.09%) but regresses small by +1.79% bytes — outside the
+    gate. The small-image time win (−4.9%) is also under the 5% bar.
+  - 64 / 96 give big time wins but bytes regress 2-3.4% across the board.
+  - 224 / 128 show no consistent win; medium is noisy in those cells
+    (likely co-tenant contention from sibling agent's SIMD WP-cost bench).
+  - Large 4.19MP @ 192 IS a clean Pareto win (−12.1% time / +0.09% bytes)
+    but a knob that wins only on the largest tier and pessimizes small
+    isn't worth the public-API surface — picker / __expert path can
+    already set tree_max_buckets via LosslessInternalParams when
+    image size is known up front.
+
+  Conclusion: the bucket axis is not the right lever for the remaining
+  e9 wall-clock gap. The chunk-3 SIMD estimate_wp_cost work (sibling
+  agent) and the chunk-2 parallel-fanout tuning (already shipped) have
+  done the heavy lifting. The remaining e9 wedge is dominated by tree
+  size growth (5,277 nodes at e9 vs 2,425 at e7, per
+  lossless_e8_e9_cliff_2026-05-16.md), not by bucket-sweep cost.
+
+Sweep harness: jxl-encoder/examples/lossless_e9_buckets_sweep.rs
+Analyzer:     scripts/analyze_bucket_sweep.py
+Reproduce:    SAMPLES=5 SWEEP_BUCKETS=64,96,128,192,224,256 THREADS=8 \
+              cargo run --release -p jxl-encoder \
+                  --features 'parallel-tree-learning __expert' \
+                  --example lossless_e9_buckets_sweep > out.tsv
