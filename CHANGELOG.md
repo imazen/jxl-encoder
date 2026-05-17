@@ -549,7 +549,20 @@
   inherent methods (LLVM emits `vfmadd*` etc.); `no_std` keeps `libm`.
   Zero behaviour change; measurable speedup in the SIMD math hot paths.
 
-### Fixed
+### Changed
+
+- **`nb_rcts_to_try=0` fallback now uses RCT-10 (GBR+SubGR) instead of
+  RCT-6 (YCoCg)** in `select_best_rct{,_at}`. The previous fallback
+  defaulted to YCoCg unconditionally when no RCT trial was performed
+  (effort < 5, or `LosslessInternalParams::nb_rcts_to_try = Some(0)`).
+  RCT-10 (permutation=GBR, transform=Subtract-Green) saves **1.19% bytes**
+  on a diverse 490-image corpus relative to YCoCg as a single-RCT default
+  (per the chunk-1 RCT-picker investigation in commit `287d915`). Default
+  effort (e7) is unaffected — it sets `nb_rcts_to_try=7` and runs the full
+  trial search, so all hash-locked tests are byte-identical. Measured impact
+  at effort 4 on the 3 profile photos: small −1.82%, medium −0.64%, large
+  −0.64% (consistent with the sweep direction). Adds
+  `RctType::GBR_SUBGR = RctType(10)` as a named constant.
 
 - **Empty modular sub-bitstream EOF in multi-group VarDCT/patches frames**
   (mirrors `imazen/jxl-oxide@fd4e2c3`): when a modular section had no

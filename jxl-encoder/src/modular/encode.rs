@@ -1141,10 +1141,11 @@ pub(crate) fn select_best_rct(
     let nb_rcts_to_try = nb_rcts_to_try as usize;
 
     if nb_rcts_to_try == 0 || image.channels.len() < 3 {
-        // Default to YCoCg
+        // Default to RCT-10 (GBR + Subtract-Green): -1.19% bytes vs YCoCg on a
+        // diverse 490-image corpus (see RctType::GBR_SUBGR doc + commit 287d915).
         let mut transformed = image.clone();
-        forward_rct(&mut transformed.channels, 0, RctType::YCOCG).ok();
-        return (RctType::YCOCG, transformed);
+        forward_rct(&mut transformed.channels, 0, RctType::GBR_SUBGR).ok();
+        return (RctType::GBR_SUBGR, transformed);
     }
 
     let num_to_try = nb_rcts_to_try.min(RCT_CANDIDATES.len());
@@ -1173,7 +1174,8 @@ pub(crate) fn select_best_rct(
         });
 
     let mut best_cost = f64::MAX;
-    let mut best_rct = RctType::YCOCG;
+    // Fallback (all-trials-failed) RCT matches the nb_rcts_to_try=0 fallback.
+    let mut best_rct = RctType::GBR_SUBGR;
     let mut best_image = None;
     for (i, result) in trial_results.into_iter().enumerate() {
         let Some((cost, transformed)) = result else {
@@ -1193,7 +1195,7 @@ pub(crate) fn select_best_rct(
 
     let work_image = best_image.unwrap_or_else(|| {
         let mut t = image.clone();
-        forward_rct(&mut t.channels, 0, RctType::YCOCG).ok();
+        forward_rct(&mut t.channels, 0, RctType::GBR_SUBGR).ok();
         t
     });
 
@@ -1228,9 +1230,11 @@ pub(crate) fn select_best_rct_at(
     let nb_rcts_to_try = nb_rcts_to_try as usize;
 
     if nb_rcts_to_try == 0 || image.channels.len() < begin_c + 3 {
+        // Default to RCT-10 (GBR + Subtract-Green): -1.19% bytes vs YCoCg on a
+        // diverse 490-image corpus (see RctType::GBR_SUBGR doc + commit 287d915).
         let mut transformed = image.clone();
-        forward_rct(&mut transformed.channels, begin_c, RctType::YCOCG).ok();
-        return (RctType::YCOCG, transformed);
+        forward_rct(&mut transformed.channels, begin_c, RctType::GBR_SUBGR).ok();
+        return (RctType::GBR_SUBGR, transformed);
     }
 
     let num_to_try = nb_rcts_to_try.min(RCT_CANDIDATES.len());
@@ -1258,7 +1262,8 @@ pub(crate) fn select_best_rct_at(
         });
 
     let mut best_cost = f64::MAX;
-    let mut best_rct = RctType::YCOCG;
+    // Fallback (all-trials-failed) RCT matches the nb_rcts_to_try=0 fallback.
+    let mut best_rct = RctType::GBR_SUBGR;
     let mut best_image = None;
     for (i, result) in trial_results.into_iter().enumerate() {
         let Some((cost, transformed)) = result else {
@@ -1281,7 +1286,7 @@ pub(crate) fn select_best_rct_at(
 
     let work_image = best_image.unwrap_or_else(|| {
         let mut t = image.clone();
-        forward_rct(&mut t.channels, begin_c, RctType::YCOCG).ok();
+        forward_rct(&mut t.channels, begin_c, RctType::GBR_SUBGR).ok();
         t
     });
 
