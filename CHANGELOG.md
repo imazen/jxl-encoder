@@ -4,6 +4,35 @@
 
 ### Added
 
+- **Four `cjxl` parity knobs: `--faster-decoding`, `--container`,
+  `--progressive-dc`, `--premultiply`** (W4-3 A1 audit). New builders
+  on `LossyConfig` / `LosslessConfig` (and `EncodeRequest` for
+  `with_premultiplied_alpha_mode`) plus matching CLI flags on
+  `cjxl-rs`:
+  - `with_faster_decoding(u8)` / `--faster-decoding 0..4` — mirrors
+    libjxl `cparams.decoding_speed_tier`; per-tier semantics
+    documented in the builder rustdoc (Weighted predictor → MA tree
+    learner → EPF → DCT32+ + gaborish drop-out path). Values clamp
+    to `MAX_FASTER_DECODING = 4`.
+  - `with_container_mode(ContainerMode)` / `--container -1|0|1` —
+    mirrors libjxl `cjxl --container 0|1`. New `ContainerMode` enum
+    with `Auto` (default, wrap on metadata or codestream-level
+    demand), `Always`, `Never`.
+  - `with_progressive_dc(u8)` / `--progressive-dc 0..2` (lossy only) —
+    `1` implies `with_lf_frame(true)` and produces byte-identical
+    output to the existing `--lf-frame` flag; `2` is stored for
+    forward compatibility (currently emits a single LfFrame). Values
+    clamp to `MAX_PROGRESSIVE_DC = 2`.
+  - `with_premultiplied_alpha_mode(PremultipliedAlphaMode)` /
+    `--premultiply -1|0|1` — `Off` / `On` / `Auto` enum mirroring
+    libjxl's tri-state. `Auto` is wired as a request-level policy
+    flag; resolution at encode time is queued follow-on work.
+  Also fixes two pre-existing same-type clippy casts
+  (`effort.rs:1717`, `modular/inline_add_sample.rs:457`) flagged in
+  the W3-3 audit. Five new unit tests in `api::tests` cover clamping,
+  defaults, builder round-trip, and the `progressive_dc>=1 =>
+  lf_frame` implication.
+
 - **Multi-seed lossy butteraugli sweep at e10/e11** (RFC#45 pick #1 chunk 3).
   New `EffortProfile::lossy_search_seeds` field (1 at e ≤ 9, 2 at e10, 4 at e11)
   drives [`vardct::butteraugli_loop`]: at seeds > 1 we run the full
