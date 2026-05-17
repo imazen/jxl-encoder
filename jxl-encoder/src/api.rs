@@ -1235,14 +1235,19 @@ impl LosslessConfig {
         Self::default()
     }
 
-    /// Set effort level (1–10). Higher effort = slower, better compression.
+    /// Set effort level (1–11). Higher effort = slower, better compression.
     ///
     /// This adjusts all effort-dependent defaults:
     /// - **e1–3**: Huffman encoding
     /// - **e4–6**: + ANS entropy coding
     /// - **e7**: + content-adaptive tree learning, LZ77 RLE
     /// - **e8**: + LZ77 greedy hash chain
-    /// - **e9–10**: + LZ77 optimal (Viterbi DP)
+    /// - **e9–11**: + LZ77 optimal (Viterbi DP)
+    ///
+    /// **e10/e11 are our extensions** beyond libjxl's kTortoise=9 ceiling
+    /// (RFC#45 pick #1). Today they map to the e9 lossless code paths;
+    /// multi-seed tree learning lands in chunk 2. Bitstreams remain 100%
+    /// spec-valid (djxl / jxl-rs / jxl-oxide decode unchanged).
     ///
     /// **WARNING — e6→e7 cliff** (#23): tree learning at e7 dominates
     /// the time profile and is significantly slower than e6 (a single
@@ -2083,7 +2088,7 @@ impl LossyConfig {
         Ok(Self::new(distance))
     }
 
-    /// Set effort level (1–10). Higher effort = slower, better compression.
+    /// Set effort level (1–11). Higher effort = slower, better compression.
     ///
     /// This adjusts all effort-dependent defaults:
     /// - **e1–3**: DCT8 only, Huffman, no gaborish/patches/butteraugli
@@ -2092,7 +2097,13 @@ impl LossyConfig {
     /// - **e6**: + DCT4x8/AFV strategies, non-aligned eval, EPF dynamic sharpness
     /// - **e7**: + patches, error diffusion, CfL two-pass, LZ77 RLE, DCT64 strategies
     /// - **e8**: + butteraugli loop (2 iters), LZ77 greedy, WP param search (2 modes)
-    /// - **e9–10**: + LZ77 optimal (Viterbi DP), 4 butteraugli iters, WP search (5 modes)
+    /// - **e9**: + LZ77 optimal (Viterbi DP), 4 butteraugli iters, WP search (5 modes)
+    /// - **e10**: + 8 butteraugli iters (longer convergence; RFC#45 pick #1)
+    /// - **e11**: + 16 butteraugli iters (saturated at `MAX_QUANT_LOOP_ITERS`)
+    ///
+    /// e10/e11 extend libjxl's kTortoise=9 ceiling with strictly-longer search
+    /// budgets; the bitstream remains 100% spec-valid. Multi-seed tree learning
+    /// (chunk 2) lands separately. See RFC issue #45.
     ///
     /// Individual `with_*()` calls after `with_effort()` override these defaults.
     pub fn with_effort(self, effort: u8) -> Self {

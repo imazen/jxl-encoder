@@ -97,13 +97,15 @@ fn lossy_distance_infinite_rejected() {
 
 #[test]
 fn lossy_effort_zero_rejected() {
-    // `with_effort` clamps internally to 1..=10, so we cannot construct a
+    // `with_effort` clamps internally to 1..=11, so we cannot construct a
     // config with effort 0 via the public surface. Validation catches the
     // *clamped* value here, so this case is exercised below by routing
     // through the un-clamped path: the only way to surface effort=0 is
     // direct field manipulation, which we don't do. Instead we verify
     // validate() accepts every clamped value we *can* produce.
-    for e in 1..=10u8 {
+    //
+    // RFC#45 chunk 1: e10/e11 are our extensions past libjxl's kTortoise=9.
+    for e in 1..=11u8 {
         let cfg = LossyConfig::new(1.0).with_effort(e);
         assert!(cfg.validate().is_ok(), "effort {e} should validate");
     }
@@ -111,7 +113,7 @@ fn lossy_effort_zero_rejected() {
 
 #[test]
 fn lossless_effort_each_level_validates() {
-    for e in 1..=10u8 {
+    for e in 1..=11u8 {
         let cfg = LosslessConfig::new().with_effort(e);
         assert!(cfg.validate().is_ok(), "effort {e} should validate");
     }
