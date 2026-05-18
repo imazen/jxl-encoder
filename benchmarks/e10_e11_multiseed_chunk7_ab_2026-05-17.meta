@@ -1,0 +1,59 @@
+# Metadata for benchmarks/e10_e11_multiseed_chunk7_ab_2026-05-17.tsv
+#
+# Bench:   jxl-encoder/examples/e10_e11_multiseed_chunk7_ab.rs
+# Commit:  chunk-7 working copy (parent: 1760b038 squeeze-on-extras chunk-2)
+# Date:    2026-05-17
+# Host:    AMD Ryzen 9 7950X (water-cooled), 128 GB RAM, Linux WSL2
+# Threads: 8 (LosslessConfig::with_threads(8))
+# Samples: 2 paired
+# Corpus:  /home/lilith/work/codec-corpus/CID22/CID22-512/validation/
+#          (5 photos: 1025469, 1044329, 1189261, 1279330, 1418519)
+#
+# Cargo features:
+#   std parallel parallel-tree-learning
+#
+# Invocation:
+#   cargo run --release -p jxl-encoder \
+#     --features 'std parallel parallel-tree-learning' \
+#     --example e10_e11_multiseed_chunk7_ab
+#
+# What chunk 7 does:
+#   - Adds `multi_seed_early_out_after_probe` helper in modular/tree_learn.rs.
+#   - After the first 4 seeds (chunk-3 perturbation slot, MULTI_SEED_EARLY_OUT_PROBE_SEEDS)
+#     of the e11 16-seed loop, computes the relative spread of token costs.
+#   - If spread < 5% (MULTI_SEED_EARLY_OUT_SPREAD_THRESHOLD), breaks out of
+#     the seed loop early — the picker keeps its best-so-far tree.
+#   - High-variance images (spread >= 5%) keep running all 16 seeds.
+#
+# Comparison vs chunk 6 (benchmarks/e10_e11_multiseed_chunk6_ab_2026-05-17.tsv):
+#
+#   image         | c6_bytes | c7_bytes | dB    | c6_ms_med | c7_ms_med | speedup
+#   1025469       |   231127 |   231461 |  +334 |     27384 |      5969 | 4.59x
+#   1044329       |   327001 |   327001 |    +0 |     14846 |      6143 | 2.42x
+#   1189261       |   302399 |   302399 |    +0 |     18127 |      6234 | 2.91x
+#   1279330       |   206214 |   207027 |  +813 |     24723 |      4404 | 5.61x
+#   1418519       |   164133 |   164133 |    +0 |     31507 |      7453 | 4.23x
+#
+#   TOTALS bytes: c6=1,230,874 B → c7=1,232,021 B  (+1147 B, +0.0932%)
+#   TOTALS wall:  c6=116,587 ms → c7=30,204 ms     (3.86× speedup at e11 median)
+#
+# Honest finding from per-seed cost tracing:
+#   - 3/5 photos byte-identical with c6 (1044329, 1189261, 1418519)
+#   - 2/5 photos regress (1025469: +334B, 1279330: +813B)
+#   - The "low chunk-3 spread predicts no further improvement" hypothesis is
+#     PARTIALLY FALSE: 1279330 has the lowest chunk-3 spread (0.31%) but
+#     seeds 4..15 DO find a 0.69% cost improvement (seed 4 wins).
+#     Similarly 1025469 has spread 1.71% but seed 9 wins (0.034% cost).
+#   - The 5% threshold is calibrated as a Pareto sweet spot: maximizes
+#     wall-clock savings (3.86×) while keeping byte regression to ~0.09%.
+#
+# Hash-locks:    36/36 byte-identical (tests/hash_lock_features.rs unchanged
+#                since e ≤ 9 has tree_learn_seeds = 1 → early-out never enters).
+# Unit tests:    12/12 pass (tests::test_early_out_*).
+# rd-regression: not re-run (changes only affect e10/e11 lossless paths).
+#
+# Files changed:
+#   jxl-encoder/src/modular/tree_learn.rs   (+helper, +const, +tests)
+#   jxl-encoder/src/modular/section.rs      (+early-out wire-up)
+#   jxl-encoder/Cargo.toml                  (+[[example]] registration)
+#   jxl-encoder/examples/e10_e11_multiseed_chunk7_ab.rs (new)

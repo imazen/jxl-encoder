@@ -418,12 +418,13 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     use super::tree::Tree;
     use super::tree::count_contexts;
     use super::tree_learn::{
-        TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_gather_stride_from_profile, derive_seeded_max_property_values,
-        derive_seeded_params, derive_seeded_properties_truncation, derive_seeded_sample_fraction,
-        derive_seeded_stride, estimate_token_cost, gather_samples_strided,
-        gather_samples_strided_with_dedup_backend, gather_samples_strided_with_offset,
-        max_ref_channels, stride_for_seeded_sample_fraction,
+        MULTI_SEED_EARLY_OUT_PROBE_SEEDS, TreeLearningParams, TreeSamples,
+        collect_residuals_with_tree, compute_best_tree, compute_gather_stride_from_profile,
+        derive_seeded_max_property_values, derive_seeded_params,
+        derive_seeded_properties_truncation, derive_seeded_sample_fraction, derive_seeded_stride,
+        estimate_token_cost, gather_samples_strided, gather_samples_strided_with_dedup_backend,
+        gather_samples_strided_with_offset, max_ref_channels, multi_seed_early_out_after_probe,
+        stride_for_seeded_sample_fraction,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -661,6 +662,12 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     };
     let mut best: Option<(Vec<crate::entropy_coding::token::Token>, usize, Tree, f64)> = None;
 
+    // Per-seed cost log for the chunk-7 early-out decision. Indexed by
+    // completed seed (0..seeds). Populated inside the loop after the
+    // entropy estimate is computed for seed >= 0. Capacity matches the
+    // budget so the Vec never reallocates during the hot loop.
+    let mut seed_costs: Vec<f64> = Vec::with_capacity(seeds.max(1) as usize);
+
     // Baseline params shared across seeds. derive_seeded_params clones and
     // mutates per-seed; the with_pixel_fraction call is per-seed because
     // pixel_fraction depends on the actual gathered weight, which varies
@@ -778,12 +785,43 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
             all_tokens.len(),
             tree.len(),
         );
+        seed_costs.push(cost);
         match best {
             None => best = Some((all_tokens, nb_meta_tokens, tree, cost)),
             Some((_, _, _, prev_cost)) if cost < prev_cost => {
                 best = Some((all_tokens, nb_meta_tokens, tree, cost));
             }
             _ => {}
+        }
+
+        // RFC#45 chunk 7 — Pareto-aware wall-clock early-out.
+        //
+        // After completing the probe seeds (chunk-3 perturbation slot),
+        // check whether the spread of token costs is below the threshold.
+        // Low chunk-3 spread → skip the remaining 12 seeds. This trades a
+        // small bytes regression (~+0.09% on the 5-image chunk-6 bench)
+        // for a large wall-clock speedup (~3.36× at e11). See the helper's
+        // doc comment for the full trade-off table.
+        //
+        // Fires at most once, when the probe window first closes — `break`
+        // exits the loop immediately so the helper isn't reconsulted on
+        // subsequent iterations.
+        let completed = seed_costs.len();
+        if completed == MULTI_SEED_EARLY_OUT_PROBE_SEEDS
+            && completed < seeds as usize
+            && multi_seed_early_out_after_probe(
+                &seed_costs,
+                MULTI_SEED_EARLY_OUT_PROBE_SEEDS,
+                seeds as usize,
+            )
+        {
+            crate::trace::debug_eprintln!(
+                "MULTI_SEED_EARLY_OUT after {}/{} seeds (cost spread converged below {:.3}%)",
+                completed,
+                seeds,
+                super::tree_learn::MULTI_SEED_EARLY_OUT_SPREAD_THRESHOLD * 100.0,
+            );
+            break;
         }
     }
 

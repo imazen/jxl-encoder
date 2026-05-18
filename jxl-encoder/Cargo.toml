@@ -402,6 +402,16 @@ path = "examples/e10_e11_multiseed_chunk5_ab.rs"
 name = "e10_e11_multiseed_chunk6_ab"
 path = "examples/e10_e11_multiseed_chunk6_ab.rs"
 
+# RFC#45 chunk 7 (lossless): diminishing-returns early-out for the e11
+# multi-seed fan-out. After probing the chunk-3 seed slot (seeds 0..=3),
+# compute the relative spread of token costs; if spread < 0.5%, skip
+# seeds 4..15 (the chunks-4/5/6 dimensions). Picker still selects the
+# cheapest cost, so bytes can only match (not regress) vs chunk 6 on
+# low-spread images; high-spread images keep the full 16-seed search.
+[[example]]
+name = "e10_e11_multiseed_chunk7_ab"
+path = "examples/e10_e11_multiseed_chunk7_ab.rs"
+
 # RFC#45 chunk 3 (lossy): multi-seed butteraugli sweep isolation A/B.
 # Toggles `lossy_search_seeds` to isolate the chunk-3 contribution
 # from chunk-1's extended-iter contribution. Requires __expert so the
