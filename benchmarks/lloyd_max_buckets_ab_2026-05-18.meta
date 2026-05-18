@@ -1,0 +1,19 @@
+# Lloyd-Max bucket boundaries A/B benchmark (EX-J5 reinterpretation)
+# Date: 2026-05-18
+# Host: $(hostname 2>/dev/null || echo unknown)
+# Command: SAMPLES=3 THREADS=8 EFFORT=7 cargo run --release -p jxl-encoder \
+#   --features '__expert parallel-tree-learning' --example lloyd_max_buckets_ab
+#
+# Baseline (A): sort-quantile bucket boundaries (the existing default).
+# Variant (B): Lloyd-Max iterative clustering on properties 4 (|N|),
+#              5 (|W|), 15 (wp_max_error) — the residual-energy proxies.
+# Other 13 MA-tree properties keep the sort-quantile path in both arms.
+#
+# Bytes are deterministic; encode_ms is min across N samples (load-contam
+# noise visible on the +148% / +23% cells — see clic_07b9f93f / cid22_1025469).
+# Aggregate -0.168% bytes across 5 textured photos at e7 lossless.
+#
+# Reproducer:
+#   git log -1 --format='%H'      # commit hash for provenance
+#   cargo run --release -p jxl-encoder --features '__expert parallel-tree-learning' \
+#     --example lloyd_max_buckets_ab -- > benchmarks/lloyd_max_buckets_ab_$(date -u +%Y-%m-%d).tsv
