@@ -188,6 +188,7 @@ pub fn jpeg_cfl_search(
 }
 
 /// Per-tile chroma-from-luma map.
+#[derive(Clone)]
 pub struct CflMap {
     /// YtoX values per tile, row-major.
     pub ytox: Vec<i8>,

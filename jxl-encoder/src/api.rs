@@ -1385,6 +1385,44 @@ pub enum ContainerMode {
     Never,
 }
 
+/// Trait bundle for output destinations that support both writing and
+/// random-access seeking. Required by the streaming-refactor
+/// [`LossyEncoder::finish_to_seekable`] / [`LosslessEncoder::finish_to_seekable`]
+/// entry points (jxl-encoder#11 chunk 6).
+///
+/// The blanket impl covers every type that implements [`std::io::Write`]
+/// + [`std::io::Seek`], so concrete callers don't need to opt in:
+///
+/// ```ignore
+/// use std::io::Cursor;
+/// use jxl_encoder::{LossyConfig, Quality, PixelLayout};
+///
+/// let mut buf = Cursor::new(Vec::<u8>::new());
+/// LossyConfig::new(1.0)
+///     .encoder(1024, 1024, PixelLayout::Rgb8)?
+///     .finish_to_seekable(&mut buf)?;
+/// let encoded: Vec<u8> = buf.into_inner();
+/// # Ok::<(), jxl_encoder::EncodeError>(())
+/// ```
+///
+/// **Chunk 6 (this commit)** plumbs the trait through both encoder
+/// builders but uses it only as a [`std::io::Write`]: the buffered-
+/// output bytes are produced in memory then written in one pass. The
+/// seek capability becomes load-bearing in chunk 7 when the level-3
+/// streaming-output path lands (permuted TOC + DC-global placeholder +
+/// post-frame seek-back, mirroring libjxl `acc28c0` /
+/// `OutputProcessor::Seek`).
+///
+/// Mirrors libjxl's "streaming_output" assumption in
+/// `EncodeFrameStreaming` (`enc_frame.cc:2042-2200`) that the output
+/// sink can rewind to the DC-global slot once all per-DC-group section
+/// bytes are known.
+#[cfg(feature = "std")]
+pub trait WritableSeek: std::io::Write + std::io::Seek {}
+
+#[cfg(feature = "std")]
+impl<T: std::io::Write + std::io::Seek> WritableSeek for T {}
+
 /// Input/output buffering policy for the encode pipeline. Mirrors
 /// libjxl `cjxl --buffering -1..3`
 /// ([`JXL_ENC_FRAME_SETTING_BUFFERING`][libjxl-encode-h]).
@@ -7066,6 +7104,12 @@ impl<'a> EncodeRequest<'a> {
         enc.progressive = cfg.progressive;
         enc.use_lf_frame = cfg.lf_frame;
         enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
+        // Streaming refactor #11 chunk 6: thread the caller-selected
+        // [`Buffering`] policy into VarDctEncoder so the per-region
+        // precompute dispatch (precomputed.rs:compute_with_budget_and_buffering)
+        // can route on it. `Buffering::Auto` resolves on image size at
+        // dispatch time.
+        enc.buffering = cfg.buffering;
         #[cfg(feature = "butteraugli-loop")]
         {
             enc.butteraugli_iters = cfg.butteraugli_iters;
@@ -7954,6 +7998,39 @@ impl LossyEncoder {
         Ok(result)
     }
 
+    /// Encode, writing to a seekable destination (any type that
+    /// implements [`WritableSeek`], e.g. `std::fs::File` /
+    /// `std::io::Cursor<Vec<u8>>`).
+    ///
+    /// **Streaming refactor #11 chunk 6**: this is the seek-aware
+    /// finish path. Chunk-6 implementation routes through
+    /// [`Self::finish_inner`] like [`Self::finish_to`] — the buffered-
+    /// output one-shot bytes are computed in memory then written to
+    /// the sink in a single pass. The seek capability is plumbed but
+    /// **not yet exercised** because the level-3 streaming-output
+    /// path (`Buffering::FullStreaming` with permuted TOC + DC-global
+    /// placeholder + seek-back) is a chunk-7 deliverable.
+    ///
+    /// Callers should prefer [`Self::finish_to`] when the destination
+    /// only implements `Write` (e.g. a network socket). Use this entry
+    /// point when the destination is a file or in-memory cursor that
+    /// can accept the chunk-7 seek-back semantics without API
+    /// changes.
+    ///
+    /// libjxl reference: PR #4728 (`6553831`) — fixes the
+    /// `permuted_toc=0` bit on the non-streaming path. We mirror that
+    /// fix in chunk 7 alongside the actual seek-back implementation.
+    #[cfg(feature = "std")]
+    #[track_caller]
+    pub fn finish_to_seekable(self, mut dest: impl WritableSeek) -> Result<EncodeResult> {
+        let mut result = self.finish_inner().map_err(at)?;
+        if let Some(data) = result.data.take() {
+            dest.write_all(&data)
+                .map_err(|e| at(EncodeError::from(e)))?;
+        }
+        Ok(result)
+    }
+
     fn finish_inner(self) -> core::result::Result<EncodeResult, EncodeError> {
         if self.rows_pushed != self.height {
             return Err(EncodeError::InvalidInput {
@@ -8150,6 +8227,9 @@ impl LossyEncoder {
             enc.progressive = cfg.progressive;
             enc.use_lf_frame = cfg.lf_frame;
             enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
+            // Streaming refactor #11 chunk 6 (streaming LossyEncoder
+            // path).
+            enc.buffering = cfg.buffering;
             #[cfg(feature = "butteraugli-loop")]
             {
                 enc.butteraugli_iters = cfg.butteraugli_iters;
@@ -8937,6 +9017,26 @@ impl LosslessEncoder {
     #[cfg(feature = "std")]
     #[track_caller]
     pub fn finish_to(self, mut dest: impl std::io::Write) -> Result<EncodeResult> {
+        let mut result = self.finish_inner().map_err(at)?;
+        if let Some(data) = result.data.take() {
+            dest.write_all(&data)
+                .map_err(|e| at(EncodeError::from(e)))?;
+        }
+        Ok(result)
+    }
+
+    /// Encode, writing to a seekable destination ([`WritableSeek`]).
+    ///
+    /// **Streaming refactor #11 chunk 6**: seek-aware finish hook for
+    /// the lossless modular encoder. Same chunk-6 caveat as
+    /// [`LossyEncoder::finish_to_seekable`] — the bytes are computed in
+    /// memory and written in a single pass today; the level-3 seek-
+    /// back machinery (chunk 7) will use the seek capability once it
+    /// lands. See [`LossyEncoder::finish_to_seekable`] for the full
+    /// contract.
+    #[cfg(feature = "std")]
+    #[track_caller]
+    pub fn finish_to_seekable(self, mut dest: impl WritableSeek) -> Result<EncodeResult> {
         let mut result = self.finish_inner().map_err(at)?;
         if let Some(data) = result.data.take() {
             dest.write_all(&data)
@@ -9978,6 +10078,8 @@ fn encode_animation_lossy(
     enc.progressive = cfg.progressive;
     enc.use_lf_frame = cfg.lf_frame;
     enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
+    // Streaming refactor #11 chunk 6 (animation frame path).
+    enc.buffering = cfg.buffering;
     #[cfg(feature = "butteraugli-loop")]
     {
         enc.butteraugli_iters = cfg.butteraugli_iters;

@@ -217,6 +217,82 @@ impl EncoderPrecomputed {
         color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
         budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     ) -> crate::error::Result<Self> {
+        // Default Buffering::Auto for legacy callers without an
+        // explicit policy (preserves the chunk-5 byte-identical contract:
+        // Auto resolves to `FullBuffered` ≤2048² and `BufferedOutput`
+        // otherwise; both still dispatch through the whole-image path
+        // at chunk 6 unless the env var forces per-region).
+        Self::compute_with_budget_and_buffering(
+            width,
+            height,
+            linear_rgb,
+            distance,
+            cfl_enabled,
+            ac_strategy_enabled,
+            pixel_domain_loss,
+            enable_noise,
+            enable_denoise,
+            enable_gaborish,
+            enable_adaptive_gaborish,
+            enable_patches,
+            use_ans,
+            encoder_mode,
+            force_strategy,
+            profile,
+            color_encoding,
+            budget,
+            crate::api::Buffering::Auto,
+        )
+    }
+
+    /// Chunk-6 entry that accepts a [`crate::api::Buffering`] hint and
+    /// dispatches the per-DC-group precompute step accordingly.
+    ///
+    /// Routing matrix (resolves `Buffering::Auto` via
+    /// [`crate::api::Buffering::resolve_for`]):
+    ///
+    /// | Resolved variant      | Image size      | Path                                                            |
+    /// |-----------------------|-----------------|-----------------------------------------------------------------|
+    /// | `FullBuffered`        | any             | [`fill_dc_group_state_whole_image`] (chunk 3)                   |
+    /// | `Threshold2048`       | ≤2048²          | [`fill_dc_group_state_whole_image`]                             |
+    /// | `Threshold2048`       | >2048²          | [`fill_dc_group_state_per_region`] (chunk 5)                    |
+    /// | `BufferedOutput`      | any (≥1 group)  | [`fill_dc_group_state_per_region`]                              |
+    /// | `FullStreaming`       | any (≥1 group)  | [`fill_dc_group_state_per_region`]                              |
+    ///
+    /// The legacy `JXL_STREAMING_CHUNK5=1` env var still forces the
+    /// per-region path so existing CI / dev scripts keep working; it
+    /// supersedes the `Buffering`-derived dispatch when set.
+    ///
+    /// **Chunk 6 (this commit) does NOT yet drop per-DC-group plane
+    /// buffers** — the per-region path still accumulates into
+    /// whole-image-sized `quant_field` / `mask1x1` / post-gaborish XYB
+    /// Vecs so the downstream [`crate::vardct::encoder::VarDctEncoder::encode_from_precomputed`]
+    /// consumer (which expects whole-image planes) keeps working. Chunk
+    /// 7 lands the actual per-DC-group buffer drop once the encode-side
+    /// can consume per-region slices via the chunk-4 `encode_dc_group`
+    /// primitive.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn compute_with_budget_and_buffering(
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+        distance: f32,
+        cfl_enabled: bool,
+        ac_strategy_enabled: bool,
+        pixel_domain_loss: bool,
+        enable_noise: bool,
+        enable_denoise: bool,
+        enable_gaborish: bool,
+        enable_adaptive_gaborish: bool,
+        enable_patches: bool,
+        use_ans: bool,
+        encoder_mode: crate::api::EncoderMode,
+        force_strategy: Option<u8>,
+        profile: &crate::effort::EffortProfile,
+        color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
+        budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+        buffering: crate::api::Buffering,
+    ) -> crate::error::Result<Self> {
         // Step 1: compute the truly global state (XYB convert, noise,
         // patches, chromacity stats, pre-gaborish snapshot). This is
         // the part of the pipeline that fundamentally needs to see the
@@ -241,26 +317,38 @@ impl EncoderPrecomputed {
         )?;
 
         // Step 2: run the per-DC-group pipeline (quant_field / mask1x1
-        // / gaborish / CfL / AC strategy). Dispatch:
+        // / gaborish / CfL / AC strategy). Chunk-6 dispatch matrix:
         //
-        //   - Default (chunk 3): whole-image precompute → per-DC-group
+        //   - `Buffering::FullBuffered` (or `Auto` resolved to it for
+        //     ≤2048² images): whole-image precompute → per-DC-group
         //     slice for CfL / AC strategy. Bit-identical to the
-        //     pre-refactor monolith. This is the hash-locked path.
+        //     pre-refactor monolith. Hash-locked path.
+        //   - `Buffering::BufferedOutput` / `Buffering::FullStreaming` /
+        //     `Buffering::Auto` resolved to `BufferedOutput` (>2048²):
+        //     per-region precompute via [`fill_dc_group_state_per_region`].
+        //     Bit-equal output on every tested input today (chunk-5
+        //     buffering_dispatch tests pin 5/5 variant byte-identity on
+        //     a 2560×2560 multi-DC-group encode); per-region
+        //     quant_field/mask1x1/gaborish FP drift is <=256 ULPs at the
+        //     unit-test level but the downstream quantization absorbs it.
         //
-        //   - Opt-in (chunk 5): per-region quant_field / mask1x1 /
-        //     gaborish via `fill_dc_group_state_per_region`. Currently
-        //     gated behind the `JXL_STREAMING_CHUNK5` env var for
-        //     correctness validation; not wired to any `Buffering`
-        //     variant in the default path. Chunk 6 will wire this once
-        //     `encode_dc_group` (chunk 4) lets the loop driver drop
-        //     per-region bitstream state.
+        // Legacy escape hatch: `JXL_STREAMING_CHUNK5=1` env var still
+        // forces the per-region path (chunk-5 dev/CI scripts may rely
+        // on it). When set, the env var supersedes the `Buffering`
+        // routing.
+        let resolved = buffering.resolve_for(width as u32, height as u32);
+        let buffering_wants_per_region = matches!(
+            resolved,
+            crate::api::Buffering::BufferedOutput | crate::api::Buffering::FullStreaming
+        );
         #[cfg(feature = "std")]
-        let per_region = matches!(
+        let env_forces_per_region = matches!(
             std::env::var("JXL_STREAMING_CHUNK5"),
             Ok(ref v) if v == "1"
         );
         #[cfg(not(feature = "std"))]
-        let per_region = false;
+        let env_forces_per_region = false;
+        let per_region = buffering_wants_per_region || env_forces_per_region;
         let DcGroupFill {
             quant_field_float,
             masking,

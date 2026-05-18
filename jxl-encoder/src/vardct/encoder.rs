@@ -562,6 +562,26 @@ pub struct VarDctEncoder {
     /// existing hash-lock byte-identical). See
     /// [`crate::api::LossyConfig::with_content_aware_entropy_mul`].
     pub content_aware_entropy_mul: bool,
+    /// Streaming-refactor buffering policy (jxl-encoder#11).
+    ///
+    /// Mirrors libjxl `JXL_ENC_FRAME_SETTING_BUFFERING` integers via
+    /// [`crate::api::Buffering`]. **Chunk 6**: routed into
+    /// [`super::precomputed::EncoderPrecomputed::compute_with_budget`]
+    /// where it selects between the whole-image precompute (chunk 3)
+    /// and the per-region precompute (chunk 5,
+    /// [`super::precomputed::fill_dc_group_state_per_region`]). At chunk
+    /// 6 every variant still produces byte-identical output — the
+    /// per-region path's <=256 ULP individual-pixel FP drift was proven
+    /// in the chunk-5 tests to absorb into bit-equal output on the rd-
+    /// regression set and the hash_lock corpus. Real memory savings land
+    /// in chunk 7 when [`super::precomputed::EncoderPrecomputed`]'s
+    /// whole-image plane Vecs become per-DC-group sliding windows.
+    ///
+    /// Default [`crate::api::Buffering::Auto`] resolves to
+    /// [`crate::api::Buffering::FullBuffered`] for ≤2048² images and
+    /// [`crate::api::Buffering::BufferedOutput`] for larger inputs,
+    /// matching libjxl post-`032d39a`.
+    pub buffering: crate::api::Buffering,
 }
 
 impl Default for VarDctEncoder {
@@ -631,6 +651,7 @@ impl Default for VarDctEncoder {
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
             content_aware_entropy_mul: false,
+            buffering: crate::api::Buffering::default(),
         }
     }
 }
@@ -703,6 +724,7 @@ impl VarDctEncoder {
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
             content_aware_entropy_mul: false,
+            buffering: crate::api::Buffering::default(),
         }
     }
 
@@ -2526,26 +2548,32 @@ impl VarDctEncoder {
         // that all subsequent precomputation sees the patches-subtracted
         // XYB. Matches libjxl pipeline order
         // (`enc_heuristics.cc:1057-1194`).
-        let precomputed = super::precomputed::EncoderPrecomputed::compute_with_budget(
-            width,
-            height,
-            linear_rgb,
-            self.distance,
-            self.cfl_enabled,
-            self.ac_strategy_enabled,
-            self.pixel_domain_loss,
-            self.enable_noise,
-            self.enable_denoise,
-            self.enable_gaborish,
-            self.enable_adaptive_gaborish,
-            self.enable_patches,
-            self.use_ans,
-            self.encoder_mode,
-            self.force_strategy,
-            &self.profile,
-            self.color_encoding.as_ref(),
-            self.budget.as_ref(),
-        )?;
+        // Chunk-6 (#11): route the caller's Buffering policy into
+        // EncoderPrecomputed. `Buffering::Auto` resolves on image size;
+        // explicit `BufferedOutput` / `FullStreaming` engage the
+        // per-region precompute path.
+        let precomputed =
+            super::precomputed::EncoderPrecomputed::compute_with_budget_and_buffering(
+                width,
+                height,
+                linear_rgb,
+                self.distance,
+                self.cfl_enabled,
+                self.ac_strategy_enabled,
+                self.pixel_domain_loss,
+                self.enable_noise,
+                self.enable_denoise,
+                self.enable_gaborish,
+                self.enable_adaptive_gaborish,
+                self.enable_patches,
+                self.use_ans,
+                self.encoder_mode,
+                self.force_strategy,
+                &self.profile,
+                self.color_encoding.as_ref(),
+                self.budget.as_ref(),
+                self.buffering,
+            )?;
 
         // Run rate control loop
         super::rate_control::encode_with_rate_control(self, &precomputed, config)
