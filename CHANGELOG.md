@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **RFC#45 chunk 1 admit-gate widening: actually apply the code changes
+  the parent commit promised** (`c20e326c`, follow-on to `24f071db`).
+  The parent shipped CHANGELOG + bench data only; this commit applies
+  the actual widening: `vardct/lf_frame.rs:258` `min(10)` → `min(11)`,
+  doc comments at 5 sites (`EffortProfile.effort`,
+  `FrameEncoderOptions.effort`, `VarDctEncoder.effort`, `encode_lf_frame`,
+  CLI `--effort` help) `1-10` → `1-11`, and 5 effort-loop test ranges
+  in `effort.rs` `1..=10` → `1..=11`. Also replaces the partial
+  (sample 1 + half of sample 2) committed acceptance TSV with the full
+  5-sample grid — numbers reproduce exactly (encoder is deterministic):
+  e10 17/20 (85%) PASS, e11 8/20 (40%) FAIL. Defaults unchanged (e7);
+  hash-locks 36/36 byte-identical; 1170 lib tests pass.
+
 ### Added
 
 - **RFC#45 chunk 1 admit-gate widening: e10 / e11 effort ceiling open

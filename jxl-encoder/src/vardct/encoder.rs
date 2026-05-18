@@ -152,7 +152,8 @@ const SQUEEZE_LUMA_QTABLE: [f32; SQUEEZE_LUMA_QTABLE_LEN] = [
 pub struct VarDctEncoder {
     /// Target distance (quality). 1.0 = visually lossless.
     pub distance: f32,
-    /// Effort level (1–10). Controls AC strategy gating and search depth.
+    /// Effort level (1–11). Controls AC strategy gating and search depth.
+    /// e10/e11 extends libjxl kTortoise=9 via extended search budgets.
     pub effort: u8,
     /// Centralized effort-derived decisions. All effort-gated constants and
     /// thresholds are read from this profile instead of inline `if effort >= N`.

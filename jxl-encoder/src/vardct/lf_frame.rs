@@ -130,7 +130,7 @@ fn round_hafz(val: f32) -> i32 {
 /// * `xsize_blocks` - Number of 8x8 blocks horizontally
 /// * `ysize_blocks` - Number of 8x8 blocks vertically
 /// * `use_ans` - Whether to use ANS entropy coding
-/// * `effort` - Effort level (1-10)
+/// * `effort` - Effort level (1-11; e10/e11 extends libjxl kTortoise=9)
 pub(crate) fn encode_lf_frame(
     float_dc: &[Vec<f32>; 3],
     main_distance: f32,
@@ -254,8 +254,11 @@ pub(crate) fn encode_lf_frame(
     // libjxl (enc_cache.cc:134-136) uses one speed_tier SLOWER (= more effort) for DC:
     //   speed_tier' = max(kTortoise, speed_tier - 1)
     // Lower speed_tier = more effort in libjxl. Our effort scale is reversed (higher = more).
-    // So DC gets effort + 1, capped at 10.
-    let lf_effort = (effort + 1).min(10);
+    // So DC gets effort + 1, capped at 11 (RFC#45 chunk-1 admit-gate widening:
+    // e10/e11 fall through to the e9 (kTortoise) lossless DC code via
+    // EffortProfile::lossless's internal saturation, but we widen the cap so
+    // callers passing with_effort(11) are not silently clipped to 10 here).
+    let lf_effort = (effort + 1).min(11);
     let mut profile =
         crate::effort::EffortProfile::lossless(lf_effort, crate::api::EncoderMode::Reference);
     // libjxl (enc_cache.cc:121) disables patches for DC frames.
