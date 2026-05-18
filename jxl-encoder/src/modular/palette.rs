@@ -53,12 +53,21 @@ pub struct ModularKnobs {
     /// `enc_params.h:options.predictor`).
     ///
     /// `Some(n)` for `n in 0..=13` corresponds to
-    /// [`crate::modular::Predictor`] variants `Zero..Average4`. The tree
-    /// learner path still selects per-leaf predictors (libjxl
-    /// `Predictor::Variable` behaviour); the override is stored on the
-    /// knobs so callers can inspect it, but only the non-tree path
-    /// (Gradient default) honours it today. `n in 14..=15` (`Best` /
-    /// `Variable`) is accepted and clamped per
+    /// [`crate::modular::Predictor`] variants `Zero..Average4`. Routed
+    /// through the tree-learn path via
+    /// [`super::encode::resolve_tree_learn_force_predictor`] (single-
+    /// leaf tree override) and through every no-tree-learn writer via
+    /// [`super::encode::resolve_fixed_predictor`].
+    ///
+    /// `Some(14)` is the **RIGED** override (Sharma 2018) on the tree-
+    /// learn path — substitutes a 3-leaf gradient-aware MA tree via
+    /// [`super::encode::resolve_tree_learn_riged_tree`]. On no-tree
+    /// paths it falls back to Gradient (id 5) since those writers can't
+    /// express per-pixel switching. `Some(15)` is libjxl's `Variable`
+    /// meta-mode, which always falls through to the per-leaf ID3
+    /// learner on the tree-learn path and to Gradient on no-tree paths.
+    ///
+    /// Values are clamped to `0..=15` per
     /// [`crate::api::LosslessConfig::with_modular_predictor`].
     pub modular_predictor: Option<u8>,
     /// Override the multi-channel palette colour cap (libjxl

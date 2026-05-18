@@ -4,6 +4,51 @@
 
 ### Added
 
+- **EX-J4 — RIGED gradient-aware modular predictor via
+  `--modular-predictor 14`** (encoder-only meta-mode). Per Sharma
+  et al. 2018 *Resolution-Independent Gradient-aware Edge Detection*:
+  switches per-pixel among West / North / `Average((W+N)/2)` based on
+  the relative strength of the vertical vs horizontal local
+  gradient.
+
+  Implementation: hand-crafted 3-leaf MA tree
+  ([`modular::tree::riged_tree`]) that gates on properties 13
+  (`|NW - W|`) and 10 (`|W - WW|`) at a bit-depth-scaled threshold
+  (T = 44 for ≤ 8-bit, T = 768 for 16-bit, linear interpolation
+  in-between). The wire bitstream uses only spec-conformant
+  predictors (1, 2, 3) and properties — pixel-exact decode verified
+  via jxl-rs and djxl.
+
+  Slot: libjxl's `Predictor::Best` (id 14) is an encoder-only
+  meta-mode never emitted on the wire; we repurpose this CLI slot
+  for RIGED so the wireup matches `cjxl -P 14`. Id 15 (`Variable`)
+  continues to fall through to the ID3 tree learner.
+
+  **Honest measurement**: on 5 CLIC 2025 1024×1024 photos at e7
+  lossless, RIGED is **+25% larger** than the ID3-learned default
+  and **+1.6% larger** than `--no-tree-learning -P 5` (single-leaf
+  Gradient). The 3-leaf approximation of Sharma's continuous
+  `A_v vs A_h` discriminator loses to ID3's multi-context tree
+  (~100+ leaves over 14 properties) and gives up enough vs a
+  single-leaf Gradient to not pay for its extra context overhead on
+  photographic content. The paper's 0.3–0.7% gain figure is vs
+  classical predictors (JPEG-LS / MED / Paeth), not vs libjxl's
+  ID3-learned MA tree.
+
+  Kept as an opt-in research/comparison tool — the bytes regression
+  is real on photos, but the override is useful for synthetic /
+  benchmarking workflows and as a baseline against which future
+  multi-property gradient-aware overrides can be A/B'd. Default
+  output (`modular_predictor = None`) byte-identical
+  (`hash_lock_features` 36/36 unchanged).
+
+  Tests: 7 unit tests in `modular::tree::tests::test_riged_tree_*`
+  (shape, bit-depth threshold scaling, decoder validation, per-leaf
+  routing). 3 API tests in `api_tests::modular_knobs_predictor_*`
+  (engagement vs default, pixel-exact jxl-rs roundtrip, fall-back
+  invariants on no-tree paths). Wire bitstream verified pixel-exact
+  on 5 CLIC photos via the external `djxl` binary.
+
 - **Chroma subsampling chunk 5 — `ChromaSubsampling::Sub422` and
   `Sub440` now encode end-to-end via the same JPEG-shaped pipeline
   used by Sub420** (issue #47 follow-on to chunk 4 `7a21379f`). When

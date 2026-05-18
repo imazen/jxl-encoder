@@ -444,6 +444,36 @@ pub(crate) fn resolve_tree_learn_force_predictor(
     }
 }
 
+/// Resolve the RIGED (Sharma 2018, Resolution-Independent Gradient-aware
+/// Edge Detection) override for the tree-learning path.
+///
+/// Returns `Some(tree)` (a hand-crafted multi-leaf MA tree implementing
+/// the RIGED switching rule) when the caller asked for predictor id
+/// `14`, an encoder-only meta-mode in libjxl. The tree-learn path can
+/// then bypass ID3 and use this fixed-shape tree directly — same
+/// integration as [`resolve_tree_learn_force_predictor`] but routed
+/// through a multi-leaf tree instead of a single-leaf one.
+///
+/// Returns `None` for all other ids — including libjxl's other encoder-
+/// only meta-mode `15` (`Variable`), which keeps falling through to ID3
+/// to match its libjxl semantics ("tree learner picks per-leaf").
+///
+/// `bit_depth` is the modular channel bit depth ([`super::channel::ModularImage::bit_depth`]),
+/// used to scale the RIGED threshold (`T = 44` for ≤ 8-bit, `T = 768`
+/// for 16-bit).
+///
+/// See [`super::tree::riged_tree`] for the tree shape and references.
+#[inline]
+pub(crate) fn resolve_tree_learn_riged_tree(
+    knobs: &super::palette::ModularKnobs,
+    bit_depth: u32,
+) -> Option<super::tree::Tree> {
+    match knobs.modular_predictor {
+        Some(14) => Some(super::tree::riged_tree(bit_depth)),
+        _ => None,
+    }
+}
+
 /// Simpler stream without LZ77 but with gradient prediction.
 pub fn write_simple_modular_stream(
     image: &ModularImage,
@@ -2064,6 +2094,15 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     } else {
         resolve_tree_learn_force_predictor(knobs)
     };
+    // RIGED meta-mode override (id 14). Mutually exclusive with
+    // `force_predictor` since `Predictor::from_id(14) → None`. Skipped on
+    // the lossy modular path for the same reason as `force_predictor`:
+    // lossy needs the forced-split multiplier tree, not an override.
+    let riged_override = if is_lossy {
+        None
+    } else {
+        resolve_tree_learn_riged_tree(knobs, image.bit_depth)
+    };
 
     let tree = if let Some(ref mul_info) = multiplier_info {
         // Lossy: use forced-split tree learning with multiplier info
@@ -2073,6 +2112,10 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     } else if let Some(forced) = force_predictor {
         // Force-predictor override: single-leaf tree, no ID3.
         super::tree::simple_tree(forced)
+    } else if let Some(riged) = riged_override {
+        // RIGED override (id 14): hand-crafted 3-leaf gradient-aware
+        // tree, no ID3.
+        riged
     } else {
         compute_best_tree(&mut samples, &params)
     };

@@ -655,7 +655,21 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     // the same per-pixel residual path used for ID3-learned trees.
     let force_predictor = super::encode::resolve_tree_learn_force_predictor(knobs);
 
-    let seeds = if force_predictor.is_some() {
+    // RIGED meta-mode override (libjxl `cjxl -P 14` slot in our wiring —
+    // Sharma 2018 Resolution-Independent Gradient-aware Edge Detection).
+    // Mutually exclusive with `force_predictor` because `from_id(14) →
+    // None` keeps `force_predictor = None` for id 14. When set, the
+    // tree-learn path bypasses ID3 and uses a hand-crafted multi-leaf
+    // tree implementing the RIGED switch rule. Like `force_predictor`,
+    // the per-pixel residual collector + ANS code build path is shared
+    // with the ID3-learned tree, so this is a tree-shape override only.
+    //
+    // bit_depth is taken from the first image (all images in a multi-
+    // group encode share the same bit depth — see `ModularImage`).
+    let riged_bit_depth = images.first().map(|img| img.bit_depth).unwrap_or(8);
+    let riged_override = super::encode::resolve_tree_learn_riged_tree(knobs, riged_bit_depth);
+
+    let seeds = if force_predictor.is_some() || riged_override.is_some() {
         1
     } else {
         profile.tree_learn_seeds.max(1)
@@ -689,9 +703,13 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         // Gather + tree-learn for this seed — skipped entirely when the
         // force-predictor override is active (the single-leaf tree below
         // does not consume samples, and gather is the dominant cost at
-        // e7+).
+        // e7+). The RIGED override (predictor id 14) takes the same
+        // gather-skip shortcut and substitutes a 3-leaf gradient-aware
+        // tree instead of a single-leaf one.
         let tree = if let Some(forced) = force_predictor {
             super::tree::simple_tree(forced)
+        } else if let Some(ref riged) = riged_override {
+            riged.clone()
         } else {
             let mut samples = crate::profile_time!("modular/gather_samples", {
                 gather_for_seed(seed, seed_stride)
@@ -723,13 +741,20 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
             })
         };
 
-        if force_predictor.is_none() {
+        if force_predictor.is_none() && riged_override.is_none() {
             crate::trace::debug_eprintln!(
                 "GLOBAL_MODULAR_TREE seed={}/{}: {} nodes (ID3 learned, seed_stride={})",
                 seed,
                 seeds,
                 tree.len(),
                 seed_stride,
+            );
+        } else if riged_override.is_some() {
+            crate::trace::debug_eprintln!(
+                "GLOBAL_MODULAR_TREE seed={}/{}: {} nodes (RIGED predictor-14 override)",
+                seed,
+                seeds,
+                tree.len(),
             );
         } else {
             crate::trace::debug_eprintln!(

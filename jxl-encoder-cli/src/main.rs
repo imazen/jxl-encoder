@@ -435,10 +435,18 @@ struct Args {
 
     /// Force a fixed modular predictor (lossless path). Mirrors libjxl
     /// `cjxl -P` / `--modular_predictor`. `0..=13` = the corresponding
-    /// `jxl_encoder::modular::Predictor` variant
-    /// (Zero..Average4); `14` = Best, `15` = Variable. Stored on the
-    /// config; encoder-side wiring of the no-tree-learning path is
-    /// queued follow-on work.
+    /// `jxl_encoder::modular::Predictor` variant (Zero..Average4); `15`
+    /// = libjxl `Variable` meta-mode (falls through to ID3 tree
+    /// learning).
+    ///
+    /// `14` is reserved by libjxl for the `Best` meta-mode. In this
+    /// encoder we repurpose it as **RIGED** — Sharma et al. 2018
+    /// Resolution-Independent Gradient-aware Edge Detection. Triggers a
+    /// hand-crafted 3-leaf MA tree that switches between
+    /// `Top`/`Left`/`Average((W+N)/2)` per pixel based on the dominant
+    /// local gradient direction. Encoder-only meta-mode; the wire
+    /// bitstream is decoder-legal (uses only wire predictors 1/2/3 and
+    /// wire properties 10/13). Mostly a win on textured content.
     #[arg(short = 'P', long, value_name = "N")]
     modular_predictor: Option<u8>,
 
