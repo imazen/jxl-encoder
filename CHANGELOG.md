@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Tests
+
+- **A1 audit PARTIAL items — regression-test cleanup chunk 1**: adds
+  three focused tests in `jxl-encoder/tests/lossy_knobs_wiring.rs`
+  closing the W12-4 audit's "wired but lacks regression test" notes on
+  `--center_x` / `--center_y`, `--brotli-effort`, and the lossless
+  `--keep_invisible=false` skip-RGB pre-pass.
+  (1) `center_xy_decodes_through_jxl_rs_and_oxide` encodes the same
+  512×512 image with three distinct AC-permutation centres (default,
+  top-left, bottom-left — each landing in a different central group of
+  the 2×2 grid), asserts the three bitstreams differ, then decodes each
+  through jxl-rs (PRIMARY) AND jxl-oxide (SECONDARY), confirming the
+  permutation never corrupts the file-header `SizeHeader`.
+  (2) `brotli_effort_q11_smaller_or_equal_to_q1_and_decodes` (gated
+  `brotli-metadata`) encodes a 64×64 RGB image with 4 KB of repeated XMP
+  at Brotli q=1 vs q=11, asserts both take the `brob` path, q=11 is
+  strictly smaller than q=1, and both bitstreams decode end-to-end via
+  jxl-rs + jxl-oxide — catches any future regression that silently pins
+  the quality at a default constant. (3)
+  `lossless_keep_invisible_false_jxl_rs_roundtrip` exercises the
+  existing-but-jxl-oxide-only `with_keep_invisible(false)` skip-RGB
+  pipeline via jxl-rs as well, asserting visible (`alpha=255`) pixels
+  round-trip exactly and invisible (`alpha=0`) pixels decode back to
+  `(0,0,0)` confirming the pre-pass zeros are preserved through the
+  bitstream. Hash-lock byte-identical (36/36).
+
 ### Fixed
 
 - **ChannelCompact for VarDCT extras (constant-channel case)** — closes
