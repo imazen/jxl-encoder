@@ -243,6 +243,15 @@ path = "examples/auto_splines_trace.rs"
 name = "patches_gate_bench"
 path = "examples/patches_gate_bench.rs"
 
+# A1 audit Top-5 #4 (W12-4 follow-on): alpha_distance parity audit vs cjxl
+# --alpha_distance D. Sweeps three RGBA test images at alpha_distance ∈
+# {0.5, 1.0, 2.0, 5.0} with both jxl-encoder and cjxl, decodes via jxl-rs,
+# and reports byte size + alpha MAE per (image, distance). See
+# /mnt/v/output/jxl-encoder/alpha-distance-audit-2026-05-17/ for sweep output.
+[[example]]
+name = "alpha_distance_audit"
+path = "examples/alpha_distance_audit.rs"
+
 # RFC#45 chunk 4 calibration harness — fits the per-pixel savings
 # constant in `PatchesData::is_cost_effective` from paired
 # patches-on/off trial encodes. Uses the `__internals`-gated
