@@ -237,6 +237,20 @@
 
 ### Added
 
+- **EX-J13 — Adaptive Gaborish kernel strength** (opt-in via
+  `LossyConfig::with_adaptive_gaborish(true)`, default `false`).
+  Encoder-side per-tile contrast lookup modulates the 5×5 sharpening
+  kernel's strength multiplier in `[0.8, 1.0]` on the Y (luma)
+  channel: libjxl-faithful `mul = 1.0` on edges/text, gentler
+  `mul ≈ 0.8` on smooth regions. X (red-green) and B (blue) keep
+  `mul = 1.0`. Wire-compatible — the decoder always applies the
+  same fixed 3×3 inverse Gabor blur, so adaptive sharpening must be
+  pre-baked into the post-Gab samples. Silent gate: a no-op when
+  `with_gaborish(false)` or when the `effective_gaborish()`
+  distance/speed-tier gates disable the inverse filter. New A/B
+  harness: `cargo run --release -p jxl-encoder --example adaptive_gaborish_ab`.
+  Default-off preserves byte-identical hash-locks (36/36 pass).
+
 - **RFC#45 chunk 1 admit-gate widening: e10 / e11 effort ceiling open
   end-to-end** (issue #45). Closes the residual surface that still
   pinned the effort range at `1..=10` after the parent commit landed

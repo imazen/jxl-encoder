@@ -2823,6 +2823,10 @@ pub struct LossyConfig {
     mode: EncoderMode,
     use_ans: bool,
     gaborish: bool,
+    /// EX-J13 — per-tile contrast-adaptive gaborish kernel strength.
+    /// Encoder-only; decoder always applies the fixed 3x3 inverse blur.
+    /// Default `false`. See [`Self::with_adaptive_gaborish`].
+    adaptive_gaborish: bool,
     noise: bool,
     /// When `Some(iso)`, synthesise noise from the ISO value rather
     /// than estimating from content. Matches libjxl `--photon_noise=ISO`.
@@ -3128,6 +3132,7 @@ impl LossyConfig {
             mode: EncoderMode::Reference,
             use_ans: profile.use_ans,
             gaborish: profile.gaborish,
+            adaptive_gaborish: false,
             noise: false,
             photon_noise_iso: None,
             manual_noise_lut: None,
@@ -3427,6 +3432,36 @@ impl LossyConfig {
     pub fn with_gaborish(mut self, enable: bool) -> Self {
         self.gaborish = enable;
         self
+    }
+
+    /// Enable EX-J13 — per-tile contrast-adaptive gaborish kernel strength
+    /// (default: `false`).
+    ///
+    /// When enabled, the encoder samples local Laplacian contrast per 16×16
+    /// tile on the Y (luma) channel and modulates the 5×5 sharpening
+    /// kernel's strength multiplier in `[0.8, 1.0]` — the libjxl-faithful
+    /// baseline `mul = 1.0` on edges/text, gentler `mul ≈ 0.8` on smooth
+    /// regions. X (red-green) and B (blue) keep `mul = 1.0`. The bias
+    /// below the baseline is deliberate: pushing `mul > 1.0` over-sharpens
+    /// natural content and blows up AC coefficient energy with no
+    /// perceptual win the decoder's fixed 3×3 inverse blur can recover.
+    ///
+    /// **Encoder-only.** The decoder always applies the same fixed 3×3
+    /// inverse Gabor blur; any adaptive sharpening must be pre-baked into
+    /// the post-Gab samples. Bitstream-compatible with all conformant
+    /// decoders.
+    ///
+    /// Silent gate: when [`Self::with_gaborish`] is `false` (or the
+    /// `effective_gaborish()` distance/speed-tier gates disable gab), this
+    /// flag is also a no-op.
+    pub fn with_adaptive_gaborish(mut self, enable: bool) -> Self {
+        self.adaptive_gaborish = enable;
+        self
+    }
+
+    /// Whether adaptive gaborish (EX-J13) is enabled. Defaults to `false`.
+    pub fn adaptive_gaborish(&self) -> bool {
+        self.adaptive_gaborish
     }
 
     /// Override the edge-preserving filter (EPF) iteration count.
@@ -6733,6 +6768,9 @@ impl<'a> EncodeRequest<'a> {
         // and unconditionally OFF at decoding_speed_tier == 4
         // (enc_frame.cc:280) — captured by `cfg.effective_gaborish()`.
         enc.enable_gaborish = cfg.effective_gaborish() && effective_distance > 0.5;
+        // EX-J13: adaptive gaborish is silently gated to be a subset of
+        // gaborish (no-op when the fixed inverse is disabled).
+        enc.enable_adaptive_gaborish = enc.enable_gaborish && cfg.adaptive_gaborish;
         // libjxl `--epf -1..3` override (enc_frame.cc:284-285). `-1` =
         // encoder chooses by distance; otherwise force the given count.
         enc.epf_level_override = if cfg.epf_level < 0 {
@@ -7824,6 +7862,9 @@ impl LossyEncoder {
             enc.original_distance = cfg.original_distance;
             enc.enable_denoise = cfg.denoise;
             enc.enable_gaborish = cfg.effective_gaborish() && effective_distance > 0.5;
+            // EX-J13: adaptive gaborish is silently gated to be a subset of
+            // gaborish (no-op when the fixed inverse is disabled).
+            enc.enable_adaptive_gaborish = enc.enable_gaborish && cfg.adaptive_gaborish;
             // libjxl `--epf -1..3` override (enc_frame.cc:284-285). `-1`
             // = encoder chooses by distance; otherwise force the given
             // count.
@@ -9651,6 +9692,9 @@ fn encode_animation_lossy(
     // and unconditionally OFF at decoding_speed_tier == 4
     // (enc_frame.cc:280) — captured by `cfg.effective_gaborish()`.
     enc.enable_gaborish = cfg.effective_gaborish() && cfg.distance > 0.5;
+    // EX-J13: adaptive gaborish is silently gated to be a subset of
+    // gaborish (no-op when the fixed inverse is disabled).
+    enc.enable_adaptive_gaborish = enc.enable_gaborish && cfg.adaptive_gaborish;
     // libjxl `--epf -1..3` override (enc_frame.cc:284-285). `-1` =
     // encoder chooses by distance; otherwise force the given count.
     enc.epf_level_override = if cfg.epf_level < 0 {

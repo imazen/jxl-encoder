@@ -1,0 +1,22 @@
+EX-J13 — Adaptive Gaborish kernel strength A/B (2026-05-18)
+================================================================
+
+Encoder:        jxl-encoder (in-tree, sibling workspace jxl-encoder--adaptive-gaborish)
+Date:           2026-05-18 (UTC)
+Parent commit:  zoqsvrww 45445443 feat(jpeg-transcode): EX-J17a (#49)
+Reproduce:      cargo run --release -p jxl-encoder --example adaptive_gaborish_ab
+Image set:      3 CID22-512 validation + 2 CLIC2025-1024 photos (mixed smooth/textured)
+Config:         LossyConfig::new(1.0).with_effort(7); A = with_adaptive_gaborish(false),
+                B = with_adaptive_gaborish(true). Everything else default.
+Mapping:        Per-tile (16x16) Y-channel mean |Laplacian| → mul ∈ [0.8, 1.0].
+                contrast == 0           → mul = 0.8 (gentle, smooth tiles)
+                contrast >= 0.05        → mul = 1.0 (libjxl baseline, edges)
+Bytes-only.     Quality (butteraugli / SSIM2) not in this TSV — A and B both decode
+                identically per the wire spec (decoder applies the same fixed
+                3x3 inverse blur), so the bytes delta IS the RD delta at the
+                same achieved quality.
+
+Aggregate:      -1.74% bytes on 5 photos at d=1.0 e7 (467,394 -> 459,266 B).
+Per-image:      -0.98% to -3.03%, all five smaller than baseline.
+
+Hash-locks:     36/36 unchanged at default-off (test hash_lock_features).

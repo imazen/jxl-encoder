@@ -319,6 +319,14 @@ required-features = ["__internals"]
 name = "patches_gate_experimental_ab"
 path = "examples/patches_gate_experimental_ab.rs"
 
+# EX-J13 — Adaptive Gaborish kernel strength A/B. Encodes 5 mixed
+# photos at d=1.0 e7 with and without
+# `LossyConfig::with_adaptive_gaborish(true)` and prints a TSV with
+# bytes / delta per image plus a totals row.
+[[example]]
+name = "adaptive_gaborish_ab"
+path = "examples/adaptive_gaborish_ab.rs"
+
 # RFC#45 chunks 4-7 lossless backport — fits the per-pixel savings
 # constant for `PatchesData::is_cost_effective_lossless` from paired
 # patches-on/off trial encodes in lossless mode. Lossless has no

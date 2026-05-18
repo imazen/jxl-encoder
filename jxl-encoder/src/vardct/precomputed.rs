@@ -162,6 +162,7 @@ impl EncoderPrecomputed {
             enable_noise,
             enable_denoise,
             enable_gaborish,
+            /* enable_adaptive_gaborish */ false,
             /* enable_patches */ false,
             /* use_ans */ true,
             crate::api::EncoderMode::Reference,
@@ -197,6 +198,7 @@ impl EncoderPrecomputed {
         enable_noise: bool,
         enable_denoise: bool,
         enable_gaborish: bool,
+        enable_adaptive_gaborish: bool,
         enable_patches: bool,
         use_ans: bool,
         encoder_mode: crate::api::EncoderMode,
@@ -208,7 +210,7 @@ impl EncoderPrecomputed {
         use super::ac_strategy::compute_ac_strategy;
         // adaptive_quant helpers are referenced through their module path below.
         use super::chroma_from_luma::compute_cfl_map;
-        use super::gaborish::gaborish_inverse;
+        use super::gaborish::gaborish_inverse_maybe_adaptive;
         use super::noise::{denoise_xyb, estimate_noise_params, noise_quality_coef};
 
         assert_eq!(linear_rgb.len(), width * height * 3);
@@ -418,12 +420,13 @@ impl EncoderPrecomputed {
         // Apply gaborish inverse (5x5 sharpening) on patches-subtracted
         // XYB AFTER quant_field / mask1x1.
         if enable_gaborish {
-            gaborish_inverse(
+            gaborish_inverse_maybe_adaptive(
                 &mut xyb_x,
                 &mut xyb_y,
                 &mut xyb_b,
                 padded_width,
                 padded_height,
+                enable_adaptive_gaborish,
                 budget,
             )?;
         }

@@ -1517,12 +1517,13 @@ impl VarDctEncoder {
         // and the still-image paths at vardct/encoder.rs:973 and
         // vardct/precomputed.rs:403.
         if self.enable_gaborish {
-            super::gaborish::gaborish_inverse(
+            super::gaborish::gaborish_inverse_maybe_adaptive(
                 &mut xyb_x,
                 &mut xyb_y,
                 &mut xyb_b,
                 padded_width,
                 padded_height,
+                self.enable_adaptive_gaborish,
                 self.budget.as_ref(),
             )?;
         }
