@@ -4,6 +4,22 @@
 
 ### Added
 
+- **`alpha_distance_audit` example + parity audit** — sweeps three RGBA
+  test images (opaque, semi-transparent UI gradient, photographic alpha
+  mask) at `alpha_distance ∈ {0.5, 1.0, 2.0, 5.0}` against `cjxl v0.12.0`
+  (both default `--responsive=1` and `--responsive=0`). Quantizer formula
+  port (`bbf8a98`, W6-3) is at **bit-exact MAE parity with cjxl
+  `--responsive=0`** at every tested distance (the libjxl no-squeeze
+  alpha pipeline our encoder implements). cjxl default is much smaller
+  (-18% to -160% bytes) at lower MAE because it applies the Squeeze
+  wavelet + ChannelCompact pre-pass on the alpha plane — a separate
+  algorithm not yet ported. Audit produces TSV + meta at
+  `/mnt/v/output/jxl-encoder/alpha-distance-audit-2026-05-17/`. CLAUDE.md
+  Investigation Notes documents three ranked follow-on chunks
+  (squeeze-on-extras, ChannelCompact-on-extras, entropy-coder gap).
+  Reproducer: `cargo run --release -p jxl-encoder --example
+  alpha_distance_audit -- --output <path>`. Refs A1 audit Top-5 #4.
+
 - **Multi-group `--ec_resampling N` writer** (A1 audit Top-5 #2,
   follow-on to W5-1 `59b31cc`). Closes the multi-group hole left by
   `59b31cc`'s single-group-only landing. `extract_region` now

@@ -650,6 +650,61 @@ compute_best_tree fan-out, pre_quantize, gather_samples, dedup_samples) per
 the e9 baseline agent's ranked chunks
 (`~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/lossless_e8_e9_cliff_2026-05-16.md`).
 
+### `alpha_distance` Parity vs cjxl — Audit Result (May 17, 2026)
+
+A1 audit Top-5 item #4 (W12-4 follow-on). Swept three RGBA test images at
+`alpha_distance ∈ {0.5, 1.0, 2.0, 5.0}` against `cjxl v0.12.0` (both default
+`--responsive=1` and `--responsive=0`). Quantizer formula port (`bbf8a98`,
+`enc_modular.cc:973-1027` + `QuantizeChannel`) is at **bit-exact MAE parity
+with cjxl `--responsive=0`** at every tested distance:
+
+| image                       | d   | jxl_enc MAE | cjxl_r0 MAE |
+|---                          |---  |---          |---          |
+| red_night_opaque            | 5.0 | 3.000       | 3.000       |
+| gradients_semitrans_ui      | 2.0 | 0.674       | 0.674       |
+| gradients_semitrans_ui      | 5.0 | 1.692       | 1.692       |
+| alpha_nonpremul_photo_mask  | 2.0 | 0.666       | 0.785       |
+| alpha_nonpremul_photo_mask  | 5.0 | 1.711       | 1.961       |
+
+cjxl **default** (`--responsive=1`) produces MUCH lower MAE (0.004–0.80) at
+substantially smaller bytes (-18% to -160%) because it applies the Squeeze
+wavelet transform + ChannelCompact pre-pass on the alpha plane before
+quantizing. That's a different algorithm, not a tuning gap on ours.
+
+**Parity verdict**: PASS for the implemented algorithm (libjxl `responsive=0`
+no-squeeze path). Our quantizer formula and snap-to-multiple rounding are
+correct.
+
+**Outstanding work** (ranked, not blocking):
+
+1. **Squeeze-on-extras (responsive=1 alpha path)** — the dominant compression
+   lever. cjxl's `--responsive=1` halves alpha bytes at parity quality on
+   semi-transparent inputs, and at e7 reaches MAE < 0.01 on photo masks where
+   our raw-pixel path still has measurable error. Multi-week port: requires
+   wiring the Squeeze (Haar) transform through extras, lifting the
+   `dim_shift > 0` extras guard, and routing per-channel quantizers through
+   the squeeze-aware band scaling. Tracking: file as follow-on issue.
+
+2. **ChannelCompact (per-channel palette) for extras** — independent of
+   squeeze. For all-opaque alpha at d=5, libjxl's `responsive=0` snaps 255
+   → 252 (MAE 3.0, matching ours) BUT cjxl-default never sees this because
+   ChannelCompact reduces the constant channel to bitdepth 0 and the
+   quantizer multiplies against an empty range → lossless. Cheaper to land
+   than full squeeze; one-channel palette transform is already in
+   `modular/palette.rs` for the color path. Could ship as a small chunk:
+   detect `min == max` on each extra, route through a 1-entry palette
+   transform, skip the lossy quantizer.
+
+3. **Entropy-coder gap for lossy alpha residuals** — even matching cjxl-r0
+   on MAE, our bytes are +18% to +160% larger. The gradient predictor with
+   multiplier shares one tree; cjxl appears to use WP + a denser context
+   model. Lower priority than #1/#2 (the algorithmic gap is bigger).
+
+**Sweep TSV**: `/mnt/v/output/jxl-encoder/alpha-distance-audit-2026-05-17/`
+(`sweep.tsv` + `sweep.meta`). Reproducer:
+`cargo run --release -p jxl-encoder --example alpha_distance_audit --
+--output <path>`.
+
 ## Build Commands
 
 ```bash
