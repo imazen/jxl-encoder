@@ -653,6 +653,24 @@
   and `::sub420_decodes_via_djxl_when_available` (djxl test skips
   cleanly when the libjxl binary is not on `$PATH`).
 
+### Fixed
+
+- **Flaky `test_thread_local_workspace_caps_allocations` under
+  parallel `cargo test --lib` pressure** (issue #51). The test
+  measured `SplitWorkspace::new` allocations via a process-global
+  `before`/`after` delta on `SPLIT_WS_ALLOC_COUNT`, which any
+  concurrently-running test that called `compute_best_tree` could
+  pollute (production callers exist in `modular/section.rs`,
+  `modular/encode.rs`, `vardct/dc_tree_learn.rs`). Fix: added a
+  thread-local `IS_TEST_POOL_THREAD` marker plus a dedicated
+  `SPLIT_WS_ALLOC_COUNT_TEST_POOL` counter that only increments on
+  threads where the marker is set, and rewrote the test to build a
+  private `rayon::ThreadPool` whose `start_handler` sets the marker
+  on each worker. The measurement is now immune to allocations on
+  the global rayon pool or any unmarked thread. Verified pass 8/8
+  on full `cargo test --lib` under `--test-threads=8` and
+  `--test-threads=1`.
+
 ### Performance
 
 - **e10/e11 multi-seed chunk 7 — Pareto-aware wall-clock early-out for
