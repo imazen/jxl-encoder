@@ -1,0 +1,95 @@
+EX-J11 chunk 2 — HDR-VDP-2-lite vs butteraugli acceptance bench
+================================================================
+
+Date: 2026-05-18
+Host: lilith (AMD Ryzen 9 7950X, 128 GB)
+jj change @: mtoqltnr 26e3be10 wip(hdr-vdp2): chunk 2 — real VDP2-lite implementation
+git parent: fa7a2b5a feat(hdr): EX-J11 chunk 1 — HDR-VDP-2 loss dispatch (stub + framework)
+Build: `cargo build --release -p jxl-encoder --features butteraugli-loop`
+Command: `cargo run --release -p jxl-encoder --features butteraugli-loop --example hdr_vdp2_chunk2_bench -- benchmarks/hdr_vdp2_chunk2_bench_2026-05-18.tsv`
+
+Inputs
+------
+
+Synthetic 128×128 image:
+  - Diagonal sRGB-8 luminance gradient covering the full [0, 255] range.
+  - 2-pixel checkerboard ±8 overlay drives the high-frequency CSF band.
+
+Cells: 3 intensity_targets × 3 distances × 2 losses = 18 rows.
+  - intensity_target_nits ∈ {80, 1000, 4000}.
+  - distance ∈ {0.5, 1.0, 2.0}.
+  - loss ∈ {butteraugli, vdp2}.
+  - effort = 8 (the lowest level that runs the butteraugli loop;
+    HDR loss dispatch is only meaningful inside the loop).
+
+What this bench is and isn't
+----------------------------
+
+This is the **chunk-2 acceptance gate** — it proves the dispatch fires
+and the VDP2-lite metric responds to intensity_target. It is **not** a
+full BD-rate comparison against the HDR-AIC-2025 corpus (chunk-3
+follow-on once the corpus harness lands).
+
+Acceptance criteria
+-------------------
+
+1. Both losses complete the encode at every cell (no crashes, no
+   typed errors). PASS — all 18 cells encode successfully.
+
+2. Butteraugli output is INVARIANT to intensity_target (the
+   `butteraugli::ButteraugliParams` is hardcoded to 80 nits inside our
+   loop). PASS — for every (distance, butteraugli) pair, all three
+   intensity_target values produce the same byte count:
+     d=0.5: 1933 bytes at 80/1000/4000 nits
+     d=1.0: 1507 bytes at 80/1000/4000 nits
+     d=2.0: 991 bytes at 80/1000/4000 nits
+
+3. VDP2-lite output SCALES with intensity_target (the metric's
+   Mantiuk-CSF peak sensitivity grows with adaptation luminance, so the
+   buttloop is told to keep iterating until a tighter quant_field
+   meets the perceptual bound). PASS:
+     d=0.5: 3351 / 4204 / 4204 bytes (80 / 1000 / 4000 nits)
+     d=1.0: 2270 / 3539 / 3559 bytes
+     d=2.0: 1138 / 2519 / 2598 bytes
+   Direction is correct (more bits at higher intensity_target),
+   magnitude is reasonable (~2× at peak HDR vs SDR for d=2.0).
+
+4. At SDR (80 nits) VDP2-lite produces non-trivially different picks
+   from butteraugli — proving the metric isn't degenerating into a
+   "just match butteraugli" no-op. PASS:
+     d=0.5 SDR: 3351 (VDP2) vs 1933 (butteraugli) — 1.73× larger.
+     d=2.0 SDR: 1138 (VDP2) vs 991 (butteraugli) — 1.15× larger.
+   The larger SDR files are a known direction of VDP2 vs butteraugli
+   on this synthetic content (sharp checkerboard high-frequency band
+   has higher CSF weight under Mantiuk than under butteraugli's
+   per-channel hf_asymmetry); the metric isn't supposed to be
+   bit-equivalent at SDR, just numerically comparable. The buttloop's
+   accept_bound = 1.05 × target_distance still applies — the metric
+   converges, just to a different optimum.
+
+Known gaps (chunk-3 follow-on)
+------------------------------
+
+- No real HDR corpus measurement. Synthetic content proves dispatch
+  works; CID22-PQ + butteraugli/SSIM2/ssim2 RD curves would prove
+  *quality* improvement.
+- No cortex-channel / orientation decomposition.
+- No chromatic sensitivity (luminance-only metric).
+- No masking model (linear difference, not phase-uncertain).
+- No polynomial JOD calibration (we ship raw pooled detection
+  probability, not 100-point quality scale).
+
+See vardct/hdr_vdp2_lite.rs module docs for the full deviation list
+and rationale.
+
+Reproduction
+------------
+
+```
+cargo run --release -p jxl-encoder \
+  --features butteraugli-loop \
+  --example hdr_vdp2_chunk2_bench -- /path/to/out.tsv
+```
+
+Bytes are deterministic on a given build — re-running on the same
+toolchain + same source tree must produce identical numbers.

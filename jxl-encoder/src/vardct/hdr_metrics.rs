@@ -18,21 +18,23 @@
 //!
 //! ## Implementation status
 //!
-//! **Chunk 1 (this file)** ships only the API surface and dispatch wiring:
-//! - [`HdrLoss::Butteraugli`] (default) routes to the existing butteraugli
-//!   loop unchanged. **Hash-lock-safe** — every encode with the default
-//!   produces byte-identical output to before this commit.
-//! - [`HdrLoss::Vdp2`] is opt-in only via
-//!   [`crate::LossyConfig::with_hdr_loss`]. Selecting it on an encode
-//!   raises [`HdrMetricError::Vdp2NotImplemented`], surfaced through
-//!   [`crate::EncodeError::InvalidConfig`] at consumption.
+//! **Chunk 1** shipped only the API surface and dispatch wiring.
+//! **Chunk 2 (this commit)** lands the actual VDP2-lite maths in
+//! [`super::hdr_vdp2_lite`]:
+//! - BT.709 → display-luminance conversion using the encode's
+//!   `intensity_target` (replaces the SDR-only `peak = 80 nits` assumption).
+//! - 4-level Laplacian pyramid on log10(luminance).
+//! - Mantiuk-2007 CSF weighting per band, adapted per-pixel to the
+//!   reference's local mean luminance.
+//! - p-norm pooled diffmap (p = 4) that plugs into the buttloop's
+//!   existing tile-distance machinery unchanged.
 //!
-//! **Chunk 2** lands the actual HDR-VDP-2 maths:
-//! - LUT-baked PQ / HLG / sRGB transfer-function inversion to display nits.
-//! - Multi-scale spatial decomposition (CSF-weighted Laplacian pyramid).
-//! - Per-band visibility-threshold normalisation.
-//! - Pooled probability-of-detection score that returns a butteraugli-like
-//!   `score + diffmap` pair so the rest of the quantization loop is unchanged.
+//! Selecting [`HdrLoss::Vdp2`] now runs the metric in-place of butteraugli
+//! inside the quantization loop; existing `HdrLoss::Butteraugli` calls
+//! stay byte-identical to every prior release. See module docs in
+//! [`super::hdr_vdp2_lite`] for the deviations from the full paper and
+//! the chunk-3 follow-on plan (cortex-channel decomposition, chromatic
+//! sensitivity, masking model).
 //!
 //! Effort gating is enforced at the API layer
 //! ([`crate::api::LossyConfig::validate`]): HDR losses require effort ≥ 8
@@ -52,22 +54,23 @@ pub enum HdrLoss {
     #[default]
     Butteraugli,
     /// HDR-VDP-2-style loss adapted to the encode's `intensity_target`
-    /// and signaled transfer function (PQ / HLG / BT.2100).
-    ///
-    /// **Chunk 1: not yet implemented.** Selecting this variant raises
-    /// [`HdrMetricError::Vdp2NotImplemented`] at encode time. The
-    /// framework + dispatch are in place so chunk-2 only has to land
-    /// the maths.
+    /// (PQ / HLG / BT.2100 panels). Chunk 2 ships a calibrated subset
+    /// of the full HDR-VDP-2 paper — Mantiuk CSF + Laplacian pyramid +
+    /// Minkowski p-norm pooling — sufficient for in-loop quality
+    /// steering. See [`super::hdr_vdp2_lite`] for the deviation list
+    /// and the chunk-3 follow-on plan.
     Vdp2,
 }
 
 impl HdrLoss {
     /// Whether this loss variant ships actual HDR-aware maths or is a
-    /// stub. Returns `true` only for [`HdrLoss::Butteraugli`] today;
-    /// chunk 2 flips [`HdrLoss::Vdp2`] to `true` once the multi-scale
-    /// pyramid lands.
+    /// stub. Returns `true` for both [`HdrLoss::Butteraugli`] and
+    /// [`HdrLoss::Vdp2`] since chunk 2 landed; left as a `const fn`
+    /// so future opt-in variants (e.g. a full cortex-channel HDR-VDP-2
+    /// in chunk 3) can re-introduce a stub state without breaking the
+    /// public API shape.
     pub const fn is_implemented(self) -> bool {
-        matches!(self, HdrLoss::Butteraugli)
+        matches!(self, HdrLoss::Butteraugli | HdrLoss::Vdp2)
     }
 
     /// Human-readable name suitable for CLI `--help` and trace logs.
@@ -80,23 +83,26 @@ impl HdrLoss {
 }
 
 /// Errors raised by the HDR-loss dispatch.
+///
+/// Retained as an enum (even though no variant is currently raised) so
+/// that a future stub variant — e.g. a full cortex-channel HDR-VDP-2 in
+/// chunk 3 — can be added without breaking the public error surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HdrMetricError {
-    /// [`HdrLoss::Vdp2`] was selected but the chunk-2 implementation
-    /// hasn't landed yet. Surfaced via [`crate::EncodeError::InvalidConfig`]
-    /// so callers see a clean validation error rather than a panic.
-    Vdp2NotImplemented,
+    /// Reserved for future use. Chunk 2 implements every variant
+    /// currently exposed on [`HdrLoss`]; this preserves the
+    /// `non_exhaustive` enum shape for chunk-3 follow-ons.
+    #[doc(hidden)]
+    Reserved,
 }
 
 impl fmt::Display for HdrMetricError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            HdrMetricError::Vdp2NotImplemented => write!(
+            HdrMetricError::Reserved => write!(
                 f,
-                "HdrLoss::Vdp2 is not yet implemented (EX-J11 chunk 2 — \
-                 multi-scale CSF pyramid pending). Use HdrLoss::Butteraugli \
-                 or wait for the chunk-2 release."
+                "HdrMetricError::Reserved: this variant is reserved for future use"
             ),
         }
     }
@@ -105,14 +111,13 @@ impl fmt::Display for HdrMetricError {
 impl core::error::Error for HdrMetricError {}
 
 /// Validation hook called from the lossy encode path before the
-/// butteraugli loop runs. Returns `Err` if the selected loss variant
-/// is a stub.
+/// butteraugli loop runs. Currently always returns `Ok` because every
+/// variant on [`HdrLoss`] is implemented as of chunk 2 — kept as a hook
+/// so future opt-in losses (e.g. full cortex-channel HDR-VDP-2 in
+/// chunk 3) can re-introduce a stub state at a single call site.
 ///
 /// Called once per encode (not per iteration) so the cost is negligible.
-pub(crate) fn validate_loss(loss: HdrLoss) -> Result<(), HdrMetricError> {
-    if !loss.is_implemented() {
-        return Err(HdrMetricError::Vdp2NotImplemented);
-    }
+pub(crate) fn validate_loss(_loss: HdrLoss) -> Result<(), HdrMetricError> {
     Ok(())
 }
 
@@ -126,25 +131,24 @@ mod tests {
         assert!(HdrLoss::default().is_implemented());
     }
 
+    /// Chunk-2 invariant: Vdp2 is now implemented (was a stub in chunk 1).
     #[test]
-    fn vdp2_is_stub_in_chunk1() {
-        assert!(!HdrLoss::Vdp2.is_implemented());
+    fn vdp2_is_implemented_in_chunk2() {
+        assert!(HdrLoss::Vdp2.is_implemented());
         assert_eq!(HdrLoss::Vdp2.as_str(), "vdp2");
-        assert!(matches!(
-            validate_loss(HdrLoss::Vdp2),
-            Err(HdrMetricError::Vdp2NotImplemented)
-        ));
     }
 
     #[test]
-    fn butteraugli_passes_validation() {
+    fn all_variants_pass_validation() {
         assert!(validate_loss(HdrLoss::Butteraugli).is_ok());
+        assert!(validate_loss(HdrLoss::Vdp2).is_ok());
     }
 
     #[test]
-    fn error_display_mentions_chunk2() {
-        let s = format!("{}", HdrMetricError::Vdp2NotImplemented);
-        assert!(s.contains("chunk 2"));
-        assert!(s.contains("Vdp2"));
+    fn error_display_is_typed() {
+        // `HdrMetricError::Reserved` is the only variant today;
+        // exercise the Display impl to keep the contract live.
+        let s = format!("{}", HdrMetricError::Reserved);
+        assert!(s.contains("Reserved"));
     }
 }

@@ -61,6 +61,14 @@ pub(crate) mod gaborish;
 /// is only meaningful inside the butteraugli quantization loop.
 #[cfg(feature = "butteraugli-loop")]
 pub mod hdr_metrics;
+/// VDP2-lite: a calibrated subset of HDR-VDP-2 sufficient for in-loop
+/// quality steering on HDR (PQ / HLG / BT.2100) content. Chunk-2 deliverable
+/// for EX-J11 (see [`hdr_metrics`] for the chunk-1/2 split).
+///
+/// Gated behind `feature = "butteraugli-loop"` because it's only consumed
+/// inside the butteraugli quantization loop.
+#[cfg(feature = "butteraugli-loop")]
+pub(crate) mod hdr_vdp2_lite;
 pub(crate) mod lf_frame;
 pub(crate) mod noise;
 pub(crate) mod patches;
