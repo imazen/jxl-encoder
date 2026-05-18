@@ -1,0 +1,19 @@
+# Streaming refactor #11 chunk 7 peak-RSS bench at 3072² and 4096²
+# Default LossyConfig::encode() path + rate-control path, fbm-ish content
+# Measurement: /usr/bin/time -v "Maximum resident set size" (kbytes → MiB)
+# All variants use default 2 GiB memory budget
+path	variant	w	h	bytes	rss_kbytes	rss_mib	took_s
+default_encode	FullBuffered	3072	3072	6973041	882344	861	4.20
+default_encode	BufferedOutput	3072	3072	6973041	882600	862	4.21
+default_encode	FullStreaming	3072	3072	6973041	882192	861	4.09
+default_encode	Auto	3072	3072	6973041	882344	861	4.21
+default_encode	FullBuffered	4096	4096	12382528	1564392	1527	6.87
+default_encode	BufferedOutput	4096	4096	12382528	1564392	1527	6.94
+default_encode	FullStreaming	4096	4096	12382528	1564136	1527	6.90
+default_encode	Auto	4096	4096	12382528	1564392	1527	6.68
+# Rate-control path (consumer of compute_with_budget_and_buffering)
+rate_control	FullBuffered	4096	4096	7336845	4547676	4441	10.13
+rate_control	Threshold2048	4096	4096	7336845	4547292	4440	10.20
+rate_control	BufferedOutput	4096	4096	7340945	4873880	4759	10.57
+rate_control	FullStreaming	4096	4096	7340945	4692248	4582	10.56
+rate_control	Auto	4096	4096	7340945	4825128	4712	10.47
