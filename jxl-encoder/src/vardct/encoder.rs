@@ -2630,11 +2630,9 @@ impl VarDctEncoder {
                 0u32
             }
         };
-        let routed_buffering = self.buffering.resolve_for_streaming(
-            width as u32,
-            height as u32,
-            buttloop_iters,
-        );
+        let routed_buffering =
+            self.buffering
+                .resolve_for_streaming(width as u32, height as u32, buttloop_iters);
         // Chunk-6 (#11): route the caller's Buffering policy into
         // EncoderPrecomputed. `Buffering::Auto` resolves on image size;
         // explicit `BufferedOutput` / `FullStreaming` engage the

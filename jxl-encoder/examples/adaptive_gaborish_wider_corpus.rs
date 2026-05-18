@@ -160,7 +160,10 @@ fn measure_bytes_and_quality(
 ) -> Option<(f64, f64)> {
     let (dw, dh, dec_lin) = decode_jxl_linear(bytes)?;
     if dw != w || dh != h {
-        eprintln!("  dimension mismatch: got {}x{} expected {}x{}", dw, dh, w, h);
+        eprintln!(
+            "  dimension mismatch: got {}x{} expected {}x{}",
+            dw, dh, w, h
+        );
         return None;
     }
     let dec_pixels: Vec<RGB<f32>> = dec_lin
@@ -227,16 +230,17 @@ fn parse_args() -> (PathBuf, Option<usize>, Option<usize>) {
 }
 
 fn write_header(path: &Path) -> std::io::Result<()> {
-    if path.exists() && std::fs::metadata(path).map(|m| m.len() > 0).unwrap_or(false) {
+    if path.exists()
+        && std::fs::metadata(path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
         return Ok(());
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    let mut f = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
+    let mut f = OpenOptions::new().create(true).append(true).open(path)?;
     writeln!(
         f,
         "image\tclass\twidth\theight\tdistance\teffort\tmode\tbytes\tbutteraugli\tssim2"
@@ -367,7 +371,13 @@ fn main() {
                     cells_written += 1;
                     eprintln!(
                         "  d={} e={} mode={}: {} B  bfly={:.4}  ssim2={:.2}  ({}ms)",
-                        d, eff, mode, enc_bytes.len(), bfly, ssim2, enc_ms
+                        d,
+                        eff,
+                        mode,
+                        enc_bytes.len(),
+                        bfly,
+                        ssim2,
+                        enc_ms
                     );
                 }
             }

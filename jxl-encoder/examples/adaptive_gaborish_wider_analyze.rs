@@ -163,7 +163,12 @@ fn main() {
     let path = parse_in_path();
     let rows = read_rows(&path);
     let pairs = pair_rows(&rows);
-    println!("# input: {} ({} rows, {} pairs)", path.display(), rows.len(), pairs.len());
+    println!(
+        "# input: {} ({} rows, {} pairs)",
+        path.display(),
+        rows.len(),
+        pairs.len()
+    );
 
     // Group by (class, distance, effort)
     let mut groups: HashMap<(String, String, u8), Vec<Pair>> = HashMap::new();
@@ -177,14 +182,12 @@ fn main() {
 
     // Sorted output
     let mut keys: Vec<(String, String, u8)> = groups.keys().cloned().collect();
-    keys.sort_by(|a, b| {
-        a.0.cmp(&b.0)
-            .then(a.2.cmp(&b.2))
-            .then(a.1.cmp(&b.1))
-    });
+    keys.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)).then(a.1.cmp(&b.1)));
 
     println!("\n## Per-cell means (class × distance × effort)");
-    println!("class\tdistance\teffort\tn\tbytes_d%_mean\tbfly_d%_mean\tssim2_d_mean\tworst_bfly_d%");
+    println!(
+        "class\tdistance\teffort\tn\tbytes_d%_mean\tbfly_d%_mean\tssim2_d_mean\tworst_bfly_d%"
+    );
     for k in &keys {
         let g = &groups[k];
         let bytes_d: Vec<f64> = g.iter().map(|p| p.bytes_delta_pct()).collect();
@@ -193,8 +196,14 @@ fn main() {
         let worst_bfly = bfly_d.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         println!(
             "{}\t{}\t{}\t{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
-            k.0, k.1, k.2, g.len(),
-            mean(&bytes_d), mean(&bfly_d), mean(&ssim2_d), worst_bfly
+            k.0,
+            k.1,
+            k.2,
+            g.len(),
+            mean(&bytes_d),
+            mean(&bfly_d),
+            mean(&ssim2_d),
+            worst_bfly
         );
     }
 
@@ -203,7 +212,10 @@ fn main() {
     println!("class\teffort\tn\tbytes_d%_mean\tbfly_d%_mean\tssim2_d_mean\tworst_bfly_d%");
     let mut by_cls_eff: HashMap<(String, u8), Vec<Pair>> = HashMap::new();
     for p in &pairs {
-        by_cls_eff.entry((p.class.clone(), p.effort)).or_default().push(p.clone());
+        by_cls_eff
+            .entry((p.class.clone(), p.effort))
+            .or_default()
+            .push(p.clone());
     }
     let mut ce_keys: Vec<(String, u8)> = by_cls_eff.keys().cloned().collect();
     ce_keys.sort();
@@ -223,16 +235,30 @@ fn main() {
             bytes_mean <= 0.5 && bfly_mean <= 2.0
         };
         per_pass.insert(k.clone(), pass);
-        if !pass { all_pass = false; }
+        if !pass {
+            all_pass = false;
+        }
         println!(
             "{}\t{}\t{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{}",
-            k.0, k.1, g.len(),
-            bytes_mean, bfly_mean, mean(&ssim2_d), worst_bfly,
+            k.0,
+            k.1,
+            g.len(),
+            bytes_mean,
+            bfly_mean,
+            mean(&ssim2_d),
+            worst_bfly,
             if pass { "PASS" } else { "FAIL" }
         );
     }
 
-    println!("\n## Decision: {}", if all_pass { "FLIP DEFAULT-ON" } else { "KEEP OPT-IN (gate failed)" });
+    println!(
+        "\n## Decision: {}",
+        if all_pass {
+            "FLIP DEFAULT-ON"
+        } else {
+            "KEEP OPT-IN (gate failed)"
+        }
+    );
     if !all_pass {
         println!("Failing cells:");
         for k in &ce_keys {
@@ -245,29 +271,57 @@ fn main() {
     // Top-3 wins and top-3 losses (photos and screenshots separately)
     for class in ["photo", "screenshot"] {
         let mut cps: Vec<&Pair> = pairs.iter().filter(|p| p.class == class).collect();
-        if cps.is_empty() { continue; }
+        if cps.is_empty() {
+            continue;
+        }
 
-        cps.sort_by(|a, b| a.bytes_delta_pct().partial_cmp(&b.bytes_delta_pct()).unwrap());
-        println!("\n## {} — top-3 byte wins (most-negative bytes delta)", class);
+        cps.sort_by(|a, b| {
+            a.bytes_delta_pct()
+                .partial_cmp(&b.bytes_delta_pct())
+                .unwrap()
+        });
+        println!(
+            "\n## {} — top-3 byte wins (most-negative bytes delta)",
+            class
+        );
         for p in cps.iter().take(3) {
             println!(
                 "  {} d={} e={}  bytes {} -> {}  ({:+.2}%)  bfly {:.4} -> {:.4} ({:+.2}%)  ssim2 {:.2} -> {:.2} ({:+.2})",
-                p.image, p.distance, p.effort,
-                p.fixed_bytes, p.adapt_bytes, p.bytes_delta_pct(),
-                p.fixed_bfly, p.adapt_bfly, p.bfly_delta_pct(),
-                p.fixed_ssim2, p.adapt_ssim2, p.ssim2_delta()
+                p.image,
+                p.distance,
+                p.effort,
+                p.fixed_bytes,
+                p.adapt_bytes,
+                p.bytes_delta_pct(),
+                p.fixed_bfly,
+                p.adapt_bfly,
+                p.bfly_delta_pct(),
+                p.fixed_ssim2,
+                p.adapt_ssim2,
+                p.ssim2_delta()
             );
         }
 
         cps.sort_by(|a, b| b.bfly_delta_pct().partial_cmp(&a.bfly_delta_pct()).unwrap());
-        println!("\n## {} — top-3 butteraugli regressions (most-positive bfly delta)", class);
+        println!(
+            "\n## {} — top-3 butteraugli regressions (most-positive bfly delta)",
+            class
+        );
         for p in cps.iter().take(3) {
             println!(
                 "  {} d={} e={}  bfly {:.4} -> {:.4} ({:+.2}%)  bytes {} -> {} ({:+.2}%)  ssim2 {:.2} -> {:.2} ({:+.2})",
-                p.image, p.distance, p.effort,
-                p.fixed_bfly, p.adapt_bfly, p.bfly_delta_pct(),
-                p.fixed_bytes, p.adapt_bytes, p.bytes_delta_pct(),
-                p.fixed_ssim2, p.adapt_ssim2, p.ssim2_delta()
+                p.image,
+                p.distance,
+                p.effort,
+                p.fixed_bfly,
+                p.adapt_bfly,
+                p.bfly_delta_pct(),
+                p.fixed_bytes,
+                p.adapt_bytes,
+                p.bytes_delta_pct(),
+                p.fixed_ssim2,
+                p.adapt_ssim2,
+                p.ssim2_delta()
             );
         }
     }
