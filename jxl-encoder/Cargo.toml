@@ -468,6 +468,24 @@ name = "lossless_e9_buckets_sweep"
 path = "examples/lossless_e9_buckets_sweep.rs"
 required-features = ["__expert"]
 
+# EX-J5 reinterpretation: Lloyd-Max bucket boundaries for energy-correlated
+# MA-tree properties (4, 5, 15) vs the sort-quantile default. Hash-locks
+# stay byte-identical at the default-OFF profile; this bench measures the
+# bytes / ms delta when the __expert override flips lloyd_max_buckets to
+# `Some(true)`. See `lloyd_max_buckets_ab.rs` for the harness body.
+[[example]]
+name = "lloyd_max_buckets_ab"
+path = "examples/lloyd_max_buckets_ab.rs"
+required-features = ["__expert"]
+
+# Emit one Lloyd-Max-encoded .jxl file for manual djxl / jxl-rs / jxl-oxide
+# decode validation. Companion to the integration test
+# `tests/lloyd_max_buckets_roundtrip.rs` which covers jxl-oxide automatically.
+[[example]]
+name = "lloyd_max_emit_jxl"
+path = "examples/lloyd_max_emit_jxl.rs"
+required-features = ["__expert"]
+
 # Paired A/B for the tree_max_buckets per-image dispatch (audit item #3).
 # Variant A = dispatch ON (new default). Variant B = dispatch OFF (force
 # effort-default via __expert override). Interleaved sample-major.
