@@ -30,6 +30,12 @@ archmage = { version = "0.9.15", default-features = false, features = ["macros"]
 rayon = { version = "1.10", optional = true }
 zenjpeg = { version = "0.8.4", default-features = false, features = ["decoder"], optional = true }
 brotli = { version = "8.0", default-features = false, features = ["std"], optional = true }
+# Issue #47 chunk 3: SIMD RGB↔YCbCr / 4:4:4 / 4:2:0 / 4:2:2 conversion +
+# Sharp YUV for chroma subsampling. Production-quality, archmage-based
+# (matches our SIMD dispatch convention). Used by the chroma-subsampling
+# helpers in `vardct::chroma_subsampling`. Gated `chroma-subsampling`
+# so callers that don't ship YCbCr paths don't pull the extra binary.
+zenyuv = { version = "0.1.3", default-features = false, optional = true }
 # Optional dependencies for butteraugli-loop and rate-control features
 jxl-oxide = { version = "0.12.5", default-features = false, optional = true }
 butteraugli = { version = "0.9", optional = true }
@@ -80,6 +86,15 @@ jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
 # libjxl default-on (`jpeg_compress_boxes = true`).
 brotli-metadata = ["dep:brotli"]
 parallel = ["std", "dep:rayon"]
+# Chroma subsampling (4:2:0 / 4:2:2 / 4:4:0) helpers — RGB→YCbCr conversion
+# and Sharp YUV chroma downsampling via the zenyuv crate. Issue #47 chunk 3.
+# API surface (`ChromaSubsampling` enum + `LossyConfig::with_chroma_subsampling`)
+# is always compiled; this feature only adds the conversion helpers in
+# `vardct::chroma_subsampling` and the zenyuv dep. Non-`Full444` modes
+# still return `EncodeError::InvalidConfig` until chunk 4 wires the
+# helpers through the VarDCT encode pipeline (per-channel block grids,
+# YCbCr colour pipeline switch — multi-week work).
+chroma-subsampling = ["dep:zenyuv"]
 # Parallel tree learning for lossless modular path.
 # After dedup, splits the sample range at the root partition point and builds
 # the left+right subtrees in parallel via `rayon::join` using owned per-side
