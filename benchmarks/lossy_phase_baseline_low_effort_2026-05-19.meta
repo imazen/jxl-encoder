@@ -1,0 +1,137 @@
+# Lossy encode per-phase wall-clock baseline at e2..=e5 (W38, 2026-05-19)
+
+## Provenance
+
+- Date: 2026-05-18 UTC (post-W36-1 extension downward in effort space)
+- Hostname: lilith (water-cooled AMD Ryzen 9 7950X, 32 threads, 128 GB RAM)
+- Parent commit: 70a48af9 (W36-1 baseline at e6/e7/e8)
+- Workspace: ~/work/zen/jxl-encoder--low-effort-baseline (jj sibling on main)
+- Encoder build: release, features `std parallel butteraugli-loop`
+- Sweep wall: 42.1s (JXL phase sweep only; cross-codec table in companion file)
+
+## Tool choice
+
+Identical pattern to W36-1: subprocess-per-encode driven by `examples/lossy_low_effort_zenjpeg_compare.rs`. Each subprocess sets `__JXL_ENC_PHASE_TIMING=1` so the existing `eprintln!` markers in `vardct::encoder::encode_inner` and `vardct::bitstream::encode_two_pass_to_writer` emit a single summary line per encode; the parent captures stderr and parses the `key=value` pairs. Default encodes (env var unset) are byte-identical to main (hash_lock contract preserved).
+
+## Sweep grid
+
+- 8 images: same as W36-1 (5 CID22-512 photos: 1025469/1044329/1189261/1279330/1418519 + 3 GB82-SC screenshots: codec_wiki/imac_g3/terminal). Photos 512×512 (0.26 MP). Screenshots 2560×1664 / 2940×1912 / 1646×1062.
+- 4 distances: 0.5, 1.0, 2.0, 4.0
+- 4 efforts: 2, 3, 4, 5 (extends W36-1's 6/7/8 downward)
+- 3 runs per cell (384 encodes total); median per phase kept
+
+## Reproducer
+
+```bash
+cargo build -p jxl-encoder --release --features 'std parallel butteraugli-loop' \
+    --example lossy_low_effort_zenjpeg_compare
+./target/release/examples/lossy_low_effort_zenjpeg_compare \
+    --out-jxl benchmarks/lossy_phase_baseline_low_effort_2026-05-19.tsv \
+    --out-cross benchmarks/lossy_phase_low_effort_with_zenjpeg_2026-05-19.tsv
+```
+
+## Phase definitions
+
+Identical column layout to `lossy_phase_baseline_2026-05-18.tsv`. See W36-1 meta for full phase-name → code-location table.
+
+## Headline numbers (mean ms, mean over corpus & distances)
+
+**Photo class (512×512, 0.26 MP):**
+
+| effort | total ms | dominant phase (% of total)                                 |
+|---     |---       |---                                                          |
+| e2     |   16.1   | (no phase markers — see "e2 fast path" below)              |
+| e3     |   25.7   | entropy 43%, build_codes 25%, xyb 17%, xform 17%            |
+| e4     |   27.1   | entropy 45%, build_codes 23%, xyb 16%, xform 15%            |
+| e5     |   37.9   | entropy 37%, build_codes 19%, xform 13%, xyb 12%            |
+
+**Screenshot class (2560²-class, ~5 MP):**
+
+| effort | total ms | dominant phase (% of total)                                 |
+|---     |---       |---                                                          |
+| e2     |  132.0   | (no phase markers — see "e2 fast path" below)              |
+| e3     |  168.7   | xform 33%, entropy 27%, build_codes 13%, ac_tok 8%          |
+| e4     |  176.5   | xform 32%, entropy 29%, build_codes 12%, ac_tok 7%          |
+| e5     |  276.9   | entropy 26%, xform 19%, quant_field 15%, build_codes 14%    |
+
+**Cross-effort ladder** (sorted by mean ms per (effort, phase) cell, top 10):
+
+| effort | phase           | ms_mean | %_mean | n |
+|---     |---              |---      |---     |---|
+| e5     | ms_entropy      |   36.3  |  33.2% | 32|
+| e4     | ms_entropy      |   27.1  |  38.9% | 32|
+| e3     | ms_entropy      |   23.8  |  36.3% | 32|
+| e3     | ms_xform        |   23.8  |  22.7% | 32|
+| e4     | ms_xform        |   23.4  |  21.1% | 32|
+| e5     | ms_xform        |   22.9  |  14.9% | 32|
+| e5     | ms_build_codes  |   19.4  |  16.8% | 32|
+| e5     | ms_quant_field  |   17.9  |  10.9% | 32|
+| e4     | ms_build_codes  |   12.1  |  18.7% | 32|
+| e3     | ms_build_codes  |   12.0  |  20.3% | 32|
+
+## e2 fast path: phase markers do not fire
+
+At e2 the `__JXL_ENC_PHASE_TIMING` markers in `encode_inner` and `encode_two_pass_to_writer` produce all-zero output. Root cause: `EffortProfile::new(2)` sets `optimize_codes=false` (effort.rs:666 sets the floor at e≥3), which routes encoding through the single-pass streaming-Huffman path (`encode_streaming` / `encode_one_pass_to_writer`) instead of the two-pass `encode_two_pass` path. The single-pass entry point doesn't have phase markers — it doesn't need them, because the entire encode is a single tight loop.
+
+Per the task spec ("note what gating drops out at low effort") here's what changes between e2 and e3:
+
+- **e2**: `use_ans=false`, `optimize_codes=false`. Static-Huffman one-pass encode through `encode_streaming`. Skips ALL of: histogram clustering, custom coefficient orders, pair-merge ANS quantization, two-pass parallel entropy. The implementation is the libjxl-tiny port path.
+- **e3**: `use_ans=true`, `optimize_codes=true`. Routes through `encode_two_pass` → entropy phase becomes visible (and dominant: 43% photo, 27% screenshot).
+
+This is why e3 is the lowest effort where phase profiling actually applies. The 16 ms / 132 ms e2 totals are still meaningful as a wall-clock floor for the cross-codec comparison.
+
+## What's missing at e2..e5 (sweep-level "gating drops out" table)
+
+The `EffortProfile::new(effort)` table (effort.rs:660-700) shows the per-effort feature dropouts:
+
+| feature             | gate         | e2 | e3 | e4 | e5 |
+|---                  |---           |----|----|----|----|
+| use_ans             | effort >= 3  | ✗  | ✓  | ✓  | ✓  |
+| optimize_codes      | effort >= 3  | ✗  | ✓  | ✓  | ✓  |
+| custom_orders       | effort >= 4  | ✗  | ✗  | ✓  | ✓  |
+| gaborish            | effort >= 5  | ✗  | ✗  | ✗  | ✓  |
+| pixel_domain_loss   | effort >= 5  | ✗  | ✗  | ✗  | ✓  |
+| patches             | effort >= 7  | ✗  | ✗  | ✗  | ✗  |
+| tree_learning       | effort >= 7  | ✗  | ✗  | ✗  | ✗  |
+| EPF sharpness       | effort >= 6  | ✗  | ✗  | ✗  | ✗  |
+| buttloop            | effort >= 8  | ✗  | ✗  | ✗  | ✗  |
+| custom AC strategies (>DCT8) | effort >= 5 | – | – | – | partial |
+
+Going from e4 → e5 we add: gaborish, pixel-domain loss, and richer AC strategy search. That accounts for the +11 ms jump on photos and +100 ms on screenshots between e4 and e5 (since gaborish + pixel-domain loss + quant_field add up to ~25 ms on photos and ~70 ms on screenshots in the e5 row).
+
+## Top adaptive-dispatch candidates for e5/e6 closure of zenjpeg gap
+
+(See companion file `lossy_phase_low_effort_with_zenjpeg_2026-05-19.meta` for cross-codec context.)
+
+### #1: Skip optimize_codes / two-pass at e5 on photo class (largest win)
+
+- **Phase**: `entropy` (37% of e5 photo wall-clock = 14 ms/cell mean)
+- **Lever**: at e2 the single-pass streaming Huffman path is 2.4× faster than e3's two-pass ANS path on photos (16 vs 26 ms total). On medium-quality photo content the bytes savings of two-pass are 10-20%; on high-quality (d=0.5) it's <5%. A content-aware gate could route low-distance/photo-class encodes through the single-pass path.
+- **Expected saving**: 8-14 ms/cell (= 25-40% of total e5 photo time).
+- **Risk**: at d>1.0 the two-pass advantage grows (quantized blocks have more symbol diversity); gating on `distance >= 1.0` would be conservative.
+
+### #2: Skip pixel-domain loss at e5 on photo class
+
+- **Phase**: composite of `quant_field` (10%) + `xform` (13%) at e5; e4 → e5 adds 11 ms on photos almost entirely from pixel-domain loss recomputation in AC strategy search.
+- **Lever**: e5 enables pixel_domain_loss (`pixel_domain_loss=true` from effort.rs:669). At low distances on photos the AC strategy choice rarely differs between coefficient-domain and pixel-domain cost (most blocks stay at DCT8). A gate on `mask1x1` low-variance (smooth photo content) could skip pixel-domain re-evaluation.
+- **Expected saving**: 7-11 ms/cell.
+- **Risk**: at d>=2.0 high-frequency content sees more strategy diversity → save less.
+
+### #3: xform parallel fan-out at e3/e4 on screenshots (largest screenshot lever)
+
+- **Phase**: `xform` is 33%/32% of e3/e4 screenshot wall-clock (~56 ms/cell mean on 5 MP).
+- **Lever**: forward DCT + quantize per 8×8 block. Currently single-threaded across groups at e3/e4 (parallel-tree-learning + parallel-pass2 land at higher efforts). For 5 MP screenshots this is the dominant non-entropy cost.
+- **Expected saving**: 30-45 ms/cell on screenshots (50-70% phase reduction with rayon fan-out).
+- **Risk**: zero — this is a pure-parallel operation, already SIMD-vectorized per block.
+
+### Other near-misses
+
+- `build_codes` at e3/e4 is 12 ms/cell, 19-23% of total. Histogram clustering + Huffman tree build runs sequentially per histogram; rayon fan-out across the 3-channel histograms could save ~5-8 ms.
+- `quant_field` at e5 is 17.9 ms/cell (10.9%). The compute is a 2D pixel-domain Laplacian; already mostly SIMD but the smoothing/blur pass is the slow part.
+
+## Limitations of this baseline
+
+- Same as W36-1: 8 images, 5 photos + 3 screenshots. Cross-image variance for entropy/xform at e3/e4 could be 10-30%; rerun on 50-image stratified subset before drawing source-informing constants.
+- e2 has no phase data due to single-pass code path lacking markers (see above). The e2 wall-clock totals are still recorded.
+- The subprocess approach captures wall-clock (including subprocess fork tax). The companion cross-codec TSV uses in-process timing for the comparison — more accurate but no phase breakdown.
+- All zenjpeg `HybridProgressive` cells use `ChromaSubsampling::Quarter` (4:2:0). Cross-codec comparison at 4:4:4 would shift the zenjpeg numbers higher (~+15-30% bytes, +5-10% wall-clock).
