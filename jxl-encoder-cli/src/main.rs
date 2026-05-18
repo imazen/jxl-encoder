@@ -31,10 +31,11 @@ struct Args {
     #[arg(short, long, default_value = "90")]
     quality: u32,
 
-    /// Effort level (1-11, higher = slower but better compression).
-    /// e10/e11 are our extensions past libjxl's kTortoise=9: longer
-    /// butteraugli convergence (8 / 16 iters). Bitstreams stay 100%
-    /// spec-valid. See RFC issue #45.
+    /// Effort level (1-12, higher = slower but better compression).
+    /// e10/e11/e12 are our extensions past libjxl's kTortoise=9: longer
+    /// butteraugli convergence (8 / 16 / 32 iters) plus multi-seed tree
+    /// learning + multi-seed butteraugli sweep at e10/e11. Bitstreams stay
+    /// 100% spec-valid. See RFC issue #45.
     #[arg(short, long, default_value = "7")]
     effort: u8,
 

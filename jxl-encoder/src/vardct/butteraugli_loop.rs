@@ -263,12 +263,12 @@ impl VarDctEncoder {
         // iteration runs a full butteraugli pipeline; capping prevents
         // a malicious or buggy caller from DoS-ing the encoder.
         let iters = (self.butteraugli_iters.min(crate::api::MAX_QUANT_LOOP_ITERS)) as usize;
-        // RFC#45 chunk 1: e10/e11 push butteraugli_iters to 8/16 via the
-        // effort table (see effort.rs:560-578). The saturating `.min()`
-        // above already bounds the loop; this debug-assert documents the
-        // structural invariant so future effort levels can't sneak past
-        // `MAX_QUANT_LOOP_ITERS` and underflow the compare-only exit
-        // (`if iter == iters { break }` below at line ~382).
+        // RFC#45 chunk 1 + chunk 2: e10/e11/e12 push butteraugli_iters to
+        // 8/16/32 via the effort table (see effort.rs). The saturating
+        // `.min()` above already bounds the loop; this debug-assert documents
+        // the structural invariant so future effort levels can't sneak past
+        // `MAX_QUANT_LOOP_ITERS` (= 32 after chunk 2) and underflow the
+        // compare-only exit (`if iter == iters { break }` below).
         debug_assert!(
             iters <= crate::api::MAX_QUANT_LOOP_ITERS as usize,
             "butteraugli loop iters={} exceeds MAX_QUANT_LOOP_ITERS={} \

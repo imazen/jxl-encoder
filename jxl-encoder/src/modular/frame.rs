@@ -20,8 +20,9 @@ use crate::headers::frame_header::{BlendMode, FrameCrop, FrameHeader};
 pub struct FrameEncoderOptions {
     /// Use modular mode (lossless).
     pub use_modular: bool,
-    /// Effort level (1-11, higher = better compression, slower; e10/e11 extends
-    /// libjxl kTortoise=9 with extended search budgets).
+    /// Effort level (1-12, higher = better compression, slower; e10/e11/e12
+    /// extends libjxl kTortoise=9 with extended search budgets — e12 doubles
+    /// butteraugli iters 16 → 32 on the lossy path).
     pub effort: u8,
     /// Use ANS entropy coding instead of Huffman for modular.
     pub use_ans: bool,
