@@ -155,6 +155,15 @@ We implement all 19 AC strategies that libjxl evaluates through effort 9, all en
 | DCT64x32, DCT32x64 | 64x32 | d >= 3.0 | e7+ |
 | DCT64x64 | 64x64 | d >= 3.0 | e7+ |
 
+## HDR / wide-gamut
+
+| Capability | Entry point |
+|---|---|
+| PQ / HLG / BT.709 f32 input | Pass the matching `PixelLayout` variant (e.g. `RgbPqF32`, `RgbHlgF32`); the encoder inverts the TF before XYB. |
+| BT.2100 PQ / HLG colour encoding | `ColorEncoding::bt2100_pq()` / `ColorEncoding::bt2100_hlg()`, wired via `EncodeRequest::with_color_encoding(...)`. |
+| `ToneMapping.intensity_target` / `min_nits` | `EncodeRequest::with_intensity_target(nits)` / `with_min_nits(nits)` (mirrors libjxl `cjxl --intensity_target`). |
+| HDR-aware perceptual loss in the butteraugli quantization loop | `LossyConfig::with_hdr_loss(HdrLoss::Auto \| Butteraugli \| Vdp2)`. **Default:** `HdrLoss::Auto` (chunk 4) — auto-dispatches to `Vdp2` on PQ / HLG content (via either `with_color_encoding` or the layout's implied transfer function) and to `Butteraugli` on everything else. SDR encodes stay byte-identical to pre-Auto releases. Validated on HDR-AIC-2025: -36.5% avg paper-faithful reference score improvement vs. butteraugli (chunk 3). Requires `butteraugli-loop` cargo feature. |
+
 ## Building
 
 ```bash

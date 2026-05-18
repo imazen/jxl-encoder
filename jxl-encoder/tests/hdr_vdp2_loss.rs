@@ -28,10 +28,17 @@ fn rgb8_buf(w: u32, h: u32) -> Vec<u8> {
 }
 
 #[test]
-fn default_is_butteraugli() {
-    assert_eq!(HdrLoss::default(), HdrLoss::Butteraugli);
+fn default_is_auto_chunk4() {
+    // Chunk 4 flipped the default from `Butteraugli` to `Auto`.
+    // `Auto` resolves to `Butteraugli` on SDR content at encode entry,
+    // so hash-lock fixtures stay byte-identical (covered by
+    // `default_butteraugli_encode_unchanged_by_explicit_setter`
+    // below); the default only differs from the explicit
+    // `Butteraugli` selection on PQ / HLG content (covered by
+    // `auto_resolves_to_vdp2_on_pq` in the chunk-4 dispatch tests).
+    assert_eq!(HdrLoss::default(), HdrLoss::Auto);
     let cfg = LossyConfig::new(1.0);
-    assert_eq!(cfg.hdr_loss(), HdrLoss::Butteraugli);
+    assert_eq!(cfg.hdr_loss(), HdrLoss::Auto);
 }
 
 #[test]
