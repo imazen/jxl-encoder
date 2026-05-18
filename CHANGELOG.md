@@ -130,6 +130,27 @@
   the explicit `with_hdr_loss(...)` opt-out so callers can pin
   to butteraugli for cross-toolchain bit-for-bit reproducibility.
 
+- **Content-aware `entropy_mul` table dispatch (opt-in, default OFF)** —
+  new `LossyConfig::with_content_aware_entropy_mul(bool)` toggle and a
+  matching `EntropyMulTable::screenshot_suppressed()` constructor. When
+  the caller opts in AND the per-image `median(mask1x1)` exceeds 95
+  (screen / glyph / UI content), the AC-strategy search runs against
+  lifted entropy_mul values on the four 8x8-class transforms that
+  over-pick on flat content (`IDENTITY` 1.0428 → 1.85, `DCT2X2` 0.95
+  → 1.15, `AFV` 0.818 → 0.95, `DCT4X8` 0.859316 → 0.98). Photo content
+  (median ≤ 95) stays on the existing libjxl-faithful
+  `EntropyMulTable::reference()` values bit-for-bit. Mirrors the GPU
+  encoder's lifted-table screenshot/photo split
+  (`vardct_gpu_dropped_optimizations_resurrection_2026-05-17.md`,
+  item #3) on the CPU encoder; default `false` keeps every existing
+  hash-lock fixture byte-identical (36 / 36). Wire-up in `effort.rs`
+  (new constructor), `api.rs` (config field + builder + getter,
+  `LossyConfig::with_effort` preservation, three `VarDctEncoder`
+  construction sites), `vardct/encoder.rs` (per-encode gate +
+  `median_mask1x1` helper + threshold constant). Issue tracking and
+  chunk-2 default-on flip plan live in the
+  `vardct_gpu_dropped_optimizations_resurrection_2026-05-17.md` audit.
+
 ### Fixed
 
 - **RFC#45 chunk 1 admit-gate widening: actually apply the code changes

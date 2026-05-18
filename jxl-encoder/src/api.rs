@@ -2954,6 +2954,16 @@ pub struct LossyConfig {
     /// `None` (default) keeps every existing hash-lock byte-identical.
     /// See [`Self::with_content_class`].
     content_class: Option<crate::effort::ImageContentClass>,
+    /// Opt-in: route the AC-strategy [`crate::effort::EntropyMulTable`]
+    /// through a content-class discriminator that swaps in the
+    /// [`crate::effort::EntropyMulTable::screenshot_suppressed`] values
+    /// when the per-image `median(mask1x1)` exceeds 95. Photo content
+    /// keeps the existing (libjxl-faithful) [`crate::effort::EntropyMulTable::reference`]
+    /// values.
+    ///
+    /// Default `false` — keeps every existing hash-lock fixture
+    /// byte-identical. See [`Self::with_content_aware_entropy_mul`].
+    content_aware_entropy_mul: bool,
     /// Tracks whether the caller has explicitly set `patches` via
     /// [`Self::with_patches`]. Mirrors the
     /// `butteraugli_iters_explicit` / `resampling_explicit` pattern.
@@ -3169,6 +3179,7 @@ impl LossyConfig {
             profile_override: None,
             canonicalize_input: false,
             content_class: None,
+            content_aware_entropy_mul: false,
             patches_explicit: false,
             epf_level: -1,
             alpha_distance: None,
@@ -3365,6 +3376,7 @@ impl LossyConfig {
         new.profile_override = self.profile_override;
         new.canonicalize_input = self.canonicalize_input;
         new.content_class = self.content_class;
+        new.content_aware_entropy_mul = self.content_aware_entropy_mul;
         // Preserve explicit patches setting across with_effort.
         if self.patches_explicit {
             new.patches = self.patches;
@@ -3897,6 +3909,46 @@ impl LossyConfig {
     /// unset). See [`Self::with_content_class`].
     pub fn content_class(&self) -> Option<crate::effort::ImageContentClass> {
         self.content_class
+    }
+
+    /// Route the per-strategy AC-strategy [`crate::effort::EntropyMulTable`]
+    /// through a content-class discriminator at encode time.
+    ///
+    /// When `true`, just before `compute_ac_strategy` runs the encoder
+    /// computes the median of the 1×1 perceptual masking field
+    /// ([`crate::vardct::compute_mask1x1`]). If
+    /// `median(mask1x1) > 95.0` (high values → uniform / glyph / UI
+    /// content) the encoder swaps the active entropy-mul table to
+    /// [`crate::effort::EntropyMulTable::screenshot_suppressed`] for
+    /// the duration of the AC-strategy search. Photo content stays on
+    /// the existing libjxl-faithful
+    /// [`crate::effort::EntropyMulTable::reference`] values.
+    ///
+    /// **Discriminator rationale**: `median(mask1x1) > 95` is the same
+    /// screenshot / photo split used in the sibling GPU encoder's
+    /// dropped-optimizations audit (`vardct_gpu_dropped_optimizations_resurrection_2026-05-17.md`,
+    /// item #3). High `mask1x1` values mark flat / glyph-dominated
+    /// regions where the lifted entropy_mul values (`IDENTITY` 1.85,
+    /// `DCT2X2` 1.15, `AFV` 0.95, `DCT4X8` 0.98) suppress the
+    /// over-selection of small / corner transforms that produces
+    /// visible artifacts around sharp text edges.
+    ///
+    /// **Default `false`** — keeps every existing hash-lock fixture
+    /// byte-identical. Opt-in until a wider sweep (chunk-2) validates
+    /// a default-on flip.
+    ///
+    /// **Caller-supplied `LossyInternalParams::entropy_mul_table` wins.**
+    /// If [`Self::with_internal_params`] pins an explicit table, this
+    /// gate stays out of the way — the override is honored as-is.
+    pub fn with_content_aware_entropy_mul(mut self, on: bool) -> Self {
+        self.content_aware_entropy_mul = on;
+        self
+    }
+
+    /// Currently-set `content_aware_entropy_mul` opt-in (default
+    /// `false`). See [`Self::with_content_aware_entropy_mul`].
+    pub fn content_aware_entropy_mul(&self) -> bool {
+        self.content_aware_entropy_mul
     }
 
     /// Set a separate butteraugli distance for the alpha extra channel
@@ -6724,6 +6776,7 @@ impl<'a> EncodeRequest<'a> {
         enc.is_grayscale = self.layout.is_grayscale();
         enc.progressive = cfg.progressive;
         enc.use_lf_frame = cfg.lf_frame;
+        enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
         #[cfg(feature = "butteraugli-loop")]
         {
             enc.butteraugli_iters = cfg.butteraugli_iters;
@@ -7804,6 +7857,7 @@ impl LossyEncoder {
             enc.is_grayscale = self.layout.is_grayscale();
             enc.progressive = cfg.progressive;
             enc.use_lf_frame = cfg.lf_frame;
+            enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
             #[cfg(feature = "butteraugli-loop")]
             {
                 enc.butteraugli_iters = cfg.butteraugli_iters;
@@ -9628,6 +9682,7 @@ fn encode_animation_lossy(
     enc.auto_splines = cfg.auto_splines;
     enc.progressive = cfg.progressive;
     enc.use_lf_frame = cfg.lf_frame;
+    enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
     #[cfg(feature = "butteraugli-loop")]
     {
         enc.butteraugli_iters = cfg.butteraugli_iters;

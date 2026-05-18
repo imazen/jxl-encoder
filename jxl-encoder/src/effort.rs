@@ -112,6 +112,42 @@ impl EntropyMulTable {
             ..Self::reference()
         }
     }
+
+    /// Screen-content-tuned values that **lift** entropy_mul on the 8x8-class
+    /// transforms that tend to over-pick on flat / glyph / UI content,
+    /// suppressing block-strategy churn around sharp edges.
+    ///
+    /// Mirrors the lifted values bisected on the GPU encoder (sibling
+    /// `jxl-encoder-gpu/src/lossy_encoder.rs:1535-1539` per the
+    /// 2026-05-15 dropped-optimizations log, item #3) for screenshot /
+    /// terminal / UI content. The discriminator is
+    /// `median(mask1x1) > 95` (high mask values → uniform / flat regions
+    /// → screen-content). On photo content the GPU encoder leaves
+    /// these at libjxl reference values; on screenshots it lifts them
+    /// to suppress IDENTITY/DCT2x2/AFV over-selection that produces
+    /// visible artifacts around sharp text glyph edges.
+    ///
+    /// Changes vs reference (all lifts, never reductions):
+    /// - identity: 1.0428 → 1.85 (~77% lift, the dominant wedge)
+    /// - dct2x2: 0.95 → 1.15 (~21% lift, mirrors GPU path-flip threshold)
+    /// - afv: 0.818 → 0.95 (~16% lift, suppresses corner-DCT churn)
+    /// - dct4x8: 0.859316 → 0.98 (~14% lift, suppresses path-flip below 0.95)
+    /// - dct4x4: 1.08 (unchanged — bisected to libjxl reference)
+    /// - all larger transforms (dct16x8 … dct64x64): unchanged
+    ///
+    /// Currently used only when [`crate::api::LossyConfig::with_content_aware_entropy_mul`]
+    /// is opted in AND the per-image content discriminator routes
+    /// the encode into the screenshot class. Default-off until a
+    /// wider sweep (chunk-2) validates a default-on flip.
+    pub fn screenshot_suppressed() -> Self {
+        Self {
+            identity: 1.85,
+            dct2x2: 1.15,
+            afv: 0.95,
+            dct4x8: 0.98,
+            ..Self::reference()
+        }
+    }
 }
 
 /// All effort-derived encoder decisions, centralized.
@@ -2258,6 +2294,42 @@ mod tests {
         assert_eq!(t.dct32x32, r.dct32x32);
         assert_eq!(t.dct64x32, r.dct64x32);
         assert_eq!(t.dct64x64, r.dct64x64);
+    }
+
+    #[test]
+    fn test_entropy_mul_table_screenshot_suppressed_values() {
+        // Verify the screen-content discriminator-fed table lifts the
+        // four 8x8-class transforms most prone to over-pick on UI/glyph
+        // content and leaves every other field bit-identical to
+        // `reference()`. Used by `LossyConfig::with_content_aware_entropy_mul`.
+        let t = EntropyMulTable::screenshot_suppressed();
+        let r = EntropyMulTable::reference();
+
+        // Lifted values (screenshot-suppressed direction).
+        assert_eq!(t.identity, 1.85); // was 1.0428 — the dominant wedge
+        assert_eq!(t.dct2x2, 1.15); // was 0.95
+        assert_eq!(t.afv, 0.95); // was 0.817_794_9
+        assert_eq!(t.dct4x8, 0.98); // was 0.859_316_37
+
+        // Every other field MUST match reference (gate must not perturb
+        // the libjxl-faithful behaviour on transforms the wedge doesn't
+        // hit).
+        assert_eq!(t.dct8, r.dct8);
+        assert_eq!(t.dct4x4, r.dct4x4);
+        assert_eq!(t.dct16x8, r.dct16x8);
+        assert_eq!(t.dct16x16, r.dct16x16);
+        assert_eq!(t.dct16x32, r.dct16x32);
+        assert_eq!(t.dct32x32, r.dct32x32);
+        assert_eq!(t.dct64x32, r.dct64x32);
+        assert_eq!(t.dct64x64, r.dct64x64);
+
+        // All lifts are strict increases over reference (sanity check
+        // that we never accidentally REDUCE a value into the
+        // `experimental()` favouring direction).
+        assert!(t.identity > r.identity);
+        assert!(t.dct2x2 > r.dct2x2);
+        assert!(t.afv > r.afv);
+        assert!(t.dct4x8 > r.dct4x8);
     }
 
     #[test]

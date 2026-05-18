@@ -1,0 +1,80 @@
+# content_aware_entropy_mul_2026-05-18.tsv — meta
+#
+# Per-image paired A/B: LossyConfig::with_content_aware_entropy_mul(false|true).
+# Mirror of jxl-encoder-gpu dropped-optimizations audit item #3
+# (vardct_gpu_dropped_optimizations_resurrection_2026-05-17.md).
+#
+# Encoder: jxl-encoder, commit 44650914 (sibling workspace
+#          content-aware-entropy-mul on top of `ebf5ddaa` main).
+# Base ref (primary jxl-encoder main): 454454436ec585cebb468ae979ad6ab400289efa
+# Cargo: 1.95.0 (f2d3ce0bd 2026-03-21)
+# Host: lilith (water-cooled AMD Ryzen 9 7950X, 128 GB RAM)
+#
+# Grid: 5 photos (CID22-512 validation) × 5 screenshots (gb82-sc)
+#       × 3 distances {0.5, 1.0, 2.0} × 2 modes {off, on}
+#       = 60 cells. effort = 7 (where the cost-model wedge lives).
+#
+# Decoder: jxl-oxide, linear sRGB output (CLAUDE.md jxl-oxide rule).
+# Metrics: Rust `butteraugli` 0.9, Rust `fast-ssim2` 0.7.1
+#          (NOT butteraugli_main — avoids PNG-metadata bug
+#          documented in CLAUDE.md).
+#
+# Run:
+#   cargo run -p jxl-encoder --release --example content_aware_entropy_mul_ab
+#
+# Columns:
+#   image        — source label
+#   class        — "photo" or "screen"
+#   distance     — target distance
+#   mode         — "off" or "on"
+#   bytes        — codestream size
+#   butteraugli  — Rust butteraugli linear (lower is better)
+#   ssim2        — fast-ssim2 (higher is better, [0..100])
+#   encode_ms    — single-iter encode wall-clock
+#   bytes_delta_pct, bfly_delta_pct, ssim2_delta_abs
+#       — populated only on `on` rows (on − off / off × 100, or on − off for ssim2)
+#
+# ── Summary by content class ────────────────────────────────────────────
+#
+# Photos (15 cells): Δbytes = 0.00 %, Δbfly = 0.00 %, Δssim2 = 0.00
+#   The gate correctly DOES NOT fire on photo content
+#   (median(mask1x1) ≤ 95.0 for every photo). Bitstream output is
+#   bit-for-bit identical (default-OFF + gate-skip on photos both
+#   route through EntropyMulTable::reference()). This is the critical
+#   safety invariant: opt-in callers do not pay a tax on photos.
+#
+# Screenshots (15 cells): gate FIRES (median > 95) on every cell.
+#   - Bytes: ranges -1.27 % to +6.88 %, median ≈ +0.7 %
+#   - Butteraugli: ranges -7.62 % to +19.92 %, mixed direction
+#   - SSIM2: mostly small regressions (-1.39 to +0.46, median ≈ -0.26)
+#
+#   Direction is NOT uniformly positive on the CPU encoder, unlike
+#   the GPU encoder where the lifted IDENTITY=1.85 + DCT2x2=1.15 +
+#   AFV=0.95 + DCT4x8=0.98 values were bisected against a slightly
+#   different cost-model (kAvoidEntropyOfTransforms / X-channel
+#   multi-block weight differ between paths — see
+#   `dropped_optimizations_for_parity_2026-05-15.md` item #3).
+#
+#   Acceptance criterion for default-on flip (chunk 2):
+#     - Photo class: Δbytes ≤ 0.1 % AND Δbfly within ±2 %    -> PASS (all 0)
+#     - Screen class: Δbytes ≤ 0.5 % AND Δbfly within ±2 %   -> FAIL
+#       (screen median +0.7 %, several cells at +6.88 %; bfly swings
+#       up to +19.92 % at d=0.5 on small-image cells)
+#
+#   -> SHIP OPT-IN, DEFAULT OFF. Chunk-2 plan: re-bisect lifted values
+#      on the CPU encoder cost-model (likely IDENTITY needs to be lower
+#      than 1.85 here; the GPU encoder's other-cost-model adjustments
+#      do part of the work). Sweep harness is reusable — same script,
+#      iterate the screenshot_suppressed() constants.
+#
+# Notes on individual rows:
+#   - gb82/codec_wiki d=2.0: Δbfly +14.93 % — worst photo screen cell.
+#     The lifted IDENTITY may suppress legitimate transparent-text
+#     IDENTITY picks at low quant.
+#   - gb82/terminal d=1.0: Δbfly -7.62 % (best win) — the
+#     screen-suppression direction helps where DCT2x2/IDENTITY were
+#     truly being over-picked.
+#   - gb82/windows95 d=0.5: largest size penalty +6.88 % AND
+#     largest ssim2 hit -1.39 — small-image screen content suffers
+#     most because the lifted values move too many blocks into less
+#     suitable strategies.

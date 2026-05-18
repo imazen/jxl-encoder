@@ -373,6 +373,12 @@ path = "examples/libjxl_parity_knobs.rs"
 name = "quality_drift_investigation"
 path = "examples/quality_drift_investigation.rs"
 
+# Content-aware entropy_mul gate (opt-in) A/B sweep — see
+# `LossyConfig::with_content_aware_entropy_mul`.
+[[example]]
+name = "content_aware_entropy_mul_ab"
+path = "examples/content_aware_entropy_mul_ab.rs"
+
 [[example]]
 name = "drift_block_map"
 path = "examples/drift_block_map.rs"
