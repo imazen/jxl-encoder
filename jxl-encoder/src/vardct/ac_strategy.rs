@@ -441,6 +441,129 @@ impl AcStrategyMap {
         true
     }
 
+    /// Outer-only counterpart of `can_evaluate_region` mirroring libjxl's
+    /// `FindBestFirstLevelDivisionForSquare` precondition
+    /// (`enc_ac_strategy.cc:725-732`).
+    ///
+    /// Returns true if no existing multi-block transform crosses any of the
+    /// four outer edges of the `blocks × blocks` region at `(bx, by)`. Unlike
+    /// `can_evaluate_region`, this DOES permit a multi-block transform to sit
+    /// fully inside the region — libjxl handles that case at the per-half
+    /// inner-crossing layer instead (see
+    /// `multi_block_crosses_vertical_boundary` /
+    /// `multi_block_crosses_horizontal_boundary`).
+    ///
+    /// W44-23 (Sub-G Approach B, 2026-05-18): used by `try_merge_*_impl` to
+    /// recover the merge attempts W44-22's tighter invariant refused.
+    pub(super) fn can_evaluate_region_outer_only(
+        &self,
+        bx: usize,
+        by: usize,
+        blocks: usize,
+    ) -> bool {
+        if bx + blocks > self.xsize_blocks || by + blocks > self.ysize_blocks {
+            return false;
+        }
+        // Four outer edges: top, bottom, left, right. A transform "crosses"
+        // an edge iff a block on the inside is a non-first marker whose
+        // owner sits on the outside (or vice versa). Mirrors the four
+        // calls at libjxl `enc_ac_strategy.cc:725-732` (two horizontal, two
+        // vertical) — note libjxl's helpers short-circuit on `% 8 == 0`
+        // (64×64 boundary). We do the same here for parity with the JXL
+        // pass-group invariant.
+        if self.multi_block_crosses_horizontal_boundary(bx, by, bx + blocks) {
+            return false;
+        }
+        if self.multi_block_crosses_horizontal_boundary(bx, by + blocks, bx + blocks) {
+            return false;
+        }
+        if self.multi_block_crosses_vertical_boundary(bx, by, by + blocks) {
+            return false;
+        }
+        if self.multi_block_crosses_vertical_boundary(bx + blocks, by, by + blocks) {
+            return false;
+        }
+        true
+    }
+
+    /// True iff a multi-block transform straddles the horizontal scanline at
+    /// `y` between `start_x` and `end_x` (exclusive).
+    ///
+    /// Port of libjxl `MultiBlockTransformCrossesHorizontalBoundary`
+    /// (`enc_ac_strategy.cc:302-330`). Short-circuits on `y % 8 == 0`
+    /// because nothing crosses a 64×64 boundary (pass-group invariant).
+    /// Walks left from `start_x` to the nearest 8-aligned position to find
+    /// the first-block of a transform that might start before `start_x`,
+    /// then scans the row from there: any non-first block in `[start_x,
+    /// end_x)` means a transform crosses this row.
+    pub(super) fn multi_block_crosses_horizontal_boundary(
+        &self,
+        mut start_x: usize,
+        y: usize,
+        end_x: usize,
+    ) -> bool {
+        if start_x >= self.xsize_blocks || y >= self.ysize_blocks {
+            return false;
+        }
+        if y.is_multiple_of(8) {
+            // Nothing crosses 64×64 boundaries (pass-group invariant).
+            return false;
+        }
+        let end_x = end_x.min(self.xsize_blocks);
+        // Back up to the first IsFirstBlock() == true within the 8-aligned
+        // window so we correctly count a transform whose first block is
+        // before start_x.
+        let start_x_limit = start_x & !7;
+        while start_x != start_x_limit && !self.is_first(start_x, y) {
+            start_x -= 1;
+        }
+        let mut x = start_x;
+        while x < end_x {
+            if self.is_first(x, y) {
+                let cx = COVERED_X[self.raw_strategy(x, y) as usize];
+                x += cx.max(1);
+            } else {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// True iff a multi-block transform straddles the vertical scanline at
+    /// `x` between `start_y` and `end_y` (exclusive).
+    ///
+    /// Port of libjxl `MultiBlockTransformCrossesVerticalBoundary`
+    /// (`enc_ac_strategy.cc:332-362`). Same algorithm as the horizontal
+    /// helper with rows and columns swapped.
+    pub(super) fn multi_block_crosses_vertical_boundary(
+        &self,
+        x: usize,
+        mut start_y: usize,
+        end_y: usize,
+    ) -> bool {
+        if x >= self.xsize_blocks || start_y >= self.ysize_blocks {
+            return false;
+        }
+        if x.is_multiple_of(8) {
+            return false;
+        }
+        let end_y = end_y.min(self.ysize_blocks);
+        let start_y_limit = start_y & !7;
+        while start_y != start_y_limit && !self.is_first(x, start_y) {
+            start_y -= 1;
+        }
+        let mut y = start_y;
+        while y < end_y {
+            if self.is_first(x, y) {
+                let cy = COVERED_Y[self.raw_strategy(x, y) as usize];
+                y += cy.max(1);
+            } else {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Count the number of "first blocks" (= number of distinct transforms).
     #[cfg(test)]
     pub fn count_first_blocks(&self) -> usize {
@@ -1657,11 +1780,20 @@ fn process_tile(
             }
             let abs_bx = tile_bx + cx;
             let abs_by = tile_by + cy;
-            if !ac_strategy.can_evaluate_region(abs_bx, abs_by, 2) {
-                continue;
-            }
-
+            // W44-23 (Sub-G Approach B, 2026-05-18): loosen the gate from
+            // all-single-block (W44-22) to outer-crossing-only for the
+            // is_full_tile path, matching libjxl
+            // `enc_ac_strategy.cc:725-741`. Partial paints stay safe
+            // because `try_merge_16x16_impl` now computes per-half
+            // `allow_jxk` / `allow_kxj` flags from the inner-crossing
+            // helpers. The non-`is_full_tile` `find_best_16x16_transform`
+            // path keeps using the stricter check because its restore /
+            // reset logic relies on the all-single invariant (it resets
+            // the region to DCT8 unconditionally before searching).
             if is_full_tile {
+                if !ac_strategy.can_evaluate_region_outer_only(abs_bx, abs_by, 2) {
+                    continue;
+                }
                 try_merge_16x16(
                     *xyb,
                     stride,
@@ -1682,6 +1814,9 @@ fn process_tile(
                     profile,
                 );
             } else {
+                if !ac_strategy.can_evaluate_region(abs_bx, abs_by, 2) {
+                    continue;
+                }
                 let mut saved = [0u8; 4];
                 for dy in 0..2usize {
                     for dx in 0..2usize {
@@ -1741,10 +1876,14 @@ fn process_tile(
                 }
                 let abs_bx = tile_bx + cx;
                 let abs_by = tile_by + cy;
-                if !ac_strategy.can_evaluate_region(abs_bx, abs_by, 4) {
-                    continue;
-                }
+                // W44-23 (Sub-G Approach B, 2026-05-18): mirror the 16×16
+                // pattern — outer-only gate for try_merge_32x32 (with per-half
+                // inner-crossing guards inside the impl), stricter
+                // all-single gate for the find_best_32x32_transform path.
                 if is_full_tile {
+                    if !ac_strategy.can_evaluate_region_outer_only(abs_bx, abs_by, 4) {
+                        continue;
+                    }
                     try_merge_32x32(
                         *xyb,
                         stride,
@@ -1765,6 +1904,9 @@ fn process_tile(
                         profile,
                     );
                 } else {
+                    if !ac_strategy.can_evaluate_region(abs_bx, abs_by, 4) {
+                        continue;
+                    }
                     let mut saved = [0u8; 16];
                     for dy in 0..4usize {
                         for dx in 0..4usize {
