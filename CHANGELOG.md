@@ -251,6 +251,25 @@
   harness: `cargo run --release -p jxl-encoder --example adaptive_gaborish_ab`.
   Default-off preserves byte-identical hash-locks (36/36 pass).
 
+  **Wider-corpus follow-on (2026-05-18, W20-1):** 480-cell A/B sweep
+  (25 CID22-512 photos + 5 gb82-sc screenshots × {d=0.5, 1, 2, 4} ×
+  {e5, e7} × {fixed, adapt}) with butteraugli + ssim2 quality metrics
+  via jxl-oxide linear-sRGB decode. The original 5-photo
+  bytes-only finding (-1.74% at d=1.0 e7, ecd1ec3c) is corroborated as
+  the byte direction (-0.98% on the wider set) but is paid for in
+  butteraugli quality: individual cells regress by up to **+11.84%**
+  (cid22/1418519 d=1 e=7) on photos and **+17.46%** (gb82-sc/codec_wiki
+  d=1 e=5) on screenshots — the photo and screenshot default-on gates
+  both fail on the per-cell butteraugli ≤ +5% ceiling. Adaptive
+  Gaborish **stays opt-in**; one cell (d=2.0 e=7 on photos) is a clean
+  win (-0.67% bytes AND -0.51% butteraugli), suggesting the per-tile
+  mapping needs more conservative tuning OR distance-band gating before
+  another default-on attempt. See
+  `benchmarks/adaptive_gaborish_wider_corpus_2026-05-18.{tsv,meta}`.
+  New harnesses:
+  `cargo run --release -p jxl-encoder --example adaptive_gaborish_wider_corpus`
+  and `adaptive_gaborish_wider_analyze`.
+
 - **RFC#45 chunk 1 admit-gate widening: e10 / e11 effort ceiling open
   end-to-end** (issue #45). Closes the residual surface that still
   pinned the effort range at `1..=10` after the parent commit landed

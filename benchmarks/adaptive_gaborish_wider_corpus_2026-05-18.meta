@@ -1,0 +1,108 @@
+W20-1 follow-on — Adaptive Gaborish wider-corpus A/B with quality (2026-05-18)
+==============================================================================
+
+Encoder:        jxl-encoder (sibling workspace jxl-encoder--gaborish-wider-bench)
+Date:           2026-05-18 (UTC)
+Host:           AMD Ryzen 9 7950X, 128 GB RAM (water-cooled)
+Parent commit:  swupzums 75784882 main@origin "feat(hdr): EX-J11 chunk 4"
+W20-1 picked:   ruxstmol/0 ecd1ec3c → 1f772e5b (cherry-picked rebase onto main@origin)
+Reproduce:      cargo run --release -p jxl-encoder \
+                  --example adaptive_gaborish_wider_corpus \
+                  --features "std butteraugli-loop ssim2-loop" \
+                  -- --out benchmarks/adaptive_gaborish_wider_corpus_2026-05-18.tsv
+
+Corpus
+------
+- 25 stratified CID22-512 validation photos (every other-stride pick from
+  /home/lilith/work/codec-corpus/CID22/CID22-512/validation/, sorted)
+- 5 stratified gb82-sc screenshots (every-other-stride pick from
+  /home/lilith/work/codec-corpus/gb82-sc/, sorted)
+
+Grid (480 cells)
+----------------
+- distances: {0.5, 1.0, 2.0, 4.0}
+- efforts:   {5, 7}
+- modes:     {fixed=default, adapt=with_adaptive_gaborish(true)}
+- (30 images × 4 distances × 2 efforts × 2 modes = 480 cells)
+
+At distance ≤ 0.5 the encoder gates Gaborish off (libjxl enc_frame.cc:281,
+mirrored in jxl-encoder api.rs:6718). Adaptive Gaborish is a no-op there.
+All 60 d=0.5 cells are byte-identical (proves the silent gate, no quality
+delta).
+
+Measurement
+-----------
+- Encode through public LossyConfig path (so gates / profiles fire).
+- Decode with jxl-oxide in linear sRGB (RenderingIntent::Relative).
+- Butteraugli via Rust `butteraugli` crate (`butteraugli_linear`) on
+  the planar linear-RGB images (metadata-immune; CLAUDE.md PNG-metadata
+  rule).
+- SSIM2 via Rust `fast-ssim2` crate on sRGB u8 images.
+
+Default-on gate
+---------------
+Per task spec:
+- Photos: bytes Δ ≤ -1.0% mean AND butteraugli Δ ≤ +2% mean AND
+          no individual cell shows butteraugli Δ > +5%.
+- Screenshots: bytes Δ ≤ +0.5% mean AND butteraugli Δ ≤ +2% mean.
+- e5 AND e7 both must pass.
+
+Aggregate result (`adaptive_gaborish_wider_analyze`)
+----------------------------------------------------
+class      effort  n     bytes_d%  bfly_d%  ssim2_d  worst_bfly_d%  verdict
+photo      e5      100   -0.680    +0.150   -0.126   +11.642        FAIL
+photo      e7      100   -0.606    -0.012   -0.110   +11.838        FAIL
+screenshot e5      20    -0.269    +2.303   -0.060   +17.464        FAIL
+screenshot e7      20    -0.645    +2.397   +0.086   +14.150        FAIL
+
+Decision: KEEP OPT-IN (gate failed on all 4 cells)
+
+Failure modes
+-------------
+- **Photos**: bytes-mean win is below the -1.0% photo threshold at both e5 (-0.68%)
+  and e7 (-0.61%). Individual worst butteraugli cell (+11.84% at cid22/1418519
+  d=1 e=7) violates the +5% per-cell ceiling.
+- **Screenshots**: butteraugli-mean above the +2% ceiling at both e5 (+2.30%)
+  and e7 (+2.40%), and worst cell (+17.46% at gb82-sc/codec_wiki d=1 e=5)
+  far over the per-cell ceiling.
+
+Top-3 byte wins (overall)
+-------------------------
+1. cid22/1025469 d=4 e=5: -4.69% bytes, +6.21% bfly (paid in quality)
+2. cid22/6078297 d=4 e=7: -4.00% bytes, +0.00% bfly (clean win)
+3. cid22/1544947 d=4 e=7: -3.46% bytes, +0.68% bfly (clean-ish win)
+
+Top-3 butteraugli regressions (overall)
+---------------------------------------
+1. cid22/1418519 d=1 e=7: +11.84% bfly, -1.09% bytes (small bytes win, big
+   quality loss on a smooth-textured photo)
+2. cid22/1418519 d=1 e=5: +11.64% bfly, -1.40% bytes (same image at e5)
+3. gb82-sc/codec_wiki d=1 e=5: +17.46% bfly, -0.55% bytes (screenshot smooth
+   regions get over-quantized AC penalized by butteraugli's text-aware
+   weighting)
+
+Surprises
+---------
+- e5 and e7 behave **very similarly** (mean deltas within ±0.5pp on most
+  cells). The W20-1 mapping fires the same way regardless of effort tier;
+  effort only affects downstream rate-control loops which run *after* the
+  Gaborish gate.
+- d=2.0/e7 is the BEST cell for the adaptive path overall: bytes -0.67%
+  AND butteraugli -0.51% (genuine win, no quality cost). All other (d,e)
+  cells on photos either pay in butteraugli for the bytes win or break
+  even.
+- The W20-1 5-photo finding (-1.74% at d=1.0/e7) is corroborated as the
+  byte direction (-0.98% on the wider set at the same cell) but the
+  butteraugli regression on this cell is -0.04% mean — masked by the
+  per-cell variance. Individual cells inside that mean swing by ±12% on
+  butteraugli; the 5-image sample missed the photos that regress hardest
+  (1418519 was not in the W20-1 set).
+
+Honest stop
+-----------
+The original adaptive_gaborish_ab.rs comment ("A and B both decode
+identically per the wire spec, bytes delta IS RD delta") is FALSE — the
+decoded pixels differ because the decoder applies the *same* fixed
+3x3 inverse blur to *different* post-Gab samples. Bytes-only A/B
+overstates the value of the optimization by ignoring the quality
+component. This sweep is the corrective measurement.
