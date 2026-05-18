@@ -1,0 +1,4 @@
+variant	width	height	mb_cap_mib	peak_rss_kib	peak_rss_mib	bytes	wall_s
+FullBuffered	4096	4096	4096	2896200	2828.32	12382528	1.80
+BufferedOutput	4096	4096	4096	2893876	2826.05	12382528	1.75
+FullStreaming	4096	4096	4096	2895956	2828.08	12382528	1.80

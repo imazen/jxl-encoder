@@ -1,0 +1,81 @@
+# Streaming refactor chunk 8c (#11) — peak RSS at 4096×4096
+
+## Bench provenance
+
+- Commit: chunk-8c step D at HEAD (StreamingXybSource impl added, not wired)
+- Parent: afe0d520 (chunk 8b — region-source trait + walker seam)
+- Date: 2026-05-18T07:36:00Z
+- Host: lilith (water-cooled AMD Ryzen 9 7950X, 128 GB RAM)
+- Tool: `/usr/bin/time -v ./target/release/examples/bench_buffering_rss <variant> 4096 4096 4096`
+
+## Headline result
+
+**Peak RSS at 4096×4096: ~2895 MB across all three Buffering variants.**
+
+No measurable delta from chunk-8b baseline (2894-2895 MB). This is the
+*expected* honest-stop outcome documented in the chunk-8c plan:
+
+> If memory reduction is still 0 after all 5 steps: investigate WHICH
+> allocation didn't drop. Commit the partial structural work + chunk-9
+> investigation plan.
+
+## Why peak RSS didn't drop
+
+Chunk-8c step D ships `StreamingXybSource` as the **structural
+foundation** — concrete trait impl with per-DC-group release-tracking
+bookkeeping + `into_planes` consumer — but does *not* wire it into
+`encode_inner` because the encoder's post-transform pipeline has two
+whole-image consumers that read XYB *after* the walker would call
+release-all:
+
+1. `compute_epf_sharpness` (gated on `epf_iters > 0 && distance >= 0.5
+   && epf_dynamic_sharpness`) — whole-image IDCT-based reconstruction +
+   3-step EPF filter + histogram-based pass-2 context refinement
+   (whole-grid).
+2. `mask1x1` fallback (chunk-8c step B hoisted into
+   `resolve_mask1x1_for_sharpness`) — still reads whole-image `xyb_y`.
+
+Lifting these into per-region functions is the chunk-8c **step A**
+that didn't ship: byte-identity bar is high (pass-2 multipliers use
+size_t integer division → rounding drift in per-region accumulation
+changes the shipped sharpness map).
+
+Additionally, even WITH per-region wireup, the 4K peak RSS would not
+drop because the pipeline already drops `xyb_source` immediately after
+EPF (`encoder.rs:2186-2192`) before two-pass tokenization starts. The
+peak is during two-pass:
+- BitWriter capacity ≈ 268 MB at 4K (`width * height * 4` heuristic)
+- quant_ac ≈ 192 MB (3 ch × 256K blocks × 256 B)
+- Token vectors per AC-group during the parallel fan-out
+- ANS reverse-stream scratch per section
+- Per-DC-group section writers accumulated in `global_group_codes[]`
+
+## Chunk-9 plan (memory win path)
+
+1. **Step A revisited**: port `compute_epf_sharpness_for_region(dc_x,
+   dc_y, src, 2-block-border)` with byte-identity validation against
+   the whole-image path on the rd-regression corpus + every
+   hash_lock_features test. Acceptance: 36/36 hash-lock byte-identical
+   + RD-regression within 0.1% size delta. Spec reference: libjxl
+   `enc_heuristics.cc` runs sharpness per-DC-group with border
+   replication; pass-2 context histograms accumulate into a global
+   counter at end of walk (serial second pass, cheap).
+2. **Walker wireup**: in `encode_inner`, replace the
+   `WholeImageXybSource` construction at line 2095 with
+   `StreamingXybSource::new(...)` when EPF is fully gated AND
+   chunk-9-step-A is available. Per-DC-group loop: call
+   `compute_epf_sharpness_for_region(dc_x, dc_y)` BEFORE
+   `src.release_dc_region(dc_x, dc_y)`. After the walker joins, call
+   `let (_x, _y, _b) = src.into_planes()` (drop immediate).
+3. **Two-pass per-DC-group tokenizer** (separate chunk): the actual
+   peak-RSS killer. Replace whole-image token collection with
+   per-DC-group tokenization that writes sections to a streaming
+   sink. This is what shrinks the 2.9 GB peak to ~500-800 MB at 4K.
+
+## Cross-chunk dependencies
+
+Chunk-8c step E (walker wireup) is documented as *conditional on
+chunk 9* — see `region_source.rs::StreamingXybSource` doc comment.
+The trait surface (xyb_full, release_dc_region, into_planes,
+all_released, released_count) is the chunk-9 contract; unit tests in
+`region_source.rs::tests` lock it down.

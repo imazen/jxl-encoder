@@ -25,8 +25,28 @@
 //! Chunk 8b ships only the trait + a `WholeImageXybSource` blanket
 //! implementation that returns the existing whole-image borrows
 //! unchanged — every existing call site gets byte-identical output.
-//! Chunk 8c will wire a streaming source that materialises one DC
-//! group at a time + drops it after `transform_and_quantize` returns.
+//!
+//! ## Streaming refactor chunk 8c step D (#11)
+//!
+//! Adds [`StreamingXybSource`]: a concrete `XybRegionSource` impl
+//! with per-DC-group release tracking + an explicit
+//! [`StreamingXybSource::into_planes`] consumer that drops the
+//! contiguous plane storage. The implementation is `#![forbid
+//! (unsafe_code)]`-compatible (no slice-lifetime extension via raw
+//! pointers); the borrow checker's `'self` lifetime on
+//! [`XybRegionSource::xyb_full`] is the safety guarantee.
+//!
+//! Step D ships the type + 6 unit tests covering construction,
+//! release tracking, idempotency, out-of-bounds release, `Sync`,
+//! and the walker-contract pattern (borrow → release → into_planes).
+//! Step E does NOT wire `StreamingXybSource` into
+//! `super::encoder::VarDctEncoder::encode_inner` for the production
+//! path because the encoder's post-transform pipeline has two
+//! whole-image consumers (`compute_epf_sharpness` + the `mask1x1`
+//! fallback) that read XYB after the walker would call
+//! `into_planes`. Wiring would require chunk-9's per-region EPF
+//! sharpness port (step A). The full chunk-9 wireup plan is
+//! documented on the [`StreamingXybSource`] type itself.
 //!
 //! ### Why this trait (not a `&[f32]` x3)
 //!
@@ -301,6 +321,253 @@ impl<'a> XybRegionSource for BorrowedXybSource<'a> {
     }
 }
 
+/// Streaming XYB source: tracks per-DC-group release state and
+/// exposes [`Self::into_planes`] as the single point at which the
+/// contiguous plane storage returns to the allocator.
+///
+/// **Chunk 8c step D (#11) — structural foundation only.** This
+/// type is the concrete consumer the chunk-8b walker seam
+/// (`encoder.rs:2129-2137`) was waiting for; it is *not yet wired*
+/// into [`super::encoder::VarDctEncoder::encode_inner`] because
+/// the encoder's post-transform whole-image consumers
+/// (`compute_epf_sharpness` + the `mask1x1` fallback) would read
+/// XYB *after* the walker calls `into_planes`. Wiring the
+/// streaming source today would either (a) require step A's
+/// per-region EPF port (not landed — see "Wireup blocker" below)
+/// or (b) silently disable EPF dynamic sharpness on the streaming
+/// path (a quality regression). The walker conditional in
+/// [`super::encoder::VarDctEncoder::encode_inner`] therefore
+/// keeps engaging `WholeImageXybSource` until chunk 9 ports
+/// `compute_epf_sharpness_for_region`.
+///
+/// What this impl lands: a concrete trait impl with per-DC-group
+/// release tracking and an explicit `into_planes` consumer so
+/// chunk-9 wireup has a stable surface to plug into. Unit tests
+/// in this file's `tests` mod lock down the trait contract.
+///
+/// ### Memory model
+///
+/// Owns three XYB planes as contiguous `Vec<f32>`s (same layout
+/// as [`WholeImageXybSource`]). On construction:
+/// - The three plane Vecs.
+/// - `released: Vec<bool>` of length `num_dc_groups_x *
+///   num_dc_groups_y` tracking per-region release state.
+/// - `released_count: u32` is an O(1) "all released" probe.
+///
+/// **Why drop happens at [`Self::into_planes`], not inside
+/// [`release_dc_region`].** The trait method [`xyb_full`] returns
+/// borrowed slices with `'self` lifetime — that lifetime is the
+/// borrow checker's evidence that the planes are still alive when
+/// the caller dereferences the slice. `release_dc_region` is
+/// `&self` (required by the trait's `Sync` constraint for parallel
+/// fan-out compatibility); it cannot drop the planes in place
+/// without `unsafe` (this crate is `#![forbid(unsafe_code)]`).
+/// `into_planes` takes `self` by value, which forces the borrow
+/// checker to confirm every prior `xyb_full` borrow has been
+/// dropped before the call — no unsafe required, zero risk of
+/// dangling slices.
+///
+/// The walker contract is:
+///
+///   1. Construct the source with the XYB planes + DC-group grid.
+///   2. Call [`xyb_full`] once and hand the borrow to the
+///      parallel AC-group fan-out inside `transform_and_quantize`.
+///   3. Wait for the fan-out to join — all borrows dropped.
+///   4. Walk the DC-group grid and call [`release_dc_region`] for
+///      each (bookkeeping only).
+///   5. Confirm [`Self::all_released`] returns `true`, then call
+///      [`Self::into_planes`]. This is the single point at which
+///      the three plane Vecs return to the allocator.
+///
+/// ### Wireup blocker (chunk-9 prerequisite)
+///
+/// The encoder's post-transform pipeline has two whole-image
+/// consumers that read XYB after the walker would call
+/// `into_planes`:
+///
+///   1. [`super::epf::compute_epf_sharpness`] — IDCT-based
+///      reconstruction, 3-step EPF filter (cross-block stencil up
+///      to 3 px), per-block L2 errors with histogram-based
+///      pass-2 context refinement that touches the *entire*
+///      sharpness grid. Gated on
+///      `params.epf_iters > 0 && distance >= 0.5 &&
+///      profile.epf_dynamic_sharpness`.
+///   2. The `mask1x1` fallback — calls
+///      [`super::adaptive_quant::compute_mask1x1_with_budget`] on
+///      `xyb_y`. Already hoisted into a single
+///      [`super::adaptive_quant::resolve_mask1x1_for_sharpness`]
+///      call by chunk-8c step B (`f434350b`), but still reads
+///      whole-image `xyb_y`.
+///
+/// Lifting `compute_epf_sharpness` per-DC-group is the chunk-8c
+/// step A that didn't ship: byte-identity bar is high because
+/// pass-2 multipliers are quantised via `size_t / size_t`
+/// integer division — any rounding drift in a per-DC-group
+/// accumulation changes the shipped sharpness map. Chunk-9 task:
+/// port `compute_epf_sharpness_for_region(dc_x, dc_y, src,
+/// 2-block-border)` with byte-identity validation on the
+/// rd-regression corpus + every hash_lock_features test.
+///
+/// ### Why mid-encode RSS doesn't drop at 4K
+///
+/// Even with chunk-9 wireup, the 4096² peak RSS (~2895 MB
+/// measured at chunk-8c, unchanged from chunk-8b baseline) is
+/// dominated by *two-pass tokenization*: BitWriter capacity
+/// (~268 MB at 4K via `width * height * 4` heuristic), token
+/// vectors per AC-group, ANS reverse-stream scratch, per-DC-group
+/// section writers. The XYB planes (~200 MB) are already dropped
+/// at the end of the EPF branch (`encoder.rs:2186-2192`) before
+/// two-pass starts; freeing them per-region during transform
+/// won't bring peak RSS down because (a) `quant_ac` is allocated
+/// next (~192 MB) and lives through two-pass, and (b) glibc /
+/// jemalloc rarely `madvise(DONTNEED)` on mid-arena Vec drops, so
+/// OS-reported RSS stays high until the next allocator coalescing
+/// cycle.
+///
+/// The real RSS wins land when a future chunk replaces the
+/// whole-image two-pass tokenizer with per-DC-group tokenization
+/// that streams sections to a [`std::io::Write`] sink. This
+/// `StreamingXybSource` is the upstream contract that
+/// per-DC-group tokenization needs to call `release_dc_region`
+/// on — without it, the tokenizer would have no defined upstream
+/// "release this region" semantics.
+pub(crate) struct StreamingXybSource {
+    width: usize,
+    height: usize,
+    padded_width: usize,
+    padded_height: usize,
+    num_dc_groups_x: u32,
+    num_dc_groups_y: u32,
+    planes_x: Vec<f32>,
+    planes_y: Vec<f32>,
+    planes_b: Vec<f32>,
+    /// Per-region release bookkeeping. `std::sync::Mutex` is used
+    /// because `release_dc_region` is `&self` (trait constraint
+    /// for `Sync` parallel fan-out compatibility).
+    bookkeeping: std::sync::Mutex<StreamingBookkeeping>,
+}
+
+struct StreamingBookkeeping {
+    released: Vec<bool>,
+    released_count: u32,
+}
+
+impl StreamingXybSource {
+    /// Construct a streaming source from three already-padded XYB
+    /// planes plus the DC-group grid dimensions. Asserts the
+    /// plane lengths match `padded_width * padded_height`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        width: usize,
+        height: usize,
+        padded_width: usize,
+        padded_height: usize,
+        num_dc_groups_x: u32,
+        num_dc_groups_y: u32,
+        xyb_x: Vec<f32>,
+        xyb_y: Vec<f32>,
+        xyb_b: Vec<f32>,
+    ) -> Self {
+        let n = padded_width.saturating_mul(padded_height);
+        debug_assert_eq!(xyb_x.len(), n, "StreamingXybSource: xyb_x length mismatch");
+        debug_assert_eq!(xyb_y.len(), n, "StreamingXybSource: xyb_y length mismatch");
+        debug_assert_eq!(xyb_b.len(), n, "StreamingXybSource: xyb_b length mismatch");
+        let num_dc_groups = (num_dc_groups_x as usize) * (num_dc_groups_y as usize);
+        Self {
+            width,
+            height,
+            padded_width,
+            padded_height,
+            num_dc_groups_x,
+            num_dc_groups_y,
+            planes_x: xyb_x,
+            planes_y: xyb_y,
+            planes_b: xyb_b,
+            bookkeeping: std::sync::Mutex::new(StreamingBookkeeping {
+                released: alloc::vec![false; num_dc_groups],
+                released_count: 0,
+            }),
+        }
+    }
+
+    /// Number of DC regions whose `release_dc_region` hint has
+    /// fired. Useful for tests and for the walker to sanity-check
+    /// that it covered the full grid before calling
+    /// [`Self::into_planes`].
+    #[allow(dead_code)]
+    pub(crate) fn released_count(&self) -> u32 {
+        self.bookkeeping.lock().unwrap().released_count
+    }
+
+    /// `true` when every DC region has been released. The walker
+    /// uses this to gate the [`Self::into_planes`] call.
+    #[allow(dead_code)]
+    pub(crate) fn all_released(&self) -> bool {
+        let bk = self.bookkeeping.lock().unwrap();
+        let total = self.num_dc_groups_x.saturating_mul(self.num_dc_groups_y);
+        bk.released_count >= total
+    }
+
+    /// Consume the source, returning the three plane `Vec`s in
+    /// constructor order `(xyb_x, xyb_y, xyb_b)`.
+    ///
+    /// This is the actual point at which the contiguous plane
+    /// storage returns to the allocator. The caller (the walker)
+    /// must have dropped every prior [`Self::xyb_full`] borrow
+    /// before calling — Rust's borrow checker enforces this at
+    /// compile time because `into_planes` takes `self` by value.
+    /// No `unsafe` required.
+    #[allow(dead_code)]
+    pub(crate) fn into_planes(self) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+        (self.planes_x, self.planes_y, self.planes_b)
+    }
+}
+
+impl XybRegionSource for StreamingXybSource {
+    #[inline]
+    fn width(&self) -> usize {
+        self.width
+    }
+    #[inline]
+    fn height(&self) -> usize {
+        self.height
+    }
+    #[inline]
+    fn padded_width(&self) -> usize {
+        self.padded_width
+    }
+    #[inline]
+    fn padded_height(&self) -> usize {
+        self.padded_height
+    }
+    #[inline]
+    fn xyb_full(&self) -> (&[f32], &[f32], &[f32]) {
+        (&self.planes_x, &self.planes_y, &self.planes_b)
+    }
+
+    /// Mark `(dc_x, dc_y)` as released. Bookkeeping only — the
+    /// actual plane Vec storage is freed by [`Self::into_planes`]
+    /// (which takes `self` by value, so the borrow checker
+    /// forbids any concurrent [`xyb_full`] borrow).
+    ///
+    /// Out-of-bounds `(dc_x, dc_y)` are silently ignored — same
+    /// contract as the trait's default no-op.
+    ///
+    /// Idempotent: calling release twice for the same `(dc_x,
+    /// dc_y)` advances `released_count` only once.
+    fn release_dc_region(&self, dc_x: u32, dc_y: u32) {
+        if dc_x >= self.num_dc_groups_x || dc_y >= self.num_dc_groups_y {
+            return;
+        }
+        let idx = (dc_y as usize) * (self.num_dc_groups_x as usize) + (dc_x as usize);
+        let mut bk = self.bookkeeping.lock().unwrap();
+        if idx < bk.released.len() && !bk.released[idx] {
+            bk.released[idx] = true;
+            bk.released_count = bk.released_count.saturating_add(1);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,5 +628,111 @@ mod tests {
         let v = vec![0.0f32; 64];
         let src = BorrowedXybSource::new(8, 8, 8, 8, &v, &v, &v);
         assert_sync(&src);
+    }
+
+    #[test]
+    fn streaming_source_round_trips_xyb_full_before_release() {
+        let (x, y, b) = make_planes(16 * 16);
+        let src = StreamingXybSource::new(
+            16, 16, 16, 16, 1, 1, x.clone(), y.clone(), b.clone(),
+        );
+        assert_eq!(src.width(), 16);
+        assert_eq!(src.padded_width(), 16);
+        let (sx, sy, sb) = src.xyb_full();
+        assert_eq!(sx, x.as_slice());
+        assert_eq!(sy, y.as_slice());
+        assert_eq!(sb, b.as_slice());
+        assert!(!src.all_released());
+        assert_eq!(src.released_count(), 0);
+    }
+
+    #[test]
+    fn streaming_source_tracks_release_state() {
+        // 4×3 = 12 DC regions; release them all, expect
+        // `all_released` to flip and `into_planes` to return the
+        // original storage in order.
+        let (x, y, b) = make_planes(32 * 24);
+        let src = StreamingXybSource::new(
+            32, 24, 32, 24, 4, 3, x.clone(), y.clone(), b.clone(),
+        );
+        assert!(!src.all_released(), "fresh source must not be all-released");
+        // Release 11 of 12 — counter advances, all_released still false.
+        for i in 0..11u32 {
+            src.release_dc_region(i % 4, i / 4);
+        }
+        assert!(
+            !src.all_released(),
+            "all_released must remain false until every region is released"
+        );
+        assert_eq!(src.released_count(), 11);
+        // Final release flips all_released.
+        src.release_dc_region(3, 2);
+        assert!(src.all_released(), "all_released must fire on final release");
+        assert_eq!(src.released_count(), 12);
+        // into_planes returns the original storage in order.
+        // (The walker calls this after all_released to drop the
+        // planes.)
+        let (rx, ry, rb) = src.into_planes();
+        assert_eq!(rx, x);
+        assert_eq!(ry, y);
+        assert_eq!(rb, b);
+    }
+
+    #[test]
+    fn streaming_source_release_is_idempotent() {
+        let (x, y, b) = make_planes(16 * 8);
+        let src = StreamingXybSource::new(16, 8, 16, 8, 2, 1, x, y, b);
+        // Same region released twice — counter advances once.
+        src.release_dc_region(0, 0);
+        src.release_dc_region(0, 0);
+        src.release_dc_region(0, 0);
+        assert_eq!(src.released_count(), 1);
+        assert!(!src.all_released());
+        // Final region.
+        src.release_dc_region(1, 0);
+        assert!(src.all_released());
+    }
+
+    #[test]
+    fn streaming_source_release_out_of_bounds_is_noop() {
+        let (x, y, b) = make_planes(16 * 8);
+        let src = StreamingXybSource::new(16, 8, 16, 8, 2, 1, x, y, b);
+        src.release_dc_region(2, 0); // x past grid
+        src.release_dc_region(0, 1); // y past grid
+        src.release_dc_region(42, 42); // far past grid
+        assert_eq!(src.released_count(), 0);
+        assert!(!src.all_released());
+    }
+
+    #[test]
+    fn streaming_source_is_sync() {
+        fn assert_sync<T: Sync>(_: &T) {}
+        let (x, y, b) = make_planes(64);
+        let src = StreamingXybSource::new(8, 8, 8, 8, 1, 1, x, y, b);
+        assert_sync(&src);
+    }
+
+    #[test]
+    fn streaming_source_xyb_full_remains_valid_across_releases() {
+        // The walker contract: xyb_full() borrows are held during
+        // transform_and_quantize; release_dc_region calls run
+        // after the borrows drop. This test verifies the
+        // bookkeeping doesn't invalidate prior borrows (borrow
+        // checker would reject the pattern at compile time if it
+        // did, since release takes &self).
+        let (x, y, b) = make_planes(16 * 8);
+        let src = StreamingXybSource::new(16, 8, 16, 8, 2, 1, x.clone(), y.clone(), b.clone());
+        // Borrow snapshot before any releases.
+        let (sx, sy, sb) = src.xyb_full();
+        assert_eq!(sx, x.as_slice());
+        // Release some regions while borrows are still live (they
+        // are NOT invalidated because into_planes hasn't run).
+        src.release_dc_region(0, 0);
+        assert_eq!(sy, y.as_slice());
+        src.release_dc_region(1, 0);
+        assert_eq!(sb, b.as_slice());
+        // Source still has its planes; into_planes would take
+        // them. all_released gates that step.
+        assert!(src.all_released());
     }
 }
