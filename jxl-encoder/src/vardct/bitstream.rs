@@ -2431,6 +2431,14 @@ impl VarDctEncoder {
                     fh.height = crop.height;
                     fh.blend_mode = BlendMode::Replace;
                     fh.blend_source = 1;
+                    // Mirror the main `blend_source` onto every extra
+                    // channel. Without this, ec defaults to `source=0`
+                    // (the empty initial canvas) — `Replace`-over-
+                    // source-0 on a crop resets the canvas alpha to
+                    // the encoded pixels and zeros everywhere else.
+                    // Mirrors the modular path's fix in
+                    // `modular/frame.rs::apply_animation_to_header`.
+                    fh.ec_blend_sources = vec![fh.blend_source; num_extra_channels];
                 }
                 // Per-frame blend override wins over the crop default.
                 if let Some(mode) = opts.blend_mode {
@@ -2447,6 +2455,22 @@ impl VarDctEncoder {
                 // Per-frame override wins last.
                 if let Some(slot) = opts.save_as_reference {
                     fh.save_as_reference = slot;
+                }
+                // Chunk-2 `with_auto_delta_frames` RGBA support: when the
+                // caller wants the main blend mode to apply to extras too
+                // (e.g. `Add`-over-zero on RGBA identity frames so alpha
+                // also gets `Add`ed-with-zero = no-op), override the
+                // default `Replace`-for-all-extras here AND mirror the
+                // main `blend_source` onto every ec so the extras
+                // composite against the same reference slot the main
+                // frame uses. Without the source mirror the extras
+                // would target slot 0 (the empty initial canvas) and
+                // decode as the encoded zero instead of preserving the
+                // previous-frame alpha. `None` keeps the existing
+                // `Replace` + slot-0 default.
+                if let Some(ec_mode) = opts.ec_blend_mode_override {
+                    fh.ec_blend_modes = vec![ec_mode; num_extra_channels];
+                    fh.ec_blend_sources = vec![fh.blend_source; num_extra_channels];
                 }
                 // Reference-only frames are stored to a save slot but
                 // NOT displayed during playback. The bitstream writer

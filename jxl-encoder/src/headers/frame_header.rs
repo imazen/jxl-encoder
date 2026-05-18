@@ -50,6 +50,14 @@ pub struct FrameOptions {
     /// Optional `save_as_reference` override (0–3). `None` keeps the default
     /// (1 for non-last animated frames so crops can composite on the canvas).
     pub save_as_reference: Option<u32>,
+    /// Optional per-extra-channel blend mode override. When `Some(mode)`,
+    /// every extra channel's blend mode in the frame header
+    /// (`ec_blend_modes`) is set to `mode` instead of the default
+    /// [`BlendMode::Replace`]. Used by the chunk-2 `with_auto_delta_frames`
+    /// path to set `Add` on alpha extras so an `Add`-over-zero main also
+    /// leaves the alpha canvas unchanged on RGBA inputs. `None` keeps the
+    /// existing `Replace`-for-all-extras default.
+    pub ec_blend_mode_override: Option<BlendMode>,
     /// Encode this frame as `FrameType::ReferenceOnly` — written into the
     /// codestream and saved to its `save_as_reference` slot but NOT
     /// presented as a displayable frame. Subsequent regular frames
@@ -174,6 +182,17 @@ pub struct FrameHeader {
     pub blend_mode: BlendMode,
     /// Per-extra-channel blending modes.
     pub ec_blend_modes: Vec<BlendMode>,
+    /// Per-extra-channel `source` (reference slot 0–3). One entry per
+    /// extra channel, parallel to [`Self::ec_blend_modes`]. Default is
+    /// `0` (= "no previous canvas"); when the main frame composites
+    /// against a saved reference (e.g. animation crop frames with
+    /// `blend_source=1`), the extra channels must use the *same* source
+    /// or the extras will be decoded against the empty slot 0 and
+    /// effectively reset to zero. Chunk-2 of `with_auto_delta_frames`
+    /// sets this to match `blend_source` whenever
+    /// [`crate::modular::frame::FrameEncoderOptions::ec_blend_mode_override`]
+    /// or the vardct path's `FrameOptions::ec_blend_mode_override` is set.
+    pub ec_blend_sources: Vec<u32>,
     /// Source reference frame for blending (0-3).
     pub blend_source: u32,
     /// Alpha channel to use for blending.
@@ -230,6 +249,7 @@ impl Default for FrameHeader {
             blend_mode: BlendMode::Replace,
             blend_source: 0,
             ec_blend_modes: Vec::new(),
+            ec_blend_sources: Vec::new(),
             alpha_blend_channel: 0,
             save_as_reference: 0,
             save_before_ct: false,
@@ -397,9 +417,17 @@ impl FrameHeader {
             self.write_blending_info(writer)?;
         }
 
-        // ec_blending_info per extra channel
-        for &mode in &self.ec_blend_modes {
-            self.write_ec_blending_info(mode, writer)?;
+        // ec_blending_info per extra channel.
+        //
+        // Each ec has its own `source` (libjxl `BlendingInfo::source` in
+        // frame_header.cc:90, one per `extra_channel_blending_info[i]`).
+        // When `ec_blend_sources` is shorter than `ec_blend_modes` the
+        // missing entries are treated as `0` — the historical default
+        // that all callers but the chunk-2 `with_auto_delta_frames`
+        // path actually want.
+        for (i, &mode) in self.ec_blend_modes.iter().enumerate() {
+            let source = self.ec_blend_sources.get(i).copied().unwrap_or(0);
+            self.write_ec_blending_info(mode, source, writer)?;
         }
 
         // duration and timecode (for animated normal frames)
@@ -539,7 +567,21 @@ impl FrameHeader {
 
     /// Writes blending information for an extra channel.
     /// Same field order as `write_blending_info`.
-    fn write_ec_blending_info(&self, mode: BlendMode, writer: &mut BitWriter) -> Result<()> {
+    ///
+    /// `source` is the reference slot the ec composites against (0–3).
+    /// Defaults to `0` for callers that don't track per-ec sources
+    /// (matches the historical behaviour), but the chunk-2
+    /// `with_auto_delta_frames` RGBA path threads the main
+    /// `blend_source` through here so an `Add`-of-zero alpha lands on
+    /// the same reference slot the main `Add`-of-zero RGB does (without
+    /// this, the alpha would be added to the empty slot 0 and decode
+    /// as the encoded zero).
+    fn write_ec_blending_info(
+        &self,
+        mode: BlendMode,
+        source: u32,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
         writer.write_u32_coder(mode as u32, 0, 1, 2, 3, 2)?;
 
         let has_extras = !self.ec_blend_modes.is_empty();
@@ -555,7 +597,7 @@ impl FrameHeader {
 
         let full_frame = self.x0 == 0 && self.y0 == 0 && self.width == 0 && self.height == 0;
         if !(full_frame && mode == BlendMode::Replace) {
-            writer.write(2, 0)?; // source = 0
+            writer.write(2, source as u64)?;
         }
 
         Ok(())

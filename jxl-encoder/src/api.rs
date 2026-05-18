@@ -8708,8 +8708,23 @@ fn encode_animation_lossless(
         // linear float, adds 0.0, clamps, restores the canvas pixel),
         // and zero-valued modular pixels compress smaller than the
         // arbitrary canvas-pixel value the existing path encodes.
-        // Chunk-2 work will widen this to trial-encode
-        // `Regular` vs `Add(prev)` vs `Blend(prev)` per frame.
+        //
+        // Chunk-2 (this commit) widens chunk-1 in two ways:
+        //   * RGBA support — when the identity short-circuit fires on
+        //     a layout with alpha, the alpha extra channel pixels are
+        //     also zeroed and the frame header's `ec_blend_modes` is
+        //     overridden to `Add` (via `ec_blend_mode_override`) so
+        //     `Add`-of-zero is a no-op for both main RGB and alpha.
+        //   * Full-frame delta-residual trial — when frames differ but
+        //     the caller has opted in, encode two variants per frame:
+        //     (a) the existing Regular path and
+        //     (b) a full-frame `BlendMode::Add` payload whose pixels
+        //         are signed `frame_N - frame_N-1` deltas.
+        //     Each variant is encoded into its own scratch BitWriter;
+        //     whichever is smaller in bits gets appended to the output.
+        //     Delta-residual is byte-exact for lossless because the
+        //     modular signed-i32 channels round-trip both branches of
+        //     the subtraction.
         let mut delta_from_identical = false;
         let crop = if frame.reference_only {
             None
@@ -8719,16 +8734,10 @@ fn encode_animation_lossless(
                 Some(_) => None, // Crop covers full frame — no benefit
                 None => {
                     // Frames are identical — emit a minimal 1x1 crop to preserve canvas
-                    if cfg.auto_delta_frames && frame.blend_mode.is_none() && !layout.has_alpha() {
-                        // Chunk-1 POC: gate on no-alpha layouts so the
-                        // extra-channel `ec_blend_modes` does not need
-                        // a matching Add override; alpha extra channels
-                        // default to Replace, so an `Add` main with
-                        // `Replace` alpha would over-write alpha to
-                        // the encoded zero on RGBA inputs and corrupt
-                        // the canvas. Chunk 2 will plumb
-                        // `ec_blend_modes = Add` through
-                        // `FrameEncoderOptions` to unlock RGBA.
+                    if cfg.auto_delta_frames && frame.blend_mode.is_none() {
+                        // Chunk-2: the alpha-channel gate from chunk-1
+                        // is dropped here because `ec_blend_mode_override`
+                        // now lets us match `Add` on extras too.
                         delta_from_identical = true;
                     }
                     Some(FrameCrop {
@@ -8791,9 +8800,10 @@ fn encode_animation_lossless(
 
         let use_tree_learning = cfg.effective_tree_learning();
         let smart_profile = cfg.effective_profile_for_image((frame_w as u64) * (frame_h as u64));
-        let frame_encoder = FrameEncoder::new(
-            frame_w,
-            frame_h,
+        let make_opts = |crop: Option<FrameCrop>,
+                         blend_mode: Option<BlendMode>,
+                         ec_override: Option<BlendMode>|
+         -> FrameEncoderOptions {
             FrameEncoderOptions {
                 use_modular: true,
                 effort: cfg.effort,
@@ -8804,34 +8814,132 @@ fn encode_animation_lossless(
                 lz77_method: cfg.lz77_method,
                 lossy_palette: cfg.lossy_palette,
                 encoder_mode: cfg.mode,
-                profile: smart_profile,
+                profile: smart_profile.clone(),
                 have_animation: true,
                 have_timecodes,
                 duration: frame.duration,
                 is_last: i == num_frames - 1,
                 crop,
                 skip_rct: false,
-                blend_mode: if delta_from_identical {
-                    // Chunk-1 POC: identical-frame short-circuit via
-                    // `BlendMode::Add` over a zero-pixel 1×1 crop
-                    // (see `delta_from_identical` setup above).
-                    Some(BlendMode::Add)
-                } else {
-                    frame.blend_mode
-                },
+                blend_mode,
                 blend_source: frame.blend_source,
                 save_as_reference: frame.save_as_reference,
+                ec_blend_mode_override: ec_override,
                 reference_only: frame.reference_only,
                 name: frame.name.clone(),
                 timecode: frame.timecode,
                 modular_knobs: cfg.modular_knobs(),
                 modular_group_size_shift: cfg.effective_modular_group_size_shift(),
-            },
+            }
+        };
+
+        // Chunk-2 RGBA extension to the identity short-circuit: when
+        // `delta_from_identical` fires AND the input has alpha, ALL
+        // channels in the 1×1 crop are already zero (the `vec![0u8;
+        // frame_w * frame_h * bpp]` above zeroed the interleaved RGBA
+        // bytes including the alpha byte), so we just need the frame
+        // header to apply `Add` to both the main and the alpha extra
+        // channel. `ec_blend_mode_override = Some(Add)` makes the
+        // modular path overwrite the default `Replace`-for-extras with
+        // `Add` for every extra channel in the frame header.
+        let identity_blend_mode = if delta_from_identical {
+            Some(BlendMode::Add)
+        } else {
+            frame.blend_mode
+        };
+        let identity_ec_override = if delta_from_identical {
+            Some(BlendMode::Add)
+        } else {
+            None
+        };
+
+        // Trial-encode candidate A: Regular (the existing path's
+        // header + payload). For frame 0, the identity short-circuit
+        // branch, and reference-only frames we ship A unconditionally.
+        let mut writer_a = crate::bit_writer::BitWriter::new();
+        FrameEncoder::new(
+            frame_w,
+            frame_h,
+            make_opts(crop, identity_blend_mode, identity_ec_override),
         )
-        .with_budget(alloc::sync::Arc::clone(&budget));
-        frame_encoder
-            .encode_modular(&image, &color_encoding, &mut writer)
-            .map_err(EncodeError::from)?;
+        .with_budget(alloc::sync::Arc::clone(&budget))
+        .encode_modular(&image, &color_encoding, &mut writer_a)
+        .map_err(EncodeError::from)?;
+
+        // Trial-encode candidate B: full-frame `BlendMode::Add` delta
+        // payload. Only attempted when the caller has opted in, a
+        // previous-frame canvas exists, this frame is genuinely
+        // different (`crop` is `Some` with sub-frame coverage), and
+        // the caller has not pinned a non-default blend mode of their
+        // own. Skipped for reference-only frames (they ARE the
+        // canvas, not a delta against it) and for frame 0 (no
+        // previous canvas).
+        //
+        // Delta image is built by subtracting the previous *displayed*
+        // canvas from the current frame in interleaved-pixel space.
+        // Signed deltas live in the modular signed-i32 channel; the
+        // decoder's `Add` blend mode adds the float-lifted delta back
+        // to the float-lifted canvas, restoring `frame.pixels`
+        // exactly (lossless modular round-trip).
+        //
+        // RGBA: the alpha extra also needs `Add` — same
+        // `ec_blend_mode_override` plumbing as the identity branch.
+        let writer_b: Option<crate::bit_writer::BitWriter> = if cfg.auto_delta_frames
+            && !delta_from_identical
+            && !frame.reference_only
+            && frame.blend_mode.is_none()
+            && crop.is_some()
+            && let Some(prev) = prev_pixels
+        {
+            // The delta payload is full-frame: dimensions match the
+            // canvas, so the `crop` is `None` and the blend covers
+            // the whole frame at (0,0).
+            match build_lossless_delta_image(layout, frame.pixels, prev, w, h, bpp) {
+                Some(delta_image) => {
+                    let mut wb = crate::bit_writer::BitWriter::new();
+                    FrameEncoder::new(
+                        w,
+                        h,
+                        make_opts(
+                            None, // full-frame, no crop
+                            Some(BlendMode::Add),
+                            if layout.has_alpha() {
+                                Some(BlendMode::Add)
+                            } else {
+                                None
+                            },
+                        ),
+                    )
+                    .with_budget(alloc::sync::Arc::clone(&budget))
+                    .encode_modular(&delta_image, &color_encoding, &mut wb)
+                    .map_err(EncodeError::from)?;
+                    Some(wb)
+                }
+                // Unsupported layout for delta (e.g. one we haven't
+                // wired into `build_lossless_delta_image`). Skip the
+                // trial; ship candidate A.
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        // Pick the smaller candidate (compare bit counts because
+        // candidate appends are unaligned and the frame headers don't
+        // self-pad to byte boundaries at start).
+        let pick_a = match &writer_b {
+            None => true,
+            Some(wb) => writer_a.bits_written() <= wb.bits_written(),
+        };
+        if pick_a {
+            writer
+                .append_unaligned(&writer_a)
+                .map_err(EncodeError::from)?;
+        } else {
+            writer
+                .append_unaligned(writer_b.as_ref().unwrap())
+                .map_err(EncodeError::from)?;
+        }
 
         // ReferenceOnly frames are not the displayed canvas — keep
         // `prev_pixels` pinned to the previous displayed frame so the
@@ -8843,6 +8951,117 @@ fn encode_animation_lossless(
     }
 
     Ok(writer.finish_with_padding())
+}
+
+/// Build a full-frame signed-delta [`ModularImage`] for the lossless
+/// auto-delta trial encode. Subtracts the previous displayed canvas
+/// from the current frame in interleaved-pixel space and packs the
+/// signed result into the modular signed-i32 channel.
+///
+/// Returns `None` for layouts we don't support yet (anything beyond
+/// the 8-bit u8 / 16-bit u16 native-endian families). Reuses the same
+/// channel layout as the matching `ModularImage::from_*` constructor
+/// so the decoder sees an identically-shaped frame (the only difference
+/// is the per-channel pixel values are signed deltas instead of raw
+/// pixels — modular channels store i32 throughout).
+fn build_lossless_delta_image(
+    layout: PixelLayout,
+    curr: &[u8],
+    prev: &[u8],
+    width: usize,
+    height: usize,
+    bpp: usize,
+) -> Option<crate::modular::channel::ModularImage> {
+    use crate::modular::channel::{Channel, ModularImage};
+
+    debug_assert_eq!(curr.len(), prev.len());
+    debug_assert_eq!(curr.len(), width * height * bpp);
+
+    // Per-channel layout + delta builder. For 8-bit layouts the delta
+    // is `(curr[i] as i32) - (prev[i] as i32)`; for native-endian
+    // 16-bit, it's the same after byte-pair → u16 → i32 reads. BGR
+    // swap is handled by routing the BGR variants through the RGB
+    // builder with a one-shot swap of `curr` and `prev`.
+    let make_8bit = |interleaved_curr: &[u8],
+                     interleaved_prev: &[u8],
+                     num_chan: usize,
+                     is_grayscale: bool,
+                     has_alpha: bool|
+     -> Option<ModularImage> {
+        let mut channels = Vec::with_capacity(num_chan);
+        for c in 0..num_chan {
+            let mut ch = Channel::new(width, height).ok()?;
+            for y in 0..height {
+                for x in 0..width {
+                    let idx = (y * width + x) * num_chan + c;
+                    let d = (interleaved_curr[idx] as i32) - (interleaved_prev[idx] as i32);
+                    ch.set(x, y, d);
+                }
+            }
+            channels.push(ch);
+        }
+        Some(ModularImage {
+            channels,
+            bit_depth: 8,
+            is_grayscale,
+            has_alpha,
+        })
+    };
+    let make_16bit_native = |interleaved_curr: &[u8],
+                             interleaved_prev: &[u8],
+                             num_chan: usize,
+                             is_grayscale: bool,
+                             has_alpha: bool|
+     -> Option<ModularImage> {
+        let mut channels = Vec::with_capacity(num_chan);
+        for c in 0..num_chan {
+            let mut ch = Channel::new(width, height).ok()?;
+            for y in 0..height {
+                for x in 0..width {
+                    let pix = (y * width + x) * num_chan + c;
+                    let off = pix * 2;
+                    let cur = u16::from_ne_bytes([interleaved_curr[off], interleaved_curr[off + 1]])
+                        as i32;
+                    let prv = u16::from_ne_bytes([interleaved_prev[off], interleaved_prev[off + 1]])
+                        as i32;
+                    ch.set(x, y, cur - prv);
+                }
+            }
+            channels.push(ch);
+        }
+        Some(ModularImage {
+            channels,
+            bit_depth: 16,
+            is_grayscale,
+            has_alpha,
+        })
+    };
+
+    match layout {
+        PixelLayout::Rgb8 => make_8bit(curr, prev, 3, false, false),
+        PixelLayout::Rgba8 => make_8bit(curr, prev, 4, false, true),
+        PixelLayout::Bgr8 => {
+            let curr_swap = bgr_to_rgb(curr, 3);
+            let prev_swap = bgr_to_rgb(prev, 3);
+            make_8bit(&curr_swap, &prev_swap, 3, false, false)
+        }
+        PixelLayout::Bgra8 => {
+            let curr_swap = bgr_to_rgb(curr, 4);
+            let prev_swap = bgr_to_rgb(prev, 4);
+            make_8bit(&curr_swap, &prev_swap, 4, false, true)
+        }
+        PixelLayout::Gray8 => make_8bit(curr, prev, 1, true, false),
+        PixelLayout::GrayAlpha8 => make_8bit(curr, prev, 2, true, true),
+        PixelLayout::Rgb16 => make_16bit_native(curr, prev, 3, false, false),
+        PixelLayout::Rgba16 => make_16bit_native(curr, prev, 4, false, true),
+        PixelLayout::Gray16 => make_16bit_native(curr, prev, 1, true, false),
+        PixelLayout::GrayAlpha16 => make_16bit_native(curr, prev, 2, true, true),
+        // Float / PQ / HLG / CMYK aren't currently routed through the
+        // lossless animation path; if/when they are, add matching arms
+        // here. Returning `None` makes the trial-encode silently fall
+        // back to candidate A (Regular).
+        _ => None,
+    }
 }
 
 fn encode_animation_lossy(
@@ -9031,6 +9250,16 @@ fn encode_animation_lossy(
         // dequantize to all-zero, IDCT to all-zero, and Add 0 to the
         // canvas is a no-op redraw with cheaper modular-quantised
         // tokens.
+        //
+        // Chunk-2 extends RGBA support: when alpha is present, the
+        // extra-channel blend mode is forced to `Add` via
+        // `ec_blend_mode_override`, and the alpha-extra payload is
+        // zero (the alpha input is set to all-zero below). The full
+        // delta-residual trial-encode that the lossless path runs is
+        // NOT applied to the lossy pipeline because residuals must
+        // round-trip through the reconstructed (already-quantised)
+        // reference frame, not the original pixels — that requires a
+        // reconstruction shadow that chunk-2 does not yet wire.
         let mut delta_from_identical = false;
         let crop = if frame.reference_only {
             None
@@ -9040,12 +9269,12 @@ fn encode_animation_lossy(
                 Some(_) => None, // Crop covers full frame — no benefit
                 None => {
                     // Frames identical — emit minimal 8x8 crop (VarDCT minimum)
-                    if cfg.auto_delta_frames && frame.blend_mode.is_none() && !layout.has_alpha() {
-                        // Chunk-1 POC: gate on no-alpha layouts (see
-                        // `encode_animation_lossless` for the
-                        // ec_blend_modes rationale). Chunk-2 will
-                        // unlock RGBA after the extra-channel blend
-                        // mode plumbing lands.
+                    if cfg.auto_delta_frames && frame.blend_mode.is_none() {
+                        // Chunk-2: the alpha-channel gate from chunk-1
+                        // is dropped — `ec_blend_mode_override` (set in
+                        // `frame_options` below) now sets the alpha
+                        // extra channel's blend mode to `Add` so that
+                        // an `Add`-of-zero alpha is also a no-op.
                         delta_from_identical = true;
                     }
                     Some(FrameCrop {
@@ -9244,6 +9473,17 @@ fn encode_animation_lossy(
             },
             blend_source: frame.blend_source,
             save_as_reference: frame.save_as_reference,
+            // Chunk-2 RGBA extension: when the identity short-circuit
+            // fires on a layout with alpha, force the alpha extra
+            // channel to `Add` too so the zeroed alpha buffer is a
+            // canvas-preserving no-op. On non-alpha layouts the
+            // override is `None` and the override block in
+            // `vardct/bitstream.rs` is skipped.
+            ec_blend_mode_override: if delta_from_identical && layout.has_alpha() {
+                Some(BlendMode::Add)
+            } else {
+                None
+            },
             reference_only: frame.reference_only,
             name: frame.name.clone(),
             timecode: frame.timecode,
