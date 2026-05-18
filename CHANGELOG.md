@@ -25,6 +25,52 @@
 
 ### Added
 
+- **Seed-budget expansion to 16 + two new variance dimensions for
+  multi-seed tree learning** (RFC#45 pick #1 chunk 6 — follow-on to
+  chunk 5 `2b2ce912`). W9-1 chunk 5 expanded e11 from 4 → 8 seeds and
+  split chunk-3 perturbations (seeds 0..=3) from chunk-4 dimensions
+  (seeds 4..=7), producing −0.46% bytes vs chunk 4 / strict win over
+  chunk 3 on the 5-image CID22-512 paired bench. Chunk 6 extends the
+  same seed-slot pattern with two coupled changes:
+  (1) `EffortProfile::tree_learn_seeds_for(11)` raised from `8 → 16`
+  (e10 stays at `2`, e ≤ 9 still single-seed). (2) Two new
+  `derive_seeded_*` helpers wire orthogonal variance dimensions into
+  dedicated 4-seed slots: `derive_seeded_max_property_values(seed)`
+  returns `Some(64) / Some(128) / Some(192) / None` for seeds
+  8..=11 (split-bucket-count override that coarsens
+  `find_best_split`'s value quantization grid — coarser grids can
+  land on different and sometimes cheaper discrete thresholds than
+  the 256-bucket canonical), and
+  `derive_seeded_properties_truncation(seed)` returns
+  `Some(8) / Some(10) / Some(12) / None` for seeds 12..=15 (truncates
+  the canonical `properties` Vec to a smaller leading prefix —
+  structural regularization that can outperform full-property trees
+  when the canonical run over-fits late-tier properties like the
+  `WPMaxError` family at indices 10-15 chasing bucket noise on
+  smooth content). Both helpers return `None` outside their 4-seed
+  slot ranges so the two chunk-6 dimensions never stack on a single
+  seed — the seed-slot doctrine that chunks 3-5 established (each
+  chunk's dimension owns its own 4-seed block) is now codified by
+  strict slot-range gates rather than wrap-around modulus.
+  `section.rs` applies both overrides to a per-seed clone of the
+  baseline `TreeLearningParams` after `derive_seeded_params`, with
+  truncation clamped to `properties.len()` so a cap longer than the
+  property Vec is a no-op rather than an invalid index. Chunk-2
+  `estimate_token_cost` picker keeps the cheapest of the 16
+  candidate trees — strictly ≥ chunk 5 by construction (seeds 0..=7
+  cover the same chunk-3/4/5 candidate space). Seed 0 stays
+  byte-identical to the canonical libjxl single-seed path. New unit
+  tests: `test_derive_seeded_max_property_values_low_seeds_are_none`,
+  `test_derive_seeded_max_property_values_high_seeds_active`,
+  `test_derive_seeded_properties_truncation_low_seeds_are_none`,
+  `test_derive_seeded_properties_truncation_high_seeds_active`,
+  `test_chunk6_dimensions_are_orthogonal` (enforces that
+  bucket-count slot seeds 8..=11 never trigger truncation and
+  truncation slot seeds 12..=15 never trigger bucket override).
+  Bench harness: `examples/e10_e11_multiseed_chunk6_ab.rs`.
+  Hash-locks: `hash_lock_features` 36/36 byte-identical at e ≤ 9.
+  RFC#45 issue thread updated with the 16-seed slot table.
+
 - **Seed-slot split + e11 budget expansion for multi-seed tree learning**
   (RFC#45 pick #1 chunk 5 — follow-on to chunk 4 `ef5c1d11`). W8-3-r2's
   honest 5-image A/B showed chunk 4 regressed vs chunk 3 at e11 by

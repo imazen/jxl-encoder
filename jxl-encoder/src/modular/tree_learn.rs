@@ -6382,6 +6382,114 @@ pub fn stride_for_seeded_sample_fraction(total_pixels: usize, fraction: f32) -> 
     }
 }
 
+/// Per-seed `max_property_values` override for the multi-seed tree-learning
+/// loop (RFC#45 chunk 6 — split-bucket-count variance follow-on to chunk 5).
+///
+/// Returns an override bucket count for the given seed, or `None` to leave
+/// the canonical `TreeLearningParams::max_property_values` (set by
+/// [`EffortProfile::tree_max_buckets`]) untouched.
+///
+/// Layout (chunk 6):
+/// - seeds 0..=7  → `None` (chunk-3 / chunk-4 / chunk-5 slots)
+/// - seed 8       → `Some(64)`  (coarsest grid; 4× fewer split candidates)
+/// - seed 9       → `Some(128)` (mid-coarse)
+/// - seed 10      → `Some(192)` (just under canonical)
+/// - seed 11      → `None`      (canonical; pairs with chunk-3 perm[3])
+/// - seed ≥ 12    → `None` (chunk-6 truncation slot; bucket helper holds
+///   canonical so the two chunk-6 dimensions never stack on a single
+///   seed — preserves the chunk-3..chunk-6 seed-slot doctrine that each
+///   chunk's dimension owns its own 4-seed block)
+///
+/// Why this dimension is orthogonal to chunks 3-5:
+/// - Chunk 3 perturbs the *acceptance* threshold (which splits clear the
+///   gate).
+/// - Chunk 4 perturbs the *sample density* and *predictor evaluation
+///   order* (which residuals the gate is computed over, and tie-break
+///   order at split selection).
+/// - Chunk 6 perturbs the *granularity of the split-value search* itself.
+///   For each property, `find_best_split` quantizes the value range into
+///   `max_property_values` buckets and picks the best boundary. With 256
+///   buckets (canonical at e9+), the boundary that minimizes residual
+///   entropy may sit between two coarse bins that a smaller grid would
+///   have collapsed onto a different (and sometimes better) discrete
+///   threshold. The token-cost picker keeps the cheapest of the 4
+///   chunk-6 candidates, so this is purely a strict-≥ improvement.
+///
+/// The 64 / 128 / 192 / 256 sweep straddles the canonical 256 and adds
+/// three substantially coarser variants. 256 stays as a "null" slot
+/// (seed 11) so chunk-3 perm[3] gets a clean canonical-bucket run.
+///
+/// e ≤ 9 has `tree_learn_seeds = 1` so this helper is never called
+/// outside e10/e11.
+#[must_use]
+pub fn derive_seeded_max_property_values(seed: u64) -> Option<usize> {
+    if !(8..12).contains(&seed) {
+        // Seeds < 8 → chunks 3-5 slots (canonical preserved).
+        // Seeds >= 12 → chunk-6 truncation slot (canonical preserved
+        // so the two chunk-6 dimensions never stack on a single seed).
+        return None;
+    }
+    const BUCKETS: [Option<usize>; 4] = [Some(64), Some(128), Some(192), None];
+    BUCKETS[(seed - 8) as usize]
+}
+
+/// Per-seed `properties`-slice truncation for the multi-seed tree-learning
+/// loop (RFC#45 chunk 6 — property-set-size variance follow-on to chunk 5).
+///
+/// Returns the maximum number of leading properties from the canonical
+/// `TreeLearningParams::properties` Vec the seeded run should consider,
+/// or `None` to leave the canonical slice length untouched.
+///
+/// Layout (chunk 6):
+/// - seeds 0..=11 → `None` (chunk-3 / chunk-4 / chunk-5 / chunk-6 bucket
+///   slots)
+/// - seed 12      → `Some(8)`  (smallest set; forces aggressive
+///   regularization)
+/// - seed 13      → `Some(10)` (Kitten-equivalent at e8)
+/// - seed 14      → `Some(12)` (just below canonical 14 reference props)
+/// - seed 15      → `None`     (canonical; pairs with chunk-3 perm[3])
+/// - seed ≥ 16    → `None` (out of chunk-6 truncation budget; any future
+///   chunk-7 dimension owns its own seed slots above 15 by symmetry
+///   with chunks 3-6)
+///
+/// Why this dimension is orthogonal to chunks 3-5 and chunk-6 bucket:
+/// - Chunks 3-5 vary *which* splits are tried among a fixed property
+///   list and *how* their costs are computed.
+/// - Chunk-6 buckets vary the *split-value granularity within* each
+///   property.
+/// - Chunk-6 truncation varies the *property-set size itself*. Reducing
+///   the candidate property list forces the greedy ID3 builder to choose
+///   from fewer high-information properties first — a form of structural
+///   regularization that can outperform the full-property tree when the
+///   canonical run over-fits late-tier properties (e.g., the
+///   `WPMaxError`-derived properties at indices 10-15, which can chase
+///   bucket noise on smooth content).
+///
+/// The 8 / 10 / 12 / 14 sweep covers Kitten / Wombat / pre-Tortoise /
+/// near-Tortoise property-set sizes — three steps below canonical that
+/// the multi-seed picker can fall back on when smaller is cheaper.
+///
+/// `Some(n)` is clamped to `properties.len()` at the consumer (see
+/// section.rs) so an aggressive cap on a short property Vec is a no-op
+/// rather than an out-of-range error. Truncation **preserves** the
+/// structural prefix (Channel + GroupId) the rotation in
+/// [`derive_seeded_params`] always keeps at the front, because the
+/// canonical [`PROP_ORDER_NO_SQUEEZE`] places structural props at
+/// indices 0-1 and truncation only drops from the tail.
+///
+/// e ≤ 9 has `tree_learn_seeds = 1` so this helper is never called
+/// outside e10/e11.
+#[must_use]
+pub fn derive_seeded_properties_truncation(seed: u64) -> Option<usize> {
+    if !(12..16).contains(&seed) {
+        // Seeds < 12 → chunks 3-5 + chunk-6 bucket slots (canonical
+        // preserved). Seeds >= 16 → out of chunk-6 budget.
+        return None;
+    }
+    const PROP_CAPS: [Option<usize>; 4] = [Some(8), Some(10), Some(12), None];
+    PROP_CAPS[(seed - 12) as usize]
+}
+
 /// Multi-seed tree-learning fan-out (RFC#45 chunk 2 — pick #1).
 ///
 /// Runs `gather_fn` once per seed in `0..seeds`, hands the resulting
@@ -7759,6 +7867,112 @@ mod tests {
                     "chunk 5: seed {seed} constructor must preserve canonical predictor order at idx {i}"
                 );
             }
+        }
+    }
+
+    // ---- RFC#45 chunk 6 helpers (split-bucket-count + properties truncation) ----
+    //      Chunk 6 gates both helpers to seeds 8..=15 so chunk-3, chunk-4,
+    //      and chunk-5 perturbations on seeds 0..=7 are not recombined
+    //      inside the doubled budget.
+
+    #[test]
+    fn test_derive_seeded_max_property_values_low_seeds_are_none() {
+        // Chunk 6: seeds 0..=7 are reserved for chunk-3/chunk-4 slots and
+        // MUST return None (canonical bucket count preserved).
+        for seed in 0u64..=7 {
+            assert_eq!(
+                derive_seeded_max_property_values(seed),
+                None,
+                "chunk 6: seed {seed} must return None (chunks 3-5 slot)",
+            );
+        }
+    }
+
+    #[test]
+    fn test_derive_seeded_max_property_values_high_seeds_active() {
+        // Chunk 6: seeds 8..=11 carry three coarser bucket counts plus
+        // one canonical-bucket slot (seed 11).
+        assert_eq!(derive_seeded_max_property_values(8), Some(64));
+        assert_eq!(derive_seeded_max_property_values(9), Some(128));
+        assert_eq!(derive_seeded_max_property_values(10), Some(192));
+        assert_eq!(derive_seeded_max_property_values(11), None);
+        // Seeds 12..=15 are the chunk-6 truncation slot; bucket helper
+        // returns None there so the two chunk-6 dimensions never stack.
+        for seed in 12u64..=15 {
+            assert_eq!(
+                derive_seeded_max_property_values(seed),
+                None,
+                "seed {seed} is a truncation slot, bucket helper must hold canonical",
+            );
+        }
+        // Distinct: 3 non-None values across seeds 8..=10.
+        let vals: std::collections::BTreeSet<usize> = (8u64..=10)
+            .map(|s| derive_seeded_max_property_values(s).unwrap())
+            .collect();
+        assert_eq!(
+            vals.len(),
+            3,
+            "seeds 8..=10 must produce 3 distinct bucket counts"
+        );
+    }
+
+    #[test]
+    fn test_derive_seeded_properties_truncation_low_seeds_are_none() {
+        // Chunk 6: seeds 0..=11 are reserved for chunks 3-5 + chunk-6
+        // bucket slots and MUST return None (canonical slice length
+        // preserved).
+        for seed in 0u64..=11 {
+            assert_eq!(
+                derive_seeded_properties_truncation(seed),
+                None,
+                "chunk 6: seed {seed} must return None (chunks 3-5/bucket slot)",
+            );
+        }
+    }
+
+    #[test]
+    fn test_derive_seeded_properties_truncation_high_seeds_active() {
+        // Chunk 6: seeds 12..=15 carry three smaller property-set sizes
+        // plus one canonical-size slot (seed 15).
+        assert_eq!(derive_seeded_properties_truncation(12), Some(8));
+        assert_eq!(derive_seeded_properties_truncation(13), Some(10));
+        assert_eq!(derive_seeded_properties_truncation(14), Some(12));
+        assert_eq!(derive_seeded_properties_truncation(15), None);
+        // Seeds >= 16 fall outside the chunk-6 budget; helper returns
+        // None (any future chunk-7 dimension owns its own slot range).
+        assert_eq!(derive_seeded_properties_truncation(16), None);
+        assert_eq!(derive_seeded_properties_truncation(17), None);
+        // Distinct: 3 non-None values across seeds 12..=14.
+        let vals: std::collections::BTreeSet<usize> = (12u64..=14)
+            .map(|s| derive_seeded_properties_truncation(s).unwrap())
+            .collect();
+        assert_eq!(
+            vals.len(),
+            3,
+            "seeds 12..=14 must produce 3 distinct truncation caps"
+        );
+    }
+
+    #[test]
+    fn test_chunk6_dimensions_are_orthogonal() {
+        // Sanity: bucket-count slot (8..=11) MUST return None from the
+        // truncation helper, and truncation slot (12..=15) MUST return
+        // None from the bucket-count helper. Otherwise a single seed
+        // would activate two chunk-6 dimensions at once, defeating the
+        // seed-slot split discipline.
+        for seed in 8u64..=11 {
+            assert_eq!(
+                derive_seeded_properties_truncation(seed),
+                None,
+                "chunk 6: bucket-count slot seed {seed} must NOT trigger truncation",
+            );
+        }
+        for seed in 12u64..=15 {
+            assert_eq!(
+                derive_seeded_max_property_values(seed),
+                None,
+                "chunk 6: truncation slot seed {seed} must NOT trigger bucket override",
+            );
         }
     }
 }

@@ -347,7 +347,8 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_gather_stride_from_profile, derive_seeded_params, derive_seeded_sample_fraction,
+        compute_gather_stride_from_profile, derive_seeded_max_property_values,
+        derive_seeded_params, derive_seeded_properties_truncation, derive_seeded_sample_fraction,
         derive_seeded_stride, estimate_token_cost, gather_samples_strided,
         gather_samples_strided_with_dedup_backend, gather_samples_strided_with_offset,
         max_ref_channels, stride_for_seeded_sample_fraction,
@@ -525,33 +526,47 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
 
     // Multi-seed dispatch — RFC#45 chunk 2 (start-offset variance), chunk 3
     // (broader variance: stride / split_threshold / property-order), chunk
-    // 4 (sample-fraction jitter + predictor-evaluation-order shuffle), and
-    // chunk 5 (seed-slot split + budget expansion at e11).
+    // 4 (sample-fraction jitter + predictor-evaluation-order shuffle),
+    // chunk 5 (seed-slot split + budget expansion at e11), and chunk 6
+    // (split-bucket-count + properties-slice truncation, e11 budget
+    // doubled again 8 → 16).
     //
     // At e ≤ 9 `tree_learn_seeds = 1` (libjxl-equivalent, byte-identical
-    // hash-locks). At e10 we fan out 2 seeded runs; at e11 chunk 5 fans
-    // out 8 (was 4) and pick the tree whose tokens have the lowest
+    // hash-locks). At e10 we fan out 2 seeded runs; at e11 chunk 6 fans
+    // out 16 (was 8) and pick the tree whose tokens have the lowest
     // entropy cost.
     //
-    // Chunk 5 seed-slot layout (relevant when `seeds >= 4`):
-    //   - seeds 0..=3: chunk-3 perturbations active
-    //                  (split_threshold jitter via [`derive_seeded_params`],
-    //                  property-order rotation, per-seed stride via
-    //                  [`derive_seeded_stride`]). Chunk-4 helpers are
-    //                  no-ops here ([`derive_seeded_sample_fraction`]
-    //                  returns None, [`derive_seeded_predictor_order`]
-    //                  returns the canonical order).
-    //   - seeds 4..=7: chunk-4 perturbations active on top of the
-    //                  chunk-3 perturbations
-    //                  ([`derive_seeded_sample_fraction`] takes precedence
-    //                  over [`derive_seeded_stride`] when it returns
-    //                  Some(_); [`derive_seeded_predictor_order`] cycles
-    //                  through 4 permutations of [`CANDIDATE_PREDICTORS`]).
+    // Chunk 6 seed-slot layout (relevant when `seeds >= 4`):
+    //   - seeds 0..=3:   chunk-3 perturbations active
+    //                    (split_threshold jitter via [`derive_seeded_params`],
+    //                    property-order rotation, per-seed stride via
+    //                    [`derive_seeded_stride`]). Chunks 4/5/6 helpers
+    //                    are no-ops here.
+    //   - seeds 4..=7:   chunk-4 perturbations active on top of chunk-3
+    //                    ([`derive_seeded_sample_fraction`] takes precedence
+    //                    over [`derive_seeded_stride`] when it returns
+    //                    Some(_); [`derive_seeded_predictor_order`] cycles
+    //                    through 4 permutations of [`CANDIDATE_PREDICTORS`]).
+    //                    Chunk-6 helpers are no-ops here.
+    //   - seeds 8..=11:  chunk-6 split-bucket-count override active
+    //                    ([`derive_seeded_max_property_values`] cycles
+    //                    through Some(64) / Some(128) / Some(192) / None
+    //                    — coarser-than-canonical bucket grids for the
+    //                    `find_best_split` value quantization). Chunk-4
+    //                    helpers held to canonical no-op.
+    //   - seeds 12..=15: chunk-6 properties-slice truncation active
+    //                    ([`derive_seeded_properties_truncation`] cycles
+    //                    through Some(8) / Some(10) / Some(12) / None —
+    //                    a structural-regularization fallback that forces
+    //                    the greedy builder to choose among fewer
+    //                    high-information properties first). Chunk-4 +
+    //                    chunk-6-bucket helpers held to canonical no-op.
     //   - seed 0 stays the canonical libjxl run for all dimensions.
     //
-    // The split lets chunk-3's wins (which honest W8-3-r2 benching
-    // showed on 2/5 photos) survive in seed-slots 0..=3 instead of being
-    // overwritten by chunk-4's recombined candidate set.
+    // The split-per-dimension pattern (chunk-3 → chunk-4 → chunk-5 →
+    // chunk-6) preserves the wins of each prior chunk in dedicated seed
+    // slots, exactly as chunk 5 reserved seeds 0..=3 for chunk-3-only
+    // perturbations after chunk 4's recombined-budget regression.
     let seeds = profile.tree_learn_seeds.max(1);
     let mut best: Option<(Vec<crate::entropy_coding::token::Token>, usize, Tree, f64)> = None;
 
@@ -584,14 +599,29 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
             1.0
         };
         // Per-seed parameter variance — seed 0 is a no-op clone.
-        let params = derive_seeded_params(&base_params, seed).with_pixel_fraction(pixel_fraction);
+        let mut params =
+            derive_seeded_params(&base_params, seed).with_pixel_fraction(pixel_fraction);
+        // Chunk-6 dim A — split-bucket-count override (seeds 8..=11).
+        // Seeds 0..=7 return None → canonical bucket count preserved.
+        if let Some(buckets) = derive_seeded_max_property_values(seed) {
+            params.max_property_values = buckets;
+        }
+        // Chunk-6 dim B — properties-slice truncation (seeds 12..=15).
+        // Seeds 0..=11 return None → canonical slice length preserved.
+        // Clamp to current slice length so a truncation cap longer than
+        // the property Vec is a no-op rather than an invalid index.
+        if let Some(prop_cap) = derive_seeded_properties_truncation(seed) {
+            let cap = prop_cap.min(params.properties.len());
+            params.properties.truncate(cap);
+        }
         let tree = crate::profile_time!("modular/compute_best_tree", {
             compute_best_tree(&mut samples, &params)
         });
 
         crate::trace::debug_eprintln!(
             "GLOBAL_MODULAR_TREE seed={}/{}: {} nodes from {} samples \
-             (pixel_fraction={:.3}, stride={}, split_threshold={:.2})",
+             (pixel_fraction={:.3}, stride={}, split_threshold={:.2}, \
+              max_property_values={}, properties.len={})",
             seed,
             seeds,
             tree.len(),
@@ -599,6 +629,8 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
             pixel_fraction,
             seed_stride,
             params.split_threshold,
+            params.max_property_values,
+            params.properties.len(),
         );
 
         // Collect residuals for this candidate tree.

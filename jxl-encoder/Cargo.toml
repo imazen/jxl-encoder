@@ -313,6 +313,15 @@ path = "examples/e10_e11_multiseed_chunk4_ab.rs"
 name = "e10_e11_multiseed_chunk5_ab"
 path = "examples/e10_e11_multiseed_chunk5_ab.rs"
 
+# RFC#45 chunk 6 (lossless): seed budget 8 → 16 at e11 + 2 new variance
+# dimensions (max_property_values + properties.len() truncation). Seeds
+# 0..=3 chunk-3-only, 4..=7 chunk-4 dimensions, 8..=11 chunk-6 bucket
+# override, 12..=15 chunk-6 properties truncation. Honest A/B vs chunk
+# 5 (2b2ce912).
+[[example]]
+name = "e10_e11_multiseed_chunk6_ab"
+path = "examples/e10_e11_multiseed_chunk6_ab.rs"
+
 # RFC#45 chunk 3 (lossy): multi-seed butteraugli sweep isolation A/B.
 # Toggles `lossy_search_seeds` to isolate the chunk-3 contribution
 # from chunk-1's extended-iter contribution. Requires __expert so the
