@@ -265,6 +265,12 @@ name = "buttloop_screenshot_cap_sweep"
 path = "examples/buttloop_screenshot_cap_sweep.rs"
 required-features = ["butteraugli-loop"]
 
+# Focused W42-2 A/B for the patches `group_size_shift` libjxl-parity fix.
+# 4 screenshots + 3 photos × 4 distances × {ours, cjxl} = 56 cells, e7 only.
+[[example]]
+name = "patches_group_size_shift_ab"
+path = "examples/patches_group_size_shift_ab.rs"
+
 [[example]]
 name = "hdr_rd_sweep_vs_cjxl"
 path = "examples/hdr_rd_sweep_vs_cjxl.rs"

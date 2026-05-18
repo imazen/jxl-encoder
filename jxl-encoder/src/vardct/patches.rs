@@ -2456,6 +2456,43 @@ pub(crate) fn subtract_patches_modular(
     }
 }
 
+/// Mirror libjxl's `GetGroupSizeShift` heuristic (`enc_frame.cc:125-146`) for
+/// the modular patches reference frame.
+///
+/// libjxl picks `shift=2` (512-pixel groups) for any image with both
+/// dimensions <= 400, so a typical packed-patches ref frame (say 268×260)
+/// emits as a SINGLE PassGroup. Our default `FrameHeader::lossless()` hardcodes
+/// `shift=1` (256-pixel groups), which splits the same 268×260 ref into a 2×2
+/// = 4 PassGroup grid and pays 4× per-stream entropy overhead (LZ77 metadata,
+/// HybridUint headers, byte alignment, TOC entries) — on imac_g3 that's
+/// ~50 KB of pure packing overhead on a ~70 KB pixel payload (10.15 bpp vs
+/// cjxl's 3.64 bpp on the equivalent ref frame).
+///
+/// libjxl reference: `lib/jxl/enc_frame.cc:125-146`:
+/// ```text
+/// if (xsize <= 128 && ysize <= 128) return 0;  // 128 px groups
+/// if (xsize <= 256 && ysize <= 256) return 1;  // 256 px groups
+/// if (xsize <= 400 && ysize <= 400) return 2;  // 512 px groups
+/// return 1;                                     // default
+/// ```
+///
+/// We only model the dimension-driven tail of `GetGroupSizeShift`; the cparams
+/// branches at the top of the libjxl function (`!modular_mode`,
+/// `decoding_speed_tier >= 2`, etc.) do not apply to a patches reference frame
+/// (it is always Modular, never the user's main image, and we don't expose a
+/// `decoding_speed_tier` knob to ref-frame emission).
+pub(crate) fn patches_ref_group_size_shift(ref_w: usize, ref_h: usize) -> u32 {
+    if ref_w <= 128 && ref_h <= 128 {
+        0
+    } else if ref_w <= 256 && ref_h <= 256 {
+        1
+    } else if ref_w <= 400 && ref_h <= 400 {
+        2
+    } else {
+        1
+    }
+}
+
 /// Trial-encode the XYB reference frame and return the byte count.
 ///
 /// Used for cost-benefit gating: if the reference frame overhead exceeds
@@ -2566,6 +2603,10 @@ pub(crate) fn encode_reference_frame_rgb(
     fh.epf_iters = 0;
     fh.width = ref_w as u32;
     fh.height = ref_h as u32;
+    // Pick the modular group_size_shift the way libjxl does for ref frames
+    // (enc_frame.cc:125-146) — small ref frames should not be split into
+    // 256-pixel groups; that quadruples per-stream entropy overhead.
+    fh.group_size_shift = patches_ref_group_size_shift(ref_w, ref_h);
 
     fh.write(writer)?;
 
@@ -2593,6 +2634,10 @@ pub(crate) fn encode_reference_frame_rgb(
     // (enc_patch_dictionary.cc: "Use gradient predictor and not Predictor::Best").
     // Tree learning can help on large ref frames (>= 128×128) with many unique patterns.
     // Gated by EffortProfile.patch_ref_tree_learning (experimental mode, effort >= 7).
+    //
+    // `modular_group_size_shift` MUST match `fh.group_size_shift` (set above)
+    // because `FrameEncoder` partitions independently of the FrameHeader.
+    // libjxl computes both from the same `GetGroupSizeShift` heuristic.
     use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
     let enable_tree = use_tree_learning && ref_w >= 128 && ref_h >= 128;
     let options = FrameEncoderOptions {
@@ -2600,6 +2645,7 @@ pub(crate) fn encode_reference_frame_rgb(
         use_tree_learning: enable_tree,
         use_squeeze: false,
         is_last: false,
+        modular_group_size_shift: Some(patches_ref_group_size_shift(ref_w, ref_h) as u8),
         ..Default::default() // skip_rct=false → RCT applied to RGB channels
     };
     let mut encoder = FrameEncoder::new(ref_w, ref_h, options);
@@ -2649,6 +2695,10 @@ pub(crate) fn encode_reference_frame(
     // Set dimensions to the reference frame size (via have_crop mechanism)
     fh.width = ref_w as u32;
     fh.height = ref_h as u32;
+    // Pick the modular group_size_shift the way libjxl does for ref frames
+    // (enc_frame.cc:125-146) — small ref frames should not be split into
+    // 256-pixel groups; that quadruples per-stream entropy overhead.
+    fh.group_size_shift = patches_ref_group_size_shift(ref_w, ref_h);
 
     #[cfg(feature = "trace-bitstream")]
     let ref_frame_start = writer.bits_written();
@@ -2722,12 +2772,16 @@ pub(crate) fn encode_reference_frame(
     // Tree learning can help on large ref frames (>= 128×128) with many unique patterns.
     // RCT decorrelates the Y/X/B-Y channels further for entropy coding.
     let enable_tree = use_tree_learning && ref_w >= 128 && ref_h >= 128;
+    // `modular_group_size_shift` MUST match `fh.group_size_shift` (set above)
+    // because `FrameEncoder` partitions independently of the FrameHeader.
+    // libjxl computes both from the same `GetGroupSizeShift` heuristic.
     let options = FrameEncoderOptions {
         use_ans,
         use_tree_learning: enable_tree,
         use_squeeze: false,
         skip_rct: false, // Enable RCT — matches libjxl behavior
         is_last: false,
+        modular_group_size_shift: Some(patches_ref_group_size_shift(ref_w, ref_h) as u8),
         ..Default::default()
     };
     let mut encoder = FrameEncoder::new(ref_w, ref_h, options);
@@ -2749,6 +2803,30 @@ pub(crate) fn encode_reference_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_patches_ref_group_size_shift_matches_libjxl() {
+        // libjxl enc_frame.cc:142-145 dimension thresholds.
+        // The four buckets, with both dimensions on each side of the threshold.
+        assert_eq!(patches_ref_group_size_shift(1, 1), 0);
+        assert_eq!(patches_ref_group_size_shift(128, 128), 0);
+        // ...crossing 128 in either axis bumps to shift=1 (256 px bucket).
+        assert_eq!(patches_ref_group_size_shift(129, 128), 1);
+        assert_eq!(patches_ref_group_size_shift(128, 129), 1);
+        assert_eq!(patches_ref_group_size_shift(256, 256), 1);
+        // ...crossing 256 in either axis bumps to shift=2 (512 px bucket).
+        assert_eq!(patches_ref_group_size_shift(257, 256), 2);
+        assert_eq!(patches_ref_group_size_shift(256, 257), 2);
+        assert_eq!(patches_ref_group_size_shift(400, 400), 2);
+        // The W42-1 wedge case (imac_g3 ref frame): 268x260 → shift=2 (single
+        // 512-pixel group, no per-PassGroup entropy overhead).
+        assert_eq!(patches_ref_group_size_shift(268, 260), 2);
+        assert_eq!(patches_ref_group_size_shift(268, 264), 2);
+        // ...crossing 400 in either axis falls back to the default shift=1.
+        assert_eq!(patches_ref_group_size_shift(401, 400), 1);
+        assert_eq!(patches_ref_group_size_shift(400, 401), 1);
+        assert_eq!(patches_ref_group_size_shift(1024, 1024), 1);
+    }
 
     #[test]
     fn test_pack_signed_roundtrip() {
