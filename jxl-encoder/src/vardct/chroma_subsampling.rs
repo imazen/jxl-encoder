@@ -154,6 +154,116 @@ pub fn rgb_to_yuv420_box(rgb: &[u8], width: usize, height: usize) -> YCbCrPlanes
     }
 }
 
+/// Convert interleaved RGB to 4:2:2 planar YCbCr via horizontal
+/// box-filter chroma downsample (BT.601 Full range).
+///
+/// Y is computed at full resolution; Cb/Cr are horizontal-pair-averaged
+/// chroma at `ceil(width/2) × height`. zenyuv 0.1.3 has no dedicated
+/// 4:2:2 kernel — we run the SIMD-dispatched 4:4:4 encode and then
+/// average horizontally in a small scalar tail. This is correct and
+/// produces decoder-valid output; a future zenyuv release with a
+/// native 4:2:2 SIMD kernel can swap in here without API change.
+///
+/// Chunk-5 helper for [`ChromaSubsampling::Sub422`] — paired with the
+/// matching `jpeg_upsampling=[0, 2, 0]` Y mode in the JXL frame
+/// header.
+pub fn rgb_to_yuv422_box(rgb: &[u8], width: usize, height: usize) -> YCbCrPlanes {
+    assert!(
+        rgb.len() >= width * height * 3,
+        "rgb buffer too small: {} < {}",
+        rgb.len(),
+        width * height * 3
+    );
+    let full = rgb_to_ycbcr_444(rgb, width, height);
+    let cw = width.div_ceil(2);
+    let ch = height;
+    let mut cb = vec![0u8; cw * ch];
+    let mut cr = vec![0u8; cw * ch];
+    horizontal_box_downsample(&full.cb, width, height, &mut cb);
+    horizontal_box_downsample(&full.cr, width, height, &mut cr);
+    YCbCrPlanes {
+        y: full.y,
+        cb,
+        cr,
+        chroma_width: cw,
+        chroma_height: ch,
+    }
+}
+
+/// Convert interleaved RGB to 4:4:0 planar YCbCr via vertical
+/// box-filter chroma downsample (BT.601 Full range).
+///
+/// Y is computed at full resolution; Cb/Cr are vertical-pair-averaged
+/// chroma at `width × ceil(height/2)`. Same zenyuv 0.1.3 limitation
+/// as [`rgb_to_yuv422_box`] — we run 4:4:4 then average vertically
+/// in a scalar tail.
+///
+/// Chunk-5 helper for [`ChromaSubsampling::Sub440`] — paired with the
+/// matching `jpeg_upsampling=[0, 3, 0]` Y mode in the JXL frame
+/// header.
+pub fn rgb_to_yuv440_box(rgb: &[u8], width: usize, height: usize) -> YCbCrPlanes {
+    assert!(
+        rgb.len() >= width * height * 3,
+        "rgb buffer too small: {} < {}",
+        rgb.len(),
+        width * height * 3
+    );
+    let full = rgb_to_ycbcr_444(rgb, width, height);
+    let cw = width;
+    let ch = height.div_ceil(2);
+    let mut cb = vec![0u8; cw * ch];
+    let mut cr = vec![0u8; cw * ch];
+    vertical_box_downsample(&full.cb, width, height, &mut cb);
+    vertical_box_downsample(&full.cr, width, height, &mut cr);
+    YCbCrPlanes {
+        y: full.y,
+        cb,
+        cr,
+        chroma_width: cw,
+        chroma_height: ch,
+    }
+}
+
+/// Average horizontal pairs of a single planar u8 buffer into the
+/// output (`ceil(width/2) × height`). Odd last column replicates the
+/// final source pixel (libwebp / libjxl convention — matches the
+/// boundary handling already used in `rgb_to_yuv420_scalar_tail`).
+fn horizontal_box_downsample(src: &[u8], width: usize, height: usize, dst: &mut [u8]) {
+    let cw = width.div_ceil(2);
+    debug_assert!(src.len() >= width * height);
+    debug_assert!(dst.len() >= cw * height);
+    for row in 0..height {
+        let s_off = row * width;
+        let d_off = row * cw;
+        for cx in 0..cw {
+            let x = cx * 2;
+            let x1 = (x + 1).min(width - 1);
+            let sum = src[s_off + x] as u16 + src[s_off + x1] as u16;
+            dst[d_off + cx] = sum.div_ceil(2) as u8;
+        }
+    }
+}
+
+/// Average vertical pairs of a single planar u8 buffer into the
+/// output (`width × ceil(height/2)`). Odd last row replicates the
+/// final source row.
+fn vertical_box_downsample(src: &[u8], width: usize, height: usize, dst: &mut [u8]) {
+    let ch = height.div_ceil(2);
+    debug_assert!(src.len() >= width * height);
+    debug_assert!(dst.len() >= width * ch);
+    for cy in 0..ch {
+        let y = cy * 2;
+        let y1 = (y + 1).min(height - 1);
+        let s0 = y * width;
+        let s1 = y1 * width;
+        let d_off = cy * width;
+        for x in 0..width {
+            let sum = src[s0 + x] as u16 + src[s1 + x] as u16;
+            dst[d_off + x] = sum.div_ceil(2) as u8;
+        }
+    }
+}
+
 /// Convert interleaved RGB to 4:2:0 planar YCbCr with Sharp YUV
 /// chroma refinement (BT.601 Full range).
 ///
@@ -493,15 +603,17 @@ fn fdct_quantize_plane(
 }
 
 /// Synthesise a [`JpegData`] payload from an interleaved RGB buffer
-/// for the chunk-4 Sub420 path.
+/// for the chunk-4 / chunk-5 chroma-subsampling lossy paths.
 ///
 /// Pipeline:
-/// 1. RGB → YCbCr 4:2:0 via [`rgb_to_yuv420_sharp`] (zenyuv Sharp YUV).
+/// 1. RGB → YCbCr via the per-`mode` zenyuv helper
+///    ([`rgb_to_yuv420_sharp`] for Sub420; [`rgb_to_yuv422_box`] /
+///    [`rgb_to_yuv440_box`] for the chunk-5 single-axis modes).
 /// 2. Forward 8×8 DCT-II + integer quantisation on every block of Y
-///    (full res) and Cb / Cr (half res).
+///    (full res) and Cb / Cr (per-mode subsampled).
 /// 3. Pack the resulting i16 coefficient arrays into [`JpegData`]
-///    fields so [`crate::jpeg::encode::encode_jpeg_to_jxl`] can
-///    consume it.
+///    fields with per-mode `h_samp_factor` / `v_samp_factor` so
+///    [`crate::jpeg::encode::encode_jpeg_to_jxl`] can consume it.
 ///
 /// The synthetic [`JpegData`] omits scan_info / marker_order /
 /// inter_marker_data / huffman_code / app_data — none of those are
@@ -510,21 +622,28 @@ fn fdct_quantize_plane(
 /// from this output (the source bytes are RGB pixels, not a JPEG);
 /// the synthesised payload is only valid as input to
 /// `encode_jpeg_to_jxl` (codestream-only).
+///
+/// `mode` must be one of [`ChromaSubsampling::Sub420`],
+/// [`ChromaSubsampling::Sub422`], [`ChromaSubsampling::Sub440`].
+/// [`ChromaSubsampling::Full444`] returns
+/// [`crate::error::Error::InvalidInput`] — the Full444 path uses the
+/// standard VarDCT pipeline, not this JPEG-shaped helper.
 #[cfg(feature = "jpeg-reencoding")]
-fn synth_jpeg_data_from_rgb8_sub420(
+fn synth_jpeg_data_from_rgb8(
     rgb: &[u8],
     width: usize,
     height: usize,
     distance: f32,
+    mode: ChromaSubsampling,
 ) -> Result<JpegData, crate::error::Error> {
     if width == 0 || height == 0 {
         return Err(crate::error::Error::InvalidInput(format!(
-            "synth_jpeg_data_from_rgb8_sub420 requires non-zero dimensions, got {width}x{height}"
+            "synth_jpeg_data_from_rgb8 requires non-zero dimensions, got {width}x{height}"
         )));
     }
     if rgb.len() < width * height * 3 {
         return Err(crate::error::Error::InvalidInput(format!(
-            "synth_jpeg_data_from_rgb8_sub420 rgb buffer too small: {} < {}",
+            "synth_jpeg_data_from_rgb8 rgb buffer too small: {} < {}",
             rgb.len(),
             width * height * 3
         )));
@@ -534,12 +653,35 @@ fn synth_jpeg_data_from_rgb8_sub420(
     let luma_qt = scale_qt(&STD_LUMA_QT, quality);
     let chroma_qt = scale_qt(&STD_CHROMA_QT, quality);
 
-    let planes = rgb_to_yuv420_sharp(rgb, width, height);
+    // Per-mode RGB→YCbCr + Y component sampling factors. For 4:2:0 we
+    // route through Sharp YUV (zenyuv's only refined kernel); for
+    // 4:2:2 / 4:4:0 we use box-filter chroma downsampling on top of
+    // the SIMD-dispatched 4:4:4 encode (zenyuv 0.1.3 has no native
+    // 4:2:2 / 4:4:0 kernels — a future zenyuv release with
+    // axis-specific Sharp YUV would slot in here).
+    //
+    // Per the libjxl `YCbCrChromaSubsampling::Set()` table referenced
+    // in `jpeg_upsampling_for`:
+    //   - Sub420: Y h_samp=2 v_samp=2, Cb/Cr h_samp=1 v_samp=1.
+    //   - Sub422: Y h_samp=2 v_samp=1, Cb/Cr h_samp=1 v_samp=1.
+    //   - Sub440: Y h_samp=1 v_samp=2, Cb/Cr h_samp=1 v_samp=1.
+    let (planes, y_h_samp, y_v_samp) = match mode {
+        ChromaSubsampling::Sub420 => (rgb_to_yuv420_sharp(rgb, width, height), 2u32, 2u32),
+        ChromaSubsampling::Sub422 => (rgb_to_yuv422_box(rgb, width, height), 2u32, 1u32),
+        ChromaSubsampling::Sub440 => (rgb_to_yuv440_box(rgb, width, height), 1u32, 2u32),
+        ChromaSubsampling::Full444 => {
+            return Err(crate::error::Error::InvalidInput(
+                "synth_jpeg_data_from_rgb8: Full444 is not routed through the JPEG-shaped path — \
+                 use the standard VarDCT pipeline instead"
+                    .to_string(),
+            ));
+        }
+    };
 
     // Y plane: full resolution.
     let (y_coeffs, y_w_blocks, y_h_blocks) =
         fdct_quantize_plane(&planes.y, width, height, &luma_qt);
-    // Cb / Cr planes: chroma_width × chroma_height (half-res in each axis).
+    // Cb / Cr planes: chroma_width × chroma_height (per-mode shape).
     let (cb_coeffs, cb_w_blocks, cb_h_blocks) = fdct_quantize_plane(
         &planes.cb,
         planes.chroma_width,
@@ -556,8 +698,10 @@ fn synth_jpeg_data_from_rgb8_sub420(
 
     // Build component list. Channel order is JPEG-native (Y, Cb, Cr);
     // the JXL encode side remaps via `jpeg_c_map = [1, 0, 2]` per the
-    // libjxl convention (`jpeg/encode.rs:62`).
-    let comp_y = jpeg_component(1, 2, 2, 0, y_w_blocks, y_h_blocks, y_coeffs);
+    // libjxl convention (`jpeg/encode.rs:62`). Per-channel
+    // h_samp_factor / v_samp_factor encode the per-mode chroma shape
+    // (chroma is always 1×1; Y carries the mode tag).
+    let comp_y = jpeg_component(1, y_h_samp, y_v_samp, 0, y_w_blocks, y_h_blocks, y_coeffs);
     let comp_cb = jpeg_component(2, 1, 1, 1, cb_w_blocks, cb_h_blocks, cb_coeffs);
     let comp_cr = jpeg_component(3, 1, 1, 1, cr_w_blocks, cr_h_blocks, cr_coeffs);
 
@@ -615,18 +759,38 @@ fn jpeg_quant_table(values: &[i32; 64], index: u32, is_last: bool) -> crate::jpe
     }
 }
 
-/// Encode an interleaved RGB8 image as a JXL codestream with
-/// chroma subsampling 4:2:0. Public entry point for the chunk-4
-/// Sub420 path; called from the `LossyConfig` lossy encoder when the
-/// caller picks [`ChromaSubsampling::Sub420`].
+/// Encode an interleaved RGB8 image as a JXL codestream with the
+/// requested chroma subsampling mode. Public entry point for the
+/// chunk-4 / chunk-5 paths; called from the `LossyConfig` lossy
+/// encoder when the caller picks a non-`Full444`
+/// [`ChromaSubsampling`].
 ///
 /// Output is a bare JXL codestream (not a container) — same shape as
 /// what [`crate::jpeg::encode::encode_jpeg_to_jxl`] returns. The
 /// `distance` parameter only controls the JPEG quant table scaling
 /// (see [`distance_to_jpeg_quality`]); it does not run a butteraugli
-/// loop or per-block adaptive quant. RD parity with cjxl is chunk-5+
+/// loop or per-block adaptive quant. RD parity with cjxl is later
 /// territory; this entry just produces a decoder-roundtrippable
-/// Sub420 bitstream.
+/// subsampled bitstream.
+///
+/// Returns [`crate::error::Error::InvalidInput`] when called with
+/// [`ChromaSubsampling::Full444`] — that path uses the standard
+/// VarDCT pipeline.
+#[cfg(feature = "jpeg-reencoding")]
+pub fn encode_rgb8_via_jpeg_path(
+    rgb: &[u8],
+    width: usize,
+    height: usize,
+    distance: f32,
+    mode: ChromaSubsampling,
+) -> Result<Vec<u8>, crate::error::Error> {
+    let jpeg = synth_jpeg_data_from_rgb8(rgb, width, height, distance, mode)?;
+    crate::jpeg::encode_jpeg_to_jxl(&jpeg)
+}
+
+/// Sub420 alias for [`encode_rgb8_via_jpeg_path`]. Kept as a stable
+/// chunk-4 entry point; new callers should prefer the generic
+/// `encode_rgb8_via_jpeg_path(.., ChromaSubsampling::Sub420)` form.
 #[cfg(feature = "jpeg-reencoding")]
 pub fn encode_rgb8_sub420_via_jpeg_path(
     rgb: &[u8],
@@ -634,8 +798,33 @@ pub fn encode_rgb8_sub420_via_jpeg_path(
     height: usize,
     distance: f32,
 ) -> Result<Vec<u8>, crate::error::Error> {
-    let jpeg = synth_jpeg_data_from_rgb8_sub420(rgb, width, height, distance)?;
-    crate::jpeg::encode_jpeg_to_jxl(&jpeg)
+    encode_rgb8_via_jpeg_path(rgb, width, height, distance, ChromaSubsampling::Sub420)
+}
+
+/// Sub422 entry point. Same shape as
+/// [`encode_rgb8_sub420_via_jpeg_path`] but uses horizontal-only
+/// chroma downsampling via [`rgb_to_yuv422_box`].
+#[cfg(feature = "jpeg-reencoding")]
+pub fn encode_rgb8_sub422_via_jpeg_path(
+    rgb: &[u8],
+    width: usize,
+    height: usize,
+    distance: f32,
+) -> Result<Vec<u8>, crate::error::Error> {
+    encode_rgb8_via_jpeg_path(rgb, width, height, distance, ChromaSubsampling::Sub422)
+}
+
+/// Sub440 entry point. Same shape as
+/// [`encode_rgb8_sub420_via_jpeg_path`] but uses vertical-only
+/// chroma downsampling via [`rgb_to_yuv440_box`].
+#[cfg(feature = "jpeg-reencoding")]
+pub fn encode_rgb8_sub440_via_jpeg_path(
+    rgb: &[u8],
+    width: usize,
+    height: usize,
+    distance: f32,
+) -> Result<Vec<u8>, crate::error::Error> {
+    encode_rgb8_via_jpeg_path(rgb, width, height, distance, ChromaSubsampling::Sub440)
 }
 
 #[cfg(test)]
@@ -830,5 +1019,123 @@ mod tests {
         assert_eq!(planes.y, [0, 255]);
         assert_eq!(planes.cb, [128, 128]);
         assert_eq!(planes.cr, [128, 128]);
+    }
+
+    // ── Chunk 5 — Sub422 / Sub440 helpers ──────────────────────────────────
+
+    #[test]
+    fn rgb_to_yuv422_box_halves_chroma_width_only() {
+        let (w, h) = (64, 32);
+        let rgb = make_gradient_rgb(w, h);
+        let planes = rgb_to_yuv422_box(&rgb, w, h);
+        assert_eq!(planes.y.len(), w * h, "Y must stay full-res");
+        assert_eq!(planes.chroma_width, w / 2);
+        assert_eq!(planes.chroma_height, h);
+        assert_eq!(planes.cb.len(), (w / 2) * h);
+        assert_eq!(planes.cr.len(), (w / 2) * h);
+    }
+
+    #[test]
+    fn rgb_to_yuv440_box_halves_chroma_height_only() {
+        let (w, h) = (32, 64);
+        let rgb = make_gradient_rgb(w, h);
+        let planes = rgb_to_yuv440_box(&rgb, w, h);
+        assert_eq!(planes.y.len(), w * h, "Y must stay full-res");
+        assert_eq!(planes.chroma_width, w);
+        assert_eq!(planes.chroma_height, h / 2);
+        assert_eq!(planes.cb.len(), w * (h / 2));
+        assert_eq!(planes.cr.len(), w * (h / 2));
+    }
+
+    #[test]
+    fn rgb_to_yuv422_box_odd_width_rounds_up() {
+        // 33×16 → chroma width 17.
+        let (w, h) = (33, 16);
+        let rgb = make_gradient_rgb(w, h);
+        let planes = rgb_to_yuv422_box(&rgb, w, h);
+        assert_eq!(planes.chroma_width, 17);
+        assert_eq!(planes.chroma_height, 16);
+        assert_eq!(planes.cb.len(), 17 * 16);
+    }
+
+    #[test]
+    fn rgb_to_yuv440_box_odd_height_rounds_up() {
+        // 16×33 → chroma height 17.
+        let (w, h) = (16, 33);
+        let rgb = make_gradient_rgb(w, h);
+        let planes = rgb_to_yuv440_box(&rgb, w, h);
+        assert_eq!(planes.chroma_width, 16);
+        assert_eq!(planes.chroma_height, 17);
+        assert_eq!(planes.cb.len(), 16 * 17);
+    }
+
+    /// R=G=B → Cb=Cr=128 must hold for the 4:2:2 / 4:4:0 wrappers
+    /// too. Pins the BT.601 identity through the box-filter
+    /// downsampling tail.
+    #[test]
+    fn rgb_white_and_black_have_chroma_128_in_422_and_440() {
+        // 4 pixels wide so the horizontal downsample sees a pair of
+        // identical values per chroma sample.
+        let rgb: Vec<u8> = (0..4)
+            .flat_map(|i| if i < 2 { [0u8, 0, 0] } else { [255, 255, 255] })
+            .collect();
+        let p422 = rgb_to_yuv422_box(&rgb, 4, 1);
+        assert_eq!(p422.cb, [128, 128]);
+        assert_eq!(p422.cr, [128, 128]);
+        // For 4:4:0 we need vertical pairs of constant rows.
+        let rgb_v: Vec<u8> = (0..2)
+            .flat_map(|row| {
+                let v = if row == 0 { 0u8 } else { 255 };
+                [v, v, v, v, v, v]
+            })
+            .collect();
+        let p440 = rgb_to_yuv440_box(&rgb_v, 2, 2);
+        assert_eq!(p440.cb, [128, 128]);
+        assert_eq!(p440.cr, [128, 128]);
+    }
+
+    /// Expected average matches libwebp's `(a + b + 1) / 2` form
+    /// (round-half-up). Spelled as `(a + b).div_ceil(2)` to dodge
+    /// clippy's manual-div-ceil lint — semantically identical for
+    /// the values we exercise here.
+    fn avg_round_half_up(a: u8, b: u8) -> u8 {
+        ((a as u16 + b as u16).div_ceil(2)) as u8
+    }
+
+    #[test]
+    fn horizontal_box_downsample_averages_pairs() {
+        let src = [0u8, 100, 50, 200];
+        let mut dst = [0u8; 2];
+        horizontal_box_downsample(&src, 4, 1, &mut dst);
+        assert_eq!(dst, [avg_round_half_up(0, 100), avg_round_half_up(50, 200)]);
+    }
+
+    #[test]
+    fn vertical_box_downsample_averages_pairs() {
+        // 2x2 source: row 0 = [10, 50], row 1 = [30, 70].
+        let src = [10u8, 50, 30, 70];
+        let mut dst = [0u8; 2];
+        vertical_box_downsample(&src, 2, 2, &mut dst);
+        assert_eq!(dst, [avg_round_half_up(10, 30), avg_round_half_up(50, 70)]);
+    }
+
+    #[test]
+    fn horizontal_box_downsample_odd_replicates_last_column() {
+        // 3 pixels → 2 chroma samples; the last sample averages
+        // pixel 2 with itself (replicated).
+        let src = [10u8, 20, 30];
+        let mut dst = [0u8; 2];
+        horizontal_box_downsample(&src, 3, 1, &mut dst);
+        assert_eq!(dst, [avg_round_half_up(10, 20), avg_round_half_up(30, 30)]);
+    }
+
+    #[test]
+    fn vertical_box_downsample_odd_replicates_last_row() {
+        // 1 col × 3 rows → 2 chroma samples; last sample averages
+        // row 2 with itself.
+        let src = [10u8, 20, 30];
+        let mut dst = [0u8; 2];
+        vertical_box_downsample(&src, 1, 3, &mut dst);
+        assert_eq!(dst, [avg_round_half_up(10, 20), avg_round_half_up(30, 30)]);
     }
 }

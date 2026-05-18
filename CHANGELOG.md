@@ -4,6 +4,50 @@
 
 ### Added
 
+- **Chroma subsampling chunk 5 — `ChromaSubsampling::Sub422` and
+  `Sub440` now encode end-to-end via the same JPEG-shaped pipeline
+  used by Sub420** (issue #47 follow-on to chunk 4 `7a21379f`). When
+  both the `chroma-subsampling` and `jpeg-reencoding` cargo features
+  are on, both single-axis chroma modes round-trip through jxl-rs and
+  djxl on 256×256 RGB at d=1.0.
+
+  Pipeline differences vs Sub420:
+  - **Sub422** (`jpeg_upsampling=[0, 2, 0]`, Y `h_samp=2 v_samp=1`):
+    horizontal-only chroma downsample. New
+    `vardct::chroma_subsampling::rgb_to_yuv422_box` runs zenyuv's
+    SIMD-dispatched 4:4:4 encode and then averages chroma along the
+    horizontal axis (libwebp `(a + b + 1) / 2` round-half-up tail,
+    odd-column edge replication).
+  - **Sub440** (`jpeg_upsampling=[0, 3, 0]`, Y `h_samp=1 v_samp=2`):
+    vertical-only chroma downsample. Symmetric to Sub422 via
+    `rgb_to_yuv440_box`.
+
+  zenyuv 0.1.3 has no dedicated 4:2:2 / 4:4:0 kernels and no Sharp
+  YUV for the single-axis modes — the box-filter tail is a temporary
+  bridge. A future zenyuv release with axis-specific Sharp YUV can
+  slot in here without API change.
+
+  New public helpers in
+  `crate::vardct::chroma_subsampling`:
+  `rgb_to_yuv422_box`, `rgb_to_yuv440_box`,
+  `encode_rgb8_via_jpeg_path` (generic mode-dispatching entry),
+  `encode_rgb8_sub422_via_jpeg_path`,
+  `encode_rgb8_sub440_via_jpeg_path`. `encode_rgb8_sub420_via_jpeg_path`
+  preserved as a thin wrapper.
+
+  Scope: one-shot `EncodeRequest::encode` with `PixelLayout::Rgb8`
+  only. Streaming `LossyEncoder::finish` and Rgba8 / Bgr8 / Bgra8 /
+  Gray / 16-bit / float / linear layouts still reject — same gates
+  as Sub420. RD parity with cjxl is still chunk-6+ territory.
+
+  Default `Full444` bitstream byte-identical (`hash_lock_features`
+  36/36 unchanged). Tests at
+  `jxl-encoder/tests/chroma_subsampling_signal.rs::sub422_encodes_and_roundtrips_via_jxl_rs`,
+  `::sub440_encodes_and_roundtrips_via_jxl_rs`, and
+  `::sub422_and_sub440_decode_via_djxl_when_available`. Unit-level
+  coverage in `vardct::chroma_subsampling::tests` (10 new tests for
+  the box-filter tails and the YCbCr identity).
+
 - **Chroma subsampling chunk 4 — `ChromaSubsampling::Sub420` now
   encodes end-to-end via the JPEG-shaped pipeline** (issue #47
   follow-on to chunk 3 `1994441`). When both the `chroma-subsampling`
