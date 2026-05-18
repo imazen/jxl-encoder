@@ -705,6 +705,98 @@ code touched. Worth a follow-up: the JXL_ENCODER_LEARNINGS.md doc should be
 updated to drop EX-J1 or re-scope it to a real lever (e.g. EX-J2 per-context
 ANS tables for LZ77 output, which IS a real opportunity).
 
+### Per-Context ANS Tables for LZ77 Output (EX-J2) Does Not Apply to JXL (May 18, 2026)
+
+**Status**: [RULED OUT] — proposed in `~/work/zen/jxl-encoder/JXL_ENCODER_LEARNINGS.md`
+lines 73-78 (EX-J2) as the "real lever" follow-on to the EX-J1 abort. **Verified
+that the JXL wire format mandates exactly ONE distance context per LZ77-enabled
+stream — there is no spec-compatible way to split distance tokens into 4-8
+per-tier histograms. Do not re-investigate.**
+
+**The proposal** (from JXL_ENCODER_LEARNINGS.md and the dispatch task):
+- Currently jxl-encoder emits all LZ77 distance tokens into ONE shared ANS
+  context (`Lz77Params::distance_context = num_contexts`).
+- EX-J2 proposes splitting that into 4-8 contexts based on either
+  `(prev_symbol, distance mod 8)` or `(literal/match, copy-length tier)`,
+  expecting 1-3 % bpp gain on screenshots / strong-spatial-correlation content.
+- The task explicitly directs: "JXL's ANS already supports per-symbol context
+  maps via `context_map_size`. Use that, don't invent a new wire format."
+
+**Why it does not apply to jxl-encoder**:
+
+1. **The JXL spec hardcodes a single distance context in the bitstream layer.**
+   `libjxl/lib/jxl/dec_ans.cc:362` sets
+   `code->lz77.nonserialized_distance_context = context_map->back();` — exactly
+   one `size_t`, derived from the LAST entry of the context map. Our own
+   `zenjxl-decoder/src/entropy_coding/decode.rs:624-628` mirrors this:
+   `let lz_dist_cluster = *context_map.last().unwrap();`. Every LZ77 distance
+   symbol the decoder reads goes through this single cluster.
+
+2. **The hot decode loop physically cannot route distance tokens to multiple
+   contexts.** `dec_ans.h:309` reads
+   `size_t d_token = ReadSymbolWithoutRefill(lz77_ctx_, br);` — `lz77_ctx_` is
+   set once in `ANSSymbolReader::Init` (`dec_ans.cc:411`) from
+   `code->lz77.nonserialized_distance_context` and is a single member, not a
+   per-token lookup. There is no mechanism for the decoder to know "this
+   distance token came after a long match, use context 5 instead of 7."
+
+3. **Adding extra context-map entries past the distance slot has no effect on
+   decoding.** The encoder could allocate `num_contexts + N` entries in the
+   context map, but the decoder still reads only `context_map.back()`. The
+   extra `N-1` entries are dead data — they cost wire bytes (~5-10 bits each
+   to MTF-encode) for no decoder-side use.
+
+4. **LZ77 length tokens cannot be moved to a separate context either.** Length
+   tokens are encoded with `symbol = min_symbol + length_token` *into the
+   original symbol's context* (`enc_ans.cc:1138`,
+   `lz77.rs:341 SymbolCostEstimator::len_cost`). The decoder distinguishes
+   length from literal purely by `symbol >= min_symbol` within the *same*
+   context. Moving length tokens to a dedicated context would break this
+   in-band signaling — there's no wire-format bit to say "the next token is a
+   length, look in a different context."
+
+5. **The implicit splits EX-J2 wants already exist in the encoder.**
+   - "Literal vs match" is already encoded by the `is_lz77_length` flag, and
+     the existing histogram clustering can give length tokens (which appear at
+     `symbol >= 224`) their own ANS slot inside a clustered histogram. Cluster
+     pair-merge will keep length-token sub-distributions separate from literals
+     whenever the data justifies it — no API-level split is needed.
+   - "Per-context length-token distributions" already exist because length
+     tokens inherit the original literal's context, which is set by the
+     learned MA tree. A length token after a "smooth" tree leaf lives in a
+     different context histogram from one after a "high-gradient" leaf.
+   - Distance tokens are the *only* stream that has no per-token context
+     differentiation — and they are the one stream the spec hardcodes to 1
+     context.
+
+**What I verified**:
+- Read the encoder side (`apply_lz77_rle`, `apply_lz77_backref`,
+  `apply_lz77_optimal` in `lz77.rs`) and confirmed all distance tokens emit
+  with `context = lz77.distance_context` (single shared context).
+- Read libjxl `dec_ans.cc:341-362` (DecodeHistograms) and `dec_ans.h:285-345`
+  (ReadHybridUintClusteredInlined): `lz77_ctx_` is set once, read every
+  decode.
+- Read our own `zenjxl-decoder/src/entropy_coding/decode.rs:621-628` and
+  confirmed the same single-context constraint.
+- Confirmed `nonserialized_distance_context` is a scalar `size_t` in
+  `LZ77Params` (`dec_ans.h:119`), not an array.
+
+**Conclusion**: EX-J2 as specified has no actionable implementation path that
+produces a wire-compatible bitstream change. No production code touched in
+this workspace (`~/work/zen/jxl-encoder--lz77-per-context-ans`). This is the
+**second** JXL_ENCODER_LEARNINGS.md proposal in the entropy-coding section
+that's blocked by spec mandates after careful reading — the doc was written
+without verifying against the JXL wire-format constraints. Recommend dropping
+both EX-J1 and EX-J2 from the priority slate and re-scoping the entropy
+chapter to levers that ARE wire-compatible:
+- **Context-tree refinement** (more pre-LZ77 properties so the MA tree
+  produces tighter per-leaf literal distributions — this is what EX-J5
+  CALIC-style energy quantization already proposes).
+- **Pre-LZ77 token re-ordering** to improve histogram clustering (e.g.,
+  group-by-channel to let pair-merge find tighter clusters).
+- **HybridUint config tuning per histogram** (already partially shipped via
+  `optimize_uint_configs_best_from_freqs`).
+
 ### `alpha_distance` Parity vs cjxl — Audit Result (May 17, 2026)
 
 A1 audit Top-5 item #4 (W12-4 follow-on). Swept three RGBA test images at
