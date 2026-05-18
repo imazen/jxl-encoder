@@ -377,7 +377,7 @@ impl AcStrategyMap {
 
     /// Copy a rectangular region from `src` into `self`.
     /// Copies blocks from `(start_bx, start_by)` to `(end_bx, end_by)` exclusive.
-    fn copy_region_from(
+    pub(crate) fn copy_region_from(
         &mut self,
         src: &AcStrategyMap,
         start_bx: usize,
@@ -1748,23 +1748,75 @@ pub fn compute_ac_strategy(
     mask1x1_stride: usize,
     profile: &EffortProfile,
 ) -> AcStrategyMap {
-    let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
-
-    // Collect tile coordinates
+    // Collect tile coordinates covering the whole image.
     let mut tiles = Vec::new();
     for tile_by in (0..ysize_blocks).step_by(TILE_DIM_IN_BLOCKS) {
         for tile_bx in (0..xsize_blocks).step_by(TILE_DIM_IN_BLOCKS) {
             tiles.push((tile_bx, tile_by));
         }
     }
+    compute_ac_strategy_for_tiles(
+        xyb_x,
+        xyb_y,
+        xyb_b,
+        stride,
+        buf_height,
+        xsize_blocks,
+        ysize_blocks,
+        distance,
+        quant_field_float,
+        masking,
+        cfl_map,
+        mask1x1,
+        mask1x1_stride,
+        profile,
+        &tiles,
+    )
+}
+
+/// Per-tile-list variant of [`compute_ac_strategy`]. Runs the
+/// AC strategy search for an arbitrary list of tile top-left
+/// coordinates instead of every tile in the image.
+///
+/// Used by [`super::precomputed::compute_dc_group`] (#11 chunk 3) to
+/// process just the 4×4 tiles inside a single DC group while leaving
+/// the rest of the returned `AcStrategyMap` at the default DCT8
+/// sentinel. The caller then `copy_region_from`s the DC group's tile
+/// rectangle into the aggregated whole-image map.
+///
+/// Byte-identical to [`compute_ac_strategy`] when `tile_list` contains
+/// every tile in row-major order. Per-DC-group calls are byte-identical
+/// to the corresponding tile slice of the whole-image call because
+/// each per-tile worker reads only from the passed-in whole-image
+/// slices (XYB / quant_field / masking / mask1x1 / CfL) — there is no
+/// cross-tile state.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute_ac_strategy_for_tiles(
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    stride: usize,
+    buf_height: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    distance: f32,
+    quant_field_float: &[f32],
+    masking: &[f32],
+    cfl_map: &CflMap,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    profile: &EffortProfile,
+    tile_list: &[(usize, usize)],
+) -> AcStrategyMap {
+    let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
 
     let xyb = [xyb_x, xyb_y, xyb_b];
 
     // Process tiles in parallel. Each tile gets its own AcStrategyMap and scratch
     // buffer. Tiles are spatially disjoint, so results can be merged by copying
     // each tile's region into the final map.
-    let tile_results = crate::parallel::parallel_map(tiles.len(), |tile_idx| {
-        let (tile_bx, tile_by) = tiles[tile_idx];
+    let tile_results = crate::parallel::parallel_map(tile_list.len(), |tile_idx| {
+        let (tile_bx, tile_by) = tile_list[tile_idx];
         let tile_w = TILE_DIM_IN_BLOCKS.min(xsize_blocks - tile_bx);
         let tile_h = TILE_DIM_IN_BLOCKS.min(ysize_blocks - tile_by);
 
@@ -1797,7 +1849,7 @@ pub fn compute_ac_strategy(
     // Merge tile results into a single map
     let mut ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
     for (tile_idx, tile_map) in tile_results.into_iter().enumerate() {
-        let (tile_bx, tile_by) = tiles[tile_idx];
+        let (tile_bx, tile_by) = tile_list[tile_idx];
         let tile_w = TILE_DIM_IN_BLOCKS.min(xsize_blocks - tile_bx);
         let tile_h = TILE_DIM_IN_BLOCKS.min(ysize_blocks - tile_by);
         ac_strategy.copy_region_from(
