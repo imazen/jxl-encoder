@@ -1,0 +1,57 @@
+# W44-27 AdjustQuantBlockAC firing-rate audit
+
+Date: 2026-05-18
+Commit: see git log @ time of TSV write
+Workspace: ~/work/zen/jxl-encoder--w44-27-adjust-quant-firing
+Feature: investigate-adjust-quant-block-ac (gated, default-off)
+
+## What this TSV measures
+
+For each F-D residual cell from the W44-1 cjxl_parity_ledger:
+- Per-(strategy, channel) total invocations of AdjustQuantBlockAC
+- Firing counts for each of 6 heuristics (A/B/C/D/E/F bits 0-5)
+- Quant change direction (unchanged/increased/decreased)
+- Orig and new quant means
+
+Heuristics:
+  A: Large-transform threshold reduction (xsize > 1 || ysize > 1)
+  B: Sparse-Y zero-band adjustment (c=1, sum_of_vals*8 < xsize*ysize)
+  C: High-freq corner penalty (mul[c]*sum_HF >= all_nonzeros)
+  D: DCT8 flatness boost (hf_nonzeros sum < 11.0)
+  E: Large-transform error correction (norm_error > threshold, DCT16+)
+  F: Activity-based quant reduction (only quant-DECREASE path)
+
+## Schema
+
+tag                strategy_code strategy_label channel total a b c d e f \
+                   q_unchanged q_inc q_dec orig_q_mean new_q_mean \
+                   a_pct b_pct c_pct d_pct e_pct f_pct
+
+## Reproducer
+
+cargo build -p jxl-encoder-cli --release --no-default-features \
+  --features 'butteraugli-loop parallel investigate-adjust-quant-block-ac'
+
+for cell in "1420710 5" "1420710 6" "1531677 4" "1531677 5" "1531677 6"; do
+  set -- $cell; img=$1; d=$2
+  JXL_AQBA_DIAG_TSV=benchmarks/adjust_quant_block_ac_firing_rates_2026-05-18.tsv \
+    ./target/release/cjxl-rs \
+    ~/work/codec-corpus/CID22/CID22-512/validation/${img}.png \
+    /tmp/${img}_d${d}.jxl -d $d -e 7 --quiet
+done
+
+## F-D residual cells
+
+  1420710.png e7 d=5, d=6
+  1531677.png e7 d=4, d=5, d=6
+
+## Cross-reference
+
+  ~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/\
+    f_d_adjust_quant_block_ac_firing_rates_2026-05-18.md
+
+## Verdict
+
+FIRING-MATCHES-LIBJXL-PREDICTION. Firing patterns explained by bit-exact
+constants. Wedge is NOT in AdjustQuantBlockAC. Pivot to entropy_mul_table
+re-tune at d>4 (W44-24 #3).

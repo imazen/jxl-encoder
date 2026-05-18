@@ -1835,6 +1835,18 @@ fn main() {
     } else {
         println!("{}", args.output.display());
     }
+    // W44-27: emit per-block AdjustQuantBlockAC firing-rate TSV when feature is on.
+    #[cfg(feature = "investigate-adjust-quant-block-ac")]
+    {
+        let tag = std::env::var("JXL_AQBA_DIAG_TAG").unwrap_or_else(|_| {
+            args.input
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| format!("{s}_d{distance:.1}"))
+                .unwrap_or_else(|| "encode".to_string())
+        });
+        jxl_encoder::vardct::aqba_diag::emit_and_reset(&tag);
+    }
 }
 
 /// Convert the libjxl `--container -1|0|1` integer CLI form to our

@@ -649,6 +649,8 @@ impl VarDctEncoder {
                                 1.0
                             };
                             let weights_c = super::quant::quant_weights(raw_strategy as usize, c);
+                            #[cfg(feature = "investigate-adjust-quant-block-ac")]
+                            let _orig_quant_c = quant_c;
                             let (hflags, vals, err, activity) = Self::adjust_quant_block_ac(
                                 &dct_coeffs[c],
                                 weights_c,
@@ -662,6 +664,14 @@ impl VarDctEncoder {
                                 cy,
                                 &mut thres,
                                 &mut quant_c,
+                            );
+                            #[cfg(feature = "investigate-adjust-quant-block-ac")]
+                            super::aqba_diag::record(
+                                raw_strategy,
+                                c,
+                                hflags,
+                                _orig_quant_c,
+                                quant_c,
                             );
                             if c == 1 {
                                 thresholds_y = thres;
@@ -1246,6 +1256,12 @@ impl VarDctEncoder {
                 end_bx,
                 &mut result,
             );
+            // W44-27: flush worker thread's AdjustQuantBlockAC firing
+            // counts to the global aggregate before this rayon task
+            // returns. Without this, the main-thread emit_and_reset
+            // sees only the main thread's contributions.
+            #[cfg(feature = "investigate-adjust-quant-block-ac")]
+            super::aqba_diag::flush_tl_to_global();
             result
         });
 
