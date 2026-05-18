@@ -1335,6 +1335,28 @@ fn try_merge_16x16_impl(
 
     // A merge won — reset 2×2 region to DCT8 first to avoid orphaned non-first
     // blocks from any previous multi-block transform in this region.
+    //
+    // NOTE (F-D Sub-G, 2026-05-18): root cause pinned by source-diff vs libjxl
+    // `FindBestFirstLevelDivisionForSquare` (enc_ac_strategy.cc:703-825). libjxl
+    // does NOT reset because its inner-split crossing checks (`allow_JXK`/
+    // `allow_KXJ` via `MultiBlockTransformCrossesVerticalBoundary` at
+    // `bx+cx+blocks_half`) refuse to evaluate JXK/KXJ when an existing
+    // multi-block transform spans both halves — so partial-JXK wins never
+    // orphan an existing JXJ's non-first markers. Our `can_evaluate_region`
+    // is LOOSER: it accepts regions containing fully-contained existing
+    // multi-blocks, so dropping the reset corrupts those markers on a
+    // partial-JXK win → "varblocks overlap" decode failures (reproduced at
+    // d=0.25/0.5/1.0 on real photos in the prior session). Two ways to close
+    // the divergence without the reset:
+    //   (A) tighten `can_evaluate_region` to require all-single-block (loses
+    //       merge attempts but simplest);
+    //   (B) port libjxl's per-half inner-crossing checks into the merge
+    //       comparison (most faithful, larger change touching both impls and
+    //       the three SIMD variants each).
+    // Divergence is real (we lose best 8×8-class strategies on non-winning
+    // halves) but the fix needs hash-lock regen and decoder re-verification
+    // across the full sweep — out of scope for this audit chunk.
+    // Audit memory: f_d_sub_chunk_g_try_merge_2026-05-18.md.
     for dy in 0..2usize {
         for dx in 0..2usize {
             ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
@@ -1843,6 +1865,11 @@ fn try_merge_32x32_impl(
     }
 
     // A merge won — reset 4×4 region to DCT8 first to avoid orphaned non-first blocks.
+    // (See note in try_merge_16x16_impl: root cause is our `can_evaluate_region`
+    //  accepting fully-contained existing multi-block transforms, vs libjxl's
+    //  per-half inner-crossing checks that reject those cases. Dropping the
+    //  reset triggers "varblocks overlap" decode failures on real photos.
+    //  Audit memory: f_d_sub_chunk_g_try_merge_2026-05-18.md.)
     for dy in 0..4usize {
         for dx in 0..4usize {
             ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
