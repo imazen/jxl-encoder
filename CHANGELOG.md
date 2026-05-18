@@ -1114,6 +1114,50 @@
 
 ### Investigated
 
+- **libjxl HEAD refresh + drift bench — zero drift across 39 cells**
+  (W19-2). Pulled local `~/work/jxl-efforts/libjxl` from `d2c7032`
+  (2026-02-22) to HEAD `4279d48` (2026-05-12) — 81 commits,
+  274 files, +1,529 / −49,928 (the deletion volume is the
+  `tools/jpegli*` and `tools/jni/*` removal, not encoder code).
+  Rebuilt `cjxl`, preserved the old binary at
+  `/tmp/cjxl_old_d2c7032`, and benched OLD vs NEW vs our
+  `cjxl-rs` on four axes:
+  - **RD parity**: 5 CLIC 1024×1024 photos × d∈{0.5, 1.0, 2.0, 5.0}
+    × {ours, cjxl_old, cjxl_new} at e7 = 60 rows. bytes + Rust
+    butteraugli (metadata-immune per CLAUDE.md).
+  - **Lossless photos**: same 5 CLIC images at `-d 0 -e 7`.
+  - **Lossless screenshots**: 5 gb82-sc images at `-d 0 -e 7`
+    (chosen because the diff contains the streaming/buffering/MA-tree
+    PRs `acc28c0` `032d39a` `1389871` `b3510d1` `e39a6aa` which would
+    most plausibly affect tree-heavy/palette-heavy content).
+  - **HDR**: re-ran `examples/hdr_rd_sweep_vs_cjxl` against both
+    binaries (PQ/HLG/BT709 × d∈{1, 2, 5}).
+
+  All 39 cells (20 RD + 5 lossless + 5 screenshots + 9 HDR) are
+  byte-identical between `cjxl_old` and `cjxl_new`, with Rust
+  butteraugli scores matching to six decimal places. The 81-commit
+  delta does not touch `lib/jxl/quant_weights.cc`,
+  `enc_quant_weights.cc`, `enc_adaptive_quantization.cc`,
+  `enc_ac_strategy.cc`, or `enc_chroma_from_luma.cc`; what *did*
+  change is overwhelmingly safety hardening (overflow / NaN / null
+  / buffer-size guards) and CI dependency bumps.
+
+  **No drift cells** → no items for the W19-2 cherry-pick
+  investigation queue. Our libjxl-r0 baseline (`d2c7032`) is
+  indistinguishable from HEAD on every axis we currently bench.
+  Re-run quarterly or after the next encoder-touching libjxl PR
+  (watch for changes under `lib/jxl/enc_*` outside the safety-fix
+  pattern).
+
+  Bench artifacts:
+  - `benchmarks/libjxl_drift_rd_2026-05-18.{tsv,meta}` (60 rows)
+  - `benchmarks/libjxl_drift_lossless_2026-05-18.{tsv,meta}` (15 rows)
+  - `benchmarks/libjxl_drift_screenshots_2026-05-18.{tsv,meta}` (10 rows)
+  - `benchmarks/hdr_drift_2026-05-18/{hdr_old,hdr_new,hdr_drift}.tsv` + `.meta`
+  - `benchmarks/libjxl_drift_2026-05-18.SUMMARY.md` (top-level write-up)
+  Reproducer scripts:
+  - `scripts/libjxl_drift_{bench,lossless,screenshots,hdr}.sh`
+
 - **Auto-splines default-on at e8+ — REJECTED for the second time, with
   stronger evidence** (chunk-7 re-bench, follow-on to chunk-5
   `ddc02a02` + chunk-6 `d77c589d`). Initial rejection

@@ -1,0 +1,19 @@
+# libjxl HEAD drift bench — screenshots lossless (W19-2)
+#
+# Compares OLD cjxl (d2c7032) vs NEW cjxl (4279d48) on 5 gb82-sc screenshots
+# at -d 0 -e 7. Chosen because the libjxl HEAD diff contains plausibly-
+# screenshot-relevant commits:
+#   e39a6aa "Disable global palette for progressive lossless"
+#   b3510d1 "Revise MA tree check to align with new buffering logic"
+#   032d39a "Default to buffering level 2"
+#   acc28c0 "Streaming encode without streaming output"
+#   1389871 "Loosen buffering check"
+# These could in principle change output on tree-heavy/palette-heavy content.
+date_utc=2026-05-18
+host=lilith
+old_cjxl=cjxl v0.12.0 d2c7032
+new_cjxl=cjxl v0.12.0 4279d48
+images=gb82-sc [codec_wiki, imac_dark, imac_g3, terminal, windows95]
+effort=7
+script=scripts/libjxl_drift_screenshots.sh
+finding=byte-identical on all 5 screenshots. The streaming/buffering/tree commits do not affect default (non-streaming) lossless output at -d 0 -e 7.

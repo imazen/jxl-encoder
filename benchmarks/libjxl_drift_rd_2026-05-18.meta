@@ -1,0 +1,23 @@
+# libjxl HEAD drift bench — RD parity (W19-2)
+#
+# Compares OLD cjxl (d2c7032, 2026-02-22) vs NEW cjxl (4279d48, 2026-05-12)
+# vs our cjxl-rs encoder on 5 CLIC 1024x1024 photos × 4 distances at effort 7.
+# Each cell reports bytes and Rust butteraugli on jxl-encoder->djxl->png pipeline.
+date_utc=2026-05-18
+host=lilith
+old_cjxl=cjxl v0.12.0 d2c7032 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+old_cjxl_date=2026-02-22
+new_cjxl=cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+new_cjxl_date=2026-05-12
+commits_old_to_new=81
+files_changed=274
+insertions=1529
+deletions=49928
+notes=large deletion is jpegli/* removal — not encoder code
+ours_git_rev=45445443 (main@origin)
+images=clic2025-1024 [02809272, 0369d229, 07b9f93f, 097cb426, 0c49a5cc]
+distances=[0.5, 1.0, 2.0, 5.0]
+effort=7
+metric=Rust butteraugli (~/.cargo/bin/butteraugli) on source.png vs djxl(decoded)
+script=scripts/libjxl_drift_bench.sh
+finding=cjxl_old and cjxl_new produce BYTE-IDENTICAL output on all 20 cells (bytes + butteraugli). No lossy encoder code changes in 81-commit delta — encoder hot path (enc_ac_strategy, enc_quant_weights, enc_adaptive_quantization, enc_chroma_from_luma) is unchanged.

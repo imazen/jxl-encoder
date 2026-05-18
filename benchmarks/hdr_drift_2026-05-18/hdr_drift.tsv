@@ -1,0 +1,10 @@
+layout	distance	ours_bytes	cjxl_old_bytes	cjxl_new_bytes	delta_new_vs_old_pct
+pq	1	1295	1775	1775	+0.00
+pq	2	819	1460	1460	+0.00
+pq	5	685	1131	1131	+0.00
+hlg	1	1056	968	968	+0.00
+hlg	2	468	900	900	+0.00
+hlg	5	481	705	705	+0.00
+bt709	1	1143	840	840	+0.00
+bt709	2	945	638	638	+0.00
+bt709	5	439	610	610	+0.00
