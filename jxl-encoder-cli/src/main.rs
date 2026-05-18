@@ -144,6 +144,14 @@ struct Args {
     #[arg(long)]
     no_gaborish: bool,
 
+    /// EX-J13 — per-tile contrast-adaptive gaborish kernel strength on
+    /// the Y (luma) channel (off by default). Encoder-only; decoder
+    /// always applies the fixed 3x3 inverse blur. No-op when
+    /// `--no-gaborish` is set or when the distance gate disables
+    /// gaborish.
+    #[arg(long)]
+    adaptive_gaborish: bool,
+
     /// Edge-preserving filter strength override (mirrors libjxl `cjxl --epf`).
     /// `-1` (default) = encoder chooses by distance; `0` = off;
     /// `1`/`2`/`3` = forced iteration count (heavier smoothing).
@@ -806,6 +814,9 @@ fn main() {
                     if args.no_gaborish {
                         cfg = cfg.with_gaborish(false);
                     }
+                    if args.adaptive_gaborish {
+                        cfg = cfg.with_adaptive_gaborish(true);
+                    }
                     if args.epf != -1 {
                         cfg = cfg.with_epf_level(args.epf);
                     }
@@ -1157,6 +1168,9 @@ fn main() {
         if args.no_gaborish {
             cfg = cfg.with_gaborish(false);
         }
+        if args.adaptive_gaborish {
+            cfg = cfg.with_adaptive_gaborish(true);
+        }
         if args.epf != -1 {
             cfg = cfg.with_epf_level(args.epf);
         }
@@ -1301,6 +1315,9 @@ fn main() {
             } else {
                 args.effort >= 3 && distance > 0.5
             };
+            // EX-J13: adaptive gaborish is silently gated to be a subset
+            // of gaborish (no-op when the fixed inverse is disabled).
+            tiny.enable_adaptive_gaborish = tiny.enable_gaborish && args.adaptive_gaborish;
             // libjxl `--epf -1..3` override (enc_frame.cc:284-285).
             tiny.epf_level_override = if args.epf < 0 {
                 None

@@ -12,7 +12,7 @@ use super::adaptive_quant::quantize_quant_field;
 use super::chroma_from_luma::{CflMap, compute_cfl_map};
 use super::common::*;
 use super::frame::{DistanceParams, write_toc, write_toc_with_permutation};
-use super::gaborish::gaborish_inverse;
+use super::gaborish::gaborish_inverse_maybe_adaptive;
 use super::noise::{denoise_xyb, estimate_noise_params, noise_quality_coef};
 use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
 use crate::bit_writer::BitWriter;
@@ -285,6 +285,13 @@ pub struct VarDctEncoder {
     /// to compensate, reducing blocking artifacts.
     /// Matches the libjxl VarDCT encoder default.
     pub enable_gaborish: bool,
+    /// EX-J13 — apply a per-tile contrast-derived multiplier (`mul ∈ [0.8, 1.2]`)
+    /// to the gaborish 5x5 kernel on the Y (luma) channel. **Encoder-only**:
+    /// the decoder always applies the fixed 3x3 inverse Gabor blur, so
+    /// adaptive sharpening must be pre-baked into the post-Gab samples we
+    /// hand the DCT.
+    /// Default `false`. Forced to `false` when `enable_gaborish == false`.
+    pub enable_adaptive_gaborish: bool,
     /// Override the edge-preserving filter (EPF) iteration count.
     ///
     /// `None` (default) = use the distance-derived `epf_iters` from
@@ -577,6 +584,7 @@ impl Default for VarDctEncoder {
             original_distance: None,
             enable_denoise: false,
             enable_gaborish: true,
+            enable_adaptive_gaborish: false, // EX-J13: opt-in via LossyConfig
             epf_level_override: None,
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
@@ -648,6 +656,7 @@ impl VarDctEncoder {
             original_distance: None,
             enable_denoise: false,
             enable_gaborish: true,
+            enable_adaptive_gaborish: false, // EX-J13: opt-in via LossyConfig
             epf_level_override: None,
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
@@ -1669,12 +1678,13 @@ impl VarDctEncoder {
         //   line 1150-1174: CfL (post-gaborish)
         //   line 1179: AC strategy (post-gaborish)
         if self.enable_gaborish {
-            gaborish_inverse(
+            gaborish_inverse_maybe_adaptive(
                 &mut xyb_x,
                 &mut xyb_y,
                 &mut xyb_b,
                 padded_width,
                 padded_height,
+                self.enable_adaptive_gaborish,
                 self.budget.as_ref(),
             )?;
         }
@@ -2527,6 +2537,7 @@ impl VarDctEncoder {
             self.enable_noise,
             self.enable_denoise,
             self.enable_gaborish,
+            self.enable_adaptive_gaborish,
             self.enable_patches,
             self.use_ans,
             self.encoder_mode,
@@ -2761,12 +2772,13 @@ impl VarDctEncoder {
             super::patches::subtract_patches(&mut xyb, padded_width, pd);
             if precomputed.gaborish_enabled {
                 let [mut x, mut y, mut b] = xyb;
-                super::gaborish::gaborish_inverse(
+                super::gaborish::gaborish_inverse_maybe_adaptive(
                     &mut x,
                     &mut y,
                     &mut b,
                     padded_width,
                     precomputed.padded_height,
+                    self.enable_adaptive_gaborish,
                     self.budget.as_ref(),
                 )?;
                 Some([x, y, b])
