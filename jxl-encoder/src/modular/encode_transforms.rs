@@ -78,7 +78,7 @@ pub(crate) fn write_rct_transform(
 /// - nb_colors: U32(Bits(8), BitsOffset(10,256), BitsOffset(12,1280), BitsOffset(16,5376))
 /// - nb_deltas: U32(Val(0), BitsOffset(8,1), BitsOffset(10,257), BitsOffset(16,1281))
 /// - predictor: 4 bits (0=Zero for lossless)
-pub(super) fn write_palette_transform(
+pub(crate) fn write_palette_transform(
     writer: &mut BitWriter,
     begin_c: usize,
     num_c: usize,

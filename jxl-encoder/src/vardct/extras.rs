@@ -77,4 +77,47 @@ impl<'a> VardctExtra<'a> {
     pub fn channel_width(&self, image_width: usize) -> usize {
         image_width >> self.info.dim_shift
     }
+
+    /// Scan the channel covering the rectangular region
+    /// `[x0, x0+region_width) × [y0, y0+region_height)` (sampled at
+    /// this channel's resolution via `dim_shift`) for the single-value
+    /// constant-channel ChannelCompact opportunity.
+    ///
+    /// Returns `Some(value)` when every sampled pixel is equal to the
+    /// same `value`. Used by
+    /// [`super::bitstream::write_modular_extras_subbitstream`] to emit
+    /// a libjxl-parity `kPalette` (num_c=1, nb_colors=1) transform so
+    /// the original constant value survives lossy alpha quantization
+    /// (`alpha_distance > 0` → `q > 1` would otherwise snap
+    /// `255 → 252` at `q == 7`, W13-4 audit gap).
+    ///
+    /// Returns `None` on empty regions or when at least two distinct
+    /// values are seen. Stops scanning at the first mismatch.
+    pub(crate) fn detect_constant_value(
+        &self,
+        image_width: usize,
+        x0: usize,
+        y0: usize,
+        region_width: usize,
+        region_height: usize,
+    ) -> Option<i32> {
+        let ch_w = self.channel_width(image_width);
+        let ch_x0 = x0 >> self.info.dim_shift;
+        let ch_y0 = y0 >> self.info.dim_shift;
+        let ch_rw = region_width >> self.info.dim_shift;
+        let ch_rh = region_height >> self.info.dim_shift;
+        if ch_rw == 0 || ch_rh == 0 {
+            return None;
+        }
+        let first = self.data.sample(ch_y0 * ch_w + ch_x0);
+        for y in 0..ch_rh {
+            for x in 0..ch_rw {
+                let v = self.data.sample((ch_y0 + y) * ch_w + (ch_x0 + x));
+                if v != first {
+                    return None;
+                }
+            }
+        }
+        Some(first)
+    }
 }
