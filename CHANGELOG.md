@@ -4,6 +4,21 @@
 
 ### Added
 
+- **EX-J17a: wire-format-safe custom coefficient orders on the
+  `--lossless-jpeg` transcode path** (issue #49). The JPEG bridge now
+  computes per-channel custom coefficient orders from the same Lehmer
+  cost-benefit gate used by the VarDCT path
+  (`compute_custom_orders` at `vardct/coeff_order.rs:345`). The
+  spec-mandated per-block channel order `[Y, X, B]` is unchanged —
+  only the *position* permutation per channel varies, so existing
+  decoders read the stream correctly and `djxl --reconstruct_jpeg`
+  remains byte-exact on all corpus entries that round-trip on `main`.
+  Aggregate −0.28% bytes on a 23-JPEG corpus (15 wins / 8 losses);
+  per-image range −0.59% to +0.09%. Replaces the historical-but-
+  wire-illegal "EX-J17 channel-grouped DCT reorder" idea (see issue
+  #49 for the analysis that ruled out the literal paper-described
+  layout).
+
 - **EX-J4 — RIGED gradient-aware modular predictor via
   `--modular-predictor 14`** (encoder-only meta-mode). Per Sharma
   et al. 2018 *Resolution-Independent Gradient-aware Edge Detection*:
