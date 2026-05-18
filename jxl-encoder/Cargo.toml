@@ -407,6 +407,15 @@ name = "content_aware_entropy_mul_ab"
 path = "examples/content_aware_entropy_mul_ab.rs"
 required-features = ["butteraugli-loop"]
 
+# W36-3: patches photo-skip dispatch A/B sweep — `Auto` (default,
+# skip scan on photo class via `median(mask1x1) > 95` discriminator)
+# vs `AlwaysScan` (pre-W36-3 behavior). Default output:
+# benchmarks/patches_dispatch_e7_2026-05-18.tsv.
+[[example]]
+name = "patches_dispatch_ab"
+path = "examples/patches_dispatch_ab.rs"
+required-features = ["butteraugli-loop"]
+
 # W22-1 chunk-2 follow-on: CPU re-bisect of lifted entropy_mul values for
 # screen-content. Sweeps IDENTITY × DCT2X2 lifts (AFV / DCT4X8 pinned at
 # W22-1) on screenshots, then validates the winning tuple on photos.

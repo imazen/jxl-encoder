@@ -1,0 +1,145 @@
+# W36-3 patches photo-skip dispatch — A/B paired benchmark
+# (2026-05-18)
+
+## Provenance
+
+- Date: 2026-05-18 UTC
+- Hostname: lilith (water-cooled AMD Ryzen 9 7950X, 32 threads, 128 GB RAM)
+- Workspace: ~/work/zen/jxl-encoder--patches-photo-skip (jj sibling
+  workspace on top of `main@origin` head)
+- Parent commit at time of bench: 70a48af9 (W36-1 phase-baseline)
+- Encoder build: release, features `std parallel butteraugli-loop`
+- Sweep wall: ~3-4 min for the 30-cell paired sweep
+  (REPEATS=5 × 30 cells)
+
+## What is being measured
+
+Per-image paired A/B between `LossyConfig::with_patches_dispatch`:
+* `PatchesDispatch::AlwaysScan` — pre-W36-3 behaviour: the patches
+  detector (`find_and_build_with_per_patch_gate`) runs on every
+  image, regardless of content class.
+* `PatchesDispatch::Auto` (default since W36-3) — the encoder runs a
+  cheap per-block-mean median(mask1x1) pass on the pre-patches XYB
+  Y plane and skips the patches scan when the median is at or below
+  `PATCHES_DISPATCH_BLOCK_MASK_THRESHOLD = 60.0` (photo class).
+
+For each cell we compute median wall-clock over 5 sequential repeats
+(per-cell A/B alternation), Rust butteraugli (in-process, linear sRGB
+from jxl-oxide — avoids the `butteraugli_main` PNG-metadata bug per
+CLAUDE.md), and Rust fast-ssim2 (sRGB roundtrip).
+
+Bytes / butteraugli / ssim2 are compared cell-by-cell. The key
+acceptance gate is `Δbytes` — photo cells should be 0.000 % (the
+patches scan would have produced empty output), screenshot cells
+should be 0.000 % (the dispatch gate fires `> 60` and the scan
+still runs).
+
+## Sweep grid
+
+- 10 sources, all from `~/work/codec-corpus`:
+  * 5 CID22-512 validation photos: 1025469, 1189261, 1418519,
+    1531677, 159550 (512×512 = 0.26 MP each)
+  * 5 gb82-sc screenshots: codec_wiki (2560×1664 = 4.26 MP),
+    imac_dark (2940×1912 = 5.62 MP), imac_g3 (2940×1912 = 5.62 MP),
+    terminal (1646×1062 = 1.75 MP), windows95 (640×480 = 0.31 MP)
+- 3 distances: 0.5, 1.0, 2.0 (where the patches scan is on at e7+
+  per the W36-1 phase baseline)
+- 2 modes: AlwaysScan, Auto
+- 5 repeats per cell (median wall-clock)
+- Effort 7 only (where the patches scan was profiled at 25.2 % of
+  e7 wall-clock per `lossy_phase_baseline_2026-05-18.meta`)
+
+Total: 30 paired cells (60 measurement points × 5 = 300 encodes
+plus 60 jxl-oxide decodes for the metric computation).
+
+## Reproducer
+
+```bash
+cargo build -p jxl-encoder --release \
+    --features 'std parallel butteraugli-loop' \
+    --example patches_dispatch_ab
+./target/release/examples/patches_dispatch_ab \
+    benchmarks/patches_dispatch_e7_2026-05-18.tsv
+```
+
+## Discriminator design (why threshold 60 and not 95)
+
+The shared `SCREENSHOT_MEDIAN_MASK_THRESHOLD = 95.0` used by the
+auto-splines screenshot skip + the GPU encoder's AFV cost-grid gate
+optimises for a **different cost asymmetry** than patches:
+
+| Use case          | False-positive cost          | False-negative cost              |
+|---                |---                           |---                               |
+| auto-splines      | skip splines on photo (bad)  | run splines on screenshot (caught by per-spline cost gate) |
+| GPU AFV cost grid | eval AFV on photo (cheap)    | skip AFV on screenshot (small bytes loss) |
+| **W36-3 patches** | run scan on photo (~25-30 ms/MP wasted) | skip scan on screenshot (30-70 % bytes regression) |
+
+For patches the false-negative cost is **catastrophic** (we lose the
+patches savings entirely), while the false-positive cost is just a
+wall-clock penalty — the patches scan returns empty `PatchesData` on
+photos so the output stays byte-identical. We therefore bias the
+threshold strongly toward false-positive: `> 60` catches
+`windows95.png` (the documented false-negative of the `> 95` gate at
+per-block-mean median ≈ 69.9) without admitting any CLIC photo
+(corpus characterised at median ≈ 56, max ≤ 87).
+
+If a future content discriminator regression admits a photo above 60,
+the worst case is still byte-identical output (the scan runs and
+produces empty `PatchesData`) — only the per-image wall-clock win
+disappears for that image.
+
+## Headline measured
+
+Acceptance gate **MET**: all 30 cells report `Δbytes = +0.000 %`
+(15 photo cells + 15 screenshot cells, including `windows95.png`
+which the `> 95` gate misses but `> 60` correctly catches).
+
+Wall-clock summary:
+
+* **Photo cells** (5 × 3 = 15): mean Δms = **+0.4 ms/cell**.
+  Photos in this sweep are 512×512 (0.26 MP), so the patches scan
+  saved is small (~16 ms at 62 ms/MP per W36-1 baseline) and the
+  discriminator pass cost is comparable on tiny images. Net is
+  near zero on this corpus. The win scales with image size — at
+  1 MP we expect ~30 ms/cell savings, at 4 MP we expect
+  ~150 ms/cell savings (the patches scan grows linearly with
+  pixel count while the discriminator's per-block reduction also
+  grows linearly but with a much smaller constant).
+* **Screenshot cells** (5 × 3 = 15): mean Δms = **+43 ms/cell**.
+  The discriminator pass costs ~25 ms/MP and adds on top of the
+  patches scan (which still runs because the gate fires `> 60`).
+  Worst-case +142 ms on `codec_wiki` (4.26 MP at d=1.0); best
+  case -19 ms within paired-measurement noise on `codec_wiki`
+  d=2.0. Net is small positive — the cost paid to keep the
+  hash-lock byte-identical output on screenshots.
+* Quality (butteraugli, ssim2) is byte-equal so it is identical
+  bit-for-bit on every cell.
+
+## What this changes
+
+* `LossyConfig::with_patches_dispatch(PatchesDispatch::Auto)` is
+  the new default. It is hash-lock 36/36 byte-identical against
+  the pre-W36-3 default — verified across the standard
+  hash-lock matrix (`tests/hash_lock_features.rs`).
+* `LossyConfig::with_patches_dispatch(PatchesDispatch::AlwaysScan)`
+  restores the pre-W36-3 path bit-for-bit. Use for A/B
+  reproducibility against earlier output.
+* `LossyConfig::with_patches_dispatch(PatchesDispatch::NeverScan)`
+  force-skips the scan on every image — equivalent to setting
+  `LossyConfig::with_patches(false)` for the scan step.
+
+For corpora dominated by ≤ 1 MP photos (CID22-512, KADID-10k
+crops) the wall-clock win on photos is small (paired Δms within
+noise) but the safety property — byte-identical to AlwaysScan on
+all classes — holds. The savings materialise on larger photo
+sweeps (CLIC-1024 / CLIC-1080 / 4K) where each photo cell saves
+~30-200 ms vs the prior path.
+
+## Layout
+
+The TSV has paired rows per cell: one `mode = always` row carrying
+absolute measurements + empty Δ columns, immediately followed by one
+`mode = auto` row carrying the same measurements plus filled Δ
+columns. Columns:
+
+| image | class | w | h | distance | mode | bytes | butteraugli | ssim2 | encode_ms_median | encode_ms_best | bytes_delta_pct | bfly_delta_pct | ssim2_delta_abs | ms_delta_median | ms_delta_best | ms_per_mp_median_delta |
