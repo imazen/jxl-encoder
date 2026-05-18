@@ -52,6 +52,15 @@ pub(crate) mod epf;
 pub(crate) mod extras;
 pub(crate) mod frame;
 pub(crate) mod gaborish;
+/// HDR-aware perceptual loss dispatch for the butteraugli quantization loop
+/// (EX-J11 chunk 1). See module docs for the chunk-1/chunk-2 split — chunk 1
+/// ships only the [`hdr_metrics::HdrLoss`] enum + validation; chunk 2 lands
+/// the HDR-VDP-2 maths.
+///
+/// Gated behind `feature = "butteraugli-loop"` because the loss dispatch
+/// is only meaningful inside the butteraugli quantization loop.
+#[cfg(feature = "butteraugli-loop")]
+pub mod hdr_metrics;
 pub(crate) mod lf_frame;
 pub(crate) mod noise;
 pub(crate) mod patches;
