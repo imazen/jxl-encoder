@@ -562,6 +562,21 @@ pub struct VarDctEncoder {
     /// existing hash-lock byte-identical). See
     /// [`crate::api::LossyConfig::with_content_aware_entropy_mul`].
     pub content_aware_entropy_mul: bool,
+    /// Caller-supplied override for the
+    /// [`Self::content_aware_entropy_mul`] gate. Only consulted when
+    /// `content_aware_entropy_mul` is `true`.
+    ///
+    /// - `None` (default): use the encoder-internal
+    ///   `median(mask1x1) > 95` discriminator (W22-1).
+    /// - `Some(true)`: force-apply the lifted
+    ///   [`crate::effort::EntropyMulTable::screenshot_suppressed`]
+    ///   table.
+    /// - `Some(false)`: suppress the lift even when mask1x1 would
+    ///   trigger it.
+    ///
+    /// Set via [`crate::api::LossyConfig::with_screenshot_lift_hint`].
+    /// Default `None` keeps every existing hash-lock byte-identical.
+    pub screenshot_lift_hint: Option<bool>,
     /// Streaming-refactor buffering policy (jxl-encoder#11).
     ///
     /// Mirrors libjxl `JXL_ENC_FRAME_SETTING_BUFFERING` integers via
@@ -651,6 +666,7 @@ impl Default for VarDctEncoder {
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
             content_aware_entropy_mul: false,
+            screenshot_lift_hint: None,
             buffering: crate::api::Buffering::default(),
         }
     }
@@ -724,6 +740,7 @@ impl VarDctEncoder {
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
             content_aware_entropy_mul: false,
+            screenshot_lift_hint: None,
             buffering: crate::api::Buffering::default(),
         }
     }
@@ -1764,29 +1781,40 @@ impl VarDctEncoder {
         // Compute adaptive AC strategy (DCT8/DCT16x8/DCT8x16/DCT16x16/DCT32x32)
         // Content-aware `entropy_mul` table dispatch (opt-in). When the
         // caller has set `LossyConfig::with_content_aware_entropy_mul(true)`
-        // AND we have a mask1x1 to discriminate on, compute the median and
-        // — if it crosses the screenshot threshold — swap in the
-        // `EntropyMulTable::screenshot_suppressed` lifted values for the
-        // duration of the AC-strategy search. The swap is scoped to a
-        // local `profile_for_search` (cloned) so the rest of the encode
-        // sees the original profile.
+        // we choose between the libjxl-faithful `reference()` table and the
+        // lifted `screenshot_suppressed()` table for the AC-strategy search.
         //
-        // Default `false` keeps the existing reference-table behaviour
-        // (every hash-lock fixture byte-identical).
+        // The discriminator is:
+        //   1. If [`Self::screenshot_lift_hint`] is `Some(b)` the caller
+        //      has plugged in their own classifier (e.g. zenanalyze
+        //      features in `examples/entropy_mul_smart_dispatch_ab.rs`).
+        //      `Some(true)` forces the lift; `Some(false)` suppresses it
+        //      regardless of `mask1x1`.
+        //   2. Otherwise (hint is `None`) fall back to the W22-1
+        //      encoder-internal `median(mask1x1) > 95` check.
+        //
+        // The swap is scoped to a local `profile_for_search` (cloned) so
+        // the rest of the encode sees the original profile.
+        //
+        // Default (`content_aware_entropy_mul == false`) keeps the
+        // reference-table behaviour and every hash-lock byte-identical.
         let profile_for_search = if self.content_aware_entropy_mul {
-            match mask1x1.as_deref() {
-                Some(mask) => {
-                    let med = median_mask1x1(mask, padded_width, width, height);
-                    if med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD {
-                        let mut p = self.profile.clone();
-                        p.entropy_mul_table =
-                            crate::effort::EntropyMulTable::screenshot_suppressed();
-                        Some(p)
-                    } else {
-                        None
+            let lift = match self.screenshot_lift_hint {
+                Some(b) => b,
+                None => match mask1x1.as_deref() {
+                    Some(mask) => {
+                        let med = median_mask1x1(mask, padded_width, width, height);
+                        med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD
                     }
-                }
-                None => None,
+                    None => false,
+                },
+            };
+            if lift {
+                let mut p = self.profile.clone();
+                p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
+                Some(p)
+            } else {
+                None
             }
         } else {
             None
@@ -3329,6 +3357,17 @@ mod tests {
         assert!(!enc.content_aware_entropy_mul);
         let enc_default = VarDctEncoder::default();
         assert!(!enc_default.content_aware_entropy_mul);
+    }
+
+    #[test]
+    fn test_screenshot_lift_hint_default_none() {
+        // Verify the hint defaults to None on both constructors (so the
+        // gate keeps the existing W22-1 mask1x1 behaviour and every
+        // hash-lock byte-identical).
+        let enc = VarDctEncoder::new(1.0);
+        assert!(enc.screenshot_lift_hint.is_none());
+        let enc_default = VarDctEncoder::default();
+        assert!(enc_default.screenshot_lift_hint.is_none());
     }
 
     #[test]

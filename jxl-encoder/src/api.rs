@@ -3272,6 +3272,26 @@ pub struct LossyConfig {
     /// Default `false` — keeps every existing hash-lock fixture
     /// byte-identical. See [`Self::with_content_aware_entropy_mul`].
     content_aware_entropy_mul: bool,
+    /// Optional caller-supplied override for the W22-1
+    /// [`Self::with_content_aware_entropy_mul`] gate. Only consulted
+    /// when `content_aware_entropy_mul` is `true`.
+    ///
+    /// - `None` (default): fall back to the encoder-internal
+    ///   `median(mask1x1) > 95` discriminator (W22-1 behaviour).
+    /// - `Some(true)`: force-apply the lifted
+    ///   [`crate::effort::EntropyMulTable::screenshot_suppressed`]
+    ///   table regardless of mask1x1. Caller asserts the image is
+    ///   safe to lift (typically validated via a zenanalyze-driven
+    ///   classifier in the caller).
+    /// - `Some(false)`: suppress the lift even when mask1x1 would
+    ///   trigger it. Caller asserts the image is in a class that
+    ///   regresses under the lifted values (e.g., palette /
+    ///   pixel-art content like the W23-2-blocking windows95.png).
+    ///
+    /// See [`Self::with_screenshot_lift_hint`] and the
+    /// `entropy_mul_smart_dispatch_ab` example for the classifier
+    /// rule (chunk 1 of the smart-dispatch follow-on to W23-2).
+    screenshot_lift_hint: Option<bool>,
     /// Tracks whether the caller has explicitly set `patches` via
     /// [`Self::with_patches`]. Mirrors the
     /// `butteraugli_iters_explicit` / `resampling_explicit` pattern.
@@ -3498,6 +3518,7 @@ impl LossyConfig {
             canonicalize_input: false,
             content_class: None,
             content_aware_entropy_mul: false,
+            screenshot_lift_hint: None,
             patches_explicit: false,
             epf_level: -1,
             alpha_distance: None,
@@ -3696,6 +3717,7 @@ impl LossyConfig {
         new.canonicalize_input = self.canonicalize_input;
         new.content_class = self.content_class;
         new.content_aware_entropy_mul = self.content_aware_entropy_mul;
+        new.screenshot_lift_hint = self.screenshot_lift_hint;
         // Preserve explicit patches setting across with_effort.
         if self.patches_explicit {
             new.patches = self.patches;
@@ -4303,6 +4325,38 @@ impl LossyConfig {
     /// `false`). See [`Self::with_content_aware_entropy_mul`].
     pub fn content_aware_entropy_mul(&self) -> bool {
         self.content_aware_entropy_mul
+    }
+
+    /// Caller-supplied override for the W22-1
+    /// [`Self::with_content_aware_entropy_mul`] discriminator.
+    ///
+    /// Only consulted when `with_content_aware_entropy_mul(true)`
+    /// is set. Lets the caller plug in a richer image-content
+    /// classifier (e.g., zenanalyze features that distinguish
+    /// "screenshot we should lift" from "palette pixel-art we
+    /// should not") without putting that classifier inside
+    /// `jxl-encoder` itself.
+    ///
+    /// Semantics:
+    /// - `None` (default): fall back to the encoder's internal
+    ///   `median(mask1x1) > 95` discriminator (W22-1 behaviour).
+    /// - `Some(true)`: force-apply the lift.
+    /// - `Some(false)`: suppress the lift even when mask1x1 would
+    ///   otherwise trigger it.
+    ///
+    /// The default `None` keeps every existing hash-lock byte-identical.
+    /// See `entropy_mul_smart_dispatch_ab` for the prototype
+    /// classifier (windows95-class detected via
+    /// `palette_log2_size <= 6`).
+    pub fn with_screenshot_lift_hint(mut self, hint: Option<bool>) -> Self {
+        self.screenshot_lift_hint = hint;
+        self
+    }
+
+    /// Currently-set [`Self::with_screenshot_lift_hint`] override
+    /// (default `None`).
+    pub fn screenshot_lift_hint(&self) -> Option<bool> {
+        self.screenshot_lift_hint
     }
 
     /// Set a separate butteraugli distance for the alpha extra channel
@@ -7156,6 +7210,7 @@ impl<'a> EncodeRequest<'a> {
         enc.progressive = cfg.progressive;
         enc.use_lf_frame = cfg.lf_frame;
         enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
+        enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
         // Streaming refactor #11 chunk 6: thread the caller-selected
         // [`Buffering`] policy into VarDctEncoder so the per-region
         // precompute dispatch (precomputed.rs:compute_with_budget_and_buffering)
@@ -8279,6 +8334,7 @@ impl LossyEncoder {
             enc.progressive = cfg.progressive;
             enc.use_lf_frame = cfg.lf_frame;
             enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
+            enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
             // Streaming refactor #11 chunk 6 (streaming LossyEncoder
             // path).
             enc.buffering = cfg.buffering;
@@ -10130,6 +10186,7 @@ fn encode_animation_lossy(
     enc.progressive = cfg.progressive;
     enc.use_lf_frame = cfg.lf_frame;
     enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
+    enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
     // Streaming refactor #11 chunk 6 (animation frame path).
     enc.buffering = cfg.buffering;
     #[cfg(feature = "butteraugli-loop")]

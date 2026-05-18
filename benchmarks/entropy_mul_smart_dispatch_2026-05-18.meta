@@ -1,0 +1,153 @@
+Smart-dispatch chunk-1 — zenanalyze-driven screenshot_lift_hint A/B
+====================================================================
+
+Date: 2026-05-18
+Host: $(uname -n)
+Repo: jxl-encoder (sibling workspace --entropy-mul-smart-dispatch)
+Parent commit: 74b4112b (main@origin at workspace creation)
+Build features: __expert butteraugli-loop parallel (release)
+Effort: 7
+
+Harness: jxl-encoder/examples/entropy_mul_smart_dispatch_ab.rs (NOT
+committed to CI registry — sibling-only via temporary zenanalyze
+path dep edit; the example registration in jxl-encoder/Cargo.toml is
+marked LOCAL-ONLY and reverted before the commit that lands the
+API + bench fixtures.)
+
+Sweep design
+------------
+10 gb82-sc screenshots × 3 distances {0.5, 1.0, 2.0} × 2 modes
+{smart_off, smart_on} = 60 measurements.
+
+  smart_off : libjxl-faithful reference EntropyMulTable.
+              `with_content_aware_entropy_mul(false)` (default).
+  smart_on  : `with_content_aware_entropy_mul(true)` +
+              `with_screenshot_lift_hint(classify_zenanalyze(rgb))`
+              where the classifier rule is:
+
+                  if palette_log2_size <= 6: Some(false)   # windows95-class
+                  elif fcbr >= 0.50 && uniformity >= 0.50: Some(true)
+                  else: None  # falls back to mask1x1 (W22-1)
+
+Methodology
+-----------
+Per cell:
+  1. Encode at distance d, effort 7.
+  2. Decode with jxl-oxide in linear sRGB (CLAUDE.md jxl-oxide rule).
+  3. Compute Rust butteraugli (linear) and Rust fast-ssim2 (sRGB u8).
+
+The classifier runs once per image (Tier-1 zenanalyze sweep) and
+the result is forwarded to both `smart_off` (ignored) and `smart_on`.
+
+Discriminator features explored (chunk-1)
+-----------------------------------------
+zenanalyze features computed on each gb82-sc image:
+
+  image            fcbr   unif   edge    chroma  var       lap_var   var_spr  colf   hf_eng    lum_ent   distincols  plog2
+  codec_wiki       0.843  0.844  0.0391  0.31    1485.82   1.79      1.5490   146.04 0.1054    2.321     785         10
+  gmessages        0.907  0.915  0.0209  0.02    1009.79   0.80      1.4995   10.67  0.0821    1.696     455         9
+  graph            0.809  0.812  0.0548  0.03    415.84    1.07      1.4855   11.76  0.4813    0.342     199         8
+  gui              0.868  0.890  0.0172  0.03    992.17    0.19      1.8331   11.21  0.0641    2.081     147         8
+  imac_dark        0.730  0.746  0.0574  0.06    2419.25   3.90      1.1864   21.71  0.1378    1.895     3127        12
+  imac_g3          0.709  0.725  0.0789  0.05    3923.46   8.25      0.9267   15.32  0.1029    1.511     1105        11
+  imessage         0.873  0.889  0.0262  0.19    2577.61   0.90      1.5288   68.19  0.0775    2.283     506         9
+  terminal         0.804  0.811  0.0552  0.04    1734.83   1.69      1.2693   13.99  0.1354    1.510     342         9
+  windows          0.775  0.786  0.0662  0.05    3159.79   5.82      1.1800   15.42  0.3867    1.932     1593        11
+  windows95        0.360  0.360  0.2684  0.08    4478.11   14.94     0.8311   27.19  0.8652    1.666     14          4   <-- outlier
+
+windows95 sits 2-7× outside the cluster on plog2, fcbr, unif, edge,
+hf_eng — any one of those single thresholds cleanly separates it.
+The chunk-1 rule picks `palette_log2_size` (most interpretable, the
+JXL palette-transform breakpoint vocabulary already uses it).
+
+Result
+------
+Aggregate over 30 smart_on cells:
+  avg_bytes_delta_pct = +0.309 %    (FAIL — gate requires <= -0.30 %)
+  avg_bfly_delta_pct  = +6.033 %
+  cells with |bfly Δ| > 3 %  = 14 / 30  (FAIL — gate requires 0)
+
+windows95 sub-result (the W23-2-blocker):
+  classifier verdict: lift_hint = Some(false)  ← confirmed plog2=4 < 7
+  effect: byte-identical to smart_off at all 3 distances
+          (Δbytes = 0.000 %, Δbfly = 0.000 %, Δssim2 = 0.000)
+
+  The hint API correctly suppresses the W22-1 mask1x1-trigger on
+  windows95.  This proves the wiring is sound and the classifier
+  rule (palette_log2_size <= 6 → suppress) is the right shape.
+
+Decision
+--------
+HONEST STOP — the smart-dispatch chunk-1 does NOT meet the pass gate.
+
+The classifier is correctly identifying windows95 as the regression
+class (plog2=4 ≤ 6 → lift_hint=Some(false), bytes/bfly/ssim2 deltas
+all 0.000).  But removing the windows95 excursion is not sufficient
+to satisfy the gate:
+
+  - 14 of the remaining 27 (non-windows95) cells still excursion
+    |bfly Δ| > 3 %.  graph d=0.5 alone is +94 % bfly under the
+    lifted table.
+  - Average bytes Δ = +0.309 % over the screen class (gate wanted
+    ≤ -0.30 %).  Most cells either grow bytes or stay flat; the few
+    -2 % to -3 % wins (gui d=0.5, terminal d=1, imessage d=1) are
+    not enough to drag the average negative.
+
+The W22-1 default lift tuple (IDENT=1.85, DCT2X2=1.15, AFV=0.95,
+DCT4X8=0.98) is broadly too aggressive — it overshoots IDENTITY /
+DCT2X2 cost on ALL screen content the chunk-1 classifier "approves",
+not just windows95.  Lift values would need their own re-bisect
+inside the safe-class-only subset before chunk-1's gating logic can
+add value.
+
+Wiring shipped (committable)
+----------------------------
+1. `LossyConfig::with_screenshot_lift_hint(Option<bool>)` /
+   `screenshot_lift_hint()` — caller-supplied override for the
+   W22-1 W22-1 mask1x1 discriminator.  `None` (default) preserves
+   the existing W22-1 behaviour; `Some(b)` forces or suppresses
+   the lift.
+2. `VarDctEncoder.screenshot_lift_hint: Option<bool>` field +
+   wire-through at all 3 propagation sites (still-image, streaming
+   LossyEncoder, animation frame path).
+3. `vardct/encoder.rs` gate updated to consult hint first, fall
+   back to mask1x1 only when hint is None.
+4. Unit test `test_screenshot_lift_hint_default_none`.
+5. Hash-lock fixtures: 36 / 36 byte-identical with default
+   (`with_content_aware_entropy_mul(false)`).
+6. NOT committed: temporary zenanalyze path dep in Cargo.toml
+   `[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]`
+   + the `[[example]]` block for `entropy_mul_smart_dispatch_ab`.
+   Same gating convention as `examples/smart_fanout_sweep.rs` and
+   `examples/content_class_dispatch_ab.rs`.
+7. The example itself (`examples/entropy_mul_smart_dispatch_ab.rs`)
+   IS committed so the next agent can re-run it after re-adding
+   the zenanalyze dev-dep.
+
+Chunk-4 plan (not in scope for chunk-1)
+---------------------------------------
+The smart-dispatch wiring is sound but the lifted table is the
+problem.  Three forward paths, ranked:
+
+1. **Re-bisect lift values inside the safe-class subset** — drop
+   windows95 from the W23-2 bisect corpus, re-run on the 9 plog2>=7
+   screenshots, find a SECOND-tier lift tuple (likely lower than
+   1.85/1.15) that passes the |bfly| ≤ 3 % gate on the safe class.
+   Most likely outcome: an `EntropyMulTable::screenshot_modest()`
+   table with IDENT in the 1.20-1.30 range and DCT2X2 unchanged.
+
+2. **Distance-aware lift gating** — d=0.5 cells in the data have
+   the smallest bfly excursions; d=1 and d=2 cells are uniformly
+   harmful.  Gate the lift on `distance <= 1.0` in addition to the
+   classifier.  Smaller win envelope but more robust.
+
+3. **Per-block discriminator** — abandon the per-image classifier
+   entirely, plug the discriminator into the per-block AC strategy
+   search loop (lift only the IDENTITY/DCT2X2 costs for blocks
+   where local mask1x1 > 95 AND local edge density is low).  Deep
+   algo change, multi-week.
+
+Recommend chunk-4 = path #1 (smallest scope, highest probability of
+shipping a gain).  Update zenanalyze classifier rule to ALSO gate
+distance + map plog2-buckets to lift-strength tiers if the re-bisect
+finds a non-trivial tuple distribution.

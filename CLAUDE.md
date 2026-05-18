@@ -581,6 +581,66 @@ Key patterns to watch for when working on this codebase:
 
 ## Investigation Notes
 
+### Smart-Dispatch Chunk-1 — zenanalyze-Driven `screenshot_lift_hint` (May 18, 2026)
+
+**Status**: [RULED OUT — wiring shipped, classifier rule shipped, lift values are the wedge]
+
+Follow-on to W23-2 (`68c74ef3`) honest-stop on the `content_aware_entropy_mul`
+gate.  W23-2 bisected 465 cells of lift-tuple values and found that every
+lifted `(IDENTITY, DCT2X2)` value regressed `windows95.png` (14-color
+pixel-art) by +30-33 % bfly at d=0.5 — the W22-1 `median(mask1x1) > 95`
+discriminator is too coarse.
+
+This chunk tested: can zenanalyze features (computed once per image,
+~2-7 ms Tier-1 cost) split the WIN class from the windows95-class?
+
+**Wiring shipped** (`9dcb8394` follow-on):
+- `LossyConfig::with_screenshot_lift_hint(Option<bool>)` — caller-supplied
+  override for the W22-1 mask1x1 discriminator.  `None` (default) preserves
+  W22-1 behaviour; `Some(true)` forces the lift; `Some(false)` suppresses
+  even when mask1x1 would fire.
+- `VarDctEncoder.screenshot_lift_hint: Option<bool>` field wired through
+  all 3 propagation sites (still-image, streaming LossyEncoder, animation).
+- Gate logic in `vardct/encoder.rs:1781-1822` consults hint first.
+- Hash-locks: 36 / 36 byte-identical with default.
+- Unit test `test_screenshot_lift_hint_default_none`.
+
+**Classifier rule** (`examples/entropy_mul_smart_dispatch_ab.rs`, chunk-1):
+```
+if palette_log2_size <= 6:               lift = Some(false)    # windows95-class
+elif fcbr >= 0.50 && uniformity >= 0.50: lift = Some(true)
+else:                                    lift = None            # fall back to mask1x1
+```
+
+**zenanalyze cluster analysis** (all 10 gb82-sc images, Tier-1):
+windows95 sits 2-7× outside the cluster on plog2 (=4 vs 8-12),
+flat_color_block_ratio (=0.36 vs 0.71-0.91), edge_density (=0.27 vs
+0.02-0.08), high_freq_energy_ratio (=0.87 vs 0.06-0.48).  Any of
+these alone separates it cleanly; `palette_log2_size` is the most
+interpretable (already used by JXL Modular palette breakpoints).
+
+**A/B result** (10 screenshots × 3 distances × 2 modes,
+`benchmarks/entropy_mul_smart_dispatch_2026-05-18.{tsv,meta}`):
+- avg bytes Δ = **+0.309 %** (FAIL — gate wanted ≤ -0.30 %)
+- avg bfly Δ = **+6.033 %**
+- cells with `|bfly Δ| > 3 %` = **14 / 30** (FAIL — gate wanted 0)
+- windows95 sub-result: classifier returned `Some(false)`,
+  bytes/bfly/ssim2 deltas all 0.000 (hint API correctly suppresses
+  the W22-1 mask1x1-trigger).
+
+**Honest stop**.  The classifier IS correctly identifying the
+regression class (windows95 byte-identical to OFF), and the hint
+plumbing is sound — but the W22-1 default lift tuple
+(IDENT=1.85, DCT2X2=1.15, AFV=0.95, DCT4X8=0.98) is broadly too
+aggressive on EVERY screenshot in the cluster, not just windows95.
+`graph` d=0.5 alone is +94 % bfly under the lifted table.  No
+classifier rule can rescue an inherently-bad tuple.
+
+**Chunk-4 plan**: re-bisect lift values inside the safe-class subset
+(drop windows95, find a SECOND-tier lift table likely with
+IDENT in the 1.20-1.30 range that passes |bfly| ≤ 3 % on the 9
+plog2≥7 screenshots).  See benchmark meta for the full plan.
+
 ### Picker Oracle Sweep TSVs (April 30, 2026)
 
 Picker training oracle (issue #24) ran on 100-image stratified subset
