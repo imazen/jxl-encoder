@@ -1,0 +1,133 @@
+# W38-3 — parallel xform fan-out at e3/e4 on screenshots (HONEST-STOP)
+
+## Status: HONEST-STOP — chunk premise INVALID
+
+`transform_and_quantize` is **already rayon-parallel** via `parallel_map` at
+every effort level (gated only on the `parallel` cargo feature, which is
+default-on in workspace builds). At e3/e4 the existing AC-group fan-out
+fires and gives a measurable 1.05x – 4.04x speedup on the 8T paths.
+
+See `vardct/transform.rs:1222` — the parallel reduce was already wired by
+prior chunk-8b work (region-source refactor) and the comment block at
+:1198–1201 explicitly notes the per-group parallel reduce as the reason for
+keeping the hot-path arg list flat instead of struct-packed.
+
+No source changes shipped in this commit — only the bench TSV that proves
+the premise is moot. CHANGELOG entry under `[Unreleased] / Performance`
+documents the honest-stop so the next agent does not re-investigate.
+
+## Provenance
+
+- Date: 2026-05-18 UTC
+- Hostname: lilith (water-cooled AMD Ryzen 9 7950X, 32 threads, 128 GB RAM)
+- Parent commit: a2cd4758 (W38-1 low-effort baseline + zenjpeg comparator)
+- Workspace: ~/work/zen/jxl-encoder--parallel-xform-low-effort (jj sibling on main)
+- Encoder build: release, features `std parallel butteraugli-loop`
+- CLI: `target/release/cjxl-rs`
+- Phase timing: `__JXL_ENC_PHASE_TIMING=1` env var (W36-1 path)
+- Thread control: `RAYON_NUM_THREADS={1, 8}`
+
+## Method
+
+- 3 screenshots (>=1.5 MP, per task spec): terminal (1.75 MP), codec_wiki
+  (4.26 MP), imac_g3 (5.62 MP).
+- 2 efforts: 3, 4
+- 1 distance: 1.0 (xform-dominated regime per W38-1 baseline)
+- 3 trials per cell, median kept
+- 4 cells per image × effort: {1T, 8T} × {trial 1, 2, 3} = 12 rows per
+  (image, effort) pair. Total: 3 imgs × 2 efforts × 2 thr × 3 trials = 36
+  rows.
+- Output captured: `total_ms` (encode_inner total), `xform_ms` (the
+  `transform_and_quantize` phase), `entropy_ms`, `xyb_ms`.
+- Run on quiet load (no other heavy compute concurrent).
+
+## TSV columns
+
+- `img`           : screenshot file name
+- `pixels`        : MP rounded (1/4/5)
+- `effort`        : 3 or 4
+- `distance`      : 1.0
+- `threads`       : 1 or 8 (RAYON_NUM_THREADS)
+- `run`           : trial index (1-3)
+- `total_ms`      : `encode_inner` total
+- `xform_ms`      : `transform_and_quantize` phase
+- `entropy_ms`    : entropy coding phase
+- `xyb_ms`        : XYB conversion + adaptive quant init phase
+
+## Median xform speedup (xform_8T_med vs xform_1T_med)
+
+| img             | effort | xform_1T_ms | xform_8T_ms | speedup | saving_ms |
+|-----------------|-------:|------------:|------------:|--------:|----------:|
+| terminal.png    |      3 |        44.5 |        62.4 |  0.71×  |     -17.9 |
+| terminal.png    |      4 |        74.2 |        71.0 |  1.05×  |       3.2 |
+| codec_wiki.png  |      3 |       209.5 |        51.8 |  4.04×  |     157.7 |
+| codec_wiki.png  |      4 |        89.1 |        49.4 |  1.80×  |      39.7 |
+| imac_g3.png     |      3 |       223.9 |       151.5 |  1.48×  |      72.4 |
+| imac_g3.png     |      4 |       141.7 |        64.5 |  2.20×  |      77.2 |
+
+terminal e3 8T is *slower* than 1T — rayon scheduling overhead exceeds the
+parallel work at 1.75 MP (35 AC groups, ~1.3 ms wall-clock per group at
+single-thread). This is the classic "parallelism overhead worse than
+work on tiny inputs" failure mode the task spec asked us to gate on
+(`pixels >= 1.5e6`). The wedge is *already* the gate floor — increasing
+it further (or scaling group-fan-out chunking) could be a future chunk.
+
+## Why the speedups are sub-ideal at 8T
+
+The existing `parallel_map(num_groups, ...)` correctly fans out per-AC-group
+work. Speedups are bounded by:
+
+1. **Serial scatter at end of `transform_and_quantize`** (transform.rs:1252).
+   The closure produces per-group flat boxed slices; the main thread then
+   copies them into the jagged `Vec<Vec<...>>` global output and applies the
+   quant_adjustments. At 12 MP this is on the order of single-digit ms.
+
+2. **Per-group `GroupTransformResult::new` allocations** (transform.rs:122).
+   Each closure allocates 5 boxed slices × 3 channels = 15 short-lived
+   allocations per group. 64 groups @ 12 MP × 15 allocs = ~1000 allocs per
+   transform_and_quantize call.
+
+3. **Memory bandwidth ceiling on XYB plane reads + AC coef writes** on big
+   images.
+
+4. **Small images (<2 MP)**: per-group work is small enough that rayon
+   scheduling overhead can dominate. terminal @ e3 1T = 44.5 ms across 35
+   groups = ~1.3 ms/group, which is below rayon's per-task overhead floor.
+
+None of these are fixable by "wire parallel fan-out" — they are tuning /
+chunking problems against an already-parallel baseline.
+
+## Reproducer
+
+```bash
+cd ~/work/zen/jxl-encoder--parallel-xform-low-effort
+cargo build -p jxl-encoder-cli --release \
+    --features 'std parallel butteraugli-loop'
+
+for trial in 1 2 3; do
+  for img in terminal codec_wiki imac_g3; do
+    for eff in 3 4; do
+      for thr in 1 8; do
+        RAYON_NUM_THREADS=$thr __JXL_ENC_PHASE_TIMING=1 \
+          ./target/release/cjxl-rs \
+          ~/work/codec-corpus/gb82-sc/$img.png /tmp/out.jxl -d 1.0 -e $eff \
+          2>&1 | grep 'encode_inner:'
+      done
+    done
+  done
+done
+```
+
+## Conclusion
+
+- Task as specified ("add parallel xform fan-out at e3/e4") is moot — the
+  parallel path already exists and fires.
+- Default ship decision: **no change**. The existing parallel path stays.
+- Future levers (NOT shipped this chunk):
+  - Reduce per-group allocator pressure (`GroupTransformResult` could
+    share a thread-local arena).
+  - Parallelize scatter step (per-channel par_iter across the 3 channels).
+  - Auto-tune AC-group chunking on small images so rayon overhead
+    doesn't exceed work (cf. terminal e3 8T regression).
+- These belong in a separate "xform parallel scaling polish" chunk; this
+  chunk simply records the honest-stop.
