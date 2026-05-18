@@ -4,6 +4,54 @@
 
 ### Added
 
+- **EX-J11 chunk 4: `HdrLoss::Auto` default dispatcher — PQ / HLG →
+  `Vdp2`, everything else → `Butteraugli`** (`vardct/hdr_metrics.rs`,
+  `api.rs`, `tests/hdr_vdp2_chunk4_auto.rs`).
+  Closes the chunk-3 follow-on: ship the auto-dispatch the chunk-3
+  CHANGELOG promised, without disturbing the SDR hash-lock corpus.
+
+  Public API: new `HdrLoss::Auto` variant + `HdrLoss::resolve(tf)`
+  + `LossyConfig::resolve_hdr_loss(layout, color_encoding)`. The
+  default for `LossyConfig` flips from `HdrLoss::Butteraugli` to
+  `HdrLoss::Auto`. The resolver consults the encode's signaled
+  transfer function — `EncodeRequest::with_color_encoding(...)` if
+  set, else `PixelLayout::implied_transfer_function()` (populated
+  for the `RgbPqF32` / `RgbHlgF32` / `RgbBt709F32` HDR layouts) —
+  and picks `Vdp2` on PQ / HLG, `Butteraugli` on everything else.
+  Resolution happens once at encode entry; the per-iteration
+  butteraugli loop reads a concrete variant with zero dispatch
+  cost.
+
+  Validation:
+  - `hash_lock_features` **36/36 byte-identical** — SDR content
+    (sRGB / BT.709 / Linear / Unknown / no TF) resolves to
+    `Butteraugli` and the existing reference precompute + per-iter
+    compare path runs unchanged.
+  - 8 chunk-2 integration tests (`hdr_vdp2_loss.rs`) re-asserted
+    against the new default (one assertion updated:
+    `default_is_auto_chunk4` replaces `default_is_butteraugli`).
+  - 6 chunk-4 integration tests (`hdr_vdp2_chunk4_auto.rs`) prove
+    the dispatch matrix: byte-identical `Auto == Butteraugli` on
+    SDR Rgb8; byte-identical `Auto == Vdp2` on `RgbPqF32` and
+    `RgbHlgF32`; byte-identical `Auto == Vdp2` when the caller
+    overrides via `with_color_encoding(ColorEncoding::bt2100_pq())`;
+    explicit `Butteraugli` on a PQ layout produces a *different*
+    bitstream than explicit `Vdp2` (escape-hatch proof).
+  - 10 hdr_metrics unit tests (`vardct::hdr_metrics::tests`)
+    cover every cell of the dispatch matrix.
+
+  Per the chunk-3 RD sweep (`benchmarks/hdr_vdp2_chunk3_rd_sweep_2026-05-18.tsv`,
+  commit `c8010560`): on PQ / HLG content `Vdp2` improved the
+  paper-faithful reference VDP2 score by **-36.5 % on average**
+  (top cell -44.6 %) vs. the SDR butteraugli loop, so the new
+  default ships measurable HDR perceptual quality wins out of the
+  box without any caller opt-in.
+
+  Escape hatches preserved: `LossyConfig::with_hdr_loss(HdrLoss::Butteraugli)`
+  pins the SDR loss on any content (useful for byte-stable encodes
+  on PQ-tagged but visually-SDR content); `HdrLoss::Vdp2` forces
+  the HDR loss on any content.
+
 - **EX-J11 chunk 3: HDR-VDP-2-lite real-corpus RD sweep — validates
   `HdrLoss::Vdp2` against the SDR butteraugli baseline on PQ/HLG
   content** (`examples/hdr_vdp2_chunk3_rd_sweep.rs`,

@@ -3149,9 +3149,17 @@ impl LossyConfig {
             butteraugli_iters: profile.butteraugli_iters,
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters_explicit: false,
-            // EX-J11 chunk 1: default keeps every hash-lock byte-identical.
+            // EX-J11 chunk 4: default flipped from `Butteraugli` to
+            // `Auto`. SDR encodes (sRGB / BT.709 / Linear / Unknown)
+            // resolve `Auto` → `Butteraugli` at encode entry — the
+            // hash-lock fixtures all use SDR transfer functions and
+            // therefore stay byte-identical. PQ / HLG encodes pick up
+            // `Vdp2` automatically; chunk-3 measured -36.5% avg
+            // paper-faithful reference score improvement vs.
+            // butteraugli on HDR-AIC-2025. See
+            // [`HdrLoss::resolve`] for the full dispatch matrix.
             #[cfg(feature = "butteraugli-loop")]
-            hdr_loss: HdrLoss::Butteraugli,
+            hdr_loss: HdrLoss::Auto,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0,
             #[cfg(feature = "zensim-loop")]
@@ -4392,14 +4400,17 @@ impl LossyConfig {
     }
 
     /// Pick the perceptual loss used by the butteraugli quantization loop
-    /// on HDR encodes (EX-J11). Default [`HdrLoss::Butteraugli`] preserves
-    /// every existing hash-lock byte-identical.
+    /// on HDR encodes (EX-J11).
     ///
-    /// [`HdrLoss::Vdp2`] is opt-in only. Chunk 1 of EX-J11 ships the
-    /// dispatch and validation only — selecting [`HdrLoss::Vdp2`] today
-    /// surfaces [`EncodeError::InvalidConfig`] at encode time with a
-    /// message pointing at chunk 2 (where the multi-scale CSF pyramid
-    /// lands).
+    /// Default [`HdrLoss::Auto`] (chunk 4) dispatches to
+    /// [`HdrLoss::Vdp2`] on PQ / HLG content and [`HdrLoss::Butteraugli`]
+    /// on everything else — see [`HdrLoss::resolve`] for the dispatch
+    /// matrix. SDR hash-lock fixtures stay byte-identical.
+    ///
+    /// Override with [`HdrLoss::Butteraugli`] to pin the SDR-tuned loss
+    /// regardless of transfer function (e.g. for byte-stable encodes on
+    /// PQ-tagged but visually-SDR content), or [`HdrLoss::Vdp2`] to
+    /// force the HDR-VDP-2-lite metric on any content.
     ///
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
@@ -4408,11 +4419,48 @@ impl LossyConfig {
         self
     }
 
-    /// Currently configured HDR-aware perceptual loss. See
-    /// [`Self::with_hdr_loss`].
+    /// Currently configured HDR-aware perceptual loss. May be
+    /// [`HdrLoss::Auto`] (the default) — use [`Self::resolve_hdr_loss`]
+    /// to see the loss that actually runs for a given pixel layout.
     #[cfg(feature = "butteraugli-loop")]
     pub fn hdr_loss(&self) -> HdrLoss {
         self.hdr_loss
+    }
+
+    /// Resolve the configured [`HdrLoss`] into the concrete loss that
+    /// will run inside the butteraugli quantization loop, given the
+    /// caller's input pixel layout and (optionally) an explicit
+    /// `ColorEncoding` from `EncodeRequest::with_color_encoding`.
+    ///
+    /// When [`Self::with_hdr_loss`] is set to [`HdrLoss::Auto`] (the
+    /// default), the resolution uses:
+    ///
+    /// 1. The transfer function of `color_encoding` if the caller
+    ///    wired one explicitly on the request, else
+    /// 2. The transfer function implied by `layout` (PQ / HLG / BT.709
+    ///    f32 input variants populate this; sRGB-u8 / linear-f32
+    ///    layouts don't).
+    /// 3. If neither path yields a TF, the resolver assumes SDR and
+    ///    returns [`HdrLoss::Butteraugli`].
+    ///
+    /// Non-`Auto` variants pass through unchanged. See
+    /// [`HdrLoss::resolve`] for the full dispatch matrix.
+    ///
+    /// `color_encoding` lives on [`EncodeRequest`] (not on this
+    /// config), so the encoder pipelines pass it through explicitly.
+    /// This is the single dispatch site for chunk-4 — called once
+    /// when wiring `enc.hdr_loss`, so the per-iteration butteraugli
+    /// loop reads a concrete variant with zero dispatch overhead.
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn resolve_hdr_loss(
+        &self,
+        layout: PixelLayout,
+        color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
+    ) -> HdrLoss {
+        let tf = color_encoding
+            .map(|ce| ce.transfer_function)
+            .or_else(|| layout.implied_transfer_function());
+        self.hdr_loss.resolve(tf)
     }
 
     /// Set the policy for non-finite XYB values at the
@@ -6679,7 +6727,13 @@ impl<'a> EncodeRequest<'a> {
         #[cfg(feature = "butteraugli-loop")]
         {
             enc.butteraugli_iters = cfg.butteraugli_iters;
-            enc.hdr_loss = cfg.hdr_loss;
+            // EX-J11 chunk 4: resolve `HdrLoss::Auto` to a concrete
+            // loss now (using caller's `with_color_encoding` if set,
+            // else `PixelLayout::implied_transfer_function()`), so the
+            // per-iter butteraugli loop reads a fixed variant. PQ /
+            // HLG content lands on `Vdp2`; everything else on
+            // `Butteraugli` (SDR hash-locks stay byte-identical).
+            enc.hdr_loss = cfg.resolve_hdr_loss(self.layout, self.color_encoding.as_ref());
         }
         #[cfg(feature = "ssim2-loop")]
         {
@@ -7753,7 +7807,10 @@ impl LossyEncoder {
             #[cfg(feature = "butteraugli-loop")]
             {
                 enc.butteraugli_iters = cfg.butteraugli_iters;
-                enc.hdr_loss = cfg.hdr_loss;
+                // EX-J11 chunk 4: see `encode_lossy` site above for
+                // the resolution rationale. Auto → Vdp2 on PQ/HLG,
+                // Butteraugli otherwise.
+                enc.hdr_loss = cfg.resolve_hdr_loss(self.layout, self.color_encoding.as_ref());
             }
             #[cfg(feature = "ssim2-loop")]
             {
@@ -9574,7 +9631,13 @@ fn encode_animation_lossy(
     #[cfg(feature = "butteraugli-loop")]
     {
         enc.butteraugli_iters = cfg.butteraugli_iters;
-        enc.hdr_loss = cfg.hdr_loss;
+        // EX-J11 chunk 4: see the still-image `encode_lossy` site
+        // for the resolution rationale. The animation API has no
+        // per-encode `with_color_encoding` (today), so resolution
+        // falls back to the layout's implied transfer function —
+        // PQ / HLG f32 layouts will route to `Vdp2`, everything
+        // else to `Butteraugli`.
+        enc.hdr_loss = cfg.resolve_hdr_loss(layout, None);
     }
     #[cfg(feature = "ssim2-loop")]
     {

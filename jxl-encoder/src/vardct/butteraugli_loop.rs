@@ -147,7 +147,17 @@ impl VarDctEncoder {
                 self.hdr_loss.as_str()
             )));
         }
-        let use_vdp2 = matches!(self.hdr_loss, super::hdr_metrics::HdrLoss::Vdp2);
+        // EX-J11 chunk 4: belt-and-braces resolve of `HdrLoss::Auto`.
+        // The public LossyConfig pipeline calls
+        // `LossyConfig::resolve_hdr_loss(...)` before assigning
+        // `enc.hdr_loss`, so by the time we reach this loop `Auto`
+        // has normally been replaced by `Butteraugli` or `Vdp2`.
+        // Direct construction of `VarDctEncoder` (e.g. from tests or
+        // internal callers) may still leave `Auto` here — resolve with
+        // `None` (no transfer-function hint available at this layer)
+        // so we land on the SDR-safe `Butteraugli` path.
+        let resolved_loss = self.hdr_loss.resolve(None);
+        let use_vdp2 = matches!(resolved_loss, super::hdr_metrics::HdrLoss::Vdp2);
 
         let budget = self.budget.as_ref();
         let target_distance = self.distance;
