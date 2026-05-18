@@ -1385,6 +1385,183 @@ pub enum ContainerMode {
     Never,
 }
 
+/// Input/output buffering policy for the encode pipeline. Mirrors
+/// libjxl `cjxl --buffering -1..3`
+/// ([`JXL_ENC_FRAME_SETTING_BUFFERING`][libjxl-encode-h]).
+///
+/// This is the scaffolding API for the streaming refactor tracked in
+/// jxl-encoder#11 / libjxl PRs #4634 + #4635 + #4637 + #4642 + #4728
+/// (commits `acc28c0` + `032d39a` + `b3510d1` + `1389871` + `6553831`).
+/// **Chunk 1 (this commit)** introduces the enum, the builder methods
+/// on [`LossyConfig`] / [`LosslessConfig`], and the CLI flag. **No
+/// dispatch is wired yet** — every variant currently routes through
+/// the existing one-shot full-buffer path, so output bytes are
+/// identical regardless of which `Buffering` value is selected.
+/// Chunks 2-7 land the per-DC-group split, the buffered-output path
+/// (libjxl level 2), the permuted-TOC seek-back path (libjxl level
+/// 3), and the lossless mirror. See
+/// [`libjxl_streaming_refactor_porting_plan_2026-05-18`][plan] for
+/// the full chunk schedule.
+///
+/// libjxl semantics (post-`acc28c0`):
+///
+/// | libjxl int | This enum                       | Meaning                                                                                          |
+/// |-----------:|---------------------------------|--------------------------------------------------------------------------------------------------|
+/// |       `-1` | [`Auto`](Self::Auto)            | Encoder picks. Currently resolves to libjxl level **2** for `num_dc_groups > 8`, else level **0**. |
+/// |        `0` | [`FullBuffered`](Self::FullBuffered) | Buffer everything — semantically equivalent to today's one-shot encode path.                |
+/// |        `1` | [`Threshold2048`](Self::Threshold2048) | Buffer for ≤ 2048×2048; stream input + buffer output for larger images.                   |
+/// |        `2` | [`BufferedOutput`](Self::BufferedOutput) | Stream input + buffer output whenever `num_dc_groups > 8`. **libjxl default since `032d39a`.** |
+/// |        `3` | [`FullStreaming`](Self::FullStreaming) | Stream input AND stream output. Requires seek-back support on the output sink; the produced bitstream is not progressively decodable. |
+///
+/// **Critical distinction** (per the libjxl-spec doc-comment in
+/// `lib/include/jxl/encode.h` post-`acc28c0`):
+///
+/// - **Levels 0-2** all produce *progressive-decodability-friendly*
+///   bitstreams with a non-permuted TOC and natural-order section
+///   layout. Level 2 simply trades the input-side full-buffer for a
+///   streaming pixel source while still buffering the encoded
+///   per-DC-group sections in `global_group_codes[]` until the loop
+///   ends.
+/// - **Level 3** is the original "streaming encode" path: permuted
+///   TOC with a DC-global placeholder, sections emitted to the sink
+///   as soon as each DC group finishes, then a seek-back at the end
+///   to fill in the real DC-global + TOC. Smaller peak RAM but the
+///   output is *not* progressively decodable.
+///
+/// **Default**: [`Auto`](Self::Auto) (matches libjxl post-`032d39a`,
+/// which changed `JXL_ENC_FRAME_SETTING_BUFFERING` default from `1`
+/// to `2`).
+///
+/// [libjxl-encode-h]: https://github.com/libjxl/libjxl/blob/main/lib/include/jxl/encode.h
+/// [plan]: https://github.com/imazen/jxl-encoder/issues/11
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Buffering {
+    /// **Default.** Encoder picks per-image based on dimensions and
+    /// `num_dc_groups`. Mirrors libjxl `--buffering -1`.
+    ///
+    /// Current heuristic (chunk 1; will refine in chunks 5/7):
+    /// - `num_dc_groups <= 8` → resolves to [`FullBuffered`](Self::FullBuffered).
+    /// - Otherwise → resolves to [`BufferedOutput`](Self::BufferedOutput).
+    ///
+    /// The 2048² threshold matches libjxl's
+    /// `CanDoStreamingEncoding` gate (`enc_frame.cc:1779-1820`): a
+    /// `2048×2048` image fits in exactly one DC group (so streaming
+    /// gives no win), while larger images split into multiple DC
+    /// groups where the buffered-output path can drop per-region
+    /// pixel buffers as soon as the corresponding sections are
+    /// emitted.
+    #[default]
+    Auto,
+    /// Buffer everything. Semantically equivalent to today's one-shot
+    /// encode path. Mirrors libjxl `--buffering 0`.
+    ///
+    /// Peak memory ≈ pixel buffer + full XYB / quant / mask / CfL /
+    /// AC-strategy plane buffers + accumulated section bytes. Smallest
+    /// code path; same output as the pre-streaming-refactor encoder.
+    FullBuffered,
+    /// Buffer everything for inputs ≤ 2048×2048; otherwise stream
+    /// input + buffer output. Mirrors libjxl `--buffering 1`.
+    ///
+    /// Chunk 1: no behavioural difference — routes through the
+    /// one-shot path. Chunks 3+5 land the per-DC-group split and the
+    /// large-image streaming path.
+    Threshold2048,
+    /// Always stream input + buffer output when `num_dc_groups > 8`
+    /// (i.e. images larger than ~ a single 2048×2048 DC group).
+    /// Mirrors libjxl `--buffering 2`. **This is libjxl's default
+    /// since `032d39a`.**
+    ///
+    /// Buffered-output path: the encoder still accumulates every
+    /// DC-group's bitstream section in `global_group_codes[]` until
+    /// the per-group loop finishes, then writes a non-permuted TOC +
+    /// sections in natural order. No seek-back required on the
+    /// output sink. Lets the encoder drop each DC group's plane
+    /// slice as soon as its sections are emitted — the load-bearing
+    /// memory win is the absence of the whole-image XYB / quant /
+    /// CfL / AC-strategy plane buffers, not the section buffers
+    /// themselves.
+    ///
+    /// Chunk 1: no behavioural difference — routes through the
+    /// one-shot path. Chunk 5 lands the buffered-output streaming
+    /// path.
+    BufferedOutput,
+    /// Stream input AND stream output. Mirrors libjxl `--buffering 3`.
+    ///
+    /// Requires seek-back support on the output sink (the encoder
+    /// reserves the DC-global slot, emits per-DC-group sections as
+    /// they finish, then seeks back to write the real DC-global +
+    /// permuted TOC at end-of-frame). The produced bitstream is *not*
+    /// progressively decodable — the TOC permutation reorders the
+    /// sections so DC-global sits at the end.
+    ///
+    /// Chunk 1: no behavioural difference — routes through the
+    /// one-shot path. Chunks 6-7 land the `WritableSeek` trait and
+    /// the level-3 streaming-output path.
+    FullStreaming,
+}
+
+impl Buffering {
+    /// Convert from the libjxl `--buffering` integer encoding
+    /// (`-1..=3`). Values outside the documented range fold to
+    /// [`Auto`](Self::Auto) (matches libjxl's
+    /// `JXL_ENC_FRAME_SETTING_BUFFERING` defaulting behaviour for
+    /// out-of-range input on the C API).
+    pub const fn from_i8(v: i8) -> Self {
+        match v {
+            0 => Self::FullBuffered,
+            1 => Self::Threshold2048,
+            2 => Self::BufferedOutput,
+            3 => Self::FullStreaming,
+            _ => Self::Auto,
+        }
+    }
+
+    /// Inverse of [`Self::from_i8`]: convert to the libjxl `cjxl
+    /// --buffering` integer encoding. [`Auto`](Self::Auto) maps to
+    /// `-1`.
+    pub const fn to_i8(self) -> i8 {
+        match self {
+            Self::Auto => -1,
+            Self::FullBuffered => 0,
+            Self::Threshold2048 => 1,
+            Self::BufferedOutput => 2,
+            Self::FullStreaming => 3,
+        }
+    }
+
+    /// Resolve [`Auto`](Self::Auto) to a concrete variant for an
+    /// image with the given pixel dimensions. Non-`Auto` variants
+    /// are returned unchanged.
+    ///
+    /// Chunk 1 heuristic (mirrors libjxl `CanDoStreamingEncoding`
+    /// in `enc_frame.cc:1779-1820`): images with `width * height
+    /// <= 2048 * 2048` (i.e. one DC group) resolve to
+    /// [`FullBuffered`](Self::FullBuffered); larger images resolve
+    /// to [`BufferedOutput`](Self::BufferedOutput) (libjxl level 2,
+    /// matching the post-`032d39a` default).
+    ///
+    /// This is a no-op for chunk 1 — every concrete variant
+    /// currently routes through the same one-shot encode path. The
+    /// helper exists so chunks 3-7 can dispatch on the resolved
+    /// value without re-implementing the threshold rule.
+    pub const fn resolve_for(self, width: u32, height: u32) -> Self {
+        match self {
+            Self::Auto => {
+                // libjxl threshold: a single 2048×2048 DC group fits
+                // any image ≤ 2048² total pixels. Use `u64` to avoid
+                // overflow on the 4G × 4G upper bound.
+                let pixels = (width as u64).saturating_mul(height as u64);
+                if pixels <= 2048u64 * 2048u64 {
+                    Self::FullBuffered
+                } else {
+                    Self::BufferedOutput
+                }
+            }
+            other => other,
+        }
+    }
+}
+
 /// Premultiplied (associated) alpha policy for inputs with an alpha
 /// channel.
 ///
@@ -1623,6 +1800,15 @@ pub struct LosslessConfig {
     /// hash-locked bitstream changes at default.
     /// See [`Self::with_auto_delta_frames`].
     auto_delta_frames: bool,
+    /// Input/output buffering policy (streaming refactor scaffolding,
+    /// jxl-encoder#11). Default [`Buffering::Auto`] resolves to
+    /// [`Buffering::FullBuffered`] for ≤ 2048² images and
+    /// [`Buffering::BufferedOutput`] otherwise (matches libjxl post-
+    /// `032d39a`). **Chunk 1: no dispatch is wired** — every variant
+    /// currently routes through the existing one-shot path, so output
+    /// bytes are identical regardless of `buffering`. See
+    /// [`Self::with_buffering`].
+    buffering: Buffering,
 }
 
 impl Default for LosslessConfig {
@@ -1663,6 +1849,7 @@ impl LosslessConfig {
             container_mode: ContainerMode::Auto,
             modular_group_size_shift: None,
             auto_delta_frames: false,
+            buffering: Buffering::Auto,
         }
     }
 
@@ -1805,6 +1992,28 @@ impl LosslessConfig {
     /// Currently-configured container-wrap policy.
     pub fn container_mode(&self) -> ContainerMode {
         self.container_mode
+    }
+
+    /// Set the input/output buffering policy (streaming refactor
+    /// scaffolding, jxl-encoder#11). Mirrors libjxl `cjxl --buffering
+    /// -1..3`. See [`Buffering`] for variant semantics and the chunk
+    /// schedule.
+    ///
+    /// **Chunk 1: no dispatch is wired** — every variant currently
+    /// routes through the existing one-shot path, so output bytes are
+    /// identical regardless of which `Buffering` value is selected.
+    /// Chunks 2-7 land the per-DC-group split, the buffered-output
+    /// streaming path (libjxl level 2), the seekable streaming-output
+    /// path (libjxl level 3), and the lossless mirror.
+    pub fn with_buffering(mut self, mode: Buffering) -> Self {
+        self.buffering = mode;
+        self
+    }
+
+    /// Currently-configured input/output buffering policy. See
+    /// [`Self::with_buffering`].
+    pub fn buffering(&self) -> Buffering {
+        self.buffering
     }
 
     /// Resolve the effective [`EffortProfile`]: the override if set,
@@ -2004,6 +2213,11 @@ impl LosslessConfig {
         new.profile_override = self.profile_override;
         new.tree_parallel_smart = self.tree_parallel_smart;
         new.small_image_fallback_override = self.small_image_fallback_override;
+        // Buffering policy — never effort-derived; pure caller
+        // preference. Carry across `with_effort` so the builder chain
+        // `LosslessConfig::new().with_buffering(_).with_effort(_)` is
+        // order-independent.
+        new.buffering = self.buffering;
         new
     }
 
@@ -3079,6 +3293,15 @@ pub struct LossyConfig {
     /// chunk 2 will add a reconstruction shadow for the lossy path.
     /// See [`Self::with_auto_delta_frames`].
     auto_delta_frames: bool,
+    /// Input/output buffering policy (streaming refactor scaffolding,
+    /// jxl-encoder#11). Default [`Buffering::Auto`] resolves to
+    /// [`Buffering::FullBuffered`] for ≤ 2048² images and
+    /// [`Buffering::BufferedOutput`] otherwise (matches libjxl post-
+    /// `032d39a`). **Chunk 1: no dispatch is wired** — every variant
+    /// currently routes through the existing one-shot path, so output
+    /// bytes are identical regardless of `buffering`. See
+    /// [`Self::with_buffering`].
+    buffering: Buffering,
     /// Chroma subsampling mode (issue #47). Default
     /// [`ChromaSubsampling::Full444`] keeps existing bitstreams
     /// byte-identical. Non-`Full444` modes currently return
@@ -3200,6 +3423,7 @@ impl LossyConfig {
             container_mode: ContainerMode::Auto,
             progressive_dc: 0,
             auto_delta_frames: false,
+            buffering: Buffering::Auto,
             chroma_subsampling: ChromaSubsampling::Full444,
         }
     }
@@ -3405,6 +3629,11 @@ impl LossyConfig {
         // `LossyConfig::new(d).with_chroma_subsampling(Sub420).with_effort(5)`
         // is order-independent.
         new.chroma_subsampling = self.chroma_subsampling;
+        // Buffering policy — never effort-derived; pure caller
+        // preference. Carry across `with_effort` so the builder chain
+        // `LossyConfig::new(d).with_buffering(_).with_effort(_)` is
+        // order-independent.
+        new.buffering = self.buffering;
         new
     }
 
@@ -4468,6 +4697,28 @@ impl LossyConfig {
     /// Currently-configured container-wrap policy.
     pub fn container_mode(&self) -> ContainerMode {
         self.container_mode
+    }
+
+    /// Set the input/output buffering policy (streaming refactor
+    /// scaffolding, jxl-encoder#11). Mirrors libjxl `cjxl --buffering
+    /// -1..3`. See [`Buffering`] for variant semantics and the chunk
+    /// schedule.
+    ///
+    /// **Chunk 1: no dispatch is wired** — every variant currently
+    /// routes through the existing one-shot path, so output bytes are
+    /// identical regardless of which `Buffering` value is selected.
+    /// Chunks 2-7 land the per-DC-group split, the buffered-output
+    /// streaming path (libjxl level 2), the seekable streaming-output
+    /// path (libjxl level 3), and the lossless mirror.
+    pub fn with_buffering(mut self, mode: Buffering) -> Self {
+        self.buffering = mode;
+        self
+    }
+
+    /// Currently-configured input/output buffering policy. See
+    /// [`Self::with_buffering`].
+    pub fn buffering(&self) -> Buffering {
+        self.buffering
     }
 
     /// Set butteraugli quantization loop iterations explicitly.

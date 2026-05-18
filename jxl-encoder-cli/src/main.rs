@@ -7,8 +7,8 @@
 
 use clap::Parser;
 use jxl_encoder::{
-    AnimationFrame, AnimationParams, ContainerMode, LosslessConfig, LossyConfig, Lz77Method,
-    PixelLayout, PremultipliedAlphaMode, ProgressiveMode,
+    AnimationFrame, AnimationParams, Buffering, ContainerMode, LosslessConfig, LossyConfig,
+    Lz77Method, PixelLayout, PremultipliedAlphaMode, ProgressiveMode,
 };
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
@@ -542,6 +542,32 @@ struct Args {
     )]
     premultiply: i8,
 
+    /// Input/output buffering policy (streaming refactor scaffolding,
+    /// jxl-encoder#11). Mirrors libjxl `cjxl --buffering -1..3`.
+    ///
+    /// `-1` = auto (default): encoder picks per-image — ≤ 2048² folds
+    /// to `0` (full-buffered); larger images fold to `2`
+    /// (stream-input + buffered-output), matching libjxl post-`032d39a`.
+    /// `0` = buffer everything (today's one-shot path).
+    /// `1` = buffer ≤ 2048², stream-input + buffered-output otherwise.
+    /// `2` = always stream-input + buffered-output.
+    /// `3` = stream input AND stream output (requires seek-back on sink;
+    /// bitstream is not progressively decodable).
+    ///
+    /// **Chunk 1 scaffolding** — accepted on the CLI and surfaced on
+    /// the config types but no dispatch is wired; output bytes are
+    /// identical regardless of value. Chunks 2-7 land the per-DC-group
+    /// split and the active streaming paths. Both `--buffering` and
+    /// `--buffering=N` forms are accepted; both lossy and lossless
+    /// configs receive the value.
+    #[arg(
+        long,
+        value_name = "MODE",
+        default_value = "-1",
+        allow_hyphen_values = true
+    )]
+    buffering: i8,
+
     /// Route the encode through the streaming
     /// [`LossyEncoder`](jxl_encoder::LossyEncoder) /
     /// [`LosslessEncoder`](jxl_encoder::LosslessEncoder) API by chunking
@@ -886,6 +912,7 @@ fn main() {
                     cfg = cfg.with_faster_decoding(args.faster_decoding);
                     cfg = cfg.with_container_mode(container_mode_from_cli(args.container));
                     cfg = cfg.with_progressive_dc(args.progressive_dc);
+                    cfg = cfg.with_buffering(Buffering::from_i8(args.buffering));
 
                     #[cfg(feature = "butteraugli-loop")]
                     {
@@ -974,6 +1001,7 @@ fn main() {
                         lcfg = lcfg.with_faster_decoding(args.faster_decoding);
                         lcfg = lcfg.with_modular_group_size(args.modular_group_size);
                         lcfg = lcfg.with_container_mode(container_mode_from_cli(args.container));
+                        lcfg = lcfg.with_buffering(Buffering::from_i8(args.buffering));
                         lcfg
                     }
                     .encode_animation(
@@ -1240,6 +1268,7 @@ fn main() {
         cfg = cfg.with_faster_decoding(args.faster_decoding);
         cfg = cfg.with_container_mode(container_mode_from_cli(args.container));
         cfg = cfg.with_progressive_dc(args.progressive_dc);
+        cfg = cfg.with_buffering(Buffering::from_i8(args.buffering));
         if (args.center_x.is_some() || args.center_y.is_some())
             && !matches!(args.group_order, Some(1))
         {
@@ -1575,6 +1604,7 @@ fn main() {
         cfg = cfg.with_faster_decoding(args.faster_decoding);
         cfg = cfg.with_modular_group_size(args.modular_group_size);
         cfg = cfg.with_container_mode(container_mode_from_cli(args.container));
+        cfg = cfg.with_buffering(Buffering::from_i8(args.buffering));
         let cfg = cfg;
 
         // `--ec_resampling N` (libjxl parity): pre-downsample the
