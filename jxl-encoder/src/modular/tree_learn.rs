@@ -6149,6 +6149,12 @@ pub fn collect_residuals_with_tree_offset(
     channel_offset: u32,
     wp_params: &WeightedPredictorParams,
 ) -> Vec<crate::entropy_coding::token::Token> {
+    // Budget-less call cannot trip the AllocationLimit branch. The only
+    // other error path is `Error::InvalidInput("Residual overflow ...")`
+    // from the fuzz-hardening guard (mirrors libjxl `SubOverflow` in
+    // `EncodeModularChannelMAANS`, commit `87bee19`); valid-channel
+    // input never reaches it. The .expect propagates a descriptive
+    // panic message if either invariant is ever violated.
     collect_residuals_with_tree_offset_with_budget(
         image,
         tree,
@@ -6157,7 +6163,7 @@ pub fn collect_residuals_with_tree_offset(
         wp_params,
         None,
     )
-    .expect("budget-less collect_residuals_with_tree_offset must not return AllocationLimit")
+    .expect("budget-less collect_residuals_with_tree_offset: no AllocationLimit, no residual overflow on valid input")
 }
 
 /// `collect_residuals_with_tree_offset` with explicit allocation budget.
@@ -6288,7 +6294,14 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
                 } else {
                     leaf.predictor.predict_from_neighbors(&n)
                 };
-                let residual = pixel - prediction;
+                // Fuzz-hardening: reject i32-overflowing residuals before
+                // they corrupt token stream. Mirrors libjxl `SubOverflow`
+                // guard in `EncodeModularChannelMAANS`
+                // (`modular/encoding/enc_encoding.cc:307`, commit `87bee19`).
+                // Valid input never trips this (predictor range is
+                // bounded by channel range), so the fast path is one
+                // branch on success.
+                let residual = super::fuzz_safety::checked_residual(pixel, prediction)?;
 
                 // Divide by multiplier for lossy modular quantization.
                 // When multiplier > 1, pixels have been pre-quantized to multiples of q
@@ -8588,5 +8601,92 @@ mod tests {
         // chunk-6 paired bench's bimodal split (1.7-4.1% on converged
         // cells vs 25.9% on the one improving cell).
         assert!((MULTI_SEED_EARLY_OUT_SPREAD_THRESHOLD - 0.05).abs() < 1e-12);
+    }
+
+    /// Integration test for the SubOverflow fuzz-hardening guard ported
+    /// from libjxl commit `87bee19` (PR #4759).
+    ///
+    /// Constructs a 1×2 single-channel image whose second row triggers
+    /// `pixel - prediction` integer overflow under the `Top` predictor:
+    ///
+    /// - row 0: a moderate negative value `-1_000_000` (avoids the
+    ///   `pack_signed(i32::MIN)` separate-but-related overflow at the
+    ///   pack step, which would mask the residual-overflow guard).
+    ///   This serves as the `Top` neighbor for row 1.
+    /// - row 1: `i32::MAX`. residual = `i32::MAX - (-1_000_000)` =
+    ///   `i32::MAX + 1_000_000` → overflows i32.
+    ///
+    /// The budget-aware entry returns `Err(InvalidInput("Residual
+    /// overflow ..."))` instead of corrupting the token stream. Without
+    /// the guard the `pixel - prediction` subtraction panics in debug
+    /// (`attempt to subtract with overflow`) and silently wraps in
+    /// release, both of which are wrong for adversarial fuzz input.
+    #[test]
+    fn test_residual_overflow_rejected_with_top_predictor() {
+        use crate::modular::channel::Channel;
+        use crate::modular::predictor::{Predictor, WeightedPredictorParams};
+        use crate::modular::tree::{PropertyDecisionNode, Tree};
+
+        let channel = Channel::from_vec(vec![-1_000_000, i32::MAX], 1, 2)
+            .expect("Channel::from_vec accepts adversarial i32 values");
+        let image = ModularImage {
+            channels: vec![channel],
+            bit_depth: 32,
+            is_grayscale: true,
+            has_alpha: false,
+        };
+
+        // Single-leaf tree using the Top predictor.
+        let tree: Tree = vec![PropertyDecisionNode {
+            property: -1,
+            predictor: Predictor::Top,
+            context_id: 0,
+            ..Default::default()
+        }];
+        let wp_params = WeightedPredictorParams::default();
+
+        let result =
+            collect_residuals_with_tree_offset_with_budget(&image, &tree, 0, 0, &wp_params, None);
+        match result {
+            Err(crate::error::Error::InvalidInput(msg)) => {
+                assert!(
+                    msg.contains("Residual overflow") || msg.contains("overflow"),
+                    "expected residual-overflow error, got: {msg}"
+                );
+            }
+            Err(other) => panic!("expected Error::InvalidInput, got: {other:?}"),
+            Ok(_) => panic!("adversarial i32::MAX - (-1_000_000) should have overflowed"),
+        }
+    }
+
+    /// Companion to [`test_residual_overflow_rejected_with_top_predictor`]:
+    /// valid 8-bit input through the same path must NOT trip the guard.
+    /// This pins down the "valid input never reaches it" invariant the
+    /// `.expect` on the budget-less wrapper relies on.
+    #[test]
+    fn test_residual_overflow_guard_zero_overhead_on_valid_input() {
+        use crate::modular::channel::Channel;
+        use crate::modular::predictor::{Predictor, WeightedPredictorParams};
+        use crate::modular::tree::{PropertyDecisionNode, Tree};
+
+        let channel = Channel::from_vec(vec![100, 110, 120, 130], 2, 2).unwrap();
+        let image = ModularImage {
+            channels: vec![channel],
+            bit_depth: 8,
+            is_grayscale: true,
+            has_alpha: false,
+        };
+        let tree: Tree = vec![PropertyDecisionNode {
+            property: -1,
+            predictor: Predictor::Top,
+            context_id: 0,
+            ..Default::default()
+        }];
+        let wp_params = WeightedPredictorParams::default();
+
+        let tokens =
+            collect_residuals_with_tree_offset_with_budget(&image, &tree, 0, 0, &wp_params, None)
+                .expect("valid 8-bit input must not trip the overflow guard");
+        assert_eq!(tokens.len(), 4);
     }
 }

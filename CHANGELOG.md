@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Modular encoder: fuzz-hardening mirrors for two libjxl upstream
+  fixes** (`modular/fuzz_safety.rs`).
+
+  1. **NaN guard in lossy-palette float→int quantization** —
+     `modular/palette.rs:1109` in `apply_lossy_palette_with_budget`
+     now rejects NaN values produced by adversarial error-diffusion
+     states before the `(color_with_error.round() as i64).clamp(...)`
+     cast. Rust's NaN-to-int saturation is well-defined (yields 0)
+     but silently producing wrong palette indices on fuzz input is
+     still a bug. The function bails to `None` (caller skips the
+     lossy palette), matching the rest of the function's failure
+     contract. Mirrors libjxl commit `1eb44c9` ("Guard against NaN
+     values", PR #4667) which adds the same check to
+     `enc_modular.cc::QuantizeWP`.
+
+  2. **i32-overflow guard on modular residual computation** —
+     `modular/tree_learn.rs:6006` in
+     `collect_residuals_with_tree_offset_with_budget`. The
+     `pixel - prediction` subtraction is now routed through
+     `fuzz_safety::checked_residual` (an `i32::checked_sub` wrapper)
+     and returns `Error::InvalidInput("Residual overflow ...")` on
+     overflow instead of panicking in debug / silently wrapping in
+     release. Valid input never trips this — the weighted-predictor
+     output is bounded by the channel's range — so the fast path is
+     one branch on success and `hash_lock_features` stays 36/36
+     byte-identical. Mirrors libjxl commit `87bee19` ("Check that
+     residual does not overflow", PR #4759) which adds the same
+     `SubOverflow` check to
+     `modular/encoding/enc_encoding.cc::EncodeModularChannelMAANS`.
+
+  Tests: 6 unit tests in `modular::fuzz_safety::tests::*` plus 2
+  integration tests in `modular::tree_learn::tests::*`
+  (`test_residual_overflow_rejected_with_top_predictor` constructs a
+  1×2 single-channel image where `i32::MAX - (-1_000_000)` overflows
+  under the `Top` predictor; `test_residual_overflow_guard_zero_overhead_on_valid_input`
+  pins the "valid input never reaches the guard" invariant the
+  budget-less wrapper's `.expect` relies on).
+
 ### Added
 
 - **EX-J17a: wire-format-safe custom coefficient orders on the
