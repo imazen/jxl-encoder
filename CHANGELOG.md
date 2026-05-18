@@ -165,6 +165,23 @@
 
 ### Fixed
 
+- **W40-2 follow-on — `wasm32` build broken since W38-2 (`33011181`)
+  by ungated `__buttloop_overrides` re-export** (`src/vardct/mod.rs`).
+  The `pub mod __buttloop_overrides { pub use super::butteraugli_loop::… }`
+  block lifted the sweep-only atomic overrides into the public
+  `__buttloop_overrides` namespace but missed the
+  `#[cfg(feature = "butteraugli-loop")]` gate, so the `pub use` named
+  a module that was `cfg`'d out under `--no-default-features --features "std"`
+  (the WASM CI configuration). `cargo build --target wasm32-wasip1
+  --no-default-features --features "std" -p jxl-encoder` failed with
+  `E0432: unresolved import super::butteraugli_loop` at
+  `src/vardct/mod.rs:141`. Fix: gate the `__buttloop_overrides`
+  module behind the same `feature = "butteraugli-loop"` as the
+  underlying re-exported items. Hash-lock 36/36 byte-identical
+  (WASM-only fix; native build, default-feature build, and clippy
+  all unchanged). Verified `cargo build --release --no-default-features
+  --features "std" --workspace --target wasm32-wasip1` now passes.
+
 - **W38-2 #3.1 — distance-aware butteraugli-loop tuning scaffolding
   (CPU port of GPU commit `d75bf7c`, HONEST-STOP on the literal port)**
   (`src/vardct/butteraugli_loop.rs`, `src/vardct/mod.rs`,

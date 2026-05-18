@@ -136,6 +136,12 @@ pub mod __recon_hook {
 /// See `benchmarks/buttloop_distance_split_port_*.{tsv,meta}` for
 /// reference sweep output and `examples/buttloop_distance_split_ab.rs`
 /// for the canonical harness.
+///
+/// Gated behind `feature = "butteraugli-loop"` because every re-exported
+/// item lives in [`butteraugli_loop`]. Without this gate, `wasm32-wasip1`
+/// (and any other `--no-default-features --features "std"` build) fails
+/// to compile the `pub use` below.
+#[cfg(feature = "butteraugli-loop")]
 #[doc(hidden)]
 pub mod __buttloop_overrides {
     pub use super::butteraugli_loop::{
