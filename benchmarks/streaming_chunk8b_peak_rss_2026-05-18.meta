@@ -1,0 +1,50 @@
+# Streaming refactor chunk 8b — peak-RSS A/B bench
+# 2026-05-18
+
+Image: 4096×4096 RGB8, synthetic fbm-ish content (mix of structure +
+randomness), distance=1.0, effort=7 (LossyConfig defaults), 4 GiB
+memory budget cap.
+
+Tool: /usr/bin/time -v (GNU time 1.9), Maximum resident set size.
+3 paired runs per variant, sequential, single image / fresh process per
+run.
+
+Host: water-cooled AMD Ryzen 9 7950X (16 cores, 128 GB RAM).
+WSL2 Linux 6.6.114.1-microsoft-standard-WSL2.
+Sibling workspace: ~/work/zen/jxl-encoder--streaming-chunk8b.
+
+Build: cargo build --release --example bench_buffering_rss
+Bench: ./target/release/examples/bench_buffering_rss <variant> 4096 4096 4096
+
+Result (median of 3 runs):
+
+  FullBuffered:    2894928 KB peak RSS  (12382528 bytes output)
+  BufferedOutput:  2894432 KB peak RSS  (12382528 bytes output) — same as FullBuffered ±0.02%
+  FullStreaming:   2895052 KB peak RSS  (12382528 bytes output) — same as FullBuffered ±0.01%
+
+Bytes byte-identical across all 3 variants — confirms hash-locked
+output (matches `hash_lock_features.rs` 36/36 pass).
+
+Expected for chunk 8b: this commit lands the `XybRegionSource` trait
++ walker structure in `encode_inner` but no streaming source is wired.
+The `WholeImageXybSource` `release_dc_region` is a no-op; the legacy
+`drop(xyb_*)` after `compute_epf_sharpness` still drops the whole
+image at once. Memory savings land in chunk 8c when a streaming
+source materialises one DC group at a time + actually drops region
+storage on the release hint.
+
+xyb plane size at 4096×4096:
+  padded = ceil(4096/8)*8 × ceil(4096/8)*8 = 4096×4096 pixels
+  3 channels × 4096×4096 × 4 B/f32 = 192 MiB
+
+A future chunk-8c streaming source on this size would target a peak-
+RSS drop of ~192 MiB (subset of the ~2827 MiB total — the rest is
+quant_field / mask1x1 / CfL map / TransformOutput / token vectors /
+bitstream writer).
+
+Reproduce:
+  cd ~/work/zen/jxl-encoder--streaming-chunk8b
+  cargo build --release --example bench_buffering_rss --features 'parallel parallel-tree-learning'
+  /usr/bin/time -v ./target/release/examples/bench_buffering_rss full 4096 4096 4096
+  /usr/bin/time -v ./target/release/examples/bench_buffering_rss buffered 4096 4096 4096
+  /usr/bin/time -v ./target/release/examples/bench_buffering_rss streaming 4096 4096 4096

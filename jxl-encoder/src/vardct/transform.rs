@@ -1147,6 +1147,54 @@ impl VarDctEncoder {
         )
     }
 
+    /// Pull-style variant of [`Self::transform_and_quantize`] that
+    /// reads XYB data through a [`super::region_source::XybRegionSource`].
+    ///
+    /// **Streaming refactor chunk 8b (#11)**: this is the seam that
+    /// lets the encoder pull XYB data per-region instead of holding
+    /// three whole-image plane borrows for the lifetime of the call.
+    /// Chunk-8b ships only the *seam* — the body still calls
+    /// `xyb_full()` once and delegates to the existing whole-image
+    /// implementation, so every byte produced is identical to the
+    /// pre-refactor path (verified by `hash_lock_features.rs` 36/36).
+    ///
+    /// The trait abstraction unlocks two future wins:
+    /// 1. **Per-DC-group source materialisation (chunk 8c)** — a
+    ///    streaming source can materialise one DC group's region at
+    ///    a time, dropping it before the next region is pulled.
+    /// 2. **Region-aware AC-group fan-out (chunk 8c)** — the per-tile
+    ///    `transform_blocks_into` loop body can be lifted out into a
+    ///    per-DC-group orchestrator that pulls + releases per region.
+    ///
+    /// See [`super::region_source`] module docs for the chunk-8b
+    /// scope and the list of remaining whole-image consumers.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn transform_and_quantize_with_source(
+        &self,
+        source: &dyn super::region_source::XybRegionSource,
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        params: &DistanceParams,
+        quant_field: &mut [u8],
+        cfl_map: &CflMap,
+        ac_strategy: &AcStrategyMap,
+    ) -> Result<TransformOutput> {
+        let padded_width = source.padded_width();
+        let (xyb_x, xyb_y, xyb_b) = source.xyb_full();
+        self.transform_and_quantize(
+            xyb_x,
+            xyb_y,
+            xyb_b,
+            padded_width,
+            xsize_blocks,
+            ysize_blocks,
+            params,
+            quant_field,
+            cfl_map,
+            ac_strategy,
+        )
+    }
+
     // Internal hot-path entry: factoring these into a struct
     // would force per-call packing/unpacking on the per-group
     // parallel reduce. All call sites are within this crate; the
