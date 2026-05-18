@@ -2600,6 +2600,37 @@ impl VarDctEncoder {
         // that all subsequent precomputation sees the patches-subtracted
         // XYB. Matches libjxl pipeline order
         // (`enc_heuristics.cc:1057-1194`).
+        // Chunk-6 (#11) + chunk-8c streaming gate: route the caller's
+        // Buffering policy into EncoderPrecomputed, but downgrade to
+        // FullBuffered when the butteraugli quantization loop is
+        // active. Mirrors libjxl `CanDoStreamingEncoding`
+        // (`enc_frame.cc`): the buttloop reconstructs the whole
+        // image per iteration and cannot run from a sliding-window
+        // XYB source, so a caller-requested BufferedOutput/
+        // FullStreaming silently falls back to FullBuffered when
+        // butteraugli iterations are configured. The buttloop is
+        // feature- and effort-gated (default effort 7 leaves it off)
+        // so this gate is a no-op for the typical Auto + default
+        // path; it matters when an explicit `--butteraugli-iters`
+        // combines with `--buffering 2` / `--buffering 3`.
+        //
+        // `Auto` resolves first via `resolve_for_streaming` so the
+        // routed variant is always concrete.
+        let buttloop_iters: u32 = {
+            #[cfg(feature = "butteraugli-loop")]
+            {
+                self.butteraugli_iters
+            }
+            #[cfg(not(feature = "butteraugli-loop"))]
+            {
+                0u32
+            }
+        };
+        let routed_buffering = self.buffering.resolve_for_streaming(
+            width as u32,
+            height as u32,
+            buttloop_iters,
+        );
         // Chunk-6 (#11): route the caller's Buffering policy into
         // EncoderPrecomputed. `Buffering::Auto` resolves on image size;
         // explicit `BufferedOutput` / `FullStreaming` engage the
@@ -2624,7 +2655,7 @@ impl VarDctEncoder {
                 &self.profile,
                 self.color_encoding.as_ref(),
                 self.budget.as_ref(),
-                self.buffering,
+                routed_buffering,
             )?;
 
         // Run rate control loop

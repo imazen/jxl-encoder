@@ -225,6 +225,97 @@ fn buffering_resolve_for_handles_giant_dimensions_without_overflow() {
 }
 
 #[test]
+fn buffering_is_streaming_matches_libjxl_can_do_streaming() {
+    // Mirrors libjxl `CanDoStreamingEncoding`: only level-2 and
+    // level-3 are streaming-capable. Auto is not (it resolves to a
+    // concrete level first); FullBuffered and Threshold2048 are
+    // explicitly whole-image.
+    assert!(!Buffering::Auto.is_streaming());
+    assert!(!Buffering::FullBuffered.is_streaming());
+    assert!(!Buffering::Threshold2048.is_streaming());
+    assert!(Buffering::BufferedOutput.is_streaming());
+    assert!(Buffering::FullStreaming.is_streaming());
+}
+
+#[test]
+fn buffering_resolve_for_streaming_no_buttloop_matches_resolve_for() {
+    // With `butteraugli_iters == 0` the streaming gate is a no-op:
+    // every variant resolves to the same value `resolve_for` would
+    // return. Spot-check both the Auto-resolves-large and the
+    // pass-through-concrete cases.
+    for (w, h) in [(1024u32, 1024u32), (4096, 4096), (8192, 8192)] {
+        for variant in [
+            Buffering::Auto,
+            Buffering::FullBuffered,
+            Buffering::Threshold2048,
+            Buffering::BufferedOutput,
+            Buffering::FullStreaming,
+        ] {
+            assert_eq!(
+                variant.resolve_for_streaming(w, h, 0),
+                variant.resolve_for(w, h),
+                "buttloop=0 gate must be a no-op for {variant:?} at {w}x{h}"
+            );
+        }
+    }
+}
+
+#[test]
+fn buffering_resolve_for_streaming_with_buttloop_downgrades_streaming() {
+    // Chunk-8c (#11) gate: when buttloop is active, BufferedOutput
+    // and FullStreaming downgrade to FullBuffered so the loop sees
+    // whole-image XYB. Mirrors libjxl `CanDoStreamingEncoding`'s
+    // `use_butteraugli_loop` short-circuit.
+    for iters in [1u32, 2, 4, 8] {
+        // Auto on >2048² normally resolves to BufferedOutput; with
+        // buttloop active it must downgrade to FullBuffered.
+        assert_eq!(
+            Buffering::Auto.resolve_for_streaming(4096, 4096, iters),
+            Buffering::FullBuffered,
+            "Auto + buttloop must downgrade BufferedOutput → FullBuffered"
+        );
+        // Explicit streaming requests downgrade too.
+        assert_eq!(
+            Buffering::BufferedOutput.resolve_for_streaming(4096, 4096, iters),
+            Buffering::FullBuffered,
+            "explicit BufferedOutput + buttloop must downgrade"
+        );
+        assert_eq!(
+            Buffering::FullStreaming.resolve_for_streaming(4096, 4096, iters),
+            Buffering::FullBuffered,
+            "explicit FullStreaming + buttloop must downgrade"
+        );
+        // FullBuffered + Threshold2048 are never streaming, so the
+        // gate is a no-op for them — they pass through.
+        assert_eq!(
+            Buffering::FullBuffered.resolve_for_streaming(4096, 4096, iters),
+            Buffering::FullBuffered,
+        );
+        assert_eq!(
+            Buffering::Threshold2048.resolve_for_streaming(4096, 4096, iters),
+            Buffering::Threshold2048,
+        );
+    }
+}
+
+#[test]
+fn buffering_resolve_for_streaming_small_image_unaffected() {
+    // For images that resolve to FullBuffered anyway (≤ 2048²) the
+    // buttloop gate is moot: the resolver already returned
+    // FullBuffered before the gate ran.
+    for iters in [0u32, 1, 4] {
+        assert_eq!(
+            Buffering::Auto.resolve_for_streaming(2048, 2048, iters),
+            Buffering::FullBuffered,
+        );
+        assert_eq!(
+            Buffering::Auto.resolve_for_streaming(1024, 1024, iters),
+            Buffering::FullBuffered,
+        );
+    }
+}
+
+#[test]
 fn buffering_enum_is_copy_and_debug() {
     // Same shape as the rest of our config-shared knob enums
     // (`ContainerMode`, `PremultipliedAlphaMode`, ...). Useful for
