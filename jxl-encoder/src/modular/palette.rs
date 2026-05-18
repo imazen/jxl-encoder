@@ -1105,6 +1105,16 @@ pub(crate) fn apply_lossy_palette_with_budget(
                 let max_val = (1i64 << bit_depth) - 1;
                 for c in 0..num_c.min(3) {
                     color_with_error[c] = orig_color[c] as f32 + diff_mul * error_rows[0][x + 2][c];
+                    // Fuzz-hardening: NaN can leak into the float-to-int
+                    // cast on adversarial diffused-error states. Rust's
+                    // `as i64` saturates NaN to 0, but silently producing
+                    // wrong output is still a bug. Bail to None (caller
+                    // skips lossy palette). Mirrors libjxl `std::isnan`
+                    // guard in `QuantizeWP`
+                    // (`enc_modular.cc:1554`, commit `1eb44c9`).
+                    if super::fuzz_safety::is_nan_for_quantize(color_with_error[c]) {
+                        return None;
+                    }
                     color_clamped[c] =
                         (color_with_error[c].round() as i64).clamp(0, max_val) as i32;
                 }

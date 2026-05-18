@@ -13,6 +13,7 @@ mod encode_primitives;
 mod encode_transforms;
 mod encode_tree;
 pub(crate) mod frame;
+pub(crate) mod fuzz_safety;
 pub(crate) mod inline_add_sample;
 pub(crate) mod inline_dedup_table;
 pub(crate) mod palette;
