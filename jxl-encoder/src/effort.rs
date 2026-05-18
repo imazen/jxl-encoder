@@ -984,25 +984,38 @@ impl EffortProfile {
     }
 
     /// Number of multi-seed tree-learning runs by effort (RFC#45 pick #1
-    /// chunk 2, extended by chunk 5). e ≤ 9 keeps the single-pass libjxl
-    /// behaviour (byte-identical hash-locks); e10/e11 fan out 2 / 8
-    /// seeded runs and pick the cheapest-encoding tree.
+    /// chunk 2, extended by chunks 5 + 6). e ≤ 9 keeps the single-pass
+    /// libjxl behaviour (byte-identical hash-locks); e10/e11 fan out
+    /// 2 / 16 seeded runs and pick the cheapest-encoding tree.
+    ///
+    /// Chunk 6 raised e11 from 8 → 16 seeds by adding two new variance
+    /// dimensions on top of chunks 3-5. The 16-seed layout is:
+    /// - seeds 0..=3 chunk-3-only perturbations (split_threshold
+    ///   jitter + property-order rotation + stride; chunk-4/5/6 helpers
+    ///   hold to canonical no-op).
+    /// - seeds 4..=7 chunk-4 dimensions on top of chunk-3
+    ///   (sample-fraction override + predictor-evaluation-order
+    ///   shuffle).
+    /// - seeds 8..=11 chunk-6 split-bucket-count override
+    ///   (`max_property_values` ∈ {64, 128, 192, canonical 256},
+    ///   chunk-4 helpers held to no-op).
+    /// - seeds 12..=15 chunk-6 properties-slice truncation (truncate
+    ///   to {8, 10, 12, canonical 14+} leading properties, chunk-4 +
+    ///   chunk-6-bucket helpers held to no-op).
     ///
     /// Chunk 5 raised e11 from 4 → 8 seeds so that chunk-3-only
-    /// perturbations (seeds 0..3 — split_threshold jitter + property-order
-    /// rotation + stride perturbation, with chunk-4 dimensions held to
-    /// their canonical no-op) and chunk-4 dimensions (seeds 4..7 —
-    /// sample-fraction override + predictor-evaluation-order shuffle)
-    /// both contribute candidates. Honest W8-3-r2 benching showed chunk 4
-    /// regressed vs chunk 3 at e11 (+0.39% bytes) because a fixed 4-seed
-    /// budget cycled through *different* 4 trees rather than *more*; the
-    /// 8-seed split preserves chunk-3's wins while still exercising
-    /// chunk-4's new dimensions.
+    /// perturbations and chunk-4 dimensions both contribute candidates.
+    /// Honest W8-3-r2 benching showed chunk 4 regressed vs chunk 3 at
+    /// e11 (+0.39% bytes) because a fixed 4-seed budget cycled through
+    /// *different* 4 trees rather than *more*; the 8-seed split fixed
+    /// that. The chunk-5 → chunk-6 doubling extends the same pattern:
+    /// each new variance dimension gets its own 4-seed slot rather than
+    /// being recombined with the others inside a fixed budget.
     fn tree_learn_seeds_for(effort: u8) -> u8 {
         match effort {
             0..=9 => 1,
             10 => 2,
-            _ => 8,
+            _ => 16,
         }
     }
 

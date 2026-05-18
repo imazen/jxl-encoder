@@ -1,0 +1,159 @@
+# RFC#45 chunk 6: seed-budget 8 → 16 + 2 new variance dimensions A/B
+# follow-on to chunk 5 (2b2ce912), extends seed-slot pattern
+
+## Command
+cd jxl-encoder
+SAMPLES=2 THREADS=8 cargo run -p jxl-encoder --release \
+  --features 'std parallel parallel-tree-learning' \
+  --example e10_e11_multiseed_chunk6_ab \
+  > benchmarks/e10_e11_multiseed_chunk6_ab_2026-05-17.tsv
+
+## Source revision
+parent: 8af25cb3 (chunk 7 patches; predecessor to chunk 6 source)
+chunk-5 source baseline: 2b2ce912 (seed-budget 8, dims chunk-3..chunk-5)
+commit: TBD (chunk 6 — this commit)
+
+## Hardware
+host: rotor (water-cooled AMD Ryzen 9 7950X, 128 GB RAM)
+threads: 8
+
+## Corpus
+/home/lilith/work/codec-corpus/CID22/CID22-512/validation/
+  1025469.png
+  1044329.png
+  1189261.png
+  1279330.png
+  1418519.png
+
+5 photos × 3 efforts {e9, e10, e11} × 2 paired samples = 30 cells.
+
+## Chunk 6 design
+
+### EffortProfile::tree_learn_seeds_for(effort)
+  e0..=9 → 1  (unchanged; libjxl single-seed; e ≤ 9 hash-locks
+              byte-identical because every seeded helper holds
+              canonical for seed 0)
+  e10   → 2  (unchanged from chunks 2-5)
+  e11   → 16 (was 8 at chunk 5 — chunk 6 doubling, two new
+              variance dimensions get their own 4-seed slots)
+
+### Seed-slot layout (16 seeds at e11)
+
+| seed | sample-fraction       | predictor-order            | max_property_values  | properties truncation |
+|------|----------------------|---------------------------|---------------------|----------------------|
+| 0    | None                 | canonical                 | canonical (256)     | full (canonical)     |
+| 1    | None                 | canonical                 | canonical (256)     | full (canonical)     |
+| 2    | None                 | canonical                 | canonical (256)     | full (canonical)     |
+| 3    | None                 | canonical                 | canonical (256)     | full (canonical)     |
+| 4    | Some(0.40)           | perm[0] (canonical)       | canonical (256)     | full (canonical)     |
+| 5    | Some(0.60)           | perm[1] (strong-first)    | canonical (256)     | full (canonical)     |
+| 6    | Some(0.70)           | perm[2] (directional-first)| canonical (256)    | full (canonical)     |
+| 7    | None                 | perm[3] (full-reverse)    | canonical (256)     | full (canonical)     |
+| 8    | None                 | canonical                 | **Some(64)**        | full (canonical)     |
+| 9    | None                 | canonical                 | **Some(128)**       | full (canonical)     |
+| 10   | None                 | canonical                 | **Some(192)**       | full (canonical)     |
+| 11   | None                 | canonical                 | None (canonical)    | full (canonical)     |
+| 12   | None                 | canonical                 | canonical (256)     | **Some(8)**          |
+| 13   | None                 | canonical                 | canonical (256)     | **Some(10)**         |
+| 14   | None                 | canonical                 | canonical (256)     | **Some(12)**         |
+| 15   | None                 | canonical                 | canonical (256)     | None (canonical)     |
+
+Chunk-3 perturbations (`derive_seeded_params`, `derive_seeded_stride`)
+remain active for ALL 16 seeds — they cycle by `seed % 4` so every
+chunk-6 seed inherits the chunk-3 perturbation pattern from its mod-4
+position.
+
+### Why these two dimensions (and not max_tree_depth / property_gain
+### threshold per the original brief)
+TreeLearningParams has no `max_tree_depth` knob — the greedy builder
+grows until no split clears `split_threshold` or `max_nodes` is hit.
+The acceptance-threshold dimension is already exercised by chunk-3's
+`split_threshold` jitter. `max_property_values` (split granularity)
+and `properties.len()` (set size) are the next two structurally
+orthogonal knobs that change which trees the greedy builder can reach
+without recombining chunk-3's existing perturbations.
+
+### Strict-slot-range gates
+Both new helpers return `None` outside their 4-seed slot ranges:
+  - `derive_seeded_max_property_values(seed)`: returns None for
+    seed < 8 or seed >= 12.
+  - `derive_seeded_properties_truncation(seed)`: returns None for
+    seed < 12 or seed >= 16.
+
+This codifies the chunk-3..chunk-6 seed-slot doctrine — each chunk's
+dimension owns its own 4-seed block; the two chunk-6 dimensions
+never stack on a single seed. A `test_chunk6_dimensions_are_orthogonal`
+unit test enforces this invariant.
+
+### Expectation
+- e9:  byte-identical to chunks 2-5 / pre-RFC#45-chunk-2.
+- e10: byte-identical to chunks 3-5 (still 2 seeds, both reserved
+  for chunk-3-only perturbations; chunk-4/5/6 helpers no-op).
+- e11: strictly ≥ chunk 5 by construction. Seeds 0..=7 cover the
+  same candidate space as chunk-5 (chunk-6 helpers held to canonical
+  no-op via the seed < 8 gate). The chunk-2 `estimate_token_cost`
+  picker keeps the cheapest of the 16 candidate trees — additional 8
+  chunk-6 candidates can only improve.
+
+## Results (paired sums across 5 images, byte-deterministic both samples)
+
+| image      |  e9    | e10 ch5  | e10 ch6  |  Δ ch6-ch5  | e11 ch5  | e11 ch6  |   Δ ch6-ch5   |
+|------------|--------|----------|----------|-------------|----------|----------|---------------|
+| 1025469    | 231695 |  231461  |  231461  |       0     |  231461  |  231127  |  **-334 (-0.144%)** |
+| 1044329    | 330198 |  330499  |  330499  |       0     |  327001  |  327001  |       0       |
+| 1189261    | 303156 |  303864  |  303864  |       0     |  302399  |  302399  |       0       |
+| 1279330    | 208471 |  207027  |  207027  |       0     |  206214  |  206214  |       0       |
+| 1418519    | 165481 |  165275  |  165275  |       0     |  164133  |  164133  |       0       |
+| **sum**    |1239001 | 1238126  | 1238126  |       0     | 1231208  | 1230874  |   **-334 (-0.027%)** |
+| **vs ch5** |   —    |    —     |    —     |   0.000%    |    —     |    —     |   **-0.027%** |
+
+### vs chunk-3 + chunk-4 baselines at e11
+chunk 3 baseline (per chunk-5 .meta): sum 1232021 bytes at e11.
+chunk 4 baseline (per chunk-5 .meta): sum 1236855 bytes at e11.
+chunk 5 (this corpus): 1231208 = -0.066% under chunk 3.
+chunk 6 (this corpus): 1230874 = -0.093% under chunk 3 = -0.484% under chunk 4.
+
+### vs e9 baseline (chunk 6)
+chunk-6 e10 sum 1238126 = -0.071% under e9 (chunks 3-5 ch6 e10 unchanged).
+chunk-6 e11 sum 1230874 = -0.656% under e9 (chunk 5 was -0.628%).
+
+## Win analysis
+Only 1 of 5 cells improved at e11 (1025469 by -334 bytes); other 4 are
+byte-identical to chunk 5. This is the expected pattern given chunk-5's
+diminishing-returns regime — when chunks 0..=7 cover the relevant
+candidate space well, chunk-6's additional 8 candidates can only beat
+the picker on images whose minima lie at coarser-bucket-grid or
+truncated-property-set tree shapes. 1025469 picked up such a
+candidate (likely a bucket-grid coarser variant in seeds 8..=11, since
+the chunk-3 perm-rotation already exercised property reordering in
+seeds 0..=3). 4 byte-identical cells means chunk-5's best tree was
+already optimal among the 16 chunk-6 candidates for those images.
+
+## Wall-clock (seconds, sample 0 — under-load is dominant in paired
+## interleave)
+| image    | e9    | e10   | e11    |
+|----------|-------|-------|--------|
+| 1025469  | 1.25  | 2.07  | 14.20  |
+| 1044329  | 1.59  | 2.28  | 14.85  |
+| 1189261  | 1.24  | 2.36  | 15.13  |
+| 1279330  | 2.62  | 4.78  | 24.72  |
+| 1418519  | 2.30  | 3.24  | 31.51  |
+
+e11 ≈ 14-31s (chunk 5 reported 7-12s under load; chunk-6 wall-clock
+roughly doubles with the 8-seed → 16-seed budget doubling). e10 and
+e9 unchanged (e10 still 2 seeds, e9 still 1 seed).
+
+## Hash-locks (e ≤ 9 byte-identicality)
+hash_lock_features: 36/36 PASS (re-run after chunk-6 edits)
+
+## Unit tests added (5)
+- test_derive_seeded_max_property_values_low_seeds_are_none
+- test_derive_seeded_max_property_values_high_seeds_active
+- test_derive_seeded_properties_truncation_low_seeds_are_none
+- test_derive_seeded_properties_truncation_high_seeds_active
+- test_chunk6_dimensions_are_orthogonal
+
+## TSV columns
+image  effort  sample  bytes  sha  wall_ms
+
+Both `# samples=...` and `# threads=...` recorded in header.
