@@ -1,0 +1,23 @@
+# entropy_coeffs magetypes consolidation bench (W43-2 chunk-7, final)
+timestamp: 2026-05-18T21:31:02Z
+hostname: unknown
+git_commit: ff4f65df
+sizes: [256, 512, 1024, 2048, 4096]
+samples_per_cell: 11
+warmup: 2
+purpose: validates that the magetypes(define(f32x8), v4, v3, neon, wasm128, scalar)
+         consolidation in jxl-encoder-simd/src/entropy.rs preserves wall-clock vs the
+         prior 3-variant hand-written code (AVX2 / NEON / WASM128) and the scalar fallback.
+kernel:  entropy_estimate_coeffs — per-coefficient entropy + nzeros + info_loss accumulation.
+         Called once per candidate AC strategy per 8x8 block during estimate_entropy_full;
+         single biggest VarDCT encoder hotspot (~7.5 % CPU at e7).
+shape:   (width/8) * (height/8) DCT8-shaped blocks (64 coeffs each), 50/50 pixel/coeff domain
+         (alternating) to exercise both branches in the kernel body.
+input:   block_c / block_y synthesized as decaying-AC blocks (large DC, freq-decay AC),
+         weights grow 0.05 -> ~2.0 across coeffs (low-freq preserve, high-freq discard).
+note:    v4 (AVX-512) tier IS emitted (pure f32 kernel — all 5 accumulators are f32x8,
+         no f64 inside the SIMD body). v4 opt-in via the jxl-encoder-simd 'avx512' feature.
+         Accumulator structure (entropy_acc / nzeros_acc / info_loss_acc / info_loss2_acc /
+         cost2_acc) preserved bit-for-bit from the prior AVX2 / NEON / WASM bodies — FMA
+         reduction order is load-bearing for W44-9 (DCT8 entropy FMA-order investigation).
+tsv:     /tmp/entropy_coeffs_magetypes_bench.tsv
