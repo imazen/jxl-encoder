@@ -1,0 +1,86 @@
+Auto-splines chunk-5 content-discriminator A/B
+================================================
+
+Bench: 11 cells (3 synthetics + 5 photos + 3 screenshots) × 3 efforts.
+Distance: 1.0. Features: std parallel butteraugli-loop.
+Harness: jxl-encoder/examples/auto_splines_corpus_bench.rs
+Run host: AMD Ryzen 9 7950X / 128 GB / WSL2
+Run date: 2026-05-17 UTC
+
+Compares `LossyConfig::with_effort(e)` (auto_splines OFF)
+against `LossyConfig::with_effort(e).with_auto_splines(true)`.
+
+Photos: 5x CLIC2025-1024 corpus stems
+        (02809272, 0369d229, 07b9f93f, 097cb426, 0c49a5cc).
+Screens: 3x gb82-sc corpus (terminal, codec_wiki, imac_g3).
+Synthetics: 1, 4, and 8 horizontal bright lines on a flat 80-grey background.
+
+Chunk-5 change: added content discriminator
+(vardct/splines::looks_like_screenshot) at the auto_splines branch
+of vardct/encoder.rs. Threshold: median(per-8x8-block mean of
+mask1x1) > 95.0 — shipped value shared with the GPU encoder's W7-3
+AFV cost-grid gate (jxl-encoder-gpu/src/lossy_encoder.rs::
+SCREENSHOT_MEDIAN_MASK_THRESHOLD). When the discriminator fires,
+the splines pipeline is skipped before `find_splines_at_distance`
+runs, leaving the encode byte-identical to the auto_splines-off baseline.
+
+Before chunk-5 (chunk-4 cost gate alone, see
+benchmarks/auto_splines_bench_2026-05-17_chunk4.tsv):
+    photos: 5/5 byte-identical at e7/e8/e9 (cost gate rejects)
+    terminal: byte-identical at e7/e8/e9 (cost gate rejects)
+    codec_wiki: still +2.8% to +3.3% (6 wide ridges admit)
+    imac_g3:    still +3.2% to +3.5% (33 wide ridges admit)
+    synth_1line: +5.1 / +6.8 / +29.8% (always regresses)
+    synth_4lines: -2.8 / -2.3 / +20.0% (net-win at e7/e8, regression at e9)
+    synth_8lines: -3.1 / -2.0 / +50.7% (net-win at e7/e8, catastrophic at e9)
+
+After chunk-5 (this file):
+    photos: 5/5 byte-identical (discriminator skips — median ~56)
+    screenshots: 3/3 byte-identical (discriminator skips — median ~100)
+    synthetics: 3/3 byte-identical (discriminator skips — median ~100,
+                flat 80-grey backgrounds classified as screenshot-class)
+
+Discriminator validation (median per-8x8-block mean of mask1x1):
+    photo 02809272 (1024×1024):  55.878 → non-screenshot, splines admitted
+    synth_1line   (1024× 256): 100.013 → SCREENSHOT (skip splines)
+    synth_4lines  (1024× 512): 100.013 → SCREENSHOT (skip splines)
+    synth_8lines  (2048×1024): 100.013 → SCREENSHOT (skip splines)
+    terminal      (1646×1062): 100.013 → SCREENSHOT (skip splines)
+    codec_wiki    (2560×1664): 100.013 → SCREENSHOT (skip splines)
+    imac_g3       (2940×1912): 100.013 → SCREENSHOT (skip splines)
+
+Implication for default: STAYS OFF (now for a different reason than chunk-4).
+    With chunk-5 active there are no observed wins anywhere on this
+    bench — photos already went byte-identical under chunk 4 (cost gate
+    rejected), screenshots now go byte-identical under chunk 5
+    (discriminator skips), and the chunk-3 synthetic wins (-2 to -3%
+    at e7/e8) are gone because the synthetics' flat 80-grey background
+    correctly classifies as screenshot-class. Flipping the default
+    `auto_splines_default(_) = true` would add a `compute_mask1x1` pass
+    per encode for zero observable RD benefit on any tested image.
+    The flag remains opt-in for callers that hand-tune for thin-feature
+    content (power lines on a noisy sky, hair on a noisy background)
+    where the discriminator does NOT fire AND the cost gate admits the
+    candidate.
+
+Default-on candidacy:
+    e7  NO (no observed wins; discriminator + cost gate already perfect)
+    e8  NO (same)
+    e9  NO (same; chunk-3 synth wins disappeared)
+
+Discriminator threshold provenance:
+    `SCREENSHOT_MEDIAN_MASK_THRESHOLD = 95.0` mirrors
+    `jxl-encoder-gpu/src/lossy_encoder.rs:2907`. Calibrated on
+    16 CLIC photos (all median ≤ 87) + 10 gb82-sc screenshots
+    (9 of 10 median = 100.01). 95 sits well above the photo max (87)
+    and below the screenshot median (100), giving a clean gap with
+    only one false-negative in the GPU dataset (windows95.png at
+    median 69.9).
+
+Hash-locks: `hash_lock_features` 36/36 byte-identical (auto_splines
+defaults remain off, so no impact on default encode path).
+6 of 6 `tests/auto_splines.rs` integration tests pass (5 retained
+from chunk 3/4, plus the chunk-5 contract `chunk5_multi_line_runs_detector`
+that replaced chunk 3's flat-background-only `chunk3_multi_line_decreases_bytes`).
+4 new lib tests in `vardct::splines::tests` cover the discriminator
+(flat / photo-gradient / strided / tiny-image cases).
