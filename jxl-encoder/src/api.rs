@@ -3175,6 +3175,55 @@ pub enum EpfDispatch {
     Auto,
 }
 
+/// Adaptive dispatch policy for the pixel-domain loss term added to
+/// the AC-strategy search cost (libjxl
+/// `enc_adaptive_quantization.cc::EstimateEntropy` →
+/// `enc_ac_strategy.cc`).
+///
+/// The pixel-domain loss path runs an IDCT of the per-block
+/// quantization error, multiplies by the per-pixel `mask1x1`
+/// perceptual mask, and folds an 8th-power norm into the
+/// strategy-selection cost. It's the W38-1 phase profile's dominant
+/// AC-strategy overhead at e5 — `pixel_domain_loss = true` adds
+/// ~11 ms/MP on photos and ~70 ms/MP on screenshots vs the
+/// coefficient-domain-only path
+/// (`benchmarks/lossy_phase_low_effort_with_zenjpeg_2026-05-19.{tsv,meta}`).
+///
+/// On smooth photo content the pixel-domain loss term rarely changes
+/// which strategy wins — the AC-strategy search already converges on
+/// DCT8/DCT16 picks from the coefficient-domain entropy estimate
+/// alone. [`PixelLossDispatch::Auto`] short-circuits the loss path
+/// in that regime (per-image `median(mask1x1) > 80` — smooth /
+/// low-variance content) while preserving it on textured/edge
+/// content where the loss term changes picks.
+///
+/// **Default**: [`PixelLossDispatch::AlwaysOn`]. Flipping the
+/// default to `Auto` is a separate chunk after a wider corpus bench;
+/// until that lands callers who want the speed-up opt in explicitly.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PixelLossDispatch {
+    /// **Default.** Always include the pixel-domain loss term in the
+    /// AC-strategy search cost when the underlying gate
+    /// (`ac_strategy_enabled && pixel_domain_loss`) is satisfied.
+    /// Byte-identical to historical encoder behaviour.
+    #[default]
+    AlwaysOn,
+    /// Always skip the pixel-domain loss term. Equivalent to
+    /// `with_pixel_domain_loss(false)` at the encoder layer (mask1x1
+    /// is not computed; AC-strategy search uses the
+    /// coefficient-domain-only constants). Cheap; gives up the
+    /// pixel-domain loss contribution to strategy picks.
+    AlwaysOff,
+    /// Run the pixel-domain loss term only when a `mask1x1`-based
+    /// smoothness predicate says the input has enough texture/edges
+    /// to benefit. On smooth regions (`median(mask1x1) > 80`) the
+    /// mask is dropped before the AC-strategy search and the cost
+    /// folds back to the coefficient-domain-only path. Bitstream-
+    /// affecting on the gated subset; behaviour matches
+    /// [`Self::AlwaysOn`] on content the predicate doesn't gate.
+    Auto,
+}
+
 // ── LossyConfig ─────────────────────────────────────────────────────────────
 
 /// Lossy (VarDCT) encoding configuration.
@@ -3421,6 +3470,14 @@ pub struct LossyConfig {
     /// [`EpfDispatch::AlwaysSelect`] preserves the historical
     /// bitstream byte-for-byte. See [`Self::with_epf_dispatch`].
     epf_dispatch: EpfDispatch,
+    /// Adaptive dispatch for the pixel-domain loss term in the
+    /// AC-strategy search cost (W38-1 — `pixel_domain_loss` adds
+    /// ~11 ms/MP photo / ~70 ms/MP screenshot at e5 per the
+    /// `benchmarks/lossy_phase_low_effort_with_zenjpeg_2026-05-19`
+    /// baseline). Default [`PixelLossDispatch::AlwaysOn`] preserves
+    /// the historical bitstream byte-for-byte. See
+    /// [`Self::with_pixel_loss_dispatch`].
+    pixel_loss_dispatch: PixelLossDispatch,
     /// Optional separate butteraugli distance for the alpha extra
     /// channel (CLI passthrough — mirrors libjxl `cjxl --alpha_distance`,
     /// `enc_params.h:alpha_distance`). `None` (default) keeps the
@@ -3630,6 +3687,7 @@ impl LossyConfig {
             patches_dispatch: PatchesDispatch::default(),
             epf_level: -1,
             epf_dispatch: EpfDispatch::default(),
+            pixel_loss_dispatch: PixelLossDispatch::default(),
             alpha_distance: None,
             // Chunk-1 default: keep responsive=0 lossy alpha path
             // (byte-identical to today). Opt-in via
@@ -3837,6 +3895,9 @@ impl LossyConfig {
         // effort-derived; pure caller preference (mirrors the
         // alpha_distance / chroma_subsampling / buffering pattern below).
         new.patches_dispatch = self.patches_dispatch;
+        // Preserve pixel-loss dispatch policy across with_effort —
+        // never effort-derived; pure caller preference (W38-2).
+        new.pixel_loss_dispatch = self.pixel_loss_dispatch;
         // Preserve CLI-passthrough knobs across with_effort (they're
         // never effort-derived; opt-in / pure forwarding).
         new.alpha_distance = self.alpha_distance;
@@ -4181,6 +4242,47 @@ impl LossyConfig {
     pub fn with_pixel_domain_loss(mut self, enable: bool) -> Self {
         self.pixel_domain_loss = enable;
         self
+    }
+
+    /// Select the adaptive-dispatch policy for the pixel-domain loss
+    /// term in the AC-strategy search cost (W38-2).
+    ///
+    /// The pixel-domain loss path (libjxl
+    /// `EstimateEntropy` → IDCT of quantization error → per-pixel
+    /// `mask1x1` weighting → 8th-power norm) is W38-1's dominant
+    /// per-AC-strategy-eval overhead at e5 — adds ~11 ms/MP on
+    /// photos and ~70 ms/MP on screenshots vs the coefficient-domain-
+    /// only path
+    /// (`benchmarks/lossy_phase_low_effort_with_zenjpeg_2026-05-19`).
+    /// On smooth content the loss term rarely changes which
+    /// AC-strategy wins, so the work is wasted.
+    /// [`PixelLossDispatch::Auto`] skips the loss term when the
+    /// per-image `median(mask1x1) > 80` (smooth / low-variance
+    /// content) and falls back to the coefficient-domain entropy
+    /// estimate alone. Textured/edge content still pays for the
+    /// pixel-domain loss term.
+    ///
+    /// **Default**: [`PixelLossDispatch::AlwaysOn`] — byte-identical
+    /// to historical encoder behaviour. The `Auto` default flip is
+    /// gated behind a wider corpus RD bench + hash-lock rebake;
+    /// until that lands, callers who want the speed-up opt in
+    /// explicitly. Mirrors the W36-2 [`EpfDispatch`] and W36-3
+    /// [`PatchesDispatch`] opt-in patterns.
+    ///
+    /// Effective only when the underlying gate is satisfied
+    /// (`ac_strategy_enabled && pixel_domain_loss`). When the gate
+    /// is already off (`with_pixel_domain_loss(false)` or
+    /// `ac_strategy_enabled = false`) the dispatch knob is a no-op
+    /// (no mask1x1 is computed; the loss term is already absent).
+    pub fn with_pixel_loss_dispatch(mut self, dispatch: PixelLossDispatch) -> Self {
+        self.pixel_loss_dispatch = dispatch;
+        self
+    }
+
+    /// Current [`PixelLossDispatch`] policy. See
+    /// [`Self::with_pixel_loss_dispatch`].
+    pub fn pixel_loss_dispatch(&self) -> PixelLossDispatch {
+        self.pixel_loss_dispatch
     }
 
     /// Convenience switch that toggles all encoder-side perceptual
@@ -7355,6 +7457,7 @@ impl<'a> EncodeRequest<'a> {
         enc.epf_dispatch = cfg.epf_dispatch;
         enc.error_diffusion = cfg.error_diffusion;
         enc.pixel_domain_loss = cfg.pixel_domain_loss;
+        enc.pixel_loss_dispatch = cfg.pixel_loss_dispatch;
         enc.enable_lz77 = cfg.effective_lz77();
         enc.lz77_method = cfg.lz77_method;
         enc.force_strategy = cfg.force_strategy;
@@ -8492,6 +8595,7 @@ impl LossyEncoder {
             enc.epf_dispatch = cfg.epf_dispatch;
             enc.error_diffusion = cfg.error_diffusion;
             enc.pixel_domain_loss = cfg.pixel_domain_loss;
+            enc.pixel_loss_dispatch = cfg.pixel_loss_dispatch;
             enc.enable_lz77 = cfg.effective_lz77();
             enc.lz77_method = cfg.lz77_method;
             enc.force_strategy = cfg.force_strategy;
@@ -10347,6 +10451,7 @@ fn encode_animation_lossy(
     enc.epf_dispatch = cfg.epf_dispatch;
     enc.error_diffusion = cfg.error_diffusion;
     enc.pixel_domain_loss = cfg.pixel_domain_loss;
+    enc.pixel_loss_dispatch = cfg.pixel_loss_dispatch;
     enc.enable_lz77 = cfg.effective_lz77();
     enc.lz77_method = cfg.lz77_method;
     enc.force_strategy = cfg.force_strategy;

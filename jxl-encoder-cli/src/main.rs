@@ -8,7 +8,8 @@
 use clap::Parser;
 use jxl_encoder::{
     AnimationFrame, AnimationParams, Buffering, ContainerMode, EpfDispatch, LosslessConfig,
-    LossyConfig, Lz77Method, PixelLayout, PremultipliedAlphaMode, ProgressiveMode,
+    LossyConfig, Lz77Method, PixelLayout, PixelLossDispatch, PremultipliedAlphaMode,
+    ProgressiveMode,
 };
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
@@ -171,6 +172,19 @@ struct Args {
     /// wall-clock and 33.8% of e7.
     #[arg(long, value_name = "POLICY", default_value = "always-select")]
     epf_dispatch: String,
+
+    /// Adaptive-dispatch policy for the pixel-domain loss term in the
+    /// AC-strategy search cost (W38-2). `always-on` (default) keeps
+    /// the loss term whenever `pixel_domain_loss` is enabled —
+    /// byte-identical to historical builds. `auto` drops the loss
+    /// term on smooth content (per-image `median(mask1x1) > 80`)
+    /// where it rarely changes which strategy wins. `always-off`
+    /// disables the loss term unconditionally (equivalent to
+    /// `--no-pixel-domain-loss`). Per the W38-1 baseline the loss
+    /// path adds ~11 ms/MP on photos and ~70 ms/MP on screenshots at
+    /// effort 5.
+    #[arg(long, value_name = "POLICY", default_value = "always-on")]
+    pixel_loss_dispatch: String,
 
     /// Force DCT8 only (disable AC strategy selection)
     #[arg(long)]
@@ -685,6 +699,19 @@ fn main() {
         }
     };
 
+    let pixel_loss_dispatch = match args.pixel_loss_dispatch.to_lowercase().as_str() {
+        "always-on" | "always_on" | "on" => PixelLossDispatch::AlwaysOn,
+        "always-off" | "always_off" | "off" => PixelLossDispatch::AlwaysOff,
+        "auto" => PixelLossDispatch::Auto,
+        other => {
+            eprintln!(
+                "Unknown pixel-loss dispatch policy: {}. Using 'always-on'.",
+                other
+            );
+            PixelLossDispatch::AlwaysOn
+        }
+    };
+
     // Determine input format from extension
     let ext = args
         .input
@@ -873,6 +900,7 @@ fn main() {
                         cfg = cfg.with_epf_level(args.epf);
                     }
                     cfg = cfg.with_epf_dispatch(epf_dispatch);
+                    cfg = cfg.with_pixel_loss_dispatch(pixel_loss_dispatch);
                     if args.noise || args.denoise {
                         cfg = cfg.with_noise(true);
                     }
@@ -1230,6 +1258,7 @@ fn main() {
             cfg = cfg.with_epf_level(args.epf);
         }
         cfg = cfg.with_epf_dispatch(epf_dispatch);
+        cfg = cfg.with_pixel_loss_dispatch(pixel_loss_dispatch);
         if args.noise || args.denoise {
             cfg = cfg.with_noise(true);
         }

@@ -1642,13 +1642,34 @@ impl VarDctEncoder {
         // Compute per-pixel mask for pixel-domain loss on PRE-gaborish XYB
         // (matches libjxl `InitialQuantField` which produces
         // `initial_quant_masking1x1` before `GaborishInverse`).
-        let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss {
-            Some(super::adaptive_quant::compute_mask1x1_with_budget(
+        //
+        // W38-2 [`crate::api::PixelLossDispatch`] gate (mirrors the
+        // still-image path at `vardct/encoder.rs::encode_inner`):
+        //   * `AlwaysOff`  → skip mask1x1 (loss term disabled).
+        //   * `AlwaysOn`   → default; byte-identical to historical.
+        //   * `Auto`       → drop mask when `median(mask1x1) > 80`
+        //                    (smooth content; AC-strategy search
+        //                    falls back to coefficient-domain entropy).
+        let pld_force_off = matches!(
+            self.pixel_loss_dispatch,
+            crate::api::PixelLossDispatch::AlwaysOff
+        );
+        let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss && !pld_force_off {
+            let m = super::adaptive_quant::compute_mask1x1_with_budget(
                 &xyb_y,
                 padded_width,
                 padded_height,
                 self.budget.as_ref(),
-            )?)
+            )?;
+            if matches!(
+                self.pixel_loss_dispatch,
+                crate::api::PixelLossDispatch::Auto
+            ) && super::encoder::pixel_loss_auto_should_skip(&m, padded_width, width, height)
+            {
+                None
+            } else {
+                Some(m)
+            }
         } else {
             None
         };

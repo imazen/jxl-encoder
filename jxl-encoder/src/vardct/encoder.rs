@@ -187,6 +187,60 @@ const CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD: f32 = 95.0;
 /// win disappears for that image.
 const PATCHES_DISPATCH_BLOCK_MASK_THRESHOLD: f32 = 60.0;
 
+/// W38-2 pixel-loss dispatch threshold on the raw per-pixel `median(mask1x1)`
+/// (the same statistic the content-aware entropy_mul dispatch at W22-1
+/// uses, NOT the per-block-mean median used by the patches/auto-splines
+/// gates).
+///
+/// `> 80` is chosen from the W38-1 phase profile (`benchmarks/
+/// lossy_phase_low_effort_with_zenjpeg_2026-05-19.{tsv,meta}`) where
+/// `pixel_domain_loss=true` adds ~11 ms/MP on photos (CID22 medians
+/// in the 10-40 range) and ~70 ms/MP on screenshots (gb82-sc medians
+/// 110-180). On smooth content (median >80, the photo-flat /
+/// screenshot-class regime) the pixel-domain loss term rarely
+/// changes which AC-strategy wins — the coefficient-domain entropy
+/// estimate alone converges on the same DCT8/DCT16 pick — so the
+/// loss term's cost is wasted.
+///
+/// The `80` cut-off is **below** the `95` screenshot/photo split
+/// (`CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD`) deliberately: we
+/// want to gate on the broader "smooth / low-variance" class, not
+/// just the screenshot class. CID22 photos with mostly smooth
+/// content (blue-sky, soft-focus portrait backgrounds) typically
+/// land in the 60-90 range and benefit from the gate too.
+///
+/// If a future content discriminator regression admits a textured
+/// photo above 80, the worst case is a bitstream-affecting AC
+/// strategy pick change (the loss term is skipped). The W22-1
+/// content_aware_entropy_mul precedent suggests this is a small
+/// effect at e5 where the strategy search is already shallow.
+const PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD: f32 = 80.0;
+
+/// W38-2 pixel-loss dispatch predicate: returns `true` when the
+/// per-image `median(mask1x1)` exceeds
+/// [`PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD`], indicating smooth /
+/// low-variance content where the pixel-domain loss term in the
+/// AC-strategy search cost is unlikely to change picks. Callers
+/// using [`crate::api::PixelLossDispatch::Auto`] drop the `mask1x1`
+/// from downstream when this returns `true`, falling back to the
+/// coefficient-domain entropy estimate alone.
+///
+/// Mirrors the predicate shape of
+/// [`crate::vardct::epf::mask1x1_is_smooth_enough_to_skip_sharpness`]
+/// but uses the per-image median statistic (matching the W22-1
+/// content-aware entropy_mul dispatch) rather than the mean —
+/// medians are more robust on screenshot content with isolated
+/// high-contrast text/icons.
+pub(crate) fn pixel_loss_auto_should_skip(
+    mask1x1: &[f32],
+    stride: usize,
+    width: usize,
+    height: usize,
+) -> bool {
+    let med = median_mask1x1(mask1x1, stride, width, height);
+    med > PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD
+}
+
 /// W36-3 patches photo-skip dispatch helper: returns the per-8×8-block
 /// mean median of [`crate::vardct::adaptive_quant::compute_mask1x1`]
 /// over the unpadded `[0, width) × [0, height)` region of the XYB Y
@@ -430,6 +484,17 @@ pub struct VarDctEncoder {
     /// When false (default), uses coefficient-domain loss (libjxl-tiny style).
     /// Note: Requires `ac_strategy_enabled` to have any effect.
     pub pixel_domain_loss: bool,
+    /// Adaptive dispatch policy for the pixel-domain loss term in the
+    /// AC-strategy search cost (W38-2). See
+    /// [`crate::api::PixelLossDispatch`].
+    ///
+    /// `AlwaysOn` (default) preserves byte-identical behaviour with
+    /// historical encoder builds. `Auto` skips the loss term on
+    /// smooth content (per-image `median(mask1x1) > 80`) and falls
+    /// back to coefficient-domain-only entropy. `AlwaysOff`
+    /// unconditionally skips the loss term (equivalent to
+    /// `pixel_domain_loss = false`).
+    pub pixel_loss_dispatch: crate::api::PixelLossDispatch,
     /// Enable LZ77 backward references in entropy coding.
     /// When true, compresses token streams using LZ77 length+distance tokens.
     /// Only effective with two-pass mode (optimize_codes=true) and ANS (use_ans=true).
@@ -753,7 +818,8 @@ impl Default for VarDctEncoder {
             epf_dispatch: crate::api::EpfDispatch::AlwaysSelect,
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
-            enable_lz77: false,      // LZ77 has known interactions with DCT2x2/IDENTITY strategies
+            pixel_loss_dispatch: crate::api::PixelLossDispatch::AlwaysOn,
+            enable_lz77: false, // LZ77 has known interactions with DCT2x2/IDENTITY strategies
             lz77_method: crate::entropy_coding::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
@@ -829,7 +895,8 @@ impl VarDctEncoder {
             epf_dispatch: crate::api::EpfDispatch::AlwaysSelect,
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
-            enable_lz77: false,     // LZ77 has known interactions with DCT2x2/IDENTITY strategies
+            pixel_loss_dispatch: crate::api::PixelLossDispatch::AlwaysOn,
+            enable_lz77: false, // LZ77 has known interactions with DCT2x2/IDENTITY strategies
             lz77_method: crate::entropy_coding::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
@@ -1910,13 +1977,37 @@ impl VarDctEncoder {
         // decision, and drops it before this compute runs so
         // subtract_patches / subtract_splines mutations don't observe
         // the wrong mask.
-        let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss {
-            Some(super::adaptive_quant::compute_mask1x1_with_budget(
+        //
+        // W38-2 [`crate::api::PixelLossDispatch`] gate:
+        //   * `AlwaysOff` → skip mask1x1 entirely (equivalent to
+        //     `pixel_domain_loss = false`; AC strategy search uses
+        //     coefficient-domain entropy only).
+        //   * `AlwaysOn` (default) → keep current byte-identical
+        //     behaviour: compute the mask and feed it to the search.
+        //   * `Auto` → compute the mask, then check
+        //     `median(mask1x1) > 80`; on smooth content drop the
+        //     mask before the AC-strategy search so the loss term
+        //     folds back to coefficient-domain only.
+        let pld_force_off = matches!(
+            self.pixel_loss_dispatch,
+            crate::api::PixelLossDispatch::AlwaysOff
+        );
+        let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss && !pld_force_off {
+            let m = super::adaptive_quant::compute_mask1x1_with_budget(
                 &xyb_y,
                 padded_width,
                 padded_height,
                 self.budget.as_ref(),
-            )?)
+            )?;
+            if matches!(
+                self.pixel_loss_dispatch,
+                crate::api::PixelLossDispatch::Auto
+            ) && pixel_loss_auto_should_skip(&m, padded_width, width, height)
+            {
+                None
+            } else {
+                Some(m)
+            }
         } else {
             None
         };
@@ -2961,6 +3052,7 @@ impl VarDctEncoder {
                 self.color_encoding.as_ref(),
                 self.budget.as_ref(),
                 routed_buffering,
+                self.pixel_loss_dispatch,
             )?;
 
         // Run rate control loop
@@ -3635,6 +3727,66 @@ mod tests {
         assert!(
             m_screen > 95.0,
             "screen-band median {m_screen} should be > 95.0 threshold"
+        );
+    }
+
+    /// W38-2: the `pixel_loss_auto_should_skip` predicate flips at the
+    /// documented `> 80` median threshold and returns the same answer
+    /// whether the input represents a photo, smooth photo, or
+    /// screenshot regime.
+    #[test]
+    fn test_pixel_loss_auto_should_skip_predicate() {
+        // Photo-class: median well below the threshold → do NOT skip
+        // (keep the pixel-domain loss term — strategy search benefits).
+        let photo: Vec<f32> = (0..(64 * 64)).map(|i| 5.0 + (i % 35) as f32).collect();
+        assert!(
+            !pixel_loss_auto_should_skip(&photo, 64, 64, 64),
+            "photo-band content should keep pixel-domain loss"
+        );
+
+        // Smooth-photo class: median right above the threshold (the
+        // W38-2 gate's primary target — flat backgrounds, soft-focus
+        // bokeh). Should skip.
+        let smooth: Vec<f32> = vec![85.0; 64 * 64];
+        assert!(
+            pixel_loss_auto_should_skip(&smooth, 64, 64, 64),
+            "smooth-photo content (median 85 > 80) should skip pixel-domain loss"
+        );
+
+        // Screenshot-class: median far above the threshold → skip.
+        let screen: Vec<f32> = (0..(64 * 64)).map(|i| 110.0 + (i % 30) as f32).collect();
+        assert!(
+            pixel_loss_auto_should_skip(&screen, 64, 64, 64),
+            "screenshot-band content (median ~125 > 80) should skip pixel-domain loss"
+        );
+
+        // Edge: median right at the threshold should NOT skip
+        // (the `>` comparator excludes the boundary).
+        let at_threshold: Vec<f32> = vec![PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD; 64 * 64];
+        assert!(
+            !pixel_loss_auto_should_skip(&at_threshold, 64, 64, 64),
+            "median exactly at 80 should NOT skip (strict `>`)"
+        );
+        let just_above: Vec<f32> = vec![PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD + 0.1; 64 * 64];
+        assert!(
+            pixel_loss_auto_should_skip(&just_above, 64, 64, 64),
+            "median 80.1 (just above strict threshold) should skip"
+        );
+    }
+
+    /// W38-2: every encoder constructor pin defaults `pixel_loss_dispatch`
+    /// to `AlwaysOn` so the historical bitstream is byte-identical.
+    #[test]
+    fn test_pixel_loss_dispatch_default_always_on() {
+        let enc = VarDctEncoder::new(1.0);
+        assert_eq!(
+            enc.pixel_loss_dispatch,
+            crate::api::PixelLossDispatch::AlwaysOn
+        );
+        let enc_default = VarDctEncoder::default();
+        assert_eq!(
+            enc_default.pixel_loss_dispatch,
+            crate::api::PixelLossDispatch::AlwaysOn
         );
     }
 

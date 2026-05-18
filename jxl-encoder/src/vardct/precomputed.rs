@@ -222,6 +222,12 @@ impl EncoderPrecomputed {
         // Auto resolves to `FullBuffered` ≤2048² and `BufferedOutput`
         // otherwise; both still dispatch through the whole-image path
         // at chunk 6 unless the env var forces per-region).
+        //
+        // Default [`crate::api::PixelLossDispatch::AlwaysOn`] for legacy
+        // callers — byte-identical to historical behaviour. The W38-2
+        // dispatch knob is opt-in via the
+        // [`Self::compute_with_budget_and_buffering`] entry point
+        // (used by [`crate::vardct::encoder::VarDctEncoder::encode_with_rate_control_config`]).
         Self::compute_with_budget_and_buffering(
             width,
             height,
@@ -242,6 +248,7 @@ impl EncoderPrecomputed {
             color_encoding,
             budget,
             crate::api::Buffering::Auto,
+            crate::api::PixelLossDispatch::AlwaysOn,
         )
     }
 
@@ -292,6 +299,7 @@ impl EncoderPrecomputed {
         color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
         budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
         buffering: crate::api::Buffering,
+        pixel_loss_dispatch: crate::api::PixelLossDispatch,
     ) -> crate::error::Result<Self> {
         // Step 1: compute the truly global state (XYB convert, noise,
         // patches, chromacity stats, pre-gaborish snapshot). This is
@@ -349,10 +357,29 @@ impl EncoderPrecomputed {
         #[cfg(not(feature = "std"))]
         let env_forces_per_region = false;
         let per_region = buffering_wants_per_region || env_forces_per_region;
+
+        // W38-2 [`crate::api::PixelLossDispatch`] gate (rate-control
+        // path). Compute the per-DC-group fill with the dispatch-
+        // adjusted `effective_pixel_domain_loss`:
+        //   * `AlwaysOff` forces `false` (mask1x1 is never computed).
+        //   * `AlwaysOn` (default) keeps the caller's `pixel_domain_loss`
+        //     unchanged → byte-identical to historical behaviour.
+        //   * `Auto` keeps it unchanged here; the mask1x1 IS computed
+        //     so the per-image median can be measured, and the post-
+        //     fill `pixel_loss_auto_should_skip` predicate decides
+        //     whether to drop the mask before the downstream
+        //     consumers (rate_control / encode_from_precomputed) see it.
+        let effective_pixel_domain_loss = match pixel_loss_dispatch {
+            crate::api::PixelLossDispatch::AlwaysOff => false,
+            crate::api::PixelLossDispatch::AlwaysOn | crate::api::PixelLossDispatch::Auto => {
+                pixel_domain_loss
+            }
+        };
+
         let DcGroupFill {
             quant_field_float,
             masking,
-            mask1x1,
+            mask1x1: mut mask1x1_after_fill,
             cfl_map,
             ac_strategy,
         } = if per_region {
@@ -360,7 +387,7 @@ impl EncoderPrecomputed {
                 &mut global,
                 cfl_enabled,
                 ac_strategy_enabled,
-                pixel_domain_loss,
+                effective_pixel_domain_loss,
                 enable_adaptive_gaborish,
                 force_strategy,
                 profile,
@@ -371,13 +398,25 @@ impl EncoderPrecomputed {
                 &mut global,
                 cfl_enabled,
                 ac_strategy_enabled,
-                pixel_domain_loss,
+                effective_pixel_domain_loss,
                 enable_adaptive_gaborish,
                 force_strategy,
                 profile,
                 budget,
             )?
         };
+
+        // W38-2 Auto: drop mask1x1 on smooth content so the
+        // AC-strategy search downstream sees `None` and folds back
+        // to the coefficient-domain entropy estimate. The mask is
+        // released early so peak working-set doesn't include it.
+        if matches!(pixel_loss_dispatch, crate::api::PixelLossDispatch::Auto)
+            && let Some(ref m) = mask1x1_after_fill
+            && super::encoder::pixel_loss_auto_should_skip(m, global.padded_width, width, height)
+        {
+            mask1x1_after_fill = None;
+        }
+        let mask1x1 = mask1x1_after_fill;
 
         // Step 3: assemble into the public-shape EncoderPrecomputed
         // that downstream consumers (rate_control, encode_inner,
