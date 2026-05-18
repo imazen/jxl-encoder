@@ -83,6 +83,31 @@
   override produces valid bitstreams (djxl + jxl-rs decode) for every
   id, opening the door to per-image content-discriminated dispatch.
 
+- **Auto-splines chunk-6 false-positive suppression on textured photos**
+  (A1 audit Top-5 #5, follow-on to W11-3 `ddc02a02` chunk-5 content
+  discriminator). Adds a bbox-span gate inside
+  `spline_passes_trial_encode_gate`: any candidate whose bbox
+  `max(width, height)` doesn't span the image's long dimension is
+  rejected before the existing trial-encode + cost-benefit machinery
+  runs. New constant
+  `vardct::splines::detect_params::MIN_BBOX_SPAN_OF_IMAGE_LONG_DIM = 1.0`.
+  Closes 4 of 42 CID22-512 photo regressions (worst was
+  `ularapi_Semarang_City_Logo` at +1.19% bytes / +0.86% on
+  `klepas-Gentle-giants-of-the-sea-3`) at opt-in
+  `with_auto_splines(true)`; default-off encode path is unaffected.
+  The bbox-span discriminator was picked after testing Hessian-ratio,
+  AC-only-energy, raw-L2 relative-drop, and cost-margin variants —
+  the energy proxy is dominated by XYB-DC and cannot cleanly
+  separate true thin features on textured backgrounds from
+  sub-image ridge segments through textured photo content. Bbox span
+  is image-relative, cheap to compute, and the chunk-3 stripe+ramp
+  test image (1024×256, wire span 1024) passes the gate exactly
+  unchanged. `tests/auto_splines.rs` 6/6 pass; `cargo test splines`
+  30/30 pass; hash_locks 36/36 byte-identical; rd-regression all 18
+  cells within thresholds. Calibration TSV:
+  `benchmarks/auto_splines_bench_2026-05-17_chunk6_fp.tsv` (+
+  `_before.tsv` for the pre-chunk-6 snapshot).
+
 ### BREAKING CHANGE (queued)
 
 - **`modular_knobs_predictor_does_not_override_tree_learner`** test
@@ -95,7 +120,6 @@
   callers that have built tooling assuming `modular_predictor` is a
   no-op on the tree-learn path (the W4-1 / W7-2 partial-wire state)
   will see bytes change when they pass `-P {0,1,2,3,4,6,7,8,9,10,11,12,13}`.
-
 - **Lossless patches gate now uses lossless-shape trial encoder**
   (`trial_encode_ref_frame_bytes_lossless`, RFC#45 lossless chunk 5
   follow-on to W11-1 `ad9964a6`). Replaces the XYB-shape

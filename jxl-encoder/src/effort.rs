@@ -1047,34 +1047,44 @@ impl EffortProfile {
     /// stale `50.0` anchor down to `0.20`, cutting the gate's
     /// false-positive admit count from ~20 splines per screenshot down
     /// to 6-33 on long bright ridges where the bbox-area-linear energy
-    /// proxy still over-claims. Chunk 5 (this commit) layered a content
-    /// discriminator
+    /// proxy still over-claims. Chunk 5 layered a content discriminator
     /// ([`crate::vardct::splines::looks_like_screenshot`], threshold
     /// shared with the GPU encoder's W7-3 AFV cost-grid gate at
     /// `median(mask1x1) > 95.0`) that skips the detector entirely on
-    /// screenshot-class content. With chunk-5 active every image in
-    /// `benchmarks/auto_splines_bench_2026-05-17_chunk5.tsv` (5 CLIC
-    /// photos, 3 gb82-sc screenshots, 3 line/grid synthetics × e7/e8/e9)
-    /// goes byte-identical.
+    /// screenshot-class content. Chunk 6
+    /// (`benchmarks/auto_splines_bench_2026-05-17_chunk6_fp.tsv`)
+    /// added a bbox-span gate
+    /// ([`crate::vardct::splines::detect_params::MIN_BBOX_SPAN_OF_IMAGE_LONG_DIM`])
+    /// inside `spline_passes_trial_encode_gate`: any candidate whose
+    /// `max(bbox_width, bbox_height)` doesn't span the image's long
+    /// dimension is rejected. This closes the only observed real-photo
+    /// false-positive cluster — 4 of 42 CID22-512 photos that regressed
+    /// by +0.05% to +1.19% on opt-in auto_splines because the
+    /// trial-encode L2-energy proxy couldn't tell a true thin feature
+    /// from a sub-image ridge segment riding through textured photo
+    /// content. With chunks 5+6 active every image in
+    /// `benchmarks/auto_splines_bench_2026-05-17_chunk5.tsv` AND in
+    /// the chunk-6 42-image CID22 sweep goes byte-identical.
     ///
-    /// Default-on at e7+ remains rejected, but for a NEW reason
-    /// post-chunk-5: the discriminator is so effective at filtering
-    /// false-positive content that there are no observed wins to
-    /// flip on. Photos already went byte-identical under chunk 4 (cost
-    /// gate rejected). Screenshots now go byte-identical under chunk 5
-    /// (discriminator skips). The chunk-3 synthetic wins (-2 to -3%
-    /// on multi-line power-line images at e7/e8) are also gone because
-    /// the synthetics have flat 80-grey backgrounds that the
-    /// discriminator correctly classifies as screenshot-class — they
-    /// were a calibration artefact, not a real-world content win.
-    /// Flipping `auto_splines_default(_) = true` at any effort would
-    /// add compute cost (one [`crate::vardct::adaptive_quant::compute_mask1x1`]
-    /// pass per encode) for zero observable benefit on any tested image.
+    /// Default-on at e7+ remains rejected. The discriminator + chunk-6
+    /// span gate are now so effective at filtering candidates that
+    /// there are no observed wins to flip on. Photos go byte-identical
+    /// under the combined chunk-4 cost gate + chunk-6 span gate.
+    /// Screenshots go byte-identical under chunk 5 (discriminator skips).
+    /// The chunk-3 synthetic wins (-2 to -3% on multi-line power-line
+    /// images at e7/e8) are also gone because the synthetics have flat
+    /// 80-grey backgrounds that the discriminator correctly classifies
+    /// as screenshot-class — they were a calibration artefact, not a
+    /// real-world content win. Flipping `auto_splines_default(_) = true`
+    /// at any effort would add compute cost (one
+    /// [`crate::vardct::adaptive_quant::compute_mask1x1`] pass per
+    /// encode) for zero observable benefit on any tested image.
     ///
-    /// The flag remains opt-in for callers who hand-tune for thin-feature
-    /// content (power lines on a noisy sky, hair on a photo background)
-    /// where the discriminator does NOT fire AND the cost gate admits
-    /// the candidate.
+    /// The flag remains opt-in for callers who hand-tune for full-image-
+    /// spanning thin features (power lines crossing a noisy sky edge to
+    /// edge, hair strands spanning a photo background) where the
+    /// discriminator does NOT fire AND the span gate admits the
+    /// candidate AND the cost gate admits the candidate.
     ///
     /// libjxl ships its own `enc_splines.cc:104-107` `FindSplines` as
     /// a stub at `speed_tier <= kSquirrel` (effort >= 7); the real
