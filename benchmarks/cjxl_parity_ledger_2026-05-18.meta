@@ -1,12 +1,12 @@
 # cjxl parity ledger
-git_rev: a23aff6af1cc6da002bfa263b0465fc7cdf87843
+git_rev: 67817f6c780b9410b6117110ce9d29a23b9b6caa
 host: lilith
 cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
 distances: [6.0]
 efforts: [7]
 images: ["codec_wiki.png"]
 corpus: /home/lilith/work/codec-corpus
-wall_seconds: 4.3
+wall_seconds: 4.0
 total_rows: 595
 cells_this_run: 1
 update_mode: true

@@ -1196,6 +1196,21 @@ fn try_merge_16x16_impl(
     let abs_bx = bx0 + cx;
     let abs_by = by0 + cy;
 
+    // W44-23 (Sub-G Approach B, 2026-05-18): per-half inner-crossing checks
+    // mirroring libjxl `enc_ac_strategy.cc:738-741`. The call-site gate at
+    // `vardct/ac_strategy.rs` now uses `can_evaluate_region_outer_only`,
+    // which permits a multi-block transform to sit fully inside the 2×2
+    // region (e.g. an aligned-pass DCT16X16). When that happens, JXK / KXJ
+    // splits are unsafe to paint (the inner column / row would partially
+    // overwrite the existing transform). The flags below gate the
+    // EstimateEntropy calls; libjxl uses `numeric_limits::max()` as the
+    // disallowed-arm cost, so we use `f32::INFINITY` for the same effect.
+    // blocks=2, blocks_half=1.
+    let allow_jxk =
+        !ac_strategy.multi_block_crosses_vertical_boundary(abs_bx + 1, abs_by, abs_by + 2);
+    let allow_kxj =
+        !ac_strategy.multi_block_crosses_horizontal_boundary(abs_bx, abs_by + 1, abs_bx + 2);
+
     // Read cached single-block costs from the aligned pass.
     // (cx, cy) are tile-relative coords; entropy_estimate is indexed as [iy * 8 + ix].
     let cached = [
@@ -1210,7 +1225,10 @@ fn try_merge_16x16_impl(
     ];
     let cost_all_single = cached[0][0] + cached[0][1] + cached[1][0] + cached[1][1];
 
-    // Evaluate merge candidates only (5 calls instead of ~45)
+    // Evaluate merge candidates only (5 calls instead of ~45). JXJ
+    // (DCT16X16) is always evaluated when we reach here because the
+    // outer-only gate already refused if any transform crosses the OUTER
+    // box (libjxl `:725-732` parity).
     let entropy_16x16 = mul16x16
         * estimate_entropy_with_mask(
             RAW_STRATEGY_DCT16X16,
@@ -1232,87 +1250,103 @@ fn try_merge_16x16_impl(
             scratch,
         );
 
-    let entropy_16x8_left = mul16x8
-        * estimate_entropy_with_mask(
-            RAW_STRATEGY_DCT16X8,
-            xyb,
-            stride,
-            abs_bx,
-            abs_by,
-            distance,
-            quant_field,
-            xsize_blocks,
-            masking,
-            ytox,
-            ytob,
-            mask1x1,
-            mask1x1_stride,
-            0.0,
-            scaled_constants,
-            &profile.entropy_mul_table,
-            scratch,
-        );
-    let entropy_16x8_right = mul16x8
-        * estimate_entropy_with_mask(
-            RAW_STRATEGY_DCT16X8,
-            xyb,
-            stride,
-            abs_bx + 1,
-            abs_by,
-            distance,
-            quant_field,
-            xsize_blocks,
-            masking,
-            ytox,
-            ytob,
-            mask1x1,
-            mask1x1_stride,
-            0.0,
-            scaled_constants,
-            &profile.entropy_mul_table,
-            scratch,
-        );
+    let entropy_16x8_left = if allow_jxk {
+        mul16x8
+            * estimate_entropy_with_mask(
+                RAW_STRATEGY_DCT16X8,
+                xyb,
+                stride,
+                abs_bx,
+                abs_by,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                0.0,
+                scaled_constants,
+                &profile.entropy_mul_table,
+                scratch,
+            )
+    } else {
+        f32::INFINITY
+    };
+    let entropy_16x8_right = if allow_jxk {
+        mul16x8
+            * estimate_entropy_with_mask(
+                RAW_STRATEGY_DCT16X8,
+                xyb,
+                stride,
+                abs_bx + 1,
+                abs_by,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                0.0,
+                scaled_constants,
+                &profile.entropy_mul_table,
+                scratch,
+            )
+    } else {
+        f32::INFINITY
+    };
 
-    let entropy_8x16_top = mul16x8
-        * estimate_entropy_with_mask(
-            RAW_STRATEGY_DCT8X16,
-            xyb,
-            stride,
-            abs_bx,
-            abs_by,
-            distance,
-            quant_field,
-            xsize_blocks,
-            masking,
-            ytox,
-            ytob,
-            mask1x1,
-            mask1x1_stride,
-            0.0,
-            scaled_constants,
-            &profile.entropy_mul_table,
-            scratch,
-        );
-    let entropy_8x16_bottom = mul16x8
-        * estimate_entropy_with_mask(
-            RAW_STRATEGY_DCT8X16,
-            xyb,
-            stride,
-            abs_bx,
-            abs_by + 1,
-            distance,
-            quant_field,
-            xsize_blocks,
-            masking,
-            ytox,
-            ytob,
-            mask1x1,
-            mask1x1_stride,
-            0.0,
-            scaled_constants,
-            &profile.entropy_mul_table,
-            scratch,
-        );
+    let entropy_8x16_top = if allow_kxj {
+        mul16x8
+            * estimate_entropy_with_mask(
+                RAW_STRATEGY_DCT8X16,
+                xyb,
+                stride,
+                abs_bx,
+                abs_by,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                0.0,
+                scaled_constants,
+                &profile.entropy_mul_table,
+                scratch,
+            )
+    } else {
+        f32::INFINITY
+    };
+    let entropy_8x16_bottom = if allow_kxj {
+        mul16x8
+            * estimate_entropy_with_mask(
+                RAW_STRATEGY_DCT8X16,
+                xyb,
+                stride,
+                abs_bx,
+                abs_by + 1,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                0.0,
+                scaled_constants,
+                &profile.entropy_mul_table,
+                scratch,
+            )
+    } else {
+        f32::INFINITY
+    };
 
     // Cost comparison (same logic as find_best_16x16_transform)
     let cost_single_left = cached[0][0] + cached[1][0];
@@ -1333,16 +1367,21 @@ fn try_merge_16x16_impl(
         return false; // No merge improvement
     }
 
-    // W44-22 (F-D Sub-G fix Approach A, 2026-05-18): the prior "reset 2×2
-    // region to DCT8 first" prologue is gone — `can_evaluate_region` now
-    // requires all-single-block, so no existing multi-block transform can sit
-    // within the 2×2 region whose markers would need to be cleared. Painting
-    // only the winning halves preserves per-block 8×8-class picks (DCT4×4,
-    // AFV0-3, DCT2×2, IDENTITY, DCT4×8, DCT8×4) on the non-winning halves.
-    // Audit memory: f_d_sub_chunk_g_try_merge_2026-05-18.md.
+    // W44-23 (F-D Sub-G fix Approach B, 2026-05-18): the call-site gate now
+    // requires only OUTER-edge crossings to be clear (libjxl
+    // `enc_ac_strategy.cc:725-732` parity). A multi-block transform may sit
+    // fully inside the 2×2 region; in that case the per-half inner-crossing
+    // checks above (`allow_jxk`, `allow_kxj`) made the corresponding splits
+    // INFINITY-cost so a partial-merge paint can't overlap the inner
+    // transform. Painting only the winning halves preserves per-block
+    // 8×8-class picks (DCT4×4, AFV0-3, DCT2×2, IDENTITY, DCT4×8, DCT8×4)
+    // on the non-winning halves. If JXJ wins, painting the entire 2×2
+    // region with DCT16X16 is safe (the outer-only gate proved no
+    // transform straddles the outer edges, and Set() overwrites
+    // first-block markers cleanly).
     debug_assert!(
-        ac_strategy.can_evaluate_region(abs_bx, abs_by, 2),
-        "try_merge_16x16_impl invariant: region must be all-single-block before merge"
+        ac_strategy.can_evaluate_region_outer_only(abs_bx, abs_by, 2),
+        "try_merge_16x16_impl invariant: region must have no outer-crossing transforms"
     );
 
     // Apply the winning transform and update entropy cache.
@@ -1720,6 +1759,17 @@ fn try_merge_32x32_impl(
     let abs_bx = bx0 + cx;
     let abs_by = by0 + cy;
 
+    // W44-23 (F-D Sub-G fix Approach B, 2026-05-18): per-half inner-crossing
+    // checks mirroring libjxl `enc_ac_strategy.cc:738-741`. blocks=4,
+    // blocks_half=2. The outer-only gate at the call site permits an
+    // existing multi-block transform (e.g. an aligned-pass DCT32X32,
+    // DCT16X16, DCT32X16, DCT16X32) to sit fully inside the 4×4 region;
+    // these flags decide whether partial JXN / NXJ splits are safe.
+    let allow_jxn =
+        !ac_strategy.multi_block_crosses_vertical_boundary(abs_bx + 2, abs_by, abs_by + 4);
+    let allow_nxj =
+        !ac_strategy.multi_block_crosses_horizontal_boundary(abs_bx, abs_by + 2, abs_bx + 4);
+
     // Read cached sub-costs from the aligned + non-aligned 16×16 passes.
     // Sum into per-quadrant costs (2×2 array of quadrants, each covering 2×2 blocks).
     let mut quadrant_cost = [[0.0f32; 2]; 2];
@@ -1734,7 +1784,9 @@ fn try_merge_32x32_impl(
     let sub_bottom = quadrant_cost[1][0] + quadrant_cost[1][1];
     let cost_sub = sub_left + sub_right;
 
-    // Evaluate 5 large transform candidates.
+    // Evaluate 5 large transform candidates. JXJ (DCT32X32) is always
+    // evaluated when we reach here because the outer-only gate already
+    // refused if any transform crosses the OUTER box.
     let entropy_32x32 = mul32x32
         * estimate_entropy_with_mask(
             RAW_STRATEGY_DCT32X32,
@@ -1755,86 +1807,102 @@ fn try_merge_32x32_impl(
             &profile.entropy_mul_table,
             scratch,
         );
-    let entropy_32x16_0 = mul32x16
-        * estimate_entropy_with_mask(
-            RAW_STRATEGY_DCT32X16,
-            xyb,
-            stride,
-            abs_bx,
-            abs_by,
-            distance,
-            quant_field,
-            xsize_blocks,
-            masking,
-            ytox,
-            ytob,
-            mask1x1,
-            mask1x1_stride,
-            0.0,
-            scaled_constants,
-            &profile.entropy_mul_table,
-            scratch,
-        );
-    let entropy_32x16_1 = mul32x16
-        * estimate_entropy_with_mask(
-            RAW_STRATEGY_DCT32X16,
-            xyb,
-            stride,
-            abs_bx + 2,
-            abs_by,
-            distance,
-            quant_field,
-            xsize_blocks,
-            masking,
-            ytox,
-            ytob,
-            mask1x1,
-            mask1x1_stride,
-            0.0,
-            scaled_constants,
-            &profile.entropy_mul_table,
-            scratch,
-        );
-    let entropy_16x32_0 = mul32x16
-        * estimate_entropy_with_mask(
-            RAW_STRATEGY_DCT16X32,
-            xyb,
-            stride,
-            abs_bx,
-            abs_by,
-            distance,
-            quant_field,
-            xsize_blocks,
-            masking,
-            ytox,
-            ytob,
-            mask1x1,
-            mask1x1_stride,
-            0.0,
-            scaled_constants,
-            &profile.entropy_mul_table,
-            scratch,
-        );
-    let entropy_16x32_1 = mul32x16
-        * estimate_entropy_with_mask(
-            RAW_STRATEGY_DCT16X32,
-            xyb,
-            stride,
-            abs_bx,
-            abs_by + 2,
-            distance,
-            quant_field,
-            xsize_blocks,
-            masking,
-            ytox,
-            ytob,
-            mask1x1,
-            mask1x1_stride,
-            0.0,
-            scaled_constants,
-            &profile.entropy_mul_table,
-            scratch,
-        );
+    let entropy_32x16_0 = if allow_jxn {
+        mul32x16
+            * estimate_entropy_with_mask(
+                RAW_STRATEGY_DCT32X16,
+                xyb,
+                stride,
+                abs_bx,
+                abs_by,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                0.0,
+                scaled_constants,
+                &profile.entropy_mul_table,
+                scratch,
+            )
+    } else {
+        f32::INFINITY
+    };
+    let entropy_32x16_1 = if allow_jxn {
+        mul32x16
+            * estimate_entropy_with_mask(
+                RAW_STRATEGY_DCT32X16,
+                xyb,
+                stride,
+                abs_bx + 2,
+                abs_by,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                0.0,
+                scaled_constants,
+                &profile.entropy_mul_table,
+                scratch,
+            )
+    } else {
+        f32::INFINITY
+    };
+    let entropy_16x32_0 = if allow_nxj {
+        mul32x16
+            * estimate_entropy_with_mask(
+                RAW_STRATEGY_DCT16X32,
+                xyb,
+                stride,
+                abs_bx,
+                abs_by,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                0.0,
+                scaled_constants,
+                &profile.entropy_mul_table,
+                scratch,
+            )
+    } else {
+        f32::INFINITY
+    };
+    let entropy_16x32_1 = if allow_nxj {
+        mul32x16
+            * estimate_entropy_with_mask(
+                RAW_STRATEGY_DCT16X32,
+                xyb,
+                stride,
+                abs_bx,
+                abs_by + 2,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                0.0,
+                scaled_constants,
+                &profile.entropy_mul_table,
+                scratch,
+            )
+    } else {
+        f32::INFINITY
+    };
 
     // Three-way comparison matching libjxl FindBestFirstLevelDivisionForSquare.
     let cost_jxn = entropy_32x16_0.min(sub_left) + entropy_32x16_1.min(sub_right);
@@ -1846,13 +1914,14 @@ fn try_merge_32x32_impl(
         return false;
     }
 
-    // W44-22 (F-D Sub-G fix Approach A, 2026-05-18): the prior "reset 4×4
-    // region to DCT8 first" prologue is gone — `can_evaluate_region` now
-    // requires all-single-block. Preserves per-block 8×8-class picks on
-    // non-winning halves. See try_merge_16x16_impl for the full note.
+    // W44-23 (F-D Sub-G fix Approach B, 2026-05-18): the call-site gate now
+    // requires only OUTER-edge crossings to be clear; per-half inner-
+    // crossing checks above suppress partial JXN/NXJ paints when an
+    // inner-contained multi-block would be partially overwritten. See
+    // try_merge_16x16_impl for the full note.
     debug_assert!(
-        ac_strategy.can_evaluate_region(abs_bx, abs_by, 4),
-        "try_merge_32x32_impl invariant: region must be all-single-block before merge"
+        ac_strategy.can_evaluate_region_outer_only(abs_bx, abs_by, 4),
+        "try_merge_32x32_impl invariant: region must have no outer-crossing transforms"
     );
 
     if entropy_32x32 < cost_jxn && entropy_32x32 < cost_nxj {
