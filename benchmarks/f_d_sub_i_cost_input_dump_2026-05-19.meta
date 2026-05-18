@@ -1,0 +1,10 @@
+# W44-21 F-D Sub-I: per-position cost-input dump
+# Image: 1531677.png e7 d=6
+# Borderline-loss positions (delta_pct in [0,+2%], 32x32 loses):
+#   These are candidates where a small numerical bias could flip the
+#   decision from JxN/NxJ to 32x32 (matching cjxl's pick on the F-D
+#   wedge).
+# Read-only — no source mutation; the dump path is gated on
+# `JXL_DUMP_POS={bx,by}` env var only.
+total_positions: 225
+borderline_count: 33

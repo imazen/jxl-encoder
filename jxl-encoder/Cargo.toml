@@ -806,6 +806,17 @@ name = "f_d_fused_vs_unfused_dct8"
 path = "examples/f_d_fused_vs_unfused_dct8.rs"
 required-features = ["__expert"]
 
+# W44-21 F-D Sub-I: per-position cost-input dump at chosen 32x32 wedge
+# positions. Drives the `JXL_DUMP_POS={bx,by}` env-var-gated dump path
+# in `vardct/ac_strategy_search.rs::find_best_32x32_transform_impl`.
+# Sweeps every 4-aligned (bx, by) in [4..60]² and emits per-position
+# cost-component breakdown TSV. Identifies "borderline-loss" positions
+# (delta_pct ∈ [0, +2%]) which are the most likely cjxl-vs-ours wedge
+# candidates. Requires a pre-built `target/release/cjxl-rs` binary.
+[[example]]
+name = "f_d_sub_i_cost_input_dump"
+path = "examples/f_d_sub_i_cost_input_dump.rs"
+
 # W43-2 chunk-7 magetypes consolidation (final): wall-clock A/B for the
 # consolidated `entropy_estimate_coeffs` kernel (5 image sizes, dispatch vs
 # scalar over a sweep of DCT8-shaped blocks with alternating pixel-domain /

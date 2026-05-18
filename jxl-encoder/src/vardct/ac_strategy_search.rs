@@ -2520,6 +2520,100 @@ fn find_best_32x32_transform_impl(
         mul32x16
     );
 
+    // W44-21 F-D Sub-I: env-var-driven per-position cost-input dump.
+    // Set `JXL_DUMP_POS=bx,by` to dump all cost components at this 32x32 position
+    // (bx, by are 8x8-block coordinates of the top-left of the 32x32 region).
+    #[cfg(feature = "std")]
+    if let Ok(target) = std::env::var("JXL_DUMP_POS") {
+        let parts: Vec<&str> = target.split(',').collect();
+        if let [Ok(tx), Ok(ty)] = [
+            parts.first().copied().unwrap_or("").parse::<usize>(),
+            parts.get(1).copied().unwrap_or("").parse::<usize>(),
+        ] && parts.len() == 2 && abs_bx == tx && abs_by == ty {
+                        let mut s = String::new();
+                        s.push_str(&format!("\n=== W44-21 DUMP at (bx={abs_bx}, by={abs_by}) d={distance} ===\n"));
+                        s.push_str(&format!("OUR CONTEXT:\n  scaled_constants = (info_loss_mul={:.6}, cost_delta={:.6}, zeros_mul={:.6})\n",
+                            scaled_constants.0, scaled_constants.1, scaled_constants.2));
+                        s.push_str(&format!("  mul32x32={mul32x32:.6} mul32x16={mul32x16:.6}\n"));
+                        s.push_str(&format!("  use_pixel_domain={use_pixel_domain} ytox={ytox} ytob={ytob}\n"));
+                        s.push_str(&format!("  entropy_mul_table: DCT8={:.4} DCT16X8={:.4} DCT16X16={:.4} DCT32X32={:.4} DCT16X32={:.4}\n",
+                            profile.entropy_mul_table.dct8,
+                            profile.entropy_mul_table.dct16x8,
+                            profile.entropy_mul_table.dct16x16,
+                            profile.entropy_mul_table.dct32x32,
+                            profile.entropy_mul_table.dct16x32,
+                        ));
+                        s.push_str("\nQUANT_FIELD (4x4 of 8x8 positions):\n");
+                        for iy in 0..4 {
+                            s.push_str("  ");
+                            for ix in 0..4 {
+                                let idx = (abs_by + iy) * xsize_blocks + (abs_bx + ix);
+                                s.push_str(&format!("{:>10.4} ", quant_field[idx]));
+                            }
+                            s.push('\n');
+                        }
+                        s.push_str("\nMASKING (per-block, 4x4 of 8x8 positions):\n");
+                        for iy in 0..4 {
+                            s.push_str("  ");
+                            for ix in 0..4 {
+                                let idx = (abs_by + iy) * xsize_blocks + (abs_bx + ix);
+                                s.push_str(&format!("{:>10.4} ", masking[idx]));
+                            }
+                            s.push('\n');
+                        }
+                        if let Some(m1) = mask1x1 {
+                            s.push_str("\nMASK1X1 (8x8 subsampled — first pixel of each 8x8 block):\n");
+                            for iy in 0..4 {
+                                s.push_str("  ");
+                                for ix in 0..4 {
+                                    let py = (abs_by + iy) * 8;
+                                    let px = (abs_bx + ix) * 8;
+                                    let idx = py * mask1x1_stride + px;
+                                    s.push_str(&format!("{:>10.4} ", m1[idx]));
+                                }
+                                s.push('\n');
+                            }
+                            s.push_str("\nMASK1X1 8x8 means (Y channel only):\n");
+                            for iy in 0..4 {
+                                s.push_str("  ");
+                                for ix in 0..4 {
+                                    let mut sum = 0.0f32;
+                                    for dy in 0..8 {
+                                        for dx in 0..8 {
+                                            let py = (abs_by + iy) * 8 + dy;
+                                            let px = (abs_bx + ix) * 8 + dx;
+                                            sum += m1[py * mask1x1_stride + px];
+                                        }
+                                    }
+                                    s.push_str(&format!("{:>10.4} ", sum / 64.0));
+                                }
+                                s.push('\n');
+                            }
+                        }
+                        s.push_str("\nENTROPY_ESTIMATE (16 per-8x8 sub-costs in 4x4 grid, populated by find_best_16x16):\n");
+                        if let Some((ox, oy)) = cache_offset {
+                            for iy in 0..4 {
+                                s.push_str("  ");
+                                for ix in 0..4 {
+                                    s.push_str(&format!("{:>12.2} ", scratch.entropy_estimate[(oy+iy) * 8 + (ox+ix)]));
+                                }
+                                s.push('\n');
+                            }
+                        } else {
+                            s.push_str("  <no cache_offset; cannot read>\n");
+                        }
+                        s.push_str(&format!("\nQUADRANT_COSTS (2x2):\n  [0][0]={:.2}  [0][1]={:.2}\n  [1][0]={:.2}  [1][1]={:.2}\n",
+                            quadrant_cost[0][0], quadrant_cost[0][1], quadrant_cost[1][0], quadrant_cost[1][1]));
+                        s.push_str(&format!("\nFINAL COSTS:\n  entropy_32x32={entropy_32x32:.2}\n  entropy_32x16_0(left)={entropy_32x16_0:.2}  entropy_32x16_1(right)={entropy_32x16_1:.2}\n  entropy_16x32_0(top)={entropy_16x32_0:.2}  entropy_16x32_1(bot)={entropy_16x32_1:.2}\n"));
+                        s.push_str(&format!("  sub_left={sub_left:.2} sub_right={sub_right:.2} sub_top={sub_top:.2} sub_bottom={sub_bottom:.2}\n"));
+                        s.push_str(&format!("  cost_sub={cost_sub:.2} cost_jxn={cost_jxn:.2} cost_nxj={cost_nxj:.2}\n"));
+                        s.push_str(&format!("  DECISION: 32x32_wins={}, jxN_better_than_nxJ={}\n",
+                            entropy_32x32 < cost_jxn && entropy_32x32 < cost_nxj,
+                            cost_jxn < cost_nxj));
+                        eprintln!("{s}");
+        }
+    }
+
     // Three-way comparison matching libjxl FindBestFirstLevelDivisionForSquare.
     // The square must beat BOTH rect orientations (which account for partial merges).
     if entropy_32x32 < cost_jxn && entropy_32x32 < cost_nxj {
