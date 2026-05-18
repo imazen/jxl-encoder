@@ -2,6 +2,53 @@
 
 ## [Unreleased]
 
+### Performance
+
+- **W43-2 chunk-4 — magetypes-consolidate `gaborish_5x5`**
+  (`jxl-encoder-simd/src/gaborish5x5.rs`, `jxl-encoder-simd/Cargo.toml`,
+  `jxl-encoder/examples/gaborish5x5_magetypes_bench.rs`,
+  `benchmarks/magetypes_gaborish5x5_consolidation_2026-05-19.{tsv,meta}`).
+  Mirrors the W43-2b `compute_mask1x1` consolidation pattern on the next
+  candidate from the W43-2 audit memo (`memory/magetypes_cpu_acceleration_-
+  candidates_2026-05-19.md`). The prior 3 hand-written SIMD variants
+  (AVX2 + NEON + scalar fallback) plus the missing-WASM fall-through
+  collapse to a single `#[magetypes(define(f32x8), v4, v3, neon, wasm128,
+  scalar)]` body. The macro generates one `#[arcane]`-wrapped variant per
+  listed tier from the same source-level algorithm:
+    - `gaborish_5x5_impl_v4`      (x86_64 AVX-512, opt-in via the new
+                                   `jxl-encoder-simd` `avx512` feature flag)
+    - `gaborish_5x5_impl_v3`      (x86_64 AVX2, native 256-bit f32x8)
+    - `gaborish_5x5_impl_neon`    (aarch64, 2x f32x4 polyfill of f32x8)
+    - `gaborish_5x5_impl_wasm128` (wasm32, 2x f32x4 polyfill of f32x8 —
+                                   NEW: pre-consolidation the wasm32
+                                   dispatch fell through to scalar)
+    - `gaborish_5x5_impl_scalar`  (portable scalar fallback)
+  The body uses the same `f32x8` FMA chain shape the existing AVX2 body
+  had (`mul_add` association `wc*center + (wr*r + (wd*d + (...)))`), so
+  emitted instructions are bit-equivalent on AVX2 and NEON. wasm32 now
+  gets a real SIMD path where it previously ran the scalar loop.
+  Hash-lock 36/36 byte-identical (`tests/hash_lock_features.rs`); 125
+  `cargo test -p jxl-encoder-simd` tests pass including 3 new gaborish
+  parity tests (`test_gaborish_5x5_simd_matches_scalar` exercises every
+  available token permutation via `archmage::testing::for_each_token_-
+  permutation`). x86_64 wall-clock at 1024² photo size (the dominant
+  cell in the e5-e7 budget): **5.03 ms dispatch vs 11.20 ms scalar =
+  2.23× median speedup** (matches the prior hand-written AVX2 baseline
+  within run-to-run thermal/CPU-load variance — the LLVM-emitted AVX2
+  body is bit-equivalent to the prior hand-written one). Per-size
+  dispatch-vs-scalar median speedups: 256² 3.83×, 512² 2.55×, 1024²
+  2.23×, 2048² 1.82×, 4096² 3.05×. (Best-of-13-samples ratios are
+  larger — 1024² 9.16/3.34 ms = 2.74× best-iter — and a quieter-load
+  re-run hit 1024² 23.5/2.6 ms = 9.00×; the median bench was on a
+  load-active machine so the dispatch arm caught more contention.)
+  Backwards-compat aliases preserved:
+  `gaborish_5x5_avx2`, `gaborish_5x5_neon`, plus the new
+  `gaborish_5x5_wasm128`. Chunk-5 candidate per W43-2 audit:
+  `pixel_domain_loss` (#5, 4 h, LOW risk — manual `x²·x²·x²` chain
+  preserves the 8th-power parity already proven on the AVX2 path) or
+  `forward_xyb` (#1, 6 h, biggest LOC reduction). No AI attribution
+  (gaborish algorithm derived from libjxl).
+
 ### Investigated
 
 - **W41-1 (issue #52) — distance-aware `min_peak` patches gate

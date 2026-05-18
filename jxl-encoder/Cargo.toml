@@ -760,5 +760,12 @@ name = "hdr_loss_ssim2_promotion_ab"
 path = "examples/hdr_loss_ssim2_promotion_ab.rs"
 required-features = ["std", "butteraugli-loop", "ssim2-loop"]
 
+# W43-2 chunk-4 magetypes consolidation: wall-clock A/B for the consolidated
+# `gaborish_5x5_channel` kernel (5 image sizes, dispatch vs scalar). Saves
+# TSV + .meta to /tmp/ for atomic mv into benchmarks/ once verified.
+[[example]]
+name = "gaborish5x5_magetypes_bench"
+path = "examples/gaborish5x5_magetypes_bench.rs"
+
 [lints]
 workspace = true
