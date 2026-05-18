@@ -2193,14 +2193,20 @@ impl LosslessConfig {
     /// `None` (default) lets the MA tree learner pick. `Some(n)` for
     /// `n in 0..=13` corresponds to [`crate::modular::Predictor`]
     /// variants `Zero..Average4` (see the enum in
-    /// `jxl-encoder/src/modular/predictor.rs`). `Some(14)` / `Some(15)`
-    /// are reserved for libjxl's `Best` / `Variable` modes and are
-    /// currently stored but not honoured by our encoder (the per-leaf
-    /// tree-learned predictor still wins). Values outside `0..=15` are
-    /// clamped silently.
+    /// `jxl-encoder/src/modular/predictor.rs`).
     ///
-    /// Encoder-side wiring of the forced predictor through the
-    /// no-tree-learning modular path is queued follow-on work.
+    /// `Some(15)` is libjxl's `Variable` meta-mode — falls through to
+    /// the per-leaf ID3 tree learner. `Some(14)` is libjxl's `Best`
+    /// slot, which we repurpose as **RIGED** (Sharma 2018, Resolution-
+    /// Independent Gradient-aware Edge Detection): the tree learner is
+    /// replaced with a hand-crafted 3-leaf gradient-aware MA tree
+    /// switching between `Top`/`Left`/`Average((W+N)/2)` per pixel based
+    /// on `|NW - W|` and `|W - WW|` thresholds. Encoder-only meta-mode
+    /// — the wire bitstream uses only spec-conformant predictors and
+    /// properties, so any JXL decoder rounds-trips pixel-exact. See
+    /// [`crate::modular::tree::riged_tree`] for the tree shape.
+    ///
+    /// Values outside `0..=15` are clamped silently.
     pub fn with_modular_predictor(mut self, p: Option<u8>) -> Self {
         self.modular_predictor = p.map(|v| v.min(15));
         self

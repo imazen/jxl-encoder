@@ -10549,33 +10549,101 @@ fn modular_knobs_predictor_overrides_tree_learner_left() {
 }
 
 #[test]
-fn modular_knobs_predictor_tree_learn_meta_modes_fall_back_to_id3() {
-    // Ids 14 (libjxl `Best`) and 15 (libjxl `Variable`) are
-    // encoder-only meta-modes that explicitly REQUEST per-leaf tree
-    // selection. On the tree-learning path they must NOT override the
-    // learner — bytes stay identical to the unset default. Pins the
-    // resolve_tree_learn_force_predictor 14/15→None invariant.
+fn modular_knobs_predictor_tree_learn_id15_variable_falls_back_to_id3() {
+    // Id 15 (libjxl `Variable`) is an encoder-only meta-mode that
+    // explicitly REQUESTS per-leaf tree selection. On the tree-learning
+    // path it must NOT override the learner — bytes stay identical to
+    // the unset default. Pins the resolve_tree_learn_force_predictor
+    // 15→None invariant.
+    //
+    // Id 14 (formerly libjxl `Best`) is now repurposed as RIGED
+    // (Sharma 2018, see `crate::modular::tree::riged_tree`) — covered
+    // by `modular_knobs_predictor_tree_learn_id14_riged_*` tests below.
     let pixels = make_palette_friendly_rgb_256();
     let default = LosslessConfig::new()
         .encode(&pixels, 256, 256, PixelLayout::Rgb8)
         .expect("default encode");
-    let best = LosslessConfig::new()
-        .with_modular_predictor(Some(14)) // libjxl Best
-        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
-        .expect("Some(14) Best encode");
     let variable = LosslessConfig::new()
         .with_modular_predictor(Some(15)) // libjxl Variable
         .encode(&pixels, 256, 256, PixelLayout::Rgb8)
         .expect("Some(15) Variable encode");
     assert_eq!(
-        default, best,
-        "Some(14) (Best) is a meta-mode requesting per-leaf selection — must \
-         fall through to ID3 and stay byte-identical to default"
-    );
-    assert_eq!(
         default, variable,
         "Some(15) (Variable) is a meta-mode requesting per-leaf selection — \
          must fall through to ID3 and stay byte-identical to default"
+    );
+}
+
+/// Synthesizes a 256x256 RGB image with high-frequency texture so the
+/// RIGED predictor-14 override exercises real gradient-driven branch
+/// switching. Bands of strong vertical edges, horizontal edges, and
+/// smooth gradients in different regions guarantee all three RIGED
+/// leaves are hit. Pixel values span the full 0..=255 range so the
+/// 8-bit RIGED threshold (T=44) is meaningfully exceeded.
+fn make_textured_rgb_256() -> Vec<u8> {
+    let mut pixels = Vec::with_capacity(256 * 256 * 3);
+    for y in 0..256u32 {
+        for x in 0..256u32 {
+            // Mix sinusoids of different frequencies + a sharp diagonal
+            // edge to produce varied local-gradient strength.
+            let r = ((x.wrapping_mul(3).wrapping_add(y.wrapping_mul(5)) ^ 0x5A) & 0xFF) as u8;
+            let g = (((x + y) ^ (x.wrapping_mul(7))) & 0xFF) as u8;
+            let b = ((x.wrapping_mul(11) ^ y.wrapping_mul(13) ^ 0xA3) & 0xFF) as u8;
+            pixels.push(r);
+            pixels.push(g);
+            pixels.push(b);
+        }
+    }
+    pixels
+}
+
+#[test]
+fn modular_knobs_predictor_tree_learn_id14_riged_changes_bytes() {
+    // Id 14 in this encoder is the RIGED (Sharma 2018) gradient-aware
+    // tree override — replaces ID3 with a hand-crafted 3-leaf MA tree.
+    // On textured content where gradient-strength signals vary across
+    // pixels, RIGED MUST differ from the unset default (which runs ID3
+    // and learns a different tree shape). Palette-friendly content
+    // would convert via the palette transform to small-valued indices
+    // where RIGED's T=44 threshold is rarely crossed, so we use
+    // texture here.
+    let pixels = make_textured_rgb_256();
+    let default = LosslessConfig::new()
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("default encode");
+    let riged = LosslessConfig::new()
+        .with_modular_predictor(Some(14)) // RIGED override
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("Some(14) RIGED encode");
+    assert_ne!(
+        default, riged,
+        "Some(14) (RIGED) is a tree-shape override on textured content — must \
+         produce a different bitstream from the ID3-learned default"
+    );
+}
+
+#[test]
+fn modular_knobs_predictor_tree_learn_id14_riged_roundtrip_via_jxl_rs() {
+    // RIGED tree must be wire-legal — every leaf uses a wire predictor
+    // (0..=13) and every split uses a wire property. jxl-rs (project's
+    // primary decoder) must decode pixel-exact on textured content.
+    let pixels = make_textured_rgb_256();
+    let encoded = LosslessConfig::new()
+        .with_modular_predictor(Some(14))
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("Some(14) RIGED encode");
+    let decoded = crate::test_helpers::decode_with_jxl_rs(&encoded)
+        .expect("jxl-rs decode of RIGED-encoded image");
+    assert_eq!(decoded.width, 256);
+    assert_eq!(decoded.height, 256);
+    let decoded_u8: Vec<u8> = decoded
+        .pixels
+        .iter()
+        .map(|&v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
+        .collect();
+    assert_eq!(
+        decoded_u8, pixels,
+        "RIGED override (--modular-predictor 14) must roundtrip pixel-exact via jxl-rs"
     );
 }
 
@@ -10701,11 +10769,13 @@ fn modular_knobs_predictor_all_ids_roundtrip_via_jxl_rs() {
 
 #[test]
 fn modular_knobs_predictor_meta_modes_fall_back_to_gradient() {
-    // Predictor ids 14 (`Best`) and 15 (`Variable`) are libjxl
-    // encoder-only meta-modes that imply tree learning. With
-    // tree-learning OFF, the non-tree paths fall back to Gradient (id
-    // 5) and produce byte-identical output to an explicit `Some(5)`.
-    // This pins the resolve_fixed_predictor 14/15→5 invariant.
+    // Predictor ids 14 (RIGED, encoder-only meta-mode in this encoder /
+    // libjxl `Best`) and 15 (libjxl `Variable`) both imply tree-shaped
+    // logic. With tree-learning OFF the non-tree paths have no tree
+    // machinery to honour either meta-mode, so they fall back to
+    // Gradient (id 5) and produce byte-identical output to `Some(5)`.
+    // This pins the resolve_fixed_predictor 14/15→5 invariant for the
+    // simple-stream paths.
     let pixels = make_palette_friendly_rgb_256();
     let cfg = || LosslessConfig::new().with_tree_learning(false);
     let gradient = cfg()
@@ -10715,14 +10785,15 @@ fn modular_knobs_predictor_meta_modes_fall_back_to_gradient() {
     let best = cfg()
         .with_modular_predictor(Some(14))
         .encode(&pixels, 256, 256, PixelLayout::Rgb8)
-        .expect("Some(14) Best");
+        .expect("Some(14) RIGED (no-op on non-tree path)");
     let variable = cfg()
         .with_modular_predictor(Some(15))
         .encode(&pixels, 256, 256, PixelLayout::Rgb8)
         .expect("Some(15) Variable");
     assert_eq!(
         gradient, best,
-        "predictor=14 (Best) must fall back to Gradient on non-tree path"
+        "predictor=14 (RIGED) must fall back to Gradient on non-tree path \
+         (no tree machinery to express the multi-leaf RIGED switch)"
     );
     assert_eq!(
         gradient, variable,

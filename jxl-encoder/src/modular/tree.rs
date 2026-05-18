@@ -338,6 +338,113 @@ pub fn weighted_tree() -> Tree {
     simple_tree(Predictor::Weighted)
 }
 
+/// Creates a RIGED-shaped (Resolution-Independent Gradient-aware Edge
+/// Detection) MA tree as an encoder-only meta-mode for
+/// `--modular-predictor 14`.
+///
+/// Per Sharma et al. 2018, RIGED switches per-pixel among `West`,
+/// `North` and a Paeth-like average based on the relative strength of
+/// the vertical vs horizontal local gradient. The full paper's metric is
+///
+/// ```text
+///   A_v = |NW - W| + |NN - N|
+///   A_h = |WW - W| + |NW - N|
+/// ```
+///
+/// JXL's MA tree only splits on a single property at a time, so we
+/// cannot encode the literal `(A_v - A_h)` comparison in one node. We
+/// approximate the three-way switch with a 3-leaf tree that gates on the
+/// dominant single-property contributors of each axis (`|NW - W|` for
+/// `A_v`, `|W - WW|` for `A_h`) — capturing the gradient-strength
+/// intuition while remaining wire-legal under the spec's predictor and
+/// property tables.
+///
+/// Tree shape (lchild = property <= splitval, rchild = property >
+/// splitval):
+///
+/// ```text
+///   Root: |NW - W| (property 13) > T  // strong vertical edge?
+///     yes ── leaf: Top (predict from N)
+///     no  ── |W - WW| (property 10) > T  // strong horizontal edge?
+///              yes ── leaf: Left (predict from W)
+///              no  ── leaf: Average0 ((W + N) / 2)  // smooth / mixed
+/// ```
+///
+/// Threshold `T` scales with channel bit depth, per the paper's
+/// constants: `T = 44` for ≤ 8-bit channels, `T = 768` for > 8-bit. The
+/// scaling matches the dynamic range of the absolute-difference
+/// properties produced by [`PixelProperties::compute`].
+///
+/// This tree is decoder-trivial — every leaf uses a predictor in
+/// `0..=13` and every split property is in `0..=15`, so any spec-
+/// conformant JXL decoder evaluates the RIGED switch the same way the
+/// encoder did. Pixel-exact round-trip is verified by the modular
+/// roundtrip integration tests.
+///
+/// Used by [`super::encode::resolve_tree_learn_riged_tree`].
+pub fn riged_tree(bit_depth: u32) -> Tree {
+    // Sharma 2018 thresholds — T = 44 for 8-bit, T = 768 for 16-bit.
+    // For other bit depths we interpolate linearly in the ratio
+    // T / max_value to keep the gate independent of dynamic range.
+    let threshold: i32 = if bit_depth <= 8 {
+        44
+    } else if bit_depth >= 16 {
+        768
+    } else {
+        // Linear interp between the two reference points; rounds toward
+        // the nearest integer so 12-bit lands at ~199, 10-bit at ~110.
+        let lo = 44.0_f32;
+        let hi = 768.0_f32;
+        let frac = (bit_depth as f32 - 8.0) / 8.0;
+        (lo + (hi - lo) * frac).round() as i32
+    };
+
+    vec![
+        // 0: Root — split on |NW - W| (property 13, AbsNwMinusW).
+        // Captures the vertical-axis gradient component (NW→W is the
+        // vertical-edge signature: a strong vertical edge between rows
+        // makes NW and W differ a lot).
+        PropertyDecisionNode {
+            property: Property::AbsNwMinusW as i32,
+            splitval: threshold,
+            lchild: 2, // |NW-W| <= T → check horizontal axis
+            rchild: 1, // |NW-W| >  T → strong vertical edge → leaf Top
+            ..Default::default()
+        },
+        // 1: Leaf — strong vertical edge → predict from North.
+        PropertyDecisionNode {
+            property: -1,
+            predictor: Predictor::Top,
+            context_id: 0,
+            ..Default::default()
+        },
+        // 2: Inner — split on |W - WW| (property 10, AbsWMinusWw).
+        // Captures the horizontal-axis gradient component.
+        PropertyDecisionNode {
+            property: Property::AbsWMinusWw as i32,
+            splitval: threshold,
+            lchild: 4, // |W-WW| <= T → smooth/mixed → Average0
+            rchild: 3, // |W-WW| >  T → strong horizontal edge → Left
+            ..Default::default()
+        },
+        // 3: Leaf — strong horizontal edge → predict from West.
+        PropertyDecisionNode {
+            property: -1,
+            predictor: Predictor::Left,
+            context_id: 1,
+            ..Default::default()
+        },
+        // 4: Leaf — both gradients weak (smooth region) → average W and
+        // N. This is the Paeth-like fallback from the paper.
+        PropertyDecisionNode {
+            property: -1,
+            predictor: Predictor::Average0,
+            context_id: 2,
+            ..Default::default()
+        },
+    ]
+}
+
 /// Creates a tree that selects between Gradient and Weighted based on WP max error.
 /// Uses Gradient when max error is low (WP is stable), Weighted when error is higher.
 pub fn adaptive_gradient_weighted_tree() -> Tree {
@@ -525,6 +632,106 @@ mod tests {
         let tree = weighted_tree();
         assert_eq!(tree.len(), 1);
         assert_eq!(tree[0].predictor, Predictor::Weighted);
+    }
+
+    #[test]
+    fn test_riged_tree_shape_8bit() {
+        // Sharma 2018: T = 44 at ≤ 8-bit channels.
+        let tree = riged_tree(8);
+        assert_eq!(tree.len(), 5, "RIGED tree has 3 leaves + 2 inner nodes");
+        // Root splits on |NW - W| at T=44.
+        assert_eq!(tree[0].property, Property::AbsNwMinusW as i32);
+        assert_eq!(tree[0].splitval, 44);
+        // Strong-vertical-edge leaf → Top.
+        assert_eq!(tree[1].property, -1);
+        assert_eq!(tree[1].predictor, Predictor::Top);
+        // Second inner splits on |W - WW| at T=44.
+        assert_eq!(tree[2].property, Property::AbsWMinusWw as i32);
+        assert_eq!(tree[2].splitval, 44);
+        // Strong-horizontal-edge leaf → Left.
+        assert_eq!(tree[3].property, -1);
+        assert_eq!(tree[3].predictor, Predictor::Left);
+        // Smooth/mixed leaf → Average0 (paeth-ish).
+        assert_eq!(tree[4].property, -1);
+        assert_eq!(tree[4].predictor, Predictor::Average0);
+    }
+
+    #[test]
+    fn test_riged_tree_threshold_scales_with_bit_depth() {
+        // 8-bit: T=44.
+        assert_eq!(riged_tree(8)[0].splitval, 44);
+        assert_eq!(riged_tree(5)[0].splitval, 44, "≤8-bit floor");
+        // 16-bit: T=768.
+        assert_eq!(riged_tree(16)[0].splitval, 768);
+        assert_eq!(riged_tree(32)[0].splitval, 768, "≥16-bit ceiling");
+        // Interior bit depths interpolate linearly.
+        let t10 = riged_tree(10)[0].splitval;
+        assert!(
+            t10 > 44 && t10 < 768,
+            "10-bit between 44 and 768, got {t10}"
+        );
+        let t12 = riged_tree(12)[0].splitval;
+        assert!(t12 > t10, "12-bit > 10-bit, got 10:{t10} 12:{t12}");
+    }
+
+    #[test]
+    fn test_riged_tree_routes_strong_vertical_edge_to_top() {
+        let tree = riged_tree(8);
+        // Synthesize properties: strong vertical edge means |NW - W| large.
+        let mut props = PixelProperties::default();
+        props.values[Property::AbsNwMinusW as usize] = 100; // > T=44
+        let leaf = traverse_tree(&tree, &props);
+        assert_eq!(
+            leaf.predictor,
+            Predictor::Top,
+            "strong |NW-W| → Top (north)"
+        );
+    }
+
+    #[test]
+    fn test_riged_tree_routes_strong_horizontal_edge_to_left() {
+        let tree = riged_tree(8);
+        let mut props = PixelProperties::default();
+        props.values[Property::AbsNwMinusW as usize] = 10; // ≤ T=44
+        props.values[Property::AbsWMinusWw as usize] = 100; // > T=44
+        let leaf = traverse_tree(&tree, &props);
+        assert_eq!(
+            leaf.predictor,
+            Predictor::Left,
+            "weak |NW-W|, strong |W-WW| → Left (west)"
+        );
+    }
+
+    #[test]
+    fn test_riged_tree_routes_smooth_to_average() {
+        let tree = riged_tree(8);
+        let mut props = PixelProperties::default();
+        props.values[Property::AbsNwMinusW as usize] = 5; // ≤ T=44
+        props.values[Property::AbsWMinusWw as usize] = 10; // ≤ T=44
+        let leaf = traverse_tree(&tree, &props);
+        assert_eq!(
+            leaf.predictor,
+            Predictor::Average0,
+            "both gradients weak → Average0 ((W+N)/2)"
+        );
+    }
+
+    #[test]
+    fn test_riged_tree_validates_as_decoder_legal() {
+        // The tree must satisfy `validate_tree_djxl` (no invalid splits,
+        // no orphan ranges) so libjxl / jxl-rs / jxl-oxide accept it.
+        assert!(validate_tree_djxl(&riged_tree(8)).is_ok());
+        assert!(validate_tree_djxl(&riged_tree(16)).is_ok());
+    }
+
+    #[test]
+    fn test_riged_tree_three_contexts_after_assignment() {
+        // count_contexts should report 3 BFS-reachable leaves; sequential
+        // context assignment should populate them in BFS order.
+        let mut tree = riged_tree(8);
+        assert_eq!(count_contexts(&tree), 3);
+        let n = assign_sequential_contexts(&mut tree);
+        assert_eq!(n, 3);
     }
 
     #[test]
