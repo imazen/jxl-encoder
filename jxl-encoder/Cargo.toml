@@ -752,5 +752,13 @@ name = "fine_grained_step_libjxl_parity_ab"
 path = "examples/fine_grained_step_libjxl_parity_ab.rs"
 required-features = ["std", "butteraugli-loop", "ssim2-loop", "__expert"]
 
+# W43-3 chunk 1: HdrLoss::Ssim2 promotion A/B vs HdrLoss::Butteraugli.
+# 5 CID22-512 photos × {d=0.5, 1.0, 2.5, 4.0} × e8 = 40 cells × 2 modes.
+# Decoder: jxl-oxide srgb_linear; metric: Rust butteraugli + fast-ssim2.
+[[example]]
+name = "hdr_loss_ssim2_promotion_ab"
+path = "examples/hdr_loss_ssim2_promotion_ab.rs"
+required-features = ["std", "butteraugli-loop", "ssim2-loop"]
+
 [lints]
 workspace = true

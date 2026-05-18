@@ -2291,41 +2291,114 @@ impl VarDctEncoder {
         #[cfg(feature = "butteraugli-loop")]
         if self.butteraugli_iters > 0 {
             let initial_qf_float = quant_field_float.clone();
-            // W39-2 (WF3 fix): classify the input as screenshot vs
-            // photo for the buttloop's HIGH-regime cap dispatch.
-            // Reuses the same `median(mask1x1) > 95.0` discriminator
-            // as `splines::looks_like_screenshot` and the W22-1
-            // `entropy_mul` content-aware dispatch above
-            // (`CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD`). `mask1x1`
-            // is already in scope here (computed at line ~1913 for
-            // `pixel_domain_loss`); falling back to `false` when it
-            // wasn't computed keeps the photo-default (no cap, libjxl
-            // faithful, byte-identical).
-            let is_screenshot = mask1x1.as_deref().is_some_and(|m| {
-                median_mask1x1(m, padded_width, width, height)
-                    > super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD
-            });
-            params = self.butteraugli_refine_quant_field(
-                linear_rgb,
-                width,
-                height,
-                &xyb_x,
-                &xyb_y,
-                &xyb_b,
-                padded_width,
-                padded_height,
-                xsize_blocks,
-                ysize_blocks,
-                &params,
-                &mut quant_field,
-                &mut quant_field_float,
-                &initial_qf_float,
-                &cfl_map,
-                &ac_strategy,
-                patches_data.as_ref(),
-                splines_data.as_ref(),
-                is_screenshot,
-            )?;
+            // W43-3 chunk 1: HdrLoss::Ssim2 dispatch.
+            //
+            // When the caller pinned HdrLoss::Ssim2 via
+            // `LossyConfig::with_hdr_loss`, route the buttloop budget
+            // (`butteraugli_iters`) through `ssim2_refine_quant_field`
+            // instead. The ssim2-loop infrastructure has been wired
+            // internally for several releases — chunk 1 just exposes
+            // it through the public HdrLoss enum so callers don't have
+            // to know about the legacy `with_ssim2_iters` path.
+            //
+            // `validate_loss` (one call site, called once per encode)
+            // surfaces a clear `Error::NotImplemented` if the
+            // `ssim2-loop` feature is off, so the dispatch below is
+            // only reached when the feature is compiled in.
+            //
+            // The default `HdrLoss::Auto` resolves to `Butteraugli` on
+            // every SDR encode (see `HdrLoss::resolve`) so the
+            // hash-lock corpus stays byte-identical.
+            if let Err(e) = super::hdr_metrics::validate_loss(self.hdr_loss) {
+                return Err(crate::error::Error::NotImplemented(alloc::format!(
+                    "HDR loss dispatch: {e} (selected: {})",
+                    self.hdr_loss.as_str()
+                )));
+            }
+            // Resolve `Auto` to a concrete loss here (defensive — the
+            // public LossyConfig path already calls
+            // `resolve_hdr_loss` before assigning `enc.hdr_loss`; this
+            // belt-and-braces step covers direct `VarDctEncoder`
+            // construction from tests / internal callers).
+            let resolved_loss = self.hdr_loss.resolve(None);
+            // Tag-as-used when ssim2-loop is off; the dispatch table
+            // below collapses to the always-butteraugli branch in that
+            // configuration.
+            let _ = resolved_loss;
+
+            #[cfg(feature = "ssim2-loop")]
+            let take_ssim2_path = matches!(resolved_loss, super::hdr_metrics::HdrLoss::Ssim2);
+            #[cfg(not(feature = "ssim2-loop"))]
+            let take_ssim2_path = false;
+
+            if take_ssim2_path {
+                #[cfg(feature = "ssim2-loop")]
+                {
+                    // Use `butteraugli_iters` as the ssim2-loop budget
+                    // so callers can opt in via the single setter
+                    // `with_hdr_loss(HdrLoss::Ssim2)` without also
+                    // needing `with_ssim2_iters`. The legacy
+                    // `with_ssim2_iters` path (below) still works for
+                    // backward-compat experiments.
+                    params = self.ssim2_refine_quant_field_with_iters(
+                        self.butteraugli_iters,
+                        linear_rgb,
+                        width,
+                        height,
+                        &xyb_x,
+                        &xyb_y,
+                        &xyb_b,
+                        padded_width,
+                        padded_height,
+                        xsize_blocks,
+                        ysize_blocks,
+                        &params,
+                        &mut quant_field,
+                        &mut quant_field_float,
+                        &initial_qf_float,
+                        &cfl_map,
+                        &ac_strategy,
+                        patches_data.as_ref(),
+                        splines_data.as_ref(),
+                    )?;
+                }
+            } else {
+                // W39-2 (WF3 fix): classify the input as screenshot vs
+                // photo for the buttloop's HIGH-regime cap dispatch.
+                // Reuses the same `median(mask1x1) > 95.0` discriminator
+                // as `splines::looks_like_screenshot` and the W22-1
+                // `entropy_mul` content-aware dispatch above
+                // (`CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD`). `mask1x1`
+                // is already in scope here (computed at line ~1913 for
+                // `pixel_domain_loss`); falling back to `false` when it
+                // wasn't computed keeps the photo-default (no cap, libjxl
+                // faithful, byte-identical).
+                let is_screenshot = mask1x1.as_deref().is_some_and(|m| {
+                    median_mask1x1(m, padded_width, width, height)
+                        > super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD
+                });
+                params = self.butteraugli_refine_quant_field(
+                    linear_rgb,
+                    width,
+                    height,
+                    &xyb_x,
+                    &xyb_y,
+                    &xyb_b,
+                    padded_width,
+                    padded_height,
+                    xsize_blocks,
+                    ysize_blocks,
+                    &params,
+                    &mut quant_field,
+                    &mut quant_field_float,
+                    &initial_qf_float,
+                    &cfl_map,
+                    &ac_strategy,
+                    patches_data.as_ref(),
+                    splines_data.as_ref(),
+                    is_screenshot,
+                )?;
+            }
         }
 
         // SSIM2 quantization loop: alternative to butteraugli using SSIM2 + per-block RMSE.

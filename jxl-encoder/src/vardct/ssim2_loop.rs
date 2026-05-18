@@ -54,10 +54,72 @@ impl VarDctEncoder {
     /// RGB RMSE for spatial error distribution.
     ///
     /// Same structure as butteraugli_refine_quant_field but faster per iteration.
+    ///
+    /// Thin wrapper around [`Self::ssim2_refine_quant_field_with_iters`]
+    /// that reads the iter count from `self.ssim2_iters` (the legacy
+    /// `with_ssim2_iters` entry point). W43-3 chunk 1's
+    /// `HdrLoss::Ssim2` dispatch calls
+    /// [`Self::ssim2_refine_quant_field_with_iters`] directly with the
+    /// `butteraugli_iters` budget — no field shuffling needed.
     #[cfg(feature = "ssim2-loop")]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn ssim2_refine_quant_field(
         &self,
+        linear_rgb: &[f32],
+        width: usize,
+        height: usize,
+        xyb_x: &[f32],
+        xyb_y: &[f32],
+        xyb_b: &[f32],
+        padded_width: usize,
+        padded_height: usize,
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        initial_params: &DistanceParams,
+        quant_field: &mut [u8],
+        quant_field_float: &mut [f32],
+        initial_quant_field_float: &[f32],
+        cfl_map: &CflMap,
+        ac_strategy: &AcStrategyMap,
+        patches_data: Option<&super::patches::PatchesData>,
+        splines_data: Option<&super::splines::SplinesData>,
+    ) -> Result<DistanceParams> {
+        self.ssim2_refine_quant_field_with_iters(
+            self.ssim2_iters,
+            linear_rgb,
+            width,
+            height,
+            xyb_x,
+            xyb_y,
+            xyb_b,
+            padded_width,
+            padded_height,
+            xsize_blocks,
+            ysize_blocks,
+            initial_params,
+            quant_field,
+            quant_field_float,
+            initial_quant_field_float,
+            cfl_map,
+            ac_strategy,
+            patches_data,
+            splines_data,
+        )
+    }
+
+    /// Same as [`Self::ssim2_refine_quant_field`] but takes an explicit
+    /// `iters_budget` instead of reading `self.ssim2_iters`. Used by
+    /// W43-3 chunk 1's [`crate::vardct::hdr_metrics::HdrLoss::Ssim2`]
+    /// dispatch in `vardct/encoder.rs` so the ssim2 loop can run with
+    /// the caller's `butteraugli_iters` budget without temporarily
+    /// mutating `self.ssim2_iters` (which would require `&mut self` or
+    /// interior mutability — both unwelcome under
+    /// `forbid(unsafe_code)`).
+    #[cfg(feature = "ssim2-loop")]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn ssim2_refine_quant_field_with_iters(
+        &self,
+        iters_budget: u32,
         linear_rgb: &[f32],
         width: usize,
         height: usize,
@@ -167,7 +229,13 @@ impl VarDctEncoder {
         let mut recon_rgb3: Vec<[f32; 3]> = Vec::with_capacity(n);
 
         // Saturate at consumption — see butteraugli_loop.rs for rationale.
-        let iters = (self.ssim2_iters.min(crate::api::MAX_QUANT_LOOP_ITERS)) as usize;
+        // `iters_budget` is the caller-supplied iteration count: either
+        // `self.ssim2_iters` (legacy `with_ssim2_iters` entry point) or
+        // `self.butteraugli_iters` (W43-3 chunk 1 `HdrLoss::Ssim2`
+        // dispatch). Both are validated against `ITER_MAX` upstream;
+        // the saturating `.min()` here is belt-and-braces for callers
+        // that skipped `LossyConfig::validate`.
+        let iters = (iters_budget.min(crate::api::MAX_QUANT_LOOP_ITERS)) as usize;
         let mut current_params;
 
         for iter in 0..iters + 1 {
