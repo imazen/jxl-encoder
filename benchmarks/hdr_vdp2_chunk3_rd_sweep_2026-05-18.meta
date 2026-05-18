@@ -1,0 +1,31 @@
+# EX-J11 chunk 3 — HDR-VDP-2-lite real-corpus RD sweep
+git_rev=9ad0ebe4eb24 (jj sibling workspace; primary main = 84be3a7f post chunk-2)
+host=lilith
+cjxl_version=cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+command=cargo run --release -p jxl-encoder --features butteraugli-loop --example hdr_vdp2_chunk3_rd_sweep
+corpus=CID22-512 (5 stratified images, real SDR → synthesised PQ)
+distances=[1.0, 2.0, 4.0]
+intensity_targets=[1000.0, 4000.0, 10000.0]
+modes=Butteraugli, Vdp2, cjxl
+synth_method=linearise sRGB → scale by intensity_target/10000 → PQ-OETF → RgbPqF32
+decoder=jxl-oxide --linear-sRGB → Rust butteraugli + paper-faithful ref VDP2
+ref_vdp2_params=5 bands, 30 ppd, Mantiuk-2011 CSF, p=3.5 (INDEPENDENT of shipped lite: 4 bands, 32 ppd, simplified CSF, p=4)
+effort=8 (buttloop active at e>=8)
+tsv=/tmp/hdr_vdp2_chunk3_rd_sweep_2026-05-18.tsv
+
+# Post-sweep analysis
+dispatch_pct_gt_2pct=93.3  pass=true
+paired_total=45
+vdp2_spends_more=43
+pct_spends_more=95.6
+vdp2_better_when_spending_more=43
+pct_quality_win=100.0
+avg_byte_delta_pct=112.45
+avg_score_delta_pct_when_more=-36.52
+correlation_pass=true
+global_spearman_butteraugli=-0.0585 (n=45)
+global_spearman_vdp2=0.4166 (n=45)
+global_spearman_cjxl=0.6231 (n=45)
+top_wins=2
+win	1418519	1	4000	-0.03	-20.98
+win	1418519	1	10000	-1.76	-2.09

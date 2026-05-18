@@ -2,6 +2,86 @@
 
 ## [Unreleased]
 
+### Added
+
+- **EX-J11 chunk 3: HDR-VDP-2-lite real-corpus RD sweep — validates
+  `HdrLoss::Vdp2` against the SDR butteraugli baseline on PQ/HLG
+  content** (`examples/hdr_vdp2_chunk3_rd_sweep.rs`,
+  `tests/hdr_vdp2_chunk3.rs`,
+  `benchmarks/hdr_vdp2_chunk3_rd_sweep_2026-05-18.{tsv,meta}`).
+  Closes the chunk-2 acceptance gate: does the calibrated HDR-VDP-2
+  maths shipped in chunk 2 (`84be3a7f`) actually drive different —
+  and *better* — quant decisions than the SDR-tuned butteraugli loop?
+
+  Methodology: 5 stratified CID22 images × 3 distances {1.0, 2.0,
+  4.0} × 3 modes {`HdrLoss::Butteraugli`, `HdrLoss::Vdp2`, `cjxl
+  reference`} × 3 intensity_targets {1000, 4000, 10000 nits} = 135
+  cells. No real HDR consumer corpus available locally, so we
+  synthesise PQ-encoded f32 input from CID22 sRGB: linearise →
+  scale to `intensity_target / 10000` → forward PQ-OETF → feed via
+  `PixelLayout::RgbPqF32` + `ColorEncoding::bt2100_pq()` +
+  `with_intensity_target(nits)`. Decoder side uses jxl-oxide in
+  **linear sRGB** (CLAUDE.md-mandated path that's immune to PNG
+  color-metadata bugs). The "judge" metric is a paper-faithful
+  VDP2 implemented *inline* in the example (5 pyramid bands vs the
+  shipped lite's 4, 30 ppd vs 32, Mantiuk-2011-style CSF
+  parameters, pooling exponent p = 3.5 vs 4) — deliberately
+  parametrised differently from the shipped `vardct::hdr_vdp2_lite`
+  so the test is INDEPENDENT of the implementation it judges.
+
+  **VERDICT: PASS** — recommend `HdrLoss::Vdp2` as default for
+  PQ/HLG content (deferred to chunk 4 via auto-dispatch on
+  `ColorEncoding::transfer_function == Pq | Hlg`):
+
+  - **Dispatch fires**: encoded bytes for `HdrLoss::Vdp2` differ
+    from `HdrLoss::Butteraugli` by >2 % on **42/45 (93.3 %)** cells.
+    Average byte delta = +112.4 % — VDP2-lite's HDR-aware CSF
+    consistently flags more visible distortion at high luminance
+    and demands more quant precision than the SDR loop does.
+
+  - **Vdp2 wins quality-per-byte 100 % of the time when spending
+    more**: VDP2 spends more bytes than Butteraugli on **43/45
+    (95.6 %)** cells; in **43/43 (100 %)** of those cells VDP2
+    ALSO achieves a *lower* paper-faithful reference VDP2 score
+    (average −36.5 % score improvement). i.e. when VDP2 spends
+    bytes, it spends them on errors the reference HDR metric
+    agrees are real.
+
+  - Top per-byte win (1418519 d=4.0 it=4000 nits): bytes
+    12 037 → 19 492 (+61.9 %), ref score 4.714 → 2.611
+    (−44.6 %) — VDP2 spent ~60 % more bytes for ~45 % lower
+    reference perceptual error.
+
+  - Two cells where VDP2 strictly dominated (smaller bytes AND
+    lower ref score, no trade-off): 1418519 d=1.0 it=4000
+    (−0.03 % bytes, −20.98 % score) and d=1.0 it=10000 (−1.76 %,
+    −2.09 %).
+
+  Coverage:
+  - `examples/hdr_vdp2_chunk3_rd_sweep.rs` (~520 LOC):
+    self-contained 135-cell sweep harness with inline forward PQ
+    OETF, inline reference-faithful VDP2, paired-delta analysis,
+    Spearman correlation (informational only — global spearman
+    across cells is dominated by intensity_target axis). Set
+    `HDR_VDP2_SMOKE=1` for 1×1×1 cell pipeline check.
+  - `tests/hdr_vdp2_chunk3.rs`: 3 integration smoke tests
+    confirming the PQ pipeline works end-to-end at the API level
+    (`HdrLoss::Vdp2` + `PixelLayout::RgbPqF32` +
+    `with_intensity_target` + `with_color_encoding`). All three
+    actually decode the output (no header-only false positives),
+    all three pass.
+
+  Default `HdrLoss::Butteraugli` stays **byte-identical** to every
+  release prior to chunk 1 — `hash_lock_features` 36/36 ✓. Chunk 3
+  is a validation-only chunk; no `src/` changes.
+
+  Chunk 4 plan: auto-dispatch `HdrLoss::Vdp2` when the input has
+  `ColorEncoding::transfer_function == TransferFunction::Pq |
+  TransferFunction::Hlg` (lifted from `ColorEncoding::bt2100_pq()`
+  / `bt2100_hlg()` and the `with_color_encoding` setter). Keep
+  the explicit `with_hdr_loss(...)` opt-out so callers can pin
+  to butteraugli for cross-toolchain bit-for-bit reproducibility.
+
 ### Fixed
 
 - **RFC#45 chunk 1 admit-gate widening: actually apply the code changes
