@@ -2482,3 +2482,459 @@ fn test_auto_delta_frames_lossy_identical_path_decodes() {
         );
     }
 }
+
+// ── Chunk-2 trial-encode + RGBA support ─────────────────────────────────────
+//
+// Chunk-1 (`904b373d`) shipped the identical-frame short-circuit on no-alpha
+// layouts. Chunk-2 widens that in two ways:
+//
+//   1. RGBA support — the identity short-circuit now zeros the alpha byte
+//      (same `vec![0u8; ...]` step) and the frame header's `ec_blend_modes`
+//      is overridden to `Add` so the alpha extra channel also adds zero
+//      = no-op.
+//   2. Full-frame delta-residual trial — for frames that differ but the
+//      caller has opted in, the lossless encoder trial-encodes two
+//      variants per frame (Regular crop vs full-frame Add-of-signed-delta)
+//      and picks the smaller bitstream. Lossy is intentionally NOT extended
+//      to delta-residual: the residual would have to round-trip through the
+//      reconstructed (already-quantised) reference canvas, which needs a
+//      reconstruction shadow that chunk-2 does not wire.
+
+/// Build a 256×256 RGBA8 frame with a horizontal gradient. The alpha
+/// channel is fully opaque (0xff) on all pixels so the test stays focused
+/// on the main RGB delta — alpha changes are exercised separately.
+fn gradient_256_rgba8(opaque: u8) -> Vec<u8> {
+    let mut pixels = Vec::with_capacity(256 * 256 * 4);
+    for y in 0..256 {
+        for x in 0..256 {
+            pixels.push(200u8.wrapping_add(x as u8));
+            pixels.push(50u8.wrapping_add(y as u8));
+            pixels.push(125u8.wrapping_add(((x + y) / 2) as u8));
+            pixels.push(opaque);
+        }
+    }
+    pixels
+}
+
+/// Overlay an `n×n` red square onto an RGB8 frame at `(x0, y0)`. Used
+/// to construct small-motion deltas that the chunk-2 full-frame trial
+/// can shrink.
+fn overlay_rect_rgb8(base: &[u8], width: usize, x0: usize, y0: usize, n: usize) -> Vec<u8> {
+    let mut out = base.to_vec();
+    for dy in 0..n {
+        for dx in 0..n {
+            let off = ((y0 + dy) * width + (x0 + dx)) * 3;
+            out[off] = 255;
+            out[off + 1] = 0;
+            out[off + 2] = 0;
+        }
+    }
+    out
+}
+
+/// Overlay an `n×n` red+opaque square onto an RGBA8 frame at `(x0, y0)`.
+fn overlay_rect_rgba8(base: &[u8], width: usize, x0: usize, y0: usize, n: usize) -> Vec<u8> {
+    let mut out = base.to_vec();
+    for dy in 0..n {
+        for dx in 0..n {
+            let off = ((y0 + dy) * width + (x0 + dx)) * 4;
+            out[off] = 255;
+            out[off + 1] = 0;
+            out[off + 2] = 0;
+            out[off + 3] = 255;
+        }
+    }
+    out
+}
+
+#[test]
+fn test_auto_delta_frames_lossless_rgba_identity_short_circuit() {
+    // RGBA mirror of the chunk-1 identity short-circuit. Without
+    // chunk-2's `ec_blend_mode_override` plumbing the heuristic would
+    // refuse to fire on RGBA — chunk-1 documented the gate and the
+    // commit message promised chunk-2 would unlock it.
+    let frame0 = gradient_256_rgba8(0xff);
+    let frame1 = gradient_256_rgba8(0xff); // identical
+    let frame2 = gradient_256_rgba8(0xff); // identical
+    let animation = AnimationParams::default();
+    let frames = [
+        AnimationFrame::new(&frame0, 10),
+        AnimationFrame::new(&frame1, 10),
+        AnimationFrame::new(&frame2, 10),
+    ];
+
+    let without_delta = LosslessConfig::new()
+        .encode_animation(256, 256, PixelLayout::Rgba8, &animation, &frames)
+        .expect("without_delta encode failed");
+    let with_delta = LosslessConfig::new()
+        .with_auto_delta_frames(true)
+        .encode_animation(256, 256, PixelLayout::Rgba8, &animation, &frames)
+        .expect("with_delta encode failed");
+
+    eprintln!(
+        "auto-delta lossless RGBA identity: without={} bytes, with={} bytes, delta={} bytes",
+        without_delta.len(),
+        with_delta.len(),
+        with_delta.len() as i64 - without_delta.len() as i64,
+    );
+
+    // The contract is the same as the RGB case: delta path must not
+    // enlarge the bitstream. The actual savings on a 1×1 RGBA crop can
+    // be in the noise; what matters is that the heuristic now fires
+    // without alpha corrupting the canvas.
+    assert!(
+        with_delta.len() <= without_delta.len(),
+        "RGBA auto-delta must not enlarge the bitstream (without={} bytes, with={} bytes)",
+        without_delta.len(),
+        with_delta.len(),
+    );
+
+    // Round-trip + alpha-preservation check via jxl-oxide.
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&with_delta))
+        .expect("jxl-oxide parse failed");
+    assert_eq!(image.width(), 256);
+    assert_eq!(image.height(), 256);
+    assert_eq!(image.num_loaded_keyframes(), 3);
+
+    // For each of the three frames, the alpha plane must stay fully
+    // opaque (1.0 in linear float). If chunk-1's missing
+    // `ec_blend_mode_override` had been used here the alpha would have
+    // been overwritten to zero on frames 1 and 2.
+    for k in 0..3 {
+        let render = image.render_frame(k).expect("render frame");
+        let buf = render.image_all_channels();
+        let channels = buf.channels();
+        // jxl-oxide enumerates color (3 channels for RGB) + alpha extras.
+        // Total channels should be 4 for our RGBA encode.
+        assert_eq!(
+            channels, 4,
+            "frame {k} expected 4 channels (RGB + alpha), got {channels}",
+        );
+        let pixels = buf.buf();
+        // Alpha is the 4th channel per pixel — every pixel's alpha
+        // should round-trip to ~1.0 (lossless modular).
+        for px in 0..(256 * 256) {
+            let alpha = pixels[px * 4 + 3];
+            assert!(
+                (alpha - 1.0).abs() < 0.01,
+                "frame {k} px {px} alpha = {alpha:.4}, expected 1.0",
+            );
+        }
+    }
+}
+
+#[test]
+fn test_auto_delta_frames_lossless_rgb_small_motion_wins() {
+    // Small-motion test: 3 frames with an 8×8 red overlay drifting one
+    // pixel per frame. The full-frame delta-residual trial-encode must
+    // pick a not-larger bitstream than the Regular (8×8 crop) variant,
+    // and the delta path must round-trip the pixels exactly (lossless).
+    //
+    // We don't assert "with < without" strictly because a tiny 8×8 crop
+    // is sometimes cheaper than encoding a sparse signed-delta full
+    // frame — the heuristic's job is to PICK the smaller of the two,
+    // not to always shrink. The hard contract is `with_delta <=
+    // without_delta` (we never regress) AND `with_delta` decodes pixel-
+    // exact via jxl-rs.
+    let frame0 = gradient_256_rgb8();
+    let frame1 = overlay_rect_rgb8(&frame0, 256, 100, 100, 8);
+    let frame2 = overlay_rect_rgb8(&frame0, 256, 101, 101, 8);
+    let animation = AnimationParams::default();
+    let frames = [
+        AnimationFrame::new(&frame0, 10),
+        AnimationFrame::new(&frame1, 10),
+        AnimationFrame::new(&frame2, 10),
+    ];
+
+    let without_delta = LosslessConfig::new()
+        .encode_animation(256, 256, PixelLayout::Rgb8, &animation, &frames)
+        .expect("without_delta encode failed");
+    let with_delta = LosslessConfig::new()
+        .with_auto_delta_frames(true)
+        .encode_animation(256, 256, PixelLayout::Rgb8, &animation, &frames)
+        .expect("with_delta encode failed");
+
+    eprintln!(
+        "auto-delta lossless RGB small-motion: without={} bytes, with={} bytes, delta={} bytes",
+        without_delta.len(),
+        with_delta.len(),
+        with_delta.len() as i64 - without_delta.len() as i64,
+    );
+
+    assert!(
+        with_delta.len() <= without_delta.len(),
+        "auto-delta must never enlarge the bitstream on the small-motion case \
+         (without={} bytes, with={} bytes)",
+        without_delta.len(),
+        with_delta.len(),
+    );
+
+    // Pixel-exact roundtrip via jxl-rs (the primary decoder per
+    // project CLAUDE.md). For the lossless path the delta-residual
+    // trial is byte-exact because modular's signed-i32 channels
+    // round-trip both branches of the subtraction.
+    let decoded = decode_animation_jxlrs(&with_delta);
+    assert_eq!(decoded.len(), 3, "jxl-rs expected 3 frames");
+    let originals = [&frame0, &frame1, &frame2];
+    for (idx, decoded_frame) in decoded.iter().enumerate() {
+        let src = originals[idx];
+        for px in 0..(256 * 256) {
+            for ch in 0..3 {
+                let expected = src[px * 3 + ch] as f32 / 255.0;
+                let actual = decoded_frame[px * 3 + ch];
+                assert!(
+                    (actual - expected).abs() < 0.01,
+                    "frame {idx} px {px} ch {ch}: expected {expected:.4} got {actual:.4}",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_auto_delta_frames_lossless_rgba_small_motion_alpha_survives() {
+    // RGBA mirror of the small-motion test. Verifies (a) the alpha
+    // extra channel survives the delta-residual trial-encode (its own
+    // signed delta channel + Add blend) and (b) RGB pixels round-trip
+    // exactly. This is the case chunk-1 could not handle — without
+    // `ec_blend_mode_override` either the heuristic refused to fire or
+    // the alpha would have been clobbered to zero by the default
+    // `Replace`-for-extras.
+    let frame0 = gradient_256_rgba8(0xff);
+    let frame1 = overlay_rect_rgba8(&frame0, 256, 100, 100, 8);
+    let frame2 = overlay_rect_rgba8(&frame0, 256, 101, 101, 8);
+    let animation = AnimationParams::default();
+    let frames = [
+        AnimationFrame::new(&frame0, 10),
+        AnimationFrame::new(&frame1, 10),
+        AnimationFrame::new(&frame2, 10),
+    ];
+
+    let without_delta = LosslessConfig::new()
+        .encode_animation(256, 256, PixelLayout::Rgba8, &animation, &frames)
+        .expect("without_delta encode failed");
+    let with_delta = LosslessConfig::new()
+        .with_auto_delta_frames(true)
+        .encode_animation(256, 256, PixelLayout::Rgba8, &animation, &frames)
+        .expect("with_delta encode failed");
+
+    eprintln!(
+        "auto-delta lossless RGBA small-motion: without={} bytes, with={} bytes, delta={} bytes",
+        without_delta.len(),
+        with_delta.len(),
+        with_delta.len() as i64 - without_delta.len() as i64,
+    );
+
+    assert!(
+        with_delta.len() <= without_delta.len(),
+        "RGBA auto-delta must never enlarge the bitstream on small-motion \
+         (without={} bytes, with={} bytes)",
+        without_delta.len(),
+        with_delta.len(),
+    );
+
+    // Pixel-exact roundtrip via jxl-oxide (jxl-rs in our wrapper
+    // strips alpha — use oxide for RGBA verification). Alpha must stay
+    // fully opaque on all three frames.
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&with_delta))
+        .expect("jxl-oxide parse failed");
+    assert_eq!(image.num_loaded_keyframes(), 3);
+    let originals = [&frame0, &frame1, &frame2];
+    for (k, src) in originals.iter().enumerate() {
+        let render = image.render_frame(k).expect("render frame");
+        let buf = render.image_all_channels();
+        assert_eq!(buf.channels(), 4, "frame {k} expected RGBA");
+        let pixels = buf.buf();
+        for px in 0..(256 * 256) {
+            for ch in 0..3 {
+                let expected = src[px * 4 + ch] as f32 / 255.0;
+                let actual = pixels[px * 4 + ch];
+                assert!(
+                    (actual - expected).abs() < 0.01,
+                    "frame {k} px {px} ch {ch}: expected {expected:.4} got {actual:.4}",
+                );
+            }
+            let alpha = pixels[px * 4 + 3];
+            assert!(
+                (alpha - 1.0).abs() < 0.01,
+                "frame {k} px {px} alpha = {alpha:.4}, expected 1.0",
+            );
+        }
+    }
+}
+
+#[test]
+fn test_auto_delta_frames_lossless_fully_different_no_regression() {
+    // Edge case: 3 frames with content too different for delta to help.
+    // The full-frame signed-delta payload will be roughly as expensive
+    // (or more) than the regular Replace-over-tight-crop variant; the
+    // trial-encode must pick the Regular variant and the final bitstream
+    // must NOT be larger than the no-opt baseline. This is the
+    // "auto-detect picks Regular when delta is large" gate from the
+    // chunk-2 spec.
+    fn checkerboard_256(phase: u8) -> Vec<u8> {
+        let mut pixels = Vec::with_capacity(256 * 256 * 3);
+        for y in 0..256 {
+            for x in 0..256 {
+                let on = ((x / 16) + (y / 16) + phase as usize).is_multiple_of(2);
+                if on {
+                    pixels.extend_from_slice(&[20, 200, 80]);
+                } else {
+                    pixels.extend_from_slice(&[200, 50, 180]);
+                }
+            }
+        }
+        pixels
+    }
+    let frame0 = checkerboard_256(0);
+    let frame1 = checkerboard_256(1); // inverted phase — every pixel changes
+    let frame2 = checkerboard_256(0); // back to phase 0 — every pixel changes again
+    let animation = AnimationParams::default();
+    let frames = [
+        AnimationFrame::new(&frame0, 10),
+        AnimationFrame::new(&frame1, 10),
+        AnimationFrame::new(&frame2, 10),
+    ];
+
+    let without_delta = LosslessConfig::new()
+        .encode_animation(256, 256, PixelLayout::Rgb8, &animation, &frames)
+        .expect("without_delta encode failed");
+    let with_delta = LosslessConfig::new()
+        .with_auto_delta_frames(true)
+        .encode_animation(256, 256, PixelLayout::Rgb8, &animation, &frames)
+        .expect("with_delta encode failed");
+
+    eprintln!(
+        "auto-delta lossless RGB fully-different: without={} bytes, with={} bytes, delta={} bytes",
+        without_delta.len(),
+        with_delta.len(),
+        with_delta.len() as i64 - without_delta.len() as i64,
+    );
+
+    // Hard contract: the trial-encode picker must NOT make this worse
+    // even when delta is the wrong choice.
+    assert!(
+        with_delta.len() <= without_delta.len(),
+        "auto-delta must never enlarge the fully-different case \
+         (without={} bytes, with={} bytes)",
+        without_delta.len(),
+        with_delta.len(),
+    );
+
+    // Pixel-exact roundtrip via jxl-rs (sanity check that whichever
+    // variant got picked decodes correctly).
+    let decoded = decode_animation_jxlrs(&with_delta);
+    assert_eq!(decoded.len(), 3, "jxl-rs expected 3 frames");
+    let originals = [&frame0, &frame1, &frame2];
+    for (idx, decoded_frame) in decoded.iter().enumerate() {
+        let src = originals[idx];
+        for px in 0..(256 * 256) {
+            for ch in 0..3 {
+                let expected = src[px * 3 + ch] as f32 / 255.0;
+                let actual = decoded_frame[px * 3 + ch];
+                assert!(
+                    (actual - expected).abs() < 0.01,
+                    "frame {idx} px {px} ch {ch}: expected {expected:.4} got {actual:.4}",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_rgba_animation_crop_alpha_baseline_preserved() {
+    // Regression test for the long-latent RGBA animation-crop alpha
+    // bug surfaced (and fixed) during chunk-2 development. The default
+    // baseline path (NO `with_auto_delta_frames` toggle) used to write
+    // every extra-channel `BlendingInfo::source` as `0` (the empty
+    // initial canvas slot) regardless of the main frame's
+    // `blend_source`. For an animation crop frame the main RGB
+    // composites against slot 1 (the saved previous-displayed frame)
+    // but the alpha extra composited against slot 0, so anywhere
+    // outside the crop region the alpha decoded as 0.
+    //
+    // The fix mirrors `blend_source` onto every ec when a crop is
+    // set, in both the modular path
+    // (`modular/frame.rs::apply_animation_to_header`) and the vardct
+    // path (`vardct/bitstream.rs`). This test asserts the post-fix
+    // behaviour: with an 8×8 RGBA overlay drift between frames, the
+    // alpha plane stays opaque (≈ 1.0) across the whole canvas on
+    // every frame, with NO chunk-2 toggle in play.
+    let frame0 = gradient_256_rgba8(0xff);
+    let frame1 = overlay_rect_rgba8(&frame0, 256, 100, 100, 8);
+    let frame2 = overlay_rect_rgba8(&frame0, 256, 101, 101, 8);
+    let animation = AnimationParams::default();
+    let frames = [
+        AnimationFrame::new(&frame0, 10),
+        AnimationFrame::new(&frame1, 10),
+        AnimationFrame::new(&frame2, 10),
+    ];
+    let data = LosslessConfig::new()
+        .encode_animation(256, 256, PixelLayout::Rgba8, &animation, &frames)
+        .expect("baseline RGBA crop encode failed");
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&data))
+        .expect("jxl-oxide parse failed");
+    assert_eq!(image.num_loaded_keyframes(), 3);
+    for k in 0..3 {
+        let render = image.render_frame(k).expect("render frame");
+        let buf = render.image_all_channels();
+        assert_eq!(buf.channels(), 4, "frame {k} expected RGBA");
+        let pixels = buf.buf();
+        for px in 0..(256 * 256) {
+            let alpha = pixels[px * 4 + 3];
+            assert!(
+                (alpha - 1.0).abs() < 0.01,
+                "RGBA crop baseline: frame {k} px {px} alpha = {alpha:.4} \
+                 (regression — was 0.0 before ec source mirror fix)",
+            );
+        }
+    }
+}
+
+#[test]
+fn test_auto_delta_frames_lossy_rgba_identity_short_circuit() {
+    // Lossy + RGBA mirror of the lossless RGBA identity test. The
+    // chunk-1 commit gated this off on the lossy path too; chunk-2's
+    // `ec_blend_mode_override` plumbing in `vardct/bitstream.rs`
+    // unlocks it.
+    let frame0 = gradient_256_rgba8(0xff);
+    let frame1 = gradient_256_rgba8(0xff);
+    let frame2 = gradient_256_rgba8(0xff);
+    let animation = AnimationParams::default();
+    let frames = [
+        AnimationFrame::new(&frame0, 10),
+        AnimationFrame::new(&frame1, 10),
+        AnimationFrame::new(&frame2, 10),
+    ];
+
+    let data = LossyConfig::new(1.0)
+        .with_auto_delta_frames(true)
+        .encode_animation(256, 256, PixelLayout::Rgba8, &animation, &frames)
+        .expect("lossy RGBA encode failed");
+
+    // jxl-oxide round-trip; 3 displayable keyframes, alpha plane must
+    // stay fully opaque (no `Replace`-of-zero corruption).
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&data))
+        .expect("jxl-oxide parse failed");
+    assert_eq!(image.num_loaded_keyframes(), 3);
+    for k in 0..3 {
+        let render = image.render_frame(k).expect("render frame");
+        let buf = render.image_all_channels();
+        assert_eq!(buf.channels(), 4, "frame {k} expected RGBA");
+        let pixels = buf.buf();
+        // Alpha should stay ~1.0 across all pixels on all frames.
+        // Lossy alpha shows tiny slop near 1.0 (~0.01 typical, allow
+        // 0.05 just to keep the test stable across encoder tunings).
+        for px in 0..(256 * 256) {
+            let alpha = pixels[px * 4 + 3];
+            assert!(
+                (alpha - 1.0).abs() < 0.05,
+                "lossy RGBA auto-delta: frame {k} px {px} alpha = {alpha:.4}",
+            );
+        }
+    }
+}

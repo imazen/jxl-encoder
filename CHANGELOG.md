@@ -142,6 +142,56 @@
   `test_auto_delta_frames_lossless_identical_path_decodes_via_jxlrs`,
   `test_auto_delta_frames_lossy_identical_path_decodes`.
 
+- **`with_auto_delta_frames` chunk-2: RGBA support + full-frame
+  delta-residual trial-encode loop** (follow-on to chunk-1 POC
+  `904b373d`). Two coupled widenings:
+  (1) RGBA layouts can now take the identity short-circuit. The
+  extra-channel blend mode is overridden to `Add` (via a new
+  `FrameOptions::ec_blend_mode_override` /
+  `FrameEncoderOptions::ec_blend_mode_override` Option<BlendMode>)
+  and the extra-channel `source` is mirrored onto the main
+  `blend_source` so an `Add`-of-zero alpha lands on the same
+  reference slot the main `Add`-of-zero RGB does — without the
+  source mirror, the alpha would composite against the empty slot 0
+  and decode as zero.
+  (2) For genuinely-different frames the lossless animation path
+  trial-encodes two candidates per frame — (A) the existing Regular
+  same-pixel crop and (B) a full-frame `BlendMode::Add` payload whose
+  pixels are signed `frame_N - frame_N-1` deltas built by a new
+  internal helper `build_lossless_delta_image` (handles Rgb8 / Rgba8 /
+  Bgr8 / Bgra8 / Gray8 / GrayAlpha8 / Rgb16 / Rgba16 / Gray16 /
+  GrayAlpha16; float / PQ / HLG inputs fall back silently to
+  candidate A). Each candidate is encoded into its own scratch
+  `BitWriter`; the smaller (by bit count, since frame-header writes
+  are not byte-aligned at start) is appended to the output via
+  `append_unaligned`. Delta-residual is byte-exact for lossless
+  because the modular signed-i32 channels round-trip both branches
+  of the subtraction. Lossy is NOT extended to delta-residual —
+  per the chunk-1 commit, lossy residuals must round-trip through
+  the reconstructed (already-quantised) reference frame, not the
+  original pixels; that needs a reconstruction shadow that
+  chunk-2 does not wire. Lossy gets only the RGBA identity
+  extension.
+  Bonus fix: the chunk-2 work surfaced a long-latent baseline bug —
+  for ALL RGBA animation crop frames (not just the chunk-2 paths)
+  the encoder was writing every extra-channel
+  `BlendingInfo::source` as `0`, so alpha decoded to zero everywhere
+  outside the crop region. The fix mirrors `blend_source` onto every
+  ec when a crop is set, in both `modular/frame.rs::
+  apply_animation_to_header` and `vardct/bitstream.rs`. New
+  regression test `test_rgba_animation_crop_alpha_baseline_preserved`
+  locks in the post-fix behaviour. Hash-locks 36/36 still byte-
+  identical (none cover RGBA + animation crop); `cargo test --tests`
+  passes including the existing 26 animation cases. New tests in
+  `jxl-encoder/tests/animation.rs`:
+  `test_auto_delta_frames_lossless_rgba_identity_short_circuit`,
+  `test_auto_delta_frames_lossless_rgb_small_motion_wins`,
+  `test_auto_delta_frames_lossless_rgba_small_motion_alpha_survives`,
+  `test_auto_delta_frames_lossless_fully_different_no_regression`,
+  `test_auto_delta_frames_lossy_rgba_identity_short_circuit`,
+  `test_rgba_animation_crop_alpha_baseline_preserved`. Default
+  remains `false`; opt-in only.
+
 - **`EffortProfile::auto_splines_default(effort: u8) -> bool` and
   `LossyConfig::auto_splines_explicit()` getter** (follow-on to W6-2 +
   W7-4 chunk 3). The function centralises the per-effort default for

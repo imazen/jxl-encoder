@@ -60,6 +60,13 @@ pub struct FrameEncoderOptions {
     /// Optional `save_as_reference` override (0–3). `None` keeps the encoder default
     /// (1 for non-last animated frames).
     pub save_as_reference: Option<u32>,
+    /// Optional per-extra-channel blend mode override. `Some(mode)`
+    /// replaces every extra channel's [`BlendMode::Replace`] default
+    /// with `mode` in the frame header's `ec_blend_modes` vector.
+    /// Used by the chunk-2 `with_auto_delta_frames` path on RGBA inputs
+    /// so an `Add`-over-zero main also leaves alpha unchanged. `None`
+    /// keeps the existing `Replace` default.
+    pub ec_blend_mode_override: Option<BlendMode>,
     /// Encode as `FrameType::ReferenceOnly`. The frame is written into
     /// its `save_as_reference` slot but is NOT a displayable keyframe;
     /// later regular frames can composite against it via
@@ -113,6 +120,7 @@ impl Default for FrameEncoderOptions {
             blend_mode: None,
             blend_source: None,
             save_as_reference: None,
+            ec_blend_mode_override: None,
             reference_only: false,
             name: None,
             timecode: None,
@@ -209,6 +217,21 @@ impl FrameEncoder {
             fh.height = crop.height;
             fh.blend_mode = BlendMode::Replace;
             fh.blend_source = 1;
+            // Mirror the main `blend_source` onto every extra channel.
+            // Without this, ec defaults to `source=0` (the empty
+            // initial canvas) — `Replace`-over-source-0 on a crop
+            // resets the canvas alpha to the encoded pixels and zeros
+            // everywhere else, which decodes as alpha=0 outside the
+            // crop region (the long-standing RGBA animation-crop
+            // bug surfaced by the chunk-2 RGBA tests).
+            //
+            // `ec_blend_modes` is set by the calling sites
+            // (`encode_modular`, `encode_modular_with_patches`,
+            // multi-group) before `apply_animation_to_header` runs, so
+            // size it from there.
+            if !fh.ec_blend_modes.is_empty() {
+                fh.ec_blend_sources = vec![fh.blend_source; fh.ec_blend_modes.len()];
+            }
         }
         if let Some(mode) = self.options.blend_mode {
             fh.blend_mode = mode;
@@ -225,6 +248,31 @@ impl FrameEncoder {
         }
         if let Some(slot) = self.options.save_as_reference {
             fh.save_as_reference = slot;
+        }
+
+        // Chunk-2 `with_auto_delta_frames` RGBA support: when the
+        // caller has set `Add` on the main frame (e.g. identity-frame
+        // short-circuit on RGBA), the alpha extra channel must also
+        // get `Add` AND must composite against the *same* reference
+        // slot as the main frame so that `Add`-over-zero-alpha is a
+        // canvas-preserving no-op. Default behaviour (`Replace` with
+        // source 0) would clobber alpha to the encoded zero — both
+        // because Replace overwrites instead of adding and because
+        // source 0 is the empty initial canvas, not the previous-frame
+        // slot the main RGB is compositing against. The caller is
+        // responsible for matching the override to the main blend
+        // mode and zeroing the extra-channel pixel buffer.
+        if let Some(ec_mode) = self.options.ec_blend_mode_override {
+            for slot in fh.ec_blend_modes.iter_mut() {
+                *slot = ec_mode;
+            }
+            // Mirror the main `blend_source` onto every ec so the
+            // decoder composites the extras against the same reference
+            // canvas the main frame is using. `apply_animation_to_header`
+            // has already finalised `fh.blend_source` by the time we
+            // reach this block.
+            let n = fh.ec_blend_modes.len();
+            fh.ec_blend_sources = vec![fh.blend_source; n];
         }
 
         // Reference-only frames are written to a save slot but NOT
