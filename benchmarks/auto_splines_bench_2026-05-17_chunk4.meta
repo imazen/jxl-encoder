@@ -1,0 +1,48 @@
+Auto-splines chunk-4 BYTES_PER_ENERGY_UNIT_AT_D1 recalibration A/B
+=================================================================
+
+Bench: 11 cells (3 synthetics + 5 photos + 3 screenshots) × 3 efforts.
+Distance: 1.0. Features: std parallel butteraugli-loop.
+Harness: jxl-encoder/examples/auto_splines_corpus_bench.rs
+Run host: AMD Ryzen 9 7950X / 128 GB / WSL2
+Run date: 2026-05-17 UTC
+
+Compares `LossyConfig::with_effort(e)` (auto_splines OFF)
+against `LossyConfig::with_effort(e).with_auto_splines(true)`.
+
+Photos: 5x CLIC2025-1024 corpus stems
+        (02809272, 0369d229, 07b9f93f, 097cb426, 0c49a5cc).
+Screens: 3x gb82-sc corpus (terminal, codec_wiki, imac_g3).
+Synthetics: 1, 4, and 8 horizontal bright lines on a flat background.
+
+Chunk-4 change: BYTES_PER_ENERGY_UNIT_AT_D1 in
+vardct/splines.rs::spline_passes_trial_encode_gate dropped from
+50.0 (stale anchor from a comment that mis-estimated `energy_drop ≈ 2-4`
+when actual is ≈ 533) down to 0.20 (geomean fit on the multi-line
+power-line synthetics).
+
+Before chunk-4 (`50.0` constant, see
+benchmarks/auto_splines_bench_2026-05-17.tsv from commit 6c01965):
+    photos: 2/5 regressed at e8/e9
+    screenshots: all 3 regressed 3-8% at e7/e8/e9
+
+After chunk-4 (`0.20` constant, this file):
+    photos: 5/5 byte-identical at e7/e8/e9
+    terminal: byte-identical at e7/e8/e9 (gate now correctly rejects
+              all 20 prior false-positives)
+    codec_wiki: still +2.8% to +3.3% (6 of 62 wide ridges admit)
+    imac_g3:    still +3.2% to +3.5% (33 of 76 wide ridges admit)
+
+Implication for default: STAYS OFF.
+    The recalibration fixes the worst false-positives (photos +
+    most screenshots) but doesn't fully solve the long-bright-ridge
+    case on wallpaper-style screenshots. The energy-drop proxy is
+    structurally biased on long bboxes: it linearises in pixel count
+    but actual VarDCT byte savings are sub-linear. Fixing that would
+    require either full A/B trial encode (too expensive) or a content
+    discriminator that's outside chunk-4 scope.
+
+Default-on candidacy:
+    e7  NO (3% regression on 2/3 screenshots)
+    e8  NO (same; chunk-3 gate is effort-independent)
+    e9  NO (multi-line synthetics regress at e9 too)

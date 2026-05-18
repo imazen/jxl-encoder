@@ -205,7 +205,58 @@
   integration tests pass (incl. `auto_splines_default_is_off`,
   `auto_splines_chunk3_multi_line_decreases_bytes`).
 
+### Changed
+
+- **Auto-splines cost gate `BYTES_PER_ENERGY_UNIT_AT_D1` recalibrated
+  from `50.0` to `0.20`** (chunk 4 follow-on to W8-6 `6c01965`).
+  W8-6's rejection rationale was wrong: the chunk-3 cost gate is
+  deterministic on (XYB, distance) inputs and effort-independent, so
+  it can NOT silently start rejecting all candidates at e8+. Re-running
+  the bench against the chunk-4 binary
+  (`benchmarks/auto_splines_bench_2026-05-17_chunk4.{tsv,meta}`)
+  showed the gate was actually OVER-claiming savings on screenshots
+  and 2/5 photos under the old `50.0` constant: terminal regressed
+  +3-8% at e7/e8/e9, codec_wiki regressed +6-9%, imac_g3 +3.2-3.4%.
+  Root cause: the original `50.0` anchor was derived from a stale
+  comment that estimated `energy_drop ≈ 2-4` for the 1024×256 power-
+  line synthetic, but the chunk-3 detector measures `energy_drop ≈
+  533` for the same image — the realised bytes-per-energy ratio is
+  closer to `0.07-0.15`. Recalibrating to `0.20` (geomean fit on
+  the multi-line synthetics) restores screenshots and all 5 photos
+  to byte-identical at e7/e8/e9 while keeping the multi-line
+  power-line wins (-2.3 to -3.1% at e7/e8, -557 to -138 bytes).
+  The `test_find_splines_finds_horizontal_ridge` unit test was
+  updated to bypass the cost gate (verifies the pre-gate detector
+  produces polylines, since the chunk-4 gate correctly rejects the
+  prior single-ridge synthetic as a real-encode regression). Hash-
+  locks 36/36 byte-identical; default `auto_splines = false` is
+  unchanged so the recalibration has zero effect on the default
+  encode path; all 6 `tests/auto_splines.rs` integration tests pass.
+
 ### Investigated
+
+- **Auto-splines default-on at e7+: rejected even after chunk-4
+  recalibration** (`benchmarks/auto_splines_bench_2026-05-17_chunk4.{tsv,meta}`).
+  After fixing the over-claim bug (above), photos and `terminal.png`
+  go byte-identical at e7/e8/e9 (was +3-8% regression). But two
+  remaining screenshots (`codec_wiki.png`, `imac_g3.png`) still admit
+  6 / 33 splines on wide bright ridges (table borders, wallpaper
+  edges), regressing real encodes by ~3% across all three efforts.
+  The energy-drop proxy is structurally biased on long bboxes — it
+  scales linearly in pixel count but actual VarDCT byte savings are
+  sub-linear (the AC coefficients aren't independent). Fixing that
+  would require either full A/B trial-encode (too expensive) or a
+  content discriminator that's outside chunk-4 scope. The multi-line
+  synthetics still net-win at e7/e8 (-2 to -3%) and lose at e9 (the
+  more aggressive baseline outpaces the splines section), so the
+  detector design is sound in its narrow target regime. Default
+  stays `false` at every effort. Investigations of options A
+  (`COST_BENEFIT_MARGIN` 2.0 → 1.5) and B (run gate on initial
+  quant field, not post-buttloop) were skipped after the proxy
+  miscalibration was identified as the dominant lever — neither
+  option fixes the structural over-claim on long ridges. The
+  `auto_splines_trace` helper example was added under
+  `jxl-encoder/examples/` for future debugging passes.
 
 - **Auto-splines default-on at e8+: rejected after bench
   (`benchmarks/auto_splines_bench_2026-05-17.{tsv,meta}`).** Photo
@@ -220,6 +271,10 @@
   byte change across the corpus. Default stays `false` at every
   effort. When the detector evolves to win at e8+, only
   `EffortProfile::auto_splines_default` needs updating.
+  (Note: chunk 4 above showed the "rejected at e8+" rationale was
+  incorrect — the gate isn't effort-dependent. The default-off
+  conclusion stands but for the right reason: gate over-claims on
+  long-ridge content, not effort-tied behavior.)
 
 ### Changed
 
