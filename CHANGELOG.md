@@ -212,6 +212,53 @@
 
 ### Investigated
 
+- **W35-2 chunk-4 — safe-class entropy_mul re-bisect (windows95
+  EXCLUDED) — HONEST-STOP, no default-on flip**
+  (`examples/entropy_mul_safe_class_bisect.rs`,
+  `benchmarks/entropy_mul_safe_class_bisect_2026-05-18.{tsv,meta}`).
+
+  Follow-on to W35-1 chunk-1 (`3541912b`), which proved the
+  `with_screenshot_lift_hint` API correctly suppresses the W22-1
+  lift on windows95 (plog2=4) but the lifted table itself is too
+  aggressive on EVERY screen-class image. This chunk drops windows95
+  from the bisect corpus and re-sweeps the 9 plog2 ≥ 7 screenshots
+  with LOWER lift values: `IDENTITY` ∈ {1.10..1.30} ×
+  `DCT2X2` ∈ {1.04..1.13} (W23-2 stage A swept 1.20..1.60 / 0.95..1.045
+  and failed; W35-2 narrows further). AFV + DCT4X8 pinned at W22-1
+  lifted values (0.95, 0.98). 9 imgs × 20 tuples × 3 distances ∈
+  {0.5, 1.0, 2.0} = 540 stage-A measurements.
+
+  Pass gate: avg screen-class bytes Δ ≤ -0.30 % AND no cell
+  |bfly Δ| > 3 % AND ≥ 80 % of cells |bfly Δ| ≤ 2 %.
+
+  **NO TUPLE passes.** Smallest max |bfly Δ| across the entire grid
+  is 91.48 % (IDENTITY=1.15 DCT2X2=1.10) — far above the 3 % bar.
+  Best avg bytes is -0.509 % (IDENTITY=1.10 DCT2X2=1.10) but with
+  max |bfly Δ| 115.9 %. Per-image bistability dominates: the same
+  tuple shows `imessage d=1` -24.1 % bfly AND `imessage d=0.5`
+  +16.2 % bfly. `graph` (796x481 high-edge plot) is the worst
+  outlier — +91-115 % bfly at d=0.5 across the entire grid, even
+  at IDENTITY=1.10. Confirms W23-2's structural finding: lifting
+  IDENTITY entropy_mul triggers per-block AC-strategy flips that
+  swing bfly wildly in both directions; no global tuple can clear
+  the gate.
+
+  Default `LossyConfig::content_aware_entropy_mul` stays `false`;
+  the W35-1 hint API (`with_screenshot_lift_hint`) stays as the
+  caller-driven opt-in. Hash-lock fixtures untouched.
+
+  Chunk-5 plan (ranked, see meta): (1) per-block discriminator
+  inside `compute_ac_strategy` (multi-week, deep AC search rework);
+  (2) tighten zenanalyze rule with `lum_entropy >= 1.0` to suppress
+  `graph`-class outliers (cheap but doesn't fix per-image
+  bistability on the other 8); (3) lift `kAvoidEntropyOfTransforms`
+  gate from `d > 4` to `d > 0` (W23-2 deferred); (4) decompose
+  `screenshot_suppressed()` into per-strategy gates (start with
+  DCT4X4-only lift); (5) accept that the wedge is structural and
+  ship the W35-1 hint infrastructure as the final state. Recommend
+  path #5 (no further work) per the data — no chunk-5 work is
+  shippable today without one of the deep paths.
+
 - **Streaming refactor #11 chunk 7 — peak-RSS bench at 4K confirms
   structural blocker; documented chunk-8 plan** (no production code
   changes). `benchmarks/streaming_chunk7_peak_rss_2026-05-18.{tsv,meta}`.

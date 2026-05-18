@@ -1,0 +1,243 @@
+W35-2 chunk-4 — safe-class entropy_mul re-bisect (windows95 EXCLUDED)
+=====================================================================
+
+Date: 2026-05-18
+Host: $(uname -n)
+Repo: jxl-encoder (sibling workspace --entropy-mul-safe-class-bisect-r)
+Parent commit: 3541912b (W35-1 chunk-1 honest-stop)
+Build features: __expert butteraugli-loop parallel (release)
+Effort: 7
+
+Harness: jxl-encoder/examples/entropy_mul_safe_class_bisect.rs
+Decode:  jxl-oxide linear sRGB (CLAUDE.md jxl-oxide rule)
+Metric:  Rust butteraugli `butteraugli_linear` (PNG-metadata-immune)
+
+Sweep design
+------------
+Stage A — 9 plog2 ≥ 7 screenshots × 20 (IDENTITY, DCT2X2) tuples × 3
+distances {0.5, 1.0, 2.0} = 540 measurements.
+
+Lift grids (narrower than W23-2; AFV + DCT4X8 pinned at W22-1 lifts):
+  IDENTITY ∈ {1.10, 1.15, 1.20, 1.25, 1.30}
+  DCT2X2   ∈ {1.04, 1.07, 1.10, 1.13}
+  AFV PINNED  = 0.95  (W22-1)
+  DCT4X8 PINNED = 0.98 (W22-1)
+
+Image list (windows95 DROPPED — plog2=4 < 7, handled by W35-1
+classifier hint suppression `Some(false)`):
+  codec_wiki   plog2=10
+  gmessages    plog2=9
+  graph        plog2=8
+  gui          plog2=8
+  imac_dark    plog2=12
+  imac_g3      plog2=11
+  imessage     plog2=9
+  terminal     plog2=9
+  windows      plog2=11
+
+Stage B — 5 CID22-512 photos × 1 tuple (default IDENT=1.10
+DCT2X2=1.04 — lowest cell) × 3 distances = 15 measurements.
+
+NOTE on Stage B interpretation: photo encodes route through
+`LossyInternalParams::entropy_mul_table` (a direct override that
+ignores the production `median(mask1x1) > 95` discriminator). So
+Stage B measures the SAME lifted table applied UNCONDITIONALLY to
+photos — it is NOT a test of the production gate's photo-skip
+behavior. The production gate's photo-skip path is verified
+separately by the W22-1 `test_default_off_byte_identical` hash-lock
+fixtures (36 / 36 pass on parent commit `3541912b`); see
+`test_entropy_mul_table_screenshot_suppressed_values` in
+`effort.rs`. Stage B remains useful as a sanity that even the
+lowest cell does NOT regress photo butteraugli — it does not.
+
+Acceptance gates
+----------------
+1. avg screen-class bytes Δ ≤ -0.30 %
+2. no cell |bfly Δ| > 3 %
+3. ≥ 80 % of cells |bfly Δ| ≤ 2 %
+
+Per-tuple summary (sorted by avg bytes Δ ascending)
+----------------------------------------------------
+ ident   dct2   n avg_bytes_%  avg_bfly_%  max|bfly|%  >3%  <=2%  pass
+ 1.100 1.1000  27      -0.509       6.937     115.904   11   56%    no
+ 1.200 1.1000  27      -0.470       6.560     115.904   12   52%    no
+ 1.150 1.1300  27      -0.429       6.173      95.090   13   52%    no
+ 1.150 1.1000  27      -0.399       6.740      91.484   14   44%    no
+ 1.150 1.0700  27      -0.355       5.873      91.524   11   48%    no
+ 1.200 1.1300  27      -0.345       6.793     115.899   13   48%    no
+ 1.100 1.1300  27      -0.298       7.756     115.900   13   52%    no
+ 1.250 1.1300  27      -0.285       7.457     104.600   12   52%    no
+ 1.100 1.0700  27      -0.235       6.902     115.900    9   56%    no
+ 1.200 1.0700  27      -0.210       6.571     115.900   12   48%    no
+ 1.300 1.1300  27      -0.209       7.402     115.906   14   48%    no
+ 1.250 1.1000  27      -0.208       6.402      91.493   12   52%    no
+ 1.100 1.0400  27      -0.198       7.356     115.901   11   52%    no
+ 1.250 1.0700  27      -0.153       5.543      91.973   12   52%    no
+ 1.150 1.0400  27      -0.056       5.454      91.602   14   41%    no
+ 1.300 1.1000  27      -0.053       7.097     115.908   13   48%    no
+ 1.200 1.0400  27       0.054       6.725     115.908   15   44%    no
+ 1.300 1.0700  27       0.166       6.652     115.900   12   52%    no
+ 1.250 1.0400  27       0.203       6.226      92.040   15   44%    no
+ 1.300 1.0400  27       0.517       6.562     115.903   16   41%    no
+
+Verdict
+-------
+HONEST STOP — NO TUPLE passes all 3 gates.
+
+  - The smallest max |bfly Δ| across the entire grid is 91.48 %
+    (IDENTITY=1.15 DCT2X2=1.10) — far above the 3 % bar.
+  - Best avg bytes Δ is -0.509 % (IDENTITY=1.10 DCT2X2=1.10) —
+    passes gate 1 but the same tuple has max |bfly| 115.9 % and
+    only 56 % of cells under |bfly| ≤ 2 %.
+  - The "closest" tuple (avg bytes negative + smallest max |bfly|)
+    is IDENTITY=1.15 DCT2X2=1.10: avg bytes -0.399 %, max |bfly|
+    91.48 %, 14/27 cells failing gate 2.
+
+Per-cell breakdown (IDENTITY=1.15 DCT2X2=1.10, the "closest" tuple)
+-------------------------------------------------------------------
+       image          d  bytes%   bfly%
+       codec_wiki  0.5   +0.21   -0.78
+       codec_wiki  1.0   -1.26   +4.55   FAIL gate 2 (>3%)
+       codec_wiki  2.0   -0.33  +14.94   FAIL gate 2
+       gmessages   0.5   -0.08   -1.19
+       gmessages   1.0   -0.20   +1.76
+       gmessages   2.0   +0.25   +0.03
+       graph       0.5   +6.61  +91.48   FAIL gate 2 (catastrophic)
+       graph       1.0   +5.58  +44.90   FAIL gate 2
+       graph       2.0   -1.42   +9.10   FAIL gate 2
+       gui         0.5   -3.97   -0.00
+       gui         1.0   -0.38   +8.88   FAIL gate 2
+       gui         2.0   +0.32   -0.00
+       imac_dark   0.5   -1.93   +0.79
+       imac_dark   1.0   -0.69   -0.79
+       imac_dark   2.0   +0.52   +3.08   FAIL gate 2 (borderline)
+       imac_g3     0.5   -1.22   -5.07
+       imac_g3     1.0   -0.23   -0.00
+       imac_g3     2.0   -0.34   +0.00
+       imessage    0.5   -2.34  +16.21   FAIL gate 2
+       imessage    1.0   -1.75  -24.12   passes |bfly| gate (negative)
+       imessage    2.0   +0.07   +1.81
+       terminal    0.5   -0.63   -4.18   FAIL gate 2 (borderline, negative)
+       terminal    1.0   -0.98   -7.62
+       terminal    2.0   -0.08  +18.46   FAIL gate 2
+       windows     0.5   -2.49   -0.01
+       windows     1.0   -2.24   +7.45   FAIL gate 2
+       windows     2.0   -1.80   +2.30
+
+Interpretation
+--------------
+The W22-1 IDENTITY / DCT2X2 lifts trigger AC-strategy bistability
+on the screen class. Concretely: lifting IDENTITY entropy_mul shifts
+which 8x8-class transform the per-block search picks, and on certain
+image / distance combinations the alternate strategy degrades
+butteraugli wildly (both directions — see `imessage d=1` -24.12 %
+vs `imessage d=0.5` +16.21 %). The decision boundary is sharp;
+any global lift causes some neighborhood of (image, distance) to
+flip the wrong way.
+
+This bistability is NOT addressable by tightening the lift values:
+the smallest tested IDENTITY=1.10 still triggers +115.9 % bfly on
+`graph` at d=0.5. The W23-2 stage A2 result (libjxl-reference AFV +
+DCT4X8 with W22-1 IDENT/DCT2X2 lifts) showed identical pattern —
+the AFV / DCT4X8 lifts are NOT the dominant destabilizer. The
+IDENTITY lift itself is structurally the wedge.
+
+`graph` is a particularly hostile case (small image, thin plot
+lines, high-edge density at 796x481): the IDENTITY-lifted search
+prefers larger DCT blocks that blur the lines, and the resulting
+butteraugli explodes. Even the W35-1 zenanalyze classifier
+correctly identifies `graph` as plog2=8 (still in the "safe"
+class by the chunk-1 rule) — there is no zenanalyze tier-1 feature
+in the current set that cleanly separates `graph` from the other
+safe-class screenshots.
+
+The W22-1 / W35-1 `content_aware_entropy_mul` gate stays
+default-OFF. The screenshot lift remains opt-in via
+`LossyConfig::with_content_aware_entropy_mul(true)`.
+
+Chunk-5 plan (ranked, smallest-scope first)
+-------------------------------------------
+
+1. **Per-block discriminator inside compute_ac_strategy**
+   (W35-1 chunk-4 plan #3, deferred from previous attempts).
+   Stop trying to find a per-image lifted table; lift IDENTITY /
+   DCT2X2 entropy_mul ONLY for blocks whose local mask1x1 > threshold
+   AND local edge density is low (where lifting is most likely a
+   strict win — flat glyph backgrounds). Avoid lifting near sharp
+   edges where the strategy bistability shows up. Multi-week deep
+   AC-strategy-search change.
+
+2. **Distance-aware lift gating** (W35-1 chunk-4 plan #2).
+   The pattern across the data suggests d=0.5 is the safest regime
+   (codec_wiki, gmessages, imac_dark all show small bfly excursions
+   here). d=2 is uniformly the worst. A small win envelope would be:
+   gate the lift on `distance <= 0.5` in addition to the classifier.
+   But this would only buy ~0.3-0.5 % bytes on a subset and the
+   `graph` excursion at d=0.5 still kills it (+91 % bfly).
+
+3. **Tighter zenanalyze classifier rule**.
+   The chunk-1 zenanalyze data shows `graph` is an outlier on
+   `palette_log2_size` (8 vs 9-12 for the others in the safe set),
+   `chroma_complexity` (0.03 vs 0.04-0.31), and `lum_entropy`
+   (0.342 vs 1.5-2.3). Adding `lum_entropy >= 1.0` to the
+   `palette_log2_size > 6` rule would suppress lift on `graph`
+   (lum_entropy 0.342) and on any other small high-edge plot
+   image. Cheap to add but doesn't fix the per-image bistability
+   on the remaining 8 safe-class screenshots (terminal d=2, imessage
+   d=0.5, etc. all still excursion).
+
+4. **Add `kAvoidEntropyOfTransforms` gate to ALL distances**
+   (W23-2 deferred path option (a)).
+   Currently the avoid-entropy stabilizer is gated at d > 4.0
+   (`ac_strategy_search.rs:60`). Dropping the gate to d > 0 would
+   apply the cost-model stabilizer at all distances; the question
+   is whether it stabilizes the IDENTITY-vs-other-strategy decision
+   enough that lifting entropy_mul stays correctness-safe. Would
+   take its own bisect (W36-class effort) plus a hash-lock rebuild
+   on photos (likely breaks bit-identity).
+
+5. **Drop the per-image gate entirely; keep W35-1 hint API**.
+   The `with_screenshot_lift_hint(Some(true)/Some(false))` API
+   shipped in W35-1 chunk-1 remains useful as a CALLER-driven
+   knob. A caller with their own classifier (e.g., zenanalyze
+   downstream pipeline that has already classified the image as
+   safe-class screen content for its own reasons) can opt in.
+   This is the current shipped behavior; no chunk-5 needed if we
+   accept that the wedge is structural and the gate should remain
+   opt-in.
+
+Recommend chunk-5 = path #5 (no further work; ship the W35-1
+infrastructure as-is, document that auto-enable is not yet
+shippable). Path #1 is the technically correct fix but it's
+multi-week scope and pushes against the AC-strategy search hot
+path. Paths #3 and #4 are micro-scope but unlikely to clear the
+gate on the harder cells.
+
+Files
+-----
+- Sweep harness: `jxl-encoder/examples/entropy_mul_safe_class_bisect.rs`
+- Cargo.toml registration: `jxl-encoder/Cargo.toml` block before
+  `cpu_entropy_mul_bisect_stage_a2` entry
+- Raw TSV: `benchmarks/entropy_mul_safe_class_bisect_2026-05-18.tsv`
+  (555 rows = 540 Stage A + 15 Stage B)
+- This meta: `benchmarks/entropy_mul_safe_class_bisect_2026-05-18.meta`
+
+Photo bit-identity (production gate path)
+------------------------------------------
+The W35-1 hash-lock fixtures (36 / 36 pass at parent commit
+`3541912b`) verify that `with_content_aware_entropy_mul(false)`
+— the default — keeps every photo encode byte-identical. No new
+default-on table flip occurs in this chunk; the
+`EntropyMulTable::screenshot_suppressed()` values are UNCHANGED
+from W22-1. Therefore:
+
+  - Default config: byte-identical to parent (hash-lock proven).
+  - `with_content_aware_entropy_mul(true)` opt-in: same lift
+    behavior as W22-1 / W35-1.
+  - `with_screenshot_lift_hint(Some(true|false))` override: same
+    behavior as W35-1.
+  - `LossyInternalParams::entropy_mul_table = Some(...)`: still
+    bypasses both gates (used by this bench; not the production
+    path).
+
+No production wiring changed in this chunk.

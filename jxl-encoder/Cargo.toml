@@ -446,6 +446,14 @@ name = "cpu_entropy_mul_bisect_stage_a2"
 path = "examples/cpu_entropy_mul_bisect_stage_a2.rs"
 required-features = ["__expert", "butteraugli-loop"]
 
+# W35-2 chunk-4 follow-on (drops windows95 from W23-2 bisect corpus,
+# re-bisects on 9 plog2 ≥ 7 screenshots with LOWER lift values).
+# Sweeps IDENTITY ∈ {1.10..1.30} × DCT2X2 ∈ {1.04..1.13}.
+[[example]]
+name = "entropy_mul_safe_class_bisect"
+path = "examples/entropy_mul_safe_class_bisect.rs"
+required-features = ["__expert", "butteraugli-loop"]
+
 [[example]]
 name = "drift_block_map"
 path = "examples/drift_block_map.rs"
