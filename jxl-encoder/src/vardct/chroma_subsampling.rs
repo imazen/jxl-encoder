@@ -267,6 +267,377 @@ pub fn build_ycbcr_vardct_frame_header(mode: ChromaSubsampling) -> FrameHeader {
     }
 }
 
+// ── chunk 4 — Sub420 end-to-end via `jpeg::encode` ──────────────────────────
+//
+// The chunk-4 strategy (see module-level doc): we don't refactor the
+// VarDCT pipeline to grow per-channel block grids. Instead, we convert
+// RGB → YCbCr+420 with zenyuv, run a standard 8×8 forward DCT +
+// integer quantization on every block of each plane (Y at full res,
+// Cb/Cr at half res), pack the quantized coefficients into a
+// [`JpegData`] payload, and hand it to
+// [`crate::jpeg::encode::encode_jpeg_to_jxl`]. That encoder already
+// supports `do_ycbcr=true` + `jpeg_upsampling=[0,1,0]` +
+// per-component block dimensions, so we get a decoder-roundtrippable
+// 4:2:0 bitstream without touching the standard VarDCT pipeline.
+//
+// The chunk-4 path is intentionally **lossy** (quantization is not
+// bit-exact to any specific cjxl output) but the bitstream IS valid
+// JXL and decodes to YCbCr pixels with the requested 4:2:0 chroma
+// shape. RD parity with cjxl is chunk-5+ territory.
+
+#[cfg(feature = "jpeg-reencoding")]
+use crate::jpeg::JpegData;
+
+/// JPEG-style standard luma quantization table (Annex K Table K.1).
+///
+/// Stored in natural row-major order. Scaled by the encoder's
+/// quality-derived factor (see [`distance_to_jpeg_quality`]) to
+/// produce per-distance Y quant tables.
+#[cfg(feature = "jpeg-reencoding")]
+const STD_LUMA_QT: [i32; 64] = [
+    16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14, 13, 16, 24, 40, 57, 69, 56,
+    14, 17, 22, 29, 51, 87, 80, 62, 18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81, 104, 113,
+    92, 49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99,
+];
+
+/// JPEG-style standard chroma quantization table (Annex K Table K.2).
+#[cfg(feature = "jpeg-reencoding")]
+const STD_CHROMA_QT: [i32; 64] = [
+    17, 18, 24, 47, 99, 99, 99, 99, 18, 21, 26, 66, 99, 99, 99, 99, 24, 26, 56, 99, 99, 99, 99, 99,
+    47, 66, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+    99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+];
+
+/// Approximate Butteraugli distance → libjpeg-style 1..100 quality
+/// factor. Used only to scale the standard luma/chroma tables for the
+/// chunk-4 Sub420 path. Not a calibrated mapping (chunk 5+ will tune
+/// per-distance quant matrices against cjxl) — just a monotonic
+/// "smaller distance → higher quality, finer quant" curve that keeps
+/// quant values >= 1 across the supported `distance` range.
+#[cfg(feature = "jpeg-reencoding")]
+fn distance_to_jpeg_quality(distance: f32) -> i32 {
+    // Anchor points (rough libjxl distance vs subjective JPEG quality):
+    //   d=0.5 ↔ q≈92, d=1.0 ↔ q≈85, d=2.0 ↔ q≈75, d=4.0 ↔ q≈60.
+    // Linear interpolation in log(distance) space is good enough for
+    // the chunk-4 acceptance test (valid roundtrip; no RD parity claim).
+    let d = distance.clamp(0.05, 25.0);
+    let q = 95.0_f32 - 15.0_f32 * d.log2().max(-2.0);
+    q.round().clamp(1.0, 100.0) as i32
+}
+
+/// Scale a standard JPEG quant table by a libjpeg-style quality
+/// factor `1..100`. Mirrors libjpeg's `jpeg_quality_scaling` formula.
+#[cfg(feature = "jpeg-reencoding")]
+fn scale_qt(base: &[i32; 64], quality: i32) -> [i32; 64] {
+    // libjpeg-style scale: q < 50 -> 5000/q, else 200 - 2*q.
+    let scale = if quality < 50 {
+        5000 / quality
+    } else {
+        200 - 2 * quality
+    };
+    let mut out = [0i32; 64];
+    for i in 0..64 {
+        let v = (base[i] * scale + 50) / 100;
+        out[i] = v.clamp(1, 255);
+    }
+    out
+}
+
+/// Reference 8×8 forward DCT-II that produces JPEG natural-order
+/// coefficients (row-major, frequency `(u, v)` at `coeffs[u*8+v]`).
+///
+/// Implements the standard separable 2D DCT-II with libjpeg
+/// normalisation: `C[u,v] = (1/4) * a(u) * a(v) * sum_{x,y}
+/// input[y,x] * cos(...) * cos(...)`. Not the fastest possible
+/// implementation but trivially correct — the chunk-4 path runs
+/// per-block, not per-row-strip, so the speed difference is
+/// invisible at our target sizes. Reuse via the jxl `dct_8x8` would
+/// require an additional transpose (jxl emits coeffs in transposed
+/// layout — see `vardct/dct/forward.rs:128`) and would entangle the
+/// jpeg-shaped path with the VarDCT DCT module's scaling convention;
+/// a small standalone implementation is easier to audit.
+#[cfg(feature = "jpeg-reencoding")]
+fn forward_dct_8x8_natural(input: &[f32; 64], output: &mut [f32; 64]) {
+    // Per-row 1D DCT-II into a temp.
+    let mut tmp = [0.0_f32; 64];
+    for y in 0..8 {
+        dct1d_8_natural(
+            &[
+                input[y * 8],
+                input[y * 8 + 1],
+                input[y * 8 + 2],
+                input[y * 8 + 3],
+                input[y * 8 + 4],
+                input[y * 8 + 5],
+                input[y * 8 + 6],
+                input[y * 8 + 7],
+            ],
+            &mut tmp[y * 8..y * 8 + 8],
+        );
+    }
+    // Per-column 1D DCT-II into output.
+    for x in 0..8 {
+        let col = [
+            tmp[x],
+            tmp[8 + x],
+            tmp[16 + x],
+            tmp[24 + x],
+            tmp[32 + x],
+            tmp[40 + x],
+            tmp[48 + x],
+            tmp[56 + x],
+        ];
+        let mut col_out = [0.0_f32; 8];
+        dct1d_8_natural(&col, &mut col_out);
+        for u in 0..8 {
+            output[u * 8 + x] = col_out[u];
+        }
+    }
+}
+
+/// 1D DCT-II of length 8 with libjpeg orthonormalisation
+/// (`a(0) = 1/sqrt(2)`, `a(k) = 1` for k > 0, overall `1/2`).
+///
+/// The combined 2D scaling (`(1/2)^2 = 1/4` plus per-axis `a(u)*a(v)`)
+/// is split across the two passes so the per-pass output is
+/// orthonormal. Specifically each 1D pass multiplies by `sqrt(2/N) =
+/// 1/2` and the DC term gets the additional `1/sqrt(2)` factor.
+#[cfg(feature = "jpeg-reencoding")]
+fn dct1d_8_natural(input: &[f32; 8], output: &mut [f32]) {
+    let pi_over_16 = core::f32::consts::PI / 16.0;
+    for (u, out_u) in output.iter_mut().enumerate().take(8) {
+        let mut s = 0.0_f32;
+        for (x, &in_x) in input.iter().enumerate() {
+            // (2x + 1) * u * pi / 16
+            let theta = ((2 * x + 1) as f32) * (u as f32) * pi_over_16;
+            s += in_x * theta.cos();
+        }
+        // 1D normalisation: sqrt(2/N) = 1/2, with extra 1/sqrt(2) for DC.
+        let a = if u == 0 {
+            1.0 / core::f32::consts::SQRT_2
+        } else {
+            1.0
+        };
+        *out_u = 0.5 * a * s;
+    }
+}
+
+/// Forward-DCT + quantize one 8×8 pixel block (u8 input, level-shifted
+/// by −128 per JPEG convention) into 64 i16 natural-order quantized
+/// coefficients.
+#[cfg(feature = "jpeg-reencoding")]
+fn fdct_quantize_block(pixels: &[u8; 64], qtable: &[i32; 64], out: &mut [i16; 64]) {
+    let mut f = [0.0_f32; 64];
+    for i in 0..64 {
+        f[i] = pixels[i] as f32 - 128.0;
+    }
+    let mut coeffs = [0.0_f32; 64];
+    forward_dct_8x8_natural(&f, &mut coeffs);
+    for i in 0..64 {
+        let q = qtable[i].max(1) as f32;
+        // Symmetric rounding away from zero matches libjpeg's
+        // `(coeff + sign * q/2) / q` integer divide convention.
+        let v = (coeffs[i] / q).round() as i32;
+        out[i] = v.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+    }
+}
+
+/// Extract an 8×8 pixel block from a planar buffer, with right/bottom
+/// edge replication for out-of-bounds samples (standard JPEG
+/// boundary-pad convention).
+#[cfg(feature = "jpeg-reencoding")]
+fn extract_block(
+    plane: &[u8],
+    width: usize,
+    height: usize,
+    block_x: usize,
+    block_y: usize,
+    out: &mut [u8; 64],
+) {
+    let x0 = block_x * 8;
+    let y0 = block_y * 8;
+    for j in 0..8 {
+        let y = (y0 + j).min(height.saturating_sub(1));
+        for i in 0..8 {
+            let x = (x0 + i).min(width.saturating_sub(1));
+            out[j * 8 + i] = plane[y * width + x];
+        }
+    }
+}
+
+/// Forward-DCT-quantize every 8×8 block of a planar u8 buffer and
+/// return the concatenated natural-order quantized coefficients
+/// (block-by-block in raster order).
+#[cfg(feature = "jpeg-reencoding")]
+fn fdct_quantize_plane(
+    plane: &[u8],
+    width: usize,
+    height: usize,
+    qtable: &[i32; 64],
+) -> (Vec<i16>, u32, u32) {
+    let w_blocks = width.div_ceil(8);
+    let h_blocks = height.div_ceil(8);
+    let n = w_blocks * h_blocks;
+    let mut coeffs = vec![0_i16; n * 64];
+    let mut pixels = [0_u8; 64];
+    let mut block = [0_i16; 64];
+    for by in 0..h_blocks {
+        for bx in 0..w_blocks {
+            extract_block(plane, width, height, bx, by, &mut pixels);
+            fdct_quantize_block(&pixels, qtable, &mut block);
+            let dst = (by * w_blocks + bx) * 64;
+            coeffs[dst..dst + 64].copy_from_slice(&block);
+        }
+    }
+    (coeffs, w_blocks as u32, h_blocks as u32)
+}
+
+/// Synthesise a [`JpegData`] payload from an interleaved RGB buffer
+/// for the chunk-4 Sub420 path.
+///
+/// Pipeline:
+/// 1. RGB → YCbCr 4:2:0 via [`rgb_to_yuv420_sharp`] (zenyuv Sharp YUV).
+/// 2. Forward 8×8 DCT-II + integer quantisation on every block of Y
+///    (full res) and Cb / Cr (half res).
+/// 3. Pack the resulting i16 coefficient arrays into [`JpegData`]
+///    fields so [`crate::jpeg::encode::encode_jpeg_to_jxl`] can
+///    consume it.
+///
+/// The synthetic [`JpegData`] omits scan_info / marker_order /
+/// inter_marker_data / huffman_code / app_data — none of those are
+/// read by the JXL-emit half of the JPEG path (see
+/// `jpeg/encode.rs:51-456`). JBRD reconstruction is NOT possible
+/// from this output (the source bytes are RGB pixels, not a JPEG);
+/// the synthesised payload is only valid as input to
+/// `encode_jpeg_to_jxl` (codestream-only).
+#[cfg(feature = "jpeg-reencoding")]
+fn synth_jpeg_data_from_rgb8_sub420(
+    rgb: &[u8],
+    width: usize,
+    height: usize,
+    distance: f32,
+) -> Result<JpegData, crate::error::Error> {
+    if width == 0 || height == 0 {
+        return Err(crate::error::Error::InvalidInput(format!(
+            "synth_jpeg_data_from_rgb8_sub420 requires non-zero dimensions, got {width}x{height}"
+        )));
+    }
+    if rgb.len() < width * height * 3 {
+        return Err(crate::error::Error::InvalidInput(format!(
+            "synth_jpeg_data_from_rgb8_sub420 rgb buffer too small: {} < {}",
+            rgb.len(),
+            width * height * 3
+        )));
+    }
+
+    let quality = distance_to_jpeg_quality(distance);
+    let luma_qt = scale_qt(&STD_LUMA_QT, quality);
+    let chroma_qt = scale_qt(&STD_CHROMA_QT, quality);
+
+    let planes = rgb_to_yuv420_sharp(rgb, width, height);
+
+    // Y plane: full resolution.
+    let (y_coeffs, y_w_blocks, y_h_blocks) =
+        fdct_quantize_plane(&planes.y, width, height, &luma_qt);
+    // Cb / Cr planes: chroma_width × chroma_height (half-res in each axis).
+    let (cb_coeffs, cb_w_blocks, cb_h_blocks) = fdct_quantize_plane(
+        &planes.cb,
+        planes.chroma_width,
+        planes.chroma_height,
+        &chroma_qt,
+    );
+    let (cr_coeffs, cr_w_blocks, cr_h_blocks) = fdct_quantize_plane(
+        &planes.cr,
+        planes.chroma_width,
+        planes.chroma_height,
+        &chroma_qt,
+    );
+    debug_assert_eq!((cb_w_blocks, cb_h_blocks), (cr_w_blocks, cr_h_blocks));
+
+    // Build component list. Channel order is JPEG-native (Y, Cb, Cr);
+    // the JXL encode side remaps via `jpeg_c_map = [1, 0, 2]` per the
+    // libjxl convention (`jpeg/encode.rs:62`).
+    let comp_y = jpeg_component(1, 2, 2, 0, y_w_blocks, y_h_blocks, y_coeffs);
+    let comp_cb = jpeg_component(2, 1, 1, 1, cb_w_blocks, cb_h_blocks, cb_coeffs);
+    let comp_cr = jpeg_component(3, 1, 1, 1, cr_w_blocks, cr_h_blocks, cr_coeffs);
+
+    let quant_y = jpeg_quant_table(&luma_qt, 0, false);
+    let quant_c = jpeg_quant_table(&chroma_qt, 1, true);
+
+    Ok(JpegData {
+        width: width as u32,
+        height: height as u32,
+        restart_interval: 0,
+        app_data: Vec::new(),
+        app_marker_type: Vec::new(),
+        com_data: Vec::new(),
+        quant: alloc::vec![quant_y, quant_c],
+        huffman_code: Vec::new(),
+        components: alloc::vec![comp_y, comp_cb, comp_cr],
+        scan_info: Vec::new(),
+        marker_order: Vec::new(),
+        inter_marker_data: Vec::new(),
+        tail_data: Vec::new(),
+        has_zero_padding_bit: false,
+        padding_bits: Vec::new(),
+        component_type: crate::jpeg::JpegComponentType::YCbCr,
+    })
+}
+
+#[cfg(feature = "jpeg-reencoding")]
+fn jpeg_component(
+    id: u32,
+    h_samp: u32,
+    v_samp: u32,
+    quant_idx: u32,
+    width_in_blocks: u32,
+    height_in_blocks: u32,
+    coeffs: Vec<i16>,
+) -> crate::jpeg::JpegComponent {
+    crate::jpeg::JpegComponent {
+        id,
+        h_samp_factor: h_samp,
+        v_samp_factor: v_samp,
+        quant_idx,
+        width_in_blocks,
+        height_in_blocks,
+        coeffs,
+    }
+}
+
+#[cfg(feature = "jpeg-reencoding")]
+fn jpeg_quant_table(values: &[i32; 64], index: u32, is_last: bool) -> crate::jpeg::JpegQuantTable {
+    crate::jpeg::JpegQuantTable {
+        values: *values,
+        precision: 0,
+        index,
+        is_last,
+    }
+}
+
+/// Encode an interleaved RGB8 image as a JXL codestream with
+/// chroma subsampling 4:2:0. Public entry point for the chunk-4
+/// Sub420 path; called from the `LossyConfig` lossy encoder when the
+/// caller picks [`ChromaSubsampling::Sub420`].
+///
+/// Output is a bare JXL codestream (not a container) — same shape as
+/// what [`crate::jpeg::encode::encode_jpeg_to_jxl`] returns. The
+/// `distance` parameter only controls the JPEG quant table scaling
+/// (see [`distance_to_jpeg_quality`]); it does not run a butteraugli
+/// loop or per-block adaptive quant. RD parity with cjxl is chunk-5+
+/// territory; this entry just produces a decoder-roundtrippable
+/// Sub420 bitstream.
+#[cfg(feature = "jpeg-reencoding")]
+pub fn encode_rgb8_sub420_via_jpeg_path(
+    rgb: &[u8],
+    width: usize,
+    height: usize,
+    distance: f32,
+) -> Result<Vec<u8>, crate::error::Error> {
+    let jpeg = synth_jpeg_data_from_rgb8_sub420(rgb, width, height, distance)?;
+    crate::jpeg::encode_jpeg_to_jxl(&jpeg)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
