@@ -202,6 +202,15 @@ archmage = { version = "0.9.15", default-features = false, features = ["macros",
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 codec-corpus = "1.0.1"
 rayon = "1.10"
+# Restored 2026-05-18 (W44-16) — required by examples/cjxl_parity_ledger.rs
+# for inline TOC parsing of cjxl reference bitstreams. These were dropped
+# in the W43-2 chunk-7 mass-deletion (ac903e02) but the example survived
+# the deletion-restore cycle and still needs them.
+jxl-frame = "0.13.3"
+jxl-bitstream = "1.1.0"
+jxl-image = "0.13.0"
+jxl-color = "0.11.0"
+jxl-oxide-common = "1.0.0"
 # Deterministic RNG for picker oracle scalar sampling.
 fastrand = "2.4.1"
 # NOTE on `zenanalyze` (sibling path dep) — required by
@@ -813,6 +822,16 @@ path = "examples/entropy_coeffs_magetypes_bench.rs"
 [[example]]
 name = "forward_xyb_magetypes_bench"
 path = "examples/forward_xyb_magetypes_bench.rs"
+
+# W44-10/W44-16 cjxl parity ledger refresher. Restored from 18f751fb after
+# the W43-2 chunk-7 jj-conflict-resolution commit (ac903e02) inadvertently
+# wiped it. Iterates over the persisted TSV cells, re-encodes via the
+# library, decodes via jxl-oxide in srgb_linear, and computes butteraugli +
+# fast-ssim2 deltas vs cjxl reference; supports --update and --all modes.
+[[example]]
+name = "cjxl_parity_ledger"
+path = "examples/cjxl_parity_ledger.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
 [lints]
 workspace = true
