@@ -525,7 +525,55 @@ struct Args {
         allow_hyphen_values = true
     )]
     premultiply: i8,
+
+    /// Route the encode through the streaming
+    /// [`LossyEncoder`](jxl_encoder::LossyEncoder) /
+    /// [`LosslessEncoder`](jxl_encoder::LosslessEncoder) API by chunking
+    /// the decoded pixel buffer into row-groups (`STREAM_CHUNK_ROWS`)
+    /// fed via `push_rows()` + finalized with `finish()` /
+    /// [`finish_to`](jxl_encoder::LossyEncoder::finish_to).
+    ///
+    /// Mirrors `cjxl --streaming_input` at the CLI surface. The input
+    /// file itself is still PNG/PNM-decoded into memory first because
+    /// our streaming PNM reader is not yet wired (that's the multi-day
+    /// follow-on tracked alongside `--streaming-input` in the A1 audit);
+    /// this flag exercises the encoder-side row-streaming pipeline so
+    /// the API is regularly covered from end-to-end. Bitstreams emitted
+    /// via `--streaming-input` are bit-identical to the bulk path on the
+    /// supported subset (basic RGB / RGBA / Gray / Gray+Alpha lossless
+    /// or lossy without rate-control, JPEG transcode, animation, or
+    /// ec_resampling). When combined with an unsupported path the flag
+    /// is logged and ignored.
+    ///
+    /// Both `--streaming_input` (libjxl style) and `--streaming-input`
+    /// (clap default) are accepted.
+    #[arg(long = "streaming_input", alias = "streaming-input")]
+    streaming_input: bool,
+
+    /// Write the encoded codestream directly into the output file via
+    /// [`LossyEncoder::finish_to`](jxl_encoder::LossyEncoder::finish_to) /
+    /// [`LosslessEncoder::finish_to`](jxl_encoder::LosslessEncoder::finish_to)
+    /// instead of buffering the full encoded `Vec<u8>` in memory first.
+    ///
+    /// Mirrors `cjxl --streaming_output`. Only effective alongside
+    /// `--streaming-input`; the bulk one-shot path still goes through a
+    /// `Vec<u8>` because it has no incremental writer surface. The
+    /// streaming-encoder `finish_to` sink is `std::io::Write`-backed, so
+    /// we wrap the destination in a `BufWriter<File>` and let the
+    /// encoder push bytes as they are emitted.
+    ///
+    /// Both `--streaming_output` (libjxl style) and `--streaming-output`
+    /// (clap default) are accepted.
+    #[arg(long = "streaming_output", alias = "streaming-output")]
+    streaming_output: bool,
 }
+
+/// Number of pixel rows pushed per `push_rows` call when
+/// `--streaming-input` is on. Picked to (a) keep per-chunk pixel byte
+/// volume below ~16 MiB at typical pixel widths and (b) match the
+/// 256-row JXL group height so deinterleave / channel writes line up
+/// with downstream group boundaries.
+const STREAM_CHUNK_ROWS: u32 = 64;
 
 fn main() {
     let args = Args::parse();
@@ -1313,7 +1361,46 @@ fn main() {
             result
                 .map(|(data, _)| data)
                 .map_err(|e| jxl_encoder::at(jxl_encoder::EncodeError::from(e)))
+        } else if args.streaming_input
+            && !args.progressive
+            && !args.qprogressive
+            && !args.lf_frame
+            && args.progressive_dc == 0
+        {
+            if !args.quiet {
+                println!(
+                    "Streaming-input: pushing {} chunks of up to {} rows via LossyEncoder",
+                    height.div_ceil(STREAM_CHUNK_ROWS),
+                    STREAM_CHUNK_ROWS
+                );
+                if args.streaming_output {
+                    println!(
+                        "Streaming-output: writing codestream directly to {}",
+                        args.output.display()
+                    );
+                }
+            }
+            encode_lossy_streaming(
+                &cfg,
+                width,
+                height,
+                layout,
+                &data,
+                metadata.as_ref(),
+                source_gamma,
+                args.intensity_target,
+                args.brotli_effort,
+                args.premultiply,
+                &args.output,
+                args.streaming_output,
+            )
         } else {
+            if args.streaming_input && !args.quiet {
+                eprintln!(
+                    "Warning: --streaming-input ignored — lossy path requires no \
+                     --progressive / --qprogressive / --lf-frame / --progressive-dc"
+                );
+            }
             let mut req = cfg.encode_request(width, height, layout);
             if let Some(ref meta) = metadata {
                 req = req.with_metadata(meta);
@@ -1341,25 +1428,66 @@ fn main() {
                 eprintln!("Warning: --rate-control requires the rate-control feature");
                 eprintln!("Rebuild with: cargo build --features rate-control");
             }
-            let mut req = cfg.encode_request(width, height, layout);
-            if let Some(ref meta) = metadata {
-                req = req.with_metadata(meta);
-            }
-            if let Some(gamma) = source_gamma {
-                req = req.with_source_gamma(gamma);
-            }
-            if let Some(it) = args.intensity_target {
-                req = req.with_intensity_target(it);
-            }
-            if let Some(q) = args.brotli_effort {
-                req = req.with_brotli_metadata(q);
-            }
-            if args.premultiply != 0 && layout.has_alpha() {
-                req = req.with_premultiplied_alpha_mode(PremultipliedAlphaMode::from_i8(
+            if args.streaming_input
+                && !args.progressive
+                && !args.qprogressive
+                && !args.lf_frame
+                && args.progressive_dc == 0
+            {
+                if !args.quiet {
+                    println!(
+                        "Streaming-input: pushing {} chunks of up to {} rows via LossyEncoder",
+                        height.div_ceil(STREAM_CHUNK_ROWS),
+                        STREAM_CHUNK_ROWS
+                    );
+                    if args.streaming_output {
+                        println!(
+                            "Streaming-output: writing codestream directly to {}",
+                            args.output.display()
+                        );
+                    }
+                }
+                encode_lossy_streaming(
+                    &cfg,
+                    width,
+                    height,
+                    layout,
+                    &data,
+                    metadata.as_ref(),
+                    source_gamma,
+                    args.intensity_target,
+                    args.brotli_effort,
                     args.premultiply,
-                ));
+                    &args.output,
+                    args.streaming_output,
+                )
+            } else {
+                if args.streaming_input && !args.quiet {
+                    eprintln!(
+                        "Warning: --streaming-input ignored — lossy path requires no \
+                         --progressive / --qprogressive / --lf-frame / --progressive-dc"
+                    );
+                }
+                let mut req = cfg.encode_request(width, height, layout);
+                if let Some(ref meta) = metadata {
+                    req = req.with_metadata(meta);
+                }
+                if let Some(gamma) = source_gamma {
+                    req = req.with_source_gamma(gamma);
+                }
+                if let Some(it) = args.intensity_target {
+                    req = req.with_intensity_target(it);
+                }
+                if let Some(q) = args.brotli_effort {
+                    req = req.with_brotli_metadata(q);
+                }
+                if args.premultiply != 0 && layout.has_alpha() {
+                    req = req.with_premultiplied_alpha_mode(PremultipliedAlphaMode::from_i8(
+                        args.premultiply,
+                    ));
+                }
+                req.encode(&data)
             }
-            req.encode(&data)
         }
     } else {
         // Lossless modular path (or lossy RGBA/gray which falls through to modular)
@@ -1497,7 +1625,41 @@ fn main() {
                 req = req.with_brotli_metadata(q);
             }
             req.encode(&color)
+        } else if args.streaming_input && !args.lossy_palette {
+            if !args.quiet {
+                println!(
+                    "Streaming-input: pushing {} chunks of up to {} rows via LosslessEncoder",
+                    height.div_ceil(STREAM_CHUNK_ROWS),
+                    STREAM_CHUNK_ROWS
+                );
+                if args.streaming_output {
+                    println!(
+                        "Streaming-output: writing codestream directly to {}",
+                        args.output.display()
+                    );
+                }
+            }
+            encode_lossless_streaming(
+                &cfg,
+                width,
+                height,
+                layout,
+                &data,
+                metadata.as_ref(),
+                source_gamma,
+                args.intensity_target,
+                args.brotli_effort,
+                args.premultiply,
+                &args.output,
+                args.streaming_output,
+            )
         } else {
+            if args.streaming_input && !args.quiet {
+                eprintln!(
+                    "Warning: --streaming-input ignored — lossless path is incompatible \
+                     with --lossy-palette (not yet supported by LosslessEncoder)"
+                );
+            }
             let mut req = cfg.encode_request(width, height, layout);
             if let Some(ref meta) = metadata {
                 req = req.with_metadata(meta);
@@ -1526,17 +1688,26 @@ fn main() {
 
     let encode_time = start.elapsed();
 
-    // Write output
-    match write_output(&args.output, &encoded) {
-        Ok(()) => {}
-        Err(e) => {
-            eprintln!("Error writing output: {}", e);
-            std::process::exit(1);
-        }
-    };
+    // Write output (skip if --streaming-output already wrote it directly)
+    if !(args.streaming_input && args.streaming_output) {
+        match write_output(&args.output, &encoded) {
+            Ok(()) => {}
+            Err(e) => {
+                eprintln!("Error writing output: {}", e);
+                std::process::exit(1);
+            }
+        };
+    }
 
     let input_size = std::fs::metadata(&args.input).map(|m| m.len()).unwrap_or(0);
-    let output_size = encoded.len() as u64;
+    let output_size = if args.streaming_input && args.streaming_output {
+        // `finish_to` wrote the bytes directly; ask the FS for the size
+        std::fs::metadata(&args.output)
+            .map(|m| m.len())
+            .unwrap_or(0)
+    } else {
+        encoded.len() as u64
+    };
     let ratio = if input_size > 0 {
         output_size as f64 / input_size as f64
     } else {
@@ -1562,6 +1733,189 @@ fn container_mode_from_cli(v: i8) -> ContainerMode {
         0 => ContainerMode::Never,
         1 => ContainerMode::Always,
         _ => ContainerMode::Auto,
+    }
+}
+
+/// Drive the lossy encode through [`LossyEncoder`]'s `push_rows()` +
+/// `finish_to()` / `finish()` surface for the `--streaming-input` /
+/// `--streaming-output` CLI flags.
+///
+/// The pre-built [`LossyConfig`] is reused verbatim (so distance, effort,
+/// gaborish, butteraugli, etc. all flow from the same dispatch as the
+/// bulk path). The decoded pixel buffer is sliced into row-groups of
+/// [`STREAM_CHUNK_ROWS`] and fed to `push_rows()` to exercise the
+/// incremental path end-to-end; bitstreams are bit-identical to the
+/// bulk one-shot path on the eligible subset.
+///
+/// When `streaming_output` is `true` the resulting `Vec<u8>` is empty —
+/// bytes were streamed directly to `output_path` via
+/// [`LossyEncoder::finish_to`].
+#[allow(clippy::too_many_arguments)]
+fn encode_lossy_streaming(
+    cfg: &LossyConfig,
+    width: u32,
+    height: u32,
+    layout: PixelLayout,
+    data: &[u8],
+    metadata: Option<&jxl_encoder::ImageMetadata>,
+    source_gamma: Option<f32>,
+    intensity_target: Option<f32>,
+    brotli_effort: Option<u32>,
+    premultiply: i8,
+    output_path: &std::path::Path,
+    streaming_output: bool,
+) -> Result<Vec<u8>, jxl_encoder::At<jxl_encoder::EncodeError>> {
+    let mut enc = cfg.encoder(width, height, layout)?;
+    if let Some(meta) = metadata {
+        if let Some(icc) = meta.icc_profile() {
+            enc = enc.with_icc_profile(icc);
+        }
+        if let Some(exif) = meta.exif() {
+            enc = enc.with_exif(exif);
+        }
+        if let Some(xmp) = meta.xmp() {
+            enc = enc.with_xmp(xmp);
+        }
+        if let Some(jumbf) = meta.jumbf() {
+            enc = enc.with_jumbf(jumbf);
+        }
+    }
+    if let Some(g) = source_gamma {
+        enc = enc.with_source_gamma(g);
+    }
+    if let Some(it) = intensity_target {
+        enc = enc.with_intensity_target(it);
+    }
+    if let Some(q) = brotli_effort {
+        enc = enc.with_brotli_metadata(q);
+    }
+    if premultiply != 0 && layout.has_alpha() {
+        enc = enc.with_premultiplied_alpha(premultiply > 0);
+    }
+
+    let bpp = layout.bytes_per_pixel();
+    let row_bytes = (width as usize).checked_mul(bpp).ok_or_else(|| {
+        jxl_encoder::at(jxl_encoder::EncodeError::InvalidInput {
+            message: "row dimensions overflow".into(),
+        })
+    })?;
+    let mut rows_remaining = height;
+    let mut offset = 0usize;
+    while rows_remaining > 0 {
+        let chunk_rows = rows_remaining.min(STREAM_CHUNK_ROWS);
+        let chunk_bytes = row_bytes * chunk_rows as usize;
+        let end = offset + chunk_bytes;
+        if end > data.len() {
+            return Err(jxl_encoder::at(jxl_encoder::EncodeError::InvalidInput {
+                message: format!(
+                    "streaming chunk past pixel buffer end ({end} > {})",
+                    data.len()
+                ),
+            }));
+        }
+        enc.push_rows(&data[offset..end], chunk_rows)?;
+        offset = end;
+        rows_remaining -= chunk_rows;
+    }
+
+    if streaming_output {
+        let file = File::create(output_path).map_err(|e| {
+            jxl_encoder::at(jxl_encoder::EncodeError::InvalidInput {
+                message: format!("create output {}: {}", output_path.display(), e),
+            })
+        })?;
+        let writer = BufWriter::new(file);
+        let _result = enc.finish_to(writer)?;
+        Ok(Vec::new())
+    } else {
+        enc.finish()
+    }
+}
+
+/// Drive the lossless modular encode through [`LosslessEncoder`]'s
+/// `push_rows()` + `finish_to()` / `finish()` surface for the
+/// `--streaming-input` / `--streaming-output` CLI flags. Counterpart to
+/// [`encode_lossy_streaming`]; see that function for the architectural
+/// notes.
+#[allow(clippy::too_many_arguments)]
+fn encode_lossless_streaming(
+    cfg: &LosslessConfig,
+    width: u32,
+    height: u32,
+    layout: PixelLayout,
+    data: &[u8],
+    metadata: Option<&jxl_encoder::ImageMetadata>,
+    source_gamma: Option<f32>,
+    intensity_target: Option<f32>,
+    brotli_effort: Option<u32>,
+    premultiply: i8,
+    output_path: &std::path::Path,
+    streaming_output: bool,
+) -> Result<Vec<u8>, jxl_encoder::At<jxl_encoder::EncodeError>> {
+    let mut enc = cfg.encoder(width, height, layout)?;
+    if let Some(meta) = metadata {
+        if let Some(icc) = meta.icc_profile() {
+            enc = enc.with_icc_profile(icc);
+        }
+        if let Some(exif) = meta.exif() {
+            enc = enc.with_exif(exif);
+        }
+        if let Some(xmp) = meta.xmp() {
+            enc = enc.with_xmp(xmp);
+        }
+        if let Some(jumbf) = meta.jumbf() {
+            enc = enc.with_jumbf(jumbf);
+        }
+    }
+    if let Some(g) = source_gamma {
+        enc = enc.with_source_gamma(g);
+    }
+    if let Some(it) = intensity_target {
+        enc = enc.with_intensity_target(it);
+    }
+    if let Some(q) = brotli_effort {
+        enc = enc.with_brotli_metadata(q);
+    }
+    if premultiply != 0 && layout.has_alpha() {
+        enc = enc.with_premultiplied_alpha(premultiply > 0);
+    }
+
+    let bpp = layout.bytes_per_pixel();
+    let row_bytes = (width as usize).checked_mul(bpp).ok_or_else(|| {
+        jxl_encoder::at(jxl_encoder::EncodeError::InvalidInput {
+            message: "row dimensions overflow".into(),
+        })
+    })?;
+    let mut rows_remaining = height;
+    let mut offset = 0usize;
+    while rows_remaining > 0 {
+        let chunk_rows = rows_remaining.min(STREAM_CHUNK_ROWS);
+        let chunk_bytes = row_bytes * chunk_rows as usize;
+        let end = offset + chunk_bytes;
+        if end > data.len() {
+            return Err(jxl_encoder::at(jxl_encoder::EncodeError::InvalidInput {
+                message: format!(
+                    "streaming chunk past pixel buffer end ({end} > {})",
+                    data.len()
+                ),
+            }));
+        }
+        enc.push_rows(&data[offset..end], chunk_rows)?;
+        offset = end;
+        rows_remaining -= chunk_rows;
+    }
+
+    if streaming_output {
+        let file = File::create(output_path).map_err(|e| {
+            jxl_encoder::at(jxl_encoder::EncodeError::InvalidInput {
+                message: format!("create output {}: {}", output_path.display(), e),
+            })
+        })?;
+        let writer = BufWriter::new(file);
+        let _result = enc.finish_to(writer)?;
+        Ok(Vec::new())
+    } else {
+        enc.finish()
     }
 }
 
