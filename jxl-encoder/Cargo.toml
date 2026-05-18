@@ -553,5 +553,14 @@ path = "benches/predictor_prune_microbench.rs"
 harness = false
 required-features = ["__bench_internals"]
 
+# EX-J11 chunk 2: HDR-VDP-2-lite vs butteraugli paired bench.
+# Encodes synthetic HDR content at multiple intensity_targets through both
+# losses, writes a TSV. Acceptance gate: dispatch fires, scores numerically
+# sane. Not a full BD-rate comparison (no HDR corpus harness yet).
+[[example]]
+name = "hdr_vdp2_chunk2_bench"
+path = "examples/hdr_vdp2_chunk2_bench.rs"
+required-features = ["butteraugli-loop"]
+
 [lints]
 workspace = true
