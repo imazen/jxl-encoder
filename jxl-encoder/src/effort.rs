@@ -216,7 +216,12 @@ pub struct EffortProfile {
     /// Enable non-aligned evaluation pass (odd-aligned 16x16 regions).
     pub non_aligned_eval: bool,
     /// Step size for fine-grained AC strategy search on 32x32+ blocks.
-    /// 1 = every position (effort 9+), 2 = every other (default).
+    /// `1` evaluates every position (effort 10+, extends past libjxl
+    /// kGlacier); `2` every other position (default for effort 1..=9,
+    /// matches libjxl `enc_ac_strategy.cc:1046` for `speed_tier >=
+    /// kTortoise`). W38-2 wedge #1.1: we previously used step=1 at e9
+    /// — 4× more search work than libjxl's reference but consistently
+    /// found worse partitions in the wedge audit.
     pub fine_grained_step: u8,
 
     // ─── VarDCT pipeline options ──────────────────────────────────────────
@@ -734,7 +739,17 @@ impl EffortProfile {
             try_dct64: effort >= 7,
             try_dct4x8_afv: effort >= 6,
             non_aligned_eval: effort >= 6,
-            fine_grained_step: if effort >= 9 { 1 } else { 2 },
+            // libjxl gates step=1 at `speed_tier < kTortoise` (effort >= 10 on our
+            // scale); at speed_tier >= kTortoise (effort 1..=9 on our scale, which
+            // maps to libjxl kTortoise/kKitten/.../kLightning) it uses step=2.
+            // See libjxl `enc_ac_strategy.cc:1046`:
+            //   `size_t step = cparams.speed_tier >= SpeedTier::kTortoise ? 2 : 1;`
+            // W38-2 wedge #1.1 found we had this inverted at e9 — we were doing
+            // 4× more 32×32 search work than libjxl at the same effort and finding
+            // worse partitions (the cost model favours the libjxl-spaced grid).
+            // Keep the finer step=1 only at our e10+ where we explicitly extend
+            // libjxl past kGlacier.
+            fine_grained_step: if effort >= 10 { 1 } else { 2 },
 
             // ── VarDCT pipeline ──
             chromacity_adjustment: effort >= 7,
@@ -1622,7 +1637,9 @@ pub struct LossyInternalParams {
     pub try_dct4x8_afv: Option<bool>,
 
     /// Step size for fine-grained AC strategy search on 32×32+ blocks.
-    /// `1` evaluates every position (effort 9+), `2` every other (default).
+    /// `1` evaluates every position (effort 10+, extends past libjxl
+    /// kGlacier), `2` every other (default, matches libjxl
+    /// `enc_ac_strategy.cc:1046` for `speed_tier >= kTortoise`).
     pub fine_grained_step: Option<u8>,
 
     /// Base multiplier on the IDCT-domain (pixel-domain) error term in
@@ -2066,7 +2083,9 @@ mod tests {
         assert!(p.lz77); // VarDCT LZ77 enabled at e9+ (kTortoise)
         assert_eq!(p.lz77_method, Lz77Method::Optimal);
         assert_eq!(p.butteraugli_iters, 4);
-        assert_eq!(p.fine_grained_step, 1);
+        // W38-2 wedge #1.1: e9 matches libjxl kTortoise (step=2). step=1 only
+        // at our e10+ extension. See `enc_ac_strategy.cc:1046`.
+        assert_eq!(p.fine_grained_step, 2);
         assert!(p.enhanced_clustering_vardct); // e9+
         assert!(p.optimize_uint_configs_vardct); // e9+
         assert_eq!(p.nb_rcts_to_try, 19);
@@ -2085,6 +2104,28 @@ mod tests {
         assert!(!p.enhanced_clustering_vardct); // e9+
         assert!(!p.optimize_uint_configs_vardct); // e9+
         assert_eq!(p.wp_num_param_sets, 2); // e8
+    }
+
+    #[test]
+    fn test_fine_grained_step_libjxl_parity() {
+        // W38-2 wedge #1.1: libjxl uses step=2 at speed_tier >= kTortoise
+        // (= effort 1..=9 on our scale), step=1 only at speed_tier < kTortoise
+        // (kGlacier/kTectonicPlate = our e10+ extension). See
+        // `enc_ac_strategy.cc:1046`.
+        for effort in 1..=9 {
+            let p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert_eq!(
+                p.fine_grained_step, 2,
+                "e{effort}: libjxl kTortoise+ uses step=2"
+            );
+        }
+        for effort in 10..=12 {
+            let p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert_eq!(
+                p.fine_grained_step, 1,
+                "e{effort}: extended past libjxl kGlacier uses finer step=1"
+            );
+        }
     }
 
     #[test]

@@ -4,6 +4,31 @@
 
 ### Performance
 
+- **W38-2 #1.1 — `fine_grained_step` libjxl parity at e9**
+  (`src/effort.rs:752`,
+  `examples/fine_grained_step_libjxl_parity_ab.rs`,
+  `benchmarks/fine_grained_step_libjxl_parity_2026-05-19.{tsv,meta}`).
+  Per W38-2 wedge audit (`benchmarks/rd_curve_wedges_2026-05-18.md`)
+  we had `fine_grained_step = 1` at effort 9, the inverse of libjxl
+  `enc_ac_strategy.cc:1046`:
+  `size_t step = cparams.speed_tier >= SpeedTier::kTortoise ? 2 : 1;`
+  libjxl uses step=2 at `speed_tier >= kTortoise` (which maps to our
+  effort 1..=9 — kTortoise is libjxl's slowest *speed_tier value*, =1,
+  with kGlacier=0 and kTectonicPlate=-1 below it). We were doing 4×
+  more non-aligned 32×32/16×32/32×16 search work at e9 than libjxl AND
+  the wedge audit found we were consistently losing on the high-d
+  cells anyway. Fix: `fine_grained_step: if effort >= 10 { 1 } else { 2 }`
+  — e10+ retains the finer step=1 as our explicit extension past
+  libjxl kGlacier. e7 hash-locked output unchanged (36/36 byte-
+  identical), rd-regression 18/18 within thresholds. A/B at e9 on 8
+  mixed images (5 CID22-512 + 3 gb82-sc) × 4 distances × 3 samples:
+  RD-neutral (Δbytes mean -0.35%, Δbfly mean -1.26% = better, Δssim2
+  mean +0.005 with max |Δ| = 0.482). Wall-clock saving modest
+  (-1.8% mean, -12.4% on the 5.6 MP imac_g3 screenshot where the
+  non-aligned 32×32 step scales hardest); the 4× theoretical
+  reduction is one phase among many at e9 (butteraugli loop, optimal
+  LZ77, enhanced clustering, 14-predictor tree learner).
+
 - **W38-3 — HONEST-STOP: parallel xform fan-out at e3/e4 is already
   shipped** (`benchmarks/parallel_xform_e3_e4_2026-05-19.{tsv,meta}`,
   no src/ changes). W38-1 (`a2cd4758`) flagged "parallel xform fan-out
