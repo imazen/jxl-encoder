@@ -69,6 +69,64 @@
 
 ### Added
 
+- **`ChromaSubsampling` API surface + zenyuv-backed helpers (issue #47
+  chunk 3)** — supersedes the homegrown helpers drafted on PR #48,
+  which had been queued behind the chunk-1 API surface drafted on PR
+  #47. Both PRs are closed in favour of this single landing on
+  current main (PR #47's branch hadn't been refreshed against the
+  `clone-siblings` CI fix shipped between its open date and today's
+  main, so the PR couldn't merge cleanly; PR #48's homegrown
+  `rgb_to_ycbcr_planar` / `box_downsample_2x_both` are replaced
+  outright by zenyuv).
+
+  Lands in one commit:
+
+  1. New [`ChromaSubsampling`] enum (`Full444` / `Sub422` / `Sub420` /
+     `Sub440`) mirroring libjxl `YCbCrChromaSubsampling::kHShift` /
+     `kVShift` (`frame_header.h:81`). Per-mode `h_shifts()` /
+     `v_shifts()` / `is_full()` / `tag()` accessors in libjxl `[Cb,
+     Y, Cr]` channel order.
+  2. New [`LossyConfig::with_chroma_subsampling`] builder + matching
+     `chroma_subsampling()` getter. Default is
+     `ChromaSubsampling::Full444` so every existing bitstream stays
+     byte-identical (hash-lock 36/36 verified).
+  3. Field carried across `LossyConfig::with_effort()` so the builder
+     chain
+     `LossyConfig::new(d).with_chroma_subsampling(Sub420).with_effort(5)`
+     is order-independent. Regression test pins the invariant.
+  4. New `vardct::chroma_subsampling` module gated behind a new
+     `chroma-subsampling` cargo feature. Adds the production
+     [`zenyuv`] crate (`0.1.3`, default-features = false) for SIMD
+     RGB↔YCbCr conversion (BT.601 Full range; AVX2 / NEON / WASM
+     SIMD dispatch via archmage) and Sharp YUV 4:2:0 chroma
+     refinement (L2-optimal Newton step Cb/Cr, 25× faster than the
+     original scalar implementation with better quality vs hand-
+     tuned damping constants).
+  5. Public chunk-3 helpers: `rgb_to_ycbcr_444`,
+     `rgb_to_yuv420_box`, `rgb_to_yuv420_sharp`, `jpeg_upsampling_for`,
+     `build_ycbcr_vardct_frame_header`. 9 unit tests cover plane
+     sizes (including odd-dimensions round-up), Sharp-vs-box
+     refinement non-no-op, jpeg_upsampling↔h/v_shifts round-trip,
+     and white/black RGB→chroma=128 identity.
+  6. Fast-fail guard in BOTH the one-shot `EncodeRequest::encode`
+     path and the streaming `LossyEncoder::finish` path: any
+     non-`Full444` value returns [`EncodeError::InvalidConfig`] with
+     a message that names the format tag (`"4:2:0"` etc.) AND the
+     missing wiring (per-channel block grids + `do_ycbcr=true` +
+     `ColorTransform::kYCbCr`, which today only exist on the
+     `jpeg-reencoding` path). 12-case integration test
+     `tests/chroma_subsampling_signal.rs` covers the enum surface,
+     default, libjxl shift-table parity, `Full444` jxl-rs roundtrip,
+     and `InvalidConfig` for each non-default mode via both encode
+     entry points.
+  7. Chunk-4 wire-up plan (queued): route Sub420 through the JPEG
+     transcode-shaped pipeline ([`crate::jpeg::encode`]), which
+     already supports `do_ycbcr=true` + `jpeg_upsampling=[1,0,1]` +
+     per-channel block grids. Feed it RGB → YCbCr+420 from
+     `rgb_to_yuv420_sharp` instead of a parsed JPEG payload — gets us
+     a decoder-roundtrippable Sub420 bitstream without retrofitting
+     the standard VarDCT encoder for per-channel grids.
+
 - **`LossyConfig::with_alpha_squeeze(bool)` — chunk-1 framework opt-in
   for the squeeze-on-extras (responsive=1) lossy alpha pipeline** (W13-4
   follow-on #1, named "Alpha squeeze-on-extras chunk 1"). Closes the

@@ -2669,6 +2669,111 @@ pub enum ProgressiveMode {
     DcVlfLfAc,
 }
 
+/// Chroma subsampling mode for lossy VarDCT encoding (issue #47).
+///
+/// Mirrors libjxl's four `YCbCrChromaSubsampling` modes
+/// (`frame_header.h:81`). Each mode is described by the
+/// (horizontal, vertical) shift applied to the Cb/Cr channels:
+///
+/// | Mode       | Cb / Cr H-shift | Cb / Cr V-shift | Cb/Cr sample density |
+/// |------------|-----------------|-----------------|----------------------|
+/// | `Full444`  | 0               | 0               | full resolution      |
+/// | `Sub422`   | 1               | 0               | half horizontal      |
+/// | `Sub420`   | 1               | 1               | quarter (H+V halved) |
+/// | `Sub440`   | 0               | 1               | half vertical        |
+///
+/// # Current status (chunk 3)
+///
+/// **API surface + zenyuv-backed RGB→YCbCr+420 helpers landed; encoder
+/// pipeline not yet wired.** Only [`ChromaSubsampling::Full444`] (the
+/// default) is currently honoured end-to-end. Setting any other mode
+/// causes the encoder to return [`EncodeError::InvalidConfig`].
+///
+/// The conversion building blocks live in
+/// `crate::vardct::chroma_subsampling` (gated behind the
+/// `chroma-subsampling` cargo feature) and call into the production
+/// `zenyuv` SIMD kernels — Box-filter 4:2:0 (`rgb_to_yuv420`) and Sharp
+/// YUV 4:2:0 (`rgb_to_yuv420_sharp_with_workspace`). What's missing
+/// is the encoder-side wiring: the JXL spec ties chroma subsampling to
+/// `ColorTransform::kYCbCr` (libjxl `enc_frame.cc:381-387`), but our
+/// VarDCT pipeline currently emits `ColorTransform::kXYB`, and the
+/// VarDCT encoder's adaptive_quant / CfL / AC-strategy / transform
+/// stages assume all three channels share one block grid. Per-channel
+/// block grids (Y full-res, Cb/Cr half-res) exist only in the
+/// `jpeg-reencoding` path today.
+///
+/// Chunk 4 work (tracked on issue #47): route Sub420 through the JPEG
+/// transcode-shaped pipeline — convert RGB → YCbCr via zenyuv, DCT8 +
+/// quantize all three planes (Y at full res, Cb/Cr at half res), and
+/// reuse `crate::jpeg::encode::encode_jpeg_to_jxl_inner`'s
+/// `channel_shifts` / `do_ycbcr=true` / `jpeg_upsampling=[1,0,1]` /
+/// modular substream layout. That gets us a decoder-roundtrippable
+/// Sub420 bitstream without touching the standard VarDCT pipeline.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChromaSubsampling {
+    /// **Default.** Full-resolution chroma (4:4:4). Y, Cb, Cr each sampled
+    /// at every pixel. Largest files; highest chroma fidelity. The only
+    /// mode currently honoured by the encoder.
+    #[default]
+    Full444,
+    /// 4:2:2 — chroma halved horizontally, full vertical.
+    /// (Cb/Cr H-shift = 1, V-shift = 0.)
+    Sub422,
+    /// 4:2:0 — chroma halved both horizontally and vertically.
+    /// (Cb/Cr H-shift = 1, V-shift = 1.) The classic JPEG default.
+    Sub420,
+    /// 4:4:0 — chroma halved vertically, full horizontal.
+    /// (Cb/Cr H-shift = 0, V-shift = 1.) Rare in practice.
+    Sub440,
+}
+
+impl ChromaSubsampling {
+    /// Per-channel horizontal shift in `[Cb, Y, Cr]` order. Mirrors
+    /// libjxl `YCbCrChromaSubsampling::HShift(c)` — the shift the
+    /// decoder applies (so `Sub420` returns `[1, 0, 1]`, NOT the raw
+    /// mode index).
+    pub const fn h_shifts(self) -> [u8; 3] {
+        match self {
+            Self::Full444 => [0, 0, 0],
+            Self::Sub422 => [1, 0, 1],
+            Self::Sub420 => [1, 0, 1],
+            Self::Sub440 => [0, 0, 0],
+        }
+    }
+
+    /// Per-channel vertical shift in `[Cb, Y, Cr]` order. See
+    /// [`Self::h_shifts`].
+    pub const fn v_shifts(self) -> [u8; 3] {
+        match self {
+            Self::Full444 => [0, 0, 0],
+            Self::Sub422 => [0, 0, 0],
+            Self::Sub420 => [1, 0, 1],
+            Self::Sub440 => [1, 0, 1],
+        }
+    }
+
+    /// `true` for [`Self::Full444`] (no subsampling). False for any
+    /// real subsampling mode. Convenience for code that wants to
+    /// short-circuit the YCbCr conversion path when the caller hasn't
+    /// asked for subsampling.
+    pub const fn is_full(self) -> bool {
+        matches!(self, Self::Full444)
+    }
+
+    /// Industry-convention tag string (`"4:4:4"` / `"4:2:2"` / etc.).
+    /// Used in [`EncodeError::InvalidConfig`] messages so callers see
+    /// the format they typed in CLI / config rather than the Rust
+    /// variant name.
+    pub const fn tag(self) -> &'static str {
+        match self {
+            Self::Full444 => "4:4:4",
+            Self::Sub422 => "4:2:2",
+            Self::Sub420 => "4:2:0",
+            Self::Sub440 => "4:4:0",
+        }
+    }
+}
+
 // ── LossyConfig ─────────────────────────────────────────────────────────────
 
 /// Lossy (VarDCT) encoding configuration.
@@ -2945,6 +3050,14 @@ pub struct LossyConfig {
     /// chunk 2 will add a reconstruction shadow for the lossy path.
     /// See [`Self::with_auto_delta_frames`].
     auto_delta_frames: bool,
+    /// Chroma subsampling mode (issue #47). Default
+    /// [`ChromaSubsampling::Full444`] keeps existing bitstreams
+    /// byte-identical. Non-`Full444` modes currently return
+    /// [`EncodeError::InvalidConfig`] (encoder wiring is chunk 4); the
+    /// zenyuv-backed conversion helpers in
+    /// `crate::vardct::chroma_subsampling` are ready for the wire-up.
+    /// See [`Self::with_chroma_subsampling`].
+    chroma_subsampling: ChromaSubsampling,
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -3045,6 +3158,7 @@ impl LossyConfig {
             container_mode: ContainerMode::Auto,
             progressive_dc: 0,
             auto_delta_frames: false,
+            chroma_subsampling: ChromaSubsampling::Full444,
         }
     }
 
@@ -3235,6 +3349,11 @@ impl LossyConfig {
         if matches!(self.group_order, Some(1)) {
             new.center_first = true;
         }
+        // Chroma subsampling — never effort-derived; carry across
+        // `with_effort` so the builder chain
+        // `LossyConfig::new(d).with_chroma_subsampling(Sub420).with_effort(5)`
+        // is order-independent.
+        new.chroma_subsampling = self.chroma_subsampling;
         new
     }
 
@@ -4147,6 +4266,33 @@ impl LossyConfig {
     /// when [`Self::with_auto_delta_frames`] has been opted into.
     pub fn auto_delta_frames(&self) -> bool {
         self.auto_delta_frames
+    }
+
+    /// Set the chroma subsampling mode (issue #47).
+    ///
+    /// Default is [`ChromaSubsampling::Full444`] — every existing
+    /// bitstream stays byte-identical without an explicit call. See
+    /// [`ChromaSubsampling`] for the per-mode shift table and the
+    /// chunk-3 status: only `Full444` is honoured end-to-end; setting
+    /// any other mode causes the encoder to return
+    /// [`EncodeError::InvalidConfig`] with a message that names the
+    /// missing encoder-side wiring.
+    ///
+    /// The conversion helpers (RGB→YCbCr, Sharp YUV 4:2:0 downsample)
+    /// are already implemented in
+    /// `crate::vardct::chroma_subsampling` when the
+    /// `chroma-subsampling` cargo feature is enabled — chunk 4 wires
+    /// them through the encode pipeline.
+    pub fn with_chroma_subsampling(mut self, mode: ChromaSubsampling) -> Self {
+        self.chroma_subsampling = mode;
+        self
+    }
+
+    /// Currently-set chroma subsampling mode. Defaults to
+    /// [`ChromaSubsampling::Full444`]. See
+    /// [`Self::with_chroma_subsampling`].
+    pub fn chroma_subsampling(&self) -> ChromaSubsampling {
+        self.chroma_subsampling
     }
 
     /// Bias the VarDCT encode toward simpler bitstreams that decode
@@ -5951,6 +6097,25 @@ impl<'a> EncodeRequest<'a> {
         pixels: &[u8],
         budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
     ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
+        // Chroma subsampling gate (issue #47 chunk 3). Only
+        // [`ChromaSubsampling::Full444`] is wired through the lossy
+        // pipeline today; non-default modes fast-fail with a message
+        // pointing at the chunk-4 wire-up (see
+        // [`ChromaSubsampling`] for the full status).
+        if !cfg.chroma_subsampling.is_full() {
+            return Err(EncodeError::InvalidConfig {
+                message: format!(
+                    "chroma subsampling {} requires `do_ycbcr=true` + \
+                     per-channel block grids, which today only exist on the \
+                     `jpeg-reencoding` path; the standard lossy VarDCT \
+                     pipeline emits `ColorTransform::kXYB`. zenyuv-backed \
+                     RGB→YCbCr+420 helpers ship in \
+                     `vardct::chroma_subsampling` (gated `chroma-subsampling`); \
+                     issue #47 chunk 4 wires them through.",
+                    cfg.chroma_subsampling.tag(),
+                ),
+            });
+        }
         let w = self.width as usize;
         let h = self.height as usize;
 
@@ -7263,6 +7428,24 @@ impl LossyEncoder {
                 message: format!(
                     "incomplete image: {} of {} rows pushed",
                     self.rows_pushed, self.height
+                ),
+            });
+        }
+        // Mirror the one-shot chroma subsampling gate (issue #47
+        // chunk 3). Streaming and oneshot must behave identically;
+        // omitting the gate here would let the streaming path silently
+        // ignore the caller's choice.
+        if !self.cfg.chroma_subsampling.is_full() {
+            return Err(EncodeError::InvalidConfig {
+                message: format!(
+                    "chroma subsampling {} requires `do_ycbcr=true` + \
+                     per-channel block grids, which today only exist on the \
+                     `jpeg-reencoding` path; the standard lossy VarDCT \
+                     pipeline emits `ColorTransform::kXYB`. zenyuv-backed \
+                     RGB→YCbCr+420 helpers ship in \
+                     `vardct::chroma_subsampling` (gated `chroma-subsampling`); \
+                     issue #47 chunk 4 wires them through.",
+                    self.cfg.chroma_subsampling.tag(),
                 ),
             });
         }

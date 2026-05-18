@@ -23,6 +23,13 @@ mod block_extract;
 #[cfg(feature = "butteraugli-loop")]
 pub(crate) mod butteraugli_loop;
 pub(crate) mod chroma_from_luma;
+/// Chroma subsampling helpers — RGB → YCbCr conversion and
+/// Sharp YUV 4:2:0 chroma downsample via the zenyuv crate.
+/// Issue #47 chunk 3: foundational helpers for the eventual end-to-end
+/// Sub420 / Sub422 / Sub440 lossy pipeline (chunk 4). See the module
+/// docs for the public API.
+#[cfg(feature = "chroma-subsampling")]
+pub mod chroma_subsampling;
 pub(crate) mod cluster;
 mod coeff_order;
 pub(crate) mod common;
