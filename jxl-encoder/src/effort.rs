@@ -1086,6 +1086,23 @@ impl EffortProfile {
     /// discriminator does NOT fire AND the span gate admits the
     /// candidate AND the cost gate admits the candidate.
     ///
+    /// Chunk 7
+    /// (`benchmarks/auto_splines_bench_2026-05-17_chunk7.tsv`) re-asked
+    /// the default-on question on 18 cells at d=1.0/e8: 5 power-line
+    /// synthetics with photo-realistic backgrounds that bypass the
+    /// chunk-5 discriminator + 10 CID22-512 photos (including all 4
+    /// original chunk-6 FPs) + 3 CLIC2025-1024 photos. All 13 photos
+    /// went byte-identical (chunk-6 closure holds), but 3 of 5 wire
+    /// synthetics REGRESS by +3.1% / +4.3% / +5.5% at e8 — the
+    /// trial-encode L2-energy proxy predicts a saving but the
+    /// butteraugli loop re-quantizes the post-splines XYB and emits
+    /// a strictly worse encode. The chunk-6 bbox-span gate rejects
+    /// the other 2 (long_dim ≥ 2048, polyline tracer caps at ~1042 px).
+    /// Default-on at e8+ would therefore net +0 photos and +3-5%
+    /// wire regressions; the proxy is structurally mis-calibrated at
+    /// the buttloop's effort range. A future flip needs either a
+    /// buttloop-aware cost proxy or an effort-axis split.
+    ///
     /// libjxl ships its own `enc_splines.cc:104-107` `FindSplines` as
     /// a stub at `speed_tier <= kSquirrel` (effort >= 7); the real
     /// detector landing on a future libjxl release would let us

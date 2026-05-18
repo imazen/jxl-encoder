@@ -1,0 +1,153 @@
+# Splines chunk-7 default-on re-bench (post chunks 5+6)
+
+## Provenance
+
+- Commit at investigation: `invest(splines): chunk 7 default-on re-bench post-chunks-5+6`
+- Reference commits:
+  - `ddc02a02` (chunk 5 — screenshot discriminator)
+  - `d77c589d` (chunk 6 — bbox-span gate)
+  - `cbb3647`  (chunk 4 — BYTES_PER_ENERGY_UNIT_AT_D1 cost-gate recalibration)
+  - `6c01965`  (initial chunk-3-era default-on rejection — superseded by chunk 7)
+- Workspace: `~/work/zen/jxl-encoder--splines-chunk7`
+- Harness:   `jxl-encoder/examples/auto_splines_chunk7_bench.rs`
+- Features:  `std parallel butteraugli-loop`
+- Build:     release profile, `target/release/examples/auto_splines_chunk7_bench`
+- Run host:  AMD Ryzen 9 7950X / 128 GB / WSL2
+- Run date:  2026-05-18 UTC
+
+## Corpus (5 + 10 + 3 = 18 cells, all at distance=1.0, effort=8)
+
+### Synthetic power-line ridges (5 cells)
+
+Built in-process by `make_realistic_power_line_image(w, h, n_wires)`,
+mirroring `tests/auto_splines.rs::make_power_line_image` so the chunk-5
+screenshot discriminator does NOT fire (stripes + diagonal ramp give
+median(mask1x1) ≈ 55, below `SCREENSHOT_MEDIAN_MASK_THRESHOLD = 95`).
+All candidates therefore reach the chunk-6 bbox-span gate + chunk-4
+trial-encode cost gate.
+
+  realistic_1wire_1024x256   — 1 wire,  long_dim 1024, polylines=2
+  realistic_2wires_1024x256  — 2 wires, long_dim 1024, polylines=4
+  realistic_4wires_1024x512  — 4 wires, long_dim 1024, polylines=8
+  realistic_4wires_2048x512  — 4 wires, long_dim 2048, polylines=16
+  realistic_8wires_2048x1024 — 8 wires, long_dim 2048, polylines=32
+
+### Real photos (10 cells)
+
+From `/home/lilith/work/codec-corpus/CID22/CID22-512/training/`, picked
+to include all four original chunk-6 FPs (`207691`, `2123337`,
+`klepas-Gentle-giants-of-the-sea-3`, `ularapi_Semarang_City_Logo`) plus
+6 mixed-content additions:
+
+  207691, 2123337, klepas-Gentle-giants-of-the-sea-3,
+  ularapi_Semarang_City_Logo, 1001682, 1080721, 1129482,
+  pexels-photo-1029599, pexels-photo-1933873,
+  14768480444_bc0a1b4a2e_o
+
+### Mixed photos with potential thin features (3 cells)
+
+From `/home/lilith/work/codec-corpus/clic2025-1024/` (1024×1024,
+photo-class, the same images the original rejection commit `6c01965`
+swept):
+
+  02809272…b6cd804f7, 07b9f93f…200fb4e5b, 0c49a5cce…41e90ba
+
+## Decision: DO NOT FLIP DEFAULT-ON AT e8+
+
+### Photos (10 + 3 = 13 cells): 13/13 byte-identical at d=1.0 e8
+
+All photos including the original chunk-6 false-positive cluster are now
+byte-identical — the chunk-6 bbox-span gate cleanly rejects every
+sub-image ridge segment.
+
+### Synthetics (5 cells): 3/5 REGRESS, 2/5 byte-identical
+
+| Image                          | off    | on    | delta   | pct    | gate outcome |
+|--------------------------------|--------|-------|---------|--------|--------------|
+| realistic_1wire_1024x256       | 6831   | 7043  | +212    | +3.10% | ADMIT (bbox span 1024 = long_dim 1024) |
+| realistic_2wires_1024x256      | 6856   | 7148  | +292    | +4.26% | ADMIT (×2)   |
+| realistic_4wires_1024x512      | 13162  | 13882 | +720    | +5.47% | ADMIT (×4)   |
+| realistic_4wires_2048x512      | 23654  | 23654 |    +0   |  +0%   | REJECT (×16; polyline tracer caps at ~1042 px) |
+| realistic_8wires_2048x1024     | 43861  | 43861 |    +0   |  +0%   | REJECT (×32; polyline tracer caps at ~1042 px) |
+
+The 1024-wide cells admit at the gate (`bbox_span ≥ image_long_dim`) and
+then the spline encode actively HURTS bytes at e8: +3-5% bigger.
+
+This is a stronger negative result than `6c01965`'s "zero benefit"
+finding. With chunks 5+6 in place, the chunk-6 span gate works on
+2048+-wide ridges (the polyline tracer caps at `MAX_POLYLINE_LENGTH ≈
+1042` so no candidate clears `1.0 × 2048` span) but is a no-op at
+1024-wide ridges where every candidate clears `1.0 × 1024 = 1024`
+exactly. At e8 the post-splines XYB feeds the butteraugli loop a
+different field and the encoder emits a strictly worse bitstream.
+
+The trial-encode L2-energy proxy (`bytes_saved_proxy = e_drop / 5.0`)
+predicts +212 to +303 bytes saved on these candidates; the actual
+delta is +212 to +720 LARGER. The proxy is structurally wrong at e8
+because it ignores the buttloop's re-quantization of the spline-free
+residual on the post-splines XYB.
+
+### Default decision: `auto_splines_default(_) = false` (unchanged)
+
+Flipping default-on at e8+ would:
+- Net 13 byte-identical photos (zero gain).
+- Net 3 wire-image regressions (+3.1% to +5.5%) on exactly the content
+  the detector was designed to win on.
+- Net 2 wire-image byte-identical at long_dim ≥ 2048 (span gate rejects).
+- Add per-encode CPU: Sobel, NMS, Hessian, polyline trace, trial encode.
+
+The flag stays opt-in. Callers with extreme single-wire ground-truth
+content who are willing to tune may still try it; the bench data above
+gives them a realistic expectation.
+
+### Why the rejection persists
+
+The fundamental issue identified in `6c01965` is unchanged:
+
+> butteraugli-loop converges the quant_field on the post-splines XYB so
+> the measured residual-energy savings proxy falls below the 2×
+> COST_BENEFIT_MARGIN at e8+.
+
+Chunk 7 strengthens this: even when the proxy claims a win and the
+candidate is admitted (1024-wide cases), the actual bytes go UP by
+3-5%. The proxy is mis-calibrated at e8+; recalibrating it would need
+to model the buttloop's residual re-quantization, which is materially
+more compute than the detector's existing trial encode.
+
+A future flip would need either:
+1. Detector evolution: replace the L2 proxy with an actual
+   one-iteration buttloop predictor (expensive — likely cancels the
+   savings on real content).
+2. Effort-axis split: keep auto-splines off at e8+ where buttloop runs,
+   and add a separate per-image opt-in for the pre-buttloop effort
+   levels (e5-e7) where the chunk-3 detector originally won.
+
+Neither lands in chunk 7; default stays off.
+
+## Reproducibility
+
+```
+cargo build --release --example auto_splines_chunk7_bench \
+  --features 'std parallel butteraugli-loop'
+
+CID22=/home/lilith/work/codec-corpus/CID22/CID22-512/training
+CLIC=/home/lilith/work/codec-corpus/clic2025-1024
+./target/release/examples/auto_splines_chunk7_bench \
+  "photo:$CID22/207691.png" "photo:$CID22/2123337.png" \
+  "photo:$CID22/klepas-Gentle-giants-of-the-sea-3.png" \
+  "photo:$CID22/ularapi_Semarang_City_Logo.png" \
+  "photo:$CID22/1001682.png" "photo:$CID22/1080721.png" \
+  "photo:$CID22/1129482.png" "photo:$CID22/pexels-photo-1029599.png" \
+  "photo:$CID22/pexels-photo-1933873.png" \
+  "photo:$CID22/14768480444_bc0a1b4a2e_o.png" \
+  "mixed:$CLIC/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png" \
+  "mixed:$CLIC/07b9f93f170a0381836bdf301280a5b80b2c4be6e66f793a3c335dc200fb4e5b.png" \
+  "mixed:$CLIC/0c49a5cce349020bbba2f97ae41e90ba.png"
+```
+
+## Hash locks
+
+`cargo test --release --test hash_lock_features` → 36/36 byte-identical
+(default `auto_splines_default(_) = false` is unchanged).
+`cargo test --release --test auto_splines` → 6/6 pass.
+`cargo test --release -p jxl-encoder --lib splines` → 24/24 pass.

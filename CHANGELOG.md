@@ -956,6 +956,39 @@
 
 ### Investigated
 
+- **Auto-splines default-on at e8+ — REJECTED for the second time, with
+  stronger evidence** (chunk-7 re-bench, follow-on to chunk-5
+  `ddc02a02` + chunk-6 `d77c589d`). Initial rejection
+  (`6c01965`) was "no observed wins on real content". Chunk 7 picks
+  18 cells (5 photo-realistic power-line synthetics that bypass the
+  chunk-5 screenshot discriminator + 10 CID22-512 photos including all
+  4 original chunk-6 false-positive images + 3 CLIC2025-1024
+  photo-class images) and bench-encodes them at distance=1.0, effort=8
+  with `auto_splines` off vs on. Result:
+
+  - 13/13 real photos byte-identical (chunk-6 FP closure holds).
+  - 2/5 wire synthetics (long_dim ≥ 2048): byte-identical because the
+    chunk-6 bbox-span gate rejects every candidate (polyline tracer
+    caps at ~1042 px so no segment spans `1.0 × 2048`).
+  - 3/5 wire synthetics (long_dim = 1024): admit at the gate AND
+    regress bytes by +3.1% / +4.3% / +5.5%. The trial-encode L2-energy
+    proxy predicts a saving; the actual bitstream is bigger because
+    the e8+ butteraugli loop re-converges the quant_field on the
+    post-splines XYB and emits a strictly worse encode.
+
+  Default `auto_splines_default(_) = false` stays. Flipping at e8+
+  would net 13 byte-identical photos for 3 wire regressions on
+  exactly the content the detector was designed to win on. The flag
+  remains opt-in; a future flip needs either a buttloop-aware cost
+  proxy or an effort-axis split that confines the detector to e5-e7
+  (pre-buttloop). Bench archive:
+    `benchmarks/auto_splines_bench_2026-05-17_chunk7.tsv` (18 cells)
+    `benchmarks/auto_splines_bench_2026-05-17_chunk7.meta`
+  Harness:
+    `jxl-encoder/examples/auto_splines_chunk7_bench.rs`
+  Hash-locks: `hash_lock_features` 36/36 byte-identical; tests/auto_splines.rs
+  6/6; splines lib tests 24/24.
+
 - **First-ever HDR RD-bytes sweep vs cjxl** (jxl-encoder#44 / W4
   follow-on; closes the "never RD-benchmarked" line item from
   `memory/hdr_encoding_implementation_plan_2026-05-17.md`). New

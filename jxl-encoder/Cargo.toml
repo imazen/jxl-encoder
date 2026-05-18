@@ -263,6 +263,10 @@ name = "auto_splines_chunk6_fp_bench"
 path = "examples/auto_splines_chunk6_fp_bench.rs"
 
 [[example]]
+name = "auto_splines_chunk7_bench"
+path = "examples/auto_splines_chunk7_bench.rs"
+
+[[example]]
 name = "patches_gate_bench"
 path = "examples/patches_gate_bench.rs"
 
