@@ -1,0 +1,49 @@
+# W41-1 (issue #52) — paired A/B for distance-aware `min_peak`
+#
+# Goal: verify or refute the W41-1 audit hypothesis that raising
+# `min_peak` from 1 to 2 at d>=3.0 (libjxl unconditional `kMinPeak=2`
+# parity) closes the W38-2 WF2 wedge (e7 screenshot blow-up at
+# d>=3, +22-51% bytes vs cjxl on `imac_g3 / codec_wiki / terminal`).
+#
+# RESULT: Hypothesis RULED OUT. The detected patch set is IDENTICAL
+# between min_peak=1 and min_peak=2 on the 3 wedge images (e.g.
+# imac_g3: 277 refs / 2052 occurrences at either threshold). The
+# wedge cannot be closed by tweaking the detector threshold; it has
+# a different root cause (post-detection encoding, ref-frame
+# storage, or AC strategy mix). The only image affected by the
+# threshold change is `windows95.png` (82 refs at mp=2 vs 85 refs
+# at mp=1), and clamping it at d>=3 saves 0.7-1.5 % bytes but
+# regresses ssim2 by 0.4-1.3 points — net quality loss.
+#
+# DECISION: Code change reverted. Bench harness committed for
+# next-chunk follow-on investigation.
+#
+# Cells:
+#   labels       = baseline (min_peak = if d<1 { 2 } else { 1 })
+#                  fix       (min_peak = if d<1 || d>=3 { 2 } else { 1 })
+#   images       = 4 screenshots (imac_g3, codec_wiki, terminal, windows95)
+#                  + 3 photos (cid22/1025469, cid22/1189261, cid22/1418519)
+#   distances    = 0.5, 1.0, 2.0, 3.0, 4.0, 5.0
+#   effort       = 7
+#   repeats      = 3
+#   threads      = default (rayon)
+#   total cells  = 84 (42 per label)
+#
+# Provenance:
+#   utc          = 2026-05-18
+#   host         = water-cooled AMD Ryzen 9 7950X, 128 GB RAM
+#   cjxl         = (not used in this comparator — paired vs our own baseline)
+#   bench bin    = jxl-encoder/examples/patches_min_peak_distance_ab.rs
+#   trace bin    = jxl-encoder/examples/patches_min_peak_scan.rs
+#                  (full-corpus min_peak diff diagnostic; gb82-sc 11 imgs × 6 d)
+#   decoder      = jxl-oxide srgb_linear
+#   metrics      = Rust butteraugli_linear + Rust fast-ssim2 (CLAUDE.md
+#                  PNG-metadata bug avoidance)
+#
+# Cross-references:
+#   issue #52       — https://github.com/imazen/jxl-encoder/issues/52
+#   W38-2 wedge     — benchmarks/rd_curve_wedges_2026-05-18.md (WF2)
+#   audit memo      — ~/.claude/projects/-home-lilith-work-zen-jxl-encoder/
+#                     memory/patches_effort_gate_audit_2026-05-18.md
+#   W3-1 origin     — commit 4fb0f52 (distance-aware min_peak introduced)
+#   W2-5 chunk 1    — commit 7b8c06e (kMinPeak relaxation to 1)

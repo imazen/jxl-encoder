@@ -1,0 +1,132 @@
+=== codec_wiki.png d=0.50 ===
+W41 d=0.50 min_peak=2 should_scan=true patches_data=Some(57 refs / 196 occ / 133x130 frame)
+=== codec_wiki.png d=1.00 ===
+W41 d=1.00 min_peak=1 should_scan=true patches_data=Some(57 refs / 196 occ / 133x130 frame)
+=== codec_wiki.png d=2.00 ===
+W41 d=2.00 min_peak=1 should_scan=true patches_data=Some(57 refs / 196 occ / 133x130 frame)
+=== codec_wiki.png d=3.00 ===
+W41 d=3.00 min_peak=2 should_scan=true patches_data=Some(57 refs / 196 occ / 133x130 frame)
+=== codec_wiki.png d=4.00 ===
+W41 d=4.00 min_peak=2 should_scan=true patches_data=Some(57 refs / 196 occ / 133x130 frame)
+=== codec_wiki.png d=5.00 ===
+W41 d=5.00 min_peak=2 should_scan=true patches_data=Some(57 refs / 196 occ / 133x130 frame)
+=== gmessages.png d=0.50 ===
+W41 d=0.50 min_peak=2 should_scan=true patches_data=None
+=== gmessages.png d=1.00 ===
+W41 d=1.00 min_peak=1 should_scan=true patches_data=None
+=== gmessages.png d=2.00 ===
+W41 d=2.00 min_peak=1 should_scan=true patches_data=None
+=== gmessages.png d=3.00 ===
+W41 d=3.00 min_peak=2 should_scan=true patches_data=None
+=== gmessages.png d=4.00 ===
+W41 d=4.00 min_peak=2 should_scan=true patches_data=None
+=== gmessages.png d=5.00 ===
+W41 d=5.00 min_peak=2 should_scan=true patches_data=None
+=== graph.png d=0.50 ===
+W41 d=0.50 min_peak=2 should_scan=true patches_data=None
+=== graph.png d=1.00 ===
+W41 d=1.00 min_peak=1 should_scan=true patches_data=None
+=== graph.png d=2.00 ===
+W41 d=2.00 min_peak=1 should_scan=true patches_data=None
+=== graph.png d=3.00 ===
+W41 d=3.00 min_peak=2 should_scan=true patches_data=None
+=== graph.png d=4.00 ===
+W41 d=4.00 min_peak=2 should_scan=true patches_data=None
+=== graph.png d=5.00 ===
+W41 d=5.00 min_peak=2 should_scan=true patches_data=None
+=== gui.png d=0.50 ===
+W41 d=0.50 min_peak=2 should_scan=true patches_data=None
+=== gui.png d=1.00 ===
+W41 d=1.00 min_peak=1 should_scan=true patches_data=None
+=== gui.png d=2.00 ===
+W41 d=2.00 min_peak=1 should_scan=true patches_data=None
+=== gui.png d=3.00 ===
+W41 d=3.00 min_peak=2 should_scan=true patches_data=None
+=== gui.png d=4.00 ===
+W41 d=4.00 min_peak=2 should_scan=true patches_data=None
+=== gui.png d=5.00 ===
+W41 d=5.00 min_peak=2 should_scan=true patches_data=None
+=== imac_dark.png d=0.50 ===
+W41 d=0.50 min_peak=2 should_scan=true patches_data=Some(290 refs / 2346 occ / 250x247 frame)
+=== imac_dark.png d=1.00 ===
+W41 d=1.00 min_peak=1 should_scan=true patches_data=Some(290 refs / 2346 occ / 250x247 frame)
+=== imac_dark.png d=2.00 ===
+W41 d=2.00 min_peak=1 should_scan=true patches_data=Some(290 refs / 2346 occ / 250x247 frame)
+=== imac_dark.png d=3.00 ===
+W41 d=3.00 min_peak=2 should_scan=true patches_data=Some(290 refs / 2346 occ / 250x247 frame)
+=== imac_dark.png d=4.00 ===
+W41 d=4.00 min_peak=2 should_scan=true patches_data=Some(290 refs / 2346 occ / 250x247 frame)
+=== imac_dark.png d=5.00 ===
+W41 d=5.00 min_peak=2 should_scan=true patches_data=Some(290 refs / 2346 occ / 250x247 frame)
+=== imac_g3.png d=0.50 ===
+W41 d=0.50 min_peak=2 should_scan=true patches_data=Some(277 refs / 2052 occ / 268x260 frame)
+=== imac_g3.png d=1.00 ===
+W41 d=1.00 min_peak=1 should_scan=true patches_data=Some(277 refs / 2052 occ / 268x260 frame)
+=== imac_g3.png d=2.00 ===
+W41 d=2.00 min_peak=1 should_scan=true patches_data=Some(277 refs / 2052 occ / 268x260 frame)
+=== imac_g3.png d=3.00 ===
+W41 d=3.00 min_peak=2 should_scan=true patches_data=Some(277 refs / 2052 occ / 268x260 frame)
+=== imac_g3.png d=4.00 ===
+W41 d=4.00 min_peak=2 should_scan=true patches_data=Some(277 refs / 2052 occ / 268x260 frame)
+=== imac_g3.png d=5.00 ===
+W41 d=5.00 min_peak=2 should_scan=true patches_data=Some(277 refs / 2052 occ / 268x260 frame)
+=== imac_g3_strip.png d=0.50 ===
+W41 d=0.50 min_peak=2 should_scan=true patches_data=Some(277 refs / 2052 occ / 268x260 frame)
+=== imac_g3_strip.png d=1.00 ===
+W41 d=1.00 min_peak=1 should_scan=true patches_data=Some(277 refs / 2052 occ / 268x260 frame)
+=== imac_g3_strip.png d=2.00 ===
+W41 d=2.00 min_peak=1 should_scan=true patches_data=Some(277 refs / 2052 occ / 268x260 frame)
+=== imac_g3_strip.png d=3.00 ===
+W41 d=3.00 min_peak=2 should_scan=true patches_data=Some(277 refs / 2052 occ / 268x260 frame)
+=== imac_g3_strip.png d=4.00 ===
+W41 d=4.00 min_peak=2 should_scan=true patches_data=Some(277 refs / 2052 occ / 268x260 frame)
+=== imac_g3_strip.png d=5.00 ===
+W41 d=5.00 min_peak=2 should_scan=true patches_data=Some(277 refs / 2052 occ / 268x260 frame)
+=== imessage.png d=0.50 ===
+W41 d=0.50 min_peak=2 should_scan=true patches_data=Some(33 refs / 103 occ / 123x120 frame)
+=== imessage.png d=1.00 ===
+W41 d=1.00 min_peak=1 should_scan=true patches_data=Some(33 refs / 103 occ / 123x120 frame)
+=== imessage.png d=2.00 ===
+W41 d=2.00 min_peak=1 should_scan=true patches_data=Some(33 refs / 103 occ / 123x120 frame)
+=== imessage.png d=3.00 ===
+W41 d=3.00 min_peak=2 should_scan=true patches_data=Some(33 refs / 103 occ / 123x120 frame)
+=== imessage.png d=4.00 ===
+W41 d=4.00 min_peak=2 should_scan=true patches_data=Some(33 refs / 103 occ / 123x120 frame)
+=== imessage.png d=5.00 ===
+W41 d=5.00 min_peak=2 should_scan=true patches_data=Some(33 refs / 103 occ / 123x120 frame)
+=== terminal.png d=0.50 ===
+W41 d=0.50 min_peak=2 should_scan=true patches_data=Some(92 refs / 688 occ / 138x138 frame)
+=== terminal.png d=1.00 ===
+W41 d=1.00 min_peak=1 should_scan=true patches_data=Some(92 refs / 688 occ / 138x138 frame)
+=== terminal.png d=2.00 ===
+W41 d=2.00 min_peak=1 should_scan=true patches_data=Some(92 refs / 688 occ / 138x138 frame)
+=== terminal.png d=3.00 ===
+W41 d=3.00 min_peak=2 should_scan=true patches_data=Some(92 refs / 688 occ / 138x138 frame)
+=== terminal.png d=4.00 ===
+W41 d=4.00 min_peak=2 should_scan=true patches_data=Some(92 refs / 688 occ / 138x138 frame)
+=== terminal.png d=5.00 ===
+W41 d=5.00 min_peak=2 should_scan=true patches_data=Some(92 refs / 688 occ / 138x138 frame)
+=== windows95.png d=0.50 ===
+W41 d=0.50 min_peak=2 should_scan=true patches_data=Some(82 refs / 1071 occ / 51x49 frame)
+=== windows95.png d=1.00 ===
+W41 d=1.00 min_peak=1 should_scan=true patches_data=Some(85 refs / 1166 occ / 51x49 frame)
+=== windows95.png d=2.00 ===
+W41 d=2.00 min_peak=1 should_scan=true patches_data=Some(85 refs / 1166 occ / 51x49 frame)
+=== windows95.png d=3.00 ===
+W41 d=3.00 min_peak=2 should_scan=true patches_data=Some(82 refs / 1071 occ / 51x49 frame)
+=== windows95.png d=4.00 ===
+W41 d=4.00 min_peak=2 should_scan=true patches_data=Some(82 refs / 1071 occ / 51x49 frame)
+=== windows95.png d=5.00 ===
+W41 d=5.00 min_peak=2 should_scan=true patches_data=Some(82 refs / 1071 occ / 51x49 frame)
+=== windows.png d=0.50 ===
+W41 d=0.50 min_peak=2 should_scan=true patches_data=Some(421 refs / 3140 occ / 160x155 frame)
+=== windows.png d=1.00 ===
+W41 d=1.00 min_peak=1 should_scan=true patches_data=Some(421 refs / 3140 occ / 160x155 frame)
+=== windows.png d=2.00 ===
+W41 d=2.00 min_peak=1 should_scan=true patches_data=Some(421 refs / 3140 occ / 160x155 frame)
+=== windows.png d=3.00 ===
+W41 d=3.00 min_peak=2 should_scan=true patches_data=Some(421 refs / 3140 occ / 160x155 frame)
+=== windows.png d=4.00 ===
+W41 d=4.00 min_peak=2 should_scan=true patches_data=Some(421 refs / 3140 occ / 160x155 frame)
+=== windows.png d=5.00 ===
+W41 d=5.00 min_peak=2 should_scan=true patches_data=Some(421 refs / 3140 occ / 160x155 frame)

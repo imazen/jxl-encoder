@@ -467,6 +467,22 @@ name = "patches_dispatch_ab"
 path = "examples/patches_dispatch_ab.rs"
 required-features = ["butteraugli-loop"]
 
+# W41-1 (issue #52): distance-aware `min_peak` patches gate A/B.
+# Run twice: once on `main@origin` baseline (`--label baseline`),
+# once on this branch (`--label fix`). Same TSV accumulates both.
+# Default output: benchmarks/patches_min_peak_distance_2026-05-19.tsv.
+[[example]]
+name = "patches_min_peak_distance_ab"
+path = "examples/patches_min_peak_distance_ab.rs"
+required-features = ["butteraugli-loop"]
+
+# W41-1 follow-up: scan ALL gb82-sc screenshots at all 6 distances to see
+# if ANY image has a different patch admission set between min_peak=1 and
+# min_peak=2 (used to verify or refute the audit's hypothesis universally).
+[[example]]
+name = "patches_min_peak_scan"
+path = "examples/patches_min_peak_scan.rs"
+
 # W22-1 chunk-2 follow-on: CPU re-bisect of lifted entropy_mul values for
 # screen-content. Sweeps IDENTITY × DCT2X2 lifts (AFV / DCT4X8 pinned at
 # W22-1) on screenshots, then validates the winning tuple on photos.
