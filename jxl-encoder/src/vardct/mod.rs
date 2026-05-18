@@ -76,6 +76,11 @@ pub(crate) mod patches;
 pub(crate) mod precomputed;
 #[cfg(feature = "rate-control")]
 pub mod rate_control;
+/// Region-source abstraction for XYB planes consumed by
+/// [`transform::VarDctEncoder::transform_and_quantize_with_source`]
+/// (streaming refactor chunk 8b, jxl-encoder#11). See module docs for
+/// scope; whole-image impl is the only one shipping in chunk 8b.
+pub(crate) mod region_source;
 pub(crate) mod resampling;
 pub(crate) mod simplify_invisible;
 pub(crate) mod splines;

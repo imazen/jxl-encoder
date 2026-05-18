@@ -2074,12 +2074,40 @@ impl VarDctEncoder {
         // chunk-3, 2026-05-15). See the moved block above and the comment
         // there for ordering rationale.
 
-        // Perform DCT and quantization (XYB data is padded to block boundaries)
-        let transform_out = self.transform_and_quantize(
-            &xyb_x,
-            &xyb_y,
-            &xyb_b,
+        // ── Streaming refactor chunk 8b (#11): region-source seam ──
+        //
+        // Wrap the three whole-image XYB Vecs in a
+        // `WholeImageXybSource` so `transform_and_quantize` (and any
+        // chunk-8c per-DC-group orchestrator) can pull the data
+        // through the `XybRegionSource` trait. The whole-image source
+        // is a thin wrapper — output bytes are bit-identical to the
+        // pre-chunk-8b path (proven by `hash_lock_features.rs`
+        // 36/36).
+        //
+        // After `transform_and_quantize` returns we walk the DC-group
+        // grid and call `release_dc_region(dc_x, dc_y)` for each
+        // region. The whole-image source's `release_dc_region` is a
+        // no-op today — chunk 8c plugs in a streaming source that
+        // drops the region's storage on the hint. EPF sharpness
+        // derivation (whole-image consumer #1) still reads the source
+        // afterward; chunk 8c lifts that into the per-DC-group walker
+        // so the release can happen before sharpness runs.
+        let xyb_source = super::region_source::WholeImageXybSource::new(
+            width,
+            height,
             padded_width,
+            padded_height,
+            xyb_x,
+            xyb_y,
+            xyb_b,
+        );
+
+        // Perform DCT and quantization (XYB data is padded to block
+        // boundaries). The trait routes through `xyb_full()` for the
+        // whole-image source; output is byte-identical to the direct
+        // call.
+        let transform_out = self.transform_and_quantize_with_source(
+            &xyb_source,
             xsize_blocks,
             ysize_blocks,
             &params,
@@ -2092,6 +2120,29 @@ impl VarDctEncoder {
         let nzeros = &transform_out.nzeros;
         let raw_nzeros = &transform_out.raw_nzeros;
 
+        // Chunk-8b drop seam (no-op on whole-image source): walk
+        // every DC group + hint the source it can release that
+        // region's storage. With the chunk-8c streaming source this
+        // is where the per-DC-group XYB buffer actually drops; with
+        // the whole-image source it's a fast no-op that documents
+        // the lifetime.
+        for dc_y in 0..ysize_dc_groups {
+            for dc_x in 0..xsize_dc_groups {
+                super::region_source::XybRegionSource::release_dc_region(
+                    &xyb_source,
+                    dc_x as u32,
+                    dc_y as u32,
+                );
+            }
+        }
+
+        // Re-borrow the planes for the remaining whole-image
+        // consumers (compute_epf_sharpness + the legacy `drop(xyb_*)`
+        // path). Chunk-8c lifts each consumer into the per-DC-group
+        // walker so this re-borrow goes away entirely.
+        let (xyb_x_ref, xyb_y_ref, xyb_b_ref) =
+            super::region_source::XybRegionSource::xyb_full(&xyb_source);
+
         // Compute per-block EPF sharpness map when EPF is active
         // Dynamic sharpness gated at effort >= 6 (speed_tier <= kWombat) matching libjxl
         let sharpness_map =
@@ -2101,7 +2152,7 @@ impl VarDctEncoder {
                     Some(m) => m,
                     None => {
                         mask_fallback = super::adaptive_quant::compute_mask1x1_with_budget(
-                            &xyb_y,
+                            xyb_y_ref,
                             padded_width,
                             padded_height,
                             self.budget.as_ref(),
@@ -2110,7 +2161,7 @@ impl VarDctEncoder {
                     }
                 };
                 Some(super::epf::compute_epf_sharpness(
-                    [&xyb_x, &xyb_y, &xyb_b],
+                    [xyb_x_ref, xyb_y_ref, xyb_b_ref],
                     quant_dc,
                     quant_ac,
                     &quant_field,
@@ -2127,11 +2178,12 @@ impl VarDctEncoder {
                 None
             };
 
-        // Free XYB planes — no longer needed after EPF sharpness computation.
-        // At 4K (6720×4480), this frees ~339 MB (3 channels × padded_pixels × f32).
-        drop(xyb_x);
-        drop(xyb_y);
-        drop(xyb_b);
+        // Free the XYB source — no longer needed after EPF sharpness
+        // computation. At 4K (6720×4480), this frees ~339 MB
+        // (3 channels × padded_pixels × f32) for the whole-image
+        // source; the chunk-8c streaming source will have already
+        // dropped most of it via per-region release hints.
+        drop(xyb_source);
         // Free mask1x1 — up to ~115 MB at 4K (padded_pixels × f32).
         drop(mask1x1);
 
@@ -2860,13 +2912,25 @@ impl VarDctEncoder {
         let cfl_map_for_encode: &CflMap = cfl_map_patched.as_ref().unwrap_or(&precomputed.cfl_map);
         let _ms_cfl = _t_cfl.elapsed().as_secs_f64() * 1000.0;
 
-        // Perform DCT and quantization using precomputed XYB data
+        // Perform DCT and quantization using precomputed XYB data.
+        // Chunk 8b (#11): route through the `XybRegionSource` seam so
+        // future per-region streaming sources can be wired in here
+        // without further refactoring of this call site. The
+        // borrowed-source variant keeps the precomputed planes
+        // owned by the caller (we don't take ownership of the
+        // precomputed struct).
         let _t_xform = std::time::Instant::now();
-        let transform_out = self.transform_and_quantize(
+        let precomputed_source = super::region_source::BorrowedXybSource::new(
+            width,
+            height,
+            padded_width,
+            padded_height,
             xyb_x_for_dct,
             xyb_y_for_dct,
             xyb_b_for_dct,
-            padded_width,
+        );
+        let transform_out = self.transform_and_quantize_with_source(
+            &precomputed_source,
             xsize_blocks,
             ysize_blocks,
             &params,
@@ -2874,6 +2938,22 @@ impl VarDctEncoder {
             cfl_map_for_encode,
             &precomputed.ac_strategy,
         )?;
+        // Chunk-8b drop seam (no-op on the borrowed source — the
+        // precomputed XYB is owned by the caller, not by us).
+        let xsize_dc_groups_seam = div_ceil(width, DC_GROUP_DIM);
+        let ysize_dc_groups_seam = div_ceil(height, DC_GROUP_DIM);
+        for dc_y in 0..ysize_dc_groups_seam {
+            for dc_x in 0..xsize_dc_groups_seam {
+                super::region_source::XybRegionSource::release_dc_region(
+                    &precomputed_source,
+                    dc_x as u32,
+                    dc_y as u32,
+                );
+            }
+        }
+        // Drop the source view — the underlying slices outlive it
+        // (held by `precomputed` / `patched_xyb`).
+        drop(precomputed_source);
         let _ms_xform = _t_xform.elapsed().as_secs_f64() * 1000.0;
         let quant_dc = &transform_out.quant_dc;
         let quant_ac = &transform_out.quant_ac;

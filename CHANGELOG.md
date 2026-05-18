@@ -2,6 +2,62 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Streaming refactor #11 chunk 8b — `XybRegionSource` trait + walker
+  seam in `encode_inner` + `encode_from_precomputed_inner`**
+  (`src/vardct/region_source.rs` [new],
+  `src/vardct/transform.rs::transform_and_quantize_with_source`,
+  `src/vardct/encoder.rs::encode_inner` walker,
+  `src/vardct/encoder.rs::encode_from_precomputed_inner` walker,
+  `examples/bench_buffering_rss.rs`,
+  `benchmarks/streaming_chunk8b_peak_rss_2026-05-18.{tsv,meta}`).
+
+  - **New `XybRegionSource` trait** (`pub(crate)` in
+    `vardct/region_source.rs`): `xyb_full() -> (&[f32], &[f32],
+    &[f32])` plus `release_dc_region(dc_x, dc_y)` release hint.
+    Whole-image impl (`WholeImageXybSource`) and borrowed-view impl
+    (`BorrowedXybSource<'a>`) — both `Sync` for the rayon-parallel
+    fan-out inside `transform_and_quantize`.
+  - **`VarDctEncoder::transform_and_quantize_with_source`**: pull-
+    style entry point that takes `&dyn XybRegionSource` instead of
+    three `&[f32]` slices. Today it calls `xyb_full()` once and
+    delegates to the existing whole-image
+    `transform_and_quantize`; output is byte-identical (verified by
+    `hash_lock_features` 36/36).
+  - **`encode_inner` walker** wraps the three XYB Vecs in a
+    `WholeImageXybSource`, calls `transform_and_quantize_with_source`,
+    then iterates DC groups and calls
+    `release_dc_region(dc_x, dc_y)` on the source. The whole-image
+    source ignores the hint — chunk-8c will wire a streaming source
+    that drops the region's storage on each release.
+  - **`encode_from_precomputed_inner` walker** wires the same trait
+    with a `BorrowedXybSource` (precomputed XYB is owned by the
+    caller).
+  - **Documented remaining whole-image consumers** in
+    `region_source.rs` module docs: (1) `compute_epf_sharpness`,
+    (2) the mask1x1 fallback inside the sharpness branch,
+    (3) `butteraugli_loop` (feature-gated, multi-iteration), (4)
+    splines auto-detection / `simplify_invisible` (run before
+    `transform_and_quantize`, not affected). Chunk-8c plan: lift each
+    consumer into the per-DC-group walker so the release can happen
+    *before* the consumer runs.
+  - **Peak-RSS at 4096×4096** (lossy d=1.0, 4 GiB cap):
+    FullBuffered ≈ 2895 MB, BufferedOutput ≈ 2894 MB,
+    FullStreaming ≈ 2895 MB — identical within measurement noise.
+    Bytes byte-identical across all 3 variants (12382528 B). **No
+    memory reduction is expected from chunk 8b alone** — the trait
+    is a structural prereq; actual peak-RSS savings land in chunk-8c
+    when the streaming source materialises one DC group at a time
+    and drops it on the release hint.
+  - **Acceptance**: `cargo test --lib` 1222 pass (+4 region_source
+    unit tests vs 1218 baseline), `cargo test --test
+    hash_lock_features` 36/36, `cargo test --test buffering_dispatch`
+    7/7, `cargo test --test buffering_enum` 15/15, `cargo clippy
+    --lib -- -D warnings` clean, `just rd-regression` 2/2
+    (improvements on every cell — likely a marginal effect of the
+    extra walker structure on a hot LLVM inlining decision).
+
 ### Investigated
 
 - **Streaming refactor #11 chunk 7 — peak-RSS bench at 4K confirms
