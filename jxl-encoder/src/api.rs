@@ -1598,6 +1598,58 @@ impl Buffering {
             other => other,
         }
     }
+
+    /// Returns `true` if this buffering policy is compatible with
+    /// streaming encoding (i.e. the encoder may drop per-DC-group
+    /// XYB / quant / mask storage as soon as the corresponding
+    /// section is emitted).
+    ///
+    /// Mirrors the streaming-side of libjxl's
+    /// [`CanDoStreamingEncoding`](https://github.com/libjxl/libjxl/blob/main/lib/jxl/enc_frame.cc)
+    /// gate: only [`BufferedOutput`](Self::BufferedOutput) and
+    /// [`FullStreaming`](Self::FullStreaming) request the per-region
+    /// release path. [`Auto`](Self::Auto) is resolved first via
+    /// [`Self::resolve_for`] before this check is meaningful.
+    pub const fn is_streaming(self) -> bool {
+        matches!(self, Self::BufferedOutput | Self::FullStreaming)
+    }
+
+    /// Chunk-8c (#11) streaming gate. Returns the buffering policy
+    /// to actually use given a caller-requested mode and whether the
+    /// butteraugli quantization loop will run on this encode.
+    ///
+    /// Mirrors libjxl `CanDoStreamingEncoding` in `enc_frame.cc`:
+    /// the butteraugli loop reconstructs the whole image multiple
+    /// times to evaluate per-block quality and cannot run from a
+    /// sliding-window XYB source. When a caller asks for streaming
+    /// (`BufferedOutput` / `FullStreaming` / `Auto` resolved to one
+    /// of those) **and** the butteraugli loop is active, this
+    /// helper returns [`FullBuffered`](Self::FullBuffered) instead
+    /// — the encoder runs the loop on a whole-image XYB then
+    /// emits the final pass through the buffered-output path.
+    ///
+    /// Today the butteraugli loop is feature-gated and effort-gated
+    /// (off at default effort 7); the typical request path
+    /// (`Auto` + default effort) is unaffected. The `Auto`
+    /// resolution happens first so the returned variant is always a
+    /// concrete level (never `Auto`).
+    pub const fn resolve_for_streaming(
+        self,
+        width: u32,
+        height: u32,
+        butteraugli_iters: u32,
+    ) -> Self {
+        let resolved = self.resolve_for(width, height);
+        if butteraugli_iters > 0 && resolved.is_streaming() {
+            // Downgrade to FullBuffered so the buttloop sees the
+            // whole-image XYB it requires. Mirrors libjxl's
+            // CanDoStreamingEncoding which returns false on
+            // `use_butteraugli_loop`.
+            Self::FullBuffered
+        } else {
+            resolved
+        }
+    }
 }
 
 /// Premultiplied (associated) alpha policy for inputs with an alpha
