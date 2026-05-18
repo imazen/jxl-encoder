@@ -4,6 +4,56 @@
 
 ### Performance
 
+- **W43-2 chunk-5 — magetypes-consolidate `pixel_domain_loss`**
+  (`jxl-encoder-simd/src/pixel_loss.rs`, `jxl-encoder/Cargo.toml`,
+  `jxl-encoder/examples/pixel_loss_magetypes_bench.rs`,
+  `benchmarks/magetypes_pixel_loss_consolidation_2026-05-19.{tsv,meta}`).
+  Mirrors W43-2 chunks 3 (`compute_mask1x1`) and 4 (`gaborish_5x5`) on
+  the next candidate from the audit memo
+  (`memory/magetypes_cpu_acceleration_candidates_2026-05-19.md`,
+  candidate #5, LOW risk). The prior 3 hand-written SIMD variants
+  (AVX2 + NEON + WASM128) plus the scalar fallback collapse to a single
+  `#[magetypes(define(f32x8, f64x4), v3, neon, wasm128, scalar)]`
+  body. The macro generates one `#[arcane]`-wrapped variant per listed
+  tier from the same source-level algorithm:
+    - `pixel_domain_loss_impl_v3`      (x86_64 AVX2, native 256-bit
+                                        `f32x8` + `f64x4`)
+    - `pixel_domain_loss_impl_neon`    (aarch64, 2× f32x4 polyfill of
+                                        f32x8 and 2× f64x2 polyfill of
+                                        f64x4)
+    - `pixel_domain_loss_impl_wasm128` (wasm32, same polyfill shape)
+    - `pixel_domain_loss_impl_scalar`  (portable scalar fallback)
+  The body promotes `f32x8 → 2× f64x4` via the array round-trip
+  `to_array() → [as f64; 4] → from_array(...)`. On AVX2 LLVM fuses
+  the store + scalar-extend + load chain into the same `vcvtps2pd`
+  pair the prior hand-written `_mm256_castps256_ps128 +
+  _mm256_cvtps_pd` path emitted (asm-verified: 16 `vcvtps2pd` + 16
+  `vextractf128` per 8-block inner loop, matching baseline). The
+  manual `x²·x²·x²` 8th-power chain and per-half (`acc_lo` / `acc_hi`)
+  accumulation grouping are preserved exactly, so bitstream byte-output
+  is unchanged. **AVX-512 (`v4`) tier is NOT included** — magetypes
+  0.9.23 does not implement `F64x4Backend` for `X64V4Token` /
+  `X64V4xToken` (the natural f64 width on AVX-512 is `f64x8`, one
+  512-bit register). Ceiling on x86_64 is `v3` (AVX2). Hash-lock
+  36/36 byte-identical (`tests/hash_lock_features.rs`); 1250
+  `jxl-encoder` lib tests pass; 125 `jxl-encoder-simd` tests pass
+  including 3 pixel_loss parity tests
+  (`test_pixel_domain_loss_matches_scalar` exercises every available
+  token permutation via `archmage::testing::for_each_token_-
+  permutation`). x86_64 best-iter wall-clock under heavy concurrent
+  system load (load_avg ~14-25, other agents' bake_compare consuming
+  26 cores) — dispatch arm matches baseline within noise:
+  512² 0.106 → 0.105 ms (-1 %); 1024² 0.569 → 0.570 ms ( 0 %);
+  2048² 2.405 → 2.062 ms (-14 %); 4096² 9.967 → 10.551 ms (+6 %).
+  Per-size dispatch-vs-scalar speedups (post): 512² 2.12×, 1024² 1.48×,
+  2048² 1.89×, 4096² 1.45×. LOC delta: 442 → 362 (-80, -18 %).
+  Backwards-compat aliases preserved: `pixel_domain_loss_avx2`,
+  `pixel_domain_loss_neon`, `pixel_domain_loss_wasm128`. Chunk-6
+  candidate per W43-2 audit: `forward_xyb` (#1, 6 h, LOW risk,
+  biggest LOC reduction — color-convert example shape, 3-channel
+  fused). No AI attribution (pixel-domain loss formula derived from
+  libjxl `EstimateEntropy`).
+
 - **W43-2 chunk-4 — magetypes-consolidate `gaborish_5x5`**
   (`jxl-encoder-simd/src/gaborish5x5.rs`, `jxl-encoder-simd/Cargo.toml`,
   `jxl-encoder/examples/gaborish5x5_magetypes_bench.rs`,

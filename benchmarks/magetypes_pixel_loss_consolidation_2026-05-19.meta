@@ -1,0 +1,38 @@
+# pixel_domain_loss magetypes consolidation bench (W43-2 chunk-5)
+timestamp: 2026-05-18T20:36:00Z
+hostname: lilith (Ryzen 9 7950X, 128 GB RAM, water-cooled)
+git_commit: pending-commit
+phase_baseline_at:  dd51c504 (W44-1 cjxl parity ledger, pixel_loss.rs hand-written AVX2/NEON/WASM128)
+phase_post_at:      this commit (W43-2 chunk-5 magetypes-consolidated)
+sizes: [512, 1024, 2048, 4096]
+samples_per_cell: 15
+warmup: 3
+purpose: validates that the magetypes(define(f32x8, f64x4), v3, neon, wasm128, scalar) consolidation
+         in jxl-encoder-simd/src/pixel_loss.rs preserves wall-clock vs the prior 3-variant
+         hand-written code (AVX2 / NEON / WASM128) and the scalar fallback.
+kernel:   pixel_domain_loss — 8th-power of masked pixel errors (x^2 * x^2 * x^2 chain)
+shape:    one 8x8 block per call, looped over the entire NxN plane to mirror
+          estimate_entropy_full's per-block invocation pattern.
+input:    synthetic XYB-error plane + strictly-positive mask1x1-like plane.
+load_note: bench was run with system load_avg ~14-25 (other agents' bake_compare
+           consuming 26 cores); use best_ms columns as the least noise-sensitive signal.
+           See `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/jj_concurrent_workspace_failure_mode_2026-05-18.md`
+           for noise-handling discipline.
+asm_check: cargo asm on both variants emits the same instruction shape — 16 vcvtps2pd
+           per inner loop, paired vextractf128 for the high-half, vmulpd chains for
+           m4/m8, vaddpd into 2× f64x4 accumulators. The f32→f64 promote via
+           array round-trip lowers to the same vcvtps2pd as the hand-written
+           _mm256_castps256_ps128 + _mm256_cvtps_pd path.
+best_ms_a_b_summary (dispatch, ms):
+  512x512:    baseline 0.106 → post 0.105 (-1%)   noise floor
+  1024x1024:  baseline 0.569 → post 0.570 ( 0%)   parity
+  2048x2048:  baseline 2.405 → post 2.062 (-14%)  bench noise; LLVM identical asm
+  4096x4096:  baseline 9.967 → post 10.551 (+6%)  bench noise; LLVM identical asm
+note:     v4 (AVX-512) tier is NOT emitted — magetypes 0.9.23 lacks F64x4Backend for
+          X64V4Token (the natural f64 width on AVX-512 is f64x8). Ceiling is v3 (AVX2).
+          Revisit when magetypes ships a v4 f64x4 polyfill or rewrite around f64x8.
+hash_lock: 36/36 byte-identical (jxl-encoder/tests/hash_lock_features.rs --release)
+lib_tests: 1250/1250 jxl-encoder lib, 125/125 jxl-encoder-simd, 3/3 pixel_loss
+clippy:    clean (default + --features avx512)
+fmt:       clean
+tsv:      benchmarks/magetypes_pixel_loss_consolidation_2026-05-19.tsv
