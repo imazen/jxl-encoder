@@ -2865,6 +2865,11 @@ pub struct LossyConfig {
     /// follow-on work — the value is currently advisory only.
     /// See [`Self::with_alpha_distance`].
     alpha_distance: Option<f32>,
+    /// Opt-in: engage the **squeeze-on-extras** (responsive=1) lossy
+    /// alpha pipeline. Default `false`. See
+    /// [`Self::with_alpha_squeeze`] for the framework + chunk-2
+    /// status.
+    alpha_squeeze: bool,
     /// Optional modular group-encoding order (CLI passthrough — mirrors
     /// libjxl `cjxl --group_order` / `JXL_ENC_FRAME_SETTING_GROUP_ORDER`).
     /// `None` (default) = scanline order. `Some(0)` = scanline. `Some(1)`
@@ -3028,6 +3033,10 @@ impl LossyConfig {
             patches_explicit: false,
             epf_level: -1,
             alpha_distance: None,
+            // Chunk-1 default: keep responsive=0 lossy alpha path
+            // (byte-identical to today). Opt-in via
+            // `LossyConfig::with_alpha_squeeze(true)`.
+            alpha_squeeze: false,
             group_order: None,
             center_x: None,
             center_y: None,
@@ -3216,6 +3225,7 @@ impl LossyConfig {
         // Preserve CLI-passthrough knobs across with_effort (they're
         // never effort-derived; opt-in / pure forwarding).
         new.alpha_distance = self.alpha_distance;
+        new.alpha_squeeze = self.alpha_squeeze;
         new.group_order = self.group_order;
         new.center_x = self.center_x;
         new.center_y = self.center_y;
@@ -3762,6 +3772,45 @@ impl LossyConfig {
     /// Currently-set alpha-channel distance (or `None` if unset).
     pub fn alpha_distance(&self) -> Option<f32> {
         self.alpha_distance
+    }
+
+    /// Opt-in to the **squeeze-on-extras** (responsive=1) lossy alpha
+    /// pipeline. Default `false`.
+    ///
+    /// libjxl's default cjxl path uses `--responsive=1` for lossy
+    /// alpha, which applies the Squeeze (Haar wavelet) transform on
+    /// the alpha plane and routes a per-band quantizer through the
+    /// shifted entries of `squeeze_luma_qtable[16]`
+    /// (`enc_modular.cc:1004-1027`). This delivers `-18%` to `-160%`
+    /// smaller bytes on non-opaque alpha than the `responsive=0`
+    /// no-squeeze path we ship today (audit: commit `a160deb7`,
+    /// three-image sweep at d ∈ {0.5, 1.0, 2.0, 5.0}).
+    ///
+    /// **Chunk-1 framework (current ship)**: setting this to `true`
+    /// validates the per-band quantizer table + shift-aware quantizer
+    /// function are in place, but surfaces a clear
+    /// `Error::NotImplemented` from the encoder when the lossy alpha
+    /// path is actually engaged
+    /// (`alpha_distance > 0.0` AND an alpha extra is present). The
+    /// chunk-2 follow-on wires the Squeeze application on the alpha
+    /// extra and a per-band quantizer dispatch through the modular
+    /// channel-split tree, at which point this flag will deliver
+    /// real byte savings.
+    ///
+    /// Default `false` keeps the existing pipeline byte-for-byte
+    /// identical (hash-locks 36/36 unchanged).
+    ///
+    /// See also: [`Self::with_alpha_distance`] (the distance knob
+    /// this opt-in modifies the **encoding** of, not its target
+    /// quality).
+    pub fn with_alpha_squeeze(mut self, on: bool) -> Self {
+        self.alpha_squeeze = on;
+        self
+    }
+
+    /// Currently-set squeeze-on-extras opt-in (default `false`).
+    pub fn alpha_squeeze(&self) -> bool {
+        self.alpha_squeeze
     }
 
     /// Set the modular-group encoding order (CLI passthrough — mirrors
@@ -6476,6 +6525,10 @@ impl<'a> EncodeRequest<'a> {
         // see [`crate::vardct::VarDctEncoder::compute_extra_pixel_quantizer`]
         // for the libjxl-parity formula.
         enc.alpha_distance = cfg.alpha_distance;
+        // Squeeze-on-extras opt-in (chunk-1 framework — see
+        // [`crate::LossyConfig::with_alpha_squeeze`] and
+        // [`crate::vardct::VarDctEncoder::alpha_squeeze_engaged`]).
+        enc.alpha_squeeze = cfg.alpha_squeeze;
 
         // Tone mapping and intrinsic size from metadata
         if let Some(meta) = self.metadata {

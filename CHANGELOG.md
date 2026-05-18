@@ -4,6 +4,97 @@
 
 ### Added
 
+- **`LossyConfig::with_alpha_squeeze(bool)` — chunk-1 framework opt-in
+  for the squeeze-on-extras (responsive=1) lossy alpha pipeline** (W13-4
+  follow-on #1, named "Alpha squeeze-on-extras chunk 1"). Closes the
+  framework half of the dominant alpha compression lever surfaced by the
+  audit on `a160deb7`: cjxl default `--responsive=1` is -18% to -160%
+  smaller than our current `responsive=0` path on non-opaque alpha.
+
+  This ship lands:
+
+  1. `SQUEEZE_LUMA_QTABLE[16]` + `SQUEEZE_QUALITY_FACTOR_CONST` +
+     `SQUEEZE_LUMA_FACTOR_CONST` lifted out of inline literals into
+     named constants matching `lib/jxl/enc_modular.cc:82-103` exactly
+     (unit-test `squeeze_luma_qtable_matches_libjxl_constants` pins
+     all 16 entries).
+  2. New `VarDctEncoder::compute_extra_pixel_quantizer_shifted(bits,
+     ec_type, shift)` — the responsive=1 quantizer formula
+     (`enc_modular.cc:1019-1027` luma branch). Diverges from the
+     existing no-squeeze `compute_extra_pixel_quantizer` by dropping
+     the `* 0.1` "just color quantization" factor and folding in
+     `squeeze_luma_qtable[shift]`; at `shift = 0` returns `~10×` the
+     value of the no-squeeze path. Returns `1` (lossless) for
+     non-alpha extras and for `alpha_distance` of `None` / `Some(0)`.
+     Clamps `shift` to `[0, 15]` (table length).
+  3. `LossyConfig::with_alpha_squeeze(bool)` builder + getter,
+     plumbed through to `VarDctEncoder::alpha_squeeze` and
+     preserved across `with_effort` (joins the CLI-passthrough knob
+     list).
+  4. `VarDctEncoder::alpha_squeeze_engaged()` predicate (`true` iff
+     flag on AND `alpha_distance > 0`), and
+     `check_alpha_squeeze_chunk1_unsupported` gate that surfaces
+     `Error::NotImplemented` with a chunk-2 reference when an alpha
+     extra is present + flag engaged. Wired into all three lossy
+     entry points (`encode_with_extras`,
+     `encode_from_precomputed_with_extras`, the pre-quantized
+     variant). `Error::NotImplemented` lets callers distinguish
+     "framework gate fired" from "real encode failure".
+
+  **Chunk-1 contract verified (`tests/alpha_squeeze_chunk1_framework.rs`,
+  6/6 passing)**:
+  - default flag-off + `alpha_distance = 2.0` is byte-identical
+    between repeat encodes AND identical to explicit
+    `with_alpha_squeeze(false)` (no silent perturbation).
+  - default flag-off decodes correctly via jxl-rs at d=2.0 with
+    alpha plane variation preserved (POC roundtrip).
+  - flag-on + alpha extra + `alpha_distance > 0` returns
+    `NotImplemented` with a clear "chunk 2" message.
+  - flag-on with no alpha extra OR `alpha_distance` unset/zero is a
+    no-op (does not error — lets callers stage the flag).
+  - `with_effort` preserves the flag (CLI-passthrough invariant).
+  - `hash_lock_features`: **36/36 byte-identical**.
+
+  **Chunk-2 plan** (multi-week, dominant compression lever):
+  1. Lift the `dim_shift > 0` extras guard (currently rejects with
+     `InvalidInput` in `encode_with_extras` and twin precomputed
+     paths) for the squeeze-engaged alpha path only — non-alpha
+     extras keep the existing guard until per-channel `ec_distance`
+     lands.
+  2. When `alpha_squeeze_engaged() == true`: route the alpha extra
+     through `modular::squeeze::default_squeeze_params` +
+     `apply_squeeze` BEFORE entering
+     `write_modular_extras_subbitstream`. Track the per-sub-channel
+     `(hshift, vshift)` pairs so the writer knows each shifted
+     sub-channel's shift index.
+  3. Replace the single `extras_quantizers: &[u32]` slice (one
+     entry per top-level extra) with a per-sub-channel
+     `Vec<u32>` produced by calling
+     `compute_extra_pixel_quantizer_shifted` per sub-channel with
+     `shift = (hshift + vshift) - 1` (libjxl
+     `enc_modular.cc:1006-1008`). Each sub-channel maps to its own
+     leaf in a channel-split tree (already supported by
+     `write_tree_histogram_for_channel_split_lossy`); extend the
+     property-0 split to dispatch by sub-channel index.
+  4. Signal the Squeeze transform in the extras subbitstream's
+     GroupHeader (`nb_transforms > 0`) and write each
+     `SqueezeParam` via `write_squeeze_transform`.
+  5. Bench bytes vs cjxl `--responsive=1` on the same three audit
+     images at d ∈ {0.5, 1.0, 2.0, 5.0}; target is `<= cjxl
+     bytes` at parity MAE. Acceptance gate:
+     `tests/alpha_squeeze_chunk1_framework.rs::alpha_squeeze_on_plus_lossy_alpha_returns_not_implemented`
+     flips from "expect Err" to "expect bytes < no-squeeze
+     baseline" and the `expect_err` line becomes `expect`.
+
+  **Chunk-3+ (parked for after chunk 2 byte-savings prove out)**:
+  ChannelCompact (per-channel palette) for extras — handles the
+  opaque-alpha snap-255-to-252 case where cjxl-default preserves
+  the constant channel exactly via bitdepth-0 reduction. Documented
+  in the audit Investigation Notes (`a160deb7`).
+
+  Default `with_alpha_squeeze(false)` keeps the existing
+  responsive=0 pipeline byte-for-byte identical (hash_locks 36/36).
+
 - **`alpha_distance_audit` example + parity audit** — sweeps three RGBA
   test images (opaque, semi-transparent UI gradient, photographic alpha
   mask) at `alpha_distance ∈ {0.5, 1.0, 2.0, 5.0}` against `cjxl v0.12.0`
