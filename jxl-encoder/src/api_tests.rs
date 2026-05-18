@@ -10494,28 +10494,128 @@ fn modular_knobs_nb_prev_channels_cap_changes_tree_path() {
 }
 
 #[test]
-fn modular_knobs_predictor_does_not_override_tree_learner() {
-    // The MA tree learner (libjxl `Predictor::Variable` mode) still
-    // selects per-leaf predictors regardless of `modular_predictor`
-    // when tree learning is on — by design, matching libjxl. The
-    // override only applies to the no-tree-learning modular paths
-    // (write_improved_modular_stream, RCT, palette, lossy palette,
-    // multi-group non-tree-learn). When tree learning is enabled
-    // (default effort >= 7), forcing Gradient via the knob produces
-    // byte-identical output to the unset default.
+fn modular_knobs_predictor_some5_byte_identical_to_default_tree_learn() {
+    // `Some(5)` (Gradient — the legacy default) MUST produce
+    // byte-identical output to the unset default on the tree-learning
+    // path. The override resolver returns `None` for `Some(5)` so the
+    // ID3 path runs unchanged — this pins the hash-lock invariant when
+    // callers explicitly pass `--modular-predictor 5`.
+    //
+    // Was previously titled "modular_knobs_predictor_does_not_override_tree_learner"
+    // and asserted that ALL ids were ignored on the tree-learn path.
+    // That semantics was flipped intentionally in the W12-4 chunk that
+    // wired `--modular-predictor N` into tree-learn — see CHANGELOG.
     let pixels = make_palette_friendly_rgb_256();
     let default = LosslessConfig::new()
         .encode(&pixels, 256, 256, PixelLayout::Rgb8)
         .expect("default encode");
     let forced_gradient = LosslessConfig::new()
-        .with_modular_predictor(Some(5)) // 5 = Gradient
+        .with_modular_predictor(Some(5)) // 5 = Gradient (legacy default)
         .encode(&pixels, 256, 256, PixelLayout::Rgb8)
         .expect("forced-gradient encode");
     assert_eq!(
         default, forced_gradient,
-        "modular_predictor is ignored on the tree-learning path (libjxl \
-         Predictor::Variable semantics); flipping this assertion requires a CHANGELOG entry"
+        "modular_predictor=Some(5) must stay byte-identical to default on the \
+         tree-learning path (Gradient is the legacy default; resolver returns \
+         None to preserve ID3 hash-locks)"
     );
+}
+
+#[test]
+fn modular_knobs_predictor_overrides_tree_learner_left() {
+    // Predictor 1 (Left) is a single-fixed predictor, NOT the legacy
+    // Gradient default. On the tree-learning path, setting
+    // `modular_predictor = Some(1)` MUST bypass ID3 and emit a
+    // single-leaf tree pinned to Left — producing a bitstream that
+    // differs from the unset default (which runs the full per-leaf ID3
+    // selection).
+    //
+    // This pins the new tree-learn override semantics (libjxl
+    // `cjxl -P 1` style). The default config has tree-learning on at
+    // effort 7.
+    let pixels = make_palette_friendly_rgb_256();
+    let default_tree_learn = LosslessConfig::new()
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("default tree-learn encode");
+    let forced_left_tree_learn = LosslessConfig::new()
+        .with_modular_predictor(Some(1)) // 1 = Left
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("forced-Left tree-learn encode");
+    assert_ne!(
+        default_tree_learn, forced_left_tree_learn,
+        "modular_predictor=Some(1) (Left) on the tree-learning path MUST bypass \
+         ID3 and produce a different bitstream from the unset default"
+    );
+}
+
+#[test]
+fn modular_knobs_predictor_tree_learn_meta_modes_fall_back_to_id3() {
+    // Ids 14 (libjxl `Best`) and 15 (libjxl `Variable`) are
+    // encoder-only meta-modes that explicitly REQUEST per-leaf tree
+    // selection. On the tree-learning path they must NOT override the
+    // learner — bytes stay identical to the unset default. Pins the
+    // resolve_tree_learn_force_predictor 14/15→None invariant.
+    let pixels = make_palette_friendly_rgb_256();
+    let default = LosslessConfig::new()
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("default encode");
+    let best = LosslessConfig::new()
+        .with_modular_predictor(Some(14)) // libjxl Best
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("Some(14) Best encode");
+    let variable = LosslessConfig::new()
+        .with_modular_predictor(Some(15)) // libjxl Variable
+        .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+        .expect("Some(15) Variable encode");
+    assert_eq!(
+        default, best,
+        "Some(14) (Best) is a meta-mode requesting per-leaf selection — must \
+         fall through to ID3 and stay byte-identical to default"
+    );
+    assert_eq!(
+        default, variable,
+        "Some(15) (Variable) is a meta-mode requesting per-leaf selection — \
+         must fall through to ID3 and stay byte-identical to default"
+    );
+}
+
+#[test]
+fn modular_knobs_predictor_tree_learn_all_ids_roundtrip_via_jxl_rs() {
+    // Force each predictor id (0..=13) on the tree-learning path and
+    // confirm jxl-rs (project's primary decoder) decodes pixel-exact.
+    // Catches single-leaf-tree emission bugs, predictor-mismatch
+    // between encoded leaf and per-pixel residual collection, and
+    // ANS context-map breakage when num_contexts = 1 (single-leaf).
+    let pixels = make_palette_friendly_rgb_256();
+    for predictor_id in 0u8..=13 {
+        let encoded = LosslessConfig::new()
+            .with_modular_predictor(Some(predictor_id))
+            .encode(&pixels, 256, 256, PixelLayout::Rgb8)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "tree-learn encode failed for predictor={}: {:?}",
+                    predictor_id, e
+                )
+            });
+        let decoded = crate::test_helpers::decode_with_jxl_rs(&encoded).unwrap_or_else(|e| {
+            panic!(
+                "jxl-rs decode failed for tree-learn predictor={}: {:?}",
+                predictor_id, e
+            )
+        });
+        assert_eq!(decoded.width, 256, "predictor={}", predictor_id);
+        assert_eq!(decoded.height, 256, "predictor={}", predictor_id);
+        let decoded_u8: Vec<u8> = decoded
+            .pixels
+            .iter()
+            .map(|&v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
+            .collect();
+        assert_eq!(
+            decoded_u8, pixels,
+            "tree-learn --modular-predictor {} must roundtrip pixel-exact via jxl-rs",
+            predictor_id
+        );
+    }
 }
 
 #[test]

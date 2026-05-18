@@ -130,16 +130,19 @@ fn run_cjxl(input_png: &Path, label: &str, extra_args: &[&str]) -> Vec<u8> {
 fn modular_predictor_flag_accepted_lossless_path() {
     let png = write_cropped_fixture("predictor");
     // Lossless path: -d 0 routes through LosslessConfig where the
-    // modular_predictor field lives. Default and forced-predictor
-    // builds should both succeed and produce valid bytes.
+    // modular_predictor field lives. Default and `--modular-predictor 5`
+    // (Gradient, the legacy default) must produce byte-identical output:
     //
-    // The predictor knob is stored on the ModularKnobs but does NOT
-    // override per-leaf tree-learned predictors (libjxl
-    // `Predictor::Variable` semantics). The MA tree learner still
-    // selects predictors per leaf, so default-path bytes are unchanged.
-    // This is the documented partial-wire state — the field is on the
-    // config surface so callers can begin migrating, with full
-    // forced-predictor wiring queued as follow-on work.
+    // - On the no-tree-learn paths, `resolve_fixed_predictor` maps
+    //   `None → 5`, so the explicit `5` is the identity.
+    // - On the tree-learn path (default at effort >= 7),
+    //   `resolve_tree_learn_force_predictor` returns `None` for
+    //   `Some(5)` specifically, so ID3 runs unchanged.
+    //
+    // Both invariants preserve hash-lock parity for the default-effort
+    // CLI path. Forcing a NON-Gradient id (e.g. `--modular-predictor 1`)
+    // does change bytes — see api_tests::
+    // `modular_knobs_predictor_overrides_tree_learner_left`.
     let baseline = run_cjxl(&png, "predictor_default", &["-d", "0"]);
     let forced = run_cjxl(
         &png,
@@ -149,7 +152,8 @@ fn modular_predictor_flag_accepted_lossless_path() {
     assert_eq!(
         fingerprint(&baseline),
         fingerprint(&forced),
-        "modular_predictor is stored-only today — full no-tree-path wiring queued"
+        "`-P 5` (Gradient, legacy default) must stay byte-identical to unset \
+         on both tree-learn and non-tree-learn paths"
     );
 }
 

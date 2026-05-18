@@ -307,6 +307,8 @@ pub fn write_global_modular_section_with_predictor(
 /// - lz77.enabled = 0
 /// - Multi-context ANS data histogram (write_entropy_code_ans)
 /// - GroupHeader (use_global_tree=1, wp_header.all_default=1, num_transforms=0)
+#[allow(dead_code)] // public wrapper retained for API stability;
+// internal callers route through `write_global_modular_section_with_tree_knobs`
 pub fn write_global_modular_section_with_tree(
     images: &[ModularImage],
     writer: &mut BitWriter,
@@ -316,7 +318,7 @@ pub fn write_global_modular_section_with_tree(
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     meta_image: Option<&ModularImage>,
 ) -> Result<GlobalModularState> {
-    write_global_modular_section_with_tree_dc_quant(
+    write_global_modular_section_with_tree_dc_quant_knobs(
         images,
         writer,
         profile,
@@ -325,6 +327,47 @@ pub fn write_global_modular_section_with_tree(
         lz77_method,
         None,
         meta_image,
+        &super::palette::ModularKnobs::default(),
+    )
+}
+
+/// Knob-aware variant of [`write_global_modular_section_with_tree`].
+///
+/// When [`super::palette::ModularKnobs::modular_predictor`] resolves to a
+/// concrete `0..=13` predictor (excluding `5` Gradient — the default
+/// keeps the legacy ID3 path for hash-lock parity, and `14`/`15` are
+/// libjxl's `Best`/`Variable` meta-modes that explicitly request
+/// per-leaf selection), the tree learner is skipped entirely and a
+/// single-leaf tree with the requested predictor is emitted. Per-group
+/// residual collection in [`write_group_modular_section`] picks up the
+/// override via the [`GlobalModularState::AnsWithTree`] tree handle,
+/// keeping the bitstream self-consistent end-to-end.
+///
+/// Mirrors libjxl `cjxl -P N` / `--modular_predictor`: forcing the leaf
+/// predictor in the tree-learn path matches the libjxl behaviour where
+/// `options.predictor` overrides what would otherwise be the tree
+/// learner's per-leaf choice.
+#[allow(clippy::too_many_arguments)]
+pub fn write_global_modular_section_with_tree_knobs(
+    images: &[ModularImage],
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    transforms: GlobalTransforms,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    meta_image: Option<&ModularImage>,
+    knobs: &super::palette::ModularKnobs,
+) -> Result<GlobalModularState> {
+    write_global_modular_section_with_tree_dc_quant_knobs(
+        images,
+        writer,
+        profile,
+        transforms,
+        use_lz77,
+        lz77_method,
+        None,
+        meta_image,
+        knobs,
     )
 }
 
@@ -339,6 +382,35 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     dc_quant_custom: Option<[f32; 3]>,
     meta_image: Option<&ModularImage>,
+) -> Result<GlobalModularState> {
+    write_global_modular_section_with_tree_dc_quant_knobs(
+        images,
+        writer,
+        profile,
+        transforms,
+        use_lz77,
+        lz77_method,
+        dc_quant_custom,
+        meta_image,
+        &super::palette::ModularKnobs::default(),
+    )
+}
+
+/// Knob-aware + LfFrame-aware variant of
+/// [`write_global_modular_section_with_tree`]. See
+/// [`write_global_modular_section_with_tree_knobs`] for the override
+/// semantics.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
+    images: &[ModularImage],
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    transforms: GlobalTransforms,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    dc_quant_custom: Option<[f32; 3]>,
+    meta_image: Option<&ModularImage>,
+    knobs: &super::palette::ModularKnobs,
 ) -> Result<GlobalModularState> {
     use super::encode::write_tree;
     use super::encode::write_wp_header;
@@ -567,7 +639,26 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     // chunk-6) preserves the wins of each prior chunk in dedicated seed
     // slots, exactly as chunk 5 reserved seeds 0..=3 for chunk-3-only
     // perturbations after chunk 4's recombined-budget regression.
-    let seeds = profile.tree_learn_seeds.max(1);
+    // Tree-learn force-predictor override (libjxl `cjxl -P N` /
+    // `--modular_predictor`). When the caller has asked for a fixed
+    // `0..=13` predictor (excluding `5` Gradient — keeps hash-locks green
+    // — and excluding `14`/`15` meta-modes), bypass ID3 entirely: build a
+    // single-leaf tree with the requested predictor, collect residuals
+    // against it once (no multi-seed search — all seeds would produce
+    // identical output), and skip straight to ANS code building.
+    //
+    // Mirrors libjxl's behaviour where `options.predictor` overrides
+    // what would otherwise be the tree learner's per-leaf choice. The
+    // returned [`GlobalModularState::AnsWithTree`] carries the
+    // single-leaf tree so per-group sections pick up the override via
+    // the same per-pixel residual path used for ID3-learned trees.
+    let force_predictor = super::encode::resolve_tree_learn_force_predictor(knobs);
+
+    let seeds = if force_predictor.is_some() {
+        1
+    } else {
+        profile.tree_learn_seeds.max(1)
+    };
     let mut best: Option<(Vec<crate::entropy_coding::token::Token>, usize, Tree, f64)> = None;
 
     // Baseline params shared across seeds. derive_seeded_params clones and
@@ -588,50 +679,59 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
             Some(frac) => stride_for_seeded_sample_fraction(total_pixels, frac),
             None => derive_seeded_stride(stride, seed),
         };
-        // Gather + tree-learn for this seed.
-        let mut samples = crate::profile_time!("modular/gather_samples", {
-            gather_for_seed(seed, seed_stride)
-        });
-
-        let pixel_fraction = if total_pixels > 0 {
-            samples.total_gathered_weight() as f64 / total_pixels as f64
+        // Gather + tree-learn for this seed — skipped entirely when the
+        // force-predictor override is active (the single-leaf tree below
+        // does not consume samples, and gather is the dominant cost at
+        // e7+).
+        let tree = if let Some(forced) = force_predictor {
+            super::tree::simple_tree(forced)
         } else {
-            1.0
-        };
-        // Per-seed parameter variance — seed 0 is a no-op clone.
-        let mut params =
-            derive_seeded_params(&base_params, seed).with_pixel_fraction(pixel_fraction);
-        // Chunk-6 dim A — split-bucket-count override (seeds 8..=11).
-        // Seeds 0..=7 return None → canonical bucket count preserved.
-        if let Some(buckets) = derive_seeded_max_property_values(seed) {
-            params.max_property_values = buckets;
-        }
-        // Chunk-6 dim B — properties-slice truncation (seeds 12..=15).
-        // Seeds 0..=11 return None → canonical slice length preserved.
-        // Clamp to current slice length so a truncation cap longer than
-        // the property Vec is a no-op rather than an invalid index.
-        if let Some(prop_cap) = derive_seeded_properties_truncation(seed) {
-            let cap = prop_cap.min(params.properties.len());
-            params.properties.truncate(cap);
-        }
-        let tree = crate::profile_time!("modular/compute_best_tree", {
-            compute_best_tree(&mut samples, &params)
-        });
+            let mut samples = crate::profile_time!("modular/gather_samples", {
+                gather_for_seed(seed, seed_stride)
+            });
 
-        crate::trace::debug_eprintln!(
-            "GLOBAL_MODULAR_TREE seed={}/{}: {} nodes from {} samples \
-             (pixel_fraction={:.3}, stride={}, split_threshold={:.2}, \
-              max_property_values={}, properties.len={})",
-            seed,
-            seeds,
-            tree.len(),
-            samples.num_samples,
-            pixel_fraction,
-            seed_stride,
-            params.split_threshold,
-            params.max_property_values,
-            params.properties.len(),
-        );
+            let pixel_fraction = if total_pixels > 0 {
+                samples.total_gathered_weight() as f64 / total_pixels as f64
+            } else {
+                1.0
+            };
+            // Per-seed parameter variance — seed 0 is a no-op clone.
+            let mut params =
+                derive_seeded_params(&base_params, seed).with_pixel_fraction(pixel_fraction);
+            // Chunk-6 dim A — split-bucket-count override (seeds 8..=11).
+            // Seeds 0..=7 return None → canonical bucket count preserved.
+            if let Some(buckets) = derive_seeded_max_property_values(seed) {
+                params.max_property_values = buckets;
+            }
+            // Chunk-6 dim B — properties-slice truncation (seeds 12..=15).
+            // Seeds 0..=11 return None → canonical slice length preserved.
+            // Clamp to current slice length so a truncation cap longer than
+            // the property Vec is a no-op rather than an invalid index.
+            if let Some(prop_cap) = derive_seeded_properties_truncation(seed) {
+                let cap = prop_cap.min(params.properties.len());
+                params.properties.truncate(cap);
+            }
+            crate::profile_time!("modular/compute_best_tree", {
+                compute_best_tree(&mut samples, &params)
+            })
+        };
+
+        if force_predictor.is_none() {
+            crate::trace::debug_eprintln!(
+                "GLOBAL_MODULAR_TREE seed={}/{}: {} nodes (ID3 learned, seed_stride={})",
+                seed,
+                seeds,
+                tree.len(),
+                seed_stride,
+            );
+        } else {
+            crate::trace::debug_eprintln!(
+                "GLOBAL_MODULAR_TREE seed={}/{}: {} nodes (force-predictor override)",
+                seed,
+                seeds,
+                tree.len(),
+            );
+        }
 
         // Collect residuals for this candidate tree.
         let (all_tokens, nb_meta_tokens) =

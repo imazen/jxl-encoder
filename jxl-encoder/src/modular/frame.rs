@@ -9,7 +9,6 @@ use super::encode::{
     build_histogram_from_residuals, select_best_rct_at, write_group_modular_section_idx,
 };
 use super::palette::{CHANNEL_COLORS_PERCENT, analyze_channel_compact};
-use super::section::write_global_modular_section_with_tree;
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::lz77::Lz77Method;
 use crate::error::Result;
@@ -795,8 +794,12 @@ impl FrameEncoder {
         }
 
         let global_state = if self.options.use_tree_learning && self.options.use_ans {
-            // Tree learning path: gather samples, learn tree, build multi-context ANS
-            write_global_modular_section_with_tree(
+            // Tree learning path: gather samples, learn tree, build multi-context ANS.
+            // Honours [`super::palette::ModularKnobs::modular_predictor`]
+            // (libjxl `cjxl -P N` / `--modular_predictor`) by routing
+            // through the `_knobs` variant, which builds a single-leaf
+            // tree pinned to the requested predictor when set.
+            super::section::write_global_modular_section_with_tree_knobs(
                 &group_images,
                 &mut lf_global_writer,
                 &self.options.profile, // effort-dependent tree params
@@ -804,6 +807,7 @@ impl FrameEncoder {
                 self.options.enable_lz77,
                 self.options.lz77_method,
                 meta_image.as_ref(),
+                &self.options.modular_knobs,
             )?
         } else {
             // Standard path: collect residuals using the requested predictor
