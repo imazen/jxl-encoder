@@ -56,6 +56,41 @@
 
 ### Added
 
+- **Auto-splines content discriminator** (chunk 5 — follow-on to
+  chunk 4 `cbb36478`). Adds `vardct::splines::looks_like_screenshot`,
+  a `median(per-8x8-block mean of mask1x1) > 95.0` gate (threshold
+  mirrors the GPU encoder's W7-3 AFV cost-grid
+  `SCREENSHOT_MEDIAN_MASK_THRESHOLD` in
+  `jxl-encoder-gpu/src/lossy_encoder.rs:2907`). When `auto_splines`
+  fires at `effort >= 7`, the discriminator runs first on the
+  post-patches pre-gaborish XYB Y plane; on screenshot-class content
+  the splines detector is skipped entirely, avoiding the
+  `bbox-area-linear` energy-drop proxy's structural over-claim on
+  long bright ridges (table borders, wallpaper edges). After chunk 4
+  the remaining residual was `codec_wiki @ d=1.0` (+3.3%) and
+  `imac_g3 @ d=1.0` (+3.5%); after chunk 5 both go byte-identical
+  (`benchmarks/auto_splines_bench_2026-05-17_chunk5.tsv`: 33 of 33
+  cells delta 0.000% across 5 photos + 3 screenshots + 3 synthetics
+  × e7/e8/e9). Discriminator-validated screenshot median: 100.013;
+  photo median: 55.878 (clean ≥5x gap from threshold). Default
+  `auto_splines_default(_) = false` unchanged — the discriminator
+  is so effective at filtering false-positives that no test image
+  benefits from default-on, so flipping it would add a
+  `compute_mask1x1` pass per encode for zero observable RD benefit.
+  The flag remains opt-in for callers tuning for thin-feature
+  content (power lines on a noisy sky, hair on a photo background)
+  where the discriminator does NOT fire AND the cost gate admits the
+  candidate. Hash-locks: `hash_lock_features` 36/36 byte-identical;
+  `tests/auto_splines.rs` 6/6 pass (5 retained, plus chunk-5
+  `chunk5_multi_line_runs_detector` that replaced
+  `chunk3_multi_line_decreases_bytes` whose flat-grey synthetic
+  contract chunk 5 correctly short-circuits); 4 new lib unit tests
+  in `vardct::splines::tests` cover the discriminator at the flat /
+  photo-gradient / strided / tiny-image boundaries.
+  `vardct::splines::SCREENSHOT_MEDIAN_MASK_THRESHOLD` exposed at
+  `pub(crate)` for any future intra-crate caller that wants the same
+  gate before its own analysis pass.
+
 - **Seed-budget expansion to 16 + two new variance dimensions for
   multi-seed tree learning** (RFC#45 pick #1 chunk 6 — follow-on to
   chunk 5 `2b2ce912`). W9-1 chunk 5 expanded e11 from 4 → 8 seeds and

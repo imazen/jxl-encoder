@@ -809,6 +809,122 @@ pub(crate) fn find_splines(
     find_splines_at_distance(xyb_x, xyb_y, xyb_b, width, height, stride, 1.0)
 }
 
+/// Empirically-derived median-mask1x1 threshold above which an image is
+/// classified as "screenshot-like" content. Mirrors the value used by
+/// the GPU encoder's AFV cost-grid gate (W7-3,
+/// `jxl-encoder-gpu/src/lossy_encoder.rs::SCREENSHOT_MEDIAN_MASK_THRESHOLD`)
+/// where the same threshold was validated on 16 CLIC photos (all
+/// median ≤ 87) and 10 gb82-sc screenshots (9 of 10 median = 100.01).
+///
+/// Used by [`looks_like_screenshot`] to skip the auto-splines pipeline
+/// on content where the bbox-area-linear energy-drop proxy structurally
+/// over-claims VarDCT byte savings on long bright ridges (table
+/// borders, wallpaper edges) — see chunk-4 bench notes in
+/// `effort.rs::auto_splines_default` for the underlying regression.
+pub(crate) const SCREENSHOT_MEDIAN_MASK_THRESHOLD: f32 = 95.0;
+
+/// Content discriminator: classify an XYB Y-plane as "screenshot-like"
+/// based on the median per-8x8-block mean of [`compute_mask1x1`]. The
+/// 1x1 Laplacian masking field is large in flat regions and small in
+/// textured regions, so the per-block-mean median is a cheap proxy for
+/// "what fraction of this image is flat".
+///
+/// Returns `true` when the median per-block mean exceeds
+/// [`SCREENSHOT_MEDIAN_MASK_THRESHOLD`]. Callers should skip the
+/// auto-splines pipeline on `true` to avoid the long-bright-ridge
+/// over-claim documented in chunk-4
+/// (`benchmarks/auto_splines_bench_2026-05-17_chunk4.tsv`).
+///
+/// Cost: one [`compute_mask1x1`] pass (~SIMD per-pixel + 5x5 blur over
+/// `width * height` f32s) plus a per-block-mean reduction and a partial
+/// sort over the `(width / 8) * (height / 8)` block-mean vector. Cheap
+/// relative to the full splines pipeline that follows (Sobel + NMS +
+/// Hessian + polyline tracing + per-spline DCT fit + trial-encode gate),
+/// so paying it up front is a net win whenever the gate fires.
+pub(crate) fn looks_like_screenshot(
+    xyb_y: &[f32],
+    width: usize,
+    height: usize,
+    stride: usize,
+) -> bool {
+    if width < 8 || height < 8 {
+        // Below one full 8x8 block — there's no meaningful median to take,
+        // and `find_splines_at_distance` already short-circuits at
+        // `width < 16 || height < 16` anyway. Treat as "not screenshot".
+        return false;
+    }
+
+    // Re-pack the (possibly strided) Y plane into a contiguous buffer
+    // because `compute_mask1x1` assumes `stride == width`. The mask1x1
+    // computation expects row-major contiguous input — see callers in
+    // `vardct/encoder.rs:1218` which pass `padded_width` directly as
+    // both width AND stride.
+    let y_contig: alloc::vec::Vec<f32> = if stride == width {
+        // SAFETY: stride == width means buffer is already contiguous.
+        // Slice up to width*height to drop any trailing slop.
+        xyb_y[..width * height].to_vec()
+    } else {
+        let mut buf = alloc::vec::Vec::with_capacity(width * height);
+        for y in 0..height {
+            let row_start = y * stride;
+            buf.extend_from_slice(&xyb_y[row_start..row_start + width]);
+        }
+        buf
+    };
+
+    let mask1x1 = super::adaptive_quant::compute_mask1x1(&y_contig, width, height);
+
+    // Per-block mean of mask1x1, matching the GPU encoder's
+    // `compute_block_mask_means` (jxl-encoder-gpu/src/lossy_encoder.rs).
+    let blocks_per_row = width / 8;
+    let blocks_per_col = height / 8;
+    if blocks_per_row == 0 || blocks_per_col == 0 {
+        return false;
+    }
+    let n_blocks = blocks_per_row * blocks_per_col;
+    let mut block_means: alloc::vec::Vec<f32> = alloc::vec::Vec::with_capacity(n_blocks);
+    for by in 0..blocks_per_col {
+        for bx in 0..blocks_per_row {
+            let mut sum: f64 = 0.0;
+            let mut count: usize = 0;
+            for dy in 0..8 {
+                let y = by * 8 + dy;
+                if y >= height {
+                    break;
+                }
+                for dx in 0..8 {
+                    let x = bx * 8 + dx;
+                    if x >= width {
+                        break;
+                    }
+                    sum += mask1x1[y * width + x] as f64;
+                    count += 1;
+                }
+            }
+            let mean = if count > 0 {
+                (sum / count as f64) as f32
+            } else {
+                1.0
+            };
+            block_means.push(mean);
+        }
+    }
+
+    block_means.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+    let median = block_means[block_means.len() / 2];
+    #[cfg(feature = "debug-tokens")]
+    eprintln!(
+        "looks_like_screenshot: w={width} h={height} n_blocks={} median(mask1x1)={median:.3} threshold={SCREENSHOT_MEDIAN_MASK_THRESHOLD} → {}",
+        block_means.len(),
+        if median > SCREENSHOT_MEDIAN_MASK_THRESHOLD {
+            "SCREENSHOT (skip splines)"
+        } else {
+            "non-screenshot"
+        }
+    );
+    median > SCREENSHOT_MEDIAN_MASK_THRESHOLD
+}
+
 /// Distance-aware variant of [`find_splines`]. Internal entry used by
 /// the encoder when it knows the configured `distance` parameter so the
 /// cost-benefit gate can scale VarDCT-bytes-saved estimates correctly.
@@ -2324,6 +2440,81 @@ mod tests {
             "chunk-3 dedup must keep at most 1 of the two near-coincident \
              ridge tracings (got {})",
             splines.len()
+        );
+    }
+
+    // ── Chunk-5 content discriminator tests ──────────────────────────────
+
+    /// Chunk-5 invariant: a constant-color image is fully flat — every
+    /// 8x8 block has near-max mask1x1 → median far above the threshold
+    /// → classified as screenshot-like → auto-splines must be skipped.
+    #[test]
+    fn test_looks_like_screenshot_flat_image() {
+        let (w, h) = (128usize, 128usize);
+        let y_plane = alloc::vec![0.4f32; w * h];
+        assert!(
+            looks_like_screenshot(&y_plane, w, h, w),
+            "constant-color image must be classified as screenshot-like"
+        );
+    }
+
+    /// Chunk-5 invariant: a smoothly-varying photo-like gradient has
+    /// non-trivial per-pixel Laplacian → low mask1x1 → median far below
+    /// 95 → classified as non-screenshot → auto-splines proceeds.
+    #[test]
+    fn test_looks_like_screenshot_rejects_photo_gradient() {
+        let (w, h) = (128usize, 128usize);
+        let mut y_plane = alloc::vec![0.0f32; w * h];
+        // High-variance gradient with cross-diagonal noise so the 1x1
+        // Laplacian sees genuine spatial variation, not the smooth
+        // single-axis ramp used by `test_find_splines_rejects_smooth_gradient`.
+        for y in 0..h {
+            for x in 0..w {
+                let base = (x as f32 / w as f32) + 0.3 * (y as f32 / h as f32).sin();
+                let noise = 0.1 * (((x * 7 + y * 13) % 17) as f32 / 17.0);
+                y_plane[y * w + x] = base + noise;
+            }
+        }
+        assert!(
+            !looks_like_screenshot(&y_plane, w, h, w),
+            "photo-like gradient with spatial noise must NOT be classified as screenshot"
+        );
+    }
+
+    /// Chunk-5 invariant: handles strided plane buffers correctly. The
+    /// encoder passes `xyb_y` with `stride == padded_width` (which may
+    /// exceed `width` for boundary-padded XYB), so the discriminator
+    /// must re-pack rows when stride > width.
+    #[test]
+    fn test_looks_like_screenshot_strided_input() {
+        let (w, h, stride) = (64usize, 64usize, 96usize);
+        let mut y_plane = alloc::vec![0.4f32; stride * h];
+        // Fill the "in-bounds" region with a constant; junk in the
+        // stride padding should be ignored.
+        for y in 0..h {
+            for x in 0..w {
+                y_plane[y * stride + x] = 0.4;
+            }
+            for x in w..stride {
+                // Junk values: would skew the median if NOT re-packed.
+                y_plane[y * stride + x] = 1e3;
+            }
+        }
+        assert!(
+            looks_like_screenshot(&y_plane, w, h, stride),
+            "strided flat image must still be classified as screenshot"
+        );
+    }
+
+    /// Chunk-5 invariant: tiny images (below one 8x8 block in either
+    /// dimension) get a safe `false` return — the caller will short-circuit
+    /// in `find_splines_at_distance` at the `< 16` check anyway.
+    #[test]
+    fn test_looks_like_screenshot_tiny_image() {
+        let y_plane = alloc::vec![0.4f32; 4 * 4];
+        assert!(
+            !looks_like_screenshot(&y_plane, 4, 4, 4),
+            "tiny image must safely return false"
         );
     }
 

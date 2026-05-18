@@ -1049,20 +1049,45 @@ impl VarDctEncoder {
             // explicitly disable by passing `vec![]`).
             Some(splines.clone())
         } else if self.auto_splines && self.effort >= 7 {
-            // Pass distance through so the per-spline cost-benefit gate
-            // can scale the "VarDCT bytes saved per spline pixel"
-            // estimate. The gate model assumes ~5 bits/pixel of AC
-            // residual at d=1.0 and clamps the divisor at 1.0 — see
-            // `spline_passes_cost_gate` in `vardct/splines.rs`.
-            Some(super::splines::find_splines_at_distance(
-                &xyb_x,
-                &xyb_y,
-                &xyb_b,
-                width,
-                height,
-                padded_width,
-                self.distance,
-            ))
+            // Chunk-5 content discriminator: skip auto-splines detection
+            // on screenshot-like content. The bbox-area-linear
+            // energy-drop proxy used by the per-spline cost-benefit gate
+            // structurally over-claims VarDCT byte savings on long
+            // bright ridges (table borders, wallpaper edges), regressing
+            // real encodes by ~3% on `codec_wiki.png` and `imac_g3.png`
+            // — see chunk-4 bench notes (`benchmarks/
+            // auto_splines_bench_2026-05-17_chunk4.meta`) and the
+            // `effort.rs::auto_splines_default` doc-comment for the
+            // structural-proxy explanation.
+            //
+            // Uses the same `median(mask1x1) > 95.0` discriminator that
+            // the GPU encoder's W7-3 AFV cost-grid gate uses
+            // (`jxl-encoder-gpu/src/lossy_encoder.rs::
+            // SCREENSHOT_MEDIAN_MASK_THRESHOLD`). On the chunk-5 corpus
+            // bench (`benchmarks/auto_splines_bench_2026-05-17_chunk5.tsv`)
+            // this correctly classifies every screenshot (`terminal`,
+            // `codec_wiki`, `imac_g3`) and every flat-background line
+            // synthetic as screenshot-class, while admitting all 5
+            // CLIC2025-1024 photos (photo median ~56 vs screenshot/synth
+            // median 100).
+            if super::splines::looks_like_screenshot(&xyb_y, width, height, padded_width) {
+                None
+            } else {
+                // Pass distance through so the per-spline cost-benefit gate
+                // can scale the "VarDCT bytes saved per spline pixel"
+                // estimate. The gate model assumes ~5 bits/pixel of AC
+                // residual at d=1.0 and clamps the divisor at 1.0 — see
+                // `spline_passes_cost_gate` in `vardct/splines.rs`.
+                Some(super::splines::find_splines_at_distance(
+                    &xyb_x,
+                    &xyb_y,
+                    &xyb_b,
+                    width,
+                    height,
+                    padded_width,
+                    self.distance,
+                ))
+            }
         } else {
             None
         };

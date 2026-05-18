@@ -1044,25 +1044,37 @@ impl EffortProfile {
     /// and near-coincident-candidate dedup. Chunk 4
     /// (`benchmarks/auto_splines_bench_2026-05-17_chunk4.tsv`)
     /// recalibrated the `BYTES_PER_ENERGY_UNIT_AT_D1` constant from a
-    /// stale `50.0` anchor down to `0.20` based on the actual
-    /// measured per-spline savings-to-energy ratio on the chunk-3
-    /// multi-line synthetics. The new constant eliminates absurd
-    /// over-claims on screenshot/photo content: with the prior `50.0`
-    /// the gate admitted ~20 false-positive splines on every screenshot,
-    /// regressing real encodes by 3-8%; with `0.20` all 5 CLIC2025-1024
-    /// photos AND `terminal.png` go byte-identical at e7/e8/e9.
+    /// stale `50.0` anchor down to `0.20`, cutting the gate's
+    /// false-positive admit count from ~20 splines per screenshot down
+    /// to 6-33 on long bright ridges where the bbox-area-linear energy
+    /// proxy still over-claims. Chunk 5 (this commit) layered a content
+    /// discriminator
+    /// ([`crate::vardct::splines::looks_like_screenshot`], threshold
+    /// shared with the GPU encoder's W7-3 AFV cost-grid gate at
+    /// `median(mask1x1) > 95.0`) that skips the detector entirely on
+    /// screenshot-class content. With chunk-5 active every image in
+    /// `benchmarks/auto_splines_bench_2026-05-17_chunk5.tsv` (5 CLIC
+    /// photos, 3 gb82-sc screenshots, 3 line/grid synthetics × e7/e8/e9)
+    /// goes byte-identical.
     ///
-    /// Even after recalibration, default-on at e7+ remains rejected:
-    /// 2 of 3 screenshots (`codec_wiki.png`, `imac_g3.png`) still admit
-    /// 6-33 splines on wide bright ridges (table borders, wallpaper
-    /// edges) where the bbox-area-linear energy proxy over-claims
-    /// savings. Those splines regress real encodes by ~3% with no
-    /// realistic fix short of full A/B trial-encode (too expensive)
-    /// or a content discriminator (ridge density / DCT8 structure).
-    /// The synthetics still net-win at e7/e8 (-2 to -3% on multi-line
-    /// power-line images) and lose at e9 (more aggressive baseline
-    /// outpaces the splines section), confirming the detector's
-    /// design intent works in its narrow target regime.
+    /// Default-on at e7+ remains rejected, but for a NEW reason
+    /// post-chunk-5: the discriminator is so effective at filtering
+    /// false-positive content that there are no observed wins to
+    /// flip on. Photos already went byte-identical under chunk 4 (cost
+    /// gate rejected). Screenshots now go byte-identical under chunk 5
+    /// (discriminator skips). The chunk-3 synthetic wins (-2 to -3%
+    /// on multi-line power-line images at e7/e8) are also gone because
+    /// the synthetics have flat 80-grey backgrounds that the
+    /// discriminator correctly classifies as screenshot-class — they
+    /// were a calibration artefact, not a real-world content win.
+    /// Flipping `auto_splines_default(_) = true` at any effort would
+    /// add compute cost (one [`crate::vardct::adaptive_quant::compute_mask1x1`]
+    /// pass per encode) for zero observable benefit on any tested image.
+    ///
+    /// The flag remains opt-in for callers who hand-tune for thin-feature
+    /// content (power lines on a noisy sky, hair on a photo background)
+    /// where the discriminator does NOT fire AND the cost gate admits
+    /// the candidate.
     ///
     /// libjxl ships its own `enc_splines.cc:104-107` `FindSplines` as
     /// a stub at `speed_tier <= kSquirrel` (effort >= 7); the real
