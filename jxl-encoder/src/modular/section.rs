@@ -524,23 +524,34 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     };
 
     // Multi-seed dispatch — RFC#45 chunk 2 (start-offset variance), chunk 3
-    // (broader variance: stride / split_threshold / property-order), and
-    // chunk 4 (sample-fraction jitter + predictor-evaluation-order shuffle).
+    // (broader variance: stride / split_threshold / property-order), chunk
+    // 4 (sample-fraction jitter + predictor-evaluation-order shuffle), and
+    // chunk 5 (seed-slot split + budget expansion at e11).
     //
     // At e ≤ 9 `tree_learn_seeds = 1` (libjxl-equivalent, byte-identical
-    // hash-locks). At e10/e11 we fan out 2 / 4 seeded gather→tree runs and
-    // pick the tree whose tokens have the lowest entropy cost.
+    // hash-locks). At e10 we fan out 2 seeded runs; at e11 chunk 5 fans
+    // out 8 (was 4) and pick the tree whose tokens have the lowest
+    // entropy cost.
     //
-    // Chunk 3 widens the per-seed variance via [`derive_seeded_stride`]
-    // (density perturbation) and [`derive_seeded_params`] (split-threshold
-    // jitter + property-order rotation). Chunk 4 adds
-    // [`derive_seeded_sample_fraction`] (an absolute target sample
-    // fraction, applied via [`stride_for_seeded_sample_fraction`] in place
-    // of the chunk-3 stride perturbation when present) and
-    // [`derive_seeded_predictor_order`] (a per-seed permutation of the
-    // [`CANDIDATE_PREDICTORS`] list, baked into `TreeSamples` at
-    // construction). Seed 0 stays the canonical run for all five
-    // dimensions.
+    // Chunk 5 seed-slot layout (relevant when `seeds >= 4`):
+    //   - seeds 0..=3: chunk-3 perturbations active
+    //                  (split_threshold jitter via [`derive_seeded_params`],
+    //                  property-order rotation, per-seed stride via
+    //                  [`derive_seeded_stride`]). Chunk-4 helpers are
+    //                  no-ops here ([`derive_seeded_sample_fraction`]
+    //                  returns None, [`derive_seeded_predictor_order`]
+    //                  returns the canonical order).
+    //   - seeds 4..=7: chunk-4 perturbations active on top of the
+    //                  chunk-3 perturbations
+    //                  ([`derive_seeded_sample_fraction`] takes precedence
+    //                  over [`derive_seeded_stride`] when it returns
+    //                  Some(_); [`derive_seeded_predictor_order`] cycles
+    //                  through 4 permutations of [`CANDIDATE_PREDICTORS`]).
+    //   - seed 0 stays the canonical libjxl run for all dimensions.
+    //
+    // The split lets chunk-3's wins (which honest W8-3-r2 benching
+    // showed on 2/5 photos) survive in seed-slots 0..=3 instead of being
+    // overwritten by chunk-4's recombined candidate set.
     let seeds = profile.tree_learn_seeds.max(1);
     let mut best: Option<(Vec<crate::entropy_coding::token::Token>, usize, Tree, f64)> = None;
 

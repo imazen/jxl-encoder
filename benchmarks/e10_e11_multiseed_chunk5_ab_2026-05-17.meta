@@ -1,0 +1,100 @@
+# RFC#45 chunk 5: seed-slot split + e11 budget expansion A/B
+# follow-on to chunk 4 (ef5c1d11), addresses W8-3-r2 honest finding
+
+## Command
+cd jxl-encoder
+SAMPLES=2 THREADS=8 cargo run -p jxl-encoder --release \
+  --features 'std parallel parallel-tree-learning' \
+  --example e10_e11_multiseed_chunk5_ab \
+  > benchmarks/e10_e11_multiseed_chunk5_ab_2026-05-17.tsv
+
+## Source revision
+parent: ef5c1d11a99103c9fdf7d383dd6c6f067a725c68 (chunk 4)
+commit: TBD (chunk 5 — this commit)
+
+## Hardware
+host: rotor (water-cooled AMD Ryzen 9 7950X, 128 GB RAM)
+threads: 8
+
+## Corpus
+/home/lilith/work/codec-corpus/CID22/CID22-512/validation/
+  1025469.png
+  1044329.png
+  1189261.png
+  1279330.png
+  1418519.png
+
+5 photos × 3 efforts {e9, e10, e11} × 2 paired samples = 30 cells.
+
+## Chunk 5 design
+
+### EffortProfile::tree_learn_seeds_for(effort)
+  e0..=9 → 1 (unchanged; libjxl single-seed)
+  e10   → 2 (unchanged)
+  e11   → 8 (was 4 — chunk 5 expansion)
+
+### Seed-slot split
+For seed >= 4 in `tree_learn_seeds`:
+  derive_seeded_sample_fraction(seed):
+    seeds 0..=3 → None             (chunk-3-only slots)
+    seed 4      → Some(0.40)
+    seed 5      → Some(0.60)
+    seed 6      → Some(0.70)
+    seed 7      → None             (canonical; pairs with perm #3)
+  derive_seeded_predictor_order(seed):
+    seeds 0..=3 → canonical CANDIDATE_PREDICTORS  (chunk-3-only slots)
+    seed 4      → perm[0] (canonical)
+    seed 5      → perm[1] (strong-first)
+    seed 6      → perm[2] (directional-first)
+    seed 7      → perm[3] (full-reverse)
+
+Chunk-3 perturbations (`derive_seeded_params`, `derive_seeded_stride`)
+remain active for ALL seeds — they already cycle by `seed % 4` so seeds
+4..7 layer chunk-4 dimensions on top of the same chunk-3 perturbation
+pattern as seeds 0..3.
+
+### Expectation
+- e9:  byte-identical to chunk 4 / chunk 3 / chunk 2 / pre-RFC#45-chunk-2.
+- e10: ≤ chunk 4 (still 2 seeds, both reserved for chunk-3-only
+  perturbations because seeds < 4 ⇒ chunk-4 helpers no-op; bytes can
+  differ from chunk 4 because chunk 4's seed 1 used Some(0.40) +
+  perm[1], whereas chunk 5's seed 1 is chunk-3-only).
+- e11: strictly ≥ chunk 3's wins by construction; should match or beat
+  chunk 4.
+
+## Results (paired sums across 5 images, byte-deterministic both samples)
+
+| image      |  e9    | e10 ch4 | e10 ch5 |  Δ ch5-ch4 | e11 ch4 | e11 ch5 |   Δ ch5-ch4 |
+|------------|--------|---------|---------|------------|---------|---------|-------------|
+| 1025469    | 231695 |  231461 |  231461 |       0    |  231461 |  231461 |       0     |
+| 1044329    | 330198 |  330499 |  330499 |       0    |  330499 |  327001 |  **-3498**  |
+| 1189261    | 303156 |  303864 |  303864 |       0    |  303864 |  302399 |  **-1465**  |
+| 1279330    | 208471 |  207123 |  207027 |     -96    |  207123 |  206214 |   **-909**  |
+| 1418519    | 165481 |  165275 |  165275 |       0    |  163908 |  164133 |     +225    |
+| **sum**    |1239001 | 1238222 | 1238126 |   **-96**  | 1236855 | 1231208 | **-5647**   |
+| **vs ch4** |   —    |    —    |   —     |  -0.008%   |    —    |   —     | **-0.457%** |
+
+vs chunk 3 baseline (chunk 4 was +0.39% vs chunk 3 on this corpus, sum
+1232021 bytes at e11), chunk 5 sum 1231208 = **-813 bytes = -0.066%
+under chunk 3** — chunk 5 strictly beats chunk 3 on this corpus AND
+fixes chunk 4's regression.
+
+## Wall-clock (seconds, sample 0)
+| image    | e9    | e10   | e11    |
+|----------|-------|-------|--------|
+| 1025469  | 1.37  | 2.40  |  8.95  |
+| 1044329  | 1.35  | 2.31  |  9.91  |
+| 1189261  | 1.39  | 2.38  |  9.84  |
+| 1279330  | 0.94  | 1.74  |  7.26  |
+| 1418519  | 1.74  | 2.87  | 12.02  |
+
+e11 ≈ 7-12s (was ≈ 5s at chunk 4 with 4 seeds — doubled seed budget
+roughly doubles tree-learn wall time at e11).
+
+## Hash-locks (e ≤ 9 byte-identicality)
+hash_lock_features: 36/36 PASS (re-run after chunk-5 edits)
+
+## TSV columns
+image  effort  sample  bytes  sha  wall_ms
+
+Both `# samples=...` and `# threads=...` recorded in header.

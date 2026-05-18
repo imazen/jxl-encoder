@@ -509,7 +509,10 @@ pub struct EffortProfile {
     /// - effort ≤ 9: `1` (single run — libjxl-equivalent, byte-identical
     ///   to the pre-RFC#45-chunk-2 baseline)
     /// - effort = 10: `2`
-    /// - effort = 11: `4`
+    /// - effort = 11: `8` (RFC#45 chunk 5 — expanded from 4 so that
+    ///   chunk-3-only perturbations (seeds 0..3) and chunk-4
+    ///   perturbations (seeds 4..7) can both contribute candidate trees
+    ///   instead of overwriting each other inside a fixed 4-seed budget)
     ///
     /// Bitstream-valid: each seed produces a normal, spec-valid tree;
     /// the picker just chooses among them. Bytes change only when
@@ -981,14 +984,25 @@ impl EffortProfile {
     }
 
     /// Number of multi-seed tree-learning runs by effort (RFC#45 pick #1
-    /// chunk 2). e ≤ 9 keeps the single-pass libjxl behaviour
-    /// (byte-identical hash-locks); e10/e11 fan out 2 / 4 seeded runs and
-    /// pick the cheapest-encoding tree.
+    /// chunk 2, extended by chunk 5). e ≤ 9 keeps the single-pass libjxl
+    /// behaviour (byte-identical hash-locks); e10/e11 fan out 2 / 8
+    /// seeded runs and pick the cheapest-encoding tree.
+    ///
+    /// Chunk 5 raised e11 from 4 → 8 seeds so that chunk-3-only
+    /// perturbations (seeds 0..3 — split_threshold jitter + property-order
+    /// rotation + stride perturbation, with chunk-4 dimensions held to
+    /// their canonical no-op) and chunk-4 dimensions (seeds 4..7 —
+    /// sample-fraction override + predictor-evaluation-order shuffle)
+    /// both contribute candidates. Honest W8-3-r2 benching showed chunk 4
+    /// regressed vs chunk 3 at e11 (+0.39% bytes) because a fixed 4-seed
+    /// budget cycled through *different* 4 trees rather than *more*; the
+    /// 8-seed split preserves chunk-3's wins while still exercising
+    /// chunk-4's new dimensions.
     fn tree_learn_seeds_for(effort: u8) -> u8 {
         match effort {
             0..=9 => 1,
             10 => 2,
-            _ => 4,
+            _ => 8,
         }
     }
 
@@ -1650,7 +1664,9 @@ pub struct LosslessInternalParams {
     /// `Some(N)` with `N >= 2` runs gather→tree `N` times with different
     /// stride offsets and keeps the tree whose tokens have the lowest
     /// entropy cost. `None` keeps the effort-derived default (1 at
-    /// e ≤ 9, 2 at e10, 4 at e11).
+    /// e ≤ 9, 2 at e10, 8 at e11 — RFC#45 chunk 5 expanded e11 from 4
+    /// so chunk-3 perturbations and chunk-4 dimensions each get
+    /// dedicated seed slots).
     ///
     /// Output is bitstream-valid for any `N`. Sweep harnesses re-baking
     /// hash_lock sidecars should be aware that `N >= 2` *can* change the

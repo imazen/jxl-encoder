@@ -304,6 +304,15 @@ path = "examples/e10_e11_multiseed_chunk3_ab.rs"
 name = "e10_e11_multiseed_chunk4_ab"
 path = "examples/e10_e11_multiseed_chunk4_ab.rs"
 
+# RFC#45 chunk 5 (lossless): seed-slot split + budget expansion at e11.
+# tree_learn_seeds_for(11) was 4 → now 8. Seeds 0..=3 are chunk-3-only
+# (chunk-4 helpers no-op). Seeds 4..=7 layer the chunk-4 dimensions
+# (sample-fraction override + predictor-order shuffle) on top of chunk-3
+# perturbations. Honest A/B vs chunk 4 (ef5c1d11).
+[[example]]
+name = "e10_e11_multiseed_chunk5_ab"
+path = "examples/e10_e11_multiseed_chunk5_ab.rs"
+
 # RFC#45 chunk 3 (lossy): multi-seed butteraugli sweep isolation A/B.
 # Toggles `lossy_search_seeds` to isolate the chunk-3 contribution
 # from chunk-1's extended-iter contribution. Requires __expert so the

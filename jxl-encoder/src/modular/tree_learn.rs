@@ -6281,16 +6281,21 @@ pub fn derive_seeded_stride(base_stride: usize, seed: u64) -> usize {
 }
 
 /// Per-seed `tree_sample_fraction` override for the multi-seed tree-learning
-/// loop (RFC#45 chunk 4 — sample-fraction variance follow-on to chunk 3).
+/// loop (RFC#45 chunk 4 — sample-fraction variance follow-on to chunk 3,
+/// gated to seeds 4..7 by chunk 5).
 ///
 /// Returns the absolute sample fraction the gather should target for this
 /// seed, or `None` to leave the canonical profile fraction untouched.
 ///
-/// Cycled by `seed % 4`:
-///   - seed 0 → `None`           (canonical profile fraction, byte-identical)
-///   - seed 1 → `Some(0.40)`     (sparser sample set, faster gather)
-///   - seed 2 → `Some(0.60)`     (denser than canonical 0.50)
-///   - seed 3 → `Some(0.70)`     (densest, most expensive)
+/// Layout (chunk 5):
+/// - seeds 0..=3 → `None` (chunk-3-only perturbations apply; chunk-4
+///   dimensions held to canonical)
+/// - seed 4 → `Some(0.40)` (sparser sample set, faster gather)
+/// - seed 5 → `Some(0.60)` (denser than canonical 0.50)
+/// - seed 6 → `Some(0.70)` (densest, most expensive)
+/// - seed 7 → `None` (canonical fraction; pairs with chunk-4's predictor
+///   permutation #3)
+/// - seed ≥ 8 → cycled by `(seed - 4) % 4`
 ///
 /// The 0.40 / 0.60 / 0.70 triplet straddles the canonical 0.50 default
 /// (set by [`EffortProfile::tree_sample_fraction_for`] at effort ≥ 7) and
@@ -6299,22 +6304,39 @@ pub fn derive_seeded_stride(base_stride: usize, seed: u64) -> usize {
 /// stride changes — at small images the stride is already 1 and the
 /// override is effectively a no-op.
 ///
-/// Seed 0 is `None` to preserve the chunk-2 / chunk-3 invariant that
-/// seed 0 = the legacy single-pass pipeline. e ≤ 9 has
-/// `tree_learn_seeds = 1` so this helper is never called outside e10/e11.
+/// Seeds 0..=3 stay `None` so chunk 3's split_threshold-jitter and
+/// property-order-rotation perturbations can hit their best minima
+/// without being recombined with sample-fraction overrides — honest
+/// W8-3-r2 benching showed combining all variance dimensions inside a
+/// 4-seed budget regressed vs chunk 3 on 3 of 5 photos at e11.
+/// Chunk 5 raised `tree_learn_seeds_for(11)` from 4 → 8 so chunk-4
+/// dimensions get their own seed slots (4..7) on top of the chunk-3
+/// candidates rather than replacing them.
+///
+/// e ≤ 9 has `tree_learn_seeds = 1` so this helper is never called
+/// outside e10/e11.
 #[must_use]
 pub fn derive_seeded_sample_fraction(seed: u64) -> Option<f32> {
-    const FRACTIONS: [Option<f32>; 4] = [None, Some(0.40), Some(0.60), Some(0.70)];
-    FRACTIONS[(seed as usize) % FRACTIONS.len()]
+    if seed < 4 {
+        return None;
+    }
+    const FRACTIONS: [Option<f32>; 4] = [Some(0.40), Some(0.60), Some(0.70), None];
+    FRACTIONS[((seed - 4) as usize) % FRACTIONS.len()]
 }
 
 /// Per-seed predictor evaluation order for the multi-seed tree-learning
-/// loop (RFC#45 chunk 4 — predictor-order variance follow-on to chunk 3).
+/// loop (RFC#45 chunk 4 — predictor-order variance follow-on to chunk 3,
+/// gated to seeds 4..7 by chunk 5).
 ///
-/// Returns one of the four [`CANDIDATE_PREDICTORS_PERMS`] arrays cycled
-/// by `seed % 4`. Seed 0 returns the canonical libjxl order — identical
-/// to the static [`CANDIDATE_PREDICTORS`] — so the e ≤ 9 byte-identical
-/// hash-locks are preserved.
+/// Layout (chunk 5):
+/// - seeds 0..=3 → canonical [`CANDIDATE_PREDICTORS`] order (preserves
+///   chunk-3-only seed slots — chunk-4 dimensions held to canonical so
+///   chunk 3's threshold/property-rotation/stride perturbations can hit
+///   their best minima cleanly)
+/// - seeds 4..=7 → cycled through the four [`CANDIDATE_PREDICTORS_PERMS`]
+///   permutations (canonical / strong-first / directional-first /
+///   full-reverse)
+/// - seed ≥ 8 → cycled by `(seed - 4) % 4`
 ///
 /// Reason: [`find_best_predictor`] (and the parallel hybrid variant)
 /// iterates the candidate list in array order and applies a strict-`<`
@@ -6325,10 +6347,17 @@ pub fn derive_seeded_sample_fraction(seed: u64) -> Option<f32> {
 ///
 /// All permutations contain the same 14 predictors as a set, so every
 /// per-seed tree remains spec-valid and the chunk-2 picker still chooses
-/// among them on equal terms.
+/// among them on equal terms. The chunk-5 gating preserves seed 0's
+/// byte-identical hash-lock invariant (e ≤ 9 has `tree_learn_seeds = 1`
+/// → never enters this helper anyway) and additionally fixes seeds 1..=3
+/// to the canonical predictor order so chunk-3's perturbation set is
+/// applied without chunk-4 interference.
 #[must_use]
 pub fn derive_seeded_predictor_order(seed: u64) -> &'static [Predictor] {
-    CANDIDATE_PREDICTORS_PERMS[(seed as usize) % CANDIDATE_PREDICTORS_PERMS.len()]
+    if seed < 4 {
+        return CANDIDATE_PREDICTORS_PERMS[0];
+    }
+    CANDIDATE_PREDICTORS_PERMS[((seed - 4) as usize) % CANDIDATE_PREDICTORS_PERMS.len()]
 }
 
 /// Convert an absolute target sample fraction into a gather stride for a
@@ -7596,32 +7625,42 @@ mod tests {
     }
 
     // ---- RFC#45 chunk 4 helpers (sample-fraction jitter + predictor order) ----
+    //      Chunk 5 gates these to seeds 4..7 so chunk-3 perturbations
+    //      (seeds 0..3) are not recombined inside a fixed budget.
 
     #[test]
-    fn test_derive_seeded_sample_fraction_seed_zero_is_none() {
-        // Seed 0 must return None so the canonical profile fraction
-        // (set by EffortProfile::tree_sample_fraction_for) is used
-        // verbatim — preserves seed-0 byte-identicality.
-        assert_eq!(derive_seeded_sample_fraction(0), None);
+    fn test_derive_seeded_sample_fraction_low_seeds_are_none() {
+        // Chunk 5: seeds 0..=3 are reserved for chunk-3-only perturbations.
+        // The sample-fraction helper MUST return None for all of them so
+        // the canonical profile fraction (set by
+        // EffortProfile::tree_sample_fraction_for) is used verbatim.
+        for seed in 0u64..=3 {
+            assert_eq!(
+                derive_seeded_sample_fraction(seed),
+                None,
+                "chunk 5: seed {seed} must return None (chunk-3-only slot)",
+            );
+        }
     }
 
     #[test]
-    fn test_derive_seeded_sample_fraction_nonzero_returns_distinct_values() {
-        // Seeds 1..=3 must each return a Some(_) with the expected
-        // values (0.40 / 0.60 / 0.70). Seeds wrap by mod 4 so seed 4
-        // cycles back to seed 0 (None).
-        assert_eq!(derive_seeded_sample_fraction(1), Some(0.40));
-        assert_eq!(derive_seeded_sample_fraction(2), Some(0.60));
-        assert_eq!(derive_seeded_sample_fraction(3), Some(0.70));
-        assert_eq!(derive_seeded_sample_fraction(4), None);
-        // Distinct: 3 non-None values.
-        let vals: std::collections::BTreeSet<u32> = (1u64..=3)
+    fn test_derive_seeded_sample_fraction_high_seeds_active() {
+        // Chunk 5: seeds 4..=7 carry the three sample-fraction overrides
+        // plus one canonical-fraction slot (seed 7).
+        assert_eq!(derive_seeded_sample_fraction(4), Some(0.40));
+        assert_eq!(derive_seeded_sample_fraction(5), Some(0.60));
+        assert_eq!(derive_seeded_sample_fraction(6), Some(0.70));
+        assert_eq!(derive_seeded_sample_fraction(7), None);
+        // Wrap-around: seed 8 cycles back to the seed-4 entry.
+        assert_eq!(derive_seeded_sample_fraction(8), Some(0.40));
+        // Distinct: 3 non-None values across seeds 4..=6.
+        let vals: std::collections::BTreeSet<u32> = (4u64..=6)
             .map(|s| (derive_seeded_sample_fraction(s).unwrap() * 100.0) as u32)
             .collect();
         assert_eq!(
             vals.len(),
             3,
-            "seeds 1..=3 must produce 3 distinct fractions"
+            "seeds 4..=6 must produce 3 distinct fractions"
         );
     }
 
@@ -7645,33 +7684,43 @@ mod tests {
     }
 
     #[test]
-    fn test_derive_seeded_predictor_order_seed_zero_is_canonical() {
-        // Seed 0 must return a slice with the canonical predictor order
-        // (matches CANDIDATE_PREDICTORS element-for-element).
-        let order0 = derive_seeded_predictor_order(0);
-        assert_eq!(order0.len(), CANDIDATE_PREDICTORS.len());
-        for (a, b) in order0.iter().zip(CANDIDATE_PREDICTORS.iter()) {
-            assert_eq!(
-                a, b,
-                "seed-0 predictor order must equal CANDIDATE_PREDICTORS"
-            );
+    fn test_derive_seeded_predictor_order_low_seeds_canonical() {
+        // Chunk 5: seeds 0..=3 are reserved for chunk-3-only perturbations
+        // and MUST receive the canonical predictor order (no chunk-4
+        // interference). This preserves chunk-2/chunk-3 seed-0
+        // byte-identicality AND keeps chunk-3's threshold/property/stride
+        // perturbations from being recombined with predictor permutations.
+        for seed in 0u64..=3 {
+            let order = derive_seeded_predictor_order(seed);
+            assert_eq!(order.len(), CANDIDATE_PREDICTORS.len());
+            for (a, b) in order.iter().zip(CANDIDATE_PREDICTORS.iter()) {
+                assert_eq!(
+                    a, b,
+                    "chunk 5: seed {seed} predictor order must equal CANDIDATE_PREDICTORS",
+                );
+            }
         }
     }
 
     #[test]
-    fn test_derive_seeded_predictor_order_nonzero_perturbs() {
-        // Seeds 1..=3 must each produce a permutation that differs from
-        // the canonical order in at least one position.
+    fn test_derive_seeded_predictor_order_high_seeds_perturb() {
+        // Chunk 5: seeds 5..=7 must each produce a permutation that
+        // differs from the canonical order (seed 4 maps to perm[0], the
+        // canonical, so we start the differs-check at seed 5).
         let canonical = derive_seeded_predictor_order(0);
-        for seed in 1u64..=3 {
+        for seed in 5u64..=7 {
             let perm = derive_seeded_predictor_order(seed);
             assert_eq!(perm.len(), canonical.len());
             let differs = perm.iter().zip(canonical.iter()).any(|(a, b)| a != b);
             assert!(
                 differs,
-                "seed {} predictor order must differ from canonical",
-                seed
+                "chunk 5: seed {seed} predictor order must differ from canonical",
             );
+        }
+        // Seed 4 IS the canonical (chunk-4 perm index 0).
+        let perm4 = derive_seeded_predictor_order(4);
+        for (a, b) in perm4.iter().zip(canonical.iter()) {
+            assert_eq!(a, b, "chunk 5: seed 4 maps to perm[0] (canonical)");
         }
     }
 
@@ -7681,34 +7730,35 @@ mod tests {
         // (set equality) as CANDIDATE_PREDICTORS — only the order varies.
         let canonical_set: std::collections::BTreeSet<u32> =
             CANDIDATE_PREDICTORS.iter().map(|p| *p as u32).collect();
-        for seed in 0u64..=3 {
+        for seed in 0u64..=7 {
             let perm = derive_seeded_predictor_order(seed);
             let perm_set: std::collections::BTreeSet<u32> =
                 perm.iter().map(|p| *p as u32).collect();
             assert_eq!(
                 perm_set, canonical_set,
-                "seed {} permutation must contain the same predictor set",
-                seed
+                "seed {seed} permutation must contain the same predictor set",
             );
             assert_eq!(perm.len(), CANDIDATE_PREDICTORS.len());
         }
     }
 
     #[test]
-    fn test_new_with_predictor_order_for_seed_seed_zero_matches_default() {
-        // The chunk-4 constructor with seed=0 must produce a TreeSamples
-        // whose candidate_predictors are pointer-equal-ish to the
-        // canonical CANDIDATE_PREDICTORS (set+order equality).
-        let s0 = TreeSamples::new_with_predictor_order_for_seed(0, 0);
-        assert_eq!(s0.num_predictors(), CANDIDATE_PREDICTORS.len());
+    fn test_new_with_predictor_order_for_seed_low_seeds_match_default() {
+        // Chunk 5: the constructor with any seed in 0..=3 MUST produce
+        // a TreeSamples whose candidate_predictors equal the canonical
+        // CANDIDATE_PREDICTORS list element-for-element. This preserves
+        // the chunk-3-only invariant for low seeds.
         let base = TreeSamples::new_with_ref_channels(0);
-        assert_eq!(s0.num_predictors(), base.num_predictors());
-        // Element-wise equality with the canonical list.
-        for (i, c) in CANDIDATE_PREDICTORS.iter().enumerate() {
-            assert_eq!(
-                s0.candidate_predictors[i] as u32, *c as u32,
-                "seed-0 constructor must preserve canonical predictor order at idx {i}"
-            );
+        for seed in 0u64..=3 {
+            let s = TreeSamples::new_with_predictor_order_for_seed(0, seed);
+            assert_eq!(s.num_predictors(), CANDIDATE_PREDICTORS.len());
+            assert_eq!(s.num_predictors(), base.num_predictors());
+            for (i, c) in CANDIDATE_PREDICTORS.iter().enumerate() {
+                assert_eq!(
+                    s.candidate_predictors[i] as u32, *c as u32,
+                    "chunk 5: seed {seed} constructor must preserve canonical predictor order at idx {i}"
+                );
+            }
         }
     }
 }
