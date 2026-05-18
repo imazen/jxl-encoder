@@ -1867,29 +1867,45 @@ impl VarDctEncoder {
 
         let sharpness_map =
             if params.epf_iters > 0 && self.distance >= 0.5 && self.profile.epf_dynamic_sharpness {
-                let mask = match mask1x1 {
-                    Some(m) => m,
-                    None => super::adaptive_quant::compute_mask1x1_with_budget(
-                        &xyb_y,
-                        padded_width,
-                        padded_height,
-                        self.budget.as_ref(),
-                    )?,
-                };
-                Some(super::epf::compute_epf_sharpness(
-                    [&xyb_x, &xyb_y, &xyb_b],
-                    &transform_out.quant_dc,
-                    &transform_out.quant_ac,
-                    &quant_field,
-                    &mask,
-                    &params,
-                    &cfl_map,
-                    &ac_strategy,
-                    self.enable_gaborish,
-                    xsize_blocks,
-                    ysize_blocks,
-                    self.budget.as_ref(),
-                )?)
+                match self.epf_dispatch {
+                    crate::api::EpfDispatch::AlwaysDefault => Some(
+                        super::epf::uniform_default_sharpness_map(xsize_blocks, ysize_blocks),
+                    ),
+                    crate::api::EpfDispatch::Auto | crate::api::EpfDispatch::AlwaysSelect => {
+                        let mask = match mask1x1 {
+                            Some(m) => m,
+                            None => super::adaptive_quant::compute_mask1x1_with_budget(
+                                &xyb_y,
+                                padded_width,
+                                padded_height,
+                                self.budget.as_ref(),
+                            )?,
+                        };
+                        if matches!(self.epf_dispatch, crate::api::EpfDispatch::Auto)
+                            && super::epf::mask1x1_is_smooth_enough_to_skip_sharpness(&mask)
+                        {
+                            Some(super::epf::uniform_default_sharpness_map(
+                                xsize_blocks,
+                                ysize_blocks,
+                            ))
+                        } else {
+                            Some(super::epf::compute_epf_sharpness(
+                                [&xyb_x, &xyb_y, &xyb_b],
+                                &transform_out.quant_dc,
+                                &transform_out.quant_ac,
+                                &quant_field,
+                                &mask,
+                                &params,
+                                &cfl_map,
+                                &ac_strategy,
+                                self.enable_gaborish,
+                                xsize_blocks,
+                                ysize_blocks,
+                                self.budget.as_ref(),
+                            )?)
+                        }
+                    }
+                }
             } else {
                 None
             };

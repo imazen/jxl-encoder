@@ -33,6 +33,61 @@ const EPF_BORDER_SAD_MUL: f32 = 2.0 / 3.0;
 /// Channel importance weights for SAD computation
 const EPF_CHANNEL_SCALE: [f32; 3] = [40.0, 5.0, 3.5];
 
+/// Default per-block sharpness emitted by [`uniform_default_sharpness_map`]
+/// and the [`crate::api::EpfDispatch::AlwaysDefault`] /
+/// [`crate::api::EpfDispatch::Auto`] (smooth-region) paths. Matches the
+/// initial value libjxl writes when `--epf -1` (auto) selects EPF iters
+/// but the per-block search is skipped.
+pub(crate) const EPF_DEFAULT_SHARPNESS: u8 = 4;
+
+/// Per-region `mask1x1` smoothness threshold used by
+/// [`crate::api::EpfDispatch::Auto`] to decide whether to skip the
+/// per-block sharpness search. Higher `mask1x1` values mean smoother
+/// content (mask is `1 / (log1p(neighbor_diff) + 0.01)` — saturated
+/// at ~100 on flat input, drops to single digits on textured input).
+///
+/// A region whose mean post-blur `mask1x1` exceeds this value is
+/// considered smooth enough that the per-block sharpness search
+/// almost always picks the default — emit the uniform default map
+/// and skip the search.
+///
+/// Threshold rationale: derived from the W36-1 phase profile +
+/// W36-2 A/B sweep. Photos with strong texture sit at mean(mask) in
+/// the 5-15 range; flat / smooth content (gradients, UI background,
+/// blue sky) sits above 50; screenshot-class flat fills are >90.
+/// A threshold of 60 keeps the per-block search active on every
+/// textured photo region we measured while skipping it on smooth
+/// regions that already converge to default sharpness.
+pub(crate) const EPF_AUTO_SMOOTH_MASK_THRESHOLD: f32 = 60.0;
+
+/// Build a uniform sharpness map (all entries =
+/// [`EPF_DEFAULT_SHARPNESS`]) sized for the given block dimensions.
+/// Used by the [`crate::api::EpfDispatch::AlwaysDefault`] and
+/// [`crate::api::EpfDispatch::Auto`] (smooth-region) dispatch paths
+/// when the per-block search is skipped.
+pub(crate) fn uniform_default_sharpness_map(xsize_blocks: usize, ysize_blocks: usize) -> Vec<u8> {
+    vec![EPF_DEFAULT_SHARPNESS; xsize_blocks * ysize_blocks]
+}
+
+/// Compute the mean of `mask1x1` across the whole image. Cheap O(N)
+/// scan; the encoder already pays the mask compute itself, this
+/// helper is only the average.
+pub(crate) fn mask1x1_mean(mask1x1: &[f32]) -> f32 {
+    if mask1x1.is_empty() {
+        return 0.0;
+    }
+    let sum: f64 = mask1x1.iter().map(|&v| v as f64).sum();
+    (sum / mask1x1.len() as f64) as f32
+}
+
+/// `true` when the input `mask1x1` is smooth enough that the
+/// per-block EPF sharpness search would converge on the default
+/// sharpness value almost everywhere. Predicate for
+/// [`crate::api::EpfDispatch::Auto`].
+pub(crate) fn mask1x1_is_smooth_enough_to_skip_sharpness(mask1x1: &[f32]) -> bool {
+    mask1x1_mean(mask1x1) >= EPF_AUTO_SMOOTH_MASK_THRESHOLD
+}
+
 /// Default sharpness LUT: epf_sharp_lut[i] = i / 7.0
 const EPF_SHARP_LUT: [f32; 8] = [
     0.0,
@@ -1289,5 +1344,52 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// `uniform_default_sharpness_map` produces a map of the right
+    /// shape filled with [`EPF_DEFAULT_SHARPNESS`].
+    #[test]
+    fn test_uniform_default_sharpness_map_shape() {
+        let m = uniform_default_sharpness_map(7, 5);
+        assert_eq!(m.len(), 7 * 5);
+        for &v in &m {
+            assert_eq!(v, EPF_DEFAULT_SHARPNESS);
+        }
+        // Empty edge case.
+        let z = uniform_default_sharpness_map(0, 0);
+        assert!(z.is_empty());
+    }
+
+    /// `mask1x1_mean` matches a straightforward mean on a known
+    /// vector.
+    #[test]
+    fn test_mask1x1_mean_basic() {
+        assert_eq!(mask1x1_mean(&[]), 0.0);
+        assert!((mask1x1_mean(&[1.0, 2.0, 3.0, 4.0]) - 2.5).abs() < 1e-6);
+        // 100-valued uniform (saturated mask) → 100.
+        let smooth: Vec<f32> = vec![100.0; 1024];
+        assert!((mask1x1_mean(&smooth) - 100.0).abs() < 1e-3);
+        // Mixed: half saturated, half low.
+        let mixed: Vec<f32> = (0..2048)
+            .map(|i| if i < 1024 { 100.0 } else { 2.0 })
+            .collect();
+        assert!((mask1x1_mean(&mixed) - 51.0).abs() < 1e-3);
+    }
+
+    /// `mask1x1_is_smooth_enough_to_skip_sharpness` flips at the
+    /// documented threshold.
+    #[test]
+    fn test_mask1x1_is_smooth_enough_predicate() {
+        // Saturated mask = flat content → skip the per-block search.
+        let smooth: Vec<f32> = vec![100.0; 1024];
+        assert!(mask1x1_is_smooth_enough_to_skip_sharpness(&smooth));
+        // Heavily textured content → mask ~3-10 → run the search.
+        let textured: Vec<f32> = vec![5.0; 1024];
+        assert!(!mask1x1_is_smooth_enough_to_skip_sharpness(&textured));
+        // Right at the threshold.
+        let at_threshold: Vec<f32> = vec![EPF_AUTO_SMOOTH_MASK_THRESHOLD; 1024];
+        assert!(mask1x1_is_smooth_enough_to_skip_sharpness(&at_threshold));
+        let just_below: Vec<f32> = vec![EPF_AUTO_SMOOTH_MASK_THRESHOLD - 0.1; 1024];
+        assert!(!mask1x1_is_smooth_enough_to_skip_sharpness(&just_below));
     }
 }

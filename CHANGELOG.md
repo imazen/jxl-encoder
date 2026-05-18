@@ -24,6 +24,57 @@
   pre-W36-3 behaviour for A/B reproducibility runs;
   `PatchesDispatch::NeverScan` force-skips the scan on every image.
 
+- **W36-2 — adaptive dispatch for per-block EPF sharpness selection**
+  (`src/api.rs`, `src/vardct/epf.rs`, `src/vardct/encoder.rs`,
+  `src/vardct/bitstream.rs`, `src/lib.rs`,
+  `jxl-encoder-cli/src/main.rs`,
+  `examples/epf_dispatch_ab.rs` [new],
+  `tests/lossy_knobs_wiring.rs`,
+  `benchmarks/epf_dispatch_e6_e7_2026-05-18.{tsv,meta}`).
+
+  - New public `EpfDispatch` enum + `LossyConfig::with_epf_dispatch`
+    builder. Three variants: `AlwaysSelect` (default — historical
+    behaviour, byte-identical), `Auto` (skip the per-block search
+    on smooth regions per `mask1x1` mean threshold), `AlwaysDefault`
+    (force uniform default sharpness, skip the search
+    unconditionally). New CLI flag `--epf-dispatch
+    {always-select,auto,always-default}`.
+  - `compute_epf_sharpness` is the dominant phase on the W36-1 phase
+    baseline (`benchmarks/lossy_phase_baseline_2026-05-18.{tsv,meta}`):
+    **45.5% of e6 wall-clock** and **33.8% of e7**. The per-block
+    sharpness search is bitstream-affecting; skipping converges the
+    bitstream onto the uniform default sharpness map (=4).
+  - **Default unchanged**: `EpfDispatch::AlwaysSelect`. `hash_lock`
+    36/36 byte-identical, RD regression unchanged. Auto-default
+    flip evaluated in `examples/epf_dispatch_ab` (10 images × 3
+    distances × 3 efforts × 3 dispatch modes = 266 successful cells
+    out of 270 planned; 4 screen-e8 cells errored on buttloop budget
+    exhaustion, not material to default-flip evaluation). All six
+    (class, effort) gates PASS on the full 266-cell sweep: photo
+    bytes −1.10 to −1.23 %, screen bytes −1.54 to −2.58 %,
+    butteraugli +0.30 to +1.73 % across the grid (under the +2 %
+    gate), wall-clock saving 34-49 ms/MP. Shipping as opt-in for
+    chunk-1; default flip is queued as chunk-2 follow-on so the
+    36-fixture `hash_lock_features` rebake + RD regression baseline
+    rebake get their own commit + review (margins on photo-e6
+    +1.69 % and screen-e8 +1.73 % are tight enough to want a
+    standalone gate-flip rather than bundling with the surface
+    introduction).
+  - Helper functions in `vardct/epf.rs`:
+    `uniform_default_sharpness_map(xb, yb)`,
+    `mask1x1_mean(&[f32])`,
+    `mask1x1_is_smooth_enough_to_skip_sharpness(&[f32])`. Threshold
+    constant `EPF_AUTO_SMOOTH_MASK_THRESHOLD = 60.0` (post-blur
+    `mask1x1` mean above this → skip search on Auto). Tested with
+    3 unit tests in `vardct::epf::tests` + 3 integration tests in
+    `tests/lossy_knobs_wiring.rs`.
+  - Encoder field `VarDctEncoder.epf_dispatch` plumbed from
+    `LossyConfig.epf_dispatch` at all three construction sites
+    (one-shot, animation, JPEG transcode). Gate sites in
+    `vardct/encoder.rs:2215` (encode_inner),
+    `vardct/encoder.rs:3074` (encode_from_precomputed),
+    `vardct/bitstream.rs:1868` (animation frame).
+
 - **RFC#45 chunk 2 — e12 admit gate widening** (mirrors W21-2 chunk 1's
   e11 admit-gate pattern from `24f071db` + `ebf5ddaa`).
   (`src/validation.rs`, `src/effort.rs`, `src/api.rs`,

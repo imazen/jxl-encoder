@@ -12,7 +12,7 @@
 //! intentionally still lossless at all `alpha_distance` values for this
 //! chunk; see the doc on [`LossyConfig::with_alpha_distance`]).
 
-use jxl_encoder::{LossyConfig, PixelLayout};
+use jxl_encoder::{EpfDispatch, LossyConfig, PixelLayout};
 
 fn rgb8_buf(w: u32, h: u32) -> Vec<u8> {
     (0..(w * h * 3) as usize).map(|i| (i % 256) as u8).collect()
@@ -622,4 +622,87 @@ fn lossless_keep_invisible_false_jxl_rs_roundtrip() {
             }
         }
     }
+}
+
+// ─── W36-2: EpfDispatch wiring ─────────────────────────────────────────────
+
+/// `LossyConfig::with_epf_dispatch` round-trips via `epf_dispatch()`.
+#[test]
+fn epf_dispatch_round_trips_through_config() {
+    let c = LossyConfig::new(1.0);
+    assert_eq!(c.epf_dispatch(), EpfDispatch::AlwaysSelect);
+    let c2 = c.with_epf_dispatch(EpfDispatch::Auto);
+    assert_eq!(c2.epf_dispatch(), EpfDispatch::Auto);
+    let c3 = c2.with_epf_dispatch(EpfDispatch::AlwaysDefault);
+    assert_eq!(c3.epf_dispatch(), EpfDispatch::AlwaysDefault);
+}
+
+/// `EpfDispatch::AlwaysDefault` must change emitted bytes on
+/// realistic content where the per-block search would otherwise
+/// pick non-default sharpness values. On a synthetic checkerboard
+/// (lots of strong edges) the per-block search picks varied
+/// sharpness; forcing the uniform default produces a distinct
+/// bitstream.
+#[test]
+fn epf_dispatch_always_default_changes_bytes_on_textured() {
+    let w = 64u32;
+    let h = 64u32;
+    // Strong-edge checkerboard with 16-pixel cells — guarantees the
+    // per-block search has work to do (the cell boundaries cross
+    // many 8x8 block edges so different blocks favour different
+    // sharpness values).
+    let mut buf = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let on = ((x / 16) + (y / 16)) % 2 == 0;
+            let v = if on { 230u8 } else { 25u8 };
+            buf.extend_from_slice(&[v, v, v]);
+        }
+    }
+    // Effort 6 to make sure dynamic-sharpness gate is active. d=1.0
+    // exceeds the 0.5 gate.
+    let bytes_select = LossyConfig::new(1.0)
+        .with_effort(6)
+        .with_epf_dispatch(EpfDispatch::AlwaysSelect)
+        .encode(&buf, w, h, PixelLayout::Rgb8)
+        .expect("encode AlwaysSelect");
+    let bytes_default = LossyConfig::new(1.0)
+        .with_effort(6)
+        .with_epf_dispatch(EpfDispatch::AlwaysDefault)
+        .encode(&buf, w, h, PixelLayout::Rgb8)
+        .expect("encode AlwaysDefault");
+    assert_ne!(
+        bytes_select.len(),
+        bytes_default.len(),
+        "AlwaysDefault should produce a different byte length on textured \
+         input than AlwaysSelect (select={}, default={})",
+        bytes_select.len(),
+        bytes_default.len()
+    );
+}
+
+/// `EpfDispatch::Auto` must agree byte-for-byte with `AlwaysDefault`
+/// on a perfectly flat image — the smoothness predicate fires
+/// (mean(mask1x1) is saturated near 100) and the per-block search
+/// is skipped.
+#[test]
+fn epf_dispatch_auto_skips_on_flat_content() {
+    let w = 64u32;
+    let h = 64u32;
+    let buf = vec![128u8; (w * h * 3) as usize];
+    let bytes_auto = LossyConfig::new(1.0)
+        .with_effort(6)
+        .with_epf_dispatch(EpfDispatch::Auto)
+        .encode(&buf, w, h, PixelLayout::Rgb8)
+        .expect("encode Auto");
+    let bytes_default = LossyConfig::new(1.0)
+        .with_effort(6)
+        .with_epf_dispatch(EpfDispatch::AlwaysDefault)
+        .encode(&buf, w, h, PixelLayout::Rgb8)
+        .expect("encode AlwaysDefault");
+    assert_eq!(
+        bytes_auto, bytes_default,
+        "Auto on flat content must produce identical bytes to AlwaysDefault \
+         (smoothness predicate should skip the per-block search)"
+    );
 }

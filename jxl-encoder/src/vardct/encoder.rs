@@ -409,6 +409,15 @@ pub struct VarDctEncoder {
     /// skips the dynamic sharpness search. Mirrors libjxl
     /// `cparams.epf` (`enc_frame.cc:284-285`).
     pub epf_level_override: Option<u32>,
+    /// Adaptive dispatch policy for the per-block EPF sharpness
+    /// search (W36-2). See [`crate::api::EpfDispatch`].
+    ///
+    /// `AlwaysSelect` (default) preserves byte-identical behaviour
+    /// with historical encoder builds. `Auto` skips the per-block
+    /// search on smooth regions (per-region `mask1x1` mean below a
+    /// threshold) and emits uniform default sharpness instead.
+    /// `AlwaysDefault` always emits uniform default sharpness.
+    pub epf_dispatch: crate::api::EpfDispatch,
     /// Enable error diffusion in AC quantization.
     /// When true, spreads quantization error to neighboring coefficients in
     /// zigzag order, helping preserve smooth gradients at high compression.
@@ -741,6 +750,7 @@ impl Default for VarDctEncoder {
             enable_gaborish: true,
             enable_adaptive_gaborish: false, // EX-J13: opt-in via LossyConfig
             epf_level_override: None,
+            epf_dispatch: crate::api::EpfDispatch::AlwaysSelect,
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
             enable_lz77: false,      // LZ77 has known interactions with DCT2x2/IDENTITY strategies
@@ -816,6 +826,7 @@ impl VarDctEncoder {
             enable_gaborish: true,
             enable_adaptive_gaborish: false, // EX-J13: opt-in via LossyConfig
             epf_level_override: None,
+            epf_dispatch: crate::api::EpfDispatch::AlwaysSelect,
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
             enable_lz77: false,     // LZ77 has known interactions with DCT2x2/IDENTITY strategies
@@ -2399,27 +2410,53 @@ impl VarDctEncoder {
         // borrows).
         let sharpness_map =
             if params.epf_iters > 0 && self.distance >= 0.5 && self.profile.epf_dynamic_sharpness {
-                let mask_cow = super::adaptive_quant::resolve_mask1x1_for_sharpness(
-                    mask1x1.as_deref(),
-                    xyb_y_ref,
-                    padded_width,
-                    padded_height,
-                    self.budget.as_ref(),
-                )?;
-                Some(super::epf::compute_epf_sharpness(
-                    [xyb_x_ref, xyb_y_ref, xyb_b_ref],
-                    quant_dc,
-                    quant_ac,
-                    &quant_field,
-                    &mask_cow,
-                    &params,
-                    &cfl_map,
-                    &ac_strategy,
-                    self.enable_gaborish,
-                    xsize_blocks,
-                    ysize_blocks,
-                    self.budget.as_ref(),
-                )?)
+                match self.epf_dispatch {
+                    crate::api::EpfDispatch::AlwaysDefault => {
+                        // W36-2: skip per-block search, write uniform default sharpness.
+                        Some(super::epf::uniform_default_sharpness_map(
+                            xsize_blocks,
+                            ysize_blocks,
+                        ))
+                    }
+                    crate::api::EpfDispatch::Auto | crate::api::EpfDispatch::AlwaysSelect => {
+                        let mask_cow = super::adaptive_quant::resolve_mask1x1_for_sharpness(
+                            mask1x1.as_deref(),
+                            xyb_y_ref,
+                            padded_width,
+                            padded_height,
+                            self.budget.as_ref(),
+                        )?;
+                        // W36-2 Auto: skip the per-block search on
+                        // smooth regions (predicate: mean mask1x1
+                        // above EPF_AUTO_SMOOTH_MASK_THRESHOLD). The
+                        // bitstream still gets a sharpness map, just
+                        // the uniform default one — same shape as
+                        // AlwaysDefault but content-gated.
+                        if matches!(self.epf_dispatch, crate::api::EpfDispatch::Auto)
+                            && super::epf::mask1x1_is_smooth_enough_to_skip_sharpness(&mask_cow)
+                        {
+                            Some(super::epf::uniform_default_sharpness_map(
+                                xsize_blocks,
+                                ysize_blocks,
+                            ))
+                        } else {
+                            Some(super::epf::compute_epf_sharpness(
+                                [xyb_x_ref, xyb_y_ref, xyb_b_ref],
+                                quant_dc,
+                                quant_ac,
+                                &quant_field,
+                                &mask_cow,
+                                &params,
+                                &cfl_map,
+                                &ac_strategy,
+                                self.enable_gaborish,
+                                xsize_blocks,
+                                ysize_blocks,
+                                self.budget.as_ref(),
+                            )?)
+                        }
+                    }
+                }
             } else {
                 None
             };
@@ -3258,27 +3295,43 @@ impl VarDctEncoder {
         // encode_inner.
         let sharpness_map =
             if params.epf_iters > 0 && self.distance >= 0.5 && self.profile.epf_dynamic_sharpness {
-                let mask_cow = super::adaptive_quant::resolve_mask1x1_for_sharpness(
-                    precomputed.mask1x1.as_deref(),
-                    &precomputed.xyb_y,
-                    padded_width,
-                    padded_height,
-                    self.budget.as_ref(),
-                )?;
-                Some(super::epf::compute_epf_sharpness(
-                    [xyb_x_for_dct, xyb_y_for_dct, xyb_b_for_dct],
-                    quant_dc,
-                    quant_ac,
-                    &quant_field,
-                    &mask_cow,
-                    &params,
-                    cfl_map_for_encode,
-                    &precomputed.ac_strategy,
-                    self.enable_gaborish,
-                    xsize_blocks,
-                    ysize_blocks,
-                    self.budget.as_ref(),
-                )?)
+                match self.epf_dispatch {
+                    crate::api::EpfDispatch::AlwaysDefault => Some(
+                        super::epf::uniform_default_sharpness_map(xsize_blocks, ysize_blocks),
+                    ),
+                    crate::api::EpfDispatch::Auto | crate::api::EpfDispatch::AlwaysSelect => {
+                        let mask_cow = super::adaptive_quant::resolve_mask1x1_for_sharpness(
+                            precomputed.mask1x1.as_deref(),
+                            &precomputed.xyb_y,
+                            padded_width,
+                            padded_height,
+                            self.budget.as_ref(),
+                        )?;
+                        if matches!(self.epf_dispatch, crate::api::EpfDispatch::Auto)
+                            && super::epf::mask1x1_is_smooth_enough_to_skip_sharpness(&mask_cow)
+                        {
+                            Some(super::epf::uniform_default_sharpness_map(
+                                xsize_blocks,
+                                ysize_blocks,
+                            ))
+                        } else {
+                            Some(super::epf::compute_epf_sharpness(
+                                [xyb_x_for_dct, xyb_y_for_dct, xyb_b_for_dct],
+                                quant_dc,
+                                quant_ac,
+                                &quant_field,
+                                &mask_cow,
+                                &params,
+                                cfl_map_for_encode,
+                                &precomputed.ac_strategy,
+                                self.enable_gaborish,
+                                xsize_blocks,
+                                ysize_blocks,
+                                self.budget.as_ref(),
+                            )?)
+                        }
+                    }
+                }
             } else {
                 None
             };
