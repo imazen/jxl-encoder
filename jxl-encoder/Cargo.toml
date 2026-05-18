@@ -378,6 +378,24 @@ path = "examples/quality_drift_investigation.rs"
 [[example]]
 name = "content_aware_entropy_mul_ab"
 path = "examples/content_aware_entropy_mul_ab.rs"
+required-features = ["butteraugli-loop"]
+
+# W22-1 chunk-2 follow-on: CPU re-bisect of lifted entropy_mul values for
+# screen-content. Sweeps IDENTITY × DCT2X2 lifts (AFV / DCT4X8 pinned at
+# W22-1) on screenshots, then validates the winning tuple on photos.
+# Uses `LossyInternalParams::entropy_mul_table` override (requires __expert).
+[[example]]
+name = "cpu_entropy_mul_bisect"
+path = "examples/cpu_entropy_mul_bisect.rs"
+required-features = ["__expert", "butteraugli-loop"]
+
+# Stage A2: AFV + DCT4X8 unpinned (at libjxl reference). Tests
+# the hypothesis that W22-1's AFV/DCT4X8 lifts are the dominant
+# source of bfly degradation, not IDENTITY/DCT2X2.
+[[example]]
+name = "cpu_entropy_mul_bisect_stage_a2"
+path = "examples/cpu_entropy_mul_bisect_stage_a2.rs"
+required-features = ["__expert", "butteraugli-loop"]
 
 [[example]]
 name = "drift_block_map"

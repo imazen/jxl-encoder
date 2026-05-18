@@ -185,7 +185,9 @@ fn median_mask1x1(mask: &[f32], stride: usize, width: usize, height: usize) -> f
     // The mask is always finite (compute_mask1x1 produces 1/(log1p(x)+0.01)
     // with x >= 0), so NaN should not occur in practice; the fallback
     // here keeps the median well-defined if it ever does.
-    buf.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+    buf.select_nth_unstable_by(mid, |a, b| {
+        a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
+    });
     buf[mid]
 }
 

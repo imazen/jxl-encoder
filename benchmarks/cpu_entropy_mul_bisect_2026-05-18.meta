@@ -1,0 +1,73 @@
+CPU entropy_mul bisect — W22-1 chunk-2 follow-on
+=================================================
+
+Date: 2026-05-18
+Host: $(uname -n)
+Repo: jxl-encoder (sibling workspace --cpu-entropy-mul-bisect)
+Parent commit: 6abfb9c9 (W22-1: content-aware entropy_mul gate, opt-in, default OFF)
+Build features: __expert butteraugli-loop
+Effort: 7
+
+Harness: jxl-encoder/examples/cpu_entropy_mul_bisect.rs
+
+Sweep design
+------------
+Stage A (screen): paired baseline (libjxl reference EntropyMulTable) vs
+lifted (`LossyInternalParams::entropy_mul_table` override) across:
+  IDENTITY ∈ {1.20, 1.30, 1.40, 1.50, 1.60}     (libjxl base = 1.0428)
+  DCT2X2   ∈ {0.95, 0.9975, 1.045}              (libjxl base = 0.95)
+  AFV      = 0.95   (PINNED at W22-1 lift)
+  DCT4X8   = 0.98   (PINNED at W22-1 lift)
+  d ∈ {0.5, 1.0, 2.0}
+  5 gb82-sc screenshots: codec_wiki, imac_dark, imac_g3, terminal, windows95
+  Total: 5 imgs × 5 ident × 3 dct2 × 3 dist + 15 baselines = 240 measurements
+
+Stage B (photo validation): 5 CID22-512 photos × tuple = 30 measurements
+  Tuple: IDENTITY=1.85, DCT2X2=1.15 (W22-1 default)
+  (CPU_ENT_PHOTO_IDENT / CPU_ENT_PHOTO_DCT2 env vars to override.)
+
+Methodology
+-----------
+Per cell: encode with reference table (baseline) and lifted table; decode
+both with jxl-oxide in linear sRGB; measure Rust `butteraugli_linear`. The
+PNG-metadata trap in `butteraugli_main` is avoided per CLAUDE.md.
+
+TSV columns
+-----------
+stage           A | B
+image           label
+class           screen | photo
+distance        target distance
+identity        IDENTITY entropy_mul (lifted)
+dct2x2          DCT2X2 entropy_mul (lifted)
+afv             AFV entropy_mul (pinned at 0.95 W22-1)
+dct4x8          DCT4X8 entropy_mul (pinned at 0.98 W22-1)
+baseline_bytes  reference table encode bytes
+lifted_bytes    lifted table encode bytes
+baseline_bfly   reference table butteraugli
+lifted_bfly     lifted table butteraugli
+bytes_delta_pct (lifted - baseline) / baseline * 100
+bfly_delta_pct  (lifted - baseline) / baseline * 100
+baseline_ms     reference table encode wall ms
+lifted_ms       lifted table encode wall ms
+
+Headline
+--------
+NO winning tuple meets the chunk-2 acceptance gate
+(median Δbytes ≤ 0.5 %, max(|Δbfly|) ≤ 2 %).
+
+Lowest median Δbytes: IDENTITY=1.20, DCT2X2=1.045 → median Δbytes +0.136 %
+  but max |Δbfly| = 18.45 % (terminal d=2 unstable, +18.45 % bfly).
+
+Best stability: IDENTITY=1.40, DCT2X2=0.9975 → max |Δbfly| 14.97 %
+  but median Δbytes +0.771 % (above 0.5 % gate).
+
+Stage B photo at the W22-1 tuple shows -1.13 % median bytes / +20 % max
+bfly — confirms photos are NOT bit-identical at the lifted table (the
+override bypasses the content-aware gate).
+
+Reproducer
+----------
+cargo run --release -p jxl-encoder --features '__expert butteraugli-loop' \
+    --example cpu_entropy_mul_bisect -- \
+    benchmarks/cpu_entropy_mul_bisect_2026-05-18.tsv
