@@ -30,6 +30,36 @@
 
 ### Added
 
+- **W43-3 chunk 1 — `HdrLoss::Ssim2` promoted to first-class variant**
+  (`src/vardct/hdr_metrics.rs`, `src/vardct/ssim2_loop.rs`,
+  `src/vardct/encoder.rs`, `tests/hdr_loss_ssim2_promotion.rs`,
+  `examples/hdr_loss_ssim2_promotion_ab.rs`,
+  `benchmarks/hdr_loss_ssim2_promotion_2026-05-19.{tsv,meta}`). The
+  `ssim2-loop` cargo feature has wired
+  `VarDctEncoder::ssim2_refine_quant_field` (SSIMULACRA2 — Jon
+  Sneyers' JXL-tuned metric, the same algorithm that powers libjxl's
+  `ssimulacra2_main`) internally for several releases. This chunk
+  exposes that path through the public `HdrLoss` enum so callers can
+  opt in via a single `LossyConfig::with_hdr_loss(HdrLoss::Ssim2)`
+  call instead of `with_ssim2_iters`. New
+  `ssim2_refine_quant_field_with_iters` shim takes an explicit
+  `iters_budget` so the dispatch in `vardct/encoder.rs` can pass the
+  `butteraugli_iters` budget without mutating `self` (the
+  `forbid(unsafe_code)` rule rules out interior-mutability tricks).
+  `validate_loss` surfaces a typed
+  `HdrMetricError::Ssim2FeatureDisabled` (→ `Error::NotImplemented`)
+  when `Ssim2` is selected without the `ssim2-loop` cargo feature —
+  no silent fallback to butteraugli. **Default `HdrLoss::Auto`
+  still resolves to `Butteraugli` on SDR** (no behaviour change on
+  the 36/36 hash-lock corpus); a chunk-2 follow-on covers the A.9
+  decisive-rule eval (Mohammadi 2025 6-stat panel) that would
+  justify flipping `Auto` to `Ssim2` for SDR. Dispatch test:
+  `ssim2_bytes_differ_from_butteraugli_proves_dispatch_works` proves
+  the route is wired (byte-identical between modes would be a silent
+  fallback regression). Bench: 5 CID22-512 photos × {d=0.5, 1.0,
+  2.5, 4.0} × e8 = 40 cells; see TSV header for the per-distance
+  paired aggregates.
+
 - **W38-2 — `LossyConfig::with_pixel_loss_dispatch(PixelLossDispatch)`
   adaptive-dispatch surface** (`src/api.rs`,
   `src/vardct/encoder.rs`, `src/vardct/bitstream.rs`,

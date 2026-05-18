@@ -19,7 +19,7 @@
 //! ## Implementation status
 //!
 //! **Chunk 1** shipped only the API surface and dispatch wiring.
-//! **Chunk 2 (this commit)** lands the actual VDP2-lite maths in
+//! **Chunk 2** landed the actual VDP2-lite maths in
 //! [`super::hdr_vdp2_lite`]:
 //! - BT.709 → display-luminance conversion using the encode's
 //!   `intensity_target` (replaces the SDR-only `peak = 80 nits` assumption).
@@ -29,12 +29,26 @@
 //! - p-norm pooled diffmap (p = 4) that plugs into the buttloop's
 //!   existing tile-distance machinery unchanged.
 //!
-//! Selecting [`HdrLoss::Vdp2`] now runs the metric in-place of butteraugli
-//! inside the quantization loop; existing `HdrLoss::Butteraugli` calls
-//! stay byte-identical to every prior release. See module docs in
-//! [`super::hdr_vdp2_lite`] for the deviations from the full paper and
-//! the chunk-3 follow-on plan (cortex-channel decomposition, chromatic
-//! sensitivity, masking model).
+//! **W43-3 chunk 1 (this commit)** promotes the existing `ssim2-loop`
+//! feature-gated path to a first-class [`HdrLoss::Ssim2`] variant.
+//! Selecting `Ssim2` routes the buttloop dispatch through
+//! [`super::encoder::VarDctEncoder::ssim2_refine_quant_field`] —
+//! SSIMULACRA2 (Sneyers' JXL-tuned metric, the same code that
+//! powers libjxl's `ssimulacra2_main`) replaces butteraugli for
+//! the per-iter compare. Requires the `ssim2-loop` cargo feature;
+//! [`validate_loss`] surfaces [`HdrMetricError::Ssim2FeatureDisabled`]
+//! when the feature is off. The default [`HdrLoss::Auto`] keeps
+//! resolving to [`HdrLoss::Butteraugli`] for SDR (no behaviour change
+//! on the hash-lock corpus); a future chunk may flip `Auto`'s SDR
+//! branch to `Ssim2` if the A.9 decisive-rule eval (Mohammadi 6-stat
+//! panel) confirms a win across the full distance band.
+//!
+//! Selecting [`HdrLoss::Vdp2`] runs the VDP2-lite metric in-place of
+//! butteraugli inside the quantization loop; existing
+//! `HdrLoss::Butteraugli` calls stay byte-identical to every prior
+//! release. See module docs in [`super::hdr_vdp2_lite`] for the
+//! deviations from the full paper and the chunk-3 follow-on plan
+//! (cortex-channel decomposition, chromatic sensitivity, masking model).
 //!
 //! Effort gating is enforced at the API layer
 //! ([`crate::api::LossyConfig::validate`]): HDR losses require effort ≥ 8
@@ -81,19 +95,48 @@ pub enum HdrLoss {
     /// steering. See [`super::hdr_vdp2_lite`] for the deviation list
     /// and the chunk-3 follow-on plan.
     Vdp2,
+    /// **SSIMULACRA2** — Jon Sneyers' JXL-tuned perceptual metric
+    /// (the same algorithm that powers libjxl's `ssimulacra2_main`).
+    /// Per AIC-2025 (Mohammadi et al.) SSIMULACRA2 reaches PLCC
+    /// 0.906 overall and 0.968 per-source on CID22, vs butteraugli's
+    /// 0.882-0.910 — a modest but consistent lift on the compression
+    /// content the encoder ships against.
+    ///
+    /// Selecting `Ssim2` routes the per-iter compare through
+    /// [`super::encoder::VarDctEncoder::ssim2_refine_quant_field`]
+    /// (full-image SSIMULACRA2 score + per-block linear-RGB RMSE for
+    /// the spatial error map). Requires the `ssim2-loop` cargo
+    /// feature — [`validate_loss`] returns
+    /// [`HdrMetricError::Ssim2FeatureDisabled`] when the feature is
+    /// off so callers get a clear actionable error instead of a
+    /// silent fallback to butteraugli.
+    ///
+    /// Promoted to a first-class variant in W43-3 chunk 1 (the
+    /// `ssim2-loop` plumbing has been wired internally for several
+    /// releases — this commit exposes it through the public
+    /// `HdrLoss` enum so callers can opt in via
+    /// [`crate::api::LossyConfig::with_hdr_loss`] without flipping
+    /// `with_ssim2_iters`). The default [`HdrLoss::Auto`] keeps
+    /// resolving to [`HdrLoss::Butteraugli`] on SDR; a future chunk
+    /// may flip `Auto` once the A.9 decisive-rule eval confirms a
+    /// win across the full distance band.
+    Ssim2,
 }
 
 impl HdrLoss {
     /// Whether this loss variant ships actual HDR-aware maths or is a
-    /// stub. Returns `true` for [`HdrLoss::Auto`],
-    /// [`HdrLoss::Butteraugli`], and [`HdrLoss::Vdp2`] — chunk-4 makes
-    /// `Auto` a concrete dispatcher (not a stub), so the encoder
-    /// always reaches a real loss path. Left as a `const fn` so
-    /// future opt-in variants (e.g. a full cortex-channel HDR-VDP-2
-    /// in chunk 5) can re-introduce a stub state without breaking
+    /// stub. Returns `true` for every variant currently exposed —
+    /// [`HdrLoss::Auto`], [`HdrLoss::Butteraugli`], [`HdrLoss::Vdp2`],
+    /// and [`HdrLoss::Ssim2`] (gated behind the `ssim2-loop` cargo
+    /// feature at dispatch time). Left as a `const fn` so future
+    /// opt-in variants (e.g. a full cortex-channel HDR-VDP-2 in a
+    /// later chunk) can re-introduce a stub state without breaking
     /// the public API shape.
     pub const fn is_implemented(self) -> bool {
-        matches!(self, HdrLoss::Auto | HdrLoss::Butteraugli | HdrLoss::Vdp2)
+        matches!(
+            self,
+            HdrLoss::Auto | HdrLoss::Butteraugli | HdrLoss::Vdp2 | HdrLoss::Ssim2
+        )
     }
 
     /// Human-readable name suitable for CLI `--help` and trace logs.
@@ -104,6 +147,7 @@ impl HdrLoss {
             HdrLoss::Auto => "auto",
             HdrLoss::Butteraugli => "butteraugli",
             HdrLoss::Vdp2 => "vdp2",
+            HdrLoss::Ssim2 => "ssim2",
         }
     }
 
@@ -138,18 +182,20 @@ impl HdrLoss {
 }
 
 /// Errors raised by the HDR-loss dispatch.
-///
-/// Retained as an enum (even though no variant is currently raised) so
-/// that a future stub variant — e.g. a full cortex-channel HDR-VDP-2 in
-/// chunk 3 — can be added without breaking the public error surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HdrMetricError {
-    /// Reserved for future use. Chunk 2 implements every variant
-    /// currently exposed on [`HdrLoss`]; this preserves the
-    /// `non_exhaustive` enum shape for chunk-3 follow-ons.
+    /// Reserved for future use. The `non_exhaustive` attribute keeps
+    /// this enum forwards-compatible for additional dispatch errors
+    /// without bumping the major version.
     #[doc(hidden)]
     Reserved,
+    /// [`HdrLoss::Ssim2`] was selected but the `ssim2-loop` cargo
+    /// feature is not compiled in. The user-visible message is
+    /// surfaced through [`crate::error::Error::NotImplemented`] —
+    /// callers should either rebuild with `--features ssim2-loop`
+    /// or pick a different [`HdrLoss`] variant.
+    Ssim2FeatureDisabled,
 }
 
 impl fmt::Display for HdrMetricError {
@@ -159,6 +205,11 @@ impl fmt::Display for HdrMetricError {
                 f,
                 "HdrMetricError::Reserved: this variant is reserved for future use"
             ),
+            HdrMetricError::Ssim2FeatureDisabled => write!(
+                f,
+                "HdrLoss::Ssim2 selected but the `ssim2-loop` cargo feature is disabled — \
+                 rebuild jxl-encoder with `--features ssim2-loop` or pick HdrLoss::Butteraugli/Vdp2"
+            ),
         }
     }
 }
@@ -166,13 +217,21 @@ impl fmt::Display for HdrMetricError {
 impl core::error::Error for HdrMetricError {}
 
 /// Validation hook called from the lossy encode path before the
-/// butteraugli loop runs. Currently always returns `Ok` because every
-/// variant on [`HdrLoss`] is implemented as of chunk 2 — kept as a hook
-/// so future opt-in losses (e.g. full cortex-channel HDR-VDP-2 in
-/// chunk 3) can re-introduce a stub state at a single call site.
+/// butteraugli loop runs. Currently surfaces
+/// [`HdrMetricError::Ssim2FeatureDisabled`] when [`HdrLoss::Ssim2`] is
+/// selected without the `ssim2-loop` feature; every other variant
+/// passes. Kept as a single call site so future opt-in losses can
+/// re-introduce a stub state without scattering checks.
 ///
 /// Called once per encode (not per iteration) so the cost is negligible.
-pub(crate) fn validate_loss(_loss: HdrLoss) -> Result<(), HdrMetricError> {
+pub(crate) fn validate_loss(loss: HdrLoss) -> Result<(), HdrMetricError> {
+    // The `ssim2-loop` cargo feature gates the dispatch path in
+    // `vardct/encoder.rs`. With the feature off, surface a clear
+    // error here instead of silently falling back to butteraugli.
+    if matches!(loss, HdrLoss::Ssim2) {
+        #[cfg(not(feature = "ssim2-loop"))]
+        return Err(HdrMetricError::Ssim2FeatureDisabled);
+    }
     Ok(())
 }
 
@@ -204,19 +263,53 @@ mod tests {
         assert_eq!(HdrLoss::Butteraugli.as_str(), "butteraugli");
     }
 
+    /// W43-3 chunk 1: `Ssim2` is a first-class variant. The enum
+    /// itself always compiles (mirrors `Vdp2`); the
+    /// `ssim2-loop`-feature-gated runtime path is checked separately
+    /// in `ssim2_validate_*`.
     #[test]
-    fn all_variants_pass_validation() {
+    fn ssim2_is_first_class_variant() {
+        assert!(HdrLoss::Ssim2.is_implemented());
+        assert_eq!(HdrLoss::Ssim2.as_str(), "ssim2");
+    }
+
+    #[test]
+    fn all_variants_pass_validation_when_features_present() {
+        // Butteraugli + Vdp2 + Auto are always valid; Ssim2 is only
+        // valid under the `ssim2-loop` feature (proven separately).
         assert!(validate_loss(HdrLoss::Auto).is_ok());
         assert!(validate_loss(HdrLoss::Butteraugli).is_ok());
         assert!(validate_loss(HdrLoss::Vdp2).is_ok());
     }
 
+    /// With the `ssim2-loop` feature, [`HdrLoss::Ssim2`] validates.
+    #[cfg(feature = "ssim2-loop")]
+    #[test]
+    fn ssim2_validate_ok_with_feature() {
+        assert!(validate_loss(HdrLoss::Ssim2).is_ok());
+    }
+
+    /// Without the `ssim2-loop` feature, [`HdrLoss::Ssim2`] surfaces
+    /// [`HdrMetricError::Ssim2FeatureDisabled`].
+    #[cfg(not(feature = "ssim2-loop"))]
+    #[test]
+    fn ssim2_validate_err_without_feature() {
+        assert_eq!(
+            validate_loss(HdrLoss::Ssim2),
+            Err(HdrMetricError::Ssim2FeatureDisabled)
+        );
+    }
+
     #[test]
     fn error_display_is_typed() {
-        // `HdrMetricError::Reserved` is the only variant today;
-        // exercise the Display impl to keep the contract live.
+        // Reserved variant (private).
         let s = format!("{}", HdrMetricError::Reserved);
         assert!(s.contains("Reserved"));
+        // Ssim2 feature-disabled variant — public, surfaces through
+        // Error::NotImplemented at dispatch.
+        let s2 = format!("{}", HdrMetricError::Ssim2FeatureDisabled);
+        assert!(s2.contains("Ssim2"));
+        assert!(s2.contains("ssim2-loop"));
     }
 
     /// Chunk-4: Auto resolution dispatch matrix.
@@ -267,7 +360,7 @@ mod tests {
     /// Non-`Auto` variants pass through `resolve` unchanged regardless
     /// of the transfer function. This is the "pin a specific loss"
     /// escape hatch for callers who want to override `Auto`'s default
-    /// dispatch.
+    /// dispatch. W43-3 chunk 1 extends to [`HdrLoss::Ssim2`].
     #[test]
     fn explicit_loss_passes_through_resolve() {
         for tf in [
@@ -279,6 +372,23 @@ mod tests {
         ] {
             assert_eq!(HdrLoss::Butteraugli.resolve(tf), HdrLoss::Butteraugli);
             assert_eq!(HdrLoss::Vdp2.resolve(tf), HdrLoss::Vdp2);
+            assert_eq!(HdrLoss::Ssim2.resolve(tf), HdrLoss::Ssim2);
         }
+    }
+
+    /// W43-3 chunk 1 deferral: `HdrLoss::Auto` still resolves SDR
+    /// content to `Butteraugli`. The chunk-2 plan is to flip this to
+    /// `Ssim2` once the A.9 decisive-rule eval passes; until then,
+    /// no behaviour change.
+    #[test]
+    fn auto_keeps_sdr_butteraugli_pre_a9_eval() {
+        // Critical invariant: hash-lock corpus stays byte-identical
+        // because Auto → Butteraugli on every SDR TF, including the
+        // common case of no TF signalled.
+        assert_eq!(HdrLoss::Auto.resolve(None), HdrLoss::Butteraugli);
+        assert_eq!(
+            HdrLoss::Auto.resolve(Some(TransferFunction::Srgb)),
+            HdrLoss::Butteraugli
+        );
     }
 }

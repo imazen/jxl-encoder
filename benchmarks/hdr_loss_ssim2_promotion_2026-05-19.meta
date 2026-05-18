@@ -1,0 +1,19 @@
+# W43-3 chunk 1 — HdrLoss::Ssim2 promotion A/B
+# Generated: 1779133420
+# Host: unknown
+# Promote HdrLoss::Ssim2 to first-class variant; bench vs HdrLoss::Butteraugli
+# Grid: 5 CID22-512 photos × {d=0.5, 1.0, 2.5, 4.0} × e8 = 40 cells
+# PRE  = HdrLoss::Butteraugli (default Auto resolves to Butteraugli on SDR)
+# POST = HdrLoss::Ssim2 (routes butteraugli_iters budget through ssim2_refine_quant_field)
+# Decoder: jxl-oxide srgb_linear (metadata-immune).
+# Metric: Rust butteraugli_linear + fast_ssim2::compute_ssimulacra2.
+# Total rows: 40
+# Failed cells: 0
+#
+
+=== Paired aggregates (ssim2 - butteraugli) per distance ===
+dist     n      d_bytes%    d_bfly%    d_ssim2   bt_bytes   ss_bytes    bt_bfly
+0.50     5        +71.56    -4.01   +1.143      79688     135414     0.7043
+1.00     5        +59.07    -1.27   +1.659      48734      78454     1.1971
+2.50     5        +47.39    -7.96   +2.378      24700      37703     2.6865
+4.00     5        +40.23    -3.29   +3.141      16868      24512     4.0004

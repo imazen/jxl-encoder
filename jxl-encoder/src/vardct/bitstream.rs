@@ -1794,37 +1794,83 @@ impl VarDctEncoder {
         #[cfg(feature = "butteraugli-loop")]
         if self.butteraugli_iters > 0 {
             let initial_qf_float = quant_field_float.clone();
-            // W39-2 (WF3 fix): animation frames pass `false` (photo
-            // class) as the screenshot classifier hint. Animations are
-            // overwhelmingly photo / video content; the W22-1
-            // `median(mask1x1)` discriminator is fitted to still-image
-            // screenshots (UI / text / terminal) and is not validated
-            // on animation inputs. Hash-locked animation fixtures stay
-            // byte-identical with `false`. If a screenshot-class
-            // animation case appears in the wild, extend here using
-            // the same `median(mask1x1) > SCREENSHOT_MEDIAN_THRESHOLD`
-            // gate as the still-image call site in `encoder.rs`.
-            params = self.butteraugli_refine_quant_field(
-                linear_rgb,
-                width,
-                height,
-                &xyb_x,
-                &xyb_y,
-                &xyb_b,
-                padded_width,
-                padded_height,
-                xsize_blocks,
-                ysize_blocks,
-                &params,
-                &mut quant_field,
-                &mut quant_field_float,
-                &initial_qf_float,
-                &cfl_map,
-                &ac_strategy,
-                patches_data.as_ref(),
-                None,  // No splines in animation frames
-                false, // is_screenshot: see comment above
-            )?;
+            // W43-3 chunk 1 mirror of the still-image dispatch in
+            // `vardct/encoder.rs`: HdrLoss::Ssim2 routes the
+            // butteraugli_iters budget through ssim2_refine_quant_field.
+            // Default HdrLoss::Auto resolves to Butteraugli on SDR
+            // (animation hash-lock fixtures stay byte-identical).
+            if let Err(e) = super::hdr_metrics::validate_loss(self.hdr_loss) {
+                return Err(crate::error::Error::NotImplemented(alloc::format!(
+                    "HDR loss dispatch (animation): {e} (selected: {})",
+                    self.hdr_loss.as_str()
+                )));
+            }
+            let resolved_loss = self.hdr_loss.resolve(None);
+            let _ = resolved_loss;
+
+            #[cfg(feature = "ssim2-loop")]
+            let take_ssim2_path = matches!(resolved_loss, super::hdr_metrics::HdrLoss::Ssim2);
+            #[cfg(not(feature = "ssim2-loop"))]
+            let take_ssim2_path = false;
+
+            if take_ssim2_path {
+                #[cfg(feature = "ssim2-loop")]
+                {
+                    params = self.ssim2_refine_quant_field_with_iters(
+                        self.butteraugli_iters,
+                        linear_rgb,
+                        width,
+                        height,
+                        &xyb_x,
+                        &xyb_y,
+                        &xyb_b,
+                        padded_width,
+                        padded_height,
+                        xsize_blocks,
+                        ysize_blocks,
+                        &params,
+                        &mut quant_field,
+                        &mut quant_field_float,
+                        &initial_qf_float,
+                        &cfl_map,
+                        &ac_strategy,
+                        patches_data.as_ref(),
+                        None, // No splines in animation frames
+                    )?;
+                }
+            } else {
+                // W39-2 (WF3 fix): animation frames pass `false` (photo
+                // class) as the screenshot classifier hint. Animations are
+                // overwhelmingly photo / video content; the W22-1
+                // `median(mask1x1)` discriminator is fitted to still-image
+                // screenshots (UI / text / terminal) and is not validated
+                // on animation inputs. Hash-locked animation fixtures stay
+                // byte-identical with `false`. If a screenshot-class
+                // animation case appears in the wild, extend here using
+                // the same `median(mask1x1) > SCREENSHOT_MEDIAN_THRESHOLD`
+                // gate as the still-image call site in `encoder.rs`.
+                params = self.butteraugli_refine_quant_field(
+                    linear_rgb,
+                    width,
+                    height,
+                    &xyb_x,
+                    &xyb_y,
+                    &xyb_b,
+                    padded_width,
+                    padded_height,
+                    xsize_blocks,
+                    ysize_blocks,
+                    &params,
+                    &mut quant_field,
+                    &mut quant_field_float,
+                    &initial_qf_float,
+                    &cfl_map,
+                    &ac_strategy,
+                    patches_data.as_ref(),
+                    None,  // No splines in animation frames
+                    false, // is_screenshot: see comment above
+                )?;
+            }
         }
 
         // SSIM2 quantization loop: alternative to butteraugli using SSIM2 +
