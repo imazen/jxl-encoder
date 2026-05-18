@@ -21,6 +21,8 @@
 
 pub use crate::entropy_coding::Lz77Method;
 pub use crate::headers::frame_header::BlendMode;
+#[cfg(feature = "butteraugli-loop")]
+pub use crate::vardct::hdr_metrics::HdrLoss;
 pub use enough::{Stop, Unstoppable};
 pub use whereat::{At, ResultAtExt, at};
 
@@ -2922,6 +2924,13 @@ pub struct LossyConfig {
     butteraugli_iters: u32,
     #[cfg(feature = "butteraugli-loop")]
     butteraugli_iters_explicit: bool,
+    /// HDR-aware perceptual loss for the butteraugli quantization loop
+    /// (EX-J11). Default [`HdrLoss::Butteraugli`] keeps every existing
+    /// hash-lock byte-identical. [`HdrLoss::Vdp2`] is opt-in and surfaces
+    /// [`EncodeError::InvalidConfig`] at encode time until the chunk-2
+    /// HDR-VDP-2 maths land. See [`Self::with_hdr_loss`].
+    #[cfg(feature = "butteraugli-loop")]
+    hdr_loss: HdrLoss,
     #[cfg(feature = "ssim2-loop")]
     ssim2_iters: u32,
     #[cfg(feature = "zensim-loop")]
@@ -3140,6 +3149,9 @@ impl LossyConfig {
             butteraugli_iters: profile.butteraugli_iters,
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters_explicit: false,
+            // EX-J11 chunk 1: default keeps every hash-lock byte-identical.
+            #[cfg(feature = "butteraugli-loop")]
+            hdr_loss: HdrLoss::Butteraugli,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0,
             #[cfg(feature = "zensim-loop")]
@@ -3325,6 +3337,14 @@ impl LossyConfig {
         if self.butteraugli_iters_explicit {
             new.butteraugli_iters = self.butteraugli_iters;
             new.butteraugli_iters_explicit = true;
+        }
+        // EX-J11 chunk 1: hdr_loss is a plain flag (no _explicit twin —
+        // the default Butteraugli is the existing behaviour, so simple
+        // copy preserves the caller's choice across with_effort() exactly
+        // like ssim2_iters / zensim_iters below).
+        #[cfg(feature = "butteraugli-loop")]
+        {
+            new.hdr_loss = self.hdr_loss;
         }
         #[cfg(feature = "ssim2-loop")]
         {
@@ -4369,6 +4389,30 @@ impl LossyConfig {
         self.butteraugli_iters = n;
         self.butteraugli_iters_explicit = true;
         self
+    }
+
+    /// Pick the perceptual loss used by the butteraugli quantization loop
+    /// on HDR encodes (EX-J11). Default [`HdrLoss::Butteraugli`] preserves
+    /// every existing hash-lock byte-identical.
+    ///
+    /// [`HdrLoss::Vdp2`] is opt-in only. Chunk 1 of EX-J11 ships the
+    /// dispatch and validation only — selecting [`HdrLoss::Vdp2`] today
+    /// surfaces [`EncodeError::InvalidConfig`] at encode time with a
+    /// message pointing at chunk 2 (where the multi-scale CSF pyramid
+    /// lands).
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn with_hdr_loss(mut self, loss: HdrLoss) -> Self {
+        self.hdr_loss = loss;
+        self
+    }
+
+    /// Currently configured HDR-aware perceptual loss. See
+    /// [`Self::with_hdr_loss`].
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn hdr_loss(&self) -> HdrLoss {
+        self.hdr_loss
     }
 
     /// Set the policy for non-finite XYB values at the
@@ -6635,6 +6679,7 @@ impl<'a> EncodeRequest<'a> {
         #[cfg(feature = "butteraugli-loop")]
         {
             enc.butteraugli_iters = cfg.butteraugli_iters;
+            enc.hdr_loss = cfg.hdr_loss;
         }
         #[cfg(feature = "ssim2-loop")]
         {
@@ -7708,6 +7753,7 @@ impl LossyEncoder {
             #[cfg(feature = "butteraugli-loop")]
             {
                 enc.butteraugli_iters = cfg.butteraugli_iters;
+                enc.hdr_loss = cfg.hdr_loss;
             }
             #[cfg(feature = "ssim2-loop")]
             {
@@ -9528,6 +9574,7 @@ fn encode_animation_lossy(
     #[cfg(feature = "butteraugli-loop")]
     {
         enc.butteraugli_iters = cfg.butteraugli_iters;
+        enc.hdr_loss = cfg.hdr_loss;
     }
     #[cfg(feature = "ssim2-loop")]
     {

@@ -122,6 +122,47 @@
   spec-valid; jxl-rs + jxl-oxide + djxl decode every cell in the
   acceptance bench without warnings or fallback.
 
+- **EX-J11 chunk 1: HDR-aware loss dispatch for the butteraugli
+  quantization loop** (`vardct/hdr_metrics.rs`,
+  `LossyConfig::with_hdr_loss`, `EX-J11` in
+  `JXL_ENCODER_LEARNINGS.md`). Ships the API surface + dispatch
+  wiring + validation so callers can opt into a future HDR-VDP-2
+  loss (PLCC 0.936 vs Butteraugli-pnorm's 0.882 on HDR-AIC-2025) on
+  HDR encodes.
+
+  - New public enum `HdrLoss { Butteraugli (default), Vdp2 }`
+    re-exported from the crate root (gated behind
+    `feature = "butteraugli-loop"`).
+  - New `LossyConfig::with_hdr_loss(loss)` setter +
+    `LossyConfig::hdr_loss()` getter; the field is preserved
+    across `with_effort()` re-application (mirrors the
+    `butteraugli_iters` preservation pattern).
+  - Default `HdrLoss::Butteraugli` is **byte-identical** to every
+    release prior to this commit — `hash_lock_features` stays
+    36/36 ✓, `corpus_regression` unchanged.
+  - `HdrLoss::Vdp2` is **opt-in only and stub-only in chunk 1**:
+    when the butteraugli loop runs (effort ≥ 8) with `Vdp2`
+    selected, the dispatch surfaces
+    `Error::NotImplemented("HDR loss dispatch: HdrLoss::Vdp2 is
+    not yet implemented (EX-J11 chunk 2 — multi-scale CSF pyramid
+    pending) (selected: vdp2)")` — a typed error, never a panic.
+  - Chunk 2 (queued) lands the actual HDR-VDP-2 maths
+    (LUT-baked PQ/HLG transfer-function inversion to display
+    nits, multi-scale CSF-weighted Laplacian pyramid, per-band
+    visibility-threshold normalisation). Chunk 2 only has to
+    swap the `validate_loss` call site in
+    `vardct/butteraugli_loop.rs:128` to route through the real
+    VDP-2 reference type; the rest of the loop is unchanged.
+  - Coverage: 11 tests total — 4 unit tests in
+    `vardct::hdr_metrics::tests::*` (enum surface, validation
+    predicate, error formatting) plus 7 integration tests in
+    `tests/hdr_vdp2_loss.rs` (default-is-Butteraugli,
+    explicit-default-is-byte-identical-to-implicit,
+    Vdp2-typed-error-when-buttloop-runs,
+    Vdp2-silently-unused-at-e7,
+    `with_effort`-preservation, end-to-end roundtrip with
+    `HdrLoss::Butteraugli` at e8).
+
 - **EX-J17a: wire-format-safe custom coefficient orders on the
   `--lossless-jpeg` transcode path** (issue #49). The JPEG bridge now
   computes per-channel custom coefficient orders from the same Lehmer

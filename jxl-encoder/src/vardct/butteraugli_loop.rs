@@ -127,6 +127,26 @@ impl VarDctEncoder {
     ) -> Result<DistanceParams> {
         use crate::budget::MemoryBudget;
 
+        // EX-J11 chunk 1: HDR-aware loss dispatch.
+        //
+        // Default path (`HdrLoss::Butteraugli`) is byte-identical to
+        // every release prior to EX-J11 — the existing butteraugli
+        // pipeline below runs unchanged.
+        //
+        // `HdrLoss::Vdp2` is opt-in via [`crate::LossyConfig::with_hdr_loss`].
+        // Until chunk 2 lands the multi-scale CSF pyramid, selecting it
+        // surfaces a clean `Error::NotImplemented` here so callers see a
+        // typed validation error rather than a panic. The
+        // [`crate::vardct::hdr_metrics::validate_loss`] helper centralises
+        // the predicate so chunk 2 only has to swap that one call site to
+        // route through the real VDP-2 path.
+        if let Err(e) = super::hdr_metrics::validate_loss(self.hdr_loss) {
+            return Err(crate::error::Error::NotImplemented(alloc::format!(
+                "HDR loss dispatch: {e} (selected: {})",
+                self.hdr_loss.as_str()
+            )));
+        }
+
         let budget = self.budget.as_ref();
         let target_distance = self.distance;
         let num_blocks = xsize_blocks * ysize_blocks;
