@@ -243,6 +243,11 @@ path = "examples/distance_sweep.rs"
 name = "rd_curve_audit_vs_cjxl"
 path = "examples/rd_curve_audit_vs_cjxl.rs"
 
+# W38-2 #3.1 — distance-aware buttloop split A/B (CPU port of GPU d75bf7c).
+[[example]]
+name = "buttloop_distance_split_ab"
+path = "examples/buttloop_distance_split_ab.rs"
+
 [[example]]
 name = "hdr_rd_sweep_vs_cjxl"
 path = "examples/hdr_rd_sweep_vs_cjxl.rs"

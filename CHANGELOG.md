@@ -51,6 +51,76 @@
   task spec's honest-stop condition: "If transform_and_quantize is
   already parallel everywhere: honest-stop with explanation."
 
+### Fixed
+
+- **W38-2 #3.1 — distance-aware butteraugli-loop tuning scaffolding
+  (CPU port of GPU commit `d75bf7c`, HONEST-STOP on the literal port)**
+  (`src/vardct/butteraugli_loop.rs`, `src/vardct/mod.rs`,
+  `examples/buttloop_distance_split_ab.rs` [new],
+  `benchmarks/buttloop_distance_split_port_2026-05-18.{tsv,meta}`).
+  Ports the GPU encoder's distance-aware split of the per-iter
+  `(cur_pow, max_increase)` tuning into the CPU buttloop as
+  **scaffolding plus a sweep harness** — the literal GPU LOW-regime
+  tuning regresses RD-pareto on CPU, so production defaults stay
+  libjxl-faithful at both regimes.
+
+  - New module-level constants in `vardct::butteraugli_loop`:
+    `DEFAULT_CUR_POW_LOW/HIGH`, `DEFAULT_MAX_INCREASE_LOW/HIGH`,
+    `DEFAULT_DISTANCE_SPLIT`. **All set to libjxl values** (`cur_pow=0.2`,
+    `max_increase=100.0` ≈ "no cap", split at `d=2.0`). Production
+    output is byte-identical to pre-port behaviour at every distance,
+    every effort.
+  - New `pub static` atomics `CUR_POW_X1000_{LOW,HIGH}`,
+    `MAX_INCREASE_X1000_{LOW,HIGH}`, `DISTANCE_SPLIT_X1000` (re-exported
+    via `#[doc(hidden)] pub mod vardct::__buttloop_overrides`). Sweep
+    harnesses hot-swap per-regime values without rebuilds (mirrors the
+    GPU encoder's atomics in `forks/butteraugli_loop.rs`).
+  - New per-iter helpers `resolved_cur_pow(iter, target_distance)` /
+    `resolved_max_increase(target_distance)` consult the atomics and
+    fall back to defaults. Wired into the buttloop's good-block
+    reduction (`cur_pow.powf(diff)`) and bad-block bump (`old * diff`
+    capped at `max_increase`).
+  - 7 unit tests covering helper resolution + override round-trip +
+    regime-split shift + an invariant test
+    (`production_defaults_are_libjxl_faithful`) that guards against
+    accidental default drift.
+
+  **Why HONEST-STOP on the literal port** (the GPU-tuned LOW values):
+  the W38-2 audit (`benchmarks/rd_curve_wedges_2026-05-18.md` #3.1)
+  documented WF3 (e8/e9 buttloop over-compresses screenshots at
+  d>=2.0) and suggested mirroring the GPU split. **Two reasons that
+  recommendation does not fit the CPU encoder**:
+
+  1. The CPU loop was **already at the GPU's post-fix HIGH values**
+     (libjxl defaults) at every distance pre-port. The literal port
+     only changes LOW-regime behaviour, leaving WF3 (which lives at
+     d>=2.0, HIGH regime) untouched. Verified empirically: PRE/POST
+     paired sweep is byte-identical at every HIGH cell.
+  2. **Applying the GPU LOW tuning to CPU LOW (cur_pow=0.5,
+     max_increase=1.3) regresses RD-pareto** on both photos and
+     screenshots. Paired sweep at d=0.5/1.0/1.5 e8/e9 (6 images,
+     `benchmarks/buttloop_distance_split_port_2026-05-18.tsv`):
+     - photos d=0.5-1.5: bytes -3 to -7 %, **bfly +1 to +8 %**, ssim2
+       -0.04 to -1.04.
+     - screenshots d=0.5-1.5: bytes -3 to -7 %, **bfly +4 to +13 %**,
+       ssim2 -0.41 to -1.20.
+
+     The GPU's tuning was calibrated against its own e7 baseline
+     (≈9 % smaller bytes than cjxl e7) which left less room for
+     good-block reclamation; CPU's baseline differs and the same
+     reclamation factor over-shrinks the quant field.
+
+  Hash-lock 36/36 byte-identical; RD-regression 18/18 within
+  thresholds (buttloop is gated off at effort < 8, so rd-regression
+  cells at e7 default are unaffected).
+
+  **Next chunk (not landed here)**: the real WF3 fix is a screenshot-
+  class cap at HIGH regime (`max_increase=1.3` for content with
+  high-contrast text). The scaffolding shipped in this commit is the
+  enabling infrastructure (atomic overrides + paired A/B harness) for
+  that follow-on tuning sweep. Memory at
+  `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/buttloop_rd_gap_2026-05-14.md`.
+
 ### Added
 
 - **W38 — lossy low-effort phase baseline (e2..=e5) + zenjpeg-hybrid
