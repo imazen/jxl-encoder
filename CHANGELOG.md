@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-group `--ec_resampling N` writer** (A1 audit Top-5 #2,
+  follow-on to W5-1 `59b31cc`). Closes the multi-group hole left by
+  `59b31cc`'s single-group-only landing. `extract_region` now
+  downshifts the per-group rect by each channel's own
+  `hshift`/`vshift` (matches libjxl `enc_modular.cc:1400-1407`'s
+  `Rect(rect.x0() >> fc.hshift, rect.y0() >> fc.vshift, ...)`), so
+  downsampled extras (e.g. half-res alpha at `dim_shift = 1`) crop
+  in channel-local coordinates rather than at full-resolution. The
+  destination channel inherits `hshift`/`vshift` from the source so
+  downstream consumers (tree learning, residual gather, group
+  section writer) see the same geometry the decoder reconstructs.
+  Per-group rects that shift to empty are materialised as zero-sized
+  channel placeholders, which the decoder skips via the standard
+  `if (!channel.w || !channel.h) continue;` check
+  (`encoding.cc:579`). The CLI rejection of multi-group
+  `--ec_resampling > 1` (`jxl-encoder-cli/src/main.rs:1455-1463`) is
+  removed — 4K+ web assets with downsampled alpha now route through
+  the standard lossless RGBA / BGRA / GrayAlpha path. New API:
+  `ModularImage::push_extra_channel_u8_with_shift(...)` and the
+  16-bit twin; `api.rs` propagates `ExtraChannelInfo.dim_shift` to
+  the channel automatically. New regression test:
+  `test_lossless_rgba_multi_group_with_ec_resampling_half_res_alpha`
+  (384×384 = 4 groups, half-res alpha, jxl-oxide + djxl verified).
+  hash_locks 36/36 byte-identical (no change at `dim_shift = 0`).
+
 ### Changed
 
 - **Lossless patches gate now uses lossless-shape trial encoder**

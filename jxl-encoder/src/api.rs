@@ -5648,9 +5648,22 @@ impl<'a> EncodeRequest<'a> {
                     ),
                 });
             }
+            // For `dim_shift > 0` extras (e.g. `--ec_resampling N`
+            // alpha at `log2(N)` half-steps), the multi-group writer
+            // needs the channel's hshift/vshift set so per-group
+            // rects crop in channel-local coords (libjxl
+            // `enc_modular.cc:1400-1407`). Single-group writers
+            // never call `extract_region`, so this is a no-op for
+            // single-group; multi-group at dim_shift > 0 (>256-pixel
+            // images with half-res alpha) now writes correctly.
+            let ec_shift = ec.info.dim_shift;
             match ec.data {
-                ExtraChannelBuf::U8(d) => image.push_extra_channel_u8(d, ec_w, ec_h),
-                ExtraChannelBuf::U16(d) => image.push_extra_channel_u16(d, ec_w, ec_h),
+                ExtraChannelBuf::U8(d) => {
+                    image.push_extra_channel_u8_with_shift(d, ec_w, ec_h, ec_shift, ec_shift)
+                }
+                ExtraChannelBuf::U16(d) => {
+                    image.push_extra_channel_u16_with_shift(d, ec_w, ec_h, ec_shift, ec_shift)
+                }
             }
             .map_err(EncodeError::from)?;
         }

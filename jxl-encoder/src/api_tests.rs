@@ -8398,6 +8398,96 @@ fn test_lossless_rgb_with_ec_resampling_half_res_alpha() {
     }
 }
 
+/// A1 audit Top-5 #2 — multi-group `--ec_resampling` writer.
+///
+/// Mirror of [`test_lossless_rgb_with_ec_resampling_half_res_alpha`]
+/// at 384×384 (>256 in both dims → 4 modular groups). Verifies the
+/// fix in `modular/channel.rs:extract_region` that downshifts the
+/// per-group rect by each channel's own `hshift`/`vshift` (libjxl
+/// `enc_modular.cc:1400-1407`) so a `dim_shift = 1` alpha extra is
+/// cropped in channel-local coords instead of yielding a corrupt
+/// or oversized per-group slot.
+///
+/// Pre-fix this combination of multi-group + downsampled alpha
+/// would either decode-fail in djxl/jxl-oxide or silently emit
+/// garbage rows for the alpha channel. The CLI guarded against
+/// it explicitly; both the CLI rejection and the writer bug are
+/// removed in the same change.
+#[test]
+fn test_lossless_rgba_multi_group_with_ec_resampling_half_res_alpha() {
+    use crate::api::ExtraChannel;
+    use crate::api::downsample_channel_u8;
+
+    // 384 = 256 (one full group) + 128 (partial group), so the
+    // image is multi-group (4 groups @ 256×256 grid) AND has
+    // partial-group edges — exercising the shifted edge case
+    // where the rightmost / bottom alpha rect is < group_dim.
+    let w = 384u32;
+    let h = 384u32;
+    let rgb: Vec<u8> = (0..(w * h * 3)).map(|i| ((i * 13) % 251) as u8).collect();
+    let mut alpha_full: Vec<u8> = vec![0u8; (w * h) as usize];
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let bx = (x / 2) as u32;
+            let by = (y / 2) as u32;
+            // Same "every 2×2 block uniform" pattern as the
+            // single-group test so a box-filter factor=2 maps
+            // cleanly back to the source values.
+            alpha_full[y * w as usize + x] =
+                ((bx.wrapping_mul(7) + by.wrapping_mul(11)) % 251) as u8;
+        }
+    }
+    let alpha_half = downsample_channel_u8(&alpha_full, w as usize, h as usize, 2);
+    assert_eq!(alpha_half.len(), (w as usize / 2) * (h as usize / 2));
+
+    let extras = [ExtraChannel::from_alpha_buf(&alpha_half, false).with_dim_shift(1)];
+    let bytes = LosslessConfig::new()
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_extra_channels(&extras)
+        .encode(&rgb)
+        .expect("encode multi-group lossless rgb + half-res alpha");
+
+    // Optional: persist the bitstream for djxl verification when
+    // `JXL_ENCODER_DUMP_PATH` is set in the env. The roundtrip
+    // assertions below remain the load-bearing test surface.
+    if let Ok(path) = std::env::var("JXL_ENCODER_DUMP_PATH") {
+        std::fs::write(&path, &bytes).expect("dump");
+        eprintln!("DUMP: wrote {} bytes to {path}", bytes.len());
+    }
+
+    // jxl-oxide parse + render (load-bearing roundtrip).
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let header = image.image_header();
+    assert_eq!(
+        header.metadata.ec_info.len(),
+        1,
+        "expected 1 extra channel (alpha)",
+    );
+    assert_eq!(
+        header.metadata.ec_info[0].dim_shift, 1,
+        "alpha extra should declare dim_shift=1 (half-resolution)",
+    );
+    let _render = image.render_frame(0).expect("jxl-oxide render");
+
+    // jxl-rs roundtrip — same gate as the single-group test
+    // (jxl-rs ec_upsampling support is still incomplete for some
+    // half-res-alpha bitstreams). Hard requirement once it catches up.
+    if let Ok(decoded) = crate::test_helpers::decode_with_jxl_rs(&bytes) {
+        assert_eq!(decoded.width, w as usize);
+        assert_eq!(decoded.height, h as usize);
+        assert_eq!(decoded.channels, 4);
+    } else {
+        eprintln!(
+            "jxl-rs decode of multi-group half-res alpha is currently incomplete; \
+             jxl-oxide render above is the load-bearing roundtrip for now"
+        );
+    }
+}
+
 /// Refs #9: lossless RGBA + Depth + SpotColor (6 channels) —
 /// stress test that the num_extra_channels size-coder fix
 /// extends past 2 entries. With 3 extras the size coder still

@@ -76,6 +76,27 @@ impl Channel {
         })
     }
 
+    /// Creates a zero-sized channel placeholder.
+    ///
+    /// Used by the multi-group writer when a downsampled extra's
+    /// per-group rect shrinks to empty (e.g. half-res alpha at a
+    /// 1-pixel-wide trailing column). The decoder skips
+    /// zero-sized channels via the standard
+    /// `if (!channel.w || !channel.h) continue;` check in
+    /// `encoding.cc:579`. Shift fields default to 0 — the caller
+    /// is responsible for setting `hshift`/`vshift` to match the
+    /// source channel.
+    pub fn new_zero_sized() -> Self {
+        Self {
+            data: Vec::new(),
+            width: 0,
+            height: 0,
+            hshift: 0,
+            vshift: 0,
+            component: -1,
+        }
+    }
+
     /// Creates a channel from existing data.
     pub fn from_vec(data: Vec<i32>, width: usize, height: usize) -> Result<Self> {
         if width == 0 || height == 0 {
@@ -386,6 +407,25 @@ impl ModularImage {
         width: usize,
         height: usize,
     ) -> Result<()> {
+        self.push_extra_channel_u8_with_shift(data, width, height, 0, 0)
+    }
+
+    /// Append an 8-bit extra channel with explicit `hshift`/`vshift`.
+    /// Required when the matching [`ExtraChannelInfo`] has
+    /// `dim_shift > 0` so that the multi-group writer can crop
+    /// per-group regions in channel-local coordinates (matches
+    /// libjxl `enc_modular.cc:1400-1407`'s
+    /// `Rect(rect.x0() >> fc.hshift, rect.y0() >> fc.vshift, ...)`).
+    /// For `--ec_resampling N` this is `hshift = vshift = log2(N)`
+    /// (i.e. `dim_shift`).
+    pub fn push_extra_channel_u8_with_shift(
+        &mut self,
+        data: &[u8],
+        width: usize,
+        height: usize,
+        hshift: u32,
+        vshift: u32,
+    ) -> Result<()> {
         if data.len() != width * height {
             return Err(Error::InvalidImageDimensions(width, height));
         }
@@ -393,6 +433,8 @@ impl ModularImage {
         for (i, &val) in data.iter().enumerate() {
             channel.set(i % width, i / width, val as i32);
         }
+        channel.hshift = hshift;
+        channel.vshift = vshift;
         self.channels.push(channel);
         Ok(())
     }
@@ -408,6 +450,21 @@ impl ModularImage {
         width: usize,
         height: usize,
     ) -> Result<()> {
+        self.push_extra_channel_u16_with_shift(data, width, height, 0, 0)
+    }
+
+    /// 16-bit twin of
+    /// [`Self::push_extra_channel_u8_with_shift`]. Same shift
+    /// semantics — required when `ExtraChannelInfo.dim_shift > 0`
+    /// for multi-group writes.
+    pub fn push_extra_channel_u16_with_shift(
+        &mut self,
+        data: &[u16],
+        width: usize,
+        height: usize,
+        hshift: u32,
+        vshift: u32,
+    ) -> Result<()> {
         if data.len() != width * height {
             return Err(Error::InvalidImageDimensions(width, height));
         }
@@ -415,6 +472,8 @@ impl ModularImage {
         for (i, &val) in data.iter().enumerate() {
             channel.set(i % width, i / width, val as i32);
         }
+        channel.hshift = hshift;
+        channel.vshift = vshift;
         self.channels.push(channel);
         Ok(())
     }
@@ -673,6 +732,28 @@ impl ModularImage {
     ///
     /// Creates a new ModularImage containing only the pixels within the
     /// specified bounds. Used for multi-group encoding.
+    ///
+    /// Coordinates are in full-resolution image space. For each
+    /// channel, the rect is downshifted by the channel's own
+    /// `hshift`/`vshift` so downsampled extras (e.g.
+    /// `--ec_resampling N` alpha with `dim_shift = log2(N)`) are
+    /// cropped correctly. The shift on the destination channel is
+    /// propagated from the source. This mirrors libjxl
+    /// `enc_modular.cc:1400-1407`:
+    ///
+    /// ```text
+    /// Rect r(rect.x0() >> fc.hshift, rect.y0() >> fc.vshift,
+    ///        rect.xsize() >> fc.hshift, rect.ysize() >> fc.vshift, fc.w, fc.h);
+    /// gc.hshift = fc.hshift; gc.vshift = fc.vshift;
+    /// ```
+    ///
+    /// A channel whose shifted region is empty (`xsize == 0` or
+    /// `ysize == 0`, e.g. a half-res alpha when the group rect is
+    /// less than 2 pixels wide) is materialised as a zero-sized
+    /// channel and the decoder skips it via the standard
+    /// `if (!channel.w || !channel.h) continue;` check
+    /// (`encoding.cc:579`). The matching tree-learning /
+    /// histogram-gathering passes also skip zero-sized channels.
     pub fn extract_region(
         &self,
         x_start: usize,
@@ -689,20 +770,39 @@ impl ModularImage {
 
         let mut channels = Vec::with_capacity(self.channels.len());
         for src_channel in &self.channels {
-            let mut dst_channel = Channel::new(region_width, region_height)?;
+            // libjxl parity: shift the full-resolution group rect
+            // into channel-local coords. For dim_shift == 0 this is
+            // a no-op and the old behaviour is preserved bit-exact.
+            let hs = src_channel.hshift;
+            let vs = src_channel.vshift;
+            let ch_x_start = x_start >> hs;
+            let ch_y_start = y_start >> vs;
+            let ch_region_w =
+                (region_width >> hs).min(src_channel.width().saturating_sub(ch_x_start));
+            let ch_region_h =
+                (region_height >> vs).min(src_channel.height().saturating_sub(ch_y_start));
 
-            for dy in 0..region_height {
-                let sy = y_start + dy;
-                if sy >= src_channel.height() {
-                    continue;
-                }
+            if ch_region_w == 0 || ch_region_h == 0 {
+                // Empty per-group slot for downsampled extras at the
+                // image edge. Push a zero-sized channel; the decoder
+                // skips it (`encoding.cc:579-581`). The shift fields
+                // still propagate so any later consumer sees the
+                // original geometry.
+                let mut dst_channel = Channel::new_zero_sized();
+                dst_channel.hshift = hs;
+                dst_channel.vshift = vs;
+                channels.push(dst_channel);
+                continue;
+            }
 
-                for dx in 0..region_width {
-                    let sx = x_start + dx;
-                    if sx >= src_channel.width() {
-                        continue;
-                    }
+            let mut dst_channel = Channel::new(ch_region_w, ch_region_h)?;
+            dst_channel.hshift = hs;
+            dst_channel.vshift = vs;
 
+            for dy in 0..ch_region_h {
+                let sy = ch_y_start + dy;
+                for dx in 0..ch_region_w {
+                    let sx = ch_x_start + dx;
                     dst_channel.set(dx, dy, src_channel.get(sx, sy));
                 }
             }
