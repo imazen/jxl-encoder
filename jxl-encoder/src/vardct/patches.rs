@@ -421,7 +421,7 @@ impl PatchesData {
     /// safety margin below 1.5× (which would risk false-positives on
     /// untested content classes).
     pub fn is_cost_effective(&self, distance: f32, use_ans: bool) -> bool {
-        let ref_overhead = trial_encode_ref_frame_bytes(self, use_ans);
+        let ref_overhead = trial_encode_ref_frame_bytes(self, distance, use_ans);
         if ref_overhead == usize::MAX {
             return false;
         }
@@ -2497,11 +2497,20 @@ pub(crate) fn patches_ref_group_size_shift(ref_w: usize, ref_h: usize) -> u32 {
 ///
 /// Used for cost-benefit gating: if the reference frame overhead exceeds
 /// the estimated VarDCT savings from patch subtraction, skip patches entirely.
-pub(crate) fn trial_encode_ref_frame_bytes(patches: &PatchesData, use_ans: bool) -> usize {
+///
+/// `distance` is forwarded to [`encode_reference_frame`] so the trial uses
+/// the same DC quantization the live emit will use. Passing `0.0`
+/// preserves the legacy spec-default DC quant (4096/512/256), which is
+/// what the lossless patches path expects.
+pub(crate) fn trial_encode_ref_frame_bytes(
+    patches: &PatchesData,
+    distance: f32,
+    use_ans: bool,
+) -> usize {
     let mut writer = BitWriter::new();
     // Trial encode always uses default (no tree learning) — tree learning is slower
     // and the cost estimate only needs to be approximate for the gating decision.
-    if encode_reference_frame(patches, use_ans, false, &mut writer, None).is_ok() {
+    if encode_reference_frame(patches, distance, use_ans, false, &mut writer, None).is_ok() {
         writer.zero_pad_to_byte();
         writer.bytes_written()
     } else {
@@ -2659,6 +2668,67 @@ pub(crate) fn encode_reference_frame_rgb(
 
 // ── Reference Frame Encoding (XYB) ──────────────────────────────────────────
 
+/// libjxl-parity enc_factors (X, Y, B-Y) for the patches reference frame's DC
+/// quantization. The base values come from `enc_modular.cc:757-758` and are
+/// NOT the spec defaults — `quant_weights.h:289` defines spec defaults
+/// `{4096, 512, 256}`, but libjxl's modular encoder starts from
+/// `{65536, 4096, 4096}` and rescales by distance when present.
+///
+/// At `distance > 0` the same file scales (lines 760-762):
+/// ```text
+/// enc_factors[0] *= 1 / (1 + 23 * d);   // X channel
+/// enc_factors[1] *= 1 / (1 + 14 * d);   // Y channel
+/// enc_factors[2] *= 1 / (1 + 14 * d);   // B-Y channel
+/// ```
+///
+/// We mirror that here, then F16-roundtrip the inverse factors so the
+/// encoder and decoder agree on the exact reconstruction multiplier
+/// (`DequantMatricesEncodeDC` in `enc_quant_weights.cc:144-180` writes
+/// `dc_quant * 128.0` through `F16Coder::Write` — the decoder reads back
+/// the same truncated value).
+///
+/// Returns `(scaled_inv_factors, dc_quant_for_header)` where
+/// `dc_quant_for_header = 1 / enc_factors` (in the order the bitstream
+/// expects: X, Y, B). When `distance == 0.0`, returns `None` so the
+/// existing `all_default = true` (spec defaults `{4096, 512, 256}`) path
+/// is preserved bit-for-bit — that path is used for the lossless patches
+/// frame today and we do not want to perturb its hash-locks.
+fn compute_patches_dc_quant(distance: f32) -> Option<([f32; 3], [f32; 3])> {
+    if distance <= 0.0 {
+        return None;
+    }
+    // libjxl enc_modular.cc:757 base values (NOT spec defaults).
+    let mut enc_factors = [65536.0f32, 4096.0, 4096.0];
+    // libjxl enc_modular.cc:759-763 distance gate (`!cparams_.responsive`
+    // always holds for the patches ref frame — enc_patch_dictionary.cc:823
+    // sets `cparams.responsive = 0` before calling EncodeFrame).
+    enc_factors[0] *= 1.0 / (1.0 + 23.0 * distance);
+    enc_factors[1] *= 1.0 / (1.0 + 14.0 * distance);
+    enc_factors[2] *= 1.0 / (1.0 + 14.0 * distance);
+
+    // F16-roundtrip the dc_quant (inverse of enc_factors) so the decoder
+    // and encoder use bit-identical reconstruction multipliers. The
+    // bitstream stores `dc_quant * 128.0` as F16; the decoder reads back
+    // the rounded value and divides by 128. We mirror that round-trip
+    // here to keep the encoder-side `inv_factor` consistent with what
+    // the decoder will reconstruct (DequantMatricesEncodeDC +
+    // DequantMatricesDC).
+    let mut dc_quant = [0.0f32; 3];
+    let mut inv_factors_rt = [0.0f32; 3];
+    for c in 0..3 {
+        let raw_dc_quant = 1.0 / enc_factors[c];
+        // The bitstream value is `dc_quant * 128.0`; round-trip through
+        // F16 and divide back out to recover the value the decoder sees.
+        let rt = match crate::f16::f16_roundtrip(raw_dc_quant * 128.0) {
+            Ok(v) => v / 128.0,
+            Err(_) => raw_dc_quant, // Should not happen for the values above.
+        };
+        dc_quant[c] = rt;
+        inv_factors_rt[c] = if rt > 0.0 { 1.0 / rt } else { enc_factors[c] };
+    }
+    Some((inv_factors_rt, dc_quant))
+}
+
 /// Encode the XYB reference frame containing all unique patch templates.
 ///
 /// This writes a complete modular FrameType::ReferenceOnly frame to the writer.
@@ -2667,10 +2737,19 @@ pub(crate) fn encode_reference_frame_rgb(
 /// The reference image is 3-channel XYB float data. For modular encoding, we scale
 /// to i32 (multiply by a fixed scale factor and round).
 ///
+/// `distance` is the butteraugli distance of the host VarDCT frame. When
+/// `distance > 0.0`, the patches reference frame's DC quantization is
+/// scaled by `1 / (1 + 23·d)` (X) and `1 / (1 + 14·d)` (Y, B-Y), matching
+/// libjxl `enc_modular.cc:755-774`. At `distance == 0.0` the legacy
+/// spec-default DC quant path is used (no behaviour change vs the
+/// pre-distance signature — required to keep the lossless patches
+/// hash-locks byte-identical).
+///
 /// Uses FrameEncoder for body encoding, which provides RCT for the 3 channels,
 /// ANS entropy coding, and multi-group support for reference frames > 256×256.
 pub(crate) fn encode_reference_frame(
     patches: &PatchesData,
+    distance: f32,
     use_ans: bool,
     use_tree_learning: bool,
     writer: &mut BitWriter,
@@ -2714,18 +2793,26 @@ pub(crate) fn encode_reference_frame(
     // Convert XYB float data to i32 for modular encoding.
     //
     // The decoder uses LfQuantFactors (DC quant) to convert back:
-    //   X_float = ch1_int * DCQuant[0]   where DCQuant[0] = 1/4096
-    //   Y_float = ch0_int * DCQuant[1]   where DCQuant[1] = 1/512
-    //   B_float = (ch2_int + ch0_int) * DCQuant[2]  where DCQuant[2] = 1/256
+    //   X_float = ch1_int * DCQuant[0]
+    //   Y_float = ch0_int * DCQuant[1]
+    //   B_float = (ch2_int + ch0_int) * DCQuant[2]
     //
-    // Since we signal all_default=true for DC quant, the inverse factors are:
-    //   INV_DC_QUANT = [4096.0, 512.0, 256.0]  (X, Y, B)
+    // When distance == 0 (lossless patches path) we keep the legacy
+    // INV_DC_QUANT = [4096, 512, 256] (X, Y, B) and signal
+    // `all_default = true`. When distance > 0, libjxl
+    // `enc_modular.cc:755-774` scales a different base
+    // `[65536, 4096, 4096]` by `1 / (1 + k * d)` and writes
+    // `all_default = false` + 3 F16 dc_quant values
+    // (DequantMatricesEncodeDC in `enc_quant_weights.cc:144-180`).
     //
     // Modular channels are stored as: [0=Y, 1=X, 2=B-Y]
     // B-Y subtraction is done in integer space after scaling.
-    const INV_DC_QUANT_X: f32 = 4096.0;
-    const INV_DC_QUANT_Y: f32 = 512.0;
-    const INV_DC_QUANT_B: f32 = 256.0;
+    let scaled = compute_patches_dc_quant(distance);
+    let (inv_dc_quant_x, inv_dc_quant_y, inv_dc_quant_b) = match scaled {
+        Some((inv, _)) => (inv[0], inv[1], inv[2]),
+        None => (4096.0f32, 512.0, 256.0),
+    };
+    let dc_quant_custom = scaled.map(|(_, dq)| dq);
     let n = ref_w * ref_h;
 
     // Build modular channels in decoder order: [Y, X, B-Y]
@@ -2734,19 +2821,19 @@ pub(crate) fn encode_reference_frame(
     // Channel 0: Y (from ref_image[1], which is the Y plane in XYB)
     let mut ch_y = Vec::with_capacity(n);
     for i in 0..n {
-        ch_y.push(safe_round_to_i32(patches.ref_image[1][i] * INV_DC_QUANT_Y));
+        ch_y.push(safe_round_to_i32(patches.ref_image[1][i] * inv_dc_quant_y));
     }
 
     // Channel 1: X (from ref_image[0], which is the X plane in XYB)
     let mut ch_x = Vec::with_capacity(n);
     for i in 0..n {
-        ch_x.push(safe_round_to_i32(patches.ref_image[0][i] * INV_DC_QUANT_X));
+        ch_x.push(safe_round_to_i32(patches.ref_image[0][i] * inv_dc_quant_x));
     }
 
     // Channel 2: B-Y (B scaled by INV_DC_QUANT_B, minus Y_int from channel 0)
     let mut ch_by = Vec::with_capacity(n);
     for i in 0..n {
-        let b_int = safe_round_to_i32(patches.ref_image[2][i] * INV_DC_QUANT_B);
+        let b_int = safe_round_to_i32(patches.ref_image[2][i] * inv_dc_quant_b);
         ch_by.push(b_int - ch_y[i]);
     }
 
@@ -2782,6 +2869,7 @@ pub(crate) fn encode_reference_frame(
         skip_rct: false, // Enable RCT — matches libjxl behavior
         is_last: false,
         modular_group_size_shift: Some(patches_ref_group_size_shift(ref_w, ref_h) as u8),
+        dc_quant_custom,
         ..Default::default()
     };
     let mut encoder = FrameEncoder::new(ref_w, ref_h, options);

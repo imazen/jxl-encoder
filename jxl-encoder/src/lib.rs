@@ -232,11 +232,17 @@ pub mod __internals {
     /// for a pre-detected `PatchesData`. Pre-chunk-5: used by W11-1's
     /// `is_cost_effective_lossless` gate. Retained for A/B harnesses
     /// that compare XYB-overshoot vs lossless-shape overhead.
+    ///
+    /// `distance` is forwarded to the trial encoder so the overhead
+    /// estimate reflects the distance-scaled DC quantization the live
+    /// emit will use (libjxl `enc_modular.cc:755-774` parity). Pass
+    /// `0.0` for the lossless / spec-default path.
     pub fn patches_trial_overhead(
         pd: &crate::vardct::patches::PatchesData,
+        distance: f32,
         use_ans: bool,
     ) -> (usize, usize) {
-        let ref_b = crate::vardct::patches::trial_encode_ref_frame_bytes(pd, use_ans);
+        let ref_b = crate::vardct::patches::trial_encode_ref_frame_bytes(pd, distance, use_ans);
         let dict_b = crate::vardct::patches::trial_encode_dict_section_bytes(pd, use_ans)
             .unwrap_or_else(|| {
                 pd.ref_positions_len_for_calibration() * 5 + pd.positions_len_for_calibration() * 5

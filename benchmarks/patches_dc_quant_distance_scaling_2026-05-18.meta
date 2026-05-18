@@ -1,0 +1,42 @@
+# Patches DC quant distance scaling — W44-4 chunk B bench (#55)
+#
+# Date:        2026-05-18
+# Workspace:   /home/lilith/work/zen/jxl-encoder--patches-dc-quant-distance-scaling
+# Baseline:    main@origin (jj `uvrsksqu` = git `3915dd4c`)
+# Patched:     this change (jj `wtpvyxvz`)
+# cjxl:        v0.12.0 d2c7032 (libjxl, /home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl)
+# Hostname:    $(hostname) — water-cooled AMD Ryzen 9 7950X
+# Corpus:      /home/lilith/work/codec-corpus/gb82-sc/{terminal,codec_wiki,imac_g3,windows95}.png
+# Cmd ours:    target/release/cjxl-rs --distance D --effort 7 IN.png OUT.jxl
+# Cmd cjxl:    cjxl -e 7 -d D IN.png OUT.jxl
+#
+# What the patched build does:
+#   Ports libjxl `enc_modular.cc:755-774` into the patches reference frame
+#   path. At distance > 0 the DC quantization for the XYB ref frame scales
+#   by 1 / (1 + 23·d) (X) and 1 / (1 + 14·d) (Y, B-Y) from a non-default
+#   base of {65536, 4096, 4096}, replacing the previous spec-default
+#   {4096, 512, 256} that was distance-invariant.
+#
+# Headline:
+#   • terminal d=4-6 (the F-A wedge cells): gap to cjxl drops from
+#     +20.9% / +21.4% / +28.7% to +0.9% / -2.5% / +1.9%. Wedge closed.
+#   • imac_g3 d=3-6: ours now BEATS cjxl by 2-6%.
+#   • codec_wiki d=3-6: gap halved (+18.2% → +10%), residual not from DC.
+#   • windows95 (smallest patches activity, mostly DCT-coded): +0.2 to +0.3%.
+#   • Photos d=1 / d=2: byte-identical to baseline.
+#   • Photos d=3 / d=4: -93 / -48 bytes (<0.06%, noise).
+#
+# Decoder validation (3 decoders × 6 cells = 18 roundtrips, all pass):
+#   djxl v0.12.0 d2c7032, jxl-rs (third-party HEAD), jxl-oxide (HEAD).
+#
+# Hash-lock impact: 0 sidecars regen. No hash_lock_features tests use
+# patches-positive content; all 36 pass byte-identical.
+#
+# Columns:
+#   image, d, baseline_B, patched_B, cjxl_B, ours_save_pct, gap_before_pct, gap_after_pct
+#   • baseline_B = main@origin output in bytes
+#   • patched_B  = patched-workspace output in bytes
+#   • cjxl_B     = libjxl cjxl output in bytes
+#   • ours_save_pct = (baseline - patched) / baseline * 100   (positive = smaller)
+#   • gap_before_pct = (baseline - cjxl) / cjxl * 100   (positive = larger than cjxl)
+#   • gap_after_pct  = (patched - cjxl) / cjxl * 100    (positive = larger than cjxl)
