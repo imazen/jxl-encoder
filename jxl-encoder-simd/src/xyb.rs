@@ -8,9 +8,33 @@
 //! Inverse (XYB → linear RGB): unmix + cube + inverse matrix multiply.
 //!
 //! The cube root uses Newton-Raphson in f64 with bit-manipulation initial guess,
-//! following the proven approach from fast-ssim2/yuvxyb.
+//! following the proven approach from fast-ssim2/yuvxyb. The SIMD path extracts
+//! each lane to scalar, runs Newton-Raphson, then reloads — same as the
+//! pre-consolidation AVX2 body.
 //!
 //! Data layout: separate channel buffers (SoA), not interleaved.
+//!
+//! **magetypes-consolidated** (W43-2 chunk-6): the three forward and three
+//! inverse variants (AVX2 / NEON / WASM128) previously copy-pasted in this
+//! file collapse to two `#[magetypes(...)]` bodies (`forward_xyb_impl`,
+//! `inverse_xyb_planar_impl`) plus a scalar interleave wrapper for the
+//! AoS `xyb_to_linear_rgb_batch` path. Each `#[magetypes(...)]` generates
+//! one `#[arcane]`-wrapped variant per listed tier:
+//!   - `*_v4` (x86_64 AVX-512 native 256-bit f32x8, opt-in via the
+//!     `avx512` cargo feature)
+//!   - `*_v3` (x86_64 AVX2, native 256-bit f32x8)
+//!   - `*_neon` (aarch64, 2× f32x4 polyfill of f32x8)
+//!   - `*_wasm128` (wasm32, 2× f32x4 polyfill of f32x8)
+//!   - `*_scalar` (portable scalar fallback)
+//!
+//! Pure-f32 kernels: the v4 tier compiles cleanly here (no `f64x4` is
+//! required inside the SIMD body — the cube root happens on extracted
+//! `[f32; 8]` lanes through the precision-critical `cbrt_fast` scalar).
+//! Contrast with W43-2 chunk-5's `pixel_domain_loss` body which DID
+//! require `f64x4` (8th-power norm) and was capped at `v3` because
+//! magetypes 0.9.23 has no `F64x4Backend` for `X64V4Token`.
+
+use archmage::prelude::*;
 
 // --- Constants ---
 
@@ -37,14 +61,13 @@ const OPSIN_BIAS: [f32; 3] = [0.003_793_073_4; 3];
 #[allow(clippy::excessive_precision)]
 const NEG_CBRT_BIAS: [f32; 3] = [-0.155_954_2; 3];
 
-// --- Forward XYB (linear RGB → XYB) ---
+// --- Public dispatch entry points ---
 
 /// Convert separate R, G, B channel buffers to separate X, Y, B channel buffers.
 ///
 /// All buffers must be at least `n` elements. Uses SIMD for the inner loop.
 /// The cube root uses Newton-Raphson in f64 for precision.
 #[inline]
-#[allow(clippy::too_many_arguments)]
 pub fn linear_rgb_to_xyb_batch(
     r: &[f32],
     g: &[f32],
@@ -61,34 +84,15 @@ pub fn linear_rgb_to_xyb_batch(
         .min(y_out.len())
         .min(b_out.len());
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::X64V3Token::summon() {
-            forward_xyb_avx2(token, r, g, b, x_out, y_out, b_out, n);
-            return;
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::NeonToken::summon() {
-            forward_xyb_neon(token, r, g, b, x_out, y_out, b_out, n);
-            return;
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::Wasm128Token::summon() {
-            forward_xyb_wasm128(token, r, g, b, x_out, y_out, b_out, n);
-            return;
-        }
-    }
-
-    forward_xyb_scalar(r, g, b, x_out, y_out, b_out, n);
+    // Dispatch through incant! — picks the best magetypes-generated variant
+    // at runtime. Falls through to `_scalar` on platforms without a SIMD
+    // token. Pure-f32 body — `v4` (AVX-512) compiles fine here; gated on
+    // the `avx512` cargo feature so default builds keep `v3` as the
+    // x86_64 ceiling.
+    incant!(
+        forward_xyb_impl(r, g, b, x_out, y_out, b_out, n),
+        [v4, v3, neon, wasm128, scalar]
+    )
 }
 
 /// Convert separate X, Y, B channel buffers to planar linear RGB.
@@ -108,39 +112,23 @@ pub fn xyb_to_linear_rgb_planar(
     debug_assert!(xyb_x.len() >= n && xyb_y.len() >= n && xyb_b.len() >= n);
     debug_assert!(out_r.len() >= n && out_g.len() >= n && out_b.len() >= n);
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::X64V3Token::summon() {
-            inverse_xyb_planar_avx2(token, xyb_x, xyb_y, xyb_b, out_r, out_g, out_b, n);
-            return;
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::NeonToken::summon() {
-            inverse_xyb_planar_neon(token, xyb_x, xyb_y, xyb_b, out_r, out_g, out_b, n);
-            return;
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::Wasm128Token::summon() {
-            inverse_xyb_planar_wasm128(token, xyb_x, xyb_y, xyb_b, out_r, out_g, out_b, n);
-            return;
-        }
-    }
-
-    inverse_xyb_planar_scalar(xyb_x, xyb_y, xyb_b, out_r, out_g, out_b, n);
+    incant!(
+        inverse_xyb_planar_impl(xyb_x, xyb_y, xyb_b, out_r, out_g, out_b, n),
+        [v4, v3, neon, wasm128, scalar]
+    )
 }
 
 /// Convert separate X, Y, B channel buffers to interleaved linear RGB.
 ///
 /// Output is `[R0, G0, B0, R1, G1, B1, ...]` with length `3 * n`.
+///
+/// Implementation: run the planar inverse into temporary buffers, then
+/// scalar-interleave. The pre-consolidation per-arch bodies open-coded
+/// the interleave for each SIMD width; consolidating routes through the
+/// planar kernel (which is the load-bearing inner loop) and pays a
+/// modest interleave pass on top. The fast path for most callers is
+/// `xyb_to_linear_rgb_planar`; the interleaved entry exists for the
+/// few decoder consumers that need AoS output.
 #[inline]
 pub fn xyb_to_linear_rgb_batch(
     xyb_x: &[f32],
@@ -152,37 +140,28 @@ pub fn xyb_to_linear_rgb_batch(
     debug_assert!(xyb_x.len() >= n && xyb_y.len() >= n && xyb_b.len() >= n);
     debug_assert!(linear_rgb.len() >= n * 3);
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::X64V3Token::summon() {
-            inverse_xyb_avx2(token, xyb_x, xyb_y, xyb_b, linear_rgb, n);
-            return;
-        }
-    }
+    // Allocate tiny per-call scratch only when the caller actually uses AoS.
+    // The inner kernel is the same `inverse_xyb_planar_impl` that the planar
+    // entry uses; the scalar interleave below is O(n) memcpy-style writes.
+    extern crate alloc;
+    use alloc::vec;
+    let mut r = vec![0.0f32; n];
+    let mut g = vec![0.0f32; n];
+    let mut b = vec![0.0f32; n];
 
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::NeonToken::summon() {
-            inverse_xyb_neon(token, xyb_x, xyb_y, xyb_b, linear_rgb, n);
-            return;
-        }
-    }
+    incant!(
+        inverse_xyb_planar_impl(xyb_x, xyb_y, xyb_b, &mut r, &mut g, &mut b, n),
+        [v4, v3, neon, wasm128, scalar]
+    );
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::Wasm128Token::summon() {
-            inverse_xyb_wasm128(token, xyb_x, xyb_y, xyb_b, linear_rgb, n);
-            return;
-        }
+    for i in 0..n {
+        linear_rgb[i * 3] = r[i];
+        linear_rgb[i * 3 + 1] = g[i];
+        linear_rgb[i * 3 + 2] = b[i];
     }
-
-    inverse_xyb_scalar(xyb_x, xyb_y, xyb_b, linear_rgb, n);
 }
 
-// --- Scalar fallbacks ---
+// --- Scalar cube root helper ---
 
 /// Newton-Raphson cube root with bit-manipulation initial guess.
 /// 2 iterations in f64 gives ~1e-7 relative error.
@@ -206,6 +185,8 @@ fn cbrt_fast(x: f32) -> f32 {
     t = t * (xf64 + xf64 + r) / (xf64 + r + r);
     t as f32
 }
+
+// --- Scalar fallbacks (also reused by the magetypes `_scalar` tier internally) ---
 
 #[inline]
 pub fn forward_xyb_scalar(
@@ -349,14 +330,31 @@ pub fn inverse_xyb_scalar(
     }
 }
 
-// --- AVX2 implementations ---
+// ============================================================================
+// magetypes-consolidated SIMD implementation — forward (RGB → XYB)
+// ============================================================================
+//
+// Single body, one source of truth. The `#[magetypes(...)]` macro generates
+// one `#[arcane]`-wrapped variant per listed tier:
+//   - `forward_xyb_impl_v4`      (x86_64 AVX-512 256-bit f32x8, opt-in `avx512`)
+//   - `forward_xyb_impl_v3`      (x86_64 AVX2, native 256-bit f32x8)
+//   - `forward_xyb_impl_neon`    (aarch64, 2× f32x4 polyfill of f32x8)
+//   - `forward_xyb_impl_wasm128` (wasm32, 2× f32x4 polyfill of f32x8)
+//   - `forward_xyb_impl_scalar`  (portable scalar fallback)
+//
+// FMA association: outermost is `m00 * r + (m01 * g + (m02 * b + bias0))`,
+// matching the pre-consolidation AVX2/NEON/WASM bodies bit-for-bit. The
+// cube root extracts each lane to scalar, runs `cbrt_fast` (f64 Newton-
+// Raphson), and rebuilds an `f32x8`. This is the same scalar-cbrt pattern
+// the pre-consolidation AVX2 body used — proven precision-critical for
+// XYB encoding. **Do not** replace with a SIMD `cbrt_lowp`; the f64
+// Newton-Raphson is the discipline this kernel relies on for hash-lock
+// byte-identity through downstream quantization.
 
-#[cfg(target_arch = "x86_64")]
-#[inline]
-#[archmage::arcane]
+#[magetypes(define(f32x8), v4, v3, neon, wasm128, scalar)]
 #[allow(clippy::too_many_arguments)]
-pub fn forward_xyb_avx2(
-    token: archmage::X64V3Token,
+pub fn forward_xyb_impl(
+    token: Token,
     r: &[f32],
     g: &[f32],
     b: &[f32],
@@ -365,8 +363,6 @@ pub fn forward_xyb_avx2(
     b_out: &mut [f32],
     n: usize,
 ) {
-    use magetypes::simd::f32x8;
-
     let m00 = f32x8::splat(token, OPSIN_MATRIX[0][0]);
     let m01 = f32x8::splat(token, OPSIN_MATRIX[0][1]);
     let m02 = f32x8::splat(token, OPSIN_MATRIX[0][2]);
@@ -387,17 +383,14 @@ pub fn forward_xyb_avx2(
 
     let chunks = n / 8;
     let simd_n = chunks * 8;
-    let r_s = &r[..simd_n];
-    let g_s = &g[..simd_n];
-    let b_s = &b[..simd_n];
 
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let rv = crate::load_f32x8(token, r_s, base);
-        let gv = crate::load_f32x8(token, g_s, base);
-        let bv = crate::load_f32x8(token, b_s, base);
+        let rv = f32x8::from_slice(token, &r[base..]);
+        let gv = f32x8::from_slice(token, &g[base..]);
+        let bv = f32x8::from_slice(token, &b[base..]);
 
-        // Matrix multiply + bias (FMA chains)
+        // Matrix multiply + bias (FMA chains, association preserved)
         let mixed0 = m00.mul_add(rv, m01.mul_add(gv, m02.mul_add(bv, bias0)));
         let mixed1 = m10.mul_add(rv, m11.mul_add(gv, m12.mul_add(bv, bias1)));
         let mixed2 = m20.mul_add(rv, m21.mul_add(gv, m22.mul_add(bv, bias2)));
@@ -407,58 +400,68 @@ pub fn forward_xyb_avx2(
         let mixed1 = mixed1.max(zero);
         let mixed2 = mixed2.max(zero);
 
-        // Cube root: extract to scalar, Newton-Raphson, reload
-        // This is the proven pattern from fast-ssim2 — precision-critical
-        let mut m0_arr = [0.0f32; 8];
-        let mut m1_arr = [0.0f32; 8];
-        let mut m2_arr = [0.0f32; 8];
-        mixed0.store(m0_arr.as_mut_slice().try_into().unwrap());
-        mixed1.store(m1_arr.as_mut_slice().try_into().unwrap());
-        mixed2.store(m2_arr.as_mut_slice().try_into().unwrap());
+        // Cube root: extract to scalar, Newton-Raphson, reload — precision
+        // critical pattern from fast-ssim2 / pre-consolidation AVX2 body.
+        let m0_arr = mixed0.to_array();
+        let m1_arr = mixed1.to_array();
+        let m2_arr = mixed2.to_array();
+        let mut c0 = [0.0f32; 8];
+        let mut c1 = [0.0f32; 8];
+        let mut c2 = [0.0f32; 8];
         for j in 0..8 {
-            m0_arr[j] = cbrt_fast(m0_arr[j]);
-            m1_arr[j] = cbrt_fast(m1_arr[j]);
-            m2_arr[j] = cbrt_fast(m2_arr[j]);
+            c0[j] = cbrt_fast(m0_arr[j]);
+            c1[j] = cbrt_fast(m1_arr[j]);
+            c2[j] = cbrt_fast(m2_arr[j]);
         }
-        let l = f32x8::from_slice(token, &m0_arr) + neg_cbrt0;
-        let m = f32x8::from_slice(token, &m1_arr) + neg_cbrt1;
-        let s = f32x8::from_slice(token, &m2_arr) + neg_cbrt2;
+        let l = f32x8::from_array(token, c0) + neg_cbrt0;
+        let m = f32x8::from_array(token, c1) + neg_cbrt1;
+        let s = f32x8::from_array(token, c2) + neg_cbrt2;
 
         // XYB mixing
         let xv = half * (l - m);
         let yv = half * (l + m);
 
-        crate::store_f32x8(x_out, base, xv);
-        crate::store_f32x8(y_out, base, yv);
-        crate::store_f32x8(b_out, base, s);
+        let xs: &mut [f32; 8] = (&mut x_out[base..base + 8]).try_into().unwrap();
+        xv.store(xs);
+        let ys: &mut [f32; 8] = (&mut y_out[base..base + 8]).try_into().unwrap();
+        yv.store(ys);
+        let bs: &mut [f32; 8] = (&mut b_out[base..base + 8]).try_into().unwrap();
+        s.store(bs);
     }
 
     // Scalar remainder
-    let start = simd_n;
-    forward_xyb_scalar(
-        &r[start..],
-        &g[start..],
-        &b[start..],
-        &mut x_out[start..],
-        &mut y_out[start..],
-        &mut b_out[start..],
-        n - start,
-    );
+    if simd_n < n {
+        forward_xyb_scalar(
+            &r[simd_n..],
+            &g[simd_n..],
+            &b[simd_n..],
+            &mut x_out[simd_n..],
+            &mut y_out[simd_n..],
+            &mut b_out[simd_n..],
+            n - simd_n,
+        );
+    }
 }
 
-#[cfg(target_arch = "x86_64")]
-#[inline]
-#[archmage::arcane]
-pub fn inverse_xyb_avx2(
-    token: archmage::X64V3Token,
+// ============================================================================
+// magetypes-consolidated SIMD implementation — inverse planar (XYB → RGB)
+// ============================================================================
+//
+// Inverse direction has no cube root (the cube is a SIMD-friendly multiply
+// chain), so the body is shorter and entirely vectorizable.
+
+#[magetypes(define(f32x8), v4, v3, neon, wasm128, scalar)]
+#[allow(clippy::too_many_arguments)]
+pub fn inverse_xyb_planar_impl(
+    token: Token,
     xyb_x: &[f32],
     xyb_y: &[f32],
     xyb_b: &[f32],
-    linear_rgb: &mut [f32],
+    out_r: &mut [f32],
+    out_g: &mut [f32],
+    out_b: &mut [f32],
     n: usize,
 ) {
-    use magetypes::simd::f32x8;
-
     let neg_cbrt0 = f32x8::splat(token, -NEG_CBRT_BIAS[0]); // positive: cbrt(bias)
     let neg_cbrt1 = f32x8::splat(token, -NEG_CBRT_BIAS[1]);
     let neg_cbrt2 = f32x8::splat(token, -NEG_CBRT_BIAS[2]);
@@ -476,11 +479,13 @@ pub fn inverse_xyb_avx2(
     let inv22 = f32x8::splat(token, INV_OPSIN[2][2]);
 
     let chunks = n / 8;
+    let simd_n = chunks * 8;
+
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let x = crate::load_f32x8(token, xyb_x, base);
-        let y = crate::load_f32x8(token, xyb_y, base);
-        let b = crate::load_f32x8(token, xyb_b, base);
+        let x = f32x8::from_slice(token, &xyb_x[base..]);
+        let y = f32x8::from_slice(token, &xyb_y[base..]);
+        let b = f32x8::from_slice(token, &xyb_b[base..]);
 
         // Unmix to gamma-domain LMS + add cbrt(bias)
         let gamma_r = y + x + neg_cbrt0;
@@ -492,573 +497,105 @@ pub fn inverse_xyb_avx2(
         let mixed_g = gamma_g * gamma_g * gamma_g + neg_bias1;
         let mixed_b = gamma_b * gamma_b * gamma_b + neg_bias2;
 
-        // Inverse opsin matrix (FMA chains)
+        // Inverse opsin matrix (FMA chains, association preserved)
         let rv = inv00.mul_add(mixed_r, inv01.mul_add(mixed_g, inv02 * mixed_b));
         let gv = inv10.mul_add(mixed_r, inv11.mul_add(mixed_g, inv12 * mixed_b));
         let bv = inv20.mul_add(mixed_r, inv21.mul_add(mixed_g, inv22 * mixed_b));
 
-        // Store interleaved: [R0,G0,B0, R1,G1,B1, ...]
-        // No efficient SIMD scatter for AoS, so extract and interleave
-        let mut r_arr = [0.0f32; 8];
-        let mut g_arr = [0.0f32; 8];
-        let mut b_arr = [0.0f32; 8];
-        rv.store(r_arr.as_mut_slice().try_into().unwrap());
-        gv.store(g_arr.as_mut_slice().try_into().unwrap());
-        bv.store(b_arr.as_mut_slice().try_into().unwrap());
-        let out = &mut linear_rgb[base * 3..];
-        for i in 0..8 {
-            out[i * 3] = r_arr[i];
-            out[i * 3 + 1] = g_arr[i];
-            out[i * 3 + 2] = b_arr[i];
-        }
+        // Planar SIMD store — no scalar interleave needed on the hot path.
+        let rs: &mut [f32; 8] = (&mut out_r[base..base + 8]).try_into().unwrap();
+        rv.store(rs);
+        let gs: &mut [f32; 8] = (&mut out_g[base..base + 8]).try_into().unwrap();
+        gv.store(gs);
+        let bs: &mut [f32; 8] = (&mut out_b[base..base + 8]).try_into().unwrap();
+        bv.store(bs);
     }
 
-    // Scalar remainder
-    let start = chunks * 8;
-    inverse_xyb_scalar(
-        &xyb_x[start..],
-        &xyb_y[start..],
-        &xyb_b[start..],
-        &mut linear_rgb[start * 3..],
-        n - start,
-    );
+    if simd_n < n {
+        inverse_xyb_planar_scalar(
+            &xyb_x[simd_n..],
+            &xyb_y[simd_n..],
+            &xyb_b[simd_n..],
+            &mut out_r[simd_n..],
+            &mut out_g[simd_n..],
+            &mut out_b[simd_n..],
+            n - simd_n,
+        );
+    }
 }
+
+// ============================================================================
+// Backwards-compat suffixed re-exports
+// ============================================================================
+//
+// Pre-consolidation callers spelled the variants `forward_xyb_avx2` etc.
+// magetypes' tier names are `_v3` (AVX2) / `_neon` / `_wasm128`. Re-export
+// under the historical names so the external API stays stable.
+//
+// `inverse_xyb_*` (AoS interleaved) historical exports route through the
+// scalar wrapper that calls the planar magetypes body and interleaves on
+// the way out. The per-arch direct re-exports of the planar variant
+// satisfy callers that want to skip the dispatch.
 
 #[cfg(target_arch = "x86_64")]
+pub use forward_xyb_impl_v3 as forward_xyb_avx2;
+
+#[cfg(target_arch = "x86_64")]
+pub use inverse_xyb_planar_impl_v3 as inverse_xyb_planar_avx2;
+
+#[cfg(target_arch = "aarch64")]
+pub use forward_xyb_impl_neon as forward_xyb_neon;
+
+#[cfg(target_arch = "aarch64")]
+pub use inverse_xyb_planar_impl_neon as inverse_xyb_planar_neon;
+
+#[cfg(target_arch = "wasm32")]
+pub use forward_xyb_impl_wasm128 as forward_xyb_wasm128;
+
+#[cfg(target_arch = "wasm32")]
+pub use inverse_xyb_planar_impl_wasm128 as inverse_xyb_planar_wasm128;
+
+// AoS interleaved inverse — re-export the public dispatch entry under each
+// historical per-arch alias so existing callers keep compiling. Direct
+// per-arch fast paths into the AoS form are not exposed (the SIMD work
+// happens in the planar kernel; the interleave is a scalar tail).
+#[cfg(target_arch = "x86_64")]
 #[inline]
-#[archmage::arcane]
-#[allow(clippy::too_many_arguments)]
-pub fn inverse_xyb_planar_avx2(
-    token: archmage::X64V3Token,
+pub fn inverse_xyb_avx2(
+    _token: archmage::X64V3Token,
     xyb_x: &[f32],
     xyb_y: &[f32],
     xyb_b: &[f32],
-    out_r: &mut [f32],
-    out_g: &mut [f32],
-    out_b: &mut [f32],
+    linear_rgb: &mut [f32],
     n: usize,
 ) {
-    use magetypes::simd::f32x8;
-
-    let neg_cbrt0 = f32x8::splat(token, -NEG_CBRT_BIAS[0]);
-    let neg_cbrt1 = f32x8::splat(token, -NEG_CBRT_BIAS[1]);
-    let neg_cbrt2 = f32x8::splat(token, -NEG_CBRT_BIAS[2]);
-    let neg_bias0 = f32x8::splat(token, -OPSIN_BIAS[0]);
-    let neg_bias1 = f32x8::splat(token, -OPSIN_BIAS[1]);
-    let neg_bias2 = f32x8::splat(token, -OPSIN_BIAS[2]);
-    let inv00 = f32x8::splat(token, INV_OPSIN[0][0]);
-    let inv01 = f32x8::splat(token, INV_OPSIN[0][1]);
-    let inv02 = f32x8::splat(token, INV_OPSIN[0][2]);
-    let inv10 = f32x8::splat(token, INV_OPSIN[1][0]);
-    let inv11 = f32x8::splat(token, INV_OPSIN[1][1]);
-    let inv12 = f32x8::splat(token, INV_OPSIN[1][2]);
-    let inv20 = f32x8::splat(token, INV_OPSIN[2][0]);
-    let inv21 = f32x8::splat(token, INV_OPSIN[2][1]);
-    let inv22 = f32x8::splat(token, INV_OPSIN[2][2]);
-
-    let chunks = n / 8;
-    for chunk in 0..chunks {
-        let base = chunk * 8;
-        let x = crate::load_f32x8(token, xyb_x, base);
-        let y = crate::load_f32x8(token, xyb_y, base);
-        let b = crate::load_f32x8(token, xyb_b, base);
-
-        // Unmix to gamma-domain LMS + add cbrt(bias)
-        let gamma_r = y + x + neg_cbrt0;
-        let gamma_g = y - x + neg_cbrt1;
-        let gamma_b = b + neg_cbrt2;
-
-        // Cube and subtract bias
-        let mixed_r = gamma_r * gamma_r * gamma_r + neg_bias0;
-        let mixed_g = gamma_g * gamma_g * gamma_g + neg_bias1;
-        let mixed_b = gamma_b * gamma_b * gamma_b + neg_bias2;
-
-        // Inverse opsin matrix (FMA chains)
-        let rv = inv00.mul_add(mixed_r, inv01.mul_add(mixed_g, inv02 * mixed_b));
-        let gv = inv10.mul_add(mixed_r, inv11.mul_add(mixed_g, inv12 * mixed_b));
-        let bv = inv20.mul_add(mixed_r, inv21.mul_add(mixed_g, inv22 * mixed_b));
-
-        // Store planar — direct SIMD store, no scalar interleave needed
-        crate::store_f32x8(out_r, base, rv);
-        crate::store_f32x8(out_g, base, gv);
-        crate::store_f32x8(out_b, base, bv);
-    }
-
-    // Scalar remainder
-    let start = chunks * 8;
-    inverse_xyb_planar_scalar(
-        &xyb_x[start..],
-        &xyb_y[start..],
-        &xyb_b[start..],
-        &mut out_r[start..],
-        &mut out_g[start..],
-        &mut out_b[start..],
-        n - start,
-    );
-}
-
-// --- aarch64 NEON implementations ---
-
-#[cfg(target_arch = "aarch64")]
-#[inline]
-#[archmage::arcane]
-#[allow(clippy::too_many_arguments)]
-pub fn forward_xyb_neon(
-    token: archmage::NeonToken,
-    r: &[f32],
-    g: &[f32],
-    b: &[f32],
-    x_out: &mut [f32],
-    y_out: &mut [f32],
-    b_out: &mut [f32],
-    n: usize,
-) {
-    use magetypes::simd::f32x4;
-
-    let m00 = f32x4::splat(token, OPSIN_MATRIX[0][0]);
-    let m01 = f32x4::splat(token, OPSIN_MATRIX[0][1]);
-    let m02 = f32x4::splat(token, OPSIN_MATRIX[0][2]);
-    let m10 = f32x4::splat(token, OPSIN_MATRIX[1][0]);
-    let m11 = f32x4::splat(token, OPSIN_MATRIX[1][1]);
-    let m12 = f32x4::splat(token, OPSIN_MATRIX[1][2]);
-    let m20 = f32x4::splat(token, OPSIN_MATRIX[2][0]);
-    let m21 = f32x4::splat(token, OPSIN_MATRIX[2][1]);
-    let m22 = f32x4::splat(token, OPSIN_MATRIX[2][2]);
-    let bias0 = f32x4::splat(token, OPSIN_BIAS[0]);
-    let bias1 = f32x4::splat(token, OPSIN_BIAS[1]);
-    let bias2 = f32x4::splat(token, OPSIN_BIAS[2]);
-    let neg_cbrt0 = f32x4::splat(token, NEG_CBRT_BIAS[0]);
-    let neg_cbrt1 = f32x4::splat(token, NEG_CBRT_BIAS[1]);
-    let neg_cbrt2 = f32x4::splat(token, NEG_CBRT_BIAS[2]);
-    let half = f32x4::splat(token, 0.5);
-    let zero = f32x4::zero(token);
-
-    let chunks = n / 4;
-    let simd_n = chunks * 4;
-    let r_s = &r[..simd_n];
-    let g_s = &g[..simd_n];
-    let b_s = &b[..simd_n];
-
-    for chunk in 0..chunks {
-        let base = chunk * 4;
-        let rv = f32x4::from_slice(token, &r_s[base..]);
-        let gv = f32x4::from_slice(token, &g_s[base..]);
-        let bv = f32x4::from_slice(token, &b_s[base..]);
-
-        let mixed0 = m00.mul_add(rv, m01.mul_add(gv, m02.mul_add(bv, bias0)));
-        let mixed1 = m10.mul_add(rv, m11.mul_add(gv, m12.mul_add(bv, bias1)));
-        let mixed2 = m20.mul_add(rv, m21.mul_add(gv, m22.mul_add(bv, bias2)));
-
-        let mixed0 = mixed0.max(zero);
-        let mixed1 = mixed1.max(zero);
-        let mixed2 = mixed2.max(zero);
-
-        // Scalar cbrt (same approach as AVX2 — precision-critical)
-        let mut m0_arr = [0.0f32; 4];
-        let mut m1_arr = [0.0f32; 4];
-        let mut m2_arr = [0.0f32; 4];
-        mixed0.store(m0_arr.as_mut_slice().try_into().unwrap());
-        mixed1.store(m1_arr.as_mut_slice().try_into().unwrap());
-        mixed2.store(m2_arr.as_mut_slice().try_into().unwrap());
-        for j in 0..4 {
-            m0_arr[j] = cbrt_fast(m0_arr[j]);
-            m1_arr[j] = cbrt_fast(m1_arr[j]);
-            m2_arr[j] = cbrt_fast(m2_arr[j]);
-        }
-        let l = f32x4::from_slice(token, &m0_arr) + neg_cbrt0;
-        let m = f32x4::from_slice(token, &m1_arr) + neg_cbrt1;
-        let s = f32x4::from_slice(token, &m2_arr) + neg_cbrt2;
-
-        let xv = half * (l - m);
-        let yv = half * (l + m);
-
-        xv.store((&mut x_out[base..base + 4]).try_into().unwrap());
-        yv.store((&mut y_out[base..base + 4]).try_into().unwrap());
-        s.store((&mut b_out[base..base + 4]).try_into().unwrap());
-    }
-
-    let start = simd_n;
-    forward_xyb_scalar(
-        &r[start..],
-        &g[start..],
-        &b[start..],
-        &mut x_out[start..],
-        &mut y_out[start..],
-        &mut b_out[start..],
-        n - start,
-    );
+    xyb_to_linear_rgb_batch(xyb_x, xyb_y, xyb_b, linear_rgb, n);
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-#[archmage::arcane]
 pub fn inverse_xyb_neon(
-    token: archmage::NeonToken,
+    _token: archmage::NeonToken,
     xyb_x: &[f32],
     xyb_y: &[f32],
     xyb_b: &[f32],
     linear_rgb: &mut [f32],
     n: usize,
 ) {
-    use magetypes::simd::f32x4;
-
-    let neg_cbrt0 = f32x4::splat(token, -NEG_CBRT_BIAS[0]);
-    let neg_cbrt1 = f32x4::splat(token, -NEG_CBRT_BIAS[1]);
-    let neg_cbrt2 = f32x4::splat(token, -NEG_CBRT_BIAS[2]);
-    let neg_bias0 = f32x4::splat(token, -OPSIN_BIAS[0]);
-    let neg_bias1 = f32x4::splat(token, -OPSIN_BIAS[1]);
-    let neg_bias2 = f32x4::splat(token, -OPSIN_BIAS[2]);
-    let inv00 = f32x4::splat(token, INV_OPSIN[0][0]);
-    let inv01 = f32x4::splat(token, INV_OPSIN[0][1]);
-    let inv02 = f32x4::splat(token, INV_OPSIN[0][2]);
-    let inv10 = f32x4::splat(token, INV_OPSIN[1][0]);
-    let inv11 = f32x4::splat(token, INV_OPSIN[1][1]);
-    let inv12 = f32x4::splat(token, INV_OPSIN[1][2]);
-    let inv20 = f32x4::splat(token, INV_OPSIN[2][0]);
-    let inv21 = f32x4::splat(token, INV_OPSIN[2][1]);
-    let inv22 = f32x4::splat(token, INV_OPSIN[2][2]);
-
-    let chunks = n / 4;
-    for chunk in 0..chunks {
-        let base = chunk * 4;
-        let x = f32x4::from_slice(token, &xyb_x[base..]);
-        let y = f32x4::from_slice(token, &xyb_y[base..]);
-        let b = f32x4::from_slice(token, &xyb_b[base..]);
-
-        let gamma_r = y + x + neg_cbrt0;
-        let gamma_g = y - x + neg_cbrt1;
-        let gamma_b = b + neg_cbrt2;
-
-        let mixed_r = gamma_r * gamma_r * gamma_r + neg_bias0;
-        let mixed_g = gamma_g * gamma_g * gamma_g + neg_bias1;
-        let mixed_b = gamma_b * gamma_b * gamma_b + neg_bias2;
-
-        let rv = inv00.mul_add(mixed_r, inv01.mul_add(mixed_g, inv02 * mixed_b));
-        let gv = inv10.mul_add(mixed_r, inv11.mul_add(mixed_g, inv12 * mixed_b));
-        let bv = inv20.mul_add(mixed_r, inv21.mul_add(mixed_g, inv22 * mixed_b));
-
-        let mut r_arr = [0.0f32; 4];
-        let mut g_arr = [0.0f32; 4];
-        let mut b_arr = [0.0f32; 4];
-        rv.store(r_arr.as_mut_slice().try_into().unwrap());
-        gv.store(g_arr.as_mut_slice().try_into().unwrap());
-        bv.store(b_arr.as_mut_slice().try_into().unwrap());
-        let out = &mut linear_rgb[base * 3..];
-        for i in 0..4 {
-            out[i * 3] = r_arr[i];
-            out[i * 3 + 1] = g_arr[i];
-            out[i * 3 + 2] = b_arr[i];
-        }
-    }
-
-    let start = chunks * 4;
-    inverse_xyb_scalar(
-        &xyb_x[start..],
-        &xyb_y[start..],
-        &xyb_b[start..],
-        &mut linear_rgb[start * 3..],
-        n - start,
-    );
-}
-
-#[cfg(target_arch = "aarch64")]
-#[inline]
-#[archmage::arcane]
-#[allow(clippy::too_many_arguments)]
-pub fn inverse_xyb_planar_neon(
-    token: archmage::NeonToken,
-    xyb_x: &[f32],
-    xyb_y: &[f32],
-    xyb_b: &[f32],
-    out_r: &mut [f32],
-    out_g: &mut [f32],
-    out_b: &mut [f32],
-    n: usize,
-) {
-    use magetypes::simd::f32x4;
-
-    let neg_cbrt0 = f32x4::splat(token, -NEG_CBRT_BIAS[0]);
-    let neg_cbrt1 = f32x4::splat(token, -NEG_CBRT_BIAS[1]);
-    let neg_cbrt2 = f32x4::splat(token, -NEG_CBRT_BIAS[2]);
-    let neg_bias0 = f32x4::splat(token, -OPSIN_BIAS[0]);
-    let neg_bias1 = f32x4::splat(token, -OPSIN_BIAS[1]);
-    let neg_bias2 = f32x4::splat(token, -OPSIN_BIAS[2]);
-    let inv00 = f32x4::splat(token, INV_OPSIN[0][0]);
-    let inv01 = f32x4::splat(token, INV_OPSIN[0][1]);
-    let inv02 = f32x4::splat(token, INV_OPSIN[0][2]);
-    let inv10 = f32x4::splat(token, INV_OPSIN[1][0]);
-    let inv11 = f32x4::splat(token, INV_OPSIN[1][1]);
-    let inv12 = f32x4::splat(token, INV_OPSIN[1][2]);
-    let inv20 = f32x4::splat(token, INV_OPSIN[2][0]);
-    let inv21 = f32x4::splat(token, INV_OPSIN[2][1]);
-    let inv22 = f32x4::splat(token, INV_OPSIN[2][2]);
-
-    let chunks = n / 4;
-    for chunk in 0..chunks {
-        let base = chunk * 4;
-        let x = f32x4::from_slice(token, &xyb_x[base..]);
-        let y = f32x4::from_slice(token, &xyb_y[base..]);
-        let b = f32x4::from_slice(token, &xyb_b[base..]);
-
-        let gamma_r = y + x + neg_cbrt0;
-        let gamma_g = y - x + neg_cbrt1;
-        let gamma_b = b + neg_cbrt2;
-
-        let mixed_r = gamma_r * gamma_r * gamma_r + neg_bias0;
-        let mixed_g = gamma_g * gamma_g * gamma_g + neg_bias1;
-        let mixed_b = gamma_b * gamma_b * gamma_b + neg_bias2;
-
-        let rv = inv00.mul_add(mixed_r, inv01.mul_add(mixed_g, inv02 * mixed_b));
-        let gv = inv10.mul_add(mixed_r, inv11.mul_add(mixed_g, inv12 * mixed_b));
-        let bv = inv20.mul_add(mixed_r, inv21.mul_add(mixed_g, inv22 * mixed_b));
-
-        rv.store((&mut out_r[base..base + 4]).try_into().unwrap());
-        gv.store((&mut out_g[base..base + 4]).try_into().unwrap());
-        bv.store((&mut out_b[base..base + 4]).try_into().unwrap());
-    }
-
-    let start = chunks * 4;
-    inverse_xyb_planar_scalar(
-        &xyb_x[start..],
-        &xyb_y[start..],
-        &xyb_b[start..],
-        &mut out_r[start..],
-        &mut out_g[start..],
-        &mut out_b[start..],
-        n - start,
-    );
-}
-
-// --- wasm32 SIMD128 implementations ---
-
-#[cfg(target_arch = "wasm32")]
-#[inline]
-#[archmage::arcane]
-#[allow(clippy::too_many_arguments)]
-pub fn forward_xyb_wasm128(
-    token: archmage::Wasm128Token,
-    r: &[f32],
-    g: &[f32],
-    b: &[f32],
-    x_out: &mut [f32],
-    y_out: &mut [f32],
-    b_out: &mut [f32],
-    n: usize,
-) {
-    use magetypes::simd::f32x4;
-
-    let m00 = f32x4::splat(token, OPSIN_MATRIX[0][0]);
-    let m01 = f32x4::splat(token, OPSIN_MATRIX[0][1]);
-    let m02 = f32x4::splat(token, OPSIN_MATRIX[0][2]);
-    let m10 = f32x4::splat(token, OPSIN_MATRIX[1][0]);
-    let m11 = f32x4::splat(token, OPSIN_MATRIX[1][1]);
-    let m12 = f32x4::splat(token, OPSIN_MATRIX[1][2]);
-    let m20 = f32x4::splat(token, OPSIN_MATRIX[2][0]);
-    let m21 = f32x4::splat(token, OPSIN_MATRIX[2][1]);
-    let m22 = f32x4::splat(token, OPSIN_MATRIX[2][2]);
-    let bias0 = f32x4::splat(token, OPSIN_BIAS[0]);
-    let bias1 = f32x4::splat(token, OPSIN_BIAS[1]);
-    let bias2 = f32x4::splat(token, OPSIN_BIAS[2]);
-    let neg_cbrt0 = f32x4::splat(token, NEG_CBRT_BIAS[0]);
-    let neg_cbrt1 = f32x4::splat(token, NEG_CBRT_BIAS[1]);
-    let neg_cbrt2 = f32x4::splat(token, NEG_CBRT_BIAS[2]);
-    let half = f32x4::splat(token, 0.5);
-    let zero = f32x4::zero(token);
-
-    let chunks = n / 4;
-    let simd_n = chunks * 4;
-    let r_s = &r[..simd_n];
-    let g_s = &g[..simd_n];
-    let b_s = &b[..simd_n];
-
-    for chunk in 0..chunks {
-        let base = chunk * 4;
-        let rv = f32x4::from_slice(token, &r_s[base..]);
-        let gv = f32x4::from_slice(token, &g_s[base..]);
-        let bv = f32x4::from_slice(token, &b_s[base..]);
-
-        let mixed0 = m00.mul_add(rv, m01.mul_add(gv, m02.mul_add(bv, bias0)));
-        let mixed1 = m10.mul_add(rv, m11.mul_add(gv, m12.mul_add(bv, bias1)));
-        let mixed2 = m20.mul_add(rv, m21.mul_add(gv, m22.mul_add(bv, bias2)));
-
-        let mixed0 = mixed0.max(zero);
-        let mixed1 = mixed1.max(zero);
-        let mixed2 = mixed2.max(zero);
-
-        // Scalar cbrt (same approach as AVX2 — precision-critical)
-        let mut m0_arr = [0.0f32; 4];
-        let mut m1_arr = [0.0f32; 4];
-        let mut m2_arr = [0.0f32; 4];
-        mixed0.store(m0_arr.as_mut_slice().try_into().unwrap());
-        mixed1.store(m1_arr.as_mut_slice().try_into().unwrap());
-        mixed2.store(m2_arr.as_mut_slice().try_into().unwrap());
-        for j in 0..4 {
-            m0_arr[j] = cbrt_fast(m0_arr[j]);
-            m1_arr[j] = cbrt_fast(m1_arr[j]);
-            m2_arr[j] = cbrt_fast(m2_arr[j]);
-        }
-        let l = f32x4::from_slice(token, &m0_arr) + neg_cbrt0;
-        let m = f32x4::from_slice(token, &m1_arr) + neg_cbrt1;
-        let s = f32x4::from_slice(token, &m2_arr) + neg_cbrt2;
-
-        let xv = half * (l - m);
-        let yv = half * (l + m);
-
-        xv.store((&mut x_out[base..base + 4]).try_into().unwrap());
-        yv.store((&mut y_out[base..base + 4]).try_into().unwrap());
-        s.store((&mut b_out[base..base + 4]).try_into().unwrap());
-    }
-
-    let start = simd_n;
-    forward_xyb_scalar(
-        &r[start..],
-        &g[start..],
-        &b[start..],
-        &mut x_out[start..],
-        &mut y_out[start..],
-        &mut b_out[start..],
-        n - start,
-    );
+    xyb_to_linear_rgb_batch(xyb_x, xyb_y, xyb_b, linear_rgb, n);
 }
 
 #[cfg(target_arch = "wasm32")]
 #[inline]
-#[archmage::arcane]
 pub fn inverse_xyb_wasm128(
-    token: archmage::Wasm128Token,
+    _token: archmage::Wasm128Token,
     xyb_x: &[f32],
     xyb_y: &[f32],
     xyb_b: &[f32],
     linear_rgb: &mut [f32],
     n: usize,
 ) {
-    use magetypes::simd::f32x4;
-
-    let neg_cbrt0 = f32x4::splat(token, -NEG_CBRT_BIAS[0]);
-    let neg_cbrt1 = f32x4::splat(token, -NEG_CBRT_BIAS[1]);
-    let neg_cbrt2 = f32x4::splat(token, -NEG_CBRT_BIAS[2]);
-    let neg_bias0 = f32x4::splat(token, -OPSIN_BIAS[0]);
-    let neg_bias1 = f32x4::splat(token, -OPSIN_BIAS[1]);
-    let neg_bias2 = f32x4::splat(token, -OPSIN_BIAS[2]);
-    let inv00 = f32x4::splat(token, INV_OPSIN[0][0]);
-    let inv01 = f32x4::splat(token, INV_OPSIN[0][1]);
-    let inv02 = f32x4::splat(token, INV_OPSIN[0][2]);
-    let inv10 = f32x4::splat(token, INV_OPSIN[1][0]);
-    let inv11 = f32x4::splat(token, INV_OPSIN[1][1]);
-    let inv12 = f32x4::splat(token, INV_OPSIN[1][2]);
-    let inv20 = f32x4::splat(token, INV_OPSIN[2][0]);
-    let inv21 = f32x4::splat(token, INV_OPSIN[2][1]);
-    let inv22 = f32x4::splat(token, INV_OPSIN[2][2]);
-
-    let chunks = n / 4;
-    for chunk in 0..chunks {
-        let base = chunk * 4;
-        let x = f32x4::from_slice(token, &xyb_x[base..]);
-        let y = f32x4::from_slice(token, &xyb_y[base..]);
-        let b = f32x4::from_slice(token, &xyb_b[base..]);
-
-        let gamma_r = y + x + neg_cbrt0;
-        let gamma_g = y - x + neg_cbrt1;
-        let gamma_b = b + neg_cbrt2;
-
-        let mixed_r = gamma_r * gamma_r * gamma_r + neg_bias0;
-        let mixed_g = gamma_g * gamma_g * gamma_g + neg_bias1;
-        let mixed_b = gamma_b * gamma_b * gamma_b + neg_bias2;
-
-        let rv = inv00.mul_add(mixed_r, inv01.mul_add(mixed_g, inv02 * mixed_b));
-        let gv = inv10.mul_add(mixed_r, inv11.mul_add(mixed_g, inv12 * mixed_b));
-        let bv = inv20.mul_add(mixed_r, inv21.mul_add(mixed_g, inv22 * mixed_b));
-
-        let mut r_arr = [0.0f32; 4];
-        let mut g_arr = [0.0f32; 4];
-        let mut b_arr = [0.0f32; 4];
-        rv.store(r_arr.as_mut_slice().try_into().unwrap());
-        gv.store(g_arr.as_mut_slice().try_into().unwrap());
-        bv.store(b_arr.as_mut_slice().try_into().unwrap());
-        let out = &mut linear_rgb[base * 3..];
-        for i in 0..4 {
-            out[i * 3] = r_arr[i];
-            out[i * 3 + 1] = g_arr[i];
-            out[i * 3 + 2] = b_arr[i];
-        }
-    }
-
-    let start = chunks * 4;
-    inverse_xyb_scalar(
-        &xyb_x[start..],
-        &xyb_y[start..],
-        &xyb_b[start..],
-        &mut linear_rgb[start * 3..],
-        n - start,
-    );
-}
-
-#[cfg(target_arch = "wasm32")]
-#[inline]
-#[archmage::arcane]
-#[allow(clippy::too_many_arguments)]
-pub fn inverse_xyb_planar_wasm128(
-    token: archmage::Wasm128Token,
-    xyb_x: &[f32],
-    xyb_y: &[f32],
-    xyb_b: &[f32],
-    out_r: &mut [f32],
-    out_g: &mut [f32],
-    out_b: &mut [f32],
-    n: usize,
-) {
-    use magetypes::simd::f32x4;
-
-    let neg_cbrt0 = f32x4::splat(token, -NEG_CBRT_BIAS[0]);
-    let neg_cbrt1 = f32x4::splat(token, -NEG_CBRT_BIAS[1]);
-    let neg_cbrt2 = f32x4::splat(token, -NEG_CBRT_BIAS[2]);
-    let neg_bias0 = f32x4::splat(token, -OPSIN_BIAS[0]);
-    let neg_bias1 = f32x4::splat(token, -OPSIN_BIAS[1]);
-    let neg_bias2 = f32x4::splat(token, -OPSIN_BIAS[2]);
-    let inv00 = f32x4::splat(token, INV_OPSIN[0][0]);
-    let inv01 = f32x4::splat(token, INV_OPSIN[0][1]);
-    let inv02 = f32x4::splat(token, INV_OPSIN[0][2]);
-    let inv10 = f32x4::splat(token, INV_OPSIN[1][0]);
-    let inv11 = f32x4::splat(token, INV_OPSIN[1][1]);
-    let inv12 = f32x4::splat(token, INV_OPSIN[1][2]);
-    let inv20 = f32x4::splat(token, INV_OPSIN[2][0]);
-    let inv21 = f32x4::splat(token, INV_OPSIN[2][1]);
-    let inv22 = f32x4::splat(token, INV_OPSIN[2][2]);
-
-    let chunks = n / 4;
-    for chunk in 0..chunks {
-        let base = chunk * 4;
-        let x = f32x4::from_slice(token, &xyb_x[base..]);
-        let y = f32x4::from_slice(token, &xyb_y[base..]);
-        let b = f32x4::from_slice(token, &xyb_b[base..]);
-
-        let gamma_r = y + x + neg_cbrt0;
-        let gamma_g = y - x + neg_cbrt1;
-        let gamma_b = b + neg_cbrt2;
-
-        let mixed_r = gamma_r * gamma_r * gamma_r + neg_bias0;
-        let mixed_g = gamma_g * gamma_g * gamma_g + neg_bias1;
-        let mixed_b = gamma_b * gamma_b * gamma_b + neg_bias2;
-
-        let rv = inv00.mul_add(mixed_r, inv01.mul_add(mixed_g, inv02 * mixed_b));
-        let gv = inv10.mul_add(mixed_r, inv11.mul_add(mixed_g, inv12 * mixed_b));
-        let bv = inv20.mul_add(mixed_r, inv21.mul_add(mixed_g, inv22 * mixed_b));
-
-        rv.store((&mut out_r[base..base + 4]).try_into().unwrap());
-        gv.store((&mut out_g[base..base + 4]).try_into().unwrap());
-        bv.store((&mut out_b[base..base + 4]).try_into().unwrap());
-    }
-
-    let start = chunks * 4;
-    inverse_xyb_planar_scalar(
-        &xyb_x[start..],
-        &xyb_y[start..],
-        &xyb_b[start..],
-        &mut out_r[start..],
-        &mut out_g[start..],
-        &mut out_b[start..],
-        n - start,
-    );
+    xyb_to_linear_rgb_batch(xyb_x, xyb_y, xyb_b, linear_rgb, n);
 }
 
 #[cfg(test)]
@@ -1109,7 +646,8 @@ mod tests {
             b_ref[i] = s;
         }
 
-        // Dispatch — test all token permutations
+        // Dispatch — test all token permutations so every magetypes tier
+        // available on this host runs at least once.
         let report = archmage::testing::for_each_token_permutation(
             archmage::testing::CompileTimePolicy::Warn,
             |perm| {

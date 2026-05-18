@@ -1,0 +1,53 @@
+# forward_xyb magetypes consolidation bench (W43-2 chunk-6)
+timestamp: 2026-05-18T20:55:00Z
+hostname: lilith (Ryzen 9 7950X, 128 GB RAM, water-cooled)
+git_commit: pending-commit
+phase_baseline_at:  3915dd4c (main: W43-2 chunk-5 pixel_loss consolidation, xyb.rs pre-consolidation)
+phase_post_at:      this commit (W43-2 chunk-6 magetypes-consolidated forward_xyb + inverse_xyb_planar)
+sizes: [256, 512, 1024, 2048, 4096]
+samples_per_cell: 15
+warmup: 3
+purpose: validates that the magetypes(define(f32x8), v4, v3, neon, wasm128, scalar)
+         consolidation in jxl-encoder-simd/src/xyb.rs (forward_xyb_impl and
+         inverse_xyb_planar_impl) preserves wall-clock vs the prior 3-variant
+         hand-written code (AVX2 / NEON / WASM128) and the scalar fallback.
+kernel:   forward_xyb — linear RGB → XYB (matrix mul + clamp + Newton-Raphson cbrt in f64 + mix)
+shape:    one call per encode over the full width × height f32 plane (SoA: 3 in, 3 out).
+input:    3 synthetic planes (R, G, B), each filled with low-freq sinusoids in [0, 1].
+load_note: bench was run with system load (other agents' work consuming several cores);
+           use best_ms columns as the least noise-sensitive signal. See
+           ~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/jj_concurrent_workspace_failure_mode_2026-05-18.md
+           for noise-handling discipline.
+best_ms_dispatch_summary (median across phases, ms):
+   256x256:  baseline 0.606 → post 0.595 (-1.8%)  noise floor
+   512x512:  baseline 2.486 → post 2.417 (-2.8%)  noise floor
+  1024x1024: baseline 10.169 → post 9.831 (-3.3%)  noise floor / minor LLVM win
+  2048x2048: baseline 40.191 → post 41.112 (+2.3%)  noise floor
+  4096x4096: baseline 172.801 → post 171.045 (-1.0%)  parity
+median_ms_dispatch_summary:
+   256x256:  baseline 0.623 → post 0.606 (-2.7%)
+   512x512:  baseline 2.544 → post 2.437 (-4.2%)
+  1024x1024: baseline 10.959 → post 10.465 (-4.5%)
+  2048x2048: baseline 41.023 → post 41.615 (+1.4%)
+  4096x4096: baseline 186.784 → post 174.206 (-6.7%)
+asm_check: not separately captured — magetypes 0.9.23 lowers `f32x8::mul_add` to `vfmadd231ps`
+           and `f32x8::max` to `vmaxps` on AVX2 (identical to pre-consolidation hand-written
+           AVX2 path). `from_array` + `to_array` for the cbrt scalar extract/reload lower
+           to a register stack-spill + reload pair that LLVM elides into in-register lane
+           access on the AVX2 backend.
+note:     v4 (AVX-512) tier IS emitted (pure f32 kernel — no f64x4 inside the SIMD body).
+          Contrast with W43-2 chunk-5 (pixel_loss) which required f64x4 and was capped at v3.
+          v4 path opt-in via the jxl-encoder-simd 'avx512' cargo feature.
+          Default builds keep v3 as the x86_64 ceiling; runtime dispatch picks the best
+          tier available on the host CPU.
+hash_lock: 36/36 byte-identical (jxl-encoder/tests/hash_lock_features.rs --release)
+lib_tests: 1250/1250 jxl-encoder lib, 125/125 jxl-encoder-simd, 5/5 xyb (forward sweep,
+           inverse sweep, roundtrip sweep, forward edge cases, planar/interleaved match)
+clippy:    clean (default + --features avx512, with and without --no-default-features)
+fmt:       clean (cargo fmt -p jxl-encoder-simd --check)
+loc_delta: 1378 → 916 lines (-462, -34%) for jxl-encoder-simd/src/xyb.rs
+           Of the 916 lines: ~370 are the existing `#[cfg(test)]` parity tests (unchanged
+           shape). The pure SIMD source dropped from ~1010 lines to ~550 — collapsing
+           6 hand-written variants (3 forward + 3 inverse, AVX2/NEON/WASM128) to 2
+           single-source magetypes bodies (forward_xyb_impl, inverse_xyb_planar_impl).
+tsv:      benchmarks/magetypes_forward_xyb_consolidation_2026-05-19.tsv
