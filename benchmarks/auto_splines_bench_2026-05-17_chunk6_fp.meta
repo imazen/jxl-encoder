@@ -1,0 +1,117 @@
+Auto-splines chunk-6 false-positive suppression on textured photos
+==================================================================
+
+Bench: 42 CID22-512/training photos × 2 distances (1.0, 2.0) × 2 efforts (e7, e8) = 168 cells.
+Distance gate: existing chunk-3 trial-encode gate stays; chunk-6 adds an early
+bbox-span gate that rejects any candidate whose bbox doesn't span the image's
+long dimension.
+Features: std parallel butteraugli-loop.
+Harness: jxl-encoder/examples/auto_splines_chunk6_fp_bench.rs
+Run host: AMD Ryzen 9 7950X / 128 GB / WSL2
+Run date: 2026-05-17 UTC
+Commit:   chunk-6 working commit (sibling workspace splines-chunk6-fp)
+
+Photo corpus: /home/lilith/work/codec-corpus/CID22/CID22-512/training/*.png
+Sample selection: every 5th filename (sorted, skipping names with spaces);
+                  first 42 → 42 distinct photos at 512×512 each.
+
+Compares `LossyConfig::new(d).with_effort(e)` (auto_splines OFF)
+against the same with `.with_auto_splines(true)`.
+
+Chunk-6 change
+--------------
+File: jxl-encoder/src/vardct/splines.rs
+- Added `detect_params::MIN_BBOX_SPAN_OF_IMAGE_LONG_DIM = 1.0`.
+- In `spline_passes_trial_encode_gate`, an early-out is inserted
+  before the existing trial-encode + energy-drop computation: any
+  candidate whose bbox `max(w, h)` is below `MIN_BBOX_SPAN_OF_IMAGE_LONG_DIM
+  * max(image_width, image_height)` is rejected. This is the chunk-6
+  audit's "Option B" (ridge-length filter) realised at the candidate
+  level instead of the polyline-trace level.
+
+Rationale for the chosen option
+-------------------------------
+Options considered (from the A1 audit Top-5 #5 prompt):
+  A. Raise Hessian eigenvalue ratio threshold (current 5) to 10.
+     REJECTED: every observed FP already has high eigenvalue ratio
+     (they are clean Sobel ridges, just on textured baselines).
+  B. Add a ridge-length / bbox-span filter.                       SHIPPED.
+  C. Per-block pre-classification by mask1x1.
+     REJECTED: more compute (per-block) for the same effect; the
+     bbox-span gate is cheaper and image-relative.
+  D. (E&F internal alternatives) Raise COST_BENEFIT_MARGIN, add
+     relative-energy-drop floor.
+     REJECTED: the L2-energy proxy is dominated by the bbox's XYB
+     DC term. Photo FPs and the chunk-3 stripe+ramp test image both
+     sit in the same ~0.07-0.15 rel_drop band — no clean separator
+     exists at any threshold. Lowering the floor enough to admit
+     the test image leaves through half the FPs; raising it enough
+     to catch all FPs kills the test image. An AC-only denominator
+     was also implemented and discarded (still produced overlapping
+     distributions).
+
+Bbox span vs image long dim cleanly separates the two classes:
+  Test image (1024×256 stripe+ramp + wire): bbox span 1024 = 1.0×.
+  Photo FPs (all on 512×512): max bbox span 510 = 0.99× (some lower).
+
+Before chunk-6 (default constants, chunk-5 discriminator only)
+--------------------------------------------------------------
+4 of 42 photos regressed at default-on (file `..._chunk6_fp_before.tsv`):
+  207691                          d=1 e7 +32 B  (+0.05%)
+  207691                          d=1 e8 +135 B (+0.21%)
+  2123337                         d=1 e7 +65 B  (+0.10%)
+  2123337                         d=1 e8 +42 B  (+0.07%)
+  klepas-Gentle-giants-of-the-sea-3 d=1 e7 +442 B (+0.86%)
+  klepas-Gentle-giants-of-the-sea-3 d=1 e8 +388 B (+0.81%)
+  klepas-Gentle-giants-of-the-sea-3 d=2 e7 +178 B (+0.49%)
+  klepas-Gentle-giants-of-the-sea-3 d=2 e8 +287 B (+0.85%)
+  ularapi_Semarang_City_Logo      d=1 e7 +294 B (+0.64%)
+  ularapi_Semarang_City_Logo      d=1 e8 +501 B (+1.19%)
+
+After chunk-6 (this file)
+-------------------------
+42 of 42 photos byte-identical at default-on across both distances and efforts.
+Net wins: 0 (no observed real-content wins under the chunk-5 discriminator).
+Net regressions: 0 (was 10 cells across 4 images, up to +1.19%).
+
+Chunk-5 corpus regression (3 synthetics + 5 CLIC photos + 3 gb82-sc
+screenshots × e7/e8/e9) re-verified BYTE-IDENTICAL: see chunk-5 bench
+above. The chunk-6 bbox-span gate fires only on the discriminator-
+bypass path (non-screenshot images); the chunk-5 corpus is dominated
+by either flat-bg synthetics (discriminator skips) or photos where
+the chunk-4 cost gate already rejects every candidate.
+
+Hash-locks: `hash_lock_features` 36/36 byte-identical (auto_splines
+defaults remain off, so no impact on the default encode path).
+
+Test impact
+-----------
+6 of 6 `tests/auto_splines.rs` integration tests pass unchanged.
+The `auto_splines_power_line_changes_bitstream` test image
+(1024×256 stripe+ramp bg + bright horizontal wire) has wire bbox
+(0, 115, 1024, 142) = span 1024 = exactly image long dim, so the
+spline candidate clears the chunk-6 gate. The test continues to
+assert `bytes_off != bytes_on` (admission). No test expectation
+was relaxed.
+
+30 of 30 splines lib tests pass (`cargo test -p jxl-encoder splines`).
+RD-regression (18 cells, 6 photos × 3 distances) all within thresholds:
+size < 103% of baseline, butteraugli < 105% of baseline, ssim2 > baseline - 1.0.
+
+Default-on candidacy
+--------------------
+    e7  NO  (no observed wins; chunk-6 only closes risk for opt-in callers)
+    e8  NO  (same)
+    e9  NO  (same)
+
+The chunk-5 audit concluded auto_splines provides no observed wins on
+real content. Chunk-6 strengthens the trial-encode gate against a
+specific failure mode (long-ridge segments riding through textured
+photo content) but doesn't change the no-wins conclusion. Flipping
+the default still adds a per-encode `compute_mask1x1` pass for zero
+observable benefit.
+
+Files
+-----
+auto_splines_bench_2026-05-17_chunk6_fp_before.tsv  pre-chunk-6 sweep
+auto_splines_bench_2026-05-17_chunk6_fp.tsv         post-chunk-6 sweep

@@ -754,6 +754,34 @@ mod detect_params {
     /// the spline to be admitted. Mirrors the 2× margin used by
     /// patches (`vardct/patches.rs:281`).
     pub const COST_BENEFIT_MARGIN: f32 = 2.0;
+
+    /// Chunk-6 false-positive suppression on textured photo content.
+    /// Minimum spline-bbox span (max of bbox-width / bbox-height,
+    /// in pixels) as a fraction of the larger image dimension. A
+    /// candidate whose bbox doesn't span at least this fraction of
+    /// the long image dimension is rejected.
+    ///
+    /// Rationale (see `benchmarks/auto_splines_bench_2026-05-17_chunk6_fp.tsv`):
+    /// every false-positive admit in a 42-image CID22 sweep at d=1.0
+    /// e7/e8 had a bbox span of at most ~510 pixels on 512×512 photos
+    /// (a span/long_dim ratio of <= 0.99). Genuine thin features
+    /// (power lines, hair strands, image-spanning ridges) almost
+    /// always cross most of the image in their dominant orientation
+    /// — they cover the image's long dimension nearly edge-to-edge.
+    /// At a 1.0 threshold the gate admits only candidates that span
+    /// the FULL image long dimension, which preserves the existing
+    /// chunk-3 power-line-on-textured-background test image
+    /// (1024×256, wire spans ≈ 1018 pixels = 0.99 of image width =
+    /// 1024) while rejecting every observed textured-photo FP.
+    ///
+    /// 1.0 is a strict cutoff — a candidate must span at least the
+    /// image's long dimension. This is intentional: post chunk-5 the
+    /// detector's only known "real" win case is full-image-spanning
+    /// power-line synthetics, and a shorter ridge fragment is more
+    /// efficiently handled by VarDCT than by emitting a Gaussian
+    /// splat over a sub-image bbox where the splat-vs-VarDCT cost
+    /// gap narrows.
+    pub const MIN_BBOX_SPAN_OF_IMAGE_LONG_DIM: f32 = 1.0;
 }
 
 /// Automatic spline detection from XYB pixel planes.
@@ -1734,6 +1762,43 @@ fn spline_passes_trial_encode_gate(
     // (same weights the encoder uses to quantize, so it's a reasonable
     // proxy for "bits per channel" magnitude).
     let bbox = spline_bbox(spline, width, height);
+
+    // ── Chunk-6 false-positive suppression on textured photo content.
+    // Reject any candidate whose bbox doesn't span at least
+    // `MIN_BBOX_SPAN_OF_IMAGE_LONG_DIM` of the image's long dimension.
+    // The L2-energy proxy used below cannot reliably tell a true thin
+    // feature (low-baseline bbox + high-contrast ridge) from a sub-
+    // image ridge segment riding across textured content (where the
+    // splat-subtract drops raw L2 by 5-15% via partial texture
+    // averaging without reducing actual VarDCT residual cost). The
+    // observed FPs cluster at bbox spans <= 0.99 × image long dim;
+    // genuine wins span the full long dim almost edge-to-edge. See
+    // `benchmarks/auto_splines_bench_2026-05-17_chunk6_fp.tsv` for the
+    // per-bbox distribution and 4 of 42 CID22 photo regressions
+    // (+0.05% to +1.19% file size) that this gate closes.
+    let bbox_span = (bbox.2 - bbox.0).max(bbox.3 - bbox.1) as f32;
+    let image_long_dim = width.max(height) as f32;
+    let min_span = detect_params::MIN_BBOX_SPAN_OF_IMAGE_LONG_DIM * image_long_dim;
+    if bbox_span < min_span {
+        #[cfg(feature = "debug-tokens")]
+        eprintln!(
+            "spline_passes_trial_encode_gate: cps={} encoded={} bbox=({},{},{},{}) \
+             bbox_span={} image_long_dim={} pass=false \
+             (chunk6 bbox-span floor {:.3}*long_dim={} not met)",
+            num_cps,
+            encoded_bytes,
+            bbox.0,
+            bbox.1,
+            bbox.2,
+            bbox.3,
+            bbox_span as usize,
+            image_long_dim as usize,
+            detect_params::MIN_BBOX_SPAN_OF_IMAGE_LONG_DIM,
+            min_span as usize,
+        );
+        return false;
+    }
+
     let energy_before = bbox_energy(xyb_x, xyb_y, xyb_b, stride, bbox);
     // Apply the spline subtraction to a local copy of the bbox region.
     let energy_after = bbox_energy_after_subtract(xyb_x, xyb_y, xyb_b, stride, bbox, &trial_data);

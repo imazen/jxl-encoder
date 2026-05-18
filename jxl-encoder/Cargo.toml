@@ -240,6 +240,10 @@ name = "auto_splines_trace"
 path = "examples/auto_splines_trace.rs"
 
 [[example]]
+name = "auto_splines_chunk6_fp_bench"
+path = "examples/auto_splines_chunk6_fp_bench.rs"
+
+[[example]]
 name = "patches_gate_bench"
 path = "examples/patches_gate_bench.rs"
 
