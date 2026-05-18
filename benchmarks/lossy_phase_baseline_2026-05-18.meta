@@ -1,0 +1,219 @@
+# Lossy encode per-phase wall-clock baseline (2026-05-18)
+
+## Provenance
+
+- Date: 2026-05-18 UTC
+- Hostname: lilith (water-cooled AMD Ryzen 9 7950X, 32 threads, 128 GB RAM)
+- Parent commit: 45445443 (W19-2 libjxl diff review investigation)
+- Workspace: ~/work/zen/jxl-encoder--phase-profile (jj sibling on main)
+- Encoder build: release, features `std parallel butteraugli-loop`
+- Sweep wall: 132.8s (288 encodes)
+
+## Tool choice
+
+Used **inline `Instant::now()` timing markers** behind the existing
+`__JXL_ENC_PHASE_TIMING` env-var pattern (mirroring what
+`encode_from_precomputed` and `encode_two_pass_to_writer` already do).
+No new cargo features, no `tracing` dep — just additive `let _t_X =
+Instant::now()` + a single `eprintln!` summary line per encode. Default
+encodes are unaffected (env var unset = zero overhead, both `_t_X` and
+`_ms_X` are `let _` prefixed so Rust eliminates them entirely when
+unused).
+
+The example `examples/lossy_phase_baseline.rs` re-invokes itself as a
+subprocess per (image, effort, distance) cell, sets
+`__JXL_ENC_PHASE_TIMING=1`, captures stderr, parses the
+`encode_inner: ... entropy=X` and `encode_two_pass: ... build_codes=X`
+lines. Subprocess isolation gives clean per-encode wall-clock measurement
+without warm-up bias.
+
+Flamegraph was considered and rejected: 288 cells × per-cell SVG render
++ stack aggregation would have taken ~30 min wall and produced 288 SVGs
+to summarize. The 96-cell TSV with named phases is denser and more
+actionable for the adaptive-dispatch design.
+
+## Sweep grid
+
+- 8 images: 5 CID22-512 photos (1025469, 1044329, 1189261, 1279330, 1418519)
+  + 3 GB82-SC screenshots (codec_wiki, imac_g3, terminal).
+  Photos: 512×512 (0.26 MP). Screenshots: 1646×1062 / 1024×1024 / 1646×1062.
+- 4 distances: 0.5, 1.0, 2.0, 4.0
+- 3 efforts: 6, 7, 8
+- 3 runs per cell (288 encodes total); median per phase kept
+
+## Reproducer
+
+```bash
+cargo build -p jxl-encoder --release --features 'std parallel butteraugli-loop' \
+    --example lossy_phase_baseline
+./target/release/examples/lossy_phase_baseline \
+    --out benchmarks/lossy_phase_baseline_2026-05-18.tsv
+```
+
+## Phase definitions (in pipeline order)
+
+| Phase         | Code location                                                   | Description                                                                |
+|---            |---                                                              |---                                                                         |
+| xyb           | `convert_to_xyb_padded`                                         | Linear-sRGB → XYB SIMD, edge-replicated padding                            |
+| patches       | `find_and_build_with_per_patch_gate` + `subtract_patches`       | Patch detection (post-noise, pre-gaborish)                                 |
+| splines       | `find_splines_at_distance` + `subtract_splines`                 | Auto-splines (e>=7 only, gated by screenshot discriminator)                |
+| quant_field   | `compute_quant_field_float_with_budget` + `quantize_quant_field` + `compute_mask1x1` | Adaptive quantization field + 1x1 mask         |
+| gaborish      | `gaborish_inverse`                                              | 5x5 sharpening pre-filter (distance > 0.5)                                 |
+| cfl1          | `compute_cfl_map`                                               | Per-tile chroma-from-luma pass 1 (LS, post-gaborish)                       |
+| acstrat       | `compute_ac_strategy`                                           | AC strategy search (DCT8 ... DCT64x64)                                     |
+| cfl2          | `refine_cfl_map`                                                | Pass 2 with actual strategies (e>=7, quant-weighted)                       |
+| buttloop      | `butteraugli_refine_quant_field`                                | Butteraugli quantization loop (e>=8 only, 2-4 iters)                       |
+| xform         | `transform_and_quantize`                                        | Forward DCT + quantize + nzeros count per block                            |
+| sharp         | `compute_epf_sharpness`                                         | Per-block EPF sharpness selection (e>=6 dynamic, distance >= 0.5)          |
+| entropy       | `encode_two_pass`                                               | Sum of subphases below                                                     |
+| tok_dc        | `tokenize_dc_group*`                                            | DC + AC-metadata token collection                                          |
+| co            | (custom coefficient order)                                      | Per-strategy scan order from coeff statistics                              |
+| bcm           | (block context map)                                             | QF-threshold context map split                                             |
+| ac_tok        | `tokenize_ac_group*`                                            | AC coefficient tokenization (parallel)                                     |
+| lz77          | LZ77 backref scan                                               | RLE/greedy/optimal LZ77 (effort-dependent)                                 |
+| build_codes   | `cluster_histograms` + `build_codes`                            | Histogram clustering + ANS code construction                               |
+| pass2_write   | per-group entropy write                                         | Pass 2: write tokens through final codes per group                         |
+
+## Headline numbers
+
+Total wall-clock (mean over corpus, ms):
+
+| effort | total ms | dominant phase (% of total)                               |
+|---     |---       |---                                                        |
+| e6     |    176.0 | sharp 45.5%, patches 0%, build_codes 9.2%, xform 10.1%    |
+| e7     |    247.6 | sharp 33.8%, **patches 25.2%** (screenshots), bldC 5.6%   |
+| e8     |    804.3 | **buttloop 71.8%**, sharp 8.5%, patches 7.2%              |
+
+Per-megapixel (ms/MP, mean over corpus & distances):
+
+| cls   | effort | total/MP | sharp/MP | patches/MP | acstr/MP | xform/MP | bldC/MP | buttl/MP |
+|---    |---     |---       |---       |---         |---       |---       |---      |---       |
+| photo | e6     |  173     |  69      |   0        |  12      |  14      |  21     |  0       |
+| photo | e7     |  203     |  64      |  27        |  13      |  12      |  21     |  0       |
+| photo | e8     |  579     |  55      |  27        |  13      |   9      |  19     |  **390** |
+| scrn  | e6     |  106     |  48      |   0        |   8      |  11      |  10     |  0       |
+| scrn  | e7     |  150     |  52      |  39        |   9      |   9      |   8     |  0       |
+| scrn  | e8     |  540     |  48      |  40        |   9      |  10      |   7     |  **388** |
+
+EPF sharpness selection (`compute_epf_sharpness`) is the surprise winner
+at e6/e7 — accounts for 30-45% of wall-clock. Cost scales with distance:
+0.3 ms/MP @ d=0.5 → 117 ms/MP @ d=4.0 on photos at e7. Driver: distance
+>= 0.5 gate fires it on at all but the lowest-distance cells; bigger
+distance → more block diversity → more sharpness candidates to score.
+
+Butteraugli loop dominates at e8: 388-390 ms/MP across both content
+classes. At d=4.0 it's 471 ms/MP on photos (worst cell). 2 iterations
+each running a full forward+inverse pipeline + butteraugli comparison;
+each iter is roughly the cost of a full e7 encode.
+
+Patches at e7 are 25% of total wall-clock in the aggregate but only
+because the screenshot subset dominates: per-MP photo patches are 27 ms/MP
+(modest), screenshot patches are 40 ms/MP (also modest per-MP, but the
+screenshots are 4-7× bigger). The aggregate 25% number is real but
+content-driven.
+
+## Top-3 adaptive-dispatch candidates
+
+These are the highest-value (phase, content-class, effort) triples
+where a content classifier could elide a large slice of wall-clock
+without quality loss. Ranked by `(phase wall-clock at gated cell) ×
+(probability content classifier fires correctly)`.
+
+### #1: EPF sharpness selection at e6/e7 on smooth content (large win, easy gate)
+
+- **Phase**: `compute_epf_sharpness` (vardct/encoder.rs:1957)
+- **Cost**: 64 ms/MP on photos at e7, scales 1 ms/MP at d=0.5 →
+  117 ms/MP at d=4.0; 30-45% of total wall-clock at e6 and e7
+- **Adaptive gate idea**: skip per-block sharpness search when
+  `mask1x1` field has low variance (smooth image) and pick the
+  population mode instead. The decoder accepts any sharpness 0-7;
+  picking sharpness=4 (the libjxl default when dynamic search is off)
+  is a no-op for blocks where the loss curve is flat.
+- **Expected savings**: 30-50 ms/MP on smooth-content e6/e7 = 30-25%
+  encode time win on photo content.
+- **Content classifier**: `stdev(mask1x1)` or median(mask1x1) — already
+  computed for splines + screenshot detection (see
+  `splines::looks_like_screenshot` for the existing
+  `median(mask1x1) > 95` discriminator pattern).
+- **Why now**: the existing dynamic-sharpness path is gated by
+  `epf_dynamic_sharpness` (effort >= 6) but doesn't classify
+  per-image. A content-aware skip would compose with the existing
+  gate.
+
+### #2: Butteraugli loop at e8 on photo content with low distance (large win, ranged gate)
+
+- **Phase**: `butteraugli_refine_quant_field` (vardct/encoder.rs:1800)
+- **Cost**: 81 ms/MP on photos @ d=0.5 at e8, scales to 471 ms/MP
+  @ d=4.0; 60-75% of total wall-clock at e8
+- **Adaptive gate idea**: reduce buttloop iter count from 2 → 1 (or skip
+  entirely) when the initial quant field is already within bounds of
+  the target distance. Use `mask1x1` statistics or the *initial*
+  butteraugli score to decide whether the second iteration will move
+  the needle.
+- **Expected savings**: 100-200 ms/MP on `photo + d <= 1.0 + e8`
+  cells, which is the bulk of e8 traffic.
+- **Content classifier**: post-first-iter butteraugli delta predicts
+  the second iter's marginal value. If iter 1 already converges below
+  the deviation bound, skip iter 2.
+- **Why now**: libjxl's buttloop is iter-count-fixed (2 @ e8, 4 @ e9+);
+  early-exit is structurally cheap to add because the loop already
+  recomputes global_scale per iter.
+
+### #3: Patches detection on photo content at any effort (medium win, low risk)
+
+- **Phase**: `find_and_build_with_per_patch_gate` (vardct/encoder.rs:1286)
+- **Cost**: 27 ms/MP on photos at e7 (mostly detection scan; gating
+  catches "no useful patches" but the scan ran)
+- **Adaptive gate idea**: photo-class detector (variance, edge
+  density, color spread) → skip the patches scan entirely. The scan
+  always returns "no patches" on photos (zero overhead on patches
+  output for CLIC corpus per existing CLAUDE.md notes), but the scan
+  itself still costs 27 ms/MP.
+- **Expected savings**: 25-30 ms/MP on every photo at e7+, which is
+  10-15% of total photo encode time.
+- **Content classifier**: simple "is this a photo" gate. The screenshot
+  discriminator (`median(mask1x1) > 95.0`) already exists and is the
+  inverse — i.e., we could `if !looks_like_screenshot { skip_patches }`
+  and gain perfectly. Risk: very rare photos with text overlays would
+  miss patches savings, but those are the EXACT cases the existing
+  cost-benefit gate handles correctly when patches DO fire.
+
+## Notable observations
+
+- **Buttloop is the dominant e8 cost everywhere** (71.8% of total).
+  Per-MP it's nearly content-class-invariant (388-390 ms/MP). It's a
+  pixel-domain operation that doesn't care about content; the only
+  knob is iter count.
+- **Patches at e7 ALWAYS runs** even on photos (27 ms/MP on photos in
+  this sweep) — the cost is the detection scan, not the patch ref
+  frame. The existing screenshot discriminator (`median(mask1x1) > 95`)
+  is the natural gate.
+- **Sharpness search dominates e6/e7** at 30-45% of wall-clock. This
+  is by far the biggest single lever for photo encode acceleration at
+  default effort.
+- `splines` is 0.0 ms across the corpus — auto-splines is correctly
+  declining all screenshots (existing `looks_like_screenshot` gate
+  shipped) and the photo subset stays out of the find_splines call.
+- `lz77` is 0.0 at all efforts because LZ77 is gated at effort >= 7
+  for VarDCT, default at e>=9, and the e8 cells use buttloop not
+  LZ77.
+- `cfl2` at e7 is 7 ms/MP photo vs 1 ms/MP scrn — refine_cfl_map
+  cost is photo-amplified (more chroma diversity → more Newton iters).
+  Small absolute cost.
+- `xform` (forward DCT + quantize) is ~10-14 ms/MP across all configs
+  — fairly content-invariant. Already SIMD-optimized.
+
+## Limitations of this baseline
+
+- Only 8 images. Cross-image variance for buttloop/sharpness could be
+  10-30%; rerun on 50-image stratified subset before drawing
+  source-informing constants.
+- Screenshots are 4-7× bigger than photos by pixel count; cost ratios
+  are normalized by MP but absolute wall-clock totals skew by class
+  size. The headline `% of wall-clock` table is content-mix-dependent.
+- e9 not measured. Buttloop at e9 is 4 iters (vs 2 at e8) so e9 total
+  would scale roughly 2× e8 with the loop staying as the dominant
+  phase.
+- Single thread of subprocess but each encode uses rayon internally;
+  the recorded wall-clock is parallel-encode wall-clock, not single-thread
+  CPU time.

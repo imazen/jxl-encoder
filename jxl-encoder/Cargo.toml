@@ -207,6 +207,10 @@ fastrand = "2.4.1"
 
 # Standard examples (autoexamples is disabled above; list each explicitly).
 [[example]]
+name = "lossy_phase_baseline"
+path = "examples/lossy_phase_baseline.rs"
+
+[[example]]
 name = "distance_sweep"
 path = "examples/distance_sweep.rs"
 
