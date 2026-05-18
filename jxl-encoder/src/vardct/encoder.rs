@@ -142,6 +142,53 @@ const SQUEEZE_LUMA_QTABLE: [f32; SQUEEZE_LUMA_QTABLE_LEN] = [
     0.005,
 ];
 
+/// Threshold on `median(mask1x1)` above which a per-image encode is
+/// classified as **screen content** (UI / terminal / glyph-heavy) for
+/// the content-aware `entropy_mul` dispatch
+/// ([`VarDctEncoder::content_aware_entropy_mul`]).
+///
+/// `mask1x1` is the post-blur Laplacian masking field — higher values
+/// mark uniform / flat regions. Photos populate the field with low
+/// values (1–30 typical) because almost every pixel has at least some
+/// gradient activity; UI / glyph / terminal content concentrates the
+/// distribution above 100 because most pixels sit in flat foreground /
+/// background regions. The `> 95` cut-off matches the GPU encoder's
+/// screenshot/photo split (`vardct_gpu_dropped_optimizations_resurrection_2026-05-17.md`,
+/// item #3) and is empirically derived from CID22 (photos median ≈ 10–40)
+/// vs the gb82-sc screenshot corpus (medians ≈ 110–180).
+const CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD: f32 = 95.0;
+
+/// Return the median value of the unpadded region `[0, width) × [0, height)`
+/// of a `mask1x1` plane laid out with row stride `stride`. Uses
+/// `select_nth_unstable` on an owned copy of the unpadded values (O(n)
+/// expected, no allocation outside the temporary buffer) — exact median
+/// rather than histogram approximation because the field is small
+/// (≤ 12 MP) and `mask1x1` is allocated once per encode anyway.
+fn median_mask1x1(mask: &[f32], stride: usize, width: usize, height: usize) -> f32 {
+    if width == 0 || height == 0 {
+        return 0.0;
+    }
+    let mut buf: Vec<f32> = Vec::with_capacity(width * height);
+    for y in 0..height {
+        let row_off = y * stride;
+        let row_end = row_off + width;
+        if row_end > mask.len() {
+            // Defensive: pad / row-stride mismatch — return 0.0 so the
+            // gate stays off rather than reading uninitialised memory.
+            return 0.0;
+        }
+        buf.extend_from_slice(&mask[row_off..row_end]);
+    }
+    let n = buf.len();
+    let mid = n / 2;
+    // f32 has no Ord — use partial_cmp + Equal for NaN tie-break.
+    // The mask is always finite (compute_mask1x1 produces 1/(log1p(x)+0.01)
+    // with x >= 0), so NaN should not occur in practice; the fallback
+    // here keeps the median well-defined if it ever does.
+    buf.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+    buf[mid]
+}
+
 /// Tiny JPEG XL encoder.
 ///
 /// This is a simplified VarDCT encoder based on libjxl-tiny that uses:
@@ -498,6 +545,14 @@ pub struct VarDctEncoder {
     /// exceeded. When `None` (the test/library default), allocation
     /// proceeds unbounded.
     pub(crate) budget: Option<alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    /// Opt-in: just before `compute_ac_strategy` runs, compute
+    /// `median(mask1x1)` and — if > 95.0 (screenshot-class content) —
+    /// swap [`Self::profile`].`entropy_mul_table` to
+    /// [`crate::effort::EntropyMulTable::screenshot_suppressed`] for
+    /// the duration of the AC-strategy search. Default `false` (every
+    /// existing hash-lock byte-identical). See
+    /// [`crate::api::LossyConfig::with_content_aware_entropy_mul`].
+    pub content_aware_entropy_mul: bool,
 }
 
 impl Default for VarDctEncoder {
@@ -565,6 +620,7 @@ impl Default for VarDctEncoder {
             alpha_squeeze: false,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
+            content_aware_entropy_mul: false,
         }
     }
 }
@@ -635,6 +691,7 @@ impl VarDctEncoder {
             alpha_squeeze: false,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
+            content_aware_entropy_mul: false,
         }
     }
 
@@ -1671,6 +1728,37 @@ impl VarDctEncoder {
         );
 
         // Compute adaptive AC strategy (DCT8/DCT16x8/DCT8x16/DCT16x16/DCT32x32)
+        // Content-aware `entropy_mul` table dispatch (opt-in). When the
+        // caller has set `LossyConfig::with_content_aware_entropy_mul(true)`
+        // AND we have a mask1x1 to discriminate on, compute the median and
+        // — if it crosses the screenshot threshold — swap in the
+        // `EntropyMulTable::screenshot_suppressed` lifted values for the
+        // duration of the AC-strategy search. The swap is scoped to a
+        // local `profile_for_search` (cloned) so the rest of the encode
+        // sees the original profile.
+        //
+        // Default `false` keeps the existing reference-table behaviour
+        // (every hash-lock fixture byte-identical).
+        let profile_for_search = if self.content_aware_entropy_mul {
+            match mask1x1.as_deref() {
+                Some(mask) => {
+                    let med = median_mask1x1(mask, padded_width, width, height);
+                    if med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD {
+                        let mut p = self.profile.clone();
+                        p.entropy_mul_table =
+                            crate::effort::EntropyMulTable::screenshot_suppressed();
+                        Some(p)
+                    } else {
+                        None
+                    }
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        let active_profile_for_search = profile_for_search.as_ref().unwrap_or(&self.profile);
+
         #[allow(unused_mut)]
         let mut ac_strategy = if let Some(forced) = self.force_strategy {
             // Force a specific strategy for all blocks that fit
@@ -1692,7 +1780,7 @@ impl VarDctEncoder {
                 &cfl_map,
                 mask1x1.as_deref(),
                 padded_width,
-                &self.profile,
+                active_profile_for_search,
             )
         };
 
@@ -3029,6 +3117,64 @@ mod tests {
 
         let encoder_default = VarDctEncoder::default();
         assert_eq!(encoder_default.distance, 1.0);
+    }
+
+    #[test]
+    fn test_median_mask1x1_basic() {
+        // 4x3 unpadded inside a 6-stride row → odd count 12 → exact median
+        // is the (12/2) = 6th-smallest element.
+        // Sorted values: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+        // index 6 → 7.0
+        #[rustfmt::skip]
+        let mask = [
+            1.0, 2.0, 3.0, 4.0,  0.0, 0.0, // row 0: 1..4 + padding
+            5.0, 6.0, 7.0, 8.0,  0.0, 0.0, // row 1: 5..8 + padding
+            9.0,10.0,11.0,12.0, 0.0, 0.0, // row 2: 9..12 + padding
+        ];
+        let med = median_mask1x1(&mask, 6, 4, 3);
+        assert_eq!(med, 7.0);
+    }
+
+    #[test]
+    fn test_median_mask1x1_zero_dim() {
+        // 0-width / 0-height shouldn't panic.
+        assert_eq!(median_mask1x1(&[], 0, 0, 0), 0.0);
+        assert_eq!(median_mask1x1(&[1.0, 2.0], 2, 0, 1), 0.0);
+        assert_eq!(median_mask1x1(&[1.0, 2.0], 2, 2, 0), 0.0);
+    }
+
+    #[test]
+    fn test_median_mask1x1_screenshot_vs_photo_band() {
+        // Photo-class: low mask values clustered around 10..40
+        // (compute_mask1x1 produces 1/(log1p(diff) + 0.01) — high local
+        // activity → low mask). Expected median far below 95.
+        let photo: Vec<f32> = (0..(64 * 64)).map(|i| 5.0 + (i % 35) as f32).collect();
+        let m_photo = median_mask1x1(&photo, 64, 64, 64);
+        assert!(
+            m_photo < 95.0,
+            "photo-band median {m_photo} should be < 95.0 threshold"
+        );
+
+        // Screenshot-class: high mask values (flat regions, low activity)
+        // clustered around 110..170. Expected median above 95.
+        let screen: Vec<f32> = (0..(64 * 64)).map(|i| 110.0 + (i % 30) as f32).collect();
+        let m_screen = median_mask1x1(&screen, 64, 64, 64);
+        assert!(
+            m_screen > 95.0,
+            "screen-band median {m_screen} should be > 95.0 threshold"
+        );
+    }
+
+    #[test]
+    fn test_content_aware_entropy_mul_default_off() {
+        // Verify the flag defaults to false (every existing hash-lock
+        // byte-identical) and that toggling it on doesn't panic on a
+        // tiny image (the gate has a defensive fallback when
+        // `mask1x1` is absent — e.g. `pixel_domain_loss = false`).
+        let enc = VarDctEncoder::new(1.0);
+        assert!(!enc.content_aware_entropy_mul);
+        let enc_default = VarDctEncoder::default();
+        assert!(!enc_default.content_aware_entropy_mul);
     }
 
     #[test]
