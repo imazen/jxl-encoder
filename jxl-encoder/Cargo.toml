@@ -805,5 +805,14 @@ required-features = ["__expert"]
 [[example]]
 name = "entropy_coeffs_magetypes_bench"
 path = "examples/entropy_coeffs_magetypes_bench.rs"
+
+# W43-2 chunk-6 magetypes consolidation: wall-clock A/B for the consolidated
+# `linear_rgb_to_xyb_batch` kernel (5 image sizes, dispatch vs scalar over
+# full-plane RGB → XYB). Saves TSV + .meta to /tmp/ for atomic mv into
+# benchmarks/ once verified.
+[[example]]
+name = "forward_xyb_magetypes_bench"
+path = "examples/forward_xyb_magetypes_bench.rs"
+
 [lints]
 workspace = true
