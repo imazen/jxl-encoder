@@ -1,0 +1,17 @@
+date: 2026-05-17
+purpose: RFC#45 chunks 4-7 lossless backport — A/B gate verification
+corpus: gb82-sc (5 screenshots — chunks 4-7 baseline) + CID22-512 (5 photos)
+config: LosslessConfig::new() vs .with_patches(false)
+features: __internals
+example: jxl-encoder/examples/patches_lossless_gate_ab.rs
+
+verifies:
+  1. Gate verdict matches empirical win sign across 10 measured cells.
+  2. Post-wire-up bytes_on identical to pre-wire-up calibration TSV
+     (gate fires TRUE on all 5 screenshots where patches were previously
+     auto-admitted, gate fires FALSE on photos where detector returns
+     None upstream).
+
+results: 10 of 10 cells gate verdict == empirical win sign
+  5 screenshots: gate=true,  empirical_win=true  (savings 1110-135091 B)
+  5 photos:      gate=false, empirical_win=false (detector None, no patches)

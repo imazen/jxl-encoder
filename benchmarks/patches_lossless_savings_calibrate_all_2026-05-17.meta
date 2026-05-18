@@ -1,0 +1,41 @@
+date: 2026-05-17
+purpose: RFC#45 chunks 4-7 lossless backport — extended calibration sweep
+corpus: gb82-sc (11 screenshots) + CID22-512 validation (5 photos)
+config: LosslessConfig::new() (default effort=7 enables patches);
+        patches_off variant uses .with_patches(false)
+features: __internals
+example: jxl-encoder/examples/patches_lossless_calibrate_all.rs
+
+findings:
+  screenshots_detected: 8 of 11 (3 hit detector's 1% coverage filter:
+                                  gmessages, graph, gui)
+  photos_detected:      0 of 5
+  net_bpp_min:          0.048  (windows95.png)
+  net_bpp_p25:          0.261  (imac_dark)
+  net_bpp_median:       0.272
+  net_bpp_mean:         0.498
+  net_bpp_p75:          0.392
+  net_bpp_max:          2.317  (imessage.png — text-heavy chat)
+  net_bpp_geomean:      0.27   (8-image fit)
+
+  per-image C needed at 1.5x margin to admit:
+    windows95:       0.186
+    terminal:        0.191
+    codec_wiki:      0.346
+    imac_g3:         0.429
+    imac_g3_strip:   0.429
+    imessage:        0.305
+    imac_dark:       0.437  <-- worst case
+    windows:         0.353
+  max:               0.437
+
+calibration_constant_shipped: SAVINGS_BYTES_PER_PIXEL_LOSSLESS = 0.45
+  -> admits 8/8 measured cases at chunk-6 1.5x safety margin
+  -> margin range across cells: 1.03x (imac_dark) ... 2.42x (terminal)
+
+variance_disclosure:
+  per_image_bpp_8x_range:     0.048 .. 2.317 (48x spread)
+  R^2_constant_predictor:     0    (definitionally; no fit residual)
+  R^2_oh_density_predictor:   0.003 (overhead-density is not predictive)
+  conclusion: per-image bpp variance is content-structural;
+              C is content-discriminator not regressor.

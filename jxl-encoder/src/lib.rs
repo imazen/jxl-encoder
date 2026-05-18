@@ -162,6 +162,72 @@ pub mod __internals {
     /// [`crate::vardct::patches`] doc-comment.
     pub use crate::vardct::patches::{LastPatchesStats, take_last_patches_stats};
     pub use crate::vardct::quantize::adjust_quant_block_ac_free;
+
+    // ── Lossless patches calibration wrappers (RFC#45 lossless backport) ──
+    /// Run the lossless patches detector directly. Used by the
+    /// `patches_lossless_calibrate` harness to capture per-image
+    /// telemetry (total_patch_pixels, ref-frame size, occurrence count)
+    /// without re-encoding. Returns `None` when the detector rejects
+    /// the image (sub-1% coverage, no text-like content, etc.).
+    pub fn find_and_build_patches_lossless(
+        pixels: &[u8],
+        width: usize,
+        height: usize,
+        num_channels: usize,
+        bit_depth: u32,
+    ) -> Option<crate::vardct::patches::PatchesData> {
+        crate::vardct::patches::find_and_build_lossless(
+            pixels,
+            width,
+            height,
+            num_channels,
+            bit_depth,
+        )
+    }
+
+    /// Telemetry for a [`crate::vardct::patches::PatchesData`]:
+    /// `(total_patch_pixels, unique_refs, ref_frame_pixels, occurrences)`.
+    /// `total_patch_pixels = sum over occurrences of ref.xsize*ref.ysize`.
+    pub fn patches_data_stats(
+        pd: &crate::vardct::patches::PatchesData,
+    ) -> (usize, usize, usize, usize) {
+        let total_patch_pixels = pd.total_patch_pixels_for_calibration();
+        let unique_refs = pd.ref_positions_len_for_calibration();
+        let ref_frame_pixels = pd.ref_frame_pixels_for_calibration();
+        let occurrences = pd.positions_len_for_calibration();
+        (
+            total_patch_pixels,
+            unique_refs,
+            ref_frame_pixels,
+            occurrences,
+        )
+    }
+
+    /// Lossless gate sidecar — invokes the new
+    /// [`crate::vardct::patches::PatchesData::is_cost_effective_lossless`]
+    /// helper on a pre-detected `PatchesData`. Used by the A/B harness
+    /// to compare gate decisions vs measured deltas.
+    pub fn is_cost_effective_lossless(
+        pd: &crate::vardct::patches::PatchesData,
+        use_ans: bool,
+    ) -> bool {
+        pd.is_cost_effective_lossless(use_ans)
+    }
+
+    /// Returns trial-encoded `(ref_overhead_B, dict_overhead_B)` for a
+    /// pre-detected `PatchesData`. Exposed for the calibration harness
+    /// to show the gate's overhead estimates alongside measured savings.
+    pub fn patches_trial_overhead(
+        pd: &crate::vardct::patches::PatchesData,
+        use_ans: bool,
+    ) -> (usize, usize) {
+        let ref_b = crate::vardct::patches::trial_encode_ref_frame_bytes(pd, use_ans);
+        let dict_b = crate::vardct::patches::trial_encode_dict_section_bytes(pd, use_ans)
+            .unwrap_or_else(|| {
+                pd.ref_positions_len_for_calibration() * 5 + pd.positions_len_for_calibration() * 5
+            });
+        (ref_b, dict_b)
+    }
 }
 
 /// Pre-quantized AC entry point — accepts an already-prepared
