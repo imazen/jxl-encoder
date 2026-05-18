@@ -10,6 +10,32 @@
 //!   rval = round(val)
 //!   entropy_sum += sqrt(|rval|) * cost_delta
 //!   nzeros += (rval != 0)
+//!
+//! **magetypes-consolidated** (W43-2 chunk-7, final): the three per-arch
+//! variants (AVX2 / NEON / WASM128) previously copy-pasted in this file
+//! collapse to one `#[magetypes(define(f32x8), v4, v3, neon, wasm128, scalar)]`
+//! body (`entropy_coeffs_impl`). The macro generates one
+//! `#[arcane]`-wrapped variant per listed tier:
+//!   - `entropy_coeffs_impl_v4` (x86_64 AVX-512 native 256-bit f32x8,
+//!     opt-in via the `avx512` cargo feature)
+//!   - `entropy_coeffs_impl_v3` (x86_64 AVX2, native 256-bit f32x8)
+//!   - `entropy_coeffs_impl_neon` (aarch64, 2× f32x4 polyfill of f32x8)
+//!   - `entropy_coeffs_impl_wasm128` (wasm32, 2× f32x4 polyfill of f32x8)
+//!   - `entropy_coeffs_impl_scalar` (portable scalar fallback)
+//!
+//! Pure-f32 kernel: `v4` tier compiles cleanly here (no `f64x4` is required
+//! anywhere in the body — all five accumulators are `f32x8`). Contrast with
+//! W43-2 chunk-5's `pixel_domain_loss` body which DID require `f64x4`
+//! (8th-power norm) and was capped at `v3`.
+//!
+//! **FMA-reduction-order preservation.** The five-accumulator layout is the
+//! exact structure the prior hand-written AVX2 / NEON / WASM bodies used,
+//! which had IDENTICAL FMA op order across all three (lane width was the
+//! only difference). The macro-generated variants inherit that order
+//! unchanged. Per W44-9 (Sub-chunk B in flight), even subtle FMA-order
+//! perturbations affect AC-strategy selection and risk bitstream divergence
+//! — so the body below is a 1:1 collapse of the prior arch variants, not
+//! a re-derivation.
 
 /// Results from vectorized entropy coefficient processing.
 #[derive(Debug, Clone, Copy)]
@@ -33,6 +59,8 @@ impl EntropyCoeffResult {
     };
 }
 
+use archmage::prelude::*;
+
 /// Vectorized entropy coefficient processing.
 ///
 /// For each coefficient `i` in 0..n:
@@ -46,6 +74,10 @@ impl EntropyCoeffResult {
 ///
 /// In pixel-domain mode: writes `error_coeffs[i] = weights[i] * (val - rval)`
 /// In coefficient-domain mode: accumulates info_loss stats and k_cost2 penalty.
+///
+/// Dispatch through `incant!` — picks the best magetypes-generated variant
+/// (`_v4` AVX-512 with the `avx512` cargo feature, else `_v3` AVX2, else
+/// `_neon`, else `_wasm128`, else `_scalar`) at runtime.
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn entropy_estimate_coeffs(
@@ -61,81 +93,21 @@ pub fn entropy_estimate_coeffs(
     pixel_domain: bool,
     error_coeffs: &mut [f32],
 ) -> EntropyCoeffResult {
-    #[cfg(target_arch = "x86_64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::X64V3Token::summon() {
-            return entropy_coeffs_avx2(
-                token,
-                block_c,
-                block_y,
-                weights,
-                inv_weights,
-                n,
-                cmap_factor,
-                quant,
-                k_cost_delta,
-                k_cost2,
-                pixel_domain,
-                error_coeffs,
-            );
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::NeonToken::summon() {
-            return entropy_coeffs_neon(
-                token,
-                block_c,
-                block_y,
-                weights,
-                inv_weights,
-                n,
-                cmap_factor,
-                quant,
-                k_cost_delta,
-                k_cost2,
-                pixel_domain,
-                error_coeffs,
-            );
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::Wasm128Token::summon() {
-            return entropy_coeffs_wasm128(
-                token,
-                block_c,
-                block_y,
-                weights,
-                inv_weights,
-                n,
-                cmap_factor,
-                quant,
-                k_cost_delta,
-                k_cost2,
-                pixel_domain,
-                error_coeffs,
-            );
-        }
-    }
-
-    entropy_coeffs_scalar(
-        block_c,
-        block_y,
-        weights,
-        inv_weights,
-        n,
-        cmap_factor,
-        quant,
-        k_cost_delta,
-        k_cost2,
-        pixel_domain,
-        error_coeffs,
+    incant!(
+        entropy_coeffs_impl(
+            block_c,
+            block_y,
+            weights,
+            inv_weights,
+            n,
+            cmap_factor,
+            quant,
+            k_cost_delta,
+            k_cost2,
+            pixel_domain,
+            error_coeffs,
+        ),
+        [v4, v3, neon, wasm128, scalar]
     )
 }
 
@@ -198,12 +170,40 @@ pub fn entropy_coeffs_scalar(
     }
 }
 
-#[cfg(target_arch = "x86_64")]
-#[inline]
-#[archmage::arcane]
+// ============================================================================
+// magetypes-consolidated SIMD implementation
+// ============================================================================
+//
+// Single body, one source of truth. The `#[magetypes(...)]` macro generates
+// one `#[arcane]`-wrapped variant per listed tier:
+//   - `entropy_coeffs_impl_v4` (x86_64 AVX-512 native 256-bit f32x8,
+//     opt-in via the `avx512` cargo feature)
+//   - `entropy_coeffs_impl_v3` (x86_64 AVX2, native 256-bit f32x8)
+//   - `entropy_coeffs_impl_neon` (aarch64, 2× f32x4 polyfill of f32x8)
+//   - `entropy_coeffs_impl_wasm128` (wasm32, 2× f32x4 polyfill of f32x8)
+//   - `entropy_coeffs_impl_scalar` (portable scalar fallback)
+//
+// **FMA-reduction-order preservation (load-bearing).** The pre-consolidation
+// AVX2 / NEON / WASM bodies had IDENTICAL per-lane FMA op order (only the
+// lane width differed: 8 vs 4 vs 4). The five accumulators
+// (`entropy_acc`, `nzeros_acc`, `info_loss_acc`, `info_loss2_acc`,
+// `cost2_acc`) are independent and stay independent — they are NOT
+// reordered, fused, or grouped differently in this consolidation. The
+// `q.sqrt().mul_add(cost_delta_v, entropy_acc)` and
+// `diff_abs.mul_add(diff_abs, info_loss2_acc)` chains preserve libjxl's
+// `MulAdd(x, y, acc)` order bit-for-bit. The final
+// `reduce_add()` on each accumulator + scalar add of `cost2_acc.reduce_add()`
+// (only when `!pixel_domain`) matches the prior bodies' tail.
+//
+// Per W44-9 Sub-chunk B (in flight investigating fused DCT8 entropy
+// FMA-order sensitivity) we explicitly DO NOT re-group these accumulators
+// — even subtle reduction-order perturbations can affect AC-strategy
+// selection and risk bitstream divergence downstream.
+
+#[magetypes(define(f32x8), v4, v3, neon, wasm128, scalar)]
 #[allow(clippy::too_many_arguments)]
-pub fn entropy_coeffs_avx2(
-    token: archmage::X64V3Token,
+pub fn entropy_coeffs_impl(
+    token: Token,
     block_c: &[f32],
     block_y: &[f32],
     weights: &[f32],
@@ -216,8 +216,6 @@ pub fn entropy_coeffs_avx2(
     pixel_domain: bool,
     error_coeffs: &mut [f32],
 ) -> EntropyCoeffResult {
-    use magetypes::simd::f32x8;
-
     let cmap_v = f32x8::splat(token, cmap_factor);
     let quant_v = f32x8::splat(token, quant);
     let cost_delta_v = f32x8::splat(token, k_cost_delta);
@@ -238,14 +236,13 @@ pub fn entropy_coeffs_avx2(
     let block_y_s = &block_y[..simd_n];
     let weights_s = &weights[..simd_n];
     let inv_weights_s = &inv_weights[..simd_n];
-    let error_coeffs_s = &mut error_coeffs[..simd_n];
     for chunk in 0..chunks {
         let base = chunk * 8;
 
-        let bc = crate::load_f32x8(token, block_c_s, base);
-        let by_v = crate::load_f32x8(token, block_y_s, base);
-        let w = crate::load_f32x8(token, weights_s, base);
-        let iw = crate::load_f32x8(token, inv_weights_s, base);
+        let bc = f32x8::from_slice(token, &block_c_s[base..]);
+        let by_v = f32x8::from_slice(token, &block_y_s[base..]);
+        let w = f32x8::from_slice(token, &weights_s[base..]);
+        let iw = f32x8::from_slice(token, &inv_weights_s[base..]);
 
         // val = (block_c - block_y * cmap_factor) * inv_weights * quant
         let adjusted = bc - by_v * cmap_v;
@@ -257,7 +254,8 @@ pub fn entropy_coeffs_avx2(
         // Write error coefficients for pixel-domain loss
         if pixel_domain {
             let err = w * diff;
-            crate::store_f32x8(error_coeffs_s, base, err);
+            let out: &mut [f32; 8] = (&mut error_coeffs[base..base + 8]).try_into().unwrap();
+            err.store(out);
         }
 
         // Entropy accumulation: entropy += sqrt(|rval|) * cost_delta
@@ -314,224 +312,22 @@ pub fn entropy_coeffs_avx2(
 }
 
 // ============================================================================
-// aarch64 NEON implementation
+// Backwards-compat suffixed re-exports
 // ============================================================================
+//
+// Pre-consolidation callers spelled the variants `entropy_coeffs_avx2` /
+// `_neon` / `_wasm128`. magetypes' tier names are `_v3` (AVX2) / `_neon` /
+// `_wasm128`. Re-export under the historical names so the external API
+// (including the per-arch `pub use` re-exports in `lib.rs`) stays stable.
+
+#[cfg(target_arch = "x86_64")]
+pub use entropy_coeffs_impl_v3 as entropy_coeffs_avx2;
 
 #[cfg(target_arch = "aarch64")]
-#[inline]
-#[archmage::arcane]
-#[allow(clippy::too_many_arguments)]
-pub fn entropy_coeffs_neon(
-    token: archmage::NeonToken,
-    block_c: &[f32],
-    block_y: &[f32],
-    weights: &[f32],
-    inv_weights: &[f32],
-    n: usize,
-    cmap_factor: f32,
-    quant: f32,
-    k_cost_delta: f32,
-    k_cost2: f32,
-    pixel_domain: bool,
-    error_coeffs: &mut [f32],
-) -> EntropyCoeffResult {
-    use magetypes::simd::f32x4;
-
-    let cmap_v = f32x4::splat(token, cmap_factor);
-    let quant_v = f32x4::splat(token, quant);
-    let cost_delta_v = f32x4::splat(token, k_cost_delta);
-    let cost2_v = f32x4::splat(token, k_cost2);
-    let zero = f32x4::zero(token);
-    let one = f32x4::splat(token, 1.0);
-    let thr_1_5 = f32x4::splat(token, 1.5);
-
-    let mut entropy_acc = f32x4::zero(token);
-    let mut nzeros_acc = f32x4::zero(token);
-    let mut info_loss_acc = f32x4::zero(token);
-    let mut info_loss2_acc = f32x4::zero(token);
-    let mut cost2_acc = f32x4::zero(token);
-
-    let chunks = n / 4;
-    let simd_n = chunks * 4;
-    let block_c_s = &block_c[..simd_n];
-    let block_y_s = &block_y[..simd_n];
-    let weights_s = &weights[..simd_n];
-    let inv_weights_s = &inv_weights[..simd_n];
-    for chunk in 0..chunks {
-        let base = chunk * 4;
-
-        let bc = f32x4::from_slice(token, &block_c_s[base..]);
-        let by_v = f32x4::from_slice(token, &block_y_s[base..]);
-        let w = f32x4::from_slice(token, &weights_s[base..]);
-        let iw = f32x4::from_slice(token, &inv_weights_s[base..]);
-
-        // val = (block_c - block_y * cmap_factor) * inv_weights * quant
-        let adjusted = bc - by_v * cmap_v;
-        let val = adjusted * iw * quant_v;
-
-        let rval = val.round();
-        let diff = val - rval;
-
-        if pixel_domain {
-            let err = w * diff;
-            let out: &mut [f32; 4] = (&mut error_coeffs[base..base + 4]).try_into().unwrap();
-            err.store(out);
-        }
-
-        let q = rval.abs();
-        entropy_acc = q.sqrt().mul_add(cost_delta_v, entropy_acc);
-
-        let nz_mask = q.simd_ne(zero);
-        nzeros_acc += f32x4::blend(nz_mask, one, zero);
-
-        if !pixel_domain {
-            let diff_abs = diff.abs();
-            info_loss_acc += diff_abs;
-            info_loss2_acc = diff_abs.mul_add(diff_abs, info_loss2_acc);
-
-            let ge_mask = q.simd_ge(thr_1_5);
-            cost2_acc += f32x4::blend(ge_mask, cost2_v, zero);
-        }
-    }
-
-    // Scalar remainder
-    let start = chunks * 4;
-    let remainder = entropy_coeffs_scalar(
-        &block_c[start..n],
-        &block_y[start..n],
-        &weights[start..n],
-        &inv_weights[start..n],
-        n - start,
-        cmap_factor,
-        quant,
-        k_cost_delta,
-        k_cost2,
-        pixel_domain,
-        &mut error_coeffs[start..n],
-    );
-
-    let mut entropy_sum = entropy_acc.reduce_add() + remainder.entropy_sum;
-    if !pixel_domain {
-        entropy_sum += cost2_acc.reduce_add();
-    }
-
-    EntropyCoeffResult {
-        entropy_sum,
-        nzeros_sum: nzeros_acc.reduce_add() + remainder.nzeros_sum,
-        info_loss_sum: info_loss_acc.reduce_add() + remainder.info_loss_sum,
-        info_loss2_sum: info_loss2_acc.reduce_add() + remainder.info_loss2_sum,
-    }
-}
-
-// ============================================================================
-// wasm32 SIMD128 implementation
-// ============================================================================
+pub use entropy_coeffs_impl_neon as entropy_coeffs_neon;
 
 #[cfg(target_arch = "wasm32")]
-#[inline]
-#[archmage::arcane]
-#[allow(clippy::too_many_arguments)]
-pub fn entropy_coeffs_wasm128(
-    token: archmage::Wasm128Token,
-    block_c: &[f32],
-    block_y: &[f32],
-    weights: &[f32],
-    inv_weights: &[f32],
-    n: usize,
-    cmap_factor: f32,
-    quant: f32,
-    k_cost_delta: f32,
-    k_cost2: f32,
-    pixel_domain: bool,
-    error_coeffs: &mut [f32],
-) -> EntropyCoeffResult {
-    use magetypes::simd::f32x4;
-
-    let cmap_v = f32x4::splat(token, cmap_factor);
-    let quant_v = f32x4::splat(token, quant);
-    let cost_delta_v = f32x4::splat(token, k_cost_delta);
-    let cost2_v = f32x4::splat(token, k_cost2);
-    let zero = f32x4::zero(token);
-    let one = f32x4::splat(token, 1.0);
-    let thr_1_5 = f32x4::splat(token, 1.5);
-
-    let mut entropy_acc = f32x4::zero(token);
-    let mut nzeros_acc = f32x4::zero(token);
-    let mut info_loss_acc = f32x4::zero(token);
-    let mut info_loss2_acc = f32x4::zero(token);
-    let mut cost2_acc = f32x4::zero(token);
-
-    let chunks = n / 4;
-    let simd_n = chunks * 4;
-    let block_c_s = &block_c[..simd_n];
-    let block_y_s = &block_y[..simd_n];
-    let weights_s = &weights[..simd_n];
-    let inv_weights_s = &inv_weights[..simd_n];
-    for chunk in 0..chunks {
-        let base = chunk * 4;
-
-        let bc = f32x4::from_slice(token, &block_c_s[base..]);
-        let by_v = f32x4::from_slice(token, &block_y_s[base..]);
-        let w = f32x4::from_slice(token, &weights_s[base..]);
-        let iw = f32x4::from_slice(token, &inv_weights_s[base..]);
-
-        // val = (block_c - block_y * cmap_factor) * inv_weights * quant
-        let adjusted = bc - by_v * cmap_v;
-        let val = adjusted * iw * quant_v;
-
-        let rval = val.round();
-        let diff = val - rval;
-
-        if pixel_domain {
-            let err = w * diff;
-            let out: &mut [f32; 4] = (&mut error_coeffs[base..base + 4]).try_into().unwrap();
-            err.store(out);
-        }
-
-        let q = rval.abs();
-        entropy_acc = q.sqrt().mul_add(cost_delta_v, entropy_acc);
-
-        let nz_mask = q.simd_ne(zero);
-        nzeros_acc += f32x4::blend(nz_mask, one, zero);
-
-        if !pixel_domain {
-            let diff_abs = diff.abs();
-            info_loss_acc += diff_abs;
-            info_loss2_acc = diff_abs.mul_add(diff_abs, info_loss2_acc);
-
-            let ge_mask = q.simd_ge(thr_1_5);
-            cost2_acc += f32x4::blend(ge_mask, cost2_v, zero);
-        }
-    }
-
-    // Scalar remainder
-    let start = chunks * 4;
-    let remainder = entropy_coeffs_scalar(
-        &block_c[start..n],
-        &block_y[start..n],
-        &weights[start..n],
-        &inv_weights[start..n],
-        n - start,
-        cmap_factor,
-        quant,
-        k_cost_delta,
-        k_cost2,
-        pixel_domain,
-        &mut error_coeffs[start..n],
-    );
-
-    let mut entropy_sum = entropy_acc.reduce_add() + remainder.entropy_sum;
-    if !pixel_domain {
-        entropy_sum += cost2_acc.reduce_add();
-    }
-
-    EntropyCoeffResult {
-        entropy_sum,
-        nzeros_sum: nzeros_acc.reduce_add() + remainder.nzeros_sum,
-        info_loss_sum: info_loss_acc.reduce_add() + remainder.info_loss_sum,
-        info_loss2_sum: info_loss2_acc.reduce_add() + remainder.info_loss2_sum,
-    }
-}
+pub use entropy_coeffs_impl_wasm128 as entropy_coeffs_wasm128;
 
 // ============================================================================
 // Shannon entropy computation (P6: histogram entropy for clustering)

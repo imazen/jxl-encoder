@@ -797,5 +797,13 @@ name = "f_d_fused_vs_unfused_dct8"
 path = "examples/f_d_fused_vs_unfused_dct8.rs"
 required-features = ["__expert"]
 
+# W43-2 chunk-7 magetypes consolidation (final): wall-clock A/B for the
+# consolidated `entropy_estimate_coeffs` kernel (5 image sizes, dispatch vs
+# scalar over a sweep of DCT8-shaped blocks with alternating pixel-domain /
+# coefficient-domain mode mirroring estimate_entropy_full's call shape).
+# Saves TSV + .meta to /tmp/ for atomic mv into benchmarks/ once verified.
+[[example]]
+name = "entropy_coeffs_magetypes_bench"
+path = "examples/entropy_coeffs_magetypes_bench.rs"
 [lints]
 workspace = true
