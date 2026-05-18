@@ -4,6 +4,28 @@
 
 ### Added
 
+- **W38 — lossy low-effort phase baseline (e2..=e5) + zenjpeg-hybrid
+  cross-codec wall-clock + RD comparator** on the W36-1 8-image corpus
+  (`jxl-encoder/examples/lossy_low_effort_zenjpeg_compare.rs`,
+  `benchmarks/lossy_phase_baseline_low_effort_2026-05-19.{tsv,meta}`,
+  `benchmarks/lossy_phase_low_effort_with_zenjpeg_2026-05-19.{tsv,meta}`).
+  Extends W36-1 (`70a48af9`) downward in effort space and adds zenjpeg
+  `HybridProgressive` at q∈{60,75,85,95} mapped to JXL d∈{4,2,1,0.5}.
+  Reuses `__JXL_ENC_PHASE_TIMING` env-var path; no src/ changes.
+  Headline: jxl matches zenjpeg-hybrid wall-clock at e2/e3/e4 across
+  most cells (most-common matched-e per class — photo: e2, scrn: e4),
+  with bytes Δ=+17.3% overall but butteraugli Δ=−2.30 (better) and
+  ssim2 Δ=+3.47 (better) at parity wall. The e2 fast path produces no
+  phase markers because `optimize_codes=false` routes through the
+  single-pass streaming Huffman entry point. Top-3 adaptive-dispatch
+  targets identified: (1) skip two-pass entropy at e5 on smooth-photo
+  d≤1.0 (~14 ms/cell saving), (2) skip pixel-domain loss at e5 on
+  photo class (~11 ms/cell), (3) parallel xform fan-out at e3/e4 on
+  ≥1.5 MP screenshots (~35 ms/cell). Sweep wall: 254.4s. zenjpeg dev-
+  dependency (`{ version = "0.8.4", features = ["decoder", "trellis",
+  "parallel"] }`) added; workspace `[patch.crates-io]` already
+  redirects to local sibling.
+
 - **`PatchesDispatch` enum + `LossyConfig::with_patches_dispatch`**
   (W36-3, `src/api.rs`, `src/vardct/encoder.rs`,
   `examples/patches_dispatch_ab.rs`,

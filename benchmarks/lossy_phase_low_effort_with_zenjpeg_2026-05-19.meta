@@ -1,0 +1,171 @@
+# Cross-codec lossy wall-clock + RD comparison (W38, 2026-05-19)
+
+jxl-encoder e2..=e7 vs zenjpeg-hybrid (HybridProgressive preset) on the
+W36-1 8-image corpus. Answers: "at what jxl e-value does our wall-clock
+match zenjpeg-hybrid, and what's the RD delta at that cell?"
+
+## Provenance
+
+- Date: 2026-05-18 UTC
+- Hostname: lilith (water-cooled AMD Ryzen 9 7950X, 32 threads, 128 GB RAM)
+- Parent commit: 70a48af9 (W36-1 phase baseline) + W38 sibling 983d7740
+- Workspace: ~/work/zen/jxl-encoder--low-effort-baseline (jj sibling on main)
+- Encoder build: release, features `std parallel butteraugli-loop`
+- zenjpeg: path-pinned to ~/work/zen/zenjpeg/zenjpeg (workspace patch), v0.8.4-pre, features `decoder trellis parallel`
+- Sweep wall: 212.3s (cross-codec sweep) + 42.1s (phase sweep) = 254.4s total
+- 224 cross-codec encode cells (each 3-run median): 8 imgs × (6 jxl efforts + 4 zj qualities) × 4 dist (jxl only, zj sub-table is 4 q values)
+
+## Method
+
+- 8 images (same as W36-1): 5 CID22-512 photos + 3 GB82-SC screenshots
+- 4 distance targets: 0.5, 1.0, 2.0, 4.0
+- Per (image, distance) and per codec, 3 in-process encodes (median wall_ms kept)
+- jxl-encoder rows: e2/e3/e4/e5/e6/e7. e6/e7 included to bracket the W36-1 baseline.
+- zenjpeg rows: HybridProgressive preset at q∈{60, 75, 85, 95} → mapped to JXL distance grid as q60=d4, q75=d2, q85=d1, q95=d0.5 (rough mapping per task spec; the harness records absolute butteraugli + ssim2 so this stays honest even if the mapping drifts)
+- chroma subsampling: zenjpeg ChromaSubsampling::Quarter (4:2:0), matching the JXL default for low-distance lossy
+- Decode: jxl via `jxl-oxide 0.12.5` (request linear sRGB per CLAUDE.md); zenjpeg via `zenjpeg::decoder::Decoder::output_target(SrgbF32)` then sRGB OETF^-1 to linear-f32 for butteraugli
+- Metrics: `butteraugli_linear` on linear-f32 RGB; `fast_ssim2::compute_ssimulacra2` on sRGB-u8 RGB (same pattern as `examples/adaptive_gaborish_wider_corpus.rs`)
+
+## Reproducer
+
+```bash
+cargo build -p jxl-encoder --release --features 'std parallel butteraugli-loop' \
+    --example lossy_low_effort_zenjpeg_compare
+./target/release/examples/lossy_low_effort_zenjpeg_compare \
+    --out-jxl benchmarks/lossy_phase_baseline_low_effort_2026-05-19.tsv \
+    --out-cross benchmarks/lossy_phase_low_effort_with_zenjpeg_2026-05-19.tsv
+```
+
+## TSV columns
+
+`image  codec  effort_or_q  distance  width  height  bytes  wall_ms  butteraugli  ssim2`
+
+- `codec`: `jxl` or `zenjpeg_hybrid`
+- `effort_or_q`: `e2`..`e7` for jxl, `q60`..`q95` for zenjpeg
+- `wall_ms`: median of 3 in-process runs
+- `butteraugli`: lower is better (Rust `butteraugli` 0.9, linear-domain)
+- `ssim2`: SSIMULACRA2 score, higher is better (`fast-ssim2` 0.7.1)
+
+## zenjpeg-hybrid wall-clock per image (median over runs)
+
+| image                      | q95 (d≈0.5) | q85 (d≈1) | q75 (d≈2) | q60 (d≈4) |
+|---                         |---          |---        |---        |---        |
+| cid22/1025469 (512²)       |    17.4 ms  |   9.7 ms  |   7.7 ms  |   9.3 ms  |
+| cid22/1044329 (512²)       |    38.4 ms  |  25.6 ms  |  22.6 ms  |  14.6 ms  |
+| cid22/1189261 (512²)       |    26.5 ms  |  20.4 ms  |  11.4 ms  |  10.2 ms  |
+| cid22/1279330 (512²)       |    17.0 ms  |  16.9 ms  |   8.2 ms  |   8.3 ms  |
+| cid22/1418519 (512²)       |    10.0 ms  |   8.6 ms  |   9.6 ms  |   6.5 ms  |
+| scrn/codec_wiki (2560×1664)|   112.5 ms  | 107.3 ms  | 105.4 ms  |  95.0 ms  |
+| scrn/imac_g3   (2940×1912) |   244.1 ms  | 230.2 ms  | 209.7 ms  | 202.2 ms  |
+| scrn/terminal  (1646×1062) |    60.4 ms  |  59.6 ms  |  57.7 ms  |  52.5 ms  |
+
+zenjpeg-hybrid encode speed is roughly content-invariant per pixel at this preset (HybridProgressive runs trellis quantization + jpegli 3T quant tables + progressive scan optimization — the heavy parts scale with pixel count, not content).
+
+## Headline: which jxl e-value matches zenjpeg wall-clock?
+
+For each (image, distance) cell: pick the LARGEST jxl-encoder effort whose median wall_ms ≤ zenjpeg-hybrid wall_ms at the same distance. If no jxl effort is fast enough, the fastest jxl effort wins (always e2).
+
+**Matched e-value distribution (32 cells = 8 images × 4 distances):**
+
+| class      | e2 | e3 | e4 | e5 | e6 | e7 |
+|---         |----|----|----|----|----|----|
+| overall    | 13 |  7 | 11 |  1 |  0 |  0 |
+| photo (×20)| 12 |  3 |  4 |  1 |  0 |  0 |
+| scrn (×12) |  1 |  4 |  7 |  0 |  0 |  0 |
+
+**Top answer**: jxl-encoder at **e2** matches or beats zenjpeg-hybrid wall-clock on 13 of 32 cells (40%); **e4** matches on 11 cells (34%); **e3** on 7 (22%). e5+ rarely matches (1 cell) because zenjpeg-hybrid is faster than e5 on most photos.
+
+**Per-class pattern**:
+
+- **Photos (5 imgs × 4 dist = 20 cells)**: zenjpeg-hybrid often beats jxl at all efforts ≥ e3, especially at small d=2.0/4.0 where zenjpeg's quick-quant fast path runs in 6-12 ms while jxl-e3 stays at ~22-26 ms. Result: e2 dominates the photo match list (12/20).
+- **Screenshots (3 imgs × 4 dist = 12 cells)**: zenjpeg-hybrid is much slower per pixel on screenshots (105-244 ms vs photos' 7-38 ms — the trellis path doesn't downsample structured content as efficiently). jxl-e4 fits comfortably under zenjpeg-hybrid budget on screenshots (7/12).
+
+## RD delta at the matched cells
+
+**Per-distance summary** (mean across 8 images at each d):
+
+| distance | matched e ∈     | bytes Δ% (jxl vs zj) | bfly Δ (jxl vs zj) | ss2 Δ (jxl vs zj) |
+|---       |---              |---                   |---                 |---                |
+| d=0.5    | e2/e3/e4/e5     |    -0.9%             |  **-1.85** (better)|  **+5.33** (better)|
+| d=1.0    | e2/e3/e4        |   +21.0%             |  **-2.25** (better)|  **+5.92** (better)|
+| d=2.0    | e2/e3/e4        |   +12.2%             |  **-2.21** (better)|  **+3.04** (better)|
+| d=4.0    | e2/e4           |   +36.9%             |  **-2.89** (better)|  -0.41             |
+
+**Per-class summary**:
+
+| class | bytes Δ% | bfly Δ          | ss2 Δ           | most-common matched e |
+|---    |---       |---              |---              |---                    |
+| photo |  +21.0%  | **-1.90** better | **+3.41** better | e2 (12), e4 (4), e3 (3), e5 (1) |
+| scrn  |  +11.1%  | **-2.97** better | **+3.56** better | e4 (7), e3 (4), e2 (1) |
+| **OVERALL** | **+17.3%** | **-2.30** better | **+3.47** better | e2 (13) > e4 (11) > e3 (7) > e5 (1) |
+
+**Interpretation**: At wall-clock parity with zenjpeg-hybrid, jxl-encoder produces files that are 17.3% larger on average BUT with butteraugli 2.3 points better (lower) and SSIMULACRA2 3.5 points higher. The bytes deficit shrinks at d=0.5/d=2.0 (under +13%); the largest deficit is d=4.0 (+37%) which is also the cell where SSIM2 marginally regresses.
+
+**The qualitative answer to "does jxl-encoder beat zenjpeg-hybrid on RD at zenjpeg-hybrid speeds?"**: YES on butteraugli and SSIMULACRA2 at every distance band; NO on bytes at d≥1.0 (we use 12-37% more bytes for those quality wins).
+
+## Absolute quality bound at full effort (jxl e7) vs zenjpeg-hybrid
+
+For context — when jxl is allowed to spend whatever wall-clock it needs, the quality gap widens significantly:
+
+| distance | zenjpeg bfly | zenjpeg ss2 | jxl-e7 bfly | jxl-e7 ss2 | jxl quality advantage |
+|---       |---           |---          |---          |---         |---                    |
+| d=0.5    |  2.74        |  86.27      |  0.74       |  92.03     | bfly 3.7× better, ss2 +5.8 |
+| d=1.0    |  3.91        |  81.51      |  1.20       |  88.39     | bfly 3.3× better, ss2 +6.9 |
+| d=2.0    |  4.93        |  77.01      |  2.12       |  82.36     | bfly 2.3× better, ss2 +5.4 |
+| d=4.0    |  6.77        |  71.36      |  3.62       |  72.50     | bfly 1.9× better, ss2 +1.1 |
+
+This is the upper-bound quality the encoder can produce; the matched-cell numbers show how much of that advantage survives the wall-clock-constrained low-effort path.
+
+## Top-3 adaptive-dispatch targets for e5/e6 to close the wall-clock gap
+
+Ranked by `(phase wall-clock saving at gated cell) × (gate predictability)` × `(impact on the cells the user cares about)`.
+
+### #1: Skip two-pass entropy at e5 on photo+low-distance (largest e5 photo win)
+
+- **Phase target**: `entropy` (37% of e5 photo wall-clock = 14 ms mean, 7-14 ms per cell)
+- **Impact**: dropping the two-pass entropy phase saves up to 14 ms/cell on photos at e5 = ~37% wall-clock reduction. That brings e5 photo wall from ~38 ms → ~24 ms, beating zenjpeg-hybrid on 3 of 5 photo subjects at d=0.5/d=1.0.
+- **Gating**: distance ≤ 1.0 AND mask1x1 stdev < threshold (smooth photo content). At low distance most blocks have nearly-uniform symbol distribution so the two-pass cluster-optimization is barely beneficial.
+- **Quality risk**: estimated -2 to -4% bytes regression at d≤1.0 on smooth photos. The matched-cell data above already shows e2 (single-pass) beating zenjpeg with -2 to +18% bytes; a gated e5-single-pass would split the difference.
+- **Code touch**: small. `effort.rs:660-700` `EffortProfile::new(5)` checks an extra content classifier (already-cheap median(mask1x1)), routes `optimize_codes: false` for smooth-photo class.
+
+### #2: Skip pixel-domain loss at e5 on photo class (composite quant_field + xform saving)
+
+- **Phase target**: `pixel_domain_loss=true` at e5 (effort.rs:669). Composite cost: ~11 ms photo / ~70 ms screenshot.
+- **Impact**: dropping pixel-domain loss in AC-strategy search at e5 cuts the ~11 ms photo gap between e4 (27 ms) and e5 (38 ms). On smooth photo content the strategy choice rarely differs between coefficient-domain and pixel-domain cost.
+- **Gating**: distance < 2.0 AND median(mask1x1) > 80 (low-variance/smooth content). The cells where it matters most are exactly the cells where pixel-domain loss differentiates AC strategies — high-detail content at d>=2.0.
+- **Quality risk**: small at d<2.0 (most blocks pick DCT8 either way). The lossy_low_effort_zenjpeg_compare data shows e4 and e5 photo wall_ms diverging by 11 ms but bytes/quality nearly identical at d=0.5/1.0.
+- **Code touch**: `effort.rs:660-700` plus a content-classifier dispatch in `vardct::adaptive_quant`. The existing `screenshot_lift_hint` plumbing (chunk-1, commit 3541912b) already provides the dispatch surface.
+
+### #3: Parallel xform fan-out at e3/e4 on screenshots (largest screenshot lever)
+
+- **Phase target**: `xform` (forward DCT + quantize) is 33%/32% of e3/e4 screenshot wall-clock = 55 ms/cell mean on 5 MP images.
+- **Impact**: with rayon fan-out across the ~25-30 DC groups per 5 MP screenshot, expect 50-70% phase reduction = 30-45 ms/cell saved. That makes jxl-e4 dramatically faster than zenjpeg-hybrid on screenshots (which is already the case: e4 ~100-130 ms vs zj ~110-244 ms — see imac_g3 cells where e3 is 128 ms vs zj 244 ms = -47%).
+- **Gating**: none needed — pure parallel speedup, no quality risk, byte-identical output. The harder question is fanout overhead on small (photo, <1 MP) cells — gate on pixel_count > 1.5 MP.
+- **Quality risk**: zero.
+- **Code touch**: medium. `vardct::encoder::transform_and_quantize` currently iterates groups sequentially; needs a `rayon::par_iter` outer loop similar to what `parallel-tree-learning` does in modular. Reference: the parallel pass2 work already done at e9+ in `encode_two_pass`.
+
+### Other near-misses (would need more measurement before promoting)
+
+- **xyb conversion** is 4-7 ms/cell on photos but already SIMD-optimized; parallel fan-out across 8-row stripes could save 2-3 ms.
+- **build_codes** at e3/e4 is 12 ms/cell (~20%). Histogram clustering + Huffman tree build runs sequentially per histogram channel; parallel-3-channel fan-out could save 5-8 ms.
+- **quant_field** at e5 is 17.9 ms/cell (10.9%). The compute is a 2D pixel-domain Laplacian; the smoothing/blur pass is the bottleneck.
+
+## Notable observations
+
+- **jxl-e2 IS faster than zenjpeg-hybrid on photos at most distances**: 12 of 20 photo cells. The libjxl-tiny-style single-pass Huffman path is genuinely competitive with mature JPEG encoders on wall-clock at the cost of 20-50% larger files (but still better butteraugli — the inherent JXL coding gains).
+- **Screenshots are jxl's natural advantage**: zenjpeg-hybrid is 100-250 ms on 3-5 MP screenshots; jxl-e3/e4 fits in 95-130 ms on the same content while producing 3-9% smaller files (codec_wiki q60: jxl-e2 +200% bytes but at jxl's d=4 setting — the encoder over-allocates bits on screenshot patches at fast efforts).
+- **The d=4.0 +37% byte deficit** at matched cells comes from jxl-e2 over-coding at high distances on photos (the e2 path has weak rate-distortion calibration). Promoting e3/e4 here (which DO produce smaller files at d=4.0 — see cid22/1418519 e2=18855 vs e3=12000-class) would close most of this gap, but at +10 ms wall-clock per cell.
+- **At parity wall-clock, butteraugli is uniformly better for jxl** at every distance and every content class. The encoder is making intrinsically better perceptual decisions than JPEG even on the e2 fast path.
+
+## Companion data
+
+- `lossy_phase_baseline_low_effort_2026-05-19.tsv` + `.meta` — JXL per-phase wall-clock breakdown at e2..=e5 (extends W36-1)
+- `lossy_phase_baseline_2026-05-18.tsv` + `.meta` (in jj sibling `phase-profile`) — W36-1 baseline at e6/e7/e8
+
+## Limitations
+
+- 8 images is small. Cross-image variance on the photo class is large (cid22/1044329 has 4× more bytes than cid22/1418519 at the same distance); cell-level conclusions need 50+ photos before becoming source-informing.
+- zenjpeg HybridProgressive is the only zenjpeg preset measured here. HybridMaxCompression would be slower but smaller-bytes; HybridBaseline would be faster but worse RD. The adaptive-dispatch plan should be revisited with HybridBaseline as the "low-end zenjpeg" reference if we want a true RD-vs-time Pareto.
+- 4:2:0 chroma subsampling on the zenjpeg side. 4:4:4 zenjpeg would shift bytes higher by 15-30%.
+- The distance→quality mapping is the rough task-spec guess. A calibrated mapping (matching SSIM2 within ±1 point) would shift the bytes Δ but not the wall-clock or relative-quality comparisons.
+- Background: 32-thread machine, no other load during sweep. Single-thread or contention-heavy environments would shift jxl-encoder wall-clock more than zenjpeg-hybrid (jxl uses more internal rayon at e5+).

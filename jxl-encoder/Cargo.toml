@@ -181,6 +181,13 @@ imgref = "1.12"
 rgb = "0.8"
 walkdir = "2.5"
 sha2 = "0.11.0"
+# zenjpeg comparator for the lossy low-effort cross-codec baseline (W38).
+# `trellis` enables the HybridProgressive / HybridMaxCompression presets;
+# `parallel` enables rayon-fanout for fair wall-clock comparison.
+# Workspace `[patch.crates-io]` redirects zenjpeg to the local sibling path
+# (see workspace Cargo.toml line 62); use the registry coordinate here so
+# both refer to the same canonical source.
+zenjpeg = { version = "0.8.4", default-features = false, features = ["decoder", "trellis", "parallel"] }
 # Microbench harness for the chunk-1 SplitTreeSamples primitive (issue #40).
 # zenbench is the workspace-standard benchmarking tool — interleaved sampling
 # and paired statistics give cleaner signal than criterion's isolated rounds.
@@ -216,6 +223,15 @@ path = "examples/lossy_phase_baseline.rs"
 name = "epf_dispatch_ab"
 path = "examples/epf_dispatch_ab.rs"
 required-features = ["butteraugli-loop"]
+
+# W38: low-effort phase baseline (e2..=e5) + zenjpeg-hybrid cross-codec
+# comparator. Reuses the __JXL_ENC_PHASE_TIMING env-var path from W36-1
+# and adds a zenjpeg `HybridProgressive` encode + RD measurement on the
+# same corpus. See benchmarks/lossy_phase_baseline_low_effort_2026-05-19.{tsv,meta}
+# and benchmarks/lossy_phase_low_effort_with_zenjpeg_2026-05-19.{tsv,meta}.
+[[example]]
+name = "lossy_low_effort_zenjpeg_compare"
+path = "examples/lossy_low_effort_zenjpeg_compare.rs"
 
 [[example]]
 name = "distance_sweep"
