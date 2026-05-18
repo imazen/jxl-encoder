@@ -4,6 +4,26 @@
 
 ### Added
 
+- **`PatchesDispatch` enum + `LossyConfig::with_patches_dispatch`**
+  (W36-3, `src/api.rs`, `src/vardct/encoder.rs`,
+  `examples/patches_dispatch_ab.rs`,
+  `benchmarks/patches_dispatch_e7_2026-05-18.{tsv,meta}`). Default
+  `PatchesDispatch::Auto` skips the ~27 ms/MP patches scan on photo
+  class (per-block-mean `median(mask1x1) <= 60` — same statistic the
+  auto-splines screenshot skip and GPU AFV cost-grid gate use, with a
+  dedicated lower threshold because the cost asymmetry is inverted:
+  false-negative on a screenshot loses 30-70 % of the screenshot's
+  bytes, while false-positive on a photo is just wall-clock overhead
+  because the scan returns empty `PatchesData` either way). Empty
+  `PatchesData` is the same result the scan would have returned on
+  photo content (W11-1 + W12-5: "Zero overhead on CLIC photos"), so
+  hash-lock 36/36 stays byte-identical. Screenshots — including
+  `windows95.png` 640×480 (the documented false-negative of the >95
+  gate per `auto_splines_bench_2026-05-17`) — keep running the scan
+  exactly as before. `PatchesDispatch::AlwaysScan` restores the
+  pre-W36-3 behaviour for A/B reproducibility runs;
+  `PatchesDispatch::NeverScan` force-skips the scan on every image.
+
 - **RFC#45 chunk 2 — e12 admit gate widening** (mirrors W21-2 chunk 1's
   e11 admit-gate pattern from `24f071db` + `ebf5ddaa`).
   (`src/validation.rs`, `src/effort.rs`, `src/api.rs`,

@@ -2949,6 +2949,52 @@ pub enum EncoderMode {
     Experimental,
 }
 
+// ── PatchesDispatch ──────────────────────────────────────────────────────────
+
+/// Controls when the VarDCT patches detector runs.
+///
+/// The patches scan (text glyph / icon / button repeated-rectangle detector,
+/// see [`crate::vardct::patches::find_and_build_with_per_patch_gate`]) costs
+/// **~25-30 ms/MP** at effort >= 7. On photo content (CID22, CLIC) the scan
+/// has historically produced zero output — the per-patch cost gate vetoes
+/// every candidate, and the early-out `min_peak` filter rejects most before
+/// they reach the cost gate. The full scan still runs end-to-end every time.
+///
+/// `Auto` (default) consults the same `median(mask1x1) > 95` discriminator
+/// already used by [`Self::with_content_aware_entropy_mul`] / the GPU
+/// encoder's AFV cost-grid gate and the W23-2 auto-splines screenshot skip.
+/// When the discriminator says "photo class", `Auto` skips the scan entirely
+/// — the omitted scan would have produced the same empty `PatchesData` it
+/// always produces on photos, so the output is byte-identical and the wall
+/// clock drops by ~25-30 ms/MP.
+///
+/// When the discriminator says "screenshot class" (median(mask1x1) > 95),
+/// `Auto` runs the scan as before. Screenshots see no behavioural change.
+///
+/// `AlwaysScan` forces the patches scan regardless of content (the
+/// pre-W36-3 behavior — useful for A/B benchmarks and reproducibility
+/// against earlier output).
+///
+/// `NeverScan` short-circuits the scan and skips it on every image
+/// (equivalent to [`LossyConfig::with_patches`]`(false)` for the scan step
+/// — note that the rest of the patches pipeline including `enable_patches`
+/// gating still applies; this only suppresses the detector).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PatchesDispatch {
+    /// Skip the scan on photo content (`median(mask1x1) <= 95`); run on
+    /// screenshot content (`> 95`). Default since W36-3.
+    #[default]
+    Auto,
+    /// Always run the patches detector when `enable_patches` is true.
+    /// Pre-W36-3 behavior. Use to compare A/B against `Auto` output, or
+    /// when calibration sweeps need to compare to the older codepath.
+    AlwaysScan,
+    /// Never run the patches detector — skip the scan on every image
+    /// regardless of `enable_patches`. Equivalent to gating the patches
+    /// step off at the call site.
+    NeverScan,
+}
+
 // ── ProgressiveMode ──────────────────────────────────────────────────────────
 
 /// Progressive encoding mode for VarDCT.
@@ -3301,6 +3347,18 @@ pub struct LossyConfig {
     /// `true` means the user-set [`Self::patches`] wins outright.
     /// Default `false`. See [`Self::with_patches`].
     patches_explicit: bool,
+    /// Controls when the VarDCT patches detector runs (W36-3).
+    ///
+    /// Default [`PatchesDispatch::Auto`] skips the ~25-30 ms/MP patches
+    /// scan on photo content (`median(mask1x1) <= 95`) — those scans
+    /// would have produced empty `PatchesData` anyway, so the output
+    /// stays byte-identical and the wall clock drops. Set
+    /// [`PatchesDispatch::AlwaysScan`] for byte-for-byte reproducibility
+    /// against pre-W36-3 encodes, or [`PatchesDispatch::NeverScan`] to
+    /// force-skip the scan on every image.
+    ///
+    /// See [`Self::with_patches_dispatch`].
+    patches_dispatch: PatchesDispatch,
     /// Edge-preserving filter (EPF) iteration count override.
     ///
     /// `-1` (default) = encoder chooses based on butteraugli distance
@@ -3521,6 +3579,7 @@ impl LossyConfig {
             content_aware_entropy_mul: false,
             screenshot_lift_hint: None,
             patches_explicit: false,
+            patches_dispatch: PatchesDispatch::default(),
             epf_level: -1,
             alpha_distance: None,
             // Chunk-1 default: keep responsive=0 lossy alpha path
@@ -3725,6 +3784,10 @@ impl LossyConfig {
             new.patches = self.patches;
             new.patches_explicit = true;
         }
+        // Preserve patches dispatch policy across with_effort — never
+        // effort-derived; pure caller preference (mirrors the
+        // alpha_distance / chroma_subsampling / buffering pattern below).
+        new.patches_dispatch = self.patches_dispatch;
         // Preserve CLI-passthrough knobs across with_effort (they're
         // never effort-derived; opt-in / pure forwarding).
         new.alpha_distance = self.alpha_distance;
@@ -4136,6 +4199,39 @@ impl LossyConfig {
         self.patches = enable;
         self.patches_explicit = true;
         self
+    }
+
+    /// Controls when the VarDCT patches detector runs (W36-3).
+    ///
+    /// Default [`PatchesDispatch::Auto`] consults the existing
+    /// `median(mask1x1) > 95` screenshot/photo discriminator (the same
+    /// one used by [`Self::with_content_aware_entropy_mul`] and the
+    /// auto-splines screenshot skip) and short-circuits the
+    /// ~25-30 ms/MP patches scan on photo content where it is known to
+    /// produce empty output. Output is byte-identical to
+    /// [`PatchesDispatch::AlwaysScan`] on photos.
+    ///
+    /// [`PatchesDispatch::AlwaysScan`] forces the pre-W36-3 behavior
+    /// (run the scan unconditionally). Use for A/B benchmarks against
+    /// older output or strict reproducibility runs.
+    ///
+    /// [`PatchesDispatch::NeverScan`] suppresses the scan on every
+    /// image (still allowing other patches-related encoder state to
+    /// flow through).
+    ///
+    /// This method is orthogonal to [`Self::with_patches`] —
+    /// `with_patches(false)` already disables the patches *step*, while
+    /// `with_patches_dispatch` controls when the patches *scan* runs
+    /// inside the step. Setting both is allowed.
+    pub fn with_patches_dispatch(mut self, dispatch: PatchesDispatch) -> Self {
+        self.patches_dispatch = dispatch;
+        self
+    }
+
+    /// Current patches dispatch policy. See
+    /// [`Self::with_patches_dispatch`].
+    pub fn patches_dispatch(&self) -> PatchesDispatch {
+        self.patches_dispatch
     }
 
     /// Enable libjxl-style **dot detection** (refs #19). Default `true`,
@@ -7204,6 +7300,7 @@ impl<'a> EncodeRequest<'a> {
         } else {
             enc.profile.patches
         };
+        enc.patches_dispatch = cfg.patches_dispatch;
         enc.enable_dot_detection = cfg.dot_detection;
         enc.encoder_mode = cfg.mode;
         enc.splines = cfg.splines.clone();
@@ -8328,6 +8425,7 @@ impl LossyEncoder {
             } else {
                 enc.profile.patches
             };
+            enc.patches_dispatch = cfg.patches_dispatch;
             enc.enable_dot_detection = cfg.dot_detection;
             enc.encoder_mode = cfg.mode;
             enc.splines = cfg.splines.clone();
@@ -10181,6 +10279,7 @@ fn encode_animation_lossy(
     } else {
         enc.profile.patches
     };
+    enc.patches_dispatch = cfg.patches_dispatch;
     enc.enable_dot_detection = cfg.dot_detection;
     enc.encoder_mode = cfg.mode;
     enc.splines = cfg.splines.clone();

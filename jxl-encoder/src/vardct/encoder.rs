@@ -158,6 +158,114 @@ const SQUEEZE_LUMA_QTABLE: [f32; SQUEEZE_LUMA_QTABLE_LEN] = [
 /// vs the gb82-sc screenshot corpus (medians ≈ 110–180).
 const CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD: f32 = 95.0;
 
+/// W36-3 patches photo-skip dispatch threshold on the per-block-mean
+/// median of `mask1x1` (same statistic the auto-splines
+/// [`crate::vardct::splines::looks_like_screenshot`] gate uses).
+///
+/// `> 60` is **deliberately lower** than the shared `95.0` used by
+/// auto-splines / GPU AFV cost-grid because the cost asymmetry is
+/// opposite:
+///
+/// * The auto-splines gate prefers **false-negative** (run splines on
+///   an actual screenshot — caught later by the per-spline cost gate)
+///   over **false-positive** (skip splines on a real photo).
+/// * The patches photo-skip dispatch prefers **false-positive**
+///   (run the patches scan on a real photo — produces empty
+///   `PatchesData`, byte-identical to AlwaysScan, just slower by
+///   ~25-30 ms/MP) over **false-negative** (skip the scan on a real
+///   screenshot — loses 30-70 % of the screenshot's bytes savings).
+///
+/// The `auto_splines_bench_2026-05-17_chunk5.meta` corpus characterises
+/// `windows95.png` (640×480 Win95 UI mockup) as the one false-negative
+/// of the `> 95` gate: per-block-mean median ≈ 69.9 vs CID22 photos
+/// median ≈ 56 (max ≤ 87 across 16 CLIC photos). `> 60` catches
+/// `windows95.png` without dragging in any photo in that corpus.
+///
+/// If a future content discriminator regression admits a photo above
+/// 60, the worst case is still byte-identical output (the patches
+/// scan runs and produces empty `PatchesData`) — only the wall-clock
+/// win disappears for that image.
+const PATCHES_DISPATCH_BLOCK_MASK_THRESHOLD: f32 = 60.0;
+
+/// W36-3 patches photo-skip dispatch helper: returns the per-8×8-block
+/// mean median of [`crate::vardct::adaptive_quant::compute_mask1x1`]
+/// over the unpadded `[0, width) × [0, height)` region of the XYB Y
+/// plane laid out with row stride `stride`. Returns `None` when the
+/// image is too small to span a full 8×8 block (callers should treat
+/// `None` as "discriminator unavailable" and fall back to the scan).
+///
+/// This is the same statistic
+/// [`crate::vardct::splines::looks_like_screenshot`] uses for the
+/// auto-splines screenshot skip — duplicated locally to keep the
+/// W36-3 change strictly within encoder.rs / api.rs and avoid touching
+/// splines.rs's public surface. The pure-mathematical helper is small
+/// enough that the duplication is a cheaper maintenance cost than
+/// exporting a new crate-private `pub(crate)` symbol.
+fn patches_dispatch_block_mask_median(
+    xyb_y: &[f32],
+    width: usize,
+    height: usize,
+    stride: usize,
+) -> Option<f32> {
+    if width < 8 || height < 8 {
+        return None;
+    }
+    // Re-pack the (possibly strided) Y plane into a contiguous buffer
+    // because `compute_mask1x1` assumes `stride == width` (callers in
+    // `encode_inner` already pass `padded_width` directly as both
+    // width AND stride, so the contiguous fast-path almost always
+    // wins).
+    let y_contig: Vec<f32> = if stride == width {
+        xyb_y[..width * height].to_vec()
+    } else {
+        let mut buf = Vec::with_capacity(width * height);
+        for y in 0..height {
+            let row_start = y * stride;
+            buf.extend_from_slice(&xyb_y[row_start..row_start + width]);
+        }
+        buf
+    };
+    let mask1x1 = super::adaptive_quant::compute_mask1x1(&y_contig, width, height);
+    let blocks_per_row = width / 8;
+    let blocks_per_col = height / 8;
+    if blocks_per_row == 0 || blocks_per_col == 0 {
+        return None;
+    }
+    let n_blocks = blocks_per_row * blocks_per_col;
+    let mut block_means: Vec<f32> = Vec::with_capacity(n_blocks);
+    for by in 0..blocks_per_col {
+        for bx in 0..blocks_per_row {
+            let mut sum: f64 = 0.0;
+            let mut count: usize = 0;
+            for dy in 0..8 {
+                let y = by * 8 + dy;
+                if y >= height {
+                    break;
+                }
+                for dx in 0..8 {
+                    let x = bx * 8 + dx;
+                    if x >= width {
+                        break;
+                    }
+                    sum += mask1x1[y * width + x] as f64;
+                    count += 1;
+                }
+            }
+            let mean = if count > 0 {
+                (sum / count as f64) as f32
+            } else {
+                1.0
+            };
+            block_means.push(mean);
+        }
+    }
+    let mid = block_means.len() / 2;
+    block_means.select_nth_unstable_by(mid, |a, b| {
+        a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
+    });
+    Some(block_means[mid])
+}
+
 /// Return the median value of the unpadded region `[0, width) × [0, height)`
 /// of a `mask1x1` plane laid out with row stride `stride`. Uses
 /// `select_nth_unstable` on an owned copy of the unpadded values (O(n)
@@ -386,6 +494,17 @@ pub struct VarDctEncoder {
     /// and stores unique patterns once in a reference frame. Huge wins on screenshots.
     /// On by default for lossy encoding.
     pub enable_patches: bool,
+    /// Controls when the patches detector actually runs when
+    /// `enable_patches == true`. See
+    /// [`crate::api::PatchesDispatch`] for the policy doc.
+    ///
+    /// Default [`crate::api::PatchesDispatch::Auto`] consults the
+    /// existing `median(mask1x1) > 95` screenshot/photo discriminator
+    /// (used by `content_aware_entropy_mul` and the auto-splines
+    /// detector) and short-circuits the ~25-30 ms/MP patches scan on
+    /// photo content where it always produces empty output. Wire-format
+    /// byte-identical to `AlwaysScan` on photos.
+    pub patches_dispatch: crate::api::PatchesDispatch,
     /// Enable libjxl-style **dot detection** (refs #19). When true and
     /// effort >= 7 and distance >= 3.0 and no text-like patches were
     /// found, the encoder runs the star-field / specular-highlight
@@ -639,6 +758,7 @@ impl Default for VarDctEncoder {
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
+            patches_dispatch: crate::api::PatchesDispatch::default(),
             enable_dot_detection: false, // refs #19; LossyConfig flips this to true by default
             encoder_mode: crate::api::EncoderMode::Reference,
             splines: None,
@@ -713,6 +833,7 @@ impl VarDctEncoder {
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
+            patches_dispatch: crate::api::PatchesDispatch::default(),
             enable_dot_detection: false, // refs #19; LossyConfig flips this to true by default
             encoder_mode: crate::api::EncoderMode::Reference,
             splines: None,
@@ -1419,7 +1540,63 @@ impl VarDctEncoder {
         // already detected, not ones the detector rejected.
         let _t_patches = std::time::Instant::now();
         let min_peak = if self.distance < 1.0 { 2 } else { 1 };
-        let mut patches_data = if self.enable_patches {
+        // W36-3: patches photo-skip dispatch. Consult the per-block-mean
+        // `median(mask1x1)` screenshot discriminator (same statistic the
+        // auto-splines `looks_like_screenshot` gate uses, mirroring the
+        // GPU encoder's `compute_block_mask_means`) BEFORE running the
+        // patches scan. On photo content the patches scan is known to
+        // produce empty `PatchesData` (W11-1 + W12-5: "Zero overhead on
+        // CLIC photos (patches correctly produce nothing)") — so
+        // short-circuiting the ~25-30 ms/MP scan there is a wall-clock
+        // win with byte-identical output.
+        //
+        // **Why per-block-mean, not the raw `median_mask1x1` used by
+        // `content_aware_entropy_mul`**: the raw-pixel median catches
+        // pixel-grid edges in low-resolution UI and pulls the median
+        // below 95 even though the image is glyph-heavy and the
+        // patches scan is highly profitable. Per-block-mean smooths
+        // over pixel-level gridlines and stays high on UI content.
+        //
+        // **Why threshold 60 instead of the shared 95**: see
+        // `PATCHES_DISPATCH_BLOCK_MASK_THRESHOLD` doc — cost asymmetry
+        // is opposite to auto-splines, so prefer false-positive
+        // (run scan on photo → byte-identical) over false-negative
+        // (skip scan on screenshot → 30-70 % regression).
+        //
+        // Dispatch policy (see `crate::api::PatchesDispatch`):
+        //   * `Auto` (default): run scan when per-block-mean
+        //     `median(mask1x1) > 60` (catches CLIC photo edge case +
+        //     all of gb82-sc including windows95.png 640×480).
+        //   * `AlwaysScan`: run scan unconditionally (pre-W36-3
+        //     behavior — no discriminator pass).
+        //   * `NeverScan`: short-circuit the scan on every image.
+        let should_scan_patches = self.enable_patches
+            && match self.patches_dispatch {
+                crate::api::PatchesDispatch::NeverScan => false,
+                crate::api::PatchesDispatch::AlwaysScan => true,
+                crate::api::PatchesDispatch::Auto => {
+                    // The discriminator pass costs one
+                    // `compute_mask1x1` + per-block-mean reduction +
+                    // partial sort — a few ms/MP, well under the
+                    // ~25-30 ms/MP patches scan we save when the gate
+                    // fires. The pass uses the PRE-patches /
+                    // PRE-gaborish XYB just like the later quant-field
+                    // mask1x1, so subsequent subtract_patches /
+                    // subtract_splines mutations don't observe the
+                    // wrong mask. (The late `compute_mask1x1` at the
+                    // quant_field step recomputes on the post-subtract
+                    // XYB.)
+                    //
+                    // `None` from the discriminator (image smaller
+                    // than 8×8 in either dim) falls back to "run scan"
+                    // because that's the safe / byte-identical
+                    // direction.
+                    patches_dispatch_block_mask_median(&xyb_y, width, height, padded_width)
+                        .map(|m| m > PATCHES_DISPATCH_BLOCK_MASK_THRESHOLD)
+                        .unwrap_or(true)
+                }
+            };
+        let mut patches_data = if should_scan_patches {
             super::patches::find_and_build_with_per_patch_gate(
                 [&xyb_x, &xyb_y, &xyb_b],
                 width,
@@ -1714,6 +1891,14 @@ impl VarDctEncoder {
 
         // Compute per-pixel mask on PRE-GABORISH image (matches libjxl:
         // initial_quant_masking1x1 is computed in InitialQuantField before GaborishInverse)
+        //
+        // NOTE: this mask is computed on the (possibly patches / dots /
+        // splines-subtracted) XYB — the W36-3 patches photo-skip
+        // dispatch above (via `splines::looks_like_screenshot`) runs its
+        // own mask1x1 pass on the pre-patches XYB just for the gate
+        // decision, and drops it before this compute runs so
+        // subtract_patches / subtract_splines mutations don't observe
+        // the wrong mask.
         let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss {
             Some(super::adaptive_quant::compute_mask1x1_with_budget(
                 &xyb_y,
