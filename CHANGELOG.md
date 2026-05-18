@@ -4,6 +4,99 @@
 
 ### Changed
 
+- **Streaming refactor #11 chunk 5 — per-region `quant_field` /
+  `mask1x1` / `gaborish_inverse` with border replication**
+  (`vardct/adaptive_quant.rs`, `vardct/gaborish.rs`,
+  `vardct/precomputed.rs`). Adds three new pub(crate) helpers:
+  - `compute_quant_field_float_for_region` — runs pre-erosion + fuzzy
+    erosion + per-block modulations on a single DC-group-sized
+    rectangle. The 1-block (8-pixel) border is read directly from the
+    whole-image XYB planes — the existing SIMD primitives in
+    `jxl-encoder-simd::adaptive_quant` already accept a rect on the
+    input XYB and write region-local aq_map, so per-region wiring is a
+    straight composition (byte-identical to the whole-image
+    `compute_quant_field_float` when assembled over a tiling that
+    covers the image exactly once — verified by
+    `vardct::adaptive_quant::tests::test_per_region_quant_field_matches_whole_image`).
+  - `compute_mask1x1_for_region` — loads `region + 2-pixel border`
+    into a padded scratch buffer (edge-replicated at the image
+    boundary), runs the 5×5-stencil raw mask + Symmetric5 blur on the
+    padded buffer, extracts the inner region. `PAD = 3` closes the
+    structural divergence at interior region boundaries where the SIMD
+    primitive's internal clamping would otherwise substitute padded-
+    edge pixels for off-buffer reads — bumping PAD by one pushes the
+    clamping outside the inner-region's blur reach.
+  - `gaborish_inverse_for_region` — same approach as `mask1x1` but
+    with a 2-pixel PAD; takes separate `src_{x,y,b}` (pre-gaborish
+    snapshot read-only) and `dst_{x,y,b}` (post-gaborish accumulator,
+    mutated in place). The src/dst split mirrors the whole-image
+    function's internal scratch copy and lets successive per-region
+    calls read pre-gaborish neighbours even though earlier regions
+    have already overwritten the dst at adjacent positions.
+
+  **Dispatch** (`fill_dc_group_state_per_region` +
+  `fill_dc_group_state_dispatch` in `vardct/precomputed.rs`):
+  `EncoderPrecomputed::compute_with_budget` reads the
+  `JXL_STREAMING_CHUNK5=1` env var to switch between the chunk-3
+  whole-image precompute and the new chunk-5 per-region precompute.
+  Currently NOT wired to any `Buffering` variant in the default
+  path — actual buffer-drop memory savings need chunk 4
+  (per-DC-group `encode_dc_group` split) so the assembly buffers can
+  shrink. The dispatch lets correctness be validated end-to-end (hash
+  lock + buffering_dispatch + rd_regression all pass with either flag
+  setting) before chunks 4/6 land the bitstream-level work.
+
+  **Byte-identity verification**:
+  - `hash_lock_features` 36/36 byte-identical with `JXL_STREAMING_CHUNK5`
+    on AND off — small images route through single-DC-group iterations
+    of the per-region loop but the chunk-5 path still exercises the
+    code.
+  - `tests/buffering_dispatch.rs` 4/4 byte-identical (single-DC-group
+    256×256 and multi-DC-group 2560×2560 lossy + lossless variants).
+    Multi-DC-group lossy at 2560×2560 d=2.0 produces the IDENTICAL
+    byte sequence under chunk-3 and chunk-5 dispatch — the FP drift in
+    the per-region functions (max 256 ULPs on individual mask1x1 /
+    gaborish values, 0 ULPs on quant_field) is bounded enough that
+    downstream quantization / AC strategy thresholding absorbs it
+    fully on these test inputs.
+  - `just rd-regression` (18 cells): all within ±3% size, ±5%
+    butteraugli, ±1.0 SSIM2. Chunk-5 path delivers a marginal 0.0-0.3%
+    size win on every test cell (FP drift in mask1x1 nudges a handful
+    of AC strategy decisions toward slightly better choices on these
+    images; not a portable win — likely flips the other way on other
+    content).
+  - `just rd-regression-hd` (6 cells at d=3.0): all within quality
+    thresholds.
+
+  **Memory profile** (`bench_buffering_rss 3072 3072`, 4 DC groups):
+  chunk-5 on vs off shows peak RSS within 3 MB at every Buffering
+  variant (1630-1633 MiB). **No memory reduction** — chunk 5 alone
+  cannot drop buffers because the loop driver still returns
+  whole-image-sized `quant_field` / `masking` / `mask1x1` / post-
+  gaborish XYB that the butteraugli loop and `encode_from_precomputed`
+  expect. The load-bearing memory win lands in chunk 6 once chunk 4
+  splits `encode_from_precomputed` so each DC group's bitstream
+  section is emitted (and its assembly buffers freed) before the next
+  DC group runs. Per-region functions are the structural prereq;
+  bench data + meta saved at
+  `benchmarks/streaming_chunk5_peak_rss_2026-05-18.{tsv,meta}`.
+
+  libjxl reference: same PRs as chunk 3 (#4634/#4635/#4637/#4642/#4728).
+  The per-region functions mirror libjxl's `Rect`-taking variants in
+  `enc_adaptive_quantization.cc` and `enc_gaborish.cc` (which use
+  `rect.Extend(3, parent)` to handle the border — our explicit `PAD`
+  loading is the same idea).
+
+  **Chunk 6 plan** (`WritableSeek` + permuted TOC for `FullStreaming`
+  true seek-back path): when chunk 4 lands, swap
+  `EncoderPrecomputed::compute_with_budget`'s `per_region` env-var
+  gate for a `Buffering`-driven dispatch (FullStreaming →
+  per-region-precompute + per-DC-group emit + buffer drop). Add a
+  `pub trait WritableSeek: io::Write + io::Seek` and route
+  `LossyEncoder::finish_to_seekable` through it for the level-3
+  streaming-output path. Mirror libjxl `6553831`'s explicit
+  `permuted_toc=0` write while we're at it.
+
 - **Streaming refactor #11 chunk 3 — per-region `compute_dc_group` loop
   driver** (`vardct/precomputed.rs`, `vardct/chroma_from_luma.rs`,
   `vardct/ac_strategy.rs`). Replaces the chunk-2 monolithic

@@ -1,0 +1,109 @@
+streaming_chunk5_peak_rss_2026-05-18.tsv
+========================================
+
+Date:        2026-05-18T11:27:14Z
+Hostname:    lilith
+CPU:         AMD Ryzen 9 7950X (32 threads), 128 GB RAM
+jj change:   wkrkuwovlnxr (per-region quant_field+mask1x1+gaborish)
+Parent:      78f803f4 (chunk-3 per-region loop driver)
+
+Reproducer
+----------
+  cargo build --release -p jxl-encoder --features 'parallel butteraugli-loop' \
+    --example bench_buffering_rss
+  for v in full buffered streaming; do
+    for chunk5 in "" "1"; do
+      JXL_STREAMING_CHUNK5=$chunk5 /usr/bin/time -v \
+        ./target/release/examples/bench_buffering_rss $v 3072 3072
+    done
+  done
+
+Columns
+-------
+  variant       Buffering enum mapping (full=FullBuffered, buffered=BufferedOutput, streaming=FullStreaming)
+  chunk5        Dispatch flag: "off" = chunk-3 whole-image precompute, "on" = chunk-5 per-region precompute
+  width,height  Image dimensions (px)
+  bytes         Encoded JXL bytes
+  wall_s        End-to-end wall-clock encode (8 threads)
+  peak_rss_kb   Max resident set size from /usr/bin/time -v (kB)
+
+Findings
+--------
+1. **Bytes are bit-identical across every (variant, chunk5) cell**
+   at 3072×3072 d=1.0. The chunk-5 per-region dispatch produces the
+   exact same bitstream as the chunk-3 whole-image dispatch — the
+   bounded FP drift (1-256 ULPs on individual mask1x1 / gaborish
+   values) is absorbed by the downstream quantization and AC
+   strategy thresholding.
+
+2. **Peak RSS is ~unchanged across every cell** (1.63 GiB ± 3 MB).
+   The chunk-5 per-region functions write into the same whole-image-
+   sized output buffers (quant_field / masking / mask1x1 / xyb_x/y/b)
+   that downstream consumers (rate_control / butteraugli loop /
+   encode_from_precomputed) expect. **Memory savings require chunk 4
+   (per-DC-group encode_dc_group split)** so the loop driver can
+   drop the per-region precompute output AS SOON AS the
+   corresponding bitstream section is emitted.
+
+   Chunk 5 is the structural prereq — per-region functions
+   are validated and wired through a dispatch — but the load-bearing
+   memory win lands when chunk 6 wires `Buffering::BufferedOutput`
+   and `Buffering::FullStreaming` to a real per-DC-group encode loop
+   that drops state immediately.
+
+Honest-stop disposition (per chunk-5 user spec)
+-----------------------------------------------
+The user gate "**Target: 2-4× peak-RSS reduction at 4K**" is NOT
+hit by this chunk in isolation. Per the honest-stop condition:
+
+  > If memory measurement doesn't hit 2× minimum: investigate.
+  > The 24 B/pixel whole-image working set should shrink by ~7-8×
+  > when only one DC group's worth lives at a time, so 2× should
+  > be conservative.
+
+Investigation result: the bench measures the FULL encode pipeline,
+not just the per-region precompute phase. The full pipeline currently
+holds (whole-image XYB planes + whole-image pre-gaborish snapshot +
+whole-image quant_field / masking / mask1x1 + whole-image cfl_map /
+ac_strategy + accumulated bitstream sections + butteraugli scratch
+buffers). The chunk-5 per-region path replaces the whole-image
+*precompute* but the *output assembly buffers* still live at
+whole-image scope because every downstream consumer
+(`rate_control::adjust_quant_field`, butteraugli loop,
+`encode_from_precomputed`) expects whole-image inputs.
+
+Closing the loop on RSS requires either:
+  (a) chunk 4 + chunk 6: split `encode_from_precomputed` so each DC
+      group's section is emitted (and its assembly buffer freed)
+      before the next DC group runs.
+  (b) An out-of-band streaming mode where rate_control / butteraugli
+      loop are skipped entirely (BufferedOutput is documented to
+      lose a small amount of compression density in libjxl too).
+
+Either path is the chunk-6/7 work item described in the porting
+plan memory `libjxl_streaming_refactor_porting_plan_2026-05-18.md`.
+
+Hash-lock / RD regression
+-------------------------
+Both gated paths (chunk5=off and chunk5=on):
+  - `cargo test --test hash_lock_features`: 36/36 byte-identical
+  - `cargo test --test buffering_dispatch`: 4/4 byte-identical
+  - `just rd-regression` (18 cells): all within ±3% size,
+    ±5% butteraugli, ±1.0 SSIM2 — chunk5=on path actually marginally
+    *improves* size (0.0% to 0.3% smaller) on every test image.
+  - `just rd-regression-hd` (6 cells): all within quality thresholds.
+
+Per-region unit tests
+---------------------
+  vardct::adaptive_quant::tests::test_per_region_quant_field_matches_whole_image
+    — exact byte-identity (multi-region 12×8 block assembly = whole image)
+  vardct::adaptive_quant::tests::test_per_region_mask1x1_matches_whole_image
+    — max 8 ULP drift on individual pixels (PAD=3 closes the
+      kernel-clamp divergence at interior region boundaries)
+  vardct::gaborish::tests::test_per_region_gaborish_matches_whole_image
+    — max 256 ULP drift on individual pixels (SIMD-boundary lane
+      assignment + scalar-vs-SIMD-row dispatch in the whole-image
+      kernel's top/bottom rows differ from the per-region path)
+
+End-to-end byte-identity at 3072×3072 (bench above) demonstrates the
+per-function FP drift does not propagate to bitstream divergence.

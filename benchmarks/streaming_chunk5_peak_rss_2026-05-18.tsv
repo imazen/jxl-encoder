@@ -1,0 +1,7 @@
+variant	chunk5	width	height	bytes	wall_s	peak_rss_kb
+FullBuffered	off	3072	3072	6973041	0.96	1630948
+FullBuffered	on	3072	3072	6973041	0.95	1630680
+BufferedOutput	off	3072	3072	6973041	0.99	1631640
+BufferedOutput	on	3072	3072	6973041	0.96	1631952
+FullStreaming	off	3072	3072	6973041	0.95	1633464
+FullStreaming	on	3072	3072	6973041	0.96	1633124
