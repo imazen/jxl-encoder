@@ -1,0 +1,46 @@
+# F-D photo high-d AC overspend wedge investigation
+# Date: 2026-05-18
+# Investigation: W44-5 follow-on, F-D family (30 cells, 60% of OPEN ledger)
+# Workspace: ~/work/zen/jxl-encoder--f-d-investigation
+# Baseline commit: jj rev `nvtryuxu 585205a5` (parent ttuksksq a2cd4758 = bench W38 baseline)
+# Hostname: $(hostname)
+# Encoders compared:
+#   ours: cargo run --release -p jxl-encoder --example f_d_wedge_investigate (jxl-encoder workspace `default`)
+#   cjxl: /home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl v0.12.0
+# Decoder for stats: /home/lilith/work/jxl-efforts/jxl-oxide/target/release/jxl-inspect export-csv --per-block
+#
+# Cells investigated (7 of 30 F-D cells, chosen to span all 3 hot images at e7 d∈{3,4,5,6}):
+#   - 1531677.png e7 d=5.0  (top ssim2 loss: -2.09)
+#   - 1531677.png e7 d=6.0  (-1.88 ssim2)
+#   - 1531677.png e7 d=4.0  (-1.18 ssim2)
+#   - 1420710.png e7 d=6.0  (-1.98 ssim2)
+#   - 1420710.png e7 d=5.0  (-1.43 ssim2)
+#   - 1189261.png e7 d=3.0  (-0.66 ssim2, +1724 ac, -654 lf)
+#   - 1189261.png e7 d=4.0  (-0.37 ssim2, +1364 ac, -716 lf)
+#
+# Schema (one row per (cell, encoder) — 14 rows total):
+#   image, effort, distance, encoder, bytes, encode_ms,
+#   total_varblocks, total_8x8_area,
+#   hf_mul_median, hf_mul_mean, hf_mul_mad, hf_mul_min, hf_mul_max,
+#   global_scale, quant_lf,
+#   Dct8_pct ... AfvN_pct       (19 cols: varblock-count percentages, one per DCT type),
+#   Dct8_area_pct ... AfvN_area_pct  (19 cols: 8x8-block-area percentages, one per DCT type)
+#
+# DCT type list: Dct8, Dct16, Dct32, Dct64, Dct16x8, Dct8x16, Dct32x16,
+# Dct16x32, Dct32x64, Dct64x32, Dct4x8, Dct8x4, Dct4, Dct2, Hornuss,
+# Afv0, Afv1, Afv2, Afv3.
+#
+# Notes on parsing:
+# - "global_scale" and "quant_lf" columns are always 0 here because the
+#   crude lf_global.json parser didn't pull the Quantizer block in this
+#   tool version. Use `jxl-inspect inspect` + manifest browsing if needed.
+# - `Dct4_pct` corresponds to libjxl's DCT4X4 (4x4 within an 8x8 block).
+#   `Dct4x8_pct` is DCT4X8 / DCT8X4 (libjxl labels both as Dct4x8 or Dct8x4
+#   depending on orientation; jxl-inspect surfaces them separately).
+# - hf_mul is libjxl's raw_quant (one per varblock). Higher = finer quant
+#   = more bits.
+#
+# Reproducer:
+#   cd ~/work/zen/jxl-encoder--f-d-investigation
+#   cargo run --release -p jxl-encoder --example f_d_wedge_investigate -- \
+#     --output benchmarks/f_d_photo_high_d_wedge_2026-05-19.tsv
