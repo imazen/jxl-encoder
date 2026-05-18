@@ -1616,6 +1616,19 @@ impl VarDctEncoder {
         // per-patch gate is a refinement, not a replacement for the
         // detector-side `min_peak` threshold — it captures patches
         // already detected, not ones the detector rejected.
+        //
+        // W41-1 (issue #52) investigated raising `min_peak=2` at d>=3.0
+        // to match libjxl unconditional `kMinPeak=2`, hypothesising it
+        // would close the W38-2 WF2 wedge (+22-51 % bytes vs cjxl on
+        // screenshots at e7+ d>=3). The measurement ruled the
+        // hypothesis OUT: across the 3 wedge images (`imac_g3`,
+        // `codec_wiki`, `terminal`) the detected patch set is
+        // IDENTICAL at both thresholds (e.g. imac_g3: 277 refs / 2052
+        // occurrences at either). Only `windows95.png` admits 3 extra
+        // refs / ~95 extra occurrences at `min_peak=1`, and clamping
+        // it to 2 saves ~0.7-1.5 % bytes at d>=3 but regresses ssim2
+        // by 0.4-1.3 points (-0.7 at d=3, -1.3 at d=5). Wedge does not
+        // close; not shipped. See benchmarks/patches_min_peak_distance_2026-05-19.tsv.
         let _t_patches = std::time::Instant::now();
         let min_peak = if self.distance < 1.0 { 2 } else { 1 };
         // W36-3: patches photo-skip dispatch. Consult the per-block-mean
@@ -3243,10 +3256,11 @@ impl VarDctEncoder {
             } else if self.enable_patches
                 && let Some(pre_gab) = precomputed.xyb_pre_gaborish.as_ref()
             {
-                // Same distance-aware kMinPeak as `encode_inner` (~line 745):
+                // Same distance-aware kMinPeak as `encode_inner` (~line 1620):
                 // libjxl parity at d<1.0, W2-5 chunk 1 relaxation at d>=1.0.
                 // RFC#45 pick #5 chunk 3 per-patch cost gate — mirrors
-                // `encode_inner` ~line 745 (see comment there).
+                // `encode_inner` ~line 1620 (see comment there for W41-1
+                // measurement findings).
                 let min_peak = if self.distance < 1.0 { 2 } else { 1 };
                 let mut pd = super::patches::find_and_build_with_per_patch_gate(
                     [&pre_gab[0], &pre_gab[1], &pre_gab[2]],

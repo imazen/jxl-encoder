@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Investigated
+
+- **W41-1 (issue #52) — distance-aware `min_peak` patches gate
+  hypothesis RULED OUT** (`benchmarks/patches_min_peak_distance_2026-05-19.{tsv,meta}`,
+  `benchmarks/patches_min_peak_admission_2026-05-19.txt`,
+  `examples/patches_min_peak_distance_ab.rs`,
+  `examples/patches_min_peak_scan.rs`). The W38-2 WF2 wedge audit
+  hypothesised that raising `min_peak` from 1 to 2 at d>=3.0
+  (libjxl unconditional `kMinPeak=2` parity) would close +22-51 %
+  byte regressions vs cjxl on `imac_g3 / codec_wiki / terminal`
+  at e7+. Measurement (84 paired cells: 4 screenshots × 3 photos
+  × 6 distances × 2 variants) confirms the detected patch set is
+  IDENTICAL between `min_peak=1` and `min_peak=2` on the three
+  wedge images (e.g. `imac_g3`: 277 refs / 2052 occurrences at
+  either threshold). Only `windows95.png` admits 3 extra refs at
+  `min_peak=1` (82 vs 85); clamping it to 2 at d>=3 saves
+  0.7-1.5 % bytes but regresses ssim2 by 0.4-1.3 points (net
+  quality loss). **No code change shipped.** The bench harness +
+  full-corpus admission scan (`patches_min_peak_admission_2026-05-19.txt`
+  covers all 11 gb82-sc screenshots × 6 distances) are committed
+  for the next-chunk follow-on, which must look elsewhere for the
+  wedge root cause — candidates per the audit memo: post-detection
+  encoding overhead, distance-blind `apply_per_patch_cost_gate`
+  constants, or unlocking `is_cost_effective` in Reference mode at
+  d>=3 with the `1/sqrt(distance)` divisor. Wedge stays open.
+
 ### Added
 
 - **W38-2 — `LossyConfig::with_pixel_loss_dispatch(PixelLossDispatch)`
