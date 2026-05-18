@@ -1,7 +1,12 @@
 # effort_11_admit_2026-05-18.tsv — RFC#45 chunk 1 acceptance bench
 
 Date: 2026-05-18
-Parent commit: 45445443 (feat(jpeg-transcode): EX-J17a — wire-safe custom coeff orders #49)
+Parent commit: 24f071db (feat(effort): RFC#45 chunk-1 admit-gate widening — e10/e11)
+  Re-bench follow-on: c20e326c (fix(effort): actually apply RFC#45 chunk-1
+  admit-gate widening; widens lf_frame.rs:258 + doc comments + 5 test ranges
+  the parent commit's message promised but did not apply, and replaces the
+  earlier partial TSV — sample 1 + 50% of sample 2 — with the full 5-sample
+  grid).
 Host: water-cooled AMD Ryzen 9 7950X (128 GB RAM)
 Bench: jxl-encoder/examples/e10_e11_paired_ab.rs
 

@@ -133,7 +133,11 @@ impl EntropyMulTable {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct EffortProfile {
-    /// The raw effort level (1–10).
+    /// The raw effort level (1–11).
+    ///
+    /// e10/e11 extends libjxl's kTortoise=9 ceiling: those levels reuse the
+    /// e9 code paths but get extended search budgets on the knobs that scale
+    /// (`butteraugli_iters`, `tree_learn_seeds`, `lossy_search_seeds`).
     pub effort: u8,
 
     // ─── Feature flags ───────────────────────────────────────────────────
@@ -2195,7 +2199,7 @@ mod tests {
     #[test]
     fn test_lossless_experimental_matches_reference() {
         // Lossless experimental is currently identical to reference
-        for effort in 1..=10 {
+        for effort in 1..=11 {
             let r = EffortProfile::lossless(effort, EncoderMode::Reference);
             let e = EffortProfile::lossless(effort, EncoderMode::Experimental);
             assert_eq!(r.effort, e.effort);
@@ -2243,7 +2247,7 @@ mod tests {
         // Lossy and lossless both surface the parallel-tree-learning knobs
         // (lossy uses tree learning for patch reference frames). The defaults
         // must match so a picker sees one canonical schedule per effort.
-        for effort in 1u8..=10 {
+        for effort in 1u8..=11 {
             let l = EffortProfile::lossless(effort, EncoderMode::Reference);
             let v = EffortProfile::lossy(effort, EncoderMode::Reference);
             assert_eq!(l.tree_parallel_max_depth, v.tree_parallel_max_depth);
@@ -2300,7 +2304,7 @@ mod tests {
     #[test]
     fn test_adapt_small_image_fallback_threshold() {
         // Default profile starts with fallback OFF.
-        for effort in 1u8..=10 {
+        for effort in 1u8..=11 {
             let p = EffortProfile::lossless(effort, EncoderMode::Reference);
             assert!(
                 !p.tree_parallel_small_image_fallback,
@@ -2325,7 +2329,7 @@ mod tests {
 
         // At/above size threshold: gate stays OFF (regardless of effort).
         for &pixels in &[SMALL_IMAGE_PIXEL_THRESHOLD, 1_048_576, 4_194_304, 8_000_000] {
-            for effort in 1u8..=10 {
+            for effort in 1u8..=11 {
                 let mut p = EffortProfile::lossless(effort, EncoderMode::Reference);
                 p.adapt_small_image_fallback(pixels);
                 assert!(
@@ -2428,7 +2432,7 @@ mod tests {
 
         // 4. Cross-product spot check: all (effort, pixels) cells outside
         //    the (effort>=9 AND pixels>=4MP) box leave the profile unchanged.
-        for effort in 1u8..=10 {
+        for effort in 1u8..=11 {
             for &pixels in &[262_144u64, 1_048_576, 3_999_999] {
                 let mut p = EffortProfile::lossless(effort, EncoderMode::Reference);
                 let want = baseline(effort);

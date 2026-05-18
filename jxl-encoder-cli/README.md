@@ -35,7 +35,7 @@ Reads PNG (including APNG animation). Writes bare JXL codestream or container fo
 |------|---------|-------------|
 | `-d, --distance` | 1.0 | Butteraugli distance (0 = lossless, 1.0 = visually lossless) |
 | `-q, --quality` | 90 | Quality 0-100 (alternative to distance) |
-| `-e, --effort` | 7 | Effort 1-10 (higher = slower, better compression) |
+| `-e, --effort` | 7 | Effort 1-11 (higher = slower, better compression; e10/e11 extends libjxl kTortoise=9) |
 | `--lossless` | off | Lossless modular encoding |
 | `--no-gaborish` | on | Disable gaborish pre-filter |
 | `--no-pixel-domain-loss` | on | Disable pixel-domain loss (faster, lower quality) |
