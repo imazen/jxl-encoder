@@ -277,13 +277,26 @@ path = "examples/alpha_distance_audit.rs"
 
 # Chunk-2 byte report for `with_alpha_squeeze(true)` (W14-4 follow-on).
 # Sweeps the three W13-4 audit images at 4 alpha distances and reports
-# bytes_no_squeeze vs bytes_squeeze + the resulting Δ. Multi-group
-# inputs (red_night_opaque, alpha_nonpremul_photo_mask) hit the
-# chunk-2.b NotImplemented gate; gradients_semitrans_ui (256×128)
-# is single-group and exercises the new pipeline end-to-end.
+# bytes_no_squeeze vs bytes_squeeze + the resulting Δ. As of chunk-2.b
+# all three (single-group AND multi-group) exercise the new pipeline
+# end-to-end.
 [[example]]
 name = "alpha_squeeze_chunk2_bytes"
 path = "examples/alpha_squeeze_chunk2_bytes.rs"
+
+# Chunk-2.b roundtrip verification: encode each W13-4 audit image with
+# `with_alpha_squeeze(true)` at 4 distances, decode via jxl-rs, report
+# bytes delta + alpha-plane MAE + decode success per (image, distance).
+[[example]]
+name = "alpha_squeeze_chunk2b_roundtrip"
+path = "examples/alpha_squeeze_chunk2b_roundtrip.rs"
+
+# Chunk-2.b djxl helper: emits the same 12 (image, distance) chunk-2.b
+# .jxl files to /tmp/chunk2b_*.jxl so the caller can shell out to djxl
+# for libjxl reference-decoder validation.
+[[example]]
+name = "alpha_squeeze_chunk2b_emit_for_djxl"
+path = "examples/alpha_squeeze_chunk2b_emit_for_djxl.rs"
 
 # RFC#45 chunk 4 calibration harness — fits the per-pixel savings
 # constant in `PatchesData::is_cost_effective` from paired

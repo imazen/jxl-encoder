@@ -221,10 +221,16 @@ fn alpha_squeeze_chunk2_decodes_via_jxl_rs() {
 }
 
 #[test]
-fn alpha_squeeze_chunk2_multigroup_returns_not_implemented_chunk2b() {
-    // Multi-group images (> 256×256) must still surface
-    // `NotImplemented` pointing at chunk-2.b. The squeeze pipeline
-    // doesn't yet route the LfGlobal + per-HfGroup split correctly.
+fn alpha_squeeze_chunk2b_multigroup_encodes_and_jxl_rs_roundtrips() {
+    // Chunk-2.b lifts the multi-group gate: the squeeze pipeline now
+    // partitions sub-channels across LfGlobal (`w,h ≤ GROUP_DIM`) +
+    // per-LfGroup (`min_shift ≥ 3`) + per-HfGroup (`min_shift < 3`)
+    // sections, matching the libjxl decoder partition in
+    // `dec_modular.cc:331-373`. This test:
+    //   - encodes a 320×128 RGBA multi-group image (> GROUP_DIM in x);
+    //   - confirms the encode succeeds (no NotImplemented);
+    //   - decodes through jxl-rs (primary roundtrip per project CLAUDE.md);
+    //   - confirms the alpha plane round-trips with reasonable MAE.
     const WIDE: u32 = 320;
     const TALL: u32 = 128;
     let mut buf = vec![0u8; (WIDE * TALL * 4) as usize];
@@ -237,15 +243,93 @@ fn alpha_squeeze_chunk2_multigroup_returns_not_implemented_chunk2b() {
             buf[idx + 3] = ((x * 3 + y * 5) % 256) as u8;
         }
     }
-    let res = LossyConfig::new(1.0)
+    let bytes = LossyConfig::new(1.0)
         .with_alpha_distance(Some(2.0))
         .with_alpha_squeeze(true)
-        .encode(&buf, WIDE, TALL, PixelLayout::Rgba8);
-    let err = res.expect_err("multi-group alpha_squeeze must error");
-    let msg = format!("{err:?}");
+        .encode(&buf, WIDE, TALL, PixelLayout::Rgba8)
+        .expect("chunk-2.b: multi-group alpha squeeze encode must succeed");
+    assert!(!bytes.is_empty());
+    // Roundtrip through jxl-rs to verify the wire format is valid.
+    let decoded = {
+        use jxl::api::{
+            JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+            JxlPixelFormat, ProcessingResult, states,
+        };
+        use jxl::image::{Image, Rect};
+
+        let mut input = bytes.as_slice();
+        let options = JxlDecoderOptions::default();
+        let decoder = JxlDecoder::<states::Initialized>::new(options);
+        let mut decoder_init = decoder;
+        let mut decoder = loop {
+            match decoder_init.process(&mut input) {
+                Ok(ProcessingResult::Complete { result }) => break result,
+                Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => decoder_init = fallback,
+                Err(e) => panic!("chunk-2.b multigroup: jxl-rs header decode error: {e:?}"),
+            }
+        };
+        let basic = decoder.basic_info().clone();
+        let (w, h) = basic.size;
+        let num_extras = basic.extra_channels.len();
+        assert_eq!(w as u32, WIDE);
+        assert_eq!(h as u32, TALL);
+        decoder.set_pixel_format(JxlPixelFormat {
+            color_type: JxlColorType::Rgba,
+            color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
+            extra_channel_format: vec![None; num_extras],
+        });
+        let mut decoder_frame = loop {
+            match decoder.process(&mut input) {
+                Ok(ProcessingResult::Complete { result }) => break result,
+                Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => decoder = fallback,
+                Err(e) => panic!("chunk-2.b multigroup: jxl-rs frame info error: {e:?}"),
+            }
+        };
+        let channels = 4usize;
+        let mut img = Image::<u8>::new((w * channels, h)).expect("alloc");
+        let mut buffers = vec![JxlOutputBuffer::from_image_rect_mut(
+            img.get_rect_mut(Rect {
+                origin: (0, 0),
+                size: (w * channels, h),
+            })
+            .into_raw(),
+        )];
+        loop {
+            match decoder_frame.process(&mut input, &mut buffers) {
+                Ok(ProcessingResult::Complete { .. }) => break,
+                Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => decoder_frame = fallback,
+                Err(e) => panic!("chunk-2.b multigroup: jxl-rs frame decode error: {e:?}"),
+            }
+        }
+        let mut pixels = Vec::with_capacity(w * h * channels);
+        for y in 0..h {
+            pixels.extend_from_slice(img.row(y));
+        }
+        pixels
+    };
+
+    // Alpha plane should vary and MAE should be reasonable for lossy
+    // alpha at distance 2.0 with squeeze (the squeeze averages
+    // sub-bands, expect some smoothing).
+    let alpha_min = decoded.iter().skip(3).step_by(4).copied().min().unwrap();
+    let alpha_max = decoded.iter().skip(3).step_by(4).copied().max().unwrap();
     assert!(
-        msg.contains("single-group") || msg.contains("chunk-2.b"),
-        "multi-group error should mention single-group / chunk-2.b; got: {msg}"
+        alpha_max > alpha_min,
+        "chunk-2.b multigroup squeeze: alpha plane should vary; got \
+         min={alpha_min} max={alpha_max}"
+    );
+    // Bound MAE on the alpha plane only.
+    let mut sum = 0u32;
+    let mut n = 0u32;
+    for i in (3..decoded.len()).step_by(4) {
+        sum += (decoded[i] as i32 - buf[i] as i32).unsigned_abs();
+        n += 1;
+    }
+    let mae = sum as f32 / n as f32;
+    assert!(
+        mae < 80.0,
+        "chunk-2.b multigroup squeeze: alpha MAE = {mae} is unreasonably \
+         high; suspect a wire bug"
     );
 }
 
