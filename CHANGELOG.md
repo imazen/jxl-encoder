@@ -792,6 +792,45 @@
 
 ### Investigated
 
+- **First-ever HDR RD-bytes sweep vs cjxl** (jxl-encoder#44 / W4
+  follow-on; closes the "never RD-benchmarked" line item from
+  `memory/hdr_encoding_implementation_plan_2026-05-17.md`). New
+  bench-only example `jxl-encoder/examples/hdr_rd_sweep_vs_cjxl.rs`
+  synthesizes a 256×256 RGB gradient in PQ / HLG / BT.709 codeword
+  space, encodes it with `LossyConfig` + the matching
+  `RgbPqF32` / `RgbHlgF32` / `RgbBt709F32` `PixelLayout` + the
+  matching `ColorEncoding` preset + `EncodeRequest::with_intensity_target`,
+  and compares bytes against `cjxl -x color_space={Rec2100PQ,
+  Rec2100HLG, RGB_D65_SRG_Rel_709} --intensity_target=...` at
+  d ∈ {1.0, 2.0, 5.0}. All nine cells produce well-formed
+  bitstreams that both jxl-oxide (parse) and `djxl` (decode)
+  consume cleanly; the colour-encoding header carries the
+  expected transfer function (`Pq` / `Hlg` / `Bt709`) on every
+  cell.
+
+  PQ wins outright: -27% at d=1.0, -44% at d=2.0, -39% at d=5.0.
+  HLG splits — +9% at d=1.0 but -48% / -32% at d=2.0 / d=5.0.
+  BT.709 reverses direction with distance: +36% at d=1.0, +48%
+  at d=2.0, -28% at d=5.0.
+
+  Verdict: HDR signalling + transfer-function plumbing is at
+  bytes-parity-or-better with cjxl across all three layouts at the
+  high-distance end of the sweep. The d ≤ 2.0 BT.709 and d=1.0
+  HLG overheads are not HDR-specific — they track the same gap
+  the CLAUDE.md "Quality Gap vs Full libjxl (Feb 24, 2026)" table
+  reports at d=1.0 / d=2.0 on sRGB photos (+0.8% / +2.8% there;
+  the synthetic gradient amplifies it because it has only LF
+  content and our cost model picks DCT8 where cjxl picks larger
+  transforms). No HDR-path tuning chunks are needed. This is a
+  bench-only delivery — no production-code changes beyond adding
+  the example + Cargo.toml registration. Bench:
+  `benchmarks/hdr_rd_sweep_20260518T053349Z.{tsv,meta}`. No
+  HDR-aware perceptual metric is reported because Rust butteraugli
+  in-tree assumes an SDR ~80 nits display model; once we expose
+  an HDR butteraugli (or wire `butteraugli_main --intensity_target=`
+  with a metadata-clean PNG pipeline) the same harness can drop
+  in a `metric` column.
+
 - **Auto-splines default-on at e7+: rejected even after chunk-4
   recalibration** (`benchmarks/auto_splines_bench_2026-05-17_chunk4.{tsv,meta}`).
   After fixing the over-claim bug (above), photos and `terminal.png`

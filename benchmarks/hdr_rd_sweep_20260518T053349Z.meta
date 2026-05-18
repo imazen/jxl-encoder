@@ -1,0 +1,10 @@
+# HDR RD sweep vs cjxl (jxl-encoder#44 / W4 follow-up)
+git_rev=
+host=lilith
+cjxl_version=cjxl v0.12.0 d2c7032 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+command=cargo run -p jxl-encoder --release --example hdr_rd_sweep_vs_cjxl
+size=256x256
+distances=[1.0, 2.0, 5.0]
+effort=7 (jxl-encoder default), 7 (cjxl default)
+metric=bytes only (no HDR-aware perceptual metric in tree)
+tsv=/home/lilith/work/zen/jxl-encoder--hdr-sweep/benchmarks/hdr_rd_sweep_20260518T053349Z.tsv
