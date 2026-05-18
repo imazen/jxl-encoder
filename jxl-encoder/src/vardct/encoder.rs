@@ -1250,6 +1250,13 @@ impl VarDctEncoder {
 
         crate::debug_rect::clear();
 
+        // Optional per-phase wall-clock timing. Gated on env var
+        // `__JXL_ENC_PHASE_TIMING` so default encodes are unaffected.
+        // Mirrors the pattern already used in `encode_from_precomputed`
+        // and `encode_two_pass_to_writer`.
+        let _phase_dbg = std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some();
+        let _t_total = std::time::Instant::now();
+
         // Calculate dimensions
         let xsize_blocks = div_ceil(width, BLOCK_DIM);
         let ysize_blocks = div_ceil(height, BLOCK_DIM);
@@ -1315,8 +1322,10 @@ impl VarDctEncoder {
 
         // Convert to XYB with edge-replicated padding to block boundaries.
         // This allows SIMD to process full blocks without bounds checking.
+        let _t_xyb = std::time::Instant::now();
         let (mut xyb_x, mut xyb_y, mut xyb_b) =
             self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb)?;
+        let _ms_xyb = _t_xyb.elapsed().as_secs_f64() * 1000.0;
 
         // Defense-in-depth XYB scan. Catches downstream-bug non-finite
         // (memory corruption, butteraugli-loop reconstruction polluting
@@ -1407,6 +1416,7 @@ impl VarDctEncoder {
         // per-patch gate is a refinement, not a replacement for the
         // detector-side `min_peak` threshold — it captures patches
         // already detected, not ones the detector rejected.
+        let _t_patches = std::time::Instant::now();
         let min_peak = if self.distance < 1.0 { 2 } else { 1 };
         let mut patches_data = if self.enable_patches {
             super::patches::find_and_build_with_per_patch_gate(
@@ -1488,6 +1498,8 @@ impl VarDctEncoder {
             }
         }
 
+        let _ms_patches = _t_patches.elapsed().as_secs_f64() * 1000.0;
+        let _t_splines = std::time::Instant::now();
         // Build and subtract splines (after patches, before gaborish).
         // Splines are additive overlays: encoder subtracts, decoder adds back.
         // Uses default DC CfL params (y_to_x=0.0, y_to_b=1.0) since we write default DC cmap.
@@ -1581,6 +1593,8 @@ impl VarDctEncoder {
             None
         };
 
+        let _ms_splines = _t_splines.elapsed().as_secs_f64() * 1000.0;
+        let _t_quant_field = std::time::Instant::now();
         // Compute pixel chromacity stats BEFORE gaborish (matching libjxl pipeline).
         // Gaborish sharpening inflates gradients, producing overly aggressive adjustment.
         // Gated at effort >= 7 to skip the full-image gradient scan at low effort.
@@ -1710,6 +1724,8 @@ impl VarDctEncoder {
             None
         };
 
+        let _ms_quant_field = _t_quant_field.elapsed().as_secs_f64() * 1000.0;
+        let _t_gaborish = std::time::Instant::now();
         // Apply gaborish inverse (5x5 sharpening) AFTER quant field and mask1x1
         // but BEFORE CfL and AC strategy. This matches libjxl enc_heuristics.cc:
         //   line 1124: InitialQuantField (pre-gaborish)
@@ -1735,6 +1751,8 @@ impl VarDctEncoder {
         // blocks with spatial structure, causing catastrophic LfFrame quality for
         // DCT16+ (up to 31% error on gradient content, butteraugli 13-20 vs ~2.5).
 
+        let _ms_gaborish = _t_gaborish.elapsed().as_secs_f64() * 1000.0;
+        let _t_cfl1 = std::time::Instant::now();
         // Compute per-tile chroma-from-luma map on GABORISHED XYB
         // Pass 1 always uses LS (use_newton=false): with distance_mul=1e-9, the
         // perceptual cost function collapses to LS, so Newton adds no value.
@@ -1778,6 +1796,8 @@ impl VarDctEncoder {
             self.error_diffusion
         );
 
+        let _ms_cfl1 = _t_cfl1.elapsed().as_secs_f64() * 1000.0;
+        let _t_acstrat = std::time::Instant::now();
         // Compute adaptive AC strategy (DCT8/DCT16x8/DCT8x16/DCT16x16/DCT32x32)
         // Content-aware `entropy_mul` table dispatch (opt-in). When the
         // caller has set `LossyConfig::with_content_aware_entropy_mul(true)`
@@ -1920,6 +1940,8 @@ impl VarDctEncoder {
             );
         }
 
+        let _ms_acstrat = _t_acstrat.elapsed().as_secs_f64() * 1000.0;
+        let _t_cfl2 = std::time::Instant::now();
         // Free masking — no longer needed after AC strategy selection.
         drop(masking);
 
@@ -1958,6 +1980,8 @@ impl VarDctEncoder {
             );
         }
 
+        let _ms_cfl2 = _t_cfl2.elapsed().as_secs_f64() * 1000.0;
+        let _t_buttloop = std::time::Instant::now();
         // Quantization loops: iteratively refine quant_field using perceptual
         // distance feedback. Butteraugli and zensim loops can stack: butteraugli
         // handles global convergence, zensim adds SSIM-aware spatial fine-tuning.
@@ -2102,6 +2126,8 @@ impl VarDctEncoder {
         // chunk-3, 2026-05-15). See the moved block above and the comment
         // there for ordering rationale.
 
+        let _ms_buttloop = _t_buttloop.elapsed().as_secs_f64() * 1000.0;
+        let _t_xform = std::time::Instant::now();
         // ── Streaming refactor chunk 8b (#11): region-source seam ──
         //
         // Wrap the three whole-image XYB Vecs in a
@@ -2143,6 +2169,8 @@ impl VarDctEncoder {
             &cfl_map,
             &ac_strategy,
         )?;
+        let _ms_xform = _t_xform.elapsed().as_secs_f64() * 1000.0;
+        let _t_sharp = std::time::Instant::now();
         let quant_dc = &transform_out.quant_dc;
         let quant_ac = &transform_out.quant_ac;
         let nzeros = &transform_out.nzeros;
@@ -2219,6 +2247,8 @@ impl VarDctEncoder {
         // Free mask1x1 — up to ~115 MB at 4K (padded_pixels × f32).
         drop(mask1x1);
 
+        let _ms_sharp = _t_sharp.elapsed().as_secs_f64() * 1000.0;
+        let _t_entropy = std::time::Instant::now();
         // Two-pass mode: collect tokens, build optimal codes, write bitstream
         if self.optimize_codes {
             let strategy_counts = ac_strategy.strategy_histogram();
@@ -2253,6 +2283,13 @@ impl VarDctEncoder {
                     None
                 },
             )?;
+            let _ms_entropy = _t_entropy.elapsed().as_secs_f64() * 1000.0;
+            let _ms_total = _t_total.elapsed().as_secs_f64() * 1000.0;
+            if _phase_dbg {
+                eprintln!(
+                    "encode_inner: total={_ms_total:.1} xyb={_ms_xyb:.1} patches={_ms_patches:.1} splines={_ms_splines:.1} quant_field={_ms_quant_field:.1} gaborish={_ms_gaborish:.1} cfl1={_ms_cfl1:.1} acstrat={_ms_acstrat:.1} cfl2={_ms_cfl2:.1} buttloop={_ms_buttloop:.1} xform={_ms_xform:.1} sharp={_ms_sharp:.1} entropy={_ms_entropy:.1}",
+                );
+            }
             crate::debug_rect::flush("");
             return Ok(VarDctOutput {
                 data,
