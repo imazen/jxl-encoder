@@ -1,0 +1,36 @@
+Per-section byte breakdown for the imac_g3 d=2.5 -> d=3.0 wedge investigation.
+
+Source image:
+  /home/lilith/work/codec-corpus/gb82-sc/imac_g3.png (2940x1912 RGB8 PNG, 689345 bytes)
+
+Encoders:
+  cjxl v0.12.0 4279d48 (libjxl, /home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl)
+  ours: jxl-encoder HEAD (commit a3b27b5), target/release/cjxl-rs, default effort 7
+
+Commands:
+  cjxl -d {2.5,3.0} -e 7 imac_g3.png cjxl_d{2.5,3.0}.jxl
+  cjxl-rs -d {2.5,3.0} --effort 7 imac_g3.png ours_d{2.5,3.0}.jxl
+
+Parser: /tmp/jxl_toc_dump (Rust binary using jxl-oxide's Bitstream + Toc parser,
+        iterates frames until is_last=true, reports per-frame TOC section sizes).
+
+Findings:
+  * cjxl @ d=2.5: NO patches reference frame (single RegularFrame, 376KB total)
+  * cjxl @ d=3.0: PATCHES enabled (32KB ReferenceOnly + 129KB main, 162KB total)
+  * ours @ d=2.5: 88KB patches ref frame + 145KB main = 234KB
+  * ours @ d=3.0: 88KB patches ref frame + 135KB main = 224KB (essentially identical patches)
+  * cjxl ref frame is single-section (group_size_shift=2 -> 512-pixel groups, 1 group fits)
+  * ours ref frame is 4 sections (group_size_shift=1 -> 256-pixel groups, 2x2 groups)
+  * Ours patch set is IDENTICAL between d=2.5 and d=3.0 (already established by W41-2 commit 0c3ccc96)
+
+Verification of cjxl's d=2.5 -> d=3.0 cliff:
+  cjxl d=2.0 -> 415112 bytes
+  cjxl d=2.25 -> 393669 bytes
+  cjxl d=2.4 -> 383418 bytes
+  cjxl d=2.5 -> 376320 bytes
+  cjxl d=2.6 -> 371990 bytes
+  cjxl d=2.75 -> 364253 bytes
+  cjxl d=2.9 -> 354207 bytes
+  cjxl d=3.0 -> 161648 bytes  <-- discrete cliff
+  cjxl d=3.1 -> 159837 bytes
+  cjxl d=3.5 -> 151718 bytes
