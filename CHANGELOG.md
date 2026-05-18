@@ -506,6 +506,49 @@
     (improvements on every cell — likely a marginal effect of the
     extra walker structure on a hot LLVM inlining decision).
 
+### Fixed
+
+- **W42-2 — patches reference-frame `group_size_shift` libjxl parity**
+  (`jxl-encoder/src/vardct/patches.rs`,
+  `jxl-encoder/examples/patches_group_size_shift_ab.rs`,
+  `benchmarks/patches_group_size_shift_2026-05-18.{tsv,meta}`). Ports
+  libjxl's `GetGroupSizeShift` dimension heuristic
+  (`lib/jxl/enc_frame.cc:125-146`) to the patches reference-frame writer
+  (`patches.rs` `encode_reference_frame` + `encode_reference_frame_rgb`).
+  Pre-fix we hardcoded `group_size_shift = 1` (256-pixel groups) via
+  `FrameHeader::lossless()`, so a typical 268×260 packed-patches ref
+  frame split into a 2×2 = 4 PassGroup grid and paid 4× per-stream
+  entropy overhead (LZ77 metadata, HybridUint headers, byte alignment,
+  TOC entries). New helper `patches_ref_group_size_shift(w, h)` mirrors
+  libjxl's thresholds (≤128: shift=0, ≤256: shift=1, ≤400: shift=2,
+  else shift=1) so a 268×260 ref frame now emits as a single
+  512-pixel group with no per-PassGroup overhead. Both sites also wire
+  `FrameEncoderOptions::modular_group_size_shift = Some(shift)` so the
+  encoder's actual partitioning matches the FrameHeader signal (the
+  body writer reads its options field independently of the FH).
+  **Headline (imac_g3 @ e7, d=3.0)**: total bytes 223,759 → 178,037
+  (**-20.4 %**, ref-frame component 88,378 → ~46 KB at ~5 bpp);
+  gap vs cjxl 0.12.0 closes from +38.4 % to +10.1 %. **Other wedge
+  cells (e7)**: imac_g3 d=2.0 -50.7 % vs cjxl (we still win because
+  cjxl runs streaming-mode at d<3 and skips patches entirely);
+  terminal d=2.0 -48.9 % vs cjxl, d=3.0 +14.1 %; codec_wiki d=2.0
+  -7.9 %, d=3.0 +14.3 %; windows95 d=2.0 +6.8 %, d=3.0 +7.3 %.
+  Photo class byte-identical pre/post fix on the 3 CID22-512 photos
+  sampled at d∈{2,3,4,5} (PatchesDispatch::Auto short-circuits when
+  patches aren't detected, so the new shift code never runs). Closes
+  issue #52 root-cause WF2.
+  - **Validation**: `cargo test --lib patches::` 10/10 (incl. new
+    `test_patches_ref_group_size_shift_matches_libjxl` covering libjxl's
+    four dimension buckets + the imac_g3 wedge case), `cargo test
+    --test hash_lock_features` 36/36 byte-identical, `cargo clippy
+    --lib -- -D warnings` clean, `just rd-regression` 2/2 (all 18
+    cells smaller than baseline, well within thresholds), djxl decode
+    of the post-fix imac_g3 d=3.0 file successful.
+  - **libjxl reference**: `lib/jxl/enc_frame.cc:125-146`
+    `GetGroupSizeShift` — we model only the dimension-driven tail; the
+    cparams branches (`!modular_mode`, `decoding_speed_tier >= 2`,
+    `responsive == 1 && IsLossless`) don't apply to ref-frame emission.
+
 ### Investigated
 
 - **W35-2 chunk-4 — safe-class entropy_mul re-bisect (windows95

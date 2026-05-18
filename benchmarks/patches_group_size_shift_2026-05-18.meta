@@ -1,0 +1,13 @@
+# patches group_size_shift A/B (W42-2)
+git_rev: 
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [2.0, 3.0, 4.0, 5.0]
+effort: 7
+screenshots: ["imac_g3.png", "terminal.png", "codec_wiki.png", "windows95.png"]
+photos: ["1025469.png", "1418519.png", "1531677.png"]
+corpus: /home/lilith/work/codec-corpus
+schema: image\tclass\twidth\theight\tencoder\teffort\tdistance\tbytes\tbutteraugli\tssim2\tencode_ms
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+reproducer: cargo run -p jxl-encoder --release --example patches_group_size_shift_ab -- --output benchmarks/patches_group_size_shift_2026-05-18.tsv
