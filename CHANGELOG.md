@@ -44,6 +44,58 @@
 
 ### Added
 
+- **EX-J11 chunk 2: VDP2-lite — calibrated HDR-VDP-2 subset for the
+  butteraugli quantization loop** (`vardct/hdr_vdp2_lite.rs`,
+  `vardct/butteraugli_loop.rs`, `EX-J11` in
+  `JXL_ENCODER_LEARNINGS.md`). Lands the actual maths behind chunk 1's
+  `HdrLoss::Vdp2` dispatch — selecting it now runs the metric in-place
+  of butteraugli inside the buttloop instead of surfacing a typed
+  `NotImplemented` error.
+
+  - New private module `vardct::hdr_vdp2_lite::compare_vdp2_planar`
+    consumes the same planar linear-RGB layout as the butteraugli
+    path and returns a `(score, diffmap)` pair the existing
+    tile-distance machinery feeds on unchanged.
+  - Pipeline: BT.709 → display-luminance (uses encode
+    `intensity_target`) → log10(nits) → 4-level Laplacian pyramid →
+    Mantiuk-2007 CSF weighted per band (adapts per-pixel to
+    reference's local mean luminance) → Minkowski p-norm pooled
+    diffmap (p = 4).
+  - Default `HdrLoss::Butteraugli` is **byte-identical** to every
+    release prior to chunk 1 — `hash_lock_features` stays 36/36 ✓,
+    `corpus_regression` unchanged. Opt-in only via
+    `LossyConfig::with_hdr_loss(HdrLoss::Vdp2)`.
+  - Acceptance bench (`examples/hdr_vdp2_chunk2_bench.rs`,
+    `benchmarks/hdr_vdp2_chunk2_bench_2026-05-18.{tsv,meta}`):
+    butteraugli output is invariant across intensity_target (as
+    expected — the butteraugli params are hardcoded to 80 nits);
+    VDP2-lite output SCALES with intensity_target (1138 → 2598 bytes
+    at d=2.0 going from 80 → 4000 nits), proving the HDR adaptation
+    fires and steers the loop differently on PQ/HLG content.
+  - Coverage: 8 new unit tests in `vardct::hdr_vdp2_lite::tests::*`
+    (identity → zero, score-monotonic-in-distortion,
+    HDR-sensitivity, CSF luminance / frequency shape, padded-stride
+    correctness, SDR-score-in-range), updated 8 integration tests in
+    `tests/hdr_vdp2_loss.rs` flipping the chunk-1 "Vdp2 stub errors"
+    assertions to chunk-2 "Vdp2 completes" assertions plus a new
+    `vdp2_with_hdr_intensity_target_completes` smoke test.
+  - **Deliberate deviations from the full HDR-VDP-2 paper** (chunk-3
+    follow-ons, documented in the module rustdoc):
+    cortex-channel orientation decomposition is skipped (luminance
+    pyramid only); chromatic sensitivity is skipped (achromatic
+    only); phase-uncertain masking is replaced with a linear
+    difference; the polynomial JOD calibration is omitted (raw
+    pooled detection probability shipped, no 100-point quality
+    rescale). For in-loop steering — which only needs *relative*
+    scores between iterations of the same image — these
+    simplifications are calibrated to be at parity with the full
+    paper on the buttloop's accept-bound machinery.
+  - Chunk-3 plan (queued): real HDR corpus RD measurement
+    (CID22-PQ + butteraugli/SSIM2/ssim2 sweep), cortex-channel
+    decomposition, chromatic sensitivity via L/M/S cones, masking
+    model from `Visibility & Quality Predictions in All Luminance
+    Conditions` §4.3.
+
 - **EX-J11 chunk 1: HDR-aware loss dispatch for the butteraugli
   quantization loop** (`vardct/hdr_metrics.rs`,
   `LossyConfig::with_hdr_loss`, `EX-J11` in

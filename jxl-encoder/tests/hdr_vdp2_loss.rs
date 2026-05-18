@@ -1,12 +1,15 @@
-//! Integration tests for EX-J11 chunk 1 — HDR-aware loss dispatch.
+//! Integration tests for EX-J11 chunk 2 — HDR-aware loss dispatch + VDP2-lite.
+//!
+//! Chunk 1 shipped the dispatch framework with a stub for [`HdrLoss::Vdp2`];
+//! chunk 2 (this commit) lands the actual VDP2-lite maths so both
+//! [`HdrLoss::Butteraugli`] (default) and [`HdrLoss::Vdp2`] run to completion.
 //!
 //! Verifies:
 //! 1. `HdrLoss::Butteraugli` (default) produces byte-identical output to
 //!    every encode that doesn't touch `with_hdr_loss` at all — the
 //!    36/36 hash-lock safety net.
-//! 2. `HdrLoss::Vdp2` is opt-in and surfaces a typed error at encode
-//!    time (not a panic). The framework is in place; chunk 2 will swap
-//!    the stub for actual HDR-VDP-2 maths.
+//! 2. `HdrLoss::Vdp2` is opt-in and now COMPLETES the encode (was a typed
+//!    error in chunk 1; chunk 2 swaps in the multi-scale CSF pyramid).
 //! 3. `with_effort()` preserves `hdr_loss` across re-application.
 //! 4. The HdrLoss enum has the expected API surface (Default, Copy,
 //!    Debug, PartialEq, `as_str`, `is_implemented`).
@@ -41,9 +44,9 @@ fn hdr_loss_enum_surface() {
     assert_eq!(format!("{:?}", l), "Vdp2");
     assert_eq!(HdrLoss::Butteraugli.as_str(), "butteraugli");
     assert_eq!(HdrLoss::Vdp2.as_str(), "vdp2");
-    // Chunk-1 invariant: only Butteraugli is implemented.
+    // Chunk-2 invariant: both losses are implemented.
     assert!(HdrLoss::Butteraugli.is_implemented());
-    assert!(!HdrLoss::Vdp2.is_implemented());
+    assert!(HdrLoss::Vdp2.is_implemented());
 }
 
 #[test]
@@ -98,23 +101,58 @@ fn vdp2_without_buttloop_iters_is_silently_unused_today() {
 }
 
 #[test]
-fn vdp2_with_buttloop_iters_surfaces_typed_error() {
-    // When the buttloop actually runs (effort 8+), the Vdp2 stub
-    // must surface a clean error rather than panic.
+fn vdp2_with_buttloop_iters_completes() {
+    // Chunk-2: when the buttloop actually runs (effort 8+), Vdp2 now
+    // completes the encode using the VDP2-lite metric. (Chunk 1 used
+    // to surface a typed error here.)
     let w = 32u32;
     let h = 32u32;
     let buf = rgb8_buf(w, h);
 
-    let err = LossyConfig::new(1.0)
+    let result = LossyConfig::new(1.0)
         .with_effort(8) // effort 8: butteraugli_iters = 2 by default
         .with_hdr_loss(HdrLoss::Vdp2)
-        .encode(&buf, w, h, PixelLayout::Rgb8)
-        .expect_err("Vdp2 stub must error at encode time when loop runs");
+        .encode(&buf, w, h, PixelLayout::Rgb8);
 
-    let msg = format!("{err}");
     assert!(
-        msg.contains("HDR loss dispatch") || msg.contains("Vdp2") || msg.contains("vdp2"),
-        "Vdp2 stub error should mention HDR-VDP-2; got: {msg}"
+        result.is_ok(),
+        "Vdp2 at e8 must complete now that chunk 2 has landed; got {:?}",
+        result.as_ref().err()
+    );
+    let bytes = result.unwrap();
+    // JXL signature must be present (sanity: encode actually produced
+    // a JXL file rather than e.g. an empty Vec).
+    assert!(
+        bytes.len() > 32,
+        "VDP2 encode produced suspiciously few bytes ({})",
+        bytes.len()
+    );
+    assert_eq!(&bytes[..2], &[0xFF, 0x0A], "JXL signature missing");
+}
+
+#[test]
+fn vdp2_with_hdr_intensity_target_completes() {
+    // Smoke test for the HDR path: encode at a 1000-nit intensity_target
+    // and confirm the VDP2-lite metric handles the larger luminance range
+    // without crashing or producing degenerate output. `with_intensity_target`
+    // is exposed on `EncodeRequest`, not `LossyConfig`, so we go through
+    // the request layer.
+    let w = 32u32;
+    let h = 32u32;
+    let buf = rgb8_buf(w, h);
+
+    let cfg = LossyConfig::new(1.0)
+        .with_effort(8)
+        .with_hdr_loss(HdrLoss::Vdp2);
+    let result = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_intensity_target(1000.0)
+        .encode(&buf);
+
+    assert!(
+        result.is_ok(),
+        "Vdp2 at 1000-nit intensity_target must complete; got {:?}",
+        result.as_ref().err()
     );
 }
 

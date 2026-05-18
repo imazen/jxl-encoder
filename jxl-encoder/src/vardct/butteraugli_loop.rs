@@ -127,50 +127,76 @@ impl VarDctEncoder {
     ) -> Result<DistanceParams> {
         use crate::budget::MemoryBudget;
 
-        // EX-J11 chunk 1: HDR-aware loss dispatch.
+        // EX-J11 chunk 2: HDR-aware loss dispatch.
         //
         // Default path (`HdrLoss::Butteraugli`) is byte-identical to
         // every release prior to EX-J11 — the existing butteraugli
-        // pipeline below runs unchanged.
+        // reference setup + per-iter compare below runs unchanged.
         //
-        // `HdrLoss::Vdp2` is opt-in via [`crate::LossyConfig::with_hdr_loss`].
-        // Until chunk 2 lands the multi-scale CSF pyramid, selecting it
-        // surfaces a clean `Error::NotImplemented` here so callers see a
-        // typed validation error rather than a panic. The
-        // [`crate::vardct::hdr_metrics::validate_loss`] helper centralises
-        // the predicate so chunk 2 only has to swap that one call site to
-        // route through the real VDP-2 path.
+        // `HdrLoss::Vdp2` (opt-in via [`crate::LossyConfig::with_hdr_loss`])
+        // skips the butteraugli reference precompute and routes each
+        // per-iter compare through [`super::hdr_vdp2_lite::compare_vdp2_planar`]
+        // — a calibrated subset of HDR-VDP-2 that adapts to the encode's
+        // `intensity_target`. See the module docs in
+        // [`super::hdr_vdp2_lite`] for the deviations from the full paper
+        // (cortex channels, chromatic sensitivity, masking model — all
+        // chunk-3 follow-ons).
         if let Err(e) = super::hdr_metrics::validate_loss(self.hdr_loss) {
             return Err(crate::error::Error::NotImplemented(alloc::format!(
                 "HDR loss dispatch: {e} (selected: {})",
                 self.hdr_loss.as_str()
             )));
         }
+        let use_vdp2 = matches!(self.hdr_loss, super::hdr_metrics::HdrLoss::Vdp2);
 
         let budget = self.budget.as_ref();
         let target_distance = self.distance;
         let num_blocks = xsize_blocks * ysize_blocks;
         let padded_pixels = padded_width * padded_height;
 
-        // Precompute butteraugli reference from original image ONCE.
-        // Deinterleave to planar to avoid interleave round-trip inside the crate.
+        // Precompute the perceptual reference from the original image ONCE.
+        // Deinterleave to planar so both metric paths consume the same layout.
+        //
+        // For `HdrLoss::Butteraugli` we additionally build a `ButteraugliReference`
+        // (the cached separated-frequencies + masking precompute). For
+        // `HdrLoss::Vdp2` we skip that precompute — VDP2-lite has no separable
+        // per-image cache; it walks both planes per-iter (the pyramid construction
+        // dominates and is only sub-linear in the image size).
+        //
+        // The planar `ref_r/g/b` planes are kept alive for the full loop
+        // duration so the VDP2 path can re-use them across iterations. Budget
+        // is reserved permanently in the VDP2 branch (vs the butteraugli branch
+        // where the planes are released after the reference precompute takes
+        // ownership of an internal copy).
         let n = width * height;
-        // Three transient planar buffers — released as soon as the reference
-        // crate finishes consuming them.
-        let reference = {
+        let mut ref_r = vec![0.0f32; n];
+        let mut ref_g = vec![0.0f32; n];
+        let mut ref_b = vec![0.0f32; n];
+        for i in 0..n {
+            ref_r[i] = linear_rgb[i * 3];
+            ref_g[i] = linear_rgb[i * 3 + 1];
+            ref_b[i] = linear_rgb[i * 3 + 2];
+        }
+        // intensity_target the VDP2-lite path uses to map linear-RGB [0,1]
+        // onto absolute display luminance in cd/m². Pulled from the
+        // VarDctEncoder field that the public LossyConfig::with_intensity_target
+        // setter populates. SDR encodes default to 255.0, matching the
+        // existing initialiser in vardct/encoder.rs:549.
+        let vdp2_intensity_target = self.intensity_target;
+
+        let reference: Option<butteraugli::ButteraugliReference> = if use_vdp2 {
+            // VDP2 path: hold onto the planar refs permanently (one
+            // n*4*3 reservation) and skip the butteraugli precompute.
+            MemoryBudget::reserve_permanent_opt(budget, (n as u64).saturating_mul(4 * 3))?;
+            None
+        } else {
+            // Butteraugli path: transient n*4*3 reservation released as
+            // soon as the reference precompute owns its internal copy.
             let _g = MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
-            let mut ref_r = vec![0.0f32; n];
-            let mut ref_g = vec![0.0f32; n];
-            let mut ref_b = vec![0.0f32; n];
-            for i in 0..n {
-                ref_r[i] = linear_rgb[i * 3];
-                ref_g[i] = linear_rgb[i * 3 + 1];
-                ref_b[i] = linear_rgb[i * 3 + 2];
-            }
             let butteraugli_params = butteraugli::ButteraugliParams::new()
                 .with_intensity_target(80.0)
                 .with_compute_diffmap(true);
-            match butteraugli::ButteraugliReference::new_linear_planar(
+            let r = match butteraugli::ButteraugliReference::new_linear_planar(
                 &ref_r,
                 &ref_g,
                 &ref_b,
@@ -181,8 +207,8 @@ impl VarDctEncoder {
             ) {
                 Ok(r) => r,
                 Err(_) => return Ok(initial_params.clone()),
-            }
-            // _g drops here, releasing the three n*4 reservations
+            };
+            Some(r)
         };
 
         // Compute deviation bounds from the FLOAT initial field (libjxl lines 968-976).
@@ -294,7 +320,14 @@ impl VarDctEncoder {
                 ac_strategy,
                 patches_data,
                 splines_data,
-                &reference,
+                reference.as_ref(),
+                &ref_r,
+                &ref_g,
+                &ref_b,
+                width,
+                height,
+                use_vdp2,
+                vdp2_intensity_target,
                 qf_lower,
                 qf_higher,
                 &sharpness,
@@ -409,7 +442,26 @@ impl VarDctEncoder {
         ac_strategy: &AcStrategyMap,
         patches_data: Option<&super::patches::PatchesData>,
         splines_data: Option<&super::splines::SplinesData>,
-        reference: &butteraugli::ButteraugliReference,
+        // `Some(reference)` for the butteraugli path (chunk-1 default).
+        // `None` for the VDP2-lite path (chunk-2 opt-in via
+        // `HdrLoss::Vdp2`) — the metric reads `ref_r/g/b` directly.
+        reference: Option<&butteraugli::ButteraugliReference>,
+        // Planar linear-RGB reference planes (always populated by the
+        // top-level call). Sized `width × height` with stride = width.
+        // Owned by the caller for the duration of the seed loop so we
+        // can re-use them across iterations without re-deinterleaving.
+        ref_r: &[f32],
+        ref_g: &[f32],
+        ref_b: &[f32],
+        // Logical image extent. Distinct from `padded_width`/`padded_height`
+        // (which describe the reconstruction buffer's row stride).
+        width: usize,
+        height: usize,
+        // EX-J11 chunk 2: select the perceptual metric.
+        use_vdp2: bool,
+        // VDP2-lite display-luminance target in cd/m². Unused on the
+        // butteraugli path (which hardcodes `intensity_target = 80`).
+        vdp2_intensity_target: f32,
         qf_lower: f32,
         qf_higher: f32,
         sharpness: &[u8],
@@ -427,11 +479,10 @@ impl VarDctEncoder {
         let target_distance = self.distance;
         let num_blocks = xsize_blocks * ysize_blocks;
         let padded_pixels = padded_width * padded_height;
-        // Width/height of the cropped reference image, derived from the
-        // reference handle's stored dimensions so we don't have to plumb
-        // the caller's `width`/`height` through the per-seed signature.
-        let width = reference.width();
-        let height = reference.height();
+        debug_assert_eq!(ref_r.len(), width * height);
+        debug_assert_eq!(ref_g.len(), width * height);
+        debug_assert_eq!(ref_b.len(), width * height);
+        debug_assert!(use_vdp2 == reference.is_none());
         debug_assert_eq!(padded_pixels, recon_r.len());
         let mut current_params;
         // Score from the final compare-only iteration (i == iters).
@@ -578,14 +629,34 @@ impl VarDctEncoder {
                 });
             }
 
-            // Step 5: Butteraugli comparison.
-            // On compare failure / missing diffmap we cannot continue refining
-            // (no signal to adjust quant_field) — return the current state with
-            // `last_score` left as INFINITY (or the previous iter's score),
-            // which makes the picker prefer any seed that *did* converge.
-            let result =
-                match reference.compare_linear_planar(recon_r, recon_g, recon_b, padded_width) {
-                    Ok(r) => r,
+            // Step 5: Perceptual comparison.
+            //
+            // Dispatches on `use_vdp2`:
+            //  - false (default): butteraugli `compare_linear_planar` against
+            //    the precomputed reference (chunk-1 byte-identical path).
+            //  - true (`HdrLoss::Vdp2` opt-in): VDP2-lite, walks ref + rec
+            //    planar planes through the multi-scale CSF pyramid in
+            //    [`super::hdr_vdp2_lite::compare_vdp2_planar`].
+            //
+            // Both metrics return `(score: f64, diffmap: Vec<f32>)` sized to
+            // the logical `width × height` extent. On compare failure (rare —
+            // typically NaN inputs the reconstruction shouldn't produce) we
+            // bail out with the previous iter's score so the picker prefers
+            // any seed that converged.
+            let (iter_score, diffmap_vec): (f64, alloc::vec::Vec<f32>) = if use_vdp2 {
+                match super::hdr_vdp2_lite::compare_vdp2_planar(
+                    ref_r,
+                    ref_g,
+                    ref_b,
+                    recon_r,
+                    recon_g,
+                    recon_b,
+                    width,
+                    height,
+                    padded_width,
+                    vdp2_intensity_target,
+                ) {
+                    Ok(r) => (r.score, r.diffmap),
                     Err(_) => {
                         let mean_qf = mean_qf_float(quant_field_float);
                         return Ok(SeedOutcome {
@@ -597,32 +668,56 @@ impl VarDctEncoder {
                             k_init_mul,
                         });
                     }
-                };
-
-            let diffmap = match result.diffmap {
-                Some(dm) => dm,
-                None => {
-                    let mean_qf = mean_qf_float(quant_field_float);
-                    return Ok(SeedOutcome {
-                        params: current_params,
-                        quant_field: quant_field.to_vec(),
-                        quant_field_float: quant_field_float.to_vec(),
-                        final_score: last_score,
-                        mean_qf,
-                        k_init_mul,
-                    });
                 }
+            } else {
+                let bref = reference.expect(
+                    "non-VDP2 path must carry a butteraugli reference (top-level invariant)",
+                );
+                let result =
+                    match bref.compare_linear_planar(recon_r, recon_g, recon_b, padded_width) {
+                        Ok(r) => r,
+                        Err(_) => {
+                            let mean_qf = mean_qf_float(quant_field_float);
+                            return Ok(SeedOutcome {
+                                params: current_params,
+                                quant_field: quant_field.to_vec(),
+                                quant_field_float: quant_field_float.to_vec(),
+                                final_score: last_score,
+                                mean_qf,
+                                k_init_mul,
+                            });
+                        }
+                    };
+                let dm = match result.diffmap {
+                    Some(dm) => dm,
+                    None => {
+                        let mean_qf = mean_qf_float(quant_field_float);
+                        return Ok(SeedOutcome {
+                            params: current_params,
+                            quant_field: quant_field.to_vec(),
+                            quant_field_float: quant_field_float.to_vec(),
+                            final_score: last_score,
+                            mean_qf,
+                            k_init_mul,
+                        });
+                    }
+                };
+                // ImgVec is contiguous when produced by the butteraugli
+                // crate (stride == width — confirmed in lib.rs:510). Take
+                // ownership of the backing Vec to match the VDP2 branch's
+                // owned-Vec return type without re-allocating.
+                (result.score, dm.into_buf())
             };
 
-            // Record butteraugli score for the picker (rewritten every iter;
+            // Record metric score for the picker (rewritten every iter;
             // the value at loop exit is what the picker compares against the
             // target). Stored before the iter==iters early-break below so the
             // compare-only last iteration is included.
-            last_score = result.score;
+            last_score = iter_score;
 
             // Step 6: Compute per-block tile distance (16th-power norm, matching libjxl TileDistMap)
             const K_TILE_NORM: f32 = 1.2;
-            let diffmap_buf = diffmap.buf();
+            let diffmap_buf: &[f32] = &diffmap_vec;
             tile_dist.fill(0.0);
             for by in 0..ysize_blocks {
                 for bx in 0..xsize_blocks {
@@ -688,7 +783,7 @@ impl VarDctEncoder {
                     "iter={}/{} score={:.3} target={:.3} gs={} qf_avg={:.4} qf=[{:.4};{:.4}] td_max={:.2} bad={}",
                     iter,
                     iters,
-                    result.score,
+                    iter_score,
                     target_distance,
                     current_params.global_scale,
                     qf_avg,
