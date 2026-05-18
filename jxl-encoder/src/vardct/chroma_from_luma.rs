@@ -288,7 +288,69 @@ pub fn compute_cfl_map(
     let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
     let xsize_tiles = div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS);
     let ysize_tiles = div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS);
-    let num_tiles = xsize_tiles * ysize_tiles;
+
+    // Compute CfL for every tile in the image.
+    let (ytox, ytob) = compute_cfl_map_for_tiles(
+        xyb_x,
+        xyb_y,
+        xyb_b,
+        stride,
+        buf_height,
+        xsize_blocks,
+        ysize_blocks,
+        /* tile_bx0 */ 0,
+        /* tile_by0 */ 0,
+        /* region_w */ xsize_tiles,
+        /* region_h */ ysize_tiles,
+        use_newton,
+        newton_eps,
+        newton_max_iters,
+    );
+
+    CflMap {
+        ytox,
+        ytob,
+        xsize_tiles,
+        ysize_tiles,
+    }
+}
+
+/// Per-tile-rectangle variant of [`compute_cfl_map`]: computes CfL
+/// values for the tile rectangle `[tile_bx0..tile_bx0+region_w] ×
+/// [tile_by0..tile_by0+region_h]` only. Returns the `(ytox, ytob)`
+/// pair, each `region_w * region_h` entries row-major.
+///
+/// Used by [`super::precomputed::compute_dc_group`] (#11 chunk 3) to
+/// process just the 4×4 CfL tiles inside a single DC group (a DC group
+/// is 32×32 blocks = 4×4 tiles at `TILE_DIM_IN_BLOCKS = 8`). The caller
+/// assembles per-DC-group slices into the whole-image map.
+///
+/// Byte-identical to the corresponding slice of [`compute_cfl_map`]
+/// because per-tile CfL reads only its own tile's XYB data (the
+/// `find_best_multiplier` Newton iteration has no cross-tile state).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute_cfl_map_for_tiles(
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    stride: usize,
+    buf_height: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    tile_bx0: usize,
+    tile_by0: usize,
+    region_w: usize,
+    region_h: usize,
+    use_newton: bool,
+    newton_eps: f32,
+    newton_max_iters: usize,
+) -> (Vec<i8>, Vec<i8>) {
+    let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
+    let num_region_tiles = region_w * region_h;
+
+    if num_region_tiles == 0 {
+        return (Vec::new(), Vec::new());
+    }
 
     // Pre-compute inverse quant weights once (avoid per-block division).
     let qw_x = quant::quant_weights(0, 0); // DCT8, X channel
@@ -300,15 +362,17 @@ pub fn compute_cfl_map(
         inv_qm_b[i] = 1.0 / qw_b[i];
     }
 
-    // Process tiles in parallel. Each tile is independent (reads shared XYB,
-    // writes only to its own ytox/ytob slot).
-    let tile_results = crate::parallel::parallel_map(num_tiles, |tile_idx| {
-        let tx = tile_idx % xsize_tiles;
-        let ty = tile_idx / xsize_tiles;
-        let tile_bx0 = tx * TILE_DIM_IN_BLOCKS;
-        let tile_by0 = ty * TILE_DIM_IN_BLOCKS;
-        let tile_bx1 = (tile_bx0 + TILE_DIM_IN_BLOCKS).min(xsize_blocks);
-        let tile_by1 = (tile_by0 + TILE_DIM_IN_BLOCKS).min(ysize_blocks);
+    // Process region tiles in parallel. Each tile is independent (reads
+    // shared XYB, writes only to its own ytox/ytob slot).
+    let tile_results = crate::parallel::parallel_map(num_region_tiles, |idx| {
+        let sub_tx = idx % region_w;
+        let sub_ty = idx / region_w;
+        let abs_tx = tile_bx0 + sub_tx;
+        let abs_ty = tile_by0 + sub_ty;
+        let tile_blk_x0 = abs_tx * TILE_DIM_IN_BLOCKS;
+        let tile_blk_y0 = abs_ty * TILE_DIM_IN_BLOCKS;
+        let tile_blk_x1 = (tile_blk_x0 + TILE_DIM_IN_BLOCKS).min(xsize_blocks);
+        let tile_blk_y1 = (tile_blk_y0 + TILE_DIM_IN_BLOCKS).min(ysize_blocks);
 
         // Thread-local scratch buffers
         let max_coeffs_per_tile = TILE_DIM_IN_BLOCKS * TILE_DIM_IN_BLOCKS * DCT_BLOCK_SIZE;
@@ -319,8 +383,8 @@ pub fn compute_cfl_map(
 
         let mut num_ac = 0usize;
 
-        for by in tile_by0..tile_by1 {
-            for bx in tile_bx0..tile_bx1 {
+        for by in tile_blk_y0..tile_blk_y1 {
+            for bx in tile_blk_x0..tile_blk_x1 {
                 let mut block_y = [0.0f32; DCT_BLOCK_SIZE];
                 let mut block_x = [0.0f32; DCT_BLOCK_SIZE];
                 let mut block_b = [0.0f32; DCT_BLOCK_SIZE];
@@ -380,20 +444,16 @@ pub fn compute_cfl_map(
         (tx_val, tb_val)
     });
 
-    // Unpack results into ytox/ytob arrays
-    let mut ytox = vec![0i8; num_tiles];
-    let mut ytob = vec![0i8; num_tiles];
-    for (tile_idx, &(tx_val, tb_val)) in tile_results.iter().enumerate() {
-        ytox[tile_idx] = tx_val;
-        ytob[tile_idx] = tb_val;
+    // Unpack results into ytox/ytob arrays in region-local row-major
+    // order.
+    let mut ytox = vec![0i8; num_region_tiles];
+    let mut ytob = vec![0i8; num_region_tiles];
+    for (idx, &(tx_val, tb_val)) in tile_results.iter().enumerate() {
+        ytox[idx] = tx_val;
+        ytob[idx] = tb_val;
     }
 
-    CflMap {
-        ytox,
-        ytob,
-        xsize_tiles,
-        ysize_tiles,
-    }
+    (ytox, ytob)
 }
 
 /// CfL pass 2: recompute CfL map using actual AC strategies and per-block

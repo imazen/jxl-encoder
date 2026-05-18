@@ -4,6 +4,53 @@
 
 ### Changed
 
+- **Streaming refactor #11 chunk 3 — per-region `compute_dc_group` loop
+  driver** (`vardct/precomputed.rs`, `vardct/chroma_from_luma.rs`,
+  `vardct/ac_strategy.rs`). Replaces the chunk-2 monolithic
+  `fill_dc_group_state_whole_image` with a real per-`DC_GROUP_DIM`
+  (2048×2048) loop that iterates `compute_dc_group(global, dc_x,
+  dc_y, ...)` over every DC group in the image and assembles
+  per-region `PerDcGroupFill` slices into the whole-image Vecs that
+  downstream rate-control / butteraugli / `encode_from_precomputed`
+  consumers still expect. Hash-locked byte-identical
+  (`hash_lock_features` 36/36, plus new `buffering_dispatch` test
+  pinning byte-identity across all 5 `Buffering` variants on a
+  2560×2560 multi-DC-group image).
+
+  **Per-region split per cross-group dep**:
+  1. Gaborish 5×5 — whole-image precompute, sliced per region.
+     Chunk 5 will add 2-pixel border replication.
+  2. mask1x1 5×5 — whole-image precompute, sliced per region.
+     Chunk 5 will add 2-pixel border replication.
+  3. quant_field 3×3-block — whole-image precompute, sliced per
+     region. Chunk 5 will add 1-block border replication.
+  4. CfL 8-block tiles — **per-region** via new
+     `chroma_from_luma::compute_cfl_map_for_tiles` helper. DC groups
+     (256×256 blocks = 32×32 CfL tiles) align cleanly; no border
+     needed (per-tile CfL has no cross-tile state).
+  5. AC strategy 1-block — **per-region** via new
+     `ac_strategy::compute_ac_strategy_for_tiles` helper, taking an
+     arbitrary tile list. Per-tile AC search reads only its tile's
+     XYB slice; per-DC-group call is byte-identical to the slice of
+     the whole-image call.
+
+  **All `Buffering` variants currently route through the same
+  per-region loop**, so output bytes are bit-identical regardless of
+  `--buffering -1..3`. Peak RSS measurement on a 3072×3072 (4 DC
+  groups) lossy `d=1.0` encode: FullBuffered = BufferedOutput =
+  FullStreaming = 1.63 GiB (within 32 KB of each other), all
+  producing the identical 6 973 041-byte bitstream. This is the
+  honest-stop point for chunk 3 — actual memory savings on
+  `Buffering::BufferedOutput` lands in chunk 5 once per-region
+  versions of quant_field / mask1x1 / gaborish ship (chunk 4 handles
+  per-DC-group bitstream emit + `global_group_codes[]`
+  accumulation). The chunk-3 loop driver is the load-bearing
+  structural prereq.
+
+  libjxl reference: PRs #4634 (acc28c0) + #4635 (032d39a) + #4637
+  (b3510d1) + #4642 (1389871) + #4728 (6553831). Bench:
+  `cargo run --release --example bench_buffering_rss <variant> [w h]`.
+
 - **Streaming refactor #11 chunk 2 — split `compute_with_budget` into
   global vs per-DC-group precompute** (`vardct/precomputed.rs`).
   Internally factors `EncoderPrecomputed::compute_with_budget` into:

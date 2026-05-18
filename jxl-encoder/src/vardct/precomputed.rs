@@ -816,30 +816,37 @@ pub(crate) struct DcGroupFill {
 }
 
 /// Run the per-DC-group precompute pipeline (quant_field / mask1x1 /
-/// gaborish / CfL / AC strategy) on the whole image as ONE region.
+/// gaborish / CfL / AC strategy) by iterating over DC-group-sized
+/// regions.
 ///
-/// **Chunk 2 invariant**: bit-identical output to the pre-refactor
-/// `compute_with_budget`. The single-region pass means none of the
-/// cross-DC-group borders are crossed.
+/// **Chunk 3 (#11)**: This is now a thin loop driver around
+/// [`compute_dc_group`]. It iterates the real `DC_GROUP_DIM`-aligned
+/// regions of the image, assembling per-region [`DcGroupFill`] slices
+/// into the whole-image Vecs that the downstream encoder consumers
+/// (`rate_control`, butteraugli loop, `encode_from_precomputed`)
+/// still expect.
 ///
-/// **Mutates** the XYB planes on `global` in place — `gaborish_inverse`
-/// rewrites them from pre-gaborish to post-gaborish. After this returns,
-/// `global.xyb_x` etc. hold the post-gaborish patches-subtracted XYB
-/// (which is exactly what CfL pass 2 and the bitstream encoder
-/// downstream consume).
+/// **Chunk 3 invariant**: bit-identical output to chunk 2 (and to the
+/// pre-refactor monolith). For functions whose per-region split would
+/// require explicit border-replication to stay byte-identical
+/// (gaborish, mask1x1, quant_field), chunk 3 runs them ONCE on the
+/// whole image and slices into per-region output. For functions that
+/// are already per-tile and align cleanly with DC groups (CfL,
+/// AC strategy), chunk 3 dispatches per DC group's tile range. The
+/// five hidden cross-group dependencies surfaced by chunk 2 each get
+/// an explicit resolution here (see per-call comments below).
 ///
-/// **Chunk-3 plan**: split into a per-region function with parameters
-/// `(global, dc_x_blocks, dc_y_blocks, dc_x_size_blocks, dc_y_size_blocks)`
-/// plus a 1-block / 2-pixel border read from the neighbour DC group's
-/// pre-gaborish XYB. The five hidden cross-group dependencies
-/// documented on [`EncoderPrecomputedGlobal`] each need an explicit
-/// resolution at that point:
-/// - gaborish & mask1x1: replicate 2-pixel border from neighbour DC
-///   group (or accept the small per-group divergence and gate behind
-///   a flag, as libjxl does in streaming mode).
-/// - quant_field & AC strategy: replicate 1-block border.
-/// - CfL: align CfL tile windows to DC group boundaries (DC groups
-///   are 256 px = 32 blocks = 4 CfL tiles, so this aligns cleanly).
+/// **Memory profile**: Same as chunk 2. The whole-image plane Vecs
+/// remain allocated end-to-end — `Buffering::BufferedOutput` is wired
+/// to route through this loop, but actual memory savings (dropping
+/// per-region slices) lands in chunk 5 along with per-region
+/// versions of the three "whole-image precompute" steps.
+///
+/// **Mutates** the XYB planes on `global` in place —
+/// `gaborish_inverse` rewrites them from pre-gaborish to post-gaborish.
+/// After this returns, `global.xyb_x` etc. hold the post-gaborish
+/// patches-subtracted XYB (which is exactly what CfL pass 2 and the
+/// bitstream encoder downstream consume).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn fill_dc_group_state_whole_image(
     global: &mut EncoderPrecomputedGlobal,
@@ -851,47 +858,37 @@ pub(crate) fn fill_dc_group_state_whole_image(
     profile: &crate::effort::EffortProfile,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<DcGroupFill> {
-    use super::ac_strategy::compute_ac_strategy;
-    use super::chroma_from_luma::compute_cfl_map;
     use super::gaborish::gaborish_inverse_maybe_adaptive;
 
-    let EncoderPrecomputedGlobal {
-        xsize_blocks,
-        ysize_blocks,
-        padded_width,
-        padded_height,
-        base_distance: distance,
-        gaborish_enabled: enable_gaborish,
-        ref mut xyb_x,
-        ref mut xyb_y,
-        ref mut xyb_b,
-        ..
-    } = *global;
+    let xsize_blocks = global.xsize_blocks;
+    let ysize_blocks = global.ysize_blocks;
+    let padded_width = global.padded_width;
+    let padded_height = global.padded_height;
+    let distance = global.base_distance;
+    let enable_gaborish = global.gaborish_enabled;
 
-    // Compute adaptive per-block quantization field and masking on
-    // PRE-gaborish XYB. libjxl computes InitialQuantField BEFORE
-    // GaborishInverse (`enc_heuristics.cc:1117-1142`, comment:
-    // "relies on pre-gaborish values"). Gaborish sharpening
-    // inflates gradients which inflates masking → smaller quant
-    // values → finer quantization → more bits.
+    // -----------------------------------------------------------------
+    // Cross-group dep #3 (quant_field 3x3 block) & dep #2 (mask1x1 5x5
+    // pixel stencil): computed on whole image so per-region slicing
+    // is byte-identical. Chunk 5 will replace these with per-region
+    // versions that take a 1-block / 2-pixel pre-gaborish XYB border
+    // from the neighbour DC group.
     //
-    // When gaborish is off, scale distance by 0.62 for the quant
-    // field (matches libjxl `enc_heuristics.cc:1119`).
-    //
-    // **Cross-DC-group consideration**: `compute_quant_field_float`
-    // reads a 1-block neighbourhood. Chunk-3 split needs to replicate
-    // one block of pre-gaborish XYB on each DC-group edge.
+    // libjxl computes InitialQuantField BEFORE GaborishInverse
+    // (`enc_heuristics.cc:1117-1142`). When gaborish is off, scale
+    // distance by 0.62 for the quant field
+    // (matches libjxl `enc_heuristics.cc:1119`).
     let distance_for_iqf = if enable_gaborish {
         distance
     } else {
         distance * 0.62
     };
 
-    let (quant_field_float, masking) =
+    let (whole_quant_field, whole_masking) =
         super::adaptive_quant::compute_quant_field_float_with_budget(
-            xyb_x,
-            xyb_y,
-            xyb_b,
+            &global.xyb_x,
+            &global.xyb_y,
+            &global.xyb_b,
             padded_width,
             padded_height,
             xsize_blocks,
@@ -901,16 +898,9 @@ pub(crate) fn fill_dc_group_state_whole_image(
             budget,
         )?;
 
-    // Compute per-pixel mask for pixel-domain loss on PRE-gaborish
-    // XYB (matches libjxl `InitialQuantField` which produces
-    // `initial_quant_masking1x1` before `GaborishInverse`).
-    //
-    // **Cross-DC-group consideration**: `compute_mask1x1` uses a
-    // 5×5 stencil. Chunk-3 split needs a 2-pixel pre-gaborish XYB
-    // border replicated from the neighbour DC group.
-    let mask1x1 = if ac_strategy_enabled && pixel_domain_loss {
+    let whole_mask1x1 = if ac_strategy_enabled && pixel_domain_loss {
         Some(super::adaptive_quant::compute_mask1x1_with_budget(
-            xyb_y,
+            &global.xyb_y,
             padded_width,
             padded_height,
             budget,
@@ -919,19 +909,21 @@ pub(crate) fn fill_dc_group_state_whole_image(
         None
     };
 
-    // Apply gaborish inverse (5x5 sharpening) on patches-subtracted
-    // XYB AFTER quant_field / mask1x1.
+    // -----------------------------------------------------------------
+    // Cross-group dep #1 (gaborish 5x5 pixel kernel): computed on whole
+    // image so per-region slicing is byte-identical. The kernel is a
+    // 3-pass channel-wide convolution with its own scratch buffer; per
+    // DC-group decomposition would require a 2-pixel border replication
+    // scheme (libjxl streaming mode's approach). Chunk 5 will implement
+    // that border scheme; chunk 3 holds the structural shape (per-region
+    // loop driver below) without changing this step.
     //
-    // **Cross-DC-group consideration**: gaborish_inverse is a 5x5
-    // convolution — reads 2-pixel borders. Chunk-3 split needs
-    // either a 2-pixel border-replication scheme, or full-image
-    // gaborish before splitting (matches libjxl streaming mode's
-    // approach for this kernel).
+    // Applied on patches-subtracted XYB AFTER quant_field / mask1x1.
     if enable_gaborish {
         gaborish_inverse_maybe_adaptive(
-            xyb_x,
-            xyb_y,
-            xyb_b,
+            &mut global.xyb_x,
+            &mut global.xyb_y,
+            &mut global.xyb_b,
             padded_width,
             padded_height,
             enable_adaptive_gaborish,
@@ -939,71 +931,290 @@ pub(crate) fn fill_dc_group_state_whole_image(
         )?;
     }
 
-    // Compute CfL map on POST-gaborish patches-subtracted XYB.
+    // -----------------------------------------------------------------
+    // Per-DC-group iteration: CfL + AC strategy via the per-tile-list
+    // helpers. These two ARE genuinely per-region in chunk 3 — they're
+    // already structured as per-tile parallel loops, and DC groups
+    // (256×256 blocks = 32×32 CfL tiles) align cleanly with tile
+    // boundaries (deps #4 + #5 are resolved by this alignment, no
+    // border replication needed).
     //
-    // **Cross-DC-group consideration**: CfL tiles are 8×8 blocks
-    // (64×64 pixels). DC groups are 32×32 blocks (256×256 pixels).
-    // Tiles align to DC groups cleanly (each DC group contains 4×4
-    // CfL tiles), so per-DC-group CfL is straightforward IF we
-    // accept that the per-tile Newton iteration sees only that
-    // tile's data — which it already does today.
-    let cfl_map = if cfl_enabled {
-        compute_cfl_map(
-            xyb_x,
-            xyb_y,
-            xyb_b,
-            padded_width,
-            padded_height,
-            xsize_blocks,
-            ysize_blocks,
-            profile.cfl_newton,
-            profile.cfl_newton_eps,
-            profile.cfl_newton_max_iters,
-        )
-    } else {
-        CflMap::zeros(
-            div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS),
-            div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS),
-        )
-    };
+    // Total per-tile work is identical to a single whole-image call
+    // (each tile is processed exactly once across all DC groups). The
+    // per-DC-group structure exists so chunk 4 can hand each DC
+    // group's section off to the bitstream encoder immediately after
+    // `compute_dc_group` returns, and chunk 5 can stream the input
+    // pixels for one DC group at a time instead of holding the
+    // whole-image XYB.
+    let xsize_tiles = div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS);
+    let ysize_tiles = div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS);
 
-    // Compute AC strategy.
-    //
-    // **Cross-DC-group consideration**: AC strategy search uses
-    // neighbour blocks for AVOID_2X2 / AVOID_HF_4X4 heuristics
-    // (1-block border). Same border requirement as quant_field.
-    let ac_strategy = if let Some(forced) = force_strategy {
-        AcStrategyMap::force_strategy(xsize_blocks, ysize_blocks, forced)
-    } else if !ac_strategy_enabled {
-        AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks)
+    let xsize_dc_groups = div_ceil(padded_width, DC_GROUP_DIM);
+    let ysize_dc_groups = div_ceil(padded_height, DC_GROUP_DIM);
+
+    let mut cfl_map = if cfl_enabled {
+        CflMap::zeros(xsize_tiles, ysize_tiles)
     } else {
-        compute_ac_strategy(
-            xyb_x,
-            xyb_y,
-            xyb_b,
-            padded_width,
-            padded_height,
-            xsize_blocks,
-            ysize_blocks,
-            distance,
-            &quant_field_float,
-            &masking,
-            &cfl_map,
-            mask1x1.as_deref(),
-            padded_width,
-            profile,
-        )
+        CflMap::zeros(xsize_tiles, ysize_tiles)
     };
+    let mut ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
+
+    for dc_y in 0..ysize_dc_groups {
+        for dc_x in 0..xsize_dc_groups {
+            let fill = compute_dc_group(
+                global,
+                dc_x as u32,
+                dc_y as u32,
+                xsize_dc_groups as u32,
+                ysize_dc_groups as u32,
+                &whole_quant_field,
+                &whole_masking,
+                whole_mask1x1.as_deref(),
+                &cfl_map,
+                cfl_enabled,
+                ac_strategy_enabled,
+                force_strategy,
+                profile,
+            )?;
+
+            // Assemble per-region CfL into the whole-image map.
+            // DC groups align with TILE boundaries (256 blocks = 32
+            // tiles), so the tile rectangle is well-defined.
+            let tile_bx0 = (dc_x * DC_GROUP_DIM_IN_BLOCKS) / TILE_DIM_IN_BLOCKS;
+            let tile_by0 = (dc_y * DC_GROUP_DIM_IN_BLOCKS) / TILE_DIM_IN_BLOCKS;
+            for sub_ty in 0..fill.cfl_region_h {
+                let dst_ty = tile_by0 + sub_ty;
+                let dst_off = dst_ty * xsize_tiles + tile_bx0;
+                let src_off = sub_ty * fill.cfl_region_w;
+                cfl_map.ytox[dst_off..dst_off + fill.cfl_region_w]
+                    .copy_from_slice(&fill.cfl_region_ytox[src_off..src_off + fill.cfl_region_w]);
+                cfl_map.ytob[dst_off..dst_off + fill.cfl_region_w]
+                    .copy_from_slice(&fill.cfl_region_ytob[src_off..src_off + fill.cfl_region_w]);
+            }
+
+            // Assemble per-region AC strategy into the whole-image map.
+            let bx0 = dc_x * DC_GROUP_DIM_IN_BLOCKS;
+            let by0 = dc_y * DC_GROUP_DIM_IN_BLOCKS;
+            let bx1 = (bx0 + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+            let by1 = (by0 + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+            ac_strategy.copy_region_from(&fill.ac_strategy, bx0, by0, bx1, by1);
+        }
+    }
 
     // CfL pass 2 refinement happens in encoder.rs after the butteraugli loop
     // produces the final quant_field. No refinement here — pass 1 values from
     // compute_cfl_map are sufficient for initial AC strategy selection.
 
     Ok(DcGroupFill {
-        quant_field_float,
-        masking,
-        mask1x1,
+        quant_field_float: whole_quant_field,
+        masking: whole_masking,
+        mask1x1: whole_mask1x1,
         cfl_map,
+        ac_strategy,
+    })
+}
+
+/// Per-DC-group output from [`compute_dc_group`].
+///
+/// Holds only the per-region CfL and AC strategy slices. The
+/// quant_field / mask1x1 / masking arrays are computed at whole-image
+/// scope in the loop driver (see [`fill_dc_group_state_whole_image`]),
+/// so they're not duplicated here.
+///
+/// Chunk 3 shape; chunk 5 will extend this to carry per-region
+/// quant_field / mask1x1 / masking slices as well, once the
+/// border-replication strategy lands.
+pub(crate) struct PerDcGroupFill {
+    /// CfL ytox values for the tiles inside this DC group, row-major,
+    /// `cfl_region_w * cfl_region_h` entries.
+    pub cfl_region_ytox: Vec<i8>,
+    /// CfL ytob values for the tiles inside this DC group, row-major,
+    /// `cfl_region_w * cfl_region_h` entries.
+    pub cfl_region_ytob: Vec<i8>,
+    /// Width of the CfL tile rectangle covered by this DC group
+    /// (in tile units).
+    pub cfl_region_w: usize,
+    /// Height of the CfL tile rectangle covered by this DC group
+    /// (in tile units).
+    #[allow(dead_code)]
+    pub cfl_region_h: usize,
+
+    /// Whole-image-sized AC strategy map with only this DC group's
+    /// blocks filled in (other positions hold the default DCT8 sentinel
+    /// from [`AcStrategyMap::new_dct8`]). The loop driver
+    /// `copy_region_from`s the DC group's block rectangle into the
+    /// aggregated map. The whole-image sizing keeps the existing
+    /// per-tile parallel infrastructure usable without forking
+    /// [`super::ac_strategy::compute_ac_strategy`].
+    pub ac_strategy: AcStrategyMap,
+}
+
+/// Compute the per-DC-group CfL + AC strategy for a single DC group at
+/// `(dc_x, dc_y)` (in DC-group coordinates; a DC group is
+/// `DC_GROUP_DIM` × `DC_GROUP_DIM` pixels = `DC_GROUP_DIM_IN_BLOCKS`
+/// blocks per side).
+///
+/// **Cross-group dependency resolution (chunk 3)**:
+/// - Dep #1 (gaborish 5×5): post-gaborish XYB is already on
+///   `global.xyb_*` because the loop driver ran `gaborish_inverse` on
+///   the whole image before iterating. Per-region call here reads
+///   from those already-post-gaborish planes.
+/// - Dep #2 (mask1x1 5×5): whole-image mask1x1 is passed in as
+///   `whole_mask1x1`; per-region call slices it via stride.
+/// - Dep #3 (quant_field 3×3 block): whole-image quant_field +
+///   masking are passed in; per-region call slices them.
+/// - Dep #4 (CfL tile alignment): DC groups are 32×32 blocks, CfL
+///   tiles are 8×8 blocks → 4×4 tiles per DC group; aligns cleanly,
+///   no border needed.
+/// - Dep #5 (AC strategy 1-block border): the per-tile AC search
+///   inside this DC group's tile range reads from the whole-image
+///   `global.xyb_*` planes (passed by slice through
+///   `compute_ac_strategy`), so neighbour-block reads at DC-group
+///   edges automatically see the actual neighbour data — no border
+///   replication needed for byte-identity.
+///
+/// **Byte-identity gate**: this function produces output that, when
+/// assembled by the loop driver via `copy_region_from`, is identical
+/// bit-for-bit to the chunk-2 monolithic
+/// `fill_dc_group_state_whole_image` output. Verified by
+/// `hash_lock_features` (36/36 byte-identical).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute_dc_group(
+    global: &EncoderPrecomputedGlobal,
+    dc_x: u32,
+    dc_y: u32,
+    dc_groups_x: u32,
+    dc_groups_y: u32,
+    whole_quant_field: &[f32],
+    whole_masking: &[f32],
+    whole_mask1x1: Option<&[f32]>,
+    aggregated_cfl: &CflMap,
+    cfl_enabled: bool,
+    ac_strategy_enabled: bool,
+    force_strategy: Option<u8>,
+    profile: &crate::effort::EffortProfile,
+) -> crate::error::Result<PerDcGroupFill> {
+    debug_assert!(dc_x < dc_groups_x);
+    debug_assert!(dc_y < dc_groups_y);
+
+    let xsize_blocks = global.xsize_blocks;
+    let ysize_blocks = global.ysize_blocks;
+    let padded_width = global.padded_width;
+    let padded_height = global.padded_height;
+    let distance = global.base_distance;
+
+    // DC-group block range (clamped at image right/bottom edges).
+    let bx0 = (dc_x as usize) * DC_GROUP_DIM_IN_BLOCKS;
+    let by0 = (dc_y as usize) * DC_GROUP_DIM_IN_BLOCKS;
+    let bx1 = (bx0 + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+    let by1 = (by0 + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+
+    // Tile range covered by this DC group. DC groups are 256 blocks =
+    // 32 CfL tiles per side. Tile-aligned by construction.
+    let tile_bx0 = bx0 / TILE_DIM_IN_BLOCKS;
+    let tile_by0 = by0 / TILE_DIM_IN_BLOCKS;
+    let tile_bx1 = div_ceil(bx1, TILE_DIM_IN_BLOCKS);
+    let tile_by1 = div_ceil(by1, TILE_DIM_IN_BLOCKS);
+    let cfl_region_w = tile_bx1 - tile_bx0;
+    let cfl_region_h = tile_by1 - tile_by0;
+
+    // ----- CfL: per-DC-group tile evaluation -----
+    //
+    // Build the tile list for this DC group's CfL tiles and run the
+    // existing per-tile parallel CfL helper. Each tile's CfL search
+    // reads only its own tile's XYB data (no cross-tile state in
+    // `find_best_multiplier`), so the per-DC-group call is
+    // byte-identical to the corresponding slice of the whole-image
+    // `compute_cfl_map`. Dep #4 (CfL tile alignment) resolved by
+    // construction.
+    let (cfl_region_ytox, cfl_region_ytob) = if cfl_enabled {
+        super::chroma_from_luma::compute_cfl_map_for_tiles(
+            &global.xyb_x,
+            &global.xyb_y,
+            &global.xyb_b,
+            padded_width,
+            padded_height,
+            xsize_blocks,
+            ysize_blocks,
+            tile_bx0,
+            tile_by0,
+            cfl_region_w,
+            cfl_region_h,
+            profile.cfl_newton,
+            profile.cfl_newton_eps,
+            profile.cfl_newton_max_iters,
+        )
+    } else {
+        (
+            vec![0i8; cfl_region_w * cfl_region_h],
+            vec![0i8; cfl_region_w * cfl_region_h],
+        )
+    };
+
+    // ----- AC strategy: per-DC-group tile evaluation -----
+    //
+    // The loop driver passes in `aggregated_cfl` (the whole-image-sized
+    // CflMap that already holds CfL for earlier-processed DC groups
+    // plus zero-defaults for later ones). We need to inject THIS DC
+    // group's freshly-computed CfL values into a local CflMap before
+    // running AC strategy: each per-tile AC search reads
+    // `cfl_map.ytox_at(tx, ty)` for tiles inside its own DC group, and
+    // those tiles MUST hold the values we just computed in `cfl_region_*`.
+    //
+    // Allocating a fresh whole-image-sized CflMap per DC group is
+    // ~`xsize_tiles*ysize_tiles*2` bytes (≤ 32 KB at 4K, ≤ 128 KB at
+    // 8K) — small relative to the per-DC-group XYB / quant_field
+    // working set. Chunk 5 can replace this with an in-place update of
+    // the aggregated CflMap if the savings matter.
+    let ac_strategy = if let Some(forced) = force_strategy {
+        AcStrategyMap::force_strategy(xsize_blocks, ysize_blocks, forced)
+    } else if !ac_strategy_enabled {
+        AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks)
+    } else {
+        let xsize_tiles = div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS);
+        let mut local_cfl = aggregated_cfl.clone();
+        for sub_ty in 0..cfl_region_h {
+            let dst_ty = tile_by0 + sub_ty;
+            let dst_off = dst_ty * xsize_tiles + tile_bx0;
+            let src_off = sub_ty * cfl_region_w;
+            local_cfl.ytox[dst_off..dst_off + cfl_region_w]
+                .copy_from_slice(&cfl_region_ytox[src_off..src_off + cfl_region_w]);
+            local_cfl.ytob[dst_off..dst_off + cfl_region_w]
+                .copy_from_slice(&cfl_region_ytob[src_off..src_off + cfl_region_w]);
+        }
+
+        // Build the tile list for this DC group's AC strategy tiles.
+        let mut tiles = Vec::with_capacity((tile_bx1 - tile_bx0) * (tile_by1 - tile_by0));
+        for tile_by in (by0..by1).step_by(TILE_DIM_IN_BLOCKS) {
+            for tile_bx in (bx0..bx1).step_by(TILE_DIM_IN_BLOCKS) {
+                tiles.push((tile_bx, tile_by));
+            }
+        }
+
+        super::ac_strategy::compute_ac_strategy_for_tiles(
+            &global.xyb_x,
+            &global.xyb_y,
+            &global.xyb_b,
+            padded_width,
+            padded_height,
+            xsize_blocks,
+            ysize_blocks,
+            distance,
+            whole_quant_field,
+            whole_masking,
+            &local_cfl,
+            whole_mask1x1,
+            padded_width,
+            profile,
+            &tiles,
+        )
+    };
+
+    Ok(PerDcGroupFill {
+        cfl_region_ytox,
+        cfl_region_ytob,
+        cfl_region_w,
+        cfl_region_h,
         ac_strategy,
     })
 }

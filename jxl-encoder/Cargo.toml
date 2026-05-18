@@ -622,5 +622,14 @@ name = "hdr_vdp2_chunk3_rd_sweep"
 path = "examples/hdr_vdp2_chunk3_rd_sweep.rs"
 required-features = ["butteraugli-loop"]
 
+# Chunk-3 streaming refactor RSS bench (jxl-encoder#11). Encodes a
+# 4096x4096 photo with a `Buffering` variant and reports byte count +
+# wall-clock. Chunk-3 expectation: peak RSS is identical across
+# variants (same per-region loop); chunk 5 will introduce the actual
+# buffered-output memory savings.
+[[example]]
+name = "bench_buffering_rss"
+path = "examples/bench_buffering_rss.rs"
+
 [lints]
 workspace = true
