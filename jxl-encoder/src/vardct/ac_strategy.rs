@@ -317,6 +317,7 @@ impl AcStrategyMap {
 
     /// Find the first block (top-left corner) of the transform that owns (bx, by).
     /// Returns (first_x, first_y, raw_strategy).
+    #[allow(dead_code)] // used by `split_one_level` (gated behind `zensim-loop`)
     fn find_first_block(&self, bx: usize, by: usize) -> (usize, usize, u8) {
         if self.is_first(bx, by) {
             return (bx, by, self.raw_strategy(bx, by));
@@ -399,11 +400,27 @@ impl AcStrategyMap {
     /// Returns true if it's safe to call `find_best_16x16_transform` (blocks=2)
     /// or `find_best_32x32_transform` (blocks=4) at this position.
     ///
-    /// The check verifies that no existing transform extends both inside and
-    /// outside the proposed region (i.e., would need to be "split" by the new one).
-    fn can_evaluate_region(&self, bx: usize, by: usize, blocks: usize) -> bool {
-        // For each block in the proposed region, find its owning transform
-        // and check that the transform is fully contained within the region.
+    /// **W44-22 (F-D Sub-G fix Approach A, 2026-05-18):** Tightened to require
+    /// that **every block within the region is a single 8×8 strategy** (one
+    /// of: DCT8, DCT4×8, DCT8×4, DCT4×4, IDENTITY, DCT2×2, AFV0-3 — i.e.
+    /// `COVERED_X == 1 && COVERED_Y == 1`).
+    ///
+    /// This is *stricter* than libjxl's `MultiBlockTransformCrossesBoundary`
+    /// checks (`enc_ac_strategy.cc:725-741`), which only refuse merges that
+    /// would orphan non-first markers, but it has a critical property: the
+    /// `try_merge_16x16_impl` / `try_merge_32x32_impl` "reset region to DCT8"
+    /// prologue (formerly load-bearing under the prior looser invariant) is
+    /// now provably redundant, so non-winning halves preserve their per-block
+    /// 8×8-class picks (DCT4×4, AFV0-3, DCT2×2, IDENTITY, DCT4×8, DCT8×4)
+    /// instead of being clobbered to plain DCT8.
+    ///
+    /// Cost: a region containing an existing fully-contained multi-block
+    /// transform (e.g. an aligned-pass DCT16X16 sitting at the top-left of a
+    /// 32×32 try_merge candidate) is no longer re-evaluated. Those regions
+    /// already have a strategy that won an entropy comparison; the lost
+    /// re-evaluation is small. See `f_d_sub_chunk_g_try_merge_2026-05-18.md`
+    /// for full audit and approach (B) (per-half inner-crossing port).
+    pub(super) fn can_evaluate_region(&self, bx: usize, by: usize, blocks: usize) -> bool {
         for dy in 0..blocks {
             for dx in 0..blocks {
                 let x = bx + dx;
@@ -411,15 +428,13 @@ impl AcStrategyMap {
                 if x >= self.xsize_blocks || y >= self.ysize_blocks {
                     return false;
                 }
-                let (fx, fy, raw) = self.find_first_block(x, y);
-                let cx = COVERED_X[raw as usize];
-                let cy = COVERED_Y[raw as usize];
-                // The owning transform spans [fx, fx+cx) × [fy, fy+cy).
-                // It must be fully inside or fully outside the region [bx, bx+blocks) × [by, by+blocks).
-                // Since (x,y) is inside the region and inside the transform,
-                // the transform must be fully contained within the region.
-                if fx < bx || fy < by || fx + cx > bx + blocks || fy + cy > by + blocks {
-                    return false; // Transform extends outside the region
+                // Require single-block strategy: this guarantees no existing
+                // multi-block transform straddles or sits within the region,
+                // so try_merge can paint over without destroying orphaned
+                // non-first markers.
+                let raw = self.raw_strategy(x, y);
+                if COVERED_X[raw as usize] != 1 || COVERED_Y[raw as usize] != 1 {
+                    return false;
                 }
             }
         }
