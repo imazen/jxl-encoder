@@ -833,5 +833,10 @@ name = "cjxl_parity_ledger"
 path = "examples/cjxl_parity_ledger.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+[[example]]
+name = "w44_20_codec_wiki_coverage"
+path = "examples/w44_20_codec_wiki_coverage.rs"
+required-features = ["__internals"]
+
 [lints]
 workspace = true

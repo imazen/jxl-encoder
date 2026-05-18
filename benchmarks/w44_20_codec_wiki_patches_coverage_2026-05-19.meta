@@ -1,0 +1,20 @@
+# W44-20: codec_wiki patches coverage gap vs libjxl
+# Commit: WORKING (sibling workspace jxl-encoder--w44-20-codec-wiki-patches)
+# Host: $(hostname)
+# Reproducer:
+#   cargo run --release -p jxl-encoder --features __internals \
+#     --example w44_20_codec_wiki_coverage
+# Plus cjxl --patches=0 / --patches=1 verification at e7 d=1..6 on codec_wiki:
+#   $ cjxl input.png out.jxl -d D.0 -e 7 --patches={0,1}
+#
+# Per-stage detection counters captured via new thread-local
+# LastPatchesDetectStats set inside find_text_like_patches_with_min_peak.
+#
+# RESULT: W44-7's premise "cjxl admits 6× more patches" is wrong.
+# - Our per-patch cost gate drops 0-3.4% of refs (NOT the bottleneck).
+# - Our patches step saves MORE bytes than cjxl's at codec_wiki d=1, 3, 4, 5, 6.
+# - The wedge is in bytes_off (VarDCT-only): ours +7-8 KB vs cjxl across d>=3.
+# - Belongs to F-D family (cost model / entropy mul), not patches coverage.
+#
+# See:
+#   ~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_20_codec_wiki_patches_coverage_2026-05-19.md
