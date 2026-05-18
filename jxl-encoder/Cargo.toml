@@ -775,5 +775,16 @@ path = "examples/gaborish5x5_magetypes_bench.rs"
 name = "pixel_loss_magetypes_bench"
 path = "examples/pixel_loss_magetypes_bench.rs"
 
+# W44-5 F-D wedge investigation (2026-05-18). For each of 7 chosen
+# F-D-family photo cells (image × effort × distance), dumps per-cell
+# AC strategy histograms (varblock count + 8x8-area weighted),
+# hf_mul (raw_quant) statistics, and quantization params (global_scale,
+# quant_lf) for BOTH ours and cjxl. Uses jxl-inspect (subprocess) to
+# extract per-block CSV from the encoded .jxl files. Read-only — no
+# source/src changes needed.
+[[example]]
+name = "f_d_wedge_investigate"
+path = "examples/f_d_wedge_investigate.rs"
+
 [lints]
 workspace = true
