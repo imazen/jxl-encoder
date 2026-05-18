@@ -650,6 +650,61 @@ compute_best_tree fan-out, pre_quantize, gather_samples, dedup_samples) per
 the e9 baseline agent's ranked chunks
 (`~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/lossless_e8_e9_cliff_2026-05-16.md`).
 
+### Steiner 2025 ANS Tables (EX-J1) Does Not Apply to JXL (May 18, 2026)
+
+**Status**: [RULED OUT] — proposed in `~/work/zen/zenpapers/JXL_ENCODER_LEARNINGS.md`
+lines 28-58 (EX-J1), but the algorithm targets a different problem than what
+libjxl / jxl-encoder ANS code solves. **Do not re-investigate.**
+
+**Steiner 2025 paper** (`/mnt/v/input/papers/ce/ce20482f5c13bc9986eb612d85f649c4a6057b419edf26e0d77921d8689b3121.md`)
+constructs an *allocation sequence* `A: Z_{≥0} → S` from a probability measure
+`f` and a fixed table length `L`. It replaces Duda 2013's min-heap allocation
+(`Algorithm 2.1` in the paper) with an Earliest-Deadline-First (EDF) scheduler
+that achieves a tighter discrepancy bound `|f(s)·N − rank(s, N−1)| ≤ 1`. The
+"dangerous `1/min f(t)`" term in Duda's bound disappears.
+
+**Why it does not apply to jxl-encoder**:
+
+1. **The JXL spec mandates the *alias method* (Walker-style) for the actual ANS
+   table** (`InitAliasTable` in `libjxl/lib/jxl/ans_common.cc:42` and our port at
+   `ans.rs:445` `build_reverse_maps`). The decoder reconstructs the same alias
+   table from the normalized counts; encoder must produce a bit-identical table.
+   There is no wire-format slot for a different allocation algorithm.
+
+2. **Neither libjxl nor jxl-encoder uses a min-heap for ANS table construction.**
+   `grep priority_queue` returns 0 hits across all of libjxl's ANS code. The
+   "min-heap iteration" reference in the JXL_ENCODER_LEARNINGS doc appears to
+   conflate Duda's `Algorithm 2.1` with libjxl's `RebalanceHistogram` greedy
+   iterator (`enc_ans.cc:416`, our port `ans.rs:906` `rebalance_histogram_cached`).
+   RebalanceHistogram solves a *different problem*: normalize integer
+   frequencies to a fixed sum on an *allowed-counts grid* (with quantized
+   logarithmic spacing). Steiner's algorithm does not produce grid-snapped
+   counts and the discrepancy bound is irrelevant to allowed-counts snapping.
+
+3. **The `1/min f(t)` regime cannot occur in JXL.** After normalization to
+   `ANS_TAB_SIZE = 4096`, any non-zero count is ≥ 1 → `min f(t) ≥ 1/4096`.
+   Symbols with `min f(t) → 0` (where Steiner wins over Duda) get snapped to
+   `count = 0` and are excluded from the alphabet anyway.
+
+4. **As an alternative seed for `RebalanceHistogram`**: Steiner's bound is
+   `|count − f·L| ≤ 1`, but standard `round(freq * L / total)` already gives
+   `|round − f·L| ≤ 0.5` — *tighter* than Steiner's bound. Replacing the seed
+   would not improve the greedy refinement.
+
+**What I verified**:
+- Read paper sections §1-§4 (theorems, algorithms 4.1, 4.2, 4.3)
+- Confirmed our `build_reverse_maps` is bit-identical to libjxl's
+  `InitAliasTable` (alias method, no heap)
+- Confirmed `RebalanceHistogram` ≠ Duda 2013 table-construction problem
+- Bound math: post-normalization `min f(t) ≥ 1/4096`, never `1e-6`
+
+**Conclusion**: EX-J1 as specified has no actionable implementation path that
+produces a wire-compatible bitstream change. Reverted the placeholder commit
+(`6f099dd0 wip: EX-J1 Steiner 2025 ANS table construction`); no production
+code touched. Worth a follow-up: the JXL_ENCODER_LEARNINGS.md doc should be
+updated to drop EX-J1 or re-scope it to a real lever (e.g. EX-J2 per-context
+ANS tables for LZ77 output, which IS a real opportunity).
+
 ### `alpha_distance` Parity vs cjxl — Audit Result (May 17, 2026)
 
 A1 audit Top-5 item #4 (W12-4 follow-on). Swept three RGBA test images at
