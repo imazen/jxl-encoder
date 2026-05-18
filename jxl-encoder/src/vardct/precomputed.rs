@@ -241,28 +241,55 @@ impl EncoderPrecomputed {
         )?;
 
         // Step 2: run the per-DC-group pipeline (quant_field / mask1x1
-        // / gaborish / CfL / AC strategy) over the whole image as ONE
-        // region. In chunk 2 this still produces whole-image Vecs; the
-        // bit-identical output is the chunk-2 acceptance gate. Chunks
-        // 3+ will iterate this over real DC-group-sized windows with
-        // explicit borders (see hidden-cross-group-dependency notes on
-        // [`fill_dc_group_state_whole_image`]).
+        // / gaborish / CfL / AC strategy). Dispatch:
+        //
+        //   - Default (chunk 3): whole-image precompute → per-DC-group
+        //     slice for CfL / AC strategy. Bit-identical to the
+        //     pre-refactor monolith. This is the hash-locked path.
+        //
+        //   - Opt-in (chunk 5): per-region quant_field / mask1x1 /
+        //     gaborish via `fill_dc_group_state_per_region`. Currently
+        //     gated behind the `JXL_STREAMING_CHUNK5` env var for
+        //     correctness validation; not wired to any `Buffering`
+        //     variant in the default path. Chunk 6 will wire this once
+        //     `encode_dc_group` (chunk 4) lets the loop driver drop
+        //     per-region bitstream state.
+        #[cfg(feature = "std")]
+        let per_region = matches!(
+            std::env::var("JXL_STREAMING_CHUNK5"),
+            Ok(ref v) if v == "1"
+        );
+        #[cfg(not(feature = "std"))]
+        let per_region = false;
         let DcGroupFill {
             quant_field_float,
             masking,
             mask1x1,
             cfl_map,
             ac_strategy,
-        } = fill_dc_group_state_whole_image(
-            &mut global,
-            cfl_enabled,
-            ac_strategy_enabled,
-            pixel_domain_loss,
-            enable_adaptive_gaborish,
-            force_strategy,
-            profile,
-            budget,
-        )?;
+        } = if per_region {
+            fill_dc_group_state_per_region(
+                &mut global,
+                cfl_enabled,
+                ac_strategy_enabled,
+                pixel_domain_loss,
+                enable_adaptive_gaborish,
+                force_strategy,
+                profile,
+                budget,
+            )?
+        } else {
+            fill_dc_group_state_whole_image(
+                &mut global,
+                cfl_enabled,
+                ac_strategy_enabled,
+                pixel_domain_loss,
+                enable_adaptive_gaborish,
+                force_strategy,
+                profile,
+                budget,
+            )?
+        };
 
         // Step 3: assemble into the public-shape EncoderPrecomputed
         // that downstream consumers (rate_control, encode_inner,
@@ -858,7 +885,78 @@ pub(crate) fn fill_dc_group_state_whole_image(
     profile: &crate::effort::EffortProfile,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<DcGroupFill> {
-    use super::gaborish::gaborish_inverse_maybe_adaptive;
+    fill_dc_group_state_dispatch(
+        global,
+        cfl_enabled,
+        ac_strategy_enabled,
+        pixel_domain_loss,
+        enable_adaptive_gaborish,
+        force_strategy,
+        profile,
+        budget,
+        /* per_region_precompute */ false,
+    )
+}
+
+/// Per-region variant of [`fill_dc_group_state_whole_image`] — runs
+/// the streaming-refactor chunk-5 per-region precomputes
+/// (quant_field / mask1x1 / gaborish) instead of computing them on the
+/// whole image.
+///
+/// **Streaming refactor chunk 5 (#11)**: opt-in entry point that
+/// exercises the per-region functions through the production loop
+/// driver. Currently NOT wired to any `Buffering` variant in the
+/// default-features path — hash-lock byte-identity (the chunk-3
+/// invariant) is enforced via the whole-image path, while this
+/// per-region path may differ by a small FP drift (1-256 ULPs on
+/// individual quant_field / mask1x1 / gaborish values, propagating
+/// through the AC strategy / CfL search to ~0.1% bytes-level
+/// divergence in the worst case).
+///
+/// Memory profile is identical to chunk-3 today — actual savings land
+/// when chunk-4 ([encode_dc_group][`super::encoder`]) drops per-DC-group
+/// section state immediately after the per-region precompute. This
+/// function is the structural prereq for that wiring; tests in
+/// `tests/buffering_dispatch.rs` and the chunk-5 per-region byte-
+/// identity tests in `vardct::{adaptive_quant,gaborish}::tests` cover
+/// the correctness contract.
+#[allow(clippy::too_many_arguments, dead_code)]
+pub(crate) fn fill_dc_group_state_per_region(
+    global: &mut EncoderPrecomputedGlobal,
+    cfl_enabled: bool,
+    ac_strategy_enabled: bool,
+    pixel_domain_loss: bool,
+    enable_adaptive_gaborish: bool,
+    force_strategy: Option<u8>,
+    profile: &crate::effort::EffortProfile,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<DcGroupFill> {
+    fill_dc_group_state_dispatch(
+        global,
+        cfl_enabled,
+        ac_strategy_enabled,
+        pixel_domain_loss,
+        enable_adaptive_gaborish,
+        force_strategy,
+        profile,
+        budget,
+        /* per_region_precompute */ true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fill_dc_group_state_dispatch(
+    global: &mut EncoderPrecomputedGlobal,
+    cfl_enabled: bool,
+    ac_strategy_enabled: bool,
+    pixel_domain_loss: bool,
+    enable_adaptive_gaborish: bool,
+    force_strategy: Option<u8>,
+    profile: &crate::effort::EffortProfile,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    per_region_precompute: bool,
+) -> crate::error::Result<DcGroupFill> {
+    use super::gaborish::{gaborish_inverse_for_region, gaborish_inverse_maybe_adaptive};
 
     let xsize_blocks = global.xsize_blocks;
     let ysize_blocks = global.ysize_blocks;
@@ -867,13 +965,6 @@ pub(crate) fn fill_dc_group_state_whole_image(
     let distance = global.base_distance;
     let enable_gaborish = global.gaborish_enabled;
 
-    // -----------------------------------------------------------------
-    // Cross-group dep #3 (quant_field 3x3 block) & dep #2 (mask1x1 5x5
-    // pixel stencil): computed on whole image so per-region slicing
-    // is byte-identical. Chunk 5 will replace these with per-region
-    // versions that take a 1-block / 2-pixel pre-gaborish XYB border
-    // from the neighbour DC group.
-    //
     // libjxl computes InitialQuantField BEFORE GaborishInverse
     // (`enc_heuristics.cc:1117-1142`). When gaborish is off, scale
     // distance by 0.62 for the quant field
@@ -884,8 +975,166 @@ pub(crate) fn fill_dc_group_state_whole_image(
         distance * 0.62
     };
 
-    let (whole_quant_field, whole_masking) =
-        super::adaptive_quant::compute_quant_field_float_with_budget(
+    let xsize_dc_groups_pre = div_ceil(padded_width, DC_GROUP_DIM);
+    let ysize_dc_groups_pre = div_ceil(padded_height, DC_GROUP_DIM);
+
+    // -----------------------------------------------------------------
+    // quant_field / masking / mask1x1 + gaborish: whole-image precompute
+    // (chunk-3 default) OR per-region assembly (chunk-5 opt-in).
+    //
+    // Chunk-3 path: one call each over the whole image; per-DC-group
+    // iteration below slices into these whole-image buffers via
+    // `compute_dc_group`. Bit-identical to the pre-refactor monolith.
+    //
+    // Chunk-5 path: per-region quant_field / mask1x1 / gaborish via
+    // the helpers in `super::adaptive_quant` / `super::gaborish`,
+    // accumulated into the same whole-image-sized output buffers. The
+    // per-region functions use 1-block / 2-pixel borders from the
+    // pre-gaborish XYB on `global` (gaborish-disabled) or from
+    // `global.xyb_pre_gaborish` (gaborish-enabled). FP drift bounded
+    // at the per-function unit tests in `vardct::{adaptive_quant,
+    // gaborish}::tests::test_per_region_*`.
+    let (whole_quant_field, whole_masking, whole_mask1x1) = if per_region_precompute {
+        // For gaborish src reads we need a stable snapshot of
+        // pre-gaborish XYB. When gaborish is enabled, that's
+        // `global.xyb_pre_gaborish`. When disabled, the per-region
+        // gaborish pass is a no-op and we just process from
+        // `global.xyb_*` directly (which IS pre-gaborish in that
+        // case).
+        let mut acc_qf = vec![0.0_f32; xsize_blocks * ysize_blocks];
+        let mut acc_mask = vec![0.0_f32; xsize_blocks * ysize_blocks];
+        let mut acc_mask1x1 = if ac_strategy_enabled && pixel_domain_loss {
+            Some(vec![0.0_f32; padded_width * padded_height])
+        } else {
+            None
+        };
+
+        // Snapshot pre-gaborish XYB if gaborish is enabled so we can
+        // mutate global.xyb_* in place to hold the post-gaborish
+        // accumulator. When gaborish is enabled, `xyb_pre_gaborish`
+        // is already populated (see EncoderPrecomputedGlobal::
+        // compute_global_only); we read from it as the SRC.
+        for dc_y in 0..ysize_dc_groups_pre {
+            for dc_x in 0..xsize_dc_groups_pre {
+                let bx0 = dc_x * DC_GROUP_DIM_IN_BLOCKS;
+                let by0 = dc_y * DC_GROUP_DIM_IN_BLOCKS;
+                let rw_b = DC_GROUP_DIM_IN_BLOCKS.min(xsize_blocks - bx0);
+                let rh_b = DC_GROUP_DIM_IN_BLOCKS.min(ysize_blocks - by0);
+
+                // Per-region quant_field + masking. Reads PRE-gaborish
+                // XYB (because quant_field is computed before gaborish
+                // in libjxl). If gaborish is enabled, we read from the
+                // `xyb_pre_gaborish` snapshot; otherwise from
+                // `global.xyb_*` (which is pre-gaborish == post-gaborish
+                // in that case).
+                let (src_x, src_y, src_b) = if let Some(ref pre) = global.xyb_pre_gaborish {
+                    (&pre[0][..], &pre[1][..], &pre[2][..])
+                } else {
+                    (&global.xyb_x[..], &global.xyb_y[..], &global.xyb_b[..])
+                };
+
+                let (region_qf, region_mask) =
+                    super::adaptive_quant::compute_quant_field_float_for_region(
+                        src_x,
+                        src_y,
+                        src_b,
+                        padded_width,
+                        padded_height,
+                        xsize_blocks,
+                        ysize_blocks,
+                        bx0,
+                        by0,
+                        rw_b,
+                        rh_b,
+                        distance_for_iqf,
+                        profile.k_ac_quant,
+                        budget,
+                    )?;
+                for ry in 0..rh_b {
+                    let dst_off = (by0 + ry) * xsize_blocks + bx0;
+                    let src_off = ry * rw_b;
+                    acc_qf[dst_off..dst_off + rw_b]
+                        .copy_from_slice(&region_qf[src_off..src_off + rw_b]);
+                    acc_mask[dst_off..dst_off + rw_b]
+                        .copy_from_slice(&region_mask[src_off..src_off + rw_b]);
+                }
+
+                // Per-region mask1x1.
+                if let Some(ref mut acc) = acc_mask1x1 {
+                    let region_x0 = bx0 * 8;
+                    let region_y0 = by0 * 8;
+                    let region_w = rw_b * 8;
+                    let region_h = rh_b * 8;
+                    let region = super::adaptive_quant::compute_mask1x1_for_region(
+                        src_y,
+                        padded_width,
+                        padded_height,
+                        region_x0,
+                        region_y0,
+                        region_w,
+                        region_h,
+                        budget,
+                    )?;
+                    for ry in 0..region_h {
+                        let dst_off = (region_y0 + ry) * padded_width + region_x0;
+                        let src_off = ry * region_w;
+                        acc[dst_off..dst_off + region_w]
+                            .copy_from_slice(&region[src_off..src_off + region_w]);
+                    }
+                }
+            }
+        }
+
+        // Per-region gaborish: in-place on global.xyb_* using a
+        // pre-gaborish snapshot for SRC reads. Borrow checker: snapshot
+        // first (or borrow `xyb_pre_gaborish` ref-only), then mutate
+        // global.xyb_*.
+        if enable_gaborish {
+            // SAFETY-WISE — split borrows: take `xyb_pre_gaborish` by
+            // reference for SRC, and mutate `global.xyb_x/y/b` for DST.
+            // Both live on the same struct so we destructure into local
+            // bindings to satisfy the borrow checker.
+            let EncoderPrecomputedGlobal {
+                xyb_x: ref mut dst_x,
+                xyb_y: ref mut dst_y,
+                xyb_b: ref mut dst_b,
+                xyb_pre_gaborish: ref pre,
+                ..
+            } = *global;
+            let pre = pre
+                .as_ref()
+                .expect("xyb_pre_gaborish must be Some when gaborish is enabled");
+
+            for dc_y in 0..ysize_dc_groups_pre {
+                for dc_x in 0..xsize_dc_groups_pre {
+                    let region_x0 = dc_x * DC_GROUP_DIM;
+                    let region_y0 = dc_y * DC_GROUP_DIM;
+                    let region_w = DC_GROUP_DIM.min(padded_width - region_x0);
+                    let region_h = DC_GROUP_DIM.min(padded_height - region_y0);
+
+                    gaborish_inverse_for_region(
+                        &pre[0],
+                        &pre[1],
+                        &pre[2],
+                        dst_x,
+                        dst_y,
+                        dst_b,
+                        padded_width,
+                        padded_height,
+                        region_x0,
+                        region_y0,
+                        region_w,
+                        region_h,
+                        enable_adaptive_gaborish,
+                        budget,
+                    )?;
+                }
+            }
+        }
+
+        (acc_qf, acc_mask, acc_mask1x1)
+    } else {
+        let (qf, mask) = super::adaptive_quant::compute_quant_field_float_with_budget(
             &global.xyb_x,
             &global.xyb_y,
             &global.xyb_b,
@@ -898,38 +1147,30 @@ pub(crate) fn fill_dc_group_state_whole_image(
             budget,
         )?;
 
-    let whole_mask1x1 = if ac_strategy_enabled && pixel_domain_loss {
-        Some(super::adaptive_quant::compute_mask1x1_with_budget(
-            &global.xyb_y,
-            padded_width,
-            padded_height,
-            budget,
-        )?)
-    } else {
-        None
-    };
+        let mask1x1 = if ac_strategy_enabled && pixel_domain_loss {
+            Some(super::adaptive_quant::compute_mask1x1_with_budget(
+                &global.xyb_y,
+                padded_width,
+                padded_height,
+                budget,
+            )?)
+        } else {
+            None
+        };
 
-    // -----------------------------------------------------------------
-    // Cross-group dep #1 (gaborish 5x5 pixel kernel): computed on whole
-    // image so per-region slicing is byte-identical. The kernel is a
-    // 3-pass channel-wide convolution with its own scratch buffer; per
-    // DC-group decomposition would require a 2-pixel border replication
-    // scheme (libjxl streaming mode's approach). Chunk 5 will implement
-    // that border scheme; chunk 3 holds the structural shape (per-region
-    // loop driver below) without changing this step.
-    //
-    // Applied on patches-subtracted XYB AFTER quant_field / mask1x1.
-    if enable_gaborish {
-        gaborish_inverse_maybe_adaptive(
-            &mut global.xyb_x,
-            &mut global.xyb_y,
-            &mut global.xyb_b,
-            padded_width,
-            padded_height,
-            enable_adaptive_gaborish,
-            budget,
-        )?;
-    }
+        if enable_gaborish {
+            gaborish_inverse_maybe_adaptive(
+                &mut global.xyb_x,
+                &mut global.xyb_y,
+                &mut global.xyb_b,
+                padded_width,
+                padded_height,
+                enable_adaptive_gaborish,
+                budget,
+            )?;
+        }
+        (qf, mask, mask1x1)
+    };
 
     // -----------------------------------------------------------------
     // Per-DC-group iteration: CfL + AC strategy via the per-tile-list
