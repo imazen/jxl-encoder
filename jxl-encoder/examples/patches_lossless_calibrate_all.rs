@@ -3,6 +3,7 @@
 
 use jxl_encoder::__internals::{
     find_and_build_patches_lossless, patches_data_stats, patches_trial_overhead,
+    patches_trial_overhead_lossless,
 };
 use jxl_encoder::{LosslessConfig, PixelLayout};
 
@@ -28,7 +29,9 @@ fn main() {
     println!(
         "class\timage\twidth\theight\tbytes_off\tbytes_on\tactual_savings_B\t\
          total_patch_pixels\tunique_refs\tref_frame_pixels\toccurrences\t\
-         ref_overhead_B\tdict_overhead_B\ttotal_overhead_B\tempirical_bpp"
+         ref_overhead_xyb_B\tref_overhead_lossless_B\tdict_overhead_B\t\
+         total_overhead_xyb_B\ttotal_overhead_lossless_B\tempirical_bpp\t\
+         c_needed_xyb\tc_needed_lossless\toverhead_overshoot_ratio"
     );
 
     // Photos for a no-detection sanity row.
@@ -71,17 +74,20 @@ fn main() {
             unique_refs,
             ref_frame_pixels,
             occurrences,
-            ref_overhead_b,
+            ref_overhead_xyb_b,
+            ref_overhead_lossless_b,
             dict_overhead_b,
         ) = match find_and_build_patches_lossless(rgb, w as usize, h as usize, 3, 8) {
             Some(pd) => {
                 let (tpp, ur, rfp, occ) = patches_data_stats(&pd);
-                let (rb, db) = patches_trial_overhead(&pd, true);
-                (tpp, ur, rfp, occ, rb, db)
+                let (rb_xyb, db) = patches_trial_overhead(&pd, true);
+                let (rb_lossless, _) = patches_trial_overhead_lossless(&pd, 8, true);
+                (tpp, ur, rfp, occ, rb_xyb, rb_lossless, db)
             }
-            None => (0, 0, 0, 0, 0, 0),
+            None => (0, 0, 0, 0, 0, 0, 0),
         };
-        let total_overhead_b = ref_overhead_b + dict_overhead_b;
+        let total_overhead_xyb_b = ref_overhead_xyb_b + dict_overhead_b;
+        let total_overhead_lossless_b = ref_overhead_lossless_b + dict_overhead_b;
 
         let bytes_off =
             match LosslessConfig::new()
@@ -101,12 +107,32 @@ fn main() {
         } else {
             0.0
         };
+        // C needed to admit this cell at the chunk-6 1.5x safety margin:
+        //   2 * (total_patch_pixels * C) >= 3 * total_overhead
+        //   C >= 1.5 * total_overhead / total_patch_pixels
+        let c_needed_xyb = if total_patch_pixels > 0 {
+            1.5 * total_overhead_xyb_b as f64 / total_patch_pixels as f64
+        } else {
+            0.0
+        };
+        let c_needed_lossless = if total_patch_pixels > 0 {
+            1.5 * total_overhead_lossless_b as f64 / total_patch_pixels as f64
+        } else {
+            0.0
+        };
+        let overhead_overshoot_ratio = if ref_overhead_lossless_b > 0 {
+            ref_overhead_xyb_b as f64 / ref_overhead_lossless_b as f64
+        } else {
+            0.0
+        };
 
         println!(
             "{label}\t{name}\t{w}\t{h}\t{bytes_off}\t{bytes_on}\t\
              {savings_signed}\t{total_patch_pixels}\t{unique_refs}\t\
              {ref_frame_pixels}\t{occurrences}\t\
-             {ref_overhead_b}\t{dict_overhead_b}\t{total_overhead_b}\t{empirical_bpp:.6}",
+             {ref_overhead_xyb_b}\t{ref_overhead_lossless_b}\t{dict_overhead_b}\t\
+             {total_overhead_xyb_b}\t{total_overhead_lossless_b}\t{empirical_bpp:.6}\t\
+             {c_needed_xyb:.4}\t{c_needed_lossless:.4}\t{overhead_overshoot_ratio:.4}",
         );
     }
 }

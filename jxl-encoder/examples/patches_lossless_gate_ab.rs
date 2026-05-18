@@ -106,7 +106,8 @@ fn main() {
             ) = match find_and_build_patches_lossless(rgb, w as usize, h as usize, 3, 8) {
                 Some(pd) => {
                     let (tpp, ur, rfp, occ) = patches_data_stats(&pd);
-                    let eff = is_cost_effective_lossless(&pd, true);
+                    // Chunk-5 signature: bit_depth + use_ans
+                    let eff = is_cost_effective_lossless(&pd, 8, true);
                     (tpp, ur, rfp, occ, eff)
                 }
                 None => (0, 0, 0, 0, false),

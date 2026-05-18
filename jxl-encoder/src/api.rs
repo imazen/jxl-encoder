@@ -5675,14 +5675,15 @@ impl<'a> EncodeRequest<'a> {
                     num_channels,
                     image.bit_depth,
                 );
-                // RFC#45 chunks 4-7 lossless backport: per-image cost
-                // gate. Trial-encodes ref-frame + dictionary overhead,
+                // RFC#45 chunks 4-7 lossless backport (chunk 5 lossless
+                // trial encoder): per-image cost gate. Trial-encodes
+                // lossless-shape ref-frame + dictionary overhead,
                 // requires `savings_est >= 1.5 * overhead`. Protects
                 // against pathological mixed content where patches barely
                 // clear the detector's 1% coverage filter but the
                 // ref-frame overhead dominates net savings. See
                 // `PatchesData::is_cost_effective_lossless` doc-comment.
-                pd_opt.filter(|pd| pd.is_cost_effective_lossless(cfg.use_ans))
+                pd_opt.filter(|pd| pd.is_cost_effective_lossless(image.bit_depth, cfg.use_ans))
             })
         } else {
             None
@@ -8257,9 +8258,10 @@ impl LosslessEncoder {
                     num_channels,
                     image.bit_depth,
                 );
-                // RFC#45 chunks 4-7 lossless backport: per-image cost
-                // gate (see `PatchesData::is_cost_effective_lossless`).
-                pd_opt.filter(|pd| pd.is_cost_effective_lossless(cfg.use_ans))
+                // RFC#45 chunks 4-7 lossless backport (chunk 5 lossless
+                // trial encoder): per-image cost gate (see
+                // `PatchesData::is_cost_effective_lossless`).
+                pd_opt.filter(|pd| pd.is_cost_effective_lossless(image.bit_depth, cfg.use_ans))
             } else {
                 None
             };

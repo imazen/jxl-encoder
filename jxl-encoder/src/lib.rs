@@ -207,21 +207,47 @@ pub mod __internals {
     /// [`crate::vardct::patches::PatchesData::is_cost_effective_lossless`]
     /// helper on a pre-detected `PatchesData`. Used by the A/B harness
     /// to compare gate decisions vs measured deltas.
+    ///
+    /// Post-chunk-5 signature takes `bit_depth` (used by the
+    /// lossless-shape trial encoder); pass `8` for the common Rgb8
+    /// path.
     pub fn is_cost_effective_lossless(
         pd: &crate::vardct::patches::PatchesData,
+        bit_depth: u32,
         use_ans: bool,
     ) -> bool {
-        pd.is_cost_effective_lossless(use_ans)
+        pd.is_cost_effective_lossless(bit_depth, use_ans)
     }
 
-    /// Returns trial-encoded `(ref_overhead_B, dict_overhead_B)` for a
-    /// pre-detected `PatchesData`. Exposed for the calibration harness
-    /// to show the gate's overhead estimates alongside measured savings.
+    /// Returns XYB-shape trial-encoded `(ref_overhead_B, dict_overhead_B)`
+    /// for a pre-detected `PatchesData`. Pre-chunk-5: used by W11-1's
+    /// `is_cost_effective_lossless` gate. Retained for A/B harnesses
+    /// that compare XYB-overshoot vs lossless-shape overhead.
     pub fn patches_trial_overhead(
         pd: &crate::vardct::patches::PatchesData,
         use_ans: bool,
     ) -> (usize, usize) {
         let ref_b = crate::vardct::patches::trial_encode_ref_frame_bytes(pd, use_ans);
+        let dict_b = crate::vardct::patches::trial_encode_dict_section_bytes(pd, use_ans)
+            .unwrap_or_else(|| {
+                pd.ref_positions_len_for_calibration() * 5 + pd.positions_len_for_calibration() * 5
+            });
+        (ref_b, dict_b)
+    }
+
+    /// Returns lossless-shape trial-encoded `(ref_overhead_B,
+    /// dict_overhead_B)` for a pre-detected `PatchesData` — RFC#45
+    /// lossless chunk 5. The `ref_overhead_B` mirrors the live emit
+    /// path ([`crate::vardct::patches`]'s `encode_reference_frame_rgb`)
+    /// and is the estimator the production
+    /// [`is_cost_effective_lossless`] gate uses post-chunk-5.
+    pub fn patches_trial_overhead_lossless(
+        pd: &crate::vardct::patches::PatchesData,
+        bit_depth: u32,
+        use_ans: bool,
+    ) -> (usize, usize) {
+        let ref_b =
+            crate::vardct::patches::trial_encode_ref_frame_bytes_lossless(pd, bit_depth, use_ans);
         let dict_b = crate::vardct::patches::trial_encode_dict_section_bytes(pd, use_ans)
             .unwrap_or_else(|| {
                 pd.ref_positions_len_for_calibration() * 5 + pd.positions_len_for_calibration() * 5

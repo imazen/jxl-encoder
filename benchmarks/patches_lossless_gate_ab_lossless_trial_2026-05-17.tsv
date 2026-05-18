@@ -1,0 +1,11 @@
+class	image	width	height	bytes_off	bytes_on	delta_B	total_patch_pixels	unique_refs	ref_frame_pixels	occurrences	gate_says_effective	empirical_win
+screenshot	windows95.png	640	480	11729	10619	1110	22902	85	2499	1178	true	true
+screenshot	terminal.png	1646	1062	87667	49714	37953	129288	92	20216	688	true	true
+screenshot	codec_wiki.png	2560	1664	219128	212163	6965	53595	56	19028	194	true	true
+screenshot	imac_g3.png	2940	1912	450044	314953	135091	496951	278	74790	1970	true	true
+screenshot	windows.png	2560	1392	381818	356297	25521	65179	184	19285	1009	true	true
+photo	1025469.png	512	512	236251	236251	0	0	0	0	0	false	false
+photo	1044329.png	512	512	342087	342087	0	0	0	0	0	false	false
+photo	1189261.png	512	512	307447	307447	0	0	0	0	0	false	false
+photo	1279330.png	512	512	213025	213025	0	0	0	0	0	false	false
+photo	1418519.png	512	512	176050	176050	0	0	0	0	0	false	false

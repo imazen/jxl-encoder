@@ -129,11 +129,11 @@ const HAS_SIMILAR_RADIUS: usize = 2;
 const HAS_SIMILAR_THRESHOLD: f32 = 0.03;
 
 /// Bytes-per-patch-pixel savings constant for the lossless
-/// [`PatchesData::is_cost_effective_lossless`] gate (RFC#45 chunks 4-7
-/// backport).
+/// [`PatchesData::is_cost_effective_lossless`] gate (RFC#45 lossless
+/// chunks 4-7 + chunk-5 lossless-shape trial encoder).
 ///
 /// Calibrated from
-/// `benchmarks/patches_lossless_savings_calibrate_all_2026-05-17.tsv`
+/// `benchmarks/patches_lossless_savings_calibrate_all_lossless_trial_2026-05-17.tsv`
 /// (11 gb82-sc screenshots × default `LosslessConfig`; 8 of 11 produce
 /// detectable patches, 3 hit the detector's 1% coverage filter and
 /// return `None`).
@@ -142,32 +142,38 @@ const HAS_SIMILAR_THRESHOLD: f32 = 0.03;
 /// no distance axis, so no `1/sqrt(d)` divisor (contrast the lossy
 /// `C = 0.78` value under the chunk-5 `1/sqrt(d)` shape).
 ///
-/// **Constant choice: `0.45`** is the *overhead-overshoot-corrected*
-/// bytes-per-patch-pixel — the smallest C that admits all 8 measured
-/// net-winning cells under the chunk-6 1.5× safety margin. The true
-/// geometric-mean of measured `actual_savings / total_patch_pixels`
-/// is 0.27, BUT the lossy trial-encoder (`trial_encode_ref_frame_bytes`)
-/// is XYB-shape and overshoots the lossless `encode_reference_frame_rgb`
-/// path's actual byte cost by ≈1.5-2× on our corpus. Until we ship a
-/// lossless-shape trial encoder, C is calibrated against the existing
-/// (over-stating) trial overhead so the gate only fires when overhead
-/// vs savings is *clearly* upside-down.
+/// **Constant choice: `0.35`** is the smallest C that admits every
+/// measured net-winning cell under the chunk-6 1.5× safety margin
+/// against the **lossless-shape** trial-encoded overhead
+/// ([`trial_encode_ref_frame_bytes_lossless`]). RFC#45 lossless chunk
+/// 5 replaced the XYB-shape trial encoder used by W11-1
+/// ([`trial_encode_ref_frame_bytes`]) — which overshot the true
+/// lossless byte cost by ≈1.0-1.8× depending on content — with the
+/// lossless-shape path that mirrors the live emit
+/// ([`encode_reference_frame_rgb`]). With tighter overhead, the same
+/// 8/8 admission set is reachable at C=0.35 (vs W11-1's 0.45), a 22%
+/// tighter gate that also rejects pathological cells more aggressively.
 ///
-/// Distribution of measured `net_bpp` (actual_savings / total_patch_pixels)
-/// across the 8 admitted screenshots:
-///   `min = 0.048` (windows95 — small chrome glyphs),
-///   `p25 = 0.26`, `median = 0.27`, `mean = 0.50`, `p75 = 0.39`,
-///   `max = 2.32` (imessage — text-heavy chat), `geomean = 0.27`.
-/// Per-image variance is 8× max/min — gate is a content-discriminator,
-/// not a regressor (R² of constant predictor = 0; overhead-density
-/// covariate R² = 0.003).
+/// The empirical `actual_savings / total_patch_pixels` distribution is
+/// unchanged from W11-1 (the live emit is unchanged; only the overhead
+/// estimator moved): geomean ≈ 0.275, mean ≈ 0.498, min 0.048
+/// (windows95 — small chrome glyphs), max 2.317 (imessage — text-heavy
+/// chat). Per-image variance is 48× max/min; gate is a
+/// content-discriminator, not a regressor (R² of constant predictor
+/// against bpp variance = 0 by definition).
 ///
-/// Per-image C needed to admit at the 1.5× margin:
-///   `windows95: 0.19`, `terminal: 0.19`, `codec_wiki: 0.35`,
-///   `imac_g3: 0.43`, `imessage: 0.31`, `windows: 0.35`,
-///   `imac_dark: 0.44`, `imac_g3_strip: 0.43`. Max = 0.44 → C = 0.45
+/// Per-image C needed to admit at the 1.5× margin (post-chunk-5,
+/// lossless-shape overhead):
+///   `windows95: 0.183`, `terminal: 0.192`, `imac_g3: 0.245`,
+///   `imac_g3_strip: 0.245`, `imac_dark: 0.252`, `imessage: 0.302`,
+///   `codec_wiki: 0.333`, `windows: 0.350`. Max = 0.350 → C = 0.35
 ///   admits 8/8.
-const SAVINGS_BYTES_PER_PIXEL_LOSSLESS: f64 = 0.45;
+///
+/// xyb-vs-lossless overhead overshoot ratio: min 0.99 (terminal), max
+/// 1.81 (imac_g3) — the 3 imac entries are smooth-dark-UI heavy and
+/// gain the most from the lossless-shape encoder; the other 5 are
+/// near-parity. Mean overshoot 1.32×.
+const SAVINGS_BYTES_PER_PIXEL_LOSSLESS: f64 = 0.35;
 
 // ── Calibration Stats Sink ────────────────────────────────────────────────────
 //
@@ -505,17 +511,17 @@ impl PatchesData {
     /// # Calibration of `C_LOSSLESS`
     ///
     /// See [`SAVINGS_BYTES_PER_PIXEL_LOSSLESS`] doc-comment for full
-    /// provenance. Summary: `C = 0.45` is the smallest constant that
-    /// admits all 8 net-winning gb82-sc screenshots at the 1.5×
-    /// margin, calibrated against this method's `trial_encode_*`
-    /// overhead estimates (which over-state actual lossless ref-frame
-    /// byte cost by ≈1.5-2× — `trial_encode_ref_frame_bytes` invokes
-    /// the XYB-shape path).
+    /// provenance. RFC#45 lossless chunk 5 tightened this constant
+    /// from 0.45 to 0.35 by replacing the XYB-shape trial encoder with
+    /// the lossless-shape [`trial_encode_ref_frame_bytes_lossless`]
+    /// (which mirrors the live [`encode_reference_frame_rgb`] emit).
+    /// True overhead drops by up to 1.8× on smooth-dark UI
+    /// screenshots, so the same 8/8 admission set is reachable at a
+    /// smaller C, which also tightens rejection of pathological cells.
     ///
-    /// The true geomean `actual_savings / total_patch_pixels` is 0.27,
-    /// but using that constant would over-reject. Future work: ship a
-    /// lossless-shape trial encoder (mirrors `encode_reference_frame_rgb`)
-    /// and re-fit C against tighter overhead estimates.
+    /// `bit_depth` must match the value the live encode would pass to
+    /// [`encode_reference_frame_rgb`] (`image.bit_depth` — 8 in the
+    /// common Rgb8/Rgba8 path, 16 for Rgb16/Rgba16).
     ///
     /// # Notes
     ///
@@ -525,15 +531,15 @@ impl PatchesData {
     ///   ceiling (`5 * ref_positions + 5 * positions`) is the same
     ///   conservative bound here — we never under-estimate overhead.
     /// * Trial-encoding overhead per image is one extra
-    ///   `encode_reference_frame` + one extra `encode_patches_section`
+    ///   `encode_reference_frame_rgb` + one extra `encode_patches_section`
     ///   pass; modest vs. the full lossless multi-group encode.
     /// * Gate ships behind the detector's existing 1% coverage filter,
     ///   so it only fires when patches were already worth considering.
     /// * Wired into `api.rs` at both `encode_lossless` one-shot
     ///   (line ~5797) and the streaming `LosslessEncoder::finish`
     ///   variant (line ~8325).
-    pub fn is_cost_effective_lossless(&self, use_ans: bool) -> bool {
-        let ref_overhead = trial_encode_ref_frame_bytes(self, use_ans);
+    pub fn is_cost_effective_lossless(&self, bit_depth: u32, use_ans: bool) -> bool {
+        let ref_overhead = trial_encode_ref_frame_bytes_lossless(self, bit_depth, use_ans);
         if ref_overhead == usize::MAX {
             return false;
         }
@@ -2466,6 +2472,41 @@ pub(crate) fn trial_encode_ref_frame_bytes(patches: &PatchesData, use_ans: bool)
     }
 }
 
+/// Trial-encode the lossless (RGB, non-XYB) reference frame and return the byte count.
+///
+/// RFC#45 lossless chunk 5: companion to [`trial_encode_ref_frame_bytes`],
+/// but invokes the lossless-shape [`encode_reference_frame_rgb`] path that
+/// the default lossless emit actually uses. The XYB-shape trial overshoots
+/// the true lossless byte cost by ≈1.5-2× on screenshot corpus (XYB carries
+/// a Y/X/B-Y reorder + DC-quant scaling that inflates the modular stream
+/// relative to the RGB+RCT path), which was correctness-safe but forced the
+/// W11-1 gate to ship `SAVINGS_BYTES_PER_PIXEL_LOSSLESS = 0.45` against an
+/// over-stating overhead estimator. This trial encoder mirrors the live
+/// emit so the gate can re-fit against true bytes (geomean bpp ≈ 0.27 on
+/// the gb82-sc corpus — see [`SAVINGS_BYTES_PER_PIXEL_LOSSLESS`] doc).
+///
+/// `bit_depth` must match the value the live encode would pass to
+/// [`encode_reference_frame_rgb`] (i.e. `image.bit_depth` — 8 in the
+/// common Rgb8/Rgba8 path, 16 for Rgb16/Rgba16). Trial-encode disables
+/// tree learning and uses no budget (mirrors the XYB trial's `false, None`
+/// arguments), keeping cost approximate but cheap.
+///
+/// Returns `usize::MAX` on encode error so callers can treat it as
+/// "overhead is infinite, reject patches".
+pub(crate) fn trial_encode_ref_frame_bytes_lossless(
+    patches: &PatchesData,
+    bit_depth: u32,
+    use_ans: bool,
+) -> usize {
+    let mut writer = BitWriter::new();
+    if encode_reference_frame_rgb(patches, bit_depth, use_ans, false, &mut writer, None).is_ok() {
+        writer.zero_pad_to_byte();
+        writer.bytes_written()
+    } else {
+        usize::MAX
+    }
+}
+
 /// Trial-encode the patches dictionary section and return the byte count.
 ///
 /// RFC#45 chunk 7: replaces the pre-chunk-7 analytical estimate
@@ -3186,12 +3227,12 @@ mod tests {
             ref_height: 8,
         };
         // total_patch_pixels = 32 * 8 * 8 = 2048
-        // savings_est = 2048 * 0.45 = 921 B
-        // For 1.5x margin gate to fire: overhead must be <= 614 B.
-        // Trial-encoded ref-frame for an 8×8 zero patch is tiny (<200 B),
+        // savings_est = 2048 * 0.35 = 716 B (post-chunk-5)
+        // For 1.5x margin gate to fire: overhead must be <= 477 B.
+        // Trial-encoded RGB ref-frame for an 8×8 zero patch is tiny (<200 B),
         // dictionary section for 32 occurrences also tiny.
         assert!(
-            pd.is_cost_effective_lossless(true),
+            pd.is_cost_effective_lossless(8, true),
             "high-savings synthetic case must pass the lossless gate"
         );
     }
@@ -3227,10 +3268,10 @@ mod tests {
             ref_height: 256,
         };
         // total_patch_pixels = 1 * 4 * 4 = 16
-        // savings_est = 16 * 0.45 = 7 B
-        // overhead for a 256×256 ref frame is >>1 KB, easily.
+        // savings_est = 16 * 0.35 = 5 B (post-chunk-5)
+        // overhead for a 256×256 RGB ref frame is >>1 KB, easily.
         assert!(
-            !pd.is_cost_effective_lossless(true),
+            !pd.is_cost_effective_lossless(8, true),
             "tiny-savings huge-ref synthetic case must FAIL the lossless gate"
         );
     }
