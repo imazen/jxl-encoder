@@ -1,0 +1,61 @@
+image	class	distance	mode	plog2	fcbr	edge_density	lift_hint	class_ms	bytes	butteraugli	ssim2	encode_ms	bytes_delta_pct	bfly_delta_pct	ssim2_delta_abs
+gb82/codec_wiki	screen	0.500	smart_off	10	0.8433	0.0391	Some(true)	4.41	129038	0.8178	92.6926	386.22			
+gb82/codec_wiki	screen	0.500	smart_on	10	0.8433	0.0391	Some(true)	4.41	132738	0.8140	92.6640	431.98	+2.867	-0.468	-0.0285
+gb82/codec_wiki	screen	1.000	smart_off	10	0.8433	0.0391	Some(true)	4.41	120539	1.0917	90.2287	655.32			
+gb82/codec_wiki	screen	1.000	smart_on	10	0.8433	0.0391	Some(true)	4.41	119009	1.1406	90.2871	612.13	-1.269	+4.472	+0.0584
+gb82/codec_wiki	screen	2.000	smart_off	10	0.8433	0.0391	Some(true)	4.41	95638	2.0376	86.4397	644.09			
+gb82/codec_wiki	screen	2.000	smart_on	10	0.8433	0.0391	Some(true)	4.41	95843	2.3418	86.2356	673.28	+0.214	+14.931	-0.2041
+gb82/gmessages	screen	0.500	smart_off	9	0.9067	0.0209	Some(true)	4.66	163765	0.6841	94.1407	376.82			
+gb82/gmessages	screen	0.500	smart_on	9	0.9067	0.0209	Some(true)	4.66	171278	0.6777	94.0199	368.51	+4.588	-0.935	-0.1209
+gb82/gmessages	screen	1.000	smart_off	9	0.9067	0.0209	Some(true)	4.66	152778	0.8943	91.6725	716.79			
+gb82/gmessages	screen	1.000	smart_on	9	0.9067	0.0209	Some(true)	4.66	153885	0.9101	91.5718	598.51	+0.725	+1.770	-0.1007
+gb82/gmessages	screen	2.000	smart_off	9	0.9067	0.0209	Some(true)	4.66	118236	1.6822	87.8714	687.17			
+gb82/gmessages	screen	2.000	smart_on	9	0.9067	0.0209	Some(true)	4.66	119144	1.6828	87.6047	680.10	+0.768	+0.033	-0.2668
+gb82/graph	screen	0.500	smart_off	8	0.8088	0.0548	Some(true)	2.01	31336	0.3469	94.8271	41.71			
+gb82/graph	screen	0.500	smart_on	8	0.8088	0.0548	Some(true)	2.01	31425	0.6749	94.6603	61.70	+0.284	+94.538	-0.1668
+gb82/graph	screen	1.000	smart_off	8	0.8088	0.0548	Some(true)	2.01	26045	0.8472	91.7604	59.37			
+gb82/graph	screen	1.000	smart_on	8	0.8088	0.0548	Some(true)	2.01	26196	1.0068	91.5042	72.06	+0.580	+18.833	-0.2562
+gb82/graph	screen	2.000	smart_off	8	0.8088	0.0548	Some(true)	2.01	21572	1.9267	85.7898	57.94			
+gb82/graph	screen	2.000	smart_on	8	0.8088	0.0548	Some(true)	2.01	21652	2.1020	85.2332	61.57	+0.371	+9.098	-0.5566
+gb82/gui	screen	0.500	smart_off	8	0.8677	0.0172	Some(true)	2.96	50713	0.6906	96.1107	148.60			
+gb82/gui	screen	0.500	smart_on	8	0.8677	0.0172	Some(true)	2.96	49051	0.6906	95.9485	143.38	-3.277	-0.000	-0.1621
+gb82/gui	screen	1.000	smart_off	8	0.8677	0.0172	Some(true)	2.96	42207	0.7862	94.7187	257.20			
+gb82/gui	screen	1.000	smart_on	8	0.8677	0.0172	Some(true)	2.96	41998	0.8587	94.5629	250.77	-0.495	+9.232	-0.1558
+gb82/gui	screen	2.000	smart_off	8	0.8677	0.0172	Some(true)	2.96	32843	1.7610	91.8999	214.26			
+gb82/gui	screen	2.000	smart_on	8	0.8677	0.0172	Some(true)	2.96	32848	1.7610	91.8876	189.23	+0.015	-0.000	-0.0123
+gb82/imac_dark	screen	0.500	smart_off	12	0.7297	0.0574	Some(true)	4.46	352093	0.8736	93.6324	591.50			
+gb82/imac_dark	screen	0.500	smart_on	12	0.7297	0.0574	Some(true)	4.46	354638	0.8805	93.4937	526.85	+0.723	+0.794	-0.1387
+gb82/imac_dark	screen	1.000	smart_off	12	0.7297	0.0574	Some(true)	4.46	305903	1.4182	90.3755	746.25			
+gb82/imac_dark	screen	1.000	smart_on	12	0.7297	0.0574	Some(true)	4.46	303775	1.4069	90.0283	914.61	-0.696	-0.793	-0.3472
+gb82/imac_dark	screen	2.000	smart_off	12	0.7297	0.0574	Some(true)	4.46	235000	2.0691	86.0403	864.67			
+gb82/imac_dark	screen	2.000	smart_on	12	0.7297	0.0574	Some(true)	4.46	238300	2.2071	85.7812	815.80	+1.404	+6.669	-0.2591
+gb82/imac_g3	screen	0.500	smart_off	11	0.7087	0.0789	Some(true)	7.74	332256	0.7611	90.0030	484.01			
+gb82/imac_g3	screen	0.500	smart_on	11	0.7087	0.0789	Some(true)	7.74	337143	0.7587	89.7424	502.93	+1.471	-0.314	-0.2605
+gb82/imac_g3	screen	1.000	smart_off	11	0.7087	0.0789	Some(true)	7.74	300925	1.3009	88.0138	874.14			
+gb82/imac_g3	screen	1.000	smart_on	11	0.7087	0.0789	Some(true)	7.74	301327	1.3009	87.7492	824.00	+0.134	-0.002	-0.2646
+gb82/imac_g3	screen	2.000	smart_off	11	0.7087	0.0789	Some(true)	7.74	250185	2.3828	84.2863	925.06			
+gb82/imac_g3	screen	2.000	smart_on	11	0.7087	0.0789	Some(true)	7.74	250762	2.3828	84.5445	941.91	+0.231	+0.000	+0.2583
+gb82/imessage	screen	0.500	smart_off	9	0.8732	0.0262	Some(true)	3.54	178883	0.7151	92.9539	239.42			
+gb82/imessage	screen	0.500	smart_on	9	0.8732	0.0262	Some(true)	3.54	178350	0.7887	92.6631	195.65	-0.298	+10.294	-0.2908
+gb82/imessage	screen	1.000	smart_off	9	0.8732	0.0262	Some(true)	3.54	151927	1.3651	90.7058	335.63			
+gb82/imessage	screen	1.000	smart_on	9	0.8732	0.0262	Some(true)	3.54	149619	1.0364	90.4322	338.98	-1.519	-24.077	-0.2737
+gb82/imessage	screen	2.000	smart_off	9	0.8732	0.0262	Some(true)	3.54	114843	1.8954	85.1141	353.56			
+gb82/imessage	screen	2.000	smart_on	9	0.8732	0.0262	Some(true)	3.54	114871	1.9298	86.7323	366.25	+0.024	+1.811	+1.6182
+gb82/terminal	screen	0.500	smart_off	9	0.8042	0.0552	Some(true)	3.36	60132	0.5224	94.6086	119.07			
+gb82/terminal	screen	0.500	smart_on	9	0.8042	0.0552	Some(true)	3.36	63907	0.5479	95.0726	113.68	+6.278	+4.884	+0.4641
+gb82/terminal	screen	1.000	smart_off	9	0.8042	0.0552	Some(true)	3.36	63448	0.8308	91.7699	196.98			
+gb82/terminal	screen	1.000	smart_on	9	0.8042	0.0552	Some(true)	3.36	63315	0.7676	91.7726	200.06	-0.210	-7.616	+0.0026
+gb82/terminal	screen	2.000	smart_off	9	0.8042	0.0552	Some(true)	3.36	51092	1.2936	88.9321	203.44			
+gb82/terminal	screen	2.000	smart_on	9	0.8042	0.0552	Some(true)	3.36	51802	1.5324	88.8012	200.49	+1.390	+18.456	-0.1309
+gb82/windows	screen	0.500	smart_off	11	0.7746	0.0662	Some(true)	3.70	342503	0.9297	88.7988	267.33			
+gb82/windows	screen	0.500	smart_on	11	0.7746	0.0662	Some(true)	3.70	340209	0.9296	88.5873	266.49	-0.670	-0.007	-0.2115
+gb82/windows	screen	1.000	smart_off	11	0.7746	0.0662	Some(true)	3.70	279742	1.5080	86.5638	439.60			
+gb82/windows	screen	1.000	smart_on	11	0.7746	0.0662	Some(true)	3.70	273584	1.7046	86.1947	449.87	-2.201	+13.032	-0.3692
+gb82/windows	screen	2.000	smart_off	11	0.7746	0.0662	Some(true)	3.70	199949	2.4944	81.9082	460.21			
+gb82/windows	screen	2.000	smart_on	11	0.7746	0.0662	Some(true)	3.70	195607	2.6525	81.7730	449.71	-2.172	+6.341	-0.1352
+gb82/windows95	screen	0.500	smart_off	4	0.3600	0.2684	Some(false)	1.53	48540	0.5527	94.0908	55.37			
+gb82/windows95	screen	0.500	smart_on	4	0.3600	0.2684	Some(false)	1.53	48540	0.5527	94.0908	41.29	+0.000	+0.000	+0.0000
+gb82/windows95	screen	1.000	smart_off	4	0.3600	0.2684	Some(false)	1.53	50600	1.1841	90.3793	54.05			
+gb82/windows95	screen	1.000	smart_on	4	0.3600	0.2684	Some(false)	1.53	50600	1.1841	90.3793	52.85	+0.000	+0.000	+0.0000
+gb82/windows95	screen	2.000	smart_off	4	0.3600	0.2684	Some(false)	1.53	41765	2.1426	82.4037	59.28			
+gb82/windows95	screen	2.000	smart_on	4	0.3600	0.2684	Some(false)	1.53	41765	2.1426	82.4037	56.48	+0.000	+0.000	+0.0000
