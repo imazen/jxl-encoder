@@ -211,6 +211,10 @@ name = "distance_sweep"
 path = "examples/distance_sweep.rs"
 
 [[example]]
+name = "hdr_rd_sweep_vs_cjxl"
+path = "examples/hdr_rd_sweep_vs_cjxl.rs"
+
+[[example]]
 name = "fresh_encode"
 path = "examples/fresh_encode.rs"
 
