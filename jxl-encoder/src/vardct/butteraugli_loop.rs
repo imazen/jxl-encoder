@@ -12,6 +12,8 @@
 //! - Recomputes global_scale each iteration via SetQuantField (median/MAD)
 //! - Returns final DistanceParams for use in CfL pass 2 and encoding
 
+use core::sync::atomic::{AtomicI32, Ordering};
+
 use super::ac_strategy::AcStrategyMap;
 use super::adaptive_quant::quantize_quant_field;
 use super::chroma_from_luma::CflMap;
@@ -26,6 +28,131 @@ use crate::error::Result;
 /// the initial AC heuristic field. Single-seed encodes use only this
 /// value (bit-identical to libjxl).
 pub(crate) const LIBJXL_INIT_MUL: f64 = 0.6;
+
+// ===== Distance-aware buttloop tuning scaffolding (W38-2 #3.1).
+//
+// Infrastructure ported from GPU `d75bf7c` (memory
+// `buttloop_rd_gap_2026-05-14.md`) for hot-swap A/B sweeps on the
+// per-iter `(cur_pow, max_increase)` knobs. **Production defaults
+// match libjxl at every regime** (`cur_pow=0.2`, `max_increase=100.0`
+// ≈ "no cap"); the GPU's tuned LOW-regime values (`cur_pow=0.5`,
+// `max_increase=1.3`) regressed RD-pareto on CPU at LOW (bfly +4-13 %
+// on screenshots, +1-8 % on photos at d<2.0) when tested A/B — see
+// `benchmarks/buttloop_distance_split_port_2026-05-18.tsv`. The GPU's
+// tuning was calibrated against its own e7 baseline (≈9 % smaller
+// bytes than cjxl e7); CPU's baseline differs and the same factor
+// over-shrinks the quant field.
+//
+// The atomic overrides below let sweep harnesses search for a
+// CPU-specific LOW value (or any other tuning) without rebuilds.
+// Production code never sets them — see `resolved_cur_pow` /
+// `resolved_max_increase` helpers.
+//
+// Hash-lock invariants at default e7 are preserved because the
+// buttloop is gated at effort >= 8 (`speed_tier <= kKitten`).
+
+/// Sweep override for `cur_pow` at low distances (`target_distance <
+/// [`DEFAULT_DISTANCE_SPLIT`]`). Stored as `value × 1000` (so 500 = 0.5).
+/// `i32::MIN` means "not overridden — use [`DEFAULT_CUR_POW_LOW`]".
+pub static CUR_POW_X1000_LOW: AtomicI32 = AtomicI32::new(i32::MIN);
+
+/// Sweep override for `cur_pow` at high distances (`target_distance >=
+/// [`DEFAULT_DISTANCE_SPLIT`]`). `i32::MIN` means "use
+/// [`DEFAULT_CUR_POW_HIGH`]".
+pub static CUR_POW_X1000_HIGH: AtomicI32 = AtomicI32::new(i32::MIN);
+
+/// Sweep override for `max_increase` (per-iter bad-block bump cap) at
+/// low distances. Stored as `value × 1000`. `i32::MIN` means "use
+/// [`DEFAULT_MAX_INCREASE_LOW`]".
+pub static MAX_INCREASE_X1000_LOW: AtomicI32 = AtomicI32::new(i32::MIN);
+
+/// Sweep override for `max_increase` at high distances. `i32::MIN` means
+/// "use [`DEFAULT_MAX_INCREASE_HIGH`]".
+pub static MAX_INCREASE_X1000_HIGH: AtomicI32 = AtomicI32::new(i32::MIN);
+
+/// Sweep override for the threshold between LOW and HIGH regimes. The
+/// per-iter loop picks LOW when `target_distance < threshold`, else HIGH.
+/// Defaults to `2000` (= 2.0) — see [`DEFAULT_DISTANCE_SPLIT`].
+///
+/// Unlike the other overrides this slot is initialised to its default
+/// value (NOT `i32::MIN`) so that `resolved_*` helpers always see a
+/// valid split even when production runs without any harness present.
+pub static DISTANCE_SPLIT_X1000: AtomicI32 = AtomicI32::new(2000);
+
+/// Helper: read an `_X1000` override; return `default` when unset.
+fn read_override_x1000(slot: &AtomicI32, default: f64) -> f64 {
+    let v = slot.load(Ordering::Relaxed);
+    if v == i32::MIN {
+        default
+    } else {
+        v as f64 / 1000.0
+    }
+}
+
+/// Production default for `cur_pow` in the LOW regime
+/// (`target_distance < DEFAULT_DISTANCE_SPLIT`). Matches libjxl's
+/// default — **the literal GPU port (`0.5`) was tested A/B on CPU
+/// and over-reclaims, costing 1-13 % butteraugli at d<2.0** (see
+/// `benchmarks/buttloop_distance_split_port_*.{tsv,meta}`). The
+/// scaffolding stays so sweep harnesses can find a CPU-specific
+/// LOW value via `CUR_POW_X1000_LOW`, but the default is the
+/// libjxl-faithful value until that sweep lands.
+///
+/// GPU equivalent: `DEFAULT_CUR_POW_LOW = 0.5` in
+/// `jxl-encoder-gpu/src/forks/butteraugli_loop.rs`. The GPU's
+/// `0.5` tuning was calibrated to its own baseline (≈9 % smaller
+/// bytes at e7 than cjxl); CPU's e7 baseline differs and the same
+/// value is too aggressive here.
+pub const DEFAULT_CUR_POW_LOW: f64 = 0.2;
+
+/// Production default for `cur_pow` in the HIGH regime
+/// (`target_distance >= DEFAULT_DISTANCE_SPLIT`). Matches libjxl's
+/// default (`enc_adaptive_quantization.cc:1106`) — no change from
+/// pre-port CPU behaviour.
+pub const DEFAULT_CUR_POW_HIGH: f64 = 0.2;
+
+/// Production default for `max_increase` (per-iter bad-block bump cap)
+/// in the LOW regime. Matches libjxl's implicit "no cap" — set to
+/// `100.0` (effectively infinite). See `DEFAULT_CUR_POW_LOW` for the
+/// rationale on why the literal GPU port (`1.3`) is not the default.
+pub const DEFAULT_MAX_INCREASE_LOW: f64 = 100.0;
+
+/// Production default for `max_increase` in the HIGH regime. Matches
+/// libjxl's implicit "no cap" — set to `100.0` (effectively infinite).
+pub const DEFAULT_MAX_INCREASE_HIGH: f64 = 100.0;
+
+/// Default split point between LOW and HIGH regimes.
+/// `target_distance >= DEFAULT_DISTANCE_SPLIT` triggers the HIGH regime.
+pub const DEFAULT_DISTANCE_SPLIT: f64 = 2.0;
+
+/// Resolve `cur_pow` for the current iter + `target_distance`, honouring
+/// any sweep overrides set in `CUR_POW_X1000_{LOW,HIGH}`.
+///
+/// Returns 0.0 for `iter >= 2` regardless of override (only iter < 2
+/// has a good-block reclamation regime; later iters only bump bad
+/// blocks — same as libjxl `enc_adaptive_quantization.cc:1106`).
+pub(crate) fn resolved_cur_pow(iter: usize, target_distance: f64) -> f64 {
+    if iter >= 2 {
+        return 0.0;
+    }
+    let split = read_override_x1000(&DISTANCE_SPLIT_X1000, DEFAULT_DISTANCE_SPLIT);
+    if target_distance < split {
+        read_override_x1000(&CUR_POW_X1000_LOW, DEFAULT_CUR_POW_LOW)
+    } else {
+        read_override_x1000(&CUR_POW_X1000_HIGH, DEFAULT_CUR_POW_HIGH)
+    }
+}
+
+/// Resolve `max_increase` (per-iter bad-block bump cap) for the current
+/// `target_distance`, honouring sweep overrides.
+pub(crate) fn resolved_max_increase(target_distance: f64) -> f64 {
+    let split = read_override_x1000(&DISTANCE_SPLIT_X1000, DEFAULT_DISTANCE_SPLIT);
+    if target_distance < split {
+        read_override_x1000(&MAX_INCREASE_X1000_LOW, DEFAULT_MAX_INCREASE_LOW)
+    } else {
+        read_override_x1000(&MAX_INCREASE_X1000_HIGH, DEFAULT_MAX_INCREASE_HIGH)
+    }
+}
 
 /// Seed values for the multi-seed butteraugli sweep (RFC#45 pick #1
 /// chunk 3). Each seed runs the full quantization loop with a different
@@ -840,14 +967,28 @@ impl VarDctEncoder {
             // Step 8: Adjust float quant_field based on tile distances.
             // (libjxl enc_adaptive_quantization.cc:1059-1110)
             //
-            // kPow controls how aggressively to reduce quality of good blocks:
-            // iters 0-1: pow=0.2 (gently reduce good blocks to save bits)
-            // iters 2+: pow=0.0 (only fix bad blocks)
-            let cur_pow: f64 = if iter < 2 {
-                0.2 + (target_distance as f64 - 1.0) * 0.0 // kPowMod[0..1] = 0
-            } else {
-                0.0
-            };
+            // Distance-aware tuning scaffolding (W38-2 #3.1; ported
+            // from GPU `d75bf7c` as infrastructure-only).
+            //
+            // **Production defaults match libjxl at both regimes**
+            // (`cur_pow=0.2`, `max_increase=100.0` ≈ "no cap"). The
+            // literal GPU LOW-regime tuning (cur_pow=0.5,
+            // max_increase=1.3) regressed bfly +4-13 % on CPU and was
+            // not adopted as default — see
+            // `benchmarks/buttloop_distance_split_port_2026-05-18.tsv`.
+            //
+            // The atomic overrides
+            // (`CUR_POW_X1000_{LOW,HIGH}` / `MAX_INCREASE_X1000_{LOW,HIGH}`
+            // / `DISTANCE_SPLIT_X1000`) let sweep harnesses search for
+            // a CPU-specific LOW value that survives RD-pareto without
+            // rebuilds; production code never sets them.
+            //
+            // `cur_pow` is 0.0 for `iter >= 2` regardless of regime
+            // (only iter < 2 reduces quality of good blocks; later
+            // iters only bump bad blocks — same as libjxl
+            // `enc_adaptive_quantization.cc:1106`).
+            let cur_pow: f64 = resolved_cur_pow(iter, target_distance as f64);
+            let max_increase: f64 = resolved_max_increase(target_distance as f64);
 
             // InvGlobalScale and Scale from current iteration's params
             // (these change per iteration as global_scale is recomputed)
@@ -876,7 +1017,10 @@ impl VarDctEncoder {
                          (clamps should keep this finite every iter)",
                         quant_field_float[bi]
                     );
-                    let diff = tile_dist[bi] / target_distance;
+                    let diff_raw = tile_dist[bi] / target_distance;
+                    // W38-2 #3.1: cap the per-iter bump (no-op in HIGH
+                    // regime where max_increase = 100.0).
+                    let diff = diff_raw.min(max_increase as f32);
                     if diff > 1.0 {
                         let old = quant_field_float[bi];
                         quant_field_float[bi] = old * diff;
@@ -905,7 +1049,11 @@ impl VarDctEncoder {
                         "butteraugli loop: non-finite quant_field_float[{bi}] = {}",
                         quant_field_float[bi]
                     );
-                    let diff = tile_dist[bi] / target_distance;
+                    let diff_raw = tile_dist[bi] / target_distance;
+                    // W38-2 #3.1: cap the per-iter bump for bad blocks
+                    // (no-op in HIGH regime where max_increase = 100.0,
+                    // no-op for good blocks where diff <= 1.0 anyway).
+                    let diff = diff_raw.min(max_increase as f32);
                     if diff <= 1.0 {
                         // Good quality: reduce precision to save bits.
                         // `diff` must be finite — NaN here indicates a real bug
@@ -1063,5 +1211,117 @@ pub mod recon_hook {
     pub fn take_last() -> Option<InternalRecon> {
         let mut guard = LAST_RECON.lock().expect("recon_hook mutex poisoned");
         guard.take()
+    }
+}
+
+// ===== Distance-aware buttloop tuning unit tests (W38-2 #3.1) =====
+//
+// These tests share global atomic state with sweep harnesses. Run
+// serially (`cargo test --lib -- --test-threads=1` if interleaved
+// flakes appear). They mirror the GPU encoder's
+// `forks/butteraugli_loop.rs::resolved_*` tests for parity.
+#[cfg(test)]
+mod tuning_tests {
+    use super::*;
+
+    fn reset_overrides() {
+        CUR_POW_X1000_LOW.store(i32::MIN, Ordering::Relaxed);
+        CUR_POW_X1000_HIGH.store(i32::MIN, Ordering::Relaxed);
+        MAX_INCREASE_X1000_LOW.store(i32::MIN, Ordering::Relaxed);
+        MAX_INCREASE_X1000_HIGH.store(i32::MIN, Ordering::Relaxed);
+        DISTANCE_SPLIT_X1000.store(2000, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn resolved_cur_pow_uses_low_default_below_split() {
+        reset_overrides();
+        // d=1.0 < 2.0 → LOW regime.
+        let v = resolved_cur_pow(0, 1.0);
+        assert!(
+            (v - DEFAULT_CUR_POW_LOW).abs() < 1e-9,
+            "expected DEFAULT_CUR_POW_LOW={DEFAULT_CUR_POW_LOW}, got {v}"
+        );
+        // iter=1 also LOW regime.
+        let v1 = resolved_cur_pow(1, 1.5);
+        assert!((v1 - DEFAULT_CUR_POW_LOW).abs() < 1e-9);
+    }
+
+    #[test]
+    fn resolved_cur_pow_uses_high_default_at_or_above_split() {
+        reset_overrides();
+        // d=2.0 >= 2.0 → HIGH regime.
+        let v = resolved_cur_pow(0, 2.0);
+        assert!(
+            (v - DEFAULT_CUR_POW_HIGH).abs() < 1e-9,
+            "expected DEFAULT_CUR_POW_HIGH={DEFAULT_CUR_POW_HIGH}, got {v}"
+        );
+        // d=3.0 — RD-pareto target; HIGH.
+        let v3 = resolved_cur_pow(0, 3.0);
+        assert!((v3 - DEFAULT_CUR_POW_HIGH).abs() < 1e-9);
+    }
+
+    #[test]
+    fn resolved_cur_pow_zero_at_late_iterations() {
+        reset_overrides();
+        // iter >= 2 → 0.0 regardless of regime.
+        assert_eq!(resolved_cur_pow(2, 1.0), 0.0);
+        assert_eq!(resolved_cur_pow(3, 3.0), 0.0);
+        assert_eq!(resolved_cur_pow(99, 5.0), 0.0);
+    }
+
+    #[test]
+    fn resolved_max_increase_picks_per_regime_default() {
+        reset_overrides();
+        let v_low = resolved_max_increase(1.0);
+        assert!((v_low - DEFAULT_MAX_INCREASE_LOW).abs() < 1e-9);
+        let v_high = resolved_max_increase(3.0);
+        assert!((v_high - DEFAULT_MAX_INCREASE_HIGH).abs() < 1e-9);
+        // Edge: exactly at split → HIGH.
+        let v_split = resolved_max_increase(2.0);
+        assert!((v_split - DEFAULT_MAX_INCREASE_HIGH).abs() < 1e-9);
+    }
+
+    #[test]
+    fn override_round_trip_x1000() {
+        reset_overrides();
+        // Confirm the X1000 encoding round-trips through resolve helpers.
+        CUR_POW_X1000_HIGH.store(350, Ordering::Relaxed); // 0.350
+        let v = resolved_cur_pow(0, 3.0);
+        assert!((v - 0.35).abs() < 1e-9, "got {v}");
+        MAX_INCREASE_X1000_LOW.store(1500, Ordering::Relaxed); // 1.500
+        let m = resolved_max_increase(1.0);
+        assert!((m - 1.5).abs() < 1e-9, "got {m}");
+        reset_overrides();
+    }
+
+    /// Production defaults must match libjxl
+    /// `enc_adaptive_quantization.cc:1106` at every regime — both LOW
+    /// and HIGH ship libjxl-faithful values until A/B sweeps find
+    /// CPU-specific tuning that survives RD-pareto.
+    ///
+    /// The atomic-override scaffolding is intentional (sweep harnesses
+    /// can override LOW), but production CPU encodes are byte-identical
+    /// to pre-port behaviour.
+    #[test]
+    fn production_defaults_are_libjxl_faithful() {
+        // libjxl `kPow = {0.2, 0.2, 0, 0, ...}` (one entry per iter).
+        assert_eq!(DEFAULT_CUR_POW_LOW, 0.2);
+        assert_eq!(DEFAULT_CUR_POW_HIGH, 0.2);
+        // libjxl applies no cap to `diff = tile_dist / target_distance`.
+        // Encode as 100.0 ("effectively infinite" — block diffs of
+        // 100× would already saturate at qf_higher).
+        assert_eq!(DEFAULT_MAX_INCREASE_LOW, 100.0);
+        assert_eq!(DEFAULT_MAX_INCREASE_HIGH, 100.0);
+        assert_eq!(DEFAULT_DISTANCE_SPLIT, 2.0);
+    }
+
+    #[test]
+    fn distance_split_override_shifts_regime() {
+        reset_overrides();
+        // Lower the split to 1.0 — then d=1.5 is HIGH.
+        DISTANCE_SPLIT_X1000.store(1000, Ordering::Relaxed);
+        let v = resolved_cur_pow(0, 1.5);
+        assert!((v - DEFAULT_CUR_POW_HIGH).abs() < 1e-9, "got {v}");
+        reset_overrides();
     }
 }

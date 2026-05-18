@@ -116,5 +116,34 @@ pub mod __recon_hook {
     pub use super::butteraugli_loop::recon_hook::*;
 }
 
+/// Sweep-only atomic overrides for the distance-aware butteraugli-loop
+/// tuning scaffolding (W38-2 #3.1; infrastructure ported from GPU
+/// commit `d75bf7c`).
+///
+/// **Not part of the stable API.** These statics let an A/B harness
+/// hot-swap `cur_pow` / `max_increase` / split-distance values per
+/// regime without rebuilding. Production code never sets these — they
+/// default to the values documented in
+/// [`crate::vardct::butteraugli_loop`] (both regimes: `cur_pow=0.2`,
+/// `max_increase=100.0` ≈ libjxl's "no cap"). The GPU's tuned LOW
+/// values (`cur_pow=0.5`, `max_increase=1.3`) regressed CPU
+/// RD-pareto in A/B and are NOT the CPU production default.
+///
+/// `i32::MIN` on any of `CUR_POW_X1000_*` / `MAX_INCREASE_X1000_*`
+/// means "use the production default". `DISTANCE_SPLIT_X1000`
+/// initialises to `2000` (= 2.0) and is read every time.
+///
+/// See `benchmarks/buttloop_distance_split_port_*.{tsv,meta}` for
+/// reference sweep output and `examples/buttloop_distance_split_ab.rs`
+/// for the canonical harness.
+#[doc(hidden)]
+pub mod __buttloop_overrides {
+    pub use super::butteraugli_loop::{
+        CUR_POW_X1000_HIGH, CUR_POW_X1000_LOW, DEFAULT_CUR_POW_HIGH, DEFAULT_CUR_POW_LOW,
+        DEFAULT_DISTANCE_SPLIT, DEFAULT_MAX_INCREASE_HIGH, DEFAULT_MAX_INCREASE_LOW,
+        DISTANCE_SPLIT_X1000, MAX_INCREASE_X1000_HIGH, MAX_INCREASE_X1000_LOW,
+    };
+}
+
 #[cfg(test)]
 mod tests;
