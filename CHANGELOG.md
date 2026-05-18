@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`PatchesData::is_cost_effective` — per-image overhead correction**
+  (RFC#45 chunk 7 — follow-on to W9-4 chunk 6 `088719c5`). Replaces the
+  analytical `dict_overhead_est = 5 * ref_positions + 5 * positions`
+  estimate with a trial-encode of `encode_patches_section` to measure the
+  actual dictionary-section byte count per image. Also bundles the chunk-6
+  1.5x safety-margin relaxation (`2 * savings_est >= 3 * total_overhead`),
+  which was never landed on `main@origin`. The analytical estimate
+  overshot the actual ANS-coded delta-encoded dictionary size by 2-4x on
+  screenshots with many similar packed patches, inflating `total_overhead`
+  and forcing the gate shut on the two W9-4 residual cells (`windows95
+  @ d=4.0` and `windows @ d=4.0`). Chunk 7 admits both residuals plus 4
+  other previously-rejected high-d cells, while keeping the 14 already-
+  admitted cells byte-identical and the 20 photo cells unchanged
+  (detector returns `None` upstream on photos so the gate is not
+  invoked). Total newly-admitted savings: 425,793 B across 6 screenshot
+  cells (`benchmarks/patches_gate_experimental_ab_chunk7_2026-05-17.tsv`).
+  Hash-locks 36/36 byte-identical (Reference mode unchanged; gate fires
+  only in `EncoderMode::Experimental`).
+
 ### Added
 
 - **Seed-slot split + e11 budget expansion for multi-seed tree learning**

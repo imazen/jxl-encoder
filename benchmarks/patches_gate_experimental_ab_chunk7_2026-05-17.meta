@@ -1,0 +1,87 @@
+# RFC#45 chunk 7 — per-image overhead correction for `PatchesData::is_cost_effective`
+
+Commit:           HEAD (to be set on landing)
+Host:             $(hostname)
+Reference path:   ~/work/zen/jxl-encoder--patches-chunk7-overhead
+Codec-corpus:     ~/work/codec-corpus/gb82-sc + CID22-512/validation
+Encoder mode:     Experimental (EncoderMode::Experimental)
+Build:            cargo run --release -p jxl-encoder --example patches_gate_experimental_ab
+
+## Background
+
+W9-4 (chunk 6, commit 088719c5) relaxed the chunk-5 safety multiplier from
+2.0x → 1.5x and admitted 4 of 6 previously-rejected high-d screenshot cells
+on the experimental gate. Two residuals remained:
+  - windows95.png @ d=4.0  (savings_est / total_overhead < 1.5x)
+  - windows.png   @ d=4.0  (savings_est / total_overhead < 1.5x)
+
+Per the W9-4 agent's note: "ref_overhead too large for any margin in
+[1.0, 1.5] without breaking the 14 already-admitted cells. Queued for
+chunk 7 (per-image overhead correction)." This commit ships chunk 7.
+
+## Change
+
+Pre-chunk-7 estimate of total overhead:
+
+    total_overhead = ref_overhead       // trial-encoded reference frame
+                   + dict_overhead_est  // analytical: 5 * ref_positions
+                                        //           + 5 * positions
+
+Chunk 7 swaps the analytical estimate for a real trial-encode of
+`encode_patches_section`:
+
+    total_overhead = ref_overhead       // trial-encoded reference frame
+                   + dict_overhead      // trial-encoded dictionary section
+
+The dictionary section is ANS-coded (8 contexts) with delta-encoded
+per-occurrence positions, so the actual per-record byte count is much
+smaller than the 5-byte analytical guess on screenshots with many similar
+patches packed into a small reference frame. The analytical estimate was
+overshooting `total_overhead` by 2-4x on those cells, inflating the
+denominator of `savings_est / total_overhead` and forcing the chunk-6 1.5x
+gate shut.
+
+Chunk 7 also bundles the chunk-6 1.5x safety-margin relaxation (originally
+authored as commit 088719c5 but never landed on main@origin). The two
+changes ship together because chunk 7's per-image correction only matters
+in conjunction with the relaxed margin.
+
+## Bytes delta (negative = patches save bytes; 0 = gate rejected)
+
+Compared to chunk-5 baseline
+(benchmarks/patches_gate_experimental_ab_chunk5_2026-05-17.tsv):
+
+Screenshot      d=0.5         d=1.0         d=2.0         d=4.0
+windows95        same          same         -28768  NEW   -20961  NEW (RESIDUAL CLOSED)
+terminal         same          same          same          same
+codec_wiki       same          same          same         -10349  NEW
+imac_g3          same          same          same        -157874  NEW
+windows          same          same        -129035  NEW   -78806  NEW (RESIDUAL CLOSED)
+
+Total newly-admitted savings: 425,793 B across 6 cells.
+Both W9-4 residuals (windows95 d=4.0, windows d=4.0) are now admitted.
+
+## 14 already-admitted cells (chunk 5)
+
+All 14 stay admitted with byte-identical delta_B vs chunk-5 baseline.
+(Note: the cells admitted by chunk 5 were a subset of the 6 newly-admitted
+cells' siblings — chunk 5 admitted at lower d for the same images.)
+
+## Photos (5 images x 4 distances = 20 cells)
+
+delta_B = 0 on every photo cell. Detector returns None upstream for photo
+content, gate not invoked.
+
+## Hash-locks
+
+cargo test -p jxl-encoder --release --test hash_lock_features
+  -> 36/36 passed (Reference mode bitstream byte-identical; chunk 7 only
+  fires in EncoderMode::Experimental)
+
+## Patches unit tests
+
+cargo test -p jxl-encoder --release --lib vardct::patches::tests
+  -> 7 passed, 2 ignored (corpus-tests gated)
+
+cargo test -p jxl-encoder --release --test patches_oob_repro
+  -> 3 passed

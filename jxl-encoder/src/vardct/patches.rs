@@ -285,10 +285,11 @@ pub struct PatchesData {
 impl PatchesData {
     /// Check whether patches are cost-effective at the given distance.
     ///
-    /// Trial-encodes the reference frame to measure actual overhead, then
-    /// estimates VarDCT savings from patch subtraction. Returns false if
-    /// overhead exceeds estimated savings (with 2× safety margin baked into
-    /// the comparison).
+    /// Trial-encodes BOTH the reference frame and the dictionary section to
+    /// measure actual overhead per image, then estimates VarDCT savings from
+    /// patch subtraction. Returns false if overhead exceeds estimated savings
+    /// (with 1.5× safety margin baked into the comparison; relaxed from 2.0×
+    /// in RFC#45 chunk 6 and tightened to a per-image measurement in chunk 7).
     ///
     /// # Calibration of the per-pixel savings constant
     ///
@@ -301,9 +302,10 @@ impl PatchesData {
     /// `windows95.png` at d=0.5 has total_patch_pixels = 22851 and the
     /// model predicted 22851 / 1.0 * 0.3 = 6855 B of saving, yet
     /// patches-on vs patches-off measured 25693 B (~3.75× more). With
-    /// the `2× safety margin` baked in (`effective` requires
-    /// `savings_est >= 2 * total_overhead`), `C = 0.3` rejected every
-    /// truly-winning case where the ref-frame overhead crossed ~3-4 KB.
+    /// the historical 2× safety margin in place (`effective` once required
+    /// `savings_est >= 2 * total_overhead`; relaxed to 1.5× in chunk 6),
+    /// `C = 0.3` rejected every truly-winning case where the ref-frame
+    /// overhead crossed ~3-4 KB.
     ///
     /// RFC#45 chunk 4 (commit `420eb43`) re-fit `C` to 1.0 keeping the
     /// `1/max(d,1.0)` shape. That fixed admission at low/mid distances
@@ -349,14 +351,48 @@ impl PatchesData {
     ///   larger than `1/d` everywhere above d=1.0; the product
     ///   `C/sqrt(d)` ends up close to the actual bpp curve where
     ///   chunk-4's `1.0/d` was diverging downward.
+    ///
+    /// # RFC#45 chunk 7 — per-image overhead correction
+    ///
+    /// Chunk 6 (1.5× margin) admitted 4 of 6 previously-rejected high-d
+    /// screenshot cells but left `windows95.png @ d=4.0` and
+    /// `windows.png @ d=4.0` blocked because their analytical
+    /// `dict_overhead_est = 5*ref_positions + 5*positions` overshoots the
+    /// actual encoded dictionary-section byte count. The dictionary is
+    /// ANS-coded (8 contexts in [`encode_patches_section`]) with delta
+    /// encoding on the per-occurrence positions, so its true byte count
+    /// per record is well below 5 B on screenshots with many similar
+    /// patches packed into a small reference frame — the analytical
+    /// estimate inflated `total_overhead` by 2-4× on those cells.
+    ///
+    /// Chunk 7 replaces the analytical `dict_overhead_est` with an actual
+    /// trial-encode of [`encode_patches_section`] into a scratch
+    /// `BitWriter`. The cost is one extra entropy-coding pass over the
+    /// patch tokens — modest vs. the ref-frame trial encode that we were
+    /// already paying. The benefit is a tighter overhead estimate that
+    /// admits the two remaining residual cells without relaxing the
+    /// safety margin below 1.5× (which would risk false-positives on
+    /// untested content classes).
     pub fn is_cost_effective(&self, distance: f32, use_ans: bool) -> bool {
         let ref_overhead = trial_encode_ref_frame_bytes(self, use_ans);
         if ref_overhead == usize::MAX {
             return false;
         }
-        // Estimate dictionary section overhead: ~5 bytes per ref position + ~5 per occurrence
-        let dict_overhead_est = self.ref_positions.len() * 5 + self.positions.len() * 5;
-        let total_overhead = ref_overhead.saturating_add(dict_overhead_est);
+        // RFC#45 chunk 7: measure the dictionary section overhead by
+        // trial-encoding `encode_patches_section` instead of the analytical
+        // `5 * ref_positions + 5 * positions` estimate used pre-chunk-7.
+        // The analytical estimate overshoots by 2-4× on screenshots with
+        // many similar patches (delta encoding + ANS clustering shrinks
+        // per-record cost well below 5 B), which inflated `total_overhead`
+        // and forced the gate shut on `windows95 @ d=4.0` and
+        // `windows @ d=4.0` even with the chunk-6 1.5× margin. On error
+        // (e.g. token overflow), fall back to a conservative analytical
+        // ceiling so we never under-estimate overhead.
+        let dict_overhead = trial_encode_dict_section_bytes(self, use_ans).unwrap_or_else(|| {
+            // Fallback: same shape as the pre-chunk-7 analytical estimate.
+            self.ref_positions.len() * 5 + self.positions.len() * 5
+        });
+        let total_overhead = ref_overhead.saturating_add(dict_overhead);
         // Sum total patch pixels across all occurrences
         let total_patch_pixels: usize = self
             .positions
@@ -379,14 +415,20 @@ impl PatchesData {
         let d_clamped = (distance.max(1.0) as f64).sqrt();
         let savings_est =
             (total_patch_pixels as f64 / d_clamped * SAVINGS_BYTES_PER_PIXEL) as usize;
-        let effective = savings_est >= 2 * total_overhead;
+        // RFC#45 chunk 6: relax the safety multiplier from 2.0 to 1.5,
+        // expressed as `2 * savings_est >= 3 * total_overhead` to keep the
+        // gate purely-integer. Calibration documented on chunk 6.
+        const SAFETY_MULTIPLIER: usize = 3; // numerator
+        const SAFETY_DIVISOR: usize = 2; // denominator → 1.5×
+        let effective = SAFETY_DIVISOR.saturating_mul(savings_est)
+            >= SAFETY_MULTIPLIER.saturating_mul(total_overhead);
         #[cfg(feature = "debug-tokens")]
         eprintln!(
             "PATCHES cost_effective: d={:.2} ref_overhead={} dict_overhead={} total_overhead={} \
              patch_pixels={} savings_est={} effective={}",
             distance,
             ref_overhead,
-            dict_overhead_est,
+            dict_overhead,
             total_overhead,
             total_patch_pixels,
             savings_est,
@@ -2263,6 +2305,29 @@ pub(crate) fn trial_encode_ref_frame_bytes(patches: &PatchesData, use_ans: bool)
     } else {
         usize::MAX // On error, signal "don't use patches"
     }
+}
+
+/// Trial-encode the patches dictionary section and return the byte count.
+///
+/// RFC#45 chunk 7: replaces the pre-chunk-7 analytical estimate
+/// `5 * ref_positions + 5 * positions` used in [`PatchesData::is_cost_effective`]
+/// with the actual byte count produced by [`encode_patches_section`]. The
+/// analytical estimate overshoots by 2-4× on screenshots with many similar
+/// patches (delta-encoded positions + ANS clustering shrinks per-record
+/// cost well below 5 B), so per-image trial-encoding gives a tighter
+/// overhead and admits residual cells that the analytical inflation was
+/// rejecting.
+///
+/// Returns `None` if the trial encode fails (e.g. transient token-budget
+/// error); callers should fall back to a conservative analytical estimate.
+pub(crate) fn trial_encode_dict_section_bytes(
+    patches: &PatchesData,
+    use_ans: bool,
+) -> Option<usize> {
+    let mut writer = BitWriter::new();
+    encode_patches_section(patches, use_ans, &mut writer).ok()?;
+    writer.zero_pad_to_byte();
+    Some(writer.bytes_written())
 }
 
 /// Encode a non-XYB reference frame for lossless patches.
