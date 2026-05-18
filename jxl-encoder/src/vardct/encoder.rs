@@ -287,6 +287,18 @@ pub struct VarDctEncoder {
     /// Default: 0 (disabled)
     #[cfg(feature = "butteraugli-loop")]
     pub butteraugli_iters: u32,
+    /// EX-J11 chunk 1: HDR-aware loss dispatch for the butteraugli
+    /// quantization loop. Default [`crate::vardct::hdr_metrics::HdrLoss::Butteraugli`]
+    /// keeps every existing hash-lock byte-identical;
+    /// [`crate::vardct::hdr_metrics::HdrLoss::Vdp2`] surfaces
+    /// [`crate::api::EncodeError::InvalidConfig`] until chunk 2 lands
+    /// the actual HDR-VDP-2 maths.
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    ///
+    /// Default: [`crate::vardct::hdr_metrics::HdrLoss::Butteraugli`]
+    #[cfg(feature = "butteraugli-loop")]
+    pub hdr_loss: crate::vardct::hdr_metrics::HdrLoss,
     /// Number of SSIM2 quantization loop iterations.
     /// Alternative to butteraugli loop: uses per-block linear RGB RMSE + full-image SSIM2.
     /// Requires the `ssim2-loop` feature.
@@ -515,6 +527,9 @@ impl Default for VarDctEncoder {
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 0, // Effort-gated: default off (effort 7). Set via LossyConfig.
+            // EX-J11 chunk 1: default keeps every hash-lock byte-identical.
+            #[cfg(feature = "butteraugli-loop")]
+            hdr_loss: crate::vardct::hdr_metrics::HdrLoss::Butteraugli,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]
@@ -582,6 +597,9 @@ impl VarDctEncoder {
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 0, // Effort-gated: default off (effort 7). Set via LossyConfig.
+            // EX-J11 chunk 1: default keeps every hash-lock byte-identical.
+            #[cfg(feature = "butteraugli-loop")]
+            hdr_loss: crate::vardct::hdr_metrics::HdrLoss::Butteraugli,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]

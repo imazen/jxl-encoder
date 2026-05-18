@@ -59,6 +59,10 @@ pub use api::{
     Quality, ResultAtExt, Stop, Unstoppable, at, calibrated_jxl_quality, downsample_channel_u8,
     quality_to_distance,
 };
+// EX-J11 chunk 1: HDR-aware perceptual loss selector for the butteraugli
+// quantization loop. Only meaningful with the `butteraugli-loop` feature.
+#[cfg(feature = "butteraugli-loop")]
+pub use api::HdrLoss;
 // `EffortProfile` was re-exported at the crate root in 0.3.0; it is now an
 // **internal** type that drives the encoder's effort-derived decisions.
 // The public picker / sweep escape hatch is the segmented
