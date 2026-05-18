@@ -260,6 +260,29 @@ required-features = ["__internals"]
 name = "patches_gate_experimental_ab"
 path = "examples/patches_gate_experimental_ab.rs"
 
+# RFC#45 chunks 4-7 lossless backport — fits the per-pixel savings
+# constant for `PatchesData::is_cost_effective_lossless` from paired
+# patches-on/off trial encodes in lossless mode. Lossless has no
+# `distance` axis so the model shape is `pixels * C` (no `1/sqrt(d)`).
+[[example]]
+name = "patches_lossless_calibrate"
+path = "examples/patches_lossless_calibrate.rs"
+required-features = ["__internals"]
+
+# RFC#45 chunks 4-7 lossless backport — A/B harness verifying the
+# gate's decisions on 5 screenshots + 5 photos in lossless mode.
+[[example]]
+name = "patches_lossless_gate_ab"
+path = "examples/patches_lossless_gate_ab.rs"
+required-features = ["__internals"]
+
+# RFC#45 chunks 4-7 lossless backport — extended calibration across
+# all 11 gb82-sc screenshots (widens fit beyond lossy-chunks 5).
+[[example]]
+name = "patches_lossless_calibrate_all"
+path = "examples/patches_lossless_calibrate_all.rs"
+required-features = ["__internals"]
+
 [[example]]
 name = "bench_lossy_palette"
 path = "examples/bench_lossy_palette.rs"

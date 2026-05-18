@@ -5668,13 +5668,21 @@ impl<'a> EncodeRequest<'a> {
             && !self.layout.is_cmyk();
         let patches_data = if can_use_patches {
             crate::profile_time!("modular/patches_detect", {
-                crate::vardct::patches::find_and_build_lossless(
+                let pd_opt = crate::vardct::patches::find_and_build_lossless(
                     detection_pixels,
                     w,
                     h,
                     num_channels,
                     image.bit_depth,
-                )
+                );
+                // RFC#45 chunks 4-7 lossless backport: per-image cost
+                // gate. Trial-encodes ref-frame + dictionary overhead,
+                // requires `savings_est >= 1.5 * overhead`. Protects
+                // against pathological mixed content where patches barely
+                // clear the detector's 1% coverage filter but the
+                // ref-frame overhead dominates net savings. See
+                // `PatchesData::is_cost_effective_lossless` doc-comment.
+                pd_opt.filter(|pd| pd.is_cost_effective_lossless(cfg.use_ans))
             })
         } else {
             None
@@ -8242,13 +8250,16 @@ impl LosslessEncoder {
                         }
                     }
                 }
-                crate::vardct::patches::find_and_build_lossless(
+                let pd_opt = crate::vardct::patches::find_and_build_lossless(
                     &detection_pixels,
                     w,
                     h,
                     num_channels,
                     image.bit_depth,
-                )
+                );
+                // RFC#45 chunks 4-7 lossless backport: per-image cost
+                // gate (see `PatchesData::is_cost_effective_lossless`).
+                pd_opt.filter(|pd| pd.is_cost_effective_lossless(cfg.use_ans))
             } else {
                 None
             };

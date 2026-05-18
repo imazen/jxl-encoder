@@ -128,6 +128,47 @@ const HAS_SIMILAR_RADIUS: usize = 2;
 /// Threshold for has_similar check.
 const HAS_SIMILAR_THRESHOLD: f32 = 0.03;
 
+/// Bytes-per-patch-pixel savings constant for the lossless
+/// [`PatchesData::is_cost_effective_lossless`] gate (RFC#45 chunks 4-7
+/// backport).
+///
+/// Calibrated from
+/// `benchmarks/patches_lossless_savings_calibrate_all_2026-05-17.tsv`
+/// (11 gb82-sc screenshots × default `LosslessConfig`; 8 of 11 produce
+/// detectable patches, 3 hit the detector's 1% coverage filter and
+/// return `None`).
+///
+/// Model shape: `savings_est = total_patch_pixels * C` — lossless has
+/// no distance axis, so no `1/sqrt(d)` divisor (contrast the lossy
+/// `C = 0.78` value under the chunk-5 `1/sqrt(d)` shape).
+///
+/// **Constant choice: `0.45`** is the *overhead-overshoot-corrected*
+/// bytes-per-patch-pixel — the smallest C that admits all 8 measured
+/// net-winning cells under the chunk-6 1.5× safety margin. The true
+/// geometric-mean of measured `actual_savings / total_patch_pixels`
+/// is 0.27, BUT the lossy trial-encoder (`trial_encode_ref_frame_bytes`)
+/// is XYB-shape and overshoots the lossless `encode_reference_frame_rgb`
+/// path's actual byte cost by ≈1.5-2× on our corpus. Until we ship a
+/// lossless-shape trial encoder, C is calibrated against the existing
+/// (over-stating) trial overhead so the gate only fires when overhead
+/// vs savings is *clearly* upside-down.
+///
+/// Distribution of measured `net_bpp` (actual_savings / total_patch_pixels)
+/// across the 8 admitted screenshots:
+///   `min = 0.048` (windows95 — small chrome glyphs),
+///   `p25 = 0.26`, `median = 0.27`, `mean = 0.50`, `p75 = 0.39`,
+///   `max = 2.32` (imessage — text-heavy chat), `geomean = 0.27`.
+/// Per-image variance is 8× max/min — gate is a content-discriminator,
+/// not a regressor (R² of constant predictor = 0; overhead-density
+/// covariate R² = 0.003).
+///
+/// Per-image C needed to admit at the 1.5× margin:
+///   `windows95: 0.19`, `terminal: 0.19`, `codec_wiki: 0.35`,
+///   `imac_g3: 0.43`, `imessage: 0.31`, `windows: 0.35`,
+///   `imac_dark: 0.44`, `imac_g3_strip: 0.43`. Max = 0.44 → C = 0.45
+///   admits 8/8.
+const SAVINGS_BYTES_PER_PIXEL_LOSSLESS: f64 = 0.45;
+
 // ── Calibration Stats Sink ────────────────────────────────────────────────────
 //
 // Thread-local snapshot of the last patches-detection on this thread. Set by
@@ -435,6 +476,124 @@ impl PatchesData {
             effective
         );
         effective
+    }
+
+    /// Lossless variant of [`Self::is_cost_effective`] — RFC#45 chunks
+    /// 4-7 backport to the lossless (`find_and_build_lossless`) path.
+    ///
+    /// Before this method shipped, the lossless path had NO gate at all
+    /// — `find_and_build_lossless` ran a 1% coverage filter and then
+    /// every surviving patch was emitted with its reference frame +
+    /// dictionary section overhead. On the 11-screenshot gb82-sc
+    /// corpus this turned out to be safe (8 detected, all 8 net-win;
+    /// 3 rejected by the coverage filter), but the path is
+    /// structurally vulnerable to pathological mixed content where
+    /// `total_patch_pixels` is just over 1% of the image and
+    /// `ref_frame_pixels` is large.
+    ///
+    /// # Model shape
+    ///
+    /// Lossless has no `distance` axis (every coefficient is preserved
+    /// exactly) so the model is `savings_est = total_patch_pixels * C`
+    /// with no `1/sqrt(d)` divisor. Otherwise it mirrors the lossy
+    /// chunk-7 structure: trial-encode both `ref_overhead` (via
+    /// [`trial_encode_ref_frame_bytes`]) AND `dict_overhead` (via
+    /// [`trial_encode_dict_section_bytes`]) per image, sum them as
+    /// `total_overhead`, compare `2 * savings_est >= 3 * total_overhead`
+    /// (the chunk-6 1.5× safety margin, integer form).
+    ///
+    /// # Calibration of `C_LOSSLESS`
+    ///
+    /// See [`SAVINGS_BYTES_PER_PIXEL_LOSSLESS`] doc-comment for full
+    /// provenance. Summary: `C = 0.45` is the smallest constant that
+    /// admits all 8 net-winning gb82-sc screenshots at the 1.5×
+    /// margin, calibrated against this method's `trial_encode_*`
+    /// overhead estimates (which over-state actual lossless ref-frame
+    /// byte cost by ≈1.5-2× — `trial_encode_ref_frame_bytes` invokes
+    /// the XYB-shape path).
+    ///
+    /// The true geomean `actual_savings / total_patch_pixels` is 0.27,
+    /// but using that constant would over-reject. Future work: ship a
+    /// lossless-shape trial encoder (mirrors `encode_reference_frame_rgb`)
+    /// and re-fit C against tighter overhead estimates.
+    ///
+    /// # Notes
+    ///
+    /// * libjxl has no equivalent gate; their lossless path admits
+    ///   every detected patch.
+    /// * The lossy chunk-7 fallback `dict_overhead` analytical
+    ///   ceiling (`5 * ref_positions + 5 * positions`) is the same
+    ///   conservative bound here — we never under-estimate overhead.
+    /// * Trial-encoding overhead per image is one extra
+    ///   `encode_reference_frame` + one extra `encode_patches_section`
+    ///   pass; modest vs. the full lossless multi-group encode.
+    /// * Gate ships behind the detector's existing 1% coverage filter,
+    ///   so it only fires when patches were already worth considering.
+    /// * Wired into `api.rs` at both `encode_lossless` one-shot
+    ///   (line ~5797) and the streaming `LosslessEncoder::finish`
+    ///   variant (line ~8325).
+    pub fn is_cost_effective_lossless(&self, use_ans: bool) -> bool {
+        let ref_overhead = trial_encode_ref_frame_bytes(self, use_ans);
+        if ref_overhead == usize::MAX {
+            return false;
+        }
+        let dict_overhead = trial_encode_dict_section_bytes(self, use_ans).unwrap_or_else(|| {
+            // Conservative fallback identical in shape to the lossy
+            // pre-chunk-7 analytical estimate.
+            self.ref_positions.len() * 5 + self.positions.len() * 5
+        });
+        let total_overhead = ref_overhead.saturating_add(dict_overhead);
+        let total_patch_pixels: usize = self
+            .positions
+            .iter()
+            .map(|pos| {
+                let rp = &self.ref_positions[pos.ref_pos_idx];
+                (rp.xsize as usize) * (rp.ysize as usize)
+            })
+            .sum();
+        // Calibrated below — see doc-comment.
+        let savings_est = (total_patch_pixels as f64 * SAVINGS_BYTES_PER_PIXEL_LOSSLESS) as usize;
+        // Same 1.5× safety multiplier as lossy chunk 6 / 7
+        // (`2 * savings_est >= 3 * total_overhead`).
+        const SAFETY_MULTIPLIER: usize = 3;
+        const SAFETY_DIVISOR: usize = 2;
+        let effective = SAFETY_DIVISOR.saturating_mul(savings_est)
+            >= SAFETY_MULTIPLIER.saturating_mul(total_overhead);
+        #[cfg(feature = "debug-tokens")]
+        eprintln!(
+            "PATCHES_LOSSLESS cost_effective: ref_overhead={} dict_overhead={} \
+             total_overhead={} patch_pixels={} savings_est={} effective={}",
+            ref_overhead, dict_overhead, total_overhead, total_patch_pixels, savings_est, effective
+        );
+        effective
+    }
+
+    // ── Calibration accessors (RFC#45 lossless backport) ──
+    //
+    // Exposed for the `patches_lossless_calibrate` harness (via
+    // `__internals::patches_data_stats`) without leaking the
+    // `pub(crate)` field layout. Tiny inline getters; no behaviour.
+    #[doc(hidden)]
+    pub fn total_patch_pixels_for_calibration(&self) -> usize {
+        self.positions
+            .iter()
+            .map(|pos| {
+                let rp = &self.ref_positions[pos.ref_pos_idx];
+                (rp.xsize as usize) * (rp.ysize as usize)
+            })
+            .sum()
+    }
+    #[doc(hidden)]
+    pub fn ref_positions_len_for_calibration(&self) -> usize {
+        self.ref_positions.len()
+    }
+    #[doc(hidden)]
+    pub fn ref_frame_pixels_for_calibration(&self) -> usize {
+        self.ref_width * self.ref_height
+    }
+    #[doc(hidden)]
+    pub fn positions_len_for_calibration(&self) -> usize {
+        self.positions.len()
     }
 
     /// Build a `PatchesData` from a list of [`super::dot_detection::DetectedDot`]
@@ -2996,6 +3155,83 @@ mod tests {
             result.ref_positions.len(),
             2,
             "both patches survive at value 4 and 12"
+        );
+    }
+
+    #[test]
+    fn test_is_cost_effective_lossless_admits_high_savings() {
+        // Synthetic case: large patches in a tiny ref frame — savings
+        // dwarf overhead, gate must admit.
+        // 4 occurrences of an 8×8 patch packed into one 8×8 ref slot.
+        let ref_image = [vec![0.0f32; 64], vec![0.0f32; 64], vec![0.0f32; 64]];
+        let ref_positions = vec![PatchReferencePosition {
+            ref_id: PATCH_FRAME_REFERENCE_ID,
+            x0: 0,
+            y0: 0,
+            xsize: 8,
+            ysize: 8,
+        }];
+        let positions = (0..32)
+            .map(|i| PatchPosition {
+                x: i * 16,
+                y: 0,
+                ref_pos_idx: 0,
+            })
+            .collect();
+        let pd = PatchesData {
+            positions,
+            ref_positions,
+            ref_image,
+            ref_width: 8,
+            ref_height: 8,
+        };
+        // total_patch_pixels = 32 * 8 * 8 = 2048
+        // savings_est = 2048 * 0.45 = 921 B
+        // For 1.5x margin gate to fire: overhead must be <= 614 B.
+        // Trial-encoded ref-frame for an 8×8 zero patch is tiny (<200 B),
+        // dictionary section for 32 occurrences also tiny.
+        assert!(
+            pd.is_cost_effective_lossless(true),
+            "high-savings synthetic case must pass the lossless gate"
+        );
+    }
+
+    #[test]
+    fn test_is_cost_effective_lossless_rejects_overhead_dominated() {
+        // Synthetic case: ONE tiny patch occurrence in a huge ref frame —
+        // overhead dwarfs the 1-pixel-equivalent savings, gate must reject.
+        // 1 occurrence of a 4×4 patch, but the ref frame is 256×256
+        // (mostly empty, but still encodes 65k pixels).
+        let ref_image = [
+            vec![0.0f32; 256 * 256],
+            vec![0.0f32; 256 * 256],
+            vec![0.0f32; 256 * 256],
+        ];
+        let ref_positions = vec![PatchReferencePosition {
+            ref_id: PATCH_FRAME_REFERENCE_ID,
+            x0: 0,
+            y0: 0,
+            xsize: 4,
+            ysize: 4,
+        }];
+        let positions = vec![PatchPosition {
+            x: 100,
+            y: 100,
+            ref_pos_idx: 0,
+        }];
+        let pd = PatchesData {
+            positions,
+            ref_positions,
+            ref_image,
+            ref_width: 256,
+            ref_height: 256,
+        };
+        // total_patch_pixels = 1 * 4 * 4 = 16
+        // savings_est = 16 * 0.45 = 7 B
+        // overhead for a 256×256 ref frame is >>1 KB, easily.
+        assert!(
+            !pd.is_cost_effective_lossless(true),
+            "tiny-savings huge-ref synthetic case must FAIL the lossless gate"
         );
     }
 }

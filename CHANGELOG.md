@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Lossless-mode patches per-image cost gate**
+  (`PatchesData::is_cost_effective_lossless`, RFC#45 chunks 4-7 backport
+  to the lossless path). Mirrors the chunk-7 lossy structure
+  (trial-encoded `ref_overhead` + `dict_overhead`, integer-form 1.5×
+  safety margin `2 * savings_est >= 3 * total_overhead`) but without a
+  distance axis — lossless preserves every coefficient exactly so the
+  savings model is `pixels * C_LOSSLESS` (no `1/sqrt(d)` divisor).
+  Calibrated from
+  `benchmarks/patches_lossless_savings_calibrate_all_2026-05-17.tsv`
+  (11 gb82-sc screenshots, 8 produce patches, 3 hit the detector's 1%
+  coverage filter): `C_LOSSLESS = 0.45` admits all 8 net-winning cells
+  at 1.5× margin (worst case `imac_dark` at margin 1.03×). Wired into
+  `api.rs` at both `encode_lossless` one-shot (after `find_and_build_lossless`)
+  and the streaming `LosslessEncoder::finish` variant. Photos
+  byte-identical (detector returns `None` upstream → gate not invoked,
+  5/5 CID22-512 cells unchanged); 5/5 measured gb82-sc screenshots
+  byte-identical (gate admits the same patches the no-gate path
+  shipped). hash_locks 36/36 byte-identical. The gate is **protective**
+  — it ships behind the detector's existing 1% coverage filter and only
+  fires on pathological mixed content where overhead clearly exceeds
+  savings; no measured regression on the gb82-sc corpus. Pre-gate state
+  shipped every detected patch unconditionally. The current calibration
+  is **overhead-overshoot-corrected** — the true geomean
+  `actual_savings / total_patch_pixels` is 0.27, but
+  `trial_encode_ref_frame_bytes` invokes the XYB-shape path which
+  overshoots actual lossless ref-frame cost by ≈1.5-2×. Future work:
+  ship a lossless-shape trial encoder and re-fit C against tighter
+  overhead estimates. Refs jxl-encoder#45.
+
 ### Changed
 
 - **`PatchesData::is_cost_effective` — per-image overhead correction**
