@@ -458,10 +458,14 @@ fn encode_dc_group_section(
     ac_strategy: &AcStrategyMap,
     dc_built_code: &BuiltEntropyCode<'_>,
     dc_lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
+    modular_dc_extras: Option<(
+        &super::extras::AlphaSqueezePipeline,
+        &super::extras::AlphaSqueezePartition,
+    )>,
 ) -> Result<Vec<u8>> {
     let blocks_per_dc_group = (256 / 8) * (256 / 8);
     let mut dc_group = BitWriter::with_capacity(blocks_per_dc_group * 10);
-    enc.write_dc_group_from_tokens(
+    enc.write_dc_group_from_tokens_inner(
         dc_group_idx,
         xsize_blocks,
         ysize_blocks,
@@ -471,6 +475,7 @@ fn encode_dc_group_section(
         ac_strategy,
         dc_built_code,
         dc_lz77_params,
+        modular_dc_extras,
         &mut dc_group,
     )?;
     dc_group.zero_pad_to_byte();
@@ -495,6 +500,15 @@ fn encode_ac_group_section(
     // path). Length must equal `extras.len()` when non-empty; the
     // empty-extras path ignores this slice.
     extras_quantizers: &[u32],
+    // Chunk-2.b alpha-squeeze override: when `Some`, the HF group
+    // emits the squeeze HF band (`min_shift < 3` sub-channels, cropped
+    // to GROUP_DIM) instead of calling the raw-pixel extras writer.
+    // The decoder reads exactly one modular sub-bitstream per HF group
+    // — same wire-slot, different content.
+    modular_hf_extras: Option<(
+        &super::extras::AlphaSqueezePipeline,
+        &super::extras::AlphaSqueezePartition,
+    )>,
 ) -> Result<Vec<u8>> {
     let blocks_per_ac_group = (256 / 8) * (256 / 8);
     let mut ac_group_writer = BitWriter::with_capacity(blocks_per_ac_group * 100);
@@ -503,24 +517,49 @@ fn encode_ac_group_section(
     if is_last_pass && !extras.is_empty() {
         let group_x = group_idx % xsize_groups;
         let group_y = group_idx / xsize_groups;
-        let x0 = group_x * GROUP_DIM;
-        let y0 = group_y * GROUP_DIM;
-        let gw = GROUP_DIM.min(width - x0);
-        let gh = GROUP_DIM.min(height - y0);
-        VarDctEncoder::write_modular_extras_group_with_quant(
-            extras,
-            width,
-            height,
-            x0,
-            y0,
-            gw,
-            gh,
-            extras_quantizers,
-            &mut ac_group_writer,
-        )?;
+        if let Some((pipeline, partition)) = modular_hf_extras {
+            VarDctEncoder::write_modular_extras_alpha_squeezed_hf_group(
+                pipeline,
+                partition,
+                group_x,
+                group_y,
+                &mut ac_group_writer,
+            )?;
+        } else {
+            let x0 = group_x * GROUP_DIM;
+            let y0 = group_y * GROUP_DIM;
+            let gw = GROUP_DIM.min(width - x0);
+            let gh = GROUP_DIM.min(height - y0);
+            VarDctEncoder::write_modular_extras_group_with_quant(
+                extras,
+                width,
+                height,
+                x0,
+                y0,
+                gw,
+                gh,
+                extras_quantizers,
+                &mut ac_group_writer,
+            )?;
+        }
     }
     ac_group_writer.zero_pad_to_byte();
     Ok(ac_group_writer.finish())
+}
+
+/// Per-group crop descriptor for the multi-group alpha-squeeze writers
+/// (chunk-2.b). `grid_x, grid_y` are the section's coordinates in
+/// VarDCT group space; `group_dim` is `DC_GROUP_DIM` for LfGroup and
+/// `GROUP_DIM` for HfGroup. Resolves to a
+/// [`Channel::extract_grid_cell(grid_x, grid_y, group_dim)`] call,
+/// which handles the per-channel `>> hshift` / `>> vshift` reduction
+/// to match the decoder's per-channel `Rect` slicing in
+/// [libjxl `dec_modular.cc:357`].
+#[derive(Debug, Clone, Copy)]
+struct CropRegion {
+    grid_x: usize,
+    grid_y: usize,
+    group_dim: usize,
 }
 
 impl VarDctEncoder {
@@ -2616,13 +2655,51 @@ impl VarDctEncoder {
             // so no per-channel data belongs in the global section.
             // The decoder still reads the GroupHeader + tree for the
             // global section.
+            //
+            // Chunk-2.b alpha-squeeze opt-in: when the squeeze pipeline
+            // is engaged for a multi-group image, the LfGlobal section
+            // emits the `kSqueeze` transform descriptor + the
+            // sub-channels that fit fully under `GROUP_DIM`; per-DC-
+            // group sections later emit their LF sub-channels
+            // (min_shift ≥ 3, cropped to DC_GROUP_DIM regions);
+            // per-HF-group sections later emit their HF sub-channels
+            // (min_shift < 3, cropped to GROUP_DIM regions). Mirrors
+            // the libjxl-parity decoder partition in
+            // `dec_modular.cc:331-373`.
+            let squeeze_pipeline_mg = if !extras.is_empty() {
+                self.maybe_build_alpha_squeeze_pipeline(extras, width, height)?
+            } else {
+                None
+            };
+            let squeeze_partition_mg = squeeze_pipeline_mg
+                .as_ref()
+                .map(|p| p.partition(super::common::GROUP_DIM));
             if !extras.is_empty() {
-                Self::write_modular_empty_global(&mut dc_global)?;
+                if let (Some(pipeline), Some(partition)) =
+                    (squeeze_pipeline_mg.as_ref(), squeeze_partition_mg.as_ref())
+                {
+                    Self::write_modular_extras_alpha_squeezed_global(
+                        pipeline,
+                        partition,
+                        &mut dc_global,
+                    )?;
+                } else {
+                    Self::write_modular_empty_global(&mut dc_global)?;
+                }
             }
             dc_global.zero_pad_to_byte();
             sections.push(dc_global.finish());
 
-            // DC groups — parallelizable
+            // DC groups — parallelizable. The chunk-2.b modular DC
+            // extras (squeeze LF band, min_shift ≥ 3) are emitted
+            // mid-section between VarDCT DC tokens and AC metadata,
+            // matching libjxl decoder order (`dec_frame.cc:322-336`).
+            // The no-squeeze path passes None and is byte-identical.
+            let modular_dc_extras =
+                match (squeeze_pipeline_mg.as_ref(), squeeze_partition_mg.as_ref()) {
+                    (Some(pipeline), Some(partition)) => Some((pipeline, partition)),
+                    _ => None,
+                };
             let dc_group_sections: Vec<Vec<u8>> =
                 crate::parallel::parallel_map_result(num_dc_groups, |dc_group_idx| {
                     encode_dc_group_section(
@@ -2636,6 +2713,7 @@ impl VarDctEncoder {
                         ac_strategy,
                         &dc_built_code,
                         dc_lz77_params.as_ref(),
+                        modular_dc_extras,
                     )
                 })?;
             sections.extend(dc_group_sections);
@@ -2668,6 +2746,15 @@ impl VarDctEncoder {
             } else {
                 self.compute_extras_pixel_quantizers(extras)
             };
+            // Chunk-2.b: per-HF-group modular extras override. When
+            // active, each HF group emits the squeeze HF band cropped
+            // to its GROUP_DIM region instead of the raw-pixel extras
+            // writer. None = unchanged byte-identical no-squeeze path.
+            let modular_hf_extras =
+                match (squeeze_pipeline_mg.as_ref(), squeeze_partition_mg.as_ref()) {
+                    (Some(pipeline), Some(partition)) => Some((pipeline, partition)),
+                    _ => None,
+                };
             for pass in 0..num_passes {
                 let is_last_pass = pass == num_passes - 1;
                 let ac_group_sections: Vec<Vec<u8>> =
@@ -2683,6 +2770,7 @@ impl VarDctEncoder {
                             width,
                             height,
                             &extras_quantizers,
+                            modular_hf_extras,
                         )
                     })?;
                 sections.extend(ac_group_sections);
@@ -3354,6 +3442,11 @@ impl VarDctEncoder {
     /// Write the modular extras sub-bitstream when the alpha extra is
     /// routed through the chunk-2 squeeze pipeline (W14-4 follow-on).
     ///
+    /// Thin convenience wrapper around
+    /// [`Self::write_modular_extras_alpha_squeezed_section`] for the
+    /// single-group case: writes the kSqueeze transform descriptor
+    /// inline and passes every sub-channel uncropped.
+    ///
     /// Wire layout (mirrors libjxl `enc_modular.cc:937-1027` for the
     /// extras-only ModularImage that VarDCT emits separately from the
     /// XYB color image):
@@ -3373,14 +3466,129 @@ impl VarDctEncoder {
     /// 4. Shared entropy code over the concatenated residuals (LZ77
     ///    RLE detection on consecutive identical residuals — alpha is
     ///    heavily uniform after squeeze, so this typically dominates).
-    ///
-    /// Currently scoped to the single-extra (alpha) single-group case:
-    /// `extras.len() == 1` AND the extra is alpha AND the encoder is
-    /// running its single-combined-section bit-level layout. Multi-group
-    /// callers route to a different writer (or, for chunk 2, surface
-    /// `Error::NotImplemented` with a clear chunk-2.b message).
     pub(crate) fn write_modular_extras_alpha_squeezed(
         pipeline: &super::extras::AlphaSqueezePipeline,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        // Single-group ⇒ every sub-channel is written here, uncropped.
+        let local_indices: alloc::vec::Vec<usize> = (0..pipeline.sub_channels.len()).collect();
+        Self::write_modular_extras_alpha_squeezed_section(
+            pipeline,
+            &local_indices,
+            /* declare_squeeze */ true,
+            /* crop_region */ None,
+            writer,
+        )
+    }
+
+    /// LfGlobal entry point for the multi-group alpha squeeze.
+    ///
+    /// Emits the kSqueeze transform descriptor (so the decoder's
+    /// `FullModularImage::Decode` learns the post-transform channel
+    /// layout before reading any group sections) plus the data for any
+    /// sub-channels that fit fully in LfGlobal (`w ≤ group_dim AND
+    /// h ≤ group_dim`). The tree carried here is sized to the
+    /// **global** sub-channel subset; each per-group section
+    /// (LfGroup/HfGroup) emits its own GroupHeader + tree dispatching
+    /// on the LOCAL channel indices of its own filtered subset, since
+    /// `decode_modular_subbitstream` constructs a fresh sub-image per
+    /// section (`dec_modular.cc:341-373`).
+    pub(crate) fn write_modular_extras_alpha_squeezed_global(
+        pipeline: &super::extras::AlphaSqueezePipeline,
+        partition: &super::extras::AlphaSqueezePartition,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        Self::write_modular_extras_alpha_squeezed_section(
+            pipeline,
+            &partition.global_indices,
+            /* declare_squeeze */ true,
+            /* crop_region */ None,
+            writer,
+        )
+    }
+
+    /// Per-LfGroup (DC group) entry point for the multi-group alpha
+    /// squeeze. `dc_gx, dc_gy` are this DC group's coordinates;
+    /// channel data is cropped via `Channel::extract_grid_cell` with
+    /// `DC_GROUP_DIM` so the per-channel grid sizes match the
+    /// decoder's `Rect(rect.x0() >> hshift, ..., rect.xsize() >> hshift,
+    /// ...)` slicing in `dec_modular.cc:357`.
+    ///
+    /// Returns `Ok(false)` if this DC group has no LF sub-channel data
+    /// to emit (rare — happens only if every LF sub-channel's crop is
+    /// empty). The caller should still emit a no-op GroupHeader for
+    /// the section if extras is non-empty so the decoder reads
+    /// something coherent — but in practice the partition guarantees
+    /// at least one nonempty channel per section, so `Ok(true)` is the
+    /// usual outcome.
+    pub(crate) fn write_modular_extras_alpha_squeezed_lf_group(
+        pipeline: &super::extras::AlphaSqueezePipeline,
+        partition: &super::extras::AlphaSqueezePartition,
+        dc_gx: usize,
+        dc_gy: usize,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        let crop = CropRegion {
+            grid_x: dc_gx,
+            grid_y: dc_gy,
+            group_dim: super::common::DC_GROUP_DIM,
+        };
+        Self::write_modular_extras_alpha_squeezed_section(
+            pipeline,
+            &partition.lf_group_indices,
+            /* declare_squeeze */ false,
+            Some(crop),
+            writer,
+        )
+    }
+
+    /// Per-HfGroup entry point for the multi-group alpha squeeze.
+    /// `gx, gy` are this HF group's coordinates; channel data is
+    /// cropped to `GROUP_DIM` (= 256).
+    pub(crate) fn write_modular_extras_alpha_squeezed_hf_group(
+        pipeline: &super::extras::AlphaSqueezePipeline,
+        partition: &super::extras::AlphaSqueezePartition,
+        gx: usize,
+        gy: usize,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        let crop = CropRegion {
+            grid_x: gx,
+            grid_y: gy,
+            group_dim: super::common::GROUP_DIM,
+        };
+        Self::write_modular_extras_alpha_squeezed_section(
+            pipeline,
+            &partition.hf_group_indices,
+            /* declare_squeeze */ false,
+            Some(crop),
+            writer,
+        )
+    }
+
+    /// Shared body for the four chunk-2 / chunk-2.b alpha squeeze
+    /// writers (single-group / LfGlobal / LfGroup / HfGroup).
+    ///
+    /// `local_indices` selects which sub-channels from `pipeline`
+    /// participate in this section. Their order here is the order they
+    /// appear in the bitstream and the order the decoder assigns local
+    /// channel indices to (so `local_indices[k]` becomes channel `k`
+    /// in the decoder's per-section sub-image and the tree's `prop 0`
+    /// values cover `0..local_indices.len()`).
+    ///
+    /// `declare_squeeze = true` writes `nb_transforms = 1` + the
+    /// kSqueeze descriptor. False writes `nb_transforms = 0` — used
+    /// by the per-group sections, which inherit the post-transform
+    /// channel layout the decoder built from LfGlobal.
+    ///
+    /// `crop_region = Some(...)` invokes `Channel::extract_grid_cell`
+    /// per sub-channel; `None` writes the full sub-channel data
+    /// uncropped (single-group + LfGlobal).
+    fn write_modular_extras_alpha_squeezed_section(
+        pipeline: &super::extras::AlphaSqueezePipeline,
+        local_indices: &[usize],
+        declare_squeeze: bool,
+        crop_region: Option<CropRegion>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         use crate::modular::encode::{
@@ -3403,21 +3611,21 @@ impl VarDctEncoder {
         //   transforms: Vec<Transform> sized via U32(Val(0), Val(1),
         //   BitsOffset(4,2), BitsOffset(8,18)).
         //
-        // We emit either zero or one Transform — always a single
-        // `kSqueeze` descriptor that itself carries the param list as
-        // its `squeezes: Vec<SqueezeParams>` inner field (via
-        // `write_squeeze_transform`). The first-level `nb_transforms`
-        // is *number of transforms*, NOT *number of squeeze params*;
-        // re-using the squeeze_params count there would tell the
-        // decoder to start reading N transform descriptors when only
-        // one squeeze descriptor (with N params inside it) is on the
-        // wire.
+        // In the LfGlobal call we emit either zero or one Transform —
+        // always a single `kSqueeze` descriptor that itself carries
+        // the param list as its `squeezes: Vec<SqueezeParams>` inner
+        // field (via `write_squeeze_transform`). Per-group sections
+        // (LfGroup/HfGroup) always carry `nb_transforms = 0` because
+        // the post-transform channel layout is built once during the
+        // LfGlobal `FullModularImage::Decode` (see libjxl
+        // `dec_modular.cc:289` + the comment chain through
+        // `decode_modular_subbitstream`).
         writer.write(1, 0)?; // use_global_tree
         writer.write(1, 1)?; // wp_params all_default
-        let nb_transforms: u32 = if pipeline.squeeze_params.is_empty() {
-            0
-        } else {
+        let nb_transforms: u32 = if declare_squeeze && !pipeline.squeeze_params.is_empty() {
             1
+        } else {
+            0
         };
         write_num_transforms(writer, nb_transforms)?;
 
@@ -3425,20 +3633,32 @@ impl VarDctEncoder {
         // (We do not rely on the decoder's default-squeeze inference —
         // the explicit form keeps us robust against future libjxl
         // default-param drift.)
-        if !pipeline.squeeze_params.is_empty() {
+        if declare_squeeze && !pipeline.squeeze_params.is_empty() {
             write_squeeze_transform(writer, &pipeline.squeeze_params)?;
         }
 
-        // Per-sub-channel quantizer vector for the tree leaves.
-        let per_sub_q: alloc::vec::Vec<u32> =
-            pipeline.sub_channels.iter().map(|sc| sc.q.max(1)).collect();
+        // Per-LOCAL-channel quantizer vector for the tree leaves —
+        // sized to this section's subset, indexed by tree prop 0
+        // exactly as the decoder consumes it. Single-group flattens
+        // to the full sub-channel list; per-group sections use only
+        // their slice of the partition.
+        let per_sub_q: alloc::vec::Vec<u32> = local_indices
+            .iter()
+            .map(|&i| pipeline.sub_channels[i].q.max(1))
+            .collect();
 
         // ── Local tree ─────────────────────────────────────────────────
+        // - 0 sub-channels (empty section): still emit a valid empty
+        //   tree + entropy header so the bitstream parses (rare — only
+        //   happens when every sub-channel in this section's partition
+        //   bucket cropped to empty in this group). Tree is the
+        //   single-channel gradient form with q=1 which uses minimal
+        //   bits; the entropy code then writes zero data tokens.
         // - 1 sub-channel: single-leaf gradient (lossless or lossy).
         // - ≥2 sub-channels: channel-split tree dispatching on prop 0.
-        let any_lossy = per_sub_q.iter().any(|&q| q > 1);
-        if num_subs == 1 {
-            let q = per_sub_q[0];
+        let n = local_indices.len();
+        if n <= 1 {
+            let q = if n == 1 { per_sub_q[0] } else { 1 };
             if q == 1 {
                 let (d, c) = write_tree_histogram_for_gradient(writer)?;
                 write_gradient_tree_tokens(writer, &d, &c)?;
@@ -3448,14 +3668,11 @@ impl VarDctEncoder {
                 write_gradient_tree_tokens_lossy(writer, &d, &c, mul_log, mul_bits)?;
             }
         } else {
-            // Channel-split tree: one gradient leaf per sub-channel,
-            // each carrying its own integer quantizer. Even when
-            // !any_lossy we use the channel-split form (cleaner than
-            // duplicating the gradient-only form for the multi-channel
-            // case); the alpha squeeze path is only entered when
-            // alpha_distance > 0 so q > 1 on at least one band in
-            // practice.
-            let _ = any_lossy; // documentation marker; see comment above
+            // Channel-split tree: one gradient leaf per LOCAL
+            // sub-channel index, each carrying its own integer
+            // quantizer. The decoder's per-section tree dispatches
+            // on the channel index *within that section's sub-image*,
+            // which is exactly 0..local_indices.len().
             let (d, c) = write_tree_histogram_for_channel_split_lossy(writer, &per_sub_q)?;
             write_channel_split_tree_tokens(writer, &d, &c, &per_sub_q)?;
         }
@@ -3465,20 +3682,49 @@ impl VarDctEncoder {
         // per-sub-channel (each with its own (width, height) and `q`).
         // Within a sub-channel: gradient-predict; divide residual by q
         // (sub-channel data is already pre-snapped to multiples of q
-        // via QuantizeChannel — see build_alpha_squeeze_pipeline).
+        // via QuantizeChannel — see build_alpha_squeeze_pipeline). For
+        // per-group sections we crop each sub-channel via
+        // `extract_grid_cell` matching the decoder's
+        // `Rect(rect.x0() >> hshift, ..., xsize >> hshift, ...)`
+        // (`dec_modular.cc:357`).
         let mut tokens: alloc::vec::Vec<Token> = alloc::vec::Vec::new();
         let mut current_run: usize = 0;
         let mut num_decoded: usize = 0;
         let mut last_value: u32 = u32::MAX;
 
-        for sc in &pipeline.sub_channels {
-            let ch = &sc.channel;
+        // Materialize per-section channel views. `Channel` is cheap to
+        // clone (Vec<i32>) for the cropped case; the uncropped case
+        // re-uses the existing storage.
+        let mut section_channels: alloc::vec::Vec<super::super::modular::channel::Channel> =
+            alloc::vec::Vec::with_capacity(local_indices.len());
+        for &i in local_indices {
+            let src = &pipeline.sub_channels[i].channel;
+            let view = match crop_region {
+                None => src.clone(),
+                Some(cr) => match src.extract_grid_cell(cr.grid_x, cr.grid_y, cr.group_dim) {
+                    Some(cropped) => cropped,
+                    None => {
+                        // This sub-channel has no data in this group's
+                        // region — push a zero-sized placeholder so
+                        // the index alignment with `per_sub_q` stays
+                        // intact; the inner loop skips empty channels.
+                        let mut z = super::super::modular::channel::Channel::new_zero_sized();
+                        z.hshift = src.hshift;
+                        z.vshift = src.vshift;
+                        z
+                    }
+                },
+            };
+            section_channels.push(view);
+        }
+
+        for (local_idx, ch) in section_channels.iter().enumerate() {
             let w = ch.width();
             let h = ch.height();
             if w == 0 || h == 0 {
                 continue;
             }
-            let q = sc.q.max(1);
+            let q = per_sub_q[local_idx].max(1);
             let qi = q as i32;
 
             // Flush any pending run from the previous sub-channel
@@ -3668,6 +3914,52 @@ impl VarDctEncoder {
         dc_lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
         writer: &mut BitWriter,
     ) -> Result<()> {
+        self.write_dc_group_from_tokens_inner(
+            dc_group_idx,
+            xsize_blocks,
+            ysize_blocks,
+            xsize_dc_groups,
+            dc_tokens,
+            ac_metadata_tokens,
+            ac_strategy,
+            dc_code,
+            dc_lz77_params,
+            /* modular_dc_extras */ None,
+            writer,
+        )
+    }
+
+    /// Internal DC group writer. `modular_dc_extras = Some((pipeline,
+    /// partition))` inserts the chunk-2.b LfGroup alpha-squeeze sub-
+    /// bitstream between the VarDCT DC tokens and the AC metadata
+    /// header — matching the libjxl decoder's read order
+    /// (`dec_frame.cc:322-336`):
+    ///
+    /// 1. `DecodeVarDCTDC` — VarDCT DC entropy code
+    /// 2. `DecodeGroup(ModularStreamId::ModularDC, minShift=3,
+    ///    maxShift=∞)` — the modular sub-bitstream for LF channels
+    /// 3. `DecodeAcMetadata` — AC metadata tokens
+    ///
+    /// `modular_dc_extras = None` preserves the byte-for-byte
+    /// no-extras path used by every existing call site.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn write_dc_group_from_tokens_inner(
+        &self,
+        dc_group_idx: usize,
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        xsize_dc_groups: usize,
+        dc_tokens: &[Token],
+        ac_metadata_tokens: &[Token],
+        ac_strategy: &AcStrategyMap,
+        dc_code: &BuiltEntropyCode,
+        dc_lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
+        modular_dc_extras: Option<(
+            &super::extras::AlphaSqueezePipeline,
+            &super::extras::AlphaSqueezePartition,
+        )>,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
         let dc_gx = dc_group_idx % xsize_dc_groups;
         let dc_gy = dc_group_idx / xsize_dc_groups;
         let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
@@ -3686,6 +3978,20 @@ impl VarDctEncoder {
 
             // Write DC tokens
             dc_code.write_tokens(dc_tokens, dc_lz77_params, writer)?;
+        }
+
+        // Chunk-2.b: modular DC sub-bitstream (squeeze LfGroup band)
+        // sits between the VarDCT DC entropy code and the AC metadata
+        // header. Matches libjxl decoder order in
+        // `dec_frame.cc:322-336`. Skipped when no chunk-2.b extras
+        // partition was passed OR the partition has no LF sub-
+        // channels (the no-squeeze path passes None unconditionally).
+        if let Some((pipeline, partition)) = modular_dc_extras
+            && !partition.lf_group_indices.is_empty()
+        {
+            Self::write_modular_extras_alpha_squeezed_lf_group(
+                pipeline, partition, dc_gx, dc_gy, writer,
+            )?;
         }
 
         // AC metadata sub-header — count first blocks (distinct transforms)

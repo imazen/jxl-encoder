@@ -96,6 +96,76 @@
 
 ### Added
 
+- **Squeeze-on-extras chunk 2.b — multi-group + dim_shift>0 audit
+  surfaces lifted** (follow-on to chunk 2 `1760b03`). Routes the
+  squeezed alpha sub-channels across the standard VarDCT section
+  layout per libjxl's decoder partition (`dec_modular.cc:331-373`):
+  sub-channels with `w ≤ GROUP_DIM AND h ≤ GROUP_DIM` land in
+  LfGlobal; `min(hshift, vshift) ≥ 3` go in LfGroup; `min < 3` go
+  in HfGroup. Each section emits its own GroupHeader + tree +
+  entropy code over its filtered sub-channel subset (the squeeze
+  descriptor itself lives only in LfGlobal). The DC-group writer
+  now inserts the LfGroup modular sub-bitstream between the VarDCT
+  DC entropy code and the AC metadata header, matching libjxl
+  `dec_frame.cc:322-336` read order. The HF-group writer continues
+  to append the modular extras after the AC entropy code, but on
+  the squeeze path emits the squeeze HF band (cropped to
+  `GROUP_DIM`) instead of the raw-pixel writer.
+
+  Bytes Δ on the two previously-skipped W13-4 audit images (sweep
+  in `examples/alpha_squeeze_chunk2_bytes.rs` updated for chunk-2.b
+  coverage):
+
+  | image                              | dims      | d   | no_sq | sq    | Δ%       |
+  |------------------------------------|-----------|-----|-------|-------|----------|
+  | red_night_opaque                   | 400×267   | 0.5 | 9118  | 9194  | +0.83%   |
+  | red_night_opaque                   | 400×267   | 1.0 | 9118  | 9195  | +0.84%   |
+  | red_night_opaque                   | 400×267   | 2.0 | 9141  | 9198  | +0.62%   |
+  | red_night_opaque                   | 400×267   | 5.0 | 9141  | 9209  | +0.74%   |
+  | alpha_nonpremul_photo_mask         | 1024×1024 | 0.5 | 6859  | 4794  | **-30.11%** |
+  | alpha_nonpremul_photo_mask         | 1024×1024 | 1.0 | 6859  | 4770  | **-30.46%** |
+  | alpha_nonpremul_photo_mask         | 1024×1024 | 2.0 | 5337  | 4816  | -9.76%   |
+  | alpha_nonpremul_photo_mask         | 1024×1024 | 5.0 | 4848  | 4823  | -0.52%   |
+
+  `alpha_nonpremul_photo_mask` matches the W13-4 audit's "-18% to
+  -160% smaller than cjxl default" direction. `red_night_opaque` is
+  an all-opaque alpha plane that ChannelCompact already collapses
+  to a 1-value palette in the no-squeeze baseline; the squeeze
+  overhead's GroupHeader + per-band tree leaves cost ~+76 bytes on
+  the very tight baseline. The squeeze path is opt-in, so callers
+  for whom this tradeoff matters can keep `with_alpha_squeeze` at
+  its default `false`.
+
+  `dim_shift > 0` for the squeeze path is **not separately gated**.
+  The `dim_shift > 0` rejection is enforced by every lossy VarDCT
+  entry-point validator (`encoder.rs:927`, `2497`, `2901`) with
+  `Error::InvalidInput` — that's a property of VarDCT lossy extras
+  generally, not of the squeeze flag, and `check_alpha_squeeze_supported`
+  no longer shadows it with a misleading squeeze-specific message.
+  When the broader dim_shift > 0 path lifts upstream, the squeeze
+  pipeline already materializes the alpha channel at its native
+  `width >> dim_shift × height >> dim_shift` resolution; the
+  partition/writer would still need a `Channel::hshift/vshift =
+  dim_shift` seed to keep decoder-side shift bracket classification
+  consistent.
+
+  Hash-lock: 36/36 byte-identical with `alpha_squeeze` at default
+  `false`. Roundtrip-verified on all 12 (image, distance) chunk-2.b
+  outputs via **jxl-rs** (PRIMARY per project CLAUDE.md) and
+  **djxl v0.12.0** (`/tmp/chunk2b_*.jxl` → 1024×1024 / 400×267 /
+  256×128 decode clean, no parse errors). The previously-failing
+  multi-group test `alpha_squeeze_chunk2_multigroup_returns_not_implemented_chunk2b`
+  flips to `alpha_squeeze_chunk2b_multigroup_encodes_and_jxl_rs_roundtrips`
+  asserting successful encode + jxl-rs roundtrip with bounded MAE
+  on a 320×128 multi-group RGBA. Repro:
+  `cargo run --release -p jxl-encoder --example alpha_squeeze_chunk2b_roundtrip`
+  (jxl-rs MAE table) and
+  `cargo run --release -p jxl-encoder --example alpha_squeeze_chunk2b_emit_for_djxl`
+  (writes the 12 .jxl files to `/tmp/chunk2b_*.jxl` for `djxl`
+  validation). 2 new partition unit tests + the flipped pipeline
+  test (`alpha_squeeze_chunk2b_multigroup_encodes_and_jxl_rs_roundtrips`)
+  cover the new wiring. RD-regression 18/18 within thresholds.
+
 - **Squeeze-on-extras chunk 2 — `with_alpha_squeeze(true)` now wired
   into the lossy alpha bitstream** (W14-4 follow-on, builds on the
   chunk-1 framework `3b042f8`). Closes the dominant slice of the

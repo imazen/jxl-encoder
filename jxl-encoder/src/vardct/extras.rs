@@ -161,6 +161,75 @@ pub(crate) struct AlphaSqueezePipeline {
     pub squeeze_params: alloc::vec::Vec<SqueezeParams>,
 }
 
+/// Per-section sub-channel partition for the multi-group squeeze
+/// pipeline. Mirrors libjxl's decoder-side shift bracket classification
+/// (`dec_modular.cc:331-373`):
+///
+/// - **Global** (`min(w,h) ≤ group_dim`): both width and height of the
+///   sub-channel fit in the LfGlobal modular sub-bitstream.
+/// - **LfGroup** (`min(hshift, vshift) ≥ 3`): the sub-channel is large
+///   *and* deep enough in the squeeze hierarchy that it belongs to the
+///   DC-group sections.
+/// - **HfGroup** (`min(hshift, vshift) < 3`): everything else — the
+///   shallowest squeeze residuals, partitioned per HF-group region.
+///
+/// Each entry holds the index into [`AlphaSqueezePipeline::sub_channels`].
+/// Order within each bucket is the original sub-channel order so
+/// `full_image.channel` indexing on the decoder side stays stable.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AlphaSqueezePartition {
+    /// Sub-channel indices that fit fully in LfGlobal.
+    pub global_indices: alloc::vec::Vec<usize>,
+    /// Sub-channel indices that travel per-LfGroup (DC group).
+    pub lf_group_indices: alloc::vec::Vec<usize>,
+    /// Sub-channel indices that travel per-HfGroup.
+    pub hf_group_indices: alloc::vec::Vec<usize>,
+}
+
+impl AlphaSqueezePipeline {
+    /// Classify each sub-channel into the section that carries it.
+    /// `group_dim` is [`super::common::GROUP_DIM`] (= 256).
+    ///
+    /// Decoder loop (`dec_modular.cc:331-373`):
+    /// ```text
+    /// for each full_image.channel beyond nb_meta_channels:
+    ///   if fc.w > group_dim OR fc.h > group_dim:
+    ///     # not in LfGlobal — assigned to {LfGroup, HfGroup} by shift
+    ///     shift = min(fc.hshift, fc.vshift)
+    ///     if minShift <= shift <= maxShift: emit per-section
+    /// ```
+    ///
+    /// `ModularDC` (LfGroup) uses `minShift = 3, maxShift = max_shift`
+    /// (LfGroup is for high-shift / deep-LF channels).
+    /// `ModularAC` (HfGroup) uses `minShift = 0, maxShift = 2` (the
+    /// shallowest squeeze residuals).
+    pub(crate) fn partition(&self, group_dim: usize) -> AlphaSqueezePartition {
+        let mut p = AlphaSqueezePartition::default();
+        for (idx, sc) in self.sub_channels.iter().enumerate() {
+            let w = sc.channel.width();
+            let h = sc.channel.height();
+            if w == 0 || h == 0 {
+                // Empty sub-channels are skipped entirely (decoder
+                // also skips zero-sized channels — see
+                // `Channel::new_zero_sized` doc + libjxl
+                // `encoding.cc:579`).
+                continue;
+            }
+            if w <= group_dim && h <= group_dim {
+                p.global_indices.push(idx);
+            } else {
+                let min_shift = sc.channel.hshift.min(sc.channel.vshift);
+                if min_shift >= 3 {
+                    p.lf_group_indices.push(idx);
+                } else {
+                    p.hf_group_indices.push(idx);
+                }
+            }
+        }
+        p
+    }
+}
+
 /// Build the squeeze pipeline for a single alpha extra. Mirrors libjxl
 /// `enc_modular.cc:937-1027` responsive=1 path narrowed to the
 /// extras-only ModularImage (one alpha channel, no color).
@@ -285,10 +354,14 @@ mod squeeze_pipeline_tests {
     use crate::headers::extra_channels::ExtraChannelType;
 
     fn alpha_info(bits: u32) -> ExtraChannelInfo {
-        let mut info = ExtraChannelInfo::default();
-        info.ec_type = ExtraChannelType::Alpha;
-        info.bit_depth.bits_per_sample = bits;
-        info
+        let default_info = ExtraChannelInfo::default();
+        let mut bit_depth = default_info.bit_depth;
+        bit_depth.bits_per_sample = bits;
+        ExtraChannelInfo {
+            ec_type: ExtraChannelType::Alpha,
+            bit_depth,
+            ..default_info
+        }
     }
 
     #[test]
@@ -355,6 +428,102 @@ mod squeeze_pipeline_tests {
             qs.contains(&100),
             "at least one sub-channel must use shift0_quantizer=100; got qs={qs:?}"
         );
+    }
+
+    #[test]
+    fn partition_400x267_routes_first_residual_through_hfgroups() {
+        // 400×267 alpha: first horizontal squeeze produces a 200×267
+        // residual at (hshift=1, vshift=0). Height 267 > GROUP_DIM
+        // (256), so that residual escapes LfGlobal and lands in the
+        // shallow-residual bracket (min_shift=0, HfGroup). All deeper
+        // residuals fit in LfGlobal.
+        let info = alpha_info(8);
+        let pixels: alloc::vec::Vec<u8> = (0..400u32 * 267).map(|i| (i & 0xff) as u8).collect();
+        let extra = VardctExtra {
+            info: &info,
+            data: VardctExtraBuf::U8(&pixels),
+        };
+        let pipe =
+            build_alpha_squeeze_pipeline(&extra, 400, 267, 7, |shift| (7u32 >> shift).max(1))
+                .expect("build");
+        let part = pipe.partition(super::super::common::GROUP_DIM);
+        assert!(
+            !part.hf_group_indices.is_empty(),
+            "400×267 must route the first H-squeeze residual (200×267 at \
+             hshift=1, vshift=0) through HfGroup since height > GROUP_DIM; \
+             got hf_group={:?}",
+            part.hf_group_indices,
+        );
+        // Partition covers every nonempty sub-channel exactly once.
+        let mut all: alloc::vec::Vec<usize> = part
+            .global_indices
+            .iter()
+            .chain(&part.lf_group_indices)
+            .chain(&part.hf_group_indices)
+            .copied()
+            .collect();
+        all.sort();
+        let nonempty_idx: alloc::vec::Vec<usize> = pipe
+            .sub_channels
+            .iter()
+            .enumerate()
+            .filter(|(_, sc)| sc.channel.width() > 0 && sc.channel.height() > 0)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(all, nonempty_idx);
+    }
+
+    #[test]
+    fn partition_1024x1024_routes_shallow_residuals_through_hfgroups() {
+        // 1024×1024 alpha → first H-squeeze produces a 512×1024
+        // residual (>256 in both dims) at shift 1, then a 512×512
+        // residual at shift 2, etc. Sub-channels with min_shift < 3
+        // must land in hf_group_indices; deeper residuals (min_shift
+        // ≥3) eventually fit under group_dim and go to global.
+        let info = alpha_info(8);
+        let pixels: alloc::vec::Vec<u8> = (0..1024u32 * 1024)
+            .map(|i| ((i * 7 + 31) & 0xff) as u8)
+            .collect();
+        let extra = VardctExtra {
+            info: &info,
+            data: VardctExtraBuf::U8(&pixels),
+        };
+        let pipe =
+            build_alpha_squeeze_pipeline(&extra, 1024, 1024, 7, |shift| (7u32 >> shift).max(1))
+                .expect("build");
+        let part = pipe.partition(super::super::common::GROUP_DIM);
+        assert!(
+            !part.hf_group_indices.is_empty(),
+            "1024×1024 must have ≥1 HF-group sub-channel (the first \
+             residuals are 512+ on at least one axis); part = {:?}",
+            part
+        );
+        // Every assigned index lies in [0, sub_channels.len()).
+        for &i in part
+            .global_indices
+            .iter()
+            .chain(&part.lf_group_indices)
+            .chain(&part.hf_group_indices)
+        {
+            assert!(i < pipe.sub_channels.len());
+        }
+        // The partition covers every nonempty sub-channel exactly once.
+        let mut all: alloc::vec::Vec<usize> = part
+            .global_indices
+            .iter()
+            .chain(&part.lf_group_indices)
+            .chain(&part.hf_group_indices)
+            .copied()
+            .collect();
+        all.sort();
+        let nonempty_idx: alloc::vec::Vec<usize> = pipe
+            .sub_channels
+            .iter()
+            .enumerate()
+            .filter(|(_, sc)| sc.channel.width() > 0 && sc.channel.height() > 0)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(all, nonempty_idx);
     }
 
     #[test]

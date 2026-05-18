@@ -949,23 +949,39 @@ impl VarDctEncoder {
         self.encode_inner(width, height, linear_rgb, &views)
     }
 
-    /// Chunk-2 gate (W14-4 follow-on, refines the chunk-1 framework
-    /// gate). When [`Self::alpha_squeeze`] is `true` and the lossy
-    /// alpha pipeline is engaged (`alpha_distance > 0.0`) AND there is
-    /// exactly one alpha extra AND the image fits in a single VarDCT
-    /// group (≤ `GROUP_DIM` × `GROUP_DIM` = 256×256), the chunk-2
-    /// squeeze pipeline is selected at the bitstream-emit site
-    /// ([`super::bitstream::VarDctEncoder::write_modular_extras_alpha_squeezed`])
-    /// and this gate succeeds. Multi-group, multi-extra, and
-    /// non-alpha-extra cases surface a clearer
-    /// `Error::NotImplemented` pointing at chunk-2.b until that
-    /// landing.
+    /// Chunk-2.b gate (multi-group + dim_shift consolidation).
     ///
-    /// `dims = Some((w, h))` enables the multi-group / dim_shift
-    /// checks. `dims = None` defers them (no entry point currently
-    /// hits that path, but it keeps the signature flexible for a
-    /// future internal caller that doesn't know dims at validation
-    /// time).
+    /// When [`Self::alpha_squeeze`] is `true` and the lossy alpha
+    /// pipeline is engaged (`alpha_distance > 0.0`) AND there is
+    /// exactly one alpha extra, the squeeze pipeline is selected at
+    /// the bitstream-emit site — for any image size (single-group
+    /// and multi-group both supported as of chunk-2.b).
+    ///
+    /// Multi-extra (alpha + depth, alpha + spot, …) still returns
+    /// `Error::NotImplemented`; that case needs per-coded-channel
+    /// tree routing to interleave the squeezed alpha sub-channels
+    /// with the non-alpha extras and stays queued (not in chunk-2.b
+    /// scope).
+    ///
+    /// `dim_shift > 0` is rejected upstream in every lossy VarDCT
+    /// entry point (`encode_with_extras`, `encode_from_precomputed_with_extras`,
+    /// the pre-quantized variant — see `encoder.rs:927`, `2497`, `2901`)
+    /// with `Error::InvalidInput`. The squeeze pipeline therefore
+    /// inherits that rule rather than carrying its own redundant
+    /// `dim_shift` check — the constraint is a property of VarDCT
+    /// lossy extras, not of squeeze in particular. If the upstream
+    /// `dim_shift > 0` gate ever moves (e.g. via libjxl-parity wiring
+    /// of pre-subsampled extras), the squeeze pipeline's
+    /// `build_alpha_squeeze_pipeline` already materializes the alpha
+    /// channel at its native `width >> dim_shift × height >> dim_shift`
+    /// resolution; the chunk-2.b writers would still need a Channel
+    /// `hshift = dim_shift, vshift = dim_shift` seed to keep the
+    /// decoder-side shift bracket classification consistent with
+    /// `dec_modular.cc:354`.
+    ///
+    /// `dims = Some((w, h))` plumbed for future shape-aware gates
+    /// (e.g. very wide / very tall edge cases); unused as of
+    /// chunk-2.b — the writer handles arbitrary multi-group sizes.
     ///
     /// When alpha_squeeze is `false` (default), returns `Ok(())` and
     /// the existing extras pipeline runs unchanged — preserves the
@@ -973,7 +989,7 @@ impl VarDctEncoder {
     fn check_alpha_squeeze_supported(
         &self,
         extras: &[super::extras::VardctExtra<'_>],
-        dims: Option<(usize, usize)>,
+        _dims: Option<(usize, usize)>,
     ) -> Result<()> {
         if !self.alpha_squeeze_engaged() {
             return Ok(());
@@ -985,69 +1001,46 @@ impl VarDctEncoder {
                 crate::headers::extra_channels::ExtraChannelType::Alpha
             )
         });
-        let Some(alpha_idx) = alpha_idx else {
+        let Some(_alpha_idx) = alpha_idx else {
             // No alpha extra present → squeeze-on-extras is a no-op
             // even when the flag is set. Don't surprise the caller.
             return Ok(());
         };
-        // Chunk-2 scope: exactly one extra (the alpha). Multi-extra
-        // (alpha + depth, alpha + spot, …) needs per-coded-channel
-        // tree routing to interleave the squeezed alpha sub-channels
-        // with the non-alpha extras — queued for chunk-2.b.
+        // Chunk-2 scope (still): exactly one extra (the alpha).
+        // Multi-extra (alpha + depth, alpha + spot, …) needs per-
+        // coded-channel tree routing to interleave the squeezed alpha
+        // sub-channels with the non-alpha extras — not in chunk-2.b
+        // scope.
         if extras.len() > 1 {
             return Err(Error::NotImplemented(
                 "with_alpha_squeeze(true) currently supports only a single alpha extra. \
                  Multi-extra (alpha + depth, alpha + spot, …) routing through the per-band \
-                 quantizer is queued for chunk-2.b. Leave alpha_squeeze at its default \
+                 quantizer is queued. Leave alpha_squeeze at its default \
                  (false) for now to keep mixed-extras encoding working."
                     .into(),
             ));
         }
-        // Chunk-2 scope: single-group images. Multi-group needs the
-        // squeezed sub-channels to flow through the LfGlobal / HfGroup
-        // split — queued for chunk-2.b.
-        if let Some((w, h)) = dims
-            && (w > super::common::GROUP_DIM || h > super::common::GROUP_DIM)
-        {
-            return Err(Error::NotImplemented(format!(
-                "with_alpha_squeeze(true) currently supports only single-group images \
-                 (≤ {dim}×{dim}). This image is {w}×{h}; the multi-group squeeze \
-                 pipeline (LfGlobal + per-HfGroup squeeze emit) is queued for \
-                 chunk-2.b. Leave alpha_squeeze at its default (false) to use the \
-                 existing no-squeeze lossy alpha pipeline for now.",
-                dim = super::common::GROUP_DIM
-            )));
-        }
-        // dim_shift on the alpha extra: chunk-2 ships shift=0 only
-        // (full-resolution alpha). dim_shift > 0 means the caller
-        // already pre-subsampled alpha; routing that through the
-        // squeeze pipeline needs careful (hshift, vshift) seed
-        // tracking and is queued for chunk-2.b. The existing
-        // entry-point validator rejects dim_shift > 0 for the
-        // non-squeeze path; we surface a chunk-2.b-specific message
-        // here so callers don't think the flag itself is broken.
-        if extras[alpha_idx].info.dim_shift != 0 {
-            return Err(Error::NotImplemented(format!(
-                "with_alpha_squeeze(true) currently supports only dim_shift = 0 alpha \
-                 (full-resolution). Got dim_shift = {}. dim_shift > 0 routing through the \
-                 squeeze pipeline is queued for chunk-2.b.",
-                extras[alpha_idx].info.dim_shift
-            )));
-        }
+        // dim_shift > 0 is enforced upstream by every lossy VarDCT
+        // entry-point validator with `Error::InvalidInput` (see
+        // `encoder.rs:927`, `2497`, `2901`). The squeeze pipeline
+        // inherits that rule unmodified; we deliberately don't shadow
+        // it with a squeeze-flag-specific message because the
+        // restriction isn't a property of the squeeze flag.
         Ok(())
     }
 
-    /// Try to build the squeeze pipeline for the chunk-2 alpha path.
-    /// Returns `Some(pipeline)` when [`Self::alpha_squeeze_engaged`]
-    /// is `true` AND the extras shape matches the chunk-2 scope
-    /// (single alpha extra, dim_shift = 0). Returns `Ok(None)` for
-    /// the flag-off path or shapes that fall through to the
-    /// existing raw-pixel writer (including the no-alpha-extra case
-    /// and multi-extra fallback to keep the writer simple).
+    /// Try to build the squeeze pipeline for the chunk-2 / chunk-2.b
+    /// alpha path. Returns `Some(pipeline)` when
+    /// [`Self::alpha_squeeze_engaged`] is `true` AND the extras shape
+    /// matches the supported scope (single alpha extra). Returns
+    /// `Ok(None)` for the flag-off path or shapes that fall through
+    /// to the existing raw-pixel writer (no-alpha-extra case,
+    /// multi-extra fallback).
     ///
-    /// `width` and `height` are the full image dims (the writer only
-    /// invokes this on the single-group path, but we don't enforce
-    /// that here — `check_alpha_squeeze_supported` is the gate).
+    /// `width` and `height` are the full image dims. The pipeline is
+    /// built once per image and partitioned by section at the
+    /// bitstream-emit site (see
+    /// [`super::extras::AlphaSqueezePipeline::partition`]).
     pub(crate) fn maybe_build_alpha_squeeze_pipeline(
         &self,
         extras: &[super::extras::VardctExtra<'_>],
@@ -1067,11 +1060,13 @@ impl VarDctEncoder {
         ) {
             return Ok(None);
         }
-        // dim_shift > 0 is rejected at the gate; assert here so a
-        // future caller skipping the gate trips the bug visibly.
+        // dim_shift > 0 is enforced upstream as `Error::InvalidInput`;
+        // assert here so a future caller skipping the upstream
+        // validator trips the bug visibly.
         debug_assert_eq!(
             alpha.info.dim_shift, 0,
-            "alpha squeeze pipeline expects dim_shift=0 alpha (gate enforced)"
+            "alpha squeeze pipeline expects dim_shift=0 alpha (upstream \
+             VarDCT lossy entry-point validator enforces this)"
         );
         let bits = alpha.info.bit_depth.bits_per_sample;
         let shift0_q = self.compute_extra_pixel_quantizer_shifted(bits, alpha.info.ec_type, 0);
