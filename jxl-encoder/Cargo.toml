@@ -697,5 +697,16 @@ name = "bench_buffering_rss_rate_control"
 path = "examples/bench_buffering_rss_rate_control.rs"
 required-features = ["rate-control"]
 
+# W38-2 wedge #1.1: paired A/B for fine_grained_step at e9 (1 = current
+# default = inverted vs libjxl, 2 = libjxl kTortoise+ value per
+# enc_ac_strategy.cc:1046). 8 imgs × 4 d × 2 variants × 3 samples = 192
+# encodes at e9; each encode is decoded with jxl-oxide srgb_linear +
+# Rust butteraugli + fast-ssim2 (avoiding the butteraugli_main PNG-
+# metadata bug per CLAUDE.md).
+[[example]]
+name = "fine_grained_step_libjxl_parity_ab"
+path = "examples/fine_grained_step_libjxl_parity_ab.rs"
+required-features = ["std", "butteraugli-loop", "ssim2-loop", "__expert"]
+
 [lints]
 workspace = true

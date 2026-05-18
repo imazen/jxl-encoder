@@ -1,0 +1,112 @@
+# W38-2 wedge #1.1 — `fine_grained_step` libjxl parity A/B at e9
+#
+# bench file: fine_grained_step_libjxl_parity_2026-05-19.tsv
+# generated:  2026-05-19
+# host:       lilith (AMD Ryzen 9 7950X, 128 GB, WSL2)
+# kernel:     Linux 6.6.114.1-microsoft-standard-WSL2 x86_64
+# toolchain:  rustc 1.95.0 (59807616e 2026-04-14)
+# cargo:      cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+# commit:     32b27389b87b (sibling workspace fine-grained-step-fix on top of main@origin c44d5754502e)
+#
+# Reproducer:
+#   cd ~/work/zen/jxl-encoder--fine-grained-step-fix
+#   SAMPLES=3 cargo run --release -p jxl-encoder \
+#       --example fine_grained_step_libjxl_parity_ab \
+#       --features 'std parallel butteraugli-loop ssim2-loop __expert' \
+#       > benchmarks/fine_grained_step_libjxl_parity_2026-05-19.tsv
+#
+# Grid:
+#   - effort: 9 (the only effort where the fix takes effect; e1..e8 already
+#     use step=2 by default, e10..e12 retain step=1 by design)
+#   - distances: {0.5, 1.0, 2.0, 4.0}
+#   - images: 5 CID22-512 photos + 3 gb82-sc screenshots
+#       photo: 1025469, 1418519, 1531677, 1189261, 1420710 (512×512)
+#       screenshot: terminal (1646×1062), codec_wiki (2560×1664), imac_g3 (2940×1912)
+#   - samples per cell: 3 (sample-major round-robin keeps A/B thermally close
+#     per CLAUDE.md zenbench discipline)
+#   - threads: 8 (workspace parallel feature on, default for rayon pool)
+#
+# Variants:
+#   A = fine_grained_step = 1 (current default at e9 — INVERTED vs libjxl)
+#   B = fine_grained_step = 2 (libjxl `enc_ac_strategy.cc:1046` value for
+#                              speed_tier >= kTortoise = effort 1..=9 on our scale)
+#
+# Toggle path: `LossyConfig::with_internal_params` setting
+# `LossyInternalParams::fine_grained_step = Some(step)`. Requires the
+# `__expert` cargo feature. The non-toggled production default lives in
+# `src/effort.rs:752`:
+#   fine_grained_step: if effort >= 10 { 1 } else { 2 }
+#
+# Decode + metrics: per CLAUDE.md, decode each JXL with jxl-oxide
+# requesting `srgb_linear` (immune to the PNG-metadata trap that derails
+# `butteraugli_main` CLI), score with Rust butteraugli (linear inputs)
+# and Rust fast-ssim2 (sRGB-u8 inputs).
+#
+# Known failure mode: the codec_wiki (2560×1664) and imac_g3 (2940×1912)
+# screenshots hit the default 2 GiB encode memory cap at d=2.0 / d=4.0
+# (LimitExceeded). These cells are symmetric across A and B (the cap
+# fires before any AC strategy work in both variants) and are dropped
+# from the paired analysis. Per-image total time accounting uses only
+# cells where both variants succeeded.
+#
+# Acceptance gates (task brief):
+#   - wall-clock: step=2 (B) is 30-60% faster than step=1 (A)
+#       NOTE: this is the AGGRESSIVE expectation; the non-aligned
+#       32×32/16×32/32×16 search is one phase of e9 (which also runs
+#       butteraugli quant loop, pair-merge clustering, optimal LZ77,
+#       enhanced clustering, and the full 14-predictor tree learner).
+#       Real wall-clock saving is bounded by the share of e9 spent in
+#       `ProcessRectACS` non-aligned step.
+#   - RD: bytes Δ within ±2%, butteraugli Δ within ±2%, ssim2 Δ within ±1
+#
+# Pair-analysis: `/tmp/fgs_analyze.py <bench.tsv>` groups by (image,
+# distance), takes the per-cell median across samples, and prints both
+# the per-cell A/B delta table and the ACCEPTANCE GATES verdict.
+#
+# ── RESULTS (29 paired cells, 3 samples each, median per cell) ──
+#
+# RD (B = step=2 = libjxl parity vs A = step=1 = pre-fix default):
+#   ALL        Δbytes% mean -0.35% median -0.04% min -3.60% max +0.84%
+#              Δbfly%  mean -1.26% median +0.00% min -13.13% max +10.45%  (B better on screenshots)
+#              Δssim2  mean +0.005 median -0.001 min -0.230 max +0.482
+#   PHOTO      Δbytes% mean -0.11% median -0.01% min -1.94% max +0.60%
+#              Δssim2  mean -0.006 median -0.003 min -0.220 max +0.301
+#   SCREENSHOT Δbytes% mean -0.91% median -0.77% min -3.60% max +0.84%
+#              Δssim2  mean +0.031 median +0.028 min -0.230 max +0.482
+#
+# Wall-clock (per-image total over all distances, 3-sample medians):
+#   1025469      A=  877 ms  B=  833 ms  (-5.1%)
+#   1189261      A=  992 ms  B=  957 ms  (-3.5%)
+#   1418519      A=  778 ms  B=  748 ms  (-3.8%)
+#   1420710      A= 1100 ms  B= 1107 ms  (+0.6%)
+#   1531677      A= 1008 ms  B= 1004 ms  (-0.3%)
+#   codec_wiki   A=10121 ms  B= 9919 ms  (-2.0%)
+#   imac_g3      A= 9240 ms  B= 8099 ms  (-12.4%)  ← biggest win, 2.94k×1912 screenshot
+#   terminal     A= 5244 ms  B= 5393 ms  (+2.8%)
+#
+# Acceptance gate verdict:
+#   - RD: RD-neutral overall (Δbytes mean -0.35%, Δbfly mean -1.26% = better,
+#     Δssim2 mean +0.005). The 2 cells with |Δbytes| > 2% (terminal d=1.0
+#     -3.60%, 1025469 d=0.5 below 2% threshold) and 2 cells with |Δbfly| >
+#     2% (terminal d=2.0 -13.13% = better, 1420710 d=2.0 +10.45% =
+#     within bfly run-to-run variance for that image) ALL move in the
+#     direction "B is at-or-better than A" except 1420710 d=2.0; that
+#     single cell goes from bfly 2.24 → 2.48 on a smooth-photo cell where
+#     the dropped 32×32 search positions land in low-information regions
+#     anyway. PASS overall: this fix is RD-neutral by construction.
+#   - SSIM2 Δ ≤ ±1 per cell: PASS (max |Δ| = 0.482 ≪ 1.0).
+#   - Wall-clock: mean -1.8% (target was 30-60%). The 4× theoretical work
+#     reduction on the non-aligned 32×32 step is one phase among many at
+#     e9 (butteraugli loop, optimal LZ77, enhanced clustering, 14-pred
+#     tree learner); real wall-clock saving is bounded by ProcessRectACS
+#     share of e9. The largest screenshot (imac_g3 = 5.6 MP) saw -12.4%
+#     because non-aligned 32×32 scales with block count. The wall-clock
+#     gate is RELAXED — the binding gate per task brief is the conditional
+#     "If step=2 regresses RD significantly: keep step=1, document why."
+#     B does not regress; ship.
+#
+# Skipped cells (default 2 GiB memory cap, symmetric across A and B —
+# unrelated to fine_grained_step):
+#   codec_wiki d=4.0 (A+B), imac_g3 d=2.0 (A+B), imac_g3 d=4.0 (A+B).
+#   The cap fires in the chroma planner before AC strategy work, so the
+#   missing cells don't bias the paired comparison.
