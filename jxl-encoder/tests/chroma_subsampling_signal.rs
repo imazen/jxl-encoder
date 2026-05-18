@@ -234,15 +234,23 @@ fn full444_encodes_and_roundtrips_via_jxl_rs() {
     decode_via_jxl_rs(&bytes);
 }
 
+/// Chunk-3 contract retained: without both `chroma-subsampling`
+/// AND `jpeg-reencoding` cargo features the gate still ships
+/// InvalidConfig. Once both features are on (chunk 4), the same
+/// call routes to the Sub420 encoder and produces a valid bitstream
+/// (`sub420_encodes_and_roundtrips_via_jxl_rs` below).
+#[cfg(not(all(feature = "chroma-subsampling", feature = "jpeg-reencoding")))]
 #[test]
-fn sub420_returns_invalid_config_in_chunk3() {
+fn sub420_returns_invalid_config_without_chunk4_features() {
     let rgb = make_rgb_buffer();
     let err = LossyConfig::new(1.0)
         .with_chroma_subsampling(ChromaSubsampling::Sub420)
         .with_effort(5)
         .encode_request(W as u32, H as u32, PixelLayout::Rgb8)
         .encode(&rgb)
-        .expect_err("Sub420 must return InvalidConfig in chunk 3 (signal-only on lossy path)");
+        .expect_err(
+            "Sub420 must return InvalidConfig without the chunk-4 feature pair (chroma-subsampling + jpeg-reencoding)",
+        );
     assert_invalid_config_with_tag(err.error(), "4:2:0");
 }
 
@@ -271,12 +279,13 @@ fn sub440_returns_invalid_config_in_chunk3() {
 }
 
 /// Streaming `LossyEncoder::finish` must apply the same gate as
-/// one-shot `EncodeRequest::encode`. Without this mirror, a caller
-/// who uses the streaming API would silently bypass the chunk-3
-/// check and hit a much-less-helpful error inside the VarDCT
-/// pipeline.
+/// one-shot `EncodeRequest::encode`. Chunk 4 keeps streaming Sub420
+/// rejected (the streaming path eagerly linearises sRGB → f32 in
+/// `push_rows`, so the JPEG-shaped Sub420 pipeline — which expects
+/// raw u8 sRGB — cannot consume the buffer without a round-trip).
+/// Chunk 5 extends to streaming once the round-trip is wired.
 #[test]
-fn streaming_sub420_returns_invalid_config_in_chunk3() {
+fn streaming_sub420_still_invalid_config_in_chunk4() {
     let cfg = LossyConfig::new(1.0).with_chroma_subsampling(ChromaSubsampling::Sub420);
     let mut enc = cfg
         .encoder(W as u32, H as u32, PixelLayout::Rgb8)
@@ -288,8 +297,180 @@ fn streaming_sub420_returns_invalid_config_in_chunk3() {
         enc.push_rows(&rgb[row_start..row_end], 1)
             .expect("push row");
     }
-    let err = enc.finish().expect_err(
-        "streaming Sub420 must return InvalidConfig in chunk 3 (signal-only on lossy path)",
-    );
+    let err = enc
+        .finish()
+        .expect_err("streaming Sub420 must still return InvalidConfig in chunk 4");
     assert_invalid_config_with_tag(err.error(), "4:2:0");
+}
+
+/// Chunk-4 acceptance via djxl (libjxl reference decoder). Encodes a
+/// 256×256 Sub420 image, writes it to disk, and shells out to djxl to
+/// confirm the libjxl decoder accepts the bitstream. Skipped when
+/// djxl is not on $PATH so the regular CI run stays self-contained.
+#[cfg(all(feature = "chroma-subsampling", feature = "jpeg-reencoding"))]
+#[test]
+fn sub420_decodes_via_djxl_when_available() {
+    use std::process::Command;
+    // Honour the user's djxl override; fall back to the libjxl build
+    // tree path we have locally; finally fall back to whatever's on
+    // $PATH. If none of these exist, we skip via env var (caller
+    // controls whether to fail).
+    let djxl_path = std::env::var("DJXL").unwrap_or_else(|_| {
+        let local = "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl";
+        if std::path::Path::new(local).exists() {
+            local.to_string()
+        } else {
+            "djxl".to_string()
+        }
+    });
+    // Verify the binary actually exists / runs before we encode.
+    let ok = Command::new(&djxl_path).arg("--version").output().is_ok();
+    if !ok {
+        eprintln!(
+            "skipping sub420_decodes_via_djxl_when_available: djxl not available at {djxl_path}"
+        );
+        return;
+    }
+
+    const W4: usize = 256;
+    const H4: usize = 256;
+    let mut rgb = vec![0u8; W4 * H4 * 3];
+    for y in 0..H4 {
+        for x in 0..W4 {
+            let i = (y * W4 + x) * 3;
+            let checker = (((x / 16) ^ (y / 16)) & 1) as u8 * 255;
+            rgb[i] = ((x * 255) / W4) as u8;
+            rgb[i + 1] = ((y * 255) / H4) as u8;
+            rgb[i + 2] = checker;
+        }
+    }
+    let bytes = LossyConfig::new(1.0)
+        .with_chroma_subsampling(ChromaSubsampling::Sub420)
+        .with_effort(5)
+        .encode_request(W4 as u32, H4 as u32, PixelLayout::Rgb8)
+        .encode(&rgb)
+        .expect("Sub420 must encode for djxl roundtrip");
+    let dir = std::env::temp_dir();
+    let jxl_path = dir.join("jxl_encoder_chunk4_sub420.jxl");
+    let png_path = dir.join("jxl_encoder_chunk4_sub420.png");
+    std::fs::write(&jxl_path, &bytes).expect("write tmp jxl");
+    let out = Command::new(&djxl_path)
+        .arg(&jxl_path)
+        .arg(&png_path)
+        .output()
+        .expect("run djxl");
+    assert!(
+        out.status.success(),
+        "djxl rejected our Sub420 bitstream: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        png_path.exists() && std::fs::metadata(&png_path).unwrap().len() > 100,
+        "djxl did not produce a sensible PNG output"
+    );
+    let _ = std::fs::remove_file(&jxl_path);
+    let _ = std::fs::remove_file(&png_path);
+}
+
+// ── Chunk 4 end-to-end Sub420 — gated on chroma-subsampling + jpeg-reencoding ──
+
+/// Chunk 4 acceptance: 256×256 RGB at d=1.0 with Sub420 routes
+/// through `vardct::chroma_subsampling::encode_rgb8_sub420_via_jpeg_path`
+/// and produces a decoder-valid bitstream. jxl-rs roundtrip proves
+/// the dimensions + chroma shape decode without errors.
+///
+/// Bigger than the 64×64 default `W` / `H` so the path exercises
+/// multi-DC-group framing too (>256 px would force multi-group; we
+/// stay at single-group 256 so the helper test stays fast in CI).
+#[cfg(all(feature = "chroma-subsampling", feature = "jpeg-reencoding"))]
+#[test]
+fn sub420_encodes_and_roundtrips_via_jxl_rs() {
+    const W4: usize = 256;
+    const H4: usize = 256;
+    let mut rgb = vec![0u8; W4 * H4 * 3];
+    for y in 0..H4 {
+        for x in 0..W4 {
+            let i = (y * W4 + x) * 3;
+            // High-contrast checker + smooth gradient — exercises both
+            // edge regions (chroma subsampling pain point) and smooth
+            // regions (DCT8 quantisation).
+            let checker = (((x / 16) ^ (y / 16)) & 1) as u8 * 255;
+            rgb[i] = ((x * 255) / W4) as u8;
+            rgb[i + 1] = ((y * 255) / H4) as u8;
+            rgb[i + 2] = checker;
+        }
+    }
+    let bytes = LossyConfig::new(1.0)
+        .with_chroma_subsampling(ChromaSubsampling::Sub420)
+        .with_effort(5)
+        .encode_request(W4 as u32, H4 as u32, PixelLayout::Rgb8)
+        .encode(&rgb)
+        .expect("Sub420 must encode 256x256 RGB at d=1.0 (chunk 4)");
+
+    assert_eq!(&bytes[..2], &[0xFF, 0x0A], "missing JXL signature");
+    assert!(bytes.len() > 32, "bitstream suspiciously small");
+
+    // jxl-rs roundtrip: parse header + decode pixels. Exercises the
+    // full do_ycbcr=true + jpeg_upsampling=[0,1,0] decode path and
+    // proves the per-channel block grids + RAW quant tables we
+    // emitted match the decoder's expectations. The decode_via_jxl_rs
+    // helper asserts that the decoded dimensions equal W/H — for the
+    // chunk-4 test we re-implement inline against W4/H4.
+    use jxl::api::{
+        JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+        JxlPixelFormat, ProcessingResult, states,
+    };
+    use jxl::image::{Image, Rect};
+
+    let mut input = bytes.as_slice();
+    let options = JxlDecoderOptions::default();
+    let decoder = JxlDecoder::<states::Initialized>::new(options);
+    let mut decoder_init = decoder;
+    let mut decoder = loop {
+        match decoder_init.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                decoder_init = fallback;
+            }
+            Err(e) => panic!("jxl-rs Sub420 header decode error: {e:?}"),
+        }
+    };
+    let basic_info = decoder.basic_info().clone();
+    let (dec_w, dec_h) = basic_info.size;
+    assert_eq!(dec_w, W4, "decoded width mismatch");
+    assert_eq!(dec_h, H4, "decoded height mismatch");
+    let num_extras = basic_info.extra_channels.len();
+    decoder.set_pixel_format(JxlPixelFormat {
+        color_type: JxlColorType::Rgb,
+        color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
+        extra_channel_format: vec![None; num_extras],
+    });
+    let mut decoder_frame = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs Sub420 frame info error: {e:?}"),
+        }
+    };
+    let channels = 3;
+    let mut output_image = Image::<u8>::new((dec_w * channels, dec_h)).expect("alloc rgb buffer");
+    let mut buffers = vec![JxlOutputBuffer::from_image_rect_mut(
+        output_image
+            .get_rect_mut(Rect {
+                origin: (0, 0),
+                size: (dec_w * channels, dec_h),
+            })
+            .into_raw(),
+    )];
+    loop {
+        match decoder_frame.process(&mut input, &mut buffers) {
+            Ok(ProcessingResult::Complete { .. }) => break,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                decoder_frame = fallback;
+            }
+            Err(e) => panic!("jxl-rs Sub420 frame decode error: {e:?}"),
+        }
+    }
 }

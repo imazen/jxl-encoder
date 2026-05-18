@@ -6097,21 +6097,32 @@ impl<'a> EncodeRequest<'a> {
         pixels: &[u8],
         budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
     ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
-        // Chroma subsampling gate (issue #47 chunk 3). Only
-        // [`ChromaSubsampling::Full444`] is wired through the lossy
-        // pipeline today; non-default modes fast-fail with a message
-        // pointing at the chunk-4 wire-up (see
-        // [`ChromaSubsampling`] for the full status).
+        // Chroma subsampling gate (issue #47).
+        //
+        // - Chunk 3: signal-only. All non-Full444 modes returned
+        //   InvalidConfig.
+        // - Chunk 4 (this change): Sub420 is now routed through the
+        //   JPEG-shaped pipeline in `vardct::chroma_subsampling`
+        //   (RGB → YCbCr+420 via zenyuv → forward-DCT8 → integer
+        //   quantize → reuse `crate::jpeg::encode_jpeg_to_jxl`).
+        //   Sub422 / Sub440 are still rejected (chunk 5 territory).
+        //
+        // The Sub420 path only fires when BOTH `chroma-subsampling`
+        // and `jpeg-reencoding` features are compiled in; without
+        // them the InvalidConfig fallback still ships.
+        #[cfg(all(feature = "chroma-subsampling", feature = "jpeg-reencoding"))]
+        if matches!(cfg.chroma_subsampling, ChromaSubsampling::Sub420) {
+            return self.encode_lossy_sub420_via_jpeg_path(cfg, pixels);
+        }
         if !cfg.chroma_subsampling.is_full() {
             return Err(EncodeError::InvalidConfig {
                 message: format!(
                     "chroma subsampling {} requires `do_ycbcr=true` + \
-                     per-channel block grids, which today only exist on the \
-                     `jpeg-reencoding` path; the standard lossy VarDCT \
-                     pipeline emits `ColorTransform::kXYB`. zenyuv-backed \
-                     RGB→YCbCr+420 helpers ship in \
-                     `vardct::chroma_subsampling` (gated `chroma-subsampling`); \
-                     issue #47 chunk 4 wires them through.",
+                     per-channel block grids. Only `Sub420` is wired \
+                     end-to-end so far (chunk 4 — requires both \
+                     `chroma-subsampling` and `jpeg-reencoding` cargo \
+                     features); `Sub422` and `Sub440` remain pending \
+                     (chunk 5).",
                     cfg.chroma_subsampling.tag(),
                 ),
             });
@@ -6859,6 +6870,74 @@ impl<'a> EncodeRequest<'a> {
         };
         Ok((output.data, stats))
     }
+
+    /// Chunk-4 entry point for [`ChromaSubsampling::Sub420`]: convert
+    /// RGB → YCbCr+420 via zenyuv, forward-DCT + integer-quantize all
+    /// blocks, synthesise a [`crate::jpeg::JpegData`] payload, and
+    /// hand it to [`crate::jpeg::encode_jpeg_to_jxl`]. See
+    /// [`crate::vardct::chroma_subsampling::encode_rgb8_sub420_via_jpeg_path`]
+    /// for the implementation.
+    ///
+    /// Currently only honours [`PixelLayout::Rgb8`] — Rgba8 / Bgra8 /
+    /// Gray / 16-bit / float / linear layouts return
+    /// [`EncodeError::InvalidConfig`] until chunk-5+ extends the
+    /// path. The encoder ignores extras, EXIF/XMP, ICC profile,
+    /// progressive mode, butteraugli loop, splines, patches, and
+    /// rate-control for Sub420 (none of those are wired through the
+    /// JPEG-shaped pipeline yet).
+    #[cfg(all(feature = "chroma-subsampling", feature = "jpeg-reencoding"))]
+    fn encode_lossy_sub420_via_jpeg_path(
+        &self,
+        cfg: &LossyConfig,
+        pixels: &[u8],
+    ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
+        if !matches!(self.layout, PixelLayout::Rgb8) {
+            return Err(EncodeError::InvalidConfig {
+                message: format!(
+                    "chroma subsampling 4:2:0 currently only honours \
+                     `PixelLayout::Rgb8` (chunk 4); got {:?}. Rgba8 / \
+                     Bgr8 / Bgra8 / Gray / 16-bit / float / linear \
+                     layouts ship in chunk 5+.",
+                    self.layout
+                ),
+            });
+        }
+        let w = self.width as usize;
+        let h = self.height as usize;
+        if w == 0 || h == 0 {
+            return Err(EncodeError::InvalidInput {
+                message: format!("Sub420 requires non-zero dimensions, got {w}x{h}"),
+            });
+        }
+        let expected = w
+            .checked_mul(h)
+            .and_then(|n| n.checked_mul(3))
+            .ok_or_else(|| EncodeError::InvalidInput {
+                message: format!("Sub420 dimensions overflow usize: {w}x{h}"),
+            })?;
+        if pixels.len() < expected {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "Sub420 RGB buffer too small: {} < {} for {w}x{h}",
+                    pixels.len(),
+                    expected
+                ),
+            });
+        }
+        let bytes = crate::vardct::chroma_subsampling::encode_rgb8_sub420_via_jpeg_path(
+            pixels,
+            w,
+            h,
+            cfg.distance,
+        )
+        .map_err(EncodeError::from)?;
+        let stats = EncodeStats {
+            mode: EncodeMode::Lossy,
+            ans: cfg.use_ans,
+            ..Default::default()
+        };
+        Ok((bytes, stats))
+    }
 }
 
 // ── Streaming Encoders ──────────────────────────────────────────────────────
@@ -7431,20 +7510,23 @@ impl LossyEncoder {
                 ),
             });
         }
-        // Mirror the one-shot chroma subsampling gate (issue #47
-        // chunk 3). Streaming and oneshot must behave identically;
-        // omitting the gate here would let the streaming path silently
-        // ignore the caller's choice.
+        // Mirror the one-shot chroma subsampling gate (issue #47).
+        // Streaming and one-shot must report Sub420 identically; the
+        // streaming path's eager linearisation (sRGB → f32) means
+        // chunk 4 cannot route the same JPEG-shaped pipeline (which
+        // needs the raw u8 RGB for BT.601 YCbCr conversion) without
+        // a sRGB-encode round-trip on the accumulated linear buffer.
+        // Chunk 5 will wire that; for now streaming Sub420 returns
+        // InvalidConfig with a pointer to the one-shot path.
         if !self.cfg.chroma_subsampling.is_full() {
             return Err(EncodeError::InvalidConfig {
                 message: format!(
-                    "chroma subsampling {} requires `do_ycbcr=true` + \
-                     per-channel block grids, which today only exist on the \
-                     `jpeg-reencoding` path; the standard lossy VarDCT \
-                     pipeline emits `ColorTransform::kXYB`. zenyuv-backed \
-                     RGB→YCbCr+420 helpers ship in \
-                     `vardct::chroma_subsampling` (gated `chroma-subsampling`); \
-                     issue #47 chunk 4 wires them through.",
+                    "chroma subsampling {} on the streaming `LossyEncoder` \
+                     is not yet wired (chunk 4 ships the one-shot \
+                     `EncodeRequest::encode` path; chunk 5 extends to \
+                     streaming). Use \
+                     `LossyConfig::new(d).with_chroma_subsampling(...).\
+                     encode_request(w, h, layout).encode(&pixels)` for now.",
                     self.cfg.chroma_subsampling.tag(),
                 ),
             });

@@ -21,6 +21,17 @@ pub use parse::{JpegError, read_jpeg};
 #[doc(hidden)]
 pub use jbrd::encode_jbrd;
 
+// Re-exports for the chunk-4 chroma-subsampling Sub420 path
+// (`vardct::chroma_subsampling::encode_rgb8_sub420_via_jpeg_path`),
+// which synthesises a [`JpegData`] from raw RGB pixels and hands it
+// to [`encode_jpeg_to_jxl`]. The synthesised payload needs the
+// component / quant-table / component-type types — these were
+// already `pub` on their parent module; the re-export just makes
+// them reachable through `crate::jpeg::*` without exposing the
+// `data` submodule itself.
+#[doc(hidden)]
+pub use data::{JpegComponent, JpegComponentType, JpegQuantTable};
+
 /// Fast check: do the supplied bytes look like a JPEG file?
 ///
 /// Returns `true` if `bytes` starts with the JPEG SOI (Start Of Image)

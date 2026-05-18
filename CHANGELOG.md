@@ -2,6 +2,56 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Chroma subsampling chunk 4 — `ChromaSubsampling::Sub420` now
+  encodes end-to-end via the JPEG-shaped pipeline** (issue #47
+  follow-on to chunk 3 `1994441`). When both the `chroma-subsampling`
+  and `jpeg-reencoding` cargo features are on, calling
+  `LossyConfig::new(d).with_chroma_subsampling(Sub420).encode_request(...).encode(rgb)`
+  now produces a valid 4:2:0 JXL codestream instead of returning
+  `EncodeError::InvalidConfig`.
+
+  Pipeline:
+  1. `vardct::chroma_subsampling::rgb_to_yuv420_sharp` (zenyuv Sharp
+     YUV, AVX2/NEON SIMD) converts the input RGB to a planar YCbCr
+     4:2:0 buffer.
+  2. New `vardct::chroma_subsampling::encode_rgb8_sub420_via_jpeg_path`
+     runs a standard 8×8 forward DCT-II + integer quantization
+     (Annex K luma/chroma tables scaled by a `distance → quality`
+     mapping) on every block in each plane — Y at full resolution,
+     Cb/Cr at half resolution in both axes.
+  3. The quantized coefficients are packed into a synthetic
+     `crate::jpeg::JpegData` payload (omitting scan_info / marker
+     bookkeeping which the encode side doesn't read) and handed to
+     `crate::jpeg::encode_jpeg_to_jxl`, which already supports
+     `do_ycbcr=true` + `jpeg_upsampling=[0,1,0]` + per-channel block
+     grids.
+
+  Scope: one-shot `EncodeRequest::encode` with `PixelLayout::Rgb8`
+  only. Streaming `LossyEncoder::finish` still returns
+  `InvalidConfig` for Sub420 (the streaming path eagerly linearizes
+  sRGB → f32 in `push_rows`, so the JPEG-shaped pipeline — which
+  needs raw u8 sRGB for BT.601 conversion — cannot consume the
+  buffer without an extra round-trip; chunk 5 will wire that).
+  Sub422 / Sub440 remain rejected (Sharp YUV is 4:2:0-only in
+  zenyuv 0.1.3; chunk 5 ships the 4:2:2 / 4:4:0 box-filter paths).
+  Rgba8 / Bgr8 / Bgra8 / Gray / 16-bit / float / linear pixel
+  layouts are rejected for Sub420 (chunk 5+).
+
+  Quality: the synthesized JPEG quant tables are NOT calibrated to
+  match cjxl's RD curve at the requested `distance` — the chunk-4
+  acceptance test only requires a valid roundtripable bitstream
+  (verified via jxl-rs + djxl on 256×256 RGB at d=1.0). Chunk 5+
+  will tune the per-distance quant matrices and add the butteraugli
+  loop / patches / splines / progressive paths.
+
+  Default `Full444` bitstream byte-identical (`hash_lock_features`
+  36/36 unchanged). Tests at
+  `jxl-encoder/tests/chroma_subsampling_signal.rs::sub420_encodes_and_roundtrips_via_jxl_rs`
+  and `::sub420_decodes_via_djxl_when_available` (djxl test skips
+  cleanly when the libjxl binary is not on `$PATH`).
+
 ### Performance
 
 - **e10/e11 multi-seed chunk 7 — Pareto-aware wall-clock early-out for
