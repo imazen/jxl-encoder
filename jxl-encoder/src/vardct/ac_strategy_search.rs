@@ -1333,35 +1333,17 @@ fn try_merge_16x16_impl(
         return false; // No merge improvement
     }
 
-    // A merge won — reset 2×2 region to DCT8 first to avoid orphaned non-first
-    // blocks from any previous multi-block transform in this region.
-    //
-    // NOTE (F-D Sub-G, 2026-05-18): root cause pinned by source-diff vs libjxl
-    // `FindBestFirstLevelDivisionForSquare` (enc_ac_strategy.cc:703-825). libjxl
-    // does NOT reset because its inner-split crossing checks (`allow_JXK`/
-    // `allow_KXJ` via `MultiBlockTransformCrossesVerticalBoundary` at
-    // `bx+cx+blocks_half`) refuse to evaluate JXK/KXJ when an existing
-    // multi-block transform spans both halves — so partial-JXK wins never
-    // orphan an existing JXJ's non-first markers. Our `can_evaluate_region`
-    // is LOOSER: it accepts regions containing fully-contained existing
-    // multi-blocks, so dropping the reset corrupts those markers on a
-    // partial-JXK win → "varblocks overlap" decode failures (reproduced at
-    // d=0.25/0.5/1.0 on real photos in the prior session). Two ways to close
-    // the divergence without the reset:
-    //   (A) tighten `can_evaluate_region` to require all-single-block (loses
-    //       merge attempts but simplest);
-    //   (B) port libjxl's per-half inner-crossing checks into the merge
-    //       comparison (most faithful, larger change touching both impls and
-    //       the three SIMD variants each).
-    // Divergence is real (we lose best 8×8-class strategies on non-winning
-    // halves) but the fix needs hash-lock regen and decoder re-verification
-    // across the full sweep — out of scope for this audit chunk.
+    // W44-22 (F-D Sub-G fix Approach A, 2026-05-18): the prior "reset 2×2
+    // region to DCT8 first" prologue is gone — `can_evaluate_region` now
+    // requires all-single-block, so no existing multi-block transform can sit
+    // within the 2×2 region whose markers would need to be cleared. Painting
+    // only the winning halves preserves per-block 8×8-class picks (DCT4×4,
+    // AFV0-3, DCT2×2, IDENTITY, DCT4×8, DCT8×4) on the non-winning halves.
     // Audit memory: f_d_sub_chunk_g_try_merge_2026-05-18.md.
-    for dy in 0..2usize {
-        for dx in 0..2usize {
-            ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
-        }
-    }
+    debug_assert!(
+        ac_strategy.can_evaluate_region(abs_bx, abs_by, 2),
+        "try_merge_16x16_impl invariant: region must be all-single-block before merge"
+    );
 
     // Apply the winning transform and update entropy cache.
     if cost16x16 <= best_rect {
@@ -1864,17 +1846,14 @@ fn try_merge_32x32_impl(
         return false;
     }
 
-    // A merge won — reset 4×4 region to DCT8 first to avoid orphaned non-first blocks.
-    // (See note in try_merge_16x16_impl: root cause is our `can_evaluate_region`
-    //  accepting fully-contained existing multi-block transforms, vs libjxl's
-    //  per-half inner-crossing checks that reject those cases. Dropping the
-    //  reset triggers "varblocks overlap" decode failures on real photos.
-    //  Audit memory: f_d_sub_chunk_g_try_merge_2026-05-18.md.)
-    for dy in 0..4usize {
-        for dx in 0..4usize {
-            ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
-        }
-    }
+    // W44-22 (F-D Sub-G fix Approach A, 2026-05-18): the prior "reset 4×4
+    // region to DCT8 first" prologue is gone — `can_evaluate_region` now
+    // requires all-single-block. Preserves per-block 8×8-class picks on
+    // non-winning halves. See try_merge_16x16_impl for the full note.
+    debug_assert!(
+        ac_strategy.can_evaluate_region(abs_bx, abs_by, 4),
+        "try_merge_32x32_impl invariant: region must be all-single-block before merge"
+    );
 
     if entropy_32x32 < cost_jxn && entropy_32x32 < cost_nxj {
         // DCT32x32 wins

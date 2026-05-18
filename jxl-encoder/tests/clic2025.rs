@@ -7187,12 +7187,15 @@ fn test_rd_regression_high_distance() {
                 ssim2: 68.61,
             },
         },
-        // 1029604 (512x512)
+        // 1029604 (512x512) — d200 rebaselined W44-22 (2026-05-18):
+        // try_merge tightening preserves per-block 8×8-class picks on non-winning
+        // halves, shifts AC strategy mix → smaller bytes (-3.7%) at modest
+        // butteraugli cost (+6.3%, still well below floor of 8.0).
         ImageBaselines {
             d200: Baseline {
-                size: 43500,
-                butteraugli: 2.283,
-                ssim2: 79.24,
+                size: 41908,
+                butteraugli: 2.428,
+                ssim2: 79.23,
             },
             d300: Baseline {
                 size: 31237,
