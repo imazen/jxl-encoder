@@ -283,6 +283,21 @@ name = "patches_lossless_calibrate_all"
 path = "examples/patches_lossless_calibrate_all.rs"
 required-features = ["__internals"]
 
+# RFC#45 patches gate recalibration on expanded corpus
+# (gb82-sc + qoi-benchmark/screenshot_web = 25 screenshots,
+# plus 15 photos across CID22 / clic2025-1024 / gb82).
+# 4 distances {0.5, 1.0, 2.0, 4.0}.
+[[example]]
+name = "patches_lossy_gate_expanded_corpus"
+path = "examples/patches_lossy_gate_expanded_corpus.rs"
+required-features = ["__internals"]
+
+# RFC#45 lossless patches gate recalibration on expanded corpus.
+[[example]]
+name = "patches_lossless_gate_expanded_corpus"
+path = "examples/patches_lossless_gate_expanded_corpus.rs"
+required-features = ["__internals"]
+
 [[example]]
 name = "bench_lossy_palette"
 path = "examples/bench_lossy_palette.rs"
