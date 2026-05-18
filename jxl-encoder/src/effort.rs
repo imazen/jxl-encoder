@@ -558,6 +558,33 @@ pub struct EffortProfile {
     /// `0` is treated as `1` (defensive). Read by
     /// `vardct/butteraugli_loop.rs::butteraugli_refine_quant_field`.
     pub lossy_search_seeds: u8,
+
+    /// Use **Lloyd-Max iterative clustering** for MA-tree property
+    /// bucket boundaries on the three residual-energy proxy properties
+    /// (4 = `|N|`, 5 = `|W|`, 15 = `wp_max_error`).
+    ///
+    /// Spec-legal reinterpretation of EX-J5 (CALIC energy-quantized
+    /// context, Golchin & Paliwal 1998). The original proposal adds a
+    /// 17th MA-tree property index for an energy bin — JXL hard-codes
+    /// `kNumNonrefProperties = 16`, so any new property index would be
+    /// interpreted as a (nonexistent) reference-channel property by
+    /// decoders. Refining bucket boundaries of the existing energy
+    /// proxies preserves the spec, changes only encoder-side candidate
+    /// splitvals, and captures the same "give the tree learner better
+    /// energy-aware thresholds" intent.
+    ///
+    /// Read by [`crate::modular::tree_learn::TreeLearningParams::lloyd_max_buckets`]
+    /// and applied inside `pre_quantize` only when the property is one
+    /// of the energy-correlated three. Other 13 MA-tree properties keep
+    /// the cheap sort-quantile path.
+    ///
+    /// Default `false` at every effort: Lloyd-Max changes encoder
+    /// output bytes (different candidate splitvals → different chosen
+    /// tree splits), so `true` requires re-baking
+    /// `hash_lock_expected.txt`. Sweep harnesses opt in via the
+    /// `__expert` lossless override
+    /// ([`LosslessInternalParams::lloyd_max_buckets`]).
+    pub lloyd_max_buckets: bool,
 }
 
 impl EffortProfile {
@@ -751,6 +778,13 @@ impl EffortProfile {
             // butteraugli loop is no-op below e8 (butteraugli_iters = 0) so
             // this field only takes effect at e10/e11.
             lossy_search_seeds: Self::lossy_search_seeds_for(effort),
+
+            // EX-J5 reinterpretation: default OFF on lossy too (lossless
+            // is where MA-tree property pre-quantization runs, so the
+            // lossy default has no runtime effect — but keep shape parity
+            // with the lossless profile struct so both initialisers stay
+            // exhaustive and the field is never accidentally left undefined).
+            lloyd_max_buckets: false,
         }
     }
 
@@ -882,6 +916,14 @@ impl EffortProfile {
             // shared `EffortProfile` struct stays well-formed without
             // implying a phantom lossy sweep on lossless encodes.
             lossy_search_seeds: 1,
+
+            // EX-J5 reinterpretation (CALIC energy-quantized context via
+            // Lloyd-Max bucket boundaries on properties 4, 5, 15).
+            // Default OFF — flipping to true changes encoder output bytes
+            // and requires re-baking `hash_lock_expected.txt`. Sweep
+            // harnesses opt in via the `__expert` lossless override
+            // (LosslessInternalParams::lloyd_max_buckets).
+            lloyd_max_buckets: false,
         }
     }
 
@@ -1733,6 +1775,24 @@ pub struct LosslessInternalParams {
     /// hash_lock sidecars should be aware that `N >= 2` *can* change the
     /// chosen tree per (image, distance) cell.
     pub tree_learn_seeds: Option<u8>,
+
+    /// EX-J5 reinterpretation — use **Lloyd-Max iterative clustering**
+    /// for MA-tree bucket boundaries on the three residual-energy proxy
+    /// properties (4 = `|N|`, 5 = `|W|`, 15 = `wp_max_error`).
+    ///
+    /// `Some(true)` opts in to Lloyd-Max bucket boundaries; `Some(false)`
+    /// forces the sort-quantile default; `None` keeps the effort-profile
+    /// default (always `false` today; see
+    /// [`EffortProfile::lloyd_max_buckets`]).
+    ///
+    /// **Bytes change** when this flag flips from `false` → `true`
+    /// (different candidate splitvals → different chosen tree splits),
+    /// so sweep harnesses must re-bake `hash_lock_expected.txt` and
+    /// re-validate decoder roundtrip with jxl-rs, jxl-oxide, and djxl.
+    /// Bitstream remains 100 % spec-legal — the JXL property set is
+    /// untouched; only the candidate splitval shortlist the tree learner
+    /// chooses from is refined.
+    pub lloyd_max_buckets: Option<bool>,
 }
 
 #[cfg(feature = "__expert")]
@@ -1821,6 +1881,7 @@ impl LosslessInternalParams {
             tree_parallel_root_threshold,
             tree_parallel_small_image_fallback,
             tree_learn_seeds,
+            lloyd_max_buckets,
         } = self;
         if let Some(v) = nb_rcts_to_try {
             profile.nb_rcts_to_try = v;
@@ -1869,6 +1930,9 @@ impl LosslessInternalParams {
         }
         if let Some(v) = tree_learn_seeds {
             profile.tree_learn_seeds = v;
+        }
+        if let Some(v) = lloyd_max_buckets {
+            profile.lloyd_max_buckets = v;
         }
     }
 }

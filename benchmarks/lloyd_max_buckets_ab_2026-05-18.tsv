@@ -1,0 +1,12 @@
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.21s
+     Running `target/release/examples/lloyd_max_buckets_ab`
+# Lloyd-Max bucket boundaries A/B at e7 (3 samples, 8 threads)
+# baseline = sort-quantile (default); variant = Lloyd-Max on props 4/5/15
+image	bytes_a_sort	ms_a_sort	bytes_b_lloyd	ms_b_lloyd	bytes_delta_pct	ms_delta_pct
+clic_02809272_1.05MP	1281763	5351.0	1280147	5109.2	-0.126	-4.52
+clic_07b9f93f_1.05MP	1213684	2027.2	1207708	5041.8	-0.492	+148.71
+clic_0369d229_1.05MP	1088683	3342.2	1088319	3588.4	-0.033	+7.37
+clic_0d154749_1.05MP	1488040	2040.7	1486837	2091.7	-0.081	+2.49
+cid22_1025469_0.26MP	236251	497.3	236477	614.3	+0.096	+23.53
+
+# AGGREGATE: total_a = 5308421 bytes, total_b = 5299488 bytes (-0.168%)

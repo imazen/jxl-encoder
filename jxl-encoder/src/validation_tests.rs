@@ -384,6 +384,7 @@ mod expert {
             gather_dedup_phase3: Some(false),
             tree_parallel_small_image_fallback: Some(false),
             tree_learn_seeds: Some(1),
+            lloyd_max_buckets: Some(false),
         };
         assert!(p.validate().is_ok());
     }

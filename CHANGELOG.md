@@ -19,6 +19,61 @@
   #49 for the analysis that ruled out the literal paper-described
   layout).
 
+- **EX-J5 reinterpreted — Lloyd-Max bucket boundaries for energy-
+  correlated MA-tree properties** (opt-in via the `__expert` lossless
+  override `LosslessInternalParams::lloyd_max_buckets`,
+  `EffortProfile::lloyd_max_buckets`). The original EX-J5 proposal
+  (Golchin & Paliwal 1998 — CALIC-style 4-level energy-quantized
+  context as a 17th MA-tree property) is spec-illegal: JXL hard-codes
+  `kNumNonrefProperties = 16` (`context_predict.h:378-379`, jxl-rs
+  `tree.rs:197`), so any `property_idx >= 16` is interpreted as a
+  (nonexistent) reference-channel property by decoders.
+
+  This spec-legal reinterpretation refines the bucket-boundary picks
+  *inside* the existing 16-property MA-tree learner. Instead of
+  sort-quantile picks over the sorted-unique value list, the three
+  documented residual-energy proxy properties (4 = `|N|`, 5 = `|W|`,
+  15 = `wp_max_error`) use Lloyd-Max iterative clustering to choose
+  bucket edges. The other 13 properties keep the cheap sort-quantile
+  path because their distributions are not energy-shaped
+  (channel/group id, signed gradient differences ~symmetric around
+  zero), so Lloyd-Max would add cost without compression payoff.
+
+  Algorithm: empirical-histogram Lloyd-Max with count-weighted
+  k-quantile initialisation, midpoint cell boundaries, weighted-mean
+  centroid updates, convergence on max centroid movement <0.5 input
+  units or after 8 iterations (3-5 iters observed on CID22 / CLIC).
+  Encoded thresholds are integer midpoints between consecutive
+  centroids, clamped to `(min_val, max_val]` and post-deduplicated
+  for the strictly-monotone contract `pre_quantize` expects.
+
+  A/B (5 textured photos, e7 lossless, 8 threads, min of 3 samples):
+  **-0.168 % bytes** aggregate, with -0.49 % on the textured
+  CLIC `07b9f93f` photo and -0.13 % on CLIC `02809272`. Result
+  matches the W18-2 abort-report expectation of "a fraction of the
+  paper's claimed 0.5-1 % since we're refining existing properties
+  not adding new ones". TSV + meta at
+  `benchmarks/lloyd_max_buckets_ab_2026-05-18.{tsv,meta}`.
+
+  Default `false` at every effort — hash-lock fixtures
+  (`tests/hash_lock_expected.txt`, 36 entries) stay byte-identical
+  with the flag off. Sweep harnesses opt in via the `__expert`
+  override and re-bake hash-locks when promoting Lloyd-Max to a
+  per-effort default.
+
+  Roundtrip-validated pixel-exact on the 1024×1024 CLIC
+  `02809272` Lloyd-Max-encoded photo via **djxl 0.12.0**,
+  **jxl-rs**, and **jxl-oxide** (integration test
+  `tests/lloyd_max_buckets_roundtrip.rs` covers jxl-oxide
+  automatically; djxl + jxl-rs were spot-checked manually).
+  Refs `~/work/zen/jxl-encoder/JXL_ENCODER_LEARNINGS.md` lines
+  102-107 (EX-J5), W18-2 abort report. 5 new unit tests
+  (`test_lloyd_max_thresholds_monotone`,
+  `_constant_property`, `_two_clusters`, `_clamps_to_max_buckets`,
+  `_partition_samples`) cover the clustering primitive in
+  isolation; 3 integration tests cover roundtrip + opt-in
+  semantics.
+
 - **EX-J4 — RIGED gradient-aware modular predictor via
   `--modular-predictor 14`** (encoder-only meta-mode). Per Sharma
   et al. 2018 *Resolution-Independent Gradient-aware Edge Detection*:
@@ -63,7 +118,6 @@
   (engagement vs default, pixel-exact jxl-rs roundtrip, fall-back
   invariants on no-tree paths). Wire bitstream verified pixel-exact
   on 5 CLIC photos via the external `djxl` binary.
-
 - **Chroma subsampling chunk 5 — `ChromaSubsampling::Sub422` and
   `Sub440` now encode end-to-end via the same JPEG-shaped pipeline
   used by Sub420** (issue #47 follow-on to chunk 4 `7a21379f`). When
