@@ -51,6 +51,86 @@
   task spec's honest-stop condition: "If transform_and_quantize is
   already parallel everywhere: honest-stop with explanation."
 
+### Investigated
+
+- **W39-2 — HONEST-STOP: screenshot-class HIGH-regime `max_increase`
+  cap (W38-2 WF3 follow-on to W39-1 `3ecd397b`)**
+  (`src/vardct/butteraugli_loop.rs`, `src/vardct/encoder.rs`,
+  `src/vardct/bitstream.rs`, `src/vardct/mod.rs`,
+  `examples/buttloop_screenshot_cap_sweep.rs` [new],
+  `benchmarks/buttloop_screenshot_cap_sweep_2026-05-18.{tsv,meta}`).
+  Wired content-class dispatch on top of W39-1's atomic infrastructure
+  (`MAX_INCREASE_X1000_HIGH_SCREENSHOT` + `SCREENSHOT_MEDIAN_THRESHOLD`
+  + `resolved_max_increase_with_class(target_distance, is_screenshot)`).
+  The call site classifies the input via `median(mask1x1) > 95.0` (same
+  discriminator as `splines::looks_like_screenshot` and
+  `encoder::CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD`) and threads
+  `is_screenshot` through the buttloop. Animation path
+  (`bitstream.rs`) passes `is_screenshot = false` (no fixture coverage
+  on screenshot-animation inputs).
+
+  **Production default: 100.0 ("no cap")** — bit-identical to
+  pre-W39-2 at every distance / effort / content class. Hash-locks
+  36/36 byte-identical at default e7. 6 new unit tests cover the
+  class-aware resolver + photo bit-identity invariant
+  (`class_blind_resolver_byte_identical_to_legacy`,
+  `screenshot_class_low_regime_uses_low_default`,
+  `screenshot_class_high_regime_unmodified_picks_screenshot_default`,
+  `screenshot_override_only_affects_screenshot_high`,
+  `screenshot_high_picks_min_of_shared_and_screenshot_slots`,
+  `screenshot_high_default_is_no_cap_until_sweep_lands`).
+
+  **Why HONEST-STOP (no default-on flip)**: 240-cell paired sweep
+  (3 screenshots × 3 photos × {d=2.0, 3.0, 4.0, 5.0} × {e8, e9} ×
+  {1.3, 1.5, 1.8, 2.0, 100.0} caps) finds the cap fires only on
+  `imac_g3.png` at d=2.0 / d=4.0 with sub-noise impact:
+
+  - imac_g3 d=2.0 e8 cap=1.3 vs 100.0: -11 bytes (-0.005 %),
+    +0.012 SSIM2, butteraugli unchanged
+  - imac_g3 d=4.0 e8/e9 cap=1.3: -0.01 to -0.02 % bytes,
+    ±0.001-0.004 SSIM2 noise
+  - `terminal.png` + `codec_wiki.png`: byte-identical across all caps
+    and all (effort, distance) combinations
+  - All 120 photo cells: bit-identical across all 5 caps (gate
+    doesn't fire — `is_screenshot=false`)
+
+  **No cap value passes the acceptance gates** (bfly Δ ≤ -3 % AND
+  ssim2 Δ ≥ +1 AND bytes Δ within ±2 %). Observed best is butteraugli
+  +0.00 % (FAIL) and ssim2 +0.004 (1000× short of +1). The W38-2 WF3
+  wedge (e8/e9 screenshots: bytes -20 to -22 % vs cjxl, bfly +9 to
+  +19 %, ssim2 -2 to -5) is therefore NOT caused by the bad-block
+  bump magnitude — bumps simply don't exceed `1.3×` per iter on real
+  screenshot content (`tile_dist / target_distance` stays bounded by
+  butteraugli's per-tile reference computation).
+
+  **Chunk-3 plan (the real WF3 lever lives elsewhere)**:
+  1. **Screenshot-class `cur_pow` cap (good-block reduction)** — the
+     `cur_pow.powf(diff)` pullback at iter < 2 may be too aggressive
+     on flat screenshot regions (`diff < 1.0` → quant field shrinks,
+     using fewer bits). A screenshot-only `cur_pow = 0.15` (vs libjxl
+     0.2) would preserve more good-block precision. The
+     `MAX_INCREASE_X1000_HIGH_SCREENSHOT` atomic + sweep harness
+     pattern is the template; add `CUR_POW_X1000_HIGH_SCREENSHOT`
+     and reuse the same `median(mask1x1) > 95` discriminator.
+  2. **Screenshot-class `global_scale` clamping** — `SetQuantField`
+     recomputes `global_scale` from median/MAD per iter. A few
+     extreme blocks (high-contrast text edges) inflate the MAD,
+     pulling `global_scale` up, coarsening EVERY other block.
+     Clamping the per-iter delta on screenshot-class encodes would
+     stabilise this.
+  3. **Direct W38-2 WF3 bisect** — re-run the audit's wedge cells
+     (`benchmarks/rd_curve_wedges_2026-05-18.md` §3.1) with the
+     buttloop DISABLED (`--no-butteraugli`) to confirm whether the
+     bug is buttloop-internal or upstream (in CfL2 / AC strategy /
+     `transform_and_quantize`).
+
+  Atomic override stays in place
+  (`__buttloop_overrides::MAX_INCREASE_X1000_HIGH_SCREENSHOT`) so a
+  future power-user / sweep harness can engage the cap without
+  rebuilding; production runs see no behaviour change. New
+  diagnostic env var: `JXL_BUTTLOOP_W39_DEBUG=1` prints
+  `is_screenshot` + resolved cap per encode (free in normal runs).
+
 ### Fixed
 
 - **W38-2 #3.1 — distance-aware butteraugli-loop tuning scaffolding

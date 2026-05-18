@@ -1773,6 +1773,16 @@ impl VarDctEncoder {
         #[cfg(feature = "butteraugli-loop")]
         if self.butteraugli_iters > 0 {
             let initial_qf_float = quant_field_float.clone();
+            // W39-2 (WF3 fix): animation frames pass `false` (photo
+            // class) as the screenshot classifier hint. Animations are
+            // overwhelmingly photo / video content; the W22-1
+            // `median(mask1x1)` discriminator is fitted to still-image
+            // screenshots (UI / text / terminal) and is not validated
+            // on animation inputs. Hash-locked animation fixtures stay
+            // byte-identical with `false`. If a screenshot-class
+            // animation case appears in the wild, extend here using
+            // the same `median(mask1x1) > SCREENSHOT_MEDIAN_THRESHOLD`
+            // gate as the still-image call site in `encoder.rs`.
             params = self.butteraugli_refine_quant_field(
                 linear_rgb,
                 width,
@@ -1791,7 +1801,8 @@ impl VarDctEncoder {
                 &cfl_map,
                 &ac_strategy,
                 patches_data.as_ref(),
-                None, // No splines in animation frames
+                None,  // No splines in animation frames
+                false, // is_screenshot: see comment above
             )?;
         }
 

@@ -70,6 +70,28 @@ pub static MAX_INCREASE_X1000_LOW: AtomicI32 = AtomicI32::new(i32::MIN);
 /// "use [`DEFAULT_MAX_INCREASE_HIGH`]".
 pub static MAX_INCREASE_X1000_HIGH: AtomicI32 = AtomicI32::new(i32::MIN);
 
+/// Sweep override for `max_increase` (per-iter bad-block bump cap) at
+/// HIGH distances **on screenshot-class content only**
+/// (`median(mask1x1) > [`SCREENSHOT_MEDIAN_THRESHOLD`]`).
+///
+/// Stored as `value × 1000`. `i32::MIN` means "use
+/// [`DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT`]".
+///
+/// **Rationale**: W38-2 RD-curve audit WF3 found that e8/e9 buttloop
+/// over-compresses screenshots at d≥2.0 (bfly +9-19 %, ssim2 -2 to -5
+/// vs cjxl). The libjxl defaults (no cap) let the bad-block bump
+/// double-or-worse on a single bad iter when text/UI blocks register
+/// high tile_dist — recoverable on photos (next iter can rebalance),
+/// catastrophic on screenshots (text re-bumps round-trip the next iter
+/// too). A cap at HIGH for the screenshot class only is the W39-1
+/// commit's documented "real WF3 fix".
+///
+/// Photo-class HIGH regime continues to read [`MAX_INCREASE_X1000_HIGH`]
+/// → [`DEFAULT_MAX_INCREASE_HIGH`] (libjxl defaults, no cap). LOW
+/// regime is unchanged from W39-1 (literal GPU LOW values regressed
+/// CPU; HIGH is the only place this fix lives).
+pub static MAX_INCREASE_X1000_HIGH_SCREENSHOT: AtomicI32 = AtomicI32::new(i32::MIN);
+
 /// Sweep override for the threshold between LOW and HIGH regimes. The
 /// per-iter loop picks LOW when `target_distance < threshold`, else HIGH.
 /// Defaults to `2000` (= 2.0) — see [`DEFAULT_DISTANCE_SPLIT`].
@@ -121,6 +143,37 @@ pub const DEFAULT_MAX_INCREASE_LOW: f64 = 100.0;
 /// libjxl's implicit "no cap" — set to `100.0` (effectively infinite).
 pub const DEFAULT_MAX_INCREASE_HIGH: f64 = 100.0;
 
+/// Production default for `max_increase` in the HIGH regime on
+/// **screenshot-class** content (`median(mask1x1) >
+/// [`SCREENSHOT_MEDIAN_THRESHOLD`]`).
+///
+/// Default `100.0` (≈ "no cap" / libjxl-faithful). The W38-2 audit
+/// recommended capping this to fix WF3 (e8/e9 over-compresses
+/// screenshots at d≥2.0); the sweep harness
+/// `examples/buttloop_screenshot_cap_sweep.rs` searches
+/// `{1.3, 1.5, 1.8, 2.0, ∞}` for the winning value. After analysis the
+/// const flips to the chosen value (default-on).
+///
+/// Photo-class HIGH regime continues to use
+/// [`DEFAULT_MAX_INCREASE_HIGH`] (no cap), so this lever is invisible
+/// on non-screenshot inputs.
+pub const DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT: f64 = 100.0;
+
+/// `median(mask1x1)` threshold above which the HIGH-regime buttloop
+/// reads the screenshot cap ([`MAX_INCREASE_X1000_HIGH_SCREENSHOT`] /
+/// [`DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT`]) instead of the photo
+/// default ([`MAX_INCREASE_X1000_HIGH`] /
+/// [`DEFAULT_MAX_INCREASE_HIGH`]).
+///
+/// `95.0` matches the existing screenshot discriminator used by
+/// `entropy_mul` content-aware dispatch
+/// (`encoder::CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD`) and
+/// `splines::looks_like_screenshot` so we don't introduce a third
+/// boundary value. The classifier is computed once per encode on the
+/// pre-gaborish XYB Y plane (same as the existing
+/// `compute_mask1x1` call in [`super::encoder`]).
+pub const SCREENSHOT_MEDIAN_THRESHOLD: f32 = 95.0;
+
 /// Default split point between LOW and HIGH regimes.
 /// `target_distance >= DEFAULT_DISTANCE_SPLIT` triggers the HIGH regime.
 pub const DEFAULT_DISTANCE_SPLIT: f64 = 2.0;
@@ -144,12 +197,54 @@ pub(crate) fn resolved_cur_pow(iter: usize, target_distance: f64) -> f64 {
 }
 
 /// Resolve `max_increase` (per-iter bad-block bump cap) for the current
-/// `target_distance`, honouring sweep overrides.
+/// `target_distance`, honouring sweep overrides. Content-class-blind —
+/// equivalent to [`resolved_max_increase_with_class`] called with
+/// `is_screenshot = false`. Retained as a stable shim for harness /
+/// test code that doesn't have a content class to pass.
+///
+/// Production callers should prefer [`resolved_max_increase_with_class`]
+/// directly so the W39-2 WF3 fix can engage on screenshot-class input.
+#[allow(dead_code)]
 pub(crate) fn resolved_max_increase(target_distance: f64) -> f64 {
+    resolved_max_increase_with_class(target_distance, false)
+}
+
+/// Resolve `max_increase` for the current `target_distance` AND content
+/// class, honouring sweep overrides.
+///
+/// Only the HIGH regime (`target_distance >= DEFAULT_DISTANCE_SPLIT`) +
+/// `is_screenshot = true` path reads the screenshot-specific slot
+/// ([`MAX_INCREASE_X1000_HIGH_SCREENSHOT`] →
+/// [`DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT`]). Every other combination
+/// reproduces [`resolved_max_increase`] exactly so the public defaults
+/// are byte-identical on photo-class content.
+///
+/// This is the "real WF3 fix" the W39-1 commit documented (W39-1
+/// scaffolding shipped the atomic infrastructure; this helper wires
+/// content-class dispatch on top).
+pub(crate) fn resolved_max_increase_with_class(target_distance: f64, is_screenshot: bool) -> f64 {
     let split = read_override_x1000(&DISTANCE_SPLIT_X1000, DEFAULT_DISTANCE_SPLIT);
     if target_distance < split {
+        // LOW regime: no per-class split (W39-1 confirmed the literal
+        // GPU LOW tuning regresses CPU; not the place for the WF3 fix).
         read_override_x1000(&MAX_INCREASE_X1000_LOW, DEFAULT_MAX_INCREASE_LOW)
+    } else if is_screenshot {
+        // HIGH regime + screenshot class → consult the screenshot slot
+        // first; fall back to the photo HIGH default when neither is
+        // overridden so the public defaults stay byte-identical.
+        let screenshot = read_override_x1000(
+            &MAX_INCREASE_X1000_HIGH_SCREENSHOT,
+            DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT,
+        );
+        // If the screenshot slot is at its "no cap" default and the
+        // shared HIGH slot is overridden (sweep harness), honour the
+        // harness so old sweeps keep working unchanged. The "min" picks
+        // the more-restrictive cap when both are present.
+        let shared = read_override_x1000(&MAX_INCREASE_X1000_HIGH, DEFAULT_MAX_INCREASE_HIGH);
+        screenshot.min(shared)
     } else {
+        // HIGH regime + photo class: libjxl default (no cap), honouring
+        // any harness override on the shared HIGH slot.
         read_override_x1000(&MAX_INCREASE_X1000_HIGH, DEFAULT_MAX_INCREASE_HIGH)
     }
 }
@@ -231,6 +326,7 @@ impl VarDctEncoder {
     /// Returns the final DistanceParams (with recomputed global_scale).
     #[cfg(feature = "butteraugli-loop")]
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn butteraugli_refine_quant_field(
         &self,
         linear_rgb: &[f32],
@@ -251,6 +347,13 @@ impl VarDctEncoder {
         ac_strategy: &AcStrategyMap,
         patches_data: Option<&super::patches::PatchesData>,
         splines_data: Option<&super::splines::SplinesData>,
+        // W39-2 (WF3 fix): content-class hint computed once at the
+        // call site from `median(mask1x1) > SCREENSHOT_MEDIAN_THRESHOLD`.
+        // `true` switches the HIGH-regime `max_increase` resolution to
+        // [`resolved_max_increase_with_class`]'s screenshot slot. `false`
+        // (default for photo / unknown / mask-not-computed) is
+        // byte-identical to pre-W39-2 behaviour.
+        is_screenshot: bool,
     ) -> Result<DistanceParams> {
         use crate::budget::MemoryBudget;
 
@@ -290,6 +393,18 @@ impl VarDctEncoder {
         let target_distance = self.distance;
         let num_blocks = xsize_blocks * ysize_blocks;
         let padded_pixels = padded_width * padded_height;
+
+        // W39-2 diagnostic — gated by env var so it's free in normal
+        // runs. Set `JXL_BUTTLOOP_W39_DEBUG=1` to see the screenshot
+        // classification + cap-resolution per encode.
+        #[cfg(feature = "std")]
+        if std::env::var("JXL_BUTTLOOP_W39_DEBUG").is_ok() {
+            let cap = resolved_max_increase_with_class(target_distance as f64, is_screenshot);
+            eprintln!(
+                "[W39-2 buttloop] dist={:.3} is_screenshot={} resolved_max_increase={:.3} iters={}",
+                target_distance, is_screenshot, cap, self.butteraugli_iters,
+            );
+        }
 
         // Precompute the perceptual reference from the original image ONCE.
         // Deinterleave to planar so both metric paths consume the same layout.
@@ -475,6 +590,7 @@ impl VarDctEncoder {
                 &mut transform_out,
                 iters,
                 k_init_mul,
+                is_screenshot,
             )?;
             outcomes.push(outcome);
         }
@@ -609,6 +725,13 @@ impl VarDctEncoder {
         transform_out: &mut super::transform::TransformOutput,
         iters: usize,
         k_init_mul: f64,
+        // W39-2 (WF3 fix): plumbed from
+        // [`Self::butteraugli_refine_quant_field`] so the inner loop's
+        // per-iter `resolved_max_increase_with_class` can pick the
+        // screenshot HIGH cap when content was classified as
+        // screenshot. `false` (default for photo / unknown) is
+        // byte-identical to pre-W39-2 behaviour.
+        is_screenshot: bool,
     ) -> Result<SeedOutcome> {
         use super::epf;
         use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
@@ -988,7 +1111,15 @@ impl VarDctEncoder {
             // iters only bump bad blocks — same as libjxl
             // `enc_adaptive_quantization.cc:1106`).
             let cur_pow: f64 = resolved_cur_pow(iter, target_distance as f64);
-            let max_increase: f64 = resolved_max_increase(target_distance as f64);
+            // W39-2 (WF3 fix): HIGH-regime + screenshot-class content
+            // can cap `max_increase` at a lower value than the libjxl
+            // default. `is_screenshot` was classified once at the
+            // call site (`encoder::encode` → `median(mask1x1) >
+            // SCREENSHOT_MEDIAN_THRESHOLD`); the resolver gates the
+            // cap on the HIGH branch only — LOW + photo HIGH continue
+            // to read the legacy slots and stay byte-identical.
+            let max_increase: f64 =
+                resolved_max_increase_with_class(target_distance as f64, is_screenshot);
 
             // InvGlobalScale and Scale from current iteration's params
             // (these change per iteration as global_scale is recomputed)
@@ -1229,6 +1360,7 @@ mod tuning_tests {
         CUR_POW_X1000_HIGH.store(i32::MIN, Ordering::Relaxed);
         MAX_INCREASE_X1000_LOW.store(i32::MIN, Ordering::Relaxed);
         MAX_INCREASE_X1000_HIGH.store(i32::MIN, Ordering::Relaxed);
+        MAX_INCREASE_X1000_HIGH_SCREENSHOT.store(i32::MIN, Ordering::Relaxed);
         DISTANCE_SPLIT_X1000.store(2000, Ordering::Relaxed);
     }
 
@@ -1323,5 +1455,143 @@ mod tuning_tests {
         let v = resolved_cur_pow(0, 1.5);
         assert!((v - DEFAULT_CUR_POW_HIGH).abs() < 1e-9, "got {v}");
         reset_overrides();
+    }
+
+    // ===== W39-2 (WF3 fix): screenshot-class HIGH-regime cap tests =====
+
+    /// `resolved_max_increase_with_class(d, false)` is byte-identical to
+    /// `resolved_max_increase(d)` at every regime — photo class is the
+    /// pre-W39-2 path.
+    #[test]
+    fn class_blind_resolver_byte_identical_to_legacy() {
+        reset_overrides();
+        for &d in &[0.5_f64, 1.0, 1.5, 1.99, 2.0, 3.0, 4.0, 5.0] {
+            let legacy = resolved_max_increase(d);
+            let class_blind = resolved_max_increase_with_class(d, false);
+            assert!(
+                (legacy - class_blind).abs() < 1e-9,
+                "d={d}: legacy={legacy} class_blind={class_blind}",
+            );
+        }
+    }
+
+    /// Screenshot class at LOW regime uses LOW slot (the WF3 fix
+    /// applies to HIGH only — LOW is W39-1 territory and the literal
+    /// GPU LOW tuning regressed CPU; we don't add a screenshot LOW
+    /// branch here).
+    #[test]
+    fn screenshot_class_low_regime_uses_low_default() {
+        reset_overrides();
+        let v = resolved_max_increase_with_class(1.0, true);
+        assert!(
+            (v - DEFAULT_MAX_INCREASE_LOW).abs() < 1e-9,
+            "screenshot LOW: expected DEFAULT_MAX_INCREASE_LOW={DEFAULT_MAX_INCREASE_LOW}, got {v}"
+        );
+        // Edge: d just below split → LOW.
+        let v2 = resolved_max_increase_with_class(1.99, true);
+        assert!((v2 - DEFAULT_MAX_INCREASE_LOW).abs() < 1e-9, "got {v2}");
+    }
+
+    /// Screenshot class at HIGH regime, unmodified slot, picks the
+    /// screenshot default. With both defaults at `100.0` ("no cap")
+    /// the result must equal `100.0` exactly — hash-locks rely on this.
+    #[test]
+    fn screenshot_class_high_regime_unmodified_picks_screenshot_default() {
+        reset_overrides();
+        let v = resolved_max_increase_with_class(3.0, true);
+        // Both DEFAULT_MAX_INCREASE_HIGH (100.0) and
+        // DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT (100.0) are at "no
+        // cap"; the .min() picks 100.0 deterministically.
+        assert!(
+            (v - DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT).abs() < 1e-9,
+            "expected DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT={DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT}, got {v}"
+        );
+        // Edge: exactly at split → HIGH branch fires.
+        let v_split = resolved_max_increase_with_class(2.0, true);
+        assert!(
+            (v_split - DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT).abs() < 1e-9,
+            "got {v_split}"
+        );
+    }
+
+    /// Sweep override on the screenshot slot is honoured only for
+    /// screenshot-class HIGH lookups. Photo class (and LOW) stay on
+    /// the legacy slots — critical so production photo encodes are
+    /// byte-identical to pre-W39-2 when the harness is running.
+    #[test]
+    fn screenshot_override_only_affects_screenshot_high() {
+        reset_overrides();
+        // Set screenshot HIGH cap to 1.5.
+        MAX_INCREASE_X1000_HIGH_SCREENSHOT.store(1500, Ordering::Relaxed);
+
+        // Screenshot HIGH → reads override.
+        let v_s = resolved_max_increase_with_class(3.0, true);
+        assert!(
+            (v_s - 1.5).abs() < 1e-9,
+            "screenshot HIGH: expected 1.5, got {v_s}"
+        );
+
+        // Photo HIGH → reads legacy HIGH slot (default 100.0).
+        let v_p = resolved_max_increase_with_class(3.0, false);
+        assert!(
+            (v_p - DEFAULT_MAX_INCREASE_HIGH).abs() < 1e-9,
+            "photo HIGH: expected DEFAULT_MAX_INCREASE_HIGH={DEFAULT_MAX_INCREASE_HIGH}, got {v_p}"
+        );
+
+        // Screenshot LOW → reads LOW slot (default 100.0), unaffected
+        // by the HIGH screenshot override.
+        let v_sl = resolved_max_increase_with_class(1.0, true);
+        assert!(
+            (v_sl - DEFAULT_MAX_INCREASE_LOW).abs() < 1e-9,
+            "screenshot LOW: expected DEFAULT_MAX_INCREASE_LOW={DEFAULT_MAX_INCREASE_LOW}, got {v_sl}"
+        );
+
+        // Photo LOW → reads LOW slot (default 100.0).
+        let v_pl = resolved_max_increase_with_class(1.0, false);
+        assert!(
+            (v_pl - DEFAULT_MAX_INCREASE_LOW).abs() < 1e-9,
+            "photo LOW: expected DEFAULT_MAX_INCREASE_LOW={DEFAULT_MAX_INCREASE_LOW}, got {v_pl}"
+        );
+        reset_overrides();
+    }
+
+    /// When BOTH the shared HIGH slot and the screenshot HIGH slot are
+    /// overridden, the screenshot HIGH lookup must pick the
+    /// *more-restrictive* (lower) cap. This lets a sweep harness pin
+    /// the shared HIGH cap to 1.5 (e.g., for cross-class
+    /// experimentation) without losing the screenshot-specific
+    /// override of 1.3 if it's also set.
+    #[test]
+    fn screenshot_high_picks_min_of_shared_and_screenshot_slots() {
+        reset_overrides();
+        // Shared HIGH = 2.0, screenshot HIGH = 1.3 → expect 1.3.
+        MAX_INCREASE_X1000_HIGH.store(2000, Ordering::Relaxed);
+        MAX_INCREASE_X1000_HIGH_SCREENSHOT.store(1300, Ordering::Relaxed);
+        let v = resolved_max_increase_with_class(3.0, true);
+        assert!((v - 1.3).abs() < 1e-9, "expected 1.3, got {v}");
+
+        // Reverse: shared HIGH = 1.3, screenshot HIGH = 2.0 → expect 1.3.
+        MAX_INCREASE_X1000_HIGH.store(1300, Ordering::Relaxed);
+        MAX_INCREASE_X1000_HIGH_SCREENSHOT.store(2000, Ordering::Relaxed);
+        let v = resolved_max_increase_with_class(3.0, true);
+        assert!((v - 1.3).abs() < 1e-9, "expected 1.3, got {v}");
+        reset_overrides();
+    }
+
+    /// W39-2 default-off invariant: the screenshot HIGH default
+    /// constant is 100.0 ("no cap"). This guards against accidentally
+    /// flipping the default before the sweep has identified a winning
+    /// cap value. Once the sweep is analysed and a value chosen, flip
+    /// the constant AND update this test.
+    #[test]
+    fn screenshot_high_default_is_no_cap_until_sweep_lands() {
+        // Currently 100.0 (default-off) — pending sweep results from
+        // `examples/buttloop_screenshot_cap_sweep.rs`.
+        assert_eq!(DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT, 100.0);
+        // The classifier threshold reuses the same `95.0` value as
+        // splines::looks_like_screenshot / encoder.rs's
+        // CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD so we don't have
+        // a third boundary to maintain.
+        assert_eq!(SCREENSHOT_MEDIAN_THRESHOLD, 95.0);
     }
 }
