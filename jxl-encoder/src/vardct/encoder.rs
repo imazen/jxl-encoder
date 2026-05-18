@@ -1068,6 +1068,23 @@ impl VarDctEncoder {
             "alpha squeeze pipeline expects dim_shift=0 alpha (upstream \
              VarDCT lossy entry-point validator enforces this)"
         );
+        // Chunk-3 heuristic: skip squeeze when alpha is a single
+        // constant value over the full image. The W14-1 ChannelCompact
+        // path (`e97e5bb7`, `write_modular_extras_subbitstream` →
+        // `kPalette(num_c=1, nb_colors=1)`) collapses constant extras
+        // to ~76 bytes regardless of `alpha_distance`. Routing those
+        // through the squeeze pipeline costs +0.6 to +0.8% on the
+        // `red_night_opaque` W16-2 audit baseline (`191801a1`) because
+        // squeeze adds a GroupHeader + per-band tree leaves on top of
+        // an already-minimal payload; every squeeze sub-channel is
+        // itself constant so the residuals carry no extra information.
+        //
+        // ChannelCompact wins for constant alpha; squeeze wins for
+        // varying alpha (W14-4 / chunk-2 / chunk-2.b shows -30% to
+        // -56% on the photo-mask + UI-gradient audit images).
+        if alpha.is_constant_full_image(width, height) {
+            return Ok(None);
+        }
         let bits = alpha.info.bit_depth.bits_per_sample;
         let shift0_q = self.compute_extra_pixel_quantizer_shifted(bits, alpha.info.ec_type, 0);
         let shifted_q = |shift: u32| -> u32 {
