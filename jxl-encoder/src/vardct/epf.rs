@@ -1026,21 +1026,30 @@ pub(crate) fn compute_epf_sharpness(
         for bx in 0..xsize_blocks {
             let block_idx = by * xsize_blocks + bx;
 
-            // Get top and left neighbor info
+            // Get top and left neighbor info.
+            // libjxl reads the error AT THE CURRENT BLOCK (by, bx) using the
+            // NEIGHBOR's chosen sharpness as a context selector — not the
+            // neighbor's own block-position error. See
+            // `lib/jxl/enc_heuristics.cc:954-957`:
+            //   float top_error  = error_images[top_val ].Row(by)[bx];
+            //   float left_error = error_images[left_val].Row(by)[bx];
+            // We were previously reading `error_maps[top_ci][top_idx]` (i.e.
+            // the neighbor's POSITION error). Fixed to read at `block_idx`
+            // (current block's position) so the downstream comparison
+            // `best_err < min(top_err, left_err)` is apples-to-apples per
+            // libjxl semantics. (#53, W44-2 F7.1.)
             let (top_val, top_err) = if by > 0 {
-                let top_idx = (by - 1) * xsize_blocks + bx;
-                let top_s = sharpness_map[top_idx];
+                let top_s = sharpness_map[(by - 1) * xsize_blocks + bx];
                 let top_ci = candidates.iter().position(|&c| c == top_s).unwrap_or(0);
-                (top_ci, error_maps[top_ci][top_idx])
+                (top_ci, error_maps[top_ci][block_idx])
             } else {
                 (0, f32::MAX)
             };
 
             let (left_val, left_err) = if bx > 0 {
-                let left_idx = by * xsize_blocks + bx - 1;
-                let left_s = sharpness_map[left_idx];
+                let left_s = sharpness_map[by * xsize_blocks + bx - 1];
                 let left_ci = candidates.iter().position(|&c| c == left_s).unwrap_or(0);
-                (left_ci, error_maps[left_ci][left_idx])
+                (left_ci, error_maps[left_ci][block_idx])
             } else {
                 (0, f32::MAX)
             };
