@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Streaming refactor #11 chunk 2 — split `compute_with_budget` into
+  global vs per-DC-group precompute** (`vardct/precomputed.rs`).
+  Internally factors `EncoderPrecomputed::compute_with_budget` into:
+  (a) `EncoderPrecomputedGlobal::compute_global_only` — runs the
+  pipeline steps that fundamentally need to see the whole image
+  (XYB conversion, noise estimation, patches detection / subtract,
+  chromacity stats, pre-gaborish XYB snapshot); and
+  (b) `fill_dc_group_state_whole_image` — runs the steps that can in
+  principle be processed per-DC-group (quant_field, mask1x1,
+  gaborish_inverse, CfL, AC strategy). In chunk 2 the per-DC-group
+  fill processes the whole image as ONE region so the assembled
+  `EncoderPrecomputed` is **bit-identical** to the prior monolithic
+  implementation (`hash_lock_features` 36/36 pass).
+
+  Public API unchanged — `EncoderPrecomputed::compute` /
+  `compute_with_budget` keep the same signature and return shape.
+  The split is the structural prerequisite for chunks 3-7 (streaming
+  input + buffered output, mirroring libjxl PRs #4634 / #4635 / #4637
+  / #4638 / #4639). Five hidden cross-DC-group dependencies are
+  surfaced and documented on `EncoderPrecomputedGlobal` (gaborish
+  5×5, mask1x1 5×5, quant_field 3×3 block, CfL 8-block tile, AC
+  strategy neighbour-block heuristics) — each gets an explicit
+  fix-or-accept decision in chunk 3.
+
+  Chunk-3 plan: replace `fill_dc_group_state_whole_image` with a
+  per-region `compute_dc_group(global, dc_x, dc_y, ...)` plus a
+  driving loop in `encode_with_rate_control` /
+  `EncoderPrecomputed::compute_with_budget` that iterates over real
+  DC-group-sized windows with 1-block / 2-pixel border replication.
+  When `Buffering::LargeImageOnly` / `Buffering::Always` is selected,
+  the streaming code path keeps only the active DC group's slice of
+  `xyb_x/y/b` in memory and drops it after the per-group encode
+  completes — closing the ~400 MB → ~50 MB peak-RSS gap on a 4K
+  encode (the issue #11 win).
+
 ### Investigated
 
 - **W22-1 chunk-2 follow-on: CPU `entropy_mul` lifted-value re-bisect

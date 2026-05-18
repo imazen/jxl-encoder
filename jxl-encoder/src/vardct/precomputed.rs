@@ -186,6 +186,16 @@ impl EncoderPrecomputed {
     /// `use_ans` and `encoder_mode` are forwarded to the patches
     /// `is_cost_effective` gate (mirroring the logic in
     /// `vardct/encoder.rs::encode_inner`).
+    ///
+    /// **Implementation (#11 chunk 2, 2026-05-18):** internally calls
+    /// [`EncoderPrecomputedGlobal::compute_global_only`] then runs the
+    /// per-DC-group pipeline ([`fill_dc_group_state_whole_image`]) over
+    /// the whole image as a single region. Bit-identical to the prior
+    /// monolithic implementation. The split exists so chunks 3+ can
+    /// stream `compute_dc_group` over real DC-group-sized windows
+    /// without disturbing the rate-control / butteraugli-loop
+    /// consumers, which still see the same assembled
+    /// [`EncoderPrecomputed`].
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn compute_with_budget(
         width: usize,
@@ -207,302 +217,80 @@ impl EncoderPrecomputed {
         color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
         budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     ) -> crate::error::Result<Self> {
-        use super::ac_strategy::compute_ac_strategy;
-        // adaptive_quant helpers are referenced through their module path below.
-        use super::chroma_from_luma::compute_cfl_map;
-        use super::gaborish::gaborish_inverse_maybe_adaptive;
-        use super::noise::{denoise_xyb, estimate_noise_params, noise_quality_coef};
-
-        assert_eq!(linear_rgb.len(), width * height * 3);
-
-        // Calculate dimensions
-        let xsize_blocks = div_ceil(width, BLOCK_DIM);
-        let ysize_blocks = div_ceil(height, BLOCK_DIM);
-        let padded_width = xsize_blocks * BLOCK_DIM;
-        let padded_height = ysize_blocks * BLOCK_DIM;
-
-        // Convert to XYB with edge-replicated padding
-        let (mut xyb_x, mut xyb_y, mut xyb_b) = convert_to_xyb_padded(
+        // Step 1: compute the truly global state (XYB convert, noise,
+        // patches, chromacity stats, pre-gaborish snapshot). This is
+        // the part of the pipeline that fundamentally needs to see the
+        // whole image — patches detection runs an 8-connected BFS that
+        // can span the entire image, noise estimation aggregates
+        // statistics across all pixels, and XYB conversion allocates
+        // whole-image planes that later steps mutate in place.
+        let mut global = EncoderPrecomputedGlobal::compute_global_only(
             width,
             height,
-            padded_width,
-            padded_height,
             linear_rgb,
+            distance,
+            enable_noise,
+            enable_denoise,
+            enable_gaborish,
+            enable_patches,
+            use_ans,
+            encoder_mode,
+            profile,
             color_encoding,
             budget,
         )?;
 
-        // Estimate noise parameters (if enabled)
-        let noise_params = if enable_noise {
-            let quality_coef = noise_quality_coef(distance);
-            let params = estimate_noise_params(
-                &xyb_x,
-                &xyb_y,
-                &xyb_b,
-                padded_width,
-                padded_height,
-                quality_coef,
-            );
+        // Step 2: run the per-DC-group pipeline (quant_field / mask1x1
+        // / gaborish / CfL / AC strategy) over the whole image as ONE
+        // region. In chunk 2 this still produces whole-image Vecs; the
+        // bit-identical output is the chunk-2 acceptance gate. Chunks
+        // 3+ will iterate this over real DC-group-sized windows with
+        // explicit borders (see hidden-cross-group-dependency notes on
+        // [`fill_dc_group_state_whole_image`]).
+        let DcGroupFill {
+            quant_field_float,
+            masking,
+            mask1x1,
+            cfl_map,
+            ac_strategy,
+        } = fill_dc_group_state_whole_image(
+            &mut global,
+            cfl_enabled,
+            ac_strategy_enabled,
+            pixel_domain_loss,
+            enable_adaptive_gaborish,
+            force_strategy,
+            profile,
+            budget,
+        )?;
 
-            // Apply denoising pre-filter if enabled
-            if enable_denoise && let Some(ref p) = params {
-                denoise_xyb(
-                    &mut xyb_x,
-                    &mut xyb_y,
-                    &mut xyb_b,
-                    padded_width,
-                    padded_height,
-                    p,
-                    quality_coef,
-                );
-            }
-
-            params
-        } else {
-            None
-        };
-
-        // Snapshot pre-gaborish XYB so the rate-control path's
-        // `encode_from_precomputed` can run patches detection against
-        // it. Patches MUST be detected on the unsharpened XYB to
-        // roundtrip correctly through the decoder's
-        // `IDCT → gaborish → EPF → patches` pipeline (see field doc on
-        // `xyb_pre_gaborish` and the matching block in
-        // `vardct/encoder.rs::encode_from_precomputed`).
-        //
-        // The clone is ~3 × `padded_width × padded_height × 4` bytes
-        // (~16 MB at 12 MP). Skipped when gaborish is off because
-        // post-gaborish == pre-gaborish in that case (encoder uses
-        // `precomputed.xyb_*` directly when this field is `None`).
-        let xyb_pre_gaborish: Option<[Vec<f32>; 3]> = if enable_gaborish {
-            crate::budget::MemoryBudget::reserve_permanent_opt(
-                budget,
-                (padded_width as u64)
-                    .saturating_mul(padded_height as u64)
-                    .saturating_mul(4 * 3),
-            )?;
-            Some([xyb_x.clone(), xyb_y.clone(), xyb_b.clone()])
-        } else {
-            None
-        };
-
-        // Patches detection on PRE-gaborish XYB. libjxl pipeline order
-        // (enc_heuristics.cc:1057-1194):
-        //   noise → splines → patches detect/subtract → InitialQuantField
-        //   → GaborishInverse → CfL pass 1 → AC strategy → CfL pass 2 → DCT
-        //
-        // Patches MUST be detected and subtracted BEFORE quant_field /
-        // mask / gaborish / CfL / AC strategy so that ALL downstream
-        // computations see the patches-subtracted XYB. Without this, on
-        // screenshot content (text, UI) the quant_field is fitted to
-        // sharp text edges that PATCHES will absorb — producing
-        // over-aggressive quantization when the actual residual is
-        // smooth, and CfL is fitted to the dominant low-frequency luma
-        // that patches will remove — producing chroma residuals that
-        // don't match the actual encoded geometry.
-        //
-        // The decoder pipeline (dec_cache.cc:148-194) reverses this:
-        //   IDCT → gaborish → EPF → ChannelUpsampling → add patches
-        // — patches are added back AFTER gaborish, so the patches
-        // reference frame must store the PRE-gaborish patch values
-        // (which is what `find_and_build` extracts from the
-        // pre-gaborish XYB here).
-        // Distance-aware kMinPeak (W3-1 / commit 4fb0f52): libjxl
-        // parity (=2) below d=1.0, W2-5 chunk 1 relaxation (=1) at
-        // d>=1.0. See `vardct/encoder.rs::encode_inner` for why
-        // RFC#45 chunk 3's per-patch gate does NOT lower this.
-        let min_peak = if distance < 1.0 { 2 } else { 1 };
-        // RFC#45 pick #5 chunk 3 per-patch cost gate — mirrors
-        // `vardct/encoder.rs::encode_inner` (see comment there).
-        let mut patches_data = if enable_patches {
-            super::patches::find_and_build_with_per_patch_gate(
-                [&xyb_x, &xyb_y, &xyb_b],
-                width,
-                height,
-                padded_width,
-                min_peak,
-                Some(distance),
-                use_ans,
-            )
-        } else {
-            None
-        };
-        // Cost-benefit gating for experimental mode only — libjxl uses
-        // patches unconditionally when detected, so reference mode
-        // skips this to match (mirrors `encode_inner` line ~750).
-        if matches!(encoder_mode, crate::api::EncoderMode::Experimental)
-            && let Some(ref pd) = patches_data
-            && !pd.is_cost_effective(distance, use_ans)
-        {
-            patches_data = None;
-        }
-        if let Some(ref mut pd) = patches_data {
-            pd.quantize_ref_image();
-        }
-        if let Some(ref pd) = patches_data {
-            let mut xyb = [
-                core::mem::take(&mut xyb_x),
-                core::mem::take(&mut xyb_y),
-                core::mem::take(&mut xyb_b),
-            ];
-            super::patches::subtract_patches(&mut xyb, padded_width, pd);
-            let [x, y, b] = xyb;
-            xyb_x = x;
-            xyb_y = y;
-            xyb_b = b;
-        }
-
-        // Compute pixel chromacity stats AFTER patches subtract, BEFORE
-        // gaborish (mirrors `encode_inner` ordering at vardct/encoder.rs
-        // line ~850 — chromacity is on the patches-subtracted PRE-gab
-        // XYB so the X/B channel pixelization metric reflects the
-        // chroma the encoder will actually quantize). Gated at effort
-        // >= 7 to skip the full-image gradient scan at low effort.
-        let (chromacity_x_pixelized, chromacity_b_pixelized) = if profile.chromacity_adjustment {
-            let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
-                &xyb_x,
-                &xyb_y,
-                &xyb_b,
-                padded_width,
-                padded_height,
-            );
-            (
-                pixel_stats.how_much_is_x_channel_pixelized(),
-                pixel_stats.how_much_is_b_channel_pixelized(),
-            )
-        } else {
-            (0, 0)
-        };
-
-        // Compute adaptive per-block quantization field and masking on
-        // PRE-gaborish XYB. libjxl computes InitialQuantField BEFORE
-        // GaborishInverse (`enc_heuristics.cc:1117-1142`, comment:
-        // "relies on pre-gaborish values"). Gaborish sharpening
-        // inflates gradients which inflates masking → smaller quant
-        // values → finer quantization → more bits.
-        //
-        // When gaborish is off, scale distance by 0.62 for the quant
-        // field (matches libjxl `enc_heuristics.cc:1119`).
-        let distance_for_iqf = if enable_gaborish {
-            distance
-        } else {
-            distance * 0.62
-        };
-
-        let (quant_field_float, masking) =
-            super::adaptive_quant::compute_quant_field_float_with_budget(
-                &xyb_x,
-                &xyb_y,
-                &xyb_b,
-                padded_width,
-                padded_height,
-                xsize_blocks,
-                ysize_blocks,
-                distance_for_iqf,
-                profile.k_ac_quant,
-                budget,
-            )?;
-
-        // Compute per-pixel mask for pixel-domain loss on PRE-gaborish
-        // XYB (matches libjxl `InitialQuantField` which produces
-        // `initial_quant_masking1x1` before `GaborishInverse`).
-        let mask1x1 = if ac_strategy_enabled && pixel_domain_loss {
-            Some(super::adaptive_quant::compute_mask1x1_with_budget(
-                &xyb_y,
-                padded_width,
-                padded_height,
-                budget,
-            )?)
-        } else {
-            None
-        };
-
-        // Apply gaborish inverse (5x5 sharpening) on patches-subtracted
-        // XYB AFTER quant_field / mask1x1.
-        if enable_gaborish {
-            gaborish_inverse_maybe_adaptive(
-                &mut xyb_x,
-                &mut xyb_y,
-                &mut xyb_b,
-                padded_width,
-                padded_height,
-                enable_adaptive_gaborish,
-                budget,
-            )?;
-        }
-
-        // Compute CfL map on POST-gaborish patches-subtracted XYB.
-        let cfl_map = if cfl_enabled {
-            compute_cfl_map(
-                &xyb_x,
-                &xyb_y,
-                &xyb_b,
-                padded_width,
-                padded_height,
-                xsize_blocks,
-                ysize_blocks,
-                profile.cfl_newton,
-                profile.cfl_newton_eps,
-                profile.cfl_newton_max_iters,
-            )
-        } else {
-            CflMap::zeros(
-                div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS),
-                div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS),
-            )
-        };
-
-        // Compute AC strategy
-        let ac_strategy = if let Some(forced) = force_strategy {
-            AcStrategyMap::force_strategy(xsize_blocks, ysize_blocks, forced)
-        } else if !ac_strategy_enabled {
-            AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks)
-        } else {
-            compute_ac_strategy(
-                &xyb_x,
-                &xyb_y,
-                &xyb_b,
-                padded_width,
-                padded_height,
-                xsize_blocks,
-                ysize_blocks,
-                distance,
-                &quant_field_float,
-                &masking,
-                &cfl_map,
-                mask1x1.as_deref(),
-                padded_width,
-                profile,
-            )
-        };
-
-        // CfL pass 2 refinement happens in encoder.rs after the butteraugli loop
-        // produces the final quant_field. No refinement here — pass 1 values from
-        // compute_cfl_map are sufficient for initial AC strategy selection.
-
+        // Step 3: assemble into the public-shape EncoderPrecomputed
+        // that downstream consumers (rate_control, encode_inner,
+        // butteraugli loop) expect. Field-for-field passthrough — no
+        // additional computation here.
         Ok(Self {
             width,
             height,
-            xsize_blocks,
-            ysize_blocks,
-            padded_width,
-            padded_height,
-            xyb_x,
-            xyb_y,
-            xyb_b,
+            xsize_blocks: global.xsize_blocks,
+            ysize_blocks: global.ysize_blocks,
+            padded_width: global.padded_width,
+            padded_height: global.padded_height,
+            xyb_x: global.xyb_x,
+            xyb_y: global.xyb_y,
+            xyb_b: global.xyb_b,
             linear_rgb: linear_rgb.to_vec(),
             cfl_map,
-            noise_params,
+            noise_params: global.noise_params,
             quant_field_float,
             masking,
             mask1x1,
             ac_strategy,
             gaborish_enabled: enable_gaborish,
             base_distance: distance,
-            chromacity_x_pixelized,
-            chromacity_b_pixelized,
-            xyb_pre_gaborish,
-            patches_data,
+            chromacity_x_pixelized: global.chromacity_x_pixelized,
+            chromacity_b_pixelized: global.chromacity_b_pixelized,
+            xyb_pre_gaborish: global.xyb_pre_gaborish,
+            patches_data: global.patches_data,
         })
     }
 
@@ -661,6 +449,563 @@ impl EncoderPrecomputed {
         self.patches_data = Some(patches);
         self
     }
+}
+
+// =====================================================================
+// #11 chunk 2 — split global vs per-DC-group precompute
+// =====================================================================
+//
+// `EncoderPrecomputedGlobal` holds only the state that fundamentally
+// needs to see the whole image. Everything that can in principle be
+// processed per-DC-group (quant_field, mask1x1, gaborish, CfL,
+// AC strategy) is delegated to [`fill_dc_group_state_whole_image`] in
+// chunk 2 and will be split into a real per-DC-group loop in chunk 3.
+//
+// Why this split: chunks 3-7 of the streaming refactor (jxl-encoder#11)
+// want to stream input + buffer output, processing one 2048×2048 DC
+// group at a time and dropping its plane slice as soon as the per-group
+// section is encoded. Today's `compute_with_budget` allocates ~24 B/pixel
+// in whole-image Vecs (200 MB at 4K, 800 MB at 8K). The chunk-2 split
+// is the *structural* prerequisite — it isolates the truly global state
+// (chromacity stats, patches detection, noise estimation,
+// xyb_pre_gaborish snapshot) into a smaller struct that streamed
+// per-DC-group runs can hold in memory while iterating, without
+// having to re-derive any of it per group.
+//
+// Bit-identical to today's pipeline: in chunk 2 the per-DC-group fill
+// processes the whole image as ONE region, so every byte of the
+// assembled `EncoderPrecomputed` matches what `compute_with_budget`
+// produced before the refactor. The `corpus_regression` hash-lock is
+// the load-bearing invariant.
+
+/// Truly-global encoder state — the part of the precompute pipeline
+/// that can't be processed per-DC-group (or that ALL DC-group passes
+/// need to see).
+///
+/// Hand-off shape for chunk 3+: a streamed encoder loop holds a
+/// `&mut EncoderPrecomputedGlobal` while iterating over DC groups,
+/// calling [`fill_dc_group_state`]-style functions on each. The
+/// `xyb_x` / `xyb_y` / `xyb_b` planes are mutated in place by the
+/// per-DC-group pass (gaborish_inverse writes back into them).
+///
+/// **Hidden cross-DC-group dependencies surfaced by this split**
+/// (documented here so chunk 3 doesn't accidentally regress
+/// bit-identical output):
+///
+/// 1. **Gaborish 5×5 kernel** — `gaborish_inverse` reads a 2-pixel
+///    border around each output pixel. Per-DC-group gaborish needs
+///    EITHER a 2-pixel replicated border from the next DC group OR a
+///    full-image gaborish pass before splitting. Chunk-3 risk.
+/// 2. **mask1x1 5×5 stencil** — `compute_mask1x1` reads a 2-pixel
+///    border on the PRE-gaborish XYB Y plane. Same border requirement
+///    as gaborish.
+/// 3. **quant_field 3×3 block neighbours** — `compute_quant_field_float`
+///    reads neighbour blocks for masking. Needs 1-block border (8
+///    pixels at full res) on each side of every DC group.
+/// 4. **CfL tile granularity** — `compute_cfl_map` operates on
+///    8-block × 8-block tiles (64×64 pixels). Tiles don't align to
+///    DC groups (32-block / 256-pixel DC group). Chunk-3 risk: either
+///    run CfL on multi-tile windows that fall on DC group boundaries,
+///    OR accept that the boundary tile spans two DC groups and pull
+///    the second DC group's data on demand.
+/// 5. **AC strategy search** — `compute_ac_strategy` uses neighbour-
+///    block info for AVOID_2X2 / AVOID_HF_4X4 heuristics. Needs the
+///    same 1-block border as quant_field.
+///
+/// All five are dormant in chunk 2 because the per-DC-group fill
+/// processes the whole image (no DC-group boundaries are crossed). The
+/// fix-or-accept decision moves into chunk 3.
+pub(crate) struct EncoderPrecomputedGlobal {
+    /// Original image width in pixels.
+    pub width: usize,
+    /// Original image height in pixels.
+    pub height: usize,
+    /// Number of 8x8 blocks in x direction.
+    pub xsize_blocks: usize,
+    /// Number of 8x8 blocks in y direction.
+    pub ysize_blocks: usize,
+    /// Padded width (rounded up to block boundary).
+    pub padded_width: usize,
+    /// Padded height (rounded up to block boundary).
+    pub padded_height: usize,
+
+    /// Distance used for the initial quant field — kept on the global
+    /// so per-DC-group fill (and downstream rate-control) can reproduce
+    /// the same `distance_for_iqf` (gaborish-on → distance,
+    /// gaborish-off → distance × 0.62).
+    pub base_distance: f32,
+    /// Whether gaborish was requested.
+    pub gaborish_enabled: bool,
+
+    /// Patches-subtracted PRE-gaborish XYB X. Per-DC-group fill mutates
+    /// this in place when running `gaborish_inverse`. Sized
+    /// `padded_width × padded_height`, row-major.
+    pub xyb_x: Vec<f32>,
+    /// See [`Self::xyb_x`].
+    pub xyb_y: Vec<f32>,
+    /// See [`Self::xyb_x`].
+    pub xyb_b: Vec<f32>,
+
+    /// Pre-gaborish XYB snapshot (only `Some` when gaborish is
+    /// enabled). Same layout as `xyb_x`. Used by `encode_from_precomputed`
+    /// for patches case-1 (re-detect on pre-gaborish XYB when
+    /// `patches_data` is `None` but `xyb_pre_gaborish` is `Some`).
+    pub xyb_pre_gaborish: Option<[Vec<f32>; 3]>,
+
+    /// Noise parameters (full-image scan).
+    pub noise_params: Option<super::noise::NoiseParams>,
+
+    /// Patches dictionary (full-image BFS).
+    pub patches_data: Option<super::patches::PatchesData>,
+
+    /// X channel pixel chromacity (max gradient of pre-gaborish XYB X).
+    pub chromacity_x_pixelized: u32,
+    /// B channel pixel chromacity (from pre-gaborish XYB Y/B).
+    pub chromacity_b_pixelized: u32,
+}
+
+impl EncoderPrecomputedGlobal {
+    /// Run only the global part of the precompute pipeline: XYB
+    /// conversion, noise estimation, optional denoising, patches
+    /// detection and subtraction, chromacity stats, and the
+    /// pre-gaborish XYB snapshot.
+    ///
+    /// Does NOT compute quant_field, mask1x1, gaborish, CfL, or
+    /// AC strategy — those are the per-DC-group pass's job. Callers
+    /// either run [`fill_dc_group_state_whole_image`] (chunk 2 = today's
+    /// monolithic equivalent) or, in chunk 3+, iterate
+    /// `fill_dc_group_state` over real DC-group-sized regions.
+    ///
+    /// Allocation accounting matches what `compute_with_budget` did
+    /// pre-refactor: three padded XYB planes + (when gaborish) three
+    /// padded pre-gaborish snapshots.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn compute_global_only(
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+        distance: f32,
+        enable_noise: bool,
+        enable_denoise: bool,
+        enable_gaborish: bool,
+        enable_patches: bool,
+        use_ans: bool,
+        encoder_mode: crate::api::EncoderMode,
+        profile: &crate::effort::EffortProfile,
+        color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
+        budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    ) -> crate::error::Result<Self> {
+        use super::noise::{denoise_xyb, estimate_noise_params, noise_quality_coef};
+
+        assert_eq!(linear_rgb.len(), width * height * 3);
+
+        // Calculate dimensions
+        let xsize_blocks = div_ceil(width, BLOCK_DIM);
+        let ysize_blocks = div_ceil(height, BLOCK_DIM);
+        let padded_width = xsize_blocks * BLOCK_DIM;
+        let padded_height = ysize_blocks * BLOCK_DIM;
+
+        // Convert to XYB with edge-replicated padding.
+        // **Cross-DC-group consideration**: per-DC-group XYB conversion
+        // is straightforward (XYB is per-pixel; padding only matters at
+        // the image edge). Chunk 3 can stream this row-by-row.
+        let (mut xyb_x, mut xyb_y, mut xyb_b) = convert_to_xyb_padded(
+            width,
+            height,
+            padded_width,
+            padded_height,
+            linear_rgb,
+            color_encoding,
+            budget,
+        )?;
+
+        // Estimate noise parameters — full-image aggregation. Per-DC-group
+        // streaming MUST either (a) compute per-group noise and then merge
+        // the histograms, or (b) accept that noise estimation requires a
+        // full-image pre-pass. libjxl picks (b) for streaming mode.
+        let noise_params = if enable_noise {
+            let quality_coef = noise_quality_coef(distance);
+            let params = estimate_noise_params(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                quality_coef,
+            );
+
+            // Apply denoising pre-filter if enabled.
+            if enable_denoise && let Some(ref p) = params {
+                denoise_xyb(
+                    &mut xyb_x,
+                    &mut xyb_y,
+                    &mut xyb_b,
+                    padded_width,
+                    padded_height,
+                    p,
+                    quality_coef,
+                );
+            }
+
+            params
+        } else {
+            None
+        };
+
+        // Snapshot pre-gaborish XYB so the rate-control path's
+        // `encode_from_precomputed` can run patches detection against
+        // it. Patches MUST be detected on the unsharpened XYB to
+        // roundtrip correctly through the decoder's
+        // `IDCT → gaborish → EPF → patches` pipeline (see field doc on
+        // [`EncoderPrecomputed::xyb_pre_gaborish`] and the matching
+        // block in `vardct/encoder.rs::encode_from_precomputed`).
+        //
+        // The clone is ~3 × `padded_width × padded_height × 4` bytes
+        // (~16 MB at 12 MP). Skipped when gaborish is off because
+        // post-gaborish == pre-gaborish in that case (encoder uses
+        // `precomputed.xyb_*` directly when this field is `None`).
+        let xyb_pre_gaborish: Option<[Vec<f32>; 3]> = if enable_gaborish {
+            crate::budget::MemoryBudget::reserve_permanent_opt(
+                budget,
+                (padded_width as u64)
+                    .saturating_mul(padded_height as u64)
+                    .saturating_mul(4 * 3),
+            )?;
+            Some([xyb_x.clone(), xyb_y.clone(), xyb_b.clone()])
+        } else {
+            None
+        };
+
+        // Patches detection on PRE-gaborish XYB. libjxl pipeline order
+        // (enc_heuristics.cc:1057-1194):
+        //   noise → splines → patches detect/subtract → InitialQuantField
+        //   → GaborishInverse → CfL pass 1 → AC strategy → CfL pass 2 → DCT
+        //
+        // Patches MUST be detected and subtracted BEFORE quant_field /
+        // mask / gaborish / CfL / AC strategy so that ALL downstream
+        // computations see the patches-subtracted XYB. Without this, on
+        // screenshot content (text, UI) the quant_field is fitted to
+        // sharp text edges that PATCHES will absorb — producing
+        // over-aggressive quantization when the actual residual is
+        // smooth, and CfL is fitted to the dominant low-frequency luma
+        // that patches will remove — producing chroma residuals that
+        // don't match the actual encoded geometry.
+        //
+        // The decoder pipeline (dec_cache.cc:148-194) reverses this:
+        //   IDCT → gaborish → EPF → ChannelUpsampling → add patches
+        // — patches are added back AFTER gaborish, so the patches
+        // reference frame must store the PRE-gaborish patch values
+        // (which is what `find_and_build` extracts from the
+        // pre-gaborish XYB here).
+        //
+        // **Cross-DC-group consideration**: patches detection runs an
+        // 8-connected BFS that can span the whole image (a single
+        // patch can occupy multiple DC groups). libjxl-style streaming
+        // MUST do patches detection as a full-image pre-pass before
+        // the per-DC-group loop, then apply the subtract per group as
+        // each group's pixels are streamed in. This is why
+        // `patches_data` lives on the GLOBAL — it's effectively
+        // immutable input to every per-DC-group fill.
+        //
+        // Distance-aware kMinPeak (W3-1 / commit 4fb0f52): libjxl
+        // parity (=2) below d=1.0, W2-5 chunk 1 relaxation (=1) at
+        // d>=1.0. See `vardct/encoder.rs::encode_inner` for why
+        // RFC#45 chunk 3's per-patch gate does NOT lower this.
+        let min_peak = if distance < 1.0 { 2 } else { 1 };
+        // RFC#45 pick #5 chunk 3 per-patch cost gate — mirrors
+        // `vardct/encoder.rs::encode_inner` (see comment there).
+        let mut patches_data = if enable_patches {
+            super::patches::find_and_build_with_per_patch_gate(
+                [&xyb_x, &xyb_y, &xyb_b],
+                width,
+                height,
+                padded_width,
+                min_peak,
+                Some(distance),
+                use_ans,
+            )
+        } else {
+            None
+        };
+        // Cost-benefit gating for experimental mode only — libjxl uses
+        // patches unconditionally when detected, so reference mode
+        // skips this to match (mirrors `encode_inner` line ~750).
+        if matches!(encoder_mode, crate::api::EncoderMode::Experimental)
+            && let Some(ref pd) = patches_data
+            && !pd.is_cost_effective(distance, use_ans)
+        {
+            patches_data = None;
+        }
+        if let Some(ref mut pd) = patches_data {
+            pd.quantize_ref_image();
+        }
+        if let Some(ref pd) = patches_data {
+            let mut xyb = [
+                core::mem::take(&mut xyb_x),
+                core::mem::take(&mut xyb_y),
+                core::mem::take(&mut xyb_b),
+            ];
+            super::patches::subtract_patches(&mut xyb, padded_width, pd);
+            let [x, y, b] = xyb;
+            xyb_x = x;
+            xyb_y = y;
+            xyb_b = b;
+        }
+
+        // Compute pixel chromacity stats AFTER patches subtract, BEFORE
+        // gaborish (mirrors `encode_inner` ordering at vardct/encoder.rs
+        // line ~850 — chromacity is on the patches-subtracted PRE-gab
+        // XYB so the X/B channel pixelization metric reflects the
+        // chroma the encoder will actually quantize). Gated at effort
+        // >= 7 to skip the full-image gradient scan at low effort.
+        //
+        // **Cross-DC-group consideration**: chromacity is a global
+        // aggregation (max gradient across the whole image). Streaming
+        // mode either pre-passes the full image or accepts per-DC-group
+        // stats and merges them.
+        let (chromacity_x_pixelized, chromacity_b_pixelized) = if profile.chromacity_adjustment {
+            let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+            );
+            (
+                pixel_stats.how_much_is_x_channel_pixelized(),
+                pixel_stats.how_much_is_b_channel_pixelized(),
+            )
+        } else {
+            (0, 0)
+        };
+
+        Ok(Self {
+            width,
+            height,
+            xsize_blocks,
+            ysize_blocks,
+            padded_width,
+            padded_height,
+            base_distance: distance,
+            gaborish_enabled: enable_gaborish,
+            xyb_x,
+            xyb_y,
+            xyb_b,
+            xyb_pre_gaborish,
+            noise_params,
+            patches_data,
+            chromacity_x_pixelized,
+            chromacity_b_pixelized,
+        })
+    }
+}
+
+/// Per-DC-group precomputed state returned by
+/// [`fill_dc_group_state_whole_image`] (chunk 2) and by the future
+/// per-DC-group fill function (chunk 3).
+///
+/// In chunk 2 these fields cover the whole image; in chunk 3 they'll
+/// cover a single DC group, and the calling loop will assemble them
+/// into the whole-image Vecs on the assembled `EncoderPrecomputed`.
+pub(crate) struct DcGroupFill {
+    pub quant_field_float: Vec<f32>,
+    pub masking: Vec<f32>,
+    pub mask1x1: Option<Vec<f32>>,
+    pub cfl_map: CflMap,
+    pub ac_strategy: AcStrategyMap,
+}
+
+/// Run the per-DC-group precompute pipeline (quant_field / mask1x1 /
+/// gaborish / CfL / AC strategy) on the whole image as ONE region.
+///
+/// **Chunk 2 invariant**: bit-identical output to the pre-refactor
+/// `compute_with_budget`. The single-region pass means none of the
+/// cross-DC-group borders are crossed.
+///
+/// **Mutates** the XYB planes on `global` in place — `gaborish_inverse`
+/// rewrites them from pre-gaborish to post-gaborish. After this returns,
+/// `global.xyb_x` etc. hold the post-gaborish patches-subtracted XYB
+/// (which is exactly what CfL pass 2 and the bitstream encoder
+/// downstream consume).
+///
+/// **Chunk-3 plan**: split into a per-region function with parameters
+/// `(global, dc_x_blocks, dc_y_blocks, dc_x_size_blocks, dc_y_size_blocks)`
+/// plus a 1-block / 2-pixel border read from the neighbour DC group's
+/// pre-gaborish XYB. The five hidden cross-group dependencies
+/// documented on [`EncoderPrecomputedGlobal`] each need an explicit
+/// resolution at that point:
+/// - gaborish & mask1x1: replicate 2-pixel border from neighbour DC
+///   group (or accept the small per-group divergence and gate behind
+///   a flag, as libjxl does in streaming mode).
+/// - quant_field & AC strategy: replicate 1-block border.
+/// - CfL: align CfL tile windows to DC group boundaries (DC groups
+///   are 256 px = 32 blocks = 4 CfL tiles, so this aligns cleanly).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fill_dc_group_state_whole_image(
+    global: &mut EncoderPrecomputedGlobal,
+    cfl_enabled: bool,
+    ac_strategy_enabled: bool,
+    pixel_domain_loss: bool,
+    enable_adaptive_gaborish: bool,
+    force_strategy: Option<u8>,
+    profile: &crate::effort::EffortProfile,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<DcGroupFill> {
+    use super::ac_strategy::compute_ac_strategy;
+    use super::chroma_from_luma::compute_cfl_map;
+    use super::gaborish::gaborish_inverse_maybe_adaptive;
+
+    let EncoderPrecomputedGlobal {
+        xsize_blocks,
+        ysize_blocks,
+        padded_width,
+        padded_height,
+        base_distance: distance,
+        gaborish_enabled: enable_gaborish,
+        ref mut xyb_x,
+        ref mut xyb_y,
+        ref mut xyb_b,
+        ..
+    } = *global;
+
+    // Compute adaptive per-block quantization field and masking on
+    // PRE-gaborish XYB. libjxl computes InitialQuantField BEFORE
+    // GaborishInverse (`enc_heuristics.cc:1117-1142`, comment:
+    // "relies on pre-gaborish values"). Gaborish sharpening
+    // inflates gradients which inflates masking → smaller quant
+    // values → finer quantization → more bits.
+    //
+    // When gaborish is off, scale distance by 0.62 for the quant
+    // field (matches libjxl `enc_heuristics.cc:1119`).
+    //
+    // **Cross-DC-group consideration**: `compute_quant_field_float`
+    // reads a 1-block neighbourhood. Chunk-3 split needs to replicate
+    // one block of pre-gaborish XYB on each DC-group edge.
+    let distance_for_iqf = if enable_gaborish {
+        distance
+    } else {
+        distance * 0.62
+    };
+
+    let (quant_field_float, masking) =
+        super::adaptive_quant::compute_quant_field_float_with_budget(
+            xyb_x,
+            xyb_y,
+            xyb_b,
+            padded_width,
+            padded_height,
+            xsize_blocks,
+            ysize_blocks,
+            distance_for_iqf,
+            profile.k_ac_quant,
+            budget,
+        )?;
+
+    // Compute per-pixel mask for pixel-domain loss on PRE-gaborish
+    // XYB (matches libjxl `InitialQuantField` which produces
+    // `initial_quant_masking1x1` before `GaborishInverse`).
+    //
+    // **Cross-DC-group consideration**: `compute_mask1x1` uses a
+    // 5×5 stencil. Chunk-3 split needs a 2-pixel pre-gaborish XYB
+    // border replicated from the neighbour DC group.
+    let mask1x1 = if ac_strategy_enabled && pixel_domain_loss {
+        Some(super::adaptive_quant::compute_mask1x1_with_budget(
+            xyb_y,
+            padded_width,
+            padded_height,
+            budget,
+        )?)
+    } else {
+        None
+    };
+
+    // Apply gaborish inverse (5x5 sharpening) on patches-subtracted
+    // XYB AFTER quant_field / mask1x1.
+    //
+    // **Cross-DC-group consideration**: gaborish_inverse is a 5x5
+    // convolution — reads 2-pixel borders. Chunk-3 split needs
+    // either a 2-pixel border-replication scheme, or full-image
+    // gaborish before splitting (matches libjxl streaming mode's
+    // approach for this kernel).
+    if enable_gaborish {
+        gaborish_inverse_maybe_adaptive(
+            xyb_x,
+            xyb_y,
+            xyb_b,
+            padded_width,
+            padded_height,
+            enable_adaptive_gaborish,
+            budget,
+        )?;
+    }
+
+    // Compute CfL map on POST-gaborish patches-subtracted XYB.
+    //
+    // **Cross-DC-group consideration**: CfL tiles are 8×8 blocks
+    // (64×64 pixels). DC groups are 32×32 blocks (256×256 pixels).
+    // Tiles align to DC groups cleanly (each DC group contains 4×4
+    // CfL tiles), so per-DC-group CfL is straightforward IF we
+    // accept that the per-tile Newton iteration sees only that
+    // tile's data — which it already does today.
+    let cfl_map = if cfl_enabled {
+        compute_cfl_map(
+            xyb_x,
+            xyb_y,
+            xyb_b,
+            padded_width,
+            padded_height,
+            xsize_blocks,
+            ysize_blocks,
+            profile.cfl_newton,
+            profile.cfl_newton_eps,
+            profile.cfl_newton_max_iters,
+        )
+    } else {
+        CflMap::zeros(
+            div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS),
+            div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS),
+        )
+    };
+
+    // Compute AC strategy.
+    //
+    // **Cross-DC-group consideration**: AC strategy search uses
+    // neighbour blocks for AVOID_2X2 / AVOID_HF_4X4 heuristics
+    // (1-block border). Same border requirement as quant_field.
+    let ac_strategy = if let Some(forced) = force_strategy {
+        AcStrategyMap::force_strategy(xsize_blocks, ysize_blocks, forced)
+    } else if !ac_strategy_enabled {
+        AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks)
+    } else {
+        compute_ac_strategy(
+            xyb_x,
+            xyb_y,
+            xyb_b,
+            padded_width,
+            padded_height,
+            xsize_blocks,
+            ysize_blocks,
+            distance,
+            &quant_field_float,
+            &masking,
+            &cfl_map,
+            mask1x1.as_deref(),
+            padded_width,
+            profile,
+        )
+    };
+
+    // CfL pass 2 refinement happens in encoder.rs after the butteraugli loop
+    // produces the final quant_field. No refinement here — pass 1 values from
+    // compute_cfl_map are sufficient for initial AC strategy selection.
+
+    Ok(DcGroupFill {
+        quant_field_float,
+        masking,
+        mask1x1,
+        cfl_map,
+        ac_strategy,
+    })
 }
 
 /// Convert linear RGB to XYB color space with padding to block boundaries.
