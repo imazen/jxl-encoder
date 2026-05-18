@@ -104,6 +104,36 @@ pub use precomputed::EncoderPrecomputed;
 #[cfg(feature = "rate-control")]
 pub use rate_control::RateControlConfig;
 
+/// **Investigation-only** (W44-9 Sub-chunk B): toggle the process-wide
+/// override that forces DCT8 entropy estimation through the explicit
+/// non-fused fallback (separate DCT then separate entropy_estimate_coeffs)
+/// instead of the fused AVX2 kernel.
+///
+/// Default is `false` (uses fused path). Flipping has no effect on
+/// production callers — this is purely for A/B harnesses investigating
+/// whether FMA op-ordering in the fused kernel gives DCT8 a borderline
+/// cost advantage that explains F-D wedge AC overspend.
+///
+/// Gated behind the `__expert` cargo feature.
+#[cfg(feature = "__expert")]
+pub fn set_force_unfused_dct8_entropy(v: bool) {
+    ac_strategy::set_force_unfused_dct8_entropy(v);
+}
+
+/// **Investigation-only** (W44-9 Sub-chunk B): reset per-branch hit
+/// counters used to verify the override is taking effect.
+#[cfg(feature = "__expert")]
+pub fn reset_dct8_branch_counters() {
+    ac_strategy::reset_dct8_branch_counters();
+}
+
+/// **Investigation-only** (W44-9 Sub-chunk B): read per-branch hit
+/// counters. Returns `(fused_hits, unfused_hits)` since the last reset.
+#[cfg(feature = "__expert")]
+pub fn dct8_branch_counters() -> (u64, u64) {
+    ac_strategy::dct8_branch_counters()
+}
+
 /// Debug hook for capturing the butteraugli loop's internal reconstruction at
 /// the final iteration. **Not part of the stable API** — for the drift-investigation
 /// Layer-1 test only. Gated by `feature = "__internal_recon_hook"`.

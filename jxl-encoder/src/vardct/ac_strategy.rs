@@ -33,6 +33,63 @@ use super::dct::{
 };
 use super::quant::{dequant_weights, dequant_weights_full, quant_weights, quant_weights_full};
 use crate::effort::EffortProfile;
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+/// Process-wide override: when `true`, the fused-DCT8 + entropy path in
+/// `estimate_entropy_full_impl` is replaced by the explicit non-fused
+/// fallback (separate DCT then separate entropy_estimate_coeffs).
+///
+/// Used by the W44-9 Sub-chunk B investigation (`f_d_fused_vs_unfused_dct8`
+/// example) to A/B whether FMA op-ordering in the fused AVX2 kernel gives
+/// DCT8 a borderline cost advantage that explains the +2.92pp DCT8 area
+/// over-pick on F-D photo cells vs cjxl.
+///
+/// Default is `false` (uses fused path) — flipping has zero effect on
+/// production callers. Only the example crate's harness flips it.
+static FORCE_UNFUSED_DCT8: AtomicBool = AtomicBool::new(false);
+
+/// Counter for the unfused-fallback branch (W44-9 verification).
+/// Lets the example harness assert the override actually fired.
+static UNFUSED_BRANCH_HITS: AtomicU64 = AtomicU64::new(0);
+
+/// Counter for the fused-path branch (W44-9 verification).
+static FUSED_BRANCH_HITS: AtomicU64 = AtomicU64::new(0);
+
+/// Set the process-wide override; see [`FORCE_UNFUSED_DCT8`].
+///
+/// **Investigation-only.** This is a debug knob for the W44-9 Sub-chunk B
+/// A/B harness. Production code paths never call this — the default
+/// `false` preserves the fused-DCT8 path, which is byte-identical to
+/// the prior behaviour.
+pub fn set_force_unfused_dct8_entropy(v: bool) {
+    FORCE_UNFUSED_DCT8.store(v, Ordering::Relaxed);
+}
+
+/// Reset the per-branch hit counters (W44-9 verification).
+pub fn reset_dct8_branch_counters() {
+    FUSED_BRANCH_HITS.store(0, Ordering::Relaxed);
+    UNFUSED_BRANCH_HITS.store(0, Ordering::Relaxed);
+}
+
+/// Returns `(fused_hits, unfused_hits)` since the last reset (W44-9).
+pub fn dct8_branch_counters() -> (u64, u64) {
+    (
+        FUSED_BRANCH_HITS.load(Ordering::Relaxed),
+        UNFUSED_BRANCH_HITS.load(Ordering::Relaxed),
+    )
+}
+
+/// Read the process-wide override; see [`FORCE_UNFUSED_DCT8`].
+#[inline]
+fn force_unfused_dct8_entropy() -> bool {
+    let v = FORCE_UNFUSED_DCT8.load(Ordering::Relaxed);
+    if v {
+        UNFUSED_BRANCH_HITS.fetch_add(1, Ordering::Relaxed);
+    } else {
+        FUSED_BRANCH_HITS.fetch_add(1, Ordering::Relaxed);
+    }
+    v
+}
 
 /// Pre-allocated scratch buffers for entropy estimation.
 /// Avoids per-call heap allocations in the hot `estimate_entropy_full` loop.
@@ -758,20 +815,40 @@ fn estimate_entropy_full_impl(
                     .try_into()
                     .unwrap();
 
-                let coeff_result = jxl_simd::fused_dct8_entropy(
-                    xyb[c],
-                    stride,
-                    bx,
-                    by,
-                    y_dct_ref,
-                    weights,
-                    inv_wts,
-                    cmap_factors[c],
-                    quant_for_coeffs,
-                    k_cost_delta,
-                    error_coeffs,
-                    dct_out,
-                );
+                // W44-9 Sub-chunk B: optionally route through the explicit
+                // non-fused fallback (separate DCT + entropy) instead of the
+                // fused AVX2 kernel. Default is the fused path.
+                let coeff_result = if force_unfused_dct8_entropy() {
+                    jxl_simd::fused_dct8_entropy_fallback(
+                        xyb[c],
+                        stride,
+                        bx,
+                        by,
+                        y_dct_ref,
+                        weights,
+                        inv_wts,
+                        cmap_factors[c],
+                        quant_for_coeffs,
+                        k_cost_delta,
+                        error_coeffs,
+                        dct_out,
+                    )
+                } else {
+                    jxl_simd::fused_dct8_entropy(
+                        xyb[c],
+                        stride,
+                        bx,
+                        by,
+                        y_dct_ref,
+                        weights,
+                        inv_wts,
+                        cmap_factors[c],
+                        quant_for_coeffs,
+                        k_cost_delta,
+                        error_coeffs,
+                        dct_out,
+                    )
+                };
 
                 entropy += coeff_result.entropy_sum;
                 let num_nzeros = coeff_result.nzeros_sum as usize;
