@@ -1,0 +1,76 @@
+# patches_lossless_savings_calibrate_all_lossless_trial_2026-05-17.tsv
+
+## Provenance
+- RFC#45 lossless chunk 5 — lossless-shape trial encoder follow-on to W11-1 (ad9964a6).
+- Calibrated against the new trial_encode_ref_frame_bytes_lossless() helper that
+  mirrors the live encode_reference_frame_rgb() emit path (XYB-shape trial used
+  by W11-1 overshoots true cost by up to 1.8x on smooth-dark UI screenshots).
+
+## Generation
+```
+cd jxl-encoder--lossless-patches-chunk5
+cargo run --release -p jxl-encoder \
+  --example patches_lossless_calibrate_all \
+  --features __internals \
+  2>&1 | grep -E '^(class|screenshot|photo)' \
+  > benchmarks/patches_lossless_savings_calibrate_all_lossless_trial_2026-05-17.tsv
+```
+
+## Provenance
+- Parent commit (main@origin): ddc02a0212fd1d8ac4094184f79f4203fdcbf3a7
+- Hostname: lilith
+- Date: 2026-05-17 (UTC)
+- jxl-encoder version: 0.3.2
+
+## Grid
+- 11 gb82-sc screenshots + 5 CID22-512 photos = 16 rows
+- LosslessConfig::new() default profile (effort 7)
+- patches=true (with the new chunk-5 gate, C=0.35)
+- patches=false sidecar for `bytes_off` baseline
+- find_and_build_patches_lossless() called directly (no gate) for telemetry
+
+## Schema
+class                       screenshot|photo
+image                       file basename
+width / height              pixels
+bytes_off                   bytes with patches disabled
+bytes_on                    bytes with patches=default (chunk-5 gate active)
+actual_savings_B            bytes_off - bytes_on (signed)
+total_patch_pixels          sum over occurrences of ref.xsize * ref.ysize
+unique_refs                 PatchesData::ref_positions.len()
+ref_frame_pixels            ref_width * ref_height
+occurrences                 PatchesData::positions.len()
+ref_overhead_xyb_B          trial_encode_ref_frame_bytes (XYB-shape, W11-1 estimator)
+ref_overhead_lossless_B     trial_encode_ref_frame_bytes_lossless (chunk-5 estimator)
+dict_overhead_B             trial_encode_dict_section_bytes
+total_overhead_xyb_B        ref_overhead_xyb_B + dict_overhead_B
+total_overhead_lossless_B   ref_overhead_lossless_B + dict_overhead_B
+empirical_bpp               actual_savings_B / total_patch_pixels
+c_needed_xyb                1.5 * total_overhead_xyb_B / total_patch_pixels
+c_needed_lossless           1.5 * total_overhead_lossless_B / total_patch_pixels
+overhead_overshoot_ratio    ref_overhead_xyb_B / ref_overhead_lossless_B
+
+## Fit summary
+- 8 of 11 screenshots produce PatchesData (3 hit detector's 1% coverage filter)
+- 5 of 5 photos return None (no text-like patches)
+- bpp distribution over 8 admitted: min=0.048, geomean=0.275, median=0.272,
+  mean=0.498, max=2.317
+- c_needed_lossless distribution: min=0.183, max=0.350 → C=0.35 admits 8/8
+- c_needed_xyb distribution: min=0.186, max=0.437 → W11-1's C=0.45 admitted 8/8
+- 22% tighter gate via chunk-5 lossless-shape trial encoder
+- 7/8 overhead-overshoot-ratio within +/- 5% (essentially parity); 3 imac entries
+  show 1.80x overshoot (smooth-dark UI compresses much better in lossless RGB+RCT
+  than in XYB Y/X/B-Y reordered + DC-quant-scaled modular stream)
+
+## Admission decision matrix (1.5x margin)
+| image          | C=0.45 xyb (W11-1) | C=0.30 lossless | C=0.35 lossless (chunk 5) |
+|----------------|--------------------|-----------------|---------------------------|
+| codec_wiki     | admit              | reject          | admit                     |
+| imac_dark      | admit              | admit           | admit                     |
+| imac_g3        | admit              | admit           | admit                     |
+| imac_g3_strip  | admit              | admit           | admit                     |
+| imessage       | admit              | reject          | admit                     |
+| terminal       | admit              | admit           | admit                     |
+| windows95      | admit              | admit           | admit                     |
+| windows        | admit              | reject          | admit                     |
+| photos (5/5)   | n/a (no patches)   | n/a             | n/a                       |

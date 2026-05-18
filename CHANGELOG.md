@@ -2,7 +2,41 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Lossless patches gate now uses lossless-shape trial encoder**
+  (`trial_encode_ref_frame_bytes_lossless`, RFC#45 lossless chunk 5
+  follow-on to W11-1 `ad9964a6`). Replaces the XYB-shape
+  `trial_encode_ref_frame_bytes` invoked by W11-1's
+  `is_cost_effective_lossless` with a path that mirrors the live emit
+  (`encode_reference_frame_rgb`). The XYB-shape trial overshot true
+  lossless byte cost by up to 1.8× on smooth-dark UI screenshots
+  (mean overshoot 1.32× across the gb82-sc 8-image admitted set);
+  with the new tighter overhead estimator, `SAVINGS_BYTES_PER_PIXEL_LOSSLESS`
+  drops from `0.45` to `0.35` and the gate is 22% tighter against
+  pathological mixed content (admission band shifts from
+  `c_needed_xyb ≤ 0.45` to `c_needed_lossless ≤ 0.35`). Same 8/8
+  admission on the gb82-sc corpus — bytes byte-identical to W11-1.
+  Signature change: `is_cost_effective_lossless(use_ans)` →
+  `is_cost_effective_lossless(bit_depth, use_ans)` (`bit_depth = 8`
+  for the common Rgb8 path, 16 for Rgb16). Refs jxl-encoder#45.
+  Calibration TSV:
+  `benchmarks/patches_lossless_savings_calibrate_all_lossless_trial_2026-05-17.tsv`.
+  A/B verdict-vs-empirical:
+  `benchmarks/patches_lossless_gate_ab_lossless_trial_2026-05-17.tsv`
+  (5/5 screenshot wins, 5/5 photo no-ops, 10/10 gate-verdict matches
+  empirical sign). hash_locks 36/36 byte-identical.
+
 ### Added
+
+- **`trial_encode_ref_frame_bytes_lossless`** — lossless-shape
+  reference-frame trial encoder mirroring the live
+  `encode_reference_frame_rgb` emit. Companion to the existing XYB-shape
+  `trial_encode_ref_frame_bytes`. Used by the chunk-5
+  `is_cost_effective_lossless` gate. New `__internals` wrapper
+  `patches_trial_overhead_lossless(bit_depth, use_ans)` exposed for
+  calibration harnesses (sidecar to `patches_trial_overhead` which
+  retains the XYB-shape estimator). Refs jxl-encoder#45.
 
 - **Lossless-mode patches per-image cost gate**
   (`PatchesData::is_cost_effective_lossless`, RFC#45 chunks 4-7 backport

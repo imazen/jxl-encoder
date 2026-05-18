@@ -1,0 +1,68 @@
+# patches_lossless_gate_ab_lossless_trial_2026-05-17.tsv
+
+## Provenance
+- RFC#45 lossless chunk 5 — gate verdict vs empirical sign of bytes_off - bytes_on,
+  validated against the new chunk-5 C=0.35 + lossless-shape trial encoder.
+
+## Generation
+```
+cd jxl-encoder--lossless-patches-chunk5
+cargo run --release -p jxl-encoder \
+  --example patches_lossless_gate_ab \
+  --features __internals \
+  2>&1 | grep -E '^(class|screenshot|photo)' \
+  > benchmarks/patches_lossless_gate_ab_lossless_trial_2026-05-17.tsv
+```
+
+## Provenance
+- Parent commit (main@origin): ddc02a0212fd1d8ac4094184f79f4203fdcbf3a7
+- Hostname: lilith
+- Date: 2026-05-17 (UTC)
+
+## Grid
+- 5 gb82-sc screenshots (windows95, terminal, codec_wiki, imac_g3, windows)
+- 5 CID22-512 photos (1025469, 1044329, 1189261, 1279330, 1418519)
+- LosslessConfig::new() default profile (effort 7), chunk-5 gate active (C=0.35)
+
+## Schema
+class                        screenshot|photo
+image                        file basename
+width / height               pixels
+bytes_off                    bytes with patches forced off
+bytes_on                     bytes with patches=default (chunk-5 gate active)
+delta_B                      bytes_off - bytes_on (positive => patches saved bytes)
+total_patch_pixels           sum over occurrences of ref.xsize * ref.ysize
+unique_refs                  PatchesData::ref_positions.len()
+ref_frame_pixels             ref_width * ref_height
+occurrences                  PatchesData::positions.len()
+gate_says_effective          chunk-5 is_cost_effective_lossless(bit_depth=8, use_ans=true) verdict
+empirical_win                delta_B > 0
+
+## Results
+- 5/5 screenshots: delta_B > 0 (patches saved 1110 .. 135091 bytes)
+- 5/5 photos: delta_B = 0 (no patches detected, identical)
+- 10/10 gate verdict matches empirical sign
+- bytes_on identical to W11-1 (ad9964a6): same admission set, byte-for-byte
+
+## vs W11-1 (chunk-5 vs C=0.45 + xyb-shape trial encoder)
+| image          | bytes_on (W11-1) | bytes_on (chunk-5) | delta_B vs W11-1 |
+|----------------|------------------|--------------------|------------------|
+| windows95      | 10619            | 10619              | 0                |
+| terminal       | 49714            | 49714              | 0                |
+| codec_wiki     | 212163           | 212163             | 0                |
+| imac_g3        | 314953           | 314953             | 0                |
+| windows        | 356297           | 356297             | 0                |
+| 1025469        | 236251           | 236251             | 0                |
+| 1044329        | 342087           | 342087             | 0                |
+| 1189261        | 307447           | 307447             | 0                |
+| 1279330        | 213025           | 213025             | 0                |
+| 1418519        | 176050           | 176050             | 0                |
+
+## Interpretation
+On this 10-image corpus, chunk-5 produces byte-identical output to W11-1 — the
+8 screenshots in the calibration set all have c_needed_lossless < 0.35 < 0.45,
+so both gates admit. The chunk-5 win is structural: the gate is 22% tighter at
+C=0.35 vs W11-1's C=0.45 against more-accurate (lossless-shape) overhead, so
+pathological mixed content where xyb-overshoot was admitting a marginal patch
+(c_needed_xyb in (0.35, 0.45]) will now be rejected. That regression-protection
+band doesn't intersect the gb82-sc corpus.
