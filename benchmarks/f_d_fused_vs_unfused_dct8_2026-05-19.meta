@@ -1,0 +1,63 @@
+# W44-9 Sub-chunk B — fused vs unfused DCT8 entropy A/B
+#
+# Investigation: F-D photo high-d AC overspend wedge (W44-6 follow-on).
+# Tests hypothesis 3 from the W44-6 memo: that FMA op-ordering in the fused
+# AVX2 DCT8 entropy kernel (jxl_simd::fused_dct8_entropy_avx2) gives DCT8 a
+# borderline cost advantage in strategy selection, causing the +2.92pp DCT8
+# area over-pick vs cjxl observed on F-D photo cells at e7 d>=3.
+#
+# Method:
+#   - For each of 7 F-D cells (1531677/1420710/1189261 x distances 3..6 at e7):
+#       Arm A: encode with fused-DCT8 kernel (default, FORCE_UNFUSED_DCT8=false)
+#       Arm B: encode with non-fused fallback (FORCE_UNFUSED_DCT8=true) —
+#              extracts block to scratch, calls dct_8x8 + entropy_estimate_coeffs
+#              as separate kernels (still AVX2 for both halves on this host).
+#   - Both arms emit jxl. jxl-inspect export-csv --per-block gives the AC
+#     strategy histogram (varblock count + 8x8-block-area weighted) and
+#     hf_mul (raw_quant) per varblock.
+#   - Both arms decoded via jxl-oxide to linear sRGB → Rust butteraugli +
+#     fast_ssim2 (metadata-immune per CLAUDE.md PNG-metadata bug).
+#   - Branch-hit counters verify the override actually fired in each arm.
+#
+# Branch-hit verification (all 7 cells, identical pattern):
+#   Arm A: fused_hits=12288  unfused_hits=0   (fused path only)
+#   Arm B: fused_hits=0      unfused_hits=12288 (unfused path only)
+#
+# Result: REFUTED. All 7 cells show bytes Δ = +0.00%, varblocks Δ = +0.00%,
+# AC strategy area Δ = +0.000pp for every type, butteraugli Δ = +0.000%,
+# ssim2 Δ = +0.0000. The fused-AVX2 path and the unfused-fallback path
+# produce bit-identical bitstreams.
+#
+# Conclusion: Hypothesis 3 (FMA op-ordering in fused kernel) is NOT the cause
+# of the +2.92pp DCT8 area over-pick. The two paths agree at the LSB level
+# the strategy search cares about. Recommended next chunk: Sub-chunk A
+# (quant_field SIMD drift dump vs libjxl debug build, ~1-2 days).
+#
+# Reproducer (sibling workspace ~/work/zen/jxl-encoder--f-d-sub-chunk-b):
+#   cargo run -p jxl-encoder --release \
+#     --features '__expert butteraugli-loop ssim2-loop' \
+#     --example f_d_fused_vs_unfused_dct8 -- \
+#     --output benchmarks/f_d_fused_vs_unfused_dct8_2026-05-19.tsv
+#
+# Dependencies:
+#   - cjxl bin: not needed (intra-encoder A/B, no cjxl comparison)
+#   - jxl-inspect: /home/lilith/work/jxl-efforts/jxl-oxide/target/release/jxl-inspect
+#   - corpus: /home/lilith/work/codec-corpus/CID22/CID22-512/validation/{1531677,1420710,1189261}.png
+#
+# Host:
+#   - AMD Ryzen 9 7950X (water-cooled, 128 GB RAM)
+#   - WSL2 (Linux 6.6.114.1-microsoft-standard-WSL2)
+#   - AVX2 / FMA available (X64V3Token::summon() returns Some)
+#
+# Git context:
+#   - Branch: anonymous jj change off main@origin (7d31d1eb W44-5)
+#   - Source files touched:
+#     * jxl-encoder/src/vardct/ac_strategy.rs (added FORCE_UNFUSED_DCT8 atomic
+#       + setter + branch-hit counters + if-branch in fused-DCT8 path)
+#     * jxl-encoder/src/vardct/mod.rs (re-exported setters/getters under
+#       #[cfg(feature = "__expert")])
+#     * jxl-encoder/Cargo.toml (registered new example with
+#       required-features = ["__expert"])
+#     * jxl-encoder/examples/f_d_fused_vs_unfused_dct8.rs (new harness)
+#   - All toggle code gated behind `__expert`. Default behaviour
+#     (FORCE_UNFUSED_DCT8=false) is byte-identical to prior production.

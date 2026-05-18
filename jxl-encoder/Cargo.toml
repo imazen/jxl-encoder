@@ -786,5 +786,16 @@ path = "examples/pixel_loss_magetypes_bench.rs"
 name = "f_d_wedge_investigate"
 path = "examples/f_d_wedge_investigate.rs"
 
+# W44-9 Sub-chunk B: A/B fused vs unfused DCT8 entropy.
+# Tests whether FMA op-ordering in the fused-DCT8 AVX2 kernel
+# (jxl_simd::fused_dct8_entropy) gives DCT8 a borderline cost
+# advantage that explains the F-D wedge +2.92pp DCT8 area over-pick
+# vs cjxl. Requires the `__expert` feature to access
+# jxl_encoder::vardct::set_force_unfused_dct8_entropy.
+[[example]]
+name = "f_d_fused_vs_unfused_dct8"
+path = "examples/f_d_fused_vs_unfused_dct8.rs"
+required-features = ["__expert"]
+
 [lints]
 workspace = true
