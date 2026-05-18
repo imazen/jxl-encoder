@@ -2521,21 +2521,35 @@ impl VarDctEncoder {
             // in the modular global sub-bitstream within the DC global
             // section, after the VarDCT DC entropy code.
             if !extras.is_empty() {
-                // Compute per-channel lossy quantizers (libjxl parity).
-                // Alpha-typed extras read `alpha_distance`; others stay
-                // at `q == 1` (lossless) until per-channel `ec_distance`
-                // is wired through the public API. All-1 vector keeps
-                // the lossless bit-identical path, so the default
-                // `alpha_distance = None` is byte-for-byte identical
-                // regardless of how many non-alpha extras follow.
-                let quantizers = self.compute_extras_pixel_quantizers(extras);
-                Self::write_modular_extras_global_with_quant(
-                    extras,
-                    width,
-                    height,
-                    &quantizers,
-                    &mut dc_global,
-                )?;
+                // Chunk-2 alpha squeeze opt-in (W14-4 follow-on):
+                // route a single alpha extra through the responsive=1
+                // squeeze pipeline instead of the raw-pixel quantizer.
+                // Engaged when `with_alpha_squeeze(true)` AND
+                // `alpha_distance > 0` AND the only extra is alpha.
+                // Multi-extra (alpha + depth, alpha + spot, …) and
+                // non-alpha-as-only-extra cases fall through to the
+                // existing raw-pixel writer until chunk-2.b lands.
+                let squeeze_pipeline =
+                    self.maybe_build_alpha_squeeze_pipeline(extras, width, height)?;
+                if let Some(pipeline) = squeeze_pipeline {
+                    Self::write_modular_extras_alpha_squeezed(&pipeline, &mut dc_global)?;
+                } else {
+                    // Compute per-channel lossy quantizers (libjxl parity).
+                    // Alpha-typed extras read `alpha_distance`; others stay
+                    // at `q == 1` (lossless) until per-channel `ec_distance`
+                    // is wired through the public API. All-1 vector keeps
+                    // the lossless bit-identical path, so the default
+                    // `alpha_distance = None` is byte-for-byte identical
+                    // regardless of how many non-alpha extras follow.
+                    let quantizers = self.compute_extras_pixel_quantizers(extras);
+                    Self::write_modular_extras_global_with_quant(
+                        extras,
+                        width,
+                        height,
+                        &quantizers,
+                        &mut dc_global,
+                    )?;
+                }
             }
 
             let mut dc_group = BitWriter::with_capacity(num_blocks * 10);
@@ -3335,6 +3349,303 @@ impl VarDctEncoder {
             quantizers,
             writer,
         )
+    }
+
+    /// Write the modular extras sub-bitstream when the alpha extra is
+    /// routed through the chunk-2 squeeze pipeline (W14-4 follow-on).
+    ///
+    /// Wire layout (mirrors libjxl `enc_modular.cc:937-1027` for the
+    /// extras-only ModularImage that VarDCT emits separately from the
+    /// XYB color image):
+    ///
+    /// 1. `GroupHeader { use_global_tree=0, wp_default=1,
+    ///    nb_transforms = squeeze_params.len() }`.
+    /// 2. One `kSqueeze` transform descriptor per param via
+    ///    [`crate::modular::encode::write_squeeze_transform`] (already
+    ///    spec-compliant — same encoder used by the lossless modular
+    ///    path).
+    /// 3. Local tree dispatching on property 0 (channel index in the
+    ///    post-transform coded-channel sequence). The channel-split
+    ///    tree gives each post-squeeze sub-channel its own gradient
+    ///    leaf with the sub-channel's integer quantizer baked into the
+    ///    leaf multiplier. The decoder picks the right `q` per channel
+    ///    automatically.
+    /// 4. Shared entropy code over the concatenated residuals (LZ77
+    ///    RLE detection on consecutive identical residuals — alpha is
+    ///    heavily uniform after squeeze, so this typically dominates).
+    ///
+    /// Currently scoped to the single-extra (alpha) single-group case:
+    /// `extras.len() == 1` AND the extra is alpha AND the encoder is
+    /// running its single-combined-section bit-level layout. Multi-group
+    /// callers route to a different writer (or, for chunk 2, surface
+    /// `Error::NotImplemented` with a clear chunk-2.b message).
+    pub(crate) fn write_modular_extras_alpha_squeezed(
+        pipeline: &super::extras::AlphaSqueezePipeline,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        use crate::modular::encode::{
+            K_LZ77_MIN_LENGTH, K_LZ77_MIN_SYMBOL, Token, build_sparse_histogram,
+            decompose_multiplier_pub, encode_hybrid_uint_000, encode_hybrid_uint_lz77_length,
+            write_channel_split_tree_tokens, write_gradient_tree_tokens,
+            write_gradient_tree_tokens_lossy, write_hybrid_data_histogram, write_num_transforms,
+            write_sparse_lz77_histogram, write_squeeze_transform,
+            write_tree_histogram_for_channel_split_lossy, write_tree_histogram_for_gradient,
+            write_tree_histogram_for_gradient_lossy,
+        };
+        use crate::modular::predictor::pack_signed;
+
+        let num_subs = pipeline.sub_channels.len();
+        debug_assert!(num_subs >= 1, "alpha squeeze must produce ≥1 sub-channel");
+
+        // ── GroupHeader ────────────────────────────────────────────────
+        // GroupHeader layout (libjxl/jxl-rs `headers/modular.rs:160-166`):
+        //   use_global_tree (1 bit), wp_header (default → 1 bit),
+        //   transforms: Vec<Transform> sized via U32(Val(0), Val(1),
+        //   BitsOffset(4,2), BitsOffset(8,18)).
+        //
+        // We emit either zero or one Transform — always a single
+        // `kSqueeze` descriptor that itself carries the param list as
+        // its `squeezes: Vec<SqueezeParams>` inner field (via
+        // `write_squeeze_transform`). The first-level `nb_transforms`
+        // is *number of transforms*, NOT *number of squeeze params*;
+        // re-using the squeeze_params count there would tell the
+        // decoder to start reading N transform descriptors when only
+        // one squeeze descriptor (with N params inside it) is on the
+        // wire.
+        writer.write(1, 0)?; // use_global_tree
+        writer.write(1, 1)?; // wp_params all_default
+        let nb_transforms: u32 = if pipeline.squeeze_params.is_empty() {
+            0
+        } else {
+            1
+        };
+        write_num_transforms(writer, nb_transforms)?;
+
+        // Emit one kSqueeze descriptor carrying the explicit param list.
+        // (We do not rely on the decoder's default-squeeze inference —
+        // the explicit form keeps us robust against future libjxl
+        // default-param drift.)
+        if !pipeline.squeeze_params.is_empty() {
+            write_squeeze_transform(writer, &pipeline.squeeze_params)?;
+        }
+
+        // Per-sub-channel quantizer vector for the tree leaves.
+        let per_sub_q: alloc::vec::Vec<u32> =
+            pipeline.sub_channels.iter().map(|sc| sc.q.max(1)).collect();
+
+        // ── Local tree ─────────────────────────────────────────────────
+        // - 1 sub-channel: single-leaf gradient (lossless or lossy).
+        // - ≥2 sub-channels: channel-split tree dispatching on prop 0.
+        let any_lossy = per_sub_q.iter().any(|&q| q > 1);
+        if num_subs == 1 {
+            let q = per_sub_q[0];
+            if q == 1 {
+                let (d, c) = write_tree_histogram_for_gradient(writer)?;
+                write_gradient_tree_tokens(writer, &d, &c)?;
+            } else {
+                let (mul_log, mul_bits) = decompose_multiplier_pub(q);
+                let (d, c) = write_tree_histogram_for_gradient_lossy(writer, mul_log, mul_bits)?;
+                write_gradient_tree_tokens_lossy(writer, &d, &c, mul_log, mul_bits)?;
+            }
+        } else {
+            // Channel-split tree: one gradient leaf per sub-channel,
+            // each carrying its own integer quantizer. Even when
+            // !any_lossy we use the channel-split form (cleaner than
+            // duplicating the gradient-only form for the multi-channel
+            // case); the alpha squeeze path is only entered when
+            // alpha_distance > 0 so q > 1 on at least one band in
+            // practice.
+            let _ = any_lossy; // documentation marker; see comment above
+            let (d, c) = write_tree_histogram_for_channel_split_lossy(writer, &per_sub_q)?;
+            write_channel_split_tree_tokens(writer, &d, &c, &per_sub_q)?;
+        }
+
+        // ── Residuals (shared entropy code) ────────────────────────────
+        // Same loop shape as `write_modular_extras_subbitstream` but
+        // per-sub-channel (each with its own (width, height) and `q`).
+        // Within a sub-channel: gradient-predict; divide residual by q
+        // (sub-channel data is already pre-snapped to multiples of q
+        // via QuantizeChannel — see build_alpha_squeeze_pipeline).
+        let mut tokens: alloc::vec::Vec<Token> = alloc::vec::Vec::new();
+        let mut current_run: usize = 0;
+        let mut num_decoded: usize = 0;
+        let mut last_value: u32 = u32::MAX;
+
+        for sc in &pipeline.sub_channels {
+            let ch = &sc.channel;
+            let w = ch.width();
+            let h = ch.height();
+            if w == 0 || h == 0 {
+                continue;
+            }
+            let q = sc.q.max(1);
+            let qi = q as i32;
+
+            // Flush any pending run from the previous sub-channel
+            // before resetting prediction state (same discipline as
+            // the existing extras writer — gradient prediction is
+            // per-channel; an LZ77 run can't span a channel boundary).
+            if current_run > 0 {
+                if current_run > K_LZ77_MIN_LENGTH {
+                    tokens.push(Token::Lz77Run(current_run));
+                    num_decoded += current_run;
+                } else {
+                    for _ in 0..current_run {
+                        tokens.push(Token::Raw(last_value));
+                        num_decoded += 1;
+                    }
+                }
+                current_run = 0;
+            }
+            last_value = u32::MAX;
+
+            // No `snap()` wrapper here — the sub-channel was already
+            // pre-quantized in `build_alpha_squeeze_pipeline`. Read
+            // directly. `q == 1` sub-channels are lossless leaves
+            // (multipliers of `1`); residual / 1 == residual.
+            let read = |y: usize, x: usize| -> i32 { ch.get(x, y) };
+
+            for y in 0..h {
+                for x in 0..w {
+                    let pixel = read(y, x);
+                    let left = if x > 0 {
+                        read(y, x - 1)
+                    } else if y > 0 {
+                        read(y - 1, 0)
+                    } else {
+                        0
+                    };
+                    let top = if y > 0 { read(y - 1, x) } else { left };
+                    let topleft = if x > 0 && y > 0 {
+                        read(y - 1, x - 1)
+                    } else {
+                        left
+                    };
+                    let grad = left + top - topleft;
+                    let prediction = grad.clamp(left.min(top), left.max(top));
+                    let raw_residual = pixel - prediction;
+                    let residual = if q == 1 {
+                        raw_residual
+                    } else {
+                        raw_residual / qi
+                    };
+                    let packed = pack_signed(residual);
+
+                    let can_use_lz77 = num_decoded > 0 && packed == last_value;
+                    if can_use_lz77 {
+                        current_run += 1;
+                    } else {
+                        if current_run > K_LZ77_MIN_LENGTH {
+                            tokens.push(Token::Lz77Run(current_run));
+                            num_decoded += current_run;
+                        } else {
+                            for _ in 0..current_run {
+                                tokens.push(Token::Raw(last_value));
+                                num_decoded += 1;
+                            }
+                        }
+                        current_run = 0;
+                        tokens.push(Token::Raw(packed));
+                        num_decoded += 1;
+                        last_value = packed;
+                    }
+                }
+            }
+        }
+
+        // Flush final run.
+        if current_run > K_LZ77_MIN_LENGTH {
+            tokens.push(Token::Lz77Run(current_run));
+        } else {
+            for _ in 0..current_run {
+                tokens.push(Token::Raw(last_value));
+            }
+        }
+
+        // Encode tokens via shared LZ77 / non-LZ77 entropy code (same
+        // discipline as `write_modular_extras_subbitstream`).
+        let num_lz77_runs = tokens
+            .iter()
+            .filter(|t| matches!(t, Token::Lz77Run(_)))
+            .count();
+
+        if num_lz77_runs > 0 {
+            let sparse_counts = build_sparse_histogram(&tokens);
+            let (depths, codes) = write_sparse_lz77_histogram(writer, &sparse_counts)?;
+            for token in &tokens {
+                match token {
+                    Token::Raw(value) => {
+                        let (tok, nbits, extra) = encode_hybrid_uint_000(*value);
+                        let symbol = tok as usize;
+                        if depths[symbol] > 0 {
+                            writer.write(depths[symbol] as usize, codes[symbol] as u64)?;
+                        }
+                        if nbits > 0 {
+                            writer.write(nbits as usize, extra as u64)?;
+                        }
+                    }
+                    Token::Lz77Run(count) => {
+                        let adjusted = count - K_LZ77_MIN_LENGTH;
+                        let (tok, nbits, extra) = encode_hybrid_uint_lz77_length(adjusted as u32);
+                        let symbol = K_LZ77_MIN_SYMBOL + tok as usize;
+                        if depths[symbol] > 0 {
+                            writer.write(depths[symbol] as usize, codes[symbol] as u64)?;
+                        }
+                        if nbits > 0 {
+                            writer.write(nbits as usize, extra as u64)?;
+                        }
+                        // RLE distance symbol (= 1, matching the
+                        // SPECIAL_DISTANCES[1] = (1, 0) entry).
+                        let (dist_tok, dist_nbits, dist_extra) = encode_hybrid_uint_000(1);
+                        if depths[dist_tok as usize] > 0 {
+                            writer.write(
+                                depths[dist_tok as usize] as usize,
+                                codes[dist_tok as usize] as u64,
+                            )?;
+                        }
+                        if dist_nbits > 0 {
+                            writer.write(dist_nbits as usize, dist_extra as u64)?;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Non-LZ77 fallback: HybridUint {4,2,0} (matches the
+            // existing extras non-LZ77 path).
+            use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+            let hybrid_config = HybridUintConfig {
+                split_exponent: 4,
+                split: 16,
+                msb_in_token: 2,
+                lsb_in_token: 0,
+            };
+            let mut max_token: u32 = 0;
+            let mut histogram_data: alloc::vec::Vec<(u32, u32, u32)> =
+                alloc::vec::Vec::with_capacity(tokens.len());
+            for token in &tokens {
+                if let Token::Raw(value) = token {
+                    let (tok, extra_bits, num_extra) = hybrid_config.encode(*value);
+                    max_token = max_token.max(tok);
+                    histogram_data.push((tok, extra_bits, num_extra));
+                }
+            }
+            let histogram_size = (max_token + 1) as usize;
+            let mut histogram = alloc::vec![0u32; histogram_size];
+            for &(tok, _, _) in &histogram_data {
+                histogram[tok as usize] += 1;
+            }
+            let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+            for &(token, extra_bits, num_extra) in &histogram_data {
+                let depth = depths[token as usize];
+                let code = codes[token as usize];
+                writer.write(depth as usize, code as u64)?;
+                if num_extra > 0 {
+                    writer.write(num_extra as usize, extra_bits as u64)?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Writes the DC group header, DC tokens, AC metadata sub-header, then AC

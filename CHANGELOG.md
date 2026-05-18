@@ -2,6 +2,91 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Squeeze-on-extras chunk 2 — `with_alpha_squeeze(true)` now wired
+  into the lossy alpha bitstream** (W14-4 follow-on, builds on the
+  chunk-1 framework `3b042f8`). Closes the dominant slice of the
+  W13-4 audit gap (`a160deb`): cjxl default `--responsive=1` was
+  -18% to -160% smaller than our `responsive=0` lossy alpha because
+  we hadn't applied the Squeeze (Haar) wavelet to the alpha plane
+  before quantizing. Chunk 2 ships the wiring for the single-group
+  case end-to-end, mirroring libjxl `enc_modular.cc:937-1027`
+  responsive=1 path narrowed to the extras-only ModularImage.
+
+  Pipeline (when flag is on AND `alpha_distance > 0` AND single
+  alpha extra AND ≤ 256×256):
+
+  1. `build_alpha_squeeze_pipeline` (in `vardct::extras`) wraps the
+     alpha plane in a 1-channel [`ModularImage`], runs the standard
+     `default_squeeze_params` + `apply_squeeze` (Haar wavelet
+     decomposition that halves alternating axes until both
+     dimensions ≤ 8), then for each output sub-channel computes its
+     integer quantizer via `compute_extra_pixel_quantizer_shifted(
+     shift = (hshift + vshift) - 1)` (chunk-1 framework fn,
+     unchanged) and in-place quantizes each sub-channel with the
+     libjxl-parity `snap-to-multiple-of-q` `QuantizeChannel`
+     (`enc_modular.cc:141`).
+  2. `write_modular_extras_alpha_squeezed` (new, in
+     `vardct::bitstream`) emits the modular subbitstream as:
+     `GroupHeader { use_global_tree=0, wp_default=1,
+     nb_transforms=1 }` → one `kSqueeze` transform descriptor with
+     the explicit param list via `write_squeeze_transform` →
+     channel-split tree (one gradient leaf per sub-channel, each
+     carrying its own integer quantizer baked into the leaf
+     multiplier via `decompose_multiplier_pub`) → shared
+     entropy code over the per-sub-channel gradient residuals with
+     LZ77 RLE detection on consecutive identical residuals.
+  3. Routing wired at the bitstream-emit site
+     (`vardct::bitstream:write_frame_with_dc_groups` single-group
+     branch). `maybe_build_alpha_squeeze_pipeline` returns
+     `Some(pipeline)` only on the chunk-2 happy path; otherwise the
+     existing `write_modular_extras_global_with_quant` runs
+     unchanged. Multi-group, multi-extra, non-alpha-only-extra, and
+     `dim_shift > 0` cases surface a clearer `NotImplemented`
+     pointing at chunk-2.b.
+
+  Bytes Δ (3 W13-4 audit images × 4 alpha distances, A/B
+  no-squeeze vs squeeze on `LossyConfig::new(1.0)` +
+  `with_alpha_distance(Some(D))`):
+
+  | image                          | dims    | d   | no_sq | sq    | Δ     | Δ%      |
+  |--------------------------------|---------|-----|-------|-------|-------|---------|
+  | gradients_semitrans_ui         | 256×128 | 0.5 | 8775  | 4894  | -3881 | -44.2%  |
+  | gradients_semitrans_ui         | 256×128 | 1.0 | 8775  | 3827  | -4948 | -56.4%  |
+  | gradients_semitrans_ui         | 256×128 | 2.0 | 5540  | 3194  | -2346 | -42.4%  |
+  | gradients_semitrans_ui         | 256×128 | 5.0 | 4234  | 2920  | -1314 | -31.0%  |
+  | red_night_opaque (400×267)     | multi   | any | n/a   | n/a   | n/a   | chunk-2.b |
+  | alpha_nonpremul_photo_mask (1024²) | multi | any | n/a | n/a   | n/a   | chunk-2.b |
+
+  Direction matches the W13-4 audit's "-18% to -160% smaller" cjxl
+  delta on the only test image small enough to hit the chunk-2
+  single-group gate. The two multi-group audit images (red_night,
+  alpha_nonpremul_photo_mask) correctly land on the chunk-2.b
+  NotImplemented gate so callers know to fall back.
+
+  Roundtrip-verified with **jxl-rs** (PRIMARY, `tests/
+  alpha_squeeze_chunk2_pipeline.rs::
+  alpha_squeeze_chunk2_decodes_via_jxl_rs`) and **djxl v0.12.0**
+  (`/tmp/sq_chunk2.jxl` 6486-byte 256×128 RGBA round-tripped
+  through djxl → 46364-byte PNG, no parse errors). Hash-lock
+  baseline preserved: `tests/hash_lock_features.rs` 36/36
+  byte-identical with `alpha_squeeze` at its default `false`.
+
+  The chunk-1 framework test
+  `alpha_squeeze_on_plus_lossy_alpha_returns_not_implemented` flips
+  from "expect `NotImplemented`" to
+  `alpha_squeeze_on_plus_lossy_alpha_beats_no_squeeze_baseline`
+  asserting the bytes-smaller direction. New
+  `tests/alpha_squeeze_chunk2_pipeline.rs` adds 6 dedicated tests
+  covering byte savings, jxl-rs roundtrip, multi-group chunk-2.b
+  fallback, no-alpha no-op, default-off byte stability, and
+  different-bytes-from-baseline. Repro:
+  `cargo run --release -p jxl-encoder --example
+  alpha_squeeze_chunk2_bytes`. Refs jxl-encoder W14-4
+  (`3b042f8`), W13-4 audit (`a160deb`). Multi-group, multi-extra,
+  and `dim_shift > 0` plumbing tracked as chunk-2.b in CLAUDE.md.
+
 ### Tests
 
 - **A1 audit PARTIAL items — regression-test cleanup chunk 1**: adds
