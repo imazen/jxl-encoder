@@ -2143,29 +2143,33 @@ impl VarDctEncoder {
         let (xyb_x_ref, xyb_y_ref, xyb_b_ref) =
             super::region_source::XybRegionSource::xyb_full(&xyb_source);
 
-        // Compute per-block EPF sharpness map when EPF is active
-        // Dynamic sharpness gated at effort >= 6 (speed_tier <= kWombat) matching libjxl
+        // Compute per-block EPF sharpness map when EPF is active.
+        // Dynamic sharpness gated at effort >= 6 (speed_tier <= kWombat) matching libjxl.
+        //
+        // Chunk 8c step B (#11): the mask1x1 resolution (precomputed
+        // borrow vs xyb_y fallback) is now hoisted into
+        // `resolve_mask1x1_for_sharpness` so the EPF branch no longer
+        // owns the fallback's XYB-read dependency inline. The
+        // chunk-8c streaming source will own `xyb_y_ref` for the
+        // duration of resolve_mask1x1_for_sharpness, then release
+        // per-DC-group storage before the compute_epf_sharpness call
+        // (which only needs the resolved mask plus the original-XYB
+        // borrows).
         let sharpness_map =
             if params.epf_iters > 0 && self.distance >= 0.5 && self.profile.epf_dynamic_sharpness {
-                let mask_fallback;
-                let mask: &[f32] = match &mask1x1 {
-                    Some(m) => m,
-                    None => {
-                        mask_fallback = super::adaptive_quant::compute_mask1x1_with_budget(
-                            xyb_y_ref,
-                            padded_width,
-                            padded_height,
-                            self.budget.as_ref(),
-                        )?;
-                        &mask_fallback
-                    }
-                };
+                let mask_cow = super::adaptive_quant::resolve_mask1x1_for_sharpness(
+                    mask1x1.as_deref(),
+                    xyb_y_ref,
+                    padded_width,
+                    padded_height,
+                    self.budget.as_ref(),
+                )?;
                 Some(super::epf::compute_epf_sharpness(
                     [xyb_x_ref, xyb_y_ref, xyb_b_ref],
                     quant_dc,
                     quant_ac,
                     &quant_field,
-                    mask,
+                    &mask_cow,
                     &params,
                     &cfl_map,
                     &ac_strategy,
@@ -2998,27 +3002,26 @@ impl VarDctEncoder {
         // content that benefits from per-block tuning.
         let _t_sharp = std::time::Instant::now();
         let padded_height = precomputed.padded_height;
+        // Chunk 8c step B (#11): hoist mask1x1 resolution into a
+        // helper so the EPF branch no longer owns the
+        // precomputed.xyb_y fallback dependency inline. See
+        // encoder.rs line ~2150 for the symmetric site in
+        // encode_inner.
         let sharpness_map =
             if params.epf_iters > 0 && self.distance >= 0.5 && self.profile.epf_dynamic_sharpness {
-                let mask_fallback;
-                let mask: &[f32] = match &precomputed.mask1x1 {
-                    Some(m) => m,
-                    None => {
-                        mask_fallback = super::adaptive_quant::compute_mask1x1_with_budget(
-                            &precomputed.xyb_y,
-                            padded_width,
-                            padded_height,
-                            self.budget.as_ref(),
-                        )?;
-                        &mask_fallback
-                    }
-                };
+                let mask_cow = super::adaptive_quant::resolve_mask1x1_for_sharpness(
+                    precomputed.mask1x1.as_deref(),
+                    &precomputed.xyb_y,
+                    padded_width,
+                    padded_height,
+                    self.budget.as_ref(),
+                )?;
                 Some(super::epf::compute_epf_sharpness(
                     [xyb_x_for_dct, xyb_y_for_dct, xyb_b_for_dct],
                     quant_dc,
                     quant_ac,
                     &quant_field,
-                    mask,
+                    &mask_cow,
                     &params,
                     cfl_map_for_encode,
                     &precomputed.ac_strategy,
