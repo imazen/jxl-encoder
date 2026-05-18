@@ -562,5 +562,18 @@ name = "hdr_vdp2_chunk2_bench"
 path = "examples/hdr_vdp2_chunk2_bench.rs"
 required-features = ["butteraugli-loop"]
 
+# EX-J11 chunk 3: HDR-VDP-2-lite real-corpus RD sweep.
+# 5 CID22 images → synthesised PQ-encoded f32 input × 3 distances ×
+# 3 intensity_targets × 3 modes (Butteraugli/Vdp2/cjxl) = 135 cells.
+# Validates that the chunk-2 VDP2-lite metric (a) drives different
+# quant decisions than the SDR butteraugli baseline on HDR content
+# and (b) the picks correlate better with a paper-faithful reference
+# VDP2 metric implemented INLINE in the example (independent: 5 bands,
+# 30 ppd, Mantiuk-2011 CSF, p=3.5).
+[[example]]
+name = "hdr_vdp2_chunk3_rd_sweep"
+path = "examples/hdr_vdp2_chunk3_rd_sweep.rs"
+required-features = ["butteraugli-loop"]
+
 [lints]
 workspace = true
