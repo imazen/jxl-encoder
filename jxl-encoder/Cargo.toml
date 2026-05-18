@@ -221,6 +221,12 @@ required-features = ["butteraugli-loop"]
 name = "distance_sweep"
 path = "examples/distance_sweep.rs"
 
+# Full RD curve audit vs cjxl across 15 distances × 5 efforts × 8 images.
+# Designed to find wedges in bytes-vs-quality Pareto. Read-only on src/.
+[[example]]
+name = "rd_curve_audit_vs_cjxl"
+path = "examples/rd_curve_audit_vs_cjxl.rs"
+
 [[example]]
 name = "hdr_rd_sweep_vs_cjxl"
 path = "examples/hdr_rd_sweep_vs_cjxl.rs"
