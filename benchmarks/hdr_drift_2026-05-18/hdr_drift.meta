@@ -1,0 +1,16 @@
+# libjxl HEAD drift bench — HDR W4 (W19-2)
+#
+# Re-runs the existing hdr_rd_sweep_vs_cjxl example twice (CJXL=OLD, CJXL=NEW)
+# and diffs the two TSVs. The example encodes 256×256 synthetic PQ/HLG/BT.709
+# gradients at d=1.0/2.0/5.0 with effort 7.
+date_utc=2026-05-18
+host=lilith
+old_cjxl=cjxl v0.12.0 d2c7032
+new_cjxl=cjxl v0.12.0 4279d48
+distances=[1.0, 2.0, 5.0]
+layouts=[pq, hlg, bt709]
+effort=7
+script=scripts/libjxl_drift_hdr.sh
+hdr_old_tsv=hdr_old.tsv
+hdr_new_tsv=hdr_new.tsv
+finding=All 9 HDR cells byte-identical between cjxl_old and cjxl_new. HDR signaling / PQ-EOTF / HLG-OETF code paths in libjxl unchanged in the 81-commit delta.
