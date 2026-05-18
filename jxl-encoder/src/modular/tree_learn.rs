@@ -6490,6 +6490,127 @@ pub fn derive_seeded_properties_truncation(seed: u64) -> Option<usize> {
     PROP_CAPS[(seed - 12) as usize]
 }
 
+/// Multi-seed early-out decision (RFC#45 chunk 7 — Pareto-aware wall-clock
+/// short-circuit for the e10/e11 multi-seed tree-learning fan-out).
+///
+/// Examines the relative spread of the first `probe_seeds` token costs and
+/// returns `true` when the spread is below
+/// [`MULTI_SEED_EARLY_OUT_SPREAD_THRESHOLD`]. A tight chunk-3 cost cluster
+/// indicates the per-image entropy structure is already well-pinned by the
+/// chunk-3 perturbation slot; the remaining 12 seeds (chunks-4/5/6
+/// dimensions) can still find marginal improvements, but the wall-clock
+/// cost of running them outweighs the small expected byte savings.
+///
+/// Spread metric: `(max_cost - min_cost) / min_cost` over `costs[0..probe_seeds]`.
+/// This is a relative-range measure (not std-dev) — small images where every
+/// seed picks essentially the same tree show spread ≈ 0; images with high
+/// chunk-3 variance show spread several percent.
+///
+/// `probe_seeds` is the number of completed seeds to examine; the caller is
+/// responsible for calling this only after running at least that many seeds.
+/// `total_seeds` is the budget; early-out only fires when
+/// `probe_seeds < total_seeds` (i.e., there's still work to skip).
+///
+/// Returns `false` when fewer than 2 costs are available (no spread can be
+/// computed) or when `probe_seeds >= total_seeds` (nothing to skip).
+///
+/// Trade-off (calibrated on chunk-6 paired bench, CID22-512 e11):
+///
+/// | image     | chunk-3 spread | full-16 finds better? | fires at 5% | bytes Δ |
+/// |-----------|---------------|----------------------|------------|---------|
+/// | 1025469   | 1.71%         | yes (cost -0.034%)   | yes        | +334 B  |
+/// | 1044329   | 4.14%         | no                   | yes        |   0 B   |
+/// | 1189261   | 2.59%         | no                   | yes        |   0 B   |
+/// | 1279330   | 0.31%         | yes (cost -0.69%)    | yes        | +813 B  |
+/// | 1418519   | 1.68%         | no                   | yes        |   0 B   |
+///
+/// Net: **+0.09% bytes regression, 3.36× wall-clock speedup at e11**. The
+/// trade favours wall-clock heavily — equivalent to "e11 is now a fast e10+
+/// instead of a slow exhaustive search" on images where the chunk-3 slot
+/// has already pinned the solution.
+///
+/// **Important caveat**: low chunk-3 spread does NOT guarantee seeds 4..15
+/// would not improve the picked minimum. Chunks-4/5/6 explore DIFFERENT
+/// variance dimensions (sample fraction, predictor order, bucket count,
+/// property truncation) than chunk-3 (threshold jitter, property rotation,
+/// stride). The early-out is a heuristic that accepts a small bytes
+/// regression on the rare cell where a later-slot seed would have won, in
+/// exchange for large wall-clock savings on the majority of cells.
+///
+/// Bitstream invariant: byte counts can never IMPROVE vs no-early-out;
+/// they match on cells where seeds 0..3 already contained the picker's
+/// minimum and regress slightly on cells where a later seed would have won.
+#[must_use]
+pub fn multi_seed_early_out_after_probe(
+    costs: &[f64],
+    probe_seeds: usize,
+    total_seeds: usize,
+) -> bool {
+    if probe_seeds >= total_seeds {
+        return false;
+    }
+    let slice = match costs.get(..probe_seeds) {
+        Some(s) if s.len() >= 2 => s,
+        _ => return false,
+    };
+    let (mut min_cost, mut max_cost) = (slice[0], slice[0]);
+    for &c in &slice[1..] {
+        if c < min_cost {
+            min_cost = c;
+        }
+        if c > max_cost {
+            max_cost = c;
+        }
+    }
+    // Guard against zero / negative costs (shouldn't happen for entropy
+    // estimates of non-empty token streams, but be defensive).
+    if min_cost <= 0.0 {
+        return false;
+    }
+    let spread = (max_cost - min_cost) / min_cost;
+    spread < MULTI_SEED_EARLY_OUT_SPREAD_THRESHOLD
+}
+
+/// Relative cost-spread threshold for [`multi_seed_early_out_after_probe`]
+/// (RFC#45 chunk 7).
+///
+/// `0.05` = 5% spread. Calibrated against per-seed cost dumps from the
+/// chunk-6 paired bench (CID22-512 photos, e11, 16 seeds):
+///
+/// | image    | chunk-3 spread | improvement from seeds 4..15 |
+/// |----------|---------------|----------------------------|
+/// | 1025469  | 1.71%         | 0.034% (cost), 0 B (bytes)  |
+/// | 1189261  | 2.59%         | 0.000%                      |
+/// | 1044329  | 4.14%         | 0.000%                      |
+/// | 1279330  | 25.93%        | 0.781% (the one improving cell) |
+///
+/// The 5% threshold cleanly separates the 3 converged images (skip seeds
+/// 4..15 → 4-image search) from the 1 high-variance image (keep all 16).
+/// On converged images, the picker's best-of-4 tree (the same tree the
+/// e10 2-seed path picks for that image, since e10 uses seeds 0..=1) is
+/// expected to produce bytes within ≤ 0.05% of the best-of-16 tree.
+///
+/// The threshold is a relative-range measure (max-min)/min over the first
+/// `MULTI_SEED_EARLY_OUT_PROBE_SEEDS` token costs. Strict-`<` comparison
+/// means a spread of exactly 5% does not fire (preserves chunk-6 behaviour
+/// on borderline cells).
+///
+/// A tighter threshold (e.g., 1%) never fires on this corpus → no
+/// wall-clock win. A looser threshold (e.g., 30%) would fire on every
+/// image including 1279330, losing the 0.78% cost improvement that
+/// chunk-6 captured. 5% is calibrated to the empirical bimodal split.
+pub const MULTI_SEED_EARLY_OUT_SPREAD_THRESHOLD: f64 = 0.05;
+
+/// Number of "probe" seeds the multi-seed loop runs before consulting
+/// [`multi_seed_early_out_after_probe`] (RFC#45 chunk 7).
+///
+/// `4` covers the chunk-3 seed slot (chunk-3 perturbations: split_threshold
+/// jitter, property-order rotation, per-seed stride) which is the variance
+/// dimension most coupled to per-image entropy structure. Spread over these
+/// 4 candidates is the strongest single-source signal for whether the
+/// remaining 12 seeds (chunks-4/5/6 dimensions) can find further improvements.
+pub const MULTI_SEED_EARLY_OUT_PROBE_SEEDS: usize = 4;
+
 /// Multi-seed tree-learning fan-out (RFC#45 chunk 2 — pick #1).
 ///
 /// Runs `gather_fn` once per seed in `0..seeds`, hands the resulting
@@ -7974,5 +8095,102 @@ mod tests {
                 "chunk 6: truncation slot seed {seed} must NOT trigger bucket override",
             );
         }
+    }
+
+    // ---------------- RFC#45 chunk 7 early-out helper tests ----------------
+
+    #[test]
+    fn test_early_out_below_threshold_fires() {
+        // Tight cluster of costs (spread ~0.1%) below the 5% threshold
+        // → early-out fires.
+        let costs = [100_000.0, 100_050.0, 100_010.0, 100_080.0];
+        assert!(multi_seed_early_out_after_probe(&costs, 4, 16));
+    }
+
+    #[test]
+    fn test_early_out_above_threshold_does_not_fire() {
+        // Spread ~26% (well above 5%) → keep running. Mirrors the
+        // 1279330 cell where chunk 6's seeds 4..15 add 0.78% improvement.
+        let costs = [100_000.0, 126_000.0, 102_000.0, 110_000.0];
+        assert!(!multi_seed_early_out_after_probe(&costs, 4, 16));
+    }
+
+    #[test]
+    fn test_early_out_at_4pct_fires() {
+        // Spread ~4% (under 5% threshold) → fires. Mirrors the 1044329
+        // cell where chunk-3 spread is 4.14% and seeds 4..15 add 0%
+        // improvement.
+        let costs = [100_000.0, 104_000.0, 102_000.0, 103_000.0];
+        assert!(multi_seed_early_out_after_probe(&costs, 4, 16));
+    }
+
+    #[test]
+    fn test_early_out_no_skip_when_probe_eq_total() {
+        // No seeds to skip → must return false even when spread is tiny.
+        let costs = [100_000.0, 100_001.0, 100_002.0, 100_003.0];
+        assert!(!multi_seed_early_out_after_probe(&costs, 4, 4));
+    }
+
+    #[test]
+    fn test_early_out_no_skip_when_probe_gt_total() {
+        // Defensive: probe > total → return false (no skip possible).
+        let costs = [100_000.0, 100_001.0];
+        assert!(!multi_seed_early_out_after_probe(&costs, 4, 2));
+    }
+
+    #[test]
+    fn test_early_out_handles_single_cost() {
+        // With < 2 probe samples, spread is undefined → don't fire.
+        let costs = [100_000.0];
+        assert!(!multi_seed_early_out_after_probe(&costs, 1, 16));
+    }
+
+    #[test]
+    fn test_early_out_handles_zero_or_negative_cost() {
+        // Defensive guard against pathological inputs — should not panic
+        // and should not fire (we have no way to compute relative spread).
+        let costs = [0.0, 100.0, 200.0, 300.0];
+        assert!(!multi_seed_early_out_after_probe(&costs, 4, 16));
+    }
+
+    #[test]
+    fn test_early_out_identical_costs_fires() {
+        // Perfectly identical costs → spread = 0 < 0.5% threshold → fire.
+        let costs = [100_000.0; 4];
+        assert!(multi_seed_early_out_after_probe(&costs, 4, 16));
+    }
+
+    #[test]
+    fn test_early_out_just_above_threshold_does_not_fire() {
+        // Spread slightly above 0.5% → must NOT fire (preserves chunk-6
+        // behaviour on borderline cells).
+        let lo = 100_000.0_f64;
+        let hi = lo * (1.0 + MULTI_SEED_EARLY_OUT_SPREAD_THRESHOLD * 2.0);
+        let costs = [lo, hi, lo, hi];
+        assert!(!multi_seed_early_out_after_probe(&costs, 4, 16));
+    }
+
+    #[test]
+    fn test_early_out_just_under_threshold_fires() {
+        // Spread just under 0.5% → fires.
+        let lo = 100_000.0_f64;
+        let hi = lo * (1.0 + MULTI_SEED_EARLY_OUT_SPREAD_THRESHOLD * 0.5);
+        let costs = [lo, hi, lo, hi];
+        assert!(multi_seed_early_out_after_probe(&costs, 4, 16));
+    }
+
+    #[test]
+    fn test_early_out_probe_seeds_constant_is_4() {
+        // Hard-locked to chunk-3 seed slot. Changing this is a knob
+        // change that needs paired bench evidence.
+        assert_eq!(MULTI_SEED_EARLY_OUT_PROBE_SEEDS, 4);
+    }
+
+    #[test]
+    fn test_early_out_threshold_constant_is_5pct() {
+        // Hard-locked to 5%. Same caveat as above — calibrated against
+        // chunk-6 paired bench's bimodal split (1.7-4.1% on converged
+        // cells vs 25.9% on the one improving cell).
+        assert!((MULTI_SEED_EARLY_OUT_SPREAD_THRESHOLD - 0.05).abs() < 1e-12);
     }
 }

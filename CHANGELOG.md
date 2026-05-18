@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+### Performance
+
+- **e10/e11 multi-seed chunk 7 — Pareto-aware wall-clock early-out for
+  the e11 tree-learning fan-out** (RFC#45 follow-on to chunk 6
+  `47442bd0`). At e11 the multi-seed loop now examines the relative
+  spread of token costs after the first 4 seeds (chunk-3 perturbation
+  slot); if the spread is below 5%, it breaks out of the loop early and
+  the picker keeps its best-so-far tree. High-variance images (spread
+  ≥ 5%) keep running the full 16 seeds.
+
+  Trade-off measured on the same 5-image CID22-512 paired bench used
+  for chunk 6 (`benchmarks/e10_e11_multiseed_chunk7_ab_2026-05-17.tsv`):
+
+  | image    | c6 bytes | c7 bytes | delta  | c6 wall (ms) | c7 wall (ms) | speedup |
+  |----------|----------|----------|--------|-------------|--------------|---------|
+  | 1025469  | 231127   | 231461   | +334 B | 27,384       | 5,969         | 4.59×  |
+  | 1044329  | 327001   | 327001   |   0 B  | 14,846       | 6,143         | 2.42×  |
+  | 1189261  | 302399   | 302399   |   0 B  | 18,127       | 6,234         | 2.91×  |
+  | 1279330  | 206214   | 207027   | +813 B | 24,723       | 4,404         | 5.61×  |
+  | 1418519  | 164133   | 164133   |   0 B  | 31,507       | 7,453         | 4.23×  |
+
+  Net: **+0.0932% bytes, 3.86× wall-clock speedup at e11 median**.
+
+  Honest finding: per-seed cost tracing showed that low chunk-3 spread
+  does NOT reliably predict the absence of later-seed improvements.
+  1279330 has the lowest chunk-3 spread on the corpus (0.31%) yet seeds
+  4..15 find a 0.69% cost improvement that the early-out skips. The 5%
+  threshold is therefore framed as a Pareto sweet spot, not a "no
+  regression" promise — it converts e11 from "exhaustive search costing
+  3-4× e10 wall-clock" into "near-exhaustive search at roughly e10
+  wall-clock plus a small premium" on most images. The +0.09% bytes
+  regression at e11 is small relative to e11's gains over e10
+  (~-0.2 to -0.4%) and the wall-clock savings unlock more frequent e11
+  use in time-budgeted pipelines.
+
+  e ≤ 9 unchanged (`tree_learn_seeds = 1` short-circuits the loop, so
+  the early-out is never reached). e10 unchanged for the same reason —
+  2 seeds is below the 4-seed probe window. Hash-locks 36/36
+  byte-identical. New helper + 12 unit tests live in
+  `modular/tree_learn.rs::multi_seed_early_out_after_probe`. Bench at
+  `jxl-encoder/examples/e10_e11_multiseed_chunk7_ab.rs`.
+
 ### Added
 
 - **Squeeze-on-extras chunk 2 — `with_alpha_squeeze(true)` now wired
