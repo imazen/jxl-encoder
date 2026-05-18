@@ -4,6 +4,55 @@
 
 ### Added
 
+- **Seed-slot split + e11 budget expansion for multi-seed tree learning**
+  (RFC#45 pick #1 chunk 5 — follow-on to chunk 4 `ef5c1d11`). W8-3-r2's
+  honest 5-image A/B showed chunk 4 regressed vs chunk 3 at e11 by
+  +0.39% bytes because the fixed 4-seed budget meant chunk-4's new
+  variance dimensions cycled through *different* 4 trees rather than
+  *more*. Chunk 5 addresses that with two coupled changes:
+  (1) `EffortProfile::tree_learn_seeds_for(11)` raised from `4 → 8`
+  (e10 stays at `2`); and (2) seed-slot split inside
+  `derive_seeded_sample_fraction(seed)` and
+  `derive_seeded_predictor_order(seed)`: seeds 0..=3 now return
+  `None` / canonical (chunk-4 dimensions held to no-op), so chunk-3's
+  three perturbations (`split_threshold` jitter, property-order
+  rotation, per-seed stride) get four dedicated seed slots without
+  being recombined with sample-fraction overrides or predictor
+  permutations; seeds 4..=7 cycle through the four chunk-4
+  sample-fraction values `[Some(0.40), Some(0.60), Some(0.70), None]`
+  and the four `CANDIDATE_PREDICTORS_PERMS` permutations on top of
+  the chunk-3 perturbations they pick up by virtue of `seed % 4`. The
+  chunk-2 `estimate_token_cost` picker keeps the cheapest of the 8
+  candidate trees — strictly ≥ chunk 3 by construction (seeds 0..=3
+  cover the same candidate space) and strictly ≥ chunk 4 when the
+  recombined chunk-4 dimensions beat chunk-3's threshold/property/
+  stride alone. Seed 0 stays byte-identical to the canonical libjxl
+  single-seed path; e ≤ 9 still has `tree_learn_seeds = 1` so this
+  helper is never called there. Updated 4 unit tests
+  (`test_derive_seeded_sample_fraction_low_seeds_are_none`,
+  `test_derive_seeded_sample_fraction_high_seeds_active`,
+  `test_derive_seeded_predictor_order_low_seeds_canonical`,
+  `test_derive_seeded_predictor_order_high_seeds_perturb`,
+  `test_derive_seeded_predictor_order_preserves_predictor_set`,
+  `test_new_with_predictor_order_for_seed_low_seeds_match_default`)
+  enforce the chunk-5 seed-slot contract. Bench harness:
+  `examples/e10_e11_multiseed_chunk5_ab.rs`. Hash-locks:
+  `hash_lock_features` 36/36 byte-identical at e ≤ 9. Bench TSV +
+  meta archived at workspace-root
+  `benchmarks/e10_e11_multiseed_chunk5_ab_2026-05-17.{tsv,meta}`.
+  Wall-clock at e11 roughly doubles vs chunk 4 (8 seeds vs 4); e10
+  unchanged. **5-image A/B vs chunk 4 on CID22-512 photos
+  (deterministic across both samples):** e10 -0.008% (-96 bytes; 1
+  cell improved [1279330 207123→207027], 4 byte-identical), e11
+  **-0.46%** (-5647 bytes; 3 cells improved [1044329 330499→327001
+  -1.06%, 1189261 303864→302399 -0.48%, 1279330 207123→206214
+  -0.44%], 1 byte-identical, 1418519 +0.14% regression — within
+  noise of chunk-3's win there). vs chunk 3 baseline at e11
+  (sum 1232021 bytes): chunk 5 sum 1231208 = **-0.066%** — chunk 5
+  strictly beats chunk 3 AND fixes chunk 4's +0.39% regression.
+  RFC#45 issue thread updated with the seed-slot table and 5-image
+  bytes comparison.
+
 - **`LossyConfig::with_auto_delta_frames(bool)` /
   `LosslessConfig::with_auto_delta_frames(bool)` + getters** (A1
   audit "Animation" — Skip / delta frame encoding, chunk-1 POC).
