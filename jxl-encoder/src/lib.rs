@@ -165,6 +165,10 @@ pub mod __internals {
     // can't be `pub use`d directly.
     pub use crate::vardct::ac_strategy::compute_scaled_constants_free;
     pub use crate::vardct::epf::epf_step0_strip_free;
+    /// W44-20 per-stage detection counters from
+    /// [`crate::vardct::patches::find_text_like_patches_with_min_peak`].
+    /// Populated unconditionally; read via [`take_last_patches_detect_stats`].
+    pub use crate::vardct::patches::{LastPatchesDetectStats, take_last_patches_detect_stats};
     /// Thread-local snapshot of the most recent patches-detection on
     /// this thread, recorded by `find_and_build_with_per_patch_gate`.
     /// Calibration / instrumentation hook only — see

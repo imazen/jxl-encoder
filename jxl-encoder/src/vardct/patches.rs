@@ -223,6 +223,47 @@ fn set_last_patches_stats(stats: LastPatchesStats) {
     LAST_PATCHES_STATS.with(|c| c.set(Some(stats)));
 }
 
+/// W44-20 diagnostic snapshot of the per-stage candidate counts inside
+/// [`find_text_like_patches_with_min_peak`]. Populated unconditionally
+/// on every call. Read via [`take_last_patches_detect_stats`].
+///
+/// `#[doc(hidden)]` — instrumentation hook only, not part of the stable API.
+#[doc(hidden)]
+#[derive(Copy, Clone, Debug, Default)]
+pub struct LastPatchesDetectStats {
+    pub num_seeds: u32,
+    pub bg_count: usize,
+    pub raw_ccs: u32,
+    pub reject_no_border: u32,
+    pub reject_inconsistent: u32,
+    pub reject_too_large: u32,
+    pub reject_no_similar: u32,
+    pub reject_low_peak: u32,
+    pub accepted_ccs: u32,
+    pub accepted_pixels: u64,
+    pub unique_before_min_occ: u32,
+    pub singletons_dropped: u32,
+    pub final_unique: u32,
+    pub final_occurrences: usize,
+    pub final_total_patch_pixels: u64,
+}
+
+thread_local! {
+    static LAST_PATCHES_DETECT_STATS: core::cell::Cell<Option<LastPatchesDetectStats>> =
+        const { core::cell::Cell::new(None) };
+}
+
+/// Take the most recent [`LastPatchesDetectStats`] snapshot for this
+/// thread, clearing the slot. W44-20 instrumentation hook.
+#[doc(hidden)]
+pub fn take_last_patches_detect_stats() -> Option<LastPatchesDetectStats> {
+    LAST_PATCHES_DETECT_STATS.with(|c| c.take())
+}
+
+fn set_last_patches_detect_stats(stats: LastPatchesDetectStats) {
+    LAST_PATCHES_DETECT_STATS.with(|c| c.set(Some(stats)));
+}
+
 // ── Data Structures ────────────────────────────────────────────────────────────
 
 /// A patch quantized to i8 per channel, plus the original float pixels.
@@ -1393,6 +1434,25 @@ pub(crate) fn find_text_like_patches_with_min_peak(
         result.len(),
         total_patch_pixels as f64 / (width * height) as f64 * 100.0
     );
+
+    // W44-20 instrumentation: snapshot per-stage counts for diagnostic harnesses.
+    set_last_patches_detect_stats(LastPatchesDetectStats {
+        num_seeds,
+        bg_count,
+        raw_ccs: stat_raw_ccs,
+        reject_no_border: stat_reject_no_border,
+        reject_inconsistent: stat_reject_inconsistent,
+        reject_too_large: stat_reject_too_large,
+        reject_no_similar: stat_reject_no_similar,
+        reject_low_peak: stat_reject_low_peak,
+        accepted_ccs: stat_accepted,
+        accepted_pixels: stat_accepted_pixels,
+        unique_before_min_occ: stat_unique_before_min_occ,
+        singletons_dropped: stat_singleton_groups,
+        final_unique: result.len() as u32,
+        final_occurrences: total_dedup_occurrences,
+        final_total_patch_pixels: total_patch_pixels,
+    });
 
     // Also print to stderr for test visibility (always, not just debug-rect)
     #[cfg(test)]
