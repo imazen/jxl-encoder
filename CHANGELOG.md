@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Performance
+
+- **W38-3 — HONEST-STOP: parallel xform fan-out at e3/e4 is already
+  shipped** (`benchmarks/parallel_xform_e3_e4_2026-05-19.{tsv,meta}`,
+  no src/ changes). W38-1 (`a2cd4758`) flagged "parallel xform fan-out
+  at e3/e4 on ≥1.5 MP screenshots — estimated 30-45 ms/cell saving" as
+  a top-3 adaptive-dispatch candidate; on inspection the
+  `transform_and_quantize` AC-group reduce at `vardct/transform.rs:1222`
+  already routes through `crate::parallel::parallel_map(num_groups, ...)`
+  and fires at every effort whenever the workspace `parallel` feature is
+  enabled (default-on). Measured xform speedups at 8T vs 1T on three
+  ≥1.5 MP screenshots × {e3, e4} × 3 trials median: terminal e3 0.71×
+  (-17.9 ms, parallelism overhead exceeds work at 1.75 MP / 35 groups),
+  terminal e4 1.05× (+3.2 ms), codec_wiki e3 4.04× (+157.7 ms),
+  codec_wiki e4 1.80× (+39.7 ms), imac_g3 e3 1.48× (+72.4 ms), imac_g3
+  e4 2.20× (+77.2 ms). Default unchanged. Future polish levers (not
+  shipped this chunk): reduce per-group `GroupTransformResult`
+  allocator pressure, parallelize the serial scatter step, auto-tune
+  AC-group chunking on small images so rayon overhead doesn't exceed
+  per-group work — these belong in a separate "xform parallel scaling
+  polish" chunk and are documented in the bench meta. Per the W38-3
+  task spec's honest-stop condition: "If transform_and_quantize is
+  already parallel everywhere: honest-stop with explanation."
+
 ### Added
 
 - **W38 — lossy low-effort phase baseline (e2..=e5) + zenjpeg-hybrid
