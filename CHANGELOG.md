@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Investigated
+
+- **W22-1 chunk-2 follow-on: CPU `entropy_mul` lifted-value re-bisect
+  — HONEST-STOP, no default-on flip** (`cpu_entropy_mul_bisect.rs` +
+  `cpu_entropy_mul_bisect_stage_a2.rs`). Swept `IDENTITY` ∈
+  {1.20, 1.30, 1.40, 1.50, 1.60} × `DCT2X2` ∈ {0.95, 0.9975, 1.045}
+  via `LossyInternalParams::entropy_mul_table` override on 5 gb82-sc
+  screenshots at d ∈ {0.5, 1.0, 2.0}, with two AFV/DCT4X8 pinnings:
+  stage A at the W22-1 lifted values (AFV=0.95, DCT4X8=0.98) and
+  stage A2 at the libjxl reference (AFV=0.818, DCT4X8=0.859). NO
+  tuple passes the chunk-2 acceptance gate
+  (median Δbytes ≤ 0.5 %, max |Δbfly| ≤ 2 %) in either stage. Best
+  Δbytes (stage A2 IDENTITY=1.20, DCT2X2=1.045) is -0.048 % median
+  but max |Δbfly| 33.2 % on windows95 d=0.5. Per-image breakdown
+  shows the destabilization is concentrated on flat-colormap
+  screenshots (windows95 14-color, codec_wiki, terminal); the
+  `median(mask1x1) > 95` discriminator (W22-1) groups images that
+  respond very differently to IDENTITY lifting. `kAvoidEntropyOfTransforms`
+  is wired (`ac_strategy_search.rs:60`) but gated to `d > 4.0`, so
+  it provides no stabilization at the distances where the excursions
+  occur. Default `LossyConfig::content_aware_entropy_mul` stays
+  `false` (W22-1 opt-in unchanged); chunk-3 deferred pending one
+  of three approaches: (a) lift `kAvoidEntropyOfTransforms` gate
+  from `d > 4` to `d > 0`, (b) per-block (not per-image) lift
+  discriminator, (c) decompose `screenshot_suppressed()` into
+  per-strategy gates (start with DCT4X4-only lift). Bench data:
+  `benchmarks/cpu_entropy_mul_bisect_2026-05-18.{tsv,meta}` (240
+  measurements stage A) and
+  `benchmarks/cpu_entropy_mul_bisect_stage_a2_2026-05-18.{tsv,meta}`
+  (225 measurements stage A2).
+
 ### Added
 
 - **EX-J11 chunk 4: `HdrLoss::Auto` default dispatcher — PQ / HLG →

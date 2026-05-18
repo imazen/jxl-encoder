@@ -296,7 +296,13 @@ fn main() {
             writeln!(
                 out,
                 "{}\t{}\t{:.3}\toff\t{}\t{:.4}\t{:.4}\t{:.2}\t\t\t",
-                src.label, src.class, d, m_off.bytes, m_off.butteraugli, m_off.ssim2, m_off.encode_ms,
+                src.label,
+                src.class,
+                d,
+                m_off.bytes,
+                m_off.butteraugli,
+                m_off.ssim2,
+                m_off.encode_ms,
             )
             .unwrap();
             writeln!(

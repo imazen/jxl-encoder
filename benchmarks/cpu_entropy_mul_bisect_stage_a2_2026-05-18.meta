@@ -1,0 +1,122 @@
+CPU entropy_mul bisect stage A2 — W22-1 chunk-2 follow-on
+==========================================================
+
+Date: 2026-05-18
+Host: $(uname -n)
+Repo: jxl-encoder (sibling workspace --cpu-entropy-mul-bisect)
+Parent commit: 6abfb9c9 (W22-1: content-aware entropy_mul gate, opt-in, default OFF)
+Build features: __expert butteraugli-loop
+Effort: 7
+
+Harness: jxl-encoder/examples/cpu_entropy_mul_bisect_stage_a2.rs
+
+Hypothesis tested
+-----------------
+Stage A's bfly excursions (max 18.45 %) might be caused by the W22-1
+lifts on AFV (0.818→0.95, +16 %) and DCT4X8 (0.859→0.98, +14 %)
+rather than IDENTITY/DCT2X2. Stage A2 holds AFV + DCT4X8 at libjxl
+reference and re-sweeps the same IDENTITY × DCT2X2 grid.
+
+Sweep design
+------------
+Same as stage A, but:
+  AFV    = 0.817_794_9    (libjxl reference, NOT W22-1 lift)
+  DCT4X8 = 0.859_316_37   (libjxl reference, NOT W22-1 lift)
+Stage B (photo validation) is NOT repeated in this run (Stage A already
+established photos are NOT bit-identical when entropy_mul is overridden).
+
+Result — REFUTES the hypothesis
+-------------------------------
+Reverting AFV + DCT4X8 to libjxl reference made bfly excursions LARGER
+on a different image (windows95 d=0.5 jumped from out-of-grid in Stage A
+to +33.21 % in Stage A2), confirming that the lifts on IDENTITY/DCT2X2
+have their own destabilization mode independent of AFV/DCT4X8.
+
+NO tuple passes the strict gate. NO tuple passes a relaxed gate
+(median Δbytes ≤ 0.5 %, median |Δbfly| ≤ 2 %, n_violate_bfly ≤ 3).
+
+Lowest median Δbytes: IDENTITY=1.20, DCT2X2=1.045 → -0.048 % median
+  but +33.21 % max bfly on windows95 d=0.5.
+
+Per-image violation pattern (top-5 by best median Δbytes):
+  windows95 d=0.5: +33 % bfly across the ENTIRE grid
+    (image has 14-color colormap; lifting IDENTITY makes strategy
+    search pick DCT8 for blocks that should stay IDENTITY)
+  codec_wiki d=2.0: +14-15 % bfly at any DCT2X2 ≥ 1.045
+  terminal d=0.5/d=1.0: ±4-5 % bfly depending on tuple
+
+Interpretation
+--------------
+The `median(mask1x1) > 95` discriminator (W22-1) groups images that have
+fundamentally different responses to IDENTITY lifting. Lifting helps
+codec_wiki / terminal at some distances but catastrophically hurts
+windows95 / codec_wiki at others. The CPU encoder's AC strategy search
+surface around the IDENTITY/DCT8/DCT4X4 boundary is more sensitive than
+the GPU encoder's was, because the CPU path runs the FULL
+`AdjustQuantBlockAC` after strategy selection (the GPU's slow-path
+round-trip) — which amplifies strategy-pick differences into per-block
+quantizer differences.
+
+The discriminator needs to be MUCH finer than `median(mask1x1) > 95`
+— ideally per-block (or per-tile, like the GPU encoder's per-tile
+gaborish gate), or it needs to dispatch on (image content × distance ×
+effort) not just content alone.
+
+Honest-stop conclusion
+----------------------
+W22-1 chunk-2 (default-on flip) CANNOT ship with a global per-image
+discriminator. Investigation determined the chunk-3 plan needs to be
+re-scoped — `kAvoidEntropyOfTransforms` is already wired (see
+`vardct/ac_strategy_search.rs:60-68 avoid_entropy_of_transforms_mul`),
+BUT it is gated to `distance > 4.0` and returns 0.0 at every distance
+in this bisect's test grid (d ∈ {0.5, 1.0, 2.0}). So the penalty is
+NOT active at the distances where the bfly excursions occur — the
+strategy search is operating without that penalty at all.
+
+The destabilization happens because at low distances the cost model
+relies almost entirely on `(entropy + pixel-domain loss) * entropy_mul`
+to discriminate IDENTITY vs DCT8 / DCT4X4. On windows95 (14-color
+colormap) the per-block loss is genuinely close between IDENTITY and
+DCT4X4 (both reproduce a constant-color block well), so a small lift
+on IDENTITY's `entropy_mul` flips many blocks to DCT4X4, which then
+gets quantized differently and produces +33 % bfly even though byte
+counts barely change.
+
+Three forward paths for chunk-3 (ranked by expected payoff):
+
+(1) Lift `kAvoidEntropyOfTransforms` gate from `d > 4.0` to `d > 0.0`
+    (with appropriate distance scaling). This would penalize every
+    non-DCT8 strategy at every distance, stabilizing the IDENTITY↔
+    DCT8/DCT4X4 boundary. Risk: changes the byte profile at all
+    distances; needs a separate chunk to bisect the right `(base,
+    formula)` for low-d.
+
+(2) Add a per-block content discriminator (e.g., per-block variance
+    or block-local mask1x1 percentile) inside the AC strategy search
+    itself, so the lift only applies to blocks with `local_mask >
+    threshold` rather than to the whole image. This is closer to
+    libjxl's per-tile gaborish dispatch. Higher implementation cost;
+    needs the strategy search to accept a per-block multiplier on
+    `entropy_mul_table`.
+
+(3) Decompose `screenshot_suppressed()` into per-strategy gates
+    rather than a unified table swap. Specifically:
+    - DCT4X4 lift is the dominant destabilizer (the strategy that
+      windows95 was switching INTO when IDENTITY got lifted).
+    - Add `EntropyMulTable::screenshot_suppressed_dct4x4_only()`
+      that lifts ONLY DCT4X4 (e.g. 1.08 → 1.30), leaving IDENTITY,
+      DCT2X2, AFV, DCT4X8 at reference. Re-bisect.
+
+Chunk-2 stays opt-in (W22-1 current state). No default-on flip
+this chunk. CHANGELOG entry documents the negative result so future
+agents don't re-attempt the same bisect.
+
+Status: HONEST-STOP. Default `LossyConfig::content_aware_entropy_mul`
+remains `false`. Chunk-3 deferred pending chunk-3 implementation
+choice (above).
+
+Reproducer
+----------
+cargo run --release -p jxl-encoder --features '__expert butteraugli-loop' \
+    --example cpu_entropy_mul_bisect_stage_a2 -- \
+    benchmarks/cpu_entropy_mul_bisect_stage_a2_2026-05-18.tsv
