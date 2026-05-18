@@ -189,22 +189,31 @@ fn alpha_squeeze_default_off_decodes_correctly_at_d_2_0() {
 }
 
 #[test]
-fn alpha_squeeze_on_plus_lossy_alpha_returns_not_implemented() {
-    // The chunk-1 framework gate: flag-on AND alpha extra present
-    // AND alpha_distance > 0 must error, NOT silently fall back to
-    // the no-squeeze path. This protects callers from thinking
-    // they're getting the byte savings cjxl-default delivers when
-    // they're not.
-    let res = encode_rgba(
+fn alpha_squeeze_on_plus_lossy_alpha_beats_no_squeeze_baseline() {
+    // Chunk 2 (W14-4 follow-on, this commit's wiring): the same
+    // flag-on path that chunk 1 left as `NotImplemented` now produces
+    // a smaller bytestream than the chunk-1 framework's no-squeeze
+    // baseline. Direction matches the W13-4 audit's "-18% to -160%"
+    // observation (size will be a smaller margin at 32×32 than at the
+    // audit's 256×128/1024×1024 inputs, but it must be in the same
+    // direction). Per-pipeline byte numbers + the multi-group
+    // `NotImplemented` fallback live in
+    // `tests/alpha_squeeze_chunk2_pipeline.rs`.
+    let baseline =
+        encode_rgba(LossyConfig::new(1.0).with_alpha_distance(Some(2.0))).expect("baseline encode");
+    let squeezed = encode_rgba(
         LossyConfig::new(1.0)
             .with_alpha_distance(Some(2.0))
             .with_alpha_squeeze(true),
-    );
-    let err = res.expect_err("expected NotImplemented for chunk-1 framework gate");
-    let msg = format!("{err:?}");
+    )
+    .expect("chunk-2 squeezed encode");
     assert!(
-        msg.contains("chunk-1") || msg.contains("with_alpha_squeeze"),
-        "error message should explain chunk-1 framework status; got: {msg}"
+        squeezed.len() < baseline.len(),
+        "chunk-2 squeeze path must beat no-squeeze baseline; got squeeze={} vs baseline={} \
+         (Δ = {:+})",
+        squeezed.len(),
+        baseline.len(),
+        squeezed.len() as i64 - baseline.len() as i64,
     );
 }
 
