@@ -31,7 +31,7 @@ pub(crate) mod chroma_from_luma;
 #[cfg(feature = "chroma-subsampling")]
 pub mod chroma_subsampling;
 pub(crate) mod cluster;
-mod coeff_order;
+pub(crate) mod coeff_order;
 pub(crate) mod common;
 pub(crate) mod context_tree;
 pub(crate) mod dc_coding;

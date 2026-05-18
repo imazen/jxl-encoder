@@ -25,6 +25,10 @@ use crate::vardct::ac_context;
 use crate::vardct::ac_group::{collect_ac_coefficients_into, predict_from_top_and_left};
 use crate::vardct::ac_strategy::AcStrategyMap;
 use crate::vardct::chroma_from_luma::CflMap;
+use crate::vardct::coeff_order::{
+    NUM_ORDER_BUCKETS as NUM_ORDER_BUCKETS_JPEG, build_and_write_coeff_orders,
+    compute_custom_orders, get_custom_order, tokenize_coeff_orders,
+};
 use crate::vardct::common::*;
 use crate::vardct::dc_coding::{
     NUM_DC_CONTEXTS, collect_ac_metadata_tokens_region, collect_dc_tokens_region,
@@ -262,6 +266,59 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
     // count than the hardcoded COMPACT_BLOCK_CONTEXT_MAP, causing decoder mismatch.
     let block_ctx_map = ac_context::BlockCtxMap::default();
 
+    // EX-J17a: enable wire-format-safe per-channel custom coefficient orders.
+    // The JPEG bridge is all-DCT8 so only bucket 0 can carry custom orders, but
+    // the per-channel zero distribution still differs (Y vs Cb vs Cr), so
+    // permuting positions can cluster zeros at the end of each block's scan
+    // and shrink AC token totals. Spec-mandated per-block channel order
+    // `[Y, X, B]` is unchanged; only the *position* permutation per channel
+    // varies. compute_custom_orders has a built-in Lehmer cost-benefit gate
+    // that returns used_orders=0 when the permutation overhead would exceed
+    // the AC savings — same gate as the VarDCT path uses. Tiny images (under
+    // 5 blocks per side) are skipped to mirror VarDCT's xsize_blocks/ysize_blocks
+    // threshold at bitstream.rs:2067.
+    //
+    // We can't reuse `count_zero_coefficients` directly because chroma planes
+    // are smaller than the luma grid under 4:2:0 / 4:2:2 / 4:4:0 subsampling;
+    // count it manually per-channel using each channel's native dimensions.
+    let (custom_order_map, used_orders) = if xsize_blocks >= 5 || ysize_blocks >= 5 {
+        let mut zero_counts: Vec<Vec<Vec<i64>>> = (0..NUM_ORDER_BUCKETS_JPEG)
+            .map(|_| vec![Vec::new(); 3])
+            .collect();
+        // Only bucket 0 (DCT8) is populated — every JPEG block is DCT8.
+        for ch in &mut zero_counts[0] {
+            *ch = vec![0i64; BLOCK_SIZE];
+        }
+        for c in 0..3 {
+            let plane = &quant_ac[c];
+            let cnt = &mut zero_counts[0][c];
+            for row in plane {
+                for block in row {
+                    // Skip k=0 (DC) — it lives in quant_dc and is always 0
+                    // in quant_ac; we set it to -1 below so it sorts to the
+                    // front of the permutation as the LLF position
+                    // (mirroring count_zero_coefficients's treatment for
+                    // DCT8 bucket 0, coeff_order.rs:328-333).
+                    for k in 1..BLOCK_SIZE {
+                        if block[k] == 0 {
+                            cnt[k] += 1;
+                        }
+                    }
+                }
+            }
+            // Mark LLF position (DC = index 0 for DCT8 bucket 0).
+            cnt[0] = -1;
+        }
+        let (orders, used) = compute_custom_orders(&zero_counts);
+        if used != 0 {
+            (Some(orders), used)
+        } else {
+            (None, 0u32)
+        }
+    } else {
+        (None, 0u32)
+    };
+
     let mut ac_section_tokens: Vec<Vec<Token>> = Vec::with_capacity(num_groups);
     for group_idx in 0..num_groups {
         let group_x = group_idx % xsize_groups;
@@ -313,6 +370,12 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
                     };
                     let qf_val = quant_field[by * xsize_blocks + bx] as u32;
                     let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
+                    // EX-J17a: pass per-(bucket, channel) custom order if one was selected.
+                    // raw_strategy is always 0 (DCT8) on the JPEG path, so this only
+                    // consults bucket 0 of the orders map.
+                    let custom_order = custom_order_map
+                        .as_ref()
+                        .and_then(|orders| get_custom_order(orders, used_orders, raw_strategy, c));
                     collect_ac_coefficients_into(
                         &mut tokens,
                         &quant_ac[c][ch_by][ch_bx],
@@ -321,7 +384,7 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
                         predicted_nz,
                         block_ctx,
                         block_ctx_map.num_ctxs,
-                        None, // no custom coefficient order
+                        custom_order,
                     );
                 }
             }
@@ -409,7 +472,25 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
 
     // AC Global
     let mut ac_global = BitWriter::new();
-    write_ac_global_jpeg(&raw_qtables, num_groups, &ac_code, &mut ac_global)?;
+    // EX-J17a: build Lehmer tokens for the per-channel custom orders selected
+    // above (if any). Tokens are written between the used_orders selector
+    // and the AC entropy code, matching VarDCT bitstream order.
+    let coeff_order_tokens = if used_orders != 0 {
+        let orders = custom_order_map
+            .as_ref()
+            .expect("custom_order_map must exist when used_orders != 0");
+        Some(tokenize_coeff_orders(orders, used_orders))
+    } else {
+        None
+    };
+    write_ac_global_jpeg(
+        &raw_qtables,
+        num_groups,
+        &ac_code,
+        used_orders,
+        coeff_order_tokens.as_deref(),
+        &mut ac_global,
+    )?;
 
     // AC Groups
     let mut ac_groups = Vec::with_capacity(num_groups);
@@ -712,6 +793,8 @@ fn write_ac_global_jpeg(
     raw_qtables: &[i32],
     num_groups: usize,
     ac_code: &OwnedAnsEntropyCode,
+    used_orders: u32,
+    coeff_order_tokens: Option<&[Token]>,
     writer: &mut BitWriter,
 ) -> Result<()> {
     // RAW quant matrices with JPEG quant tables
@@ -724,8 +807,26 @@ fn write_ac_global_jpeg(
         writer.write(num_histo_bits as usize, 0)?;
     }
 
-    // used_orders via u2S(0x5F, 0x13, 0x00, U(13)): 0 = no custom orders
-    writer.write(2, 2)?; // selector 2 = 0x00 (no custom orders)
+    // EX-J17a: write used_orders via u2S(0x5F, 0x13, 0x00, U(13)).
+    // Mirrors VarDCT bitstream.rs:986-997 so the decoder reads the same
+    // selector encoding on both paths.
+    match used_orders {
+        0x5F => writer.write(2, 0)?, // selector 0 = 0x5F
+        0x13 => writer.write(2, 1)?, // selector 1 = 0x13
+        0 => writer.write(2, 2)?,    // selector 2 = 0x00 (no custom orders)
+        other => {
+            writer.write(2, 3)?; // selector 3 = U(13)
+            writer.write(13, other as u64)?;
+        }
+    }
+
+    // EX-J17a: write the Lehmer permutation tokens for any (bucket, channel)
+    // pair flagged in used_orders. Must come after used_orders and before the
+    // AC entropy code header, matching the VarDCT write_ac_global flow.
+    if let Some(tokens) = coeff_order_tokens.filter(|_| used_orders != 0) {
+        // Always ANS on the JPEG path (use_ans=true), matching ac_code below.
+        build_and_write_coeff_orders(tokens, true, writer)?;
+    }
 
     // LZ77: disabled
     writer.write(1, 0)?;
