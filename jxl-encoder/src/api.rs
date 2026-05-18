@@ -3665,9 +3665,13 @@ impl LossyConfig {
     /// nearest multiple of `q` and the decoder reconstructs via the
     /// modular-tree leaf's `(mul_log, mul_bits)` multiplier. `d` is
     /// clamped to `[0.01, 25.0]` (matches libjxl `encode.cc:1552`).
-    /// Only applied when there is exactly one extra channel — mixed
-    /// extras stay lossless. Sample yields at 8-bit alpha: `d=1.0`
-    /// → `q=1` (still lossless), `d=2.0` → `q=3`, `d=10.0` → `q=15`.
+    /// Applies per-channel: with a mixed-extras frame (alpha + depth /
+    /// spot color / selection mask / ...) only the alpha-typed extras
+    /// take this `q`; all other types stay lossless until per-channel
+    /// `ec_distance` is wired through the public API (libjxl
+    /// `cparams.ec_distance[i]`). Sample yields at 8-bit alpha:
+    /// `d=1.0` → `q=1` (still lossless), `d=2.0` → `q=3`, `d=10.0`
+    /// → `q=15`.
     pub fn with_alpha_distance(mut self, d: Option<f32>) -> Self {
         self.alpha_distance = d;
         self
@@ -6319,7 +6323,7 @@ impl<'a> EncodeRequest<'a> {
         // libjxl `cjxl --alpha_distance`). `None` and `Some(0.0)`
         // keep the lossless path. A non-zero value engages the lossy
         // alpha pipeline (pre-quantize + modular-tree multiplier);
-        // see [`crate::vardct::VarDctEncoder::compute_alpha_pixel_quantizer`]
+        // see [`crate::vardct::VarDctEncoder::compute_extra_pixel_quantizer`]
         // for the libjxl-parity formula.
         enc.alpha_distance = cfg.alpha_distance;
 
