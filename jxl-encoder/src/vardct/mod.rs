@@ -93,6 +93,8 @@ mod zensim_loop;
 
 pub(crate) mod quant;
 pub(crate) mod quantize;
+#[cfg(feature = "investigate-adjust-quant-block-ac")]
+pub mod aqba_diag;
 pub(crate) mod reconstruct;
 mod static_codes;
 pub mod transform;

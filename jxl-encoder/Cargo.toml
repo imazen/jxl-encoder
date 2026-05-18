@@ -64,6 +64,10 @@ hdr-gainmap = ["std", "dep:ultrahdr-core"]
 trace-bitstream = []
 # Verbose debug output for token encoding (DC, AC, entropy codes)
 debug-tokens = []
+# W44-27: per-block AdjustQuantBlockAC firing-rate diagnostic.
+# Counts per-heuristic firings (A/B/C/D/E/F) per (strategy, channel) and
+# emits a TSV to `$JXL_AQBA_DIAG_TSV` env var when set, else stderr summary.
+investigate-adjust-quant-block-ac = []
 # Debug DC extraction for DCT16x16/32x32
 debug-dc = []
 # Print AC strategy selection histogram
