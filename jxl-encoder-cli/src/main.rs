@@ -1445,22 +1445,14 @@ fn main() {
                  (got {layout:?})."
             );
         }
-        // Multi-group encoder paths don't currently downsample
-        // extras in their per-group writers — the produced bitstream
-        // decodes in jxl-oxide but fails libjxl djxl. Refuse rather
-        // than silently emit broken output. Tracked alongside the
-        // lossy `dim_shift > 0` guard in vardct/encoder.rs.
-        // Groups are 256×256; a width or height exceeding 256 means
-        // the image is multi-group.
-        if ec_resampling_active && (width > 256 || height > 256) {
-            eprintln!(
-                "Error: --ec_resampling > 1 currently requires single-group \
-                 input (both width and height <= 256); got {width}x{height}. \
-                 The multi-group writer for half-res extras is queued; until \
-                 then, use cjxl --ec_resampling for >256-pixel images."
-            );
-            std::process::exit(1);
-        }
+        // Multi-group writer now propagates `dim_shift > 0` through
+        // `extract_region` so downsampled extras (e.g. half-res
+        // alpha) crop in channel-local coordinates per libjxl
+        // `enc_modular.cc:1400-1407`. Previously the CLI refused
+        // multi-group on `--ec_resampling > 1`; the rejection is no
+        // longer needed. Lossy still guards `dim_shift > 0` in
+        // `vardct/encoder.rs` — only the lossless RGBA / BGRA /
+        // GrayAlpha path below exercises the new writer.
 
         if ec_resampling_active {
             // Split: bpp = 4 for RGBA/BGRA, bpp = 2 for GrayAlpha.
