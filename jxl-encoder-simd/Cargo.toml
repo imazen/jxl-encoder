@@ -17,6 +17,11 @@ include = ["/src/**", "/README.md", "/LICENSE*"]
 [features]
 default = ["std"]
 std = ["archmage/std", "magetypes/std"]
+# Opt-in AVX-512 tier for magetypes-consolidated kernels (W43-2 onwards).
+# When set, `#[magetypes(v4, ...)]` generates an `_v4` variant using native
+# `__m512` ops in addition to the AVX2 `_v3` path. Forwarded to magetypes and
+# archmage so they enable their internal v4/v4x token machinery.
+avx512 = ["magetypes/avx512", "archmage/avx512"]
 
 [dependencies]
 archmage = { version = "0.9.15", default-features = false, features = ["macros"] }

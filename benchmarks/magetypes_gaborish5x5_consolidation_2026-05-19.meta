@@ -1,0 +1,14 @@
+# gaborish_5x5 magetypes consolidation bench
+timestamp: 2026-05-18T20:15:59Z
+hostname: unknown
+git_commit: 8138ff50
+sizes: [256, 512, 1024, 2048, 4096]
+samples_per_cell: 13
+warmup: 3
+purpose: validates that the magetypes(define(f32x8), v4, v3, neon, wasm128, scalar) consolidation
+         in jxl-encoder-simd/src/gaborish5x5.rs preserves wall-clock vs the prior 3-variant hand-written code
+         (and adds a NEW wasm128 SIMD body where the previous crate fell through to scalar)
+kernel:   gaborish_5x5_channel — 21-tap 5x5 weighted convolution (sharpening pre-filter)
+input:    synthetic XYB-Y plane (smooth ramp + texture)
+weights:  libjxl default Y-channel tuple, normalized to sum=1
+tsv:      /tmp/gaborish5x5_magetypes_bench.tsv
