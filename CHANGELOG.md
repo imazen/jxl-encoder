@@ -4,6 +4,28 @@
 
 ### Added
 
+- **`LossyConfig::with_auto_delta_frames(bool)` /
+  `LosslessConfig::with_auto_delta_frames(bool)` + getters** (A1
+  audit "Animation" — Skip / delta frame encoding, chunk-1 POC).
+  Opt-in (default `false`, hash-locks 36/36 byte-identical at
+  default). When enabled, the animation encode path swaps the
+  existing same-pixel `Replace`-over-1×1 / 8×8 crop for an
+  `Add`-over-zero-pixel-crop on byte-identical successor frames.
+  Add-of-zero is a no-op redraw in linear-RGB float; zero pixels
+  modular-encode smaller than arbitrary canvas-pixel values.
+  Chunk-1 scope: identical-frame short-circuit on no-alpha layouts
+  only (RGBA needs `ec_blend_modes = Add` plumbing, queued for
+  chunk-2 alongside the full per-frame trial-encode loop of
+  `Regular` vs `Add(prev)` vs `Blend(prev)`). Measured -10 bytes
+  on a 3-frame 256×256 RGB8 gradient with all frames identical
+  (208 → 198 bytes lossless; jxl-rs + jxl-oxide both decode the
+  result to a 3-keyframe animation with frames 1/2 matching frame
+  0). New tests in `jxl-encoder/tests/animation.rs`:
+  `test_auto_delta_frames_default_off_is_byte_identical`,
+  `test_auto_delta_frames_lossless_identity_short_circuit`,
+  `test_auto_delta_frames_lossless_identical_path_decodes_via_jxlrs`,
+  `test_auto_delta_frames_lossy_identical_path_decodes`.
+
 - **`EffortProfile::auto_splines_default(effort: u8) -> bool` and
   `LossyConfig::auto_splines_explicit()` getter** (follow-on to W6-2 +
   W7-4 chunk 3). The function centralises the per-effort default for

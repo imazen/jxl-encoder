@@ -2267,3 +2267,218 @@ fn test_animation_reference_only_lossy_oxide() {
         "lossy: expected at least 3 total frames"
     );
 }
+
+// ── Chunk-1 POC: with_auto_delta_frames ─────────────────────────────────────
+//
+// A1 audit "Animation" — Skip / delta frame encoding (LOW value per audit).
+// Demonstrates the identical-frame short-circuit heuristic: when
+// `with_auto_delta_frames(true)` is set AND frame N is byte-identical to the
+// preceding displayed frame, the encoder emits the no-op redraw as
+// `BlendMode::Add` over a zero-pixel 1×1 (lossless) / 8×8 (lossy) crop
+// instead of `BlendMode::Replace` over the same-pixel crop. Add of zero
+// leaves the canvas unchanged; zero pixels modular-encode smaller than
+// arbitrary canvas-pixel values.
+
+/// Build a 256×256 RGB8 frame with a horizontal gradient — varied enough that
+/// the same-pixel-crop path encodes a real byte payload, so the all-zero
+/// delta path can show savings on the test scale. Origin pixel is `(200, 50,
+/// 125)` (chosen non-zero) so the same-pixel `Replace`-over-1×1 emit at the
+/// default path encodes that specific value, while the `Add`-of-zero emit
+/// encodes three zeros instead.
+fn gradient_256_rgb8() -> Vec<u8> {
+    let mut pixels = Vec::with_capacity(256 * 256 * 3);
+    for y in 0..256 {
+        for x in 0..256 {
+            pixels.push(200u8.wrapping_add(x as u8));
+            pixels.push(50u8.wrapping_add(y as u8));
+            pixels.push(125u8.wrapping_add(((x + y) / 2) as u8));
+        }
+    }
+    pixels
+}
+
+#[test]
+fn test_auto_delta_frames_default_off_is_byte_identical() {
+    // Default is off → no bitstream change vs the existing identical-frame
+    // crop path. Locks in the "opt-in, no hash-lock changes" contract.
+    let frame0 = gradient_256_rgb8();
+    let frame1 = gradient_256_rgb8(); // identical to frame0
+    let frame2 = gradient_256_rgb8(); // identical to frame0
+
+    let animation = AnimationParams::default();
+    let frames = [
+        AnimationFrame::new(&frame0, 10),
+        AnimationFrame::new(&frame1, 10),
+        AnimationFrame::new(&frame2, 10),
+    ];
+
+    let baseline = LosslessConfig::new()
+        .encode_animation(256, 256, PixelLayout::Rgb8, &animation, &frames)
+        .expect("baseline encode failed");
+    let default_off = LosslessConfig::new()
+        .with_auto_delta_frames(false)
+        .encode_animation(256, 256, PixelLayout::Rgb8, &animation, &frames)
+        .expect("default-off encode failed");
+
+    assert_eq!(
+        baseline, default_off,
+        "default (no setter) and explicit-off must produce identical bitstreams",
+    );
+
+    // Verify getter round-trip.
+    assert!(!LosslessConfig::new().auto_delta_frames());
+    assert!(
+        LosslessConfig::new()
+            .with_auto_delta_frames(true)
+            .auto_delta_frames()
+    );
+    assert!(!LossyConfig::new(1.0).auto_delta_frames());
+    assert!(
+        LossyConfig::new(1.0)
+            .with_auto_delta_frames(true)
+            .auto_delta_frames()
+    );
+}
+
+#[test]
+fn test_auto_delta_frames_lossless_identity_short_circuit() {
+    // 3-frame animation where frames 1 and 2 are identical to frame 0 — the
+    // chunk-1 heuristic should trigger on frames 1 and 2 and emit smaller
+    // bitstreams than the default same-pixel `Replace` path.
+    let frame0 = gradient_256_rgb8();
+    let frame1 = gradient_256_rgb8();
+    let frame2 = gradient_256_rgb8();
+
+    let animation = AnimationParams::default();
+    let frames = [
+        AnimationFrame::new(&frame0, 10),
+        AnimationFrame::new(&frame1, 10),
+        AnimationFrame::new(&frame2, 10),
+    ];
+
+    let without_delta = LosslessConfig::new()
+        .encode_animation(256, 256, PixelLayout::Rgb8, &animation, &frames)
+        .expect("without_delta encode failed");
+    let with_delta = LosslessConfig::new()
+        .with_auto_delta_frames(true)
+        .encode_animation(256, 256, PixelLayout::Rgb8, &animation, &frames)
+        .expect("with_delta encode failed");
+
+    eprintln!(
+        "auto-delta lossless: without={} bytes, with={} bytes, delta={} bytes",
+        without_delta.len(),
+        with_delta.len(),
+        with_delta.len() as i64 - without_delta.len() as i64,
+    );
+
+    // The heuristic should not regress; tiny per-frame token differences
+    // mean the saving on 1×1 crops can be 0..several bytes per frame. The
+    // hard contract: the delta path produces a valid decodable bitstream
+    // and is not larger than the baseline.
+    assert!(
+        with_delta.len() <= without_delta.len(),
+        "auto-delta must not enlarge the bitstream (without={} bytes, with={} bytes)",
+        without_delta.len(),
+        with_delta.len(),
+    );
+
+    // Round-trip: 3 displayable keyframes, all matching frame 0.
+    let (width, height, decoded) = decode_animation_oxide(&with_delta);
+    assert_eq!(width, 256);
+    assert_eq!(height, 256);
+    assert_eq!(decoded.len(), 3, "expected 3 displayable keyframes");
+
+    // All three decoded frames must match the source byte-for-byte
+    // (after the encoder's sRGB→linear roundtrip via jxl-oxide).
+    let (f0_decoded, _) = &decoded[0];
+    for (idx, (frame_decoded, _)) in decoded.iter().enumerate() {
+        assert_eq!(
+            f0_decoded.len(),
+            frame_decoded.len(),
+            "frame {idx} buffer size mismatch",
+        );
+        for (i, (a, b)) in f0_decoded.iter().zip(frame_decoded.iter()).enumerate() {
+            assert!(
+                (a - b).abs() < 0.001,
+                "frame {idx} px {i} diverges from frame 0: {a:.4} vs {b:.4}",
+            );
+        }
+    }
+}
+
+#[test]
+fn test_auto_delta_frames_lossless_identical_path_decodes_via_jxlrs() {
+    // Independent decoder check (jxl-rs is the primary roundtrip decoder
+    // per project CLAUDE.md). The same auto-delta lossless encode must
+    // decode via jxl-rs without error.
+    let frame0 = gradient_256_rgb8();
+    let frame1 = gradient_256_rgb8();
+    let frame2 = gradient_256_rgb8();
+
+    let animation = AnimationParams::default();
+    let frames = [
+        AnimationFrame::new(&frame0, 10),
+        AnimationFrame::new(&frame1, 10),
+        AnimationFrame::new(&frame2, 10),
+    ];
+    let data = LosslessConfig::new()
+        .with_auto_delta_frames(true)
+        .encode_animation(256, 256, PixelLayout::Rgb8, &animation, &frames)
+        .expect("encode failed");
+
+    let decoded = decode_animation_jxlrs(&data);
+    assert_eq!(decoded.len(), 3, "jxl-rs expected 3 frames");
+    // All three frames identical to frame 0.
+    for (idx, frame) in decoded.iter().enumerate().skip(1) {
+        for (i, (a, b)) in decoded[0].iter().zip(frame.iter()).enumerate() {
+            assert!(
+                (a - b).abs() < 0.001,
+                "jxl-rs frame {idx} px {i} diverges from frame 0: {a:.4} vs {b:.4}",
+            );
+        }
+    }
+}
+
+#[test]
+fn test_auto_delta_frames_lossy_identical_path_decodes() {
+    // Lossy path mirror — identical frames at d=1.0 must round-trip with the
+    // auto-delta heuristic enabled. The Add-of-zero 8×8 emit is safe because
+    // a zero-coefficient VarDCT block dequantises to all-zero linear RGB.
+    let frame0 = gradient_256_rgb8();
+    let frame1 = gradient_256_rgb8();
+    let frame2 = gradient_256_rgb8();
+
+    let animation = AnimationParams::default();
+    let frames = [
+        AnimationFrame::new(&frame0, 10),
+        AnimationFrame::new(&frame1, 10),
+        AnimationFrame::new(&frame2, 10),
+    ];
+    let data = LossyConfig::new(1.0)
+        .with_auto_delta_frames(true)
+        .encode_animation(256, 256, PixelLayout::Rgb8, &animation, &frames)
+        .expect("lossy encode failed");
+
+    // jxl-oxide round-trip: 3 displayable keyframes; frames 1 and 2 should
+    // match frame 0 within lossy slop (Add of an all-zero 8×8 block is a
+    // no-op modulo gaborish/EPF passes that should also see zero).
+    let (width, height, decoded) = decode_animation_oxide(&data);
+    assert_eq!(width, 256);
+    assert_eq!(height, 256);
+    assert_eq!(decoded.len(), 3);
+
+    // Compare frame 1 / frame 2 against frame 0 — they should match each
+    // other (the canvas-of-frame-0 is the reference for frame 1's Add, and
+    // frame 1's reconstructed canvas is the reference for frame 2). Pick a
+    // loose tolerance because the lossy quantisation of frame 0 itself can
+    // shift values; we just want to confirm the Add path doesn't smash the
+    // canvas.
+    let (f1, _) = &decoded[1];
+    let (f2, _) = &decoded[2];
+    for (i, (a, b)) in f1.iter().zip(f2.iter()).enumerate() {
+        assert!(
+            (a - b).abs() < 0.05,
+            "lossy auto-delta: frame 1 vs frame 2 mismatch at {i}: {a:.4} vs {b:.4}",
+        );
+    }
+}
