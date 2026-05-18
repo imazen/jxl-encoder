@@ -767,5 +767,13 @@ required-features = ["std", "butteraugli-loop", "ssim2-loop"]
 name = "gaborish5x5_magetypes_bench"
 path = "examples/gaborish5x5_magetypes_bench.rs"
 
+# W43-2 chunk-5 magetypes consolidation: wall-clock A/B for the consolidated
+# `pixel_domain_loss` kernel (5 image sizes, dispatch vs scalar, per-8x8-block
+# sweep mirroring estimate_entropy_full's call shape). Saves TSV + .meta to
+# /tmp/ for atomic mv into benchmarks/ once verified.
+[[example]]
+name = "pixel_loss_magetypes_bench"
+path = "examples/pixel_loss_magetypes_bench.rs"
+
 [lints]
 workspace = true
