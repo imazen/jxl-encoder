@@ -403,6 +403,47 @@ pub(crate) fn resolve_fixed_predictor_for_simple_path(knobs: &super::palette::Mo
     }
 }
 
+/// Resolve the optional tree-learn force-predictor override.
+///
+/// Returns `Some(predictor)` when the caller has explicitly asked for a
+/// fixed predictor (libjxl `cjxl -P N` / `--modular_predictor`) AND that
+/// id maps to a real [`super::predictor::Predictor`] variant in
+/// `0..=13`. The tree-learning path can then build a single-leaf tree
+/// with this predictor instead of running ID3 — matching libjxl's
+/// behaviour when an explicit `-P N` is supplied alongside its tree
+/// learner: the leaf predictor is forced to `N` even though the
+/// surrounding plumbing (gather, learn, residual collection) is the same
+/// shape as `Predictor::Variable`.
+///
+/// Returns `None` to mean "no override — fall through to the per-leaf
+/// ID3 selection". Triggered when:
+/// - [`super::palette::ModularKnobs::modular_predictor`] is `None`,
+/// - the requested id is `14` (libjxl `Best`) or `15` (libjxl `Variable`)
+///   — both encoder-only meta-modes that explicitly want tree-driven
+///   per-leaf selection,
+/// - the id is out of range (`>= 16`),
+/// - the id is `5` (Gradient — the legacy default that hash-locks pin),
+///   so the tree-learn default path stays byte-identical when callers
+///   pass through `--modular-predictor 5` explicitly.
+///
+/// Note id 6 (Weighted) IS returned as `Some(Weighted)` — the tree-learn
+/// residual collector ([`super::tree_learn::collect_residuals_with_tree`])
+/// already carries `WeightedPredictorState` per channel and handles
+/// `Predictor::Weighted` leaves natively, so there is no need to fold
+/// `6 → 5` the way [`resolve_fixed_predictor_for_simple_path`] does for
+/// the no-tree-learn paths.
+#[inline]
+pub(crate) fn resolve_tree_learn_force_predictor(
+    knobs: &super::palette::ModularKnobs,
+) -> Option<super::predictor::Predictor> {
+    use super::predictor::Predictor;
+    match knobs.modular_predictor {
+        None => None,
+        Some(5) => None, // Default — fall through to ID3 to keep hash-locks green.
+        Some(id) => Predictor::from_id(id), // 0..=4, 6..=13 → Some(_); 14/15/>=16 → None
+    }
+}
+
 /// Simpler stream without LZ77 but with gradient prediction.
 pub fn write_simple_modular_stream(
     image: &ModularImage,
@@ -2005,11 +2046,33 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
         .with_pixel_fraction(pixel_fraction)
         .with_total_pixels(total_pixels);
 
+    // Tree-learn force-predictor override (libjxl `cjxl -P N` /
+    // `--modular_predictor`). When `modular_predictor` is `Some(0..=13)`
+    // and we are NOT in the lossy modular path (which has its own
+    // multiplier-info forced-split discipline + Zero predictor invariant),
+    // bypass ID3 and build a single-leaf tree pinned to the requested
+    // predictor. This matches libjxl's behaviour when an explicit `-P N`
+    // accompanies its tree learner: the leaf predictor is forced even
+    // though the surrounding plumbing (gather, residual collection)
+    // proceeds as usual.
+    //
+    // The `5` default (Gradient) falls through to ID3 by design — see
+    // [`resolve_tree_learn_force_predictor`] — so hash-locks stay green
+    // when callers pass `--modular-predictor 5` explicitly.
+    let force_predictor = if is_lossy {
+        None
+    } else {
+        resolve_tree_learn_force_predictor(knobs)
+    };
+
     let tree = if let Some(ref mul_info) = multiplier_info {
         // Lossy: use forced-split tree learning with multiplier info
         let num_channels = work_image.channels.len() as u32;
         let initial_range = [[0, num_channels], [0, 1]];
         compute_best_tree_with_multipliers(&mut samples, &params, mul_info, initial_range)
+    } else if let Some(forced) = force_predictor {
+        // Force-predictor override: single-leaf tree, no ID3.
+        super::tree::simple_tree(forced)
     } else {
         compute_best_tree(&mut samples, &params)
     };

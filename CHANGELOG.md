@@ -47,6 +47,55 @@
 
 ### Changed
 
+- **`--modular-predictor N` now overrides the MA tree learner**
+  (W12-4 audit Top-5 #1, follow-on to W7-2 `e887c2bb`). When
+  `LosslessConfig::modular_predictor = Some(N)` with `N` in `0..=4` or
+  `6..=13` AND the encode runs through the tree-learning path (default
+  at effort >= 7), the ID3 learner is now bypassed and a single-leaf
+  tree pinned to predictor `N` is emitted instead — matching the
+  libjxl `cjxl -P N` / `--modular_predictor` semantics where
+  `options.predictor` overrides what would otherwise be the tree
+  learner's per-leaf choice. Wired through both the single-group path
+  (`write_modular_stream_with_tree_dc_quant_knobs`) and the multi-group
+  LfGlobal path (`write_global_modular_section_with_tree_knobs`); per-
+  group sections pick up the override via the existing
+  `GlobalModularState::AnsWithTree` tree handle. Three exceptions
+  preserve hash-lock parity: `Some(5)` (Gradient — the legacy default
+  the resolver maps to None to keep the ID3 path identical), `Some(14)`
+  (libjxl `Best`) and `Some(15)` (libjxl `Variable`) are meta-modes
+  that explicitly request per-leaf selection and stay byte-identical to
+  the unset default. The lossy modular path (LfFrame, `is_lossy`) does
+  NOT honour the override — its forced-split tree + Zero predictor
+  invariant must be preserved for residual divisibility. Verification:
+  4 new tests
+  (`modular_knobs_predictor_some5_byte_identical_to_default_tree_learn`,
+  `modular_knobs_predictor_overrides_tree_learner_left`,
+  `modular_knobs_predictor_tree_learn_meta_modes_fall_back_to_id3`,
+  `modular_knobs_predictor_tree_learn_all_ids_roundtrip_via_jxl_rs`)
+  pin both the bytes-change semantics and the pixel-exact jxl-rs
+  roundtrip for all 14 ids; hash_locks 36/36 byte-identical; 1132/1132
+  lib tests pass; CLI smoke test
+  `modular_predictor_flag_accepted_lossless_path` updated to match new
+  Gradient-fallthrough invariant. Measured impact on
+  `gb82-sc/terminal.png` at effort 7 lossless: default ID3 49714 bytes,
+  `-P 5` 49714 bytes (identical), `-P 4` (Select) 84384 bytes, other
+  ids 95-1518 KB — confirms ID3 wins on screenshot content but the
+  override produces valid bitstreams (djxl + jxl-rs decode) for every
+  id, opening the door to per-image content-discriminated dispatch.
+
+### BREAKING CHANGE (queued)
+
+- **`modular_knobs_predictor_does_not_override_tree_learner`** test
+  renamed to `modular_knobs_predictor_some5_byte_identical_to_default_tree_learn`
+  and semantics flipped: the original test asserted that NO id
+  overrides the tree learner; the new test pins only `Some(5)`
+  (Gradient default) as byte-identical, while the companion
+  `modular_knobs_predictor_overrides_tree_learner_left` requires non-
+  Gradient ids to CHANGE bytes on the tree-learn path. Downstream
+  callers that have built tooling assuming `modular_predictor` is a
+  no-op on the tree-learn path (the W4-1 / W7-2 partial-wire state)
+  will see bytes change when they pass `-P {0,1,2,3,4,6,7,8,9,10,11,12,13}`.
+
 - **Lossless patches gate now uses lossless-shape trial encoder**
   (`trial_encode_ref_frame_bytes_lossless`, RFC#45 lossless chunk 5
   follow-on to W11-1 `ad9964a6`). Replaces the XYB-shape
