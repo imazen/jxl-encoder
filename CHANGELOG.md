@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+### Investigated
+
+- **Streaming refactor #11 chunk 7 — peak-RSS bench at 4K confirms
+  structural blocker; documented chunk-8 plan** (no production code
+  changes). `benchmarks/streaming_chunk7_peak_rss_2026-05-18.{tsv,meta}`.
+
+  - **Default `LossyConfig::encode()` path at 4096²** measures
+    identical peak RSS (~1527 MiB) and identical bytes (12382528)
+    across all 5 `Buffering` variants. The `Buffering` knob remains a
+    no-op on the default path — this is the backwards-compat guarantee
+    chunk 6 promised, and the gap that chunk 8 must close.
+  - **Rate-control path at 4096²** confirms the chunk-6 pattern at
+    larger size: per-region (BufferedOutput) uses **+7%** peak RSS
+    (4759 vs 4441 MiB) and bytes diverge by +0.056% (per-region class
+    vs whole-image class). Reproduces the chunk-6 3K finding (+12%
+    per-region).
+  - **Why chunk 7 cannot deliver peak-RSS reduction with the
+    chunk-3/4/5/6 helpers as-built**: (1) `compute_global_only`
+    allocates an `xyb_pre_gaborish` snapshot (~192 MiB at 4K) so
+    per-region precompute reads from a stable source — the default
+    `encode_inner` does gaborish in-place and pays no snapshot cost,
+    so routing through `compute_with_budget_and_buffering` would
+    INCREASE peak RSS; (2) the chunk-4 `encode_dc_group` primitive
+    consumes whole-image token vectors (`dc_tokens`,
+    `ac_section_tokens_per_pass`) — real per-DC-group memory savings
+    require collecting tokens per-region AND clustering at the end
+    (libjxl `acc28c0`'s `global_group_codes[]` shape).
+  - **Chunk 8 plan** (the actual peak-RSS reduction): reshape
+    `encode_two_pass` to collect tokens per-DC-group (drop slice on
+    `quant_dc`/`quant_ac`/`nzeros`/`xyb_*` immediately after
+    tokenization), run histogram clustering across the accumulated
+    per-group token sets, emit DC global + per-DC-group sections +
+    AC global with `permuted_toc=0` for `BufferedOutput` (libjxl
+    `6553831`-style explicit-write) and permuted TOC + seek-back via
+    the chunk-6 `WritableSeek` trait for `FullStreaming`. Target
+    working set: ~5 MiB per DC group vs ~190 MiB whole-image xyb at
+    4K. Estimated 4-7 agent-days per the porting plan.
+  - **Honest-stop rationale** (per CLAUDE.md "honest-stop > false
+    completion"): the prompt allowed "ship the partial refactor that
+    at least removes the precompute peak even if downstream still
+    re-materializes". The partial refactor (route precompute through
+    `compute_with_budget_and_buffering`) ADDS memory cost on the
+    default path because of (1) above. Shipping it as "chunk 7
+    progress" would be false-completion — peak RSS would regress and
+    the `BufferedOutput` knob would still be a no-op on the byte-level
+    (encode_inner re-does everything inline regardless of what the
+    precomputed struct contains). The bench documents the structural
+    gap so the next agent picks up from the right baseline.
+
 ### Added
 
 - **Streaming refactor #11 chunk 6 — `Buffering`-driven dispatch +

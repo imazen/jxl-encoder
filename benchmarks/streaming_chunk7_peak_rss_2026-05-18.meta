@@ -1,0 +1,129 @@
+# Streaming refactor #11 chunk 7 peak-RSS bench meta
+date: 2026-05-18
+commit: chunk-7-WIP (atop 95623da3 chunk-6 dispatch)
+host: $(hostname)
+example_default: jxl-encoder/examples/bench_buffering_rss.rs (default LossyConfig::encode())
+example_rate_control: jxl-encoder/examples/bench_buffering_rss_rate_control.rs (VarDctEncoder::encode_with_rate_control_config)
+build: cargo build --release -p jxl-encoder [--features rate-control for rate-control bench]
+measurement: /usr/bin/time -v "Maximum resident set size (kbytes)"
+
+# Chunk 7 honest-stop summary
+# ===========================
+#
+# CHUNK 7 AS-SPECIFIED IS STRUCTURALLY BLOCKED.
+# The chunk-3/4/5/6 helpers do NOT produce a peak-RSS reduction on the
+# default path because:
+#
+#   1. `EncoderPrecomputedGlobal::compute_global_only` ALLOCATES an
+#      additional `xyb_pre_gaborish` snapshot ([Vec<f32>; 3]) when
+#      gaborish is enabled (precomputed.rs:782). That's ~192 MiB EXTRA
+#      at 4K — the cost of letting per-region precompute reads from a
+#      stable pre-gaborish source. The default `encode_inner` path does
+#      gaborish in-place (no snapshot), so routing through
+#      `compute_with_budget_and_buffering` would INCREASE peak RSS, not
+#      decrease it. The rate-control 4K measurement confirms:
+#        FullBuffered:   4441 MiB
+#        BufferedOutput: 4759 MiB (+7%)
+#      The +7% gap reproduces what chunk-6's 3K bench showed (+12%).
+#
+#   2. The chunk-4 `encode_dc_group` primitive consumes WHOLE-IMAGE
+#      token vectors (`dc_tokens: &[Token]`,
+#      `ac_section_tokens_per_pass: &[Vec<Vec<Token>>]`). Token
+#      collection currently happens whole-image in `encode_two_pass`,
+#      then `encode_dc_group` just rearranges section emission. Real
+#      per-DC-group memory savings require collecting tokens per-region
+#      AND clustering at the end (the libjxl `global_group_codes[]`
+#      shape change in commit `acc28c0`).
+#
+#   3. The default `encode_inner` already drops its biggest allocations
+#      as early as the current architecture allows:
+#        - masking:           line 1896 (after AC strategy)
+#        - quant_field_float: line 2017 (after loop refinement)
+#        - xyb_x/y/b:         line 2132 (after EPF sharpness)
+#        - mask1x1:           line 2136 (after EPF sharpness)
+#      The peak is structural: xyb + quant_field_float + mask1x1 + cfl
+#      + ac_strategy must coexist between line 1302 (XYB convert) and
+#      line 2132 (xyb drop) because each pipeline step reads from the
+#      live xyb planes (chromacity, quant_field, mask1x1, gaborish, cfl
+#      pass 1, ac_strategy, cfl pass 2, optional butt/ssim2/zensim
+#      loops, transform_and_quantize, EPF sharpness).
+#
+# DEFAULT PATH PEAK RSS (this bench, fbm-ish content, default 2 GiB cap)
+# =====================================================================
+#   3072² (= 9.4 MP):  ~861-862 MiB — all 5 Buffering variants identical
+#   4096² (= 16.8 MP): ~1527 MiB    — all 5 Buffering variants identical
+#
+#   bytes identical across variants (6973041 @ 3K, 12382528 @ 4K) →
+#   confirms the Buffering knob is currently a no-op on the default
+#   path. This is the backwards-compat guarantee — and the structural
+#   gap that chunk 8 must close.
+#
+# RATE-CONTROL PATH PEAK RSS (this bench, 4K)
+# ============================================
+#   FullBuffered:   4441 MiB  bytes=7336845  (whole-image precompute)
+#   Threshold2048:  4440 MiB  bytes=7336845  (also whole-image)
+#   BufferedOutput: 4759 MiB  bytes=7340945  (per-region; +7% RSS)
+#   FullStreaming:  4582 MiB  bytes=7340945  (per-region; +3% RSS)
+#   Auto:           4712 MiB  bytes=7340945  (Auto > 2048² → per-region)
+#
+#   Bytes split into two classes (Δ +0.056% per-region vs whole-image)
+#   confirms the chunk-6 dispatch matrix is correctly routing on the
+#   `Buffering` value. The per-region class costs MORE peak RSS today
+#   because of the xyb_pre_gaborish snapshot — same pattern as 3K.
+#
+# CHUNK 8 PLAN (the actual peak-RSS reduction)
+# =============================================
+#   To deliver the 2-3× peak-RSS reduction the prompt targets, chunk 8
+#   must reshape `encode_inner` to NOT hold the whole image in memory at
+#   any point:
+#
+#   1. Replace `encode_two_pass`'s whole-image token collection with a
+#      per-DC-group token collector. Each DC group:
+#        - Tokenizes its DC + AC + metadata into local `Vec<Token>`s.
+#        - Pushes those into a per-region `EncodedDcGroup`.
+#        - Drops its slice of `quant_dc / quant_ac / nzeros /
+#          raw_nzeros / xyb_*` immediately after tokenization.
+#      Mirrors libjxl's `OutputGroups` shape post-`acc28c0`.
+#
+#   2. Run histogram clustering ACROSS the accumulated per-DC-group
+#      tokens (libjxl-parity: clustering still happens whole-image at
+#      `buffering ∈ {0, 1, 2}`, only `buffering = 3` ships local trees
+#      — and even then only for `responsive=1` modular, per `b3510d1` /
+#      `1389871`).
+#
+#   3. Emit DC global + per-DC-group sections + AC global. For
+#      `BufferedOutput`: natural-order TOC + `permuted_toc=0`
+#      (libjxl `6553831` fix). For `FullStreaming`: permuted TOC with
+#      seek-back via `WritableSeek` (chunk 6 wired the trait but the
+#      actual streaming-output emit path is chunk 8).
+#
+#   4. Drop the global xyb slice for each DC group as soon as its
+#      `encode_dc_group` returns. At 4K this brings the live working
+#      set from ~190 MiB (whole xyb) down to ~5 MiB (one 256×256 ×
+#      24 B/pixel DC-group footprint).
+#
+#   The structural shape exists today (`encode_dc_group` primitive,
+#   `compute_with_budget_and_buffering` dispatch, `WritableSeek`
+#   trait, `permuted_toc=0` test). The remaining work is per-DC-group
+#   token collection + early per-region buffer drop in `encode_inner`.
+#   Estimated 4-7 agent-days per the porting plan
+#   (libjxl_streaming_refactor_porting_plan_2026-05-18.md → chunk 5).
+#
+# Why chunk 7 didn't attempt the half-refactor (honest-stop rationale)
+# =====================================================================
+# The prompt allowed "ship the partial refactor that at least removes
+# the precompute peak even if downstream still re-materializes." The
+# partial refactor (route precompute through compute_with_budget_and_-
+# buffering) ADDS memory cost on the default path because of (1)
+# above, not removes it. Shipping that as "chunk 7 progress" would be
+# false-completion: the user-visible metric (peak RSS) would regress,
+# and the BufferedOutput knob would still be a no-op on the byte-level
+# (encode_inner re-does everything inline regardless of what the
+# precomputed struct contains).
+#
+# The honest, useful chunk-7 deliverable is the 4K bench above plus
+# this documented chunk-8 plan. The chunk-6 commit explicitly named
+# chunk 7 as "Refactor encode_inner to call the same per-DC-group
+# helpers"; this bench is the empirical confirmation that the
+# refactor as-named cannot land without ALSO solving the per-DC-group
+# token collection problem (which is chunk 8 scope).
