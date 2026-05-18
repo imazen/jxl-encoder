@@ -1026,8 +1026,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (smaller bytes AND better vdp2_ref). Useful color for the report.
     let mut wins: Vec<(String, f32, f32, f64, f64)> = Vec::new();
     #[allow(clippy::type_complexity)] // local benchmark map — factoring adds noise
-    let mut by_key: std::collections::HashMap<(String, u64, u64), (Option<Cell>, Option<Cell>)> =
-        std::collections::HashMap::new();
+    let mut by_key: std::collections::HashMap<
+        (String, u64, u64),
+        (Option<Cell>, Option<Cell>),
+    > = std::collections::HashMap::new();
     for (img, d, it, mode, c) in &all_rows {
         let k = (img.clone(), (*d * 1000.0) as u64, *it as u64);
         let entry = by_key.entry(k).or_insert((None, None));

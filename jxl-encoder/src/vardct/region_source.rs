@@ -633,9 +633,7 @@ mod tests {
     #[test]
     fn streaming_source_round_trips_xyb_full_before_release() {
         let (x, y, b) = make_planes(16 * 16);
-        let src = StreamingXybSource::new(
-            16, 16, 16, 16, 1, 1, x.clone(), y.clone(), b.clone(),
-        );
+        let src = StreamingXybSource::new(16, 16, 16, 16, 1, 1, x.clone(), y.clone(), b.clone());
         assert_eq!(src.width(), 16);
         assert_eq!(src.padded_width(), 16);
         let (sx, sy, sb) = src.xyb_full();
@@ -652,9 +650,7 @@ mod tests {
         // `all_released` to flip and `into_planes` to return the
         // original storage in order.
         let (x, y, b) = make_planes(32 * 24);
-        let src = StreamingXybSource::new(
-            32, 24, 32, 24, 4, 3, x.clone(), y.clone(), b.clone(),
-        );
+        let src = StreamingXybSource::new(32, 24, 32, 24, 4, 3, x.clone(), y.clone(), b.clone());
         assert!(!src.all_released(), "fresh source must not be all-released");
         // Release 11 of 12 — counter advances, all_released still false.
         for i in 0..11u32 {
@@ -667,7 +663,10 @@ mod tests {
         assert_eq!(src.released_count(), 11);
         // Final release flips all_released.
         src.release_dc_region(3, 2);
-        assert!(src.all_released(), "all_released must fire on final release");
+        assert!(
+            src.all_released(),
+            "all_released must fire on final release"
+        );
         assert_eq!(src.released_count(), 12);
         // into_planes returns the original storage in order.
         // (The walker calls this after all_released to drop the

@@ -3050,8 +3050,7 @@ impl VarDctEncoder {
                     let pass_sections_for_dc = &eg.ac_sections_per_pass[pass];
                     for hf_gy in hf_y_start..hf_y_end {
                         for hf_gx in hf_x_start..hf_x_end {
-                            let local_idx = (hf_gy - hf_y_start) * dc_hf_w
-                                + (hf_gx - hf_x_start);
+                            let local_idx = (hf_gy - hf_y_start) * dc_hf_w + (hf_gx - hf_x_start);
                             let global_idx = hf_gy * xsize_groups + hf_gx;
                             pass_sections[global_idx] = pass_sections_for_dc[local_idx].clone();
                         }
