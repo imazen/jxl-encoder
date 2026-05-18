@@ -97,6 +97,19 @@ pub struct FrameEncoderOptions {
     /// encoder both fix VarDCT groups at 256). See
     /// [`crate::api::LosslessConfig::with_modular_group_size`].
     pub modular_group_size_shift: Option<u8>,
+    /// Optional custom DC quantization factors for the LfGlobal
+    /// `LfQuantFactors` block (libjxl `DequantMatricesEncodeDC` in
+    /// `enc_quant_weights.cc:144-180`). When `Some([x, y, b])`, writes
+    /// `all_default = 0` followed by 3 F16-encoded `dc_quant * 128.0`
+    /// values into the modular frame's LfGlobal. When `None` (the
+    /// default), writes `all_default = 1` (spec defaults `{1/4096,
+    /// 1/512, 1/256}` per `quant_weights.h:289-293`).
+    ///
+    /// Used by the patches reference frame at lossy distance (libjxl
+    /// `enc_modular.cc:755-774` scales the base `{65536, 4096, 4096}`
+    /// by `1 / (1 + 23·d)` (X) and `1 / (1 + 14·d)` (Y, B-Y)). At
+    /// `distance == 0.0` the legacy spec-default DC quant is preserved.
+    pub dc_quant_custom: Option<[f32; 3]>,
 }
 
 impl Default for FrameEncoderOptions {
@@ -127,6 +140,7 @@ impl Default for FrameEncoderOptions {
             timecode: None,
             modular_knobs: super::palette::ModularKnobs::default(),
             modular_group_size_shift: None,
+            dc_quant_custom: None,
         }
     }
 }
@@ -795,7 +809,27 @@ impl FrameEncoder {
             )?;
         }
 
-        let global_state = if self.options.use_tree_learning && self.options.use_ans {
+        let global_state = if self.options.dc_quant_custom.is_some() {
+            // When the caller supplied custom DC quant (patches ref frame at
+            // lossy distance), always use the tree-learning `_dc_quant_knobs`
+            // variant — it is the only multi-group path that writes a
+            // non-default `LfQuantFactors`. The non-tree path
+            // (`write_global_modular_section_with_predictor`) hardcodes
+            // `all_default = true`. Sending custom dc_quant through it would
+            // silently emit spec defaults and the decoder would dequantize
+            // with the wrong scale, corrupting the patches.
+            super::section::write_global_modular_section_with_tree_dc_quant_knobs(
+                &group_images,
+                &mut lf_global_writer,
+                &self.options.profile,
+                global_transforms,
+                self.options.enable_lz77,
+                self.options.lz77_method,
+                self.options.dc_quant_custom,
+                meta_image.as_ref(),
+                &self.options.modular_knobs,
+            )?
+        } else if self.options.use_tree_learning && self.options.use_ans {
             // Tree learning path: gather samples, learn tree, build multi-context ANS.
             // Honours [`super::palette::ModularKnobs::modular_predictor`]
             // (libjxl `cjxl -P N` / `--modular_predictor`) by routing
@@ -2245,7 +2279,32 @@ impl FrameEncoder {
             let mut section_writer = BitWriter::new();
 
             let use_rct = image.channels.len() >= 3 && !self.options.skip_rct;
-            if self.options.use_tree_learning && self.options.use_ans {
+
+            // When the caller supplied custom DC quant (patches ref frame at
+            // lossy distance), always route through the tree-learning
+            // `_dc_quant_knobs` variant — it is the only single-group path
+            // that wires the `LfQuantFactors` header through to
+            // `write_lf_quant`. The non-tree paths hardcode
+            // `writer.write(1, 1) // all_default = true`. Sending Some(dq)
+            // through them would silently emit the spec defaults and the
+            // decoder would dequantize with the wrong scale.
+            //
+            // At `dc_quant_custom == None` we preserve the existing routing
+            // (no perturbation to lossless hash-locks).
+            if self.options.dc_quant_custom.is_some() {
+                super::encode::write_modular_stream_with_tree_dc_quant_knobs(
+                    image,
+                    &mut section_writer,
+                    &self.options.profile,
+                    use_rct,
+                    self.options.enable_lz77,
+                    self.options.lz77_method,
+                    self.options.dc_quant_custom,
+                    None, // not lossy modular (no Squeeze + multiplier-info path)
+                    true, // palette detection ok
+                    &self.options.modular_knobs,
+                )?;
+            } else if self.options.use_tree_learning && self.options.use_ans {
                 super::encode::write_modular_stream_with_tree_knobs(
                     image,
                     &mut section_writer,

@@ -10130,6 +10130,7 @@ fn encode_animation_lossless(
                 timecode: frame.timecode,
                 modular_knobs: cfg.modular_knobs(),
                 modular_group_size_shift: cfg.effective_modular_group_size_shift(),
+                dc_quant_custom: None,
             }
         };
 

@@ -2005,6 +2005,7 @@ impl VarDctEncoder {
         if let Some(ref pd) = patches_data {
             super::patches::encode_reference_frame(
                 pd,
+                self.distance,
                 self.use_ans,
                 self.profile.patch_ref_tree_learning,
                 writer,
@@ -2121,6 +2122,7 @@ impl VarDctEncoder {
             );
             super::patches::encode_reference_frame(
                 pd,
+                self.distance,
                 self.use_ans,
                 self.profile.patch_ref_tree_learning,
                 &mut writer,
