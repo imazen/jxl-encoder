@@ -2187,6 +2187,20 @@ impl VarDctEncoder {
         #[cfg(feature = "butteraugli-loop")]
         if self.butteraugli_iters > 0 {
             let initial_qf_float = quant_field_float.clone();
+            // W39-2 (WF3 fix): classify the input as screenshot vs
+            // photo for the buttloop's HIGH-regime cap dispatch.
+            // Reuses the same `median(mask1x1) > 95.0` discriminator
+            // as `splines::looks_like_screenshot` and the W22-1
+            // `entropy_mul` content-aware dispatch above
+            // (`CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD`). `mask1x1`
+            // is already in scope here (computed at line ~1913 for
+            // `pixel_domain_loss`); falling back to `false` when it
+            // wasn't computed keeps the photo-default (no cap, libjxl
+            // faithful, byte-identical).
+            let is_screenshot = mask1x1.as_deref().is_some_and(|m| {
+                median_mask1x1(m, padded_width, width, height)
+                    > super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD
+            });
             params = self.butteraugli_refine_quant_field(
                 linear_rgb,
                 width,
@@ -2206,6 +2220,7 @@ impl VarDctEncoder {
                 &ac_strategy,
                 patches_data.as_ref(),
                 splines_data.as_ref(),
+                is_screenshot,
             )?;
         }
 
