@@ -59,6 +59,11 @@ pub use api::{
     ProgressiveMode, Quality, ResultAtExt, Stop, Unstoppable, at, calibrated_jxl_quality,
     downsample_channel_u8, quality_to_distance,
 };
+// Streaming refactor #11 chunk 6: seekable output sink trait. Required
+// by `LossyEncoder::finish_to_seekable` / `LosslessEncoder::finish_to_seekable`.
+// Lives behind `feature = "std"` because it depends on `std::io::Seek`.
+#[cfg(feature = "std")]
+pub use api::WritableSeek;
 // EX-J11 chunk 1: HDR-aware perceptual loss selector for the butteraugli
 // quantization loop. Only meaningful with the `butteraugli-loop` feature.
 #[cfg(feature = "butteraugli-loop")]

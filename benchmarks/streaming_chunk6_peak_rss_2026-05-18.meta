@@ -1,0 +1,60 @@
+# Streaming refactor #11 chunk 6 peak-RSS bench meta
+date: 2026-05-18
+commit: chunk-6-WIP (chunk 4 reapplied + chunk 6 Buffering dispatch + WritableSeek)
+host: $(hostname)
+example_default: jxl-encoder/examples/bench_buffering_rss.rs (default LossyConfig::encode())
+example_rate_control: jxl-encoder/examples/bench_buffering_rss_rate_control.rs (VarDctEncoder::encode_with_rate_control_config)
+build: cargo build --release -p jxl-encoder [--features rate-control for the rate-control bench]
+measurement: /usr/bin/time -v "Maximum resident set size (kbytes)"
+
+# Key findings:
+# 1. Default LossyConfig::encode() path: identical peak RSS (881-883 MB) and
+#    identical bytes (6973041) across all 5 Buffering variants. This is the
+#    backwards-compat guarantee — the default path goes through encoder.rs:
+#    encode_inner which does inline precompute and never hits the chunk-6
+#    dispatch in EncoderPrecomputed::compute_with_budget_and_buffering.
+#
+# 2. Rate-control path: peak RSS DIVERGES by Buffering variant:
+#    - FullBuffered:   2504 MiB, bytes=4131213 (whole-image precompute)
+#    - Threshold2048:  2579 MiB, bytes=4131213 (also whole-image; chunk 6 routes
+#                                                Threshold2048 to whole-image)
+#    - Auto:           2651 MiB, bytes=4133123 (Auto resolves to BufferedOutput
+#                                                at 3072² > 2048², engages per-region)
+#    - BufferedOutput: 2811 MiB, bytes=4133123 (per-region; +12% RSS vs FullBuffered)
+#    - FullStreaming:  2784 MiB, bytes=4133123 (per-region; +11% RSS vs FullBuffered)
+#
+# 3. The per-region path uses MORE peak RSS today, not less. Chunk 5 commit
+#    explicitly documented this: "No memory reduction — chunk 5 alone cannot
+#    drop buffers because the loop driver still returns whole-image-sized
+#    quant_field / masking / mask1x1 / post-gaborish XYB that the butteraugli
+#    loop and encode_from_precomputed expect."
+#
+# 4. The per-region path's bytes-level FP drift is small (4133123 vs 4131213 =
+#    +0.046% bytes), well within the chunk-5-documented 0.1% worst-case
+#    envelope. The test `rate_control_buffering_dispatch_routes_correctly`
+#    pins this at <1%.
+#
+# 5. Bytes split into two equivalence classes confirms the chunk-6 dispatch
+#    is correctly routing on Buffering value AT THE RATE-CONTROL PATH:
+#    - whole-image class: FullBuffered, Threshold2048
+#    - per-region class:  Auto (resolved to BufferedOutput), BufferedOutput,
+#                         FullStreaming
+#
+# Chunk-7 plan (to deliver the 2-4x peak-RSS reduction the prompt targets):
+#   The default LossyConfig::encode() path's encoder.rs:encode_inner must be
+#   refactored to use the same compute_global_only + per-DC-group encode_dc_group
+#   shape that the rate-control path now (partially) has. Specifically:
+#   - Hoist XYB conversion into compute_global_only.
+#   - Replace the inline precompute calls (xyb_x/y/b allocs, quant_field_float,
+#     mask1x1, gaborish_inverse_maybe_adaptive, compute_cfl_map_with_budget,
+#     compute_ac_strategy_for_tiles) with the per-DC-group helpers from
+#     chunk 3 (compute_dc_group) and chunk 5 (fill_dc_group_state_per_region).
+#   - Replace the inline emit (parallel_map_result over encode_dc_group_section /
+#     encode_ac_group_section) with the chunk-4 encode_dc_group primitive.
+#   - Drop each DC-group's plane slice on global as soon as encode_dc_group
+#     returns — this is the actual buffer drop that delivers the memory win.
+#   - Mirror libjxl's `OutputProcessor::Seek` for the FullStreaming path:
+#     reserve DC-global placeholder, emit per-DC-group sections to the
+#     WritableSeek sink as they finish, seek back to write the real DC-global
+#     + permuted TOC. Wire `permuted_toc=1` explicit-write for that path
+#     (libjxl 6553831 fix).

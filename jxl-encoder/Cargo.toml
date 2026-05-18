@@ -631,5 +631,13 @@ required-features = ["butteraugli-loop"]
 name = "bench_buffering_rss"
 path = "examples/bench_buffering_rss.rs"
 
+# Chunk-6 follow-on: peak-RSS bench through the rate-control path,
+# which IS the consumer of the chunk-6 Buffering-driven dispatch in
+# `EncoderPrecomputed::compute_with_budget_and_buffering`.
+[[example]]
+name = "bench_buffering_rss_rate_control"
+path = "examples/bench_buffering_rss_rate_control.rs"
+required-features = ["rate-control"]
+
 [lints]
 workspace = true

@@ -2,6 +2,130 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Streaming refactor #11 chunk 6 — `Buffering`-driven dispatch +
+  `WritableSeek` trait + permuted-TOC `=0` invariant test** (`src/api.rs`,
+  `src/lib.rs`, `src/vardct/encoder.rs`, `src/vardct/precomputed.rs`,
+  `tests/buffering_dispatch.rs`,
+  `examples/bench_buffering_rss_rate_control.rs`).
+
+  - **`compute_with_budget_and_buffering`** in
+    `vardct/precomputed.rs` — the chunk-5 `JXL_STREAMING_CHUNK5=1`
+    env-var gate is replaced by a per-call `Buffering` parameter.
+    Routing matrix: `FullBuffered` / `Threshold2048` always go through
+    the whole-image precompute (chunk 3); `BufferedOutput` /
+    `FullStreaming` engage the per-region precompute (chunk 5); `Auto`
+    resolves via [`Buffering::resolve_for`] (≤2048² → `FullBuffered`,
+    larger → `BufferedOutput`). The env var still works as an escape
+    hatch when set.
+  - **`VarDctEncoder.buffering`** field threads the caller's
+    [`LossyConfig.buffering`] policy into the rate-control entry
+    point (`encode_with_rate_control_config`), which is the only
+    consumer of `compute_with_budget` today. Default `Buffering::Auto`
+    keeps every existing hash-lock byte-identical.
+  - **`pub trait WritableSeek: std::io::Write + std::io::Seek`** in
+    `api.rs`, with blanket impl covering `std::io::Cursor<Vec<u8>>` /
+    `std::fs::File`. Required by the new
+    [`LossyEncoder::finish_to_seekable`] and
+    [`LosslessEncoder::finish_to_seekable`] methods. **Chunk 6
+    behaviour: routes through `finish_inner` like `finish_to`** — the
+    bytes are produced in memory and written in one pass; the seek
+    capability is plumbed for the chunk-7 level-3 streaming-output
+    path (permuted TOC + DC-global placeholder + post-frame seek-back,
+    mirroring libjxl `acc28c0`).
+  - **Re-applied chunk 4** (encode-side `encode_dc_group` extraction;
+    bitstream.rs). Chunks 1, 2, 3, 5 landed on `origin/main` but
+    chunk 4 was authored as a sibling commit (`fa12661c`) that never
+    made it into a branch. Chunk 6 needs the per-DC-group
+    `EncodedDcGroup` emit primitive as the structural prereq for the
+    chunk-7 per-DC-group section buffer drop, so the dangling commit
+    is re-introduced here verbatim ahead of the chunk-6 wireup.
+  - **`#[derive(Clone)]` on `CflMap`** (`chroma_from_luma.rs`). Pre-
+    existing chunk-3 bug — `compute_dc_group` called
+    `aggregated_cfl.clone()` but the type wasn't `Clone`, so the
+    rate-control feature build failed with `E0596`. Repaired here so
+    the chunk-6 rate-control test path compiles.
+  - **New tests** in `tests/buffering_dispatch.rs`:
+    - `rate_control_buffering_dispatch_routes_correctly` (gated on
+      `feature = "rate-control"`) — verifies that on a sub-threshold
+      (256²) image all `Buffering` variants produce byte-identical
+      bytes via the whole-image path, while on a super-threshold
+      (2560²) image the `BufferedOutput` / `FullStreaming` / `Auto`
+      variants produce bytes that fall inside the chunk-5-documented
+      <1% FP-drift envelope of the `FullBuffered` baseline.
+    - `permuted_toc_zero_invariant_for_buffered_output` — asserts
+      `BufferedOutput` and `FullBuffered` produce byte-identical
+      output on a 2560² image (both write `permuted_toc=0`,
+      mirroring libjxl PR `6553831`'s explicit-zero fix). Chunk 7
+      will lift this for `FullStreaming` only, when the level-3 path
+      starts writing `permuted_toc=1`.
+    - `finish_to_seekable_round_trips_identically_lossy` /
+      `_lossless` — sanity that the `WritableSeek` finish path
+      produces bytes identical to `finish()` at chunk 6.
+  - **Bench data** at
+    `benchmarks/streaming_chunk6_peak_rss_2026-05-18.{tsv,meta}`.
+    Headline at 3072×3072: `LossyConfig::encode()` (default
+    `encode_inner` path) sees identical peak RSS (~861 MiB) and
+    identical bytes across all 5 `Buffering` variants — confirms the
+    backwards-compat guarantee. The rate-control path
+    (`VarDctEncoder::encode_with_rate_control_config`, which IS the
+    consumer of the chunk-6 dispatch) sees the per-region path use
+    **slightly higher** peak RSS than whole-image (+5–12%), because
+    the per-region functions produce per-region buffers that are then
+    copied into the whole-image accumulators that downstream
+    rate-control / butteraugli / `encode_from_precomputed` still
+    consume. This is the chunk-5-documented behaviour: real memory
+    reduction needs chunk 7 to refactor `encode_inner` itself to use
+    the chunk-3/4/5 per-DC-group primitives + drop per-region buffers
+    inline.
+
+  **Why peak RSS does not drop at chunk 6** (the honest-stop): the
+  default `LossyConfig::encode()` path goes through
+  `vardct/encoder.rs:encode_inner` which does inline precompute (XYB
+  conversion, `compute_quant_field_float_with_budget`,
+  `compute_mask1x1_with_budget`, `gaborish_inverse_maybe_adaptive`,
+  `compute_cfl_map_with_budget`, `compute_ac_strategy_for_tiles`) and
+  inline emit (`parallel_map_result` over `encode_dc_group_section` /
+  `encode_ac_group_section`). The chunk-3/4/5 per-DC-group helpers
+  exist as `EncoderPrecomputed::compute_with_budget_and_buffering` +
+  `bitstream::encode_dc_group`, but **only the rate-control path
+  consumes them**. Chunk 7 must reshape `encode_inner` to call the
+  same compute_global_only + per-DC-group encode_dc_group +
+  per-region buffer drop sequence the rate-control path uses, then
+  the BufferedOutput / FullStreaming routes will actually reduce RSS.
+
+  **Chunk 7 plan** (carries forward from chunk 6):
+  1. Refactor `encode_inner` to call `compute_global_only` (chunk 2)
+     + per-DC-group `compute_dc_group` (chunk 3) +
+     `fill_dc_group_state_per_region` (chunk 5) instead of the
+     inline precompute calls.
+  2. Hook `encode_dc_group` (chunk 4) into the per-DC-group emit
+     loop so each DC group's LfGroup + HF sections land in
+     `global_group_codes[]` and the per-region XYB / quant_field /
+     mask1x1 slice on `global` is dropped (via `Vec::drain` or
+     replacement with an empty same-stride buffer) before the next
+     DC group runs.
+  3. For `Buffering::FullStreaming`: emit each DC group's sections
+     directly to the `WritableSeek` sink as they finish, reserve the
+     DC-global placeholder upfront, then seek back at end-of-frame
+     to write the real DC-global + write `permuted_toc=1` via
+     `write_toc_with_permutation` (already exists in `vardct/frame.rs`).
+     Mirror libjxl `6553831`'s explicit-write fix for the level-2
+     `permuted_toc=0` bit while we're at it.
+  4. Stream input via `LossyEncoder::push_rows` for the level-3
+     path: today `push_rows` linearises eagerly into
+     `self.linear_rgb`; chunk 7 should let each DC group consume only
+     the rows it needs (mirroring libjxl's
+     `JxlEncoderChunkedFrameAdapter` random-access shape).
+
+  libjxl reference: PRs #4634 (`acc28c0`) + #4635 (`032d39a`) +
+  #4637 (`b3510d1`) + #4642 (`1389871`) + #4728 (`6553831`). The
+  chunk-6 dispatch mirrors `enc_frame.cc:1779-1820` (`CanDoStreamingEncoding`
+  + default-buffering resolution) and reserves the chunk-7 seek-back
+  for the actual `EncodeFrameStreaming` (`enc_frame.cc:2042-2200`)
+  port.
+
 ### Changed
 
 - **Streaming refactor #11 chunk 5 — per-region `quant_field` /
