@@ -786,6 +786,48 @@ pub(crate) fn compute_mask1x1_for_region(
     Ok(out)
 }
 
+/// Mask1x1 plane for EPF sharpness derivation: either reuse the
+/// precomputed mask1x1 from the global precompute pass (when present)
+/// or compute it on-demand from `xyb_y` via
+/// [`compute_mask1x1_with_budget`].
+///
+/// **Streaming refactor chunk 8c step B (#11)**: extracts the
+/// inline `match &mask1x1 { Some(m) => m, None => fallback }`
+/// pattern that used to live inside the
+/// `params.epf_iters > 0 && distance >= 0.5 && epf_dynamic_sharpness`
+/// branch of `encode_inner` / `encode_from_precomputed_inner` into a
+/// single helper. Hoisting the resolution out of the EPF branch
+/// decouples the XYB-source lifetime from EPF: callers may now own
+/// the resolved mask1x1 before the streaming source releases the
+/// per-DC-group XYB regions that the fallback path would otherwise
+/// need to read.
+///
+/// Returns:
+/// - `Cow::Borrowed(m)` when `precomputed_mask1x1` is `Some(m)` — no
+///   allocation, no XYB read.
+/// - `Cow::Owned(v)` when `precomputed_mask1x1` is `None` — the
+///   fallback computes the full mask1x1 plane from `xyb_y` and
+///   returns ownership to the caller.
+///
+/// Output bytes are bit-identical to the previous inline pattern
+/// (same `compute_mask1x1_with_budget` call, same arguments).
+#[allow(dead_code)]
+pub(crate) fn resolve_mask1x1_for_sharpness<'a>(
+    precomputed_mask1x1: Option<&'a [f32]>,
+    xyb_y: &[f32],
+    padded_width: usize,
+    padded_height: usize,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<alloc::borrow::Cow<'a, [f32]>> {
+    match precomputed_mask1x1 {
+        Some(m) => Ok(alloc::borrow::Cow::Borrowed(m)),
+        None => {
+            let owned = compute_mask1x1_with_budget(xyb_y, padded_width, padded_height, budget)?;
+            Ok(alloc::borrow::Cow::Owned(owned))
+        }
+    }
+}
+
 /// `pub` wrapper around [`compute_quant_field_float_with_budget`] for
 /// the `__pre_quantized` escape hatch. Matches the production-path
 /// signature minus the budget plumbing — passes `None` internally;
