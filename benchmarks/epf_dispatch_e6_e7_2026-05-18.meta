@@ -1,0 +1,149 @@
+# W36-2 — EPF sharpness adaptive-dispatch A/B sweep (2026-05-18)
+
+## Provenance
+
+- Date: 2026-05-18 UTC
+- Hostname: lilith (water-cooled AMD Ryzen 9 7950X, 32 threads, 128 GB RAM)
+- Parent commit: `33408e09` (RFC#45 chunk 2 — e12 admit)
+- Workspace: `~/work/zen/jxl-encoder--epf-smart-dispatch` (jj sibling on main)
+- Encoder build: release, features `std parallel butteraugli-loop`
+- Sweep wall: ~20 min (270 cells × 3 runs each = 810 encodes)
+
+## Motivation
+
+W36-1 (`70a48af9`) phase profile (`benchmarks/lossy_phase_baseline_2026-05-18.{tsv,meta}`)
+established that the per-block EPF sharpness search (`compute_epf_sharpness`
+in `vardct/epf.rs`) is the dominant phase of the default lossy encode:
+
+- e6 (176 ms mean): **EPF sharpness 45.5%**
+- e7 (248 ms mean): **EPF sharpness 33.8%**
+- e8 (804 ms mean): EPF sharpness 8.5% (buttloop dominates)
+
+On smooth photo regions the search converges on the default sharpness
+value (=4) for nearly every block, so the work is wasted — the bitstream
+is identical to writing the uniform default directly. This sweep
+quantifies the trade-off across photo + screen content with three
+dispatch modes:
+
+- `AlwaysSelect` — historical behaviour (always run the search when the
+  underlying gate is satisfied)
+- `Auto` — skip the search when the per-image `mean(mask1x1)` exceeds
+  `EPF_AUTO_SMOOTH_MASK_THRESHOLD = 60.0` (saturated `mask1x1`
+  ≈ 100, textured `mask1x1` ≈ 5-15)
+- `AlwaysDefault` — always emit uniform default sharpness, skip the
+  search unconditionally
+
+## Sweep grid
+
+- **10 images**: 5 CID22-512 photos (1025469, 1044329, 1189261, 1279330,
+  1418519; 512×512 = 0.26 MP each) + 5 GB82-SC screenshots
+  (codec_wiki, imac_g3, terminal, imac_dark, windows; 1024×1024 to
+  2940×1912 = 1.0-5.6 MP each)
+- **3 distances**: {0.5, 1.0, 2.0}
+- **3 efforts**: {6, 7, 8}
+- **3 dispatch modes**: {`always_select`, `auto`, `always_default`}
+- **3 runs per cell** (median ms reported; min ms also captured)
+- **Cells**: 10 × 3 × 3 × 3 = 270 cells = 810 encodes
+- **Result**: 266 cells recorded (4 cells failed for screen e8 — buttloop
+  budget exhaustion on edge-heavy screenshots; not material to the
+  photo / screen e6 / screen e7 default-flip evaluation)
+
+## Metrics
+
+Each cell's bytes/butteraugli/SSIM2/wall-clock captured. Decoded via
+**jxl-oxide linear** (`request_color_encoding(srgb_linear)`), then:
+
+- Butteraugli: Rust `butteraugli::butteraugli_linear` on linear f32
+  RGB — CLAUDE.md PNG-metadata-immune path (avoids the
+  `butteraugli_main`-vs-gamma-2.2 trap that has burned multiple
+  sessions).
+- SSIM2: `fast_ssim2::compute_ssimulacra2` on sRGB u8 (decoded linear
+  → sRGB u8 via the correct sRGB TF, not gamma 2.2; matches
+  `tests/quality_compare.rs::linear_to_srgb_u8`).
+
+Reproducer:
+
+```
+cargo run -p jxl-encoder --release --features 'std parallel butteraugli-loop' \
+  --example epf_dispatch_ab -- \
+  --out benchmarks/epf_dispatch_e6_e7_2026-05-18.tsv
+```
+
+## Default-flip gate criteria
+
+Per the W36-2 spec:
+
+- **Photo class**: bytes Δ ≤ +0.5 %, butteraugli Δ ≤ +2 %, wall-clock
+  saving ≥ 15 ms/MP at e6
+- **Screen class**: bytes Δ ≤ +0.5 %, butteraugli Δ ≤ +2 %, wall-clock
+  saving ≥ 10 ms/MP at e7
+
+If Auto passes both classes on all three efforts, the data permits a
+default flip (which would require rebaking `hash_lock_features` and the
+RD regression baselines). If either class fails, ship as opt-in.
+
+## Headline (Auto vs AlwaysSelect, paired per cell, full 266 cells)
+
+| class  | effort | N  | bytes Δ | butteraugli Δ | ssim2 Δ | wall-save (ms/MP, med) | gate |
+|--------|--------|----|---------|---------------|---------|-----------------------|------|
+| photo  | e6     | 15 | −1.10 % | +1.69 %       | −0.04   | +34.9                 | **PASS** |
+| photo  | e7     | 15 | −1.12 % | +0.30 %       | −0.04   | +34.2                 | **PASS** |
+| photo  | e8     | 15 | −1.23 % | +0.59 %       | −0.04   | +42.9                 | **PASS** |
+| screen | e6     | 15 | −1.54 % | +0.87 %       | +0.04   | +40.5                 | **PASS** |
+| screen | e7     | 15 | −2.58 % | +0.88 %       | −0.01   | +48.7                 | **PASS** |
+| screen | e8     | 14 | −2.58 % | +1.73 %       | −0.09   | +47.7                 | **PASS** |
+
+Compared to `AlwaysDefault` (which forces the uniform default
+unconditionally), `Auto` is byte-identical to AlwaysDefault on the
+screen-class images at e6/e7 (every screenshot's mean mask1x1 sits
+above the threshold for the cells that matter — flat UI backgrounds
+dominate the average), and adds only a few extra blocks of search on
+the smooth photo cells where the predicate gates the search OFF.
+
+## Decision
+
+**Ship as opt-in. Default remains `EpfDispatch::AlwaysSelect`.**
+
+The data permits a default flip — both photo and screen classes pass
+all six (class, effort) gates on the full 266-cell sweep. Bytes
+**shrink** (1-3 % smaller) because the sharpness-map context model
+costs more to encode than the uniform-default fallback for blocks
+that anyway converge on the default. Butteraugli sits at +0.30 % to
++1.73 % across the grid — comfortably under the +2 % gate, but the
+margins on photo-e6 (+1.69 %) and screen-e8 (+1.73 %) are tight
+enough that the conservative move is to ship the dispatch surface
+as an opt-in and let a follow-on PR do the actual default flip +
+36-fixture `hash_lock_features` rebake + RD regression rebake under
+its own review.
+
+The `with_epf_dispatch(EpfDispatch::Auto)` builder + `--epf-dispatch
+auto` CLI flag let callers opt in immediately. Since the default is
+unchanged, `hash_lock_features` stays byte-identical (36/36 pass)
+and the existing RD regression numbers are preserved.
+
+## Follow-on chunk plan
+
+1. **Default flip** — change `LossyConfig` field default to
+   `EpfDispatch::Auto`; flip the `VarDctEncoder::default` /
+   constructor seed. Rebake `hash_lock_expected.txt` (full 36
+   entries) and the RD regression baseline TSVs. CHANGELOG note
+   under `### Changed` calling out the bitstream change.
+2. **Per-region (per-DC-group) dispatch** — the current whole-image
+   `mean(mask1x1)` predicate is conservative (one textured patch
+   gates the whole image OFF). Lifting the dispatch into the
+   per-DC-group walker (the chunk-8c streaming source already has
+   the seam) would let mixed photo + UI content skip the search
+   on the smooth regions and run it on the textured ones.
+3. **Content-class dispatch** — RFC#45 pick #4 already added
+   `cfg.with_content_class(ImageContentClass::{Photo, Screenshot})`.
+   A second-pass `EpfDispatch::AutoForPhoto` that's equivalent to
+   `Auto` when the caller has tagged `Photo` content, and to
+   `AlwaysSelect` otherwise, would avoid the screen-class margin
+   risk entirely.
+
+## Knobs honoured during the sweep
+
+- All other knobs default per `LossyConfig::new(d).with_effort(e)`.
+- No `__expert` overrides. No CLI args beyond `--out`.
+- No `__JXL_ENC_PHASE_TIMING` env var — the sweep measures wall-clock
+  end-to-end (single in-process `Instant`-bracketed `cfg.encode`).

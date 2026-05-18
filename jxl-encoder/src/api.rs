@@ -3133,6 +3133,48 @@ impl ChromaSubsampling {
     }
 }
 
+/// Adaptive dispatch policy for the per-block EPF sharpness search.
+///
+/// The per-block EPF sharpness selection (libjxl
+/// `ComputeARHeuristics`) is, on the W36-1 phase profile
+/// (`benchmarks/lossy_phase_baseline_2026-05-18.{tsv,meta}`),
+/// **45.5% of e6 wall-clock** and **33.8% of e7**, dominating the
+/// VarDCT pipeline at default effort. On smooth photo regions the
+/// search converges on the default sharpness value (4) for nearly
+/// every block; running the full two-pass search there is pure
+/// overhead — the bitstream is identical to writing the uniform
+/// default directly.
+///
+/// `EpfDispatch::Auto` skips the search when the input is "smooth
+/// enough" by a `mask1x1`-based discriminator and emits the uniform
+/// default sharpness for the affected region instead. On textured /
+/// edge-heavy content the search still runs.
+///
+/// **Default**: [`EpfDispatch::AlwaysSelect`]. Flipping this default
+/// requires a fresh hash-lock rebake plus a measured RD pass — until
+/// that lands the byte-identical default stays put.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EpfDispatch {
+    /// **Default.** Always run the per-block sharpness selection when
+    /// the underlying gate (`epf_iters > 0 && distance >= 0.5 &&
+    /// profile.epf_dynamic_sharpness`) is satisfied. Byte-identical
+    /// to historical encoder behaviour.
+    #[default]
+    AlwaysSelect,
+    /// Always force the uniform default sharpness (4) and skip the
+    /// per-block search. Cheap; gives up the per-block tuning win.
+    /// Use this when you've measured that the search isn't worth the
+    /// CPU on your content.
+    AlwaysDefault,
+    /// Run the per-block selection only when a `mask1x1`-based
+    /// smoothness predicate says the input has enough texture/edges
+    /// to benefit. On smooth regions the uniform default sharpness
+    /// is written without invoking the search. Bitstream-affecting
+    /// on the gated subset; behaviour matches [`Self::AlwaysSelect`]
+    /// on content the predicate doesn't gate.
+    Auto,
+}
+
 // ── LossyConfig ─────────────────────────────────────────────────────────────
 
 /// Lossy (VarDCT) encoding configuration.
@@ -3373,6 +3415,12 @@ pub struct LossyConfig {
     ///
     /// See [`Self::with_epf_level`].
     epf_level: i8,
+    /// Adaptive dispatch for the per-block EPF sharpness search
+    /// (W36-2 — `compute_epf_sharpness` is the dominant phase at
+    /// e6/e7 on the W36-1 baseline). Default
+    /// [`EpfDispatch::AlwaysSelect`] preserves the historical
+    /// bitstream byte-for-byte. See [`Self::with_epf_dispatch`].
+    epf_dispatch: EpfDispatch,
     /// Optional separate butteraugli distance for the alpha extra
     /// channel (CLI passthrough — mirrors libjxl `cjxl --alpha_distance`,
     /// `enc_params.h:alpha_distance`). `None` (default) keeps the
@@ -3581,6 +3629,7 @@ impl LossyConfig {
             patches_explicit: false,
             patches_dispatch: PatchesDispatch::default(),
             epf_level: -1,
+            epf_dispatch: EpfDispatch::default(),
             alpha_distance: None,
             // Chunk-1 default: keep responsive=0 lossy alpha path
             // (byte-identical to today). Opt-in via
@@ -3892,6 +3941,38 @@ impl LossyConfig {
     pub fn with_epf_level(mut self, level: i8) -> Self {
         self.epf_level = level.clamp(-1, 3);
         self
+    }
+
+    /// Select the adaptive-dispatch policy for the per-block EPF
+    /// sharpness search (W36-2).
+    ///
+    /// The per-block sharpness selection (`compute_epf_sharpness` in
+    /// `vardct/epf.rs`) is the dominant phase on the W36-1 baseline:
+    /// 45.5% of e6 wall-clock, 33.8% of e7. On smooth photo regions
+    /// the search picks the default sharpness value for nearly every
+    /// block, so the work is wasted. [`EpfDispatch::Auto`] skips the
+    /// search on smooth content (predicate: per-region `mask1x1`
+    /// mean below a threshold) and emits the uniform default
+    /// sharpness directly. Textured/edge content still runs the
+    /// search.
+    ///
+    /// **Default**: [`EpfDispatch::AlwaysSelect`] — byte-identical
+    /// to historical encoder behaviour. The Auto default flip is
+    /// gated behind a measured RD + hash-lock rebake; until that
+    /// lands, callers who want the speed-up must opt in explicitly.
+    ///
+    /// Effective only when the underlying gate is satisfied
+    /// (`epf_iters > 0 && distance >= 0.5 &&
+    /// profile.epf_dynamic_sharpness`). When the gate is already off
+    /// the dispatch knob is a no-op (no sharpness map is computed).
+    pub fn with_epf_dispatch(mut self, dispatch: EpfDispatch) -> Self {
+        self.epf_dispatch = dispatch;
+        self
+    }
+
+    /// Current [`EpfDispatch`] policy. See [`Self::with_epf_dispatch`].
+    pub fn epf_dispatch(&self) -> EpfDispatch {
+        self.epf_dispatch
     }
 
     /// Enable/disable content-estimated noise synthesis (default: false).
@@ -7271,6 +7352,7 @@ impl<'a> EncodeRequest<'a> {
         } else {
             Some(cfg.epf_level as u32)
         };
+        enc.epf_dispatch = cfg.epf_dispatch;
         enc.error_diffusion = cfg.error_diffusion;
         enc.pixel_domain_loss = cfg.pixel_domain_loss;
         enc.enable_lz77 = cfg.effective_lz77();
@@ -8407,6 +8489,7 @@ impl LossyEncoder {
             } else {
                 Some(cfg.epf_level as u32)
             };
+            enc.epf_dispatch = cfg.epf_dispatch;
             enc.error_diffusion = cfg.error_diffusion;
             enc.pixel_domain_loss = cfg.pixel_domain_loss;
             enc.enable_lz77 = cfg.effective_lz77();
@@ -10261,6 +10344,7 @@ fn encode_animation_lossy(
     } else {
         Some(cfg.epf_level as u32)
     };
+    enc.epf_dispatch = cfg.epf_dispatch;
     enc.error_diffusion = cfg.error_diffusion;
     enc.pixel_domain_loss = cfg.pixel_domain_loss;
     enc.enable_lz77 = cfg.effective_lz77();

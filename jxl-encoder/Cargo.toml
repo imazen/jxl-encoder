@@ -210,6 +210,13 @@ fastrand = "2.4.1"
 name = "lossy_phase_baseline"
 path = "examples/lossy_phase_baseline.rs"
 
+# W36-2: A/B sweep for the EpfDispatch adaptive policy
+# (AlwaysSelect / Auto / AlwaysDefault).
+[[example]]
+name = "epf_dispatch_ab"
+path = "examples/epf_dispatch_ab.rs"
+required-features = ["butteraugli-loop"]
+
 [[example]]
 name = "distance_sweep"
 path = "examples/distance_sweep.rs"

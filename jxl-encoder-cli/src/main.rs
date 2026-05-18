@@ -7,8 +7,8 @@
 
 use clap::Parser;
 use jxl_encoder::{
-    AnimationFrame, AnimationParams, Buffering, ContainerMode, LosslessConfig, LossyConfig,
-    Lz77Method, PixelLayout, PremultipliedAlphaMode, ProgressiveMode,
+    AnimationFrame, AnimationParams, Buffering, ContainerMode, EpfDispatch, LosslessConfig,
+    LossyConfig, Lz77Method, PixelLayout, PremultipliedAlphaMode, ProgressiveMode,
 };
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
@@ -159,6 +159,18 @@ struct Args {
     /// Values outside `-1..=3` are clamped to that range.
     #[arg(long, value_name = "LEVEL", allow_hyphen_values = true, default_value_t = -1)]
     epf: i8,
+
+    /// Adaptive-dispatch policy for the per-block EPF sharpness
+    /// search (W36-2). `always-select` (default) runs the full
+    /// search whenever EPF + dynamic sharpness are active —
+    /// byte-identical to historical builds. `auto` skips the
+    /// per-block search on smooth regions (uniform default
+    /// sharpness emitted instead). `always-default` skips the
+    /// search unconditionally. The search is `compute_epf_sharpness`
+    /// in `vardct/epf.rs`; per the W36-1 baseline it is 45.5% of e6
+    /// wall-clock and 33.8% of e7.
+    #[arg(long, value_name = "POLICY", default_value = "always-select")]
+    epf_dispatch: String,
 
     /// Force DCT8 only (disable AC strategy selection)
     #[arg(long)]
@@ -660,6 +672,19 @@ fn main() {
             }
         });
 
+    let epf_dispatch = match args.epf_dispatch.to_lowercase().as_str() {
+        "always-select" | "always_select" | "select" => EpfDispatch::AlwaysSelect,
+        "always-default" | "always_default" | "default" | "skip" => EpfDispatch::AlwaysDefault,
+        "auto" => EpfDispatch::Auto,
+        other => {
+            eprintln!(
+                "Unknown EPF dispatch policy: {}. Using 'always-select'.",
+                other
+            );
+            EpfDispatch::AlwaysSelect
+        }
+    };
+
     // Determine input format from extension
     let ext = args
         .input
@@ -847,6 +872,7 @@ fn main() {
                     if args.epf != -1 {
                         cfg = cfg.with_epf_level(args.epf);
                     }
+                    cfg = cfg.with_epf_dispatch(epf_dispatch);
                     if args.noise || args.denoise {
                         cfg = cfg.with_noise(true);
                     }
@@ -1203,6 +1229,7 @@ fn main() {
         if args.epf != -1 {
             cfg = cfg.with_epf_level(args.epf);
         }
+        cfg = cfg.with_epf_dispatch(epf_dispatch);
         if args.noise || args.denoise {
             cfg = cfg.with_noise(true);
         }
