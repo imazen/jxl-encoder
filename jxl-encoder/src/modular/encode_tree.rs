@@ -168,6 +168,299 @@ pub(crate) fn write_gradient_tree_tokens_lossy(
     Ok(())
 }
 
+/// Write a multi-leaf Gradient-predictor tree that routes each modular
+/// channel to its own leaf, with per-leaf `(mul_log, mul_bits)`
+/// multipliers. Pairs with the same `pack_signed`-residual emission as
+/// the single-leaf paths but lets each channel carry an independent
+/// pixel quantizer `q` (libjxl `enc_modular.cc:973-1027` per-extra
+/// `quants_[ch_id]`; `dec_ma.cc:DecodeTree` parses the BFS-encoded
+/// tree).
+///
+/// The tree splits on property 0 (`static_props[0] = chan` — the
+/// modular-subimage channel index, `encoding.cc:160`). Layout for
+/// `quantizers.len() == N`:
+///
+/// - Decision node 0: `property=0, splitval=0` → LEFT (`chan > 0`)
+///   continues into the subtree for channels 1..N-1; RIGHT (`chan <= 0`)
+///   is the leaf for channel 0.
+/// - Decision node 1: `property=0, splitval=1` → LEFT (`chan > 1`)
+///   continues into the subtree for channels 2..N-1; RIGHT is the leaf
+///   for channel 1.
+/// - ... and so on until the last leaf for channel N-1 (no decision).
+///
+/// This left-spine shape uses `2*N - 1` total nodes (N-1 decisions
+/// plus N leaves) and is decoded in libjxl's BFS order
+/// (`dec_ma.cc:75-125`): each internal node pushes its two children
+/// onto the to-decode queue, so we write
+/// `[D0, L0, D1, L1, ..., D_{N-2}, L_{N-2}, L_{N-1}]`.
+///
+/// Histogram alphabet covers all tokens emitted by the tree: per
+/// decision `prop1 = property + 1` (`prop1 = 1` for property 0) and
+/// `splitval` packed-signed; per leaf `predictor = 5`, `offset = 0`,
+/// `mul_log`, `mul_bits`. Returns `(depths, codes)` for the caller to
+/// write the matching tokens via [`write_channel_split_tree_tokens`].
+///
+/// Requires `quantizers.len() >= 2` (single-channel callers use the
+/// existing [`write_tree_histogram_for_gradient_lossy`] / lossless
+/// paths). `quantizers[i] == 0` is treated as `1` (lossless leaf).
+pub(crate) fn write_tree_histogram_for_channel_split_lossy(
+    writer: &mut BitWriter,
+    quantizers: &[u32],
+) -> Result<(Vec<u8>, Vec<u16>)> {
+    debug_assert!(
+        quantizers.len() >= 2,
+        "channel-split tree requires at least 2 leaves"
+    );
+
+    // Tokens emitted by [`write_channel_split_tree_tokens`]:
+    //
+    // - For each of N-1 decisions: `prop1 = 1` (property 0) and
+    //   `splitval` packed-signed. `splitval = 0` → packed = 0;
+    //   `splitval = k > 0` → packed = 2*k - 1 (odd). All decisions
+    //   use `prop1 = 1`.
+    // - For each of N leaves: `predictor = 5`, `offset = 0`,
+    //   `mul_log`, `mul_bits`.
+    //
+    // Count symbol frequencies so the Huffman code matches the
+    // tokens we emit. Symbol values come from the tree contexts the
+    // decoder reads (`dec_ma.cc:89-118`) — for raw symbol encoding
+    // the value IS the histogram index.
+    let n = quantizers.len();
+    let mut max_symbol: u32 = 0;
+    let mut count = |s: u32| {
+        if s > max_symbol {
+            max_symbol = s;
+        }
+    };
+    // Decisions: N-1 entries. Each emits prop1=1 and splitval=k
+    // packed-signed (k >= 0 → packed = 2k).
+    count(1); // prop1 (first decision)
+    count(0); // splitval = 0 packed (= 2*0)
+    for k in 1..(n - 1) {
+        count(1); // prop1 for every decision
+        count((2 * k) as u32); // splitval = k packed (= 2k)
+    }
+    // Leaves: N entries. Each emits prop1=0, predictor=5, offset=0
+    // (packed_signed=0), mul_log, mul_bits.
+    for &q in quantizers.iter() {
+        let q = q.max(1);
+        let (mul_log, mul_bits) = decompose_multiplier_pub(q);
+        count(0); // prop1 = 0 (leaf marker)
+        count(5); // predictor = 5 (Gradient)
+        count(0); // offset = 0 (packed)
+        count(mul_log);
+        count(mul_bits);
+    }
+
+    // Rebuild the histogram now that we know the alphabet size. Use
+    // the same counting helper so a refactor that adds a token also
+    // bumps the histogram.
+    let used = (max_symbol as usize) + 1;
+    let mut tree_histogram = vec![0u32; used];
+    let mut bump = |s: u32| {
+        tree_histogram[s as usize] += 1;
+    };
+    bump(1);
+    bump(0);
+    for k in 1..(n - 1) {
+        bump(1);
+        bump((2 * k) as u32);
+    }
+    for &q in quantizers.iter() {
+        let q = q.max(1);
+        let (mul_log, mul_bits) = decompose_multiplier_pub(q);
+        bump(0);
+        bump(5);
+        bump(0);
+        bump(mul_log);
+        bump(mul_bits);
+    }
+
+    // Sub-bitstream tree header (matches the single-leaf paths above).
+    writer.write(1, 0)?; // lz77.enabled = 0
+    writer.write(1, 1)?; // context_map is_simple = 1
+    writer.write(2, 0)?; // context_map bits_per_entry = 0 (one shared histogram)
+    writer.write(1, 1)?; // use_prefix_code = 1
+
+    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    write_integer_config(
+        writer,
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX,
+        0,
+        0,
+    )?;
+    write_varlen_u16(writer, max_symbol as u16)?;
+
+    let (depths, codes) = if used > 1 {
+        let table = build_and_store_huffman_tree(&tree_histogram, writer)?;
+        (table.depths, table.codes)
+    } else {
+        (vec![0u8; used], vec![0u16; used])
+    };
+    Ok((depths, codes))
+}
+
+/// Write the tokens for a multi-leaf channel-split Gradient tree.
+/// Pairs with [`write_tree_histogram_for_channel_split_lossy`] — the
+/// caller passes the same `quantizers` slice and the `(depths, codes)`
+/// returned by the histogram writer.
+///
+/// Token emission follows libjxl's BFS tree-decode order
+/// (`dec_ma.cc:75-125`): each internal node pushes its two children
+/// onto the to-decode queue, so we write `[D0, L0, D1, L1, ...,
+/// D_{N-2}, L_{N-2}, L_{N-1}]`.
+pub(crate) fn write_channel_split_tree_tokens(
+    writer: &mut BitWriter,
+    depths: &[u8],
+    codes: &[u16],
+    quantizers: &[u32],
+) -> Result<()> {
+    debug_assert!(quantizers.len() >= 2);
+    let n = quantizers.len();
+
+    // Helper to write one raw symbol via the prefix-code table.
+    let write_sym = |writer: &mut BitWriter, sym: u32| -> Result<()> {
+        let d = depths.get(sym as usize).copied().unwrap_or(0);
+        let c = codes.get(sym as usize).copied().unwrap_or(0);
+        if d > 0 {
+            writer.write(d as usize, c as u64)?;
+        }
+        Ok(())
+    };
+
+    // Decoder reads one node, then queues 2 children for internals.
+    // BFS order with left-spine internals: [D0, L0, D1, L1, ..., L_{N-1}].
+    // For each k in 0..N-1: decision Dk (property=0, splitval=k),
+    // followed by leaf L_k (for channel k). After the last decision
+    // D_{N-2}, the LEFT-child slot is filled by the final leaf
+    // L_{N-1}.
+    //
+    // BUT — internal nodes' children populate in queue order, which
+    // for our left-spine means D_k's RIGHT child is L_k and LEFT
+    // child is D_{k+1} (or L_{N-1} for the final decision). Decoder
+    // emplaces children at indices `tree.size() + to_decode + 1`
+    // (left) and `+ 2` (right). The decoder's BFS reads in queued
+    // order, so we emit in queued order too: emit each node, queue
+    // its children, repeat. Left-spine means left-child = next
+    // decision (or final leaf), right-child = current channel leaf.
+    //
+    // Order: D0, D1, D2, ..., D_{N-2}, L_{N-1}, L_{N-2}, ..., L_1, L_0
+    // is WRONG because the decoder pops in FIFO order and our left
+    // children are decisions. Instead the to-decode queue evolves:
+    //   start: [root]            pop root=D0, push [L_left_of_D0, L_right_of_D0]
+    //   queue: [D1, L_0]         pop D1, push  [L_left_of_D1, L_right_of_D1]
+    //   queue: [L_0, D2, L_1]    pop L_0 (leaf, no children)
+    //   queue: [D2, L_1]         pop D2 ...
+    //   ...
+    // Output order: D0, D1, L_0, D2, L_1, D3, L_2, ..., D_{N-2},
+    // L_{N-3}, L_{N-1}, L_{N-2}.
+    //
+    // That's awkward to author. Use the symmetric shape instead: a
+    // RIGHT-spine where each decision's LEFT child is the current
+    // channel leaf and RIGHT child is the next decision. Then:
+    //   pop D0 → push [L_0_leaf, D1]; queue: [L_0_leaf, D1]
+    //   pop L_0 leaf; queue: [D1]
+    //   pop D1 → push [L_1_leaf, D2]; queue: [L_1_leaf, D2]
+    //   ...
+    // Output order: D0, L_0, D1, L_1, D2, L_2, ..., D_{N-2}, L_{N-2},
+    // L_{N-1}. Much cleaner. But the property direction inverts: with
+    // the LEFT branch being the per-channel leaf, the decoder takes
+    // LEFT when `properties[0] > splitval`, so `chan > k` → leaf for
+    // channel ??? We need the LEFT child taken when `chan == k` so
+    // each decision peels off one channel.
+    //
+    // Concretely: at decision D_k we want `chan == k` → its own leaf,
+    // `chan > k` → continue down the spine to find a leaf for a
+    // higher channel. With splitval = k - 1:
+    //   chan > k - 1  → LEFT  (i.e., chan >= k)
+    //   chan <= k - 1 → RIGHT
+    // That doesn't peel off cleanly either.
+    //
+    // Easier: split LEFT-spine where LEFT child = next decision, RIGHT
+    // child = leaf for the smallest remaining channel. At D_k peel
+    // off channel `k` on the RIGHT branch:
+    //   D_k: splitval = k → LEFT (chan > k) goes to D_{k+1}; RIGHT
+    //   (chan <= k) goes to leaf for channel k. Combined with prior
+    //   decisions D_0..D_{k-1} having already peeled channels 0..k-1
+    //   via their RIGHT branches, RIGHT at D_k captures exactly chan
+    //   == k. The final decision D_{N-2}'s LEFT child is the leaf for
+    //   channel N-1.
+    //
+    // BFS emission order for LEFT-spine where LEFT child is next
+    // decision (or final leaf) and RIGHT child is current leaf:
+    //   queue: [D0]; pop D0, push [D1, L_0]; queue: [D1, L_0]
+    //   pop D1, push [D2, L_1]; queue: [L_0, D2, L_1]
+    //   pop L_0; queue: [D2, L_1]
+    //   pop D2, push [D3, L_2]; queue: [L_1, D3, L_2]
+    //   pop L_1; queue: [D3, L_2]
+    //   ...
+    // Final pattern: emit D0, D1, L_0, D2, L_1, D3, L_2, ..., D_{N-2},
+    // L_{N-3}, L_{N-1}, L_{N-2}.
+    //
+    // We'll just author the simple recursive form: emit decision +
+    // 2 children pre-order, but using BFS via explicit queue.
+    use alloc::collections::VecDeque;
+    enum NodeKind {
+        Decision { splitval: i32 },
+        Leaf { chan: usize },
+    }
+    let mut queue: VecDeque<NodeKind> = VecDeque::new();
+    queue.push_back(NodeKind::Decision { splitval: 0 });
+    let mut next_split: i32 = 1;
+    let mut leaves_emitted: usize = 0;
+
+    while let Some(node) = queue.pop_front() {
+        match node {
+            NodeKind::Decision { splitval } => {
+                // prop1 = property + 1 = 1 (property = 0).
+                write_sym(writer, 1)?;
+                // splitval packed-signed.
+                let packed = if splitval >= 0 {
+                    (splitval as u32) << 1
+                } else {
+                    (((-splitval) as u32) << 1) - 1
+                };
+                write_sym(writer, packed)?;
+
+                // Queue children: LEFT (chan > splitval) first, then
+                // RIGHT (chan <= splitval). LEFT is the next decision
+                // unless we are at the last decision.
+                let next_splitval = next_split;
+                next_split += 1;
+                let is_last_decision = (splitval as usize) == n - 2;
+                if is_last_decision {
+                    // LEFT-most leaf is for channel N-1 (all chan > N-2).
+                    queue.push_back(NodeKind::Leaf { chan: n - 1 });
+                } else {
+                    queue.push_back(NodeKind::Decision {
+                        splitval: next_splitval,
+                    });
+                }
+                // RIGHT child: leaf for the current splitval (channel splitval).
+                queue.push_back(NodeKind::Leaf {
+                    chan: splitval as usize,
+                });
+            }
+            NodeKind::Leaf { chan } => {
+                // prop1 = 0 (leaf marker).
+                write_sym(writer, 0)?;
+                // predictor = 5 (Gradient).
+                write_sym(writer, 5)?;
+                // offset = 0 (packed_signed(0) == 0).
+                write_sym(writer, 0)?;
+                let q = quantizers[chan].max(1);
+                let (mul_log, mul_bits) = decompose_multiplier_pub(q);
+                write_sym(writer, mul_log)?;
+                write_sym(writer, mul_bits)?;
+                leaves_emitted += 1;
+            }
+        }
+    }
+    debug_assert_eq!(leaves_emitted, n, "channel-split tree must emit all leaves");
+    Ok(())
+}
+
 /// Decompose `q >= 1` into `(mul_log, mul_bits)` such that
 /// `q == (mul_bits + 1) << mul_log`. Mirrors
 /// [`super::tree::decompose_multiplier`] but is exposed for the lossy

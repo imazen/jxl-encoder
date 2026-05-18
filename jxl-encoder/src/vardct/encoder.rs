@@ -393,15 +393,16 @@ pub struct VarDctEncoder {
     ///
     /// `Some(d)` with `d > 0.0` engages the lossy alpha pipeline:
     /// computes an integer pixel quantizer via
-    /// [`Self::compute_alpha_pixel_quantizer`] (libjxl no-squeeze
+    /// [`Self::compute_extra_pixel_quantizer`] (libjxl no-squeeze
     /// formula, `enc_modular.cc:973-1027`), pre-quantizes each alpha
     /// pixel to the nearest multiple of `q`, and emits the modular
-    /// extras tree's single leaf with `(mul_log, mul_bits)` carrying
-    /// that multiplier so the decoder reconstructs
+    /// extras tree leaf with `(mul_log, mul_bits)` carrying that
+    /// multiplier so the decoder reconstructs
     /// `pixel = prediction + val * q`
-    /// (`modular/encoding/encoding.cc:186-191`). Only applied when
-    /// there is exactly one extra channel — mixed-extras inputs stay
-    /// lossless until per-channel multiplier dispatch lands.
+    /// (`modular/encoding/encoding.cc:186-191`). Applied per channel:
+    /// mixed-extras inputs route an alpha-typed leaf through this
+    /// quantizer while non-alpha extras (depth, spot color, ...) stay
+    /// lossless (`q = 1`) on the same frame.
     pub alpha_distance: Option<f32>,
     /// Policy for non-finite XYB values at the conversion→pipeline
     /// boundary. See [`crate::api::NonFiniteAction`].
@@ -567,8 +568,8 @@ impl VarDctEncoder {
     }
 
     /// Compute the integer pixel quantizer `q` to apply to a single
-    /// alpha extra channel from [`Self::alpha_distance`] and the
-    /// extras' bit depth, mirroring libjxl's lossy-modular
+    /// extra channel from [`Self::alpha_distance`] and the channel's
+    /// bit depth + type, mirroring libjxl's lossy-modular
     /// `quantizers[component] * squeeze_quality_factor *
     /// squeeze_luma_factor * squeeze_luma_qtable[shift]` at
     /// `shift = 0` and `responsive = false`
@@ -581,25 +582,29 @@ impl VarDctEncoder {
     ///            * squeeze_luma_qtable[0] (163.84)`
     /// - `q = max(1, floor(q_float))`
     ///
-    /// Returns `1` whenever the value resolves to lossless: `None`,
-    /// `Some(d)` with `d <= 0.0`, or any input that yields `q < 1`
-    /// after the libjxl truncation. `q == 1` keeps the bitstream
-    /// byte-for-byte identical to the pre-pipeline lossless path.
-    /// `extras_count > 1` also returns `1` because the current shared
-    /// extras tree carries one multiplier for all channels; mixed
-    /// extras stay lossless until per-channel multiplier dispatch
-    /// lands.
-    pub(crate) fn compute_alpha_pixel_quantizer(
+    /// Returns `1` (lossless) for any extra channel that does not carry
+    /// its own distance knob: today only alpha-typed channels use
+    /// `alpha_distance`. Non-alpha extras (depth, spot, selection mask,
+    /// thermal, CFA, ...) stay lossless because we do not currently
+    /// expose per-channel `ec_distance`. Also returns `1` when
+    /// `alpha_distance` is `None`, `Some(d <= 0.0)`, or any input that
+    /// rounds below `1` after libjxl's `floor`.
+    pub(crate) fn compute_extra_pixel_quantizer(
         &self,
         extras_bits: u32,
-        extras_count: usize,
+        ec_type: crate::headers::extra_channels::ExtraChannelType,
     ) -> u32 {
-        let Some(dist) = self.alpha_distance else {
-            return 1;
+        let dist = match ec_type {
+            crate::headers::extra_channels::ExtraChannelType::Alpha => match self.alpha_distance {
+                Some(d) if d > 0.0 => d,
+                _ => return 1,
+            },
+            // Non-alpha extras have no per-channel distance knob today.
+            // libjxl supports `cparams.ec_distance[i]` per extra channel;
+            // when that is wired through the public API, dispatch here
+            // by `ec_type` / channel index.
+            _ => return 1,
         };
-        if dist <= 0.0 || extras_count != 1 {
-            return 1;
-        }
         // libjxl clamps non-zero alpha_distance to [0.01, 25.0] at the
         // public API boundary (encode.cc:1558). Mirror the lower clamp
         // here so callers writing `Some(0.001)` don't silently regress
@@ -632,6 +637,31 @@ impl VarDctEncoder {
         // clamps to 1 (lossless).
         let q = q_float.floor() as i64;
         if q < 1 { 1 } else { q as u32 }
+    }
+
+    /// Build the per-channel quantizer vector for an extras slice.
+    ///
+    /// Returns `Vec<u32>` of length `extras.len()`. Each entry is
+    /// computed via [`Self::compute_extra_pixel_quantizer`] from that
+    /// channel's bit depth + [`ExtraChannelType`]. `extras.is_empty()`
+    /// returns an empty vec.
+    ///
+    /// Mixed-extras invariant: the existing single-extra (`extras.len()
+    /// == 1`) path delegates here, so a single alpha extra at index 0
+    /// continues to produce the same `q` value as before.
+    pub(crate) fn compute_extras_pixel_quantizers(
+        &self,
+        extras: &[super::extras::VardctExtra<'_>],
+    ) -> alloc::vec::Vec<u32> {
+        extras
+            .iter()
+            .map(|ec| {
+                self.compute_extra_pixel_quantizer(
+                    ec.info.bit_depth.bits_per_sample,
+                    ec.info.ec_type,
+                )
+            })
+            .collect()
     }
 
     /// Encode an image in linear sRGB format, optionally with an alpha channel.

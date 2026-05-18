@@ -4,6 +4,39 @@
 
 ### Changed
 
+- **Lossy alpha pipeline now fires on mixed-extras frames** (W8-2,
+  follow-on to W6-3 `bbf8a985`). W6-3 wired the
+  `LossyConfig::with_alpha_distance(Some(d))` quantizer through the
+  modular extras sub-bitstream but only when `extras.len() == 1`;
+  any image with alpha + a second extra (depth, spot color,
+  selection mask, ...) silently stayed all-lossless. The encoder
+  now dispatches a per-channel quantizer slice (libjxl
+  `cparams.ec_distance[i]` shape, `enc_modular.cc:973-1027`): each
+  channel's `q` is computed from its `ExtraChannelType` — alpha
+  reads `alpha_distance`, all others stay at `q = 1` until per-
+  channel `ec_distance` is wired through the public API. When the
+  resolved quantizers are mixed (e.g. `[q=15, q=1]` for alpha-lossy
+  + depth-lossless), the encoder emits a multi-leaf gradient tree
+  splitting on property 0 (channel index, libjxl
+  `static_props[0] = chan`); when only one channel is lossy or all
+  are lossless, the single-leaf paths are preserved byte-identical
+  (W6-3 single-extra alpha frames and pre-W6-3 lossless frames are
+  bit-for-bit unchanged). Wiring: new
+  `compute_extras_pixel_quantizers` + dispatch in
+  `write_modular_extras_subbitstream`, new
+  `write_tree_histogram_for_channel_split_lossy` +
+  `write_channel_split_tree_tokens` in `modular/encode_tree.rs`.
+  Roundtrip proof in
+  `tests/lossy_mixed_extras_alpha.rs::mixed_extras_alpha_lossy_depth_lossless`
+  (RGB + alpha + depth at `alpha_distance=10.0`: jxl-rs decode
+  shows alpha MAE > 1.0 while depth comes back byte-identical) and
+  byte-identical guard in
+  `mixed_extras_alpha_lossless_depth_lossless_byte_identical`
+  (`alpha_distance=None` and `Some(0.0)` produce identical bytes on
+  mixed-extras frames). `hash_lock_features` 36/36 byte-identical;
+  existing single-extra lossy alpha tests
+  (`alpha_distance_high_loses_alpha_precision`,
+  `alpha_distance_nonzero_changes_bytes`) still pass.
 - **`--modular-predictor 0..13` now wires through to all
   no-tree-learning modular paths** (W4-1 follow-on; W4-1 stored the
   knob on `LosslessConfig` but only the tree-learn path consumed it).
