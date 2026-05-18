@@ -2118,14 +2118,33 @@ impl VarDctEncoder {
     ) -> Result<()> {
         let _phase_dbg = std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some();
         let _t0 = std::time::Instant::now();
-        // ── Pass 1: Collect tokens per section ──
+        // ── Pass 1: Collect tokens per DC group (chunk 8a refactor) ──
+        //
+        // The token-collection loop is organised per-DC-group instead of
+        // by-token-stream. Each parallel task tokenizes:
+        //   1. DC tokens for its DC group   (whole-image vector → per-group)
+        //   2. AC-metadata tokens for its DC group   (whole-image vector → per-group)
+        //   3. AC-coefficient tokens for every AC group contained in this
+        //      DC group   (256×256 px AC groups; 8×8 = 64 per DC group)
+        //
+        // After the loop, results are aggregated back into the
+        // whole-image `ac_section_tokens_per_pass[pass][global_ac_idx]`
+        // shape downstream consumers (histogram clustering, LZ77, build
+        // codes, write_dc_group_from_tokens, encode_ac_group_section)
+        // expect. The aggregation is byte-identical to the previous
+        // shape — chunk-8a is a pure structural refactor.
+        //
+        // Chunks 8b/8c will exploit this seam: 8b drops the xyb_x/y/b
+        // slice for the just-tokenized DC region immediately after each
+        // task returns; 8c dispatches DC-group sections through
+        // `Buffering::BufferedOutput` via `WritableSeek`.
 
-        // Build context tree and collect tokens.
+        // Build context tree and remap tables (shared across DC groups).
         // When use_lf_frame: DC is in separate frame, only AC metadata tree/tokens needed.
         // Otherwise: merged WP DC + AC metadata tree with both token types.
         let (learned_tree_tokens, total_contexts, ac_meta_ctx_map);
-        let mut dc_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
-        let mut ac_metadata_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
+        // Optional WP DC tree state. Populated only on the `!use_lf_frame` path.
+        let wp_dc_state: Option<(super::dc_tree_learn::DcTree, Vec<u32>)>;
 
         if self.use_lf_frame {
             // AC-metadata-only tree (no DC contexts needed)
@@ -2133,26 +2152,7 @@ impl VarDctEncoder {
             learned_tree_tokens = Some(tree_tokens);
             total_contexts = num_ctx;
             ac_meta_ctx_map = ctx_map;
-
-            // Only collect AC metadata tokens (no DC) — parallelizable
-            let dc_results: Vec<(Vec<Token>, Vec<Token>)> =
-                crate::parallel::parallel_map(num_dc_groups, |dc_group_idx| {
-                    tokenize_dc_group_lf_frame(
-                        dc_group_idx,
-                        xsize_blocks,
-                        ysize_blocks,
-                        xsize_dc_groups,
-                        quant_field,
-                        cfl_map,
-                        ac_strategy,
-                        sharpness_map,
-                        &ac_meta_ctx_map,
-                    )
-                });
-            for (dc_tok, md_tok) in dc_results {
-                dc_tokens_per_group.push(dc_tok);
-                ac_metadata_tokens_per_group.push(md_tok);
-            }
+            wp_dc_state = None;
         } else {
             // Build kWPFixedDC tree for DC context assignment.
             // Uses Weighted Predictor with balanced BSP on wp_max_error (property 15).
@@ -2171,41 +2171,21 @@ impl VarDctEncoder {
             learned_tree_tokens = Some(wrapped_tokens);
             total_contexts = num_ctx;
             ac_meta_ctx_map = ctx_map;
-            let dc_ctx_remap = dc_remap;
 
             #[cfg(feature = "debug-tokens")]
             eprintln!(
                 "WP fixed DC tree: dc_contexts={}, total={}, dc_remap={:?}, ac_map={:?}",
-                wp_dc_num_contexts, total_contexts, dc_ctx_remap, ac_meta_ctx_map
+                wp_dc_num_contexts, total_contexts, dc_remap, ac_meta_ctx_map
             );
 
-            // Collect DC + AC metadata tokens per group — parallelizable
-            let dc_results: Vec<(Vec<Token>, Vec<Token>)> =
-                crate::parallel::parallel_map(num_dc_groups, |dc_group_idx| {
-                    tokenize_dc_group_wp(
-                        dc_group_idx,
-                        xsize_blocks,
-                        ysize_blocks,
-                        xsize_dc_groups,
-                        quant_dc,
-                        quant_field,
-                        cfl_map,
-                        ac_strategy,
-                        sharpness_map,
-                        &wp_dc_tree,
-                        &dc_ctx_remap,
-                        &ac_meta_ctx_map,
-                    )
-                });
-            for (dc_tok, md_tok) in dc_results {
-                dc_tokens_per_group.push(dc_tok);
-                ac_metadata_tokens_per_group.push(md_tok);
-            }
+            wp_dc_state = Some((wp_dc_tree, dc_remap));
         }
 
-        let _t_tok_dc = _t0.elapsed().as_secs_f64() * 1000.0;
+        let _t_tok_dc_setup = _t0.elapsed().as_secs_f64() * 1000.0;
         let _t_co = std::time::Instant::now();
-        // Compute custom coefficient orders if enabled and image is large enough
+        // Compute custom coefficient orders if enabled and image is large enough.
+        // Required by AC-coefficient tokenization (inside the per-DC-group
+        // loop below), so must be computed before that loop runs.
         let (custom_order_map, used_orders) =
             if self.custom_orders && (xsize_blocks >= 5 || ysize_blocks >= 5) {
                 let zero_counts = super::coeff_order::count_zero_coefficients(
@@ -2226,7 +2206,9 @@ impl VarDctEncoder {
 
         let _ms_co = _t_co.elapsed().as_secs_f64() * 1000.0;
         let _t_bcm = std::time::Instant::now();
-        // Compute content-adaptive block context map
+        // Compute content-adaptive block context map.
+        // Required by AC-coefficient tokenization (inside the per-DC-group
+        // loop below).
         let block_ctx_map = super::ac_context::compute_block_ctx_map(
             quant_field,
             ac_strategy,
@@ -2249,36 +2231,148 @@ impl VarDctEncoder {
         // Override num_sections for progressive: each pass has its own HfGroup sections
         let num_sections = 2 + num_dc_groups + num_groups * num_passes;
 
-        // AC section tokens: per-pass per-group — parallelizable
-        // ac_section_tokens_per_pass[pass][group] = Vec<Token>
-        let ac_results: Vec<Vec<Vec<Token>>> =
-            crate::parallel::parallel_map(num_groups, |group_idx| {
-                tokenize_ac_group(
-                    group_idx,
-                    xsize_blocks,
-                    ysize_blocks,
-                    xsize_groups,
-                    quant_ac,
-                    nzeros,
-                    raw_nzeros,
-                    quant_field,
-                    ac_strategy,
-                    &block_ctx_map,
-                    custom_order_map.as_deref(),
-                    used_orders,
-                    &pass_config,
-                )
+        // ── Per-DC-group token collection (chunk 8a) ──
+        //
+        // For each DC group, parallel task returns:
+        //   (dc_tokens, ac_meta_tokens, Vec<(ac_global_idx, Vec<pass_tokens>)>)
+        //
+        // The contained AC groups are 8×8 = 64 per DC group (clamped
+        // at image edges). Their global indices are
+        // `ac_gy * xsize_groups + ac_gx`, which is the same index space
+        // downstream consumers use.
+        let ac_groups_per_dc = DC_GROUP_DIM_IN_BLOCKS / GROUP_DIM_IN_BLOCKS;
+        debug_assert_eq!(ac_groups_per_dc, 8);
+
+        // `dc_group_results[dc_idx] = (dc_tokens, ac_meta_tokens, ac_group_tokens)`
+        // where `ac_group_tokens: Vec<(global_ac_idx, Vec<Vec<Token>>)>`
+        // — one entry per contained AC group, holding its per-pass token
+        // vectors. Empty when the DC group has no AC groups (cannot
+        // happen for a non-degenerate frame; defensive).
+        type AcGroupTokens = (usize, Vec<Vec<Token>>);
+        type DcGroupTokenResult = (Vec<Token>, Vec<Token>, Vec<AcGroupTokens>);
+
+        let dc_group_results: Vec<DcGroupTokenResult> =
+            crate::parallel::parallel_map(num_dc_groups, |dc_group_idx| {
+                let dc_gx = dc_group_idx % xsize_dc_groups;
+                let dc_gy = dc_group_idx / xsize_dc_groups;
+
+                // 1) DC + AC-metadata tokens for this DC group.
+                let (dc_tokens, ac_meta_tokens) =
+                    if let Some((wp_dc_tree, dc_ctx_remap)) = wp_dc_state.as_ref() {
+                        tokenize_dc_group_wp(
+                            dc_group_idx,
+                            xsize_blocks,
+                            ysize_blocks,
+                            xsize_dc_groups,
+                            quant_dc,
+                            quant_field,
+                            cfl_map,
+                            ac_strategy,
+                            sharpness_map,
+                            wp_dc_tree,
+                            dc_ctx_remap,
+                            &ac_meta_ctx_map,
+                        )
+                    } else {
+                        tokenize_dc_group_lf_frame(
+                            dc_group_idx,
+                            xsize_blocks,
+                            ysize_blocks,
+                            xsize_dc_groups,
+                            quant_field,
+                            cfl_map,
+                            ac_strategy,
+                            sharpness_map,
+                            &ac_meta_ctx_map,
+                        )
+                    };
+
+                // 2) AC-coefficient tokens for each contained AC group.
+                // AC groups are 256×256 px (32×32 blocks). A DC group is
+                // 2048×2048 px (256×256 blocks) = 8×8 AC groups. At
+                // image edges some rows/cols of the DC group's AC-group
+                // grid may be absent — clamp to `xsize_groups` /
+                // `ysize_groups`.
+                let ac_gx_start = dc_gx * ac_groups_per_dc;
+                let ac_gy_start = dc_gy * ac_groups_per_dc;
+                let ac_gx_end = (ac_gx_start + ac_groups_per_dc).min(xsize_groups);
+                let ac_gy_end = (ac_gy_start + ac_groups_per_dc).min(_ysize_groups);
+
+                let ac_count = (ac_gx_end - ac_gx_start) * (ac_gy_end - ac_gy_start);
+                let mut ac_group_tokens: Vec<AcGroupTokens> = Vec::with_capacity(ac_count);
+                // Raster order within the DC region (ac_gy outer, ac_gx
+                // inner) — global indices are still
+                // `ac_gy * xsize_groups + ac_gx`, so downstream sees the
+                // same ordering as before.
+                for ac_gy in ac_gy_start..ac_gy_end {
+                    for ac_gx in ac_gx_start..ac_gx_end {
+                        let global_ac_idx = ac_gy * xsize_groups + ac_gx;
+                        let per_pass = tokenize_ac_group(
+                            global_ac_idx,
+                            xsize_blocks,
+                            ysize_blocks,
+                            xsize_groups,
+                            quant_ac,
+                            nzeros,
+                            raw_nzeros,
+                            quant_field,
+                            ac_strategy,
+                            &block_ctx_map,
+                            custom_order_map.as_deref(),
+                            used_orders,
+                            &pass_config,
+                        );
+                        ac_group_tokens.push((global_ac_idx, per_pass));
+                    }
+                }
+
+                (dc_tokens, ac_meta_tokens, ac_group_tokens)
             });
 
-        // Transpose: ac_results[group][pass] → ac_section_tokens_per_pass[pass][group]
-        let mut ac_section_tokens_per_pass: Vec<Vec<Vec<Token>>> =
-            vec![Vec::with_capacity(num_groups); num_passes];
-        for group_tokens in ac_results {
-            for (pass, tokens) in group_tokens.into_iter().enumerate() {
-                ac_section_tokens_per_pass[pass].push(tokens);
+        // ── Aggregate per-DC-group results into whole-image vectors ──
+        //
+        // Downstream consumers (`build_dc`, `build_ac_codes`,
+        // `write_dc_group_from_tokens`, `encode_ac_group_section`,
+        // LZ77, histogram clustering) read these in the original
+        // whole-image shape. Chunk-8a preserves that shape exactly so
+        // the output bitstream is byte-identical to the pre-refactor
+        // path. Chunks 8b/8c will replace some of these consumers
+        // with per-DC-group emit paths.
+        let mut dc_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
+        let mut ac_metadata_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
+        // Pre-allocate per-pass AC sections in global-AC-index order.
+        // Each slot is filled exactly once during aggregation.
+        let mut ac_section_tokens_per_pass: Vec<Vec<Vec<Token>>> = (0..num_passes)
+            .map(|_| vec![Vec::new(); num_groups])
+            .collect();
+
+        for (dc_tokens, ac_meta_tokens, ac_group_tokens) in dc_group_results {
+            dc_tokens_per_group.push(dc_tokens);
+            ac_metadata_tokens_per_group.push(ac_meta_tokens);
+            for (global_ac_idx, per_pass) in ac_group_tokens {
+                debug_assert!(global_ac_idx < num_groups);
+                for (pass, tokens) in per_pass.into_iter().enumerate() {
+                    debug_assert!(pass < num_passes);
+                    ac_section_tokens_per_pass[pass][global_ac_idx] = tokens;
+                }
             }
         }
 
+        // Sanity: every AC-group slot must have been filled. This holds
+        // for any non-degenerate frame (num_groups >= 1) because every
+        // AC group belongs to exactly one DC group. If this fires we
+        // have an off-by-one in the contained-AC-group window above.
+        #[cfg(debug_assertions)]
+        for (pass, sections) in ac_section_tokens_per_pass.iter().enumerate() {
+            debug_assert_eq!(
+                sections.len(),
+                num_groups,
+                "per-DC-group aggregation lost AC sections at pass {}",
+                pass
+            );
+        }
+
+        let _t_tok_dc = _t_tok_dc_setup; // legacy phase label (DC tree setup ms)
         let _ms_ac_tok = _t_ac_tok.elapsed().as_secs_f64() * 1000.0;
         let _t_lz77 = std::time::Instant::now();
         // ── Apply LZ77 if enabled (ANS only, before building codes) ──
