@@ -93,6 +93,55 @@ pub struct VarDctOutput {
     pub strategy_counts: [u32; 19],
 }
 
+// ── Squeeze-on-extras quantization constants (libjxl parity) ────────────────
+//
+// Mirrors `enc_modular.cc:82-103`. Used by both the existing no-squeeze
+// extras quantizer ([`VarDctEncoder::compute_extra_pixel_quantizer`])
+// and the chunk-1 framework function
+// ([`VarDctEncoder::compute_extra_pixel_quantizer_shifted`]) that will
+// drive the responsive=1 alpha pipeline once the squeeze application
+// for extras lands (chunk 2 — see CHANGELOG entry on the
+// `with_alpha_squeeze` flag).
+
+// Chunk-1 status note (CLAUDE.md "Investigation Notes"): the four
+// items below are framework-only. They become live the moment
+// `compute_extra_pixel_quantizer_shifted` is routed from the extras
+// subbitstream writer (chunk 2). Unit-test coverage in the
+// `tests` module below keeps the constants and the shift-aware
+// quantizer fn exercised so a chunk-2 wiring change can't silently
+// regress the libjxl-parity formula. Allow dead_code so production
+// builds stay clean while the wire-up is staged.
+
+/// Squeeze quality factor (libjxl `enc_modular.cc:82`).
+/// "Decrease this number for higher quality."
+#[allow(dead_code)]
+const SQUEEZE_QUALITY_FACTOR_CONST: f32 = 0.35;
+
+/// Squeeze luma factor (libjxl `enc_modular.cc:85`).
+/// "Decrease this number for higher quality luma."
+#[allow(dead_code)]
+const SQUEEZE_LUMA_FACTOR_CONST: f32 = 1.1;
+
+/// Length of the per-shift quantization table.
+#[allow(dead_code)]
+const SQUEEZE_LUMA_QTABLE_LEN: usize = 16;
+
+/// Per-shift quantization multipliers for the luma (and "anything
+/// non-chroma" — e.g. alpha) channels in the responsive=1 modular
+/// pipeline. Mirrors libjxl `enc_modular.cc:101-103`.
+///
+/// Index 0 (= squeeze depth 0) corresponds to the lowest-frequency
+/// average channel; higher indices correspond to deeper HF residual
+/// bands. The values halve roughly every step from 163.84 down to
+/// 0.005, so residual HF bands collapse to `q = 1` (lossless within
+/// integer rounding) quickly — that is where the responsive=1
+/// compression win on alpha comes from.
+#[allow(dead_code)]
+const SQUEEZE_LUMA_QTABLE: [f32; SQUEEZE_LUMA_QTABLE_LEN] = [
+    163.84, 81.92, 40.96, 20.48, 10.24, 5.12, 2.56, 1.28, 0.64, 0.32, 0.16, 0.08, 0.04, 0.02, 0.01,
+    0.005,
+];
+
 /// Tiny JPEG XL encoder.
 ///
 /// This is a simplified VarDCT encoder based on libjxl-tiny that uses:
@@ -404,6 +453,28 @@ pub struct VarDctEncoder {
     /// quantizer while non-alpha extras (depth, spot color, ...) stay
     /// lossless (`q = 1`) on the same frame.
     pub alpha_distance: Option<f32>,
+    /// Opt-in: engage the **squeeze-on-extras** (responsive=1) lossy
+    /// alpha pipeline rather than the default no-squeeze pixel
+    /// quantizer (`enc_modular.cc:973-1027`). Default `false`.
+    ///
+    /// libjxl's default is `responsive=1` for lossy alpha; cjxl
+    /// out-of-the-box gets `-18%` to `-160%` smaller bytes on
+    /// non-opaque alpha than our `responsive=0` path (audit:
+    /// `a160deb7`, three-image sweep at d ∈ {0.5, 1.0, 2.0, 5.0}).
+    ///
+    /// **Chunk-1 status (this flag)**: ungates a framework path that
+    /// validates the per-band quantizer table
+    /// ([`SQUEEZE_LUMA_QTABLE`]) and the [`Self::alpha_squeeze_engaged`]
+    /// predicate. The actual squeeze-application + per-band quantizer
+    /// routing through [`Self::compute_extra_pixel_quantizer_shifted`]
+    /// is queued for chunk 2 — until then the extras subbitstream
+    /// writer surfaces an explicit `Error::Unsupported` when this
+    /// flag is `true` AND a non-trivial lossy alpha case is
+    /// requested. The default `false` keeps the existing
+    /// no-squeeze path byte-for-byte identical (hash-locks 36/36).
+    ///
+    /// Set via [`crate::LossyConfig::with_alpha_squeeze`].
+    pub alpha_squeeze: bool,
     /// Policy for non-finite XYB values at the conversion→pipeline
     /// boundary. See [`crate::api::NonFiniteAction`].
     pub non_finite_action: crate::api::NonFiniteAction,
@@ -471,6 +542,11 @@ impl Default for VarDctEncoder {
             center_x: None,
             center_y: None,
             alpha_distance: None,
+            // Chunk-1 default: keep existing no-squeeze alpha pipeline.
+            // Setting `true` ungates the chunk-1 framework path which
+            // surfaces `Error::Unsupported` from the extras writer until
+            // chunk-2 wires the per-band squeeze application.
+            alpha_squeeze: false,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
         }
@@ -533,6 +609,11 @@ impl VarDctEncoder {
             center_x: None,
             center_y: None,
             alpha_distance: None,
+            // Chunk-1 default: keep existing no-squeeze alpha pipeline.
+            // Setting `true` ungates the chunk-1 framework path which
+            // surfaces `Error::Unsupported` from the extras writer until
+            // chunk-2 wires the per-band squeeze application.
+            alpha_squeeze: false,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
         }
@@ -664,6 +745,112 @@ impl VarDctEncoder {
             .collect()
     }
 
+    /// Compute the integer pixel quantizer `q` for one
+    /// **squeeze-shifted** sub-channel of an extras lossy plane,
+    /// mirroring the responsive=1 branch of libjxl
+    /// `enc_modular.cc:973-1027`:
+    ///
+    /// ```text
+    /// quantizer       = 0.25            // base; NO `* 0.1` because responsive=1
+    /// q_float         = quantizer
+    ///                  * dist
+    ///                  * bitdepth_correction
+    ///                  * squeeze_quality_factor      (0.35)
+    ///                  * squeeze_luma_factor         (1.1)
+    ///                  * squeeze_luma_qtable[shift]
+    /// q               = max(1, floor(q_float))
+    /// ```
+    ///
+    /// Here `shift` is libjxl's per-channel `hshift + vshift` decremented
+    /// by 1 (`enc_modular.cc:1006-1008`) — i.e. the depth of squeeze
+    /// halvings already applied to this sub-channel — then clamped to
+    /// `[0, 15]` (`SQUEEZE_LUMA_QTABLE_LEN - 1`).
+    ///
+    /// The `shift == 0` path **deliberately diverges** from
+    /// [`Self::compute_extra_pixel_quantizer`] (the no-squeeze formula),
+    /// which folds in an extra `* 0.1` factor (`enc_modular.cc:976-981`,
+    /// "lossy compression without Squeeze transform is just color
+    /// quantization"). At `shift == 0` and the same `dist`/`bits`,
+    /// this function returns `~10×` the q value of the no-squeeze
+    /// path because squeezed averages need much coarser quantization
+    /// than raw pixels would. The HF residual sub-channels (shift > 0)
+    /// then drop very quickly toward `q = 1` via the qtable.
+    ///
+    /// **Chunk-1 status**: this function is wired into the
+    /// `with_alpha_squeeze` opt-in flag but **not yet routed into the
+    /// extras subbitstream** — see
+    /// [`Self::alpha_squeeze`] / chunk-2 plan in CHANGELOG. Today it
+    /// is unit-testable and ready for chunk-2 to consume.
+    ///
+    /// Like [`Self::compute_extra_pixel_quantizer`] this returns `1`
+    /// for non-alpha extras and for `alpha_distance` of `None` /
+    /// `Some(0.0)` / `Some(d <= 0)` — preserves the lossless
+    /// contract end-to-end.
+    #[allow(dead_code)] // chunk-1 framework — chunk 2 wires this in.
+    pub(crate) fn compute_extra_pixel_quantizer_shifted(
+        &self,
+        extras_bits: u32,
+        ec_type: crate::headers::extra_channels::ExtraChannelType,
+        shift: u32,
+    ) -> u32 {
+        let dist = match ec_type {
+            crate::headers::extra_channels::ExtraChannelType::Alpha => match self.alpha_distance {
+                Some(d) if d > 0.0 => d,
+                _ => return 1,
+            },
+            _ => return 1,
+        };
+        let dist = dist.clamp(0.01, 25.0);
+        let ec_maxval = if extras_bits >= 32 {
+            0u64
+        } else {
+            (1u64 << extras_bits) - 1
+        };
+        let bitdepth_correction = if ec_maxval == 0 {
+            1.0
+        } else {
+            (ec_maxval as f32) / 255.0
+        };
+        // responsive=1: base quantizer is 0.25 (no `* 0.1` folded in).
+        const QUANTIZER_RESPONSIVE: f32 = 0.25;
+        const SQUEEZE_QUALITY_FACTOR: f32 = SQUEEZE_QUALITY_FACTOR_CONST;
+        const SQUEEZE_LUMA_FACTOR: f32 = SQUEEZE_LUMA_FACTOR_CONST;
+        let shift_idx = shift.min(SQUEEZE_LUMA_QTABLE_LEN as u32 - 1) as usize;
+        let qtable_val = SQUEEZE_LUMA_QTABLE[shift_idx];
+        let q_float = QUANTIZER_RESPONSIVE
+            * dist
+            * bitdepth_correction
+            * SQUEEZE_QUALITY_FACTOR
+            * SQUEEZE_LUMA_FACTOR
+            * qtable_val;
+        let q = q_float.floor() as i64;
+        if q < 1 { 1 } else { q as u32 }
+    }
+
+    /// Whether the squeeze-on-extras lossy alpha pipeline is engaged
+    /// for this encode (chunk-1 framework opt-in, not yet wired into
+    /// the bitstream).
+    ///
+    /// Returns `true` only when **both** of the following hold:
+    /// - [`Self::alpha_squeeze`] was set via
+    ///   [`crate::LossyConfig::with_alpha_squeeze`].
+    /// - [`Self::alpha_distance`] is `Some(d > 0.0)` (lossy alpha
+    ///   path actually engaged).
+    ///
+    /// When this returns `true`, the extras writer is expected to
+    /// route through the squeeze + per-band quantizer pipeline
+    /// (libjxl `enc_modular.cc:937-1027`, `responsive=1`). Chunk 1
+    /// surfaces an `Error::NotImplemented` from the writer to keep
+    /// the wire format honest while the per-band quantizer routing
+    /// lands.
+    ///
+    /// When this returns `false`, the existing no-squeeze
+    /// [`Self::compute_extra_pixel_quantizer`] path is used — fully
+    /// backwards-compatible (hash-lock byte-identical).
+    pub(crate) fn alpha_squeeze_engaged(&self) -> bool {
+        self.alpha_squeeze && matches!(self.alpha_distance, Some(d) if d > 0.0)
+    }
+
     /// Encode an image in linear sRGB format, optionally with an alpha channel.
     ///
     /// Input should be 3 channels (RGB) of f32 values in [0, 1] range.
@@ -758,7 +945,49 @@ impl VarDctEncoder {
             views.push(super::extras::VardctExtra::from_api(ec));
         }
 
+        self.check_alpha_squeeze_chunk1_unsupported(&views)?;
         self.encode_inner(width, height, linear_rgb, &views)
+    }
+
+    /// Chunk-1 framework gate: when [`Self::alpha_squeeze`] is `true`
+    /// and the lossy alpha pipeline is engaged (`alpha_distance >
+    /// 0.0`) AND at least one extra would actually be alpha-typed,
+    /// surface a clear `Error::Unsupported` instead of silently
+    /// running the no-squeeze path. The framework constants
+    /// ([`SQUEEZE_LUMA_QTABLE`]) and quantizer fn
+    /// ([`Self::compute_extra_pixel_quantizer_shifted`]) are in
+    /// place; chunk 2 will route them into a real
+    /// squeeze-and-emit pipeline.
+    ///
+    /// When alpha_squeeze is `false` (default), this returns `Ok(())`
+    /// and the existing extras pipeline runs unchanged — preserves
+    /// the byte-for-byte hash-lock baseline (36/36 hashes match).
+    fn check_alpha_squeeze_chunk1_unsupported(
+        &self,
+        extras: &[super::extras::VardctExtra<'_>],
+    ) -> Result<()> {
+        if !self.alpha_squeeze_engaged() {
+            return Ok(());
+        }
+        let has_alpha_extra = extras.iter().any(|ec| {
+            matches!(
+                ec.info.ec_type,
+                crate::headers::extra_channels::ExtraChannelType::Alpha
+            )
+        });
+        if !has_alpha_extra {
+            // No alpha extra present → squeeze-on-extras is a no-op
+            // even when the flag is set. Don't surprise the caller.
+            return Ok(());
+        }
+        Err(Error::NotImplemented(
+            "with_alpha_squeeze(true) is the chunk-1 opt-in framework: the per-band quantizer \
+             table and shift-aware compute_extra_pixel_quantizer_shifted are wired but the actual \
+             Squeeze application on the alpha extra is queued for chunk 2 (see CHANGELOG). \
+             Until then, leave with_alpha_squeeze at its default (false) to use the existing \
+             no-squeeze lossy alpha pipeline."
+                .into(),
+        ))
     }
 
     /// Shared implementation backing both [`Self::encode`] and
@@ -2192,6 +2421,7 @@ impl VarDctEncoder {
             }
             extras_views.push(super::extras::VardctExtra::from_api(ec));
         }
+        self.check_alpha_squeeze_chunk1_unsupported(&extras_views)?;
         self.encode_from_precomputed_inner(precomputed, quant_field, &extras_views)
     }
 
@@ -2595,6 +2825,7 @@ impl VarDctEncoder {
             }
             extras_views.push(super::extras::VardctExtra::from_api(ec));
         }
+        self.check_alpha_squeeze_chunk1_unsupported(&extras_views)?;
 
         let xsize_groups = div_ceil(width, GROUP_DIM);
         let ysize_groups = div_ceil(height, GROUP_DIM);
@@ -3138,5 +3369,144 @@ mod tests {
             .expect("jxl-oxide render of butteraugli loop output failed");
         let _pixels = render.image_all_channels();
         eprintln!("Butteraugli loop output decodes OK");
+    }
+
+    // ── Chunk-1 framework tests for `with_alpha_squeeze` ──────────────────
+    //
+    // These tests exercise the new constants + quantizer fn so the
+    // framework is provably reachable. They don't yet drive a real
+    // squeeze-on-extras encode (that's chunk 2) — they verify the
+    // chunk-1 contract: (a) constants are libjxl-parity, (b) the
+    // shifted quantizer behaves correctly across the table, (c) the
+    // opt-in flag surfaces NotImplemented at the right boundary AND
+    // stays at byte-identical lossless when alpha_distance is unset.
+
+    #[test]
+    fn squeeze_luma_qtable_matches_libjxl_constants() {
+        // Mirrors `lib/jxl/enc_modular.cc:101-103` exactly.
+        let expected: [f32; 16] = [
+            163.84, 81.92, 40.96, 20.48, 10.24, 5.12, 2.56, 1.28, 0.64, 0.32, 0.16, 0.08, 0.04,
+            0.02, 0.01, 0.005,
+        ];
+        for (i, &v) in expected.iter().enumerate() {
+            assert_eq!(
+                SQUEEZE_LUMA_QTABLE[i], v,
+                "SQUEEZE_LUMA_QTABLE[{i}] mismatch vs libjxl enc_modular.cc:101-103"
+            );
+        }
+        assert_eq!(SQUEEZE_LUMA_QTABLE_LEN, 16);
+        assert_eq!(SQUEEZE_QUALITY_FACTOR_CONST, 0.35);
+        assert_eq!(SQUEEZE_LUMA_FACTOR_CONST, 1.1);
+    }
+
+    #[test]
+    fn compute_extra_pixel_quantizer_shifted_alpha_d2_shift0_matches_responsive1() {
+        // At shift = 0, 8-bit alpha, d = 2.0:
+        // q_float = 0.25 * 2.0 * 1.0 * 0.35 * 1.1 * 163.84 = 31.5392
+        // floor → 31. This is ~10x the responsive=0 q value (q=3 at
+        // d=2.0 in compute_extra_pixel_quantizer), confirming the
+        // responsive=1 vs responsive=0 base divergence (`* 0.1` skip).
+        let mut enc = VarDctEncoder::new(1.0);
+        enc.alpha_distance = Some(2.0);
+        let q = enc.compute_extra_pixel_quantizer_shifted(
+            8,
+            crate::headers::extra_channels::ExtraChannelType::Alpha,
+            0,
+        );
+        assert_eq!(q, 31, "shift=0 d=2.0 8-bit alpha should yield q=31");
+
+        // Sanity: the responsive=0 path at d=2.0 yields q=3 (10x smaller).
+        let q_r0 = enc.compute_extra_pixel_quantizer(
+            8,
+            crate::headers::extra_channels::ExtraChannelType::Alpha,
+        );
+        assert_eq!(q_r0, 3, "responsive=0 path unchanged");
+    }
+
+    #[test]
+    fn compute_extra_pixel_quantizer_shifted_drops_to_1_at_deep_shifts() {
+        // Deeper shifts → smaller qtable_val → q < 1 → clamp to 1
+        // (lossless). At shift 11+ (qtable[11] = 0.08) with d=2.0,
+        // 8-bit: q_float = 0.25 * 2.0 * 1.0 * 0.35 * 1.1 * 0.08 =
+        // 0.0154 → floor 0 → clamp to 1.
+        let mut enc = VarDctEncoder::new(1.0);
+        enc.alpha_distance = Some(2.0);
+        for shift in 11..=15 {
+            let q = enc.compute_extra_pixel_quantizer_shifted(
+                8,
+                crate::headers::extra_channels::ExtraChannelType::Alpha,
+                shift,
+            );
+            assert_eq!(q, 1, "deep shift={shift} should clamp to q=1 (lossless)");
+        }
+    }
+
+    #[test]
+    fn compute_extra_pixel_quantizer_shifted_clamps_oversized_shift() {
+        // shift > 15 must clamp to 15 (the table last entry), never panic.
+        let mut enc = VarDctEncoder::new(1.0);
+        enc.alpha_distance = Some(5.0);
+        let q_at_15 = enc.compute_extra_pixel_quantizer_shifted(
+            8,
+            crate::headers::extra_channels::ExtraChannelType::Alpha,
+            15,
+        );
+        let q_at_100 = enc.compute_extra_pixel_quantizer_shifted(
+            8,
+            crate::headers::extra_channels::ExtraChannelType::Alpha,
+            100,
+        );
+        assert_eq!(q_at_100, q_at_15, "shift > 15 must clamp, not panic");
+    }
+
+    #[test]
+    fn compute_extra_pixel_quantizer_shifted_returns_1_for_non_alpha() {
+        // Non-alpha extras stay lossless at every shift — only alpha
+        // has the per-channel distance knob wired today.
+        let mut enc = VarDctEncoder::new(1.0);
+        enc.alpha_distance = Some(2.0);
+        for ec_type in [
+            crate::headers::extra_channels::ExtraChannelType::Depth,
+            crate::headers::extra_channels::ExtraChannelType::SpotColor,
+            crate::headers::extra_channels::ExtraChannelType::Thermal,
+        ] {
+            for shift in 0..=15 {
+                let q = enc.compute_extra_pixel_quantizer_shifted(8, ec_type, shift);
+                assert_eq!(
+                    q, 1,
+                    "non-alpha ec_type={ec_type:?} shift={shift} must stay lossless"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn alpha_squeeze_engaged_predicate() {
+        // Default: flag off → never engaged.
+        let mut enc = VarDctEncoder::new(1.0);
+        assert!(!enc.alpha_squeeze_engaged(), "default off");
+
+        // Flag on but no alpha distance → not engaged.
+        enc.alpha_squeeze = true;
+        assert!(
+            !enc.alpha_squeeze_engaged(),
+            "no alpha_distance → not engaged"
+        );
+
+        // Flag on but distance=0 → not engaged (lossless contract).
+        enc.alpha_distance = Some(0.0);
+        assert!(
+            !enc.alpha_squeeze_engaged(),
+            "alpha_distance=0 → not engaged"
+        );
+
+        // Flag on + non-zero distance → engaged.
+        enc.alpha_distance = Some(2.0);
+        assert!(enc.alpha_squeeze_engaged(), "true + d=2.0 → engaged");
+
+        // Flag off + non-zero distance → not engaged
+        // (responsive=0 path still runs).
+        enc.alpha_squeeze = false;
+        assert!(!enc.alpha_squeeze_engaged(), "flag off wins");
     }
 }
