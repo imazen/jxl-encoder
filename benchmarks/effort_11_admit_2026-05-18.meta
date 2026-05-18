@@ -1,0 +1,47 @@
+# effort_11_admit_2026-05-18.tsv — RFC#45 chunk 1 acceptance bench
+
+Date: 2026-05-18
+Parent commit: 45445443 (feat(jpeg-transcode): EX-J17a — wire-safe custom coeff orders #49)
+Host: water-cooled AMD Ryzen 9 7950X (128 GB RAM)
+Bench: jxl-encoder/examples/e10_e11_paired_ab.rs
+
+Grid: 5 CID22-512 photos × 4 distances × 3 efforts × 5 samples = 300 encodes
+  Images: 1025469, 1044329, 1189261, 1418519, 2079234 (CID22-512/validation)
+  Distances: 0.5, 1.0, 2.0, 4.0
+  Variants (paired, sample-major interleave):
+    A = e9   (libjxl kTortoise, 4 butteraugli iters)
+    B = e10  (8 butteraugli iters)
+    C = e11  (16 butteraugli iters, saturated at MAX_QUANT_LOOP_ITERS)
+  Threads: 8
+  Decoder: jxl-oxide in linear sRGB (per CLAUDE.md PNG metadata trap rule)
+  Metric: Rust butteraugli (`butteraugli_linear`)
+
+Command:
+  REPO_ROOT=$PWD SAMPLES=5 THREADS=8 DISTANCES="0.5,1.0,2.0,4.0" \
+    cargo run -p jxl-encoder --release \
+    --features 'std parallel butteraugli-loop' \
+    --example e10_e11_paired_ab \
+    > benchmarks/effort_11_admit_2026-05-18.tsv
+
+Acceptance (per RFC#45 chunk 1):
+  e10 ≤ e9  on bytes AND butteraugli on ≥80% of cells: 17/20 (85%) PASS
+  e11 ≤ e10 on bytes AND butteraugli on ≥80% of cells:  8/20 (40%) FAIL
+
+Geometric-mean deltas across 20 (image,distance) cells:
+  B/A: bytes=0.9966 (-0.34%), butteraugli=0.9729 (-2.71%), encode_ms=2.326×
+  C/B: bytes=1.0069 (+0.69%), butteraugli=0.9866 (-1.34%), encode_ms=3.177×
+
+Decision (RFC#45 chunk 1 plan, "If acceptance fails: ship `effort.clamp(1, 11)`
+anyway — gate is opened — + chunk-2 plan"):
+  - Ship e10 as the chunk-1 win (85% gate met, modest size + butteraugli win).
+  - Open the e11 gate (clamp 1..=11 widening, lf_frame cap 10→11) but mark
+    e11 as a gate-only ship: butteraugli loop saturation alone is not enough
+    to beat e10. The expected e11 lever (already wired in this tree) is the
+    multi-seed butteraugli loop (`lossy_search_seeds = 4` at e11) which we
+    confirmed bench-active via the existing `e10_e11_multiseed_*` examples.
+    Per-cell bench above is loop-only (single seed); the per-image-cell C/B
+    regression is the expected "just burn 16 iters on a saturated qf"
+    behaviour the RFC explicitly anticipates. Multi-seed + the upcoming
+    chunks (1.3 per-image hyperparam sweep, 1.5 two-pass strategy
+    refinement) consume the new e11 budget.
+  - Defaults unchanged (e7); hash-locks 36/36 byte-identical.

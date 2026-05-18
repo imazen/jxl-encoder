@@ -4,6 +4,71 @@
 
 ### Added
 
+- **RFC#45 chunk 1 admit-gate widening: e10 / e11 effort ceiling open
+  end-to-end** (issue #45). Closes the residual surface that still
+  pinned the effort range at `1..=10` after the parent commit landed
+  the per-knob e10/e11 wiring (clamp inside `EffortProfile::lossy` /
+  `EffortProfile::lossless`, `butteraugli_iters` map extension, CLI
+  `--effort` help string). Remaining sites widened:
+  - `vardct/lf_frame.rs:258` — DC effort cap `(effort + 1).min(10)` →
+    `min(11)`. Mirrors libjxl `enc_cache.cc:134-136` "one speed-tier
+    slower for DC" idiom past the new ceiling so callers passing
+    `with_effort(11)` aren't silently clipped to 10 inside the LfFrame
+    path. e10/e11 fall through to the e9 (kTortoise) lossless DC code
+    today; only knobs that explicitly scale (`tree_learn_seeds`,
+    `lossy_search_seeds`, `butteraugli_iters`) consume the extra
+    budget.
+  - Doc comments: `EffortProfile.effort` (`effort.rs:136`),
+    `FrameEncoderOptions.effort` (`modular/frame.rs:23`),
+    `VarDctEncoder.effort` (`vardct/encoder.rs:155`),
+    `encode_lf_frame` (`vardct/lf_frame.rs:133`), CLI `--effort` help
+    text in `jxl-encoder-cli/README.md` — all updated from `1-10` to
+    `1-11` with an explicit "e10/e11 extends libjxl kTortoise=9" note
+    so external readers see the new ceiling instead of inferring it
+    from compile errors.
+  - Effort-loop test ranges in `effort.rs` widened from `1..=10` to
+    `1..=11` (9 sites:
+    `test_lossless_experimental_matches_reference`,
+    `test_tree_parallel_schedule_lossy_matches_lossless`,
+    `test_adapt_small_image_fallback_threshold` (two ranges),
+    `test_adapt_tree_max_buckets_for_image_threshold` (cross-product),
+    `test_adapt_tree_max_buckets_lossy_profile_parity`,
+    `test_adapt_to_image_lossy_dct64_gate`,
+    `test_adapt_to_image_content_screenshot_enables_patches_at_e5_e6`).
+    All 24 effort-module tests pass at the widened range; 1170
+    `jxl-encoder` lib tests pass; hash-lock fixtures 36/36
+    byte-identical (defaults stay at e7).
+
+  **Acceptance bench**
+  (`benchmarks/effort_11_admit_2026-05-18.{tsv,meta}`, 300 paired
+  encodes via `examples/e10_e11_paired_ab.rs`): 5 CID22-512 photos × 4
+  distances {0.5, 1.0, 2.0, 4.0} × 3 efforts {e9, e10, e11} × 5
+  samples, sample-major interleave, jxl-oxide linear decode + Rust
+  `butteraugli_linear`. Per-cell medians across the 5 samples:
+  - **e10 vs e9: PASS the RFC#45 chunk-1 acceptance gate (17/20 cells,
+    85% — ≥80% required).** Geo-mean bytes ratio 0.9966 (-0.34%),
+    butteraugli ratio 0.9729 (-2.71%), encode-ms ratio 2.326×.
+  - **e11 vs e10: FAILS the same gate (8/20 cells, 40%).** Geo-mean
+    bytes ratio 1.0069 (+0.69%), butteraugli ratio 0.9866 (-1.34%),
+    encode-ms ratio 3.177×. The butteraugli loop saturates inside the
+    iter-8 budget on 12/20 cells, so cranking to iter-16 buys nothing
+    on those cells and converges to a slightly looser (qf, scale)
+    solution on a handful of others.
+  - **Decision** (per RFC#45 chunk-1 plan, "If acceptance fails: ship
+    `effort.clamp(1, 11)` anyway — gate is opened — + chunk-2 plan"):
+    e10 ships as the chunk-1 win; e11 ships as the gate-only widening
+    so the downstream multi-seed (`lossy_search_seeds = 4` at e11) and
+    multi-seed tree learning chunks (already wired in this tree —
+    `tree_learn_seeds = 8` at e11 per W9-1 chunk 5) consume the e11
+    budget instead of `butteraugli_iters` alone. Single-axis iter-16
+    loop saturation alone is not enough to beat e10.
+
+  Defaults unchanged (`LossyConfig::new(d)` and `LosslessConfig::new()`
+  still produce e7 output). e10/e11 are strictly opt-in via
+  `with_effort(10)` / `with_effort(11)`. Bitstream stays 100%
+  spec-valid; jxl-rs + jxl-oxide + djxl decode every cell in the
+  acceptance bench without warnings or fallback.
+
 - **EX-J17a: wire-format-safe custom coefficient orders on the
   `--lossless-jpeg` transcode path** (issue #49). The JPEG bridge now
   computes per-channel custom coefficient orders from the same Lehmer
