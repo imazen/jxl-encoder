@@ -96,6 +96,50 @@
 
 ### Added
 
+- **Squeeze-on-extras chunk 3 — skip squeeze when alpha is a single
+  constant value** (follow-on to chunk 2.b `191801a1`, W14-1 ChannelCompact
+  `e97e5bb7`). Adds a one-line predicate in
+  `vardct::encoder::maybe_build_alpha_squeeze_pipeline` that checks the
+  alpha extra via the new
+  `VardctExtra::is_constant_full_image(width, height)` helper before
+  building the squeeze pipeline. When the predicate fires, the
+  dispatcher returns `Ok(None)` and the existing
+  `write_modular_extras_subbitstream` path takes over — for
+  constant-channel extras that path already emits a libjxl-parity
+  `kPalette(num_c=1, nb_colors=1)` transform via
+  `detect_constant_value` (W14-1, `e97e5bb7`) that collapses the
+  channel to ~76 bytes regardless of `alpha_distance`.
+
+  Closes the `red_night_opaque` overhead the chunk-2.b audit
+  (`191801a1`) accepted as a tradeoff:
+
+  | image                              | dims      | d   | no_sq | sq (pre) | sq (chunk-3) |
+  |------------------------------------|-----------|-----|-------|----------|--------------|
+  | red_night_opaque                   | 400×267   | 0.5 | 9118  | 9194 (+0.83%) | **9118 (+0.00%)** |
+  | red_night_opaque                   | 400×267   | 1.0 | 9118  | 9195 (+0.84%) | **9118 (+0.00%)** |
+  | red_night_opaque                   | 400×267   | 2.0 | 9141  | 9198 (+0.62%) | **9141 (+0.00%)** |
+  | red_night_opaque                   | 400×267   | 5.0 | 9141  | 9209 (+0.74%) | **9141 (+0.00%)** |
+  | alpha_nonpremul_photo_mask         | 1024×1024 | 0.5 | 6859  | 4794 (-30.11%) | 4794 (-30.11%) |
+  | alpha_nonpremul_photo_mask         | 1024×1024 | 1.0 | 6859  | 4770 (-30.46%) | 4770 (-30.46%) |
+  | alpha_nonpremul_photo_mask         | 1024×1024 | 2.0 | 5337  | 4816 (-9.76%)  | 4816 (-9.76%)  |
+  | alpha_nonpremul_photo_mask         | 1024×1024 | 5.0 | 4848  | 4823 (-0.52%)  | 4823 (-0.52%)  |
+
+  All `alpha_nonpremul_photo_mask` and `gradients_semitrans_ui` wins
+  are preserved (squeeze is the right answer when alpha is varying);
+  `red_night_opaque` (constant-opaque alpha) now matches its
+  no-squeeze baseline byte-for-byte because the dispatcher hands
+  the channel to ChannelCompact instead. Decoder roundtrip via
+  jxl-rs unchanged (alpha MAE 0.00 across all 4 `red_night_opaque`
+  distance points, preserved on the photo-mask).
+
+  Hash-locks: 36/36 byte-identical (`alpha_squeeze` at default
+  `false` is untouched; the chunk-3 dispatcher only fires when the
+  flag is `true`). 3 new unit tests in `vardct::extras`
+  (`is_constant_full_image_true_for_all_opaque`,
+  `..._false_for_one_mismatch`, `..._true_for_all_transparent`).
+  Repro: `cargo run --release -p jxl-encoder --example
+  alpha_squeeze_chunk2b_roundtrip`.
+
 - **Squeeze-on-extras chunk 2.b — multi-group + dim_shift>0 audit
   surfaces lifted** (follow-on to chunk 2 `1760b03`). Routes the
   squeezed alpha sub-channels across the standard VarDCT section

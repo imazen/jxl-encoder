@@ -123,6 +123,27 @@ impl<'a> VardctExtra<'a> {
         }
         Some(first)
     }
+
+    /// Detect whether the full channel is a single constant value at
+    /// full image resolution (`image_width × image_height` sampled at
+    /// this channel's `dim_shift`). Convenience wrapper around
+    /// [`Self::detect_constant_value`] used by the squeeze dispatcher
+    /// to short-circuit when ChannelCompact (W14-1, `e97e5bb7`) already
+    /// collapses the channel to ~76 bytes — in that regime the squeeze
+    /// pipeline adds GroupHeader + per-band tree leaves (~0.6–0.8%
+    /// overhead vs the no-squeeze baseline; W16-2 audit, `191801a1`)
+    /// for zero compression win, since every squeeze sub-channel is
+    /// also constant and the residuals carry no information that
+    /// ChannelCompact's single `kPalette(num_c=1, nb_colors=1)` doesn't
+    /// already capture.
+    ///
+    /// Returns `true` iff [`Self::detect_constant_value`] over the
+    /// full image returns `Some(_)`.
+    #[inline]
+    pub(crate) fn is_constant_full_image(&self, image_width: usize, image_height: usize) -> bool {
+        self.detect_constant_value(image_width, 0, 0, image_width, image_height)
+            .is_some()
+    }
 }
 
 /// One squeeze-output sub-channel of an alpha extra, after default
@@ -579,5 +600,49 @@ mod squeeze_pipeline_tests {
         assert_eq!(ch.get(4, 0), 0);
         assert_eq!(ch.get(5, 0), 4);
         assert_eq!(ch.get(6, 0), 4);
+    }
+
+    #[test]
+    fn is_constant_full_image_true_for_all_opaque() {
+        // 400×267 fully-opaque alpha (red_night_opaque shape from the
+        // W16-2 audit, `191801a1`). The chunk-3 dispatcher uses this
+        // to short-circuit squeeze and hand the channel to the W14-1
+        // ChannelCompact (`e97e5bb7`) `kPalette(num_c=1, nb_colors=1)`
+        // writer.
+        let info = alpha_info(8);
+        let pixels = alloc::vec![255u8; 400 * 267];
+        let extra = VardctExtra {
+            info: &info,
+            data: VardctExtraBuf::U8(&pixels),
+        };
+        assert!(extra.is_constant_full_image(400, 267));
+    }
+
+    #[test]
+    fn is_constant_full_image_false_for_one_mismatch() {
+        // 16×16 mostly-opaque alpha with a single transparent pixel
+        // in the middle. ChannelCompact's single-value gate fails on
+        // this; the squeeze path is the right answer.
+        let info = alpha_info(8);
+        let mut pixels = alloc::vec![255u8; 16 * 16];
+        pixels[8 * 16 + 8] = 254; // one mismatch
+        let extra = VardctExtra {
+            info: &info,
+            data: VardctExtraBuf::U8(&pixels),
+        };
+        assert!(!extra.is_constant_full_image(16, 16));
+    }
+
+    #[test]
+    fn is_constant_full_image_true_for_all_transparent() {
+        // Edge case: fully transparent alpha — also constant, also
+        // ChannelCompact territory (single value = 0).
+        let info = alpha_info(8);
+        let pixels = alloc::vec![0u8; 32 * 32];
+        let extra = VardctExtra {
+            info: &info,
+            data: VardctExtraBuf::U8(&pixels),
+        };
+        assert!(extra.is_constant_full_image(32, 32));
     }
 }
