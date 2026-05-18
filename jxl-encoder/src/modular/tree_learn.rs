@@ -5142,13 +5142,37 @@ struct SplitWorkspace {
 pub(crate) static SPLIT_WS_ALLOC_COUNT: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 
+/// Test-only allocation counter that increments **only** on threads marked as
+/// belonging to the cap-allocations test's private rayon pool (via
+/// [`IS_TEST_POOL_THREAD`]). The cap test reads this counter so it sees ONLY
+/// allocations made by its own controlled thread set, immune to allocations
+/// from other concurrent tests in the same test binary. Tracks issue #51.
+#[cfg(test)]
+pub(crate) static SPLIT_WS_ALLOC_COUNT_TEST_POOL: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+thread_local! {
+    /// Set to `true` on threads owned by the cap-allocations test's private
+    /// rayon pool (and on the test's calling thread for the duration of the
+    /// measurement). When set, [`SplitWorkspace::new`] also increments
+    /// [`SPLIT_WS_ALLOC_COUNT_TEST_POOL`]. Issue #51.
+    pub(crate) static IS_TEST_POOL_THREAD: core::cell::Cell<bool> =
+        const { core::cell::Cell::new(false) };
+}
+
 impl SplitWorkspace {
     fn new(max_count: usize, histogram_size: usize, max_buckets: usize) -> Self {
         // Provable: `histogram_size` derives from `GATHER_HYBRID_UINT.encode`
         // tokens, max 239 for any u32 input (see HISTO_PADDED comment).
         debug_assert!(histogram_size <= HISTO_PADDED);
         #[cfg(test)]
-        SPLIT_WS_ALLOC_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        {
+            SPLIT_WS_ALLOC_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            if IS_TEST_POOL_THREAD.with(|f| f.get()) {
+                SPLIT_WS_ALLOC_COUNT_TEST_POOL.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            }
+        }
         Self {
             count_increase: vec![0u32; max_buckets * HISTO_PADDED],
             extra_bits_increase: vec![0u64; max_buckets],
@@ -7315,6 +7339,17 @@ mod tests {
     /// The parallel path may add up to `num_rayon_workers` additional
     /// allocations (one per fresh worker thread that participates), so
     /// we assert an upper bound rather than equality.
+    ///
+    /// **Race-free measurement (issue #51)**: this test runs inside a
+    /// private `rayon::ThreadPool` whose workers are marked with the
+    /// thread-local [`IS_TEST_POOL_THREAD`] flag (via `start_handler`).
+    /// `SplitWorkspace::new` bumps the dedicated
+    /// [`SPLIT_WS_ALLOC_COUNT_TEST_POOL`] counter ONLY on threads where
+    /// that flag is set. This guarantees the measurement is immune to
+    /// allocations from any other test in the same test binary that
+    /// happens to call `compute_best_tree` concurrently — they run on
+    /// the global rayon pool or unmarked threads, neither of which bump
+    /// the test-pool counter.
     #[test]
     fn test_thread_local_workspace_caps_allocations() {
         use core::sync::atomic::Ordering;
@@ -7345,43 +7380,90 @@ mod tests {
 
         let params = TreeLearningParams::for_effort(7);
 
-        // First call: warm any state the test runtime might have lazily
-        // initialised, AND warm this thread's cache so the count is stable.
-        let mut samples_warm = TreeSamples::new();
-        gather_samples(&mut samples_warm, &image, 0);
-        let _ = compute_best_tree(&mut samples_warm, &params);
+        // Use a private rayon pool with a fixed worker count we control. Its
+        // workers (and only its workers) set IS_TEST_POOL_THREAD = true so
+        // SplitWorkspace::new can attribute allocations to this test alone.
+        // Without a private pool we'd inherit the global rayon pool, whose
+        // workers may be shared with concurrently-running tests in the same
+        // test binary — that race is exactly what made this test flaky
+        // (issue #51).
+        #[cfg(feature = "parallel-tree-learning")]
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .thread_name(|i| format!("flaky-test-51-worker-{i}"))
+            .start_handler(|_idx| {
+                IS_TEST_POOL_THREAD.with(|f| f.set(true));
+            })
+            .build()
+            .expect("build private rayon pool");
 
-        // Snapshot, then run a real encode and measure how many NEW workspace
-        // allocations happened.
-        let before = SPLIT_WS_ALLOC_COUNT.load(Ordering::Relaxed);
-        let mut samples = TreeSamples::new();
-        gather_samples(&mut samples, &image, 0);
-        let tree = compute_best_tree(&mut samples, &params);
-        let after = SPLIT_WS_ALLOC_COUNT.load(Ordering::Relaxed);
+        // Run everything inside `pool.install` so any parallel fan-out from
+        // compute_best_tree uses our marked workers. The calling thread itself
+        // also runs portions of the work; flag it for the measurement window.
+        IS_TEST_POOL_THREAD.with(|f| f.set(true));
+
+        // Helper that runs `f` either on the private pool (when
+        // parallel-tree-learning is on) or directly on the current thread.
+        let run = |f: &mut dyn FnMut()| {
+            #[cfg(feature = "parallel-tree-learning")]
+            {
+                pool.install(f);
+            }
+            #[cfg(not(feature = "parallel-tree-learning"))]
+            {
+                f();
+            }
+        };
+
+        // First call: warm any state the test runtime might have lazily
+        // initialised, AND warm the calling thread + private-pool workers'
+        // caches so the second measurement is stable.
+        run(&mut || {
+            let mut samples_warm = TreeSamples::new();
+            gather_samples(&mut samples_warm, &image, 0);
+            let _ = compute_best_tree(&mut samples_warm, &params);
+        });
+
+        // Snapshot the test-pool-only counter, then run a real encode and
+        // measure how many NEW workspace allocations happened on threads we
+        // own. Allocations from any other concurrent test go to the global
+        // counter only, not this one.
+        let before = SPLIT_WS_ALLOC_COUNT_TEST_POOL.load(Ordering::Relaxed);
+        let mut tree_len = 0usize;
+        run(&mut || {
+            let mut samples = TreeSamples::new();
+            gather_samples(&mut samples, &image, 0);
+            let tree = compute_best_tree(&mut samples, &params);
+            tree_len = tree.len();
+        });
+        let after = SPLIT_WS_ALLOC_COUNT_TEST_POOL.load(Ordering::Relaxed);
         let added = after - before;
+
+        // Clear the flag on the calling thread — important if cargo runs more
+        // tests on this same OS thread later.
+        IS_TEST_POOL_THREAD.with(|f| f.set(false));
 
         // Sanity: this WAS a real tree-build (multiple splits).
         assert!(
-            tree.len() >= 3,
-            "expected non-trivial tree, got {} nodes",
-            tree.len()
+            tree_len >= 3,
+            "expected non-trivial tree, got {tree_len} nodes",
         );
 
-        // With the thread-local cache, the main thread's workspace is already
-        // alive from the warmup call, so the second call should allocate 0
-        // workspaces on it. Parallel forks may schedule onto rayon workers
-        // that haven't run a tree-learn before in this test process, so we
-        // allow up to `num_threads + 1` additional allocations.
+        // With the thread-local cache, every thread in our private pool is
+        // already warm from the first `run(...)` above, so the second call
+        // should allocate 0 workspaces. We still allow `num_threads + 1` to
+        // tolerate (a) a worker that didn't participate in the warm-up but
+        // participated in the measurement, and (b) the calling thread.
         //
         // The old code (per-fork `SplitWorkspace::new`) would have allocated
-        // 16 (up to `2^max_parallel_depth`) workspaces in the recursive path
+        // up to `2^max_parallel_depth = 16` workspaces in the recursive path
         // PLUS one for the outer loop PLUS one for the seed find_best_split
-        // — so > 16 every time on the same machine.
+        // — so the test would have caught a regression with > 16 every time.
         let cap = {
             #[cfg(feature = "parallel-tree-learning")]
             {
-                // Allow num_rayon_workers (workers may not all be warm).
-                rayon::current_num_threads() + 1
+                // Private pool worker count + the calling thread.
+                pool.current_num_threads() + 1
             }
             #[cfg(not(feature = "parallel-tree-learning"))]
             {
@@ -7390,11 +7472,9 @@ mod tests {
         };
         assert!(
             added <= cap,
-            "thread-local workspace cache leaked: {} new SplitWorkspace::new \
-             calls (cap = {}). With the cache, only the first call on each \
-             worker thread should allocate.",
-            added,
-            cap,
+            "thread-local workspace cache leaked: {added} new SplitWorkspace::new \
+             calls on test-pool threads (cap = {cap}). With the cache, only the \
+             first call on each worker thread should allocate.",
         );
     }
 
