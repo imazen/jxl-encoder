@@ -1604,6 +1604,23 @@ pub struct LosslessConfig {
     /// fix VarDCT groups at 256). See
     /// [`Self::with_modular_group_size`].
     modular_group_size_shift: Option<u8>,
+    /// Opt-in: enable automatic delta-frame mode selection for
+    /// multi-frame animation encodes (A1 audit "Animation" — Skip /
+    /// delta frame encoding). When `true`, the animation encode path is
+    /// permitted to swap the per-frame [`BlendMode::Replace`] default
+    /// for a delta-friendly alternative ([`BlendMode::Add`] with a 1×1
+    /// zero-pixel crop that leaves the canvas unchanged) when it
+    /// detects that frame N is byte-identical to the preceding
+    /// displayed frame.
+    ///
+    /// Chunk 1 POC scope (this commit): one heuristic — identical-frame
+    /// short-circuit using `Add` over a 1×1 zero-pixel crop. Chunk 2
+    /// will add a full trial-encode of `Regular` vs
+    /// `Add(reference=N-1)` vs `Blend(reference=N-1)` per frame and
+    /// pick the cheapest decodable variant. Default `false` — no
+    /// hash-locked bitstream changes at default.
+    /// See [`Self::with_auto_delta_frames`].
+    auto_delta_frames: bool,
 }
 
 impl Default for LosslessConfig {
@@ -1643,6 +1660,7 @@ impl LosslessConfig {
             faster_decoding: 0,
             container_mode: ContainerMode::Auto,
             modular_group_size_shift: None,
+            auto_delta_frames: false,
         }
     }
 
@@ -1691,6 +1709,28 @@ impl LosslessConfig {
     /// 256-pixel default; `Some(n)` overrides per [`Self::with_modular_group_size`].
     pub fn modular_group_size(&self) -> Option<u8> {
         self.modular_group_size_shift
+    }
+
+    /// Opt-in: enable automatic delta-frame mode selection for
+    /// multi-frame animation encodes (A1 audit "Animation" — Skip /
+    /// delta frame encoding). See the field doc on
+    /// [`auto_delta_frames`][Self::auto_delta_frames] for the full
+    /// rollout plan.
+    ///
+    /// Chunk 1 POC scope: one heuristic — identical-frame short-circuit
+    /// using [`BlendMode::Add`] over a 1×1 zero-pixel crop. Chunk 2
+    /// will add the full trial-encode loop (`Regular` vs `Add(prev)`
+    /// vs `Blend(prev)`). Default `false` — no hash-locked bitstream
+    /// changes at default.
+    pub fn with_auto_delta_frames(mut self, enable: bool) -> Self {
+        self.auto_delta_frames = enable;
+        self
+    }
+
+    /// Whether the encode is permitted to emit delta-frame variants
+    /// when [`Self::with_auto_delta_frames`] has been opted into.
+    pub fn auto_delta_frames(&self) -> bool {
+        self.auto_delta_frames
     }
 
     /// Opt-in: enable per-image smart-fanout for parallel tree learning.
@@ -2878,6 +2918,28 @@ pub struct LossyConfig {
     /// (libjxl path; our encoder currently emits a single LfFrame and
     /// warns). See [`Self::with_progressive_dc`].
     progressive_dc: u8,
+    /// Opt-in: enable automatic delta-frame mode selection for
+    /// multi-frame animation encodes (A1 audit "Animation" — Skip /
+    /// delta frame encoding). When `true`, the animation encode path is
+    /// permitted to swap the per-frame [`BlendMode::Replace`] default
+    /// for a delta-friendly alternative
+    /// ([`BlendMode::Add`] with a tiny crop that leaves the canvas
+    /// unchanged) when it detects that frame N is byte-identical to the
+    /// preceding displayed frame.
+    ///
+    /// Chunk 1 POC scope (this commit): one heuristic — identical-frame
+    /// short-circuit using `Add` over a 1×1 zero-pixel crop. Chunk 2
+    /// will add a full trial-encode of `Regular` vs
+    /// `Add(reference=N-1)` vs `Blend(reference=N-1)` per frame and
+    /// pick the cheapest decodable variant. Default `false` — no
+    /// hash-locked bitstream changes at default.
+    ///
+    /// Lossless only in chunk 1: a residual-from-prior `Add` payload in
+    /// the lossy pipeline must round-trip through the reconstructed
+    /// (already-quantised) reference frame, not the original pixels —
+    /// chunk 2 will add a reconstruction shadow for the lossy path.
+    /// See [`Self::with_auto_delta_frames`].
+    auto_delta_frames: bool,
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -2973,6 +3035,7 @@ impl LossyConfig {
             faster_decoding: 0,
             container_mode: ContainerMode::Auto,
             progressive_dc: 0,
+            auto_delta_frames: false,
         }
     }
 
@@ -4006,6 +4069,35 @@ impl LossyConfig {
     /// Currently-configured `progressive_dc` level (`0..=2`).
     pub fn progressive_dc(&self) -> u8 {
         self.progressive_dc
+    }
+
+    /// Opt-in: enable automatic delta-frame mode selection for
+    /// multi-frame animation encodes (A1 audit "Animation" — Skip /
+    /// delta frame encoding). See the field doc on
+    /// [`auto_delta_frames`][Self::auto_delta_frames] for the full
+    /// rollout plan.
+    ///
+    /// Chunk 1 POC scope: one heuristic — identical-frame short-circuit
+    /// using [`BlendMode::Add`] over a 1×1 zero-pixel crop. Chunk 2
+    /// will add the full trial-encode loop. Default `false` — no
+    /// hash-locked bitstream changes at default.
+    ///
+    /// Lossy path: the chunk 1 heuristic is wired but the lossy
+    /// pipeline reconstructs from the already-quantised reference
+    /// frame, not the original pixels — the residual semantics are
+    /// only safe when the per-frame quantisation is locked. Treat
+    /// `with_auto_delta_frames(true)` on [`LossyConfig`] as
+    /// experimental until chunk 2 lands; the safe demoable path is the
+    /// [`LosslessConfig`] variant.
+    pub fn with_auto_delta_frames(mut self, enable: bool) -> Self {
+        self.auto_delta_frames = enable;
+        self
+    }
+
+    /// Whether the encode is permitted to emit delta-frame variants
+    /// when [`Self::with_auto_delta_frames`] has been opted into.
+    pub fn auto_delta_frames(&self) -> bool {
+        self.auto_delta_frames
     }
 
     /// Bias the VarDCT encode toward simpler bitstreams that decode
@@ -8605,6 +8697,20 @@ fn encode_animation_lossless(
         // detection; the diff base for the next regular frame stays
         // pinned to the last *displayed* frame (we don't update
         // `prev_pixels` after a reference-only frame, below).
+        //
+        // `delta_from_identical`: chunk-1 POC of
+        // `with_auto_delta_frames` (A1 audit "Animation" — Skip /
+        // delta frame encoding). When the caller opts in AND this
+        // frame is byte-identical to the previous displayed frame,
+        // the existing same-pixel `Replace`-over-1×1 emit is replaced
+        // with a zero-pixel `Add`-over-1×1 emit. Add of zero leaves
+        // the canvas unchanged (the decoder lifts the 1×1 crop to
+        // linear float, adds 0.0, clamps, restores the canvas pixel),
+        // and zero-valued modular pixels compress smaller than the
+        // arbitrary canvas-pixel value the existing path encodes.
+        // Chunk-2 work will widen this to trial-encode
+        // `Regular` vs `Add(prev)` vs `Blend(prev)` per frame.
+        let mut delta_from_identical = false;
         let crop = if frame.reference_only {
             None
         } else if let Some(prev) = prev_pixels {
@@ -8613,6 +8719,18 @@ fn encode_animation_lossless(
                 Some(_) => None, // Crop covers full frame — no benefit
                 None => {
                     // Frames are identical — emit a minimal 1x1 crop to preserve canvas
+                    if cfg.auto_delta_frames && frame.blend_mode.is_none() && !layout.has_alpha() {
+                        // Chunk-1 POC: gate on no-alpha layouts so the
+                        // extra-channel `ec_blend_modes` does not need
+                        // a matching Add override; alpha extra channels
+                        // default to Replace, so an `Add` main with
+                        // `Replace` alpha would over-write alpha to
+                        // the encoded zero on RGBA inputs and corrupt
+                        // the canvas. Chunk 2 will plumb
+                        // `ec_blend_modes = Add` through
+                        // `FrameEncoderOptions` to unlock RGBA.
+                        delta_from_identical = true;
+                    }
                     Some(FrameCrop {
                         x0: 0,
                         y0: 0,
@@ -8625,12 +8743,20 @@ fn encode_animation_lossless(
             None // Frame 0: always full frame
         };
 
-        // Build ModularImage from the appropriate pixel region
+        // Build ModularImage from the appropriate pixel region. When
+        // `delta_from_identical` is set, the 1×1 crop is filled with
+        // zeros instead of the actual canvas pixel — the `Add` blend
+        // mode below makes that a no-op redraw with cheaper modular
+        // tokens.
         let (frame_w, frame_h, frame_pixels_owned);
         let frame_pixels: &[u8] = if let Some(ref crop) = crop {
             frame_w = crop.width as usize;
             frame_h = crop.height as usize;
-            frame_pixels_owned = extract_pixel_crop(frame.pixels, w, crop, bpp);
+            frame_pixels_owned = if delta_from_identical {
+                vec![0u8; frame_w * frame_h * bpp]
+            } else {
+                extract_pixel_crop(frame.pixels, w, crop, bpp)
+            };
             &frame_pixels_owned
         } else {
             frame_w = w;
@@ -8685,7 +8811,14 @@ fn encode_animation_lossless(
                 is_last: i == num_frames - 1,
                 crop,
                 skip_rct: false,
-                blend_mode: frame.blend_mode,
+                blend_mode: if delta_from_identical {
+                    // Chunk-1 POC: identical-frame short-circuit via
+                    // `BlendMode::Add` over a zero-pixel 1×1 crop
+                    // (see `delta_from_identical` setup above).
+                    Some(BlendMode::Add)
+                } else {
+                    frame.blend_mode
+                },
                 blend_source: frame.blend_source,
                 save_as_reference: frame.save_as_reference,
                 reference_only: frame.reference_only,
@@ -8887,6 +9020,18 @@ fn encode_animation_lossy(
         // base for the NEXT regular frame stays pinned to the last
         // *displayed* frame (we don't update `prev_pixels` after a
         // reference-only frame, below).
+        // `delta_from_identical`: chunk-1 POC of
+        // `with_auto_delta_frames` for the lossy animation path.
+        // Mirrors the lossless path's identical-frame short-circuit
+        // (see `encode_animation_lossless` for the rationale): when
+        // the caller opts in AND frame N is byte-identical to the
+        // previous displayed frame, the existing same-pixel
+        // `Replace`-over-8×8 emit is replaced by a zero-pixel
+        // `Add`-over-8×8 emit. All-zero VarDCT coefficients
+        // dequantize to all-zero, IDCT to all-zero, and Add 0 to the
+        // canvas is a no-op redraw with cheaper modular-quantised
+        // tokens.
+        let mut delta_from_identical = false;
         let crop = if frame.reference_only {
             None
         } else if let Some(prev) = prev_pixels {
@@ -8895,6 +9040,14 @@ fn encode_animation_lossy(
                 Some(_) => None, // Crop covers full frame — no benefit
                 None => {
                     // Frames identical — emit minimal 8x8 crop (VarDCT minimum)
+                    if cfg.auto_delta_frames && frame.blend_mode.is_none() && !layout.has_alpha() {
+                        // Chunk-1 POC: gate on no-alpha layouts (see
+                        // `encode_animation_lossless` for the
+                        // ec_blend_modes rationale). Chunk-2 will
+                        // unlock RGBA after the extra-channel blend
+                        // mode plumbing lands.
+                        delta_from_identical = true;
+                    }
                     Some(FrameCrop {
                         x0: 0,
                         y0: 0,
@@ -8907,7 +9060,10 @@ fn encode_animation_lossy(
             None // Frame 0: always full frame
         };
 
-        // Extract crop region from raw pixels, then convert to linear
+        // Extract crop region from raw pixels, then convert to linear.
+        // When `delta_from_identical` is set, the 8×8 crop is filled
+        // with zeros so the resulting VarDCT block round-trips to a
+        // zero canvas-delta under the `Add` blend mode applied below.
         let (frame_w, frame_h) = if let Some(ref crop) = crop {
             (crop.width as usize, crop.height as usize)
         } else {
@@ -8916,7 +9072,11 @@ fn encode_animation_lossy(
 
         let crop_pixels_owned;
         let src_pixels: &[u8] = if let Some(ref crop) = crop {
-            crop_pixels_owned = extract_pixel_crop(frame.pixels, w, crop, bpp);
+            crop_pixels_owned = if delta_from_identical {
+                vec![0u8; (crop.width as usize) * (crop.height as usize) * bpp]
+            } else {
+                extract_pixel_crop(frame.pixels, w, crop, bpp)
+            };
             &crop_pixels_owned
         } else {
             crop_pixels_owned = Vec::new();
@@ -9074,7 +9234,14 @@ fn encode_animation_lossy(
             duration: frame.duration,
             is_last: i == num_frames - 1,
             crop,
-            blend_mode: frame.blend_mode,
+            blend_mode: if delta_from_identical {
+                // Chunk-1 POC: identical-frame short-circuit via
+                // `BlendMode::Add` over a zero-pixel 8×8 crop
+                // (see `delta_from_identical` setup above).
+                Some(BlendMode::Add)
+            } else {
+                frame.blend_mode
+            },
             blend_source: frame.blend_source,
             save_as_reference: frame.save_as_reference,
             reference_only: frame.reference_only,
