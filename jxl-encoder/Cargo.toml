@@ -327,6 +327,21 @@ path = "examples/patches_gate_experimental_ab.rs"
 name = "adaptive_gaborish_ab"
 path = "examples/adaptive_gaborish_ab.rs"
 
+# W20-1 follow-on: wider-corpus A/B with butteraugli + ssim2 quality
+# metrics; 25 CID22 + 5 gb82-sc screenshots × {0.5,1,2,4} × {e5,e7} ×
+# {fixed,adapt} = 480 cells. Decides whether to flip default-on.
+[[example]]
+name = "adaptive_gaborish_wider_corpus"
+path = "examples/adaptive_gaborish_wider_corpus.rs"
+required-features = ["std", "butteraugli-loop", "ssim2-loop"]
+
+# Analyzes the wider-corpus sweep TSV — pairs fixed/adapt cells, prints
+# per-(class × distance × effort) means, top-3 wins / regressions, and
+# the default-on decision.
+[[example]]
+name = "adaptive_gaborish_wider_analyze"
+path = "examples/adaptive_gaborish_wider_analyze.rs"
+
 # RFC#45 chunks 4-7 lossless backport — fits the per-pixel savings
 # constant for `PatchesData::is_cost_effective_lossless` from paired
 # patches-on/off trial encodes in lossless mode. Lossless has no
