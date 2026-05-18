@@ -2848,9 +2848,10 @@ impl VarDctEncoder {
             K_LZ77_MIN_LENGTH, K_LZ77_MIN_SYMBOL, Token, build_sparse_histogram,
             decompose_multiplier_pub, encode_hybrid_uint_000, encode_hybrid_uint_lz77_length,
             write_channel_split_tree_tokens, write_gradient_tree_tokens,
-            write_gradient_tree_tokens_lossy, write_hybrid_data_histogram,
-            write_sparse_lz77_histogram, write_tree_histogram_for_channel_split_lossy,
-            write_tree_histogram_for_gradient, write_tree_histogram_for_gradient_lossy,
+            write_gradient_tree_tokens_lossy, write_hybrid_data_histogram, write_num_transforms,
+            write_palette_transform, write_sparse_lz77_histogram,
+            write_tree_histogram_for_channel_split_lossy, write_tree_histogram_for_gradient,
+            write_tree_histogram_for_gradient_lossy,
         };
         use crate::modular::predictor::pack_signed;
 
@@ -2859,47 +2860,171 @@ impl VarDctEncoder {
             "extras quantizers slice length must equal extras count when non-empty"
         );
 
-        // GroupHeader: use_global_tree=0, wp default, no transforms
-        writer.write(1, 0)?; // use_global_tree = false
-        writer.write(1, 1)?; // wp_params all_default = true
-        writer.write(2, 0)?; // nb_transforms = 0
-
         // Per-channel resolved quantizer (treat empty/short slice as
         // all-lossless so an internal caller can't accidentally enable
         // lossy on a channel that didn't opt in).
         let resolved_q = |ch: usize| -> u32 { quantizers.get(ch).copied().unwrap_or(1).max(1) };
-        let any_lossy = (0..extras.len()).any(|i| resolved_q(i) > 1);
 
-        // Local tree shape depends on the (set of) per-channel multipliers:
+        // ChannelCompact for extras — single-channel kPalette transform
+        // (libjxl `enc_modular.cc:413-426`, `FwdPaletteIteration` in
+        // `modular/transform/enc_palette.cc:177`). Detect channels that
+        // contain a single constant value and emit a `kPalette` with
+        // `num_c=1, nb_colors=1, predictor=Zero` so the original value
+        // survives lossy alpha quantization. Without ChannelCompact,
+        // `alpha_distance=5.0` produces `q=7` and snaps a constant
+        // `255` alpha to `252` (W13-4 audit gap, `red_night_opaque`
+        // case). With ChannelCompact, the meta-palette holds `255`
+        // untouched (meta channel, `q=1` leaf) and the index channel is
+        // all zeros (the lossy `q` applies to index, but snap(0,q)=0 so
+        // the index survives).
         //
-        // - All channels lossless (`all q == 1`): single-leaf Gradient
-        //   tree (byte-identical to the pre-pipeline lossless path).
-        // - Exactly one channel with `q > 1` (always the alpha-only
-        //   case today): single-leaf Gradient tree carrying that
-        //   multiplier (byte-identical to the W6-3 single-extra lossy
-        //   alpha path).
-        // - Mixed: multi-leaf tree splitting on property 0 (channel
-        //   index) so each channel gets its own multiplier. Mirrors
-        //   libjxl's per-channel `quants_[ch_id]` (`enc_modular.cc:1027`)
-        //   on a decoder-side decision tree.
-        let use_channel_split = any_lossy && extras.len() > 1;
-        // Per-channel multiplier vector used by both the tree writer
-        // and the residual loop. Length 0 when `extras` is empty.
-        let mut per_channel_q: alloc::vec::Vec<u32> = alloc::vec::Vec::with_capacity(extras.len());
-        for i in 0..extras.len() {
-            per_channel_q.push(resolved_q(i));
+        // Limited to the `nb_colors=1` case for now: at `nb_colors>=2`
+        // and `q>1` the index channel would carry non-zero indices that
+        // round to 0 under lossy quantization, conflating distinct
+        // palette entries. The `nb_colors>=2` lossless case is also
+        // covered by the existing lossless-modular-path ChannelCompact
+        // in `modular/section.rs` for the main color image; the extras
+        // sub-bitstream stays narrow on the lossy parity win.
+        let constant_values: alloc::vec::Vec<Option<i32>> = extras
+            .iter()
+            .map(|ec| ec.detect_constant_value(image_width, x0, y0, region_width, region_height))
+            .collect();
+        // Per-extra: does this extras index get a kPalette transform?
+        // We only gate on `is_some(constant_value)` AND the resolved
+        // quantizer being >1 — at q=1 the lossless path already
+        // preserves the value exactly, so spending bits on a transform
+        // descriptor is a regression on the hash-locked lossless cases.
+        let extras_compact: alloc::vec::Vec<bool> = (0..extras.len())
+            .map(|i| constant_values[i].is_some() && resolved_q(i) > 1)
+            .collect();
+        let any_compact = extras_compact.iter().any(|&b| b);
+
+        // Build the post-transform "coded channel" plan. Each entry is
+        // either a palette meta channel (1×1, q=1) or an "original
+        // channel that may have been replaced by an index" (full size,
+        // q=original-or-1-if-compacted-zero-index). We use the
+        // channel-split tree (one leaf per coded channel) so meta
+        // channels get a `q=1` leaf while index/passthrough channels
+        // get their per-extras quantizer.
+        //
+        // libjxl `FwdPalette` inserts each new meta channel at the
+        // front (`enc_palette.cc:241`). For multiple extras compacts
+        // we'd need to interleave per-transform insert ordering, but
+        // today only the single-alpha case fires this path so the
+        // ordering simplifies: at most one meta channel, then the
+        // possibly-reordered original extras.
+        #[derive(Clone, Copy)]
+        enum CodedChan {
+            /// Palette meta channel for extras index `ec_idx`.
+            /// Contains a single constant value (`nb_colors=1`).
+            Meta { ec_idx: usize },
+            /// Original or index channel for extras index `ec_idx`.
+            /// If `is_index`, the channel was compacted and is now an
+            /// all-zeros index (W×H over the region).
+            Data { ec_idx: usize, is_index: bool },
         }
+        let mut coded_chans: alloc::vec::Vec<CodedChan> = alloc::vec::Vec::new();
+        let mut num_meta = 0usize;
+        for (ec_idx, &compact) in extras_compact.iter().enumerate() {
+            if compact {
+                coded_chans.push(CodedChan::Meta { ec_idx });
+                num_meta += 1;
+            }
+        }
+        for (ec_idx, &compact) in extras_compact.iter().enumerate() {
+            coded_chans.push(CodedChan::Data {
+                ec_idx,
+                is_index: compact,
+            });
+        }
+
+        // GroupHeader: use_global_tree=0, wp default. Number of
+        // transforms equals the count of compacted extras (each is its
+        // own num_c=1 kPalette).
+        writer.write(1, 0)?; // use_global_tree = false
+        writer.write(1, 1)?; // wp_params all_default = true
+        write_num_transforms(writer, num_meta as u32)?;
+        if any_compact {
+            // Emit one kPalette descriptor per compacted extra. begin_c
+            // is the post-prior-inserts channel position: the first
+            // applied transform sees the original layout (all extras at
+            // positions 0..N). Each subsequent transform sees one
+            // additional meta-channel inserted at the front, so its
+            // `begin_c` shifts.
+            //
+            // Iterate in reverse insertion order so the *first* applied
+            // transform targets the *last* compact extras index, which
+            // is what mirrors libjxl: each successful FwdPalette inserts
+            // its meta channel at index 0, pushing existing channels
+            // (including prior meta channels) up by one. Re-applying
+            // the same insertion order on encode means we write
+            // descriptors in apply-order and let the decoder MetaPalette
+            // pipeline reinsert in the same order.
+            let mut prior_inserts = 0usize;
+            for (ec_idx, &compact) in extras_compact.iter().enumerate() {
+                if compact {
+                    // Original position of this extra in the input
+                    // channel list (extras are 0-indexed). The decoder
+                    // sees prior inserts before this one, so the
+                    // effective begin_c at the moment this descriptor
+                    // applies is `ec_idx + prior_inserts`.
+                    let begin_c = ec_idx + prior_inserts;
+                    write_palette_transform(
+                        writer, begin_c, /* num_c */ 1, /* nb_colors */ 1,
+                        /* nb_deltas */ 0, /* predictor */ 0,
+                    )?;
+                    prior_inserts += 1;
+                }
+            }
+        }
+
+        let any_lossy = (0..coded_chans.len()).any(|i| {
+            let q = match coded_chans[i] {
+                CodedChan::Meta { .. } => 1,
+                CodedChan::Data { ec_idx, .. } => resolved_q(ec_idx),
+            };
+            q > 1
+        });
+
+        // Local tree shape depends on the (set of) per-coded-channel
+        // multipliers:
+        //
+        // - All coded channels lossless (`all q == 1`): single-leaf
+        //   Gradient tree (byte-identical to the pre-pipeline lossless
+        //   path).
+        // - Exactly one coded channel with `q > 1` AND no
+        //   ChannelCompact metas: single-leaf Gradient tree carrying
+        //   that multiplier (byte-identical to the W6-3 single-extra
+        //   lossy alpha path).
+        // - Otherwise (mixed quantizers OR meta channels present):
+        //   multi-leaf tree splitting on property 0 (channel index in
+        //   coded order) so each coded channel gets its own multiplier.
+        //   Mirrors libjxl's per-channel `quants_[ch_id]`
+        //   (`enc_modular.cc:1027`) on a decoder-side decision tree.
+        let use_channel_split = (any_lossy && coded_chans.len() > 1) || num_meta > 0;
+        // Per-coded-channel multiplier vector used by both the tree
+        // writer and the residual loop. Length 0 when there are no
+        // coded channels.
+        let per_coded_q: alloc::vec::Vec<u32> = coded_chans
+            .iter()
+            .map(|c| match c {
+                CodedChan::Meta { .. } => 1, // Meta channels never quantized
+                CodedChan::Data { ec_idx, .. } => resolved_q(*ec_idx),
+            })
+            .collect();
         if use_channel_split {
-            let (d, c) = write_tree_histogram_for_channel_split_lossy(writer, &per_channel_q)?;
-            write_channel_split_tree_tokens(writer, &d, &c, &per_channel_q)?;
+            let (d, c) = write_tree_histogram_for_channel_split_lossy(writer, &per_coded_q)?;
+            write_channel_split_tree_tokens(writer, &d, &c, &per_coded_q)?;
         } else if !any_lossy {
             let (d, c) = write_tree_histogram_for_gradient(writer)?;
             write_gradient_tree_tokens(writer, &d, &c)?;
         } else {
             // Exactly one channel is lossy. Find it and use its
             // multiplier on the (single-leaf) tree.
-            let lossy_ch = (0..extras.len()).find(|&i| resolved_q(i) > 1).unwrap_or(0);
-            let q_single = resolved_q(lossy_ch);
+            let lossy_ch = (0..coded_chans.len())
+                .find(|&i| per_coded_q[i] > 1)
+                .unwrap_or(0);
+            let q_single = per_coded_q[lossy_ch];
             let (mul_log, mul_bits) = decompose_multiplier_pub(q_single);
             let (d, c) = write_tree_histogram_for_gradient_lossy(writer, mul_log, mul_bits)?;
             write_gradient_tree_tokens_lossy(writer, &d, &c, mul_log, mul_bits)?;
@@ -2914,20 +3039,40 @@ impl VarDctEncoder {
         let mut num_decoded = 0usize;
         let mut last_value = u32::MAX; // impossible initial value prevents LZ77 from first pixel
 
-        for (ch_idx, ec) in extras.iter().enumerate() {
+        for (coded_idx, coded) in coded_chans.iter().enumerate() {
             // dim_shift > 0 in lossy is guarded upstream — assert here
             // so a future caller can't silently produce a wrong bitstream.
-            debug_assert_eq!(
-                ec.info.dim_shift, 0,
-                "write_modular_extras_subbitstream: dim_shift > 0 not supported yet"
-            );
+            // Meta channels are 1×1 and don't carry dim_shift.
+            let (ec_idx, is_meta) = match *coded {
+                CodedChan::Meta { ec_idx } => (ec_idx, true),
+                CodedChan::Data { ec_idx, .. } => (ec_idx, false),
+            };
+            let ec = &extras[ec_idx];
+            if !is_meta {
+                debug_assert_eq!(
+                    ec.info.dim_shift, 0,
+                    "write_modular_extras_subbitstream: dim_shift > 0 not supported yet"
+                );
+            }
+            let _ = image_height; // reserved for dim_shift > 0 plumbing
 
             let ch_w = ec.channel_width(image_width);
             let ch_x0 = x0 >> ec.info.dim_shift;
             let ch_y0 = y0 >> ec.info.dim_shift;
             let ch_rw = region_width >> ec.info.dim_shift;
             let ch_rh = region_height >> ec.info.dim_shift;
-            let _ = image_height; // reserved for dim_shift > 0 plumbing
+
+            // Per-coded-channel dimensions. Meta channels are 1×1
+            // (single constant value); data channels are the full
+            // region.
+            let (rw, rh) = if is_meta {
+                (1usize, 1usize)
+            } else {
+                (ch_rw, ch_rh)
+            };
+            if rw == 0 || rh == 0 {
+                continue;
+            }
 
             // Flush any pending run from the *previous* channel before
             // resetting prediction state. Without this the run gets
@@ -2952,39 +3097,54 @@ impl VarDctEncoder {
             // a uniform end-of-prev-channel doesn't run into the next.
             last_value = u32::MAX;
 
-            // Per-channel pixel quantizer. The decoder picks this
+            // Per-coded-channel pixel quantizer. The decoder picks this
             // multiplier via the channel-split tree (when present) or
             // via the single-leaf lossy / lossless tree. Lossless
             // (`q_ch == 1`) leaves the scratch buffer empty and falls
-            // back to direct `ec.data.sample`.
-            let q_ch = per_channel_q.get(ch_idx).copied().unwrap_or(1).max(1);
+            // back to direct sample reads. Meta channels are ALWAYS
+            // `q==1` — they encode the original palette values
+            // unquantized so ChannelCompact preserves them across
+            // lossy alpha encoding.
+            let q_ch = per_coded_q[coded_idx];
             let qi = q_ch as i32;
             let half = qi / 2;
-            let mut quantized: alloc::vec::Vec<i32> = alloc::vec::Vec::new();
-            if q_ch > 1 {
-                quantized.reserve(ch_rw.saturating_mul(ch_rh));
-                for y in 0..ch_rh {
-                    for x in 0..ch_rw {
-                        let s = ec.data.sample((ch_y0 + y) * ch_w + (ch_x0 + x));
-                        let snapped = if s >= 0 {
-                            ((s + half) / qi) * qi
-                        } else {
-                            -(((-s) + half) / qi) * qi
-                        };
-                        quantized.push(snapped);
-                    }
-                }
-            }
-            let read = |ry: usize, rx: usize| -> i32 {
-                if q_ch > 1 {
-                    quantized[ry * ch_rw + rx]
+
+            // `read(ry, rx)` returns the value at position (rx, ry)
+            // within THIS coded channel:
+            // - Meta channels: the single palette value (constant).
+            // - Compacted data channels: the index (always 0 for
+            //   `nb_colors=1`), then quantized through the same
+            //   `snap-to-multiple-of-q` rule (snap(0,q)==0).
+            // - Pass-through data channels: the original sample,
+            //   optionally lossy-snapped.
+            let read_raw = |ry: usize, rx: usize| -> i32 {
+                if is_meta {
+                    // 1×1 meta channel with the constant value.
+                    constant_values[ec_idx].expect("Meta coded chan must have constant_value")
+                } else if let CodedChan::Data { is_index: true, .. } = coded_chans[coded_idx] {
+                    // ChannelCompact replaced the original data with
+                    // an all-zeros index channel.
+                    0
                 } else {
                     ec.data.sample((ch_y0 + ry) * ch_w + (ch_x0 + rx))
                 }
             };
 
-            for y in 0..ch_rh {
-                for x in 0..ch_rw {
+            // Pre-snap to multiples of q_ch so the gradient prediction
+            // residual is exactly divisible.
+            let snap = |s: i32| -> i32 {
+                if q_ch <= 1 {
+                    s
+                } else if s >= 0 {
+                    ((s + half) / qi) * qi
+                } else {
+                    -(((-s) + half) / qi) * qi
+                }
+            };
+            let read = |ry: usize, rx: usize| -> i32 { snap(read_raw(ry, rx)) };
+
+            for y in 0..rh {
+                for x in 0..rw {
                     let pixel = read(y, x);
 
                     let left = if x > 0 {

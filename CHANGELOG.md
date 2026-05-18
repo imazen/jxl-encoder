@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **ChannelCompact for VarDCT extras (constant-channel case)** — closes
+  the W13-4 audit (`a160deb`) `red_night_opaque @ alpha_distance=5.0`
+  gap where our encoder snapped a fully-opaque alpha plane from `255`
+  to `252` (MAE = 3.000) while `cjxl --responsive=1` preserved it
+  exactly (MAE = 0.000). The lossy alpha quantizer (`bbf8a98`, W6-3)
+  computes `q = 7` at `d = 5.0` and `(255 + 3) / 7 * 7 = 252` snaps
+  every alpha pixel down by 3 — silent precision loss on the most
+  common alpha shape (100% opaque). `write_modular_extras_subbitstream`
+  now detects single-value constant extra channels via
+  `VardctExtra::detect_constant_value` and emits a libjxl-parity
+  single-channel `kPalette` transform (`num_c = 1, nb_colors = 1,
+  predictor = Zero`, `enc_modular.cc:413-426`,
+  `modular/transform/enc_palette.cc:177`). The palette meta-channel
+  holds the original constant value at `q = 1` (meta channels skip
+  lossy quantization, libjxl `enc_modular.cc:1004` only quantizes
+  `i >= gi.nb_meta_channels`); the index channel is all-zeros and
+  `snap(0, q) = 0` so it also survives. Decoder reconstructs
+  `palette[index = 0] = constant_value`. Tree shape switches to the
+  N-leaf `channel-split` tree (one leaf per coded channel) so the meta
+  leaf gets `q = 1` while the data leaf keeps the per-channel
+  quantizer. Gate fires only at `q > 1 AND channel is single-value
+  constant` so hash-locked lossless paths (`hash_lock_features` 36/36
+  unchanged) and the existing single-extra lossy alpha path
+  (`bbf8a98`) on non-constant alpha stay byte-identical. Verified on
+  `red_night_opaque` (400×267 multi-group): bytes `9141` vs cjxl
+  `--responsive=1` `9253` (-1.2%) and cjxl `--responsive=0` `9216`
+  (-0.8%), MAE drops `3.000 → 0.000` at every tested distance
+  ({0.5, 1.0, 2.0, 5.0}). Multi-group support is automatic: each HF
+  group's extras sub-bitstream independently detects + compacts its
+  per-region slice. Roundtrip tests:
+  `opaque_alpha_survives_high_alpha_distance_via_channel_compact`,
+  `opaque_alpha_survives_all_lossy_distances_via_channel_compact`,
+  `opaque_alpha_multigroup_survives_high_alpha_distance_via_channel_compact`
+  in `lossy_alpha_roundtrip.rs` (jxl-rs decoded). Multi-color
+  ChannelCompact for extras (`nb_colors >= 2`) and the
+  squeeze-on-extras path stay parked in CLAUDE.md follow-ons.
+
 ### Added
 
 - **`LossyConfig::with_alpha_squeeze(bool)` — chunk-1 framework opt-in

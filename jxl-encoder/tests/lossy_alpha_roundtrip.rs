@@ -222,3 +222,214 @@ fn alpha_distance_default_is_lossless() {
         "default (alpha_distance=None) must produce lossless alpha"
     );
 }
+
+/// RGBA buffer with non-trivial RGB content but a CONSTANT (all-255)
+/// opaque alpha plane. Mirrors the W13-4 audit `red_night_opaque` shape
+/// (`100% opaque`) so we can repro the ChannelCompact-for-extras win.
+fn rgba_opaque_buf() -> Vec<u8> {
+    let mut buf = vec![0u8; (W * H * 4) as usize];
+    for y in 0..H as i32 {
+        for x in 0..W as i32 {
+            let idx = ((y as u32 * W + x as u32) * 4) as usize;
+            // RGB: non-flat so the VarDCT path actually does work.
+            let fx = x as f32 / W as f32;
+            let fy = y as f32 / H as f32;
+            buf[idx] = ((0.5 + 0.4 * (fx * 11.0).sin() * (fy * 9.0).cos()) * 255.0)
+                .clamp(0.0, 255.0) as u8;
+            buf[idx + 1] = ((0.4 + 0.3 * (fx * 7.0).cos()) * 255.0).clamp(0.0, 255.0) as u8;
+            buf[idx + 2] = ((0.5 + 0.4 * (fy * 13.0).sin()) * 255.0).clamp(0.0, 255.0) as u8;
+            // Alpha: every pixel exactly 255 (the ChannelCompact gate).
+            buf[idx + 3] = 255;
+        }
+    }
+    buf
+}
+
+#[test]
+fn opaque_alpha_survives_high_alpha_distance_via_channel_compact() {
+    // W13-4 audit gap: lossy alpha pipeline at `alpha_distance=5.0`
+    // computes `q=7` and snaps the constant `255` value to `252`
+    // (`(255 + 3) / 7 * 7 = 36 * 7 = 252`), giving MAE=3.000 on a
+    // 100%-opaque alpha plane vs cjxl-default's MAE=0.000.
+    //
+    // ChannelCompact-for-extras (single-channel `kPalette` with
+    // `num_c=1, nb_colors=1`) preserves the constant exactly: the
+    // palette meta channel holds `255` at `q=1` (meta channels skip
+    // quantization) and the index channel is all zeros, so the
+    // decoder reconstructs `palette[index=0] = 255`.
+    //
+    // This test asserts MAE = 0 at `alpha_distance=5.0` for a constant
+    // alpha plane — the exact fix the W13-4 audit called for.
+    let buf = rgba_opaque_buf();
+    let input_alpha = alpha_only(&buf);
+    assert!(
+        input_alpha.iter().all(|&a| a == 255),
+        "test image precondition: alpha must be 100% opaque"
+    );
+
+    let bytes = LossyConfig::new(1.0)
+        .with_alpha_distance(Some(5.0))
+        .encode(&buf, W, H, PixelLayout::Rgba8)
+        .expect("opaque alpha + alpha_distance=5.0 encode");
+    let dec = decode_jxl_rs_rgba8(&bytes);
+    let dec_alpha = alpha_only(&dec);
+    let alpha_mae_v = mae(&dec_alpha, &input_alpha);
+    assert_eq!(
+        alpha_mae_v, 0.0,
+        "ChannelCompact must preserve constant alpha exactly at d=5.0 \
+         (got MAE={alpha_mae_v:.4}, want 0.0); regression: \
+         255→252 snap is back"
+    );
+    assert!(
+        dec_alpha.iter().all(|&a| a == 255),
+        "every decoded alpha byte must be exactly 255 (ChannelCompact win)"
+    );
+}
+
+#[test]
+fn opaque_alpha_survives_all_lossy_distances_via_channel_compact() {
+    // Sweep the four distances from the W13-4 audit (0.5, 1.0, 2.0,
+    // 5.0). At every distance, a 100%-opaque alpha plane must decode
+    // bit-identically — the ChannelCompact `nb_colors=1` path is
+    // independent of `q` (the meta channel is at `q=1`, the index
+    // channel is all-zeros and `snap(0, q)=0`).
+    let buf = rgba_opaque_buf();
+    let input_alpha = alpha_only(&buf);
+    for &ad in &[0.5_f32, 1.0, 2.0, 5.0] {
+        let bytes = LossyConfig::new(1.0)
+            .with_alpha_distance(Some(ad))
+            .encode(&buf, W, H, PixelLayout::Rgba8)
+            .unwrap_or_else(|e| panic!("encode failed at alpha_distance={ad}: {e:?}"));
+        let dec = decode_jxl_rs_rgba8(&bytes);
+        let dec_alpha = alpha_only(&dec);
+        let alpha_mae_v = mae(&dec_alpha, &input_alpha);
+        assert_eq!(
+            alpha_mae_v, 0.0,
+            "constant opaque alpha at alpha_distance={ad} must \
+             roundtrip exactly via ChannelCompact (got MAE={alpha_mae_v:.4})"
+        );
+    }
+}
+
+/// Multi-group sibling of [`opaque_alpha_survives_high_alpha_distance_via_channel_compact`].
+/// Uses a 400×267 RGBA image (the same shape as the W13-4 audit
+/// `red_night_opaque` corpus image) so the extras sub-bitstream is
+/// split across multiple HF groups. Each per-group region is also
+/// constant-alpha, so each HF group's `write_modular_extras_subbitstream`
+/// independently emits a `kPalette(num_c=1, nb_colors=1)` transform.
+#[test]
+fn opaque_alpha_multigroup_survives_high_alpha_distance_via_channel_compact() {
+    const MW: u32 = 400;
+    const MH: u32 = 267;
+    let mut buf = vec![0u8; (MW * MH * 4) as usize];
+    for y in 0..MH as i32 {
+        for x in 0..MW as i32 {
+            let idx = ((y as u32 * MW + x as u32) * 4) as usize;
+            // Multi-frequency RGB so the VarDCT path actually does work.
+            let fx = x as f32 / MW as f32;
+            let fy = y as f32 / MH as f32;
+            buf[idx] = ((0.5 + 0.4 * (fx * 11.0).sin() * (fy * 9.0).cos()) * 255.0)
+                .clamp(0.0, 255.0) as u8;
+            buf[idx + 1] = ((0.4 + 0.3 * (fx * 7.0).cos()) * 255.0).clamp(0.0, 255.0) as u8;
+            buf[idx + 2] = ((0.5 + 0.4 * (fy * 13.0).sin()) * 255.0).clamp(0.0, 255.0) as u8;
+            buf[idx + 3] = 255; // constant 100%-opaque alpha
+        }
+    }
+
+    let bytes = LossyConfig::new(1.0)
+        .with_alpha_distance(Some(5.0))
+        .encode(&buf, MW, MH, PixelLayout::Rgba8)
+        .expect("multi-group opaque-alpha + alpha_distance=5.0 encode");
+
+    // Decode via jxl-rs and verify EVERY alpha byte is exactly 255.
+    let dec = decode_multi(MW, MH, &bytes);
+    let dec_alpha: Vec<u8> = dec.iter().skip(3).step_by(4).copied().collect();
+    let max_err = dec_alpha.iter().map(|&a| 255i32 - a as i32).max().unwrap();
+    let min_err = dec_alpha.iter().map(|&a| 255i32 - a as i32).min().unwrap();
+    let alpha_mae_v: f64 = dec_alpha
+        .iter()
+        .map(|&a| (255i32 - a as i32).unsigned_abs() as f64)
+        .sum::<f64>()
+        / dec_alpha.len() as f64;
+    assert_eq!(
+        alpha_mae_v, 0.0,
+        "multi-group opaque alpha must roundtrip exactly at d=5.0 via \
+         per-HF-group ChannelCompact (got MAE={alpha_mae_v:.4}, \
+         min_err={min_err}, max_err={max_err})"
+    );
+}
+
+/// Decode an arbitrary-dimension JXL bitstream as RGBA8 via jxl-rs.
+/// Used by the multi-group test (the original [`decode_jxl_rs_rgba8`]
+/// helper hard-codes `W × H = 32 × 32`-shaped pieces of the test path).
+fn decode_multi(width: u32, height: u32, data: &[u8]) -> Vec<u8> {
+    use jxl::api::{
+        JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+        JxlPixelFormat, ProcessingResult, states,
+    };
+    use jxl::image::{Image, Rect};
+
+    let mut input = data;
+    let options = JxlDecoderOptions::default();
+    let decoder = JxlDecoder::<states::Initialized>::new(options);
+
+    let mut decoder_init = decoder;
+    let mut decoder = loop {
+        match decoder_init.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                decoder_init = fallback;
+            }
+            Err(e) => panic!("jxl-rs header decode error: {e:?}"),
+        }
+    };
+
+    let basic_info = decoder.basic_info().clone();
+    let (w, h) = basic_info.size;
+    assert_eq!(w as u32, width, "width mismatch");
+    assert_eq!(h as u32, height, "height mismatch");
+    let num_extras = basic_info.extra_channels.len();
+
+    decoder.set_pixel_format(JxlPixelFormat {
+        color_type: JxlColorType::Rgba,
+        color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
+        extra_channel_format: vec![None; num_extras],
+    });
+
+    let mut decoder_frame = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs frame info error: {e:?}"),
+        }
+    };
+
+    let channels = 4usize;
+    let mut output_image = Image::<u8>::new((w * channels, h)).expect("alloc");
+    let mut buffers = vec![JxlOutputBuffer::from_image_rect_mut(
+        output_image
+            .get_rect_mut(Rect {
+                origin: (0, 0),
+                size: (w * channels, h),
+            })
+            .into_raw(),
+    )];
+
+    loop {
+        match decoder_frame.process(&mut input, &mut buffers) {
+            Ok(ProcessingResult::Complete { .. }) => break,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                decoder_frame = fallback;
+            }
+            Err(e) => panic!("jxl-rs frame decode error: {e:?}"),
+        }
+    }
+
+    let mut pixels = Vec::with_capacity(w * h * channels);
+    for y in 0..h {
+        pixels.extend_from_slice(output_image.row(y));
+    }
+    pixels
+}
