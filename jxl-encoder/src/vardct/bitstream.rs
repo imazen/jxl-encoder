@@ -547,6 +547,148 @@ fn encode_ac_group_section(
     Ok(ac_group_writer.finish())
 }
 
+/// Output of [`encode_dc_group`] — the per-DC-group section bytes that
+/// `encode_two_pass_to_writer` would have produced inline.
+///
+/// Mirrors libjxl's `group_codes` shape from `OutputGroups` /
+/// `EncodeFrameStreaming` (`enc_frame.cc:2042-2200`, post-`acc28c0`),
+/// minus the dc_global / ac_global slots since those are global to the
+/// whole frame (not per-DC-group) in our two-pass writer.
+///
+/// At this chunk (#11 chunk 4), `encode_dc_group` is called inline from
+/// the existing loop driver in `encode_two_pass_to_writer` and the
+/// caller reassembles sections in the existing natural order
+/// (`[dc_global, dc_groups..., ac_global, ac_groups (pass-major)]`).
+/// Future chunks 5/6/7 wire this into the level-2 / level-3 buffered-
+/// output streaming paths.
+pub(crate) struct EncodedDcGroup {
+    /// Byte-aligned DC group section (LfGroup) bytes.
+    pub(crate) dc_section: Vec<u8>,
+    /// Per-pass AC group section bytes for HF groups inside this DC
+    /// group's 8×8-HF-group footprint. Outer Vec index = pass; inner
+    /// Vec is in HF-group raster order within the DC group (row-major
+    /// over the local `dc_hf_w × dc_hf_h` window). Empty when the DC
+    /// group has no HF groups (1×1 image).
+    pub(crate) ac_sections_per_pass: Vec<Vec<Vec<u8>>>,
+}
+
+/// Encode one DC group's worth of sections (LfGroup + that DC group's
+/// HF groups across all passes). Byte-identical to the inline body of
+/// `encode_two_pass_to_writer` — same helpers (`encode_dc_group_section`
+/// + `encode_ac_group_section`), same data, same byte boundaries.
+///
+/// This is the chunk-4 extraction (jxl-encoder#11). Mirrors libjxl
+/// `acc28c0`'s shape change (`OutputGroups` returning per-DC-group
+/// `group_codes` so they can be accumulated in `global_group_codes[]`
+/// for level-2 buffered-output streaming). The current call site still
+/// reassembles in natural section order — chunks 5/6/7 will use this
+/// function as the per-region emit primitive for the actual streaming
+/// paths.
+///
+/// `xsize_groups` is needed for the HF-group → (global) index mapping
+/// when slicing into the per-pass token / lz77 vectors that span the
+/// whole image.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_dc_group(
+    enc: &VarDctEncoder,
+    dc_group_idx: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    xsize_groups: usize,
+    ysize_groups: usize,
+    xsize_dc_groups: usize,
+    dc_tokens: &[Token],
+    ac_metadata_tokens: &[Token],
+    ac_strategy: &AcStrategyMap,
+    dc_built_code: &BuiltEntropyCode<'_>,
+    dc_lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
+    modular_dc_extras: Option<(
+        &super::extras::AlphaSqueezePipeline,
+        &super::extras::AlphaSqueezePartition,
+    )>,
+    // Per-pass AC inputs (whole-image, indexed by global HF group idx).
+    ac_section_tokens_per_pass: &[Vec<Vec<Token>>],
+    ac_built_codes: &[BuiltEntropyCode<'_>],
+    ac_lz77_params_per_pass: &[Option<crate::entropy_coding::lz77::Lz77Params>],
+    extras: &[super::extras::VardctExtra<'_>],
+    extras_quantizers: &[u32],
+    modular_hf_extras: Option<(
+        &super::extras::AlphaSqueezePipeline,
+        &super::extras::AlphaSqueezePartition,
+    )>,
+    width: usize,
+    height: usize,
+) -> Result<EncodedDcGroup> {
+    // 1. DC group (LfGroup) section — identical to the existing
+    //    parallel_map_result call site.
+    let dc_section = encode_dc_group_section(
+        enc,
+        dc_group_idx,
+        xsize_blocks,
+        ysize_blocks,
+        xsize_dc_groups,
+        dc_tokens,
+        ac_metadata_tokens,
+        ac_strategy,
+        dc_built_code,
+        dc_lz77_params,
+        modular_dc_extras,
+    )?;
+
+    // 2. Per-pass HF group sections for HF groups inside this DC
+    //    group's 8×8 footprint. Each DC group covers
+    //    DC_GROUP_DIM_IN_BLOCKS / GROUP_DIM_IN_BLOCKS = 256/32 = 8
+    //    HF groups per axis (cropped at image edge). Within a DC
+    //    group we emit HF groups in row-major order; the global
+    //    section assembler maps that to the natural pass-major
+    //    section layout.
+    let dc_gx = dc_group_idx % xsize_dc_groups;
+    let dc_gy = dc_group_idx / xsize_dc_groups;
+    let hf_per_dc = DC_GROUP_DIM_IN_BLOCKS / GROUP_DIM_IN_BLOCKS;
+    let hf_x_start = dc_gx * hf_per_dc;
+    let hf_y_start = dc_gy * hf_per_dc;
+    let hf_x_end = (hf_x_start + hf_per_dc).min(xsize_groups);
+    let hf_y_end = (hf_y_start + hf_per_dc).min(ysize_groups);
+
+    let num_passes = ac_built_codes.len();
+    let mut ac_sections_per_pass: Vec<Vec<Vec<u8>>> = Vec::with_capacity(num_passes);
+
+    for pass in 0..num_passes {
+        let is_last_pass = pass == num_passes - 1;
+        let mut pass_sections: Vec<Vec<u8>> = Vec::new();
+        for hf_gy in hf_y_start..hf_y_end {
+            for hf_gx in hf_x_start..hf_x_end {
+                let group_idx = hf_gy * xsize_groups + hf_gx;
+                let section = encode_ac_group_section(
+                    &ac_section_tokens_per_pass[pass][group_idx],
+                    &ac_built_codes[pass],
+                    ac_lz77_params_per_pass[pass].as_ref(),
+                    extras,
+                    is_last_pass,
+                    group_idx,
+                    xsize_groups,
+                    width,
+                    height,
+                    extras_quantizers,
+                    modular_hf_extras,
+                )?;
+                pass_sections.push(section);
+            }
+        }
+        ac_sections_per_pass.push(pass_sections);
+    }
+
+    // Silence unused-variable warnings on the ysize_groups arg in
+    // configs where it's only used in the loop above; the explicit
+    // bounds-check (`min(ysize_groups)`) needs it.
+    let _ = ysize_groups;
+
+    Ok(EncodedDcGroup {
+        dc_section,
+        ac_sections_per_pass,
+    })
+}
+
 /// Per-group crop descriptor for the multi-group alpha-squeeze writers
 /// (chunk-2.b). `grid_x, grid_y` are the section's coordinates in
 /// VarDCT group space; `group_dim` is `DC_GROUP_DIM` for LfGroup and
@@ -2691,50 +2833,27 @@ impl VarDctEncoder {
             dc_global.zero_pad_to_byte();
             sections.push(dc_global.finish());
 
-            // DC groups — parallelizable. The chunk-2.b modular DC
-            // extras (squeeze LF band, min_shift ≥ 3) are emitted
-            // mid-section between VarDCT DC tokens and AC metadata,
-            // matching libjxl decoder order (`dec_frame.cc:322-336`).
-            // The no-squeeze path passes None and is byte-identical.
+            // ── Chunk-4 (jxl-encoder#11): per-DC-group emit via
+            // `encode_dc_group`. Mirrors libjxl `acc28c0`'s
+            // `OutputGroups` shape — each DC group iteration produces
+            // its LfGroup section AND the HF group sections for HF
+            // groups inside its 8×8-HF-group footprint (across all
+            // passes). The caller reassembles into the natural section
+            // order (LfGlobal → LfGroups… → HfGlobal → HfGroups
+            // pass-major). Byte-identical to the prior inline loop
+            // since the same helpers are called with the same data.
+            //
+            // Chunks 5/6/7 will use `encode_dc_group` as the per-region
+            // emit primitive for actual streaming (level-2 buffered
+            // output / level-3 streaming output) — at that point the
+            // dc_global / ac_global slots get accumulated into
+            // `global_group_codes[]` rather than written inline.
             let modular_dc_extras =
                 match (squeeze_pipeline_mg.as_ref(), squeeze_partition_mg.as_ref()) {
                     (Some(pipeline), Some(partition)) => Some((pipeline, partition)),
                     _ => None,
                 };
-            let dc_group_sections: Vec<Vec<u8>> =
-                crate::parallel::parallel_map_result(num_dc_groups, |dc_group_idx| {
-                    encode_dc_group_section(
-                        self,
-                        dc_group_idx,
-                        xsize_blocks,
-                        ysize_blocks,
-                        xsize_dc_groups,
-                        &dc_tokens_per_group[dc_group_idx],
-                        &ac_metadata_tokens_per_group[dc_group_idx],
-                        ac_strategy,
-                        &dc_built_code,
-                        dc_lz77_params.as_ref(),
-                        modular_dc_extras,
-                    )
-                })?;
-            sections.extend(dc_group_sections);
 
-            // AC Global (HfGlobal)
-            let mut ac_global = BitWriter::with_capacity(4096);
-            self.write_ac_global(
-                num_groups,
-                &ac_built_codes,
-                used_orders,
-                coeff_order_tokens.as_deref(),
-                &ac_lz77_params_per_pass,
-                &mut ac_global,
-            )?;
-            ac_global.zero_pad_to_byte();
-            sections.push(ac_global.finish());
-
-            // AC groups: Section order is pass-major, group-minor — parallelizable
-            // Section index = 2 + num_dc_groups + pass * num_groups + group
-            //
             // Per-channel lossy quantizers (libjxl parity, all-`1`
             // vector keeps the lossless byte-identical path). Computed
             // once for the whole frame so all HF groups carry the same
@@ -2756,25 +2875,95 @@ impl VarDctEncoder {
                     (Some(pipeline), Some(partition)) => Some((pipeline, partition)),
                     _ => None,
                 };
+
+            // Per-DC-group encode — parallelizable across DC groups
+            // (matches the prior shape, just now bundling DC + this
+            // group's HF sections into one `EncodedDcGroup` per
+            // iteration). Each `encode_dc_group` call is independent;
+            // shared state (tokens, codes, ac_strategy) is borrowed
+            // read-only.
+            let encoded_dc_groups: Vec<EncodedDcGroup> =
+                crate::parallel::parallel_map_result(num_dc_groups, |dc_group_idx| {
+                    encode_dc_group(
+                        self,
+                        dc_group_idx,
+                        xsize_blocks,
+                        ysize_blocks,
+                        xsize_groups,
+                        _ysize_groups,
+                        xsize_dc_groups,
+                        &dc_tokens_per_group[dc_group_idx],
+                        &ac_metadata_tokens_per_group[dc_group_idx],
+                        ac_strategy,
+                        &dc_built_code,
+                        dc_lz77_params.as_ref(),
+                        modular_dc_extras,
+                        &ac_section_tokens_per_pass,
+                        &ac_built_codes,
+                        &ac_lz77_params_per_pass,
+                        extras,
+                        &extras_quantizers,
+                        modular_hf_extras,
+                        width,
+                        height,
+                    )
+                })?;
+
+            // Reassemble: LfGroups first (natural DC-group order).
+            for eg in &encoded_dc_groups {
+                sections.push(eg.dc_section.clone());
+            }
+
+            // AC Global (HfGlobal) — sits between DC group sections
+            // and AC group sections in the natural-order layout.
+            let mut ac_global = BitWriter::with_capacity(4096);
+            self.write_ac_global(
+                num_groups,
+                &ac_built_codes,
+                used_orders,
+                coeff_order_tokens.as_deref(),
+                &ac_lz77_params_per_pass,
+                &mut ac_global,
+            )?;
+            ac_global.zero_pad_to_byte();
+            sections.push(ac_global.finish());
+
+            // AC groups: Section order is pass-major, group-minor.
+            // Section index = 2 + num_dc_groups + pass * num_groups + group.
+            //
+            // The per-DC-group emit produced HF sections in
+            // (dc_group_idx, pass, local_hf_idx) order; here we
+            // transpose to (pass, global_hf_group_idx) by indexing
+            // into the per-DC-group HF window.
+            //
+            // Per-DC-group HF mapping mirrors `encode_dc_group`'s loop:
+            //   hf_per_dc = 8 (DC_GROUP_DIM_IN_BLOCKS / GROUP_DIM_IN_BLOCKS)
+            //   hf_x_start = (dc_idx % xsize_dc_groups) * hf_per_dc
+            //   hf_y_start = (dc_idx / xsize_dc_groups) * hf_per_dc
+            //   local_idx = (hf_gy - hf_y_start) * dc_hf_w + (hf_gx - hf_x_start)
+            // where dc_hf_w = min(hf_per_dc, xsize_groups - hf_x_start).
+            let hf_per_dc = DC_GROUP_DIM_IN_BLOCKS / GROUP_DIM_IN_BLOCKS;
             for pass in 0..num_passes {
-                let is_last_pass = pass == num_passes - 1;
-                let ac_group_sections: Vec<Vec<u8>> =
-                    crate::parallel::parallel_map_result(num_groups, |group_idx| {
-                        encode_ac_group_section(
-                            &ac_section_tokens_per_pass[pass][group_idx],
-                            &ac_built_codes[pass],
-                            ac_lz77_params_per_pass[pass].as_ref(),
-                            extras,
-                            is_last_pass,
-                            group_idx,
-                            xsize_groups,
-                            width,
-                            height,
-                            &extras_quantizers,
-                            modular_hf_extras,
-                        )
-                    })?;
-                sections.extend(ac_group_sections);
+                let mut pass_sections: Vec<Vec<u8>> = vec![Vec::new(); num_groups];
+                for (dc_group_idx, eg) in encoded_dc_groups.iter().enumerate() {
+                    let dc_gx = dc_group_idx % xsize_dc_groups;
+                    let dc_gy = dc_group_idx / xsize_dc_groups;
+                    let hf_x_start = dc_gx * hf_per_dc;
+                    let hf_y_start = dc_gy * hf_per_dc;
+                    let hf_x_end = (hf_x_start + hf_per_dc).min(xsize_groups);
+                    let hf_y_end = (hf_y_start + hf_per_dc).min(_ysize_groups);
+                    let dc_hf_w = hf_x_end - hf_x_start;
+                    let pass_sections_for_dc = &eg.ac_sections_per_pass[pass];
+                    for hf_gy in hf_y_start..hf_y_end {
+                        for hf_gx in hf_x_start..hf_x_end {
+                            let local_idx = (hf_gy - hf_y_start) * dc_hf_w
+                                + (hf_gx - hf_x_start);
+                            let global_idx = hf_gy * xsize_groups + hf_gx;
+                            pass_sections[global_idx] = pass_sections_for_dc[local_idx].clone();
+                        }
+                    }
+                }
+                sections.extend(pass_sections);
             }
 
             let section_sizes: Vec<usize> = sections.iter().map(|s| s.len()).collect();
