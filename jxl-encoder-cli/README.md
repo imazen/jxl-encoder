@@ -52,6 +52,7 @@ Reads PNG (including APNG animation). Writes bare JXL codestream or container fo
 | `--icc FILE` | none | Embed ICC profile |
 | `--exif FILE` | none | Embed EXIF metadata |
 | `--xmp FILE` | none | Embed XMP metadata |
+| `--buffering MODE` | -1 (auto) | Input/output buffering policy. `-1`=auto (≤ 2048² full-buffer, larger stream-input+buffered-output), `0`=full buffer, `1`=threshold 2048², `2`=stream input + buffered output, `3`=stream input + stream output. Scaffolding only in chunk 1 — no dispatch wired yet; output bytes are identical regardless of value. |
 
 ## License
 

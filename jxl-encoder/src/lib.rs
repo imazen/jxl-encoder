@@ -52,12 +52,12 @@ pub mod convenience;
 
 // Re-export new API as primary
 pub use api::{
-    AnimationFrame, AnimationParams, At, BlendMode, ChromaSubsampling, ContainerMode, EncodeError,
-    EncodeMode, EncodeRequest, EncodeResult, EncodeStats, EncoderMode, ImageMetadata, Limits,
-    LosslessConfig, LosslessEncoder, LossyConfig, LossyEncoder, Lz77Method, MAX_FASTER_DECODING,
-    MAX_PROGRESSIVE_DC, NonFiniteAction, PixelLayout, PremultipliedAlphaMode, ProgressiveMode,
-    Quality, ResultAtExt, Stop, Unstoppable, at, calibrated_jxl_quality, downsample_channel_u8,
-    quality_to_distance,
+    AnimationFrame, AnimationParams, At, BlendMode, Buffering, ChromaSubsampling, ContainerMode,
+    EncodeError, EncodeMode, EncodeRequest, EncodeResult, EncodeStats, EncoderMode, ImageMetadata,
+    Limits, LosslessConfig, LosslessEncoder, LossyConfig, LossyEncoder, Lz77Method,
+    MAX_FASTER_DECODING, MAX_PROGRESSIVE_DC, NonFiniteAction, PixelLayout, PremultipliedAlphaMode,
+    ProgressiveMode, Quality, ResultAtExt, Stop, Unstoppable, at, calibrated_jxl_quality,
+    downsample_channel_u8, quality_to_distance,
 };
 // EX-J11 chunk 1: HDR-aware perceptual loss selector for the butteraugli
 // quantization loop. Only meaningful with the `butteraugli-loop` feature.

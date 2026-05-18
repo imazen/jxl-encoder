@@ -428,6 +428,25 @@
     `with_effort`-preservation, end-to-end roundtrip with
     `HdrLoss::Butteraugli` at e8).
 
+- **`Buffering` enum + `with_buffering` builders + `--buffering` CLI
+  flag** (issue #11, chunk 1 of the streaming refactor porting plan).
+  Scaffolding for the libjxl 3-level buffering refactor (mirrors
+  upstream PRs #4634 + #4635 + #4637 + #4642 + #4728). Five variants:
+  `Auto` (default; resolves to `FullBuffered` for ≤ 2048² images and
+  `BufferedOutput` otherwise, matching libjxl post-`032d39a`),
+  `FullBuffered` (libjxl `--buffering 0`), `Threshold2048`
+  (`--buffering 1`), `BufferedOutput` (`--buffering 2`, libjxl
+  default), and `FullStreaming` (`--buffering 3`). Surfaced on both
+  `LossyConfig::with_buffering` and `LosslessConfig::with_buffering`
+  with bare-name getters, plus `Buffering::from_i8` / `to_i8` /
+  `resolve_for(width, height)` helpers. CLI flag `--buffering -1..3`
+  applies to both lossy and lossless paths.
+  **No dispatch wired yet** — every variant routes through today's
+  one-shot path so output bytes are byte-identical regardless of
+  value (36/36 hash-lock invariant); chunks 2-7 land the actual
+  per-DC-group split, the buffered-output streaming path, and the
+  seekable streaming-output path.
+
 - **EX-J17a: wire-format-safe custom coefficient orders on the
   `--lossless-jpeg` transcode path** (issue #49). The JPEG bridge now
   computes per-channel custom coefficient orders from the same Lehmer
