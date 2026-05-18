@@ -1041,19 +1041,28 @@ impl EffortProfile {
     /// chunk-3 ridge-following detector (commit `f76cbe6`) is guarded
     /// by a trial-encode + measured-energy cost gate
     /// ([`crate::vardct::splines::spline_passes_trial_encode_gate`])
-    /// and near-coincident-candidate dedup, so photo content reliably
-    /// produces zero admitted splines.
+    /// and near-coincident-candidate dedup. Chunk 4
+    /// (`benchmarks/auto_splines_bench_2026-05-17_chunk4.tsv`)
+    /// recalibrated the `BYTES_PER_ENERGY_UNIT_AT_D1` constant from a
+    /// stale `50.0` anchor down to `0.20` based on the actual
+    /// measured per-spline savings-to-energy ratio on the chunk-3
+    /// multi-line synthetics. The new constant eliminates absurd
+    /// over-claims on screenshot/photo content: with the prior `50.0`
+    /// the gate admitted ~20 false-positive splines on every screenshot,
+    /// regressing real encodes by 3-8%; with `0.20` all 5 CLIC2025-1024
+    /// photos AND `terminal.png` go byte-identical at e7/e8/e9.
     ///
-    /// A default-on-at-e8+ flip was investigated and rejected based on
-    /// `benchmarks/auto_splines_bench_2026-05-17.tsv` (10 images at e7
-    /// plus e8 plus e9, sweep harness `examples/auto_splines_corpus_bench`).
-    /// At e7 the chunk-3 multi-line synthetics net-win
-    /// (138 / 557 bytes saved on 4-line / 8-line ridges, 118 bytes cost on the
-    /// 1-line edge case). At e8 plus e9 the cost gate rejects every
-    /// candidate on every tested image (10 / 10 byte-identical): the
-    /// detection cost is paid (Sobel, NMS, Hessian, polyline trace,
-    /// per-candidate trial encode) for zero byte change. The flip
-    /// would ship CPU overhead with no compression benefit.
+    /// Even after recalibration, default-on at e7+ remains rejected:
+    /// 2 of 3 screenshots (`codec_wiki.png`, `imac_g3.png`) still admit
+    /// 6-33 splines on wide bright ridges (table borders, wallpaper
+    /// edges) where the bbox-area-linear energy proxy over-claims
+    /// savings. Those splines regress real encodes by ~3% with no
+    /// realistic fix short of full A/B trial-encode (too expensive)
+    /// or a content discriminator (ridge density / DCT8 structure).
+    /// The synthetics still net-win at e7/e8 (-2 to -3% on multi-line
+    /// power-line images) and lose at e9 (more aggressive baseline
+    /// outpaces the splines section), confirming the detector's
+    /// design intent works in its narrow target regime.
     ///
     /// libjxl ships its own `enc_splines.cc:104-107` `FindSplines` as
     /// a stub at `speed_tier <= kSquirrel` (effort >= 7); the real

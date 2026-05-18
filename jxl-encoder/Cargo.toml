@@ -236,6 +236,10 @@ name = "auto_splines_corpus_bench"
 path = "examples/auto_splines_corpus_bench.rs"
 
 [[example]]
+name = "auto_splines_trace"
+path = "examples/auto_splines_trace.rs"
+
+[[example]]
 name = "patches_gate_bench"
 path = "examples/patches_gate_bench.rs"
 

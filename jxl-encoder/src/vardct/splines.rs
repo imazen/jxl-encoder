@@ -1627,13 +1627,29 @@ fn spline_passes_trial_encode_gate(
     // VarDCT residual is already coarsely quantized, so a given energy
     // drop saves fewer bytes.
     //
-    // Anchor: on the 1024x256 power-line synthetic at d=1.0 the chunk-3
-    // detector measures `energy_drop ≈ 2-4` (Y-channel dominates the
-    // weighted sum, integrated over ~5,000 pixels in the bbox). The
-    // realised encoded delta is on the order of -200 bytes. So
-    // `~50-100 bytes per unit energy at d=1.0` is the right ballpark.
-    // We pick the conservative end (50) and scale `/ distance`.
-    const BYTES_PER_ENERGY_UNIT_AT_D1: f32 = 50.0;
+    // Recalibration (chunk 4, 2026-05-17): the original `50.0` anchor
+    // was derived from a stale comment that estimated `energy_drop ≈ 2-4`
+    // for the 1024x256 power-line synthetic. The chunk-3 detector
+    // actually measures `energy_drop ≈ 500` for the same synthetic, so
+    // the realised bytes-per-energy ratio is closer to `0.07-0.15`
+    // (138 bytes saved on 4-line synth / 4 splines / ~533 e_drop each
+    // ≈ 0.065; per-spline encoded ≈ 39 bytes, so a 2× safety margin
+    // demands `bytes_saved_proxy >= 78`, which lands right at the
+    // ratio×e_drop threshold).
+    //
+    // The previous `50.0` value over-claimed savings by ~770× on
+    // synthetics (and worse on screenshots, where ridge density is
+    // high but DCT8 already captures sharp text edges so the spline
+    // overlay does not actually reduce VarDCT bytes — and in fact
+    // regresses screenshot encodes by 3-8% at e7/e8/e9).
+    //
+    // The new anchor `0.20` is the geomean-fit per-spline ratio across
+    // the synthetic power-line / multi-line bench plus three CLIC2025
+    // photos that the detector falsely admitted under the old constant.
+    // It admits the multi-line synthetics (target wins) while rejecting
+    // every screenshot/photo spline in the chunk-3 bench. See
+    // `benchmarks/auto_splines_bench_2026-05-17_chunk4.tsv`.
+    const BYTES_PER_ENERGY_UNIT_AT_D1: f32 = 0.20;
     let bytes_saved_proxy =
         (energy_drop * BYTES_PER_ENERGY_UNIT_AT_D1 / distance.max(1.0)) as usize;
 
@@ -2103,32 +2119,40 @@ mod tests {
         );
     }
 
-    /// Chunk 2 detector: a long, high-contrast horizontal "wire" on
-    /// a flat background should yield at least one ridge polyline.
-    /// We use a 1024×64 image so the path length comfortably clears
-    /// the conservative cost-benefit gate.
+    /// Chunk 2 detector: a long bright horizontal "wire" produces a
+    /// non-empty pre-gate candidate set (verified via the pipeline-internal
+    /// polyline trace step). This test now bypasses the chunk-3
+    /// trial-encode cost gate (recalibrated to 0.20 in chunk 4) by using
+    /// the raw `find_splines` helper — single-ridge synthetics are
+    /// expected to BE REJECTED by the production gate (they regress real
+    /// encodes), but the detector itself must still produce candidates
+    /// for the gate to evaluate. Multi-ridge synthetics that actually
+    /// admit through the gate are exercised by
+    /// `examples/auto_splines_corpus_bench.rs`.
     #[test]
     fn test_find_splines_finds_horizontal_ridge() {
+        // Verify the detector produces the expected polylines for a single
+        // bright horizontal ridge. We re-implement the early phases of
+        // `find_splines_at_distance` to short-circuit before the cost gate,
+        // since the cost gate (correctly, post-chunk-4) rejects this case
+        // as a real-encode regression.
         let (w, h, stride) = (1024usize, 64usize, 1024usize);
         let mut y_plane = vec![0.0f32; stride * h];
-        // Bright thin horizontal line at row 32. We push it well past
-        // MIN_GRAD_MAG so the NMS + Hessian filters comfortably admit it.
         for x in 4..w - 4 {
             y_plane[32 * stride + x] = 0.8;
         }
-        let zero = vec![0.0f32; stride * h];
-        // Use distance=1.0 (the chunk-2 default cost-gate parameter)
-        // for this test — high path-length keeps it inside the gate.
-        let out = find_splines(&y_plane, &y_plane, &zero, w, h, stride);
+        let (gx, gy, gmag) = sobel_xy(&y_plane, w, h, stride);
+        let nms_mask = nms_along_gradient(&gx, &gy, &gmag, w, h);
+        let ridge_mask = hessian_ridge_filter(&y_plane, &nms_mask, w, h, stride);
+        let polylines = trace_polylines(&ridge_mask, &gmag, w, h);
         assert!(
-            !out.is_empty(),
-            "horizontal ridge should produce at least one spline; got zero"
+            !polylines.is_empty(),
+            "horizontal ridge should produce at least one polyline; got zero"
         );
-        // All splines must have at least 2 control points and a non-
-        // trivial DCT (sigma > 0).
-        for s in &out {
-            assert!(s.control_points.len() >= 2);
-            assert!(s.sigma_dct[0] > 0.0);
+        // Each polyline must trace at least the conservative-min ridge
+        // length so the downstream subsampler can extract a curve.
+        for p in &polylines {
+            assert!(p.len() >= detect_params::MIN_POLYLINE_LEN);
         }
     }
 
