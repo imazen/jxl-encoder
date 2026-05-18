@@ -1,0 +1,16 @@
+# imac_g3 d=3.0 wedge per-section bytes
+# Image: ~/work/codec-corpus/gb82-sc/imac_g3.png (2940x1912 RGB8)
+# cjxl: /home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl v0.12.0 4279d48
+# ours: /home/lilith/work/zen/jxl-encoder target/release/cjxl-rs (built from HEAD a3b27b5)
+# Both at -e 7 (cjxl) / --effort 7 (ours), default options otherwise.
+# Section sizes parsed via jxl-frame::data::Toc (jxl-oxide upstream parsed inline).
+section	cjxl_d2.5	cjxl_d3.0	ours_d2.5	ours_d3.0
+patches_ref_frame_total	0	32214	88378	88378
+ref_frame_lf_global	0	0	51	51
+ref_frame_ac_or_all	0	32214	88327	88327
+main_lf_global	46	7118	7026	6982
+main_lf_groups	62275	37841	34676	33957
+main_hf_global	5229	3386	4785	4474
+main_ac_groups	308578	80901	98446	89764
+main_frame_total	376128	129246	144933	135177
+file_total	376320	161648	233515	223759
