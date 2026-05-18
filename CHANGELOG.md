@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Added
+
+- **W38-2 — `LossyConfig::with_pixel_loss_dispatch(PixelLossDispatch)`
+  adaptive-dispatch surface** (`src/api.rs`,
+  `src/vardct/encoder.rs`, `src/vardct/bitstream.rs`,
+  `src/vardct/precomputed.rs`, `--pixel-loss-dispatch` CLI flag,
+  `examples/pixel_loss_dispatch_ab.rs`,
+  `benchmarks/pixel_loss_dispatch_2026-05-19.{tsv,meta}`). Per W38-1
+  baseline `pixel_domain_loss` adds ~11 ms/MP on photos and
+  ~70 ms/MP on screenshots at e5 — the IDCT-of-quant-error +
+  per-pixel `mask1x1` weighting + 8th-power-norm path inside
+  `estimate_entropy_full`. On smooth content the term rarely
+  changes which AC-strategy wins. The new
+  `PixelLossDispatch::{AlwaysOn, AlwaysOff, Auto}` enum lets callers
+  opt into skipping the loss term: `AlwaysOff` unconditionally
+  skips (equivalent to `with_pixel_domain_loss(false)`), `Auto`
+  computes `mask1x1` then drops it before the AC-strategy search
+  when per-image `median(mask1x1) > 80`. **Default `AlwaysOn`** —
+  preserves the byte-identical historical bitstream (hash-lock
+  36/36 + dedicated regression test). Mirrors the W36-2
+  `EpfDispatch` / W36-3 `PatchesDispatch` opt-in patterns.
+  A/B sweep (5 CID22-512 photos + 3 gb82-sc screenshots × 3
+  distances × 2 efforts × 3 dispatches = 144 cells): photo e5
+  Auto wall-clock Δ median = +2.2 % (mask1x1 compute overhead
+  pessimises non-gated cells); screen e5 Auto Δ median = -1.2 %
+  (gates 9/9, AlwaysOff = -10.4 % shows the ceiling). Quality on
+  gated cells: photo ssim2 Δ median = -0.27, screen ssim2 Δ
+  median = -0.64 (e5) / +0.02 (e7) — `Auto`-default flip is
+  deferred to chunk 2 pending a wider corpus RD-pareto bench
+  (`benchmarks/pixel_loss_dispatch_2026-05-19.meta` documents the
+  gating logic and the chunk-2 acceptance criteria).
+
 ### Performance
 
 - **W38-2 #1.1 — `fine_grained_step` libjxl parity at e9**

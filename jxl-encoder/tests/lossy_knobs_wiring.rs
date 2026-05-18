@@ -12,7 +12,7 @@
 //! intentionally still lossless at all `alpha_distance` values for this
 //! chunk; see the doc on [`LossyConfig::with_alpha_distance`]).
 
-use jxl_encoder::{EpfDispatch, LossyConfig, PixelLayout};
+use jxl_encoder::{EpfDispatch, LossyConfig, PixelLayout, PixelLossDispatch};
 
 fn rgb8_buf(w: u32, h: u32) -> Vec<u8> {
     (0..(w * h * 3) as usize).map(|i| (i % 256) as u8).collect()
@@ -704,5 +704,130 @@ fn epf_dispatch_auto_skips_on_flat_content() {
         bytes_auto, bytes_default,
         "Auto on flat content must produce identical bytes to AlwaysDefault \
          (smoothness predicate should skip the per-block search)"
+    );
+}
+
+// ─── W38-2: PixelLossDispatch wiring ───────────────────────────────────────
+
+/// `LossyConfig::with_pixel_loss_dispatch` round-trips via
+/// `pixel_loss_dispatch()` and starts at the byte-identical default
+/// `AlwaysOn`.
+#[test]
+fn pixel_loss_dispatch_round_trips_through_config() {
+    let c = LossyConfig::new(1.0);
+    assert_eq!(c.pixel_loss_dispatch(), PixelLossDispatch::AlwaysOn);
+    let c2 = c.with_pixel_loss_dispatch(PixelLossDispatch::Auto);
+    assert_eq!(c2.pixel_loss_dispatch(), PixelLossDispatch::Auto);
+    let c3 = c2.with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOff);
+    assert_eq!(c3.pixel_loss_dispatch(), PixelLossDispatch::AlwaysOff);
+}
+
+/// `LossyConfig::with_pixel_loss_dispatch` survives `with_effort`
+/// (the dispatch policy is pure caller preference, never effort-
+/// derived). This protects against the regression where reordering
+/// `with_effort(...)` and `with_pixel_loss_dispatch(...)` would
+/// silently flip the policy back to `AlwaysOn`.
+#[test]
+fn pixel_loss_dispatch_preserved_across_with_effort() {
+    let c = LossyConfig::new(1.0)
+        .with_pixel_loss_dispatch(PixelLossDispatch::Auto)
+        .with_effort(5);
+    assert_eq!(c.pixel_loss_dispatch(), PixelLossDispatch::Auto);
+    let c2 = LossyConfig::new(1.0)
+        .with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOff)
+        .with_effort(7);
+    assert_eq!(c2.pixel_loss_dispatch(), PixelLossDispatch::AlwaysOff);
+}
+
+/// `PixelLossDispatch::AlwaysOff` on textured content must produce
+/// a different bitstream than the byte-identical `AlwaysOn` default
+/// — the pixel-domain loss term in the AC-strategy search cost is
+/// removed, which changes which strategy wins for at least some
+/// blocks at d=1.0 effort 5 (where the loss term is active).
+#[test]
+fn pixel_loss_dispatch_always_off_changes_bytes_on_textured() {
+    let w = 64u32;
+    let h = 64u32;
+    // Strong-edge checkerboard with 16-pixel cells — guarantees the
+    // AC-strategy search has work to do across multiple strategy
+    // candidates, so the pixel-domain loss term participates.
+    let mut buf = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let on = ((x / 16) + (y / 16)) % 2 == 0;
+            let v = if on { 230u8 } else { 25u8 };
+            buf.extend_from_slice(&[v, v, v]);
+        }
+    }
+    // Effort 5 (Hare) — `profile.pixel_domain_loss = true` and AC
+    // strategy search is active.
+    let bytes_on = LossyConfig::new(1.0)
+        .with_effort(5)
+        .with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOn)
+        .encode(&buf, w, h, PixelLayout::Rgb8)
+        .expect("encode AlwaysOn");
+    let bytes_off = LossyConfig::new(1.0)
+        .with_effort(5)
+        .with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOff)
+        .encode(&buf, w, h, PixelLayout::Rgb8)
+        .expect("encode AlwaysOff");
+    assert_ne!(
+        bytes_on,
+        bytes_off,
+        "AlwaysOff should produce different bytes than AlwaysOn on textured input \
+         (on={} bytes, off={} bytes)",
+        bytes_on.len(),
+        bytes_off.len()
+    );
+}
+
+/// `PixelLossDispatch::Auto` on a perfectly flat image (saturated
+/// mask1x1, median > 80) must agree byte-for-byte with `AlwaysOff`
+/// — the smoothness predicate fires and drops mask1x1 before the
+/// AC-strategy search.
+#[test]
+fn pixel_loss_dispatch_auto_skips_on_flat_content() {
+    let w = 64u32;
+    let h = 64u32;
+    let buf = vec![128u8; (w * h * 3) as usize];
+    let bytes_auto = LossyConfig::new(1.0)
+        .with_effort(5)
+        .with_pixel_loss_dispatch(PixelLossDispatch::Auto)
+        .encode(&buf, w, h, PixelLayout::Rgb8)
+        .expect("encode Auto");
+    let bytes_off = LossyConfig::new(1.0)
+        .with_effort(5)
+        .with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOff)
+        .encode(&buf, w, h, PixelLayout::Rgb8)
+        .expect("encode AlwaysOff");
+    assert_eq!(
+        bytes_auto, bytes_off,
+        "Auto on flat content must produce identical bytes to AlwaysOff \
+         (smoothness predicate should drop mask1x1)"
+    );
+}
+
+/// `PixelLossDispatch::AlwaysOn` (the default) must produce
+/// byte-identical output to a freshly-constructed config without
+/// any `with_pixel_loss_dispatch` call — this is the hash-lock
+/// byte-identical contract.
+#[test]
+fn pixel_loss_dispatch_default_byte_identical_to_explicit_always_on() {
+    let w = 64u32;
+    let h = 64u32;
+    let buf = rgb8_buf(w, h);
+    let bytes_default = LossyConfig::new(1.0)
+        .with_effort(5)
+        .encode(&buf, w, h, PixelLayout::Rgb8)
+        .expect("encode default");
+    let bytes_explicit = LossyConfig::new(1.0)
+        .with_effort(5)
+        .with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOn)
+        .encode(&buf, w, h, PixelLayout::Rgb8)
+        .expect("encode explicit AlwaysOn");
+    assert_eq!(
+        bytes_default, bytes_explicit,
+        "default config (implicit AlwaysOn) must produce byte-identical output \
+         to explicit AlwaysOn"
     );
 }

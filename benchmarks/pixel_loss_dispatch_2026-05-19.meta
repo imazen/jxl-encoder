@@ -1,0 +1,105 @@
+# W38-2 — A/B sweep for PixelLossDispatch (AlwaysOn / Auto / AlwaysOff)
+
+date_utc:          2026-05-18T17:30:00Z
+host:              lilith (AMD Ryzen 9 7950X, 128 GB)
+os:                Linux 6.6 WSL2
+git_base:          a2cd4758 (main: bench(lossy): W38 — low-effort phase baseline)
+branch_workspace:  ~/work/zen/jxl-encoder--pixel-loss-dispatch
+reproducer:
+  cargo run -p jxl-encoder --release --features 'std parallel butteraugli-loop' \
+    --example pixel_loss_dispatch_ab -- \
+    --out benchmarks/pixel_loss_dispatch_2026-05-19.tsv
+
+sweep_grid:
+  sources:          5 CID22-512 photos + 3 gb82-sc screenshots = 8 images
+  distances:        {0.5, 1.0, 2.0}
+  efforts:          {5, 7}
+  dispatches:       {AlwaysOn, Auto, AlwaysOff}
+  runs_per_cell:    3 (median wall-clock reported, min also captured)
+  total_cells:      144  (432 encodes)
+
+sources_photos (CID22-512/validation):
+  1025469.png  512x512
+  1044329.png  512x512
+  1189261.png  512x512
+  1279330.png  512x512
+  1418519.png  512x512
+sources_screen (gb82-sc):
+  codec_wiki.png  variable
+  imac_g3.png     variable
+  terminal.png    variable
+
+dispatch_definitions:
+  AlwaysOn (default):
+    Always compute mask1x1 + use pixel-domain loss term in
+    estimate_entropy_full when ac_strategy_enabled &&
+    pixel_domain_loss are both true. Byte-identical to historical
+    encoder builds (hash-lock 36/36 verified).
+  AlwaysOff:
+    Force-skip mask1x1 (equivalent to with_pixel_domain_loss(false)).
+    AC strategy search uses coefficient-domain entropy only.
+  Auto:
+    Compute mask1x1, measure per-image median; when median > 80
+    (PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD), drop mask1x1 before the
+    AC-strategy search. Bitstream-affecting on gated cells; matches
+    AlwaysOn behaviour otherwise.
+
+metric_methodology:
+  encode_ms:   3-run median wall-clock (default-features build,
+               release profile, NOT -C target-cpu=native — runtime
+               SIMD dispatch).
+  bytes:       jxl-encoder output size (full container + codestream).
+  butteraugli: Rust butteraugli_linear, jxl-oxide linear-sRGB decode
+               (CLAUDE.md PNG-metadata-immune path).
+  ssim2:       fast_ssim2::compute_ssimulacra2, sRGB u8 inputs after
+               linear→sRGB conversion of the jxl-oxide decode.
+
+key_findings:
+  - Default AlwaysOn byte-identical confirmed: hash_lock_features
+    36/36 + test_pixel_loss_dispatch_default_byte_identical_to_explicit_always_on
+    pass.
+  - photo e5: Auto skips 6/15 cells (per-image median(mask1x1) > 80
+    on smooth photos). Wall-clock median Δ vs AlwaysOn = +2.2%
+    (computing mask1x1 + then dropping it adds overhead when the
+    AlwaysOn path would have used it anyway).
+  - screen e5: Auto skips 9/9 cells. Wall-clock median Δ = -1.2%
+    vs AlwaysOn. AlwaysOff median Δ = -10.4% — the win when you
+    can skip mask1x1 compute too.
+  - photo e7 / screen e7: gates fire same ratio; wall-clock Δ
+    smaller because pixel_domain_loss is a smaller % of e7's
+    deeper AC-strategy search budget.
+  - Quality on skipped cells: photo ssim2 median Δ = -0.27 to -0.36;
+    screen ssim2 median Δ = -0.64 (e5) / +0.02 (e7). Auto-default
+    flip requires a wider corpus + RD-pareto bench (chunk-2 plan).
+
+chunk_2_plan_default_on_auto_flip:
+  - 50+ CID22 photos + 20+ gb82-sc screenshots × 5 distances ×
+    {AlwaysOn, Auto} × {e5, e7, e8} grid.
+  - Per-image RD-pareto comparison: does Auto stay within +/- 1
+    ssim2 point and +/- 3% bytes vs AlwaysOn?
+  - If yes: flip default to Auto, rebake hash-locks, ship as chunk
+    2 with updated baseline.
+  - If photos regress >1 ssim2 point on > 5% of cells: keep
+    AlwaysOn default, document Auto as opt-in for screen-heavy /
+    smooth-photo workloads where the wall-clock win justifies the
+    small quality cost.
+
+ranked_per_class_observations_for_chunk2_design:
+  photos:
+    - Auto skip rate varies image-to-image. 1279330.png skipped
+      every distance; 1025469.png/1044329.png/1189261.png never
+      skipped at d=0.5/d=1 (median below 80 — textured content).
+    - On skipped cells bytes Δ = +5.6% (we LOSE bytes — strategy
+      search shifts toward DCT8 without the loss term, smaller
+      strategies more often).
+    - Auto on photos is a small wall-clock pessimisation on
+      non-skipped cells (mask1x1 compute is small but not free).
+  screens:
+    - 9/9 cells skip — gb82-sc median(mask1x1) sits well above 80.
+    - Wall-clock saving is real but smaller than AlwaysOff
+      (mask1x1 compute is the residual cost).
+    - Quality regresses ~0.6 ssim2 at e5 — likely DCT2x2/IDENTITY
+      strategy picks drift without the pixel-loss tiebreaker.
+      Worth investigating whether the threshold should be tighter
+      for screen content (raise to 100 or 110) so only the
+      flattest screens skip.

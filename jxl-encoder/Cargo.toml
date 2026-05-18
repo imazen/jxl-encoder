@@ -224,6 +224,15 @@ name = "epf_dispatch_ab"
 path = "examples/epf_dispatch_ab.rs"
 required-features = ["butteraugli-loop"]
 
+# W38-2: A/B sweep for the PixelLossDispatch adaptive policy
+# (AlwaysOn / Auto / AlwaysOff). Mirrors the W36-2 EpfDispatch
+# harness — 5 CID22 photos + 3 gb82-sc screenshots × 3 distances ×
+# 2 efforts × 3 dispatches = 144 cells.
+[[example]]
+name = "pixel_loss_dispatch_ab"
+path = "examples/pixel_loss_dispatch_ab.rs"
+required-features = ["butteraugli-loop"]
+
 # W38: low-effort phase baseline (e2..=e5) + zenjpeg-hybrid cross-codec
 # comparator. Reuses the __JXL_ENC_PHASE_TIMING env-var path from W36-1
 # and adds a zenjpeg `HybridProgressive` encode + RD measurement on the
