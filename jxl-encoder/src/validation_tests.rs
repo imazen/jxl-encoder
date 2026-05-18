@@ -97,15 +97,17 @@ fn lossy_distance_infinite_rejected() {
 
 #[test]
 fn lossy_effort_zero_rejected() {
-    // `with_effort` clamps internally to 1..=11, so we cannot construct a
+    // `with_effort` clamps internally to 1..=12, so we cannot construct a
     // config with effort 0 via the public surface. Validation catches the
     // *clamped* value here, so this case is exercised below by routing
     // through the un-clamped path: the only way to surface effort=0 is
     // direct field manipulation, which we don't do. Instead we verify
     // validate() accepts every clamped value we *can* produce.
     //
-    // RFC#45 chunk 1: e10/e11 are our extensions past libjxl's kTortoise=9.
-    for e in 1..=11u8 {
+    // RFC#45 chunk 1 + chunk 2: e10/e11/e12 are our extensions past libjxl's
+    // kTortoise=9 (e12 doubles butteraugli_iters 16 → 32; requires ITER_MAX
+    // = 32 in validation.rs).
+    for e in 1..=12u8 {
         let cfg = LossyConfig::new(1.0).with_effort(e);
         assert!(cfg.validate().is_ok(), "effort {e} should validate");
     }
@@ -113,7 +115,7 @@ fn lossy_effort_zero_rejected() {
 
 #[test]
 fn lossless_effort_each_level_validates() {
-    for e in 1..=11u8 {
+    for e in 1..=12u8 {
         let cfg = LosslessConfig::new().with_effort(e);
         assert!(cfg.validate().is_ok(), "effort {e} should validate");
     }
@@ -124,7 +126,8 @@ fn lossless_effort_each_level_validates() {
 #[cfg(feature = "butteraugli-loop")]
 #[test]
 fn lossy_butteraugli_iters_in_range_validates() {
-    for n in [0, 1, 4, 16] {
+    // RFC#45 chunk 2: ITER_MAX bumped 16 → 32 to admit e12 (32 iters).
+    for n in [0, 1, 4, 16, 32] {
         let cfg = LossyConfig::new(1.0).with_butteraugli_iters(n);
         assert!(
             cfg.validate().is_ok(),
@@ -136,12 +139,14 @@ fn lossy_butteraugli_iters_in_range_validates() {
 #[cfg(feature = "butteraugli-loop")]
 #[test]
 fn lossy_butteraugli_iters_too_high_rejected() {
+    // RFC#45 chunk 2: ITER_MAX bumped 16 → 32 to admit e12; the rejection
+    // boundary moves with it, so test the new far-above value.
     let cfg = LossyConfig::new(1.0).with_butteraugli_iters(64);
     match cfg.validate() {
         Err(ValidationError::IterCountOutOfRange { name, value, valid }) => {
             assert_eq!(name, "butteraugli_iters");
             assert_eq!(value, 64);
-            assert_eq!(*valid.end(), 16);
+            assert_eq!(*valid.end(), 32);
         }
         other => panic!("expected IterCountOutOfRange, got {other:?}"),
     }

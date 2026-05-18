@@ -1,0 +1,78 @@
+# effort_12_admit_2026-05-18.tsv — RFC#45 chunk 2 acceptance bench (e12)
+
+Date: 2026-05-18
+Parent commit: ebf5ddaa (fix(effort): actually apply RFC#45 chunk-1 admit-gate widening
+  — e10/e11 + ITER_MAX=16 cap + lf_frame.rs:258 (effort+1).min(11)).
+Host: water-cooled AMD Ryzen 9 7950X (128 GB RAM)
+Bench: jxl-encoder/examples/e12_admit_paired_ab.rs
+
+Grid: 5 CID22-512 photos × 3 distances × 2 efforts × 5 samples = 150 paired encodes
+  Images: 1025469, 1044329, 1189261, 1418519, 2079234 (CID22-512/validation)
+  Distances: 0.5, 1.0, 2.0
+    (Trimmed from W21-2's {0.5, 1.0, 2.0, 4.0} per chunk-2 task brief —
+     diminishing returns expected, smaller grid lands faster.)
+  Variants (paired, sample-major interleave):
+    A = e11 (16 butteraugli iters — was the chunk-1 ceiling at MAX_QUANT_LOOP_ITERS = 16)
+    B = e12 (32 butteraugli iters — new chunk-2 admit; requires ITER_MAX 16 → 32)
+  Threads: 8
+  Decoder: jxl-oxide in linear sRGB (per CLAUDE.md PNG metadata trap rule)
+  Metric: Rust butteraugli (`butteraugli_linear`)
+
+Command:
+  REPO_ROOT=/home/lilith/work/zen/jxl-encoder--e12-admit \
+    SAMPLES=5 THREADS=8 DISTANCES="0.5,1.0,2.0" \
+    ./target/release/examples/e12_admit_paired_ab \
+    > benchmarks/effort_12_admit_2026-05-18.tsv
+
+Acceptance (per RFC#45 chunk 2, relaxed ≥70% gate vs chunk-1's 80%):
+  e12 ≤ e11 on bytes AND butteraugli on ≥70% of (image, distance) cells: 15/15 (100%) PASS
+
+Per-cell SHA match:
+  e12 bitstream byte-identical to e11 on EVERY (image, distance) cell: 15/15 (100%).
+  The butteraugli single-axis loop has fully converged within the 16-iter
+  budget on this CID22-512 corpus at all three tested distances; the extra
+  16 iters at e12 are pure CPU cost (1.86× wall-clock) for zero RD benefit.
+
+Geometric-mean deltas across 15 (image, distance) cells (medians):
+  B/A: bytes=1.0000 (±0.00%), butteraugli=1.0000 (±0.00%), encode_ms=1.86×
+
+Decision (RFC#45 chunk 2 plan, "If acceptance fails: ship the clamp widening
+anyway"):
+  - Acceptance technically PASSES the relaxed ≥70% gate trivially (no
+    cell regressed because every cell is byte-identical).
+  - SHIP e12 as a clamp/cap widening ("gate-only" ship per W21-2 pattern):
+    * `EFFORT_RANGE` widened 1..=11 → 1..=12 (validation.rs)
+    * `ITER_MAX` bumped 16 → 32 (validation.rs) — propagates through
+      `Limits::DEFAULT_MAX_QUANT_LOOP_ITERS` and the public
+      `MAX_QUANT_LOOP_ITERS` re-export.
+    * `EffortProfile::lossy.clamp(1, 11)` → `clamp(1, 12)` (effort.rs)
+    * `butteraugli_iters[12] = 32` (effort.rs) — the chunk-2 differentiator
+      knob, even though this bench shows it has zero RD impact on this
+      corpus at iter 16 already.
+    * `vardct/lf_frame.rs::encode_lf_frame` DC effort cap `min(11)` → `min(12)`.
+  - Defaults unchanged (e7); `hash_lock_features` 36/36 byte-identical;
+    1228 jxl-encoder lib tests pass; clippy --release clean; cargo fmt clean.
+
+Chunk-2 follow-on plan (the real e12 lever):
+  - `init_mul_seeds` is hard-capped at 4 entries (`butteraugli_loop.rs:55`,
+    `const ALL: [f64; 4] = [LIBJXL_INIT_MUL, 0.4, 0.8, 0.5]`). Requesting
+    `lossy_search_seeds = 8` at e12 silently saturates at 4 — this is why
+    chunk 2 chose `butteraugli_iters` as the differentiator instead of
+    `lossy_search_seeds`, even though the iters-only result is null.
+  - Real e12 differentiation requires either (a) extending `init_mul_seeds`
+    with 4 new basins (e.g. `[0.3, 0.7, 0.5, 0.9]` interpolated to fill
+    gaps) and bumping `lossy_search_seeds[12] = 8`, or (b) splitting the
+    chunk-3 tree-learn seed slots (already saturated at 16 in chunk 6) into
+    smaller perturbation steps and bumping `tree_learn_seeds[12] = 24`, or
+    (c) a fundamentally new optimization axis (per-block AC strategy
+    re-eval, two-pass mask1x1 with the post-loop quant field, etc.). The
+    saturated-loop finding is a clean signal that the right next chunk is
+    NOT another iter doubling — file as RFC#45 chunk 3 follow-on.
+
+Per-cell raw data (every cell sha-matches A vs B, hence the 100% gate):
+  See effort_12_admit_2026-05-18.tsv. Pattern: A and B rows for the same
+  (image, distance, sample) cell share identical `bytes` AND identical
+  `sha256_prefix` AND identical `butteraugli`. Only `encode_ms` differs
+  (~1.85× for the extra iters that produce no new state). Visual spot-
+  check of cells e.g. 1025469/d0.50: 11→A=63534B/0.6357bfly, 12→B=63534B/
+  0.6357bfly — pixel-for-pixel identical reconstruction.

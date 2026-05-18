@@ -4,6 +4,87 @@
 
 ### Added
 
+- **RFC#45 chunk 2 — e12 admit gate widening** (mirrors W21-2 chunk 1's
+  e11 admit-gate pattern from `24f071db` + `ebf5ddaa`).
+  (`src/validation.rs`, `src/effort.rs`, `src/api.rs`,
+  `src/vardct/encoder.rs`, `src/vardct/lf_frame.rs`,
+  `src/vardct/butteraugli_loop.rs`, `src/modular/frame.rs`,
+  `src/validation_tests.rs`, `jxl-encoder-cli/src/main.rs`,
+  `jxl-encoder-cli/README.md`,
+  `examples/e12_admit_paired_ab.rs` [new],
+  `benchmarks/effort_12_admit_2026-05-18.{tsv,meta}`).
+
+  - **`EFFORT_RANGE` widened `1..=11` → `1..=12`** so callers passing
+    `with_effort(12)` are not silently clipped to 11 by the validator.
+    `EffortProfile::lossy(_).clamp(1, 11)` → `clamp(1, 12)` (and the
+    matching lossless path). `vardct/lf_frame.rs::encode_lf_frame`
+    DC effort cap `(effort + 1).min(11)` → `min(12)`.
+  - **`ITER_MAX` bumped `16 → 32`** (`validation.rs:152`). This is the
+    public `MAX_QUANT_LOOP_ITERS` / `Limits::DEFAULT_MAX_QUANT_LOOP_ITERS`
+    re-export — it caps the butteraugli / ssim2 / zensim quantization
+    loops. Callers that explicitly set a lower per-encode
+    `Limits::with_max_quant_loop_iters(_)` are unaffected (the encoder
+    saturates at the lower of the per-encode value and the validator
+    max). The loop has its own per-iteration convergence early-exit so
+    the cap remains a worst-case CPU bound, not a typical iter count.
+  - **e12 differentiator: `butteraugli_iters = 32`** (vs e11's 16,
+    e10's 8, e9's 4). Doubles the search budget along the same axis
+    chunk-1 used for e10/e11, keeping a clean power-of-two ladder
+    (4 → 8 → 16 → 32) per effort tier past libjxl's kTortoise=9 cap.
+    Knob chosen for "least likely to saturate": the seed table
+    `init_mul_seeds` is hard-capped at 4 entries, so requesting
+    `lossy_search_seeds = 8` at e12 would silently cap at 4; the
+    `tree_learn_seeds` ladder already shipped 16 at e11 (chunk-6
+    follow-on); AC strategy `fine_grained_step` already saturates at
+    1 from e9; `butteraugli_iters` was the only knob with daylight
+    above e11.
+  - **Doc comments updated 1-11 → 1-12** at: `EffortProfile.effort`
+    (effort.rs:172), `EffortProfile::lossy/lossless` accept-range
+    docs, `FrameEncoderOptions.effort` (modular/frame.rs:23),
+    `VarDctEncoder.effort` (vardct/encoder.rs:204), `encode_lf_frame`
+    arg doc (vardct/lf_frame.rs:133), `LossyConfig::with_effort` and
+    `LosslessConfig::with_effort` (api.rs), CLI `--effort` help
+    (jxl-encoder-cli/src/main.rs:34) and README ladder row.
+  - **Tests**: 8 effort-loop iteration ranges (`1..=11` → `1..=12`)
+    across `effort.rs` test module and `validation_tests.rs`.
+    `test_effort_clamp` now asserts clamp(99) = 12. New asserts in
+    `test_butteraugli_iters_e10_e11_extended` confirm
+    `p12.butteraugli_iters == 32` AND that
+    `MAX_QUANT_LOOP_ITERS == 32` (so the cap bump and the e12 table
+    row stay in lockstep — drift on either side will fail the test).
+    `test_lossy_search_seeds_e10_e11_extended` extended to assert
+    e12 also fans out 4 seeds (table saturation, documented).
+    `lossy_butteraugli_iters_in_range_validates` now accepts 32 as
+    in-range; the `too_high_rejected` test asserts the new cap (`*valid.end() == 32`).
+  - **Defaults unchanged (e7)**; `hash_lock_features` 36/36
+    byte-identical; 1228 jxl-encoder lib tests pass; clippy clean;
+    cargo fmt clean.
+  - **Acceptance bench** (5 CID22-512 photos × 3 distances {0.5, 1.0,
+    2.0} × 2 efforts {e11, e12} × 5 samples = 150 paired encodes,
+    `examples/e12_admit_paired_ab.rs`,
+    `benchmarks/effort_12_admit_2026-05-18.{tsv,meta}`):
+    - **15/15 cells (100%) PASS** the relaxed ≥70% gate (e12 ≤ e11
+      bytes AND e12 ≤ e11 butteraugli).
+    - **15/15 cells (100%) byte-identical bitstream** (e12 sha256 ==
+      e11 sha256 on every (image, distance, sample)). Geo-mean B/A
+      ratios: bytes 1.0000 (±0.00%), butteraugli 1.0000 (±0.00%),
+      encode_ms 1.86×.
+    - **The butteraugli single-axis loop has fully converged within
+      the 16-iter budget on CID22-512 at d ∈ {0.5, 1.0, 2.0}.** The
+      extra 16 iters at e12 are pure CPU cost for zero RD benefit on
+      this corpus — same "gate-only ship" outcome as chunk 1's e11.
+    - **Decision**: ship the clamp + cap widening per the chunk-2
+      task brief's "ship anyway" rule. The differentiator knob is
+      live for callers who request `with_butteraugli_iters(32)` or
+      hit slower-converging corpora; CID22-512 photos just don't need
+      it. Chunk-3 follow-on plan (the actual e12 lever) documented in
+      the meta file: extend `init_mul_seeds` past its 4-entry cap and
+      bump `lossy_search_seeds[12] = 8`, OR split `tree_learn_seeds`
+      slots into smaller perturbations and bump to 24, OR add a
+      fundamentally new optimization axis (per-block AC strategy
+      re-eval, two-pass mask1x1 with the post-loop quant field).
+      Single-axis iter doubling is exhausted as a lever.
+
 - **Streaming refactor #11 chunk 8b — `XybRegionSource` trait + walker
   seam in `encode_inner` + `encode_from_precomputed_inner`**
   (`src/vardct/region_source.rs` [new],

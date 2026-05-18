@@ -436,6 +436,14 @@ name = "e10_e11_paired_ab"
 path = "examples/e10_e11_paired_ab.rs"
 required-features = ["butteraugli-loop"]
 
+# RFC#45 chunk 2: e12 admit paired A/B bench (32 butteraugli iters vs e11's 16).
+# Acceptance gate (relaxed from chunk-1's 80%): e12 ≤ e11 bytes at ≤ e11
+# butteraugli on ≥70% of cells; if fail, ship the clamp widening anyway.
+[[example]]
+name = "e12_admit_paired_ab"
+path = "examples/e12_admit_paired_ab.rs"
+required-features = ["butteraugli-loop"]
+
 # RFC#45 chunk 2: e10/e11 multi-seed lossless tree-learning A/B/C bench.
 # No butteraugli-loop needed (lossless path).
 [[example]]
