@@ -1,0 +1,119 @@
+# patches_lossless_gate_expanded_corpus_2026-05-17.tsv
+
+## Provenance
+- Issue #45 (patches gate expanded corpus calibration).
+- Re-runs W12-1's `patches_lossless_calibrate_all` shape on an expanded
+  screenshot corpus (25 instead of 11) + 15-photo no-regression panel
+  to test whether the larger corpus surfaces wins or stresses that
+  gb82-sc alone does not see.
+
+## Generation
+```
+cd jxl-encoder--patches-expanded-corpus
+cargo run --release -p jxl-encoder \
+  --example patches_lossless_gate_expanded_corpus \
+  --features __internals \
+  > benchmarks/patches_lossless_gate_expanded_corpus_2026-05-17.tsv
+```
+
+## Environment
+- Parent commit (main@origin): 336829f135f6fff69781b51c54739d742678383e
+  (`perf(modular/patches): lossless-shape trial encoder + tighter C
+  (RFC#45 lossless chunk 5)`)
+- Hostname: lilith (water-cooled Ryzen 9 7950X, 128 GB RAM)
+- Date: 2026-05-17 (UTC)
+- jxl-encoder version: 0.3.2
+
+## Grid
+- 11 gb82-sc + 14 qoi-benchmark/screenshot_web = 25 screenshots
+- 5 CID22-512 + 5 clic2025-1024 + 5 gb82-photos = 15 photos
+- LosslessConfig::new() default profile (effort 7)
+- patches=true (with chunk-5 gate, C=SAVINGS_BYTES_PER_PIXEL_LOSSLESS=0.35)
+- patches=false sidecar for `bytes_off` baseline
+- `find_and_build_patches_lossless()` called directly (no gate) for telemetry
+
+## Schema
+class                       screenshot|photo
+image                       file basename
+width / height              pixels
+bytes_off                   bytes with patches disabled
+bytes_on                    bytes with patches=default (chunk-5 gate active)
+actual_savings_B            bytes_off - bytes_on (signed)
+total_patch_pixels          sum over occurrences of ref.xsize * ref.ysize
+unique_refs                 PatchesData::ref_positions.len()
+ref_frame_pixels            ref_width * ref_height
+occurrences                 PatchesData::positions.len()
+ref_overhead_xyb_B          trial_encode_ref_frame_bytes (XYB-shape, W11-1 estimator)
+ref_overhead_lossless_B     trial_encode_ref_frame_bytes_lossless (chunk-5 estimator)
+dict_overhead_B             trial_encode_dict_section_bytes
+total_overhead_xyb_B        ref_overhead_xyb_B + dict_overhead_B
+total_overhead_lossless_B   ref_overhead_lossless_B + dict_overhead_B
+empirical_bpp               actual_savings_B / total_patch_pixels
+c_needed_xyb                1.5 * total_overhead_xyb_B / total_patch_pixels
+c_needed_lossless           1.5 * total_overhead_lossless_B / total_patch_pixels
+overhead_overshoot_ratio    ref_overhead_xyb_B / ref_overhead_lossless_B
+
+## Notes
+- Reading `bytes_on==bytes_off` with `total_patch_pixels>0` indicates
+  the live `is_cost_effective_lossless` gate REJECTED the detection
+  (gate's verdict matches the calibration — no encode-time win for
+  the per-image cost).
+- The XYB-shape `c_needed_xyb` column is kept for cross-reference
+  with W11-1's older calibration; the production gate uses
+  `c_needed_lossless` against `SAVINGS_BYTES_PER_PIXEL_LOSSLESS = 0.35`.
+- `overhead_overshoot_ratio` 1.0 → XYB and lossless trial encoders
+  agree (text-heavy content); >1.5 → smooth-UI content for which
+  XYB-shape over-estimates true lossless-emit cost.
+
+## Verdict (2026-05-17)
+
+**No constant change required. Current `SAVINGS_BYTES_PER_PIXEL_LOSSLESS
+= 0.35` holds on expanded corpus.**
+
+### Headline numbers
+- 25 screenshots, 15 photos = 40 measured images.
+- Detected: 22 / 25 screenshots, 0 / 15 photos.
+- Admitted (won bytes): 10 / 22 detected screenshots.
+- Rejected (gate said no, savings=0): 12 / 22 detected screenshots.
+- **Zero regressions** (no admitted cell loses bytes).
+- **Total screenshot savings: 1,017,526 bytes (4.78% of bytes_off)**.
+- **Photo bytes byte-identical 15/15 images, 0 detections, 0 overhead.**
+
+### c_needed_lossless distribution on detected (n=22)
+- min:     0.1833 (windows95)
+- p25:     0.2522
+- median:  0.3831
+- p75:     0.5474
+- max:     0.7787 (stripe)
+
+### Admission sweep
+- C=0.25: admits 5 / 22 detected
+- C=0.30: admits 6 / 22 detected
+- C=0.35: admits 10 / 22 detected  ← **current production**
+- C=0.40: admits 12 / 22 detected
+- C=0.45: admits 13 / 22 detected (W11-1's old value, pre-chunk-5)
+- C=0.50: admits 15 / 22 detected
+
+### New finds vs W12-1's 11 gb82-sc screenshots
+The expanded corpus surfaces **2 new winning admissions** at C=0.35:
+- `sublime.png`: c_needed=0.229, **savings 403,068 B (67.5%)** — single
+  largest lossless screenshot win in the corpus.
+- `cnn.com.png`: c_needed=0.337, savings 42,707 B (4.1%).
+
+The rejected set also expanded — qoi-benchmark web pages (amazon, apple,
+microsoft, etc.) trigger detection but have c_needed > 0.35; the gate
+correctly rejects to avoid net-loss.
+
+### Decision
+- **NO change to `SAVINGS_BYTES_PER_PIXEL_LOSSLESS = 0.35`.**
+- **NO change to 1.5× safety margin.**
+- Calibration is robust on 25-screenshot + 15-photo corpus.
+- W12-1's verdict ("smallest C admitting all empirically-winning
+  cells") still holds. C=0.35 admits every winner observed on the
+  larger corpus.
+- Increasing C beyond 0.35 carries unknown risk: the rejected cells
+  with c_needed in [0.35, 0.50] (imdb, news.ycombinator, duckduckgo,
+  reddit, etc.) might or might not net-win at higher C — would require
+  a force-admit sidecar to determine, and the chunk-7 design philosophy
+  is conservative ("safety margin below 1.5× would risk false-positives
+  on untested content classes").

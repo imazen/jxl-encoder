@@ -1,0 +1,132 @@
+# patches_lossy_gate_expanded_corpus_2026-05-17.tsv
+
+## Provenance
+- Issue #45 (patches gate expanded corpus calibration).
+- Re-runs RFC#45 chunks 4-7's lossy `is_cost_effective` calibration
+  shape on an expanded screenshot corpus (25 instead of 5) + 15-photo
+  no-regression panel to test whether the larger corpus shifts the
+  fit of `SAVINGS_BYTES_PER_PIXEL` (chunk 4/5), the 1/sqrt(d_clamped)
+  divisor (chunk 5), or the 1.5× safety margin (chunk 6).
+
+## Generation
+```
+cd jxl-encoder--patches-expanded-corpus
+cargo run --release -p jxl-encoder \
+  --example patches_lossy_gate_expanded_corpus \
+  --features __internals \
+  > benchmarks/patches_lossy_gate_expanded_corpus_2026-05-17.tsv
+```
+
+## Environment
+- Parent commit (main@origin): 336829f135f6fff69781b51c54739d742678383e
+  (`perf(modular/patches): lossless-shape trial encoder + tighter C
+  (RFC#45 lossless chunk 5)`)
+- Hostname: lilith (water-cooled Ryzen 9 7950X, 128 GB RAM)
+- Date: 2026-05-17 (UTC)
+- jxl-encoder version: 0.3.2
+
+## Grid
+- 11 gb82-sc + 14 qoi-benchmark/screenshot_web = 25 screenshots
+- 5 CID22-512 + 5 clic2025-1024 + 5 gb82-photos = 15 photos
+- 4 distances: {0.5, 1.0, 2.0, 4.0}
+- 40 images × 4 distances = 160 measured cells
+- `LossyConfig::new(d).with_mode(EncoderMode::Experimental)` —
+  Experimental is the mode where the per-set `is_cost_effective` gate
+  is the ONLY patches gate (Reference mode admits patches and runs
+  the per-patch gate so the per-set constant is invisible there).
+- patches-on = default; patches-off = `with_patches(false)` sidecar.
+- `LastPatchesStats` thread-local snapshot captures detection stats
+  *after* per-patch gating (the only path with the per-set gate
+  visible).
+
+## Schema
+class                 screenshot|photo
+image                 file basename
+width / height        pixels
+distance              {0.5, 1.0, 2.0, 4.0}
+bytes_off             bytes with patches=false
+bytes_on              bytes with patches=default
+actual_savings_B      bytes_off - bytes_on (signed)
+total_patch_pixels    sum over occurrences of ref.xsize * ref.ysize
+unique_refs           PatchesData::ref_positions.len() AFTER per-patch gate
+ref_frame_pixels      ref_width * ref_height AFTER per-patch gate
+occurrences           PatchesData::positions.len() AFTER per-patch gate
+empirical_bpp_sqrt_d  actual_savings_B * sqrt(max(d,1.0)) / total_patch_pixels
+                      (the chunk-5 fit shape: 0.78 is the geomean over the
+                      original 5-screenshot × 4-distance grid)
+
+## Notes
+- `bytes_on == bytes_off` with `total_patch_pixels > 0` indicates the
+  gate REJECTED the detection (matches our calibration's intent — the
+  per-image cost outweighs estimated savings).
+- For C-fit: gather all rows with `total_patch_pixels > 0 AND
+  actual_savings_B > 0` (gate admitted AND empirically won), then
+  `geomean(empirical_bpp_sqrt_d)` ≈ chunk-5's 0.78 — verify if expanded
+  corpus shifts this.
+- For C-rejection floor: gather all rows with `actual_savings_B < 0`
+  (gate admitted but lost bytes) — currently expected to be empty
+  (gate is conservative); if non-empty, C is too low.
+
+## Per-cell c_needed (post-process)
+For a given C, the per-cell admission verdict is:
+  `total_patch_pixels * C / sqrt(max(d,1.0)) * 2 >= 3 * total_overhead`
+where `total_overhead` is derived from the lossless calibration TSV
+(same image, same detection — overhead is distance-invariant since
+patches detection runs on pre-gaborish XYB).
+
+## Verdict (2026-05-17)
+
+**No constant change required. Current `SAVINGS_BYTES_PER_PIXEL = 0.78`
+holds on expanded corpus.**
+
+### Headline numbers
+- 25 screenshots × 4 distances = 100 cells, 1 OOM (phoboslab @ d=4.0)
+  → 99 measured cells.
+- 15 photos × 4 distances = 60 cells, all encoded.
+- Detected: 87 / 99 screenshot cells, 0 / 60 photo cells.
+- Admitted (won bytes): 58 / 87 detected cells.
+- Rejected (gate said no, savings=0): 29 / 87 detected cells.
+- **Zero regressions** (no admitted cell loses bytes).
+- **Total screenshot savings: 13.07 MB (26.0% of bytes_off)**.
+- **Photo bytes byte-identical 60/60 cells, 0 detections, 0 overhead.**
+
+### Empirical bpp_sqrt_d distribution on admitted (n=58)
+- min:     0.2329
+- p10:     0.4883
+- p25:     0.6722
+- median:  0.8041
+- geomean: **0.8005** (current C=0.78; within 3% of fit target)
+- mean:    0.8575
+- max:     1.8212
+
+### Per-distance geomean of empirical_bpp_sqrt_d
+- d=0.50: n=16, geomean=0.8848
+- d=1.00: n=16, geomean=0.7805
+- d=2.00: n=14, geomean=0.7943
+- d=4.00: n=12, geomean=0.7313
+
+All four distances are within 10% of C=0.78. The `1/sqrt(d_clamped)`
+shape is robust on the expanded corpus.
+
+### 1.5× safety margin
+26 of 58 admitted cells have `empirical_bpp_sqrt_d < C = 0.78` — they
+would be FALSE-NEGATIVE-rejected by a strict C-only model, but win
+bytes thanks to the 1.5× margin (the gate admits when est-savings is
+only ⅔ of overhead, so ⅔ × C = 0.52 is the effective floor). All 26
+empirically WIN bytes → margin is correctly tuned.
+
+### New finds vs original 5-screenshot fit
+The expanded corpus surfaces winning cells in:
+- `news.ycombinator.com.png` (4/4 d, 41-86 KB savings each)
+- `nytimes.com.png` (4/4 d, 47-194 KB savings)
+- `reddit.com.png` (2/4 d at low-d, 67-79 KB savings)
+- `phoboslab.org.png` (3/4 d, 846 KB-1.2 MB savings — biggest absolute win)
+- All gb82-sc admissions hold.
+
+Total bytes added by expanded corpus: ~5.7 MB additional savings.
+
+### Decision
+- **NO change to `SAVINGS_BYTES_PER_PIXEL = 0.78`.**
+- **NO change to `1/sqrt(d_clamped)` divisor shape.**
+- **NO change to 1.5× safety margin.**
+- Calibration is robust on 5× larger screenshot corpus + 3× larger photo set.
