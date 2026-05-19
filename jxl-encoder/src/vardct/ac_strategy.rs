@@ -15,7 +15,7 @@
 
 use super::ac_strategy_search::{
     find_best_16x16_transform, find_best_32x32_transform, find_best_64x64_transform,
-    try_merge_16x16, try_merge_32x32,
+    try_merge_16x16, try_merge_32x32, try_merge_dct64_halves,
 };
 use super::afv::afv_transform_from_pixels;
 use super::block_extract::*;
@@ -2058,6 +2058,33 @@ fn process_tile(
         let mut cx = 0;
         while cx + 7 < tile_w {
             find_best_64x64_transform(
+                *xyb,
+                stride,
+                tile_bx,
+                tile_by,
+                cx,
+                cy,
+                distance,
+                quant_field_float,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                profile,
+            );
+            // W44-61 (2026-05-19): port libjxl's non-aligned TryMergeAcs
+            // pass for DCT64X32 / DCT32X64 (enc_ac_strategy.cc:1023-1027).
+            // Tries each half (left/right for DCT64X32, top/bottom for
+            // DCT32X64) as a replacement for the current paint over that
+            // half — catches cases where the three-way comparison inside
+            // find_best_64x64 picked DCT64X64 or sub-blocks but a single
+            // 32×64 / 64×32 half is still cheaper. Gated by the existing
+            // try_dct64 effort knob.
+            try_merge_dct64_halves(
                 *xyb,
                 stride,
                 tile_bx,
