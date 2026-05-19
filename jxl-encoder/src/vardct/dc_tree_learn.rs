@@ -673,36 +673,63 @@ fn build_tree_recursive(
 ///
 /// Iterates the per-predictor residual tokens (populated by
 /// `gather_dc_samples_variable`) and returns `[cost_pred_0, ..cost_pred_13]`.
-/// Each entry is the entropy in bits of the residual-token histogram for that
-/// predictor on the subset.
+/// Each entry is the entropy of the residual-token histogram for that
+/// predictor on the subset, plus the extra-bits cost.
 ///
-/// Mirrors libjxl `FindBestSplit` inner loop (`enc_ma.cc:340-403`) which
-/// computes `EstimateBits(counts.data() + pred * max_symbols, max_symbols)`
-/// per predictor.
+/// Mirrors libjxl `FindBestSplit` inner loop (`enc_ma.cc:206-227, 340-403`)
+/// which computes both `EstimateBits` and tracks `tot_extra_bits[pred]`
+/// separately. The HybridUint {4,1,2} extra-bits cost per token of value v
+/// is `floor_log2(v) - 4` bits for v >= 16, 0 otherwise.
 fn estimate_subset_cost_per_predictor(
     samples: &DcTreeSamples,
     indices: &[usize],
-    max_token: u32,
+    _max_token: u32,
 ) -> [f64; NUM_PREDICTORS_VARIABLE] {
     let mut out = [0.0f64; NUM_PREDICTORS_VARIABLE];
     if indices.is_empty() || !samples.has_variable_residuals() {
         return out;
     }
-    let histogram_size = (max_token + 1) as usize;
+
+    // Find true max token across all predictors for histogram sizing.
+    // Mirrors libjxl `enc_ma.cc:207-213`. Without this, large residuals
+    // overflow the histogram and entropy is undercounted, making
+    // wide-distribution predictors look misleadingly cheap.
+    let mut true_max_token: u32 = 0;
+    for pred_tokens in &samples.residual_tokens_per_predictor {
+        for &idx in indices {
+            let t = pred_tokens[idx];
+            if t > true_max_token {
+                true_max_token = t;
+            }
+        }
+    }
+    let histogram_size = (true_max_token + 1) as usize;
     let mut counts = vec![0u32; histogram_size];
 
     for pred in 0..NUM_PREDICTORS_VARIABLE {
         counts.iter_mut().for_each(|c| *c = 0);
         let mut total = 0u32;
+        let mut extra_bits = 0.0f64;
         let tokens = &samples.residual_tokens_per_predictor[pred];
         for &idx in indices {
             let tok = tokens[idx];
-            if (tok as usize) < histogram_size {
-                counts[tok as usize] += 1;
-                total += 1;
+            counts[tok as usize] += 1;
+            total += 1;
+            // HybridUint {4,1,2} extra bits: tokens >= 16 carry MSB+LSB bits.
+            // libjxl `enc_ma.cc:218-225` tracks `extra_bits = rt.nbits * count`.
+            // For our gather config (split_exponent=4, msb=1, lsb=2):
+            //   token < 16: no extra bits
+            //   token >= 16: bits in the encoded residual = (token-16)/3 * 1 + 2
+            //                ≈ token-15 bits at worst (we approximate as the
+            //                payload-bit count, sufficient for relative ranking).
+            if tok >= GATHER_SPLIT {
+                let n_minus_split_exp = (tok - GATHER_SPLIT) / (GATHER_MSB_IN_TOKEN + GATHER_LSB_IN_TOKEN);
+                // Extra bits = msb_count_used + lsb_count
+                // For msb=1, lsb=2: extra_bits = 1 + 2 = 3 per token of this magnitude class
+                extra_bits += (n_minus_split_exp as f64) + 2.0;
             }
         }
-        out[pred] = estimate_bits(&counts, total);
+        out[pred] = estimate_bits(&counts, total) + extra_bits;
     }
     out
 }
@@ -813,11 +840,14 @@ fn find_best_split_variable(
             let new_cost = lcost + rcost;
             let gain = base_cost - new_cost;
 
-            // Split overhead — same heuristic as gradient-only path.
-            // Could be refined to libjxl's threshold + extra-bits-per-pred
-            // accounting (enc_ma.cc:441-455), but ~10 bits is a safe lower
-            // bound that keeps screenshot LfGlobal collapsing aggressively.
-            let overhead = 10.0;
+            // Split overhead estimate (libjxl `enc_ma.cc:441-455`):
+            //   internal node tokens: property + splitval = ~10-20 bits
+            //   2× leaf delta vs 1 leaf: ~30-50 bits of leaf tokens
+            //   new ANS histogram per added context: ~30-50 bits
+            // Plus the libjxl gate adds `threshold` (we use 0). Net 60-100 bits.
+            // Without this, Variable mode over-splits on heavily-quantized DC
+            // (terminal e6 d=6) and bloats LfGlobal (~1 KB vs cjxl ~15 B).
+            let overhead = 60.0;
             let net_gain = gain - overhead;
 
             if net_gain > best_gain {
