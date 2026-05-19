@@ -2598,88 +2598,104 @@ fn find_best_32x32_transform_impl(
         if let [Ok(tx), Ok(ty)] = [
             parts.first().copied().unwrap_or("").parse::<usize>(),
             parts.get(1).copied().unwrap_or("").parse::<usize>(),
-        ] && parts.len() == 2 && abs_bx == tx && abs_by == ty {
-                        let mut s = String::new();
-                        s.push_str(&format!("\n=== W44-21 DUMP at (bx={abs_bx}, by={abs_by}) d={distance} ===\n"));
-                        s.push_str(&format!("OUR CONTEXT:\n  scaled_constants = (info_loss_mul={:.6}, cost_delta={:.6}, zeros_mul={:.6})\n",
+        ] && parts.len() == 2
+            && abs_bx == tx
+            && abs_by == ty
+        {
+            let mut s = String::new();
+            s.push_str(&format!(
+                "\n=== W44-21 DUMP at (bx={abs_bx}, by={abs_by}) d={distance} ===\n"
+            ));
+            s.push_str(&format!("OUR CONTEXT:\n  scaled_constants = (info_loss_mul={:.6}, cost_delta={:.6}, zeros_mul={:.6})\n",
                             scaled_constants.0, scaled_constants.1, scaled_constants.2));
-                        s.push_str(&format!("  mul32x32={mul32x32:.6} mul32x16={mul32x16:.6}\n"));
-                        s.push_str(&format!("  use_pixel_domain={use_pixel_domain} ytox={ytox} ytob={ytob}\n"));
-                        s.push_str(&format!("  entropy_mul_table: DCT8={:.4} DCT16X8={:.4} DCT16X16={:.4} DCT32X32={:.4} DCT16X32={:.4}\n",
+            s.push_str(&format!(
+                "  mul32x32={mul32x32:.6} mul32x16={mul32x16:.6}\n"
+            ));
+            s.push_str(&format!(
+                "  use_pixel_domain={use_pixel_domain} ytox={ytox} ytob={ytob}\n"
+            ));
+            s.push_str(&format!("  entropy_mul_table: DCT8={:.4} DCT16X8={:.4} DCT16X16={:.4} DCT32X32={:.4} DCT16X32={:.4}\n",
                             profile.entropy_mul_table.dct8,
                             profile.entropy_mul_table.dct16x8,
                             profile.entropy_mul_table.dct16x16,
                             profile.entropy_mul_table.dct32x32,
                             profile.entropy_mul_table.dct16x32,
                         ));
-                        s.push_str("\nQUANT_FIELD (4x4 of 8x8 positions):\n");
-                        for iy in 0..4 {
-                            s.push_str("  ");
-                            for ix in 0..4 {
-                                let idx = (abs_by + iy) * xsize_blocks + (abs_bx + ix);
-                                s.push_str(&format!("{:>10.4} ", quant_field[idx]));
-                            }
-                            s.push('\n');
-                        }
-                        s.push_str("\nMASKING (per-block, 4x4 of 8x8 positions):\n");
-                        for iy in 0..4 {
-                            s.push_str("  ");
-                            for ix in 0..4 {
-                                let idx = (abs_by + iy) * xsize_blocks + (abs_bx + ix);
-                                s.push_str(&format!("{:>10.4} ", masking[idx]));
-                            }
-                            s.push('\n');
-                        }
-                        if let Some(m1) = mask1x1 {
-                            s.push_str("\nMASK1X1 (8x8 subsampled — first pixel of each 8x8 block):\n");
-                            for iy in 0..4 {
-                                s.push_str("  ");
-                                for ix in 0..4 {
-                                    let py = (abs_by + iy) * 8;
-                                    let px = (abs_bx + ix) * 8;
-                                    let idx = py * mask1x1_stride + px;
-                                    s.push_str(&format!("{:>10.4} ", m1[idx]));
-                                }
-                                s.push('\n');
-                            }
-                            s.push_str("\nMASK1X1 8x8 means (Y channel only):\n");
-                            for iy in 0..4 {
-                                s.push_str("  ");
-                                for ix in 0..4 {
-                                    let mut sum = 0.0f32;
-                                    for dy in 0..8 {
-                                        for dx in 0..8 {
-                                            let py = (abs_by + iy) * 8 + dy;
-                                            let px = (abs_bx + ix) * 8 + dx;
-                                            sum += m1[py * mask1x1_stride + px];
-                                        }
-                                    }
-                                    s.push_str(&format!("{:>10.4} ", sum / 64.0));
-                                }
-                                s.push('\n');
+            s.push_str("\nQUANT_FIELD (4x4 of 8x8 positions):\n");
+            for iy in 0..4 {
+                s.push_str("  ");
+                for ix in 0..4 {
+                    let idx = (abs_by + iy) * xsize_blocks + (abs_bx + ix);
+                    s.push_str(&format!("{:>10.4} ", quant_field[idx]));
+                }
+                s.push('\n');
+            }
+            s.push_str("\nMASKING (per-block, 4x4 of 8x8 positions):\n");
+            for iy in 0..4 {
+                s.push_str("  ");
+                for ix in 0..4 {
+                    let idx = (abs_by + iy) * xsize_blocks + (abs_bx + ix);
+                    s.push_str(&format!("{:>10.4} ", masking[idx]));
+                }
+                s.push('\n');
+            }
+            if let Some(m1) = mask1x1 {
+                s.push_str("\nMASK1X1 (8x8 subsampled — first pixel of each 8x8 block):\n");
+                for iy in 0..4 {
+                    s.push_str("  ");
+                    for ix in 0..4 {
+                        let py = (abs_by + iy) * 8;
+                        let px = (abs_bx + ix) * 8;
+                        let idx = py * mask1x1_stride + px;
+                        s.push_str(&format!("{:>10.4} ", m1[idx]));
+                    }
+                    s.push('\n');
+                }
+                s.push_str("\nMASK1X1 8x8 means (Y channel only):\n");
+                for iy in 0..4 {
+                    s.push_str("  ");
+                    for ix in 0..4 {
+                        let mut sum = 0.0f32;
+                        for dy in 0..8 {
+                            for dx in 0..8 {
+                                let py = (abs_by + iy) * 8 + dy;
+                                let px = (abs_bx + ix) * 8 + dx;
+                                sum += m1[py * mask1x1_stride + px];
                             }
                         }
-                        s.push_str("\nENTROPY_ESTIMATE (16 per-8x8 sub-costs in 4x4 grid, populated by find_best_16x16):\n");
-                        if let Some((ox, oy)) = cache_offset {
-                            for iy in 0..4 {
-                                s.push_str("  ");
-                                for ix in 0..4 {
-                                    s.push_str(&format!("{:>12.2} ", scratch.entropy_estimate[(oy+iy) * 8 + (ox+ix)]));
-                                }
-                                s.push('\n');
-                            }
-                        } else {
-                            s.push_str("  <no cache_offset; cannot read>\n");
-                        }
-                        s.push_str(&format!("\nQUADRANT_COSTS (2x2):\n  [0][0]={:.2}  [0][1]={:.2}\n  [1][0]={:.2}  [1][1]={:.2}\n",
+                        s.push_str(&format!("{:>10.4} ", sum / 64.0));
+                    }
+                    s.push('\n');
+                }
+            }
+            s.push_str("\nENTROPY_ESTIMATE (16 per-8x8 sub-costs in 4x4 grid, populated by find_best_16x16):\n");
+            if let Some((ox, oy)) = cache_offset {
+                for iy in 0..4 {
+                    s.push_str("  ");
+                    for ix in 0..4 {
+                        s.push_str(&format!(
+                            "{:>12.2} ",
+                            scratch.entropy_estimate[(oy + iy) * 8 + (ox + ix)]
+                        ));
+                    }
+                    s.push('\n');
+                }
+            } else {
+                s.push_str("  <no cache_offset; cannot read>\n");
+            }
+            s.push_str(&format!("\nQUADRANT_COSTS (2x2):\n  [0][0]={:.2}  [0][1]={:.2}\n  [1][0]={:.2}  [1][1]={:.2}\n",
                             quadrant_cost[0][0], quadrant_cost[0][1], quadrant_cost[1][0], quadrant_cost[1][1]));
-                        s.push_str(&format!("\nFINAL COSTS:\n  entropy_32x32={entropy_32x32:.2}\n  entropy_32x16_0(left)={entropy_32x16_0:.2}  entropy_32x16_1(right)={entropy_32x16_1:.2}\n  entropy_16x32_0(top)={entropy_16x32_0:.2}  entropy_16x32_1(bot)={entropy_16x32_1:.2}\n"));
-                        s.push_str(&format!("  sub_left={sub_left:.2} sub_right={sub_right:.2} sub_top={sub_top:.2} sub_bottom={sub_bottom:.2}\n"));
-                        s.push_str(&format!("  cost_sub={cost_sub:.2} cost_jxn={cost_jxn:.2} cost_nxj={cost_nxj:.2}\n"));
-                        s.push_str(&format!("  DECISION: 32x32_wins={}, jxN_better_than_nxJ={}\n",
-                            entropy_32x32 < cost_jxn && entropy_32x32 < cost_nxj,
-                            cost_jxn < cost_nxj));
-                        eprintln!("{s}");
+            s.push_str(&format!("\nFINAL COSTS:\n  entropy_32x32={entropy_32x32:.2}\n  entropy_32x16_0(left)={entropy_32x16_0:.2}  entropy_32x16_1(right)={entropy_32x16_1:.2}\n  entropy_16x32_0(top)={entropy_16x32_0:.2}  entropy_16x32_1(bot)={entropy_16x32_1:.2}\n"));
+            s.push_str(&format!("  sub_left={sub_left:.2} sub_right={sub_right:.2} sub_top={sub_top:.2} sub_bottom={sub_bottom:.2}\n"));
+            s.push_str(&format!(
+                "  cost_sub={cost_sub:.2} cost_jxn={cost_jxn:.2} cost_nxj={cost_nxj:.2}\n"
+            ));
+            s.push_str(&format!(
+                "  DECISION: 32x32_wins={}, jxN_better_than_nxJ={}\n",
+                entropy_32x32 < cost_jxn && entropy_32x32 < cost_nxj,
+                cost_jxn < cost_nxj
+            ));
+            eprintln!("{s}");
         }
     }
 
@@ -3350,23 +3366,302 @@ fn find_best_64x64_transform_impl(
     );
 
     // Three-way comparison matching libjxl FindBestFirstLevelDivisionForSquare.
+    // After setting, update entropy_estimate to reflect the new paint so any
+    // follow-on pass (W44-61 try_merge_dct64_halves) sees the correct
+    // per-position cost summary. Mirrors libjxl's `SetEntropyForTransform`
+    // calls (`enc_ac_strategy.cc:798-822`).
     if entropy_64x64 < cost_jxn && entropy_64x64 < cost_nxj {
         ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X64);
+        set_entropy_for_transform(&mut scratch.entropy_estimate, cx, cy, 8, 8, entropy_64x64);
     } else if cost_jxn < cost_nxj {
         // Vertical split (DCT64X32) — try each half independently.
         if entropy_64x32_0 < sub_left {
             ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X32);
+            set_entropy_for_transform(&mut scratch.entropy_estimate, cx, cy, 4, 8, entropy_64x32_0);
         }
         if entropy_64x32_1 < sub_right {
             ac_strategy.set(abs_bx + 4, abs_by, RAW_STRATEGY_DCT64X32);
+            set_entropy_for_transform(
+                &mut scratch.entropy_estimate,
+                cx + 4,
+                cy,
+                4,
+                8,
+                entropy_64x32_1,
+            );
         }
     } else {
         // Horizontal split (DCT32X64) — try each half independently.
         if entropy_32x64_0 < sub_top {
             ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X64);
+            set_entropy_for_transform(&mut scratch.entropy_estimate, cx, cy, 8, 4, entropy_32x64_0);
         }
         if entropy_32x64_1 < sub_bottom {
             ac_strategy.set(abs_bx, abs_by + 4, RAW_STRATEGY_DCT32X64);
+            set_entropy_for_transform(
+                &mut scratch.entropy_estimate,
+                cx,
+                cy + 4,
+                8,
+                4,
+                entropy_32x64_1,
+            );
+        }
+    }
+}
+
+// ─── DCT64X32 / DCT32X64 non-aligned merge pass (W44-61) ────────────────────
+
+/// libjxl `ProcessRectACS` non-aligned TryMergeAcs pass for DCT64X32 /
+/// DCT32X64. Port of `enc_ac_strategy.cc:1023-1027` for the DCT64X32 and
+/// DCT32X64 entries of `kTransformsForMerge` (table at lines 917-918).
+///
+/// Background (W44-60 / W44-61, 2026-05-19): our `find_best_64x64_transform`
+/// is the analog of libjxl's `FindBestFirstLevelDivisionForSquare(blocks=8)`
+/// (lines 952-955). It runs the three-way DCT64X64 / DCT64X32-split /
+/// DCT32X64-split comparison and picks per-half DCT64X32 or DCT32X64 when
+/// either split wins. But libjxl ALSO runs `TryMergeAcs(DCT64X32)` at
+/// (cy=0, cx=0) and (cy=0, cx=4), and `TryMergeAcs(DCT32X64)` at
+/// (cy=4, cx=0) (line 1023-1026), INDEPENDENT of the three-way comparison.
+/// These extra positions catch the case where the three-way comparison
+/// settled on DCT64X64 or one of the splits, but the OTHER orientation's
+/// half is still cheaper than the resulting sub-blocks.
+///
+/// Call counts (W44-60 finding): libjxl evaluates DCT64X32 ≈ 256 times and
+/// DCT32X64 ≈ 192 times per representative photo; we previously evaluated
+/// each ≈ 128 times (one path per 64×64 tile, via the three-way only).
+/// This function closes that gap.
+///
+/// Algorithm: for each candidate (DCT64X32 left/right, DCT32X64 top/bottom),
+/// check that the half-region's OUTER boundaries are clean (no multi-block
+/// transform crosses them) and that no multi-block transform inside the
+/// half-region straddles the OPPOSITE split boundary (this mirrors libjxl's
+/// `priority[]` rejection at `enc_ac_strategy.cc:629-633`). Sum
+/// `scratch.entropy_estimate` over the half, evaluate the candidate via
+/// `estimate_entropy_with_mask`, and replace if cheaper. Updates
+/// `entropy_estimate` so subsequent candidates see the new state.
+///
+/// PRECONDITIONS:
+/// - `bx0 + cx + 7 < xsize_blocks && by0 + cy + 7 < ysize_blocks`
+///   (i.e., this is a full 64×64 region where `find_best_64x64_transform`
+///   already ran and populated `scratch.entropy_estimate`).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn try_merge_dct64_halves(
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) {
+    let use_pixel_domain = mask1x1.is_some();
+    let scaled_constants = if use_pixel_domain {
+        compute_scaled_constants(
+            distance,
+            (
+                profile.k_info_loss_mul_base,
+                profile.k_zeros_mul_base,
+                profile.k_cost_delta_base,
+            ),
+        )
+    } else {
+        COEFF_DOMAIN_CONSTANTS
+    };
+    // entropy_mul for DCT64X32 / DCT32X64 in pixel-domain mode comes from
+    // the profile's entropy_mul_table (libjxl: 2.25). In coefficient-domain
+    // we apply the distance-shaped multiplier matching `find_best_64x64`.
+    let mul_half: f32 = if use_pixel_domain {
+        1.0
+    } else {
+        let k64x32mul1: f32 = -0.75;
+        let k64x32mul2: f32 = 1.2;
+        let k64x32base: f32 = 2.5;
+        k64x32mul2 + k64x32mul1 / (distance + k64x32base)
+    };
+
+    let abs_bx = bx0 + cx;
+    let abs_by = by0 + cy;
+
+    // ── DCT64X32 left (cov_x=4, cov_y=8, top-left = (abs_bx, abs_by)) ──
+    // libjxl `enc_ac_strategy.cc:1024` with mt.type=DCT64X32, (cy=0, cx=0).
+    // Outer edges of the 4x8 region: vertical at cx=0 (outer-left of tile,
+    // 64-aligned, always clean) and cx+4=4 (must be clean inside the tile);
+    // horizontal at cy=0 (outer-top, 64-aligned) and cy+8=8 (outer-bottom,
+    // 64-aligned). The only inner-crossing risk is a multi-block transform
+    // straddling cx+4 (= cx + blocks_half × 8 in pixel terms).
+    if !ac_strategy.multi_block_crosses_vertical_boundary(abs_bx + 4, abs_by, abs_by + 8) {
+        let mut cur = 0.0f32;
+        for iy in 0..8 {
+            for ix in 0..4 {
+                cur += scratch.entropy_estimate[(cy + iy) * 8 + (cx + ix)];
+            }
+        }
+        // Skip if current paint is already DCT64X32 in this exact slot
+        // (libjxl's `priority` short-circuit equivalent).
+        if !(ac_strategy.is_first(abs_bx, abs_by)
+            && ac_strategy.raw_strategy(abs_bx, abs_by) == RAW_STRATEGY_DCT64X32)
+        {
+            let cand = mul_half
+                * estimate_entropy_with_mask(
+                    RAW_STRATEGY_DCT64X32,
+                    xyb,
+                    stride,
+                    abs_bx,
+                    abs_by,
+                    distance,
+                    quant_field,
+                    xsize_blocks,
+                    masking,
+                    ytox,
+                    ytob,
+                    mask1x1,
+                    mask1x1_stride,
+                    0.0,
+                    scaled_constants,
+                    &profile.entropy_mul_table,
+                    scratch,
+                );
+            if cand < cur {
+                ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X32);
+                set_entropy_for_transform(&mut scratch.entropy_estimate, cx, cy, 4, 8, cand);
+            }
+        }
+    }
+
+    // ── DCT64X32 right (cov_x=4, cov_y=8, top-left = (abs_bx+4, abs_by)) ──
+    // libjxl `enc_ac_strategy.cc:1024` with mt.type=DCT64X32, (cy=0, cx=4).
+    // Vertical inner edges: cx+4 (split between halves) and cx+8 (outer-
+    // right, 64-aligned). Both should be clean by now (the left-half merge
+    // either left no crosser at cx+4 or our pre-check refused it).
+    if !ac_strategy.multi_block_crosses_vertical_boundary(abs_bx + 4, abs_by, abs_by + 8) {
+        let mut cur = 0.0f32;
+        for iy in 0..8 {
+            for ix in 4..8 {
+                cur += scratch.entropy_estimate[(cy + iy) * 8 + (cx + ix)];
+            }
+        }
+        if !(ac_strategy.is_first(abs_bx + 4, abs_by)
+            && ac_strategy.raw_strategy(abs_bx + 4, abs_by) == RAW_STRATEGY_DCT64X32)
+        {
+            let cand = mul_half
+                * estimate_entropy_with_mask(
+                    RAW_STRATEGY_DCT64X32,
+                    xyb,
+                    stride,
+                    abs_bx + 4,
+                    abs_by,
+                    distance,
+                    quant_field,
+                    xsize_blocks,
+                    masking,
+                    ytox,
+                    ytob,
+                    mask1x1,
+                    mask1x1_stride,
+                    0.0,
+                    scaled_constants,
+                    &profile.entropy_mul_table,
+                    scratch,
+                );
+            if cand < cur {
+                ac_strategy.set(abs_bx + 4, abs_by, RAW_STRATEGY_DCT64X32);
+                set_entropy_for_transform(&mut scratch.entropy_estimate, cx + 4, cy, 4, 8, cand);
+            }
+        }
+    }
+
+    // ── DCT32X64 top (cov_x=8, cov_y=4, top-left = (abs_bx, abs_by)) ──
+    // libjxl iteration would call FindBestFirstLevelDivisionForSquare(8) at
+    // (cy=0, cx=0) here (not TryMergeAcs); we already did that via
+    // find_best_64x64. But if the left/right DCT64X32 merges above set
+    // anything, the situation is now mixed and re-evaluating DCT32X64 top
+    // would conflict (DCT64X32 cov_y=8 straddles cy+4). The horizontal-
+    // boundary check at cy+4 catches that.
+    if !ac_strategy.multi_block_crosses_horizontal_boundary(abs_bx, abs_by + 4, abs_bx + 8) {
+        let mut cur = 0.0f32;
+        for iy in 0..4 {
+            for ix in 0..8 {
+                cur += scratch.entropy_estimate[(cy + iy) * 8 + (cx + ix)];
+            }
+        }
+        if !(ac_strategy.is_first(abs_bx, abs_by)
+            && ac_strategy.raw_strategy(abs_bx, abs_by) == RAW_STRATEGY_DCT32X64)
+        {
+            let cand = mul_half
+                * estimate_entropy_with_mask(
+                    RAW_STRATEGY_DCT32X64,
+                    xyb,
+                    stride,
+                    abs_bx,
+                    abs_by,
+                    distance,
+                    quant_field,
+                    xsize_blocks,
+                    masking,
+                    ytox,
+                    ytob,
+                    mask1x1,
+                    mask1x1_stride,
+                    0.0,
+                    scaled_constants,
+                    &profile.entropy_mul_table,
+                    scratch,
+                );
+            if cand < cur {
+                ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X64);
+                set_entropy_for_transform(&mut scratch.entropy_estimate, cx, cy, 8, 4, cand);
+            }
+        }
+    }
+
+    // ── DCT32X64 bottom (cov_x=8, cov_y=4, top-left = (abs_bx, abs_by+4)) ──
+    // libjxl `enc_ac_strategy.cc:1024` with mt.type=DCT32X64, (cy=4, cx=0).
+    // This is the position our pre-W44-61 path never evaluated.
+    if !ac_strategy.multi_block_crosses_horizontal_boundary(abs_bx, abs_by + 4, abs_bx + 8) {
+        let mut cur = 0.0f32;
+        for iy in 4..8 {
+            for ix in 0..8 {
+                cur += scratch.entropy_estimate[(cy + iy) * 8 + (cx + ix)];
+            }
+        }
+        if !(ac_strategy.is_first(abs_bx, abs_by + 4)
+            && ac_strategy.raw_strategy(abs_bx, abs_by + 4) == RAW_STRATEGY_DCT32X64)
+        {
+            let cand = mul_half
+                * estimate_entropy_with_mask(
+                    RAW_STRATEGY_DCT32X64,
+                    xyb,
+                    stride,
+                    abs_bx,
+                    abs_by + 4,
+                    distance,
+                    quant_field,
+                    xsize_blocks,
+                    masking,
+                    ytox,
+                    ytob,
+                    mask1x1,
+                    mask1x1_stride,
+                    0.0,
+                    scaled_constants,
+                    &profile.entropy_mul_table,
+                    scratch,
+                );
+            if cand < cur {
+                ac_strategy.set(abs_bx, abs_by + 4, RAW_STRATEGY_DCT32X64);
+                set_entropy_for_transform(&mut scratch.entropy_estimate, cx, cy + 4, 8, 4, cand);
+            }
         }
     }
 }
