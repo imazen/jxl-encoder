@@ -2918,6 +2918,11 @@ pub(crate) fn encode_reference_frame(
     // (enc_patch_dictionary.cc line 821: "Use gradient predictor and not Predictor::Best").
     // Tree learning can help on large ref frames (>= 128×128) with many unique patterns.
     // RCT decorrelates the Y/X/B-Y channels further for entropy coding.
+    //
+    // W44-51 investigated H3 (tree-learn Variable vs forced Gradient): byte-identical
+    // on all 16 cells (4 gb82-sc screenshots × {3,4,5,6} distances). ID3 converges to
+    // the same output as Predictor::Gradient on packed-patch ref frames. Predictor
+    // choice is not the wedge lever — patches.rs:2918 / W44-46 / W44-48 / W44-51.
     let enable_tree = use_tree_learning && ref_w >= 128 && ref_h >= 128;
     // `modular_group_size_shift` MUST match `fh.group_size_shift` (set above)
     // because `FrameEncoder` partitions independently of the FrameHeader.
