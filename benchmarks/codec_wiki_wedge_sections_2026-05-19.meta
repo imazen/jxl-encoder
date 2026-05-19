@@ -1,0 +1,197 @@
+# W44-37 codec_wiki +3-7% bytes wedge analysis
+
+date_utc: 2026-05-19
+chunk: W44-37 (investigate-only, follow-on to W44-36 ledger refresh)
+host: lilith (Linux 6.6.114.1-microsoft-standard-WSL2)
+cpu: AMD Ryzen 9 7950X (32 threads, water-cooled)
+rustc: stable
+git_parent: 626d0dc8 (bench(W44-36): cjxl_parity_ledger refresh post W44-35 — 5 OPEN→FIXED, 0 regressions)
+sibling_workspace: /home/lilith/work/zen/jxl-encoder--w44-37-codec-wiki-wedge
+features_built: parallel butteraugli-loop ssim2-loop (per-cell encoders); debug-tokens (probe)
+
+# CRITICAL CORRECTION
+The W44-36 meta-file claim of "+136-139% bytes" on codec_wiki cells is a
+SCALE/DOC ERROR. The ledger TSV `bytes_delta_pct` field at the same cells
+shows +3.20% (e6 d=4.0) to +7.34% (e7 d=4.0). All five OPEN cells are in
+the +3.2-7.3% range, NOT +136%. Verified by direct read of
+benchmarks/cjxl_parity_ledger_2026-05-18.tsv at the same rows.
+
+# Inputs
+ledger_source: benchmarks/cjxl_parity_ledger_2026-05-18.tsv (W44-36 refresh)
+open_cells_inspected:
+  - codec_wiki.png e=6 d=4.0 (+3.20% bytes, +7.96% bfly, -4.92 ssim2)
+  - codec_wiki.png e=7 d=3.0 (+4.14% bytes, +13.56% bfly, -2.65 ssim2)
+  - codec_wiki.png e=7 d=4.0 (+7.34% bytes, +7.19% bfly, -4.52 ssim2)
+  - codec_wiki.png e=7 d=5.0 (+6.16% bytes, +4.11% bfly, -2.41 ssim2)
+  - codec_wiki.png e=7 d=6.0 (+6.67% bytes, +3.26% bfly, -1.24 ssim2)
+ref_fixed_cells (sanity-check, expect parity or better):
+  - codec_wiki.png e=7 d=1.0 (-17.2% bytes, FIXED — we beat cjxl)
+  - codec_wiki.png e=7 d=2.0 (-15.1% bytes, FIXED — we beat cjxl)
+
+# Image content classification
+type: webpage screenshot, dark-mode Safari/macOS Big Sur
+size: 2560×1664 (4.26 MP, 197 KB PNG)
+content: top browser chrome (gray gradient), HUGE solid hot-pink banner
+         with anti-aliased text "Codec Wiki" + "Your Guide to All Things
+         Encoding" + "Start learning!" button. Large dark-gray footer
+         with 3-column text list (Getting Started / Filtering / More).
+         Three flat colored regions dominate; minimal gradients; text-
+         heavy in footer. Very few unique colors. Mixed text + flat color
+         + gradient (chrome window controls).
+content_class: "mixed text + flat color regions + minimal gradient"
+patches_friendly: yes (text glyphs repeat; UI controls repeat).
+
+# Tooling
+new_harness: jxl-encoder/examples/w44_37_codec_wiki_investigate.rs
+  (forked from f_d_wedge_investigate.rs; CELLS list edited + corpus path
+   changed gb82-sc/ instead of CID22/CID22-512/validation/)
+debug_probe: cjxl-rs built with --features 'parallel butteraugli-loop debug-tokens'
+extraction:
+  - jxl-inspect export-csv --per-block (AC strategy histogram, hf_mul)
+  - jxl-inspect inspect (byte_range for each section JSON)
+  - cjxl-rs (--features debug-tokens) eprintln! traces for entropy code stats
+
+# Per-section breakdown (from W44-36 ledger, all 5 OPEN cells)
+| effort | distance | dlf_global | dlf_groups   | dhf_global    | dac_groups    | dpatches  | total |
+|--------|----------|------------|--------------|---------------|---------------|-----------|-------|
+| 6      | 4.0      | +795       | -328         | +1683 (64%)   | +225 (0%)     | 0         | +2375 |
+| 7      | 3.0      | +244       | +2231        | +1104 (35%)   | +1000 (2%)    | -1590     | +2989 |
+| 7      | 4.0      | +154       | +1798        | +998 (37%)    | +2879 (8%)    | -1230     | +4599 |
+| 7      | 5.0      | +240       | +1244        | +953 (50%)    | +2050 (6%)    | -968      | +3519 |
+| 7      | 6.0      | +161       | +920         | +782 (43%)    | +2461 (8%)    | -868      | +3456 |
+
+Two distinct mechanisms emerge:
+
+# Mechanism A — e6 d=4.0 (DCT32/64 mispick, like 1418519)
+AC strategy histogram on e6 d=4.0:
+  Dct32   ours 71.5%  cjxl  1.8%   Δ +69.6pp
+  Dct64   ours  0.0%  cjxl 55.2%   Δ -55.2pp
+Varblocks: ours 10256 vs cjxl 8007 (+28.1%) — we use MORE varblocks because
+each DCT32 covers 16 8x8 blocks but DCT64 covers 64 8x8 blocks.
+
+This is the SAME failure as 1418519 W44-34/W44-35 (try_dct64 hint), but
+the W44-35 smart-dispatch hint evidently doesn't fire on codec_wiki at
+e6 (or fires but the mask1x1 threshold doesn't match screenshot content).
+
+# Mechanism B — e7 d=3-6 (entropy + LF + patches at parity AC strategy)
+AC strategy histograms at e7 d=3-6:
+  Dct32   Δ +0.1pp to +0.2pp  (essentially parity)
+  Dct64x32  Δ -1.0pp           (small under-pick)
+  Dct32x64  Δ +1.1pp to +1.3pp (small over-pick)
+
+AC STRATEGY IS AT PARITY at e7 d=3-6. The wedge has three distributed
+components:
+1. lf_groups overspend +920 to +2231 bytes
+2. ac_groups overspend +1000 to +2879 bytes
+3. patches counter-savings: cjxl uses MORE bytes on patches (-868 to -1590)
+   but evidently saves more in AC by removing repeat patterns.
+
+hf_global (+782 to +1104, 35-50% wider) accounts for a SMALLER absolute
+share than lf_groups/ac_groups at e7, but is the largest RELATIVE delta.
+
+# Debug-tokens probe (codec_wiki e7 d=4.0, ours hf_global = 4324 bytes)
+write_entropy_code_ans calls during encode:
+  1. DC stream:   43 contexts → 8 hists, ctx_map=132 bits, hists=3748 bits
+  2. (small):     10 contexts → 7 hists, ctx_map=33 bits, hists=538 bits
+  3. patches:     45 contexts → 23 hists, ctx_map=242 bits, hists=4520 bits
+  4. (small):      8 contexts → 4 hists, ctx_map=19 bits, hists=342 bits
+  5. AC stream: 6435 contexts → 71 hists, ctx_map=16528 bits, hists=10606 bits
+                                          (largest single block by far)
+
+AC entropy code = 6435 contexts (= 13 block_ctxs × 495 nzero+zero-density)
+clusters to 71 histograms. The 16528-bit (2066 byte) context map dominates
+that section. cjxl's count of histograms is not directly measurable from
+jxl-inspect (annotations field is empty for HfGlobal), but the +35-50%
+hf_global ratio suggests cjxl uses fewer histograms OR a more compact
+context map representation OR fewer block contexts (smaller num_ctxs).
+
+# Patches story (W44-20 already RULED OUT coverage hypothesis)
+Per W44-20 (memo:w44_20_codec_wiki_patches_coverage_2026-05-19), our patches
+detector saves MORE bytes than cjxl's on codec_wiki when measured via
+--patches=0 vs --patches=1 byte deltas. But the ledger shows cjxl's
+patches section is LARGER than ours (+868 to +1590 bytes per cell). This
+is consistent with cjxl admitting more patterns into its ref frame: each
+admitted pattern costs ref-frame bytes but saves AC-stream bytes. The
+question of net saving was already settled (W44-20: ours saves equally
+or more on codec_wiki).
+
+# Top-3 hypotheses (ranked by likelihood)
+
+## H1 [LIKELY] — Block context map under-clustering hurts hf_global+ac_groups
+Mechanism B's bytes go primarily to ac_groups (+1000 to +2879) with
+secondary hf_global overspend (+998 average). Our block context model
+produces 13 block contexts at codec_wiki dimensions (clamped at 8 luma
++ 5 chroma per ac_context.rs:231-232). This determines BOTH:
+  (a) hf_global entropy code size (more contexts → larger context map +
+      more histogram bits)
+  (b) ac_groups per-block bit cost (better-fitting histograms reduce
+      coefficient bits)
+
+cjxl may compute fewer contexts for this content (text-heavy + flat
+regions) and pay LESS hf_global cost while still encoding ac_groups
+efficiently. Verify by adding instrumentation that prints
+`num_ctxs / num_qf_segments` for both encoders. EV: HIGH.
+
+## H2 [LIKELY] — lf_groups overspend = DC quantization or LF coefficient cost
++920 to +2231 bytes per cell in lf_groups. Codec_wiki has large flat
+color regions where DC values are highly repetitive but cjxl encodes
+them more compactly. Could be:
+  (a) cjxl's LF context tree (modular tree learning on DC) is more
+      efficient for this content class
+  (b) DC quant is set differently (we don't have a custom DC quant table
+      derivation for screenshot content)
+  (c) cjxl uses LF prediction better (Weighted predictor for repeated
+      flat-color DC values)
+
+Compare DC modular tree learned in both encoders. EV: MEDIUM-HIGH.
+
+## H3 [LESS LIKELY] — Patches admit/subtract policy mismatches AC distribution
+cjxl admits more patches (larger patches section, -868 to -1590 bytes
+delta relative to us). With more patches admitted, the subtract step
+removes more high-energy patterns from the AC residual, leaving a SMALLER
+and more concentrated AC distribution that compresses better. We could
+measure: encode codec_wiki with all 59 of our detected patterns + cjxl's
+patterns and see whether the additional patches (which our cost gate
+drops as "not worth it") would shrink ac_groups more than they enlarge
+the patches section. EV: MEDIUM (W44-20 partially explored this).
+
+# Recommended fix chunk (next agent)
+
+**Type: Diagnostic + small parity audit (~1d, no production code changes
+expected on first pass).**
+
+Step 1: Verify H1 by adding a print of `block_ctx_map.num_ctxs` and the
+number of clustered AC histograms for both ours and cjxl at e7 d=4.
+For cjxl: reverse-engineer from the encoded bitstream via a patched
+jxl-inspect or write a small zenjxl-decoder hook to dump the same.
+
+Step 2: If cjxl uses materially fewer block contexts (e.g. 5-6 vs our 13),
+investigate the libjxl heuristic at `enc_heuristics.cc:69-204`
+(FindBestBlockEntropyModel) — our port may differ on screenshot content.
+Specifically check `nb_clusters_luma` and `nb_clusters_chroma` clamping
++ the median-cut QF threshold derivation.
+
+Step 3: If H1 confirmed, the fix is a clamp adjustment or a content-
+adaptive cluster count (use zenanalyze features like
+`palette_log2_size`, `flat_color_block_ratio`, or `high_freq_energy_ratio`
+to dial down cluster count for screenshot-class content).
+
+# Constraints
+- READ-ONLY src/. New harness file + new entry in Cargo.toml only.
+- jj on main via sibling workspace. Find-only, no production-code touches.
+- libjxl is Google-org repo → no AI attribution on any commit affecting
+  the libjxl port logic.
+
+# Reproducer
+cargo run --release -p jxl-encoder --example w44_37_codec_wiki_investigate \
+    --features 'butteraugli-loop ssim2-loop' \
+    -- --output benchmarks/codec_wiki_wedge_sections_2026-05-19.tsv
+
+# Honest-stop note
+This memo is investigate-only. The dominant wedge mechanism (B, at e7) is
+HYPOTHESIS-level only; H1 has not been verified by measuring cjxl's
+number of histograms. The mechanism (A) at e6 d=4.0 is well-understood
+(DCT32/DCT64 mispick, same root cause as 1418519 already addressed by
+W44-35 try_dct64 hint that evidently doesn't extend to e6). Extending
+the W44-35 hint to e6 is straightforward and would close ~1 of the 5
+OPEN cells (e6 d=4.0).

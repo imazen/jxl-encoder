@@ -820,6 +820,14 @@ path = "examples/pixel_loss_magetypes_bench.rs"
 name = "f_d_wedge_investigate"
 path = "examples/f_d_wedge_investigate.rs"
 
+# W44-37 codec_wiki wedge investigation — same harness as
+# f_d_wedge_investigate.rs but CELLS list + source dir point at the
+# 5 remaining OPEN codec_wiki cells from the W44-36 ledger. See the
+# example header for the per-cell deltas and methodology.
+[[example]]
+name = "w44_37_codec_wiki_investigate"
+path = "examples/w44_37_codec_wiki_investigate.rs"
+
 # W44-9 Sub-chunk B: A/B fused vs unfused DCT8 entropy.
 # Tests whether FMA op-ordering in the fused-DCT8 AVX2 kernel
 # (jxl_simd::fused_dct8_entropy) gives DCT8 a borderline cost
