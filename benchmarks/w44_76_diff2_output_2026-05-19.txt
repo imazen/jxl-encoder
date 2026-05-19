@@ -1,0 +1,25 @@
+=== Y-channel nzeros distribution by strategy ===
+strat  ours_n  ours_total  ours_mean  cjxl_n  cjxl_total  cjxl_mean  AC_tokens_ours  AC_tokens_cjxl
+    0      9         67        7.4       12         91        7.6         76         103
+    1      1         13       13.0        1         13       13.0         14          14
+    2      0          0        0.0        1         12       12.0          0          13
+    4     26        705       27.1       33        886       26.8        731         919
+    5    201      19543       97.2      204      19787       97.0      19744       19991
+    6      2         22       11.0        6         81       13.5         24          87
+    7      5         53       10.6        9         92       10.2         58         101
+   10     55       2604       47.3       45       2070       46.0       2659        2115
+   11     39       1801       46.2       37       1650       44.6       1840        1687
+
+Y-channel total AC-token lower-bound: ours=25146 cjxl=25030  delta=+116
+
+=== Per-(32x32-region) example: where ours=10/11 vs cjxl=5 ===
+y/4  x/4  ours_first_blocks_Y                            cjxl_first_blocks_Y
+( 0, 60): (62,0,s10,nz38)                                               (60,0,s5,nz67)
+(12, 40): (40,12,s10,nz55), (42,12,s10,nz59)                            (40,12,s5,nz108)
+(24, 20): (20,24,s10,nz73), (22,24,s10,nz62)                            (20,24,s5,nz111)
+(36, 32): (32,36,s10,nz45), (34,36,s10,nz63)                            (32,36,s5,nz93)
+(48, 40): (40,48,s10,nz34), (42,48,s10,nz44)                            (40,48,s5,nz83)
+(56, 36): (38,56,s10,nz50)                                              (36,56,s5,nz105)
+(60, 16): (16,60,s11,nz56), (16,62,s11,nz49)                            (16,60,s5,nz107)
+(60, 44): (44,60,s10,nz47), (46,60,s10,nz42)                            (44,60,s5,nz89)
+Total 32x32 regions where ours-split vs cjxl-DCT32X32: 8

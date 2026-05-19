@@ -1,0 +1,62 @@
+diff --git a/lib/jxl/enc_entropy_coder.cc b/lib/jxl/enc_entropy_coder.cc
+index 65cfc36..c55a953 100644
+--- a/lib/jxl/enc_entropy_coder.cc
++++ b/lib/jxl/enc_entropy_coder.cc
+@@ -7,6 +7,9 @@
+ 
+ #include <cstddef>
+ #include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <string>
+ #include <vector>
+ 
+ #include "lib/jxl/base/rect.h"
+@@ -144,6 +147,29 @@ int32_t NumNonZero8x8ExceptDC(const int32_t* JXL_RESTRICT block,
+   return nzeros;
+ }
+ 
++// W44-76: env-var-gated per-block dump.  Set JXL_W44_76_PER_BLOCK_DUMP=<dir>
++// to record one row per (block, channel) tokenization with columns
++// (bx, by, strategy [wire enum], channel, nzeros, qac).  Coordinates are
++// absolute (rect.x0/y0 added).  Zero overhead when env var unset.
++static FILE* W44_76_DumpFile() {
++  static FILE* f = nullptr;
++  static bool initialized = false;
++  if (!initialized) {
++    initialized = true;
++    const char* dir = std::getenv("JXL_W44_76_PER_BLOCK_DUMP");
++    if (dir && *dir) {
++      std::string path = std::string(dir) + "/per_block_libjxl.tsv";
++      (void)std::system(("mkdir -p '" + std::string(dir) + "'").c_str());
++      f = std::fopen(path.c_str(), "w");
++      if (f) {
++        std::fprintf(f, "# W44-76 per-block dump (libjxl reference)\n");
++        std::fprintf(f, "bx\tby\tstrategy\tchannel\tnzeros\tqac\n");
++      }
++    }
++  }
++  return f;
++}
++
+ // The number of nonzeros of each block is predicted from the top and the left
+ // blocks, with opportune scaling to take into account the number of blocks of
+ // each strategy.  The predicted number of nonzeros divided by two is used as a
+@@ -210,6 +236,17 @@ Status TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
+                                       log2_covered_blocks, block, nzeros_stride,
+                                       row_nzeros[c] + sbx[c]);
+ 
++        // W44-76: per-block dump (raw_strategy is libjxl wire enum directly).
++        if (FILE* dump = W44_76_DumpFile()) {
++          // qf is per-pixel quant-field; per-block raw_quant is at sbx[c]
++          // (post-subsampling x).  Use row_qf which is the rect's row offset.
++          const int32_t qac_val = row_qf[sbx[c]];
++          std::fprintf(dump, "%zu\t%zu\t%u\t%d\t%d\t%d\n",
++                       rect.x0() + bx, rect.y0() + by,
++                       static_cast<unsigned>(acs.RawStrategy()), c, nzeros,
++                       qac_val);
++        }
++
+         int ord = kStrategyOrder[acs.RawStrategy()];
+         const coeff_order_t* JXL_RESTRICT order =
+             &orders[CoeffOrderOffset(ord, c)];
