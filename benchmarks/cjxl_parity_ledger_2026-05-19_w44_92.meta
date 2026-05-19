@@ -1,0 +1,72 @@
+# cjxl parity ledger — W44-92 refresh post W44-91 (zenanalyze-proxy auto-dispatch)
+#
+# W44-91 (`f4ffbb2b`) shipped zenanalyze-proxy auto-dispatch for the
+# 1189261-class high-d photo gate (closes the W44-78 follow-on "1189261
+# (mask=69) needs zenanalyze feature dispatch, not raw mask1x1 widening").
+# Gate fires when:
+#   - distance in [HIGH_D_PHOTO_MIN_DISTANCE, HIGH_D_PHOTO_W44_91_MAX_DISTANCE]
+#     (3.0..=5.0; d=6 capped to avoid the +560 B regression W44-79 measured)
+#   - mask1x1_median in [HIGH_D_PHOTO_SMOOTH_THRESHOLD, HIGH_D_PHOTO_W44_91_MASK_UPPER)
+#     (50..80; W44-79 ambiguous band)
+#   - zenanalyze proxies: colourfulness >= 80 AND flat_color_block_ratio < 0.01
+#
+# This refresh re-ran (across 4 sequential passes):
+#   1) all 16 OPEN cells from W44-79 (--update --status OPEN) → 3 closed
+#      (1189261 e5 d=4, e8 d=3, e9 d=3), 0 regressions
+#   2) all 5 photo cells × 5 efforts × 3 distances (3, 4, 5) covering the W44-91
+#      target zone (--update --distances 3,4,5) → 0 FIXED→OPEN regressions
+#   3) all 5 photo cells × 5 efforts × 15 distances (--update --images <5 photos>)
+#      → 0 FIXED→OPEN
+#   4) all 3 screenshot cells × 5 efforts × 15 distances (--update --images
+#      terminal.png,codec_wiki.png,imac_g3.png) → 0 FIXED→OPEN
+#      (4 cells of imac_g3 high-d failed metric computation: e8 d=4 and
+#      e9 d=4/5/6. These cells were already stale before W44-92 and the
+#      failure mode is pre-existing jxl-oxide decode/metric error, NOT
+#      a W44-91 regression. The last-successful commit hashes for those
+#      rows predate W44-91 — they remain stale in this ledger.)
+#
+# Final state vs W44-79 baseline:
+#   OPEN: 16 → 13 (3 closures, exactly the W44-91 targets)
+#   FIXED: 579 → 582
+#   Zero FIXED → OPEN regressions
+#
+# 3 closed cells (all 1189261):
+#   1189261.png e5 d=4: bytes +3.67% → -1.06%  bfly +3.69% → -0.49%
+#   1189261.png e8 d=3: bytes +3.55% → -0.18%  bfly +4.87% → -0.62%
+#   1189261.png e9 d=3: bytes +4.91% → +1.14%  bfly +4.87% → +2.07%
+#
+git_rev: f4ffbb2b330a36f0ee386055bb5577178a9ab4d6 (W44-91 main)
+production_rev: f4ffbb2b (main, W44-91 shipped)
+baseline_for_diff: W44-79 (cjxl_parity_ledger_2026-05-19_w44_79.tsv; W44-79
+                   was bench-and-doc-only, production was a01c4a7f W44-78;
+                   W44-79 closed nothing but documented the discriminator)
+bench_workspace: ../jxl-encoder--w44-92-ledger-refresh
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1418519.png", "1531677.png", "1189261.png", "1420710.png", "terminal.png", "codec_wiki.png", "imac_g3.png"]
+corpus: /home/lilith/work/codec-corpus
+total_rows: 595
+cells_encoded_this_run: 16 OPEN + 75 wedge zone + 375 all-photos + 225 all-screenshots + 6 imac_g3-retry = 697 encodings
+                        (each ledger row updated by the LAST successful run)
+update_mode: true
+status_filter: Some("OPEN") then None (photo subsets, screenshot full, imac_g3 retry)
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+
+# Remaining OPEN cells (all 13 are F-D structural residual on 1420710 + 1531677
+# d=5/d=6 — see w44_92_per_strategy_dump_1531677_e5_d6_2026-05-19.tsv for the
+# per-strategy analysis):
+# 1420710.png e5 d5  e5 d6  e6 d5  e6 d6  e7 d5  e8 d5  e9 d5  (7 cells)
+# 1531677.png e5 d5  e5 d6  e6 d5  e6 d6  e8 d5  e9 d5         (6 cells)
+#
+# Toughest remaining: 1531677.png e5 d=6 at +5.395% bytes_delta
+# Top overspending strategy bucket: DCT64X64 + DCT64X32 (cjxl uses; we never do
+# at effort 5/6 because of `try_dct64: effort >= 7` gate in src/effort.rs:794)
+
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>

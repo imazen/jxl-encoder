@@ -1,0 +1,138 @@
+# W44-92 per-strategy AC tokenization dump on toughest 3 remaining OPEN cells
+# ==========================================================================
+#
+# Cells (sorted by bytes_delta_pct, descending = toughest first):
+#   1) 1531677.png e5 d6:  +5.395% bytes  bfly -0.665%  ssim2 -1.0709
+#   2) 1420710.png e5 d6:  +5.066% bytes  bfly -5.974%  ssim2 -1.4403
+#   3) 1420710.png e7 d5:  +4.001% bytes  bfly +16.813% ssim2 -1.3957
+#
+# Method
+# ------
+# Reuses W44-76 infrastructure (`JXL_W44_76_PER_BLOCK_DUMP=<dir>` env var on
+# both our cjxl-rs and libjxl's cjxl with the dump patch from
+# `w44_76_libjxl_per_block_dump_2026-05-19.patch`). Per-block dump fields:
+# (bx, by, strategy_wire, channel, nzeros, qac).
+#
+# Analysis script: `benchmarks/w44_92_per_strategy_dump.py`. Output: 3 TSVs,
+# one per cell: `w44_92_per_strategy_dump_<cell>_2026-05-19.tsv`.
+#
+# Findings
+# --------
+#
+# Cell 1: 1531677 e5 d=6  (NEW — never investigated)
+#
+#   strat       ours_n_fb  cjxl_n_fb  delta  cov_delta  Y_delta
+#   DCT8           3         11        -8       -8        -73
+#   DCT16X16      41         43        -2       -8        -55
+#   DCT32X32     163        159        +4      +64       +181
+#   DCT16X8       15         20        -5      -10        -87
+#   DCT8X16        4          7        -3       -6        -60
+#   DCT32X16      96         86       +10      +80       +314
+#   DCT16X32      64         62        +2      +16       +162
+#   DCT64X64       0          1        -1      -64       -185  ←
+#   DCT64X32       0          2        -2      -64       -140  ←
+#
+#   Per-cell agreement: 91.6% (3752 of 4096 cells)
+#   Total Y nzeros: ours 20870 vs cjxl 20813 (+0.27%, at parity)
+#   Top disagreement pairs:
+#     48 cells: ours=DCT32X32 → cjxl=DCT64X64
+#     48 cells: ours=DCT16X32 → cjxl=DCT32X32
+#     32 cells: ours=DCT32X32 → cjxl=DCT64X32
+#     32 cells: ours=DCT32X16 → cjxl=DCT64X32
+#     32 cells: ours=DCT32X32 → cjxl=DCT16X32
+#
+#   ROOT CAUSE: at effort=5 our `try_dct64` is OFF
+#   (`jxl-encoder/src/effort.rs:794: try_dct64: effort >= 7`). cjxl evaluates
+#   DCT64 at all efforts (libjxl gates only on `decoding_speed_tier < 4`,
+#   default 0 — see `enc_ac_strategy.cc:948`). cjxl picks 3 DCT64 first-blocks
+#   covering 128 cells (3.1% of plane); we replace those with split DCT32/16
+#   blocks that emit more nzeros tokens per region.
+#
+# Cell 2: 1420710 e5 d=6  (extension of W44-77's e7 d=6 work)
+#
+#   strat       ours_n_fb  cjxl_n_fb  delta  cov_delta  Y_delta
+#   DCT8           9         16        -7       -7        -62
+#   DCT16X16      30         32        -2       -8        -30
+#   DCT32X32     197        202        -5      -80       -423
+#   DCT16X8        2          6        -4       -8        -59
+#   DCT8X16        5          9        -4       -8        -39
+#   DCT32X16      57         45       +12      +96       +617  ← biggest overspend
+#   DCT16X32      43         41        +2      +16       +161
+#
+#   Per-cell agreement: 94.5% (3872 of 4096 cells)
+#   Top disagreement pairs:
+#     104 cells: ours=DCT32X16 → cjxl=DCT32X32
+#      24 cells: ours=DCT32X32 → cjxl=DCT16X32
+#
+#   Pattern matches W44-77 1420710 e7 d=6 finding exactly (same 96 split-vs-
+#   keep on DCT32X32 region pairs). W44-77 closed e7 d=6 but DID NOT reach
+#   e5 d=6 — that cell needs the find_best_32x32_transform tightening to be
+#   applied at all efforts where DCT32X32 evaluation is on (effort >= 3
+#   per `try_dct32`).
+#
+# Cell 3: 1420710 e7 d=5  (NEW — same content as W44-77 closure cell e7 d=6)
+#
+#   strat       ours_n_fb  cjxl_n_fb  delta  cov_delta  Y_delta
+#   DCT8          20         37       -17      -17       -174
+#   DCT16X16      20         32       -12      -48       -325
+#   DCT32X32     202        202        +0        0       +233
+#   DCT16X8        6         18       -12      -24       -154
+#   DCT8X16        8         15        -7      -14        -89
+#   DCT32X16      48         39        +9      +72       +458  ← biggest overspend
+#   DCT16X32      44         40        +4      +32       +302
+#
+#   Per-cell agreement: 95.2% (3900 of 4096 cells)
+#   Top disagreement pairs:
+#     32 cells: ours=DCT16X32 → cjxl=DCT32X32
+#     24 cells: ours=DCT32X16 → cjxl=DCT16X16
+#
+#   At e7 d=5, DCT64 is available to both encoders but NEITHER picks any
+#   DCT64 first-block. The gap is purely in 32x16-vs-32x32 and
+#   8x16/16x8-vs-16x16 split-or-merge decisions. The W44-77 find_best_32x32
+#   tightening may need a wider safety margin at d=5 (lower distance than
+#   d=6 where W44-77 was tuned).
+#
+# Cross-cell pattern summary
+# --------------------------
+# All 3 cells share a common signal: ours over-splits where cjxl keeps larger
+# transforms (DCT32→DCT64 at e5/e6, DCT16→DCT32 at e7). Token volume is at
+# parity within ±0.8%; the bytes overshoot comes from per-first-block
+# overhead (more nzeros tokens, separate ZeroDensity walks, weaker
+# histogram clustering).
+#
+# Strategy buckets ranked by Y_delta sum across the 3 cells:
+#   DCT32X16:  +314 + +617 + +458  = +1389  (biggest single offender)
+#   DCT32X32:  +181 + -423 + +233  = -9     (at parity in aggregate)
+#   DCT16X32:  +162 + +161 + +302  = +625
+#   DCT64X64:  -185 +    0 +    0  = -185   (e5-only, DCT64 effort gate)
+#   DCT64X32:  -140 +    0 +    0  = -140   (e5-only, DCT64 effort gate)
+#
+# DO NOT
+# ------
+# - Touch `tokenize_ac_coefficients`, `nz_context`, `zd_offset` — bit-exact
+#   per W44-75 audit
+# - Touch BlockCtxMap / cluster_histograms — W44-71/75 verified upstream
+# - Touch AdjustQuantBlockAC — W44-76 verified same-strategy nzeros parity
+# - Spawn "FMA precision floor" claims — wrong per W44-69 user correction
+
+reproducer:
+  # ours
+  JXL_W44_76_PER_BLOCK_DUMP=/tmp/w44_92_dumps/1531677_e5_d6_ours \
+    cjxl-rs -e 5 -d 6 --threads 1 \
+    /home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png \
+    /tmp/w44_92_dumps/1531677_e5_d6_ours.jxl
+  # cjxl (libjxl with W44-76 dump patch applied + rebuilt)
+  JXL_W44_76_PER_BLOCK_DUMP=/tmp/w44_92_dumps/1531677_e5_d6_cjxl \
+    ~/work/jxl-efforts/libjxl--w44-76-per-block-debug-dump/build/tools/cjxl \
+    /home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png \
+    /tmp/w44_92_dumps/1531677_e5_d6_cjxl.jxl -e 5 -d 6 --num_threads 1 --quiet
+  # analysis
+  python3 benchmarks/w44_92_per_strategy_dump.py \
+    /tmp/w44_92_dumps/1531677_e5_d6_ours/per_block_ours.tsv \
+    /tmp/w44_92_dumps/1531677_e5_d6_cjxl/per_block_libjxl.tsv
+
+bench_workspace: ../jxl-encoder--w44-92-ledger-refresh
+git_rev: f4ffbb2b330a36f0ee386055bb5577178a9ab4d6 (W44-91 main)
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+libjxl_dump_branch: w44-76-per-block-debug (NOT pushed — Google org)

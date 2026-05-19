@@ -1,0 +1,54 @@
+# ours rows: 1167
+# cjxl rows: 1182
+
+# Per-strategy summary (ours vs cjxl)
+# n_fb = number of first-blocks selected with this strategy
+# cov_tot = total 8x8-block coverage (n_fb * covered_blocks)
+# sum_y/x/b = sum of nzeros across all first-blocks for that strategy
+# mean_y_per_fb = sum_y / n_fb (avg Y-channel nzeros per block)
+
+strat	name	ours_n_fb	cjxl_n_fb	delta_n_fb	ours_cov	cjxl_cov	delta_cov	ours_sum_y	cjxl_sum_y	delta_sum_y	ours_sum_x	cjxl_sum_x	delta_sum_x	ours_sum_b	cjxl_sum_b	delta_sum_b	ours_mean_y	cjxl_mean_y
+0	DCT8	3	11	-8	3	11	-8	27	100	-73	0	0	+0	0	0	+0	9.00	9.09
+1	IDENTITY	2	2	+0	2	2	+0	9	9	+0	0	0	+0	0	0	+0	4.50	4.50
+2	DCT2X2	1	1	+0	1	1	+0	11	11	+0	0	0	+0	0	0	+0	11.00	11.00
+4	DCT16X16	41	43	-2	164	172	-8	1042	1097	-55	0	0	+0	0	0	+0	25.41	25.51
+5	DCT32X32	163	159	+4	2608	2544	+64	13081	12900	+181	1	1	+0	2	2	+0	80.25	81.13
+6	DCT16X8	15	20	-5	30	40	-10	89	176	-87	0	1	-1	0	0	+0	5.93	8.80
+7	DCT8X16	4	7	-3	8	14	-6	51	111	-60	0	0	+0	0	0	+0	12.75	15.86
+10	DCT32X16	96	86	+10	768	688	+80	3694	3380	+314	1	0	+1	0	0	+0	38.48	39.30
+11	DCT16X32	64	62	+2	512	496	+16	2866	2704	+162	0	2	-2	0	0	+0	44.78	43.61
+18	DCT64X64	0	1	-1	0	64	-64	0	185	-185	0	0	+0	0	0	+0	0.00	185.00
+19	DCT64X32	0	2	-2	0	64	-64	0	140	-140	0	0	+0	0	0	+0	0.00	70.00
+
+# Totals:
+# ours total first-blocks: 389    cjxl: 394   delta: -5
+# ours total 8x8 coverage: 4096    cjxl: 4096   delta: +0
+# ours total Y nzeros:     20870    cjxl: 20813   delta: +57 (+0.27%)
+# ours total X nzeros:     2    cjxl: 4   delta: -2 (-50.00%)
+# ours total B nzeros:     2    cjxl: 2   delta: +0 (+0.00%)
+
+# Top overspending strategies (by Y-channel sum_y delta, descending):
+  DCT32X16      Y_delta=  +314  ours_n_fb=  96  cjxl_n_fb=  86  ours_Y= 3694  cjxl_Y= 3380
+  DCT64X64      Y_delta=  -185  ours_n_fb=   0  cjxl_n_fb=   1  ours_Y=    0  cjxl_Y=  185
+  DCT32X32      Y_delta=  +181  ours_n_fb= 163  cjxl_n_fb= 159  ours_Y=13081  cjxl_Y=12900
+  DCT16X32      Y_delta=  +162  ours_n_fb=  64  cjxl_n_fb=  62  ours_Y= 2866  cjxl_Y= 2704
+  DCT64X32      Y_delta=  -140  ours_n_fb=   0  cjxl_n_fb=   2  ours_Y=    0  cjxl_Y=  140
+  DCT16X8       Y_delta=   -87  ours_n_fb=  15  cjxl_n_fb=  20  ours_Y=   89  cjxl_Y=  176
+  DCT8          Y_delta=   -73  ours_n_fb=   3  cjxl_n_fb=  11  ours_Y=   27  cjxl_Y=  100
+  DCT8X16       Y_delta=   -60  ours_n_fb=   4  cjxl_n_fb=   7  ours_Y=   51  cjxl_Y=  111
+
+# Per-8x8-cell strategy agreement (fill-the-plane):
+#   agree: 3752  (91.60%)
+#   disagree: 344  (8.40%)
+
+# Top disagreement pairs (ours_strat -> cjxl_strat, cell count):
+  DCT16X32     -> DCT32X32      48 cells
+  DCT32X32     -> DCT64X64      48 cells
+  DCT32X32     -> DCT64X32      32 cells
+  DCT32X16     -> DCT64X32      32 cells
+  DCT32X32     -> DCT16X32      32 cells
+  DCT32X16     -> DCT32X32      24 cells
+  DCT32X32     -> DCT32X16      24 cells
+  DCT32X16     -> DCT16X32      20 cells
+  DCT32X16     -> DCT64X64      16 cells
+  DCT32X16     -> DCT16X16      12 cells
