@@ -4143,8 +4143,10 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: fix multi-DC-group context tree splitval
-        const EXPECTED_HASH: u64 = 0xfde7b582460edebc;
+        // Updated W44-54: LearnTree DC tree at effort >= 4 (libjxl parity,
+        // enc_modular.cc:1166). 8x8 gradient image now produces 112 bytes
+        // via gradient-predicted DC + adaptive single-leaf tree.
+        const EXPECTED_HASH: u64 = 0x8236b7d776017b61;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -4172,8 +4174,10 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: fix multi-DC-group context tree splitval
-        const EXPECTED_HASH: u64 = 0xb71172a676faf64d;
+        // Updated W44-54: LearnTree DC tree at effort >= 4 (libjxl parity,
+        // enc_modular.cc:1166). 16x16 solid gray now 97 bytes via single-leaf
+        // tree (constant input → no useful splits).
+        const EXPECTED_HASH: u64 = 0x65ced4d61ad0736c;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -4213,9 +4217,9 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated W44-43: ANSHistogramStrategy::Approximate at effort <= 7
-        // (libjxl `enc_ans_params.h:60-75` parity, `tier >= kSquirrel`).
-        const EXPECTED_HASH: u64 = 0x8df064e23ad51caf;
+        // Updated W44-54: LearnTree DC tree at effort >= 4 (libjxl parity,
+        // enc_modular.cc:1166). 64x64 checkerboard now 729 bytes.
+        const EXPECTED_HASH: u64 = 0x4714b491846b1295;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -4250,8 +4254,9 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: fix multi-DC-group context tree splitval
-        const EXPECTED_HASH: u64 = 0x8a3db6460320e743;
+        // Updated W44-54: LearnTree DC tree at effort >= 4 (libjxl parity,
+        // enc_modular.cc:1166). 13x17 noise now 502 bytes.
+        const EXPECTED_HASH: u64 = 0xb3ec5b525a65798b;
         assert_eq!(
             hash,
             EXPECTED_HASH,
