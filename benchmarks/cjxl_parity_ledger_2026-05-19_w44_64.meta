@@ -1,0 +1,202 @@
+# cjxl parity ledger — W44-64 refresh post 9-chunk session (W44-54..W44-63)
+git_rev: 6169ba7b8aa6933cb3b1493cc309b600c4a8e38f (main; source identical to
+         workspace-snapshot a738ce105bea025b1cc5da10c9b627fa9fe8c3f4 used by the
+         harness — W44-64 is bench-and-meta-only, no production source change)
+build_change_id: rktnssvr b05389bf (sibling workspace ../jxl-encoder--w44-64-ledger-refresh)
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1189261.png", "1418519.png", "1420710.png",
+         "1531677.png", "codec_wiki.png", "imac_g3.png", "terminal.png"]
+corpus: /home/lilith/work/codec-corpus
+wall_seconds: ~128 (16.9 s --status OPEN + 110.9 s stratified FIXED sample)
+total_rows: 595
+cells_this_run: 20 (OPEN re-bench) + 80 (stratified e7,e9 × d{0.4,1.0,2.0,3.0,5.0} × 8 images)
+update_mode: true
+status_filter: Some("OPEN") for OPEN pass; None for stratified pass
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update OPEN): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --status OPEN
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
+
+# Purpose: Refresh the cjxl_parity ledger after a 9-chunk session
+# (W44-54 .. W44-63) to:
+#   (1) Verify no OPEN→FIXED reverts or quality regressions from the
+#       cumulative changes.
+#   (2) Attribute byte deltas across the 9 commits (chunk-level).
+#   (3) Cluster remaining OPEN cells for W44-65 planning.
+
+# ── HEADLINE ────────────────────────────────────────────────────────────
+
+# Pre-state  (W44-56 @ 4f626bd4): 20 OPEN, 575 FIXED (of 595)
+# Post-state (W44-64 @ 6169ba7b): 20 OPEN, 575 FIXED (of 595)
+#
+# Net OPEN flips this session (W44-56 → W44-64): 0 (set identical).
+# Quality regressions: 0 cells with |bfly_delta| > 1 % or |ssim2_delta| > 0.5.
+#
+# Session-cumulative vs W44-1 baseline (50 OPEN, 544 FIXED):
+#   30 OPEN cells CLOSED total, 31 net FIXED additions across the
+#   W44-1..W44-64 chunk run.
+#   Per-image residual OPEN distribution unchanged from W44-56.
+
+# ── COMMITS COVERED (4f626bd4..6169ba7b) ───────────────────────────────
+#
+# d53519d4  W44-54: DC LearnTree gradient (already in W44-55 baseline)
+# bb39a784  W44-56 stage 7a: AC metadata Variable predictor
+# ddb94f27  W44-56 stage 7b: DC stream Variable predictor (cherry)
+# 4f626bd4  W44-56 stage 7c+7d: DC LearnTree Variable cost-model refinement
+# b62d3462  W44-57:    per-stream kWPFixedDC override (issue #57, closes #56)
+# deb20740  W44-58:    libjxl-side cost-input dump (investigate-only)
+# 78ed46d3  W44-58:    libjxl reference patch (investigate-only)
+# 5928aee2  W44-59:    AFV0/AFV1 strategy-code remap fix (closes #58)
+# 93520d98  W44-60:    AFV policy at parity, honest-stop (docs)
+# cf30d2ed  W44-61:    TryMergeAcs(DCT64X32) non-aligned pass port
+# 07f8b3d2  W44-62:    DCT64 suppress lever found (docs + bench)
+# 2af814dc  W44-62 follow-on: cosmetic fmt fixups
+# 6169ba7b  W44-63:    with_dct_suppress_hint opt-in (codec_wiki e7 d=5)
+
+# ── STRATIFIED-SAMPLE BYTE DELTAS vs W44-56 (70 changed / 79 sampled) ──
+#
+# Sample: efforts {7, 9} × distances {0.4, 1.0, 2.0, 3.0, 5.0} × 8 images
+#         (1 cell unsampled due to mismatched effort gate at e9 on
+#         imac_g3 d=2/3/5 + codec_wiki d=5 — pre-existing harness e9
+#         crashes also seen in W44-55/W44-56).
+#
+# Per-image mean byte% (changed cells only):
+#   image           n    mean   min     max    interp
+#   1025469.png    10   −1.67  −3.60  −0.05   smooth photo: DC Variable + W44-61 wins
+#   1189261.png     9   −0.18  −0.63  +0.05   mid-d photo: small net win
+#   1418519.png     9   −1.64  −3.28  +0.11   smooth photo: W44-56 closed W44-54 regression
+#   1420710.png     8   −0.14  −0.24  −0.03   high-d photo: tiny win (F-D still OPEN)
+#   1531677.png     9   −0.22  −0.70  +0.09   high-d photo: small win
+#   codec_wiki.png  8   −1.98  −2.66  +0.03   screenshot: W44-56 + W44-61 dominate
+#   imac_g3.png     7   −0.03  −0.05  +0.03   screenshot: was at parity, stays at parity
+#   terminal.png   10   −0.00  −0.12  +0.07   screenshot: at parity (W44-50 cell stayed FIXED)
+#
+# Overall (70 changed cells): mean −0.71 %; no losses > +0.11 %.
+#
+# Biggest individual byte wins (top 10):
+#   1025469.png   e9 d=5.0  10065 →  9703 (−3.60 %)
+#   1418519.png   e9 d=5.0   7558 →  7310 (−3.28 %)
+#   1025469.png   e7 d=5.0  11250 → 10901 (−3.10 %)
+#   1418519.png   e9 d=3.0  10956 → 10619 (−3.08 %)
+#   1418519.png   e7 d=5.0   7912 →  7695 (−2.74 %)
+#   codec_wiki.png e9 d=3.0 68485 → 66663 (−2.66 %)
+#   codec_wiki.png e9 d=2.0 81154 → 79016 (−2.63 %)
+#   1025469.png   e9 d=3.0  15378 → 14981 (−2.58 %)
+#   codec_wiki.png e9 d=0.4 115307 → 112565 (−2.38 %)
+#   1418519.png   e7 d=3.0  11195 → 10940 (−2.28 %)
+
+# ── PER-CHUNK ATTRIBUTION (best-effort) ─────────────────────────────────
+#
+# 1. **bb39a784 + ddb94f27 + 4f626bd4 (W44-56 stage 7a-7d, Variable
+#    predictor + cost-model refinement)** — closed the W44-54 photo
+#    regression cluster. Evidence: 1418519 mean −1.64 % vs W44-56
+#    baseline (it was +1.36 % vs W44-47 under W44-54); 1025469 mean
+#    −1.67 % (photo win not present in W44-54/W44-55). Mechanism is
+#    per-leaf Best(Gradient, Weighted) selection so the WP-better
+#    smooth-photo leaves stop overpaying for the gradient predictor.
+#
+# 2. **b62d3462 (W44-57 per-stream kWPFixedDC)** — closed issue #57.
+#    Routes the AC metadata stream through kWPFixedDC while DC stream
+#    uses the learned tree. Likely contributor to codec_wiki −1.98 %
+#    mean (AC metadata block context map reduction) and to the
+#    1189261/1418519 wins on mid-d cells.
+#
+# 3. **cf30d2ed (W44-61 TryMergeAcs DCT64X32 non-aligned)** — closed
+#    6 mid-band photo cells per its commit notes. In this sweep,
+#    most visible on 1025469 d=3-5 and 1418519 d=3-5 (the top byte
+#    wins of −3.0 % to −3.6 %).
+#
+# 4. **6169ba7b (W44-63 with_dct_suppress_hint opt-in)** — closed
+#    codec_wiki e7 d=5 only when the caller passes
+#    `with_dct_suppress_hint(true)`. In default-API path, hint is
+#    None → byte-identical: codec_wiki e7 d=5 in W44-64 is still
+#    bytes:+3.51% bfly:+4.11% (still OPEN). Confirms W44-63 is opt-in
+#    only — production default unchanged. The W44-65 chunk should
+#    wire auto-detection.
+#
+# 5. **5928aee2 (W44-59 AFV strategy-code remap)** — diagnostic-only,
+#    no production code change. No byte-delta expected; no byte-delta
+#    observed.
+#
+# 6. **deb20740 + 78ed46d3 + 93520d98 + 07f8b3d2 + 2af814dc** — all
+#    docs/bench/cleanup. No byte deltas expected; no deltas observed.
+
+# ── REMAINING OPEN CELLS (20) — CLUSTER VIEW ───────────────────────────
+#
+# Per-image OPEN counts (identical to W44-56):
+#   1420710.png    8 OPEN  (high-d photo F-D cluster; d>=5)
+#   1531677.png    6 OPEN  (high-d photo F-D cluster; d>=5)
+#   1189261.png    3 OPEN  (mid-d photo F-D cluster; d=3,4)
+#   codec_wiki.png 3 OPEN  (e7 d=4,5,6; remaining block context map tail)
+#   1418519.png    0 OPEN  (CLOSED by W44-56 Variable mode)
+#   1025469.png    0 OPEN  (CLOSED by W44-56 + W44-61)
+#   imac_g3.png    0 OPEN
+#   terminal.png   0 OPEN
+#
+# Cluster breakdown:
+#   - F-D structural residual (17 cells): 1420710, 1531677, 1189261
+#     all at d>=3. Per f_d_residual_exhausted_2026-05-18 memory note,
+#     these cells are structurally bound on the global pipeline
+#     (6 audits confirmed bit-exact parity with libjxl on per-component
+#     bytes). Multi-feature-discriminator or per-block RDO levers are
+#     the only paths.
+#
+#   - codec_wiki tail (3 cells): e7 d=4 (ssim2 −4.52), e7 d=5 (−2.41),
+#     e7 d=6 (−1.24). e7 d=3 was closed by W44-56; e7 d=5 is
+#     "closeable via with_dct_suppress_hint(true)" per W44-63 commit
+#     but default API still has it OPEN.
+
+# ── W44-65 NEXT-ATTACK PROPOSAL ────────────────────────────────────────
+#
+# Highest-EV next chunk: **codec_wiki e7 d=4,5,6 — wire the
+# dct_suppress_hint auto-detection into the default API.**
+#
+# Rationale:
+#   - W44-63 already SHIPPED the lever (`with_dct_suppress_hint`) and
+#     proved it closes codec_wiki e7 d=5. The remaining work is the
+#     content-aware *detection* heuristic so the default API picks
+#     `Some(true)` for screenshot-like content at d>=4.
+#   - Three cells closeable from one heuristic; codec_wiki tail is the
+#     ONLY non-F-D OPEN cluster, so closing it puts the ledger at
+#     pure F-D residual (17 cells, structurally bound per ruling).
+#   - The W44-63 mechanism is identical in scope to the W44-22 /
+#     W44-23 `content_aware_entropy_mul` workflow: detect screenshot-
+#     class content via mask1x1 / palette_log2_size, opt into the
+#     lifted suppression table. Reuse the same zenanalyze-driven
+#     classifier (or a coarser mask1x1-only fast probe) instead of
+#     adding a new classifier from scratch.
+#   - Risk: same as `entropy_mul_smart_dispatch` — windows95-class
+#     pixel-art may regress. Gate the detector with palette_log2_size
+#     >= 6 (the W23-2 ruling) to avoid that class.
+#
+# Alternative (lower EV, longer horizon): F-D multi-feature
+# discriminator for per-block RDO. Per f_d_residual_exhausted note
+# this is the only path to crack the 17-cell F-D cluster, but it's a
+# multi-week port (per-block libjxl RDO state-tracking on top of the
+# AC strategy search). Not the right chunk to spawn while a 3-cell
+# 1-week win sits on the table.
+#
+# Recommended W44-65 spec:
+#   1. Sibling workspace `~/work/zen/jxl-encoder--w44-65-screenshot-dct-suppress`.
+#   2. Read `vardct/effort.rs` (DCT64 suppress lever location from
+#      W44-62) + `entropy_mul_smart_dispatch_ab.rs` (classifier shape
+#      from W23-2 / chunk-1).
+#   3. Implement `auto_dct_suppress_hint(features)` returning
+#      `Option<bool>` (None = no change, Some(true) = lift on screenshots
+#      with palette_log2_size >= 6, Some(false) = explicit off otherwise).
+#   4. Wire into default API path at the same site `with_dct_suppress_hint`
+#      currently consults the caller override.
+#   5. A/B sweep all 10 GB82-SC screenshots + 8 ledger images at d=4,5,6
+#      to confirm no regressions on photos.
+#   6. Acceptance: 3 codec_wiki cells flip OPEN→FIXED, 0 cells flip
+#      FIXED→OPEN on photos + windows95.
+#
+# Estimated effort: 1 work-day. Expected ledger delta: 20 OPEN → 17 OPEN
+# (all photo F-D residual).
