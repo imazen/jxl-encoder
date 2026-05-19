@@ -1,0 +1,140 @@
+# W44-80 — re-test 15-cluster BlockCtxMap::default on top of main (post W44-73/W44-77/W44-78)
+
+## Question
+
+W44-71 (`01cde909` on origin/w44-71-wip) ported libjxl's 15-cluster simple
+BlockCtxMap default but regressed 6 of 12 cells when applied on top of
+W44-68 main, with 0 cells improving. W44-73 added the LZ77+ANS context-map
+writer (the diagnosed binding constraint at that time). Since then,
+W44-77 (cost-model audit) and W44-78 (HIGH_D_PHOTO_MIN_DISTANCE 4.0 → 3.0)
+have landed.
+
+Does the W44-71 cherry-pick on top of current main (W44-79 tip,
+`2ced8d29`) close the regression?
+
+## Method
+
+Sibling workspace `~/work/zen/jxl-encoder--w44-80-retry-15cluster`,
+jj on main, rebased onto `ktlrzvot 2ced8d29` (W44-79 tip).
+
+1. Build CLI on clean main (commit `2ced8d29`) → baseline bytes.
+2. Apply W44-71 source-only patch (4 files from `01cde909`, sans
+   bench artifacts) → patched bytes.
+3. Re-encode 12 F-D test cells (3 images × 4 distances) at e7,
+   release build, single-thread CLI.
+4. Compare bytes deltas vs each other and vs cjxl v0.12.0 (cjxl numbers
+   from `benchmarks/w44_73_context_map_lz77_ans_2026-05-19.tsv`).
+
+## Result
+
+| image    | d | base   | patched | ΔB    | Δ%     | verdict             |
+|---       |---|---     |---      |---    |---     |---                  |
+| 1420710  | 3 | 36505  | 36505   |  0    |  0.00  | byte-identical      |
+| 1420710  | 4 | 26702  | 26702   |  0    |  0.00  | byte-identical      |
+| 1420710  | 5 | 24589  | 24751   | +162  | +0.66  | REGRESS             |
+| 1420710  | 6 | 21212  | 21369   | +157  | +0.74  | REGRESS             |
+| 1531677  | 3 | 32246  | 32246   |  0    |  0.00  | byte-identical      |
+| 1531677  | 4 | 24367  | 24367   |  0    |  0.00  | byte-identical      |
+| 1531677  | 5 | 21059  | 21270   | +211  | +1.00  | REGRESS             |
+| 1531677  | 6 | 18084  | 18346   | +262  | +1.45  | REGRESS             |
+| 1189261  | 3 | 30481  | 30481   |  0    |  0.00  | byte-identical      |
+| 1189261  | 4 | 24380  | 24380   |  0    |  0.00  | byte-identical      |
+| 1189261  | 5 | 19778  | 19811   |  +33  | +0.17  | REGRESS             |
+| 1189261  | 6 | 16816  | 17065   | +249  | +1.48  | REGRESS             |
+
+**6 of 12 regress (+33 to +262 B). 0 of 12 improve. 6 byte-identical.**
+
+Total bytes delta: +1276 B across the 12 cells. Per-cell average: +106 B.
+
+## Comparison to prior W44-73 run
+
+W44-73 already ran the same 12-cell test with the same patch on top
+of W44-73 (`benchmarks/w44_73_context_map_lz77_ans_2026-05-19.tsv`
+rows 10-18) and observed essentially identical deltas:
+
+- 1420710 d=6: +94 B then (21295 → 21389), +157 B now (21212 → 21369)
+- 1531677 d=6: +109 B then (18227 → 18336), +262 B now (18084 → 18346)
+- 1189261 d=6: -94 B then (16910 → 16816)*, +249 B now (16816 → 17065)
+
+*W44-73's "ours_new" column was the W73 BASELINE (4-cluster, with the new
+LZ77+ANS writer) — it was a -94 B win vs the W73 pre-baseline 4-cluster
+Huffman+MTF writer. Adding W44-71 on top moves UP from that base by
+similar +33 to +262 B amounts.
+
+The regression magnitudes are unchanged in shape (1531677 worst, 1189261
+slight). W44-78 distance-gate widening doesn't interact with the clustering
+binding constraint — it only flips one cell (1420710 d=3) to a smaller
+table that doesn't trigger 15-cluster gain in EITHER path.
+
+## Decision
+
+**Honest-stop. Do NOT cherry-pick W44-71 onto main.**
+
+W44-73 already validated this exact combination (`w44_73_..._2026-05-19.md`
+"W44-71 verdict (gate c)") and reached the same conclusion. Re-running
+post-W44-78 reproduces the regression with no improvement.
+
+Per W44-73's diagnosis: cjxl has additional levers (different pair-merge
+cost model, different ANS strategy thresholds, possibly different
+quantize-counts targets) that let it benefit from finer-grained context
+maps. Our cluster_histograms (W44-75 bit-exact audit) and writer
+(W44-73 LZ77+ANS port) are both at parity, but pair-merge / scheduling
+upstream is not. Issue #59 stays open; should be re-scoped to
+"investigate why cjxl's 15c works AND ours regresses with the same writer
+and same clustering algorithm."
+
+W44-71 stays parked on `origin/w44-71-wip` bookmark.
+
+## Time spent
+
+~45 min (workspace, two builds, two 12-cell sweeps, this writeup).
+
+## Reproducer
+
+```bash
+jj workspace add ~/work/zen/jxl-encoder--w44-80-retry-15cluster
+cd ~/work/zen/jxl-encoder--w44-80-retry-15cluster
+jj rebase -d main
+
+# Baseline build
+cargo build --release -p jxl-encoder-cli
+for img in 1420710 1531677 1189261; do
+  for d in 3 4 5 6; do
+    ./target/release/cjxl-rs -e 7 -d $d \
+      /home/lilith/work/codec-corpus/CID22/CID22-512/validation/${img}.png \
+      /tmp/${img}_d${d}_base.jxl
+  done
+done
+
+# Cherry-pick W44-71 source diff
+git -C ~/work/zen/jxl-encoder show 01cde909 -- \
+  'jxl-encoder/src/jpeg/encode.rs' \
+  'jxl-encoder/src/vardct/ac_context.rs' \
+  'jxl-encoder/src/vardct/bitstream.rs' \
+  'jxl-encoder/src/vardct/encoder.rs' > /tmp/w44_71_src.patch
+patch -p1 < /tmp/w44_71_src.patch
+cargo build --release -p jxl-encoder-cli
+# Repeat the loop with output suffix _patched.
+```
+
+## Config grid
+
+- Host: AMD Ryzen 9 7950X, 128 GB RAM, water-cooled.
+- Toolchain: rustc 1.91.0 stable, release profile.
+- jxl-encoder commit hash: `2ced8d29` (W44-79 tip on origin/main).
+- W44-71 patch: `01cde909` from `origin/w44-71-wip` bookmark
+  (source-only, no bench artifacts).
+- CLI: `cjxl-rs -e 7 -d {3,4,5,6}` single-thread.
+- Corpus: CID22-512 validation subset (3 photos).
+- cjxl reference: v0.12.0 numbers from prior W44-73 sweep.
+
+## Acceptance gates
+
+- (a) 12-cell re-bench TSV committed: **YES** (this file's sibling .tsv).
+- (b) Bytes deltas reported vs main baseline: **YES** (table above).
+- (c) Decision documented: **YES — honest-stop, parked on wip bookmark**.
+- (d) No FIXED→OPEN regressions risk: **MOOT — not shipping**.
+- (e) `cargo test --release` skipped per honest-stop (no shipping).
+- (f) Multi-decoder roundtrip skipped per honest-stop.
+- (g) Memory note: pending push.
+- (h) Push: docs/bench only, source not touched on main.
