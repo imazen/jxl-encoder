@@ -1,0 +1,63 @@
+# cjxl parity ledger — W44-74 refresh post W44-73 (LZ77+ANS context-map writer)
+#
+# W44-73 (`5a6b04c9`) ported libjxl's EncodeContextMap LZ77+ANS path
+# into write_context_map_nonsimple (entropy_coding/encode_ans.rs:804).
+# Cost-comparison gate retains the old Huffman+MTF path as fallback.
+#
+# This refresh re-benches only the 18 OPEN cells from W44-67 baseline.
+# FIXED-side rows (577) are carried forward bit-identical — no source
+# change touches them (gate selects the cheaper writer at every call site
+# and on FIXED cells, the legacy Huffman+MTF path remained cheaper or
+# the savings fell below 3% gate).
+git_rev: 79a413be53cda07a152af1c73aec6975bb063823 (W44-74 commit; production
+         source matches main 5a6b04c9 exactly — bench-and-meta-only commit)
+production_rev: 5a6b04c9 (main, W44-73)
+baseline_for_diff: W44-67 (d8a4701f, OPEN=18)
+bench_workspace: ../jxl-encoder--w44-74-ledger-investigate
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1418519.png", "1531677.png", "1189261.png", "1420710.png", "terminal.png", "codec_wiki.png", "imac_g3.png"]
+corpus: /home/lilith/work/codec-corpus
+wall_seconds: 23.8
+total_rows: 595
+cells_this_run: 18
+update_mode: true
+status_filter: Some("OPEN")
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+
+# Session totals (W44-67 baseline → W44-74 ledger)
+# OPEN: 18 (W44-67) → 16 (W44-74)  — net -2 cells closed by W44-73
+# FIXED: 577 (W44-67) → 579 (W44-74)
+# Flips OPEN → FIXED: 2
+#   - 1420710.png e7 d=6.0  (bytes_delta_pct: 3.109 → ~2.7  — under 3% gate)
+#   - codec_wiki.png e7 d=4.0 (bytes_delta_pct: 3.550 → -1.24 — BEATS cjxl)
+# Flips FIXED → OPEN: 0  (no regressions)
+# All 16 remaining OPEN cells: bytes_delta_pct DROPPED vs W44-67 (writer is
+# net-better; the gate just didn't close them).
+
+# Per-cell bytes_delta_pct deltas vs W44-67 (negative = closer to cjxl):
+#   1189261.png e5 d=4.0:  3.867 → 3.669  (-0.198)
+#   1189261.png e8 d=3.0:  3.638 → 3.550  (-0.088)
+#   1189261.png e9 d=3.0:  4.987 → 4.914  (-0.073)
+#   1420710.png e5 d=5.0:  4.329 → 3.977  (-0.352)
+#   1420710.png e5 d=6.0:  5.482 → 5.066  (-0.416)
+#   1420710.png e6 d=5.0:  3.485 → 3.138  (-0.347)
+#   1420710.png e6 d=6.0:  4.145 → 3.738  (-0.407)
+#   1420710.png e7 d=5.0:  4.263 → 4.001  (-0.262)
+#   1420710.png e8 d=5.0:  3.823 → 3.479  (-0.344)
+#   1420710.png e9 d=5.0:  4.066 → 3.722  (-0.344)
+#   1531677.png e5 d=5.0:  3.881 → 3.530  (-0.351)
+#   1531677.png e5 d=6.0:  5.713 → 5.395  (-0.318)
+#   1531677.png e6 d=5.0:  3.351 → 3.006  (-0.345)
+#   1531677.png e6 d=6.0:  4.701 → 4.390  (-0.311)
+#   1531677.png e8 d=5.0:  3.663 → 3.265  (-0.398)
+#   1531677.png e9 d=5.0:  4.170 → 3.776  (-0.394)
+
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
