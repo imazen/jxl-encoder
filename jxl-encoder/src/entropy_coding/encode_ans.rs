@@ -184,6 +184,36 @@ pub fn build_entropy_code_from_accumulated_ans(
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
 ) -> OwnedAnsEntropyCode {
+    build_entropy_code_from_accumulated_ans_with_strategy(
+        data,
+        enhanced_clustering,
+        optimize_uint_configs,
+        lz77,
+        total_pixel_hint,
+        ANSHistogramStrategy::Precise,
+    )
+}
+
+/// Build an ANS entropy code from accumulated histogram data, with explicit
+/// ANS histogram normalization strategy.
+///
+/// `ans_strategy` controls the shift-grid density used by
+/// [`ANSEncodingHistogram::from_histogram_cached`]:
+/// - `Precise` (libjxl default for `tier < kSquirrel`, our effort >= 8): all
+///   12 shifts tried, picks the one with lowest total cost.
+/// - `Approximate` (libjxl `tier >= kSquirrel`, our effort <= 7): every other
+///   shift (7 values). Headers are typically smaller because the chosen
+///   shift sits on a coarser grid; the very small data-fit penalty is more
+///   than recovered by lower header overhead on streams with many histograms.
+/// - `Fast`: only 3 shifts (0, mid, max).
+pub fn build_entropy_code_from_accumulated_ans_with_strategy(
+    data: AccumulatedAnsData,
+    enhanced_clustering: bool,
+    optimize_uint_configs: bool,
+    lz77: Option<&Lz77Params>,
+    total_pixel_hint: Option<usize>,
+    ans_strategy: ANSHistogramStrategy,
+) -> OwnedAnsEntropyCode {
     use crate::entropy_coding::cluster::{
         ClusteringType, EntropyType, cluster_histograms as enhanced_cluster,
     };
@@ -277,7 +307,7 @@ pub fn build_entropy_code_from_accumulated_ans(
             let histo = EnhancedHistogram::from_counts(&i32_counts);
             ANSEncodingHistogram::from_histogram_cached(
                 &histo,
-                ANSHistogramStrategy::Precise,
+                ans_strategy,
                 &allowed_cache,
             )
             .expect("ANS histogram normalization failed")
@@ -372,18 +402,45 @@ pub fn build_entropy_code_ans_from_token_groups(
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
 ) -> OwnedAnsEntropyCode {
+    build_entropy_code_ans_from_token_groups_with_strategy(
+        groups,
+        num_contexts,
+        enhanced_clustering,
+        optimize_uint_configs,
+        lz77,
+        total_pixel_hint,
+        ANSHistogramStrategy::Precise,
+    )
+}
+
+/// Like [`build_entropy_code_ans_from_token_groups`] but lets the caller pick
+/// the ANS histogram normalization strategy. See
+/// [`build_entropy_code_from_accumulated_ans_with_strategy`] for the meaning of
+/// the strategy values; in normal usage the caller should pass the value from
+/// the active [`crate::effort::EffortProfile::ans_histogram_strategy_vardct`]
+/// (VarDCT path) or leave the default `Precise` (lossless / one-off paths).
+pub fn build_entropy_code_ans_from_token_groups_with_strategy(
+    groups: &[&[Token]],
+    num_contexts: usize,
+    enhanced_clustering: bool,
+    optimize_uint_configs: bool,
+    lz77: Option<&Lz77Params>,
+    total_pixel_hint: Option<usize>,
+    ans_strategy: ANSHistogramStrategy,
+) -> OwnedAnsEntropyCode {
     // Phase A: Accumulate per-context histograms and value frequencies.
     // Per-group accumulators are independent and merge associatively;
     // run a parallel map-reduce over the groups.
     let accumulated = accumulate_groups_parallel(groups, num_contexts, lz77);
 
     // Phase B: Build entropy code from accumulated data.
-    let code = build_entropy_code_from_accumulated_ans(
+    let code = build_entropy_code_from_accumulated_ans_with_strategy(
         accumulated,
         enhanced_clustering,
         optimize_uint_configs,
         lz77,
         total_pixel_hint,
+        ans_strategy,
     );
 
     // Validate: every token in the stream must have a valid, non-zero frequency

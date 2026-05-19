@@ -20,9 +20,7 @@ use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
 
-use crate::entropy_coding::encode::{
-    build_entropy_code_ans_from_token_groups, build_entropy_code_from_token_groups,
-};
+use crate::entropy_coding::encode::build_entropy_code_from_token_groups;
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
 use crate::headers::color_encoding::{ColorEncoding, ColorSpace, RenderingIntent};
@@ -2683,14 +2681,17 @@ impl VarDctEncoder {
                 .map(|v| v.as_slice())
                 .collect();
             if self.use_ans {
-                BuiltEntropyCode::Ans(build_entropy_code_ans_from_token_groups(
-                    &dc_groups,
-                    dc_num_contexts,
-                    self.profile.enhanced_clustering_vardct,
-                    self.profile.optimize_uint_configs_vardct,
-                    dc_lz77_params.as_ref(),
-                    None,
-                ))
+                BuiltEntropyCode::Ans(
+                    crate::entropy_coding::encode::build_entropy_code_ans_from_token_groups_with_strategy(
+                        &dc_groups,
+                        dc_num_contexts,
+                        self.profile.enhanced_clustering_vardct,
+                        self.profile.optimize_uint_configs_vardct,
+                        dc_lz77_params.as_ref(),
+                        None,
+                        self.profile.ans_histogram_strategy_vardct,
+                    ),
+                )
             } else {
                 BuiltEntropyCode::Huffman(build_entropy_code_from_token_groups(
                     &dc_groups,
@@ -2712,14 +2713,17 @@ impl VarDctEncoder {
                     .map(|v| v.as_slice())
                     .collect();
                 if self.use_ans {
-                    BuiltEntropyCode::Ans(build_entropy_code_ans_from_token_groups(
-                        &ac_groups,
-                        ac_num_contexts,
-                        self.profile.enhanced_clustering_vardct,
-                        self.profile.optimize_uint_configs_vardct,
-                        ac_lz77_params_per_pass[pass].as_ref(),
-                        None,
-                    ))
+                    BuiltEntropyCode::Ans(
+                        crate::entropy_coding::encode::build_entropy_code_ans_from_token_groups_with_strategy(
+                            &ac_groups,
+                            ac_num_contexts,
+                            self.profile.enhanced_clustering_vardct,
+                            self.profile.optimize_uint_configs_vardct,
+                            ac_lz77_params_per_pass[pass].as_ref(),
+                            None,
+                            self.profile.ans_histogram_strategy_vardct,
+                        ),
+                    )
                 } else {
                     BuiltEntropyCode::Huffman(build_entropy_code_from_token_groups(
                         &ac_groups,

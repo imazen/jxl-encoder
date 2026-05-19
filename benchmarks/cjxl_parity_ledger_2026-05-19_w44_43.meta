@@ -1,0 +1,43 @@
+# cjxl parity ledger
+git_rev: 57b4a7ae20d6eb583606e0deaa108f00362eee56
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1418519.png", "1531677.png", "1189261.png", "1420710.png", "terminal.png", "codec_wiki.png", "imac_g3.png"]
+corpus: /home/lilith/work/codec-corpus
+wall_seconds: 377.6
+total_rows: 595
+cells_this_run: 600
+update_mode: true
+status_filter: None
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
+
+# W44-43 refresh: ANSHistogramStrategy::Approximate at VarDCT e<=7
+# Diff vs W44-36 baseline (benchmarks/cjxl_parity_ledger_2026-05-18.tsv):
+#   Pre-state (W44-36)  : 30 OPEN, 565 FIXED
+#   Post-W44-43         : 31 OPEN, 564 FIXED
+#   flips OPEN→FIXED    : 0
+#   flips FIXED→OPEN    : 1 (1189261.png e7 d=4.0 bytes_delta 2.994% → 3.006%, noise across 3% threshold)
+#   stayed OPEN         : 30 (all 4 codec_wiki e7 d=3-6 cells unchanged)
+#
+# byte-level effect (where W44-43 actually helps):
+#   full ledger jxl_bytes total: 55,580,040 → 54,822,716 (Δ=-757,324 bytes, -1.36%)
+#   codec_wiki e7 d=0.2-2.5: -2K to -16K per cell (LARGE savings on low-d high-context streams)
+#   terminal e7 d=0.2-2.5  : -1K to -13K per cell, SSIM2 mostly +0.05 to +0.34
+#   imac_g3 e7 d=0.2-2.5   : -4K to -30K per cell, SSIM2 mostly +0.07 to +0.57
+#   codec_wiki e7 d=3-6    : negligible (+5 to +20 bytes; the wedge target — not closed)
+#
+# Pre-existing imac_g3 e9 corruption (CLAUDE.md known bug): 6 cells failed encode
+# (e9 d=2, e9 d=4-6, e8 d=4) — unchanged from baseline, unrelated to W44-43.
+#
+# Conclusion: W44-43 ships a LARGE total-byte improvement (-1.36%) concentrated
+# at LOW distance (where many histograms diverge between Precise and Approximate
+# shift grids). It does NOT close the codec_wiki e7 d=3-6 wedge (those cells are
+# byte-stable; the wedge lives elsewhere — likely AC strategy / quant-field).

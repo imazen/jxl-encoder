@@ -4213,8 +4213,9 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: fix multi-DC-group context tree splitval
-        const EXPECTED_HASH: u64 = 0xeb729ad9e2766dd7;
+        // Updated W44-43: ANSHistogramStrategy::Approximate at effort <= 7
+        // (libjxl `enc_ans_params.h:60-75` parity, `tier >= kSquirrel`).
+        const EXPECTED_HASH: u64 = 0x8df064e23ad51caf;
         assert_eq!(
             hash,
             EXPECTED_HASH,
