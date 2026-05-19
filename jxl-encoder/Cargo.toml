@@ -1045,5 +1045,22 @@ name = "w44_68_roundtrip"
 path = "examples/w44_68_roundtrip.rs"
 required-features = ["parallel"]
 
+# W44-77 dump: A/B vs W44-29 on 1420710 e7 d=6 photo cell.
+# Reproduces the find_best_32x32_transform divergence and provides a
+# minimal harness for the per-position cost-comparison dump
+# (JXL_DUMP_POS=bx,by env var).
+[[example]]
+name = "w44_77_dump"
+path = "examples/w44_77_dump.rs"
+required-features = ["parallel"]
+
+# W44-77 tuning search: hold W44-29 `dct32x32=1.34` while sweeping
+# `dct16x32` toward libjxl's 1.49 reference.  Uses the `__expert`
+# `LossyInternalParams::entropy_mul_table` override.
+[[example]]
+name = "w44_77_tuning_search"
+path = "examples/w44_77_tuning_search.rs"
+required-features = ["parallel", "__expert"]
+
 [lints]
 workspace = true

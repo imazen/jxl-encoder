@@ -1,0 +1,60 @@
+W44-77 metadata
+================
+
+Date: 2026-05-19
+Hostname: $(hostname)
+Branch: main (sibling workspace ~/work/zen/jxl-encoder--w44-77-find-best-32x32-fix)
+Parent commit: wlqytwlr 1fae505c (W44-76 per-block AC tokenization dump)
+
+Sweep design:
+  Source cells: 3 (CID22-512 1420710, 1531677, 1189261 — F-D residual cluster)
+  Distances: {3, 4, 5, 6}  (12 total cells)
+  Effort: 7
+  Layouts: Rgb8
+  cjxl: libjxl HEAD at /home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl
+        invoked with `cjxl -d <d> -e 7 <src> <out>`
+
+Configurations:
+  ours_w29:    LossyConfig::new(d).with_effort(7)
+               → high_d_photo_hint auto-fires (W44-29 default-on)
+  ours_nohint: LossyConfig::new(d).with_effort(7)
+                 .with_high_d_photo_hint(Some(false))
+               → forces EntropyMulTable::reference() (libjxl values)
+
+Method:
+  In-process encode via cargo example `w44_77_dump`.
+  cjxl reference shelled out per cell, /tmp scratch.
+  Per-block dump infrastructure (W44-76 module) gated by
+  JXL_W44_76_PER_BLOCK_DUMP=<dir>.  Per-position cost dump gated by
+  JXL_DUMP_POS=bx,by.
+
+Findings (TL;DR):
+  1. find_best_32x32_transform is structurally at parity with
+     libjxl's FindBestFirstLevelDivisionForSquare (line-by-line audit
+     in w44_77_find_best_32x32_parity_audit_2026-05-19.md).
+  2. W44-76's 96-cell DCT32X16/DCT32X32 mismatch is the intended
+     side-effect of W44-29's `high_d_photo_smooth_suppressed`
+     entropy_mul table swap.
+  3. Disabling W44-29 closes 80 of 96 mismatched cells (per-block
+     evidence in w44_77_per_block_after_w29_off_2026-05-19.txt) but
+     regresses bytes by +0 to +2423 B per cell — load-bearing.
+  4. The strategy alignment and the byte target are *opposed* —
+     no single-knob fix exists.
+
+Conclusion: HONEST-STOP per CLAUDE.md rule "Regression on any photo
+cell: revert + investigate".  No fix shipped.
+
+Artifacts (in this benchmarks/ directory):
+  w44_77_fd_residual_ab_2026-05-19.tsv    bytes A/B with cjxl reference
+  w44_77_per_block_after_w29_off_2026-05-19.txt  per-cell diff
+  w44_77_find_best_32x32_parity_audit_2026-05-19.md  side-by-side audit
+  w44_77_meta_2026-05-19.meta             this file
+
+Follow-on W44-78 plan:
+  Hypothesis: a 2-axis tuning search holding W44-29's dct32x32=1.34
+  while *lifting* dct16x32/dct32x16 above the libjxl 1.49 ratio (e.g.
+  to 1.50-1.60) would re-tip close-races toward DCT32X32 selection
+  while keeping W44-29's F-D residual byte savings.  Cells: 1420710 /
+  1531677 / 1189261 at d ∈ {4, 5, 6}; grid: dct16x32 ∈
+  {1.349, 1.40, 1.45, 1.50, 1.55, 1.60}.  Acceptance: any cell
+  achieves -100 B vs current default while no cell regresses > +100 B.
