@@ -1,0 +1,79 @@
+W44-78 widen-W44-29-gate A/B sweep — 2026-05-19
+================================================
+
+Goal
+----
+Test candidate widenings of the W44-29 auto-fire gate
+(`HIGH_D_PHOTO_MIN_DISTANCE = 4.0` AND `HIGH_D_PHOTO_SMOOTH_THRESHOLD = 50.0`)
+after the W44-77 sweep found that simply forcing the
+`EntropyMulTable::high_d_photo_smooth_suppressed` table on cells outside
+the current gate saved up to 1705 B per cell.
+
+Variants tested
+---------------
+  default (no widening):  distance >= 4.0 AND mask1x1_median < 50.0   (current production)
+  A (dist>=3):            distance >= 3.0 AND mask1x1_median < 50.0   (lower distance gate)
+  B (mask<80):            distance >= 4.0 AND mask1x1_median < 80.0   (lift mask gate)
+  C (dist>=3 mask<80):    distance >= 3.0 AND mask1x1_median < 80.0   (both lifts)
+  D (dist>=2.5 mask<95):  distance >= 2.5 AND mask1x1_median < 95.0   (most aggressive)
+
+Method
+------
+- 46 images total: all 41 CID22-512 validation photos + 5 gb82-sc screenshots
+  (codec_wiki, imac_g3, terminal, windows95, graph).
+- 5 distances per image: 2.5, 3.0, 4.0, 5.0, 6.0.
+- effort=7, threads=8, butteraugli loop OFF (e7 default).
+- Each (image, distance) cell encoded once per variant. When a variant's
+  gate decision matches default, the encode is reused (no duplicate work).
+- `mask1x1_median` is the encoder-internal value from
+  `examples/w44_65_encoder_mask1x1_probe.rs`.
+- cjxl reference: libjxl v0.12 HEAD at
+  `/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl`, `-d <d> -e 7`.
+
+Cell flips ("FIXED" = bytes within 1.5 % of cjxl, matching cjxl_parity_ledger)
+-----------------------------------------------------------------------------
+Variant                   Δbytes(B)  FIXED→OPEN  OPEN→FIXED
+default (no widening)            0          0           0
+A (dist>=3 mask<50)          -2564          0           1   ← clean win
+B (mask<80)                   +919          7           7
+C (dist>=3 mask<80)          -3604          9          10
+D (dist>=2.5 mask<95)        -5713         11          14
+
+Variant A is the only widening that closes cells without ANY
+`FIXED → OPEN` regression.
+
+Variant A per-cell deltas (5 cells affected)
+--------------------------------------------
+image           mask1x1  d   default  variantA  Δ        cjxl
+1420710.png      39.55   3   38180    36505    -1675     36567   ← OPEN → FIXED
+1044329.png      48.03   3   49148    48693    -455      48629
+2389166.png      46.24   3   24015    23686    -329      24002
+3637739.png      47.80   3   20127    19798    -329      19421
+1531677.png      35.63   3   32022    32246    +224      32698   (still FIXED)
+
+Hash-lock impact (verified via `examples/w44_78_gradient_mask_probe.rs`)
+-----------------------------------------------------------------------
+- `lossy_distance_3` fixture (32×32 gradient @ d=3.0):
+  mask1x1_median = 96.74 → does NOT trigger widened gate
+  (96.74 > 50.0 mask threshold). Hash byte-identical.
+- All `lossy_*_48x48_noise` fixtures encode at d=1.0:
+  1.0 < 3.0 widened distance gate → does NOT trigger. Hash byte-identical.
+- All other lossy hash-locks encode at d <= 1.0: same — no trigger.
+- Predicted hash-lock regen count: 0.
+
+Reproducer
+----------
+cargo run --release -p jxl-encoder --features parallel \
+    --example w44_78_widen_gate_ab
+
+Host: water-cooled 7950X, 128 GB RAM, Linux 6.6.114.1-microsoft-standard-WSL2.
+Git: branch main (W44-77 commits e18e94d4 + 1ea61f79 in tree).
+
+Recommendation
+--------------
+Ship `HIGH_D_PHOTO_MIN_DISTANCE: 4.0 → 3.0` (one-line constant change in
+`jxl-encoder/src/vardct/encoder.rs`). No widening of
+`HIGH_D_PHOTO_SMOOTH_THRESHOLD` (keep at 50.0). Zero hash-lock
+regen. Expected RD-pareto ledger movement: +1 FIXED (1420710.png e7
+d=3) ± any e5/e6/e8/e9 cells the d=3 distance gate now touches
+(separately measured via cjxl_parity_ledger refresh post-ship).
