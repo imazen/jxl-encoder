@@ -4402,11 +4402,12 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated W44-56 (stage 7c): Variable-mode DC tree learning — per-leaf
-        // best-of-14 predictor selection + WP state in property 15 + extra-bits
-        // accounting in cost estimator (libjxl `enc_ma.cc:218-225` parity).
-        // 64x64 checkerboard now 673 bytes (was 729 in W44-54, -7.7%).
-        const EXPECTED_HASH: u64 = 0x175d2fa48c492e64;
+        // Updated W44-73: ANS+LZ77 in write_context_map_nonsimple. 64x64
+        // checkerboard now 467 bytes (was 468 pre-W44-73, -1 byte). Larger
+        // context maps with high-repetition entries are where the LZ77+ANS
+        // path wins; small images saw 1-byte improvements (or stayed flat).
+        // Pre-W44-73 history: 673 bytes (W44-56), 729 (W44-54).
+        const EXPECTED_HASH: u64 = 0x563a514804f622ca;
         assert_eq!(
             hash,
             EXPECTED_HASH,

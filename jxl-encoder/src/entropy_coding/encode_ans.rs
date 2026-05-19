@@ -785,10 +785,57 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
     write_context_map_nonsimple(&code.context_map, writer)
 }
 
-/// Write a non-simple context map (Huffman-encoded with optional MTF).
+/// Write a non-simple context map. Picks between Huffman+MTF (legacy) and
+/// ANS+LZ77 (libjxl-parity) based on actual byte cost.
 ///
-/// Format: is_simple=0, use_mtf, lz77_enabled=0, then Huffman prefix code + data.
+/// libjxl's [`EncodeContextMap`](https://github.com/libjxl/libjxl/blob/main/lib/jxl/enc_context_map.cc)
+/// (`enc_context_map.cc:65-139`) uses `BuildAndEncodeHistograms` with default
+/// `HistogramParams` (`LZ77Method::kRLE` + `HybridUintMethod::kContextMap` →
+/// `HybridUintConfig(2, 0, 1)`). On large repetitive maps (e.g. the 7425-entry
+/// 15-cluster block context map default), the ANS+LZ77 path saves hundreds of
+/// bytes per HfGlobal section vs Huffman+MTF.
+///
+/// Format (non-simple branch):
+/// `is_simple=0` | `use_mtf` | `LZ77 header` | inner `entropy_code` | tokens.
+///
+/// The inner entropy code has 1 context (the context map itself). When LZ77 is
+/// enabled, the inner Histograms decoder bumps that to 2 (LZ77 distance
+/// context) and reads a 2-entry inner-inner context map.
 fn write_context_map_nonsimple(context_map: &[u8], writer: &mut BitWriter) -> Result<()> {
+    // Strategy 1: legacy Huffman+MTF, write to scratch and measure cost.
+    let mut huffman_scratch = BitWriter::with_capacity(context_map.len());
+    write_context_map_nonsimple_huffman(context_map, &mut huffman_scratch)?;
+    let huffman_cost = huffman_scratch.bits_written();
+
+    // Strategy 2: libjxl-parity ANS+LZ77, write to scratch and measure cost.
+    // Wrap in Result so we can fall back to Huffman if ANS path errors
+    // (e.g. degenerate input that exposes a histogram-builder edge case).
+    let ans_lz77_scratch = build_context_map_nonsimple_ans_lz77(context_map).ok();
+
+    let pick_ans = match &ans_lz77_scratch {
+        Some(buf) => buf.bits_written() < huffman_cost,
+        None => false,
+    };
+
+    if pick_ans {
+        let buf = ans_lz77_scratch.expect("pick_ans true requires Some buffer");
+        let bits_to_copy = buf.bits_written();
+        let bytes = buf.finish_with_padding();
+        copy_bits(&bytes, bits_to_copy, writer)?;
+    } else {
+        let bits_to_copy = huffman_cost;
+        let bytes = huffman_scratch.finish_with_padding();
+        copy_bits(&bytes, bits_to_copy, writer)?;
+    }
+    Ok(())
+}
+
+/// Legacy Huffman+MTF non-simple context map writer.
+///
+/// Format: `is_simple=0` | `use_mtf` | `lz77_enabled=0` | Huffman prefix code + data.
+/// Retained as a fast fallback (and as one of the two candidates compared in
+/// [`write_context_map_nonsimple`]).
+fn write_context_map_nonsimple_huffman(context_map: &[u8], writer: &mut BitWriter) -> Result<()> {
     // Try both direct and MTF, pick whichever has lower estimated cost.
     let mtf_tokens = move_to_front_transform(context_map);
 
@@ -854,6 +901,199 @@ fn write_context_map_nonsimple(context_map: &[u8], writer: &mut BitWriter) -> Re
     }
 
     Ok(())
+}
+
+/// Build the ANS+LZ77 encoding of a non-simple context map into a scratch
+/// [`BitWriter`]. Returns the buffer so the caller can compare its bit length
+/// against the Huffman+MTF candidate.
+///
+/// Mirrors libjxl's `EncodeContextMap` (`enc_context_map.cc:77-137`):
+///   - Build BOTH a raw-tokens stream and an MTF-tokens stream.
+///   - Run LZ77-RLE on each, picking the cheaper encoded form.
+///   - Force `HybridUintConfig(2, 0, 1)` per `HistogramParams::UintConfig()`
+///     when `uint_method == kContextMap` (`enc_ans_params.h:81-90`).
+///   - Write `is_simple=0`, `use_mtf`, then a full inner entropy code
+///     (LZ77 header + 1-context map + ANS distributions) + tokens.
+///
+/// The decoder side calls [`Histograms::decode(1, br, allow_lz77 = num_contexts > 2)`](https://github.com/libjxl/libjxl/blob/main/lib/jxl/dec_ans.cc)
+/// so we only emit the LZ77 header — never `lz77.enabled = true` when the
+/// outer `num_contexts <= 2` (in which case `decode_context_map` would reject
+/// it). That gate matches libjxl: `ApplyLZ77` skips LZ77 for streams whose
+/// post-RLE token count is too short to make headers pay off, which is
+/// effectively the same constraint for the tiny contexts.
+fn build_context_map_nonsimple_ans_lz77(context_map: &[u8]) -> Result<BitWriter> {
+    use super::ans::ANSHistogramStrategy;
+    use super::lz77::apply_lz77_rle;
+
+    // Outer allow_lz77 gate: jxl-rs `decode_context_map` calls
+    // `Histograms::decode(1, br, allow_lz77 = num_contexts > 2)`. When the
+    // outer num_contexts (= context_map.len()) is <= 2, we cannot signal
+    // LZ77-enabled — the decoder would error with `Lz77Disallowed`.
+    let lz77_allowed_outer = context_map.len() > 2;
+
+    // Build both candidate token streams.
+    let raw_tokens: Vec<Token> = context_map
+        .iter()
+        .map(|&v| Token::new(0, v as u32))
+        .collect();
+    let mtf_bytes = move_to_front_transform(context_map);
+    let mtf_tokens: Vec<Token> = mtf_bytes.iter().map(|&v| Token::new(0, v as u32)).collect();
+
+    let raw_cost = estimate_context_map_cost(context_map);
+    let mtf_cost_est = estimate_context_map_cost(&mtf_bytes);
+    let use_mtf = mtf_cost_est < raw_cost;
+    let tokens: &[Token] = if use_mtf { &mtf_tokens } else { &raw_tokens };
+
+    // Optionally apply LZ77-RLE. distance_multiplier=0 (no special distances
+    // for a 1-D context map). num_contexts=1 (single context).
+    let (final_tokens_owned, lz77_params) = if lz77_allowed_outer
+        && let Some((lz_tokens, lz_params)) = apply_lz77_rle(
+            tokens, /*num_contexts=*/ 1, /*force_huffman=*/ false, 0,
+        ) {
+        (Some(lz_tokens), Some(lz_params))
+    } else {
+        (None, None)
+    };
+    let final_tokens: &[Token] = final_tokens_owned.as_deref().unwrap_or(tokens);
+
+    // Build a 1-context (literals only) or 2-context (literals + LZ77 distance)
+    // ANS code over the (possibly LZ77-transformed) tokens. libjxl post-LZ77 has
+    // num_contexts incremented by 1 for the distance context (`enc_ans.cc:1121`);
+    // `apply_lz77_rle` uses `distance_context = num_contexts_pre_lz77 = 1`.
+    let post_lz77_num_contexts = if lz77_params.is_some() { 2 } else { 1 };
+    let mut code = build_entropy_code_ans_from_token_groups_with_strategy(
+        &[final_tokens],
+        post_lz77_num_contexts,
+        /*enhanced_clustering=*/ false,
+        /*optimize_uint_configs=*/ false,
+        lz77_params.as_ref(),
+        /*total_pixel_hint=*/ None,
+        ANSHistogramStrategy::Precise,
+    );
+
+    // Override the HybridUint config with libjxl's kContextMap = (2, 0, 1).
+    // The build path above set it to the default (4, 2, 0); re-normalize
+    // each histogram against the kContextMap config so the bitstream encoding
+    // matches.
+    use super::ans::{ANSEncodingHistogram, AllowedCountsCache, AnsDistribution};
+    use super::histogram::Histogram as EnhancedHistogram;
+    let new_config = HybridUintConfig::new(2, 0, 1);
+    let allowed_cache = AllowedCountsCache::new();
+    let mut new_histograms = Vec::with_capacity(code.histograms.len());
+    let mut new_distributions = Vec::with_capacity(code.distributions.len());
+
+    // Re-accumulate per-histogram counts under the new uint config.
+    // Since num_contexts == 1, all tokens map to histogram 0.
+    let num_hist = code.histograms.len().max(1);
+    let mut counts_per_hist: Vec<Vec<u32>> = vec![Vec::new(); num_hist];
+    for tok in final_tokens {
+        let cm_idx = code
+            .context_map
+            .get(tok.context() as usize)
+            .copied()
+            .unwrap_or(0) as usize;
+        let sym = if tok.is_lz77_length() {
+            let lz_params = lz77_params
+                .as_ref()
+                .expect("LZ77 length token requires lz77_params");
+            let e = super::token::Lz77UintCoder::encode(tok.value);
+            e.token + lz_params.min_symbol
+        } else {
+            let (t, _, _) = new_config.encode(tok.value);
+            t
+        };
+        let counts = &mut counts_per_hist[cm_idx];
+        if sym as usize >= counts.len() {
+            counts.resize(sym as usize + 1, 0);
+        }
+        counts[sym as usize] += 1;
+    }
+
+    for counts in &counts_per_hist {
+        let i32_counts: Vec<i32> = counts.iter().map(|&c| c as i32).collect();
+        let histo = EnhancedHistogram::from_counts(&i32_counts);
+        let ans_hist = ANSEncodingHistogram::from_histogram_cached(
+            &histo,
+            ANSHistogramStrategy::Precise,
+            &allowed_cache,
+        )?;
+        new_histograms.push(ans_hist);
+    }
+
+    // Recompute global log_alpha_size after re-normalization.
+    let max_alpha = new_histograms
+        .iter()
+        .map(|h| h.counts.len())
+        .max()
+        .unwrap_or(1);
+    let log_alpha_size = if lz77_params.as_ref().is_some_and(|p| p.enabled) {
+        8
+    } else if max_alpha <= (1 << ANS_LOG_ALPHA_SIZE) {
+        ANS_LOG_ALPHA_SIZE
+    } else {
+        let min_bits = if max_alpha <= 1 {
+            5
+        } else {
+            (max_alpha - 1).ilog2() as usize + 1
+        };
+        min_bits.clamp(5, 8)
+    };
+
+    for h in &new_histograms {
+        let dist =
+            AnsDistribution::from_normalized_counts_with_log_alpha(&h.counts, log_alpha_size)?;
+        new_distributions.push(dist);
+    }
+    code.histograms = new_histograms;
+    code.distributions = new_distributions;
+    code.log_alpha_size = log_alpha_size;
+    code.uint_configs = vec![new_config; code.histograms.len()];
+
+    // Now write to the scratch BitWriter:
+    //
+    //   is_simple=0 | use_mtf | LZ77 header
+    //   [if outer-num_contexts (post-LZ77) > 1: inner context map]
+    //   use_prefix_code=0 | log_alpha_size-5 | HybridUint config | histograms
+    //   tokens
+    //
+    // Matches the decoder side `Histograms::decode(num_contexts=1, ..., allow_lz77)`
+    // (`jxl-rs entropy_coding/decode.rs:576-634` + `libjxl dec_ans.cc:341-358`):
+    // when post-LZ77 num_contexts == 1, the inner `decode_context_map` is
+    // SKIPPED entirely (the decoder falls back to `vec![0]`). Writing the
+    // 3-bit "simple, nbits=0" shortcut in that case would misalign every
+    // subsequent bit.
+    let mut scratch = BitWriter::with_capacity(context_map.len() * 2);
+    scratch.write(1, 0)?; // is_simple = 0
+    scratch.write(1, if use_mtf { 1 } else { 0 })?; // use_mtf
+
+    super::lz77::write_lz77_header(lz77_params.as_ref(), &mut scratch)?;
+
+    // Inner context map: ONLY when decoder will actually read it.
+    let inner_num_contexts = post_lz77_num_contexts;
+    if inner_num_contexts > 1 {
+        write_context_map_for_ans(&code, &mut scratch)?;
+    }
+
+    // use_prefix_code = 0 (ANS)
+    scratch.write(1, 0)?;
+    let las = code.log_alpha_size;
+    scratch.write(2, (las - 5) as u64)?;
+
+    // HybridUint configs (one per histogram).
+    for (i, _) in code.histograms.iter().enumerate() {
+        let cfg = code.uint_configs.get(i).copied().unwrap_or_default();
+        write_hybrid_uint_config_value(las, &cfg, &mut scratch)?;
+    }
+
+    // ANS distributions.
+    for h in &code.histograms {
+        h.write(&mut scratch)?;
+    }
+
+    // Tokens.
+    write_tokens_ans(final_tokens, &code, lz77_params.as_ref(), &mut scratch)?;
+
+    Ok(scratch)
 }
 
 /// Copy `num_bits` from a byte slice into a BitWriter.
