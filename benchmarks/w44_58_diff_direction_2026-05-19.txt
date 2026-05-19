@@ -1,0 +1,18 @@
+
+=== 1531677 d=6 ===
+  strategy       n     sign+ (ours>lib)     sign- (ours<lib)    med_final_delta     med_loss_delta       med_ep_delta
+  DCT8        4096                 3980                  115               0.04             0.0167             0.0001
+  AFV0        4096                 2017                 2079              -3.14             0.0020             0.0004
+  AFV1        4096                 2004                 2092              -4.89             1.0807             0.0004
+
+=== 1418519 d=5 ===
+  strategy       n     sign+ (ours>lib)     sign- (ours<lib)    med_final_delta     med_loss_delta       med_ep_delta
+  DCT8        4096                 3427                  668               0.02             0.0079            -0.0001
+  AFV0        4096                 2682                 1413               0.01             0.0054            -0.0006
+  AFV1        4096                 2694                 1400               0.01             0.0053            -0.0006
+
+=== 1420710 d=6 ===
+  strategy       n     sign+ (ours>lib)     sign- (ours<lib)    med_final_delta     med_loss_delta       med_ep_delta
+  DCT8        4096                 4000                   96               0.04             0.0186             0.0002
+  AFV0        4096                 2034                 2062              -1.75            -1.3879             0.0006
+  AFV1        4096                 2103                 1993               6.02             0.8728             4.9707

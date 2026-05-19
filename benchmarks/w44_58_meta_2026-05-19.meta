@@ -1,0 +1,77 @@
+# W44-58: libjxl debug-build per-position cost-input dump
+#
+# Follow-on to f_d_residual_exhausted_2026-05-18 memo "DO consider" #3.
+# Closes the W44-21 honest-stop on lack of libjxl-side comparison data.
+#
+# Date: 2026-05-19
+# Workspaces (sibling, mandatory):
+#   - jxl-encoder:  ~/work/zen/jxl-encoder--w44-58-libjxl-debug-dump
+#   - libjxl:       ~/work/jxl-efforts/libjxl--w44-58-debug-dump (git worktree)
+#
+# Method:
+#   1. Patched libjxl `EstimateEntropy` (lib/jxl/enc_ac_strategy.cc:364) to dump
+#      per-call cost inputs (strategy, x, y, entropy_mul, covered_blocks,
+#      quant_norm16, cmap_x/b, mask1x1_mean_y, entropy_pre_loss, loss_scalar,
+#      info_loss_mul, cost_delta, zeros_mul, final_entropy) to a TSV file path
+#      from env var `JXL_DUMP_COST_INPUTS_PATH`.
+#      VERIFIED bit-identical bitstream when env var unset (MD5 match).
+#   2. Patched our `estimate_entropy_full_impl` (jxl-encoder/src/vardct/ac_strategy.rs
+#      line ~1228) with the same dump format. VERIFIED bit-identical when env unset.
+#   3. Ran cjxl + cjxl-rs on 3 F-D wedge images at d=5 and d=6 (6 cells total).
+#   4. Diffed per-(strategy, x, y) shared keys. Source dumps archived at:
+#      /mnt/v/output/jxl-encoder/w44-58-libjxl-cost-input-dump/ (~70MB total)
+#
+# Test images: CID22 1531677, 1418519, 1420710 at d=5,6 e7
+# All bitstreams produced with --num_threads 1 (libjxl) and default (ours).
+#
+# Key findings (see benchmarks/w44_58_diff_*_summary_2026-05-19.txt):
+#
+#   Fields CONFIRMED bit-exact (median 0, 100% zero):
+#     - info_loss_mul, cost_delta, zeros_mul, cmap_x
+#
+#   Fields with significant divergence (cross-image median abs rel diff):
+#     - loss_scalar:       11.6%  (DOMINANT divergence)
+#     - final_entropy:      5.6%
+#     - entropy_pre_loss:   5.6%
+#     - entropy_mul:        1.4%
+#     - cmap_b:             0.4%
+#
+#   Stratified by strategy (shared-key, same entropy_mul, same covered_blocks):
+#     DCT8 / DCT32x16 / DCT16x32 / DCT16x16 / DCT32x32:
+#       median <0.0002 (essentially bit-exact), p95 <1%
+#     AFV0 / AFV1:
+#       median 12.4%–12.9% loss_scalar
+#       median 5.5%–5.7% entropy_pre_loss
+#       p95 32%–35% loss_scalar
+#
+#   Coverage: only ~31,500 of ~47,700 (strategy,x,y) keys shared between
+#   ours and libjxl on each image. We and libjxl explore DIFFERENT strategies
+#   at the same positions — the search trees themselves diverge.
+#   Strategy-count divergence vs libjxl on 1531677 d=6:
+#     strat 4 (DCT16x16): ours 256 calls, libjxl 1024 (×4)
+#     strat 5 (DCT32x32): ours 4096 calls, libjxl  268 (we evaluate 15× more)
+#     strat 16/17 (AFV2/3): ours 64/128, libjxl 4096/4096 (libjxl evaluates ×30+)
+#
+# Root cause: AFV (adaptive-frequency-variable, corner DCT) transform pipeline
+# is the dominant pure-numerical divergence. Direction is roughly symmetric
+# (50/50 positive/negative deltas) but magnitude is large — would explain
+# why W44-19's per-block bisection found 264-346 strategy disagreements
+# concentrated in the AFV/sub-block-merge regime.
+#
+# Recommended attack chunk:
+#   Audit AFV pipeline end-to-end vs libjxl:
+#     - `vardct/afv.rs::afv_transform_from_pixels` (forward; ~lines 194-262)
+#     - `vardct/afv.rs::inverse_afv_transform`     (inverse; ~lines 282-362)
+#     - `vardct/afv.rs::afv_dct_4x4` / `afv_idct_4x4` (inner 4x4 corner DCT)
+#     - `vardct/quant.rs::generate_afv_weights`    (quant weights; verify
+#        post-Feb-15 sub-weight row indexing fix is still correct)
+#   Compare with libjxl `enc_transforms-inl.h:407 AFVTransformFromPixels` and
+#   `dec_transforms-inl.h:400 AFVTransformToPixels`.
+#
+#   Specific attack: instrument AFV inner-DCT input/output values for a SINGLE
+#   block (e.g. 1531677 d=6 strategy=14 x=64 y=64) on BOTH sides — compare
+#   the 16 AFV4x4 output coefficients, 16 DCT4x4 outputs, 32 DCT4x8 outputs
+#   value-by-value. The dump infra here gives us the post-aggregate values;
+#   to isolate which inner stage diverges we need per-coefficient dumps.
+#
+# Filed issue: imazen/jxl-encoder#XX (see commit message)

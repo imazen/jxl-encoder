@@ -1020,8 +1020,16 @@ fn estimate_entropy_full_impl(
         // Final cost: entropy * entropy_mul + loss
         let n = DCT_BLOCK_SIZE as f64;
         let loss_scalar = (total_pixel_loss / n).sqrt().sqrt().sqrt() * n / quant_for_coeffs as f64;
+        let entropy_pre_loss_dct8 = entropy * entropy_mul;
         entropy *= entropy_mul;
         entropy += k_info_loss_mul * loss_scalar as f32;
+        // W44-58: dump cost inputs for the fused-DCT8 fast path too.
+        dump_cost_inputs(
+            raw_strategy, bx, by, entropy_mul, 1, 1, quant_for_coeffs,
+            ytox, ytob, mask1x1, mask1x1_stride,
+            entropy_pre_loss_dct8, loss_scalar as f32,
+            k_info_loss_mul, k_cost_delta, k_zeros_mul, entropy,
+        );
         return entropy;
     }
 
@@ -1348,23 +1356,136 @@ fn estimate_entropy_full_impl(
     // Compute final cost: entropy * entropy_mul + loss
     // CRITICAL: entropy_mul applies ONLY to entropy, not to loss!
     // This matches libjxl enc_ac_strategy.cc:508-509
-    if use_pixel_domain {
+    let (entropy_pre_loss, loss_scalar_for_dump) = if use_pixel_domain {
         // Pixel-domain loss: (sum/n)^(1/8) * n / quant_norm16
         let n = (num_blocks * DCT_BLOCK_SIZE) as f64;
         // x^(1/8) = sqrt(sqrt(sqrt(x)))
         let loss_scalar = (total_pixel_loss / n).sqrt().sqrt().sqrt() * n / quant_norm16 as f64;
         // Apply entropy_mul to entropy, then add loss
+        let entropy_pre = entropy * entropy_mul;
         entropy *= entropy_mul;
         entropy += k_info_loss_mul * loss_scalar as f32;
+        (entropy_pre, loss_scalar as f32)
     } else {
         // Coefficient-domain loss (libjxl-tiny style)
         // In this mode, entropy_mul is 1.0 and caller applies multipliers externally
         let infoloss2 = (num_blocks as f32 * info_loss2_sum).sqrt();
         let info_loss_score = k_info_loss_mul * info_loss_sum + K_INFO_LOSS_MULTIPLIER2 * infoloss2;
+        let entropy_pre = entropy;
         entropy += mask_val * info_loss_score;
-    }
+        (entropy_pre, info_loss_score)
+    };
+
+    // W44-58: env-var-driven per-call dump for cost-input parity vs libjxl.
+    // Coords are reported in pixel units (x=bx*8, y=by*8) to match libjxl.
+    dump_cost_inputs(
+        raw_strategy, bx, by, entropy_mul, cx, cy, quant_norm16,
+        ytox, ytob, mask1x1, mask1x1_stride,
+        entropy_pre_loss, loss_scalar_for_dump,
+        k_info_loss_mul, k_cost_delta, k_zeros_mul, entropy,
+    );
 
     entropy
+}
+
+/// W44-58: env-var-driven per-call cost-input dump (parity diff vs libjxl).
+///
+/// Set `JXL_DUMP_COST_INPUTS_PATH=/path/to/dump.tsv` to enable. Format:
+///   strategy x y entropy_mul cbx cby quant_norm16 cmap_x cmap_b
+///   mask1x1_mean_y entropy_pre_loss loss_scalar info_loss_mul cost_delta
+///   zeros_mul final_entropy
+/// Coords reported in pixel units (x=bx*8, y=by*8). Zero overhead when env
+/// var unset (one getenv at first call per thread).
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn dump_cost_inputs(
+    raw_strategy: u8,
+    bx: usize,
+    by: usize,
+    entropy_mul: f32,
+    cx: usize,
+    cy: usize,
+    quant_norm16: f32,
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    entropy_pre_loss: f32,
+    loss_scalar_for_dump: f32,
+    k_info_loss_mul: f32,
+    k_cost_delta: f32,
+    k_zeros_mul: f32,
+    entropy: f32,
+) {
+    #[cfg(feature = "std")]
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::sync::{Mutex, OnceLock};
+        static DUMP_FILE: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
+        let slot = DUMP_FILE.get_or_init(|| {
+            let path = std::env::var("JXL_DUMP_COST_INPUTS_PATH").ok()?;
+            if path.is_empty() { return None; }
+            let mut f = OpenOptions::new().create(true).append(true).open(&path).ok()?;
+            if f.metadata().map(|m| m.len() == 0).unwrap_or(false) {
+                let _ = writeln!(
+                    f,
+                    "strategy\tx\ty\tentropy_mul\tcovered_blocks_x\tcovered_blocks_y\tquant_norm16\tcmap_x\tcmap_b\tmask1x1_mean_y\tentropy_pre_loss\tloss_scalar\tinfo_loss_mul\tcost_delta\tzeros_mul\tfinal_entropy"
+                );
+            }
+            Some(Mutex::new(f))
+        });
+        if let Some(file_mutex) = slot.as_ref() {
+            if let Ok(mut f) = file_mutex.lock() {
+                let (mask_mean, _count) = if let Some(m) = mask1x1 {
+                    let mut sum = 0.0f32;
+                    let mut count = 0usize;
+                    for iy in 0..(cy * BLOCK_DIM) {
+                        for ix in 0..(cx * BLOCK_DIM) {
+                            let py = by * BLOCK_DIM + iy;
+                            let px = bx * BLOCK_DIM + ix;
+                            let idx = py * mask1x1_stride + px;
+                            if idx < m.len() {
+                                sum += m[idx];
+                                count += 1;
+                            }
+                        }
+                    }
+                    if count > 0 { (sum / count as f32, count) } else { (0.0, 0) }
+                } else { (0.0, 0) };
+                let cmap_x = ytox_ratio(ytox);
+                let cmap_b = ytob_ratio(ytob);
+                let _ = writeln!(
+                    f,
+                    "{}\t{}\t{}\t{:.6}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}",
+                    raw_strategy,
+                    bx * BLOCK_DIM,
+                    by * BLOCK_DIM,
+                    entropy_mul,
+                    cx,
+                    cy,
+                    quant_norm16,
+                    cmap_x,
+                    cmap_b,
+                    mask_mean,
+                    entropy_pre_loss,
+                    loss_scalar_for_dump,
+                    k_info_loss_mul,
+                    k_cost_delta,
+                    k_zeros_mul,
+                    entropy,
+                );
+            }
+        }
+    }
+    // Suppress unused-variable warnings when std is disabled.
+    #[cfg(not(feature = "std"))]
+    {
+        let _ = (raw_strategy, bx, by, entropy_mul, cx, cy, quant_norm16,
+                 ytox, ytob, mask1x1, mask1x1_stride,
+                 entropy_pre_loss, loss_scalar_for_dump,
+                 k_info_loss_mul, k_cost_delta, k_zeros_mul, entropy);
+    }
 }
 
 /// Apply inverse DCT to error coefficients based on strategy.
