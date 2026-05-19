@@ -828,6 +828,13 @@ path = "examples/f_d_wedge_investigate.rs"
 name = "w44_37_codec_wiki_investigate"
 path = "examples/w44_37_codec_wiki_investigate.rs"
 
+# W44-39 block context map probe — measures num_block_clusters in both
+# our and cjxl bitstreams, to test H1 from W44-37 (codec_wiki uses too
+# many block contexts vs cjxl).
+[[example]]
+name = "w44_39_block_ctx_probe"
+path = "examples/w44_39_block_ctx_probe.rs"
+
 # W44-9 Sub-chunk B: A/B fused vs unfused DCT8 entropy.
 # Tests whether FMA op-ordering in the fused-DCT8 AVX2 kernel
 # (jxl_simd::fused_dct8_entropy) gives DCT8 a borderline cost

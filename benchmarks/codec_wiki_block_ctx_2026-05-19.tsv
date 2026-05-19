@@ -1,0 +1,8 @@
+image	effort	distance	ours_bytes	cjxl_bytes	ours_n_clusters	cjxl_n_clusters	ours_n_qf_thresh	cjxl_n_qf_thresh	ours_ctxmap_len	cjxl_ctxmap_len	ours_error	cjxl_error
+codec_wiki.png	6	4	76795	74416	13	10	1	1	78	78		
+codec_wiki.png	7	3	75225	72232	14	14	1	1	78	78		
+codec_wiki.png	7	4	67314	62710	13	13	1	1	78	78		
+codec_wiki.png	7	5	60755	57232	10	10	1	1	78	78		
+codec_wiki.png	7	6	55336	51875	8	8	1	1	78	78		
+codec_wiki.png	7	1	112190	135432	14	14	1	1	78	78		
+codec_wiki.png	7	2	88093	103821	14	14	1	1	78	78		
