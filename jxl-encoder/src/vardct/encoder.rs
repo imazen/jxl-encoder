@@ -3342,6 +3342,15 @@ impl VarDctEncoder {
         let xsize_blocks = precomputed.xsize_blocks;
         let ysize_blocks = precomputed.ysize_blocks;
         let padded_width = precomputed.padded_width;
+        // W44-44: hoist `padded_height` ahead of the
+        // `BorrowedXybSource::new(..., padded_height, ...)` call at
+        // ~line 3531 (use-before-let; only triggers under
+        // `rate-control` / `__pre_quantized` cfg gate at line 3333,
+        // which is why default `cargo check --release` did not
+        // surface the break). Previous binding sat after the call
+        // site (~line 3573) and got shadowed by the EPF branch's own
+        // `let padded_height = precomputed.padded_height;`.
+        let padded_height = precomputed.padded_height;
 
         // Calculate group dimensions
         let xsize_groups = div_ceil(width, GROUP_DIM);
@@ -3564,7 +3573,13 @@ impl VarDctEncoder {
         // Without this the bitstream emits uniform sharpness=4, costing bytes on
         // content that benefits from per-block tuning.
         let _t_sharp = std::time::Instant::now();
-        let padded_height = precomputed.padded_height;
+        // W44-44: `padded_height` is hoisted to the top of the
+        // function (see ~line 3353) so the earlier
+        // `BorrowedXybSource::new` call site can see it under
+        // `rate-control` / `__pre_quantized` cfg. The binding that
+        // previously lived here would have shadowed the hoisted one
+        // with an identical value; it is removed to keep one source
+        // of truth.
         // Chunk 8c step B (#11): hoist mask1x1 resolution into a
         // helper so the EPF branch no longer owns the
         // precomputed.xyb_y fallback dependency inline. See
