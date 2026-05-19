@@ -1,0 +1,182 @@
+# W44-75: bisect upstream histogram clustering divergence on 7425-entry AC ctx map
+
+## Setup
+
+- Date: 2026-05-19
+- Workspaces (sibling, mandatory):
+  - `~/work/zen/jxl-encoder--w44-75-cluster-source` (jj on main)
+  - `~/work/jxl-efforts/libjxl--w44-58-debug-dump` (git worktree, NOT pushed upstream — Google org)
+- Image: `~/work/codec-corpus/CID22/CID22-512/validation/1420710.png` (512x512 RGB photo)
+- Cell: `e7 d=6.0`, single-threaded, W44-71 15-cluster default applied to ours.
+- Hostname: WSL2 / AMD Ryzen 9 7950X / 128 GB RAM.
+
+## Method
+
+1. Added `JXL_W44_75_DUMP_CTXMAP=<dir>` env-var-gated dump to
+   `cluster_histograms` on both sides (`jxl-encoder/src/entropy_coding/cluster.rs`
+   `w44_75_dump` module; libjxl
+   `lib/jxl/enc_cluster.cc::W44_75_DumpInputHistograms` /
+   `W44_75_DumpOutputContextMap` — see
+   `w44_75_libjxl_enc_cluster_dump_2026-05-19.patch`).
+2. Applied W44-71 patch (`01cde909`) to make `BlockCtxMap::default()`
+   return the 15-cluster libjxl-conformant map (`SIMPLE_BLOCK_CONTEXT_MAP`).
+3. Built `cjxl-rs` (release) and libjxl `cjxl` with dump active. Both threshold
+   the dump at `in.size() >= 100` to skip noise from tiny clusterings.
+4. Ran both encoders on the wedge cell, diffed per-context input histograms.
+
+## Bytes (control)
+
+| variant | bytes  |
+|---      |---:    |
+| ours    | 21369  |
+| cjxl    | 20653  |
+| delta   | +716 B |
+
+Matches W44-74 W73+W71 measurement exactly (-15B LfGlobal, +198B HfGlobal, ...).
+
+## Cluster-output finding
+
+| variant | num_clusters | total_input_tokens |
+|---      |---:          |---:                |
+| ours    | 17           | 107650             |
+| cjxl    | 10           | 85238              |
+
+**Token-count divergence is +26 %, upstream of clustering.** cjxl produces
+**fewer** clusters AND **fewer** total tokens for the same image.
+
+Non-zero context range (0..554) is at-parity (1014 vs 1044 tokens, the same
+~16 000-block frame, every block emits 1 NonZeros token). The +22 442 token
+delta is entirely in the **ZeroDensity range (555..7424)**.
+
+## Per-block-context token-volume bisection (ZeroDensity tokens only)
+
+| block_ctx | ours    | cjxl    | delta   |
+|---:       |---:     |---:     |---:     |
+| 0         | 200     | 245     | -45     |
+| 1         | 62      | 111     | -49     |
+| 2         | 87 722  | 71 262  | +16 460 |
+| 3         | 185     | 453     | -268    |
+| 4         | 18 455  | 12 110  | +6 345  |
+| 5-14      | ~12     | ~13     | +-1     |
+
+The +22 442 ZD-token delta lives almost entirely in **bctx=2** (+16 460) and
+**bctx=4** (+6 345). In `SIMPLE_BLOCK_CONTEXT_MAP[Y]`:
+- bctx=2: index 2/3 (Y channel, DCT16x16 or DCT32x32 strategies).
+- bctx=4: index 6 (Y channel, DCT16x16 cluster overflow).
+
+i.e. we are emitting many more AC coefficients on **Y-channel large-DCT blocks**
+than cjxl does, on identical input.
+
+## What is NOT the divergence
+
+- NOT `cluster_histograms` algorithm: byte-exact port of
+  `FastClusterHistograms` (`enc_cluster.cc:136-208`), `HistogramReindex`
+  (`enc_cluster.cc:234-253`), `MIN_DISTANCE_FOR_DISTINCT = 48.0` constant,
+  same `prev_count = 0` seed selection, same KL/symmetric distance routing.
+- NOT context-map writer (W44-73 closed that gap; W44-74 confirmed parity).
+- NOT clustering seed differences: with **identical input histograms** our port
+  WOULD produce the same clusters (verified algorithmically in test).
+- NOT `total_pixel_hint` cap: both sides pass effectively-unlimited
+  `max_histograms = min(num_contexts, kClustersLimit) = min(7425, 128) = 128`.
+- NOT `kClustersLimit`: ours `256` vs libjxl `128`, but neither side ever
+  reaches the cap (both stop at the MIN_DISTANCE threshold).
+- NOT `ZeroDensityContext` formula: same `kCoeffFreqContext` /
+  `kCoeffNumNonzeroContext` tables (bit-exact match
+  `ac_context.h:28-41` ↔ `ac_context.rs:68-81`), same
+  `(num_nonzero[nl] + freq[k]) * 2 + prev` formula
+  (`ac_context.h:81` ↔ `ac_context.rs:404`).
+- NOT `BlockCtxMap::block_context` dispatch: same channel-swap (Y↔X for c<2,
+  B for c=2), same `(c * NUM_ORDER_BUCKETS + order_id) * num_qf + qf_idx`
+  formula. (libjxl additionally factors in `num_dc_ctxs * dc_idx`, but
+  `num_dc_ctxs = 1` for the default constructor — degenerate.)
+- NOT `STRATEGY_TO_BUCKET`: bit-exact match with libjxl `kStrategyOrder`
+  (`coeff_order.h:44` ↔ `coeff_order.rs:35`).
+
+## Localized divergence
+
+**Stage: AC coefficient tokenization / quantization (upstream of clustering),
+specifically on Y-channel DCT16x16 / DCT32x32 blocks at this cell
+(`1420710 e7 d=6`).**
+
+Either:
+- (a) We select **more DCT16x16 / DCT32x32 blocks** than cjxl (AC strategy
+  search divergence on Y), OR
+- (b) The blocks we DO select have **less aggressive quantization** (more
+  non-zero coefficients survive), OR
+- (c) Our `dc_from_dct_NxN` / `LowestFrequenciesFromDC` produces different
+  LLF values for these strategies, shifting AC residuals.
+
+Hypothesis (a) is consistent with the F-D arc's documented finding that we
+under-select DCT32X32 on smooth photo content vs cjxl
+(`memory/fd_residual_exhausted_2026-05-18.md`). (b) and (c) require
+per-block dump to discriminate — see W44-76 plan.
+
+## W44-76 follow-on fix path
+
+1. **Per-block strategy + nzeros dump** for `1420710 e7 d=6` Y channel only.
+   Extend `JXL_W44_75_DUMP_*` to also dump
+   `(by, bx, raw_strategy, channel, num_nonzeros, qac)` for every block, both
+   sides. Diff to identify which blocks have strategy disagreement vs
+   which have same-strategy-different-nzeros.
+2. **If strategy disagreement dominates**: the bisection points to the
+   FindBestFirstLevelDivisionForSquare cost-model heuristic on Y, which
+   was the residual after W44-58's AFV-localization finding. Check
+   whether our `find_best_32x32_transform` undervotes DCT16x16 →
+   DCT32x32 collapse for low-energy 32x32 macro-blocks. Reference
+   `vardct/ac_strategy_search.rs` vs `enc_ac_strategy.cc::FindBest...`.
+3. **If same-strategy-different-nzeros dominates**: the bisection points
+   to per-coefficient quantization (likely AdjustQuantBlockAC fine-tuning
+   or the kMul1/kMul2/kQuantNormalizer interaction on multi-block
+   transforms). Check `vardct/transform.rs::adjust_quant_block_ac` vs
+   `enc_quant_weights.cc::AdjustQuantBlockAC`.
+4. **Land neither in this chunk** — only diagnose. W44-76 ships the fix
+   after the per-block dump narrows the suspect to within one function.
+
+## Files
+
+- `benchmarks/w44_75_cluster_input_diff_2026-05-19.tsv` — 600-row diff TSV
+  (only contexts where ours OR cjxl have tokens; 162 cells with
+  `|delta| > 100`).
+- `benchmarks/w44_75_dumps_2026-05-19/{ours,cjxl}_output_clusters.tsv` —
+  per-cluster summaries (17 vs 10 clusters).
+- `benchmarks/w44_75_dumps_2026-05-19/{ours,cjxl}_output_context_map.tsv` —
+  full 7425-entry context maps from both sides.
+- `benchmarks/w44_75_libjxl_enc_cluster_dump_2026-05-19.patch` — libjxl
+  reference patch (NOT pushed upstream — Google org).
+- Full input-histogram TSVs (~600 KB each) NOT committed; stored at
+  `/mnt/v/output/jxl-encoder/w44-75-cluster-source/{ours,cjxl}_dump/`.
+
+## Decoder validation
+
+This chunk modifies no production code paths. The W44-75 dump infrastructure
+is gated by `JXL_W44_75_DUMP_CTXMAP` env var (only writes files when set);
+the encoder bitstream is byte-identical with env unset. W44-71 patch is also
+kept WIP-only (NOT default).
+
+## Time spent
+
+~3.5 h: 20 min sibling-workspace + memo reading; 30 min reading libjxl +
+ours clustering code; 40 min add+test Rust dump infrastructure; 25 min add
+libjxl dump + rebuild; 15 min run both sides; 50 min diff + bisection analysis;
+20 min write up.
+
+## Gates
+
+- (a) Per-context map dump committed for both sides: **PASS** (see Files).
+- (b) Specific divergence stage identified: **PASS** — AC coefficient
+  tokenization / quantization on Y-channel large-DCT blocks. NOT clustering
+  algorithm, NOT context-map writer, NOT context-id offset formulas.
+- (c) W44-76 fix path documented: **PASS** (see "W44-76 follow-on" above).
+- (d) Memory note + MEMORY.md entry: **PASS** (this file + memo).
+- (e) Push lands cleanly: pending push step (post-commit).
+
+## DO NOT (in W44-76 or later chunks)
+
+- Touch `cluster_histograms` / `fast_cluster_histograms` /
+  `histogram_reindex` — they are at libjxl parity.
+- Touch `write_context_map_nonsimple_ans_lz77` (W44-73 wrote that one
+  correctly).
+- Re-bisect ZeroDensityContext / NonZeroContext formulas — bit-exact match
+  verified.
+- Attribute residual to "FMA precision" or "structural ceiling" per
+  `fd_residual_not_fma_precision_2026-05-19`.

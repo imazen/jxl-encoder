@@ -1,0 +1,12 @@
+# call_id=0 num_clusters=10
+cluster	total_count	num_nonzero_symbols	max_symbol
+0	23233	5	4
+1	236	11	28
+2	4094	22	21
+3	83	6	24
+4	12307	9	8
+5	10801	12	15
+6	6676	14	15
+7	4209	18	17
+8	4945	18	18
+9	18654	5	4

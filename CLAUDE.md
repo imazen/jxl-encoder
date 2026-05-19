@@ -586,6 +586,54 @@ Key patterns to watch for when working on this codebase:
 
 ## Investigation Notes
 
+### W44-75: upstream clustering bisection — divergence is in AC tokenization, NOT clustering (May 19, 2026)
+
+**Status**: [SHIPPED — diagnostic dump infrastructure, find-only]
+
+Follow-on to W44-74 (`d8a4701f`) which observed our 7425-entry AC context
+map (with W44-71 15-cluster default) has HfGlobal 1237 B vs cjxl's 670 B
+— a 567 B gap. W44-74 hypothesized the gap lived in
+`cluster_histograms(kFast)` algorithm or `histogram_reindex` ordering.
+
+**Bisection result via env-var-gated per-context histogram dumps on both
+sides** (`JXL_W44_75_DUMP_CTXMAP`, see
+`jxl-encoder/src/entropy_coding/cluster.rs::w44_75_dump` and
+`benchmarks/w44_75_libjxl_enc_cluster_dump_2026-05-19.patch`): the
+divergence is **upstream of clustering**. On `1420710 e7 d=6.0`:
+- ours: 107 650 input tokens → 17 clusters
+- cjxl: 85 238 input tokens → 10 clusters
+
+We emit **+26 % more zero-density tokens** than cjxl on identical input.
+Non-zero (block-count) contexts are at-parity (1014 vs 1044). Token
+delta is concentrated in **Y-channel large-DCT blocks** (bctx=2 +16 460,
+bctx=4 +6 345, all other bctxs at-parity).
+
+**Ruled out**: clustering algorithm (bit-exact port verified),
+`HistogramReindex`, context-map writer (W44-73 closed),
+`ZeroDensityContext` formula, `BlockCtxMap::block_context` formula,
+`STRATEGY_TO_BUCKET` ↔ `kStrategyOrder`, `kClustersLimit` ceiling.
+
+**Specific divergence stage**: AC coefficient
+tokenization / quantization on Y-channel DCT16x16 / DCT32x32 blocks.
+Two competing hypotheses for W44-76:
+- (a) Strategy-selection: we under-select DCT32X32 → decay to DCT16X16
+  → more tokens per block (consistent with F-D arc residual and W44-58
+  AFV-localization).
+- (b) Same-strategy-different-nzeros: less aggressive quantization on
+  Y-channel large-DCTs (suspect: AdjustQuantBlockAC fine-tuning).
+
+**W44-76 plan**: per-block dump of
+`(by, bx, raw_strategy, channel, num_nonzeros, qac)` to discriminate
+(a) vs (b). NOT a quick fix — could be a multi-cell loop. See
+`memory/w44_75_upstream_clustering_bisection_2026-05-19.md` for full
+detail + decision tree.
+
+**Production impact**: zero. Dump infrastructure is env-gated; bitstream
+byte-identical with env unset. Cluster tests 13/13 pass.
+
+**Bench TSV/meta**: `benchmarks/w44_75_cluster_input_diff_2026-05-19.{tsv,meta}`.
+**Memory note**: `w44_75_upstream_clustering_bisection_2026-05-19.md`.
+
 ### W44-63: `with_dct_suppress_hint` content-aware DCT64-suppress — SHIPPED (May 19, 2026)
 
 **Status**: [SHIPPED]

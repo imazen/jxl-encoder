@@ -1,0 +1,162 @@
+diff --git a/lib/jxl/enc_cluster.cc b/lib/jxl/enc_cluster.cc
+index 9a46b5e..4d9648e 100644
+--- a/lib/jxl/enc_cluster.cc
++++ b/lib/jxl/enc_cluster.cc
+@@ -6,8 +6,12 @@
+ #include "lib/jxl/enc_cluster.h"
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <cstddef>
+ #include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
+ #include <limits>
+ #include <map>
+ #include <numeric>
+@@ -257,6 +261,117 @@ void HistogramReindex(std::vector<Histogram>* out, size_t prev_histograms,
+ // Clusters similar histograms in 'in' together, the selected histograms are
+ // placed in 'out', and for each index in 'in', *histogram_symbols will
+ // indicate which of the 'out' histograms is the best approximation.
++// W44-75: env-var-gated diagnostic dump of clustering input and output.
++// Triggered when JXL_W44_75_DUMP_CTXMAP=<dir> is set. Per process, this
++// writes (input_histograms_N.tsv, output_context_map_N.tsv,
++// output_clusters_N.tsv) for the N-th call to ClusterHistograms that has
++// >= 100 input contexts. Matches the format of the Rust dump in
++// jxl-encoder/src/entropy_coding/cluster.rs::w44_75_dump.
++namespace {
++const char* W44_75_DumpDir() {
++  static const char* p = std::getenv("JXL_W44_75_DUMP_CTXMAP");
++  return (p == nullptr || p[0] == '\0') ? nullptr : p;
++}
++std::atomic<size_t> w44_75_call_counter{0};
++
++void W44_75_DumpInputHistograms(const std::vector<Histogram>& in,
++                                size_t max_histograms,
++                                HistogramParams::ClusteringType ctype,
++                                size_t call_id) {
++  const char* dir = W44_75_DumpDir();
++  if (dir == nullptr) return;
++  char path[1024];
++  std::snprintf(path, sizeof(path),
++                "%s/input_histograms_%04zu.tsv", dir, call_id);
++  FILE* f = std::fopen(path, "w");
++  if (f == nullptr) return;
++  const char* cstr =
++      (ctype == HistogramParams::ClusteringType::kFastest) ? "Fastest"
++      : (ctype == HistogramParams::ClusteringType::kFast)  ? "Fast"
++                                                           : "Best";
++  std::fprintf(f,
++               "# call_id=%zu num_contexts=%zu max_histograms=%zu "
++               "clustering=%s entropy=Ans\n",
++               call_id, in.size(), max_histograms, cstr);
++  std::fprintf(f,
++               "context\ttotal_count\tnum_nonzero_symbols\tmax_symbol\ttop_symbols\n");
++  for (size_t ctx = 0; ctx < in.size(); ++ctx) {
++    const Histogram& h = in[ctx];
++    size_t nonzero = 0;
++    int max_sym = -1;
++    for (size_t s = 0; s < h.counts.size(); ++s) {
++      if (h.counts[s] > 0) {
++        ++nonzero;
++        max_sym = static_cast<int>(s);
++      }
++    }
++    // Top-5 (symbol, count) pairs by descending count.
++    std::vector<std::pair<size_t, int>> pairs;
++    for (size_t s = 0; s < h.counts.size(); ++s) {
++      if (h.counts[s] > 0) pairs.emplace_back(s, h.counts[s]);
++    }
++    std::sort(pairs.begin(), pairs.end(),
++              [](const std::pair<size_t, int>& a,
++                 const std::pair<size_t, int>& b) {
++                if (a.second != b.second) return a.second > b.second;
++                return a.first < b.first;
++              });
++    std::fprintf(f, "%zu\t%zu\t%zu\t%d\t",
++                 ctx, h.total_count, nonzero, max_sym);
++    for (size_t k = 0; k < pairs.size() && k < 5; ++k) {
++      if (k) std::fputc(',', f);
++      std::fprintf(f, "%zu:%d", pairs[k].first, pairs[k].second);
++    }
++    std::fputc('\n', f);
++  }
++  std::fclose(f);
++}
++
++void W44_75_DumpOutputContextMap(const std::vector<Histogram>& out,
++                                 const std::vector<uint32_t>& symbols,
++                                 size_t call_id) {
++  const char* dir = W44_75_DumpDir();
++  if (dir == nullptr) return;
++  // context_map
++  char path[1024];
++  std::snprintf(path, sizeof(path),
++                "%s/output_context_map_%04zu.tsv", dir, call_id);
++  FILE* f = std::fopen(path, "w");
++  if (f) {
++    std::fprintf(f, "# call_id=%zu num_contexts=%zu num_clusters=%zu\n",
++                 call_id, symbols.size(), out.size());
++    std::fprintf(f, "context\tcluster\n");
++    for (size_t ctx = 0; ctx < symbols.size(); ++ctx) {
++      std::fprintf(f, "%zu\t%u\n", ctx, symbols[ctx]);
++    }
++    std::fclose(f);
++  }
++  // clusters
++  std::snprintf(path, sizeof(path),
++                "%s/output_clusters_%04zu.tsv", dir, call_id);
++  FILE* cf = std::fopen(path, "w");
++  if (cf) {
++    std::fprintf(cf, "# call_id=%zu num_clusters=%zu\n", call_id, out.size());
++    std::fprintf(cf,
++                 "cluster\ttotal_count\tnum_nonzero_symbols\tmax_symbol\n");
++    for (size_t c = 0; c < out.size(); ++c) {
++      const Histogram& h = out[c];
++      size_t nonzero = 0;
++      int max_sym = -1;
++      for (size_t s = 0; s < h.counts.size(); ++s) {
++        if (h.counts[s] > 0) {
++          ++nonzero;
++          max_sym = static_cast<int>(s);
++        }
++      }
++      std::fprintf(cf, "%zu\t%zu\t%zu\t%d\n",
++                   c, h.total_count, nonzero, max_sym);
++    }
++    std::fclose(cf);
++  }
++}
++}  // namespace
++
+ Status ClusterHistograms(const HistogramParams& params,
+                          const std::vector<Histogram>& in,
+                          size_t max_histograms, std::vector<Histogram>* out,
+@@ -268,6 +383,13 @@ Status ClusterHistograms(const HistogramParams& params,
+     max_histograms = std::min(max_histograms, static_cast<size_t>(4));
+   }
+ 
++  // W44-75: pre-clustering dump.
++  size_t w44_75_id = SIZE_MAX;
++  if (W44_75_DumpDir() != nullptr && in.size() >= 100) {
++    w44_75_id = w44_75_call_counter.fetch_add(1, std::memory_order_seq_cst);
++    W44_75_DumpInputHistograms(in, max_histograms, params.clustering, w44_75_id);
++  }
++
+   JXL_RETURN_IF_ERROR(HWY_DYNAMIC_DISPATCH(FastClusterHistograms)(
+       in, prev_histograms + max_histograms, out, histogram_symbols));
+ 
+@@ -365,6 +487,12 @@ Status ClusterHistograms(const HistogramParams& params,
+ 
+   // Convert the context map to a canonical form.
+   HistogramReindex(out, prev_histograms, histogram_symbols);
++
++  // W44-75: post-clustering dump.
++  if (w44_75_id != SIZE_MAX) {
++    W44_75_DumpOutputContextMap(*out, *histogram_symbols, w44_75_id);
++  }
++
+   return true;
+ }
+ 

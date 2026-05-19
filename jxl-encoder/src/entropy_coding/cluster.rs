@@ -636,12 +636,16 @@ pub fn cluster_histograms(
     input: &[Histogram],
     max_histograms: usize,
 ) -> Result<ClusterResult> {
-    let max_histograms = match clustering_type {
+    let max_histograms_req = match clustering_type {
         ClusteringType::Fastest => max_histograms.min(4),
         _ => max_histograms,
     };
 
-    let max_histograms = max_histograms.min(input.len()).min(CLUSTERS_LIMIT);
+    let max_histograms = max_histograms_req.min(input.len()).min(CLUSTERS_LIMIT);
+
+    // W44-75: dump per-context input histograms BEFORE clustering when env var set.
+    #[cfg(feature = "std")]
+    w44_75_dump::dump_input_histograms(input, max_histograms, clustering_type, entropy_type);
 
     // Fast clustering
     let mut result = fast_cluster_histograms(input, max_histograms)?;
@@ -654,7 +658,161 @@ pub fn cluster_histograms(
     // Reindex for canonical form
     histogram_reindex(&mut result.histograms, 0, &mut result.symbols);
 
+    // W44-75: dump output context_map AFTER clustering when env var set.
+    #[cfg(feature = "std")]
+    w44_75_dump::dump_output_context_map(&result);
+
     Ok(result)
+}
+
+/// W44-75 chunk: env-var-gated diagnostic dump of clustering input and output.
+///
+/// Triggered when `JXL_W44_75_DUMP_CTXMAP=<dir>` is set in the environment.
+/// Writes two TSVs per `cluster_histograms` call to `<dir>/`:
+///   - `input_histograms_N.tsv` (per-context, before clustering)
+///   - `output_context_map_N.tsv` (per-context cluster ID, after reindex)
+/// where N is a monotonically increasing per-process counter.
+///
+/// Used to bisect the W44-74 finding that our 7425-entry AC context map
+/// produces a structurally less LZ77-friendly sequence than cjxl's.
+/// Pair with the equivalent libjxl debug patch
+/// `benchmarks/w44_75_libjxl_dump_cluster.patch`.
+#[cfg(feature = "std")]
+#[doc(hidden)]
+pub mod w44_75_dump {
+    use super::{ClusterResult, ClusteringType, EntropyType, Histogram};
+    use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering as AOrd};
+
+    static CALL_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn dump_dir() -> Option<std::path::PathBuf> {
+        std::env::var_os("JXL_W44_75_DUMP_CTXMAP").map(std::path::PathBuf::from)
+    }
+
+    /// Get the call number for the NEXT dump (peek; does not increment).
+    fn peek_call_id() -> usize {
+        CALL_COUNTER.load(AOrd::Relaxed)
+    }
+
+    /// Allocate the call id for input + output of one call (incremented once
+    /// at the input dump entry; output dump reads back without incrementing).
+    pub fn dump_input_histograms(
+        input: &[Histogram],
+        max_histograms: usize,
+        clustering_type: ClusteringType,
+        entropy_type: EntropyType,
+    ) {
+        let Some(dir) = dump_dir() else { return };
+        // Only dump non-trivial clusterings (skip the many tiny clusterings
+        // for DC / metadata / context-map-of-context-map, which would flood
+        // the output). Threshold: at least 100 input contexts.
+        if input.len() < 100 {
+            return;
+        }
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let id = CALL_COUNTER.fetch_add(1, AOrd::SeqCst);
+        let path = dir.join(format!("input_histograms_{:04}.tsv", id));
+        let Ok(mut f) = std::fs::File::create(&path) else {
+            return;
+        };
+        // Header: metadata first
+        let _ = writeln!(
+            f,
+            "# call_id={} num_contexts={} max_histograms={} clustering={:?} entropy={:?}",
+            id,
+            input.len(),
+            max_histograms,
+            clustering_type,
+            entropy_type
+        );
+        let _ = writeln!(
+            f,
+            "context\ttotal_count\tnum_nonzero_symbols\tmax_symbol\ttop_symbols"
+        );
+        for (ctx, h) in input.iter().enumerate() {
+            let total = h.total_count;
+            let mut nonzero = 0usize;
+            let mut max_sym: i32 = -1;
+            for (s, &c) in h.counts.iter().enumerate() {
+                if c > 0 {
+                    nonzero += 1;
+                    max_sym = s as i32;
+                }
+            }
+            // Top-5 (symbol, count) by count for distribution signature.
+            let mut pairs: alloc::vec::Vec<(usize, i32)> = h
+                .counts
+                .iter()
+                .enumerate()
+                .filter(|&(_, &c)| c > 0)
+                .map(|(s, &c)| (s, c))
+                .collect();
+            pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            let top: alloc::vec::Vec<String> = pairs
+                .iter()
+                .take(5)
+                .map(|(s, c)| alloc::format!("{}:{}", s, c))
+                .collect();
+            let _ = writeln!(
+                f,
+                "{}\t{}\t{}\t{}\t{}",
+                ctx,
+                total,
+                nonzero,
+                max_sym,
+                top.join(",")
+            );
+        }
+    }
+
+    pub fn dump_output_context_map(result: &ClusterResult) {
+        let Some(dir) = dump_dir() else { return };
+        if result.symbols.len() < 100 {
+            return;
+        }
+        let id = peek_call_id().saturating_sub(1);
+        let path = dir.join(format!("output_context_map_{:04}.tsv", id));
+        let Ok(mut f) = std::fs::File::create(&path) else {
+            return;
+        };
+        let _ = writeln!(
+            f,
+            "# call_id={} num_contexts={} num_clusters={}",
+            id,
+            result.symbols.len(),
+            result.histograms.len()
+        );
+        let _ = writeln!(f, "context\tcluster");
+        for (ctx, &sym) in result.symbols.iter().enumerate() {
+            let _ = writeln!(f, "{}\t{}", ctx, sym);
+        }
+        // Also dump per-cluster total_count for cross-side comparison.
+        let cluster_path = dir.join(format!("output_clusters_{:04}.tsv", id));
+        if let Ok(mut cf) = std::fs::File::create(&cluster_path) {
+            let _ = writeln!(
+                cf,
+                "# call_id={} num_clusters={}",
+                id,
+                result.histograms.len()
+            );
+            let _ = writeln!(cf, "cluster\ttotal_count\tnum_nonzero_symbols\tmax_symbol");
+            for (c, h) in result.histograms.iter().enumerate() {
+                let total = h.total_count;
+                let mut nonzero = 0usize;
+                let mut max_sym: i32 = -1;
+                for (s, &cnt) in h.counts.iter().enumerate() {
+                    if cnt > 0 {
+                        nonzero += 1;
+                        max_sym = s as i32;
+                    }
+                }
+                let _ = writeln!(cf, "{}\t{}\t{}\t{}", c, total, nonzero, max_sym);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
