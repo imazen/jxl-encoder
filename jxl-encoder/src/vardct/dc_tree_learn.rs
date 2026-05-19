@@ -22,7 +22,10 @@ use super::common::pack_signed;
 use super::dc_coding::clamped_gradient;
 
 /// Number of properties used in DC tree learning.
-/// Must match jxl-rs decoder's property buffer layout:
+///
+/// Must match libjxl's `kNumNonrefProperties = kNumStaticProperties(2) + 13 +
+/// weighted::kNumProperties(1) = 16` (`context_predict.h:378-379`) and jxl-rs
+/// decoder's property buffer layout:
 /// - 0: channel (static, set by caller)
 /// - 1: group_id/stream (static, typically 0 for DC)
 /// - 2: y position
@@ -32,16 +35,25 @@ use super::dc_coding::clamped_gradient;
 /// - 6: top
 /// - 7: left
 /// - 8: local gradient (left - prev_left, maintained across row)
-/// - 9: gradient (left + top - topleft) ← PRIMARY SPLIT PROPERTY
+/// - 9: gradient (left + top - topleft) ← KEY SPLIT PROPERTY
 /// - 10: left - topleft (FFV1)
 /// - 11: topleft - top (FFV1)
 /// - 12: top - topright (FFV1)
 /// - 13: top - toptop (FFV1)
 /// - 14: left - leftleft (FFV1)
-const NUM_DC_PROPERTIES: usize = 15;
+/// - 15: wp_max_error (WeightedPredictor max abs error among teW/teN/teNW/teNE)
+///       — `kWPProp = kNumNonrefProperties - 1 = 15` (`context_predict.h:381`).
+const NUM_DC_PROPERTIES: usize = 16;
+
+/// Number of candidate predictors per sample in Variable mode.
+/// Matches libjxl `kNumModularPredictors = 14` (`modular/options.h:47` references
+/// `Predictor::Variable + 1`; 14 simple predictors enumerated 0..=13).
+const NUM_PREDICTORS_VARIABLE: usize = 14;
 
 /// Properties to consider for splits.
-/// Property 9 (gradient) is the most effective for DC coding.
+/// Property 9 (gradient) is the most effective for DC coding; property 15
+/// (wp_max_error) is what `kWPFixedDC` splits on and what libjxl's
+/// `kNumNonrefProperties` Variable-mode learner ranks all the way through.
 const SPLIT_PROPERTIES: &[usize] = &[
     9,  // gradient (left + top - topleft) - most important
     4,  // |top|
@@ -49,6 +61,26 @@ const SPLIT_PROPERTIES: &[usize] = &[
     6,  // top
     7,  // left
     10, // left - topleft (FFV1)
+];
+
+/// Properties to consider for splits in Variable mode (stage 7c).
+/// Adds wp_max_error (15) — required to access WP's adaptive prediction error
+/// in the split decision, matching libjxl's `kWPProp` ranking in `FindBestSplit`.
+const SPLIT_PROPERTIES_VARIABLE: &[usize] = &[
+    9,  // gradient (left + top - topleft)
+    15, // wp_max_error (kWPProp)
+    4,  // |top|
+    5,  // |left|
+    6,  // top
+    7,  // left
+    10, // left - topleft (FFV1)
+    11, // topleft - top (FFV1)
+    12, // top - topright (FFV1)
+    13, // top - toptop (FFV1)
+    14, // left - leftleft (FFV1)
+    8,  // local gradient
+    2,  // y position
+    3,  // x position
 ];
 
 /// Maximum tree depth to prevent overfitting.
@@ -76,12 +108,22 @@ fn encode_hybrid_uint(value: u32) -> u32 {
 }
 
 /// Collected samples for DC tree learning.
+///
+/// Holds residual tokens for every candidate predictor (Variable mode) and
+/// property values for every sample. Backward-compatible: `add_sample` keeps
+/// gradient-only behaviour for the stage 1-6 path (extra predictor slots stay
+/// empty unless `add_sample_variable` is used).
 pub struct DcTreeSamples {
     /// Number of samples collected.
     pub num_samples: usize,
-    /// Residual tokens (packed residuals converted to HybridUint tokens).
+    /// Gradient-predictor residual tokens (stage 1-6 path).
     residual_tokens: Vec<u32>,
-    /// Property values: props[property_idx][sample_idx].
+    /// Per-predictor residual tokens (stage 7 Variable path). Index by
+    /// `Predictor` id 0..=13 (`Predictor::all_simple()`).
+    /// Empty until `add_sample_variable` is called.
+    residual_tokens_per_predictor: Vec<Vec<u32>>,
+    /// Property values: `props[property_idx][sample_idx]`. Size:
+    /// `NUM_DC_PROPERTIES = 16` (stage 7b extended set).
     props: Vec<Vec<i32>>,
 }
 
@@ -97,11 +139,14 @@ impl DcTreeSamples {
         Self {
             num_samples: 0,
             residual_tokens: Vec::new(),
+            residual_tokens_per_predictor: Vec::new(),
             props: vec![Vec::new(); NUM_DC_PROPERTIES],
         }
     }
 
-    /// Add a sample with its properties and residual.
+    /// Add a sample with its properties and a single gradient-predictor residual.
+    /// Stage 1-6 compatibility path. Property 15 (`wp_max_error`) should be 0
+    /// when WP state isn't tracked — splits on it become no-ops.
     #[inline]
     pub fn add_sample(&mut self, residual: i32, props: [i32; NUM_DC_PROPERTIES]) {
         let packed = pack_signed(residual);
@@ -112,6 +157,48 @@ impl DcTreeSamples {
             self.props[i].push(p);
         }
         self.num_samples += 1;
+    }
+
+    /// Add a sample with multi-predictor residuals (stage 7 Variable mode).
+    ///
+    /// `residuals[i]` is the residual when predictor `i` (per `Predictor`
+    /// enum: 0=Zero, 1=Left, 2=Top, 3=Average0, 4=Select, 5=Gradient,
+    /// 6=Weighted, 7=TopRight, 8=TopLeft, 9=LeftLeft, 10=Average1, 11=Average2,
+    /// 12=Average3, 13=Average4) is subtracted from the actual DC value.
+    ///
+    /// Mirrors libjxl `TreeSamples::AddSample` (`enc_ma.cc:711-730`) which
+    /// stores one tokenized residual per predictor for later per-leaf
+    /// best-predictor selection in `FindBestSplit`.
+    #[inline]
+    pub fn add_sample_variable(
+        &mut self,
+        residuals: [i32; NUM_PREDICTORS_VARIABLE],
+        props: [i32; NUM_DC_PROPERTIES],
+    ) {
+        if self.residual_tokens_per_predictor.is_empty() {
+            // Lazy-init per-predictor arrays on first variable-mode sample.
+            self.residual_tokens_per_predictor =
+                vec![Vec::with_capacity(self.num_samples + 1); NUM_PREDICTORS_VARIABLE];
+        }
+        for (i, &r) in residuals.iter().enumerate() {
+            let packed = pack_signed(r);
+            let token = encode_hybrid_uint(packed);
+            self.residual_tokens_per_predictor[i].push(token);
+        }
+        // Mirror gradient residual into legacy slot for stage 1-6 callers.
+        let grad_token =
+            encode_hybrid_uint(pack_signed(residuals[crate::modular::Predictor::Gradient as usize]));
+        self.residual_tokens.push(grad_token);
+
+        for (i, &p) in props.iter().enumerate() {
+            self.props[i].push(p);
+        }
+        self.num_samples += 1;
+    }
+
+    /// Returns true if multi-predictor samples were gathered (`add_sample_variable`).
+    pub fn has_variable_residuals(&self) -> bool {
+        !self.residual_tokens_per_predictor.is_empty()
     }
 }
 
@@ -178,6 +265,133 @@ pub fn compute_dc_properties(
     props[14] = left.wrapping_sub(leftleft);
 
     (props, local_grad)
+}
+
+/// Gather DC samples with multi-predictor residuals + WP state (Variable mode).
+///
+/// Mirrors libjxl's per-pixel sample gathering when
+/// `SetPredictor(Predictor::Variable)` is configured:
+/// for each DC value, it computes:
+/// - All 14 simple-predictor predictions (Zero through Average4) via
+///   `Predictor::predict_from_neighbors` — matches `PredictOne` for
+///   non-Weighted predictors (`context_predict.h:472-516`).
+/// - The Weighted predictor's prediction + `wp_max_error` property by running
+///   `WeightedPredictorState::predict_and_property` — matches
+///   `weighted::State::Predict<true>` (`context_predict.h:133-193`).
+///
+/// Then stores `[i32; 14]` residuals (one per predictor) plus the 16-property
+/// vector (property 15 = `wp_max_error`) via `add_sample_variable`.
+///
+/// Each channel gets a FRESH `WeightedPredictorState` — matches libjxl's
+/// per-channel processing pattern.
+pub fn gather_dc_samples_variable(
+    samples: &mut DcTreeSamples,
+    quant_dc: &[Vec<Vec<i16>>; 3],
+) {
+    use crate::modular::predictor::{Neighbors, Predictor, WeightedPredictorState};
+
+    if quant_dc[0].is_empty() || quant_dc[0][0].is_empty() {
+        return;
+    }
+
+    let height = quant_dc[0].len();
+    let width = quant_dc[0][0].len();
+
+    // Gather in encoding channel order: Y (1), X (0), B (2)
+    for (enc_idx, &c) in [1usize, 0, 2].iter().enumerate() {
+        let channel = &quant_dc[c];
+        let mut wp_state = WeightedPredictorState::with_defaults(width);
+
+        for y in 0..height {
+            let mut prev_local_grad = 0i32;
+
+            for x in 0..width {
+                let dc_val = channel[y][x] as i32;
+
+                // Edge handling matching jxl-rs decoder + libjxl's PredictionData.
+                let left = if x > 0 {
+                    channel[y][x - 1] as i32
+                } else if y > 0 {
+                    channel[y - 1][x] as i32
+                } else {
+                    0
+                };
+                let top = if y > 0 {
+                    channel[y - 1][x] as i32
+                } else {
+                    left
+                };
+                let topleft = if x > 0 && y > 0 {
+                    channel[y - 1][x - 1] as i32
+                } else {
+                    left
+                };
+                let topright = if y > 0 && x + 1 < width {
+                    channel[y - 1][x + 1] as i32
+                } else {
+                    top
+                };
+                let toptop = if y > 1 { channel[y - 2][x] as i32 } else { top };
+                let leftleft = if x > 1 {
+                    channel[y][x - 2] as i32
+                } else {
+                    left
+                };
+                let nee = if y > 0 && x + 2 < width {
+                    channel[y - 1][x + 2] as i32
+                } else {
+                    topright
+                };
+
+                let neighbors = Neighbors {
+                    n: top,
+                    w: left,
+                    nw: topleft,
+                    ne: topright,
+                    nn: toptop,
+                    ww: leftleft,
+                    nee,
+                };
+
+                // 14 simple predictions
+                let mut residuals = [0i32; NUM_PREDICTORS_VARIABLE];
+                for (i, pred) in Predictor::all_simple().iter().enumerate() {
+                    if *pred == Predictor::Weighted {
+                        continue; // filled below via WP state
+                    }
+                    let p = pred.predict_from_neighbors(&neighbors);
+                    residuals[i] = dc_val - p;
+                }
+
+                // WP prediction + max_error property
+                let (wp_pred, wp_max_error) =
+                    wp_state.predict_and_property(x, y, width, &neighbors);
+                residuals[Predictor::Weighted as usize] = dc_val - wp_pred as i32;
+
+                // Update WP error state with actual value
+                wp_state.update_errors(dc_val, x, y, width);
+
+                // Compute extended property vector (16 entries, prop 15 = wp_max_error)
+                let (mut props, new_local_grad) = compute_dc_properties(
+                    enc_idx as u32,
+                    x,
+                    y,
+                    top,
+                    left,
+                    topleft,
+                    topright,
+                    toptop,
+                    leftleft,
+                    prev_local_grad,
+                );
+                props[15] = wp_max_error;
+
+                samples.add_sample_variable(residuals, props);
+
+                prev_local_grad = new_local_grad;
+            }
+        }
+    }
 }
 
 /// Gather DC samples from quantized DC values.
@@ -628,6 +842,39 @@ mod tests {
         let mut samples = DcTreeSamples::new();
         gather_dc_samples(&mut samples, &quant_dc);
         assert_eq!(samples.num_samples, 0);
+    }
+
+    #[test]
+    fn test_gather_dc_samples_variable_multi_predictor() {
+        // 8x8 channel with stride values to exercise all predictors.
+        // Channel: each row constant (so Top predictor wins easily on row 1+).
+        let mk_channel = |base: i16| -> Vec<Vec<i16>> {
+            let mut ch = Vec::with_capacity(8);
+            for y in 0..8 {
+                ch.push(vec![base + y as i16 * 4; 8]);
+            }
+            ch
+        };
+        let quant_dc: [Vec<Vec<i16>>; 3] = [mk_channel(50), mk_channel(100), mk_channel(30)];
+
+        let mut samples = DcTreeSamples::new();
+        gather_dc_samples_variable(&mut samples, &quant_dc);
+
+        // 8*8 * 3 channels = 192 samples
+        assert_eq!(samples.num_samples, 192);
+        // Variable mode populates per-predictor residual arrays
+        assert!(samples.has_variable_residuals());
+        // All 14 predictor slots present
+        assert_eq!(samples.residual_tokens_per_predictor.len(), 14);
+        for slot in &samples.residual_tokens_per_predictor {
+            assert_eq!(slot.len(), 192);
+        }
+        // Gradient residuals also mirrored into legacy slot
+        assert_eq!(samples.residual_tokens.len(), 192);
+        // Property 15 (wp_max_error) should have at least one non-zero entry
+        // (the WP error term grows non-trivially through the iteration).
+        let has_nonzero_wp = samples.props[15].iter().any(|&v| v != 0);
+        assert!(has_nonzero_wp, "wp_max_error property should populate");
     }
 
     #[test]
