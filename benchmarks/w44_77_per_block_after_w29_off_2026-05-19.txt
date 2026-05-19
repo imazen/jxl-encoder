@@ -1,0 +1,41 @@
+W44-77 per-block strategy diff: ours_w29 OFF vs cjxl on 1420710 e7 d=6
+
+Source TSV: /tmp/w44_77_no_w29/per_block_ours.tsv
+                (env JXL_W44_76_PER_BLOCK_DUMP=/tmp/w44_77_no_w29
+                 ours encoder with high_d_photo_hint(Some(false)))
+                benchmarks/w44_76_per_block_libjxl_2026-05-19.tsv (cjxl baseline)
+
+Method: expand each (bx, by, channel=1, strategy) first-block into its
+covered 8x8 cells via the libjxl-wire strategy → (cx, cy) table, then
+diff per-cell.
+
+ours_default (W44-29 on)  vs cjxl:   3838 agree, 258 disagree   (5.96 % disagree)
+ours_no_w29 (libjxl table) vs cjxl:  4028 agree,  92 disagree   (2.25 % disagree)
+
+Top disagreements with W44-29 OFF:
+   (ours=5,  cjxl=10):  24 cells   — DCT32X32 → DCT32X16   (we picked the rect)
+   (ours=10, cjxl=5):   16 cells   — DCT32X16 → DCT32X32   (residual after table swap)
+   (ours=5,  cjxl=11):  16 cells   — DCT32X32 → DCT16X32
+   (ours=7,  cjxl=5):   12 cells   — DCT64X32 → DCT32X32
+   (ours=7,  cjxl=11):   8 cells   — DCT64X32 → DCT16X32
+
+Reduction in 96-cell pattern (W44-76 hypothesis (a) signature):
+  default:  96 cells  (ours=10 cjxl=5)
+  no_w29:   16 cells
+
+=> Disabling W44-29 closes 80 of 96 mismatched cells.  The residual 92
+cells span other strategy disagreements (DCT64X32 picks, DCT32X32 →
+DCT16X32 in the opposite direction).  Those are separate divergences
+and require their own audits (see W44-78 follow-on plan).
+
+Conclusion: the 96-cell DCT32X16 / DCT32X32 strategy mismatch IS
+attributable to the W44-29 table swap.  The audit confirms
+find_best_32x32_transform's three-way comparison logic
+(`entropy_jxj < cost_jxn && entropy_jxj < cost_nxj`) is structurally
+identical to libjxl's `FindBestFirstLevelDivisionForSquare` (verified
+side-by-side, see W44-77 memo).  No porting bug exists.
+
+The strategy-vs-bytes trade-off is real: the strategy alignment
+(no_w29) closes 80 cells but loses 18 B on this cell because the
+LfGlobal context-map / first-block overhead grows when we pack fewer
+multi-block transforms into the same image.
