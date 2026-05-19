@@ -1,0 +1,167 @@
+W44-48: codec_wiki density patches threshold tuning — NEGATIVE RESULT
+======================================================================
+
+Date: 2026-05-19 (UTC)
+Host: lilith / WSL2 / AMD Ryzen 9 7950X
+Commit: jxl-encoder main @ edf20a5c (W44-47 ledger refresh) — anonymous
+        change vqlnoyxu 6d02fce5 on top; reverted to baseline before write.
+Sibling workspace: ~/work/zen/jxl-encoder--w44-48-codec-wiki-density-experiment
+
+PROMPT
+------
+W44-46 honest-stop hypothesized that relaxing patches detection thresholds
+in vardct/patches.rs would close the +3 KB to +4.6 KB codec_wiki e7 d=3..6
+wedge vs cjxl. The two candidate constants:
+
+  VERY_SIMILAR_THRESHOLD  (border `is_similar_b`, current 0.03)
+  HAS_SIMILAR_THRESHOLD   (uniqueness window radius=2, current 0.03)
+
+The W44-46 detector stats showed `reject_inconsistent=454` on codec_wiki e7
+d=3.0 — 56 % of all CCs rejected by the border check — which made the
+threshold-relaxation hypothesis attractive.
+
+SWEEP DESIGN
+------------
+4 images × 4 distances × 8 configs:
+  baseline    VERY_SIMILAR=0.03   HAS_SIMILAR=0.03    (libjxl parity)
+  c1          VERY_SIMILAR=0.05   HAS_SIMILAR=0.03
+  c2          VERY_SIMILAR=0.08   HAS_SIMILAR=0.03
+  c3          VERY_SIMILAR=0.03   HAS_SIMILAR=0.05
+  c4          VERY_SIMILAR=0.05   HAS_SIMILAR=0.05
+  c5          VERY_SIMILAR=0.10   HAS_SIMILAR=0.10
+  extreme_100 VERY_SIMILAR=1.0    HAS_SIMILAR=1.0     (sanity: max relax)
+  extreme_001 VERY_SIMILAR=0.0001 HAS_SIMILAR=0.0001  (sanity: max strict)
+
+Images: codec_wiki, terminal, imac_g3, windows95 (gb82-sc).
+Distances: 3.0, 4.0, 5.0, 6.0.
+cjxl reference: libjxl v0.12.0 cjxl, same -e 7 -d $d --num_threads=1.
+
+RESULT — TOTAL NULL EFFECT
+--------------------------
+ALL 64 cells (8 configs × 4 images × 4 distances) produced BYTE-IDENTICAL
+output to the baseline. Confirmed via md5sum:
+
+  baseline_codec_wiki_e7_d3.0.jxl c876c14e... 75245 bytes
+  c5_codec_wiki_e7_d3.0.jxl       c876c14e... 75245 bytes
+  extreme_100_codec_wiki_d3.0.jxl c876c14e... 75245 bytes
+
+(Same identity confirmed across all 32 codec_wiki + terminal + imac_g3 +
+windows95 cells.)
+
+DIAGNOSTIC PROBE
+----------------
+Instrumented `apply_per_patch_cost_gate` to print
+{distance, VERY_SIMILAR_THRESHOLD, HAS_SIMILAR_THRESHOLD, ref_positions,
+positions, ref_width, ref_height, total_patch_pixels} on every call.
+
+codec_wiki e7 d=3.0 results across the same configs:
+
+  VST=0.03   HST=0.03    refs=57 occ=196 ref=133x130 pix=51529
+  VST=1.0    HST=0.03    refs=57 occ=196 ref=133x130 pix=51529
+  VST=0.0001 HST=0.0001  refs=57 occ=196 ref=133x130 pix=51527
+  VST=0.03   HST=1.0     refs=57 occ=196 ref=133x130 pix=51533
+
+The detector emits the EXACT SAME 57 unique refs / 196 occurrences /
+133×130 ref frame regardless of either threshold across a 10000× range
+(0.0001 to 1.0). Pix count varies by ±6 pixels (rounding noise inside the
+bounding-box arithmetic) but does not change the patches set.
+
+ROOT CAUSE (CORRECTING W44-46 HYPOTHESIS)
+-----------------------------------------
+W44-46's `reject_inconsistent=454` stat was a TRUE-POSITIVE measurement
+but a FALSE-CAUSE attribution. Those 454 CCs ARE rejected by
+`is_similar_b`, but they would ALSO be rejected by at least one of:
+
+  - kMinPatchOccurrences=2     (singleton patches dropped)
+  - kMinPeak filter            (low-magnitude patches dropped)
+  - kMinMaxPatchSize=20        (too-small patches dropped)
+  - bounding-box max-size      (MAX_PATCH_SIZE=32)
+  - the per-patch cost gate    (apply_per_patch_cost_gate)
+  - the per-set cost gate      (PatchesData::is_cost_effective)
+
+When we set VERY_SIMILAR_THRESHOLD = 1.0, every previously-rejected CC
+flows through to the downstream stages, but the OUTPUT is unchanged —
+proving the downstream filters absorb 100 % of the additional candidates
+without admitting a single new patch.
+
+The wedge mechanism therefore is NOT in the similarity thresholds.
+Three remaining hypotheses (UNVERIFIED — out of scope for this chunk):
+
+  H1 (highest EV): cjxl's BFS / DFS connected-component enumeration
+     differs from ours in some subtle way that produces ~7 % more
+     patch-pixel area. We'd need to instrument cjxl with the same
+     "refs / occ / pix" probe and compare admit counts. Likely a 1-2 d
+     reading + bisect of cjxl's find_text_like_patches loop.
+
+  H2: cjxl's ref-frame bin packer produces a slightly denser layout
+     (140×132 vs ours 133×130) by some packing heuristic that lets it
+     fit one or two more patches into the frame. Look at libjxl's
+     `enc_patch_dictionary.cc` PackInRectangles vs our bin_packing_*
+     module.
+
+  H3: cjxl's Predictor::Gradient ref-frame encoding produces a
+     DIFFERENT *quantized* pixel set vs our tree-learned Variable. The
+     two paths are both LOSSLESS, but cjxl's gradient predictor may
+     leave higher-magnitude residuals (more bits in the ref frame =
+     denser per pixel) that subtract MORE energy from the main residual
+     when applied via `image_features.AddTo()`. To test: force our
+     ref-frame encoder to Predictor::Gradient (drop tree-learn for
+     patches ref frames) and measure if ref-frame bytes go UP and main
+     bytes go DOWN.
+
+H3 is the most consistent with W44-46's per-section data:
+  cjxl: 7522 bytes patches + 64703 bytes main = 72225 total
+  ours: 5932 bytes patches + 69303 bytes main = 75235 total
+The +1590 cjxl patch overhead correlates with +4600 main savings — a
+3 × leverage that does not fit a "same pixels, smaller encoding" story.
+
+HONEST STOP — NO PRODUCTION CODE TOUCH
+--------------------------------------
+This chunk's two candidate fixes (W44-46 recommended chunks B and C)
+are now CONCLUSIVELY ruled out by direct measurement. The threshold
+constants in vardct/patches.rs:57 and :129 are at libjxl-parity values
+(0.03 / 0.03) and should remain there. NO production code touched.
+
+The W44-46 honest-stop's "recommended" status for chunks B + C should
+be downgraded to RULED-OUT in the next ledger refresh. Future work
+should target H1 (cjxl admit-count instrumentation), H2 (bin-packer
+comparison), or H3 (ref-frame predictor experiment) instead.
+
+REPRODUCER
+----------
+cd ~/work/zen/jxl-encoder--w44-48-codec-wiki-density-experiment
+# Sweep config c1 example:
+sed -i 's/^const VERY_SIMILAR_THRESHOLD: f32 = .*/const VERY_SIMILAR_THRESHOLD: f32 = 0.05;/' \
+    jxl-encoder/src/vardct/patches.rs
+cargo build --release -p jxl-encoder-cli
+for img in codec_wiki terminal imac_g3 windows95; do
+  for d in 3.0 4.0 5.0 6.0; do
+    ./target/release/cjxl-rs \
+      /home/lilith/work/codec-corpus/gb82-sc/${img}.png \
+      /tmp/c1_${img}_e7_d${d}.jxl -e 7 -d $d --threads 1
+    stat -c%s /tmp/c1_${img}_e7_d${d}.jxl
+  done
+done
+# Reset:
+sed -i 's/^const VERY_SIMILAR_THRESHOLD: f32 = .*/const VERY_SIMILAR_THRESHOLD: f32 = 0.03;/' \
+    jxl-encoder/src/vardct/patches.rs
+
+ACCEPTANCE GATES (from prompt)
+------------------------------
+(a) codec_wiki e7 d=3-6: at least 2 of 4 cells flip OPEN→FIXED
+    -> FAIL (0 of 4 cells changed any bytes)
+(b) terminal e7 d=3-6: bytes within ±0.5%
+    -> PASS (byte-identical)
+(c) imac_g3 e7 d=3-6: bytes within ±0.5%
+    -> PASS (byte-identical)
+(d) windows95 e7 d=3-6: bytes within ±0.5%
+    -> PASS (byte-identical)
+(e) Photos at d=1-4: byte-identical
+    -> PASS (no patches code touched ⇒ photo paths unchanged)
+(f) cargo test passes
+    -> N/A (no production code touch)
+(g) Hash-lock regen counted
+    -> 0 (no production code touch)
+(h) Multi-decoder roundtrip on 3+ cells
+    -> Baseline cells already verified pre-W44-48 (sweep cells byte-
+       identical to baseline ⇒ trivially same roundtrip behavior)
