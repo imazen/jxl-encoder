@@ -1,0 +1,101 @@
+W44-42 codec_wiki post-cluster ANS / LZ77 / HybridUint byte-attribution audit
+=============================================================================
+
+Workspace: ~/work/zen/jxl-encoder--w44-42-codec-wiki-ans/
+Commit base: main @ 083020ba (W44-39)
+Reproducer: cargo run -p jxl-encoder --release \
+    --example w44_42_ans_lz77_probe -- \
+    --output benchmarks/codec_wiki_section_attribution_2026-05-18.tsv
+cjxl: /home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl (v0.12.0)
+corpus: /home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png (2560x1664)
+
+Cells: codec_wiki.png × {e6 d=4} ∪ {e7 d=1,2,3,4,5,6}
+       (5 OPEN cells from W44-36 ledger + 2 FIXED reference cells)
+
+Findings:
+=========
+
+Audit RULES OUT 3 hypotheses and pin-points the wedge to ANS distributions
+inside hf_global (NOT in coefficient orders or LZ77).
+
+1. dequant matrix bytes: 1 byte ours vs cjxl across ALL cells (just an
+   all_default=1 flag — bit-identical).
+
+2. block context map count (W44-39): at parity (already known).
+
+3. num_hf_presets: ours=1, cjxl varies (1 at d>=3 patches cells, 2 at d=1,2).
+
+4. used_orders bitmask:
+     ours = 0x55 (pop=4, buckets {DCT8, DCT16x16, DCT16x8/8x16, DCT32x16/16x32})
+     cjxl = 0x5F (pop=6) at d=1,2,3,4 / 0x57 (pop=5) at d=5,6
+   cjxl picks 1-2 more buckets, yet its hf_global is 35-50% SMALLER per cell.
+   Confirms the cost-gating in our `compute_custom_orders` removes buckets
+   whose Lehmer-code cost exceeds expected AC savings.
+
+5. Section attribution per cell (delta = ours - cjxl):
+     cell             total Δ    hfglob Δ   passgrp Δ    n_blkclu  used_orders
+     -----------------------------------------------------------------------------
+     e6 d=4          +2379       +1683       +225        13 vs 10  0x55 vs 0x5F
+     e7 d=3          +2993       +1104       +1000       14 vs 14  0x55 vs 0x5F
+     e7 d=4          +4604        +998       +2879       13 vs 13  0x55 vs 0x5F
+     e7 d=5          +3523        +953       +2050       10 vs 10  0x55 vs 0x57
+     e7 d=6          +3461        +782       +2461        8 vs  8  0x55 vs 0x57
+     e7 d=1         -23242       +1153      -30039       14 vs 14  0x55 vs 0x5F
+     e7 d=2         -15728        +296      -22416       14 vs 14  0x55 vs 0x5F
+
+6. Within hf_global: dequant Δ = 0 across all cells, ALL the overspend is in
+   "perm_etc" (= used_orders + coeff_order Lehmer codes + LZ77 header +
+   the hf_dist Decoder header for AC entropy code).
+
+Fix attempts (all REGRESSED — not landed):
+==========================================
+
+A. `build_and_write_coeff_orders` LZ77-RLE + enhanced_clustering enabled
+   (full libjxl HistogramParams() parity for permutation encoding):
+   - codec_wiki_section_attribution_post_fix_2026-05-18.tsv
+   - Result: hf_global got +9 to +65 bytes WIDER vs baseline; passgroups
+     unchanged; net delta WORSE.
+   - Root cause guess: permutation streams are tiny (~80 tokens) — RLE
+     header cost dominates any savings, and the extra LZ77 distance
+     context adds ANS header overhead.
+
+B. `build_and_write_coeff_orders` enhanced_clustering only (no LZ77):
+   - codec_wiki_section_attribution_clusteronly_2026-05-18.tsv
+   - Result: hf_global 0 to +21 bytes WIDER vs baseline.
+   - Root cause guess: pair-merge has no merge opportunities at 8 contexts
+     with ~80 tokens, and the search/select overhead is paid for nothing.
+
+Verdict — wedge is NOT in `build_and_write_coeff_orders`:
+========================================================
+
+The dominant cost contributor is the **`hf_dist` AC entropy code header**
+(NOT the coefficient orders permutation). `hf_dist` carries:
+  - 8-context cluster_map for permutation contexts (small)
+  - 1-bit use_prefix_code
+  - 2-bit log_alpha_size
+  - Per-cluster HybridUintConfig (~10 bits each)
+  - Per-cluster ANS histogram (potentially LARGE — `kPrecise` strategy)
+
+At cjxl e7 (kSquirrel), the AC entropy code uses
+`ans_histogram_strategy = kApproximate` (`enc_ans_params.h:73` triggers
+when `tier >= kSquirrel`). Our code uses `ANSHistogramStrategy::Precise`
+unconditionally for VarDCT AC. This means our normalization picks one of
+12 split-exponent values; cjxl picks one of 7. The TWO encoders may
+converge to the same ans counts (when the underlying histogram favors
+the same split), but when they diverge, our Precise encoder picks a more
+expensive ANS distribution.
+
+This rules out W44-42's H1-H4 (`ANS clustering parity` / `LZ77 parity` /
+`HybridUint parity`). The next chunks should target:
+
+  CH1. ANS histogram strategy: Approximate vs Precise at VarDCT e<9
+       (match libjxl kSquirrel default). LOWER risk than disabling
+       useful features — kApproximate is libjxl-default behavior.
+
+  CH2. Per-cluster HybridUint config selection: confirm our kNone path
+       writes optimal (4,2,0) for ALL clusters (not just the global default).
+
+  CH3. Context-map encoding (simple vs non-simple) at VarDCT AC: confirm
+       we always pick the cheaper of the two for the cells in question.
+
+Read-only audit. Workspace will be discarded (no fix shipped).
