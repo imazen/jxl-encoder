@@ -1,0 +1,47 @@
+W44-81 — Residual mechanism survey
+==================================
+
+Date:    2026-05-19
+Author:  claude-w44-81
+Method:  read-only audit
+Commit:  pending
+Workspace: ~/work/zen/jxl-encoder--w44-81-survey
+
+Files surveyed in libjxl (~/work/jxl-efforts/libjxl/lib/jxl/):
+- enc_ans.cc, enc_ans_params.h
+- enc_ac_strategy.cc, ac_context.h
+- enc_cluster.cc
+- enc_coeff_order.cc
+- enc_frame.cc (HistogramParams setup)
+- enc_heuristics.cc (FindBestBlockEntropyModel, AdjustQuantField)
+- enc_chroma_from_luma.cc
+- enc_quant_weights.cc
+- enc_modular.cc
+- enc_group.cc (AdjustQuantBlockAC, QuantizeRoundtripYBlockAC)
+- enc_entropy_coder.cc (TokenizeCoefficients)
+- enc_adaptive_quantization.cc (AdjustQuantField, InitialQuantField)
+- common.h (SpeedTier enum)
+
+Files cross-referenced in our encoder:
+- jxl-encoder/src/vardct/{ac_context.rs, ac_strategy.rs,
+                          ac_strategy_search.rs, coeff_order.rs,
+                          bitstream.rs, encoder.rs, transform.rs}
+- jxl-encoder/src/entropy_coding/{ans.rs, cluster.rs, encode_ans.rs}
+- jxl-encoder/src/effort.rs
+
+Top-5 findings ranked by EV * ease:
+  #1 custom-orders cost-gate over-rejection      (5-15 LOC, MEDIUM-LOW risk)
+  #2 BlockCtxMap adaptive threshold widening      (3-100 LOC, MEDIUM risk)
+  #3 block_fraction = 0.5 sampling in zero-count  (25-40 LOC, LOW-MEDIUM)
+  #4 kAvoidEntropyOfTransforms double-count       (5-10 LOC, MEDIUM, audit first)
+  #5 max_histograms = 6 cap                       (3-5 LOC, HIGH uncertainty)
+
+DO NOT re-investigate (cite W44-* memos for parity):
+- cluster_histograms / FastClusterHistograms (W44-75)
+- write_context_map_nonsimple LZ77+ANS (W44-73)
+- find_best_32x32_transform 32x32 fork (W44-77)
+- AdjustQuantBlockAC constants (dropped_optimizations_for_parity)
+- entropy_mul table values (dropped_optimizations_for_parity)
+- F-D residual being "structural" / "FMA precision"
+
+Time spent: ~3 hours (within budget).
