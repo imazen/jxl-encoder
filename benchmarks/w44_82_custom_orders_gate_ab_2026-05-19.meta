@@ -1,0 +1,54 @@
+# W44-82 custom-orders cost-gate removal A/B
+# Date: 2026-05-19
+# Workspace: ~/work/zen/jxl-encoder--w44-82-custom-orders-gate
+# Method: ran examples/w44_82_custom_orders_gate_ab.rs at HEAD with the
+#         Lehmer-cost-vs-AC-savings gate REMOVED from
+#         vardct/coeff_order.rs:410-487 (matched libjxl's unconditional
+#         ComputeCoeffOrder enc_coeff_order.cc:198-237). Compared bytes
+#         vs the W44-79 baseline ledger
+#         benchmarks/cjxl_parity_ledger_2026-05-19_w44_79.tsv
+#         jxl_bytes column (commit `0fb4854c` HEAD, baseline gate ON).
+# Cells: 5 photos (1420710 + 1531677 + 1189261 F-D OPEN + 1025469 +
+#         1418519 photo controls) x e7 x d in {3,4,5,6} = 20 cells.
+# Sample protocol: min-of-2 per cell (warm), bytes only, single thread
+#         (release).
+# Comparison script: benchmarks/w44_82_compare_script.py
+#
+# RESULT: gate removal regresses bytes (+1595 B total, +1437 B on 16
+# OPEN cells). 1 OPEN->FIXED flip (1531677 d=3), 1 FIXED->OPEN
+# regression (1025469 d=4). Worst cell 1420710 e7 d=4 +1682 B (+6.28%
+# vs gate-on; new_vs_cjxl jumped from -4.10% to +1.92%).
+#
+# Hash-lock impact: 4 lossy sidecars regress +47 B each:
+#   lossy_defaults_rgb_48x48_noise: 3207 -> 3254
+#   lossy_with_noise:               3207 -> 3254
+#   lossy_with_lz77_rle:            3207 -> 3254
+#   lossy_with_lz77_greedy:         3207 -> 3254
+# (The 48x48 noise fixture was the original gate motivation per
+# commit 70b1a18 hash-lock diff.)
+#
+# CONCLUSION: the W44-81 hypothesis was wrong. The gate is load-bearing
+# at high d on smooth content - the Lehmer-code overhead really does
+# exceed per-position zero-rate savings, and libjxl is implicitly
+# paying that cost. RESTORED the gate; issue #60 -> ruled out.
+#
+# Acceptance gates (per W44-82 task brief):
+#   (b) F-D cells: >=4 OPEN->FIXED OR avg -100B per cell on 13 photo
+#       OPEN cells: FAIL (1 OPEN->FIXED, +95B avg).
+#   (c) NO FIXED->OPEN regression: FAIL (1025469 d=4).
+# Both core gates failed. Gate restored to source.
+#
+# Multi-decoder roundtrip (gate RESTORED state):
+#   djxl 0.12.0:  1420710 d=4 + 1531677 d=5 + 1189261 d=6 all OK
+#   jxl-oxide:    1420710 d=4 + 1531677 d=5 + 1189261 d=6 all OK
+#   jxl-rs:       1420710 d=4 + 1531677 d=5 + 1189261 d=6 all OK
+#
+# Bench reproducer:
+#   cargo run -p jxl-encoder --release \
+#       --features 'parallel butteraugli-loop' \
+#       --example w44_82_custom_orders_gate_ab
+#
+# Multi-decoder dump:
+#   W44_82_DUMP_DIR=/tmp/w44_82_dump cargo run -p jxl-encoder --release \
+#       --features 'parallel butteraugli-loop' \
+#       --example w44_82_custom_orders_gate_ab

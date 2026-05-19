@@ -1097,5 +1097,13 @@ path = "examples/w44_79_trial.rs"
 name = "w44_79_decoder_check"
 path = "examples/w44_79_decoder_check.rs"
 
+# W44-82 custom-orders cost-gate removal — bytes-only sweep on F-D OPEN
+# cells (1420710 / 1531677 / 1189261 at e7 d=3-6) plus photo controls.
+# Compare bytes_new vs the W44-79 ledger jxl_bytes baseline.
+[[example]]
+name = "w44_82_custom_orders_gate_ab"
+path = "examples/w44_82_custom_orders_gate_ab.rs"
+required-features = ["parallel", "butteraugli-loop"]
+
 [lints]
 workspace = true
