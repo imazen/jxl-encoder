@@ -411,14 +411,30 @@ pub fn compute_custom_orders(zero_counts: &[Vec<Vec<i64>>]) -> (Vec<Vec<Vec<u32>
             // Cost-benefit check: estimate whether the Lehmer code encoding
             // overhead is justified by AC savings from reordering.
             //
-            // At high distances, zero counts become uniform (most coefficients
-            // are zero regardless of position), so reordering provides minimal
-            // benefit while the Lehmer code still costs bits to encode.
+            // **W44-82 (2026-05-19, issue #60) RULED OUT removal of this
+            // gate.** The W44-81 audit hypothesized that libjxl's
+            // unconditional `ComputeCoeffOrder` path
+            // (enc_coeff_order.cc:198-237 — only `is_nondefault` is the
+            // gate) would save bytes on F-D OPEN cells because our gate was
+            // rejecting custom orders too aggressively. **Paired bench on
+            // 20 F-D + photo cells showed +1595 B total regression** with
+            // the gate removed; worst cell `1420710 e7 d=4` +1682 B
+            // (+6.28%). 0 OPEN→FIXED flips, 1 FIXED→OPEN regression. The
+            // gate is load-bearing: at high d on smooth content, the
+            // Lehmer-code overhead really does exceed the per-position
+            // zero-rate savings, and libjxl is implicitly paying that cost.
+            // See `benchmarks/w44_82_custom_orders_gate_ab_2026-05-19.tsv`.
+            //
+            // At high distances, zero counts become uniform (most
+            // coefficients are zero regardless of position), so reordering
+            // provides minimal benefit while the Lehmer code still costs
+            // bits to encode.
             //
             // We estimate:
             // - Cost: bits to encode the Lehmer code for all 3 channels
-            // - Savings: expected increase in trailing zeros per block × num_blocks
-            //   (each extra trailing zero saves ~1 bit in nzeros coding)
+            // - Savings: expected increase in trailing zeros per block ×
+            //   num_blocks (each extra trailing zero saves ~1 bit in
+            //   nzeros coding)
             let (cx_n, cy_n) = if cx >= cy { (cx, cy) } else { (cy, cx) };
             let llf = cx_n * cy_n;
             let natural_lut = natural_coeff_order_lut(cx, cy);
