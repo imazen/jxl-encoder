@@ -1,0 +1,129 @@
+# cjxl parity ledger — W44-45 refresh post W44-43
+git_rev: 19f67008 (main HEAD; perf(entropy): use ANSHistogramStrategy::Approximate at VarDCT e<=7 (W44-43, libjxl parity))
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1418519.png", "1531677.png", "1189261.png", "1420710.png", "terminal.png", "codec_wiki.png", "imac_g3.png"]
+corpus: /home/lilith/work/codec-corpus
+total_rows: 595
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
+
+# W44-45 refresh: re-runs all 31 OPEN cells + 10-cell FIXED regression sample
+# against main HEAD (19f67008) post W44-44 build-fix rename of W44-43.
+# Source diff 57b4a7ae..19f67008 = build-fix only (padded_height hoist for
+# rate-control cfg path), no behavioral change under default features.
+#
+# Pre-state  (W44-43 @ 57b4a7ae): 31 OPEN, 564 FIXED
+# Post-state (W44-45 @ 19f67008): 31 OPEN, 564 FIXED
+# Flips OPEN→FIXED: 0
+# Flips FIXED→OPEN: 0
+# Sample-of-10 FIXED retest: all 10 still FIXED (terminal e7 d=0.4, codec_wiki
+#   e7 d=0.6, imac_g3 e7 d=0.8, 1418519 e6 d=1.0 + e7 d=1.6, 1531677 e7 d=1.0,
+#   1025469 e5 d=1.0, 1189261 e7 d=3.0, 1420710 e7 d=3.0, terminal e6 d=5.0).
+#   W44-43 wins held (terminal e7 d=0.4 bytes_delta -65.45%, imac_g3 e7 d=0.8
+#   bytes_delta -58.76%, codec_wiki e7 d=0.6 bytes_delta -20.77%).
+# Wall_seconds this refresh: 9.7s (31 OPEN cells) + ~13s (10 FIXED sample).
+#
+# Session total vs W44-1 baseline (2026-05-18):
+#   W44-1 baseline:           50 OPEN, 544 FIXED  (file: cjxl_parity_ledger_2026-05-18.tsv)
+#   W44-45 post-refresh:      31 OPEN, 564 FIXED
+#   Δ session = -19 OPEN  (50→31, -38%)
+#   Δ session = +20 FIXED (W44-1 had 544; ledger expanded by 1 cell during W44-36 to 595 total)
+#
+# Per-image OPEN distribution (31 cells):
+#   1531677.png : 10  (all at d>=5, all 5 efforts; SSIM2_delta_abs -1.07 to -1.85)
+#   1420710.png : 10  (all at d>=5, all 5 efforts; SSIM2_delta_abs -1.08 to -1.96)
+#   codec_wiki.png :  5  (4 at e7 d=3-6 + 1 at e6 d=4; W44-42/W44-43 ruled out ANS path)
+#   1189261.png :  4  (e5 d=4, e7 d=4, e8 d=3, e9 d=3)
+#   terminal.png:  1  (e6 d=6)
+#   1025469.png :  1  (e9 d=1.2)
+#
+# Per-distance OPEN distribution:
+#   d=6.0 : 12   (dominant; high-d photo Pareto loss = WF1 from rd_curve_audit)
+#   d=5.0 : 11   (dominant; high-d photo Pareto loss)
+#   d=4.0 : 4
+#   d=3.0 : 3
+#   d=1.2 : 1    (1025469 e9, low-d only-at-e9 outlier)
+#
+# Section-attribution wedge analysis (largest over-budget section per OPEN cell):
+#   1420710 + 1531677 (20 cells, photo group, d>=5):
+#     AC GROUPS dominate: +900 to +1800 bytes per cell over cjxl
+#     LF GROUPS NEGATIVE (we under-spend): -480 to -940 bytes per cell
+#     HF GLOBAL slightly over: +100 to +450 bytes per cell
+#     => Profile: we under-allocate LF, over-allocate AC. Quant-field is too aggressive
+#        on high-frequency content at high d. Same WF1 family as rd_curve_audit_2026-05-18.
+#
+#   codec_wiki.png e7 d=3-6 (4 cells, screenshot group):
+#     LF GROUPS DOMINATE: +920 to +2230 bytes per cell over cjxl
+#     PATCHES UNDER-SPEND: -870 to -1590 bytes (cjxl writes more patches data)
+#     AC GROUPS over: +1000 to +2880 bytes
+#     HF GLOBAL over: +780 to +1120 bytes
+#     => Profile: cjxl's patches dictionary captures more repeated text, our
+#        residual goes into LF + AC instead. Patches detector / cost-gate too
+#        conservative at high d. W44-42 + W44-43 (ANS strategy) ruled out;
+#        wedge is in PATCHES or MODULAR REF FRAME density.
+#
+#   1189261.png (4 cells, e5/e7/e8/e9 at d=3-4):
+#     AC GROUPS dominate: +1100 to +1290 bytes
+#     LF GROUPS NEGATIVE: -535 to -830 bytes
+#     HF GLOBAL over: +170 to +840
+#     => Same WF1 photo profile as 1420710/1531677.
+#
+#   terminal.png e6 d=6 (1 cell, screenshot, distinct from codec_wiki cluster):
+#     AC GROUPS dominate: +1842
+#     LF GROUPS NEGATIVE: -1397
+#     HF GLOBAL over: +1111
+#     LF GLOBAL over: +685
+#     => Screenshot at e6 lacks W44-43's e7 ANS win and lacks W44-35's e6 dct64 win.
+#        Look at AC strategy distribution and quant_field at e6.
+#
+# Top-5 OPEN by abs(bytes_delta_pct):
+#   1. codec_wiki.png e7 d=4   bytes_d=+7.35% bfly_d=+7.19% ssim2_d=-4.52
+#   2. 1420710.png  e5 d=6   bytes_d=+6.95% bfly_d=-5.97% ssim2_d=-1.44
+#   3. codec_wiki.png e7 d=6   bytes_d=+6.69% bfly_d=+3.26% ssim2_d=-1.24
+#   4. codec_wiki.png e7 d=5   bytes_d=+6.16% bfly_d=+4.11% ssim2_d=-2.41
+#   5. 1531677.png  e5 d=6   bytes_d=+5.88% bfly_d=-0.67% ssim2_d=-1.07
+#
+# RECOMMENDED NEXT ATTACK FAMILY (Top-EV):
+#
+# == Chunk A (highest EV): codec_wiki e7 d=3-6 patches density ==
+#   Section attribution shows cjxl writes MORE patches data (-870 to -1590 bytes
+#   per cell) at high d on codec_wiki, while we under-detect/under-encode patches
+#   and the residual goes into LF+AC. W44-42 ruled out ANS as the wedge; pivot
+#   away from entropy-layer tuning toward PATCHES at high d.
+#   Concrete next steps:
+#     (1) Per-section diff cjxl vs ours on codec_wiki e7 d=4 (the worst OPEN cell)
+#         to confirm patches count + ref-frame size delta.
+#     (2) Audit patches `apply_per_patch_cost_gate` constants at d>=3.
+#     (3) Audit patches `min_peak` (we use 1 at d>=1, libjxl uses kMinPeak=2 —
+#         already noted in memory file patches_effort_gate_audit_2026-05-18 as
+#         "Chunk #A revert min_peak=2 at d>=3, 2-line change, 60-80% wedge close,
+#         hash-lock safe"). This is the cleanest first chunk.
+#     (4) If (3) insufficient, look at patches `mode == Reference` per-set gate
+#         `is_cost_effective` which already has `1/sqrt(d)` term but is Experimental-
+#         only at default; unlocking it at d>=3 in Reference mode is chunk B.
+#
+# == Chunk B (broad EV): photo group WF1 d>=5 quant-field/LF over-confidence ==
+#   12 cells across 1420710 + 1531677 (and 4 cells on 1189261) all show same
+#   profile: LF under-spend, AC over-spend, butteraugli-better-or-equal but
+#   ssim2 -1 to -2 worse. Quant-field is biasing too much budget to AC.
+#   Concrete next steps:
+#     (1) Per-block raw_quant histogram diff cjxl vs ours on 1420710 e5 d=6
+#         (most-OPEN; AC over-spend +1619).
+#     (2) Audit DC quant scaling at d>=5. Possibly LF quant matrix needs upward
+#         lift at high d (we encode too coarsely → SSIM2 drops on low-freq content).
+#     (3) W44-8 (51e8ae41 DC quant patch — verified absent from main per memory
+#         file cjxl_ledger_refresh_post_w44_3_w44_8_2026-05-19) would have flipped
+#         imac_g3 + terminal cells at this distance band; reinstating it is the
+#         lowest-effort EV win available.
+#
+# Wall_seconds this refresh: 9.7s (31 OPEN cells) + ~13s (10 FIXED sample) = ~23s
+# update_mode: true
+# status_filter: OPEN (then per-cell --image/--effort/--distance for sample)
