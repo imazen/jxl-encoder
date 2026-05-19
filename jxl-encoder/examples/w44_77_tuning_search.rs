@@ -10,9 +10,18 @@ use jxl_encoder::{EntropyMulTable, LossyConfig, LossyInternalParams, PixelLayout
 use std::process::Command;
 
 const CELLS: &[(&str, &str)] = &[
-    ("1420710", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png"),
-    ("1531677", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png"),
-    ("1189261", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1189261.png"),
+    (
+        "1420710",
+        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png",
+    ),
+    (
+        "1531677",
+        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png",
+    ),
+    (
+        "1189261",
+        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1189261.png",
+    ),
 ];
 const DISTANCES: &[f32] = &[3.0, 4.0, 5.0, 6.0];
 
@@ -25,13 +34,7 @@ fn build_table(dct16x32_val: f32) -> EntropyMulTable {
     t
 }
 
-fn encode_with_table(
-    rgb: &[u8],
-    w: u32,
-    h: u32,
-    d: f32,
-    table: Option<EntropyMulTable>,
-) -> usize {
+fn encode_with_table(rgb: &[u8], w: u32, h: u32, d: f32, table: Option<EntropyMulTable>) -> usize {
     let mut cfg = LossyConfig::new(d).with_effort(7);
     if let Some(t) = table {
         // Force W44-29 OFF then inject our custom table via internal_params
@@ -46,7 +49,11 @@ fn encode_with_table(
 }
 
 fn cjxl_size(src: &str, d: f32) -> Option<usize> {
-    let tmp = format!("/tmp/w44_77_tune_cjxl_{}_{}.jxl", std::process::id(), (d * 10.0) as u32);
+    let tmp = format!(
+        "/tmp/w44_77_tune_cjxl_{}_{}.jxl",
+        std::process::id(),
+        (d * 10.0) as u32
+    );
     let out = Command::new("cjxl")
         .args(["-d", &d.to_string(), "-e", "7", src, &tmp])
         .output()

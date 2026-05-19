@@ -241,9 +241,43 @@ const HIGH_D_PHOTO_SMOOTH_THRESHOLD: f32 = 50.0;
 /// The W44-29 table is harmful in the 50-80 mask1x1 zone for these
 /// images — keep mask<50 strict.
 ///
-/// **Sweep artifact**: `benchmarks/w44_78_widen_gate_ab_2026-05-19.tsv`
-/// (reproducer: `cargo run --release -p jxl-encoder --features parallel
-/// --example w44_78_widen_gate_ab`).
+/// **W44-79 zenanalyze discriminator (opt-in)**: the 50-80 mask1x1 band
+/// can be safely widened *only* for the colourful+textured photo
+/// sub-class that 1189261 represents. The verified discriminator is
+/// `colourfulness >= 80 AND flat_color_block_ratio < 0.01` (both
+/// zenanalyze Tier 2 features). Of the 41 CID22 validation images, only
+/// 1189261 matches. All 6 documented regression-band images
+/// (1025469, 1624487, 159550, 2079234, 2775196, 297394) fail this
+/// discriminator and stay on the libjxl-parity reference table.
+/// Per-distance impact when [`crate::api::LossyConfig::with_high_d_photo_hint`]
+/// is set to `Some(true)` on 1189261 (e7 in-process measurement, 2026-05-19):
+///
+///   - d=3: -679 B (-2.23 %)
+///   - d=4: -452 B (-1.85 %)
+///   - d=5: -319 B (-1.61 %)
+///   - d=6: +560 B (+3.33 %) ← regression — caller MUST cap at d <= 5
+///
+/// Total -1450 B across d ∈ {3, 4, 5} for 1189261. The discriminator
+/// is *not* auto-fired by the production hot path because:
+///
+///   1. Zenanalyze Tier 2 features cost ~7 ms/MP (vs the cheap
+///      pipeline-internal mask1x1 statistic that costs ~0).
+///   2. Only 1 of 41 CID22 photos matches, so the EV (~1450 B per
+///      qualifying encode × 1 image / 41) does not justify the
+///      Tier 2 compute on the production hot path.
+///
+/// Callers that already compute zenanalyze features per-image (e.g.,
+/// imageflow content-class routers) should call
+/// [`crate::api::LossyConfig::with_high_d_photo_hint`] with
+/// `Some(true)` when both `colourfulness >= 80` and
+/// `flat_color_block_ratio < 0.01` AND `3.0 <= distance <= 5.0`.
+///
+/// **Sweep artifact**: `benchmarks/w44_78_widen_gate_ab_2026-05-19.tsv` +
+/// W44-79 discriminator confirmation in
+/// `benchmarks/w44_79_zenanalyze_discriminator_2026-05-19.tsv` (reproducer:
+/// `cargo run --release -p jxl-encoder --features parallel --example
+/// w44_78_widen_gate_ab` for the sweep, `cargo run --release -p
+/// jxl-encoder --example w44_79_trial` for the per-image hint A/B).
 const HIGH_D_PHOTO_MIN_DISTANCE: f32 = 3.0;
 
 /// W36-3 patches photo-skip dispatch threshold on the per-block-mean

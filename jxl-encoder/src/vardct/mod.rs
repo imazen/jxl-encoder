@@ -94,11 +94,11 @@ mod zensim_loop;
 #[cfg(feature = "investigate-adjust-quant-block-ac")]
 pub mod aqba_diag;
 pub(crate) mod quant;
-pub(crate) mod w44_76_dump;
 pub(crate) mod quantize;
 pub(crate) mod reconstruct;
 mod static_codes;
 pub mod transform;
+pub(crate) mod w44_76_dump;
 pub(crate) mod xyb;
 
 pub use encoder::{VarDctEncoder, VarDctOutput};

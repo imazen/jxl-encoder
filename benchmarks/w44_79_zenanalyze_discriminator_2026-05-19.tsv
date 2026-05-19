@@ -1,0 +1,91 @@
+# W44-79 zenanalyze-feature discriminator for widening the W44-29 mask1x1
+# gate from <50 to <80 on the 50-80 ambiguous band (per W44-78 follow-on).
+#
+# Goal: find a zenanalyze-feature predicate that catches 1189261 (mask=69.08,
+# the W44-78 follow-on TARGET) and excludes ALL 6 REGRESSION-band images
+# from the W44-78 sweep (where mask1x1 ∈ [50, 80] but B-variant widening
+# regresses bytes vs the production A-variant).
+#
+# Method
+# ------
+# 1. Extract zenanalyze features for 15 CID22 validation images:
+#    - 1 TARGET (1189261)
+#    - 6 REGRESSION-band (B regresses A by >1 pp on at least 1 distance)
+#    - 5 BENEFICIARY (B helps A by >1 pp on at least 1 distance — but
+#      these mostly regress at d=6 too, so we keep them as observation
+#      cells but the discriminator doesn't need to catch them).
+#    - 2 reference cells that already fire (1420710, 1531677 mask<50)
+#    - 1 reference cell that doesn't need to fire (1418519 mask>95)
+# 2. Find a 1-or-2-feature predicate over Tier 1/2 features that
+#    cleanly separates TARGET from REGRESSION.
+# 3. Verify on full 41-image CID22 validation: only 1189261 matches.
+# 4. Trial-encode 1189261 with LossyConfig::with_high_d_photo_hint(Some(true))
+#    at d ∈ {3, 4, 5, 6} to confirm per-distance impact.
+#
+# Discriminator candidates tested (all `mask1x1 ∈ [50, 80]` AND predicate):
+#   C1: colourfulness >= 80 AND edge_density >= 0.15 AND flat_color_block_ratio < 0.01
+#   C2: chroma_complexity >= 0.20 AND flat_color_block_ratio < 0.01
+#   C3: colourfulness >= 80 AND flat_color_block_ratio < 0.01
+#   C4: palette_log2_size >= 13 AND flat_color_block_ratio < 0.005      → catches 1624487 (FALSE POSITIVE)
+#   C5: chroma_complexity >= 0.20 AND colourfulness >= 80               → catches 297394 (FALSE POSITIVE)
+#   C6: palette_log2_size >= 13 AND chroma_complexity >= 0.20           → catches 297394 (FALSE POSITIVE)
+#   C7: colourfulness >= 90                                              → catches 297394 (FALSE POSITIVE)
+#
+# Result: C1, C2, C3 all cleanly identify ONLY 1189261. C3 is the
+# simplest (2 features, both Tier 2 derived).
+#
+# Per-distance hint A/B for 1189261 (1189261_w44_79_hint_ab.tsv):
+#   distance  auto_bytes  hint_true_bytes  delta_pct
+#   3.0       30481       29802            -2.23     ← save 679 B
+#   4.0       24380       23928            -1.85     ← save 452 B
+#   5.0       19778       19459            -1.61     ← save 319 B
+#   6.0       16816       17376            +3.33     ← REGRESS 560 B
+#
+# Caller MUST cap the hint-true firing at d <= 5 to avoid the d=6
+# regression. Total potential EV: -1450 B across d ∈ {3, 4, 5} on
+# 1189261 alone.
+#
+# Why NOT shipped as auto-fire in production:
+#   1. Zenanalyze Tier 2 features (colourfulness, flat_color_block_ratio)
+#      cost ~7 ms/MP. The current encoder hot path uses only the cheap
+#      pipeline-internal mask1x1 statistic (which is computed anyway for
+#      adaptive quant).
+#   2. Only 1 of 41 CID22 validation photos matches the discriminator.
+#      EV per qualifying encode: -1450 B (~6 % of file). Expected
+#      population EV (1450 B × 1/41): ~35 B per random photo — well
+#      below the noise floor of any ledger sweep.
+#   3. Existing API already supports opt-in via
+#      `LossyConfig::with_high_d_photo_hint(Some(true))` for callers
+#      that classify images upstream (e.g., imageflow content routers
+#      already compute zenanalyze features).
+#
+# Honest-stop verdict: discriminator IS shippable as DOCUMENTATION + opt-in
+# pathway. No production hot-path change. The discriminator is recorded in
+# the `HIGH_D_PHOTO_MIN_DISTANCE` const doc for callers to consume.
+#
+# Reproducers:
+#   /tmp/w44_79_features/   — zenanalyze feature extractor
+#   /tmp/w44_79_zenanalyze.tsv — 15-image features
+#   /tmp/w44_79_all_features.tsv — full 41-image features
+#   /tmp/w44_79_analyze.py — discriminator scan
+#   /tmp/w44_79_full_scan.py — full-corpus scan
+#   examples/w44_79_trial.rs — per-distance hint A/B on 1189261
+#
+# Per-image features (from /tmp/w44_79_zenanalyze.tsv):
+#
+image	category	mask1x1	palette_log2_size	flat_color_block_ratio	edge_density	high_freq_energy_ratio	colourfulness	chroma_complexity	C1_fires	C2_fires	C3_fires
+1189261.png	TARGET	69.08	13	0.0034	0.1836	0.1179	98.84	0.224	1	1	1
+1025469.png	REGRESSION	76.08	11	0.0166	0.0536	0.3032	45.45	0.135	0	0	0
+1624487.png	REGRESSION	79.69	13	0.0042	0.1376	0.1208	66.24	0.147	0	0	0
+159550.png	REGRESSION	72.76	12	0.0410	0.0793	0.1333	39.33	0.115	0	0	0
+2079234.png	REGRESSION	66.33	11	0.0984	0.2116	0.2174	54.51	0.137	0	0	0
+2775196.png	REGRESSION	74.73	11	0.0100	0.1230	0.2190	52.24	0.132	0	0	0
+297394.png	REGRESSION	62.00	14	0.0957	0.1954	0.1493	103.70	0.287	0	0	0
+162520.png	BENEFICIARY	64.49	12	0.0012	0.2047	0.1528	61.16	0.172	0	0	0
+164595.png	BENEFICIARY	71.88	11	0.0994	0.1906	0.4194	33.28	0.076	0	0	0
+2253934.png	BENEFICIARY	73.60	11	0.1062	0.1080	0.1126	31.27	0.073	0	0	0
+2670327.png	BENEFICIARY	60.35	13	0.0303	0.1007	0.0806	47.74	0.128	0	0	0
+2936831.png	BENEFICIARY	63.41	11	0.0259	0.0711	0.1257	41.41	0.118	0	0	0
+1420710.png	REF-already-fires	39.55	10	0.0000	0.5141	0.1288	32.93	0.043	0	0	0
+1531677.png	REF-already-fires	35.63	11	0.0000	0.3956	0.1750	12.29	0.032	0	0	0
+1418519.png	REF-no-need	92.33	11	0.0984	0.0394	0.1071	36.84	0.099	0	0	0
