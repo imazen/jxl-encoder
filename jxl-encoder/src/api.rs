@@ -3708,6 +3708,43 @@ pub struct LossyConfig {
     /// See [`Self::with_smooth_photo_dct64_hint`] and W44-34 root-cause
     /// memo (`1418519_mid_d_wedge_2026-05-18.md`).
     smooth_photo_dct64_hint: Option<bool>,
+    /// Optional caller-supplied override for the W44-63 content-aware
+    /// DCT64-class suppression gate.
+    ///
+    /// W44-62 (`07f8b3d2` harness) probed the 20 OPEN cells residual to
+    /// W44-61 with `__expert` `try_dct64=Some(false)` and found a polar
+    /// content-class split: screenshot-class content (codec_wiki + the
+    /// already-FIXED imac_g3 + terminal) wins uniformly -0.13 % to
+    /// -3.25 %, while photo content wins only sub-1 % (sub-flip-threshold).
+    /// codec_wiki e7 d=5 alone flips from `+3.51 %` → `+0.18 %` bytes
+    /// delta (OPEN → FIXED).
+    ///
+    /// Semantics (analogous to [`Self::with_screenshot_lift_hint`] /
+    /// [`Self::with_high_d_photo_hint`]):
+    /// - `None` (default): when
+    ///   [`Self::with_content_aware_entropy_mul(true)`] is set, the
+    ///   encoder uses an internal `median(mask1x1) > 95` discriminator
+    ///   (the existing W22-1 screenshot threshold) to suppress
+    ///   DCT64-class transforms on screenshot content. Outside the
+    ///   `content_aware_entropy_mul` opt-in the gate never fires.
+    /// - `Some(true)`: force-suppress DCT64-class transforms regardless
+    ///   of content discriminator. Caller asserts the image is in the
+    ///   screenshot class (e.g., via a zenanalyze
+    ///   `palette_log2_size`/`flat_color_block_ratio` classifier — see
+    ///   `examples/w44_63_dct_suppress_ab.rs`).
+    /// - `Some(false)`: force-enable DCT64 evaluation even when the
+    ///   mask1x1 discriminator would suppress. Caller asserts the
+    ///   image regresses under DCT64 suppression (e.g., textured
+    ///   photo content where DCT64 picks legitimately reduce bytes).
+    ///
+    /// Default `None` + `content_aware_entropy_mul=false` (the
+    /// production default) keeps every hash-lock byte-identical because
+    /// the gate cannot fire.
+    ///
+    /// See [`Self::with_dct_suppress_hint`], W44-62 honest-stop memo
+    /// (`w44_62_dct64_suppress_lever_found_2026-05-19.md`), and W44-61
+    /// libjxl-port commit message for context.
+    dct_suppress_hint: Option<bool>,
     /// Tracks whether the caller has explicitly set `patches` via
     /// [`Self::with_patches`]. Mirrors the
     /// `butteraugli_iters_explicit` / `resampling_explicit` pattern.
@@ -3971,6 +4008,12 @@ impl LossyConfig {
             // can't fit there). Larger fixtures get the same auto
             // detection as production input.
             smooth_photo_dct64_hint: None,
+            // W44-63: default None defers to the encoder-internal
+            // `median(mask1x1) > 95` discriminator (gated on
+            // `content_aware_entropy_mul=true` opt-in). Hash-locks
+            // outside the opt-in stay byte-identical because the gate
+            // cannot fire.
+            dct_suppress_hint: None,
             patches_explicit: false,
             patches_dispatch: PatchesDispatch::default(),
             epf_level: -1,
@@ -4199,6 +4242,7 @@ impl LossyConfig {
         new.screenshot_lift_hint = self.screenshot_lift_hint;
         new.high_d_photo_hint = self.high_d_photo_hint;
         new.smooth_photo_dct64_hint = self.smooth_photo_dct64_hint;
+        new.dct_suppress_hint = self.dct_suppress_hint;
         // Preserve explicit patches setting across with_effort.
         if self.patches_explicit {
             new.patches = self.patches;
@@ -5024,6 +5068,51 @@ impl LossyConfig {
     /// (default `None`).
     pub fn smooth_photo_dct64_hint(&self) -> Option<bool> {
         self.smooth_photo_dct64_hint
+    }
+
+    /// Caller-supplied override for the W44-63 content-aware DCT64-class
+    /// suppression gate.
+    ///
+    /// When [`Self::with_content_aware_entropy_mul(true)`] is set, the
+    /// encoder consults this hint to decide whether to disable
+    /// DCT64-class transforms (`DCT64X64`, `DCT64X32`, `DCT32X64`) at
+    /// AC-strategy search time. W44-62 (`07f8b3d2` harness) showed that
+    /// forcing DCT64 off on screenshot content yields uniform -0.13 % to
+    /// -3.25 % bytes wins, including a flip from `+3.51 %` → `+0.18 %`
+    /// on `codec_wiki.png e7 d=5` (OPEN → FIXED in the cjxl parity
+    /// ledger).
+    ///
+    /// Semantics:
+    /// - `None` (default): when `content_aware_entropy_mul=true`, fall
+    ///   back to the encoder-internal `median(mask1x1) > 95`
+    ///   discriminator (the existing W22-1 screenshot threshold). When
+    ///   `content_aware_entropy_mul=false`, the gate never fires.
+    /// - `Some(true)`: force-suppress DCT64-class evaluation regardless
+    ///   of the mask1x1 discriminator. Caller asserts the image is in
+    ///   the screenshot / pixel-art class (e.g., via zenanalyze
+    ///   `palette_log2_size`/`flat_color_block_ratio` features — see
+    ///   `examples/w44_63_dct_suppress_ab.rs`).
+    /// - `Some(false)`: force-allow DCT64 evaluation even when the
+    ///   mask1x1 discriminator would suppress. Caller asserts the
+    ///   image regresses under DCT64 suppression (e.g., textured photo
+    ///   content where DCT64 picks legitimately reduce bytes).
+    ///
+    /// **Default keeps every hash-lock byte-identical** because the
+    /// production default is `content_aware_entropy_mul=false`, under
+    /// which this hint has no effect.
+    ///
+    /// References W44-62 honest-stop memo
+    /// (`w44_62_dct64_suppress_lever_found_2026-05-19.md`) +
+    /// `benchmarks/w44_62_dct64_suppress_ab_2026-05-19.tsv`.
+    pub fn with_dct_suppress_hint(mut self, hint: Option<bool>) -> Self {
+        self.dct_suppress_hint = hint;
+        self
+    }
+
+    /// Currently-set [`Self::with_dct_suppress_hint`] override
+    /// (default `None`).
+    pub fn dct_suppress_hint(&self) -> Option<bool> {
+        self.dct_suppress_hint
     }
 
     /// Set a separate butteraugli distance for the alpha extra channel
@@ -7894,6 +7983,7 @@ impl<'a> EncodeRequest<'a> {
         enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
         enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
         enc.high_d_photo_hint = cfg.high_d_photo_hint;
+        enc.dct_suppress_hint = cfg.dct_suppress_hint;
         // Streaming refactor #11 chunk 6: thread the caller-selected
         // [`Buffering`] policy into VarDctEncoder so the per-region
         // precompute dispatch (precomputed.rs:compute_with_budget_and_buffering)
@@ -9022,6 +9112,7 @@ impl LossyEncoder {
             enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
             enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
             enc.high_d_photo_hint = cfg.high_d_photo_hint;
+            enc.dct_suppress_hint = cfg.dct_suppress_hint;
             // Streaming refactor #11 chunk 6 (streaming LossyEncoder
             // path).
             enc.buffering = cfg.buffering;
@@ -10879,6 +10970,7 @@ fn encode_animation_lossy(
     enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
     enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
     enc.high_d_photo_hint = cfg.high_d_photo_hint;
+    enc.dct_suppress_hint = cfg.dct_suppress_hint;
     // Streaming refactor #11 chunk 6 (animation frame path).
     enc.buffering = cfg.buffering;
     #[cfg(feature = "butteraugli-loop")]
