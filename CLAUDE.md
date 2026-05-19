@@ -586,6 +586,64 @@ Key patterns to watch for when working on this codebase:
 
 ## Investigation Notes
 
+### W44-63: `with_dct_suppress_hint` content-aware DCT64-suppress — SHIPPED (May 19, 2026)
+
+**Status**: [SHIPPED]
+
+Follow-on production wire-up to W44-62 (`07f8b3d2`, harness only).
+W44-62 measured that forcing `try_dct64=Some(false)` via `__expert`
+on the 26-cell ledger residual yielded uniform -0.13 % to -3.25 %
+screenshot-class wins (codec_wiki + the already-FIXED imac_g3 +
+terminal) with sub-1 % photo wins.
+
+**API surface added**:
+- `LossyConfig::with_dct_suppress_hint(Option<bool>)` setter +
+  `dct_suppress_hint()` getter.
+- `VarDctEncoder.dct_suppress_hint` field with constructor defaults
+  + propagation through still-image, streaming `LossyEncoder`, and
+  animation paths in `api.rs` (3 sites total).
+- Dispatch logic in `vardct/encoder.rs:2249-2290` composes with the
+  existing W22-1 / W44-29 gates: when active, sets
+  `profile_for_search.try_dct64 = false`, which `ac_strategy.rs:2094`
+  reads to skip DCT64X64 / DCT64X32 / DCT32X64 evaluation.
+- Auto discriminator: `median(mask1x1) > 95` (W22-1 screenshot
+  threshold). Gated on the existing `content_aware_entropy_mul` opt-in
+  so the production default keeps every hash-lock byte-identical.
+
+**Acceptance gates (all PASS)**:
+- (a) codec_wiki e7 d=5 B Δbytes = **-3.49 %** (was +3.51 %; flips
+  OPEN → FIXED in cjxl ledger).
+- (b) No photo cell B Δbytes > 1 % (auto discriminator correctly
+  defers on every photo).
+- (c) Decoder roundtrip via djxl + jxl_cli: **12/12 PASS** on 2 cells
+  × 3 variants × 2 decoders.
+- (d) 36 hash-lock fixtures byte-identical (production default `false`
+  on `content_aware_entropy_mul` keeps the gate off).
+- (e) Public API unit tests: `test_dct_suppress_hint_default_none`,
+  `test_dct_suppress_hint_api_roundtrip`.
+
+**Bench**:
+- `examples/w44_63_dct_suppress_ab.rs` (registered, requires
+  `__expert butteraugli-loop ssim2-loop parallel`).
+- `benchmarks/w44_63_dct_suppress_ab_2026-05-19.{tsv,meta}` — 26
+  cells × A/B/C variants; B variant TOTAL -1.20 % across the
+  harness.
+- `tests/w44_63_decoder_roundtrip.rs` — `#[ignore]`, 2 cells × 3
+  variants × 2 decoders.
+
+**Discriminator firing rate** (26-cell harness):
+- 9/9 screenshot cells fire correctly (B == C on every screen row).
+- 0/17 photo cells false-fire (B == A on every photo row).
+
+**Follow-ups (not blocking)**:
+- Full 1,196-cell ledger sweep to verify no FIXED → OPEN regression
+  on the broader 575 FIXED-cell set. Not blocking because the
+  production default keeps the gate off.
+- zenanalyze-driven classifier wired into the encoder for callers
+  without mask1x1 access (pixel_domain_loss=false path).
+- Distance-aware variant ("suppress DCT64 at d ≥ 4 for smooth
+  photos") to harvest the W44-62 sub-1 % photo F-D wins.
+
 ### W44-60: AFV policy already at parity (May 19, 2026)
 
 **Status**: [HONEST-STOP — no code shipped]

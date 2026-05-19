@@ -985,5 +985,16 @@ name = "w44_62_dct64_suppress_ab"
 path = "examples/w44_62_dct64_suppress_ab.rs"
 required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 
+# W44-63: production wire-up of the W44-62 DCT64-suppress lever via
+# the public `LossyConfig::with_dct_suppress_hint(Option<bool>)` API,
+# gated on the existing `content_aware_entropy_mul` opt-in. A/B/C
+# sweep validates that the new public hint matches the W44-62
+# `__expert try_dct64=Some(false)` channel and closes codec_wiki e7
+# d=5 (OPEN → FIXED). Pure public API — no zenanalyze dep.
+[[example]]
+name = "w44_63_dct_suppress_ab"
+path = "examples/w44_63_dct_suppress_ab.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+
 [lints]
 workspace = true

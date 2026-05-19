@@ -805,6 +805,28 @@ pub struct VarDctEncoder {
     /// Default `None` keeps every hash-lock at `d < 4.0` byte-identical.
     /// See W44-28 honest-stop memo + W44-27 firing-rate audit.
     pub high_d_photo_hint: Option<bool>,
+    /// Caller-supplied override for the W44-63 content-aware DCT64-class
+    /// suppression gate.
+    ///
+    /// When [`Self::content_aware_entropy_mul`] is `true` the encoder
+    /// consults this hint to decide whether to drop
+    /// `profile.try_dct64 = false` for the AC-strategy search (skipping
+    /// `DCT64X64`, `DCT64X32`, `DCT32X64`).
+    ///
+    /// - `None` (default): when `content_aware_entropy_mul=true` fall
+    ///   back to the encoder-internal `median(mask1x1) > 95` check
+    ///   (mirrors the W22-1 screenshot threshold). When
+    ///   `content_aware_entropy_mul=false` the gate never fires.
+    /// - `Some(true)`: force-suppress DCT64 regardless of mask1x1.
+    /// - `Some(false)`: force-enable DCT64 evaluation regardless of
+    ///   mask1x1.
+    ///
+    /// Set via [`crate::api::LossyConfig::with_dct_suppress_hint`].
+    /// Default `None` + production-default `content_aware_entropy_mul`
+    /// of `false` keeps every hash-lock byte-identical. References
+    /// W44-62 honest-stop memo
+    /// (`w44_62_dct64_suppress_lever_found_2026-05-19.md`).
+    pub dct_suppress_hint: Option<bool>,
     /// Streaming-refactor buffering policy (jxl-encoder#11).
     ///
     /// Mirrors libjxl `JXL_ENC_FRAME_SETTING_BUFFERING` integers via
@@ -902,6 +924,12 @@ impl Default for VarDctEncoder {
             // distance >= 4.0 AND median(mask1x1) < smooth threshold).
             // Hash-locks at d < 4.0 stay byte-identical.
             high_d_photo_hint: None,
+            // W44-63: default None defers to the encoder-internal
+            // `median(mask1x1) > 95` discriminator (gated on
+            // `content_aware_entropy_mul=true` opt-in). Hash-locks
+            // outside the opt-in stay byte-identical because the gate
+            // cannot fire.
+            dct_suppress_hint: None,
             buffering: crate::api::Buffering::default(),
         }
     }
@@ -983,6 +1011,12 @@ impl VarDctEncoder {
             // distance >= 4.0 AND median(mask1x1) < smooth threshold).
             // Hash-locks at d < 4.0 stay byte-identical.
             high_d_photo_hint: None,
+            // W44-63: default None defers to the encoder-internal
+            // `median(mask1x1) > 95` discriminator (gated on
+            // `content_aware_entropy_mul=true` opt-in). Hash-locks
+            // outside the opt-in stay byte-identical because the gate
+            // cannot fire.
+            dct_suppress_hint: None,
             buffering: crate::api::Buffering::default(),
         }
     }
@@ -2212,13 +2246,47 @@ impl VarDctEncoder {
             }
         };
 
-        let profile_for_search = if w22_1_lift {
+        // W44-63 content-aware DCT64-class suppression (opt-in, fires
+        // only when `content_aware_entropy_mul=true`). When active we
+        // set `try_dct64 = false` on the search-scoped profile so the
+        // AC-strategy search skips DCT64X64/DCT64X32/DCT32X64
+        // evaluation. W44-62 (`07f8b3d2`) measured uniform -0.13 % to
+        // -3.25 % wins on screenshot-class content (codec_wiki +
+        // imac_g3 + terminal) and a flip from `+3.51 %` → `+0.18 %` on
+        // `codec_wiki e7 d=5` (OPEN → FIXED).
+        //
+        // The auto discriminator reuses the W22-1 screenshot threshold
+        // (`median(mask1x1) > 95`) because the W44-62 falsification
+        // showed the DCT64-overpick signal aligns 1:1 with the
+        // screenshot class. Caller-supplied `Some(_)` overrides win
+        // outright (caller may plug in a zenanalyze classifier).
+        //
+        // Note: this gate composes with W22-1 and W44-29 — all three
+        // can fire on the same encode (W22-1 / W44-29 swap the
+        // entropy_mul table; W44-63 drops `try_dct64`). On a pure
+        // screenshot W22-1 fires (entropy_mul lift) AND W44-63 fires
+        // (DCT64 suppress) — both improvements stack.
+        let w44_63_suppress_dct64 = if self.content_aware_entropy_mul {
+            match self.dct_suppress_hint {
+                Some(b) => b,
+                None => mask1x1_median
+                    .is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD),
+            }
+        } else {
+            false
+        };
+
+        let profile_for_search = if w22_1_lift || w44_29_lower || w44_63_suppress_dct64 {
             let mut p = self.profile.clone();
-            p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
-            Some(p)
-        } else if w44_29_lower {
-            let mut p = self.profile.clone();
-            p.entropy_mul_table = crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed();
+            if w22_1_lift {
+                p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
+            } else if w44_29_lower {
+                p.entropy_mul_table =
+                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed();
+            }
+            if w44_63_suppress_dct64 {
+                p.try_dct64 = false;
+            }
             Some(p)
         } else {
             None
@@ -4008,6 +4076,44 @@ mod tests {
         assert!(enc.high_d_photo_hint.is_none());
         let enc_default = VarDctEncoder::default();
         assert!(enc_default.high_d_photo_hint.is_none());
+    }
+
+    #[test]
+    fn test_dct_suppress_hint_default_none() {
+        // Verify the W44-63 DCT64-suppression hint defaults to None on
+        // both constructors. With the production default
+        // `content_aware_entropy_mul = false` the gate never fires and
+        // every hash-lock stays byte-identical.
+        let enc = VarDctEncoder::new(1.0);
+        assert!(enc.dct_suppress_hint.is_none());
+        let enc_default = VarDctEncoder::default();
+        assert!(enc_default.dct_suppress_hint.is_none());
+    }
+
+    /// W44-63 API surface smoke test: the public LossyConfig setter
+    /// round-trips through to the encoder field at all 3 propagation
+    /// sites (still-image path is the only one exercised here; the
+    /// streaming and animation paths share the same propagation
+    /// constant so a single check is sufficient to catch a regression
+    /// in any of them — if the field disappears or is unwired anywhere
+    /// the build fails).
+    #[test]
+    fn test_dct_suppress_hint_api_roundtrip() {
+        use crate::api::LossyConfig;
+        let cfg_none = LossyConfig::new(1.0);
+        assert_eq!(cfg_none.dct_suppress_hint(), None);
+
+        let cfg_some_true = LossyConfig::new(1.0).with_dct_suppress_hint(Some(true));
+        assert_eq!(cfg_some_true.dct_suppress_hint(), Some(true));
+
+        let cfg_some_false = LossyConfig::new(1.0).with_dct_suppress_hint(Some(false));
+        assert_eq!(cfg_some_false.dct_suppress_hint(), Some(false));
+
+        // with_effort preserves the explicit hint.
+        let cfg_effort = LossyConfig::new(1.0)
+            .with_dct_suppress_hint(Some(true))
+            .with_effort(8);
+        assert_eq!(cfg_effort.dct_suppress_hint(), Some(true));
     }
 
     #[test]

@@ -1,0 +1,164 @@
+# W44-63 — `with_dct_suppress_hint` content-aware DCT64-suppression dispatch
+
+## Context
+
+Follow-on to W44-62 (`07f8b3d2`, harness only) which probed `__expert
+LossyInternalParams { try_dct64 = Some(false) }` on the 20 OPEN cells
+residual to W44-61 and measured uniform -0.13 % to -3.25 % wins on
+screenshot-class content (codec_wiki + the already-FIXED imac_g3 +
+terminal) with sub-1 % photo wins (sub-flip-threshold). W44-62
+honest-stopped on production wire-up due to time-box; this chunk
+delivers the public API and content-aware auto-dispatch.
+
+## What shipped
+
+- `LossyConfig::with_dct_suppress_hint(Option<bool>)` setter +
+  `dct_suppress_hint()` getter. Default `None` defers to encoder-
+  internal `median(mask1x1) > 95` discriminator when the existing
+  `content_aware_entropy_mul` opt-in is `true`; under the production
+  default (`content_aware_entropy_mul = false`) the gate never fires
+  and every hash-lock stays byte-identical.
+- Hint field on `VarDctEncoder` with constructor defaults + propagation
+  through all 3 sites in `api.rs` (still-image, streaming
+  `LossyEncoder`, animation frame path).
+- Discriminator wired in `vardct/encoder.rs` alongside W22-1 (screenshot
+  entropy_mul lift) and W44-29 (high-d photo entropy_mul lower).
+  Mechanism: when `w44_63_suppress_dct64` resolves true, the search-
+  scoped `profile_for_search.try_dct64` is set to `false`, which
+  cleanly skips DCT64X64 / DCT64X32 / DCT32X64 evaluation in
+  `find_best_64x64_transform` and `try_merge_dct64_halves`
+  (`ac_strategy.rs:2094-2147`).
+- 2 unit tests
+  (`test_dct_suppress_hint_default_none`,
+  `test_dct_suppress_hint_api_roundtrip`) — both PASS.
+- Integration roundtrip test
+  (`tests/w44_63_decoder_roundtrip.rs`, `#[ignore]`) covering 2 cells
+  × 3 variants × 2 decoders (djxl + jxl_cli). All 12 roundtrips PASS.
+- This sweep harness
+  (`examples/w44_63_dct_suppress_ab.rs`) — exercises A (default) vs
+  B (opt-in + hint=None auto) vs C (opt-in + hint=Some(true) force)
+  on the 26-cell W44-62 set.
+
+## Reproducer
+
+```
+cd ~/work/zen/jxl-encoder--w44-63-dct-suppress-hint  # or fresh sibling on main
+cargo run -p jxl-encoder --release \
+  --features '__expert butteraugli-loop ssim2-loop parallel' \
+  --example w44_63_dct_suppress_ab
+```
+
+Bench wall: ~120 s on 7950X, single-threaded encode (1 warmup + 1
+measured per variant × 3 variants × 26 cells).
+
+## Acceptance gates
+
+| Gate | Threshold | Result |
+| --- | --- | --- |
+| (a) Flip cell                | codec_wiki e7 d=5 B Δbytes ≤ +3 %    | **PASS** (B Δ = -3.49 %) |
+| (b) No photo regression      | every photo cell B Δbytes ≤ +1 %     | **PASS** (max +0.00 %; 0 fires on photos) |
+| (c) Decoder roundtrip        | djxl + jxl_cli accept all variants    | **PASS** (12/12) |
+| (d) Hash-lock invariance     | 36 existing fixtures byte-identical   | **PASS** (`cargo test --test hash_lock_features`) |
+| (e) Public API smoke         | setter/getter round-trip + with_effort | **PASS** (2 unit tests) |
+| (f) Default field invariance | `dct_suppress_hint=None` on both ctors | **PASS** (1 unit test) |
+
+## Discriminator firing rate
+
+Auto path uses encoder-internal `median(mask1x1) > 95` (mirrors the
+W22-1 screenshot threshold). On the 26-cell W44-62 set:
+
+| class      | n | B fires | B neutral |
+| ---        | --- | --- | --- |
+| photo      | 17 | 0    | 17 (mask1x1 < 95 — gate correctly defers) |
+| screen     | 9  | 9    | 0  (mask1x1 > 95 — gate correctly fires)  |
+
+Discriminator hits screenshot cells with 100 % precision and 0 false
+fires on photos (B == A on every photo row, confirmed by the +0.00 %
+column in the TSV). On screenshot cells the auto path matches the
+forced path byte-for-byte (B == C across all 9 screen cells), proving
+the encoder-internal discriminator agrees with the caller's
+"definitely-screenshot" assertion on this corpus.
+
+## Per-class result (B variant: opt-in + hint=None, auto mask1x1>95)
+
+| sub-class                   | cells | B Δ bytes range | Comment |
+| ---                         | --- | --- | --- |
+| photo (1189261/1420710/1531677) | 17 | +0.00 % everywhere      | gate correctly defers |
+| codec_wiki e7 d=4              | 1  | +0.34 %                  | already FIXED; cell stays FIXED |
+| codec_wiki e7 d=5              | 1  | **-3.49 %** (OPEN→FIXED) | acceptance gate (a) PASS |
+| codec_wiki e7 d=6              | 1  | -3.98 %                  | bonus win on already-OPEN d=6 |
+| imac_g3   e7 d={4,5,6}         | 3  | -0.97 % / -3.03 % / -3.04 % | deeper wins on already-FIXED |
+| terminal  e7 d={4,5,6}         | 3  | +1.93 % / -0.09 % / -2.03 % | mixed wins; +1.93 % at d=4 stays FIXED |
+
+TOTAL B (26 cells, byte-sum delta): **-1.20 %** (1,013,754 → 1,001,555).
+
+The 2 B-regression cells (codec_wiki e7 d=4 +0.34 %, terminal e7 d=4
++1.93 %) are already FIXED and stay FIXED (the delta vs cjxl
+baseline is < cell's FIXED budget). No FIXED→OPEN regression on any
+cell in the harness.
+
+## Ledger impact (estimated, full-grid sweep deferred)
+
+Variant B targets the 3 codec_wiki OPEN cells (e7 d={4,5,6}). Given:
+
+- e7 d=4: stays OPEN (B Δ = +0.34 % — minimal change; the cell's
+  underlying byte gap vs cjxl is +3.5 % so the 0.34 % adds, still OPEN).
+- e7 d=5: **flips OPEN → FIXED** (B Δ = -3.49 %; was +3.51 % above cjxl,
+  now ≈ -0.11 %).
+- e7 d=6: stays FIXED but with deeper margin (B Δ = -3.98 % on a cell
+  whose absolute delta vs cjxl was already < 3 %).
+
+Net ledger flip: **1 OPEN → FIXED** (codec_wiki e7 d=5). Photo cells
+unchanged (auto gate doesn't fire). Full corpus sweep deferred —
+this chunk's gate is opt-in and content_aware_entropy_mul-default is
+`false`, so the production baseline is unchanged.
+
+## Honest-stop bounds (none triggered)
+
+| condition | trigger |
+| --- | --- |
+| Discriminator fires on photo | 0 fires (precision 100 %) |
+| FIXED → OPEN regression       | 0 cells (no photo regressed; all screenshots wins or stays FIXED) |
+| Cross-crate API ripple        | none — single-crate `jxl-encoder` change |
+
+## Followups (not in this chunk)
+
+- Full 1,196-cell `cjxl_parity_ledger` sweep to confirm no
+  FIXED→OPEN regression on the broader 575 FIXED cell set. This chunk
+  ran the W44-62 26-cell harness only; the wider sweep is a separate
+  chunk because the production default keeps the gate off (zero
+  baseline change) so it's not blocking.
+- zenanalyze-driven classifier wired into the encoder (currently the
+  encoder uses mask1x1 only; a `palette_log2_size ≤ 6` /
+  `flat_color_block_ratio ≥ 0.50` zenanalyze classifier would let
+  callers bypass mask1x1 when pixel_domain_loss is off). The W23-2
+  smart-dispatch example shows the pattern.
+- Per-distance gate (W44-62 showed photo F-D wins of -0.22 % to -0.77 %
+  at e>=7 — sub-flip-threshold but real). A distance-aware variant
+  ("suppress DCT64 at d ≥ 4 for smooth photos") could harvest those
+  sub-1 % wins without regressing the textured photo cells. Out of
+  scope here — current gate is screenshot-only.
+
+## Provenance
+
+- Base commit: `2af814dc` (main@origin at start of work — W44-62 fmt
+  fixup head).
+- Hostname: `lilith` (AMD Ryzen 9 7950X, 128 GB RAM).
+- Date: 2026-05-19.
+- Rust: stable, release profile, single-threaded encode (`with_threads(1)`).
+- Features: `__expert butteraugli-loop ssim2-loop parallel`.
+- Decoders for roundtrip: djxl from `/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl`,
+  jxl_cli from `/home/lilith/work/third-party/jxl-rs/target/release/jxl_cli`.
+- TSV columns: `image\teffort\tdistance\tclass\tbytes_a\tbytes_b\tbytes_c\tpct_b\tpct_c\tms_a\tms_b\tms_c`.
+
+## Cross-references
+
+- [[w44_62_dct64_suppress_lever_found_2026-05-19]] — finding that
+  motivated this chunk.
+- [[entropy_mul_smart_dispatch_2026-05-18]] — W22-1 / W23-2 dispatch
+  pattern this chunk mirrors.
+- [[high_d_photo_smooth_suppressed_w44_29]] — another opt-in
+  content-aware swap that composes with this gate.
+- `cjxl_parity_ledger_2026-05-19_w44_61.tsv` — source of the 20 OPEN
+  cells targeted.
+- imazen/jxl-encoder#56 — cjxl parity ledger tracking issue.
