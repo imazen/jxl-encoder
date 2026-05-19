@@ -1,0 +1,198 @@
+# cjxl parity ledger — W44-55 refresh post W44-54 DC LearnTree (issue #56)
+git_rev: 8006f486 (workspace head on top of main@origin 68b34cb3; identical
+                   source to 68b34cb3 — W44-55 is bench-and-meta-only)
+build_change_id: xyoryvlw df94d525 (sibling workspace ../jxl-encoder--w44-55-ledger-post-learntree)
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1189261.png", "1418519.png", "1420710.png",
+         "1531677.png", "codec_wiki.png", "imac_g3.png", "terminal.png"]
+corpus: /home/lilith/work/codec-corpus
+wall_seconds: ~210 (10.5 s --status OPEN + ~200 s stratified FIXED sample)
+total_rows: 595
+cells_this_run: 31 (OPEN re-bench) + 287 (stratified FIXED sample, 72 explicit
+                   × cross-product fan-out)
+update_mode: true
+status_filter: Some("OPEN") for OPEN pass; None for FIXED-sample pass
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update OPEN): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --status OPEN
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
+
+# Purpose: Refresh the cjxl parity ledger after W44-54 (DC LearnTree port,
+# kyqsvpurqpqq, commit d53519d4; PR landed via 68b34cb3) to:
+#   (1) Count OPEN→FIXED flips (W44-50 wedge predicted closed; codec_wiki
+#       + terminal cells expected to improve).
+#   (2) Detect FIXED→OPEN regressions, especially on smooth-photo cells
+#       where the gradient-predictor DC tree was expected to underperform
+#       the WP fixed tree (W44-54 commit predicted 0369d229/097cb426
+#       regressions; we don't carry those photos but 1418519 is the
+#       analogous smooth-content member of our ledger corpus).
+
+# ── HEADLINE ────────────────────────────────────────────────────────────
+
+# Pre-state  (W44-47 @ da08fd9b): 31 OPEN, 564 FIXED (of 595)
+# Post-state (W44-55 @ 8006f486): 26 OPEN, 569 FIXED (of 595)
+#
+# Net flips: 6 OPEN → FIXED, 1 FIXED → OPEN, net −5 OPEN (−10 % of OPEN
+# baseline; −16 % of OPEN-from-W44-1 baseline of 50 → 26 = −48 %).
+#
+# Session total vs W44-1 baseline (memory note
+# cjxl_ledger_refresh_post_w44_3_w44_8_2026-05-19):
+#   W44-1 baseline: 50 OPEN, 544 FIXED
+#   W44-55 now:     26 OPEN, 569 FIXED (of 595, +1 row added W44-?)
+#   Session total: 24 OPEN cells CLOSED, ~25 FIXED cells added or
+#   reclassified across all W44-1..W44-55 chunks combined.
+
+# ── OPEN → FIXED CELLS (6) ──────────────────────────────────────────────
+#
+# (bytes_delta_pct before → after, bfly and ssim2 essentially unchanged
+# because the actual bytes shifted but the metrics did not — DC re-tokenisation
+# is a pure entropy-layer change, not a quant or strategy change)
+#
+# 1531677.png e7 d=5.0   bytes %+3.17 → %+2.37   (smooth photo, threshold cross)
+# 1531677.png e7 d=6.0   bytes %+3.24 → %+1.97   (smooth photo, threshold cross)
+# 1531677.png e8 d=6.0   bytes %+3.25 → %+2.10   (smooth photo, threshold cross)
+# 1531677.png e9 d=6.0   bytes %+3.62 → %+2.36   (smooth photo, threshold cross)
+# codec_wiki.png e6 d=4.0 bytes %+3.21 → %+2.92  (screenshot)
+# terminal.png e6 d=6.0  bytes %+4.06 → %+0.93   (W44-50 wedge, headline win)
+
+# ── FIXED → OPEN CELLS (1, noise-level boundary cross) ──────────────────
+#
+# 1418519.png e9 d=0.8   bytes 25608 → 25866 (+1.0%)
+#                        bytes_delta_pct %+2.05 → %+3.08
+#                        bfly_d% unchanged at 3.265, ssim2_abs unchanged at +0.189
+#                        Crossed bytes_delta_pct > 3 % gate. Sub-1 % byte
+#                        regression on smooth photo — the predicted W44-54
+#                        photo cluster regression, exactly as advertised.
+
+# ── PER-IMAGE BYTE DELTAS (FIXED-sample, 287 changed cells) ────────────
+#
+# image           n     mean_d%    min_d%    max_d%    wins(<-0.5%)  losses(>+0.5%)
+# terminal        25    −2.42      −3.96     −1.61     25 / 25       0 / 25
+# imac_g3         35    −1.22      −1.93     −0.72     35 / 35       0 / 35
+# 1531677         38    −0.32      −1.23     +0.06     10            0
+# 1420710         44    +0.01      −0.67     +0.24      4            0
+# codec_wiki      42    −0.08      −0.44     +0.32      0            0
+# 1025469         33    +0.19      −0.02     +0.50      0            0
+# 1189261         30    +0.41      +0.18     +0.85      0            7
+# 1418519         40    +1.36      +0.99     +2.03      0           40   ← uniform smooth-photo regression
+#
+# Overall (287 changed cells): mean −0.16 %; 74 wins > 0.5 %, 47 losses > 0.5 %.
+# Net direction: SCREENSHOTS WIN (terminal/imac_g3 dominate), SMOOTH-PHOTO
+# CLUSTER LOSES (1418519 uniformly, 1189261 partially).
+
+# ── BIGGEST INDIVIDUAL WINS (top-10 byte savings on FIXED sample) ──────
+#
+# terminal.png e9 d=0.4   48155 → 46247   (−3.96 %)
+# terminal.png e7 d=0.4   55087 → 53190   (−3.44 %)
+# terminal.png e7 d=2.0   44161 → 42940   (−2.76 %)
+# terminal.png e9 d=1.8   40344 → 39259   (−2.69 %)
+# terminal.png e6 d=2.5   91395 → 89171   (−2.43 %)
+# terminal.png e9 d=4.0   30616 → 29907   (−2.32 %)
+# terminal.png e5 d=1.8   105115 → 102756 (−2.24 %)
+# terminal.png e7 d=3.0   36176 → 35446   (−2.02 %)
+# terminal.png e6 d=0.4   159556 → 156654 (−1.82 %)
+# imac_g3.png e9 d=0.2    317932 → 312513 (−1.70 %)
+
+# ── INTERPRETATION ─────────────────────────────────────────────────────
+#
+# W44-54 DC LearnTree wins are concentrated on screenshot content (terminal,
+# imac_g3) where heavily-quantised DC has 0-1 unique values per block —
+# the W44-50 forensic analysis predicted exactly this: the fixed WP-BSP
+# tree (45 contexts post AC-metadata merge) spends ~4500 bits of ANS
+# histogram tables where 1-3 contexts would suffice. The learned tree
+# collapses to a few leaves on flat content.
+#
+# Photo regressions concentrate on smooth content (1418519 uniformly,
+# 1189261 partially) where WP-on-DC is a substantially better predictor
+# than clamped_gradient — DC residuals have spatial structure that WP
+# captures via its multi-channel weighted prediction but gradient does
+# not. The 1418519 cluster regression is +1.36 % bytes mean, peaking at
+# +2.03 % — consistent with the W44-54 commit's predicted +2-3 % photo
+# cluster.
+#
+# This validates the W44-54 commit's follow-on plan: a WP-residual
+# sub-chunk (gather samples on Weighted Predictor residuals + tokenise
+# with WP prediction at learned-tree leaves) should recover the smooth-
+# photo regression while keeping the screenshot win, since libjxl's
+# `Predictor::Variable` (effort >= 4) selects WP per-leaf for DC on
+# photo content.
+
+# ── PHOTO REGRESSION ASSESSMENT ────────────────────────────────────────
+#
+# Only 1 of 287 sampled FIXED cells flipped to OPEN (1418519 e9 d=0.8,
+# noise-level boundary cross at +1.0 % bytes). No quality regressions
+# (bfly_delta_pct and ssim2_delta_abs unchanged on every cell — DC
+# re-tokenisation is a pure bitstream-efficiency change).
+#
+# The 1418519 cluster has +1.36 % bytes mean across all 40 cells, but
+# 39 of them were already FIXED at bytes_d% > 1.5 % (smooth-photo
+# cluster within tolerance) so only the e9 d=0.8 boundary cell tipped
+# over. The remaining 39 are still FIXED at bytes_d% in the 1-2 % range,
+# now bumped to ~2-3 % but still under the wedge gate.
+#
+# Net: NO quality regressions, NO functional regressions, 1 noise-level
+# OPEN flip on a smooth-photo cluster (predicted by W44-54), 6 OPEN→FIXED
+# wins on screenshot + smooth-photo high-d content.
+
+# ── RECOMMENDED NEXT CHUNK ──────────────────────────────────────────────
+#
+# Highest-EV follow-on per W44-54 commit message: **WP-residual sub-chunk
+# (issue #56 follow-on)**.
+#
+# Spec:
+#   (1) Gather DC samples on Weighted Predictor residuals instead of
+#       clamped_gradient residuals.
+#   (2) Allow `Predictor::Weighted` (predictor=6) at learned-tree leaves
+#       (currently hardcoded to Gradient=5).
+#   (3) Tokenise via WP prediction at decode time (decoder reads the
+#       per-leaf predictor field, so this is purely encoder-side).
+#   (4) Re-include property 15 (`wp_max_error`) in the splitter candidate
+#       set — this gives the tree access to WP's per-position confidence,
+#       which is the dominant signal on smooth-photo DC where WP wins.
+#
+# Expected outcome (from W44-54 follow-on + this refresh):
+#   - 1418519 cluster regression closes (+1.36 % → ~0 % byte mean)
+#   - 1189261 partial cluster closes (+0.41 % → ~0 %)
+#   - Screenshot wins preserved (terminal −2.4 %, imac_g3 −1.2 %)
+#   - 1418519 e9 d=0.8 flip-back FIXED→FIXED (regression source removed)
+#
+# If WP-residual sub-chunk lands cleanly: estimate ledger drops from
+# 26 OPEN to ~22-23 OPEN (1418519 cells were not OPEN to begin with —
+# the win on them is metric-internal, not flip-producing — but combined
+# with screenshot wins continuing to flip the next-marginal OPEN cells,
+# net flip count ~3-4 additional OPEN→FIXED expected).
+#
+# Pivot signal: if codec_wiki cells (currently 5 OPEN at e7) did NOT
+# close further — they didn't (codec_wiki e7 d=3/4/5/6 all still OPEN,
+# byte changes flat at +0.08 % mean across the image). codec_wiki wedge
+# is NOT in the DC-LearnTree EV path — it's a per-section attribution
+# question already filed at W44-42 (rqwkrrpqswxk). Defer.
+#
+# Per-image OPEN counts after W44-55:
+#   1420710  10 OPEN (high-d photo, F-D cluster, NOT addressable by DC tree)
+#   1531677   6 OPEN (high-d photo, partially addressed; 4 more flipped this chunk)
+#   1189261   4 OPEN (mid-d photo, F-D cluster)
+#   codec_wiki 4 OPEN (e7 d=3,4,5,6 — block context map count wedge per W44-39/W44-42)
+#   1418519   1 OPEN (NEW, sub-threshold smooth-photo regression, will close with WP)
+#   1025469   1 OPEN (boundary cell)
+#   terminal  0 OPEN (was 1, W44-50 wedge CLOSED)
+#   imac_g3   0 OPEN
+#
+# So the 26 remaining OPEN cells split:
+#   - 20 high-d photo cells (F-D cluster, NOT DC-tree addressable, need
+#     quant-field / LF quant work per W44-47 recommendation)
+#   - 4 codec_wiki e7 cells (block context map, separate wedge)
+#   - 2 boundary noise cells (will fluctuate with any bitstream change)
+#
+# WP-residual sub-chunk is the right next move because it both
+# (a) makes the W44-54 DC LearnTree net-positive on photos (closes the
+# 1418519 cluster regression), and (b) leaves the F-D photo cluster
+# work (W44-47 recommended chunk) as the next-priority follow-on after
+# WP-residual lands.
