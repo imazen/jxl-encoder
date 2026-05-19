@@ -277,8 +277,13 @@ fn tokenize_dc_group_learned(
     let region_xsize = end_bx - start_bx;
     let region_ysize = end_by - start_by;
 
-    // Collect DC tokens using gradient predictor + learned tree
-    let dc_tokens = super::dc_tree_learn::collect_dc_tokens_with_tree(
+    // Stage 7c (W44-56): use Variable-mode tokenizer that reads each leaf's
+    // chosen predictor from the learned tree and runs WP state in parallel
+    // (always, for property 15 + decoder-state consistency). Per-leaf
+    // predictor is what libjxl `Predictor::Variable` produces after
+    // `FindBestSplit` (`enc_ma.cc:1044` asserts `tree[cur].predictor <
+    // Predictor::Best` — i.e. concrete simple predictor 0..13).
+    let dc_tokens = super::dc_tree_learn::collect_dc_tokens_with_tree_variable(
         quant_dc,
         learned_dc_tree,
         start_bx,
@@ -2342,22 +2347,25 @@ impl VarDctEncoder {
             // LearnTree path (effort >= 4 matches libjxl
             // `speed_tier < SpeedTier::kFalcon`, enc_modular.cc:1166).
             //
-            // Gather DC samples (one per quantized DC value × 3 channels) and
-            // run the ID3-style splitter from `dc_tree_learn::learn_dc_tree`.
-            // The learned tree splits on intensity / gradient properties and
-            // each leaf carries `predictor = Gradient` (5). Splits that don't
-            // beat a small overhead (~10 bits) are rejected, so on
-            // heavily-quantized content the tree collapses to a few leaves —
-            // closes the W44-50 LfGlobal over-spend wedge.
+            // Stage 7c (W44-56): Variable-mode learner — gathers multi-predictor
+            // residuals + WP state, evaluates all 14 simple predictors per
+            // leaf, emits per-leaf best predictor. Mirrors libjxl
+            // `SetPredictor(Predictor::Variable)` + `FindBestSplit`
+            // (`enc_ma.cc:542-547, 158-457`). Property set extended to 16
+            // including `wp_max_error` (kWPProp = 15).
+            //
+            // Splits that don't beat a small overhead (~10 bits) are rejected,
+            // so on heavily-quantized content the tree collapses to a few
+            // leaves — closes the W44-50 LfGlobal over-spend wedge.
             let mut samples = super::dc_tree_learn::DcTreeSamples::new();
-            super::dc_tree_learn::gather_dc_samples(&mut samples, quant_dc);
+            super::dc_tree_learn::gather_dc_samples_variable(&mut samples, quant_dc);
 
             // `max_token` upper-bounds the residual-token histogram size used
             // by `estimate_subset_cost`. 64 covers the HybridUint {4,1,2}
             // token range for the residuals we ever emit on DC at d>=0.25.
             let max_token = 64u32;
             let (learned_tree, learned_num_contexts) =
-                super::dc_tree_learn::learn_dc_tree(&samples, max_token);
+                super::dc_tree_learn::learn_dc_tree_variable(&samples, max_token);
 
             let (wrapped_tokens, num_ctx, dc_remap, ctx_map) =
                 super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(

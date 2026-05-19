@@ -669,6 +669,280 @@ fn build_tree_recursive(
     node_idx
 }
 
+/// Stage 7c: estimate per-predictor cost for a subset of samples.
+///
+/// Iterates the per-predictor residual tokens (populated by
+/// `gather_dc_samples_variable`) and returns `[cost_pred_0, ..cost_pred_13]`.
+/// Each entry is the entropy in bits of the residual-token histogram for that
+/// predictor on the subset.
+///
+/// Mirrors libjxl `FindBestSplit` inner loop (`enc_ma.cc:340-403`) which
+/// computes `EstimateBits(counts.data() + pred * max_symbols, max_symbols)`
+/// per predictor.
+fn estimate_subset_cost_per_predictor(
+    samples: &DcTreeSamples,
+    indices: &[usize],
+    max_token: u32,
+) -> [f64; NUM_PREDICTORS_VARIABLE] {
+    let mut out = [0.0f64; NUM_PREDICTORS_VARIABLE];
+    if indices.is_empty() || !samples.has_variable_residuals() {
+        return out;
+    }
+    let histogram_size = (max_token + 1) as usize;
+    let mut counts = vec![0u32; histogram_size];
+
+    for pred in 0..NUM_PREDICTORS_VARIABLE {
+        counts.iter_mut().for_each(|c| *c = 0);
+        let mut total = 0u32;
+        let tokens = &samples.residual_tokens_per_predictor[pred];
+        for &idx in indices {
+            let tok = tokens[idx];
+            if (tok as usize) < histogram_size {
+                counts[tok as usize] += 1;
+                total += 1;
+            }
+        }
+        out[pred] = estimate_bits(&counts, total);
+    }
+    out
+}
+
+/// Stage 7c: find best split for Variable-mode samples.
+///
+/// At each candidate split: for each candidate predictor, compute the entropy
+/// cost on the left + right side. The best split is the one minimizing
+/// `min_pred(left_cost(pred)) + min_pred(right_cost(pred))`, with each side's
+/// best predictor recorded.
+///
+/// Mirrors libjxl `FindBestSplit` (`enc_ma.cc:158-457`) — specifically the
+/// per-predictor `costs_l[i]` / `costs_r[i]` accumulation and the
+/// "pick best (cost, pred)" reduction. Penalties from libjxl (change-pred,
+/// favor-Zero, disfavor-Weighted) match the source.
+///
+/// Returns (property_idx, splitval, left_indices, right_indices,
+///          best_left_predictor, best_right_predictor, gain).
+fn find_best_split_variable(
+    samples: &DcTreeSamples,
+    indices: &[usize],
+    max_token: u32,
+    current_predictor: u32,
+    threshold: f64,
+) -> Option<(usize, i32, Vec<usize>, Vec<usize>, u32, u32, f64)> {
+    if indices.len() < MIN_SAMPLES_PER_LEAF * 2 {
+        return None;
+    }
+    if !samples.has_variable_residuals() {
+        return None;
+    }
+
+    // Current (unsplit) cost with the current predictor — used as baseline.
+    let base_per_pred = estimate_subset_cost_per_predictor(samples, indices, max_token);
+    let base_cost = base_per_pred[current_predictor as usize];
+
+    let mut best_gain = 0.0f64;
+    let mut best_split: Option<(usize, i32, Vec<usize>, Vec<usize>, u32, u32)> = None;
+
+    // Change-predictor penalty (libjxl enc_ma.cc:302): lower threshold = more noisy
+    // estimates → discourage switching predictors. We use threshold=0 for DC
+    // (libjxl ModularOptions default), but match the formula anyway.
+    let change_pred_penalty = 800.0 / (100.0 + threshold);
+
+    for &prop_idx in SPLIT_PROPERTIES_VARIABLE {
+        let props = &samples.props[prop_idx];
+        let mut values: Vec<i32> = indices.iter().map(|&i| props[i]).collect();
+        values.sort_unstable();
+        values.dedup();
+
+        if values.len() < 2 {
+            continue;
+        }
+        // Quantile-based split candidates (matches stage 1-6 strategy)
+        let num_quantiles = 32.min(values.len() - 1);
+        if num_quantiles == 0 {
+            continue;
+        }
+
+        for q in 0..num_quantiles {
+            let split_idx = (values.len() * (q + 1)) / (num_quantiles + 1);
+            if split_idx == 0 || split_idx >= values.len() {
+                continue;
+            }
+            let splitval = values[split_idx - 1];
+
+            let (left, right): (Vec<usize>, Vec<usize>) =
+                indices.iter().copied().partition(|&i| props[i] <= splitval);
+
+            if left.len() < MIN_SAMPLES_PER_LEAF || right.len() < MIN_SAMPLES_PER_LEAF {
+                continue;
+            }
+
+            let left_costs = estimate_subset_cost_per_predictor(samples, &left, max_token);
+            let right_costs = estimate_subset_cost_per_predictor(samples, &right, max_token);
+
+            // Per-side best-predictor selection with libjxl penalties
+            // (enc_ma.cc:376-390): change-pred penalty if differs from
+            // current_predictor & current isn't Weighted; favour Zero (-1e-8);
+            // disfavour Weighted (+1e-8).
+            let pick_best = |costs: &[f64; NUM_PREDICTORS_VARIABLE]| -> (f64, u32) {
+                let mut best_cost = f64::MAX;
+                let mut best_pred: u32 = 0;
+                for (i, &c) in costs.iter().enumerate() {
+                    let mut penalty = 0.0;
+                    let pred_id = i as u32;
+                    let cur_pred_is_weighted =
+                        current_predictor == crate::modular::Predictor::Weighted as u32;
+                    if pred_id != current_predictor && !cur_pred_is_weighted {
+                        penalty += change_pred_penalty;
+                    }
+                    if pred_id == crate::modular::Predictor::Weighted as u32 {
+                        penalty += 1e-8;
+                    }
+                    if pred_id == crate::modular::Predictor::Zero as u32 {
+                        penalty -= 1e-8;
+                    }
+                    if c + penalty < best_cost {
+                        best_cost = c + penalty;
+                        best_pred = pred_id;
+                    }
+                }
+                (best_cost, best_pred)
+            };
+
+            let (lcost, lpred) = pick_best(&left_costs);
+            let (rcost, rpred) = pick_best(&right_costs);
+            let new_cost = lcost + rcost;
+            let gain = base_cost - new_cost;
+
+            // Split overhead — same heuristic as gradient-only path.
+            // Could be refined to libjxl's threshold + extra-bits-per-pred
+            // accounting (enc_ma.cc:441-455), but ~10 bits is a safe lower
+            // bound that keeps screenshot LfGlobal collapsing aggressively.
+            let overhead = 10.0;
+            let net_gain = gain - overhead;
+
+            if net_gain > best_gain {
+                best_gain = net_gain;
+                best_split = Some((prop_idx, splitval, left, right, lpred, rpred));
+            }
+        }
+    }
+
+    best_split.map(|(p, sv, l, r, lp, rp)| (p, sv, l, r, lp, rp, best_gain))
+}
+
+/// Stage 7c: recursively build a DC tree with per-leaf best-predictor selection.
+///
+/// Mirrors libjxl `FindBestSplit` BFS queue (`enc_ma.cc:177-525`) — at each
+/// node, evaluates Variable-mode candidate splits, records best left+right
+/// predictors, and recurses. Leaves store the best predictor for their subset.
+fn build_tree_recursive_variable(
+    samples: &DcTreeSamples,
+    indices: &[usize],
+    depth: usize,
+    current_predictor: u32,
+    tree: &mut DcTree,
+    next_context: &mut u32,
+    max_token: u32,
+) -> usize {
+    let node_idx = tree.len();
+    tree.push(DcTreeNode::default());
+
+    // Leaf if depth cap or insufficient samples.
+    if depth >= MAX_TREE_DEPTH || indices.len() < MIN_SAMPLES_PER_LEAF * 2 {
+        tree[node_idx].property = -1;
+        tree[node_idx].context_id = *next_context;
+        tree[node_idx].predictor = current_predictor;
+        *next_context += 1;
+        return node_idx;
+    }
+
+    // libjxl uses threshold=0 for DC (ModularOptions::splitting_heuristics_node_threshold
+    // default). enc_modular.cc:1166-1217 doesn't override.
+    let threshold = 0.0f64;
+
+    if let Some((prop_idx, splitval, left_indices, right_indices, lpred, rpred, _gain)) =
+        find_best_split_variable(samples, indices, max_token, current_predictor, threshold)
+    {
+        let lchild = build_tree_recursive_variable(
+            samples,
+            &left_indices,
+            depth + 1,
+            lpred,
+            tree,
+            next_context,
+            max_token,
+        );
+        let rchild = build_tree_recursive_variable(
+            samples,
+            &right_indices,
+            depth + 1,
+            rpred,
+            tree,
+            next_context,
+            max_token,
+        );
+
+        tree[node_idx].property = prop_idx as i32;
+        tree[node_idx].splitval = splitval;
+        tree[node_idx].lchild = lchild;
+        tree[node_idx].rchild = rchild;
+    } else {
+        // Leaf with current best predictor.
+        tree[node_idx].property = -1;
+        tree[node_idx].context_id = *next_context;
+        tree[node_idx].predictor = current_predictor;
+        *next_context += 1;
+    }
+    node_idx
+}
+
+/// Stage 7c: learn a DC tree with per-leaf Variable predictor.
+///
+/// Mirrors libjxl `ComputeBestTree` (`enc_ma.cc:503-525`) with
+/// `SetPredictor(Predictor::Variable)`. Each leaf's `predictor` field holds
+/// the best of 14 simple predictors for its subset, which the bitstream emits
+/// per leaf (decoder uses one predictor per leaf — `Predictor::Variable` and
+/// `Predictor::Best` are encoder-only meta-modes, `enc_ma.cc:1044`).
+///
+/// Starting predictor is Gradient (libjxl swaps Weighted→0, Gradient→1 then
+/// initialises tree root predictor from `predictors[0]` at `enc_ma.cc:546-547,
+/// 513`; for DC the per-leaf reseed via penalties dominates the initial choice).
+pub fn learn_dc_tree_variable(samples: &DcTreeSamples, max_token: u32) -> (DcTree, u32) {
+    if samples.num_samples == 0 || !samples.has_variable_residuals() {
+        // Empty / not variable-mode: single-leaf gradient-predictor tree
+        // matches the stage 1-6 fallback.
+        let tree = vec![DcTreeNode {
+            property: -1,
+            context_id: 0,
+            predictor: crate::modular::Predictor::Gradient as u32,
+            ..Default::default()
+        }];
+        return (tree, 1);
+    }
+
+    let mut tree = DcTree::new();
+    let mut next_context = 0u32;
+    let indices: Vec<usize> = (0..samples.num_samples).collect();
+
+    // libjxl starts root at predictors[0] which (after swap) is Weighted.
+    // But for DC the change-predictor penalty heavily favours sticking with
+    // the initial choice; we use Gradient as the initial state because most
+    // DC subsets favour it (gradient is the median across CID22 + gb82-sc).
+    let initial_predictor = crate::modular::Predictor::Gradient as u32;
+
+    build_tree_recursive_variable(
+        samples,
+        &indices,
+        0,
+        initial_predictor,
+        &mut tree,
+        &mut next_context,
+        max_token,
+    );
+
+    (tree, next_context)
+}
+
 /// Learn an optimal DC context tree from samples.
 ///
 /// # Arguments
@@ -1298,6 +1572,176 @@ pub fn ac_metadata_only_tree() -> (Vec<(u32, u32)>, u32, [u32; NUM_AC_META_CONTE
 
     let total_contexts = leaf_ctx;
     (tokens, total_contexts, ac_meta_ctx_map)
+}
+
+/// Collect DC tokens using a learned Variable-mode tree.
+///
+/// Each leaf's `predictor` field selects one of 14 simple predictors for the
+/// residual. WP state is **always** run in parallel (regardless of which
+/// predictor each leaf chose) because:
+///   1. It produces `wp_max_error` (property 15) which the tree traversal may
+///      use for routing.
+///   2. The decoder maintains identical WP state for any leaf that emitted
+///      `Predictor::Weighted` (id 6), so the encoder must update state on
+///      every pixel even when the current leaf chose a different predictor —
+///      matches libjxl `EncodeModularChannelMAANS` (`enc_encoding.cc`)
+///      which keeps `weighted::State::UpdateErrors` running unconditionally.
+///
+/// Mirrors libjxl `EncodeModularChannelMAANS` per-pixel loop. Each channel
+/// gets a FRESH `WeightedPredictorState` (matches libjxl per-channel pass).
+pub fn collect_dc_tokens_with_tree_variable(
+    quant_dc: &[Vec<Vec<i16>>; 3],
+    tree: &DcTree,
+    start_bx: usize,
+    start_by: usize,
+    end_bx: usize,
+    end_by: usize,
+) -> Vec<crate::entropy_coding::token::Token> {
+    use crate::entropy_coding::token::Token;
+    use crate::modular::predictor::{Neighbors, Predictor, WeightedPredictorState};
+
+    let region_width = end_bx - start_bx;
+    let region_height = end_by - start_by;
+
+    if region_width == 0 || region_height == 0 {
+        return Vec::new();
+    }
+
+    let mut tokens = Vec::with_capacity(region_width * region_height * 3);
+
+    // Encode in channel order: Y (1), X (0), B (2). Fresh WP state per channel.
+    for (enc_idx, &c) in [1usize, 0, 2].iter().enumerate() {
+        let channel = &quant_dc[c];
+        let mut wp_state = WeightedPredictorState::with_defaults(region_width);
+
+        for y in start_by..end_by {
+            let mut prev_local_grad = 0i32;
+
+            for x in start_bx..end_bx {
+                let dc_val = channel[y][x] as i32;
+
+                let left = if x > start_bx {
+                    channel[y][x - 1] as i32
+                } else if y > start_by {
+                    channel[y - 1][x] as i32
+                } else {
+                    0
+                };
+                let top = if y > start_by {
+                    channel[y - 1][x] as i32
+                } else {
+                    left
+                };
+                let topleft = if x > start_bx && y > start_by {
+                    channel[y - 1][x - 1] as i32
+                } else {
+                    left
+                };
+                let topright = if y > start_by && x + 1 < end_bx {
+                    channel[y - 1][x + 1] as i32
+                } else {
+                    top
+                };
+                let toptop = if y > start_by + 1 {
+                    channel[y - 2][x] as i32
+                } else {
+                    top
+                };
+                let leftleft = if x > start_bx + 1 {
+                    channel[y][x - 2] as i32
+                } else {
+                    left
+                };
+                let nee = if y > start_by && x + 2 < end_bx {
+                    channel[y - 1][x + 2] as i32
+                } else {
+                    topright
+                };
+
+                let neighbors = Neighbors {
+                    n: top,
+                    w: left,
+                    nw: topleft,
+                    ne: topright,
+                    nn: toptop,
+                    ww: leftleft,
+                    nee,
+                };
+
+                let local_x = x - start_bx;
+                let local_y = y - start_by;
+
+                // Always run WP state for property 15 (wp_max_error) and to
+                // keep state consistent with the decoder for any
+                // Weighted-predictor leaves.
+                let (wp_pred, wp_max_error) =
+                    wp_state.predict_and_property(local_x, local_y, region_width, &neighbors);
+
+                // Compute extended property vector (16 entries)
+                let (mut props, new_local_grad) = compute_dc_properties(
+                    enc_idx as u32,
+                    x - start_bx,
+                    y - start_by,
+                    top,
+                    left,
+                    topleft,
+                    topright,
+                    toptop,
+                    leftleft,
+                    prev_local_grad,
+                );
+                props[15] = wp_max_error;
+
+                // Traverse the tree to find the leaf's context + predictor.
+                let (ctx_id, leaf_predictor) = get_dc_context_and_predictor(tree, &props);
+
+                // Compute prediction using leaf's chosen predictor.
+                let prediction = if leaf_predictor == Predictor::Weighted as u32 {
+                    wp_pred as i32
+                } else if let Some(pred) =
+                    Predictor::from_id(leaf_predictor as u8)
+                {
+                    pred.predict_from_neighbors(&neighbors)
+                } else {
+                    // Defensive: unknown predictor id — use clamped gradient.
+                    clamped_gradient(top, left, topleft)
+                };
+
+                let residual = dc_val - prediction;
+                tokens.push(Token::new(ctx_id, pack_signed(residual)));
+
+                // Always update WP error state (mandatory for state consistency).
+                wp_state.update_errors(dc_val, local_x, local_y, region_width);
+
+                prev_local_grad = new_local_grad;
+            }
+        }
+    }
+
+    tokens
+}
+
+/// Traverse the learned tree to get (context_id, predictor) for a DC value.
+///
+/// Like `get_dc_context` but also returns the leaf's predictor field.
+#[inline]
+pub fn get_dc_context_and_predictor(
+    tree: &DcTree,
+    props: &[i32; NUM_DC_PROPERTIES],
+) -> (u32, u32) {
+    let mut idx = 0;
+    loop {
+        let node = &tree[idx];
+        if node.property < 0 {
+            return (node.context_id, node.predictor);
+        }
+        let pval = props[node.property as usize];
+        if pval <= node.splitval {
+            idx = node.lchild;
+        } else {
+            idx = node.rchild;
+        }
+    }
 }
 
 /// Collect DC tokens using a learned tree for context assignment.
