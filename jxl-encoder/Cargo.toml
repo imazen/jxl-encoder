@@ -253,6 +253,15 @@ name = "pixel_loss_dispatch_ab"
 path = "examples/pixel_loss_dispatch_ab.rs"
 required-features = ["butteraugli-loop"]
 
+# W44-90: paired interleaved A/B/C for the PixelLossDispatch
+# default-flip decision (W38-2 follow-on). 22 images × 5 distances ×
+# 3 dispatches × 5 trials = 1650 encodes. Uses the W44-89 interleaved
+# methodology (all variants run back-to-back within each trial).
+[[example]]
+name = "w44_90_pixelloss_default_flip_ab"
+path = "examples/w44_90_pixelloss_default_flip_ab.rs"
+required-features = ["butteraugli-loop"]
+
 # W38: low-effort phase baseline (e2..=e5) + zenjpeg-hybrid cross-codec
 # comparator. Reuses the __JXL_ENC_PHASE_TIMING env-var path from W36-1
 # and adds a zenjpeg `HybridProgressive` encode + RD measurement on the

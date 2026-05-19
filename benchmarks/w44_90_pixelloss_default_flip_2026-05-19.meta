@@ -1,0 +1,218 @@
+# W44-90 — paired interleaved A/B/C for PixelLossDispatch default-flip decision
+
+## Provenance
+
+- Date:                   2026-05-19 UTC
+- Hostname:               lilith (water-cooled AMD Ryzen 9 7950X, 32 threads, 128 GB RAM)
+- Parent commit:          e0178b55 (W44-89 honest-stop on main)
+- Workspace:              ~/work/zen/jxl-encoder--w44-90-pixelloss-default-flip
+- Encoder build:          release, features `std parallel butteraugli-loop`
+- Target dir:             $HOME/work/zen/jxl-encoder-shared-target (per disk-fill mitigation)
+- Decoder for metrics:    jxl-oxide linear-sRGB
+- Butteraugli:            Rust `butteraugli_linear` (CLAUDE.md PNG-metadata-immune path)
+- SSIM2:                  fast_ssim2 (sRGB u8 inputs after linear→sRGB conversion)
+
+## Goal
+
+W38-2 (`33011181`) shipped the `PixelLossDispatch` enum scaffolding
+with `AlwaysOn` (default), `Auto` (mask1x1-median gate at 80), and
+`AlwaysOff`. The original A/B was narrow (8 images, 144 cells).
+
+This bench widens the corpus to 22 images × 5 distances × 3 dispatches
+× 5 trials (interleaved, per W44-89 methodology) = 1650 encodes, to
+decide whether `Auto` or `AlwaysOff` can become the default at e5
+without RD regression on any cell.
+
+## Acceptance gates
+
+- Bytes Δ vs `AlwaysOn` baseline: ≤ +5 % on every cell
+- Butteraugli Δ: ≤ +3 % on every cell
+- SSIM2 Δ: ≥ -1.5 points on every cell
+- Median perf win on smooth-photo cells (where `Auto` fires) ≥ 5 ms
+
+A variant must pass ALL gates to be promoted to default.
+
+## Method
+
+- 3 variants run **back-to-back within each trial** (interleaved
+  A/B/C order: AlwaysOn, AlwaysOff, Auto). 5 trials per cell.
+  Variance recorded per cell (max - min / median).
+- Per-trial raw rows also persisted to `.raw.tsv` for diagnostic /
+  bisection.
+- Each encode independently runs through the full pipeline (no
+  shared encoder state between dispatches).
+
+## Sweep grid
+
+- Effort: e5 only (per W38-2 finding pixel_domain_loss matters most at e5)
+- Distances: {0.5, 1.0, 2.0, 3.0, 5.0}  (5 points covering low/mid/high d)
+- Dispatches: {AlwaysOn, AlwaysOff, Auto}  (3)
+- Trials: 5 (interleaved)
+- Planned: 22 × 5 × 3 = 330 aggregate rows, 1650 encodes
+- **Actual (truncated)**: 60 cells × 3 dispatches = 180 rows, 900 encodes.
+  Photos (8) + mid-class (4) = 60 of 110 planned cells = 54 % coverage.
+  Screenshot class (10 images, 50 cells) NOT included — bench was
+  killed at the codec_wiki stage when the decision became conclusive
+  from photos+mid alone (truncation justification in TRUNCATION below).
+
+## TRUNCATION (partial bench, photos+mid only)
+
+The bench was killed at row 181 / 330 (54 % cells) after both
+acceptance gates were comfortably exhausted on the photo+mid subset:
+
+- `auto`: **11 / 60 cells (18 %)** failed at least one acceptance gate
+  on photos alone; **median Δms = -1.95 ms** on cells where Auto
+  actually fires (5 ms target gate).
+- `always_off`: 43 / 60 cells (72 %) failed (catastrophic).
+
+No screenshot result can rescue `auto` to PASS because (a) gates are
+per-cell (all cells must pass, screenshots only add cells), and (b)
+screenshots typically lift `mask1x1 median` well above 80 so `Auto`
+fires there ≈ `always_off`, which is already known to regress 0.6 ssim2
+on screens at e5 per W38-2's narrow A/B. Adding 50 more cells with the
+W38-2 ~0.6 ssim2 regression profile would increase the failure count,
+not decrease it.
+
+**Time budget**: bench ran ~70 minutes for photos+mid; codec_wiki
+alone (~4 MP at e5 × 3 dispatches × 5 trials) was on track to take
+20-30 minutes. Total bench would have run ~3.5 hours, far exceeding
+the chunk's time-box. Decision-conclusive partial bench was the
+appropriate call.
+
+## Corpus (22 images)
+
+### CID22-512 photos (8):
+- 1025469.png, 1044329.png, 1189261.png, 1279330.png, 1418519.png,
+  1420710.png, 1531677.png, 2389166.png
+
+### CID22-512 mid-class (4):
+- 3637739.png, 1624487.png, 1544947.png, 1475938.png
+
+### GB82-SC screenshots (10):
+- codec_wiki.png, imac_g3.png, imac_dark.png, terminal.png, windows.png,
+  windows95.png, gmessages.png, imessage.png, graph.png, gui.png
+
+## TSV columns (aggregate)
+
+- `image`            : source filename
+- `class`            : photo / mid / screen
+- `effort`           : 5
+- `distance`         : 0.5 / 1.0 / 2.0 / 3.0 / 5.0
+- `dispatch`         : always_on / always_off / auto
+- `width`, `height`  : input dimensions
+- `bytes_med`        : 5-trial median bytes
+- `butteraugli_med`  : 5-trial median butteraugli score
+- `ssim2_med`        : 5-trial median SSIM2 score
+- `encode_ms_med`    : 5-trial median encode wall-ms
+- `encode_ms_min`    : minimum across trials
+- `encode_ms_max`    : maximum across trials
+- `encode_ms_p25`    : 25th percentile
+- `encode_ms_p75`    : 75th percentile
+- `variance_pct`     : 100 * (max - min) / median (acceptance gate from
+                       W44-89 lesson: < 20 % is "stable measurement")
+
+## Raw companion TSV
+
+`.raw.tsv` companion has per-trial rows with columns:
+- `image`, `class`, `effort`, `distance`, `dispatch`, `trial` (0..4),
+  `width`, `height`, `bytes`, `butteraugli`, `ssim2`, `encode_ms`
+
+## Reproducer
+
+```bash
+cd ~/work/zen/jxl-encoder
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run -p jxl-encoder --release \
+  --features 'std parallel butteraugli-loop' \
+  --example w44_90_pixelloss_default_flip_ab -- \
+  --out benchmarks/w44_90_pixelloss_default_flip_2026-05-19.tsv
+```
+
+## Analysis
+
+```bash
+python3 jxl-encoder/examples/w44_90_analyze.py \
+  benchmarks/w44_90_pixelloss_default_flip_2026-05-19.tsv
+```
+
+The analyzer outputs per-variant gate tally + median Δ on bytes/bfly/
+ssim2/ms across all cells, lists failing cells, and prints a final
+ACCEPTANCE VERDICT line.
+
+## Verdict
+
+```
+=== ACCEPTANCE VERDICT ===
+  always_off: gates=FAIL (43 cells), perf=OK (median win +5.24ms on n=60 firing cells) — FAIL
+  auto:       gates=FAIL (11 cells), perf=FAIL (median win +1.95ms on n=15 firing cells) — FAIL
+```
+
+**Both candidate variants fail the default-flip gates.** Default
+stays `AlwaysOn`. No source change shipped.
+
+### Failing cells under `auto`
+
+The 11 cells where `Auto` regresses despite the mask1x1 > 80 gate:
+
+| image            | d   | regression                               |
+|---               |---  |---                                       |
+| 1279330.png      | 0.5 | bytes +6.57 %                            |
+| 1279330.png      | 2.0 | bytes +5.62 %                            |
+| 1279330.png      | 3.0 | bfly +6.32 %                             |
+| 1418519.png      | 0.5 | bytes +7.25 %, bfly +20.37 %             |
+| 1418519.png      | 1.0 | bytes +6.34 %, bfly +25.11 %             |
+| 1418519.png      | 2.0 | bfly +9.73 %                             |
+| 1475938.png      | 0.5 | bfly +21.78 %                            |
+| 1475938.png      | 1.0 | bfly +19.26 %                            |
+| 1475938.png      | 2.0 | bfly +5.29 %                             |
+| 1475938.png      | 3.0 | bfly +7.98 %                             |
+| 1475938.png      | 5.0 | bfly +31.94 %                            |
+
+**Diagnosis**: the `median(mask1x1) > 80` discriminator is too coarse.
+It fires (correctly identifies smooth-LOOKING content) on
+`1279330`/`1418519`/`1475938`, but on those particular smooth photos
+the pixel-domain loss term is doing crucial AC-strategy-search work
+that the coefficient-domain entropy estimate alone cannot recover.
+Disabling it costs up to 25-32 % butteraugli.
+
+### Diagnosis ranking — what would be required to rescue `Auto`
+
+1. **A second-order discriminator** beyond `median(mask1x1) > 80`.
+   The mid-class `1475938.png` was specifically added to this bench to
+   probe this regime — and it fires the worst regression in the whole
+   set (+31.94 % bfly at d=5.0). Per W22-1 / W23-2 the existing
+   mask1x1 median has been audited as too coarse on multiple lifts.
+   Likely candidates: `(palette_log2_size, flat_color_block_ratio)`
+   pair from zenanalyze, or a stddev-of-mask1x1 term to detect mixed
+   smooth-plus-detail content.
+
+2. **Raise the gate**: `> 100` or `> 120` would exclude more cells
+   from Auto firing, sacrificing perf savings on cells that currently
+   DO benefit (smooth photo `1531677.png` at d=0.5 went from
+   bfly +26.76% under `always_off` to +0 under `auto` — meaning Auto
+   correctly skipped here). Raising the gate makes Auto a no-op even
+   more often.
+
+3. **Per-distance gating**: regressions cluster at d=0.5 to d=3.0
+   on the mid class. A `d >= 5` only gate would close some cells
+   but `1418519 d=2.0` still fails.
+
+None of these are cheap. The W38-2 ~11 ms/photo expected saving
+turned into a measured ~2 ms median because the gate-firing rate on
+this wider corpus is low (15 of 60 cells = 25 %) and the variance
+across cells is large (-72 ms to +74 ms).
+
+## Cross-references
+
+- W38-2 commit `33011181` — original PixelLossDispatch scaffolding +
+  narrow A/B (`pixel_loss_dispatch_2026-05-19.{tsv,meta}`).
+- W44-89 commit `e0178b550c38` — methodology lesson: paired
+  interleaved A/B at ≥ 5 trials, variance < 20 % before claiming a
+  regression. Premise of guard chunk refuted.
+- W22-1 / W23-2 — `median(mask1x1) > 95` content-aware lift bisection
+  was found to over-fire on `windows95.png`-class outliers; the
+  W44-90 finding here mirrors that on the photo side (Auto over-fires
+  on `1279330`/`1418519`/`1475938`).
+- `vardct/encoder.rs:265` — `PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD = 80.0`
+- `api.rs:3426` — `PixelLossDispatch` enum definition
+- `api.rs:4638` — `with_pixel_loss_dispatch` builder
