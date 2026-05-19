@@ -2344,25 +2344,38 @@ impl VarDctEncoder {
             wp_dc_state = None;
             learned_dc_state = None;
         } else if self.effort >= 4 {
-            // LearnTree path (effort >= 4 matches libjxl
-            // `speed_tier < SpeedTier::kFalcon`, enc_modular.cc:1166).
+            // Stage 7c (W44-56): Variable-mode learner extends W44-54's
+            // effort >= 4 LearnTree path with per-leaf best-of-14 predictor
+            // selection + WP state in property 15.
             //
-            // Stage 7c (W44-56): Variable-mode learner — gathers multi-predictor
-            // residuals + WP state, evaluates all 14 simple predictors per
-            // leaf, emits per-leaf best predictor. Mirrors libjxl
+            // Dispatch design — pragmatic mix vs libjxl's stricter per-stream
+            // override (`enc_modular.cc:1584-1598`):
+            //   libjxl at effort 5/6/7 (kHare/kWombat/kSquirrel) sets DC
+            //   stream → kWPFixedDC (not learned). Only at effort >= 8 does
+            //   libjxl learn the DC tree (`Predictor::Best` at e=8,
+            //   `Predictor::Variable` at e=9).
+            //
+            //   We keep the learned path active at effort >= 4 (W44-54 wedge
+            //   closure: terminal e6 d=6 LfGlobal 700 B → adaptive). The
+            //   Variable-mode upgrade in stage 7c additionally closes the
+            //   1418519 photo regression cluster (predicted OPEN→FIXED in
+            //   the W44-55 ledger plan).
+            //
+            // Variable-mode learner: gathers multi-predictor residuals + WP
+            // state, evaluates all 14 simple predictors per leaf, emits
+            // per-leaf best predictor. Mirrors libjxl
             // `SetPredictor(Predictor::Variable)` + `FindBestSplit`
             // (`enc_ma.cc:542-547, 158-457`). Property set extended to 16
             // including `wp_max_error` (kWPProp = 15).
             //
-            // Splits that don't beat a small overhead (~10 bits) are rejected,
-            // so on heavily-quantized content the tree collapses to a few
-            // leaves — closes the W44-50 LfGlobal over-spend wedge.
+            // Splits that don't beat ~60 bits overhead are rejected, so on
+            // heavily-quantized content the tree collapses to a few leaves —
+            // preserves the W44-50 wedge closure.
             let mut samples = super::dc_tree_learn::DcTreeSamples::new();
             super::dc_tree_learn::gather_dc_samples_variable(&mut samples, quant_dc);
 
-            // `max_token` upper-bounds the residual-token histogram size used
-            // by `estimate_subset_cost`. 64 covers the HybridUint {4,1,2}
-            // token range for the residuals we ever emit on DC at d>=0.25.
+            // `max_token` is a legacy parameter — the cost estimator now
+            // determines the true max per call (libjxl parity).
             let max_token = 64u32;
             let (learned_tree, learned_num_contexts) =
                 super::dc_tree_learn::learn_dc_tree_variable(&samples, max_token);
