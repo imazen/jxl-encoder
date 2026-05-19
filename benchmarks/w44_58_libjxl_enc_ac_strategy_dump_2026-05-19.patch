@@ -1,0 +1,77 @@
+diff --git a/lib/jxl/enc_ac_strategy.cc b/lib/jxl/enc_ac_strategy.cc
+index f99cb55..d110f1f 100644
+--- a/lib/jxl/enc_ac_strategy.cc
++++ b/lib/jxl/enc_ac_strategy.cc
+@@ -9,6 +9,7 @@
+ #include <cmath>
+ #include <cstdint>
+ #include <cstdio>
++#include <cstdlib>
+ #include <cstring>
+ #include <limits>
+ 
+@@ -366,6 +367,29 @@ Status EstimateEntropy(const AcStrategy& acs, float entropy_mul, size_t x,
+                        const float* JXL_RESTRICT cmap_factors, float* block,
+                        float* full_scratch_space, uint32_t* quantized,
+                        float& entropy) {
++  // W44-58: env-var-driven per-call dump for cost-input parity vs jxl-encoder.
++  // Set JXL_DUMP_COST_INPUTS_PATH=/path/to/dump.tsv to enable. Lines emitted:
++  //   strategy<TAB>x<TAB>y<TAB>entropy_mul<TAB>covered_blocks_x<TAB>
++  //   covered_blocks_y<TAB>quant_norm16<TAB>cmap_x<TAB>cmap_b<TAB>
++  //   mask1x1_mean_y<TAB>entropy_pre_loss<TAB>loss_scalar<TAB>
++  //   info_loss_mul<TAB>cost_delta<TAB>zeros_mul<TAB>final_entropy
++  // Zero overhead when env var unset (one getenv at first call per target).
++  static thread_local FILE* dump_fp = []() -> FILE* {
++    const char* p = std::getenv("JXL_DUMP_COST_INPUTS_PATH");
++    if (p == nullptr || p[0] == '\0') return nullptr;
++    FILE* f = std::fopen(p, "a");
++    if (f == nullptr) return nullptr;
++    // Emit header if file is empty (first writer).
++    std::fseek(f, 0, SEEK_END);
++    if (std::ftell(f) == 0) {
++      std::fprintf(f,
++                   "strategy\tx\ty\tentropy_mul\tcovered_blocks_x\t"
++                   "covered_blocks_y\tquant_norm16\tcmap_x\tcmap_b\t"
++                   "mask1x1_mean_y\tentropy_pre_loss\tloss_scalar\t"
++                   "info_loss_mul\tcost_delta\tzeros_mul\tfinal_entropy\n");
++    }
++    return f;
++  }();
+   entropy = 0.0f;
+   float* mem = full_scratch_space;
+   float* scratch_space = full_scratch_space + AcStrategy::kMaxCoeffArea;
+@@ -505,8 +529,34 @@ Status EstimateEntropy(const AcStrategy& acs, float entropy_mul, size_t x,
+       pow(GetLane(SumOfLanes(df8, loss)) / (num_blocks * kDCTBlockSize),
+           1.0f / 8.0f) *
+       (num_blocks * kDCTBlockSize) / quant_norm16;
++  float entropy_pre_loss = entropy * entropy_mul;
+   entropy *= entropy_mul;
+   entropy += config.info_loss_multiplier * loss_scalar;
++  if (dump_fp != nullptr) {
++    // Average mask1x1 across the covered region (Y channel only). Bounded by
++    // mask1x1_xsize to stay safe near the right edge of the image (libjxl's
++    // mask1x1 is full-image and indexed by absolute pixel coords).
++    float mask_sum = 0.0f;
++    size_t mask_count = 0;
++    for (size_t iy = 0; iy < acs.covered_blocks_y() * 8; iy++) {
++      for (size_t ix = 0; ix < acs.covered_blocks_x() * 8; ix++) {
++        if (x + ix < config.mask1x1_xsize) {
++          mask_sum += *config.MaskingPtr1x1(x + ix, y + iy);
++          mask_count++;
++        }
++      }
++    }
++    float mask_mean = mask_count > 0 ? mask_sum / mask_count : 0.0f;
++    std::fprintf(dump_fp,
++                 "%u\t%zu\t%zu\t%.6f\t%zu\t%zu\t%.6f\t%.6f\t%.6f\t%.6f\t"
++                 "%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\n",
++                 static_cast<unsigned>(acs.Strategy()), x, y, entropy_mul,
++                 acs.covered_blocks_x(), acs.covered_blocks_y(), quant_norm16,
++                 cmap_factors[0], cmap_factors[2], mask_mean, entropy_pre_loss,
++                 loss_scalar, config.info_loss_multiplier, config.cost_delta,
++                 config.zeros_mul, entropy);
++    std::fflush(dump_fp);
++  }
+   return true;
+ }
+ 
