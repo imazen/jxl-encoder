@@ -1,0 +1,214 @@
+# W44-93 try_dct64 gate widening A/B — HONEST-STOP (2026-05-19)
+
+## TL;DR
+
+Per W44-92 Recommendation A: change `try_dct64: effort >= 7` →
+`try_dct64: effort >= 5` in `src/effort.rs:794` (parity with `try_dct32`)
+to match libjxl's gate (`decoding_speed_tier < 4`, NOT effort).
+
+**Honest-stop.** Cardinal gates failed:
+- Target cell 1531677 e5 d=6 did NOT close (delta 5.40% → 3.90%, still > 3.0%).
+- 1 NEW infrastructure failure: imac_g3 e9 d=3 OOMs at 2 GiB default
+  memory cap (DCT64 evaluation adds memory pressure on 5.6 MP × 4
+  butteraugli iters).
+- 19 cells with SSIM2 drops ≥ 0.3, max -1.21 on 1189261 e6 d=6
+  (photo cells lose quality to gain bytes).
+- 1418519 e6 d=6: -9.89% bytes for -2.22 SSIM2 vs cjxl — the same
+  rate-quality tradeoff W44-38 honest-stopped on at e6 widening.
+
+Source REVERTED to `try_dct64: effort >= 7` (with explanatory comment
+added pointing to this honest-stop). Bench TSV + meta retained as the
+permanent record.
+
+## Acceptance gates
+
+| Gate | Status |
+|---|---|
+| 1531677 e5 d=6 closes (bytes delta ≤ 3.0%) | FAIL (3.90% > 3.0%) |
+| Zero FIXED → OPEN flips on parity ledger | PASS (0 flips) |
+| Multi-decoder roundtrip on spot cells | NOT RUN (acceptance failed earlier) |
+| Hash-locks ≤ 100 cells regenerated | NOT MEASURED (would have passed) |
+| 1262/1262 cargo test --lib | PASS (both with and without change) |
+| Zero NEW infrastructure failures | FAIL (imac_g3 e9 d=3 OOM) |
+| SSIM2 stays within tolerance on FIXED cells | FAIL (-1.21 on 1189261 e6 d=6) |
+
+## Baseline vs W44-93 ledger comparison
+
+- Baseline: `benchmarks/cjxl_parity_ledger_2026-05-19_w44_92.tsv` (13 OPEN, 582 FIXED)
+- W44-93: `benchmarks/cjxl_parity_ledger_2026-05-19_w44_93.tsv` (10 OPEN, 585 FIXED)
+- Change: -3 OPEN (good closures) but introduces SSIM2 photo regressions
+  on FIXED cells that are not visible in the bytes+bfly+ssim2-delta
+  status thresholds.
+
+### OPEN → FIXED closures (3 cells)
+
+| Image | Effort | Distance | bytes A→B | delta A→B |
+|---|---|---|---|---|
+| 1420710 | e6 | d=6 | 21425 → 21209 (-1.01%) | +3.74% → +2.69% |
+| 1531677 | e6 | d=5 | 21178 → 21059 (-0.56%) | +3.01% → +2.43% |
+| 1531677 | e6 | d=6 | 18430 → 18082 (-1.89%) | +4.39% → +2.42% |
+
+### Improvements (>0.5% bytes shrink, top 10)
+
+| Image | Effort | Distance | bytes A→B | delta A→B |
+|---|---|---|---|---|
+| 1420710 | e6 | d=4 | 28862 → 26696 (-7.50%) | +3.33% → -4.42% |
+| 1418519 | e5 | d=6 | 6437 → 5969 (-7.27%) | -4.31% → -11.27% |
+| 1418519 | e6 | d=6 | 6951 → 6468 (-6.95%) | -3.16% → -9.89% |
+| 1418519 | e5 | d=2 | 14193 → 13393 (-5.64%) | +2.66% → -3.12% |
+| 1418519 | e6 | d=2 | 14715 → 13961 (-5.12%) | +2.16% → -3.08% |
+| 1418519 | e5 | d=4 | 8492 → 8059 (-5.10%) | -0.84% → -5.90% |
+| 1418519 | e6 | d=2.5 | 12558 → 12031 (-4.20%) | +0.92% → -3.32% |
+| 1418519 | e5 | d=3 | 10661 → 10221 (-4.13%) | -0.19% → -4.31% |
+| 1418519 | e5 | d=2.5 | 12003 → 11508 (-4.12%) | +1.26% → -2.92% |
+| 1531677 | e6 | d=4 | 25369 → 24365 (-3.96%) | +1.96% → -2.07% |
+
+### Regressions (>0.5% bytes growth, 4 cells)
+
+| Image | Effort | Distance | bytes A→B | delta A→B |
+|---|---|---|---|---|
+| 1531677 | e6 | d=2 | 49445 → 49974 (+1.07%) | -0.41% → +0.65% |
+| 1420710 | e6 | d=5 | 24385 → 24589 (+0.84%) | +3.14% → +4.00% |
+| 1025469 | e5 | d=3 | 15805 → 15908 (+0.65%) | -2.01% → -1.37% |
+| 1189261 | e6 | d=2.5 | 33915 → 34106 (+0.56%) | +2.31% → +2.89% |
+
+### SSIM2 quality regressions (>0.3 drop, top 10)
+
+| Image | Effort | Distance | ssim2 A→B | bfly A→B | status |
+|---|---|---|---|---|---|
+| 1189261 | e6 | d=6 | 54.55 → 53.33 (-1.21) | +1.75 → -1.31 | FIXED |
+| 1189261 | e5 | d=6 | 49.58 → 48.49 (-1.09) | +1.94 → -0.69 | FIXED |
+| 1418519 | e6 | d=6 | 63.93 → 63.03 (-0.90) | -3.16 → -9.89 | FIXED |
+| 1418519 | e5 | d=6 | 62.10 → 61.39 (-0.71) | -4.31 → -11.27 | FIXED |
+| 1418519 | e6 | d=5 | 67.56 → 66.94 (-0.61) | (varies) | FIXED |
+| 1418519 | e6 | d=3 | 76.48 → 75.92 (-0.56) | (varies) | FIXED |
+| 1418519 | e5 | d=5 | 65.92 → 65.36 (-0.56) | (varies) | FIXED |
+| 1418519 | e5 | d=4 | 71.24 → 70.73 (-0.52) | (varies) | FIXED |
+| 1418519 | e5 | d=3 | 76.57 → 76.10 (-0.48) | (varies) | FIXED |
+| 1418519 | e6 | d=4 | 71.82 → 71.35 (-0.47) | (varies) | FIXED |
+
+19 cells total with SSIM2 drop ≥ 0.3. All on photo content. Pattern
+identical to W44-38 honest-stop: photo SSIM2 drops to chase byte
+savings on cells where DCT64 over-fires.
+
+### NEW failure introduced
+
+`imac_g3.png e9 d=3`: encoded fine in baseline (bytes=133047). With
+the W44-93 widened gate the encode now exceeds the 2 GiB default
+memory budget at e9 (4 butteraugli iters × DCT64 evaluation
+infrastructure on 5.6 MP). Verified via `cjxl-rs` CLI:
+
+```
+Error encoding: limit exceeded: memory budget exceeded:
+requested 202874688 bytes on top of 2079554208 (cap 2147483648)
+```
+
+This points to memory pressure that is real but not unbounded. The
+budget can be raised; the bench harness uses the default cap. e9 d=3
+on 5.6 MP screenshots is a realistic deployment scenario.
+
+## Root cause of the photo SSIM2 regression
+
+Same pattern W44-38 (`8c7644a0`) measured at e6 widening:
+
+> "Photo collateral: SSIM2 -1.31 / -1.54 on 1418519 d=3/4 (bytes
+> -1.7% each, status FIXED). Visible photo quality drops to chase a
+> screenshot wedge cell that did NOT close."
+
+W44-93 widened to e5 (not e6), and the same regression pattern fires
+on 1189261 (-1.21 SSIM2) and 1418519 (-2.22 SSIM2 vs cjxl on e6 d=6).
+W44-38 hypothesised "cost-model wedge" via dropped counterweights.
+W44-40 MEMORY.md update clarified counterweights ARE on CPU; W44-38's
+RC was about GPU encoder. The empirical regression remains valid even
+if the diagnostic mechanism was misattributed.
+
+The real cost-model question: when DCT64 is allowed at e5/e6, the
+encoder's `EstimateEntropy` over-values the partition's byte savings
+without seeing the SSIM2 cost (no butteraugli loop at e5/e6 — gate is
+e8+/kKitten per `effort.rs`). At e7+ the cost model gets it right
+because either (a) butteraugli loop runs (e8+) or (b) the cells where
+DCT64 wins are already in the FIXED band. Widening to e5/e6 exposes
+the unrefined cost model on smooth-but-textured photos.
+
+## Why the smart-dispatch in W44-35 doesn't help here
+
+`adapt_to_image_lossy_with_smoothness` (W44-35, `4f8579e7`) was
+designed for this exact scenario: smooth photo classifier admits DCT64
+on cells where it wins. But the classifier is **gated on
+`pixels < 500_000 AND distance < 2.0`** — i.e., it only fires on
+small + low-distance cells. The W44-92 wedge cell 1531677 e5 d=6 is
+512×512 = 262_144 px (< 500_000) but distance=6.0 (>= 2.0), so the
+smart-dispatch doesn't fire and the baseline `try_dct64: effort >= 7`
+gate keeps DCT64 off at e5/e6.
+
+The right path forward (NOT shipped in W44-93) is to widen the
+smart-dispatch distance window to admit DCT64 on smooth photos at any
+distance — or to ship distance-aware DCT64 admission inside the per-
+block cost model itself. Both are larger chunks than W44-93's scope.
+
+## Multi-decoder roundtrip
+
+Not run — acceptance gate failed earlier in the pipeline. Source
+reverted; the W44-93 widened gate is not on disk in source.
+
+## Files
+
+- `benchmarks/cjxl_parity_ledger_2026-05-19_w44_93.tsv` — full ledger
+  with the W44-93 widened gate applied (10 OPEN, 585 FIXED — for the
+  record; source reverted before commit)
+- `benchmarks/w44_93_try_dct64_gate_ab_2026-05-19.tsv` — per-cell A/B
+  on the 51 cells whose bytes changed (most are improvements; SSIM2
+  regressions are in the table above)
+- `benchmarks/cjxl_parity_ledger_2026-05-19_w44_93.meta` — meta from
+  the ledger refresh run (refreshed via --update on baseline)
+- `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_93_try_dct64_gate_honest_stop_2026-05-19.md`
+
+## DO NOT
+
+- DO NOT re-attempt this gate widening at the global EffortProfile
+  level without first either (a) fixing the cost-model SSIM2-blind
+  over-pick on smooth-textured photos or (b) widening the W44-35
+  smart-dispatch classifier to cover the high-d range. The empirical
+  regression has now been measured twice (W44-38 at e6, W44-93 at e5)
+  with the same pattern.
+- DO NOT lower the W44-35 distance threshold from 2.0 without a
+  per-cell A/B on the regressed photo set (1189261, 1418519,
+  potentially others) — the threshold was calibrated against the W44-35
+  cell set, not the W44-93 cell set.
+- DO NOT cite this as "DCT64 doesn't help" — the wins on 1418519 d=2-6
+  and 1420710 e6 d=4 (-7.5%) are real and meaningful. The problem is
+  the SSIM2-blind cost model at e5/e6, not the DCT64 transform itself.
+
+## Recommended next chunks (in priority order)
+
+1. **W44-94 candidate A**: implement Recommendation B from W44-92 —
+   widen `find_best_32x32_transform`'s W44-77 entropy_mul tightening
+   to all `(effort, distance)` where `try_dct32 = true`, not just
+   `e7+ && d>=5`. Closes 1420710 e5/e6/e7 d=5 OPEN cells without
+   touching DCT64.
+2. **W44-94 candidate B**: widen the W44-35 smart-dispatch distance
+   threshold from 2.0 to 6.0 specifically when the smooth-photo
+   classifier returns `true`. Closes 1531677 e5 d=5/d=6 without
+   regressing 1189261/1418519 (the regressed cells DO classify as
+   smooth-photo per the existing W44-35 classifier — verified by
+   reading their feature vectors).
+3. **W44-94 candidate C**: build a distance-aware admit-DCT64 hint
+   that takes `(mask1x1_median, distance)` and returns `Some(true)`
+   only when both the smoothness signal AND the bytes-savings vs
+   SSIM2-cost tradeoff is favorable. Requires per-cell calibration
+   sweep.
+
+## Reproducer
+
+```
+# Baseline (reverted state, `try_dct64: effort >= 7`):
+cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' \
+  --example cjxl_parity_ledger -- --update --status OPEN
+
+# Widened gate (the W44-93 attempt; revert before running this):
+# 1. Edit src/effort.rs:794: `try_dct64: effort >= 7,` → `try_dct64: effort >= 5,`
+# 2. Update tests in src/effort.rs at lines 2198, 2867-2937, 2944-3025 to
+#    reflect new baseline (see commit diff below).
+# 3. Run: cargo test --release --lib -p jxl-encoder
+# 4. Run the ledger refresh as above.
+```

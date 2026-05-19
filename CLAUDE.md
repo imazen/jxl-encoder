@@ -586,6 +586,69 @@ Key patterns to watch for when working on this codebase:
 
 ## Investigation Notes
 
+### W44-93: try_dct64 effort gate widening — HONEST-STOP (May 19, 2026)
+
+**Status**: [RULED OUT — measurement shipped, source-change reverted]
+
+Attempted W44-92 Recommendation A: change `try_dct64: effort >= 7` →
+`try_dct64: effort >= 5` in `src/effort.rs:794` to match libjxl exactly
+(libjxl gates DCT64 evaluation on `cparams.decoding_speed_tier < 4`,
+default 0, NOT on encoding effort; see `enc_ac_strategy.cc:948`).
+
+**Acceptance gates failed (3 of 5)**:
+
+1. **Target cell did NOT close**: 1531677 e5 d=6 went from delta 5.40% →
+   3.90% (improved by 1.5pp via DCT64 picks shaving -258B), but still
+   above the 3.0% threshold. Stayed OPEN.
+2. **NEW infrastructure failure**: imac_g3 e9 d=3 now OOMs at the 2 GiB
+   default memory budget (DCT64 evaluation infrastructure × 4 butteraugli
+   iters × 5.6 MP exceeds cap). cjxl-rs CLI emits:
+   `Error encoding: limit exceeded: memory budget exceeded: requested
+   202874688 bytes on top of 2079554208 (cap 2147483648)`.
+3. **Photo SSIM2 collateral**: 19 cells with SSIM2 drops ≥ 0.3, max
+   -1.21 on 1189261 e6 d=6, max -2.22 SSIM2 vs cjxl on 1418519 e6 d=6
+   (where we save -9.89% bytes). Same pattern W44-38 honest-stopped on at
+   e6 widening (`8c7644a0`). The cells stay FIXED on the parity-ledger
+   bytes+bfly+ssim2-delta thresholds but lose meaningful absolute
+   quality vs cjxl.
+
+**Acceptance gates that passed**:
+- Zero FIXED → OPEN flips on parity ledger (13 OPEN → 10 OPEN).
+- 3 OPEN closures: 1420710 e6 d=6, 1531677 e6 d=5/d=6.
+- `cargo test --lib`: 1262/1262 PASS both with and without the change.
+
+**Why W44-35 smart-dispatch didn't help here**: the
+`adapt_to_image_lossy_with_smoothness` classifier is gated on
+`pixels < 500_000 AND distance < 2.0`. The W44-92 wedge cell
+1531677 e5 d=6 has 262_144 px (< 500_000) but distance=6.0 (>= 2.0),
+so the smart-dispatch doesn't fire.
+
+**Why this is honest-stop, not ship**: the photo SSIM2 collateral
+matches the W44-38 pattern that triggered an honest-stop then. W44-40
+MEMORY.md update clarified counterweights ARE on CPU (W44-38's "cost
+model wedge" RC was about GPU encoder, not CPU), but the empirical
+regression remains — the diagnosis was wrong, the measurement was
+right. The right path forward (NOT in W44-93 scope) is either:
+(a) widen the W44-35 smart-dispatch distance window for classified-
+smooth photos, or (b) implement Recommendation B from W44-92 (widen
+`find_best_32x32_transform`'s W44-77 entropy_mul tightening to all
+`(effort, distance)` where `try_dct32 = true`).
+
+**Files**:
+- `benchmarks/cjxl_parity_ledger_2026-05-19_w44_93.tsv` — full ledger
+  WITH widened gate applied (HONEST-STOP measurement artifact)
+- `benchmarks/cjxl_parity_ledger_2026-05-19_w44_93.meta` — annotated
+  meta noting the source-revert
+- `benchmarks/w44_93_try_dct64_gate_ab_2026-05-19.{tsv,meta}` —
+  per-cell A/B comparison of the 51 cells that changed bytes plus the
+  full honest-stop narrative
+
+**Source state**: `src/effort.rs:794` is `try_dct64: effort >= 7`
+(unchanged from W44-92). A comment was added pointing to this
+investigation note for future agents.
+
+**Production ledger remains**: 13 OPEN, 582 FIXED (W44-92).
+
 ### W44-91: zenanalyze-proxy auto-dispatch for 1189261 high-d photo gate — SHIPPED (May 19, 2026)
 
 **Status**: [SHIPPED]
