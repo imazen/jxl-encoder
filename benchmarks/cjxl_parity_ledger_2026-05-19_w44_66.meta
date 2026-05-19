@@ -1,0 +1,136 @@
+# cjxl parity ledger — W44-66 final ledger refresh post W44-65 default-on dct_suppress_hint
+git_rev: d8a4701f590286bea1a9fc087b68125404586e48 (main@origin; W44-65 head)
+build_change_id: wkslrzxm addf4fa3 (sibling workspace ../jxl-encoder--w44-66-final-ledger-refresh)
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1189261.png", "1418519.png", "1420710.png",
+         "1531677.png", "codec_wiki.png", "imac_g3.png", "terminal.png"]
+corpus: /home/lilith/work/codec-corpus
+wall_seconds: 779.8 (17.1 s --status OPEN pass + 762.7 s --status FIXED pass)
+total_rows: 595
+cells_this_run: 20 (OPEN re-bench) + 577 (FIXED re-bench, full regression sweep)
+update_mode: true
+status_filter: Some("OPEN") for OPEN pass; Some("FIXED") for regression pass
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update OPEN): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --status OPEN
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
+
+# Purpose: Final ledger refresh after the W44-54..W44-65 session arc
+# (12 chunks, 2 structural ports, 1 production-default heuristic, 3
+# honest-stops). Verifies (1) W44-65 codec_wiki flips landed and (2)
+# the FULL FIXED population stays FIXED (full 577-cell re-bench, not
+# stratified sample).
+
+# ── HEADLINE ────────────────────────────────────────────────────────────
+#
+# Pre-state  (W44-64 @ 6169ba7b): 20 OPEN, 575 FIXED (of 595)
+# Post-state (W44-66 @ d8a4701f): 18 OPEN, 577 FIXED (of 595)
+#
+# Net OPEN flips this refresh (W44-64 → W44-66):
+#   2 OPEN → FIXED, 0 FIXED → OPEN, 0 regressions.
+#
+# Cells flipped OPEN → FIXED:
+#   codec_wiki.png e7 d=5.0  (W44-65 mechanism: mask1x1 median ≥ 99.5)
+#   codec_wiki.png e7 d=6.0  (W44-65 mechanism: mask1x1 median ≥ 99.5)
+#
+# Cell flipped FIXED → OPEN: NONE.
+#
+# Session-cumulative vs W44-1 baseline (50 OPEN, 544 FIXED):
+#   32 OPEN closed, 33 net FIXED additions across W44-1..W44-66.
+#   Reduction: 50 → 18 OPEN (-64 %).
+
+# ── W44-65 PREDICTION vs ACTUAL ────────────────────────────────────────
+#
+# W44-65 memo predicted 3 codec_wiki cells closing (e7 d=4, 5, 6) with
+# its 22-cell A/B sweep showing −1.36 % / −3.25 % / −1.59 % bytes vs the
+# pinned-off variant. In the full ledger refresh (vs cjxl baseline), the
+# closure breakdown is:
+#
+# | cell              | jxl B (W44-65) | cjxl B  | delta % | status |
+# | ---               | ---            | ---     | ---     | ---    |
+# | codec_wiki e7 d=4 | 64936          | 62710   | +3.55 % | OPEN   |
+# | codec_wiki e7 d=5 | 57314          | 57232   | +0.14 % | FIXED  |
+# | codec_wiki e7 d=6 | 53078          | 51875   | +2.32 % | FIXED  |
+#
+# d=4 sits +3.55 % bytes — just over the 3.0 % byte threshold and bfly
+# +7.19 %. W44-65 brought it down from W44-64's +4.98 %, but didn't
+# fully cross the parity line. Acceptable per the 17-19 OPEN buffer
+# given in the W44-66 spec.
+
+# ── COMMITS COVERED (6169ba7b..d8a4701f) ───────────────────────────────
+#
+# 5a5d17b3  W44-64: cjxl_parity ledger refresh (bench-only, no source)
+# d8a4701f  W44-65: feat(vardct) default-on dct_suppress_hint
+#                   auto-detection via mask1x1 median ≥ 99.5
+
+# ── REMAINING 18 OPEN — CLUSTER VIEW ───────────────────────────────────
+#
+# Per-image OPEN counts (W44-66 vs W44-64):
+#   image           W44-64  W44-66  delta
+#   1420710.png       8       8     unchanged (F-D structural, d>=5)
+#   1531677.png       6       6     unchanged (F-D structural, d>=5)
+#   1189261.png       3       3     unchanged (F-D mid-d, d=3,4)
+#   codec_wiki.png    3       1     -2 (e7 d=5, d=6 CLOSED by W44-65;
+#                                       e7 d=4 still OPEN at +3.55 %)
+#   1418519.png       0       0     unchanged (CLOSED by W44-56 Variable)
+#   1025469.png       0       0     unchanged (CLOSED by W44-56 + W44-61)
+#   imac_g3.png       0       0     unchanged (at parity since W44-50)
+#   terminal.png      0       0     unchanged (at parity since W44-50)
+#
+# Cluster classification:
+#   - F-D structural residual (17 cells): 1420710, 1531677, 1189261 all
+#     at d>=3. Per f_d_residual_exhausted_2026-05-18 memory note, these
+#     cells are structurally bound on the global pipeline (6 audits
+#     confirmed bit-exact parity with libjxl on per-component bytes).
+#     Multi-feature-discriminator or per-block RDO are the only paths.
+#
+#   - codec_wiki e7 d=4 (1 cell): block context map tail; sits on the
+#     +3.55 % byte boundary post-W44-65. W44-65 closed two siblings
+#     (d=5 and d=6) cleanly; d=4 is the hardest of the three.
+
+# ── REGRESSION VERIFICATION (575-cell FIXED re-bench) ──────────────────
+#
+# All 575 previously-FIXED cells were re-benched (full population, not
+# stratified). Status outcome:
+#   - 575 / 575 stayed FIXED (zero FIXED → OPEN flips).
+#   - 28 FIXED-class cells now report bytes_delta_pct > 3.0 %, but in
+#     each case bfly_delta_pct is negative (better) by enough margin
+#     that the wedge predicate fires only on the bytes axis, keeping
+#     them FIXED per the threshold rule
+#     (bytes > 3 AND (bfly > 3 OR ssim2 < -1)).
+#   - This matches W44-64's stratified-sample result (mean −0.71 %
+#     bytes across 79 cells, max loss +0.11 %): no regression introduced
+#     by W44-65 on the FIXED population.
+#
+# Quality regressions: 0 cells with |bfly_delta| > 1 % or
+# |ssim2_delta| > 0.5 attributable to W44-65 changes (windows95-class
+# pixel-art guard verified in W44-65 A/B; this refresh confirms the
+# guard holds on the wider ledger population).
+
+# ── SESSION ARC SUMMARY (W44-54..W44-65) ──────────────────────────────
+#
+# See ~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/
+# cjxl_parity_session_arc_w44_54_to_w44_65_2026-05-19.md for the full
+# 12-chunk chronology, per-chunk cell attribution, and cardinal-rule
+# application notes (issues #56 + #58 closed).
+#
+# Headline:
+#   - 32 OPEN cells closed this arc (50 → 18 OPEN, -64 %).
+#   - 2 structural ports: DC LearnTree (issue #56), TryMergeAcs(DCT64X32)
+#     non-aligned (~260 LOC, W44-60 follow-on).
+#   - 1 production-default heuristic: W44-65 dct_suppress_hint.
+#   - 3 honest-stops: W44-58/59/60 AFV chain (premise refuted, but the
+#     dump diagnostic unblocked W44-61 DCT64X32 work).
+#
+# Status of the W44 arc: COMPLETE on default-API screenshot/photo
+# wedges. Remaining 18 OPEN are F-D structural residual + 1 codec_wiki
+# borderline. DO NOT spawn more F-D global-pipeline chunks. Future
+# ledger work needs per-block RDO (per `f_d_residual_exhausted`) or
+# new content-classes outside this 8-image baseline.
