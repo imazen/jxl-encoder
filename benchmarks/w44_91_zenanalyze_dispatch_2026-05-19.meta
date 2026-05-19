@@ -1,0 +1,89 @@
+# W44-91 zenanalyze-proxy auto-dispatch for the 1189261 high-d photo gate
+#
+# Date: 2026-05-19
+# Sibling workspace: ~/work/zen/jxl-encoder--w44-91-zenanalyze-dispatch-1189261
+# Parent commit: f9f347fb (W44-90 PixelLossDispatch default-flip HONEST-STOP)
+# Predecessor: W44-78 (a01c4a7f) + W44-79 (2ced8d29)
+#
+# Reproducer
+# ----------
+# cargo run --release -p jxl-encoder --example w44_91_dispatch_ab \
+#   --features parallel
+#
+# Companion artifacts:
+#   - jxl-encoder/examples/w44_91_proxy_probe.rs      (proxy selection)
+#   - jxl-encoder/examples/w44_91_dispatch_ab.rs      (this TSV)
+#   - jxl-encoder/examples/w44_91_decoder_check.rs    (multi-decoder roundtrip)
+#
+# Goal
+# ----
+# Wire the W44-79 zenanalyze-equivalent discriminator
+# (`colourfulness >= 80 AND flat_color_block_ratio < 0.01`, both
+# zenanalyze tier1.rs features computed over sRGB u8 source pixels)
+# into the production default so that 1189261.png closes 3 OPEN cells
+# (e7 d=3, e7 d=4, e7 d=5) WITHOUT regressing the 6 documented
+# W44-78 regression-band images (1025469, 1624487, 159550, 2079234,
+# 2775196, 297394) at any distance.
+#
+# Approach
+# --------
+# Add a cheap encoder-internal proxy (`vardct::encoder::ZenanalyzeProxies`)
+# computed in api.rs `encode_inner` for the 8-bit sRGB layouts (Rgb8,
+# Rgba8, Bgr8, Bgra8). Definitions match zenanalyze `src/tier1.rs`
+# colourfulness (Hasler-Süsstrunk M3) and `flat_color_blocks` exactly,
+# so the proxy is bit-equivalent to the zenanalyze reference up to FP
+# accumulation order. No new dependency.
+#
+# The dispatch site in `vardct/encoder.rs::compute_ac_strategy` (around
+# line 2641, the W44-29 `w44_29_lower` branch) is extended to also fire
+# the lift when ALL hold:
+#   1. distance ∈ [HIGH_D_PHOTO_MIN_DISTANCE,
+#                  HIGH_D_PHOTO_W44_91_MAX_DISTANCE] (3.0..=5.0)
+#   2. mask1x1_median ∈ [HIGH_D_PHOTO_SMOOTH_THRESHOLD,
+#                        HIGH_D_PHOTO_W44_91_MASK_UPPER) (50..80)
+#   3. ZenanalyzeProxies present (Rgb8/Rgba8/Bgr8/Bgra8 layout)
+#   4. m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN (80)
+#   5. flat_color_block_ratio < W44_91_FCBR_MAX (0.01)
+#
+# Per-image proxy values (from w44_91_proxy_probe.rs run)
+# -------------------------------------------------------
+# image            mask    m3_col  fcbr     W44-91 fires?
+# 1189261 (TGT)    69.08   98.84   0.0034   YES at d=3,4,5
+# 1025469 (REG)    76.08   45.45   0.0166   no (col<80, fcbr>0.01)
+# 1624487 (REG)    79.69   66.24   0.0042   no (col<80)
+# 159550  (REG)    72.76   39.33   0.0410   no (col<80, fcbr>0.01)
+# 2079234 (REG)    66.33   54.51   0.0984   no (col<80, fcbr>0.01)
+# 2775196 (REG)    74.73   52.24   0.0100   no (col<80, fcbr~=0.01)
+# 297394  (REG)    62.00  103.70   0.0957   no (fcbr>0.01) ← KEY: fcbr
+#                                              alone disqualifies despite
+#                                              high colourfulness
+#
+# Acceptance gates
+# ----------------
+# (a) TARGET 1189261 d=3/4/5 close: -679/-452/-319 bytes vs forced-off
+#     baseline. Matches W44-79 trial values exactly.
+# (b) TARGET 1189261 d=2.5 and d=6: zero delta (gate outside d-band).
+# (c) 6 REGRESSION images at every d ∈ {2.5,3,4,5,6}: zero delta
+#     (proxies fail at least one of the gates).
+# (d) 5 W44-78 already-fires reference cells: unchanged from W44-78
+#     baseline (W44-29 still fires, W44-91 doesn't double-fire).
+# (e) Hash-locks: all 36 byte-identical (gate cannot fire on tiny
+#     synthetic fixtures — they are either mask>=50 photos at d<3
+#     or mask>=99.5 gradients).
+# (f) Multi-decoder roundtrip: jxl-oxide + djxl + jxl-rs all decode
+#     1189261 d=3/4/5 cleanly under the auto-fired W44-91 lift.
+#
+# Sweep cells: 17 images × 5 distances = 85 cells, 2 encodes each (170)
+# Effort: 7. Threads: 8.
+#
+# Columns
+# -------
+# class           — TARGET / REGRESSION / W44_78_FIRES / MASK_HIGH / SCREENSHOT
+# image           — file name
+# distance        — encode distance
+# baseline_off    — bytes when LossyConfig::with_high_d_photo_hint(Some(false))
+#                   (both W44-29 and W44-91 gates suppressed)
+# default         — bytes for default LossyConfig (W44-29 + W44-91 auto-fire)
+# delta           — default - baseline_off (negative = saving)
+# delta_pct       — delta as percentage of baseline_off
+# w44_91_expected — predicted fire flag for the W44-91 gate

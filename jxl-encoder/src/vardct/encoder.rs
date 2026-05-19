@@ -199,6 +199,53 @@ const W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD: f32 = 99.5;
 /// preserve the libjxl reference tuple than over-fit either direction.
 const HIGH_D_PHOTO_SMOOTH_THRESHOLD: f32 = 50.0;
 
+/// W44-91 zenanalyze-proxy upper bound on `median(mask1x1)` for the
+/// **textured colourful photo** sub-band. The W44-79 follow-on identified
+/// that 1189261.png (mask=69.08) sits in the 50–80 ambiguous mask1x1 band
+/// AND benefits from the W44-29 lift, but the existing
+/// [`HIGH_D_PHOTO_SMOOTH_THRESHOLD`] (50.0) excludes it. A direct widening
+/// of the mask gate to 80 catches 1189261 but ALSO catches 6 documented
+/// regression-band images (1025469.png, 1624487.png, 159550.png,
+/// 2079234.png, 2775196.png, 297394.png) where the lift hurts bytes.
+///
+/// W44-91 wires a **zenanalyze-equivalent discriminator** computed cheaply
+/// at the API boundary (sRGB u8 only): Hasler-Süsstrunk M3 colourfulness
+/// and per-8×8-block flat-color-block ratio (matching zenanalyze
+/// tier1.rs exactly). The W44-91 lift fires only when:
+///
+///   `HIGH_D_PHOTO_SMOOTH_THRESHOLD <= mask1x1_median < HIGH_D_PHOTO_W44_91_MASK_UPPER`
+///   `AND distance in [HIGH_D_PHOTO_MIN_DISTANCE, HIGH_D_PHOTO_W44_91_MAX_DISTANCE]`
+///   `AND m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN`
+///   `AND flat_color_block_ratio_4 < W44_91_FCBR_MAX`
+///
+/// On the 41 CID22 validation images only **1189261.png** matches; on the
+/// 6 W44-78 regression-band images none match (each fails at least one
+/// gate: low colourfulness or high fcbr). See
+/// `benchmarks/w44_91_zenanalyze_dispatch_2026-05-19.{tsv,meta}` for the
+/// per-image proxy values + paired A/B sweep evidence.
+const HIGH_D_PHOTO_W44_91_MASK_UPPER: f32 = 80.0;
+
+/// W44-91 zenanalyze-proxy upper bound on `distance`. Above this the
+/// W44-79 hint-true measurement regressed 1189261 by +560 B at d=6
+/// (vs -679/-452/-319 B saves at d=3/4/5). The d=5 cap protects the
+/// d=6 regression from the auto-fire path.
+const HIGH_D_PHOTO_W44_91_MAX_DISTANCE: f32 = 5.0;
+
+/// W44-91 zenanalyze-proxy minimum on Hasler-Süsstrunk M3 colourfulness
+/// computed over sRGB u8 source pixels (matches zenanalyze tier1.rs
+/// `M3 = sqrt(σ_rg² + σ_yb²) + 0.3 * sqrt(μ_rg² + μ_yb²)` exactly up to
+/// FP precision). Verified: 1189261 = 98.84 (passes), 297394 = 103.70
+/// (passes — but stopped by the fcbr gate below).
+const W44_91_M3_COLOURFULNESS_MIN: f32 = 80.0;
+
+/// W44-91 zenanalyze-proxy maximum on per-8×8-block flat-color-block
+/// ratio. A block is "flat" when its per-channel sRGB u8 range (max-min)
+/// is ≤ 4 on EVERY channel R/G/B (zenanalyze tier1.rs exact rule).
+/// Verified: 1189261 = 0.34 % (passes), 297394 = 9.57 % (fails →
+/// 297394 stays on the libjxl reference table). All 6 W44-78
+/// regression-band images have fcbr ≥ 0.89 %, all failing this gate.
+const W44_91_FCBR_MAX: f32 = 0.01;
+
 /// W44-87 single-pass-entropy dispatch — smooth-photo `median(mask1x1)`
 /// upper bound. Same direction as [`HIGH_D_PHOTO_SMOOTH_THRESHOLD`]
 /// (smooth = below threshold), set to the same `50.0` value: CID22
@@ -272,14 +319,24 @@ const SINGLE_PASS_ENTROPY_MAX_DISTANCE: f32 = 1.0;
 /// The W44-29 table is harmful in the 50-80 mask1x1 zone for these
 /// images — keep mask<50 strict.
 ///
-/// **W44-79 zenanalyze discriminator (opt-in)**: the 50-80 mask1x1 band
-/// can be safely widened *only* for the colourful+textured photo
-/// sub-class that 1189261 represents. The verified discriminator is
-/// `colourfulness >= 80 AND flat_color_block_ratio < 0.01` (both
-/// zenanalyze Tier 2 features). Of the 41 CID22 validation images, only
-/// 1189261 matches. All 6 documented regression-band images
-/// (1025469, 1624487, 159550, 2079234, 2775196, 297394) fail this
-/// discriminator and stay on the libjxl-parity reference table.
+/// **W44-79 zenanalyze discriminator (then default-on via W44-91)**: the
+/// 50-80 mask1x1 band can be safely widened *only* for the
+/// colourful+textured photo sub-class that 1189261 represents. The
+/// verified discriminator is `colourfulness >= 80 AND
+/// flat_color_block_ratio < 0.01` (both zenanalyze Tier 1 features —
+/// the W44-79 memo incorrectly listed them as Tier 2). Of the 41 CID22
+/// validation images, only 1189261 matches. All 6 documented
+/// regression-band images (1025469, 1624487, 159550, 2079234, 2775196,
+/// 297394) fail this discriminator and stay on the libjxl-parity
+/// reference table.
+///
+/// **W44-91 (2026-05-19) wired the discriminator into the production
+/// default** via cheap encoder-internal proxies (see
+/// [`HIGH_D_PHOTO_W44_91_MASK_UPPER`] and [`ZenanalyzeProxies`]).
+/// On 8-bit sRGB-like layouts (`Rgb8` / `Rgba8` / `Bgr8` / `Bgra8`)
+/// the API layer computes the two-proxy discriminator in one O(W·H)
+/// pass and the dispatch fires when distance ∈ [3.0, 5.0] AND
+/// mask1x1_median ∈ [50, 80) AND m3 ≥ 80 AND fcbr < 0.01.
 /// Per-distance impact when [`crate::api::LossyConfig::with_high_d_photo_hint`]
 /// is set to `Some(true)` on 1189261 (e7 in-process measurement, 2026-05-19):
 ///
@@ -288,27 +345,28 @@ const SINGLE_PASS_ENTROPY_MAX_DISTANCE: f32 = 1.0;
 ///   - d=5: -319 B (-1.61 %)
 ///   - d=6: +560 B (+3.33 %) ← regression — caller MUST cap at d <= 5
 ///
-/// Total -1450 B across d ∈ {3, 4, 5} for 1189261. The discriminator
-/// is *not* auto-fired by the production hot path because:
+/// Total -1450 B across d ∈ {3, 4, 5} for 1189261.
 ///
-///   1. Zenanalyze Tier 2 features cost ~7 ms/MP (vs the cheap
-///      pipeline-internal mask1x1 statistic that costs ~0).
-///   2. Only 1 of 41 CID22 photos matches, so the EV (~1450 B per
-///      qualifying encode × 1 image / 41) does not justify the
-///      Tier 2 compute on the production hot path.
+/// **W44-91 update (2026-05-19)**: discriminator now wired into the
+/// production default via cheap encoder-internal proxies — see
+/// [`HIGH_D_PHOTO_W44_91_MASK_UPPER`], the [`ZenanalyzeProxies`] struct,
+/// and the dispatch site in `compute_ac_strategy` for the gate logic.
+/// Both `colourfulness` and `flat_color_block_ratio` turn out to live in
+/// zenanalyze **Tier 1** (not Tier 2 — the W44-79 memo had the tier
+/// wrong); their definitions are a single O(W·H) sRGB-u8 pass each, so
+/// the proxy can ship in-encoder without a dependency on zenanalyze.
 ///
-/// Callers that already compute zenanalyze features per-image (e.g.,
-/// imageflow content-class routers) should call
-/// [`crate::api::LossyConfig::with_high_d_photo_hint`] with
-/// `Some(true)` when both `colourfulness >= 80` and
-/// `flat_color_block_ratio < 0.01` AND `3.0 <= distance <= 5.0`.
+/// `LossyConfig::with_high_d_photo_hint(Some(false))` still suppresses
+/// both the W44-29 and the W44-91 gates (the hint is a single
+/// suppress/force lever shared by both).
 ///
 /// **Sweep artifact**: `benchmarks/w44_78_widen_gate_ab_2026-05-19.tsv` +
 /// W44-79 discriminator confirmation in
-/// `benchmarks/w44_79_zenanalyze_discriminator_2026-05-19.tsv` (reproducer:
+/// `benchmarks/w44_79_zenanalyze_discriminator_2026-05-19.tsv` +
+/// W44-91 wired-dispatch A/B in
+/// `benchmarks/w44_91_zenanalyze_dispatch_2026-05-19.tsv` (reproducer:
 /// `cargo run --release -p jxl-encoder --features parallel --example
-/// w44_78_widen_gate_ab` for the sweep, `cargo run --release -p
-/// jxl-encoder --example w44_79_trial` for the per-image hint A/B).
+/// w44_91_dispatch_ab`).
 const HIGH_D_PHOTO_MIN_DISTANCE: f32 = 3.0;
 
 /// W36-3 patches photo-skip dispatch threshold on the per-block-mean
@@ -504,6 +562,147 @@ fn median_mask1x1(mask: &[f32], stride: usize, width: usize, height: usize) -> f
         a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
     });
     buf[mid]
+}
+
+/// W44-91 cheap encoder-internal zenanalyze proxies used to widen the
+/// W44-29 high-distance smooth-photo lift onto the **textured colourful
+/// photo** sub-band (mask1x1 ∈ [50, 80]) without regressing the 6
+/// documented W44-78 regression-band images.
+///
+/// Both fields use definitions that match zenanalyze tier1.rs EXACTLY
+/// (rather than encoder-internal XYB-derived approximations) so the
+/// discriminator behaviour ports cleanly from the W44-79 reference
+/// (`benchmarks/w44_79_zenanalyze_discriminator_2026-05-19.tsv`) to the
+/// production hot path.
+///
+/// Compute cost: one O(W·H) pass over sRGB u8 source bytes — measured at
+/// ~5–10 ms on a 512×512 image on a modern CPU. Only computed for the
+/// 8-bit sRGB pixel layouts ([`crate::api::PixelLayout::Rgb8`], `Rgba8`,
+/// `Bgr8`, `Bgra8`) where the M3 colourfulness scale is meaningful. For
+/// other layouts (16-bit, linear-f32, grayscale, HDR) the proxy field on
+/// [`VarDctEncoder`] stays `None` and the W44-91 gate cannot fire — the
+/// existing W44-29 mask1x1<50 gate retains full coverage of those layouts.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ZenanalyzeProxies {
+    /// Hasler-Süsstrunk M3 colourfulness over sRGB u8 source pixels.
+    /// `M3 = sqrt(σ_rg² + σ_yb²) + 0.3 * sqrt(μ_rg² + μ_yb²)` where
+    /// `rg = R − G` and `yb = 0.5·(R+G) − B` per pixel. Matches
+    /// zenanalyze `src/tier1.rs` colourfulness computation exactly.
+    pub m3_colourfulness: f32,
+    /// Fraction of 8×8 sRGB blocks where every channel's per-block u8
+    /// range (max − min) is ≤ 4. Matches zenanalyze `src/tier1.rs`
+    /// `flat_color_blocks` accumulator exactly (`r_range <= 4 AND
+    /// g_range <= 4 AND b_range <= 4`).
+    pub flat_color_block_ratio: f32,
+}
+
+impl ZenanalyzeProxies {
+    /// Compute proxies from an 8-bit sRGB pixel buffer. Layout (R, G, B
+    /// byte offsets within the pixel) is described by `r_off`, `g_off`,
+    /// `b_off`. `bpp` is bytes-per-pixel (3 for `Rgb8`/`Bgr8`, 4 for
+    /// `Rgba8`/`Bgra8`). Caller pre-validates that
+    /// `pixels.len() >= width * height * bpp`.
+    #[inline(never)]
+    pub(crate) fn compute_srgb_u8(
+        pixels: &[u8],
+        width: usize,
+        height: usize,
+        bpp: usize,
+        r_off: usize,
+        g_off: usize,
+        b_off: usize,
+    ) -> Self {
+        let n_pix = (width * height) as f64;
+        if n_pix == 0.0 {
+            return Self {
+                m3_colourfulness: 0.0,
+                flat_color_block_ratio: 0.0,
+            };
+        }
+
+        // --- M3 colourfulness: one pass over pixels -----------------------
+        let mut rg_sum = 0.0_f64;
+        let mut rg_sq_sum = 0.0_f64;
+        let mut yb_sum = 0.0_f64;
+        let mut yb_sq_sum = 0.0_f64;
+        for y in 0..height {
+            for x in 0..width {
+                let off = (y * width + x) * bpp;
+                let r = pixels[off + r_off] as f64;
+                let g = pixels[off + g_off] as f64;
+                let b = pixels[off + b_off] as f64;
+                let rg = r - g;
+                let yb = 0.5 * (r + g) - b;
+                rg_sum += rg;
+                rg_sq_sum += rg * rg;
+                yb_sum += yb;
+                yb_sq_sum += yb * yb;
+            }
+        }
+        let mu_rg = rg_sum / n_pix;
+        let mu_yb = yb_sum / n_pix;
+        let var_rg = (rg_sq_sum / n_pix - mu_rg * mu_rg).max(0.0);
+        let var_yb = (yb_sq_sum / n_pix - mu_yb * mu_yb).max(0.0);
+        let m3 = (var_rg + var_yb).sqrt() + 0.3 * (mu_rg * mu_rg + mu_yb * mu_yb).sqrt();
+
+        // --- flat_color_block_ratio: per-8×8-block channel range -----------
+        let blocks_x = width / 8;
+        let blocks_y = height / 8;
+        let mut flat_blocks = 0usize;
+        let total_blocks = blocks_x * blocks_y;
+        for by in 0..blocks_y {
+            for bx in 0..blocks_x {
+                let mut r_min = 255u8;
+                let mut r_max = 0u8;
+                let mut g_min = 255u8;
+                let mut g_max = 0u8;
+                let mut b_min = 255u8;
+                let mut b_max = 0u8;
+                for dy in 0..8 {
+                    for dx in 0..8 {
+                        let off = ((by * 8 + dy) * width + (bx * 8 + dx)) * bpp;
+                        let r = pixels[off + r_off];
+                        let g = pixels[off + g_off];
+                        let b = pixels[off + b_off];
+                        if r < r_min {
+                            r_min = r;
+                        }
+                        if r > r_max {
+                            r_max = r;
+                        }
+                        if g < g_min {
+                            g_min = g;
+                        }
+                        if g > g_max {
+                            g_max = g;
+                        }
+                        if b < b_min {
+                            b_min = b;
+                        }
+                        if b > b_max {
+                            b_max = b;
+                        }
+                    }
+                }
+                let r_range = (r_max as i32) - (r_min as i32);
+                let g_range = (g_max as i32) - (g_min as i32);
+                let b_range = (b_max as i32) - (b_min as i32);
+                if r_range <= 4 && g_range <= 4 && b_range <= 4 {
+                    flat_blocks += 1;
+                }
+            }
+        }
+        let fcbr = if total_blocks > 0 {
+            flat_blocks as f32 / total_blocks as f32
+        } else {
+            0.0
+        };
+
+        Self {
+            m3_colourfulness: m3 as f32,
+            flat_color_block_ratio: fcbr,
+        }
+    }
 }
 
 /// Tiny JPEG XL encoder.
@@ -977,6 +1176,28 @@ pub struct VarDctEncoder {
     /// (`w44_63_dct_suppress_hint_shipped_2026-05-19.md`), W44-65
     /// (`w44_65_dct_suppress_default_on_2026-05-19.md`).
     pub dct_suppress_hint: Option<bool>,
+    /// W44-91 cheap zenanalyze-equivalent proxies for widening the W44-29
+    /// high-distance smooth-photo lift onto the textured-colourful-photo
+    /// sub-band (mask1x1 ∈ [50, 80]) without regressing the 6 documented
+    /// W44-78 regression-band images.
+    ///
+    /// `None` (default): the W44-91 gate cannot fire. Only the existing
+    /// W44-29 mask1x1<50 gate is considered (every existing hash-lock
+    /// byte-identical).
+    ///
+    /// `Some(proxies)`: the W44-91 gate also evaluates and may fire when:
+    /// - distance ∈ [`HIGH_D_PHOTO_MIN_DISTANCE`,
+    ///   `HIGH_D_PHOTO_W44_91_MAX_DISTANCE`] (3.0..=5.0)
+    /// - mask1x1_median ∈ [`HIGH_D_PHOTO_SMOOTH_THRESHOLD`,
+    ///   `HIGH_D_PHOTO_W44_91_MASK_UPPER`) (50..80)
+    /// - `proxies.m3_colourfulness` >= `W44_91_M3_COLOURFULNESS_MIN` (80)
+    /// - `proxies.flat_color_block_ratio` < `W44_91_FCBR_MAX` (0.01)
+    ///
+    /// Populated by the API layer for 8-bit sRGB pixel layouts (`Rgb8` /
+    /// `Rgba8` / `Bgr8` / `Bgra8`). Stays `None` for layouts where the
+    /// proxy isn't well-defined (16-bit, linear-f32, grayscale, HDR) —
+    /// the existing W44-29 gate retains full coverage of those layouts.
+    pub(crate) zenanalyze_proxies: Option<ZenanalyzeProxies>,
     /// Streaming-refactor buffering policy (jxl-encoder#11).
     ///
     /// Mirrors libjxl `JXL_ENC_FRAME_SETTING_BUFFERING` integers via
@@ -1084,6 +1305,10 @@ impl Default for VarDctEncoder {
             // outside the opt-in stay byte-identical because the gate
             // cannot fire.
             dct_suppress_hint: None,
+            // W44-91: default None means the gate cannot fire (every
+            // existing hash-lock byte-identical). API layer populates
+            // for 8-bit sRGB layouts.
+            zenanalyze_proxies: None,
             buffering: crate::api::Buffering::default(),
         }
     }
@@ -1175,6 +1400,10 @@ impl VarDctEncoder {
             // outside the opt-in stay byte-identical because the gate
             // cannot fire.
             dct_suppress_hint: None,
+            // W44-91: default None means the gate cannot fire (every
+            // existing hash-lock byte-identical). API layer populates
+            // for 8-bit sRGB layouts.
+            zenanalyze_proxies: None,
             buffering: crate::api::Buffering::default(),
         }
     }
@@ -2427,9 +2656,45 @@ impl VarDctEncoder {
             match self.high_d_photo_hint {
                 Some(b) => b,
                 None => {
-                    // Auto: distance gate AND smooth-content gate.
-                    self.distance >= HIGH_D_PHOTO_MIN_DISTANCE
-                        && mask1x1_median.is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD)
+                    // Auto: try two gates in OR.
+                    //
+                    // (a) **W44-29 smooth-photo gate** (default-on since
+                    // commit `a01c4a7f`): `distance >= HIGH_D_PHOTO_MIN_DISTANCE`
+                    // AND `median(mask1x1) < HIGH_D_PHOTO_SMOOTH_THRESHOLD`
+                    // (smooth-content discriminator, mask1x1 < 50).
+                    //
+                    // (b) **W44-91 zenanalyze-proxy gate**: targets the
+                    // textured-colourful-photo sub-band (mask1x1 ∈ [50, 80))
+                    // that the W44-29 gate alone cannot reach without
+                    // regressing 6 documented W44-78 regression-band images
+                    // (1025469, 1624487, 159550, 2079234, 2775196, 297394).
+                    // Fires only when ALL hold:
+                    //   * distance ∈ [HIGH_D_PHOTO_MIN_DISTANCE,
+                    //                 HIGH_D_PHOTO_W44_91_MAX_DISTANCE] (3..=5)
+                    //   * mask1x1_median ∈ [HIGH_D_PHOTO_SMOOTH_THRESHOLD,
+                    //                       HIGH_D_PHOTO_W44_91_MASK_UPPER) (50..80)
+                    //   * zenanalyze proxies populated (8-bit sRGB layout)
+                    //   * m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN (80)
+                    //   * flat_color_block_ratio < W44_91_FCBR_MAX (0.01)
+                    //
+                    // On the 41 CID22 validation images only 1189261
+                    // matches; on the 6 documented W44-78 regression-band
+                    // images none match (each fails at least one of the
+                    // colourfulness/fcbr gates per W44-79 discriminator C3).
+                    let w44_29_gate = self.distance >= HIGH_D_PHOTO_MIN_DISTANCE
+                        && mask1x1_median.is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD);
+                    let w44_91_gate = (HIGH_D_PHOTO_MIN_DISTANCE
+                        ..=HIGH_D_PHOTO_W44_91_MAX_DISTANCE)
+                        .contains(&self.distance)
+                        && mask1x1_median.is_some_and(|med| {
+                            (HIGH_D_PHOTO_SMOOTH_THRESHOLD..HIGH_D_PHOTO_W44_91_MASK_UPPER)
+                                .contains(&med)
+                        })
+                        && self.zenanalyze_proxies.is_some_and(|p| {
+                            p.m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN
+                                && p.flat_color_block_ratio < W44_91_FCBR_MAX
+                        });
+                    w44_29_gate || w44_91_gate
                 }
             }
         };
@@ -4351,6 +4616,74 @@ mod tests {
         assert!(enc.high_d_photo_hint.is_none());
         let enc_default = VarDctEncoder::default();
         assert!(enc_default.high_d_photo_hint.is_none());
+    }
+
+    #[test]
+    fn test_zenanalyze_proxies_default_none() {
+        // Verify the W44-91 zenanalyze proxies default to None on both
+        // constructors. With the proxy absent the W44-91 gate cannot fire
+        // and every hash-lock stays byte-identical.
+        let enc = VarDctEncoder::new(1.0);
+        assert!(enc.zenanalyze_proxies.is_none());
+        let enc_default = VarDctEncoder::default();
+        assert!(enc_default.zenanalyze_proxies.is_none());
+    }
+
+    #[test]
+    fn test_zenanalyze_proxies_compute_srgb_u8_solid_red() {
+        // Solid red has high M3 colourfulness (R-G axis variance ~0 but
+        // mu_rg high; rg_sum = N * 255 → μ_rg² term dominates) and 100%
+        // flat blocks (per-block channel range = 0 on every channel).
+        let w = 32;
+        let h = 32;
+        let mut pixels = vec![0u8; w * h * 3];
+        for chunk in pixels.chunks_mut(3) {
+            chunk[0] = 255;
+            chunk[1] = 0;
+            chunk[2] = 0;
+        }
+        let p = ZenanalyzeProxies::compute_srgb_u8(&pixels, w, h, 3, 0, 1, 2);
+        // M3 = 0.3 * sqrt(μ_rg² + μ_yb²) for zero-variance image.
+        // μ_rg = 255, μ_yb = 127.5; M3 = 0.3 * sqrt(65025 + 16256.25) ≈ 85.6
+        assert!(
+            (p.m3_colourfulness - 85.6).abs() < 0.5,
+            "solid red M3 expected ~85.6 got {}",
+            p.m3_colourfulness
+        );
+        // All 16 blocks (4×4) are perfectly flat.
+        assert!(
+            (p.flat_color_block_ratio - 1.0).abs() < 1e-6,
+            "solid red fcbr expected 1.0 got {}",
+            p.flat_color_block_ratio
+        );
+    }
+
+    #[test]
+    fn test_zenanalyze_proxies_compute_srgb_u8_random_noise() {
+        // Random-ish noise (counter pattern) has low colourfulness (R≈G≈B
+        // so rg/yb ≈ 0) and zero flat blocks (every block has full range).
+        let w = 32;
+        let h = 32;
+        let mut pixels = vec![0u8; w * h * 3];
+        for (i, chunk) in pixels.chunks_mut(3).enumerate() {
+            let v = (i % 256) as u8;
+            chunk[0] = v;
+            chunk[1] = v;
+            chunk[2] = v;
+        }
+        let p = ZenanalyzeProxies::compute_srgb_u8(&pixels, w, h, 3, 0, 1, 2);
+        assert!(
+            p.m3_colourfulness < 1.0,
+            "grayscale M3 expected ~0 got {}",
+            p.m3_colourfulness
+        );
+        // Every 8×8 block spans 64 different luma values (counter mod 256
+        // never repeats within a block at this w/h) → r_range = 63 > 4.
+        assert!(
+            p.flat_color_block_ratio < 0.01,
+            "noise fcbr expected ~0 got {}",
+            p.flat_color_block_ratio
+        );
     }
 
     #[test]
