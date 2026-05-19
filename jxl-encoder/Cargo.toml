@@ -904,5 +904,13 @@ name = "w44_32_dct64_sweep"
 path = "examples/w44_32_dct64_sweep.rs"
 required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 
+# W44-34: verify dispatch ON vs OFF on 1418519 mid-d wedge cells.
+# Tests whether the `adapt_to_image_lossy` gate (which drops try_dct64=false
+# on pixels<500k + d<2.0) is over-aggressive on smooth-photo 512×512 content.
+[[example]]
+name = "w44_34_1418519_dct64_verify"
+path = "examples/w44_34_1418519_dct64_verify.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+
 [lints]
 workspace = true

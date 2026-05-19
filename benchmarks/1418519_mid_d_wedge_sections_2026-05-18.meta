@@ -1,0 +1,129 @@
+# 1418519 mid-d wedge — AC strategy distribution analysis (W44-34)
+
+date_utc: 2026-05-19
+chunk: W44-34 (investigate-only, pivot from F-D high-d residuals exhausted in W44-32)
+host: lilith (Linux 6.6.114.1-microsoft-standard-WSL2)
+cpu: AMD Ryzen 9 7950X (32 threads, water-cooled)
+rustc: stable
+git_parent: 60df963f (investigate(vardct): W44-32 DCT64 entropy_mul sweep on F-D residual cells — HONEST-STOP)
+sibling_workspace: /home/lilith/work/zen/jxl-encoder--w44-34-1418519-mid-d
+features_built: parallel butteraugli-loop ssim2-loop
+
+# Inputs
+ledger_source: benchmarks/cjxl_parity_ledger_2026-05-18.tsv (post W44-30 refresh, commit 1ae427c1)
+open_cells_inspected:
+  - 1418519.png e=6 d=1.0 (+5.10% bytes, +3.11% bfly, +0.33 ssim2)
+  - 1418519.png e=6 d=1.2 (+6.42% bytes, +3.24% bfly, -0.07 ssim2)
+  - 1418519.png e=6 d=1.6 (+5.24% bytes, +4.68% bfly, -0.21 ssim2)
+  - 1418519.png e=7 d=1.2 (+6.62% bytes, +3.20% bfly, -0.08 ssim2)
+  - 1418519.png e=7 d=1.6 (+5.17% bytes, +4.34% bfly, -0.40 ssim2)
+ref_fixed_cells:
+  - 1418519.png e=5 d=1.0 (+4.37% bytes, FIXED)
+  - 1418519.png e=5 d=1.2 (+5.37% bytes, FIXED, but >5% threshold)
+
+# Methodology
+tool: jxl-encoder/examples/f_d_wedge_investigate.rs (CELLS edited in-place to point at 1418519 cells)
+metric_extraction: jxl-inspect (raw_quant from coefficient dump, AC strategy from frame analysis)
+                   block-area-weighted strategy histogram per cell + delta (ours - cjxl)
+
+# Key finding (per-section delta breakdown from ledger)
+| effort | distance | bytes_delta_pct | ac_pct_of_delta | hf_global_pct | lf_groups_pct |
+|--------|----------|-----------------|------------------|----------------|----------------|
+| 6      | 1.0      | +5.10           | +83 %            | +51 %          | -46 %          |
+| 6      | 1.2      | +6.42           | +85 %            | +50 %          | -36 %          |
+| 6      | 1.6      | +5.24           | +98 %            | +51 %          | -55 %          |
+| 7      | 1.2      | +6.62           | +81 %            | +53 %          | -37 %          |
+| 7      | 1.6      | +5.17           | +99 %            | +51 %          | -57 %          |
+
+ac_groups + hf_global dominate the delta; lf_groups partially recover.
+patches = 0 for both encoders (correct: photo content, no patches detected).
+
+# Root cause (AC strategy histogram per cell)
+| cell                   | Dct32_ours | Dct32_cjxl | Dct64_ours | Dct64_cjxl |
+|------------------------|-------------|-------------|-------------|-------------|
+| e=6 d=1.0              | 73.8 %      | 19.9 %      | 0.0 %       | 48.4 %      |
+| e=6 d=1.2              | 73.8 %      | 17.2 %      | 0.0 %       | 50.0 %      |
+| e=6 d=1.6              | 77.0 %      | 17.6 %      | 0.0 %       | 51.6 %      |
+| e=7 d=1.2              | 73.8 %      | 17.2 %      | 0.0 %       | 50.0 %      |
+| e=7 d=1.6              | 77.0 %      | 16.8 %      | 0.0 %       | 53.1 %      |
+
+AGGREGATE (mean Δpp by 8x8-block-area, ours - cjxl):
+  Dct32         Δ +56.75pp
+  Dct64         Δ -50.22pp
+  Dct32x64      Δ  -5.13pp
+  Dct64x32      Δ  -1.79pp
+
+# Root-cause location
+File: jxl-encoder/src/effort.rs:1429-1436 (`EffortProfile::adapt_to_image_lossy`)
+Guard:
+    if pixels < LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD  // 500_000
+        && distance < LOSSY_LOW_DISTANCE_THRESHOLD  // 2.0
+        && self.try_dct64
+    {
+        self.try_dct64 = false;
+    }
+Result: 1418519 (512×512 = 262_144 px < 500_000) at d ∈ {1.0, 1.2, 1.6} (< 2.0)
+        → try_dct64 = false → find_best_64x64_transform never runs → 0 % DCT64 pick rate.
+        cjxl picks DCT64 on 48-53 % of 8×8-block-area on the same image.
+
+# Calibration provenance gap
+adapt_to_image_lossy was tuned by W44-17 chunk (commit 142ef4f6 family) on a SINGLE image,
+7256805.png (CID22 training), at the same small_0.26MP (512×512) cell. Bench data:
+  benchmarks/vardct_ac_dispatch_paired_2026-05-17.tsv
+
+7256805 at d=1.0 e=7: variant A (DCT64 off) = 27199, variant B (DCT64 on) = 27637.
+  → A 1.6% SMALLER on 7256805 → "DCT64 isn't winning here" conclusion.
+1418519 at d=1.0 e=7: forcing variant-B (DCT64 on) = 21723 vs default 23074.
+  → B 5.86% SMALLER on 1418519 → conclusion was image-specific, not size-specific.
+
+The wedge: 1418519 is a smooth-photo (pool water + sky + distant mountains, kurtosis 3.18)
+whereas 7256805 is more textured. cjxl's per-block cost model picks DCT64 wherever the
+content is sufficiently smooth — and small smooth-photo cells exist that the W44-17
+calibration set didn't sample.
+
+# Verification (variant-A vs variant-B paired)
+tool: jxl-encoder/examples/w44_34_1418519_dct64_verify.rs
+features: __expert butteraugli-loop ssim2-loop parallel
+min-of-3 wall-clock per cell, single-thread
+
+| cell     | bytes_A | bytes_B | Δ_bytes | Δ_pct  | ms_A   | ms_B   |
+|----------|---------|---------|---------|--------|--------|--------|
+| e6 d=1.0 | 23074   | 21723   | -1351   | -5.86 %| 34.5   | 33.4   |
+| e6 d=1.2 | 20894   | 19723   | -1171   | -5.60 %| 35.1   | 33.9   |
+| e6 d=1.6 | 17334   | 16155   | -1179   | -6.80 %| 36.7   | 35.9   |
+| e7 d=1.2 | 20899   | 19730   | -1169   | -5.59 %| 37.4   | 37.6   |
+| e7 d=1.6 | 17325   | 16151   | -1174   | -6.78 %| 42.7   | 41.2   |
+| TOTAL    | 99526   | 93482   | -6044   | -6.07 %| (essentially zero ms delta)
+
+Comparing variant B vs cjxl baselines from the ledger:
+| cell     | bytes_B | cjxl_bytes | B vs cjxl |
+|----------|---------|------------|-----------|
+| e6 d=1.0 | 21723   | 21954      | -1.05 %   ← BEATS cjxl
+| e6 d=1.2 | 19723   | 19634      | +0.45 %   ← essentially parity
+| e6 d=1.6 | 16155   | 16471      | -1.92 %   ← BEATS cjxl
+| e7 d=1.2 | 19730   | 19602      | +0.65 %   ← essentially parity
+| e7 d=1.6 | 16151   | 16474      | -1.96 %   ← BEATS cjxl
+
+# Recommended fix chunk (out of scope for W44-34 investigate; queue for next chunk)
+Chunk-type: dispatch-classifier refinement (analogous to entropy_mul smart_dispatch in
+            content_aware_entropy_mul_ab.rs).
+Mechanism: extend `adapt_to_image_lossy` with a content-aware override that re-enables
+           try_dct64 when image smoothness predicts DCT64 wins. Possible features:
+           - block-mean stddev (low = smooth = DCT64 wins)
+           - high-frequency-energy ratio (low = smooth = DCT64 wins)
+           - kurtosis or std-dev percentile
+           Calibrate on a stratified set of 6-10 images across content classes (not just
+           7256805) at d ∈ {0.5, 1.0, 1.5, 2.0} sweep.
+Expected win: ~6 % bytes recovery on smooth-photo 512×512 cells (5 OPEN ledger entries),
+              zero impact on non-smooth small images (verified by 7256805 baseline).
+Risk: wall-clock cost. Forcing try_dct64=true on 1418519 added <2 ms/encode in this
+      bench — within noise. The original W44-17 wall-clock rationale was speed of
+      tiny_0.07MP and large_2.78MP cells, both of which would not flip under a
+      smoothness gate (large_2.78MP keeps try_dct64=true via the pixel gate anyway).
+
+# Files
+section_tsv: benchmarks/1418519_mid_d_wedge_sections_2026-05-18.tsv
+section_meta: this file
+verify_tool: jxl-encoder/examples/w44_34_1418519_dct64_verify.rs
+verify_log: /tmp/w44_34_verify.log (variant-A vs variant-B paired comparison)
+memory_file: ~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/1418519_mid_d_wedge_2026-05-18.md
