@@ -100,7 +100,13 @@ fn linear_to_srgb_u8(linear: f32) -> u8 {
 fn rgb_to_linear_img(rgb: &[u8], w: u32, h: u32) -> Img<Vec<RGB<f32>>> {
     let pixels: Vec<RGB<f32>> = rgb
         .chunks(3)
-        .map(|c| RGB::new(srgb_to_linear_f32(c[0]), srgb_to_linear_f32(c[1]), srgb_to_linear_f32(c[2])))
+        .map(|c| {
+            RGB::new(
+                srgb_to_linear_f32(c[0]),
+                srgb_to_linear_f32(c[1]),
+                srgb_to_linear_f32(c[2]),
+            )
+        })
         .collect();
     Img::new(pixels, w as usize, h as usize)
 }
@@ -154,7 +160,13 @@ fn score_jxl(
 
     let dec_srgb: Vec<[u8; 3]> = dec_lin
         .chunks(3)
-        .map(|c| [linear_to_srgb_u8(c[0]), linear_to_srgb_u8(c[1]), linear_to_srgb_u8(c[2])])
+        .map(|c| {
+            [
+                linear_to_srgb_u8(c[0]),
+                linear_to_srgb_u8(c[1]),
+                linear_to_srgb_u8(c[2]),
+            ]
+        })
         .collect();
     let dec_srgb_img: Img<Vec<[u8; 3]>> = Img::new(dec_srgb, dw, dh);
     let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
@@ -482,7 +494,11 @@ fn main() {
     // Resume detection.
     let existing_keys = if args.resume {
         let k = read_existing_keys(&args.output);
-        eprintln!("Resume: {} existing rows in {}", k.len(), args.output.display());
+        eprintln!(
+            "Resume: {} existing rows in {}",
+            k.len(),
+            args.output.display()
+        );
         k
     } else {
         // Always start fresh unless --resume.

@@ -84,7 +84,13 @@ fn linear_to_srgb_u8(linear: f32) -> u8 {
 fn rgb_to_linear_img(rgb: &[u8], w: u32, h: u32) -> Img<Vec<RGB<f32>>> {
     let pixels: Vec<RGB<f32>> = rgb
         .chunks(3)
-        .map(|c| RGB::new(srgb_to_linear_f32(c[0]), srgb_to_linear_f32(c[1]), srgb_to_linear_f32(c[2])))
+        .map(|c| {
+            RGB::new(
+                srgb_to_linear_f32(c[0]),
+                srgb_to_linear_f32(c[1]),
+                srgb_to_linear_f32(c[2]),
+            )
+        })
         .collect();
     Img::new(pixels, w as usize, h as usize)
 }
@@ -136,7 +142,13 @@ fn score_jxl(
     .score as f64;
     let dec_srgb: Vec<[u8; 3]> = dec_lin
         .chunks(3)
-        .map(|c| [linear_to_srgb_u8(c[0]), linear_to_srgb_u8(c[1]), linear_to_srgb_u8(c[2])])
+        .map(|c| {
+            [
+                linear_to_srgb_u8(c[0]),
+                linear_to_srgb_u8(c[1]),
+                linear_to_srgb_u8(c[2]),
+            ]
+        })
         .collect();
     let dec_srgb_img: Img<Vec<[u8; 3]>> = Img::new(dec_srgb, dw, dh);
     let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
@@ -215,7 +227,10 @@ fn parse_args() -> Args {
     let output = output
         .unwrap_or_else(|| PathBuf::from("benchmarks/w44_51_refframe_predictor_ab_2026-05-19.tsv"));
     let output_meta = output.with_extension("meta");
-    Args { output, output_meta }
+    Args {
+        output,
+        output_meta,
+    }
 }
 
 fn row_header() -> String {
@@ -314,7 +329,18 @@ fn main() {
                 if let Some((bfly, ssim2)) = score_jxl(&bytes, &orig_linear, &orig_srgb, w, h) {
                     append_atomic(
                         &tmp_out,
-                        &row_tsv(img_name, w, h, "ours_tree", EFFORT, d, bytes.len(), bfly, ssim2, ms),
+                        &row_tsv(
+                            img_name,
+                            w,
+                            h,
+                            "ours_tree",
+                            EFFORT,
+                            d,
+                            bytes.len(),
+                            bfly,
+                            ssim2,
+                            ms,
+                        ),
                     );
                 }
             }
@@ -326,7 +352,18 @@ fn main() {
                 if let Some((bfly, ssim2)) = score_jxl(&bytes, &orig_linear, &orig_srgb, w, h) {
                     append_atomic(
                         &tmp_out,
-                        &row_tsv(img_name, w, h, "ours_grad", EFFORT, d, bytes.len(), bfly, ssim2, ms),
+                        &row_tsv(
+                            img_name,
+                            w,
+                            h,
+                            "ours_grad",
+                            EFFORT,
+                            d,
+                            bytes.len(),
+                            bfly,
+                            ssim2,
+                            ms,
+                        ),
                     );
                 }
             }
@@ -338,7 +375,18 @@ fn main() {
                 if let Some((bfly, ssim2)) = score_jxl(&bytes, &orig_linear, &orig_srgb, w, h) {
                     append_atomic(
                         &tmp_out,
-                        &row_tsv(img_name, w, h, "cjxl", EFFORT, d, bytes.len(), bfly, ssim2, ms),
+                        &row_tsv(
+                            img_name,
+                            w,
+                            h,
+                            "cjxl",
+                            EFFORT,
+                            d,
+                            bytes.len(),
+                            bfly,
+                            ssim2,
+                            ms,
+                        ),
                     );
                 }
             }

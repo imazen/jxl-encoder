@@ -66,9 +66,9 @@ fn corpus_dir() -> PathBuf {
 }
 
 fn cjxl_bin() -> PathBuf {
-    std::env::var("CJXL").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from("/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl")
-    })
+    std::env::var("CJXL")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl"))
 }
 
 fn output_path() -> PathBuf {
@@ -170,7 +170,7 @@ struct SectionStats {
     num_hf_presets: u32,
     used_orders_pass0: u32,
     used_orders_count_pass0: u32, // popcount(used_orders)
-    dequant_bytes: usize,          // dequant matrix set encoded bytes
+    dequant_bytes: usize,         // dequant matrix set encoded bytes
     // Errors
     error: Option<String>,
 }
@@ -283,8 +283,7 @@ fn probe(jxl: &[u8]) -> SectionStats {
                                 consumed_bytes, group.size
                             );
                         }
-                        let remaining =
-                            (group.size as usize).saturating_sub(consumed_bytes) * 8;
+                        let remaining = (group.size as usize).saturating_sub(consumed_bytes) * 8;
                         if remaining > 0 && br.skip_bits(remaining).is_err() {
                             s.error = Some("skip after LfGlobal".to_string());
                             return s;
@@ -294,8 +293,7 @@ fn probe(jxl: &[u8]) -> SectionStats {
                         s.error = Some(format!("lf_global parse: {e}"));
                         let consumed_bits = br.num_read_bits() - sec_start_bits;
                         let consumed_bytes = (consumed_bits + 7) / 8;
-                        let remaining =
-                            (group.size as usize).saturating_sub(consumed_bytes) * 8;
+                        let remaining = (group.size as usize).saturating_sub(consumed_bytes) * 8;
                         let _ = br.skip_bits(remaining);
                     }
                 }
@@ -365,8 +363,7 @@ fn probe(jxl: &[u8]) -> SectionStats {
                         let consumed_bits = br.num_read_bits() - sec_start_bits;
                         let consumed_bytes = (consumed_bits + 7) / 8;
                         s.main_frame_hfglobal_bytes += group.size as usize;
-                        let remaining =
-                            (group.size as usize).saturating_sub(consumed_bytes) * 8;
+                        let remaining = (group.size as usize).saturating_sub(consumed_bytes) * 8;
                         if remaining > 0 && br.skip_bits(remaining).is_err() {
                             s.error = Some("skip after HfGlobal".to_string());
                             return s;
@@ -377,8 +374,7 @@ fn probe(jxl: &[u8]) -> SectionStats {
                         s.main_frame_hfglobal_bytes += group.size as usize;
                         let consumed_bits = br.num_read_bits() - sec_start_bits;
                         let consumed_bytes = (consumed_bits + 7) / 8;
-                        let remaining =
-                            (group.size as usize).saturating_sub(consumed_bytes) * 8;
+                        let remaining = (group.size as usize).saturating_sub(consumed_bytes) * 8;
                         let _ = br.skip_bits(remaining);
                     }
                 }
@@ -390,12 +386,8 @@ fn probe(jxl: &[u8]) -> SectionStats {
                     return s;
                 }
                 match group.kind {
-                    TocGroupKind::LfGroup(_) => {
-                        s.main_frame_lfgroups_bytes += group.size as usize
-                    }
-                    TocGroupKind::HfGlobal => {
-                        s.main_frame_hfglobal_bytes += group.size as usize
-                    }
+                    TocGroupKind::LfGroup(_) => s.main_frame_lfgroups_bytes += group.size as usize,
+                    TocGroupKind::HfGlobal => s.main_frame_hfglobal_bytes += group.size as usize,
                     TocGroupKind::GroupPass { .. } => {
                         s.main_frame_passgroups_bytes += group.size as usize
                     }
@@ -485,10 +477,12 @@ fn main() {
             0.0
         };
 
-        let ours_perm_etc =
-            ours.main_frame_hfglobal_bytes.saturating_sub(ours.dequant_bytes);
-        let cjxl_perm_etc =
-            cjxl.main_frame_hfglobal_bytes.saturating_sub(cjxl.dequant_bytes);
+        let ours_perm_etc = ours
+            .main_frame_hfglobal_bytes
+            .saturating_sub(ours.dequant_bytes);
+        let cjxl_perm_etc = cjxl
+            .main_frame_hfglobal_bytes
+            .saturating_sub(cjxl.dequant_bytes);
         eprintln!(
             "  ours: total={} patches={} lfgrp={} lfglob={} hfglob={} (dequant={} perm_etc={}) passgrp={} n_blkclu={} n_hfpr={} used_orders=0x{:X} (pop={}) {}",
             ours.total_bytes,

@@ -129,7 +129,13 @@ fn linear_to_srgb_u8(linear: f32) -> u8 {
 fn rgb_to_linear_img(rgb: &[u8], w: u32, h: u32) -> Img<Vec<RGB<f32>>> {
     let pixels: Vec<RGB<f32>> = rgb
         .chunks(3)
-        .map(|c| RGB::new(srgb_to_linear_f32(c[0]), srgb_to_linear_f32(c[1]), srgb_to_linear_f32(c[2])))
+        .map(|c| {
+            RGB::new(
+                srgb_to_linear_f32(c[0]),
+                srgb_to_linear_f32(c[1]),
+                srgb_to_linear_f32(c[2]),
+            )
+        })
         .collect();
     Img::new(pixels, w as usize, h as usize)
 }
@@ -182,7 +188,13 @@ fn score_jxl(
 
     let dec_srgb: Vec<[u8; 3]> = dec_lin
         .chunks(3)
-        .map(|c| [linear_to_srgb_u8(c[0]), linear_to_srgb_u8(c[1]), linear_to_srgb_u8(c[2])])
+        .map(|c| {
+            [
+                linear_to_srgb_u8(c[0]),
+                linear_to_srgb_u8(c[1]),
+                linear_to_srgb_u8(c[2]),
+            ]
+        })
         .collect();
     let dec_srgb_img: Img<Vec<[u8; 3]>> = Img::new(dec_srgb, dw, dh);
     let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
@@ -199,7 +211,7 @@ struct Sections {
     hf_global: u64,
     ac_groups: u64,
     main_frame_total: u64,
-    patches_total: u64, // sum of all ReferenceOnly frames before the main frame
+    patches_total: u64,  // sum of all ReferenceOnly frames before the main frame
     other_overhead: u64, // file_total - main_frame_total - patches_total
     file_total: u64,
 }
@@ -300,7 +312,9 @@ fn parse_sections(bytes: &[u8]) -> Option<Sections> {
 // ── Encoders ────────────────────────────────────────────────────────────────
 
 fn encode_ours(rgb: &[u8], w: u32, h: u32, distance: f32, effort: u8) -> Option<(Vec<u8>, f64)> {
-    let cfg = LossyConfig::new(distance).with_effort(effort).with_threads(1);
+    let cfg = LossyConfig::new(distance)
+        .with_effort(effort)
+        .with_threads(1);
     let start = Instant::now();
     let bytes = cfg.encode(rgb, w, h, PixelLayout::Rgb8).ok()?;
     let ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -665,11 +679,7 @@ fn parse_args() -> Args {
                     .collect()
             }
             "--distance" => {
-                let v: f32 = it
-                    .next()
-                    .expect("--distance VALUE")
-                    .parse()
-                    .expect("float");
+                let v: f32 = it.next().expect("--distance VALUE").parse().expect("float");
                 distances = vec![v];
             }
             "--efforts" => {
@@ -851,15 +861,16 @@ fn main() {
     let started = Instant::now();
 
     // Cache decoded images per (image path).
-    let image_data: HashMap<String, (Vec<u8>, u32, u32, Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>)> = images
-        .iter()
-        .filter_map(|img| {
-            let (rgb, w, h) = load_png(&img.path)?;
-            let lin = rgb_to_linear_img(&rgb, w, h);
-            let sr = rgb_to_srgb_arr3(&rgb, w, h);
-            Some((img.name.clone(), (rgb, w, h, lin, sr)))
-        })
-        .collect();
+    let image_data: HashMap<String, (Vec<u8>, u32, u32, Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>)> =
+        images
+            .iter()
+            .filter_map(|img| {
+                let (rgb, w, h) = load_png(&img.path)?;
+                let lin = rgb_to_linear_img(&rgb, w, h);
+                let sr = rgb_to_srgb_arr3(&rgb, w, h);
+                Some((img.name.clone(), (rgb, w, h, lin, sr)))
+            })
+            .collect();
 
     // Parallel encode. Use a Mutex on the rows map for atomic per-cell writes.
     let rows_mtx = Mutex::new(&mut existing_rows);
@@ -889,8 +900,14 @@ fn main() {
             write_ledger(&args.output, &header_line, &guard);
             eprintln!(
                 "  [{}/{}] last: {} e{} d{} status={} bytes_delta={:.2}% bfly_delta={:.2}%",
-                n, total, row.image, row.effort, row.distance, row.status,
-                row.bytes_delta_pct, row.bfly_delta_pct
+                n,
+                total,
+                row.image,
+                row.effort,
+                row.distance,
+                row.status,
+                row.bytes_delta_pct,
+                row.bfly_delta_pct
             );
         }
     });

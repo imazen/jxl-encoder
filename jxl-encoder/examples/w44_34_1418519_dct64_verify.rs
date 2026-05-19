@@ -65,7 +65,8 @@ fn encode_b(rgb: &[u8], w: u32, h: u32, distance: f32, effort: u8) -> (Vec<u8>, 
 }
 
 fn main() {
-    let img_path = PathBuf::from("/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png");
+    let img_path =
+        PathBuf::from("/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png");
     let (rgb, w, h) = load_png(&img_path);
     println!("Loaded {:?} → {}×{} ({} bytes)", img_path, w, h, rgb.len());
 
