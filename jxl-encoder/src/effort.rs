@@ -791,6 +791,16 @@ impl EffortProfile {
             ac_strategy_enabled: effort >= 5,
             try_dct16: effort >= 5,
             try_dct32: effort >= 5,
+            // libjxl gates DCT64 evaluation in
+            // `FindBestFirstLevelDivisionForSquare(8, ...)` only on
+            // `cparams.decoding_speed_tier < 4` (default 0; see
+            // `libjxl/lib/jxl/enc_ac_strategy.cc:948`), NOT on encoding
+            // effort. We use `effort >= 7` instead — see W44-93 honest-
+            // stop note in CLAUDE.md "Investigation Notes" for the
+            // measured photo SSIM2 collateral that widening to e5 caused
+            // (the same pattern W44-38 saw at e6). The single-image
+            // smart-dispatch in `adapt_to_image_lossy_with_smoothness`
+            // already widens to e5 for classified-smooth photos.
             try_dct64: effort >= 7,
             try_dct4x8_afv: effort >= 6,
             non_aligned_eval: effort >= 6,
