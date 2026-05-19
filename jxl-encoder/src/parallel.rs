@@ -32,6 +32,41 @@ where
     (0..n).map(f).collect()
 }
 
+/// Map `f` over `0..n`, collecting results in index order. Falls back to
+/// serial execution when `n < min_parallel_n`, even with `parallel` enabled.
+///
+/// W44-89: small-image guard helper. Initially added to gate the AC-group
+/// parallel xform fan-out on small inputs (W44-88 had reported a
+/// `terminal.png` 1.75 MP regression at e3). Paired interleaved A/B
+/// benchmark (`benchmarks/parallel_xform_guard_AB_2026-05-19.tsv`) showed
+/// the regression is NOT reproducible on stable measurements — parallel
+/// xform reliably beats serial at 35 AC groups (1.72× speedup, 15.8 ms
+/// saved). Helper kept for future use if a real small-input regression
+/// appears in another hot loop; not currently wired into any call site.
+#[cfg(feature = "parallel")]
+#[allow(dead_code)]
+pub fn parallel_map_min<T, F>(n: usize, min_parallel_n: usize, f: F) -> Vec<T>
+where
+    T: Send,
+    F: Fn(usize) -> T + Send + Sync,
+{
+    if n < min_parallel_n {
+        return (0..n).map(f).collect();
+    }
+    use rayon::prelude::*;
+    (0..n).into_par_iter().map(f).collect()
+}
+
+/// Sequential fallback for [`parallel_map_min`].
+#[cfg(not(feature = "parallel"))]
+#[allow(dead_code)]
+pub fn parallel_map_min<T, F>(n: usize, _min_parallel_n: usize, f: F) -> Vec<T>
+where
+    F: Fn(usize) -> T,
+{
+    (0..n).map(f).collect()
+}
+
 /// Map `f` over `0..n` where `f` returns `Result<T>`, collecting results in index order.
 ///
 /// Returns the first error encountered, or all results.

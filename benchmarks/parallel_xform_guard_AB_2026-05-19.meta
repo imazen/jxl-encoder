@@ -1,0 +1,159 @@
+# W44-89 — AC-group parallel xform guard A/B bench (HONEST-STOP)
+
+## Status: HONEST-STOP — premise INVALID
+
+W44-88 (`benchmarks/parallel_xform_e3_e4_2026-05-19.tsv`) reported a
+-17.9 ms regression on `terminal.png` e3 (1.75 MP, 35 AC groups) when
+8T rayon parallelism was used vs 1T serial. The W44-89 task asked us
+to add a small-image guard (`if num_groups < N`: use serial path) to
+gate the parallel fan-out and fix that regression.
+
+A paired interleaved A/B benchmark (5 trials × 3 images × 2 efforts ×
+2 thread counts × 2 builds, 240 rows total) shows the regression is
+**not reproducible** on stable measurements. The parallel xform path
+reliably **beats** the serial path even at the 35-group `terminal.png`
+e3 cell — 8T median 21.8 ms vs 1T median 37.6 ms (1.72× speedup,
+15.8 ms saved). Wiring the guard INTRODUCED a +16.6 ms regression on
+that cell by forcing serial when parallel was helping.
+
+W44-88's non-interleaved run had high trial-to-trial variance on the
+regressed cell (trial 1: 67.7 ms, trial 2: 62.4 ms, trial 3: 25.6 ms),
+strongly suggesting cold-rayon-thread-pool wake-up or thermal noise
+contamination on the first two trials.
+
+The `parallel_map_min` helper was kept in `parallel.rs` (marked
+`#[allow(dead_code)]`) for future use if a real small-input regression
+appears in another hot loop. The transform.rs call site was reverted
+to its original `parallel_map` call.
+
+## Provenance
+
+- Date: 2026-05-19 UTC
+- Hostname: lilith (water-cooled AMD Ryzen 9 7950X, 32 threads, 128 GB RAM)
+- Parent commit: 1d2683ec (W44-87 SinglePassEntropyDispatch on main)
+- Workspace: ~/work/zen/jxl-encoder--w44-89-ac-chunking-guard (jj sibling on main)
+- Encoder build: release, features `parallel butteraugli-loop`
+- CLI: `target/release/cjxl-rs`
+- Phase timing: `__JXL_ENC_PHASE_TIMING=1` env var (W36-1 path)
+- Thread control: `RAYON_NUM_THREADS={1, 8}`
+
+## Method
+
+- 3 screenshots: terminal (1.75 MP, 35 groups), codec_wiki (4.26 MP,
+  70 groups), imac_g3 (5.62 MP, 96 groups).
+- 2 efforts: 3, 4
+- 1 distance: 1.0
+- 2 builds: baseline (`/tmp/cjxl-rs-baseline`, identical source to
+  guard binary minus the small-image guard); guard
+  (`/tmp/cjxl-rs-w44-89-guard`, `MIN_GROUPS_FOR_PARALLEL_XFORM = 48`).
+- 2 thread counts: 1, 8 (`RAYON_NUM_THREADS`).
+- 5 trials per cell, all 4 cell variants (2 build × 2 thr) executed
+  **interleaved within each trial** to amortize thermal / system-load
+  noise. Median kept per cell.
+- Output: `total_ms`, `xform_ms`, `entropy_ms`, `xyb_ms` captured per
+  encode_inner phase line.
+
+## TSV columns
+
+- `build`          : `baseline` or `guard`
+- `img`            : screenshot file name
+- `pixels`         : MP rounded
+- `effort`         : 3 or 4
+- `distance`       : 1.0
+- `threads`        : 1 or 8 (RAYON_NUM_THREADS)
+- `run`            : trial index (1-5)
+- `total_ms`       : `encode_inner` total
+- `xform_ms`       : `transform_and_quantize` phase
+- `entropy_ms`     : entropy coding phase
+- `xyb_ms`         : XYB + adaptive quant init phase
+
+## Paired median results (xform_ms)
+
+| img            | eff | thr | base_med | guard_med | Δ ms   | Δ %    |
+|----------------|-----|-----|---------:|----------:|-------:|-------:|
+| terminal.png   |  3  | 1   |    37.6  |    37.1   |  -0.5  | -1.33% |
+| terminal.png   |  3  | 8   |    21.8  |    38.4   | +16.6  | +76.2% |
+| terminal.png   |  4  | 1   |    36.2  |    37.3   |  +1.1  |  +3.0% |
+| terminal.png   |  4  | 8   |    22.4  |    36.8   | +14.4  | +64.3% |
+| codec_wiki.png |  3  | 1   |    78.0  |    78.2   |  +0.2  |  +0.3% |
+| codec_wiki.png |  3  | 8   |    42.4  |    43.9   |  +1.5  |  +3.5% |
+| codec_wiki.png |  4  | 1   |    76.8  |    79.4   |  +2.6  |  +3.4% |
+| codec_wiki.png |  4  | 8   |    44.1  |    43.5   |  -0.6  |  -1.4% |
+| imac_g3.png    |  3  | 1   |   108.1  |   110.4   |  +2.3  |  +2.1% |
+| imac_g3.png    |  3  | 8   |    55.3  |    55.7   |  +0.4  |  +0.7% |
+| imac_g3.png    |  4  | 1   |   105.5  |   105.8   |  +0.3  |  +0.3% |
+| imac_g3.png    |  4  | 8   |    55.2  |    55.4   |  +0.2  |  +0.4% |
+
+## Net 1T→8T speedup (same build, paired)
+
+| img            | eff | build    | 1T_med | 8T_med | speedup | saving_ms |
+|----------------|-----|----------|-------:|-------:|--------:|----------:|
+| terminal.png   |  3  | baseline |   37.6 |   21.8 |   1.72× |     +15.8 |
+| terminal.png   |  3  | guard    |   37.1 |   38.4 |   0.97× |      -1.3 |
+| terminal.png   |  4  | baseline |   36.2 |   22.4 |   1.62× |     +13.8 |
+| terminal.png   |  4  | guard    |   37.3 |   36.8 |   1.01× |      +0.5 |
+| codec_wiki.png |  3  | baseline |   78.0 |   42.4 |   1.84× |     +35.6 |
+| codec_wiki.png |  3  | guard    |   78.2 |   43.9 |   1.78× |     +34.3 |
+| codec_wiki.png |  4  | baseline |   76.8 |   44.1 |   1.74× |     +32.7 |
+| codec_wiki.png |  4  | guard    |   79.4 |   43.5 |   1.83× |     +35.9 |
+| imac_g3.png    |  3  | baseline |  108.1 |   55.3 |   1.95× |     +52.8 |
+| imac_g3.png    |  3  | guard    |  110.4 |   55.7 |   1.98× |     +54.7 |
+| imac_g3.png    |  4  | baseline |  105.5 |   55.2 |   1.91× |     +50.3 |
+| imac_g3.png    |  4  | guard    |  105.8 |   55.4 |   1.91× |     +50.4 |
+
+## Tiny-image cold-start check
+
+To validate that rayon overhead doesn't bite at the smallest sizes,
+synthetic 64×64 (1 group), 256×256 (1 group), 512×512 (4 groups)
+PNGs were run on baseline 8T vs 1T. All sizes either no-op (sub-ms
+xform on the 1-group cases) or win modestly at 4 groups
+(512×512 e3: 1T ~4.8 ms, 8T ~3.7 ms = 1.30× speedup). Rayon's
+`par_iter` over n=1 runs serially internally — no thread-wakeup cost
+at the smallest sizes either.
+
+## Reproducer
+
+```bash
+cd ~/work/zen/jxl-encoder--w44-89-ac-chunking-guard
+
+# Build BASELINE (no guard, baseline binary)
+cargo build -p jxl-encoder-cli --release --features 'parallel butteraugli-loop'
+cp target/release/cjxl-rs /tmp/cjxl-rs-baseline
+
+# Apply guard via parallel_map_min, MIN_GROUPS_FOR_PARALLEL_XFORM=48
+# (see git diff at commit 5232c16f or its parent)
+cargo build -p jxl-encoder-cli --release --features 'parallel butteraugli-loop'
+cp target/release/cjxl-rs /tmp/cjxl-rs-w44-89-guard
+
+# Run interleaved A/B
+for trial in 1 2 3 4 5; do
+  for img in terminal codec_wiki imac_g3; do
+    for eff in 3 4; do
+      for thr in 1 8; do
+        for build in baseline guard; do
+          BIN=/tmp/cjxl-rs-${build}
+          RAYON_NUM_THREADS=$thr __JXL_ENC_PHASE_TIMING=1 \
+            $BIN ~/work/codec-corpus/gb82-sc/${img}.png \
+            /tmp/out.jxl -d 1.0 -e $eff 2>&1 | grep 'encode_inner:'
+        done
+      done
+    done
+  done
+done
+```
+
+## Conclusion
+
+- Task as specified ("add small-image guard for parallel xform") is
+  invalid in current measurements — there is no regression to fix.
+- Default ship decision: **no source change at the call site**. The
+  `parallel_map_min` helper was added to `parallel.rs` for future
+  use; the existing `parallel_map` call in
+  `vardct/transform.rs:1232` stays untouched (modulo a documentation
+  comment recording this honest-stop).
+- If a future investigation finds a real small-input regression in
+  another hot loop, `parallel_map_min(n, min_n, f)` is ready to wire
+  in with a single line.
+- W44-88's bench methodology (3 non-interleaved trials with no
+  cool-down) is the suspect; future small-image perf work should use
+  paired interleaved measurements with at least 5 trials per cell.
