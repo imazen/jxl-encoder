@@ -1,0 +1,113 @@
+W44-65 encoder mask1x1 probe — fires debug-w44-65 to stderr
+Run with: --features debug-w44-65 to see mask1x1_median per image
+
+==== codec_wiki.png (2560x1664) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(100.01297) hint=Some(false) width=2560 height=1664
+==== imac_g3.png (2940x1912) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(100.01297) hint=Some(false) width=2940 height=1912
+==== imac_dark.png (2940x1912) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(100.01297) hint=Some(false) width=2940 height=1912
+==== terminal.png (1646x1062) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(100.01297) hint=Some(false) width=1646 height=1062
+==== windows.png (2560x1392) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(100.01297) hint=Some(false) width=2560 height=1392
+==== windows95.png (640x480) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(99.05959) hint=Some(false) width=640 height=480
+==== imessage.png (1206x2622) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(100.01297) hint=Some(false) width=1206 height=2622
+==== graph.png (796x481) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(100.01297) hint=Some(false) width=796 height=481
+==== 1189261.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(69.077835) hint=Some(false) width=512 height=512
+==== 1418519.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(92.330666) hint=Some(false) width=512 height=512
+==== 1420710.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(39.54928) hint=Some(false) width=512 height=512
+==== 1531677.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(35.63426) hint=Some(false) width=512 height=512
+==== 1025469.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(76.08269) hint=Some(false) width=512 height=512
+
+All CID22 validation photos:
+==== 1025469.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(76.08269) hint=Some(false) width=512 height=512
+==== 1044329.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(48.02913) hint=Some(false) width=512 height=512
+==== 1189261.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(69.077835) hint=Some(false) width=512 height=512
+==== 1279330.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(83.75822) hint=Some(false) width=512 height=512
+==== 1418519.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(92.330666) hint=Some(false) width=512 height=512
+==== 1420710.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(39.54928) hint=Some(false) width=512 height=512
+==== 1475938.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(89.32096) hint=Some(false) width=512 height=512
+==== 1531677.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(35.63426) hint=Some(false) width=512 height=512
+==== 1544947.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(57.581604) hint=Some(false) width=512 height=512
+==== 159550.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(72.75706) hint=Some(false) width=512 height=512
+==== 1624487.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(79.69467) hint=Some(false) width=512 height=512
+==== 162520.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(64.489944) hint=Some(false) width=512 height=512
+==== 164595.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(71.88371) hint=Some(false) width=512 height=512
+==== 2079234.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(66.329575) hint=Some(false) width=512 height=512
+==== 2190188.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(55.82596) hint=Some(false) width=512 height=512
+==== 225228.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(77.045334) hint=Some(false) width=512 height=512
+==== 2253934.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(73.60347) hint=Some(false) width=512 height=512
+==== 2389166.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(46.241882) hint=Some(false) width=512 height=512
+==== 2670327.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(60.35435) hint=Some(false) width=512 height=512
+==== 2736139.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(59.840275) hint=Some(false) width=512 height=512
+==== 2775196.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(74.728874) hint=Some(false) width=512 height=512
+==== 2887497.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(88.18202) hint=Some(false) width=512 height=512
+==== 2936831.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(63.409958) hint=Some(false) width=512 height=512
+==== 297394.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(62.002342) hint=Some(false) width=512 height=512
+==== 3156482.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(69.416405) hint=Some(false) width=512 height=512
+==== 3316926.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(82.20468) hint=Some(false) width=512 height=512
+==== 3637739.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(75.8272) hint=Some(false) width=512 height=512
+==== 3653963.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(62.563896) hint=Some(false) width=512 height=512
+==== 373965.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(70.12695) hint=Some(false) width=512 height=512
+==== 3762075.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(71.34839) hint=Some(false) width=512 height=512
+==== 382297.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(57.461742) hint=Some(false) width=512 height=512
+==== 4215100.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(78.470436) hint=Some(false) width=512 height=512
+==== 5055743.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(72.06563) hint=Some(false) width=512 height=512
+==== 5458393.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(84.85982) hint=Some(false) width=512 height=512
+==== 6078297.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(80.11247) hint=Some(false) width=512 height=512
+==== 6292444.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(81.33525) hint=Some(false) width=512 height=512
+==== 70497.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(74.28914) hint=Some(false) width=512 height=512
+==== 7062219.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(47.795895) hint=Some(false) width=512 height=512
+==== 7552578.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(91.48045) hint=Some(false) width=512 height=512
+==== 792079.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(85.2012) hint=Some(false) width=512 height=512
+==== 844297.png (512x512) ====
+W44-65 dbg: distance=1.00 mask1x1_median=Some(82.96583) hint=Some(false) width=512 height=512

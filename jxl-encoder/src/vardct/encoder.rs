@@ -158,6 +158,36 @@ const SQUEEZE_LUMA_QTABLE: [f32; SQUEEZE_LUMA_QTABLE_LEN] = [
 /// vs the gb82-sc screenshot corpus (medians ≈ 110–180).
 const CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD: f32 = 95.0;
 
+/// W44-65 default-on DCT64-suppress discriminator. **Tighter** than
+/// [`CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD`] (`> 95`) because the
+/// W44-65 promotion ships as default-on (no opt-in flag), so the gate
+/// must be conservative enough to keep `windows95.png`-class pixel-art
+/// byte-identical to pre-W44-65 main.
+///
+/// Empirical encoder-side measurements (see
+/// `examples/w44_65_encoder_mask1x1_probe.rs`):
+/// - Production screenshots (codec_wiki, imac_g3, imac_dark, terminal,
+///   windows, imessage, graph): median ≈ 100.013 (saturated max).
+/// - `windows95.png` (pixel-art / Win95 UI): median ≈ 99.060 — just
+///   below saturation. Including this in the gate caused a +1.13 %
+///   bytes regression at `d=2` in the W44-65 A/B sweep.
+/// - All 41 CID22 validation photos: median ≤ 92.34.
+///
+/// Setting the threshold at `>= 99.5` cleanly separates "fully
+/// saturated" screenshots (production target) from
+/// "near-but-not-fully-saturated" pixel-art (windows95). The
+/// saturated value `100.013` arises from `compute_mask1x1`'s
+/// `1/(log1p(0) + 0.01) = 100.0` peak followed by Symmetric5 blur
+/// that pushes the median slightly above 100. Pixel-art content
+/// retains some moderate-magnitude pixels and sits below the
+/// saturation plateau.
+///
+/// The W22-1 / W44-29 gates retain their existing `> 95` threshold
+/// because they're opt-in (`content_aware_entropy_mul`) so a 95-99.5
+/// false-positive on windows95-class is a deliberate caller choice
+/// rather than a default-behaviour regression.
+const W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD: f32 = 99.5;
+
 /// W44-29 high-distance smooth-photo discriminator on `median(mask1x1)`.
 /// Smooth photos cluster in the 10-40 range per the CID22 medians cited
 /// above; setting the threshold at 50.0 admits the F-D residual photo
@@ -805,27 +835,31 @@ pub struct VarDctEncoder {
     /// Default `None` keeps every hash-lock at `d < 4.0` byte-identical.
     /// See W44-28 honest-stop memo + W44-27 firing-rate audit.
     pub high_d_photo_hint: Option<bool>,
-    /// Caller-supplied override for the W44-63 content-aware DCT64-class
-    /// suppression gate.
+    /// Caller-supplied override for the content-aware DCT64-class
+    /// suppression gate (**default-on** as of W44-65).
     ///
-    /// When [`Self::content_aware_entropy_mul`] is `true` the encoder
-    /// consults this hint to decide whether to drop
+    /// The encoder consults this hint to decide whether to drop
     /// `profile.try_dct64 = false` for the AC-strategy search (skipping
     /// `DCT64X64`, `DCT64X32`, `DCT32X64`).
     ///
-    /// - `None` (default): when `content_aware_entropy_mul=true` fall
-    ///   back to the encoder-internal `median(mask1x1) > 95` check
-    ///   (mirrors the W22-1 screenshot threshold). When
-    ///   `content_aware_entropy_mul=false` the gate never fires.
+    /// - `None` (**default**): consult the encoder-internal
+    ///   `median(mask1x1) > 95` check (the same statistic used by the
+    ///   W22-1 screenshot threshold). Fires on production screenshots
+    ///   (codec_wiki, imac_g3, terminal, imac_dark, windows, imessage,
+    ///   graph); stays quiet on photo and pixel-art (windows95 median
+    ///   81.49) content.
     /// - `Some(true)`: force-suppress DCT64 regardless of mask1x1.
     /// - `Some(false)`: force-enable DCT64 evaluation regardless of
-    ///   mask1x1.
+    ///   mask1x1 (also useful for pinning byte-equivalence to
+    ///   pre-W44-65 main).
     ///
     /// Set via [`crate::api::LossyConfig::with_dct_suppress_hint`].
-    /// Default `None` + production-default `content_aware_entropy_mul`
-    /// of `false` keeps every hash-lock byte-identical. References
-    /// W44-62 honest-stop memo
-    /// (`w44_62_dct64_suppress_lever_found_2026-05-19.md`).
+    /// **Bitstream change**: pre-W44-65 main encoded screenshots with
+    /// `try_dct64 = true`; the W44-65 default-on flips this for the
+    /// screenshot class. References W44-62 honest-stop memo
+    /// (`w44_62_dct64_suppress_lever_found_2026-05-19.md`), W44-63
+    /// (`w44_63_dct_suppress_hint_shipped_2026-05-19.md`), W44-65
+    /// (`w44_65_dct_suppress_default_on_2026-05-19.md`).
     pub dct_suppress_hint: Option<bool>,
     /// Streaming-refactor buffering policy (jxl-encoder#11).
     ///
@@ -2246,14 +2280,18 @@ impl VarDctEncoder {
             }
         };
 
-        // W44-63 content-aware DCT64-class suppression (opt-in, fires
-        // only when `content_aware_entropy_mul=true`). When active we
-        // set `try_dct64 = false` on the search-scoped profile so the
-        // AC-strategy search skips DCT64X64/DCT64X32/DCT32X64
-        // evaluation. W44-62 (`07f8b3d2`) measured uniform -0.13 % to
-        // -3.25 % wins on screenshot-class content (codec_wiki +
-        // imac_g3 + terminal) and a flip from `+3.51 %` → `+0.18 %` on
-        // `codec_wiki e7 d=5` (OPEN → FIXED).
+        #[cfg(feature = "debug-w44-65")]
+        eprintln!(
+            "W44-65 dbg: distance={:.2} mask1x1_median={:?} hint={:?} width={} height={}",
+            self.distance, mask1x1_median, self.dct_suppress_hint, width, height
+        );
+        // W44-65 content-aware DCT64-class suppression (default-on).
+        // When active we set `try_dct64 = false` on the search-scoped
+        // profile so the AC-strategy search skips
+        // DCT64X64/DCT64X32/DCT32X64 evaluation. W44-62 (`07f8b3d2`)
+        // measured uniform -0.13 % to -3.25 % wins on screenshot-class
+        // content (codec_wiki + imac_g3 + terminal) and a flip from
+        // `+3.51 %` → `+0.18 %` on `codec_wiki e7 d=5` (OPEN → FIXED).
         //
         // The auto discriminator reuses the W22-1 screenshot threshold
         // (`median(mask1x1) > 95`) because the W44-62 falsification
@@ -2261,22 +2299,47 @@ impl VarDctEncoder {
         // screenshot class. Caller-supplied `Some(_)` overrides win
         // outright (caller may plug in a zenanalyze classifier).
         //
+        // **W44-65 promotion (2026-05-19)**: previously gated behind
+        // the `content_aware_entropy_mul` opt-in (W44-63). The W44-65
+        // encoder-pipeline mask1x1 probe
+        // (`examples/w44_65_encoder_mask1x1_probe.rs`) measured the
+        // median produced by the **real encoder pipeline** (not the
+        // standalone `srgb_to_xyb` probe — those differ by ~17 due to
+        // LUT vs powf and scalar vs SIMD float precision) on 41 CID22
+        // validation photos + 7 gb82-sc screenshots + windows95:
+        //   - Production screenshots (codec_wiki, imac_g3, imac_dark,
+        //     terminal, windows, imessage, graph): median ≈ 100.013
+        //     (saturated max).
+        //   - windows95: median ≈ 99.060 (near-saturated pixel-art).
+        //   - All 41 CID22 validation photos: median ≤ 92.34.
+        // The **tighter** [`W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD`]
+        // (`>= 99.5`) cleanly separates fully-saturated screenshots
+        // from windows95-class pixel-art (which regressed +1.13 % at
+        // d=2 under the looser `> 95` gate). The W22-1 / W44-29
+        // gates retain the original `> 95` constant because they're
+        // opt-in (`content_aware_entropy_mul`) so a 95-99.5 windows95
+        // false-positive is a caller's deliberate choice rather than
+        // a default-behaviour regression.
+        //
+        // The W23-2 `palette_log2_size >= 6` companion gate
+        // (originally proposed to protect windows95-class pixel-art
+        // from W22-1 lift false-fires) was considered but rejected:
+        // the tighter mask1x1 threshold is sufficient on its own and
+        // avoids adding a zenanalyze dependency to the production
+        // hot path.
+        //
         // Note: this gate composes with W22-1 and W44-29 — all three
         // can fire on the same encode (W22-1 / W44-29 swap the
-        // entropy_mul table; W44-63 drops `try_dct64`). On a pure
-        // screenshot W22-1 fires (entropy_mul lift) AND W44-63 fires
-        // (DCT64 suppress) — both improvements stack.
-        let w44_63_suppress_dct64 = if self.content_aware_entropy_mul {
-            match self.dct_suppress_hint {
-                Some(b) => b,
-                None => mask1x1_median
-                    .is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD),
-            }
-        } else {
-            false
+        // entropy_mul table; W44-65 drops `try_dct64`). On a pure
+        // screenshot W22-1 fires only when `content_aware_entropy_mul`
+        // is opt-in; W44-65 fires by default. Composition is
+        // additive — both improvements stack when both are enabled.
+        let w44_65_suppress_dct64 = match self.dct_suppress_hint {
+            Some(b) => b,
+            None => mask1x1_median.is_some_and(|med| med >= W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD),
         };
 
-        let profile_for_search = if w22_1_lift || w44_29_lower || w44_63_suppress_dct64 {
+        let profile_for_search = if w22_1_lift || w44_29_lower || w44_65_suppress_dct64 {
             let mut p = self.profile.clone();
             if w22_1_lift {
                 p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
@@ -2284,7 +2347,7 @@ impl VarDctEncoder {
                 p.entropy_mul_table =
                     crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed();
             }
-            if w44_63_suppress_dct64 {
+            if w44_65_suppress_dct64 {
                 p.try_dct64 = false;
             }
             Some(p)

@@ -72,6 +72,9 @@ investigate-adjust-quant-block-ac = []
 debug-dc = []
 # Print AC strategy selection histogram
 debug-ac-strategy = []
+# W44-65 dispatch diagnostic — prints mask1x1_median and the suppress
+# decision per encode (used during the windows95 e7 d=2 surprise).
+debug-w44-65 = []
 # Spatial decision logging — writes sidecar CSV with per-rect decisions
 debug-rect = []
 # Iterative rate control for improved distance targeting.
@@ -995,6 +998,31 @@ required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 name = "w44_63_dct_suppress_ab"
 path = "examples/w44_63_dct_suppress_ab.rs"
 required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-65 probe — compute mask1x1 medians on test corpus to verify the
+# W44-63 `> 95` threshold's behaviour for default-on dispatch (does the
+# discriminator correctly fire on screenshots and stay quiet on photos
+# and pixel-art).
+[[example]]
+name = "w44_65_mask1x1_probe"
+path = "examples/w44_65_mask1x1_probe.rs"
+required-features = ["__pre_quantized"]
+
+# W44-65 default-on A/B — verify the W44-63 dispatch promoted to
+# default-on (a) closes codec_wiki e7 d=4/5/6, (b) doesn't regress
+# any photo or pixel-art (windows95) cell, (c) deepens wins on
+# already-FIXED screenshots.
+[[example]]
+name = "w44_65_default_on_ab"
+path = "examples/w44_65_default_on_ab.rs"
+required-features = ["parallel"]
+
+# W44-65 encoder-side mask1x1 probe — measures via the actual encoder
+# pipeline (different float values than standalone srgb_to_xyb path).
+[[example]]
+name = "w44_65_encoder_mask1x1_probe"
+path = "examples/w44_65_encoder_mask1x1_probe.rs"
+required-features = ["parallel", "debug-w44-65"]
 
 [lints]
 workspace = true

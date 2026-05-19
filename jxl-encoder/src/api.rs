@@ -3708,8 +3708,8 @@ pub struct LossyConfig {
     /// See [`Self::with_smooth_photo_dct64_hint`] and W44-34 root-cause
     /// memo (`1418519_mid_d_wedge_2026-05-18.md`).
     smooth_photo_dct64_hint: Option<bool>,
-    /// Optional caller-supplied override for the W44-63 content-aware
-    /// DCT64-class suppression gate.
+    /// Optional caller-supplied override for the content-aware
+    /// DCT64-class suppression gate (**default-on** as of W44-65).
     ///
     /// W44-62 (`07f8b3d2` harness) probed the 20 OPEN cells residual to
     /// W44-61 with `__expert` `try_dct64=Some(false)` and found a polar
@@ -3717,16 +3717,18 @@ pub struct LossyConfig {
     /// already-FIXED imac_g3 + terminal) wins uniformly -0.13 % to
     /// -3.25 %, while photo content wins only sub-1 % (sub-flip-threshold).
     /// codec_wiki e7 d=5 alone flips from `+3.51 %` → `+0.18 %` bytes
-    /// delta (OPEN → FIXED).
+    /// delta (OPEN → FIXED). W44-63 (`6169ba7b`) shipped the API behind
+    /// the `content_aware_entropy_mul` opt-in. W44-65 (this change)
+    /// promotes the discriminator to default-on after the W44-65
+    /// mask1x1 probe verified 0/41 photo false-fires and
+    /// `windows95.png` correctly excluded (median 81.49 < 95).
     ///
     /// Semantics (analogous to [`Self::with_screenshot_lift_hint`] /
     /// [`Self::with_high_d_photo_hint`]):
-    /// - `None` (default): when
-    ///   [`Self::with_content_aware_entropy_mul(true)`] is set, the
-    ///   encoder uses an internal `median(mask1x1) > 95` discriminator
-    ///   (the existing W22-1 screenshot threshold) to suppress
-    ///   DCT64-class transforms on screenshot content. Outside the
-    ///   `content_aware_entropy_mul` opt-in the gate never fires.
+    /// - `None` (default): consult the encoder-internal
+    ///   `median(mask1x1) > 95` discriminator (the same statistic used
+    ///   by the W22-1 screenshot lift). Fires on production
+    ///   screenshots; stays quiet on photos and pixel-art.
     /// - `Some(true)`: force-suppress DCT64-class transforms regardless
     ///   of content discriminator. Caller asserts the image is in the
     ///   screenshot class (e.g., via a zenanalyze
@@ -3734,16 +3736,18 @@ pub struct LossyConfig {
     ///   `examples/w44_63_dct_suppress_ab.rs`).
     /// - `Some(false)`: force-enable DCT64 evaluation even when the
     ///   mask1x1 discriminator would suppress. Caller asserts the
-    ///   image regresses under DCT64 suppression (e.g., textured
-    ///   photo content where DCT64 picks legitimately reduce bytes).
+    ///   image regresses under DCT64 suppression OR wants
+    ///   byte-equivalence with pre-W44-65 main.
     ///
-    /// Default `None` + `content_aware_entropy_mul=false` (the
-    /// production default) keeps every hash-lock byte-identical because
-    /// the gate cannot fire.
+    /// **Hash-lock impact**: pre-W44-65 main encoded screenshots with
+    /// `try_dct64 = true`; this change flips that default for
+    /// screenshot-class content. Pin `Some(false)` to recover the
+    /// pre-W44-65 bitstream.
     ///
     /// See [`Self::with_dct_suppress_hint`], W44-62 honest-stop memo
-    /// (`w44_62_dct64_suppress_lever_found_2026-05-19.md`), and W44-61
-    /// libjxl-port commit message for context.
+    /// (`w44_62_dct64_suppress_lever_found_2026-05-19.md`), W44-63
+    /// (`w44_63_dct_suppress_hint_shipped_2026-05-19.md`), and W44-65
+    /// (`w44_65_dct_suppress_default_on_2026-05-19.md`) for context.
     dct_suppress_hint: Option<bool>,
     /// Tracks whether the caller has explicitly set `patches` via
     /// [`Self::with_patches`]. Mirrors the
@@ -5070,11 +5074,10 @@ impl LossyConfig {
         self.smooth_photo_dct64_hint
     }
 
-    /// Caller-supplied override for the W44-63 content-aware DCT64-class
-    /// suppression gate.
+    /// Caller-supplied override for the content-aware DCT64-class
+    /// suppression gate. **Default-on as of W44-65**.
     ///
-    /// When [`Self::with_content_aware_entropy_mul(true)`] is set, the
-    /// encoder consults this hint to decide whether to disable
+    /// The encoder consults this hint to decide whether to disable
     /// DCT64-class transforms (`DCT64X64`, `DCT64X32`, `DCT32X64`) at
     /// AC-strategy search time. W44-62 (`07f8b3d2` harness) showed that
     /// forcing DCT64 off on screenshot content yields uniform -0.13 % to
@@ -5083,10 +5086,14 @@ impl LossyConfig {
     /// ledger).
     ///
     /// Semantics:
-    /// - `None` (default): when `content_aware_entropy_mul=true`, fall
-    ///   back to the encoder-internal `median(mask1x1) > 95`
-    ///   discriminator (the existing W22-1 screenshot threshold). When
-    ///   `content_aware_entropy_mul=false`, the gate never fires.
+    /// - `None` (**default**): consult the encoder-internal
+    ///   `median(mask1x1) > 95` discriminator (the existing W22-1
+    ///   screenshot threshold). The W44-65 probe verified this
+    ///   threshold fires on 7/7 production screenshots (codec_wiki,
+    ///   imac_g3, imac_dark, terminal, windows, imessage, graph) and
+    ///   stays quiet on 0/41 CID22 validation photos. `windows95.png`
+    ///   (median 81.49) is **correctly excluded** so pixel-art
+    ///   content stays byte-identical to the pre-W44-65 default.
     /// - `Some(true)`: force-suppress DCT64-class evaluation regardless
     ///   of the mask1x1 discriminator. Caller asserts the image is in
     ///   the screenshot / pixel-art class (e.g., via zenanalyze
@@ -5095,13 +5102,16 @@ impl LossyConfig {
     /// - `Some(false)`: force-allow DCT64 evaluation even when the
     ///   mask1x1 discriminator would suppress. Caller asserts the
     ///   image regresses under DCT64 suppression (e.g., textured photo
-    ///   content where DCT64 picks legitimately reduce bytes).
+    ///   content where DCT64 picks legitimately reduce bytes), or
+    ///   asserts byte-equivalence with pre-W44-65 main.
     ///
-    /// **Default keeps every hash-lock byte-identical** because the
-    /// production default is `content_aware_entropy_mul=false`, under
-    /// which this hint has no effect.
+    /// **Bitstream change**: as of W44-65 (default-on), encoding a
+    /// screenshot-class image with `dct_suppress_hint = None`
+    /// produces a different (smaller) bitstream than pre-W44-65
+    /// main. Pin to `Some(false)` to recover byte-identical output.
     ///
-    /// References W44-62 honest-stop memo
+    /// References W44-65 promotion (`benchmarks/w44_65_default_on_ab_2026-05-19.tsv`),
+    /// W44-62 honest-stop memo
     /// (`w44_62_dct64_suppress_lever_found_2026-05-19.md`) +
     /// `benchmarks/w44_62_dct64_suppress_ab_2026-05-19.tsv`.
     pub fn with_dct_suppress_hint(mut self, hint: Option<bool>) -> Self {
