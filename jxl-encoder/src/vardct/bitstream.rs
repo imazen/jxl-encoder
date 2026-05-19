@@ -242,6 +242,81 @@ fn tokenize_dc_group_wp(
     (dc_tokens, md_tokens)
 }
 
+/// Tokenize a single DC group (LearnTree DC mode: both DC and AC metadata tokens).
+///
+/// Mirrors `tokenize_dc_group_wp` but uses the gradient predictor + a
+/// data-adaptive context tree produced by
+/// [`super::dc_tree_learn::learn_dc_tree`]. Active when effort >= 4
+/// (libjxl `speed_tier < kFalcon`, [enc_modular.cc:1166]). The learned
+/// tree splits on properties 4/5/6/7/9/10 (intensity + gradient) rather
+/// than property 15 (`wp_max_error`), so DC residuals are computed via
+/// `clamped_gradient(top, left, topleft)` to match each leaf's
+/// `predictor = Gradient` field that the merged tree emits to the
+/// bitstream.
+#[allow(clippy::too_many_arguments)]
+fn tokenize_dc_group_learned(
+    dc_group_idx: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    xsize_dc_groups: usize,
+    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_field: &[u8],
+    cfl_map: &CflMap,
+    ac_strategy: &AcStrategyMap,
+    sharpness_map: Option<&[u8]>,
+    learned_dc_tree: &super::dc_tree_learn::DcTree,
+    dc_ctx_remap: &[u32],
+    ac_meta_ctx_map: &[u32],
+) -> (Vec<Token>, Vec<Token>) {
+    let dc_gx = dc_group_idx % xsize_dc_groups;
+    let dc_gy = dc_group_idx / xsize_dc_groups;
+    let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
+    let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
+    let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+    let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+    let region_xsize = end_bx - start_bx;
+    let region_ysize = end_by - start_by;
+
+    // Collect DC tokens using gradient predictor + learned tree
+    let dc_tokens = super::dc_tree_learn::collect_dc_tokens_with_tree(
+        quant_dc,
+        learned_dc_tree,
+        start_bx,
+        start_by,
+        end_bx,
+        end_by,
+    );
+    let md_tokens = collect_ac_metadata_tokens_region(
+        region_xsize,
+        region_ysize,
+        quant_field,
+        xsize_blocks,
+        start_bx,
+        start_by,
+        cfl_map,
+        ac_strategy,
+        sharpness_map,
+    );
+    // Remap DC token contexts to match BFS ordering of merged tree.
+    let dc_tokens: Vec<Token> = dc_tokens
+        .into_iter()
+        .map(|mut t| {
+            t.set_context(dc_ctx_remap[t.context() as usize]);
+            t
+        })
+        .collect();
+
+    let md_tokens: Vec<Token> = md_tokens
+        .into_iter()
+        .map(|mut t| {
+            t.set_context(ac_meta_ctx_map[t.context() as usize]);
+            t
+        })
+        .collect();
+
+    (dc_tokens, md_tokens)
+}
+
 /// Tokenize a single AC group, returning per-pass token Vecs.
 ///
 /// Scratch buffers are allocated locally (per-call, not shared).
@@ -2234,11 +2309,26 @@ impl VarDctEncoder {
         // `Buffering::BufferedOutput` via `WritableSeek`.
 
         // Build context tree and remap tables (shared across DC groups).
-        // When use_lf_frame: DC is in separate frame, only AC metadata tree/tokens needed.
-        // Otherwise: merged WP DC + AC metadata tree with both token types.
+        // Three modes:
+        //   1. `use_lf_frame`: DC is in a separate frame — only AC metadata
+        //      tree/tokens needed in the main frame.
+        //   2. `effort >= 4` (libjxl `speed_tier < kFalcon`, [enc_modular.cc:1166]):
+        //      data-adaptive LearnTree. Mirrors libjxl's default path for the
+        //      majority of production effort levels.
+        //   3. `effort <= 3` (libjxl `speed_tier == kFalcon`,
+        //      [enc_modular.cc:676-680]): predefined `kWPFixedDC` tree with
+        //      Weighted Predictor on `wp_max_error` (property 15). Cheap to
+        //      compute, no sample-gathering pass.
+        //
+        // The previous behaviour used `kWPFixedDC` at every effort level,
+        // which over-spends on screenshot LfGlobal at high distance — W44-50
+        // measured `terminal e6 d=6` LfGlobal at 700 B vs cjxl 15 B. Adaptive
+        // tree learning collapses splits that don't pay for themselves.
         let (learned_tree_tokens, total_contexts, ac_meta_ctx_map);
-        // Optional WP DC tree state. Populated only on the `!use_lf_frame` path.
+        // Per-mode DC tree state. At most one of `wp_dc_state` /
+        // `learned_dc_state` is populated; both are `None` for `use_lf_frame`.
         let wp_dc_state: Option<(super::dc_tree_learn::DcTree, Vec<u32>)>;
+        let learned_dc_state: Option<(super::dc_tree_learn::DcTree, Vec<u32>)>;
 
         if self.use_lf_frame {
             // AC-metadata-only tree (no DC contexts needed)
@@ -2247,10 +2337,56 @@ impl VarDctEncoder {
             total_contexts = num_ctx;
             ac_meta_ctx_map = ctx_map;
             wp_dc_state = None;
+            learned_dc_state = None;
+        } else if self.effort >= 4 {
+            // LearnTree path (effort >= 4 matches libjxl
+            // `speed_tier < SpeedTier::kFalcon`, enc_modular.cc:1166).
+            //
+            // Gather DC samples (one per quantized DC value × 3 channels) and
+            // run the ID3-style splitter from `dc_tree_learn::learn_dc_tree`.
+            // The learned tree splits on intensity / gradient properties and
+            // each leaf carries `predictor = Gradient` (5). Splits that don't
+            // beat a small overhead (~10 bits) are rejected, so on
+            // heavily-quantized content the tree collapses to a few leaves —
+            // closes the W44-50 LfGlobal over-spend wedge.
+            let mut samples = super::dc_tree_learn::DcTreeSamples::new();
+            super::dc_tree_learn::gather_dc_samples(&mut samples, quant_dc);
+
+            // `max_token` upper-bounds the residual-token histogram size used
+            // by `estimate_subset_cost`. 64 covers the HybridUint {4,1,2}
+            // token range for the residuals we ever emit on DC at d>=0.25.
+            let max_token = 64u32;
+            let (learned_tree, learned_num_contexts) =
+                super::dc_tree_learn::learn_dc_tree(&samples, max_token);
+
+            let (wrapped_tokens, num_ctx, dc_remap, ctx_map) =
+                super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
+                    &learned_tree,
+                    learned_num_contexts,
+                    num_dc_groups,
+                );
+
+            learned_tree_tokens = Some(wrapped_tokens);
+            total_contexts = num_ctx;
+            ac_meta_ctx_map = ctx_map;
+
+            #[cfg(feature = "debug-tokens")]
+            eprintln!(
+                "Learned DC tree: samples={}, dc_contexts={}, total={}, dc_remap={:?}, ac_map={:?}",
+                samples.num_samples,
+                learned_num_contexts,
+                total_contexts,
+                dc_remap,
+                ac_meta_ctx_map
+            );
+
+            wp_dc_state = None;
+            learned_dc_state = Some((learned_tree, dc_remap));
         } else {
-            // Build kWPFixedDC tree for DC context assignment.
+            // kWPFixedDC tree at effort <= 3.
             // Uses Weighted Predictor with balanced BSP on wp_max_error (property 15).
-            // Matches libjxl's PredefinedTree(kWPFixedDC) at speed_tier <= kFalcon (effort >= 4).
+            // Matches libjxl's `PredefinedTree(kWPFixedDC)` at
+            // `speed_tier == SpeedTier::kFalcon` (effort == 3).
             let total_dc_pixels = xsize_blocks * ysize_blocks * 3;
             let (wp_dc_tree, wp_dc_num_contexts) =
                 super::dc_tree_learn::build_wp_fixed_dc_tree(total_dc_pixels, 8);
@@ -2273,6 +2409,7 @@ impl VarDctEncoder {
             );
 
             wp_dc_state = Some((wp_dc_tree, dc_remap));
+            learned_dc_state = None;
         }
 
         let _t_tok_dc_setup = _t0.elapsed().as_secs_f64() * 1000.0;
@@ -2352,7 +2489,22 @@ impl VarDctEncoder {
 
                 // 1) DC + AC-metadata tokens for this DC group.
                 let (dc_tokens, ac_meta_tokens) =
-                    if let Some((wp_dc_tree, dc_ctx_remap)) = wp_dc_state.as_ref() {
+                    if let Some((learned_tree, dc_ctx_remap)) = learned_dc_state.as_ref() {
+                        tokenize_dc_group_learned(
+                            dc_group_idx,
+                            xsize_blocks,
+                            ysize_blocks,
+                            xsize_dc_groups,
+                            quant_dc,
+                            quant_field,
+                            cfl_map,
+                            ac_strategy,
+                            sharpness_map,
+                            learned_tree,
+                            dc_ctx_remap,
+                            &ac_meta_ctx_map,
+                        )
+                    } else if let Some((wp_dc_tree, dc_ctx_remap)) = wp_dc_state.as_ref() {
                         tokenize_dc_group_wp(
                             dc_group_idx,
                             xsize_blocks,
