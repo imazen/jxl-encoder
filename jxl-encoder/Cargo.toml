@@ -886,5 +886,13 @@ required-features = ["butteraugli-loop", "ssim2-loop", "parallel"]
 name = "w44_29_decoder_smoke"
 path = "examples/w44_29_decoder_smoke.rs"
 
+# W44-31: per-distance high_d_photo_hint value sweep at d=5/d=6.
+# Extends W44-29's content-aware DCT32 entropy_mul lowering by tuning
+# the (dct16, dct32) values per-distance — same gate, different table.
+[[example]]
+name = "w44_31_per_distance_sweep"
+path = "examples/w44_31_per_distance_sweep.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+
 [lints]
 workspace = true

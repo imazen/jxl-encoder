@@ -1,0 +1,159 @@
+W44-31 per-distance high_d_photo_hint value sweep at d=5/d=6 — HONEST STOP
+==========================================================================
+
+Date         : 2026-05-18
+Workspace    : ~/work/zen/jxl-encoder--w44-31-per-distance-hint
+Parent commit: 1ae427c1 (W44-30 ledger refresh on origin/main)
+Author       : claude-w44-31
+Hostname     : lilith-7950x (Linux 6.6.114.1-microsoft-standard-WSL2)
+Toolchain    : rustc stable, cargo release build
+Features     : __expert + butteraugli-loop + ssim2-loop + parallel
+Reproducer   : cargo run -p jxl-encoder --release \
+                 --features '__expert butteraugli-loop ssim2-loop parallel' \
+                 --example w44_31_per_distance_sweep
+
+Sweep design
+------------
+- Images   : 1531677.png (CID22-512/validation), 1420710.png (CID22-512/validation)
+             — the 2 F-D photos with OPEN cells at d=5 and d=6 per
+             benchmarks/cjxl_parity_ledger_2026-05-18.tsv
+- Distances: 5.0, 6.0  (the W44-30 d=5/d=6 residual after W44-29 closed d=4)
+- Efforts  : 5, 6, 7, 8, 9
+- Tuples   : 5 candidates per cell, all paired against the W44-29 default
+             baseline (dct16=1.27, dct32=1.34)
+
+Candidate tuples
+----------------
+  (dct16, dct32)
+  w44_29_default   = (1.27, 1.34)   — current ship-state via auto-gate
+  dct32_libjxl_ref = (1.27, 1.48)   — dct32 at libjxl reference
+  dct32_higher     = (1.27, 1.62)   — dct32 above libjxl ref
+  both_dir_a       = (1.20, 1.48)   — lower dct16 + libjxl-ref dct32
+  both_dir_b       = (1.15, 1.62)   — most aggressive in re-balance direction
+
+Direction rationale
+-------------------
+Initial W44-30 memo suggested "looser dct32 at d=5/d=6" (LOWER entropy_mul).
+However, AC strategy distribution analysis vs cjxl (from the ledger TSV)
+showed our encoder picks **MORE** DCT32 than cjxl at d=5/d=6 (not less):
+
+  1531677 e=5 d=5: OUR dct32=1050 vs cjxl 889 (+18 %)
+  1531677 e=5 d=6: OUR dct32=1104 vs cjxl 719 (+53 %)
+  1420710 e=5 d=5: OUR dct32=1189 vs cjxl 986 (+21 %)
+  1420710 e=5 d=6: OUR dct32=1098 vs cjxl 702 (+56 %)
+
+To re-balance toward cjxl's distribution we want LESS DCT32 picks ->
+RAISE the dct32 entropy_mul (make it more expensive). The candidates
+above sweep dct32 in the 1.34 -> 1.48 -> 1.62 range, with optional
+DCT16 nudges to also encourage more DCT16 picks.
+
+Implementation gotcha (FIRST PASS BUG, fixed in this harness):
+The W44-29 auto-gate in vardct/encoder.rs:2200-2226 OVERRIDES
+profile.entropy_mul_table with the hardcoded
+high_d_photo_smooth_suppressed() table when the gate fires
+(distance >= 4.0 AND median(mask1x1) < 50.0). On these smooth F-D
+photos at d=5/6, the gate fires every time -> the internal-params
+override is silently discarded. The harness forces the gate OFF
+via with_high_d_photo_hint(Some(false)) so the override actually
+reaches compute_ac_strategy.
+
+Result — no winning override at d=5/d=6
+---------------------------------------
+ALL 4 alternative tuples are bigger than the W44-29 default baseline
+across ALL 20 (image, effort, distance) cells. The W44-29 (1.27, 1.34)
+table is already a local minimum for bytes on this content at this
+distance regime.
+
+  Worst-case byte regression per candidate (across 20 F-D cells):
+                   dct32_libjxl_ref  dct32_higher  both_dir_a  both_dir_b
+  bytes Δ max %    +3.42 %           +4.50 %       +4.86 %     +10.46 %
+  bytes Δ min %    +0.60 %           +0.60 %       +0.72 %     +1.17 %
+  bytes Δ all+ ?   YES               YES           YES         YES
+
+Note: butteraugli swings -10 % to +20 % vs baseline depending on cell,
+and ssim2 wins +0.7 to +1.4 in some cells, but the BYTES gate (the
+ledger discriminator) is uniformly worse. The W44-29 default tuple
+sits on the bytes-Pareto frontier for entropy_mul tuning at d=5/6.
+
+Screenshot regression panel — IDENTICAL or marginal
+---------------------------------------------------
+3 cells (imac_g3 e7 d=4, imac_g3 e7 d=6, terminal e7 d=5). Auto-gate
+forced OFF on all 4 tuples so the override applies cleanly. Bytes
+within ±1.8 % across all tuples; bfly within ±0.7 %; ssim2 within
+±0.4. No catastrophic regression. (The W44-28 honest-stop noted
+imac_g3 e=7 d=4 path-flips +36 % bfly when the lift fires on
+screenshots — that's the W22-1 gate not the W44-29 gate. Our sweep
+sets both hints to false and confirms no flip.)
+
+Honest-stop conclusion
+----------------------
+The F-D residual photo d=5/d=6 wedge is NOT closable by per-distance
+high_d_photo_hint entropy_mul value tuning. The (1.27, 1.34) tuple
+the W44-29 default uses is already the bytes-Pareto-optimal value
+in the searched 5-tuple space at d=5/d=6.
+
+This generalizes the W44-28 honest-stop ("no winning override at
+d=4 either" — d=4 was eventually closed by content-aware gating
+via W44-29, not by table tuning).
+
+The wedge mechanism at d=5/d=6 must lie outside the
+EntropyMulTable surface. Likely candidates per the ledger AC
+strategy distribution:
+  - DCT64 over-pick (ours 18039 vs cjxl 16366 at 1531677 e=5 d=5,
+    +10 %). DCT64 isn't in EntropyMulTable; lives in a separate
+    code path. Tuning DCT64 entropy_mul would require structural
+    work on the hierarchical strategy search.
+  - Quantizer / global_scale divergence — at d>=5, libjxl's
+    butteraugli loop may converge to a tighter quant field than our
+    rate-control path picks. (e=5..7 don't run buttloop; e=8/9 do,
+    and gap is still present at e=8/9 -> implicates RC not BL.)
+  - AdjustQuantBlockAC firing rate at high d — W44-27 noted 79.8 %
+    DCT8 firing rate at F-D residual cells. At d=5/6 with mostly
+    DCT64 blocks the firing rate breakdown is unknown.
+  - Entropy coding overhead at low coefficient density — at very
+    high d almost all AC coefficients quantize to zero, and our
+    histogram / context model may emit redundant bits for the
+    near-empty distributions.
+
+Recommended next chunks (NOT this chunk)
+----------------------------------------
+1. AdjustQuantBlockAC firing-rate audit at d>=5 (extends W44-27).
+   Hypothesis: the D-heuristic that fires on 79.8 % of DCT8 blocks
+   at d=2 may fire MORE at d=5/6 (or in DIFFERENT regions),
+   producing systematic quant nudges cjxl doesn't.
+2. DCT64 entropy_mul investigation. Currently DCT64 is gated by
+   distance threshold (d>=1.0) but its cost-model parameters live
+   outside EntropyMulTable. Survey vardct/ac_strategy.rs for
+   DCT64-specific cost adjustments.
+3. Per-strategy quant_mul scaling. The mul8x8 post-hoc multiplier
+   1.0 + (-0.4)/(d+1.4) is applied for 8x8-class blocks. Larger
+   transforms get mul=1.0. cjxl may use a distance-aware multiplier
+   for 16x16/32x32/64x64 too.
+4. histogram_clustering at very-low-AC distributions. At d=5/6 most
+   blocks have <10 non-zero AC coefs; the clustering / pair-merge
+   path may over-allocate contexts that we encode with full
+   overhead.
+
+What this chunk shipped
+-----------------------
+- Sweep harness  : jxl-encoder/examples/w44_31_per_distance_sweep.rs
+- Sweep bench    : benchmarks/w44_31_per_distance_sweep_2026-05-18.tsv (115 rows)
+- This meta      : benchmarks/w44_31_per_distance_sweep_2026-05-18.meta
+
+NO source code changes to api.rs / effort.rs / vardct/encoder.rs.
+The W44-29 (1.27, 1.34) hint values are preserved as the
+bytes-Pareto-optimal entropy_mul setting at d>=4 on smooth-photo
+content; no per-distance variants are warranted.
+
+Acceptance gates — honest-stop alternative path
+-----------------------------------------------
+(a) FAILED to close >=5 of 20 F-D d=5/6 cells (no candidate improves
+    bytes vs W44-29 default).
+(b) PASSED — W44-29 d=4 wins are unaffected (this work touches no
+    code; auto-gate at d=4 continues to fire and select the
+    high_d_photo_smooth_suppressed table).
+(c) PASSED — no screenshot regressions (sweep panel shows imac_g3 /
+    terminal cells within ±1.8 % bytes; no path-flip).
+(d) cargo test pass — N/A (no source changes to test).
+(e) Hash-lock regen — N/A (no bitstream changes shipped).
+(f) Multi-decoder roundtrip — N/A (no bitstream changes shipped).
