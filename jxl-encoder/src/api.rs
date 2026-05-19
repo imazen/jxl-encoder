@@ -8117,6 +8117,13 @@ impl<'a> EncodeRequest<'a> {
         enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
         enc.high_d_photo_hint = cfg.high_d_photo_hint;
         enc.dct_suppress_hint = cfg.dct_suppress_hint;
+        // W44-91: cheap zenanalyze-equivalent proxies for the textured-
+        // colourful-photo sub-band gate (mask1x1 ∈ [50, 80] @ d ∈ [3, 5]).
+        // See `compute_w44_91_zenanalyze_proxies` for which layouts the
+        // proxy is well-defined on; for everything else (16-bit, linear-f32,
+        // grayscale, HDR) the proxy stays `None` and the W44-91 gate
+        // cannot fire — the W44-29 mask1x1<50 gate retains full coverage.
+        enc.zenanalyze_proxies = compute_w44_91_zenanalyze_proxies(pixels, w, h, self.layout);
         // Streaming refactor #11 chunk 6: thread the caller-selected
         // [`Buffering`] policy into VarDctEncoder so the per-region
         // precompute dispatch (precomputed.rs:compute_with_budget_and_buffering)
@@ -9247,6 +9254,14 @@ impl LossyEncoder {
             enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
             enc.high_d_photo_hint = cfg.high_d_photo_hint;
             enc.dct_suppress_hint = cfg.dct_suppress_hint;
+            // W44-91: streaming `LossyEncoder` ingests pre-converted
+            // `linear_rgb` rows, so the sRGB u8 source bytes the
+            // zenanalyze-equivalent proxy needs are not available
+            // here — leave `zenanalyze_proxies = None`, which keeps
+            // the W44-91 gate dormant on this code path. Callers that
+            // need the W44-91 lift on a streaming encode can set
+            // `LossyConfig::with_high_d_photo_hint(Some(true))`
+            // explicitly after computing the proxy upstream.
             // Streaming refactor #11 chunk 6 (streaming LossyEncoder
             // path).
             enc.buffering = cfg.buffering;
@@ -11106,6 +11121,13 @@ fn encode_animation_lossy(
     enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
     enc.high_d_photo_hint = cfg.high_d_photo_hint;
     enc.dct_suppress_hint = cfg.dct_suppress_hint;
+    // W44-91: animation per-frame encodes don't compute the
+    // zenanalyze-proxy because the proxy is per-image and the discriminator
+    // logic was designed against still-image CID22 validation cells.
+    // Each frame falls back to the W44-29 mask1x1<50 gate (which works
+    // on per-frame XYB the same way it does on still images). Callers
+    // that want the W44-91 lift on a specific frame can set
+    // `LossyConfig::with_high_d_photo_hint(Some(true))` explicitly.
     // Streaming refactor #11 chunk 6 (animation frame path).
     enc.buffering = cfg.buffering;
     #[cfg(feature = "butteraugli-loop")]
@@ -11991,6 +12013,41 @@ fn extract_alpha_u16(data: &[u8], stride: usize, alpha_offset: usize, u16_max: f
         .chunks(stride)
         .map(|px| ((px[alpha_offset] as f32 / u16_max).clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
         .collect()
+}
+
+/// W44-91: compute the cheap zenanalyze-equivalent proxies for the
+/// high-distance smooth-photo gate widening when the input layout is
+/// 8-bit sRGB-like. Returns `None` for all other layouts (16-bit,
+/// linear-f32, grayscale, HDR, CMYK) where the M3 colourfulness scale
+/// and per-block range threshold are not well-defined.
+///
+/// See [`crate::vardct::encoder::ZenanalyzeProxies::compute_srgb_u8`]
+/// for the per-byte definitions (matches zenanalyze `src/tier1.rs`
+/// colourfulness and `flat_color_blocks` accumulators exactly).
+fn compute_w44_91_zenanalyze_proxies(
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+    layout: PixelLayout,
+) -> Option<crate::vardct::encoder::ZenanalyzeProxies> {
+    use crate::vardct::encoder::ZenanalyzeProxies;
+    // Per-layout (R offset, G offset, B offset, bytes per pixel). Only the
+    // 8-bit sRGB layouts have a meaningful M3 colourfulness scale —
+    // everything else stays `None`.
+    let (r_off, g_off, b_off, bpp) = match layout {
+        PixelLayout::Rgb8 => (0, 1, 2, 3),
+        PixelLayout::Rgba8 => (0, 1, 2, 4),
+        PixelLayout::Bgr8 => (2, 1, 0, 3),
+        PixelLayout::Bgra8 => (2, 1, 0, 4),
+        _ => return None,
+    };
+    let expected_len = width.checked_mul(height)?.checked_mul(bpp)?;
+    if pixels.len() < expected_len || width == 0 || height == 0 {
+        return None;
+    }
+    Some(ZenanalyzeProxies::compute_srgb_u8(
+        pixels, width, height, bpp, r_off, g_off, b_off,
+    ))
 }
 
 /// Swap B and R channels in-place equivalent: BGR(A) → RGB(A).

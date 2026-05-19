@@ -586,6 +586,87 @@ Key patterns to watch for when working on this codebase:
 
 ## Investigation Notes
 
+### W44-91: zenanalyze-proxy auto-dispatch for 1189261 high-d photo gate — SHIPPED (May 19, 2026)
+
+**Status**: [SHIPPED]
+
+Closes the W44-78 follow-on note ("1189261 (mask=69) needs zenanalyze
+feature dispatch, not raw mask1x1 widening") and completes the W44-79
+discriminator port (which shipped as doc + opt-in API only) per the
+cardinal rule "leave nothing unported."
+
+**Mechanism** (`vardct/encoder.rs:2641` dispatch extension): the W44-79
+discriminator (`colourfulness >= 80 AND flat_color_block_ratio < 0.01`)
+is wired into the production default via a cheap encoder-internal proxy
+struct [`ZenanalyzeProxies`]. Both fields use definitions that match
+zenanalyze `src/tier1.rs` EXACTLY (Hasler-Süsstrunk M3 over sRGB u8
+pixels; per-channel block range ≤ 4 on every 8×8 block). The proxy is
+computed in `api.rs::encode_inner` for the 8-bit sRGB layouts
+(Rgb8/Rgba8/Bgr8/Bgra8) — one O(W·H) pass over source bytes, ~5-10 ms
+on a 512² image. No new dependency.
+
+The new W44-91 gate fires (ORed with the existing W44-29 gate) when ALL
+hold:
+1. distance ∈ [3.0, 5.0] (the W44-79 trial showed +560 B regression at
+   d=6 on 1189261, so capped at d ≤ 5)
+2. mask1x1_median ∈ [50, 80) (the W44-79 "ambiguous band" between the
+   W44-29 default-fire threshold and the W22-1 screenshot threshold)
+3. ZenanalyzeProxies present (only 8-bit sRGB-like layouts)
+4. m3_colourfulness ≥ 80
+5. flat_color_block_ratio < 0.01
+
+**Acceptance gates (all PASS)**:
+- (a) TARGET 1189261 d=3/4/5 close: **-679 / -452 / -319 bytes** (matches
+  W44-79 trial values exactly). d=2.5 and d=6 stay byte-identical.
+- (b) All 6 W44-78 REGRESSION-band images (1025469, 1624487, 159550,
+  2079234, 2775196, 297394): **zero delta at every distance**. The
+  fcbr gate alone disqualifies 297394 (which has high colourfulness
+  103.7 but fcbr=0.096 ≫ 0.01); the m3 gate disqualifies the other 5.
+- (c) 4 spot-checked gb82-sc screenshots (codec_wiki, imac_dark, terminal,
+  windows95): zero delta everywhere — mask >> 80, gate cannot fire.
+- (d) 5 W44-78 already-fires reference cells (mask < 50): bytes match
+  W44-78 baseline EXACTLY. W44-91 doesn't double-fire.
+- (e) MASK_HIGH 1418519 (mask=92, photo): zero delta (above 80 cap).
+- (f) **Hash-locks all 36 byte-identical**: gate cannot fire on the
+  tiny synthetic fixtures (gradients have mask>>50 OR distance<3.0).
+- (g) `cargo test --lib`: 1262/1262 pass (3 new unit tests added).
+- (h) **Multi-decoder roundtrip**: jxl-oxide + djxl + jxl-rs all
+  decode 1189261 d=3/4/5 cleanly under the auto-fired lift.
+
+**Per-cell results**:
+
+| class       | image          | d=3 Δ B  | d=4 Δ B  | d=5 Δ B  | d=6 Δ B |
+|---          |---             |---       |---       |---       |---      |
+| **TARGET**  | 1189261.png    | **-679** | **-452** | **-319** | 0 (cap) |
+| REGRESSION  | (all 6 imgs)   | 0        | 0        | 0        | 0       |
+| W44_78_FIRES | (5 imgs)      | unchanged from W44-78 baseline (no double-fire) |
+| SCREENSHOT  | (4 gb82 imgs)  | 0        | 0        | 0        | 0       |
+| MASK_HIGH   | 1418519.png    | 0        | 0        | 0        | 0       |
+
+**Streaming / animation paths**: leave `zenanalyze_proxies = None`
+because (a) streaming `LossyEncoder` ingests pre-converted `linear_rgb`
+with no sRGB source bytes in scope, and (b) animation per-frame
+encodes don't make sense for a per-image discriminator. The existing
+W44-29 gate retains coverage there. Callers needing the W44-91 lift on
+those paths can set `LossyConfig::with_high_d_photo_hint(Some(true))`
+explicitly.
+
+**Why this is a port, not a heuristic**: the discriminator predicate
+itself came from the W44-79 audit against zenanalyze tier1 features
+(audited on 41 CID22 validation images + 8 screenshots). W44-91
+ports the discriminator from a per-image opt-in API call to an
+encoder-internal auto-fire by adding bit-equivalent definitions
+in-encoder. The two-line constant tuning (m3>=80, fcbr<0.01) and the
+distance-band cap (3..=5) come from W44-79's measured EV table, not
+guesswork.
+
+**Bench TSV**: `benchmarks/w44_91_zenanalyze_dispatch_2026-05-19.{tsv,meta}`.
+**Reproducers**: `examples/w44_91_proxy_probe.rs` (proxy selection),
+`examples/w44_91_dispatch_ab.rs` (paired A/B sweep, 85 cells),
+`examples/w44_91_decoder_check.rs` (multi-decoder roundtrip).
+
+---
+
 ### W44-75: upstream clustering bisection — divergence is in AC tokenization, NOT clustering (May 19, 2026)
 
 **Status**: [SHIPPED — diagnostic dump infrastructure, find-only]

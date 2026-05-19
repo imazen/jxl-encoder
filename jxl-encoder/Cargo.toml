@@ -1100,6 +1100,31 @@ required-features = ["parallel", "rate-control"]
 name = "w44_79_trial"
 path = "examples/w44_79_trial.rs"
 
+# W44-91 proxy probe — measure cheap encoder-internal XYB-derived proxies
+# (chroma_var_x, chroma_var_b, flat_x_block_ratio, mask1x1 percentiles)
+# on the W44-79 wedge set to find a discriminator that catches 1189261
+# without catching the REGRESSION-band images, using only data the encoder
+# hot path already computes.
+[[example]]
+name = "w44_91_proxy_probe"
+path = "examples/w44_91_proxy_probe.rs"
+required-features = ["__pre_quantized"]
+
+# W44-91 dispatch A/B sweep — verifies the wired zenanalyze-proxy dispatch
+# catches 1189261 at d∈{3,4,5} without regressing any of the 6 documented
+# W44-78 REGRESSION-band images.
+[[example]]
+name = "w44_91_dispatch_ab"
+path = "examples/w44_91_dispatch_ab.rs"
+required-features = ["parallel"]
+
+# W44-91 decoder roundtrip — confirms the auto-fired W44-91 lift on
+# 1189261 at d ∈ {3, 4, 5} produces valid JXL decodable by jxl-oxide
+# (and djxl when the local binary is built).
+[[example]]
+name = "w44_91_decoder_check"
+path = "examples/w44_91_decoder_check.rs"
+
 # W44-79 decoder roundtrip — verifies jxl-oxide and djxl both decode the
 # hint=Some(true) bitstream on 1189261 d=4.
 [[example]]
