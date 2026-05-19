@@ -4217,9 +4217,10 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated W44-54: LearnTree DC tree at effort >= 4 (libjxl parity,
-        // enc_modular.cc:1166). 64x64 checkerboard now 729 bytes.
-        const EXPECTED_HASH: u64 = 0x4714b491846b1295;
+        // Updated W44-56 (stage 7c): Variable-mode DC tree learning — per-leaf
+        // best-of-14 predictor selection + WP state in property 15. 64x64
+        // checkerboard now 692 bytes (was 729 in W44-54, -5%).
+        const EXPECTED_HASH: u64 = 0xd949e9f71e4fb0eb;
         assert_eq!(
             hash,
             EXPECTED_HASH,
