@@ -288,6 +288,15 @@ required-features = ["butteraugli-loop"]
 name = "patches_group_size_shift_ab"
 path = "examples/patches_group_size_shift_ab.rs"
 
+# W44-51: patches ref-frame predictor A/B (tree-learn vs libjxl-parity Gradient).
+# Tests H3 from W44-48: does forcing Predictor::Gradient (libjxl behaviour)
+# fix the codec_wiki e7 d=3..6 wedge? 4 screenshots × 4 distances ×
+# {ours_tree, ours_grad, cjxl} = 48 cells.
+[[example]]
+name = "w44_51_refframe_predictor_ab"
+path = "examples/w44_51_refframe_predictor_ab.rs"
+required-features = ["__expert"]
+
 [[example]]
 name = "hdr_rd_sweep_vs_cjxl"
 path = "examples/hdr_rd_sweep_vs_cjxl.rs"

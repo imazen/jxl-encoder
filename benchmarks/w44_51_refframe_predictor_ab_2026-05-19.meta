@@ -1,0 +1,138 @@
+W44-51 — patches ref-frame predictor A/B (tree-learn vs libjxl-parity Gradient)
+Date: 2026-05-19
+Host: water-cooled AMD Ryzen 9 7950X, 128 GB RAM (single-thread)
+
+==============================================================================
+VERDICT: H3 RULED OUT — predictor choice does NOT move bytes on patches ref
+frame. All 16 cells byte-identical between tree-learned `Predictor::Variable`
+and forced `Predictor::Gradient`.
+==============================================================================
+
+Hypothesis (H3 from W44-48):
+- libjxl unconditionally uses Predictor::Gradient for patches ref frames
+  (`~/work/jxl-efforts/libjxl/lib/jxl/enc_patch_dictionary.cc:828`).
+- Our default at e7+ enables tree-learned Predictor::Variable when
+  `ref_w>=128 AND ref_h>=128` (`vardct/patches.rs:2921`).
+- codec_wiki e7 d=3..6 ref frame is 133×130 → triggers tree-learn.
+- cjxl ships +1590 patches bytes / -4600 main bytes per W44-46:
+  the working theory was that denser per-pixel Gradient residuals subtract
+  MORE main-AC energy, lowering main-frame bytes.
+- A/B test: force `Predictor::Gradient` on ours_grad, leave tree-learn on
+  ours_tree, measure byte delta.
+
+Initial knob attempt:
+- `LossyInternalParams::patch_ref_tree_learning: Some(true|false)`
+  is plumbed correctly to `vardct/patches.rs::encode_reference_frame`
+  (verified via eprintln probe — `use_tree_learning=true` vs `false` both
+  reach the call site).
+- BUT: `modular/frame.rs::encode_modular_body` always routes through
+  `write_modular_stream_with_tree_dc_quant_knobs` when
+  `dc_quant_custom.is_some()`, which is the case at distance > 0 (the
+  patches ref frame uses libjxl-derived per-channel DC quant scales for
+  d>0). The `use_tree_learning=false` flag is silently ignored at d>0.
+- This makes the existing `patch_ref_tree_learning` knob non-functional
+  for distance > 0 — it only flips the dispatch for the lossless
+  `dc_quant_custom=None` path.
+
+V2 fix to enable the real A/B:
+- The `ours_grad` bench arm injects `ModularKnobs.modular_predictor = Some(5)`
+  (Predictor::Gradient) which IS honored by
+  `write_modular_stream_with_tree_dc_quant_knobs` via
+  `resolve_tree_learn_force_predictor` (single-leaf `simple_tree(forced)`,
+  no ID3). This skips ID3 and emits the same shape libjxl produces.
+
+Sweep design:
+- 4 gb82-sc screenshots (codec_wiki, imac_g3, terminal, windows95)
+  × 4 distances {3, 4, 5, 6}
+  × 3 encoders {ours_tree, ours_grad, cjxl}
+  = 48 encodes.
+- effort=7, threads=1, default LossyConfig (no buttloop at e7).
+- Decode + score via jxl-oxide linear-sRGB (PNG-metadata immune
+  per CLAUDE.md).
+
+Results (TSV columns: image | width | height | encoder | effort | distance |
+                     bytes | butteraugli | ssim2 | encode_ms):
+
+ours_tree vs ours_grad bytes per cell (diff column = tree - grad):
+
+  codec_wiki.png  d=3.0   tree=75245   grad=75245   diff=0   cjxl=72232
+  codec_wiki.png  d=4.0   tree=67321   grad=67321   diff=0   cjxl=62710
+  codec_wiki.png  d=5.0   tree=60760   grad=60760   diff=0   cjxl=57232
+  codec_wiki.png  d=6.0   tree=55343   grad=55343   diff=0   cjxl=51875
+  imac_g3.png     d=3.0   tree=154258  grad=154258  diff=0   cjxl=161648
+  imac_g3.png     d=4.0   tree=139605  grad=139605  diff=0   cjxl=146832
+  imac_g3.png     d=5.0   tree=122196  grad=122196  diff=0   cjxl=129968
+  imac_g3.png     d=6.0   tree=111651  grad=111651  diff=0   cjxl=119645
+  terminal.png    d=3.0   tree=36176   grad=36176   diff=0   cjxl=37645
+  terminal.png    d=4.0   tree=33662   grad=33662   diff=0   cjxl=33536
+  terminal.png    d=5.0   tree=28785   grad=28785   diff=0   cjxl=29707
+  terminal.png    d=6.0   tree=27551   grad=27551   diff=0   cjxl=27112
+  windows95.png   d=3.0   tree=33729   grad=33729   diff=0   cjxl=32839
+  windows95.png   d=4.0   tree=30362   grad=30362   diff=0   cjxl=29083
+  windows95.png   d=5.0   tree=27346   grad=27346   diff=0   cjxl=26163
+  windows95.png   d=6.0   tree=24988   grad=24988   diff=0   cjxl=24177
+
+Butteraugli + SSIM2: also bit-identical between tree/grad on every cell
+(deltas confirm decoded pixels are exactly the same, not just byte-equal).
+
+Probe trace (from W44-51 instrumented run):
+  PROBE: encode_reference_frame d=3 ref=133x130
+         use_tree_learning=true  enable_tree=true  force_pred=None
+  PROBE: encode_reference_frame d=3 ref=133x130
+         use_tree_learning=false enable_tree=false force_pred=Some(5)
+(ref frame is 133×130 on codec_wiki — meets the >=128 threshold, so
+tree-learn would fire in production. Forcing Gradient via Some(5)
+produces the SAME bytes as ID3-learned Variable.)
+
+Conclusion (H3 RULED OUT):
+- ID3 tree learning on packed-patches ref frames (RCT + Gradient candidates
+  across small windows of glyphs) converges to the same per-leaf prediction
+  as a fixed Gradient predictor. The single-leaf `Predictor::Gradient` tree
+  IS already the best fit for this content shape — no other predictor in
+  the 14-predictor candidate set offers a measurable improvement on a
+  133×130 RCT-decorrelated XYB image of packed patches.
+- The cjxl "+1590 patches / -4600 main" delta from W44-46 is NOT from
+  predictor choice. The ref frame produces literally the same bytes
+  whether ID3 picks Gradient or Gradient is forced.
+- This rules out the most likely H3 from W44-48's three remaining
+  hypotheses. Recommend H2 (bin-packer layout — cjxl 140×132 vs ours
+  133×130 admits 1-2 more patches?) or H1 (CC enumeration / BFS-DFS
+  difference) as the next chunk.
+
+Reproducer (post-revert, with knob plumbed but not effective at d>0):
+```
+cargo run -p jxl-encoder --release --features __expert \
+    --example w44_51_refframe_predictor_ab \
+    -- --output benchmarks/w44_51_refframe_predictor_ab_2026-05-19.tsv
+```
+The above runs the bench but ours_grad ≡ ours_tree post-revert (the knob
+is a no-op at d>0). The DEFINITIVE A/B with `force_pred=Some(5)` is
+recorded in this TSV; reproducing requires re-applying the V2 probe at
+`vardct/patches.rs:2921` (commit `patch ref-frame ModularKnobs
+modular_predictor=Some(5) when !enable_tree`).
+
+Action taken:
+- AUDIT-ONLY chunk. No production behavior change. Doc-comment added at
+  `vardct/patches.rs:2920-2925` referencing W44-51 verdict, so future
+  agents do not re-investigate.
+- Bench TSV + meta committed.
+
+Cross-references:
+- w44_48_threshold_relaxation_null_2026-05-19 (chunks B+C ruled out)
+- w44_46_codec_wiki_patches_density_2026-05-19 (per-section ledger)
+- w44_37_codec_wiki_wedge_2026-05-18 (origin of wedge)
+- patches_group_size_shift_ab_2026-05-18 (W42-2 fix already shipped)
+
+Sub-finding (orphan knob):
+- `LossyInternalParams::patch_ref_tree_learning` (effort.rs:1790,
+  effort_expert_tests.rs:259, vardct/bitstream.rs:2008/2125) does NOT
+  alter bitstream at distance > 0 because the FrameEncoder dispatch in
+  `modular/frame.rs::encode_modular_body:2294` routes any
+  `dc_quant_custom.is_some()` path unconditionally through the tree-learn
+  writer. The existing unit test (`effort_expert_tests::lossy_override_
+  patch_ref_tree_learning`) passes only because it ALSO sets
+  `k_info_loss_mul_base: Some(1.5)`. Recommended follow-up issue: either
+  wire the knob through to the dc_quant path (requires a new
+  `write_modular_stream_with_no_tree_dc_quant_knobs` variant), or remove
+  the knob as dead code at d>0 since the V2 measurement shows there's no
+  RD lever there anyway.
