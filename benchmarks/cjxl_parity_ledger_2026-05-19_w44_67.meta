@@ -1,0 +1,42 @@
+# cjxl parity ledger — W44-67 finalize W44-66 ledger refresh post default-on dct_suppress_hint
+# This is the canonical W44-65 RD-parity ledger for the 12-chunk W44-54..W44-65 session.
+# W44-66 ran the OPEN re-bench but the session died before promotion; W44-67 promotes
+# the same bench output (no source change between W44-66 and W44-65 main d8a4701f, and
+# no source change between W44-67 and main: source code matches d8a4701f exactly).
+git_rev: d8a4701f590286bea1a9fc087b68125404586e48 (main; W44-65 default-on
+         dct_suppress_hint; sibling-workspace bench commits 0e7cfac3 (W44-66)
+         and the W44-67 commit referencing this meta are bench-and-meta-only,
+         no production source change)
+bench_workspace: ../jxl-encoder--w44-66-final-ledger-refresh (W44-66) →
+                 promoted into ../jxl-encoder--w44-67-finish-ledger-refresh (this)
+bench_commit_w44_66: 0e7cfac358d387f86f2627dfe679890227cc7ab3
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1418519.png", "1531677.png", "1189261.png",
+         "1420710.png", "terminal.png", "codec_wiki.png", "imac_g3.png"]
+corpus: /home/lilith/work/codec-corpus
+wall_seconds: 17.1 (OPEN re-bench, 20 cells; FIXED-side rows carried forward
+                    bit-identical from W44-64 ledger — no source change)
+total_rows: 595
+cells_this_run: 20 (OPEN re-bench at W44-65 production code)
+update_mode: true
+status_filter: Some("OPEN")
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+
+# Session totals (W44-54 baseline → W44-65 ledger, refreshed here)
+# OPEN: 20 (W44-64) → 18 (W44-66/W44-67)  — net -2 cells closed by W44-65
+# FIXED: 575 (W44-64) → 577 (W44-66/W44-67)
+# Flips OPEN → FIXED: 2 (codec_wiki.png e7 d=5.0, e7 d=6.0)
+# Flips FIXED → OPEN: 0  (no regressions)
+# codec_wiki e7 d=4.0 remains OPEN (3.55% bytes, just above 3% gate; bfly +7.2%,
+#                                   ssim2 -4.51 — sub-threshold for closing
+#                                   under the default-on dct_suppress_hint heuristic)
+
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
