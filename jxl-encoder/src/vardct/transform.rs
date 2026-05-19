@@ -1229,6 +1229,19 @@ impl VarDctEncoder {
         let ysize_groups = div_ceil(ysize_blocks, GROUP_DIM_IN_BLOCKS);
         let num_groups = xsize_groups * ysize_groups;
 
+        // W44-89 HONEST-STOP: a parallel-vs-serial guard was investigated
+        // here per the W44-88 follow-on task. Paired interleaved A/B
+        // benchmark (5 trials × 12 cells, baseline-binary vs guard-binary,
+        // `benchmarks/parallel_xform_guard_AB_2026-05-19.tsv`) showed the
+        // W44-88 "terminal e3 regression" is NOT reproducible on stable
+        // measurements — 8T parallel reliably beats 1T serial by 1.62-1.72×
+        // even at 35 AC groups (terminal e3 8T median 21.8 ms vs 1T 37.6 ms
+        // across 5 interleaved trials). W44-88's high-variance non-paired
+        // measurement was likely contaminated by cold rayon thread-pool
+        // wake-up or thermal noise on trial 1. Forcing serial at any group
+        // count INTRODUCED a +16 ms regression on terminal e3. Guard NOT
+        // shipped. The helper `parallel_map_min` was added to `parallel.rs`
+        // for future use if a real regression appears.
         let group_results = crate::parallel::parallel_map(num_groups, |group_idx| {
             let gy = group_idx / xsize_groups;
             let gx = group_idx % xsize_groups;
