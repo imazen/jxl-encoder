@@ -158,6 +158,24 @@ const SQUEEZE_LUMA_QTABLE: [f32; SQUEEZE_LUMA_QTABLE_LEN] = [
 /// vs the gb82-sc screenshot corpus (medians ≈ 110–180).
 const CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD: f32 = 95.0;
 
+/// W44-29 high-distance smooth-photo discriminator on `median(mask1x1)`.
+/// Smooth photos cluster in the 10-40 range per the CID22 medians cited
+/// above; setting the threshold at 50.0 admits the F-D residual photo
+/// class (1531677.png, 1420710.png, 1025469.png, 1080721.png, 1531677.png
+/// all have median(mask1x1) ~15-35) while excluding gb82-sc screenshots
+/// (medians ≈ 110-180, well above 50). The 50-95 gap between the two
+/// thresholds is the "ambiguous" band where neither gate fires — the
+/// content is either mixed photo+text or a noisy photo, and we'd rather
+/// preserve the libjxl reference tuple than over-fit either direction.
+const HIGH_D_PHOTO_SMOOTH_THRESHOLD: f32 = 50.0;
+
+/// W44-29 minimum distance for the auto smooth-photo gate. Below this
+/// distance the AdjustQuantBlockAC D-heuristic firing rate is too low
+/// (per W44-27 audit) for the entropy_mul reduction to matter; above it
+/// the F-D residual byte gap vs cjxl is the dominant remaining wedge
+/// (per W44-28 stage-A sweep).
+const HIGH_D_PHOTO_MIN_DISTANCE: f32 = 4.0;
+
 /// W36-3 patches photo-skip dispatch threshold on the per-block-mean
 /// median of `mask1x1` (same statistic the auto-splines
 /// [`crate::vardct::splines::looks_like_screenshot`] gate uses).
@@ -771,6 +789,22 @@ pub struct VarDctEncoder {
     /// Set via [`crate::api::LossyConfig::with_screenshot_lift_hint`].
     /// Default `None` keeps every existing hash-lock byte-identical.
     pub screenshot_lift_hint: Option<bool>,
+    /// Caller-supplied override for the W44-29 high-distance smooth-photo
+    /// gate that **lowers** `entropy_mul[DCT16X16]` and
+    /// `entropy_mul[DCT32X32]` (via
+    /// [`crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed`])
+    /// to close the F-D residual photo byte gap vs cjxl at d ≥ 4.
+    ///
+    /// - `None` (default): auto gate — fires only when *both*
+    ///   `self.distance >= 4.0` AND `median(mask1x1) < SMOOTH_THRESHOLD`
+    ///   (the smooth-content discriminator).
+    /// - `Some(true)`: force-apply regardless of distance or content.
+    /// - `Some(false)`: suppress even when the auto gate would fire.
+    ///
+    /// Set via [`crate::api::LossyConfig::with_high_d_photo_hint`].
+    /// Default `None` keeps every hash-lock at `d < 4.0` byte-identical.
+    /// See W44-28 honest-stop memo + W44-27 firing-rate audit.
+    pub high_d_photo_hint: Option<bool>,
     /// Streaming-refactor buffering policy (jxl-encoder#11).
     ///
     /// Mirrors libjxl `JXL_ENC_FRAME_SETTING_BUFFERING` integers via
@@ -864,6 +898,10 @@ impl Default for VarDctEncoder {
             budget: None,
             content_aware_entropy_mul: false,
             screenshot_lift_hint: None,
+            // W44-29: default None engages the auto gate (fires only at
+            // distance >= 4.0 AND median(mask1x1) < smooth threshold).
+            // Hash-locks at d < 4.0 stay byte-identical.
+            high_d_photo_hint: None,
             buffering: crate::api::Buffering::default(),
         }
     }
@@ -941,6 +979,10 @@ impl VarDctEncoder {
             budget: None,
             content_aware_entropy_mul: false,
             screenshot_lift_hint: None,
+            // W44-29: default None engages the auto gate (fires only at
+            // distance >= 4.0 AND median(mask1x1) < smooth threshold).
+            // Hash-locks at d < 4.0 stay byte-identical.
+            high_d_photo_hint: None,
             buffering: crate::api::Buffering::default(),
         }
     }
@@ -2119,24 +2161,65 @@ impl VarDctEncoder {
         //
         // Default (`content_aware_entropy_mul == false`) keeps the
         // reference-table behaviour and every hash-lock byte-identical.
-        let profile_for_search = if self.content_aware_entropy_mul {
-            let lift = match self.screenshot_lift_hint {
+        //
+        // Compute `median(mask1x1)` once for both the W22-1 (screenshot
+        // lift) and W44-29 (high-d photo lower) gates below. `None` means
+        // the mask isn't available (pixel_domain_loss off / PixelLossDispatch
+        // skipped) — both gates degrade to "don't fire" in that case
+        // unless the caller supplied an explicit `Some(true)/Some(false)`
+        // hint that bypasses the mask discriminator.
+        let mask1x1_median: Option<f32> = mask1x1
+            .as_deref()
+            .map(|mask| median_mask1x1(mask, padded_width, width, height));
+
+        // W22-1 screenshot lift (opt-in, fires only when
+        // `content_aware_entropy_mul=true`).
+        let w22_1_lift = if self.content_aware_entropy_mul {
+            match self.screenshot_lift_hint {
                 Some(b) => b,
-                None => match mask1x1.as_deref() {
-                    Some(mask) => {
-                        let med = median_mask1x1(mask, padded_width, width, height);
-                        med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD
-                    }
-                    None => false,
-                },
-            };
-            if lift {
-                let mut p = self.profile.clone();
-                p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
-                Some(p)
-            } else {
-                None
+                None => mask1x1_median
+                    .is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD),
             }
+        } else {
+            false
+        };
+
+        // W44-29 high-distance smooth-photo lowering. Default-on auto
+        // gate: fires when `distance >= HIGH_D_PHOTO_MIN_DISTANCE` AND
+        // `median(mask1x1) < HIGH_D_PHOTO_SMOOTH_THRESHOLD` (smooth-photo
+        // content). Hash-locks at `d < 4.0` stay byte-identical because
+        // the gate cannot fire there.
+        //
+        // Resolution when both W22-1 and W44-29 would fire: W22-1 wins
+        // because its swap is more specific to screen content AND its
+        // mask1x1>95 condition is mutually exclusive with W44-29's
+        // mask1x1<50 condition in auto mode. The explicit-hint paths
+        // can in principle conflict (caller forces both `Some(true)`);
+        // in that case W22-1 wins by precedence (its lift was shipped
+        // first, has hash-lock coverage at d < 4, and is opt-in only).
+        let w44_29_lower = if w22_1_lift {
+            // Mutually exclusive — W22-1 already swapped to the lift
+            // table. Don't double-swap.
+            false
+        } else {
+            match self.high_d_photo_hint {
+                Some(b) => b,
+                None => {
+                    // Auto: distance gate AND smooth-content gate.
+                    self.distance >= HIGH_D_PHOTO_MIN_DISTANCE
+                        && mask1x1_median.is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD)
+                }
+            }
+        };
+
+        let profile_for_search = if w22_1_lift {
+            let mut p = self.profile.clone();
+            p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
+            Some(p)
+        } else if w44_29_lower {
+            let mut p = self.profile.clone();
+            p.entropy_mul_table = crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed();
+            Some(p)
         } else {
             None
         };
@@ -3898,6 +3981,18 @@ mod tests {
         assert!(enc.screenshot_lift_hint.is_none());
         let enc_default = VarDctEncoder::default();
         assert!(enc_default.screenshot_lift_hint.is_none());
+    }
+
+    #[test]
+    fn test_high_d_photo_hint_default_none() {
+        // Verify the W44-29 high-d photo hint defaults to None on both
+        // constructors (so the auto gate fires only at distance >= 4.0
+        // AND median(mask1x1) < SMOOTH_THRESHOLD; hash-locks at d < 4.0
+        // stay byte-identical).
+        let enc = VarDctEncoder::new(1.0);
+        assert!(enc.high_d_photo_hint.is_none());
+        let enc_default = VarDctEncoder::default();
+        assert!(enc_default.high_d_photo_hint.is_none());
     }
 
     #[test]
