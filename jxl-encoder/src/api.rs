@@ -3446,6 +3446,67 @@ pub enum PixelLossDispatch {
     Auto,
 }
 
+/// Adaptive dispatch policy for the two-pass entropy code optimization
+/// (W44-87 — `optimize_codes` controls dynamic vs static Huffman path).
+///
+/// The two-pass entropy path collects every AC token into a per-context
+/// histogram, builds optimal Huffman/ANS codes from the empirical
+/// distribution, then re-walks the tokens to write the optimized
+/// bitstream. The W38 phase profile measured this `entropy` +
+/// `build_codes` pair at 56-62% of e5 photo wall-clock — about 14 ms
+/// (`benchmarks/lossy_phase_baseline_low_effort_2026-05-19.tsv`).
+///
+/// The single-pass path uses pre-computed static Huffman codes
+/// (`get_dc_entropy_code()` / `get_ac_entropy_code()`), eliminating
+/// the histogram collection + code build entirely. The trade is a
+/// small bitstream-size regression (the static codes are tuned for an
+/// averaged token distribution that doesn't fit any single image as
+/// tightly as per-image-optimized codes).
+///
+/// On smooth photo content at low distance (`d <= 1.0`,
+/// `median(mask1x1)` below the smooth-content threshold) the
+/// regression is typically 2-4% bytes — well below the 30%+
+/// wall-clock saving — making this a high-value dispatch on the
+/// content class that dominates web/CDN encode workloads.
+///
+/// `Auto` (this dispatch's content-aware mode) flips to single-pass
+/// only when ALL of the following hold:
+///   - `effort == 5` (the targeted speed tier),
+///   - `distance <= 1.0`,
+///   - `median(mask1x1) < SMOOTH_THRESHOLD` (smooth-photo class),
+///   - the encode has NO features that require the two-pass
+///     plumbing (patches, splines, learned tree, sharpness map,
+///     noise params, LF frame, extras / alpha).
+/// On any other content / mode / feature combo `Auto` behaves
+/// identically to [`Self::AlwaysTwoPass`].
+///
+/// **Default**: [`SinglePassEntropyDispatch::AlwaysTwoPass`].
+/// Bitstream byte-identical to historical builds; callers opt in
+/// via [`LossyConfig::with_single_pass_entropy_dispatch`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SinglePassEntropyDispatch {
+    /// **Default.** Always run the two-pass dynamic entropy path
+    /// when the effort profile asks for it (`profile.optimize_codes`).
+    /// Byte-identical to historical encoder behaviour.
+    #[default]
+    AlwaysTwoPass,
+    /// Always use the single-pass static-Huffman path. Equivalent to
+    /// `enc.optimize_codes = false`; will fall back to the two-pass
+    /// path automatically when the encode has features the single-
+    /// pass path cannot serialize (patches, splines, learned tree,
+    /// sharpness map, noise params, LF frame, extras).
+    /// Skips the histogram pass + code build entirely (~7-14 ms
+    /// savings/MP at e5 on smooth photos).
+    AlwaysSinglePass,
+    /// Use single-pass static-Huffman codes when the content
+    /// classifier says "smooth photo at low distance"
+    /// (`effort == 5 && distance <= 1.0 && median(mask1x1) <
+    /// SMOOTH_THRESHOLD`) AND the single-pass-safety predicate
+    /// holds (no patches/splines/learned tree/sharpness map/noise/
+    /// LF frame/extras). Otherwise behaves like [`Self::AlwaysTwoPass`].
+    Auto,
+}
+
 // ── LossyConfig ─────────────────────────────────────────────────────────────
 
 /// Lossy (VarDCT) encoding configuration.
@@ -3797,6 +3858,14 @@ pub struct LossyConfig {
     /// the historical bitstream byte-for-byte. See
     /// [`Self::with_pixel_loss_dispatch`].
     pixel_loss_dispatch: PixelLossDispatch,
+    /// Adaptive dispatch for the two-pass dynamic-entropy path
+    /// (W44-87 — `entropy` + `build_codes` dominate e5 photo wall
+    /// at 56-62%, ~14 ms/MP per
+    /// `benchmarks/lossy_phase_baseline_low_effort_2026-05-19.tsv`).
+    /// Default [`SinglePassEntropyDispatch::AlwaysTwoPass`]
+    /// preserves the historical bitstream byte-for-byte. See
+    /// [`Self::with_single_pass_entropy_dispatch`].
+    single_pass_entropy_dispatch: SinglePassEntropyDispatch,
     /// Optional separate butteraugli distance for the alpha extra
     /// channel (CLI passthrough — mirrors libjxl `cjxl --alpha_distance`,
     /// `enc_params.h:alpha_distance`). `None` (default) keeps the
@@ -4023,6 +4092,7 @@ impl LossyConfig {
             epf_level: -1,
             epf_dispatch: EpfDispatch::default(),
             pixel_loss_dispatch: PixelLossDispatch::default(),
+            single_pass_entropy_dispatch: SinglePassEntropyDispatch::default(),
             alpha_distance: None,
             // Chunk-1 default: keep responsive=0 lossy alpha path
             // (byte-identical to today). Opt-in via
@@ -4259,6 +4329,13 @@ impl LossyConfig {
         // Preserve pixel-loss dispatch policy across with_effort —
         // never effort-derived; pure caller preference (W38-2).
         new.pixel_loss_dispatch = self.pixel_loss_dispatch;
+        // Preserve single-pass-entropy dispatch policy across
+        // with_effort — never effort-derived; pure caller preference
+        // (W44-87). The dispatch itself gates on `effort == 5`
+        // internally, so the value is meaningful only when the new
+        // effort is 5; carrying it across with_effort keeps the
+        // builder chain order-independent.
+        new.single_pass_entropy_dispatch = self.single_pass_entropy_dispatch;
         // Preserve CLI-passthrough knobs across with_effort (they're
         // never effort-derived; opt-in / pure forwarding).
         new.alpha_distance = self.alpha_distance;
@@ -4644,6 +4721,51 @@ impl LossyConfig {
     /// [`Self::with_pixel_loss_dispatch`].
     pub fn pixel_loss_dispatch(&self) -> PixelLossDispatch {
         self.pixel_loss_dispatch
+    }
+
+    /// Select the adaptive-dispatch policy for the two-pass dynamic-
+    /// entropy path (W44-87).
+    ///
+    /// The two-pass `entropy` + `build_codes` phases together account
+    /// for 56-62% of e5 photo wall-clock (~14 ms/MP per
+    /// `benchmarks/lossy_phase_baseline_low_effort_2026-05-19.tsv`).
+    /// On smooth photos at low distance the per-image-tuned codes
+    /// only save 2-4% bytes vs the pre-computed static Huffman
+    /// codes — a poor trade against 30%+ wall-clock cost.
+    /// [`SinglePassEntropyDispatch::Auto`] flips to single-pass
+    /// when the content classifier says "smooth photo at low
+    /// distance" AND the encode has no features that require the
+    /// two-pass plumbing (patches, splines, learned tree, sharpness
+    /// map, noise params, LF frame, extras / alpha).
+    ///
+    /// Trigger predicate (all required):
+    ///   - `effort == 5`,
+    ///   - `distance <= 1.0`,
+    ///   - `median(mask1x1) < SMOOTH_THRESHOLD` (smooth-photo
+    ///     class),
+    ///   - the encode has no patches/splines/learned tree/sharpness
+    ///     map/noise params/LF frame/extras (any of these forces
+    ///     two-pass mode regardless of dispatch).
+    ///
+    /// **Default**: [`SinglePassEntropyDispatch::AlwaysTwoPass`] —
+    /// byte-identical to historical encoder behaviour. The `Auto`
+    /// default flip is gated behind a wider corpus RD bench +
+    /// hash-lock rebake; until that lands, callers who want the
+    /// speed-up opt in explicitly. Mirrors the W36-2 [`EpfDispatch`]
+    /// / W36-3 [`PatchesDispatch`] / W38-2 [`PixelLossDispatch`]
+    /// opt-in patterns.
+    pub fn with_single_pass_entropy_dispatch(
+        mut self,
+        dispatch: SinglePassEntropyDispatch,
+    ) -> Self {
+        self.single_pass_entropy_dispatch = dispatch;
+        self
+    }
+
+    /// Current [`SinglePassEntropyDispatch`] policy. See
+    /// [`Self::with_single_pass_entropy_dispatch`].
+    pub fn single_pass_entropy_dispatch(&self) -> SinglePassEntropyDispatch {
+        self.single_pass_entropy_dispatch
     }
 
     /// Convenience switch that toggles all encoder-side perceptual
@@ -7955,6 +8077,7 @@ impl<'a> EncodeRequest<'a> {
         enc.error_diffusion = cfg.error_diffusion;
         enc.pixel_domain_loss = cfg.pixel_domain_loss;
         enc.pixel_loss_dispatch = cfg.pixel_loss_dispatch;
+        enc.single_pass_entropy_dispatch = cfg.single_pass_entropy_dispatch;
         enc.enable_lz77 = cfg.effective_lz77();
         enc.lz77_method = cfg.lz77_method;
         enc.force_strategy = cfg.force_strategy;
@@ -9095,6 +9218,7 @@ impl LossyEncoder {
             enc.error_diffusion = cfg.error_diffusion;
             enc.pixel_domain_loss = cfg.pixel_domain_loss;
             enc.pixel_loss_dispatch = cfg.pixel_loss_dispatch;
+            enc.single_pass_entropy_dispatch = cfg.single_pass_entropy_dispatch;
             enc.enable_lz77 = cfg.effective_lz77();
             enc.lz77_method = cfg.lz77_method;
             enc.force_strategy = cfg.force_strategy;
@@ -10954,6 +11078,7 @@ fn encode_animation_lossy(
     enc.error_diffusion = cfg.error_diffusion;
     enc.pixel_domain_loss = cfg.pixel_domain_loss;
     enc.pixel_loss_dispatch = cfg.pixel_loss_dispatch;
+    enc.single_pass_entropy_dispatch = cfg.single_pass_entropy_dispatch;
     enc.enable_lz77 = cfg.effective_lz77();
     enc.lz77_method = cfg.lz77_method;
     enc.force_strategy = cfg.force_strategy;

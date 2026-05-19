@@ -56,8 +56,9 @@ pub use api::{
     EncodeError, EncodeMode, EncodeRequest, EncodeResult, EncodeStats, EncoderMode, EpfDispatch,
     ImageMetadata, Limits, LosslessConfig, LosslessEncoder, LossyConfig, LossyEncoder, Lz77Method,
     MAX_FASTER_DECODING, MAX_PROGRESSIVE_DC, NonFiniteAction, PatchesDispatch, PixelLayout,
-    PixelLossDispatch, PremultipliedAlphaMode, ProgressiveMode, Quality, ResultAtExt, Stop,
-    Unstoppable, at, calibrated_jxl_quality, downsample_channel_u8, quality_to_distance,
+    PixelLossDispatch, PremultipliedAlphaMode, ProgressiveMode, Quality, ResultAtExt,
+    SinglePassEntropyDispatch, Stop, Unstoppable, at, calibrated_jxl_quality,
+    downsample_channel_u8, quality_to_distance,
 };
 // Streaming refactor #11 chunk 6: seekable output sink trait. Required
 // by `LossyEncoder::finish_to_seekable` / `LosslessEncoder::finish_to_seekable`.
