@@ -1,0 +1,34 @@
+# W44-69: per-section bytes attribution, 1420710.png e7 d=6, single-thread.
+# Source: jxl-inspect inspect on each bitstream; bytes computed from
+# contiguous bit_range boundaries in manifest.json (sorted ascending).
+#
+# Decoder: jxl-oxide jxl-inspect 0.12.5
+# Tool versions: cjxl v0.12.0 4279d48; ours = jxl-encoder workspace HEAD
+# Encoder cmd (ours): cjxl-rs <img> <out> -e 7 -d 6.0 --threads 1
+# Encoder cmd (cjxl): cjxl <img> <out> -e 7 -d 6.0 --num_threads=1
+#
+# Image: /home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png 512x512 RGB8 photo
+# Sizes: ours=21295 cjxl=20653 (delta +642 = +3.11%)
+encoder	section	bytes
+ours	Signature	2.0
+ours	ImageHeader	6.0
+ours	FrameHeader+Toc	40.0
+ours	LfGlobal	237.0
+ours	HfMetadata	4600.0
+ours	HfGlobal	1122.0
+ours	HfCoeff_group0	3919.0
+ours	HfCoeff_group1	3706.0
+ours	HfCoeff_group2	3844.0
+ours	HfCoeff_group3	3839.0
+ours	TOTAL	21295.0
+cjxl	Signature	2.0
+cjxl	ImageHeader	6.0
+cjxl	FrameHeader+Toc	36.0
+cjxl	LfGlobal	273.0
+cjxl	HfMetadata	5721.0
+cjxl	HfGlobal	670.0
+cjxl	HfCoeff_group0	3590.0
+cjxl	HfCoeff_group1	3388.0
+cjxl	HfCoeff_group2	3463.0
+cjxl	HfCoeff_group3	3522.0
+cjxl	TOTAL	20653.0

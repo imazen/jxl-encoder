@@ -1,0 +1,115 @@
+# W44-69: F-D residual re-attack on 1420710.png e7 d=6 (per user correction: "never FMA precision")
+# Date: 2026-05-19
+# Workspace: ~/work/zen/jxl-encoder--w44-69-fd-reattack (jj on main)
+# Session: 118ea766-e6b6-4161-9ac7-b65cd15f5e97
+# Parent commit: 4f626bd4 (W44-54 DC LearnTree)
+#
+# Chosen cell: 1420710.png photo 512x512 effort=7 distance=6.0
+# Cell status from W44-55 ledger: OPEN bytes_d=+3.84% bfly_d=+3.84% ss2_d=-1.93
+# Sized: ours=21295 cjxl=20653 (delta +642 bytes = +3.11%; ledger shows +3.84% — minor variance from DC LearnTree branch)
+#
+# === Method ===
+# 1. Encoded both with -e 7 -d 6.0 --threads 1
+# 2. jxl-inspect inspect + export-csv --per-block on both outputs
+# 3. Computed per-section bytes from contiguous bit_range boundaries (manifest.json)
+# 4. Computed per-block AC strategy plane (expanded to 64x64 8x8-cell grid)
+# 5. Diffed strategy distributions and per-cell disagreements
+# 6. Bisected W44-29 high_d_photo_smooth_suppressed via env-var override (refuted as root)
+# 7. Patched jxl-oxide HfPass + LfGlobal parsers to dump num_block_clusters / num_contexts
+# 8. Verified our compact block ctx map encoding ≠ libjxl's simple-default encoding
+#
+# === Per-section delta (ours - cjxl) ===
+# Signature:           +0
+# ImageHeader:         +0
+# FrameHeader+Toc:     +4    (negligible)
+# LfGlobal:           -36    (we save: simpler scales / context tree?)
+# HfMetadata:       -1121    (we save: 338 varblocks vs cjxl 348 = fewer, larger transforms)
+# HfGlobal:          +452    (***biggest concentrated wedge***)
+# HfCoeff×4 groups: +1345    (broadest wedge: +9% per group)
+# TOTAL:             +642
+#
+# === Per-block strategy diff ===
+# Plane size: 64x64 = 4096 cells. Agree: 3872 (94.53%). Disagree: 224 (5.47%).
+# Top 5 disagreement pairs:
+#   ours=Dct32x16 → cjxl=Dct32    96 cells (12 paired positions, 8-cell halves of 32x32)
+#   ours=Dct32    → cjxl=Dct32x16 24 cells
+#   ours=Dct32    → cjxl=Dct16x32 24 cells
+#   ours=Dct32x16 → cjxl=Dct16    16 cells
+#   ours=Dct32    → cjxl=Dct16    16 cells
+# We pick MORE rectangular split transforms (Dct32x16 +10, Dct16x32 +2)
+# and FEWER squares + 8x8s (Dct16 -7, Dct8 -3).
+#
+# === W44-29 A/B (sibling-workspace env-var) ===
+# WITH W44-29 high_d_photo_lower (default): ours_bytes=21295
+# WITHOUT W44-29 (env W44_69_NO_HIGH_D_PHOTO=1): ours_bytes=21299  (+4 bytes only)
+# Strategy distribution WITHOUT W44-29 matches cjxl closely (Dct32x16: 45=45, Dct32: 205≈204)
+# BUT HfGlobal still 1066 vs cjxl 670 (+396B, -56B vs WITH W44-29).
+# Conclusion: W44-29 explains the strategy-distribution shift but NOT the byte wedge.
+#
+# === Root divergence found (HfGlobal +452B) ===
+#
+# Block context map (`num_block_clusters`):
+#   - ours: 4 clusters (BlockCtxMap::default() = NUM_BLOCK_CTXS = 4)
+#   - cjxl: 15 clusters (libjxl simple-default hardcoded map at lf.rs:69-75)
+#
+# Bitstream-level encoding:
+#   - ours: writes bit_0 = 0 (non-default), then 16 zero bits, then encoded
+#           39-entry context map with 4-cluster values via prefix code.
+#           Path: bitstream.rs:999 → context_tree::write_block_context_map.
+#   - cjxl: writes bit_0 = 1 (libjxl's "is_simple_block_ctx_map"=true).
+#           Decoder synthesizes the hardcoded 15-cluster map at jxl-oxide/lf.rs:69-75.
+#
+# HfGlobal size scales with `num_contexts = 495 × num_hf_presets × num_block_clusters`.
+#   - ours: 495 × 1 × 4 = 1980 → clustered to 17 ANS histograms → 5584 bits entropy code
+#   - cjxl: 495 × 1 × 15 = 7425 → finer clustering opportunity → can produce tighter histograms
+#
+# IRONY: more contexts gives cjxl MORE flexibility to cluster (pair-merge ANS histogram
+# clustering produces tighter context-specific distributions). Our 4-cluster default
+# collapses too many cells into one histogram → wider per-symbol distributions →
+# more bits per AC coefficient symbol → larger HfCoeff (+1345B across 4 groups).
+#
+# Net wedge mechanism:
+#   - LfGlobal: ours saves ~36B by writing a simpler context map
+#   - BUT in HfGlobal: ours pays +452B (more bits per histogram with too-wide dists)
+#   - AND in HfCoeff: ours pays +1345B (4-cluster blunt entropy model can't track AC
+#     distributions as tightly as 15-cluster fine-grained model)
+#   - HfMetadata: ours saves -1121B (10 fewer varblocks, larger transforms)
+#   - Net: +642B (the F-D wedge)
+#
+# === Why prior "structural ceiling" audits missed this ===
+# - W44-58/59 audit looked at AFV evaluation cost-inputs (joined on strategy+x+y);
+#   found them at parity. Did NOT look at LfGlobal encoding choices.
+# - W44-60/61 audit looked at strategy CALL FREQUENCY; found DCT64X32 gap, fixed it.
+#   Did NOT look at the post-strategy entropy coding model selection.
+# - W44-33 declared "structurally unfixable" based on 6 audits but every audit was
+#   in the AC strategy / cost model layer, never the block context map layer.
+# - W44-39 looked at "block context map count vs cjxl" but ended in honest-stop
+#   without trying the simple-default flag bit toggle.
+#
+# === Recommended W44-70 fix ===
+#
+# Hypothesis: writing `bit_0 = 1` ("simple-default") emits the libjxl-15-cluster map
+# without the per-block tokenization context-map overhead, AND gives the entropy
+# coder more contexts to cluster, which produces tighter ANS distributions
+# and shrinks both HfGlobal (-452B saved) and HfCoeff (-1345B saved) on this
+# cell. Estimated savings: ~1800B on this cell, ~9% file size win.
+#
+# Note: this would REQUIRE changing our encoder's COMPACT_BLOCK_CONTEXT_MAP
+# entries to the libjxl 15-cluster default values (lf.rs:69-75 of jxl-oxide
+# is the verbatim reference). The mapping is from (channel, order_id) →
+# block_ctx ID, with 13 order_ids × 3 channels = 39 cells. libjxl's default:
+#   [0, 1, 2, 2, 3, 3, 4, 5, 6, 6, 6, 6, 6, 7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14, 7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14]
+#
+# Side-effects to consider:
+# - The decoder will see 15 distinct block contexts instead of 4.
+# - HfCoeff context_offset arithmetic must use num_block_clusters=15.
+# - Tests that hash-lock on bitstream bytes will need rebaseline (many).
+# - ANS histogram count will change; per-context HybridUint configs will change.
+# - Other photo cells (especially 1531677, 1189261, codec_wiki) should see similar wins.
+#
+# === Acceptance gates ===
+# (a) per-section bytes attribution TSV: w44_69_per_section_2026-05-19.tsv ✓
+# (b) per-block strategy diff TSV: w44_69_per_block_diff_2026-05-19.tsv ✓
+# (c) specific divergence identified: 4-cluster default vs libjxl 15-cluster simple ✓
+# (d) memory note + MEMORY.md entry: see w44_69_block_ctx_map_4_vs_15_2026-05-19.md ✓
+# (e) issue filed: TBD via gh CLI
