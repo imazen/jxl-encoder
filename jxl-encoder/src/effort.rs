@@ -1426,11 +1426,69 @@ impl EffortProfile {
     /// Bench provenance: paired A/B in
     /// `jxl-encoder/examples/vardct_ac_dispatch_paired_ab.rs`, results
     /// in `benchmarks/vardct_ac_dispatch_paired_2026-05-17.tsv`.
+    ///
+    /// **W44-35 smooth-photo escape hatch**: the W44-34 root-cause
+    /// investigation traced 5 OPEN cells on `1418519.png` (CID22-512
+    /// validation, 262_144 px) at e6/e7 × d ∈ {1.0, 1.2, 1.6} to this
+    /// gate firing on a smooth photo where DCT64 actually WINS
+    /// (-5 to -7 % bytes vs the gated default). The single-image
+    /// calibration of the original gate (7256805 at small_0.26MP)
+    /// missed the smooth-photo class entirely. The
+    /// [`Self::adapt_to_image_lossy_with_smoothness`] variant takes a
+    /// `smooth_photo_hint` boolean that, when `true`, suppresses the
+    /// `try_dct64 -> false` flip even on the gated cell.
     pub fn adapt_to_image_lossy(&mut self, pixels: u64, distance: f32) {
-        if pixels < LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD
-            && distance < LOSSY_LOW_DISTANCE_THRESHOLD
-            && self.try_dct64
-        {
+        self.adapt_to_image_lossy_with_smoothness(pixels, distance, false);
+    }
+
+    /// Variant of [`Self::adapt_to_image_lossy`] that takes an explicit
+    /// smooth-photo admission hint (W44-35).
+    ///
+    /// When `smooth_photo_hint == true` AND the would-otherwise-gated
+    /// cell holds (small image + low distance), the behaviour swaps:
+    /// instead of dropping `try_dct64 -> false`, the gate forces
+    /// `try_dct64 -> true` so the encoder evaluates DCT64-class
+    /// transforms on the smooth photo and the cost model picks the
+    /// right partition. The W44-34 root-cause forensics found this
+    /// admits the 5 OPEN ledger cells on `1418519.png` for -6.07 %
+    /// paired total at e6/e7 × d ∈ {1.0, 1.2, 1.6}. The forced-true
+    /// is gated on `ac_strategy_enabled` (effort >= 5) — at effort < 5
+    /// the encoder skips AC strategy search entirely so DCT64 has no
+    /// way to fire even if requested.
+    ///
+    /// When `smooth_photo_hint == false` (the default callers should
+    /// use unless they've explicitly classified the image), behaviour is
+    /// byte-identical to [`Self::adapt_to_image_lossy`].
+    ///
+    /// **Caller responsibility**: only set `true` when the input is
+    /// classified as a smooth photo (low edge density, low HF energy,
+    /// low solid-color block ratio). See
+    /// `jxl-encoder/examples/dct64_smart_dispatch_calibrate.rs` for the
+    /// W44-35 discriminator calibration and proxy implementation in
+    /// `crate::api::detect_smooth_photo_for_dct64_from_layout`.
+    pub fn adapt_to_image_lossy_with_smoothness(
+        &mut self,
+        pixels: u64,
+        distance: f32,
+        smooth_photo_hint: bool,
+    ) {
+        // Only consider the gate when the cell holds (small + low-d).
+        if pixels >= LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD || distance >= LOSSY_LOW_DISTANCE_THRESHOLD {
+            return;
+        }
+        if smooth_photo_hint {
+            // W44-35 admission: force-enable try_dct64 on the gated
+            // cell (only when AC strategy search runs, i.e. effort >= 5
+            // per `EffortProfile::lossy` defaults). At effort < 5 the
+            // entire AC strategy search is skipped and DCT64 cannot
+            // fire — admitting would be a no-op + sweep noise.
+            if self.ac_strategy_enabled {
+                self.try_dct64 = true;
+            }
+        } else if self.try_dct64 {
+            // Original (pre-W44-35) gate: drop try_dct64 to false on
+            // small + low-d cells. Preserves the byte-identical
+            // behaviour documented in `vardct_ac_dispatch_paired_2026-05-17`.
             self.try_dct64 = false;
         }
     }
@@ -2823,6 +2881,94 @@ mod tests {
             !p.try_dct64,
             "lossy experimental e7 small + low-d: adapter still fires"
         );
+    }
+
+    /// W44-35: `adapt_to_image_lossy_with_smoothness(.., true)` must
+    /// suppress the `try_dct64 -> false` flip on the gated cell so the
+    /// encoder evaluates DCT64 transforms on smooth photos that benefit.
+    /// `with_smoothness(.., false)` must be byte-identical to
+    /// `adapt_to_image_lossy`.
+    #[test]
+    fn test_adapt_to_image_lossy_with_smoothness_w44_35() {
+        // 1. Smooth-photo hint TRUE on gated cell: dispatch suppressed.
+        for effort in 7u8..=10 {
+            for &pixels in &[1u64, 1024, 262_144, 499_999] {
+                for &distance in &[0.1_f32, 0.5, 1.0, 1.5, 1.999] {
+                    let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+                    p.adapt_to_image_lossy_with_smoothness(pixels, distance, true);
+                    assert!(
+                        p.try_dct64,
+                        "smooth_photo=true e{effort} pixels={pixels} d={distance}: \
+                         try_dct64 must stay true (W44-35 admission)"
+                    );
+                }
+            }
+        }
+
+        // 2. Smooth-photo hint FALSE on gated cell: byte-identical to
+        //    `adapt_to_image_lossy` (try_dct64 drops to false).
+        for effort in 7u8..=10 {
+            let mut p_with = EffortProfile::lossy(effort, EncoderMode::Reference);
+            p_with.adapt_to_image_lossy_with_smoothness(262_144, 1.0, false);
+            let mut p_without = EffortProfile::lossy(effort, EncoderMode::Reference);
+            p_without.adapt_to_image_lossy(262_144, 1.0);
+            assert_eq!(
+                p_with.try_dct64, p_without.try_dct64,
+                "e{effort}: smooth_photo=false must match adapt_to_image_lossy()"
+            );
+            assert!(
+                !p_with.try_dct64,
+                "e{effort} smooth_photo=false: try_dct64 must drop"
+            );
+        }
+
+        // 3. Above pixel threshold: smoothness hint is irrelevant.
+        let mut p_smooth = EffortProfile::lossy(7, EncoderMode::Reference);
+        p_smooth.adapt_to_image_lossy_with_smoothness(1_048_576, 1.0, true);
+        assert!(
+            p_smooth.try_dct64,
+            "medium image: try_dct64 stays true regardless of hint"
+        );
+
+        // 4. At/above distance threshold: smoothness hint is irrelevant.
+        let mut p_smooth = EffortProfile::lossy(7, EncoderMode::Reference);
+        p_smooth.adapt_to_image_lossy_with_smoothness(262_144, 2.0, true);
+        assert!(
+            p_smooth.try_dct64,
+            "d=2.0: try_dct64 stays true (gate not firing) regardless of hint"
+        );
+
+        // 5. Effort 5..=6 (ac_strategy_enabled but try_dct64 default
+        //    false): smooth_photo=true admits DCT64 via the W44-35
+        //    force-enable. Closes the 1418519 e6 cells.
+        for effort in 5u8..=6 {
+            let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert!(!p.try_dct64, "e{effort} baseline: try_dct64 must be false");
+            assert!(
+                p.ac_strategy_enabled,
+                "e{effort} baseline: ac_strategy_enabled must be true"
+            );
+            p.adapt_to_image_lossy_with_smoothness(262_144, 1.0, true);
+            assert!(
+                p.try_dct64,
+                "e{effort} smooth_photo=true: try_dct64 flipped to true (W44-35)"
+            );
+        }
+
+        // 6. Effort < 5: AC strategy search disabled; smooth_photo hint
+        //    is a no-op (admitting DCT64 wouldn't fire anyway).
+        for effort in 1u8..=4 {
+            let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert!(
+                !p.ac_strategy_enabled,
+                "e{effort} baseline: ac_strategy_enabled must be false"
+            );
+            p.adapt_to_image_lossy_with_smoothness(262_144, 1.0, true);
+            assert!(
+                !p.try_dct64,
+                "e{effort} smooth_photo=true: try_dct64 stays false (ac search off)"
+            );
+        }
     }
 
     /// RFC #45 pick #4 chunk 1 — `adapt_to_image_content` must flip

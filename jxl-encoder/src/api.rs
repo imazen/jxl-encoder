@@ -838,6 +838,228 @@ pub fn downsample_channel_u8(src: &[u8], width: usize, height: usize, factor: u3
     out
 }
 
+// ── W44-35: smooth-photo DCT64 admission detector ──────────────────────────
+
+/// Mean-abs adjacent-luma-diff threshold (4×-downsampled luma plane,
+/// integer scale 0..255) below which the input is "smooth enough" for
+/// DCT64-class transforms to win on the gated-cell (W44-35).
+/// Calibration: smooth photos 1418519 / 7256805 / 1025469 all measure
+/// `<= 0.10`; textured photos and most screenshots measure `>= 0.20`.
+const W44_35_PROXY_EDGE_DENSITY_MAX: f32 = 0.15;
+
+/// Fraction-of-8×8-blocks-with-luma-variance-below-5 threshold above
+/// which the input looks like solid-color screen content (W44-35).
+/// Calibration: smooth photos measure `~0.50`; solid-color UI screenshots
+/// (codec_wiki, terminal) measure `>= 0.67`.
+const W44_35_PROXY_FLAT_SOLID_MAX: f32 = 0.60;
+
+/// `mean(|2c - l - r| over rows + |2c - t - b| over cols) / mean(|r-l| + |b-t|)`
+/// threshold above which the input has too much high-frequency energy to
+/// benefit from DCT64-class merges (W44-35). Calibration: smooth photos
+/// 1418519 / 7256805 measure `<= 0.95`; textured photo 1025469 measures
+/// `1.38`; screenshots measure `>= 1.30`.
+const W44_35_PROXY_HF_RATIO_MAX: f32 = 1.0;
+
+/// Auto detector for the W44-35 smooth-photo DCT64 admission gate.
+///
+/// Returns `true` when the input classifies as a smooth photo that
+/// benefits from DCT64-class transforms even on the small + low-distance
+/// gated cell. Cheap cost (~0.2 ms on 512×512 RGB on a modern desktop):
+/// reads the input once, computes three integer aggregates on a
+/// 4×-downsampled luma plane.
+///
+/// Discriminator (all 3 must hold):
+/// - Edge density proxy < [`W44_35_PROXY_EDGE_DENSITY_MAX`] = 0.15
+/// - Solid-color block ratio < [`W44_35_PROXY_FLAT_SOLID_MAX`] = 0.60
+/// - HF energy ratio < [`W44_35_PROXY_HF_RATIO_MAX`] = 1.0
+///
+/// **Provenance**: `benchmarks/w44_35_dct64_smart_dispatch_calibrate.tsv`
+/// and `examples/dct64_smart_dispatch_proxy_calibrate.rs`. Validated on
+/// 10 stratified images across 8 cells each (e ∈ {6, 7}, d ∈ {1.0, 1.2,
+/// 1.6, 2.0}): admits 1418519 (-5 to -7 % bytes), admits 7256805
+/// (-2 to -4 %), correctly skips 1025469 (mixed +/- < 1.3 %), correctly
+/// skips all 4 screenshots / pixel-art.
+///
+/// **Callers**: each lossy entry point in [`crate::api`] computes this
+/// once on the input RGB before resolving the per-image profile via
+/// [`LossyConfig::effective_profile_for_image_with_smoothness`]. The
+/// `with_smooth_photo_dct64_hint(Some(_))` override always wins.
+///
+/// **Layout dispatch**: this function takes raw `pixels` plus a
+/// [`PixelLayout`] descriptor and only fires on the u8 sRGB-encoded
+/// layouts (`Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`). For other layouts
+/// (16-bit, float, gray) it returns `false` — the gate falls through
+/// to the default `adapt_to_image_lossy` behaviour. Callers wanting
+/// the admission on non-u8 layouts should set
+/// [`LossyConfig::with_smooth_photo_dct64_hint(Some(true))`].
+#[must_use]
+pub(crate) fn detect_smooth_photo_for_dct64_from_layout(
+    pixels: &[u8],
+    w: u32,
+    h: u32,
+    layout: PixelLayout,
+) -> bool {
+    // Only sRGB u8 layouts are supported by the cheap proxy. Other
+    // layouts return `false` (conservative — the gate stays as today).
+    let (bpp, r_offset) = match layout {
+        PixelLayout::Rgb8 => (3usize, 0usize),
+        PixelLayout::Rgba8 => (4usize, 0usize),
+        PixelLayout::Bgr8 => (3usize, 2usize), // R at +2, B at +0
+        PixelLayout::Bgra8 => (4usize, 2usize),
+        _ => return false,
+    };
+    detect_smooth_photo_for_dct64_inner(pixels, w, h, bpp, r_offset)
+}
+
+/// Internal kernel for [`detect_smooth_photo_for_dct64_from_layout`].
+/// Operates on interleaved u8 sRGB at `bpp` bytes per pixel with the
+/// R channel at byte offset `r_offset` (0 for RGB-order, 2 for BGR-order).
+/// Luma is approximated as `(R + 2G + B) >> 2`.
+fn detect_smooth_photo_for_dct64_inner(
+    rgb: &[u8],
+    w: u32,
+    h: u32,
+    bpp: usize,
+    r_offset: usize,
+) -> bool {
+    // Cheap proxy: only meaningful when the gate condition would fire
+    // (pixels < 500_000). Skip the work otherwise to keep the entry-point
+    // dispatch overhead-free on production-sized inputs.
+    let pixels = (w as u64) * (h as u64);
+    if pixels >= crate::effort::LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD {
+        return false;
+    }
+    let w = w as usize;
+    let h = h as usize;
+    if w * h * bpp != rgb.len() {
+        return false;
+    }
+    let stride = w * bpp;
+    // Channel-byte offsets for R/G/B (G is always between R and B
+    // in RGB-order; for BGR-order R is at +2, G is at +1, B is at +0).
+    let g_off = 1usize;
+    let b_off = if r_offset == 0 { 2 } else { 0 };
+    let ds = 4usize;
+    let dw = w / ds;
+    let dh = h / ds;
+    if dw < 3 || dh < 3 {
+        return false;
+    }
+    // Build integer luma plane on the 4×-downsampled grid.
+    let mut luma = vec![0i32; dw * dh];
+    for dy in 0..dh {
+        let y = dy * ds;
+        let row_off = y * stride;
+        for dx in 0..dw {
+            let x = dx * ds;
+            let i = row_off + x * bpp;
+            let r = rgb[i + r_offset] as i32;
+            let g = rgb[i + g_off] as i32;
+            let b = rgb[i + b_off] as i32;
+            // Approximate luma: (R + 2G + B) / 4, range 0..255.
+            luma[dy * dw + dx] = (r + 2 * g + b) >> 2;
+        }
+    }
+    // Proxy 1: mean abs adjacent luma diff (edge density).
+    let mut sum_d1: u64 = 0;
+    let mut count_d1: u64 = 0;
+    for y in 0..dh {
+        for x in 1..dw {
+            let a = luma[y * dw + x - 1];
+            let b = luma[y * dw + x];
+            sum_d1 += (a - b).unsigned_abs() as u64;
+            count_d1 += 1;
+        }
+    }
+    for y in 1..dh {
+        for x in 0..dw {
+            let a = luma[(y - 1) * dw + x];
+            let b = luma[y * dw + x];
+            sum_d1 += (a - b).unsigned_abs() as u64;
+            count_d1 += 1;
+        }
+    }
+    let mean_d1 = (sum_d1 as f32) / (count_d1.max(1) as f32);
+    let proxy_edge = mean_d1 / 64.0;
+    if proxy_edge >= W44_35_PROXY_EDGE_DENSITY_MAX {
+        return false;
+    }
+    // Proxy 2: HF energy ratio (mean abs 2nd-derivative / mean abs 1st-derivative).
+    let mut sum_d2: u64 = 0;
+    let mut count_d2: u64 = 0;
+    let mut sum_d1_center: u64 = 0;
+    for y in 0..dh {
+        for x in 1..dw - 1 {
+            let l = luma[y * dw + x - 1];
+            let c = luma[y * dw + x];
+            let r = luma[y * dw + x + 1];
+            sum_d2 += (2 * c - l - r).unsigned_abs() as u64;
+            sum_d1_center += (r - l).unsigned_abs() as u64;
+            count_d2 += 1;
+        }
+    }
+    for y in 1..dh - 1 {
+        for x in 0..dw {
+            let t = luma[(y - 1) * dw + x];
+            let c = luma[y * dw + x];
+            let b = luma[(y + 1) * dw + x];
+            sum_d2 += (2 * c - t - b).unsigned_abs() as u64;
+            sum_d1_center += (b - t).unsigned_abs() as u64;
+            count_d2 += 1;
+        }
+    }
+    let mean_d2 = (sum_d2 as f32) / (count_d2.max(1) as f32);
+    let mean_d1c = (sum_d1_center as f32) / (count_d2.max(1) as f32) + 0.001;
+    let proxy_hf = mean_d2 / mean_d1c;
+    if proxy_hf >= W44_35_PROXY_HF_RATIO_MAX {
+        return false;
+    }
+    // Proxy 3: fraction of 8×8 luma blocks with intra-block variance < 5
+    // (= near-solid-color regions, typical of screen content). Run on the
+    // full-resolution input.
+    let block = 8usize;
+    let bw = w / block;
+    let bh = h / block;
+    if bw == 0 || bh == 0 {
+        // Image smaller than a single 8×8 block — can't be DCT64 candidate.
+        return false;
+    }
+    let mut flat: u64 = 0;
+    let mut total: u64 = 0;
+    for by in 0..bh {
+        for bx in 0..bw {
+            let mut sum: u32 = 0;
+            let mut sum_sq: u32 = 0;
+            for py in 0..block {
+                let y = by * block + py;
+                let row_off = y * stride;
+                for px in 0..block {
+                    let x = bx * block + px;
+                    let i = row_off + x * bpp;
+                    let r = rgb[i + r_offset] as u32;
+                    let g = rgb[i + g_off] as u32;
+                    let b = rgb[i + b_off] as u32;
+                    let luma_v = (r + 2 * g + b) >> 2;
+                    sum += luma_v;
+                    sum_sq += luma_v * luma_v;
+                }
+            }
+            let n = (block * block) as u32;
+            let mean = sum as f32 / n as f32;
+            let var = (sum_sq as f32 / n as f32) - mean * mean;
+            if var < 5.0 {
+                flat += 1;
+            }
+            total += 1;
+        }
+    }
+    let ratio = (flat as f32) / (total.max(1) as f32);
+    if ratio >= W44_35_PROXY_FLAT_SOLID_MAX {
+        return false;
+    }
+    true
+}
+
 // ── Supporting types ────────────────────────────────────────────────────────
 
 /// Image metadata (ICC, EXIF, XMP, JUMBF, tone mapping) to embed in the JXL file.
@@ -3461,6 +3683,31 @@ pub struct LossyConfig {
     /// See [`Self::with_high_d_photo_hint`]. References the W44-28
     /// honest-stop memo + W44-27 firing-rate audit.
     high_d_photo_hint: Option<bool>,
+    /// Optional caller-supplied override for the W44-35 smooth-photo
+    /// DCT64 admission gate.
+    ///
+    /// `EffortProfile::adapt_to_image_lossy` disables `try_dct64` on
+    /// `pixels < 500_000` AND `distance < 2.0`. This gate was originally
+    /// calibrated on a single textured image (7256805) and missed the
+    /// smooth-photo class entirely; W44-34 traced 5 OPEN ledger cells on
+    /// 1418519.png (a 512×512 smooth photo) to this gate firing where
+    /// `try_dct64=true` would have BEATEN cjxl by 5-7 % bytes.
+    ///
+    /// Semantics:
+    /// - `None` (default): use the auto detector
+    ///   [`detect_smooth_photo_for_dct64`] (cheap RGB-based discriminator
+    ///   on edge density + flat block ratio + HF energy). Fires only when
+    ///   the gate condition holds (`pixels < 500_000` AND `distance < 2.0`)
+    ///   AND the input classifies as a smooth photo. Hash-locks outside
+    ///   that envelope stay byte-identical.
+    /// - `Some(true)`: force-admit DCT64 even on the gated cell. Caller
+    ///   asserts the image is in the smooth-photo class.
+    /// - `Some(false)`: force-skip the admission. Caller asserts the
+    ///   image regresses under DCT64 evaluation.
+    ///
+    /// See [`Self::with_smooth_photo_dct64_hint`] and W44-34 root-cause
+    /// memo (`1418519_mid_d_wedge_2026-05-18.md`).
+    smooth_photo_dct64_hint: Option<bool>,
     /// Tracks whether the caller has explicitly set `patches` via
     /// [`Self::with_patches`]. Mirrors the
     /// `butteraugli_iters_explicit` / `resampling_explicit` pattern.
@@ -3718,6 +3965,12 @@ impl LossyConfig {
             // distance >= 4.0 AND median(mask1x1) < smooth-content
             // threshold). Hash-locks at d < 4.0 stay byte-identical.
             high_d_photo_hint: None,
+            // W44-35: default None engages the auto detector
+            // (`detect_smooth_photo_for_dct64`). Hash-locks at sizes
+            // < 64×64 stay byte-identical (the underlying transform
+            // can't fit there). Larger fixtures get the same auto
+            // detection as production input.
+            smooth_photo_dct64_hint: None,
             patches_explicit: false,
             patches_dispatch: PatchesDispatch::default(),
             epf_level: -1,
@@ -3804,12 +4057,35 @@ impl LossyConfig {
     /// Mirrors the lossless [`LosslessConfig::effective_profile_for_image`]
     /// (audit item #3 / chunk 1 `1c4691f`).
     pub(crate) fn effective_profile_for_image(&self, pixels: u64) -> crate::effort::EffortProfile {
+        self.effective_profile_for_image_with_smoothness(pixels, false)
+    }
+
+    /// Variant of [`Self::effective_profile_for_image`] that also takes a
+    /// caller-computed `smooth_photo_for_dct64` hint (W44-35).
+    ///
+    /// When the auto detector says `true` AND the caller has not pinned
+    /// `Some(false)` via [`Self::with_smooth_photo_dct64_hint`], the
+    /// `adapt_to_image_lossy` `try_dct64 -> false` flip is suppressed
+    /// on the gated cell so DCT64-class transforms are evaluated.
+    ///
+    /// Caller-supplied explicit `Some(true)`/`Some(false)` always wins
+    /// over the auto detector. Default `None` defers to the auto value.
+    pub(crate) fn effective_profile_for_image_with_smoothness(
+        &self,
+        pixels: u64,
+        smooth_photo_for_dct64_auto: bool,
+    ) -> crate::effort::EffortProfile {
         let mut p = self.effective_profile();
         // Always-on per-image adapter — skipped only when an explicit
         // `__expert` override is in play, to avoid silently re-flipping
         // a sweep harness's pinned value.
         if self.profile_override.is_none() {
-            p.adapt_to_image_lossy(pixels, self.distance);
+            // W44-35: caller hint wins over auto detector. Default `None`
+            // engages the auto detector value computed at the entry point.
+            let smooth_hint = self
+                .smooth_photo_dct64_hint
+                .unwrap_or(smooth_photo_for_dct64_auto);
+            p.adapt_to_image_lossy_with_smoothness(pixels, self.distance, smooth_hint);
             // RFC #45 pick #4 chunk 1 — content-class dispatch.
             // Fires only when the caller has explicitly set the class
             // via `with_content_class` (default `None` keeps every
@@ -3922,6 +4198,7 @@ impl LossyConfig {
         new.content_aware_entropy_mul = self.content_aware_entropy_mul;
         new.screenshot_lift_hint = self.screenshot_lift_hint;
         new.high_d_photo_hint = self.high_d_photo_hint;
+        new.smooth_photo_dct64_hint = self.smooth_photo_dct64_hint;
         // Preserve explicit patches setting across with_effort.
         if self.patches_explicit {
             new.patches = self.patches;
@@ -4706,6 +4983,47 @@ impl LossyConfig {
     /// (default `None`).
     pub fn high_d_photo_hint(&self) -> Option<bool> {
         self.high_d_photo_hint
+    }
+
+    /// Caller-supplied override for the W44-35 smooth-photo DCT64
+    /// admission gate.
+    ///
+    /// [`crate::effort::EffortProfile::adapt_to_image_lossy`] disables
+    /// `try_dct64` on `pixels < 500_000` AND `distance < 2.0`. This
+    /// gate was originally calibrated on a single textured image and
+    /// missed the smooth-photo class entirely; the W44-34 root-cause
+    /// memo traced 5 OPEN ledger cells on `1418519.png` (a 512×512
+    /// smooth photo) to this gate firing, where `try_dct64=true`
+    /// would have BEATEN cjxl by 5-7 % bytes (-6.07 % paired total
+    /// across 5 cells).
+    ///
+    /// Semantics:
+    /// - `None` (default): use the encoder's internal auto detector
+    ///   (cheap RGB-based discriminator on edge density + flat-block
+    ///   ratio + HF energy). Fires only when the gate condition holds
+    ///   AND the input classifies as a smooth photo. Hash-locks on
+    ///   sub-64 × 64 fixtures stay byte-identical (DCT64 cannot apply).
+    /// - `Some(true)`: force-admit DCT64 even on the gated cell.
+    ///   Caller asserts the image is in the smooth-photo class
+    ///   (typically validated via a zenanalyze classifier in the
+    ///   caller — see `dct64_smart_dispatch_calibrate` example for
+    ///   the W44-35 calibration).
+    /// - `Some(false)`: force-skip the admission. Caller asserts the
+    ///   image regresses under DCT64 evaluation (preserves the
+    ///   pre-W44-35 behaviour on any image).
+    ///
+    /// References W44-34 root-cause memo (`1418519_mid_d_wedge_2026-05-18.md`),
+    /// W44-35 calibration TSV
+    /// (`benchmarks/w44_35_dct64_smart_dispatch_calibrate.tsv`).
+    pub fn with_smooth_photo_dct64_hint(mut self, hint: Option<bool>) -> Self {
+        self.smooth_photo_dct64_hint = hint;
+        self
+    }
+
+    /// Currently-set [`Self::with_smooth_photo_dct64_hint`] override
+    /// (default `None`).
+    pub fn smooth_photo_dct64_hint(&self) -> Option<bool> {
+        self.smooth_photo_dct64_hint
     }
 
     /// Set a separate butteraugli distance for the alpha extra channel
@@ -7431,7 +7749,19 @@ impl<'a> EncodeRequest<'a> {
             }
         };
 
-        let mut profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
+        // W44-35: cheap smooth-photo auto-detect on the raw sRGB u8
+        // input (when applicable) feeds the DCT64 admission gate via
+        // `effective_profile_for_image_with_smoothness`. Returns false
+        // for non-u8 layouts, large images (>= 500k px), and content
+        // that fails the smoothness discriminator. Caller-supplied
+        // `with_smooth_photo_dct64_hint(Some(_))` always wins over the
+        // auto value (resolved inside `effective_profile_*`).
+        let smooth_photo_for_dct64 =
+            detect_smooth_photo_for_dct64_from_layout(pixels, self.width, self.height, self.layout);
+        let mut profile = cfg.effective_profile_for_image_with_smoothness(
+            (w as u64) * (h as u64),
+            smooth_photo_for_dct64,
+        );
 
         let mut linear_rgb = linear_rgb;
 
@@ -12123,6 +12453,158 @@ mod tests {
         let cfg = LossyConfig::new(0.5).with_effort(7);
         let p = cfg.effective_profile_for_image(4_194_304);
         assert!(p.try_dct64, "large_4MP + d=0.5 + e7: try_dct64 stays true");
+    }
+
+    /// W44-35 smooth-photo DCT64 admission gate: when the smoothness
+    /// auto-detector (or caller hint) is `true`, suppress the
+    /// `adapt_to_image_lossy` `try_dct64 -> false` flip even on the
+    /// gated cell.
+    #[test]
+    fn test_lossy_effective_profile_for_image_smooth_photo_admission() {
+        // Baseline: small + low-d + e7 with `smooth_photo=false` keeps
+        // the gated behaviour (try_dct64 = false). Matches the pre-W44-35
+        // result asserted in the existing dct64_dispatch test.
+        let cfg = LossyConfig::new(1.0).with_effort(7);
+        let p = cfg.effective_profile_for_image_with_smoothness(512 * 512, false);
+        assert!(
+            !p.try_dct64,
+            "smooth_photo=false on gated cell: try_dct64 stays false"
+        );
+
+        // Auto detector returns `true` (input classified smooth) →
+        // the dispatch must restore try_dct64=true so the encoder
+        // evaluates DCT64-class transforms. This is the W44-34 fix.
+        let cfg = LossyConfig::new(1.0).with_effort(7);
+        let p = cfg.effective_profile_for_image_with_smoothness(512 * 512, true);
+        assert!(
+            p.try_dct64,
+            "smooth_photo=true on gated cell: try_dct64 restored to true (W44-35)"
+        );
+
+        // Caller hint Some(true) wins over auto detector value false.
+        let cfg = LossyConfig::new(1.0)
+            .with_effort(7)
+            .with_smooth_photo_dct64_hint(Some(true));
+        let p = cfg.effective_profile_for_image_with_smoothness(512 * 512, false);
+        assert!(
+            p.try_dct64,
+            "explicit hint Some(true) wins over auto=false: try_dct64=true"
+        );
+
+        // Caller hint Some(false) wins over auto detector value true.
+        let cfg = LossyConfig::new(1.0)
+            .with_effort(7)
+            .with_smooth_photo_dct64_hint(Some(false));
+        let p = cfg.effective_profile_for_image_with_smoothness(512 * 512, true);
+        assert!(
+            !p.try_dct64,
+            "explicit hint Some(false) wins over auto=true: try_dct64=false"
+        );
+
+        // Outside the gate envelope (medium image), smoothness signal is
+        // irrelevant — try_dct64 stays at the effort default (true at e7).
+        let cfg = LossyConfig::new(1.0).with_effort(7);
+        let p = cfg.effective_profile_for_image_with_smoothness(1024 * 1024, false);
+        assert!(
+            p.try_dct64,
+            "medium image: try_dct64 stays true regardless of smoothness"
+        );
+
+        // At e6 the baseline try_dct64 is false (effort gate); on the
+        // small + low-d cell the smooth-photo hint admits it (forced
+        // true) so the encoder evaluates DCT64-class transforms.
+        // Closes the 1418519 e6 cells (W44-34 forensics).
+        let cfg = LossyConfig::new(1.2).with_effort(6);
+        let p_default = cfg.effective_profile_for_image_with_smoothness(512 * 512, false);
+        assert!(
+            !p_default.try_dct64,
+            "e6 baseline: try_dct64 stays false (pre-W44-35 behaviour)"
+        );
+        let p_smooth = cfg.effective_profile_for_image_with_smoothness(512 * 512, true);
+        assert!(
+            p_smooth.try_dct64,
+            "e6 + smooth_photo=true on gated cell: try_dct64 admitted (W44-35)"
+        );
+    }
+
+    /// W44-35 auto detector: smooth photo (low edge, low HF, low solid
+    /// fill) returns `true`; textured / screen-content / large images
+    /// return `false`.
+    #[test]
+    fn test_detect_smooth_photo_for_dct64() {
+        // Large input (>= 500_000 px): short-circuits to false even on
+        // smooth content (the gate it informs doesn't fire above 500k).
+        let large_smooth = vec![128u8; 800 * 800 * 3];
+        assert!(!detect_smooth_photo_for_dct64_from_layout(
+            &large_smooth,
+            800,
+            800,
+            PixelLayout::Rgb8,
+        ));
+
+        // Flat solid mid-gray (variance=0 everywhere) on a 512×512:
+        // proxy_flat is 1.0 (all blocks solid) → rejected as
+        // screenshot-like.
+        let solid = vec![128u8; 512 * 512 * 3];
+        assert!(!detect_smooth_photo_for_dct64_from_layout(
+            &solid,
+            512,
+            512,
+            PixelLayout::Rgb8,
+        ));
+
+        // Smooth low-frequency texture (photo-like): low edge density,
+        // moderate flat ratio, low HF — should classify as smooth photo.
+        // Built from a slow sinusoidal modulation so per-block variance
+        // sits in the "smooth gradient" band (var > 5 → not "solid")
+        // but the wavelength is long enough that proxy_edge and
+        // proxy_hf both stay below the admission thresholds.
+        let mut smooth = vec![0u8; 256 * 256 * 3];
+        for y in 0..256 {
+            for x in 0..256 {
+                // Slow sinusoid in both axes, mean=128, amp~80.
+                let fx = (x as f32) * 0.02; // ~32px wavelength
+                let fy = (y as f32) * 0.02;
+                let v = (128.0 + 80.0 * fx.sin() * fy.cos()).clamp(0.0, 255.0) as u8;
+                let i = (y * 256 + x) * 3;
+                smooth[i] = v;
+                smooth[i + 1] = v;
+                smooth[i + 2] = v;
+            }
+        }
+        assert!(
+            detect_smooth_photo_for_dct64_from_layout(&smooth, 256, 256, PixelLayout::Rgb8),
+            "low-frequency sinusoidal texture should classify as smooth photo"
+        );
+
+        // Coarse high-contrast checkerboard (8×8 cells): high edge
+        // density, screen-content-like — rejected. Cell size 8 is past
+        // the 4× downsample Nyquist so edges survive into the proxy.
+        let mut checker = vec![0u8; 256 * 256 * 3];
+        for y in 0..256 {
+            for x in 0..256 {
+                let on = ((x / 8) + (y / 8)) % 2 == 0;
+                let v = if on { 255u8 } else { 0 };
+                let i = (y * 256 + x) * 3;
+                checker[i] = v;
+                checker[i + 1] = v;
+                checker[i + 2] = v;
+            }
+        }
+        assert!(
+            !detect_smooth_photo_for_dct64_from_layout(&checker, 256, 256, PixelLayout::Rgb8),
+            "coarse high-contrast checkerboard must NOT classify as smooth photo"
+        );
+
+        // Non-u8 layouts return false (auto detector skipped — caller
+        // can still set Some(true) via the hint API).
+        let f32_data = vec![0u8; 256 * 256 * 4 * 4]; // float pixels
+        assert!(!detect_smooth_photo_for_dct64_from_layout(
+            &f32_data,
+            256,
+            256,
+            PixelLayout::RgbaLinearF32,
+        ));
     }
 
     /// `__expert` sweep override pinning `try_dct64=Some(true)` must

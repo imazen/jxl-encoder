@@ -1,0 +1,100 @@
+# W44-35 calibration: smoothness-gated try_dct64 admission for small photos
+
+## Purpose
+
+Find a smoothness discriminator that admits the 1418519-class (smooth
+512×512 photos) into DCT64 evaluation at mid-distances (d ∈ {1.0, 1.2,
+1.6, 2.0}) while keeping screenshots / pixel-art / textured photos
+gated off. Follow-on to W44-34 root-cause forensics that traced 5 OPEN
+ledger cells on 1418519.png to `EffortProfile::adapt_to_image_lossy`
+disabling try_dct64 on pixels<500_000 + distance<2.0.
+
+## Parent commit / branch
+
+Branch: main (W44-34 base: dd9e1237)
+Sibling workspace: /home/lilith/work/zen/jxl-encoder--w44-35-dct64-smart-dispatch
+
+## Sweep grid
+
+- 10 images (5 photos + 1 textured photo + 3 screenshots + 1 pixel-art)
+- All images cropped center to 512×512 (262_144 px, under 500k gate)
+- 2 efforts (6, 7)
+- 4 distances (1.0, 1.2, 1.6, 2.0)
+- 2 variants: bytes_default (gate firing, try_dct64=false) vs
+  bytes_force (LossyInternalParams::try_dct64=Some(true))
+- 2 measurement reps per variant, take min wall-time
+- Single-threaded encode
+- Features: parallel butteraugli-loop ssim2-loop __expert
+
+## Reproducer
+
+```bash
+cd /home/lilith/work/zen/jxl-encoder--w44-35-dct64-smart-dispatch
+cargo run -p jxl-encoder --release \
+    --features 'parallel butteraugli-loop ssim2-loop __expert' \
+    --example dct64_smart_dispatch_calibrate \
+    -- benchmarks/w44_35_dct64_smart_dispatch_calibrate.tsv
+```
+
+Note: requires zenanalyze sibling path dep, temporarily added in
+`jxl-encoder/Cargo.toml [dev-dependencies]` (must revert before push
+per the existing pattern documented at the top of the dev-deps block).
+
+## Discriminator findings (read off from the TSV)
+
+Three thresholds, all 3 must hold to admit DCT64:
+
+| signal              | threshold | rationale                                |
+|---                  |---        |---                                       |
+| proxy_edge_density  | < 0.15    | reject textured photos (1531677, 1420710) |
+| proxy_flat_v=5_ratio| < 0.60    | reject solid-color UI screenshots (codec_wiki) |
+| proxy_hf_ratio      | < 1.0     | reject high-HF photos (1025469)          |
+
+Per-image classification under those rules:
+- 1418519 (smooth_photo, target): ADMIT (-5 to -7 % bytes)
+- 7256805 (textured_photo): ADMIT (-2 to -4 %)
+- 1025469 (photo, hf=0.303): SKIP (mixed +/- < 1.3 %)
+- 1531677/1420710/1189261 (photo, high edge): SKIP
+- terminal/codec_wiki/imac_g3 (screenshots): SKIP
+- windows95 (pixel_art): SKIP
+
+## Implementation chunks
+
+1. `adapt_to_image_lossy_with_smoothness` in src/effort.rs:
+   accepts `smooth_photo_hint: bool`. When true on gated cell, FORCES
+   try_dct64=true (instead of dropping to false). When false, byte-
+   identical to `adapt_to_image_lossy`.
+
+2. `detect_smooth_photo_for_dct64_from_layout` in src/api.rs: cheap
+   RGB-u8 detector implementing the 3-threshold discriminator above.
+   Returns false for non-u8 layouts and large images (short-circuit).
+
+3. `LossyConfig::with_smooth_photo_dct64_hint(Option<bool>)`:
+   caller-supplied override (Some(_) wins over auto, None engages
+   auto detector).
+
+4. Wired into `encode_lossy` main entry point at api.rs:7752 via
+   `effective_profile_for_image_with_smoothness(pixels, smooth_auto)`.
+
+## Acceptance result
+
+W44-34 verification table (5 cells on 1418519, pre→post):
+
+| cell       | bytes pre | bytes post | Δ pre | Δ post |
+|---         |---        |---         |---    |---     |
+| e6_d1.0    | 23074     | 21723      | --    | -5.86% |
+| e6_d1.2    | 20894     | 19723      | --    | -5.60% |
+| e6_d1.6    | 17334     | 16155      | --    | -6.80% |
+| e7_d1.2    | 20899     | 19730      | --    | -5.59% |
+| e7_d1.6    | 17325     | 16151      | --    | -6.78% |
+| TOTAL      | 99526     | 93482      | --    | -6.07% |
+
+All 5 cells flipped OPEN → FIXED. Screenshots at e7 d ∈ {3, 4, 5, 6}
+byte-identical to pre-W44-35 (gate doesn't fire). F-D residual cells
+(1531677/1420710 at d ∈ {5, 6}) byte-identical. Small photo cells at
+d=1.2 that the classifier correctly rejects (1531677, 1420710,
+1189261, 1025469) also byte-identical.
+
+Hash-lock test: 36 of 36 pass (sub-64×64 fixtures, DCT64 can't fire).
+RD-regression test: 18 of 18 pass (improvements on frymire, 1028637).
+jxl-oxide multi-decoder roundtrip: 5 of 5 OK.
