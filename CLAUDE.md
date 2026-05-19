@@ -586,6 +586,37 @@ Key patterns to watch for when working on this codebase:
 
 ## Investigation Notes
 
+### W44-60: AFV policy already at parity (May 19, 2026)
+
+**Status**: [HONEST-STOP — no code shipped]
+
+W44-58/59 sequence claimed an AFV call-distribution gap (ours 64/128
+vs libjxl 4096/4096). Counter-counted directly from the W44-58 dumps
+(`/tmp/w44-58/`) after applying the internal→wire strategy remap:
+**AFV0-3 evaluated exactly 16,384 times each on both sides for every
+cell**. Both per-call cost inputs (W44-59) AND call frequency (this
+chunk) are at parity. The W44-58 task description's `"ours=64/128 vs
+libjxl=4096/4096"` framing came from misreading the dump-side call
+counts where internal strategy codes (12-15 for AFV) were tagged
+against libjxl wire codes (14-17 for AFV) — they happen to land in
+the same slot indices but represent different transforms.
+
+The only real call-frequency divergence is in DCT64X32/DCT32X64
+(ours 128/128 vs libjxl 256/192 per 512×512 cell). At positions we
+DO evaluate, mean entropy matches libjxl to 0.05%. Extra libjxl
+evaluations come from `TryMergeAcs(DCT64X32)` non-aligned pass in
+`ProcessRectACS` — we have no analog. Adding it would require ~150
+LOC + hash-lock regen for likely <0.5% byte impact (mean costs at
+parity, TryMergeAcs short-circuits when worse). Documented as a
+follow-on candidate but explicitly NOT shipped this chunk per the
+time budget + low-EV gate.
+
+Full audit table + RCA + DO-NOT list:
+`~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_60_afv_policy_audit_already_at_parity_2026-05-19.md`
+
+**DO NOT**: Re-spawn AFV chunks. Both numerical and call-frequency
+are proven at parity.
+
 ### W44-57: per-stream kWPFixedDC override on DC stream — SHIPPED (May 19, 2026)
 
 **Status**: [RESOLVED — shipped]; issue #57 follow-on to W44-56 stage 7d.
