@@ -1,0 +1,22 @@
+commit: (audit-only, no production code change)
+host: lilith-archmage
+date: 2026-05-19
+purpose: W44-83 — re-audit W44-81 #4 suspicion of kAvoidEntropyOfTransforms
+  double-count in find_best_16x16_transform path
+method: read-only side-by-side audit of libjxl/lib/jxl/enc_ac_strategy.cc
+  (FindBest8x8Transform line 513-613; TryMergeAcs line 618-653;
+  FindBestFirstLevelDivisionForSquare line 703-825) vs
+  jxl-encoder/src/vardct/ac_strategy_search.rs
+  (find_best_16x16_transform_impl line 352-884;
+   try_merge_16x16_impl line 1155-1444;
+   find_best_32x32_transform_impl line 2262-2784;
+   find_best_64x64_transform_impl line 3042-3667)
+result: RULED OUT. No double-count exists. W44-81 #4 cited lines 2495-2502
+  but those are inside find_best_32x32_transform_impl, not 16x16.
+  All merge candidates (DCT16X*, DCT32X*, DCT64X*) receive 0.0 adjust;
+  avoid_transforms_adjust applied exactly once per 8x8-class sub-cost.
+tests: cargo test --release -p jxl-encoder --lib avoid_entropy passes
+  (test_avoid_entropy_of_transforms_mul_libjxl_parity,
+   test_avoid_entropy_dct4x4_at_d6)
+follow-on: W44-81 #2a (adaptive BlockCtxMap threshold widening),
+  #3 (block_fraction sampling), #5 (MaxHistograms cap)
