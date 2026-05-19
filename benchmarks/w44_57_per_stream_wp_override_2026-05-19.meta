@@ -1,0 +1,66 @@
+# W44-57 — Per-stream kWPFixedDC override on DC stream (issue #57)
+
+## Date
+2026-05-19
+
+## Repo state
+- Branch: main
+- Baseline commit: 4f626bd4 (W44-56 stage 7d Variable-mode DC LearnTree)
+- This commit: see git log (W44-57)
+
+## Hostname
+Water-cooled AMD Ryzen 9 7950X, 128 GB RAM, WSL2 / Ubuntu 24.04.
+
+## Command (repro)
+```bash
+cargo build --release -p jxl-encoder-cli
+for SPEC in <cell list>; do
+  cjxl-rs $PNG /tmp/baseline.jxl -d $D -e $E   # main
+  cjxl-rs $PNG /tmp/w44_57.jxl   -d $D -e $E   # this branch
+done
+```
+
+## Sweep grid
+16 cells spanning the 6 W44-56 wins + gate-c target (terminal e6 d=6)
++ 4 extra spot-checks (small d, large d, e5/e7):
+
+- W44-56 wins (must stay byte-identical OR better):
+  1418519 d=0.8/2.0/4.0 e6, 1025469 d=1.0/3.0/4.0 e6,
+  1189261 d=4.0 e6, 1420710 d=6.0 e6, codec_wiki d=3.0 e6
+- Gate-c target: terminal e6 d=6 (LfGlobal ≤30B target)
+- Spot-checks: imac_g3 d=3, imac_dark d=3, 1418519 d=1.0 e5/e7,
+  terminal e6 d=0.5/d=3.0
+
+## Results
+
+ALL 16 cells: byte-identical to baseline (0 bytes delta, 0% delta).
+
+Per-cell A/B with FORCE_FIXED env hook (debug-only) reveals:
+- terminal e6 d=6: FORCE_FIXED would save 204 B LfGlobal (904→700)
+  but cost 2555 B NET (55062 → 57617). Trial-and-pick correctly
+  picks Variable. Gate-c target LfGlobal ≤30B is therefore
+  UNREACHABLE while preserving NET parity.
+- 5 of 6 W44-56 wins: Variable wins both LfGlobal AND NET.
+- 1418519 d=0.8: FORCE_FIXED would save 61 B NET (-0.24%) +
+  124 B LfGlobal. Trial-and-pick chose Variable. Sub-threshold
+  miss; cost-model proxy is not bit-exact vs actual ANS.
+
+## Conclusion
+
+W44-57 ships the per-stream kWPFixedDC override infrastructure.
+The cost model evaluates both candidates per stream and picks
+the cheaper one. On the current ledger cells, Variable wins
+on every screenshot and almost every photo (61 B miss on
+1418519 d=0.8 = 0.24%, sub-threshold).
+
+The issue's gate-c target (LfGlobal ≤30B on terminal e6 d=6) is
+structurally incompatible with NET file size parity. The 904 B
+LfGlobal IS the optimal choice — kWPFixedDC would save 204 B
+in LfGlobal at the cost of 2555 B in AC. The W44-56 cost-model
+refinement that landed Variable on this cell was correct.
+
+Issue #57 should close with this finding: the per-stream override
+infrastructure is in place; on the current grid, the override
+never fires in favor of kWPFixedDC because Variable always wins.
+Future cells may shift the balance; the infrastructure stands
+ready.

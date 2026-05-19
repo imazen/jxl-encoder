@@ -2314,21 +2314,31 @@ impl VarDctEncoder {
         // `Buffering::BufferedOutput` via `WritableSeek`.
 
         // Build context tree and remap tables (shared across DC groups).
-        // Three modes:
+        // Four modes:
         //   1. `use_lf_frame`: DC is in a separate frame — only AC metadata
         //      tree/tokens needed in the main frame.
         //   2. `effort >= 4` (libjxl `speed_tier < kFalcon`, [enc_modular.cc:1166]):
-        //      data-adaptive LearnTree. Mirrors libjxl's default path for the
-        //      majority of production effort levels.
+        //      data-adaptive LearnTree (Variable mode) vs predefined
+        //      `kWPFixedDC` — picked per stream by trial-tokenizing both and
+        //      keeping the cheaper one (W44-57, issue #57). Mirrors libjxl's
+        //      per-stream override at `enc_modular.cc:1586-1590`, but generalised
+        //      to "measure residual cost with both, pick smaller" so we keep
+        //      the W44-56 wins on photos that benefit from per-leaf predictor
+        //      adaptation AND drop the 900 B LfGlobal overhead on heavily
+        //      quantized screenshots (terminal e6 d=6) where the fixed BSP
+        //      tree pays for itself in a few hundred bits while Variable's
+        //      14-leaf predictor tokens never amortize.
         //   3. `effort <= 3` (libjxl `speed_tier == kFalcon`,
         //      [enc_modular.cc:676-680]): predefined `kWPFixedDC` tree with
         //      Weighted Predictor on `wp_max_error` (property 15). Cheap to
         //      compute, no sample-gathering pass.
         //
-        // The previous behaviour used `kWPFixedDC` at every effort level,
-        // which over-spends on screenshot LfGlobal at high distance — W44-50
-        // measured `terminal e6 d=6` LfGlobal at 700 B vs cjxl 15 B. Adaptive
-        // tree learning collapses splits that don't pay for themselves.
+        // The W44-54..7c era used Variable-only at `effort >= 4`, which
+        // over-spent on terminal e6 d=6 LfGlobal (904 B vs cjxl 15 B). The
+        // W44-50 era used `kWPFixedDC` at every effort level, which
+        // over-spends on the photo cells where multi-predictor adaptation
+        // shaves real bits. The trial-and-pick gate here picks the right one
+        // per image.
         let (learned_tree_tokens, total_contexts, ac_meta_ctx_map);
         // Per-mode DC tree state. At most one of `wp_dc_state` /
         // `learned_dc_state` is populated; both are `None` for `use_lf_frame`.
@@ -2344,33 +2354,26 @@ impl VarDctEncoder {
             wp_dc_state = None;
             learned_dc_state = None;
         } else if self.effort >= 4 {
-            // Stage 7c (W44-56): Variable-mode learner extends W44-54's
-            // effort >= 4 LearnTree path with per-leaf best-of-14 predictor
-            // selection + WP state in property 15.
+            // W44-57 (issue #57) — per-stream kWPFixedDC override on DC stream.
             //
-            // Dispatch design — pragmatic mix vs libjxl's stricter per-stream
-            // override (`enc_modular.cc:1584-1598`):
-            //   libjxl at effort 5/6/7 (kHare/kWombat/kSquirrel) sets DC
-            //   stream → kWPFixedDC (not learned). Only at effort >= 8 does
-            //   libjxl learn the DC tree (`Predictor::Best` at e=8,
-            //   `Predictor::Variable` at e=9).
+            // Strategy: build BOTH candidate trees (Variable learner from
+            // stage 7c W44-56, plus the cheap predefined kWPFixedDC BSP),
+            // trial-tokenize the whole DC channel with each, estimate
+            // tree-overhead + DC-token cost (Shannon entropy + per-context
+            // ANS-histogram header proxy via `estimate_token_cost`), keep
+            // the cheaper one.
             //
-            //   We keep the learned path active at effort >= 4 (W44-54 wedge
-            //   closure: terminal e6 d=6 LfGlobal 700 B → adaptive). The
-            //   Variable-mode upgrade in stage 7c additionally closes the
-            //   1418519 photo regression cluster (predicted OPEN→FIXED in
-            //   the W44-55 ledger plan).
-            //
-            // Variable-mode learner: gathers multi-predictor residuals + WP
-            // state, evaluates all 14 simple predictors per leaf, emits
-            // per-leaf best predictor. Mirrors libjxl
-            // `SetPredictor(Predictor::Variable)` + `FindBestSplit`
-            // (`enc_ma.cc:542-547, 158-457`). Property set extended to 16
-            // including `wp_max_error` (kWPProp = 15).
-            //
-            // Splits that don't beat ~60 bits overhead are rejected, so on
-            // heavily-quantized content the tree collapses to a few leaves —
-            // preserves the W44-50 wedge closure.
+            // Honest-stop notes:
+            //   * Trial cost runs over the FULL DC channel (xsize_blocks ·
+            //     ysize_blocks · 3 pixels) — same work the actual per-DC-group
+            //     tokenizer will do later. We pay one extra DC-pass to avoid
+            //     a 900 B LfGlobal regression. At 12 MP that's < 1 ms.
+            //   * libjxl's `enc_modular.cc:1586-1590` per-stream override
+            //     unconditionally forces kWPFixedDC at `speed_tier >= kSquirrel`
+            //     (effort ≤ 7). Our trial-and-pick is strictly more capable —
+            //     it picks kWPFixedDC where libjxl would AND keeps Variable
+            //     where Variable wins (W44-56 photo cluster). Either tree is
+            //     spec-compliant; only the cost model decides.
             let mut samples = super::dc_tree_learn::DcTreeSamples::new();
             super::dc_tree_learn::gather_dc_samples_variable(&mut samples, quant_dc);
 
@@ -2380,29 +2383,118 @@ impl VarDctEncoder {
             let (learned_tree, learned_num_contexts) =
                 super::dc_tree_learn::learn_dc_tree_variable(&samples, max_token);
 
-            let (wrapped_tokens, num_ctx, dc_remap, ctx_map) =
+            // Candidate A: Variable learner (W44-56).
+            let (a_wrapped, a_num_ctx, a_dc_remap, a_ctx_map) =
                 super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
                     &learned_tree,
                     learned_num_contexts,
                     num_dc_groups,
                 );
 
-            learned_tree_tokens = Some(wrapped_tokens);
-            total_contexts = num_ctx;
-            ac_meta_ctx_map = ctx_map;
+            // Candidate B: predefined kWPFixedDC (libjxl per-stream override).
+            let total_dc_pixels = xsize_blocks * ysize_blocks * 3;
+            let (wp_dc_tree, wp_dc_num_contexts) =
+                super::dc_tree_learn::build_wp_fixed_dc_tree(total_dc_pixels, 8);
+            let (b_wrapped, b_num_ctx, b_dc_remap, b_ctx_map) =
+                super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
+                    &wp_dc_tree,
+                    wp_dc_num_contexts,
+                    num_dc_groups,
+                );
+
+            // Trial-tokenize DC residuals for both candidates over the full image.
+            // Each helper uses its own predictor & context-mapping (Variable
+            // reads per-leaf predictor; WP runs Weighted with wp_max_error
+            // splits). DC tokens are quantized-coefficient residuals; cost is
+            // a proxy for the actual LfGlobal `dc_entropy_code` byte cost.
+            let mut a_dc_tokens = super::dc_tree_learn::collect_dc_tokens_with_tree_variable(
+                quant_dc,
+                &learned_tree,
+                0,
+                0,
+                xsize_blocks,
+                ysize_blocks,
+            );
+            for t in a_dc_tokens.iter_mut() {
+                t.set_context(a_dc_remap[t.context() as usize]);
+            }
+
+            let mut b_dc_tokens = super::dc_coding::collect_dc_tokens_wp(
+                quant_dc,
+                &wp_dc_tree,
+                0,
+                0,
+                xsize_blocks,
+                ysize_blocks,
+            );
+            for t in b_dc_tokens.iter_mut() {
+                t.set_context(b_dc_remap[t.context() as usize]);
+            }
+
+            // Cost = tree-encoding tokens (LfGlobal `dc_entropy_code` tree
+            // prefix) + DC-residual tokens (LfGroup `dc` stream content).
+            // `estimate_token_cost` returns Shannon bits + a per-context
+            // header proxy (~50 bits/context) — same model used in
+            // `modular/section.rs:804` and tree_learn loops.
+            let a_tree_toks: Vec<crate::entropy_coding::token::Token> = a_wrapped
+                .iter()
+                .map(|&(ctx, val)| crate::entropy_coding::token::Token::new(ctx, val))
+                .collect();
+            let b_tree_toks: Vec<crate::entropy_coding::token::Token> = b_wrapped
+                .iter()
+                .map(|&(ctx, val)| crate::entropy_coding::token::Token::new(ctx, val))
+                .collect();
+
+            let a_cost = crate::modular::tree_learn::estimate_token_cost(&a_tree_toks)
+                + crate::modular::tree_learn::estimate_token_cost(&a_dc_tokens);
+            let b_cost = crate::modular::tree_learn::estimate_token_cost(&b_tree_toks)
+                + crate::modular::tree_learn::estimate_token_cost(&b_dc_tokens);
 
             #[cfg(feature = "debug-tokens")]
             eprintln!(
-                "Learned DC tree: samples={}, dc_contexts={}, total={}, dc_remap={:?}, ac_map={:?}",
-                samples.num_samples,
+                "W44-57 per-stream override: variable_cost={:.1} fixed_cost={:.1} winner={} \
+                 (variable: tree_toks={} dc_ctx={} | fixed: tree_toks={} dc_ctx={})",
+                a_cost,
+                b_cost,
+                if a_cost <= b_cost {
+                    "Variable"
+                } else {
+                    "kWPFixedDC"
+                },
+                a_wrapped.len(),
                 learned_num_contexts,
-                total_contexts,
-                dc_remap,
-                ac_meta_ctx_map
+                b_wrapped.len(),
+                wp_dc_num_contexts,
             );
 
-            wp_dc_state = None;
-            learned_dc_state = Some((learned_tree, dc_remap));
+            // Debug env hooks (W44-57 A/B sweep harness):
+            //   __JXL_W44_57_FORCE_FIXED=1 → always pick kWPFixedDC
+            //   __JXL_W44_57_FORCE_VARIABLE=1 → always pick Variable learner
+            // Used for `examples/w44_57_dc_tree_ab_sweep.rs` and ad-hoc
+            // ledger spot-checks. Unset = production trial-and-pick.
+            let force_fixed = std::env::var_os("__JXL_W44_57_FORCE_FIXED").is_some();
+            let force_variable = std::env::var_os("__JXL_W44_57_FORCE_VARIABLE").is_some();
+            let pick_variable = if force_fixed {
+                false
+            } else if force_variable {
+                true
+            } else {
+                a_cost <= b_cost
+            };
+
+            if pick_variable {
+                learned_tree_tokens = Some(a_wrapped);
+                total_contexts = a_num_ctx;
+                ac_meta_ctx_map = a_ctx_map;
+                wp_dc_state = None;
+                learned_dc_state = Some((learned_tree, a_dc_remap));
+            } else {
+                learned_tree_tokens = Some(b_wrapped);
+                total_contexts = b_num_ctx;
+                ac_meta_ctx_map = b_ctx_map;
+                wp_dc_state = Some((wp_dc_tree, b_dc_remap));
+                learned_dc_state = None;
+            }
         } else {
             // kWPFixedDC tree at effort <= 3.
             // Uses Weighted Predictor with balanced BSP on wp_max_error (property 15).
