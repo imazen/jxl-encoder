@@ -1,0 +1,91 @@
+W44-39 codec_wiki block context map probe
+==========================================
+
+Commit:    a0229b6d9e4e167a6c81902fb9274992ae1c7fc2 (parent of probe commit; pre-build)
+Workspace: ~/work/zen/jxl-encoder--w44-39-codec-wiki-contexts (jj workspace)
+Host:      lilith
+Date:      2026-05-19
+
+Sweep grid
+----------
+Image:    codec_wiki.png (2560x1664, dark-mode webpage screenshot, gb82-sc corpus)
+Effort:   6 and 7 (matches W44-37 OPEN cells)
+Distance: {1.0, 2.0, 3.0, 4.0, 5.0, 6.0}
+Encoders: ours = jxl-encoder release build, single-thread
+          cjxl = /home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl v0.12.0
+                 --num_threads 1 --quiet
+
+Decoded via
+-----------
+jxl-frame 0.13.3 (imazen/jxl-oxide fork rev fd4e2c3 patched via workspace
+[patch.crates-io]). Bitstream parsing through ContainerParser ->
+ImageHeader::parse -> FrameHeader::parse -> Toc::parse -> LfGlobal::parse.
+Block context map extracted from `LfGlobal::vardct.hf_block_ctx`:
+  - num_block_clusters (= our BlockCtxMap::num_ctxs)
+  - qf_thresholds.len()
+  - block_ctx_map.len()
+
+Verdict (H1 from W44-37: codec_wiki block context map is over-clustered)
+-----------------------------------------------------------------------
+RULED OUT for 4 of 5 OPEN cells (e7 d=3,4,5,6).
+LIKELY-CONFIRMED for 1 of 5 cells (e6 d=4.0): ours=13, cjxl=10.
+
+Per-cell results
+----------------
+cell                    ours_clust  cjxl_clust  diff  bytes_delta_pct
+e6 d=4 (OPEN)           13          10          +3    +3.20%
+e7 d=3 (OPEN)           14          14          0     +4.14%
+e7 d=4 (OPEN)           13          13          0     +7.34%
+e7 d=5 (OPEN)           10          10          0     +6.16%
+e7 d=6 (OPEN)           8           8           0     +6.67%
+e7 d=1 (ref FIXED)      14          14          0     -17.16%
+e7 d=2 (ref FIXED)      14          14          0     -15.16%
+
+context map length (78 = 3 channels x 13 strategy order buckets x 2 qf segs)
+is IDENTICAL for ours and cjxl on every cell. num_qf_thresholds is identical
+(1 on every cell, giving num_qf_segs = 2).
+
+Conclusion: the +3-7% bytes overspend at e7 d=3-6 is NOT located in the
+block context map. The two encoders ship the same cluster count, same
+qf_threshold count, same context_map length, same context_map encoding
+size on the wire. The hf_global overspend (~35-50% per W44-37) must live
+in the per-context HISTOGRAMS (ANS frequency tables or LZ77 stream) and
+not in the BlockCtxMap layer.
+
+W44-37's claim that "16528-bit (2066 byte) context map alone is ~48% of
+our hf_global" is therefore mis-attributed. cjxl ships the SAME 78-element
+ctx_map; the bytes are not the wedge.
+
+Action taken
+------------
+NONE in production code. The `nb_clusters_luma`/`nb_clusters_chroma`
+clamping in `vardct/ac_context.rs:231-232` is at byte-parity with libjxl
+(verified by independent calc on codec_wiki: tot=66560, d=4 ->
+size_for_ctx_model=4096, nb_clusters_luma=clamp(8.125,2,9)=8,
+nb_clusters_chroma=clamp(5.4,1,5)=5, total=13) AND at decoder-observable
+parity (this probe).
+
+Recommended next chunk
+----------------------
+Re-investigate the per-context HISTOGRAMS at e7 d=3-6:
+  1. Dump per-context ANS frequency tables for both encoders at e7 d=4
+  2. Compare HybridUint config selections per histogram
+  3. Check whether cjxl uses LZ77 in the AC stream at e7 (we currently
+     disable LZ77 for VarDCT at e<9 per c0329f3)
+  4. Check histogram clustering aggressiveness: even with 13 clusters,
+     enhanced_clustering pair-merge may merge histograms more aggressively
+     in cjxl
+
+For the e6 d=4 cell (only cell where cluster count differs), the +3
+extra clusters add ~3 * (1-3 KB per histogram) = a few KB to hf_global.
+That mechanism could account for the ~2.4 KB total overspend at this
+cell (cjxl 74416 vs ours 76795). But this is a SEPARATE wedge from the
+e7 cluster — and the e6 d=4 wedge is the same DCT64-starved root cause
+identified in W44-37 Mechanism A (cluster count differs as a downstream
+consequence of which qf values are present, which is gated by which AC
+strategies pick which mul levels).
+
+Reproducer
+----------
+cargo run -p jxl-encoder --release --example w44_39_block_ctx_probe -- \
+    --output benchmarks/codec_wiki_block_ctx_2026-05-19.tsv
