@@ -1,0 +1,9 @@
+image	effort	distance	encoder	bytes	ref_total	main_lf_global	main_hf_global	main_lf_groups	main_passes	ref_w	ref_h	ref_bpp
+codec_wiki.png	7	3.0	cjxl	72232	7522	1352	3111	16595	43521	140	132	3.253
+codec_wiki.png	7	3.0	ours	75245	5932	1598	4229	18826	44525	133	130	2.741
+codec_wiki.png	7	4.0	cjxl	62710	6827	1350	2699	16270	35433	140	132	2.952
+codec_wiki.png	7	4.0	ours	67321	5597	1505	3703	18068	38312	133	130	2.586
+codec_wiki.png	7	5.0	cjxl	57232	6083	1279	1924	14323	33492	140	132	2.630
+codec_wiki.png	7	5.0	ours	60760	5115	1521	2880	15567	35542	133	130	2.363
+codec_wiki.png	7	6.0	cjxl	51875	5822	1306	1801	13781	29035	140	132	2.517
+codec_wiki.png	7	6.0	ours	55343	4954	1468	2587	14701	31498	133	130	2.288
