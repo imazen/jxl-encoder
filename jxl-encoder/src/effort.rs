@@ -9,6 +9,7 @@
 //! `(effort, mode)`, then pass to all subsystems.
 
 use crate::api::EncoderMode;
+use crate::entropy_coding::ans::ANSHistogramStrategy;
 use crate::entropy_coding::lz77::Lz77Method;
 
 /// Per-strategy raw entropy multipliers for the AC strategy cost model.
@@ -274,6 +275,21 @@ pub struct EffortProfile {
     /// The fast optimization picks non-default configs whose signaling overhead
     /// exceeds their coding benefit on VarDCT token distributions.
     pub optimize_uint_configs_vardct: bool,
+    /// ANS histogram normalization strategy for VarDCT entropy codes.
+    ///
+    /// libjxl `enc_ans_params.h:60-75` (HistogramParams ctor):
+    /// `tier >= kSquirrel` (effort <= 7 in our scheme) → `ANSHistogramStrategy::kApproximate`;
+    /// otherwise → `kPrecise` (the struct default).
+    ///
+    /// `Precise` tries all 12 shift values to find the lowest-cost ANS distribution
+    /// header; `Approximate` tries every other shift (7 values, step 2). For most
+    /// distributions the best shift sits on an even index, so Approximate finds a
+    /// header within a few bits of Precise while spending less encoder CPU AND
+    /// shipping smaller headers on average (W44-42 codec_wiki wedge: precise's
+    /// extra search overhead on shift-odd candidates often picks a tighter data
+    /// fit at the cost of a larger header — Approximate's coarser grid lands on
+    /// the better total-bytes point on this kind of content).
+    pub ans_histogram_strategy_vardct: ANSHistogramStrategy,
     /// Compute per-block dynamic EPF sharpness (effort >= 6 in libjxl).
     pub epf_dynamic_sharpness: bool,
     /// Recompute CfL map after initial quantization for better estimates (effort >= 7 in libjxl).
@@ -794,6 +810,16 @@ impl EffortProfile {
             chromacity_adjustment: effort >= 7,
             enhanced_clustering_vardct: effort >= 9,
             optimize_uint_configs_vardct: effort >= 9,
+            // libjxl `enc_ans_params.h:72-74`: `tier >= kSquirrel`
+            // (cjxl effort <= 7) → Approximate; tier < kSquirrel
+            // (cjxl effort >= 8) → kPrecise (struct default).
+            // Approximate trades a few bits of data-fit for smaller
+            // headers — wins on diverse-context streams (W44-43).
+            ans_histogram_strategy_vardct: if effort >= 8 {
+                ANSHistogramStrategy::Precise
+            } else {
+                ANSHistogramStrategy::Approximate
+            },
             epf_dynamic_sharpness: effort >= 6,
             cfl_two_pass: effort >= 7,
             cfl_newton: effort >= 7,
@@ -932,6 +958,7 @@ impl EffortProfile {
             chromacity_adjustment: false,
             enhanced_clustering_vardct: false,
             optimize_uint_configs_vardct: false, // N/A for lossless
+            ans_histogram_strategy_vardct: ANSHistogramStrategy::Precise, // N/A for lossless
             epf_dynamic_sharpness: false,
             cfl_two_pass: false,
             cfl_newton: false,
@@ -1772,6 +1799,13 @@ pub struct LossyInternalParams {
     /// uses fast k-means-only clustering (cheaper, slightly larger codes).
     pub enhanced_clustering_vardct: Option<bool>,
 
+    /// ANS histogram normalization strategy for VarDCT entropy codes.
+    /// Default mirrors libjxl `enc_ans_params.h:60-75`: `Approximate` at
+    /// effort <= 7 (libjxl `tier >= kSquirrel`), `Precise` at effort >= 8.
+    /// `Fast` is exposed for sweeps; users should rarely override the
+    /// effort-derived default.
+    pub ans_histogram_strategy_vardct: Option<ANSHistogramStrategy>,
+
     /// Quantization-cost constant used when materializing the initial
     /// quant field (libjxl 0.765, `enc_adaptive_quantization.cc`). Lower
     /// values produce a coarser initial field (less rate, more distortion);
@@ -1980,6 +2014,7 @@ impl LossyInternalParams {
             patch_ref_tree_learning,
             non_aligned_eval,
             enhanced_clustering_vardct,
+            ans_histogram_strategy_vardct,
             k_ac_quant,
             lossy_search_seeds,
         } = self;
@@ -2018,6 +2053,9 @@ impl LossyInternalParams {
         }
         if let Some(v) = enhanced_clustering_vardct {
             profile.enhanced_clustering_vardct = v;
+        }
+        if let Some(v) = ans_histogram_strategy_vardct {
+            profile.ans_histogram_strategy_vardct = v;
         }
         if let Some(v) = k_ac_quant {
             profile.k_ac_quant = v;
