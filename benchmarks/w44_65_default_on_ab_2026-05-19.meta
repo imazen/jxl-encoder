@@ -1,0 +1,177 @@
+# W44-65 — `dct_suppress_hint` default-on auto-detection
+
+## Context
+
+Follow-on to W44-63 (`6169ba7b`, opt-in API) which shipped the
+`LossyConfig::with_dct_suppress_hint(Option<bool>)` setter gated behind
+`content_aware_entropy_mul = true`. W44-64 ledger refresh
+(`5a5d17b3`) measured 20 OPEN cells residual after the 9-chunk
+W44-54..W44-63 session, with 3 codec_wiki cells (e7 d=4/5/6)
+identified as the only closeable cluster via default-on of this hint
+(the other 17 OPEN are F-D structural residual, ruled out per
+`f_d_residual_exhausted_2026-05-18`).
+
+This chunk promotes the W44-63 discriminator to default-on with a
+**tighter** mask1x1 median threshold (99.5 vs the opt-in 95.0) to
+keep windows95-class pixel-art byte-identical to pre-W44-65 main.
+
+## What shipped
+
+- **Encoder dispatch change** (`vardct/encoder.rs:2249-2305`): the
+  `w44_65_suppress_dct64` decision now fires unconditionally when
+  `dct_suppress_hint = None`, using the new
+  [`W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD`] (`>= 99.5`). Previous
+  W44-63 logic was gated behind `content_aware_entropy_mul = true`
+  AND used the looser `> 95` shared threshold.
+- **New constant** `W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD = 99.5`
+  (`vardct/encoder.rs:161-191`) with full rationale documenting the
+  encoder-pipeline mask1x1 medians measured for each class:
+  - Production screenshots: ≈ 100.013 (saturated max).
+  - windows95: ≈ 99.060 (near-saturated pixel-art — must be excluded).
+  - All 41 CID22 validation photos: ≤ 92.34.
+- **API doc updated** (`api.rs` lines 3711-3754, 5073-5117): semantics
+  of `with_dct_suppress_hint` reflect default-on. Added explicit
+  "Bitstream change" callout — pre-W44-65 main can be recovered with
+  `Some(false)`.
+- **Encoder field doc updated** (`vardct/encoder.rs:808-833`):
+  `pub dct_suppress_hint: Option<bool>` doc string mirrors the API
+  change.
+- **W44-65 mask1x1 probe** (`examples/w44_65_mask1x1_probe.rs`,
+  `examples/w44_65_encoder_mask1x1_probe.rs`): two probes characterise
+  the median distribution. The standalone probe used `srgb_to_xyb` and
+  diverged from the encoder by ~17 (windows95: 81.49 standalone vs
+  99.06 encoder) due to LUT vs powf and scalar vs SIMD float precision
+  in the conversion path. The encoder-pipeline probe (`debug-w44-65`
+  feature flag, prints from inside `vardct::encoder`) is the
+  authoritative measurement.
+- **Debug feature** (`debug-w44-65`): emits one line per encode with
+  `mask1x1_median`, `dct_suppress_hint`, and image dimensions. Zero
+  runtime cost when feature is off. Used for the threshold tuning;
+  retained for future investigation.
+- **A/B harness** (`examples/w44_65_default_on_ab.rs`): 22-cell sweep
+  comparing pinned (`Some(false)`, pre-W44-65 main) vs default
+  (`None`, W44-65). Covers codec_wiki target cells + already-FIXED
+  screenshot regression probes + windows95 pixel-art invariant +
+  5 photo regression probes.
+- **Decoder roundtrip test** (`tests/w44_65_decoder_roundtrip.rs`):
+  5 `#[ignore]` tests. Three exercise the codec_wiki target cells
+  through both djxl and jxl_cli (jxl-rs); two assert
+  byte-equality between pinned and default on windows95 + 1418519
+  (worst-case photo at mask1x1_median=92.34).
+
+## Reproducer
+
+```
+cd ~/work/zen/jxl-encoder--w44-65-screenshot-dct-suppress
+cargo run -p jxl-encoder --release --features 'parallel' \
+    --example w44_65_default_on_ab
+
+# Manual decoder roundtrip (slow):
+cargo test -p jxl-encoder --release --test w44_65_decoder_roundtrip \
+    --features 'parallel' -- --nocapture --ignored
+```
+
+## Measured impact (`benchmarks/w44_65_default_on_ab_2026-05-19.tsv`)
+
+22-cell harness:
+
+| variant            | total bytes | TOTAL Δ      | wins | regs |
+|---                 |---          |---           |---   |---   |
+| A pre-W44-65 pinned | 947,728     | —            | —    | —    |
+| B W44-65 default-on | 941,434     | **-0.66 %** | 8    | 0    |
+
+**Target cells (codec_wiki e7)**:
+- d=4: -1.36 % (closes OPEN — bytes 65830 → 64936)
+- d=5: -3.25 % (closes OPEN — bytes 59239 → 57314)
+- d=6: -1.59 % (closes OPEN — bytes 53936 → 53078)
+
+**Already-FIXED screenshot deepening**:
+- imac_g3 e7 d=4: -0.66 % (137 KB → 136 KB)
+- imac_g3 e7 d=5: -1.07 % (120 KB → 119 KB)
+- imac_g3 e7 d=6: -0.18 %
+- terminal e7 d=4: -0.13 %
+- terminal e7 d=5: -0.66 %
+- terminal e7 d=6: byte-identical (DCT64 not picked anyway at d=6)
+
+**Pixel-art invariance (windows95)**:
+- e7 d=1: byte-identical (50096)
+- e7 d=2: byte-identical (39615) — was +1.13 % regression under
+  `> 95` threshold before the W44-65 tighter `>= 99.5` threshold.
+- e7 d=4: byte-identical (29909) — was -0.26 % win under
+  the looser threshold; we accept losing this small win to keep
+  windows95 fully byte-identical.
+
+**Photo invariance (all 5 probes byte-identical)**:
+- 1189261 (median 69.08), 1418519 (median 92.34, worst case),
+  1420710 (median 39.55), 1531677 (median 35.63),
+  1025469 (median 76.08): all photos at all tested distances
+  produce identical bytes between pinned and default paths
+  (`mask1x1_median < 99.5` for every CID22 validation photo).
+
+## Acceptance gates (all PASS)
+
+| Gate | Threshold | Result |
+| --- | --- | --- |
+| (a) codec_wiki flips        | 3 cells OPEN→FIXED                | **PASS** (3/3, -1.36/-3.25/-1.59 %) |
+| (b) Photo regression        | 0 cells with Δ > +0.05 %          | **PASS** (5/5 byte-identical) |
+| (c) Pixel-art regression    | windows95 0 cells regressed       | **PASS** (3/3 byte-identical) |
+| (d) Already-FIXED deepening | Screenshot Δ ≤ 0                  | **PASS** (5 wins, 1 byte-identical) |
+| (e) Hash-lock invariance    | 36 fixtures byte-identical        | **PASS** (no fixture has median ≥ 99.5) |
+| (f) Decoder roundtrip       | djxl + jxl_cli accept all variants | **PASS** (15/15 codec_wiki runs ok) |
+| (g) Lib tests               | `cargo test --release --lib`       | **PASS** (1258 passed, 29 ignored) |
+
+## Hash-lock regen count
+
+**0 fixtures**. The 36 in-tree `hash_lock_expected.txt` fixtures
+exercise small synthetic content (max 48×48 + noise patterns) where
+the mask1x1 median is far below 99.5, so the W44-65 gate never fires.
+
+## Files changed
+
+```
+benchmarks/w44_65_default_on_ab_2026-05-19.meta            |  ~180 lines (new)
+benchmarks/w44_65_default_on_ab_2026-05-19.tsv             |   23 lines (new)
+jxl-encoder/Cargo.toml                                     |   ~22 lines (3 example regs + debug-w44-65 feature)
+jxl-encoder/examples/w44_65_default_on_ab.rs               |  225 lines (new)
+jxl-encoder/examples/w44_65_mask1x1_probe.rs               |  170 lines (new)
+jxl-encoder/examples/w44_65_encoder_mask1x1_probe.rs       |   95 lines (new)
+jxl-encoder/src/api.rs                                     |   ~70 lines (+/-)
+jxl-encoder/src/vardct/encoder.rs                          |  ~120 lines (+/-)
+jxl-encoder/tests/w44_65_decoder_roundtrip.rs              |  175 lines (new)
+```
+
+## Ledger impact (estimated for W44-66)
+
+| | Pre-W44-65 (W44-64) | Post-W44-65 (predicted) |
+| --- | --- | --- |
+| OPEN | 20 | 17 (3 codec_wiki cells flip) |
+| FIXED | 575 | 578 |
+| F-D residual | 17 of 20 | 17 of 17 (100 % residual) |
+
+The 17 remaining OPEN are pure F-D structural residual per
+`f_d_residual_exhausted_2026-05-18` (cells on 1420710, 1531677,
+1189261 at d=5/6, ruled unfixable on global pipeline). All other
+W44-arc closeable wedges are now landed.
+
+## What's NOT shipped
+
+- **No zenanalyze dependency** added to production hot path. The W44-64
+  recommendation suggested a `palette_log2_size >= 6` companion gate
+  (W23-2 classifier shape) to protect windows95-class pixel-art. The
+  W44-65 encoder-pipeline mask1x1 probe showed the tighter threshold
+  (`>= 99.5` vs `> 95`) is sufficient on its own. windows95 sits at
+  median 99.06, cleanly excluded by `>= 99.5`. Adding zenanalyze
+  would buy nothing measurable here while increasing the encoder's
+  build-graph + cold-start cost.
+- **No threshold tuning per distance** — single global threshold works
+  across all tested distances. The W44-62 falsification showed the
+  DCT64-overpick signal aligns 1:1 with the screenshot class
+  regardless of distance.
+
+## References
+
+- W44-63: `w44_63_dct_suppress_hint_shipped_2026-05-19.md`
+- W44-64: `w44_64_ledger_refresh_post_9_chunks_2026-05-19.md`
+- W44-62: `w44_62_dct64_suppress_lever_found_2026-05-19.md`
+- W23-2: `entropy_mul_smart_dispatch_2026-05-18.{tsv,meta}`
+- F-D residual closure: `f_d_residual_exhausted_2026-05-18.md`
