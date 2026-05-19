@@ -1,0 +1,87 @@
+# dc_learn_tree_sweep_2026-05-19_w44_54.tsv — meta
+
+## Provenance
+
+- **Commit (new)**: `d53519d4` (perf(vardct): wire learned DC tree at effort >= 4)
+- **Commit (baseline)**: `c48c50be` (pre-rebase `0fb4854c` main, W44-47 baseline)
+- **Host**: `lilith-zen` (AMD Ryzen 9 7950X, 128 GB RAM)
+- **Date**: 2026-05-19
+- **Binary baseline**:
+  `/home/lilith/work/zen/jxl-encoder/target/release/cjxl-rs` (built from
+  `c48c50be`)
+- **Binary new**:
+  `/home/lilith/work/zen/jxl-encoder--w44-54-dc-learn-tree/target/release/cjxl-rs`
+  (built from `d53519d4`)
+- **Script**: `/tmp/w44_54_full_sweep.sh` (paired A/B encode per cell,
+  single-threaded `cjxl-rs` invocation, no metric loop).
+
+## Grid
+
+- **Corpora**:
+  - photos: 5 CLIC2025-1024 1024×1024 RGB8 images.
+  - screenshots: 8 gb82-sc RGB8 images (terminal, imac_g3, imac_dark,
+    codec_wiki, windows, windows95, imessage, graph).
+- **Efforts**: 5, 6, 7, 8.
+- **Distances**: 0.5, 1.0, 2.0, 3.0, 4.0, 6.0.
+- **Cells**: 5 × 4 × 6 + 8 × 4 × 6 = 120 photos + 192 screenshots = 312.
+  308 produced output (4 cells (graph e7/e8 at higher d) timed out
+  individually but the sweep continued); 312 attempted.
+
+## Summary (paired byte delta = (new - base) / base × 100)
+
+| corpus       | n   | avg byte delta |
+|---           |---  |---             |
+| photos       | 120 | +0.89%         |
+| screenshots  | 188 | -1.25%         |
+| **overall**  | 308 | **-0.42%**     |
+
+## Per-corpus best/worst (10 cells each)
+
+### Worst photo cells (regression cluster):
+- `0369d229ba4c` e8 d6.0  +3.48 %
+- `0369d229ba4c` e7 d6.0  +3.30 %
+- `0369d229ba4c` e8 d4.0  +3.23 %
+- `0369d229ba4c` e5 d6.0  +3.06 %
+- `0369d229ba4c` e7 d4.0  +3.01 %
+- `0369d229ba4c` e6 d6.0  +2.89 %
+- `0369d229ba4c` e5 d4.0  +2.81 %
+- `0369d229ba4c` e5 d3.0  +2.80 %
+- `0369d229ba4c` e8 d3.0  +2.75 %
+- `0369d229ba4c` e6 d3.0  +2.75 %
+
+All 10 worst-cell regressions are on `0369d229ba4c` — smooth
+photographic content where the WP-fixed DC tree's `Predictor::Weighted`
+was a strong fit and gradient-residual prediction is much worse.
+Follow-on: WP-residual learning + per-leaf `Predictor::Weighted` should
+close this cluster.
+
+### Best screenshot cells (wedge closure):
+- `terminal` e8 d0.5  -3.56 %
+- `terminal` e7 d0.5  -3.36 %
+- `terminal` e5 d6.0  -3.12 %
+- `terminal` e8 d2.0  -3.08 %
+- `terminal` e6 d6.0  -3.00 %
+- `terminal` e7 d6.0  -2.06 %
+- `terminal` e7 d3.0  -2.02 %
+- `terminal` e7 d4.0  -2.05 %
+- `terminal` e5 d3.0  -1.74 %
+- `terminal` e5 d0.5  -2.00 %
+
+Closes the W44-50 wedge (`terminal e6 d=6` was the original symptom,
++4.0% vs cjxl pre-fix, now +0.9% vs cjxl).
+
+## Reproducer
+
+```bash
+# Build baseline (main):
+cd /home/lilith/work/zen/jxl-encoder
+git checkout c48c50be
+cargo build --release --bin cjxl-rs
+
+# Build new path (W44-54):
+cd /home/lilith/work/zen/jxl-encoder--w44-54-dc-learn-tree
+cargo build --release --bin cjxl-rs
+
+# Re-run sweep:
+bash /tmp/w44_54_full_sweep.sh
+```
