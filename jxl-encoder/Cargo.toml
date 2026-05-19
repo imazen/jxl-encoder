@@ -1062,5 +1062,27 @@ name = "w44_77_tuning_search"
 path = "examples/w44_77_tuning_search.rs"
 required-features = ["parallel", "__expert"]
 
+# W44-78 widen-W44-29-gate A/B sweep. Tests four candidate widenings
+# of the (distance, mask1x1) gate that triggers
+# `EntropyMulTable::high_d_photo_smooth_suppressed`.
+[[example]]
+name = "w44_78_widen_gate_ab"
+path = "examples/w44_78_widen_gate_ab.rs"
+required-features = ["parallel"]
+
+# W44-78 hash-lock impact probe — prints mask1x1_median for the small
+# synthetic fixtures used by `lossy_distance_3` and friends, so we can
+# predict which hash-locks the gate widening will flip.
+[[example]]
+name = "w44_78_gradient_mask_probe"
+path = "examples/w44_78_gradient_mask_probe.rs"
+required-features = ["parallel"]
+
+# W44-78 multi-decoder roundtrip on the affected EV cells.
+[[example]]
+name = "w44_78_decoder_roundtrip"
+path = "examples/w44_78_decoder_roundtrip.rs"
+required-features = ["parallel", "rate-control"]
+
 [lints]
 workspace = true

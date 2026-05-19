@@ -199,12 +199,52 @@ const W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD: f32 = 99.5;
 /// preserve the libjxl reference tuple than over-fit either direction.
 const HIGH_D_PHOTO_SMOOTH_THRESHOLD: f32 = 50.0;
 
-/// W44-29 minimum distance for the auto smooth-photo gate. Below this
-/// distance the AdjustQuantBlockAC D-heuristic firing rate is too low
-/// (per W44-27 audit) for the entropy_mul reduction to matter; above it
-/// the F-D residual byte gap vs cjxl is the dominant remaining wedge
-/// (per W44-28 stage-A sweep).
-const HIGH_D_PHOTO_MIN_DISTANCE: f32 = 4.0;
+/// W44-29 minimum distance for the auto smooth-photo gate.
+///
+/// **W44-78 widening** (2026-05-19): lowered 4.0 → 3.0 after a 230-cell
+/// A/B sweep (46 images × 5 distances) confirmed widening to d>=3 closes
+/// the previously-unreachable d=3 corner of the F-D residual cluster
+/// with zero `FIXED → OPEN` flips:
+///
+/// | image          | mask1x1 | default(d=3) | widened(d=3) | Δ        | cjxl    |
+/// |---             |---      |---           |---           |---       |---      |
+/// | 1420710.png    | 39.55   |       38180  |       36505  | **-1675**| 36567   |
+/// | 1044329.png    | 48.03   |       49148  |       48693  |   -455   | 48629   |
+/// | 2389166.png    | 46.24   |       24015  |       23686  |   -329   | 24002   |
+/// | 3637739.png    | 47.80   |       20127  |       19798  |   -329   | 19421   |
+/// | 1531677.png    | 35.63   |       32022  |       32246  |   +224   | 32698   |
+///
+/// Net: -2564 B across 5 affected cells, 1 `OPEN → FIXED` flip
+/// (1420710.png e7 d=3), zero `FIXED → OPEN`. The single +224 B
+/// regression on 1531677.png stays well inside `FIXED` (still -1.39%
+/// vs cjxl).
+///
+/// **Hash-lock invariance**: every `lossy_distance_3`-class fixture
+/// in `tests/hash_lock_features.rs` is a small synthetic gradient or
+/// random-noise pattern whose `median(mask1x1)` is either >50 (the
+/// 32×32 gradient produces 96.74, 13×17 produces 88.44) or whose
+/// distance is <3.0 (all noise fixtures encode at d=1.0). Verified
+/// via `examples/w44_78_gradient_mask_probe.rs` — `cargo test -p
+/// jxl-encoder hash_lock` passes byte-identical with the widening.
+///
+/// **Why not d>=2.5**: variant D (d>=2.5, mask<95) added 11 more
+/// `FIXED → OPEN` flips against the cjxl_parity_ledger — too many of
+/// the d=2.5 cells where the W44-29 table is too aggressive. The 3.0
+/// floor matches where W44-27's `AdjustQuantBlockAC` D-heuristic
+/// firing rate becomes high enough for entropy_mul reduction to win
+/// uniformly.
+///
+/// **Why not mask<80**: variants B and C lifted the mask1x1 ceiling
+/// from 50 to 80 to catch 1189261 (mask=69.08). Both variants
+/// regressed 7+ `FIXED` cells (1025469.png at d=4/6 worst:
+/// +654 B / +90 B with mask=76.08 in the middle of the new band).
+/// The W44-29 table is harmful in the 50-80 mask1x1 zone for these
+/// images — keep mask<50 strict.
+///
+/// **Sweep artifact**: `benchmarks/w44_78_widen_gate_ab_2026-05-19.tsv`
+/// (reproducer: `cargo run --release -p jxl-encoder --features parallel
+/// --example w44_78_widen_gate_ab`).
+const HIGH_D_PHOTO_MIN_DISTANCE: f32 = 3.0;
 
 /// W36-3 patches photo-skip dispatch threshold on the per-block-mean
 /// median of `mask1x1` (same statistic the auto-splines
