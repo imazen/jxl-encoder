@@ -853,5 +853,22 @@ name = "w44_20_codec_wiki_coverage"
 path = "examples/w44_20_codec_wiki_coverage.rs"
 required-features = ["__internals"]
 
+# W44-28: entropy_mul_table re-tune at d>4 for F-D residual wedge.
+# Sweeps DCT16X16 × DCT32X32 × paired baseline vs lifted on 2 F-D OPEN cells,
+# then validates a winning tuple on 3 screenshots at e=7 to confirm no
+# regression in the patches+W44-8 window.
+[[example]]
+name = "w44_28_entropy_mul_retune"
+path = "examples/w44_28_entropy_mul_retune.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-28 follow-on: re-test an alternate (dct16, dct32) tuple after the
+# primary winner failed the screenshot regression gate. Set W44_28_DCT16
+# / W44_28_DCT32 env vars to override.
+[[example]]
+name = "w44_28_candidate_check"
+path = "examples/w44_28_candidate_check.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+
 [lints]
 workspace = true

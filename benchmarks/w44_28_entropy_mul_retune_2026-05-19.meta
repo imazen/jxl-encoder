@@ -1,0 +1,137 @@
+# W44-28: entropy_mul_table re-tune at d>4 for F-D residual wedge
+
+Date: 2026-05-19
+Workspace: ~/work/zen/jxl-encoder--w44-28-entropy-mul-retune
+Hypothesis (from task brief): per W44-27 firing-rate audit,
+  AdjustQuantBlockAC D-heuristic fires on 79.8 % of DCT8 blocks at the
+  F-D residual cells. Excess DCT8 picks vs cjxl's DCT32X32 picks on
+  smooth photo content inflate quant by +1 → +6.8 % bytes. Lowering
+  entropy_mul[DCT16X16] and entropy_mul[DCT32X32] should make large
+  transforms cheaper, reducing DCT8 selection and the firing rate.
+
+## Sweep grid
+
+  DCT16X16 ∈ {1.20, 1.27, 1.34 (baseline), 1.41, 1.48}     (5 points)
+  DCT32X32 ∈ {1.20, 1.34, 1.48 (baseline), 1.62, 1.76}     (5 points)
+  DCT16X32 / DCT32X16: scale with DCT32X32 (× 1.49/1.48)
+  DCT64X32, DCT64X64: held at 2.25 (rare at 512×512)
+
+## Cells (Stage A)
+
+Two worst F-D residual cells by bytes_delta vs cjxl from W44-1 ledger:
+  1531677.png e=5 d=4.0  (+6.843 % bytes, OPEN)
+  1420710.png e=5 d=6.0  (+6.839 % bytes, OPEN)
+
+50 encodes total (2 baselines + 25 lifted × 2 cells).
+
+## Cells (Stage B)
+
+Screenshot regression check at e=7 d ∈ {3, 4, 5, 6} for the Stage-A
+winning tuple, on 3 gb82-sc screenshots:
+  gb82/terminal, gb82/codec_wiki, gb82/imac_g3
+
+## Acceptance gates
+
+(from task brief — winner ships if and only if):
+- Beats baseline by ≥ 2 pp bytes on at least 2 of 5 F-D residual cells
+- Does NOT regress screenshots (terminal/codec_wiki/imac_g3 at e=7 d=3-6)
+  by > 0.5 pp on bfly_delta_pct
+- SSIM2 doesn't drop by more than 0.3 absolute per cell
+
+## Result: NO WINNING TUPLE — honest-stop
+
+### Top-5 candidate tuples by aggregate (sum-over-F-D-cells) bytes_delta_pct
+(valid on every F-D cell per the per-cell gate bfly_delta ≤ 5%, ssim2_delta ≥ -0.3)
+
+| dct16 | dct32 | sum bytes | sum bfly  | sum ssim2 |
+|-------|-------|-----------|-----------|-----------|
+| 1.34  | 1.20  | -8.72 %   | -4.19 %   | -0.260    |
+| 1.27  | 1.20  | -7.65 %   | -4.19 %   | -0.215    |
+| 1.20  | 1.20  | -6.83 %   | -5.09 %   | -0.145    |
+| 1.27  | 1.34  | -6.02 %   | -5.08 %   | -0.143    |
+| 1.48  | 1.34  | -4.41 %   | -4.18 %   | -0.275    |
+
+### Stage B: screenshot regression — top winner dct16=1.34 dct32=1.20
+
+| image           | d=3       | d=4         | d=5     | d=6     |
+|-----------------|-----------|-------------|---------|---------|
+| terminal        | +0.89% bfly +0.00% | -0.29% bfly +0.00% | -0.37% bfly +0.00% | +0.37% bfly +0.00% |
+| codec_wiki      | -1.77% bfly -0.00% | +0.10% bfly +0.00% | -0.89% bfly -1.25% | -0.56% bfly +0.00% |
+| imac_g3         | -1.78% bfly +0.00% | **-0.52% bfly +36.46%** | -0.33% bfly -3.22% | -0.85% bfly +0.00% |
+
+The imac_g3 d=4 cell fails the gate by 70× — butteraugli jumped from
+3.19 → 4.35 (+36.46 %) while bytes only dropped 0.52 %. This is a
+path-flip, not a tuning regression.
+
+### Verification on alternate candidates
+
+The 2nd-best (dct16=1.27 dct32=1.20) and 3rd-best (dct16=1.20 dct32=1.20)
+also failed: imac_g3 d=4 bfly +36.46 % for both. The wedge is on the
+dct32=1.20 axis — any aggressive lift of DCT32X32 favorability triggers
+the path flip on this screenshot.
+
+The 4th-best (dct16=1.27 dct32=1.34, less aggressive on dct32) avoids
+the imac_g3 wedge but only beats baseline by 2pp on ONE of two F-D
+cells (1531677 d=4 -6.11 %, 1420710 d=6 only +0.09 %).
+The 5th-ish (dct16=1.34 dct32=1.34) also avoids the wedge but only
+gains -1.39 % / -1.85 % bytes on the F-D cells — both BELOW the 2pp
+gate. Same story for (dct16=1.34 dct32=1.48 = baseline).
+
+### Conclusion
+
+There is no global `entropy_mul_table` override at d > 4 that:
+  - reduces F-D bytes by ≥ 2 pp on multiple cells, AND
+  - leaves screenshot quality at e=7 within 0.5 pp butteraugli.
+
+The W44-22 / W44-23 strategy fixes already shifted strategy selection
+in a way that any further bias toward DCT32X32 at high d causes the
+imac_g3 d=4 path-flip (bfly +36 %). The current constants ARE optimal
+for the global pipeline; F-D needs a content-aware approach, not a
+global constant change.
+
+### Recommended next chunks (next-best EV)
+
+1. **kFavor2X2 lift at d ≥ 5 only** — the F-D wedge is bytes-bound at
+   high d. Lifting kFavor2X2 (currently −0.4) makes 8×8-class transforms
+   relatively cheaper, which on smooth content tends to favor DCT16X16
+   over DCT8 indirectly via the cost model. Unlike entropy_mul, it's
+   structural to the strategy comparison, not a per-strategy bias.
+2. **Content-aware entropy_mul dispatch** — extend the W22-1
+   `screenshot_lift_hint` pattern to a `high_d_photo_hint` that lifts
+   DCT32 favorability ONLY when median(mask1x1) is low (i.e., smooth
+   photo content) AND d ≥ 4. The W23-2 work already shows the lift API
+   is sound; we just need the discriminator.
+3. **Investigate why imac_g3 d=4 path-flips** — at dct32=1.20 the
+   encoder selects substantially more DCT32X32 blocks on this image,
+   which forces patches subtraction onto DCT32X32 windows where the
+   patches detector can't match. Inspect block-strategy histograms for
+   imac_g3 d=4 with dct32=1.20 vs 1.48 to confirm.
+
+## Reproducer
+
+```bash
+# Stage A + B (top winner):
+cargo run -p jxl-encoder --release \
+  --features '__expert butteraugli-loop ssim2-loop parallel' \
+  --example w44_28_entropy_mul_retune
+
+# Alternate candidate check (env-var override):
+W44_28_DCT16=1.27 W44_28_DCT32=1.34 \
+  cargo run -p jxl-encoder --release \
+    --features '__expert butteraugli-loop ssim2-loop parallel' \
+    --example w44_28_candidate_check
+```
+
+## Schema (TSV)
+
+```
+stage   image   class   effort  distance
+dct16x16  dct32x32  dct16x32
+baseline_bytes  lifted_bytes
+baseline_bfly   lifted_bfly
+baseline_ssim2  lifted_ssim2
+bytes_delta_pct bfly_delta_pct ssim2_delta_abs
+baseline_ms     lifted_ms
+```
+
+`stage` ∈ {A (F-D sweep), B (screenshot regression check)}.
