@@ -1,0 +1,13 @@
+image	effort	distance	encoder	bytes	lf_global_bytes	lf_group_bytes	dc_global_total_bits	dc_entropy_code_bits	dc_context_tree_bits	notes
+terminal	6	6.0	ours_baseline	57608	699	13012	5587	4483	983	34_leaf_kWPFixedDC_45_contexts_24_histograms
+terminal	6	6.0	cjxl_v0.12.0	55371	15	NA	NA	NA	NA	libjxl_LearnTree_at_speed_tier_kWombat
+terminal	6	6.0	ours_patched_single_leaf	61557	203	17456	1624	1254	249	1_leaf_WP_12_contexts_9_histograms_NET_REGRESSION
+terminal	6	8.0	ours_baseline	46858	NA	NA	NA	NA	NA	baseline_d8
+terminal	6	8.0	ours_patched_single_leaf	50938	NA	NA	NA	NA	NA	+8.7_percent_regression
+terminal	6	8.0	cjxl_v0.12.0	46149	NA	NA	NA	NA	NA	reference
+terminal	6	10.0	ours_baseline	38304	NA	NA	NA	NA	NA	baseline_d10
+terminal	6	10.0	ours_patched_single_leaf	38304	NA	NA	NA	NA	NA	0_percent_neutral
+terminal	6	10.0	cjxl_v0.12.0	35765	NA	NA	NA	NA	NA	reference
+terminal	6	15.0	ours_baseline	32433	NA	NA	NA	NA	NA	baseline_d15
+terminal	6	15.0	ours_patched_single_leaf	33494	NA	NA	NA	NA	NA	+3.3_percent_regression
+terminal	6	15.0	cjxl_v0.12.0	29613	NA	NA	NA	NA	NA	reference

@@ -1,0 +1,38 @@
+# W44-50: terminal e6 d=6 LfGlobal +4567% wedge investigation
+# Date: 2026-05-19
+# Host: lilith (AMD Ryzen 9 7950X, 128 GB)
+# Baseline commit: a2cd4758 (W38 — low-effort phase baseline)
+# Source: ~/work/codec-corpus/gb82-sc/terminal.png (1646x1062 RGB)
+# cjxl reference: ~/work/jxl-efforts/libjxl/build/tools/cjxl v0.12.0 4279d48
+#
+# Reproduction:
+#   /home/lilith/work/zen/jxl-encoder--w44-50-terminal-e6-d6-lf-glo/target/release/cjxl-rs -e 6 -d D INPUT OUTPUT
+#   /home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl -e 6 -d D INPUT OUTPUT
+#
+# Section breakdown captured via `cargo build --features debug-tokens`:
+#   stderr line "section[0]: LfGlobal = N bytes"
+#   /tmp/jxl_enc_debug.log line "DC_global detailed breakdown: ... total bits: N"
+#
+# Patched encoder used the following modification to bitstream.rs:2172-2197
+# (reverted; never committed). At distance >= 4.0 && effort < 8, replaces
+# build_wp_fixed_dc_tree(...) with a single-leaf WP tree
+# (DcTreeNode { property: -1, predictor: 6, context_id: 0, ... }).
+#
+# Verdict: NET REGRESSION on all measured cells. Honest stop documented in
+# memory file w44_50_terminal_e6_d6_lf_glo_2026-05-19.md. Real fix would
+# require porting libjxl's LearnTree to the production path
+# (jxl-encoder/src/vardct/dc_tree_learn.rs::learn_dc_tree is the port
+# stub but is never called).
+#
+# Columns:
+#   image: input PNG basename
+#   effort: -e flag
+#   distance: -d flag
+#   encoder: ours_baseline | ours_patched_single_leaf | cjxl_v0.12.0
+#   bytes: codestream bytes (excluding container)
+#   lf_global_bytes: bytes in section[0] (LfGlobal)
+#   lf_group_bytes: bytes in section[1] (LfGroup, single DC group)
+#   dc_global_total_bits: sum of all dc_global sections in bits
+#   dc_entropy_code_bits: bits spent on ANS prefix tables + uint configs for DC
+#   dc_context_tree_bits: bits spent on serialized DC context tree
+#   notes: tree structure / per-cell observations
