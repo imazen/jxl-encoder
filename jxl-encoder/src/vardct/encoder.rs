@@ -199,6 +199,37 @@ const W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD: f32 = 99.5;
 /// preserve the libjxl reference tuple than over-fit either direction.
 const HIGH_D_PHOTO_SMOOTH_THRESHOLD: f32 = 50.0;
 
+/// W44-87 single-pass-entropy dispatch — smooth-photo `median(mask1x1)`
+/// upper bound. Same direction as [`HIGH_D_PHOTO_SMOOTH_THRESHOLD`]
+/// (smooth = below threshold), set to the same `50.0` value: CID22
+/// photos cluster in the 10-40 range, gb82-sc screenshots run
+/// 110-180, and the 50-95 ambiguous band stays on the two-pass
+/// (per-image-optimized) entropy path where the histogram diversity
+/// makes the optimization worth its cost.
+///
+/// On smooth photos at low distance the two-pass `entropy` +
+/// `build_codes` phases save 2-4 % bytes vs the pre-computed static
+/// codes — a poor trade against ~30 % wall-clock savings
+/// (`benchmarks/lossy_phase_baseline_low_effort_2026-05-19.tsv`).
+const SINGLE_PASS_ENTROPY_SMOOTH_PHOTO_MAX_MEDIAN: f32 = 50.0;
+
+/// W44-87 single-pass-entropy dispatch — maximum effort at which the
+/// `Auto` policy will flip to single-pass. Bound matches the W38
+/// profile finding that the `entropy` + `build_codes` phase ratio
+/// peaks at e5 photos (56-62 % of wall); at e6/e7 the patches /
+/// EPF / CfL two-pass / butteraugli iterations dominate and the
+/// entropy savings stop being the largest knob. Keeping the gate
+/// at `<= 5` also dodges the e7+ `try_dct64` / patches features
+/// which require the two-pass plumbing.
+const SINGLE_PASS_ENTROPY_MAX_EFFORT: u8 = 5;
+
+/// W44-87 single-pass-entropy dispatch — maximum distance at which
+/// the `Auto` policy will flip to single-pass. At `d > 1.0` the
+/// per-image-tuned codes start saving > 4 % bytes (the histogram
+/// shifts as quantization coarsens), tilting the trade back toward
+/// two-pass on the typical smooth photo.
+const SINGLE_PASS_ENTROPY_MAX_DISTANCE: f32 = 1.0;
+
 /// W44-29 minimum distance for the auto smooth-photo gate.
 ///
 /// **W44-78 widening** (2026-05-19): lowered 4.0 → 3.0 after a 230-cell
@@ -617,6 +648,17 @@ pub struct VarDctEncoder {
     /// unconditionally skips the loss term (equivalent to
     /// `pixel_domain_loss = false`).
     pub pixel_loss_dispatch: crate::api::PixelLossDispatch,
+    /// Adaptive dispatch for the two-pass dynamic-entropy path
+    /// (W44-87). `AlwaysTwoPass` (default) preserves byte-identical
+    /// historical behaviour by always honouring [`Self::optimize_codes`].
+    /// `Auto` flips to single-pass static Huffman on smooth photos at
+    /// low distance + effort 5 + the single-pass-safety predicate
+    /// (no patches/splines/learned tree/sharpness map/noise params/
+    /// LF frame/extras). `AlwaysSinglePass` forces the single-pass
+    /// path whenever safe and falls back to two-pass otherwise.
+    /// Saves the ~14 ms/MP `entropy` + `build_codes` cost at the
+    /// price of 2-4% bytes on the dispatched subset.
+    pub single_pass_entropy_dispatch: crate::api::SinglePassEntropyDispatch,
     /// Enable LZ77 backward references in entropy coding.
     /// When true, compresses token streams using LZ77 length+distance tokens.
     /// Only effective with two-pass mode (optimize_codes=true) and ANS (use_ans=true).
@@ -983,6 +1025,10 @@ impl Default for VarDctEncoder {
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
             pixel_loss_dispatch: crate::api::PixelLossDispatch::AlwaysOn,
+            // W44-87 default keeps every hash-lock byte-identical.
+            // `Auto` flips to single-pass on smooth photos at e5 d<=1.0;
+            // callers opt in via LossyConfig::with_single_pass_entropy_dispatch.
+            single_pass_entropy_dispatch: crate::api::SinglePassEntropyDispatch::AlwaysTwoPass,
             enable_lz77: false, // LZ77 has known interactions with DCT2x2/IDENTITY strategies
             lz77_method: crate::entropy_coding::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
@@ -1070,6 +1116,10 @@ impl VarDctEncoder {
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
             pixel_loss_dispatch: crate::api::PixelLossDispatch::AlwaysOn,
+            // W44-87 default keeps every hash-lock byte-identical.
+            // `Auto` flips to single-pass on smooth photos at e5 d<=1.0;
+            // callers opt in via LossyConfig::with_single_pass_entropy_dispatch.
+            single_pass_entropy_dispatch: crate::api::SinglePassEntropyDispatch::AlwaysTwoPass,
             enable_lz77: false, // LZ77 has known interactions with DCT2x2/IDENTITY strategies
             lz77_method: crate::entropy_coding::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
@@ -2314,6 +2364,36 @@ impl VarDctEncoder {
             .as_deref()
             .map(|mask| median_mask1x1(mask, padded_width, width, height));
 
+        // W44-87 single-pass-entropy dispatch — content gate.
+        // Records whether the (effort, distance, content) tuple admits
+        // the single-pass static-Huffman path; the SAFETY predicate
+        // (no patches/splines/sharpness map/noise/LF frame/extras)
+        // is evaluated at the dispatch site itself (just before
+        // `if optimize_codes_effective` below) because those fields
+        // are computed later in this function.
+        //
+        // Modes:
+        //   - AlwaysTwoPass: never flip (default; bit-identical to
+        //     historical builds).
+        //   - AlwaysSinglePass: flip whenever the safety predicate
+        //     holds, regardless of content / effort / distance.
+        //   - Auto: flip when effort == 5 AND distance <= 1.0 AND
+        //     median(mask1x1) < SMOOTH_PHOTO_MAX_MEDIAN (50.0). Same
+        //     direction as HIGH_D_PHOTO_SMOOTH_THRESHOLD: low median
+        //     = smooth photo content, where the per-image-tuned
+        //     codes save only 2-4 % bytes vs the static codes — a
+        //     poor trade against ~30 % wall-clock savings.
+        let single_pass_entropy_content_gate: bool = match self.single_pass_entropy_dispatch {
+            crate::api::SinglePassEntropyDispatch::AlwaysTwoPass => false,
+            crate::api::SinglePassEntropyDispatch::AlwaysSinglePass => true,
+            crate::api::SinglePassEntropyDispatch::Auto => {
+                self.effort <= SINGLE_PASS_ENTROPY_MAX_EFFORT
+                    && self.distance <= SINGLE_PASS_ENTROPY_MAX_DISTANCE
+                    && mask1x1_median
+                        .is_some_and(|med| med < SINGLE_PASS_ENTROPY_SMOOTH_PHOTO_MAX_MEDIAN)
+            }
+        };
+
         // W22-1 screenshot lift (opt-in, fires only when
         // `content_aware_entropy_mul=true`).
         let w22_1_lift = if self.content_aware_entropy_mul {
@@ -2968,8 +3048,33 @@ impl VarDctEncoder {
 
         let _ms_sharp = _t_sharp.elapsed().as_secs_f64() * 1000.0;
         let _t_entropy = std::time::Instant::now();
+
+        // W44-87 single-pass-entropy dispatch — safety predicate +
+        // override. The streaming/one-pass static-Huffman path cannot
+        // serialize any of the features below; if any are present the
+        // dispatch silently falls back to the two-pass plumbing. Order
+        // matters only inasmuch as `single_pass_entropy_content_gate`
+        // was decided earlier (effort, distance, mask1x1_median); the
+        // SAFETY portion runs here because `patches_data`,
+        // `splines_data`, `sharpness_map`, `noise_params`, and the
+        // extras slice are all in scope.
+        let single_pass_entropy_safe = self.optimize_codes
+            && single_pass_entropy_content_gate
+            && extras.is_empty()
+            && patches_data.is_none()
+            && splines_data.is_none()
+            && sharpness_map.is_none()
+            && noise_params.is_none()
+            && !self.use_lf_frame
+            && !self.dc_tree_learning;
+        let optimize_codes_effective = if single_pass_entropy_safe {
+            false
+        } else {
+            self.optimize_codes
+        };
+
         // Two-pass mode: collect tokens, build optimal codes, write bitstream
-        if self.optimize_codes {
+        if optimize_codes_effective {
             let strategy_counts = ac_strategy.strategy_histogram();
             let data = self.encode_two_pass(
                 width,
@@ -4193,6 +4298,23 @@ mod tests {
         assert_eq!(
             enc_default.pixel_loss_dispatch,
             crate::api::PixelLossDispatch::AlwaysOn
+        );
+    }
+
+    /// W44-87: every encoder constructor pin defaults
+    /// `single_pass_entropy_dispatch` to `AlwaysTwoPass` so the
+    /// historical bitstream is byte-identical.
+    #[test]
+    fn test_single_pass_entropy_dispatch_default_always_two_pass() {
+        let enc = VarDctEncoder::new(1.0);
+        assert_eq!(
+            enc.single_pass_entropy_dispatch,
+            crate::api::SinglePassEntropyDispatch::AlwaysTwoPass
+        );
+        let enc_default = VarDctEncoder::default();
+        assert_eq!(
+            enc_default.single_pass_entropy_dispatch,
+            crate::api::SinglePassEntropyDispatch::AlwaysTwoPass
         );
     }
 

@@ -1,0 +1,45 @@
+# W44-87 single-pass-entropy dispatch A/B
+# date: 2026-05-19
+# runs_per_cell: 3
+# images: 5 CID22 validation photos (512x512)
+#   1025469 1044329 1189261 1418519 1531677
+# effort: e5
+# distances: d=1.0
+# modes:
+#   baseline:  SinglePassEntropyDispatch::AlwaysTwoPass (default)
+#   auto:      SinglePassEntropyDispatch::Auto (gated on effort==5, distance<=1.0, median<50, safety)
+#   forced:    SinglePassEntropyDispatch::AlwaysSinglePass (worst case, ignores content)
+#
+# Summary (medians of 3 runs):
+#   image      mask1x1  base_B  base_ms   auto_B/Δ%  auto_ms  forced_B/Δ%  forced_ms
+#   1025469      76     37823    523        0.0%      520       +34.8%       16
+#   1044329      48     99865    734       +16.0%      19       +16.0%       17     <- dispatch fires
+#   1189261      69     64770    671        0.0%      700       +13.4%       19
+#   1418519      92     21186    512        0.0%      508       +27.6%       19
+#   1531677      36     82765    421       +14.3%      19       +14.3%       19     <- dispatch fires
+#
+# Findings:
+#   - Wall-clock saving is real and large (~400-730 ms per 512x512 encode at e5 d=1.0)
+#     when the dispatch fires (>>5ms gate from task spec, way more than W38 prediction of 7-14ms).
+#   - BUT byte regression is +13-35% — far above the +5% acceptance threshold.
+#     W38 memo predicted -2 to -4% bytes on smooth photos at d<=1.0; the actual regression
+#     is 5-7x worse. Static codes are tuned for an averaged token distribution that doesn't
+#     fit any single image as tightly as per-image-optimized codes, and the smooth-photo
+#     class isn't homogeneous enough to share a single optimal code.
+#   - Default `AlwaysTwoPass` keeps every hash-lock byte-identical (36/36 hash-lock tests
+#     pass; 1258 lib tests pass).
+#   - Multi-decoder roundtrip OK on a dispatched output (1044329):
+#       jxl-oxide: parsed + rendered cleanly
+#       djxl 0.12.0: decoded cleanly (32 threads, 66.5 MP/s)
+#       jxl-rs (CLI): decoded to PNG cleanly
+#
+# Conclusion: ship the dispatch INFRASTRUCTURE (enum + builder + plumbing) as opt-in,
+# default-off. Caller can pin `AlwaysSinglePass` for offline pipelines that want the
+# wall-clock saving and accept the byte cost. Default flip to `Auto` is NOT recommended
+# without (a) a wider corpus bench (b) a per-image classifier sharper than mask1x1
+# median or (c) hybrid codes that bake in per-class distributions.
+#
+# Reproducer:
+#   cargo run -p jxl-encoder --release --features parallel \
+#     --example w44_87_single_pass_ab -- --runs 3 \
+#     --out benchmarks/single_pass_entropy_dispatch_2026-05-19.tsv

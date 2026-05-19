@@ -1105,5 +1105,13 @@ name = "w44_82_custom_orders_gate_ab"
 path = "examples/w44_82_custom_orders_gate_ab.rs"
 required-features = ["parallel", "butteraugli-loop"]
 
+# W44-87 single-pass-entropy dispatch A/B at e5 d=1.0 on smooth photos —
+# measure wall-clock saving + byte regression of the SinglePassEntropyDispatch::Auto
+# path vs the default AlwaysTwoPass.
+[[example]]
+name = "w44_87_single_pass_ab"
+path = "examples/w44_87_single_pass_ab.rs"
+required-features = ["parallel"]
+
 [lints]
 workspace = true

@@ -88,8 +88,7 @@ fn main() {
             println!("{}\t{}\t{:.4}\t{}", name, EFFORT, d, best);
             if let Some(ref dir) = dump {
                 let cfg = LossyConfig::new(d).with_effort(EFFORT);
-                let lim = Limits::default()
-                    .with_max_memory_bytes(8u64 * 1024 * 1024 * 1024);
+                let lim = Limits::default().with_max_memory_bytes(8u64 * 1024 * 1024 * 1024);
                 if let Ok(bytes) = cfg
                     .encode_request(w, h, PixelLayout::Rgb8)
                     .with_limits(&lim)
