@@ -1,0 +1,31 @@
+# W44-46 per-section accounting on codec_wiki e7 d=3-6
+#
+# Git commit (worktree): main = 6b8eefc1 (W44-45 ledger refresh)
+# Worktree: jxl-encoder--w44-46-codec-wiki-patches-density (jj sibling on main)
+# Encoders:
+#   ours: ./target/release/cjxl-rs (jxl-encoder rev main @ 6b8eefc1)
+#   cjxl: /home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl (v0.12.0 d2c7032)
+# Inspector: /home/lilith/work/jxl-efforts/jxl-oxide/target/release/jxl-inspect
+# Source: /home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png (2560x1664)
+#
+# Methodology (reproducer):
+#   for d in 3.0 4.0 5.0 6.0:
+#     cjxl-rs source.png /tmp/ours_d${d}.jxl -e 7 -d $d --threads 1
+#     cjxl    source.png /tmp/cjxl_d${d}.jxl -e 7 -d $d --num_threads=1
+#     jxl-inspect inspect -o /tmp/<who>_d${d}.dir /tmp/<who>_d${d}.jxl
+#   then python3 /tmp/sizediff.py walks frame_0 (patches ref) and frame_1
+#   (main VarDCT), summing distinct byte_range tuples.
+#
+# Section names:
+#   ref_total      = frame_0 (patches reference frame) all-section sum
+#   main_lf_global = frame_1/lf_global.json byte_range length
+#   main_hf_global = frame_1/hf_global.json byte_range length
+#   main_lf_groups = sum of frame_1/lf_group_*/ byte ranges
+#   main_passes    = sum of frame_1/pass_*/ byte ranges
+#   bytes          = file size on disk (sanity)
+#
+# Both encoders detect a 4-frame structure (1 patches ref + 1 main VarDCT)
+# at d>=3 e7. cjxl produces NO patches at d<=2 e7 because its
+# CanDoStreamingEncoding gate (enc_frame.cc:1781-1783) flips streaming OFF
+# only at d>=3 with speed_tier==kSquirrel; streaming mode and patches are
+# mutually exclusive (enc_heuristics.cc:1058 "!streaming_mode &&").
