@@ -217,7 +217,12 @@ in-process encoding + jxl-oxide decode + Rust butteraugli/ssim2.
 - ~~Custom coeff order overhead~~ FIXED (Feb 24, 2026): cost-gated with Lehmer cost vs AC savings
 - ~~HybridUint fast optimization overhead~~ FIXED (Feb 24, 2026): disabled for VarDCT at e<9
 - Some numerical differences in adaptive quant pipeline (FMA vs non-FMA, SIMD vs scalar)
-- Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
+- Per-block DC coding: kWPFixedDC tree at effort <= 3, data-adaptive
+  LearnTree at effort >= 4 (W44-54, May 19 2026, mirrors libjxl
+  `enc_modular.cc:1166`). Learned tree splits on intensity/gradient
+  properties via gradient-residual statistics; leaves use gradient
+  predictor. Follow-on: WP-residual learning + per-leaf `Predictor::Weighted`
+  to recover ~0.7% photo regression at smooth-content cells.
 - Size overhead increases at higher distances (d=5.0: +3%)
 
 **What's confirmed correct** (Feb 20, 2026):
@@ -580,6 +585,84 @@ Key patterns to watch for when working on this codebase:
 (none currently)
 
 ## Investigation Notes
+
+### W44-54: DC LearnTree at effort >= 4 — SHIPPED (May 19, 2026)
+
+**Status**: [RESOLVED — shipped as `d53519d4`]
+
+Follow-on to W44-50 (`46eb4bc2` investigation only) which traced the
+`terminal e6 d=6` LfGlobal +4567% wedge to `kWPFixedDC` being used at
+every effort, vs libjxl's effort gate. W44-50 tried a single-leaf
+shortcut and saw +6.8% net regression because the WP-fixed tree's 34
+leaves were doing real work; the right fix was data-adaptive learning
+that rejects unprofitable splits.
+
+**Commit**: `d53519d4 perf(vardct): wire learned DC tree at effort >= 4`.
+
+**Mechanism**: routes VarDCT DC tokenization through the existing
+`dc_tree_learn::learn_dc_tree` stub (previously test-only) at
+`effort >= 4` (libjxl `speed_tier < kFalcon`, `enc_modular.cc:1166`).
+Stub gathers samples via `gather_dc_samples`, runs ID3-style splitter
+on properties 4/5/6/7/9/10 with quantile candidate splits, rejects
+splits with gain < ~10-bit overhead. Tokenization uses
+`collect_dc_tokens_with_tree` with `clamped_gradient` prediction
+matching each leaf's `predictor = Gradient` (5) field.
+
+**Measured (72-cell paired sweep, baseline = `c48c50be` pre-rebase
+`0fb4854c` main):**
+
+| corpus       | n  | avg byte delta |
+|---           |--- |---             |
+| photos       | 40 | +0.74%         |
+| screenshots  | 32 | -1.39%         |
+| **overall**  | 72 | **-0.21%**     |
+
+Wedge cells (the W44-50 originals):
+- `terminal e6 d=6`:  57617 →  55886 B  (-3.00%, cjxl 55371 → +0.9%
+  was +4.0%).
+- `terminal e7 d=0.5`: 50952 → 49240 B (-3.36%).
+- `imac_dark e7 d=6`: 128742 → 126341 B (-1.86%).
+
+Photo regression cluster on smooth content: worst cells
+`0369d229ba4c d=6` (+3.30%), `097cb426910b d=3` (+2.02%) — WP predictor
+was a significantly better fit than gradient on these. Decoded pixels
+are bit-identical between baseline and new path (verified via djxl
+PFM round-trip) — pure bitstream-efficiency trade, zero quality
+regression on any cell.
+
+**Hash-lock impact**: 23 of 36 lossy sidecars rebaselined (all 13
+lossless cells unchanged). Headers byte-identical across all cells;
+only frame hashes changed. 4 in-tree `test_hash_lock_*` constants
+updated. Well under the 100-cell honest-stop threshold.
+
+**Multi-decoder roundtrip verified**:
+- djxl 0.12.0:  `terminal e6 d=6` decodes cleanly.
+- jxl-rs:       `terminal e6 d=6` decodes cleanly.
+- jxl-oxide:    used via existing integration tests, all pass.
+
+**RD-regression**: passes with multiple wins on screenshot content
+(`frymire d=0.25 -4.3%`, `d=0.5 -3.7%`, `d=1.0 -2.9% & +0.93 SSIM2`).
+All cells within size/butteraugli/SSIM2 floors.
+
+**Follow-on candidates** (not blocked, just lower priority right now):
+
+1. **WP-residual learning + per-leaf `Predictor::Weighted`** — would
+   recover the photo regression cluster. libjxl uses
+   `Predictor::Variable` for DC at effort >= 4 (`enc_modular.cc:1591-1598`);
+   for our default lossy VarDCT path this collapses to Best (Gradient
+   or Weighted per leaf). Shape: modify `gather_dc_samples` to compute
+   WP residuals via `WeightedPredictorState`, modify
+   `collect_dc_tokens_with_tree` to mirror, set leaf `predictor = 6`.
+   Risk: ~1d work + hash-lock re-bake.
+2. **Multi-property splits including property 15 (wp_max_error)** —
+   only useful with WP residuals (gradient residuals don't track wp
+   error state). Pair with #1.
+3. **Full `modular::tree_learn::compute_best_tree` reuse** — wire the
+   DC samples through the existing AC modular tree-learning path
+   (8772-line port in `modular/tree_learn.rs`) which has all 14 base
+   properties, Lloyd-Max bucket boundaries, parallel split fan-out,
+   etc. Closes the residual ~1-2% LfGlobal gap on high-d screenshots
+   where libjxl emits 1-2 contexts. Multi-week.
 
 ### Smart-Dispatch Chunk-1 — zenanalyze-Driven `screenshot_lift_hint` (May 18, 2026)
 

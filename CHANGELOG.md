@@ -4,6 +4,26 @@
 
 ### Performance
 
+- **W44-54 — VarDCT DC LearnTree at effort >= 4** (`d53519d4`,
+  closes part of imazen/jxl-encoder#56). Routes DC tokenization through
+  the data-adaptive `dc_tree_learn::learn_dc_tree` stub for `effort >= 4`,
+  mirroring libjxl's `speed_tier < SpeedTier::kFalcon` gate in
+  `enc_modular.cc:1166-1217`. Previously the encoder always emitted the
+  `kWPFixedDC` predefined tree (34 leaves, 45 post-AC-merge contexts)
+  regardless of effort, over-spending LfGlobal ANS prefix-table bits on
+  heavily-quantized screenshot DC where 1-3 contexts suffice. Effort <= 3
+  keeps `kWPFixedDC` (libjxl `kFalcon` parity). Closes W44-50 wedge:
+  `terminal e6 d=6` LfGlobal 700 B → 230 B; file total 57617 B → 55886 B
+  (-3.0%, +0.9% over cjxl was +4.0%). Sweep on 72 cells (5 photos + 4
+  screenshots × 2 efforts × 4 distances): photos +0.74%, screenshots
+  -1.39%, overall **-0.21%**. Decoded pixels bit-identical between
+  baseline and new path (zero quality regression). 23 of 36 lossy
+  hash-lock sidecars rebaselined; all 13 lossless cells unchanged;
+  headers byte-identical. RD-regression passes with multiple wins on
+  screenshot content (`frymire d=1.0 -2.9% & +0.93 SSIM2`). Follow-on:
+  WP-residual learning + per-leaf `Predictor::Weighted` for the
+  photo-content regression cluster (libjxl `Predictor::Variable` parity).
+
 - **W43-2 chunk-5 — magetypes-consolidate `pixel_domain_loss`**
   (`jxl-encoder-simd/src/pixel_loss.rs`, `jxl-encoder/Cargo.toml`,
   `jxl-encoder/examples/pixel_loss_magetypes_bench.rs`,
