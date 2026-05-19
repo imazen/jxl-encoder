@@ -215,6 +215,8 @@ jxl-bitstream = "1.1.0"
 jxl-image = "0.13.0"
 jxl-color = "0.11.0"
 jxl-oxide-common = "1.0.0"
+jxl-vardct = "0.11.1"
+jxl-threadpool = "1.0.0"
 # Deterministic RNG for picker oracle scalar sampling.
 fastrand = "2.4.1"
 # NOTE on `zenanalyze` (sibling path dep) — required by
@@ -834,6 +836,15 @@ path = "examples/w44_37_codec_wiki_investigate.rs"
 [[example]]
 name = "w44_39_block_ctx_probe"
 path = "examples/w44_39_block_ctx_probe.rs"
+
+# W44-42 codec_wiki post-cluster ANS / LZ77 / HybridUint section attribution.
+# Follow-on to W44-37 + W44-39 (block ctx count RULED OUT). Walks the
+# codestream TOC and attributes bytes per section (LfGlobal / LfGroup /
+# HfGlobal / PassGroups / patches frame), so we can locate the +35-50%
+# hf_global overspend driver. Audit-only.
+[[example]]
+name = "w44_42_ans_lz77_probe"
+path = "examples/w44_42_ans_lz77_probe.rs"
 
 # W44-9 Sub-chunk B: A/B fused vs unfused DCT8 entropy.
 # Tests whether FMA op-ordering in the fused-DCT8 AVX2 kernel

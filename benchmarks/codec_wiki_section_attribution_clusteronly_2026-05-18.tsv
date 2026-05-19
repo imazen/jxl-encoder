@@ -1,0 +1,8 @@
+image	effort	distance	ours_total	cjxl_total	delta_bytes	delta_pct	ours_patches	cjxl_patches	ours_lfgroups	cjxl_lfgroups	ours_lfglobal	cjxl_lfglobal	ours_hfglobal	cjxl_hfglobal	delta_hfglobal_pct	ours_dequant	cjxl_dequant	ours_perm_etc	cjxl_perm_etc	ours_passgroups	cjxl_passgroups	delta_passgroups_pct	ours_n_blkclu	cjxl_n_blkclu	ours_n_hf_presets	cjxl_n_hf_presets	ours_err	cjxl_err
+codec_wiki.png	6	4	76818	74416	+2402	+3.23	0	0	19696	20024	839	44	4347	2641	+64.60	1	1	4346	2640	51796	51571	+0.44	13	10	1	2		
+codec_wiki.png	7	3	75234	72232	+3002	+4.16	5932	7522	18826	16595	1596	1352	4224	3111	+35.78	1	1	4223	3110	44521	43521	+2.30	14	14	1	1		
+codec_wiki.png	7	4	67318	62710	+4608	+7.35	5597	6827	18068	16270	1504	1350	3701	2699	+37.12	1	1	3700	2698	38312	35433	+8.13	13	13	1	1		
+codec_wiki.png	7	5	60776	57232	+3544	+6.19	5115	6083	15567	14323	1519	1279	2898	1924	+50.62	1	1	2897	1923	35542	33492	+6.12	10	10	1	1		
+codec_wiki.png	7	6	55356	51875	+3481	+6.71	4954	5822	14701	13781	1467	1306	2603	1801	+44.53	1	1	2602	1800	31496	29035	+8.48	8	8	1	1		
+codec_wiki.png	7	1	112201	135432	-23231	-17.15	7204	0	19624	22817	1680	48	5733	4569	+25.48	1	1	5732	4568	77819	107858	-27.85	14	14	1	2		
+codec_wiki.png	7	2	88101	103821	-15720	-15.14	6541	0	19600	21351	1654	48	4849	4545	+6.69	1	1	4848	4544	55322	77738	-28.84	14	14	1	2		
