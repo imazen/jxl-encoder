@@ -394,6 +394,19 @@ fn tokenize_ac_group(
                 let qf_val = quant_field[by * xsize_blocks + bx] as u32;
                 let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
 
+                // W44-76: env-var-gated per-block dump (zero overhead when env unset).
+                {
+                    let nz_for_dump = raw_nzeros[c][by][bx];
+                    super::w44_76_dump::dump_block(
+                        bx,
+                        by,
+                        raw_strategy,
+                        c,
+                        nz_for_dump,
+                        qf_val.min(255) as u8,
+                    );
+                }
+
                 // Assemble the full coefficient block
                 let full_block: &[i32] = if covered_blocks == 1 {
                     &quant_ac[c][by][bx]
@@ -1310,6 +1323,12 @@ impl VarDctEncoder {
                 for &c in &[1usize, 0, 2] {
                     // Raw (unshifted) nzeros for bitstream token
                     let nz = raw_nzeros[c][by][bx];
+
+                    // W44-76: env-var-gated per-block dump (zero overhead when env unset).
+                    {
+                        let qf_dump = quant_field[by * xsize_blocks + bx];
+                        super::w44_76_dump::dump_block(bx, by, raw_strategy, c, nz, qf_dump);
+                    }
 
                     // Predict nzeros from shifted neighbors (matches C++ PredictFromTopAndLeft)
                     let row_top = if by > start_by {

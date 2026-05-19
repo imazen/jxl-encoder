@@ -1,0 +1,177 @@
+W44-76 per-block AC tokenization bisection meta
+================================================
+
+Date:      2026-05-19
+Git base:  98515203 (W44-75 upstream clustering bisection)
+Sibling:   ~/work/zen/jxl-encoder--w44-76-per-block-bisect
+libjxl:    ~/work/jxl-efforts/libjxl--w44-76-per-block-debug-dump
+           (branch w44-76-per-block-debug, NOT pushed — Google org)
+Hostname:  $(hostname)
+
+Goal
+----
+Discriminate the W44-75 upstream Y-token divergence (ours emits +22,442 more
+ZeroDensity AC tokens than cjxl on 1420710 e7 d=6) between:
+  (a) strategy-selection divergence: under-selecting DCT32X32, decay to
+      DCT16X16 / split into DCT32X16
+  (b) same-strategy-different-nzeros: less aggressive Y quant on shared
+      strategy choices
+
+Method
+------
+1. Env-var-gated per-block dump infrastructure in both encoders:
+   - Ours: new module `jxl-encoder/src/vardct/w44_76_dump.rs`, wired into
+     `tokenize_ac_group` (two-pass path) and `write_ac_group` (streaming
+     path). Strategy dumped in libjxl-wire space via STRATEGY_CODE_LUT
+     (avoids the W44-59 join-key bug).
+   - libjxl: patch on `lib/jxl/enc_entropy_coder.cc::TokenizeCoefficients`
+     (saved as `w44_76_libjxl_per_block_dump_2026-05-19.patch`).
+2. Both gated by `JXL_W44_76_PER_BLOCK_DUMP=<dir>`. TSVs:
+     bx  by  strategy  channel  nzeros  qac
+   bitstream byte-identical with env unset.
+3. Test image: 1420710.png (CID22 512x512), e=7, d=6.0, single-thread.
+4. Re-encoded both sides with env set. Bytes:
+     ours: 21212 B
+     cjxl: 20653 B
+     delta: +559 B (+2.71%)
+5. Compared per-(bx, by, channel) tuples with two Python scripts.
+
+Bytes table (consistent with W44-69 / W44-75)
+--------------------------------------------
+section            ours    cjxl    delta
+HfGlobal           ~       ~       ~ (cluster mismatch upstream)
+HfCoeff            ~       ~       (token-bloat from strategy split)
+TOTAL              21212   20653   +559
+
+Findings
+--------
+HYPOTHESIS (a) — STRATEGY-SELECTION DIVERGENCE — CONFIRMED.
+
+Per-block strategy disagreement (4096 8x8 cells):
+  Agree:    3872  (94.53%)
+  Disagree:  224  (5.47%)
+
+Top disagreement pair: ours=10 (DCT32X16) → cjxl=5 (DCT32X32) at 96 cells.
+This matches W44-69 exactly (96 cells, identical breakdown).
+
+Strategy count (first-blocks):
+  strat   ours  cjxl  delta  (libjxl wire enum)
+    0       9    12    -3    DCT8
+    4      26    33    -7    DCT16X16
+    5     201   204    -3    DCT32X32
+    6       2     6    -4    DCT16X8
+    7       5     9    -4    DCT8X16
+   10      55    45   +10    DCT32X16
+   11      39    37    +2    DCT16X32
+
+Y-channel total nzeros (sum across all blocks):
+  ours:  24808
+  cjxl:  24682
+  delta:  +126 (+0.51%)
+
+→ NOT a same-strategy nzeros bloat. Total Y-nzeros within 0.5%.
+
+Same-(bx,by,channel,strategy) nzeros deltas:
+  All medians = 0, means in [-0.84, +1.52] per block.
+  → AdjustQuantBlockAC and quant tuning are at parity.
+
+HYPOTHESIS (b) — RULED OUT.
+
+QAC (raw_quant) divergence at 36/329 shared first-blocks (mostly +/-1 difference
+between qac=4 and qac=5). Sub-leading effect; expected from slightly different
+adaptive-quant rounding cascading from strategy choices.
+
+What this rules in
+------------------
+The DCT32X32 vs DCT32X16/DCT16X32 split decisions in
+`vardct/ac_strategy_search.rs::find_best_32x32_transform`.
+
+Each 32x32 region split into two DCT32X16 first-blocks emits:
+  - 2 nzeros tokens (vs cjxl's 1) — directly adds tokens
+  - 2 separate ZeroDensity scan walks (vs 1 long walk) — different walk
+    statistics, but each k= covered_blocks..size still emits len(walk) tokens
+
+The cumulative effect across 8-12 region pairs (96 cells = 6 paired 32x32
+regions, plus 24 cells of "ours=5 → cjxl=11" and 24 cells of "ours=5 → cjxl=10"
+where ours/cjxl split direction also matters) is the +22,442 ZeroDensity-range
+token bloat W44-75 reported.
+
+W44-77 fix path
+---------------
+**Tighten `find_best_32x32_transform` to bias toward DCT32X32 over
+DCT32X16/DCT16X32 on smooth high-d photo content.**
+
+Location: `jxl-encoder/src/vardct/ac_strategy_search.rs::find_best_32x32_transform`
+(see W44-58 memo for prior AFV-localization audit that ruled out AFV-side
+cost-model bugs in the same function).
+
+Specific changes to investigate (in order):
+1. Audit `find_best_32x32_transform` against libjxl's
+   `FindBestFirstLevelDivisionForSquare` (`lib/jxl/enc_ac_strategy.cc`) for
+   the 32x32 case. Specifically the entropy_mul comparison at the 32X32 vs
+   2x DCT32X16 / 2x DCT16X32 split decision.
+2. Confirm `entropy_mul[DCT32X32]` = 2.25 matches libjxl
+   (`enc_ac_strategy.cc` AcStrategyType::DCT32X32 = 2.25). Same for
+   DCT32X16/DCT16X32 = 1.48.
+3. Confirm `kAvoidEntropyOfTransforms` weights and `X-channel multi-block`
+   weight applied at split-decision time (verified at parity per the
+   `dropped_optimizations_for_parity_2026-05-15` memo, but verify the
+   accumulation order matches libjxl exactly).
+4. If all parameters match: the split-or-keep decision in
+   `FindBestFirstLevelDivisionForSquare` uses
+     entropy_2x_split + 2 * kAvoidEntropyOfTransforms < entropy_1x_DCT32X32
+   compare ours has equivalent threshold + bias direction.
+5. Expected gain: closing 96 cells of DCT32X16→DCT32X32 reverts ~6 paired
+   regions to single first-blocks, eliminating ~12-18 channel-token sequences
+   plus their ZeroDensity walks → estimated 200-500 B HfCoeff reduction +
+   tighter cluster-input histograms (W44-71 follow-on).
+
+DO NOT
+------
+- Re-attack quant-side (AdjustQuantBlockAC, K_AC_QUANT, kMul1/kMul2): same-
+  strategy nzeros are at parity (mean delta < 1 per block).
+- Re-attack `tokenize_ac_coefficients` or `nz_context` / `zd_offset`:
+  bit-exact with libjxl (verified by tests + W44-75 source-level audit).
+- Re-attack BlockCtxMap: W44-69 already documented the 4-vs-15 cluster-count
+  divergence, separate concern (cluster-count divergence amplifies bytes-per-
+  token, not token-count).
+- Re-attack AFV pipeline: W44-59 closed this (parity at FP rounding noise).
+- Spawn more "F-D residual is FMA precision" memos: still WRONG per W44-69
+  user correction.
+
+Files
+-----
+Sibling workspace artifacts (committed):
+  jxl-encoder/src/vardct/w44_76_dump.rs                       (new dump module)
+  jxl-encoder/src/vardct/mod.rs                               (register module)
+  jxl-encoder/src/vardct/bitstream.rs                         (2 dump call sites)
+  benchmarks/w44_76_per_block_ours_2026-05-19.tsv             (ours dump, 1014 rows)
+  benchmarks/w44_76_per_block_libjxl_2026-05-19.tsv           (cjxl dump, 1044 rows)
+  benchmarks/w44_76_diff_2026-05-19.py                        (analysis script)
+  benchmarks/w44_76_diff2_2026-05-19.py                       (per-region script)
+  benchmarks/w44_76_diff_output_2026-05-19.txt                (summary)
+  benchmarks/w44_76_diff2_output_2026-05-19.txt               (region detail)
+  benchmarks/w44_76_libjxl_per_block_dump_2026-05-19.patch    (libjxl reference patch)
+
+External (not committed; in /tmp/ — ephemeral):
+  /tmp/w44_76_dumps/ours.jxl
+  /tmp/w44_76_dumps/cjxl.jxl
+
+Production impact
+-----------------
+ZERO. The dump module is env-var-gated. Encoding bytes unchanged with
+JXL_W44_76_PER_BLOCK_DUMP unset.
+
+Hash-lock impact
+----------------
+None. No production code path changed.
+
+Decoder validation
+------------------
+Not applicable. Diagnostic-only chunk; the encoder bitstream is byte-identical
+with env var unset. Smoke-tested by re-encoding the same file with and without
+the env var: bytes match (21212 B both runs).
+
+Time spent
+----------
+~3.5h (instrumentation + libjxl build + dump + analysis + write-up).
