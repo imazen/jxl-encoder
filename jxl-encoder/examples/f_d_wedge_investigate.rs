@@ -56,9 +56,9 @@ fn corpus_dir() -> PathBuf {
 }
 
 fn cjxl_bin() -> PathBuf {
-    std::env::var("CJXL").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from("/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl")
-    })
+    std::env::var("CJXL")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl"))
 }
 
 fn jxl_inspect_bin() -> PathBuf {
@@ -88,7 +88,9 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 // ── Encoders ────────────────────────────────────────────────────────────────
 
 fn encode_ours(rgb: &[u8], w: u32, h: u32, distance: f32, effort: u8) -> Option<(Vec<u8>, f64)> {
-    let cfg = LossyConfig::new(distance).with_effort(effort).with_threads(1);
+    let cfg = LossyConfig::new(distance)
+        .with_effort(effort)
+        .with_threads(1);
     let start = Instant::now();
     let bytes = cfg.encode(rgb, w, h, PixelLayout::Rgb8).ok()?;
     let ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -160,8 +162,7 @@ impl BlockStats {
         if self.hf_mul_values.is_empty() {
             return 0.0;
         }
-        self.hf_mul_values.iter().map(|&x| x as f64).sum::<f64>()
-            / self.hf_mul_values.len() as f64
+        self.hf_mul_values.iter().map(|&x| x as f64).sum::<f64>() / self.hf_mul_values.len() as f64
     }
 
     fn mad_hf_mul(&self) -> f64 {
@@ -330,9 +331,7 @@ struct CellResult {
 }
 
 fn investigate_cell(image: &str, effort: u8, distance: f32, work: &Path) -> Option<CellResult> {
-    let src = corpus_dir()
-        .join("CID22/CID22-512/validation")
-        .join(image);
+    let src = corpus_dir().join("CID22/CID22-512/validation").join(image);
     let (rgb, w, h) = load_png(&src)?;
     let (ours_bytes, ours_ms) = encode_ours(&rgb, w, h, distance, effort)?;
     let (cjxl_bytes, cjxl_ms) = encode_cjxl(&src, distance, effort, work)?;
@@ -377,7 +376,17 @@ fn tsv_header() -> String {
     s
 }
 
-fn emit_row(out: &mut String, image: &str, effort: u8, distance: f32, encoder: &str, bytes: u64, ms: f64, st: &BlockStats, qp: &QuantParams) {
+fn emit_row(
+    out: &mut String,
+    image: &str,
+    effort: u8,
+    distance: f32,
+    encoder: &str,
+    bytes: u64,
+    ms: f64,
+    st: &BlockStats,
+    qp: &QuantParams,
+) {
     let hf_min = st.hf_mul_values.iter().copied().min().unwrap_or(0);
     let hf_max = st.hf_mul_values.iter().copied().max().unwrap_or(0);
     out.push_str(&format!(
@@ -430,21 +439,39 @@ fn print_cell_summary(c: &CellResult) {
         c.ours_stats.median_hf_mul(),
         c.ours_stats.mean_hf_mul(),
         c.ours_stats.mad_hf_mul(),
-        c.ours_stats.hf_mul_values.iter().copied().min().unwrap_or(0),
-        c.ours_stats.hf_mul_values.iter().copied().max().unwrap_or(0),
+        c.ours_stats
+            .hf_mul_values
+            .iter()
+            .copied()
+            .min()
+            .unwrap_or(0),
+        c.ours_stats
+            .hf_mul_values
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0),
         c.cjxl_stats.median_hf_mul(),
         c.cjxl_stats.mean_hf_mul(),
         c.cjxl_stats.mad_hf_mul(),
-        c.cjxl_stats.hf_mul_values.iter().copied().min().unwrap_or(0),
-        c.cjxl_stats.hf_mul_values.iter().copied().max().unwrap_or(0),
+        c.cjxl_stats
+            .hf_mul_values
+            .iter()
+            .copied()
+            .min()
+            .unwrap_or(0),
+        c.cjxl_stats
+            .hf_mul_values
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0),
     );
     println!(
         "  global_scale: ours={} cjxl={}    quant_lf: ours={} cjxl={}",
         c.ours_qp.global_scale, c.cjxl_qp.global_scale, c.ours_qp.quant_lf, c.cjxl_qp.quant_lf
     );
-    println!(
-        "  AC strategy histogram (by 8x8-block-area %, sorted by largest gap):"
-    );
+    println!("  AC strategy histogram (by 8x8-block-area %, sorted by largest gap):");
     // Compute the area-delta per type and sort.
     let mut types_union: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for k in c.ours_stats.by_type.keys() {
@@ -489,7 +516,8 @@ fn main() {
             }
         }
     }
-    let out_path = output.unwrap_or_else(|| output_dir().join("f_d_photo_high_d_wedge_2026-05-19.tsv"));
+    let out_path =
+        output.unwrap_or_else(|| output_dir().join("f_d_photo_high_d_wedge_2026-05-19.tsv"));
 
     let work = work_dir();
     fs::create_dir_all(&work).expect("create work dir");

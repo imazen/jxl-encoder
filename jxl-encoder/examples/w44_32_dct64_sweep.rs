@@ -61,10 +61,10 @@ const DISTANCES: &[f32] = &[5.0, 6.0];
 /// libjxl reference = 2.25/2.25. Sweep both directions to find a local optimum
 /// (if any exists for F-D content at d=5/6).
 const CANDIDATES: &[(&str, f32, f32)] = &[
-    ("libjxl_default", 2.25, 2.25),    // baseline = libjxl parity
-    ("dct64_lift_25pct", 2.81, 2.81),  // discourage DCT64 (force more DCT32 and DCT16)
-    ("dct64_lift_50pct", 3.375, 3.375),// stronger discouragement
-    ("dct64_lower_25pct", 1.69, 1.69), // encourage DCT64 (force more 64-block picks)
+    ("libjxl_default", 2.25, 2.25),        // baseline = libjxl parity
+    ("dct64_lift_25pct", 2.81, 2.81),      // discourage DCT64 (force more DCT32 and DCT16)
+    ("dct64_lift_50pct", 3.375, 3.375),    // stronger discouragement
+    ("dct64_lower_25pct", 1.69, 1.69),     // encourage DCT64 (force more 64-block picks)
     ("dct64_only_64x64_lift", 2.81, 2.25), // lift 64x64 only
 ];
 
@@ -102,7 +102,10 @@ fn encode_with_table_and_stats(
         .encode_with_stats(rgb_u8)
         .unwrap();
     let counts = *result.stats().strategy_counts();
-    let bytes = result.data().expect("encode_with_stats yielded no data").to_vec();
+    let bytes = result
+        .data()
+        .expect("encode_with_stats yielded no data")
+        .to_vec();
     (bytes, counts)
 }
 
@@ -187,8 +190,16 @@ fn format_strategy_counts(counts: &[u32; 19]) -> String {
     // DCT32x16 (10), DCT16x32 (11), DCT64x64 (16), DCT64x32 (17), DCT32x64 (18).
     format!(
         "d8={} d16x8={} d8x16={} d16x16={} d32x32={} d16x32={} d32x16={} d64x64={} d64x32={} d32x64={}",
-        counts[0], counts[1], counts[2], counts[3], counts[4],
-        counts[11], counts[10], counts[16], counts[17], counts[18]
+        counts[0],
+        counts[1],
+        counts[2],
+        counts[3],
+        counts[4],
+        counts[11],
+        counts[10],
+        counts[16],
+        counts[17],
+        counts[18]
     )
 }
 
@@ -272,7 +283,12 @@ fn main() {
                     let identical = if b == bb { " IDENTICAL" } else { "" };
                     eprintln!(
                         "  {:>22}: {} B  Δbytes={:+.3}% Δbfly={:+.3}% Δssim2={:+.4}{}  | {}",
-                        cand_name, b, bd_pct, bfd_pct, sd_abs, identical,
+                        cand_name,
+                        b,
+                        bd_pct,
+                        bfd_pct,
+                        sd_abs,
+                        identical,
                         format_strategy_counts(&counts)
                     );
                 }

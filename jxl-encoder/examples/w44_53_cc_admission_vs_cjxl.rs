@@ -111,8 +111,7 @@ fn parse_cjxl_patches(bytes: &[u8]) -> Option<CjxlPatches> {
                 let lf_slice = &codestream[lf_start..lf_end];
 
                 let mut lf_bs = Bitstream::new(lf_slice);
-                let params =
-                    LfGlobalParams::new(&image_header, &frame_header, None, true);
+                let params = LfGlobalParams::new(&image_header, &frame_header, None, true);
                 // i32 sample type is the default for VarDCT.
                 let lf_global = LfGlobal::<i32>::parse(&mut lf_bs, params).ok()?;
                 let unique = lf_global

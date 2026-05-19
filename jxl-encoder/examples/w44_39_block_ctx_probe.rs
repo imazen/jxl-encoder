@@ -52,9 +52,9 @@ fn corpus_dir() -> PathBuf {
 }
 
 fn cjxl_bin() -> PathBuf {
-    std::env::var("CJXL").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from("/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl")
-    })
+    std::env::var("CJXL")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl"))
 }
 
 fn output_path() -> PathBuf {

@@ -305,12 +305,8 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
             }
             let i32_counts: Vec<i32> = counts.iter().map(|&c| c as i32).collect();
             let histo = EnhancedHistogram::from_counts(&i32_counts);
-            ANSEncodingHistogram::from_histogram_cached(
-                &histo,
-                ans_strategy,
-                &allowed_cache,
-            )
-            .expect("ANS histogram normalization failed")
+            ANSEncodingHistogram::from_histogram_cached(&histo, ans_strategy, &allowed_cache)
+                .expect("ANS histogram normalization failed")
         });
 
     // Compute global log_alpha_size

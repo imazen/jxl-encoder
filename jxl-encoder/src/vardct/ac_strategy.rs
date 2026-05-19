@@ -1025,10 +1025,23 @@ fn estimate_entropy_full_impl(
         entropy += k_info_loss_mul * loss_scalar as f32;
         // W44-58 / W44-59 fix: dump using libjxl wire strategy code (DCT8=0).
         dump_cost_inputs(
-            STRATEGY_CODE_LUT[raw_strategy as usize], bx, by, entropy_mul, 1, 1, quant_for_coeffs,
-            ytox, ytob, mask1x1, mask1x1_stride,
-            entropy_pre_loss_dct8, loss_scalar as f32,
-            k_info_loss_mul, k_cost_delta, k_zeros_mul, entropy,
+            STRATEGY_CODE_LUT[raw_strategy as usize],
+            bx,
+            by,
+            entropy_mul,
+            1,
+            1,
+            quant_for_coeffs,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            entropy_pre_loss_dct8,
+            loss_scalar as f32,
+            k_info_loss_mul,
+            k_cost_delta,
+            k_zeros_mul,
+            entropy,
         );
         return entropy;
     }
@@ -1275,8 +1288,7 @@ fn estimate_entropy_full_impl(
     //         "inv_weights" (dequant matrix), "weights" (quant matrix),
     //         "per_coeff_val/rval/diff/error" (entropy estimator stage).
     // ZERO overhead when env var unset (OnceLock + thread-local matched-block flag).
-    let afv_coeff_target =
-        afv_coeff_dump_target(raw_strategy, bx * BLOCK_DIM, by * BLOCK_DIM);
+    let afv_coeff_target = afv_coeff_dump_target(raw_strategy, bx * BLOCK_DIM, by * BLOCK_DIM);
     if afv_coeff_target {
         for c in 0..3 {
             dump_afv_coeff_block(
@@ -1492,10 +1504,23 @@ fn estimate_entropy_full_impl(
     // AFV1=13, AFV2=14, AFV3=15), causing AFV0/1 vs AFV2/3 to be joined at
     // the same coordinates — explaining the entire "12.4% AFV divergence".
     dump_cost_inputs(
-        STRATEGY_CODE_LUT[raw_strategy as usize], bx, by, entropy_mul, cx, cy, quant_norm16,
-        ytox, ytob, mask1x1, mask1x1_stride,
-        entropy_pre_loss, loss_scalar_for_dump,
-        k_info_loss_mul, k_cost_delta, k_zeros_mul, entropy,
+        STRATEGY_CODE_LUT[raw_strategy as usize],
+        bx,
+        by,
+        entropy_mul,
+        cx,
+        cy,
+        quant_norm16,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        entropy_pre_loss,
+        loss_scalar_for_dump,
+        k_info_loss_mul,
+        k_cost_delta,
+        k_zeros_mul,
+        entropy,
     );
 
     // W44-59: per-block aggregates for the targeted AFV block (after all
@@ -1609,8 +1634,14 @@ fn dump_cost_inputs(
                             }
                         }
                     }
-                    if count > 0 { (sum / count as f32, count) } else { (0.0, 0) }
-                } else { (0.0, 0) };
+                    if count > 0 {
+                        (sum / count as f32, count)
+                    } else {
+                        (0.0, 0)
+                    }
+                } else {
+                    (0.0, 0)
+                };
                 let cmap_x = ytox_ratio(ytox);
                 let cmap_b = ytob_ratio(ytob);
                 let _ = writeln!(
@@ -1639,10 +1670,25 @@ fn dump_cost_inputs(
     // Suppress unused-variable warnings when std is disabled.
     #[cfg(not(feature = "std"))]
     {
-        let _ = (raw_strategy, bx, by, entropy_mul, cx, cy, quant_norm16,
-                 ytox, ytob, mask1x1, mask1x1_stride,
-                 entropy_pre_loss, loss_scalar_for_dump,
-                 k_info_loss_mul, k_cost_delta, k_zeros_mul, entropy);
+        let _ = (
+            raw_strategy,
+            bx,
+            by,
+            entropy_mul,
+            cx,
+            cy,
+            quant_norm16,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            entropy_pre_loss,
+            loss_scalar_for_dump,
+            k_info_loss_mul,
+            k_cost_delta,
+            k_zeros_mul,
+            entropy,
+        );
     }
 }
 
@@ -1675,9 +1721,13 @@ fn afv_coeff_dump_target(raw_strategy: u8, x: usize, y: usize) -> bool {
         static TARGET: OnceLock<Option<(u8, usize, usize)>> = OnceLock::new();
         let cached = TARGET.get_or_init(|| {
             let path = std::env::var("JXL_DUMP_AFV_PATH").ok()?;
-            if path.is_empty() { return None; }
+            if path.is_empty() {
+                return None;
+            }
             let kind: u8 = std::env::var("JXL_DUMP_AFV_KIND").ok()?.parse().ok()?;
-            if kind > 3 { return None; }
+            if kind > 3 {
+                return None;
+            }
             let tx: usize = std::env::var("JXL_DUMP_AFV_X").ok()?.parse().ok()?;
             let ty: usize = std::env::var("JXL_DUMP_AFV_Y").ok()?.parse().ok()?;
             // Map AFV kind 0..3 → raw_strategy RAW_STRATEGY_AFV0..AFV3.
@@ -1700,8 +1750,14 @@ fn afv_dump_file() -> Option<&'static std::sync::Mutex<std::fs::File>> {
     static DUMP_FILE: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
     let slot = DUMP_FILE.get_or_init(|| {
         let path = std::env::var("JXL_DUMP_AFV_PATH").ok()?;
-        if path.is_empty() { return None; }
-        let mut f = OpenOptions::new().create(true).append(true).open(&path).ok()?;
+        if path.is_empty() {
+            return None;
+        }
+        let mut f = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .ok()?;
         if f.metadata().map(|m| m.len() == 0).unwrap_or(false) {
             let _ = writeln!(f, "stage\traw_strategy\tx\ty\tc\ti\tvalue");
         }
@@ -1711,14 +1767,7 @@ fn afv_dump_file() -> Option<&'static std::sync::Mutex<std::fs::File>> {
 }
 
 #[allow(dead_code)]
-fn dump_afv_coeff_block(
-    stage: &str,
-    raw_strategy: u8,
-    x: usize,
-    y: usize,
-    c: usize,
-    data: &[f32],
-) {
+fn dump_afv_coeff_block(stage: &str, raw_strategy: u8, x: usize, y: usize, c: usize, data: &[f32]) {
     #[cfg(feature = "std")]
     {
         use std::io::Write;
@@ -1782,14 +1831,7 @@ fn dump_afv_per_coeff(
 }
 
 #[allow(dead_code)]
-fn dump_afv_aggregate(
-    raw_strategy: u8,
-    x: usize,
-    y: usize,
-    c: usize,
-    name: &str,
-    value: f32,
-) {
+fn dump_afv_aggregate(raw_strategy: u8, x: usize, y: usize, c: usize, name: &str, value: f32) {
     #[cfg(feature = "std")]
     {
         use std::io::Write;

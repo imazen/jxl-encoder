@@ -324,13 +324,7 @@ fn main() {
                     idx + 1, n_cells
                 ))
                 .status();
-            eprintln!(
-                "[{}/{}] {} d={:.2}",
-                idx + 1,
-                n_cells,
-                c.image,
-                c.distance
-            );
+            eprintln!("[{}/{}] {} d={:.2}", idx + 1, n_cells, c.image, c.distance);
         }
     }
 
@@ -344,14 +338,7 @@ fn main() {
     summary.push_str("\n=== Paired aggregates (ssim2 - butteraugli) per distance ===\n");
     summary.push_str(&format!(
         "{:<8} {:<6} {:>8} {:>10} {:>10} {:>10} {:>10} {:>10}\n",
-        "dist",
-        "n",
-        "d_bytes%",
-        "d_bfly%",
-        "d_ssim2",
-        "bt_bytes",
-        "ss_bytes",
-        "bt_bfly",
+        "dist", "n", "d_bytes%", "d_bfly%", "d_ssim2", "bt_bytes", "ss_bytes", "bt_bfly",
     ));
 
     type AggKey = u32; // distance × 100
@@ -367,11 +354,7 @@ fn main() {
         );
     }
     for r_bt in rows.iter().filter(|r| r.mode == "butteraugli") {
-        let key = (
-            r_bt.image.clone(),
-            (r_bt.distance * 100.0) as u32,
-            "ssim2",
-        );
+        let key = (r_bt.image.clone(), (r_bt.distance * 100.0) as u32, "ssim2");
         if let Some(r_ss) = keyed.get(&key) {
             by_dist
                 .entry((r_bt.distance * 100.0) as u32)

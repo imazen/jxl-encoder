@@ -186,8 +186,9 @@ impl DcTreeSamples {
             self.residual_tokens_per_predictor[i].push(token);
         }
         // Mirror gradient residual into legacy slot for stage 1-6 callers.
-        let grad_token =
-            encode_hybrid_uint(pack_signed(residuals[crate::modular::Predictor::Gradient as usize]));
+        let grad_token = encode_hybrid_uint(pack_signed(
+            residuals[crate::modular::Predictor::Gradient as usize],
+        ));
         self.residual_tokens.push(grad_token);
 
         for (i, &p) in props.iter().enumerate() {
@@ -284,10 +285,7 @@ pub fn compute_dc_properties(
 ///
 /// Each channel gets a FRESH `WeightedPredictorState` — matches libjxl's
 /// per-channel processing pattern.
-pub fn gather_dc_samples_variable(
-    samples: &mut DcTreeSamples,
-    quant_dc: &[Vec<Vec<i16>>; 3],
-) {
+pub fn gather_dc_samples_variable(samples: &mut DcTreeSamples, quant_dc: &[Vec<Vec<i16>>; 3]) {
     use crate::modular::predictor::{Neighbors, Predictor, WeightedPredictorState};
 
     if quant_dc[0].is_empty() || quant_dc[0][0].is_empty() {
@@ -723,7 +721,8 @@ fn estimate_subset_cost_per_predictor(
             //                ≈ token-15 bits at worst (we approximate as the
             //                payload-bit count, sufficient for relative ranking).
             if tok >= GATHER_SPLIT {
-                let n_minus_split_exp = (tok - GATHER_SPLIT) / (GATHER_MSB_IN_TOKEN + GATHER_LSB_IN_TOKEN);
+                let n_minus_split_exp =
+                    (tok - GATHER_SPLIT) / (GATHER_MSB_IN_TOKEN + GATHER_LSB_IN_TOKEN);
                 // Extra bits = msb_count_used + lsb_count
                 // For msb=1, lsb=2: extra_bits = 1 + 2 = 3 per token of this magnitude class
                 extra_bits += (n_minus_split_exp as f64) + 2.0;
@@ -1728,9 +1727,7 @@ pub fn collect_dc_tokens_with_tree_variable(
                 // Compute prediction using leaf's chosen predictor.
                 let prediction = if leaf_predictor == Predictor::Weighted as u32 {
                     wp_pred as i32
-                } else if let Some(pred) =
-                    Predictor::from_id(leaf_predictor as u8)
-                {
+                } else if let Some(pred) = Predictor::from_id(leaf_predictor as u8) {
                     pred.predict_from_neighbors(&neighbors)
                 } else {
                     // Defensive: unknown predictor id — use clamped gradient.
@@ -1755,10 +1752,7 @@ pub fn collect_dc_tokens_with_tree_variable(
 ///
 /// Like `get_dc_context` but also returns the leaf's predictor field.
 #[inline]
-pub fn get_dc_context_and_predictor(
-    tree: &DcTree,
-    props: &[i32; NUM_DC_PROPERTIES],
-) -> (u32, u32) {
+pub fn get_dc_context_and_predictor(tree: &DcTree, props: &[i32; NUM_DC_PROPERTIES]) -> (u32, u32) {
     let mut idx = 0;
     loop {
         let node = &tree[idx];

@@ -58,9 +58,7 @@ fn corpus_dir() -> PathBuf {
 }
 
 fn image_path() -> PathBuf {
-    corpus_dir()
-        .join("CID22/CID22-512/validation")
-        .join(IMAGE)
+    corpus_dir().join("CID22/CID22-512/validation").join(IMAGE)
 }
 
 fn cjxl_rs_bin() -> PathBuf {
@@ -101,42 +99,58 @@ fn parse_dump(stderr: &str) -> DumpResult {
         let trimmed = line.trim_start();
         if let Some(rest) = trimmed.strip_prefix("entropy_32x32=") {
             if let Some(v) = rest.split_whitespace().next() {
-                if let Ok(f) = v.parse::<f32>() { r.entropy_32x32 = f; }
+                if let Ok(f) = v.parse::<f32>() {
+                    r.entropy_32x32 = f;
+                }
             }
         }
         if let Some(rest) = trimmed.strip_prefix("entropy_32x16_0(left)=") {
             let parts: Vec<&str> = rest.split_whitespace().collect();
             if let Some(v) = parts.first() {
-                if let Ok(f) = v.parse::<f32>() { r.entropy_32x16_0 = f; }
+                if let Ok(f) = v.parse::<f32>() {
+                    r.entropy_32x16_0 = f;
+                }
             }
             for p in &parts {
                 if let Some(s) = p.strip_prefix("entropy_32x16_1(right)=") {
-                    if let Ok(f) = s.parse::<f32>() { r.entropy_32x16_1 = f; }
+                    if let Ok(f) = s.parse::<f32>() {
+                        r.entropy_32x16_1 = f;
+                    }
                 }
             }
         }
         if let Some(rest) = trimmed.strip_prefix("entropy_16x32_0(top)=") {
             let parts: Vec<&str> = rest.split_whitespace().collect();
             if let Some(v) = parts.first() {
-                if let Ok(f) = v.parse::<f32>() { r.entropy_16x32_0 = f; }
+                if let Ok(f) = v.parse::<f32>() {
+                    r.entropy_16x32_0 = f;
+                }
             }
             for p in &parts {
                 if let Some(s) = p.strip_prefix("entropy_16x32_1(bot)=") {
-                    if let Ok(f) = s.parse::<f32>() { r.entropy_16x32_1 = f; }
+                    if let Ok(f) = s.parse::<f32>() {
+                        r.entropy_16x32_1 = f;
+                    }
                 }
             }
         }
         if let Some(rest) = trimmed.strip_prefix("cost_sub=") {
             let parts: Vec<&str> = rest.split_whitespace().collect();
             if let Some(v) = parts.first() {
-                if let Ok(f) = v.parse::<f32>() { r.cost_sub = f; }
+                if let Ok(f) = v.parse::<f32>() {
+                    r.cost_sub = f;
+                }
             }
             for p in &parts {
                 if let Some(s) = p.strip_prefix("cost_jxn=") {
-                    if let Ok(f) = s.parse::<f32>() { r.cost_jxn = f; }
+                    if let Ok(f) = s.parse::<f32>() {
+                        r.cost_jxn = f;
+                    }
                 }
                 if let Some(s) = p.strip_prefix("cost_nxj=") {
-                    if let Ok(f) = s.parse::<f32>() { r.cost_nxj = f; }
+                    if let Ok(f) = s.parse::<f32>() {
+                        r.cost_nxj = f;
+                    }
                 }
             }
         }
