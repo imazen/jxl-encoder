@@ -1,0 +1,48 @@
+W44-68: codec_wiki e7 d=4 A/B sweep — DCT32+DCT64 suppression vs default
+
+git_rev: f5ea65790db3b566a0c6728acda5fcafcb33921c (W44-68 fix applied)
+host: lilith (AMD Ryzen 9 7950X, 128 GB RAM)
+date: 2026-05-19
+cmd:  cargo run --release -p jxl-encoder --features 'parallel __expert' \
+          --example w44_68_ab
+
+Variants
+--------
+- baseline_W44_65_default: W44-65 default-on dct_suppress_hint = mask1x1 >= 99.5
+  drops `try_dct64=false` only. Hint left as None so the discriminator fires
+  naturally (or doesn't) per image.
+- suppress_dct32_and_dct64: forced via __expert `with_internal_params`,
+  `try_dct32 = Some(false)` AND `try_dct64 = Some(false)`. Bypasses the
+  discriminator so windows95 + 1418519 photo (mask1x1 < 99.5) show the
+  WORST-CASE cost if the discriminator were ever to fire on them. In
+  production, the W44-65 discriminator gate protects both.
+
+Findings
+--------
+
+1. All screenshots in the dispatched class (mask1x1 ≥ 99.5):
+   - codec_wiki d=0.5: +0.151 % (noise)
+   - codec_wiki d=1..d=6: -2.65 % to -4.48 % (uniform win)
+   - terminal d=1, d=4: -3.34 %, -3.78 %
+   - imac_g3 d=1, d=4: -1.42 %, -2.38 %
+   - imac_dark d=1, d=4: -0.76 %, -0.88 %
+   - windows d=1, d=4: -1.11 %, -1.19 %
+
+2. Wedge cell: codec_wiki e7 d=4 closed +3.55 % → -1.09 %
+   (verified via cjxl_parity_ledger re-run; OPEN → FIXED).
+
+3. NOT in dispatched class (would never see suppression in default code path):
+   - windows95 d=2..d=4: +0.81 % to +2.00 % regression IF discriminator
+     wrongly fired (it doesn't: mask1x1 = 99.06 < 99.5 threshold).
+   - 1418519 photo d=1, d=4: +10.79 %, +10.37 % regression IF discriminator
+     wrongly fired (it doesn't: mask1x1 ≤ 92.34 << 99.5).
+
+Decoder roundtrip
+-----------------
+- codec_wiki d=4 + d=3, terminal d=4, imac_g3 d=4: jxl-rs=OK + djxl=OK
+  (via `examples/w44_68_roundtrip.rs`).
+
+RD-regression
+-------------
+`just rd-regression`: all 12 images within thresholds, multiple screenshot
+wins (frymire: -3.1 % to -4.4 % size, +0.93 SSIM2 at d=1).

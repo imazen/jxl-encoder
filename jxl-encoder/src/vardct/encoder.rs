@@ -2285,13 +2285,18 @@ impl VarDctEncoder {
             "W44-65 dbg: distance={:.2} mask1x1_median={:?} hint={:?} width={} height={}",
             self.distance, mask1x1_median, self.dct_suppress_hint, width, height
         );
-        // W44-65 content-aware DCT64-class suppression (default-on).
-        // When active we set `try_dct64 = false` on the search-scoped
-        // profile so the AC-strategy search skips
-        // DCT64X64/DCT64X32/DCT32X64 evaluation. W44-62 (`07f8b3d2`)
-        // measured uniform -0.13 % to -3.25 % wins on screenshot-class
-        // content (codec_wiki + imac_g3 + terminal) and a flip from
-        // `+3.51 %` → `+0.18 %` on `codec_wiki e7 d=5` (OPEN → FIXED).
+        // W44-65 + W44-68 content-aware large-DCT suppression (default-on).
+        // When active we set `try_dct64 = false` AND `try_dct32 = false` on
+        // the search-scoped profile so the AC-strategy search skips
+        // DCT64X64/DCT64X32/DCT32X64 *and* DCT32X32/DCT32X16/DCT16X32
+        // evaluation. W44-62 (`07f8b3d2`) measured uniform -0.13 % to -3.25 %
+        // wins on screenshot-class content from the DCT64-only suppression
+        // and a flip from `+3.51 %` → `+0.18 %` on `codec_wiki e7 d=5`
+        // (OPEN → FIXED). W44-68 follow-on bisection (codec_wiki d=0.5..d=6
+        // + 4 other screenshots) showed an additional -2.65 % to -4.48 %
+        // win uniformly across all distances when DCT32 is also dropped on
+        // the same dispatched class, closing the final OPEN screenshot cell
+        // (codec_wiki e7 d=4: +3.55 % → -1.07 %, OPEN → FIXED).
         //
         // The auto discriminator reuses the W22-1 screenshot threshold
         // (`median(mask1x1) > 95`) because the W44-62 falsification
@@ -2349,6 +2354,17 @@ impl VarDctEncoder {
             }
             if w44_65_suppress_dct64 {
                 p.try_dct64 = false;
+                // W44-68: also suppress DCT32-class on the same screenshot-class
+                // dispatch. Bisection on codec_wiki d=0.5..d=6 showed uniform
+                // -2.65 % to -4.48 % wins across all distances (d=4 wedge cell
+                // closes from +3.55 % → -1.07 %, OPEN → FIXED). Other dispatched
+                // screenshots (terminal, imac_g3, imac_dark, windows) also win
+                // -0.76 % to -3.78 %. The W44-65 threshold (mask1x1 >= 99.5)
+                // protects windows95 (99.06, NOT in screenshot class — +2.0 % if
+                // suppressed) and all CID22 photos (median ≤ 92.34 — up to
+                // +10.8 % if suppressed); the discriminator gate keeps both
+                // untouched.
+                p.try_dct32 = false;
             }
             Some(p)
         } else {
