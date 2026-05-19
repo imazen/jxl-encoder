@@ -221,6 +221,8 @@ fastrand = "2.4.1"
 # `examples/smart_fanout_sweep.rs` (chunk 1 of the smart-fanout investigation,
 # memory/zenanalyze_tree_size_correlation_2026-05-17.md),
 # `examples/content_class_dispatch_ab.rs` (RFC #45 pick #4 chunk 1, this dispatch),
+# `examples/dct64_smart_dispatch_calibrate.rs` + `dct64_smart_dispatch_proxy_calibrate.rs`
+# (W44-35 calibration for the smooth-photo DCT64 admission detector),
 # and the picker-oracle calibration harnesses. Out of CI; re-add locally with:
 #   zenanalyze = { path = "../../zenanalyze", features = ["experimental"] }
 # alongside a [[example]] block for the sweep, then revert before pushing.
@@ -476,6 +478,25 @@ path = "examples/quality_drift_investigation.rs"
 name = "content_aware_entropy_mul_ab"
 path = "examples/content_aware_entropy_mul_ab.rs"
 required-features = ["butteraugli-loop"]
+
+# W44-35 acceptance check: 1418519 cells + screenshot regressions +
+# F-D residual cells. Does not need zenanalyze (uses default API).
+[[example]]
+name = "w44_35_acceptance_check"
+path = "examples/w44_35_acceptance_check.rs"
+required-features = ["parallel"]
+
+# W44-35 decoder roundtrip: 1418519 × 5 cells via jxl-oxide.
+[[example]]
+name = "w44_35_decoder_check"
+path = "examples/w44_35_decoder_check.rs"
+required-features = ["parallel"]
+
+# NOTE: W44-35 zenanalyze-dep examples
+# (`dct64_smart_dispatch_calibrate.rs`, `dct64_smart_dispatch_proxy_calibrate.rs`)
+# are checked in but NOT registered here — they require the sibling
+# zenanalyze path dep noted in the comment above. Add a
+# `[[example]]` stanza locally alongside the dep to run them.
 
 # W36-3: patches photo-skip dispatch A/B sweep — `Auto` (default,
 # skip scan on photo class via `median(mask1x1) > 95` discriminator)
