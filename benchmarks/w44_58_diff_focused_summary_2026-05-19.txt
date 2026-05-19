@@ -1,0 +1,54 @@
+
+=== 1531677 d=6 ===
+Shared keys with identical entropy_mul + covered_blocks: 13312 / 31500
+
+Pure-numerical divergence (shared-key, same entropy_mul, same covered_blocks):
+  field                  median_abs     mean_abs          p50          p95          p99          max   %<0.1%     %<1%
+  quant_norm16             0.000000     0.000005     0.000000     0.000000     0.000016     0.013325   99.92%   99.98%
+  mask1x1_mean_y           0.000072     0.000446     0.000072     0.002138     0.010399     0.054939   94.00%   98.92%
+  entropy_pre_loss         0.016385     0.040349     0.016385     0.146402     0.196197     0.293832   42.94%   45.79%
+  loss_scalar              0.043284     0.089560     0.043288     0.314030     0.437316     0.793997   37.06%   40.69%
+  final_entropy            0.017472     0.037793     0.017476     0.135206     0.183380     0.284320   37.75%   45.21%
+
+By strategy (n_keys, median_abs loss_scalar diff, median_abs entropy_pre_loss diff):
+   0 (DCT8      ) n= 4096  loss_scalar med=0.0001 p95=0.0004  entropy_pre med=0.0000 p95=0.0000
+  10 (DCT32x16  ) n=  512  loss_scalar med=0.0001 p95=0.0089  entropy_pre med=0.0000 p95=0.0000
+  11 (DCT16x32  ) n=  512  loss_scalar med=0.0001 p95=0.0075  entropy_pre med=0.0000 p95=0.0000
+  14 (AFV0      ) n= 4096  loss_scalar med=0.1242 p95=0.3492  entropy_pre med=0.0560 p95=0.1632
+  15 (AFV1      ) n= 4096  loss_scalar med=0.1242 p95=0.3539  entropy_pre med=0.0559 p95=0.1643
+
+=== 1418519 d=5 ===
+Shared keys with identical entropy_mul + covered_blocks: 13312 / 31534
+
+Pure-numerical divergence (shared-key, same entropy_mul, same covered_blocks):
+  field                  median_abs     mean_abs          p50          p95          p99          max   %<0.1%     %<1%
+  quant_norm16             0.000000     0.000009     0.000000     0.000000     0.000008     0.026433   99.94%   99.96%
+  mask1x1_mean_y           0.000121     0.000172     0.000121     0.000206     0.001155     0.057714   98.61%   99.94%
+  entropy_pre_loss         0.000000     0.011700     0.000000     0.088597     0.139403     0.322835   82.35%   83.37%
+  loss_scalar              0.000290     0.042471     0.000291     0.267666     0.446384     0.744941   59.24%   73.85%
+  final_entropy            0.000041     0.012223     0.000041     0.082264     0.139824     0.320195   73.31%   80.27%
+
+By strategy (n_keys, median_abs loss_scalar diff, median_abs entropy_pre_loss diff):
+   0 (DCT8      ) n= 4096  loss_scalar med=0.0001 p95=0.0066  entropy_pre med=0.0000 p95=0.0000
+  10 (DCT32x16  ) n=  512  loss_scalar med=0.0002 p95=0.0097  entropy_pre med=0.0000 p95=0.0000
+  11 (DCT16x32  ) n=  512  loss_scalar med=0.0002 p95=0.0114  entropy_pre med=0.0000 p95=0.0000
+  14 (AFV0      ) n= 4096  loss_scalar med=0.0017 p95=0.3274  entropy_pre med=0.0000 p95=0.0972
+  15 (AFV1      ) n= 4096  loss_scalar med=0.0017 p95=0.3312  entropy_pre med=0.0000 p95=0.0972
+
+=== 1420710 d=6 ===
+Shared keys with identical entropy_mul + covered_blocks: 13312 / 31496
+
+Pure-numerical divergence (shared-key, same entropy_mul, same covered_blocks):
+  field                  median_abs     mean_abs          p50          p95          p99          max   %<0.1%     %<1%
+  quant_norm16             0.000000     0.000000     0.000000     0.000000     0.000000     0.000018  100.00%  100.00%
+  mask1x1_mean_y           0.000073     0.000315     0.000073     0.001282     0.006897     0.017334   94.58%   99.62%
+  entropy_pre_loss         0.018740     0.040400     0.018774     0.143607     0.187232     0.294388   39.76%   44.66%
+  loss_scalar              0.046334     0.090206     0.046343     0.309128     0.411970     0.659413   36.34%   40.02%
+  final_entropy            0.018256     0.037706     0.018261     0.132349     0.178895     0.264362   37.29%   44.16%
+
+By strategy (n_keys, median_abs loss_scalar diff, median_abs entropy_pre_loss diff):
+   0 (DCT8      ) n= 4096  loss_scalar med=0.0001 p95=0.0007  entropy_pre med=0.0000 p95=0.0000
+  10 (DCT32x16  ) n=  512  loss_scalar med=0.0001 p95=0.0084  entropy_pre med=0.0000 p95=0.0041
+  11 (DCT16x32  ) n=  512  loss_scalar med=0.0001 p95=0.0072  entropy_pre med=0.0000 p95=0.0032
+  14 (AFV0      ) n= 4096  loss_scalar med=0.1293 p95=0.3416  entropy_pre med=0.0552 p95=0.1573
+  15 (AFV1      ) n= 4096  loss_scalar med=0.1257 p95=0.3424  entropy_pre med=0.0571 p95=0.1588
