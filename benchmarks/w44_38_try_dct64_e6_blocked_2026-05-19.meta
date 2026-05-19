@@ -1,0 +1,136 @@
+W44-38 chunk A — extend try_dct64 default from `effort >= 7` to `effort >= 6`
+========================================================================
+
+Status: [BLOCKED by cost-model wedge] — change NOT shipped. Source reverted.
+
+Hostname: $(hostname) (water-cooled 7950X)
+Date: 2026-05-19
+Git rev (workspace `~/work/zen/jxl-encoder--w44-38-dct64-hint-e6`):
+  main@origin = 145b5595 (W44-37 investigation commit)
+Sibling workspace baseline diff: zero (reverted via `jj restore`)
+
+# What was tried
+
+Lowered `EffortProfile::lossy` default `try_dct64: effort >= 7` →
+`effort >= 6` in `jxl-encoder/src/effort.rs:778`. Rationale:
+libjxl `enc_ac_strategy.cc:855` early-returns from `ProcessRectACS` at
+`speed_tier > kHare` (= our e4); for speed_tier <= kHare (= our e5+)
+the merge stage evaluates the DCT64X32/DCT32X64 entries in
+`kTransformsForMerge` (`enc_ac_strategy.cc:917-918`).
+`encoding_speed_tier_max_limit` is checked in `FindBest8x8Transform`
+(`:580`), NOT in the merge loop — only `decoding_speed_tier_max_limit`
+gates the merge entries. So libjxl evaluates DCT64 at e5+; our
+`effort >= 7` gate is 2 effort levels MORE conservative than libjxl.
+
+# What happened
+
+(a) **codec_wiki e6 d=4.0 (the target wedge cell)**:
+    AC strategy distribution shifted EXACTLY to cjxl parity
+    (Dct64 area_pct: 0.0 → 55.19 = matches cjxl's 55.19 area_pct).
+    But bytes REGRESSED: 76795 → 77048 (+253 bytes, +0.34pp delta vs cjxl,
+    went from +3.20% to +3.54%). SSIM2 regressed: 79.58 → 79.09 (-0.50).
+    Butteraugli unchanged. Status: still OPEN.
+
+    Root cause: the cost-model wedge documented in
+    `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/dropped_optimizations_for_parity_2026-05-15.md`
+    item #3 — our `entropy_mul` for DCT64x64/DCT64x32/DCT32x64 are lifted
+    above libjxl reference values to compensate for missing
+    `kAvoidEntropyOfTransforms` + X-channel multi-block weight + kFavor2X2
+    coverage. With our lifted muls, evaluating libjxl-faithful DCT64 picks
+    spends more bits per block than ours would.
+
+(b) **Photo regressions at e6, d>=2.0** (`benchmarks/w44_38_try_dct64_e6_photos_2026-05-19.tsv`):
+    All 12 cells remain status FIXED, but SSIM2 drops are concerning:
+    - 1418519.png d=3.0: ssim2 -1.31 (was -0.77), bytes -1.73% (was +1.17%)
+    - 1418519.png d=4.0: ssim2 -1.54 (was -1.07), bytes -1.70% (was +0.61%)
+    - 1531677.png d=4.0: ssim2 -1.24 (was -1.16), bytes -1.07% (was +2.66%)
+    - 1025469.png d=4.0: ssim2 -0.51 (was -0.33), bytes -0.64% (was +2.31%)
+    Photos d=1.0: byte-identical (small+low-d gate keeps try_dct64=false,
+    consistent with e7 behaviour).
+
+# Why this is a hard wall, not just tuning noise
+
+The bytes ratio at codec_wiki went the WRONG direction even with
+strategy distribution at perfect parity. This means the DCT64 blocks
+that ARE picked carry more bits than libjxl's would under the same
+strategy. The encoder is not just over-picking — it's spending more
+per block.
+
+`dropped_optimizations_for_parity_2026-05-15.md` lists this as the
+top-3 reason we ship entropy_mul values lifted above the libjxl ref:
+    "1-3% file size, mixed quality direction. The wedge is per-image:
+     some images want our higher mul (less over-pick of large
+     transforms), some want libjxl's lower mul. Single global value
+     can't satisfy both."
+
+# Next attempt — what's needed before this gate is safe to lower
+
+Per `dropped_optimizations_for_parity_2026-05-15.md` item #3:
+
+  "How to re-enable libjxl-faithful values: drop everything to
+   `EntropyMulTable::reference()` from `forks/cost.rs:530-560`. Then either:
+   1. Implement the missing libjxl counterweights (X-channel multi-block
+      weight, kAvoidEntropyOfTransforms penalty, kFavor2X2 on more
+      strategies). Then libjxl muls work directly.
+   2. Per-image cost-model gating (e.g. screenshot discriminator pattern).
+   3. Per-region adaptive entropy_mul.
+   4. Accept the per-image wedge: ship libjxl muls, tolerate 1-3%
+      per-image variance in either direction."
+
+Chunk A as specified in `codec_wiki_wedge_investigation_2026-05-19` is
+blocked on option (1) or (3). Option (4) is a no-go because of the
+photo SSIM2 regressions (-1.3 to -1.5 on 1418519 d=3/4) — these are
+visible quality losses on photos to chase a screenshot wedge cell that
+isn't actually closed.
+
+A NARROWER chunk-A variant could be: enable e6 `try_dct64` ONLY when
+the smooth_photo_dct64 discriminator says "screenshot-class content"
+(median(mask1x1) > 95 per the W44-35 calibration), with the existing
+small+low-d gate continuing to apply. That would localise the change
+to genuine screenshot inputs and could be A/B tested without photo
+collateral damage. The discriminator already exists in
+`api::detect_smooth_photo_for_dct64_from_layout` — but it's a
+SMOOTH-photo discriminator, not a screenshot one. Would need a
+separate W44-38b chunk to build the screenshot discriminator.
+
+# Files / reproducer
+
+- `jxl-encoder/src/effort.rs:778` — gate site (was `effort >= 7`, would
+  become `effort >= 6`).
+- `jxl-encoder/examples/w44_37_codec_wiki_investigate.rs` — wedge
+  measurement harness (unchanged, takes `--output` flag).
+- `jxl-encoder/examples/cjxl_parity_ledger.rs` — bytes/butteraugli/ssim2
+  per-cell measurement (`--image NAME --effort E --distance D --output T`).
+- `benchmarks/w44_38_try_dct64_e6_blocked_2026-05-19.tsv` — post-fix
+  AC strategy distribution on the 7 codec_wiki wedge cells
+  (confirms perfect parity at e6 d=4.0).
+- `benchmarks/w44_38_try_dct64_e6_photos_2026-05-19.tsv` — photo
+  collateral check at e6 × d ∈ {1.0, 2.0, 3.0, 4.0} × 4 photos.
+
+# Verification log
+
+- `cargo build --release -p jxl-encoder` — OK (3 unused-function warnings,
+  pre-existing).
+- `cargo test --release -p jxl-encoder --lib` — 1255 pass / 0 fail / 29
+  ignored / 0 measured (post-test-update).
+- `cargo test --release -p jxl-encoder --test hash_lock_features` —
+  36 pass (byte-identical fixtures; all <=48×48 so DCT64 cannot fire).
+- Wedge harness on 7 codec_wiki cells — codec_wiki e6 d=4.0 AC strategy
+  distribution at perfect parity with cjxl (Dct64 area_pct 55.19 = 55.19).
+- Ledger script on the target cell — still status OPEN (bytes +3.54%,
+  bfly +7.96%, ssim2 -5.42).
+
+# Recommendation for next agent
+
+Do NOT re-attempt this chunk standalone. Either:
+1. First implement libjxl's missing counterweights (separate multi-week
+   chunk; see `cost_model_wedge_analysis.md` and
+   `dct32_mul_post_loss_fix_bisection.md` for prior bisection narratives).
+2. OR build a screenshot-class discriminator and gate the e6 admission
+   on it (smaller scope, but the existing smooth_photo discriminator is
+   the WRONG direction — screenshots typically have HIGH mask1x1 values
+   from anti-aliased text edges, not the LOW values that mark smooth
+   photos).
+3. OR accept the wedge persists and move to Chunk B (block context map
+   under-clustering on screenshots, the e7 d=3-6 cluster — independent
+   of this work).
