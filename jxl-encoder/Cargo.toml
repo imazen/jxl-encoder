@@ -297,6 +297,15 @@ name = "w44_51_refframe_predictor_ab"
 path = "examples/w44_51_refframe_predictor_ab.rs"
 required-features = ["__expert"]
 
+# W44-53: codec_wiki CC enumeration / patch-admission audit vs cjxl.
+# Tests H1 from W44-52: does cjxl admit MORE patches than ours? Parses
+# cjxl bitstream's LfGlobal.patches and compares (unique, occurrences)
+# vs ours (W44-20 instrumentation).
+[[example]]
+name = "w44_53_cc_admission_vs_cjxl"
+path = "examples/w44_53_cc_admission_vs_cjxl.rs"
+required-features = ["__internals"]
+
 [[example]]
 name = "hdr_rd_sweep_vs_cjxl"
 path = "examples/hdr_rd_sweep_vs_cjxl.rs"
