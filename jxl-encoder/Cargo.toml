@@ -1024,5 +1024,26 @@ name = "w44_65_encoder_mask1x1_probe"
 path = "examples/w44_65_encoder_mask1x1_probe.rs"
 required-features = ["parallel", "debug-w44-65"]
 
+# W44-68 codec_wiki d=4 probe.
+[[example]]
+name = "w44_68_d4_probe"
+path = "examples/w44_68_d4_probe.rs"
+required-features = ["parallel", "debug-w44-65"]
+
+[[example]]
+name = "w44_68_strat_hist"
+path = "examples/w44_68_strat_hist.rs"
+required-features = ["parallel", "debug-ac-strategy"]
+
+[[example]]
+name = "w44_68_ab"
+path = "examples/w44_68_ab.rs"
+required-features = ["parallel", "__expert"]
+
+[[example]]
+name = "w44_68_roundtrip"
+path = "examples/w44_68_roundtrip.rs"
+required-features = ["parallel"]
+
 [lints]
 workspace = true

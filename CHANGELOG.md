@@ -4,6 +4,23 @@
 
 ### Performance
 
+- **W44-68 — DCT32 suppression on screenshot-class content**
+  (`jxl-encoder/src/vardct/encoder.rs`,
+  `benchmarks/w44_68_codec_wiki_d4_ab_2026-05-19.{tsv,meta}`).
+  Extends the W44-65 default-on `dct_suppress_hint` discriminator
+  (mask1x1 median >= 99.5) to additionally drop `try_dct32 = false`
+  on the same dispatched class. Bisection on codec_wiki d=0.5..d=6
+  showed uniform -2.65% to -4.48% wins; other dispatched screenshots
+  (terminal, imac_g3, imac_dark, windows) also win -0.76% to -3.78%.
+  Closes the final OPEN screenshot cell in the cjxl_parity_ledger:
+  `codec_wiki e7 d=4` flips from +3.55% bytes / OPEN → -1.09% bytes /
+  FIXED. windows95 (mask1x1=99.06) and CID22 photos (median ≤ 92.34)
+  remain protected by the discriminator threshold and are byte-identical
+  in the dispatcher path. RD-regression passes with frymire wins
+  (-3.1% to -4.4% size, +0.93 SSIM2 at d=1). Multi-decoder roundtrip
+  verified on jxl-rs + djxl for codec_wiki, terminal, imac_g3 at
+  d=3..d=4.
+
 - **W44-54 — VarDCT DC LearnTree at effort >= 4** (`d53519d4`,
   closes part of imazen/jxl-encoder#56). Routes DC tokenization through
   the data-adaptive `dc_tree_learn::learn_dc_tree` stub for `effort >= 4`,
