@@ -894,5 +894,15 @@ name = "w44_31_per_distance_sweep"
 path = "examples/w44_31_per_distance_sweep.rs"
 required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 
+# W44-32: DCT64 entropy_mul sweep on F-D residual cells at d=5/d=6.
+# Follow-on to W44-31 honest-stop. DCT64 entropy_mul lives in the same
+# EntropyMulTable surface but routes through entropy_mul_for_strategy at
+# raw_strategy = DCT64X64/DCT64X32. Tests whether lifting DCT64 from
+# libjxl default (2.25) closes the residual byte gap vs cjxl at d=5/d=6.
+[[example]]
+name = "w44_32_dct64_sweep"
+path = "examples/w44_32_dct64_sweep.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+
 [lints]
 workspace = true
