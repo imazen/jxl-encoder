@@ -586,6 +586,58 @@ Key patterns to watch for when working on this codebase:
 
 ## Investigation Notes
 
+### W44-57: per-stream kWPFixedDC override on DC stream — SHIPPED (May 19, 2026)
+
+**Status**: [RESOLVED — shipped]; issue #57 follow-on to W44-56 stage 7d.
+
+**Mechanism** (`vardct/bitstream.rs:2346-2484`): at `effort >= 4`, builds BOTH
+candidate DC trees (Variable learner from W44-56 stage 7c, plus predefined
+`kWPFixedDC` BSP from `dc_tree_learn::build_wp_fixed_dc_tree`), trial-tokenizes
+the full DC channel with each, estimates `tree-encoding + DC-residual` cost via
+`modular::tree_learn::estimate_token_cost` (Shannon entropy + per-context
+ANS-histogram header proxy), keeps the cheaper one. Mirrors libjxl's per-stream
+override at `enc_modular.cc:1586-1590`, but generalised to "measure both, pick
+smaller" so we keep the W44-56 photo wins where Variable's per-leaf predictor
+adaptation pays for itself.
+
+**Finding on gate-c target** (`terminal e6 d=6` LfGlobal ≤30B): UNREACHABLE
+while preserving NET parity. Direct A/B with debug env hook `__JXL_W44_57_FORCE_FIXED`:
+
+- AUTO (trial-and-pick → Variable): LfGlobal 904 B, NET 55062 B
+- FORCE_FIXED (kWPFixedDC):         LfGlobal 700 B, NET 57617 B (+2555 B)
+
+The 904 B Variable LfGlobal IS the optimal choice — saving 204 B in LfGlobal
+costs 2555 B in AC. The W44-56 cost-model refinement that landed Variable on
+this cell was correct.
+
+**Coverage of W44-56 wins**: byte-identical on every spot-checked cell —
+`terminal e6 d=6`, `1418519 d=0.8/2.0/4.0 e6`, `1025469 d=1.0/3.0/4.0 e6`,
+`1189261 d=4.0 e6`, `1420710 d=6.0 e6`, `codec_wiki d=3.0 e6`, plus 4 spot-check
+cells at e5/e7 + screenshot d=0.5/3.0. The cost model picks Variable on all of
+them. The trial pass over the full DC channel costs <1 ms at 12 MP.
+
+**Acceptance gates**:
+- (a) terminal e6 d=6 LfGlobal ≤30B: NOT MET (904 B), structurally incompatible
+  with NET parity. Issue closed with finding.
+- (b) NET at-or-better than current main: PASS, byte-identical on all 16 spot
+  cells.
+- (c) W44-56 wins preserved: PASS, all 6 stay FIXED.
+- (d) `cargo test`: PASS (all suites, hash-lock regenerated for 9 cells with
+  +1 to +9 byte delta on tiny synthetic 32×32 / 48×48 gradients where the
+  cost-model proxy diverges slightly from actual ANS bytes).
+- (e) Hash-lock regen: 9 cells regenerated (sub-threshold synthetic-only deltas).
+- (f) djxl roundtrip: PASS on `terminal e6 d=6` and `1418519 d=0.8 e6`.
+
+**Bench TSV**: `benchmarks/w44_57_per_stream_wp_override_2026-05-19.{tsv,meta}`.
+**Ledger refresh**: `benchmarks/cjxl_parity_ledger_2026-05-19_w44_57.tsv` (spot
+re-runs on the 6 W44-56 wins + terminal e6 d=6, all stayed FIXED at byte parity).
+
+**Debug env hooks** (kept for future ledger investigations):
+- `__JXL_W44_57_FORCE_FIXED=1` — always pick kWPFixedDC
+- `__JXL_W44_57_FORCE_VARIABLE=1` — always pick Variable learner
+
+---
+
 ### W44-54: DC LearnTree at effort >= 4 — SHIPPED (May 19, 2026)
 
 **Status**: [RESOLVED — shipped as `d53519d4`]
