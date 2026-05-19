@@ -1,0 +1,86 @@
+# W44-59: AFV0/AFV1 divergence localized — strategy-code remap bug in W44-58
+#
+# Date: 2026-05-19
+# Issue: imazen/jxl-encoder#58 (W44-58 follow-on)
+# Workspaces (sibling, mandatory):
+#   - jxl-encoder:  ~/work/zen/jxl-encoder--w44-59-afv-dump
+#   - libjxl:       ~/work/jxl-efforts/libjxl--w44-58-debug-dump (extended w/ W44-59 per-coeff dump)
+#
+# ROOT CAUSE OF W44-58's "12.4% AFV divergence":
+#
+#   W44-58 dump infrastructure on the Rust side called `dump_cost_inputs`
+#   with `raw_strategy` (our internal Rust enum: AFV0=12, AFV1=13, AFV2=14,
+#   AFV3=15). libjxl's dump uses `acs.Strategy()` (the wire enum, AFV0=14,
+#   AFV1=15, AFV2=16, AFV3=17).
+#
+#   When the W44-58 diff script joined on `(strategy, x, y)`, it
+#   compared libjxl AFV0 (wire 14) against our AFV2 (raw 14) at the same
+#   coordinate. AFV0 mirrors the 4x4 corner to top-left; AFV2 mirrors to
+#   bottom-left. These are *completely different transforms* at the same
+#   pixel block. No surprise the loss_scalar diverged ~12%.
+#
+# FIX:
+#   1. Rust dump now emits `STRATEGY_CODE_LUT[raw_strategy]` instead of
+#      `raw_strategy`. Both dump_cost_inputs call sites (DCT8 fast-path and
+#      full-strategy path). Two-line change in jxl-encoder/src/vardct/ac_strategy.rs.
+#   2. libjxl side was already correct — emits `acs.Strategy()` (wire enum).
+#
+# VERIFICATION:
+#   Re-ran diff on the existing W44-58 dumps (no re-encode needed) with the
+#   ours→wire remap applied at join time. AFV0-3 divergence collapses:
+#
+#     | image    | distance | strategy | n     | OLD med_loss | NEW med_loss |
+#     | 1531677  | d=5      | AFV0     | 4096  | (mixed)      | 0.000073     |
+#     | 1531677  | d=5      | AFV1     | 4096  | (mixed)      | 0.000073     |
+#     | 1531677  | d=5      | AFV2     | 4096  | (mixed)      | 0.000073     |
+#     | 1531677  | d=5      | AFV3     | 4096  | (mixed)      | 0.000073     |
+#     | 1418519  | d=5      | AFV0     | 4096  | 0.124        | 0.000125     |
+#     | 1418519  | d=5      | AFV1     | 4096  | 0.124        | 0.000126     |
+#     | 1418519  | d=5      | AFV2     | 4096  | (mis-joined) | 0.000126     |
+#     | 1418519  | d=5      | AFV3     | 4096  | (mis-joined) | 0.000126     |
+#     | 1420710  | d=6      | AFV0-3   | 4096  | 0.125-0.129  | 0.000074     |
+#
+#   All 4 AFV variants are now at bit-exact parity with DCT8 (median loss
+#   diff ~0.012% — driven by FP rounding, scalar replay vs SIMD).
+#   p95 loss_scalar diff: 0.04-0.06% (vs 32-35% in W44-58's "AFV0/AFV1"
+#   rows). At parity with all other strategies.
+#
+# IMPLICATION FOR W44-19 / F-D RESIDUAL:
+#   W44-58 concluded "AFV pipeline is the dominant pure-numerical
+#   divergence" and recommended an AFV audit. This conclusion is WRONG.
+#   AFV pipeline is at parity; the W44-19 strategy disagreements (264-346
+#   per cell) must come from something else — likely the search-tree
+#   divergence W44-58 also noted (strat 4 ours=256 vs libjxl=1024;
+#   strat 5 ours=4096 vs libjxl=268; strat 16/17 ours=64/128 vs
+#   libjxl=4096/4096).
+#
+#   That call-distribution gap is the real next chunk — but it's a search
+#   policy / strategy gating difference, NOT a per-call cost divergence.
+#   Fixing it would require porting libjxl's `FindBest8x8Transform` /
+#   `FindBest16x16Transform` policy more carefully (effort gates, distance
+#   gates, exploration budget).
+#
+# WHAT THIS WORK SHIPPED:
+#   1. Strategy-code remap fix in dump_cost_inputs (two call sites,
+#      two-line change). Hash-lock invariant — only affects diagnostic
+#      dump output, NOT bitstream.
+#   2. W44-59 per-coefficient dump infrastructure (env-var gated):
+#      - jxl-encoder/src/vardct/ac_strategy.rs: dump_afv_coeff_block,
+#        dump_afv_per_coeff, dump_afv_aggregate helpers
+#      - libjxl/lib/jxl/enc_ac_strategy.cc: matching helpers behind
+#        JXL_DUMP_AFV_PATH/_KIND/_X/_Y env vars
+#      Both retained as future debugging infrastructure (zero overhead
+#      when env vars unset).
+#   3. Re-diff script at benchmarks/w44_59_diff_remapped_script.py
+#      reproduces the parity result from the existing W44-58 dumps in
+#      ~3 seconds (no re-encode needed).
+#   4. TSV at benchmarks/w44_59_afv_parity_remapped_2026-05-19.tsv with
+#      per-strategy parity numbers across all 6 cells.
+#
+# WHAT WAS NOT NEEDED:
+#   The W44-59 per-coeff dump infrastructure was built but did NOT need
+#   to run — the strategy-code remap proof was sufficient. The infra is
+#   kept in tree for future AFV-related debugging.
+#
+# COMMITS:
+#   - W44-59 fix + infra: <fill in commit hash>

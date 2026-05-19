@@ -1,0 +1,262 @@
+diff --git a/lib/jxl/enc_ac_strategy.cc b/lib/jxl/enc_ac_strategy.cc
+index f99cb55..6e5b668 100644
+--- a/lib/jxl/enc_ac_strategy.cc
++++ b/lib/jxl/enc_ac_strategy.cc
+@@ -9,6 +9,7 @@
+ #include <cmath>
+ #include <cstdint>
+ #include <cstdio>
++#include <cstdlib>
+ #include <cstring>
+ #include <limits>
+ 
+@@ -361,11 +362,91 @@ bool MultiBlockTransformCrossesVerticalBoundary(
+   return false;
+ }
+ 
++// W44-59: per-coefficient AFV dump infrastructure.
++// Activates when ALL of the following env vars are set:
++//   JXL_DUMP_AFV_PATH=/path/to/dump.tsv
++//   JXL_DUMP_AFV_KIND=<14..17>  (libjxl's AcStrategy enum: 14=AFV0..17=AFV3)
++//   JXL_DUMP_AFV_X=<pixel_x>
++//   JXL_DUMP_AFV_Y=<pixel_y>
++// Dump format: stage<TAB>raw_strategy<TAB>x<TAB>y<TAB>c<TAB>i<TAB>value
++// Stages match the Rust dump: pixels (only NOT dumped here since libjxl's input
++// is the source XYB and matches at the call boundary), coeffs, inv_weights,
++// weights, per_coeff_val/rval/diff/weighted_diff, pixel_error, aggregate.*
++static thread_local FILE* w44_59_afv_fp = []() -> FILE* {
++  const char* p = std::getenv("JXL_DUMP_AFV_PATH");
++  if (p == nullptr || p[0] == '\0') return nullptr;
++  FILE* f = std::fopen(p, "a");
++  if (f == nullptr) return nullptr;
++  std::fseek(f, 0, SEEK_END);
++  if (std::ftell(f) == 0) {
++    std::fprintf(f, "stage\traw_strategy\tx\ty\tc\ti\tvalue\n");
++  }
++  return f;
++}();
++static thread_local int w44_59_afv_target_kind = []() -> int {
++  const char* p = std::getenv("JXL_DUMP_AFV_KIND");
++  if (p == nullptr || p[0] == '\0') return -1;
++  return std::atoi(p);
++}();
++static thread_local size_t w44_59_afv_target_x = []() -> size_t {
++  const char* p = std::getenv("JXL_DUMP_AFV_X");
++  if (p == nullptr || p[0] == '\0') return SIZE_MAX;
++  return static_cast<size_t>(std::atoll(p));
++}();
++static thread_local size_t w44_59_afv_target_y = []() -> size_t {
++  const char* p = std::getenv("JXL_DUMP_AFV_Y");
++  if (p == nullptr || p[0] == '\0') return SIZE_MAX;
++  return static_cast<size_t>(std::atoll(p));
++}();
++static inline bool W44_59_AfvCoeffTarget(unsigned strategy, size_t x, size_t y) {
++  return w44_59_afv_fp != nullptr && w44_59_afv_target_kind >= 0 &&
++         static_cast<int>(strategy) == w44_59_afv_target_kind &&
++         x == w44_59_afv_target_x && y == w44_59_afv_target_y;
++}
++static inline void W44_59_DumpBlock(const char* stage, unsigned raw_strategy,
++                                    size_t x, size_t y, size_t c,
++                                    const float* data, size_t n) {
++  for (size_t i = 0; i < n; i++) {
++    std::fprintf(w44_59_afv_fp, "%s\t%u\t%zu\t%zu\t%zu\t%zu\t%.8e\n",
++                 stage, raw_strategy, x, y, c, i,
++                 static_cast<double>(data[i]));
++  }
++}
++static inline void W44_59_DumpAggregate(const char* name, unsigned raw_strategy,
++                                        size_t x, size_t y, size_t c,
++                                        float value) {
++  std::fprintf(w44_59_afv_fp, "aggregate.%s\t%u\t%zu\t%zu\t%zu\t0\t%.8e\n",
++               name, raw_strategy, x, y, c, static_cast<double>(value));
++}
++
+ Status EstimateEntropy(const AcStrategy& acs, float entropy_mul, size_t x,
+                        size_t y, const ACSConfig& config,
+                        const float* JXL_RESTRICT cmap_factors, float* block,
+                        float* full_scratch_space, uint32_t* quantized,
+                        float& entropy) {
++  // W44-58: env-var-driven per-call dump for cost-input parity vs jxl-encoder.
++  // Set JXL_DUMP_COST_INPUTS_PATH=/path/to/dump.tsv to enable. Lines emitted:
++  //   strategy<TAB>x<TAB>y<TAB>entropy_mul<TAB>covered_blocks_x<TAB>
++  //   covered_blocks_y<TAB>quant_norm16<TAB>cmap_x<TAB>cmap_b<TAB>
++  //   mask1x1_mean_y<TAB>entropy_pre_loss<TAB>loss_scalar<TAB>
++  //   info_loss_mul<TAB>cost_delta<TAB>zeros_mul<TAB>final_entropy
++  // Zero overhead when env var unset (one getenv at first call per target).
++  static thread_local FILE* dump_fp = []() -> FILE* {
++    const char* p = std::getenv("JXL_DUMP_COST_INPUTS_PATH");
++    if (p == nullptr || p[0] == '\0') return nullptr;
++    FILE* f = std::fopen(p, "a");
++    if (f == nullptr) return nullptr;
++    // Emit header if file is empty (first writer).
++    std::fseek(f, 0, SEEK_END);
++    if (std::ftell(f) == 0) {
++      std::fprintf(f,
++                   "strategy\tx\ty\tentropy_mul\tcovered_blocks_x\t"
++                   "covered_blocks_y\tquant_norm16\tcmap_x\tcmap_b\t"
++                   "mask1x1_mean_y\tentropy_pre_loss\tloss_scalar\t"
++                   "info_loss_mul\tcost_delta\tzeros_mul\tfinal_entropy\n");
++    }
++    return f;
++  }();
+   entropy = 0.0f;
+   float* mem = full_scratch_space;
+   float* scratch_space = full_scratch_space + AcStrategy::kMaxCoeffArea;
+@@ -377,6 +458,29 @@ Status EstimateEntropy(const AcStrategy& acs, float entropy_mul, size_t x,
+     TransformFromPixels(acs.Strategy(), &config.Pixel(c, x, y),
+                         config.src_stride, block_c, scratch_space);
+   }
++  // W44-59: dump pixels + coeffs for target AFV block.
++  const bool w44_59_target =
++      W44_59_AfvCoeffTarget(static_cast<unsigned>(acs.Strategy()), x, y);
++  if (w44_59_target) {
++    for (size_t c = 0; c < 3; c++) {
++      // Extract 8x8 input pixels from src.
++      float pixels[64];
++      for (size_t iy = 0; iy < 8; iy++) {
++        for (size_t ix = 0; ix < 8; ix++) {
++          pixels[iy * 8 + ix] = config.Pixel(c, x + ix, y + iy);
++        }
++      }
++      W44_59_DumpBlock("pixels", static_cast<unsigned>(acs.Strategy()), x, y,
++                       c, pixels, 64);
++      W44_59_DumpBlock("coeffs", static_cast<unsigned>(acs.Strategy()), x, y,
++                       c, block + c * size, size);
++      W44_59_DumpBlock("inv_weights", static_cast<unsigned>(acs.Strategy()), x,
++                       y, c, config.dequant->InvMatrix(acs.Strategy(), c),
++                       size);
++      W44_59_DumpBlock("weights", static_cast<unsigned>(acs.Strategy()), x, y,
++                       c, config.dequant->Matrix(acs.Strategy(), c), size);
++    }
++  }
+   HWY_FULL(float) df;
+ 
+   const size_t num_blocks = acs.covered_blocks_x() * acs.covered_blocks_y();
+@@ -442,6 +546,43 @@ Status EstimateEntropy(const AcStrategy& acs, float entropy_mul, size_t x,
+       entropy_v = Add(Sqrt(q), entropy_v);
+       nzeros_v = Add(nzeros_v, IfThenZeroElse(q_is_zero, Set(df, 1.0f)));
+     }
++    // W44-59: per-coefficient dump (replay scalar formula).
++    if (w44_59_target) {
++      const float qn16 = quant_norm16;
++      const float cmf = cmap_factors[c];
++      for (size_t i = 0; i < num_blocks * kDCTBlockSize; i++) {
++        float val_in = (block + c * size)[i];
++        float val_y = (block + size)[i] * cmf;
++        float v = (val_in - val_y) * inv_matrix[i] * qn16;
++        // libjxl's Round(): banker's rounding (ties to even).
++        float rv = std::nearbyint(v);
++        float dv = v - rv;
++        float wd = matrix[i] * dv;
++        std::fprintf(w44_59_afv_fp,
++                     "per_coeff_val\t%u\t%zu\t%zu\t%zu\t%zu\t%.8e\n",
++                     static_cast<unsigned>(acs.Strategy()), x, y, c, i,
++                     static_cast<double>(v));
++        std::fprintf(w44_59_afv_fp,
++                     "per_coeff_rval\t%u\t%zu\t%zu\t%zu\t%zu\t%.8e\n",
++                     static_cast<unsigned>(acs.Strategy()), x, y, c, i,
++                     static_cast<double>(rv));
++        std::fprintf(w44_59_afv_fp,
++                     "per_coeff_diff\t%u\t%zu\t%zu\t%zu\t%zu\t%.8e\n",
++                     static_cast<unsigned>(acs.Strategy()), x, y, c, i,
++                     static_cast<double>(dv));
++        std::fprintf(w44_59_afv_fp,
++                     "per_coeff_weighted_diff\t%u\t%zu\t%zu\t%zu\t%zu\t%.8e\n",
++                     static_cast<unsigned>(acs.Strategy()), x, y, c, i,
++                     static_cast<double>(wd));
++      }
++      float esum = GetLane(SumOfLanes(df, entropy_v)) * config.cost_delta;
++      float nz = GetLane(SumOfLanes(df, nzeros_v));
++      W44_59_DumpAggregate("entropy_sum",
++                           static_cast<unsigned>(acs.Strategy()), x, y, c,
++                           esum);
++      W44_59_DumpAggregate("nzeros_sum",
++                           static_cast<unsigned>(acs.Strategy()), x, y, c, nz);
++    }
+ 
+     {
+       float masku_lut[3] = {
+@@ -453,6 +594,15 @@ Status EstimateEntropy(const AcStrategy& acs, float entropy_mul, size_t x,
+       auto lossc = Zero(df8);
+       TransformToPixels(acs.Strategy(), &mem[0], block,
+                         acs.covered_blocks_x() * 8, scratch_space);
++      // W44-59: dump pixel_error per-channel (after IDCT of quant errors).
++      // Layout: block has `covered_blocks_x()*8` columns, `covered_blocks_y()*8`
++      // rows. For AFV (1x1 block), this is just 64 floats.
++      if (w44_59_target) {
++        const size_t px_n =
++            acs.covered_blocks_x() * acs.covered_blocks_y() * 64;
++        W44_59_DumpBlock("pixel_error", static_cast<unsigned>(acs.Strategy()),
++                         x, y, c, block, px_n);
++      }
+ 
+       for (size_t iy = 0; iy < acs.covered_blocks_y(); iy++) {
+         for (size_t ix = 0; ix < acs.covered_blocks_x(); ix++) {
+@@ -483,6 +633,12 @@ Status EstimateEntropy(const AcStrategy& acs, float entropy_mul, size_t x,
+           pow(1.03, 8.0),
+       };
+       lossc = Mul(Set(df8, kChannelMul[c]), lossc);
++      if (w44_59_target) {
++        float ch_loss = GetLane(SumOfLanes(df8, lossc));
++        W44_59_DumpAggregate("channel_loss",
++                             static_cast<unsigned>(acs.Strategy()), x, y, c,
++                             ch_loss);
++      }
+       loss = Add(loss, lossc);
+     }
+     entropy += config.cost_delta * GetLane(SumOfLanes(df, entropy_v));
+@@ -505,8 +661,54 @@ Status EstimateEntropy(const AcStrategy& acs, float entropy_mul, size_t x,
+       pow(GetLane(SumOfLanes(df8, loss)) / (num_blocks * kDCTBlockSize),
+           1.0f / 8.0f) *
+       (num_blocks * kDCTBlockSize) / quant_norm16;
++  float entropy_pre_loss = entropy * entropy_mul;
+   entropy *= entropy_mul;
+   entropy += config.info_loss_multiplier * loss_scalar;
++  if (dump_fp != nullptr) {
++    // Average mask1x1 across the covered region (Y channel only). Bounded by
++    // mask1x1_xsize to stay safe near the right edge of the image (libjxl's
++    // mask1x1 is full-image and indexed by absolute pixel coords).
++    float mask_sum = 0.0f;
++    size_t mask_count = 0;
++    for (size_t iy = 0; iy < acs.covered_blocks_y() * 8; iy++) {
++      for (size_t ix = 0; ix < acs.covered_blocks_x() * 8; ix++) {
++        if (x + ix < config.mask1x1_xsize) {
++          mask_sum += *config.MaskingPtr1x1(x + ix, y + iy);
++          mask_count++;
++        }
++      }
++    }
++    float mask_mean = mask_count > 0 ? mask_sum / mask_count : 0.0f;
++    std::fprintf(dump_fp,
++                 "%u\t%zu\t%zu\t%.6f\t%zu\t%zu\t%.6f\t%.6f\t%.6f\t%.6f\t"
++                 "%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\n",
++                 static_cast<unsigned>(acs.Strategy()), x, y, entropy_mul,
++                 acs.covered_blocks_x(), acs.covered_blocks_y(), quant_norm16,
++                 cmap_factors[0], cmap_factors[2], mask_mean, entropy_pre_loss,
++                 loss_scalar, config.info_loss_multiplier, config.cost_delta,
++                 config.zeros_mul, entropy);
++    std::fflush(dump_fp);
++  }
++  // W44-59: final aggregates for target AFV block.
++  if (w44_59_target) {
++    float total_loss = GetLane(SumOfLanes(df8, loss));
++    W44_59_DumpAggregate("total_pixel_loss",
++                         static_cast<unsigned>(acs.Strategy()), x, y, 255,
++                         total_loss);
++    W44_59_DumpAggregate("quant_norm16",
++                         static_cast<unsigned>(acs.Strategy()), x, y, 255,
++                         quant_norm16);
++    W44_59_DumpAggregate("entropy_pre_loss",
++                         static_cast<unsigned>(acs.Strategy()), x, y, 255,
++                         entropy_pre_loss);
++    W44_59_DumpAggregate("loss_scalar",
++                         static_cast<unsigned>(acs.Strategy()), x, y, 255,
++                         loss_scalar);
++    W44_59_DumpAggregate("final_entropy",
++                         static_cast<unsigned>(acs.Strategy()), x, y, 255,
++                         entropy);
++    std::fflush(w44_59_afv_fp);
++  }
+   return true;
+ }
+ 

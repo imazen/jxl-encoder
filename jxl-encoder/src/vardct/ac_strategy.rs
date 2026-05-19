@@ -1023,9 +1023,9 @@ fn estimate_entropy_full_impl(
         let entropy_pre_loss_dct8 = entropy * entropy_mul;
         entropy *= entropy_mul;
         entropy += k_info_loss_mul * loss_scalar as f32;
-        // W44-58: dump cost inputs for the fused-DCT8 fast path too.
+        // W44-58 / W44-59 fix: dump using libjxl wire strategy code (DCT8=0).
         dump_cost_inputs(
-            raw_strategy, bx, by, entropy_mul, 1, 1, quant_for_coeffs,
+            STRATEGY_CODE_LUT[raw_strategy as usize], bx, by, entropy_mul, 1, 1, quant_for_coeffs,
             ytox, ytob, mask1x1, mask1x1_stride,
             entropy_pre_loss_dct8, loss_scalar as f32,
             k_info_loss_mul, k_cost_delta, k_zeros_mul, entropy,
@@ -1267,6 +1267,53 @@ fn estimate_entropy_full_impl(
         quant
     };
 
+    // W44-59: env-var-driven per-coefficient AFV dump. Activates only when
+    // `JXL_DUMP_AFV_PATH` is set AND (raw_strategy, bx*8, by*8) matches
+    // `JXL_DUMP_AFV_KIND` (0..3 → AFV0..3), `JXL_DUMP_AFV_X`, `JXL_DUMP_AFV_Y`.
+    // Emits long-format rows: stage TAB c TAB i TAB value.
+    // Stages: "pixels" (8x8 input per channel), "coeffs" (transform output),
+    //         "inv_weights" (dequant matrix), "weights" (quant matrix),
+    //         "per_coeff_val/rval/diff/error" (entropy estimator stage).
+    // ZERO overhead when env var unset (OnceLock + thread-local matched-block flag).
+    let afv_coeff_target =
+        afv_coeff_dump_target(raw_strategy, bx * BLOCK_DIM, by * BLOCK_DIM);
+    if afv_coeff_target {
+        for c in 0..3 {
+            dump_afv_coeff_block(
+                "pixels",
+                raw_strategy,
+                bx * BLOCK_DIM,
+                by * BLOCK_DIM,
+                c,
+                &scratch.pixels_8x8[c],
+            );
+            dump_afv_coeff_block(
+                "coeffs",
+                raw_strategy,
+                bx * BLOCK_DIM,
+                by * BLOCK_DIM,
+                c,
+                block_channels[c],
+            );
+            dump_afv_coeff_block(
+                "inv_weights",
+                raw_strategy,
+                bx * BLOCK_DIM,
+                by * BLOCK_DIM,
+                c,
+                inv_weight_channels[c],
+            );
+            dump_afv_coeff_block(
+                "weights",
+                raw_strategy,
+                bx * BLOCK_DIM,
+                by * BLOCK_DIM,
+                c,
+                weight_channels[c],
+            );
+        }
+    }
+
     for (c, &cmap_factor) in cmap_factors.iter().enumerate() {
         // SIMD-accelerated coefficient processing (biggest encoder hotspot).
         // LLF positions are pre-zeroed above (matching libjxl quant_weights.cc:342-355),
@@ -1300,6 +1347,49 @@ fn estimate_entropy_full_impl(
             entropy_sum += nzeros_sum * cost_of_1;
         }
         entropy += entropy_sum;
+
+        // W44-59: per-coefficient (val, rval, diff) dump for the target AFV block.
+        // Replays the entropy_estimate_coeffs scalar formula so we can compare
+        // bit-exact per-coeff values vs libjxl's `Round/Sub/Mul` SIMD output.
+        if afv_coeff_target {
+            for i in 0..size {
+                let in_val = block_channels[c][i];
+                let in_y = block_channels[1][i] * cmap_factor;
+                let im = inv_weight_channels[c][i];
+                let val = (in_val - in_y) * (im * quant_for_coeffs);
+                let rval = val.round_ties_even();
+                let diff = val - rval;
+                let m = weight_channels[c][i];
+                let weighted_diff = m * diff;
+                dump_afv_per_coeff(
+                    raw_strategy,
+                    bx * BLOCK_DIM,
+                    by * BLOCK_DIM,
+                    c,
+                    i,
+                    val,
+                    rval,
+                    diff,
+                    weighted_diff,
+                );
+            }
+            dump_afv_aggregate(
+                raw_strategy,
+                bx * BLOCK_DIM,
+                by * BLOCK_DIM,
+                c,
+                "entropy_sum",
+                entropy_sum,
+            );
+            dump_afv_aggregate(
+                raw_strategy,
+                bx * BLOCK_DIM,
+                by * BLOCK_DIM,
+                c,
+                "nzeros_sum",
+                nzeros_sum,
+            );
+        }
 
         let num_nzeros = nzeros_sum as usize;
         let nbits = ceil_log2_nonzero(num_nzeros + 1) as usize + 1;
@@ -1341,6 +1431,26 @@ fn estimate_entropy_full_impl(
             // Apply channel multiplier
             channel_loss *= CHANNEL_MUL[c];
 
+            // W44-59: per-channel pixel loss
+            if afv_coeff_target {
+                dump_afv_coeff_block(
+                    "pixel_error",
+                    raw_strategy,
+                    bx * BLOCK_DIM,
+                    by * BLOCK_DIM,
+                    c,
+                    pixel_error,
+                );
+                dump_afv_aggregate(
+                    raw_strategy,
+                    bx * BLOCK_DIM,
+                    by * BLOCK_DIM,
+                    c,
+                    "channel_loss",
+                    channel_loss as f32,
+                );
+            }
+
             total_pixel_loss += channel_loss;
 
             // X channel penalty for large transforms - applied to TOTAL loss accumulator
@@ -1376,14 +1486,62 @@ fn estimate_entropy_full_impl(
         (entropy_pre, info_loss_score)
     };
 
-    // W44-58: env-var-driven per-call dump for cost-input parity vs libjxl.
-    // Coords are reported in pixel units (x=bx*8, y=by*8) to match libjxl.
+    // W44-58 / W44-59 fix: dump using libjxl wire strategy code so AFV codes
+    // align with libjxl's `acs.Strategy()` enum (AFV0=14, AFV1=15, AFV2=16,
+    // AFV3=17). The original W44-58 dump passed `raw_strategy` (AFV0=12,
+    // AFV1=13, AFV2=14, AFV3=15), causing AFV0/1 vs AFV2/3 to be joined at
+    // the same coordinates — explaining the entire "12.4% AFV divergence".
     dump_cost_inputs(
-        raw_strategy, bx, by, entropy_mul, cx, cy, quant_norm16,
+        STRATEGY_CODE_LUT[raw_strategy as usize], bx, by, entropy_mul, cx, cy, quant_norm16,
         ytox, ytob, mask1x1, mask1x1_stride,
         entropy_pre_loss, loss_scalar_for_dump,
         k_info_loss_mul, k_cost_delta, k_zeros_mul, entropy,
     );
+
+    // W44-59: per-block aggregates for the targeted AFV block (after all
+    // channels have been processed).
+    if afv_coeff_target {
+        dump_afv_aggregate(
+            raw_strategy,
+            bx * BLOCK_DIM,
+            by * BLOCK_DIM,
+            255, // sentinel c for "all channels"
+            "total_pixel_loss",
+            total_pixel_loss as f32,
+        );
+        dump_afv_aggregate(
+            raw_strategy,
+            bx * BLOCK_DIM,
+            by * BLOCK_DIM,
+            255,
+            "quant_norm16",
+            quant_norm16,
+        );
+        dump_afv_aggregate(
+            raw_strategy,
+            bx * BLOCK_DIM,
+            by * BLOCK_DIM,
+            255,
+            "entropy_pre_loss",
+            entropy_pre_loss,
+        );
+        dump_afv_aggregate(
+            raw_strategy,
+            bx * BLOCK_DIM,
+            by * BLOCK_DIM,
+            255,
+            "loss_scalar",
+            loss_scalar_for_dump,
+        );
+        dump_afv_aggregate(
+            raw_strategy,
+            bx * BLOCK_DIM,
+            by * BLOCK_DIM,
+            255,
+            "final_entropy",
+            entropy,
+        );
+    }
 
     entropy
 }
@@ -1486,6 +1644,166 @@ fn dump_cost_inputs(
                  entropy_pre_loss, loss_scalar_for_dump,
                  k_info_loss_mul, k_cost_delta, k_zeros_mul, entropy);
     }
+}
+
+/// W44-59: per-coefficient AFV dump infrastructure.
+///
+/// Activates when ALL of the following env vars are set:
+///   JXL_DUMP_AFV_PATH=/path/to/dump.tsv
+///   JXL_DUMP_AFV_KIND=<0..3>     // 0=AFV0, 1=AFV1, 2=AFV2, 3=AFV3
+///   JXL_DUMP_AFV_X=<pixel_x>     // block top-left x in pixels
+///   JXL_DUMP_AFV_Y=<pixel_y>     // block top-left y in pixels
+///
+/// Dump format (TSV, one row per cell):
+///   stage  raw_strategy  x  y  c  i  value
+/// Stages: "pixels" (8x8 input pixels per channel, i=0..63)
+///         "coeffs" (AFV transform output, i=0..63)
+///         "inv_weights" (dequant matrix, i=0..63)
+///         "weights" (forward quant matrix, i=0..63)
+///         "per_coeff_val/rval/diff/weighted_diff" (entropy estimator stage)
+///         "pixel_error" (post-IDCT pixel error, i=0..63)
+///         "aggregate.entropy_sum/.nzeros_sum/.channel_loss" (per-channel scalars,
+///            i=0)
+///         "aggregate.total_pixel_loss/.quant_norm16/.entropy_pre_loss/
+///         .loss_scalar/.final_entropy" (per-block scalars, c=255 sentinel, i=0)
+#[inline(always)]
+#[allow(dead_code)]
+fn afv_coeff_dump_target(raw_strategy: u8, x: usize, y: usize) -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static TARGET: OnceLock<Option<(u8, usize, usize)>> = OnceLock::new();
+        let cached = TARGET.get_or_init(|| {
+            let path = std::env::var("JXL_DUMP_AFV_PATH").ok()?;
+            if path.is_empty() { return None; }
+            let kind: u8 = std::env::var("JXL_DUMP_AFV_KIND").ok()?.parse().ok()?;
+            if kind > 3 { return None; }
+            let tx: usize = std::env::var("JXL_DUMP_AFV_X").ok()?.parse().ok()?;
+            let ty: usize = std::env::var("JXL_DUMP_AFV_Y").ok()?.parse().ok()?;
+            // Map AFV kind 0..3 → raw_strategy RAW_STRATEGY_AFV0..AFV3.
+            Some((RAW_STRATEGY_AFV0 + kind, tx, ty))
+        });
+        if let Some((target_strat, tx, ty)) = *cached {
+            return raw_strategy == target_strat && x == tx && y == ty;
+        }
+    }
+    let _ = (raw_strategy, x, y);
+    false
+}
+
+#[allow(dead_code)]
+#[cfg(feature = "std")]
+fn afv_dump_file() -> Option<&'static std::sync::Mutex<std::fs::File>> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::sync::{Mutex, OnceLock};
+    static DUMP_FILE: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
+    let slot = DUMP_FILE.get_or_init(|| {
+        let path = std::env::var("JXL_DUMP_AFV_PATH").ok()?;
+        if path.is_empty() { return None; }
+        let mut f = OpenOptions::new().create(true).append(true).open(&path).ok()?;
+        if f.metadata().map(|m| m.len() == 0).unwrap_or(false) {
+            let _ = writeln!(f, "stage\traw_strategy\tx\ty\tc\ti\tvalue");
+        }
+        Some(Mutex::new(f))
+    });
+    slot.as_ref()
+}
+
+#[allow(dead_code)]
+fn dump_afv_coeff_block(
+    stage: &str,
+    raw_strategy: u8,
+    x: usize,
+    y: usize,
+    c: usize,
+    data: &[f32],
+) {
+    #[cfg(feature = "std")]
+    {
+        use std::io::Write;
+        if let Some(mu) = afv_dump_file() {
+            if let Ok(mut f) = mu.lock() {
+                for (i, &v) in data.iter().enumerate() {
+                    let _ = writeln!(
+                        f,
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
+                        stage, raw_strategy, x, y, c, i, v
+                    );
+                }
+            }
+        }
+    }
+    let _ = (stage, raw_strategy, x, y, c, data);
+}
+
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+fn dump_afv_per_coeff(
+    raw_strategy: u8,
+    x: usize,
+    y: usize,
+    c: usize,
+    i: usize,
+    val: f32,
+    rval: f32,
+    diff: f32,
+    weighted_diff: f32,
+) {
+    #[cfg(feature = "std")]
+    {
+        use std::io::Write;
+        if let Some(mu) = afv_dump_file() {
+            if let Ok(mut f) = mu.lock() {
+                let _ = writeln!(
+                    f,
+                    "per_coeff_val\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
+                    raw_strategy, x, y, c, i, val
+                );
+                let _ = writeln!(
+                    f,
+                    "per_coeff_rval\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
+                    raw_strategy, x, y, c, i, rval
+                );
+                let _ = writeln!(
+                    f,
+                    "per_coeff_diff\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
+                    raw_strategy, x, y, c, i, diff
+                );
+                let _ = writeln!(
+                    f,
+                    "per_coeff_weighted_diff\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
+                    raw_strategy, x, y, c, i, weighted_diff
+                );
+            }
+        }
+    }
+    let _ = (raw_strategy, x, y, c, i, val, rval, diff, weighted_diff);
+}
+
+#[allow(dead_code)]
+fn dump_afv_aggregate(
+    raw_strategy: u8,
+    x: usize,
+    y: usize,
+    c: usize,
+    name: &str,
+    value: f32,
+) {
+    #[cfg(feature = "std")]
+    {
+        use std::io::Write;
+        if let Some(mu) = afv_dump_file() {
+            if let Ok(mut f) = mu.lock() {
+                let _ = writeln!(
+                    f,
+                    "aggregate.{}\t{}\t{}\t{}\t{}\t0\t{:.8e}",
+                    name, raw_strategy, x, y, c, value
+                );
+            }
+        }
+    }
+    let _ = (raw_strategy, x, y, c, name, value);
 }
 
 /// Apply inverse DCT to error coefficients based on strategy.
