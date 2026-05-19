@@ -3430,6 +3430,37 @@ pub struct LossyConfig {
     /// `entropy_mul_smart_dispatch_ab` example for the classifier
     /// rule (chunk 1 of the smart-dispatch follow-on to W23-2).
     screenshot_lift_hint: Option<bool>,
+    /// Optional caller-supplied override for the W44-29 high-distance
+    /// smooth-photo gate that *lowers* `entropy_mul[DCT16X16]` and
+    /// `entropy_mul[DCT32X32]` (via
+    /// [`crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed`])
+    /// to close the F-D residual photo byte gap vs cjxl at d ≥ 4.
+    ///
+    /// The auto behaviour (when `None`) fires only when *both* of the
+    /// following hold: `distance >= 4.0` AND `median(mask1x1) <
+    /// HIGH_D_PHOTO_SMOOTH_THRESHOLD` (smooth-content discriminator,
+    /// chosen to admit the F-D residual photo class without admitting
+    /// imac_g3-class screenshots whose path flips on dct32 lowering).
+    ///
+    /// - `None` (default): use the auto gate above.
+    /// - `Some(true)`: force-apply the high-d photo lowered table
+    ///   regardless of distance or content. Caller asserts the encode
+    ///   is in the smooth-photo class.
+    /// - `Some(false)`: suppress the lowering even when the auto gate
+    ///   would fire. Caller asserts the image is content-class-sensitive.
+    ///
+    /// **Independent of W22-1 `screenshot_lift_hint`**: the auto gate
+    /// is restricted to `distance >= 4.0` where the W22-1 wedge does
+    /// not fire. The two gates produce mutually-exclusive table swaps —
+    /// W44-29 uses `mask1x1 < SMOOTH_THRESHOLD` AND `d >= 4.0`;
+    /// W22-1 uses `mask1x1 > SCREENSHOT_THRESHOLD` AND the caller-opted
+    /// `content_aware_entropy_mul` flag. If both gates conflict in
+    /// practice the W22-1 gate wins (its swap is more specific to
+    /// screen content).
+    ///
+    /// See [`Self::with_high_d_photo_hint`]. References the W44-28
+    /// honest-stop memo + W44-27 firing-rate audit.
+    high_d_photo_hint: Option<bool>,
     /// Tracks whether the caller has explicitly set `patches` via
     /// [`Self::with_patches`]. Mirrors the
     /// `butteraugli_iters_explicit` / `resampling_explicit` pattern.
@@ -3683,6 +3714,10 @@ impl LossyConfig {
             content_class: None,
             content_aware_entropy_mul: false,
             screenshot_lift_hint: None,
+            // W44-29: default None engages the auto gate (fires only at
+            // distance >= 4.0 AND median(mask1x1) < smooth-content
+            // threshold). Hash-locks at d < 4.0 stay byte-identical.
+            high_d_photo_hint: None,
             patches_explicit: false,
             patches_dispatch: PatchesDispatch::default(),
             epf_level: -1,
@@ -3886,6 +3921,7 @@ impl LossyConfig {
         new.content_class = self.content_class;
         new.content_aware_entropy_mul = self.content_aware_entropy_mul;
         new.screenshot_lift_hint = self.screenshot_lift_hint;
+        new.high_d_photo_hint = self.high_d_photo_hint;
         // Preserve explicit patches setting across with_effort.
         if self.patches_explicit {
             new.patches = self.patches;
@@ -4638,6 +4674,38 @@ impl LossyConfig {
     /// (default `None`).
     pub fn screenshot_lift_hint(&self) -> Option<bool> {
         self.screenshot_lift_hint
+    }
+
+    /// Caller-supplied override for the W44-29 high-distance smooth-photo
+    /// gate that lowers `entropy_mul[DCT16X16]` and `entropy_mul[DCT32X32]`
+    /// via [`crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed`].
+    ///
+    /// Semantics:
+    /// - `None` (default): use the encoder-internal auto gate — fires
+    ///   only when *both* hold: `distance >= 4.0` AND `median(mask1x1)
+    ///   < SMOOTH_THRESHOLD`. Hash-locks at `d < 4.0` stay byte-identical.
+    /// - `Some(true)`: force-apply the lowered table regardless of
+    ///   distance or content.
+    /// - `Some(false)`: suppress the lowering even when the auto gate
+    ///   would fire (e.g., the caller has classified the image as
+    ///   screenshot-like via richer features and wants to bypass the
+    ///   mask1x1-only auto discriminator).
+    ///
+    /// Closes 2-5 of the 5 F-D residual photo cells (1531677.png,
+    /// 1420710.png at d ∈ {4, 5, 6}) per the W44-28 stage-A top-5
+    /// sweep (dct16=1.27 dct32=1.34 is the largest reduction that does
+    /// NOT trigger the imac_g3 path flip under content gating).
+    ///
+    /// References W44-28 honest-stop memo + W44-27 firing-rate audit.
+    pub fn with_high_d_photo_hint(mut self, hint: Option<bool>) -> Self {
+        self.high_d_photo_hint = hint;
+        self
+    }
+
+    /// Currently-set [`Self::with_high_d_photo_hint`] override
+    /// (default `None`).
+    pub fn high_d_photo_hint(&self) -> Option<bool> {
+        self.high_d_photo_hint
     }
 
     /// Set a separate butteraugli distance for the alpha extra channel
@@ -7495,6 +7563,7 @@ impl<'a> EncodeRequest<'a> {
         enc.use_lf_frame = cfg.lf_frame;
         enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
         enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
+        enc.high_d_photo_hint = cfg.high_d_photo_hint;
         // Streaming refactor #11 chunk 6: thread the caller-selected
         // [`Buffering`] policy into VarDctEncoder so the per-region
         // precompute dispatch (precomputed.rs:compute_with_budget_and_buffering)
@@ -8622,6 +8691,7 @@ impl LossyEncoder {
             enc.use_lf_frame = cfg.lf_frame;
             enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
             enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
+            enc.high_d_photo_hint = cfg.high_d_photo_hint;
             // Streaming refactor #11 chunk 6 (streaming LossyEncoder
             // path).
             enc.buffering = cfg.buffering;
@@ -10478,6 +10548,7 @@ fn encode_animation_lossy(
     enc.use_lf_frame = cfg.lf_frame;
     enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
     enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
+    enc.high_d_photo_hint = cfg.high_d_photo_hint;
     // Streaming refactor #11 chunk 6 (animation frame path).
     enc.buffering = cfg.buffering;
     #[cfg(feature = "butteraugli-loop")]

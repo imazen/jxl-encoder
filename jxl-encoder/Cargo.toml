@@ -870,5 +870,21 @@ name = "w44_28_candidate_check"
 path = "examples/w44_28_candidate_check.rs"
 required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 
+# W44-29: paired baseline-vs-hint validation harness for the
+# `high_d_photo_hint` gate. Tests 5 F-D residual cells (e=5, d∈{4,5,6}) +
+# 8 screenshot cells (e=7, d∈{3,4,5,6} × {imac_g3, terminal}) + 1 photo
+# control (d=1.0, gate should NOT fire).
+[[example]]
+name = "w44_29_paired_ab"
+path = "examples/w44_29_paired_ab.rs"
+required-features = ["butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-29: multi-decoder smoke test — encodes each cell × 3 hint modes
+# and confirms jxl-oxide decodes cleanly. Outputs persisted to
+# /tmp/w44_29_smoke/ for optional djxl follow-up.
+[[example]]
+name = "w44_29_decoder_smoke"
+path = "examples/w44_29_decoder_smoke.rs"
+
 [lints]
 workspace = true

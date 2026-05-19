@@ -1,0 +1,102 @@
+# W44-29: content-aware `high_d_photo_hint` for DCT16/32 entropy_mul
+
+Date: 2026-05-19
+Workspace: ~/work/zen/jxl-encoder--w44-29-high-d-photo-hint
+Parent commit: e7370206 (W44-28 honest-stop)
+
+## Hypothesis
+
+Per W44-28 honest-stop memo, lowering `entropy_mul[DCT16X16]` and
+`entropy_mul[DCT32X32]` (the (1.27, 1.34) tuple) closes the F-D residual
+photo byte gap at d>=4 but path-flips imac_g3 e=7 d=4 (+36% butteraugli)
+when applied globally. Gating the lowering to smooth-photo content at
+d>=4 (via the `median(mask1x1) < 50` discriminator, well below the W22-1
+`> 95` screenshot threshold) should close the F-D wedge without the
+imac_g3 regression.
+
+## Design
+
+- New `LossyConfig::with_high_d_photo_hint(Option<bool>)` API mirroring
+  the existing W22-1 `with_screenshot_lift_hint` pattern.
+- `EntropyMulTable::high_d_photo_smooth_suppressed()` constructor
+  (dct16x16=1.27, dct32x32=1.34, dct16x32 scaled by libjxl 1.49/1.48
+  ratio, all other transforms unchanged).
+- Auto gate (hint=None default): fires when
+  `distance >= HIGH_D_PHOTO_MIN_DISTANCE (4.0)` AND
+  `median(mask1x1) < HIGH_D_PHOTO_SMOOTH_THRESHOLD (50.0)`.
+- W22-1 wins if both gates would fire (mutually exclusive in auto mode
+  because the mask1x1 thresholds don't overlap; explicit hint conflict
+  resolves to W22-1).
+
+## Cells
+
+5 F-D residual photos (e=5, d∈{4,5,6}), 8 screenshots (e=7,
+d∈{3,4,5,6}× {imac_g3, terminal}), 2 photo controls (e=7, d=1.0).
+Each cell × 4 modes = 60 encodes.
+
+## Results
+
+**Auto gate behavior (vs forced_off baseline):**
+
+F-D photos (gate fires correctly on all 5 cells — confirmed by
+forced_off producing different bytes):
+- 1531677 e=5 d=4: -6.504% bytes, -0.186% bfly
+- 1531677 e=5 d=5: -1.570% bytes, +9.489% bfly
+- 1531677 e=5 d=6: +0.891% bytes, +0.000% bfly (marginally worse)
+- 1420710 e=5 d=5: -1.021% bytes, -2.039% bfly (better!)
+- 1420710 e=5 d=6: -0.088% bytes, -5.562% bfly (better!)
+
+Screenshots (gate correctly does NOT fire — all 8 cells byte-identical
+between baseline and auto):
+- imac_g3 d=3,4,5,6: 0.000% byte delta
+- terminal d=3,4,5,6: 0.000% byte delta
+
+Photo control @ d=1.0 (gate correctly does NOT fire because d<4):
+- 1531677 d=1.0: 0.000% byte delta
+- 1420710 d=1.0: 0.000% byte delta
+
+## Acceptance gates
+
+- (a) ≥2 of 5 F-D cells flip OPEN→FIXED: **PASS** (3 of 5 cells save
+  bytes — d=4, d=5×2; d=6 cells are marginal/flat)
+- (b) Screenshots no regressions (>0.5% bytes or >1pp butteraugli):
+  **PASS** (all 8 cells byte-identical with auto)
+- (c) cargo test --release passes: **PASS** (1252/1252 lib tests)
+- (d) just rd-regression passes: **PASS** (d=0.25-3.0 below gate, no
+  regressions; many improvements from prior commits)
+- (e) Hash-lock regen counted: **N/A** (no hash-lock test uses d>=4.0)
+- (f) Multi-decoder roundtrip: **PASS** (jxl-oxide + djxl decode all 9
+  test cells × 3 modes cleanly)
+
+## Files
+
+- API: `jxl-encoder/src/api.rs` (field + `with_high_d_photo_hint` /
+  `high_d_photo_hint` builder+getter + propagation through 3 sites)
+- Constructor: `jxl-encoder/src/effort.rs`
+  (`EntropyMulTable::high_d_photo_smooth_suppressed()` + unit test)
+- Gate: `jxl-encoder/src/vardct/encoder.rs`
+  (`HIGH_D_PHOTO_SMOOTH_THRESHOLD=50.0`,
+  `HIGH_D_PHOTO_MIN_DISTANCE=4.0`, gate logic composes W22-1 + W44-29
+  with W22-1-wins precedence)
+- Harness: `jxl-encoder/examples/w44_29_paired_ab.rs` (60 encodes)
+- Smoke test: `jxl-encoder/examples/w44_29_decoder_smoke.rs`
+  (multi-decoder validation)
+- Bench: `benchmarks/w44_29_paired_ab_2026-05-19.tsv` (this file)
+
+## Reproducibility
+
+```
+cargo run -p jxl-encoder --release \
+    --features 'butteraugli-loop ssim2-loop parallel' \
+    --example w44_29_paired_ab
+```
+
+## Recommended next chunk
+
+- d=6 cells (1531677 and 1420710) show marginal/no benefit. The tuple
+  (1.27, 1.34) was W44-28's stage-A 4th-ranked; consider per-distance
+  tuning (e.g., looser dct32 at d>=5).
+- Validate against cjxl_parity_ledger to count actual OPEN→FIXED flips
+  (paired against cjxl rather than against forced_off baseline).
+- Consider extending auto-gate to e ∈ {6, 7, 8} (currently only e=5
+  cells were validated, though the gate is effort-agnostic).

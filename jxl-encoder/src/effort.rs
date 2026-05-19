@@ -148,6 +148,45 @@ impl EntropyMulTable {
             ..Self::reference()
         }
     }
+
+    /// Smooth-photo-tuned values that **lower** entropy_mul on the large
+    /// (16×16 and 32×32) DCT transforms at high distance (d ≥ 4) on smooth
+    /// photo content. Makes large transforms relatively cheaper than DCT8 →
+    /// reduces DCT8 over-selection on flat regions → reduces the
+    /// AdjustQuantBlockAC D-heuristic firing rate that drives the F-D
+    /// residual-photo byte gap vs cjxl at d ≥ 4 (W44-27 audit, W44-28
+    /// bisection).
+    ///
+    /// **Source**: W44-28 sweep top winner (dct16=1.27, dct32=1.20) closed
+    /// -7.65 % bytes on the F-D residual cells but PATH-FLIPPED imac_g3
+    /// e=7 d=4 (+36 % butteraugli) — too aggressive for global use. The
+    /// content-aware gate restricts the lowering to smooth-photo content
+    /// only, where the path flip cannot occur (imac_g3 has high mask1x1
+    /// median, so the smooth-content discriminator suppresses the swap).
+    ///
+    /// Changes vs reference (all reductions, never lifts):
+    /// - dct16x16: 1.34 → 1.27 (~5.2 % cheaper)
+    /// - dct32x32: 1.48 → 1.34 (~9.5 % cheaper)
+    /// - dct16x32 / dct32x16: 1.49 → 1.35 (~9.4 % cheaper, scaled with
+    ///   dct32x32 by the libjxl 1.49/1.48 ratio)
+    /// - all other transforms: unchanged
+    ///
+    /// **Gate**: only applied when (a) `distance >= 4.0` AND (b)
+    /// `median(mask1x1) < HIGH_D_PHOTO_SMOOTH_THRESHOLD` (smooth-content
+    /// discriminator — high mask1x1 medians indicate screenshot/text
+    /// content where the W22-1 `screenshot_suppressed` lift fires instead).
+    /// Caller can override via
+    /// [`crate::api::LossyConfig::with_high_d_photo_hint`].
+    pub fn high_d_photo_smooth_suppressed() -> Self {
+        Self {
+            dct16x16: 1.27,
+            dct32x32: 1.34,
+            // Scale dct16x32 with dct32x32 by the libjxl 1.49/1.48 ratio
+            // (mirrors the W44-28 sweep harness `build_table` helper).
+            dct16x32: 1.34 * (1.49 / 1.48),
+            ..Self::reference()
+        }
+    }
 }
 
 /// All effort-derived encoder decisions, centralized.
@@ -2406,6 +2445,42 @@ mod tests {
         assert!(t.dct2x2 > r.dct2x2);
         assert!(t.afv > r.afv);
         assert!(t.dct4x8 > r.dct4x8);
+    }
+
+    #[test]
+    fn test_entropy_mul_table_high_d_photo_smooth_suppressed_values() {
+        // Verify the W44-29 high-d photo smooth table lowers the large
+        // (16x16, 32x32, 16x32/32x16) transforms per the W44-28 sweep
+        // top-5 (dct16=1.27, dct32=1.34 — the largest reduction that
+        // does NOT trigger the imac_g3 path flip when content-gated)
+        // and leaves every other field bit-identical to `reference()`.
+        let t = EntropyMulTable::high_d_photo_smooth_suppressed();
+        let r = EntropyMulTable::reference();
+
+        // Lowered values (favor large-transform direction).
+        assert_eq!(t.dct16x16, 1.27); // was 1.34 (~5.2% cheaper)
+        assert_eq!(t.dct32x32, 1.34); // was 1.48 (~9.5% cheaper)
+        // dct16x32 scaled with dct32x32 by the libjxl 1.49/1.48 ratio.
+        let expected_dct16x32 = 1.34 * (1.49 / 1.48);
+        assert!((t.dct16x32 - expected_dct16x32).abs() < 1e-6);
+
+        // Every other field MUST match reference.
+        assert_eq!(t.dct8, r.dct8);
+        assert_eq!(t.dct4x4, r.dct4x4);
+        assert_eq!(t.dct4x8, r.dct4x8);
+        assert_eq!(t.identity, r.identity);
+        assert_eq!(t.dct2x2, r.dct2x2);
+        assert_eq!(t.afv, r.afv);
+        assert_eq!(t.dct16x8, r.dct16x8);
+        assert_eq!(t.dct64x32, r.dct64x32);
+        assert_eq!(t.dct64x64, r.dct64x64);
+
+        // All changes are strict reductions (the W44-29 direction is
+        // "make large transforms cheaper", opposite of the W22-1
+        // screenshot lift).
+        assert!(t.dct16x16 < r.dct16x16);
+        assert!(t.dct32x32 < r.dct32x32);
+        assert!(t.dct16x32 < r.dct16x32);
     }
 
     #[test]
