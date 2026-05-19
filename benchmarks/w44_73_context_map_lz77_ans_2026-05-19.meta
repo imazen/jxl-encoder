@@ -1,0 +1,112 @@
+W44-73: LZ77 + ANS in write_context_map_nonsimple (prerequisite for W44-71 / issue #59)
+Date: 2026-05-19
+Sibling workspace: ~/work/zen/jxl-encoder--w44-73-context-map-lz77
+Commit: TBD (working on lynpprrx)
+
+## Summary
+
+W44-71 found the libjxl 15-cluster simple-default BlockCtxMap regresses bytes
+because our `write_context_map_nonsimple` used Huffman+MTF only, while libjxl
+uses ANS+LZ77 (`enc_context_map.cc:65-139` → `BuildAndEncodeHistograms` with
+default HistogramParams: LZ77Method::kRLE + HybridUintMethod::kContextMap →
+HybridUintConfig(2, 0, 1)).
+
+This chunk ports the missing ANS+LZ77 path INTO our writer so the writer is
+no longer the binding constraint. Cost-comparison gate picks the cheaper of
+Huffman+MTF or ANS+LZ77 per call site.
+
+## Implementation
+
+- New `build_context_map_nonsimple_ans_lz77()` builds 1-context ANS code
+  (or 2 contexts post-LZ77) over MTF-or-raw context-map tokens, applies
+  RLE-LZ77 if outer num_contexts > 2 (libjxl's `decode_context_map` calls
+  `Histograms::decode(1, br, allow_lz77 = num_contexts > 2)` — we must
+  respect that gate or decoder errors `Lz77Disallowed`).
+- Forces HybridUintConfig(2, 0, 1) per libjxl `enc_ans_params.h:81-90`
+  `UintConfig()` when `uint_method == kContextMap`.
+- Renamed old path to `write_context_map_nonsimple_huffman()` (Huffman+MTF).
+- `write_context_map_nonsimple()` runs both, picks cheaper by raw bit count.
+- Subtle: when post-LZ77 num_contexts == 1, the inner `decode_context_map`
+  is SKIPPED by the decoder (`jxl-rs entropy_coding/decode.rs:576-634`,
+  `libjxl dec_ans.cc:341-358`). My writer skips the 3-bit "simple,
+  nbits=0" inner-context-map shortcut in that case to keep bit alignment.
+
+## Acceptance gates
+
+- (a) LZ77 path added to `write_context_map_nonsimple` — DONE
+- (b) Cost-comparison gate — DONE (compares raw bit counts, picks cheaper)
+- (c) 15-cluster test result — see below: NEGATIVE finding
+- (d) Default behavior strictly better — DONE (every cell tested wins)
+- (e) `cargo test --release` passes — DONE (1258 lib + 32 anim + 21 integration);
+      1 PRE-EXISTING `test_animation_lossy_runs_cfl_pass_2` failure on baseline
+      (delta 673 vs threshold 130 on bare main; W44-73 makes still smaller so
+      delta=791 — both fail same gate, not introduced here).
+- (f) djxl + jxl-rs + jxl-oxide roundtrip on flipped cells — DONE (18 checks)
+- (g) Memory note + MEMORY.md entry — TODO
+- (h) Hash-lock regen counted — 36 sidecars regenerated; net 4 noise/lz77
+      tests SAVE 218 bytes each, rest byte-identical (hash differs in
+      handful where path changed but bytes same).
+
+## Acceptance gate (c) — NEGATIVE FINDING on 15-cluster
+
+Applied W44-71 (15-cluster default) ON TOP of W44-73 and re-ran wedge cells:
+
+Cell                       4c+W73    15c+W73   delta
+1420710 e7 d=5.0           24589     24751     +162
+1420710 e7 d=6.0           21212     21369     +157
+1531677 e7 d=3.0           32022     32022     0
+1531677 e7 d=5.0           21059     21270     +211
+1531677 e7 d=6.0           18084     18346     +262
+1189261 e7 d=3.0           30481     30481     0
+1189261 e7 d=5.0           19778     19811     +33
+1189261 e7 d=6.0           16816     17065     +249
+
+15-cluster REGRESSES vs 4-cluster EVEN WITH the W73 writer. W44-69's
+prediction that "cjxl's 7425 contexts cluster down tighter via pair-merge
+than our 1980" doesn't pan out on these cells when measured through our
+clustering / pair-merge path. cjxl must have additional levers (e.g.
+different histogram pair-merge cost model, different ANS strategy) that
+let it benefit from the finer-grained map. Honest-stop: W44-71 should NOT
+be merged even after W73 lands.
+
+## Baseline-vs-W73 measurements
+
+19-cell paired sweep (6 CID22 photos x 4 distances, e7):
+- Range: -0.05% to -2.30% per cell
+- Average: -83.6 bytes per cell, -0.46% overall
+- ALL cells win (zero regressions)
+
+Screenshot cells (gb82-sc, 4 imgs x 3 distances, e7):
+- Range: -0.08% to -0.46% per cell
+
+Wedge cells from W44-69:
+- 1420710 e7 d=6: 21295 → 21212 (-83B / -0.39%) vs cjxl 20653 (gap closed 14%)
+- 1531677 e7 d=6: 18227 → 18084 (-143B / -0.78%)
+- 1189261 e7 d=6: 16910 → 16816 (-94B / -0.56%)
+
+## Decoder verification
+
+All 18 paired decoder runs (3 images x 2 distances x 3 decoders) PASS:
+djxl 0.12.0, jxl-rs (jxl_cli), jxl-oxide-imazen.
+
+## Cross-references
+
+- W44-71 memo: `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_71_15cluster_default_regression_2026-05-19.md`
+- W44-69 memo: `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_69_block_ctx_map_4_vs_15_2026-05-19.md`
+- W44-71 WIP commit (NOT merged): 01cde909 on remote bookmark `w44-71-wip`
+- libjxl refs:
+  - lib/jxl/enc_context_map.cc:65-139 (EncodeContextMap)
+  - lib/jxl/enc_ans.cc:1082-1235 (BuildAndEncodeHistograms — LZ77 setup)
+  - lib/jxl/enc_lz77.cc:111-183 (ApplyLZ77_RLE)
+  - lib/jxl/enc_ans_params.h:30-103 (HistogramParams + UintConfig)
+  - lib/jxl/dec_ans.cc:341-358 (DecodeHistograms — decoder context-map gate)
+  - lib/jxl/dec_context_map.cc:48-100 (DecodeContextMap — outer decoder)
+- jxl-rs refs:
+  - jxl/src/entropy_coding/context_map.rs:43-76 (decode_context_map)
+  - jxl/src/entropy_coding/decode.rs:576-634 (Histograms::decode)
+
+## Files modified
+
+- jxl-encoder/src/entropy_coding/encode_ans.rs (+250 LOC)
+- jxl-encoder/src/vardct/encoder.rs (1-byte in-tree hash-lock for 64x64 checkerboard: 468→467)
+- jxl-encoder/tests/hash_lock_expected.txt (36 sidecars regenerated; 4 noise/lz77 save 218B each)
