@@ -36,10 +36,8 @@ fn encode_with_table(
     if let Some(t) = table {
         // Force W44-29 OFF then inject our custom table via internal_params
         cfg = cfg.with_high_d_photo_hint(Some(false));
-        let internal = LossyInternalParams {
-            entropy_mul_table: Some(t),
-            ..Default::default()
-        };
+        let mut internal = LossyInternalParams::default();
+        internal.entropy_mul_table = Some(t);
         cfg = cfg.with_internal_params(internal);
     }
     cfg.encode(rgb, w, h, PixelLayout::Rgb8)

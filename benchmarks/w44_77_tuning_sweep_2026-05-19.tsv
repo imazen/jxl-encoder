@@ -1,0 +1,71 @@
+# W44-77 tuning sweep: hold W44-29's dct32x32=1.34 and sweep dct16x32 ∈
+# {1.349 (current), 1.40, 1.45, 1.49 (libjxl-parity), 1.55, 1.60} to find a
+# setting that closes the W44-76 strategy mismatch without losing W44-29's
+# d=4 byte savings.
+#
+# Method:
+#   * `LossyConfig::with_high_d_photo_hint(Some(false))` to disable W44-29's
+#     auto-fire (which would force dct32x32=1.34 + dct16x32=1.349)
+#   * `LossyConfig::with_internal_params(LossyInternalParams { entropy_mul_table: Some(t), .. })`
+#     to inject a custom table built from `EntropyMulTable::high_d_photo_smooth_suppressed()`
+#     with dct16x32 overridden per sweep value.
+#   * Cells: 3 CID22-512 photos × {d=3, 4, 5, 6} = 12 cells.
+#   * cjxl reference encoded with libjxl 0.12 HEAD.
+#
+# Reproducer: cargo run --release -p jxl-encoder --example w44_77_tuning_search
+#   --features 'parallel __expert'  (libjxl cjxl on PATH).
+#
+# Result: NO uniform Pareto-better setting exists.
+#
+# Cell-by-cell best (negative = saving vs default):
+#   1420710 d=3:  dct16x32=1.45  -2003 B  (W44-29 doesn't fire at d=3 — "default" uses libjxl
+#                                          reference, all sweep configs include dct32x32=1.34
+#                                          override which IS the savings driver, not dct16x32)
+#   1420710 d=4:  dct16x32=1.349  -0 B   (current default already optimal — d=4 is W44-29's
+#                                          load-bearing cell; lifting dct16x32 ≥ 1.40 regresses
+#                                          +1641 to +2067 B)
+#   1420710 d=5:  dct16x32=1.40   -264 B (small savings)
+#   1420710 d=6:  dct16x32=1.40   -259 B (small savings — task target cell)
+#   1531677 d=3:  dct16x32=1.60   -85 B  (W44-29 inactive — sweep includes table override)
+#   1531677 d=4:  dct16x32=1.40   -508 B (better than current default)
+#   1531677 d=5:  dct16x32=1.55   -25 B  (marginal, basically noise)
+#   1531677 d=6:  dct16x32=1.55   -314 B (under cjxl 17705 by -65 B)
+#   1189261 d=3:  dct16x32=1.49   -995 B (W44-29 inactive — table override saves)
+#   1189261 d=4:  dct16x32=1.349  -452 B (W44-29 inactive — sweep table override saves)
+#   1189261 d=5:  dct16x32=1.55   -567 B (under cjxl 19385 by -174 B)
+#   1189261 d=6:  dct16x32=1.49   -221 B (under cjxl 16884 by -289 B)
+#
+# Conclusions:
+#   1. The largest savings (1189261 d=3-6, 1420710 d=3, 1531677 d=3-6) come from forcing
+#      `dct32x32=1.34` on cells where W44-29 doesn't fire (1189261's mask1x1 median ≥ 50,
+#      1420710/1531677 at d<4).  This points to a real follow-on: widen the W44-29 gate
+#      to fire on these cells too.
+#   2. No `dct16x32` value uniformly beats current default 1.349.  The 1420710 d=4 cell
+#      (W44-29's primary win) is too sensitive: lifting dct16x32 above 1.349 regresses
+#      +1641 to +2067 B.
+#   3. The W44-76 task target (1420710 e7 d=6) saves at most -259 B with dct16x32=1.40,
+#      but that same setting regresses 1420710 d=4 by +2067 B — a clear FIXED → OPEN flip.
+#
+# No production code change shipped from this sweep.  Recommendation:
+#   - Land the audit (w44_77_find_best_32x32_parity_audit_2026-05-19.md) as proof that
+#     find_best_32x32_transform itself is at libjxl parity.
+#   - Follow-on (W44-78): widen W44-29's mask1x1 threshold (from 50 to 90+) to catch
+#     1189261-like cells and 1420710/1531677 at d=3 — those show the table swap saves
+#     even where the smooth-content gate currently rejects.
+#   - Follow-on (W44-79): re-bisect d=4 cell sensitivity to find a finer per-distance
+#     dct16x32 (e.g. 1.349 at d=4, 1.40 at d>=5).
+#
+# Header columns:
+cell	d	default	dct16x32=1.349	dct16x32=1.400	dct16x32=1.450	dct16x32=1.490	dct16x32=1.550	dct16x32=1.600	cjxl
+1420710	3	38180	36475(-1705)	36300(-1880)	36177(-2003)	37160(-1020)	36678(-1502)	36697(-1483)	36567
+1420710	4	26702	26702(+0)	28769(+2067)	28479(+1777)	28665(+1963)	28766(+2064)	28343(+1641)	27929
+1420710	5	24589	24589(+0)	24325(-264)	24475(-114)	24451(-138)	24472(-117)	24484(-105)	23643
+1420710	6	21212	21212(+0)	20953(-259)	21199(-13)	21155(-57)	21026(-186)	21027(-185)	20653
+1531677	3	32022	32246(+224)	32608(+586)	32209(+187)	32333(+311)	32201(+179)	32107(+85)	32698
+1531677	4	24367	24367(+0)	23859(-508)	25140(+773)	24673(+306)	25147(+780)	25556(+1189)	24918
+1531677	5	21059	21059(+0)	21426(+367)	21206(+147)	21260(+201)	21121(+62)	21084(+25)	20620
+1531677	6	18084	18084(+0)	18079(-5)	17997(-87)	17834(-250)	17770(-314)	18202(+118)	17705
+1189261	3	30481	29802(-679)	29802(-679)	29559(-922)	29486(-995)	29497(-984)	30725(+244)	29197
+1189261	4	24380	23928(-452)	24067(-313)	24497(+117)	24115(-265)	24294(-86)	24208(-172)	23751
+1189261	5	19778	19459(-319)	20147(+369)	20020(+242)	19340(-438)	19211(-567)	19455(-323)	19385
+1189261	6	16816	17376(+560)	17255(+439)	17168(+352)	16595(-221)	16724(-92)	17579(+763)	16884
