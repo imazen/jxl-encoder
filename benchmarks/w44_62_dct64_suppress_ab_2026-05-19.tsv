@@ -1,0 +1,27 @@
+image	effort	distance	bytes_default	bytes_no_dct64	delta_no_dct64_pct	bytes_no_dct32_64	delta_no_dct32_64_pct	ms_default	ms_no_dct64	ms_no_dct32_64	cell_class	currently_open	notes
+1189261.png	5	4.0	23693	23693	0.00	24599	3.82	499	491	505	photo	OPEN	try_dct64 off by default at e=5; neutral
+1189261.png	8	3.0	28461	28344	-0.41	28882	1.48	700	662	660	photo	OPEN	tiny win, d<HIGH_D_PHOTO gate
+1189261.png	9	3.0	28715	28633	-0.29	29020	1.06	748	729	754	photo	OPEN	tiny win, d<HIGH_D_PHOTO gate
+1420710.png	5	5.0	24268	24268	0.00	27676	14.04	307	313	314	photo	OPEN	W44-61 not firing at e=5
+1420710.png	5	6.0	21299	21299	0.00	24097	13.14	328	326	323	photo	OPEN	W44-61 not firing at e=5
+1420710.png	6	5.0	24467	24467	0.00	27792	13.59	327	329	333	photo	OPEN	W44-61 not firing at e=6
+1420710.png	6	6.0	21509	21509	0.00	24215	12.58	342	344	347	photo	OPEN	W44-61 not firing at e=6
+1420710.png	7	5.0	24651	24469	-0.74	27794	12.75	335	341	340	photo	OPEN	W44-61 over-firing
+1420710.png	7	6.0	21295	21512	1.02	24215	13.71	352	355	356	photo	OPEN	W44-61 helping here
+1420710.png	8	5.0	22648	22598	-0.22	25138	10.99	481	476	468	photo	OPEN	tiny win
+1420710.png	9	5.0	22701	22601	-0.44	25224	11.11	556	559	553	photo	OPEN	tiny win
+1531677.png	5	5.0	21012	21012	0.00	23183	10.33	419	416	431	photo	OPEN	W44-61 not firing
+1531677.png	5	6.0	18262	18262	0.00	20136	10.26	404	410	366	photo	OPEN	W44-61 not firing
+1531677.png	6	5.0	21249	21249	0.00	23331	9.80	433	446	457	photo	OPEN	W44-61 not firing
+1531677.png	6	6.0	18485	18485	0.00	20292	9.78	426	424	386	photo	OPEN	W44-61 not firing
+1531677.png	8	5.0	19528	19377	-0.77	20945	7.26	515	521	586	photo	OPEN	small win
+1531677.png	9	5.0	19586	19481	-0.54	21068	7.57	589	591	667	photo	OPEN	small win
+codec_wiki.png	7	4.0	65830	64936	-1.36	62027	-5.78	9758	9602	9538	screenshot	OPEN	C variant flips: +4.97%→-0.81%
+codec_wiki.png	7	5.0	59239	57314	-3.25	55362	-6.54	8391	9181	8842	screenshot	OPEN	B variant flips: +3.51%→+0.18%
+codec_wiki.png	7	6.0	53936	53078	-1.59	51145	-5.17	8533	8573	8347	screenshot	OPEN	B variant flips: +3.97%→+2.34%
+imac_g3.png	7	4.0	136863	135957	-0.66	132716	-3.03	10609	10376	10381	screenshot	FIXED	bonus: deeper win
+imac_g3.png	7	5.0	120027	118738	-1.07	114560	-4.55	11730	10644	13184	screenshot	FIXED	bonus: deeper win
+imac_g3.png	7	6.0	109004	108811	-0.18	104768	-3.89	10293	9600	10158	screenshot	FIXED	bonus
+terminal.png	7	4.0	32547	32504	-0.13	31274	-3.91	2319	2568	2319	screenshot	FIXED	bonus
+terminal.png	7	5.0	27985	27801	-0.66	26998	-3.53	2394	2153	2600	screenshot	FIXED	bonus
+terminal.png	7	6.0	26494	26492	-0.01	25430	-4.02	2243	2208	2930	screenshot	FIXED	bonus (cjxl)

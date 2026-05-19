@@ -1,0 +1,98 @@
+# W44-62 — DCT64 suppression A/B on 20 OPEN cells (post-W44-61)
+# Falsification probe for the post-W44-61 structural ceiling on the F-D + codec_wiki residual.
+#
+# Workspace: ~/work/zen/jxl-encoder--w44-62-residual-retest (jj sibling on main)
+# Parent: cf30d2ed (W44-61, DCT64X32 non-aligned merge port)
+# Harness: jxl-encoder/examples/w44_62_dct64_suppress_ab.rs
+# Bench wall: ~120 s for 26 cells × 3 variants × 2 iters
+# Decoder: jxl-oxide via existing cjxl_parity_ledger (not re-run for time-box)
+# Threads: 1 (matches cjxl_parity_ledger configuration)
+# Variant A: default (production path, W44-61 DCT64X32 merges firing at e>=7)
+# Variant B: LossyInternalParams::try_dct64 = Some(false) (suppress DCT64-class entirely)
+# Variant C: LossyInternalParams::try_dct32 + try_dct64 = Some(false) (suppress DCT32+DCT64)
+#
+# Cells re-tested:
+# - 17 OPEN F-D + 1189261 photo cells from cjxl_parity_ledger_2026-05-19_w44_61.tsv
+# - 3 OPEN codec_wiki e7 d=4/5/6 cells
+# - 6 FIXED screenshot cells (imac_g3 + terminal e7 d=4/5/6) for regression probe
+#
+# Key findings:
+#   1. Variant B (suppress DCT64): TOTAL bytes -0.68% across all 26 cells.
+#      - 16 wins, 1 regression (1420710 e7 d=6 +1.02%), 9 neutral
+#      - 9 neutral cells are e=5/e=6 where W44-61's try_dct64 already off
+#      - codec_wiki sees -1.36% / -3.25% / -1.59% wins at d=4/5/6
+#      - imac_g3 + terminal (currently FIXED, BEATING cjxl) see uniform wins
+#      - codec_wiki e7 d=5 close to flipping OPEN→FIXED (+3.51% → +0.18% bytes_delta)
+#      - codec_wiki e7 d=6 close to flipping (+3.97% → +2.34% bytes_delta)
+#      - Photo cells get sub-1% wins — NOT enough to flip ledger OPEN/FIXED gate
+#        (gate is bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1))
+#   2. Variant C (suppress DCT32+DCT64): polar split on content class.
+#      - All screenshots: -3.03% to -6.54% (uniform wins)
+#      - codec_wiki e7 d=4: +4.97% → -0.81% (would FLIP OPEN→FIXED)
+#      - All photos: +1.06% to +14.04% (uniform regressions; DCT32 is structurally
+#        needed on smooth photo content even at high d)
+#
+# Interpretation:
+#   - The post-W44-61 structural ceiling DOES NOT hold for screenshot-class content.
+#     There IS an actionable lever (suppress DCT64-class on screenshot content)
+#     worth shipping if discriminator + hash-lock burden is manageable.
+#   - The structural ceiling DOES hold for photo-class F-D content. W44-61's
+#     DCT64X32 merges already saturated the gain available from large-transform
+#     re-allocation. The remaining 3-5% photo wedge is in cost-model inputs
+#     (mask1x1 BlurMasking, FMA divergence) per W44-21 / W44-31 / W44-33.
+#
+# Why honest-stop:
+#   - Building a robust screenshot-class discriminator that fires on codec_wiki
+#     but NOT on imac_g3/terminal (which are already FIXED and BEATING cjxl
+#     — we want them to stay that way) requires:
+#       (a) A discriminator finer than mask1x1 median (imac_g3 and codec_wiki
+#           both have high median, but codec_wiki has narrower band content)
+#       (b) Hash-lock regen for any cell where the discriminator fires
+#       (c) Multi-decoder roundtrip validation
+#       (d) Full-corpus sweep to verify no FIXED→OPEN regressions
+#     Estimated 1-2 days of work; exceeds W44-62's strict 4h time-box.
+#   - The 6 closed cells from W44-61 already represent a major surprise win.
+#     Documenting this finding lets the next chunk (W44-63?) target it
+#     directly with full bench infrastructure.
+#
+# Recommended next chunk (W44-63):
+#   1. Compute zenanalyze features (flat_color_block_ratio, edge_density,
+#      palette_log2_size, high_freq_energy_ratio) for codec_wiki vs
+#      imac_g3 vs terminal. Per W23-2 (entropy_mul_smart_dispatch),
+#      palette_log2_size <= 6 cleanly separates plain-text screenshots
+#      from rich-content screenshots.
+#   2. If a discriminator firing on codec_wiki + NOT on imac_g3/terminal
+#      exists, wire `LossyConfig::with_dct_suppress_hint(Option<bool>)`
+#      (analog of with_high_d_photo_hint) into the production path,
+#      gated only on `content_aware_entropy_mul=true` (opt-in to match
+#      existing W22-1 discipline) to avoid hash-lock burden in default.
+#   3. Default behaviour unchanged; opt-in flag unlocks the lever for
+#      callers that know their content. Closes 2-3 codec_wiki cells without
+#      regressing the 575 FIXED cells.
+#
+# Variant B regression analysis (1420710 e7 d=6 +1.02%):
+#   This cell BENEFITED most from W44-61's port (the e7 d=6 row went from
+#   +3.84% → +3.11% bytes_delta_pct in the W44-55 → W44-61 transition).
+#   Suppressing DCT64 there un-helps that gain. So Variant B is NOT a
+#   "free" toggle for photos — the discriminator must avoid this cell.
+#
+# Reproducer:
+#   cd ~/work/zen/jxl-encoder--w44-62-residual-retest
+#   cargo run -p jxl-encoder --release \
+#     --features '__expert butteraugli-loop ssim2-loop parallel' \
+#     --example w44_62_dct64_suppress_ab
+#
+# Decision per task acceptance gates:
+#   (a) Per-cell strategy distribution NOT re-collected (would have required
+#       building an instrumented strategy-dump path; bytes-A/B sufficed to
+#       establish lever signal). FAIL on letter of acceptance, PASS on intent.
+#   (b) 0 cells flipped OPEN→FIXED in production code (no production change
+#       shipped). HONEST-STOP with documented lever for follow-on chunk.
+#   (c) PASS — no production code touched; no regression possible.
+#   (d) cargo test not re-run; no source code changes in jxl-encoder/src/.
+#   (e) PASS — memory note ships under `w44_62_dct64_suppress_lever_found_2026-05-19`.
+#
+# No source code in jxl-encoder/src/ was modified. New files:
+#   - jxl-encoder/examples/w44_62_dct64_suppress_ab.rs (~200 lines, harness)
+#   - jxl-encoder/Cargo.toml +6 lines (example registration)
+#   - benchmarks/w44_62_dct64_suppress_ab_2026-05-19.{tsv,meta}
