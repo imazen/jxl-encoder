@@ -1,20 +1,69 @@
-# cjxl parity ledger
-git_rev: 84c86f8b7afff1385e5ebd0ea047977010493921
+# cjxl parity ledger — W44-36 refresh post W44-35
+git_rev: 4f8579e7 (origin/main at refresh time, perf(vardct): smart-dispatch try_dct64 for smooth photos at mid-d (W44-35))
 host: lilith
 cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
 distances: [3.0, 4.0, 5.0, 6.0]
 efforts: [5, 6, 7, 8]
 images: ["terminal.png", "codec_wiki.png", "imac_g3.png"]
 corpus: /home/lilith/work/codec-corpus
-wall_seconds: 58.2
 total_rows: 595
-cells_this_run: 48
-update_mode: true
-status_filter: None
 smoke: false
 decoder: jxl-oxide (request_color_encoding=srgb_linear)
 metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
 section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
 wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
-reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
-reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
+
+# W44-36 refresh results
+# Pre-state  (W44-30 baseline @ 84c86f8b): 35 OPEN, 560 FIXED
+# Post-W44-35 refresh                    : 30 OPEN, 565 FIXED
+# Flips OPEN→FIXED: 5 (all on 1418519, exactly the W44-35 target)
+#   1418519.png e6 d=1.0
+#   1418519.png e6 d=1.2
+#   1418519.png e6 d=1.6
+#   1418519.png e7 d=1.2
+#   1418519.png e7 d=1.6
+# FIXED→OPEN regressions: 0
+# Sample-of-10 FIXED retest: all 10 still FIXED (mix included terminal, codec_wiki,
+#   imac_g3, 1531677, 1418519, 1189261, 1025469, 1420710; e5..e9; d=0.4..d=6.0)
+# Wall_seconds this refresh: 9.4 (35 OPEN cells) + ~30 (10 FIXED sample) = ~40s
+# update_mode: true
+#
+# Session-total tally (W44-1 → W44-36):
+#   W44-1 baseline                : 50 OPEN
+#   W44-10 (post-W44-3 EPF)       : 50 OPEN (sub-threshold deltas)
+#   W44-16 (post-W44-8 DC quant)  : 43 OPEN (7 imac_g3+terminal patches flips)
+#   W44-30 (post-W44-29 high_d)   : 35 OPEN (8 photo e8/9 d>=4 flips)
+#   W44-36 (post-W44-35 try_dct64): 30 OPEN (5 1418519 mid-d flips)
+# Net session: 50 → 30 OPEN (-20, -40%)
+#
+# Top-5 remaining OPEN cells (by bytes_delta_pct, all > +30%):
+#   codec_wiki.png e7 d=3.0  bytes +139% bfly +4.14% ssim2 +13.6
+#   codec_wiki.png e7 d=4.0  bytes +139% bfly +7.34% ssim2 +7.2
+#   codec_wiki.png e7 d=5.0  bytes +139% bfly +6.16% ssim2 +4.1
+#   codec_wiki.png e7 d=6.0  bytes +138% bfly +6.67% ssim2 +3.3
+#   codec_wiki.png e6 d=4.0  bytes +136% bfly +3.20% ssim2 +8.0
+#   (terminal e6 d=6 +77%; 1420710/1531677 F-D high-d cluster +26-34%)
+#
+# Per-image residual OPEN counts:
+#   1531677.png      10 (F-D high-d cluster, e5..e9 × d=5,6)
+#   1420710.png      10 (F-D high-d cluster, e5..e9 × d=5,6)
+#   codec_wiki.png    5 (screenshot e6/e7 d>=3)
+#   1189261.png       3 (mid-d residue at e5/e8/e9)
+#   terminal.png      1 (e6 d=6.0 only — e7-9 already fix)
+#   1025469.png       1 (e9 d=1.2 lonely)
+#
+# Recommended next attack chunk (W44-37):
+#   Largest remaining wedge family is the F-D photo cluster on 1420710 + 1531677
+#   (20 OPEN cells, uniform +26-34% bytes / +3-7% bfly across e5..e9 × d=5,6).
+#   W44-29's high_d_photo_hint helped 1420710/1531677 at d>=4 but stopped short of
+#   d=5,6; the smart-dispatch hint may need to extend its distance/content guards.
+#   W44-31's per-distance value sweep stopped at d=5,6 with HONEST-STOP; revisit
+#   with an image-feature-conditioned classifier (vs. mask1x1-only) per the
+#   zenanalyze pattern that worked for screenshot_lift_hint.
+#   Codec_wiki +139% screenshot cluster is the highest-bytes outlier but
+#   smaller cell count (5) and may need the unified A1 #4 alpha-distance work
+#   (W37-1 patches-dispatch shipped but codec_wiki appears to still pay).
+#
+# Reproducer (seed):          cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+# Reproducer (update one):    cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
+# Reproducer (refresh OPEN):  cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger benchmarks/cjxl_parity_ledger_2026-05-18.tsv --update --status OPEN
