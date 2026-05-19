@@ -1,0 +1,5 @@
+image	distance	ours_bytes	ours_final_unique	ours_final_occ	ours_accepted_ccs	ours_singletons	cjxl_bytes	cjxl_unique	cjxl_occurrences	cjxl_has_ref_frame	delta_unique	delta_occurrences
+codec_wiki.png	3.00	75245	59	202	319	117	72232	59	202	true	0	0
+codec_wiki.png	4.00	67321	59	202	319	117	62710	59	202	true	0	0
+codec_wiki.png	5.00	60760	59	202	319	117	57232	59	202	true	0	0
+codec_wiki.png	6.00	55343	59	202	319	117	51875	59	202	true	0	0

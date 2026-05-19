@@ -1,0 +1,52 @@
+W44-53: codec_wiki CC enumeration / patch-admission audit vs cjxl
+-------------------------------------------------------------------
+
+Generated: 2026-05-19 06:35 UTC
+Host: lilith
+Parent commit: 36e67ff897c348685b88bf144e74527c3b2cab07
+                (W44-51 — investigate(patches): codec_wiki ref-frame
+                 predictor A/B (W44-51) - H3 RULED OUT)
+Reference: ~/work/jxl-efforts/libjxl/build/tools/cjxl v0.12.0 (4279d48)
+
+Command:
+  cargo run --release -p jxl-encoder --features __internals \
+      --example w44_53_cc_admission_vs_cjxl
+
+Inputs: ~/work/codec-corpus/gb82-sc/codec_wiki.png (2560x1664 PNG)
+Encoded with: cjxl -e 7 -d {3,4,5,6} (default cparams)
+              and LossyConfig::new(d).encode(rgb, w, h, PixelLayout::Rgb8)
+              at same d.
+
+Method:
+  1. Ours: encode → drain W44-20 LastPatchesDetectStats thread-local
+     (final_unique = ref-frame unique patterns; final_occ = sum of
+     PatchPosition::positions.len()).
+  2. cjxl: encode → parse main frame's LfGlobal.patches via
+     jxl-frame::LfGlobal::<i32>::parse and count
+     (patches.len(), sum(patch_targets.len())).
+  3. Side-by-side delta.
+
+Hypothesis H1 (W44-52 final): cjxl admits MORE patches via CC
+enumeration / patch-admission differences in FindTextLikePatches.
+The 7% bigger cjxl ref-frame at d=3-6 could be 1-2 more actual
+patches admitted.
+
+Result: H1 RULED OUT. cjxl admits EXACTLY the same 59 unique
+patches with 202 occurrences as ours at every distance d=3-6.
+delta_unique = 0, delta_occurrences = 0 across all four cells.
+
+Conclusion: codec_wiki patches subsystem is at structural parity
+with libjxl. The 4-7% bytes residual is NOT from missing patches
+detection or admission. It must come from downstream coding
+(ref-frame entropy, AC residual coding, or main-frame headers).
+
+H1-H4 all ruled out for codec_wiki e7 d=3-6:
+  - W44-48: is_similar_b / has_similar threshold tuning
+  - W44-51: ref-frame predictor (Gradient vs Variable)
+  - W44-52: bin-packer canvas layout
+  - W44-53: CC enumeration / patch admission
+
+codec_wiki e7 d=3-6 is declared STRUCTURAL CEILING — accepted
+residual, similar to F-D family. The 4 OPEN cells in the
+cjxl_parity_ledger correspond to coding-side overhead that no
+patches-subsystem fix can address.
