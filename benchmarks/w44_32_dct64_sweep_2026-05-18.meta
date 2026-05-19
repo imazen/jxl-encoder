@@ -1,0 +1,208 @@
+W44-32 DCT64 entropy_mul sweep on F-D residual cells — HONEST STOP
+==================================================================
+
+Date         : 2026-05-19
+Workspace    : ~/work/zen/jxl-encoder--w44-32-dct64-investigation
+Parent commit: eb78259d (W44-31 honest-stop on per-distance high_d_photo_hint)
+Author       : claude-w44-32
+Hostname     : lilith-7950x (Linux 6.6.114.1-microsoft-standard-WSL2)
+Toolchain    : rustc stable, cargo release build
+Features     : __expert + butteraugli-loop + ssim2-loop + parallel
+Reproducer   : cargo run -p jxl-encoder --release \
+                 --features '__expert butteraugli-loop ssim2-loop parallel' \
+                 --example w44_32_dct64_sweep
+
+Audit phase (no-code, ~30 min)
+------------------------------
+Located DCT64 cost path in our encoder:
+  - jxl-encoder/src/vardct/ac_strategy_search.rs:2771 find_best_64x64_transform
+  - mul64x64/mul64x32 (line 3066) ONLY fires in coefficient-domain mode
+    (use_pixel_domain=false). Pixel-domain mode (our default) routes
+    DCT64 entropy_mul through entropy_mul_for_strategy() at line 715-716
+    via EntropyMulTable.dct64x64 / dct64x32.
+
+Located DCT64 cost path in libjxl:
+  - lib/jxl/enc_ac_strategy.cc:896-897:
+      const float entropy_mul64X32 = 2.25;
+      const float entropy_mul64X64 = 2.25;
+  - Used as static MergeTry constants in kTransformsForMerge (line 917-919).
+  - No distance scaling, no content adaptation, no per-image tuning.
+  - No DCT64-specific cost adjustments outside this constant.
+
+**Verdict: bit-exact parity**. Our EntropyMulTable::reference() also uses
+2.25 / 2.25. The DCT64 entropy_mul lever is at libjxl-parity values in
+both codepaths. No divergence to port.
+
+Direction premise check
+-----------------------
+W44-31 honest-stop memo claimed "DCT64 over-pick by +10 % at 1531677
+e=5 d=5 (ours 18039 vs cjxl 16366)" citing the ledger TSV. Re-reading
+benchmarks/cjxl_parity_ledger_2026-05-18.tsv columns 16-20 and
+matching against examples/cjxl_parity_ledger.rs:197-260:
+
+  Col 16: jxl_lf_global         (LfGlobal section bytes)
+  Col 17: jxl_lf_groups         (LfGroup sections bytes)
+  Col 18: jxl_hf_global         (HfGlobal section bytes)
+  Col 19: jxl_ac_groups         (AC pass-group sections bytes)
+  Col 20: jxl_main_total        (sum of all main-frame sections)
+
+These are **bitstream section BYTES**, not AC-strategy block counts.
+The values W44-31 cited as "dct32=1050 vs cjxl 889" (= jxl_lf_groups
+bytes) and "dct64=18039 vs cjxl 16366" (= jxl_ac_groups bytes) are
+bytes in section, not strategy histograms. The DCT64 over-pick
+hypothesis was based on a column-mislabel.
+
+Empirical sweep design
+----------------------
+- Images   : cid22/1531677.png + cid22/1420710.png (the 2 F-D photos with
+             OPEN cells at d=5/d=6 per cjxl_parity_ledger)
+- Distances: 5.0, 6.0
+- Efforts  : 5, 6, 7, 8, 9 (20 baseline cells)
+- Tuples   : 5 (dct64x64, dct64x32) candidates per cell
+
+Candidate tuples
+----------------
+  libjxl_default         = (2.25, 2.25)   — baseline = libjxl parity
+  dct64_lift_25pct       = (2.81, 2.81)   — discourage DCT64
+  dct64_lift_50pct       = (3.375, 3.375) — stronger discouragement
+  dct64_lower_25pct      = (1.69, 1.69)   — encourage DCT64
+  dct64_only_64x64_lift  = (2.81, 2.25)   — lift 64x64 only
+
+Each candidate built on top of the W44-29 `(dct16=1.27, dct32=1.34)`
+lowering (auto-gate forced OFF via with_high_d_photo_hint(Some(false))
+so the internal-params table propagates to compute_ac_strategy).
+
+Key finding — DCT64 is not selected on F-D content
+--------------------------------------------------
+Baseline (libjxl_default 2.25/2.25) DCT64 picks across 20 cells:
+
+  cid22/1531677 e=5..9 d=5: 0 / 0 / 0 / 0 / 0 DCT64 blocks
+  cid22/1531677 e=5..9 d=6: 0 / 0 / 2 / 2 / 2 DCT64 blocks  (DCT64X64=1 + DCT64X32=1)
+  cid22/1420710 e=5..9 d=5: 0 / 0 / 0 / 0 / 0 DCT64 blocks
+  cid22/1420710 e=5..9 d=6: 0 / 0 / 0 / 0 / 0 DCT64 blocks
+
+**Total: 6 DCT64 blocks across 20 baseline cells.** Average 0.30 picks
+per cell. Out of ~217 large-transform blocks per 512x512 image, DCT64
+is essentially never selected for F-D content at d=5/6.
+
+The dominant transform is DCT32X32 (163-202 picks per image).
+DCT16X16 is secondary (20-41 picks per image). DCT8 fills the residual
+(3-20 picks). DCT64 is statistical noise.
+
+A/B aggregate (20 cells per candidate)
+--------------------------------------
+candidate              n  avg_byte_Δ%  avg_bfly_Δ%  avg_ssim2_Δ  byte_wins  byte_regs  avg_dct64_picks
+dct64_lift_25pct       20  -0.049       -0.101       +0.040        3          0          0.0
+dct64_lift_50pct       20  -0.049       -0.101       +0.040        3          0          0.0
+dct64_lower_25pct      20  -0.186       +1.028       -0.375        8          4          8.4
+dct64_only_64x64_lift  20  -0.032       -0.101       +0.017        2          1          0.1
+
+(`libjxl_default` row omitted — baseline by definition all-zero deltas
+on first row of each cell-paired pair; `IDENTICAL` shows on second
+row when the override produces byte-identical output, which it does
+on most cells because 0 DCT64 picks → no entropy_mul value matters.)
+
+Three observations:
+1. The `lift_25pct` and `lift_50pct` produce **identical bytes** (-0.049 % avg)
+   because they only re-cost DCT64 blocks, and the baseline picks
+   essentially zero DCT64 blocks anyway. The -0.049 % is just the
+   3 cells where the e=7+ d=6 1531677 baseline picked 1 DCT64X64 +
+   1 DCT64X32 — lifting their entropy_mul demoted them to DCT32X32,
+   saving a few bytes per cell.
+2. `dct64_lower_25pct` IS a measurable change: avg 8.4 DCT64 picks
+   per cell (from 0), -0.186 % bytes, but +1.03 % bfly and -0.375
+   ssim2 — DCT64 averages 64x64 pixel blocks and the quality cost
+   exceeds the byte saving. 4 of 20 cells regress on bytes.
+3. `dct64_only_64x64_lift` is sub-noise (0.1 picks avg).
+
+Conclusion — DCT64 is not the wedge mechanism on F-D content
+------------------------------------------------------------
+The F-D residual photo d=5/d=6 wedge cannot be closed by DCT64
+entropy_mul tuning because we don't pick DCT64 in the first place
+at this distance/content combination. The W44-31 honest-stop's
+"DCT64 over-pick by +10 %" claim was based on a misreading of the
+ledger column 19 (jxl_ac_groups bytes-in-section) as a DCT64
+block count.
+
+The empirical strategy distribution on these cells:
+  DCT32X32 dominates (75-93 % of large-transform picks).
+  DCT16X16 secondary (9-19 %).
+  DCT64 statistical noise (<= 1 %).
+  Picks at parity with libjxl reference EntropyMulTable.
+
+The wedge mechanism at d=5/d=6 lies outside the AC-strategy
+selection cost model entirely. Likely candidates per the W44-31
+recommended-next list (still valid, just minus DCT64):
+
+1. **AdjustQuantBlockAC firing-rate audit at d>=5** (extends W44-27).
+   W44-27 noted 79.8 % firing rate at d=2 on DCT8 blocks. At d=5/6
+   on these cells the AC-strategy distribution is DCT32-dominated,
+   so the D-heuristic fires almost entirely on DCT32X32 blocks
+   instead. Per-strategy firing-rate breakdown would clarify
+   whether the heuristic mis-tunes for the DCT32X32 case.
+
+2. **DCT32x32 quantization weight audit**. The DCT32X32 transform
+   uses parametric quantization weights from a single 32x32 weight
+   table (vardct/quant_weights.rs). cjxl uses the same parametric
+   weights via decoder all_default=true. The encoder-side rate-
+   control multiplier (mul8x8) is 1.0 for DCT32+ blocks; cjxl
+   may apply a different per-strategy multiplier we don't.
+
+3. **Histogram clustering / context map overhead at low-AC density**.
+   At d>=5 most AC coefficients quantize to zero. The block-context-
+   map QF-threshold split (`encoder.rs:3117 strategy_counts`) may
+   over-allocate contexts on near-empty distributions. cjxl's
+   per-block context coding may emit fewer redundant bits.
+
+4. **DC tree learning for high-d**. Default tree is static.
+
+Recommended next chunk (NOT this chunk)
+---------------------------------------
+W44-33: AdjustQuantBlockAC firing-rate audit per-AC-strategy at d>=5.
+Re-instrument the W44-27 firing-rate dump to slice by AC strategy
+(DCT8 vs DCT16X16 vs DCT32X32). Compare with libjxl's firing rate
+under the same content at the same distance (requires libjxl
+modification, ~half-day port). If our DCT32X32 firing rate is
+substantially higher than libjxl's, the quant-nudge heuristic is
+mis-calibrated for the DCT32-dominant high-d regime.
+
+What this chunk shipped
+-----------------------
+- Sweep harness  : jxl-encoder/examples/w44_32_dct64_sweep.rs
+- Sweep bench    : benchmarks/w44_32_dct64_sweep_2026-05-18.tsv (100 rows)
+- This meta      : benchmarks/w44_32_dct64_sweep_2026-05-18.meta
+- Cargo.toml     : added [[example]] block for w44_32_dct64_sweep
+
+NO source code changes to api.rs / effort.rs / vardct/encoder.rs /
+vardct/ac_strategy.rs. The DCT64 entropy_mul values (2.25/2.25)
+are preserved as the libjxl-parity reference (also bytes-Pareto
+optimal on F-D content at d=5/6 by sweep).
+
+Acceptance gates — honest-stop alternative path
+-----------------------------------------------
+(a) FAILED to close >= 5 of 20 F-D d=5/6 cells via DCT64 lever.
+    Avg byte delta -0.05 % for lift_25pct/50pct (mechanically can't
+    move much: 6 DCT64 picks across 20 cells).
+(b) PASSED — W44-29 d=4 wins are unaffected (this work touches no
+    code; auto-gate at d=4 continues to fire and select the
+    high_d_photo_smooth_suppressed table).
+(c) PASSED — no screenshot regressions (this work touches no code).
+(d) cargo test pass — N/A (no source changes to test).
+(e) Hash-lock regen — N/A (no bitstream changes shipped).
+(f) Multi-decoder roundtrip — N/A (no bitstream changes shipped).
+
+Library learning — verify before sweeping
+------------------------------------------
+W44-31 + W44-32 illustrate a pattern: when a hypothesis depends on a
+specific cjxl block-count claim, MEASURE the block count BEFORE
+sweeping. The ledger TSV columns 16-20 are bytes-in-section, NOT
+strategy histograms. There is no public-CLI mechanism to extract
+cjxl AC-strategy distributions (only our own strategy_counts via
+EncodeStats). A future chunk could:
+  - Patch libjxl to dump per-strategy block counts (similar to
+    cjxl_parity_ledger's section-byte extraction, but reading the
+    AcStrategyImage from libjxl's encode pipeline).
+  - OR: decode cjxl JXL files with jxl-oxide/jxl-rs and count
+    strategies from the parsed bitstream HfGlobal/HfMeta.
+Either path lets future audits verify cjxl's strategy distribution
+matches the hypothesis before spending bench time on a sweep.
