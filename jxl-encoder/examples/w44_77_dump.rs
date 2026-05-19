@@ -5,9 +5,21 @@ use jxl_encoder::{LossyConfig, PixelLayout};
 use std::process::Command;
 
 const CELLS: &[(&str, &str, &[f32])] = &[
-    ("1420710", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png", &[3.0, 4.0, 5.0, 6.0]),
-    ("1531677", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png", &[3.0, 4.0, 5.0, 6.0]),
-    ("1189261", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1189261.png", &[3.0, 4.0, 5.0, 6.0]),
+    (
+        "1420710",
+        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png",
+        &[3.0, 4.0, 5.0, 6.0],
+    ),
+    (
+        "1531677",
+        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png",
+        &[3.0, 4.0, 5.0, 6.0],
+    ),
+    (
+        "1189261",
+        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1189261.png",
+        &[3.0, 4.0, 5.0, 6.0],
+    ),
 ];
 
 fn encode_with(rgb: &[u8], w: u32, h: u32, d: f32, hint: Option<bool>) -> usize {
@@ -47,7 +59,9 @@ fn main() {
                 b_no_w29 as i64 - b_def as i64,
                 if b_cjxl > 0 {
                     (b_no_w29 as f64 - b_cjxl as f64) / b_cjxl as f64 * 100.0
-                } else { 0.0 }
+                } else {
+                    0.0
+                }
             );
         }
     }

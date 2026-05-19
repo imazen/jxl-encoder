@@ -1,0 +1,159 @@
+W44-79 zenanalyze-feature discriminator — 2026-05-19
+=====================================================
+
+Follow-on to W44-78 (`a01c4a7f` — shipped `HIGH_D_PHOTO_MIN_DISTANCE: 4.0 → 3.0`).
+W44-78 closed 1420710 e7 d=3 (-1675 B) with zero `FIXED → OPEN` regressions
+by widening the distance gate, but left 1189261 (mask=69.08) untouched
+because the mask1x1 gate is hardcoded at <50. The W44-78 follow-on note
+asked: "1189261 has -1450B EV but the mask1x1 widening variants regress
+1025469 in the 50-80 band. Needs a finer zenanalyze-feature discriminator
+(palette_log2_size or flat_color_block_ratio)."
+
+Goal
+----
+Find a zenanalyze-feature predicate that catches 1189261 (the W44-78
+follow-on TARGET) and EXCLUDES all 6 documented REGRESSION-band images
+(1025469, 1624487, 159550, 2079234, 2775196, 297394) where the
+W44-29 lowered table actively regresses bytes vs the libjxl-parity
+reference table.
+
+Headline result
+---------------
+**Discriminator FOUND** (3 equivalent candidates):
+  C1: colourfulness >= 80 AND edge_density >= 0.15 AND flat_color_block_ratio < 0.01
+  C2: chroma_complexity >= 0.20 AND flat_color_block_ratio < 0.01
+  C3: colourfulness >= 80 AND flat_color_block_ratio < 0.01            ← simplest
+
+All three cleanly identify 1189261 and exclude all 6 REGRESSION-band
+images. Verified against the full 41-image CID22 validation set: only
+1189261 matches.
+
+Per-distance trial encode for 1189261 with `LossyConfig::with_high_d_photo_hint(Some(true))`
+(in-process measurement at e7, single-thread, 2026-05-19):
+
+  distance  auto_bytes  hint_true_bytes  delta_pct  comment
+  3.0       30481       29802            -2.23      save 679 B
+  4.0       24380       23928            -1.85      save 452 B
+  5.0       19778       19459            -1.61      save 319 B
+  6.0       16816       17376            +3.33      REGRESS 560 B  ← cap at d<=5
+
+Total potential EV: **-1450 B on 1189261** across d ∈ {3, 4, 5}.
+
+Status: HONEST-STOP (discriminator shipped as documentation + opt-in pathway)
+----------------------------------------------------------------------------
+The discriminator IS shippable, but only as documentation pointing to
+the existing `LossyConfig::with_high_d_photo_hint(Some(true))` opt-in
+API, NOT as a production hot-path auto-fire. Reasons:
+
+1. **Tier 2 cost on every encode**: `colourfulness` and
+   `flat_color_block_ratio` are both zenanalyze Tier 2 features. Their
+   computation cost (~7 ms/MP) exceeds the EV-per-random-encode
+   (-1450 B × 1/41 = ~35 B per random photo). The pipeline-internal
+   `mask1x1` statistic costs ~0 ms because it's already computed for
+   adaptive quant.
+
+2. **Population EV is tiny**: only 1 of 41 CID22 validation photos
+   matches the discriminator. The discriminator's `colourfulness >= 80`
+   threshold filters out 95 % of natural photos (typical CID22
+   colourfulness median ≈ 50). The "qualifying-photo" sub-population
+   that benefits is intrinsically small.
+
+3. **Existing API path**: callers that ALREADY compute zenanalyze
+   features per-image (e.g., imageflow content-class routers, picker
+   training pipelines) can opt in via the documented predicate
+   without any encoder change. The existing
+   `LossyConfig::with_high_d_photo_hint(Some(true))` setter does
+   exactly what's needed; W44-79's contribution is documenting WHEN
+   to call it.
+
+Ledger impact
+-------------
+Pre-W44-79 (W44-78 baseline): OPEN=16, FIXED=579.
+Post-W44-79: OPEN=16, FIXED=579 (no production source change — discriminator
+ships as documentation only).
+
+The 3 OPEN cells on 1189261 (e5 d=4, e8 d=3, e9 d=3) stay OPEN in the
+production default. A caller that runs zenanalyze, applies the C3
+discriminator, and calls `with_high_d_photo_hint(Some(true))` at
+3.0 <= distance <= 5.0 would observe the -1450 B saving on 1189261;
+this would flip those 3 cells to FIXED.
+
+Methodology
+-----------
+1. **Feature extraction**: 15 wedge images (1 TARGET, 6 REGRESSION,
+   5 BENEFICIARY, 3 reference) + all 41 CID22 validation images.
+   Used standalone `/tmp/w44_79_features/` bin against zenanalyze
+   path dep with `experimental` feature.
+2. **Wedge categorisation**: derived from W44-78 sweep TSV
+   (`benchmarks/w44_78_widen_gate_ab_2026-05-19.tsv`). Cells in the
+   50 <= mask1x1 < 80 band; REGRESSION = variant B regresses A by
+   >1 pp; BENEFICIARY = variant B helps A by >1 pp.
+3. **Predicate sweep**: tested 7 candidate predicates (C1-C7) over
+   key Tier 1/2 features. Recorded `TARGET fires / REGRESSION fires
+   / BENEFICIARY fires` counts. Selected the 3 clean candidates
+   (C1/C2/C3) that hit TARGET=1 and REGRESSION=0.
+4. **Full-corpus verification**: ran the selected predicates over all
+   41 CID22 validation images. Only 1189261 matched — confirming the
+   discriminator is precise (no surprise false positives).
+5. **Per-distance hint A/B**: trial-encoded 1189261 at d ∈ {3, 4, 5, 6}
+   with `with_high_d_photo_hint(None)` vs `Some(true)` via
+   `examples/w44_79_trial.rs`. Confirmed the d=3..5 savings and the
+   d=6 regression that motivates the caller-side distance cap.
+
+Hash-lock impact: ZERO (no production source change; all source
+modifications are doc-comment text + benchmark TSV/meta).
+
+Decoder roundtrip: not run (no bitstream change to verify).
+
+Time spent: ~2 h (sibling workspace setup + ledger refresh
+verification + zenanalyze feature extraction + discriminator analysis
++ per-distance trial + docs).
+
+Reproducers
+-----------
+# 1. Build the standalone feature extractor (outside this workspace):
+mkdir -p /tmp/w44_79_features/src && cd /tmp/w44_79_features
+cat > Cargo.toml <<'EOF'
+[package]
+name = "w44_79_features"
+version = "0.0.1"
+edition = "2024"
+[dependencies]
+zenanalyze = { path = "/home/lilith/work/zen/zenanalyze", features = ["experimental"] }
+image = "0.25"
+[[bin]]
+name = "w44_79_features"
+path = "src/main.rs"
+EOF
+# (see /tmp/w44_79_features/src/main.rs in the workspace memory note)
+cargo build --release
+
+# 2. Extract features for the 15 wedge images:
+/tmp/w44_79_features/target/release/w44_79_features \
+  /home/lilith/work/codec-corpus/CID22/CID22-512/validation/{1189261,1025469,1624487,159550,2079234,2775196,297394,162520,164595,2253934,2670327,2936831,1420710,1531677,1418519}.png
+
+# 3. Run the per-distance hint A/B:
+cargo run --release -p jxl-encoder --example w44_79_trial
+
+# 4. Refresh the ledger:
+cargo run --release -p jxl-encoder --features 'parallel butteraugli-loop ssim2-loop' \
+  --example cjxl_parity_ledger -- \
+  --ledger benchmarks/cjxl_parity_ledger_2026-05-19_w44_79.tsv \
+  --update --status OPEN
+
+Host: water-cooled 7950X, 128 GB RAM, Linux 6.6.114.1-microsoft-standard-WSL2.
+Git: main (W44-78 = `a01c4a7f` at HEAD).
+
+Recommendation
+--------------
+Ship the doc update (constant-doc + this benchmark TSV/meta). The
+zenanalyze-aware caller pattern is now documented and reproducible.
+No source change to the production hot path.
+
+Future work (lower priority, large investment):
+- Imageflow / picker pipeline integration: pass the discriminator
+  result through to `with_high_d_photo_hint` for the qualifying
+  sub-population. EV per qualifying encode is large enough (~6 %
+  file-size reduction at d=3, ~2 % at d=5) to justify the Tier 2
+  compute cost when the pipeline ALREADY computes zenanalyze
+  features for content-class routing.

@@ -1,0 +1,86 @@
+# cjxl parity ledger — W44-79 refresh post W44-78 (high_d_photo_min_distance 4.0→3.0)
+#
+# W44-78 (`a01c4a7f`) shipped `HIGH_D_PHOTO_MIN_DISTANCE: 4.0 → 3.0`, closing
+# 1420710 e7 d=3 OPEN→FIXED (-1675 B). Net -2564 B across 5 cells, zero
+# `FIXED → OPEN` flips.
+#
+# This refresh re-runs only the 16 OPEN cells from the W44-74 baseline to
+# confirm post-W44-78 status, plus 3 spot-checks for the cells W44-68/W44-73/W44-78
+# previously closed:
+#   - 1420710.png e7 d=3 (W44-78 target):     FIXED, bytes_delta -0.17%  (was +4.62% pre-W44-78)
+#   - 1420710.png e7 d=6 (W44-73 closure):    FIXED, bytes_delta +2.71%
+#   - codec_wiki.png e7 d=4 (W44-68 closure): FIXED, bytes_delta -1.24%
+#
+git_rev: 34f43b996710e3f569b972f551a9ca794f96ac17 (W44-79 doc-only; production
+         source matches main a01c4a7f exactly — bench-and-doc-only)
+production_rev: a01c4a7f (main, W44-78 shipped)
+baseline_for_diff: W44-74 (5a6b04c9, OPEN=16)
+bench_workspace: ../jxl-encoder--w44-79-discriminator
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1418519.png", "1531677.png", "1189261.png", "1420710.png", "terminal.png", "codec_wiki.png", "imac_g3.png"]
+corpus: /home/lilith/work/codec-corpus
+wall_seconds: ~8 (OPEN re-run) + 1.8 (3 spot checks)
+total_rows: 595
+cells_this_run: 16 OPEN re-run + 3 explicit FIXED spot-checks
+update_mode: true
+status_filter: Some("OPEN") (then 3 explicit FIXED spot-checks)
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+
+# Session totals (W44-74 baseline → W44-79 ledger)
+# OPEN: 16 (W44-74) → 16 (W44-79)  — no change (the W44-78 closure of
+#                                   1420710 e7 d=3 shows as bytes_delta
+#                                   -0.17 % vs W44-74's +4.622 %, well within
+#                                   FIXED-side already; W44-78 also did not
+#                                   touch any of the W44-74 OPEN cells)
+# FIXED: 579 (W44-74) → 579 (W44-79)
+# Flips OPEN → FIXED: 0
+# Flips FIXED → OPEN: 0
+#
+# Remaining 16 OPEN cells (sorted by image, bytes_delta_pct):
+#   1189261.png e5 d=4.0:  3.669
+#   1189261.png e8 d=3.0:  3.550
+#   1189261.png e9 d=3.0:  4.914
+#   1420710.png e5 d=5.0:  3.977
+#   1420710.png e5 d=6.0:  5.066
+#   1420710.png e6 d=5.0:  3.138
+#   1420710.png e6 d=6.0:  3.738
+#   1420710.png e7 d=5.0:  4.001
+#   1420710.png e8 d=5.0:  3.479
+#   1420710.png e9 d=5.0:  3.722
+#   1531677.png e5 d=5.0:  3.530
+#   1531677.png e5 d=6.0:  5.395
+#   1531677.png e6 d=5.0:  3.006
+#   1531677.png e6 d=6.0:  4.390
+#   1531677.png e8 d=5.0:  3.265
+#   1531677.png e9 d=5.0:  3.776
+#
+# W44-79 follow-on outcome:
+#   Discriminator FOUND for 1189261 cells (3 OPEN: e5 d=4, e8 d=3, e9 d=3).
+#   Discriminator: `colourfulness >= 80 AND flat_color_block_ratio < 0.01`
+#   (zenanalyze Tier 2 features). Per-distance hint A/B confirms -1450 B
+#   total savings on 1189261 across d ∈ {3, 4, 5} but +560 B regression
+#   at d=6 (caller MUST cap at d <= 5).
+#
+#   The discriminator does NOT auto-fire in the production hot path
+#   (Tier 2 compute too expensive for 1-of-41 EV). Ships as
+#   documentation + opt-in pathway via existing
+#   `LossyConfig::with_high_d_photo_hint(Some(true))` API.
+#
+#   See `benchmarks/w44_79_zenanalyze_discriminator_2026-05-19.meta`
+#   for full method + per-image features + reproducer.
+#
+# Reproducer (this refresh):
+#   cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' \
+#     --example cjxl_parity_ledger -- \
+#     --ledger benchmarks/cjxl_parity_ledger_2026-05-19_w44_79.tsv \
+#     --update --status OPEN
+
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>

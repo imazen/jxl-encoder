@@ -1084,5 +1084,18 @@ name = "w44_78_decoder_roundtrip"
 path = "examples/w44_78_decoder_roundtrip.rs"
 required-features = ["parallel", "rate-control"]
 
+# W44-79 trial — confirms with_high_d_photo_hint(Some(true)) saves bytes
+# on 1189261 (the W44-78 follow-on target image) at d=3..5 but regresses
+# at d=6, motivating the distance-band cap in the discriminator.
+[[example]]
+name = "w44_79_trial"
+path = "examples/w44_79_trial.rs"
+
+# W44-79 decoder roundtrip — verifies jxl-oxide and djxl both decode the
+# hint=Some(true) bitstream on 1189261 d=4.
+[[example]]
+name = "w44_79_decoder_check"
+path = "examples/w44_79_decoder_check.rs"
+
 [lints]
 workspace = true
