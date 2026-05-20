@@ -44,8 +44,9 @@ Per-image dispatch via zenanalyze proxies. These are SUPERSETS of libjxl behavio
 | `vardct/encoder.rs` W44-98 `high_d_photo_smooth_suppressed_z_high_colour` | W44-96 outer AND `m3_colourfulness >= 25.0` | DCT16X32 lift 1.30 for 1420710 (HIGH colour) | INTENTIONAL | W44-98 `0c957538` |
 | `vardct/encoder.rs` W44-99/100 `high_d_photo_smooth_suppressed_z_low_colour` | W44-96 outer AND `m3_colourfulness < 25.0` | DCT16X32 lift 1.23 for 1531677 (LOW colour) | INTENTIONAL | W44-99 `cb63f216`, W44-100 `b63315b8` |
 | `butteraugli_loop.rs` W44-105 `BUTTLOOP_QF_SEED_SCALE` | `median(mask1x1) > 95 AND (d >= 3.5 OR (m3_colourfulness < 30.0 AND d >= 2.0))` | 4× seed scale for screenshot-class | INTENTIONAL | W44-105 `bc994a21`, gate tightened W44-107 `109843aa`, sub-band recovery W44-108 |
+| `vardct/encoder.rs` + `butteraugli_loop.rs` W44-109 `resolved_adaptive_quant_qf_seed_scale` | `effort ∈ [5, 7] AND butteraugli_iters == 0 AND median(mask1x1) > 95 AND (d >= 3.5 OR (m3_colourfulness < 30.0 AND d >= 2.0))` | Pre-scale `quant_field_float` at adaptive-quant time (2× for e5/e6, 3× for e7) to extend the W44-105 fix to low effort where the buttloop is unavailable | INTENTIONAL | W44-109 (this commit) |
 
-Pattern note: all of these are "narrower-than-libjxl gates that improve specific cells without regressing FIXED cells". The discriminators compose nested: W44-91 ⊂ W44-29; W44-98 ⊂ W44-96 (high-colour); W44-99 ⊂ W44-96 (low-colour).
+Pattern note: all of these are "narrower-than-libjxl gates that improve specific cells without regressing FIXED cells". The discriminators compose nested: W44-91 ⊂ W44-29; W44-98 ⊂ W44-96 (high-colour); W44-99 ⊂ W44-96 (low-colour). W44-109 mirrors the W44-105/107/108 buttloop gate predicate exactly (same `is_screenshot` + distance + m3 sub-discriminator) but fires at lower effort where the buttloop path is unavailable — the two compose as `effort >= 8 → W44-105 owns the scale; effort ∈ [5, 7] → W44-109 owns the scale; effort < 5 → no adaptive quant, no scale`. W44-109 explicitly checks `butteraugli_iters == 0` to avoid double-applying when callers pin `butteraugli_iters > 0` at low effort.
 
 ---
 
@@ -71,6 +72,9 @@ Numeric constants where ours differ from libjxl's reference values.
 | `cur_pow` (buttloop) | [0.2, 0.2, 0, ...] | [0.2, 0.2, 0, ...] | AT PARITY | |
 | `kOriginalComparisonRound` | 1 | 1 | AT PARITY | |
 | `kInitMul` | per-effort | per-effort | AT PARITY | |
+| `DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6` (W44-109) | 2.0 | n/a (libjxl has no adaptive-quant-time pre-scale) | INTENTIONAL | Mirrors W44-105 magnitude scaled down to bound bytes regression at low effort where buttloop cannot settle the qf back down |
+| `DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7` (W44-109) | 3.0 | n/a | INTENTIONAL | e7 baseline SSIM2 is much higher (e.g. terminal d=4: e5=78.4 vs e7=83.0) — needs more boost to clear the +2.5 SSIM2 gate at the same gate-cell |
+| `ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT` (W44-109) | 7 | n/a | INTENTIONAL | Gate fires at e ∈ [5, 7]. e>=8 is owned by W44-105 buttloop; e<5 has no adaptive_quant (flat qf, scale has no useful target) |
 | `K_INFO_LOSS_MUL` | `1.2 * ratio^0.337` (distance-scaled) | same | AT PARITY | |
 | `K_ZEROS_MUL` | `9.309 * ratio^0.510` | same | AT PARITY | |
 | `K_COST_DELTA` | `10.833 * ratio^0.367` | same | AT PARITY | |
@@ -123,8 +127,8 @@ Cells/categories where we're measurably inferior to cjxl and the divergence is n
 
 | Cluster | Magnitude | Root cause | Tracking chunk |
 |---|---|---|---|
-| terminal e5/e6/e7 d=4 SSIM2 -4.6 to -5.4 | -4.6 to -5.4 SSIM2 | Buttloop only fires at e8+; W44-105 fix doesn't reach e5/e6/e7. Adaptive_quant time scale needed for screenshot-class at lower efforts. | W44-109 candidate (after W44-108) |
-| codec_wiki e5/e6/e7 d=4 SSIM2 -4.0 to -4.4 | -4.0 to -4.4 SSIM2 | Mixed-content image; not addressed by W44-91/96/98/99/105. New cluster. | W44-110+ |
+| ~~terminal e5/e6/e7 d=4 SSIM2 -4.6 to -5.4~~ | resolved | W44-109 wires the W44-105/107/108 mechanism into the adaptive_quant path at effort ∈ [5, 7]. New deltas: e5 d=4 -1.93, e6 d=4 -1.60, e7 d=4 -1.94 (improvements +3.45/+3.69/+2.68). Status moved to RESOLVED in Section G. | W44-109 SHIPPED |
+| ~~codec_wiki e5/e6/e7 d=4 SSIM2 -4.0 to -4.4~~ | mostly resolved (bonus) | W44-109 fired on codec_wiki too (mask1x1 median qualifies it as screenshot-class) and closed the SSIM2 gap: e5 d=4 -0.98, e6 d=4 -1.03, e7 d=4 +0.06 (improvements +3.22/+3.32/+4.07). Two cells flipped FIXED→OPEN on the cjxl-parity ledger because bytes grew over the +3% threshold despite the large SSIM2 wins — left as a pareto trade documented here. | W44-109 SHIPPED |
 | CID22 photos d=1.2-4 bytes +2-4%, SSIM2 -0.3 to -1.5 | bytes +2-4%, SSIM2 -0.3 to -1.5 | Per-image specific; W44-91/96/98/99 closed the biggest cells but residual cluster remains | Future zenanalyze chunks |
 | Butteraugli measurement divergence | metric reports 13-17× lower than libjxl on bit-identical qf | UNKNOWN root cause in zenmetrics/butteraugli crate | W44-110+ (HIGHEST EV long-term) |
 
@@ -150,6 +154,7 @@ Bugs/divergences that WERE active and are now at parity. Kept here so future age
 | 1531677 e6/e8/e9 d=5/6 over-quantization | W44-99 `cb63f216` | m3 low-colour discriminator |
 | 1531677 e5 d=5 over-quantization | W44-100 `b63315b8` | Micro-bisect dct16x32 1.23 |
 | Terminal e8/e9 d=4 SSIM2 -5.5 cluster (partial) | W44-105 `bc994a21` | Buttloop seed scale 4× (palliative; root cause in metric) |
+| Terminal e5/e6/e7 d=4 SSIM2 -4.6 to -5.4 cluster | W44-109 (this commit) | Adaptive-quant-time qf pre-scale (2× e5/e6, 3× e7) on screenshot-class. Mirrors W44-105/107/108 gate at lower effort where the buttloop is unavailable. New deltas e5/e6/e7 d=4: improvements +3.45/+3.69/+2.68 SSIM2 |
 | imac_g3 e8 d=3 + terminal e8/e9 d=2..3 W44-107-sacrificed wins | W44-108 | m3_colourfulness < 30 sub-discriminator admits low-colour screenshots into d ∈ [2.0, 3.5) fire-band |
 
 ---

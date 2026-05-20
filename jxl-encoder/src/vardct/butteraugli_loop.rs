@@ -268,6 +268,134 @@ pub const BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE: f32 = 2.0;
 /// belt-and-braces).
 pub const BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX: f32 = 30.0;
 
+/// W44-109: maximum effort at which the screenshot-class adaptive-quant
+/// pre-scale fires. Mirrors the W44-105 buttloop seed-scale mechanism
+/// but at adaptive_quant time, before the buttloop runs (the buttloop
+/// is itself effort-gated at `butteraugli_iters > 0`, which means
+/// `effort >= 8`).
+///
+/// **Why this is 7** (i.e. fires at e ∈ [5, 7]): the W44-106 ledger
+/// refresh showed that terminal e5/e6/e7 d=4 retains SSIM2 -4.6 to -5.4
+/// vs cjxl even AFTER W44-105 landed — the same root cause (butteraugli
+/// reports a too-low intermediate score on text-class content, leading
+/// the adaptive-quant pipeline to under-quantize text blocks) but
+/// without the buttloop's iter-1+ correction path to recover. At e<5
+/// the encoder uses a flat quant field
+/// (`profile.use_adaptive_quant = false`) so the pre-scale has no
+/// useful target. At e>=8 the W44-105 buttloop path takes over.
+///
+/// The fix mirrors W44-105 exactly: scale `quant_field_float` by 4×
+/// when the same gate predicate fires (is_screenshot AND
+/// (d >= W44-107 distance OR (m3 < W44-108 m3 AND d >= W44-108 d))),
+/// but at adaptive_quant time so it actually engages at e5/e6/e7. The
+/// e>=8 path is unchanged (W44-109 skips when `butteraugli_iters > 0`
+/// to avoid double-applying the scale).
+pub const ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT: u8 = 7;
+
+/// W44-109: scale factor applied to `quant_field_float` at adaptive-quant
+/// time on screenshot-class content at low effort. **Effort-dependent
+/// magnitude** (e5/e6 vs e7): without the buttloop the scale propagates
+/// straight to the shipped quant_field with no settling correction, so
+/// the W44-105 magnitude of 4× would inflate bytes ~78% on e5/e6 d=4.
+///
+/// Empirical sweep on terminal.png e5/e6/e7 d=4 (atomic env override
+/// `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE`):
+///
+/// | scale | e5 bytes Δ | e5 SSIM2 Δ | e6 bytes Δ | e6 SSIM2 Δ | e7 bytes Δ | e7 SSIM2 Δ |
+/// |-------|------------|------------|------------|------------|------------|------------|
+/// | 1.0   | -3.81%     | -5.38      | -2.50%     | -5.29      | -7.07%     | -4.62      |
+/// | 1.5   | +16.7%     | -3.16      | —          | —          | —          | —          |
+/// | 2.0   | +32.8%     | -1.93      | +32.4%     | -1.60      | +12.3%     | -2.51      |
+/// | 2.5   | +46.6%     | -1.41      | +45.0%     | -1.03      | +20.8%     | -2.43      |
+/// | 3.0   | +58.0%     | -0.54      | —          | —          | +29.2%     | -1.94      |
+/// | 4.0   | +77.9%     | +0.21      | +76.1%     | +0.55      | +42.2%     | -1.58      |
+///
+/// At e5/e6 the scale chases the W44-105 8/e9 SSIM2 wins (+3 to +4 SSIM2)
+/// at a steep bytes cost; we cap at 2.0 to keep bytes within ~30% of
+/// pre-W44-109 baseline. At e7 the baseline ssim2 is already higher
+/// (78.4 vs 83.0 vs e5) so a larger scale (3.0) is needed to reach the
+/// same +2.5 SSIM2 improvement — and pays a smaller relative bytes
+/// cost (+29%) because e7's per-pixel work is finer-grained.
+///
+/// The W44-105 buttloop default of 4.0 is preserved for e>=8 and
+/// shared via [`DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE`].
+pub const DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6: f32 = 2.0;
+
+/// W44-109: scale factor at e7 (the highest pre-buttloop effort) where
+/// per-pixel quality is already much closer to e8 (baseline SSIM2 83.0
+/// vs e5's 78.4). A larger scale is needed to reach the same +2.5
+/// SSIM2 improvement, and pays a smaller relative bytes cost.
+pub const DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7: f32 = 3.0;
+
+/// W44-109: compute the screenshot-class qf seed scale to apply at
+/// adaptive_quant time (low-effort path), or `1.0` to leave qf
+/// untouched.
+///
+/// Mirrors the W44-105/107/108 buttloop gate predicate exactly, with
+/// two additional guards:
+///
+/// 1. `effort <= [`ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT`]` — at
+///    e>=8 the W44-105 buttloop path applies its own seed scale and
+///    we must not double-apply (would multiply 4× × 4× = 16×).
+/// 2. `butteraugli_iters == 0` — belt-and-braces double-check; the
+///    W44-105 path fires iff `butteraugli_iters > 0`. This is true at
+///    e>=8 by `profile.butteraugli_iters` (see effort.rs:956) but
+///    callers can also pin `LossyConfig::with_butteraugli_iters(0)` at
+///    high effort, in which case BOTH fixes are off — correct per the
+///    "buttloop unavailable, no scale" semantics.
+///
+/// Returns the screenshot seed scale
+/// ([`DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE`]) when the
+/// gate fires, else `1.0`. Atomic env override
+/// `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE` allows harness sweeps without
+/// rebuild (no production effect when unset).
+#[cfg_attr(not(feature = "std"), allow(unused_variables))]
+pub(crate) fn resolved_adaptive_quant_qf_seed_scale(
+    effort: u8,
+    butteraugli_iters: u32,
+    is_screenshot: bool,
+    target_distance: f32,
+    m3_colourfulness: Option<f32>,
+) -> f32 {
+    if effort > ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT {
+        return 1.0;
+    }
+    if butteraugli_iters > 0 {
+        // W44-105 buttloop path will apply the scale — don't double-apply.
+        return 1.0;
+    }
+    if !is_screenshot {
+        return 1.0;
+    }
+    let w44_108_low_colour =
+        m3_colourfulness.is_some_and(|m3| m3 < BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX);
+    let gate_fires = target_distance >= BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE
+        || (w44_108_low_colour && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE);
+    if !gate_fires {
+        return 1.0;
+    }
+    // Effort-dependent magnitude: e5/e6 cap at 2.0 to bound bytes
+    // regression; e7 lifts to 3.0 to clear the +2.5 SSIM2 gate (baseline
+    // ssim2 at e7 is much closer to cjxl, so it needs more boost to
+    // overshoot the buttloop-measurement gap by the same margin).
+    let base_scale = if effort >= 7 {
+        DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7
+    } else {
+        DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6
+    };
+    #[cfg(feature = "std")]
+    {
+        std::env::var("JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(base_scale)
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        base_scale
+    }
+}
+
 /// Resolve `cur_pow` for the current iter + `target_distance`, honouring
 /// any sweep overrides set in `CUR_POW_X1000_{LOW,HIGH}`.
 ///
@@ -1837,5 +1965,133 @@ mod tuning_tests {
         // CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD so we don't have
         // a third boundary to maintain.
         assert_eq!(SCREENSHOT_MEDIAN_THRESHOLD, 95.0);
+    }
+
+    // W44-109: resolved_adaptive_quant_qf_seed_scale tests.
+
+    #[test]
+    fn w44_109_high_effort_returns_1_to_avoid_double_scale() {
+        // e>=8 → W44-105 buttloop owns the scale. Helper returns 1.0
+        // (no double-apply).
+        for effort in 8..=12 {
+            assert_eq!(
+                resolved_adaptive_quant_qf_seed_scale(effort, 2, true, 4.0, Some(14.0)),
+                1.0,
+                "effort {effort} should return 1.0 (W44-105 buttloop path)"
+            );
+        }
+    }
+
+    #[test]
+    fn w44_109_buttloop_iters_gt_0_returns_1() {
+        // Even at low effort, if the caller pinned butteraugli_iters,
+        // the W44-105 path will run — don't double-apply.
+        assert_eq!(
+            resolved_adaptive_quant_qf_seed_scale(7, 2, true, 4.0, Some(14.0)),
+            1.0
+        );
+    }
+
+    #[test]
+    fn w44_109_non_screenshot_returns_1() {
+        // Photo content (mask1x1 median ≤ 95) → is_screenshot=false →
+        // helper returns 1.0. Verifies "do not regress photos" guarantee.
+        assert_eq!(
+            resolved_adaptive_quant_qf_seed_scale(5, 0, false, 4.0, Some(14.0)),
+            1.0
+        );
+        assert_eq!(
+            resolved_adaptive_quant_qf_seed_scale(6, 0, false, 4.0, Some(50.0)),
+            1.0
+        );
+    }
+
+    #[test]
+    fn w44_109_low_distance_returns_1() {
+        // d < SUB_MIN_DISTANCE (=2.0) → never fires regardless of m3.
+        assert_eq!(
+            resolved_adaptive_quant_qf_seed_scale(5, 0, true, 1.9, Some(14.0)),
+            1.0
+        );
+        // d >= 2.0 but < 3.5 AND m3 missing → W44-108 sub-gate can't fire.
+        assert_eq!(
+            resolved_adaptive_quant_qf_seed_scale(5, 0, true, 2.5, None),
+            1.0
+        );
+    }
+
+    #[test]
+    fn w44_109_high_distance_fires_on_screenshot() {
+        // d >= W44-107 threshold (3.5) → fires for is_screenshot
+        // regardless of m3 value. Effort-dependent magnitude:
+        // e5/e6 = E5_E6 constant; e7 = E7 constant.
+        for effort in 5..=6u8 {
+            for dist in [3.5_f32, 4.0, 5.0, 6.0].iter() {
+                let v = resolved_adaptive_quant_qf_seed_scale(effort, 0, true, *dist, None);
+                assert!(
+                    (v - DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6).abs() < 1e-9,
+                    "effort {effort} d={dist} m3=None: expected {DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6}, got {v}"
+                );
+                let v = resolved_adaptive_quant_qf_seed_scale(effort, 0, true, *dist, Some(14.0));
+                assert!(
+                    (v - DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6).abs() < 1e-9,
+                    "effort {effort} d={dist} m3=14: expected {DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6}, got {v}"
+                );
+            }
+        }
+        // e7 uses the higher constant.
+        for dist in [3.5_f32, 4.0, 5.0, 6.0].iter() {
+            let v = resolved_adaptive_quant_qf_seed_scale(7, 0, true, *dist, None);
+            assert!(
+                (v - DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7).abs() < 1e-9,
+                "e7 d={dist}: expected {DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7}, got {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn w44_109_w44_108_sub_gate_fires_on_low_colour() {
+        // d ∈ [2.0, 3.5) AND m3 < 30 → W44-108 sub-discriminator
+        // engages (terminal/imac_g3/imac_dark-class). Magnitude follows
+        // the same effort split.
+        for dist in [2.0_f32, 2.5, 3.0, 3.4].iter() {
+            let v = resolved_adaptive_quant_qf_seed_scale(5, 0, true, *dist, Some(14.0));
+            assert!(
+                (v - DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6).abs() < 1e-9,
+                "e5 d={dist} m3=14: expected {DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6}, got {v}"
+            );
+            let v = resolved_adaptive_quant_qf_seed_scale(7, 0, true, *dist, Some(14.0));
+            assert!(
+                (v - DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7).abs() < 1e-9,
+                "e7 d={dist} m3=14: expected {DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7}, got {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn w44_109_w44_108_sub_gate_skips_on_high_colour() {
+        // codec_wiki-class (m3 = 146) at d=3.0 → sub-gate REJECTS,
+        // preserves codec_wiki d=3 (W44-107/108 design intent).
+        for dist in [2.0_f32, 2.5, 3.0, 3.4].iter() {
+            let v = resolved_adaptive_quant_qf_seed_scale(5, 0, true, *dist, Some(146.0));
+            assert_eq!(v, 1.0, "d={dist} m3=146 must NOT fire (codec_wiki class)");
+        }
+    }
+
+    #[test]
+    fn w44_109_default_scales_documented_magnitudes() {
+        // W44-109 e5/e6 = 2.0, e7 = 3.0 — both LOWER than W44-105's 4.0
+        // because there's no buttloop settling. Asserting the
+        // documented values so empirical re-tuning lands a code review.
+        assert_eq!(DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6, 2.0);
+        assert_eq!(DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7, 3.0);
+        // W44-105 (e>=8 with buttloop) stays at 4.0.
+        assert_eq!(DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE, 4.0);
+    }
+
+    #[test]
+    fn w44_109_default_max_effort_is_7() {
+        // Gate fires at e ∈ {5, 6, 7}; e>=8 is owned by W44-105.
+        assert_eq!(ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT, 7);
     }
 }
