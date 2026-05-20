@@ -867,14 +867,11 @@ impl VarDctEncoder {
         //   * `ForceScale(s)` → no gate; always scale by `s` (sweep harness)
         //   * `Off` → never scale; `scale == 1.0` (Libjxl strategy)
         //
-        // `None` `resolved_improvements` falls back to `AutoScale4` via
-        // `.unwrap_or_default()` for direct `VarDctEncoder::new` test
-        // callers — bit-identical to pre-Chunk-C.
-        let buttloop_qf_seed_policy = self
-            .resolved_improvements
-            .as_ref()
-            .map(|r| r.buttloop_qf_seed)
-            .unwrap_or_default();
+        // W44-130 Chunk D: `resolved_improvements` is now always
+        // populated (default `AutoScale4` for direct
+        // `VarDctEncoder::new` test callers) — bit-identical to
+        // pre-Chunk-D.
+        let buttloop_qf_seed_policy = self.resolved_improvements.buttloop_qf_seed;
         let w44_108_low_colour = self
             .zenanalyze_proxies
             .is_some_and(|p| p.m3_colourfulness < BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX);
@@ -997,21 +994,17 @@ impl VarDctEncoder {
         //   * `PerIterRecompute` → `#[doc(hidden)]` reserved-for-future;
         //     currently behaves identically to `AutoW44_117`.
         //
-        // `None` `resolved_improvements` falls back to default via
-        // `.unwrap_or_default()` (= `AutoW44_117 { min_distance: 1.0 }`)
-        // for direct `VarDctEncoder::new` test callers — bit-identical
-        // to pre-Chunk-C.
+        // W44-130 Chunk D: `resolved_improvements` is now always
+        // populated (default `AutoW44_117 { min_distance: 1.0 }` for
+        // direct `VarDctEncoder::new` test callers) — bit-identical to
+        // pre-Chunk-D.
         //
         // Sweep override: set `JXL_W44_117_DISABLE=1` to force the
         // legacy uniform-4 seed for A/B testing (still takes
         // precedence over the resolved policy at the call site;
         // Chunk F formalises as env-var fallback under default
         // policy value).
-        let epf_seed_policy = self
-            .resolved_improvements
-            .as_ref()
-            .map(|r| r.buttloop_epf_sharpness_seed)
-            .unwrap_or_default();
+        let epf_seed_policy = self.resolved_improvements.buttloop_epf_sharpness_seed;
         #[cfg(feature = "std")]
         let env_force_off = std::env::var("JXL_W44_117_DISABLE").is_ok_and(|v| v == "1");
         #[cfg(not(feature = "std"))]
