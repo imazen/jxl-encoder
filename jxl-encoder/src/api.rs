@@ -5290,18 +5290,23 @@ impl LossyConfig {
     /// e5/e6/e7 recovers +1.40 / +1.33 / +0.90 SSIM2.
     ///
     /// Semantics:
-    /// - `None` (**default**): preserves the W44-68 behaviour —
-    ///   `try_dct32` is dropped together with `try_dct64` whenever
-    ///   the W44-65 gate (auto OR `with_dct_suppress_hint` override)
-    ///   fires. Existing hash-locks stay byte-identical.
+    /// - `None` (**default**, W44-124 auto-discriminator): when the
+    ///   W44-65 gate fires AND the image has populated zenanalyze
+    ///   proxies (8-bit sRGB layouts: `Rgb8` / `Rgba8` / `Bgr8` /
+    ///   `Bgra8`) AND `m3_colourfulness >= 60.0` AND `edge_density
+    ///   < 0.05`, auto-keep `try_dct32 = true`. Otherwise fall
+    ///   through to the W44-68 behaviour (drop both). On the
+    ///   gb82-sc + CID22 corpus this fires only on codec_wiki-class
+    ///   content (m3=145.7, ed=0.04) and rejects the 6 W44-123
+    ///   regressing screens (graph/windows/imessage) plus all
+    ///   photos.
     /// - `Some(true)`: when W44-65 fires, KEEP `try_dct32 = true`
-    ///   (only drop `try_dct64 = false`). Useful on
-    ///   codec_wiki-class content (smooth screen with mixed
-    ///   graphic regions) where the DCT16X16 → DCT32X32 split
-    ///   loss is dominant.
+    ///   (only drop `try_dct64 = false`). Overrides the
+    ///   auto-discriminator — useful for callers that know their
+    ///   content is smooth-screen even if the proxies disagree.
     /// - `Some(false)`: when W44-65 fires, force the W44-68
-    ///   behaviour (drop both). Identical to the current default
-    ///   but explicit for the caller's intent.
+    ///   behaviour (drop both). Overrides the auto-discriminator —
+    ///   guarantees pre-W44-124 byte-equivalence on screen content.
     ///
     /// Composes with [`Self::with_dct_suppress_hint`]:
     /// `dct32_keep_hint = Some(true)` is a NO-OP if
@@ -5309,8 +5314,9 @@ impl LossyConfig {
     /// gate doesn't fire at all. The hint only matters when W44-65
     /// would otherwise drop DCT64.
     ///
-    /// References: W44-121 dump memo + W44-122 admit-DCT64 honest-stop
-    /// + W44-123 keep-dct32 lever measurement.
+    /// References: W44-121 dump memo, W44-122 admit-DCT64 honest-stop,
+    /// W44-123 keep-dct32 lever measurement, W44-124 auto-discriminator
+    /// probe (`examples/w44_124_proxy_probe.rs`).
     pub fn with_dct32_keep_hint(mut self, hint: Option<bool>) -> Self {
         self.dct32_keep_hint = hint;
         self

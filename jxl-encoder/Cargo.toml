@@ -1511,6 +1511,37 @@ name = "w44_123_decoder_check"
 path = "examples/w44_123_decoder_check.rs"
 
 
+# W44-124 proxy probe: verify the W44-123 follow-on auto-discriminator
+# (m3_colourfulness > 60 AND edge_density < 0.05) cleanly admits codec_wiki
+# while rejecting the 6 SCREEN cells (graph, windows, imessage) that
+# regressed in the W44-123 A/B.
+[[example]]
+name = "w44_124_proxy_probe"
+path = "examples/w44_124_proxy_probe.rs"
+required-features = ["__pre_quantized"]
+
+# W44-124 A/B: 3-mode harness verifying the auto-discriminator
+# (default `None`) matches `Some(true)` on codec_wiki and matches
+# `Some(false)` on the 6 W44-123 regressing screens + photos.
+[[example]]
+name = "w44_124_auto_discriminator_ab"
+path = "examples/w44_124_auto_discriminator_ab.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
+# W44-124 decoder check: encode codec_wiki with the W44-124 auto-fired
+# default, then verify decode via jxl-oxide and djxl on 3 cells.
+[[example]]
+name = "w44_124_decoder_check"
+path = "examples/w44_124_decoder_check.rs"
+required-features = ["parallel", "butteraugli-loop"]
+
+# W44-124 smoke: 2-cell single-thread sanity that auto-default maps to
+# Some(true) on codec_wiki and to Some(false) on graph (the cleanest
+# WANT/REJECT pair from the regression set).
+[[example]]
+name = "w44_124_smoke"
+path = "examples/w44_124_smoke.rs"
+
 # W44-104 proxy probe: dump zenanalyze proxies for 11 gb82-sc screenshots
 # to identify a discriminator separating terminal-class (admit DCT64) from
 # codec_wiki-class (keep W44-65/W44-68 suppression).

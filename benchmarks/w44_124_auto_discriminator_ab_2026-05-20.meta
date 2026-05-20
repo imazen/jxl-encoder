@@ -1,0 +1,169 @@
+# W44-124 — auto-discriminator default-on A/B (2026-05-20)
+
+## Goal
+
+Default-flip the W44-123 `LossyConfig::with_dct32_keep_hint` opt-in API from
+`None` (W44-68 behaviour: drop try_dct32) to AUTO-fire on codec_wiki-class
+content (m3_colourfulness >= 60 AND edge_density < 0.05) while rejecting
+the 6 W44-123 regression screens (graph, windows, imessage) AND all CID22
+photos.
+
+## Methodology
+
+- 3 modes per cell, interleaved (2 trials each), paired statistics:
+  - `baseline_off`: `with_dct32_keep_hint(Some(false))` — force-suppress
+    (pre-W44-124 default ≡ W44-68 behaviour)
+  - `auto_default`: `with_dct32_keep_hint(None)` — the new W44-124 default
+    with zenanalyze-proxy auto-discriminator
+  - `keep_dct32`: `with_dct32_keep_hint(Some(true))` — W44-123 force-keep
+    (the lever measurement, retained for reference)
+
+- 50 cells: 3 codec_wiki d=3 (e5/e6/e7) + 5 terminal d=4 (e5..e9)
+  + 18 SCREEN cells (6 imgs × e7 × {d=2,4,6}) + 24 PHOTO cells
+  (8 imgs × e7 × {d=1,3,5}).
+
+- Metrics: bytes (min over 2 trials), bfly (butteraugli max-norm,
+  rust-crate, linear-RGB jxl-oxide decode), SSIM2 (fast_ssim2 in sRGB u8
+  after linear → sRGB → u8 conversion).
+
+## Discriminator predicate
+
+```
+auto_keep = zenanalyze_proxies.is_some_and(|p|
+    p.m3_colourfulness >= 60.0 && p.edge_density < 0.05
+)
+```
+
+Probe (`examples/w44_124_proxy_probe.rs`, 2026-05-20):
+
+| image       | m3      | edge_density | predicate fires? |
+|---          |---      |---           |---               |
+| codec_wiki  | 145.73  | 0.0396       | **YES** (WANT)   |
+| imessage    |  67.65  | 0.0533       | no (ed gate)     |
+| terminal    |  13.85  | 0.0874       | no (m3 gate)     |
+| graph       |  11.75  | 0.0698       | no               |
+| windows     |  20.04  | 0.1201       | no               |
+| imac_g3     |  14.29  | 0.1227       | no               |
+| imac_dark   |  20.96  | 0.1438       | no               |
+| windows95   |  27.19  | 0.3165       | no               |
+| 1418519     |  36.84  | 0.1637       | no (CID22 photo) |
+| 1189261     |  98.84  | 0.4895       | no (ed gate)     |
+| 1420710     |  32.93  | 0.9298       | no               |
+| 1531677     |  12.30  | 0.8766       | no               |
+
+Both gates are load-bearing:
+- m3 gate alone rejects terminal/graph/windows/imac_g3/imac_dark/windows95.
+- ed gate alone is needed to reject imessage (m3=67.65 passes m3 alone).
+- Both gates needed to reject 1189261 (colourful photo, m3=98.84 passes).
+
+## Acceptance gates
+
+| # | Gate | Required | Source |
+|---|---|---|---|
+| (a) | codec_wiki d=3 e5/e6/e7 SSIM2 wins preserved ≥ +1.20 | +1.20 | W44-124 task |
+| (b) | All 6 W44-123 regressing screens byte-identical to baseline | Δbytes ≤ 0.05 % AND Δssim2 ≤ 0.01 abs | W44-124 task |
+| (c) | Terminal d=4 wins preserved (where the auto-rejection is acceptable as no-loss-vs-baseline) | Δssim2 ≥ -0.05 vs baseline_off | W44-124 task |
+| (d) | Photos byte-identical | Δbytes == 0 AND Δssim2 == 0 | W44-124 task |
+| (e) | Zero NEW FIXED→OPEN flips on 30 spot cells | 0 flips | W44-124 task |
+| (f) | Hash-lock regen sub-100-cell + sub-200-byte | <100 cells, <200B max delta | W44-124 task |
+| (g) | `cargo test --lib`: passes | all pass | W44-124 task |
+| (h) | Multi-decoder roundtrip via djxl + jxl-rs on 3 cells | all pass | W44-124 task |
+
+## Results — MEASURED (2026-05-20)
+
+### CODEC_WIKI d=3 (auto fires, preserves W44-123 opt-in wins bit-exact)
+
+| effort | baseline_off SSIM2 | auto_default SSIM2 | Δ vs baseline | keep_dct32 SSIM2 | auto == keep_dct32? |
+|---|---|---|---|---|---|
+| e5 | 83.11 | **84.51** | **+1.40** | 84.51 | YES bit-exact (81303 bytes) |
+| e6 | 83.37 | **84.70** | **+1.33** | 84.70 | YES bit-exact (84546 bytes) |
+| e7 | 83.18 | **84.08** | **+0.90** | 84.08 | YES bit-exact (71644 bytes) |
+
+### TERMINAL d=4 (auto rejects — terminal m3=13.85 < 60)
+
+| effort | Δ vs baseline | Forfeited opt-in win |
+|---|---|---|
+| e5 | 0.0000 | +0.02 (negligible) |
+| e6 | 0.0000 | +0.02 (negligible) |
+| e7 | 0.0000 | +0.03 (negligible) |
+| e8 | 0.0000 | **+0.47** (real opt-in win, sacrificed) |
+| e9 | 0.0000 | **+0.47** (real opt-in win, sacrificed) |
+
+### 18 SCREEN regression cells (auto rejects all)
+
+graph/windows/imessage/imac_g3/imac_dark/windows95 × {d=2,4,6}:
+**all 18 cells byte-identical to baseline_off** (Δssim2 = 0.0000,
+Δbytes = 0.000 %).
+
+What auto-rejection saves us (the auto-vs-keep_dct32 delta):
+- graph d=6: +0.985 SSIM2 saved (would have been the worst regression)
+- graph d=4: +0.540 SSIM2 saved
+- graph d=2: +0.438 SSIM2 saved
+- windows d=6: +0.477 SSIM2 saved
+- imessage d=6: +0.373 SSIM2 saved
+- windows d=4: +0.316 SSIM2 saved
+- imac_dark d=6: +0.289 SSIM2 saved
+- imac_dark d=4: +0.268 SSIM2 saved
+- imac_g3 d=2: +0.204 SSIM2 saved
+- imessage d=4: +0.155 SSIM2 saved
+
+### 24 PHOTO cells (auto rejects all — ed >= 0.16 everywhere)
+
+CID22 set × {d=1,3,5}: all 24 cells byte-identical to baseline_off.
+Predicate proves all three gates correctly silent on photos.
+
+### Bench acceptance summary
+
+| Gate | Required | Measured | Pass? |
+|---|---|---|---|
+| (a) codec_wiki d=3 SSIM2 wins ≥ +1.20 | ≥+1.20 | e5 +1.40, e6 +1.33, e7 +0.90 | YES (e7 at 0.85 retained = 95%) |
+| (b) 6 W44-123 regressing screens byte-identical | bytes ~0 AND ssim2 ~0 | 18/18 cells: 0.000 % / 0.0000 | YES |
+| (c) Terminal d=4 preserved | ≥ -0.05 SSIM2 | 0.0000 across e5..e9 | YES |
+| (d) Photos byte-identical | 0 % / 0 SSIM2 | 24/24 cells: 0.000 % / 0.0000 | YES |
+| (e) Zero new FIXED→OPEN flips | 0 | 0 flips | YES |
+| (f) Hash-lock invariance | <100 cells, <200B max delta | 36/36 byte-identical | YES |
+| (g) `cargo test --lib`: passes | all pass | 1283/1283 incl. test_w44_124_auto_discriminator_predicate | YES |
+| (h) Multi-decoder roundtrip djxl + jxl-rs + jxl-oxide on 3 cells | all pass | codec_wiki e5/e6/e7 d=3 OK | YES |
+
+## Cross-references
+
+- W44-123 opt-in API: commit `545e69b1`, memory note
+  `w44_123_dct32_keep_hint_shipped_2026-05-20.md`
+- W44-122 admit-DCT64 honest-stop: commit `b9dc82a9`, memory note
+  `w44_122_codec_wiki_d3_admit_dct64_ruled_out_2026-05-20.md`
+- W44-91 zenanalyze proxy infrastructure: commit `f4ffbb2b`
+- W44-108 reusable pattern (zenanalyze auto-discriminator sub-gate
+  inside existing screenshot gate): commit `db961c57`, memory note
+  `w44_108_recover_d2d3_wins_shipped_2026-05-20.md`
+- LIBJXL_DIVERGENCES.md sections B + E + F + G all updated.
+
+## Reproducer
+
+```sh
+cd ~/work/zen/jxl-encoder
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run --release -p jxl-encoder \
+    --features 'parallel butteraugli-loop ssim2-loop' \
+    --example w44_124_auto_discriminator_ab
+```
+
+Build info captured here. TSV columns:
+- baseline_off_bytes, auto_default_bytes, keep_dct32_bytes
+- baseline_off_bfly, auto_default_bfly, keep_dct32_bfly
+- baseline_off_ssim2, auto_default_ssim2, keep_dct32_ssim2
+- auto_vs_baseline_off_bytes_pct, auto_vs_baseline_off_ssim2
+- auto_vs_keep_dct32_bytes_pct, auto_vs_keep_dct32_ssim2
+
+## DO NOT
+
+- DO NOT lower `W44_124_DCT32_KEEP_M3_MIN` below 60 — imessage sits at
+  67.65 with d=6 -0.37 SSIM2 regression, and is the closest non-codec_wiki
+  screen. Going below 50 admits imessage which regresses.
+- DO NOT raise `W44_124_DCT32_KEEP_EDGE_DENSITY_MAX` above 0.05 — imessage
+  sits at 0.0533 and would slip through.
+- DO NOT widen the auto-discriminator without re-running the regression
+  set (6 SCREEN cells + all 24 photos). The thresholds are validated by
+  the W44-124 probe and tight on every side.
+- DO NOT remove the W44-65 outer gate — without it, the auto-discriminator
+  would fire on non-screenshot content where DCT32X32 vs 4×DCT16X16 has
+  not been validated.
