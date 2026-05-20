@@ -1,0 +1,143 @@
+# W44-102 cfl_two_pass e5 widening — RULED OUT
+
+Generated: 2026-05-19
+Workspace: ~/work/zen/jxl-encoder--w44-102-cfl-two-pass-e5
+Parent commit: b65836b121e5ea8d2327d312bf69ba01f869ef60 (main: W44-100 ledger refresh)
+Host: AMD Ryzen 9 7950X (water-cooled, 128 GB RAM)
+Build: release + parallel + __expert + butteraugli-loop + ssim2-loop
+
+## Command
+
+```
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+cargo run --release -p jxl-encoder \
+  --features 'parallel __expert butteraugli-loop ssim2-loop' \
+  --example w44_102_cfl_two_pass_ab
+```
+
+## Cells
+
+- 4 named WEDGE cells (W44-101 priority targets, ledger e6 cells):
+  - 1420710 e6 d=5.0, 1025469 e6 d=4.0, codec_wiki e6 d=0.2, 1418519 e6 d=6.0
+- 8 CID22 PHOTO × e5,e6 × d ∈ {0.5, 1, 2, 3, 4, 5, 6} = 109 (minus 3 wedge dupes)
+- 5 GB82-SC SCREEN × e5,e6 × d ∈ {0.5, 1, 3} = 30
+- Total planned: 143 cells (4 WEDGE + 109 PHOTO + 30 SCREEN)
+- **Actual completed: 138 / 143** (96.5%) — bench was prematurely terminated
+  by a concurrent agent's `jj abandon` op that closed the tee | tail
+  pipeline; the windows.png 5 cells (e5 d=1, e5 d=3, e6 d=0.5, e6 d=1,
+  e6 d=3) were not benched. Adding them is supported via the companion
+  example `w44_102_cfl_two_pass_ab_finish.rs`. Skipping them does not
+  change the ruling — see "Result" below.
+
+## Modes
+
+- `baseline`: `LossyInternalParams { cfl_two_pass: Some(false) }`
+  (== pre-W44-102 default at e5/e6, no Pass-2)
+- `widened`:  `LossyInternalParams { cfl_two_pass: Some(true) }`
+  (== proposed new default at e5/e6, Pass-2 fires in fast mode since
+   cfl_newton: effort >= 7 keeps Newton off at e5/e6)
+
+5 trials per (cell, mode), interleaved. Bytes are deterministic —
+sanity-checked across trials. Quality metrics computed on last-trial
+bytes (also deterministic). encode_ms uses minimum across trials.
+
+## Aggregates (138 cells)
+
+| class    | n   | avg Δbytes% | avg Δbfly% | avg Δssim2 | avg Δms% |
+|---       |--- |---          |---         |---         |---       |
+| WEDGE    | 4   | +0.015      | -0.008     | -0.034     | +0.587   |
+| PHOTO    | 109 | +0.016      | +0.071     | -0.040     | +0.635   |
+| SCREEN   | 25  | +0.030      | -0.105     | -0.088     | -0.392   |
+
+| effort | n  | avg Δbytes% | avg Δbfly% | avg Δssim2 | avg Δms% |
+|---     |--- |---          |---         |---         |---       |
+| e5     | 69 | +0.016      | -0.045     | -0.045     | +0.604   |
+| e6     | 69 | +0.020      | +0.118     | -0.052     | +0.291   |
+
+## Result
+
+**HONEST-STOP. Acceptance gates FAILED:**
+
+1. ≥5 of 4 named wedge cells improve bfly by ≥3pp: **0 / 4** (HARD GATE FAIL)
+   - 1420710 e6 d=5: Δbfly = +0.000%
+   - 1025469 e6 d=4: Δbfly = -0.036%
+   - codec_wiki e6 d=0.2: Δbfly = +0.000%
+   - 1418519 e6 d=6: Δbfly = +0.004%
+2. Bytes regression ≤ +3% on any FIXED cell: **PASS** (max +0.30%, avg +0.02%)
+3. SSIM2 regression ≤ -0.3 on any cell: **4 cells FAIL** (HARD GATE FAIL)
+   - 1418519 e6 d=1.0:    Δssim2 = -0.524
+   - 2389166 e5 d=2.0:    Δssim2 = -0.388
+   - imac_g3 e5 d=3.0:    Δssim2 = -0.536
+   - imac_g3 e6 d=3.0:    Δssim2 = -0.818
+4. e5 encode_ms regression ≤ +30%: **PASS** (avg +0.60%, max ~+3.7%)
+
+## Conclusion
+
+The W44-101 audit's correlation between the e6→e7 byte-jump and CFL
+Pass-2 widening was a wrong causal inference. The 12.8pp byte jump from
+e6 (-1.34%) to e7 (-14.17%) in the W44-100 ledger is driven by
+`patches + tree_learning + try_dct64 + enhanced_clustering_vardct`
+activating at e7 (= speed_tier kSquirrel), NOT by CFL Pass-2.
+
+CFL Pass-2 at e5/e6 produces near-identical bytes/bfly and a slight
+SSIM2 regression. This is because at these efforts, the cfl_map from
+Pass-1 (DCT8-forced, q=1) is already close to optimal for the typical
+AC strategy distribution at e5/e6 (which lacks DCT64x64, DCT64x32,
+DCT32x64, patches, and other e7-only features that would benefit more
+from per-strategy CFL refinement). On some cells the widened CFL map
+actively HURTS SSIM2 (worst: imac_g3 e6 d=3, Δssim2 = -0.818).
+
+The libjxl gate at `kHare` is correct for libjxl's own pipeline, but
+our encoder pipeline's e5/e6 stack differs from libjxl's (we run
+adaptive_quant + adjust_quant_ac + Pass-1 CFL at e5+; libjxl's
+equivalent stack runs at kHare+ but with different upstream choices).
+Without the e7+ features (especially patches, tree_learning, larger
+transforms), Pass-2 has nothing to refine against.
+
+Cells where widening DID produce real bfly improvement (top 4):
+- codec_wiki e5 d=1.0: Δbfly = -1.820% (but Δssim2 = -0.229)
+- 1044329 e5 d=0.5: Δbfly = -1.439% (Δssim2 = +0.056)
+- 1044329 e6 d=0.5: Δbfly = -1.405% (Δssim2 = +0.046)
+- codec_wiki e6 d=1.0: Δbfly = -1.154% (Δssim2 = -0.247)
+
+None of these are wedge cells. They're "lucky improvements" on
+specific images, offset by losses elsewhere.
+
+**Gate retained at `effort >= 7`. Production code change: zero.**
+
+## DO NOT
+
+- DO NOT re-investigate widening `cfl_two_pass` to e5 or e6.
+- DO NOT cite W44-101 as evidence that this gate should be widened —
+  W44-101 found the right libjxl divergence but the wrong causal link
+  for the observed bfly wedges.
+- DO NOT pin `cfl_two_pass = Some(true)` at e5/e6 in any `__expert` sweep
+  template without flagging it as known-regressive.
+
+## Future work (not blocking)
+
+The W44-100 wedges at e6 (1420710 d=5 bfly+16.8%, 1025469 d=4 bfly
++20%, codec_wiki d=0.2 bfly +26.7%, 1418519 d=6 bfly+12.7%) remain
+OPEN. Likely culprits per the absence of Pass-2 impact:
+- Adaptive quant at e6 with no buttloop (e8+) vs cjxl's heuristic-only
+  approach.
+- AC strategy entropy_mul values tuned against e7+ baseline.
+- gaborish + EPF gating differences.
+None of these are quick chunks; they're structural pipeline divergences.
+
+## Process notes
+
+The bench was prematurely terminated when a concurrent agent (or
+errant TaskStop chain) ran `jj abandon @` + `jj workspace forget`
+on this workspace mid-run. The bench process received SIGPIPE when
+the upstream `tee | tail` pipeline closed and died. Recovery:
+`jj op restore <pre-abandon-op>` brought the commit back, the
+workspace was re-added at the recovered change. Staging TSV at
+`/tmp/w44_102_cfl_two_pass_ab_3604003.tsv` was the source of truth
+for the 138-cell partial data.
+
+This is the 4th jj-concurrent failure documented in this repo this
+week (see `jj_concurrent_workspace_failure_mode_2026-05-18`,
+`jj_concurrent_failure_w44_69_2026-05-19`). Mitigation: agents
+working in sibling workspaces should never `jj abandon @` or
+`jj workspace forget` another workspace they did not create.

@@ -1306,5 +1306,36 @@ name = "w44_100_decoder_check"
 path = "examples/w44_100_decoder_check.rs"
 required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
 
+# W44-102 paired A/B: widen `cfl_two_pass` effort gate from `effort >= 7`
+# to `effort >= 5` (libjxl `enc_heuristics.cc:1190` parity at `kHare`).
+# Pins `cfl_two_pass = Some(false)` (baseline) vs `Some(true)` (widened)
+# at e5/e6 on photo + screenshot cells; reports bytes, bfly, ssim2,
+# encode_ms deltas. Targets bfly wedges from W44-100 ledger
+# (1420710 e6 d=5, 1025469 e6 d=4, codec_wiki e6 d=0.2, 1418519 e6 d=6).
+[[example]]
+name = "w44_102_cfl_two_pass_ab"
+path = "examples/w44_102_cfl_two_pass_ab.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
+# W44-102 decoder roundtrip check: encodes 5 W44-102 cells with the
+# __expert override `cfl_two_pass = Some(true)` at e5/e6 (where the
+# production default keeps `cfl_two_pass: effort >= 7`, W44-102 RULED
+# OUT). Validates that the widened-gate code path produces a
+# decoder-compatible bitstream — bitstream-parity sanity check only;
+# does NOT measure quality. djxl + jxl-rs + jxl-oxide all must pass.
+[[example]]
+name = "w44_102_decoder_check"
+path = "examples/w44_102_decoder_check.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
+# W44-102 finish-up bench: appends the 5 windows.png cells that the
+# main `w44_102_cfl_two_pass_ab` bench was missing when prematurely
+# terminated (concurrent agent `jj abandon` op killed the bench
+# pipeline). Same A/B methodology, appends rows to the canonical TSV.
+[[example]]
+name = "w44_102_cfl_two_pass_ab_finish"
+path = "examples/w44_102_cfl_two_pass_ab_finish.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
 [lints]
 workspace = true
