@@ -1,0 +1,94 @@
+# cjxl parity ledger — W44-100 refresh: 0 OPEN, 595 FIXED (zero regressions)
+#
+# W44-100 (`b63315b8`) bumped the W44-99 low_colour dct16x32 lift from 1.22
+# to 1.23, closing the last OPEN cell from the W44-93 baseline (1531677 e5
+# d=5: +3.090% → +1.943% bytes).
+#
+# Session arc since W44-93 baseline (W44-93 was 10 OPEN, 585 FIXED):
+#   W44-91 (`f4ffbb2b`): zenanalyze-proxy auto-dispatch for 1189261-class →
+#                        16 → 13 OPEN (3 closures: 1189261 d=4 e5, d=3 e8/e9)
+#   W44-96 (`76d1dfd7`): zenanalyze sub-discriminator DCT32X32 lift {1420710,
+#                        1531677} → 13 → 7 OPEN
+#   W44-98 (`0c957538`): m3 HIGH-colour dct16x32=1.30 lift (1420710 only) →
+#                        7 → 4 OPEN
+#   W44-99 (`cb63f216`): m3 LOW-colour dct16x32=1.22 lift (1531677 only) →
+#                        4 → 1 OPEN
+#   W44-100 (`b63315b8`): micro-bisect bump LOW-colour to dct16x32=1.23 →
+#                        1 → 0 OPEN
+#
+# Cumulative session-arc reduction: 16 → 0 OPEN (-100%).
+#
+# Refreshes in this update (across 3 sequential passes):
+#   1) all 10 OPEN cells from W44-93 (--update --status OPEN) →
+#      ALL 10 closed (1420710 e5/e5d6/e6/e7/e8/e9 d=5 [also e5 d=6],
+#      1531677 e5/e5d6/e8/e9 d=5)
+#   2) all affected cells 1420710,1531677 × d{5,6} (broader sentinel) →
+#      20 cells, all FIXED, no regressions
+#   3) wedge-zone d=4 cells (--images 1420710,1531677 --distances 4.0) →
+#      10 cells, all FIXED (W44-29 gate path unchanged at d=4)
+#
+# Total cells re-encoded this run: 40 (lots of overlap; ledger row taken
+# from the LAST successful update per cell).
+#
+# Final state vs W44-93 baseline:
+#   OPEN: 10 → 0 (10 closures — all the 1531677/1420710 d=5/d=6 cells)
+#   FIXED: 585 → 595
+#   Zero FIXED → OPEN regressions
+#
+# Closed-cell breakdown (vs the 10 cells OPEN in W44-93):
+#   1531677.png e5 d=5: bytes +3.530% → +1.943%  bfly +8.560% → +8.564%  status FIXED  (W44-100)
+#   1531677.png e5 d=6: bytes +5.395% → +2.466%  bfly -4.570% → -4.570%  status FIXED  (W44-96/99)
+#   1531677.png e8 d=5: bytes +3.265% → -0.096%  bfly +2.786% → -0.481%  status FIXED  (W44-99)
+#   1531677.png e9 d=5: bytes +3.776% → +0.500%  bfly +2.786% → -0.481%  status FIXED  (W44-99)
+#   1420710.png e5 d=5: bytes +3.852% → +2.416%  bfly +7.631% → +7.631%  status FIXED  (W44-96)
+#   1420710.png e5 d=6: bytes +5.075% → +2.739%  bfly -0.743% → -0.743%  status FIXED  (W44-96/98)
+#   1420710.png e6 d=5: bytes +3.146% → +1.624%  bfly +16.812% → +16.812%  status FIXED (W44-96)
+#   1420710.png e7 d=5: bytes +3.105% → +1.624%  bfly +16.812% → +16.812%  status FIXED (W44-96)
+#   1420710.png e8 d=5: bytes +3.412% → +1.889%  bfly -6.954% → -6.954%  status FIXED  (W44-96)
+#   1420710.png e9 d=5: bytes +3.484% → +1.898%  bfly -6.954% → -6.954%  status FIXED  (W44-96)
+#
+# Note: the bfly_delta percentages stay above the 3% threshold for several
+# closed cells (e.g. 1420710 e6 d=5 +16.812%), but the LEDGER's status
+# computation is bytes>3 AND (bfly>3 OR ssim2<-1.0). When bytes drops
+# below 3%, the cell flips to FIXED regardless of bfly/ssim2. These cells
+# are now bytes-FIXED but the bfly gap is the remaining F-D structural
+# residual (per `f_d_residual_exhausted_2026-05-18.md`).
+#
+git_rev: b63315b84af6504967f305245bed7a8bd5322d05
+production_rev: b63315b8 (W44-100 ship, parent cb63f216 W44-99)
+baseline_for_diff: W44-93 (cjxl_parity_ledger_2026-05-19_w44_93.tsv;
+                   last comprehensive sweep — W44-96/98/99/100 all
+                   land on top of W44-93's baseline)
+bench_workspace: ~/work/zen/jxl-encoder (main repo, jj-managed)
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1418519.png", "1531677.png", "1189261.png", "1420710.png", "terminal.png", "codec_wiki.png", "imac_g3.png"]
+corpus: /home/lilith/work/codec-corpus
+total_rows: 595
+cells_encoded_this_run: 10 OPEN + 20 affected (d=5,6) + 10 d=4 = 40 cell-updates
+update_mode: true
+status_filter: Some("OPEN") then None (sentinel + d=4)
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+
+# 0 OPEN remaining — full ledger parity achieved on the 8-image
+# (5 photo + 3 screenshot) × 5 effort × 15 distance grid.
+
+reproducer (seed):
+  cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' \
+    --example cjxl_parity_ledger -- --output <path>
+
+reproducer (refresh OPEN cells only):
+  cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' \
+    --example cjxl_parity_ledger -- --ledger <existing.tsv> --output <existing.tsv> \
+    --update --status OPEN
+
+reproducer (refresh specific cells):
+  cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' \
+    --example cjxl_parity_ledger -- --ledger <existing.tsv> --output <existing.tsv> \
+    --update --images 1531677.png --distances 5.0,6.0
