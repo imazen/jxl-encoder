@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Measured
+
+- **W44-121 — codec_wiki d=3 per-strategy + per-region SSIM2 dump**
+  (`benchmarks/w44_121_codec_wiki_d3_dump_2026-05-20.{tsv,meta}`,
+  `benchmarks/w44_121_codec_wiki_d3_analysis_2026-05-20.txt`,
+  `benchmarks/w44_121_run_dumps.sh`,
+  `benchmarks/w44_121_analyze.py`,
+  `jxl-encoder/examples/w44_121_codec_wiki_d3_dump.rs`,
+  `docs/LIBJXL_DIVERGENCES.md` Section F codec_wiki d=3 row refined with
+  W44-121 finding). Measurement-only chunk per the W44-103 (terminal d=4)
+  template; NO production code change. Result: codec_wiki d=3 has SAME
+  ROOT CAUSE as W44-103 terminal d=4. DCT16X16 over-fires 100× (ours
+  14031/14030/14310 first-blocks vs cjxl 138/138/251 at e5/e6/e7), DCT64
+  family ENTIRELY absent (ours 0 vs cjxl 783-1019 DCT64X64+DCT64X32+
+  DCT32X64), strategy agreement 10.1-12.6%, top-row + (at e7) bottom-row
+  dominate SSIM2 loss (e5/e6 top -5.98/-5.95, e7 bot averages -3.6).
+  Per-region mean qac at PARITY (8.0-8.7 both sides) — pure strategy
+  selection divergence, NOT quantization tuning. Top disagreement pair:
+  DCT16X16 → DCT64X64 (28k cells e5/e6, 36k cells e7). W44-122 attack
+  candidates ranked in `memory/w44_121_codec_wiki_d3_dump_2026-05-20.md`
+  (top: find_best_64x64_transform cost-model audit, EV 5-10 SSIM2 points).
+
 ### Fixed
 
 - **W44-120 — tighten W44-117 EPF sharpness seed distance gate to >=1.0**
