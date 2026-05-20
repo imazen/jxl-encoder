@@ -572,6 +572,20 @@ impl VarDctEncoder {
         // (default for photo / unknown / mask-not-computed) is
         // byte-identical to pre-W39-2 behaviour.
         is_screenshot: bool,
+        // W44-117: optional precomputed mask1x1 (padded, length
+        // `padded_width * padded_height`). When provided AND
+        // `epf_iters > 0` AND `epf_dynamic_sharpness`, we run
+        // `compute_epf_sharpness` once before the loop on the initial
+        // quant_dc/quant_ac, then use the resulting per-block sharpness
+        // map for every buttloop iter's `apply_epf` (instead of the
+        // uniform `vec![4u8; num_blocks]` seed). This closes the
+        // ~0.05-0.17 max-abs linear-RGB residual identified by W44-116
+        // between the buttloop's INTERNAL reconstruction (which jxl-rs
+        // sees) and the shipped bitstream's production-sharpness
+        // reconstruction. When `None` (e.g. animation frames, ssim2
+        // path), falls back to the legacy uniform-4 seed (byte-identical
+        // to pre-W44-117 behaviour).
+        mask1x1: Option<&[f32]>,
     ) -> Result<DistanceParams> {
         use crate::budget::MemoryBudget;
 
@@ -788,13 +802,133 @@ impl VarDctEncoder {
                 .saturating_add((num_blocks as u64).saturating_mul(4))
                 .saturating_add((padded_pixels as u64).saturating_mul(4 * 3)),
         )?;
-        let sharpness = vec![4u8; num_blocks];
         let mut tile_dist = vec![0.0f32; num_blocks];
         let mut recon_r = vec![0.0f32; padded_pixels];
         let mut recon_g = vec![0.0f32; padded_pixels];
         let mut recon_b = vec![0.0f32; padded_pixels];
         let mut transform_out =
             super::transform::TransformOutput::new(xsize_blocks, ysize_blocks, budget)?;
+
+        // W44-117: seed the buttloop's `apply_epf` sharpness map from
+        // `compute_epf_sharpness` on the initial reconstruction.
+        //
+        // Pre-W44-117 the loop passed `vec![4u8; num_blocks]` (uniform
+        // sharpness=4) to every `apply_epf` call. The shipped bitstream's
+        // EPF metadata, however, comes from `compute_epf_sharpness` run
+        // AFTER the buttloop on the FINAL recon — so the buttloop's
+        // INTERNAL reconstruction (the linear-RGB image it measures
+        // butteraugli against) diverged from jxl-rs's decoded output
+        // by 0.05-0.17 max-abs on photos (W44-111 → W44-116 forensic
+        // chain). The W44-105/107/108/109 qac-scale chain was a
+        // partial palliative that lifted the seed quant_field so the
+        // buttloop's optimistic-by-construction measurement settled on
+        // a coarser equilibrium; the underlying mismatch was untouched.
+        //
+        // W44-116 Option B closes the gap by computing the sharpness
+        // map ONCE before the loop (using the same `transform_out`
+        // scratch the loop reuses), then passing it to every iter's
+        // `apply_epf`. The post-loop production `compute_epf_sharpness`
+        // call still runs on the final recon (so the SHIPPED bitstream
+        // gets a final-iter-fitted map), but the buttloop's iters
+        // converge against a map that's much closer to the production
+        // map than uniform-4 was.
+        //
+        // Cost: one extra transform-quantize-reconstruct + one
+        // `compute_epf_sharpness` call. The sharpness compute reuses
+        // `base_recon` across its `candidates.len() ∈ {2, 3}`
+        // candidates, so amortised cost is roughly equivalent to one
+        // extra buttloop iter. At e9 (4 iters) that's +25%; the
+        // measured impact is gated by the cell budget gate (≤ +20%
+        // accept).
+        //
+        // Gated on:
+        //   - `initial_params.epf_iters > 0` — no point computing a
+        //     sharpness map if EPF won't run anyway. When EPF is off
+        //     the sharpness vector is never read by `apply_epf`.
+        //   - `self.profile.epf_dynamic_sharpness` — at low effort
+        //     levels the production path also skips the per-block
+        //     search and writes a uniform default sharpness map; seed
+        //     consistently with that path (uniform-4 → `apply_epf`
+        //     uses sharpness=4 → matches production exactly).
+        //   - `mask1x1.is_some()` — `compute_epf_sharpness` needs a
+        //     per-pixel mask. Callers that didn't precompute mask1x1
+        //     (animation frames, ssim2 path) fall back to uniform-4
+        //     (byte-identical to pre-W44-117).
+        //
+        // Fallback path is the legacy uniform-4: identical behaviour
+        // to every pre-W44-117 release.
+        //
+        // Sweep override: set `JXL_W44_117_DISABLE=1` to force the
+        // legacy uniform-4 seed for A/B testing. When unset (default)
+        // the per-image dispatch decides. No production runtime cost.
+        #[cfg(feature = "std")]
+        let w44_117_force_off = std::env::var("JXL_W44_117_DISABLE").is_ok_and(|v| v == "1");
+        #[cfg(not(feature = "std"))]
+        let w44_117_force_off = false;
+        let sharpness: Vec<u8> = if !w44_117_force_off
+            && initial_params.epf_iters > 0
+            && self.profile.epf_dynamic_sharpness
+            && let Some(m1x1) = mask1x1
+            && m1x1.len() == padded_pixels
+        {
+            // Quantize the (post-W44-105-scale) quant_field_float to u8
+            // using initial_params.inv_scale, matching the inner-seed
+            // loop's iter-0 quantization step. The inner loop will
+            // re-quantize per-iter via its own `current_params.inv_scale`;
+            // this one-shot quantization is just to feed the seed
+            // transform.
+            let qf_vec = quantize_quant_field(quant_field_float, initial_params.inv_scale);
+
+            // One-shot transform + quantize into `transform_out`. The
+            // inner-seed loop will overwrite `transform_out` on its
+            // first iter (via the same `transform_and_quantize_into`
+            // call), so the scratch is correctly reused.
+            //
+            // We pass a mutable copy of `qf_vec` because
+            // `transform_and_quantize_into` takes `&mut [u8]`; it
+            // doesn't mutate the field for our shipped paths, but the
+            // signature requires it.
+            let mut qf_seed = qf_vec;
+            self.transform_and_quantize_into(
+                xyb_x,
+                xyb_y,
+                xyb_b,
+                padded_width,
+                xsize_blocks,
+                ysize_blocks,
+                initial_params,
+                &mut qf_seed,
+                cfl_map,
+                ac_strategy,
+                &mut transform_out,
+            );
+
+            // Call `compute_epf_sharpness` with the same `original_xyb`
+            // (xyb_x/y/b is post-patches-subtraction xyb), quant_dc /
+            // quant_ac from the one-shot transform, the seed
+            // quant_field_u8, the precomputed mask, the initial
+            // DistanceParams, the CFL map, the AC strategy map, and
+            // `enable_gaborish`. Identical signature to the post-loop
+            // call site in `encoder.rs::encode_inner`.
+            super::epf::compute_epf_sharpness(
+                [xyb_x, xyb_y, xyb_b],
+                &transform_out.quant_dc,
+                &transform_out.quant_ac,
+                &qf_seed,
+                m1x1,
+                initial_params,
+                cfl_map,
+                ac_strategy,
+                self.enable_gaborish,
+                xsize_blocks,
+                ysize_blocks,
+                budget,
+            )?
+        } else {
+            // Legacy / fallback path: uniform sharpness=4 seed.
+            // Byte-identical to every pre-W44-117 release.
+            vec![4u8; num_blocks]
+        };
 
         // Saturate at consumption to bound worst-case CPU even when the
         // caller skipped LossyConfig::validate (which would have rejected

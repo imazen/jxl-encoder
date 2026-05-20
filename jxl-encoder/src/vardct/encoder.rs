@@ -3323,6 +3323,14 @@ impl VarDctEncoder {
                     patches_data.as_ref(),
                     splines_data.as_ref(),
                     is_screenshot,
+                    // W44-117: plumb the precomputed mask1x1 so the
+                    // buttloop can seed its `apply_epf` sharpness map
+                    // from `compute_epf_sharpness` (closes the W44-116
+                    // buttloop-vs-decoder EPF mismatch). `None` when
+                    // mask1x1 wasn't precomputed (pixel_domain_loss off
+                    // and adaptive_quant didn't materialise the mask)
+                    // falls back to legacy uniform-4 seed.
+                    mask1x1.as_deref(),
                 )?;
             }
         }
