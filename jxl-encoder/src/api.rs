@@ -4924,11 +4924,29 @@ impl LossyConfig {
         // `__expert` override is in play, to avoid silently re-flipping
         // a sweep harness's pinned value.
         if self.profile_override.is_none() {
-            // W44-35: caller hint wins over auto detector. Default `None`
-            // engages the auto detector value computed at the entry point.
-            let smooth_hint = self
-                .smooth_photo_dct64_hint
-                .unwrap_or(smooth_photo_for_dct64_auto);
+            // W44-129 Chunk C: resolve the `smooth_photo_dct64_admission`
+            // policy from the `EncoderStrategy` bundle + per-field
+            // overrides. `ResolvedImprovements` is computed once here
+            // (cheap — no allocation for the named-strategy variants;
+            // `Custom(Box<_>)` is the only allocating path).
+            //
+            // Policy translation (matches `StrategyOverrides::apply_to`):
+            //   * `Auto` → existing auto detector value
+            //   * `ForceAdmit` → true (admit DCT64 on the gated cell)
+            //   * `ForceSkip` → false (preserves pre-W44-35 behaviour;
+            //     `EncoderStrategy::Libjxl` uses this)
+            //
+            // `StrategyOverrides::apply_to` maps the legacy
+            // `smooth_photo_dct64_hint: Some(true)` → `ForceAdmit` and
+            // `Some(false)` → `ForceSkip` so production semantics stay
+            // bit-identical when the caller chains hints AFTER
+            // `with_strategy(...)`.
+            let resolved = self.resolve_improvements();
+            let smooth_hint = match resolved.smooth_photo_dct64_admission {
+                crate::api::SmoothPhotoDct64Policy::Auto => smooth_photo_for_dct64_auto,
+                crate::api::SmoothPhotoDct64Policy::ForceAdmit => true,
+                crate::api::SmoothPhotoDct64Policy::ForceSkip => false,
+            };
             p.adapt_to_image_lossy_with_smoothness(pixels, self.distance, smooth_hint);
             // RFC #45 pick #4 chunk 1 — content-class dispatch.
             // Fires only when the caller has explicitly set the class
