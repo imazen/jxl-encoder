@@ -60,6 +60,33 @@ pub static COMPACT_BLOCK_CONTEXT_MAP: [u8; 39] = [
     2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, // B
 ];
 
+/// Libjxl's `kDefaultCtxMap` from `ac_context.h:91-96`. **Per-divergence
+/// opt-in only — NOT the default.** Has 15 unique contexts vs our
+/// 4-context [`COMPACT_BLOCK_CONTEXT_MAP`].
+///
+/// Selected via [`BlockCtxMap::libjxl_default`] when
+/// `ResolvedImprovements.block_ctx_map_15_cluster == true` (i.e.
+/// [`crate::api::EncoderStrategy::Libjxl`]).
+///
+/// W44-71 (`w44_71_15cluster_default_regression_2026-05-19.md`)
+/// measured this as a +1.4-3.6% BYTE REGRESSION at default because our
+/// `write_context_map_nonsimple` uses Huffman+MTF only while libjxl uses
+/// ANS+LZ77 over the larger 7425-entry context-map output. Issue #59
+/// tracks the writer-side port that would close the regression.
+/// `EncoderStrategy::Libjxl` deliberately re-introduces the regression
+/// to match libjxl byte-for-byte (per W44-126 user decision #3:
+/// "all-divergence parity, regressions and all").
+#[allow(dead_code)]
+pub static LIBJXL_DEFAULT_CTX_MAP: [u8; 39] = [
+    0, 1, 2, 2, 3, 3, 4, 5, 6, 6, 6, 6, 6, // Y
+    7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14, // X
+    7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14, // B
+];
+
+/// Number of block contexts in [`LIBJXL_DEFAULT_CTX_MAP`].
+#[allow(dead_code)]
+pub const NUM_BLOCK_CTXS_LIBJXL_DEFAULT: usize = 15;
+
 /// Content-adaptive block context map.
 ///
 /// Provides a mapping from (channel, strategy, quantization field value) to a
@@ -88,6 +115,42 @@ impl Default for BlockCtxMap {
             qf_thresholds: vec![],
             ctx_map: COMPACT_BLOCK_CONTEXT_MAP.to_vec(),
             num_ctxs: NUM_BLOCK_CTXS,
+        }
+    }
+}
+
+impl BlockCtxMap {
+    /// Returns the libjxl 15-context default map ([`LIBJXL_DEFAULT_CTX_MAP`]).
+    /// **Per-divergence opt-in only — NOT the default.** See
+    /// [`LIBJXL_DEFAULT_CTX_MAP`] doc-comment for the regression history.
+    ///
+    /// W44-133 Chunk G: callers select between
+    /// [`BlockCtxMap::default`] (4-context, Zenjxl) and
+    /// [`BlockCtxMap::libjxl_default`] (15-context, Libjxl) via the
+    /// [`BlockCtxMap::default_for_strategy`] helper which routes from
+    /// the resolved `block_ctx_map_15_cluster` bool.
+    pub fn libjxl_default() -> Self {
+        BlockCtxMap {
+            qf_thresholds: vec![],
+            ctx_map: LIBJXL_DEFAULT_CTX_MAP.to_vec(),
+            num_ctxs: NUM_BLOCK_CTXS_LIBJXL_DEFAULT,
+        }
+    }
+
+    /// Strategy-aware default selector. Replaces the four
+    /// `BlockCtxMap::default()` call sites that today hardcode the
+    /// 4-context Zenjxl map; reads the per-encode
+    /// `block_ctx_map_15_cluster` bool from
+    /// [`crate::api::ResolvedImprovements`].
+    ///
+    /// W44-133 Chunk G — flips to libjxl's 15-context default under
+    /// [`crate::api::EncoderStrategy::Libjxl`]. Zenjxl default
+    /// (`false`) is byte-identical to pre-Chunk-G output.
+    pub fn default_for_strategy(block_ctx_map_15_cluster: bool) -> Self {
+        if block_ctx_map_15_cluster {
+            Self::libjxl_default()
+        } else {
+            Self::default()
         }
     }
 }
@@ -144,15 +207,24 @@ impl BlockCtxMap {
 ///
 /// Port of libjxl's `FindBestBlockEntropyModel` from `enc_heuristics.cc:69-204`.
 ///
-/// For small images, returns the default map. For larger images, computes QF
-/// thresholds and clusters (qf_segment, order_id) cells to produce a more
-/// efficient context map.
+/// For small images, returns the default map (selected by
+/// [`BlockCtxMap::default_for_strategy`] — Zenjxl 4-context or
+/// Libjxl 15-context per the
+/// `ResolvedImprovements.block_ctx_map_15_cluster` bool). For larger
+/// images, computes QF thresholds and clusters (qf_segment, order_id)
+/// cells to produce a more efficient context map.
+///
+/// W44-133 Chunk G — added `block_ctx_map_15_cluster` parameter to
+/// route the small-image fallback through the Libjxl 15-context default
+/// when [`crate::api::EncoderStrategy::Libjxl`] is selected. Default
+/// (`false`) is byte-identical to pre-Chunk-G.
 pub fn compute_block_ctx_map(
     quant_field: &[u8],
     ac_strategy: &AcStrategyMap,
     distance: f32,
     xsize_blocks: usize,
     ysize_blocks: usize,
+    block_ctx_map_15_cluster: bool,
 ) -> BlockCtxMap {
     let tot = xsize_blocks * ysize_blocks;
 
@@ -160,7 +232,7 @@ pub fn compute_block_ctx_map(
     // Matches libjxl: tot < (1 << 10) * distance
     let size_for_ctx_model = ((1u64 << 10) as f64 * distance as f64) as usize;
     if tot < size_for_ctx_model {
-        return BlockCtxMap::default();
+        return BlockCtxMap::default_for_strategy(block_ctx_map_15_cluster);
     }
 
     // Count QF occurrences and (order, qf) co-occurrences.
@@ -459,5 +531,79 @@ mod tests {
         // Any computed map must have num_ctxs <= MAX_BLOCK_CTXS
         let map = BlockCtxMap::default();
         assert!(map.num_ctxs <= MAX_BLOCK_CTXS);
+
+        // W44-133 Chunk G: libjxl_default also satisfies the spec bound
+        // (15 contexts fits in MAX_BLOCK_CTXS = 16).
+        let libjxl_map = BlockCtxMap::libjxl_default();
+        assert!(libjxl_map.num_ctxs <= MAX_BLOCK_CTXS);
+    }
+
+    /// W44-133 Chunk G: libjxl 15-cluster default constructor must
+    /// return the exact contents of `kDefaultCtxMap` from libjxl
+    /// `ac_context.h:91-96` with `num_ctxs = 15` and no QF thresholds.
+    #[test]
+    fn test_block_ctx_map_libjxl_default() {
+        let map = BlockCtxMap::libjxl_default();
+        assert_eq!(map.num_ctxs, NUM_BLOCK_CTXS_LIBJXL_DEFAULT);
+        assert_eq!(map.num_ctxs, 15);
+        assert!(map.qf_thresholds.is_empty());
+        assert_eq!(map.ctx_map.len(), 39); // 3 * 13 * 1
+        // Byte-for-byte match with the libjxl static table
+        assert_eq!(map.ctx_map.as_slice(), &LIBJXL_DEFAULT_CTX_MAP[..]);
+        // Spec-bounded (≤16)
+        assert!(map.num_ctxs <= MAX_BLOCK_CTXS);
+    }
+
+    /// W44-133 Chunk G: `default_for_strategy(false)` produces the
+    /// Zenjxl 4-cluster default (byte-identical to pre-Chunk-G).
+    /// `default_for_strategy(true)` produces the libjxl 15-cluster
+    /// default. Selector logic for `EncoderStrategy::Libjxl`.
+    #[test]
+    fn test_block_ctx_map_default_for_strategy_routes_correctly() {
+        let zenjxl = BlockCtxMap::default_for_strategy(false);
+        assert_eq!(zenjxl.num_ctxs, NUM_BLOCK_CTXS);
+        assert_eq!(zenjxl.ctx_map.as_slice(), &COMPACT_BLOCK_CONTEXT_MAP[..]);
+
+        let libjxl = BlockCtxMap::default_for_strategy(true);
+        assert_eq!(libjxl.num_ctxs, NUM_BLOCK_CTXS_LIBJXL_DEFAULT);
+        assert_eq!(libjxl.ctx_map.as_slice(), &LIBJXL_DEFAULT_CTX_MAP[..]);
+
+        // The two maps must differ — that's the whole point of the
+        // strategy split; if they ever match, something is wrong.
+        assert_ne!(zenjxl.num_ctxs, libjxl.num_ctxs);
+        assert_ne!(zenjxl.ctx_map, libjxl.ctx_map);
+    }
+
+    /// W44-133 Chunk G: `compute_block_ctx_map`'s new
+    /// `block_ctx_map_15_cluster` parameter routes the small-image
+    /// short-circuit (`tot < 1024 * distance`) through the matching
+    /// default constructor.
+    #[test]
+    fn test_compute_block_ctx_map_small_image_uses_strategy_default() {
+        // 4×4 blocks at distance=1.0 → tot=16 < 1024, short-circuits.
+        let xsize_blocks = 4;
+        let ysize_blocks = 4;
+        let quant_field = vec![1u8; 16];
+        let ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
+
+        let zenjxl = compute_block_ctx_map(
+            &quant_field,
+            &ac_strategy,
+            1.0,
+            xsize_blocks,
+            ysize_blocks,
+            /*block_ctx_map_15_cluster=*/ false,
+        );
+        assert_eq!(zenjxl.num_ctxs, NUM_BLOCK_CTXS);
+
+        let libjxl = compute_block_ctx_map(
+            &quant_field,
+            &ac_strategy,
+            1.0,
+            xsize_blocks,
+            ysize_blocks,
+            /*block_ctx_map_15_cluster=*/ true,
+        );
+        assert_eq!(libjxl.num_ctxs, NUM_BLOCK_CTXS_LIBJXL_DEFAULT);
     }
 }

@@ -2583,6 +2583,10 @@ impl VarDctEncoder {
             params.distance,
             xsize_blocks,
             ysize_blocks,
+            // W44-133 Chunk G: route small-image fallback through
+            // libjxl 15-cluster default when `EncoderStrategy::Libjxl`
+            // is selected. Default Zenjxl (`false`) is byte-identical.
+            self.resolved_improvements.block_ctx_map_15_cluster,
         );
 
         let _ms_bcm = _t_bcm.elapsed().as_secs_f64() * 1000.0;
