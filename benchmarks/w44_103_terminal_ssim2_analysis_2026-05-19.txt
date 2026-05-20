@@ -1,0 +1,303 @@
+
+# W44-103 Global Summary (terminal.png d=4)
+# enc      effort   bytes      ssim2    delta_ssim2_per_region (top→bot, left→right)
+  ours/cjxl  e5   67748/ 70434 ( -3.8%)  ssim2 78.44/83.82 (-5.383)
+           top: -4.203  -3.990  -3.133
+           mid: -5.257  -4.487  -4.471
+           bot: -3.861  -4.445  -5.220
+  ours/cjxl  e6   69843/ 71634 ( -2.5%)  ssim2 78.18/83.47 (-5.294)
+           top: -3.553  -4.140  -3.466
+           mid: -5.782  -5.027  -4.914
+           bot: -4.089  -5.103  -5.712
+  ours/cjxl  e7   31164/ 33536 ( -7.1%)  ssim2 83.00/87.62 (-4.621)
+           top: -2.802  -5.801  -4.545
+           mid: -4.726  -4.703  -3.905
+           bot: -4.654  -6.099  -5.797
+  ours/cjxl  e8   28088/ 56066 (-49.9%)  ssim2 81.98/87.55 (-5.568)
+           top: -5.547  -5.768  -4.761
+           mid: -9.356  -8.367  -3.519
+           bot: -2.877  -3.081  -0.739
+  ours/cjxl  e9   28124/ 56011 (-49.8%)  ssim2 81.98/87.57 (-5.594)
+           top: -5.568  -5.871  -4.766
+           mid: -9.356  -8.451  -3.568
+           bot: -2.873  -3.081  -0.739
+
+=== Effort 5 ===  ours_rows=32988  cjxl_rows=18321
+
+# Per-strategy (e5):
+  strat         ours_fb cjxl_fb  Δ_fb |  ours_Y  cjxl_Y     Δ_Y | mean_qac
+  DCT8             1678    1442  +236 |   20376   20496    -120 |   7.91/  7.88
+  IDENTITY          595     599    -4 |    4912    4993     -81 |   8.21/  8.19
+  DCT2X2           2061    1967   +94 |   37620   35809   +1811 |   7.05/  7.06
+  DCT4X4              0      14   -14 |       0     203    -203 |   0.00/  8.14
+  DCT16X16         4870     195 +4675 |    1494     761    +733 |   8.18/  8.64
+  DCT32X32            0      43   -43 |       0      76     -76 |   0.00/  8.84
+  DCT16X8           576     295  +281 |    2697    2067    +630 |   8.06/  8.31
+  DCT8X16          1216     807  +409 |    3043    1741   +1302 |   8.34/  8.50
+  DCT32X16            0      97   -97 |       0     189    -189 |   0.00/  8.05
+  DCT16X32            0     290  -290 |       0    1740   -1740 |   0.00/  8.50
+  DCT64X64            0     161  -161 |       0       0      +0 |   0.00/  8.03
+  DCT64X32            0      85   -85 |       0     435    -435 |   0.00/  8.19
+  DCT32X64            0     112  -112 |       0     520    -520 |   0.00/  7.98
+  TOTAL            10996    6107 +4889 |   70142   69030   +1112
+
+# Per-region first-block counts (rows: ours then cjxl):
+  R[0,0] Δssim2=-4.203  ours: DCT16X16:555 DCT2X2:181 DCT8X16:124 DCT8:121 DCT16X8:89
+  R[0,0]                cjxl: DCT2X2:151 DCT8:111 DCT8X16:67 DCT16X32:50 IDENTITY:46
+  R[0,1] Δssim2=-3.990  ours: DCT16X16:436 DCT2X2:339 DCT8:253 DCT8X16:233 IDENTITY:110
+  R[0,1]                cjxl: DCT2X2:324 DCT8:251 DCT8X16:140 IDENTITY:105 DCT16X8:41
+  R[0,2] Δssim2=-3.133  ours: DCT16X16:609 DCT2X2:166 DCT8X16:120 DCT8:108 DCT16X8:46
+  R[0,2]                cjxl: DCT2X2:164 DCT8:106 DCT8X16:61 IDENTITY:38 DCT16X32:32
+  R[1,0] Δssim2=-5.257  ours: DCT16X16:453 DCT2X2:343 DCT8:265 DCT8X16:133 DCT16X8:124
+  R[1,0]                cjxl: DCT2X2:306 DCT8:251 IDENTITY:65 DCT8X16:63 DCT16X32:49
+  R[1,1] Δssim2=-4.487  ours: DCT2X2:547 DCT8:399 DCT16X16:310 DCT8X16:230 IDENTITY:160
+  R[1,1]                cjxl: DCT2X2:538 DCT8:396 DCT8X16:171 IDENTITY:162 DCT16X8:89
+  R[1,2] Δssim2=-4.471  ours: DCT16X16:461 DCT2X2:374 DCT8:240 IDENTITY:148 DCT8X16:141
+  R[1,2]                cjxl: DCT2X2:373 DCT8:241 IDENTITY:148 DCT8X16:138 DCT16X8:52
+  R[2,0] Δssim2=-3.861  ours: DCT16X16:633 DCT8:124 DCT8X16:93 DCT2X2:84 DCT16X8:52
+  R[2,0]                cjxl: DCT2X2:85 DCT8X16:75 DCT8:57 DCT32X64:30 IDENTITY:28
+  R[2,1] Δssim2=-4.445  ours: DCT16X16:688 DCT8:90 DCT8X16:85 DCT2X2:23 DCT16X8:10
+  R[2,1]                cjxl: DCT8X16:52 DCT32X64:29 DCT64X64:23 DCT2X2:22 DCT8:21
+  R[2,2] Δssim2=-5.220  ours: DCT16X16:725 DCT8:78 DCT8X16:57 DCT16X8:26 DCT2X2:4
+  R[2,2]                cjxl: DCT8X16:40 DCT64X64:27 DCT32X64:23 DCT32X16:14 DCT64X32:11
+
+# Per-region mean qac (sum_qac/n_fb across all strats, weighted by n_fb):
+  top:   7.9/  8.0    7.9/  7.8    8.0/  7.9
+  mid:   7.8/  7.6    7.9/  7.8    8.0/  7.9
+  bot:   7.9/  8.0    8.2/  8.2    7.9/  7.7
+
+# Per-cell strategy agreement: 6726/27398 (24.5%)
+# Top disagreement pairs (ours → cjxl):
+  DCT16X16     → DCT64X64      10304 cells
+  DCT16X16     → DCT32X64      3264 cells
+  DCT16X16     → DCT64X32      2304 cells
+  DCT16X16     → DCT16X32      1524 cells
+  DCT8X16      → DCT16X32      688 cells
+
+=== Effort 6 ===  ours_rows=33357  cjxl_rows=18243
+
+# Per-strategy (e6):
+  strat         ours_fb cjxl_fb  Δ_fb |  ours_Y  cjxl_Y     Δ_Y | mean_qac
+  DCT8             1215     894  +321 |   11794   11373    +421 |   8.06/  7.94
+  IDENTITY          360     349   +11 |    2659    2650      +9 |   8.17/  8.16
+  DCT2X2            915     851   +64 |   17004   15721   +1283 |   6.74/  6.75
+  DCT16X16         4867     195 +4672 |    1340    1030    +310 |   8.18/  8.55
+  DCT32X32            0      43   -43 |       0      76     -76 |   0.00/  8.84
+  DCT16X8           493     234  +259 |    1444     897    +547 |   8.16/  8.56
+  DCT8X16          1185     803  +382 |    2529    1622    +907 |   8.35/  8.52
+  DCT32X16            0     104  -104 |       0     189    -189 |   0.00/  8.12
+  DCT16X32            0     296  -296 |       0    1743   -1743 |   0.00/  8.50
+  DCT4X8            131     121   +10 |    2173    2064    +109 |   6.27/  6.12
+  DCT8X4            544     471   +73 |    7429    7114    +315 |   6.76/  6.58
+  AFV0              401     388   +13 |    6030    5795    +235 |   7.55/  7.57
+  AFV1              309     300    +9 |    4421    4341     +80 |   7.64/  7.60
+  AFV2              434     413   +21 |    6595    6416    +179 |   7.52/  7.51
+  AFV3              265     261    +4 |    4381    4316     +65 |   7.42/  7.46
+  DCT64X64            0     161  -161 |       0       0      +0 |   0.00/  8.03
+  DCT64X32            0      85   -85 |       0     435    -435 |   0.00/  8.19
+  DCT32X64            0     112  -112 |       0     520    -520 |   0.00/  7.98
+  TOTAL            11119    6081 +5038 |   67799   66302   +1497
+
+# Per-region first-block counts (rows: ours then cjxl):
+  R[0,0] Δssim2=-3.553  ours: DCT16X16:555 DCT8X16:122 DCT8:92 DCT2X2:79 DCT16X8:73
+  R[0,0]                cjxl: DCT8X16:72 DCT2X2:62 DCT8:58 DCT16X32:51 DCT8X4:40
+  R[0,1] Δssim2=-4.140  ours: DCT16X16:436 DCT8X16:226 DCT8:169 DCT2X2:135 AFV2:88
+  R[0,1]                cjxl: DCT8:148 DCT8X16:139 DCT2X2:125 AFV2:85 DCT8X4:81
+  R[0,2] Δssim2=-3.466  ours: DCT16X16:609 DCT8X16:119 DCT2X2:68 DCT8:65 AFV2:49
+  R[0,2]                cjxl: DCT2X2:67 DCT8:65 DCT8X16:60 AFV2:49 AFV0:35
+  R[1,0] Δssim2=-5.782  ours: DCT16X16:450 DCT2X2:199 DCT8:188 DCT8X16:134 DCT8X4:107
+  R[1,0]                cjxl: DCT8:175 DCT2X2:172 DCT8X16:64 DCT8X4:63 AFV0:51
+  R[1,1] Δssim2=-5.027  ours: DCT16X16:310 DCT8:277 DCT2X2:263 DCT8X16:219 DCT8X4:129
+  R[1,1]                cjxl: DCT2X2:258 DCT8:248 DCT8X16:160 DCT8X4:135 IDENTITY:100
+  R[1,2] Δssim2=-4.914  ours: DCT16X16:461 DCT8:156 DCT8X16:131 DCT2X2:123 IDENTITY:94
+  R[1,2]                cjxl: DCT8:146 DCT8X16:136 DCT2X2:124 AFV0:91 DCT8X4:91
+  R[2,0] Δssim2=-4.089  ours: DCT16X16:633 DCT8:109 DCT8X16:92 DCT2X2:40 DCT16X8:39
+  R[2,0]                cjxl: DCT8X16:78 DCT2X2:38 DCT8:37 DCT32X64:30 DCT8X4:25
+  R[2,1] Δssim2=-5.103  ours: DCT16X16:688 DCT8X16:85 DCT8:83 AFV0:9 DCT8X4:9
+  R[2,1]                cjxl: DCT8X16:54 DCT32X64:29 DCT64X64:23 DCT16X32:18 DCT8:11
+  R[2,2] Δssim2=-5.712  ours: DCT16X16:725 DCT8:76 DCT8X16:57 DCT16X8:24 AFV1:3
+  R[2,2]                cjxl: DCT8X16:40 DCT64X64:27 DCT32X64:23 DCT32X16:14 DCT64X32:11
+
+# Per-region mean qac (sum_qac/n_fb across all strats, weighted by n_fb):
+  top:   7.9/  7.9    7.9/  7.7    7.9/  7.8
+  mid:   7.8/  7.5    7.9/  7.6    7.9/  7.7
+  bot:   7.9/  8.0    8.2/  8.1    7.9/  7.7
+
+# Per-cell strategy agreement: 6410/27398 (23.4%)
+# Top disagreement pairs (ours → cjxl):
+  DCT16X16     → DCT64X64      10304 cells
+  DCT16X16     → DCT32X64      3264 cells
+  DCT16X16     → DCT64X32      2304 cells
+  DCT16X16     → DCT16X32      1556 cells
+  DCT16X16     → DCT32X16      700 cells
+
+=== Effort 7 ===  ours_rows=28782  cjxl_rows=13164
+
+# Per-strategy (e7):
+  strat         ours_fb cjxl_fb  Δ_fb |  ours_Y  cjxl_Y     Δ_Y | mean_qac
+  DCT8             1035     761  +274 |    1067     967    +100 |   9.38/  9.80
+  IDENTITY          558     430  +128 |    2011    1608    +403 |   8.93/  8.96
+  DCT2X2            189     184    +5 |    2105    2109      -4 |   8.28/  8.27
+  DCT16X16         5413     287 +5126 |     858     226    +632 |   8.27/  8.87
+  DCT32X32            0      79   -79 |       0     128    -128 |   0.00/  8.89
+  DCT16X8           638     376  +262 |     952     469    +483 |   8.42/  8.83
+  DCT8X16           927     622  +305 |    1501     345   +1156 |   8.26/  8.53
+  DCT32X16            0     155  -155 |       0     132    -132 |   0.00/  8.48
+  DCT16X32            0     318  -318 |       0     852    -852 |   0.00/  8.64
+  DCT4X8             18      17    +1 |     189     187      +2 |   7.72/  7.65
+  DCT8X4            180     100   +80 |    1277     973    +304 |   7.84/  7.75
+  AFV0              220     254   -34 |    1569    1667     -98 |   8.77/  8.79
+  AFV1              242     236    +6 |    1621    1502    +119 |   8.78/  8.80
+  AFV2              113     121    -8 |    1193    1244     -51 |   8.38/  8.42
+  AFV3               61      79   -18 |     648     771    -123 |   8.39/  8.49
+  DCT64X64            0     163  -163 |       0       0      +0 |   0.00/  8.04
+  DCT64X32            0      92   -92 |       0     537    -537 |   0.00/  8.23
+  DCT32X64            0     114  -114 |       0     520    -520 |   0.00/  8.00
+  TOTAL             9594    4388 +5206 |   14991   14237    +754
+
+# Per-region first-block counts (rows: ours then cjxl):
+  R[0,0] Δssim2=-2.802  ours: DCT16X16:575 DCT16X8:110 DCT8X16:102 DCT8:98 IDENTITY:50
+  R[0,0]                cjxl: DCT8:70 DCT8X16:61 DCT16X32:50 DCT16X8:46 IDENTITY:31
+  R[0,1] Δssim2=-5.801  ours: DCT16X16:553 DCT8X16:168 DCT8:106 IDENTITY:61 DCT16X8:53
+  R[0,1]                cjxl: DCT8:108 DCT8X16:89 DCT16X8:54 DCT16X32:48 IDENTITY:48
+  R[0,2] Δssim2=-4.545  ours: DCT16X16:692 DCT8X16:75 DCT16X8:41 DCT8:29 IDENTITY:21
+  R[0,2]                cjxl: DCT16X32:38 DCT8:29 DCT32X16:25 DCT64X64:22 DCT8X16:20
+  R[1,0] Δssim2=-4.726  ours: DCT16X16:476 DCT8:215 DCT16X8:159 IDENTITY:157 DCT8X16:98
+  R[1,0]                cjxl: DCT8:194 IDENTITY:107 DCT16X8:94 DCT8X16:77 AFV0:72
+  R[1,1] Δssim2=-4.703  ours: DCT16X16:434 DCT8:228 IDENTITY:182 DCT8X16:181 DCT16X8:105
+  R[1,1]                cjxl: DCT8:213 DCT8X16:155 IDENTITY:147 DCT16X8:98 AFV0:77
+  R[1,2] Δssim2=-3.905  ours: DCT16X16:609 DCT8:94 DCT16X8:93 DCT8X16:82 IDENTITY:66
+  R[1,2]                cjxl: DCT8:93 DCT8X16:74 DCT16X16:70 IDENTITY:64 DCT16X8:47
+  R[2,0] Δssim2=-4.654  ours: DCT16X16:656 DCT8:102 DCT8X16:80 DCT16X8:46 DCT8X4:25
+  R[2,0]                cjxl: DCT8X16:64 DCT8:35 DCT32X64:29 DCT16X32:23 DCT64X64:20
+  R[2,1] Δssim2=-6.099  ours: DCT16X16:693 DCT8:87 DCT8X16:84 DCT16X8:7 AFV1:4
+  R[2,1]                cjxl: DCT8X16:42 DCT32X64:29 DCT64X64:23 DCT16X32:20 DCT8:13
+  R[2,2] Δssim2=-5.797  ours: DCT16X16:725 DCT8:76 DCT8X16:57 DCT16X8:24 AFV1:3
+  R[2,2]                cjxl: DCT8X16:40 DCT64X64:27 DCT32X64:23 DCT32X16:14 DCT64X32:11
+
+# Per-region mean qac (sum_qac/n_fb across all strats, weighted by n_fb):
+  top:   8.4/  8.8    8.5/  8.7    8.2/  8.6
+  mid:   8.8/  9.2    8.9/  9.0    8.6/  8.8
+  bot:   8.0/  8.5    8.2/  8.2    7.9/  7.7
+
+# Per-cell strategy agreement: 4449/27398 (16.2%)
+# Top disagreement pairs (ours → cjxl):
+  DCT16X16     → DCT64X64      10432 cells
+  DCT16X16     → DCT32X64      3328 cells
+  DCT16X16     → DCT64X32      2440 cells
+  DCT16X16     → DCT16X32      2012 cells
+  DCT16X16     → DCT32X32      1208 cells
+
+=== Effort 8 ===  ours_rows=28782  cjxl_rows=13164
+
+# Per-strategy (e8):
+  strat         ours_fb cjxl_fb  Δ_fb |  ours_Y  cjxl_Y     Δ_Y | mean_qac
+  DCT8             1035     761  +274 |     884    3480   -2596 |   6.05/ 92.50
+  IDENTITY          558     430  +128 |    1463    7647   -6184 |   6.12/ 99.12
+  DCT2X2            189     184    +5 |    1640    3580   -1940 |   6.06/ 83.16
+  DCT16X16         5413     287 +5126 |     519    1664   -1145 |   5.20/ 86.34
+  DCT32X32            0      79   -79 |       0     438    -438 |   0.00/ 63.86
+  DCT16X8           638     376  +262 |     818    1464    -646 |   5.58/ 82.15
+  DCT8X16           927     622  +305 |    1306    1290     +16 |   5.23/ 69.60
+  DCT32X16            0     155  -155 |       0     546    -546 |   0.00/ 63.50
+  DCT16X32            0     318  -318 |       0    3609   -3609 |   0.00/ 57.16
+  DCT4X8             18      17    +1 |     164     254     -90 |   6.39/ 28.82
+  DCT8X4            180     100   +80 |    1101    1944    -843 |   5.99/ 65.95
+  AFV0              220     254   -34 |    1114    3714   -2600 |   6.06/ 93.24
+  AFV1              242     236    +6 |    1094    3697   -2603 |   6.00/ 95.49
+  AFV2              113     121    -8 |     948    2447   -1499 |   6.16/ 83.40
+  AFV3               61      79   -18 |     526    1557   -1031 |   5.95/ 86.73
+  DCT64X64            0     163  -163 |       0       7      -7 |   0.00/ 10.52
+  DCT64X32            0      92   -92 |       0     515    -515 |   0.00/ 19.02
+  DCT32X64            0     114  -114 |       0     578    -578 |   0.00/ 17.79
+  TOTAL             9594    4388 +5206 |   11577   38431  -26854
+
+# Per-region first-block counts (rows: ours then cjxl):
+  R[0,0] Δssim2=-5.547  ours: DCT16X16:575 DCT16X8:110 DCT8X16:102 DCT8:98 IDENTITY:50
+  R[0,0]                cjxl: DCT8:70 DCT8X16:61 DCT16X32:50 DCT16X8:46 IDENTITY:31
+  R[0,1] Δssim2=-5.768  ours: DCT16X16:553 DCT8X16:168 DCT8:106 IDENTITY:61 DCT16X8:53
+  R[0,1]                cjxl: DCT8:108 DCT8X16:89 DCT16X8:54 DCT16X32:48 IDENTITY:48
+  R[0,2] Δssim2=-4.761  ours: DCT16X16:692 DCT8X16:75 DCT16X8:41 DCT8:29 IDENTITY:21
+  R[0,2]                cjxl: DCT16X32:38 DCT8:29 DCT32X16:25 DCT64X64:22 DCT8X16:20
+  R[1,0] Δssim2=-9.356  ours: DCT16X16:476 DCT8:215 DCT16X8:159 IDENTITY:157 DCT8X16:98
+  R[1,0]                cjxl: DCT8:194 IDENTITY:107 DCT16X8:94 DCT8X16:77 AFV0:72
+  R[1,1] Δssim2=-8.367  ours: DCT16X16:434 DCT8:228 IDENTITY:182 DCT8X16:181 DCT16X8:105
+  R[1,1]                cjxl: DCT8:213 DCT8X16:155 IDENTITY:147 DCT16X8:98 AFV0:77
+  R[1,2] Δssim2=-3.519  ours: DCT16X16:609 DCT8:94 DCT16X8:93 DCT8X16:82 IDENTITY:66
+  R[1,2]                cjxl: DCT8:93 DCT8X16:74 DCT16X16:70 IDENTITY:64 DCT16X8:47
+  R[2,0] Δssim2=-2.877  ours: DCT16X16:656 DCT8:102 DCT8X16:80 DCT16X8:46 DCT8X4:25
+  R[2,0]                cjxl: DCT8X16:64 DCT8:35 DCT32X64:29 DCT16X32:23 DCT64X64:20
+  R[2,1] Δssim2=-3.081  ours: DCT16X16:693 DCT8:87 DCT8X16:84 DCT16X8:7 AFV1:4
+  R[2,1]                cjxl: DCT8X16:42 DCT32X64:29 DCT64X64:23 DCT16X32:20 DCT8:13
+  R[2,2] Δssim2=-0.739  ours: DCT16X16:725 DCT8:76 DCT8X16:57 DCT16X8:24 AFV1:3
+  R[2,2]                cjxl: DCT8X16:40 DCT64X64:27 DCT32X64:23 DCT32X16:14 DCT64X32:11
+
+# Per-region mean qac (sum_qac/n_fb across all strats, weighted by n_fb):
+  top:   5.5/ 68.4    5.6/ 79.1    5.2/ 62.6
+  mid:   5.8/ 97.1    6.0/ 87.7    5.6/ 80.6
+  bot:   5.0/ 53.0    5.1/ 32.9    4.9/  7.2
+
+# Per-cell strategy agreement: 4449/27398 (16.2%)
+# Top disagreement pairs (ours → cjxl):
+  DCT16X16     → DCT64X64      10432 cells
+  DCT16X16     → DCT32X64      3328 cells
+  DCT16X16     → DCT64X32      2440 cells
+  DCT16X16     → DCT16X32      2012 cells
+  DCT16X16     → DCT32X32      1208 cells
+
+=== Effort 9 ===  ours_rows=28782  cjxl_rows=13164
+
+# Per-strategy (e9):
+  strat         ours_fb cjxl_fb  Δ_fb |  ours_Y  cjxl_Y     Δ_Y | mean_qac
+  DCT8             1035     761  +274 |     884    3589   -2705 |   6.05/ 93.34
+  IDENTITY          558     430  +128 |    1463    7663   -6200 |   6.12/ 99.41
+  DCT2X2            189     184    +5 |    1640    3629   -1989 |   6.06/ 85.97
+  DCT16X16         5413     287 +5126 |     519    1664   -1145 |   5.20/ 86.88
+  DCT32X32            0      79   -79 |       0     438    -438 |   0.00/ 67.89
+  DCT16X8           638     376  +262 |     818    1514    -696 |   5.58/ 83.01
+  DCT8X16           927     622  +305 |    1306    1301      +5 |   5.23/ 70.81
+  DCT32X16            0     155  -155 |       0     546    -546 |   0.00/ 65.45
+  DCT16X32            0     318  -318 |       0    3618   -3618 |   0.00/ 59.81
+  DCT4X8             18      17    +1 |     164     262     -98 |   6.39/ 34.29
+  DCT8X4            180     100   +80 |    1101    2030    -929 |   5.99/ 70.84
+  AFV0              220     254   -34 |    1114    3748   -2634 |   6.06/ 94.04
+  AFV1              242     236    +6 |    1094    3725   -2631 |   6.00/ 95.94
+  AFV2              113     121    -8 |     948    2491   -1543 |   6.16/ 85.88
+  AFV3               61      79   -18 |     526    1621   -1095 |   5.95/ 90.72
+  DCT64X64            0     163  -163 |       0       7      -7 |   0.00/ 10.83
+  DCT64X32            0      92   -92 |       0     515    -515 |   0.00/ 19.76
+  DCT32X64            0     114  -114 |       0     578    -578 |   0.00/ 21.66
+  TOTAL             9594    4388 +5206 |   11577   38939  -27362
+
+# Per-region first-block counts (rows: ours then cjxl):
+  R[0,0] Δssim2=-5.568  ours: DCT16X16:575 DCT16X8:110 DCT8X16:102 DCT8:98 IDENTITY:50
+  R[0,0]                cjxl: DCT8:70 DCT8X16:61 DCT16X32:50 DCT16X8:46 IDENTITY:31
+  R[0,1] Δssim2=-5.871  ours: DCT16X16:553 DCT8X16:168 DCT8:106 IDENTITY:61 DCT16X8:53
+  R[0,1]                cjxl: DCT8:108 DCT8X16:89 DCT16X8:54 DCT16X32:48 IDENTITY:48
+  R[0,2] Δssim2=-4.766  ours: DCT16X16:692 DCT8X16:75 DCT16X8:41 DCT8:29 IDENTITY:21
+  R[0,2]                cjxl: DCT16X32:38 DCT8:29 DCT32X16:25 DCT64X64:22 DCT8X16:20
+  R[1,0] Δssim2=-9.356  ours: DCT16X16:476 DCT8:215 DCT16X8:159 IDENTITY:157 DCT8X16:98
+  R[1,0]                cjxl: DCT8:194 IDENTITY:107 DCT16X8:94 DCT8X16:77 AFV0:72
+  R[1,1] Δssim2=-8.451  ours: DCT16X16:434 DCT8:228 IDENTITY:182 DCT8X16:181 DCT16X8:105
+  R[1,1]                cjxl: DCT8:213 DCT8X16:155 IDENTITY:147 DCT16X8:98 AFV0:77
+  R[1,2] Δssim2=-3.568  ours: DCT16X16:609 DCT8:94 DCT16X8:93 DCT8X16:82 IDENTITY:66
+  R[1,2]                cjxl: DCT8:93 DCT8X16:74 DCT16X16:70 IDENTITY:64 DCT16X8:47
+  R[2,0] Δssim2=-2.873  ours: DCT16X16:656 DCT8:102 DCT8X16:80 DCT16X8:46 DCT8X4:25
+  R[2,0]                cjxl: DCT8X16:64 DCT8:35 DCT32X64:29 DCT16X32:23 DCT64X64:20
+  R[2,1] Δssim2=-3.081  ours: DCT16X16:693 DCT8:87 DCT8X16:84 DCT16X8:7 AFV1:4
+  R[2,1]                cjxl: DCT8X16:42 DCT32X64:29 DCT64X64:23 DCT16X32:20 DCT8:13
+  R[2,2] Δssim2=-0.739  ours: DCT16X16:725 DCT8:76 DCT8X16:57 DCT16X8:24 AFV1:3
+  R[2,2]                cjxl: DCT8X16:40 DCT64X64:27 DCT32X64:23 DCT32X16:14 DCT64X32:11
+
+# Per-region mean qac (sum_qac/n_fb across all strats, weighted by n_fb):
+  top:   5.5/ 70.0    5.6/ 80.7    5.2/ 64.3
+  mid:   5.8/ 97.4    6.0/ 89.2    5.6/ 83.1
+  bot:   5.0/ 54.4    5.1/ 33.3    4.9/  7.2
+
+# Per-cell strategy agreement: 4449/27398 (16.2%)
+# Top disagreement pairs (ours → cjxl):
+  DCT16X16     → DCT64X64      10432 cells
+  DCT16X16     → DCT32X64      3328 cells
+  DCT16X16     → DCT64X32      2440 cells
+  DCT16X16     → DCT16X32      2012 cells
+  DCT16X16     → DCT32X32      1208 cells
