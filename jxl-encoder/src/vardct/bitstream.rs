@@ -1966,6 +1966,11 @@ impl VarDctEncoder {
                     patches_data.as_ref(),
                     None,  // No splines in animation frames
                     false, // is_screenshot: see comment above
+                    // W44-117: animation frames don't precompute
+                    // mask1x1 in this path; fall back to the legacy
+                    // uniform-4 sharpness seed (byte-identical to
+                    // pre-W44-117 animation hash-locks).
+                    None,
                 )?;
             }
         }

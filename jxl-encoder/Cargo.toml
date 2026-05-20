@@ -621,6 +621,21 @@ name = "w44_116_per_step_dump"
 path = "examples/w44_116_per_step_dump.rs"
 required-features = ["__internal_recon_hook", "butteraugli-loop"]
 
+# W44-117: paired A/B comparing legacy uniform-4 EPF sharpness seed
+# (env JXL_W44_117_DISABLE=1) vs the new compute_epf_sharpness seed
+# (default) on the W44-105/107/108/109 screenshot-class qac-scale chain
+# cells. Acceptance gate: zero SSIM2 regression > 0.3 across 30+ cells.
+[[example]]
+name = "w44_117_paired_ab"
+path = "examples/w44_117_paired_ab.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
+# W44-117 decoder-roundtrip check on 3 cells × 2 decoders (djxl + jxl-oxide).
+[[example]]
+name = "w44_117_decoder_check"
+path = "examples/w44_117_decoder_check.rs"
+required-features = ["butteraugli-loop"]
+
 # RFC#45 chunk 1: e10/e11 paired A/B/C bench.
 # Needs the butteraugli-loop feature to enable e10/e11 iter extensions.
 [[example]]

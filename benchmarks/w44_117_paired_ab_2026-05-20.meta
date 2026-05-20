@@ -1,0 +1,197 @@
+W44-117 paired A/B: legacy uniform-4 sharpness vs computed seed
+================================================================
+
+Date: 2026-05-20
+Commit: pending (W44-117 wire-up)
+Host: water-cooled AMD Ryzen 9 7950X, 128 GB RAM
+Reproducer: examples/w44_117_paired_ab.rs
+
+Background
+----------
+
+W44-116 conclusively identified the W44-111 R/G linear-RGB residual
+between the buttloop's INTERNAL reconstruction and jxl-rs's decoded
+bitstream output:
+
+  * `vardct/butteraugli_loop.rs:791` allocates `sharpness =
+    vec![4u8; num_blocks]` and passes that uniform-4 map to every
+    iter's `apply_epf` call.
+  * The shipped bitstream's EPF metadata comes from
+    `compute_epf_sharpness` run AFTER the buttloop returns, on the
+    FINAL iter's quant_dc/quant_ac → a per-block sharpness map fitted
+    to the converged state.
+  * jxl-rs decodes the bitstream with the production map → reconstructs
+    with the matching sharpness.
+  * The mismatch produces 0.05-0.17 R/G max-abs delta on photo cells.
+
+W44-117 ships Option B from the W44-116 fix-shape menu: one-shot
+`compute_epf_sharpness` seed computed ONCE before the buttloop starts,
+using the initial quant_dc/quant_ac and the precomputed mask1x1.
+
+Mechanism
+---------
+
+`butteraugli_refine_quant_field` (vardct/butteraugli_loop.rs):
+
+  1. Gain a new `mask1x1: Option<&[f32]>` parameter (plumbed from
+     `encoder.rs:3307` where mask1x1 already exists for the W44-105
+     screenshot-class pre-scale + AC-strategy pixel-domain loss term).
+  2. Gate (`epf_iters > 0 AND epf_dynamic_sharpness AND mask1x1.is_some()
+     AND mask1x1.len() == padded_pixels`):
+     a. `quantize_quant_field(quant_field_float, initial_params.inv_scale)`
+        — same step the inner-seed loop runs per-iter.
+     b. `transform_and_quantize_into(...)` into the existing
+        `transform_out` scratch.
+     c. `compute_epf_sharpness(...)` on the resulting quant_dc/quant_ac
+        + the precomputed mask1x1 + initial params + cfl_map +
+        ac_strategy + enable_gaborish. Identical signature to the
+        post-loop call site in encoder.rs.
+  3. Fallback (legacy uniform-4) keeps every hash-lock byte-identical
+     for paths that didn't precompute mask1x1 (animation frames, the
+     synthetic test fixtures, ssim2 path).
+
+Per-cell methodology
+--------------------
+
+Each cell is run TWICE in immediate succession:
+  A = `JXL_W44_117_DISABLE=1` → forces the legacy uniform-4 seed path.
+  B = (default)               → the new compute_epf_sharpness seed.
+
+The env override is on the production code path; production code never
+reads it unless the env var is set. Interleaved runs are intended to
+reduce thermal/turbo bias.
+
+Headline numbers (44 cells, this run)
+-------------------------------------
+
+* Cells with data: 44 / 44
+* Total A bytes: 2,152,325  Total B bytes: 2,154,517
+* Bytes delta (B − A) / A: **+0.10 %**
+* Mean SSIM2 delta (B − A): **+0.049** (improvement)
+* Mean butteraugli delta pct (B − A) / A: +0.26%
+* Cells with SSIM2 regression < −0.3: **2** (gate target: 0)
+
+Per-cell breakdown
+------------------
+
+terminal e5..e7 × d=2..6 (15 cells): all BYTE-IDENTICAL.  Buttloop
+  doesn't run at e<8 → no opportunity for the W44-117 dispatch to fire.
+  These cells go through W44-109's adaptive_quant qf-pre-scale path
+  which is unaffected by W44-117.
+
+terminal e8 × d=2..6 (5 cells):
+  d=2 ssim2 +0.006, bytes +0.7%   (negligible)
+  d=3 ssim2 +0.664, bytes +0.3%, bfly -15.4% (B is much better)
+  d=4 ssim2 +0.897, bytes -0.6%, bfly +1.9%  (B is significantly better)
+  d=5 ssim2 +0.402, bytes +1.5%
+  d=6 ssim2 +0.066, bytes +2.2%
+
+terminal e9 × d=2..6 (5 cells): same shape as e8 (the seed path runs
+  identically at any e>=8; the additional iters at e9 don't change the
+  seed-map magnitude).
+
+codec_wiki e7 × d=3,4,5 (3 cells): all BYTE-IDENTICAL (buttloop doesn't
+  run at e7).
+
+Photo cells (16 total at e8/e9, distance d=2,3,4):
+  1418519 d=2 ssim2 +0.027, d=3 ssim2 -0.151, d=4 ssim2 -0.134
+  1025469 d=2 ssim2 -0.031, d=3 ssim2 +0.127, d=4 ssim2 -0.847  ⚠
+  1189261 d=2 ssim2 +0.041,                    d=4 ssim2 +0.118
+  1420710 d=2 ssim2 -0.122,                    d=4 ssim2 +0.170
+  1531677 d=2 ssim2 -0.110,                    d=4 ssim2 -0.102
+
+The only ssim2 regression below the -0.3 acceptance gate is 1025469
+e8/e9 d=4 (-0.847 SSIM2, -0.98% bytes, +6.4% butteraugli).
+
+W44-118 follow-on: qac-scale re-tune
+------------------------------------
+
+The W44-105/107/108/109 qac-scale chain was tuned against the LEGACY
+optimistic buttloop measurement (which reported scores 2-47× lower
+than reality). With the W44-117 fix, the buttloop sees the SAME EPF
+as the decoder → measures accurately → converges on a slightly
+different quant_field equilibrium.
+
+On screenshot-class cells (terminal, codec_wiki) the new equilibrium
+is BETTER (SSIM2 +0.4 to +0.9) because the qac-scale chain's 4×
+seed scale lifts the buttloop into a region where the now-accurate
+measurement still requires the same lift.
+
+On photo cells the picture is mixed — 1025469 e8 d=4 regresses
+0.85 SSIM2 because the buttloop's previously-optimistic score gave
+the encoder permission to over-quantize one specific pattern; now
+that the buttloop sees the real cost, it pulls back the quantization
+slightly and the qac-scale chain's 4× seed scale becomes the binding
+constraint.
+
+W44-118 candidate work (NOT shipped in W44-117):
+  (a) Decouple the W44-105 chain's `is_screenshot` from the W44-117
+      seed compute — already done structurally; both gates fire
+      independently. The interaction is via the converged quant_field.
+  (b) Re-sweep the W44-105 `DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE`
+      (currently 4.0) against the new W44-117 buttloop accuracy.
+      Lower scales (2-3) may now be sufficient on screenshot cells AND
+      avoid the photo over-correction.
+  (c) Lower the W44-109 `effort <= 7` scales (currently 2.0 at e5/e6,
+      3.0 at e7) — these don't interact with the buttloop (W44-117
+      fires only at e>=8 when buttloop runs) but they may now be
+      sub-optimal vs a different content discriminator.
+  (d) Remove the qac-scale chain entirely — high-risk, would need a
+      wide bench to verify no terminal regression.
+
+Acceptance gate evaluation
+--------------------------
+
+| Gate | Target | Result |
+|---|---|---|
+| EPF sharpness seed computed once before buttloop, used in apply_epf | wired | PASS |
+| Per-step dump residual drops ≤0.03 R on 1025469 d=2 e8 | yes | PARTIAL (0.054 max-abs; mean 0.000174 -69%) |
+| Paired interleaved A/B on 30+ cells: no SSIM2 regression > 0.3 vs W44-109 baseline | 0 | FAIL (2 cells, both 1025469 e8/e9 d=4 at -0.85) |
+| Hash-lock regen sub-100-cell + sub-200-byte | <100 | PASS (0 hash-locks changed) |
+| cargo test --lib passes | passes | PASS (1279 passed) |
+| Multi-decoder roundtrip djxl + jxl-rs on 3 cells | 3 PASS | PASS (3/3, both decoders) |
+| buttloop wall ≤ +20% vs W44-109 baseline at e8 | TBD | NOT MEASURED (paired bench timed encode but didn't isolate buttloop wall) |
+
+Per task spec decision tree:
+  "EPF residual drops but qac-scale chain causes regressions: ship EPF
+   fix + document qac-scale re-tune as W44-118."
+
+→ SHIP W44-117 + file W44-118 follow-on.
+
+Hash-lock impact
+----------------
+
+The synthetic 32×32 / 48×48 fixtures used by `tests/hash_lock_features.rs`
+go through the encoder path with mask1x1=None (pixel_domain_loss is
+off by default at the effort levels they use, OR ac_strategy_enabled
+is false). The W44-117 gate falls back to uniform-4 → 36/36
+hash-locks BYTE-IDENTICAL.
+
+Files modified
+--------------
+
+* `jxl-encoder/src/vardct/butteraugli_loop.rs` (+~80 lines):
+  new mask1x1 param + seed compute block + env override JXL_W44_117_DISABLE
+* `jxl-encoder/src/vardct/encoder.rs` (+~8 lines):
+  plumb mask1x1.as_deref() into the buttloop call
+* `jxl-encoder/src/vardct/bitstream.rs` (+~5 lines):
+  pass None (animation frames don't precompute mask1x1)
+* `jxl-encoder/examples/w44_117_paired_ab.rs` (NEW, ~300 lines)
+* `jxl-encoder/examples/w44_117_decoder_check.rs` (NEW, ~80 lines)
+* `jxl-encoder/Cargo.toml` (+12 lines): register the new examples
+* `docs/LIBJXL_DIVERGENCES.md`: Section D row updated, Section F row
+  updated to reference W44-117 + W44-118
+* `benchmarks/w44_117_paired_ab_2026-05-20.{tsv,meta}` (NEW)
+
+DO NOT
+------
+
+* DO NOT remove the W44-105/107/108/109 qac-scale chain in this chunk
+  — that's W44-118 (separate chunk, separate bench).
+* DO NOT remove the per-iter compute_epf_sharpness call inside the
+  buttloop's `for iter in 0..iters+1` loop — there is no such call;
+  the seed is computed ONCE before the loop. Option A (per-iter
+  recompute) was rejected per the W44-116 fix-shape ranking
+  (~10-30% buttloop slowdown vs Option B's one-shot cost).
+* DO NOT respawn FMA precision claims (per the binding directive).
+  The R/G residual is the sharpness map mismatch, not FMA.
