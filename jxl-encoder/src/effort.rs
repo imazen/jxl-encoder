@@ -174,6 +174,7 @@ impl EntropyMulTable {
     /// found:
     /// - 2-3 FIXED → OPEN flips on 3637739 e5/e7
     /// - -0.35 to -0.82 SSIM2 drops on 2389166 e5/e6 (exceeds ≤0.3 budget)
+    ///
     /// Honest-stopped at the current W44-29 values pending a per-image
     /// discriminator (W44-96 candidate: 2389166 differs from 1420710 in
     /// zenanalyze features even though both are mask < 50).
@@ -247,6 +248,64 @@ impl EntropyMulTable {
             // Scale dct16x32 with dct32x32 by the libjxl 1.49/1.48 ratio
             // (mirrors the W44-28 sweep harness `build_table` helper).
             dct16x32: 1.20 * (1.49 / 1.48),
+            ..Self::reference()
+        }
+    }
+
+    /// W44-98 **variant Z' (Z-high-colour)** — lifts `dct16x32`
+    /// independently of `dct32x32` within the W44-96 variant Z gate,
+    /// for the *high-colourfulness* sub-class of variant Z.
+    ///
+    /// **Source**: W44-97 per-strategy AC tokenization dump on the 7
+    /// OPEN cells remaining post-W44-96 identified DCT32X16 as the
+    /// universal #1 overspender (+10017 Y_delta total, max +2425 on
+    /// 1531677 e6 d=5) and DCT16X32 as #2 (+2465). Both share the
+    /// `dct16x32` slot in [`EntropyMulTable`] (see
+    /// `ac_strategy.rs:713`). Lifting `dct16x32` makes BOTH
+    /// rectangular 32-class transforms more expensive relative to
+    /// `dct32x32` (square merge) and `dct16x16` (smaller square),
+    /// pushing strategy selection toward the cjxl-matching picks.
+    ///
+    /// The W44-98 A/B sweep (`benchmarks/w44_98_dct16x32_lift_z_bisect_2026-05-19.tsv`,
+    /// 4 lift values × 29 cells, paired interleaved A/B) found:
+    /// - **1420710** (m3_colourfulness=32.93): tolerates `dct16x32`
+    ///   up to **1.30** with SSIM2 deltas in +0.03 to +0.07 (gains),
+    ///   closes 3/3 OPEN cells (e5 d5/d6, e7 d5) with byte deltas
+    ///   -1.25 to -1.73 pp vs the default variant Z table.
+    /// - **1531677** (m3_colourfulness=12.30): regresses SSIM2 by
+    ///   -0.34 to -0.93 under ANY `dct16x32` ≥ 1.30 (exceeds the
+    ///   ≤0.30 SSIM2 budget). Stays on the default variant Z table.
+    ///
+    /// This table is the **high-colourfulness** sub-variant: same as
+    /// `high_d_photo_smooth_suppressed_z` but with `dct16x32 = 1.30`
+    /// instead of `1.208`. Routed in
+    /// `vardct::encoder::compute_ac_strategy` by an additional
+    /// `m3_colourfulness >= W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN`
+    /// (25.0) gate INSIDE the variant Z dispatch — when both
+    /// W44-96 fires AND the m3 sub-gate fires, swap to this table
+    /// instead of the default variant Z.
+    ///
+    /// **Gate** (ALL must hold, on top of every W44-96 gate condition):
+    ///   * `ZenanalyzeProxies.m3_colourfulness >= W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN`
+    ///     (25.0 — sits between 1531677's 12.30 and 1420710's 32.93
+    ///     with 1.3× margin on each side).
+    ///
+    /// Of the 2 CID22 photos that pass the W44-96 variant Z gate
+    /// (1420710, 1531677), only **1420710** passes this additional
+    /// m3 gate; 1531677 stays on
+    /// [`high_d_photo_smooth_suppressed_z`].
+    ///
+    /// **Bench**: `benchmarks/w44_98_dct16x32_lift_z_bisect_2026-05-19.{tsv,meta}`.
+    pub fn high_d_photo_smooth_suppressed_z_high_colour() -> Self {
+        Self {
+            dct16x16: 1.27,
+            dct32x32: 1.20,
+            // dct16x32 LIFTED to 1.30, breaking the libjxl 1.49/1.48
+            // ratio. Makes DCT32X16 / DCT16X32 strictly more expensive
+            // than DCT32X32 (square merge wins more often) without
+            // changing `dct32x32` (preserves the W44-95 SSIM2 budget
+            // honoured by variant Z).
+            dct16x32: 1.30,
             ..Self::reference()
         }
     }
@@ -2675,6 +2734,43 @@ mod tests {
 
         // Every OTHER field MUST match reference (same shape as the
         // default suppressed table — variant Z only widens dct32x32).
+        assert_eq!(t.dct8, r.dct8);
+        assert_eq!(t.dct4x4, r.dct4x4);
+        assert_eq!(t.dct4x8, r.dct4x8);
+        assert_eq!(t.identity, r.identity);
+        assert_eq!(t.dct2x2, r.dct2x2);
+        assert_eq!(t.afv, r.afv);
+        assert_eq!(t.dct16x8, r.dct16x8);
+        assert_eq!(t.dct64x32, r.dct64x32);
+        assert_eq!(t.dct64x64, r.dct64x64);
+    }
+
+    #[test]
+    fn test_entropy_mul_table_high_d_photo_smooth_suppressed_z_high_colour_values() {
+        // W44-98 variant Z' (high-colour): dct32x32 = 1.20 (inherits
+        // from variant Z) BUT dct16x32 lifted INDEPENDENTLY to 1.30
+        // (not scaled with dct32x32, breaks the libjxl 1.49/1.48 ratio).
+        // Used to make DCT32X16 / DCT16X32 strictly more expensive than
+        // DCT32X32 in the high-colourfulness sub-class of variant Z
+        // (currently {1420710}). Closes 3 W44-97 OPEN cells.
+        let t = EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour();
+        let z = EntropyMulTable::high_d_photo_smooth_suppressed_z();
+        let r = EntropyMulTable::reference();
+
+        // Same dct16x16 / dct32x32 as variant Z (only dct16x32 differs).
+        assert_eq!(t.dct16x16, z.dct16x16);
+        assert_eq!(t.dct32x32, z.dct32x32);
+        assert_eq!(t.dct32x32, 1.20);
+
+        // dct16x32 = 1.30 (LIFTED above variant Z's 1.208 — breaks ratio).
+        assert_eq!(t.dct16x32, 1.30);
+        // Strict-higher than variant Z on dct16x32 (the lift direction).
+        assert!(t.dct16x32 > z.dct16x32);
+        // But still below the libjxl reference (1.49) — strict reduction.
+        assert!(t.dct16x32 < r.dct16x32);
+
+        // Every OTHER field MUST match reference (same shape as the
+        // variant Z table — Z' only lifts dct16x32 vs Z).
         assert_eq!(t.dct8, r.dct8);
         assert_eq!(t.dct4x4, r.dct4x4);
         assert_eq!(t.dct4x8, r.dct4x8);

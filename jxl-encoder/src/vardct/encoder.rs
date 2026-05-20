@@ -285,6 +285,30 @@ const W44_96_FCBR_MAX: f32 = 0.01;
 /// distance gate here is belt-and-suspenders).
 const W44_96_VARIANT_Z_MIN_DISTANCE: f32 = 4.5;
 
+/// W44-98 sub-discriminator: minimum `m3_colourfulness` to escalate from
+/// the default variant Z table
+/// ([`crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z`])
+/// to the **high-colour** variant Z' table
+/// ([`crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour`]),
+/// which lifts `dct16x32` from 1.208 to 1.30.
+///
+/// **Source**: W44-97 per-strategy AC tokenization dump on the 7 OPEN
+/// cells remaining post-W44-96 showed DCT32X16 is the universal #1
+/// overspender; lifting `dct16x32` (shared slot with DCT32X16 in
+/// `ac_strategy.rs:713`) reduces this overspending. But the W44-98 A/B
+/// sweep found 1420710 (m3=32.93) tolerates `dct16x32=1.30` with
+/// SSIM2 gains while 1531677 (m3=12.30) regresses SSIM2 by -0.34 to
+/// -0.93 under the same lift. The two images differ on
+/// `m3_colourfulness` by 2.7× — the cleanest separator among the
+/// available `ZenanalyzeProxies` fields.
+///
+/// Threshold 25.0 sits between 12.30 (1531677, REJECT) and 32.93
+/// (1420710, WANT) with 1.3× margin on the WANT side and 2.0× margin
+/// on the REJECT side. Errs toward the WANT side: a hypothetical
+/// unseen image with m3 ∈ [20, 25] stays on the default variant Z
+/// table (safer for SSIM2).
+const W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN: f32 = 25.0;
+
 /// W44-87 single-pass-entropy dispatch — smooth-photo `median(mask1x1)`
 /// upper bound. Same direction as [`HIGH_D_PHOTO_SMOOTH_THRESHOLD`]
 /// (smooth = below threshold), set to the same `50.0` value: CID22
@@ -2873,12 +2897,33 @@ impl VarDctEncoder {
                     && p.flat_color_block_ratio < W44_96_FCBR_MAX
             });
 
+        // W44-98 variant Z' sub-discriminator: when `w44_96_variant_z`
+        // fires AND the image's `m3_colourfulness` exceeds
+        // `W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN`, escalate from the
+        // default variant Z table (dct16x32=1.208) to the high-colour
+        // variant Z' table (dct16x32=1.30). This targets the W44-97
+        // finding that DCT32X16 is the universal #1 overspender on the
+        // 7 OPEN cells post-W44-96; lifting `dct16x32` makes it more
+        // expensive relative to DCT32X32 (square merge wins more often).
+        //
+        // Of the 2 CID22 photos that pass the W44-96 gate (1420710 m3=32.93,
+        // 1531677 m3=12.30), only 1420710 passes this additional gate
+        // — 1531677 stays on the default variant Z table (the W44-98
+        // A/B sweep showed 1531677 regresses SSIM2 by -0.34 to -0.93
+        // under `dct16x32 >= 1.30`, exceeding the ≤0.30 budget).
+        let w44_98_variant_z_high_colour = w44_96_variant_z
+            && self
+                .zenanalyze_proxies
+                .is_some_and(|p| p.m3_colourfulness >= W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN);
+
         let profile_for_search = if w22_1_lift || w44_29_lower || w44_65_suppress_dct64 {
             let mut p = self.profile.clone();
             if w22_1_lift {
                 p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
             } else if w44_29_lower {
-                p.entropy_mul_table = if w44_96_variant_z {
+                p.entropy_mul_table = if w44_98_variant_z_high_colour {
+                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour()
+                } else if w44_96_variant_z {
                     crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z()
                 } else {
                     crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed()

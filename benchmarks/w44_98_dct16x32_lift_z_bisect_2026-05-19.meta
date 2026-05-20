@@ -1,0 +1,173 @@
+W44-98 dct16x32 / dct32x16 lift INSIDE the W44-96 variant Z discriminator
+=========================================================================
+
+Date: 2026-05-19
+Workspace: ~/work/zen/jxl-encoder--w44-98-dct16x32-lift-z
+Parent commit: 935ea9e1 (W44-97 per-strategy dump)
+Host: claude-w44-98 (8-thread parallel encode)
+Bench file: w44_98_dct16x32_lift_z_bisect_2026-05-19.tsv
+Reproducer:
+  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run --release -p jxl-encoder \
+    --features '__expert butteraugli-loop ssim2-loop parallel' \
+    --example w44_98_dct16x32_lift_z_bisect
+
+Background
+----------
+
+W44-97 (commit 935ea9e1) per-strategy AC tokenization dump on the 7 OPEN
+cells remaining post-W44-96 (76d1dfd7) identified:
+  - DCT32X16 is the universal #1 overspender (+10017 Y_delta total,
+    max +2425 on 1531677 e6 d=5)
+  - DCT16X32 is #2 (+2465)
+  - DCT16X16 is universally UNDER-fired (-6815 Y_delta)
+
+DCT32X16 and DCT16X32 share the `dct16x32` slot in EntropyMulTable
+(ac_strategy.rs:713: `RAW_STRATEGY_DCT32X16 | RAW_STRATEGY_DCT16X32 =>
+table.dct16x32`). Lifting that single value makes both rectangular
+32-class transforms more expensive relative to DCT32X32 (square merge)
+and DCT16X16 (smaller square).
+
+Variants tested
+---------------
+
+All 4 variants build on `high_d_photo_smooth_suppressed_z()` (dct32x32=1.20,
+dct16x16=1.27) and lift ONLY dct16x32, breaking the libjxl 1.49/1.48
+dct16x32:dct32x32 ratio. All gated on the W44-96 variant Z conditions:
+mask_med<50 AND edge_density>=0.7 AND fcbr<0.01 AND d>=4.5.
+
+  variant | dct32x32 | dct16x32 | rationale
+  --------+----------+----------+-------------------------------------------
+  default | 1.34     | 1.349    | W44-29 default suppressed table
+  ZD      | 1.20     | 1.25     | Smallest lift above variant Z (1.208)
+  ZA      | 1.20     | 1.30     | Moderate lift, matches W44-94 prediction
+  ZB      | 1.20     | 1.40     | W44-94 variant X value (tanked SSIM2 globally)
+  ZC      | 1.20     | 1.49     | libjxl reference value
+
+Cell set (29 cells)
+-------------------
+
+7 W44-97 OPEN cells:
+  1420710 e5 d=5, e5 d=6, e7 d=5
+  1531677 e5 d=5, e6 d=5, e8 d=5, e9 d=5
+
+3 W44-95 regressors (must stay FIXED, SSIM2 ≤ 0.3):
+  2389166 e7 d=5
+  3637739 e5 d=5, e7 d=4
+
+6 W93_REGR cells (W44-91 path, must stay byte-identical):
+  1189261 e7 d=3, e7 d=4, e7 d=5
+  1418519 e6/e7/e8 d=5
+
+13 SPOT_FIXED controls.
+
+Key findings
+------------
+
+Aggregate (29 cells, avg byte delta vs cjxl):
+  default        +11377B  (FIXED→OPEN 0, OPEN→FIXED 0, Δssim2_avg +0.0000)
+  ZD (1.25)       +9951B  (FIXED→OPEN 0, OPEN→FIXED 4, Δssim2_avg -0.0422,
+                           worst SSIM2 -0.287)
+  ZA (1.30)       +7378B  (FIXED→OPEN 1, OPEN→FIXED 7, Δssim2_avg -0.0969,
+                           worst SSIM2 -0.598)
+  ZB (1.40)       +9407B  (FIXED→OPEN 0, OPEN→FIXED 5, Δssim2_avg -0.179,
+                           worst SSIM2 -0.858)
+  ZC (1.49)       +8741B  (FIXED→OPEN 0, OPEN→FIXED 5, Δssim2_avg -0.177,
+                           worst SSIM2 -0.933)
+
+ZA closes the MOST cells (7) BUT tanks 1531677 SSIM2 by -0.34 to -0.60 on
+4 OPEN cells AND flips 1531677 e5 d=6 FIXED→OPEN. ZB/ZC have similar
+1531677 SSIM2 failure mode.
+
+Per-image split
+---------------
+
+  1420710 (m3_colourfulness=32.93):
+    Tolerates dct16x32 up to 1.40 with SSIM2 deltas in +0.03 to +0.07
+    (gains). ZA closes 3/3 OPEN cells (e5 d5: +3.67%→+2.42%,
+    e5 d6: +4.02%→+2.74%, e7 d5: +3.36%→+1.62%).
+
+  1531677 (m3_colourfulness=12.30):
+    Regresses SSIM2 by -0.34 to -0.93 under ANY dct16x32 ≥ 1.30. ONLY
+    ZD (1.25) stays within ≤0.30 SSIM2 budget. ZD closes 2/4 OPEN
+    cells: e6 d5 (+3.04%→+2.54%), e8 d5 (+3.05%→+2.90%). Fails to
+    close e5 d=5 (+3.55%→+3.00% — borderline OPEN) and e9 d=5
+    (+3.64%→+3.55% — still OPEN).
+
+The two images want OPPOSITE lift strengths. Single global lift cannot
+satisfy both (same constraint as W44-94 conclusion).
+
+Sub-discriminator: m3_colourfulness
+-----------------------------------
+
+  feature             | 1420710 | 1531677 | discriminating?
+  --------------------+---------+---------+-----------------
+  m3_colourfulness    | 32.93   | 12.30   | YES (2.7x)
+  edge_density        | 0.93    | 0.88    | NO (1.06x)
+  flat_color_block    | 0.00    | 0.00    | NO
+  mask_med            | 39.55   | 35.63   | NO (1.1x)
+
+`m3_colourfulness` is the cleanest single-feature splitter AND is
+already in ZenanalyzeProxies (no new computation). Threshold 25.0 sits
+between 12.30 (REJECT) and 32.93 (WANT) with 1.3x margin on each side.
+The OTHER 3 W44-29-firing photos (2389166 m3=48.00, 1044329 m3=65.03,
+7062219 m3=51.14) all FAIL the W44-96 edge_density/fcbr gate so they
+never reach the m3 sub-check — but if a future unseen photo passes
+W44-96 with m3 in [12, 25], it would safely stay on the default
+variant Z table.
+
+Production change (shipped W44-98)
+----------------------------------
+
+`EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour()`:
+  dct16x16 = 1.27
+  dct32x32 = 1.20  (matches variant Z)
+  dct16x32 = 1.30  (LIFTED above variant Z's 1.208, breaks libjxl ratio)
+
+Gate (in `vardct/encoder.rs:compute_ac_strategy`):
+  When w44_96_variant_z fires AND m3_colourfulness >= 25.0, swap to
+  the high_colour table instead of the default variant Z table.
+
+Per-cell closure (vs origin/main baseline = forced variant Z table):
+  1420710 e5 d=5:  +3.67% → +2.42% (-291B, +0.07 SSIM2) [OPEN→FIXED]
+  1420710 e5 d=6:  +4.02% → +2.74% (-259B, +0.05 SSIM2) [OPEN→FIXED]
+  1420710 e7 d=5:  +3.36% → +1.62% (-410B, -0.03 SSIM2) [OPEN→FIXED]
+  1420710 e6 d=5:  +2.78% → +1.62% (-273B, -0.01 SSIM2) [FIXED→FIXED-improved]
+  1420710 e6 d=6:  +2.72% → +1.47% (-257B, +0.02 SSIM2) [FIXED→FIXED-improved]
+  1420710 e8 d=5:  +2.46% → +1.89% (-125B, +0.003 SSIM2) [FIXED→FIXED-improved]
+  1420710 e9 d=5:  +2.48% → +1.90% (-126B, +0.003 SSIM2) [FIXED→FIXED-improved]
+  1531677 (all):   byte-identical (m3=12.30 < 25.0, stays on variant Z)
+
+See w44_98_baseline_diff_2026-05-19.tsv for the full per-cell diff
+(production vs origin/main-equivalent baseline).
+
+Acceptance gates (ALL PASS)
+---------------------------
+
+(a) ≥3 OPEN close: PASS (3 closes: 1420710 e5 d5, e5 d6, e7 d5)
+(b) Zero FIXED→OPEN regressions: PASS
+(c) SSIM2 regression ≤ 0.3 on any cell: PASS (worst -0.0275)
+(d) W93_REGR cells byte-identical: PASS (all 6 cells, all 3 W95_REGR cells)
+(e) Hash-lock regen sub-100-cell: PASS (0 hash-locks need regen — gate
+    only fires at d>=4.5 on real photos; no synthetic hash-lock images
+    touch the gate)
+(f) `cargo test --lib`: 1315/1316 PASS (pre-existing
+    effort_expert_tests::lossless_override_nb_rcts_to_try failure
+    documented in W44-94)
+(g) Multi-decoder roundtrip via djxl + jxl-rs + jxl-oxide on 3 closed
+    cells: 9/9 PASS
+
+DO NOT
+------
+
+- DO NOT lower W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN below 25.0 — the
+  W44-98 sweep measured 1531677 (m3=12.30) regressing SSIM2 by -0.34
+  to -0.93 under ANY dct16x32 ≥ 1.30. Threshold 25.0 errs toward the
+  REJECT side for unseen images.
+- DO NOT raise dct16x32 above 1.30 in the high_colour table without
+  re-measuring on 1420710 SPOT_FIXED cells — ZB (1.40) tanked
+  1420710 e6 d=5 SSIM2 in the bisect.
+- DO NOT cite "FMA precision" as the residual mechanism for the
+  remaining 4 1531677 OPEN cells (per W44-66 user correction). The
+  mechanism IS findable — see W44-94 honest-stop for the per-distance
+  butteraugli loop promotion candidate.
