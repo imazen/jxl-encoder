@@ -1,0 +1,184 @@
+# W44-100 1531677 e5 d=5 micro-bisect — bench metadata
+
+## Date / commit / host
+Date: 2026-05-19
+Parent commit: cb63f216 (W44-99 ship)
+Hostname: zenenc (AMD Ryzen 9 7950X 16-core, 128 GB RAM)
+Cargo features: __expert butteraugli-loop ssim2-loop parallel
+
+## What this measures
+
+Micro-bisect of 4 dct16x32 lift values {1.22, 1.23, 1.24, 1.25} on the
+W44-99 low-colour sub-discriminator gate. W44-99 shipped 1.22 because the
+broader bisect ({1.22, 1.25, 1.27, 1.28, 1.30}) couldn't safely close the
+last OPEN cell (1531677 e5 d=5) under the ≤0.30 SSIM2 budget. W44-99 noted
+the last OPEN cell stayed at +3.090% bytes (0.09% over the threshold) and
+suggested 1.23/1.24/1.25 might split the difference.
+
+Goal: find the largest `dct16x32` value that closes 1531677 e5 d=5 OPEN
+(bytes_delta ≤ +3.0%) WITHOUT exceeding the ≤0.30 SSIM2 regression budget
+on any of 10 sentinel cells.
+
+Cell set (10 total):
+- 4 OPEN cells: 1531677 e5/e6/e8/e9 d=5
+- 4 1531677 SPOT_FIXED cells (must stay FIXED — d=6 + d=4 controls)
+- 2 1420710 SPOT_FIXED cells (HC dispatch — must stay byte-identical)
+
+## Headline results (aggregate)
+
+| Variant   | dct16x32 | Δvs_cjxl   | OPEN→FIXED | FIXED→OPEN | worst Δssim2 | within budget? |
+|---        |---       |---         |---         |---         |---           |---             |
+| default   | 1.22 (W44-99 prod) | +4121B over 10 | 0  | 0     | 0          | baseline       |
+| LC_1.22   | 1.22     | +4121B     | 0          | 0          | 0            | (== default)   |
+| **LC_1.23** | **1.23** | **+2731B** | **1**    | **0**      | **-0.2592**  | **YES**        |
+| LC_1.24   | 1.24     | +4133B     | 1          | 1 ⚠        | -0.2869      | YES            |
+| LC_1.25   | 1.25     | +4467B     | 0          | 0          | -0.2965      | YES            |
+
+(OPEN→FIXED counter uses the harness's stricter `bytes>3 AND bfly>3` joint
+threshold; the production ledger uses `bytes>3 AND (bfly>3 OR ssim2<-1)`
+so the actual ledger flip count is larger — see per-cell table below.)
+
+**LC_1.23 strictly dominates LC_1.24 and LC_1.25**: lowest total bytes,
+lowest worst-cell SSIM2 cost, only variant with zero FIXED→OPEN flips,
+AND closes the last OPEN cell at +1.943% bytes (vs W44-99's +3.090%).
+
+## Per-cell results (LC_1.23, the SHIPPED variant)
+
+### 4 OPEN/post-W44-99 cells
+
+| cell           | W44-99 Δ% | LC_1.23 Δ% | bytes saved | Δssim2  |
+|---             |---        |---         |---          |---      |
+| 1531677 e5 d=5 | +3.090    | **+1.943** | -232 B      | -0.0729 |
+| 1531677 e6 d=5 | +2.602    | **+1.488** | -229 B      | -0.1464 |
+| 1531677 e8 d=5 | +1.922    | **-0.096** | -380 B      | -0.2592 |
+| 1531677 e9 d=5 | +2.532    | **+0.500** | -382 B      | -0.2592 |
+
+All 4 cells improve on bytes. 1531677 e5 d=5 was the last OPEN cell
+(under W44-99 ledger) and is now FIXED at +1.943%. Worst SSIM2 delta
+across these 4 = -0.2592 (e8/e9 d=5), well under the 0.30 budget.
+
+### 4 1531677 SPOT_FIXED (must stay FIXED)
+
+| cell           | W44-99 Δ% | LC_1.23 Δ% | Δbytes | Δssim2  |
+|---             |---        |---         |---     |---      |
+| 1531677 e5 d=6 | +2.952    | +2.466     | -84    | -0.2230 |
+| 1531677 e6 d=6 | +2.022    | +1.552     | -83    | -0.1629 |
+| 1531677 e5 d=4 | -0.735    | -0.735     | 0      | 0       |
+| 1531677 e6 d=4 | +1.961    | +1.961     | 0      | 0       |
+
+d=6 cells fire the LC gate and gain bytes; SSIM2 deltas within budget.
+d=4 cells are outside the gate (LC fires at d>=4.5) so byte-identical.
+
+### 2 1420710 SPOT_FIXED (HC dispatch — must stay byte-identical)
+
+| cell           | W44-99 Δ% | LC_1.23 Δ% | Δbytes |
+|---             |---        |---         |---     |
+| 1420710 e5 d=5 | +2.416    | +2.416     | 0      |
+| 1420710 e6 d=5 | +1.624    | +1.624     | 0      |
+
+Byte-identical (HC dispatch is unaffected by the LC value bump).
+
+## Production-vs-injected verification
+
+`w44_99_production_vs_injected` example re-run after the production change
+confirms the wired W44-100 gate produces bytes IDENTICAL to the injected
+LC_1.23 variant on every 1531677 cell. 1420710 cells stay on the W44-98
+high_colour Z' table (byte-identical to W44-98).
+
+```
+case	1531677.png	5	5	20620	20620	YES	Z_low_colour
+case	1531677.png	6	5	20866	20866	YES	Z_low_colour
+case	1531677.png	8	5	18820	18820	YES	Z_low_colour
+case	1531677.png	9	5	18896	18896	YES	Z_low_colour
+case	1531677.png	5	6	17701	17701	YES	Z_low_colour
+case	1531677.png	6	6	17929	17929	YES	Z_low_colour
+case	1420710.png	5	5	23823	23823	YES	Z_high_colour
+... (all HC cells byte-identical)
+```
+
+## Non-monotonic cost-model observation
+
+The bisect data shows the cost model is non-monotonic in this region:
+
+| cell           | LC_1.22 bytes_pct | LC_1.23 | LC_1.24 | LC_1.25 |
+|---             |---                |---      |---      |---      |
+| 1531677 e5 d=5 | +3.090            | +1.943  | +1.542  | +3.001  |
+| 1531677 e6 d=5 | +2.602            | +1.488  | +1.114  | +2.539  |
+| 1531677 e8 d=5 | +1.922            | -0.096  | **+3.854** | +2.904 |
+| 1531677 e9 d=5 | +2.532            | +0.500  | **+4.367** | +3.547 |
+
+LC_1.24 flips 1531677 e8/e9 d=5 to OPEN (+3.85% / +4.37%) despite being
+the lowest-bytes lift at d=5 for e5/e6. This is the FIXED→OPEN warning
+in the LC_1.24 row above. LC_1.23 is the only value with zero FIXED→OPEN
+and the most consistent byte improvement.
+
+This non-monotonicity confirms a measurement-driven bisect was correct
+— interpolating between LC_1.22 and LC_1.25 would have predicted
+LC_1.23/LC_1.24 as smooth midpoints, but the cost model routes to
+different AC strategies under tiny lift changes at different effort
+levels.
+
+## Multi-decoder roundtrip
+
+`w44_100_decoder_check` example: 15/15 PASS (5 cells × 3 decoders
+djxl + jxl-rs + jxl-oxide).
+
+```
+1531677.png e5 d5: djxl=OK jxl-rs=OK jxl-oxide=OK (bytes=20620) [OPEN closed by W44-100]
+1531677.png e6 d5: djxl=OK jxl-rs=OK jxl-oxide=OK (bytes=20866) [still LC, bumped to 1.23]
+1531677.png e8 d5: djxl=OK jxl-rs=OK jxl-oxide=OK (bytes=18820) [still LC, bumped to 1.23]
+1531677.png e9 d5: djxl=OK jxl-rs=OK jxl-oxide=OK (bytes=18896) [still LC, bumped to 1.23]
+1420710.png e5 d5: djxl=OK jxl-rs=OK jxl-oxide=OK (bytes=23823) [HC unchanged from W44-98]
+```
+
+## Hash-locks
+
+36/36 byte-identical (1295 test fixtures, 36 in hash_lock_features test
+suite; LC gate fires only on 1531677-class images at d>=4.5 — no hash-lock
+fixture matches that profile). No hash-lock regen required.
+
+## Reproducer
+
+```bash
+cd ~/work/zen/jxl-encoder
+export CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target
+
+# Bisect bench:
+cargo run --release -p jxl-encoder \
+  --features '__expert butteraugli-loop ssim2-loop parallel' \
+  --example w44_100_1531677_e5_d5_microbisect \
+  > benchmarks/w44_100_1531677_e5_d5_microbisect_2026-05-19.tsv
+
+# Verify production dispatch matches injected variant LC_1.23:
+cargo run --release -p jxl-encoder \
+  --features '__expert butteraugli-loop ssim2-loop parallel' \
+  --example w44_99_production_vs_injected
+
+# Multi-decoder roundtrip:
+cargo run --release -p jxl-encoder \
+  --features '__expert butteraugli-loop ssim2-loop parallel' \
+  --example w44_100_decoder_check
+```
+
+## Acceptance gates (HARD — per task)
+
+| Gate                                              | Target | Actual              | PASS? |
+|---                                                |---     |---                  |---    |
+| Closes 1531677 e5 d=5 (≤+3.0% bytes)              | YES    | +1.943%             | YES   |
+| Zero FIXED → OPEN flips                           | 0      | 0                   | YES   |
+| SSIM2 regression ≤ 0.30 on any cell               | ≤0.30  | worst -0.2592       | YES   |
+| Hash-lock regen sub-100-cell + sub-100-byte       | ≤100   | 0 (byte-identical)  | YES   |
+| `cargo test --lib`: passes                        | pass   | 1266/1266           | YES   |
+| Multi-decoder roundtrip on 5 cells                | pass   | 15/15 djxl+jxl-rs+oxide | YES |
+| 1420710 HC cells byte-identical to W44-98         | YES    | YES                 | YES   |
+
+ALL GATES PASS — shippable.
+
+## Ledger impact
+
+Predicted: 1 → 0 OPEN. **Cumulative session reduction: 16 → 0 (-100%).**
+
+The cell that was at +3.090% under W44-99 is now at +1.943% under W44-100.
+All other 1531677 d=5 cells (e6/e8/e9) gain additional bytes savings AND
+SSIM2 deltas stay within budget. No FIXED→OPEN regressions on any cell
+in the test set. Ledger refresh in W44-100 chunk 2 will confirm.

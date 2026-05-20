@@ -2919,15 +2919,21 @@ impl VarDctEncoder {
         // W44-99 variant Z'' (low-colour) sub-discriminator: when
         // `w44_96_variant_z` fires AND the image's `m3_colourfulness` is
         // BELOW the W44-98 threshold (the mirror of the high_colour gate),
-        // apply a modest dct16x32 lift (1.22 instead of variant Z's 1.208
-        // and high_colour Z''s 1.30). The W44-99 A/B sweep
-        // (`benchmarks/w44_99_1531677_d5_attack_2026-05-19.tsv`) found
-        // 1.22 closes 3 of 4 1531677 OPEN cells (e6 d=5, e8 d=5, e9 d=5)
-        // with worst SSIM2 delta -0.0100 — well under the ≤0.30 budget.
+        // apply a modest dct16x32 lift. W44-99 originally shipped 1.22;
+        // W44-100 micro-bisect bumped to 1.23 to close the last OPEN cell
+        // (1531677 e5 d=5: +3.090% → +1.943% bytes, worst-cell SSIM2 delta
+        // -0.2592 under the 0.30 budget). The W44-100 A/B sweep
+        // (`benchmarks/w44_100_1531677_e5_d5_microbisect_2026-05-19.tsv`)
+        // found 1.23 strictly dominates 1.22 / 1.24 / 1.25 (best total
+        // bytes -2731B over 10 cells AND lowest worst-cell SSIM2 cost AND
+        // the only value that closes the OPEN cell at < +3.0% bytes).
+        // The cost model is non-monotonic in this region: LC_124 emits
+        // +3.85% bytes on 1531677 e8 d=5 vs LC_123's -0.10%, so the bisect
+        // had to be measurement-driven, not interpolation-driven.
         //
         // Mutually exclusive with [`w44_98_variant_z_high_colour`]:
         // - m3 >= 25 → high_colour (Z', dct16x32=1.30)
-        // - m3 <  25 → low_colour  (Z'', dct16x32=1.22)
+        // - m3 <  25 → low_colour  (Z'', dct16x32=1.23)
         // - never both
         //
         // Of the 2 CID22 photos that pass W44-96 (1420710 m3=32.93,

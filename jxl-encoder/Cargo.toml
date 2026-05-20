@@ -1287,5 +1287,24 @@ name = "w44_99_decoder_check"
 path = "examples/w44_99_decoder_check.rs"
 required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
 
+# W44-100 1531677 e5 d=5 micro-bisect: tries dct16x32 lifts {1.22, 1.23,
+# 1.24, 1.25} on the low-colour gate. W44-99 picked 1.22 (worst SSIM2 only
+# -0.0100) but the last OPEN cell stays at +3.090% bytes (0.09% over the
+# 3.0% threshold). 1.25 closes it at +3.001% but at -0.2873 SSIM2; 1.23/1.24
+# may split the difference. Cost model is non-monotonic (LC_127 had MORE
+# bytes than LC_122) so worth a targeted try.
+[[example]]
+name = "w44_100_1531677_e5_d5_microbisect"
+path = "examples/w44_100_1531677_e5_d5_microbisect.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
+# W44-100 decoder roundtrip check: encodes the 1531677 e5/e6/e8/e9 d=5
+# cells with the new production dispatch (dct16x32 = 1.23 on LC) and
+# roundtrips through djxl + jxl-rs + jxl-oxide.
+[[example]]
+name = "w44_100_decoder_check"
+path = "examples/w44_100_decoder_check.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
 [lints]
 workspace = true
