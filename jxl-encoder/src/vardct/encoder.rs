@@ -2965,54 +2965,75 @@ impl VarDctEncoder {
         // can in principle conflict (caller forces both `Some(true)`);
         // in that case W22-1 wins by precedence (its lift was shipped
         // first, has hash-lock coverage at d < 4, and is opt-in only).
+        // W44-129 Chunk C: read the resolved `high_d_photo_entropy_mul` enum
+        // from `ResolvedImprovements` (populated by Chunk B
+        // `LossyConfig::resolve_improvements`). The legacy
+        // `high_d_photo_hint` `Option<bool>` is still consulted as a
+        // fallback under `Auto` for direct `VarDctEncoder::new` callers
+        // (tests + examples). `StrategyOverrides::apply_to` maps
+        // `Some(true) → ForceOn`, `Some(false) → ForceOff`, preserving
+        // production semantics bit-identically. `Disabled` is reachable
+        // only via `EncoderStrategy::Libjxl` and short-circuits the
+        // entire W44-29/91 gate stack to off.
+        let high_d_photo_policy = self
+            .resolved_improvements
+            .as_ref()
+            .map(|r| r.high_d_photo_entropy_mul)
+            .unwrap_or_default();
         let w44_29_lower = if w22_1_lift {
             // Mutually exclusive — W22-1 already swapped to the lift
             // table. Don't double-swap.
             false
         } else {
-            match self.high_d_photo_hint {
-                Some(b) => b,
-                None => {
-                    // Auto: try two gates in OR.
-                    //
-                    // (a) **W44-29 smooth-photo gate** (default-on since
-                    // commit `a01c4a7f`): `distance >= HIGH_D_PHOTO_MIN_DISTANCE`
-                    // AND `median(mask1x1) < HIGH_D_PHOTO_SMOOTH_THRESHOLD`
-                    // (smooth-content discriminator, mask1x1 < 50).
-                    //
-                    // (b) **W44-91 zenanalyze-proxy gate**: targets the
-                    // textured-colourful-photo sub-band (mask1x1 ∈ [50, 80))
-                    // that the W44-29 gate alone cannot reach without
-                    // regressing 6 documented W44-78 regression-band images
-                    // (1025469, 1624487, 159550, 2079234, 2775196, 297394).
-                    // Fires only when ALL hold:
-                    //   * distance ∈ [HIGH_D_PHOTO_MIN_DISTANCE,
-                    //                 HIGH_D_PHOTO_W44_91_MAX_DISTANCE] (3..=5)
-                    //   * mask1x1_median ∈ [HIGH_D_PHOTO_SMOOTH_THRESHOLD,
-                    //                       HIGH_D_PHOTO_W44_91_MASK_UPPER) (50..80)
-                    //   * zenanalyze proxies populated (8-bit sRGB layout)
-                    //   * m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN (80)
-                    //   * flat_color_block_ratio < W44_91_FCBR_MAX (0.01)
-                    //
-                    // On the 41 CID22 validation images only 1189261
-                    // matches; on the 6 documented W44-78 regression-band
-                    // images none match (each fails at least one of the
-                    // colourfulness/fcbr gates per W44-79 discriminator C3).
-                    let w44_29_gate = self.distance >= HIGH_D_PHOTO_MIN_DISTANCE
-                        && mask1x1_median.is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD);
-                    let w44_91_gate = (HIGH_D_PHOTO_MIN_DISTANCE
-                        ..=HIGH_D_PHOTO_W44_91_MAX_DISTANCE)
-                        .contains(&self.distance)
-                        && mask1x1_median.is_some_and(|med| {
-                            (HIGH_D_PHOTO_SMOOTH_THRESHOLD..HIGH_D_PHOTO_W44_91_MASK_UPPER)
-                                .contains(&med)
-                        })
-                        && self.zenanalyze_proxies.is_some_and(|p| {
-                            p.m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN
-                                && p.flat_color_block_ratio < W44_91_FCBR_MAX
-                        });
-                    w44_29_gate || w44_91_gate
-                }
+            match high_d_photo_policy {
+                crate::api::HighDPhotoEntropyMulPolicy::Auto => match self.high_d_photo_hint {
+                    Some(b) => b,
+                    None => {
+                        // Auto: try two gates in OR.
+                        //
+                        // (a) **W44-29 smooth-photo gate** (default-on since
+                        // commit `a01c4a7f`): `distance >= HIGH_D_PHOTO_MIN_DISTANCE`
+                        // AND `median(mask1x1) < HIGH_D_PHOTO_SMOOTH_THRESHOLD`
+                        // (smooth-content discriminator, mask1x1 < 50).
+                        //
+                        // (b) **W44-91 zenanalyze-proxy gate**: targets the
+                        // textured-colourful-photo sub-band (mask1x1 ∈ [50, 80))
+                        // that the W44-29 gate alone cannot reach without
+                        // regressing 6 documented W44-78 regression-band images
+                        // (1025469, 1624487, 159550, 2079234, 2775196, 297394).
+                        // Fires only when ALL hold:
+                        //   * distance ∈ [HIGH_D_PHOTO_MIN_DISTANCE,
+                        //                 HIGH_D_PHOTO_W44_91_MAX_DISTANCE] (3..=5)
+                        //   * mask1x1_median ∈ [HIGH_D_PHOTO_SMOOTH_THRESHOLD,
+                        //                       HIGH_D_PHOTO_W44_91_MASK_UPPER) (50..80)
+                        //   * zenanalyze proxies populated (8-bit sRGB layout)
+                        //   * m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN (80)
+                        //   * flat_color_block_ratio < W44_91_FCBR_MAX (0.01)
+                        //
+                        // On the 41 CID22 validation images only 1189261
+                        // matches; on the 6 documented W44-78 regression-band
+                        // images none match (each fails at least one of the
+                        // colourfulness/fcbr gates per W44-79 discriminator C3).
+                        let w44_29_gate = self.distance >= HIGH_D_PHOTO_MIN_DISTANCE
+                            && mask1x1_median
+                                .is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD);
+                        let w44_91_gate = (HIGH_D_PHOTO_MIN_DISTANCE
+                            ..=HIGH_D_PHOTO_W44_91_MAX_DISTANCE)
+                            .contains(&self.distance)
+                            && mask1x1_median.is_some_and(|med| {
+                                (HIGH_D_PHOTO_SMOOTH_THRESHOLD..HIGH_D_PHOTO_W44_91_MASK_UPPER)
+                                    .contains(&med)
+                            })
+                            && self.zenanalyze_proxies.is_some_and(|p| {
+                                p.m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN
+                                    && p.flat_color_block_ratio < W44_91_FCBR_MAX
+                            });
+                        w44_29_gate || w44_91_gate
+                    }
+                },
+                crate::api::HighDPhotoEntropyMulPolicy::ForceOn => true,
+                crate::api::HighDPhotoEntropyMulPolicy::ForceOff => false,
+                crate::api::HighDPhotoEntropyMulPolicy::Disabled => false,
             }
         };
 
@@ -3111,11 +3132,23 @@ impl VarDctEncoder {
         // for the per-image proxy split. Excludes the W44-91 mask band
         // because variant Z was never measured against W44-91 cells.
         //
-        // Auto only: when the caller forced `high_d_photo_hint=Some(true)`
-        // outside the W44-29 mask range we keep the default suppressed
-        // table (no variant Z escalation from a forced hint — caller can
-        // ship their own table override if they want).
+        // Auto only: when the caller forced `high_d_photo_hint=Some(true)` /
+        // `HighDPhotoEntropyMulPolicy::ForceOn` outside the W44-29 mask
+        // range we keep the default suppressed table (no variant Z
+        // escalation from a forced override — caller can ship their own
+        // table override if they want).
+        //
+        // W44-129 Chunk C: now matches against the resolved policy enum
+        // instead of `self.high_d_photo_hint.is_none()`. Production
+        // semantics unchanged: `Auto` corresponds to "caller did not
+        // force a hint" via `StrategyOverrides::apply_to`, so when the
+        // legacy `high_d_photo_hint == None` (default path),
+        // `high_d_photo_policy == Auto` and the variant Z gate is
+        // reachable; when caller set `Some(true)/Some(false)`, the
+        // policy resolves to `ForceOn`/`ForceOff` and variant Z is
+        // suppressed (mirrors the pre-rewire `.is_none()` check).
         let w44_96_variant_z = w44_29_lower
+            && matches!(high_d_photo_policy, crate::api::HighDPhotoEntropyMulPolicy::Auto)
             && self.high_d_photo_hint.is_none()
             && self.distance >= W44_96_VARIANT_Z_MIN_DISTANCE
             && mask1x1_median.is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD)
