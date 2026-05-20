@@ -149,6 +149,17 @@ pub mod __recon_hook {
     pub use super::butteraugli_loop::recon_hook::*;
 }
 
+/// W44-114 AFV IDCT parity test hook — re-exports AFV transform entry
+/// points for the `tests/afv_idct_parity.rs` impulse-response test.
+///
+/// **Not part of the stable API.** Used only to verify bit-parity of
+/// `inverse_afv_transform` and `afv_transform_from_pixels` against a
+/// hand-ported libjxl `AFVIDCT4x4` reference (chunk W44-114).
+#[doc(hidden)]
+pub mod __afv {
+    pub use super::afv::{afv_transform_from_pixels, inverse_afv_transform};
+}
+
 /// Sweep-only atomic overrides for the distance-aware butteraugli-loop
 /// tuning scaffolding (W38-2 #3.1; infrastructure ported from GPU
 /// commit `d75bf7c`).

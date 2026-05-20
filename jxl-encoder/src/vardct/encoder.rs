@@ -2610,9 +2610,8 @@ impl VarDctEncoder {
         // scale stays at 1.0 → byte-identical to pre-W44-109. Only
         // low-effort screenshot-class hits the lossy gate.
         {
-            let is_screenshot = mask1x1_median_for_pre_scale.is_some_and(|med| {
-                med > super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD
-            });
+            let is_screenshot = mask1x1_median_for_pre_scale
+                .is_some_and(|med| med > super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD);
             let m3 = self.zenanalyze_proxies.map(|p| p.m3_colourfulness);
             let qf_pre_scale = super::butteraugli_loop::resolved_adaptive_quant_qf_seed_scale(
                 self.effort,
