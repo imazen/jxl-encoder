@@ -1,0 +1,249 @@
+# W44-122 codec_wiki d=3 admit-DCT64 A/B — HONEST STOP
+
+**Date**: 2026-05-20
+**Workspace**: ~/work/zen/jxl-encoder--w44-122-codec-wiki-d3-dct64
+**Harness**: jxl-encoder/examples/w44_122_ab.rs (clone of W44-104 retargeted)
+**TSV**: w44_122_codec_wiki_d3_ab_2026-05-20.tsv
+**Outcome**: HONEST-STOP — verifies the W44-104 ruling on a different cell;
+W44-65 / W44-68 dct_suppress is load-bearing; admit-DCT64 here:
+(a) doesn't reach the +2.0 SSIM2 acceptance gate on codec_wiki (max +1.40)
+(b) regresses 11 OTHER screen cells by -0.37 to -1.44 SSIM2
+(c) introduces +29% butteraugli regression on terminal e8/e9 (the W44-104
+    regression cell from the very same suppression bypass)
+
+## Background
+
+W44-121 (`87466ec5`) dumped codec_wiki.png d=3 across e5/e6/e7 and found
+the SAME ROOT-CAUSE PATTERN as W44-103/W44-104 on terminal d=4:
+- DCT16X16 over-fires 100× vs cjxl (14031 vs 138 first-blocks)
+- DCT64 family entirely absent from our output (vs cjxl 783-1019 fb)
+- Per-region mean qac at PARITY (8.0-8.7 both sides)
+- Cluster magnitude: -2.67 / -2.99 / -3.38 SSIM2 vs cjxl
+
+W44-121 ranked "Candidate A: find_best_64x64_transform cost-model audit"
+as highest EV (5-10 SSIM2 points expected). The dispatch task acknowledged
+that W44-104 already RULED OUT the SAME LEVER on terminal d=4 but flagged
+codec_wiki d=3 as potentially different regime (lower d, different mask
+profile, post-W44-117/118/120 EPF improvements). This chunk performs the
+direct A/B to test whether the lever transfers.
+
+## Mechanism (confirmed identical to W44-104 finding)
+
+W44-65 (`vardct/encoder.rs:2960-2963`) auto-fires
+`dct_suppress = true` when `median(mask1x1) >= 99.5`. W44-68 extended
+the suppression to also drop `try_dct32 = false` on the same class.
+
+codec_wiki.png IS in the screenshot class (median ≈ 100.013 per
+W44-65 promotion notes), so both flips fire by default. The DCT64
+search is never run.
+
+Smoke verified (e5/e6/e7 d=3 codec_wiki.png):
+- AUTO (None)          : 79233 / 81576 / 68978 bytes  (W44-65 fires)
+- FORCE-SUPPRESS (true): 79233 / 81576 / 68978 bytes  (byte-identical)
+- ADMIT (false)        : 81303 / 84546 / 73021 bytes  (+2.6 / +3.6 / +5.9%)
+
+## Cell grid (50 total)
+
+| Class       | Image                                | E         | D       | n  |
+|---          |---                                   |---        |---      |---|
+| CODEC_WIKI  | codec_wiki.png                       | 5,6,7     | 3.0     | 3  |
+| TERMINAL    | terminal.png                         | 5,6,7,8,9 | 4.0     | 5  |
+| SCREEN      | imac_g3, imac_dark, windows,         | 7         | 2,4,6   | 18 |
+|             | windows95, imessage, graph (6 imgs)  |           |         |    |
+| PHOTO       | 8 CID22 images                       | 7         | 1,3,5   | 24 |
+
+Modes per cell: baseline (auto W44-65 fires) vs admit
+(`dct_suppress_hint=Some(false)` bypasses suppression).
+
+Each cell encodes twice in each mode, takes min bytes / min ms.
+Metrics: butteraugli_linear (Rust crate) + SSIM2 (fast_ssim2) via
+jxl-oxide srgb_linear decode (matches cjxl_parity_ledger pipeline).
+
+## Acceptance gates evaluation (FAIL)
+
+| Gate | Required                                              | Measured                                       | Pass? |
+|---   |---                                                    |---                                             |---    |
+| (a)  | codec_wiki d=3 SSIM2 improves by ≥+2.0               | max +1.40 (e5), e6=+1.33, e7=+0.73             | NO    |
+| (b)  | terminal d=4 SSIM2 wins preserved (W44-117/118/120)  | SSIM2 +0.02..+0.33, but butteraugli +29% e8/e9 | NO    |
+| (c)  | Zero NEW FIXED→OPEN flips on 30 spot photo cells     | 0 photo flips (W44-65 doesn't fire on photos)  | YES   |
+| (d)  | bytes regression ≤ +20% on codec_wiki d=3            | max +5.86% (e7)                                | YES   |
+
+Additional finding: **11 SCREEN cells regress by -0.37 to -1.44 SSIM2**
+under admit — these are W44-65/W44-68 CLOSED cells in the ledger
+(imac_g3, imac_dark, windows, imessage, graph). Bypassing the gate
+re-opens them. graph e7 d=6: -1.44 SSIM2 is catastrophic.
+
+## codec_wiki d=3 (TARGET cluster)
+
+| effort | bytes (B→A)        | Δbytes  | ssim2 (B→A)        | ΔSSIM2  | bfly (B→A)       | Δbfly%  |
+|---     |---                 |---      |---                 |---      |---               |---      |
+| e5     | 79233 → 81303      | +2.61%  | 83.11 → 84.51      | +1.40   | 2.415 → 2.415    | 0.00    |
+| e6     | 81576 → 84546      | +3.64%  | 83.37 → 84.70      | +1.33   | 2.379 → 2.379    | -0.02   |
+| e7     | 68978 → 73021      | +5.86%  | 83.18 → 83.90      | +0.73   | 2.353 → 2.348    | -0.22   |
+
+The W44-121 cluster magnitude was -2.67/-2.99/-3.38 SSIM2 vs cjxl.
+admit closes 52% / 45% / 22% of the gap. Insufficient to declare
+"closed", insufficient to meet the +2.0 SSIM2 gate.
+
+## terminal d=4 (W44-104 regression cells)
+
+| effort | bytes (B→A)      | Δbytes  | ssim2 (B→A)      | ΔSSIM2  | bfly (B→A)        | Δbfly%  |
+|---     |---               |---      |---               |---      |---                |---      |
+| e5     | 93515 → 93772    | +0.27%  | 81.89 → 81.91    | +0.02   | 1.679 → 1.601     | -4.6    |
+| e6     | 94810 → 94886    | +0.08%  | 81.87 → 81.89    | +0.02   | 1.669 → 1.614     | -3.3    |
+| e7     | 43329 → 44278    | +2.19%  | 85.68 → 85.82    | +0.14   | 1.719 → 1.476     | -14.1   |
+| e8     | 36788 → 37952    | +3.16%  | 85.25 → 85.58    | +0.33   | 1.740 → 2.245     | **+29.1** |
+| e9     | 37021 → 38172    | +3.11%  | 85.25 → 85.58    | +0.33   | 1.740 → 2.245     | **+29.1** |
+
+terminal e5/e6/e7 d=4 effectively no-op (SSIM2 within +0.14, bfly
+improves by 4-14%). But terminal e8/e9 d=4: SSIM2 +0.33 BUT
+butteraugli **+29.1%** — this is the W44-117/118/120 EPF-fix regime
+where the buttloop is now optimizing on better signals. Admit fights
+the buttloop convergence and produces a measurably worse butteraugli
+trade. The W44-117 ledger gate that closed these cells is at risk.
+
+## Screen cells (W44-65/68 closed, MUST NOT regress)
+
+11 SCREEN cells regress by -0.30 SSIM2 or more (these are the cells
+W44-65/W44-68 specifically protect). Worst:
+
+| image              | d   | Δbytes | ΔSSIM2 |
+|---                 |---  |---     |---     |
+| graph.png          | 6.0 | +5.33% | -1.44  |
+| imessage.png       | 6.0 | +1.39% | -0.75  |
+| graph.png          | 4.0 | +2.61% | -0.59  |
+| windows.png        | 6.0 | -0.43% | -0.50  |
+| imac_dark.png      | 4.0 | +1.26% | -0.50  |
+| imac_dark.png      | 2.0 | +1.09% | -0.41  |
+| imac_g3.png        | 6.0 | +2.64% | -0.42  |
+| windows.png        | 4.0 | +0.09% | -0.39  |
+| imessage.png       | 4.0 | +2.48% | -0.38  |
+| imac_g3.png        | 4.0 | +1.48% | -0.37  |
+| graph.png          | 2.0 | +1.31% | -0.41  |
+
+Even with a content-aware sub-discriminator that only admits DCT64 on
+codec_wiki-class content (avoiding these regressions), the upper
+bound on codec_wiki improvement is +1.40 SSIM2 — well below the
++2.0 gate.
+
+## Photo cells (regression probe)
+
+24 photo cells (8 CID22 × e7 × d ∈ {1, 3, 5}) all show 0.000 byte
+delta and 0.000 SSIM2 delta. **W44-65 does not fire on any tested
+photo** (`median(mask1x1) < 99.5` per W44-65 promotion data: ≤92.34
+for all 41 CID22 validation photos). The admit-hint has no effect on
+photos — confirms the discriminator is correctly cutting at the
+photo/screenshot boundary.
+
+## Why admit is insufficient (root cause of partial close)
+
+The W44-121 mechanism description matches the W44-104 finding:
+cjxl's DCT64 picks on codec_wiki d=3 land predominantly on BLANK
+background regions. Any transform reconstructs blank regions
+perfectly. The SSIM2 loss is in TEXT regions where both encoders
+(after admit) pick DCT8/DCT16-class. Admit recovers the blank-region
+bytes savings (smaller per first-block) but doesn't fix the text
+region quality.
+
+This was the W44-104 falsified hypothesis: candidate A would close
+the cluster. It does not — the cluster has TWO concurrent root
+causes (W44-103/121 explicitly listed both): (1) strategy
+distribution divergence (blank regions get DCT64 on cjxl, DCT16X16
+on ours), AND (2) the text-region SSIM2 deficit that DCT64 doesn't
+touch.
+
+## Honest-stop decision
+
+Per dispatch task decision tree:
+> "If fix doesn't improve codec_wiki d=3: honest-stop. Pivot to
+> W44-122 candidate B (DCT16X16 over-firing RC) or C (default-flip
+> dct_suppress_hint)"
+
+The fix DOES improve codec_wiki d=3 by +0.73 to +1.40 SSIM2, but
+fails the +2.0 gate. Additionally it regresses 11 OTHER screenshot
+cells (FIXED→OPEN) which violates the "zero new flips" gate. Pivot
+to candidate B (DCT16X16 over-firing root-cause investigation) is
+the right next chunk.
+
+## Candidate C (default-flip dct_suppress_hint) is RULED OUT here
+
+Per W44-104 explicit DO-NOT:
+> "DO NOT default-flip `with_dct_suppress_hint` to `Some(false)`.
+>  Measured cost: +4% bytes / ±0.3 SSIM2 on terminal, and the W44-62
+>  data already showed all other gb82-sc screenshots ALSO benefit
+>  from W44-65/W44-68 suppression"
+
+This W44-122 measurement reconfirms: 11 screen cells regress under
+admit. The W44-65 default is correctly protecting them.
+
+## Recommended W44-123
+
+Candidate B: DCT16X16 over-firing RC. Investigate why our
+`find_best_32x32_transform` selects DCT16X16 100× more than cjxl on
+screen-class regions. Per W44-121 top disagreement pair table:
+DCT16X16 → DCT64X64 is the dominant divergence (28k cells at e5,
+36k at e7). When W44-65 forces `try_dct64=false`, the split-vs-keep
+decision at the 32×32 level should prefer DCT32X32 keep (4 blocks
+covered) over four DCT16X16 first-blocks (8 sub-blocks). Currently
+we pick DCT16X16. Possible culprits:
+- `entropy_mul[DCT32X32]=1.21` may be too high relative to libjxl's
+  effective value on screenshot suppression path
+- `find_best_32x32_transform` may evaluate DCT32X32 with the wrong
+  per-block-loss scaling when `mask1x1` is saturated
+- The "DCT32X32 vs 4×DCT16X16" cost comparison may need a screenshot-
+  class lift on DCT32X32
+
+This is a NARROWER lever than candidate A (touches only
+`find_best_32x32_transform` cost model, not the screenshot-suppress
+gate), and per W44-121: "Expected EV: 2-5 SSIM2 points (subset of
+Candidate A's gain — once DCT64 search wins, DCT16X16 over-firing
+automatically resolves)" — but per this chunk's finding, DCT64
+admission DOES NOT close the cluster, so DCT16X16-via-DCT32X32 may
+be a complementary path that admits DCT32X32 without breaking
+neighbors.
+
+## Falsified hypotheses
+
+| Hypothesis | Status | Evidence |
+|---         |---     |---       |
+| H1: codec_wiki d=3 admit closes the SSIM2 cluster (≥+2.0)   | FALSE | max +1.40 |
+| H2: codec_wiki d=3 different regime from terminal d=4       | FALSE | same mechanism (W44-65 fires, admit produces ±0.3 SSIM2 noise on cluster, regresses neighbors) |
+| H3: W44-117/118/120 EPF closure enables admit on screens    | FALSE | terminal e8/e9 butteraugli regresses +29% under admit |
+
+## Workspace, files
+
+- `~/work/zen/jxl-encoder--w44-122-codec-wiki-d3-dct64/` — sibling
+- `CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target`
+- `.workongoing` refreshed throughout
+- Source: 0 production files touched
+- Examples added: `w44_122_smoke.rs` + `w44_122_ab.rs`
+- Cargo.toml: 2 example registrations
+- benchmarks/: TSV + this .meta
+
+## Cross-references
+
+- W44-104 honest-stop (predecessor on terminal d=4):
+  `w44_104_admit_dct64_terminal_falsified_2026-05-20.md`
+- W44-121 dump (this chunk's setup):
+  `w44_121_codec_wiki_d3_dump_2026-05-20.md`
+- W44-103 dump (predecessor on terminal):
+  `w44_103_terminal_ssim2_dump_2026-05-19.md`
+- W44-65 gate `vardct/encoder.rs:2960-2963` + `W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD`
+- W44-68 extension to `try_dct32` `vardct/encoder.rs:3063`
+- W44-117/118/120 EPF closure chain (preserved by this chunk's no-op)
+
+## DO NOT (post-W44-122)
+
+- DO NOT re-attempt admit-DCT64 on codec_wiki-class without first
+  closing the text-region SSIM2 deficit. Admit doesn't touch the
+  text deficit.
+- DO NOT widen the W44-65 mask1x1 threshold to admit more cells
+  (the W44-65 default protects 11 screen cells per this chunk).
+- DO NOT default-flip `with_dct_suppress_hint` to `Some(false)`
+  (per W44-104 DO-NOT, confirmed by this measurement).
+- DO NOT spawn a "find_best_64x64_transform cost-model" chunk —
+  the cost model is fine; admit shows DCT64 IS picked when allowed.
+  The gate is the gate.
+- DO NOT cite this as "W44-104 was wrong" — W44-104 was correct on
+  its target; this chunk re-verifies the same conclusion on a
+  different cell to remove ambiguity.

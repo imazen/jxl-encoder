@@ -1478,6 +1478,19 @@ required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 name = "w44_104_smoke"
 path = "examples/w44_104_smoke.rs"
 
+# W44-122 smoke: codec_wiki d=3 hint A/B/C across e5/e6/e7
+[[example]]
+name = "w44_122_smoke"
+path = "examples/w44_122_smoke.rs"
+
+# W44-122 A/B: codec_wiki d=3 + terminal d=4 + spot screens/photos with
+# SSIM2 + butteraugli measurements to decide whether to admit DCT64 here.
+[[example]]
+name = "w44_122_ab"
+path = "examples/w44_122_ab.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
+
 # W44-104 proxy probe: dump zenanalyze proxies for 11 gb82-sc screenshots
 # to identify a discriminator separating terminal-class (admit DCT64) from
 # codec_wiki-class (keep W44-65/W44-68 suppression).
