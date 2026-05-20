@@ -2916,6 +2916,29 @@ impl VarDctEncoder {
                 .zenanalyze_proxies
                 .is_some_and(|p| p.m3_colourfulness >= W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN);
 
+        // W44-99 variant Z'' (low-colour) sub-discriminator: when
+        // `w44_96_variant_z` fires AND the image's `m3_colourfulness` is
+        // BELOW the W44-98 threshold (the mirror of the high_colour gate),
+        // apply a modest dct16x32 lift (1.22 instead of variant Z's 1.208
+        // and high_colour Z''s 1.30). The W44-99 A/B sweep
+        // (`benchmarks/w44_99_1531677_d5_attack_2026-05-19.tsv`) found
+        // 1.22 closes 3 of 4 1531677 OPEN cells (e6 d=5, e8 d=5, e9 d=5)
+        // with worst SSIM2 delta -0.0100 — well under the ≤0.30 budget.
+        //
+        // Mutually exclusive with [`w44_98_variant_z_high_colour`]:
+        // - m3 >= 25 → high_colour (Z', dct16x32=1.30)
+        // - m3 <  25 → low_colour  (Z'', dct16x32=1.22)
+        // - never both
+        //
+        // Of the 2 CID22 photos that pass W44-96 (1420710 m3=32.93,
+        // 1531677 m3=12.30), only 1531677 enters this gate; 1420710
+        // stays on the W44-98 high_colour Z' table.
+        let w44_99_variant_z_low_colour = w44_96_variant_z
+            && !w44_98_variant_z_high_colour
+            && self
+                .zenanalyze_proxies
+                .is_some_and(|p| p.m3_colourfulness < W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN);
+
         let profile_for_search = if w22_1_lift || w44_29_lower || w44_65_suppress_dct64 {
             let mut p = self.profile.clone();
             if w22_1_lift {
@@ -2923,6 +2946,8 @@ impl VarDctEncoder {
             } else if w44_29_lower {
                 p.entropy_mul_table = if w44_98_variant_z_high_colour {
                     crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour()
+                } else if w44_99_variant_z_low_colour {
+                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour()
                 } else if w44_96_variant_z {
                     crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z()
                 } else {
