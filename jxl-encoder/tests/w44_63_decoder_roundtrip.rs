@@ -73,20 +73,31 @@ fn decode_cell(label: &str, src: &Path, effort: u8, distance: f32) {
                 .with_effort(effort)
                 .with_threads(1),
         ),
+        // W44-130 Chunk D: `with_content_aware_entropy_mul` deleted;
+        // the screenshot lift is now controlled via the strategy /
+        // strategy-overrides API. The W44-63 / W44-65 DCT64
+        // suppression covered here is orthogonal — it lives on
+        // `dct_suppress_hint`.
         (
             "hint_none",
             LossyConfig::new(distance)
                 .with_effort(effort)
                 .with_threads(1)
-                .with_content_aware_entropy_mul(true),
+                .with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+                    screenshot_lift_hint: Some(true),
+                    ..Default::default()
+                }),
         ),
         (
             "hint_some",
             LossyConfig::new(distance)
                 .with_effort(effort)
                 .with_threads(1)
-                .with_content_aware_entropy_mul(true)
-                .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct_suppress_hint: Some(true), ..Default::default() }),
+                .with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+                    screenshot_lift_hint: Some(true),
+                    dct_suppress_hint: Some(true),
+                    ..Default::default()
+                }),
         ),
     ] {
         let bytes = cfg

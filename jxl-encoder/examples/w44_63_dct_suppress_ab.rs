@@ -135,11 +135,18 @@ fn encode_with_hint(
     effort: u8,
     hint: Option<bool>,
 ) -> (Vec<u8>, f64) {
+    // W44-130 Chunk D: `with_content_aware_entropy_mul` deleted;
+    // pair the lift control (`screenshot_lift_hint`) with the
+    // DCT64-suppress hint (`dct_suppress_hint`) on a single
+    // `with_strategy_overrides` call.
     let cfg = LossyConfig::new(distance)
         .with_effort(effort)
         .with_threads(1)
-        .with_content_aware_entropy_mul(true)
-        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct_suppress_hint: hint, ..Default::default() });
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            screenshot_lift_hint: Some(true),
+            dct_suppress_hint: hint,
+            ..Default::default()
+        });
     let start = Instant::now();
     let bytes = cfg
         .encode(rgb, w, h, PixelLayout::Rgb8)

@@ -169,9 +169,15 @@ fn encode(
 ) -> Result<Vec<u8>, String> {
     let mut cfg = LossyConfig::new(d).with_effort(EFFORT);
     if smart_on {
-        cfg = cfg
-            .with_content_aware_entropy_mul(true)
-            .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { screenshot_lift_hint: lift_hint, ..Default::default() });
+        // W44-130 Chunk D: `with_content_aware_entropy_mul` deleted.
+        // The `screenshot_lift_hint` override carries the caller's
+        // intent (maps to ScreenshotEntropyMulPolicy::ForceOn/ForceOff/
+        // Auto). Setting `lift_hint=Some(true)` here matches the
+        // pre-Chunk-D behaviour of forcing the lift when on.
+        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            screenshot_lift_hint: lift_hint,
+            ..Default::default()
+        });
     }
     cfg.encode(rgb_u8, w, h, PixelLayout::Rgb8)
         .map_err(|e| format!("encode failed: {e:?}"))
