@@ -3913,7 +3913,12 @@ impl VarDctEncoder {
         // (no byte padding between sections, only at the end)
         if num_sections == 4 {
             // Write sections to individual BitWriters (no padding)
-            let block_ctx_map = super::ac_context::BlockCtxMap::default();
+            // W44-133 Chunk G: select 15-cluster libjxl default when
+            // `EncoderStrategy::Libjxl` is in effect; Zenjxl 4-cluster
+            // default is byte-identical to pre-Chunk-G output.
+            let block_ctx_map = super::ac_context::BlockCtxMap::default_for_strategy(
+                self.resolved_improvements.block_ctx_map_15_cluster,
+            );
             let num_blocks = xsize_blocks * ysize_blocks;
             let mut dc_global = BitWriter::with_capacity(4096);
             self.write_dc_global(
@@ -4043,7 +4048,12 @@ impl VarDctEncoder {
             let ac_huffman = ac_code.as_huffman();
 
             // DC Global section
-            let block_ctx_map = super::ac_context::BlockCtxMap::default();
+            // W44-133 Chunk G: select 15-cluster libjxl default when
+            // `EncoderStrategy::Libjxl` is in effect; Zenjxl 4-cluster
+            // default is byte-identical to pre-Chunk-G output.
+            let block_ctx_map = super::ac_context::BlockCtxMap::default_for_strategy(
+                self.resolved_improvements.block_ctx_map_15_cluster,
+            );
             let mut dc_global = BitWriter::with_capacity(4096);
             self.write_dc_global(
                 &params,
