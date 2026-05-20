@@ -1183,6 +1183,15 @@ impl VarDctEncoder {
                     ysize_tiles: cfl_map.ysize_tiles,
                     cfl_ytox: cfl_map.ytox.clone(),
                     cfl_ytob: cfl_map.ytob.clone(),
+                    // W44-112: capture final-iter `current_params` so the
+                    // discriminator can compare them against production's
+                    // `params` (`ProductionQf`). Per code inspection these
+                    // should be byte-identical when `final_params` is recomputed
+                    // from the same `quant_field_float` post-loop — surface them
+                    // anyway so a mismatch is a loud regression.
+                    final_global_scale: current_params.global_scale,
+                    final_scale: current_params.scale,
+                    final_inv_scale: current_params.inv_scale,
                 });
             }
 
@@ -1609,6 +1618,13 @@ pub mod recon_hook {
         pub ysize_tiles: usize,
         pub cfl_ytox: Vec<i8>,
         pub cfl_ytob: Vec<i8>,
+        // W44-112 Layer-1.5: `DistanceParams` the buttloop's FINAL iter used.
+        // Compared against `ProductionQf` (captured after the post-buttloop
+        // `transform_and_quantize_with_source`) to discriminate candidates
+        // 1 (params drift) and 2 (sequential vs parallel).
+        pub final_global_scale: i32,
+        pub final_scale: f32,
+        pub final_inv_scale: f32,
     }
 
     static CAPTURE_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -1638,6 +1654,67 @@ pub mod recon_hook {
     /// (or since process start).
     pub fn take_last() -> Option<InternalRecon> {
         let mut guard = LAST_RECON.lock().expect("recon_hook mutex poisoned");
+        guard.take()
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // W44-112: post-PRODUCTION quant_field capture
+    //
+    // The InternalRecon above captures the buttloop's FINAL-iter quant_field
+    // (post-internal-AdjustQuantBlockAC). After the buttloop returns, the
+    // production path runs `transform_and_quantize_with_source` again, which
+    // applies AdjustQuantBlockAC a SECOND time via parallel groups — possibly
+    // producing different `quant_adjustments` if `params` drifted, or if the
+    // parallel-vs-sequential pattern compounds differently.
+    //
+    // W44-112's Layer-1.5 test compares INTERNAL quant_field vs PRODUCTION
+    // quant_field per-block to discriminate W44-111 candidates 1 (params
+    // drift), 2 (sequential vs parallel), and 3 (recon vs decoder).
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /// Captured production-path quant_field (post-`transform_and_quantize_with_source`).
+    /// Length = `xsize_blocks * ysize_blocks`, row-major.
+    #[derive(Clone)]
+    pub struct ProductionQf {
+        pub xsize_blocks: usize,
+        pub ysize_blocks: usize,
+        pub quant_field_u8: Vec<u8>,
+        /// `DistanceParams.global_scale` used by production transform.
+        pub global_scale: i32,
+        /// `DistanceParams.scale` used by production transform.
+        pub scale: f32,
+        /// `DistanceParams.inv_scale` used by production transform.
+        pub inv_scale: f32,
+    }
+
+    static PROD_QF_CAPTURE_ENABLED: AtomicBool = AtomicBool::new(false);
+    static LAST_PROD_QF: Mutex<Option<ProductionQf>> = Mutex::new(None);
+
+    /// Enable or disable production-quant-field capture. Independent from
+    /// `set_capture_enabled` (the recon hook) so callers can pay only the
+    /// cost of the slot they need.
+    pub fn set_production_qf_capture_enabled(enabled: bool) {
+        PROD_QF_CAPTURE_ENABLED.store(enabled, Ordering::SeqCst);
+    }
+
+    /// Cheap relaxed read for the production-side capture point.
+    pub fn production_qf_capture_enabled() -> bool {
+        PROD_QF_CAPTURE_ENABLED.load(Ordering::Relaxed)
+    }
+
+    /// Store the production-path quant_field. Overwrites any prior capture.
+    pub fn store_production_qf(qf: ProductionQf) {
+        let mut guard = LAST_PROD_QF
+            .lock()
+            .expect("production_qf hook mutex poisoned");
+        *guard = Some(qf);
+    }
+
+    /// Take (consume) the last captured production quant_field.
+    pub fn take_last_production_qf() -> Option<ProductionQf> {
+        let mut guard = LAST_PROD_QF
+            .lock()
+            .expect("production_qf hook mutex poisoned");
         guard.take()
     }
 }
