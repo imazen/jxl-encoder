@@ -899,8 +899,16 @@ fn main() {
                     if args.epf != -1 {
                         cfg = cfg.with_epf_level(args.epf);
                     }
-                    cfg = cfg.with_epf_dispatch(epf_dispatch);
-                    cfg = cfg.with_pixel_loss_dispatch(pixel_loss_dispatch);
+                    // W44-130 Chunk D: dispatch policies absorbed into
+                    // `EncoderImprovementsCustom`; setters deleted.
+                    {
+                        let mut custom = jxl_encoder::api::EncoderImprovementsCustom::default();
+                        custom.epf_dispatch = epf_dispatch;
+                        custom.pixel_loss_dispatch = pixel_loss_dispatch;
+                        cfg = cfg.with_strategy(
+                            jxl_encoder::api::EncoderStrategy::Custom(Box::new(custom)),
+                        );
+                    }
                     if args.noise || args.denoise {
                         cfg = cfg.with_noise(true);
                     }
@@ -1257,8 +1265,16 @@ fn main() {
         if args.epf != -1 {
             cfg = cfg.with_epf_level(args.epf);
         }
-        cfg = cfg.with_epf_dispatch(epf_dispatch);
-        cfg = cfg.with_pixel_loss_dispatch(pixel_loss_dispatch);
+        // W44-130 Chunk D: dispatch policies absorbed into
+        // `EncoderImprovementsCustom`; setters deleted.
+        {
+            let mut custom = jxl_encoder::api::EncoderImprovementsCustom::default();
+            custom.epf_dispatch = epf_dispatch;
+            custom.pixel_loss_dispatch = pixel_loss_dispatch;
+            cfg = cfg.with_strategy(jxl_encoder::api::EncoderStrategy::Custom(Box::new(
+                custom,
+            )));
+        }
         if args.noise || args.denoise {
             cfg = cfg.with_noise(true);
         }

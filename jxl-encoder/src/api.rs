@@ -4433,18 +4433,10 @@ pub struct LossyConfig {
     /// `true` means the user-set [`Self::patches`] wins outright.
     /// Default `false`. See [`Self::with_patches`].
     patches_explicit: bool,
-    /// Controls when the VarDCT patches detector runs (W36-3).
-    ///
-    /// Default [`PatchesDispatch::Auto`] skips the ~25-30 ms/MP patches
-    /// scan on photo content (`median(mask1x1) <= 95`) — those scans
-    /// would have produced empty `PatchesData` anyway, so the output
-    /// stays byte-identical and the wall clock drops. Set
-    /// [`PatchesDispatch::AlwaysScan`] for byte-for-byte reproducibility
-    /// against pre-W36-3 encodes, or [`PatchesDispatch::NeverScan`] to
-    /// force-skip the scan on every image.
-    ///
-    /// See [`Self::with_patches_dispatch`].
-    patches_dispatch: PatchesDispatch,
+    // W44-130 Chunk D: `patches_dispatch` field deleted from
+    // `LossyConfig`. The dispatch policy now lives on
+    // `EncoderImprovementsCustom.patches_dispatch` and flows to
+    // `VarDctEncoder.patches_dispatch` via `resolved_improvements`.
     /// Edge-preserving filter (EPF) iteration count override.
     ///
     /// `-1` (default) = encoder chooses based on butteraugli distance
@@ -4459,28 +4451,11 @@ pub struct LossyConfig {
     ///
     /// See [`Self::with_epf_level`].
     epf_level: i8,
-    /// Adaptive dispatch for the per-block EPF sharpness search
-    /// (W36-2 — `compute_epf_sharpness` is the dominant phase at
-    /// e6/e7 on the W36-1 baseline). Default
-    /// [`EpfDispatch::AlwaysSelect`] preserves the historical
-    /// bitstream byte-for-byte. See [`Self::with_epf_dispatch`].
-    epf_dispatch: EpfDispatch,
-    /// Adaptive dispatch for the pixel-domain loss term in the
-    /// AC-strategy search cost (W38-1 — `pixel_domain_loss` adds
-    /// ~11 ms/MP photo / ~70 ms/MP screenshot at e5 per the
-    /// `benchmarks/lossy_phase_low_effort_with_zenjpeg_2026-05-19`
-    /// baseline). Default [`PixelLossDispatch::AlwaysOn`] preserves
-    /// the historical bitstream byte-for-byte. See
-    /// [`Self::with_pixel_loss_dispatch`].
-    pixel_loss_dispatch: PixelLossDispatch,
-    /// Adaptive dispatch for the two-pass dynamic-entropy path
-    /// (W44-87 — `entropy` + `build_codes` dominate e5 photo wall
-    /// at 56-62%, ~14 ms/MP per
-    /// `benchmarks/lossy_phase_baseline_low_effort_2026-05-19.tsv`).
-    /// Default [`SinglePassEntropyDispatch::AlwaysTwoPass`]
-    /// preserves the historical bitstream byte-for-byte. See
-    /// [`Self::with_single_pass_entropy_dispatch`].
-    single_pass_entropy_dispatch: SinglePassEntropyDispatch,
+    // W44-130 Chunk D: `epf_dispatch`, `pixel_loss_dispatch`,
+    // `single_pass_entropy_dispatch` fields deleted from
+    // `LossyConfig`. The dispatch policies now live on
+    // `EncoderImprovementsCustom` and flow to the matching
+    // `VarDctEncoder.*_dispatch` fields via `resolved_improvements`.
     /// Optional separate butteraugli distance for the alpha extra
     /// channel (CLI passthrough — mirrors libjxl `cjxl --alpha_distance`,
     /// `enc_params.h:alpha_distance`). `None` (default) keeps the
@@ -4697,11 +4672,10 @@ impl LossyConfig {
             // therefore stay byte-identical at the default.
             strategy: EncoderStrategy::default(),
             patches_explicit: false,
-            patches_dispatch: PatchesDispatch::default(),
+            // W44-130 Chunk D: `patches_dispatch`, `epf_dispatch`,
+            // `pixel_loss_dispatch`, `single_pass_entropy_dispatch`
+            // fields deleted (absorbed into `EncoderImprovementsCustom`).
             epf_level: -1,
-            epf_dispatch: EpfDispatch::default(),
-            pixel_loss_dispatch: PixelLossDispatch::default(),
-            single_pass_entropy_dispatch: SinglePassEntropyDispatch::default(),
             alpha_distance: None,
             // Chunk-1 default: keep responsive=0 lossy alpha path
             // (byte-identical to today). Opt-in via
@@ -4957,20 +4931,12 @@ impl LossyConfig {
             new.patches = self.patches;
             new.patches_explicit = true;
         }
-        // Preserve patches dispatch policy across with_effort — never
-        // effort-derived; pure caller preference (mirrors the
-        // alpha_distance / chroma_subsampling / buffering pattern below).
-        new.patches_dispatch = self.patches_dispatch;
-        // Preserve pixel-loss dispatch policy across with_effort —
-        // never effort-derived; pure caller preference (W38-2).
-        new.pixel_loss_dispatch = self.pixel_loss_dispatch;
-        // Preserve single-pass-entropy dispatch policy across
-        // with_effort — never effort-derived; pure caller preference
-        // (W44-87). The dispatch itself gates on `effort == 5`
-        // internally, so the value is meaningful only when the new
-        // effort is 5; carrying it across with_effort keeps the
-        // builder chain order-independent.
-        new.single_pass_entropy_dispatch = self.single_pass_entropy_dispatch;
+        // W44-130 Chunk D: the 4 dispatch fields (`patches_dispatch`,
+        // `pixel_loss_dispatch`, `single_pass_entropy_dispatch`,
+        // `epf_dispatch`) were deleted from `LossyConfig` and
+        // absorbed into `EncoderImprovementsCustom`. The `strategy`
+        // bundle (preserved across `with_effort` below) carries the
+        // dispatch values; no separate copy needed.
         // Preserve CLI-passthrough knobs across with_effort (they're
         // never effort-derived; opt-in / pure forwarding).
         new.alpha_distance = self.alpha_distance;
@@ -5077,37 +5043,12 @@ impl LossyConfig {
         self
     }
 
-    /// Select the adaptive-dispatch policy for the per-block EPF
-    /// sharpness search (W36-2).
-    ///
-    /// The per-block sharpness selection (`compute_epf_sharpness` in
-    /// `vardct/epf.rs`) is the dominant phase on the W36-1 baseline:
-    /// 45.5% of e6 wall-clock, 33.8% of e7. On smooth photo regions
-    /// the search picks the default sharpness value for nearly every
-    /// block, so the work is wasted. [`EpfDispatch::Auto`] skips the
-    /// search on smooth content (predicate: per-region `mask1x1`
-    /// mean below a threshold) and emits the uniform default
-    /// sharpness directly. Textured/edge content still runs the
-    /// search.
-    ///
-    /// **Default**: [`EpfDispatch::AlwaysSelect`] — byte-identical
-    /// to historical encoder behaviour. The Auto default flip is
-    /// gated behind a measured RD + hash-lock rebake; until that
-    /// lands, callers who want the speed-up must opt in explicitly.
-    ///
-    /// Effective only when the underlying gate is satisfied
-    /// (`epf_iters > 0 && distance >= 0.5 &&
-    /// profile.epf_dynamic_sharpness`). When the gate is already off
-    /// the dispatch knob is a no-op (no sharpness map is computed).
-    pub fn with_epf_dispatch(mut self, dispatch: EpfDispatch) -> Self {
-        self.epf_dispatch = dispatch;
-        self
-    }
-
-    /// Current [`EpfDispatch`] policy. See [`Self::with_epf_dispatch`].
-    pub fn epf_dispatch(&self) -> EpfDispatch {
-        self.epf_dispatch
-    }
+    // W44-130 Chunk D: `with_epf_dispatch` setter + `epf_dispatch`
+    // getter on `LossyConfig` were DELETED. The dispatch policy is
+    // now reachable via
+    // `with_strategy(EncoderStrategy::Custom(Box::new(
+    //     EncoderImprovementsCustom { epf_dispatch: EpfDispatch::..., ..Default::default() }
+    // )))`.
 
     /// Enable/disable content-estimated noise synthesis (default: false).
     ///
@@ -5317,91 +5258,16 @@ impl LossyConfig {
         self
     }
 
-    /// Select the adaptive-dispatch policy for the pixel-domain loss
-    /// term in the AC-strategy search cost (W38-2).
-    ///
-    /// The pixel-domain loss path (libjxl
-    /// `EstimateEntropy` → IDCT of quantization error → per-pixel
-    /// `mask1x1` weighting → 8th-power norm) is W38-1's dominant
-    /// per-AC-strategy-eval overhead at e5 — adds ~11 ms/MP on
-    /// photos and ~70 ms/MP on screenshots vs the coefficient-domain-
-    /// only path
-    /// (`benchmarks/lossy_phase_low_effort_with_zenjpeg_2026-05-19`).
-    /// On smooth content the loss term rarely changes which
-    /// AC-strategy wins, so the work is wasted.
-    /// [`PixelLossDispatch::Auto`] skips the loss term when the
-    /// per-image `median(mask1x1) > 80` (smooth / low-variance
-    /// content) and falls back to the coefficient-domain entropy
-    /// estimate alone. Textured/edge content still pays for the
-    /// pixel-domain loss term.
-    ///
-    /// **Default**: [`PixelLossDispatch::AlwaysOn`] — byte-identical
-    /// to historical encoder behaviour. The `Auto` default flip is
-    /// gated behind a wider corpus RD bench + hash-lock rebake;
-    /// until that lands, callers who want the speed-up opt in
-    /// explicitly. Mirrors the W36-2 [`EpfDispatch`] and W36-3
-    /// [`PatchesDispatch`] opt-in patterns.
-    ///
-    /// Effective only when the underlying gate is satisfied
-    /// (`ac_strategy_enabled && pixel_domain_loss`). When the gate
-    /// is already off (`with_pixel_domain_loss(false)` or
-    /// `ac_strategy_enabled = false`) the dispatch knob is a no-op
-    /// (no mask1x1 is computed; the loss term is already absent).
-    pub fn with_pixel_loss_dispatch(mut self, dispatch: PixelLossDispatch) -> Self {
-        self.pixel_loss_dispatch = dispatch;
-        self
-    }
+    // W44-130 Chunk D: `with_pixel_loss_dispatch` setter +
+    // `pixel_loss_dispatch` getter on `LossyConfig` were DELETED.
+    // Reachable via `with_strategy(EncoderStrategy::Custom(...))`
+    // with `pixel_loss_dispatch: PixelLossDispatch::...`.
 
-    /// Current [`PixelLossDispatch`] policy. See
-    /// [`Self::with_pixel_loss_dispatch`].
-    pub fn pixel_loss_dispatch(&self) -> PixelLossDispatch {
-        self.pixel_loss_dispatch
-    }
-
-    /// Select the adaptive-dispatch policy for the two-pass dynamic-
-    /// entropy path (W44-87).
-    ///
-    /// The two-pass `entropy` + `build_codes` phases together account
-    /// for 56-62% of e5 photo wall-clock (~14 ms/MP per
-    /// `benchmarks/lossy_phase_baseline_low_effort_2026-05-19.tsv`).
-    /// On smooth photos at low distance the per-image-tuned codes
-    /// only save 2-4% bytes vs the pre-computed static Huffman
-    /// codes — a poor trade against 30%+ wall-clock cost.
-    /// [`SinglePassEntropyDispatch::Auto`] flips to single-pass
-    /// when the content classifier says "smooth photo at low
-    /// distance" AND the encode has no features that require the
-    /// two-pass plumbing (patches, splines, learned tree, sharpness
-    /// map, noise params, LF frame, extras / alpha).
-    ///
-    /// Trigger predicate (all required):
-    ///   - `effort == 5`,
-    ///   - `distance <= 1.0`,
-    ///   - `median(mask1x1) < SMOOTH_THRESHOLD` (smooth-photo
-    ///     class),
-    ///   - the encode has no patches/splines/learned tree/sharpness
-    ///     map/noise params/LF frame/extras (any of these forces
-    ///     two-pass mode regardless of dispatch).
-    ///
-    /// **Default**: [`SinglePassEntropyDispatch::AlwaysTwoPass`] —
-    /// byte-identical to historical encoder behaviour. The `Auto`
-    /// default flip is gated behind a wider corpus RD bench +
-    /// hash-lock rebake; until that lands, callers who want the
-    /// speed-up opt in explicitly. Mirrors the W36-2 [`EpfDispatch`]
-    /// / W36-3 [`PatchesDispatch`] / W38-2 [`PixelLossDispatch`]
-    /// opt-in patterns.
-    pub fn with_single_pass_entropy_dispatch(
-        mut self,
-        dispatch: SinglePassEntropyDispatch,
-    ) -> Self {
-        self.single_pass_entropy_dispatch = dispatch;
-        self
-    }
-
-    /// Current [`SinglePassEntropyDispatch`] policy. See
-    /// [`Self::with_single_pass_entropy_dispatch`].
-    pub fn single_pass_entropy_dispatch(&self) -> SinglePassEntropyDispatch {
-        self.single_pass_entropy_dispatch
-    }
+    // W44-130 Chunk D: `with_single_pass_entropy_dispatch` setter +
+    // `single_pass_entropy_dispatch` getter on `LossyConfig` were
+    // DELETED. Reachable via
+    // `with_strategy(EncoderStrategy::Custom(...))` with
+    // `single_pass_entropy_dispatch: SinglePassEntropyDispatch::...`.
 
     /// Convenience switch that toggles all encoder-side perceptual
     /// heuristics on or off in one call. Mirrors libjxl's
@@ -5502,38 +5368,10 @@ impl LossyConfig {
         self
     }
 
-    /// Controls when the VarDCT patches detector runs (W36-3).
-    ///
-    /// Default [`PatchesDispatch::Auto`] consults the existing
-    /// `median(mask1x1) > 95` screenshot/photo discriminator (the same
-    /// one used by [`Self::with_content_aware_entropy_mul`] and the
-    /// auto-splines screenshot skip) and short-circuits the
-    /// ~25-30 ms/MP patches scan on photo content where it is known to
-    /// produce empty output. Output is byte-identical to
-    /// [`PatchesDispatch::AlwaysScan`] on photos.
-    ///
-    /// [`PatchesDispatch::AlwaysScan`] forces the pre-W36-3 behavior
-    /// (run the scan unconditionally). Use for A/B benchmarks against
-    /// older output or strict reproducibility runs.
-    ///
-    /// [`PatchesDispatch::NeverScan`] suppresses the scan on every
-    /// image (still allowing other patches-related encoder state to
-    /// flow through).
-    ///
-    /// This method is orthogonal to [`Self::with_patches`] —
-    /// `with_patches(false)` already disables the patches *step*, while
-    /// `with_patches_dispatch` controls when the patches *scan* runs
-    /// inside the step. Setting both is allowed.
-    pub fn with_patches_dispatch(mut self, dispatch: PatchesDispatch) -> Self {
-        self.patches_dispatch = dispatch;
-        self
-    }
-
-    /// Current patches dispatch policy. See
-    /// [`Self::with_patches_dispatch`].
-    pub fn patches_dispatch(&self) -> PatchesDispatch {
-        self.patches_dispatch
-    }
+    // W44-130 Chunk D: `with_patches_dispatch` setter +
+    // `patches_dispatch` getter on `LossyConfig` were DELETED.
+    // Reachable via `with_strategy(EncoderStrategy::Custom(...))`
+    // with `patches_dispatch: PatchesDispatch::...`.
 
     /// Enable libjxl-style **dot detection** (refs #19). Default `true`,
     /// mirroring libjxl's `Override::kDefault` semantics for `--dots`
@@ -8661,11 +8499,17 @@ impl<'a> EncodeRequest<'a> {
         } else {
             Some(cfg.epf_level as u32)
         };
-        enc.epf_dispatch = cfg.epf_dispatch;
+        // W44-130 Chunk D: the 4 dispatch policies were absorbed into
+        // `EncoderImprovementsCustom` per design doc §7 Q2 — they now
+        // flow via `enc.resolved_improvements` instead of dedicated
+        // `LossyConfig` fields. The `VarDctEncoder.X_dispatch` fields
+        // remain (many call-site reads); we hydrate them from the
+        // resolved bundle here.
+        enc.epf_dispatch = enc.resolved_improvements.epf_dispatch;
         enc.error_diffusion = cfg.error_diffusion;
         enc.pixel_domain_loss = cfg.pixel_domain_loss;
-        enc.pixel_loss_dispatch = cfg.pixel_loss_dispatch;
-        enc.single_pass_entropy_dispatch = cfg.single_pass_entropy_dispatch;
+        enc.pixel_loss_dispatch = enc.resolved_improvements.pixel_loss_dispatch;
+        enc.single_pass_entropy_dispatch = enc.resolved_improvements.single_pass_entropy_dispatch;
         enc.enable_lz77 = cfg.effective_lz77();
         enc.lz77_method = cfg.lz77_method;
         enc.force_strategy = cfg.force_strategy;
@@ -8693,7 +8537,7 @@ impl<'a> EncodeRequest<'a> {
         } else {
             enc.profile.patches
         };
-        enc.patches_dispatch = cfg.patches_dispatch;
+        enc.patches_dispatch = enc.resolved_improvements.patches_dispatch;
         enc.enable_dot_detection = cfg.dot_detection;
         enc.encoder_mode = cfg.mode;
         enc.splines = cfg.splines.clone();
@@ -9815,11 +9659,15 @@ impl LossyEncoder {
             } else {
                 Some(cfg.epf_level as u32)
             };
-            enc.epf_dispatch = cfg.epf_dispatch;
+            // W44-130 Chunk D: dispatch policies hydrated from the
+            // resolved bundle (LossyConfig setters deleted; absorbed
+            // into `EncoderImprovementsCustom`).
+            enc.epf_dispatch = enc.resolved_improvements.epf_dispatch;
             enc.error_diffusion = cfg.error_diffusion;
             enc.pixel_domain_loss = cfg.pixel_domain_loss;
-            enc.pixel_loss_dispatch = cfg.pixel_loss_dispatch;
-            enc.single_pass_entropy_dispatch = cfg.single_pass_entropy_dispatch;
+            enc.pixel_loss_dispatch = enc.resolved_improvements.pixel_loss_dispatch;
+            enc.single_pass_entropy_dispatch =
+                enc.resolved_improvements.single_pass_entropy_dispatch;
             enc.enable_lz77 = cfg.effective_lz77();
             enc.lz77_method = cfg.lz77_method;
             enc.force_strategy = cfg.force_strategy;
@@ -9836,7 +9684,7 @@ impl LossyEncoder {
             } else {
                 enc.profile.patches
             };
-            enc.patches_dispatch = cfg.patches_dispatch;
+            enc.patches_dispatch = enc.resolved_improvements.patches_dispatch;
             enc.enable_dot_detection = cfg.dot_detection;
             enc.encoder_mode = cfg.mode;
             enc.splines = cfg.splines.clone();
@@ -11688,11 +11536,14 @@ fn encode_animation_lossy(
     } else {
         Some(cfg.epf_level as u32)
     };
-    enc.epf_dispatch = cfg.epf_dispatch;
+    // W44-130 Chunk D: dispatch policies hydrated from the resolved
+    // bundle (LossyConfig setters deleted; absorbed into
+    // `EncoderImprovementsCustom`).
+    enc.epf_dispatch = enc.resolved_improvements.epf_dispatch;
     enc.error_diffusion = cfg.error_diffusion;
     enc.pixel_domain_loss = cfg.pixel_domain_loss;
-    enc.pixel_loss_dispatch = cfg.pixel_loss_dispatch;
-    enc.single_pass_entropy_dispatch = cfg.single_pass_entropy_dispatch;
+    enc.pixel_loss_dispatch = enc.resolved_improvements.pixel_loss_dispatch;
+    enc.single_pass_entropy_dispatch = enc.resolved_improvements.single_pass_entropy_dispatch;
     enc.enable_lz77 = cfg.effective_lz77();
     enc.lz77_method = cfg.lz77_method;
     enc.force_strategy = cfg.force_strategy;
@@ -11709,7 +11560,7 @@ fn encode_animation_lossy(
     } else {
         enc.profile.patches
     };
-    enc.patches_dispatch = cfg.patches_dispatch;
+    enc.patches_dispatch = enc.resolved_improvements.patches_dispatch;
     enc.enable_dot_detection = cfg.dot_detection;
     enc.encoder_mode = cfg.mode;
     enc.splines = cfg.splines.clone();

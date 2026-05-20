@@ -627,15 +627,21 @@ fn lossless_keep_invisible_false_jxl_rs_roundtrip() {
 // ─── W36-2: EpfDispatch wiring ─────────────────────────────────────────────
 
 /// `LossyConfig::with_epf_dispatch` round-trips via `epf_dispatch()`.
-#[test]
-fn epf_dispatch_round_trips_through_config() {
-    let c = LossyConfig::new(1.0);
-    assert_eq!(c.epf_dispatch(), EpfDispatch::AlwaysSelect);
-    let c2 = c.with_epf_dispatch(EpfDispatch::Auto);
-    assert_eq!(c2.epf_dispatch(), EpfDispatch::Auto);
-    let c3 = c2.with_epf_dispatch(EpfDispatch::AlwaysDefault);
-    assert_eq!(c3.epf_dispatch(), EpfDispatch::AlwaysDefault);
-}
+// W44-130 Chunk D: `with_epf_dispatch` / `epf_dispatch()` setters
+// deleted; behavioral coverage is now via the bytes-vary tests below
+// (`epf_dispatch_always_default_changes_bytes_on_textured` +
+// `epf_dispatch_auto_skips_on_flat_content`), which exercise the
+// dispatch through the encode pipeline rather than the deleted
+// getter — sufficient for the wiring contract this test covered.
+// The `resolve_improvements()` method that produces the resolved
+// policy is `pub(crate)`, so the in-process round-trip is covered
+// by `api.rs::test_with_strategy_overrides_setter_roundtrip` (lib
+// test).
+//
+// The `round_trips_through_config` smoke test is dropped here; the
+// equivalent contract is preserved by the lib-test counterparts
+// (`test_with_strategy_overrides_setter_roundtrip`,
+// `test_dct_suppress_hint_api_roundtrip`, etc. in `api.rs`).
 
 /// `EpfDispatch::AlwaysDefault` must change emitted bytes on
 /// realistic content where the per-block search would otherwise
@@ -661,14 +667,21 @@ fn epf_dispatch_always_default_changes_bytes_on_textured() {
     }
     // Effort 6 to make sure dynamic-sharpness gate is active. d=1.0
     // exceeds the 0.5 gate.
+    // W44-130 Chunk D: setter deleted; dispatch lives on
+    // `EncoderImprovementsCustom`.
+    use jxl_encoder::api::{EncoderImprovementsCustom, EncoderStrategy};
+    let mut cust = EncoderImprovementsCustom::default();
+    cust.epf_dispatch = EpfDispatch::AlwaysSelect;
     let bytes_select = LossyConfig::new(1.0)
         .with_effort(6)
-        .with_epf_dispatch(EpfDispatch::AlwaysSelect)
+        .with_strategy(EncoderStrategy::Custom(Box::new(cust)))
         .encode(&buf, w, h, PixelLayout::Rgb8)
         .expect("encode AlwaysSelect");
+    let mut cust = EncoderImprovementsCustom::default();
+    cust.epf_dispatch = EpfDispatch::AlwaysDefault;
     let bytes_default = LossyConfig::new(1.0)
         .with_effort(6)
-        .with_epf_dispatch(EpfDispatch::AlwaysDefault)
+        .with_strategy(EncoderStrategy::Custom(Box::new(cust)))
         .encode(&buf, w, h, PixelLayout::Rgb8)
         .expect("encode AlwaysDefault");
     assert_ne!(
@@ -687,17 +700,22 @@ fn epf_dispatch_always_default_changes_bytes_on_textured() {
 /// is skipped.
 #[test]
 fn epf_dispatch_auto_skips_on_flat_content() {
+    use jxl_encoder::api::{EncoderImprovementsCustom, EncoderStrategy};
     let w = 64u32;
     let h = 64u32;
     let buf = vec![128u8; (w * h * 3) as usize];
+    let mut cust = EncoderImprovementsCustom::default();
+    cust.epf_dispatch = EpfDispatch::Auto;
     let bytes_auto = LossyConfig::new(1.0)
         .with_effort(6)
-        .with_epf_dispatch(EpfDispatch::Auto)
+        .with_strategy(EncoderStrategy::Custom(Box::new(cust)))
         .encode(&buf, w, h, PixelLayout::Rgb8)
         .expect("encode Auto");
+    let mut cust = EncoderImprovementsCustom::default();
+    cust.epf_dispatch = EpfDispatch::AlwaysDefault;
     let bytes_default = LossyConfig::new(1.0)
         .with_effort(6)
-        .with_epf_dispatch(EpfDispatch::AlwaysDefault)
+        .with_strategy(EncoderStrategy::Custom(Box::new(cust)))
         .encode(&buf, w, h, PixelLayout::Rgb8)
         .expect("encode AlwaysDefault");
     assert_eq!(
@@ -709,35 +727,12 @@ fn epf_dispatch_auto_skips_on_flat_content() {
 
 // ─── W38-2: PixelLossDispatch wiring ───────────────────────────────────────
 
-/// `LossyConfig::with_pixel_loss_dispatch` round-trips via
-/// `pixel_loss_dispatch()` and starts at the byte-identical default
-/// `AlwaysOn`.
-#[test]
-fn pixel_loss_dispatch_round_trips_through_config() {
-    let c = LossyConfig::new(1.0);
-    assert_eq!(c.pixel_loss_dispatch(), PixelLossDispatch::AlwaysOn);
-    let c2 = c.with_pixel_loss_dispatch(PixelLossDispatch::Auto);
-    assert_eq!(c2.pixel_loss_dispatch(), PixelLossDispatch::Auto);
-    let c3 = c2.with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOff);
-    assert_eq!(c3.pixel_loss_dispatch(), PixelLossDispatch::AlwaysOff);
-}
-
-/// `LossyConfig::with_pixel_loss_dispatch` survives `with_effort`
-/// (the dispatch policy is pure caller preference, never effort-
-/// derived). This protects against the regression where reordering
-/// `with_effort(...)` and `with_pixel_loss_dispatch(...)` would
-/// silently flip the policy back to `AlwaysOn`.
-#[test]
-fn pixel_loss_dispatch_preserved_across_with_effort() {
-    let c = LossyConfig::new(1.0)
-        .with_pixel_loss_dispatch(PixelLossDispatch::Auto)
-        .with_effort(5);
-    assert_eq!(c.pixel_loss_dispatch(), PixelLossDispatch::Auto);
-    let c2 = LossyConfig::new(1.0)
-        .with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOff)
-        .with_effort(7);
-    assert_eq!(c2.pixel_loss_dispatch(), PixelLossDispatch::AlwaysOff);
-}
+// W44-130 Chunk D: `with_pixel_loss_dispatch` / `pixel_loss_dispatch()`
+// setters deleted; behavioral coverage moves to the bytes-vary tests
+// below. The round-trips-through-config + preserved-across-with-effort
+// tests are dropped; equivalent lib-test contract lives in
+// `api.rs::test_with_strategy_overrides_setter_roundtrip` and
+// `test_with_strategy_preserved_across_with_effort`.
 
 /// `PixelLossDispatch::AlwaysOff` on textured content must produce
 /// a different bitstream than the byte-identical `AlwaysOn` default
@@ -761,14 +756,21 @@ fn pixel_loss_dispatch_always_off_changes_bytes_on_textured() {
     }
     // Effort 5 (Hare) — `profile.pixel_domain_loss = true` and AC
     // strategy search is active.
+    // W44-130 Chunk D: setter deleted; dispatch lives on
+    // `EncoderImprovementsCustom`.
+    use jxl_encoder::api::{EncoderImprovementsCustom, EncoderStrategy};
+    let mut cust = EncoderImprovementsCustom::default();
+    cust.pixel_loss_dispatch = PixelLossDispatch::AlwaysOn;
     let bytes_on = LossyConfig::new(1.0)
         .with_effort(5)
-        .with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOn)
+        .with_strategy(EncoderStrategy::Custom(Box::new(cust)))
         .encode(&buf, w, h, PixelLayout::Rgb8)
         .expect("encode AlwaysOn");
+    let mut cust = EncoderImprovementsCustom::default();
+    cust.pixel_loss_dispatch = PixelLossDispatch::AlwaysOff;
     let bytes_off = LossyConfig::new(1.0)
         .with_effort(5)
-        .with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOff)
+        .with_strategy(EncoderStrategy::Custom(Box::new(cust)))
         .encode(&buf, w, h, PixelLayout::Rgb8)
         .expect("encode AlwaysOff");
     assert_ne!(
@@ -787,17 +789,22 @@ fn pixel_loss_dispatch_always_off_changes_bytes_on_textured() {
 /// AC-strategy search.
 #[test]
 fn pixel_loss_dispatch_auto_skips_on_flat_content() {
+    use jxl_encoder::api::{EncoderImprovementsCustom, EncoderStrategy};
     let w = 64u32;
     let h = 64u32;
     let buf = vec![128u8; (w * h * 3) as usize];
+    let mut cust = EncoderImprovementsCustom::default();
+    cust.pixel_loss_dispatch = PixelLossDispatch::Auto;
     let bytes_auto = LossyConfig::new(1.0)
         .with_effort(5)
-        .with_pixel_loss_dispatch(PixelLossDispatch::Auto)
+        .with_strategy(EncoderStrategy::Custom(Box::new(cust)))
         .encode(&buf, w, h, PixelLayout::Rgb8)
         .expect("encode Auto");
+    let mut cust = EncoderImprovementsCustom::default();
+    cust.pixel_loss_dispatch = PixelLossDispatch::AlwaysOff;
     let bytes_off = LossyConfig::new(1.0)
         .with_effort(5)
-        .with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOff)
+        .with_strategy(EncoderStrategy::Custom(Box::new(cust)))
         .encode(&buf, w, h, PixelLayout::Rgb8)
         .expect("encode AlwaysOff");
     assert_eq!(
@@ -813,6 +820,7 @@ fn pixel_loss_dispatch_auto_skips_on_flat_content() {
 /// byte-identical contract.
 #[test]
 fn pixel_loss_dispatch_default_byte_identical_to_explicit_always_on() {
+    use jxl_encoder::api::{EncoderImprovementsCustom, EncoderStrategy};
     let w = 64u32;
     let h = 64u32;
     let buf = rgb8_buf(w, h);
@@ -820,9 +828,11 @@ fn pixel_loss_dispatch_default_byte_identical_to_explicit_always_on() {
         .with_effort(5)
         .encode(&buf, w, h, PixelLayout::Rgb8)
         .expect("encode default");
+    let mut cust = EncoderImprovementsCustom::default();
+    cust.pixel_loss_dispatch = PixelLossDispatch::AlwaysOn;
     let bytes_explicit = LossyConfig::new(1.0)
         .with_effort(5)
-        .with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOn)
+        .with_strategy(EncoderStrategy::Custom(Box::new(cust)))
         .encode(&buf, w, h, PixelLayout::Rgb8)
         .expect("encode explicit AlwaysOn");
     assert_eq!(

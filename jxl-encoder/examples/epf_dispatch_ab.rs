@@ -107,7 +107,7 @@ fn measure_cell(
 ) -> Result<Measure, String> {
     let cfg = LossyConfig::new(d)
         .with_effort(effort)
-        .with_epf_dispatch(dispatch);
+        .with_strategy(jxl_encoder::api::EncoderStrategy::Custom(Box::new(jxl_encoder::api::EncoderImprovementsCustom { epf_dispatch: dispatch, ..Default::default() })));
 
     let t0 = Instant::now();
     let bytes = cfg
