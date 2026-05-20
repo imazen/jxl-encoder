@@ -8928,11 +8928,13 @@ impl<'a> EncodeRequest<'a> {
         let effective_distance = cfg.effective_distance();
 
         let mut enc = crate::vardct::VarDctEncoder::new(effective_distance);
-        // W44-128 Chunk B: resolve the EncoderStrategy bundle once
-        // here (caller-set preset + collected `with_*_hint`
-        // overrides). Stored on the encoder for Chunk C+ to consume;
-        // no call site reads it yet so hash-locks stay byte-identical.
-        enc.resolved_improvements = Some(cfg.resolve_improvements());
+        // W44-128 Chunk B + W44-130 Chunk D: resolve the
+        // EncoderStrategy bundle once here (caller-set preset +
+        // collected `with_*_hint` overrides) and store on the encoder.
+        // Field is non-optional as of Chunk D — consumed directly by
+        // the 8 call sites in `vardct/encoder.rs` +
+        // `vardct/butteraugli_loop.rs`.
+        enc.resolved_improvements = cfg.resolve_improvements();
         enc.effort = cfg.effort;
         enc.profile = profile;
         enc.use_ans = cfg.use_ans;
@@ -10075,10 +10077,10 @@ impl LossyEncoder {
             let effective_distance = cfg.effective_distance();
 
             let mut enc = crate::vardct::VarDctEncoder::new(effective_distance);
-            // W44-128 Chunk B: resolve EncoderStrategy bundle once
-            // (streaming `LossyEncoder` path). Stored for Chunk C+ to
-            // consume; hash-locks byte-identical at Zenjxl default.
-            enc.resolved_improvements = Some(cfg.resolve_improvements());
+            // W44-128 Chunk B + W44-130 Chunk D: resolve EncoderStrategy
+            // bundle once (streaming `LossyEncoder` path). Field is
+            // non-optional as of Chunk D.
+            enc.resolved_improvements = cfg.resolve_improvements();
             enc.effort = cfg.effort;
             enc.profile = profile;
             enc.use_ans = cfg.use_ans;
@@ -11955,10 +11957,10 @@ fn encode_animation_lossy(
     }
 
     let mut enc = crate::vardct::VarDctEncoder::new(cfg.distance);
-    // W44-128 Chunk B: resolve EncoderStrategy bundle once
-    // (animation per-frame path). Stored for Chunk C+ to consume;
-    // hash-locks byte-identical at Zenjxl default.
-    enc.resolved_improvements = Some(cfg.resolve_improvements());
+    // W44-128 Chunk B + W44-130 Chunk D: resolve EncoderStrategy
+    // bundle once (animation per-frame path). Field is non-optional
+    // as of Chunk D.
+    enc.resolved_improvements = cfg.resolve_improvements();
     enc.effort = cfg.effort;
     enc.profile = profile;
     enc.use_ans = cfg.use_ans;

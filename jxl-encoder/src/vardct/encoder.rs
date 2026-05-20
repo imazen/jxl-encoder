@@ -1404,23 +1404,22 @@ pub struct VarDctEncoder {
     /// [`crate::api::Buffering::BufferedOutput`] for larger inputs,
     /// matching libjxl post-`032d39a`.
     pub buffering: crate::api::Buffering,
-    /// W44-128 (Chunk B) — resolved compatibility / improvements
-    /// bundle. Computed once at encoder construction by
+    /// W44-128 (Chunk B) / W44-130 (Chunk D) — resolved compatibility /
+    /// improvements bundle. Computed once at encoder construction by
     /// [`crate::api::EncoderStrategy::resolve`] from the caller-set
     /// [`crate::api::LossyConfig::with_strategy`] preset plus the
     /// individual `with_*_hint` overrides.
     ///
-    /// `None` when constructed via [`Self::new`] (the
-    /// `VarDctEncoder::new(distance)` direct entry point, used by tests
-    /// and some legacy paths). The API layer's three encode entry
-    /// points (still-image `EncodeRequest`, streaming `LossyEncoder`,
-    /// animation) populate this from
-    /// [`crate::api::LossyConfig::resolve_improvements`] right after
-    /// `VarDctEncoder::new`. Chunks C/G read these resolved policies
-    /// in place of the existing `Option<bool>` hint fields one site at
-    /// a time; until then this field is unused and hash-locks stay
-    /// byte-identical to pre-Chunk-B main.
-    pub(crate) resolved_improvements: Option<crate::api::ResolvedImprovements>,
+    /// **W44-130 Chunk D**: this field is now always populated. The
+    /// production API layer (still-image `EncodeRequest`, streaming
+    /// `LossyEncoder`, animation) populates from
+    /// [`crate::api::LossyConfig::resolve_improvements`]; direct
+    /// `VarDctEncoder::new` callers (tests + examples) get
+    /// [`crate::api::ResolvedImprovements::default`] which matches the
+    /// `EncoderStrategy::Zenjxl` baseline. The 8 call sites in
+    /// `vardct/encoder.rs` + `vardct/butteraugli_loop.rs` read this
+    /// directly without `unwrap_or_default()` fallbacks.
+    pub(crate) resolved_improvements: crate::api::ResolvedImprovements,
 }
 
 impl Default for VarDctEncoder {
@@ -1514,12 +1513,13 @@ impl Default for VarDctEncoder {
             // for 8-bit sRGB layouts.
             zenanalyze_proxies: None,
             buffering: crate::api::Buffering::default(),
-            // W44-128 Chunk B: `None` keeps the legacy `with_*_hint`
-            // `Option<bool>` fields as the active dispatch. The API
-            // layer populates this from
-            // `LossyConfig::resolve_improvements()` so Chunks C/G can
-            // rewire one call site at a time.
-            resolved_improvements: None,
+            // W44-130 Chunk D: default to the Zenjxl-equivalent resolved
+            // policy (matches `EncoderStrategy::Zenjxl`'s
+            // `ResolvedImprovements`). The API layer overwrites this
+            // with the caller's strategy via
+            // `LossyConfig::resolve_improvements()` at all three
+            // construction sites.
+            resolved_improvements: crate::api::ResolvedImprovements::default(),
         }
     }
 }
@@ -1616,10 +1616,12 @@ impl VarDctEncoder {
             // for 8-bit sRGB layouts.
             zenanalyze_proxies: None,
             buffering: crate::api::Buffering::default(),
-            // W44-128 Chunk B: `None` keeps the legacy hint fields as
-            // the active dispatch. Populated by the API layer via
-            // `LossyConfig::resolve_improvements()`.
-            resolved_improvements: None,
+            // W44-130 Chunk D: default to the Zenjxl-equivalent resolved
+            // policy. Populated by the API layer via
+            // `LossyConfig::resolve_improvements()` at all three
+            // construction sites; tests/examples using `new()` directly
+            // get the default behaviour.
+            resolved_improvements: crate::api::ResolvedImprovements::default(),
         }
     }
 
@@ -2717,19 +2719,13 @@ impl VarDctEncoder {
             let is_screenshot = mask1x1_median_for_pre_scale
                 .is_some_and(|med| med > super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD);
             let m3 = self.zenanalyze_proxies.map(|p| p.m3_colourfulness);
-            // W44-129 Chunk C: read the resolved `adaptive_quant_qf_seed`
-            // enum from `ResolvedImprovements` (populated by Chunk B
-            // `LossyConfig::resolve_improvements`). Defaults to
-            // `AutoScalePerEffort` via `.unwrap_or_default()` when
-            // `resolved_improvements` is `None`, preserving the legacy
-            // 2.0 (e5/e6) / 3.0 (e7) per-effort scales for direct
-            // `VarDctEncoder::new` test callers. `Off` short-circuits
-            // the scale to 1.0 (Libjxl strategy).
-            let adaptive_quant_qf_seed_policy = self
-                .resolved_improvements
-                .as_ref()
-                .map(|r| r.adaptive_quant_qf_seed)
-                .unwrap_or_default();
+            // W44-129 Chunk C / W44-130 Chunk D: read the resolved
+            // `adaptive_quant_qf_seed` enum directly from
+            // `ResolvedImprovements` (always populated; defaults to
+            // `AutoScalePerEffort` for direct `VarDctEncoder::new`
+            // callers). `Off` short-circuits the scale to 1.0 (Libjxl
+            // strategy).
+            let adaptive_quant_qf_seed_policy = self.resolved_improvements.adaptive_quant_qf_seed;
             let qf_pre_scale =
                 super::butteraugli_loop::resolved_adaptive_quant_qf_seed_scale_with_policy(
                     self.effort,
@@ -2968,11 +2964,7 @@ impl VarDctEncoder {
         // `Disabled` (Libjxl strategy) short-circuits the lift off
         // regardless of the `content_aware_entropy_mul` enable bit —
         // matching libjxl's no-discriminator default.
-        let screenshot_policy = self
-            .resolved_improvements
-            .as_ref()
-            .map(|r| r.screenshot_entropy_mul)
-            .unwrap_or_default();
+        let screenshot_policy = self.resolved_improvements.screenshot_entropy_mul;
         let w22_1_lift = match screenshot_policy {
             crate::api::ScreenshotEntropyMulPolicy::Auto => {
                 if self.content_aware_entropy_mul {
@@ -3018,11 +3010,7 @@ impl VarDctEncoder {
         // production semantics bit-identically. `Disabled` is reachable
         // only via `EncoderStrategy::Libjxl` and short-circuits the
         // entire W44-29/91 gate stack to off.
-        let high_d_photo_policy = self
-            .resolved_improvements
-            .as_ref()
-            .map(|r| r.high_d_photo_entropy_mul)
-            .unwrap_or_default();
+        let high_d_photo_policy = self.resolved_improvements.high_d_photo_entropy_mul;
         let w44_29_lower = if w22_1_lift {
             // Mutually exclusive — W22-1 already swapped to the lift
             // table. Don't double-swap.
@@ -3149,11 +3137,7 @@ impl VarDctEncoder {
         // observed behaviour is identical when `resolved_improvements`
         // is populated AND `dct_suppress_hint` is `None` (the production
         // path). Chunk D deletes the legacy field.
-        let dct64_policy = self
-            .resolved_improvements
-            .as_ref()
-            .map(|r| r.dct64_search_policy)
-            .unwrap_or_default();
+        let dct64_policy = self.resolved_improvements.dct64_search_policy;
         let w44_65_suppress_dct64 = match dct64_policy {
             crate::api::Dct64SearchPolicy::Auto => match self.dct_suppress_hint {
                 Some(b) => b,
@@ -3336,11 +3320,7 @@ impl VarDctEncoder {
                 // `StrategyOverrides::apply_to` maps `dct32_keep_hint:
                 // Some(true) → KeepWhenDct64Suppressed` and `Some(false) →
                 // FollowDct64Suppression`.
-                let dct32_policy = self
-                    .resolved_improvements
-                    .as_ref()
-                    .map(|r| r.dct32_search_policy)
-                    .unwrap_or_default();
+                let dct32_policy = self.resolved_improvements.dct32_search_policy;
                 let w44_123_keep_dct32 = match dct32_policy {
                     crate::api::Dct32SearchPolicy::FollowDct64Suppression => {
                         match self.dct32_keep_hint {
