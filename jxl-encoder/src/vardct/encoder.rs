@@ -309,6 +309,59 @@ const W44_96_VARIANT_Z_MIN_DISTANCE: f32 = 4.5;
 /// table (safer for SSIM2).
 const W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN: f32 = 25.0;
 
+/// W44-124 auto-discriminator: minimum `m3_colourfulness` to AUTO-fire the
+/// W44-123 [`VarDctEncoder::dct32_keep_hint`] lever when the caller does
+/// not pass an explicit `Some(bool)`.
+///
+/// **Context**: W44-123 (`545e69b1`) shipped opt-in API
+/// `LossyConfig::with_dct32_keep_hint(Option<bool>)`. Default `None`
+/// preserved W44-68 behaviour (try_dct32=false alongside try_dct64=false).
+/// Measured A/B: codec_wiki d=3 e5/e6/e7 SSIM2 +1.40/+1.33/+0.90 (TARGET),
+/// terminal e8/e9 d=4 SSIM2 +0.47 (preserved). But 6 SCREEN cells regressed
+/// −0.32 to −0.99 SSIM2 (graph, windows, imessage) — default-on flip
+/// required a per-image discriminator.
+///
+/// **Probe** (`examples/w44_124_proxy_probe.rs`, 2026-05-20):
+///
+/// | image       | m3      | edge_density | predicate fires? |
+/// |---          |---      |---           |---               |
+/// | codec_wiki  | 145.73  | 0.0396       | **YES** (WANT)   |
+/// | imessage    |  67.65  | 0.0533       | no (ed gate)     |
+/// | terminal    |  13.85  | 0.0874       | no (m3 gate)     |
+/// | graph       |  11.75  | 0.0698       | no               |
+/// | windows     |  20.04  | 0.1201       | no               |
+/// | imac_g3     |  14.29  | 0.1227       | no               |
+/// | imac_dark   |  20.96  | 0.1438       | no               |
+/// | windows95   |  27.19  | 0.3165       | no               |
+/// | 1418519     |  36.84  | 0.1637       | no (CID22 photo) |
+/// | 1189261     |  98.84  | 0.4895       | no (ed gate)     |
+/// | 1420710     |  32.93  | 0.9298       | no               |
+///
+/// Threshold 60.0 sits between 27.19 (windows95, max regressing) and
+/// 145.73 (codec_wiki, WANT) with 2.2× margin on the WANT side. Errs
+/// strict — a hypothetical unseen screen with m3 ∈ [27, 60] stays on
+/// W44-68 baseline (safe).
+///
+/// Paired with [`W44_124_DCT32_KEEP_EDGE_DENSITY_MAX`] (see below) to
+/// reject imessage (m3=67.65 passes m3 alone but ed=0.0533 fails ed).
+const W44_124_DCT32_KEEP_M3_MIN: f32 = 60.0;
+
+/// W44-124 auto-discriminator: maximum `edge_density` to AUTO-fire the
+/// W44-123 [`VarDctEncoder::dct32_keep_hint`] lever. Belt-and-suspenders
+/// with [`W44_124_DCT32_KEEP_M3_MIN`].
+///
+/// **Why both**: imessage (m3=67.65) passes the m3 gate but its
+/// edge_density (0.0533) is above this threshold — codec_wiki sits at
+/// 0.0396 cleanly under the 0.05 floor. The W44-123 A/B showed imessage
+/// d=6 regressed −0.37 SSIM2 under the keep_dct32 lever; the ed gate
+/// prevents that regression while keeping codec_wiki firing.
+///
+/// All CID22 photos have edge_density ≥ 0.16 (textured high-frequency
+/// content), so even the colourful 1189261 (m3=98.84) is correctly
+/// rejected by this gate (ed=0.4895). Belt-and-suspenders against
+/// false-fires on unseen photo content.
+const W44_124_DCT32_KEEP_EDGE_DENSITY_MAX: f32 = 0.05;
+
 /// W44-87 single-pass-entropy dispatch — smooth-photo `median(mask1x1)`
 /// upper bound. Same direction as [`HIGH_D_PHOTO_SMOOTH_THRESHOLD`]
 /// (smooth = below threshold), set to the same `50.0` value: CID22
@@ -1289,12 +1342,25 @@ pub struct VarDctEncoder {
     pub dct_suppress_hint: Option<bool>,
     /// W44-123 caller-supplied override decoupling the W44-68
     /// `try_dct32` suppression from the W44-65 `try_dct64`
-    /// suppression. `None` (default) keeps the W44-68 behaviour
-    /// (both dropped together). `Some(true)` keeps `try_dct32 = true`
-    /// even when the W44-65 gate fires (re-enables
-    /// `find_best_32x32_transform` so DCT32X32 vs 4×DCT16X16 can
-    /// be evaluated on smooth screen content). Set via
-    /// [`crate::api::LossyConfig::with_dct32_keep_hint`].
+    /// suppression.
+    ///
+    /// - `Some(true)`: force-keep `try_dct32 = true` even when the
+    ///   W44-65 gate fires (re-enables `find_best_32x32_transform`
+    ///   so DCT32X32 vs 4×DCT16X16 is evaluated on smooth screen
+    ///   content).
+    /// - `Some(false)`: force-suppress `try_dct32 = false` alongside
+    ///   `try_dct64 = false` (the original W44-68 behaviour;
+    ///   guarantees pre-W44-124 byte-equivalence).
+    /// - `None` (default, W44-124 auto-discriminator):
+    ///   auto-fires `keep_dct32 = true` when the W44-65 gate fires AND
+    ///   `proxies.m3_colourfulness >= W44_124_DCT32_KEEP_M3_MIN` (60)
+    ///   AND `proxies.edge_density < W44_124_DCT32_KEEP_EDGE_DENSITY_MAX`
+    ///   (0.05). Otherwise falls through to the W44-68 behaviour.
+    ///   Auto-discriminator only fires when [`Self::zenanalyze_proxies`]
+    ///   is populated (8-bit sRGB layouts via [`crate::api::PixelLayout`]
+    ///   `Rgb8` / `Rgba8` / `Bgr8` / `Bgra8`).
+    ///
+    /// Set via [`crate::api::LossyConfig::with_dct32_keep_hint`].
     pub dct32_keep_hint: Option<bool>,
     /// W44-91 cheap zenanalyze-equivalent proxies for widening the W44-29
     /// high-distance smooth-photo lift onto the textured-colourful-photo
@@ -3093,12 +3159,33 @@ impl VarDctEncoder {
                 // e5/e6/e7 SSIM2 +1.40/+1.33/+0.90 (vs admit-DCT64's
                 // +1.40/+1.33/+0.73) AND terminal e8/e9 d=4 SSIM2 +0.47 with
                 // bfly -1.9% (vs admit-DCT64's bfly +29% regression). Default
-                // remains `None` (W44-68 behaviour preserved, hash-locks stay
-                // byte-identical).
+                // was `None` → W44-68 (drop try_dct32 too).
                 //
-                // For development / paired benchmarks the env var
-                // `__JXL_W44_123_KEEP_DCT32=1` also flips the gate; used by
-                // the W44-123 A/B harness before the hint API landed.
+                // W44-124 (2026-05-20): default `None` now AUTO-fires a
+                // zenanalyze-proxy discriminator that admits codec_wiki-class
+                // content while rejecting the 6 SCREEN cells (graph, windows,
+                // imessage) that regressed in the W44-123 default-off A/B.
+                // Predicate:
+                //   * zenanalyze proxies populated (8-bit sRGB layout)
+                //   * `m3_colourfulness >= W44_124_DCT32_KEEP_M3_MIN` (60)
+                //   * `edge_density < W44_124_DCT32_KEEP_EDGE_DENSITY_MAX` (0.05)
+                //
+                // Verified clean split per `examples/w44_124_proxy_probe.rs`:
+                // codec_wiki (m3=145.73, ed=0.0396) FIRES. All 6 W44-123
+                // regression screens REJECT (terminal/graph/windows m3≤21;
+                // imessage m3=67.65 but ed=0.0533 fails ed gate). All CID22
+                // photos REJECT (ed ≥ 0.16). Trade-off: terminal e8/e9 d=4
+                // loses the +0.47 SSIM2 opt-in win (m3=13.85 cleanly rejected)
+                // — that win remains accessible via explicit
+                // `with_dct32_keep_hint(Some(true))`. Net default-on:
+                // codec_wiki d=3 close-out preserved, zero new FIXED→OPEN
+                // flips on regression set.
+                //
+                // Explicit `Some(true)` / `Some(false)` overrides the
+                // auto-discriminator (caller's choice always wins). For
+                // development / paired benchmarks the env var
+                // `__JXL_W44_123_KEEP_DCT32=1` also forces keep_dct32; used
+                // by the W44-123 A/B harness before the hint API landed.
                 let w44_123_env_keep = {
                     #[cfg(feature = "std")]
                     {
@@ -3111,9 +3198,13 @@ impl VarDctEncoder {
                         false
                     }
                 };
+                let w44_124_auto_keep = self.zenanalyze_proxies.is_some_and(|p| {
+                    p.m3_colourfulness >= W44_124_DCT32_KEEP_M3_MIN
+                        && p.edge_density < W44_124_DCT32_KEEP_EDGE_DENSITY_MAX
+                });
                 let w44_123_keep_dct32 = match self.dct32_keep_hint {
                     Some(b) => b,
-                    None => w44_123_env_keep,
+                    None => w44_123_env_keep || w44_124_auto_keep,
                 };
                 if !w44_123_keep_dct32 {
                     p.try_dct32 = false;
@@ -5163,6 +5254,41 @@ mod tests {
             .with_dct32_keep_hint(Some(true))
             .with_effort(8);
         assert_eq!(cfg_effort.dct32_keep_hint(), Some(true));
+    }
+
+    /// W44-124 — verify the auto-discriminator predicate values match
+    /// the measured separation between codec_wiki (WANT-FIRE) and the
+    /// 6 W44-123 regression screens (REJECT). The probe
+    /// (`examples/w44_124_proxy_probe.rs`) captures the live values;
+    /// this test pins the threshold constants so a future drift either
+    /// way is caught.
+    #[test]
+    fn test_w44_124_auto_discriminator_predicate() {
+        // codec_wiki (WANT-FIRE): m3=145.7, ed=0.0396 → fires.
+        assert!(145.7_f32 >= W44_124_DCT32_KEEP_M3_MIN);
+        assert!(0.0396_f32 < W44_124_DCT32_KEEP_EDGE_DENSITY_MAX);
+
+        // imessage (REJECT, W44-123 d=6 −0.37 SSIM2): m3=67.65 passes m3
+        // alone but ed=0.0533 fails the ed gate → reject. This is the
+        // load-bearing case that justifies the AND clause.
+        assert!(67.65_f32 >= W44_124_DCT32_KEEP_M3_MIN);
+        assert!(0.0533_f32 >= W44_124_DCT32_KEEP_EDGE_DENSITY_MAX);
+
+        // terminal (REJECT by m3): m3=13.85 fails m3, ed=0.0874 also
+        // fails ed → reject (loses the +0.47 SSIM2 e8/e9 opt-in win;
+        // remains accessible via Some(true) override).
+        assert!(13.85_f32 < W44_124_DCT32_KEEP_M3_MIN);
+
+        // graph (REJECT by m3): m3=11.75 → reject.
+        assert!(11.75_f32 < W44_124_DCT32_KEEP_M3_MIN);
+
+        // windows (REJECT by m3): m3=20.04 → reject.
+        assert!(20.04_f32 < W44_124_DCT32_KEEP_M3_MIN);
+
+        // 1189261 photo (REJECT by ed, the colourful one that would
+        // pass m3 alone): m3=98.84 passes m3 but ed=0.4895 fails.
+        assert!(98.84_f32 >= W44_124_DCT32_KEEP_M3_MIN);
+        assert!(0.4895_f32 >= W44_124_DCT32_KEEP_EDGE_DENSITY_MAX);
     }
 
     #[test]
