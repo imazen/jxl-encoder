@@ -580,6 +580,32 @@ Key patterns to watch for when working on this codebase:
 - **Block context map**: Decoder uses `order_id` (0-12), not `strategy_code` (0-26). Account for X↔Y channel swap.
 - **Edge handling**: Encoder and decoder must agree on boundary pixel fallbacks (0 vs clamped neighbors).
 
+## MANDATORY: Maintain `docs/LIBJXL_DIVERGENCES.md` with every change
+
+**Every commit that touches a gate, tolerance, constant, or algorithm choice that differs from libjxl MUST update `docs/LIBJXL_DIVERGENCES.md`.** No exceptions.
+
+This is the SINGLE SOURCE OF TRUTH for where our encoder diverges from libjxl reference. It prevents:
+- Re-investigating already-ruled-out divergences (W44-93 try_dct64, W44-102 cfl_two_pass)
+- Losing track of intentional content-aware lifts (the W44-91/96/98/99 zenanalyze stack)
+- Re-introducing fixed bugs (W44-3 EPF Pass-1, W44-8 patches DC quant, etc.)
+- False-completion claims about parity that don't account for active KNOWN-BUG clusters
+
+**When to update**:
+- Adding/changing/removing any gate condition (`effort >= N`, distance threshold, content discriminator)
+- Adding/changing/removing any numeric constant (entropy_mul, kFavor, threshold, multiplier)
+- Adding/changing/removing any algorithm choice (which TreeKind, which clustering strategy, which search policy)
+- Moving a divergence from ACTIVE/KNOWN-BUG → RESOLVED (do NOT delete the row; move to Section G)
+
+**How to update**:
+1. Find the relevant section (A: effort gates, B: content-aware discriminators, C: cost-model constants, D: algorithm choices, E: opt-in APIs, F: known-bug clusters, G: resolved)
+2. Add/edit the row with: site, ours-value, libjxl-value, status, commit SHA
+3. If discriminator-shape: include the EXACT predicate (e.g. `m_colourfulness >= 80 AND fcbr < 0.01`)
+4. Commit the doc update in the SAME commit as the code change (or as an immediate follow-up if scope is too tight)
+
+**Sub-agent prompt requirement**: When spawning a sub-agent for any code-change chunk, the prompt MUST include reading `docs/LIBJXL_DIVERGENCES.md` in "inputs to read FIRST" AND a requirement to update the relevant row(s) before commit. Sub-agents that ship without updating the table are failing the chunk's acceptance.
+
+**Verification**: `git log --oneline -- docs/LIBJXL_DIVERGENCES.md` should show updates roughly synchronized with commits touching `effort.rs`, `vardct/encoder.rs`, `butteraugli_loop.rs`, `vardct/ac_strategy_search.rs`, `vardct/dc_tree_learn.rs`, `modular/tree_learn.rs`, or any cost-model constant table.
+
 ## Known Bugs (ACTIVE)
 
 (none currently)
