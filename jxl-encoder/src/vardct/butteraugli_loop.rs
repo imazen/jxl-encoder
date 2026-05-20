@@ -805,21 +805,58 @@ impl VarDctEncoder {
         //
         // The atomic override below lets sweep harnesses tune the scale per-class
         // without rebuilds; production defaults to 4.0 (SCALE=4 from the sweep).
+        // W44-129 Chunk C: read the resolved `buttloop_qf_seed` enum from
+        // `ResolvedImprovements` (populated by Chunk B
+        // `LossyConfig::resolve_improvements`).
+        //
+        // Policy translation:
+        //   * `AutoScale4` (default) → existing W44-105/107/108 auto gate
+        //     with scale `DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE` = 4.0
+        //   * `AutoScale(s)` → same gate predicate but caller picks the scale
+        //   * `ForceScale(s)` → no gate; always scale by `s` (sweep harness)
+        //   * `Off` → never scale; `scale == 1.0` (Libjxl strategy)
+        //
+        // `None` `resolved_improvements` falls back to `AutoScale4` via
+        // `.unwrap_or_default()` for direct `VarDctEncoder::new` test
+        // callers — bit-identical to pre-Chunk-C.
+        let buttloop_qf_seed_policy = self
+            .resolved_improvements
+            .as_ref()
+            .map(|r| r.buttloop_qf_seed)
+            .unwrap_or_default();
         let w44_108_low_colour = self
             .zenanalyze_proxies
             .is_some_and(|p| p.m3_colourfulness < BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX);
-        let buttloop_qf_seed_scale = if is_screenshot
+        let auto_gate_fires = is_screenshot
             && (target_distance >= BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE
                 || (w44_108_low_colour
-                    && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE))
-        {
-            DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE
-        } else {
-            1.0
+                    && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE));
+        let buttloop_qf_seed_scale = match buttloop_qf_seed_policy {
+            crate::api::ButtloopQfSeedPolicy::AutoScale4 => {
+                if auto_gate_fires {
+                    DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE
+                } else {
+                    1.0
+                }
+            }
+            crate::api::ButtloopQfSeedPolicy::AutoScale(s) => {
+                if auto_gate_fires {
+                    s
+                } else {
+                    1.0
+                }
+            }
+            crate::api::ButtloopQfSeedPolicy::ForceScale(s) => s,
+            crate::api::ButtloopQfSeedPolicy::Off => 1.0,
         };
 
         // W44-105 sweep override: production default is fixed via constant,
-        // but the atomic slot lets harnesses search for per-corpus tuning.
+        // but the env-var slot lets harnesses search for per-corpus tuning
+        // without rebuilds. Chunk F formalises this as an env-var fallback
+        // layer inside `EncoderStrategy::resolve` (when the API field is
+        // at its default value, env-var override applies); until then the
+        // env-var override happens at the call site and takes precedence
+        // over the resolved policy.
         #[cfg(feature = "std")]
         let buttloop_qf_seed_scale = std::env::var("JXL_BUTTLOOP_INITIAL_QF_SCALE")
             .ok()
