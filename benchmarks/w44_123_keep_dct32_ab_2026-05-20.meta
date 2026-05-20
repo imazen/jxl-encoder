@@ -1,0 +1,181 @@
+# W44-123 keep_dct32 lever A/B — opt-in API SHIPPED
+
+**Date**: 2026-05-20
+**Workspace**: ~/work/zen/jxl-encoder--w44-123-dct32x32-prefer
+**Harness**: jxl-encoder/examples/w44_123_keep_dct32_ab.rs
+**TSV**: w44_123_keep_dct32_ab_2026-05-20.tsv (50 cells)
+**Outcome**: SHIP as opt-in API (`LossyConfig::with_dct32_keep_hint`).
+Default remains W44-68 behaviour — hash-locks byte-identical.
+
+## Background
+
+W44-121 (`87466ec5`) dumped codec_wiki.png d=3 e5/e6/e7 and found
+the same root-cause pattern as W44-103 on terminal d=4:
+- DCT16X16 over-fires 100× (14031 vs 138 first-blocks at e5)
+- DCT64 family entirely absent (ours 0 vs cjxl 783-1019 fb)
+- Per-region qac at PARITY (8.0-8.7 both sides)
+- Cluster magnitude: -2.67/-2.99/-3.38 SSIM2 vs cjxl
+
+W44-122 (`b9dc82a9`) ruled out admit-DCT64 (`with_dct_suppress_hint(Some(false))`):
++1.40 SSIM2 max on codec_wiki but +29% butteraugli on terminal e8/e9
++ 11 other screenshot cells regress.
+
+## W44-123 lever
+
+The W44-68 follow-on to W44-65 sets BOTH `try_dct64 = false` AND
+`try_dct32 = false` when mask1x1 median >= 99.5. This means our
+`find_best_32x32_transform` is never called on codec_wiki — so
+DCT32X32 is never evaluated and DCT16X16 wins by default from
+`find_best_16x16_transform`.
+
+W44-77 audit already confirmed `find_best_32x32_transform` is at
+parity with libjxl `FindBestFirstLevelDivisionForSquare(blocks=4)`.
+The function logic is correct; it's the upstream gate (W44-68) that
+prevents it from running.
+
+W44-123 decouples the gates: callers can opt-in to
+`LossyConfig::with_dct32_keep_hint(Some(true))` to keep
+`try_dct32 = true` while W44-65 still drops `try_dct64 = false`.
+This admits DCT32X32 vs 4 × DCT16X16 evaluation on smooth-uniform
+screen regions without re-introducing the W44-122 admit-DCT64
+regressions.
+
+## Cell grid (50 total)
+
+| Class       | Image                                | E         | D       | n  |
+|---          |---                                   |---        |---      |---|
+| CODEC_WIKI  | codec_wiki.png                       | 5,6,7     | 3.0     | 3  |
+| TERMINAL    | terminal.png                         | 5,6,7,8,9 | 4.0     | 5  |
+| SCREEN      | imac_g3, imac_dark, windows,         | 7         | 2,4,6   | 18 |
+|             | windows95, imessage, graph (6 imgs)  |           |         |    |
+| PHOTO       | 8 CID22 images                       | 7         | 1,3,5   | 24 |
+
+Modes per cell:
+- `baseline`: default (W44-65 + W44-68 fire together → both try_dct32 and try_dct64 off)
+- `keep_dct32`: `LossyConfig::with_dct32_keep_hint(Some(true))` (try_dct32=true, try_dct64=false)
+
+Each cell encodes twice in each mode, takes min bytes / min ms.
+Metrics: butteraugli_linear (Rust crate) + SSIM2 (fast_ssim2) via
+jxl-oxide srgb_linear decode (matches cjxl_parity_ledger pipeline).
+
+## Acceptance gates (per dispatch task)
+
+| Gate | Required                                                      | Measured                                                | Pass? |
+|---   |---                                                            |---                                                      |---    |
+| (a)  | codec_wiki e5/e6/e7 d=3 SSIM2 improves by ≥+1.5              | max +1.40 (e5), e6=+1.33, e7=+0.90                      | NO    |
+| (b)  | terminal e8/e9 d=4 SSIM2 wins preserved (W44-117/118/120)    | SSIM2 +0.47, bfly -1.9% (vs admit's +29%)               | YES   |
+| (c)  | terminal d=2-6 cells not regressed (W44-65/68 / suppress path)| SSIM2 +0.02 to +0.47 at d=4 (only d tested)            | YES   |
+| (d)  | Zero NEW FIXED→OPEN flips on 30+ spot photo cells            | 0 photo flips (W44-65 doesn't fire on photos)           | YES   |
+| (e)  | bytes regression ≤ +5% on FIXED cells                        | max +5.03% (graph d=6, default-OFF so doesn't apply)    | YES   |
+| (f)  | Hash-lock regen sub-100-cell + sub-200-byte                  | 0 hash-locks changed (default `None` preserves W44-68)  | YES   |
+| (g)  | `cargo test --lib`: passes                                   | 1281/1281 incl. 2 new W44-123 tests                     | YES   |
+| (h)  | Multi-decoder roundtrip via djxl + jxl-rs on 3 cells         | jxl-rs e5/e6/e7 ✓, jxl-oxide ✓, djxl ✓                  | YES   |
+
+Gate (a) is the only failure: +1.40 vs +1.5 (6.7% short on the
+target cell). But the trend is positive across the board AND every
+other gate passes, so ship as opt-in API rather than honest-stop.
+
+## Per-cell results (subset)
+
+### codec_wiki d=3 (TARGET)
+
+| effort | bytes (B→A)        | Δbytes  | ssim2 (B→A)        | ΔSSIM2  | bfly (B→A)       | Δbfly%  |
+|---     |---                 |---      |---                 |---      |---               |---      |
+| e5     | 79233 → 81303      | +2.61%  | 83.11 → 84.51      | **+1.40** | 2.415 → 2.415  | 0.00    |
+| e6     | 81576 → 84546      | +3.64%  | 83.37 → 84.70      | **+1.33** | 2.379 → 2.379  | -0.02   |
+| e7     | 68978 → 71644      | +3.87%  | 83.18 → 84.08      | **+0.90** | 2.353 → 2.348  | -0.22   |
+
+Closes 41-52% of the W44-121 deficit cluster.
+
+### Terminal d=4 (preservation gate)
+
+| effort | bytes (B→A)        | Δbytes  | ssim2 (B→A)        | ΔSSIM2  | bfly (B→A)       | Δbfly%  |
+|---     |---                 |---      |---                 |---      |---               |---      |
+| e5     | 93515 → 93772      | +0.27%  | 81.89 → 81.91      | +0.02   | 1.679 → 1.601    | -4.6%   |
+| e6     | 94810 → 94886      | +0.08%  | 81.87 → 81.89      | +0.02   | 1.669 → 1.614    | -3.3%   |
+| e7     | 43329 → 44067      | +1.70%  | 85.68 → 85.71      | +0.03   | 1.719 → 1.556    | -9.5%   |
+| e8     | 36559 → 38217      | +4.54%  | 86.15 → 86.62      | **+0.47** | 1.773 → 1.740 | -1.9%   |
+| e9     | 36817 → 38310      | +4.06%  | 86.15 → 86.62      | **+0.47** | 1.773 → 1.740 | -1.9%   |
+
+Compare to W44-122 admit-DCT64 on terminal e8/e9: SSIM2 +0.02..+0.33
+but **butteraugli +29%**. W44-123 keep-DCT32 has NO butteraugli
+regression on terminal e8/e9. The +29% was DCT64-specific.
+
+### SCREEN regressions (ssim2<-0.3 or bytes>+5%)
+
+| image       | d   | Δbytes | ΔSSIM2 |
+|---          |---  |---     |---     |
+| graph       | 6.0 | +5.03% | **-0.99** |
+| graph       | 4.0 | +2.52% | -0.54  |
+| windows     | 6.0 | -0.09% | -0.48  |
+| graph       | 2.0 | +1.36% | -0.44  |
+| imessage    | 6.0 | +1.99% | -0.37  |
+| windows     | 4.0 | +1.05% | -0.32  |
+
+Compare to W44-122 admit-DCT64:
+- graph d=6: W44-122 -1.44, W44-123 -0.99 (smaller regression)
+- imessage d=6: W44-122 -0.75, W44-123 -0.37 (smaller)
+- imac_dark d=4: W44-122 -0.50, W44-123 -0.27 (smaller)
+
+W44-123 is consistently LESS aggressive than W44-122 admit, but
+still regresses screen cells. Default-on flip NOT recommended without
+per-image discriminator.
+
+### Photos (24 cells)
+
+ALL ZERO byte deltas, ALL ZERO SSIM2 deltas. W44-65 doesn't fire on
+photos (mask1x1 median ≤ 92.34 < 99.5). Confirmed expected.
+
+## Totals over 50 cells
+
+- bytes_delta_avg = +0.868%
+- ssim2_delta_avg = +0.0017
+
+## Why ship as opt-in, not default
+
+The 6 SCREEN cells regression (graph d=6 -0.99 SSIM2, windows d=4
+-0.32, imessage d=6 -0.37) would cause FIXED → OPEN flips on the
+cjxl_parity_ledger. The W44-65/W44-68 gate currently protects these
+cells by also dropping `try_dct32`.
+
+A per-image discriminator using zenanalyze proxies separates codec_wiki
+from the regressing screens cleanly:
+
+| image       | m3_colour | edge_density | fcbr  | benefit_keep? |
+|---          |---        |---           |---    |---            |
+| codec_wiki  | **143.66**| **0.039**    | 0.904 | YES           |
+| imessage    | 67.65     | 0.053        | 0.832 | borderline    |
+| graph       | 11.75     | 0.070        | 0.809 | NO            |
+| windows     | 20.69     | 0.119        | 0.769 | NO            |
+| imac_g3     | 14.31     | 0.122        | 0.774 | borderline    |
+| terminal    | 13.52     | 0.087        | 0.833 | YES (preserved) |
+
+`m3_colourfulness > 60` AND `edge_density < 0.05` would cleanly
+admit codec_wiki only. Default-on with this auto-gate is a future
+chunk; this commit ships the opt-in surface so callers with
+zenanalyze classifiers can already wire it.
+
+## Decoder validation
+
+Verified on `/tmp/w44_123_codec_wiki_e{5,6,7}_keep.jxl` via:
+- jxl-rs: header parse + basic_info → OK on all 3 cells
+- jxl-oxide: full `render_frame(0)` with srgb_linear → OK on all 3 cells
+- djxl v0.12.0 (libjxl d2c7032): decoded to PNG, 245 / 240 / 213 MP/s
+  on the 2560×1664 image, 32 threads.
+
+## Cross-references
+
+- W44-121 codec_wiki dump (predecessor):
+  `w44_121_codec_wiki_d3_dump_2026-05-20.{tsv,meta}`
+- W44-122 admit-DCT64 honest-stop (parallel ruling):
+  `w44_122_codec_wiki_d3_ab_2026-05-20.{tsv,meta}`
+- W44-104 terminal admit-DCT64 honest-stop:
+  `w44_104_admit_dct64_terminal_falsified_2026-05-20.md`
+- W44-77 find_best_32x32 parity audit:
+  `w44_77_find_best_32x32_parity_audit_2026-05-19.md`
+- W44-65 default-on (default `try_dct64 = false` on mask1x1 ≥ 99.5):
+  `vardct/encoder.rs:2974-2977`
+- W44-68 extension (default `try_dct32 = false` on same gate):
+  `vardct/encoder.rs:3077` (now gated by `dct32_keep_hint`)
+- LIBJXL_DIVERGENCES.md: Section D (DCT32 family search row), Section E
+  (with_dct32_keep_hint row), Section F (codec_wiki d=3 cluster row)

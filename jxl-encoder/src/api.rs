@@ -3811,6 +3811,19 @@ pub struct LossyConfig {
     /// (`w44_63_dct_suppress_hint_shipped_2026-05-19.md`), and W44-65
     /// (`w44_65_dct_suppress_default_on_2026-05-19.md`) for context.
     dct_suppress_hint: Option<bool>,
+    /// W44-123 (2026-05-20) caller-supplied override for the
+    /// `try_dct32` half of the W44-65/W44-68 screenshot-class
+    /// suppression. See [`Self::with_dct32_keep_hint`] for full
+    /// semantics.
+    ///
+    /// Decouples `try_dct32` from `try_dct64` so a caller can keep
+    /// W44-65's DCT64 drop (avoids the W44-104/W44-122 admit-DCT64
+    /// regressions on terminal-class content) while still admitting
+    /// DCT32X32 / DCT32X16 / DCT16X32 evaluation on smooth screen-
+    /// content like codec_wiki.png where the W44-121 dump showed
+    /// `DCT16X16` over-fires 100× because `find_best_32x32_transform`
+    /// never runs.
+    dct32_keep_hint: Option<bool>,
     /// Tracks whether the caller has explicitly set `patches` via
     /// [`Self::with_patches`]. Mirrors the
     /// `butteraugli_iters_explicit` / `resampling_explicit` pattern.
@@ -4088,6 +4101,10 @@ impl LossyConfig {
             // outside the opt-in stay byte-identical because the gate
             // cannot fire.
             dct_suppress_hint: None,
+            // W44-123: default None preserves W44-68 default behaviour
+            // (try_dct32 dropped together with try_dct64 when the W44-65
+            // gate fires). Hash-locks stay byte-identical.
+            dct32_keep_hint: None,
             patches_explicit: false,
             patches_dispatch: PatchesDispatch::default(),
             epf_level: -1,
@@ -4318,6 +4335,7 @@ impl LossyConfig {
         new.high_d_photo_hint = self.high_d_photo_hint;
         new.smooth_photo_dct64_hint = self.smooth_photo_dct64_hint;
         new.dct_suppress_hint = self.dct_suppress_hint;
+        new.dct32_keep_hint = self.dct32_keep_hint;
         // Preserve explicit patches setting across with_effort.
         if self.patches_explicit {
             new.patches = self.patches;
@@ -5246,6 +5264,62 @@ impl LossyConfig {
     /// (default `None`).
     pub fn dct_suppress_hint(&self) -> Option<bool> {
         self.dct_suppress_hint
+    }
+
+    /// W44-123 (2026-05-20) — caller-supplied override for the
+    /// `try_dct32` half of the W44-65/W44-68 screenshot-class
+    /// suppression. Decouples DCT32-class evaluation from DCT64-class
+    /// evaluation so callers can pick "drop DCT64 (W44-65) but KEEP
+    /// DCT32 (skip the W44-68 follow-on)" on smooth screenshots.
+    ///
+    /// W44-121 dumped codec_wiki.png d=3 e5/e6/e7 and found that our
+    /// `find_best_32x32_transform` never runs because W44-68
+    /// drops `try_dct32 = false` on any image where W44-65 also
+    /// fires (mask1x1 median ≥ 99.5). The result is that DCT16X16
+    /// over-fires 100× vs cjxl (14031 vs 138 first-blocks at e5),
+    /// costing ~0.9-1.4 SSIM2 vs cjxl on codec_wiki d=3.
+    ///
+    /// W44-122 ruled out admitting *both* DCT32 and DCT64 (full
+    /// `dct_suppress_hint = Some(false)`) — on terminal e8/e9 d=4 the
+    /// admit produces a +29 % butteraugli regression and other
+    /// screenshots (graph, imessage, imac_dark, ...) lose -0.30 to
+    /// -1.44 SSIM2. Admitting **DCT32 only** is the narrower lever:
+    /// W44-123 measurement (`benchmarks/w44_123_keep_dct32_ab_2026-05-20.tsv`)
+    /// confirms terminal e5..e9 d=4 SSIM2 stays within ±0.50 with no
+    /// butteraugli regression (-1.9 to -9.5 %) while codec_wiki d=3
+    /// e5/e6/e7 recovers +1.40 / +1.33 / +0.90 SSIM2.
+    ///
+    /// Semantics:
+    /// - `None` (**default**): preserves the W44-68 behaviour —
+    ///   `try_dct32` is dropped together with `try_dct64` whenever
+    ///   the W44-65 gate (auto OR `with_dct_suppress_hint` override)
+    ///   fires. Existing hash-locks stay byte-identical.
+    /// - `Some(true)`: when W44-65 fires, KEEP `try_dct32 = true`
+    ///   (only drop `try_dct64 = false`). Useful on
+    ///   codec_wiki-class content (smooth screen with mixed
+    ///   graphic regions) where the DCT16X16 → DCT32X32 split
+    ///   loss is dominant.
+    /// - `Some(false)`: when W44-65 fires, force the W44-68
+    ///   behaviour (drop both). Identical to the current default
+    ///   but explicit for the caller's intent.
+    ///
+    /// Composes with [`Self::with_dct_suppress_hint`]:
+    /// `dct32_keep_hint = Some(true)` is a NO-OP if
+    /// `dct_suppress_hint = Some(false)` because the outer W44-65
+    /// gate doesn't fire at all. The hint only matters when W44-65
+    /// would otherwise drop DCT64.
+    ///
+    /// References: W44-121 dump memo + W44-122 admit-DCT64 honest-stop
+    /// + W44-123 keep-dct32 lever measurement.
+    pub fn with_dct32_keep_hint(mut self, hint: Option<bool>) -> Self {
+        self.dct32_keep_hint = hint;
+        self
+    }
+
+    /// Currently-set [`Self::with_dct32_keep_hint`] override
+    /// (default `None`).
+    pub fn dct32_keep_hint(&self) -> Option<bool> {
+        self.dct32_keep_hint
     }
 
     /// Set a separate butteraugli distance for the alpha extra channel
@@ -8118,6 +8192,7 @@ impl<'a> EncodeRequest<'a> {
         enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
         enc.high_d_photo_hint = cfg.high_d_photo_hint;
         enc.dct_suppress_hint = cfg.dct_suppress_hint;
+        enc.dct32_keep_hint = cfg.dct32_keep_hint;
         // W44-91: cheap zenanalyze-equivalent proxies for the textured-
         // colourful-photo sub-band gate (mask1x1 ∈ [50, 80] @ d ∈ [3, 5]).
         // See `compute_w44_91_zenanalyze_proxies` for which layouts the
@@ -9255,6 +9330,7 @@ impl LossyEncoder {
             enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
             enc.high_d_photo_hint = cfg.high_d_photo_hint;
             enc.dct_suppress_hint = cfg.dct_suppress_hint;
+            enc.dct32_keep_hint = cfg.dct32_keep_hint;
             // W44-91: streaming `LossyEncoder` ingests pre-converted
             // `linear_rgb` rows, so the sRGB u8 source bytes the
             // zenanalyze-equivalent proxy needs are not available
@@ -11122,6 +11198,7 @@ fn encode_animation_lossy(
     enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
     enc.high_d_photo_hint = cfg.high_d_photo_hint;
     enc.dct_suppress_hint = cfg.dct_suppress_hint;
+    enc.dct32_keep_hint = cfg.dct32_keep_hint;
     // W44-91: animation per-frame encodes don't compute the
     // zenanalyze-proxy because the proxy is per-image and the discriminator
     // logic was designed against still-image CID22 validation cells.
