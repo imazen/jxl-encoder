@@ -5,12 +5,76 @@
 
 //! Command-line JPEG XL encoder.
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use jxl_encoder::{
     AnimationFrame, AnimationParams, Buffering, ContainerMode, EpfDispatch, LosslessConfig,
     LossyConfig, Lz77Method, PixelLayout, PixelLossDispatch, PremultipliedAlphaMode,
     ProgressiveMode,
 };
+// W44-131 Chunk E — `--strategy` CLI flag. The four named variants
+// (`libjxl`, `lean-faster`, `zenjxl`, `aggressive`) map to
+// [`jxl_encoder::api::EncoderStrategy`] variants of the same name.
+// `Custom` is API-only per design doc §7 Q7 (`docs/COMPATIBILITY_MODES.md`).
+
+/// CLI-facing strategy enum. Mirrors
+/// [`jxl_encoder::api::EncoderStrategy`] minus the API-only `Custom`
+/// payload. See `docs/COMPATIBILITY_MODES.md` §4.1 for behaviour.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
+enum StrategyArg {
+    /// Strict libjxl-parity bundle. Disables every W44-* improvement,
+    /// flips Section A effort-gate divergences, and re-enables the
+    /// Section D KNOWN-BUG that we currently work around. Verified
+    /// against `cjxl` output as a regression gate. Bytes may be
+    /// LARGER than `zenjxl` — that IS the point.
+    Libjxl,
+    /// Lean Faster. Drops the heavy per-image content gates and the
+    /// EPF/buttloop corrections to keep encode time leaner. Keeps the
+    /// at-parity algorithm fixes plus the cheap photo-class entropy-mul
+    /// lowering. Effort-gate divergences stay at ours (not libjxl).
+    LeanFaster,
+    /// Zenjxl — production default. What we ship today. Every
+    /// Section B content-aware gate fires on its auto discriminator.
+    /// Byte-identical to invoking `cjxl-rs` without `--strategy`.
+    #[default]
+    Zenjxl,
+    /// Aggressive — forward-compatible slot for opt-ins with
+    /// too-narrow Zenjxl discriminators. Currently equivalent to
+    /// `zenjxl` (W44-124 obsoleted the prior global DCT32 keep lift).
+    Aggressive,
+}
+
+/// Apply the CLI `--strategy` pick to a [`LossyConfig`] together with
+/// the per-dispatch overrides parsed from `--epf-dispatch` and
+/// `--pixel-loss-dispatch`. For `Zenjxl` (default) we keep the
+/// existing W44-130 Chunk D wiring — wrap the dispatches into a
+/// `Custom` payload whose other fields are `Default::default()` (=
+/// Zenjxl-equivalent), so byte output is identical to the no-`--strategy`
+/// CLI invocation. For `Libjxl`/`LeanFaster`/`Aggressive` we use the
+/// bare variant directly; dispatch overrides are dropped (a warning
+/// is emitted upstream).
+fn apply_strategy_to_lossy(
+    cfg: LossyConfig,
+    strategy: StrategyArg,
+    epf_dispatch: EpfDispatch,
+    pixel_loss_dispatch: PixelLossDispatch,
+) -> LossyConfig {
+    use jxl_encoder::api::{EncoderImprovementsCustom, EncoderStrategy};
+    match strategy {
+        StrategyArg::Zenjxl => {
+            // Byte-identical to pre-Chunk-E CLI: wrap dispatches into
+            // a `Custom` payload defaulted to Zenjxl-equivalent fields.
+            let custom = EncoderImprovementsCustom {
+                epf_dispatch,
+                pixel_loss_dispatch,
+                ..EncoderImprovementsCustom::default()
+            };
+            cfg.with_strategy(EncoderStrategy::Custom(Box::new(custom)))
+        }
+        StrategyArg::Libjxl => cfg.with_strategy(EncoderStrategy::Libjxl),
+        StrategyArg::LeanFaster => cfg.with_strategy(EncoderStrategy::LeanFaster),
+        StrategyArg::Aggressive => cfg.with_strategy(EncoderStrategy::Aggressive),
+    }
+}
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::PathBuf;
@@ -43,6 +107,28 @@ struct Args {
     /// Force lossless encoding
     #[arg(long)]
     lossless: bool,
+
+    /// Encoder strategy bundle (lossy only). One of `libjxl`,
+    /// `lean-faster`, `zenjxl`, `aggressive`. Default `zenjxl`
+    /// (production-shipping behaviour). Sets the high-level
+    /// per-divergence policy stack documented in
+    /// `docs/COMPATIBILITY_MODES.md` §4.1. `libjxl` is strict
+    /// libjxl-parity (every W44-* improvement off, Section A
+    /// effort-gate flips on, Section D KNOWN-BUG re-enabled —
+    /// bytes may be larger than `zenjxl`, that IS the point).
+    /// `Custom` is API-only — drive it from Rust via
+    /// `LossyConfig::with_strategy(EncoderStrategy::Custom(...))`
+    /// (W44-131 Chunk E). Mutually exclusive with `--lossless`.
+    /// Until Chunk G ships, `--strategy libjxl` flips only the
+    /// Section B/D divergences; the Section A effort-gate
+    /// consultation lands in Chunk G.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = StrategyArg::default(),
+        conflicts_with = "lossless",
+    )]
+    strategy: StrategyArg,
 
     /// Distance (alternative to quality, 0 = lossless, 1 = visually lossless)
     #[arg(short, long)]
@@ -712,6 +798,25 @@ fn main() {
         }
     };
 
+    // W44-131 Chunk E: when the caller picks a named non-Zenjxl
+    // strategy AND also explicitly overrides one of the perf
+    // dispatches (epf / pixel-loss), warn that the dispatch override
+    // is dropped — non-Custom strategies don't carry per-dispatch
+    // overrides. Callers wanting both must drive the encoder from
+    // Rust via `EncoderStrategy::Custom(...)`.
+    let dispatches_overridden = epf_dispatch != EpfDispatch::default()
+        || pixel_loss_dispatch != PixelLossDispatch::default();
+    if args.strategy != StrategyArg::Zenjxl && dispatches_overridden && !args.quiet {
+        eprintln!(
+            "Warning: --strategy {:?} discards --epf-dispatch / --pixel-loss-dispatch overrides.\n\
+             Named non-Zenjxl strategies carry their own perf-dispatch defaults; to keep both, \
+             drive the encoder via `LossyConfig::with_strategy(EncoderStrategy::Custom(...))` \
+             from Rust.",
+            args.strategy
+        );
+    }
+    let strategy_arg = args.strategy;
+
     // Determine input format from extension
     let ext = args
         .input
@@ -901,14 +1006,15 @@ fn main() {
                     }
                     // W44-130 Chunk D: dispatch policies absorbed into
                     // `EncoderImprovementsCustom`; setters deleted.
-                    {
-                        let mut custom = jxl_encoder::api::EncoderImprovementsCustom::default();
-                        custom.epf_dispatch = epf_dispatch;
-                        custom.pixel_loss_dispatch = pixel_loss_dispatch;
-                        cfg = cfg.with_strategy(
-                            jxl_encoder::api::EncoderStrategy::Custom(Box::new(custom)),
-                        );
-                    }
+                    // W44-131 Chunk E: `--strategy` flag drives the
+                    // top-level preset; `Zenjxl` (default) keeps the
+                    // Chunk-D wrap so dispatch overrides survive.
+                    cfg = apply_strategy_to_lossy(
+                        cfg,
+                        strategy_arg,
+                        epf_dispatch,
+                        pixel_loss_dispatch,
+                    );
                     if args.noise || args.denoise {
                         cfg = cfg.with_noise(true);
                     }
@@ -1267,14 +1373,10 @@ fn main() {
         }
         // W44-130 Chunk D: dispatch policies absorbed into
         // `EncoderImprovementsCustom`; setters deleted.
-        {
-            let mut custom = jxl_encoder::api::EncoderImprovementsCustom::default();
-            custom.epf_dispatch = epf_dispatch;
-            custom.pixel_loss_dispatch = pixel_loss_dispatch;
-            cfg = cfg.with_strategy(jxl_encoder::api::EncoderStrategy::Custom(Box::new(
-                custom,
-            )));
-        }
+        // W44-131 Chunk E: `--strategy` flag drives the top-level
+        // preset; `Zenjxl` (default) keeps the Chunk-D wrap so
+        // dispatch overrides survive.
+        cfg = apply_strategy_to_lossy(cfg, strategy_arg, epf_dispatch, pixel_loss_dispatch);
         if args.noise || args.denoise {
             cfg = cfg.with_noise(true);
         }
