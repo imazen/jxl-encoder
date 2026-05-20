@@ -3991,9 +3991,13 @@ pub(crate) struct ResolvedImprovements {
 ///
 /// `pub(crate)` — Chunk D will move the legacy hint fields here.
 //
-// W44-127 Chunk A: `dead_code` allowed because the call sites that
-// will read these fields land in Chunks B/D. Tests at the bottom of
-// this file exercise the construction path and `apply_to` precedence.
+// W44-128 Chunk B: `dead_code` allow retained because the fields are
+// read by `StrategyOverrides::apply_to` (called once per encode by
+// `LossyConfig::resolve_improvements`), but Rust's dead-code lint
+// flags struct fields independently of their containing impl when
+// only mutated/copied — Chunk C/D will refactor away the
+// `pub(crate)` and the allow when call sites consume each field
+// directly.
 #[allow(dead_code)]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct StrategyOverrides {
@@ -4005,10 +4009,13 @@ pub(crate) struct StrategyOverrides {
     // Any future `with_*_hint` adds a field here.
 }
 
-// W44-127 Chunk A: `apply_to` is `pub(crate)` and only called by
-// `EncoderStrategy::resolve`, which itself is only called by tests in
-// Chunk A (call-site wiring lands in Chunk B). The `dead_code` allow
-// keeps clippy clean until Chunk B.
+// W44-128 Chunk B: `apply_to` is called by `EncoderStrategy::resolve`
+// which is called by `LossyConfig::resolve_improvements` at the
+// boundary between `LossyConfig` and `VarDctEncoder`. The
+// `dead_code` allow is retained because Rust still flags some
+// `pub(crate)` impl items when only the struct fields are touched —
+// Chunk C/D removes the allow as call sites start consuming the
+// `ResolvedImprovements` fields.
 #[allow(dead_code)]
 impl StrategyOverrides {
     /// Apply per-field overrides on top of a resolved strategy. Each
@@ -4075,10 +4082,10 @@ impl EncoderStrategy {
     /// mirroring the `with_perceptual_optimizations` precedence
     /// pattern.
     //
-    // W44-127 Chunk A: only called by tests until Chunk B wires it
-    // into `LossyConfig` construction; `dead_code` allowed to keep
-    // clippy clean for the intermediate commit.
-    #[allow(dead_code)]
+    // W44-128 Chunk B: now called by `LossyConfig::resolve_improvements`
+    // at all three `VarDctEncoder` construction sites (still-image
+    // `EncodeRequest`, streaming `LossyEncoder`, animation per-frame);
+    // the W44-127-era `#[allow(dead_code)]` on this method was removed.
     pub(crate) fn resolve(&self, overrides: &StrategyOverrides) -> ResolvedImprovements {
         let base = match self {
             Self::Libjxl => ResolvedImprovements::libjxl(),
@@ -4091,11 +4098,12 @@ impl EncoderStrategy {
     }
 }
 
-// W44-127 Chunk A: builder methods are only called by
-// `EncoderStrategy::resolve` (and indirectly by tests). The
-// `dead_code` allow keeps clippy clean until Chunk B's call-site
-// wiring lands.
-#[allow(dead_code)]
+// W44-128 Chunk B: `EncoderStrategy::resolve` now runs at every
+// `VarDctEncoder` construction site (still-image, streaming,
+// animation) via `LossyConfig::resolve_improvements`, which
+// transitively keeps `libjxl`/`lean_faster`/`zenjxl`/`aggressive`/
+// `from_custom` reachable. The W44-127-era `#[allow(dead_code)]` on
+// the impl block was removed.
 impl ResolvedImprovements {
     /// Strict libjxl parity (all-divergence). Includes Section A
     /// effort-gate flips AND the Section D KNOWN-BUG `BlockCtxMap`
@@ -4500,6 +4508,26 @@ pub struct LossyConfig {
     /// `DCT16X16` over-fires 100× because `find_best_32x32_transform`
     /// never runs.
     dct32_keep_hint: Option<bool>,
+    /// W44-128 (Chunk B) encoder compatibility / improvements bundle.
+    ///
+    /// Selects a named preset (`Libjxl` / `LeanFaster` / `Zenjxl` /
+    /// `Aggressive`) or a fully-custom set of dials via
+    /// [`EncoderStrategy::Custom`]. Default
+    /// [`EncoderStrategy::Zenjxl`] reproduces what we ship today.
+    ///
+    /// Individual `with_*_hint` setters called AFTER
+    /// [`Self::with_strategy`] override the matching field on the
+    /// resolved [`ResolvedImprovements`] (mirrors the
+    /// [`Self::with_perceptual_optimizations`] precedence pattern).
+    ///
+    /// **Chunk B**: the resolved [`ResolvedImprovements`] is computed
+    /// once at encoder construction time and stored alongside
+    /// `VarDctEncoder` for Chunk C+ to consume. No call site reads it
+    /// yet; the existing `with_*_hint` `Option<bool>` fields still
+    /// drive every gate. Hash-locks therefore stay byte-identical.
+    ///
+    /// See [`Self::with_strategy`] and `docs/COMPATIBILITY_MODES.md`.
+    strategy: EncoderStrategy,
     /// Tracks whether the caller has explicitly set `patches` via
     /// [`Self::with_patches`]. Mirrors the
     /// `butteraugli_iters_explicit` / `resampling_explicit` pattern.
@@ -4781,6 +4809,11 @@ impl LossyConfig {
             // (try_dct32 dropped together with try_dct64 when the W44-65
             // gate fires). Hash-locks stay byte-identical.
             dct32_keep_hint: None,
+            // W44-128 Chunk B: default `EncoderStrategy::Zenjxl`
+            // (production shipping). Computed `ResolvedImprovements`
+            // is unused until Chunk C+ rewires call sites; hash-locks
+            // therefore stay byte-identical at the default.
+            strategy: EncoderStrategy::default(),
             patches_explicit: false,
             patches_dispatch: PatchesDispatch::default(),
             epf_level: -1,
@@ -5012,6 +5045,12 @@ impl LossyConfig {
         new.smooth_photo_dct64_hint = self.smooth_photo_dct64_hint;
         new.dct_suppress_hint = self.dct_suppress_hint;
         new.dct32_keep_hint = self.dct32_keep_hint;
+        // W44-128 Chunk B: preserve the caller's
+        // `with_strategy(EncoderStrategy::...)` across `with_effort`.
+        // Effort-derived state (in `new`) is regenerated from the new
+        // effort + mode, but the strategy bundle is orthogonal — the
+        // caller's choice of bundle should outlive effort changes.
+        new.strategy = self.strategy.clone();
         // Preserve explicit patches setting across with_effort.
         if self.patches_explicit {
             new.patches = self.patches;
@@ -6002,6 +6041,73 @@ impl LossyConfig {
     /// (default `None`).
     pub fn dct32_keep_hint(&self) -> Option<bool> {
         self.dct32_keep_hint
+    }
+
+    /// W44-128 (Chunk B) — set the encoder compatibility / improvements
+    /// bundle.
+    ///
+    /// Default [`EncoderStrategy::Zenjxl`] reproduces what we ship
+    /// today (every per-image content gate auto-fires per its
+    /// documented discriminator). [`EncoderStrategy::Libjxl`] is the
+    /// strict-parity bundle (disables every Section B content-aware
+    /// lift, flips Section A effort-gates, re-enables Section D
+    /// KNOWN-BUG `BlockCtxMap` 15-cluster). [`EncoderStrategy::Custom`]
+    /// lets the caller pick every dial individually via
+    /// [`EncoderImprovementsCustom`].
+    ///
+    /// Individual `with_*_hint` setters called AFTER `with_strategy`
+    /// take precedence on the matching field (mirrors the
+    /// [`Self::with_perceptual_optimizations`] precedence pattern):
+    ///
+    /// ```ignore
+    /// use jxl_encoder::api::{EncoderStrategy, LossyConfig};
+    /// // Strict libjxl-parity bundle, but force-allow DCT64 evaluation
+    /// // on screenshots (overrides Libjxl's `ForceAllow` default with
+    /// // an explicit `ForceAllow` — these agree, so the override is a
+    /// // no-op). Useful as a documentation pattern; the override would
+    /// // win field-by-field over the Libjxl preset if they disagreed.
+    /// let cfg = LossyConfig::new(1.0)
+    ///     .with_strategy(EncoderStrategy::Libjxl)
+    ///     .with_dct_suppress_hint(Some(false));
+    /// ```
+    ///
+    /// **Chunk B note**: this setter stores the strategy on the
+    /// `LossyConfig`. At encoder construction time
+    /// [`EncoderStrategy::resolve`] is called once with the collected
+    /// `StrategyOverrides` from the existing `with_*_hint` fields, and
+    /// the resulting `ResolvedImprovements` is stored on the internal
+    /// encoder. No call site reads `ResolvedImprovements` yet — the
+    /// existing `Option<bool>` hint fields continue to drive every
+    /// gate. The Zenjxl default produces byte-identical output to
+    /// pre-Chunk-B main on all 36 hash-lock fixtures.
+    pub fn with_strategy(mut self, strategy: EncoderStrategy) -> Self {
+        self.strategy = strategy;
+        self
+    }
+
+    /// Currently-set [`Self::with_strategy`] bundle (default
+    /// [`EncoderStrategy::Zenjxl`]).
+    pub fn strategy(&self) -> &EncoderStrategy {
+        &self.strategy
+    }
+
+    /// W44-128 (Chunk B) — collect the existing `with_*_hint`
+    /// `Option<bool>` fields into a [`StrategyOverrides`] and resolve
+    /// against [`Self::strategy`].
+    ///
+    /// Called once per encode at the boundary between `LossyConfig`
+    /// and the internal `VarDctEncoder`. The resulting
+    /// [`ResolvedImprovements`] is stored on the encoder for Chunks
+    /// C/G to consume.
+    pub(crate) fn resolve_improvements(&self) -> ResolvedImprovements {
+        let overrides = StrategyOverrides {
+            screenshot_lift_hint: self.screenshot_lift_hint,
+            high_d_photo_hint: self.high_d_photo_hint,
+            smooth_photo_dct64_hint: self.smooth_photo_dct64_hint,
+            dct_suppress_hint: self.dct_suppress_hint,
+            dct32_keep_hint: self.dct32_keep_hint,
+        };
+        self.strategy.resolve(&overrides)
     }
 
     /// Set a separate butteraugli distance for the alpha extra channel
@@ -8804,6 +8910,11 @@ impl<'a> EncodeRequest<'a> {
         let effective_distance = cfg.effective_distance();
 
         let mut enc = crate::vardct::VarDctEncoder::new(effective_distance);
+        // W44-128 Chunk B: resolve the EncoderStrategy bundle once
+        // here (caller-set preset + collected `with_*_hint`
+        // overrides). Stored on the encoder for Chunk C+ to consume;
+        // no call site reads it yet so hash-locks stay byte-identical.
+        enc.resolved_improvements = Some(cfg.resolve_improvements());
         enc.effort = cfg.effort;
         enc.profile = profile;
         enc.use_ans = cfg.use_ans;
@@ -9946,6 +10057,10 @@ impl LossyEncoder {
             let effective_distance = cfg.effective_distance();
 
             let mut enc = crate::vardct::VarDctEncoder::new(effective_distance);
+            // W44-128 Chunk B: resolve EncoderStrategy bundle once
+            // (streaming `LossyEncoder` path). Stored for Chunk C+ to
+            // consume; hash-locks byte-identical at Zenjxl default.
+            enc.resolved_improvements = Some(cfg.resolve_improvements());
             enc.effort = cfg.effort;
             enc.profile = profile;
             enc.use_ans = cfg.use_ans;
@@ -11822,6 +11937,10 @@ fn encode_animation_lossy(
     }
 
     let mut enc = crate::vardct::VarDctEncoder::new(cfg.distance);
+    // W44-128 Chunk B: resolve EncoderStrategy bundle once
+    // (animation per-frame path). Stored for Chunk C+ to consume;
+    // hash-locks byte-identical at Zenjxl default.
+    enc.resolved_improvements = Some(cfg.resolve_improvements());
     enc.effort = cfg.effort;
     enc.profile = profile;
     enc.use_ans = cfg.use_ans;
@@ -15073,5 +15192,153 @@ mod tests {
         let resolved_custom = custom_strategy.resolve(&StrategyOverrides::default());
         let resolved_zenjxl = EncoderStrategy::Zenjxl.resolve(&StrategyOverrides::default());
         assert_eq!(resolved_custom, resolved_zenjxl);
+    }
+
+    // ── W44-128 Chunk B tests ────────────────────────────────────
+
+    /// Default [`LossyConfig`] returns [`EncoderStrategy::Zenjxl`]
+    /// from [`LossyConfig::strategy`]. Equivalent to never calling
+    /// [`LossyConfig::with_strategy`].
+    #[test]
+    fn test_lossy_config_default_strategy_is_zenjxl() {
+        let cfg = LossyConfig::new(1.0);
+        assert_eq!(cfg.strategy(), &EncoderStrategy::Zenjxl);
+    }
+
+    /// [`LossyConfig::with_strategy`] roundtrips through
+    /// [`LossyConfig::strategy`] for every named variant.
+    #[test]
+    fn test_with_strategy_setter_roundtrip() {
+        for variant in [
+            EncoderStrategy::Libjxl,
+            EncoderStrategy::LeanFaster,
+            EncoderStrategy::Zenjxl,
+            EncoderStrategy::Aggressive,
+        ] {
+            let cfg = LossyConfig::new(1.0).with_strategy(variant.clone());
+            assert_eq!(cfg.strategy(), &variant);
+        }
+        // Custom variant carries a payload; equality is structural.
+        let mut custom_inner = EncoderImprovementsCustom::default();
+        custom_inner.dct64_search_policy = Dct64SearchPolicy::ForceSuppress;
+        let custom = EncoderStrategy::Custom(Box::new(custom_inner.clone()));
+        let cfg = LossyConfig::new(1.0).with_strategy(custom.clone());
+        assert_eq!(cfg.strategy(), &custom);
+    }
+
+    /// Override precedence (the W44-128 / Chunk B contract):
+    ///
+    /// 1. `with_strategy(Libjxl).with_dct_suppress_hint(Some(false))`:
+    ///    `Libjxl` resolves `dct64_search_policy = ForceAllow`. The
+    ///    `Some(false)` hint also maps to `ForceAllow` — the two
+    ///    agree, so resolution returns `ForceAllow`. Demonstrates the
+    ///    override path's no-op behaviour when caller and preset
+    ///    agree.
+    ///
+    /// 2. `with_strategy(Custom { dct64=ForceSuppress, .. })`
+    ///    `.with_dct_suppress_hint(Some(false))`:
+    ///    Custom asks for `ForceSuppress`, but the hint override
+    ///    rewrites it to `ForceAllow`. Demonstrates that
+    ///    individual hints WIN over the preset (mirrors the
+    ///    `with_perceptual_optimizations(false).with_gaborish(true)`
+    ///    precedence pattern).
+    #[test]
+    fn test_with_strategy_libjxl_then_hint_override() {
+        // Case 1: Libjxl + Some(false) hint → both say ForceAllow.
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Libjxl)
+            .with_dct_suppress_hint(Some(false));
+        let resolved = cfg.resolve_improvements();
+        assert_eq!(
+            resolved.dct64_search_policy,
+            Dct64SearchPolicy::ForceAllow,
+            "Libjxl base + Some(false) hint should both agree on ForceAllow"
+        );
+
+        // Case 2: Custom asks for ForceSuppress, but a `Some(false)`
+        // hint rewrites the resolved policy to ForceAllow. Hints
+        // WIN over the preset.
+        let mut custom_inner = EncoderImprovementsCustom::default();
+        custom_inner.dct64_search_policy = Dct64SearchPolicy::ForceSuppress;
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Custom(Box::new(custom_inner)))
+            .with_dct_suppress_hint(Some(false));
+        let resolved = cfg.resolve_improvements();
+        assert_eq!(
+            resolved.dct64_search_policy,
+            Dct64SearchPolicy::ForceAllow,
+            "Some(false) hint should override Custom(ForceSuppress) to ForceAllow"
+        );
+    }
+
+    /// `LossyConfig::resolve_improvements()` at the default strategy
+    /// (Zenjxl) with no hints set must equal `Zenjxl` resolved
+    /// directly — proving the resolution helper doesn't smuggle in
+    /// extra state from `LossyConfig`.
+    #[test]
+    fn test_resolve_improvements_default_equals_zenjxl_resolved() {
+        let cfg = LossyConfig::new(1.0);
+        let from_cfg = cfg.resolve_improvements();
+        let direct = EncoderStrategy::Zenjxl.resolve(&StrategyOverrides::default());
+        assert_eq!(from_cfg, direct);
+    }
+
+    /// `with_effort` preserves the caller's `with_strategy` choice.
+    /// Effort-derived fields regenerate; the strategy bundle does not.
+    #[test]
+    fn test_with_strategy_preserved_across_with_effort() {
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Libjxl)
+            .with_effort(8);
+        assert_eq!(cfg.strategy(), &EncoderStrategy::Libjxl);
+        assert_eq!(cfg.effort(), 8);
+    }
+
+    /// `resolve_improvements` propagates all five `with_*_hint`
+    /// overrides into `StrategyOverrides` correctly. Starting from
+    /// `Libjxl` (every relevant policy at `Disabled` / `ForceAllow` /
+    /// `ForceSkip`), set every hint and confirm each one re-maps
+    /// the matching policy field.
+    #[test]
+    fn test_resolve_improvements_propagates_all_hints() {
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Libjxl)
+            .with_screenshot_lift_hint(Some(true))
+            .with_high_d_photo_hint(Some(true))
+            .with_smooth_photo_dct64_hint(Some(true))
+            .with_dct_suppress_hint(Some(true))
+            .with_dct32_keep_hint(Some(true));
+        let resolved = cfg.resolve_improvements();
+        assert_eq!(
+            resolved.screenshot_entropy_mul,
+            ScreenshotEntropyMulPolicy::ForceOn,
+            "screenshot_lift_hint(Some(true)) maps to ForceOn"
+        );
+        assert_eq!(
+            resolved.high_d_photo_entropy_mul,
+            HighDPhotoEntropyMulPolicy::ForceOn,
+            "high_d_photo_hint(Some(true)) maps to ForceOn"
+        );
+        assert_eq!(
+            resolved.smooth_photo_dct64_admission,
+            SmoothPhotoDct64Policy::ForceAdmit,
+            "smooth_photo_dct64_hint(Some(true)) maps to ForceAdmit"
+        );
+        assert_eq!(
+            resolved.dct64_search_policy,
+            Dct64SearchPolicy::ForceSuppress,
+            "dct_suppress_hint(Some(true)) maps to ForceSuppress"
+        );
+        assert_eq!(
+            resolved.dct32_search_policy,
+            Dct32SearchPolicy::KeepWhenDct64Suppressed,
+            "dct32_keep_hint(Some(true)) maps to KeepWhenDct64Suppressed"
+        );
+        // Un-overridden Libjxl fields stay at Libjxl values.
+        assert_eq!(
+            resolved.buttloop_epf_sharpness_seed,
+            EpfSharpnessSeed::LegacyUniform4
+        );
+        assert!(resolved.block_ctx_map_15_cluster);
     }
 }
