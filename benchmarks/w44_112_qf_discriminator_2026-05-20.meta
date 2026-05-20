@@ -1,0 +1,124 @@
+W44-112 Layer-1.5 quant_field discriminator (INTERNAL vs PRODUCTION)
+====================================================================
+
+Base commit:  9f3c4062 (W44-111 — butteraugli metric divergence RULED OUT)
+Date:         2026-05-20
+Hostname:     lilith
+Builder:      cargo, rustc release profile (CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target)
+Features:     __internal_recon_hook butteraugli-loop
+Reproducer:   cargo run --release --quiet -p jxl-encoder \
+                --example w44_112_qf_discriminator \
+                --features '__internal_recon_hook butteraugli-loop' \
+                --manifest-path jxl-encoder/Cargo.toml \
+                > benchmarks/w44_112_qf_discriminator_2026-05-20.tsv
+
+Cells (W44-111 mirror set):
+  - terminal e8 d=4.0      (gb82-sc, 1646×1062)
+  - terminal e8 d=2.0      (gb82-sc, 1646×1062)
+  - 1025469 e8 d=2.0       (CID22-512, 512×512)
+  - 1025469 e8 d=4.0       (CID22-512, 512×512)
+
+Per-block CSV dumps (one file per cell, optional):
+  /tmp/w44_112/perblock_{image}_{d}_e{eff}.csv
+  Columns: bx,by,raw_strategy,is_first,internal_qf,production_qf,diff
+
+Method
+------
+
+For each cell:
+  1. Enable BOTH `recon_hook` (captures final-iter `quant_field_u8` from buttloop)
+     AND `production_qf` hook (captures `quant_field_u8` from
+     `transform_and_quantize_with_source` after AdjustQuantBlockAC has been
+     applied to all parallel groups).
+  2. Encode via LossyConfig::new(d).with_effort(8) (production default pipeline,
+     including the W44-105 screenshot qac-scale on screenshot cells at d>=2).
+  3. Diff per-block: int_qf vs prod_qf u8.
+  4. Also capture `DistanceParams.{global_scale, scale, inv_scale}` from BOTH
+     sides — InternalRecon snapshots the buttloop's final-iter `current_params`,
+     ProductionQf snapshots the params handed to production transform.
+
+Discriminator interpretation
+----------------------------
+
+  - If int_qf == prod_qf per-block AND params match → candidates 1 (SetQuantField
+    inv_scale drift) and 2 (parallel-vs-sequential AdjustQuantBlockAC) RULED OUT.
+    Drill candidate 3 (recon vs decoder pixel pipeline) in W44-113.
+  - If int_qf != prod_qf → candidate 1 or 2 in play; drill further by checking
+    whether the divergence concentrates in specific strategies / specific
+    `quant_adjustments` patterns.
+
+Result (this run, base 9f3c4062)
+--------------------------------
+
+| cell                | num_blocks | exact_matches | off_by_one | diff_2_5 | diff_gt_5 | max_diff | mean_abs_diff |
+|---                  |---         |---            |---         |---       |---        |---       |---            |
+| terminal d=4.0 e8   | 27398      | 27398         | 0          | 0        | 0         | 0        | 0.0000        |
+| terminal d=2.0 e8   | 27398      | 27398         | 0          | 0        | 0         | 0        | 0.0000        |
+| 1025469 d=2.0 e8    | 4096       | 4096          | 0          | 0        | 0         | 0        | 0.0000        |
+| 1025469 d=4.0 e8    | 4096       | 4096          | 0          | 0        | 0         | 0        | 0.0000        |
+
+DistanceParams check (int == prod for all 4 cells):
+
+| cell                | int_global_scale | prod_global_scale | int_scale | prod_scale | int_inv_scale | prod_inv_scale |
+|---                  |---               |---                |---        |---         |---            |---             |
+| terminal d=4.0 e8   | 2234             | 2234              | 0.034088  | 0.034088   | 29.335720     | 29.335720      |
+| terminal d=2.0 e8   | 4957             | 4957              | 0.075638  | 0.075638   | 13.220900     | 13.220900      |
+| 1025469 d=2.0 e8    | 3575             | 3575              | 0.054550  | 0.054550   | 18.331749     | 18.331749      |
+| 1025469 d=4.0 e8    | 1542             | 1542              | 0.023529  | 0.023529   | 42.500648     | 42.500648      |
+
+Verdict
+-------
+
+**Candidates 1 and 2 RULED OUT.** Zero per-block divergence across 62,988 blocks
+(4 cells × all blocks). DistanceParams byte-identical INT vs PROD for every cell.
+
+The buttloop's final-iter quantized output IS the same as production's quantized
+output. The R/G residual ~0.05 max-abs in linear RGB documented in
+quality_drift_investigation_2026-05-15 (chunk-3 followup) MUST come from
+candidate 3: a divergence in the pixel pipeline AFTER quantization, between
+`reconstruct_xyb` (buttloop side) and the decoder's render path (jxl-rs / djxl
+/ jxl-oxide side).
+
+Note: production_qf is captured in `transform_and_quantize_with_source` which is
+NOT called when bitstream-emit goes through alternative paths (e.g. precomputed
+fast-path `EncoderPrecomputed::compute_with_budget`). For the API-level
+default-effort-8 encode tested here the wrapper IS the right capture site.
+
+W44-113 plan
+------------
+
+Attack candidate 3:
+
+  a) Compare `dequant_bias` / `AdjustQuantBias` application in `reconstruct_xyb`
+     vs decoder pipeline. CLAUDE.md notes both use `kDefaultQuantBias` (Resolved
+     Bugs section / AC strategy investigation note) but the application *order*
+     vs CfL pass / LLF subtraction may differ. Existing memo `drift_block_map.rs`
+     (chunk-3 diagnostic, 2026-05-15) clustered B-channel residual by
+     `cfl_ytob != 0` (3× rate). With CfL pass-2 now BEFORE the buttloop the
+     ytob input is at parity going in; if the application step still diverges
+     the residual is in the dequant_bias step.
+
+  b) Per-block diff map extended to R/G channels (mirroring chunk-2's B-channel
+     diagnostic). Where do R/G residuals concentrate? If they correlate with
+     specific AC strategies (e.g. AFV, DCT4X4, DCT2X2 — the small-block variants
+     the chunk-2 table showed 20-40% divergent), the bug is in the buttloop's
+     `transform_and_quantize_into → reconstruct_xyb` chain's strategy-specific
+     IDCT or LLF handling vs the decoder's corresponding paths.
+
+  c) (escape hatch) Replace buttloop's internal recon with a real encode→decode
+     roundtrip on the FINAL iter — slower but eliminates the divergence in one
+     step. Useful as a regression backstop if (a)+(b) take more than one chunk.
+
+Production code change in W44-112: ZERO. Only investigation infra:
+
+  - `jxl-encoder/src/vardct/butteraugli_loop.rs` — `InternalRecon` struct gains
+    3 fields (`final_{global_scale,scale,inv_scale}`); new `ProductionQf` struct
+    + `set/take_production_qf` API in the `recon_hook` module. All gated on
+    `feature = "__internal_recon_hook"` (zero cost at production builds).
+  - `jxl-encoder/src/vardct/transform.rs` — `transform_and_quantize_with_source`
+    grows a feature-gated capture point at its tail (1 atomic load + 1 vec
+    clone when enabled; cheap atomic-load early-exit when disabled).
+  - `jxl-encoder/examples/w44_112_qf_discriminator.rs` — new example.
+  - `jxl-encoder/Cargo.toml` — registered new example.
+
+No hash-lock invalidation, no test changes.

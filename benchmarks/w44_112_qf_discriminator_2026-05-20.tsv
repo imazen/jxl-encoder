@@ -1,0 +1,5 @@
+image	distance	effort	width	height	xsize_blocks	ysize_blocks	num_blocks	qf_exact_matches	qf_off_by_one	qf_diff_2_to_5	qf_diff_gt_5	qf_max_abs_diff	qf_mean_abs_diff	qf_internal_mean	qf_production_mean	int_global_scale	prod_global_scale	int_scale	prod_scale	int_inv_scale	prod_inv_scale	bytes
+terminal	4.00	8	1646	1062	206	133	27398	27398	0	0	0	0	0.0000	7.59	7.59	2234	2234	0.034088	0.034088	29.335720	29.335720	36788
+terminal	2.00	8	1646	1062	206	133	27398	27398	0	0	0	0	0.0000	7.80	7.80	4957	4957	0.075638	0.075638	13.220900	13.220900	47792
+1025469	2.00	8	512	512	64	64	4096	4096	0	0	0	0	0.0000	5.35	5.35	3575	3575	0.054550	0.054550	18.331749	18.331749	21032
+1025469	4.00	8	512	512	64	64	4096	4096	0	0	0	0	0.0000	5.35	5.35	1542	1542	0.023529	0.023529	42.500648	42.500648	11653

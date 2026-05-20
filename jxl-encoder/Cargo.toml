@@ -595,6 +595,18 @@ name = "w44_111_metric_divergence"
 path = "examples/w44_111_metric_divergence.rs"
 required-features = ["__internal_recon_hook", "butteraugli-loop"]
 
+# W44-112 — Layer-1.5 quant_field discriminator (INTERNAL vs PRODUCTION).
+# Captures the buttloop's final-iter `quant_field` u8 alongside the
+# post-production `quant_field` and diffs per-block. Discriminates W44-111
+# candidates 1 (SetQuantField inv_scale drift) and 2 (sequential vs
+# parallel AdjustQuantBlockAC) against candidate 3 (recon vs decoder).
+# Also captures `DistanceParams` from both sides so a params mismatch
+# (candidate 1 direct) would show up loud. Investigation only; TSV stdout.
+[[example]]
+name = "w44_112_qf_discriminator"
+path = "examples/w44_112_qf_discriminator.rs"
+required-features = ["__internal_recon_hook", "butteraugli-loop"]
+
 # RFC#45 chunk 1: e10/e11 paired A/B/C bench.
 # Needs the butteraugli-loop feature to enable e10/e11 iter extensions.
 [[example]]

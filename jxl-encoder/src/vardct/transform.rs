@@ -1191,7 +1191,7 @@ impl VarDctEncoder {
     ) -> Result<TransformOutput> {
         let padded_width = source.padded_width();
         let (xyb_x, xyb_y, xyb_b) = source.xyb_full();
-        self.transform_and_quantize(
+        let out = self.transform_and_quantize(
             xyb_x,
             xyb_y,
             xyb_b,
@@ -1202,7 +1202,27 @@ impl VarDctEncoder {
             quant_field,
             cfl_map,
             ac_strategy,
-        )
+        )?;
+        // W44-112 Layer-1.5 hook: capture the post-production quant_field
+        // (after AdjustQuantBlockAC second-application) + the `DistanceParams`
+        // used by production. Compared against the buttloop's internal
+        // post-final-iter `quant_field` to discriminate the W44-111 candidates.
+        // Zero cost when feature off; cheap atomic load + early-exit when on
+        // but capture disabled.
+        #[cfg(feature = "__internal_recon_hook")]
+        if super::butteraugli_loop::recon_hook::production_qf_capture_enabled() {
+            super::butteraugli_loop::recon_hook::store_production_qf(
+                super::butteraugli_loop::recon_hook::ProductionQf {
+                    xsize_blocks,
+                    ysize_blocks,
+                    quant_field_u8: quant_field.to_vec(),
+                    global_scale: params.global_scale,
+                    scale: params.scale,
+                    inv_scale: params.inv_scale,
+                },
+            );
+        }
+        Ok(out)
     }
 
     // Internal hot-path entry: factoring these into a struct
