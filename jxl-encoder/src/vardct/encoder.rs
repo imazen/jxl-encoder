@@ -2717,13 +2717,28 @@ impl VarDctEncoder {
             let is_screenshot = mask1x1_median_for_pre_scale
                 .is_some_and(|med| med > super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD);
             let m3 = self.zenanalyze_proxies.map(|p| p.m3_colourfulness);
-            let qf_pre_scale = super::butteraugli_loop::resolved_adaptive_quant_qf_seed_scale(
-                self.effort,
-                self.butteraugli_iters,
-                is_screenshot,
-                self.distance,
-                m3,
-            );
+            // W44-129 Chunk C: read the resolved `adaptive_quant_qf_seed`
+            // enum from `ResolvedImprovements` (populated by Chunk B
+            // `LossyConfig::resolve_improvements`). Defaults to
+            // `AutoScalePerEffort` via `.unwrap_or_default()` when
+            // `resolved_improvements` is `None`, preserving the legacy
+            // 2.0 (e5/e6) / 3.0 (e7) per-effort scales for direct
+            // `VarDctEncoder::new` test callers. `Off` short-circuits
+            // the scale to 1.0 (Libjxl strategy).
+            let adaptive_quant_qf_seed_policy = self
+                .resolved_improvements
+                .as_ref()
+                .map(|r| r.adaptive_quant_qf_seed)
+                .unwrap_or_default();
+            let qf_pre_scale =
+                super::butteraugli_loop::resolved_adaptive_quant_qf_seed_scale_with_policy(
+                    self.effort,
+                    self.butteraugli_iters,
+                    is_screenshot,
+                    self.distance,
+                    m3,
+                    adaptive_quant_qf_seed_policy,
+                );
             if qf_pre_scale != 1.0 {
                 for v in quant_field_float.iter_mut() {
                     *v *= qf_pre_scale;
