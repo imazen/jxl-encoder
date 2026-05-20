@@ -1337,5 +1337,17 @@ name = "w44_102_cfl_two_pass_ab_finish"
 path = "examples/w44_102_cfl_two_pass_ab_finish.rs"
 required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
 
+# W44-103: terminal.png per-region + per-strategy SSIM2 attribution dump
+# (measurement only, no production code change). Encodes terminal.png
+# at d=4 with effort 5..=9 using cjxl-rs AND cjxl, decodes both, and
+# computes global + 3x3-region SSIM2 / butteraugli. Cross-references
+# with the W44-76 per-block strategy dump infrastructure. Outputs
+# benchmarks/w44_103_terminal_ssim2_dump_2026-05-19.tsv to identify
+# WHERE the terminal SSIM2 cost vs cjxl comes from.
+[[example]]
+name = "w44_103_terminal_ssim2_dump"
+path = "examples/w44_103_terminal_ssim2_dump.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
 [lints]
 workspace = true

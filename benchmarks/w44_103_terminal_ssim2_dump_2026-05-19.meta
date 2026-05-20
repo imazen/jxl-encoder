@@ -1,0 +1,243 @@
+# W44-103 terminal.png per-region + per-strategy SSIM2 attribution
+# Bench: encode terminal.png at d=4 with effort 5/6/7/8/9 (5 cells × 2 encoders)
+# Date: 2026-05-19
+# Image: /home/lilith/work/codec-corpus/gb82-sc/terminal.png (1646x1062 RGB8 screenshot)
+# Ours: cjxl-rs (commit c1d699e2, W44-102 main)
+# cjxl: libjxl v0.12.0 with W44-76 per-block dump patch (`libjxl--w44-76-per-block-debug-dump`)
+#
+# 3x3 spatial region grid; region indices (ry, rx) where (0,0)=top-left:
+#   top: r00 r01 r02       (each region: 544x320 px, aligned to DCT32)
+#   mid: r10 r11 r12       (mid-right + bot-right get image-edge remainder)
+#   bot: r20 r21 r22
+# region_w = (1646/3) & !31 = 544
+# region_h = (1062/3) & !31 = 320
+# Bottom row absorbs h=422 (320 + remainder 102)
+# Right col absorbs w=558 (544 + remainder 14)
+#
+# Per-block strategy dumps for both encoders written to:
+#   /tmp/w44_103_dumps/e{effort}_d4_ours/per_block_ours.tsv
+#   /tmp/w44_103_dumps/e{effort}_d4_cjxl/per_block_libjxl.tsv
+#
+# Analysis: benchmarks/w44_103_terminal_ssim2_analysis_2026-05-19.txt
+#
+# ────────────────────────────────────────────────────────────────────────────
+# KEY FINDINGS
+# ────────────────────────────────────────────────────────────────────────────
+#
+# 1. Bimodal SSIM2 loss pattern:
+#
+#    e5: bytes -3.81%  global ssim2 -5.38
+#    e6: bytes -2.50%  global ssim2 -5.29
+#    e7: bytes -7.07%  global ssim2 -4.62
+#    e8: bytes -49.90% global ssim2 -5.57
+#    e9: bytes -49.79% global ssim2 -5.59
+#
+#    At e5/e6/e7 byte savings are small and SSIM2 loss is distributed across
+#    all 9 regions (~-3 to -6). At e8/e9 our buttloop wins 50% bytes but the
+#    SSIM2 loss is concentrated in the mid row (left -9.4, center -8.5)
+#    while bottom-right is fine (-0.7).
+#
+# 2. DCT16X16 over-firing at ALL efforts:
+#
+#    Effort 5: ours 4870 fb  vs  cjxl  195 fb  (25x over-fire)
+#    Effort 6: ours 4867 fb  vs  cjxl  195 fb
+#    Effort 7: ours 5413 fb  vs  cjxl  287 fb
+#    Effort 8: ours 5413 fb  vs  cjxl  287 fb  (no buttloop-induced change)
+#    Effort 9: ours 5413 fb  vs  cjxl  287 fb
+#
+#    Strategy agreement is only 16-25%. Dominant disagreement at e7+:
+#      10432 cells: ours DCT16X16  →  cjxl DCT64X64
+#       3328 cells: ours DCT16X16  →  cjxl DCT32X64
+#       2440 cells: ours DCT16X16  →  cjxl DCT64X32
+#       2012 cells: ours DCT16X16  →  cjxl DCT16X32
+#       1208 cells: ours DCT16X16  →  cjxl DCT32X32
+#
+#    DCT16X16 smears 16x16 pixels — fine on smooth content, catastrophic on
+#    screen text (sharp glyph edges become ringy blobs). cjxl uses LARGE
+#    transforms (DCT64) on the smooth screen background and SMALL transforms
+#    (DCT8/AFV) on text — we use DCT16X16 for both.
+#
+# 3. DCT64 family entirely absent from our output:
+#
+#    Effort 5:  ours 0+0+0  vs  cjxl 161+85+112 (DCT64X64+DCT64X32+DCT32X64)
+#    Effort 6:  ours 0+0+0  vs  cjxl 161+85+112
+#    Effort 7:  ours 0+0+0  vs  cjxl 163+92+114  (try_dct64 gate at e>=7 doesn't help)
+#    Effort 8:  ours 0+0+0  vs  cjxl 163+92+114
+#    Effort 9:  ours 0+0+0  vs  cjxl 163+92+114
+#
+#    NOTE: even at e>=7 where `try_dct64=true`, we emit 0 DCT64 first-blocks.
+#    The DCT64 search runs but always loses — likely because our DCT64 entropy
+#    model is biased against it on high-contrast screenshot content (DCT64
+#    IDCT roundtrip error on sharp text edges is enormous). cjxl picks DCT64
+#    specifically on the SMOOTH bottom-row regions where there's nothing but
+#    blank background — exactly where it's free of perceptual cost.
+#
+#    W44-93 ruled out widening the try_dct64 effort gate (regresses photos).
+#    The fix here is NOT widening the gate — it's making the DCT64 search
+#    WIN on smooth screen content.
+#
+# 4. DCT32 family also missing at e5/e6:
+#
+#    Effort 5: ours 0+0+0  vs  cjxl 43+97+290 (DCT32X32+DCT32X16+DCT16X32)
+#    Effort 6: ours 0+0+0  vs  cjxl 43+104+296
+#    Effort 7: ours 0+0+0  vs  cjxl 79+155+318  (try_dct32 ON yet 0 picked)
+#
+#    Same pattern: cjxl picks DCT32* on smooth blocks, we don't.
+#
+# 5. E8/E9 buttloop divergence — cjxl's loop produces 16x finer qac:
+#
+#    Per-strategy mean_qac at e8 (ours / cjxl):
+#      IDENTITY:    6.12 / 99.12  (16.2x)
+#      DCT8:        6.05 / 92.50  (15.3x)
+#      AFV0:        6.06 / 93.24  (15.4x)
+#      AFV1:        6.00 / 95.49  (15.9x)
+#      AFV2:        6.16 / 83.40  (13.5x)
+#      DCT16X16:    5.20 / 86.34  (16.6x)
+#      DCT16X8:     5.58 / 82.15  (14.7x)
+#      DCT16X32:    0    / 57.16  (∞)
+#      DCT32X32:    0    / 63.86  (∞)
+#      DCT64X64:    0    / 10.52  (∞; left low intentionally on smooth content)
+#
+#    Per-region mean qac (ours / cjxl) at e8:
+#      top:  5.5/70.0   5.6/80.7   5.2/64.3
+#      mid:  5.8/97.4   6.0/89.2   5.6/83.1   ← cjxl heavily refines text
+#      bot:  5.0/54.4   5.1/33.3   4.9/ 7.2   ← cjxl LOWERS qac in blank area
+#
+#    cjxl's buttloop pushes qac much higher on text regions to preserve
+#    glyph fidelity. The DECREASE in qac at R[2,2] (cjxl 7.2 vs ours 4.9)
+#    is interesting: cjxl uses DCT64 + low qac on the blank area because
+#    spatial coverage matters more than fidelity there. We use DCT16X16
+#    + slightly higher qac everywhere.
+#
+#    The deviation bounds in butteraugli_loop.rs (qf_higher) likely cap our
+#    qf growth too tightly. libjxl uses the same formula but the
+#    initial_qf_max input differs because of adaptive_quant calibration on
+#    high-mask1x1-median (screenshot) inputs.
+#
+# 6. Per-region SSIM2 cost concentration matches strategy errors:
+#
+#    Worst regions across efforts:
+#      e5: R[1,0]=-5.26  R[2,2]=-5.22  (mid-left + bot-right)
+#      e6: R[1,0]=-5.78  R[2,2]=-5.71
+#      e7: R[2,1]=-6.10  R[0,1]=-5.80
+#      e8: R[1,0]=-9.36  R[1,1]=-8.37  (mid is destroyed)
+#      e9: R[1,0]=-9.36  R[1,1]=-8.45
+#
+#    e5/e6 mid-left and bot-right losses correspond to text-heavy regions
+#    where DCT16X16 over-firing destroys glyphs. e8/e9 mid catastrophe is
+#    qac under-refinement in the buttloop.
+#
+# ────────────────────────────────────────────────────────────────────────────
+# RANKED W44-104 ATTACK CANDIDATES
+# ────────────────────────────────────────────────────────────────────────────
+#
+# Candidate A (HIGHEST EV, MEDIUM RISK):
+#   Investigate why our DCT64/DCT32 search NEVER wins on screen-content
+#   smooth regions. cjxl picks DCT64X64/DCT32X64 ~370 times per cell on
+#   bot-row regions; we pick 0. Likely culprits:
+#     - Our entropy_mul64 reference values (2.25, 2.25) might be too high
+#       for screen-content smooth regions (text + blank mix)
+#     - find_best_64x64_transform may exit early due to the IDENTITY/DCT2X2
+#       merge-back path winning at the partial-merge stage
+#     - The mask1x1 field for blank screen areas is very HIGH → tighter quant
+#       in cost model → DCT8 wins via per-pixel loss term
+#   Expected EV: 5-10 SSIM2 points on terminal e5..e7 by switching DCT16X16
+#   on smooth regions to DCT64X64. NO impact on bytes either way (cjxl is
+#   AT byte parity at e5/e6 — bytes are SHIPPED there).
+#   Time: 2-3 days (debug, A/B, hash-lock).
+#   Risk: MEDIUM — needs content-aware gate so we don't regress photo cells.
+#
+# Candidate B (HIGHEST EV at e8/e9, LOW-MEDIUM RISK):
+#   Investigate why our butteraugli loop produces qac=5-6 globally vs cjxl's
+#   qac=70-97 on text regions. Likely culprits:
+#     - K_BUTTERAUGLI_ACCEPT_FACTOR = 1.05 lets us "good enough" exit too
+#       early on screenshot content where text contrast pushes butteraugli
+#       score way above target distance
+#     - Deviation bound qf_higher computed from initial_qf_max may be tighter
+#       on our adaptive_quant (post-W44-86 fixes pushed initial quant down on
+#       flat screen content)
+#     - Multi-seed search at e10+ might find a higher-qac solution; the
+#       e8/e9 single-seed loop converges on the cheap one
+#   Expected EV: 5-7 SSIM2 points at e8/e9 (matching cjxl's behavior) AND
+#   potentially +50% bytes (which IS the right tradeoff — cjxl's choice; we
+#   shouldn't be 50% cheaper at -5 SSIM2 vs cjxl).
+#   Time: 2-3 days.
+#   Risk: LOW — changes only affect e8/e9 (buttloop gate).
+#
+# Candidate C (NARROW SCOPE, LOW RISK):
+#   Use the existing `screenshot_suppressed` entropy_mul table (already
+#   shipped via W22-1 / W44-65 opt-in) as a default for terminal-class
+#   content. Currently default-off; the gate fires on median(mask1x1) > 95.
+#   Terminal.png has mask1x1 around 100-120 (very high).
+#   This would lift IDENTITY (1.04→1.85), DCT2X2 (0.95→1.15), AFV (0.82→0.95),
+#   DCT4X8 (0.86→0.98) — suppressing the small-block over-selection that
+#   DOES happen in our mid-row data.
+#   Expected EV: 1-2 SSIM2 points (helps but doesn't address DCT16X16
+#   over-firing root cause).
+#   Time: 1 day.
+#   Risk: LOW (already opt-in tested).
+#
+# Candidate D (LOW EV, INVESTIGATIVE):
+#   Audit our DCT16X16 selection criterion. We pick 4870 DCT16X16 vs cjxl 195.
+#   The split-vs-keep decision at the 16x16 level must be biased. Check
+#   libjxl `find_best_16x16_transform` vs ours — likely the `kFavor2X2 = -0.4`
+#   discount on smaller transforms isn't firing for us because we're entering
+#   the 16x16 evaluation from the 32x32 fallback, not from the bottom-up 8x8
+#   merge path.
+#   Expected EV: 2-4 SSIM2 points (changes WHERE DCT16X16 fires).
+#   Time: 2-3 days.
+#   Risk: MEDIUM — could regress photo cells where DCT16X16 IS correct.
+#
+# Candidate E (DEFER):
+#   Buttloop e7 promotion (already-suggested W44-101 follow-on). The e7
+#   SSIM2 -4.6 IS smaller than e5/e6 -5.3, suggesting some refinement benefit
+#   even without buttloop. Adding buttloop at e7 would compound that. But
+#   e8/e9 with buttloop ALREADY underperforms (B is the prior). Defer until
+#   B closes the e8/e9 buttloop bug.
+#
+# Recommendation: ship A and B in parallel. They address different efforts
+# (A for e5..e7, B for e8/e9). Both will likely need a "terminal-class"
+# content discriminator (similar to W44-91/96 zenanalyze pattern, gated on
+# median(mask1x1) > 95 + low fcbr).
+#
+# ────────────────────────────────────────────────────────────────────────────
+# DO NOT
+# ────────────────────────────────────────────────────────────────────────────
+#
+# - DO NOT widen try_dct64 effort gate (W44-93 RULED OUT — regresses photos)
+# - DO NOT widen cfl_two_pass to e5/e6 (W44-102 RULED OUT — regresses quality)
+# - DO NOT respawn FMA precision claims (per W44-66 user correction)
+# - DO NOT default-flip content_aware_entropy_mul without first investigating
+#   why DCT16X16/DCT64 are at fundamental disagreement with cjxl
+# - DO NOT touch tokenize_ac_coefficients / nz_context (W44-75 bit-exact)
+#
+# ────────────────────────────────────────────────────────────────────────────
+# REPRODUCER
+# ────────────────────────────────────────────────────────────────────────────
+#
+#   # Run the global + per-region SSIM2 bench (writes the main .tsv)
+#   cargo run -p jxl-encoder --release \
+#     --features 'parallel butteraugli-loop ssim2-loop' \
+#     --example w44_103_terminal_ssim2_dump
+#
+#   # Run per-cell W44-76 strategy dumps (writes /tmp/w44_103_dumps/)
+#   benchmarks/w44_103_run_dumps.sh
+#
+#   # Run analysis (cross-references regions × strategies × qac)
+#   python3 benchmarks/w44_103_analyze.py > \
+#     benchmarks/w44_103_terminal_ssim2_analysis_2026-05-19.txt
+#
+# Files written:
+#   benchmarks/w44_103_terminal_ssim2_dump_2026-05-19.tsv     (main bench)
+#   benchmarks/w44_103_terminal_ssim2_dump_2026-05-19.meta    (this file)
+#   benchmarks/w44_103_terminal_ssim2_analysis_2026-05-19.txt (analysis output)
+#   benchmarks/w44_103_run_dumps.sh                           (dump runner)
+#   benchmarks/w44_103_analyze.py                             (analysis script)
+#   /tmp/w44_103_dumps/e{5..9}_d4_{ours,cjxl}/per_block_*.tsv (10 dump files)
+
+git_rev: c1d699e2 (W44-102 main)
+bench_workspace: ~/work/zen/jxl-encoder--w44-103-terminal-ssim2-dump
+target_dir: ~/work/zen/jxl-encoder-shared-target
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+libjxl_dump_branch: w44-76-per-block-debug (NOT pushed — Google org)
