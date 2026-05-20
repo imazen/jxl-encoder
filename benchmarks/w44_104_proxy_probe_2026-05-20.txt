@@ -1,0 +1,12 @@
+name                        m3_colour         fcbr edge_density        WxH
+codec_wiki.png                143.660       0.9039       0.0393 2560x1664
+gmessages.png                  10.163       0.8962       0.0365 1440x3088
+graph.png                      11.753       0.8088       0.0697  796x 481
+gui.png                        10.051       0.8480       0.0599 1356x1132
+imac_dark.png                  20.647       0.7261       0.1427 2940x1912
+imac_g3.png                    14.309       0.7736       0.1222 2940x1912
+imac_g3_strip.png              14.309       0.7736       0.1222 2940x1912
+imessage.png                   67.645       0.8322       0.0531 1206x2622
+terminal.png                   13.516       0.8326       0.0871 1646x1062
+windows.png                    20.688       0.7692       0.1188 2560x1392
+windows95.png                  27.249       0.3600       0.3165  640x 480
