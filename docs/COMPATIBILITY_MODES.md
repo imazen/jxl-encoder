@@ -845,6 +845,11 @@ migrate to `with_strategy`.
 | `with_dct32_keep_hint(Some(true))` | now redundant — Zenjxl auto-discriminates via W44-124. For per-image force-on use `Custom` with `dct32_search_policy: KeepWhenDct64Suppressed`. |
 | `with_epf_dispatch(EpfDispatch::AlwaysDefault)` | `EncoderStrategy::Custom({ epf_dispatch: EpfDispatch::AlwaysDefault, ... })` |
 | `with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOff)` | `EncoderStrategy::Custom({ pixel_loss_dispatch: PixelLossDispatch::AlwaysOff, ... })` |
+| `cjxl-rs` (no `--strategy` flag) | `cjxl-rs --strategy zenjxl` (default — byte-identical, hash-locked) |
+| `cjxl-rs` cjxl-conformance run | `cjxl-rs --strategy libjxl` (W44-131 Chunk E; flips Section B/D today, Section A effort gates land Chunk G). Cannot combine with `--lossless`. |
+| `cjxl-rs` lean-faster run | `cjxl-rs --strategy lean-faster` (W44-131 Chunk E). Cannot combine with `--lossless`. |
+| `cjxl-rs` aggressive (future-opt-ins) | `cjxl-rs --strategy aggressive` (W44-131 Chunk E; currently equivalent to `zenjxl`). |
+| `cjxl-rs` per-knob escape hatch | `cjxl-rs --epf-dispatch <P> --pixel-loss-dispatch <P>` (still works under default `--strategy zenjxl`; dropped + warning under `--strategy libjxl|lean-faster|aggressive`). For full per-dial control, drop the CLI and drive the encoder from Rust via `LossyConfig::with_strategy(EncoderStrategy::Custom(...))` per design doc §7 Q7. |
 
 Env vars `JXL_W44_117_DISABLE`, `JXL_W44_120_EPF_SEED_MIN_DISTANCE`,
 `JXL_BUTTLOOP_INITIAL_QF_SCALE`, `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE`:
@@ -1027,8 +1032,14 @@ env-var promotion), the plan is 7 chunks:
    them into `StrategyOverrides`. Delete the four `with_*_dispatch`
    setters from `LossyConfig` (absorbed into Custom — caller must use
    `with_strategy(Custom(...))`). Update tests. ~120 LOC.
-5. **Chunk E**: Add `--strategy` CLI flag with the four named variants
-   plus completion. ~50 LOC.
+5. **Chunk E** (SHIPPED, W44-131 `<commit>`): Added `--strategy` CLI
+   flag with the four named variants (`libjxl|lean-faster|zenjxl|aggressive`)
+   on `cjxl-rs`. Default `zenjxl` (hash-locked byte-identical to no-flag).
+   Conflicts with `--lossless` at clap level. `Custom` is API-only per
+   §7 Q7. Per-knob `--epf-dispatch` / `--pixel-loss-dispatch` overrides
+   flow through under default `--strategy zenjxl`; dropped + warning
+   under named non-Zenjxl strategies. Tests:
+   `jxl-encoder-cli/tests/strategy_flag.rs`.
 6. **Chunk F**: Promote 4 env-var-only knobs to first-class
    `EncoderImprovementsCustom` fields. Env-var fallback layer in
    `resolve()` for harness sweeps. ~100 LOC.
