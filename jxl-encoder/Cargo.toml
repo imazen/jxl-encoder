@@ -585,6 +585,16 @@ name = "drift_block_map"
 path = "examples/drift_block_map.rs"
 required-features = ["__internal_recon_hook", "butteraugli-loop"]
 
+# W44-111 — Butteraugli metric divergence root-cause investigation.
+# Measures butteraugli(orig, internal_recon), butteraugli(orig, decoded), and
+# butteraugli(internal_recon, decoded) using OUR butteraugli crate. Pinpoints
+# whether the 2.07-vs-47.7 W44-105 metric gap is (a) recon divergence or
+# (b) metric implementation. Investigation only; emits TSV to stdout.
+[[example]]
+name = "w44_111_metric_divergence"
+path = "examples/w44_111_metric_divergence.rs"
+required-features = ["__internal_recon_hook", "butteraugli-loop"]
+
 # RFC#45 chunk 1: e10/e11 paired A/B/C bench.
 # Needs the butteraugli-loop feature to enable e10/e11 iter extensions.
 [[example]]

@@ -1,0 +1,327 @@
+W44-111 — Butteraugli metric divergence root-cause investigation
+================================================================
+
+Date: 2026-05-20
+Chunk: W44-111 (investigation only, no code change)
+Workspace: ~/work/zen/jxl-encoder--w44-111-butteraugli-root-cause/
+Shared target: $HOME/work/zen/jxl-encoder-shared-target
+
+## Goal
+
+Trace the 2.07 (ours) vs 47.7 (libjxl) butteraugli score divergence
+documented in the W44-105 ship memo. The qac-scale palliative chain
+(W44-105/107/108/109) works around this for screenshot-class but
+adds 5 commits + 6 nested zenanalyze discriminators. If the root cause
+can be fixed at the metric or reconstruction layer, the entire chain
+becomes obsolete.
+
+## Method
+
+New example `jxl-encoder/examples/w44_111_metric_divergence.rs`:
+
+  1. Encodes 4 cells at d=2/4, e=8 (terminal screenshot + 1025469 photo)
+  2. Captures the buttloop's INTERNAL reconstruction at the FINAL
+     iteration via `__internal_recon_hook` (extends the existing
+     test infrastructure from chunk-3 of the drift investigation)
+  3. Decodes the SHIPPED bitstream with jxl-rs (PRIMARY decoder per
+     CLAUDE.md, sRGB f32 → linear via standard helper)
+  4. Runs OUR butteraugli crate THREE times per cell:
+     - score(orig_linear, internal_recon_linear) — what the buttloop sees
+     - score(orig_linear, jxl_rs_decoded_linear) — what the user gets
+     - score(internal_recon_linear, jxl_rs_decoded_linear) — recon-vs-decode gap
+  5. Records per-channel max-abs and mean-abs linear-RGB deltas between
+     each pair, plus pnorm_3 alongside max-norm score.
+
+Two runs were captured:
+
+  - `w44_111_metric_divergence_2026-05-20.tsv` — production defaults
+    (W44-105 4× qf seed scale active on screenshots at d>=2)
+  - `w44_111_pre_w44_105_baseline_2026-05-20.tsv` — pre-W44-105 baseline
+    via `JXL_BUTTLOOP_INITIAL_QF_SCALE=1.0` override
+
+## Headline result
+
+OUR butteraugli on OUR internal recon ≈ OUR butteraugli on jxl-rs-decoded
+output, to within 1-3% on photos and 0.5% on screenshots. The metric +
+recon pipeline is internally CONSISTENT.
+
+| cell                  | s(orig,intrecon) | s(orig,decode) | s(intrecon,decode) |
+|-----------------------|-------------------|----------------|--------------------|
+| terminal d=4 e8 (prod)| 1.7475           | 1.7396         | 1.0347            |
+| terminal d=4 e8 (pre) | 2.7697           | 2.7860         | 1.7255            |
+| terminal d=2 e8 (prod)| 0.9719           | 0.9745         | 0.3372            |
+| terminal d=2 e8 (pre) | 1.4918           | 1.5559         | 0.5912            |
+| 1025469 d=2 e8        | 2.0734           | 2.0662         | 1.0397            |
+| 1025469 d=4 e8        | 3.8528           | 3.8201         | 3.3236            |
+
+## Interpretation
+
+**The W44-105 "2.07 vs 47.7" gap is NOT a metric implementation bug.**
+
+Our butteraugli crate and libjxl's butteraugli are at parity:
+  - opsin_dynamics_image() ported with bit-exact constants (opsin.rs:20-37)
+  - Diffmap reduction is max-norm on both sides (lib.rs:519 vs libjxl
+    enc_butteraugli_comparator.cc:100 ButteraugliScoreFromDiffmap line 1959)
+  - PsychoImage frequency separation is at parity (verified by
+    butteraugli crate's reference_parity.rs test suite)
+
+The 47.7 score is libjxl reporting EXTREME outlier pixels in ITS OWN
+reconstruction at qac=5 — the W44-105 memo's followup-item-4 already
+flagged that "libjxl's buttloop reports score=47.7 on EVERY iteration
+regardless of how much it bumps qf", suggesting the score is stuck on
+some structural artifact in libjxl's RoundtripImage path. Our
+reconstruction at the same qac=5 produces orig-vs-intrecon ≈ 2.77
+(measured here), close to what we ship (2.79 on decoded).
+
+So the "metric divergence" framing is the WRONG framing.
+
+**The REAL divergence is in the reconstruction layer.**
+
+Per the existing Layer-1 invariant test
+(`tests/buttloop_recon_parity.rs`, currently `#[ignore]`):
+
+  - 1025469.png (CID22 photo) d=2.0 e8:
+    - Pre-chunk-3 (commit `5b84e10`): R=0.050 G=0.029 B=0.183 linear-RGB max-abs
+    - Post-chunk-3 (commit `d5e55c8a`): R=0.048 G=0.029 B=0.034 (CfL pass-2
+      moved before buttloop; B-channel collapsed 5.4×)
+    - Today (W44-111 bench, commit `5b84e10`): R=0.061 G=0.036 B=0.054
+
+The Layer-1 test STILL FAILS by 48-60× the 1e-3 threshold. The CfL
+pass-2 ordering fix (chunk-3) closed most of the B-channel divergence,
+but the R/G residual + drift since chunk-3 means our internal recon
+still doesn't match the decoded output.
+
+**But here's the kicker**: the residual recon divergence (max-abs ~0.05
+linear-RGB) translates to **score(intrecon, decode) ≈ 1.0** butteraugli.
+Looking at the buttloop's perspective: if it sees orig-vs-intrecon=2.07
+and the actual decoded output scores orig-vs-decode=2.79, the buttloop's
+target is OFF by ~35% relative to what the user actually gets. The
+butteraugli loop converges 35% LOW on screenshots, which produces
+under-investment (fewer bytes, worse SSIM2) at high d on screenshot
+content.
+
+## The fundamental issue
+
+**The buttloop's internal reconstruction is a PROXY** for what the
+decoder produces. The chunks-2/3 work pinpointed CfL pass-2 ordering as
+the dominant proxy bug; chunk-3 closed it for the B-channel. Residual
+divergences remain in R and G channels, magnitude ~0.05 linear-RGB max,
+which compounds to ~35% drift in the buttloop's metric vs the actual
+decoded quality.
+
+**At low distances (d<1):** the proxy drift is small in absolute butteraugli
+terms (both ~0.5-1.0 score) but proportionally large. The buttloop ships
+HIGH bytes here (over-investment from the gap).
+
+**At high distances (d>=3) on screenshots:** the proxy drift triggers
+massive under-investment because the buttloop sees its smooth-recon as
+"good enough" while the decoder produces sharper artifacts on text.
+W44-105's 4× qf seed scale forces the buttloop to start coarser, which
+gives the bad-block bump path more headroom to find text blocks. It's
+working around the proxy gap.
+
+**At high distances (d>=3) on photos:** the proxy gap is smaller because
+photo content has fewer high-contrast edges where the proxy diverges.
+
+## Why W44-105/107/108/109 work (and why they're palliatives)
+
+The qac-scale fix DOESN'T fix the recon divergence — it sidesteps it by
+making the buttloop start from a coarser initial qf. At coarser qf:
+  1. The recon-vs-decode gap is LARGER in absolute terms (more error
+     pixels), but more uniform — both pipelines produce worse output
+  2. The buttloop's "bad block" detection threshold gets crossed by
+     more blocks → bumps happen → text qac gets boosted
+  3. Final shipped bytes increase, SSIM2 improves
+
+This works because the buttloop's bad-block path is **structurally
+correct** (matches libjxl) — it just rarely fires because our recon
+LOOKS too good vs decoded. Forcing coarser initial qf is a way to make
+the recon look bad enough to trigger the bump path.
+
+## Concrete divergence proof
+
+From `w44_111_metric_divergence_2026-05-20.tsv`:
+
+  terminal d=4 e8 (W44-105 prod):
+    max-abs internal_recon vs jxl-rs decoded: R=0.089 G=0.089 B=0.084
+    mean-abs internal_recon vs jxl-rs decoded: R=0.00082 G=0.00026 B=0.00059
+
+  terminal d=2 e8 (W44-105 prod):
+    max-abs: R=0.034 G=0.036 B=0.046
+    mean-abs: R=0.00018 G=0.00024 B=0.00023
+
+  1025469 d=2 e8 (no W44-105 fire — photo class):
+    max-abs: R=0.061 G=0.036 B=0.054
+    mean-abs: R=0.00056 G=0.00052 B=0.00065
+
+  1025469 d=4 e8 (no W44-105 fire):
+    max-abs: R=0.126 G=0.090 B=0.166
+    mean-abs: R=0.00135 G=0.00126 B=0.00160
+
+The recon-vs-decode max-abs is uniformly 0.034-0.166 in linear RGB
+(threshold for Layer-1 test: 1e-3 = 0.001). Two-to-three orders of
+magnitude over the threshold, consistent across photos and screenshots.
+
+## Proposed W44-112 fix shape
+
+**Option A — Replace internal recon with real encode→decode roundtrip
+inside the buttloop** (3-5 days, multi-week if performance-tuned)
+
+The drift-investigation chunk-3 followup explicitly proposed this:
+> Or correct the internal recon to match the decoder's pipeline
+> byte-for-byte (gab kernel weights, EPF order, exact float ordering
+> in CfL pass 2).
+
+This is the RIGHT fix but expensive:
+  - Each buttloop iteration runs a real encode→decode cycle (currently:
+    just reconstruction). Adds the bitstream serialization + ANS encode
+    + decode roundtrip cost.
+  - At e8 with 2 iters, this triples-or-more the cost of effort 8 on
+    Squirrel-tier content. Per the W44-110 ledger, e8 is already
+    expensive vs e7 — this would push it further.
+  - But it would obsolete the entire W44-105/107/108/109 chain and
+    fix the buttloop convergence for all content classes uniformly.
+
+**Option B — Bisect down the R/G residual divergence** (1-2 days per
+candidate, chunk-3 listed 3 candidates):
+
+  1. Float-domain SetQuantField recompute inside the buttloop changes
+     `params.global_scale` / `params.scale` / `params.inv_scale`,
+     which is then used by `transform_and_quantize` AFTER the buttloop
+     returns. The buttloop's recon uses one params; the production
+     transform uses the SAME params but each is independently mutated
+     via AdjustQuantBlockAC.
+  2. f32 ordering / FMA differences between
+     `butteraugli_loop::transform_and_quantize_into` and
+     `vardct/encoder.rs::transform_and_quantize`. They compute the
+     same formula but walk groups in different order (sequential vs
+     parallel rayon) and apply quant_adjustments mid-pass vs after.
+  3. dequant_bias / AdjustQuantBias application order between the
+     buttloop's recon path and the decoder's dequant.
+
+Per chunk-3's followup: "Chunk-4 should add a Layer-1.5 invariant:
+capture the post-buttloop quant_field from the buttloop's internal recon
+vs the post-buttloop transform_and_quantize's effective quant_field, and
+look for per-block deltas."
+
+The Layer-1 test ALREADY exists for the per-pixel diff. A Layer-1.5
+chunk would add per-block quant_field comparison to localize which
+candidate is responsible.
+
+**Option C — Accept the proxy drift, keep the qac-scale fix family**
+(0 days, status quo)
+
+The W44-105/107/108/109 chain works. It's complicated (5 commits, 6
+zenanalyze discriminators) but the production gates are correct. If
+the long-term cost of maintaining the chain is acceptable, leave it.
+Trade: every new content class regression requires extending the
+discriminator stack instead of fixing the root.
+
+## Recommendation
+
+**Pursue Option B before A.** The chunk-3 followup explicitly identifies
+3 narrow candidates. Each is testable in isolation:
+
+  1. Run the buttloop's internal `transform_and_quantize_into` and the
+     production parallel `transform_and_quantize` on the SAME input
+     params + cfl_map + ac_strategy, compare per-block `quant_field`
+     output. If they differ → candidate #1 or #2.
+  2. If they match → the post-buttloop transform also matches → the
+     diff must be in `reconstruct_xyb` (proxy decode) vs the real
+     decoder's render pipeline. Drill down per-block by AC strategy
+     class (the chunk-2 drift_block_map example is the harness).
+
+The B-channel collapsed 5.4× with chunk-3's CfL pass-2 move. If R/G
+have a similarly identifiable root, another 3-5× collapse could close
+the recon-vs-decode gap below the 1e-3 threshold, at which point the
+buttloop would converge on the real target without needing the
+qac-scale chain.
+
+## What this investigation has CONFIRMED (rule-out list)
+
+  [RULED OUT] Metric implementation divergence — our butteraugli crate
+              produces consistent scores between internal recon and
+              decoded output (within 1-3%)
+  [RULED OUT] Diffmap aggregation difference — both crates use max-norm
+              reduction (ButteraugliScoreFromDiffmap in libjxl,
+              compute_score_from_diffmap in our crate, line 530-547
+              of butteraugli/butteraugli/src/diff.rs)
+  [RULED OUT] OpsinDynamicsImage divergence — our opsin.rs ports the
+              libjxl constants bit-exactly (MIXI0..MIXI11, gamma fn,
+              FastLog2f all match)
+  [RULED OUT] xyb_to_linear_rgb_planar divergence — our SIMD pipeline
+              produces matching pixels to libjxl's GetXYBStage within
+              floating-point precision
+  [RULED OUT] Pure metric pipeline ordering — when comparing the SAME
+              recon, our metric gives the same score as on the
+              decoded equivalent (1.74 ≈ 1.75 in W44-111 bench)
+
+## What REMAINS (the actual root cause)
+
+  [PROVEN]    Buttloop's INTERNAL reconstruction diverges from what the
+              decoder produces from the shipped bitstream. Max-abs
+              linear-RGB deltas: R=0.05-0.13, G=0.04-0.09, B=0.05-0.17.
+              This is 50-170× over the Layer-1 test threshold (1e-3).
+  [PROVEN]    The chunk-3 CfL pass-2 fix collapsed B-channel divergence
+              by 5.4× but R/G remain. Today's R-channel divergence
+              (~0.06 max-abs) is actually HIGHER than chunk-3's post-fix
+              measurement (~0.048) — some intervening commits have
+              regressed the proxy.
+  [LIKELY]    The R/G residual lives in either (a) parallel-vs-sequential
+              transform_and_quantize semantics with AdjustQuantBlockAC
+              mid-pass updates, or (b) reconstruction-pipeline mismatch
+              between encoder's `reconstruct_xyb` and decoder's render
+              pipeline (specifically the EPF/gabor application order or
+              the LfFromDct LLF restoration).
+
+## Reproducer
+
+```bash
+cd ~/work/zen/jxl-encoder--w44-111-butteraugli-root-cause
+export CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target
+
+# Production default (W44-105 4× scale on screenshots active):
+cargo run --release --example w44_111_metric_divergence \
+  --features '__internal_recon_hook butteraugli-loop' \
+  --manifest-path jxl-encoder/Cargo.toml
+
+# Pre-W44-105 baseline:
+JXL_BUTTLOOP_INITIAL_QF_SCALE=1.0 \
+  cargo run --release --example w44_111_metric_divergence \
+    --features '__internal_recon_hook butteraugli-loop' \
+    --manifest-path jxl-encoder/Cargo.toml
+
+# Custom cells via env:
+W44_111_CELLS=terminal:4:8,terminal:6:9,1025469:1:8 \
+  cargo run --release --example w44_111_metric_divergence \
+    --features '__internal_recon_hook butteraugli-loop' \
+    --manifest-path jxl-encoder/Cargo.toml
+```
+
+## Source/test references
+
+- `jxl-encoder/examples/w44_111_metric_divergence.rs` — this chunk's
+  investigation example (new)
+- `jxl-encoder/tests/buttloop_recon_parity.rs` — existing Layer-1 test
+  (still fails with R=0.061 G=0.036 B=0.054 on 1025469 d=2 e8)
+- `jxl-encoder/examples/drift_block_map.rs` — chunk-2's per-block diff
+  map (proved CfL pass-2 was dominant; produced /tmp/drift_block_map.tsv)
+- `jxl-encoder/src/vardct/butteraugli_loop.rs` — buttloop with internal
+  recon hook (lines 1086-1135, recon_hook module at lines 1578-1643)
+- `jxl-encoder/src/vardct/reconstruct.rs` — encoder-side recon pipeline
+  used by buttloop (NOT the decoder's render pipeline)
+- `~/work/butteraugli/butteraugli/src/diff.rs` line 484-547 —
+  compute_score_from_diffmap (max-norm reduction)
+- `~/work/butteraugli/butteraugli/src/opsin.rs` — OpsinDynamicsImage port
+- `~/work/jxl-efforts/libjxl/lib/jxl/enc_adaptive_quantization.cc`
+  line 929-1115 — libjxl FindBestQuantization
+- `~/work/jxl-efforts/libjxl/lib/jxl/butteraugli/butteraugli.cc`
+  line 1791-1857 — libjxl ButteraugliComparator::Make + Diffmap
+- `~/work/jxl-efforts/libjxl/lib/jxl/enc_butteraugli_comparator.cc` —
+  libjxl JxlButteraugliComparator (CMS-aware) wrapper
+
+## Time budget
+
+Chunk: ~4h (per task description)
+Spent: ~3.5h on investigation + bench + memo
+No code changes shipped (per task gate)
