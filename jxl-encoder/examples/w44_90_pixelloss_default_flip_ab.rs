@@ -201,12 +201,7 @@ fn main() {
         "1531677.png",
         "2389166.png",
     ];
-    let cid_mid_names: &[&str] = &[
-        "3637739.png",
-        "1624487.png",
-        "1544947.png",
-        "1475938.png",
-    ];
+    let cid_mid_names: &[&str] = &["3637739.png", "1624487.png", "1544947.png", "1475938.png"];
     let scrn_names: &[&str] = &[
         "codec_wiki.png",
         "imac_g3.png",
@@ -268,7 +263,10 @@ fn main() {
     // Per-cell aggregate header.
     let header = "image\tclass\teffort\tdistance\tdispatch\twidth\theight\tbytes_med\tbutteraugli_med\tssim2_med\tencode_ms_med\tencode_ms_min\tencode_ms_max\tencode_ms_p25\tencode_ms_p75\tvariance_pct";
 
-    let tmp = format!("/tmp/w44_90_pixelloss_ab_{}.tsv.partial", std::process::id());
+    let tmp = format!(
+        "/tmp/w44_90_pixelloss_ab_{}.tsv.partial",
+        std::process::id()
+    );
     {
         let mut f = fs::File::create(&tmp).expect("create tmp");
         writeln!(f, "{}", header).unwrap();
@@ -358,7 +356,8 @@ fn main() {
                                 m.ssim2,
                                 m.encode_ms,
                             );
-                            let mut rf = fs::OpenOptions::new().append(true).open(&raw_tmp).unwrap();
+                            let mut rf =
+                                fs::OpenOptions::new().append(true).open(&raw_tmp).unwrap();
                             writeln!(rf, "{}", raw_row).unwrap();
                         }
                         Err(e) => eprintln!(
@@ -427,7 +426,11 @@ fn main() {
             }
             eprintln!(
                 "[{}] {} d={} done ({} dispatches × {} trials)",
-                src.class, src.label, d, dispatches.len(), RUNS_PER_CELL
+                src.class,
+                src.label,
+                d,
+                dispatches.len(),
+                RUNS_PER_CELL
             );
         }
     }

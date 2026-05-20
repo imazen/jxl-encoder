@@ -367,6 +367,11 @@ pub mod __pre_quantized {
     pub use crate::vardct::chroma_from_luma::refine_cfl_map;
     pub use crate::vardct::common::DCT_BLOCK_SIZE;
     pub use crate::vardct::encoder::VarDctEncoder;
+    /// W44-91 / W44-96 / W44-98 / W44-108: cheap encoder-internal proxies
+    /// (M3 colourfulness + flat-color-block-ratio + Sobel edge density)
+    /// matching zenanalyze tier1 features. Used by the sub-discriminator
+    /// gates inside the buttloop seed-scale and high-d photo lift paths.
+    pub use crate::vardct::encoder::ZenanalyzeProxies;
     /// libjxl `INV_DC_QUANT[c]` — per-channel DC scale factor.
     /// Used by GPU producers building `quantize_dc_dct8` `inv_factor`:
     ///   `inv_factor_c = INV_DC_QUANT[c] * params.scale_dc`

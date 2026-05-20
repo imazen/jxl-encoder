@@ -121,9 +121,13 @@ fn edge_density(pixels: &[u8], width: usize, height: usize, bpp: usize) -> f32 {
     for y in 1..height - 1 {
         for x in 1..width - 1 {
             let gx = luma(x + 1, y - 1) + 2.0 * luma(x + 1, y) + luma(x + 1, y + 1)
-                - luma(x - 1, y - 1) - 2.0 * luma(x - 1, y) - luma(x - 1, y + 1);
+                - luma(x - 1, y - 1)
+                - 2.0 * luma(x - 1, y)
+                - luma(x - 1, y + 1);
             let gy = luma(x - 1, y + 1) + 2.0 * luma(x, y + 1) + luma(x + 1, y + 1)
-                - luma(x - 1, y - 1) - 2.0 * luma(x, y - 1) - luma(x + 1, y - 1);
+                - luma(x - 1, y - 1)
+                - 2.0 * luma(x, y - 1)
+                - luma(x + 1, y - 1);
             let mag = (gx * gx + gy * gy).sqrt();
             if mag > 32.0 {
                 edges += 1;

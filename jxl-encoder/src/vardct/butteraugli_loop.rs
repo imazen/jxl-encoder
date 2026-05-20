@@ -239,6 +239,35 @@ pub const DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE: f32 = 4.0;
 /// the W44-108 follow-on.
 pub const BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE: f32 = 3.5;
 
+/// W44-108: lower distance bound for the sub-discriminator that recovers
+/// the 8 W44-105 wins W44-107 sacrificed at d=2..3 on terminal-class
+/// content. The gate fires in `[BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE,
+/// BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE)` only when the image's
+/// `m3_colourfulness` proxy is below
+/// [`BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX`] — separating
+/// terminal/imac_g3/imac_dark (M3 ≈ 14..21, monochrome / low-colour
+/// screenshots) from codec_wiki (M3 ≈ 146, richly-coloured wiki page
+/// with photos). Below this d the buttloop's HIGH-regime tuning does
+/// not engage strongly enough to recover the W44-105 wins; above this
+/// d the full W44-107 gate (no m3 sub-check) already fires.
+pub const BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE: f32 = 2.0;
+
+/// W44-108: upper bound on `ZenanalyzeProxies::m3_colourfulness` for the
+/// sub-discriminator that admits the d=2..3 fire-band. The probe
+/// (`examples/w44_108_proxy_probe.rs`) measured:
+///
+/// - terminal: M3 = 13.85
+/// - imac_g3: M3 = 14.29
+/// - imac_dark: M3 = 20.96
+/// - **codec_wiki: M3 = 145.73** (rich colour content, the W44-107 regression target)
+///
+/// The 30.0 threshold separates with ~6× margin both sides — robust to
+/// natural variance in M3 across similar-class images. Photos in the
+/// validation set range M3 ≈ 32..99 — outside the sub-band by design
+/// (photos also fail the `is_screenshot` mask>95 gate, so this is
+/// belt-and-braces).
+pub const BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX: f32 = 30.0;
+
 /// Resolve `cur_pow` for the current iter + `target_distance`, honouring
 /// any sweep overrides set in `CUR_POW_X1000_{LOW,HIGH}`.
 ///
@@ -578,14 +607,35 @@ impl VarDctEncoder {
         //     wins remain within FIXED status per W44-106 paired data)
         //   - butteraugli_iters > 0 (only applies when buttloop runs at all)
         //
+        // W44-108 sub-discriminator (admits the d in [2.0, 3.5) band the
+        // W44-107 tightening sacrificed): when the image's
+        // `m3_colourfulness` is below
+        // `BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX` (= 30.0), fire the
+        // 4× seed scale at d >= `BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE`
+        // (= 2.0) instead of waiting for d >= 3.5. The probe
+        // (`examples/w44_108_proxy_probe.rs`) showed terminal (M3=14),
+        // imac_g3 (M3=14), imac_dark (M3=21) cleanly separated from
+        // codec_wiki (M3=146); the 30.0 threshold has ~5× margin both
+        // sides. Photos already fail `is_screenshot` (mask<<95), so this
+        // sub-gate cannot fire on them. Reads
+        // `self.zenanalyze_proxies` — `None` (defaults / non-sRGB-u8
+        // input layouts) falls back to the W44-107 gate
+        // (byte-identical to that path).
+        //
         // The atomic override below lets sweep harnesses tune the scale per-class
         // without rebuilds; production defaults to 4.0 (SCALE=4 from the sweep).
-        let buttloop_qf_seed_scale =
-            if is_screenshot && target_distance >= BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE {
-                DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE
-            } else {
-                1.0
-            };
+        let w44_108_low_colour = self
+            .zenanalyze_proxies
+            .is_some_and(|p| p.m3_colourfulness < BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX);
+        let buttloop_qf_seed_scale = if is_screenshot
+            && (target_distance >= BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE
+                || (w44_108_low_colour
+                    && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE))
+        {
+            DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE
+        } else {
+            1.0
+        };
 
         // W44-105 sweep override: production default is fixed via constant,
         // but the atomic slot lets harnesses search for per-corpus tuning.
@@ -1607,6 +1657,38 @@ mod tuning_tests {
         // can never re-engage on d=3 due to a floating-point coercion.
         assert!(BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE > 3.0);
         assert!(BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE <= 4.0);
+    }
+
+    /// W44-108: the sub-discriminator lower bound (admit d=2..3.5 fire
+    /// for low-colour screenshots) MUST be 2.0 — recovers the 8 W44-105
+    /// wins W44-107 sacrificed (terminal d=2/2.5/3, imac_g3 d=3,
+    /// terminal e9 d=2.5, codec_wiki d=2/2.5 stay rejected via the
+    /// `m3` gate).
+    #[test]
+    fn w44_108_seed_scale_sub_min_distance_is_2p0() {
+        assert_eq!(BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE, 2.0);
+        assert!(BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE.is_finite());
+        assert!(BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE > 0.0);
+        // Must be STRICTLY LESS than the W44-107 upper gate so the
+        // sub-band is non-empty. Equality would collapse into the
+        // W44-107-only gate.
+        assert!(BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE < BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE);
+    }
+
+    /// W44-108: the colour separator MUST be 30.0 — splits codec_wiki
+    /// (M3 ≈ 146, the W44-107 regression target) from terminal (M3 ≈ 14),
+    /// imac_g3 (M3 ≈ 14), imac_dark (M3 ≈ 21) with ~5× margin both
+    /// sides per `examples/w44_108_proxy_probe.rs`.
+    #[test]
+    fn w44_108_seed_scale_low_colour_m3_max_is_30() {
+        assert_eq!(BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX, 30.0);
+        assert!(BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX.is_finite());
+        assert!(BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX > 0.0);
+        // Margin floor: must be > imac_dark's measured M3 = 21 by at
+        // least 5× upper-bound headroom for natural variance, and must
+        // be < codec_wiki's 146 by at least 4× margin.
+        assert!(BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX > 21.0);
+        assert!(BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX < 100.0);
     }
 
     #[test]

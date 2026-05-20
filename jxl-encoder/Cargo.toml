@@ -1376,5 +1376,21 @@ path = "examples/w44_104_smoke.rs"
 name = "w44_104_proxy_probe"
 path = "examples/w44_104_proxy_probe.rs"
 
+# W44-108 proxy probe: zenanalyze features on {terminal, imac_g3, imac_dark,
+# codec_wiki, 3+ photos} to find a sub-discriminator that admits the W44-105
+# wins at d in [2.0, 3.5) sacrificed by W44-107 (codec_wiki d=3 fix) without
+# re-introducing the codec_wiki regression.
+[[example]]
+name = "w44_108_proxy_probe"
+path = "examples/w44_108_proxy_probe.rs"
+required-features = ["__pre_quantized"]
+
+# W44-108 decoder roundtrip — verify the recovered W44-105 wins decode
+# cleanly via both jxl-oxide (jxl-rs) and djxl.
+[[example]]
+name = "w44_108_decoder_check"
+path = "examples/w44_108_decoder_check.rs"
+required-features = ["parallel", "butteraugli-loop"]
+
 [lints]
 workspace = true

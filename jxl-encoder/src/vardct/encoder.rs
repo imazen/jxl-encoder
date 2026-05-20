@@ -646,7 +646,7 @@ fn median_mask1x1(mask: &[f32], stride: usize, width: usize, height: usize) -> f
 /// [`VarDctEncoder`] stays `None` and the W44-91 gate cannot fire — the
 /// existing W44-29 mask1x1<50 gate retains full coverage of those layouts.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ZenanalyzeProxies {
+pub struct ZenanalyzeProxies {
     /// Hasler-Süsstrunk M3 colourfulness over sRGB u8 source pixels.
     /// `M3 = sqrt(σ_rg² + σ_yb²) + 0.3 * sqrt(μ_rg² + μ_yb²)` where
     /// `rg = R − G` and `yb = 0.5·(R+G) − B` per pixel. Matches
@@ -675,7 +675,7 @@ impl ZenanalyzeProxies {
     /// `Rgba8`/`Bgra8`). Caller pre-validates that
     /// `pixels.len() >= width * height * bpp`.
     #[inline(never)]
-    pub(crate) fn compute_srgb_u8(
+    pub fn compute_srgb_u8(
         pixels: &[u8],
         width: usize,
         height: usize,

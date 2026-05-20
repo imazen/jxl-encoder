@@ -43,7 +43,7 @@ Per-image dispatch via zenanalyze proxies. These are SUPERSETS of libjxl behavio
 | `vardct/encoder.rs` W44-96 `high_d_photo_smooth_suppressed_z` | `d >= 4.5 AND median(mask1x1) < 50 AND edge_density >= 0.7 AND fcbr < 0.01` | DCT32X32 lift for {1420710, 1531677} | INTENTIONAL | W44-96 `76d1dfd7` |
 | `vardct/encoder.rs` W44-98 `high_d_photo_smooth_suppressed_z_high_colour` | W44-96 outer AND `m3_colourfulness >= 25.0` | DCT16X32 lift 1.30 for 1420710 (HIGH colour) | INTENTIONAL | W44-98 `0c957538` |
 | `vardct/encoder.rs` W44-99/100 `high_d_photo_smooth_suppressed_z_low_colour` | W44-96 outer AND `m3_colourfulness < 25.0` | DCT16X32 lift 1.23 for 1531677 (LOW colour) | INTENTIONAL | W44-99 `cb63f216`, W44-100 `b63315b8` |
-| `butteraugli_loop.rs` W44-105 `BUTTLOOP_QF_SEED_SCALE` | `median(mask1x1) > 95 AND d >= BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE` (3.5) | 4× seed scale for screenshot-class | INTENTIONAL | W44-105 `bc994a21`, gate tightened W44-107 `109843aa` |
+| `butteraugli_loop.rs` W44-105 `BUTTLOOP_QF_SEED_SCALE` | `median(mask1x1) > 95 AND (d >= 3.5 OR (m3_colourfulness < 30.0 AND d >= 2.0))` | 4× seed scale for screenshot-class | INTENTIONAL | W44-105 `bc994a21`, gate tightened W44-107 `109843aa`, sub-band recovery W44-108 |
 
 Pattern note: all of these are "narrower-than-libjxl gates that improve specific cells without regressing FIXED cells". The discriminators compose nested: W44-91 ⊂ W44-29; W44-98 ⊂ W44-96 (high-colour); W44-99 ⊂ W44-96 (low-colour).
 
@@ -150,6 +150,7 @@ Bugs/divergences that WERE active and are now at parity. Kept here so future age
 | 1531677 e6/e8/e9 d=5/6 over-quantization | W44-99 `cb63f216` | m3 low-colour discriminator |
 | 1531677 e5 d=5 over-quantization | W44-100 `b63315b8` | Micro-bisect dct16x32 1.23 |
 | Terminal e8/e9 d=4 SSIM2 -5.5 cluster (partial) | W44-105 `bc994a21` | Buttloop seed scale 4× (palliative; root cause in metric) |
+| imac_g3 e8 d=3 + terminal e8/e9 d=2..3 W44-107-sacrificed wins | W44-108 | m3_colourfulness < 30 sub-discriminator admits low-colour screenshots into d ∈ [2.0, 3.5) fire-band |
 
 ---
 

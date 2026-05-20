@@ -18,8 +18,8 @@
 //!     --example w44_102_decoder_check
 
 use image::GenericImageView;
-use jxl_encoder::{LossyConfig, PixelLayout};
 use jxl_encoder::effort::LossyInternalParams;
+use jxl_encoder::{LossyConfig, PixelLayout};
 use std::path::PathBuf;
 use std::process::Command;
 

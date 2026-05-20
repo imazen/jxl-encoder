@@ -325,8 +325,7 @@ fn main() {
 
     let params = ButteraugliParams::default();
 
-    let mut hdr =
-        String::from("class\timage\teffort\tdistance\tcjxl_bytes\tcjxl_bfly\tgate_fires");
+    let mut hdr = String::from("class\timage\teffort\tdistance\tcjxl_bytes\tcjxl_bfly\tgate_fires");
     for v in VARIANTS {
         hdr.push_str(&format!(
             "\t{}_bytes\t{}_bytes_pct\t{}_bfly\t{}_bfly_pct\t{}_ssim2",
@@ -474,8 +473,8 @@ fn main() {
             agg.0 += m.bytes as i64 - cjxl_b as i64;
             agg.1 += 1;
             if idx > 0 {
-                let now_open = bytes_pct > fixed_threshold_bytes_pct
-                    && bfly_pct > fixed_threshold_bfly_pct;
+                let now_open =
+                    bytes_pct > fixed_threshold_bytes_pct && bfly_pct > fixed_threshold_bfly_pct;
                 if !default_is_open && now_open {
                     agg.2 += 1; // FIXED -> OPEN
                 } else if default_is_open && !now_open {
