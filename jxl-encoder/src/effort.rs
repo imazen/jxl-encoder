@@ -165,6 +165,19 @@ impl EntropyMulTable {
     /// only, where the path flip cannot occur (imac_g3 has high mask1x1
     /// median, so the smooth-content discriminator suppresses the swap).
     ///
+    /// W44-95 attempted to widen `dct32` further to 1.27 (variant W) or
+    /// 1.20 (variant Z) — both closed 5-6 of 13 OPEN F-D cells on the
+    /// W44-94 narrow population (1420710, 1531677, 1189261, 1418519)
+    /// with worst SSIM2 -0.17 to -0.18, but a wider 3-photo spot-check
+    /// (2389166 mask=46.24, 3637739 mask=47.80, 1044329 mask=48.03 —
+    /// other mask<50 photos in CID22 where the W44-29 gate also fires)
+    /// found:
+    /// - 2-3 FIXED → OPEN flips on 3637739 e5/e7
+    /// - -0.35 to -0.82 SSIM2 drops on 2389166 e5/e6 (exceeds ≤0.3 budget)
+    /// Honest-stopped at the current W44-29 values pending a per-image
+    /// discriminator (W44-96 candidate: 2389166 differs from 1420710 in
+    /// zenanalyze features even though both are mask < 50).
+    ///
     /// Changes vs reference (all reductions, never lifts):
     /// - dct16x16: 1.34 → 1.27 (~5.2 % cheaper)
     /// - dct32x32: 1.48 → 1.34 (~9.5 % cheaper)
@@ -172,11 +185,11 @@ impl EntropyMulTable {
     ///   dct32x32 by the libjxl 1.49/1.48 ratio)
     /// - all other transforms: unchanged
     ///
-    /// **Gate**: only applied when (a) `distance >= 4.0` AND (b)
-    /// `median(mask1x1) < HIGH_D_PHOTO_SMOOTH_THRESHOLD` (smooth-content
-    /// discriminator — high mask1x1 medians indicate screenshot/text
-    /// content where the W22-1 `screenshot_suppressed` lift fires instead).
-    /// Caller can override via
+    /// **Gate**: only applied when (a) `distance >= HIGH_D_PHOTO_MIN_DISTANCE`
+    /// (3.0, W44-78) AND (b) `median(mask1x1) < HIGH_D_PHOTO_SMOOTH_THRESHOLD`
+    /// (50.0, smooth-content discriminator — high mask1x1 medians indicate
+    /// screenshot/text content where the W22-1 `screenshot_suppressed`
+    /// lift fires instead). Caller can override via
     /// [`crate::api::LossyConfig::with_high_d_photo_hint`].
     pub fn high_d_photo_smooth_suppressed() -> Self {
         Self {
