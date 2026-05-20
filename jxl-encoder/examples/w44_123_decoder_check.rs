@@ -56,7 +56,7 @@ fn main() {
     for effort in &[5u8, 6, 7] {
         let cfg_keep = LossyConfig::new(3.0)
             .with_effort(*effort)
-            .with_dct32_keep_hint(Some(true));
+            .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct32_keep_hint: Some(true), ..Default::default() });
         let bytes = cfg_keep
             .encode_request(w, h, PixelLayout::Rgb8)
             .with_limits(&lim)

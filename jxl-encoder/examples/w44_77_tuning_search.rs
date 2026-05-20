@@ -38,7 +38,7 @@ fn encode_with_table(rgb: &[u8], w: u32, h: u32, d: f32, table: Option<EntropyMu
     let mut cfg = LossyConfig::new(d).with_effort(7);
     if let Some(t) = table {
         // Force W44-29 OFF then inject our custom table via internal_params
-        cfg = cfg.with_high_d_photo_hint(Some(false));
+        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() });
         let mut internal = LossyInternalParams::default();
         internal.entropy_mul_table = Some(t);
         cfg = cfg.with_internal_params(internal);

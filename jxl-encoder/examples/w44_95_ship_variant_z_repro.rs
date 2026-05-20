@@ -94,7 +94,7 @@ fn encode_baseline(rgb: &[u8], w: u32, h: u32, effort: u8, d: f32) -> Result<Vec
     let mut cfg = LossyConfig::new(d)
         .with_effort(effort)
         .with_threads(8)
-        .with_high_d_photo_hint(Some(false));
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() });
     let mut internal = LossyInternalParams::default();
     internal.entropy_mul_table = Some(old_w44_29_table());
     cfg = cfg.with_internal_params(internal);

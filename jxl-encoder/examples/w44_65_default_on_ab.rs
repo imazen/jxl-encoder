@@ -113,7 +113,7 @@ fn encode(
     let cfg = LossyConfig::new(distance)
         .with_effort(effort)
         .with_threads(1)
-        .with_dct_suppress_hint(hint);
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct_suppress_hint: hint, ..Default::default() });
     let start = Instant::now();
     let bytes = cfg.encode(rgb, w, h, PixelLayout::Rgb8).expect("encode");
     let ms = start.elapsed().as_secs_f64() * 1000.0;

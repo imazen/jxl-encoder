@@ -224,7 +224,7 @@ fn encode_with_variant(
         // We claim the W44-29 firing position; disable auto-fire so
         // the encoder doesn't double-swap, and inject our stronger
         // table via internal_params.
-        cfg = cfg.with_high_d_photo_hint(Some(false));
+        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() });
         let mut internal = LossyInternalParams::default();
         internal.entropy_mul_table = Some(t);
         cfg = cfg.with_internal_params(internal);

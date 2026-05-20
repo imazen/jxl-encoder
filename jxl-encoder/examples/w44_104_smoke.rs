@@ -21,7 +21,7 @@ fn main() {
         };
         let cfg = LossyConfig::new(4.0)
             .with_effort(7)
-            .with_dct_suppress_hint(*hint);
+            .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct_suppress_hint: *hint, ..Default::default() });
         let bytes = cfg
             .encode_request(w, h, PixelLayout::Rgb8)
             .with_limits(&lim)

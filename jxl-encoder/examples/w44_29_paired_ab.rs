@@ -151,7 +151,7 @@ fn linear_to_srgb_u8(v: f32) -> u8 {
 fn encode_with_mode(rgb_u8: &[u8], w: u32, h: u32, effort: u8, d: f32, mode: Mode) -> Vec<u8> {
     let cfg = LossyConfig::new(d).with_effort(effort);
     let cfg = match mode.hint() {
-        Some(h) => cfg.with_high_d_photo_hint(h),
+        Some(h) => cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: h, ..Default::default() }),
         None => cfg,
     };
     cfg.encode(rgb_u8, w, h, PixelLayout::Rgb8).unwrap()

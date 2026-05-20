@@ -15,7 +15,7 @@ fn enc(path: &Path, effort: u8, d: f32, hint: Option<bool>) -> usize {
     let cfg = LossyConfig::new(d)
         .with_effort(effort)
         .with_threads(1)
-        .with_dct32_keep_hint(hint);
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct32_keep_hint: hint, ..Default::default() });
     let bytes = cfg
         .encode_request(w, h, PixelLayout::Rgb8)
         .encode(&raw)

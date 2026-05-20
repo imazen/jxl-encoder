@@ -171,7 +171,7 @@ fn encode(
     if smart_on {
         cfg = cfg
             .with_content_aware_entropy_mul(true)
-            .with_screenshot_lift_hint(lift_hint);
+            .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { screenshot_lift_hint: lift_hint, ..Default::default() });
     }
     cfg.encode(rgb_u8, w, h, PixelLayout::Rgb8)
         .map_err(|e| format!("encode failed: {e:?}"))

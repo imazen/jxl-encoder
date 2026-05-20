@@ -24,7 +24,7 @@ const CELLS: &[(&str, &str, &[f32])] = &[
 
 fn encode_with(rgb: &[u8], w: u32, h: u32, d: f32, hint: Option<bool>) -> usize {
     let mut cfg = LossyConfig::new(d).with_effort(7);
-    cfg = cfg.with_high_d_photo_hint(hint);
+    cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: hint, ..Default::default() });
     cfg.encode(rgb, w, h, PixelLayout::Rgb8)
         .expect("encode")
         .len()

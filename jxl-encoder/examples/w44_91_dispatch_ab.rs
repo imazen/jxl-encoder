@@ -49,7 +49,7 @@ fn encode(rgb: &[u8], w: u32, h: u32, d: f32, force_off: bool) -> usize {
     let mut cfg = LossyConfig::new(d).with_effort(7).with_threads(8);
     if force_off {
         // Suppress both W44-29 and W44-91 (they share the same hint).
-        cfg = cfg.with_high_d_photo_hint(Some(false));
+        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() });
     }
     cfg.encode(rgb, w, h, PixelLayout::Rgb8)
         .expect("encode")

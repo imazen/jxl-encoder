@@ -79,7 +79,7 @@ const CELLS: &[(&str, u8, f32, &str)] = &[
 fn encode(rgb: &[u8], w: u32, h: u32, effort: u8, d: f32, force_off: bool) -> Vec<u8> {
     let mut cfg = LossyConfig::new(d).with_effort(effort).with_threads(8);
     if force_off {
-        cfg = cfg.with_high_d_photo_hint(Some(false));
+        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() });
     }
     cfg.encode(rgb, w, h, PixelLayout::Rgb8).expect("encode")
 }
