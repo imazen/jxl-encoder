@@ -86,7 +86,7 @@ fn decode_cell(label: &str, src: &Path, effort: u8, distance: f32) {
                 .with_effort(effort)
                 .with_threads(1)
                 .with_content_aware_entropy_mul(true)
-                .with_dct_suppress_hint(Some(true)),
+                .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct_suppress_hint: Some(true), ..Default::default() }),
         ),
     ] {
         let bytes = cfg

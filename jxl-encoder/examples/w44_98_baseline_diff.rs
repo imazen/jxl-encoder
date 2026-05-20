@@ -143,7 +143,7 @@ fn encode_baseline(rgb: &[u8], w: u32, h: u32, effort: u8, d: f32, p: ImageProxy
     let mut cfg = LossyConfig::new(d).with_effort(effort).with_threads(8);
     if w44_96_would_fire(d, p) {
         // Force variant Z (the pre-W44-98 default in this gate region).
-        cfg = cfg.with_high_d_photo_hint(Some(false));
+        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() });
         let mut internal = LossyInternalParams::default();
         internal.entropy_mul_table = Some(EntropyMulTable::high_d_photo_smooth_suppressed_z());
         cfg = cfg.with_internal_params(internal);

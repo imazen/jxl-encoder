@@ -186,7 +186,7 @@ fn encode_with_variant(
     let mut cfg = LossyConfig::new(d).with_effort(effort).with_threads(8);
     let v_table = (variant.1)(d, proxy);
     if let Some(t) = v_table {
-        cfg = cfg.with_high_d_photo_hint(Some(false));
+        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() });
         let mut internal = LossyInternalParams::default();
         internal.entropy_mul_table = Some(t);
         cfg = cfg.with_internal_params(internal);

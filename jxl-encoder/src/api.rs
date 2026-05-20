@@ -883,7 +883,8 @@ const W44_35_PROXY_HF_RATIO_MAX: f32 = 1.0;
 /// **Callers**: each lossy entry point in [`crate::api`] computes this
 /// once on the input RGB before resolving the per-image profile via
 /// [`LossyConfig::effective_profile_for_image_with_smoothness`]. The
-/// `with_smooth_photo_dct64_hint(Some(_))` override always wins.
+/// `StrategyOverrides::smooth_photo_dct64_hint = Some(_)` override
+/// (set via [`LossyConfig::with_strategy_overrides`]) always wins.
 ///
 /// **Layout dispatch**: this function takes raw `pixels` plus a
 /// [`PixelLayout`] descriptor and only fires on the u8 sRGB-encoded
@@ -891,7 +892,8 @@ const W44_35_PROXY_HF_RATIO_MAX: f32 = 1.0;
 /// (16-bit, float, gray) it returns `false` — the gate falls through
 /// to the default `adapt_to_image_lossy` behaviour. Callers wanting
 /// the admission on non-u8 layouts should set
-/// [`LossyConfig::with_smooth_photo_dct64_hint(Some(true))`].
+/// [`LossyConfig::with_strategy_overrides`] with
+/// `smooth_photo_dct64_hint: Some(true)`.
 #[must_use]
 pub(crate) fn detect_smooth_photo_for_dct64_from_layout(
     pixels: &[u8],
@@ -3657,12 +3659,13 @@ pub enum Dct64SearchPolicy {
     /// **Default.** Auto-suppress via `median(mask1x1) >= 99.5`.
     #[default]
     Auto,
-    /// Force-suppress regardless of content. Equivalent to
-    /// `with_dct_suppress_hint(Some(true))`.
+    /// Force-suppress regardless of content. Equivalent to the
+    /// `dct_suppress_hint: Some(true)` override on
+    /// [`StrategyOverrides`].
     ForceSuppress,
-    /// Force-allow DCT64 evaluation everywhere. Equivalent to
-    /// `with_dct_suppress_hint(Some(false))`. [`EncoderStrategy::Libjxl`]
-    /// uses this.
+    /// Force-allow DCT64 evaluation everywhere. Equivalent to the
+    /// `dct_suppress_hint: Some(false)` override on
+    /// [`StrategyOverrides`]. [`EncoderStrategy::Libjxl`] uses this.
     ForceAllow,
 }
 
@@ -3989,34 +3992,47 @@ pub(crate) struct ResolvedImprovements {
 /// `with_perceptual_optimizations(false).with_gaborish(true)`
 /// precedence pattern.
 ///
-/// `pub(crate)` — Chunk D will move the legacy hint fields here.
-//
-// W44-128 Chunk B: `dead_code` allow retained because the fields are
-// read by `StrategyOverrides::apply_to` (called once per encode by
-// `LossyConfig::resolve_improvements`), but Rust's dead-code lint
-// flags struct fields independently of their containing impl when
-// only mutated/copied — Chunk C/D will refactor away the
-// `pub(crate)` and the allow when call sites consume each field
-// directly.
-#[allow(dead_code)]
+/// W44-130 (Chunk D): exposed as `pub` and reachable via
+/// [`LossyConfig::with_strategy_overrides`]. Replaces the five deleted
+/// `with_*_hint(Option<bool>)` setters; use `EncoderStrategy::Custom`
+/// with [`EncoderImprovementsCustom`] when full per-divergence control
+/// is needed.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct StrategyOverrides {
-    pub(crate) screenshot_lift_hint: Option<bool>,
-    pub(crate) high_d_photo_hint: Option<bool>,
-    pub(crate) smooth_photo_dct64_hint: Option<bool>,
-    pub(crate) dct_suppress_hint: Option<bool>,
-    pub(crate) dct32_keep_hint: Option<bool>,
-    // Any future `with_*_hint` adds a field here.
+pub struct StrategyOverrides {
+    /// Override for the W22-1 screenshot entropy_mul lift gate. `None`
+    /// = use the strategy preset's value (typically `Auto` =
+    /// `median(mask1x1) > 95` discriminator). `Some(true/false)` =
+    /// force the matching `ScreenshotEntropyMulPolicy::ForceOn/Off`.
+    pub screenshot_lift_hint: Option<bool>,
+    /// Override for the W44-29 high-distance smooth-photo entropy_mul
+    /// lowering gate. `None` = use the strategy preset's value
+    /// (typically `Auto` = `distance >= 4.0 AND median(mask1x1) <
+    /// SMOOTH_THRESHOLD`). `Some(true/false)` = force the matching
+    /// `HighDPhotoEntropyMulPolicy::ForceOn/Off`.
+    pub high_d_photo_hint: Option<bool>,
+    /// Override for the W44-34/35 smooth-photo DCT64 admission gate.
+    /// `None` = use the strategy preset's value (typically `Auto` =
+    /// `detect_smooth_photo_for_dct64` auto-detector inside the
+    /// `pixels < 500_000 AND distance < 2.0` smart-dispatch gate).
+    /// `Some(true/false)` = force the matching
+    /// `SmoothPhotoDct64Policy::ForceAdmit/Skip`.
+    pub smooth_photo_dct64_hint: Option<bool>,
+    /// Override for the W44-65 content-aware DCT64-class suppression
+    /// gate. `None` = use the strategy preset's value (typically
+    /// `Auto` = `median(mask1x1) >= 99.5` screenshot-class
+    /// discriminator). `Some(true)` = force-suppress (screenshot
+    /// override); `Some(false)` = force-allow (pre-W44-65
+    /// byte-equivalence).
+    pub dct_suppress_hint: Option<bool>,
+    /// Override for the W44-123/124 DCT32-class search retention gate
+    /// (composes with `dct_suppress_hint`). `None` = use the strategy
+    /// preset's value (typically `FollowDct64Suppression` =
+    /// W44-124 auto-discriminator on m3_colourfulness + edge_density).
+    /// `Some(true)` = force `Dct32SearchPolicy::KeepWhenDct64Suppressed`;
+    /// `Some(false)` = force `FollowDct64Suppression`.
+    pub dct32_keep_hint: Option<bool>,
 }
 
-// W44-128 Chunk B: `apply_to` is called by `EncoderStrategy::resolve`
-// which is called by `LossyConfig::resolve_improvements` at the
-// boundary between `LossyConfig` and `VarDctEncoder`. The
-// `dead_code` allow is retained because Rust still flags some
-// `pub(crate)` impl items when only the struct fields are touched —
-// Chunk C/D removes the allow as call sites start consuming the
-// `ResolvedImprovements` fields.
-#[allow(dead_code)]
 impl StrategyOverrides {
     /// Apply per-field overrides on top of a resolved strategy. Each
     /// `Option<bool>` field, when `Some`, REPLACES the matching policy
@@ -4378,136 +4394,17 @@ pub struct LossyConfig {
     /// Default `false` — keeps every existing hash-lock fixture
     /// byte-identical. See [`Self::with_content_aware_entropy_mul`].
     content_aware_entropy_mul: bool,
-    /// Optional caller-supplied override for the W22-1
-    /// [`Self::with_content_aware_entropy_mul`] gate. Only consulted
-    /// when `content_aware_entropy_mul` is `true`.
-    ///
-    /// - `None` (default): fall back to the encoder-internal
-    ///   `median(mask1x1) > 95` discriminator (W22-1 behaviour).
-    /// - `Some(true)`: force-apply the lifted
-    ///   [`crate::effort::EntropyMulTable::screenshot_suppressed`]
-    ///   table regardless of mask1x1. Caller asserts the image is
-    ///   safe to lift (typically validated via a zenanalyze-driven
-    ///   classifier in the caller).
-    /// - `Some(false)`: suppress the lift even when mask1x1 would
-    ///   trigger it. Caller asserts the image is in a class that
-    ///   regresses under the lifted values (e.g., palette /
-    ///   pixel-art content like the W23-2-blocking windows95.png).
-    ///
-    /// See [`Self::with_screenshot_lift_hint`] and the
-    /// `entropy_mul_smart_dispatch_ab` example for the classifier
-    /// rule (chunk 1 of the smart-dispatch follow-on to W23-2).
-    screenshot_lift_hint: Option<bool>,
-    /// Optional caller-supplied override for the W44-29 high-distance
-    /// smooth-photo gate that *lowers* `entropy_mul[DCT16X16]` and
-    /// `entropy_mul[DCT32X32]` (via
-    /// [`crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed`])
-    /// to close the F-D residual photo byte gap vs cjxl at d ≥ 4.
-    ///
-    /// The auto behaviour (when `None`) fires only when *both* of the
-    /// following hold: `distance >= 4.0` AND `median(mask1x1) <
-    /// HIGH_D_PHOTO_SMOOTH_THRESHOLD` (smooth-content discriminator,
-    /// chosen to admit the F-D residual photo class without admitting
-    /// imac_g3-class screenshots whose path flips on dct32 lowering).
-    ///
-    /// - `None` (default): use the auto gate above.
-    /// - `Some(true)`: force-apply the high-d photo lowered table
-    ///   regardless of distance or content. Caller asserts the encode
-    ///   is in the smooth-photo class.
-    /// - `Some(false)`: suppress the lowering even when the auto gate
-    ///   would fire. Caller asserts the image is content-class-sensitive.
-    ///
-    /// **Independent of W22-1 `screenshot_lift_hint`**: the auto gate
-    /// is restricted to `distance >= 4.0` where the W22-1 wedge does
-    /// not fire. The two gates produce mutually-exclusive table swaps —
-    /// W44-29 uses `mask1x1 < SMOOTH_THRESHOLD` AND `d >= 4.0`;
-    /// W22-1 uses `mask1x1 > SCREENSHOT_THRESHOLD` AND the caller-opted
-    /// `content_aware_entropy_mul` flag. If both gates conflict in
-    /// practice the W22-1 gate wins (its swap is more specific to
-    /// screen content).
-    ///
-    /// See [`Self::with_high_d_photo_hint`]. References the W44-28
-    /// honest-stop memo + W44-27 firing-rate audit.
-    high_d_photo_hint: Option<bool>,
-    /// Optional caller-supplied override for the W44-35 smooth-photo
-    /// DCT64 admission gate.
-    ///
-    /// `EffortProfile::adapt_to_image_lossy` disables `try_dct64` on
-    /// `pixels < 500_000` AND `distance < 2.0`. This gate was originally
-    /// calibrated on a single textured image (7256805) and missed the
-    /// smooth-photo class entirely; W44-34 traced 5 OPEN ledger cells on
-    /// 1418519.png (a 512×512 smooth photo) to this gate firing where
-    /// `try_dct64=true` would have BEATEN cjxl by 5-7 % bytes.
-    ///
-    /// Semantics:
-    /// - `None` (default): use the auto detector
-    ///   [`detect_smooth_photo_for_dct64`] (cheap RGB-based discriminator
-    ///   on edge density + flat block ratio + HF energy). Fires only when
-    ///   the gate condition holds (`pixels < 500_000` AND `distance < 2.0`)
-    ///   AND the input classifies as a smooth photo. Hash-locks outside
-    ///   that envelope stay byte-identical.
-    /// - `Some(true)`: force-admit DCT64 even on the gated cell. Caller
-    ///   asserts the image is in the smooth-photo class.
-    /// - `Some(false)`: force-skip the admission. Caller asserts the
-    ///   image regresses under DCT64 evaluation.
-    ///
-    /// See [`Self::with_smooth_photo_dct64_hint`] and W44-34 root-cause
-    /// memo (`1418519_mid_d_wedge_2026-05-18.md`).
-    smooth_photo_dct64_hint: Option<bool>,
-    /// Optional caller-supplied override for the content-aware
-    /// DCT64-class suppression gate (**default-on** as of W44-65).
-    ///
-    /// W44-62 (`07f8b3d2` harness) probed the 20 OPEN cells residual to
-    /// W44-61 with `__expert` `try_dct64=Some(false)` and found a polar
-    /// content-class split: screenshot-class content (codec_wiki + the
-    /// already-FIXED imac_g3 + terminal) wins uniformly -0.13 % to
-    /// -3.25 %, while photo content wins only sub-1 % (sub-flip-threshold).
-    /// codec_wiki e7 d=5 alone flips from `+3.51 %` → `+0.18 %` bytes
-    /// delta (OPEN → FIXED). W44-63 (`6169ba7b`) shipped the API behind
-    /// the `content_aware_entropy_mul` opt-in. W44-65 (this change)
-    /// promotes the discriminator to default-on after the W44-65
-    /// mask1x1 probe verified 0/41 photo false-fires and
-    /// `windows95.png` correctly excluded (median 81.49 < 95).
-    ///
-    /// Semantics (analogous to [`Self::with_screenshot_lift_hint`] /
-    /// [`Self::with_high_d_photo_hint`]):
-    /// - `None` (default): consult the encoder-internal
-    ///   `median(mask1x1) > 95` discriminator (the same statistic used
-    ///   by the W22-1 screenshot lift). Fires on production
-    ///   screenshots; stays quiet on photos and pixel-art.
-    /// - `Some(true)`: force-suppress DCT64-class transforms regardless
-    ///   of content discriminator. Caller asserts the image is in the
-    ///   screenshot class (e.g., via a zenanalyze
-    ///   `palette_log2_size`/`flat_color_block_ratio` classifier — see
-    ///   `examples/w44_63_dct_suppress_ab.rs`).
-    /// - `Some(false)`: force-enable DCT64 evaluation even when the
-    ///   mask1x1 discriminator would suppress. Caller asserts the
-    ///   image regresses under DCT64 suppression OR wants
-    ///   byte-equivalence with pre-W44-65 main.
-    ///
-    /// **Hash-lock impact**: pre-W44-65 main encoded screenshots with
-    /// `try_dct64 = true`; this change flips that default for
-    /// screenshot-class content. Pin `Some(false)` to recover the
-    /// pre-W44-65 bitstream.
-    ///
-    /// See [`Self::with_dct_suppress_hint`], W44-62 honest-stop memo
-    /// (`w44_62_dct64_suppress_lever_found_2026-05-19.md`), W44-63
-    /// (`w44_63_dct_suppress_hint_shipped_2026-05-19.md`), and W44-65
-    /// (`w44_65_dct_suppress_default_on_2026-05-19.md`) for context.
-    dct_suppress_hint: Option<bool>,
-    /// W44-123 (2026-05-20) caller-supplied override for the
-    /// `try_dct32` half of the W44-65/W44-68 screenshot-class
-    /// suppression. See [`Self::with_dct32_keep_hint`] for full
-    /// semantics.
-    ///
-    /// Decouples `try_dct32` from `try_dct64` so a caller can keep
-    /// W44-65's DCT64 drop (avoids the W44-104/W44-122 admit-DCT64
-    /// regressions on terminal-class content) while still admitting
-    /// DCT32X32 / DCT32X16 / DCT16X32 evaluation on smooth screen-
-    /// content like codec_wiki.png where the W44-121 dump showed
-    /// `DCT16X16` over-fires 100× because `find_best_32x32_transform`
-    /// never runs.
-    dct32_keep_hint: Option<bool>,
+    /// W44-130 (Chunk D) — per-field overrides applied AFTER the
+    /// [`Self::strategy`] preset resolves. Replaces the five legacy
+    /// `with_*_hint(Option<bool>)` setters (deleted in Chunk D); the
+    /// surviving escape hatch is
+    /// [`Self::with_strategy_overrides`]. Each `Some` field maps to
+    /// the matching `Force*` variant on the resolved
+    /// [`ResolvedImprovements`] via [`StrategyOverrides::apply_to`].
+    /// Default (`StrategyOverrides::default()`) is all `None` —
+    /// overrides nothing; the preset's resolved value passes through
+    /// unchanged.
+    strategy_overrides: StrategyOverrides,
     /// W44-128 (Chunk B) encoder compatibility / improvements bundle.
     ///
     /// Selects a named preset (`Libjxl` / `LeanFaster` / `Zenjxl` /
@@ -4788,27 +4685,12 @@ impl LossyConfig {
             canonicalize_input: false,
             content_class: None,
             content_aware_entropy_mul: false,
-            screenshot_lift_hint: None,
-            // W44-29: default None engages the auto gate (fires only at
-            // distance >= 4.0 AND median(mask1x1) < smooth-content
-            // threshold). Hash-locks at d < 4.0 stay byte-identical.
-            high_d_photo_hint: None,
-            // W44-35: default None engages the auto detector
-            // (`detect_smooth_photo_for_dct64`). Hash-locks at sizes
-            // < 64×64 stay byte-identical (the underlying transform
-            // can't fit there). Larger fixtures get the same auto
-            // detection as production input.
-            smooth_photo_dct64_hint: None,
-            // W44-63: default None defers to the encoder-internal
-            // `median(mask1x1) > 95` discriminator (gated on
-            // `content_aware_entropy_mul=true` opt-in). Hash-locks
-            // outside the opt-in stay byte-identical because the gate
-            // cannot fire.
-            dct_suppress_hint: None,
-            // W44-123: default None preserves W44-68 default behaviour
-            // (try_dct32 dropped together with try_dct64 when the W44-65
-            // gate fires). Hash-locks stay byte-identical.
-            dct32_keep_hint: None,
+            // W44-130 Chunk D: default `StrategyOverrides::default()`
+            // is all-`None` — overrides nothing. The strategy preset's
+            // resolved value passes through unchanged. Replaces the
+            // five deleted `with_*_hint(Option<bool>)` setters; the
+            // surviving escape hatch is `with_strategy_overrides`.
+            strategy_overrides: StrategyOverrides::default(),
             // W44-128 Chunk B: default `EncoderStrategy::Zenjxl`
             // (production shipping). Computed `ResolvedImprovements`
             // is unused until Chunk C+ rewires call sites; hash-locks
@@ -4908,9 +4790,11 @@ impl LossyConfig {
     /// caller-computed `smooth_photo_for_dct64` hint (W44-35).
     ///
     /// When the auto detector says `true` AND the caller has not pinned
-    /// `Some(false)` via [`Self::with_smooth_photo_dct64_hint`], the
-    /// `adapt_to_image_lossy` `try_dct64 -> false` flip is suppressed
-    /// on the gated cell so DCT64-class transforms are evaluated.
+    /// `Some(false)` via
+    /// [`Self::with_strategy_overrides`]'s `smooth_photo_dct64_hint`,
+    /// the `adapt_to_image_lossy` `try_dct64 -> false` flip is
+    /// suppressed on the gated cell so DCT64-class transforms are
+    /// evaluated.
     ///
     /// Caller-supplied explicit `Some(true)`/`Some(false)` always wins
     /// over the auto detector. Default `None` defers to the auto value.
@@ -5058,11 +4942,10 @@ impl LossyConfig {
         new.canonicalize_input = self.canonicalize_input;
         new.content_class = self.content_class;
         new.content_aware_entropy_mul = self.content_aware_entropy_mul;
-        new.screenshot_lift_hint = self.screenshot_lift_hint;
-        new.high_d_photo_hint = self.high_d_photo_hint;
-        new.smooth_photo_dct64_hint = self.smooth_photo_dct64_hint;
-        new.dct_suppress_hint = self.dct_suppress_hint;
-        new.dct32_keep_hint = self.dct32_keep_hint;
+        // W44-130 Chunk D: preserve the caller's strategy overrides
+        // across `with_effort` (mirror of the strategy preservation
+        // below).
+        new.strategy_overrides = self.strategy_overrides.clone();
         // W44-128 Chunk B: preserve the caller's
         // `with_strategy(EncoderStrategy::...)` across `with_effort`.
         // Effort-derived state (in `new`) is regenerated from the new
@@ -5843,222 +5726,42 @@ impl LossyConfig {
         self.content_aware_entropy_mul
     }
 
-    /// Caller-supplied override for the W22-1
-    /// [`Self::with_content_aware_entropy_mul`] discriminator.
+    /// W44-130 (Chunk D) — set the per-field override bundle applied
+    /// AFTER [`Self::with_strategy`] resolves.
     ///
-    /// Only consulted when `with_content_aware_entropy_mul(true)`
-    /// is set. Lets the caller plug in a richer image-content
-    /// classifier (e.g., zenanalyze features that distinguish
-    /// "screenshot we should lift" from "palette pixel-art we
-    /// should not") without putting that classifier inside
-    /// `jxl-encoder` itself.
+    /// Replaces the five legacy `with_*_hint(Option<bool>)` setters
+    /// (`with_screenshot_lift_hint`, `with_high_d_photo_hint`,
+    /// `with_smooth_photo_dct64_hint`, `with_dct_suppress_hint`,
+    /// `with_dct32_keep_hint`) deleted in Chunk D. Callers needing
+    /// fine-grained per-divergence control should prefer
+    /// [`EncoderStrategy::Custom`] with [`EncoderImprovementsCustom`]
+    /// for full coverage; this setter is the smaller escape hatch when
+    /// only a few fields need overriding on top of a named preset.
     ///
-    /// Semantics:
-    /// - `None` (default): fall back to the encoder's internal
-    ///   `median(mask1x1) > 95` discriminator (W22-1 behaviour).
-    /// - `Some(true)`: force-apply the lift.
-    /// - `Some(false)`: suppress the lift even when mask1x1 would
-    ///   otherwise trigger it.
+    /// Field-by-field precedence over the preset's resolved value via
+    /// [`StrategyOverrides::apply_to`] (mirrors the
+    /// [`Self::with_perceptual_optimizations`] precedence pattern).
     ///
-    /// The default `None` keeps every existing hash-lock byte-identical.
-    /// See `entropy_mul_smart_dispatch_ab` for the prototype
-    /// classifier (windows95-class detected via
-    /// `palette_log2_size <= 6`).
-    pub fn with_screenshot_lift_hint(mut self, hint: Option<bool>) -> Self {
-        self.screenshot_lift_hint = hint;
+    /// ```ignore
+    /// use jxl_encoder::api::{EncoderStrategy, LossyConfig, StrategyOverrides};
+    /// // Zenjxl default, but force-skip the W44-65 DCT64 suppression
+    /// // (pre-W44-65 bitstream behaviour on screenshots).
+    /// let cfg = LossyConfig::new(1.0)
+    ///     .with_strategy(EncoderStrategy::Zenjxl)
+    ///     .with_strategy_overrides(StrategyOverrides {
+    ///         dct_suppress_hint: Some(false),
+    ///         ..Default::default()
+    ///     });
+    /// ```
+    pub fn with_strategy_overrides(mut self, overrides: StrategyOverrides) -> Self {
+        self.strategy_overrides = overrides;
         self
     }
 
-    /// Currently-set [`Self::with_screenshot_lift_hint`] override
-    /// (default `None`).
-    pub fn screenshot_lift_hint(&self) -> Option<bool> {
-        self.screenshot_lift_hint
-    }
-
-    /// Caller-supplied override for the W44-29 high-distance smooth-photo
-    /// gate that lowers `entropy_mul[DCT16X16]` and `entropy_mul[DCT32X32]`
-    /// via [`crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed`].
-    ///
-    /// Semantics:
-    /// - `None` (default): use the encoder-internal auto gate — fires
-    ///   only when *both* hold: `distance >= 4.0` AND `median(mask1x1)
-    ///   < SMOOTH_THRESHOLD`. Hash-locks at `d < 4.0` stay byte-identical.
-    /// - `Some(true)`: force-apply the lowered table regardless of
-    ///   distance or content.
-    /// - `Some(false)`: suppress the lowering even when the auto gate
-    ///   would fire (e.g., the caller has classified the image as
-    ///   screenshot-like via richer features and wants to bypass the
-    ///   mask1x1-only auto discriminator).
-    ///
-    /// Closes 2-5 of the 5 F-D residual photo cells (1531677.png,
-    /// 1420710.png at d ∈ {4, 5, 6}) per the W44-28 stage-A top-5
-    /// sweep (dct16=1.27 dct32=1.34 is the largest reduction that does
-    /// NOT trigger the imac_g3 path flip under content gating).
-    ///
-    /// References W44-28 honest-stop memo + W44-27 firing-rate audit.
-    pub fn with_high_d_photo_hint(mut self, hint: Option<bool>) -> Self {
-        self.high_d_photo_hint = hint;
-        self
-    }
-
-    /// Currently-set [`Self::with_high_d_photo_hint`] override
-    /// (default `None`).
-    pub fn high_d_photo_hint(&self) -> Option<bool> {
-        self.high_d_photo_hint
-    }
-
-    /// Caller-supplied override for the W44-35 smooth-photo DCT64
-    /// admission gate.
-    ///
-    /// [`crate::effort::EffortProfile::adapt_to_image_lossy`] disables
-    /// `try_dct64` on `pixels < 500_000` AND `distance < 2.0`. This
-    /// gate was originally calibrated on a single textured image and
-    /// missed the smooth-photo class entirely; the W44-34 root-cause
-    /// memo traced 5 OPEN ledger cells on `1418519.png` (a 512×512
-    /// smooth photo) to this gate firing, where `try_dct64=true`
-    /// would have BEATEN cjxl by 5-7 % bytes (-6.07 % paired total
-    /// across 5 cells).
-    ///
-    /// Semantics:
-    /// - `None` (default): use the encoder's internal auto detector
-    ///   (cheap RGB-based discriminator on edge density + flat-block
-    ///   ratio + HF energy). Fires only when the gate condition holds
-    ///   AND the input classifies as a smooth photo. Hash-locks on
-    ///   sub-64 × 64 fixtures stay byte-identical (DCT64 cannot apply).
-    /// - `Some(true)`: force-admit DCT64 even on the gated cell.
-    ///   Caller asserts the image is in the smooth-photo class
-    ///   (typically validated via a zenanalyze classifier in the
-    ///   caller — see `dct64_smart_dispatch_calibrate` example for
-    ///   the W44-35 calibration).
-    /// - `Some(false)`: force-skip the admission. Caller asserts the
-    ///   image regresses under DCT64 evaluation (preserves the
-    ///   pre-W44-35 behaviour on any image).
-    ///
-    /// References W44-34 root-cause memo (`1418519_mid_d_wedge_2026-05-18.md`),
-    /// W44-35 calibration TSV
-    /// (`benchmarks/w44_35_dct64_smart_dispatch_calibrate.tsv`).
-    pub fn with_smooth_photo_dct64_hint(mut self, hint: Option<bool>) -> Self {
-        self.smooth_photo_dct64_hint = hint;
-        self
-    }
-
-    /// Currently-set [`Self::with_smooth_photo_dct64_hint`] override
-    /// (default `None`).
-    pub fn smooth_photo_dct64_hint(&self) -> Option<bool> {
-        self.smooth_photo_dct64_hint
-    }
-
-    /// Caller-supplied override for the content-aware DCT64-class
-    /// suppression gate. **Default-on as of W44-65**.
-    ///
-    /// The encoder consults this hint to decide whether to disable
-    /// DCT64-class transforms (`DCT64X64`, `DCT64X32`, `DCT32X64`) at
-    /// AC-strategy search time. W44-62 (`07f8b3d2` harness) showed that
-    /// forcing DCT64 off on screenshot content yields uniform -0.13 % to
-    /// -3.25 % bytes wins, including a flip from `+3.51 %` → `+0.18 %`
-    /// on `codec_wiki.png e7 d=5` (OPEN → FIXED in the cjxl parity
-    /// ledger).
-    ///
-    /// Semantics:
-    /// - `None` (**default**): consult the encoder-internal
-    ///   `median(mask1x1) > 95` discriminator (the existing W22-1
-    ///   screenshot threshold). The W44-65 probe verified this
-    ///   threshold fires on 7/7 production screenshots (codec_wiki,
-    ///   imac_g3, imac_dark, terminal, windows, imessage, graph) and
-    ///   stays quiet on 0/41 CID22 validation photos. `windows95.png`
-    ///   (median 81.49) is **correctly excluded** so pixel-art
-    ///   content stays byte-identical to the pre-W44-65 default.
-    /// - `Some(true)`: force-suppress DCT64-class evaluation regardless
-    ///   of the mask1x1 discriminator. Caller asserts the image is in
-    ///   the screenshot / pixel-art class (e.g., via zenanalyze
-    ///   `palette_log2_size`/`flat_color_block_ratio` features — see
-    ///   `examples/w44_63_dct_suppress_ab.rs`).
-    /// - `Some(false)`: force-allow DCT64 evaluation even when the
-    ///   mask1x1 discriminator would suppress. Caller asserts the
-    ///   image regresses under DCT64 suppression (e.g., textured photo
-    ///   content where DCT64 picks legitimately reduce bytes), or
-    ///   asserts byte-equivalence with pre-W44-65 main.
-    ///
-    /// **Bitstream change**: as of W44-65 (default-on), encoding a
-    /// screenshot-class image with `dct_suppress_hint = None`
-    /// produces a different (smaller) bitstream than pre-W44-65
-    /// main. Pin to `Some(false)` to recover byte-identical output.
-    ///
-    /// References W44-65 promotion (`benchmarks/w44_65_default_on_ab_2026-05-19.tsv`),
-    /// W44-62 honest-stop memo
-    /// (`w44_62_dct64_suppress_lever_found_2026-05-19.md`) +
-    /// `benchmarks/w44_62_dct64_suppress_ab_2026-05-19.tsv`.
-    pub fn with_dct_suppress_hint(mut self, hint: Option<bool>) -> Self {
-        self.dct_suppress_hint = hint;
-        self
-    }
-
-    /// Currently-set [`Self::with_dct_suppress_hint`] override
-    /// (default `None`).
-    pub fn dct_suppress_hint(&self) -> Option<bool> {
-        self.dct_suppress_hint
-    }
-
-    /// W44-123 (2026-05-20) — caller-supplied override for the
-    /// `try_dct32` half of the W44-65/W44-68 screenshot-class
-    /// suppression. Decouples DCT32-class evaluation from DCT64-class
-    /// evaluation so callers can pick "drop DCT64 (W44-65) but KEEP
-    /// DCT32 (skip the W44-68 follow-on)" on smooth screenshots.
-    ///
-    /// W44-121 dumped codec_wiki.png d=3 e5/e6/e7 and found that our
-    /// `find_best_32x32_transform` never runs because W44-68
-    /// drops `try_dct32 = false` on any image where W44-65 also
-    /// fires (mask1x1 median ≥ 99.5). The result is that DCT16X16
-    /// over-fires 100× vs cjxl (14031 vs 138 first-blocks at e5),
-    /// costing ~0.9-1.4 SSIM2 vs cjxl on codec_wiki d=3.
-    ///
-    /// W44-122 ruled out admitting *both* DCT32 and DCT64 (full
-    /// `dct_suppress_hint = Some(false)`) — on terminal e8/e9 d=4 the
-    /// admit produces a +29 % butteraugli regression and other
-    /// screenshots (graph, imessage, imac_dark, ...) lose -0.30 to
-    /// -1.44 SSIM2. Admitting **DCT32 only** is the narrower lever:
-    /// W44-123 measurement (`benchmarks/w44_123_keep_dct32_ab_2026-05-20.tsv`)
-    /// confirms terminal e5..e9 d=4 SSIM2 stays within ±0.50 with no
-    /// butteraugli regression (-1.9 to -9.5 %) while codec_wiki d=3
-    /// e5/e6/e7 recovers +1.40 / +1.33 / +0.90 SSIM2.
-    ///
-    /// Semantics:
-    /// - `None` (**default**, W44-124 auto-discriminator): when the
-    ///   W44-65 gate fires AND the image has populated zenanalyze
-    ///   proxies (8-bit sRGB layouts: `Rgb8` / `Rgba8` / `Bgr8` /
-    ///   `Bgra8`) AND `m3_colourfulness >= 60.0` AND `edge_density
-    ///   < 0.05`, auto-keep `try_dct32 = true`. Otherwise fall
-    ///   through to the W44-68 behaviour (drop both). On the
-    ///   gb82-sc + CID22 corpus this fires only on codec_wiki-class
-    ///   content (m3=145.7, ed=0.04) and rejects the 6 W44-123
-    ///   regressing screens (graph/windows/imessage) plus all
-    ///   photos.
-    /// - `Some(true)`: when W44-65 fires, KEEP `try_dct32 = true`
-    ///   (only drop `try_dct64 = false`). Overrides the
-    ///   auto-discriminator — useful for callers that know their
-    ///   content is smooth-screen even if the proxies disagree.
-    /// - `Some(false)`: when W44-65 fires, force the W44-68
-    ///   behaviour (drop both). Overrides the auto-discriminator —
-    ///   guarantees pre-W44-124 byte-equivalence on screen content.
-    ///
-    /// Composes with [`Self::with_dct_suppress_hint`]:
-    /// `dct32_keep_hint = Some(true)` is a NO-OP if
-    /// `dct_suppress_hint = Some(false)` because the outer W44-65
-    /// gate doesn't fire at all. The hint only matters when W44-65
-    /// would otherwise drop DCT64.
-    ///
-    /// References: W44-121 dump memo, W44-122 admit-DCT64 honest-stop,
-    /// W44-123 keep-dct32 lever measurement, W44-124 auto-discriminator
-    /// probe (`examples/w44_124_proxy_probe.rs`).
-    pub fn with_dct32_keep_hint(mut self, hint: Option<bool>) -> Self {
-        self.dct32_keep_hint = hint;
-        self
-    }
-
-    /// Currently-set [`Self::with_dct32_keep_hint`] override
-    /// (default `None`).
-    pub fn dct32_keep_hint(&self) -> Option<bool> {
-        self.dct32_keep_hint
+    /// Currently-set [`Self::with_strategy_overrides`] (default empty
+    /// — all fields `None`).
+    pub fn strategy_overrides(&self) -> &StrategyOverrides {
+        &self.strategy_overrides
     }
 
     /// W44-128 (Chunk B) — set the encoder compatibility / improvements
@@ -6073,12 +5776,12 @@ impl LossyConfig {
     /// lets the caller pick every dial individually via
     /// [`EncoderImprovementsCustom`].
     ///
-    /// Individual `with_*_hint` setters called AFTER `with_strategy`
-    /// take precedence on the matching field (mirrors the
+    /// [`Self::with_strategy_overrides`] called AFTER `with_strategy`
+    /// takes precedence on the matching field (mirrors the
     /// [`Self::with_perceptual_optimizations`] precedence pattern):
     ///
     /// ```ignore
-    /// use jxl_encoder::api::{EncoderStrategy, LossyConfig};
+    /// use jxl_encoder::api::{EncoderStrategy, LossyConfig, StrategyOverrides};
     /// // Strict libjxl-parity bundle, but force-allow DCT64 evaluation
     /// // on screenshots (overrides Libjxl's `ForceAllow` default with
     /// // an explicit `ForceAllow` — these agree, so the override is a
@@ -6086,18 +5789,21 @@ impl LossyConfig {
     /// // win field-by-field over the Libjxl preset if they disagreed.
     /// let cfg = LossyConfig::new(1.0)
     ///     .with_strategy(EncoderStrategy::Libjxl)
-    ///     .with_dct_suppress_hint(Some(false));
+    ///     .with_strategy_overrides(StrategyOverrides {
+    ///         dct_suppress_hint: Some(false),
+    ///         ..Default::default()
+    ///     });
     /// ```
     ///
-    /// **Chunk B note**: this setter stores the strategy on the
+    /// **W44-130 Chunk D**: this setter stores the strategy on the
     /// `LossyConfig`. At encoder construction time
-    /// [`EncoderStrategy::resolve`] is called once with the collected
-    /// `StrategyOverrides` from the existing `with_*_hint` fields, and
-    /// the resulting `ResolvedImprovements` is stored on the internal
-    /// encoder. No call site reads `ResolvedImprovements` yet — the
-    /// existing `Option<bool>` hint fields continue to drive every
-    /// gate. The Zenjxl default produces byte-identical output to
-    /// pre-Chunk-B main on all 36 hash-lock fixtures.
+    /// [`EncoderStrategy::resolve`] is called once with the
+    /// [`StrategyOverrides`] from
+    /// [`Self::with_strategy_overrides`], and the resulting
+    /// [`ResolvedImprovements`] is stored on the encoder. The 8 call
+    /// sites in `vardct/encoder.rs` + `vardct/butteraugli_loop.rs`
+    /// read this directly. The Zenjxl default produces byte-identical
+    /// output to pre-Chunk-D main on all 36 hash-lock fixtures.
     pub fn with_strategy(mut self, strategy: EncoderStrategy) -> Self {
         self.strategy = strategy;
         self
@@ -6109,23 +5815,16 @@ impl LossyConfig {
         &self.strategy
     }
 
-    /// W44-128 (Chunk B) — collect the existing `with_*_hint`
-    /// `Option<bool>` fields into a [`StrategyOverrides`] and resolve
-    /// against [`Self::strategy`].
+    /// W44-128 (Chunk B) / W44-130 (Chunk D) — resolve
+    /// [`Self::strategy`] composed with [`Self::strategy_overrides`].
     ///
     /// Called once per encode at the boundary between `LossyConfig`
     /// and the internal `VarDctEncoder`. The resulting
-    /// [`ResolvedImprovements`] is stored on the encoder for Chunks
-    /// C/G to consume.
+    /// [`ResolvedImprovements`] is stored on the encoder; the 8 call
+    /// sites in `vardct/encoder.rs` + `vardct/butteraugli_loop.rs`
+    /// consume it directly.
     pub(crate) fn resolve_improvements(&self) -> ResolvedImprovements {
-        let overrides = StrategyOverrides {
-            screenshot_lift_hint: self.screenshot_lift_hint,
-            high_d_photo_hint: self.high_d_photo_hint,
-            smooth_photo_dct64_hint: self.smooth_photo_dct64_hint,
-            dct_suppress_hint: self.dct_suppress_hint,
-            dct32_keep_hint: self.dct32_keep_hint,
-        };
-        self.strategy.resolve(&overrides)
+        self.strategy.resolve(&self.strategy_overrides)
     }
 
     /// Set a separate butteraugli distance for the alpha extra channel
@@ -8856,8 +8555,9 @@ impl<'a> EncodeRequest<'a> {
         // `effective_profile_for_image_with_smoothness`. Returns false
         // for non-u8 layouts, large images (>= 500k px), and content
         // that fails the smoothness discriminator. Caller-supplied
-        // `with_smooth_photo_dct64_hint(Some(_))` always wins over the
-        // auto value (resolved inside `effective_profile_*`).
+        // `StrategyOverrides::smooth_photo_dct64_hint = Some(_)`
+        // (via `with_strategy_overrides`) always wins over the auto
+        // value (resolved inside `effective_profile_*`).
         let smooth_photo_for_dct64 =
             detect_smooth_photo_for_dct64_from_layout(pixels, self.width, self.height, self.layout);
         let mut profile = cfg.effective_profile_for_image_with_smoothness(
@@ -9002,10 +8702,11 @@ impl<'a> EncodeRequest<'a> {
         enc.progressive = cfg.progressive;
         enc.use_lf_frame = cfg.lf_frame;
         enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
-        enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
-        enc.high_d_photo_hint = cfg.high_d_photo_hint;
-        enc.dct_suppress_hint = cfg.dct_suppress_hint;
-        enc.dct32_keep_hint = cfg.dct32_keep_hint;
+        // W44-130 Chunk D: the 5 `with_*_hint` Option<bool> setters
+        // and their `VarDctEncoder` fallback fields are deleted.
+        // Strategy overrides flow through `cfg.resolve_improvements()`
+        // → `enc.resolved_improvements` which the 8 consuming call
+        // sites read directly.
         // W44-91: cheap zenanalyze-equivalent proxies for the textured-
         // colourful-photo sub-band gate (mask1x1 ∈ [50, 80] @ d ∈ [3, 5]).
         // See `compute_w44_91_zenanalyze_proxies` for which layouts the
@@ -10144,17 +9845,17 @@ impl LossyEncoder {
             enc.progressive = cfg.progressive;
             enc.use_lf_frame = cfg.lf_frame;
             enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
-            enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
-            enc.high_d_photo_hint = cfg.high_d_photo_hint;
-            enc.dct_suppress_hint = cfg.dct_suppress_hint;
-            enc.dct32_keep_hint = cfg.dct32_keep_hint;
+            // W44-130 Chunk D: legacy `with_*_hint` setters deleted;
+            // strategy overrides flow via `cfg.resolve_improvements()`
+            // into `enc.resolved_improvements`.
             // W44-91: streaming `LossyEncoder` ingests pre-converted
             // `linear_rgb` rows, so the sRGB u8 source bytes the
             // zenanalyze-equivalent proxy needs are not available
             // here — leave `zenanalyze_proxies = None`, which keeps
             // the W44-91 gate dormant on this code path. Callers that
             // need the W44-91 lift on a streaming encode can set
-            // `LossyConfig::with_high_d_photo_hint(Some(true))`
+            // [`LossyConfig::with_strategy_overrides`] with
+            // `high_d_photo_hint: Some(true)`
             // explicitly after computing the proxy upstream.
             // Streaming refactor #11 chunk 6 (streaming LossyEncoder
             // path).
@@ -12016,17 +11717,17 @@ fn encode_animation_lossy(
     enc.progressive = cfg.progressive;
     enc.use_lf_frame = cfg.lf_frame;
     enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
-    enc.screenshot_lift_hint = cfg.screenshot_lift_hint;
-    enc.high_d_photo_hint = cfg.high_d_photo_hint;
-    enc.dct_suppress_hint = cfg.dct_suppress_hint;
-    enc.dct32_keep_hint = cfg.dct32_keep_hint;
+    // W44-130 Chunk D: legacy `with_*_hint` setters deleted;
+    // strategy overrides flow via `cfg.resolve_improvements()` into
+    // `enc.resolved_improvements`.
     // W44-91: animation per-frame encodes don't compute the
     // zenanalyze-proxy because the proxy is per-image and the discriminator
     // logic was designed against still-image CID22 validation cells.
     // Each frame falls back to the W44-29 mask1x1<50 gate (which works
     // on per-frame XYB the same way it does on still images). Callers
-    // that want the W44-91 lift on a specific frame can set
-    // `LossyConfig::with_high_d_photo_hint(Some(true))` explicitly.
+    // that want the W44-91 lift on a specific frame can use
+    // [`LossyConfig::with_strategy_overrides`] with
+    // `high_d_photo_hint: Some(true)` explicitly.
     // Streaming refactor #11 chunk 6 (animation frame path).
     enc.buffering = cfg.buffering;
     #[cfg(feature = "butteraugli-loop")]
@@ -13664,20 +13365,28 @@ mod tests {
             "smooth_photo=true on gated cell: try_dct64 restored to true (W44-35)"
         );
 
-        // Caller hint Some(true) wins over auto detector value false.
+        // Caller hint Some(true) wins over auto detector value false
+        // (W44-130 Chunk D: hint moved into `StrategyOverrides`).
         let cfg = LossyConfig::new(1.0)
             .with_effort(7)
-            .with_smooth_photo_dct64_hint(Some(true));
+            .with_strategy_overrides(StrategyOverrides {
+                smooth_photo_dct64_hint: Some(true),
+                ..Default::default()
+            });
         let p = cfg.effective_profile_for_image_with_smoothness(512 * 512, false);
         assert!(
             p.try_dct64,
             "explicit hint Some(true) wins over auto=false: try_dct64=true"
         );
 
-        // Caller hint Some(false) wins over auto detector value true.
+        // Caller hint Some(false) wins over auto detector value true
+        // (W44-130 Chunk D: hint moved into `StrategyOverrides`).
         let cfg = LossyConfig::new(1.0)
             .with_effort(7)
-            .with_smooth_photo_dct64_hint(Some(false));
+            .with_strategy_overrides(StrategyOverrides {
+                smooth_photo_dct64_hint: Some(false),
+                ..Default::default()
+            });
         let p = cfg.effective_profile_for_image_with_smoothness(512 * 512, true);
         assert!(
             !p.try_dct64,
@@ -15246,48 +14955,57 @@ mod tests {
         assert_eq!(cfg.strategy(), &custom);
     }
 
-    /// Override precedence (the W44-128 / Chunk B contract):
+    /// Override precedence (W44-128 / Chunk B contract, updated for
+    /// W44-130 / Chunk D — `with_*_hint(Option<bool>)` setters
+    /// deleted; per-field overrides now flow via
+    /// `with_strategy_overrides(StrategyOverrides { ... })`):
     ///
-    /// 1. `with_strategy(Libjxl).with_dct_suppress_hint(Some(false))`:
+    /// 1. `with_strategy(Libjxl).with_strategy_overrides(...)`:
     ///    `Libjxl` resolves `dct64_search_policy = ForceAllow`. The
-    ///    `Some(false)` hint also maps to `ForceAllow` — the two
+    ///    `Some(false)` override also maps to `ForceAllow` — the two
     ///    agree, so resolution returns `ForceAllow`. Demonstrates the
     ///    override path's no-op behaviour when caller and preset
     ///    agree.
     ///
     /// 2. `with_strategy(Custom { dct64=ForceSuppress, .. })`
-    ///    `.with_dct_suppress_hint(Some(false))`:
-    ///    Custom asks for `ForceSuppress`, but the hint override
-    ///    rewrites it to `ForceAllow`. Demonstrates that
-    ///    individual hints WIN over the preset (mirrors the
+    ///    `.with_strategy_overrides(...)`:
+    ///    Custom asks for `ForceSuppress`, but the override
+    ///    rewrites it to `ForceAllow`. Demonstrates that overrides
+    ///    WIN over the preset (mirrors the
     ///    `with_perceptual_optimizations(false).with_gaborish(true)`
     ///    precedence pattern).
     #[test]
     fn test_with_strategy_libjxl_then_hint_override() {
-        // Case 1: Libjxl + Some(false) hint → both say ForceAllow.
+        // Case 1: Libjxl + Some(false) override → both say ForceAllow.
         let cfg = LossyConfig::new(1.0)
             .with_strategy(EncoderStrategy::Libjxl)
-            .with_dct_suppress_hint(Some(false));
+            .with_strategy_overrides(StrategyOverrides {
+                dct_suppress_hint: Some(false),
+                ..Default::default()
+            });
         let resolved = cfg.resolve_improvements();
         assert_eq!(
             resolved.dct64_search_policy,
             Dct64SearchPolicy::ForceAllow,
-            "Libjxl base + Some(false) hint should both agree on ForceAllow"
+            "Libjxl base + Some(false) override should both agree on ForceAllow"
         );
 
         // Case 2: Custom asks for ForceSuppress, but a `Some(false)`
-        // hint rewrites the resolved policy to ForceAllow. Hints
-        // WIN over the preset.
+        // override rewrites the resolved policy to ForceAllow.
+        // Overrides WIN over the preset.
         let mut custom_inner = EncoderImprovementsCustom::default();
         custom_inner.dct64_search_policy = Dct64SearchPolicy::ForceSuppress;
         let cfg = LossyConfig::new(1.0)
             .with_strategy(EncoderStrategy::Custom(Box::new(custom_inner)))
-            .with_dct_suppress_hint(Some(false));
+            .with_strategy_overrides(StrategyOverrides {
+                dct_suppress_hint: Some(false),
+                ..Default::default()
+            });
         let resolved = cfg.resolve_improvements();
         assert_eq!(
             resolved.dct64_search_policy,
             Dct64SearchPolicy::ForceAllow,
-            "Some(false) hint should override Custom(ForceSuppress) to ForceAllow"
+            "Some(false) override should rewrite Custom(ForceSuppress) to ForceAllow"
         );
     }
 
@@ -15314,20 +15032,22 @@ mod tests {
         assert_eq!(cfg.effort(), 8);
     }
 
-    /// `resolve_improvements` propagates all five `with_*_hint`
-    /// overrides into `StrategyOverrides` correctly. Starting from
-    /// `Libjxl` (every relevant policy at `Disabled` / `ForceAllow` /
-    /// `ForceSkip`), set every hint and confirm each one re-maps
-    /// the matching policy field.
+    /// `resolve_improvements` propagates all five `StrategyOverrides`
+    /// fields correctly. Starting from `Libjxl` (every relevant
+    /// policy at `Disabled` / `ForceAllow` / `ForceSkip`), set every
+    /// hint and confirm each one re-maps the matching policy field.
+    /// (W44-130 Chunk D: hints moved into `StrategyOverrides`.)
     #[test]
     fn test_resolve_improvements_propagates_all_hints() {
         let cfg = LossyConfig::new(1.0)
             .with_strategy(EncoderStrategy::Libjxl)
-            .with_screenshot_lift_hint(Some(true))
-            .with_high_d_photo_hint(Some(true))
-            .with_smooth_photo_dct64_hint(Some(true))
-            .with_dct_suppress_hint(Some(true))
-            .with_dct32_keep_hint(Some(true));
+            .with_strategy_overrides(StrategyOverrides {
+                screenshot_lift_hint: Some(true),
+                high_d_photo_hint: Some(true),
+                smooth_photo_dct64_hint: Some(true),
+                dct_suppress_hint: Some(true),
+                dct32_keep_hint: Some(true),
+            });
         let resolved = cfg.resolve_improvements();
         assert_eq!(
             resolved.screenshot_entropy_mul,
@@ -15360,5 +15080,60 @@ mod tests {
             EpfSharpnessSeed::LegacyUniform4
         );
         assert!(resolved.block_ctx_map_15_cluster);
+    }
+
+    /// W44-130 Chunk D — `with_strategy_overrides` setter round-trips:
+    /// the setter stores the struct verbatim and the getter returns
+    /// a reference to it. Default is all-`None` (no overrides applied).
+    #[test]
+    fn test_with_strategy_overrides_setter_roundtrip() {
+        // Default: empty overrides, all None.
+        let cfg = LossyConfig::new(1.0);
+        assert_eq!(cfg.strategy_overrides(), &StrategyOverrides::default());
+
+        // Set + read back: every field preserved exactly.
+        let overrides = StrategyOverrides {
+            screenshot_lift_hint: Some(true),
+            high_d_photo_hint: Some(false),
+            smooth_photo_dct64_hint: Some(true),
+            dct_suppress_hint: Some(false),
+            dct32_keep_hint: Some(true),
+        };
+        let cfg = LossyConfig::new(1.0).with_strategy_overrides(overrides.clone());
+        assert_eq!(cfg.strategy_overrides(), &overrides);
+
+        // Resolved policy reflects every override (Libjxl preset →
+        // every override maps to Force*; the un-set buttloop fields
+        // stay at Libjxl values, confirming the overrides don't
+        // leak past their five named fields).
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Libjxl)
+            .with_strategy_overrides(overrides);
+        let resolved = cfg.resolve_improvements();
+        assert_eq!(
+            resolved.screenshot_entropy_mul,
+            ScreenshotEntropyMulPolicy::ForceOn
+        );
+        assert_eq!(
+            resolved.high_d_photo_entropy_mul,
+            HighDPhotoEntropyMulPolicy::ForceOff
+        );
+        assert_eq!(
+            resolved.smooth_photo_dct64_admission,
+            SmoothPhotoDct64Policy::ForceAdmit
+        );
+        assert_eq!(
+            resolved.dct64_search_policy,
+            Dct64SearchPolicy::ForceAllow
+        );
+        assert_eq!(
+            resolved.dct32_search_policy,
+            Dct32SearchPolicy::KeepWhenDct64Suppressed
+        );
+        // Un-overridden Libjxl-baseline fields preserved.
+        assert_eq!(
+            resolved.buttloop_epf_sharpness_seed,
+            EpfSharpnessSeed::LegacyUniform4
+        );
     }
 }

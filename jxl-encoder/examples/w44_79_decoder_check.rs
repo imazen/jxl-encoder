@@ -14,7 +14,7 @@ fn main() {
     let cfg = LossyConfig::new(4.0)
         .with_effort(7)
         .with_threads(1)
-        .with_high_d_photo_hint(Some(true));
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(true), ..Default::default() });
     let jxl = cfg.encode(&raw, w, h, PixelLayout::Rgb8).expect("encode");
     let out = "/tmp/w44_79_1189261_d4_hint.jxl";
     std::fs::write(out, &jxl).unwrap();

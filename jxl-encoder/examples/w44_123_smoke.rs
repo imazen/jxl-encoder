@@ -26,7 +26,7 @@ fn main() {
             .unwrap();
         let cfg_keep = LossyConfig::new(3.0)
             .with_effort(*effort)
-            .with_dct32_keep_hint(Some(true));
+            .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct32_keep_hint: Some(true), ..Default::default() });
         let k = cfg_keep
             .encode_request(w, h, PixelLayout::Rgb8)
             .with_limits(&lim)
@@ -34,7 +34,7 @@ fn main() {
             .unwrap();
         let cfg_explicit_off = LossyConfig::new(3.0)
             .with_effort(*effort)
-            .with_dct32_keep_hint(Some(false));
+            .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct32_keep_hint: Some(false), ..Default::default() });
         let o = cfg_explicit_off
             .encode_request(w, h, PixelLayout::Rgb8)
             .with_limits(&lim)

@@ -1283,85 +1283,13 @@ pub struct VarDctEncoder {
     /// existing hash-lock byte-identical). See
     /// [`crate::api::LossyConfig::with_content_aware_entropy_mul`].
     pub content_aware_entropy_mul: bool,
-    /// Caller-supplied override for the
-    /// [`Self::content_aware_entropy_mul`] gate. Only consulted when
-    /// `content_aware_entropy_mul` is `true`.
-    ///
-    /// - `None` (default): use the encoder-internal
-    ///   `median(mask1x1) > 95` discriminator (W22-1).
-    /// - `Some(true)`: force-apply the lifted
-    ///   [`crate::effort::EntropyMulTable::screenshot_suppressed`]
-    ///   table.
-    /// - `Some(false)`: suppress the lift even when mask1x1 would
-    ///   trigger it.
-    ///
-    /// Set via [`crate::api::LossyConfig::with_screenshot_lift_hint`].
-    /// Default `None` keeps every existing hash-lock byte-identical.
-    pub screenshot_lift_hint: Option<bool>,
-    /// Caller-supplied override for the W44-29 high-distance smooth-photo
-    /// gate that **lowers** `entropy_mul[DCT16X16]` and
-    /// `entropy_mul[DCT32X32]` (via
-    /// [`crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed`])
-    /// to close the F-D residual photo byte gap vs cjxl at d ≥ 4.
-    ///
-    /// - `None` (default): auto gate — fires only when *both*
-    ///   `self.distance >= 4.0` AND `median(mask1x1) < SMOOTH_THRESHOLD`
-    ///   (the smooth-content discriminator).
-    /// - `Some(true)`: force-apply regardless of distance or content.
-    /// - `Some(false)`: suppress even when the auto gate would fire.
-    ///
-    /// Set via [`crate::api::LossyConfig::with_high_d_photo_hint`].
-    /// Default `None` keeps every hash-lock at `d < 4.0` byte-identical.
-    /// See W44-28 honest-stop memo + W44-27 firing-rate audit.
-    pub high_d_photo_hint: Option<bool>,
-    /// Caller-supplied override for the content-aware DCT64-class
-    /// suppression gate (**default-on** as of W44-65).
-    ///
-    /// The encoder consults this hint to decide whether to drop
-    /// `profile.try_dct64 = false` for the AC-strategy search (skipping
-    /// `DCT64X64`, `DCT64X32`, `DCT32X64`).
-    ///
-    /// - `None` (**default**): consult the encoder-internal
-    ///   `median(mask1x1) > 95` check (the same statistic used by the
-    ///   W22-1 screenshot threshold). Fires on production screenshots
-    ///   (codec_wiki, imac_g3, terminal, imac_dark, windows, imessage,
-    ///   graph); stays quiet on photo and pixel-art (windows95 median
-    ///   81.49) content.
-    /// - `Some(true)`: force-suppress DCT64 regardless of mask1x1.
-    /// - `Some(false)`: force-enable DCT64 evaluation regardless of
-    ///   mask1x1 (also useful for pinning byte-equivalence to
-    ///   pre-W44-65 main).
-    ///
-    /// Set via [`crate::api::LossyConfig::with_dct_suppress_hint`].
-    /// **Bitstream change**: pre-W44-65 main encoded screenshots with
-    /// `try_dct64 = true`; the W44-65 default-on flips this for the
-    /// screenshot class. References W44-62 honest-stop memo
-    /// (`w44_62_dct64_suppress_lever_found_2026-05-19.md`), W44-63
-    /// (`w44_63_dct_suppress_hint_shipped_2026-05-19.md`), W44-65
-    /// (`w44_65_dct_suppress_default_on_2026-05-19.md`).
-    pub dct_suppress_hint: Option<bool>,
-    /// W44-123 caller-supplied override decoupling the W44-68
-    /// `try_dct32` suppression from the W44-65 `try_dct64`
-    /// suppression.
-    ///
-    /// - `Some(true)`: force-keep `try_dct32 = true` even when the
-    ///   W44-65 gate fires (re-enables `find_best_32x32_transform`
-    ///   so DCT32X32 vs 4×DCT16X16 is evaluated on smooth screen
-    ///   content).
-    /// - `Some(false)`: force-suppress `try_dct32 = false` alongside
-    ///   `try_dct64 = false` (the original W44-68 behaviour;
-    ///   guarantees pre-W44-124 byte-equivalence).
-    /// - `None` (default, W44-124 auto-discriminator):
-    ///   auto-fires `keep_dct32 = true` when the W44-65 gate fires AND
-    ///   `proxies.m3_colourfulness >= W44_124_DCT32_KEEP_M3_MIN` (60)
-    ///   AND `proxies.edge_density < W44_124_DCT32_KEEP_EDGE_DENSITY_MAX`
-    ///   (0.05). Otherwise falls through to the W44-68 behaviour.
-    ///   Auto-discriminator only fires when [`Self::zenanalyze_proxies`]
-    ///   is populated (8-bit sRGB layouts via [`crate::api::PixelLayout`]
-    ///   `Rgb8` / `Rgba8` / `Bgr8` / `Bgra8`).
-    ///
-    /// Set via [`crate::api::LossyConfig::with_dct32_keep_hint`].
-    pub dct32_keep_hint: Option<bool>,
+    // W44-130 Chunk D: the 4 `*_hint: Option<bool>` fields
+    // (`screenshot_lift_hint`, `high_d_photo_hint`, `dct_suppress_hint`,
+    // `dct32_keep_hint`) plus the public LossyConfig setters were
+    // deleted. Strategy overrides flow via
+    // `LossyConfig::resolve_improvements()` →
+    // `VarDctEncoder::resolved_improvements`. Per-field overrides
+    // remain reachable via [`crate::api::LossyConfig::with_strategy_overrides`].
     /// W44-91 cheap zenanalyze-equivalent proxies for widening the W44-29
     /// high-distance smooth-photo lift onto the textured-colourful-photo
     /// sub-band (mask1x1 ∈ [50, 80]) without regressing the 6 documented
@@ -1496,18 +1424,8 @@ impl Default for VarDctEncoder {
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
             content_aware_entropy_mul: false,
-            screenshot_lift_hint: None,
-            // W44-29: default None engages the auto gate (fires only at
-            // distance >= 4.0 AND median(mask1x1) < smooth threshold).
-            // Hash-locks at d < 4.0 stay byte-identical.
-            high_d_photo_hint: None,
-            // W44-63: default None defers to the encoder-internal
-            // `median(mask1x1) > 95` discriminator (gated on
-            // `content_aware_entropy_mul=true` opt-in). Hash-locks
-            // outside the opt-in stay byte-identical because the gate
-            // cannot fire.
-            dct_suppress_hint: None,
-            dct32_keep_hint: None,
+            // W44-130 Chunk D: the 4 `*_hint` fields were deleted.
+            // Strategy overrides now flow through `resolved_improvements`.
             // W44-91: default None means the gate cannot fire (every
             // existing hash-lock byte-identical). API layer populates
             // for 8-bit sRGB layouts.
@@ -1599,18 +1517,8 @@ impl VarDctEncoder {
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
             content_aware_entropy_mul: false,
-            screenshot_lift_hint: None,
-            // W44-29: default None engages the auto gate (fires only at
-            // distance >= 4.0 AND median(mask1x1) < smooth threshold).
-            // Hash-locks at d < 4.0 stay byte-identical.
-            high_d_photo_hint: None,
-            // W44-63: default None defers to the encoder-internal
-            // `median(mask1x1) > 95` discriminator (gated on
-            // `content_aware_entropy_mul=true` opt-in). Hash-locks
-            // outside the opt-in stay byte-identical because the gate
-            // cannot fire.
-            dct_suppress_hint: None,
-            dct32_keep_hint: None,
+            // W44-130 Chunk D: legacy `*_hint` fields deleted; strategy
+            // overrides flow via `resolved_improvements` below.
             // W44-91: default None means the gate cannot fire (every
             // existing hash-lock byte-identical). API layer populates
             // for 8-bit sRGB layouts.
@@ -2883,12 +2791,15 @@ impl VarDctEncoder {
         // lifted `screenshot_suppressed()` table for the AC-strategy search.
         //
         // The discriminator is:
-        //   1. If [`Self::screenshot_lift_hint`] is `Some(b)` the caller
-        //      has plugged in their own classifier (e.g. zenanalyze
-        //      features in `examples/entropy_mul_smart_dispatch_ab.rs`).
-        //      `Some(true)` forces the lift; `Some(false)` suppresses it
+        //   1. If the caller set
+        //      [`crate::api::StrategyOverrides::screenshot_lift_hint`]
+        //      to `Some(b)` (W44-130 Chunk D: moved here from the
+        //      deleted `with_screenshot_lift_hint` setter), the
+        //      resolver maps it to
+        //      `ScreenshotEntropyMulPolicy::ForceOn/ForceOff`.
+        //      `ForceOn` forces the lift; `ForceOff` suppresses it
         //      regardless of `mask1x1`.
-        //   2. Otherwise (hint is `None`) fall back to the W22-1
+        //   2. Otherwise (`Auto`) fall back to the W22-1
         //      encoder-internal `median(mask1x1) > 95` check.
         //
         // The swap is scoped to a local `profile_for_search` (cloned) so
@@ -2954,25 +2865,27 @@ impl VarDctEncoder {
         // W22-1 screenshot lift (opt-in, fires only when
         // `content_aware_entropy_mul=true`).
         //
-        // W44-129 Chunk C: read the resolved `screenshot_entropy_mul`
-        // enum from `ResolvedImprovements` (populated by Chunk B
-        // `LossyConfig::resolve_improvements`). The legacy
-        // `screenshot_lift_hint` `Option<bool>` is still consulted as
-        // a fallback under `Auto` for direct `VarDctEncoder::new`
-        // callers (tests + examples). `StrategyOverrides::apply_to`
-        // maps `Some(true) → ForceOn` / `Some(false) → ForceOff`.
-        // `Disabled` (Libjxl strategy) short-circuits the lift off
-        // regardless of the `content_aware_entropy_mul` enable bit —
-        // matching libjxl's no-discriminator default.
+        // W44-129 Chunk C + W44-130 Chunk D: read the resolved
+        // `screenshot_entropy_mul` enum from `ResolvedImprovements`
+        // (populated by `LossyConfig::resolve_improvements`). The
+        // legacy `screenshot_lift_hint` `Option<bool>` field was
+        // deleted in Chunk D; the override path now lives entirely
+        // in `StrategyOverrides`, mapped via `apply_to` to `ForceOn`/
+        // `ForceOff`. `Disabled` (Libjxl strategy) short-circuits the
+        // lift off regardless of the `content_aware_entropy_mul`
+        // enable bit — matching libjxl's no-discriminator default.
         let screenshot_policy = self.resolved_improvements.screenshot_entropy_mul;
         let w22_1_lift = match screenshot_policy {
+            // W44-130 Chunk D: the legacy `screenshot_lift_hint`
+            // `Option<bool>` fallback was deleted. `StrategyOverrides`
+            // overrides flow through to `Force*` variants;
+            // `Auto` here = "no caller override" → consult the
+            // `content_aware_entropy_mul` enable bit + mask1x1
+            // discriminator directly.
             crate::api::ScreenshotEntropyMulPolicy::Auto => {
                 if self.content_aware_entropy_mul {
-                    match self.screenshot_lift_hint {
-                        Some(b) => b,
-                        None => mask1x1_median
-                            .is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD),
-                    }
+                    mask1x1_median
+                        .is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD)
                 } else {
                     false
                 }
@@ -3017,51 +2930,52 @@ impl VarDctEncoder {
             false
         } else {
             match high_d_photo_policy {
-                crate::api::HighDPhotoEntropyMulPolicy::Auto => match self.high_d_photo_hint {
-                    Some(b) => b,
-                    None => {
-                        // Auto: try two gates in OR.
-                        //
-                        // (a) **W44-29 smooth-photo gate** (default-on since
-                        // commit `a01c4a7f`): `distance >= HIGH_D_PHOTO_MIN_DISTANCE`
-                        // AND `median(mask1x1) < HIGH_D_PHOTO_SMOOTH_THRESHOLD`
-                        // (smooth-content discriminator, mask1x1 < 50).
-                        //
-                        // (b) **W44-91 zenanalyze-proxy gate**: targets the
-                        // textured-colourful-photo sub-band (mask1x1 ∈ [50, 80))
-                        // that the W44-29 gate alone cannot reach without
-                        // regressing 6 documented W44-78 regression-band images
-                        // (1025469, 1624487, 159550, 2079234, 2775196, 297394).
-                        // Fires only when ALL hold:
-                        //   * distance ∈ [HIGH_D_PHOTO_MIN_DISTANCE,
-                        //                 HIGH_D_PHOTO_W44_91_MAX_DISTANCE] (3..=5)
-                        //   * mask1x1_median ∈ [HIGH_D_PHOTO_SMOOTH_THRESHOLD,
-                        //                       HIGH_D_PHOTO_W44_91_MASK_UPPER) (50..80)
-                        //   * zenanalyze proxies populated (8-bit sRGB layout)
-                        //   * m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN (80)
-                        //   * flat_color_block_ratio < W44_91_FCBR_MAX (0.01)
-                        //
-                        // On the 41 CID22 validation images only 1189261
-                        // matches; on the 6 documented W44-78 regression-band
-                        // images none match (each fails at least one of the
-                        // colourfulness/fcbr gates per W44-79 discriminator C3).
-                        let w44_29_gate = self.distance >= HIGH_D_PHOTO_MIN_DISTANCE
-                            && mask1x1_median
-                                .is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD);
-                        let w44_91_gate = (HIGH_D_PHOTO_MIN_DISTANCE
-                            ..=HIGH_D_PHOTO_W44_91_MAX_DISTANCE)
-                            .contains(&self.distance)
-                            && mask1x1_median.is_some_and(|med| {
-                                (HIGH_D_PHOTO_SMOOTH_THRESHOLD..HIGH_D_PHOTO_W44_91_MASK_UPPER)
-                                    .contains(&med)
-                            })
-                            && self.zenanalyze_proxies.is_some_and(|p| {
-                                p.m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN
-                                    && p.flat_color_block_ratio < W44_91_FCBR_MAX
-                            });
-                        w44_29_gate || w44_91_gate
-                    }
-                },
+                // W44-130 Chunk D: legacy `high_d_photo_hint`
+                // `Option<bool>` fallback deleted. `Auto` here =
+                // "no caller override" → consult the W44-29 + W44-91
+                // auto gates directly.
+                crate::api::HighDPhotoEntropyMulPolicy::Auto => {
+                    // Auto: try two gates in OR.
+                    //
+                    // (a) **W44-29 smooth-photo gate** (default-on since
+                    // commit `a01c4a7f`): `distance >= HIGH_D_PHOTO_MIN_DISTANCE`
+                    // AND `median(mask1x1) < HIGH_D_PHOTO_SMOOTH_THRESHOLD`
+                    // (smooth-content discriminator, mask1x1 < 50).
+                    //
+                    // (b) **W44-91 zenanalyze-proxy gate**: targets the
+                    // textured-colourful-photo sub-band (mask1x1 ∈ [50, 80))
+                    // that the W44-29 gate alone cannot reach without
+                    // regressing 6 documented W44-78 regression-band images
+                    // (1025469, 1624487, 159550, 2079234, 2775196, 297394).
+                    // Fires only when ALL hold:
+                    //   * distance ∈ [HIGH_D_PHOTO_MIN_DISTANCE,
+                    //                 HIGH_D_PHOTO_W44_91_MAX_DISTANCE] (3..=5)
+                    //   * mask1x1_median ∈ [HIGH_D_PHOTO_SMOOTH_THRESHOLD,
+                    //                       HIGH_D_PHOTO_W44_91_MASK_UPPER) (50..80)
+                    //   * zenanalyze proxies populated (8-bit sRGB layout)
+                    //   * m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN (80)
+                    //   * flat_color_block_ratio < W44_91_FCBR_MAX (0.01)
+                    //
+                    // On the 41 CID22 validation images only 1189261
+                    // matches; on the 6 documented W44-78 regression-band
+                    // images none match (each fails at least one of the
+                    // colourfulness/fcbr gates per W44-79 discriminator C3).
+                    let w44_29_gate = self.distance >= HIGH_D_PHOTO_MIN_DISTANCE
+                        && mask1x1_median
+                            .is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD);
+                    let w44_91_gate = (HIGH_D_PHOTO_MIN_DISTANCE
+                        ..=HIGH_D_PHOTO_W44_91_MAX_DISTANCE)
+                        .contains(&self.distance)
+                        && mask1x1_median.is_some_and(|med| {
+                            (HIGH_D_PHOTO_SMOOTH_THRESHOLD..HIGH_D_PHOTO_W44_91_MASK_UPPER)
+                                .contains(&med)
+                        })
+                        && self.zenanalyze_proxies.is_some_and(|p| {
+                            p.m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN
+                                && p.flat_color_block_ratio < W44_91_FCBR_MAX
+                        });
+                    w44_29_gate || w44_91_gate
+                }
                 crate::api::HighDPhotoEntropyMulPolicy::ForceOn => true,
                 crate::api::HighDPhotoEntropyMulPolicy::ForceOff => false,
                 crate::api::HighDPhotoEntropyMulPolicy::Disabled => false,
@@ -3070,8 +2984,12 @@ impl VarDctEncoder {
 
         #[cfg(feature = "debug-w44-65")]
         eprintln!(
-            "W44-65 dbg: distance={:.2} mask1x1_median={:?} hint={:?} width={} height={}",
-            self.distance, mask1x1_median, self.dct_suppress_hint, width, height
+            "W44-65 dbg: distance={:.2} mask1x1_median={:?} dct64_policy={:?} width={} height={}",
+            self.distance,
+            mask1x1_median,
+            self.resolved_improvements.dct64_search_policy,
+            width,
+            height
         );
         // W44-65 + W44-68 content-aware large-DCT suppression (default-on).
         // When active we set `try_dct64 = false` AND `try_dct32 = false` on
@@ -3127,24 +3045,17 @@ impl VarDctEncoder {
         // screenshot W22-1 fires only when `content_aware_entropy_mul`
         // is opt-in; W44-65 fires by default. Composition is
         // additive — both improvements stack when both are enabled.
-        // W44-129 Chunk C: read the resolved `dct64_search_policy` enum from
-        // `ResolvedImprovements` (populated at `VarDctEncoder` construction
-        // by `LossyConfig::resolve_improvements`). The legacy `dct_suppress_hint`
-        // `Option<bool>` is still consulted as a fallback for the direct
-        // `VarDctEncoder::new` callers (tests + examples) that bypass the
-        // `LossyConfig` resolve step — `StrategyOverrides::apply_to` mirrors
-        // the same `Some(true)/Some(false) → Force*/auto` mapping so the
-        // observed behaviour is identical when `resolved_improvements`
-        // is populated AND `dct_suppress_hint` is `None` (the production
-        // path). Chunk D deletes the legacy field.
+        // W44-129 Chunk C + W44-130 Chunk D: read the resolved
+        // `dct64_search_policy` directly. The legacy `dct_suppress_hint`
+        // `Option<bool>` field was deleted in Chunk D; the override
+        // path now lives entirely in `StrategyOverrides` (mapped to
+        // `Force*` via `apply_to`). `Auto` here means "no caller
+        // override" → consult the mask1x1 discriminator directly.
         let dct64_policy = self.resolved_improvements.dct64_search_policy;
         let w44_65_suppress_dct64 = match dct64_policy {
-            crate::api::Dct64SearchPolicy::Auto => match self.dct_suppress_hint {
-                Some(b) => b,
-                None => {
-                    mask1x1_median.is_some_and(|med| med >= W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD)
-                }
-            },
+            crate::api::Dct64SearchPolicy::Auto => {
+                mask1x1_median.is_some_and(|med| med >= W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD)
+            }
             crate::api::Dct64SearchPolicy::ForceSuppress => true,
             crate::api::Dct64SearchPolicy::ForceAllow => false,
         };
@@ -3159,24 +3070,19 @@ impl VarDctEncoder {
         // for the per-image proxy split. Excludes the W44-91 mask band
         // because variant Z was never measured against W44-91 cells.
         //
-        // Auto only: when the caller forced `high_d_photo_hint=Some(true)` /
+        // Auto only: when the caller forced
         // `HighDPhotoEntropyMulPolicy::ForceOn` outside the W44-29 mask
         // range we keep the default suppressed table (no variant Z
         // escalation from a forced override — caller can ship their own
         // table override if they want).
         //
-        // W44-129 Chunk C: now matches against the resolved policy enum
-        // instead of `self.high_d_photo_hint.is_none()`. Production
-        // semantics unchanged: `Auto` corresponds to "caller did not
-        // force a hint" via `StrategyOverrides::apply_to`, so when the
-        // legacy `high_d_photo_hint == None` (default path),
-        // `high_d_photo_policy == Auto` and the variant Z gate is
-        // reachable; when caller set `Some(true)/Some(false)`, the
-        // policy resolves to `ForceOn`/`ForceOff` and variant Z is
-        // suppressed (mirrors the pre-rewire `.is_none()` check).
+        // W44-129 Chunk C + W44-130 Chunk D: matches against the
+        // resolved policy enum directly. `Auto` here means "no caller
+        // override" via `StrategyOverrides::apply_to`. The legacy
+        // `self.high_d_photo_hint.is_none()` redundant guard was
+        // deleted with the field in Chunk D.
         let w44_96_variant_z = w44_29_lower
             && matches!(high_d_photo_policy, crate::api::HighDPhotoEntropyMulPolicy::Auto)
-            && self.high_d_photo_hint.is_none()
             && self.distance >= W44_96_VARIANT_Z_MIN_DISTANCE
             && mask1x1_median.is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD)
             && self.zenanalyze_proxies.is_some_and(|p| {
@@ -3310,23 +3216,17 @@ impl VarDctEncoder {
                     p.m3_colourfulness >= W44_124_DCT32_KEEP_M3_MIN
                         && p.edge_density < W44_124_DCT32_KEEP_EDGE_DENSITY_MAX
                 });
-                // W44-129 Chunk C: read the resolved `dct32_search_policy` enum
-                // from `ResolvedImprovements` (populated by Chunk B
-                // `LossyConfig::resolve_improvements`). The legacy
-                // `dct32_keep_hint` `Option<bool>` is still consulted as a
-                // fallback under `FollowDct64Suppression` for direct
-                // `VarDctEncoder::new` callers (tests + examples) that bypass
-                // the resolve step. Production semantics unchanged because
-                // `StrategyOverrides::apply_to` maps `dct32_keep_hint:
-                // Some(true) → KeepWhenDct64Suppressed` and `Some(false) →
-                // FollowDct64Suppression`.
+                // W44-129 Chunk C + W44-130 Chunk D: read the resolved
+                // `dct32_search_policy` directly. Legacy `dct32_keep_hint`
+                // `Option<bool>` field deleted; overrides flow via
+                // `StrategyOverrides` → `KeepWhenDct64Suppressed`.
+                // `FollowDct64Suppression` here means "no caller
+                // override" → consult the env-var + W44-124
+                // auto-discriminator directly.
                 let dct32_policy = self.resolved_improvements.dct32_search_policy;
                 let w44_123_keep_dct32 = match dct32_policy {
                     crate::api::Dct32SearchPolicy::FollowDct64Suppression => {
-                        match self.dct32_keep_hint {
-                            Some(b) => b,
-                            None => w44_123_env_keep || w44_124_auto_keep,
-                        }
+                        w44_123_env_keep || w44_124_auto_keep
                     }
                     crate::api::Dct32SearchPolicy::KeepWhenDct64Suppressed => true,
                 };
@@ -5186,26 +5086,36 @@ mod tests {
     }
 
     #[test]
-    fn test_screenshot_lift_hint_default_none() {
-        // Verify the hint defaults to None on both constructors (so the
-        // gate keeps the existing W22-1 mask1x1 behaviour and every
-        // hash-lock byte-identical).
+    fn test_resolved_improvements_default_auto() {
+        // W44-130 Chunk D: verify the `resolved_improvements` field
+        // (replacing the old `*_hint: Option<bool>` defaults) is
+        // populated with the all-`Auto` Zenjxl-equivalent default on
+        // both constructors. Production API layer overwrites this via
+        // `LossyConfig::resolve_improvements()` at all 3 entry points;
+        // direct `VarDctEncoder::new` callers get the auto behaviour
+        // that matches pre-Chunk-D's `None` hint fallbacks.
         let enc = VarDctEncoder::new(1.0);
-        assert!(enc.screenshot_lift_hint.is_none());
+        assert_eq!(
+            enc.resolved_improvements.screenshot_entropy_mul,
+            crate::api::ScreenshotEntropyMulPolicy::Auto
+        );
+        assert_eq!(
+            enc.resolved_improvements.high_d_photo_entropy_mul,
+            crate::api::HighDPhotoEntropyMulPolicy::Auto
+        );
+        assert_eq!(
+            enc.resolved_improvements.dct64_search_policy,
+            crate::api::Dct64SearchPolicy::Auto
+        );
+        assert_eq!(
+            enc.resolved_improvements.dct32_search_policy,
+            crate::api::Dct32SearchPolicy::FollowDct64Suppression
+        );
         let enc_default = VarDctEncoder::default();
-        assert!(enc_default.screenshot_lift_hint.is_none());
-    }
-
-    #[test]
-    fn test_high_d_photo_hint_default_none() {
-        // Verify the W44-29 high-d photo hint defaults to None on both
-        // constructors (so the auto gate fires only at distance >= 4.0
-        // AND median(mask1x1) < SMOOTH_THRESHOLD; hash-locks at d < 4.0
-        // stay byte-identical).
-        let enc = VarDctEncoder::new(1.0);
-        assert!(enc.high_d_photo_hint.is_none());
-        let enc_default = VarDctEncoder::default();
-        assert!(enc_default.high_d_photo_hint.is_none());
+        assert_eq!(
+            enc_default.resolved_improvements.screenshot_entropy_mul,
+            crate::api::ScreenshotEntropyMulPolicy::Auto
+        );
     }
 
     #[test]
@@ -5310,74 +5220,99 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_dct_suppress_hint_default_none() {
-        // Verify the W44-63 DCT64-suppression hint defaults to None on
-        // both constructors. With the production default
-        // `content_aware_entropy_mul = false` the gate never fires and
-        // every hash-lock stays byte-identical.
-        let enc = VarDctEncoder::new(1.0);
-        assert!(enc.dct_suppress_hint.is_none());
-        let enc_default = VarDctEncoder::default();
-        assert!(enc_default.dct_suppress_hint.is_none());
-    }
-
-    /// W44-63 API surface smoke test: the public LossyConfig setter
-    /// round-trips through to the encoder field at all 3 propagation
-    /// sites (still-image path is the only one exercised here; the
-    /// streaming and animation paths share the same propagation
-    /// constant so a single check is sufficient to catch a regression
-    /// in any of them — if the field disappears or is unwired anywhere
-    /// the build fails).
+    /// W44-130 Chunk D — `StrategyOverrides::dct_suppress_hint` defaults
+    /// to `None`; the LossyConfig setter round-trips through to the
+    /// resolved policy at all 3 propagation sites (replaces the
+    /// pre-Chunk-D `with_dct_suppress_hint` setter).
     #[test]
     fn test_dct_suppress_hint_api_roundtrip() {
-        use crate::api::LossyConfig;
+        use crate::api::{Dct64SearchPolicy, LossyConfig, StrategyOverrides};
+
+        // Default LossyConfig: dct64 policy resolves to Auto.
         let cfg_none = LossyConfig::new(1.0);
-        assert_eq!(cfg_none.dct_suppress_hint(), None);
+        assert_eq!(cfg_none.strategy_overrides().dct_suppress_hint, None);
+        assert_eq!(
+            cfg_none.resolve_improvements().dct64_search_policy,
+            Dct64SearchPolicy::Auto
+        );
 
-        let cfg_some_true = LossyConfig::new(1.0).with_dct_suppress_hint(Some(true));
-        assert_eq!(cfg_some_true.dct_suppress_hint(), Some(true));
+        // Some(true) → resolves to ForceSuppress.
+        let cfg_some_true = LossyConfig::new(1.0).with_strategy_overrides(StrategyOverrides {
+            dct_suppress_hint: Some(true),
+            ..Default::default()
+        });
+        assert_eq!(
+            cfg_some_true.resolve_improvements().dct64_search_policy,
+            Dct64SearchPolicy::ForceSuppress
+        );
 
-        let cfg_some_false = LossyConfig::new(1.0).with_dct_suppress_hint(Some(false));
-        assert_eq!(cfg_some_false.dct_suppress_hint(), Some(false));
+        // Some(false) → resolves to ForceAllow.
+        let cfg_some_false = LossyConfig::new(1.0).with_strategy_overrides(StrategyOverrides {
+            dct_suppress_hint: Some(false),
+            ..Default::default()
+        });
+        assert_eq!(
+            cfg_some_false.resolve_improvements().dct64_search_policy,
+            Dct64SearchPolicy::ForceAllow
+        );
 
-        // with_effort preserves the explicit hint.
+        // with_effort preserves the explicit overrides.
         let cfg_effort = LossyConfig::new(1.0)
-            .with_dct_suppress_hint(Some(true))
+            .with_strategy_overrides(StrategyOverrides {
+                dct_suppress_hint: Some(true),
+                ..Default::default()
+            })
             .with_effort(8);
-        assert_eq!(cfg_effort.dct_suppress_hint(), Some(true));
+        assert_eq!(
+            cfg_effort.resolve_improvements().dct64_search_policy,
+            Dct64SearchPolicy::ForceSuppress
+        );
     }
 
-    /// W44-123 — verify the new `dct32_keep_hint` defaults to `None`
-    /// on both constructors so existing hash-locks stay byte-identical.
-    #[test]
-    fn test_dct32_keep_hint_default_none() {
-        let enc = VarDctEncoder::new(1.0);
-        assert!(enc.dct32_keep_hint.is_none());
-        let enc_default = VarDctEncoder::default();
-        assert!(enc_default.dct32_keep_hint.is_none());
-    }
-
-    /// W44-123 — public LossyConfig setter round-trips through to the
-    /// encoder field at all 3 propagation sites (mirrors the
-    /// `test_dct_suppress_hint_api_roundtrip` pattern from W44-63).
+    /// W44-130 Chunk D — `StrategyOverrides::dct32_keep_hint` defaults
+    /// to `None`; the LossyConfig setter round-trips through to the
+    /// resolved policy (replaces the pre-Chunk-D `with_dct32_keep_hint`
+    /// setter).
     #[test]
     fn test_dct32_keep_hint_api_roundtrip() {
-        use crate::api::LossyConfig;
+        use crate::api::{Dct32SearchPolicy, LossyConfig, StrategyOverrides};
+
         let cfg_none = LossyConfig::new(1.0);
-        assert_eq!(cfg_none.dct32_keep_hint(), None);
+        assert_eq!(cfg_none.strategy_overrides().dct32_keep_hint, None);
+        assert_eq!(
+            cfg_none.resolve_improvements().dct32_search_policy,
+            Dct32SearchPolicy::FollowDct64Suppression
+        );
 
-        let cfg_some_true = LossyConfig::new(1.0).with_dct32_keep_hint(Some(true));
-        assert_eq!(cfg_some_true.dct32_keep_hint(), Some(true));
+        let cfg_some_true = LossyConfig::new(1.0).with_strategy_overrides(StrategyOverrides {
+            dct32_keep_hint: Some(true),
+            ..Default::default()
+        });
+        assert_eq!(
+            cfg_some_true.resolve_improvements().dct32_search_policy,
+            Dct32SearchPolicy::KeepWhenDct64Suppressed
+        );
 
-        let cfg_some_false = LossyConfig::new(1.0).with_dct32_keep_hint(Some(false));
-        assert_eq!(cfg_some_false.dct32_keep_hint(), Some(false));
+        let cfg_some_false = LossyConfig::new(1.0).with_strategy_overrides(StrategyOverrides {
+            dct32_keep_hint: Some(false),
+            ..Default::default()
+        });
+        assert_eq!(
+            cfg_some_false.resolve_improvements().dct32_search_policy,
+            Dct32SearchPolicy::FollowDct64Suppression
+        );
 
-        // with_effort preserves the explicit hint.
+        // with_effort preserves the explicit overrides.
         let cfg_effort = LossyConfig::new(1.0)
-            .with_dct32_keep_hint(Some(true))
+            .with_strategy_overrides(StrategyOverrides {
+                dct32_keep_hint: Some(true),
+                ..Default::default()
+            })
             .with_effort(8);
-        assert_eq!(cfg_effort.dct32_keep_hint(), Some(true));
+        assert_eq!(
+            cfg_effort.resolve_improvements().dct32_search_policy,
+            Dct32SearchPolicy::KeepWhenDct64Suppressed
+        );
     }
 
     /// W44-124 — verify the auto-discriminator predicate values match
