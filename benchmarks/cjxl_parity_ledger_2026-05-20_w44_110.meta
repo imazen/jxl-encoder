@@ -1,0 +1,52 @@
+# cjxl parity ledger — W44-110 refresh post-W44-109
+#
+# Measures the post-W44-109 (4f82e864) state vs cjxl baseline. W44-109
+# extended the W44-105 buttloop screenshot qac scale mechanism to fire
+# at e5/e6/e7 (via adaptive_quant hook), closing the terminal e5/e6/e7
+# d=4 SSIM2 -4.6 to -5.4 cluster identified in W44-106. Per the W44-109
+# ship memo, 2 codec_wiki d=4 cells flip FIXED->OPEN as a documented
+# pareto trade (bytes+bfly growth >+3% in exchange for +3.32/+4.07
+# SSIM2 wins). This ledger quantifies the net effect across the full
+# 595-cell grid.
+#
+# Compare against:
+#   benchmarks/cjxl_parity_ledger_2026-05-20_w44_106.tsv  (pre-W44-105 = bc994a21)
+#   benchmarks/cjxl_parity_ledger_2026-05-20_w44_107.tsv  (post-W44-107 = 109843aa)
+#
+# Auto-generated meta from the example program overwritten; below is
+# the canonical entry.
+#
+git_rev: 4f82e864d0cbf517e80c9b4001ae4168826c5e37 (W44-109 main)
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1418519.png", "1531677.png", "1189261.png", "1420710.png", "terminal.png", "codec_wiki.png", "imac_g3.png"]
+corpus: /home/lilith/work/codec-corpus
+wall_seconds: 761.6
+total_rows: 593
+cells_this_run: 600
+update_mode: false
+status_filter: None
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
+#
+# Failed cells (7) — pre-existing OOM/budget on 2940x1912 imac_g3 at
+# high effort per W44-109 memo. NOT W44-109 regressions; same failures
+# occur with JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=1.0:
+#   imac_g3.png e8 d4
+#   imac_g3.png e9 d4
+#   imac_g3.png e9 d5
+#   codec_wiki.png e9 d4
+#   imac_g3.png e9 d1.8
+#   codec_wiki.png e9 d6
+#   imac_g3.png e9 d6
+#
+# Result: 593 cells captured, 8 OPEN. See
+# memory/w44_110_ledger_refresh_post_w44_109_2026-05-20.md for the
+# full analysis.
