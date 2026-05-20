@@ -81,7 +81,7 @@ fn encode(
 ) -> Result<Vec<u8>, String> {
     let cfg = LossyConfig::new(d)
         .with_effort(EFFORT)
-        .with_patches_dispatch(dispatch);
+        .with_strategy(jxl_encoder::api::EncoderStrategy::Custom(Box::new(jxl_encoder::api::EncoderImprovementsCustom { patches_dispatch: dispatch, ..Default::default() })));
     cfg.encode(rgb_u8, w, h, PixelLayout::Rgb8)
         .map_err(|e| format!("encode failed: {e:?}"))
 }
