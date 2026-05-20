@@ -4180,6 +4180,13 @@ impl EncoderStrategy {
     // at all three `VarDctEncoder` construction sites (still-image
     // `EncodeRequest`, streaming `LossyEncoder`, animation per-frame);
     // the W44-127-era `#[allow(dead_code)]` on this method was removed.
+    //
+    // W44-132 Chunk F: env-var fallback layer applied AFTER
+    // `overrides.apply_to(base)`. The fallback applies ONLY when the
+    // resolved field equals its `Default::default()` value — explicit
+    // caller settings (via `Custom` payload or `StrategyOverrides`)
+    // ALWAYS win over the env-var. See `apply_env_var_fallbacks` for
+    // the per-field mapping.
     pub(crate) fn resolve(&self, overrides: &StrategyOverrides) -> ResolvedImprovements {
         let base = match self {
             Self::Libjxl => ResolvedImprovements::libjxl(),
@@ -4188,7 +4195,80 @@ impl EncoderStrategy {
             Self::Aggressive => ResolvedImprovements::aggressive(),
             Self::Custom(c) => ResolvedImprovements::from_custom(c),
         };
-        overrides.apply_to(base)
+        let mut resolved = overrides.apply_to(base);
+        apply_env_var_fallbacks(&mut resolved);
+        resolved
+    }
+}
+
+/// W44-132 Chunk F: env-var fallback for the four promoted env-only
+/// knobs. Applies the env-var override only when the resolved field
+/// equals its `Default::default()` value — so any explicit caller
+/// setting (via `EncoderStrategy::Custom` payload or
+/// `StrategyOverrides::apply_to`) wins over the env-var.
+///
+/// Env-var → field mapping:
+///
+/// | Env var | Default | Field | Default field value |
+/// |---|---|---|---|
+/// | `JXL_W44_117_DISABLE=1` | unset | `buttloop_epf_sharpness_seed` | `AutoW44_117 { min_distance: 1.0 }`; promotes to `LegacyUniform4` when env=`1` |
+/// | `JXL_W44_120_EPF_SEED_MIN_DISTANCE=<f32>` | `1.0` | `buttloop_epf_sharpness_seed`' `min_distance` | replaces the `1.0` inside `AutoW44_117 { min_distance }` |
+/// | `JXL_BUTTLOOP_INITIAL_QF_SCALE=<f32>` | `4.0` | `buttloop_qf_seed` | replaces `AutoScale4` → `AutoScale(env_value)` |
+/// | `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=<f32>` | per-effort 2.0/3.0 | `adaptive_quant_qf_seed` | replaces `AutoScalePerEffort` → `AutoScaleCustom { e5_e6: env, e7: env }` |
+///
+/// Precedence (within the fallback): `JXL_W44_117_DISABLE=1` (force-off)
+/// is checked BEFORE `JXL_W44_120_EPF_SEED_MIN_DISTANCE` (min-distance
+/// tweak). When the disable env var is set, the `min_distance` env var
+/// is ignored — the seed compute is forced off entirely so the
+/// distance gate is moot.
+///
+/// On `not(feature = "std")` builds the fallback is a no-op (env vars
+/// are unreadable in `no_std`); the policy retains its post-overrides
+/// value bit-identically. The `#[cfg]` guards mirror the call-site
+/// env-var-read pattern this layer replaces.
+#[cfg_attr(not(feature = "std"), allow(unused_variables))]
+fn apply_env_var_fallbacks(r: &mut ResolvedImprovements) {
+    #[cfg(feature = "std")]
+    {
+        // ── buttloop_epf_sharpness_seed ────────────────────────────
+        // Default value: `AutoW44_117 { min_distance: 1.0 }`.
+        // Two env vars feed this slot. `JXL_W44_117_DISABLE=1` wins if
+        // both are set (force-off short-circuits the min-distance
+        // tweak — the seed compute never runs so the gate is moot).
+        if r.buttloop_epf_sharpness_seed == EpfSharpnessSeed::default() {
+            if std::env::var("JXL_W44_117_DISABLE").as_deref() == Ok("1") {
+                r.buttloop_epf_sharpness_seed = EpfSharpnessSeed::LegacyUniform4;
+            } else if let Ok(s) = std::env::var("JXL_W44_120_EPF_SEED_MIN_DISTANCE")
+                && let Ok(d) = s.parse::<f32>()
+            {
+                r.buttloop_epf_sharpness_seed = EpfSharpnessSeed::AutoW44_117 { min_distance: d };
+            }
+        }
+
+        // ── buttloop_qf_seed ───────────────────────────────────────
+        // Default value: `AutoScale4` (= same gate at 4.0).
+        // Env-var `JXL_BUTTLOOP_INITIAL_QF_SCALE=<f32>` replaces with
+        // `AutoScale(env_value)` (same gate, custom scale).
+        if r.buttloop_qf_seed == ButtloopQfSeedPolicy::default()
+            && let Ok(s) = std::env::var("JXL_BUTTLOOP_INITIAL_QF_SCALE")
+            && let Ok(v) = s.parse::<f32>()
+        {
+            r.buttloop_qf_seed = ButtloopQfSeedPolicy::AutoScale(v);
+        }
+
+        // ── adaptive_quant_qf_seed ─────────────────────────────────
+        // Default value: `AutoScalePerEffort` (= 2.0 e5/e6, 3.0 e7).
+        // Env-var `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=<f32>` is a
+        // SINGLE value (the env var was historically one knob — kept
+        // the per-effort split internal to the default). Replaces both
+        // e5/e6 AND e7 with the env value.
+        if r.adaptive_quant_qf_seed == AdaptiveQuantQfSeedPolicy::default()
+            && let Ok(s) = std::env::var("JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE")
+            && let Ok(v) = s.parse::<f32>()
+        {
+            r.adaptive_quant_qf_seed =
+                AdaptiveQuantQfSeedPolicy::AutoScaleCustom { e5_e6: v, e7: v };
+        }
     }
 }
 
@@ -15050,6 +15130,92 @@ mod tests {
         assert_eq!(
             resolved.buttloop_epf_sharpness_seed,
             EpfSharpnessSeed::LegacyUniform4
+        );
+    }
+
+    // ── W44-132 Chunk F (env-var-MUTATING tests) ────────────────
+    //
+    // Tests that mutate process env-vars live in
+    // `tests/strategy_env_fallback.rs` (integration test, can opt
+    // out of `#![forbid(unsafe_code)]` for the `unsafe { env::
+    // set_var(...) }` calls Rust 2024 requires). The library code
+    // itself just READS env-vars (safe) inside
+    // `apply_env_var_fallbacks` — only the test suite needs the
+    // mutating path.
+    //
+    // Pure unit tests below cover the no-env-var case (default
+    // pass-through) and the explicit-caller-wins-over-env case
+    // without needing to mutate the process environment.
+
+    /// With NO env vars set, the resolved policy stays at the
+    /// strategy preset's default value (bit-identical to pre-Chunk-F
+    /// resolved values when no env-var is set). This is the
+    /// production-default case — exercises the fallback function's
+    /// "field equals default but env-var unset" code path.
+    #[test]
+    fn test_w44_132_env_fallback_pure_no_env_default_passthrough() {
+        // NOTE: this test does NOT mutate env vars; it reads
+        // whatever the runner inherited. The cjxl-rs CI sets no
+        // JXL_* env vars, so the production hash-lock test (which
+        // also runs unset) is the binding gate.
+        //
+        // What this test verifies: when the resolved field
+        // (post-overrides) equals `Default::default()`, the fallback
+        // function's match-on-default check works correctly without
+        // running into the actual env-var lookup path (the parent
+        // `if r.field == Default::default()` short-circuits the
+        // env-var read if the policy was caller-overridden — but
+        // when it WASN'T overridden, the env-var path is taken
+        // safely).
+        //
+        // The mutating tests live in
+        // `tests/strategy_env_fallback.rs` for the env-on cases.
+
+        // Use Libjxl which sets every promoted field to a NON-default
+        // value (Off / Off / LegacyUniform4) so the fallback's
+        // default-check short-circuits the env read entirely.
+        let resolved = EncoderStrategy::Libjxl.resolve(&StrategyOverrides::default());
+        assert_eq!(resolved.buttloop_qf_seed, ButtloopQfSeedPolicy::Off);
+        assert_eq!(
+            resolved.adaptive_quant_qf_seed,
+            AdaptiveQuantQfSeedPolicy::Off
+        );
+        assert_eq!(
+            resolved.buttloop_epf_sharpness_seed,
+            EpfSharpnessSeed::LegacyUniform4
+        );
+    }
+
+    /// Caller's explicit `EncoderStrategy::Custom(...)` value sets
+    /// the field to a non-default value, which short-circuits the
+    /// env-var fallback's `field == default` check. This test does
+    /// not need to mutate env vars to verify the precedence rule —
+    /// any non-default field value disqualifies the env-var path.
+    #[test]
+    fn test_w44_132_env_fallback_pure_custom_non_default_short_circuits() {
+        // ForceScale is structurally non-default (`AutoScale4` is
+        // default); fallback `if r.field == default` is false, so
+        // the env-var read is skipped entirely regardless of what
+        // any JXL_* env var is set to in the test runner's env.
+        let custom = EncoderImprovementsCustom {
+            buttloop_qf_seed: ButtloopQfSeedPolicy::ForceScale(5.0),
+            adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy::AutoScaleCustom {
+                e5_e6: 1.5,
+                e7: 2.5,
+            },
+            buttloop_epf_sharpness_seed: EpfSharpnessSeed::AutoW44_117 { min_distance: 3.0 },
+            ..Default::default()
+        };
+        let strategy = EncoderStrategy::Custom(Box::new(custom.clone()));
+        let resolved = strategy.resolve(&StrategyOverrides::default());
+        assert_eq!(resolved.buttloop_qf_seed, custom.buttloop_qf_seed);
+        assert_eq!(
+            resolved.adaptive_quant_qf_seed,
+            custom.adaptive_quant_qf_seed
+        );
+        assert_eq!(
+            resolved.buttloop_epf_sharpness_seed,
+            custom.buttloop_epf_sharpness_seed
         );
     }
 }

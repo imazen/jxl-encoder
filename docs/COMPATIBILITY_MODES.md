@@ -180,17 +180,19 @@ the surface that the new enum will SUBSUME.
 | `with_patches_dispatch(PatchesDispatch)` | `Auto` | `AlwaysScan`, `NeverScan` | Patches detector dispatch |
 | `with_content_class(Option<ImageContentClass>)` | `None` | caller-supplied content class | Effort profile content adaptation |
 
-Two env-var-only knobs not yet on the public API:
+Four env-var fallback knobs (W44-132 Chunk F promoted to API fields; env-var
+fallback fires only when the resolved field equals its `Default::default()`
+value — explicit caller settings via `Custom` or `StrategyOverrides` win):
 
-| Env var | Default | Effect |
-|---|---|---|
-| `JXL_W44_117_DISABLE=1` | unset | Forces legacy uniform-4 EPF sharpness seed in buttloop |
-| `JXL_W44_120_EPF_SEED_MIN_DISTANCE=<f32>` | 1.0 | Overrides the W44-117 distance gate |
-| `JXL_BUTTLOOP_INITIAL_QF_SCALE=<f32>` | 4.0 | Overrides the W44-105 4× seed scale |
-| `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=<f32>` | 2.0/3.0 (per effort) | Overrides the W44-109 pre-scale |
+| Env var | Default | Effect | API field |
+|---|---|---|---|
+| `JXL_W44_117_DISABLE=1` | unset | Forces legacy uniform-4 EPF sharpness seed in buttloop | `EncoderImprovementsCustom::buttloop_epf_sharpness_seed = EpfSharpnessSeed::LegacyUniform4` |
+| `JXL_W44_120_EPF_SEED_MIN_DISTANCE=<f32>` | 1.0 | Overrides the W44-117 distance gate | `EncoderImprovementsCustom::buttloop_epf_sharpness_seed = EpfSharpnessSeed::AutoW44_117 { min_distance: <f32> }` |
+| `JXL_BUTTLOOP_INITIAL_QF_SCALE=<f32>` | 4.0 | Overrides the W44-105 4× seed scale | `EncoderImprovementsCustom::buttloop_qf_seed = ButtloopQfSeedPolicy::AutoScale(<f32>)` |
+| `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=<f32>` | 2.0/3.0 (per effort) | Overrides the W44-109 pre-scale (replaces both per-effort defaults with the single env value) | `EncoderImprovementsCustom::adaptive_quant_qf_seed = AdaptiveQuantQfSeedPolicy::AutoScaleCustom { e5_e6: <f32>, e7: <f32> }` |
 
-These should become first-class API knobs as part of this work (one of the open
-questions in §7).
+The env-var → API field mapping lives in `api.rs::apply_env_var_fallbacks`
+(applied inside `EncoderStrategy::resolve` after `StrategyOverrides::apply_to`).
 
 ---
 

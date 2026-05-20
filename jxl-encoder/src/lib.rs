@@ -274,6 +274,36 @@ pub mod __internals {
             });
         (ref_b, dict_b)
     }
+
+    // ── W44-132 Chunk F: strategy-resolve test hooks ────────────
+    //
+    // The `pub(crate)` `EncoderStrategy::resolve` + `ResolvedImprovements`
+    // types live in `api.rs`. These wrappers re-export just the
+    // resolved-value tuple we need to verify the Chunk F env-var
+    // fallback layer from an integration test (which can't reach
+    // `pub(crate)` items directly). Returns the post-fallback values
+    // of the four affected slots.
+    //
+    // Tuple shape:
+    //   ( buttloop_qf_seed, adaptive_quant_qf_seed, buttloop_epf_sharpness_seed )
+
+    /// Resolve a [`crate::api::EncoderStrategy`] with no overrides
+    /// and return the four Chunk-F-affected resolved-policy fields as
+    /// a tuple. Test hook only.
+    pub fn resolve_strategy_for_test(
+        strategy: &crate::api::EncoderStrategy,
+    ) -> (
+        crate::api::ButtloopQfSeedPolicy,
+        crate::api::AdaptiveQuantQfSeedPolicy,
+        crate::api::EpfSharpnessSeed,
+    ) {
+        let r = strategy.resolve(&crate::api::StrategyOverrides::default());
+        (
+            r.buttloop_qf_seed,
+            r.adaptive_quant_qf_seed,
+            r.buttloop_epf_sharpness_seed,
+        )
+    }
 }
 
 /// Pre-quantized AC entry point — accepts an already-prepared
