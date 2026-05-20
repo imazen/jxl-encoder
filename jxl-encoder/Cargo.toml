@@ -1260,5 +1260,32 @@ name = "w44_98_decoder_check"
 path = "examples/w44_98_decoder_check.rs"
 required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
 
+# W44-99 1531677 d=5 attack: low-colour sub-discriminator of variant Z.
+# Bisects finer dct16x32 lift values {1.22, 1.25, 1.27, 1.28, 1.30}
+# admitted by m3 < 25 (1531677 only) inside the W44-96 variant Z gate.
+# Production-aware: preserves W44-98 high_colour Z' on 1420710 cells via
+# injected table (variants only differ on the W44-99 gate cell).
+[[example]]
+name = "w44_99_1531677_d5_attack"
+path = "examples/w44_99_1531677_d5_attack.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
+# W44-99 production-vs-injected verification: confirms the new W44-99
+# dispatch (m3 < 25 sub-discriminator inside variant Z) routes 1531677
+# to the low_colour Z'' table (dct16x32=1.22), and 1420710 continues to
+# route to the high_colour Z' table (W44-98, dct16x32=1.30).
+[[example]]
+name = "w44_99_production_vs_injected"
+path = "examples/w44_99_production_vs_injected.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
+# W44-99 decoder roundtrip: encodes 2 W44-99-closed cells (1531677 e6 d=5
+# and e8 d=5) with the production dispatch and roundtrips through djxl +
+# jxl-rs + jxl-oxide.
+[[example]]
+name = "w44_99_decoder_check"
+path = "examples/w44_99_decoder_check.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
 [lints]
 workspace = true

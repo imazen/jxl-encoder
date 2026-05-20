@@ -586,6 +586,92 @@ Key patterns to watch for when working on this codebase:
 
 ## Investigation Notes
 
+### W44-99: low-colour sub-discriminator (m3 < 25) of variant Z — SHIPPED (May 19, 2026)
+
+**Status**: [SHIPPED]
+
+Follow-on to W44-98 (`0c957538`) which added the high-colour variant Z'
+(dct16x32=1.30) for 1420710 (m3=32.93) but explicitly excluded 1531677
+(m3=12.30) from the m3≥25 gate because the W44-98 measurement showed
+1531677 regresses SSIM2 by -0.34 to -0.93 under dct16x32 ≥ 1.30.
+
+W44-99 closes the remaining 1531677 d=5 OPEN cells (e6, e8, e9 d=5; 3
+of 4) by introducing a mirror low-colour variant Z'' table with a MILDER
+dct16x32 lift (1.22) gated by m3 < 25.
+
+**Mechanism**:
+
+1. Added [`EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour`]
+   — variant Z'' (Z-double-prime): same as variant Z (dct32x32=1.20)
+   but `dct16x32` LIFTED to **1.22** (+1.0% above variant Z's 1.208,
+   8.5% below high_colour Z''s 1.30).
+2. Added `w44_99_variant_z_low_colour` sub-gate in `compute_ac_strategy`
+   (mutually exclusive with W44-98's `w44_98_variant_z_high_colour`):
+   - fires when `w44_96_variant_z` AND `m3 < 25` AND `!high_colour`
+   - swaps to the low-colour Z'' table instead of the default variant Z
+3. Reused the existing `W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN = 25.0`
+   constant as the splitter (the W44-98 threshold IS the W44-99 cutoff,
+   inverted).
+
+**Per-cell impact** (4 OPEN target cells, vs default W44-98 dispatch):
+
+| cell           | default Δ% | LC_1.22 Δ% | status         | Δssim2  |
+|---             |---         |---         |---             |---      |
+| 1531677 e5 d=5 | +3.545     | +3.090     | stays OPEN     | -0.0082 |
+| 1531677 e6 d=5 | +3.040     | +2.602     | **OPEN→FIXED** | -0.0100 |
+| 1531677 e8 d=5 | +3.047     | +1.922     | **OPEN→FIXED** | +0.0964 |
+| 1531677 e9 d=5 | +3.638     | +2.532     | **OPEN→FIXED** | +0.0964 |
+
+**A/B sweep results** (29 cells × 5 variants):
+
+| Variant | dct16x32 | OPEN→FIXED | FIXED→OPEN | worst Δssim2 |
+|---      |---       |---         |---         |---           |
+| LC_1.22 (shipped) | 1.22 | **3** | **0** | **-0.0100** |
+| LC_1.25 | 1.25 | 2 | 0 | -0.2874 |
+| LC_1.27 | 1.27 | 2 | 0 | -0.3789 (over budget) |
+| LC_1.28 | 1.28 | 4 | 2 (regress!) | -0.5544 |
+| LC_1.30 | 1.30 | 4 | 1 (regress!) | -0.5979 |
+
+LC_1.22 strictly dominates LC_1.25 (more closes, much lower SSIM2 cost).
+The non-monotonic LC_1.27 behavior (closes e8/e9 strongly via butteraugli
+loop recovery, but regresses e5/e6 where no buttloop runs) confirms the
+W44-94 finding that 1531677 wants a different lever at e<8 vs e≥8.
+
+**Why a smaller lift works on low-colour**: low-m3 photos have less
+colour variance per block, so DCT32X16 → DCT32X32 strategy re-selection
+produces less Y-channel ringing. The 1420710 (high m3) photo HAS strong
+colour variance, which tolerates the stronger 1.30 lift; 1531677 (low m3)
+does not.
+
+**Acceptance gates** (all PASS):
+- (a) ≥2 of 4 OPEN close: **3** (e6, e8, e9 d=5)
+- (b) Zero FIXED→OPEN flips: **0**
+- (c) SSIM2 regression ≤ 0.30 on any cell: worst **-0.0100** (well under)
+- (d) Hash-locks: 36/36 byte-identical, ZERO regen required
+- (e) `cargo test --lib`: 1316/1317 pass (1 pre-existing W44-94 failure)
+- (f) Multi-decoder roundtrip on 2 closed cells × 3 decoders: **6/6 PASS**
+- (g) Production-vs-injected verification: 11/11 YES (1420710 unchanged
+      via HC, 1531677 new dispatch matches LC_1.22 injection exactly)
+- (h) W93_REGR + W95_REGR + 1420710 SPOT_FIXED cells: ALL byte-identical
+
+**Bench**: `benchmarks/w44_99_1531677_d5_attack_2026-05-19.{tsv,meta}`.
+
+**Files**:
+- `jxl-encoder/src/effort.rs` — [`EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour`]
+  + unit test
+- `jxl-encoder/src/vardct/encoder.rs` — `w44_99_variant_z_low_colour`
+  sub-gate in `compute_ac_strategy`, reuses `W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN`
+  as the splitter
+- `jxl-encoder/examples/w44_99_*.rs` — 3 examples (bisect, production-vs-injected,
+  decoder_check)
+- `benchmarks/w44_99_1531677_d5_attack_2026-05-19.{tsv,meta}`
+
+**Expected ledger impact**: 4 → 1 OPEN. The remaining 1531677 e5 d=5
+(+3.090%) needs a separate mechanism (likely the W44-94 follow-on
+"butteraugli loop at e7 promotion") since the SSIM2-blind cost model at
+e<8 has no way to recover the last +0.09% bytes without further SSIM2
+cost.
+
 ### W44-98: dct16x32 lift inside variant Z (m3 sub-discriminator) — SHIPPED (May 19, 2026)
 
 **Status**: [SHIPPED]

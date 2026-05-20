@@ -4,6 +4,27 @@
 
 ### Performance
 
+- **W44-99 — low-colour sub-discriminator (m3 < 25) of variant Z**
+  (`jxl-encoder/src/effort.rs`, `jxl-encoder/src/vardct/encoder.rs`,
+  `benchmarks/w44_99_1531677_d5_attack_2026-05-19.{tsv,meta}`).
+  Adds [`EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour`]
+  (dct32x32=1.20 inherited from variant Z, dct16x32 LIFTED modestly to
+  1.22 — vs variant Z's 1.208 and W44-98 high_colour Z''s 1.30). Wired
+  in `compute_ac_strategy` behind a new `m3_colourfulness < 25.0`
+  sub-gate that mirrors W44-98's high_colour gate (the two are mutually
+  exclusive). Closes 1531677 d=5 OPEN cells that W44-98 could not
+  address: e6 d=5 (+3.04% → +2.60%, OPEN → FIXED), e8 d=5
+  (+3.05% → +1.92%, OPEN → FIXED), e9 d=5 (+3.64% → +2.53%, OPEN →
+  FIXED); e5 d=5 stays OPEN at +3.09% (just 0.09% over the +3.0%
+  threshold — needs the W44-94 follow-on butteraugli loop at e7). Of the
+  2 CID22 photos that pass the W44-96 gate, only 1531677 (m3=12.30)
+  passes the m3 < 25 sub-gate; 1420710 (m3=32.93) stays on the W44-98
+  high_colour Z' table (byte-identical to the W44-98 ship). Worst SSIM2
+  delta across all 29 measured cells: -0.0100 (essentially noise — far
+  under the ≤0.30 budget). 36/36 hash-locks byte-identical, all W93_REGR
+  and W95_REGR cells byte-identical. Multi-decoder roundtrip via djxl +
+  jxl-rs + jxl-oxide on 2 closed cells: 6/6 PASS.
+
 - **W44-98 — dct16x32 lift inside variant Z (m3 sub-discriminator)**
   (`jxl-encoder/src/effort.rs`, `jxl-encoder/src/vardct/encoder.rs`,
   `benchmarks/w44_98_dct16x32_lift_z_bisect_2026-05-19.{tsv,meta}`,

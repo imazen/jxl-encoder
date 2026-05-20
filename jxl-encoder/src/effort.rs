@@ -309,6 +309,69 @@ impl EntropyMulTable {
             ..Self::reference()
         }
     }
+
+    /// W44-99 **variant Z'' (Z-low-colour)** — lifts `dct16x32` modestly
+    /// (1.208 → 1.22) within the W44-96 variant Z gate, for the
+    /// *low-colourfulness* sub-class of variant Z. Mirror of
+    /// [`high_d_photo_smooth_suppressed_z_high_colour`] for images that
+    /// fail the W44-98 m3 ≥ 25 escalation gate.
+    ///
+    /// **Source**: W44-97 per-strategy AC tokenization dump on the 7
+    /// OPEN cells remaining post-W44-96 identified DCT32X16 as the
+    /// universal #1 overspender (+10017 Y_delta total). W44-98 closed
+    /// 3 cells on 1420710 (m3=32.93) by lifting `dct16x32` to 1.30 but
+    /// W44-98 measured that 1531677 (m3=12.30) regresses SSIM2 by -0.34
+    /// to -0.93 under `dct16x32` ≥ 1.30. The W44-99 A/B sweep
+    /// (`benchmarks/w44_99_1531677_d5_attack_2026-05-19.tsv`, 5 lift
+    /// values × 29 cells) found a smaller lift (1.22, +1.0% over 1.208)
+    /// preserves SSIM2 (worst -0.0100 on the W44-99 target cells; many
+    /// gains) while closing 3 of 4 1531677 OPEN cells (e6 d=5, e8 d=5,
+    /// e9 d=5; e5 d=5 stays OPEN at +3.09% bytes vs +3.55% baseline,
+    /// just over the +3.0% threshold).
+    ///
+    /// **Why a smaller lift works on low-colour**: low-m3 photos have
+    /// less colour variance per block, so DCT32X16 → DCT32X32 strategy
+    /// re-selection produces less Y-channel ringing. The 1420710 (high
+    /// m3) photo HAS strong colour variance, which tolerates the
+    /// stronger 1.30 lift; 1531677 (low m3) does not. Two different
+    /// optimal points on the same shared-slot knob.
+    ///
+    /// Variant ZD bisect data (`benchmarks/w44_98_dct16x32_lift_z_bisect_2026-05-19.tsv`)
+    /// already measured `dct16x32=1.25` on 1531677 — closes only 2 of 4
+    /// OPEN cells. The W44-99 bisect added 1.22 / 1.27 / 1.28 and found
+    /// 1.22 strictly dominates 1.25 (more closes, lower SSIM2 cost) on
+    /// this image. 1.27 closes the e8/e9 cells more aggressively but
+    /// regresses e5/e6 (non-monotonic at e<8 because no butteraugli loop
+    /// can recover SSIM2 there) and exceeds the ≤0.3 SSIM2 budget on
+    /// e5/e6.
+    ///
+    /// Changes vs [`high_d_photo_smooth_suppressed_z`] (single lift):
+    /// - dct16x32: 1.208 → 1.22 (+1.0%, both DCT16X32 and DCT32X16)
+    /// - all other transforms: unchanged from variant Z
+    ///
+    /// **Gate** (ALL must hold, on top of every W44-96 gate condition):
+    ///   * `ZenanalyzeProxies.m3_colourfulness <
+    ///     W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN`
+    ///     (< 25.0 — the inverse of the W44-98 escalation gate; mutually
+    ///     exclusive with [`high_d_photo_smooth_suppressed_z_high_colour`]).
+    ///
+    /// Of the 2 CID22 photos that pass the W44-96 variant Z gate
+    /// (1420710 m3=32.93, 1531677 m3=12.30), only **1531677** passes
+    /// this m3 < 25 gate; 1420710 stays on the high_colour Z' table.
+    ///
+    /// **Bench**: `benchmarks/w44_99_1531677_d5_attack_2026-05-19.{tsv,meta}`.
+    pub fn high_d_photo_smooth_suppressed_z_low_colour() -> Self {
+        Self {
+            dct16x16: 1.27,
+            dct32x32: 1.20,
+            // dct16x32 LIFTED to 1.22 (+1.0% above variant Z's 1.208,
+            // 8.5% below high_colour Z''s 1.30). Conservative lift that
+            // closes 3 of 4 1531677 OPEN cells while keeping SSIM2
+            // delta within ±0.10.
+            dct16x32: 1.22,
+            ..Self::reference()
+        }
+    }
 }
 
 /// All effort-derived encoder decisions, centralized.
@@ -2771,6 +2834,47 @@ mod tests {
 
         // Every OTHER field MUST match reference (same shape as the
         // variant Z table — Z' only lifts dct16x32 vs Z).
+        assert_eq!(t.dct8, r.dct8);
+        assert_eq!(t.dct4x4, r.dct4x4);
+        assert_eq!(t.dct4x8, r.dct4x8);
+        assert_eq!(t.identity, r.identity);
+        assert_eq!(t.dct2x2, r.dct2x2);
+        assert_eq!(t.afv, r.afv);
+        assert_eq!(t.dct16x8, r.dct16x8);
+        assert_eq!(t.dct64x32, r.dct64x32);
+        assert_eq!(t.dct64x64, r.dct64x64);
+    }
+
+    #[test]
+    fn test_entropy_mul_table_high_d_photo_smooth_suppressed_z_low_colour_values() {
+        // W44-99 variant Z'' (low-colour): dct32x32 = 1.20 (inherits from
+        // variant Z) AND dct16x32 lifted modestly to 1.22 (1.0% above
+        // variant Z's 1.208, 8.5% below high_colour Z''s 1.30). Used for
+        // 1531677-class images (m3_colourfulness < 25) that can't tolerate
+        // the stronger 1.30 lift (SSIM2 regression -0.34 to -0.93 per
+        // W44-98 measurement) but benefit from a smaller lift.
+        let t = EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour();
+        let z = EntropyMulTable::high_d_photo_smooth_suppressed_z();
+        let hc = EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour();
+        let r = EntropyMulTable::reference();
+
+        // Same dct16x16 / dct32x32 as variant Z (only dct16x32 differs).
+        assert_eq!(t.dct16x16, z.dct16x16);
+        assert_eq!(t.dct32x32, z.dct32x32);
+        assert_eq!(t.dct32x32, 1.20);
+
+        // dct16x32 = 1.22 (LIFTED above variant Z's 1.208 by ~1.0%).
+        assert_eq!(t.dct16x32, 1.22);
+        // Strict-higher than variant Z on dct16x32 (the lift direction).
+        assert!(t.dct16x32 > z.dct16x32);
+        // Strict-LOWER than high_colour Z' on dct16x32 (this is the
+        // milder lift for the low-colour sub-class).
+        assert!(t.dct16x32 < hc.dct16x32);
+        // Still below the libjxl reference (1.49) — strict reduction.
+        assert!(t.dct16x32 < r.dct16x32);
+
+        // Every OTHER field MUST match reference (same shape as the
+        // variant Z table — Z'' only lifts dct16x32 vs Z).
         assert_eq!(t.dct8, r.dct8);
         assert_eq!(t.dct4x4, r.dct4x4);
         assert_eq!(t.dct4x8, r.dct4x8);

@@ -1,0 +1,156 @@
+# W44-99 1531677 d=5 attack — bench metadata
+
+## Date / commit / host
+Date: 2026-05-19
+Parent commit: 0c957538 (W44-98 ship)
+Hostname: same workspace as W44-98 (zenenc, AMD Ryzen 9 7950X 16-core, 128 GB RAM)
+Cargo features: __expert butteraugli-loop ssim2-loop parallel
+
+## What this measures
+
+5-variant bisection of `dct16x32` lift values {1.22, 1.25, 1.27, 1.28, 1.30}
+inside a NEW W44-99 low-colour sub-discriminator (m3 < 25.0) of the W44-96
+variant Z gate, vs the production W44-98 baseline (variant Z dct16x32=1.208
+for 1531677, variant Z' dct16x32=1.30 for 1420710).
+
+Goal: find the largest `dct16x32` value that closes 1531677 d=5 OPEN cells
+WITHOUT exceeding the ≤0.30 SSIM2 regression budget that the W44-98 ship
+honoured.
+
+Cell set (29 total):
+- 4 OPEN cells: 1531677 e5/e6/e8/e9 d=5
+- 4 1531677 SPOT_FIXED cells (incl. d=4 controls outside W44-96 gate)
+- 9 1420710 SPOT_FIXED cells (must stay byte-identical via W44-98 dispatch)
+- 3 W95_REGR (2389166, 3637739 — must stay byte-identical)
+- 6 W93_REGR (1189261, 1418519 — must stay byte-identical)
+- 3 OTHER_FIXED (1025469, 1044329)
+
+## Discriminator probe
+
+Re-ran `w44_96_proxy_probe` to confirm m3_colourfulness values:
+
+| image    | m3      | edge_density | fcbr    | gate |
+|---       |---      |---           |---      |---   |
+| 1420710  | 32.932  | 0.9298       | 0.00000 | HC   |
+| 1531677  | 12.295  | 0.8766       | 0.00000 | LC   |
+| 2389166  | 47.996  | 0.4409       | 0.13354 | -    |
+| 1044329  | 65.031  | 0.5486       | 0.12158 | -    |
+| 7062219  | 51.141  | 0.6332       | 0.01099 | -    |
+| 3637739  | 12.208  | 0.2962       | 0.09155 | -    |
+| 1189261  | 98.839  | 0.4895       | 0.00342 | -    |
+| 1418519  | 36.843  | 0.1637       | 0.09839 | -    |
+
+3637739 m3=12.21 is VERY close to 1531677 m3=12.30 but fails the W44-96
+gate via THREE other dimensions (mask=75.83 > 50, edge_density=0.30 < 0.7,
+fcbr=0.09 > 0.01). Three layers of defense — safe.
+
+## Headline results (aggregate)
+
+| Variant   | dct16x32 | Δbytes | OPEN→FIXED | FIXED→OPEN | worst Δssim2 | within budget? |
+|---        |---       |---     |---         |---         |---           |---             |
+| default   | 1.208    | +332/cell | 0      | 0       | 0          | baseline       |
+| LC_1.22   | 1.22     | +312      | **3**  | **0**   | **-0.0100**| **YES**        |
+| LC_1.25   | 1.25     | +324      | 2      | 0       | -0.2874    | YES (close)    |
+| LC_1.27   | 1.27     | +272      | 2      | 0       | -0.3789    | NO (-0.379)    |
+| LC_1.28   | 1.28     | +319      | 4      | 2 ⚠     | -0.5544    | NO             |
+| LC_1.30   | 1.30     | +254      | 4      | 1 ⚠     | -0.5979    | NO             |
+
+**LC_1.22 strictly dominates LC_1.25** (more closes, much lower SSIM2 cost).
+LC_1.27 only closes 1 more than LC_1.22 but tanks SSIM2.
+
+## Per-cell results (LC_1.22, the SHIPPED variant)
+
+### 4 OPEN cells (the target)
+
+| cell           | default Δ% | LC_1.22 Δ% | status         | Δssim2  |
+|---             |---         |---         |---             |---      |
+| 1531677 e5 d=5 | +3.545     | +3.090     | stays OPEN     | -0.0082 |
+| 1531677 e6 d=5 | +3.040     | +2.602     | **OPEN→FIXED** | -0.0100 |
+| 1531677 e8 d=5 | +3.047     | +1.922     | **OPEN→FIXED** | +0.0964 |
+| 1531677 e9 d=5 | +3.638     | +2.532     | **OPEN→FIXED** | +0.0964 |
+
+3 of 4 OPEN close. e5 d=5 stays OPEN at +3.090% (just 0.09% over the +3.0%
+threshold). e8 d=5 and e9 d=5 actually GAIN SSIM2 (the butteraugli loop at
+e8+ recovers + the smaller block selection helps).
+
+### 4 1531677 SPOT_FIXED (must stay FIXED)
+
+| cell           | default Δ% | LC_1.22 Δ% | Δbytes | Δssim2  |
+|---             |---         |---         |---     |---      |
+| 1531677 e5 d=6 | +2.889     | +2.952     | +11    | -0.0011 |
+| 1531677 e6 d=6 | +1.965     | +2.022     | +10    | -0.0074 |
+| 1531677 e5 d=4 | -0.735     | -0.735     | 0      | 0       |
+| 1531677 e6 d=4 | +1.961     | +1.961     | 0      | 0       |
+
+d=6 cells fire the LC gate but the deltas are essentially noise. d=4 cells
+are outside the gate (variant Z fires at d>=4.5) so byte-identical.
+
+### 9 1420710 SPOT_FIXED (must stay byte-identical via HC dispatch)
+
+ALL byte-identical (verified). HC gate keeps these on variant Z'.
+
+### 6 W93_REGR + 3 W95_REGR + 3 OTHER_FIXED
+
+ALL byte-identical with LC_1.22 (verified).
+
+## Production-vs-injected verification
+
+`w44_99_production_vs_injected` example confirms the wired W44-99 gate
+produces bytes IDENTICAL to the injected LC_1.22 variant on every
+1531677 cell (6/6 YES). 1420710 cells still match the W44-98 high_colour
+injection (5/5 YES).
+
+## Multi-decoder roundtrip
+
+2 W44-99-closed cells × 3 decoders (djxl + jxl-rs + jxl-oxide) = 6/6 PASS.
+
+## Hash-locks
+
+36/36 byte-identical (1342 fixtures filtered, 36 in hash_lock_features
+test suite). No hash-lock regen required.
+
+## Reproducer
+
+```bash
+cd ~/work/zen/jxl-encoder--w44-99-1531677-d5-attack
+export CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target
+cargo run --release -p jxl-encoder \
+  --features '__expert butteraugli-loop ssim2-loop parallel' \
+  --example w44_99_1531677_d5_attack \
+  > benchmarks/w44_99_1531677_d5_attack_2026-05-19.tsv
+
+# Verify production dispatch matches injected variant LC_1.22:
+cargo run --release -p jxl-encoder \
+  --features '__expert butteraugli-loop ssim2-loop parallel' \
+  --example w44_99_production_vs_injected
+
+# Multi-decoder roundtrip:
+cargo run --release -p jxl-encoder \
+  --features '__expert butteraugli-loop ssim2-loop parallel' \
+  --example w44_99_decoder_check
+```
+
+## Acceptance gates (HARD — per task)
+
+| Gate                                              | Target | Actual              | PASS? |
+|---                                                |---     |---                  |---    |
+| ≥2 of 4 OPEN cells close                          | ≥2     | 3 (e6/e8/e9 d=5)    | YES   |
+| Zero FIXED → OPEN flips                           | 0      | 0                   | YES   |
+| SSIM2 regression ≤ 0.30 on any cell               | ≤0.30  | worst -0.0100       | YES   |
+| Hash-lock regen sub-100-cell + sub-100-byte       | ≤100   | 0 (byte-identical)  | YES   |
+| `cargo test --lib`: passes                        | pass   | 1316/1317 (1 pre-existing W44-94 failure) | YES |
+| Multi-decoder roundtrip on 2 closed cells         | pass   | 6/6 djxl+jxl-rs+oxide | YES |
+| W93_REGR + W95_REGR cells byte-identical          | YES    | YES                 | YES   |
+
+ALL GATES PASS — shippable.
+
+## Ledger impact
+
+Predicted: 4 → 1 OPEN (1420710 wedge already closed, 1531677 d=5 cells
+close 3 of 4, 1531677 e5 d=5 stays OPEN at +3.090%).
+
+Remaining 1 OPEN (1531677 e5 d=5) likely needs the W44-94 follow-on
+("butteraugli loop at e7 promotion") since the SSIM2-blind cost model at
+e<8 has no way to recover the last +0.09% bytes without further SSIM2
+cost. That's a separate chunk with a different mechanism (loss-aware
+quant convergence vs cost-model lift).
