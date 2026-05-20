@@ -1404,6 +1404,23 @@ pub struct VarDctEncoder {
     /// [`crate::api::Buffering::BufferedOutput`] for larger inputs,
     /// matching libjxl post-`032d39a`.
     pub buffering: crate::api::Buffering,
+    /// W44-128 (Chunk B) — resolved compatibility / improvements
+    /// bundle. Computed once at encoder construction by
+    /// [`crate::api::EncoderStrategy::resolve`] from the caller-set
+    /// [`crate::api::LossyConfig::with_strategy`] preset plus the
+    /// individual `with_*_hint` overrides.
+    ///
+    /// `None` when constructed via [`Self::new`] (the
+    /// `VarDctEncoder::new(distance)` direct entry point, used by tests
+    /// and some legacy paths). The API layer's three encode entry
+    /// points (still-image `EncodeRequest`, streaming `LossyEncoder`,
+    /// animation) populate this from
+    /// [`crate::api::LossyConfig::resolve_improvements`] right after
+    /// `VarDctEncoder::new`. Chunks C/G read these resolved policies
+    /// in place of the existing `Option<bool>` hint fields one site at
+    /// a time; until then this field is unused and hash-locks stay
+    /// byte-identical to pre-Chunk-B main.
+    pub(crate) resolved_improvements: Option<crate::api::ResolvedImprovements>,
 }
 
 impl Default for VarDctEncoder {
@@ -1497,6 +1514,12 @@ impl Default for VarDctEncoder {
             // for 8-bit sRGB layouts.
             zenanalyze_proxies: None,
             buffering: crate::api::Buffering::default(),
+            // W44-128 Chunk B: `None` keeps the legacy `with_*_hint`
+            // `Option<bool>` fields as the active dispatch. The API
+            // layer populates this from
+            // `LossyConfig::resolve_improvements()` so Chunks C/G can
+            // rewire one call site at a time.
+            resolved_improvements: None,
         }
     }
 }
@@ -1593,6 +1616,10 @@ impl VarDctEncoder {
             // for 8-bit sRGB layouts.
             zenanalyze_proxies: None,
             buffering: crate::api::Buffering::default(),
+            // W44-128 Chunk B: `None` keeps the legacy hint fields as
+            // the active dispatch. Populated by the API layer via
+            // `LossyConfig::resolve_improvements()`.
+            resolved_improvements: None,
         }
     }
 
