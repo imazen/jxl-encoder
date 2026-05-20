@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### Measured
+
+- **W44-119 — ledger refresh post-W44-118 + qac-scale chain-disable A/B**
+  (`benchmarks/cjxl_parity_ledger_2026-05-20_w44_119.{tsv,meta}`,
+  `benchmarks/w44_119_chain_disable_ab_2026-05-20.{tsv,meta}`,
+  `jxl-encoder/examples/w44_119_chain_disable_ab.rs`,
+  `docs/LIBJXL_DIVERGENCES.md` Section B verdict + Section F new
+  W44-120 candidate row). Full 590-cell ledger refresh on W44-118
+  main (`f543288c`) finds **zero status flips** vs W44-110 baseline
+  (8 OPEN, identical OPEN set). W44-117/118 produces real sub-
+  threshold SSIM2 wins on terminal/codec_wiki/imac_g3 at mid distance
+  (terminal e8/e9 d=4 +0.90, d=3 +0.66) but does NOT flip any cell
+  FIXED↔OPEN. Worst W44-117 side effect: terminal e8/e9 d=0.8 SSIM2
+  -1.87 (over-correction at low distance where the buttloop already
+  had ~accurate EPF). Photos byte-identical (W44-118 gate works).
+  Chain-disable A/B (83-cell, 79 with data): disabling
+  W44-105/107/108/109 chain via `JXL_BUTTLOOP_INITIAL_QF_SCALE=1.0`
+  AND `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=1.0` regresses avg SSIM2
+  by 2.04 (B vs A) while saving 20.74% bytes. Per-cluster avg SSIM2
+  delta: terminal -3.86 (n=25), codec_wiki -2.33 (n=9), imac_g3
+  -3.97 (n=11), photo +0.00 (n=34, BYTE-IDENTICAL — chain skips
+  photos). 42 of 79 cells regress SSIM2 > 0.3; ZERO cells where
+  chain OFF wins. **Verdict**: the chain CANNOT be retired — W44-117
+  EPF seed and chain address orthogonal mechanisms (recon-side bias
+  vs measurement-side bias) and are additive. W44-120 plan: KEEP
+  the chain at its W44-109 magnitude; investigate the terminal d=0.8
+  W44-117 over-correction as a distance-gate refinement candidate.
+  No production code change in this chunk (measurement + analysis +
+  divergence-table update only).
+
 ### Fixed
 
 - **W44-118 — gate W44-117 EPF sharpness seed on `is_screenshot`**
