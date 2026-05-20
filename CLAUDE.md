@@ -586,6 +586,96 @@ Key patterns to watch for when working on this codebase:
 
 ## Investigation Notes
 
+### W44-94: find_best_32x32 tightening widen — HONEST-STOP (May 19, 2026)
+
+**Status**: [RULED OUT — measurement shipped, no production source change]
+
+Attempted W44-92 Recommendation B / W44-93 follow-on: widen the
+`EntropyMulTable::high_d_photo_smooth_suppressed` (the lift table swapped
+in by the W44-29 auto gate) to close the 13 remaining F-D OPEN cells
+on `1420710 + 1531677 d=5/d=6`. 6 stronger-lift variants tested in a
+32-cell A/B sweep (13 OPEN + 6 W44-93 regression-spot FIXED + 13
+SPOT_FIXED controls), all gated on the same `mask < 50 && d >= 3.0`
+condition as the existing W44-29 gate.
+
+**Hard acceptance gates failed (target cells did NOT all close)**:
+
+The required closures were:
+- 1420710 e5 d=5 (default +3.98% vs cjxl): NOT CLOSED by ANY variant
+  (best: Y_combined at +3.37%, still > 3.0%)
+- 1420710 e6 d=5 (default +3.14%): closed by W (+2.85%) and others
+- 1420710 e7 d=5 (default +4.00%): closed only by X (+2.88%) and Y
+  (+2.57%), but BOTH fail the SSIM2 ≤ 0.3 gate on 1531677
+
+**Variants and SSIM2 outcomes**:
+
+| Variant | dct32x32 | dct16x32 | OPEN→FIXED | Worst SSIM2 drop | SSIM2 gate |
+|---|---|---|---|---|---|
+| W_dct32_127 | 1.27 | 1.278 | 5/13 | -0.17 | PASS |
+| X_dct16x32_per_d | 1.34 | 1.40@d>=5 | 9/13 | -0.47 | FAIL |
+| Y_combined | 1.27 | 1.40@d>=5 | 11/13 | -0.74 | FAIL |
+| Z_dct32_120 | 1.20 | 1.208 | 6/13 | -0.18 | PASS |
+| XN_dct16x32_d6 | 1.34 | 1.40@d>=6 | 4/13 | -0.37 | FAIL |
+| WX_d6 | 1.27 | 1.40@d>=6 | 7/13 | -0.74 | FAIL |
+
+W and Z pass the SSIM2 gate but only close 5-6 of 13 OPEN cells — and
+critically do NOT close the 1420710 e5 d=5 and e7 d=5 hard cells.
+X, Y, WX_d6 close more cells but fail the SSIM2 gate on 1531677
+(the companion OPEN image, mask=35.63 — most-smooth photo where
+boosting dct16x32 to 1.40 over-selects DCT16X32/DCT32X16 with
+visible quality loss).
+
+**Root cause** (same mechanism as W44-93's honest-stop on try_dct64):
+the cost model at e5/e6 has no butteraugli loop (`speed_tier <= kKitten`
+gate at e8+). When `EstimateEntropy` is pushed to favor large transforms
+more aggressively (lower dct32x32 / higher dct16x32 lift), it correctly
+saves bytes but doesn't see SSIM2 cost on 1531677-class smooth-but-
+textured photos. Cells where humans notice low-frequency detail loss
+get over-quantized.
+
+W44-77 sweep (same chunk family) ALREADY documented the constraint:
+"No `dct16x32` value uniformly beats current default 1.349. The
+1420710 d=4 cell (W44-29's primary win) is too sensitive: lifting
+dct16x32 above 1.349 regresses +1641 to +2067 B." W44-94 confirms the
+SAME inverse constraint at d=5: pushing dct16x32 up to 1.40 saves on
+1420710 e7 d=5 but tanks SSIM2 on 1531677 e8/e9 d=5.
+
+**Why W or Z is NOT shipped as a partial-widening win**: per task spec,
+the hard gates take precedence over partial-win closure counts. W and Z
+each close 5-6 cells with zero regressions and within SSIM2 tolerance —
+but the W44-94 acceptance was "1420710 e5/e6/e7 d=5 close", not "any 5+
+cells close". Filed as W44-95 candidate (separate chunk, separate
+acceptance criteria) so the partial wins remain trackable without
+conflating "task done" with "task acceptance met".
+
+**1420710 vs 1531677 split**: the two F-D residual images cluster
+opposite directions at d=5:
+- 1420710 wants STRONGER lift (mask 39.55 — moderately-smooth, has
+  recoverable edges; dct16x32=1.40 helps without SSIM2 hit)
+- 1531677 wants WEAKER or NO lift (mask 35.63 — very smooth but
+  has fine texture; dct16x32=1.40 over-merges and loses quality)
+A single global table cannot satisfy both — would require a per-image
+content discriminator (W44-91-style zenanalyze proxies on fcbr /
+high_freq_energy_ratio / edge_density).
+
+**Files**:
+- `benchmarks/w44_94_find_best_32_widen_ab_2026-05-19.tsv` — 32-cell
+  × 7-variant × bytes/bfly/ssim2 measurement
+- `benchmarks/w44_94_find_best_32_widen_ab_2026-05-19.meta` — full
+  honest-stop narrative + W44-95 candidate notes
+- `jxl-encoder/examples/w44_94_find_best_32_widen.rs` — reproducer
+  (registered in Cargo.toml, `__expert butteraugli-loop ssim2-loop parallel`)
+
+**Source state**: production source UNCHANGED. `src/effort.rs::
+high_d_photo_smooth_suppressed` and `src/vardct/encoder.rs` W44-29 gate
+both at pre-W44-94 state. Zero hash-lock impact.
+
+**DO NOT** re-attempt with broader global lift values — measurement is
+conclusive that 1420710 and 1531677 want opposite directions at d=5.
+W44-95 should investigate per-image content discriminator (zenanalyze
+proxies) OR butteraugli-loop at e7 promotion before any further global
+entropy_mul table sweeps.
+
 ### W44-93: try_dct64 effort gate widening — HONEST-STOP (May 19, 2026)
 
 **Status**: [RULED OUT — measurement shipped, source-change reverted]
