@@ -1,0 +1,115 @@
+W44-116 per-step XYB dump in buttloop's recon pipeline
+=======================================================
+
+Date: 2026-05-20
+Branch: (sibling workspace) jxl-encoder--w44-116-recon-step-dump
+Parent commit: 3882e14a (main, W44-113 audit memo)
+Run on: water-cooled AMD Ryzen 9 7950X, archmage X64V3 SIMD
+
+Command (per-mode invocation; all 4 modes concatenated into TSV):
+
+  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+    cargo run --release --example w44_116_per_step_dump \
+    --features '__internal_recon_hook butteraugli-loop' \
+    --manifest-path jxl-encoder/Cargo.toml
+
+Modes (env-gated):
+  1. gab ON  + EPF ON    (default; rows 2-25)
+  2. gab OFF + EPF ON    (W44_116_NO_GAB=1; rows 26-49)
+  3. gab ON  + EPF OFF   (W44_116_NO_EPF=1; rows 50-73)
+  4. gab OFF + EPF OFF   (both env vars; rows 74-97)
+
+Cells (4 × 4 modes = 16 encode runs, 6 step rows each = 96 data rows):
+  1025469 d=2 e8 (CID22 photo, 512×512)
+  1025469 d=4 e8
+  terminal d=2 e8  (gb82-sc screenshot, 1646×1062)
+  terminal d=4 e8
+
+Columns:
+  image, distance, effort, width, height, gab (label "on"/"off"),
+  step (after_recon_xyb / after_gab / after_epf / after_patches /
+        after_splines / anchor_internal_recon),
+  step_ran (1 if step executed, 0 if skipped — NaN values follow),
+  maxabs_r/g/b: per-channel max-absolute delta vs jxl-rs decoded
+                linear-RGB (clamp to [0,1] both sides),
+  meanabs_r/g/b: same but mean,
+  delta_vs_prev_maxabs_r/g/b: step's maxabs MINUS previous step's
+                              maxabs (negative = step brought us
+                              CLOSER to jxl-rs; positive = step
+                              made things WORSE),
+  bytes: bitstream size.
+
+The "anchor_internal_recon" row is the existing W44-111 InternalRecon
+hook output (post-pipeline cropped linear-RGB) for cross-validation
+that the per-step dump matches the established baseline. It must
+match the last "ran=1" step within FP noise.
+
+Headline findings (see W44-116 memo for full discussion):
+
+Mode 4 (gab OFF + EPF OFF), 1025469 cells:
+  after_recon_xyb max-abs = 0.000004 / 0.000002 / 0.000002 (FP noise).
+  → reconstruct_xyb IS AT PARITY with jxl-rs's recon path.
+
+Mode 3 (gab ON + EPF OFF), 1025469 cells:
+  after_recon_xyb max-abs = 0.50 R (gab not yet applied),
+  after_gab max-abs = 0.000004 R (FP noise).
+  → gab_smooth IS AT PARITY with jxl-rs's GaborishStage.
+
+Mode 2 (gab OFF + EPF ON), 1025469 cells:
+  after_recon_xyb max-abs = 0.047 R,
+  after_epf max-abs = 0.047 R (EPF barely moves the delta).
+  → bitstream differs (different buttloop convergence with EPF on),
+    EPF in our pipeline matches jxl-rs's, but the buttloop's
+    INTERNAL EPF used uniform sharpness=4 while the bitstream
+    encodes the production sharpness map.
+
+Mode 1 (gab ON + EPF ON), 1025469 cells:
+  after_recon_xyb max-abs = 0.51 R, after_gab = 0.067 R,
+  after_epf = 0.061 R, anchor = 0.061 R.
+  → matches W44-111 baseline (R = 0.0608 ± 0.001 on 1025469 d=2 e8).
+
+Mode 4, terminal cells:
+  after_recon_xyb = 0.98 R (huge — patches not yet applied),
+  after_patches = 0.026-0.053 R (patches subtract most divergence).
+  → patches contribute a separate ~0.03 R residual on screenshots,
+    distinct from the EPF residual on photos.
+
+Root cause:
+  butteraugli_loop.rs:791 — `let sharpness = vec![4u8; num_blocks];`
+  The buttloop uses uniform sharpness=4 for ALL blocks across ALL
+  iterations. The production path runs `compute_epf_sharpness`
+  AFTER the buttloop and encodes the per-block sharpness map into
+  the bitstream. jxl-rs decodes the bitstream and applies EPF with
+  the production sharpness map.
+
+  This is INTENTIONAL libjxl-parity behaviour — libjxl's buttloop
+  also uses uniform sharpness=4 (documented in W44-113 audit row in
+  docs/LIBJXL_DIVERGENCES.md). But it IS the source of the W44-111
+  R/G linear-RGB residual.
+
+W44-117 candidate fixes:
+  (a) Run `compute_epf_sharpness` per buttloop iter (expensive,
+      ~10-30% buttloop slowdown; would also need to recompute on
+      each iter's recon since sharpness depends on it).
+  (b) Seed buttloop with one-shot sharpness compute on iter 0
+      (cheaper, near-correct after a few iters).
+  (c) Accept the gap and keep the qac-scale palliative chain
+      (W44-105/107/108/109) as the production solution.
+
+Status quo (c) was implicitly chosen by W44-105's ship. Per
+W44-113 the divergence is documented as INTENTIONAL libjxl-parity.
+W44-116 confirms the mechanism. Fix decision deferred to W44-117.
+
+Counter-finding: terminal cells have a SEPARATE ~0.03 R residual
+that survives gab+EPF disabled (after_patches=0.026 R). This is
+distinct from the EPF mechanism and points at patches as a
+secondary divergence source. Sub-investigation candidate for
+W44-117 phase 2 (after EPF fix decision).
+
+Acceptance gates: PASS.
+  - Per-step dump infra zero-cost when feature off (verified
+    via cargo build without __internal_recon_hook).
+  - 1281 lib tests still pass.
+  - Hash-locks unchanged (no production code path modified).
+  - First divergent step identified: apply_epf (uniform sharpness
+    vs bitstream's compute_epf_sharpness map).
