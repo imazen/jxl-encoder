@@ -1,0 +1,35 @@
+# W44-118 4-mode bisection bench (initial run with A/B/C/D modes)
+# Date: 2026-05-20
+# Commit: pending (W44-118 ship commit on origin/main)
+# Workspace: jxl-encoder--w44-118-1025469-d4-regression
+# Command: W44_118_ALL_MODES=1 cargo run --release --features 'butteraugli-loop ssim2-loop parallel' --example w44_118_bisect --manifest-path jxl-encoder/Cargo.toml
+#
+# Modes:
+#   A — JXL_W44_117_DISABLE=1  (legacy uniform-4 EPF seed, pre-W44-117 baseline)
+#   B — default                (W44-117 enabled — the regression)
+#   C — JXL_W44_118_DISABLE_LIFTS=1  (W44-117 on, content lifts disabled)
+#   D — JXL_W44_118_PER_ITER_SHARPNESS=1  (W44-117 on, per-iter compute_epf_sharpness recompute = Option A)
+#
+# Cells: 8 (5 × 1025469 photo + 3 × terminal screenshot for control)
+#
+# Bisection findings:
+# C1 (sharpness compute wrong)        — RULED OUT (Mode A restores baseline)
+# C2/C4 (stale seed / placement)      — Mode D does NOT fix 1025469 AND regresses
+#                                       terminal e8 d=4 SSIM2 by -3.06 (catastrophic).
+#                                       Per-iter recompute is NOT a viable fix.
+# C3 (content-aware lift interaction) — RULED OUT by zenanalyze probe
+#                                       (JXL_W44_118_PROBE=1): 1025469 mask=76.08
+#                                       in W44-91 band [50, 80) BUT fails
+#                                       m3_colourfulness (45.45 < 80) AND fcbr
+#                                       (0.0166 > 0.01) gates → no content-aware
+#                                       lift fires on 1025469. Mode C == Mode B
+#                                       byte-identical, confirming no lift fires.
+#
+# Conclusion: the W44-117 mechanism (one-shot iter-0 sharpness seed) is itself
+# the cause. Mode D's per-iter alternative is WORSE. The right fix is to gate
+# the W44-117 mechanism on `is_screenshot` (Mode F, tested in a follow-on bench
+# `w44_118_mode_f_validation_2026-05-20.tsv`).
+#
+# Mode C is a no-op (no lift to disable on 1025469); preserved in the harness
+# for future investigation when content classifiers might fire on different
+# photo classes.

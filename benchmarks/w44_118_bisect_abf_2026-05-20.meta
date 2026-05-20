@@ -1,0 +1,23 @@
+# W44-118 3-mode confirmation bench (A/B/F final hypothesis test)
+# Date: 2026-05-20
+# Commit: pending (W44-118 ship commit on origin/main)
+# Workspace: jxl-encoder--w44-118-1025469-d4-regression
+# Command: cargo run --release --features 'butteraugli-loop ssim2-loop parallel' --example w44_118_bisect --manifest-path jxl-encoder/Cargo.toml
+#
+# Modes:
+#   A — JXL_W44_117_DISABLE=1  (legacy uniform-4 EPF seed, pre-W44-117 baseline)
+#   B — default                (W44-117 enabled — the regression)
+#   F — JXL_W44_118_SCREENSHOT_ONLY=1  (W44-117 gated on is_screenshot)
+#
+# Cells: 8 (5 × 1025469 photo + 3 × terminal screenshot for control)
+#
+# Findings:
+#   Photos (1025469 e8 d=2/3/4, e9 d=2/4):
+#     F = A byte-identical (bytes, butteraugli, ssim2 all exactly match)
+#     B regression -0.847 SSIM2 at d=4 RESTORED to +0.000 by F.
+#   Screenshots (terminal e8 d=3/4, e9 d=3):
+#     F = B byte-identical (bytes, butteraugli, ssim2 all exactly match)
+#     W44-117 wins preserved.
+#
+# Validation confirmed in 58-cell broader bench
+# (`benchmarks/w44_118_mode_f_validation_2026-05-20.{tsv,meta}`).

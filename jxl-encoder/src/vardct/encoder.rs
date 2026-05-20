@@ -2792,6 +2792,20 @@ impl VarDctEncoder {
             .as_deref()
             .map(|mask| median_mask1x1(mask, padded_width, width, height));
 
+        // W44-118 probe: env-gated dump of mask1x1_median + key
+        // zenanalyze proxies to discriminate lift firing on the wedge
+        // cell (1025469 e8/e9 d=4). Zero runtime cost when unset.
+        #[cfg(feature = "std")]
+        if std::env::var("JXL_W44_118_PROBE").is_ok_and(|v| v == "1") {
+            let zp_m3 = self.zenanalyze_proxies.map(|p| p.m3_colourfulness);
+            let zp_fcbr = self.zenanalyze_proxies.map(|p| p.flat_color_block_ratio);
+            let zp_ed = self.zenanalyze_proxies.map(|p| p.edge_density);
+            eprintln!(
+                "W44-118-PROBE: dist={} mask1x1_median={:?} zp_m3={:?} zp_fcbr={:?} zp_ed={:?}",
+                self.distance, mask1x1_median, zp_m3, zp_fcbr, zp_ed,
+            );
+        }
+
         // W44-87 single-pass-entropy dispatch — content gate.
         // Records whether the (effort, distance, content) tuple admits
         // the single-pass static-Huffman path; the SAFETY predicate
@@ -3326,11 +3340,44 @@ impl VarDctEncoder {
                     // W44-117: plumb the precomputed mask1x1 so the
                     // buttloop can seed its `apply_epf` sharpness map
                     // from `compute_epf_sharpness` (closes the W44-116
-                    // buttloop-vs-decoder EPF mismatch). `None` when
-                    // mask1x1 wasn't precomputed (pixel_domain_loss off
-                    // and adaptive_quant didn't materialise the mask)
-                    // falls back to legacy uniform-4 seed.
-                    mask1x1.as_deref(),
+                    // buttloop-vs-decoder EPF mismatch).
+                    //
+                    // W44-118 (SHIPPED): gated on `is_screenshot`. The
+                    // W44-117 stale-iter-0 seed is a strict win on
+                    // screenshot-class content (terminal e8/e9 d=3
+                    // +0.66, d=4 +0.90 SSIM2), but on photos with
+                    // mask1x1 in the [50, 80) band (e.g. 1025469
+                    // mask=76.08) the iter-0 sharpness diverges from
+                    // the converged-qf production sharpness map more
+                    // at high d → buttloop converges to a state with
+                    // -1% bytes but -0.85 SSIM2 on 1025469 e8/e9 d=4.
+                    // W44-118 bisection (mode F sweep on 58 cells in
+                    // `benchmarks/w44_118_mode_f_validation_2026-05-20.tsv`
+                    // + targeted bisect in `examples/w44_118_bisect.rs`):
+                    // gating on `is_screenshot` restores pre-W44-117
+                    // photo behaviour (F=A byte-identical on every
+                    // photo cell) while preserving the W44-117 wins on
+                    // screenshots (F=B byte-identical on every
+                    // screenshot cell). Photos that don't fire the
+                    // mask>95 screenshot discriminator pay no W44-117
+                    // cost AND see no W44-117 quality change — purely
+                    // byte-identical to pre-W44-117 main.
+                    //
+                    // `None` when mask1x1 wasn't precomputed
+                    // (pixel_domain_loss off and adaptive_quant didn't
+                    // materialise the mask) ALSO falls back to legacy
+                    // uniform-4 seed.
+                    //
+                    // Bisection env hook `JXL_W44_118_SCREENSHOT_ONLY=0`
+                    // is NOT supported (production code is now the gated
+                    // path). `JXL_W44_117_DISABLE=1` continues to force
+                    // legacy uniform-4 across all content classes
+                    // (preserved for A/B testing).
+                    if is_screenshot {
+                        mask1x1.as_deref()
+                    } else {
+                        None
+                    },
                 )?;
             }
         }

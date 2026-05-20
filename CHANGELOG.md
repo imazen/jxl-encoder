@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **W44-118 — gate W44-117 EPF sharpness seed on `is_screenshot`**
+  (`jxl-encoder/src/vardct/encoder.rs`,
+  `benchmarks/w44_118_mode_f_validation_2026-05-20.{tsv,meta}`,
+  `benchmarks/w44_118_bisect_abcd_2026-05-20.{tsv,meta}`,
+  `benchmarks/w44_118_bisect_abf_2026-05-20.{tsv,meta}`,
+  `docs/LIBJXL_DIVERGENCES.md` Section D row 108 + Section F row 139).
+  W44-117 (`5604fdf0`) seeded the buttloop's `apply_epf` sharpness map
+  from `compute_epf_sharpness` on the initial reconstruction, replacing
+  the legacy `vec![4u8; num_blocks]` uniform seed. The fix closed the
+  R/G linear-RGB residual on screenshot-class content (terminal e8/e9
+  d=3 +0.66 SSIM2, d=4 +0.90) but introduced a `-0.847` SSIM2 regression
+  on 1025469 e8/e9 d=4 (a CID22 photo with mask1x1_median=76.08, in the
+  W44-91 band [50, 80) but failing the colourfulness/fcbr lift gates so
+  no content-aware lift compensates). W44-118 bisects 5 candidate fixes:
+  (A) revert W44-117 [restores baseline but loses screenshot wins];
+  (B) W44-117 default [the regression]; (C) disable content-aware lifts
+  [moot — `JXL_W44_118_PROBE=1` confirms no lift fires on 1025469];
+  (D) per-iter `compute_epf_sharpness` recompute [does NOT fix 1025469
+  AND regresses terminal e8 d=4 by -3.06 SSIM2 — Option A from the
+  W44-116 fix-shape menu is structurally a worse trade]; (F) gate
+  W44-117 on `is_screenshot` [F=A byte-identical on every photo,
+  F=B byte-identical on every screenshot — strict pareto win over both
+  A and B]. SHIPS Mode F as production default. 58-cell validation
+  bench: zero new F vs B SSIM2 regressions > 0.3, both 1025469 e8/e9
+  d=4 regressions restored to +0.000 (byte-identical to legacy). 36/36
+  hash-locks BYTE-IDENTICAL (synthetic 32×32 fixtures don't trigger
+  pixel_domain_loss → mask1x1 stays None regardless of is_screenshot
+  gating). 1282/1282 lib tests pass. 3/3 multi-decoder roundtrip
+  (djxl + jxl-oxide) PASS on the W44-118 regression cell + W44-117
+  win cell + W44-117-neutral photo. Env hooks preserved for future
+  bisection: `JXL_W44_117_DISABLE=1` (legacy uniform-4 across all
+  content); `JXL_W44_118_PROBE=1` (dump mask1x1_median + zenanalyze
+  proxies); `JXL_W44_118_PER_ITER_SHARPNESS=1` (Mode D Option A, kept
+  for documentation; production default off).
+
 ### Performance
 
 - **W44-99 — low-colour sub-discriminator (m3 < 25) of variant Z**
