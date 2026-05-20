@@ -373,7 +373,13 @@ fn main() {
         // Print per-region SSIM2 delta table to stdout
         eprintln!("  per-region SSIM2 (ours - cjxl):");
         for ry in 0..3 {
-            let row_top = if ry == 0 { "top" } else if ry == 1 { "mid" } else { "bot" };
+            let row_top = if ry == 0 {
+                "top"
+            } else if ry == 1 {
+                "mid"
+            } else {
+                "bot"
+            };
             eprintln!(
                 "    {}: {:+.3} {:+.3} {:+.3}",
                 row_top,

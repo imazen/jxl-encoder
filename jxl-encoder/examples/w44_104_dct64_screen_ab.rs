@@ -73,12 +73,7 @@ const SCREEN_DISTANCES: &[f32] = &[2.0, 4.0, 6.0];
 
 // CID22 photos — spot FIXED check. Pick photos with low mask1x1 (W44-65 won't
 // fire on them anyway, so admit/baseline should be identical or near-identical).
-const PHOTO_SET: &[&str] = &[
-    "1025469.png",
-    "1418519.png",
-    "1420710.png",
-    "1531677.png",
-];
+const PHOTO_SET: &[&str] = &["1025469.png", "1418519.png", "1420710.png", "1531677.png"];
 const PHOTO_EFFORTS: &[u8] = &[7];
 const PHOTO_DISTANCES: &[f32] = &[1.0, 3.0, 5.0];
 
@@ -163,7 +158,13 @@ fn compute_metrics(
         .unwrap_or(f64::NAN);
     let dec_srgb: Vec<[u8; 3]> = dec
         .chunks(3)
-        .map(|c| [linear_to_srgb_u8(c[0]), linear_to_srgb_u8(c[1]), linear_to_srgb_u8(c[2])])
+        .map(|c| {
+            [
+                linear_to_srgb_u8(c[0]),
+                linear_to_srgb_u8(c[1]),
+                linear_to_srgb_u8(c[2]),
+            ]
+        })
         .collect();
     let ssim2 =
         fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), Img::new(dec_srgb, dw, dh).as_ref())
@@ -209,7 +210,13 @@ fn load_cell(
     let rgb_u8: Vec<u8> = rgb.as_raw().clone();
     let linear: Vec<RGB<f32>> = rgb
         .pixels()
-        .map(|p| RGB::new(srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])))
+        .map(|p| {
+            RGB::new(
+                srgb_to_linear(p[0]),
+                srgb_to_linear(p[1]),
+                srgb_to_linear(p[2]),
+            )
+        })
         .collect();
     let orig_lin = Img::new(linear, w as usize, h as usize);
     let srgb_arr: Vec<[u8; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();

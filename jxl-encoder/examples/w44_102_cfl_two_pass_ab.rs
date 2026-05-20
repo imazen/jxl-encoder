@@ -49,10 +49,25 @@ use std::time::Instant;
 
 /// Named bfly wedge cells from W44-101 finding + W44-100 ledger.
 const WEDGE_CELLS: &[(&str, &str, u8, f32)] = &[
-    ("cid22/1420710", "CID22/CID22-512/validation/1420710.png", 6, 5.0),
-    ("cid22/1025469", "CID22/CID22-512/validation/1025469.png", 6, 4.0),
+    (
+        "cid22/1420710",
+        "CID22/CID22-512/validation/1420710.png",
+        6,
+        5.0,
+    ),
+    (
+        "cid22/1025469",
+        "CID22/CID22-512/validation/1025469.png",
+        6,
+        4.0,
+    ),
     ("gb82/codec_wiki", "gb82-sc/codec_wiki.png", 6, 0.2),
-    ("cid22/1418519", "CID22/CID22-512/validation/1418519.png", 6, 6.0),
+    (
+        "cid22/1418519",
+        "CID22/CID22-512/validation/1418519.png",
+        6,
+        6.0,
+    ),
 ];
 
 const CID22_PHOTOS: &[(&str, &str)] = &[
@@ -124,10 +139,19 @@ fn linear_to_srgb_u8(v: f32) -> u8 {
     (s * 255.0).round() as u8
 }
 
-fn encode_with_mode(rgb_u8: &[u8], w: u32, h: u32, effort: u8, d: f32, mode: Mode) -> (Vec<u8>, f64) {
+fn encode_with_mode(
+    rgb_u8: &[u8],
+    w: u32,
+    h: u32,
+    effort: u8,
+    d: f32,
+    mode: Mode,
+) -> (Vec<u8>, f64) {
     let mut params = LossyInternalParams::default();
     params.cfl_two_pass = mode.cfl_two_pass();
-    let cfg = LossyConfig::new(d).with_effort(effort).with_internal_params(params);
+    let cfg = LossyConfig::new(d)
+        .with_effort(effort)
+        .with_internal_params(params);
     let lim = Limits::default().with_max_memory_bytes(8u64 * 1024 * 1024 * 1024);
     let t = Instant::now();
     let bytes = cfg
@@ -153,7 +177,13 @@ fn compute_metrics(
         .unwrap_or(f64::NAN);
     let dec_srgb: Vec<[u8; 3]> = dec
         .chunks(3)
-        .map(|c| [linear_to_srgb_u8(c[0]), linear_to_srgb_u8(c[1]), linear_to_srgb_u8(c[2])])
+        .map(|c| {
+            [
+                linear_to_srgb_u8(c[0]),
+                linear_to_srgb_u8(c[1]),
+                linear_to_srgb_u8(c[2]),
+            ]
+        })
         .collect();
     let ssim2 =
         fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), Img::new(dec_srgb, dw, dh).as_ref())
@@ -173,7 +203,14 @@ struct Cell {
     orig_srgb: Img<Vec<[u8; 3]>>,
 }
 
-fn load_cell(class: &'static str, label: &str, rel: &str, corpus: &PathBuf, effort: u8, distance: f32) -> Option<Cell> {
+fn load_cell(
+    class: &'static str,
+    label: &str,
+    rel: &str,
+    corpus: &PathBuf,
+    effort: u8,
+    distance: f32,
+) -> Option<Cell> {
     let path = corpus.join(rel);
     if !path.exists() {
         eprintln!("MISS {}", path.display());
@@ -185,7 +222,13 @@ fn load_cell(class: &'static str, label: &str, rel: &str, corpus: &PathBuf, effo
     let rgb_u8: Vec<u8> = rgb.as_raw().clone();
     let linear: Vec<RGB<f32>> = rgb
         .pixels()
-        .map(|p| RGB::new(srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])))
+        .map(|p| {
+            RGB::new(
+                srgb_to_linear(p[0]),
+                srgb_to_linear(p[1]),
+                srgb_to_linear(p[2]),
+            )
+        })
         .collect();
     let orig_lin = Img::new(linear, w as usize, h as usize);
     let srgb_arr: Vec<[u8; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
@@ -216,9 +259,9 @@ fn build_cell_list(corpus: &PathBuf) -> Vec<Cell> {
         for &e in PHOTO_EFFORTS {
             for &d in PHOTO_DISTANCES {
                 // Skip if already covered by WEDGE list
-                let dup = WEDGE_CELLS.iter().any(|&(wl, _, we, wd)| {
-                    wl == label && we == e && (wd - d).abs() < 1e-6
-                });
+                let dup = WEDGE_CELLS
+                    .iter()
+                    .any(|&(wl, _, we, wd)| wl == label && we == e && (wd - d).abs() < 1e-6);
                 if dup {
                     continue;
                 }
@@ -232,9 +275,9 @@ fn build_cell_list(corpus: &PathBuf) -> Vec<Cell> {
     for &(label, rel) in SCREENSHOTS {
         for &e in SCREEN_EFFORTS {
             for &d in SCREEN_DISTANCES {
-                let dup = WEDGE_CELLS.iter().any(|&(wl, _, we, wd)| {
-                    wl == label && we == e && (wd - d).abs() < 1e-6
-                });
+                let dup = WEDGE_CELLS
+                    .iter()
+                    .any(|&(wl, _, we, wd)| wl == label && we == e && (wd - d).abs() < 1e-6);
                 if dup {
                     continue;
                 }
@@ -256,7 +299,10 @@ fn main() {
     if let Some(p) = out_path.parent() {
         std::fs::create_dir_all(p).ok();
     }
-    let staging = PathBuf::from(format!("/tmp/w44_102_cfl_two_pass_ab_{}.tsv", std::process::id()));
+    let staging = PathBuf::from(format!(
+        "/tmp/w44_102_cfl_two_pass_ab_{}.tsv",
+        std::process::id()
+    ));
     let mut out = std::fs::File::create(&staging).unwrap();
     writeln!(
         out,
@@ -296,8 +342,22 @@ fn main() {
         let mut last_b_bytes: Vec<u8> = Vec::new();
         let mut last_w_bytes: Vec<u8> = Vec::new();
         for t in 0..TRIALS {
-            let (b1, m1) = encode_with_mode(&cell.rgb_u8, cell.width, cell.height, cell.effort, cell.distance, Mode::Baseline);
-            let (w1, n1) = encode_with_mode(&cell.rgb_u8, cell.width, cell.height, cell.effort, cell.distance, Mode::Widened);
+            let (b1, m1) = encode_with_mode(
+                &cell.rgb_u8,
+                cell.width,
+                cell.height,
+                cell.effort,
+                cell.distance,
+                Mode::Baseline,
+            );
+            let (w1, n1) = encode_with_mode(
+                &cell.rgb_u8,
+                cell.width,
+                cell.height,
+                cell.effort,
+                cell.distance,
+                Mode::Widened,
+            );
             b_bytes_all.push(b1.len());
             w_bytes_all.push(w1.len());
             b_ms_all.push(m1);
@@ -313,12 +373,18 @@ fn main() {
         let w_min_bytes = *w_bytes_all.iter().min().unwrap();
 
         // Bytes are deterministic — sanity check
-        for &x in &b_bytes_all[1..] { debug_assert_eq!(x, b_bytes_all[0]); }
-        for &x in &w_bytes_all[1..] { debug_assert_eq!(x, w_bytes_all[0]); }
+        for &x in &b_bytes_all[1..] {
+            debug_assert_eq!(x, b_bytes_all[0]);
+        }
+        for &x in &w_bytes_all[1..] {
+            debug_assert_eq!(x, w_bytes_all[0]);
+        }
 
         // Quality metrics: compute once on the last encoded bytes (deterministic).
-        let (_, b_bfly, b_ssim2) = compute_metrics(&last_b_bytes, &cell.orig_lin, &cell.orig_srgb, &bparams);
-        let (_, w_bfly, w_ssim2) = compute_metrics(&last_w_bytes, &cell.orig_lin, &cell.orig_srgb, &bparams);
+        let (_, b_bfly, b_ssim2) =
+            compute_metrics(&last_b_bytes, &cell.orig_lin, &cell.orig_srgb, &bparams);
+        let (_, w_bfly, w_ssim2) =
+            compute_metrics(&last_w_bytes, &cell.orig_lin, &cell.orig_srgb, &bparams);
 
         let bytes_d = (w_min_bytes as f64 - b_min_bytes as f64) / b_min_bytes as f64 * 100.0;
         let bfly_d = (w_bfly - b_bfly) / b_bfly.max(1e-9) * 100.0;
@@ -339,9 +405,18 @@ fn main() {
 
         eprintln!(
             "  baseline: {} B  bfly={:.4}  ssim2={:.4}  {:.1}ms  |  widened: {} B  bfly={:.4}  ssim2={:.4}  {:.1}ms  |  Δbytes={:+.2}%  Δbfly={:+.2}%  Δssim2={:+.3}  Δms={:+.1}%",
-            b_min_bytes, b_bfly, b_ssim2, b_min_ms,
-            w_min_bytes, w_bfly, w_ssim2, w_min_ms,
-            bytes_d, bfly_d, ssim2_d, ms_d
+            b_min_bytes,
+            b_bfly,
+            b_ssim2,
+            b_min_ms,
+            w_min_bytes,
+            w_bfly,
+            w_ssim2,
+            w_min_ms,
+            bytes_d,
+            bfly_d,
+            ssim2_d,
+            ms_d
         );
 
         totals_bytes_delta += bytes_d;
@@ -358,7 +433,11 @@ fn main() {
         if bytes_d > 3.0 || ssim2_d < -0.3 {
             fixed_regressions.push((
                 format!("{} e{} d={:.2}", cell.label, cell.effort, cell.distance),
-                cell.effort, cell.distance, bytes_d, ssim2_d, bfly_d,
+                cell.effort,
+                cell.distance,
+                bytes_d,
+                ssim2_d,
+                bfly_d,
             ));
         }
     }
@@ -368,21 +447,39 @@ fn main() {
 
     eprintln!("\n========================");
     eprintln!("Summary across {} cells:", count);
-    eprintln!("  avg bytes delta:  {:+.3}%", totals_bytes_delta / count as f64);
-    eprintln!("  avg bfly delta:   {:+.3}%", totals_bfly_delta / count as f64);
-    eprintln!("  avg ssim2 delta:  {:+.4}", totals_ssim2_delta / count as f64);
-    eprintln!("  avg ms delta:     {:+.3}%", totals_ms_delta / count as f64);
+    eprintln!(
+        "  avg bytes delta:  {:+.3}%",
+        totals_bytes_delta / count as f64
+    );
+    eprintln!(
+        "  avg bfly delta:   {:+.3}%",
+        totals_bfly_delta / count as f64
+    );
+    eprintln!(
+        "  avg ssim2 delta:  {:+.4}",
+        totals_ssim2_delta / count as f64
+    );
+    eprintln!(
+        "  avg ms delta:     {:+.3}%",
+        totals_ms_delta / count as f64
+    );
 
     eprintln!("\nWedge cell bfly improvements:");
     for (label, d, b_bfly, w_bfly) in &wedge_bfly_improvements {
         let imp_pct = (b_bfly - w_bfly) / b_bfly.max(1e-9) * 100.0;
-        eprintln!("  {} d={:.1}: baseline bfly={:.4}, widened bfly={:.4}  ({:+.2}% improvement)", label, d, b_bfly, w_bfly, imp_pct);
+        eprintln!(
+            "  {} d={:.1}: baseline bfly={:.4}, widened bfly={:.4}  ({:+.2}% improvement)",
+            label, d, b_bfly, w_bfly, imp_pct
+        );
     }
 
     if !fixed_regressions.is_empty() {
         eprintln!("\nCells exceeding regression gates (bytes>+3% or ssim2<-0.3):");
         for (lab, e, d, bd, sd, fd) in &fixed_regressions {
-            eprintln!("  {} (e{} d={:.2}): bytes={:+.2}%, ssim2={:+.3}, bfly={:+.2}%", lab, e, d, bd, sd, fd);
+            eprintln!(
+                "  {} (e{} d={:.2}): bytes={:+.2}%, ssim2={:+.3}, bfly={:+.2}%",
+                lab, e, d, bd, sd, fd
+            );
         }
     } else {
         eprintln!("\nNo cells exceeded regression gates.");

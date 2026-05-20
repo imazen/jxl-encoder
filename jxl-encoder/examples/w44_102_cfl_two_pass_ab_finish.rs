@@ -53,10 +53,16 @@ fn linear_to_srgb_u8(v: f32) -> u8 {
 fn encode(rgb: &[u8], w: u32, h: u32, effort: u8, d: f32, two_pass: bool) -> (Vec<u8>, f64) {
     let mut params = LossyInternalParams::default();
     params.cfl_two_pass = Some(two_pass);
-    let cfg = LossyConfig::new(d).with_effort(effort).with_internal_params(params);
+    let cfg = LossyConfig::new(d)
+        .with_effort(effort)
+        .with_internal_params(params);
     let lim = Limits::default().with_max_memory_bytes(8u64 * 1024 * 1024 * 1024);
     let t = Instant::now();
-    let bytes = cfg.encode_request(w, h, PixelLayout::Rgb8).with_limits(&lim).encode(rgb).unwrap();
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_limits(&lim)
+        .encode(rgb)
+        .unwrap();
     let ms = t.elapsed().as_secs_f64() * 1000.0;
     (bytes, ms)
 }
@@ -75,19 +81,30 @@ fn metrics(
         .unwrap_or(f64::NAN);
     let dec_srgb: Vec<[u8; 3]> = dec
         .chunks(3)
-        .map(|c| [linear_to_srgb_u8(c[0]), linear_to_srgb_u8(c[1]), linear_to_srgb_u8(c[2])])
+        .map(|c| {
+            [
+                linear_to_srgb_u8(c[0]),
+                linear_to_srgb_u8(c[1]),
+                linear_to_srgb_u8(c[2]),
+            ]
+        })
         .collect();
-    let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), Img::new(dec_srgb, dw, dh).as_ref())
-        .unwrap_or(f64::NAN);
+    let ssim2 =
+        fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), Img::new(dec_srgb, dw, dh).as_ref())
+            .unwrap_or(f64::NAN);
     (bfly, ssim2)
 }
 
 fn main() {
     let corpus = PathBuf::from(
-        std::env::var("CODEC_CORPUS_DIR").unwrap_or_else(|_| "/home/lilith/work/codec-corpus".into()),
+        std::env::var("CODEC_CORPUS_DIR")
+            .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".into()),
     );
     let out_path = PathBuf::from("benchmarks/w44_102_cfl_two_pass_e5_2026-05-19.tsv");
-    let mut out = std::fs::OpenOptions::new().append(true).open(&out_path).unwrap();
+    let mut out = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&out_path)
+        .unwrap();
     let bp = ButteraugliParams::default();
 
     for &(label, rel, effort, d) in CELLS {
@@ -99,7 +116,13 @@ fn main() {
         let rgb_u8: Vec<u8> = rgb.as_raw().clone();
         let linear: Vec<RGB<f32>> = rgb
             .pixels()
-            .map(|p| RGB::new(srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])))
+            .map(|p| {
+                RGB::new(
+                    srgb_to_linear(p[0]),
+                    srgb_to_linear(p[1]),
+                    srgb_to_linear(p[2]),
+                )
+            })
             .collect();
         let orig_lin = Img::new(linear, w as usize, h as usize);
         let srgb_arr: Vec<[u8; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
@@ -138,8 +161,18 @@ fn main() {
         out.flush().ok();
         eprintln!(
             "  baseline {}B bfly={:.4} ssim2={:.4} {:.0}ms | widened {}B bfly={:.4} ssim2={:.4} {:.0}ms | Δb={:+.2}% Δbfly={:+.2}% Δssim2={:+.3} Δms={:+.1}%",
-            b_bytes_min, b_bfly, b_ssim2, b_ms_min, w_bytes_min, w_bfly, w_ssim2, w_ms_min,
-            bd, fd, sd, md
+            b_bytes_min,
+            b_bfly,
+            b_ssim2,
+            b_ms_min,
+            w_bytes_min,
+            w_bfly,
+            w_ssim2,
+            w_ms_min,
+            bd,
+            fd,
+            sd,
+            md
         );
     }
     eprintln!("done. appended 5 rows to {}", out_path.display());

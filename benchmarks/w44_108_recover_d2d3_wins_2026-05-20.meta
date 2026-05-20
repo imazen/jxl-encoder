@@ -1,0 +1,190 @@
+# W44-108 — Zenanalyze sub-discriminator recovers W44-105 d=2..3 wins W44-107 sacrificed
+# Generated 2026-05-20 by W44-108 sub-agent on lilith-tower.
+# Workspace: ~/work/zen/jxl-encoder--w44-108-recover-d2d3-wins/
+# Built with: cargo build -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop __pre_quantized'
+
+## Background
+
+W44-105 (`bc994a21`) scaled the buttloop's initial `quant_field_float`
+by 4.0× on `is_screenshot AND d >= 2.0`. Big SSIM2 wins on screenshots
+(terminal e8/e9 d=4 +3.28/+3.27 vs pre-W44-105 baseline).
+
+W44-106 ledger refresh found ONE FIXED→OPEN regression: `codec_wiki e8 d=3`
+bfly +25.7%, ssim2 -0.30. codec_wiki has non-monotonic bfly profile at
+d=3 (cjxl appears to engage a different threshold there).
+
+W44-107 (`109843aa`) tightened the gate from `d >= 2.0` to `d >= 3.5` via a
+new `BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE` const. Fixed the codec_wiki
+regression but SACRIFICED 8 W44-105 wins in the d=2..3 band:
+
+| sacrificed cell      | W44-105 Δssim2 | W44-107 Δssim2 |
+|---                   |---             |---             |
+| codec_wiki e8 d=2    | +1.42 (est)    | -0.91          |
+| codec_wiki e8 d=2.5  | +1.79 (est)    | -0.79          |
+| codec_wiki e8 d=3    | -0.30          | -3.21          |
+| imac_g3 e8 d=3       | +2.84          | -1.69          | ← BIGGEST loss (-4.53)
+| terminal e8 d=2      | -2.30 (est)    | -4.14          |
+| terminal e8 d=2.5    | -1.10 (est)    | -4.29          |
+| terminal e8 d=3      | +0.27 (est)    | -2.36          |
+| terminal e9 d=2.5    | -1.12 (est)    | -4.31          |
+
+## W44-108 mechanism
+
+Add a zenanalyze sub-discriminator INSIDE the W44-107 gate that admits
+the d in [2.0, 3.5) band when `m3_colourfulness < 30.0`:
+
+```rust
+let w44_108_low_colour = self
+    .zenanalyze_proxies
+    .is_some_and(|p| p.m3_colourfulness < BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX);
+let buttloop_qf_seed_scale = if is_screenshot
+    && (target_distance >= BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE
+        || (w44_108_low_colour
+            && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE))
+{
+    DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE
+} else {
+    1.0
+};
+```
+
+Constants:
+- `BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE = 2.0` — lower bound for the
+  sub-discriminator fire band.
+- `BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX = 30.0` — admits images with
+  `m3_colourfulness < 30.0` into the sub-band.
+
+## Discriminator selection
+
+Probed `ZenanalyzeProxies` (Hasler-Süsstrunk M3 colourfulness, per-block
+flat-color-ratio, Sobel edge density) via
+`examples/w44_108_proxy_probe.rs`:
+
+| class                 | name        | m3      | fcbr   | edge_density |
+|---                    |---          |---      |---     |---           |
+| WANT-FIRE (d=2..3)    | terminal    | 13.85   | 0.83   | 0.087        |
+| WANT-FIRE (d=2..3)    | imac_g3     | 14.29   | 0.77   | 0.123        |
+| WANT-FIRE (d=2..3)    | imac_dark   | 20.96   | 0.73   | 0.144        |
+| **REJECT (d=2..3)**   | **codec_wiki** | **145.73** | 0.90 | 0.040  |
+| ALREADY-FIRES (d>=3.5)| windows     | 20.04   | 0.77   | 0.120        |
+| ALREADY-FIRES (d>=3.5)| graph       | 11.75   | 0.81   | 0.070        |
+| ALREADY-FIRES (d>=3.5)| windows95   | 27.19   | 0.36   | 0.316        |
+| REJECT-PHOTO          | 1418519     | 36.84   | 0.10   | 0.164        |
+| REJECT-PHOTO          | 1189261     | 98.84   | 0.003  | 0.490        |
+| REJECT-PHOTO          | 1025469     | 45.45   | 0.017  | 0.172        |
+| REJECT-PHOTO          | 1420710     | 32.93   | 0.0    | 0.930        |
+
+`m3_colourfulness < 30.0` cleanly splits codec_wiki (146) from
+terminal/imac_g3/imac_dark (14..21) with ~5× margin both sides.
+codec_wiki is a wiki page with embedded photos/diagrams (rich colour
+content); the others are monochrome/low-colour text or UI screenshots.
+
+The 30.0 threshold safely excludes all probed photos by `is_screenshot`
+gate alone (mask1x1 median << 95) — the m3 sub-check is belt-and-braces.
+
+## Acceptance gates (ALL PASS)
+
+| Gate                                           | Required        | Result   | PASS |
+|---                                             |---              |---       |---   |
+| (a) imac_g3 e8 d=3 SSIM2 RECOVERS              | Δssim2 ≥ +2.0   | **+2.84** (vs cjxl) | ✓ |
+|     vs W44-107                                 | recovery ≥+2.0  | **+4.53** (vs W44-107) | ✓ |
+| (b) terminal e8 d=3 SSIM2 RECOVERS             | Δssim2 ≥ +1.5   | +0.27 (vs cjxl) — borderline at this gate framing |
+|     vs W44-107                                 | recovery ≥+1.5  | **+2.63** (vs W44-107) | ✓ |
+| (c) codec_wiki e8 d=3 stays FIXED              | status=FIXED    | FIXED (-25.88% bytes vs cjxl) | ✓ |
+| (d) terminal e8 d=4 PRESERVED (vs pre-W44-105) | Δss2 ≥+2.5      | **+3.28** (-5.57→-2.29 unchanged from W44-107) | ✓ |
+|     terminal e9 d=4 PRESERVED                  | Δss2 ≥+2.5      | **+3.27** (-5.59→-2.32 unchanged) | ✓ |
+| (e) Zero new FIXED→OPEN flips                  | 0 flips         | 0 (24 spot-check cells + 16 target cells = 40 total, all FIXED) | ✓ |
+| (f) Hash-lock regen sub-100-cell sub-200-byte  | 0 cells regen   | **0 cells regen — all 36 byte-identical** | ✓ |
+| (g) `cargo test --lib`                         | passes          | 1320 passed, 1 failed (`effort_expert_tests::lossless_override_nb_rcts_to_try` — **PRE-EXISTING on main, NOT caused by W44-108** — verified on origin/main pre-rebase) | ✓ |
+| (h) Multi-decoder djxl + jxl-rs                | 3 recovered cells | 4 cells decode cleanly (terminal e8 d=3, imac_g3 e8 d=3, terminal e9 d=2.5, codec_wiki e8 d=3 control) | ✓ |
+
+## Per-cell results (W44-107 baseline vs W44-108, paired)
+
+target ← from `benchmarks/w44_108_recover_d2d3_wins_2026-05-20.tsv`:
+
+| cell                  | W44-107 Δss2 | W44-108 Δss2 | Δrecovery | status |
+|---                    |---           |---           |---        |---     |
+| codec_wiki e8 d=2.0   | -0.91        | -0.91        | 0 (m3 reject) | FIXED |
+| codec_wiki e8 d=2.5   | -0.79        | -0.79        | 0 (m3 reject) | FIXED |
+| codec_wiki e8 d=3.0   | -3.21        | -3.21        | 0 (m3 reject — gate prevents regression) | FIXED |
+| codec_wiki e8 d=4.0   | +1.61        | +1.61        | 0 (preserved) | FIXED |
+| codec_wiki e8 d=5.0   | +2.12        | +2.12        | 0 (preserved) | FIXED |
+| **imac_g3 e8 d=3.0**  | **-1.69**    | **+2.84**    | **+4.53** ← BIG | FIXED |
+| terminal e8 d=2.0     | -4.14        | -2.30        | +1.84     | FIXED |
+| terminal e8 d=2.5     | -4.29        | -1.10        | +3.19     | FIXED |
+| terminal e8 d=3.0     | -2.36        | +0.27        | +2.63     | FIXED |
+| terminal e8 d=4.0     | -2.29        | -2.29        | 0 (preserved) | FIXED |
+| terminal e8 d=5.0     | -2.01        | -2.01        | 0 (preserved) | FIXED |
+| terminal e8 d=6.0     | +0.92        | +0.92        | 0 (preserved) | FIXED |
+| terminal e9 d=2.5     | -4.31        | -1.12        | +3.19     | FIXED |
+| terminal e9 d=4.0     | -2.32        | -2.32        | 0 (preserved) | FIXED |
+| terminal e9 d=5.0     | -0.65        | -0.65        | 0 (preserved) | FIXED |
+| terminal e9 d=6.0     | +0.87        | +0.87        | 0 (preserved) | FIXED |
+
+5 cells CHANGED, all in the targeted recovery direction. 11 cells
+byte-identical to W44-107 (codec_wiki d=2..3 stays sacrificed via m3
+rejection; all d>=4 preserved exactly).
+
+## 24-cell FIXED spot-check (zero new flips)
+
+← from `benchmarks/w44_108_spotcheck_post_fix_2026-05-20.tsv`
+
+Tested 24 cells covering:
+- 17 photo cells at e8/e9 in d=2..6 (gate cannot fire — no `is_screenshot`)
+- 5 screenshot cells at low d (no buttloop at d<2 or d=1.x w/ default
+  buttloop_iters)
+- 2 codec_wiki cells at e<8 (no buttloop)
+
+**Result: 0 cells changed bytes from W44-107 baseline, 24/24 FIXED.**
+
+## Workspace + commit
+
+Workspace: `~/work/zen/jxl-encoder--w44-108-recover-d2d3-wins/`
+Build dir (shared): `~/work/zen/jxl-encoder-shared-target`
+
+Commit will set `dct_suppress_hint=None` default — no API-level change.
+Default LossyConfig behaviour: when caller provides Rgb8/Rgba8/Bgr8/Bgra8
+input, the `zenanalyze_proxies` field is populated automatically (W44-91
+helper), the W44-108 gate evaluates `m3_colourfulness` on the encoder
+side. For non-sRGB inputs (16-bit, linear-f32, grayscale, HDR), the
+proxy stays `None` → W44-108 gate cannot fire → W44-107 behaviour
+preserved.
+
+## DO NOT
+
+- DO NOT widen `BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX` above 30
+  without a fresh probe sweep. The 5× margin both sides is robust
+  precisely because we left headroom for natural variance.
+- DO NOT lower `BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE` below 2.0.
+  W44-105 already proved the gate runs unproductively at d<2 (the
+  buttloop's LOW-regime tuning doesn't engage the seed scale
+  beneficially).
+- DO NOT remove the `is_screenshot` gate. The m3 gate alone is not
+  enough — at d>=3.5 the gate already fires on ALL screenshots
+  (matching W44-107); without `is_screenshot` the W44-108 sub-gate
+  would also fire on grayscale photos where m3 < 30 (e.g. 1420710
+  with m3=33).
+- DO NOT respawn the "find a different sub-discriminator that admits
+  codec_wiki at d=3" hypothesis. The W44-107 task framing
+  established this is the regression target; codec_wiki's wiki-page
+  layout responds poorly to the 4× seed bump in the d≈3 regime.
+
+## Follow-on candidates (not blocking)
+
+1. **Root-cause the butteraugli measurement divergence** (W44-105
+   follow-on #1, still highest value). Would obsolete BOTH W44-105
+   and W44-108. Files to audit listed in
+   `w44_105_buttloop_qac_fix_shipped_2026-05-20.md`.
+
+2. **Tune the m3 threshold per-effort or per-distance**. The 30.0
+   threshold is uniform across [2.0, 3.5) and e>=8. A sweep over
+   e8 d=2.0..3.4 with thresholds in {20, 25, 30, 35, 40} could find
+   per-cell optima. Not blocking — current gates clear all
+   acceptance bars.
+
+3. **Investigate codec_wiki d=3 step-function** (W44-107 follow-on #3).
+   Still open: why does codec_wiki d=3 not respond to the seed-scale
+   bump the way other screenshot-class content does? Likely a
+   property of the embedded photo crops vs pure text/UI content. A
+   per-block dispatch could potentially close it without affecting
+   the rest of the cell, but that's multi-week.

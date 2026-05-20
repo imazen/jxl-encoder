@@ -94,7 +94,10 @@ struct Measure {
 /// Implementations MUST gate themselves on `mask < 50` for cells
 /// where the existing W44-29 gate would also fire — otherwise we
 /// over-apply and regress non-target cells.
-type Variant = (&'static str, fn(f32, Option<f32>) -> Option<EntropyMulTable>);
+type Variant = (
+    &'static str,
+    fn(f32, Option<f32>) -> Option<EntropyMulTable>,
+);
 
 fn variant_default(_d: f32, _m: Option<f32>) -> Option<EntropyMulTable> {
     None
@@ -302,14 +305,7 @@ fn cjxl_size(src: &str, effort: u8, d: f32) -> Option<usize> {
         (d * 10.0) as u32
     );
     let out = Command::new(CJXL_BIN)
-        .args([
-            "-d",
-            &d.to_string(),
-            "-e",
-            &effort.to_string(),
-            src,
-            &tmp,
-        ])
+        .args(["-d", &d.to_string(), "-e", &effort.to_string(), src, &tmp])
         .output()
         .ok()?;
     if !out.status.success() {
@@ -323,15 +319,27 @@ fn cjxl_size(src: &str, effort: u8, d: f32) -> Option<usize> {
 fn srgb_u8_to_linear(rgb_u8: &[u8], w: u32, h: u32) -> Img<Vec<RGB<f32>>> {
     let lin: Vec<RGB<f32>> = rgb_u8
         .chunks(3)
-        .map(|c| RGB::new(srgb_to_linear(c[0]), srgb_to_linear(c[1]), srgb_to_linear(c[2])))
+        .map(|c| {
+            RGB::new(
+                srgb_to_linear(c[0]),
+                srgb_to_linear(c[1]),
+                srgb_to_linear(c[2]),
+            )
+        })
         .collect();
     Img::new(lin, w as usize, h as usize)
 }
 
 fn main() {
     eprintln!("W44-94 widen W44-77/W44-29 tightening A/B sweep");
-    eprintln!("Variants: {:?}", VARIANTS.iter().map(|v| v.0).collect::<Vec<_>>());
-    eprintln!("Cells: {} (13 OPEN + 6 W93_REGR + 13 SPOT_FIXED)", CELLS.len());
+    eprintln!(
+        "Variants: {:?}",
+        VARIANTS.iter().map(|v| v.0).collect::<Vec<_>>()
+    );
+    eprintln!(
+        "Cells: {} (13 OPEN + 6 W93_REGR + 13 SPOT_FIXED)",
+        CELLS.len()
+    );
 
     let params = ButteraugliParams::default();
 
@@ -354,12 +362,22 @@ fn main() {
     }
 
     // Cache decoded sources per image
-    let mut images_cache: BTreeMap<String, (u32, u32, Vec<u8>, Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>)> =
-        BTreeMap::new();
+    let mut images_cache: BTreeMap<
+        String,
+        (u32, u32, Vec<u8>, Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>),
+    > = BTreeMap::new();
 
     let n_cells = CELLS.len();
     for (i, &(image, effort, dist, class)) in CELLS.iter().enumerate() {
-        eprintln!("[{}/{}] {} e{} d={}  ({})", i + 1, n_cells, image, effort, dist, class);
+        eprintln!(
+            "[{}/{}] {} e{} d={}  ({})",
+            i + 1,
+            n_cells,
+            image,
+            effort,
+            dist,
+            class
+        );
         let path = PathBuf::from(CID22).join(image);
 
         let (w, h, raw, orig_linear_img, orig_srgb_img) =
@@ -368,8 +386,7 @@ fn main() {
                 let (w, h) = img.dimensions();
                 let rgb = img.to_rgb8().into_raw();
                 let linear = srgb_u8_to_linear(&rgb, w, h);
-                let srgb_pixels: Vec<[u8; 3]> =
-                    rgb.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
+                let srgb_pixels: Vec<[u8; 3]> = rgb.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
                 let srgb_img = Img::new(srgb_pixels, w as usize, h as usize);
                 (w, h, rgb, linear, srgb_img)
             });
