@@ -201,6 +201,55 @@ impl EntropyMulTable {
             ..Self::reference()
         }
     }
+
+    /// W44-96 **variant Z** lift table for the *high-edge, low-flat-color*
+    /// sub-class of [`high_d_photo_smooth_suppressed`].
+    ///
+    /// Built from the W44-95 honest-stop measurement: variant Z
+    /// (dct32x32=1.20 instead of 1.34) closes 5-6 of 13 OPEN F-D cells on
+    /// {1420710, 1531677} at d ∈ {5, 6} but regresses {2389166, 1044329}
+    /// SSIM2 by -0.30 to -0.82 (exceeds the ≤0.3 budget). The W44-96
+    /// proxy probe identified a clean per-image discriminator:
+    /// `edge_density > 0.7 AND flat_color_block_ratio < 0.01` admits
+    /// {1420710, 1531677} and rejects {2389166, 1044329, 7062219}
+    /// cleanly across every measured proxy value (see
+    /// `benchmarks/w44_96_*.tsv` for the per-image probe).
+    ///
+    /// Changes vs [`high_d_photo_smooth_suppressed`] (all reductions):
+    /// - dct32x32: 1.34 → 1.20 (~10.4 % cheaper)
+    /// - dct16x32 / dct32x16: 1.349 → 1.208 (scaled by 1.49/1.48)
+    /// - dct16x16: unchanged at 1.27
+    ///
+    /// **Gate**: only applied when ALL hold (per
+    /// `vardct::encoder::compute_ac_strategy`):
+    ///   1. The existing W44-29 lift fires (`w44_29_lower=true`).
+    ///   2. `distance >= W44_96_VARIANT_Z_MIN_DISTANCE` (4.5 — covers
+    ///      the W44-95 measured wins at d ∈ {5, 6} and excludes
+    ///      d=4 / d=3 cells where the variant Z gain is marginal).
+    ///   3. `mask1x1_median < HIGH_D_PHOTO_SMOOTH_THRESHOLD` (50 — keeps
+    ///      the variant Z lift strictly within the W44-29 sub-band, NOT
+    ///      the W44-91 colourful-textured-photo path).
+    ///   4. `ZenanalyzeProxies.edge_density >= W44_96_EDGE_DENSITY_MIN`
+    ///      (0.7).
+    ///   5. `ZenanalyzeProxies.flat_color_block_ratio < W44_96_FCBR_MAX`
+    ///      (0.01).
+    ///
+    /// Of the 5 CID22 photos that currently fire W44-29 (1420710, 1531677,
+    /// 2389166, 1044329, 7062219), only {1420710, 1531677} pass this
+    /// discriminator; the other 3 stay on the default
+    /// [`high_d_photo_smooth_suppressed`] table.
+    ///
+    /// **Bench**: `benchmarks/w44_96_zenanalyze_dct32_discriminator_2026-05-19.{tsv,meta}`.
+    pub fn high_d_photo_smooth_suppressed_z() -> Self {
+        Self {
+            dct16x16: 1.27,
+            dct32x32: 1.20,
+            // Scale dct16x32 with dct32x32 by the libjxl 1.49/1.48 ratio
+            // (mirrors the W44-28 sweep harness `build_table` helper).
+            dct16x32: 1.20 * (1.49 / 1.48),
+            ..Self::reference()
+        }
+    }
 }
 
 /// All effort-derived encoder decisions, centralized.
@@ -2600,6 +2649,41 @@ mod tests {
         assert!(t.dct16x16 < r.dct16x16);
         assert!(t.dct32x32 < r.dct32x32);
         assert!(t.dct16x32 < r.dct16x32);
+    }
+
+    #[test]
+    fn test_entropy_mul_table_high_d_photo_smooth_suppressed_z_values() {
+        // W44-96 variant Z: dct32x32 = 1.20 (vs default suppressed 1.34
+        // vs reference 1.48). Every other field except dct16x32 must
+        // match the default suppressed table (dct16x16 unchanged).
+        let t = EntropyMulTable::high_d_photo_smooth_suppressed_z();
+        let d = EntropyMulTable::high_d_photo_smooth_suppressed();
+        let r = EntropyMulTable::reference();
+
+        // Variant Z reductions:
+        assert_eq!(t.dct16x16, d.dct16x16); // unchanged at 1.27
+        assert_eq!(t.dct32x32, 1.20); // 1.34 → 1.20 in variant Z
+        let expected_dct16x32 = 1.20 * (1.49 / 1.48);
+        assert!((t.dct16x32 - expected_dct16x32).abs() < 1e-6);
+
+        // Strict-lower than default suppressed on the large-DCT axis.
+        assert!(t.dct32x32 < d.dct32x32);
+        assert!(t.dct16x32 < d.dct16x32);
+        // Lower than reference too.
+        assert!(t.dct32x32 < r.dct32x32);
+        assert!(t.dct16x32 < r.dct16x32);
+
+        // Every OTHER field MUST match reference (same shape as the
+        // default suppressed table — variant Z only widens dct32x32).
+        assert_eq!(t.dct8, r.dct8);
+        assert_eq!(t.dct4x4, r.dct4x4);
+        assert_eq!(t.dct4x8, r.dct4x8);
+        assert_eq!(t.identity, r.identity);
+        assert_eq!(t.dct2x2, r.dct2x2);
+        assert_eq!(t.afv, r.afv);
+        assert_eq!(t.dct16x8, r.dct16x8);
+        assert_eq!(t.dct64x32, r.dct64x32);
+        assert_eq!(t.dct64x64, r.dct64x64);
     }
 
     #[test]

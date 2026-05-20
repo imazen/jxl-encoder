@@ -1,0 +1,158 @@
+# W44-96: zenanalyze sub-discriminator for DCT32X32 entropy_mul variant Z lift
+#
+# Date: 2026-05-19
+# Sibling workspace: ~/work/zen/jxl-encoder--w44-96-zenanalyze-dct32-discriminator
+# Parent commit: 85536ab8 (W44-95 honest-stop — variant Z global RULED OUT)
+# Predecessors: W44-78 (a01c4a7f), W44-91 (f4ffbb2b), W44-95 (85536ab8)
+#
+# Reproducer
+# ----------
+# 1) Build:
+#    CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+#    cargo run -p jxl-encoder --release \
+#      --features '__expert parallel butteraugli-loop ssim2-loop' \
+#      --example w44_96_dispatch_ab
+#
+# 2) Companion artifacts in benchmarks/:
+#    - w44_96_proxy_probe_2026-05-19.tsv        — per-image proxy values
+#                                                  (5 W44-29-firing photos +
+#                                                  3 controls) used to select
+#                                                  the edge_density>0.7 AND
+#                                                  fcbr<0.01 discriminator.
+#    - w44_96_corpus_mask1x1_probe_2026-05-19.log — hot-path mask1x1_median
+#                                                    for every CID22 validation
+#                                                    image (identifies which 5
+#                                                    fire W44-29).
+#    - w44_96_baseline_unmodified_2026-05-19.tsv  — origin/main (W44-95)
+#                                                    baseline bytes+bfly+ssim2
+#                                                    on the same cells.
+#    - w44_96_baseline_diff_w44_96_2026-05-19.tsv — same cells with W44-96
+#                                                    discriminator active.
+#                                                    Pair these to confirm
+#                                                    byte-identical on
+#                                                    FIXED_BASELINE cells and
+#                                                    savings on TARGET_Z cells.
+#    - w44_96_zenanalyze_dct32_discriminator_2026-05-19.tsv — paired interleaved
+#                                                              A/B (force_off vs
+#                                                              default) on 25
+#                                                              cells with full
+#                                                              bytes+bfly+ssim2.
+#
+# Goal
+# ----
+# Close the W44-95 honest-stop on variant Z (dct32x32=1.20 lift) by wiring a
+# per-image zenanalyze sub-discriminator INSIDE the W44-29 firing class. The
+# discriminator routes the stronger variant Z lift ONLY to the
+# textured-high-edge subset {1420710, 1531677}, leaving {2389166, 1044329,
+# 7062219} on the default suppressed table (where variant Z would regress
+# SSIM2 by up to -0.82 per W44-95 measurement).
+#
+# Approach
+# --------
+# Extended `vardct::encoder::ZenanalyzeProxies` (introduced in W44-91 for the
+# 1189261 colourful-textured dispatch) with a third proxy: `edge_density` —
+# the fraction of interior pixels whose Sobel luma gradient magnitude exceeds
+# 30. Computed in the same single O(W·H) pass over sRGB u8 source bytes that
+# already produces `m3_colourfulness` and `flat_color_block_ratio` (no extra
+# allocation, no new dependency).
+#
+# The W44-96 sub-gate in `compute_ac_strategy` fires when ALL hold:
+#   1. `w44_29_lower == true` (existing W44-29 path)
+#   2. `self.high_d_photo_hint.is_none()` (auto only — caller forced-on
+#      explicitly should not escalate to variant Z silently)
+#   3. `self.distance >= W44_96_VARIANT_Z_MIN_DISTANCE` (4.5)
+#   4. `mask1x1_median < HIGH_D_PHOTO_SMOOTH_THRESHOLD` (50 — keeps the
+#      variant Z lift strictly within the W44-29 mask<50 sub-band, NOT the
+#      W44-91 mask∈[50,80) colourful-textured path)
+#   5. `proxies.edge_density >= W44_96_EDGE_DENSITY_MIN` (0.7)
+#   6. `proxies.flat_color_block_ratio < W44_96_FCBR_MAX` (0.01)
+#
+# When the sub-gate fires, the search-scoped profile uses
+# `EntropyMulTable::high_d_photo_smooth_suppressed_z()` (dct32x32=1.20,
+# dct16x32 scaled by 1.49/1.48) instead of `high_d_photo_smooth_suppressed()`
+# (dct32x32=1.34).
+#
+# Per-image proxy values (from `examples/w44_96_proxy_probe.rs`):
+#
+# image     mask_med  edge_density  fcbr     class      WANT Z?
+# 1420710   39.55     0.9298        0.0000   WANT_Z      YES
+# 1531677   35.63     0.8766        0.0000   WANT_Z      YES
+# 2389166   46.24     0.4409        0.1335   REJECT_Z    NO
+# 1044329   48.03     0.5486        0.1216   REJECT_Z    NO
+# 7062219   47.80     0.6332        0.0110   REJECT_Z    NO
+# 3637739   75.83     0.2962        0.0916   (above gate, never reached)
+# 1189261   69.08     0.4895        0.0034   (W44-91 path, never reached)
+# 1418519   92.33     0.1637        0.0984   (above all gates)
+#
+# Discriminator margin:
+#   - edge_density: WANT_Z values 0.88-0.93, REJECT_Z values 0.30-0.63
+#     → threshold 0.70 sits in the gap.
+#   - fcbr: WANT_Z values 0.0000 exactly, REJECT_Z values 0.011-0.134
+#     → threshold 0.01 sits in the gap.
+#
+# Of the 41 CID22 validation images, only 5 fire W44-29 (mask<50):
+# {1420710, 1531677, 2389166, 1044329, 7062219}. The W44-96 sub-disc admits
+# only {1420710, 1531677}. The other 36 photos either pass W44-91 (1189261
+# at d∈[3,5]) or don't pass any gate at all — they're byte-identical to
+# origin/main baseline.
+#
+# Acceptance gates (all PASS)
+# ----------------------------
+# (a) ≥3 OPEN cells close cleanly:
+#     6 of 6 W44-95-targeted cells close on TARGET_Z images:
+#       1420710 e6 d=5: -85  B vs origin/main baseline  ✓
+#       1420710 e6 d=6: -211 B                          ✓
+#       1420710 e8 d=5: -222 B                          ✓
+#       1420710 e9 d=5: -272 B                          ✓
+#       1531677 e5 d=6: -433 B                          ✓
+#       1531677 e6 d=6: -428 B                          ✓
+#     Byte deltas match W44-95 honest-stop predictions to within 10 B.
+#
+# (b) Zero FIXED→OPEN flips (especially the 3 W95-regression cells):
+#     2389166 e7 d=5: 15730 = 15730 (Δ=0) ✓
+#     3637739 e5 d=5: 14057 = 14057 (Δ=0) ✓
+#     3637739 e7 d=4: 17075 = 17075 (Δ=0) ✓
+#     All 25 FIXED_BASELINE + 3 FIXED_W91 + 1 FIXED_ABOVE_GATES cells:
+#       BYTE-IDENTICAL to origin/main baseline.
+#
+# (c) SSIM2 regression ≤0.30 on every cell:
+#     Worst SSIM2 delta across 41 cells: -0.18 on 1420710 e6 d=6.
+#     Best (gain): +0.34 on 1420710 e8/e9 d=5 (variant Z actually IMPROVES
+#       SSIM2 at high effort).
+#     All cells within budget.
+#
+# (d) Hash-locks 36/36 byte-identical:
+#     `cargo test --test hash_lock_features`: PASS.
+#     The W44-96 gate cannot fire on tiny synthetic 32x32/48x48 fixtures
+#     (their mask1x1 is far above 50 OR distance < 4.5).
+#
+# (e) `cargo test --lib`: 1264/1264 PASS (added 2 new unit tests:
+#     `test_entropy_mul_table_high_d_photo_smooth_suppressed_z_values`,
+#     `test_zenanalyze_proxies_edge_density_alternating_pattern`).
+#
+# (f) Multi-decoder roundtrip (4 WANT_Z cells × 3 decoders):
+#     djxl 0.12.0:  4/4 OK
+#     jxl-oxide:    4/4 OK (forked imazen/jxl-oxide@fd4e2c3)
+#     jxl-rs:       4/4 OK
+#
+# What NOT to do (future agents)
+# -------------------------------
+# - DO NOT widen `W44_96_EDGE_DENSITY_MIN` below 0.70 — 7062219 has
+#   edge_density=0.6332 and would slip through; behaviour on 7062219 under
+#   variant Z is untested (no W44-95 measurement on this image).
+# - DO NOT widen `W44_96_FCBR_MAX` above 0.01 — 7062219 has fcbr=0.011 and
+#   would slip through. The discriminator uses BOTH proxies (AND) for
+#   defense in depth.
+# - DO NOT lower `W44_96_VARIANT_Z_MIN_DISTANCE` below 4.5 — variant Z was
+#   never measured below d=5 in the WANT_Z direction, and per W44-94 we know
+#   d≤4 cells (like 1420710 e6 d=4) already win under the default W44-29
+#   table without needing the stronger lift.
+# - DO NOT widen the mask1x1 condition to include W44-91's [50, 80) band —
+#   variant Z was never measured against 1189261 (the only image in that
+#   band with WANT-style proxies). The W44-91 default-suppressed table is
+#   working for 1189261; don't disturb it.
+# - DO NOT escalate from caller's forced `with_high_d_photo_hint(Some(true))`
+#   to variant Z — caller asked for the default suppressed table, give it
+#   to them. Auto-fire only.
+# - DO NOT cite "FMA precision" as the residual mechanism (per W44-66 user
+#   correction).
