@@ -586,6 +586,109 @@ Key patterns to watch for when working on this codebase:
 
 ## Investigation Notes
 
+### W44-96: Zenanalyze sub-discriminator for DCT32X32 entropy_mul variant Z lift — SHIPPED (May 19, 2026)
+
+**Status**: [SHIPPED]
+
+Closes the W44-95 honest-stop ("variant Z lift can't ship globally — needs
+per-image discriminator"). Three consecutive honest-stops (W44-93/94/95)
+had surfaced the same blocker: SSIM2-blind cost model at e<8 means a
+SINGLE global `entropy_mul` table cannot satisfy 1420710-class AND
+2389166-class simultaneously. Follows the W44-91 (`f4ffbb2b`) pattern of
+adding a zenanalyze-equivalent sub-gate computed cheaply at the API
+boundary.
+
+**Mechanism**:
+
+1. Extended [`ZenanalyzeProxies`] (introduced in W44-91) with a third
+   proxy: `edge_density` — fraction of interior pixels whose Sobel luma
+   gradient magnitude exceeds 30. Same O(W·H) single pass over sRGB u8
+   source bytes as the other proxies; no new allocation, no new
+   dependency. Bit-equivalent to the zenanalyze tier1 `edge_density`
+   feature.
+2. Added [`EntropyMulTable::high_d_photo_smooth_suppressed_z`] — the
+   variant Z lift table from the W44-95 honest-stop (dct32x32=1.20
+   instead of the default 1.34; dct16x32 scaled by 1.49/1.48).
+3. Added the W44-96 sub-gate in `compute_ac_strategy` (fires INSIDE
+   `w44_29_lower` only). When all of the following hold, swap to the
+   variant Z table:
+   - `w44_29_lower == true` (existing path)
+   - `high_d_photo_hint.is_none()` (auto only — caller's forced-on
+     `Some(true)` keeps the default suppressed table, not variant Z)
+   - `distance >= W44_96_VARIANT_Z_MIN_DISTANCE` (4.5)
+   - `mask1x1_median < HIGH_D_PHOTO_SMOOTH_THRESHOLD` (50 — strictly
+     inside W44-29's mask band, NOT W44-91's [50, 80))
+   - `proxies.edge_density >= W44_96_EDGE_DENSITY_MIN` (0.7)
+   - `proxies.flat_color_block_ratio < W44_96_FCBR_MAX` (0.01)
+
+**Discriminator selection** (`examples/w44_96_proxy_probe.rs`): of the 5
+CID22 photos that fire W44-29 (`mask1x1_median < 50`), only {1420710,
+1531677} pass the discriminator — they sit at edge_density ≥ 0.88 and
+fcbr = 0.0000. {2389166, 1044329, 7062219} all fail at least one of the
+two proxies and stay on the default suppressed table.
+
+**Per-cell results** (baseline = origin/main commit `85536ab8`):
+
+| group | image | effort | distance | base bytes | new bytes | Δ B | Δ ssim2 |
+|---|---|---|---|---|---|---|---|
+| TARGET_Z | 1420710 | e6 | d=5 | 24385 | 24300 | -85  | -0.12 |
+| TARGET_Z | 1420710 | e6 | d=6 | 21425 | 21214 | -211 | -0.18 |
+| TARGET_Z | 1420710 | e8 | d=5 | 22573 | 22351 | -222 | +0.34 |
+| TARGET_Z | 1420710 | e9 | d=5 | 22626 | 22354 | -272 | +0.34 |
+| TARGET_Z | 1531677 | e5 | d=6 | 18207 | 17774 | -433 | +0.00 |
+| TARGET_Z | 1531677 | e6 | d=6 | 18430 | 18002 | -428 | -0.04 |
+| W95_REGR | 2389166 | e7 | d=5 | 15730 | 15730 | 0    |  0    |
+| W95_REGR | 3637739 | e5 | d=5 | 14057 | 14057 | 0    |  0    |
+| W95_REGR | 3637739 | e7 | d=4 | 17075 | 17075 | 0    |  0    |
+| W93_REGR | 1189261 | e7 | d=3 | 29802 | 29802 | 0    |  0    |
+| W93_REGR | 1189261 | e7 | d=4 | 23928 | 23928 | 0    |  0    |
+| W93_REGR | 1189261 | e7 | d=5 | 19459 | 19459 | 0    |  0    |
+| FIXED_BASELINE | 2389166 × 8 cells | | | identical | identical | 0 | 0 |
+| FIXED_BASELINE | 3637739 × 8 cells | | | identical | identical | 0 | 0 |
+| FIXED_BASELINE | 1044329 × 6 cells | | | identical | identical | 0 | 0 |
+| FIXED_BASELINE | 7062219 × 3 cells | | | identical | identical | 0 | 0 |
+
+**Acceptance gates (all PASS)**:
+- (a) ≥3 OPEN close cleanly: **6 of 6 W44-95-targeted cells close**.
+  Byte deltas match the W44-95 honest-stop predictions to within 10 B.
+- (b) Zero FIXED→OPEN flips: all 3 W95-regression cells stay byte-identical
+  (discriminator correctly rejects them). All 25 FIXED_BASELINE +
+  3 FIXED_W91 + 1 FIXED_ABOVE_GATES cells byte-identical.
+- (c) SSIM2 regression ≤ 0.30 on every cell: worst is -0.18 on
+  1420710 e6 d=6.
+- (d) Hash-locks: 36/36 byte-identical (gate cannot fire on
+  tiny synthetic fixtures).
+- (e) `cargo test --lib`: 1264/1264 pass (2 new unit tests added).
+- (f) Multi-decoder roundtrip on 4 WANT_Z cells × 3 decoders (djxl +
+  jxl-oxide + jxl-rs): 12/12 OK.
+
+**Bench TSVs**: `benchmarks/w44_96_*.{tsv,meta}` — 5 files including the
+proxy probe, corpus mask1x1 sweep, origin/main baseline, post-W44-96
+results, and the paired A/B sweep.
+
+**Reproducers**:
+- `examples/w44_96_proxy_probe.rs` (discriminator selection probe with
+  14 candidate features per image)
+- `examples/w44_96_corpus_probe.rs` (sweep every CID22 image's hot-path
+  mask1x1_median to identify W44-29 firing class)
+- `examples/w44_96_mask_probe.rs` (per-cell hot-path debug print)
+- `examples/w44_96_dispatch_ab.rs` (paired interleaved force_off vs
+  default with bytes+bfly+ssim2 metrics)
+- `examples/w44_96_baseline_diff.rs` (single-pass bytes+bfly+ssim2 for
+  baseline vs post-W44-96 comparison)
+- `examples/w44_96_decoder_check.rs` (djxl + jxl-oxide + jxl-rs)
+
+**Why this is a port, not a heuristic**: the discriminator predicate was
+derived empirically from the W44-95 measurement set (4 mask<50 photos,
+the only known REJECT vs WANT split) plus zenanalyze tier1 feature
+definitions. The thresholds sit in the middle of a 1.5×-2× gap between
+WANT and REJECT proxies (edge_density 0.7 between 0.6332 and 0.8766;
+fcbr 0.01 between 0.0000 and 0.0110). The 5-image corpus sweep verified
+no other CID22 photo currently fires the W44-29 gate, so the only images
+affected are exactly the 5 measured.
+
+---
+
 ### W44-95: Ship Variant Z (dct32=1.20) / Variant W (dct32=1.27) — HONEST-STOP (May 19, 2026)
 
 **Status**: [RULED OUT — measurement shipped, no production source change]

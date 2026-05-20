@@ -1125,6 +1125,53 @@ required-features = ["parallel"]
 name = "w44_91_decoder_check"
 path = "examples/w44_91_decoder_check.rs"
 
+# W44-96 proxy probe — split WANT_Z {1420710, 1531677} from REJECT_Z
+# {2389166, 3637739} within the W44-29 mask<50 firing class. Extends
+# W44-91 proxy battery with edge_density, high_freq_energy_ratio, and
+# palette_log2_size (zenanalyze tier1-equivalents).
+[[example]]
+name = "w44_96_proxy_probe"
+path = "examples/w44_96_proxy_probe.rs"
+required-features = ["__pre_quantized"]
+
+# W44-96 hot-path mask1x1 probe — runs the production LossyConfig encoder
+# on each test cell to confirm which dispatch gate fires (via
+# `debug-w44-65` eprintln on stderr).
+[[example]]
+name = "w44_96_mask_probe"
+path = "examples/w44_96_mask_probe.rs"
+required-features = ["parallel", "debug-w44-65"]
+
+# W44-96 corpus probe — sweep every CID22 validation image and print
+# the hot-path mask1x1_median so we can identify ALL images that fire
+# the W44-29 gate (mask<50) and verify the discriminator stays clean.
+[[example]]
+name = "w44_96_corpus_probe"
+path = "examples/w44_96_corpus_probe.rs"
+required-features = ["parallel", "debug-w44-65"]
+
+# W44-96 dispatch A/B — paired bytes+bfly+ssim2 sweep on WANT_Z target
+# cells, W44-95 regression cells (must stay FIXED), and W44-91 cells.
+[[example]]
+name = "w44_96_dispatch_ab"
+path = "examples/w44_96_dispatch_ab.rs"
+required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
+
+# W44-96 baseline diff — encode each cell with default settings (W44-96
+# discriminator active) and print bytes+bfly+ssim2 for comparison against
+# the pre-W44-96 baseline (origin/main = W44-95 commit 85536ab8).
+[[example]]
+name = "w44_96_baseline_diff"
+path = "examples/w44_96_baseline_diff.rs"
+required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
+
+# W44-96 decoder roundtrip — verify djxl + jxl-oxide both decode the
+# auto-fired W44-96 variant Z lift on the WANT_Z cells.
+[[example]]
+name = "w44_96_decoder_check"
+path = "examples/w44_96_decoder_check.rs"
+required-features = ["parallel"]
+
 # W44-79 decoder roundtrip — verifies jxl-oxide and djxl both decode the
 # hint=Some(true) bitstream on 1189261 d=4.
 [[example]]

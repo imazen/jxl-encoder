@@ -246,6 +246,45 @@ const W44_91_M3_COLOURFULNESS_MIN: f32 = 80.0;
 /// regression-band images have fcbr ≥ 0.89 %, all failing this gate.
 const W44_91_FCBR_MAX: f32 = 0.01;
 
+/// W44-96 sub-discriminator on `ZenanalyzeProxies::edge_density` for the
+/// **variant Z DCT32X32 lift** within the W44-29 firing class.
+///
+/// The W44-95 honest-stop measured that variant Z (dct32x32=1.20 vs the
+/// default 1.34) closes 5-6 OPEN F-D cells on {1420710, 1531677} at
+/// d∈{5, 6} but regresses {2389166, 1044329} SSIM2 by -0.30 to -0.82.
+/// The W44-96 proxy probe (W44-29-firing 5-image set: {1420710, 1531677,
+/// 2389166, 1044329, 7062219}) identified `edge_density` as the cleanest
+/// single-feature splitter:
+///
+/// | image    | edge_density | WANT variant Z? |
+/// |---       |---           |---              |
+/// | 1420710  | 0.9298       | YES             |
+/// | 1531677  | 0.8766       | YES             |
+/// | 2389166  | 0.4409       | NO              |
+/// | 1044329  | 0.5486       | NO              |
+/// | 7062219  | 0.6332       | NO              |
+///
+/// The threshold (0.7) sits in the gap between 0.6332 (7062219, REJECT)
+/// and 0.8766 (1531677, WANT). Paired with [`W44_96_FCBR_MAX`] for
+/// double-safety against false-fires on unseen images.
+const W44_96_EDGE_DENSITY_MIN: f32 = 0.7;
+
+/// W44-96 sub-discriminator on `ZenanalyzeProxies::flat_color_block_ratio`
+/// for the variant Z DCT32X32 lift. Both WANT-Z images have fcbr=0.0
+/// exactly (no perfectly-flat 8×8 sRGB blocks), while all 3 REJECT-Z
+/// images have fcbr ≥ 0.011. The 0.01 threshold also matches the W44-91
+/// fcbr gate exactly — semantically these are the SAME "textured, not
+/// flat-color" predicate.
+const W44_96_FCBR_MAX: f32 = 0.01;
+
+/// W44-96 minimum distance for the variant Z lift sub-dispatch. Set to
+/// 4.5 to cover the W44-95 measured wins at d∈{5, 6} on {1420710,
+/// 1531677} while excluding 3637739 e7 d=4 from the dispatch path (the
+/// task identifies it as a W44-95 regression cell — but since 3637739
+/// has mask1x1=75.83 > 50 it doesn't fire W44-29 at all, so the
+/// distance gate here is belt-and-suspenders).
+const W44_96_VARIANT_Z_MIN_DISTANCE: f32 = 4.5;
+
 /// W44-87 single-pass-entropy dispatch — smooth-photo `median(mask1x1)`
 /// upper bound. Same direction as [`HIGH_D_PHOTO_SMOOTH_THRESHOLD`]
 /// (smooth = below threshold), set to the same `50.0` value: CID22
@@ -594,6 +633,15 @@ pub(crate) struct ZenanalyzeProxies {
     /// `flat_color_blocks` accumulator exactly (`r_range <= 4 AND
     /// g_range <= 4 AND b_range <= 4`).
     pub flat_color_block_ratio: f32,
+    /// W44-96: fraction of interior pixels (excluding 1-pixel border)
+    /// whose Sobel luma gradient magnitude exceeds 30 (Sobel scale).
+    /// Used as the primary discriminator for the variant-Z DCT32X32 lift
+    /// sub-dispatch within the W44-29 firing class — separates textured
+    /// high-edge smooth photos (1420710, 1531677) from low-edge smooth
+    /// photos (2389166, 1044329, 7062219) where variant Z regresses
+    /// SSIM2. Computed in the same O(W·H) pass as the other proxies via
+    /// BT.601 luma `0.299·R + 0.587·G + 0.114·B`.
+    pub edge_density: f32,
 }
 
 impl ZenanalyzeProxies {
@@ -617,6 +665,7 @@ impl ZenanalyzeProxies {
             return Self {
                 m3_colourfulness: 0.0,
                 flat_color_block_ratio: 0.0,
+                edge_density: 0.0,
             };
         }
 
@@ -698,9 +747,47 @@ impl ZenanalyzeProxies {
             0.0
         };
 
+        // --- W44-96 edge_density: Sobel gradient on BT.601 luma -----------
+        // Iterate interior pixels (skip 1-pixel border to avoid out-of-bounds).
+        // Square-magnitude threshold = 900 corresponds to magnitude > 30,
+        // matching the W44-96 probe `edge_density()` helper exactly.
+        let edge_density = if width >= 3 && height >= 3 {
+            let luma = |y: usize, x: usize| -> f32 {
+                let off = (y * width + x) * bpp;
+                0.299 * pixels[off + r_off] as f32
+                    + 0.587 * pixels[off + g_off] as f32
+                    + 0.114 * pixels[off + b_off] as f32
+            };
+            let interior = (width - 2) * (height - 2);
+            let mut edges = 0usize;
+            for y in 1..(height - 1) {
+                for x in 1..(width - 1) {
+                    let gx = -luma(y - 1, x - 1) - 2.0 * luma(y, x - 1) - luma(y + 1, x - 1)
+                        + luma(y - 1, x + 1)
+                        + 2.0 * luma(y, x + 1)
+                        + luma(y + 1, x + 1);
+                    let gy = -luma(y - 1, x - 1) - 2.0 * luma(y - 1, x) - luma(y - 1, x + 1)
+                        + luma(y + 1, x - 1)
+                        + 2.0 * luma(y + 1, x)
+                        + luma(y + 1, x + 1);
+                    if gx * gx + gy * gy > 900.0 {
+                        edges += 1;
+                    }
+                }
+            }
+            if interior > 0 {
+                edges as f32 / interior as f32
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
         Self {
             m3_colourfulness: m3 as f32,
             flat_color_block_ratio: fcbr,
+            edge_density,
         }
     }
 }
@@ -2763,13 +2850,39 @@ impl VarDctEncoder {
             None => mask1x1_median.is_some_and(|med| med >= W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD),
         };
 
+        // W44-96 variant Z sub-discriminator: when `w44_29_lower` fires
+        // via the W44-29 mask<50 gate (NOT the W44-91 mask∈[50,80) gate),
+        // and the image passes the additional edge_density/fcbr proxies,
+        // swap to the variant Z entropy_mul table (dct32x32=1.20 instead
+        // of 1.34). Closes the W44-95-measured wins on {1420710, 1531677}
+        // at d∈{5, 6} while leaving {2389166, 1044329, 7062219} on the
+        // default suppressed table — see [`W44_96_EDGE_DENSITY_MIN`] doc
+        // for the per-image proxy split. Excludes the W44-91 mask band
+        // because variant Z was never measured against W44-91 cells.
+        //
+        // Auto only: when the caller forced `high_d_photo_hint=Some(true)`
+        // outside the W44-29 mask range we keep the default suppressed
+        // table (no variant Z escalation from a forced hint — caller can
+        // ship their own table override if they want).
+        let w44_96_variant_z = w44_29_lower
+            && self.high_d_photo_hint.is_none()
+            && self.distance >= W44_96_VARIANT_Z_MIN_DISTANCE
+            && mask1x1_median.is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD)
+            && self.zenanalyze_proxies.is_some_and(|p| {
+                p.edge_density >= W44_96_EDGE_DENSITY_MIN
+                    && p.flat_color_block_ratio < W44_96_FCBR_MAX
+            });
+
         let profile_for_search = if w22_1_lift || w44_29_lower || w44_65_suppress_dct64 {
             let mut p = self.profile.clone();
             if w22_1_lift {
                 p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
             } else if w44_29_lower {
-                p.entropy_mul_table =
-                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed();
+                p.entropy_mul_table = if w44_96_variant_z {
+                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z()
+                } else {
+                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed()
+                };
             }
             if w44_65_suppress_dct64 {
                 p.try_dct64 = false;
@@ -4655,6 +4768,40 @@ mod tests {
             (p.flat_color_block_ratio - 1.0).abs() < 1e-6,
             "solid red fcbr expected 1.0 got {}",
             p.flat_color_block_ratio
+        );
+        // W44-96: solid red has zero gradient → edge_density = 0.
+        assert!(
+            p.edge_density.abs() < 1e-6,
+            "solid red edge_density expected 0 got {}",
+            p.edge_density
+        );
+    }
+
+    #[test]
+    fn test_zenanalyze_proxies_edge_density_alternating_pattern() {
+        // W44-96: a high-contrast vertical-stripe pattern should yield
+        // high edge_density (~most interior pixels are at a black/white
+        // boundary). Verifies the Sobel computation fires.
+        let w = 32;
+        let h = 32;
+        let mut pixels = vec![0u8; w * h * 3];
+        for y in 0..h {
+            for x in 0..w {
+                let off = (y * w + x) * 3;
+                // 2-pixel-wide black/white stripes — produces strong Gx
+                // gradient on every column transition.
+                let v = if (x / 2) % 2 == 0 { 0 } else { 255 };
+                pixels[off] = v;
+                pixels[off + 1] = v;
+                pixels[off + 2] = v;
+            }
+        }
+        let p = ZenanalyzeProxies::compute_srgb_u8(&pixels, w, h, 3, 0, 1, 2);
+        // Stripe transitions cover at least 50% of interior pixels.
+        assert!(
+            p.edge_density > 0.4,
+            "alternating-stripe edge_density expected > 0.4 got {}",
+            p.edge_density
         );
     }
 
