@@ -607,6 +607,20 @@ name = "w44_112_qf_discriminator"
 path = "examples/w44_112_qf_discriminator.rs"
 required-features = ["__internal_recon_hook", "butteraugli-loop"]
 
+# W44-116 — Per-step XYB dump in buttloop's recon pipeline.
+# Captures XYB AFTER each of reconstruct_xyb / gab_smooth / apply_epf /
+# add_patches / add_splines, converts each to linear-RGB via the
+# parity-guaranteed `xyb_to_linear_rgb_planar`, compares to jxl-rs
+# decoded output. The FIRST step where max-abs vs jxl-rs INCREASES is
+# the divergent step. If max-abs monotonically decreases across all steps,
+# divergence lives INSIDE `reconstruct_xyb` itself (dequant + CfL + LFFromDC
+# ordering). Investigation only; TSV stdout. See W44-113 audit + W44-114/115
+# IDCT parity tests for what was already ruled out.
+[[example]]
+name = "w44_116_per_step_dump"
+path = "examples/w44_116_per_step_dump.rs"
+required-features = ["__internal_recon_hook", "butteraugli-loop"]
+
 # RFC#45 chunk 1: e10/e11 paired A/B/C bench.
 # Needs the butteraugli-loop feature to enable e10/e11 iter extensions.
 [[example]]

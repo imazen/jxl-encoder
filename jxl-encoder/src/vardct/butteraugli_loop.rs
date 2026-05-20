@@ -1096,8 +1096,44 @@ impl VarDctEncoder {
                 ysize_blocks,
             );
 
+            // W44-116: per-step XYB capture (FINAL iter only). The hook is
+            // populated incrementally as each step runs; only built into a
+            // StepXyb struct & stored once the full pipeline finishes.
+            #[cfg(feature = "__internal_recon_hook")]
+            let capture_steps = iter == iters && recon_hook::steps_capture_enabled();
+            #[cfg(not(feature = "__internal_recon_hook"))]
+            let capture_steps = false;
+
+            #[cfg(feature = "__internal_recon_hook")]
+            let mut step_after_recon: Option<recon_hook::Xyb> = None;
+            #[cfg(feature = "__internal_recon_hook")]
+            let mut step_after_gab: Option<recon_hook::Xyb> = None;
+            #[cfg(feature = "__internal_recon_hook")]
+            let mut step_after_epf: Option<recon_hook::Xyb> = None;
+            #[cfg(feature = "__internal_recon_hook")]
+            let mut step_after_patches: Option<recon_hook::Xyb> = None;
+            #[cfg(feature = "__internal_recon_hook")]
+            let mut step_after_splines: Option<recon_hook::Xyb> = None;
+
+            #[cfg(feature = "__internal_recon_hook")]
+            if capture_steps {
+                step_after_recon = Some(recon_hook::Xyb {
+                    x: planes[0].clone(),
+                    y: planes[1].clone(),
+                    b: planes[2].clone(),
+                });
+            }
+
             if self.enable_gaborish {
                 gab_smooth(&mut planes, padded_width, padded_height);
+            }
+            #[cfg(feature = "__internal_recon_hook")]
+            if capture_steps && self.enable_gaborish {
+                step_after_gab = Some(recon_hook::Xyb {
+                    x: planes[0].clone(),
+                    y: planes[1].clone(),
+                    b: planes[2].clone(),
+                });
             }
 
             if current_params.epf_iters > 0 {
@@ -1114,13 +1150,52 @@ impl VarDctEncoder {
                     self.budget.as_ref(),
                 )?;
             }
+            #[cfg(feature = "__internal_recon_hook")]
+            if capture_steps && current_params.epf_iters > 0 {
+                step_after_epf = Some(recon_hook::Xyb {
+                    x: planes[0].clone(),
+                    y: planes[1].clone(),
+                    b: planes[2].clone(),
+                });
+            }
 
             if let Some(pd) = patches_data {
                 super::patches::add_patches(&mut planes, padded_width, pd);
             }
+            #[cfg(feature = "__internal_recon_hook")]
+            if capture_steps && patches_data.is_some() {
+                step_after_patches = Some(recon_hook::Xyb {
+                    x: planes[0].clone(),
+                    y: planes[1].clone(),
+                    b: planes[2].clone(),
+                });
+            }
 
             if let Some(sd) = splines_data {
                 super::splines::add_splines(&mut planes, padded_width, width, height, sd);
+            }
+            #[cfg(feature = "__internal_recon_hook")]
+            if capture_steps && splines_data.is_some() {
+                step_after_splines = Some(recon_hook::Xyb {
+                    x: planes[0].clone(),
+                    y: planes[1].clone(),
+                    b: planes[2].clone(),
+                });
+            }
+
+            #[cfg(feature = "__internal_recon_hook")]
+            if capture_steps {
+                recon_hook::store_steps(recon_hook::StepXyb {
+                    padded_width,
+                    padded_height,
+                    width,
+                    height,
+                    after_recon_xyb: step_after_recon.expect("after_recon_xyb always populated"),
+                    after_gab: step_after_gab,
+                    after_epf: step_after_epf,
+                    after_patches: step_after_patches,
+                    after_splines: step_after_splines,
+                });
             }
 
             // Step 4: Convert reconstructed XYB to planar linear RGB
@@ -1715,6 +1790,103 @@ pub mod recon_hook {
         let mut guard = LAST_PROD_QF
             .lock()
             .expect("production_qf hook mutex poisoned");
+        guard.take()
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // W44-116: per-step XYB capture
+    //
+    // The W44-113 audit ranked 4 candidates for the remaining R/G linear-RGB
+    // residual between buttloop's internal recon and jxl-rs decoded output.
+    // W44-114 ruled out AFV IDCT bit-parity. W44-115 (per-strategy IDCT
+    // precision audit) — assume the IDCTs themselves are at parity. The
+    // remaining candidates collapse to "which STEP of the buttloop's
+    // recon-pipeline (reconstruct_xyb → gab_smooth → apply_epf → add_patches
+    // → add_splines → xyb_to_linear_rgb_planar) is the divergent one?".
+    //
+    // The trick to identify the divergent step without needing a jxl-rs-side
+    // intermediate dump: snapshot the XYB planes AFTER each step, then
+    // convert each snapshot to linear-RGB via the SAME xyb_to_linear_rgb_planar
+    // (parity-guaranteed). Each snapshot answers "what would the linear-RGB
+    // output be if I stopped after step N?". The decoder always runs the
+    // full pipeline, so:
+    //
+    //   step_div(N) = max_abs(linear_rgb_after_step_N, jxl_rs_linear_rgb)
+    //
+    // If the encoder pipeline is at parity with the decoder, step_div(N)
+    // monotonically DECREASES as N advances through the pipeline (each
+    // missing step is an error vs the decoder). If some step INCREASES
+    // step_div, that step is the divergent one (it's pushing our pipeline
+    // AWAY from the decoder's).
+    //
+    // For a divergent ordering, the FIRST step whose addition fails to
+    // monotonically decrease step_div is the bug.
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /// XYB planes captured AFTER each reconstruction step. All planes are
+    /// `padded_width * padded_height` (not cropped). Use the existing
+    /// `xyb_to_linear_rgb_planar` to convert to linear-RGB for comparison.
+    ///
+    /// Steps applied (in order):
+    ///   1. `after_recon_xyb` — output of `reconstruct_xyb` (dequant + CfL +
+    ///      LFFromDC + IDCT for all blocks). Always present.
+    ///   2. `after_gab` — after `gab_smooth` if `enable_gaborish`; else None.
+    ///   3. `after_epf` — after `apply_epf` if `epf_iters > 0`; else None.
+    ///   4. `after_patches` — after `add_patches` if `patches_data` is Some;
+    ///      else None.
+    ///   5. `after_splines` — after `add_splines` if `splines_data` is Some;
+    ///      else None.
+    ///
+    /// Each `Option<Xyb>` is `Some` iff that step was actually applied. The
+    /// final `after_splines` (or the last `Some` step in the chain) should
+    /// match the existing `InternalRecon::{r,g,b}` after xyb→RGB conversion.
+    #[derive(Clone, Default)]
+    pub struct Xyb {
+        pub x: Vec<f32>,
+        pub y: Vec<f32>,
+        pub b: Vec<f32>,
+    }
+
+    /// W44-116 per-step XYB snapshots. See module docs above.
+    #[derive(Clone)]
+    pub struct StepXyb {
+        pub padded_width: usize,
+        pub padded_height: usize,
+        pub width: usize,
+        pub height: usize,
+        /// Always present (first step always runs).
+        pub after_recon_xyb: Xyb,
+        pub after_gab: Option<Xyb>,
+        pub after_epf: Option<Xyb>,
+        pub after_patches: Option<Xyb>,
+        pub after_splines: Option<Xyb>,
+    }
+
+    static STEPS_CAPTURE_ENABLED: AtomicBool = AtomicBool::new(false);
+    static LAST_STEPS: Mutex<Option<StepXyb>> = Mutex::new(None);
+
+    /// Enable/disable per-step XYB capture. Independent of the linear-RGB
+    /// `set_capture_enabled` hook so callers can pay only the cost they need.
+    /// Cost when enabled: 5 × 3 × padded_pixels f32 clones at the FINAL iter
+    /// (negligible vs the buttloop itself which clones planes anyway).
+    pub fn set_steps_capture_enabled(enabled: bool) {
+        STEPS_CAPTURE_ENABLED.store(enabled, Ordering::SeqCst);
+    }
+
+    /// Cheap relaxed read for the per-step capture point.
+    pub fn steps_capture_enabled() -> bool {
+        STEPS_CAPTURE_ENABLED.load(Ordering::Relaxed)
+    }
+
+    /// Store the per-step XYB snapshot. Overwrites any prior capture.
+    pub fn store_steps(steps: StepXyb) {
+        let mut guard = LAST_STEPS.lock().expect("steps hook mutex poisoned");
+        *guard = Some(steps);
+    }
+
+    /// Take (consume) the last per-step XYB snapshot.
+    pub fn take_last_steps() -> Option<StepXyb> {
+        let mut guard = LAST_STEPS.lock().expect("steps hook mutex poisoned");
         guard.take()
     }
 }
