@@ -1024,6 +1024,22 @@ impl EffortProfile {
                 ANSHistogramStrategy::Approximate
             },
             epf_dynamic_sharpness: effort >= 6,
+            // W44-102 INVESTIGATED + RULED OUT (2026-05-19):
+            // libjxl `enc_heuristics.cc:1190` gates CFL Pass-2 at
+            // `speed_tier <= kHare` (effort >= 5), and our `cfl_newton`
+            // gate at effort >= 7 already matches the fast/Newton split.
+            // The W44-101 audit predicted widening would close bfly wedges
+            // at e6 (1420710 d=5, 1025469 d=4, codec_wiki d=0.2,
+            // 1418519 d=6) and add 0.3-1.0% byte savings. A 143-cell
+            // paired A/B (benchmarks/w44_102_cfl_two_pass_e5_2026-05-19.tsv)
+            // measured: zero meaningful bfly improvement on all 4 named
+            // wedges (|Δbfly| < 0.04% on each), bytes near-parity overall
+            // (±0.1%), and 2 cells exceeding the -0.3 SSIM2 regression gate
+            // (1418519 e6 d=1 Δssim2=-0.524; 2389166 e5 d=2 Δssim2=-0.388).
+            // The e6→e7 12.8pp byte jump in the W44-100 ledger is driven
+            // by `patches` + `tree_learning` + `try_dct64` + clustering
+            // activation at e7, not by CFL Pass-2. Gate retained at
+            // effort >= 7. Do NOT re-investigate widening this gate.
             cfl_two_pass: effort >= 7,
             cfl_newton: effort >= 7,
             cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
