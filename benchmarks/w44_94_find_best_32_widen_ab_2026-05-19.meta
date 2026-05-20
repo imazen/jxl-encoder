@@ -1,0 +1,167 @@
+# W44-94 widen find_best_32x32 tightening — HONEST-STOP
+
+Date: 2026-05-19
+Reproducer: `cargo run --release -p jxl-encoder --features '__expert parallel butteraugli-loop ssim2-loop' --example w44_94_find_best_32_widen`
+Workspace: `~/work/zen/jxl-encoder--w44-94-find-best-32-widen`
+Build target: `CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target`
+Parent commit: `ca2da622` (W44-93 honest-stop)
+
+## Task
+
+W44-92 RC2 candidate B: widen the W44-77/W44-29 entropy_mul tightening
+(`EntropyMulTable::high_d_photo_smooth_suppressed`: dct32x32=1.34,
+dct16x32=1.349, dct16x16=1.27) so it closes the 13 remaining OPEN F-D
+photo cells on 1420710 + 1531677 at d=5/d=6.
+
+Acceptance gates (HARD):
+- 1420710 e5 d=5, e6 d=5, e7 d=5 close (OPEN → FIXED, bytes ≤ +3.0% vs cjxl)
+- Other DCT32-eligible cells improve OR stay byte-identical
+- Zero FIXED → OPEN flips on 30+ spot-check FIXED cells
+- SSIM2 regression ≤ 0.3 on any cell
+
+## Method
+
+32-cell A/B sweep:
+- 13 W44-92 OPEN cells (target)
+- 6 W44-93-regressed FIXED cells (must not regress: 1189261 + 1418519 d=5/6)
+- 13 SPOT_FIXED controls (1420710/1531677 d=4 + cross-image probes)
+
+Variants tested (all gated on `mask < 50.0` AND `d >= 3.0` to mirror the
+existing W44-29 auto-fire condition — otherwise the override would over-apply
+and hit SSIM2 collateral on cells the auto-gate would never lift):
+
+| Variant | dct32x32 | dct16x32 | gating |
+|---|---|---|---|
+| default | 1.34 (W44-29) | 1.349 (W44-29) | W44-29 auto |
+| W_dct32_127 | 1.27 | 1.27 * (1.49/1.48) = 1.278 | W44-29-equivalent |
+| X_dct16x32_per_d | 1.34 | 1.40 at d>=5, else 1.349 | W44-29-equivalent |
+| Y_combined | 1.27 | 1.40 at d>=5, else 1.278 | W44-29-equivalent |
+| Z_dct32_120 | 1.20 | 1.20 * (1.49/1.48) = 1.208 | W44-29-equivalent |
+| XN_dct16x32_d6 | 1.34 | 1.40 at d>=6, else 1.349 | W44-29-equivalent |
+| WX_d6 | 1.27 | 1.40 at d>=6, else 1.278 | W44-29-equivalent |
+
+Encoder injection: `LossyConfig::with_high_d_photo_hint(Some(false))` to
+disable auto-fire + `LossyInternalParams::entropy_mul_table = Some(t)` to
+inject the override.  Gating decision happens in the example (per-image
+mask known from `examples/w44_78_widen_gate_ab.rs` table) — cells where
+`mask >= 50` get `None` override (default applies, byte-identical).
+
+Encoding: `e{effort}` × `d={distance}`, 8 threads.
+Decode: jxl-oxide → linear sRGB f32.
+Metrics: butteraugli (rust crate) on linear, fast_ssim2 (rust crate) on sRGB.
+cjxl reference: libjxl HEAD at `/home/lilith/work/jxl-efforts/libjxl`.
+
+## Result: HONEST-STOP
+
+**NO variant satisfies all hard acceptance gates simultaneously.**
+
+| Variant | OPEN→FIXED | Hard cells closed | Worst SSIM2 drop | SSIM2 gate |
+|---|---|---|---|---|
+| W_dct32_127 | 5/13 | e6 d=5 only | -0.17 | PASS |
+| X_dct16x32_per_d | 9/13 | e6 d=5 + e7 d=5 | -0.47 (1531677 e8 d=5) | FAIL |
+| Y_combined | 11/13 | e6 d=5 + e7 d=5 | -0.74 (1531677 e5 d=6) | FAIL |
+| Z_dct32_120 | 6/13 | e6 d=5 only | -0.18 | PASS |
+| XN_dct16x32_d6 | 4/13 | e6 d=5 + e6 d=6 | -0.37 (1531677 e5 d=6) | FAIL |
+| WX_d6 | 7/13 | e6 d=5 only | -0.74 | FAIL |
+
+The three target hard cells:
+- **1420710 e5 d=5**: NOT closed by ANY variant (best: Y at +3.37%, FAIL)
+- **1420710 e6 d=5**: closed by W/X/Y/Z (+2.85% to +2.78%)
+- **1420710 e7 d=5**: closed only by X/Y (+2.88%/+2.57%) but FAILS SSIM2 elsewhere
+
+W and Z pass the SSIM2 gate but only close e6 d=5 (1 of 3 hard cells).
+X and Y close 2-3 hard cells but FAIL the SSIM2 gate on 1531677 (the
+companion OPEN image), losing -0.30 to -0.74 SSIM2.
+
+## Root cause
+
+The 1420710 e5/e7 d=5 cells have `default = +3.98%/+4.00%` bytes vs cjxl
+*after* W44-29 already lifts dct32x32 to 1.34. The remaining gap is structural:
+
+1. **The cost model at e5/e6 is SSIM2-blind** (same mechanism W44-93 hit on
+   try_dct64 widening). Pushing entropy_mul more aggressively (lower
+   dct32x32, higher dct16x32-via-per-distance) trades SSIM2 for bytes
+   on 1531677 (mask=35.63, most-smooth image) where there's still
+   high-frequency content that benefits from DCT16X32/DCT32X16 over
+   DCT32X32.
+
+2. **1420710 and 1531677 want OPPOSITE adjustments at d=5**:
+   - 1420710 e7 d=5: X (dct16x32=1.40) saves -1.5pp → +2.88% (PASS)
+   - 1531677 e8 d=5: X (dct16x32=1.40) loses -0.47 SSIM2 (FAIL)
+   Without per-image content discriminators (which W44-91 already taps
+   with zenanalyze for narrower bands), a single global table can't
+   thread the needle.
+
+3. **The W44-77 sweep (May 2026) already documented this**: "No
+   `dct16x32` value uniformly beats current default 1.349. The 1420710
+   d=4 cell (W44-29's primary win) is too sensitive: lifting dct16x32
+   above 1.349 regresses +1641 to +2067 B."  W44-94 confirms the same
+   constraint at d=5 — different cell direction, same fundamental SSIM2
+   vs bytes tradeoff that can't be navigated with global constants at e<8.
+
+## Why W or Z is NOT shipped as a partial-widening win
+
+W and Z each close 5-6 OPEN cells with no SSIM2 regression > 0.18, zero
+FIXED→OPEN flips, and would hash-lock-regen cleanly (hash-lock fixtures
+are < 64×64 with high mask, gate never fires).  Net byte savings: ~1100 B
+across the touched cells.
+
+However, the hard task acceptance gate is "1420710 e5/e6/e7 d=5 close".
+W and Z close only e6 d=5. Per the cardinal "leave nothing unported" rule
+and per the W44-94 task spec: hard gates take precedence. Shipping a
+partial-widening here would close W44-94 as "completed" while the actual
+acceptance was not met, conflating "partial wins exist" with "task done".
+
+Filed instead as W44-95 candidate: ship `EntropyMulTable::high_d_photo_smooth_suppressed`
+variants W (dct32x32=1.27) OR Z (dct32x32=1.20) as a default-on tightening,
+SEPARATELY from the hard W44-94 acceptance gate.  Both options:
+- close 5-6 OPEN cells at -200B/cell average
+- max SSIM2 drop ≤ 0.18 (well within tolerance)
+- zero FIXED → OPEN flips on 13 spot-check FIXED cells
+- byte-identical hash-lock impact at d<3 OR mask>=50 (gate never fires)
+
+## What W44-95 should investigate
+
+The unclosed 7 cells (1420710 e5/e7 d=5, 1531677 e5/e6/e8/e9 d=5,
+1531677 e6/e7 d=6 marginal) need a mechanism that:
+- Pushes more aggressively at d=5 specifically (where the lift IS needed)
+- Distinguishes 1420710 (lift HELPS bytes) from 1531677 (lift HURTS SSIM2)
+
+Candidates:
+- **Per-image zenanalyze discriminator** between 1420710-class and
+  1531677-class photos within mask < 50.  The two images differ on:
+  fcbr (1420710 = 0.012 vs 1531677 = 0.014? — need probe),
+  high_freq_energy_ratio,
+  edge_density.  W44-91-style probe to find a clean splitter.
+- **Butteraugli loop at e7** (currently gated at e8+ per W44-93's preserved
+  speed_tier check).  Would converge the float quant field to recover the
+  SSIM2 cost.  Encode-time cost: ~2-4x at e7, may not be desirable.
+- **Per-distance D=5-only lift table** with a different mix
+  (e.g. dct32x32=1.27, dct16x32 increased to 1.45 — push DCT32X32 hard
+  without favoring DCT16X32).  Would need a separate A/B sweep
+  on 1420710 + 1531677 across both d=5 dimensions.
+
+## DO NOT
+
+- Re-attempt W44-93 try_dct64 widening (twice ruled out; W44-38 + W44-93).
+- Cite "FMA precision" as the mechanism (per user's W44-66 correction).
+- Touch other repos (jxl-encoder-gpu, libjxl, jxl-rs).
+- Ship W or Z without first running this through the hard W44-94 gate;
+  even if partial, the partial-win-vs-honest-stop classification matters
+  for downstream chunks expecting closure.
+
+## Files
+
+- `benchmarks/w44_94_find_best_32_widen_ab_2026-05-19.tsv`  (32 cells × 7 variants × bytes/bfly/ssim2)
+- `benchmarks/w44_94_find_best_32_widen_ab_2026-05-19.meta`  (this file)
+- `jxl-encoder/examples/w44_94_find_best_32_widen.rs`  (reproducer source, registered in Cargo.toml)
+
+## Workspace state
+
+- Sibling: `~/work/zen/jxl-encoder--w44-94-find-best-32-widen` (jj workspace `w44-94`)
+- Lockfile: `.workongoing` claimed throughout
+- Source changes: example file + Cargo.toml entry only. Production code
+  (`src/effort.rs::high_d_photo_smooth_suppressed`, `src/vardct/encoder.rs`
+  W44-29 gate) UNCHANGED.
+- No hash-lock impact (no production source touched).
+- `cargo test --lib`: unaffected (no production code change).

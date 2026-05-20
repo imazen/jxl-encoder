@@ -1147,5 +1147,13 @@ name = "w44_87_single_pass_ab"
 path = "examples/w44_87_single_pass_ab.rs"
 required-features = ["parallel"]
 
+# W44-94 widen W44-77/W44-29 find_best_32x32 tightening A/B sweep across
+# 13 OPEN cells + 5 W93_REGR + 13 SPOT_FIXED. Tests 4 variants of stronger
+# DCT32X32 / per-distance DCT16X32 lift in the W44-29 swap table.
+[[example]]
+name = "w44_94_find_best_32_widen"
+path = "examples/w44_94_find_best_32_widen.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
 [lints]
 workspace = true
