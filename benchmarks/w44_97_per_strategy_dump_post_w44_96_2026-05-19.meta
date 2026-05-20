@@ -1,0 +1,364 @@
+# W44-97 per-strategy AC tokenization dump on 7 OPEN cells post W44-96
+# =====================================================================
+#
+# Follow-on to W44-92 (per-strategy dump of 3 toughest cells in the 13-OPEN
+# state). W44-96 (`76d1dfd7`) shipped the zenanalyze sub-discriminator
+# (edge_density>=0.7 AND fcbr<0.01) routing 1420710/1531677 onto the variant Z
+# table (dct32x32=1.20 instead of 1.34) at d>=4.5. That closed 6 of 13 cells:
+# 1420710 e6 d5, e6 d6, e8 d5, e9 d5 and 1531677 e5 d6, e6 d6. The 7 remaining
+# OPEN cells need a different attack.
+#
+# Cells (7 total, sorted by bytes_delta_pct descending):
+#   1) 1420710 e5 d=6:  +4.02%  (24114→21004 vs cjxl 20192)
+#   2) 1531677 e9 d=5:  +3.64%  (19486 vs cjxl 18802)
+#   3) 1420710 e5 d=5:  +3.67%  (24114 vs cjxl 23261)
+#   4) 1531677 e5 d=5:  +3.54%  (20944 vs cjxl 20227)
+#   5) 1420710 e7 d=5:  +3.36%  (24437 vs cjxl 23643)
+#   6) 1531677 e8 d=5:  +3.05%  (19412 vs cjxl 18838)
+#   7) 1531677 e6 d=5:  +3.04%  (21185 vs cjxl 20560)
+#
+# Method
+# ------
+# Reuses W44-76/W44-92 infrastructure: `JXL_W44_76_PER_BLOCK_DUMP=<dir>` env
+# var on both cjxl-rs (built from `76d1dfd7` shared-target main) and libjxl
+# (`w44-76-per-block-debug` branch, build at
+# `~/work/jxl-efforts/libjxl--w44-76-per-block-debug-dump`). Per-block dump
+# fields: (bx, by, strategy_wire, channel, nzeros, qac).
+#
+# Analysis: `benchmarks/w44_92_per_strategy_dump.py` (unchanged).
+# Aggregation: `/tmp/w44_97_aggregate.py` (built fresh for cross-cell view).
+#
+# OUTPUT FILES
+# ------------
+# benchmarks/w44_97_per_strategy_dump_post_w44_96_2026-05-19.tsv (this dump,
+#     56 data rows = 7 cells × ~8 strategies)
+# benchmarks/w44_97_per_strategy_dump_post_w44_96_2026-05-19.meta (this file)
+#
+# PER-CELL TOP-3 OVERSPENDING STRATEGY BUCKETS
+# ============================================
+#
+# 1420710 e5 d5  (+3.67% bytes):
+#   1. DCT32X16  +888 Y_delta  (ours 55 fb vs cjxl 39 fb)
+#   2. DCT16X32  +590 Y_delta  (ours 50 fb vs cjxl 41 fb)
+#   3. DCT32X32  +329 Y_delta  (ours 201 fb vs cjxl 201 fb — same n_fb but
+#                                more Y nzeros per block; non-W44-96 cells)
+#
+# 1420710 e5 d6  (+4.02% bytes):
+#   1. DCT16X32  +628 Y_delta  (ours 53 fb vs cjxl 41 fb)
+#   2. DCT32X16  +459 Y_delta  (ours 54 fb vs cjxl 45 fb)
+#   3. (no positive #3)
+#
+# 1420710 e7 d5  (+3.36% bytes):
+#   1. DCT32X16  +888 Y_delta  (ours 55 fb vs cjxl 39 fb — IDENTICAL pattern
+#                                to e5 d5; effort level doesn't change strategy)
+#   2. DCT32X32  +438 Y_delta  (ours 203 vs cjxl 202)
+#   3. DCT16X32  +413 Y_delta  (ours 46 vs cjxl 40)
+#
+# 1531677 e5 d5  (+3.54% bytes):
+#   1. DCT32X16 +2117 Y_delta  (ours 120 fb vs cjxl 79 fb — LARGEST single
+#                                overspend across all 7 cells)
+#   2. DCT32X32  +351 Y_delta  (ours 166 vs cjxl 165)
+#   3. DCT16X32   +20 Y_delta  (parity)
+#
+# 1531677 e6 d5  (+3.04% bytes):
+#   1. DCT32X16 +2425 Y_delta  (ours 120 fb vs cjxl 72 fb — WORSE than e5)
+#   2. DCT16X32  +412 Y_delta  (ours 53 vs cjxl 48)
+#   3. (no positive #3; DCT32X32 underspends by 667)
+#
+# 1531677 e8 d5  (+3.05% bytes):
+#   1. DCT32X16 +1620 Y_delta  (ours 108 fb vs cjxl 72 fb)
+#   2. DCT16X32  +201 Y_delta  (ours 49 vs cjxl 48)
+#   3. DCT32X32  +192 Y_delta  (ours 174 vs cjxl 175 — parity)
+#
+# 1531677 e9 d5  (+3.64% bytes):
+#   IDENTICAL strategy map to 1531677 e8 d5 — md5sums match. Bytes differ
+#   (19412 vs 19486) so post-strategy refinement is happening (custom orders,
+#   clustering) but the strategy SELECTION is locked.
+#
+# AGGREGATE OVERSPENDING (across all 7 cells)
+# ============================================
+#
+# strat       total_Y_delta   n_cells_overspending   mean_per_cell   max
+# DCT32X16   +10017          7/7                    +1431.0         +2425
+# DCT16X32   +2465           7/7                    +352.1          +628
+# DCT32X32   +1502           5/7                    +300.4          +438
+#
+# AGGREGATE UNDER-FIRING (strategies cjxl uses we don't):
+#
+# strat       total_Y_delta   n_cells_underspending  mean_per_cell   min
+# DCT16X16   -6815           7/7                    -973.6          -1331
+# DCT16X8    -2006           7/7                    -286.6          -401
+# DCT8       -1521           7/7                    -217.3          -290
+# DCT8X16    -1265           7/7                    -180.7          -271
+# DCT32X32    -846           2/7                    -423.0          -667
+# IDENTITY   -41             3/7                    -13.7           -14
+# DCT2X2     -38             4/7                    -9.5            -10
+#
+# PATTERN SUMMARY: Universally we over-select DCT32X16 (and to a lesser
+# extent DCT16X32 and DCT32X32). Universally we under-select DCT16X16
+# (the strongest signal, -6815 Y_delta total). The "missing DCT16X16"
+# Y_delta IS the "extra DCT32X16" Y_delta: cjxl resolves at the 16x16-
+# level (4 DCT16X16 covering 16 cells per 32x32) where we resolve at
+# 32x16-level (2 DCT32X16 covering 16 cells per 32x32). Both fit the
+# same coverage; the difference is token-count overhead.
+#
+# STRATEGY AGREEMENT (fill-the-plane %)
+# =====================================
+#
+# cell                    agree_pct   bytes_pct_delta
+# 1420710 e5 d5           90.33%     +3.67%
+# 1420710 e5 d6           89.84%     +4.02%
+# 1420710 e7 d5           90.92%     +3.36%
+# 1531677 e5 d5           85.16%     +3.54%
+# 1531677 e6 d5           83.59%     +3.04%
+# 1531677 e8 d5           86.33%     +3.05%
+# 1531677 e9 d5           86.33%     +3.64%
+#
+# Mean agreement: 87.50%   Mean byte overshoot: +3.47%
+#
+# Note: 1531677 e8 d5 == e9 d5 (md5sum identical) — butteraugli iters at
+# e8 (2 iters) and e9 (4 iters) don't change strategy SELECTION on this
+# cell. cjxl's e8 != e9 dumps (different) so libjxl IS refining at e9.
+# Indicates: any refinement in our path isn't reaching strategy selection,
+# AND our buttloop tweaks only the quant field (libjxl-parity behaviour).
+#
+# Note: 1531677 e5 d5 == e6 d5 (md5sum identical) — at e5 (no non-aligned
+# eval) and e6 (non-aligned eval ON) we pick IDENTICAL strategies, while
+# cjxl's e5 vs e6 dumps differ. Our `try_merge_16x16` / `try_merge_32x32`
+# non-aligned passes are not picking up new merges on this cell.
+#
+# ROOT CAUSE HYPOTHESIS
+# =====================
+#
+# RC1 (most likely): W44-29 + W44-96 tables maintain the libjxl ratio
+#     dct16x32 = dct32x32 * (1.49/1.48) but with LOWER absolute values
+#     (1.34→1.20 for dct32x32; 1.349→1.208 for dct16x32). The ratio is
+#     preserved (DCT32X32 is 0.7% cheaper than 2× DCT32X16) — BUT the
+#     ABSOLUTE entropy term is lifted relative to the LOSS term in
+#     `entropy_mul * entropy + loss`. When entropy values are smaller
+#     (the lift makes them smaller), the loss term becomes RELATIVELY
+#     larger, and DCT32X16's loss is smaller than DCT32X32's loss
+#     (smaller block → smaller IDCT roundtrip error on smooth content
+#     because the smaller transform doesn't average 32×32 pixels).
+#     This biases toward DCT32X16 SPLIT.
+#
+#     EVIDENCE: 1531677 (worst cell, +2425 DCT32X16 overspend) is the
+#     image where the W44-96 sub-discriminator routes to variant Z
+#     (the MOST aggressive lift). 1420710 e5 d=5 (also variant Z) has
+#     +888 DCT32X16 overspend — large but smaller than 1531677.
+#
+# RC2 (also likely): The DCT32X16 vs DCT16X16 decision happens in
+#     find_best_16x16 INSIDE find_best_32x32_transform. The `mul8x8`
+#     external multiplier (libjxl `mul8x8 = 1.0 + (-0.4)/(d+1.4)`)
+#     at d=5 = `1.0 - 0.4/6.4 = 0.9375`. Multi-block transforms get
+#     `1.0` (no mul8x8). At d=6 = `1.0 - 0.4/7.4 = 0.946`. So mul8x8
+#     gets STRONGER (more discount) at HIGHER d. This makes singles
+#     RELATIVELY cheaper at higher d → drives DCT8/DCT16X8/DCT8X16
+#     UP at the 8x8 step. cjxl reflects this (DCT16X8 cjxl 19, ours
+#     0; DCT8 cjxl 39, ours 10).
+#
+#     EVIDENCE: We dramatically UNDER-fire DCT8, DCT16X8, DCT8X16 on
+#     every single cell. cjxl picks DCT8 31-37 times per cell; we pick
+#     9-10. The cost-model bias against single-block + 16x8 split
+#     pushes us up to 32x16 split.
+#
+# RC3 (less likely): Could be the partial-merge sub-cost logic at libjxl
+#     line 792-795:
+#       costJxN = std::min(entropy_JXK_left, entropy[0][0] + entropy[1][0]) +
+#                 std::min(entropy_JXK_right, entropy[0][1] + entropy[1][1]);
+#     Our `find_best_32x32_transform_impl` at line 2570-2571 does:
+#       cost_jxn = entropy_32x16_0.min(sub_left) + entropy_32x16_1.min(sub_right)
+#     Where sub_left = quadrant_cost[0][0] + quadrant_cost[1][0]. This
+#     matches. But the quadrant_cost values are built from cached
+#     entropy_estimate values written by find_best_16x16 — and find_best_16x16
+#     stores costs WITHOUT the parent mul8x8 baked in (because the parent
+#     mul8x8 is applied only to single-block costs INSIDE find_best_16x16,
+#     not at the storage level). Need to verify whether the cached costs
+#     match libjxl exactly at the 16x16-stores-its-own-cost step.
+#
+# UNPORTED LIBJXL MECHANISM SEARCH
+# =================================
+#
+# Searched libjxl `enc_ac_strategy.cc` for d=5-specific gates:
+#
+#   * line 587 `butteraugli_target < 5.0`: kFavor2X2 — we have it
+#     (favor_2x2_weight in ac_strategy_search.rs:40)
+#   * line 594 `butteraugli_target > 4.0`: kAvoidEntropyOfTransforms —
+#     we have it (avoid_entropy_of_transforms_mul in ac_strategy_search.rs:60)
+#   * line 936 `decoding_speed_tier < 4`: enable_32x32 — always true
+#     at our default tier 0, libjxl-parity
+#   * line 948 `decoding_speed_tier < 4`: enable DCT64 — guarded by
+#     try_dct64 (effort>=7) at our end; W44-93 RULED OUT widening this
+#
+# Searched for d=5 in `enc_adaptive_quantization.cc`:
+#   * no d=5-specific gates found (the AdjustQuantField runs at all d)
+#
+# Searched non_aligned_eval gate:
+#   * libjxl `speed_tier >= kHare` (effort 5) early-returns BEFORE
+#     non-aligned eval. Our `non_aligned_eval: effort >= 6` is LIBJXL-PARITY.
+#   * At e8/e9 the non-aligned eval is enabled both sides, but doesn't
+#     close the gap (per 1531677 e8 d5 == e9 d5 strategy md5 finding).
+#
+# Searched for "priority" array in ProcessRectACS:
+#   * libjxl line 619-637 TryMergeAcs uses `priority[]` to PREVENT
+#     overlapping merges (8x8-position priority gating). Our port replaces
+#     this with `multi_block_crosses_*_boundary` + `can_evaluate_region_outer_only`
+#     helpers. The TryMergeAcs fallthrough at line 1023-1026 only catches
+#     edge cases of last row/column at odd boundaries. On 512×512 inputs
+#     (our 7 cells) this fallthrough fires on no significant blocks.
+#
+# Searched for SetEntropyForTransform mismatch:
+#   * libjxl line 798 stores `entropy_JXJ` (with entropy_mul_JXJ baked
+#     in) for 16x16 winner. Our find_best_16x16 stores
+#     `entropy_16x16 = mul16x16 * estimate_entropy(DCT16X16,...)`
+#     where mul16x16 = 1.0 (pixel-domain) and entropy_mul_table.dct16x16
+#     (= 1.27 in W44-29, 1.34 in libjxl) is baked in by estimate_entropy_with_mask.
+#     LIBJXL parity in shape, OUR W44-29 lower value baked in.
+#
+# CONCLUSION: No single unported gate found. The pattern is a SECOND-ORDER
+# effect of the W44-29 + W44-96 entropy_mul lifts — they preserve the
+# inter-strategy ratio but shift the absolute entropy term down, making
+# the loss term RELATIVELY larger, which on smooth-photo content biases
+# toward smaller transforms (DCT32X16 over DCT32X32 or DCT16X16).
+#
+# RANKED W44-98 ATTACK CANDIDATES
+# ================================
+#
+# Candidate A: Per-strategy entropy_mul lift on DCT32X16 only (lift dct16x32
+#              ABOVE the dct32x32 baseline, breaking the W44-29 1.49/1.48
+#              ratio) for the W44-96 variant Z sub-class. — MEDIUM-LOW RISK
+#
+#   Mechanism: in `EntropyMulTable::high_d_photo_smooth_suppressed_z()`
+#   change `dct16x32 = 1.20 * (1.49/1.48) = 1.208` (current) to something
+#   like 1.30 or 1.40 — explicitly making DCT32X16 MORE expensive while
+#   keeping DCT32X32 at 1.20. Expected to close ~2200/cell on 1531677 and
+#   ~450/cell on 1420710. Risk: would over-suppress legitimate DCT32X16
+#   picks on partially-textured content.
+#
+#   Recommended bisection range: 1.30, 1.40, 1.49 (libjxl-parity).
+#   Time: 1-2 days (sweep + bisection + multi-decoder roundtrip).
+#   EV: 5-7 of 7 cells close. Risk: 1-2 photo SSIM2 cells regress.
+#
+# Candidate B: Per-distance W44-29 widening — apply W44-96 variant Z lift
+#              ALSO at d<4.5 where it currently rejects (d=4 cells).
+#              — LOW-MEDIUM RISK
+#
+#   Mechanism: lower `W44_96_VARIANT_Z_MIN_DISTANCE` (4.5) to 4.0. The 7
+#   remaining OPEN cells are all d=5 or d=6, so this doesn't directly
+#   close any new cell — but it widens the optimization scope. Test
+#   first to see if d=4 1420710/1531677 cells now win.
+#
+#   EV: 0-1 of 7 OPEN cells close (most are already at d>=5). Useful for
+#   broader optimization but won't close W44-97 targets specifically.
+#   Skip unless paired with Candidate A.
+#
+# Candidate C: Per-block QF refinement on cells where DCT32X16 was picked
+#              — re-evaluate DCT32X32 with REDUCED qac (matching cjxl's
+#              quant field for these blocks) and accept if it now beats
+#              the split. — MEDIUM-HIGH RISK
+#
+#   Mechanism: post-strategy-selection pass that finds DCT32X16 picks
+#   adjacent to other DCT32X16 picks (forming a virtual DCT32X32 region)
+#   and re-checks whether the merged region's quant field allows DCT32X32
+#   to be cheaper.
+#
+#   Risk: substantial new code path, may interact with AdjustQuantField
+#   and butteraugli loop. Estimate ~300 LOC, multi-week implementation.
+#   EV: 3-5 cells close. Hash-lock impact: significant.
+#
+# Candidate D: libjxl source-diff for unported d=5-specific gates
+#              (more careful audit than W44-97 quick scan) — INVESTIGATE
+#
+#   Mechanism: Read libjxl enc_ac_strategy.cc + enc_adaptive_quantization.cc
+#   line-by-line and compare against our port for any conditional that
+#   would fire at d=5 but not d=4. The W44-97 quick scan found
+#   kFavor2X2 (d<5) and kAvoidEntropyOfTransforms (d>4) — both ported —
+#   but a more careful 200-line audit may uncover a subtle gate.
+#
+#   Time: 4-6h. EV: low-medium (most known gates already audited per
+#   W44-91 / W44-79 audit history). Risk: low (audit is read-only).
+#
+# Candidate E: Investigate the "loss component dominates at lower entropy_mul"
+#              hypothesis (RC1). Build a per-block decomposition of
+#              `entropy * entropy_mul + loss` for DCT32X32 vs 2× DCT32X16
+#              on a few hotspot cells. If the loss component IS the
+#              tilting factor, refine the W44-29 sub-discriminator to
+#              admit DCT32X32 when the loss is the differentiator.
+#              — MEDIUM RISK (research, then targeted fix)
+#
+#   Time: 1-2 days (instrumentation + analysis + tightening).
+#   EV: 3-5 cells close, builds analytical foundation for future W44 chunks.
+#
+# My ranking for W44-98:
+#
+#   1. **Candidate A** (per-strategy dct16x32 lift in variant Z) — best
+#      EV/effort ratio. Closes the dominant DCT32X16 overshoot directly.
+#      Bisection-friendly. Low risk because variant Z is gated to 2 images.
+#
+#   2. **Candidate D** (deeper source-diff audit) — low risk, builds
+#      foundation. Should be done in parallel with A as background.
+#
+#   3. **Candidate E** (loss-component decomposition) — most rigorous,
+#      best long-term value. Use if A's bisection doesn't find a clean
+#      single value.
+#
+#   4. **Candidate B** (distance widening) — only as paired booster.
+#
+#   5. **Candidate C** (re-merge pass) — defer; too expensive.
+#
+# DO NOT (for future W44-9N agents)
+# ==================================
+#
+# - DO NOT respawn try_dct64 effort gate widening (W44-93 RULED OUT,
+#   regressed photo SSIM2 by -1.21 at e5).
+# - DO NOT respawn find_best_32x32 entropy_mul tightening as a global
+#   change (W44-94 RULED OUT — not enough EV on these 7 cells).
+# - DO NOT respawn variant Z dct32x32 lift below 1.20 (W44-95 RULED OUT
+#   — wider mask<50 population fails the ≤0.3 SSIM2 budget).
+# - DO NOT touch `tokenize_ac_coefficients`, `nz_context`, `zd_offset`
+#   — bit-exact per W44-75 audit.
+# - DO NOT touch BlockCtxMap / cluster_histograms — W44-71/75 verified.
+# - DO NOT touch AdjustQuantBlockAC — W44-76 verified same-strategy
+#   nzeros parity.
+# - DO NOT cite "FMA precision" as the residual mechanism (per W44-66
+#   user correction, `fd_residual_not_fma_precision_2026-05-19.md`).
+# - DO NOT respawn cluster_histograms / FastClusterHistograms / HistogramReindex
+#   / ZeroDensityContext audits — all at libjxl parity per W44-75.
+#
+# REPRODUCER
+# ==========
+#
+#   # build cjxl-rs from latest main (post-W44-96)
+#   cd ~/work/zen/jxl-encoder--w44-97-per-strategy-dump-7-remaining
+#   CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+#     cargo build --release --features 'parallel' -p jxl-encoder-cli --bin cjxl-rs
+#
+#   # for each cell:
+#   for cell in "1420710_5_5" "1420710_5_6" "1420710_7_5" \
+#               "1531677_5_5" "1531677_6_5" "1531677_8_5" "1531677_9_5"; do
+#     IFS='_' read img e d <<< "$cell"
+#     mkdir -p /tmp/w44_97_dumps/${cell}_ours /tmp/w44_97_dumps/${cell}_cjxl
+#
+#     JXL_W44_76_PER_BLOCK_DUMP=/tmp/w44_97_dumps/${cell}_ours \
+#       $HOME/work/zen/jxl-encoder-shared-target/release/cjxl-rs \
+#       /home/lilith/work/codec-corpus/CID22/CID22-512/validation/${img}.png \
+#       /tmp/w44_97_dumps/${cell}_ours/out.jxl -e $e -d $d --threads 1
+#
+#     JXL_W44_76_PER_BLOCK_DUMP=/tmp/w44_97_dumps/${cell}_cjxl \
+#       $HOME/work/jxl-efforts/libjxl--w44-76-per-block-debug-dump/build/tools/cjxl \
+#       /home/lilith/work/codec-corpus/CID22/CID22-512/validation/${img}.png \
+#       /tmp/w44_97_dumps/${cell}_cjxl/out.jxl -e $e -d $d --num_threads=1 --quiet
+#   done
+#
+#   # analysis
+#   python3 benchmarks/w44_92_per_strategy_dump.py \
+#     /tmp/w44_97_dumps/1531677_5_5_ours/per_block_ours.tsv \
+#     /tmp/w44_97_dumps/1531677_5_5_cjxl/per_block_libjxl.tsv \
+#     > /tmp/w44_97_1531677_e5_d5.txt
+#
+# bench_workspace: ../jxl-encoder--w44-97-per-strategy-dump-7-remaining
+# git_rev: 76d1dfd7 (W44-96 main, post zenanalyze sub-discriminator)
+# parent_rev: 85536ab8 (W44-95 main)
+# host: lilith
+# cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+# libjxl_dump_branch: w44-76-per-block-debug (NOT pushed — Google org)
