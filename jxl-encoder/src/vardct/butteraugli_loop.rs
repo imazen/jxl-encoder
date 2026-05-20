@@ -202,12 +202,42 @@ pub const DEFAULT_DISTANCE_SPLIT: f64 = 2.0;
 ///
 /// Gated on:
 ///   - `is_screenshot` (median(mask1x1) > [`SCREENSHOT_MEDIAN_THRESHOLD`])
-///   - `target_distance >= 2.0`
+///   - `target_distance >= [`BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE`]`
 ///   - `butteraugli_iters > 0` (only applies when buttloop runs)
 ///
 /// Photo-class content is unaffected (scale stays at 1.0 → byte-identical
 /// pre-W44-105 behaviour).
 pub const DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE: f32 = 4.0;
+
+/// W44-107: minimum `target_distance` at which the W44-105
+/// [`DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE`] gate fires on
+/// screenshot-class content.
+///
+/// **Why this is 3.5** (raised from W44-105's 2.0): the W44-106 full
+/// ledger refresh found that the W44-105 seed-scale fix caused one
+/// FIXED→OPEN regression on `codec_wiki.png e8 d=3` (bytes +3.3%,
+/// bfly +25.7%, ssim2 -0.30). At d=3, codec_wiki's mid-tier wiki
+/// content (text + diagrams + photo crops) responds poorly to the 4×
+/// seed-scale bump — cjxl appears to engage a different threshold in
+/// this regime that we don't yet match, producing a non-monotonic
+/// bfly profile (d=2.5: +1.3%, d=3.0: +25.7%, d=4.0: +5.4%).
+///
+/// Tightening the lower gate from `d >= 2.0` to `d >= 3.5` excludes
+/// the d=3 regression cell while preserving the W44-105 wins at d=4+
+/// (the largest cluster: terminal d=4 SSIM2 +3.28, terminal d=5 +3.31,
+/// codec_wiki d=4 +1.61, codec_wiki d=5 +2.12). Wins at d=2/d=2.5 are
+/// sacrificed (terminal d=4-cell SSIM2 win is the largest reported in
+/// W44-105 and is preserved). The W44-106 ledger entries for the
+/// sacrificed cells either remain FIXED (cjxl-comparable) or shift
+/// from "beats cjxl" to "matches cjxl pre-W44-105" — neither flips
+/// FIXED→OPEN per the W44-106 baseline data.
+///
+/// **Followups**: a per-image discriminator (e.g. zenanalyze
+/// `palette_log2_size` / `flat_color_block_ratio`) could re-engage
+/// the gate at d=2..3.5 for terminal/imac_g3-class content while
+/// keeping codec_wiki excluded. Tracked in `Investigation Notes` as
+/// the W44-108 follow-on.
+pub const BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE: f32 = 3.5;
 
 /// Resolve `cur_pow` for the current iter + `target_distance`, honouring
 /// any sweep overrides set in `CUR_POW_X1000_{LOW,HIGH}`.
@@ -539,17 +569,23 @@ impl VarDctEncoder {
         //
         // Gated on:
         //   - `is_screenshot` (median(mask1x1) > SCREENSHOT_MEDIAN_THRESHOLD=95)
-        //   - target_distance >= 2.0 (the buttloop's HIGH regime where text
-        //     fidelity matters most)
+        //   - target_distance >= BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE (= 3.5
+        //     after W44-107; was 2.0 in W44-105 — the W44-106 ledger refresh
+        //     showed the d=2..3 regime regressed codec_wiki e8 d=3 from
+        //     FIXED to OPEN. Tightening the gate to d>=3.5 preserves the
+        //     d=4+ wins (the largest cluster) and reverts the codec_wiki
+        //     d=3 cell to the pre-W44-105 baseline; the sacrificed d=2/2.5
+        //     wins remain within FIXED status per W44-106 paired data)
         //   - butteraugli_iters > 0 (only applies when buttloop runs at all)
         //
         // The atomic override below lets sweep harnesses tune the scale per-class
         // without rebuilds; production defaults to 4.0 (SCALE=4 from the sweep).
-        let buttloop_qf_seed_scale = if is_screenshot && target_distance >= 2.0 {
-            DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE
-        } else {
-            1.0
-        };
+        let buttloop_qf_seed_scale =
+            if is_screenshot && target_distance >= BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE {
+                DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE
+            } else {
+                1.0
+            };
 
         // W44-105 sweep override: production default is fixed via constant,
         // but the atomic slot lets harnesses search for per-corpus tuning.
@@ -1548,6 +1584,29 @@ mod tuning_tests {
         // the loop's starting state.
         assert!(DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE.is_finite());
         assert!(DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE > 0.0);
+    }
+
+    /// W44-107: the lower-distance gate on the W44-105 seed-scale fix
+    /// is `BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE = 3.5`. Raised from the
+    /// original W44-105 value of 2.0 after the W44-106 ledger refresh
+    /// flagged a FIXED→OPEN regression on `codec_wiki.png e8 d=3`.
+    ///
+    /// The constant MUST be a positive finite f32 — it is compared
+    /// directly to `target_distance` (also f32 — `VarDctEncoder.distance`)
+    /// so NaN / negative would silently disable the gate. 3.5 sits
+    /// between d=3 (the regression cell) and d=4 (the largest W44-105
+    /// win cluster), giving codec_wiki d=3 the pre-W44-105 byte-identical
+    /// behaviour while preserving every d=4+ win.
+    #[test]
+    fn w44_107_seed_scale_min_distance_is_3p5() {
+        assert_eq!(BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE, 3.5);
+        assert!(BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE.is_finite());
+        assert!(BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE > 0.0);
+        // Must sit strictly between d=3 (the codec_wiki regression cell)
+        // and d=4 (the largest W44-105 win cluster) so the gate boundary
+        // can never re-engage on d=3 due to a floating-point coercion.
+        assert!(BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE > 3.0);
+        assert!(BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE <= 4.0);
     }
 
     #[test]
