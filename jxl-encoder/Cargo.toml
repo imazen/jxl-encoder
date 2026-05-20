@@ -1226,5 +1226,39 @@ name = "w44_95_baseline_diff"
 path = "examples/w44_95_baseline_diff.rs"
 required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
 
+# W44-98 dct16x32 / dct32x16 lift INSIDE the W44-96 variant Z discriminator.
+# Per W44-97 per-strategy dump, DCT32X16 is the #1 overspender on the 7
+# remaining OPEN cells (and DCT16X32 #2). Both share the dct16x32 slot in
+# EntropyMulTable. Bisects 4 lift values (1.25, 1.30, 1.40, 1.49) gated to
+# the W44-96 variant Z population, plus W93_REGR + W95_REGR controls.
+[[example]]
+name = "w44_98_dct16x32_lift_z_bisect"
+path = "examples/w44_98_dct16x32_lift_z_bisect.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
+# W44-98 production-vs-injected verification: confirms the new W44-98
+# dispatch (m3 sub-discriminator inside variant Z) routes 1420710 to
+# the high_colour table and 1531677 to the default variant Z, producing
+# bytes identical to the W44-98 bisect bench injected variants.
+[[example]]
+name = "w44_98_production_vs_injected"
+path = "examples/w44_98_production_vs_injected.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
+# W44-98 baseline-diff: production (new W44-98 dispatch) vs baseline
+# (forced W44-96 variant Z table on every W44-96-gated cell). Per-cell
+# byte delta + SSIM2 delta vs origin/main behaviour.
+[[example]]
+name = "w44_98_baseline_diff"
+path = "examples/w44_98_baseline_diff.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
+# W44-98 decoder roundtrip: encodes 3 W44-98-closed cells with the
+# production dispatch and roundtrips through djxl + jxl-rs + jxl-oxide.
+[[example]]
+name = "w44_98_decoder_check"
+path = "examples/w44_98_decoder_check.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
 [lints]
 workspace = true

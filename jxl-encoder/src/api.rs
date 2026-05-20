@@ -3477,6 +3477,7 @@ pub enum PixelLossDispatch {
 ///   - the encode has NO features that require the two-pass
 ///     plumbing (patches, splines, learned tree, sharpness map,
 ///     noise params, LF frame, extras / alpha).
+///
 /// On any other content / mode / feature combo `Auto` behaves
 /// identically to [`Self::AlwaysTwoPass`].
 ///

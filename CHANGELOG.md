@@ -4,6 +4,31 @@
 
 ### Performance
 
+- **W44-98 — dct16x32 lift inside variant Z (m3 sub-discriminator)**
+  (`jxl-encoder/src/effort.rs`, `jxl-encoder/src/vardct/encoder.rs`,
+  `benchmarks/w44_98_dct16x32_lift_z_bisect_2026-05-19.{tsv,meta}`,
+  `benchmarks/w44_98_baseline_diff_2026-05-19.{tsv,meta}`).
+  Adds [`EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour`]
+  (dct32x32=1.20 inherited from variant Z, dct16x32 LIFTED to 1.30
+  breaking the libjxl 1.49/1.48 ratio). Wired in
+  `compute_ac_strategy` behind a new `m3_colourfulness >= 25.0`
+  sub-gate INSIDE the existing W44-96 variant Z dispatch. Targets the
+  W44-97 finding that DCT32X16 is the universal #1 overspender on the
+  7 OPEN F-D cells remaining post-W44-96 — DCT32X16 / DCT16X32 share
+  the `dct16x32` slot (`ac_strategy.rs:713`) so lifting it favours
+  DCT32X32 (square merge) and DCT16X16 over rectangular 32-class
+  transforms. Of the 2 CID22 photos that pass the W44-96 gate, only
+  1420710 (m3=32.93) passes the additional m3 sub-gate; 1531677
+  (m3=12.30) stays on the default variant Z table (the W44-98
+  bisect measured 1531677 regressing SSIM2 by -0.34 to -0.93 under
+  ANY `dct16x32 ≥ 1.30`). Closes 3 OPEN cells (1420710 e5 d=5,
+  e5 d=6, e7 d=5; -291B/-259B/-410B vs the W44-96 baseline) AND
+  improves 4 W44-96 FIXED cells by 125-273B further. Aggregate -1741B
+  over 29-cell bench with 0 FIXED→OPEN regressions and worst SSIM2
+  delta -0.0275. All hash-locks (36/36) byte-identical, all W93_REGR
+  and W95_REGR cells byte-identical. Multi-decoder roundtrip via
+  djxl + jxl-rs + jxl-oxide on 3 closed cells: 9/9 PASS.
+
 - **W44-68 — DCT32 suppression on screenshot-class content**
   (`jxl-encoder/src/vardct/encoder.rs`,
   `benchmarks/w44_68_codec_wiki_d4_ab_2026-05-19.{tsv,meta}`).

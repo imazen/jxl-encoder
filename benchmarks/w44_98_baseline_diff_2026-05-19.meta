@@ -1,0 +1,50 @@
+W44-98 baseline-diff: production W44-98 vs forced-variant-Z baseline
+====================================================================
+
+Date: 2026-05-19
+Workspace: ~/work/zen/jxl-encoder--w44-98-dct16x32-lift-z
+Parent commit: 935ea9e1 (W44-97)
+Bench file: w44_98_baseline_diff_2026-05-19.tsv
+Reproducer:
+  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run --release -p jxl-encoder \
+    --features '__expert butteraugli-loop ssim2-loop parallel' \
+    --example w44_98_baseline_diff
+
+Purpose
+-------
+
+Direct A/B between:
+  - production: the new W44-98 dispatch (m3 sub-discriminator routes
+    1420710-class to high_colour table, 1531677-class to default
+    variant Z)
+  - baseline: forces `high_d_photo_smooth_suppressed_z()` on every
+    W44-96-gated cell, equivalent to origin/main behaviour before
+    W44-98 landed
+
+29 cells: 7 OPEN + 3 W95_REGR + 6 W93_REGR + 6 W96_FIXED + 7 SPOT_FIXED.
+
+Aggregate
+---------
+
+  OPEN→FIXED closes:               3
+  FIXED→OPEN regressions:          0
+  Worst SSIM2 delta vs baseline:   -0.0275 (1420710 e7 d=5)
+  Total byte delta:                -1741B over 29 cells
+
+All 3 closes are on 1420710 (m3=32.93). All 1531677 cells (m3=12.30)
+are byte-identical to baseline — production correctly leaves them on
+the variant Z table. All W95_REGR and W93_REGR cells are byte-identical
+(gate doesn't fire — different mask range or wrong feature class).
+
+Acceptance gate verification
+----------------------------
+
+(a) ≥3 OPEN close: PASS (3)
+(b) Zero FIXED→OPEN flips: PASS (0)
+(c) SSIM2 regression ≤ 0.3 on any cell: PASS (worst -0.0275)
+(d) W93_REGR (1189261 + 1418519) cells byte-identical: PASS (6/6)
+(e) W95_REGR (2389166 + 3637739) cells byte-identical: PASS (3/3)
+(f) SPOT_FIXED cells stay FIXED: PASS (all 7 byte-identical)
+(g) W96_FIXED cells (W44-96 close cells) stay FIXED: PASS (4 improved
+    on 1420710 by 125-273B with SSIM2 ±0.02; 2 1531677 cells unchanged)
