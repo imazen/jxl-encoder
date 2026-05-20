@@ -1,0 +1,50 @@
+# W44-118 Mode F validation bench
+# Date: 2026-05-20
+# Commit: pending (W44-118 ship commit on origin/main)
+# Host: WSL2 Ryzen 9 7950X (8 threads to encoder)
+# Workspace: jxl-encoder--w44-118-1025469-d4-regression
+# Command: cargo run --release --features 'butteraugli-loop ssim2-loop parallel' --example w44_118_mode_f_validation --manifest-path jxl-encoder/Cargo.toml
+#
+# Modes:
+#   A — JXL_W44_117_DISABLE=1  (legacy uniform-4 EPF seed, pre-W44-117 baseline)
+#   B — default                (W44-117 enabled — the regression)
+#   F — JXL_W44_118_SCREENSHOT_ONLY=1  (W44-117 gated on is_screenshot — the SHIPPED fix)
+#
+# 58 cells planned; 56 cells produced data; 6 codec_wiki/imac_dark/imac_g3 e8 d=4
+# cells failed the 2GB encoder memory budget (unrelated to W44-118 — this is a
+# known limit on 1024×1024 screenshot encoding at high effort/distance combos
+# that incur extra patches/AC strategy memory). These memory-limit failures
+# affected ALL three modes equally; not specific to F.
+#
+# Result summary (from script stderr):
+#   New F vs B regressions > 0.3 SSIM2: 0  (gate: 0)  — PASS
+#   B regressions F restored:           2  (the 1025469 e8/e9 d=4 cells, both
+#                                          previously -0.847 SSIM2, now +0.000)
+#
+# Detail — photos: F == A byte-identical on every photo cell (10/10 CID22 cells
+# tested at e8/e9, plus 11 spot e7 cells where buttloop doesn't fire anyway).
+# Detail — screenshots: F == B byte-identical on every terminal cell (10/10 at
+# e8/e9, plus 5 spot terminal e5..e7 cells where buttloop doesn't fire anyway).
+#
+# Acceptance gates evaluation:
+#   (1) 1025469 e8/e9 d=4 SSIM2 regression ≤ -0.3 (was -0.85)
+#       → ACHIEVED: F vs A delta = +0.000 (byte-identical, complete restoration)
+#   (2) W44-117 wins preserved (terminal e8/e9 d=3 +0.66, d=4 +0.90)
+#       → ACHIEVED: terminal e8 d=3 F vs B = +0.000 (preserved),
+#                   terminal e8 d=4 F vs B = +0.000 (preserved),
+#                   terminal e9 d=3 F vs B = +0.000 (preserved),
+#                   terminal e9 d=4 F vs B = +0.000 (preserved)
+#   (3) Zero NEW FIXED→OPEN flips on 30+ spot cells
+#       → ACHIEVED: F vs B regressions > 0.3 SSIM2 = 0
+#
+# Mode F is byte-identical to A on photos and byte-identical to B on screenshots.
+# This is the cleanest possible fix: it preserves all W44-117 wins where the
+# mechanism helps (screenshot-class with mask>95) and restores pre-W44-117
+# behaviour where the mechanism hurts (photo-class with mask in [50, 80) band).
+#
+# Underlying mechanism: gates W44-117's `compute_epf_sharpness` seed (passed to
+# the buttloop's `apply_epf` via mask1x1 plumbing) on `is_screenshot` (median
+# mask1x1 > 95). Photos without mask>95 saturation receive `None` for the seed
+# parameter, which the buttloop interprets as "fall back to legacy uniform-4
+# sharpness map" — exactly the pre-W44-117 behaviour, byte-identical to the
+# legacy path because no codepath changes.

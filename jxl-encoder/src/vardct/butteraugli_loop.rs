@@ -980,6 +980,21 @@ impl VarDctEncoder {
         let mut outcomes: alloc::vec::Vec<SeedOutcome> =
             alloc::vec::Vec::with_capacity(seeds.len());
 
+        // W44-118 Mode D probe: per-iter sharpness recompute (Option A
+        // from W44-116 fix-shape menu). Env-gated; production default
+        // (unset) preserves W44-117 Option B one-shot seed behaviour.
+        // Cost: extra compute_epf_sharpness call per buttloop iter.
+        #[cfg(feature = "std")]
+        let w44_118_per_iter_sharpness =
+            std::env::var("JXL_W44_118_PER_ITER_SHARPNESS").is_ok_and(|v| v == "1");
+        #[cfg(not(feature = "std"))]
+        let w44_118_per_iter_sharpness = false;
+
+        // Mutable sharpness so the per-iter recompute (Mode D) can
+        // overwrite. Default path never mutates it (Mode B reuses the
+        // W44-117 one-shot seed verbatim).
+        let mut sharpness_mut = sharpness;
+
         for &k_init_mul in seeds {
             // Restore starting state for this seed (skipped on seed 0 because
             // quant_field/quant_field_float already hold it, but cheap enough
@@ -1013,7 +1028,7 @@ impl VarDctEncoder {
                 vdp2_intensity_target,
                 qf_lower,
                 qf_higher,
-                &sharpness,
+                &mut sharpness_mut,
                 &mut tile_dist,
                 &mut recon_r,
                 &mut recon_g,
@@ -1022,6 +1037,8 @@ impl VarDctEncoder {
                 iters,
                 k_init_mul,
                 is_screenshot,
+                w44_118_per_iter_sharpness,
+                mask1x1,
             )?;
             outcomes.push(outcome);
         }
@@ -1148,7 +1165,7 @@ impl VarDctEncoder {
         vdp2_intensity_target: f32,
         qf_lower: f32,
         qf_higher: f32,
-        sharpness: &[u8],
+        sharpness: &mut [u8],
         tile_dist: &mut [f32],
         recon_r: &mut [f32],
         recon_g: &mut [f32],
@@ -1163,6 +1180,12 @@ impl VarDctEncoder {
         // screenshot. `false` (default for photo / unknown) is
         // byte-identical to pre-W39-2 behaviour.
         is_screenshot: bool,
+        // W44-118 Mode D bisection: when true AND mask1x1 is Some,
+        // recompute sharpness per-iter using the current transform_out
+        // (post-iter-quantize) instead of reusing the W44-117 one-shot
+        // seed. Env-gated; production default false.
+        w44_118_per_iter_sharpness: bool,
+        mask1x1: Option<&[f32]>,
     ) -> Result<SeedOutcome> {
         use super::epf;
         use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
@@ -1217,6 +1240,43 @@ impl VarDctEncoder {
                 ac_strategy,
                 &mut *transform_out,
             );
+
+            // W44-118 Mode D: per-iter sharpness recompute. Replaces
+            // the W44-117 one-shot seed (which froze sharpness from
+            // iter-0 quantization, drifting from the post-buttloop
+            // production sharpness map at high d). When enabled, the
+            // sharpness used for THIS iter's apply_epf matches what
+            // compute_epf_sharpness would produce on the SAME
+            // quant_dc/quant_ac the iter just produced — much closer
+            // to what the post-loop production compute_epf_sharpness
+            // would produce on the converged state.
+            //
+            // Cost: extra compute_epf_sharpness call per iter (~10-30%
+            // buttloop slowdown). Production default off; this is a
+            // bisection switch only.
+            if w44_118_per_iter_sharpness
+                && current_params.epf_iters > 0
+                && self.profile.epf_dynamic_sharpness
+                && let Some(m1x1) = mask1x1
+                && m1x1.len() == padded_width * padded_height
+                && let Ok(new_sharpness) = super::epf::compute_epf_sharpness(
+                    [xyb_x, xyb_y, xyb_b],
+                    &transform_out.quant_dc,
+                    &transform_out.quant_ac,
+                    quant_field,
+                    m1x1,
+                    &current_params,
+                    cfl_map,
+                    ac_strategy,
+                    self.enable_gaborish,
+                    xsize_blocks,
+                    ysize_blocks,
+                    self.budget.as_ref(),
+                )
+            {
+                // Overwrite sharpness with the per-iter computed map.
+                sharpness.copy_from_slice(&new_sharpness);
+            }
 
             // Step 3: Reconstruct XYB from quantized coefficients
             let mut planes = reconstruct_xyb(

@@ -636,6 +636,27 @@ name = "w44_117_decoder_check"
 path = "examples/w44_117_decoder_check.rs"
 required-features = ["butteraugli-loop"]
 
+# W44-118 bisection — identify cause of 1025469 e8/e9 d=4 SSIM2 -0.85
+# regression introduced by W44-117. 4 modes: A=legacy, B=default,
+# C=no_content_lifts, D=per_iter_sharpness.
+[[example]]
+name = "w44_118_bisect"
+path = "examples/w44_118_bisect.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
+# W44-118 Mode F validation — verify the screenshot-only W44-117 gate
+# across the full W44-117 acceptance cell set + extra photo spot cells.
+[[example]]
+name = "w44_118_mode_f_validation"
+path = "examples/w44_118_mode_f_validation.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
+# W44-118 decoder check — 3 cells × 2 decoders (djxl + jxl-oxide).
+[[example]]
+name = "w44_118_decoder_check"
+path = "examples/w44_118_decoder_check.rs"
+required-features = ["butteraugli-loop"]
+
 # RFC#45 chunk 1: e10/e11 paired A/B/C bench.
 # Needs the butteraugli-loop feature to enable e10/e11 iter extensions.
 [[example]]
