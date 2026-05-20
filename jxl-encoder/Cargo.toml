@@ -666,6 +666,24 @@ name = "w44_119_chain_disable_ab"
 path = "examples/w44_119_chain_disable_ab.rs"
 required-features = ["butteraugli-loop", "ssim2-loop"]
 
+# W44-120 distance-gate bisection — sweeps the W44-117 EPF sharpness
+# seed activation threshold across 5 modes (A_legacy + B0.8/B1.0/B1.2/B1.5)
+# to find the optimal cutoff that closes the W44-119-surfaced terminal
+# e8/e9 d=0.8 SSIM2 -1.87 regression while preserving the W44-117 wins
+# above the cutoff.
+[[example]]
+name = "w44_120_distance_bisect"
+path = "examples/w44_120_distance_bisect.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
+# W44-120 decoder roundtrip — 3-cell × 2-decoder check that the
+# distance-gated W44-117 seed emits valid bitstreams (terminal d=0.8
+# regression cell, terminal d=4 win cell, 1025469 d=4 photo).
+[[example]]
+name = "w44_120_decoder_check"
+path = "examples/w44_120_decoder_check.rs"
+required-features = ["butteraugli-loop"]
+
 # RFC#45 chunk 1: e10/e11 paired A/B/C bench.
 # Needs the butteraugli-loop feature to enable e10/e11 iter extensions.
 [[example]]

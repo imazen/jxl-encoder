@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **W44-120 — tighten W44-117 EPF sharpness seed distance gate to >=1.0**
+  (`jxl-encoder/src/vardct/butteraugli_loop.rs`,
+  `jxl-encoder/examples/w44_120_distance_bisect.rs`,
+  `jxl-encoder/examples/w44_120_decoder_check.rs`,
+  `benchmarks/w44_120_distance_bisect_2026-05-20.{tsv,meta}`,
+  `docs/LIBJXL_DIVERGENCES.md` Section B new row + Section D row 110
+  + Section F row 141 resolution). The W44-119 ledger refresh surfaced
+  a `-1.87` SSIM2 regression on terminal e8/e9 d=0.8 introduced by
+  W44-117 (`5604fdf0`) — at very low distance the buttloop's
+  iter-0-fitted EPF sharpness seed over-protected edges that the
+  encoder should be quantizing more freely (the legacy uniform-4
+  path was already a close-enough match to the production sharpness
+  map). W44-120 adds a `W44_120_EPF_SEED_MIN_DISTANCE = 1.0` gate to
+  the seed compute (`butteraugli_loop.rs:868`): the W44-117 mechanism
+  only fires when `target_distance >= 1.0`. Below that threshold the
+  loop falls back to the legacy `vec![4u8; num_blocks]` seed (byte-
+  identical to pre-W44-117 behaviour). The W44-118 `is_screenshot`
+  gate composes underneath — photos are unaffected (already excluded
+  via mask>95 discriminator). Sweep override
+  `JXL_W44_120_EPF_SEED_MIN_DISTANCE=<f32>` preserved for future A/B.
+  Bisection (`benchmarks/w44_120_distance_bisect_2026-05-20.tsv`)
+  swept 0.8 / 1.0 / 1.2 / 1.5 on terminal × e8/e9 × d ∈ {0.5..6.0} +
+  small GB82-SC screenshots × e8 d=4 + 5 photo cells. 1.0 is the
+  pareto-optimal threshold: closes terminal e8/e9 d=0.8 regression
+  (byte-identical to A_legacy), preserves terminal d=1.0 win
+  (+0.529 SSIM2), preserves terminal d=4 win (+0.897 SSIM2). Photos
+  byte-identical to W44-118. Hash-locks: 36/36 BYTE-IDENTICAL. 1282
+  lib tests pass. 3/3 multi-decoder roundtrip via djxl + jxl-rs.
+
 ### Measured
 
 - **W44-119 — ledger refresh post-W44-118 + qac-scale chain-disable A/B**

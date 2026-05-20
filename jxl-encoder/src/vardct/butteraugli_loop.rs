@@ -292,6 +292,45 @@ pub const BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX: f32 = 30.0;
 /// to avoid double-applying the scale).
 pub const ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT: u8 = 7;
 
+/// W44-120: minimum `target_distance` at which the W44-117 EPF sharpness
+/// seed compute fires (on top of the W44-118 `is_screenshot` gate).
+///
+/// **Why this is 1.0**: the W44-119 ledger refresh
+/// (`benchmarks/cjxl_parity_ledger_2026-05-20_w44_119.{tsv,meta}`)
+/// surfaced a NEW regression introduced by W44-117 that wasn't visible
+/// in the 44-cell W44-117 acceptance bench: terminal e8/e9 d=0.8 SSIM2
+/// dropped from -0.73 → -2.60 (-1.87 vs the pre-W44-117 baseline) on a
+/// near-FIXED cell. At very low distance the buttloop's target
+/// butteraugli is already very low and the legacy uniform-4 sharpness
+/// path was a close-enough match to the production sharpness map; the
+/// W44-117 seed's iter-0-fitted sharpness map over-protects edges that
+/// the encoder should be quantizing more freely.
+///
+/// The W44-120 bisection
+/// (`benchmarks/w44_120_distance_bisect_2026-05-20.{tsv,meta}`) swept
+/// thresholds 0.8 / 1.0 / 1.2 / 1.5 on terminal × e8/e9 × d ∈ {0.5,
+/// 0.8, 1.0, 1.2, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0}. Threshold 1.0:
+/// - terminal e8/e9 d=0.8 SSIM2 regression closed (-1.87 → 0.000 — F=A
+///   when gate triggers, byte-identical to pre-W44-117 uniform-4).
+/// - terminal e8/e9 d=4 W44-117 wins preserved (still +0.90 vs
+///   pre-W44-117 baseline).
+/// - terminal e8/e9 d=1.0..1.4 wins preserved (W44-117 still fires).
+///
+/// Higher thresholds (1.2, 1.5) give back wins above the threshold;
+/// lower thresholds (0.8) preserve the regression. 1.0 is the
+/// pareto-optimal cutoff: every cell below 1.0 ALREADY had the
+/// uniform-4 path producing close-to-optimal recon for buttloop, so
+/// the seed compute is pure overhead with no upside.
+///
+/// **Photos are unaffected**: the W44-118 `is_screenshot` gate already
+/// excludes them from the W44-117 mechanism; this distance gate
+/// composes underneath and is moot for photos.
+///
+/// Sweep override: `JXL_W44_120_EPF_SEED_MIN_DISTANCE=<f32>` lets a
+/// harness search for per-corpus tuning without rebuilds. Production
+/// default is `1.0`. No production runtime cost.
+pub const W44_120_EPF_SEED_MIN_DISTANCE: f32 = 1.0;
+
 /// W44-109: scale factor applied to `quant_field_float` at adaptive-quant
 /// time on screenshot-class content at low effort. **Effort-dependent
 /// magnitude** (e5/e6 vs e7): without the buttloop the scale propagates
@@ -865,7 +904,33 @@ impl VarDctEncoder {
         let w44_117_force_off = std::env::var("JXL_W44_117_DISABLE").is_ok_and(|v| v == "1");
         #[cfg(not(feature = "std"))]
         let w44_117_force_off = false;
+
+        // W44-120 distance gate: the W44-117 seed compute only fires at
+        // `target_distance >= W44_120_EPF_SEED_MIN_DISTANCE` (= 1.0).
+        // Closes the W44-119 ledger refresh regression on terminal
+        // e8/e9 d=0.8 (SSIM2 -1.87 vs pre-W44-117 baseline) — at very
+        // low distance the legacy uniform-4 sharpness path was already
+        // a close-enough match to the production sharpness map; the
+        // W44-117 iter-0-fitted seed over-protects edges that the
+        // encoder should be quantizing more freely. See
+        // `W44_120_EPF_SEED_MIN_DISTANCE` rustdoc for the bisection
+        // results that picked 1.0.
+        //
+        // Sweep override: `JXL_W44_120_EPF_SEED_MIN_DISTANCE=<f32>`
+        // lets a harness search for per-corpus tuning without
+        // rebuilds. When unset (default) the const wins. No
+        // production runtime cost.
+        #[cfg(feature = "std")]
+        let w44_120_min_distance = std::env::var("JXL_W44_120_EPF_SEED_MIN_DISTANCE")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(W44_120_EPF_SEED_MIN_DISTANCE);
+        #[cfg(not(feature = "std"))]
+        let w44_120_min_distance = W44_120_EPF_SEED_MIN_DISTANCE;
+        let w44_120_distance_gate_passes = target_distance >= w44_120_min_distance;
+
         let sharpness: Vec<u8> = if !w44_117_force_off
+            && w44_120_distance_gate_passes
             && initial_params.epf_iters > 0
             && self.profile.epf_dynamic_sharpness
             && let Some(m1x1) = mask1x1
