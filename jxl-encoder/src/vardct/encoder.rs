@@ -2468,6 +2468,50 @@ impl VarDctEncoder {
             self.distance * 0.62
         };
 
+        // W44-109: compute mask1x1 EARLY (before quant_field) so the
+        // screenshot-class qf seed-scale gate can fire at e5/e6/e7.
+        //
+        // The mask1x1 here is the SAME object as the one computed at line
+        // ~2582 for the AC-strategy pixel-domain loss. Moving the
+        // compute up by ~120 lines lets a single result feed BOTH the
+        // W44-109 pre-scale (now) AND the AC-strategy search (later);
+        // there's no per-byte cost (the mask is computed once, kept in
+        // scope, and the downstream `let mask1x1 = ...` block at line
+        // ~2582 becomes a pass-through that just decides whether to
+        // wrap it in Some(_) for the pixel-domain-loss dispatch).
+        //
+        // Gate `pre_scale_mask1x1` to the same predicate as the
+        // downstream `let mask1x1` block at line ~2582:
+        //   - `ac_strategy_enabled` (lossy VarDCT only)
+        //   - `pixel_domain_loss` (effort >= 5 via effort.rs:927)
+        //   - `pld_force_off` skips it (caller pinned PixelLossDispatch::AlwaysOff)
+        //
+        // Since the W44-109 gate also requires effort <= 7 (so the
+        // W44-105 buttloop path can own e>=8), the effective firing
+        // range is e ∈ {5, 6, 7} on lossy encodes with default
+        // PixelLossDispatch. Lower effort skips because
+        // `pixel_domain_loss = false` → `mask1x1_for_pre_scale = None` →
+        // gate predicate evaluates to "not screenshot" and the scale
+        // stays at 1.0.
+        let pld_force_off_for_pre_scale = matches!(
+            self.pixel_loss_dispatch,
+            crate::api::PixelLossDispatch::AlwaysOff
+        );
+        let mask1x1_for_pre_scale: Option<Vec<f32>> =
+            if self.ac_strategy_enabled && self.pixel_domain_loss && !pld_force_off_for_pre_scale {
+                Some(super::adaptive_quant::compute_mask1x1_with_budget(
+                    &xyb_y,
+                    padded_width,
+                    padded_height,
+                    self.budget.as_ref(),
+                )?)
+            } else {
+                None
+            };
+        let mask1x1_median_for_pre_scale: Option<f32> = mask1x1_for_pre_scale
+            .as_deref()
+            .map(|m| median_mask1x1(m, padded_width, width, height));
+
         // Step 1: Compute float quant field on pre-gaborish XYB.
         //
         // libjxl effort gating (enc_heuristics.cc:1097-1128):
@@ -2551,6 +2595,39 @@ impl VarDctEncoder {
             chromacity_b
         );
 
+        // W44-109: pre-scale `quant_field_float` on screenshot-class content
+        // at low effort (e ∈ {5, 6, 7}). Mirrors the W44-105 buttloop
+        // seed-scale fix at adaptive_quant time; at e>=8 the buttloop's
+        // own seed scale (`butteraugli_loop.rs:648`) takes over and this
+        // helper returns `1.0` to avoid double-scaling.
+        //
+        // Mask1x1 (and its median) were computed at the top of this
+        // function before the qf computation; the screenshot
+        // discriminator + W44-108 m3 sub-discriminator both feed the
+        // shared resolver in `butteraugli_loop.rs`.
+        //
+        // Photo-class content keeps `is_screenshot = false` so the
+        // scale stays at 1.0 → byte-identical to pre-W44-109. Only
+        // low-effort screenshot-class hits the lossy gate.
+        {
+            let is_screenshot = mask1x1_median_for_pre_scale.is_some_and(|med| {
+                med > super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD
+            });
+            let m3 = self.zenanalyze_proxies.map(|p| p.m3_colourfulness);
+            let qf_pre_scale = super::butteraugli_loop::resolved_adaptive_quant_qf_seed_scale(
+                self.effort,
+                self.butteraugli_iters,
+                is_screenshot,
+                self.distance,
+                m3,
+            );
+            if qf_pre_scale != 1.0 {
+                for v in quant_field_float.iter_mut() {
+                    *v *= qf_pre_scale;
+                }
+            }
+        }
+
         // Step 3: Quantize float quant field to raw u8 with adaptive inv_scale
         let mut quant_field = quantize_quant_field(&quant_field_float, params.inv_scale);
 
@@ -2579,13 +2656,21 @@ impl VarDctEncoder {
             self.pixel_loss_dispatch,
             crate::api::PixelLossDispatch::AlwaysOff
         );
+        // W44-109: mask1x1 was computed earlier (above the qf compute) to
+        // feed the screenshot-class pre-scale. Reuse it here instead of
+        // recomputing — same plane, same predicate, same cost-saving as
+        // the original `let m = compute_mask1x1_with_budget(...)` call
+        // this block replaces (mask1x1 was unconditionally re-computed
+        // here pre-W44-109; now it lands once at the top and threads
+        // through both consumers).
         let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss && !pld_force_off {
-            let m = super::adaptive_quant::compute_mask1x1_with_budget(
-                &xyb_y,
-                padded_width,
-                padded_height,
-                self.budget.as_ref(),
-            )?;
+            // Take ownership from the earlier compute to avoid clone.
+            // `mask1x1_for_pre_scale` MUST be Some(_) here: the gate
+            // predicate above is identical to this one.
+            let m = mask1x1_for_pre_scale.expect(
+                "mask1x1_for_pre_scale must be Some when pixel_domain_loss && !pld_force_off; \
+                 W44-109 invariant violated — see encoder.rs comment",
+            );
             if matches!(
                 self.pixel_loss_dispatch,
                 crate::api::PixelLossDispatch::Auto
@@ -2596,6 +2681,10 @@ impl VarDctEncoder {
                 Some(m)
             }
         } else {
+            // `mask1x1_for_pre_scale` is None here (same predicate gates both
+            // computes). Explicitly drop to satisfy the move-checker for the
+            // !ac_strategy_enabled / !pixel_domain_loss / pld_force_off branches.
+            drop(mask1x1_for_pre_scale);
             None
         };
 

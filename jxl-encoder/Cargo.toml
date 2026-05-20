@@ -1392,5 +1392,14 @@ name = "w44_108_decoder_check"
 path = "examples/w44_108_decoder_check.rs"
 required-features = ["parallel", "butteraugli-loop"]
 
+# W44-109 decoder roundtrip — verify the new low-effort
+# screenshot-class qf-pre-scale path emits decodable files on
+# jxl-oxide (jxl-rs front-end) and djxl. Covers terminal × e5/e6/e7
+# at d=4 (the primary W44-109 target cluster).
+[[example]]
+name = "w44_109_decoder_check"
+path = "examples/w44_109_decoder_check.rs"
+required-features = ["parallel", "butteraugli-loop"]
+
 [lints]
 workspace = true

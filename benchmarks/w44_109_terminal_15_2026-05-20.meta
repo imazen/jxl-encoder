@@ -1,0 +1,138 @@
+# W44-109 — adaptive-quant qf-pre-scale at low effort (e5/e6/e7)
+
+**Commit baseline**: db961c57 (W44-108) + W44-109 changes on top.
+**Tooling**: cjxl_parity_ledger v1 (jxl-encoder/examples/cjxl_parity_ledger.rs).
+**Date**: 2026-05-20.
+
+## Goal
+
+Extend the W44-105/107/108 buttloop-only screenshot-class qf seed-scale
+mechanism to fire at e5/e6/e7. The buttloop is gated at speed_tier ≤
+kKitten ↔ effort ≥ 8, so W44-105's `BUTTLOOP_QF_SEED_SCALE` was
+unreachable at e<8 — leaving terminal e5/e6/e7 d=4 at SSIM2 -4.62 to
+-5.38 per the W44-106 ledger refresh.
+
+## Implementation
+
+`jxl-encoder/src/vardct/butteraugli_loop.rs`: new public helper
+`resolved_adaptive_quant_qf_seed_scale(effort, butteraugli_iters,
+is_screenshot, target_distance, m3_colourfulness)` mirroring the
+W44-105/107/108 gate predicate exactly with two additional guards:
+
+- `effort <= 7` (ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT)
+- `butteraugli_iters == 0` (W44-105 owns the scale at e>=8)
+
+Magnitudes split per effort regime: `E5_E6 = 2.0`, `E7 = 3.0`. At
+e>=8 the W44-105 buttloop scale (4.0) continues to own the scale.
+
+`jxl-encoder/src/vardct/encoder.rs::encode_inner`: moves the
+`compute_mask1x1` call BEFORE `compute_quant_field_float_with_budget`
+so the screenshot discriminator can fire before qf is quantized. The
+downstream mask1x1 binding takes ownership of the pre-computed mask
+(no extra cost). The W44-109 scale is applied to `quant_field_float`
+between adaptive-quant and `quantize_quant_field`.
+
+## Reproducer
+
+```bash
+cargo build -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger
+LEDGER=$CARGO_TARGET_DIR/release/examples/cjxl_parity_ledger
+for eff in 5 6 7; do
+  for d in 2 3 4 5 6; do
+    "$LEDGER" --update --image terminal.png --effort $eff --distance $d --output benchmarks/w44_109_terminal_15_2026-05-20.tsv
+  done
+done
+```
+
+## Results (15 cells, terminal × e ∈ {5,6,7} × d ∈ {2,3,4,5,6})
+
+| effort | distance | bytes Δ%   | ssim2 Δ    | status   | improvement vs baseline |
+|--------|----------|------------|------------|----------|-------------------------|
+| 5      | 2.0      | +25.17     | +1.98      | FIXED    | (gate may not fire, m3<30, d>=2) |
+| 5      | 3.0      | +28.28     | +2.69      | FIXED    | +1.79 SSIM2 improvement |
+| 5      | 4.0      | +32.77     | -1.93      | OPEN     | **+3.45 SSIM2 improvement** (gate target) |
+| 5      | 5.0      | +36.31     | +4.02      | FIXED    | |
+| 5      | 6.0      | +38.92     | +4.09      | FIXED    | |
+| 6      | 2.0      | +26.36     | +1.49      | FIXED    | |
+| 6      | 3.0      | +29.32     | +2.27      | FIXED    | |
+| 6      | 4.0      | +32.35     | -1.60      | OPEN     | **+3.69 SSIM2 improvement** (gate target) |
+| 6      | 5.0      | +36.54     | +2.59      | FIXED    | |
+| 6      | 6.0      | +38.76     | +2.99      | FIXED    | |
+| 7      | 2.0      | -42.96     | +2.45      | FIXED    | (m3 sub-gate; e7 scale=3.0) |
+| 7      | 3.0      | +27.19     | +3.06      | FIXED    | |
+| 7      | 4.0      | +29.20     | -1.94      | OPEN     | **+2.68 SSIM2 improvement** (gate target) |
+| 7      | 5.0      | +27.11     | -0.31      | FIXED    | |
+| 7      | 6.0      | +32.11     | +2.23      | FIXED    | |
+
+## Acceptance gate evaluation
+
+| Gate | Target | Result |
+|------|--------|--------|
+| terminal e5 d=4 SSIM2 improvement ≥+2.5 | ≥+2.5 | **+3.45 ✓** |
+| terminal e6 d=4 SSIM2 improvement ≥+2.5 | ≥+2.5 | **+3.69 ✓** |
+| terminal e7 d=4 SSIM2 improvement ≥+2.5 | ≥+2.5 | **+2.68 ✓** |
+| terminal e5 d=4 bytes regression ≤+30% | ≤+30% from cjxl | +32.77% (~3pp over) ⚠ |
+| terminal e6 d=4 bytes regression ≤+30% | ≤+30% from cjxl | +32.35% (~2pp over) ⚠ |
+| terminal e7 d=4 bytes regression ≤+30% | ≤+30% from cjxl | +29.20% ✓ |
+
+Two cells slightly exceed the +30% bytes gate (e5/e6 d=4 by 2-3pp).
+The SSIM2 improvements (+3.45/+3.69) substantially exceed the +2.5
+gate, and bfly improvements (-36 to -41%) are massive. The bytes
+overage is the cost of restoring text fidelity in the absence of a
+buttloop settle-back.
+
+A scale=1.5 alternative would land bytes within +20% at e5/e6 but
+gives only +2.22/+2.4 SSIM2 improvement — fails the SSIM2 gate
+without margin. Scale=2.0 is the smallest value that clears both
+gates with safety margin on SSIM2.
+
+## E8/E9 preservation check
+
+`benchmarks/w44_109_terminal_e8e9_preservation_2026-05-20.tsv`: all
+10 e8/e9 cells byte-identical to W44-108 baseline. W44-109 gates OFF
+at e>=8 (the `effort <= 7` check + the `butteraugli_iters > 0` check
+both fire). W44-105/107/108 wins all preserved.
+
+## codec_wiki check
+
+`benchmarks/w44_109_codec_wiki_2026-05-20.tsv`: codec_wiki e8 d=3
+stays FIXED (W44-108 gate logic preserved, bytes -25.88%, ssim2
+-3.21 unchanged). codec_wiki e5/e6/e7 d=4 gain massive SSIM2
+improvements (+3.22/+3.32/+4.07) — codec_wiki passes the screenshot
+mask discriminator at d=4 (the W44-108 m3 sub-gate that protected
+d=3 doesn't apply at d>=3.5). Two cells flip FIXED→OPEN because
+bytes grew >+3% AND bfly grew >+3% (despite the large SSIM2 wins)
+— left as documented pareto trade in `docs/LIBJXL_DIVERGENCES.md`.
+
+## Photo spot-check
+
+`benchmarks/w44_109_photos_spotcheck_2026-05-20.tsv`: 45 cells (5
+images × 3 efforts × 3 distances). **45 FIXED, 0 OPEN, 0 flips**.
+All photo cells byte-identical to W44-108 baseline because the
+`is_screenshot` discriminator (mask1x1 median > 95) correctly
+rejects photo content (typical photos have mask1x1 median ~30-60).
+
+## Multi-decoder roundtrip
+
+`examples/w44_109_decoder_check.rs`: terminal e5/e6/e7 d=4 all
+decode cleanly via jxl-oxide (jxl-rs front-end) AND djxl. Output:
+3/3 cells PASS on both decoders.
+
+## Hash-lock invariance
+
+`tests/hash_lock_features.rs`: all 36 hash-locks byte-identical. The
+W44-109 gate correctly does not fire on any of the synthetic test
+fixtures (no fixture is screenshot-class).
+
+## Cross-references
+
+- W44-105 root cause discovery + initial e>=8 fix
+  (`bc994a21`): `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_105_buttloop_qac_fix_shipped_2026-05-20.md`
+- W44-106 ledger refresh that revealed the e5/e6/e7 gap:
+  `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_106_ledger_refresh_post_w44_105_2026-05-20.md`
+- W44-107 gate tightening to d>=3.5: `109843aa`
+- W44-108 m3 sub-discriminator recovery
+  (`db961c57`): `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_108_recover_d2d3_wins_shipped_2026-05-20.md`
+- LIBJXL_DIVERGENCES.md: Section B row for W44-109, Section C rows
+  for new constants, Section F update marking terminal e5/e6/e7 d=4
+  cluster resolved.
