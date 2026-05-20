@@ -1,8 +1,50 @@
-# Compatibility Modes — Design Doc (W44-125)
+# Encoder Strategy — Design Doc (W44-125 v2, post-user-review)
 
-**Status**: DESIGN ONLY — no implementation in this commit.
-**Author**: agent W44-125
+**Status**: USER-APPROVED DESIGN — ready for implementation chunk A.
+**Author**: agent W44-125 (v1 design), user-revised 2026-05-20 (v2)
 **Date**: 2026-05-20
+
+---
+
+## User-approved decisions (2026-05-20)
+
+The v1 design (this doc, ≤ revision `d32ff4ff`) named the enum
+`EncoderCompatibility` with variants `CjxlMirror / Conservative / Default /
+Aggressive / Custom`. The user reviewed the 9 open questions and made the
+following four binding decisions:
+
+1. **Enum + variant rename.** The type is `EncoderStrategy`. The variants are:
+   - `Libjxl` (was `CjxlMirror`) — strict libjxl-parity bundle
+   - `Zenjxl` (was `Default`) — current production default; `impl Default`
+     returns `Self::Zenjxl`
+   - `LeanFaster` (was `Conservative`) — drop the heavy per-image content
+     gates and EPF/buttloop work; keep the algorithm fixes that don't cost
+     extra encode time
+   - `Aggressive` — unchanged
+   - `Custom(Box<EncoderImprovementsCustom>)` — unchanged
+2. **Perf dispatches ABSORB into `Custom`.** `EpfDispatch`,
+   `PixelLossDispatch`, `SinglePassEntropyDispatch`, and `PatchesDispatch`
+   move into `EncoderImprovementsCustom` (as separate fields, not nested in a
+   sub-struct — they are flat fields like every other policy).
+3. **`Libjxl` scope = all-divergence parity.** Includes the Section A
+   effort-gate divergences (`cfl_two_pass` e7 → e5, `try_dct64` no-effort-gate,
+   `epf_dynamic_sharpness` no-effort-gate) AND the KNOWN-BUG
+   `BlockCtxMap 15-cluster default` re-enable. `Libjxl` selecting BlockCtxMap
+   15-cluster intentionally re-introduces the regression the KNOWN-BUG
+   describes — that IS the point: act exactly like libjxl, regressions and
+   all. Section D KNOWN-BUG row is updated to reflect that
+   `EncoderStrategy::Libjxl` deliberately enables it.
+4. **Env-var-only knobs PROMOTE to API.** `JXL_W44_117_DISABLE`,
+   `JXL_W44_120_EPF_SEED_MIN_DISTANCE`, `JXL_BUTTLOOP_INITIAL_QF_SCALE`,
+   `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE` become first-class fields on
+   `EncoderImprovementsCustom`. Env-var fallback stays at the bottom of the
+   resolution stack for harness sweeps.
+
+The text below has been edited to match those decisions. The "Open questions"
+section is retained at §7 with the user's answer beside each row, plus a few
+follow-on questions that surfaced during the edit.
+
+---
 
 ---
 
@@ -38,17 +80,17 @@ The caller-visible problem has three faces:
    conservative "only the ported algorithm fixes, none of the content-aware
    gates" bundle have to set knobs one at a time.
 
-This doc proposes ONE top-level enum [`EncoderCompatibility`] with named
-preset variants (`CjxlMirror`, `Conservative`, `Default`, `Aggressive`) and a
-`Custom(EncoderImprovementsCustom)` variant for fine-grained control. The
-`Custom` payload uses nested enums to encode mutually-exclusive picks (e.g.
-[`EpfSharpnessSeed`] is exactly one of `LegacyUniform4`, `W44_117_OneShot`, or
-`Disabled`).
+This doc proposes ONE top-level enum [`EncoderStrategy`] with named
+preset variants (`Libjxl`, `LeanFaster`, `Zenjxl`, `Aggressive`) and a
+`Custom(Box<EncoderImprovementsCustom>)` variant for fine-grained control.
+The `Custom` payload uses nested enums to encode mutually-exclusive picks
+(e.g. [`EpfSharpnessSeed`] is exactly one of `LegacyUniform4`,
+`AutoW44_117 { min_distance }`, or `PerIterRecompute`).
 
 The [`LossyConfig`] keeps the existing `with_*_hint` setters as a low-level
-escape hatch but adds a higher-level `with_compatibility(EncoderCompatibility)`
+escape hatch but adds a higher-level `with_strategy(EncoderStrategy)`
 setter that resolves to the same internal fields. `pub(crate)` resolution
-methods on `EncoderCompatibility` translate the high-level pick into the
+methods on `EncoderStrategy` translate the high-level pick into the
 specific bools/floats consumed at each call site, so behaviour is identical
 either way the caller drives it.
 
@@ -62,7 +104,7 @@ deprecation shim or backwards-compat wrapper is required — we will iterate.
 Every active divergence pulled from [`docs/LIBJXL_DIVERGENCES.md`](LIBJXL_DIVERGENCES.md)
 sections A–E. RESOLVED rows (section G) are out of scope; AT-PARITY rows are
 listed for completeness because callers may still want to opt OUT of them in
-`CjxlMirror` mode (they're at parity *today* but a future divergence might
+`Libjxl` mode (they're at parity *today* but a future divergence might
 introduce a knob — the inventory keeps the surface honest).
 
 ### 2.1 Effort-gate divergences (Section A)
@@ -95,7 +137,7 @@ narrow content-aware lifts on top.
 ### 2.3 Cost-model constant divergences (Section C)
 
 All AT PARITY today *except* the W44-109 constants. Listed for completeness so
-`CjxlMirror` can confirm strict parity.
+`Libjxl` can confirm strict parity.
 
 | Constant | Ours | libjxl | Currently divergent? | Bound to |
 |---|---|---|---|---|
@@ -199,9 +241,9 @@ Six logical groups emerge from the table:
 6. **Effort-profile dispatch / content adaptation** (`with_content_class`,
    `adapt_to_image_content`).
 
-The new `EncoderCompatibility` enum has to cover groups 1, 2, 4, 5 (the
+The new `EncoderStrategy` enum has to cover groups 1, 2, 4, 5 (the
 "divergence" surface). Groups 3 and 6 are perf knobs / dispatch knobs and stay
-as separate setters — they don't affect the bitstream in `CjxlMirror` mode
+as separate setters — they don't affect the bitstream in `Libjxl` mode
 because Auto modes default to libjxl-faithful output, the variants are gated
 by the underlying enable bit, and the perf knobs compose cleanly with
 compatibility presets. (See open question #2 — there's a case for absorbing
@@ -217,21 +259,22 @@ group 3 too.)
 /// Encoder behaviour bundle controlling which of our W44-* improvements over
 /// libjxl reference are active.
 ///
-/// **Default**: [`EncoderCompatibility::Default`] — the production bundle
+/// **Default**: [`EncoderStrategy::Default`] — the production bundle
 /// we ship today. Equivalent to leaving every `with_*_hint` setter at its
 /// current default value.
 ///
-/// Set via [`LossyConfig::with_compatibility`]. Individual
+/// Set via [`LossyConfig::with_strategy`]. Individual
 /// `LossyConfig::with_*_hint` / `with_*_dispatch` setters called AFTER
-/// `with_compatibility` override the matching field on the resolved
+/// `with_strategy` override the matching field on the resolved
 /// `EncoderImprovements`; this mirrors the
 /// `with_perceptual_optimizations(false).with_gaborish(true)` precedence
 /// pattern (see [`LossyConfig::with_perceptual_optimizations`]).
 #[derive(Clone, Debug, PartialEq)]
-pub enum EncoderCompatibility {
-    /// **Strict libjxl-parity mode.** Disables every W44-* improvement that
-    /// causes a bitstream divergence vs libjxl reference. Verified against
-    /// `cjxl` output as a regression gate.
+pub enum EncoderStrategy {
+    /// **Strict libjxl-parity mode — all-divergence bundle.** Disables every
+    /// W44-* improvement AND flips the Section A effort-gate divergences
+    /// AND re-enables the Section D KNOWN-BUG that we currently work around.
+    /// Verified against `cjxl` output as a regression gate.
     ///
     /// Use cases:
     /// - Conformance testing — does our decoder agree with cjxl on our
@@ -239,68 +282,92 @@ pub enum EncoderCompatibility {
     /// - libjxl bitstream comparison — A/B against libjxl byte-for-byte.
     /// - Cardinal-rule "leave nothing unported" verification baseline.
     ///
-    /// Behaviour:
-    /// - All Section B content-aware gates: off
-    /// - W44-105/107/108 buttloop qf seed scale: 1.0 (no scaling)
+    /// Behaviour (Section B content-aware gates — all OFF):
+    /// - W22-1 / W44-29 / W44-91 / W44-96 / W44-98 / W44-99 / W44-100
+    ///   entropy-mul gates: off
+    /// - W44-105 / W44-107 / W44-108 buttloop qf seed scale: 1.0 (no scaling)
     /// - W44-109 adaptive-quant pre-scale: 1.0
-    /// - W44-117/118/120 EPF sharpness one-shot seed: uniform-4 (legacy)
-    /// - W44-65/68 DCT64 suppression: `try_dct64` per libjxl-effort gate
-    /// - W44-123 dct32_keep_hint: no-op (W44-65 doesn't fire)
-    /// - All `with_*_hint(Option<bool>)` setters: `None`, with the auto
-    ///   gates inside the encoder pinned to OFF
+    /// - W44-117 / W44-118 / W44-120 EPF sharpness one-shot seed: uniform-4
+    ///   (pre-W44-117 legacy)
+    /// - W44-65 / W44-68 DCT64 suppression: off (let `try_dct64` run per
+    ///   libjxl rules)
+    /// - W44-123 / W44-124 dct32_keep gates: off
+    /// - W44-34 / W44-35 smooth-photo DCT64 admission: off
     ///
-    /// NOTE: this does NOT close ALL divergences — Section A effort-gate
-    /// divergences (`cfl_two_pass` e7 vs libjxl e5, `try_dct64` effort
-    /// gate) and Section D `BlockCtxMap 15-cluster default` KNOWN-BUG
-    /// remain; those need separate code-level ports. `CjxlMirror`
-    /// closes every divergence the API CAN close.
-    CjxlMirror,
+    /// Behaviour (Section A effort-gate flips):
+    /// - `cfl_two_pass` gate: lowered from `effort >= 7` to `effort >= 5`
+    ///   (matches libjxl `speed_tier <= kHare`)
+    /// - `try_dct64` effort gate: REMOVED (matches libjxl
+    ///   `decoding_speed_tier < 4`, default 0)
+    /// - `epf_dynamic_sharpness` effort gate: REMOVED (matches libjxl)
+    ///
+    /// Behaviour (Section D KNOWN-BUG re-enable — DELIBERATE regression):
+    /// - `BlockCtxMap` 15-cluster default: RE-ENABLED. This intentionally
+    ///   re-introduces the regression the KNOWN-BUG documents (issue #59)
+    ///   because libjxl reference emits this layout. Bitstream is
+    ///   bit-compatible with cjxl; bytes may be LARGER than `Zenjxl`.
+    Libjxl,
 
-    /// **Conservative.** Enables the *photo-class* algorithm improvements
-    /// (W44-29/91/96/98/99/100 entropy-mul lowering, W44-34/35 smooth-photo
-    /// DCT64 admission) AND the ported algorithm fixes that are at-parity
-    /// today, but DISABLES the screenshot-class lifts and the buttloop /
-    /// EPF-seed corrections.
+    /// **LeanFaster.** Skips the heavy per-image content gates and the
+    /// EPF/buttloop corrections to keep encode time leaner, while keeping
+    /// the at-parity algorithm fixes and the photo-class entropy-mul
+    /// lowering that doesn't cost extra encode time.
     ///
     /// Behaviour:
-    /// - Photo-class gates: auto (default for those gates)
-    /// - Screenshot-class gates: off (W22-1, W44-65/68, W44-105 chain,
-    ///   W44-109 chain, W44-117/118/120 chain, W44-123)
-    /// - Effort-gate divergences: ours (not libjxl)
-    Conservative,
+    /// - Photo-class entropy-mul gates: auto (W44-29 / W44-91 / W44-96 /
+    ///   W44-98 / W44-99 / W44-100 — these are cheap, just table swaps)
+    /// - Screenshot-class gates: off (W22-1, W44-65 / W44-68, W44-123 /
+    ///   W44-124)
+    /// - Buttloop qf seed scale: off (W44-105 / W44-107 / W44-108 chain
+    ///   disabled — buttloop runs faster without the extra iteration the
+    ///   4× seed scale provokes)
+    /// - Adaptive-quant qf pre-scale: off (W44-109 chain disabled)
+    /// - EPF sharpness one-shot seed: off (W44-117 / W44-118 / W44-120
+    ///   chain disabled — falls back to legacy uniform-4)
+    /// - Smooth-photo DCT64 admission: off (W44-34 / W44-35)
+    /// - Effort-gate divergences: ours (not libjxl) — keeps our
+    ///   speed-conscious gating
+    LeanFaster,
 
-    /// **Default.** What we ship today. Equivalent to the all-Nones
-    /// behaviour of the `with_*_hint(Option<bool>)` setters, which routes
-    /// through the per-image auto discriminators.
+    /// **Zenjxl.** Production default — what we ship today. Equivalent to
+    /// the all-Nones behaviour of the `with_*_hint(Option<bool>)` setters,
+    /// which routes through the per-image auto discriminators.
+    ///
+    /// `impl Default for EncoderStrategy` returns `Self::Zenjxl`.
     ///
     /// Behaviour:
     /// - Every Section B gate: auto (mask1x1 / zenanalyze discriminators
     ///   fire as documented)
-    /// - W44-105/107/108 buttloop chain: 4.0 / fires per gate
+    /// - W44-105 / W44-107 / W44-108 buttloop chain: 4.0 / fires per gate
     /// - W44-109 adaptive-quant chain: 2.0/3.0 / fires per gate
-    /// - W44-117/118/120 EPF chain: fires on is_screenshot at d>=1.0
-    /// - W44-65/68 DCT64 suppression: auto via mask1x1 > 95
-    /// - W44-123 dct32_keep_hint: None (defer to W44-68 drop)
-    Default,
+    /// - W44-117 / W44-118 / W44-120 EPF chain: fires on is_screenshot
+    ///   at d ≥ 1.0
+    /// - W44-65 / W44-68 DCT64 suppression: auto via mask1x1 > 95
+    /// - W44-123 / W44-124 dct32_keep: auto via
+    ///   `m3_colourfulness ≥ 60 AND edge_density < 0.05` (codec_wiki-class)
+    Zenjxl,
 
-    /// **Aggressive.** All the Default behaviours PLUS opt-in to:
-    /// - W44-123 DCT32 keep on codec_wiki-class screenshots
-    ///   (`dct32_keep_hint = Some(true)`).
+    /// **Aggressive.** All the Zenjxl behaviours PLUS opt-in to:
     /// - Future opt-in improvements as they ship.
     ///
-    /// Caller is expected to be using a richer content classifier
-    /// (zenanalyze features) to avoid the W44-123 graph/imessage
-    /// regression.
+    /// Currently has no exclusive dials beyond what Zenjxl ships — the
+    /// previous "Aggressive flips W44-123 dct32_keep on globally" was
+    /// obsoleted by W44-124's auto-discriminator, which selects the right
+    /// content class for that lift inside Zenjxl. The Aggressive variant
+    /// is kept as a forward-compatible slot for the next opt-in chunk that
+    /// has a too-narrow auto-discriminator for the Zenjxl bundle.
     Aggressive,
 
     /// **Custom.** Caller picks every dial individually. See
-    /// [`EncoderImprovementsCustom`].
+    /// [`EncoderImprovementsCustom`]. Includes the perf-dispatch policies
+    /// (`EpfDispatch`, `PixelLossDispatch`, `SinglePassEntropyDispatch`,
+    /// `PatchesDispatch`) — they ABSORB into `Custom` per user direction.
     Custom(Box<EncoderImprovementsCustom>),
 }
 
-impl Default for EncoderCompatibility {
+impl Default for EncoderStrategy {
     fn default() -> Self {
-        Self::Default
+        Self::Zenjxl
     }
 }
 ```
@@ -314,10 +381,10 @@ configurations at the type level.
 
 ```rust
 /// Fine-grained per-divergence picks. Use with
-/// [`EncoderCompatibility::Custom`] when none of the named presets fit.
+/// [`EncoderStrategy::Custom`] when none of the named presets fit.
 ///
 /// Every field has a `Default` impl that matches
-/// [`EncoderCompatibility::Default`]. Construct via
+/// [`EncoderStrategy::Zenjxl`]. Construct via
 /// `EncoderImprovementsCustom::default().with_*` builders for a fluent
 /// experience.
 #[derive(Clone, Debug, PartialEq)]
@@ -333,28 +400,69 @@ pub struct EncoderImprovementsCustom {
     // ── DCT-class search admission ─────────────────────────────────
     /// W44-65/68 DCT64-class suppression on screenshot content.
     pub dct64_search_policy: Dct64SearchPolicy,
-    /// W44-123 DCT32-class search retention (only matters when
+    /// W44-123/124 DCT32-class search retention (only matters when
     /// `dct64_search_policy` would otherwise drop the DCT32 family
-    /// together).
+    /// together). The default policy uses W44-124's
+    /// `m3_colourfulness ≥ 60 AND edge_density < 0.05` auto-discriminator.
     pub dct32_search_policy: Dct32SearchPolicy,
-    /// W44-34/35 smooth-photo DCT64 admission (orthogonal to dct64_search_policy
-    /// above — that one is screenshot suppression; this one is photo admission
-    /// inside the small-image-pixel gate).
+    /// W44-34/35 smooth-photo DCT64 admission (orthogonal to
+    /// dct64_search_policy above — that one is screenshot suppression;
+    /// this one is photo admission inside the small-image-pixel gate).
     pub smooth_photo_dct64_admission: SmoothPhotoDct64Policy,
 
     // ── Butteraugli loop qf seeding (e>=8) ─────────────────────────
     /// W44-105/107/108 — pre-scale the buttloop's initial qf seed on
-    /// screenshot-class content at high d.
+    /// screenshot-class content at high d. Promoted from env-var
+    /// `JXL_BUTTLOOP_INITIAL_QF_SCALE`.
     pub buttloop_qf_seed: ButtloopQfSeedPolicy,
 
     // ── Adaptive-quant qf seeding (e ∈ [5,7]) ──────────────────────
     /// W44-109 — mirror of W44-105 at lower effort where buttloop is
-    /// unavailable.
+    /// unavailable. Promoted from env-var
+    /// `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE`.
     pub adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy,
 
     // ── EPF sharpness seed for buttloop ────────────────────────────
-    /// W44-117/118/120 — one-shot `compute_epf_sharpness` seed.
+    /// W44-117/118/120 — one-shot `compute_epf_sharpness` seed. The
+    /// `AutoW44_117 { min_distance }` field is promoted from env-var
+    /// `JXL_W44_120_EPF_SEED_MIN_DISTANCE`. The `LegacyUniform4` pick
+    /// is promoted from env-var `JXL_W44_117_DISABLE=1`.
     pub buttloop_epf_sharpness_seed: EpfSharpnessSeed,
+
+    // ── Perf dispatches (ABSORBED into Custom per user decision) ───
+    /// W37-2 — EPF per-block sharpness search dispatch.
+    /// Was independent setter `with_epf_dispatch` on `LossyConfig`.
+    pub epf_dispatch: EpfDispatch,
+    /// W38-2 / W44-90 — pixel-domain loss dispatch.
+    /// Was independent setter `with_pixel_loss_dispatch` on `LossyConfig`.
+    pub pixel_loss_dispatch: PixelLossDispatch,
+    /// W44-87 — single-pass entropy dispatch at e=5 on smooth photos.
+    /// Was independent setter `with_single_pass_entropy_dispatch` on
+    /// `LossyConfig`.
+    pub single_pass_entropy_dispatch: SinglePassEntropyDispatch,
+    /// W37-1 / W41-2 — patches scan dispatch.
+    /// Was independent setter `with_patches_dispatch` on `LossyConfig`.
+    pub patches_dispatch: PatchesDispatch,
+
+    // ── Section A effort-gate divergences (Libjxl-only flips) ──────
+    /// `cfl_two_pass` minimum effort threshold (we e7+, libjxl e5+).
+    /// `EncoderStrategy::Libjxl` sets `EffortGate::Libjxl` (= 5).
+    pub cfl_two_pass_min_effort: EffortGate,
+    /// `try_dct64` minimum effort threshold (we e7+, libjxl no effort
+    /// gate — decoding_speed_tier gated instead). `Libjxl` sets
+    /// `EffortGate::Off` (no gate).
+    pub try_dct64_min_effort: EffortGate,
+    /// `epf_dynamic_sharpness` minimum effort threshold (we e6+, libjxl
+    /// no effort gate). `Libjxl` sets `EffortGate::Off`.
+    pub epf_dynamic_sharpness_min_effort: EffortGate,
+
+    // ── Section D KNOWN-BUG re-enables (Libjxl-only) ───────────────
+    /// 15-cluster default for `BlockCtxMap`. Issue #59 KNOWN-BUG —
+    /// currently DISABLED because of an upstream `cluster_histograms`
+    /// divergence that regresses bytes. `EncoderStrategy::Libjxl`
+    /// re-enables (deliberately re-introducing the regression to match
+    /// libjxl byte-for-byte). Default = `false`.
+    pub block_ctx_map_15_cluster: bool,
 
     // ── Future expansion ───────────────────────────────────────────
     // Non-exhaustive — new divergences add fields here. The derive of
@@ -369,7 +477,7 @@ pub struct EncoderImprovementsCustom {
 /// W22-1 screenshot entropy-mul lift.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ScreenshotEntropyMulPolicy {
-    /// **Default in [`EncoderCompatibility::Default`].** Auto-fire via
+    /// **Default in [`EncoderStrategy::Default`].** Auto-fire via
     /// `median(mask1x1) > 95` on screenshot-class content.
     #[default]
     Auto,
@@ -380,7 +488,7 @@ pub enum ScreenshotEntropyMulPolicy {
     /// the W22-1 `Some(false)` override.
     ForceOff,
     /// Disable the gate entirely (the `content_aware_entropy_mul` bit is
-    /// false). [`EncoderCompatibility::CjxlMirror`] uses this.
+    /// false). [`EncoderStrategy::Libjxl`] uses this.
     Disabled,
 }
 
@@ -411,7 +519,7 @@ pub enum Dct64SearchPolicy {
     /// `with_dct_suppress_hint(Some(true))`.
     ForceSuppress,
     /// Force-allow DCT64 evaluation everywhere. Equivalent to
-    /// `with_dct_suppress_hint(Some(false))`. CjxlMirror uses this.
+    /// `with_dct_suppress_hint(Some(false))`. Libjxl uses this.
     ForceAllow,
 }
 
@@ -441,7 +549,7 @@ pub enum SmoothPhotoDct64Policy {
     /// Force-admit on the gated cell.
     ForceAdmit,
     /// Force-skip the admission (preserves pre-W44-35 behaviour).
-    /// CjxlMirror uses this.
+    /// Libjxl uses this.
     ForceSkip,
 }
 
@@ -458,7 +566,7 @@ pub enum ButtloopQfSeedPolicy {
     AutoScale(f32),
     /// Force-fire the scale on every encode at given factor.
     ForceScale(f32),
-    /// Off — never scale (`scale == 1.0`). CjxlMirror uses this.
+    /// Off — never scale (`scale == 1.0`). Libjxl uses this.
     Off,
 }
 
@@ -471,7 +579,7 @@ pub enum AdaptiveQuantQfSeedPolicy {
     AutoScalePerEffort,
     /// Custom per-effort scales (replaces the 2.0/3.0 defaults).
     AutoScaleCustom { e5_e6: f32, e7: f32 },
-    /// Off — never pre-scale. CjxlMirror uses this.
+    /// Off — never pre-scale. Libjxl uses this.
     Off,
 }
 
@@ -483,22 +591,52 @@ pub enum AdaptiveQuantQfSeedPolicy {
 /// `Option<bool>` shape we ship today admits invalid states like
 /// "force_seed AND force_uniform4 AND per_iter_recompute" — the enum
 /// shape makes those unrepresentable.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EpfSharpnessSeed {
     /// **Default.** W44-117 one-shot `compute_epf_sharpness` on the
     /// initial reconstruction, with the W44-118 `is_screenshot` gate
-    /// AND W44-120 `target_distance >= 1.0` gate. Falls back to
-    /// `LegacyUniform4` on photos and on screenshots at d < 1.0.
-    #[default]
-    AutoW44_117 { min_distance: f32 }, // default { min_distance: 1.0 }
+    /// AND W44-120 `target_distance >= min_distance` gate. Falls back to
+    /// `LegacyUniform4` on photos and on screenshots at d < min_distance.
+    ///
+    /// `min_distance` default is `1.0` (W44-120 pick from the bisect).
+    /// Promoted from env-var `JXL_W44_120_EPF_SEED_MIN_DISTANCE`.
+    AutoW44_117 { min_distance: f32 },
     /// Pre-W44-117 behaviour: uniform sharpness = 4 across the whole
-    /// frame inside the buttloop. CjxlMirror uses this.
+    /// frame inside the buttloop. `EncoderStrategy::Libjxl` uses this.
+    /// Promoted from env-var `JXL_W44_117_DISABLE=1`.
     LegacyUniform4,
     /// Future-shape pick — recompute `compute_epf_sharpness` per buttloop
     /// iter. Bench so far shows this regresses (Mode D in W44-118
     /// bisect); reserved for future investigation.
     #[doc(hidden)]
     PerIterRecompute,
+}
+
+impl Default for EpfSharpnessSeed {
+    fn default() -> Self {
+        Self::AutoW44_117 { min_distance: 1.0 }
+    }
+}
+
+/// Section A effort-gate threshold. A divergence row in `Section A` of
+/// `docs/LIBJXL_DIVERGENCES.md` has us at `effort >= N` while libjxl is at
+/// either `effort >= M` (different N) or no effort gate at all. This enum
+/// models the three states cleanly so [`EncoderStrategy::Libjxl`] can flip
+/// to libjxl's gate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EffortGate {
+    /// **Default.** Use the jxl-encoder threshold (Section A "Ours" column).
+    #[default]
+    Ours,
+    /// Use the libjxl threshold (Section A "libjxl" column). For
+    /// `cfl_two_pass` this is 5; for `try_dct64` and
+    /// `epf_dynamic_sharpness` this is `Off` (no effort gate).
+    Libjxl,
+    /// Disable the effort gate entirely (always run / never run depending
+    /// on caller — see the consuming `effort.rs` site for semantics).
+    Off,
+    /// Custom threshold.
+    AtLeast(u8),
 }
 ```
 
@@ -511,11 +649,12 @@ between `LossyConfig` and the internal `VarDctEncoder`.
 ```rust
 /// Fully-resolved per-divergence flags consumed by the internal encoder.
 ///
-/// Built once per encode by [`EncoderCompatibility::resolve`] from the
-/// caller-supplied compatibility variant + any individual `with_*_hint`
+/// Built once per encode by [`EncoderStrategy::resolve`] from the
+/// caller-supplied strategy variant + any individual `with_*_hint`
 /// setters that override the preset.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct ResolvedImprovements {
+    // Section B (content-aware gates)
     pub(crate) screenshot_entropy_mul: ScreenshotEntropyMulPolicy,
     pub(crate) high_d_photo_entropy_mul: HighDPhotoEntropyMulPolicy,
     pub(crate) dct64_search_policy: Dct64SearchPolicy,
@@ -524,22 +663,36 @@ pub(crate) struct ResolvedImprovements {
     pub(crate) buttloop_qf_seed: ButtloopQfSeedPolicy,
     pub(crate) adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy,
     pub(crate) buttloop_epf_sharpness_seed: EpfSharpnessSeed,
+
+    // Perf dispatches (absorbed)
+    pub(crate) epf_dispatch: EpfDispatch,
+    pub(crate) pixel_loss_dispatch: PixelLossDispatch,
+    pub(crate) single_pass_entropy_dispatch: SinglePassEntropyDispatch,
+    pub(crate) patches_dispatch: PatchesDispatch,
+
+    // Section A effort-gate flips (Libjxl-only changes from Ours default)
+    pub(crate) cfl_two_pass_min_effort: EffortGate,
+    pub(crate) try_dct64_min_effort: EffortGate,
+    pub(crate) epf_dynamic_sharpness_min_effort: EffortGate,
+
+    // Section D KNOWN-BUG re-enable
+    pub(crate) block_ctx_map_15_cluster: bool,
 }
 
-impl EncoderCompatibility {
+impl EncoderStrategy {
     /// Resolve to the internal per-divergence flag struct.
     ///
     /// `overrides` carries any individual `with_*_hint` calls the caller
-    /// made AFTER `with_compatibility` — those win field-by-field, mirroring
+    /// made AFTER `with_strategy` — those win field-by-field, mirroring
     /// the `with_perceptual_optimizations` precedence pattern.
     pub(crate) fn resolve(
         &self,
-        overrides: &CompatibilityOverrides,
+        overrides: &StrategyOverrides,
     ) -> ResolvedImprovements {
         let base = match self {
-            Self::CjxlMirror => ResolvedImprovements::cjxl_mirror(),
-            Self::Conservative => ResolvedImprovements::conservative(),
-            Self::Default => ResolvedImprovements::default_bundle(),
+            Self::Libjxl => ResolvedImprovements::libjxl(),
+            Self::LeanFaster => ResolvedImprovements::lean_faster(),
+            Self::Zenjxl => ResolvedImprovements::zenjxl(),
             Self::Aggressive => ResolvedImprovements::aggressive(),
             Self::Custom(c) => ResolvedImprovements::from_custom(c),
         };
@@ -548,7 +701,10 @@ impl EncoderCompatibility {
 }
 
 impl ResolvedImprovements {
-    fn cjxl_mirror() -> Self {
+    /// Strict libjxl parity (all-divergence). Includes Section A effort
+    /// gate flips AND the Section D KNOWN-BUG `BlockCtxMap` 15-cluster
+    /// re-enable — see [`EncoderStrategy::Libjxl`] doc-comment.
+    fn libjxl() -> Self {
         Self {
             screenshot_entropy_mul: ScreenshotEntropyMulPolicy::Disabled,
             high_d_photo_entropy_mul: HighDPhotoEntropyMulPolicy::Disabled,
@@ -558,25 +714,44 @@ impl ResolvedImprovements {
             buttloop_qf_seed: ButtloopQfSeedPolicy::Off,
             adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy::Off,
             buttloop_epf_sharpness_seed: EpfSharpnessSeed::LegacyUniform4,
+            // Perf dispatches: leave at Default `Auto` (callers pick speed
+            // tradeoff orthogonally; this doesn't break Libjxl byte parity
+            // because all four are at-parity on `Auto` for libjxl-shaped
+            // inputs).
+            epf_dispatch: EpfDispatch::default(),
+            pixel_loss_dispatch: PixelLossDispatch::default(),
+            single_pass_entropy_dispatch: SinglePassEntropyDispatch::default(),
+            patches_dispatch: PatchesDispatch::default(),
+            // Section A: flip to libjxl gates
+            cfl_two_pass_min_effort: EffortGate::Libjxl,
+            try_dct64_min_effort: EffortGate::Libjxl,
+            epf_dynamic_sharpness_min_effort: EffortGate::Libjxl,
+            // Section D KNOWN-BUG: deliberately re-enable to match libjxl
+            block_ctx_map_15_cluster: true,
         }
     }
-    fn conservative() -> Self {
+    fn lean_faster() -> Self {
         Self {
             screenshot_entropy_mul: ScreenshotEntropyMulPolicy::Disabled,
             high_d_photo_entropy_mul: HighDPhotoEntropyMulPolicy::Auto,
             dct64_search_policy: Dct64SearchPolicy::ForceAllow,
             dct32_search_policy: Dct32SearchPolicy::FollowDct64Suppression,
-            smooth_photo_dct64_admission: SmoothPhotoDct64Policy::Auto,
+            smooth_photo_dct64_admission: SmoothPhotoDct64Policy::ForceSkip,
             buttloop_qf_seed: ButtloopQfSeedPolicy::Off,
             adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy::Off,
             buttloop_epf_sharpness_seed: EpfSharpnessSeed::LegacyUniform4,
+            ..Default::default()
         }
     }
-    fn default_bundle() -> Self { /* every field at its enum's #[default] */ Default::default() }
+    fn zenjxl() -> Self {
+        // Every field at its enum's #[default] = current shipping behaviour.
+        Default::default()
+    }
     fn aggressive() -> Self {
-        let mut r = Self::default_bundle();
-        r.dct32_search_policy = Dct32SearchPolicy::KeepWhenDct64Suppressed;
-        r
+        // Currently equivalent to Zenjxl after W44-124's auto-discriminator
+        // for DCT32 keep landed in default Zenjxl. Forward-compatible slot
+        // for the next opt-in chunk that has a too-narrow auto-discriminator.
+        Self::zenjxl()
     }
     fn from_custom(c: &EncoderImprovementsCustom) -> Self {
         Self {
@@ -588,14 +763,22 @@ impl ResolvedImprovements {
             buttloop_qf_seed: c.buttloop_qf_seed,
             adaptive_quant_qf_seed: c.adaptive_quant_qf_seed,
             buttloop_epf_sharpness_seed: c.buttloop_epf_sharpness_seed,
+            epf_dispatch: c.epf_dispatch,
+            pixel_loss_dispatch: c.pixel_loss_dispatch,
+            single_pass_entropy_dispatch: c.single_pass_entropy_dispatch,
+            patches_dispatch: c.patches_dispatch,
+            cfl_two_pass_min_effort: c.cfl_two_pass_min_effort,
+            try_dct64_min_effort: c.try_dct64_min_effort,
+            epf_dynamic_sharpness_min_effort: c.epf_dynamic_sharpness_min_effort,
+            block_ctx_map_15_cluster: c.block_ctx_map_15_cluster,
         }
     }
 }
 
 /// Per-field overrides set via the existing `with_*_hint` setters AFTER
-/// `with_compatibility` is called. Field-by-field precedence over the
-/// compatibility preset's resolved value.
-pub(crate) struct CompatibilityOverrides {
+/// `with_strategy` is called. Field-by-field precedence over the
+/// strategy preset's resolved value.
+pub(crate) struct StrategyOverrides {
     pub(crate) screenshot_lift_hint: Option<bool>,
     pub(crate) high_d_photo_hint: Option<bool>,
     pub(crate) smooth_photo_dct64_hint: Option<bool>,
@@ -629,17 +812,17 @@ mutually-exclusive states are unrepresentable.
 ```rust
 impl LossyConfig {
     /// Set the encoder compatibility bundle. Default
-    /// [`EncoderCompatibility::Default`] reproduces what we ship today.
+    /// [`EncoderStrategy::Default`] reproduces what we ship today.
     ///
     /// Individual `with_*_hint` / `with_*_dispatch` setters called AFTER
     /// this one override the matching field on the resolved
     /// [`ResolvedImprovements`] (mirrors the
     /// [`Self::with_perceptual_optimizations`] precedence pattern).
-    pub fn with_compatibility(mut self, c: EncoderCompatibility) -> Self {
+    pub fn with_strategy(mut self, c: EncoderStrategy) -> Self {
         self.compatibility = c;
         self
     }
-    pub fn compatibility(&self) -> &EncoderCompatibility { &self.compatibility }
+    pub fn compatibility(&self) -> &EncoderStrategy { &self.compatibility }
 }
 ```
 
@@ -649,22 +832,27 @@ impl LossyConfig {
 
 No external users (per CLAUDE.md), so we DELETE rather than deprecate. The
 `with_*_hint` setters stay (as a low-level escape hatch and for the
-"override after `with_compatibility`" pattern), but most callers should
-migrate to `with_compatibility`.
+"override after `with_strategy`" pattern), but most callers should
+migrate to `with_strategy`.
 
 | Old API call | New equivalent |
 |---|---|
-| (no call — defaults) | (no call — `EncoderCompatibility::Default`) |
-| `with_content_aware_entropy_mul(true)` | `with_compatibility(EncoderCompatibility::Default)` (already on by default in Default bundle? — see open question #3) |
-| `with_content_aware_entropy_mul(false)` | `with_compatibility(EncoderCompatibility::Conservative)` OR `with_compatibility(EncoderCompatibility::CjxlMirror)` |
-| `with_dct_suppress_hint(Some(true))` | `EncoderCompatibility::Custom({ dct64_search_policy: ForceSuppress, ... })` |
-| `with_dct_suppress_hint(Some(false))` | `EncoderCompatibility::CjxlMirror` (or override `dct64_search_policy: ForceAllow` in Custom) |
-| `with_dct32_keep_hint(Some(true))` | `EncoderCompatibility::Aggressive` |
+| (no call — defaults) | (no call — `EncoderStrategy::Zenjxl`) |
+| `with_content_aware_entropy_mul(true)` | `EncoderStrategy::Custom({ screenshot_entropy_mul: Auto, ... })` (Zenjxl keeps this opt-in; Custom is the path) |
+| `with_content_aware_entropy_mul(false)` | `with_strategy(EncoderStrategy::LeanFaster)` OR `with_strategy(EncoderStrategy::Libjxl)` |
+| `with_dct_suppress_hint(Some(true))` | `with_strategy(EncoderStrategy::Custom(Box::new(EncoderImprovementsCustom { dct64_search_policy: Dct64SearchPolicy::ForceSuppress, ..Default::default() })))` |
+| `with_dct_suppress_hint(Some(false))` | `with_strategy(EncoderStrategy::Libjxl)` (or `Custom` override `dct64_search_policy: ForceAllow`) |
+| `with_dct32_keep_hint(Some(true))` | now redundant — Zenjxl auto-discriminates via W44-124. For per-image force-on use `Custom` with `dct32_search_policy: KeepWhenDct64Suppressed`. |
+| `with_epf_dispatch(EpfDispatch::AlwaysDefault)` | `EncoderStrategy::Custom({ epf_dispatch: EpfDispatch::AlwaysDefault, ... })` |
+| `with_pixel_loss_dispatch(PixelLossDispatch::AlwaysOff)` | `EncoderStrategy::Custom({ pixel_loss_dispatch: PixelLossDispatch::AlwaysOff, ... })` |
 
 Env vars `JXL_W44_117_DISABLE`, `JXL_W44_120_EPF_SEED_MIN_DISTANCE`,
-`JXL_BUTTLOOP_INITIAL_QF_SCALE`, `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE`: KEEP
-as harness-sweep overrides (they sit at the bottom of the resolution stack,
-below the API).
+`JXL_BUTTLOOP_INITIAL_QF_SCALE`, `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE`:
+PROMOTED to first-class API fields on `EncoderImprovementsCustom` per user
+decision. Env-var fallback STAYS at the bottom of the resolution stack —
+when the caller-set API field is at its default value, env-var override
+applies. Used by harness sweeps for hyperparameter exploration without
+changing source.
 
 ---
 
@@ -673,126 +861,141 @@ below the API).
 Read sites for the resolved struct (touched in implementation, NOT this design
 chunk):
 
+Updated estimate post-user-decisions (`Libjxl` all-divergence parity +
+perf-dispatch absorption + env-var promotion all expand scope vs v1):
+
 | File | LOC change | Sites |
 |---|---|---|
-| `jxl-encoder/src/api.rs` | +400 (new enum definitions, Default impls, builder), -50 (rewire `with_*_hint` setters to update overrides struct) | enum defs, `LossyConfig::with_compatibility`, `resolve()` |
-| `jxl-encoder/src/vardct/encoder.rs` | ~10 sites changed (~50 LOC), each replacing an `Option<bool>` match with a 3-arm enum match | `w44_65_suppress_dct64`, `w22_1_lift`, `w44_29_lift`, `w44_123_keep_dct32`, smooth-photo DCT64, etc. |
-| `jxl-encoder/src/vardct/butteraugli_loop.rs` | ~3 sites, ~40 LOC | EPF sharpness seed, buttloop qf seed scale |
+| `jxl-encoder/src/api.rs` | +600 (new enum definitions including `EffortGate`, Default impls, builder, absorbed perf-dispatch fields, promoted env-var fields), -80 (rewire `with_*_hint`/`with_*_dispatch` setters to update overrides struct or `EncoderImprovementsCustom`) | enum defs, `LossyConfig::with_strategy`, `resolve()`, env-var fallback layer |
+| `jxl-encoder/src/vardct/encoder.rs` | ~12 sites changed (~70 LOC), each replacing an `Option<bool>` match with an enum match | W44-65, W22-1, W44-29, W44-123/124, smooth-photo DCT64, W44-91/96/98/99/100 sub-gates, etc. |
+| `jxl-encoder/src/vardct/butteraugli_loop.rs` | ~5 sites, ~60 LOC | EPF sharpness seed (W44-117/118/120 chain), buttloop qf seed scale (W44-105/107/108 chain), env-var fallback layer |
+| `jxl-encoder/src/vardct/adaptive_quant.rs` | ~3 sites, ~30 LOC | W44-109 qf pre-scale chain |
 | `jxl-encoder/src/vardct/bitstream.rs` | ~2 sites, ~20 LOC | EPF dispatch routing |
-| `jxl-encoder/src/effort.rs` | ~5 LOC | EntropyMulTable resolve (table-swap entry point) |
-| `jxl-encoder-cli/src/main.rs` | ~30 LOC | new `--compatibility cjxl-mirror|conservative|default|aggressive` flag |
-| `jxl-encoder/src/vardct/encoder.rs` tests | ~20 LOC | rewrite existing `with_*_hint` test cases against `with_compatibility` |
+| `jxl-encoder/src/effort.rs` | ~80 LOC | EntropyMulTable resolve (table-swap entry point), Section A effort-gate consultation (3 sites: `cfl_two_pass`, `try_dct64`, `epf_dynamic_sharpness`) — each now reads the `EffortGate` enum |
+| `jxl-encoder/src/entropy_coding/cluster.rs` | ~10 LOC | Section D KNOWN-BUG `BlockCtxMap` 15-cluster re-enable site |
+| `jxl-encoder-cli/src/main.rs` | ~40 LOC | new `--strategy libjxl|lean-faster|zenjxl|aggressive` flag |
+| `jxl-encoder/src/vardct/encoder.rs` tests | ~30 LOC | rewrite existing `with_*_hint` test cases against `with_strategy` |
+| Hash-lock + roundtrip tests | ~50 LOC | new `Libjxl` hash-lock fixtures (corpus subset) + per-variant roundtrip via jxl-rs |
 
-Total: ~570 LOC across 6 files. Implementation is straightforward — the
-hard part was already done in the W44-* arc (the divergence inventory and
-the per-site auto-gate predicates).
+Total: ~990 LOC across ~9 files (was 570 LOC across 6 files in v1).
+Implementation is still straightforward — the hard part was already done in
+the W44-* arc.
 
 ---
 
-## 7. Open questions for user
+## 7. Open questions for user — RESOLVED
 
-Before any implementation chunk:
+User reviewed all 9 questions on 2026-05-20. The 4 highest-impact picks were
+collected via `AskUserQuestion`; the remaining 5 apply the recommendations.
 
-1. **Variant naming.** `Default` shadows `std::default::Default`. Options:
-   - Keep `EncoderCompatibility::Default` (allowed but slightly confusing).
-   - Rename to `Production`, `Shipping`, `Recommended`, `Standard`?
-   - **Recommendation**: `EncoderCompatibility::Production` (signals "what
-     we ship") and reserve `Default` for the `impl Default`.
+1. **Variant naming.** RESOLVED. User picked custom rename: enum is
+   `EncoderStrategy`; variants are `Libjxl`, `Zenjxl`, `LeanFaster`,
+   `Aggressive`, `Custom`. `impl Default for EncoderStrategy` returns
+   `Self::Zenjxl`. (User notation: "encoderstrategy libjxl zenjxl/default
+   leanfaster aggressive custom".)
 
-2. **Should perf dispatches absorb into the enum?** Today
-   `EpfDispatch`/`PixelLossDispatch`/`SinglePassEntropyDispatch`/
-   `PatchesDispatch` are separate setters and don't change bitstream output
-   on the `Auto` setting beyond what the underlying gate enables. They're
-   speed knobs, not divergence knobs. Should they be moved INTO the
-   `Custom` payload as an `EncoderPerfDispatch` sub-struct, OR stay as
-   independent setters? Trade-off:
-   - **Absorb**: one config struct to rule them all; perf and quality
-     bundles compose cleanly (e.g. "Conservative bundle + AlwaysOff pixel
-     loss for max speed").
-   - **Keep separate**: perf knobs are conceptually orthogonal to the
-     parity-vs-improvement bundle. A caller wanting `CjxlMirror` may still
-     want `EpfDispatch::Auto` for speed.
-   - **Recommendation**: keep separate. They're not divergence-class.
+2. **Perf dispatches absorb into enum.** RESOLVED — ABSORB. `EpfDispatch`,
+   `PixelLossDispatch`, `SinglePassEntropyDispatch`, `PatchesDispatch` move
+   into `EncoderImprovementsCustom` as direct fields. Independent
+   `with_*_dispatch` setters on `LossyConfig` are DELETED in Chunk D; their
+   functionality is reachable via `EncoderStrategy::Custom`.
 
-3. **Where does `Default` sit?** Today `with_content_aware_entropy_mul`
-   defaults to `false` — the W22-1 lift is opt-in. But many other
-   divergences (W44-65, W44-105 chain, W44-109 chain, W44-117 chain) are
-   default-on. So `EncoderCompatibility::Default` should mirror "all the
-   stuff we ship by default" which includes some opt-out and some opt-in.
-   Question: do we flip `content_aware_entropy_mul` to default-on in the
-   Default bundle, or keep it opt-in?
-   - **Recommendation**: keep it opt-in for backwards compat with existing
-     `Default` hash-locks. `Aggressive` is the variant that flips it on.
+3. **Where does `Zenjxl` sit on `content_aware_entropy_mul`?** Applied
+   recommendation: keep opt-in. `Zenjxl` leaves `screenshot_entropy_mul:
+   ScreenshotEntropyMulPolicy::Auto` BUT the underlying
+   `content_aware_entropy_mul` enable bit defaults to `false` for
+   hash-lock parity. Caller wanting the W22-1 lift uses `Custom` with
+   `screenshot_entropy_mul: ForceOn` OR enables the bit explicitly via
+   the legacy setter that survives.
 
-4. **Should `Conservative` enable `epf_dynamic_sharpness` auto-skip?**
-   That's a Section A effort-gate divergence (we e6+, libjxl no gate). It's
-   a SUPERSET of libjxl (skipping work libjxl does), not a behaviour
-   divergence. Trade-off: leaving it on in `Conservative` saves CPU but
-   diverges from libjxl effort gating semantics.
-   - **Recommendation**: leave on in `Conservative` (it's a perf-only
-     superset); turn off in `CjxlMirror`.
+4. **Should `LeanFaster` enable `epf_dynamic_sharpness` auto-skip?**
+   Applied recommendation: YES — `LeanFaster` keeps the W37-2 EPF
+   sharpness auto-skip (it's a perf-only superset of libjxl). `Libjxl`
+   variant flips `epf_dynamic_sharpness_min_effort: EffortGate::Libjxl`
+   (= no effort gate) to mirror libjxl exactly.
 
-5. **`EpfSharpnessSeed::AutoW44_117 { min_distance: f32 }`** — should this
-   be a free-form `f32` or a presets enum? The W44-120 bisection swept
-   {0.8, 1.0, 1.2, 1.5} and picked 1.0 as pareto-optimal. Future tuning
-   may want {0.5, 0.7, 0.9, 1.1}. Free-form is more flexible.
-   - **Recommendation**: free-form `f32` with a `DEFAULT_MIN_DISTANCE`
-     constant.
+5. **`EpfSharpnessSeed::AutoW44_117 { min_distance: f32 }`**: applied
+   recommendation: free-form `f32`. `EncoderImprovementsCustom`'s
+   `buttloop_epf_sharpness_seed` field default is
+   `EpfSharpnessSeed::AutoW44_117 { min_distance: 1.0 }`.
 
-6. **Should `with_*_hint` setters update a `CompatibilityOverrides`
-   struct, or update fields directly on `LossyConfig`?** The current code
-   stores each hint as `Option<bool>` on `LossyConfig` and the consumer
-   reads it directly. Trade-off:
-   - **Update overrides struct**: cleaner separation, all overrides live
-     in one place, easy to query "did the caller override anything?".
-   - **Direct fields**: less invasive change, existing tests keep working.
-   - **Recommendation**: update overrides struct — the cleaner shape is
-     worth the test rewrites.
+6. **Overrides struct vs direct fields on `LossyConfig`**: applied
+   recommendation: `StrategyOverrides` struct (cleaner separation, all
+   overrides in one place).
 
-7. **CLI flag shape.** `--compatibility cjxl-mirror` is the obvious one.
-   For `Custom`, callers would set individual `--*-hint` flags. Question:
-   are there enough callers wanting hand-tuned Custom configs at the CLI
-   level to justify the surface area, or is `Custom` API-only and the CLI
-   only exposes the named variants?
-   - **Recommendation**: CLI exposes only the four named variants;
-     `Custom` is API-only (it's a power-user knob and there's no clean
-     CLI grammar for nested enums).
+7. **CLI flag shape**: applied recommendation: CLI exposes
+   `--strategy libjxl|lean-faster|zenjxl|aggressive`. `Custom` is API-only.
 
-8. **`CjxlMirror` scope.** The doc says "closes every divergence the API
-   CAN close" but leaves Section A effort-gate divergences and the
-   KNOWN-BUG `BlockCtxMap 15-cluster default` as out-of-scope. Should
-   `CjxlMirror` ALSO flip those? They require code-level ports (not just
-   API knob changes); they should be tracked as separate chunks.
-   - **Recommendation**: scope as designed — `CjxlMirror` covers the
-     API-reachable divergences only. File issues for the rest.
+8. **`Libjxl` scope = all-divergence parity.** RESOLVED — USER OVERRODE
+   RECOMMENDATION. `Libjxl` includes:
+   - Section A effort-gate divergence flips (`cfl_two_pass` 7→5,
+     `try_dct64` 7→no-gate, `epf_dynamic_sharpness` 6→no-gate)
+   - Section D KNOWN-BUG `BlockCtxMap` 15-cluster RE-ENABLE
+     (intentionally re-introduces the regression to match libjxl bytes)
+   - All Section B content-aware gate disables (was already in scope)
+   Implication: `Libjxl` may produce LARGER bytes than `Zenjxl` on some
+   content (BlockCtxMap regression) and SLOWER encodes (`try_dct64`
+   evaluation everywhere). That's correct — Libjxl mirror means "act like
+   libjxl, regressions and all". Hash-lock these byte differences in Chunk
+   B's test plan.
 
-9. **Section 2.5 env-var-only knobs.** Should `JXL_W44_117_DISABLE`,
-   `JXL_W44_120_EPF_SEED_MIN_DISTANCE`, `JXL_BUTTLOOP_INITIAL_QF_SCALE`,
-   `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE` become first-class API knobs as
-   part of this work, OR stay env-var-only?
-   - **Recommendation**: promote to API. The `EncoderImprovementsCustom`
-     struct already has the slot — wire them through. Keep env-var
-     fallback for harness sweeps.
+9. **Promote env-var-only knobs to API.** RESOLVED — PROMOTE. The 4
+   env-vars (`JXL_W44_117_DISABLE`, `JXL_W44_120_EPF_SEED_MIN_DISTANCE`,
+   `JXL_BUTTLOOP_INITIAL_QF_SCALE`, `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE`)
+   become first-class fields on `EncoderImprovementsCustom`. Env-var
+   fallback STAYS at the bottom of the resolution stack — when the
+   caller-set API field is at the default value, env-var override
+   applies.
+
+## 7b. Follow-on questions surfaced during the edit
+
+These are LOW-stakes implementation details that arose only after the v2
+revisions. Not blocking; defaulting to the listed pick unless user objects:
+
+A. **`Aggressive` distinction.** Now that W44-124's auto-discriminator
+   landed in `Zenjxl`, `Aggressive` no longer flips W44-123 globally.
+   `Aggressive` is currently equivalent to `Zenjxl`. Three picks:
+   - **Default**: keep `Aggressive` as a forward-compatible slot (current
+     plan; it's a place to land the next opt-in chunk that has a
+     too-narrow auto-discriminator for `Zenjxl`).
+   - Drop `Aggressive` and re-introduce when needed.
+   - Make `Aggressive` flip ALL `Force*` policies to their maximum-RD
+     direction (regardless of cost/regression risk).
+
+B. **`StrategyOverrides` field for absorbed perf dispatches.** With perf
+   dispatches absorbed into `Custom`, the legacy `with_*_dispatch`
+   setters get DELETED in Chunk D. Should `StrategyOverrides` carry
+   them too (for the chained-after-strategy override pattern)?
+   - **Default**: NO. The override-after pattern is only for the legacy
+     `with_*_hint` setters that survive as escape hatches. Perf-dispatch
+     callers use `with_strategy(EncoderStrategy::Custom(...))`.
+
+C. **Env-var precedence direction.** Env-var fallback when caller-set
+   field is at default: what's "at default"?
+   - **Default**: deep `PartialEq` against the Default impl. If the
+     caller's field equals the default value, env-var override (if set)
+     applies. If the caller explicitly set a non-default value, env-var
+     is ignored.
 
 ---
 
 ## 8. Test plan
 
-1. **Unit**: `EncoderCompatibility::resolve()` for each named variant
+1. **Unit**: `EncoderStrategy::resolve()` for each named variant
    returns the expected `ResolvedImprovements` (table-driven test, one row
    per variant × one field per row).
-2. **Unit**: per-field override precedence — `with_compatibility(X)
+2. **Unit**: per-field override precedence — `with_strategy(X)
    .with_dct_suppress_hint(Some(...))` produces the expected resolved
    value.
-3. **Hash-lock**: `EncoderCompatibility::Default` produces BYTE-IDENTICAL
+3. **Hash-lock**: `EncoderStrategy::Default` produces BYTE-IDENTICAL
    output to today's pre-W44-125 `LossyConfig::new()` on every hash-lock
    fixture (36/36).
-4. **Hash-lock**: `EncoderCompatibility::CjxlMirror` produces a different
+4. **Hash-lock**: `EncoderStrategy::Libjxl` produces a different
    bitstream than `Default` on screenshot-class inputs (we expect divergence
-   — pin the CjxlMirror outputs as new hash-locks for regression).
-5. **Roundtrip**: `CjxlMirror` output decodes successfully via jxl-rs +
+   — pin the Libjxl outputs as new hash-locks for regression).
+5. **Roundtrip**: `Libjxl` output decodes successfully via jxl-rs +
    djxl + jxl-oxide on 8 CLIC photos + 10 GB82-SC screenshots.
-6. **A/B sweep**: `CjxlMirror` vs `cjxl --effort 7 --distance 4` on the
+6. **A/B sweep**: `Libjxl` vs `cjxl --effort 7 --distance 4` on the
    cjxl-parity ledger images — verify total byte/SSIM2/butteraugli deltas
    are within MEASUREMENT NOISE on the cells that should be at parity
    (i.e. excluding Section A effort-gate-driven divergences and the
@@ -800,29 +1003,47 @@ Before any implementation chunk:
 
 ---
 
-## 9. Implementation chunk plan (after design approval)
+## 9. Implementation chunk plan (USER-APPROVED design, ready to ship)
 
-Out of scope for THIS doc — listed for forward planning only:
+Out of scope for THIS doc — listed for forward planning. With the v2
+scope-expansion (`Libjxl` all-divergence parity, perf dispatch absorption,
+env-var promotion), the plan is 7 chunks:
 
 1. **Chunk A**: Land the type definitions in `api.rs` behind
    `__expert` feature flag. No `LossyConfig` field, no call-site wiring.
-   ~200 LOC. Test: type definitions compile and `Default` impls
-   round-trip.
-2. **Chunk B**: Add `LossyConfig::compatibility` field +
-   `with_compatibility` setter. Wire `resolve()` into encoder
-   construction. Internal fields still drive the call sites. ~50 LOC.
+   Includes `EffortGate` enum, all 8 nested policy enums, and the
+   expanded `EncoderImprovementsCustom` struct with all absorbed
+   perf-dispatch fields + promoted env-var fields. ~350 LOC. Test:
+   type definitions compile and `Default` impls round-trip.
+2. **Chunk B**: Add `LossyConfig::strategy` field + `with_strategy`
+   setter. Wire `resolve()` into encoder construction. Internal fields
+   still drive the call sites. Hash-lock acceptance: `Zenjxl` produces
+   byte-identical output to today on all 36 fixtures. ~80 LOC.
 3. **Chunk C**: Rewire one call site at a time (W44-65 first as it's
    the most-touched), replacing `Option<bool>` matches with
    `Dct64SearchPolicy` matches. One commit per call site, ~10 LOC each.
-   ~10 commits.
+   ~12 commits.
 4. **Chunk D**: Delete `with_*_hint` fields from `LossyConfig` and move
-   them into `CompatibilityOverrides`. Update tests. ~50 LOC.
-5. **Chunk E**: Add `--compatibility` CLI flag. ~30 LOC.
-6. **Chunk F**: Promote env-var-only knobs to API (per open question
-   #9). ~80 LOC.
+   them into `StrategyOverrides`. Delete the four `with_*_dispatch`
+   setters from `LossyConfig` (absorbed into Custom — caller must use
+   `with_strategy(Custom(...))`). Update tests. ~120 LOC.
+5. **Chunk E**: Add `--strategy` CLI flag with the four named variants
+   plus completion. ~50 LOC.
+6. **Chunk F**: Promote 4 env-var-only knobs to first-class
+   `EncoderImprovementsCustom` fields. Env-var fallback layer in
+   `resolve()` for harness sweeps. ~100 LOC.
+7. **Chunk G**: `Libjxl` ALL-divergence parity work:
+   - Section A effort-gate consultation in `effort.rs` (3 sites
+     consult the `EffortGate` enum). ~60 LOC.
+   - Section D KNOWN-BUG `BlockCtxMap` 15-cluster re-enable path
+     (gated on `block_ctx_map_15_cluster` field). ~30 LOC.
+   - Hash-lock the resulting `Libjxl` byte deltas vs `Zenjxl` (a few
+     dozen fixtures from CID22 + GB82-SC). ~100 LOC tests.
+   - Document the deliberate regression in `LIBJXL_DIVERGENCES.md`
+     Section G (RESOLVED via `Libjxl` opt-in).
 
-Total: ~450-600 LOC across ~14 commits. Each chunk is independently
-shippable.
+Total: ~990 LOC across ~17 commits. Each chunk is independently
+shippable; the 7-chunk plan keeps each commit reviewable.
 
 ---
 
