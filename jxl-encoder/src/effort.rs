@@ -1739,6 +1739,70 @@ impl EffortProfile {
         }
     }
 
+    /// Apply the Section A effort-gate divergences ([`crate::api::EffortGate`])
+    /// to the three lossy-only profile fields (`cfl_two_pass`,
+    /// `try_dct64`, `epf_dynamic_sharpness`) per
+    /// [`docs/LIBJXL_DIVERGENCES.md`](https://github.com/imazen/jxl-encoder/blob/main/docs/LIBJXL_DIVERGENCES.md)
+    /// Section A.
+    ///
+    /// **W44-133 Chunk G** — final chunk of the EncoderStrategy API
+    /// consolidation. When [`crate::api::EncoderStrategy::Libjxl`] is
+    /// selected, every Section A row flips to the libjxl threshold
+    /// listed in the divergence table. The flip happens AFTER
+    /// `lossy_reference` constructs the profile but BEFORE the encoder
+    /// reads the fields — so legacy callers that bypass
+    /// [`crate::api::EncoderStrategy`] (raw `EffortProfile::lossy(...)`
+    /// in tests, examples, harnesses) are byte-identical.
+    ///
+    /// Per-site `(ours_min_effort, libjxl_min_effort)` pairs
+    /// (mirroring the `effort.rs::lossy_reference` constants and the
+    /// libjxl source-tree lookups documented in `EffortGate::evaluate`):
+    /// - `cfl_two_pass`: `(7, 5)`
+    /// - `try_dct64`: `(7, 0)` — libjxl has no effort gate
+    ///   (`enc_ac_strategy.cc:948` uses `decoding_speed_tier < 4`)
+    /// - `epf_dynamic_sharpness`: `(6, 0)` — libjxl has no effort gate
+    ///
+    /// **Important — `EffortGate::Ours` is a NO-OP**: when the resolved
+    /// field equals the default [`crate::api::EffortGate::Ours`], the
+    /// profile field is LEFT UNTOUCHED. This preserves any prior
+    /// `adapt_to_image_lossy_with_smoothness` / explicit
+    /// `with_internal_params` / `apply_faster_decoding` adjustments to
+    /// the field — `Ours` means "do nothing", NOT "re-evaluate from
+    /// `lossy_reference`'s threshold". Only the explicit `Libjxl` /
+    /// `Off` / `AtLeast(n)` variants actually rewrite the field.
+    ///
+    /// Only relevant for lossy profiles. The Lossless path always
+    /// returns these fields as `false` (see `lossless_reference`) so
+    /// this method is structurally a no-op for lossless encodes — the
+    /// `EffortGate::Libjxl` flip on `try_dct64` would technically
+    /// re-evaluate to `true`, but lossless callers never construct a
+    /// `ResolvedImprovements` with non-default Section A picks today.
+    pub(crate) fn apply_section_a_effort_gates(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        use crate::api::EffortGate;
+        let effort = self.effort;
+        // cfl_two_pass: we e7+, libjxl e5+
+        if !matches!(resolved.cfl_two_pass_min_effort, EffortGate::Ours) {
+            self.cfl_two_pass = resolved
+                .cfl_two_pass_min_effort
+                .evaluate(effort, /*ours=*/ 7, /*libjxl=*/ 5);
+        }
+        // try_dct64: we e7+, libjxl has no effort gate
+        if !matches!(resolved.try_dct64_min_effort, EffortGate::Ours) {
+            self.try_dct64 = resolved
+                .try_dct64_min_effort
+                .evaluate(effort, /*ours=*/ 7, /*libjxl=*/ 0);
+        }
+        // epf_dynamic_sharpness: we e6+, libjxl has no effort gate
+        if !matches!(resolved.epf_dynamic_sharpness_min_effort, EffortGate::Ours) {
+            self.epf_dynamic_sharpness = resolved
+                .epf_dynamic_sharpness_min_effort
+                .evaluate(effort, /*ours=*/ 6, /*libjxl=*/ 0);
+        }
+    }
+
     /// Content-class-aware per-image adapter (RFC #45 pick #4 chunk 1).
     ///
     /// Specializes encoder defaults based on a coarse content class
@@ -3422,5 +3486,125 @@ mod tests {
         // 7. Default ImageContentClass is Unknown.
         let default_class: ImageContentClass = Default::default();
         assert_eq!(default_class, ImageContentClass::Unknown);
+    }
+
+    /// W44-133 Chunk G: `EffortProfile::apply_section_a_effort_gates`
+    /// must flip the 3 Section A fields to the libjxl threshold when
+    /// `EncoderStrategy::Libjxl` is selected. `EffortGate::Ours` (the
+    /// default) must preserve the pre-Chunk-G byte values AND must NOT
+    /// re-evaluate fields that earlier per-image adapters set (e.g.
+    /// `adapt_to_image_lossy_with_smoothness` flipping `try_dct64` to
+    /// `false` on small + low-d cells).
+    #[test]
+    fn test_apply_section_a_effort_gates_ours_preserves_default() {
+        // Default (Ours) at e7: all 3 gates fire (matching lossy_reference)
+        let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
+        let resolved = crate::api::ResolvedImprovements::default();
+        let pre_cfl = p.cfl_two_pass;
+        let pre_dct64 = p.try_dct64;
+        let pre_epf = p.epf_dynamic_sharpness;
+        p.apply_section_a_effort_gates(&resolved);
+        assert_eq!(p.cfl_two_pass, pre_cfl);
+        assert_eq!(p.try_dct64, pre_dct64);
+        assert_eq!(p.epf_dynamic_sharpness, pre_epf);
+        assert!(p.cfl_two_pass); // e7 with Ours
+        assert!(p.try_dct64); // e7 with Ours
+        assert!(p.epf_dynamic_sharpness); // e7 with Ours
+    }
+
+    /// Verifies the NO-OP semantic for `EffortGate::Ours`: if a prior
+    /// adapter (smart-dispatch / __expert override) flipped a Section A
+    /// field, `Ours` must NOT clobber it back to the lossy_reference
+    /// threshold value.
+    #[test]
+    fn test_apply_section_a_effort_gates_ours_does_not_clobber_smart_dispatch() {
+        // Simulate W44-34/35 smart-dispatch: small + low-d image at
+        // e7 drops try_dct64 → false. With strategy = Ours (default),
+        // `apply_section_a_effort_gates` must leave try_dct64 at false.
+        let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
+        p.adapt_to_image_lossy(256 * 256, 1.0);
+        assert!(!p.try_dct64, "smart-dispatch: try_dct64 dropped");
+
+        let ours = crate::api::ResolvedImprovements::default(); // Ours on all 3
+        p.apply_section_a_effort_gates(&ours);
+        assert!(
+            !p.try_dct64,
+            "Ours strategy must preserve smart-dispatch's try_dct64=false"
+        );
+    }
+
+    #[test]
+    fn test_apply_section_a_effort_gates_libjxl_widens() {
+        // At e5: Ours gates all 3 to FALSE; Libjxl widens:
+        //  - cfl_two_pass: libjxl >= 5 → true at e5
+        //  - try_dct64: libjxl no effort gate → true at e5
+        //  - epf_dynamic_sharpness: libjxl no effort gate → true at e5
+        let mut p = EffortProfile::lossy(5, EncoderMode::Reference);
+        assert!(!p.cfl_two_pass); // ours: e5 < 7
+        assert!(!p.try_dct64); // ours: e5 < 7
+        assert!(!p.epf_dynamic_sharpness); // ours: e5 < 6
+
+        let libjxl = crate::api::ResolvedImprovements {
+            cfl_two_pass_min_effort: crate::api::EffortGate::Libjxl,
+            try_dct64_min_effort: crate::api::EffortGate::Libjxl,
+            epf_dynamic_sharpness_min_effort: crate::api::EffortGate::Libjxl,
+            ..Default::default()
+        };
+        p.apply_section_a_effort_gates(&libjxl);
+        assert!(p.cfl_two_pass, "Libjxl: cfl_two_pass fires at e5");
+        assert!(p.try_dct64, "Libjxl: try_dct64 fires at e5 (no effort gate)");
+        assert!(
+            p.epf_dynamic_sharpness,
+            "Libjxl: epf_dynamic_sharpness fires at e5 (no effort gate)"
+        );
+    }
+
+    #[test]
+    fn test_apply_section_a_effort_gates_off_always_fires() {
+        // `Off` semantics: always evaluate (true)
+        let mut p = EffortProfile::lossy(1, EncoderMode::Reference);
+        let off = crate::api::ResolvedImprovements {
+            cfl_two_pass_min_effort: crate::api::EffortGate::Off,
+            try_dct64_min_effort: crate::api::EffortGate::Off,
+            epf_dynamic_sharpness_min_effort: crate::api::EffortGate::Off,
+            ..Default::default()
+        };
+        p.apply_section_a_effort_gates(&off);
+        assert!(p.cfl_two_pass);
+        assert!(p.try_dct64);
+        assert!(p.epf_dynamic_sharpness);
+    }
+
+    #[test]
+    fn test_apply_section_a_effort_gates_at_least_custom() {
+        // `AtLeast(n)` semantics: custom threshold
+        let mut p = EffortProfile::lossy(4, EncoderMode::Reference);
+        let custom = crate::api::ResolvedImprovements {
+            cfl_two_pass_min_effort: crate::api::EffortGate::AtLeast(4),
+            try_dct64_min_effort: crate::api::EffortGate::AtLeast(5),
+            epf_dynamic_sharpness_min_effort: crate::api::EffortGate::AtLeast(3),
+            ..Default::default()
+        };
+        p.apply_section_a_effort_gates(&custom);
+        assert!(p.cfl_two_pass); // e4 >= 4
+        assert!(!p.try_dct64); // e4 < 5
+        assert!(p.epf_dynamic_sharpness); // e4 >= 3
+    }
+
+    #[test]
+    fn test_effort_gate_evaluate() {
+        use crate::api::EffortGate;
+        // Ours: effort >= ours_min
+        assert!(EffortGate::Ours.evaluate(7, 7, 5));
+        assert!(!EffortGate::Ours.evaluate(6, 7, 5));
+        // Libjxl: effort >= libjxl_min
+        assert!(EffortGate::Libjxl.evaluate(5, 7, 5));
+        assert!(!EffortGate::Libjxl.evaluate(4, 7, 5));
+        // Off: always true
+        assert!(EffortGate::Off.evaluate(1, 7, 5));
+        assert!(EffortGate::Off.evaluate(0, 7, 5));
+        // AtLeast: explicit threshold
+        assert!(EffortGate::AtLeast(3).evaluate(3, 7, 5));
+        assert!(!EffortGate::AtLeast(3).evaluate(2, 7, 5));
     }
 }

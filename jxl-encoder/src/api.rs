@@ -3833,6 +3833,42 @@ pub enum EffortGate {
     AtLeast(u8),
 }
 
+impl EffortGate {
+    /// Evaluate the gate at the given `effort`, parameterised by the
+    /// per-site `ours_min_effort` and `libjxl_min_effort` defaults.
+    ///
+    /// **Per-site defaults** (read directly from `effort.rs`
+    /// `lossy_reference` + libjxl's `enc_heuristics.cc` / `enc_ac_strategy.cc`
+    /// sources; documented per `docs/LIBJXL_DIVERGENCES.md` Section A):
+    ///
+    /// | site | `ours_min_effort` | `libjxl_min_effort` |
+    /// |---|---|---|
+    /// | `cfl_two_pass` | `7` (we) | `5` (libjxl `speed_tier <= kHare`) |
+    /// | `try_dct64` | `7` (we) | `0` (libjxl has no effort gate; uses `decoding_speed_tier`) |
+    /// | `epf_dynamic_sharpness` | `6` (we) | `0` (libjxl has no effort gate) |
+    ///
+    /// Semantics:
+    /// - [`Ours`](EffortGate::Ours) → `effort >= ours_min_effort`
+    /// - [`Libjxl`](EffortGate::Libjxl) → `effort >= libjxl_min_effort`
+    /// - [`Off`](EffortGate::Off) → `true` (gate disabled, always fire)
+    /// - [`AtLeast(n)`](EffortGate::AtLeast) → `effort >= n`
+    ///
+    /// W44-133 Chunk G consumes this from
+    /// `LosslessConfig::effective_profile_for_image_with_smoothness` and the
+    /// equivalent lossy boundary to flip the 3 Section A effort gates in
+    /// `EffortProfile` when [`EncoderStrategy::Libjxl`] is selected. The
+    /// default value [`EffortGate::Ours`] preserves all pre-Chunk-G hash
+    /// locks byte-identical.
+    pub(crate) fn evaluate(self, effort: u8, ours_min_effort: u8, libjxl_min_effort: u8) -> bool {
+        match self {
+            EffortGate::Ours => effort >= ours_min_effort,
+            EffortGate::Libjxl => effort >= libjxl_min_effort,
+            EffortGate::Off => true,
+            EffortGate::AtLeast(n) => effort >= n,
+        }
+    }
+}
+
 /// Fine-grained per-divergence picks. Use with [`EncoderStrategy::Custom`]
 /// when none of the named presets fit.
 ///
@@ -4975,6 +5011,19 @@ impl LossyConfig {
             if let Some(class) = self.content_class {
                 p.adapt_to_image_content(pixels, self.distance, class);
             }
+            // W44-133 Chunk G: Section A effort-gate consultation.
+            // Flips `cfl_two_pass` / `try_dct64` / `epf_dynamic_sharpness`
+            // to the libjxl threshold when `EncoderStrategy::Libjxl` is
+            // selected (or to `Off`/`AtLeast(n)` for `Custom` strategies
+            // that set the matching `EffortGate` variant). Default
+            // `EffortGate::Ours` preserves the pre-Chunk-G value
+            // byte-identically. Applied AFTER `adapt_to_image_lossy_with_smoothness`
+            // so the W44-34/35 smart-dispatch (which already may
+            // promote `try_dct64 -> true` on smooth photos) and the
+            // content-class dispatch run first; the consultation can
+            // still re-flip the field to the libjxl gate value if the
+            // strategy requests it.
+            p.apply_section_a_effort_gates(&resolved);
         }
         p
     }
