@@ -2942,14 +2942,42 @@ impl VarDctEncoder {
 
         // W22-1 screenshot lift (opt-in, fires only when
         // `content_aware_entropy_mul=true`).
-        let w22_1_lift = if self.content_aware_entropy_mul {
-            match self.screenshot_lift_hint {
-                Some(b) => b,
-                None => mask1x1_median
-                    .is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD),
+        //
+        // W44-129 Chunk C: read the resolved `screenshot_entropy_mul`
+        // enum from `ResolvedImprovements` (populated by Chunk B
+        // `LossyConfig::resolve_improvements`). The legacy
+        // `screenshot_lift_hint` `Option<bool>` is still consulted as
+        // a fallback under `Auto` for direct `VarDctEncoder::new`
+        // callers (tests + examples). `StrategyOverrides::apply_to`
+        // maps `Some(true) → ForceOn` / `Some(false) → ForceOff`.
+        // `Disabled` (Libjxl strategy) short-circuits the lift off
+        // regardless of the `content_aware_entropy_mul` enable bit —
+        // matching libjxl's no-discriminator default.
+        let screenshot_policy = self
+            .resolved_improvements
+            .as_ref()
+            .map(|r| r.screenshot_entropy_mul)
+            .unwrap_or_default();
+        let w22_1_lift = match screenshot_policy {
+            crate::api::ScreenshotEntropyMulPolicy::Auto => {
+                if self.content_aware_entropy_mul {
+                    match self.screenshot_lift_hint {
+                        Some(b) => b,
+                        None => mask1x1_median
+                            .is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD),
+                    }
+                } else {
+                    false
+                }
             }
-        } else {
-            false
+            // `ForceOn` bypasses the `content_aware_entropy_mul` enable
+            // bit per design doc §7 Q3 ("caller wanting the W22-1 lift
+            // uses `Custom` with `screenshot_entropy_mul: ForceOn` OR
+            // enables the bit explicitly via the legacy setter that
+            // survives").
+            crate::api::ScreenshotEntropyMulPolicy::ForceOn => true,
+            crate::api::ScreenshotEntropyMulPolicy::ForceOff => false,
+            crate::api::ScreenshotEntropyMulPolicy::Disabled => false,
         };
 
         // W44-29 high-distance smooth-photo lowering. Default-on auto
