@@ -396,6 +396,38 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale(
     target_distance: f32,
     m3_colourfulness: Option<f32>,
 ) -> f32 {
+    resolved_adaptive_quant_qf_seed_scale_with_policy(
+        effort,
+        butteraugli_iters,
+        is_screenshot,
+        target_distance,
+        m3_colourfulness,
+        crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+    )
+}
+
+/// W44-129 Chunk C variant of [`resolved_adaptive_quant_qf_seed_scale`]
+/// that consults the resolved [`crate::api::AdaptiveQuantQfSeedPolicy`]
+/// enum from `ResolvedImprovements`.
+///
+/// The legacy unpolicy'd entry point delegates to this with
+/// `AutoScalePerEffort` to preserve the pre-Chunk-C behaviour for any
+/// remaining callers (tests / examples) that don't carry a resolved
+/// policy.
+#[cfg_attr(not(feature = "std"), allow(unused_variables))]
+pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
+    effort: u8,
+    butteraugli_iters: u32,
+    is_screenshot: bool,
+    target_distance: f32,
+    m3_colourfulness: Option<f32>,
+    policy: crate::api::AdaptiveQuantQfSeedPolicy,
+) -> f32 {
+    // Off policy short-circuits before the gate evaluation: Libjxl
+    // strategy never pre-scales.
+    if matches!(policy, crate::api::AdaptiveQuantQfSeedPolicy::Off) {
+        return 1.0;
+    }
     if effort > ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT {
         return 1.0;
     }
@@ -417,10 +449,29 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale(
     // regression; e7 lifts to 3.0 to clear the +2.5 SSIM2 gate (baseline
     // ssim2 at e7 is much closer to cjxl, so it needs more boost to
     // overshoot the buttloop-measurement gap by the same margin).
-    let base_scale = if effort >= 7 {
-        DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7
-    } else {
-        DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6
+    //
+    // Policy translation:
+    //   * `AutoScalePerEffort` (default) → the production 2.0/3.0 split
+    //   * `AutoScaleCustom { e5_e6, e7 }` → caller-supplied per-effort
+    //     scales (replaces the 2.0/3.0 defaults but keeps the same gate
+    //     predicate above).
+    //   * `Off` → handled above (early return 1.0).
+    let base_scale = match policy {
+        crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort => {
+            if effort >= 7 {
+                DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7
+            } else {
+                DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6
+            }
+        }
+        crate::api::AdaptiveQuantQfSeedPolicy::AutoScaleCustom { e5_e6, e7 } => {
+            if effort >= 7 {
+                e7
+            } else {
+                e5_e6
+            }
+        }
+        crate::api::AdaptiveQuantQfSeedPolicy::Off => unreachable!(),
     };
     #[cfg(feature = "std")]
     {
