@@ -3250,9 +3250,29 @@ impl VarDctEncoder {
                     p.m3_colourfulness >= W44_124_DCT32_KEEP_M3_MIN
                         && p.edge_density < W44_124_DCT32_KEEP_EDGE_DENSITY_MAX
                 });
-                let w44_123_keep_dct32 = match self.dct32_keep_hint {
-                    Some(b) => b,
-                    None => w44_123_env_keep || w44_124_auto_keep,
+                // W44-129 Chunk C: read the resolved `dct32_search_policy` enum
+                // from `ResolvedImprovements` (populated by Chunk B
+                // `LossyConfig::resolve_improvements`). The legacy
+                // `dct32_keep_hint` `Option<bool>` is still consulted as a
+                // fallback under `FollowDct64Suppression` for direct
+                // `VarDctEncoder::new` callers (tests + examples) that bypass
+                // the resolve step. Production semantics unchanged because
+                // `StrategyOverrides::apply_to` maps `dct32_keep_hint:
+                // Some(true) → KeepWhenDct64Suppressed` and `Some(false) →
+                // FollowDct64Suppression`.
+                let dct32_policy = self
+                    .resolved_improvements
+                    .as_ref()
+                    .map(|r| r.dct32_search_policy)
+                    .unwrap_or_default();
+                let w44_123_keep_dct32 = match dct32_policy {
+                    crate::api::Dct32SearchPolicy::FollowDct64Suppression => {
+                        match self.dct32_keep_hint {
+                            Some(b) => b,
+                            None => w44_123_env_keep || w44_124_auto_keep,
+                        }
+                    }
+                    crate::api::Dct32SearchPolicy::KeepWhenDct64Suppressed => true,
                 };
                 if !w44_123_keep_dct32 {
                     p.try_dct32 = false;
