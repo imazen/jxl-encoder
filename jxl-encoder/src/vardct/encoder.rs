@@ -1275,14 +1275,11 @@ pub struct VarDctEncoder {
     /// exceeded. When `None` (the test/library default), allocation
     /// proceeds unbounded.
     pub(crate) budget: Option<alloc::sync::Arc<crate::budget::MemoryBudget>>,
-    /// Opt-in: just before `compute_ac_strategy` runs, compute
-    /// `median(mask1x1)` and — if > 95.0 (screenshot-class content) —
-    /// swap [`Self::profile`].`entropy_mul_table` to
-    /// [`crate::effort::EntropyMulTable::screenshot_suppressed`] for
-    /// the duration of the AC-strategy search. Default `false` (every
-    /// existing hash-lock byte-identical). See
-    /// [`crate::api::LossyConfig::with_content_aware_entropy_mul`].
-    pub content_aware_entropy_mul: bool,
+    // W44-130 Chunk D: `content_aware_entropy_mul: bool` enable bit
+    // DELETED — subsumed by `ResolvedImprovements.screenshot_entropy_mul`
+    // (the 4-state `ScreenshotEntropyMulPolicy` enum). The Auto branch
+    // in `compute_ac_strategy` fires the W22-1 mask1x1 discriminator
+    // directly; `Disabled` (Zenjxl default) short-circuits to off.
     // W44-130 Chunk D: the 4 `*_hint: Option<bool>` fields
     // (`screenshot_lift_hint`, `high_d_photo_hint`, `dct_suppress_hint`,
     // `dct32_keep_hint`) plus the public LossyConfig setters were
@@ -1423,9 +1420,9 @@ impl Default for VarDctEncoder {
             alpha_squeeze: false,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
-            content_aware_entropy_mul: false,
-            // W44-130 Chunk D: the 4 `*_hint` fields were deleted.
-            // Strategy overrides now flow through `resolved_improvements`.
+            // W44-130 Chunk D: `content_aware_entropy_mul` enable bit
+            // + the 4 `*_hint` fields were deleted. Strategy + overrides
+            // flow through `resolved_improvements` below.
             // W44-91: default None means the gate cannot fire (every
             // existing hash-lock byte-identical). API layer populates
             // for 8-bit sRGB layouts.
@@ -1516,9 +1513,9 @@ impl VarDctEncoder {
             alpha_squeeze: false,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
-            content_aware_entropy_mul: false,
-            // W44-130 Chunk D: legacy `*_hint` fields deleted; strategy
-            // overrides flow via `resolved_improvements` below.
+            // W44-130 Chunk D: `content_aware_entropy_mul` enable bit
+            // + legacy `*_hint` fields deleted; strategy + overrides
+            // flow via `resolved_improvements` below.
             // W44-91: default None means the gate cannot fire (every
             // existing hash-lock byte-identical). API layer populates
             // for 8-bit sRGB layouts.
@@ -2876,25 +2873,16 @@ impl VarDctEncoder {
         // enable bit — matching libjxl's no-discriminator default.
         let screenshot_policy = self.resolved_improvements.screenshot_entropy_mul;
         let w22_1_lift = match screenshot_policy {
-            // W44-130 Chunk D: the legacy `screenshot_lift_hint`
-            // `Option<bool>` fallback was deleted. `StrategyOverrides`
-            // overrides flow through to `Force*` variants;
-            // `Auto` here = "no caller override" → consult the
-            // `content_aware_entropy_mul` enable bit + mask1x1
-            // discriminator directly.
-            crate::api::ScreenshotEntropyMulPolicy::Auto => {
-                if self.content_aware_entropy_mul {
-                    mask1x1_median
-                        .is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD)
-                } else {
-                    false
-                }
-            }
-            // `ForceOn` bypasses the `content_aware_entropy_mul` enable
-            // bit per design doc §7 Q3 ("caller wanting the W22-1 lift
-            // uses `Custom` with `screenshot_entropy_mul: ForceOn` OR
-            // enables the bit explicitly via the legacy setter that
-            // survives").
+            // W44-130 Chunk D: the legacy `content_aware_entropy_mul`
+            // enable bit was subsumed by the policy enum. The Zenjxl
+            // default is `Disabled` (preserving pre-Chunk-D default-off
+            // behaviour); callers opt in via `Custom` /
+            // `with_strategy_overrides` mapped to `Auto` / `ForceOn`.
+            //
+            // `Auto` here fires the W22-1 mask1x1 discriminator
+            // directly (no longer guarded by a separate enable bit).
+            crate::api::ScreenshotEntropyMulPolicy::Auto => mask1x1_median
+                .is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD),
             crate::api::ScreenshotEntropyMulPolicy::ForceOn => true,
             crate::api::ScreenshotEntropyMulPolicy::ForceOff => false,
             crate::api::ScreenshotEntropyMulPolicy::Disabled => false,
@@ -5075,29 +5063,44 @@ mod tests {
 
     #[test]
     fn test_content_aware_entropy_mul_default_off() {
-        // Verify the flag defaults to false (every existing hash-lock
-        // byte-identical) and that toggling it on doesn't panic on a
-        // tiny image (the gate has a defensive fallback when
-        // `mask1x1` is absent — e.g. `pixel_domain_loss = false`).
-        let enc = VarDctEncoder::new(1.0);
-        assert!(!enc.content_aware_entropy_mul);
-        let enc_default = VarDctEncoder::default();
-        assert!(!enc_default.content_aware_entropy_mul);
-    }
-
-    #[test]
-    fn test_resolved_improvements_default_auto() {
-        // W44-130 Chunk D: verify the `resolved_improvements` field
-        // (replacing the old `*_hint: Option<bool>` defaults) is
-        // populated with the all-`Auto` Zenjxl-equivalent default on
-        // both constructors. Production API layer overwrites this via
-        // `LossyConfig::resolve_improvements()` at all 3 entry points;
-        // direct `VarDctEncoder::new` callers get the auto behaviour
-        // that matches pre-Chunk-D's `None` hint fallbacks.
+        // W44-130 Chunk D: the `content_aware_entropy_mul` enable bit
+        // was deleted and folded into
+        // `ResolvedImprovements.screenshot_entropy_mul` (the 4-state
+        // `ScreenshotEntropyMulPolicy`). The Zenjxl default sets
+        // `Disabled` to preserve the pre-Chunk-D default-off
+        // behaviour — verify here that both constructors produce a
+        // `Disabled` resolved policy. (`ResolvedImprovements`'s
+        // manual `Default` impl flips just this one field to
+        // `Disabled` to mirror Zenjxl.)
         let enc = VarDctEncoder::new(1.0);
         assert_eq!(
             enc.resolved_improvements.screenshot_entropy_mul,
-            crate::api::ScreenshotEntropyMulPolicy::Auto
+            crate::api::ScreenshotEntropyMulPolicy::Disabled,
+            "ResolvedImprovements::default() must mirror Zenjxl's Disabled \
+             screenshot_entropy_mul for hash-lock parity"
+        );
+        let enc_default = VarDctEncoder::default();
+        assert_eq!(
+            enc_default.resolved_improvements.screenshot_entropy_mul,
+            crate::api::ScreenshotEntropyMulPolicy::Disabled
+        );
+    }
+
+    #[test]
+    fn test_resolved_improvements_default_zenjxl_equivalent() {
+        // W44-130 Chunk D: verify the `resolved_improvements` field
+        // (replacing the old `*_hint: Option<bool>` defaults) is
+        // populated with the Zenjxl-equivalent default on both
+        // constructors. Most policies default to `Auto` (production
+        // auto-detector engaged); `screenshot_entropy_mul` is
+        // explicitly `Disabled` (mirrors the deleted
+        // `content_aware_entropy_mul = false` enable bit). Production
+        // API layer overwrites this via
+        // `LossyConfig::resolve_improvements()` at all 3 entry points.
+        let enc = VarDctEncoder::new(1.0);
+        assert_eq!(
+            enc.resolved_improvements.screenshot_entropy_mul,
+            crate::api::ScreenshotEntropyMulPolicy::Disabled
         );
         assert_eq!(
             enc.resolved_improvements.high_d_photo_entropy_mul,
@@ -5114,7 +5117,7 @@ mod tests {
         let enc_default = VarDctEncoder::default();
         assert_eq!(
             enc_default.resolved_improvements.screenshot_entropy_mul,
-            crate::api::ScreenshotEntropyMulPolicy::Auto
+            crate::api::ScreenshotEntropyMulPolicy::Disabled
         );
     }
 

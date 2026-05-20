@@ -61,9 +61,19 @@ fn linear_to_srgb_u8(linear: f32) -> u8 {
 }
 
 fn encode(rgb_u8: &[u8], w: u32, h: u32, d: f32, content_aware: bool) -> Result<Vec<u8>, String> {
+    // W44-130 Chunk D: `with_content_aware_entropy_mul` deleted —
+    // policy enum subsumes the enable bit. `content_aware=true` →
+    // `ScreenshotEntropyMulPolicy::Auto` (the mask1x1 auto-detector
+    // matches the pre-Chunk-D enable-bit-on path);
+    // `content_aware=false` → the Zenjxl default `Disabled` (matches
+    // pre-Chunk-D enable-bit-off path).
+    let mut custom = jxl_encoder::api::EncoderImprovementsCustom::default();
+    if content_aware {
+        custom.screenshot_entropy_mul = jxl_encoder::api::ScreenshotEntropyMulPolicy::Auto;
+    }
     let cfg = LossyConfig::new(d)
         .with_effort(EFFORT)
-        .with_content_aware_entropy_mul(content_aware);
+        .with_strategy(jxl_encoder::api::EncoderStrategy::Custom(Box::new(custom)));
     cfg.encode(rgb_u8, w, h, PixelLayout::Rgb8)
         .map_err(|e| format!("encode failed: {e:?}"))
 }

@@ -3862,7 +3862,7 @@ pub enum EffortGate {
 ///   `epf_dynamic_sharpness_min_effort`
 /// - **Section D KNOWN-BUG re-enables** (Libjxl-only):
 ///   `block_ctx_map_15_cluster`
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EncoderImprovementsCustom {
     // ── Screenshot-class entropy-mul lifts ─────────────────────────
     /// W22-1 screenshot lift table (lifts `IDENTITY` / `DCT2X2` /
@@ -3946,6 +3946,48 @@ pub struct EncoderImprovementsCustom {
     pub block_ctx_map_15_cluster: bool,
 }
 
+impl Default for EncoderImprovementsCustom {
+    /// Default values matching [`EncoderStrategy::Zenjxl`] — the
+    /// production-shipping bundle.
+    ///
+    /// **W44-130 Chunk D**: `screenshot_entropy_mul` defaults to
+    /// [`ScreenshotEntropyMulPolicy::Disabled`] (NOT `Auto`) to
+    /// preserve the pre-Chunk-D default-off W22-1 lift behaviour
+    /// (was `content_aware_entropy_mul = false` enable bit, now
+    /// folded into the policy enum). Callers wanting the lift use
+    /// `Custom` with `screenshot_entropy_mul: ForceOn` (typically
+    /// alongside a zenanalyze-driven content classifier) or set the
+    /// matching override via
+    /// [`LossyConfig::with_strategy_overrides`].
+    fn default() -> Self {
+        Self {
+            // W44-130 Chunk D: explicitly `Disabled` (not the field
+            // default `Auto`) to preserve pre-Chunk-D opt-in behaviour
+            // — `Auto` here would fire the mask1x1 discriminator on
+            // every screenshot-like input, changing default bytes on
+            // screenshot fixtures.
+            screenshot_entropy_mul: ScreenshotEntropyMulPolicy::Disabled,
+            // All other fields inherit their type-level defaults
+            // (which are tuned to match Zenjxl shipping behaviour).
+            high_d_photo_entropy_mul: HighDPhotoEntropyMulPolicy::default(),
+            dct64_search_policy: Dct64SearchPolicy::default(),
+            dct32_search_policy: Dct32SearchPolicy::default(),
+            smooth_photo_dct64_admission: SmoothPhotoDct64Policy::default(),
+            buttloop_qf_seed: ButtloopQfSeedPolicy::default(),
+            adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy::default(),
+            buttloop_epf_sharpness_seed: EpfSharpnessSeed::default(),
+            epf_dispatch: EpfDispatch::default(),
+            pixel_loss_dispatch: PixelLossDispatch::default(),
+            single_pass_entropy_dispatch: SinglePassEntropyDispatch::default(),
+            patches_dispatch: PatchesDispatch::default(),
+            cfl_two_pass_min_effort: EffortGate::default(),
+            try_dct64_min_effort: EffortGate::default(),
+            epf_dynamic_sharpness_min_effort: EffortGate::default(),
+            block_ctx_map_15_cluster: false,
+        }
+    }
+}
+
 /// Fully-resolved per-divergence flags consumed by the internal
 /// encoder. Built once per encode by [`EncoderStrategy::resolve`] from
 /// the caller-supplied strategy variant plus any individual
@@ -3959,7 +4001,7 @@ pub struct EncoderImprovementsCustom {
 // will read these fields land in Chunks B/C/G. Tests at the bottom of
 // this file exercise the construction and resolve paths.
 #[allow(dead_code)]
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ResolvedImprovements {
     // Section B (content-aware gates)
     pub(crate) screenshot_entropy_mul: ScreenshotEntropyMulPolicy,
@@ -3984,6 +4026,42 @@ pub(crate) struct ResolvedImprovements {
 
     // Section D KNOWN-BUG re-enable
     pub(crate) block_ctx_map_15_cluster: bool,
+}
+
+impl Default for ResolvedImprovements {
+    /// Default values matching [`EncoderStrategy::Zenjxl`] —
+    /// production-shipping bundle. Mirrors
+    /// [`EncoderImprovementsCustom::default`].
+    ///
+    /// **W44-130 Chunk D**: `screenshot_entropy_mul` defaults to
+    /// [`ScreenshotEntropyMulPolicy::Disabled`] (NOT `Auto`) to
+    /// preserve the pre-Chunk-D default-off W22-1 lift behaviour
+    /// (the `content_aware_entropy_mul` enable bit was folded into
+    /// this policy). Direct `VarDctEncoder::new` callers (tests +
+    /// examples) inherit this via
+    /// `VarDctEncoder.resolved_improvements: ResolvedImprovements`
+    /// initialised at `Default::default()`; production API paths
+    /// overwrite via `LossyConfig::resolve_improvements`.
+    fn default() -> Self {
+        Self {
+            screenshot_entropy_mul: ScreenshotEntropyMulPolicy::Disabled,
+            high_d_photo_entropy_mul: HighDPhotoEntropyMulPolicy::default(),
+            dct64_search_policy: Dct64SearchPolicy::default(),
+            dct32_search_policy: Dct32SearchPolicy::default(),
+            smooth_photo_dct64_admission: SmoothPhotoDct64Policy::default(),
+            buttloop_qf_seed: ButtloopQfSeedPolicy::default(),
+            adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy::default(),
+            buttloop_epf_sharpness_seed: EpfSharpnessSeed::default(),
+            epf_dispatch: EpfDispatch::default(),
+            pixel_loss_dispatch: PixelLossDispatch::default(),
+            single_pass_entropy_dispatch: SinglePassEntropyDispatch::default(),
+            patches_dispatch: PatchesDispatch::default(),
+            cfl_two_pass_min_effort: EffortGate::default(),
+            try_dct64_min_effort: EffortGate::default(),
+            epf_dynamic_sharpness_min_effort: EffortGate::default(),
+            block_ctx_map_15_cluster: false,
+        }
+    }
 }
 
 /// Per-field overrides set via the existing `with_*_hint` setters
@@ -4384,16 +4462,16 @@ pub struct LossyConfig {
     /// `None` (default) keeps every existing hash-lock byte-identical.
     /// See [`Self::with_content_class`].
     content_class: Option<crate::effort::ImageContentClass>,
-    /// Opt-in: route the AC-strategy [`crate::effort::EntropyMulTable`]
-    /// through a content-class discriminator that swaps in the
-    /// [`crate::effort::EntropyMulTable::screenshot_suppressed`] values
-    /// when the per-image `median(mask1x1)` exceeds 95. Photo content
-    /// keeps the existing (libjxl-faithful) [`crate::effort::EntropyMulTable::reference`]
-    /// values.
-    ///
-    /// Default `false` — keeps every existing hash-lock fixture
-    /// byte-identical. See [`Self::with_content_aware_entropy_mul`].
-    content_aware_entropy_mul: bool,
+    // W44-130 Chunk D: `content_aware_entropy_mul: bool` field
+    // DELETED. The opt-in enable bit was subsumed by the
+    // [`ScreenshotEntropyMulPolicy`] 4-state enum
+    // (`Auto` / `ForceOn` / `ForceOff` / `Disabled`). The Zenjxl
+    // default in [`EncoderImprovementsCustom::default`] is
+    // `Disabled` (preserving pre-Chunk-D default-off behaviour).
+    // Callers opt in via `EncoderStrategy::Custom` with
+    // `screenshot_entropy_mul: ForceOn` or
+    // `with_strategy_overrides(StrategyOverrides {
+    // screenshot_lift_hint: Some(true), .. })`.
     /// W44-130 (Chunk D) — per-field overrides applied AFTER the
     /// [`Self::strategy`] preset resolves. Replaces the five legacy
     /// `with_*_hint(Option<bool>)` setters (deleted in Chunk D); the
@@ -4659,7 +4737,10 @@ impl LossyConfig {
             profile_override: None,
             canonicalize_input: false,
             content_class: None,
-            content_aware_entropy_mul: false,
+            // W44-130 Chunk D: `content_aware_entropy_mul` field
+            // deleted; opt-in lives via `EncoderStrategy::Custom` with
+            // `screenshot_entropy_mul: ForceOn` (or
+            // `with_strategy_overrides`).
             // W44-130 Chunk D: default `StrategyOverrides::default()`
             // is all-`None` — overrides nothing. The strategy preset's
             // resolved value passes through unchanged. Replaces the
@@ -4915,10 +4996,10 @@ impl LossyConfig {
         new.profile_override = self.profile_override;
         new.canonicalize_input = self.canonicalize_input;
         new.content_class = self.content_class;
-        new.content_aware_entropy_mul = self.content_aware_entropy_mul;
-        // W44-130 Chunk D: preserve the caller's strategy overrides
-        // across `with_effort` (mirror of the strategy preservation
-        // below).
+        // W44-130 Chunk D: `content_aware_entropy_mul` field deleted;
+        // opt-in lives via `strategy` / `strategy_overrides` below.
+        // Preserve the caller's strategy overrides across
+        // `with_effort` (mirror of the strategy preservation below).
         new.strategy_overrides = self.strategy_overrides.clone();
         // W44-128 Chunk B: preserve the caller's
         // `with_strategy(EncoderStrategy::...)` across `with_effort`.
@@ -5524,45 +5605,26 @@ impl LossyConfig {
         self.content_class
     }
 
-    /// Route the per-strategy AC-strategy [`crate::effort::EntropyMulTable`]
-    /// through a content-class discriminator at encode time.
-    ///
-    /// When `true`, just before `compute_ac_strategy` runs the encoder
-    /// computes the median of the 1×1 perceptual masking field
-    /// ([`crate::vardct::compute_mask1x1`]). If
-    /// `median(mask1x1) > 95.0` (high values → uniform / glyph / UI
-    /// content) the encoder swaps the active entropy-mul table to
-    /// [`crate::effort::EntropyMulTable::screenshot_suppressed`] for
-    /// the duration of the AC-strategy search. Photo content stays on
-    /// the existing libjxl-faithful
-    /// [`crate::effort::EntropyMulTable::reference`] values.
-    ///
-    /// **Discriminator rationale**: `median(mask1x1) > 95` is the same
-    /// screenshot / photo split used in the sibling GPU encoder's
-    /// dropped-optimizations audit (`vardct_gpu_dropped_optimizations_resurrection_2026-05-17.md`,
-    /// item #3). High `mask1x1` values mark flat / glyph-dominated
-    /// regions where the lifted entropy_mul values (`IDENTITY` 1.85,
-    /// `DCT2X2` 1.15, `AFV` 0.95, `DCT4X8` 0.98) suppress the
-    /// over-selection of small / corner transforms that produces
-    /// visible artifacts around sharp text edges.
-    ///
-    /// **Default `false`** — keeps every existing hash-lock fixture
-    /// byte-identical. Opt-in until a wider sweep (chunk-2) validates
-    /// a default-on flip.
-    ///
-    /// **Caller-supplied `LossyInternalParams::entropy_mul_table` wins.**
-    /// If [`Self::with_internal_params`] pins an explicit table, this
-    /// gate stays out of the way — the override is honored as-is.
-    pub fn with_content_aware_entropy_mul(mut self, on: bool) -> Self {
-        self.content_aware_entropy_mul = on;
-        self
-    }
-
-    /// Currently-set `content_aware_entropy_mul` opt-in (default
-    /// `false`). See [`Self::with_content_aware_entropy_mul`].
-    pub fn content_aware_entropy_mul(&self) -> bool {
-        self.content_aware_entropy_mul
-    }
+    // W44-130 Chunk D: `with_content_aware_entropy_mul(bool)` setter
+    // + `content_aware_entropy_mul()` getter on `LossyConfig` were
+    // DELETED. The opt-in enable bit is subsumed by the
+    // [`ScreenshotEntropyMulPolicy`] enum.
+    //
+    // Migration:
+    // - `cfg.with_content_aware_entropy_mul(true)` →
+    //   `cfg.with_strategy_overrides(StrategyOverrides {
+    //         screenshot_lift_hint: Some(true), ..Default::default()
+    //   })`
+    //   OR
+    //   `cfg.with_strategy(EncoderStrategy::Custom(Box::new(
+    //         EncoderImprovementsCustom {
+    //             screenshot_entropy_mul: ScreenshotEntropyMulPolicy::ForceOn,
+    //             ..Default::default()
+    //         }
+    //   )))`
+    // - `cfg.with_content_aware_entropy_mul(false)` is a no-op (this
+    //   is the Zenjxl default — `EncoderImprovementsCustom::default`
+    //   sets `screenshot_entropy_mul: Disabled`).
 
     /// W44-130 (Chunk D) — set the per-field override bundle applied
     /// AFTER [`Self::with_strategy`] resolves.
@@ -8545,11 +8607,11 @@ impl<'a> EncodeRequest<'a> {
         enc.is_grayscale = self.layout.is_grayscale();
         enc.progressive = cfg.progressive;
         enc.use_lf_frame = cfg.lf_frame;
-        enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
-        // W44-130 Chunk D: the 5 `with_*_hint` Option<bool> setters
-        // and their `VarDctEncoder` fallback fields are deleted.
-        // Strategy overrides flow through `cfg.resolve_improvements()`
-        // → `enc.resolved_improvements` which the 8 consuming call
+        // W44-130 Chunk D: `content_aware_entropy_mul` enable bit +
+        // 5 `with_*_hint` Option<bool> setters + their VarDctEncoder
+        // fallback fields all deleted. Strategy + overrides flow
+        // through `cfg.resolve_improvements()` →
+        // `enc.resolved_improvements` which the 8 consuming call
         // sites read directly.
         // W44-91: cheap zenanalyze-equivalent proxies for the textured-
         // colourful-photo sub-band gate (mask1x1 ∈ [50, 80] @ d ∈ [3, 5]).
@@ -9692,10 +9754,10 @@ impl LossyEncoder {
             enc.is_grayscale = self.layout.is_grayscale();
             enc.progressive = cfg.progressive;
             enc.use_lf_frame = cfg.lf_frame;
-            enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
-            // W44-130 Chunk D: legacy `with_*_hint` setters deleted;
-            // strategy overrides flow via `cfg.resolve_improvements()`
-            // into `enc.resolved_improvements`.
+            // W44-130 Chunk D: `content_aware_entropy_mul` + legacy
+            // `with_*_hint` setters all deleted; strategy + overrides
+            // flow via `cfg.resolve_improvements()` into
+            // `enc.resolved_improvements`.
             // W44-91: streaming `LossyEncoder` ingests pre-converted
             // `linear_rgb` rows, so the sRGB u8 source bytes the
             // zenanalyze-equivalent proxy needs are not available
@@ -11567,10 +11629,9 @@ fn encode_animation_lossy(
     enc.auto_splines = cfg.auto_splines;
     enc.progressive = cfg.progressive;
     enc.use_lf_frame = cfg.lf_frame;
-    enc.content_aware_entropy_mul = cfg.content_aware_entropy_mul;
-    // W44-130 Chunk D: legacy `with_*_hint` setters deleted;
-    // strategy overrides flow via `cfg.resolve_improvements()` into
-    // `enc.resolved_improvements`.
+    // W44-130 Chunk D: `content_aware_entropy_mul` + legacy
+    // `with_*_hint` setters all deleted; strategy + overrides flow
+    // via `cfg.resolve_improvements()` into `enc.resolved_improvements`.
     // W44-91: animation per-frame encodes don't compute the
     // zenanalyze-proxy because the proxy is per-image and the discriminator
     // logic was designed against still-image CID22 validation cells.
@@ -14681,10 +14742,14 @@ mod tests {
             custom.block_ctx_map_15_cluster
         );
 
-        // Fields left at Default should be at Default
+        // Fields left at Default should be at the
+        // EncoderImprovementsCustom::default() value (= Zenjxl
+        // baseline). Note `screenshot_entropy_mul` defaults to
+        // `Disabled` (NOT `Auto`) per W44-130 Chunk D — Zenjxl
+        // preserves the pre-Chunk-D default-off W22-1 lift.
         assert_eq!(
             resolved.screenshot_entropy_mul,
-            ScreenshotEntropyMulPolicy::default()
+            ScreenshotEntropyMulPolicy::Disabled
         );
         assert_eq!(
             resolved.epf_dynamic_sharpness_min_effort,
