@@ -1,0 +1,89 @@
+# W44-121 codec_wiki.png per-region + per-strategy SSIM2 attribution dump
+# (measurement only, no production code change)
+#
+# Date: 2026-05-20
+# Commit context: rebased on top of W44-120 (e20e5cd9 on main)
+# Image: /home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png (2560x1664 RGB8)
+# Cells: codec_wiki d=3 x effort {5, 6, 7} (the biggest remaining SSIM2
+#   inferiority cluster per W44-119 ledger refresh, after W44-117/118/120
+#   EPF seed work shipped)
+#
+# Predecessor: W44-103 terminal d=4 dump
+#   (benchmarks/w44_103_terminal_ssim2_dump_2026-05-19.{tsv,meta})
+#
+# Methodology
+# -----------
+# 1. Encode codec_wiki.png at d=3 with effort 5/6/7 using:
+#    - cjxl-rs (W44-120 main, e20e5cd9)
+#    - cjxl (libjxl 0.12.0 + W44-76 per-block-dump patch)
+#    Each side run in a separate process so the W44-76 dump infrastructure
+#    (initializes once per process) writes a fresh TSV for each cell.
+# 2. Decode both outputs via jxl-oxide in srgb_linear mode.
+# 3. Compute global butteraugli + ssim2 + 3x3 spatial-region grid scores
+#    (regions aligned to DCT32, right column + bottom row get remainder).
+# 4. Cross-reference per-region SSIM2 delta with per-block strategy dump
+#    via benchmarks/w44_121_analyze.py.
+#
+# Files
+# -----
+# w44_121_codec_wiki_d3_dump_2026-05-20.tsv  - global + 3x3 region SSIM2/bfly
+# w44_121_codec_wiki_d3_dump_2026-05-20.meta - this file
+# w44_121_run_dumps.sh                       - per-cell W44-76 dump runner
+# w44_121_analyze.py                         - cross-reference analysis
+# /tmp/w44_121_dumps/e{5,6,7}_d3_{ours,cjxl}/per_block_*.tsv  (per-block dumps)
+# jxl-encoder/examples/w44_121_codec_wiki_d3_dump.rs          (registered example)
+#
+# Reproducer
+# ----------
+# # Per-block dumps (3 efforts x 2 encoders, ~10s each)
+# bash benchmarks/w44_121_run_dumps.sh
+#
+# # SSIM2 region bench
+# CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+#   cargo run --release \
+#   --features 'parallel butteraugli-loop ssim2-loop' \
+#   --example w44_121_codec_wiki_d3_dump \
+#   --manifest-path jxl-encoder/Cargo.toml
+#
+# # Cross-reference analysis (prints summary tables to stdout)
+# python3 benchmarks/w44_121_analyze.py > /tmp/w44_121_analysis.txt
+#
+# Key findings (see memory note w44_121_codec_wiki_d3_dump_2026-05-20.md
+# for the full writeup + ranked W44-122 attack candidates)
+# -----------
+# * Bytes/SSIM2 (matches W44-110 ledger):
+#     e5 d=3: 79233/85177 (-7.0%)  SSIM2 83.11/85.78 (-2.667)
+#     e6 d=3: 81576/85999 (-5.1%)  SSIM2 83.37/86.36 (-2.992)
+#     e7 d=3: 68978/72232 (-4.5%)  SSIM2 83.18/86.56 (-3.383)
+#
+# * DCT16X16 over-fires 100x:
+#     e5 ours=14031 (66%)  cjxl=138 (2%)
+#     e6 ours=14030 (66%)  cjxl=138 (2%)
+#     e7 ours=14310 (70%)  cjxl=251 (4%)
+#
+# * DCT64 family ENTIRELY absent in our output:
+#     e5 ours=0 vs cjxl=449+72+262=783 (DCT64X64/DCT64X32/DCT32X64)
+#     e6 ours=0 vs cjxl=449+72+262=783
+#     e7 ours=0 vs cjxl=574+95+350=1019
+#
+# * Strategy agreement (8x8 cells where both encoders pick same strategy):
+#     e5: 12.6%  e6: 12.1%  e7: 10.1%
+#
+# * Top disagreement pair (all 3 efforts): DCT16X16 -> DCT64X64
+#     e5: 28048 cells   e6: 28048 cells   e7: 36592 cells
+#
+# * SSIM2 loss concentrated in top + bottom rows (where cjxl picks DCT64+DCT32 large transforms):
+#     e5  top: -5.98/-2.87/-2.01  mid: -1.78/-0.66/-0.61  bot: -0.04/+0.14/-0.32
+#     e6  top: -5.95/-3.43/-2.36  mid: -1.82/-1.16/-1.16  bot: -0.39/-0.55/-0.25
+#     e7  top: -4.13/-3.49/-2.75  mid: -1.93/-0.90/-1.59  bot: -3.12/-4.12/-3.68
+#     (e7 spreads to bottom too - cjxl picks DCT64X64+DCT32X64 in mid-bot)
+#
+# * Per-region mean qac is at PARITY (7.7-8.7 both sides):
+#     This is PURE strategy-selection divergence, NOT quantization tuning.
+#
+# Identical pattern to W44-103 (terminal d=4):
+#   W44-103: DCT16X16 over-fires 25x, DCT64 absent, top region dominates SSIM2 loss
+#   W44-121: DCT16X16 over-fires 100x, DCT64 absent, top region dominates SSIM2 loss
+#
+# Same root cause: find_best_64x64_transform / find_best_32x32_transform cost-model
+# bias rejects large transforms on smooth screen-content where libjxl picks them.

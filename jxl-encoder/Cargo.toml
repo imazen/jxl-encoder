@@ -1448,6 +1448,16 @@ name = "w44_103_terminal_ssim2_dump"
 path = "examples/w44_103_terminal_ssim2_dump.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-121: codec_wiki.png per-region + per-strategy SSIM2 attribution dump
+# at d=3 across effort 5..=7 (biggest remaining SSIM2 inferiority cluster
+# after W44-117/118/120 EPF seed work). Same methodology as W44-103
+# terminal dump. Outputs benchmarks/w44_121_codec_wiki_d3_dump_2026-05-20.tsv
+# to identify WHERE the codec_wiki d=3 SSIM2 cost vs cjxl comes from.
+[[example]]
+name = "w44_121_codec_wiki_d3_dump"
+path = "examples/w44_121_codec_wiki_d3_dump.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
 # W44-104: probe whether bypassing W44-65/W44-68 DCT32+DCT64 suppression
 # on terminal-class content (via `with_dct_suppress_hint(Some(false))`)
 # recovers SSIM2 vs cjxl. Background: W44-103 dump found ours emits 0
