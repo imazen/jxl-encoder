@@ -1349,5 +1349,32 @@ name = "w44_103_terminal_ssim2_dump"
 path = "examples/w44_103_terminal_ssim2_dump.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-104: probe whether bypassing W44-65/W44-68 DCT32+DCT64 suppression
+# on terminal-class content (via `with_dct_suppress_hint(Some(false))`)
+# recovers SSIM2 vs cjxl. Background: W44-103 dump found ours emits 0
+# DCT64 first-blocks on terminal.png while cjxl picks ~370. Root cause
+# (this chunk): W44-65/W44-68 default-on suppression flips `try_dct64`
+# AND `try_dct32` to false when `median(mask1x1) >= 99.5`. Measures
+# bytes / bfly / ssim2 on terminal.png × e5..e9 × d ∈ {2..6} plus 10
+# screenshots × e7 (regression probe for W44-65/W44-68 closed cells)
+# plus 8 photos × e5/e7 (FIXED-spot probe to confirm the gate doesn't
+# fire on low-mask1x1 content).
+[[example]]
+name = "w44_104_dct64_screen_ab"
+path = "examples/w44_104_dct64_screen_ab.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
+# W44-104 quick smoke test: one cell, three hint values.
+[[example]]
+name = "w44_104_smoke"
+path = "examples/w44_104_smoke.rs"
+
+# W44-104 proxy probe: dump zenanalyze proxies for 11 gb82-sc screenshots
+# to identify a discriminator separating terminal-class (admit DCT64) from
+# codec_wiki-class (keep W44-65/W44-68 suppression).
+[[example]]
+name = "w44_104_proxy_probe"
+path = "examples/w44_104_proxy_probe.rs"
+
 [lints]
 workspace = true

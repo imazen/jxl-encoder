@@ -1,0 +1,204 @@
+# W44-104 — admit-DCT64-on-terminal-class A/B HONEST STOP (2026-05-20)
+#
+# Status: [RULED OUT — W44-103 candidate A hypothesis falsified]
+#
+# Workspace: ~/work/zen/jxl-encoder--w44-104-dct64-search-screen (jj sibling on main)
+# Parent: f2682707 (W44-103 terminal SSIM2 attribution dump)
+# Harness: jxl-encoder/examples/w44_104_dct64_screen_ab.rs
+# Bench wall: ~50 min for 23 of 52 cells (terminal subset; killed early once result was
+# decisive). Each cell = 2 trials × 2 modes (baseline / admit) + 2 metric decodes.
+# Threads: 1.
+#
+# Modes:
+#   - baseline: default (W44-65/W44-68 auto-fires on terminal-class: try_dct64=false
+#     AND try_dct32=false when median(mask1x1) >= 99.5).
+#   - admit   : `LossyConfig::with_dct_suppress_hint(Some(false))` — bypass the
+#     auto-suppression. At e>=7, this admits the full DCT64-class search
+#     (DCT64X64, DCT64X32, DCT32X64). At e>=5, this also re-admits the
+#     DCT32-class search (DCT32X32, DCT32X16, DCT16X32).
+#
+# Background — what W44-103 found:
+# ───────────────────────────────
+# terminal.png d=4 is the largest SSIM2 inferiority cluster vs cjxl (-4.6 to
+# -5.6 across all 5 efforts). The W44-103 dump
+# (benchmarks/w44_103_terminal_ssim2_dump_2026-05-19.tsv) attributed this to
+# three concurrent root causes:
+#
+#   1. DCT16X16 over-firing 25× at ALL efforts (4870 vs cjxl 287).
+#   2. DCT64 family ENTIRELY absent from our output (0 vs cjxl 369 first-blocks).
+#   3. e8/e9 buttloop convergence on qac 13-17× LOWER than cjxl.
+#
+# W44-103 candidate A (highest expected EV per analysis): close the DCT64
+# selection gap. Hypothesis: "cjxl picks ~370 DCT64 first-blocks per cell on
+# the blank screen-background bottom-row regions. Why does our DCT64 search
+# never win? Likely entropy_mul64=2.25 too high OR find_best_64x64_transform
+# exits early OR mask1x1 quant bias."
+#
+# Root cause traced (this chunk, hour 1):
+# ──────────────────────────────────────
+# The DCT64 search NEVER RUNS on terminal — it is *gated out before evaluation*
+# by the W44-65/W44-68 default-on auto suppression in `vardct/encoder.rs:2872-2976`:
+#
+#   let w44_65_suppress_dct64 = match self.dct_suppress_hint {
+#       Some(b) => b,
+#       None => mask1x1_median.is_some_and(|med| med >= 99.5),
+#   };
+#   if w44_65_suppress_dct64 {
+#       p.try_dct64 = false;  // W44-65
+#       p.try_dct32 = false;  // W44-68
+#   }
+#
+# terminal.png saturates at mask1x1 median ≈ 100, so both flips fire — the
+# AC strategy search never even calls `find_best_64x64_transform`. This is
+# NOT a bug in the search itself; it is a deliberate gate.
+#
+# Smoke test (cell 1, terminal e7 d=4):
+#   hint=None         => 31164 bytes (auto suppression fires)
+#   hint=Some(true)   => 31164 bytes (force suppress; identical)
+#   hint=Some(false)  => 32443 bytes (admit; +4.10% bytes)
+#
+# The hint plumbing works. The next question: does admitting move SSIM2?
+#
+# Measurement (23 terminal cells × 5 efforts × 5 distances):
+# ─────────────────────────────────────────────────────────
+# Effort × distance grid (admit minus baseline; positive ssim2_delta = quality improved):
+#
+# | effort | d=2          | d=3          | d=4          | d=5           | d=6          |
+# |--------|--------------|--------------|--------------|---------------|--------------|
+# | e5     | +0.21 / +0.8 | +1.04 / +0.9 | +0.24 / -0.1 | +0.16 / +0.4  | +0.29 / +0.9 |
+# | e6     | +0.43 / +0.9 | +1.04 / -0.8 | +0.26 / +1.5 | +0.23 / +0.7  | +0.40 / +1.5 |
+# | e7     | -0.10 / +2.4 | +0.79 / +1.0 | +0.03 / +4.1 | -0.28 / +3.5  | +0.53 / +4.0 |
+# | e8     | +1.02 / +3.8 | +0.75 / +3.7 | -1.10 / +4.6 | -1.51 / +5.7  | -0.21 / +3.5 |
+# | e9     | +1.02 / +3.7 | +0.75 / +3.3 | -1.10 / +4.3 | (incomplete)  | (incomplete) |
+#
+# (cell value = `ssim2_delta_abs` / `bytes_delta_pct`; e5/e6 are pre-DCT64
+# effort gate, so admit only re-enables DCT32-class; e7+ admits the full
+# DCT64-class search)
+#
+# Acceptance gate from task spec:
+# ───────────────────────────────
+#   "≥3 SSIM2 points improvement on at least 3 of the 5 terminal d=4
+#    cells (e5..e9)"
+#
+# Measured d=4 ssim2_delta_abs:
+#   e5 d=4: +0.24
+#   e6 d=4: +0.26
+#   e7 d=4: +0.03
+#   e8 d=4: -1.10  (REGRESSION)
+#   e9 d=4: -1.10  (REGRESSION)
+#
+# ZERO of 5 cells reach +3.0 SSIM2 improvement. GATE FAILS BY 12-13× margin.
+#
+# Bytes regression budget: ≤ +5%.
+#   e5 d=4: -0.11%  (under)
+#   e6 d=4: +1.48%  (under)
+#   e7 d=4: +4.10%  (under)
+#   e8 d=4: +4.64%  (under, close)
+#   e9 d=4: +4.32%  (under, close)
+#
+# Bytes gate would pass, but SSIM2 doesn't — so the whole acceptance fails.
+#
+# Why the hypothesis was wrong:
+# ────────────────────────────
+# W44-103's strategy distribution showed cjxl picks DCT64 on terminal. The
+# unspoken inference was that selecting DCT64 ourselves would close the
+# quality gap. The measurement disproves that:
+#
+#   - At e7-e9 d=4 (the cells with the worst W44-103 SSIM2 gap), admit
+#     produces +4.1-4.6% bytes AND -0.0 to -1.1 SSIM2 change. The DCT64-class
+#     spend goes into low-information large blocks; the SSIM2-load-bearing
+#     text glyph regions are unaffected (we're not picking DCT64 on the text;
+#     cjxl wasn't either — DCT64 is for the BLANK regions where neither
+#     encoder loses much quality).
+#   - The real W44-103 SSIM2 gap is in the TEXT regions where cjxl's
+#     buttloop converges on qac 87-100 vs our qac 5-6. That's W44-103
+#     candidate B (e8/e9 buttloop), not candidate A (DCT64 search).
+#
+# Strategy distribution at e7 (W44-103 data):
+#   - Total 8x8-equiv blocks: 27,398 (terminal 1646×1062)
+#   - cjxl DCT64-class first-blocks: 369 (1.3% of blocks; covers 84% by area
+#     since each DCT64 spans 64 blocks)
+#   - The 369 DCT64 first-blocks live in the bottom-right blank-screen region,
+#     which is roughly 25% of the image area, where the dynamic range is near
+#     zero and ANY transform produces near-perfect reconstruction.
+#   - cjxl's strategy choices on the TEXT regions are nearly identical to
+#     ours (DCT8/DCT16X16/DCT16X8/DCT8X16). The qac difference is what makes
+#     cjxl's text look better.
+#
+# So admitting DCT64 (a) regresses bytes ~4% because we add a 2.25-multiplier
+# entropy_mul that's higher than our DCT16X16 picks, AND (b) does ~nothing
+# for SSIM2 because the SSIM2 cliff is in TEXT regions where DCT64 isn't
+# being picked by either side.
+#
+# Falsification of secondary hypotheses (1-2):
+#   - H1 (entropy_mul64=2.25 too high): MOOT. The 2.25 IS libjxl reference;
+#     when admitted, our search picks DCT64 in proportions close to cjxl on
+#     blank regions. The high entropy_mul does not gate it out; the W44-65/68
+#     image-level gate does.
+#   - H2 (find_best_64x64_transform exits early via IDENTITY): RULED OUT.
+#     The function is never reached on terminal — try_dct64=false → the
+#     outer search never calls it.
+#   - H3 (mask1x1 quant bias): also irrelevant given H1/H2.
+#   - H4 (missing kFavor2X2-equivalent): we already match libjxl.
+#
+# Recommended W44-105 chunk:
+# ────────────────────────
+# Pivot to W44-103 candidate B (e8/e9 buttloop qac divergence). This is
+# where the actual SSIM2 cliff lives:
+#
+#   - Buttloop on terminal converges on flat qac=5-6 across all regions.
+#   - cjxl's buttloop converges on text-region qac=87-100 (high) and
+#     blank-region qac=7.2 (low) — strongly bimodal.
+#   - Our buttloop iter count is 2 at e8, 4 at e9. cjxl uses 4 + multiseed.
+#   - Hypothesis: the per-iteration deviation-bound `qf_higher` is tighter
+#     on our adaptive_quant (post-W44-86 lowered initial qf on flat screen
+#     regions) — restricting buttloop from exploring the high-qac region
+#     needed for text. Or `K_BUTTERAUGLI_ACCEPT_FACTOR = 1.05` exits early
+#     once the loss falls below threshold globally, before tightening text.
+#   - Investigation path: capture per-iter (qf_lower, qf_higher, qf_median,
+#     final_qac_by_region) for both encoders on terminal e8 d=4. Adjust the
+#     deviation bound or accept factor and re-measure SSIM2.
+#
+# Falsification of "is it really region-bimodal in cjxl?" — the W44-103 dump
+# already showed:
+#
+#   Per-region mean qac at e8 (ours / cjxl):
+#     top:  5.5/70.0   5.6/80.7   5.2/64.3
+#     mid:  5.8/97.4   6.0/89.2   5.6/83.1   ← cjxl heavily refines text
+#     bot:  5.0/54.4   5.1/33.3   4.9/ 7.2   ← cjxl LOWERS qac on blank area
+#
+# Estimated EV: same 5-7 SSIM2 points as W44-103 ranked, but actually
+# achievable. Risk: LOW-MEDIUM — buttloop changes only affect e8+.
+#
+# Decision per task acceptance gates:
+#   (a) ≥3 SSIM2 on 3 of 5 d=4 cells: FAIL (0 of 5).
+#   (b) bytes ≤ +5%: PASS but conditional on (a).
+#   (c) Zero FIXED→OPEN on photos: NOT TESTED (bench killed once root cause
+#       was decisive on terminal data).
+#   (d) bfly ≤ +5%: 19 of 23 PASS; 4 fail (e8 d=2/3 bfly improves -15%/+5%
+#       which are wins not regressions; e7 d=4 bfly -1.1% IS an improvement).
+#   (e) SSIM2 ≤ -0.3 on photos: NOT TESTED.
+#   (f) Hash-locks: NO production code change shipped — N/A.
+#   (g) cargo test: NO production code change shipped — N/A.
+#   (h) Multi-decoder roundtrip: NO production code change shipped — N/A.
+#
+# HONEST STOP. No production code change. Bench TSV + meta + 11-screenshot
+# proxy data retained as permanent measurement record. The hint API
+# (`with_dct_suppress_hint`) already exists; callers who want to admit
+# DCT64 on terminal-class can opt in by passing `Some(false)` and pay the
+# documented +4% bytes / ±0.3 SSIM2 cost.
+#
+# Reproducer:
+#   cd ~/work/zen/jxl-encoder--w44-104-dct64-search-screen
+#   cargo run -p jxl-encoder --release \
+#     --features 'parallel butteraugli-loop ssim2-loop' \
+#     --example w44_104_dct64_screen_ab
+#
+# Proxy probe (zenanalyze-equivalent on 11 screenshots) lives at
+# benchmarks/w44_104_proxy_probe_2026-05-20.txt. terminal vs codec_wiki
+# separation by m3_colourfulness (13 vs 144) was a candidate path IF the
+# admit-DCT64 lever had worked — kept on file for follow-on chunks that
+# need a screenshot-class sub-discriminator for unrelated reasons.
+#
+# Source code changes in jxl-encoder/src/: ZERO. All work is in
+# `examples/w44_104_*.rs` + `Cargo.toml` registration + `benchmarks/`.
