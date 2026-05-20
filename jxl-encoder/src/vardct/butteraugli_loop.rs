@@ -934,36 +934,65 @@ impl VarDctEncoder {
         // Fallback path is the legacy uniform-4: identical behaviour
         // to every pre-W44-117 release.
         //
+        // W44-129 Chunk C: read the resolved `buttloop_epf_sharpness_seed`
+        // enum from `ResolvedImprovements` (populated by Chunk B
+        // `LossyConfig::resolve_improvements`).
+        //
+        // Policy translation:
+        //   * `AutoW44_117 { min_distance }` (default) → existing W44-117
+        //     seed compute, gated on `target_distance >= min_distance`.
+        //   * `LegacyUniform4` → force pre-W44-117 uniform-4 seed (Libjxl
+        //     strategy). Equivalent to `JXL_W44_117_DISABLE=1`.
+        //   * `PerIterRecompute` → `#[doc(hidden)]` reserved-for-future;
+        //     currently behaves identically to `AutoW44_117`.
+        //
+        // `None` `resolved_improvements` falls back to default via
+        // `.unwrap_or_default()` (= `AutoW44_117 { min_distance: 1.0 }`)
+        // for direct `VarDctEncoder::new` test callers — bit-identical
+        // to pre-Chunk-C.
+        //
         // Sweep override: set `JXL_W44_117_DISABLE=1` to force the
-        // legacy uniform-4 seed for A/B testing. When unset (default)
-        // the per-image dispatch decides. No production runtime cost.
+        // legacy uniform-4 seed for A/B testing (still takes
+        // precedence over the resolved policy at the call site;
+        // Chunk F formalises as env-var fallback under default
+        // policy value).
+        let epf_seed_policy = self
+            .resolved_improvements
+            .as_ref()
+            .map(|r| r.buttloop_epf_sharpness_seed)
+            .unwrap_or_default();
         #[cfg(feature = "std")]
-        let w44_117_force_off = std::env::var("JXL_W44_117_DISABLE").is_ok_and(|v| v == "1");
+        let env_force_off = std::env::var("JXL_W44_117_DISABLE").is_ok_and(|v| v == "1");
         #[cfg(not(feature = "std"))]
-        let w44_117_force_off = false;
+        let env_force_off = false;
+        let policy_forces_legacy =
+            matches!(epf_seed_policy, crate::api::EpfSharpnessSeed::LegacyUniform4);
+        let w44_117_force_off = env_force_off || policy_forces_legacy;
 
         // W44-120 distance gate: the W44-117 seed compute only fires at
-        // `target_distance >= W44_120_EPF_SEED_MIN_DISTANCE` (= 1.0).
-        // Closes the W44-119 ledger refresh regression on terminal
-        // e8/e9 d=0.8 (SSIM2 -1.87 vs pre-W44-117 baseline) — at very
-        // low distance the legacy uniform-4 sharpness path was already
-        // a close-enough match to the production sharpness map; the
-        // W44-117 iter-0-fitted seed over-protects edges that the
-        // encoder should be quantizing more freely. See
-        // `W44_120_EPF_SEED_MIN_DISTANCE` rustdoc for the bisection
-        // results that picked 1.0.
+        // `target_distance >= min_distance`. Default `1.0` (W44-120
+        // bisect pick) closes the terminal e8/e9 d=0.8 SSIM2 -1.87
+        // regression vs pre-W44-117. The threshold is now read from
+        // the resolved `EpfSharpnessSeed::AutoW44_117 { min_distance }`
+        // variant — production default is 1.0 (Chunk A enum Default impl)
+        // matching the const `W44_120_EPF_SEED_MIN_DISTANCE`.
         //
-        // Sweep override: `JXL_W44_120_EPF_SEED_MIN_DISTANCE=<f32>`
-        // lets a harness search for per-corpus tuning without
-        // rebuilds. When unset (default) the const wins. No
-        // production runtime cost.
+        // Env-var override `JXL_W44_120_EPF_SEED_MIN_DISTANCE=<f32>` still
+        // applies for harness sweeps (Chunk F formalises). For
+        // `LegacyUniform4` / `PerIterRecompute` variants the distance
+        // gate logic is moot (the outer `w44_117_force_off` already
+        // forces the legacy path under `LegacyUniform4`).
+        let policy_min_distance = match epf_seed_policy {
+            crate::api::EpfSharpnessSeed::AutoW44_117 { min_distance } => min_distance,
+            _ => W44_120_EPF_SEED_MIN_DISTANCE,
+        };
         #[cfg(feature = "std")]
         let w44_120_min_distance = std::env::var("JXL_W44_120_EPF_SEED_MIN_DISTANCE")
             .ok()
             .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(W44_120_EPF_SEED_MIN_DISTANCE);
+            .unwrap_or(policy_min_distance);
         #[cfg(not(feature = "std"))]
-        let w44_120_min_distance = W44_120_EPF_SEED_MIN_DISTANCE;
+        let w44_120_min_distance = policy_min_distance;
         let w44_120_distance_gate_passes = target_distance >= w44_120_min_distance;
 
         let sharpness: Vec<u8> = if !w44_117_force_off
