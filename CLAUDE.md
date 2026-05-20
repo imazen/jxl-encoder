@@ -586,6 +586,53 @@ Key patterns to watch for when working on this codebase:
 
 ## Investigation Notes
 
+### W44-95: Ship Variant Z (dct32=1.20) / Variant W (dct32=1.27) — HONEST-STOP (May 19, 2026)
+
+**Status**: [RULED OUT — measurement shipped, no production source change]
+
+W44-95 was queued as a follow-on to W44-94 to ship variant Z (or fallback W)
+because both passed the SSIM2 budget on W44-94's narrow 19-cell measurement
+and closed 5-6 OPEN cells. **Wider 3-photo spot-check confirmed both Z and W
+regress cells outside the W44-94 cell list**:
+
+- **Variant Z (dct32=1.20)** on 15 cells across 2389166 / 3637739 / 1044329:
+  3 FIXED→OPEN flips, worst SSIM2 -0.82 on 2389166 e6 d=4.
+- **Variant W (dct32=1.27)**: 2 FIXED→OPEN flips, worst SSIM2 -0.43 on
+  2389166 e5 d=3 + paired byte AND SSIM2 regressions on 2389166 e5 d=4
+  (+397 bytes, -0.39 SSIM2 — strictly worse, not Pareto).
+- **Intermediate dct32=1.30**: same 2 flips + -0.42 SSIM2 on 2389166 e5 d=3.
+
+**Root cause**: W44-94's narrow 19-cell measurement covered only 4 photos
+(1420710, 1531677, 1189261, 1418519). The wider mask<50 population
+(2389166 mask=46.24, 3637739 mask=47.80, 1044329 mask=48.03) wants
+DIFFERENT entropy_mul values at d=3..=5. A single global dct32 constant
+in [1.20, 1.34] satisfies one photo class but regresses the other —
+same pattern W44-94 documented for 1531677 vs 1420710 at d=5, now
+generalized across the mask<50 photo population.
+
+**Reproduction verified**: variant Z bytes on the narrow 13 OPEN cells
+are byte-identical to W44-94's variant Z column (proves the production
+edit `dct32x32 = 1.34 → 1.20` matches W44-94's injected-table values).
+W93_REGR cells stay byte-identical to W44-94 default (gate doesn't fire
+for mask ≥ 50).
+
+**Code reverted to W44-29 baseline (dct32=1.34)**. Net OPEN count
+unchanged at 13. Benches `benchmarks/w44_95_*_2026-05-19.tsv` + meta
+`benchmarks/w44_95_honest_stop_2026-05-19.meta` shipped to capture the
+falsification (don't re-investigate without a per-image discriminator).
+
+**Reproducers (registered, gated on `__expert butteraugli-loop ssim2-loop parallel`)**:
+- `examples/w44_95_ship_variant_z_repro.rs` — narrow 19-cell W44-94 reproduction
+- `examples/w44_95_baseline_diff.rs` — wider 15-cell spot-check on 3 photos NOT in W44-94
+- `examples/w44_95_spot_check_wider.rs` — 22-cell uncharted-cell probe
+
+**W44-96 plan**: Per-image zenanalyze discriminator (W44-91 pattern)
+within mask < 50. Hypothesis: 1420710 / 1531677 (where Z wins) differ
+from 2389166 / 3637739 (where Z regresses) on at least one of:
+m3_colourfulness, flat_color_block_ratio, high_freq_energy_ratio,
+edge_density. Wire splitter as sub-gate within `w44_29_lower` to route
+dct32=1.20/1.27 only to the "1420710-class" sub-population.
+
 ### W44-94: find_best_32x32 tightening widen — HONEST-STOP (May 19, 2026)
 
 **Status**: [RULED OUT — measurement shipped, no production source change]

@@ -1155,5 +1155,29 @@ name = "w44_94_find_best_32_widen"
 path = "examples/w44_94_find_best_32_widen.rs"
 required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
 
+# W44-95 ship-variant-Z reproducer. Confirms W44-94's variant Z wins on
+# 13 OPEN + 6 W93_REGR cells after the production dct32x32=1.34→1.20 change
+# lands in `EntropyMulTable::high_d_photo_smooth_suppressed`.
+[[example]]
+name = "w44_95_ship_variant_z_repro"
+path = "examples/w44_95_ship_variant_z_repro.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
+# W44-95 wider spot-check on 3 additional photos (mask < 50: 2389166,
+# 3637739, 1044329) NOT covered by the W44-94 cell list. Verifies no
+# large FIXED→OPEN regressions on the broader W44-29-firing population.
+[[example]]
+name = "w44_95_spot_check_wider"
+path = "examples/w44_95_spot_check_wider.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
+# W44-95 baseline-diff: OLD W44-29 (dct32=1.34, forced via internal_params
+# + hint=false) vs NEW W44-95 production default. Spot-checks 3 photos
+# (mask < 50) for FIXED→OPEN flips on cells NOT in the W44-94 cell list.
+[[example]]
+name = "w44_95_baseline_diff"
+path = "examples/w44_95_baseline_diff.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
 [lints]
 workspace = true

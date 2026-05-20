@@ -1,0 +1,197 @@
+# W44-95 — Variant Z (dct32=1.20) + W (dct32=1.27) HONEST-STOP
+
+Date: 2026-05-19
+Workspace: `~/work/zen/jxl-encoder--w44-95-ship-variant-z/`
+Build target: `CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target`
+Parent commit: `7b5866ee` (W44-94 honest-stop)
+Reproducers (registered, gated on `__expert butteraugli-loop ssim2-loop parallel`):
+- `examples/w44_95_ship_variant_z_repro.rs` — narrow 19-cell W44-94 reproduction
+- `examples/w44_95_baseline_diff.rs` — wider 15-cell spot-check on 3 photos (mask < 50) NOT in W44-94
+- `examples/w44_95_spot_check_wider.rs` — 22-cell uncharted-cell probe
+
+## Task
+
+W44-94 honest-stopped on widening `EntropyMulTable::high_d_photo_smooth_suppressed`
+because no variant satisfied ALL the hard W44-94 acceptance gates simultaneously
+on the named 1420710 e5/e6/e7 d=5 target cells. W44-95 was queued as a follow-on
+to ship variant Z (or W) because both passed the SSIM2 budget on W44-94's narrow
+19-cell measurement and still closed 5-6 OPEN cells with zero FIXED → OPEN flips.
+
+Acceptance gates (RELAXED from W44-94 per W44-95 task):
+- Net OPEN count decreases by ≥3 cells (was 13, target ≤10)
+- Zero FIXED → OPEN flips on 30+ spot-check FIXED cells
+- SSIM2 regression ≤ 0.3 on any cell
+- W93_REGR cells (1189261/1418519) byte-identical OR improved
+- Hash-lock regen sub-100-cell + sub-100-byte
+- `cargo test --lib`: passes
+- Multi-decoder roundtrip via djxl + jxl-rs on 3 closed cells
+
+## Method
+
+Three benches:
+
+1. **Narrow 19-cell W44-94 reproduction** (`w44_95_ship_variant_z_repro`):
+   13 OPEN + 6 W93_REGR cells from W44-94. Confirms variant Z/W produce
+   byte-identical bytes to the W44-94 measurement when wired into production
+   via editing `EntropyMulTable::high_d_photo_smooth_suppressed`.
+
+2. **Wider 3-photo baseline-diff** (`w44_95_baseline_diff`): 15 cells across
+   2389166 (mask=46.24), 3637739 (mask=47.80), 1044329 (mask=48.03) — three
+   CID22 photos with mask < 50 (W44-29 gate fires) NOT covered by W44-94.
+   Compares baseline (OLD W44-29 dct32=1.34 forced via internal_params +
+   `with_high_d_photo_hint(Some(false))`) vs SHIPPED (production default
+   after W44-95 code change).
+
+3. **22-cell uncharted-cell probe** (`w44_95_spot_check_wider`): same 3 photos
+   plus wider distance range. Diagnostic only.
+
+## Results — narrow 19-cell reproduction
+
+### Variant Z (dct32x32=1.20) on narrow cells
+
+| Image | e | d | cjxl | baseline | baseline_pct | shipped | shipped_pct | bytes_Δ | ssim2_Δ | status |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1420710 | 5 | 5 | 23261 | 24186 | +3.98% | 24114 | +3.67% | -72 | -0.10 | still OPEN |
+| 1420710 | 5 | 6 | 20192 | 21215 | +5.07% | 21004 | +4.02% | -211 | -0.08 | still OPEN |
+| 1420710 | 6 | 5 | 23643 | 24385 | +3.14% | 24300 | +2.78% | -85 | -0.12 | **OPEN→FIXED** |
+| 1420710 | 6 | 6 | 20653 | 21425 | +3.74% | 21214 | +2.72% | -211 | -0.18 | **OPEN→FIXED** |
+| 1420710 | 7 | 5 | 23643 | 24589 | +4.00% | 24437 | +3.36% | -152 | -0.12 | still OPEN |
+| 1420710 | 8 | 5 | 21814 | 22573 | +3.48% | 22351 | +2.46% | -222 | +0.34 | **OPEN→FIXED** |
+| 1420710 | 9 | 5 | 21814 | 22626 | +3.72% | 22354 | +2.48% | -272 | +0.34 | **OPEN→FIXED** |
+| 1531677 | 5 | 5 | 20227 | 20941 | +3.53% | 20944 | +3.55% | +3 | +0.03 | still OPEN |
+| 1531677 | 5 | 6 | 17275 | 18207 | +5.40% | 17774 | +2.89% | -433 | +0.00 | **OPEN→FIXED** |
+| 1531677 | 6 | 5 | 20560 | 21178 | +3.01% | 21185 | +3.04% | +7 | -0.10 | still OPEN |
+| 1531677 | 6 | 6 | 17655 | 18430 | +4.39% | 18002 | +1.97% | -428 | -0.04 | **OPEN→FIXED** |
+| 1531677 | 8 | 5 | 18838 | 19453 | +3.27% | 19412 | +3.05% | -41 | -0.13 | still OPEN |
+| 1531677 | 9 | 5 | 18802 | 19512 | +3.78% | 19486 | +3.64% | -26 | -0.13 | still OPEN |
+
+Z closes 6 of 13 OPEN cells. Worst SSIM2 -0.18 (within 0.3 budget). All bytes
+byte-identical to W44-94's variant Z column (verified row-by-row).
+
+### Variant W (dct32x32=1.27) on narrow cells
+
+W closes 5 cells (1420710 e6 d=5/d=6, 1420710 e8/e9 d=5, 1531677 e8 d=5).
+Worst SSIM2 drop -0.17.
+
+### W93_REGR cells (both Z and W)
+
+All 6 cells (1189261 e5/e6 d=6, 1418519 e5/e6 d=5/d=6) byte-identical to
+W44-94's "default" column. The W44-29 gate doesn't fire for these images
+(mask ≥ 50: 1189261=69.08, 1418519=92.33), so the constant change has no
+effect on either side.
+
+The reproducer's "BYTES DIFFER" status on these rows is a measurement
+artifact of the bench's baseline path (which forces `hint=Some(false)` +
+internal_params override). The shipped path uses the natural production
+gate which doesn't fire for these images, so shipped bytes match the
+production-default W44-94 numbers EXACTLY (verified — see `w44_95_ship_variant_z_repro_2026-05-19.tsv`).
+
+## Results — wider 3-photo baseline-diff (FAIL)
+
+Both Z and W (and intermediate dct32=1.30) regressed cells outside the
+W44-94 cell list. Critical findings:
+
+### Variant Z (dct32x32=1.20) on wider population
+
+| Image | e | d | old_pct | new_pct | bytes_Δ | ssim2_Δ | status |
+|---|---|---|---|---|---|---|---|
+| 2389166 | 5 | 3 | +2.27% | -0.23% | -574 | **-0.46** | stable |
+| 2389166 | 5 | 4 | -0.63% | -0.48% | +26 | **-0.37** | stable |
+| 2389166 | 5 | 5 | -0.17% | +0.48% | +98 | -0.10 | stable |
+| 2389166 | 6 | 4 | +1.23% | +0.39% | -159 | **-0.82** | stable |
+| 2389166 | 7 | 5 | -1.31% | +3.59% | +780 | -0.06 | **FIXED→OPEN** |
+| 3637739 | 5 | 5 | +2.27% | +3.10% | +113 | -0.02 | **FIXED→OPEN** |
+| 3637739 | 7 | 4 | +2.98% | +4.64% | +270 | -0.03 | **FIXED→OPEN** |
+
+3 FIXED→OPEN flips, worst SSIM2 -0.82 (well outside the 0.3 budget).
+
+### Variant W (dct32x32=1.27) on wider population
+
+| Image | e | d | old_pct | new_pct | bytes_Δ | ssim2_Δ | status |
+|---|---|---|---|---|---|---|---|
+| 2389166 | 5 | 3 | +2.27% | -1.26% | -811 | **-0.43** | stable |
+| 2389166 | 5 | 4 | -0.63% | +1.58% | +397 | **-0.39** | stable |
+| 2389166 | 6 | 4 | +1.23% | +2.09% | +162 | **-0.35** | stable |
+| 3637739 | 5 | 5 | +2.27% | +3.10% | +113 | -0.02 | **FIXED→OPEN** |
+| 3637739 | 7 | 4 | +2.98% | +4.64% | +270 | -0.03 | **FIXED→OPEN** |
+
+2 FIXED→OPEN flips, worst SSIM2 -0.43 (outside 0.3 budget). The 2389166
+cells produce paired byte+SSIM2 regressions (e5 d=4: +397 bytes AND -0.39
+SSIM2 — strictly worse, not a Pareto trade).
+
+### Intermediate variant dct32x32=1.30 on wider population
+
+| Image | e | d | old_pct | new_pct | bytes_Δ | ssim2_Δ | status |
+|---|---|---|---|---|---|---|---|
+| 2389166 | 5 | 3 | +2.27% | -0.48% | -633 | **-0.42** | stable |
+| 3637739 | 5 | 5 | +2.27% | +3.10% | +113 | -0.02 | **FIXED→OPEN** |
+| 3637739 | 7 | 4 | +2.98% | +4.64% | +270 | -0.03 | **FIXED→OPEN** |
+
+Still 2 FIXED→OPEN flips and -0.42 SSIM2 on 2389166. Marginally better
+than W but still fails the gate.
+
+## Honest-stop decision
+
+Per W44-95 decision tree:
+> If neither [Z nor W]: honest-stop documenting what changed since
+> W44-94's measurement.
+
+Both Z and W fail the SSIM2 ≤ 0.3 gate AND have FIXED→OPEN flips on the
+wider mask<50 photo population (2389166, 3637739). The W44-94
+measurement's narrow 19-cell coverage missed these regressions —
+2389166 and 3637739 are also in the W44-29-firing region but exhibit
+different RD behavior than 1420710 / 1531677.
+
+W44-94's RC2 honest-stop comment ("1420710 and 1531677 want OPPOSITE
+adjustments at d=5") was correct in concept but understated the scope:
+2389166 (mask=46.24) and 3637739 (mask=47.80) ALSO want different
+adjustments than 1420710 (mask=39.55) and 1531677 (mask=35.63).
+A single global constant change cannot satisfy all four.
+
+**Code reverted to W44-29 baseline (dct32=1.34)**. Net OPEN count
+unchanged at 13.
+
+## What W44-96 needs
+
+A per-image zenanalyze discriminator (W44-91 pattern) within mask < 50.
+Hypothesis: 1420710 / 1531677 (where Z wins) differ from 2389166 / 3637739
+(where Z regresses) on at least one of:
+- m3_colourfulness
+- flat_color_block_ratio
+- high_freq_energy_ratio
+- edge_density
+
+A W44-96 chunk should:
+1. Compute zenanalyze proxies on all 4 photos via `zenanalyze` CLI
+2. Find a clean splitter that puts {1420710, 1531677} on one side and
+   {2389166, 3637739} on the other
+3. Wire the splitter as a sub-gate within `w44_29_lower` (after mask < 50
+   confirms photo class, the new gate routes to dct32=1.20/1.27 only on
+   the "1420710-class" sub-population)
+4. Re-measure all 4 photos to confirm no regressions
+
+## Files
+
+- `benchmarks/w44_95_ship_variant_z_repro_2026-05-19.tsv` — narrow 19-cell Z reproduction
+- `benchmarks/w44_95_ship_variant_w_repro_2026-05-19.tsv` — narrow 19-cell W reproduction
+- `benchmarks/w44_95_ship_variant_130_repro_2026-05-19.tsv` — narrow 19-cell dct32=1.30 reproduction
+- `benchmarks/w44_95_baseline_diff_z_wider_2026-05-19.tsv` — wider 15-cell baseline-diff with Z
+- `benchmarks/w44_95_baseline_diff_w_wider_2026-05-19.tsv` — wider 15-cell baseline-diff with W
+- `benchmarks/w44_95_baseline_diff_130_wider_2026-05-19.tsv` — wider 15-cell baseline-diff with dct32=1.30
+- `jxl-encoder/examples/w44_95_ship_variant_z_repro.rs` — reproducer (registered)
+- `jxl-encoder/examples/w44_95_baseline_diff.rs` — wider baseline-diff (registered)
+- `jxl-encoder/examples/w44_95_spot_check_wider.rs` — uncharted-cell probe (registered)
+
+## DO NOT
+
+- Re-attempt blind widening of `high_d_photo_smooth_suppressed.dct32x32`
+  without a per-image discriminator — measurement is conclusive that no
+  global value between 1.20 and 1.34 satisfies all 4 mask<50 photos
+  (1420710 + 1531677 wins; 2389166 + 3637739 regress).
+- Apply the dct16x32 lift to 1.40 — W44-94 already RULED OUT (1531677
+  SSIM2 -0.30 to -0.74).
+- Widen the W44-29 gate distance further below 3.0 — W44-78 already
+  widened from 4.0 to 3.0; lower than that hits more photos.
+- Cite "FMA precision" as the residual mechanism (per user's W44-66
+  correction on `fd_residual_not_fma_precision_2026-05-19.md`).
+- Touch other repos.
