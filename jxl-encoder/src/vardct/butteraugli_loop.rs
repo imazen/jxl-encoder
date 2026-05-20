@@ -473,17 +473,17 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
         }
         crate::api::AdaptiveQuantQfSeedPolicy::Off => unreachable!(),
     };
-    #[cfg(feature = "std")]
-    {
-        std::env::var("JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE")
-            .ok()
-            .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(base_scale)
-    }
-    #[cfg(not(feature = "std"))]
-    {
-        base_scale
-    }
+    // W44-132 Chunk F: env-var `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE` is
+    // now consumed inside `EncoderStrategy::resolve`'s env-var fallback
+    // layer (api.rs::apply_env_var_fallbacks) — when the policy is at
+    // its `Default::default()` (== `AutoScalePerEffort`), the env-var
+    // value promotes it to `AutoScaleCustom { e5_e6: env, e7: env }`
+    // BEFORE this function sees it. The single env value replaces both
+    // per-effort defaults. Explicit caller settings via
+    // `EncoderStrategy::Custom` or `StrategyOverrides` win over the
+    // env-var; the legacy "env-var always overrides" semantic ended
+    // with Chunk F. See `apply_env_var_fallbacks` for the rationale.
+    base_scale
 }
 
 /// Resolve `cur_pow` for the current iter + `target_distance`, honouring
@@ -898,18 +898,16 @@ impl VarDctEncoder {
             crate::api::ButtloopQfSeedPolicy::Off => 1.0,
         };
 
-        // W44-105 sweep override: production default is fixed via constant,
-        // but the env-var slot lets harnesses search for per-corpus tuning
-        // without rebuilds. Chunk F formalises this as an env-var fallback
-        // layer inside `EncoderStrategy::resolve` (when the API field is
-        // at its default value, env-var override applies); until then the
-        // env-var override happens at the call site and takes precedence
-        // over the resolved policy.
-        #[cfg(feature = "std")]
-        let buttloop_qf_seed_scale = std::env::var("JXL_BUTTLOOP_INITIAL_QF_SCALE")
-            .ok()
-            .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(buttloop_qf_seed_scale);
+        // W44-132 Chunk F: env-var `JXL_BUTTLOOP_INITIAL_QF_SCALE` is
+        // now consumed inside `EncoderStrategy::resolve`'s env-var
+        // fallback layer (api.rs::apply_env_var_fallbacks) — when the
+        // policy is at its `Default::default()` (== `AutoScale4`), the
+        // env value promotes it to `AutoScale(env_value)` BEFORE this
+        // call site sees it (still subject to the gate). Explicit
+        // caller settings via `EncoderStrategy::Custom` or
+        // `StrategyOverrides` win over the env-var; the legacy
+        // "env-var always overrides" semantic ended with Chunk F. See
+        // `apply_env_var_fallbacks` for the rationale.
 
         if buttloop_qf_seed_scale != 1.0 {
             for v in quant_field_float.iter_mut() {
@@ -999,44 +997,35 @@ impl VarDctEncoder {
         // direct `VarDctEncoder::new` test callers) — bit-identical to
         // pre-Chunk-D.
         //
-        // Sweep override: set `JXL_W44_117_DISABLE=1` to force the
-        // legacy uniform-4 seed for A/B testing (still takes
-        // precedence over the resolved policy at the call site;
-        // Chunk F formalises as env-var fallback under default
-        // policy value).
+        // W44-132 Chunk F: env-vars `JXL_W44_117_DISABLE=1` and
+        // `JXL_W44_120_EPF_SEED_MIN_DISTANCE=<f32>` are now consumed
+        // inside `EncoderStrategy::resolve`'s env-var fallback layer
+        // (api.rs::apply_env_var_fallbacks) — when the policy is at
+        // its `Default::default()` (== `AutoW44_117 { min_distance:
+        // 1.0 }`), the env vars promote it to `LegacyUniform4` or
+        // `AutoW44_117 { min_distance: env }` BEFORE this call site
+        // sees it. Explicit caller settings via `EncoderStrategy::
+        // Custom` or `StrategyOverrides` win over the env-var; the
+        // legacy "env-var always overrides" semantic ended with
+        // Chunk F. See `apply_env_var_fallbacks` for the rationale.
         let epf_seed_policy = self.resolved_improvements.buttloop_epf_sharpness_seed;
-        #[cfg(feature = "std")]
-        let env_force_off = std::env::var("JXL_W44_117_DISABLE").is_ok_and(|v| v == "1");
-        #[cfg(not(feature = "std"))]
-        let env_force_off = false;
-        let policy_forces_legacy =
+        let w44_117_force_off =
             matches!(epf_seed_policy, crate::api::EpfSharpnessSeed::LegacyUniform4);
-        let w44_117_force_off = env_force_off || policy_forces_legacy;
 
         // W44-120 distance gate: the W44-117 seed compute only fires at
         // `target_distance >= min_distance`. Default `1.0` (W44-120
         // bisect pick) closes the terminal e8/e9 d=0.8 SSIM2 -1.87
-        // regression vs pre-W44-117. The threshold is now read from
-        // the resolved `EpfSharpnessSeed::AutoW44_117 { min_distance }`
-        // variant — production default is 1.0 (Chunk A enum Default impl)
-        // matching the const `W44_120_EPF_SEED_MIN_DISTANCE`.
-        //
-        // Env-var override `JXL_W44_120_EPF_SEED_MIN_DISTANCE=<f32>` still
-        // applies for harness sweeps (Chunk F formalises). For
-        // `LegacyUniform4` / `PerIterRecompute` variants the distance
-        // gate logic is moot (the outer `w44_117_force_off` already
-        // forces the legacy path under `LegacyUniform4`).
-        let policy_min_distance = match epf_seed_policy {
+        // regression vs pre-W44-117. The threshold is read from the
+        // resolved `EpfSharpnessSeed::AutoW44_117 { min_distance }`
+        // variant — production default is 1.0 (Chunk A enum Default
+        // impl) matching the const `W44_120_EPF_SEED_MIN_DISTANCE`.
+        // For `LegacyUniform4` / `PerIterRecompute` variants the
+        // distance gate logic is moot (the outer `w44_117_force_off`
+        // already forces the legacy path under `LegacyUniform4`).
+        let w44_120_min_distance = match epf_seed_policy {
             crate::api::EpfSharpnessSeed::AutoW44_117 { min_distance } => min_distance,
             _ => W44_120_EPF_SEED_MIN_DISTANCE,
         };
-        #[cfg(feature = "std")]
-        let w44_120_min_distance = std::env::var("JXL_W44_120_EPF_SEED_MIN_DISTANCE")
-            .ok()
-            .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(policy_min_distance);
-        #[cfg(not(feature = "std"))]
-        let w44_120_min_distance = policy_min_distance;
         let w44_120_distance_gate_passes = target_distance >= w44_120_min_distance;
 
         let sharpness: Vec<u8> = if !w44_117_force_off
