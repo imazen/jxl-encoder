@@ -1,0 +1,86 @@
+# W44-119 chain-disable A/B — paired comparison
+#
+# Hypothesis tested: now that W44-117 (5604fdf0) ships an EPF
+# sharpness seed for the buttloop's internal recon and W44-118
+# (f543288c) gates that seed on `is_screenshot`, can the
+# W44-105/107/108/109 qac-scale chain be retired (or reduced)
+# without regressing the cells it currently improves?
+#
+# Mode A: chain ON  (current main, post-W44-118)
+# Mode B: chain OFF (sets JXL_BUTTLOOP_INITIAL_QF_SCALE=1.0 AND
+#                    JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=1.0)
+#
+# Both env knobs are read per-encode in butteraugli_loop.rs:
+#   line 785: buttloop seed-scale (W44-105 + W44-107 + W44-108)
+#   line 388: adaptive-quant pre-scale (W44-109)
+# Setting both to 1.0 collapses the chain to a no-op.
+#
+# W44-117 EPF sharpness seed remains ACTIVE in both modes
+# (independent of the chain — the seed is the buttloop's apply_epf
+# input; the chain is the buttloop's initial quant_field).
+#
+# Cells (83 total):
+#   terminal e5..=e9 × d ∈ {2, 3, 4, 5, 6}     (25 cells, canary)
+#   codec_wiki e5..=e7 × d ∈ {3, 4, 5}         (9 cells, mid-d)
+#   imac_g3 e5..=e9 × d ∈ {2, 3, 4}            (15 cells, mixed)
+#   1025469 e7..=e9 × d ∈ {1, 2, 3, 4}         (8 cells, photo canary)
+#   1418519 e7..=e9 × d ∈ {1, 2, 3, 4}         (8 cells, photo)
+#   1189261 e7..=e9 × d ∈ {2, 3, 4}            (6 cells, photo)
+#   1420710 e7..=e9 × d ∈ {2, 3, 4}            (6 cells, photo)
+#   1531677 e7..=e9 × d ∈ {2, 3, 4}            (6 cells, photo)
+#
+# Interleaved (A, B, A, B, ...) per cell to reduce thermal/turbo
+# bias across the long bench run.
+#
+git_rev: f543288ca1537381336736572f0ac6dff6396780 (W44-118 main)
+host: lilith
+cjxl_version: n/a (no cjxl baseline in this bench — pure jxl-encoder A/B)
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+reproducer: cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example w44_119_chain_disable_ab > benchmarks/w44_119_chain_disable_ab_2026-05-20.tsv
+#
+# TSV schema:
+#   image | effort | distance
+#   | A_bytes | B_bytes | bytes_delta_pct (B vs A; + = B bigger)
+#   | A_bfly  | B_bfly  | bfly_delta_pct  (B vs A; - = B better)
+#   | A_ssim2 | B_ssim2 | ssim2_delta_abs (B vs A; + = B better)
+#
+# Headlines:
+#   - 79 cells with data (4 OOM failures on imac_g3 e8/e9 high d,
+#     same pre-existing budget cluster as the ledger sweep).
+#   - Total bytes: 6,896,898 (A) → 5,466,435 (B) = -20.74% (chain
+#     OFF saves bytes).
+#   - Avg SSIM2 delta (B-A): -2.04 (chain OFF degrades quality).
+#   - Avg butteraugli delta (B-A): +24.69% (chain OFF much worse).
+#   - 42 cells with SSIM2 regression > 0.3 (chain-OFF loses).
+#   - ZERO cells where chain OFF wins by > 0.3 SSIM2.
+#
+# Per-cluster averages (ssim2 delta B-A, bytes delta):
+#   terminal   (n=25): ssim2 -3.86, bytes -25.71%
+#   codec_wiki (n=9):  ssim2 -2.33, bytes -18.50%
+#   imac_g3    (n=11): ssim2 -3.97, bytes -23.99%
+#   photo      (n=34): ssim2 +0.00, bytes +0.00% (BYTE-IDENTICAL)
+#
+# Photos byte-identical confirms the chain's `is_screenshot` gate
+# correctly skips photos regardless of env knob value.
+#
+# Worst per-cell screenshot regressions (B-A):
+#   terminal e8 d=6: ssim2 -5.58
+#   terminal e9 d=6: ssim2 -5.58
+#   terminal e8 d=4: ssim2 -5.45
+#   terminal e9 d=4: ssim2 -5.45
+#   terminal e5 d=5: ssim2 -4.46
+#   terminal e7 d=3: ssim2 -4.25
+#   terminal e5 d=5: ssim2 -4.46
+#
+# Verdict: the chain CANNOT be retired. The W44-117/118 EPF seed
+# fix addresses an ORTHOGONAL mechanism (buttloop-recon-vs-decoder
+# delta) than the chain (buttloop-measurement bias). Disabling the
+# chain regresses every screenshot cell.
+#
+# W44-120 plan:
+#   1. KEEP the chain at its W44-109 magnitude (do not retire/reduce).
+#   2. Investigate the terminal e8/e9 d=0.8 W44-117 over-correction
+#      (-1.87 SSIM2 vs W44-110 baseline) surfaced by the ledger
+#      refresh, as a distance-gate refinement on the W44-117 EPF
+#      seed (probably gate at d >= 1.0).

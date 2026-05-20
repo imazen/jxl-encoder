@@ -657,6 +657,15 @@ name = "w44_118_decoder_check"
 path = "examples/w44_118_decoder_check.rs"
 required-features = ["butteraugli-loop"]
 
+# W44-119 chain-disable A/B — paired A/B comparison of the
+# W44-105/107/108/109 qac-scale chain ON vs OFF, after the W44-117/118
+# EPF sharpness seed fix. Tests whether the chain is still needed now
+# that the buttloop sees accurate EPF on screenshots.
+[[example]]
+name = "w44_119_chain_disable_ab"
+path = "examples/w44_119_chain_disable_ab.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
 # RFC#45 chunk 1: e10/e11 paired A/B/C bench.
 # Needs the butteraugli-loop feature to enable e10/e11 iter extensions.
 [[example]]
