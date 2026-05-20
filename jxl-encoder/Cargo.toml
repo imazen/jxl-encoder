@@ -1490,6 +1490,26 @@ name = "w44_122_ab"
 path = "examples/w44_122_ab.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-123 A/B: keep_dct32 lever. Re-enables `find_best_32x32_transform`
+# (DCT32X32 vs 4×DCT16X16) on W44-65-dispatched screen-class while
+# preserving `try_dct64 = false` (W44-104 / W44-122 dead-letter ruling).
+[[example]]
+name = "w44_123_keep_dct32_ab"
+path = "examples/w44_123_keep_dct32_ab.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
+# W44-123 smoke: verify the hint API matches the env-var fallback the A/B
+# harness used. Should print baseline / keep_dct32 / keep_dct32(false)=identical bytes.
+[[example]]
+name = "w44_123_smoke"
+path = "examples/w44_123_smoke.rs"
+
+# W44-123 decoder check: encode codec_wiki with keep_dct32 hint, decode via
+# jxl-rs + jxl-oxide; caller runs djxl manually on the staged JXL files.
+[[example]]
+name = "w44_123_decoder_check"
+path = "examples/w44_123_decoder_check.rs"
+
 
 # W44-104 proxy probe: dump zenanalyze proxies for 11 gb82-sc screenshots
 # to identify a discriminator separating terminal-class (admit DCT64) from

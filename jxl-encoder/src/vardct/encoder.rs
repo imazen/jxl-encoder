@@ -1287,6 +1287,15 @@ pub struct VarDctEncoder {
     /// (`w44_63_dct_suppress_hint_shipped_2026-05-19.md`), W44-65
     /// (`w44_65_dct_suppress_default_on_2026-05-19.md`).
     pub dct_suppress_hint: Option<bool>,
+    /// W44-123 caller-supplied override decoupling the W44-68
+    /// `try_dct32` suppression from the W44-65 `try_dct64`
+    /// suppression. `None` (default) keeps the W44-68 behaviour
+    /// (both dropped together). `Some(true)` keeps `try_dct32 = true`
+    /// even when the W44-65 gate fires (re-enables
+    /// `find_best_32x32_transform` so DCT32X32 vs 4×DCT16X16 can
+    /// be evaluated on smooth screen content). Set via
+    /// [`crate::api::LossyConfig::with_dct32_keep_hint`].
+    pub dct32_keep_hint: Option<bool>,
     /// W44-91 cheap zenanalyze-equivalent proxies for widening the W44-29
     /// high-distance smooth-photo lift onto the textured-colourful-photo
     /// sub-band (mask1x1 ∈ [50, 80]) without regressing the 6 documented
@@ -1416,6 +1425,7 @@ impl Default for VarDctEncoder {
             // outside the opt-in stay byte-identical because the gate
             // cannot fire.
             dct_suppress_hint: None,
+            dct32_keep_hint: None,
             // W44-91: default None means the gate cannot fire (every
             // existing hash-lock byte-identical). API layer populates
             // for 8-bit sRGB layouts.
@@ -1511,6 +1521,7 @@ impl VarDctEncoder {
             // outside the opt-in stay byte-identical because the gate
             // cannot fire.
             dct_suppress_hint: None,
+            dct32_keep_hint: None,
             // W44-91: default None means the gate cannot fire (every
             // existing hash-lock byte-identical). API layer populates
             // for 8-bit sRGB layouts.
@@ -3074,7 +3085,39 @@ impl VarDctEncoder {
                 // suppressed) and all CID22 photos (median ≤ 92.34 — up to
                 // +10.8 % if suppressed); the discriminator gate keeps both
                 // untouched.
-                p.try_dct32 = false;
+                //
+                // W44-123 (2026-05-20): caller can opt-in to KEEP try_dct32=true
+                // (while preserving try_dct64=false) via
+                // `LossyConfig::with_dct32_keep_hint(Some(true))`. This is the
+                // narrower lever measured in the W44-123 A/B: codec_wiki d=3
+                // e5/e6/e7 SSIM2 +1.40/+1.33/+0.90 (vs admit-DCT64's
+                // +1.40/+1.33/+0.73) AND terminal e8/e9 d=4 SSIM2 +0.47 with
+                // bfly -1.9% (vs admit-DCT64's bfly +29% regression). Default
+                // remains `None` (W44-68 behaviour preserved, hash-locks stay
+                // byte-identical).
+                //
+                // For development / paired benchmarks the env var
+                // `__JXL_W44_123_KEEP_DCT32=1` also flips the gate; used by
+                // the W44-123 A/B harness before the hint API landed.
+                let w44_123_env_keep = {
+                    #[cfg(feature = "std")]
+                    {
+                        std::env::var("__JXL_W44_123_KEEP_DCT32")
+                            .map(|s| s == "1")
+                            .unwrap_or(false)
+                    }
+                    #[cfg(not(feature = "std"))]
+                    {
+                        false
+                    }
+                };
+                let w44_123_keep_dct32 = match self.dct32_keep_hint {
+                    Some(b) => b,
+                    None => w44_123_env_keep,
+                };
+                if !w44_123_keep_dct32 {
+                    p.try_dct32 = false;
+                }
             }
             Some(p)
         } else {
@@ -5088,6 +5131,38 @@ mod tests {
             .with_dct_suppress_hint(Some(true))
             .with_effort(8);
         assert_eq!(cfg_effort.dct_suppress_hint(), Some(true));
+    }
+
+    /// W44-123 — verify the new `dct32_keep_hint` defaults to `None`
+    /// on both constructors so existing hash-locks stay byte-identical.
+    #[test]
+    fn test_dct32_keep_hint_default_none() {
+        let enc = VarDctEncoder::new(1.0);
+        assert!(enc.dct32_keep_hint.is_none());
+        let enc_default = VarDctEncoder::default();
+        assert!(enc_default.dct32_keep_hint.is_none());
+    }
+
+    /// W44-123 — public LossyConfig setter round-trips through to the
+    /// encoder field at all 3 propagation sites (mirrors the
+    /// `test_dct_suppress_hint_api_roundtrip` pattern from W44-63).
+    #[test]
+    fn test_dct32_keep_hint_api_roundtrip() {
+        use crate::api::LossyConfig;
+        let cfg_none = LossyConfig::new(1.0);
+        assert_eq!(cfg_none.dct32_keep_hint(), None);
+
+        let cfg_some_true = LossyConfig::new(1.0).with_dct32_keep_hint(Some(true));
+        assert_eq!(cfg_some_true.dct32_keep_hint(), Some(true));
+
+        let cfg_some_false = LossyConfig::new(1.0).with_dct32_keep_hint(Some(false));
+        assert_eq!(cfg_some_false.dct32_keep_hint(), Some(false));
+
+        // with_effort preserves the explicit hint.
+        let cfg_effort = LossyConfig::new(1.0)
+            .with_dct32_keep_hint(Some(true))
+            .with_effort(8);
+        assert_eq!(cfg_effort.dct32_keep_hint(), Some(true));
     }
 
     #[test]
