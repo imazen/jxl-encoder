@@ -3075,9 +3075,30 @@ impl VarDctEncoder {
         // screenshot W22-1 fires only when `content_aware_entropy_mul`
         // is opt-in; W44-65 fires by default. Composition is
         // additive — both improvements stack when both are enabled.
-        let w44_65_suppress_dct64 = match self.dct_suppress_hint {
-            Some(b) => b,
-            None => mask1x1_median.is_some_and(|med| med >= W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD),
+        // W44-129 Chunk C: read the resolved `dct64_search_policy` enum from
+        // `ResolvedImprovements` (populated at `VarDctEncoder` construction
+        // by `LossyConfig::resolve_improvements`). The legacy `dct_suppress_hint`
+        // `Option<bool>` is still consulted as a fallback for the direct
+        // `VarDctEncoder::new` callers (tests + examples) that bypass the
+        // `LossyConfig` resolve step — `StrategyOverrides::apply_to` mirrors
+        // the same `Some(true)/Some(false) → Force*/auto` mapping so the
+        // observed behaviour is identical when `resolved_improvements`
+        // is populated AND `dct_suppress_hint` is `None` (the production
+        // path). Chunk D deletes the legacy field.
+        let dct64_policy = self
+            .resolved_improvements
+            .as_ref()
+            .map(|r| r.dct64_search_policy)
+            .unwrap_or_default();
+        let w44_65_suppress_dct64 = match dct64_policy {
+            crate::api::Dct64SearchPolicy::Auto => match self.dct_suppress_hint {
+                Some(b) => b,
+                None => {
+                    mask1x1_median.is_some_and(|med| med >= W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD)
+                }
+            },
+            crate::api::Dct64SearchPolicy::ForceSuppress => true,
+            crate::api::Dct64SearchPolicy::ForceAllow => false,
         };
 
         // W44-96 variant Z sub-discriminator: when `w44_29_lower` fires
