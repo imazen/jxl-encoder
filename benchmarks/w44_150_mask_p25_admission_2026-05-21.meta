@@ -1,0 +1,119 @@
+W44-150 Phase 2 paired A/B — Mechanism A photo admission for W44-117 EPF sharpness seed
+
+Verdict: HONEST-STOP (production code REVERTED).
+- 1418519 d=5/6 mean SSIM2 delta = +0.27 (max +0.78); HARD GATE wanted ≥ +1.0 net.
+- Cells closed to ≥ 50% of W44-147 deficit: 0 of 6 target cells.
+- Mean closure across 6 target cells: ~10.2 % (e7 cells 0 % because buttloop doesn't run at e7; e8/e9 d=5 ~30 %; e8/e9 d=6 ~0.5 %).
+- PROTECT cells (1025469 + 39 other CID22 photos via 4-photo spot-check): zero violations,
+  all 51 non-target cells BYTE-IDENTICAL between Mode A and Mode B.
+- Hash-locks 36/36 BYTE-IDENTICAL (run separately).
+- `cargo test --lib`: 1320 / 1320 PASS.
+
+What the discriminator did, measurement-side:
+- The W44-149 mask_p25 ≥ 85 + distance ≥ 4 discriminator correctly fires
+  ONLY on 1418519 across all six tested CID22 photos. The 51 non-target
+  cells (1025469 / 1189261 / 1420710 / 1531677 / 7552578) all stay
+  byte-identical between Mode A (W44-150 disabled via env hook) and
+  Mode B (default — W44-150 admits 1418519). Proxy-level discriminator
+  is sound.
+- At e7 the W44-117 EPF sharpness-seed code path is structurally gated
+  on `initial_params.epf_iters > 0 AND profile.epf_dynamic_sharpness`,
+  and at e7 the buttloop runs with 0 iterations (per
+  `EffortProfile::butteraugli_iters` which is 0 at e<=7). The W44-150
+  admission therefore has no effect at e7 — bytes / butteraugli / SSIM2
+  byte-identical at 1418519 e7 × d=4/5/6.
+- At e8/e9 the W44-150 admission DOES fire. The result is structural —
+  the new code path activates `compute_epf_sharpness` once before the
+  buttloop's sharpness-seed loop. On 1418519:
+    d=4 SSIM2 -0.13 / -0.10 (within ±0.30 budget, no acceptance concern)
+    d=5 SSIM2 +0.78 / +0.78 (real improvement, but only ~30 % of -2.57 deficit)
+    d=6 SSIM2 +0.01 / +0.01 (essentially neutral, ~0.5 % of -2.17 deficit)
+
+Why the gate fails:
+The W44-147 audit predicted "Mechanism A photo W44-117 admission" would
+close 6 of 10 SSIM2-deficit top cells. The W44-149 Phase 1 audit
+predicted SSIM2 gains in the +0.2 to +1.0 range. The W44-139 CRITICAL
+caveat documented that the +0.034 R buttloop EPF divergence on photos
+is REAL but ssim2-NEUTRAL in production today. W44-150 Phase 2 is the
+first measurement of W44-117 actually running on a photo — and the
+measured SSIM2 closure (+0.78 at d=5, +0.01 at d=6, on the two cells
+where the mechanism can fire and is in the audit target band) lands
+on the LOW end of the W44-149 prediction range.
+
+Per the task spec's "most likely" branch:
+> "**Most likely**: somewhere in between — partial close with some
+>   collateral"
+the measured outcome IS partial close (+0.78 at d=5, hits ~30 % of
+the deficit) with mild bytes overhead (+0.18 to +0.56 %) and small
+collateral on d=4 (-0.13 SSIM2 within budget). But the HARD acceptance
+gate is "≥ +1.0 net (close ≥ 50 % of deficit)" — and we miss it on the
+mean (+0.27 vs +1.0 required) and on the per-cell basis (only 30 %
+closure at d=5, ~0 % at d=6 and at e7 entirely).
+
+Mechanism A as specified can only fire where W44-117 fires (effort
+>= 8 with buttloop, AND with `profile.epf_dynamic_sharpness`). Lifting
+the W44-150 gate to fire at e7 would require a separate "fire EPF
+sharpness seed at e7" change — out of scope and would be a larger
+divergence from libjxl.
+
+Per the task's HARD acceptance criteria:
+> "If any gate fails: HONEST-STOP. Revert source change."
+
+Pivot recommendation (per task spec):
+The Mechanism A approach was structurally limited by where W44-117
+runs (e>=8 with full buttloop). To recover the e7 d=5/6 deficit on
+1418519 (-2.39 and -2.30 SSIM2), the next chunk needs a DIFFERENT
+mechanism that fires at e7. Per W44-147 Phase 1 ranked candidates:
+  * Mechanism C (W44-29 outer table on 1531677-class at low effort)
+    targets a DIFFERENT image (1531677), not 1418519.
+  * Mechanism B (variant Z dct32x32 d=5/6 bisect) was already SHIPPED
+    as W44-148 (`2a303428`) and did not touch 1418519 (fails W44-29
+    mask<50 gate).
+The remaining W44-147 cluster cells on 1418519 e7 d=5/6 require a
+new content-aware admission path that targets the AC-strategy or
+quantizer side, NOT the EPF sharpness seed side. Candidates from a
+fresh audit might include: (a) admit `find_best_32x32_transform` lift
+at d>=4 AND mask_p25 >= 85 (parallels W44-150 but on Mechanism B-side),
+(b) widen the W44-105 buttloop-qf-seed-scale gate to fire on
+mask_p25 >= 85 photos at d>=4 (parallels the W44-105 screenshot-class
+gate but on photo-class).
+
+Reproducer:
+  cargo run --release --example w44_150_phase2_ab \
+    --features 'butteraugli-loop ssim2-loop parallel' \
+    --manifest-path jxl-encoder/Cargo.toml \
+    > benchmarks/w44_150_mask_p25_admission_2026-05-21.tsv
+
+Files (HONEST-STOP — production code REVERTED):
+- jxl-encoder/src/vardct/encoder.rs (REVERTED — but the `percentile_mask1x1`
+  helper kept for future investigations; constants `W44_150_PHOTO_W44_117_MASK_P25_MIN` /
+  `W44_150_PHOTO_W44_117_MIN_DISTANCE` kept as `#[allow(dead_code)]` for documentation)
+- jxl-encoder/examples/w44_150_phase2_ab.rs (NEW, ~280 LOC, registered)
+- jxl-encoder/Cargo.toml (registered new example)
+- benchmarks/w44_150_mask_p25_admission_2026-05-21.{tsv,meta} (NEW)
+- docs/LIBJXL_DIVERGENCES.md Section F row updated with HONEST-STOP
+- memory/w44_150_mechanism_a_phase2_2026-05-21.md
+
+Per-cell results (1418519 + first-five protection-cell sample):
+
+image          eff  d  A_bytes B_bytes  BA_pct  A_ssim2  B_ssim2  BA_ssim2
+1418519.png    e7   4   8951    8951   +0.000   71.2475  71.2475  +0.0000
+1418519.png    e7   5   7581    7581   +0.000   66.8851  66.8851  +0.0000
+1418519.png    e7   6   6471    6471   +0.000   62.9988  62.9988  +0.0000
+1418519.png    e8   4   8465    8512   +0.555   70.5486  70.4151  -0.1336
+1418519.png    e8   5   7101    7136   +0.493   65.4083  66.1925  +0.7841
+1418519.png    e8   6   6207    6188   -0.306   62.4975  62.5122  +0.0147
+1418519.png    e9   4   8570    8586   +0.187   70.5199  70.4151  -0.1048
+1418519.png    e9   5   7172    7212   +0.558   65.4083  66.1925  +0.7841
+1418519.png    e9   6   6292    6326   +0.540   62.4975  62.5122  +0.0147
+1025469.png    e7   2  22928   22928   +0.000   79.2805  79.2805  +0.0000
+1025469.png    e7   3  16263   16263   +0.000   71.8216  71.8216  +0.0000
+1025469.png    e7   4  12978   12978   +0.000   65.1417  65.1417  +0.0000
+1025469.png    e7   5  10796   10796   +0.000   57.8358  57.8358  +0.0000
+1025469.png    e7   6   9145    9145   +0.000   50.7746  50.7746  +0.0000
+[...30 more protection-cell rows: all byte-identical, all SSIM2 delta=0...]
+
+Host: lilith
+Target dir: $HOME/work/zen/jxl-encoder-shared-target
+Parent commit: dad6bb47 (W44-149 Phase 1)
+Chunk duration: ~1 hour (build + bench + analysis + memo + revert)

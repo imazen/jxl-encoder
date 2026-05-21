@@ -679,6 +679,17 @@ name = "w44_118_decoder_check"
 path = "examples/w44_118_decoder_check.rs"
 required-features = ["butteraugli-loop"]
 
+# W44-150 Phase 2 — paired A/B bench for the photo W44-117 EPF
+# sharpness seed admission gate (`mask_p25 >= 85.0 AND distance >= 4.0`).
+# Tests TARGET 1418519 d=4/5/6 × e7/e8/e9 (must improve SSIM2 on d=5/6),
+# PROTECT_W118 1025469 d=2..6 × e7/e8/e9 (must be byte-identical), and
+# SPOT_PHOTO {1189261, 1420710, 1531677, 7552578} d=4/5/6 × e7/e8/e9
+# (must be byte-identical).
+[[example]]
+name = "w44_150_phase2_ab"
+path = "examples/w44_150_phase2_ab.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
 # W44-119 chain-disable A/B — paired A/B comparison of the
 # W44-105/107/108/109 qac-scale chain ON vs OFF, after the W44-117/118
 # EPF sharpness seed fix. Tests whether the chain is still needed now

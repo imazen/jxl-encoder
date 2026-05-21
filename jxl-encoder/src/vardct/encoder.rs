@@ -598,6 +598,82 @@ const SINGLE_PASS_ENTROPY_MAX_DISTANCE: f32 = 1.0;
 /// w44_91_dispatch_ab`).
 const HIGH_D_PHOTO_MIN_DISTANCE: f32 = 3.0;
 
+/// W44-150: minimum `mask1x1` 25th-percentile to ADMIT a non-screenshot
+/// photo to the W44-117 EPF sharpness seed (in addition to the W44-118
+/// `is_screenshot` gate).
+///
+/// **Audit derivation** (W44-149 Phase 1,
+/// `examples/w44_149_photo_proxy_audit.rs` +
+/// `benchmarks/w44_149_photo_proxy_audit_2026-05-21.tsv`): probed 28
+/// candidate proxies × 41 CID22 validation photos to find a discriminator
+/// admitting `1418519.png` (WANT — closes the -2.17 to -2.57 SSIM2 deficit
+/// per W44-147) while excluding `1025469.png` (REJECT — W44-118 closed a
+/// -0.85 SSIM2 regression there) and the 39 other CID22 photos (CONTROL —
+/// no measured EV).
+///
+/// `mask_p25` (`compute_mask1x1` 25th percentile) cleanly separates the
+/// three classes with the widest single-axis safety margin:
+///
+/// | image          | mask_p25 | class      |
+/// |---             |---       |---         |
+/// | 1418519.png    | 88.88    | WANT       |
+/// | 7552578.png    | 77.90    | CONTROL    |
+/// | 1025469.png    | 60.64    | REJECT     |
+/// | 39 other CID22 photos | < 78  | CONTROL  |
+///
+/// Threshold `85.0` sits in the 10.98-pp gap between WANT (88.88) and the
+/// nearest CONTROL (7552578 at 77.90) — 5× the safety margin of the
+/// runner-up discriminators (`mask_med >= 92` had gap 0.85; `mask_p10 >=
+/// 71` had gap 2.20). Errs strict — a hypothetical unseen photo with
+/// `mask_p25 ∈ [77.9, 85.0]` stays on the legacy uniform-4 seed (safe).
+///
+/// Other axes (`m3_colourfulness`, `flat_color_block_ratio`,
+/// `edge_density`, `mean_luma`, `high_luma_ratio`, `high_freq_energy`)
+/// all RULED OUT — multiple CONTROL photos land above WANT on each.
+///
+/// **Hard caveat (per W44-139)**: the +0.034 R post-EPF buttloop
+/// divergence on 1418519 is REAL but was ssim2-NEUTRAL in production
+/// today (because the W44-118 hardcoded gate prevented W44-117 from
+/// firing on photos under any configuration). W44-150 was the FIRST
+/// measurement of W44-117 actually running on a photo.
+///
+/// **W44-150 Phase 2 HONEST-STOP (2026-05-21)**: the Mechanism A admission
+/// path that this constant gated produced +0.27 mean SSIM2 on 1418519
+/// d=5/6 (HARD gate wanted +1.0 = 50 % of -2.17 to -2.57 deficit).
+/// Discriminator works (proxy-side 51/51 protection cells byte-identical;
+/// only 1418519 fired the new path) but the W44-117 EPF seed mechanism
+/// alone only recovers ~30 % of the SSIM2 deficit at d=5 and ~0 % at d=6
+/// on the e8/e9 cells. e7 cells stay byte-identical because W44-117 is
+/// gated on `profile.epf_dynamic_sharpness AND butteraugli_iters > 0`
+/// which is false at e<=7. Production code reverted; this constant kept
+/// for documentation + future chunks that pair the same discriminator
+/// with a different mechanism (W44-105-style qac-seed scale on photos,
+/// AC-strategy lift on mask_p25-high content, etc.). Bench:
+/// `benchmarks/w44_150_mask_p25_admission_2026-05-21.{tsv,meta}`.
+#[allow(dead_code)]
+pub const W44_150_PHOTO_W44_117_MASK_P25_MIN: f32 = 85.0;
+
+/// W44-150: minimum `target_distance` to ADMIT a non-screenshot photo to
+/// the W44-117 EPF sharpness seed (in addition to the
+/// [`W44_150_PHOTO_W44_117_MASK_P25_MIN`] discriminator).
+///
+/// The W44-147 photo deficit cluster on 1418519 measured `SSIM2 ∈
+/// [-2.17, -2.57]` at d=5 e7/e8/e9 and d=6 e7/e8/e9 (six worst SSIM2
+/// cells in the W44-146 ledger). The d=4 deficit is much smaller
+/// (-1.00 worst); the d<4 cells are at SSIM2 parity. Capping the
+/// admission band at `d >= 4.0` limits the new code path to the
+/// distance regime where the W44-147 audit predicted EV, and avoids
+/// firing W44-117 on photos at low-d where the +0.034 R divergence may
+/// flip SSIM2-negative (mirrors the W44-120 distance gate on
+/// screenshots which capped at `d >= 1.0` to close the d=0.8 W44-117
+/// over-correction).
+///
+/// **W44-150 HONEST-STOP (2026-05-21)**: see
+/// [`W44_150_PHOTO_W44_117_MASK_P25_MIN`] for the post-measurement
+/// disposition. Constant kept for documentation + reuse.
+#[allow(dead_code)]
+pub const W44_150_PHOTO_W44_117_MIN_DISTANCE: f32 = 4.0;
+
 /// W36-3 patches photo-skip dispatch threshold on the per-block-mean
 /// median of `mask1x1` (same statistic the auto-splines
 /// [`crate::vardct::splines::looks_like_screenshot`] gate uses).
@@ -791,6 +867,58 @@ pub(super) fn median_mask1x1(mask: &[f32], stride: usize, width: usize, height: 
         a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
     });
     buf[mid]
+}
+
+/// W44-150: arbitrary-percentile selector on the unpadded `width × height`
+/// view of a [`compute_mask1x1`]-style plane laid out with row stride
+/// `stride`. Mirrors [`median_mask1x1`] in I/O contract but takes a
+/// percentile in `[0.0, 1.0]` (e.g. `0.25` → 25th percentile / Q1).
+///
+/// Index formula matches the W44-149 audit's `percentile()` helper exactly
+/// (`examples/w44_149_photo_proxy_audit.rs:109`):
+/// `idx = floor((n - 1) * p)`. Uses `select_nth_unstable_by` on an owned
+/// copy of the unpadded values (O(n) expected, single allocation outside
+/// the temporary buffer).
+///
+/// Returns `0.0` for empty inputs or row-stride mismatches (defensive).
+///
+/// **W44-150 HONEST-STOP (2026-05-21)**: helper kept after W44-150 Phase 2
+/// revert — see [`W44_150_PHOTO_W44_117_MASK_P25_MIN`] for the
+/// disposition. Currently unused by production code; future chunks that
+/// pair the W44-149 audit's discriminator with a different mechanism
+/// (W44-105-style qac-seed scale on photos, AC-strategy lift on
+/// mask_p25-high content) can reuse this directly.
+#[allow(dead_code)]
+pub(super) fn percentile_mask1x1(
+    mask: &[f32],
+    stride: usize,
+    width: usize,
+    height: usize,
+    p: f32,
+) -> f32 {
+    if width == 0 || height == 0 {
+        return 0.0;
+    }
+    let mut buf: Vec<f32> = Vec::with_capacity(width * height);
+    for y in 0..height {
+        let row_off = y * stride;
+        let row_end = row_off + width;
+        if row_end > mask.len() {
+            return 0.0;
+        }
+        buf.extend_from_slice(&mask[row_off..row_end]);
+    }
+    let n = buf.len();
+    if n == 0 {
+        return 0.0;
+    }
+    let p_clamped = p.clamp(0.0, 1.0);
+    let idx = ((n as f32 - 1.0) * p_clamped).floor() as usize;
+    let idx = idx.min(n - 1);
+    buf.select_nth_unstable_by(idx, |a, b| {
+        a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
+    });
+    buf[idx]
 }
 
 /// W44-91 cheap encoder-internal zenanalyze proxies used to widen the
@@ -3541,8 +3669,7 @@ impl VarDctEncoder {
                 // `Dct32SearchPolicy::KeepWhenDct64Suppressed`) bypasses
                 // this distance gate — opt-in callers still get the
                 // unconditional W44-123 behaviour.
-                let w44_124_distance_in_band = self.distance
-                    >= w44_143_effective_min_distance()
+                let w44_124_distance_in_band = self.distance >= w44_143_effective_min_distance()
                     && self.distance <= W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE;
                 let w44_124_auto_keep = w44_124_distance_in_band
                     && self.zenanalyze_proxies.is_some_and(|p| {
@@ -3808,6 +3935,34 @@ impl VarDctEncoder {
                     median_mask1x1(m, padded_width, width, height)
                         > super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD
                 });
+                // W44-150 Phase 2 HONEST-STOP (2026-05-21): the
+                // Mechanism A photo-admission path (was: admit
+                // `is_screenshot || (mask_p25 >= 85.0 AND distance >=
+                // 4.0)` to the W44-117 EPF sharpness seed) was
+                // measured and produced a +0.27 mean SSIM2 delta on
+                // 1418519 d=5/6 vs the HARD acceptance gate of ≥ +1.0
+                // (50 % of the W44-147 -2.17 to -2.57 deficit). The
+                // proxy-level discriminator works (51 of 51 protection
+                // cells byte-identical between A and B; only 1418519
+                // fired the new path) but the W44-117 EPF seed
+                // mechanism alone only recovers ~30 % of the deficit
+                // at d=5 and ~0.5 % at d=6, on the e8/e9 cells where
+                // the mechanism can fire. The e7 cells stay
+                // byte-identical because W44-117 is structurally gated
+                // on `initial_params.epf_iters > 0 AND
+                // profile.epf_dynamic_sharpness` which is false at
+                // e<=7. Per the task spec's HARD gate ("ship only if
+                // ≥ +1.0 net"), this chunk reverts the gate-site
+                // change. The constants
+                // [`W44_150_PHOTO_W44_117_MASK_P25_MIN`] /
+                // [`W44_150_PHOTO_W44_117_MIN_DISTANCE`] and the
+                // [`percentile_mask1x1`] helper are KEPT (marked
+                // `#[allow(dead_code)]` on the constants) for future
+                // chunks that may pair the same discriminator with a
+                // different mechanism (e.g. W44-105-style qac-seed
+                // scale on photos, AC-strategy lift on
+                // mask_p25-high content). Bench artifacts:
+                // `benchmarks/w44_150_mask_p25_admission_2026-05-21.{tsv,meta}`.
                 params = self.butteraugli_refine_quant_field(
                     linear_rgb,
                     width,
@@ -3864,6 +4019,11 @@ impl VarDctEncoder {
                     // path). `JXL_W44_117_DISABLE=1` continues to force
                     // legacy uniform-4 across all content classes
                     // (preserved for A/B testing).
+                    //
+                    // W44-150 HONEST-STOP (see comment above): the
+                    // photo admission path was reverted; gate stays at
+                    // the W44-118 `is_screenshot ? Some(mask) : None`
+                    // form. Pre-W44-150 byte-identical.
                     if is_screenshot {
                         mask1x1.as_deref()
                     } else {
