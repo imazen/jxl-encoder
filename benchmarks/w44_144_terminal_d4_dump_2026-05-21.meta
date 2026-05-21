@@ -1,0 +1,293 @@
+# W44-144: terminal e5/e6/e7 d=4 SSIM2 cluster investigation — Phase 1 (per-strategy dump only)
+
+## Status
+
+[SHIPPED — Phase 1 measurement only, NO production code change]
+
+## TL;DR
+
+Re-ran the W44-103 per-strategy dump methodology on the current
+post-W44-143 main (`1b479e7e`) to attribute mechanism for the still-OPEN
+terminal e5/e6/e7 d=4 cells in the W44-141 ledger.
+
+**Key finding**: The user's prompt framing is OUTDATED. The W44-104
+attempted "fix DCT64 search miss" was actually an HONEST-STOP that
+*disproved* the DCT64 candidate (W44-104 ruled out adding DCT64 on
+terminal-class). The SSIM2 cluster was subsequently closed by W44-105
+(buttloop seed scale 4× at e8/e9) and W44-109 (adaptive-quant qf seed
+scale 2× at e5/e6, 3× at e7). The cells remain OPEN in the cjxl-parity
+ledger because **bytes regression +29-33%** exceeds the +3% byte-axis
+threshold — not because SSIM2 is bad. The terminal d=4 SSIM2 cluster
+is **marked RESOLVED in `docs/LIBJXL_DIVERGENCES.md` Section F** (line
+160) as a documented pareto trade.
+
+W44-144's contribution is to verify the post-W44-109 strategy
+distribution and qac state on terminal d=4 to confirm:
+1. None of W44-103's three concurrent root causes were "fixed" by
+   strategy selection (DCT16X16 still over-fires, DCT64 still absent,
+   strategy agreement still 13-19%).
+2. W44-105 at e8/e9 closed SSIM2 by trading buttloop qac for bytes
+   savings (-35% vs cjxl) WITHOUT changing strategy distribution or qac
+   structure (still flat ~8 vs cjxl bimodal text-97/blank-7).
+3. W44-109 at e5/e6/e7 closed SSIM2 by uniformly raising adaptive-quant
+   qf 2-3× (ours qac 15-25 now exceeds cjxl qac 7-9 by 2-3×), trading
+   bytes for SSIM2 across all regions.
+4. **Strategy distribution is essentially identical to W44-103
+   baseline** at every effort. Neither W44-105 nor W44-109 touched
+   strategy selection.
+
+## Cell-by-cell summary (post-W44-143 main `1b479e7e`)
+
+| effort | ours bytes | cjxl bytes | bytes Δ% | ours SSIM2 | cjxl SSIM2 | Δ SSIM2 | ledger status | mechanism that "closed" |
+|---|---|---|---|---|---|---|---|---|
+| e5 | 93515 | 70434 | +32.77% | 81.89 | 83.82 | -1.93 | OPEN (bytes) | W44-109 qf×2 |
+| e6 | 94810 | 71634 | +32.35% | 81.87 | 83.47 | -1.60 | OPEN (bytes) | W44-109 qf×2 |
+| e7 | 43329 | 33536 | +29.21% | 85.68 | 87.62 | -1.94 | OPEN (bytes) | W44-109 qf×3 |
+| e8 | 36559 | 56066 | -34.78% | 86.15 | 87.55 | -1.40 | FIXED | W44-105 buttloop seed×4 |
+| e9 | 36817 | 56011 | -34.27% | 86.15 | 87.57 | -1.42 | FIXED | W44-105 buttloop seed×4 |
+
+For comparison, the W44-103 baseline (pre-W44-105/109, commit
+`6f099dd0`-era) was:
+
+| effort | ours bytes | cjxl bytes | bytes Δ% | Δ SSIM2 |
+|---|---|---|---|---|
+| e5 | 67748 | 70434 | -3.81% | -5.38 |
+| e6 | 69843 | 71634 | -2.50% | -5.29 |
+| e7 | 31164 | 33536 | -7.07% | -4.62 |
+| e8 | 28088 | 56066 | -49.90% | -5.57 |
+| e9 | 28124 | 56011 | -49.79% | -5.59 |
+
+SSIM2 improvements W44-103 → W44-144:
+- e5: +3.45 (W44-109 mechanism)
+- e6: +3.69 (W44-109)
+- e7: +2.68 (W44-109)
+- e8: +4.17 (W44-105)
+- e9: +4.17 (W44-105)
+
+## Per-effort attribution (mechanism per cell at d=4)
+
+### e5 (W44-109 fire-path)
+
+- Bytes +32.77%, SSIM2 -1.93 (improved +3.45 from W44-103's -5.38).
+- W44-109 multiplies adaptive-quant qf by 2.0 on screenshot-class.
+  Our mean qac is now **15.4-15.8** across all 9 regions vs cjxl
+  **7.6-8.2**. We are 2× COARSER than cjxl on every cell.
+- DCT16X16 first-blocks: ours 4795 vs cjxl 195. UNCHANGED from W44-103
+  (5413 was at e7 — at e5 the DCT16X16 distribution is identical pattern
+  but more DCT8/DCT2X2 sub-blocks).
+- DCT64 family: ours 0 vs cjxl 358 (sum DCT64X64+DCT64X32+DCT32X64).
+  UNCHANGED — W44-65 still suppresses on terminal mask=99.5.
+- Strategy agreement: 19.3% (the highest of all efforts at d=4 — the
+  W44-109 qf×2 doesn't change selection at all).
+- Top disagreement pair: DCT16X16 → DCT64X64 (10304 cells).
+
+### e6 (W44-109 fire-path)
+
+- Bytes +32.35%, SSIM2 -1.60 (improved +3.69 from W44-103's -5.29).
+- W44-109 also fires at e6 with the same SCALE=2.0. Mean qac per
+  region 15.3-16.2.
+- Strategy agreement: 16.1%. AFV0-3 now available (effort >= 6 gate
+  per Section A) but ours over-picks them by ~30-40% per variant.
+- Top disagreement pair: DCT16X16 → DCT64X64 (10304 cells, same as e5).
+
+### e7 (W44-109 fire-path with SCALE=3.0)
+
+- Bytes +29.21%, SSIM2 -1.94 (improved +2.68 from W44-103's -4.62).
+- W44-109 escalates to SCALE=3.0 at e7. Mean qac per region 23.9-25.7,
+  cjxl 8.2-9.2 — we are **~3× COARSER** than cjxl.
+- Patches and enhanced_clustering enabled (effort >= 7).
+- Strategy agreement: 13.7% (LOWEST of all five efforts — patches
+  consumption changes some block coverage but the underlying DCT16X16
+  bias persists).
+- Top disagreement pair: DCT16X16 → DCT64X64 (10432 cells).
+
+### e8 / e9 (W44-105 fire-path, buttloop)
+
+- Bytes -34.78% / -34.27%, SSIM2 -1.40 / -1.42 (improved +4.17 each
+  from W44-103's -5.57 / -5.59).
+- W44-105 multiplies buttloop initial qf by 4× on screenshot-class.
+  Per-region mean qac ours = 6.8-8.5 (FLAT) vs cjxl = 7.2-97.4
+  (BIMODAL: text mid-row 80-97, blank bot-right 7-33).
+- This is the W44-103 mechanism 3 unchanged at the structural level —
+  cjxl's buttloop converges to high text-region qac while ours stays
+  flat. W44-105 *closed* the SSIM2 by stopping our buttloop from
+  REDUCING quality (cur_pow=0.2 "good block" relaxation path), but
+  doesn't push our qac to cjxl-comparable text-region values.
+- Bytes savings -35% vs cjxl indicates we still under-quantize text
+  regions while cjxl spends more bytes there for clearer glyphs.
+- Strategy agreement: 16.2% (identical to W44-103 baseline at e8/e9 —
+  buttloop only touches qac, never strategy).
+- Top disagreement pair: DCT16X16 → DCT64X64 (10432 cells, same as e7).
+
+## Mechanism attribution per remaining SSIM2 gap
+
+For each cell, the residual SSIM2 deficit vs cjxl can be attributed to:
+
+| effort | residual ΔSSIM2 | mechanism (W44-103 root cause that remains active) |
+|---|---|---|
+| e5 | -1.93 | DCT16X16/DCT64 mismatch (mechanism 1 + 2). qf scale×2 partially compensates. |
+| e6 | -1.60 | Same (mechanism 1 + 2). qf scale×2 compensates more (e6 baseline lower than e5/e7). |
+| e7 | -1.94 | Same (mechanism 1 + 2) PLUS the qf×3 made bytes 29% larger but residual SSIM2 not closed — diminishing returns on uniform qac boost. |
+| e8 | -1.40 | qac bimodality mismatch (mechanism 3). W44-105 4× seed scale closes most but cjxl text-region 97 vs ours 8 still leaves 1.4 SSIM2 inferiority on glyph fidelity. |
+| e9 | -1.42 | Same as e8 (e9 = e8 + 2 more buttloop iters; both converge to similar state). |
+
+## Phase 2 candidates (NOT shipped — ranked for user review)
+
+### Candidate 1 (LOW-MED EV, LOW-MED risk, 1-2d): Close e5/e6/e7 bytes overhead
+
+The +29-33% bytes is the FIRST flag on these cells. Tuning W44-109's
+SCALE constants downward would reduce bytes but cost SSIM2. The W44-109
+ship memo notes 4× SCALE in W44-105 (e8/e9) and 2.0/3.0 SCALEs in
+W44-109 (e5/e6/e7) were tuned via single-cell sweep:
+
+- W44-109 `DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6 = 2.0`
+- W44-109 `DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7 = 3.0`
+
+Plan: bisect SCALE ∈ {1.5, 1.8, 2.0} for e5/e6 and {2.0, 2.5, 3.0} for
+e7. Goal: find SCALE where ledger bytes wedge closes (≤ +3%) without
+losing too much SSIM2 (e.g. SSIM2 stays ≤ -2.5 worst).
+
+EV: if SCALE=1.5 at e5/e6 trades SSIM2 -1.93 → -2.4 for bytes +32% →
++15%, the cells STAY OPEN on bytes. EV likely 0 cells closed; better
+documentation of the SCALE/SSIM2/bytes curve. **NOT recommended as
+first attack** because the trade is fundamentally "more bytes ↔ more
+SSIM2" and we already chose +30% bytes once.
+
+File: `jxl-encoder/src/vardct/butteraugli_loop.rs` (W44-109 const).
+
+### Candidate 2 (MED EV, MED risk, 2-3d): Per-region adaptive qac on screenshots
+
+W44-109's qf scale is UNIFORM across the image — every block gets ×2 or
+×3. But the SSIM2 loss is in text regions (mid-row), not blank regions
+(bot-right). cjxl's buttloop produces BIMODAL qac (text=97, blank=7).
+
+Plan: instead of uniform SCALE, route the SCALE multiplier through
+the existing mask1x1 field per-block: blocks with high mask1x1 (text)
+get higher SCALE, blocks with low mask1x1 (blank) get lower SCALE.
+
+EV: closes ~+2 SSIM2 at lower bytes cost (don't pay for blank-region
+over-quantization). If we can move e5 from -1.93 to -0.3 and bytes
+from +33% to +10%, that's a real wedge close.
+
+Risk: changes the W44-109 mechanism from "uniform pre-scale" to
+"content-adaptive pre-scale". Need to verify on photos that the mask1x1
+gate (`is_screenshot AND mask > 95`) still rejects them.
+
+File: `jxl-encoder/src/vardct/butteraugli_loop.rs`
+`resolved_adaptive_quant_qf_seed_scale` + the qf application loop in
+`vardct/encoder.rs` between adaptive-quant and quantize_quant_field.
+
+### Candidate 3 (HIGH EV, HIGH risk, 1-2 weeks): Root-cause butteraugli measurement divergence
+
+Per W44-103 finding and W44-105 commit message: cjxl's butteraugli
+reports 47.7 on the same initial reconstruction where ours reports 2.07.
+**W44-111 RULED OUT** that this is a metric implementation issue (our
+metric reports 1.74 on our recon ≈ jxl-rs's 1.75 on our decoded
+bitstream). The actual gap is internal-recon-vs-decoded-bitstream.
+
+W44-117 + W44-118 + W44-120 + W44-140 SHIPPED partial closures of the
+recon-vs-decoder gap by seeding the EPF sharpness map ONCE before the
+buttloop. W44-138 Phase 1 verified this CLOSED the gap for screenshots
+at d>=1.0 (terminal d=4 e8 EPF delta -0.0007 to 0.000 with W44-117 ON).
+
+**However**: even with W44-117 on screenshots at e8, the qac
+bimodality remains because our metric is NOW consistent with the
+decoder — but it's STILL reporting much lower butteraugli scores than
+cjxl on the same content. The remaining metric/recon gap is a separate
+investigation that lives outside this repo (butteraugli crate or zenmetrics).
+
+EV: if root-caused, W44-105/109 become obsolete and the +30% bytes
+overhead goes away entirely. The terminal d=4 cluster would naturally
+close on metric.
+
+Risk: cross-crate change (butteraugli or zenmetrics). Out of scope for
+this repo. Multi-week investigation.
+
+## What was NOT measured in this chunk
+
+- Per-region SSIM2 (W44-103 had 3×3 region SSIM2 grid). Skipped here
+  because Phase 1 is investigation-only and we have enough strategy-level
+  data to attribute the mechanism. Per-region SSIM2 would be needed to
+  validate Candidate 2 (per-region adaptive qac).
+- Validation of Candidate 1/2/3 — those are explicitly Phase 2 work.
+- Multi-decoder roundtrip — no source change.
+
+## Bench files
+
+- `benchmarks/w44_144_terminal_d4_dump_2026-05-21.tsv` — 142 rows
+  per-strategy summary across 5 efforts × 2 encoders + 5-row agreement
+  summary at bottom
+- `benchmarks/w44_144_terminal_d4_dump_2026-05-21.analysis.txt` —
+  human-readable per-strategy + per-region qac table for all 5 efforts
+- `benchmarks/w44_144_terminal_d4_dump_2026-05-21.dumps.txt` — dump
+  runner stdout (bytes per cell, dump TSV sizes)
+- `benchmarks/w44_144_run_dumps.sh` — reproducer script (re-runs both
+  encoders in subprocesses with W44-76 dump infrastructure)
+- `benchmarks/w44_144_analyze.py` — Python analyzer (per-strategy,
+  per-region, agreement, top-disagreement)
+
+## Reproducer
+
+```bash
+# Build cjxl-rs at current main:
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo build --release -p jxl-encoder-cli
+
+# Re-run dump methodology:
+bash benchmarks/w44_144_run_dumps.sh
+
+# Re-analyze (writes TSV to stdout):
+python3 benchmarks/w44_144_analyze.py
+```
+
+## Provenance
+
+```
+git rev:    1b479e7e737bc82dd8ad87ce2d45cac249723313 (post-W44-143)
+ours cli:   /home/lilith/work/zen/jxl-encoder-shared-target/release/cjxl-rs
+            (rebuilt at 23:53 UTC on 2026-05-20 from current main)
+cjxl-libjxl: /home/lilith/work/jxl-efforts/libjxl--w44-76-per-block-debug-dump/build/tools/cjxl
+            (W44-76 patched, built 2026-05-19)
+host:       lilith
+image:      /home/lilith/work/codec-corpus/gb82-sc/terminal.png (1646x1062 sRGB)
+distances:  d=4 only
+efforts:    e5, e6, e7, e8, e9
+threads:    1 (per-W44-76 dump initialization quirk; all dumps run
+            single-process to avoid TSV race)
+```
+
+## Cross-references
+
+- W44-103 (`benchmarks/w44_103_terminal_ssim2_dump_2026-05-19.{tsv,meta}`)
+  — original measurement (this chunk re-runs identical methodology)
+- W44-104 (`395ee846`) — HONEST STOP on admit-DCT64 (NOT a fix)
+- W44-105 (`bc994a21`) — buttloop seed×4 at e8/e9 (W44-103 candidate B)
+- W44-107 (`109843aa`) — tighten W44-105 gate to d>=3.5
+- W44-108 (`db961c57`) — m3 sub-discriminator for W44-105
+- W44-109 (`4f82e864`) — adaptive-quant qf scale×2/×3 at e5/e6/e7
+- W44-110 (`5b84e109`) — ledger refresh post-W44-109 (terminal d=4 went
+  FIXED → OPEN due to bytes, NOT SSIM2)
+- W44-117/118/120/140/142 — EPF sharpness seed (orthogonal fix on
+  recon-vs-decoder side)
+- W44-141 (`6a7d8835`) — latest ledger refresh (terminal d=4 e5/e6/e7
+  still OPEN, e8/e9 FIXED)
+- `docs/LIBJXL_DIVERGENCES.md` Section F line 160 — terminal e5/e6/e7
+  d=4 marked RESOLVED with pareto-trade note
+
+## DO NOT
+
+- DO NOT re-spawn W44-104 (admit-DCT64) — RULED OUT for terminal-class.
+  DCT64 picks on cjxl's encoded terminal live in blank bot-right region
+  where SSIM2 is already at parity.
+- DO NOT re-spawn W44-93 (widen try_dct64 effort gate) — RULED OUT,
+  regresses photos.
+- DO NOT cite FMA precision for the strategy disagreement (per W44-66
+  user correction).
+- DO NOT default-flip W44-123 dct32_keep_hint on terminal — terminal
+  m3=13.85 below the W44-124 m3>=60 auto-fire threshold for good reason
+  (graph/imessage regressed under the lever). Need a different sub-discriminator
+  to admit terminal-class without graph/imessage.
+- DO NOT shrink the W44-109 SCALE values without first measuring the
+  bytes-vs-SSIM2 trade-off curve (Candidate 1).
+- DO NOT investigate buttloop measurement divergence in this repo —
+  it's a cross-crate issue (butteraugli/zenmetrics).
