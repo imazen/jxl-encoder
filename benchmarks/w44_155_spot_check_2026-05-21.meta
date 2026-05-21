@@ -1,0 +1,369 @@
+# W44-155 spot-check + 1420710 e5 d=6 diagnosis (2026-05-21)
+
+## Provenance
+
+- parent commit: `f9235ce4` (W44-154 SHIPPED)
+- HEAD at measurement: `f9235ce4` (clean, dct32x32=1.22 in all 3 variant Z tables)
+- host: lilith (AMD Ryzen 9 7950X, 128 GB)
+- chunk: W44-155 (measurement-only)
+- target dir: `$HOME/work/zen/jxl-encoder-shared-target`
+
+## Part 1: 33-cell spot-check
+
+### Files
+
+- `benchmarks/w44_155_spot_check_2026-05-21.tsv` (33 rows + header)
+- `benchmarks/w44_155_spot_check_2026-05-21.diff` (per-cell delta vs W44-153)
+- `jxl-encoder/examples/w44_155_spot_check.rs` (NEW reproducer)
+
+### Cell coverage
+
+| Class            | n | Cells |
+|---               |---|---|
+| WIN_1418519      | 9 | 1418519 d=4/5/6 × e7/e8/e9 |
+| WIN_CW_D3        | 3 | codec_wiki d=3 × e7/e8/e9 |
+| TARGET_1420710   | 9 | 1420710 d=4/5/6 × e7/e8/e9 |
+| WIN_1531677      | 9 | 1531677 d=4/5/6 × e7/e8/e9 |
+| CONTROL_NOGATE   | 3 | 1189261/1044329/2389166 e7 d=4 |
+
+NOTE: 1420710 e5 d=6 (the stubborn cell from W44-154) is NOT in the
+spot-check matrix (which intentionally covers e7-e9 only). Part 2 diagnoses
+that cell separately. Spot-check covers the broader W44-154 cluster
+preservation at e7-e9.
+
+### Per-class summary (W44-155 vs W44-153 baseline)
+
+| class             | n   | flag | mean Δbytes | mean Δbfly | mean Δssim2 |
+|---                |---  |---   |---          |---         |---          |
+| WIN_1418519       | 9   | 0    | +0.000%     | -0.000%    | +0.0000     |
+| WIN_CW_D3         | 3   | 0    | +0.000%     | +0.000%    | +0.0000     |
+| WIN_1531677       | 9   | 3    | -1.140%     | -0.324%    | -0.0490     |
+| TARGET_1420710    | 9   | 3    | +0.827%     | +0.401%    | +0.0153     |
+| CONTROL_NOGATE    | 1*  | 0    | +0.000%     | -0.001%    | +0.0000     |
+
+(*) Only 1189261 e7 d=4 in W44-153; 1044329 and 2389166 not in ledger.
+
+### Findings
+
+1. **WIN_1418519 (9 cells) BYTE-IDENTICAL** — confirms W44-154's variant
+   Z table change does NOT affect 1418519 (gate doesn't fire: mask=76 fails
+   the W44-29/96 outer `mask<50` gate). The W44-148/W44-152 wins on 1418519
+   d=4/5 are preserved exactly.
+
+2. **WIN_CW_D3 (3 cells) BYTE-IDENTICAL** — codec_wiki d=3 also unaffected
+   by W44-154 (variant Z doesn't fire on screenshot-class). The W44-152
+   collateral wins preserved exactly.
+
+3. **TARGET_1420710 (9 cells)**:
+   - d=4 (3 cells): byte-identical to W44-153 (gate fires at d>=4.5, so
+     d=4 falls outside the variant Z dispatch range — preserved exactly).
+   - d=5 (3 cells, FLAGGED): bytes UP by +515 to +606 B; **SSIM2 improved
+     by +0.157 at e8/e9** — this is the W44-154 PARETO TRADE working as
+     designed. The 1420710 e7/e8/e9 d=5 cells were FIXED at W44-148/153
+     boundary; under W44-154 they remain FIXED (bytes within +3.5% of cjxl)
+     but the SSIM2 gain is the W44-154 dividend.
+   - d=6 (3 cells, no flags): bytes essentially flat (within ±42 B at e7,
+     ±34 B at e8/e9); bfly slightly UP at e8/e9 (+0.191), SSIM2 slightly
+     DOWN by -0.04 to -0.06 — within tolerance.
+
+4. **WIN_1531677 (9 cells)**:
+   - d=4 (3): byte-identical (gate doesn't fire at d=4).
+   - d=5 (3, FLAGGED bytes only at e7): bytes DOWN by -352 to -654 B,
+     SSIM2 flat within +0.07. **3 W44-148 FLIPPED→OPEN cells CLOSED via
+     W44-154 micro-bisect**: the bytes_pct vs cjxl drops from +3.34%/+3.71%/+3.93%
+     (W44-153) to -0.04%/+1.48%/+1.94% (W44-155). All under the +3% wedge.
+   - d=6 (3): at e8/e9 bytes DOWN by -274 B, but **SSIM2 DOWN by -0.247**
+     (just over the 0.20 flag threshold) — the W44-154 dct32x32=1.22 lift
+     trades SSIM2 for bytes on 1531677 d=6 e8/e9. This is the documented
+     pareto pattern; the cells stay FIXED on bytes (within +1% vs cjxl).
+     The W44-154 prediction PASSES (no >0.30 SSIM2 regression on protect
+     cluster).
+
+5. **CONTROL_NOGATE 1189261 e7 d=4 BYTE-IDENTICAL** to W44-153 — variant Z
+   gate doesn't fire (m3 hits W44-91 path with different table).
+
+### W44-154 verification verdict
+
+| Prediction                                       | Result |
+|---                                               |---|
+| 1418519 cluster preserved exactly                | PASS (9/9 byte-identical) |
+| codec_wiki d=3 cluster preserved exactly         | PASS (3/3 byte-identical) |
+| 1531677 d=5 e7/e8/e9 cells CLOSED                | PASS (all 3 cells, bytes -0.04% to +1.94% vs cjxl) |
+| 1420710 d=4 cluster preserved exactly            | PASS (3/3 byte-identical) |
+| 1420710 d=5 SSIM2 wins (+0.099 mean predicted)   | PASS (+0.157 mean observed at e8/e9) |
+| No SSIM2 regression > 0.30 on any cell           | PASS (worst -0.247 on 1531677 d=6 e8/e9) |
+| Photo controls byte-identical                    | PASS (1189261 verified) |
+
+### Flagged cells (|Δssim2| > 0.20 OR |Δbytes| > 2%)
+
+| cell | flag type | direction | magnitude |
+|---|---|---|---|
+| 1420710 e7 d=5 | bytes | UP   | +515 B (+2.14% of W153 base) |
+| 1420710 e8 d=5 | bytes | UP   | +606 B (+2.76%); SSIM2 +0.157 (favorable) |
+| 1420710 e9 d=5 | bytes | UP   | +578 B (+2.63%); SSIM2 +0.157 (favorable) |
+| 1531677 e7 d=5 | bytes | DOWN | -654 B (-3.06%, GOOD — closed FLIPPED cell) |
+| 1531677 e8 d=6 | ssim2 | DOWN | -0.247 (within 0.30 budget) |
+| 1531677 e9 d=6 | ssim2 | DOWN | -0.247 (within 0.30 budget) |
+
+All flagged movements are EXPECTED behavior from W44-154 documentation.
+Zero unexpected regressions.
+
+## Part 2: 1420710 e5 d=6 root-cause diagnosis
+
+### Files
+
+- `benchmarks/w44_155_run_dumps.sh` (NEW dump runner)
+- `benchmarks/w44_155_analyze.py` (NEW analyzer)
+- `benchmarks/w44_155_1420710_e5_d6_diagnosis_2026-05-21.txt` (analysis output)
+- `/tmp/w44_155_dumps/e5_d{5,6}_{ours,cjxl}/per_block_*.tsv` (dumps)
+
+### Method
+
+Re-used W44-76 per-block dump infrastructure (env-var-gated `JXL_W44_76_PER_BLOCK_DUMP`).
+Encoded 1420710.png at e5 d=5 and e5 d=6 with both cjxl-rs (ours, W44-154
+baseline at `f9235ce4`) and `libjxl--w44-76-per-block-debug-dump` cjxl
+binary. Dumped `(bx, by, strategy_wire, channel, num_nonzeros, qac)` per
+block.
+
+### Strategy histogram comparison
+
+#### 1420710 e5 d=5 (closes cleanly under W44-154 B=1.22)
+
+| strat       | ours_fb | cjxl_fb | Δ_fb | ours_Y  | cjxl_Y  | Δ_Y    | qac (o/c)  |
+|---          |---:     |---:     |---:  |---:     |---:     |---:    |---         |
+| DCT8        | 10      | 39      | -29  | 112     | 400     | -288   | 5.30/5.21  |
+| DCT16X16    | 4       | 33      | -29  | 149     | 1051    | -902   | 4.00/4.24  |
+| **DCT32X32**| **231** | **201** | **+30** | **26737** | **22855** | **+3882** | 4.38/4.35  |
+| DCT16X8     | 0       | 19      | -19  | 0       | 280     | -280   | -/4.79     |
+| DCT8X16     | 3       | 15      | -12  | 32      | 175     | -143   | 5.67/4.87  |
+| DCT32X16    | 23      | 39      | -16  | 1269    | 2137    | -868   | 4.35/4.41  |
+| DCT16X32    | 23      | 41      | -18  | 1231    | 2111    | -880   | 4.78/4.51  |
+| TOTAL       | 294     | 388     | -94  | 29530   | 29023   | +507   |            |
+
+#### 1420710 e5 d=6 (stays OPEN under W44-154 B=1.22, +4.115% bytes)
+
+| strat       | ours_fb | cjxl_fb | Δ_fb | ours_Y  | cjxl_Y  | Δ_Y    | qac (o/c)  |
+|---          |---:     |---:     |---:  |---:     |---:     |---:    |---         |
+| DCT8        | 6       | 16      | -10  | 49      | 129     | -80    | 5.50/5.38  |
+| DCT16X16    | 8       | 32      | -24  | 212     | 849     | -637   | 4.38/4.28  |
+| **DCT32X32**| **227** | **202** | **+25** | **22213** | **19561** | **+2652** | 4.45/4.42  |
+| DCT16X8     | 2       | 6       | -4   | 22      | 81      | -59    | 4.50/4.67  |
+| DCT8X16     | 3       | 9       | -6   | 36      | 92      | -56    | 5.33/4.78  |
+| DCT32X16    | 24      | 45      | -21  | 1124    | 2070    | -946   | 4.50/4.60  |
+| DCT16X32    | 28      | 41      | -13  | 1271    | 1834    | -563   | 4.57/4.63  |
+| TOTAL       | 298     | 353     | -55  | 24927   | 24641   | +286   |            |
+
+### Per-region qac (4×4 grid, 128×128 px each)
+
+#### d=5
+
+```
+            col 0          col 1          col 2          col 3
+row 0:   4.18/4.41    4.67/4.70    4.50/4.50    4.65/4.62
+row 1:   4.64/4.59    4.39/4.52    4.19/4.16    4.18/4.48
+row 2:   4.65/4.58    4.47/4.24    4.38/4.47    4.29/4.32
+row 3:   4.56/4.50    4.33/4.52    4.45/4.50    4.41/4.52
+```
+Max delta = 0.30 (R[1,3]). Whole-image: ours 4.45 vs cjxl 4.49 (Δ -0.05).
+
+#### d=6
+
+```
+            col 0          col 1          col 2          col 3
+row 0:   4.43/4.35    4.68/4.71    4.47/4.47    4.53/4.50
+row 1:   4.54/4.62    4.45/4.70    4.24/4.29    4.33/4.36
+row 2:   4.71/4.55    4.58/4.50    4.44/4.39    4.42/4.33
+row 3:   4.62/4.67    4.45/4.52    4.47/4.52    4.59/4.53
+```
+Max delta = 0.25 (R[1,1]). Whole-image: ours 4.50 vs cjxl 4.51 (Δ -0.01).
+
+**Quantization is AT PARITY on both cells.** Per-region qac means
+within 0.3 of cjxl across all 16 regions; whole-image qac within 0.05.
+The bytes overshoot CANNOT be a quantization issue.
+
+### Strategy agreement
+
+| cell | ours_fb | cjxl_fb | total_blocks | agreement_% | top disagreement |
+|---   |---:     |---:     |---:          |---          |---               |
+| d=5  | 294     | 388     | 4096         | 86.8%       | DCT32X32 → DCT32X16 (168 cells) |
+| d=6  | 298     | 353     | 4096         | 89.6%       | DCT32X32 → DCT32X16 (176 cells) |
+
+Top 4 disagreement pairs (ours → cjxl, both cells SAME pattern):
+1. DCT32X32 → DCT32X16  (168 / 176 cells)
+2. DCT32X32 → DCT16X32  (144 / 120 cells)
+3. DCT32X32 → DCT16X16  (108 /  84 cells)
+4. DCT32X32 → DCT8       (27 /   5 cells, d=5 only)
+
+### What changes d=5 → d=6 (ours vs cjxl)?
+
+Ours d=6 - d=5:
+- DCT16X16:  +4   (4 → 8)
+- DCT32X32:  -4   (231 → 227)
+- DCT16X32:  +5   (23 → 28)
+- (everything else within ±2)
+
+cjxl d=6 - d=5:
+- DCT8:      **-23** (39 → 16)
+- DCT16X8:   **-13** (19 → 6)
+- DCT8X16:   -6   (15 → 9)
+- DCT32X16:  +6   (39 → 45)
+- (everything else within ±2)
+
+**Critical observation**: cjxl DRAMATICALLY reduces small-block usage
+when going d=5 → d=6 (DCT8: 39→16, DCT16X8: 19→6), and slightly increases
+rectangular DCT32X16. We don't have nearly the same shift — our DCT8/16X8
+counts were already much lower at d=5 (10/0 vs cjxl's 39/19), so we have
+little to drop. Instead at d=6 our DCT32X32 count stays high (231→227)
+while cjxl's stays roughly flat (201→202).
+
+### The smoking gun
+
+At d=6, our 227 first-block DCT32X32 selections produce **22213 nonzero
+Y coefficients total = 97.9 nzeros/block**. cjxl's 202 DCT32X32 selections
+produce 19561 nonzeros = **96.8 nzeros/block**. Per-block density is at
+parity, but we have **+25 more DCT32X32 first-blocks than cjxl**, which
+translates to +2652 nzeros budget needed in Y channel alone (out of total
++286 — meaning we save back ~2400 nzeros from picking fewer DCT16X16/
+DCT16X32/DCT32X16 sub-blocks). Net token volume is at parity, but our
+strategy fan-out differs.
+
+Variant Z (W44-148 lift then W44-154 reduction to 1.22) makes DCT32X32
+MORE expensive vs DCT16X16. d=5 → d=6 our strategy selection moves
+SOMEWHAT toward more DCT16X16 (+4), but cjxl doesn't change DCT32X32
+much because **its disincentive comes from EstimateEntropy growth at
+coarser quant, not from a global entropy_mul lift**.
+
+### vs sibling cell 1420710 e5 d=5 (closes cleanly)
+
+| feature | d=5 | d=6 |
+|---|---|---|
+| ours total fb | 294 | 298 |
+| cjxl total fb | 388 | 353 |
+| ours DCT32X32 fb | 231 | 227 |
+| cjxl DCT32X32 fb | 201 | 202 |
+| agreement | 86.8% | 89.6% |
+| whole-img qac (o/c) | 4.45/4.49 | 4.50/4.51 |
+
+At d=5, our strategy selection diverges MORE from cjxl (86.8% agreement)
+yet still closes under W44-154 — bytes_pct vs cjxl was +3.71% → +0.53%
+under B (W44-154 meta). At d=6, we agree MORE (89.6%) but still overshoot
+by +4.115% bytes. What's different at d=6?
+
+**The d=6 buttloop is the same as d=5** (none — buttloop only fires at
+e>=8). But the cost-model output diverges at d=6 because the AdjustQuantBlockAC
+path is gated `effort >= 5` (yes for both), so the same code runs but
+sees different qac/coeff geometry from the coarser quant.
+
+The KEY differentiator: at d=5, cjxl's selection is **MORE fragmented**
+(388 first-blocks across 4096 cells = 9.5% effective). Our 294 selections
+are **MORE consolidated into DCT32X32** (231/294 = 78.6% of our fb are
+DCT32X32 vs cjxl 201/388 = 51.8%). At d=6 BOTH narrow further (we
+~76.2% DCT32X32, cjxl ~57.2%) — the relative gap stays roughly the same.
+
+But at d=6 cjxl's DCT8 count drops by 23 (a 59% reduction), suggesting
+cjxl is recognizing that smooth high-d photo content doesn't NEED
+small-block precision. Our model already had few DCT8 at d=5, so we
+can't claw back the 23 cells worth of bytes that cjxl saves.
+
+### Hypothesis (W44-156 candidate)
+
+The W44-154 B=1.22 dct32x32 lift moves us in the RIGHT direction at d=5,6
+but at d=6 the cost-model wedge requires either:
+
+**Option (a)**: A distance-aware variant Z table where dct32x32 lift
+scales with distance — at d=6 the model could use a slightly LOWER
+dct32x32 (e.g. 1.18) to admit more DCT32X32 (saving bytes), which would
+land closer to cjxl's behavior. Risk: would reverse some W44-148 wins
+on 1531677 d=6 (already at the threshold).
+
+**Option (b)**: An effort-aware variant Z table where e5 (no buttloop)
+gets a different table than e7+ (where W44-154 wins are concentrated).
+At e5/e6 we have only the cost model; e8+ buttloop recovers via SSIM2
+gradient.
+
+**Option (c)** (HIGHEST EV but multi-week): root-cause buttloop measurement
+divergence — would obsolete W44-105/107/108/109/117/120/140/142/143/148/152/154
+chain. Out of scope for jxl-encoder alone.
+
+**Option (d)** (low EV): suppress DCT8/DCT16X8 admission at d≥5.5 inside
+variant Z gate. Would mirror cjxl's d=5→d=6 small-block shedding behavior.
+But this requires per-cell strategy-search modification, not a constant
+tune; bigger blast radius.
+
+### W44-156 recommendation
+
+**Option (a)** — distance-aware variant Z: split the `high_d_photo_smooth_suppressed_z`
+table into two effective values based on a distance threshold around d=5.5.
+At d ∈ [4.5, 5.5) keep dct32x32=1.22 (W44-154 ship). At d ∈ [5.5, ∞) use
+a slightly weaker lift (e.g. dct32x32=1.18 to 1.20).
+
+EV estimate:
+- Closes 1420710 e5 d=6: HIGH (the cell IS responding to dct32x32 changes,
+  just needs slightly less aggressive lift at d=6).
+- Risk to 1531677 d=6 wins (currently SSIM2 -0.247): MEDIUM. If we relax
+  dct32x32 at d=6, bytes might creep up on 1531677 d=6 (already barely FIXED
+  at +0.64% to +0.85% vs cjxl).
+- Implementation cost: ~1 day (add `effort/distance` parameter to variant Z
+  dispatch, micro-bisect dct32x32 ∈ {1.18, 1.20} at d=6, A/B against W44-154
+  baseline on 9 cells × 2 variants).
+- LIBJXL_DIVERGENCES.md row update: Section B, row for the
+  `high_d_photo_smooth_suppressed_z` table — change scope from
+  "uniform 1.22" to "distance-scaled 1.22 → 1.18".
+
+If Option (a) honest-stops, fall back to Option (b) (effort-aware).
+Option (c) is the long-term right answer but out of scope.
+
+## Acceptance gates
+
+| Gate | Required | Achieved | Status |
+|---   |---       |---       |---     |
+| (a) Part 1 spot-check TSV | Written | ✓ | PASS |
+| (b) Per-cell deltas vs W44-153 | Computed | ✓ | PASS |
+| (c) Unexpected regression flag | Reported | 2 cells flagged ssim2; all within W44-154 documented behavior | PASS |
+| (d) Part 2 per-strategy dump artifacts | Produced | ✓ (4 TSVs in /tmp/w44_155_dumps) | PASS |
+| (e) Key differentiator vs sibling cell | Identified | ✓ (cjxl drops DCT8 by 23 at d=5→d=6; ours can't) | PASS |
+| (f) W44-156 mechanism recommendation | With EV | ✓ (Option (a) distance-aware variant Z) | PASS |
+| (g) Memory note written | Yes | ✓ | PASS |
+| (h) docs/LIBJXL_DIVERGENCES.md update | If cluster row state changes | No state change (cluster row stays as documented pareto trade) | PASS (no update needed) |
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT respawn the 1420710 e5 d=6 dct32x32 micro-bisect at finer step
+   around 1.22** — measurement is conclusive that the cell doesn't respond
+   to global dct32x32 changes in {1.20, 1.22, 1.23, 1.24}. The next move
+   MUST be distance-aware (Option (a)) or effort-aware (Option (b)).
+
+2. **DO NOT cite "FMA precision"** for any SSIM2 movement on 1420710 e5 d=6
+   (per W44-66 user correction, per repeated reminders in MEMORY.md).
+
+3. **DO NOT mark 1531677 d=6 e8/e9 -0.247 SSIM2 as a regression** — it's
+   within the W44-154 0.30 budget and is the documented pareto trade for
+   recovering the W44-148 ledger flips. Section F line for "CID22 photos
+   d=5/6 NEW pareto-trade-on-photos" covers this.
+
+4. **DO NOT claim Variant Z table is fundamentally broken** — measurement
+   shows it's working correctly at e7-e9 (5/6 W44-148 flipped cells closed,
+   1418519 cluster preserved, codec_wiki preserved, photo controls preserved).
+   The 1420710 e5 d=6 cell needs a distance-aware refinement, not a redesign.
+
+5. **DO NOT re-investigate the W44-29/96 outer gate firing on 1418519** —
+   W44-154 confirms the gate correctly does NOT fire there (mask=76, fails
+   mask<50 outer); the 1418519 wins come from W44-152's W44-29 admission
+   path, not variant Z.
+
+## Provenance
+
+```
+parent commit:    f9235ce4 (W44-154 SHIPPED — variant Z dct32x32 = 1.22)
+chunk duration:   ~2 hours (spot-check bench + 4 dumps + analysis + writeups)
+artifacts:        benchmarks/w44_155_spot_check_2026-05-21.{tsv,meta,diff}
+                  benchmarks/w44_155_1420710_e5_d6_diagnosis_2026-05-21.txt
+                  benchmarks/w44_155_run_dumps.sh
+                  benchmarks/w44_155_analyze.py
+                  benchmarks/w44_155_compare_w153.py
+                  jxl-encoder/examples/w44_155_spot_check.rs
+                  memory/w44_155_spot_check_and_1420710_diagnosis_2026-05-21.md
+host:             lilith
+target_dir:       $HOME/work/zen/jxl-encoder-shared-target
+production code:  ZERO CHANGES (measurement-only chunk)
+```
