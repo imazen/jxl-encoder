@@ -1,0 +1,113 @@
+# cjxl parity ledger — W44-134 refresh post-EncoderStrategy arc
+#
+# Measures the post-EncoderStrategy-arc state on origin/main HEAD
+# (8691aafc, W44-133.4 Chunk G of 7). The 7-chunk arc (W44-125→W44-133)
+# was API-only — `EncoderStrategy::Zenjxl` (the new default) is claimed
+# byte-identical to pre-arc. This ledger verifies that claim AND
+# captures the cumulative effect of all post-W44-110 production code
+# changes:
+#
+#   W44-117 (5604fdf0)  EPF sharpness one-shot seed for buttloop
+#   W44-118 (f543288c)  Gate W44-117 on is_screenshot (mask>95)
+#   W44-120 (e20e5cd9)  Distance gate W44-117 EPF seed at d>=1.0
+#   W44-123 (545e69b1)  Opt-in with_dct32_keep_hint API
+#   W44-124 (bc9f71eb)  Auto-discriminator default for W44-123
+#                       (m3>=60 AND edge_density<0.05)
+#   W44-125→W44-133     EncoderStrategy API consolidation (API-only,
+#                       Zenjxl byte-identical to pre-arc)
+#
+# Compare against:
+#   benchmarks/cjxl_parity_ledger_2026-05-20_w44_110.tsv  (pre-W44-117 = 4f82e864)
+#   benchmarks/cjxl_parity_ledger_2026-05-20_w44_119.tsv  (post-W44-118 = f543288c)
+#
+git_rev: 8691aafcf10bd1a94e1110105a217cc3b78f9703 (W44-133.4 Chunk G of 7 — main HEAD)
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1418519.png", "1531677.png", "1189261.png", "1420710.png", "terminal.png", "codec_wiki.png", "imac_g3.png"]
+corpus: /home/lilith/work/codec-corpus
+wall_seconds: 836.5
+total_rows: 591
+cells_this_run: 600
+update_mode: false
+status_filter: None
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
+#
+# Failed cells (9) — pre-existing OOM/budget on 2940x1912 imac_g3 at
+# high effort + 1024x1024 codec_wiki at e9 d=4-6. NOT regressions; same
+# failure cluster as W44-119 baseline:
+#   imac_g3.png e8 d4, e8 d5, e8 d6
+#   imac_g3.png e9 d3, e9 d4, e9 d5, e9 d6
+#   codec_wiki.png e9 d4, e9 d5, e9 d6
+#
+# Result: 591 cells captured (vs 590 on W44-119; 1 more codec_wiki cell
+# survived), 9 OPEN (was 8 on W44-110 + W44-119).
+#
+# === vs W44-110 baseline (pre-W44-117) ===
+#   OPEN delta:    8 → 9 (+1 NEW: codec_wiki e5 d=4 FIXED→OPEN, ssim2 -0.977→-2.377)
+#   OPEN closures (W110 OPEN→W134 FIXED): 0
+#   OPEN regressions (W110 FIXED→W134 OPEN): 1
+#   byte-identical to W110: 481 cells
+#   byte-different from W110: 109 cells (W44-117/123/124 mechanisms cumulative)
+#
+# === vs W44-119 baseline (post-W44-118) ===
+#   OPEN delta:    8 → 9 (+1 NEW: codec_wiki e5 d=4 FIXED→OPEN)
+#   OPEN closures: 0
+#   byte-identical to W119: 514 cells
+#   byte-different from W119: 76 cells (W44-120/123/124 mechanisms)
+#
+# Photos: ALL 375 photo cells BYTE-IDENTICAL to W119 — W44-124 auto-
+# discriminator correctly rejects every CID22 photo (m3 OR edge_density
+# gate fails). Confirms W44-124 acceptance gate (d).
+#
+# Inferiority axes (W44-134):
+#   bytes_inf (>+3%):  53 (9.0%)
+#   bfly_inf  (>+3%): 100 (16.9%)
+#   ssim2_inf (<-1.0): 110 (18.6%)
+#   any_axis_inf:      221 (37.4%)
+# (W44-119 was: 53/102/112/228 → net inferiority essentially flat, but
+# redistributed: codec_wiki d=4-6 worsened, codec_wiki d=2.5/3 + terminal
+# d=0.8/d=4 improved.)
+#
+# Per-cluster mean shift (W44-110 → W44-134):
+#   photo      (n=375): bytes-identical (W44-118 photo gate works)
+#   terminal   (n=75):  bytes -19.38→-19.25%, bfly -14.97→-14.61%, ssim2 -0.276→-0.198
+#   codec_wiki (n=72):  bytes -9.43→-7.16%,   bfly +0.13→-2.97%,   ssim2 -0.430→-0.299
+#   imac_g3    (n=68):  bytes -17.69→-17.62%, bfly -9.05→-8.94%,   ssim2 +1.025→+1.006
+#
+# Top SSIM2 wins (W44-134 vs W44-119):
+#   terminal e8/e9 d=0.8: +1.865 (each)  ← W44-120 distance gate fix
+#   codec_wiki e6 d=2.5: +1.771
+#   codec_wiki e5 d=2.5: +1.619
+#   codec_wiki e5 d=3.0: +1.402  ← W44-124 TARGET (matches memo prediction)
+#   codec_wiki e6 d=3.0: +1.331  ← W44-124 TARGET (matches memo prediction)
+#   codec_wiki e9 d=2.5: +1.109  (and e8)
+#   codec_wiki e7 d=3.0: +0.905  ← W44-124 TARGET (matches memo prediction)
+#
+# Top SSIM2 regressions (W44-134 vs W44-119) — ALL on codec_wiki:
+#   codec_wiki e6 d=4.0: -1.425  ← W44-124 collateral
+#   codec_wiki e5 d=4.0: -1.399  ← W44-124 collateral; FLIPS FIXED→OPEN
+#   codec_wiki e7 d=5.0: -1.377
+#   codec_wiki e7 d=4.0: -1.224
+#   codec_wiki e7 d=6.0: -0.636
+#   codec_wiki e8 d=1.0: -0.524  (and e9 d=1.0)
+#   codec_wiki e9 d=0.8: -0.410  (and e8 d=0.8)
+#
+# All regressions concentrated on codec_wiki. The W44-124 auto-
+# discriminator (m3>=60 AND edge_density<0.05) fires on codec_wiki at
+# EVERY distance, not just d=3 (the W44-121-measured target). It's
+# net-good on d=2.5/3 (W44-124 acceptance grid) but net-bad on d=4-6
+# where DCT64X64 selection is actually better than DCT32X32-keep. Also
+# slightly net-bad on d=0.8/1.0 (low-distance over-correction). This is
+# the leading W44-135 candidate (distance-band the auto-discriminator
+# to d ∈ [2.0, 3.5]).
+#
+# See memory/w44_134_ledger_refresh_post_arc_2026-05-20.md for full
+# analysis + ranked W44-135 candidates.
