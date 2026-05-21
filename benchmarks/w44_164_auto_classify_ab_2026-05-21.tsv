@@ -1,0 +1,56 @@
+W44-164 Smart-Zenjxl chunk 1 — auto-classifier A/B
+  Mode A = auto ON  (EncoderStrategy::Zenjxl default)
+  Mode B = auto OFF (Custom with content_class_auto_classify = false)
+  cells: 22 (paired sequentially)
+image	corpus	effort	distance	A_bytes	B_bytes	bytes_delta	bytes_delta_pct
+[1/22] codec_wiki.png (gb82-sc) e5 d=1
+codec_wiki.png	gb82-sc	5	1.00	100013	125709	-25696	-20.441
+[2/22] codec_wiki.png (gb82-sc) e6 d=1
+codec_wiki.png	gb82-sc	6	1.00	101682	126761	-25079	-19.784
+[3/22] codec_wiki.png (gb82-sc) e7 d=1
+codec_wiki.png	gb82-sc	7	1.00	104483	104483	0	+0.000
+[4/22] imac_g3.png (gb82-sc) e5 d=1
+imac_g3.png	gb82-sc	5	1.00	212358	529842	-317484	-59.921
+[5/22] imac_g3.png (gb82-sc) e6 d=1
+imac_g3.png	gb82-sc	6	1.00	217001	533707	-316706	-59.341
+[6/22] imac_g3.png (gb82-sc) e7 d=1
+imac_g3.png	gb82-sc	7	1.00	218536	218536	0	+0.000
+[7/22] terminal.png (gb82-sc) e5 d=1
+terminal.png	gb82-sc	5	1.00	49780	129915	-80135	-61.683
+[8/22] terminal.png (gb82-sc) e6 d=1
+terminal.png	gb82-sc	6	1.00	52026	131004	-78978	-60.287
+[9/22] terminal.png (gb82-sc) e7 d=1
+terminal.png	gb82-sc	7	1.00	52046	52046	0	+0.000
+[10/22] windows95.png (gb82-sc) e5 d=1
+windows95.png	gb82-sc	5	1.00	48440	81796	-33356	-40.780
+[11/22] windows95.png (gb82-sc) e6 d=1
+windows95.png	gb82-sc	6	1.00	48258	81079	-32821	-40.480
+[12/22] windows95.png (gb82-sc) e7 d=1
+windows95.png	gb82-sc	7	1.00	50052	50052	0	+0.000
+[13/22] 1189261.png (CID22) e5 d=1
+1189261.png	CID22	5	1.00	64770	64770	0	+0.000
+[14/22] 1189261.png (CID22) e7 d=1
+1189261.png	CID22	7	1.00	66417	66417	0	+0.000
+[15/22] 1025469.png (CID22) e5 d=1
+1025469.png	CID22	5	1.00	37823	37823	0	+0.000
+[16/22] 1025469.png (CID22) e7 d=1
+1025469.png	CID22	7	1.00	37778	37778	0	+0.000
+[17/22] 1418519.png (CID22) e5 d=1
+1418519.png	CID22	5	1.00	21186	21186	0	+0.000
+[18/22] 1418519.png (CID22) e7 d=1
+1418519.png	CID22	7	1.00	21685	21685	0	+0.000
+[19/22] 1279330.png (CID22) e5 d=1
+1279330.png	CID22	5	1.00	40241	40241	0	+0.000
+[20/22] 1279330.png (CID22) e7 d=1
+1279330.png	CID22	7	1.00	40615	40615	0	+0.000
+[21/22] 1044329.png (CID22) e5 d=1
+1044329.png	CID22	5	1.00	99865	99865	0	+0.000
+[22/22] 1044329.png (CID22) e7 d=1
+1044329.png	CID22	7	1.00	101998	101998	0	+0.000
+
+─── Summary ──────────────────────────────────────────────────
+  cells: 22
+  byte-identical:         14 (63.6%)
+  A < B (auto helps):      8 (36.4%)
+  B < A (auto hurts):      0 (0.0%)
+  total bytes A: 1787053 B: 2697308 delta: -910255 (-33.747%)

@@ -1755,5 +1755,18 @@ name = "w44_149_photo_proxy_audit"
 path = "examples/w44_149_photo_proxy_audit.rs"
 required-features = ["__pre_quantized"]
 
+# W44-164 Smart-Zenjxl chunk 1 — auto-classifier A/B bench. Paired
+# comparison of `EncoderStrategy::Zenjxl` (auto-classify ON by default)
+# vs `EncoderStrategy::Custom { content_class_auto_classify: false, .. }`
+# (auto OFF, equivalent to pre-W44-164 behaviour). Verifies the chunk
+# acceptance: GB82-SC screenshots at e ∈ {5, 6} get measurably smaller
+# bytes (patches auto-enabled via `adapt_to_image_content`), e >= 7 +
+# all photos byte-identical (e7 already has patches on by default;
+# photos auto-classify as Photo which is a no-op).
+[[example]]
+name = "w44_164_auto_classify_ab"
+path = "examples/w44_164_auto_classify_ab.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+
 [lints]
 workspace = true
