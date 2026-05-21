@@ -1010,53 +1010,46 @@ C. **Env-var precedence direction.** Env-var fallback when caller-set
 
 ---
 
-## 9. Implementation chunk plan (USER-APPROVED design, ready to ship)
+## 9. Implementation chunk plan — COMPLETE (W44-127 .. W44-133, SHIPPED 2026-05-20)
 
-Out of scope for THIS doc — listed for forward planning. With the v2
-scope-expansion (`Libjxl` all-divergence parity, perf dispatch absorption,
-env-var promotion), the plan is 7 chunks:
+**Status: IMPLEMENTED — ready to ship as a 0.x release.** All 7 chunks
+landed on origin/main between W44-127 and W44-133. The design rolled
+out as planned (single LOC estimate within 5 % of the actuals).
 
-1. **Chunk A**: Land the type definitions in `api.rs` behind
-   `__expert` feature flag. No `LossyConfig` field, no call-site wiring.
-   Includes `EffortGate` enum, all 8 nested policy enums, and the
-   expanded `EncoderImprovementsCustom` struct with all absorbed
-   perf-dispatch fields + promoted env-var fields. ~350 LOC. Test:
-   type definitions compile and `Default` impls round-trip.
-2. **Chunk B**: Add `LossyConfig::strategy` field + `with_strategy`
-   setter. Wire `resolve()` into encoder construction. Internal fields
-   still drive the call sites. Hash-lock acceptance: `Zenjxl` produces
-   byte-identical output to today on all 36 fixtures. ~80 LOC.
-3. **Chunk C**: Rewire one call site at a time (W44-65 first as it's
-   the most-touched), replacing `Option<bool>` matches with
-   `Dct64SearchPolicy` matches. One commit per call site, ~10 LOC each.
-   ~12 commits.
-4. **Chunk D**: Delete `with_*_hint` fields from `LossyConfig` and move
-   them into `StrategyOverrides`. Delete the four `with_*_dispatch`
-   setters from `LossyConfig` (absorbed into Custom — caller must use
-   `with_strategy(Custom(...))`). Update tests. ~120 LOC.
-5. **Chunk E** (SHIPPED, W44-131 `<commit>`): Added `--strategy` CLI
-   flag with the four named variants (`libjxl|lean-faster|zenjxl|aggressive`)
-   on `cjxl-rs`. Default `zenjxl` (hash-locked byte-identical to no-flag).
-   Conflicts with `--lossless` at clap level. `Custom` is API-only per
-   §7 Q7. Per-knob `--epf-dispatch` / `--pixel-loss-dispatch` overrides
-   flow through under default `--strategy zenjxl`; dropped + warning
-   under named non-Zenjxl strategies. Tests:
-   `jxl-encoder-cli/tests/strategy_flag.rs`.
-6. **Chunk F**: Promote 4 env-var-only knobs to first-class
-   `EncoderImprovementsCustom` fields. Env-var fallback layer in
-   `resolve()` for harness sweeps. ~100 LOC.
-7. **Chunk G**: `Libjxl` ALL-divergence parity work:
-   - Section A effort-gate consultation in `effort.rs` (3 sites
-     consult the `EffortGate` enum). ~60 LOC.
-   - Section D KNOWN-BUG `BlockCtxMap` 15-cluster re-enable path
-     (gated on `block_ctx_map_15_cluster` field). ~30 LOC.
-   - Hash-lock the resulting `Libjxl` byte deltas vs `Zenjxl` (a few
-     dozen fixtures from CID22 + GB82-SC). ~100 LOC tests.
-   - Document the deliberate regression in `LIBJXL_DIVERGENCES.md`
-     Section G (RESOLVED via `Libjxl` opt-in).
+| Chunk | Work | Commit(s) |
+|---|---|---|
+| **A** (W44-127) | Type definitions in `api.rs` (`EncoderStrategy`, 8 nested policy enums, `EncoderImprovementsCustom`, `EffortGate`, `ResolvedImprovements`, `StrategyOverrides`). Gated `__expert`; no `LossyConfig` field yet. ~350 LOC. | `4f52af16` |
+| **B** (W44-128) | `LossyConfig::strategy` field + `with_strategy` setter; `resolve_improvements` runs at all 3 `VarDctEncoder` construction sites (still-image / streaming / animation). Internal fields still drive call sites. **Hash-lock acceptance: 36/36 BYTE-IDENTICAL.** ~80 LOC. | `9d45e999` |
+| **C** (W44-129) | 8 call-site rewires (Section B content gates): W44-65 `dct_suppress_hint`, W44-123/124 `dct32_keep_hint`, W44-29/91/96/98/99/100 `high_d_photo_hint`, W22-1 `screenshot_lift_hint`, W44-34/35 `smooth_photo_dct64_hint`, W44-105/107/108 `buttloop_qf_seed_scale`, W44-117/118/120 EPF sharpness seed, W44-109 adaptive_quant qf seed. One commit per site. | `a9e6763d`..`4766e229` |
+| **D** (W44-130) | Deleted 5 legacy `with_*_hint(Option<bool>)` setters from `LossyConfig` and folded them into `StrategyOverrides`. Deleted the 4 `with_*_dispatch` setters (absorbed into `EncoderImprovementsCustom`). Deleted the `with_content_aware_entropy_mul(bool)` setter (subsumed by `ScreenshotEntropyMulPolicy::{Auto, Disabled}` defaults). | `207ae055`..`9cd9739c` |
+| **E** (W44-131) | `--strategy` CLI flag (`libjxl|lean-faster|zenjxl|aggressive`) on `cjxl-rs`. Default `zenjxl` byte-identical. Conflicts with `--lossless` at clap level. `Custom` is API-only per §7 Q7. Tests under `jxl-encoder-cli/tests/strategy_flag.rs`. | `133897d9` |
+| **F** (W44-132) | Promoted 4 env-var-only knobs (`JXL_W44_117_DISABLE`, `JXL_W44_120_EPF_SEED_MIN_DISTANCE`, `JXL_BUTTLOOP_INITIAL_QF_SCALE`, `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE`) to first-class `EncoderImprovementsCustom` fields. Env-var fallback layer in `apply_env_var_fallbacks` (called inside `EncoderStrategy::resolve`) fires only when the resolved field equals its default — explicit caller settings WIN over the env-var. ~100 LOC. | `49093cef` |
+| **G** (W44-133) | `Libjxl` ALL-divergence parity wiring: **(G.1)** Section A effort-gate consultation via `EffortGate::evaluate` + `EffortProfile::apply_section_a_effort_gates` (called inside `LossyConfig::effective_profile_for_image_with_smoothness`). Critical: `EffortGate::Ours` is a NO-OP so smart-dispatch's `try_dct64 → false` flip on small + low-d cells is preserved. **(G.2)** Section D KNOWN-BUG `BlockCtxMap` 15-cluster re-enable via `BlockCtxMap::default_for_strategy(bool)` + `compute_block_ctx_map`'s new `block_ctx_map_15_cluster` parameter. **(G.3)** Pinned NEW Libjxl hash-locks (5 fixtures) + multi-decoder roundtrip via jxl-rs + jxl-oxide + djxl. **(G.4)** Docs finalization. **Hash-lock acceptance: 36/36 Zenjxl BYTE-IDENTICAL.** ~190 LOC total. | `d6330c26`, `319b1b6c`, `3b0783c9`, `<this commit>` |
 
-Total: ~990 LOC across ~17 commits. Each chunk is independently
-shippable; the 7-chunk plan keeps each commit reviewable.
+**Cumulative deltas (as actually shipped, post-Chunk-G):**
+- ~1020 LOC across 18 commits (Chunk A ~350 + B ~80 + C 8×10 ~80 +
+  D 6 commits ~120 + E ~70 + F ~100 + G 4 commits ~190 + docs ~50).
+- 0 new ACTIVE divergences. 7 Section A + 1 Section D KNOWN-BUG rows
+  MOVED to Section G with the `EncoderStrategy::Libjxl` resolution path.
+- 36/36 Zenjxl hash-locks BYTE-IDENTICAL at every chunk boundary.
+- 5 NEW Libjxl hash-locks pinned (Chunk G.3).
+- 3 decoder roundtrips covered (jxl-rs + jxl-oxide + djxl).
+
+**What `EncoderStrategy::Libjxl` now does (Chunk G output):**
+- Flips `cfl_two_pass` to fire at `effort >= 5` (vs default `>= 7`).
+- Flips `try_dct64` to fire at every effort (vs default `>= 7`).
+- Flips `epf_dynamic_sharpness` to fire at every effort (vs default `>= 6`).
+- Uses libjxl 15-cluster `kDefaultCtxMap` for `BlockCtxMap` small-image
+  fallback (vs default 4-cluster `COMPACT_BLOCK_CONTEXT_MAP`).
+- Disables W22-1 / W44-29 / W44-65 / W44-117 content-aware gates.
+- Pins butteraugli qf seed scale + adaptive-quant qf seed + EPF
+  sharpness seed to libjxl-parity values.
+
+This produces byte-different output from `EncoderStrategy::Zenjxl`
+that intentionally re-introduces measured regressions (per W44-126
+user decision #3 "all-divergence parity, regressions and all"). The
+Zenjxl default (production-shipping behaviour) keeps every measured
+win.
 
 ---
 
