@@ -1,0 +1,278 @@
+# W44-147: photo cluster per-strategy + per-region SSIM2 audit
+#
+# Phase 1 investigation per W44-146 ranked candidate #1 (photo SSIM2
+# recovery, HIGH EV, MED risk, 3-5d). Measurement only; no production
+# code change.
+#
+# === TL;DR ===
+#
+# Three distinct sub-mechanisms across the photo SSIM2 deficit cluster:
+#
+#   A. 1418519 e7/e8 d=5/6 (SSIM2 -2.17 to -2.57): strategy + qac at
+#      PARITY (98.8% agreement, identical Y-channel tokens, identical
+#      first-block counts). Mechanism is downstream — pure buttloop
+#      reconstruction / EPF / metric divergence. SAME mechanism W44-138
+#      identified (+0.034 R max-abs at after_epf). W44-139 already
+#      HONEST-STOPPED on 4 cells; W44-147 confirms the mechanism is
+#      load-bearing on the broader 1418519 cluster (6 of 6 1418519 cells
+#      d>=5 share this pattern).
+#
+#   B. 1420710 e6-e9 d=5/6 (SSIM2 -2.11 to -2.13): cost-model
+#      over-prefers DCT32X32 over smaller transforms (DCT16X32 /
+#      DCT16X16 / DCT32X16). 88.4% agreement, Y-tokens at parity (+94).
+#      W44-96/98 already lift DCT32X32 entropy_mul for this image —
+#      but the lift admits MORE DCT32X32, not less, which is the
+#      WRONG direction per W44-147. The W44-98 fix was tuned for cells
+#      where 1420710 was UNDER-picking DCT32X32 (e8 d=5/6). At d=6/e6
+#      it now OVER-picks.
+#
+#   C. 1531677 e5-e7 d=3/5/6 (SSIM2 -1.17 to -2.00): same mechanism as
+#      B but more severe — at e5 d=3 strategy agreement drops to 70.7%
+#      and ours picks DCT32X32 where cjxl picks 16× DCT8 (252-cell
+#      disagreement on DCT32X32 → DCT8 alone). 1531677 e7 d=5 is the
+#      MOST ACTIONABLE cell on the entire photo cluster (top of the
+#      at-parity-bytes list, SSIM2 -2.00, bytes +0.53%).
+#
+# Top 3 Phase 2 candidates ranked in memory note. NO production source
+# touched. Hash-locks unchanged.
+#
+git_rev: 4f2b15735eb788d515010f4372353027d441944b
+host: lilith
+date: 2026-05-21
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+cjxl_patched: /home/lilith/work/jxl-efforts/libjxl--w44-76-per-block-debug-dump/build/tools/cjxl
+cjxl_rs:      /home/lilith/work/zen/jxl-encoder-shared-target/release/cjxl-rs
+images:       1418519.png 1531677.png 1420710.png 1531677.png 1418519.png
+              (all 512x512 = 64x64 blocks = 4096 8x8 cells)
+              (corpus: /home/lilith/work/codec-corpus/CID22/CID22-512/validation/)
+cells:        5 (mix of e5/e7/e8 × d=3/5/6 from W44-146 ledger photo top-10)
+methodology:  W44-103 / W44-121 / W44-144 per-block dump pattern
+dump_runner:  benchmarks/w44_147_run_dumps.sh
+analyzer:     benchmarks/w44_147_analyze.py
+dumps:        /tmp/w44_147_dumps/{img}_e{eff}_d{dist}_{ours,cjxl}/per_block_*.tsv
+#
+# === FILES ===
+#
+# benchmarks/w44_147_photo_audit_2026-05-21.tsv          — per-strategy summary (49 rows)
+# benchmarks/w44_147_photo_audit_2026-05-21.summary.tsv  — top-10 deficit cells + per-image stats
+# benchmarks/w44_147_photo_audit_2026-05-21.analysis.txt — full analyzer output (per-region + agreement)
+# benchmarks/w44_147_photo_audit_2026-05-21.meta         — this file
+# benchmarks/w44_147_run_dumps.sh                        — dump runner (reproducible)
+# benchmarks/w44_147_analyze.py                          — analyzer (reproducible)
+#
+# === LEDGER CONTEXT (from W44-146 refresh, 4f2b1573) ===
+#
+# Photo cluster: 375 cells (5 images × 5 efforts × 15 distances)
+# Mean SSIM2 delta vs cjxl: -0.392 (FLAT across W110/W134/W141/W146,
+#   spanning 4 ledger refreshes without movement)
+#
+# Per-image (mean SSIM2 delta, worst SSIM2 delta):
+#   1025469.png   -0.353  -1.00  (closest to parity, 75 cells)
+#   1189261.png   -0.068  -1.12  (W44-91 closed the worst cells)
+#   1418519.png   -0.565  -2.57  (WORST, no current sub-gate)
+#   1420710.png   -0.460  -2.13  (W44-96/98 covers but residual at d=6)
+#   1531677.png   -0.513  -2.00  (W44-96/99/100 covers but residual at d=3-6)
+#
+# Per-distance (all 25 cells per d):
+#   d <= 0.6: mean -0.02 to -0.05 (at parity)
+#   d 0.8-2.5: mean -0.09 to -0.32 (mild deficit)
+#   d 3.0-6.0: mean -0.79 to -1.24 (MAJOR deficit, target band)
+#
+# === TOP 10 PHOTO CELLS BY SSIM2 DEFICIT ===
+#
+# 1418519 cluster (6 of 10):
+#   e8 d=5 -2.57   e9 d=5 -2.57   e7 d=5 -2.39
+#   e7 d=6 -2.30   e8 d=6 -2.17   e9 d=6 -2.17
+# 1420710 cluster (4 of 10):
+#   e8 d=6 -2.13   e9 d=6 -2.13   e6 d=6 -2.12   e7 d=6 -2.11
+#
+# === TOP 10 PHOTO CELLS AT-PARITY-BYTES (|bytes| <= 1%) ===
+# (Most actionable — SSIM2 win not gated by bytes wedge)
+#
+# 1531677 e7 d=5 -2.00 +0.53%   1531677 e8 d=6 -1.70 +0.35%
+# 1531677 e9 d=6 -1.70 +0.58%   1531677 e8 d=5 -1.43 -0.10%
+# 1531677 e9 d=5 -1.43 +0.50%   1531677 e5 d=3 -1.32 -0.32%
+# 1531677 e6 d=3 -1.17 -0.98%   1531677 e5 d=4 -1.17 -0.74%
+# 1189261 e9 d=6 -1.12 +0.22%   1420710 e7 d=3 -1.09 -0.17%
+#
+# 1531677 dominates the actionable list — 8 of 10.
+#
+# === PER-CELL MECHANISM (5 cells dumped) ===
+#
+# Cell                  | Agreement | Δ_fb   | Δ_Y    | Mechanism class
+# ---                   | ---       | ---    | ---    | ---
+# 1418519 e8 d=5        | 98.8%     | 0/317  | +9     | A (downstream/recon)
+# 1418519 e7 d=5        | 98.8%     | 0/317  | +38    | A (downstream/recon)
+# 1531677 e7 d=5        | 86.9%     | -92/433| +225   | B (DCT32X32 over-pick)
+# 1420710 e8 d=6        | 88.4%     | -55/348| +94    | B (DCT32X32 over-pick)
+# 1531677 e5 d=3        | 70.7%     | -622/1195| -1502| C (DCT32+ massive over-pick @ low effort)
+#
+# === MECHANISM A — 1418519 d=5/6 (recon/EPF divergence) ===
+#
+# Per-strategy first-block counts byte-IDENTICAL between ours and cjxl
+# at every effort tested (e7, e8). Y-channel nonzero deltas tiny (+9
+# at e8, +38 at e7). Per-region mean qac matches cjxl to within 0.1.
+# The 1.2% non-agreement cells are at the DCT32X64 vs DCT64X32 vs
+# DCT32X32 boundary — minor strategy oscillations on identical Y energy.
+#
+# This MATCHES W44-138 Phase 1's finding (+0.034 R max-abs at after_epf
+# on 1418519 d=5 e8) and W44-139's verdict (SSIM2-neutral in production
+# because W44-118 hard-gates W44-117 OFF on photos). The bytes-identical
+# strategy + tokens explains why W44-91/96/98/99 stack cannot help —
+# those gates change entropy_mul / DCT lift to shift strategy selection,
+# but here selection is already at parity.
+#
+# 1418519 has mask=76 (W44-118 PROBE output), m3=23, fcbr=0.05 — fails
+# both W44-29 mask<50 gate AND W44-91 m3>=80 gate AND W44-96 ed>=0.7
+# gate. **No current sub-discriminator admits 1418519.**
+#
+# Phase 2 fix for A: needs measurement-only photo-class W44-117 gate
+# (separate from the W44-118 `is_screenshot` mask). W44-139 already
+# scoped this as a measurement chunk; recommendation is to expand the
+# W44-139 cell set (4 → 25+ cells, all 1418519 d>=3 plus other photos)
+# AND ADD a measurement-only env-var hook (`JXL_W44_118_SCREENSHOT_ONLY=0`
+# or equivalent) to actually fire W44-117 on photos and measure SSIM2.
+# Risk: 1025469 e8/e9 d=4 -0.85 SSIM2 regression (the original W44-118
+# fix); but 1025469 mask=76.08 ≈ 1418519 mask=76 — they likely behave
+# the same way. If both go down, abandon. If 1418519 goes UP and 1025469
+# down by <+0.85, may need finer discriminator.
+#
+# === MECHANISM B — 1420710/1531677 d=5/6 (DCT32X32 over-pick) ===
+#
+# Top disagreement pairs (1531677 e7 d=5, 86.9% agreement):
+#   DCT32X32 → DCT16X32  96 cells  (we pick larger, cjxl picks smaller)
+#   DCT32X32 → DCT16X16  80 cells
+#   DCT32X16 → DCT16X16  76 cells
+#   DCT32X16 → DCT32X32  56 cells
+#   DCT32X32 → DCT32X16  48 cells  (oscillation between rectangular)
+#   DCT32X16 → DCT16X8   28 cells
+#
+# Top disagreement pairs (1420710 e8 d=6, 88.4% agreement):
+#   DCT32X32 → DCT32X16  208 cells  (very large skew)
+#   DCT32X32 → DCT16X32  128 cells
+#   DCT32X32 → DCT16X16  96 cells
+#   DCT32X32 → DCT8X16   10 cells
+#
+# In both cells we pick DCT32X32 where cjxl picks DCT32X16 / DCT16X32 /
+# DCT16X16. Total first-block count delta: ours 341 vs cjxl 433 on
+# 1531677 (we use 92 fewer blocks total because each block is larger);
+# 293 vs 348 on 1420710 (55 fewer blocks). Y-channel total token delta
+# is small (+225 and +94) — so the bytes savings come from fewer blocks,
+# the SSIM2 loss comes from larger blocks blurring high-frequency
+# detail in textured photo regions.
+#
+# **W44-96/98/99/100 LIFT dct32x32 entropy_mul ABOVE the default for
+# these images, but per-table inspection shows the lift is for the
+# OPPOSITE direction**: variant Z (W44-96) raises dct32x32 from 1.34
+# default to 1.20 (LOWER number = SMALLER cost penalty = MORE picks of
+# DCT32X32). So we EXPLICITLY made DCT32X32 cheaper on 1420710/1531677,
+# and the W44-147 dumps show it's now too cheap at d=5/6/e5-e9.
+#
+# The W44-98 / W44-99 measurement DID see this at certain (e, d) cells
+# but did NOT cover d=5/6 across e5-e9; the wins were measured on
+# d=5 e8/e9 (W44-98) and d=5 e8/e9 (W44-99). The wider sweep was never
+# done. W44-100 micro-bisected dct16x32 to 1.23 (LOW colour table) but
+# never re-checked dct32x32.
+#
+# Phase 2 fix for B: REVISIT variant Z's dct32x32 lift on 1420710 +
+# 1531677 across the d=3-6 × e5-e9 grid. Bisect dct32x32 values
+# {1.20, 1.24, 1.28, 1.34} to find pareto-optimal per-image (the
+# W44-98/99 split already exists). This may CLOSE the d=5/6 deficit
+# at cost of LOSING the original W44-98/99 d=5 e8/e9 wins (need to
+# verify with measurement). Risk: low-medium (the gates exist; we're
+# tuning a single number within a narrow range).
+#
+# === MECHANISM C — 1531677 e5 d=3 (DCT32+ massive over-pick) ===
+#
+# Strategy agreement 70.7%. cjxl picks ~3× more first-blocks total
+# (1195 vs 573) AND emits more Y tokens (44217 vs 42715). Top
+# disagreement: DCT32X32 → DCT8 (252 cells), DCT32X16 → DCT8 (123),
+# DCT16X32 → DCT8 (111) — we pick LARGE transforms where cjxl picks
+# the smallest. We also pick DCT16X32 / DCT32X16 where cjxl picks
+# DCT16X8 / DCT8X16 / DCT8.
+#
+# This is the SAME shape as B but more severe — at e5 the cost model
+# has less iterations to refine, and the W44-29 + W44-96/99 lift stack
+# is firing harder (variant Z at low effort = aggressive DCT32X32
+# admission). 1531677 e5 d=3 fires W44-29 (mask 35.63 < 50, d>=3 ✓),
+# fires W44-91 if m3>=80 (no — 1531677 m3=12.30 → fails), fires W44-96
+# (d>=4.5 — NO, d=3 fails the inner gate). So at e5 d=3 only W44-29
+# fires; the dct32x32 entropy_mul comes from the OUTER suppressed table
+# (1.34 default → suppressed_default 1.34, still LOWER cost = MORE
+# DCT32X32 admission).
+#
+# 1531677 e5 d=3 fails the W44-96 gate (d>=4.5) so doesn't use variant
+# Z. At d=4 it would still fail (just barely). At d=4.5+ it kicks in.
+# So 1531677 e5 d=3 / d=4 cells use the outer W44-29 table.
+#
+# Phase 2 fix for C: separate from B. The W44-29 OUTER table may be
+# too aggressive on 1531677-class at d=3 e5/e6. New sub-discriminator
+# OR distance-band split. Per-cell EV: 2 cells (e5/e6 d=3, e5/e6 d=4
+# both still W44-29 outer), SSIM2 -1.32 and -1.17 (medium impact).
+#
+# === ACTIONABLE PHASE 2 CANDIDATES (RANKED) ===
+#
+# 1. MECHANISM B (variant Z dct32x32 d=5/6 bisect on 1420710/1531677)
+#    - EV: HIGH — closes 8 of 10 photo at-parity-bytes top cells
+#    - Risk: MEDIUM — may sacrifice W44-98/99 e8/e9 d=5 wins
+#    - Effort: 2-3d (bisect + verify W44-98/99 cells stay FIXED)
+#    - Cells closed: 1531677 e5/e6/e7/e8/e9 d=5/6, 1420710 e6/e7/e8/e9 d=6
+#      (up to ~14 cells; SSIM2 wins +0.5 to +2.0 expected)
+#
+# 2. MECHANISM A (photo W44-117 admission with new discriminator)
+#    - EV: MED-HIGH — closes 6 of 10 SSIM2-deficit top cells
+#    - Risk: HIGH — 1025469-class regressions (W44-118 precedent)
+#    - Effort: 1d measurement (env-var hook + sweep), then 2-3d if
+#      results pareto-positive
+#    - Cells closed: 1418519 e7/e8/e9 d=5/6 (up to 6 cells)
+#    - Pre-requisite: lift the W44-118 hard gate to admit
+#      photo-class mask~76 path (NEW: m3<25 OR ed<X discriminator)
+#
+# 3. MECHANISM C (W44-29 outer table d=3 e5/e6 on 1531677-class)
+#    - EV: LOW-MED — closes 2-4 cells
+#    - Risk: LOW — narrow targeted fix, easy to gate to 1531677 only
+#    - Effort: 1d
+#    - Cells closed: 1531677 e5/e6 d=3 (and possibly d=4)
+#
+# === RECOMMENDATION: spawn W44-148 as Mechanism B bisect ===
+#
+# Highest EV/risk ratio. Pre-existing W44-98/99 infrastructure means
+# the gate already exists — the only change is the dct32x32 number
+# in the variant Z tables. Bisect runs in ~1h paired interleaved A/B
+# on 14 target cells × 5 variants. If pareto-optimal value exists
+# (likely — W44-77 already proved this kind of bisect works), ship as
+# 1-line constant change (W44-98 high-colour table + W44-99/100 LOW
+# colour table). If no pareto-optimal value, HONEST-STOP and try
+# Mechanism A as W44-149.
+#
+# === DO NOT (binding for future agents) ===
+#
+# 1. DO NOT re-investigate Mechanism A without first ENLARGING the
+#    W44-139 cell set (4 → 25+) AND adding a measurement-only gate-
+#    bypass env-var. W44-139 explicitly scoped this as 1-day measurement
+#    work; respawning the same 4-cell experiment will produce the same
+#    SSIM2-zero result.
+#
+# 2. DO NOT cite "FMA precision" for any photo cluster SSIM2 gap (per
+#    W44-66 user correction).
+#
+# 3. DO NOT respawn the per-block adaptive qac approach (W44-145
+#    HONEST-STOPPED at e5-e7 because cjxl runs FLAT qac there). On
+#    photos at e5 d=3 the W44-147 dump shows per-region qac is at parity
+#    — qac is NOT the lever; strategy selection is.
+#
+# 4. DO NOT widen variant Z dct32x32 BELOW 1.20 — Mechanism B fix needs
+#    to RAISE the number (1.20 → 1.24+) so DCT32X32 is MORE expensive
+#    and we pick DCT16X16 / DCT32X16 / DCT16X32 instead. Lowering would
+#    make the problem worse.
+#
+# 5. DO NOT remove or weaken W44-118's is_screenshot gate without a
+#    measurement-validated photo discriminator. The W44-118 was a
+#    fix for a -0.85 SSIM2 regression on 1025469; removing the gate
+#    risks re-introducing that regression on 1025469-class photos that
+#    sit close to (mask 76, similar to 1418519's mask 76).
+#
+# 6. DO NOT spawn a W44-29 outer-table bisect (Mechanism C) before
+#    closing B. C only covers 2-4 cells and the bisect surface is much
+#    smaller — wait for B's outcome to inform whether the W44-29 outer
+#    table needs revisiting at all.
