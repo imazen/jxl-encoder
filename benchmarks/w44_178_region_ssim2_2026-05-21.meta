@@ -1,0 +1,139 @@
+W44-178 Phase 1.5 — per-region SSIM2 ours-vs-source AND ours-vs-cjxl
+Date: 2026-05-21
+Image: clic_097cb426 (1024x1024 CLIC smooth photo)
+Cell: e7 d=5 — no buttloop, deterministic transform pipeline
+
+Headline (the W44-173 hypothesis was wrong about where the bug LIVES):
+
+W44-173 reported "right-column DCT64X64 SSIM2 -7 deficit" and posited the
+bug was in IDCT / dequant / EPF / gaborish / CfL on the DCT64X64 path.
+
+Phase 1.5 measurement shows:
+
+| region | ours-src | cjxl-src | delta | ours-cjxl-ssim2 | ours-cjxl-max-abs-RGB |
+|---|---|---|---|---|---|
+| r[0,2] top-right | 77.08 | 84.12 | **-7.04** | 74.48 | **0.0080** |
+| r[1,2] mid-right | 76.60 | 84.33 | **-7.73** | 72.45 | **0.0074** |
+| r[2,2] bot-right | 77.65 | 84.63 | **-6.98** | 77.09 | **0.0064** |
+
+Right column has the SMALLEST per-pixel diff between ours-decoded and
+cjxl-decoded (max-abs 0.008 in linear RGB = ~2 sRGB-u8 levels), yet
+the LARGEST SSIM2 deficit relative to source. The ssim2(ours, cjxl)
+score in r[0,2] is only 74.48 — meaning a 0.008 max-abs RGB shift on
+smooth content registers as severe perceptual divergence.
+
+By contrast, r[0,1] (top-mid, mostly DCT32x32 + DCT16x32) has
+max_abs(ours,cjxl) = 0.0893 — 10× LARGER — but SSIM2 deficit is only
+-1.40. Mid-mid regions have larger RGB diffs but smaller SSIM2 deltas.
+
+Mechanism: smooth-content + sub-pixel-shift = catastrophic SSIM2 penalty.
+The right column is dominated by DCT64X64 (100% coverage), is smooth
+in the source, and is correctly reconstructed by BOTH encoders with
+matching qac (W44-173 confirmed both encoders pick DCT64X64 with mean
+qac=7.82 and AC nzeros=0 throughout the right column). The 0.008
+linear-RGB shift between us and cjxl must come from a small consistent
+divergence in DC quantization, DC CfL, or LLF reconstruction — NOT
+from gaborish or EPF (W44-178 Phase 2 confirmed this).
+
+Phase 2 (`benchmarks/w44_178_bisect_pipeline_2026-05-21.tsv`) toggled
+gaborish and EPF in our encoder. Right-column SSIM2 deficit stays
+between -6.67 and -8.20 across all 4 (gab × epf) combinations. Gab
+disabled saves ~0.58 SSIM2 in the right column but costs +4314 bytes;
+EPF disabled marginally worsens the right column. Neither stage is
+the bug.
+
+What this rules OUT (binding for follow-on agents):
+
+1. **DCT64X64 IDCT precision**: the IDCT runs identically per the
+   `idct_parity` test suite. Phase 1.5 max-abs 0.008 in linear RGB
+   (and matching mean qac in W44-173) is not consistent with an IDCT
+   that diverges from libjxl. IDCT is at parity.
+2. **Gaborish**: disabling gab does not close the deficit.
+3. **EPF sharpness selection**: disabling EPF actually slightly
+   WORSENS the deficit on the right column. EPF is helping a tiny bit.
+4. **AC coefficient quantization**: the right column has all-zero AC
+   coefficients on DCT64X64 (W44-173 dump confirmed nzeros=0). AC
+   rounding cannot cause this divergence.
+5. **The "right column DCT64X64" framing as a CAUSE of the SSIM2
+   deficit**: the right column has the SMALLEST per-pixel diff in the
+   image. The W44-173 finding (-7 SSIM2 on right column) is real but
+   the COVERAGE pattern (DCT64X64) is COINCIDENT with the SMOOTH-CONTENT
+   pattern that amplifies tiny diffs. Cannot blame DCT64X64 recon.
+
+What this LEAVES open (W44-179 candidates):
+
+1. **DC quantization precision** (HIGHEST EV, ~1-3 days). The DC
+   quantization formula is:
+     `(dc_float * inv_factor - y_dc_int * dc_cfl_factor).round() as i16`
+   in our `transform.rs:947-949`. We verified the algebra matches
+   libjxl's `enc_modular.cc:1684-1696`:
+     `std::round((dc_float - y_dc_int * y_factor * cfl_factor) * inv_factor)`
+   to constants. But:
+   - Our `inv_factor = INV_DC_QUANT[c] * params.scale_dc` evaluates as
+     `kInvDCQuant[c] * (quant_dc * global_scale / 65536)`.
+   - Libjxl `inv_factor = GetInvDcStep(c) = kInvDCQuant[c] * global_scale * quant_dc / 65536`.
+   - These should match. But the f32 evaluation ORDER differs: we
+     compute `(dc * inv_factor) - (y_dc * 0.5)`, libjxl computes
+     `(dc - y_dc * y_factor * cfl_factor) * inv_factor`. The f32
+     rounding of the intermediate may differ by ±1 ULP on smooth
+     content where `dc - y_dc*0.5` is near integer boundaries.
+   - **W44-179 first chunk**: add an env-gated diagnostic that emits
+     per-block float(dc), float(y_dc * cfl_factor * y_factor),
+     int(quant_dc), then compare against libjxl-side dump. If even
+     one DC value differs by 1, that's the bug.
+
+2. **DC CfL global prediction parameters** (MED EV, ~2 days). Our
+   `dc_cfl_factor = 0.5` for B and `0.0` for X. Libjxl computes
+   `DCFactors()[c] = base_correlation + ytox_dc/ytob_dc * color_scale`
+   where `base_correlation_b = kYToBRatio = 1.0` and color_scale
+   defaults to 1/84 = 0.0119. Our `0.5` matches the post-multiply
+   simplification at default cmap (`base * y_factor * inv_factor = 0.5`).
+   But if cjxl picks ytob_dc != 0 or color_factor != 84 for this
+   image (which it can, especially at d=5), our hardcoded 0.5 is
+   wrong by ~1.2% per unit. We need to read the cmap from the
+   bitstream and apply the per-image cfl factors. Audit
+   `vardct/chroma_from_luma.rs::dc_factor` for whether ytob_dc /
+   color_factor are dynamic.
+
+3. **LowestFrequenciesFromDC scale-product roundoff** (LOW-MED EV).
+   `DCT_RESAMPLE_SCALE_64_TO_8[k] * DCT_RESAMPLE_SCALE_8_TO_64[k]`
+   does not equal 1.0 exactly in f32 — the product differs by ~4e-7
+   per stage. For DCT64X64 the per-block scale is two products = ~8e-7
+   total. Over 64 cells × 8.66 mean qac, the accumulated error per
+   block is ~5e-6 per pixel — too small to explain 0.008 max-abs.
+   Eliminate by inspection unless candidates 1+2 close.
+
+What was DONE (this chunk):
+
+- `jxl-encoder/examples/w44_178_recon_diff.rs` (NEW, 530 LOC) —
+  Phase 1: per-pixel + per-region + per-strategy diff aggregation.
+- `jxl-encoder/examples/w44_178_region_ssim2.rs` (NEW, 230 LOC) —
+  Phase 1.5: paired (ours-vs-source AND ours-vs-cjxl) SSIM2 to
+  measure the perceptual amplification.
+- `jxl-encoder/examples/w44_178_bisect_pipeline.rs` (NEW, 290 LOC) —
+  Phase 2: gab × epf bisection.
+- Bench outputs:
+  - `benchmarks/w44_178_recon_diff_clic_097cb426_2026-05-21.tsv`
+  - `benchmarks/w44_178_recon_diff_clic_097cb426_2026-05-21.blocks.tsv`
+  - `benchmarks/w44_178_recon_diff_clic_097cb426_2026-05-21.meta`
+  - `benchmarks/w44_178_region_ssim2_2026-05-21.tsv`
+  - `benchmarks/w44_178_region_ssim2_2026-05-21.meta` (this file)
+  - `benchmarks/w44_178_bisect_pipeline_2026-05-21.tsv`
+  - `benchmarks/w44_178_bisect_pipeline_2026-05-21.meta`
+
+ZERO production code change. This is a diagnostic chunk. W44-179
+should pick the DC-quantization-precision audit (candidate 1) first.
+
+DO NOT (binding for future agents):
+
+- DO NOT attempt to "fix" the DCT64X64 IDCT — it's at parity. The
+  Phase 1 + 1.5 measurement is conclusive that the right column has
+  the smallest per-pixel diff in the image.
+- DO NOT cite "FMA precision" for the deficit (per W44-66 user
+  correction).
+- DO NOT mark clic_097cb426 as FIXED in any cjxl-parity ledger
+  without re-running the Phase 1.5 region SSIM2 bench. The 9-cell
+  per-region grid is the canonical diagnostic.
+- DO NOT spawn yet another "what is the strategy / qac difference"
+  diagnostic — they MATCH. The bug is in DC values or sub-pixel CfL,
+  not strategy/AC quantization.

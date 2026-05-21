@@ -1,0 +1,10 @@
+W44-178 Phase 2 — bisect gaborish + EPF on clic_097cb426 e7 d=5
+Date: 2026-05-21
+
+Hypothesis: the right-column DCT64X64 SSIM2 deficit (W44-173)
+is driven by a small sub-pixel shift introduced by either
+gaborish reconstruction or EPF filter selection. If toggling
+either stage closes/shifts the deficit, that is the bug site.
+
+Reads: cjxl baseline + 4 cells (gab × epf cross).
+Output: benchmarks/w44_178_bisect_pipeline_2026-05-21.tsv
