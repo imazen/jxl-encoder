@@ -1208,6 +1208,15 @@ name = "cjxl_parity_ledger"
 path = "examples/cjxl_parity_ledger.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-170: comprehensive cjxl-parity sweep at step 0.25 across a varied
+# 20-image corpus, full effort grid (5..9), both Libjxl and Zenjxl
+# strategies. Per-strategy TSV output; charts + analysis driven by
+# benchmarks/scripts/w44_170_analyze.py.
+[[example]]
+name = "w44_170_cjxl_step025_sweep"
+path = "examples/w44_170_cjxl_step025_sweep.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
 [[example]]
 name = "w44_20_codec_wiki_coverage"
 path = "examples/w44_20_codec_wiki_coverage.rs"
