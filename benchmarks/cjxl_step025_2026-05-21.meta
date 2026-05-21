@@ -1,0 +1,22 @@
+# W44-170 comprehensive cjxl-parity sweep
+date: 2026-05-21
+commit: 73f85d3e64de3fc1cf4e2edf8a1a4f3bb456e8bc
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+manifest: benchmarks/corpora/w44_170_varied_corpus.tsv
+corpus_dir: /home/lilith/work/codec-corpus
+strategies: ["zenjxl", "libjxl"]
+distance_grid: [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0, 4.25, 4.5, 4.75, 5.0]
+efforts: [5, 6, 7, 8, 9]
+time_iters: 1
+smoke: false
+wall_seconds: 3040.5
+wall_minutes: 50.7
+cells_failed: 41
+decoder: jxl-oxide (srgb_linear)
+metrics: butteraugli_linear (default params); fast_ssim2 (sRGB u8 from linear)
+tsv_outputs:
+  zenjxl: benchmarks/cjxl_step025_zenjxl_2026-05-21.tsv
+  libjxl: benchmarks/cjxl_step025_libjxl_2026-05-21.tsv
+reproducer (full sweep):
+  cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example w44_170_cjxl_step025_sweep -- --corpus-manifest benchmarks/corpora/w44_170_varied_corpus.tsv --output-prefix benchmarks/cjxl_step025 --strategies zenjxl,libjxl
