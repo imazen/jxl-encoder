@@ -67,10 +67,22 @@ fn env_lock_and_snapshot() -> (
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
     let snapshot: [(&'static str, Option<String>); 4] = [
-        (PROMOTED_ENV_VARS[0], std::env::var(PROMOTED_ENV_VARS[0]).ok()),
-        (PROMOTED_ENV_VARS[1], std::env::var(PROMOTED_ENV_VARS[1]).ok()),
-        (PROMOTED_ENV_VARS[2], std::env::var(PROMOTED_ENV_VARS[2]).ok()),
-        (PROMOTED_ENV_VARS[3], std::env::var(PROMOTED_ENV_VARS[3]).ok()),
+        (
+            PROMOTED_ENV_VARS[0],
+            std::env::var(PROMOTED_ENV_VARS[0]).ok(),
+        ),
+        (
+            PROMOTED_ENV_VARS[1],
+            std::env::var(PROMOTED_ENV_VARS[1]).ok(),
+        ),
+        (
+            PROMOTED_ENV_VARS[2],
+            std::env::var(PROMOTED_ENV_VARS[2]).ok(),
+        ),
+        (
+            PROMOTED_ENV_VARS[3],
+            std::env::var(PROMOTED_ENV_VARS[3]).ok(),
+        ),
     ];
     for (name, _) in snapshot.iter() {
         // SAFETY: env mutation is serialised by the W44_132_ENV_LOCK
@@ -131,7 +143,10 @@ fn env_adaptive_quant_qf_scale_promotes() {
     let (_, aq, _) = resolve_strategy_for_test(&EncoderStrategy::Zenjxl);
     assert_eq!(
         aq,
-        AdaptiveQuantQfSeedPolicy::AutoScaleCustom { e5_e6: 2.5, e7: 2.5 }
+        AdaptiveQuantQfSeedPolicy::AutoScaleCustom {
+            e5_e6: 2.5,
+            e7: 2.5
+        }
     );
     env_restore(snapshot);
 }
@@ -303,7 +318,10 @@ fn env_multiple_promote_independently() {
     assert_eq!(qf, ButtloopQfSeedPolicy::AutoScale(3.0));
     assert_eq!(
         aq,
-        AdaptiveQuantQfSeedPolicy::AutoScaleCustom { e5_e6: 1.7, e7: 1.7 }
+        AdaptiveQuantQfSeedPolicy::AutoScaleCustom {
+            e5_e6: 1.7,
+            e7: 1.7
+        }
     );
     assert_eq!(epf, EpfSharpnessSeed::AutoW44_117 { min_distance: 0.5 });
     env_restore(snapshot);
@@ -333,7 +351,10 @@ fn env_custom_partial_default_fields_take_env() {
     // Default adaptive_quant_qf_seed picks up the env value.
     assert_eq!(
         aq,
-        AdaptiveQuantQfSeedPolicy::AutoScaleCustom { e5_e6: 1.7, e7: 1.7 }
+        AdaptiveQuantQfSeedPolicy::AutoScaleCustom {
+            e5_e6: 1.7,
+            e7: 1.7
+        }
     );
     env_restore(snapshot);
 }

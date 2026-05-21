@@ -41,7 +41,9 @@ fn check_one(corpus_sub: &str, image_name: &str, effort: u32, d: f32) -> bool {
     let rgb = img.to_rgb8();
     let (w, h) = (rgb.width(), rgb.height());
     let raw = rgb.into_raw();
-    let cfg = LossyConfig::new(d).with_effort(effort as u8).with_threads(8);
+    let cfg = LossyConfig::new(d)
+        .with_effort(effort as u8)
+        .with_threads(8);
     let jxl = cfg
         .encode(&raw, w, h, PixelLayout::Rgb8)
         .expect("encode failed");

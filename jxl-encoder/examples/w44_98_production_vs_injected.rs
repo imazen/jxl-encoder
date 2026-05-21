@@ -43,7 +43,10 @@ fn encode_injected_z_high_colour(
     d: f32,
 ) -> Result<Vec<u8>, String> {
     let mut cfg = LossyConfig::new(d).with_effort(effort).with_threads(8);
-    cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() });
+    cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+        high_d_photo_hint: Some(false),
+        ..Default::default()
+    });
     let mut internal = LossyInternalParams::default();
     internal.entropy_mul_table =
         Some(EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour());
@@ -54,7 +57,10 @@ fn encode_injected_z_high_colour(
 
 fn encode_injected_z(rgb: &[u8], w: u32, h: u32, effort: u8, d: f32) -> Result<Vec<u8>, String> {
     let mut cfg = LossyConfig::new(d).with_effort(effort).with_threads(8);
-    cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() });
+    cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+        high_d_photo_hint: Some(false),
+        ..Default::default()
+    });
     let mut internal = LossyInternalParams::default();
     internal.entropy_mul_table = Some(EntropyMulTable::high_d_photo_smooth_suppressed_z());
     cfg = cfg.with_internal_params(internal);

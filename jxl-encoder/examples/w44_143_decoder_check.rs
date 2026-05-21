@@ -27,7 +27,10 @@ fn main() {
         .expect("encode");
     let out_path = "/tmp/w44_143_decoder_check.jxl";
     std::fs::write(out_path, &bytes).unwrap();
-    println!("Encoded codec_wiki e8 d=1.6 -> {} bytes -> {out_path}", bytes.len());
+    println!(
+        "Encoded codec_wiki e8 d=1.6 -> {} bytes -> {out_path}",
+        bytes.len()
+    );
 
     // djxl
     let djxl_path = std::env::var("DJXL_PATH")
@@ -60,11 +63,7 @@ fn main() {
     ));
     let render = oxide.render_frame(0).expect("jxl-oxide render");
     let fb = render.image_all_channels();
-    println!(
-        "[PASS] jxl-oxide decoded {}x{}",
-        fb.width(),
-        fb.height()
-    );
+    println!("[PASS] jxl-oxide decoded {}x{}", fb.width(), fb.height());
 
     // jxl-rs decode via process
     let jxl_rs_path = std::env::var("JXL_RS_PATH").unwrap_or_else(|_| {
@@ -84,7 +83,9 @@ fn main() {
             // Don't exit — jxl-rs binary may not be at that path.
         }
         Err(e) => {
-            eprintln!("[SKIP] jxl-rs binary not found at /home/lilith/work/jxl-rs/target/release/jxl: {e}");
+            eprintln!(
+                "[SKIP] jxl-rs binary not found at /home/lilith/work/jxl-rs/target/release/jxl: {e}"
+            );
         }
     }
 

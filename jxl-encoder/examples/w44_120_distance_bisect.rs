@@ -275,12 +275,19 @@ fn run_mode(
 
 fn main() {
     eprintln!("W44-120 distance-gate bisection: A_legacy + B0.8 + B1.0 + B1.2 + B1.5");
-    eprintln!("Cells: {} ({} modes per cell, interleaved)", CELLS.len(), MODES.len());
+    eprintln!(
+        "Cells: {} ({} modes per cell, interleaved)",
+        CELLS.len(),
+        MODES.len()
+    );
 
     // Header — one bytes/bfly/ssim2 triple per mode.
     let mut header = String::from("image\teffort\tdistance");
     for m in MODES {
-        header.push_str(&format!("\t{}_bytes\t{}_bfly\t{}_ssim2", m.name, m.name, m.name));
+        header.push_str(&format!(
+            "\t{}_bytes\t{}_bfly\t{}_ssim2",
+            m.name, m.name, m.name
+        ));
     }
     // Deltas: bytes %, bfly %, ssim2 abs, all vs A_legacy.
     for m in &MODES[1..] {
@@ -304,7 +311,15 @@ fn main() {
         vec![(0, 0.0, 0.0, 0, 0, 0); MODES.len()];
 
     for (i, &(image, corpus, effort, d)) in CELLS.iter().enumerate() {
-        eprintln!("[{}/{}] {} ({}) e{} d={}", i + 1, n_cells, image, corpus, effort, d);
+        eprintln!(
+            "[{}/{}] {} ({}) e{} d={}",
+            i + 1,
+            n_cells,
+            image,
+            corpus,
+            effort,
+            d
+        );
 
         let dir = match corpus {
             "CID22" => CID22,
@@ -339,7 +354,16 @@ fn main() {
 
         let mut scores: Vec<Option<Score>> = Vec::with_capacity(MODES.len());
         for m in MODES {
-            scores.push(run_mode(m, raw, *w, *h, effort, d, orig_linear_img, orig_srgb_img));
+            scores.push(run_mode(
+                m,
+                raw,
+                *w,
+                *h,
+                effort,
+                d,
+                orig_linear_img,
+                orig_srgb_img,
+            ));
         }
 
         // Reference for deltas: A_legacy (idx 0).
@@ -371,7 +395,10 @@ fn main() {
                         f64::NAN
                     };
                     let d_ssim2 = s.ssim2 - a.ssim2;
-                    row.push_str(&format!("\t{:+.3}\t{:+.3}\t{:+.3}", d_bytes, d_bfly, d_ssim2));
+                    row.push_str(&format!(
+                        "\t{:+.3}\t{:+.3}\t{:+.3}",
+                        d_bytes, d_bfly, d_ssim2
+                    ));
 
                     // Accumulate per-mode stats.
                     mode_stats[j].0 += s.bytes;
@@ -431,8 +458,7 @@ fn main() {
     for (j, (bytes, sum_ssim2, sum_bfly, n, reg_vs_a, _reg_vs_b08)) in
         mode_stats.iter().enumerate().skip(1)
     {
-        let bytes_delta_pct =
-            100.0 * (*bytes as f64 - a_bytes_total as f64) / a_bytes_total as f64;
+        let bytes_delta_pct = 100.0 * (*bytes as f64 - a_bytes_total as f64) / a_bytes_total as f64;
         let mean_ssim2 = if *n > 0 { sum_ssim2 / *n as f64 } else { 0.0 };
         let mean_bfly = if *n > 0 { sum_bfly / *n as f64 } else { 0.0 };
         eprintln!(
@@ -445,7 +471,10 @@ fn main() {
     for (j, (_bytes, _sum_ssim2, _sum_bfly, _n, _reg_vs_a, reg_vs_b08)) in
         mode_stats.iter().enumerate().skip(2)
     {
-        eprintln!("  {}: {} cells with SSIM2 < B0.8 by > 0.3", MODES[j].name, reg_vs_b08);
+        eprintln!(
+            "  {}: {} cells with SSIM2 < B0.8 by > 0.3",
+            MODES[j].name, reg_vs_b08
+        );
     }
     eprintln!();
     eprintln!("Acceptance gate: pick the lowest-threshold mode (favouring more W44-117 wins)");

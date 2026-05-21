@@ -96,7 +96,10 @@ fn encode_with_table_and_stats(
     // internal-params table at distance >= 4.0 (per W44-31 gotcha).
     let result = LossyConfig::new(d)
         .with_effort(effort)
-        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() })
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            high_d_photo_hint: Some(false),
+            ..Default::default()
+        })
         .with_internal_params(params)
         .encode_request(w, h, PixelLayout::Rgb8)
         .encode_with_stats(rgb_u8)

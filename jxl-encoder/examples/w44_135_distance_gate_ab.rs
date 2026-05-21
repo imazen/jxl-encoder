@@ -74,11 +74,7 @@ const IMAC_G3_OPEN_EFFORTS: &[u8] = &[5, 6];
 const IMAC_G3_OPEN_DISTANCES: &[f32] = &[2.0];
 
 // Photo spot-check: byte-identical (proxies will reject every CID22 photo).
-const PHOTO_SET: &[&str] = &[
-    "1418519.png",
-    "1420710.png",
-    "1531677.png",
-];
+const PHOTO_SET: &[&str] = &["1418519.png", "1420710.png", "1531677.png"];
 const PHOTO_EFFORTS: &[u8] = &[7];
 const PHOTO_DISTANCES: &[f32] = &[1.0, 3.0, 5.0];
 
@@ -138,12 +134,12 @@ fn encode_with_mode(
     d: f32,
     mode: Mode,
 ) -> (Vec<u8>, f64) {
-    let cfg = LossyConfig::new(d).with_effort(effort).with_strategy_overrides(
-        jxl_encoder::api::StrategyOverrides {
+    let cfg = LossyConfig::new(d)
+        .with_effort(effort)
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
             dct32_keep_hint: mode.hint(),
             ..Default::default()
-        },
-    );
+        });
     let lim = Limits::default().with_max_memory_bytes(8u64 * 1024 * 1024 * 1024);
     let t = Instant::now();
     let bytes = cfg

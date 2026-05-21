@@ -37,7 +37,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (w, h) = img.dimensions();
     let rgb = img.to_rgb8().into_raw();
 
-    eprintln!("Encoding codec_wiki e9 d=1.2 with W44-142 default (m3>=60 AND ed<0.05 AND d<1.5 → fire)...");
+    eprintln!(
+        "Encoding codec_wiki e9 d=1.2 with W44-142 default (m3>=60 AND ed<0.05 AND d<1.5 → fire)..."
+    );
     let bitstream = LossyConfig::new(1.2)
         .with_effort(9)
         .with_threads(8)

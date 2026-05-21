@@ -3169,7 +3169,10 @@ mod tuning_tests {
         // scale, matching cjxl's qac ≈ 97 in those regions.
         let e5_full = DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6;
         let e7_full = DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7;
-        assert_eq!(w44_145_per_block_qf_scale(W44_145_PER_BLOCK_MASK_LOW, e5_full), e5_full);
+        assert_eq!(
+            w44_145_per_block_qf_scale(W44_145_PER_BLOCK_MASK_LOW, e5_full),
+            e5_full
+        );
         assert_eq!(w44_145_per_block_qf_scale(50.0, e5_full), e5_full);
         assert_eq!(w44_145_per_block_qf_scale(20.0, e7_full), e7_full);
         assert_eq!(w44_145_per_block_qf_scale(0.0, e7_full), e7_full);
@@ -3181,12 +3184,18 @@ mod tuning_tests {
         // 1.0 + 0.5 * (2.0 - 1.0) = 1.5.
         let mid = (W44_145_PER_BLOCK_MASK_LOW + W44_145_PER_BLOCK_MASK_HIGH) * 0.5;
         let v = w44_145_per_block_qf_scale(mid, 2.0);
-        assert!((v - 1.5).abs() < 1e-6, "midpoint scale: expected 1.5, got {v}");
+        assert!(
+            (v - 1.5).abs() < 1e-6,
+            "midpoint scale: expected 1.5, got {v}"
+        );
         // 1/4 from HIGH: t = 0.25 → scale = 1.0 + 0.25 * (3.0 - 1.0) = 1.5
         let quarter_high = W44_145_PER_BLOCK_MASK_HIGH
             - 0.25 * (W44_145_PER_BLOCK_MASK_HIGH - W44_145_PER_BLOCK_MASK_LOW);
         let v = w44_145_per_block_qf_scale(quarter_high, 3.0);
-        assert!((v - 1.5).abs() < 1e-5, "quarter-from-HIGH e7 scale: expected 1.5, got {v}");
+        assert!(
+            (v - 1.5).abs() < 1e-5,
+            "quarter-from-HIGH e7 scale: expected 1.5, got {v}"
+        );
     }
 
     #[test]

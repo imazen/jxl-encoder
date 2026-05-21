@@ -389,26 +389,26 @@ fn probe(path: &Path) -> ImageProxies {
         ),
     };
 
-    let (mask_med, mask_p10, mask_p25, mask_p75, mask_p90) = if let Some(mask) = pre.mask1x1.as_ref()
-    {
-        let mut buf: Vec<f32> = Vec::with_capacity(w * h);
-        for y in 0..h {
-            let row_off = y * stride;
-            buf.extend_from_slice(&mask[row_off..row_off + w]);
-        }
-        let mut m1 = buf.clone();
-        let med = percentile(&mut m1, 0.50);
-        let mut m1 = buf.clone();
-        let p10 = percentile(&mut m1, 0.10);
-        let mut m1 = buf.clone();
-        let p25 = percentile(&mut m1, 0.25);
-        let mut m1 = buf.clone();
-        let p75 = percentile(&mut m1, 0.75);
-        let p90 = percentile(&mut buf, 0.90);
-        (med, p10, p25, p75, p90)
-    } else {
-        (0.0, 0.0, 0.0, 0.0, 0.0)
-    };
+    let (mask_med, mask_p10, mask_p25, mask_p75, mask_p90) =
+        if let Some(mask) = pre.mask1x1.as_ref() {
+            let mut buf: Vec<f32> = Vec::with_capacity(w * h);
+            for y in 0..h {
+                let row_off = y * stride;
+                buf.extend_from_slice(&mask[row_off..row_off + w]);
+            }
+            let mut m1 = buf.clone();
+            let med = percentile(&mut m1, 0.50);
+            let mut m1 = buf.clone();
+            let p10 = percentile(&mut m1, 0.10);
+            let mut m1 = buf.clone();
+            let p25 = percentile(&mut m1, 0.25);
+            let mut m1 = buf.clone();
+            let p75 = percentile(&mut m1, 0.75);
+            let p90 = percentile(&mut buf, 0.90);
+            (med, p10, p25, p75, p90)
+        } else {
+            (0.0, 0.0, 0.0, 0.0, 0.0)
+        };
 
     let mut x_unpadded: Vec<f32> = Vec::with_capacity(w * h);
     let mut b_unpadded: Vec<f32> = Vec::with_capacity(w * h);
@@ -645,8 +645,5 @@ chroma_block_ratio\tlow_luma_ratio\thigh_luma_ratio\tmean_luma"
             pr.mean_luma,
         );
     }
-    eprintln!(
-        "# probed {} CID22 photos ({} missing)",
-        probed, missing
-    );
+    eprintln!("# probed {} CID22 photos ({} missing)", probed, missing);
 }

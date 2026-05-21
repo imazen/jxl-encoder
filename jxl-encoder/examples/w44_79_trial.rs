@@ -6,7 +6,10 @@ use std::path::Path;
 fn encode(rgb: &[u8], w: u32, h: u32, d: f32, hint: Option<bool>) -> usize {
     let mut cfg = LossyConfig::new(d).with_effort(7).with_threads(1);
     if let Some(h) = hint {
-        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(h), ..Default::default() });
+        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            high_d_photo_hint: Some(h),
+            ..Default::default()
+        });
     }
     cfg.encode(rgb, w, h, PixelLayout::Rgb8)
         .expect("encode")

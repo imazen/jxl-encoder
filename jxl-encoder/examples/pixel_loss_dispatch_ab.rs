@@ -105,9 +105,14 @@ fn measure_cell(
     orig_srgb_img: &Img<Vec<[u8; 3]>>,
     params: &ButteraugliParams,
 ) -> Result<Measure, String> {
-    let cfg = LossyConfig::new(d)
-        .with_effort(effort)
-        .with_strategy(jxl_encoder::api::EncoderStrategy::Custom(Box::new(jxl_encoder::api::EncoderImprovementsCustom { pixel_loss_dispatch: dispatch, ..Default::default() })));
+    let cfg = LossyConfig::new(d).with_effort(effort).with_strategy(
+        jxl_encoder::api::EncoderStrategy::Custom(Box::new(
+            jxl_encoder::api::EncoderImprovementsCustom {
+                pixel_loss_dispatch: dispatch,
+                ..Default::default()
+            },
+        )),
+    );
 
     let t0 = Instant::now();
     let bytes = cfg

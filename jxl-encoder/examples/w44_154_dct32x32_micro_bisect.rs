@@ -435,12 +435,14 @@ fn main() {
         "Variants: {:?}",
         VARIANTS.iter().map(|v| v.0).collect::<Vec<_>>()
     );
-    eprintln!("Cells: {} (target: close ≥4 of 6 FLIPPED_W148, preserve ≥80% of DEFICIT_* SSIM2 wins)", CELLS.len());
+    eprintln!(
+        "Cells: {} (target: close ≥4 of 6 FLIPPED_W148, preserve ≥80% of DEFICIT_* SSIM2 wins)",
+        CELLS.len()
+    );
 
     let params = ButteraugliParams::default();
 
-    let mut hdr =
-        String::from("class\timage\teffort\tdistance\tcjxl_bytes\tcjxl_bfly\tgate_fires");
+    let mut hdr = String::from("class\timage\teffort\tdistance\tcjxl_bytes\tcjxl_bfly\tgate_fires");
     for v in VARIANTS {
         hdr.push_str(&format!(
             "\t{}_bytes\t{}_bytes_pct\t{}_bfly\t{}_bfly_pct\t{}_ssim2",
@@ -579,8 +581,8 @@ fn main() {
         } else {
             0.0
         };
-        let baseline_is_open =
-            baseline_bytes_pct > fixed_threshold_bytes_pct && baseline_bfly_pct > fixed_threshold_bfly_pct;
+        let baseline_is_open = baseline_bytes_pct > fixed_threshold_bytes_pct
+            && baseline_bfly_pct > fixed_threshold_bfly_pct;
 
         let mut cols: Vec<String> = Vec::new();
         for (idx, m) in variant_results.iter().enumerate() {
@@ -604,8 +606,8 @@ fn main() {
             agg.1 += 1;
 
             if idx > 0 {
-                let now_open = bytes_pct > fixed_threshold_bytes_pct
-                    && bfly_pct > fixed_threshold_bfly_pct;
+                let now_open =
+                    bytes_pct > fixed_threshold_bytes_pct && bfly_pct > fixed_threshold_bfly_pct;
                 if !baseline_is_open && now_open {
                     agg.2 += 1;
                 } else if baseline_is_open && !now_open {
@@ -638,7 +640,10 @@ fn main() {
                 byte_identical_violations
                     .get_mut(label)
                     .unwrap()
-                    .push(format!("{} e{} d={}: {} != {}", image, effort, dist, m.bytes, baseline_a_bytes));
+                    .push(format!(
+                        "{} e{} d={}: {} != {}",
+                        image, effort, dist, m.bytes, baseline_a_bytes
+                    ));
             }
         }
 
@@ -682,7 +687,10 @@ fn main() {
     for v in &VARIANTS[1..] {
         let viols = byte_identical_violations.get(v.0).unwrap();
         if viols.is_empty() {
-            eprintln!("  {:24}  OK (3/3 CONTROL cells byte-identical to A baseline)", v.0);
+            eprintln!(
+                "  {:24}  OK (3/3 CONTROL cells byte-identical to A baseline)",
+                v.0
+            );
         } else {
             for s in viols {
                 eprintln!("  {:24}  VIOLATION: {}", v.0, s);
