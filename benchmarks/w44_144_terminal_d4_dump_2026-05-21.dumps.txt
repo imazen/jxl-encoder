@@ -1,0 +1,20 @@
+  [ours e5] Ratio:       0.91x
+  [ours e5] Time:        3.65s
+  -> ours e5 d4: bytes=93515 dump=516K
+  -> cjxl e5 d4: bytes=70434 dump=272K
+  [ours e6] Ratio:       0.92x
+  [ours e6] Time:        3.62s
+  -> ours e6 d4: bytes=94810 dump=532K
+  -> cjxl e6 d4: bytes=71634 dump=276K
+  [ours e7] Ratio:       0.42x
+  [ours e7] Time:        2.60s
+  -> ours e7 d4: bytes=43329 dump=448K
+  -> cjxl e7 d4: bytes=33536 dump=196K
+  [ours e8] Ratio:       0.35x
+  [ours e8] Time:        3.30s
+  -> ours e8 d4: bytes=36559 dump=424K
+  -> cjxl e8 d4: bytes=56066 dump=216K
+  [ours e9] Ratio:       0.36x
+  [ours e9] Time:        3.63s
+  -> ours e9 d4: bytes=36817 dump=424K
+  -> cjxl e9 d4: bytes=56011 dump=216K
