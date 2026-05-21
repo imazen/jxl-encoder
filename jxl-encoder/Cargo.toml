@@ -1739,6 +1739,11 @@ name = "w44_155_spot_check"
 path = "examples/w44_155_spot_check.rs"
 required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
 
+[[example]]
+name = "w44_156_distance_aware_variant_z_ab"
+path = "examples/w44_156_distance_aware_variant_z_ab.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
 # W44-149 Phase 1 photo discriminator audit — computes ZenanalyzeProxies
 # fields + auxiliary candidate features (luma ratios, chroma_block_ratio,
 # mask1x1 percentiles) across all 41 CID22 validation photos to find a

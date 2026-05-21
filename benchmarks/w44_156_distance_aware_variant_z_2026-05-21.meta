@@ -1,0 +1,223 @@
+# W44-156 distance-aware variant Z A/B (2026-05-21)
+
+## Status
+
+[SHIPPED] — production default `W44_156_VARIANT_Z_D_HIGH_THRESHOLD = 5.5`
+
+## Setup
+
+- Host: lilith (AMD Ryzen 9 7950X, 128 GB)
+- Date: 2026-05-21
+- Parent commit: `6739107c` (W44-155 spot-check + diagnosis)
+- Build: `CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target cargo run --release -p jxl-encoder --features '__expert butteraugli-loop ssim2-loop parallel' --example w44_156_distance_aware_variant_z_ab`
+- cjxl reference: `/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl` (v0.12.0)
+- Decode: jxl-oxide (linear request)
+- Metrics: butteraugli (Rust crate, linear input), fast_ssim2 (sRGB u8 input)
+
+## Source
+
+Follow-on to W44-155 (`6739107c`, measurement-only) which diagnosed the
+1420710 e5 d=6 OPEN cell: our model over-consolidates into DCT32X32
+(78.6% of first-blocks at d=5 vs cjxl 51.8%) and doesn't shed small
+blocks at the d=5→d=6 transition (DCT8: cjxl 39→16, ours 10→2).
+Per-region qac is AT PARITY — pure strategy selection issue.
+
+W44-155 recommended distance-aware variant Z: weaker dct32x32 lift
+(~1.18-1.20) above d~5.5, keep W44-154's 1.22 below.
+
+## Mechanism (SHIPPED)
+
+3 new `EntropyMulTable` constructors in `src/effort.rs`:
+- `high_d_photo_smooth_suppressed_z_d_high`        (plain Z d-high, dct32x32=1.20)
+- `high_d_photo_smooth_suppressed_z_high_colour_d_high` (Z' d-high, dct32x32=1.20, dct16x32=1.30)
+- `high_d_photo_smooth_suppressed_z_low_colour_d_high`  (Z'' d-high, dct32x32=1.20, dct16x32=1.23)
+
+New constant in `src/vardct/encoder.rs:286`:
+- `W44_156_VARIANT_Z_D_HIGH_THRESHOLD: f32 = 5.5`
+
+Env hook in `src/vardct/encoder.rs:498`:
+- `__JXL_W44_156_THRESHOLD` — runtime override (0.0 = disable, any
+  positive value = use as threshold). Production default 5.5.
+
+Dispatch at BOTH variant Z dispatch sites (`compute_ac_strategy` and
+the inner `profile_for_search` site):
+```rust
+let w44_156_d_high = w44_96_variant_z && self.distance > w44_156_effective_threshold();
+
+p.entropy_mul_table = if w44_98_variant_z_high_colour {
+    if w44_156_d_high {
+        EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour_d_high()
+    } else {
+        EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour()
+    }
+} else if w44_99_variant_z_low_colour {
+    if w44_156_d_high {
+        EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour_d_high()
+    } else {
+        EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour()
+    }
+} else if w44_96_variant_z {
+    if w44_156_d_high {
+        EntropyMulTable::high_d_photo_smooth_suppressed_z_d_high()
+    } else {
+        EntropyMulTable::high_d_photo_smooth_suppressed_z()
+    }
+} else { /* default W44-29 suppressed */ };
+```
+
+Mirrors the W44-98/99 sub-discriminator pattern (HC / LC split inside
+variant Z, gated on `m3_colourfulness`) but adds a distance-axis split
+that's orthogonal to the colour-axis split.
+
+## Bisect design
+
+20 cells × 3 variants paired interleaved (60 encodes total):
+
+| Class                   | n | Cells                                       |
+|---                      |---|---                                          |
+| TARGET                  | 1 | 1420710 e5 d=6                              |
+| PROTECT_1531677_d6      | 3 | 1531677 d=6 × e7/e8/e9                      |
+| PROTECT_1420710_d45     | 6 | 1420710 d=4/5 × e7/e8/e9                    |
+| PROTECT_1531677_d5      | 3 | 1531677 d=5 × e7/e8/e9                      |
+| PROTECT_1418519         | 4 | 1418519 d=5/6 × e8/e9 (variant Z doesn't fire) |
+| PROTECT_codec_wiki_d3   | 1 | codec_wiki e8 d=3 (variant Z doesn't fire)  |
+| CONTROL_NOGATE          | 2 | 1189261/1044329 photos off variant Z gates  |
+
+Variants:
+- **A = baseline** (no d-high split; equivalent to W44-154 ship)
+- **B = threshold 5.5** (d > 5.5 → d-high; SHIPPED)
+- **C = threshold 5.0** (d > 5.0 → d-high)
+
+## Headline results
+
+### Aggregate (vs A baseline)
+
+| Variant            | Δvs_cjxl (B) | n   | FIXED→OPEN | OPEN→FIXED | Δssim2_avg | ssim2_min/max |
+|---                 |---           |---  |---         |---         |---         |---            |
+| A_baseline_no_split| -20680B      | 20  | 0          | 0          | +0.0000    | [+0.00, +0.00]|
+| **B_threshold_5p5**| **-21089B**  | 20  | 0          | 0          | -0.0286    | [-0.19, +0.00]|
+| C_threshold_5p0    | -21089B      | 20  | 0          | 0          | -0.0286    | [-0.19, +0.00]|
+
+**B == C empirically** on this cell coverage (no cells fall in the
+(5.0, 5.5] range where they would differ). The 5.5 threshold is the
+safer ship (narrower d-high band).
+
+### TARGET closure
+
+| Variant | bytes_pct | bfly_pct | closed? |
+|---|---|---|---|
+| A | +4.115% | -0.743% | true (bfly axis) |
+| **B** | **+2.739%** | **-0.743%** | **true (BOTH axes — bytes now also < 3%)** |
+| C | +2.739% | -0.743% | true (BOTH axes) |
+
+W44-156 closes the TARGET cell on bytes axis (was at +4.115% under
+W44-154 baseline; now at +2.739% under B/C). The cell was already
+technically "closed" on bfly axis at the baseline (bfly_pct -0.743%
+< 3.0%) but W44-153 ledger criterion requires BOTH bytes_pct AND
+bfly_pct > 3.0% to mark OPEN; with bytes at +4.115% the cell sat at
+the edge of the FIXED/OPEN boundary depending on how the ledger
+applies the OR vs AND rule. W44-156 moves it firmly into FIXED on
+both axes, eliminating ambiguity. The W44-155 diagnosis predicted
+this — the W44-154 1.22 lift over-fires DCT32X32 at d=6 (relative
+to cjxl's d=6 strategy distribution); the W44-156 1.20 d-high lift
+matches cjxl's distribution better.
+
+### Per-class deltas (B vs A)
+
+| Class                   | n | Δssim2_avg | Δbytes_avg | verdict |
+|---                      |---|---         |---         |---|
+| TARGET                  | 1 | -0.0337    | -278.0B    | bytes improved, SSIM2 within budget |
+| PROTECT_1531677_d6      | 3 | -0.1797    | -43.7B     | bytes improved, SSIM2 -0.18 (within 0.30 budget) |
+| PROTECT_1420710_d45     | 6 | +0.0000    | +0.0B      | **byte-identical** (d=4/5 ≤ 5.5, gate off) |
+| PROTECT_1531677_d5      | 3 | +0.0000    | +0.0B      | **byte-identical** (d=5 ≤ 5.5, gate off) |
+| PROTECT_1418519         | 4 | +0.0000    | +0.0B      | **byte-identical** (mask=76 fails W44-29 mask<50) |
+| PROTECT_codec_wiki_d3   | 1 | +0.0000    | +0.0B      | **byte-identical** (screenshot path, not Z) |
+| CONTROL_NOGATE          | 2 | +0.0000    | +0.0B      | **byte-identical** (off W44-96 gate) |
+
+### Worst-case SSIM2 deltas
+
+Worst SSIM2 drop is -0.192 on 1531677 e8/e9 d=6 — within the 0.30
+budget. These are also the cells where bytes IMPROVE (-46 to -49B
+each). Pareto-positive trade.
+
+## Acceptance gates
+
+| Gate | Status | Evidence |
+|---|---|---|
+| (a) Build all features | PASS | `cargo build --release --features '__expert butteraugli-loop ssim2-loop parallel'` |
+| (b) `cargo test --lib --features __expert` | PASS | 1375/1375 passed |
+| (c) Hash-locks regen ≤5 | PASS — **0 regen** | 36/36 byte-identical |
+| (d) 1420710 e5 d=6 closes (bytes <= +3.0%) | PASS | +4.115% → +2.739% (B) |
+| (e) PROTECT_1531677_d6 SSIM2 budget (no regression > 0.30) | PASS | worst -0.192 (avg -0.18) |
+| (f) PROTECT_1420710_d45 preservation | PASS | byte-identical (gate off at d≤5.5) |
+| (g) PROTECT_1531677_d5 preservation | PASS | byte-identical (gate off at d≤5.5) |
+| (h) PROTECT_1418519 + codec_wiki byte-identical | PASS | both classes byte-identical |
+| (i) CONTROL byte-identical | PASS | both control cells byte-identical |
+| (j) Multi-decoder roundtrip | PASS | djxl + jxl-rs on TARGET cell (1420710 e5 d=6) — see decoder_check below |
+
+## Why B == C on this coverage
+
+The 5.5 vs 5.0 split only differs for cells at d ∈ (5.0, 5.5]. Our 20-cell
+coverage has no cells in that range (standard CID22 sweeps use d ∈
+{0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0}). Both thresholds:
+- FIRE on d=6 cells (the TARGET, PROTECT_1531677_d6)
+- DO NOT FIRE on d=5 or below (PROTECT_1420710_d45 d=5, PROTECT_1531677_d5)
+
+The B / C choice is therefore not data-distinguishable here. Picking
+B = 5.5 as the safer ship: narrower d-high band reduces the chance
+that a future image at d=5.0-5.5 catches a regression in the d-high
+table that hasn't been measured.
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT lower W44_156_VARIANT_Z_D_HIGH_THRESHOLD below 5.0 without
+   wider measurement** — the bisect did not cover cells in (3.0, 5.0],
+   where the W44-154 1.22 lift is documented to be the Pareto winner
+   (W44-148 PROTECT_W98 +0.099 mean SSIM2, W44-154 DEFICIT_LC +0.257
+   mean). Lowering the W44-156 threshold below 5.0 would re-route those
+   cells to dct32x32=1.20, undoing the W44-148/154 wins.
+
+2. **DO NOT raise W44_156_VARIANT_Z_D_HIGH_THRESHOLD above 6.0** —
+   the cell coverage above d=6.0 in CID22 is single-cell (rare).
+   Raising past 6.0 would orphan the TARGET cell back to the W44-154
+   default and re-OPEN it.
+
+3. **DO NOT respawn micro-bisect of d ∈ {5.0, 5.5, 6.0} at finer
+   step** — measurement is conclusive that B == C and both close the
+   TARGET. Sub-cell discriminators would need finer-grained content
+   features, not finer-grained distance thresholds.
+
+4. **DO NOT cite "FMA precision"** for any SSIM2 movement (per
+   W44-66 user correction).
+
+5. **DO NOT mark 1531677 d=6 e8/e9 -0.19 SSIM2 as regression** —
+   within the 0.30 budget, and bytes IMPROVE.
+
+## Documentation updates
+
+`docs/LIBJXL_DIVERGENCES.md`:
+- Section B: add 3 new variant Z d-high rows
+- Section F: update the variant Z pareto-trade row to reflect the
+  W44-156 distance split
+
+## Multi-decoder roundtrip
+
+Tested on TARGET cell (1420710 e5 d=6) with B=5.5 threshold:
+- djxl 0.12.0: PASS
+- jxl-rs: PASS
+- jxl-oxide: PASS (used in bench harness directly)
+
+## Provenance
+
+```
+parent commit:    6739107c (W44-155 spot-check)
+this commit:      <set on jj describe>
+chunk duration:   ~3 hours (table + dispatch + bench + ship)
+artifacts:        benchmarks/w44_156_distance_aware_variant_z_2026-05-21.{tsv,meta}
+                  jxl-encoder/examples/w44_156_distance_aware_variant_z_ab.rs
+                  jxl-encoder/src/effort.rs (3 new table constructors + 3 unit tests)
+                  jxl-encoder/src/vardct/encoder.rs (W44-156 constant + helpers + dispatch)
+                  docs/LIBJXL_DIVERGENCES.md (Section B + F updates)
+host:             lilith
+target_dir:       $HOME/work/zen/jxl-encoder-shared-target
+```
