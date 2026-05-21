@@ -1,0 +1,201 @@
+W44-145 per-block adaptive qac scaling A/B — HONEST-STOP (2026-05-21)
+======================================================================
+
+Status: [HONEST-STOP — mechanism implemented + tested, NOT shipped to
+production qf_pre_scale apply site; helper functions retained as
+`#[allow(dead_code)]` for future use.]
+
+Repo state:
+  git rev:    pending commit (W44-145 investigation)
+  ours cli:   /home/lilith/work/zen/jxl-encoder-shared-target/release/cjxl-rs
+  host:       lilith
+  command:    cargo run --release --features 'butteraugli-loop ssim2-loop
+              parallel' --example w44_145_per_block_qac_ab --manifest-path
+              jxl-encoder/Cargo.toml
+
+Goal (per W44-145 task spec, Phase 2 candidate 2 from W44-144 memo):
+  Close the terminal e5/e6/e7 d=4 SSIM2/bytes-overhead cluster by
+  routing the W44-109 adaptive_quant qf seed scale through a per-block
+  mask1x1 lookup, so blank-mask blocks get scale ≈ 1.0 (keeping qac at
+  baseline ~7-8) and text-mask blocks get the full per-effort scale
+  (mirroring cjxl's bimodal qac at e8+ where text qac ≈ 97 and blank
+  qac ≈ 7).
+
+Acceptance gates (task spec):
+  (a) SSIM2 within ±0.30 of pre-W44-145 baseline OR improved on the
+      terminal d=4 primary cells (e5/e6/e7)
+  (b) bytes overhead REDUCED from +33% baseline toward +10-15%
+  (c) terminal e5/e6/e7 d=3.5/d=4.5 adjacent cells: bytes ±5%,
+      SSIM2 ±0.10
+  (d) terminal e8/e9 d=4: byte-identical (W44-105 owns qac at e>=8)
+  (e) codec_wiki d=3/d=4: byte-identical (different content class)
+  (f) terminal d=1.0/d=2: byte-identical or within budget
+  (g) photo cells: byte-identical (is_screenshot=false)
+  (h) imac_g3 d=2/d=3: byte-impact reduced, SSIM2 preserved
+  (i) hash-locks 36/36 byte-identical
+  (j) multi-decoder roundtrip on 1 closed cell
+
+Mechanism (`vardct/butteraugli_loop.rs`):
+  `per_block_mask1x1_mean(mask1x1, padded_width, xs_b, ys_b) -> Vec<f32>`
+    — computes mean of mask1x1 per 8×8 block (length xs_b * ys_b)
+  `w44_145_per_block_qf_scale(block_mask_mean, full_scale) -> f32`
+    — linear interp between 1.0 (at mask >= HIGH=99.5) and full_scale
+      (at mask <= LOW). Returns 1.0 when full_scale == 1.0.
+
+  Bisected LOW thresholds:
+    v1: LOW=70 (initial estimate based on W44-145 doc reference values
+        — text mask 20-60, blank mask saturates ~100)
+    v2: LOW=95 (conservative — only blocks in [95, 99.5] get any
+        scale reduction; most blocks stay at full W44-109 scale)
+
+Results (35 cells × 2 modes paired interleaved):
+
+  See `w44_145_per_block_qac_ab_v1_low70_2026-05-21.tsv` and
+      `w44_145_per_block_qac_ab_v2_low95_2026-05-21.tsv`
+
+  Primary terminal d=4 cluster:
+
+  | cell           | v1 bytes Δ | v1 SSIM2 Δ | v2 bytes Δ | v2 SSIM2 Δ |
+  |----------------|------------|------------|------------|------------|
+  | terminal e5 d=4| -3.04 %    | **-0.41**  | +0.63 %    | -0.07      |
+  | terminal e6 d=4| -2.54 %    | -0.34      | +0.82 %    | -0.12      |
+  | terminal e7 d=4| -8.53 %    | **-0.50**  | +2.73 %    | -0.16      |
+
+  v1 FAILS gate (a) on e5 and e7 (SSIM2 < -0.30);
+                FAILS gate (b) on all 3 cells (-3 to -8.5% from W44-109
+                baseline = +29% to +22% overhead vs cjxl, target was +10-15%).
+
+  v2 PASSES gate (a) on all 3 cells (SSIM2 -0.07 to -0.16, within ±0.30);
+                FAILS gate (b) on all 3 cells (bytes +0.6 to +2.7% =
+                WRONG DIRECTION — overhead vs cjxl went UP from +33% to
+                +34% to +36%).
+
+  W44-145 mechanism cannot satisfy gates (a) AND (b) simultaneously at
+  any LOW threshold in the bisection. The fundamental obstacle:
+
+ROOT CAUSE — cjxl is NOT bimodal at e5-e7:
+
+  W44-144 Phase 1 dump (CLAUDE.md investigation notes 2026-05-21)
+  cited cjxl's bimodal qac on terminal d=4 e8+ (text ≈ 97, blank ≈ 7).
+  Re-reading the dump confirms this is e8+ ONLY (post-buttloop):
+
+    e5 mean qac per region: cjxl 7.6 to 8.2 (FLAT)
+    e7 mean qac per region: cjxl 7.7 to 9.2 (FLAT)
+    e8 mean qac per region: cjxl 7.2 to 97.4 (BIMODAL)
+
+  At e5-e7, cjxl runs a FLAT lower qac everywhere (~7-9). W44-109's
+  uniform 2×/3× scale lifts our qac to 15.5-25.7 to mimic cjxl's
+  byte overhead at d=4 (which itself pays bytes for fine quant
+  everywhere). The W44-109 bytes overhead is the price for matching
+  cjxl's SSIM2 at e5-e7.
+
+  W44-145 attempted to be SMARTER than cjxl: scale only text blocks
+  while leaving blanks coarse-quantized. But cjxl is NOT actually
+  coarse-quantizing blanks at e5-e7 — it runs fine quant everywhere.
+  Skipping the scale on blanks means our blanks are coarser than
+  cjxl's, costing SSIM2 there without recovering enough bytes
+  elsewhere to hit the +10-15% target.
+
+  The correct mechanism at e5-e7 is NOT per-block bimodal — it is
+  Candidate 1 from W44-144: shrink the 2.0/3.0 uniform constants
+  (e.g., to 1.5 / 2.5) and accept a smaller SSIM2 win for a smaller
+  bytes overhead.
+
+Per-block mechanism MAY still apply at e8+ (W44-105 path):
+
+  At e8+ cjxl IS bimodal. The W44-105 path applies the 4× scale via
+  buttloop iter-0 seed (not the W44-109 adaptive_quant pre-scale).
+  Routing the W44-105 seed through `w44_145_per_block_qf_scale` could
+  hypothetically close the +30% bytes overhead at e8/e9 d=4 while
+  preserving the +4 SSIM2 win.
+
+  Not attempted in this chunk (out of scope — W44-145 was specced
+  against the e5/e6/e7 W44-109 path). Filed as W44-146+ candidate.
+
+Acceptance gate results:
+
+  (a) SSIM2 budget on terminal d=4: v1 FAIL, v2 PASS
+  (b) bytes target on terminal d=4: BOTH FAIL
+  (c) adjacent cells: v1 mostly within bfly budget, v2 within all budgets
+  (d) terminal e8/e9 d=4: BYTE-IDENTICAL (W44-109 gate doesn't fire at e>=8)
+  (e) codec_wiki cells: byte-identical at e8 d=3, small SSIM2 wins at d=4
+  (f) terminal d=1.0: byte-identical; d=2: small SSIM2 deltas within budget
+  (g) photo cells: ALL 8 BYTE-IDENTICAL
+  (h) imac_g3 d=2/d=3: bytes -1.7% to -1.9% (v1), SSIM2 +0.06 to -0.08 (within ±0.10)
+  (i) Hash-locks: 36/36 BYTE-IDENTICAL (synthetic fixtures don't trigger gate)
+  (j) Multi-decoder roundtrip: not run (mechanism reverted before this gate)
+
+DECISION: HONEST-STOP per task spec ("If the implementation doesn't
+close the cluster within the SSIM2/bytes budget: HONEST-STOP, document.
+Don't ship a regression").
+
+PRODUCTION STATE:
+  - `vardct/butteraugli_loop.rs`: ADDED `w44_145_per_block_qf_scale`
+    and `per_block_mask1x1_mean` helpers + 7 unit tests. Both marked
+    `#[allow(dead_code)]`. Constants W44_145_PER_BLOCK_MASK_LOW=70.0,
+    W44_145_PER_BLOCK_MASK_HIGH=99.5.
+  - `vardct/encoder.rs`: qf_pre_scale apply site UNCHANGED in net
+    semantics — uniform multiply (pre-W44-145 behaviour). Added an
+    explanatory comment block citing this investigation.
+  - `jxl-encoder/examples/w44_145_per_block_qac_ab.rs`: A/B harness
+    registered in Cargo.toml. The example reads
+    `JXL_W44_145_PER_BLOCK_DISABLE` but the production path no longer
+    consults the env var, so under the HONEST-STOP revert the example
+    will report byte-identical A=B everywhere. Retained for the
+    reproducer (future investigators can re-enable the per-block path
+    via direct code edit + rebuild).
+
+FOLLOW-ON CANDIDATES (NOT this chunk):
+
+  1. W44-146 Candidate 1 (W44-144 candidate 1 promoted): shrink
+     `DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6 = 2.0` →
+     {1.5, 1.75} and `_E7 = 3.0` → {2.0, 2.5}. The W44-109 SSIM2 win
+     scales roughly linearly with scale; smaller scale = smaller win
+     and smaller bytes overhead. May land an acceptable pareto point
+     at SSIM2 -0.5 / bytes +15% (vs current SSIM2 -1.93 / bytes +33%).
+
+  2. W44-146 Candidate 2: apply the W44-145 mechanism to the W44-105
+     buttloop seed scale at e8+ where cjxl IS bimodal. Could close
+     the +30% bytes overhead at terminal e8/e9 d=4 (currently the
+     W44-110 ledger pareto trade).
+
+  3. W44-146 Candidate 3: don't lift everywhere — instead lift only
+     content the buttloop would have lifted (at e<8 we don't have a
+     buttloop, but we could simulate by running 1 fake buttloop iter
+     on quant_field, applying the iter-1 bump-bad-blocks logic).
+
+  4. Cross-crate: root-cause the butteraugli measurement divergence
+     that causes our internal recon to score "too good" on text-heavy
+     screenshots (per W44-105 commit message). HIGH EV, HIGH risk,
+     multi-week — would obsolete W44-105/107/108/109/145 entirely.
+
+DO NOT (future agents):
+
+  - DO NOT re-attempt W44-145 with LOW thresholds in [70, 95] without
+    first measuring cjxl's qac structure at the target effort. The
+    bisection here is monotone — LOW=70 gives most aggressive bytes
+    savings + worst SSIM2; LOW=95 gives minimal change + tiny SSIM2
+    drift. Neither extreme + nothing in between meets gates (a) AND (b).
+  - DO NOT cite "FMA precision" for the SSIM2 gap (per W44-66 user
+    correction).
+  - DO NOT shrink W44-109 SCALE without a paired bisection on the
+    full ledger cluster (W44-144 documented this as Phase 2
+    Candidate 1, low-EV per the SSIM2/bytes coupling).
+  - DO NOT mark terminal e5/e6/e7 d=4 as FIXED on the cjxl-parity
+    ledger. The +3% bytes wedge gate is the correct signal that we
+    pay more bytes than cjxl; the SSIM2 trade is documented as
+    pareto in Section F line 160 of LIBJXL_DIVERGENCES.md.
+
+Cells affected by W44-145 in v1 production-default-on (had it shipped):
+  Photos: 0 cells (all byte-identical, gate doesn't fire on
+          is_screenshot=false)
+  e8+ screens: 0 cells (W44-105 owns qac, W44-109/145 inactive)
+  Hash-locks: 0 fixtures (synthetic 32×32 gradients don't trigger
+              pixel_domain_loss → mask1x1=None → gate doesn't fire)
+
+  Lossy screen cells with non-trivial deltas: terminal × {d=2, d=3.5,
+  d=4, d=4.5} × e ∈ {5, 6, 7}, codec_wiki × d=4 × e ∈ {5, 6, 7},
+  imac_g3 × {d=2, d=3} × e ∈ {5, 6}.
+
+  All of those revert to pre-W44-145 (W44-109 uniform multiply) under
+  the HONEST-STOP — byte-identical to pre-W44-145 main.

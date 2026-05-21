@@ -1663,5 +1663,15 @@ name = "w44_109_decoder_check"
 path = "examples/w44_109_decoder_check.rs"
 required-features = ["parallel", "butteraugli-loop"]
 
+# W44-145 per-block adaptive qac A/B — measures whether routing the
+# W44-109 qf seed scale through a per-block mask1x1 lookup reduces
+# the +30 % byte overhead on terminal d=4 e5/e6/e7 while preserving
+# the W44-109 SSIM2 gains. Paired interleaved A/B (A = pre-W44-145
+# uniform multiply, B = W44-145 per-block scaling).
+[[example]]
+name = "w44_145_per_block_qac_ab"
+path = "examples/w44_145_per_block_qac_ab.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
 [lints]
 workspace = true
