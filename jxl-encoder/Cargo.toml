@@ -690,6 +690,19 @@ name = "w44_150_phase2_ab"
 path = "examples/w44_150_phase2_ab.rs"
 required-features = ["butteraugli-loop", "ssim2-loop"]
 
+# W44-165 (Smart-Zenjxl chunk 2) — re-enable the W44-150 Mechanism A
+# photo admission to the W44-117 EPF sharpness seed on Zenjxl /
+# Aggressive strategies. Per user directive 2026-05-21 ("restore any
+# superior options according to the current encode strategy
+# selection"). Mode A = Custom with photo_epf_seed_admit=false (=
+# W44-150 honest-stop baseline), Mode B = default Zenjxl (W44-165 ON),
+# Mode LIBJXL_OFF = EncoderStrategy::Libjxl (must be byte-identical
+# regardless of the W44-165 field). 37-cell paired A/B reproducer.
+[[example]]
+name = "w44_165_restore_epf_seed_photos_ab"
+path = "examples/w44_165_restore_epf_seed_photos_ab.rs"
+required-features = ["butteraugli-loop", "ssim2-loop", "__expert"]
+
 # W44-151 W44-29 widen A/B — measure the Mechanism B photo admission
 # gate (mask_p25 >= 85.0 AND distance >= 3.0) on the W44-147 1418519
 # d=5/6 cluster + W44-118 protection set (1025469) + 4 SPOT photos.
