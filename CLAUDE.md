@@ -612,6 +612,116 @@ This is the SINGLE SOURCE OF TRUTH for where our encoder diverges from libjxl re
 
 ## Investigation Notes
 
+### W44-164: Smart-Zenjxl chunk 1 — auto-classify ImageContentClass — SHIPPED (May 21, 2026)
+
+**Status**: [SHIPPED]
+
+W44-163 Smart-Zenjxl audit pick #1 (highest-EV chunk per the
+2026-05-21 directive). The encoder shipped the
+`adapt_to_image_content(ImageContentClass)` infrastructure ages ago
+(W36-3 / W41-2 + RFC #45 pick #4 chunk 1) but it only fired when
+callers manually called `LossyConfig::with_content_class(Some(class))`.
+W44-164 wires the auto-classifier at the encode entry so the dispatch
+fires automatically on `EncoderStrategy::Zenjxl` / `Aggressive`.
+
+**Mechanism**:
+- New `EncoderImprovementsCustom.content_class_auto_classify: bool`
+  field (and matching `ResolvedImprovements` field).
+  `Zenjxl::Default` / `Aggressive` → `true`; `Libjxl` / `LeanFaster`
+  → `false`.
+- New `auto_classify_content_class_from_layout(pixels, w, h, layout)`
+  in `api.rs` mirrors the `detect_smooth_photo_for_dct64_from_layout`
+  pattern. Computes the existing `ZenanalyzeProxies` (W44-91)
+  on 8-bit sRGB layouts when `pixels >= CONTENT_CLASS_MIN_PIXELS`
+  (= 65,536); returns `None` otherwise.
+- Discriminator (calibrated from 10 GB82-SC screenshots +
+  41 CID22 photos + 6 W44-78 regression-band photos):
+  - `fcbr >= W44_164_FCBR_SCREENSHOT_MIN (= 0.35)` → Screenshot
+  - `fcbr < 0.10 AND m3 >= 5.0` → Photo
+  - else → Unknown (no-op)
+- `effective_profile_for_image_with_smoothness` → new variant
+  `_and_class` takes the auto-classified value; the dispatch site
+  consults `self.content_class.or(auto_class if auto_classify is on)`.
+- Explicit `with_content_class(Some(...))` ALWAYS wins.
+- Streaming `LossyEncoder` + animation `encode_animation_lossy`
+  paths leave `auto_content_class = None` (same precedent as W44-91 —
+  proxies need the raw sRGB u8 source bytes not in scope on those
+  paths; callers opt in via `with_content_class(Some(...))`).
+
+**Per-cell results** (22-cell paired A/B
+`benchmarks/w44_164_auto_classify_ab_2026-05-21.tsv`):
+
+| corpus       | image           | e5      | e6      | e7      |
+|---           |---              |---      |---      |---      |
+| GB82-SC      | codec_wiki      | -20.4%  | -19.8%  | 0.000%  |
+| GB82-SC      | imac_g3         | -59.9%  | -59.3%  | 0.000%  |
+| GB82-SC      | terminal        | -61.7%  | -60.3%  | 0.000%  |
+| GB82-SC      | windows95       | -40.8%  | -40.5%  | 0.000%  |
+| CID22 photo  | 1189261         | 0.000%  | n/a     | 0.000%  |
+| CID22 photo  | 1025469         | 0.000%  | n/a     | 0.000%  |
+| CID22 photo  | 1418519         | 0.000%  | n/a     | 0.000%  |
+| CID22 photo  | 1279330         | 0.000%  | n/a     | 0.000%  |
+| CID22 photo  | 1044329         | 0.000%  | n/a     | 0.000%  |
+
+- 8/8 GB82-SC e5/e6 cells WIN (mean -45.3%)
+- 4/4 GB82-SC e7 cells BYTE-IDENTICAL (patches already on at e7+)
+- 10/10 CID22 photo cells BYTE-IDENTICAL (auto-classifier short-
+  circuits via Photo or Unknown classification → adapter is a no-op
+  on those classes)
+- Total bytes A vs B: -33.7%, ZERO regressions
+
+**Acceptance gates (all PASS)**:
+- (a) Build PASS
+- (b) `cargo test --lib --features __expert butteraugli-loop ssim2-loop parallel`
+      1392/1392 (+8 vs 1384 baseline)
+- (c) Hash-locks BYTE-IDENTICAL on synthetic fixtures: 36/36
+      (gate fires only on `pixels >= 65,536`; largest fixture
+      48×48 = 2,304 px)
+- (d) GB82-SC measurable improvement: 8/8 e5/e6 cells WIN
+- (e) 5 CID22 photo cells: 10/10 BYTE-IDENTICAL
+- (f) `EncoderStrategy::Libjxl` byte-identical: structural argument
+      (`ResolvedImprovements::libjxl()` sets
+      `content_class_auto_classify: false`), verified by
+      `test_w44_164_resolved_default_per_strategy`
+- (g) `docs/LIBJXL_DIVERGENCES.md` Section B updated with new row
+- (h) Multi-decoder roundtrip via jxl-rs + jxl-oxide:
+      6/6 PASS (`jxl-encoder/tests/w44_164_decoder_roundtrip.rs`)
+
+**Files**:
+- `jxl-encoder/src/api.rs` — discriminator + auto-classifier helper +
+  `_and_class` profile variant + 8 unit tests + field on
+  `EncoderImprovementsCustom` / `ResolvedImprovements`
+- `jxl-encoder/examples/w44_164_auto_classify_ab.rs` — 22-cell paired
+  A/B bench
+- `jxl-encoder/tests/w44_164_decoder_roundtrip.rs` — 3-cell × 2-decoder
+  roundtrip
+- `benchmarks/w44_164_auto_classify_ab_2026-05-21.{tsv,meta}` — bench
+  output + provenance
+- `docs/LIBJXL_DIVERGENCES.md` Section B — new entry row
+
+**Why the e5/e6 win is so large**: libjxl gates `patches = true` at
+`speed_tier <= kHare` (effort >= 7); e5/e6 stay at `patches = false`
+by default. `EffortProfile::adapt_to_image_content` flips
+`patches = true` on Screenshot-class at e ∈ {5, 6} (libjxl-superset
+behaviour the encoder has shipped for ages, but only fired when
+callers manually plumbed the class). Patches detection on
+screenshots typically catches repeated UI elements (icons, glyphs,
+button bars) and packs them into the reference frame.
+
+**DO NOT** (future agents):
+- DO NOT raise `W44_164_FCBR_SCREENSHOT_MIN` above 0.40 — windows95
+  sits at fcbr=0.360 in gb82-sc and IS a screenshot (patches helps
+  pixel-art too; 22-cell A/B measured -40.8% on windows95 e5).
+- DO NOT lower the threshold below 0.30 — risks pulling
+  297394-class photos (fcbr=0.0957 — top of the photo range) into
+  the Screenshot bucket; the deadband [0.10, 0.35) is the safety
+  margin.
+- DO NOT cite "FMA precision" for any byte movement (per W44-66
+  user correction).
+- DO NOT extend to streaming/animation without first adding the
+  per-frame proxy compute to those paths (called out in the meta as
+  W44-165/166 follow-on candidates).
+
 ### W44-145: per-block adaptive qac scaling via mask1x1 lookup — HONEST-STOP (May 21, 2026)
 
 **Status**: [HONEST-STOP — mechanism implemented, tested, NOT shipped to

@@ -1062,6 +1062,113 @@ fn detect_smooth_photo_for_dct64_inner(
     true
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// W44-164: Smart-Zenjxl auto-classifier for `ImageContentClass`
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The encoder ships an opt-in `LossyConfig::with_content_class(Some(...))`
+// setter that feeds [`crate::effort::EffortProfile::adapt_to_image_content`]
+// (today: enables `patches` at e ∈ {5, 6} on `Screenshot` content). The
+// auto-classifier below derives the class from the same cheap zenanalyze
+// proxies the W44-91 / W44-96 / W44-124 gates already consume, so the
+// dispatch fires automatically on `EncoderStrategy::Zenjxl` /
+// `Aggressive` without the caller having to plumb a class through.
+//
+// Discriminator (sRGB u8 corpus measurements; see
+// `benchmarks/entropy_mul_smart_dispatch_2026-05-18.meta` for the 10
+// GB82-SC screenshots × per-image proxy table and
+// `benchmarks/w44_91_zenanalyze_dispatch_2026-05-19.meta` for the 41
+// CID22 validation photos + 6 W44-78 regression-band photos):
+//
+//   class      fcbr range (gb82-sc)    fcbr range (CID22 photos)
+//   --------   ----------------------  -------------------------------
+//   Screenshot 0.360 (windows95) –     never seen ≥ 0.10
+//              0.907 (gmessages)
+//   Photo      never seen ≥ 0.30       0.0034 (1189261) – 0.098 (297394)
+//
+// `fcbr >= 0.30` cleanly captures every screenshot in the corpus
+// (smallest 0.36) while staying well above every photo (largest 0.098,
+// 3× margin). We use the slightly higher 0.35 threshold to leave
+// windows95-class outliers (very-low palette pixel-art) on the safe
+// side — the W23-2 honest-stop showed the W22-1 *entropy_mul lift* hurts
+// windows95, but `adapt_to_image_content` only flips `patches` (which
+// helps repetitive UI content). Photos with anomalous fcbr in the
+// 0.10–0.30 deadband stay `Unknown` (no dispatch).
+
+/// W44-164 fcbr threshold for the `Screenshot` class. Calibrated from
+/// 10 GB82-SC screenshots (range 0.360–0.907) vs 41 CID22 photos +
+/// 6 W44-78 regression-band photos (range 0.0034–0.098). The 0.35
+/// threshold sits inside the 0.098 → 0.360 gap, ~3.5× above the
+/// photo ceiling and just below the screenshot floor — see the table
+/// above for the source data.
+const W44_164_FCBR_SCREENSHOT_MIN: f32 = 0.35;
+
+/// W44-164 minimum pixel count for the auto-classifier to compute the
+/// proxies. Matches [`crate::effort::CONTENT_CLASS_MIN_PIXELS`]
+/// (= 65,536); below this both (a) the proxies are unreliable on
+/// thumbnail content AND (b) `adapt_to_image_content` short-circuits
+/// anyway. Skipping the proxy compute saves the O(W·H) scan on the
+/// throwaway-small inputs.
+const W44_164_MIN_PIXELS: u64 = crate::effort::CONTENT_CLASS_MIN_PIXELS;
+
+/// W44-164: derive an [`crate::effort::ImageContentClass`] from the
+/// caller-supplied 8-bit sRGB pixel buffer when the auto-classifier
+/// dispatch is active. Returns `None` for layouts where the proxy
+/// would be unreliable (16-bit, linear-f32, grayscale, HDR), for
+/// images below the pixel threshold, and for content sitting in the
+/// fcbr deadband between the photo ceiling and screenshot floor
+/// (`fcbr` ∈ [0.10, [`W44_164_FCBR_SCREENSHOT_MIN`])) — in those
+/// cases the dispatch falls through to the existing default profile
+/// (no class adapter fires).
+///
+/// Discriminator (see module-level prose above for the source data):
+///
+/// - `fcbr >= W44_164_FCBR_SCREENSHOT_MIN (= 0.35)` → `Screenshot`
+/// - `fcbr < 0.10 AND m3_colourfulness >= 5.0` → `Photo`
+/// - else → `None`
+///
+/// The `m3 >= 5.0` photo floor excludes pure-grayscale gradients
+/// (which have m3 ≈ 0); they sit in the `Unknown` bucket where the
+/// adapter is a no-op today anyway.
+///
+/// **Layout dispatch**: only the 8-bit sRGB layouts (`Rgb8`, `Rgba8`,
+/// `Bgr8`, `Bgra8`) compute the proxies — for everything else this
+/// returns `None` (same surface as `compute_w44_91_zenanalyze_proxies`).
+#[must_use]
+pub(crate) fn auto_classify_content_class_from_layout(
+    pixels: &[u8],
+    w: u32,
+    h: u32,
+    layout: PixelLayout,
+) -> Option<crate::effort::ImageContentClass> {
+    let pixel_count = (w as u64).checked_mul(h as u64)?;
+    if pixel_count < W44_164_MIN_PIXELS {
+        return None;
+    }
+    let proxies = compute_w44_91_zenanalyze_proxies(pixels, w as usize, h as usize, layout)?;
+    Some(classify_from_proxies(&proxies))
+}
+
+/// Pure function: classify content given precomputed proxies. Split
+/// out for unit testing so the discriminator predicate can be
+/// exercised without instantiating an input buffer.
+#[must_use]
+pub(crate) fn classify_from_proxies(
+    p: &crate::vardct::encoder::ZenanalyzeProxies,
+) -> crate::effort::ImageContentClass {
+    use crate::effort::ImageContentClass;
+    if p.flat_color_block_ratio >= W44_164_FCBR_SCREENSHOT_MIN {
+        ImageContentClass::Screenshot
+    } else if p.flat_color_block_ratio < 0.10 && p.m3_colourfulness >= 5.0 {
+        ImageContentClass::Photo
+    } else {
+        // Deadband fcbr ∈ [0.10, 0.35) or near-grayscale photo:
+        // leave `Unknown` so the adapter is a no-op (default behaviour
+        // — preserves byte parity on edge cases).
+        ImageContentClass::Unknown
+    }
+}
+
 // ── Supporting types ────────────────────────────────────────────────────────
 
 /// Image metadata (ICC, EXIF, XMP, JUMBF, tone mapping) to embed in the JXL file.
@@ -4025,6 +4132,35 @@ pub struct EncoderImprovementsCustom {
     /// re-enables this (deliberately re-introducing the regression
     /// to match libjxl byte-for-byte). Default = `false`.
     pub block_ctx_map_15_cluster: bool,
+
+    // ── Smart-Zenjxl: auto-classify `ImageContentClass` (W44-164) ──
+    /// When `true`, the encoder runs a cheap zenanalyze-proxy-based
+    /// classifier at the encode entry to derive an
+    /// [`crate::effort::ImageContentClass`] when the caller has NOT
+    /// explicitly set one via
+    /// [`crate::api::LossyConfig::with_content_class`]. The classifier
+    /// inspects the source sRGB u8 buffer for `fcbr` (flat-color-block
+    /// ratio) and `m3_colourfulness` to identify screenshot-class
+    /// content; the resulting class is passed into
+    /// [`crate::effort::EffortProfile::adapt_to_image_content`] which
+    /// (today) enables `patches` at e ∈ {5, 6} on `Screenshot` content.
+    ///
+    /// Auto-classification fires only on the 8-bit sRGB layouts
+    /// (`Rgb8`/`Rgba8`/`Bgr8`/`Bgra8`) where the proxy is well-defined;
+    /// every other layout (16-bit, linear-f32, grayscale, HDR) leaves
+    /// the dispatch inactive (same surface as the W44-91 zenanalyze
+    /// proxies). The pixel-count gate
+    /// [`crate::effort::CONTENT_CLASS_MIN_PIXELS`] (65,536) excludes
+    /// every hash-lock fixture (largest is 48×48 = 2,304 px).
+    ///
+    /// **Default**: `true` for [`EncoderStrategy::Zenjxl`] and
+    /// [`EncoderStrategy::Aggressive`]; `false` for
+    /// [`EncoderStrategy::Libjxl`] (parity) and
+    /// [`EncoderStrategy::LeanFaster`] (skip heavy per-image gates).
+    /// Explicit `LossyConfig::with_content_class(Some(...))` ALWAYS
+    /// wins over the auto-classifier (the auto path only runs when
+    /// the field is `None`).
+    pub content_class_auto_classify: bool,
 }
 
 impl Default for EncoderImprovementsCustom {
@@ -4065,6 +4201,11 @@ impl Default for EncoderImprovementsCustom {
             try_dct64_min_effort: EffortGate::default(),
             epf_dynamic_sharpness_min_effort: EffortGate::default(),
             block_ctx_map_15_cluster: false,
+            // W44-164: Zenjxl default fires the cheap auto-classifier
+            // when the caller hasn't set `with_content_class`. Libjxl /
+            // LeanFaster override this to `false` in their resolved-
+            // improvements constructors.
+            content_class_auto_classify: true,
         }
     }
 }
@@ -4107,6 +4248,9 @@ pub(crate) struct ResolvedImprovements {
 
     // Section D KNOWN-BUG re-enable
     pub(crate) block_ctx_map_15_cluster: bool,
+
+    // W44-164 — Smart-Zenjxl auto-classify ImageContentClass at encode entry
+    pub(crate) content_class_auto_classify: bool,
 }
 
 impl Default for ResolvedImprovements {
@@ -4141,6 +4285,9 @@ impl Default for ResolvedImprovements {
             try_dct64_min_effort: EffortGate::default(),
             epf_dynamic_sharpness_min_effort: EffortGate::default(),
             block_ctx_map_15_cluster: false,
+            // W44-164: Zenjxl default fires the cheap auto-classifier.
+            // Libjxl / LeanFaster constructors below override to `false`.
+            content_class_auto_classify: true,
         }
     }
 }
@@ -4390,6 +4537,10 @@ impl ResolvedImprovements {
             // Section D KNOWN-BUG: deliberately re-enable to match
             // libjxl
             block_ctx_map_15_cluster: true,
+            // W44-164: strict libjxl parity — no auto-classifier.
+            // Callers can still opt in via
+            // `LossyConfig::with_content_class(Some(class))`.
+            content_class_auto_classify: false,
         }
     }
 
@@ -4405,6 +4556,11 @@ impl ResolvedImprovements {
             buttloop_qf_seed: ButtloopQfSeedPolicy::Off,
             adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy::Off,
             buttloop_epf_sharpness_seed: EpfSharpnessSeed::LegacyUniform4,
+            // W44-164: LeanFaster drops the heavy per-image content
+            // gates — the auto-classifier dispatch is one such gate.
+            // Callers can still opt in via
+            // `LossyConfig::with_content_class(Some(class))`.
+            content_class_auto_classify: false,
             ..Default::default()
         }
     }
@@ -4443,6 +4599,7 @@ impl ResolvedImprovements {
             try_dct64_min_effort: c.try_dct64_min_effort,
             epf_dynamic_sharpness_min_effort: c.epf_dynamic_sharpness_min_effort,
             block_ctx_map_15_cluster: c.block_ctx_map_15_cluster,
+            content_class_auto_classify: c.content_class_auto_classify,
         }
     }
 }
@@ -5019,6 +5176,34 @@ impl LossyConfig {
         pixels: u64,
         smooth_photo_for_dct64_auto: bool,
     ) -> crate::effort::EffortProfile {
+        // Delegate to the broader variant with no auto-classified
+        // content (callers that need the W44-164 dispatch use the
+        // `_and_class` variant directly).
+        self.effective_profile_for_image_with_smoothness_and_class(
+            pixels,
+            smooth_photo_for_dct64_auto,
+            None,
+        )
+    }
+
+    /// Variant of [`Self::effective_profile_for_image_with_smoothness`]
+    /// that also takes a caller-computed
+    /// [`crate::effort::ImageContentClass`] from the W44-164 auto-
+    /// classifier ([`auto_classify_content_class_from_layout`]).
+    ///
+    /// Precedence (highest → lowest):
+    /// 1. `self.content_class` (caller-set via `with_content_class`)
+    /// 2. `auto_classified_content` IF
+    ///    `resolved.content_class_auto_classify` is `true`
+    ///    (default on `EncoderStrategy::Zenjxl` / `Aggressive`;
+    ///    `false` on `Libjxl` / `LeanFaster`)
+    /// 3. No class adapter fires
+    pub(crate) fn effective_profile_for_image_with_smoothness_and_class(
+        &self,
+        pixels: u64,
+        smooth_photo_for_dct64_auto: bool,
+        auto_classified_content: Option<crate::effort::ImageContentClass>,
+    ) -> crate::effort::EffortProfile {
         let mut p = self.effective_profile();
         // Always-on per-image adapter — skipped only when an explicit
         // `__expert` override is in play, to avoid silently re-flipping
@@ -5048,12 +5233,38 @@ impl LossyConfig {
                 crate::api::SmoothPhotoDct64Policy::ForceSkip => false,
             };
             p.adapt_to_image_lossy_with_smoothness(pixels, self.distance, smooth_hint);
-            // RFC #45 pick #4 chunk 1 — content-class dispatch.
-            // Fires only when the caller has explicitly set the class
-            // via `with_content_class` (default `None` keeps every
-            // hash-lock fixture byte-identical, because the dispatch
-            // surface itself is opt-in at the API level for chunk 1).
-            if let Some(class) = self.content_class {
+            // W44-164 Smart-Zenjxl chunk 1 — content-class dispatch.
+            //
+            // Precedence:
+            //   * `self.content_class` (caller-set via
+            //     `with_content_class`) — ALWAYS wins.
+            //   * Auto-classified via
+            //     `auto_classify_content_class_from_layout` ONLY when
+            //     `resolved.content_class_auto_classify == true`
+            //     (default on `EncoderStrategy::Zenjxl` /
+            //     `EncoderStrategy::Aggressive`; off on `Libjxl` and
+            //     `LeanFaster`).
+            //   * Neither set → no class adapter fires.
+            //
+            // The auto-classifier only computes on 8-bit sRGB layouts
+            // with `pixels >= CONTENT_CLASS_MIN_PIXELS` (= 65,536), so
+            // every existing hash-lock fixture (largest = 48×48 =
+            // 2,304 px) and every non-sRGB-u8 layout (16-bit, linear-
+            // f32, grayscale, HDR) stays byte-identical to pre-W44-164.
+            //
+            // The `Unknown` variant short-circuits inside
+            // `adapt_to_image_content` so a deadband classification is
+            // also byte-identical.
+            //
+            // RFC #45 pick #4 chunk 1 prior wiring kept the explicit
+            // path; W44-164 layers the auto-path on top.
+            let auto_class_for_resolve = if resolved.content_class_auto_classify {
+                auto_classified_content
+            } else {
+                None
+            };
+            let effective_class = self.content_class.or(auto_class_for_resolve);
+            if let Some(class) = effective_class {
                 p.adapt_to_image_content(pixels, self.distance, class);
             }
             // W44-133 Chunk G: Section A effort-gate consultation.
@@ -8688,9 +8899,21 @@ impl<'a> EncodeRequest<'a> {
         // value (resolved inside `effective_profile_*`).
         let smooth_photo_for_dct64 =
             detect_smooth_photo_for_dct64_from_layout(pixels, self.width, self.height, self.layout);
-        let mut profile = cfg.effective_profile_for_image_with_smoothness(
+        // W44-164 Smart-Zenjxl chunk 1: cheap zenanalyze-proxy-based
+        // ImageContentClass auto-classifier. Only computes on 8-bit sRGB
+        // layouts and images >= CONTENT_CLASS_MIN_PIXELS (= 65,536 px).
+        // The dispatch fires only when `EncoderStrategy::Zenjxl` /
+        // `Aggressive` is selected (resolved via
+        // `content_class_auto_classify`) AND the caller hasn't set
+        // `with_content_class(Some(...))` explicitly. See
+        // `auto_classify_content_class_from_layout` for the
+        // discriminator definition.
+        let auto_content_class =
+            auto_classify_content_class_from_layout(pixels, self.width, self.height, self.layout);
+        let mut profile = cfg.effective_profile_for_image_with_smoothness_and_class(
             (w as u64) * (h as u64),
             smooth_photo_for_dct64,
+            auto_content_class,
         );
 
         let mut linear_rgb = linear_rgb;
@@ -13743,6 +13966,320 @@ mod tests {
             256,
             PixelLayout::RgbaLinearF32,
         ));
+    }
+
+    /// W44-164: the auto-classifier discriminator predicate. Exercises
+    /// the pure `classify_from_proxies` function with synthesised
+    /// proxy values that bracket the threshold (no allocator / no
+    /// O(W·H) scan).
+    #[test]
+    fn test_w44_164_classify_from_proxies_screenshot() {
+        use crate::effort::ImageContentClass;
+        use crate::vardct::encoder::ZenanalyzeProxies;
+        // gb82-sc gmessages (real corpus): fcbr=0.907, m3=10.67
+        let p = ZenanalyzeProxies {
+            m3_colourfulness: 10.67,
+            flat_color_block_ratio: 0.907,
+            edge_density: 0.021,
+        };
+        assert_eq!(classify_from_proxies(&p), ImageContentClass::Screenshot);
+        // gb82-sc windows95 (real corpus, outlier): fcbr=0.360. Above
+        // the W44_164 threshold (0.35) → Screenshot.
+        let p = ZenanalyzeProxies {
+            m3_colourfulness: 27.19,
+            flat_color_block_ratio: 0.360,
+            edge_density: 0.268,
+        };
+        assert_eq!(classify_from_proxies(&p), ImageContentClass::Screenshot);
+        // gb82-sc imac_g3 (real corpus): fcbr=0.709, m3=15.32
+        let p = ZenanalyzeProxies {
+            m3_colourfulness: 15.32,
+            flat_color_block_ratio: 0.709,
+            edge_density: 0.079,
+        };
+        assert_eq!(classify_from_proxies(&p), ImageContentClass::Screenshot);
+    }
+
+    #[test]
+    fn test_w44_164_classify_from_proxies_photo() {
+        use crate::effort::ImageContentClass;
+        use crate::vardct::encoder::ZenanalyzeProxies;
+        // 1189261 (W44-91 TARGET, real corpus): fcbr=0.0034, m3=98.84
+        let p = ZenanalyzeProxies {
+            m3_colourfulness: 98.84,
+            flat_color_block_ratio: 0.0034,
+            edge_density: 0.633,
+        };
+        assert_eq!(classify_from_proxies(&p), ImageContentClass::Photo);
+        // 1025469 (W44-91 REGRESSION cell, real corpus): fcbr=0.0166,
+        // m3=45.45 — must classify as Photo (NOT Screenshot), proving
+        // the auto-classifier does not misfire on the W44-91 regression
+        // band.
+        let p = ZenanalyzeProxies {
+            m3_colourfulness: 45.45,
+            flat_color_block_ratio: 0.0166,
+            edge_density: 0.300,
+        };
+        assert_eq!(classify_from_proxies(&p), ImageContentClass::Photo);
+        // 297394 (high-colour photo, fcbr=0.0957) — just below the
+        // 0.10 photo ceiling, fcbr still in photo range, m3 high.
+        let p = ZenanalyzeProxies {
+            m3_colourfulness: 103.70,
+            flat_color_block_ratio: 0.0957,
+            edge_density: 0.300,
+        };
+        assert_eq!(classify_from_proxies(&p), ImageContentClass::Photo);
+    }
+
+    #[test]
+    fn test_w44_164_classify_from_proxies_deadband() {
+        use crate::effort::ImageContentClass;
+        use crate::vardct::encoder::ZenanalyzeProxies;
+        // Synthetic deadband (fcbr ∈ [0.10, 0.35)) — no fcbr value
+        // currently observed in either corpus sits here, but the
+        // classifier must short-circuit defensively. The deadband
+        // exists so future inputs in the gap don't get misclassified.
+        for fcbr in [0.10_f32, 0.15, 0.20, 0.25, 0.30, 0.34] {
+            let p = ZenanalyzeProxies {
+                m3_colourfulness: 50.0,
+                flat_color_block_ratio: fcbr,
+                edge_density: 0.2,
+            };
+            assert_eq!(
+                classify_from_proxies(&p),
+                ImageContentClass::Unknown,
+                "fcbr={fcbr} in deadband must classify as Unknown",
+            );
+        }
+        // Near-grayscale low-m3 content (fcbr below photo ceiling but
+        // m3 below the photo floor) → Unknown (no class adapter fires
+        // → byte-identical to pre-W44-164).
+        let p = ZenanalyzeProxies {
+            m3_colourfulness: 2.0,
+            flat_color_block_ratio: 0.05,
+            edge_density: 0.1,
+        };
+        assert_eq!(classify_from_proxies(&p), ImageContentClass::Unknown);
+    }
+
+    /// W44-164 auto-classifier entry point: short-circuits below the
+    /// `CONTENT_CLASS_MIN_PIXELS` (= 65,536 px) gate so the per-encode
+    /// O(W·H) scan is skipped on hash-lock-sized fixtures (largest
+    /// 48×48 = 2,304 px). The pixel gate exists in BOTH the helper
+    /// AND `adapt_to_image_content` so the dispatch is doubly
+    /// short-circuited — defence in depth.
+    #[test]
+    fn test_w44_164_auto_classify_pixel_gate() {
+        // 48×48 RGB (largest hash-lock fixture): below 65,536 → None.
+        let small = vec![200u8; 48 * 48 * 3];
+        let result = auto_classify_content_class_from_layout(&small, 48, 48, PixelLayout::Rgb8);
+        assert_eq!(
+            result, None,
+            "auto-classifier MUST short-circuit below CONTENT_CLASS_MIN_PIXELS \
+             so hash-lock fixtures stay byte-identical"
+        );
+        // 256×256 (= 65,536 px): exactly at threshold → computes.
+        // Construct fcbr-screenshot-like input: solid mid-gray (range=0
+        // on every block, fcbr=1.0).
+        let solid = vec![128u8; 256 * 256 * 3];
+        let result = auto_classify_content_class_from_layout(&solid, 256, 256, PixelLayout::Rgb8);
+        // Solid mid-gray: fcbr=1.0 (every block range=0), m3=0 →
+        // Screenshot via fcbr branch.
+        assert_eq!(
+            result,
+            Some(crate::effort::ImageContentClass::Screenshot),
+            "solid 256×256 (fcbr=1.0) must classify as Screenshot"
+        );
+    }
+
+    /// W44-164: layout dispatch — non-u8-sRGB layouts return None
+    /// (the proxy scan only knows BT.601-shaped layouts).
+    #[test]
+    fn test_w44_164_auto_classify_layout_dispatch() {
+        // 16-bit and float layouts return None — auto-classifier
+        // unavailable; caller can still set `with_content_class(Some)`
+        // explicitly. Use 256×256 (above pixel threshold) so the
+        // layout gate is the only thing rejecting.
+        let f32_data = vec![0u8; 256 * 256 * 4 * 4];
+        assert_eq!(
+            auto_classify_content_class_from_layout(
+                &f32_data,
+                256,
+                256,
+                PixelLayout::RgbaLinearF32
+            ),
+            None,
+        );
+        let u16_data = vec![0u8; 256 * 256 * 3 * 2];
+        assert_eq!(
+            auto_classify_content_class_from_layout(&u16_data, 256, 256, PixelLayout::Rgb16),
+            None,
+        );
+        let gray_data = vec![0u8; 256 * 256];
+        assert_eq!(
+            auto_classify_content_class_from_layout(&gray_data, 256, 256, PixelLayout::Gray8),
+            None,
+        );
+    }
+
+    /// W44-164: ResolvedImprovements.content_class_auto_classify
+    /// defaults per strategy.
+    #[test]
+    fn test_w44_164_resolved_default_per_strategy() {
+        let zenjxl = EncoderStrategy::Zenjxl.resolve(&StrategyOverrides::default());
+        assert!(
+            zenjxl.content_class_auto_classify,
+            "Zenjxl must enable the auto-classifier"
+        );
+        let aggressive = EncoderStrategy::Aggressive.resolve(&StrategyOverrides::default());
+        assert!(
+            aggressive.content_class_auto_classify,
+            "Aggressive must enable the auto-classifier"
+        );
+        let libjxl = EncoderStrategy::Libjxl.resolve(&StrategyOverrides::default());
+        assert!(
+            !libjxl.content_class_auto_classify,
+            "Libjxl must disable the auto-classifier (strict parity)"
+        );
+        let lean = EncoderStrategy::LeanFaster.resolve(&StrategyOverrides::default());
+        assert!(
+            !lean.content_class_auto_classify,
+            "LeanFaster must disable the auto-classifier (skip heavy per-image gates)"
+        );
+        // Custom inherits whatever the user set on EncoderImprovementsCustom.
+        let mut custom = EncoderImprovementsCustom::default();
+        assert!(
+            custom.content_class_auto_classify,
+            "EncoderImprovementsCustom::default() matches Zenjxl"
+        );
+        custom.content_class_auto_classify = false;
+        let resolved =
+            EncoderStrategy::Custom(Box::new(custom)).resolve(&StrategyOverrides::default());
+        assert!(
+            !resolved.content_class_auto_classify,
+            "Custom with field set false must propagate"
+        );
+    }
+
+    /// W44-164 explicit `with_content_class(Some(...))` ALWAYS wins
+    /// over the auto-classifier even on Zenjxl.
+    #[test]
+    fn test_w44_164_explicit_content_class_wins() {
+        use crate::effort::ImageContentClass;
+        // Build a 256×256 sRGB Photo-class input (smooth gradient,
+        // low fcbr). Auto-classifier should call this Photo; the
+        // explicit override (Screenshot) must win.
+        let mut photo = vec![0u8; 256 * 256 * 3];
+        for y in 0..256 {
+            for x in 0..256 {
+                let i = (y * 256 + x) * 3;
+                let r = (x as u8).wrapping_add(50);
+                let g = ((x + y) as u8 / 2).wrapping_add(80);
+                let b = (y as u8).wrapping_add(110);
+                photo[i] = r;
+                photo[i + 1] = g;
+                photo[i + 2] = b;
+            }
+        }
+        // Sanity-check the input: classifier sees this as Photo (or
+        // Unknown if fcbr or m3 falls outside the bands; in either
+        // case NOT Screenshot — we just need to verify the override
+        // path).
+        let auto = auto_classify_content_class_from_layout(&photo, 256, 256, PixelLayout::Rgb8);
+        assert_ne!(
+            auto,
+            Some(ImageContentClass::Screenshot),
+            "synthetic gradient should not auto-classify as Screenshot"
+        );
+
+        // Build a Zenjxl LossyConfig + explicit Screenshot override.
+        // At e5, baseline (no class) → patches=false. Auto-classifier
+        // saying Photo → patches stays false. Explicit override
+        // Screenshot → patches=true (per `adapt_to_image_content`).
+        let cfg = LossyConfig::new(1.0)
+            .with_effort(5)
+            .with_content_class(Some(ImageContentClass::Screenshot));
+        let p = cfg.effective_profile_for_image_with_smoothness_and_class(
+            256 * 256,
+            false,
+            auto, // Photo or Unknown, NEVER Screenshot
+        );
+        assert!(
+            p.patches,
+            "explicit with_content_class(Screenshot) must enable patches at e5"
+        );
+
+        // Now flip the override OFF (Some(Photo)) but auto says
+        // Screenshot — explicit Photo still wins → no patches.
+        let cfg = LossyConfig::new(1.0)
+            .with_effort(5)
+            .with_content_class(Some(ImageContentClass::Photo));
+        let p = cfg.effective_profile_for_image_with_smoothness_and_class(
+            256 * 256,
+            false,
+            Some(ImageContentClass::Screenshot),
+        );
+        assert!(
+            !p.patches,
+            "explicit with_content_class(Photo) must keep patches off at e5"
+        );
+    }
+
+    /// W44-164: auto-classifier fires on Zenjxl + Aggressive when the
+    /// caller leaves content_class unset.
+    #[test]
+    fn test_w44_164_auto_fires_on_zenjxl() {
+        use crate::effort::ImageContentClass;
+        // Zenjxl + no caller class + auto-classifier says Screenshot:
+        // patches flips on at e5.
+        let cfg = LossyConfig::new(1.0).with_effort(5);
+        assert_eq!(cfg.content_class, None);
+        let p = cfg.effective_profile_for_image_with_smoothness_and_class(
+            256 * 256,
+            false,
+            Some(ImageContentClass::Screenshot),
+        );
+        assert!(
+            p.patches,
+            "Zenjxl + auto-classifier=Screenshot must enable patches at e5"
+        );
+        // Same scenario but on Libjxl: auto-classifier DOES NOT fire,
+        // patches stays off (matching libjxl behaviour).
+        let cfg = LossyConfig::new(1.0)
+            .with_effort(5)
+            .with_strategy(EncoderStrategy::Libjxl);
+        let p = cfg.effective_profile_for_image_with_smoothness_and_class(
+            256 * 256,
+            false,
+            Some(ImageContentClass::Screenshot),
+        );
+        assert!(
+            !p.patches,
+            "Libjxl must NOT auto-classify (strict parity), patches stays off"
+        );
+        // LeanFaster: same as Libjxl on this axis (heavy gates dropped).
+        let cfg = LossyConfig::new(1.0)
+            .with_effort(5)
+            .with_strategy(EncoderStrategy::LeanFaster);
+        let p = cfg.effective_profile_for_image_with_smoothness_and_class(
+            256 * 256,
+            false,
+            Some(ImageContentClass::Screenshot),
+        );
+        assert!(
+            !p.patches,
+            "LeanFaster must NOT auto-classify, patches stays off"
+        );
+        // Aggressive: auto-classifier fires (same as Zenjxl).
+        let cfg = LossyConfig::new(1.0)
+            .with_effort(5)
+            .with_strategy(EncoderStrategy::Aggressive);
+        let p = cfg.effective_profile_for_image_with_smoothness_and_class(
+            256 * 256,
+            false,
+            Some(ImageContentClass::Screenshot),
+        );
+        assert!(p.patches, "Aggressive must auto-classify same as Zenjxl");
     }
 
     /// `__expert` sweep override pinning `try_dct64=Some(true)` must

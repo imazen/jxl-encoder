@@ -1,0 +1,140 @@
+W44-164 Smart-Zenjxl chunk 1 — auto-classifier A/B paired bench
+================================================================
+
+Source commit:    (pending — will be set at commit time)
+Parent (main):    f99c9ac4 feat(api): W44-162 HDR ToneMapping ...
+Bench script:     jxl-encoder/examples/w44_164_auto_classify_ab.rs
+Bench TSV:        benchmarks/w44_164_auto_classify_ab_2026-05-21.tsv
+Date:             2026-05-21
+Host:             lilith (Ryzen 9 7950X, 8 threads)
+Cells:            22 paired-sequential (Mode A then Mode B, per cell)
+
+Mode A: EncoderStrategy::Zenjxl (default).
+        `content_class_auto_classify == true` →
+        auto_classify_content_class_from_layout runs at encode entry,
+        derives ImageContentClass from cheap ZenanalyzeProxies, calls
+        `adapt_to_image_content`.
+Mode B: EncoderStrategy::Custom(Box::new(EncoderImprovementsCustom {
+            content_class_auto_classify: false, ..Default::default()
+        })).
+        Every other field at the Zenjxl default → equivalent to pre-
+        W44-164 production behaviour (Mode A minus the auto-classifier).
+
+Cells (12 screenshots + 10 photos; all d=1.0):
+  - 4 GB82-SC screenshots × e ∈ {5, 6, 7}: codec_wiki, imac_g3,
+    terminal, windows95
+  - 5 CID22 validation photos × e ∈ {5, 7}: 1189261 (W44-91 TARGET),
+    1025469 (W44-78 REGRESSION), 1418519 (high-smooth protection),
+    1279330, 1044329
+
+Discriminator (from `auto_classify_content_class_from_layout`):
+  - fcbr >= W44_164_FCBR_SCREENSHOT_MIN (= 0.35) → Screenshot
+  - fcbr <  0.10 AND m3_colourfulness >= 5.0    → Photo
+  - else                                         → Unknown (no-op)
+
+Per-cell results:
+  Mode A: bytes when auto-classifier active
+  Mode B: bytes when auto-classifier inactive (= pre-W44-164)
+  delta:  A_bytes - B_bytes (negative = chunk wins)
+
+Headline (per the TSV):
+
+  SCREENSHOTS at e ∈ {5, 6} (8 cells — TARGETS):
+    codec_wiki e5: -20.4%  e6: -19.8%
+    imac_g3    e5: -59.9%  e6: -59.3%
+    terminal   e5: -61.7%  e6: -60.3%
+    windows95  e5: -40.8%  e6: -40.5%
+
+  SCREENSHOTS at e=7 (4 cells — patches already on by default):
+    codec_wiki e7:  0.000% (BYTE-IDENTICAL)
+    imac_g3    e7:  0.000%
+    terminal   e7:  0.000%
+    windows95  e7:  0.000%
+
+  PHOTOS at e=5/e=7 (10 cells — protection set):
+    1189261 e5/e7:  0.000% / 0.000% (BYTE-IDENTICAL)
+    1025469 e5/e7:  0.000% / 0.000%
+    1418519 e5/e7:  0.000% / 0.000%
+    1279330 e5/e7:  0.000% / 0.000%
+    1044329 e5/e7:  0.000% / 0.000%
+
+  Totals:
+    byte-identical:    14 cells (63.6%)
+    A < B (auto wins):  8 cells (36.4%)
+    B < A (auto hurts): 0 cells (0.0%)
+    Total bytes A: 1,787,053 B: 2,697,308 delta: -910,255 (-33.747%)
+
+Acceptance gates (chunk 1):
+  (a) Build PASS                                                       PASS
+  (b) `cargo test --lib --features __expert` 1392/1392 (+8 vs 1384)    PASS
+  (c) Hash-locks BYTE-IDENTICAL on lossy fixtures                       PASS (36/36)
+  (d) GB82-SC measurable improvement on 3 spot-check screenshots       PASS (8/8 e5/e6)
+  (e) 5 CID22 photo cells BYTE-IDENTICAL                                PASS (10/10)
+  (f) EncoderStrategy::Libjxl byte-identical (structural argument:
+      ResolvedImprovements::libjxl() sets
+      content_class_auto_classify: false; verified by
+      test_w44_164_resolved_default_per_strategy)                       PASS
+  (g) docs/LIBJXL_DIVERGENCES.md Section B updated                      PASS
+  (h) Multi-decoder roundtrip jxl-rs + jxl-oxide on 3 cells             PASS (6/6
+      via jxl-encoder/tests/w44_164_decoder_roundtrip.rs)
+
+Why the win is so large at e ∈ {5, 6}:
+  - libjxl gates `patches = true` at speed_tier <= kHare (effort >= 7).
+    e5 and e6 stay at `patches = false` by default.
+  - `EffortProfile::adapt_to_image_content` (W36-3 / W41-2 era) flips
+    `patches = true` on `Screenshot`-class content at e ∈ {5, 6} —
+    libjxl-superset behaviour the encoder has shipped for ages, but
+    only fired when callers manually plumbed `with_content_class(Some(
+    Screenshot))`. W44-164 wires the auto-classifier so the dispatch
+    fires automatically.
+  - Patches detection on screenshots typically catches repeated UI
+    elements (icons, glyphs, button bars) and packs them into the
+    reference frame. The 20-60% byte savings here matches the W36-3 /
+    W41-2 measurements on the same corpus.
+
+What changed from the W44-163 audit's "+37% screenshot bytes":
+  - W44-163's "+37%" figure was from W36-3 / W41-2 at e7 (now byte-
+    identical because patches is already on at e7+ by default).
+  - The auto-classifier moves that lift down to e5/e6 where it's
+    MORE valuable than at e7 (e5/e6 are the speed/quality tiers where
+    patches-at-no-cost is most felt).
+  - At e7+, the auto-classifier is a no-op (matches W23-1 / W23-2
+    intent — only flip what isn't already on).
+
+Streaming + animation paths:
+  - Streaming `LossyEncoder` ingests pre-converted linear_rgb, so the
+    raw sRGB u8 source the proxies need is not in scope. Auto-classifier
+    returns None there (same precedent as W44-91).
+  - Animation `encode_animation_lossy` could be wired to compute the
+    proxies per-frame, but per-frame proxy cost would multiply across
+    every frame and animation content is typically uniform across the
+    timeline. Deferred to a follow-on chunk (see DO-NOT below).
+  - Callers needing the auto-classifier on those paths can plumb
+    `with_content_class(Some(class))` explicitly upstream.
+
+DO NOT (future agents):
+  - DO NOT raise the fcbr threshold above 0.40 — windows95 sits at
+    0.360 in the gb82-sc corpus and IS a screenshot (patches helps
+    pixel-art too).
+  - DO NOT lower the fcbr threshold below 0.30 — that risks pulling
+    297394-class photos (fcbr=0.0957) into the Screenshot bucket; the
+    deadband [0.10, 0.35) is the safety margin.
+  - DO NOT cite "FMA precision" for any byte movement (per W44-66 user
+    correction).
+  - DO NOT re-investigate "should auto-classifier fire on streaming"
+    without first adding the per-frame proxy compute to the streaming
+    + animation paths.
+  - DO NOT remove the `auto_classify_content_class_from_layout`
+    short-circuit on `pixels < CONTENT_CLASS_MIN_PIXELS`. That short-
+    circuit (a) saves the O(W·H) scan on throwaway-small inputs,
+    and (b) keeps the 36/36 hash-lock fixtures byte-identical.
+
+Follow-on chunks (NOT this chunk):
+  - W44-165 candidate: thread per-frame proxy compute through animation
+    encoder so screen-recordings get the auto-classifier lift.
+  - W44-166 candidate: add streaming proxy compute (caller plumbs a
+    `with_first_strip_proxies(...)` or similar shape) so live encoders
+    can opt in to the dispatch.
+  - W44-167 candidate: add 16-bit + linear-f32 layout coverage to
+    `compute_w44_91_zenanalyze_proxies` so the auto-classifier extends
+    to HDR + medical / scientific inputs.
