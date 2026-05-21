@@ -1,0 +1,168 @@
+
+# W44-147: photo cluster per-strategy dump analysis
+# Source: /tmp/w44_147_dumps
+# Image dims: 512×512 = 64×64 blocks; 3×3 regions = 21×21 blocks each
+
+=== 1418519 e8 d=5 ===  ours_rows=951  cjxl_rows=951
+
+  strat         ours_fb cjxl_fb   Δ_fb |  ours_Y  cjxl_Y     Δ_Y | mean_qac (o/c)
+  DCT8               80      80     +0 |     681     679      +2 |   5.19/  5.33
+  IDENTITY            6       6     +0 |      21      21      +0 |   5.17/  5.17
+  DCT2X2              8       8     +0 |      54      51      +3 |   4.88/  5.00
+  DCT16X16           25      25     +0 |     473     463     +10 |   4.76/  4.84
+  DCT32X32           46      46     +0 |    1146    1162     -16 |   5.09/  5.28
+  DCT16X8            30      30     +0 |     276     264     +12 |   5.00/  5.10
+  DCT8X16            29      29     +0 |     308     304      +4 |   4.83/  4.93
+  DCT32X16           20      20     +0 |     385     390      -5 |   5.00/  5.35
+  DCT16X32           25      25     +0 |     388     390      -2 |   4.96/  5.12
+  DCT64X64           36      36     +0 |     317     313      +4 |   5.14/  5.25
+  DCT64X32            3       4     -1 |       3       3      +0 |   5.00/  5.00
+  DCT32X64            9       8     +1 |      24      27      -3 |   5.11/  5.50
+  TOTAL             317     317     +0 |    4076    4067      +9
+
+  Per-region mean qac (ours / cjxl):
+    top:   5.2/  5.4    5.0/  5.1    5.2/  5.4
+    mid:   5.0/  5.1    5.1/  5.3    5.0/  5.1
+    bot:   5.2/  5.4    5.0/  5.0    5.4/  5.5
+
+  Per-region first-block count (ours / cjxl):
+    top:   23/  23    12/  12    12/  12
+    mid:   96/  96    39/  39    96/  96
+    bot:   18/  18    11/  10    10/  11
+
+  Per-cell strategy agreement: 4048/4096 (98.8%)
+  Top disagreement pairs (ours → cjxl):
+    DCT32X32     → DCT64X32      16 cells
+    DCT32X64     → DCT32X32      16 cells
+    DCT32X64     → DCT64X32      16 cells
+
+=== 1531677 e7 d=5 ===  ours_rows=1023  cjxl_rows=1299
+
+  strat         ours_fb cjxl_fb   Δ_fb |  ours_Y  cjxl_Y     Δ_Y | mean_qac (o/c)
+  DCT8                9      34    -25 |      82     298    -216 |   5.33/  5.41
+  DCT2X2              1       2     -1 |      13      23     -10 |   5.00/  4.50
+  DCT16X16            3      48    -45 |      65    1277   -1212 |   5.00/  4.38
+  DCT32X32          188     175    +13 |   18824   17194   +1630 |   4.46/  4.49
+  DCT16X8             8      33    -25 |      67     438    -371 |   4.75/  4.88
+  DCT8X16             1      21    -20 |      13     275    -262 |   6.00/  4.71
+  DCT32X16           92      72    +20 |    4379    3292   +1087 |   4.79/  4.76
+  DCT16X32           39      48     -9 |    2112    2533    -421 |   4.62/  4.58
+  TOTAL             341     433    -92 |   25555   25330    +225
+
+  Per-region mean qac (ours / cjxl):
+    top:   4.9/  4.9    4.5/  4.5    4.9/  4.9
+    mid:   4.6/  4.7    4.5/  4.6    4.5/  4.6
+    bot:   4.7/  4.7    4.6/  4.6    4.3/  4.4
+
+  Per-region first-block count (ours / cjxl):
+    top:   44/  50    42/  47    42/  45
+    mid:   34/  41    37/  55    33/  51
+    bot:   35/  43    39/  46    35/  55
+
+  Per-cell strategy agreement: 3560/4096 (86.9%)
+  Top disagreement pairs (ours → cjxl):
+    DCT32X32     → DCT16X32      96 cells
+    DCT32X32     → DCT16X16      80 cells
+    DCT32X16     → DCT16X16      76 cells
+    DCT32X16     → DCT32X32      56 cells
+    DCT32X32     → DCT32X16      48 cells
+    DCT32X16     → DCT16X8       28 cells
+
+=== 1420710 e8 d=6 ===  ours_rows=879  cjxl_rows=1044
+
+  strat         ours_fb cjxl_fb   Δ_fb |  ours_Y  cjxl_Y     Δ_Y | mean_qac (o/c)
+  DCT8                6      12     -6 |      39      75     -36 |   6.00/  6.00
+  IDENTITY            0       1     -1 |       0      13     -13 |   0.00/  5.00
+  DCT2X2              0       1     -1 |       0       9      -9 |   0.00/  5.00
+  DCT16X16            8      33    -25 |     186     816    -630 |   5.00/  5.06
+  DCT32X32          232     204    +28 |   19668   17260   +2408 |   5.01/  5.01
+  DCT16X8             2       6     -4 |      21      70     -49 |   5.00/  5.00
+  DCT8X16             3       9     -6 |      28      85     -57 |   5.33/  5.67
+  DCT32X16           20      45    -25 |     821    1774    -953 |   5.05/  5.07
+  DCT16X32           22      37    -15 |     852    1419    -567 |   5.09/  5.11
+  TOTAL             293     348    -55 |   21615   21521     +94
+
+  Per-region mean qac (ours / cjxl):
+    top:   5.0/  5.1    5.1/  5.1    5.0/  5.0
+    mid:   5.1/  5.2    5.0/  5.1    5.0/  5.0
+    bot:   5.0/  5.0    5.1/  5.1    5.0/  5.1
+
+  Per-region first-block count (ours / cjxl):
+    top:   43/  52    35/  39    32/  41
+    mid:   37/  47    30/  32    27/  33
+    bot:   31/  36    31/  38    27/  30
+
+  Per-cell strategy agreement: 3620/4096 (88.4%)
+  Top disagreement pairs (ours → cjxl):
+    DCT32X32     → DCT32X16      208 cells
+    DCT32X32     → DCT16X32      128 cells
+    DCT32X32     → DCT16X16      96 cells
+    DCT32X32     → DCT8X16       10 cells
+    DCT32X32     → DCT16X8       8 cells
+    DCT16X32     → DCT32X32      8 cells
+
+=== 1531677 e5 d=3 ===  ours_rows=1719  cjxl_rows=3585
+
+  strat         ours_fb cjxl_fb   Δ_fb |  ours_Y  cjxl_Y     Δ_Y | mean_qac (o/c)
+  DCT8              175     698   -523 |    2801   11119   -8318 |   5.29/  5.22
+  DCT2X2              3      12     -9 |      54     189    -135 |   4.67/  4.42
+  DCT16X16           25      33     -8 |    1155    1375    -220 |   4.44/  4.70
+  DCT32X32          144     110    +34 |   24042   17492   +6550 |   4.46/  4.55
+  DCT16X8            26     111    -85 |     384    2122   -1738 |   5.12/  4.81
+  DCT8X16            23      96    -73 |     502    2154   -1652 |   4.78/  4.86
+  DCT32X16          106      81    +25 |    8044    5818   +2226 |   4.75/  4.88
+  DCT16X32           71      54    +17 |    5733    3948   +1785 |   4.68/  4.80
+  TOTAL             573    1195   -622 |   42715   44217   -1502
+
+  Per-region mean qac (ours / cjxl):
+    top:   5.1/  5.3    4.7/  4.9    5.0/  5.2
+    mid:   4.9/  5.1    4.6/  4.9    4.8/  5.0
+    bot:   4.9/  5.2    4.4/  4.9    4.8/  5.0
+
+  Per-region first-block count (ours / cjxl):
+    top:   65/  97    55/  92    63/ 104
+    mid:   51/  76    58/ 189    63/ 145
+    bot:   82/ 151    45/ 152    91/ 189
+
+  Per-cell strategy agreement: 2896/4096 (70.7%)
+  Top disagreement pairs (ours → cjxl):
+    DCT32X32     → DCT8          252 cells
+    DCT32X16     → DCT8          123 cells
+    DCT16X32     → DCT8          111 cells
+    DCT32X32     → DCT16X32      96 cells
+    DCT32X32     → DCT16X8       80 cells
+    DCT32X32     → DCT32X16      64 cells
+
+=== 1418519 e7 d=5 ===  ours_rows=951  cjxl_rows=951
+
+  strat         ours_fb cjxl_fb   Δ_fb |  ours_Y  cjxl_Y     Δ_Y | mean_qac (o/c)
+  DCT8               80      80     +0 |     748     748      +0 |   6.70/  6.70
+  IDENTITY            6       6     +0 |      24      24      +0 |   7.00/  7.00
+  DCT2X2              8       8     +0 |      64      64      +0 |   6.75/  6.75
+  DCT16X16           25      25     +0 |     469     469      +0 |   6.36/  6.24
+  DCT32X32           46      46     +0 |    1344    1319     +25 |   7.57/  7.43
+  DCT16X8            30      30     +0 |     284     284      +0 |   6.57/  6.57
+  DCT8X16            29      29     +0 |     349     349      +0 |   6.28/  6.28
+  DCT32X16           20      20     +0 |     416     416      +0 |   7.20/  7.20
+  DCT16X32           25      25     +0 |     445     451      -6 |   7.20/  7.16
+  DCT64X64           36      36     +0 |     459     440     +19 |   7.97/  7.97
+  DCT64X32            3       4     -1 |       4       4      +0 |   8.00/  8.00
+  DCT32X64            9       8     +1 |      37      37      +0 |   8.00/  8.00
+  TOTAL             317     317     +0 |    4643    4605     +38
+
+  Per-region mean qac (ours / cjxl):
+    top:   7.6/  7.7    7.9/  8.0    8.2/  8.2
+    mid:   6.5/  6.4    7.3/  7.3    6.6/  6.6
+    bot:   8.1/  7.9    8.1/  8.0    8.1/  8.0
+
+  Per-region first-block count (ours / cjxl):
+    top:   23/  23    12/  12    12/  12
+    mid:   96/  96    39/  39    96/  96
+    bot:   18/  18    11/  10    10/  11
+
+  Per-cell strategy agreement: 4048/4096 (98.8%)
+  Top disagreement pairs (ours → cjxl):
+    DCT32X32     → DCT64X32      16 cells
+    DCT32X64     → DCT32X32      16 cells
+    DCT32X64     → DCT64X32      16 cells
+
