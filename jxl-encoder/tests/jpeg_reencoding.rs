@@ -443,9 +443,24 @@ fn test_decode_landscape_jpeg_oxide() {
     }
     // These diffs are from IDCT implementation differences between djxl and djpeg,
     // NOT encoding errors. libjxl's own JPEG reencoding has RMSE=1.89, max_diff=29
-    // vs djpeg. Our RMSE=0.82, max_diff=10 is significantly better.
+    // vs djpeg.
+    //
+    // Pre-W44-161: max_diff was ~10 because our JPEG-CfL pipeline was buggy
+    // (transposed-vs-natural quant-table mismatch in `scaled_qtable` AND missing
+    // coefficient subtraction step entirely). Those two errors partially
+    // canceled when run through jxl-oxide's IDCT, producing a coincidentally-
+    // small numerical diff vs djpeg.
+    //
+    // Post-W44-161 (issue #63): JPEG-CfL now matches libjxl exactly — bit-
+    // exact byte roundtrip via djxl --reconstruct_jpeg PASS on every 4:4:4
+    // fixture (`tests/jpeg_transcode_roundtrip.rs` + `test_jbrd_roundtrip_*`).
+    // The cross-implementation IDCT diff vs djpeg has correspondingly aligned
+    // with libjxl's reference value (max_diff ~29, RMSE ~1.89). The bound was
+    // raised from <= 12 to <= 30 (libjxl's max + 1 cushion) to reflect this
+    // — the bound was pinned to the artifact of the bug, not the correct
+    // behavior.
     assert!(rmse < 2.0, "RMSE too high: {rmse}");
-    assert!(max_diff <= 12, "Max pixel diff too high: {max_diff}");
+    assert!(max_diff <= 30, "Max pixel diff too high: {max_diff}");
 }
 
 /// Test JBRD box serialization and byte-exact JPEG reconstruction via djxl.
