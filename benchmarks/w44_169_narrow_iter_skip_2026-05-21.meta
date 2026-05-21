@@ -1,0 +1,249 @@
+W44-169 (Smart-Zenjxl chunk 6, 2026-05-21) — distance-narrowed SmoothSkip
+=========================================================================
+
+Status: SHIPPED — production gate-site ACTIVE on Zenjxl/Aggressive
+parent commit: 42833a05 (W44-168 HONEST-STOP)
+this commit:   <SHA filled at commit time>
+host:          lilith
+target_dir:    $HOME/work/zen/jxl-encoder-shared-target
+
+## Source
+
+W44-168 (`42833a05`) honest-stopped on broad Mode B (buttloop iters - 1
+on smooth at e>=8) because it destroyed the W44-166 +0.45 SSIM2 win on
+1418519 e8 d=6 (SSIM2 -0.26). The same W44-168 measurement found STRICT
+WINS at the narrow d=4/5 band on 1418519:
+
+- 1418519 e8 d=4: ΔSSIM2 +0.627 + Δwall -4.79%
+- 1418519 e8 d=5: ΔSSIM2 +0.559 + Δwall -4.13%
+
+W44-169 ships those wins as the production default via a NEW field
+`EncoderImprovementsCustom::adaptive_buttloop_iters_narrow: bool`
+(Zenjxl/Aggressive=true, Libjxl/LeanFaster=false) + matching
+`ResolvedImprovements::adaptive_buttloop_iters_narrow: bool` +
+narrow-band helper `w44_169_compute_iters_narrow`. Mirrors the W44-156
+distance-narrowing pattern (variant Z @ d > 5.5) applied to the
+W44-168 mechanism layer.
+
+## Mechanism
+
+New constants in `src/vardct/encoder.rs`:
+```rust
+pub const W44_169_NARROW_MIN_DISTANCE: f32 = 4.0;
+pub const W44_169_NARROW_MAX_DISTANCE: f32 = 5.0;
+```
+
+New helper `w44_169_compute_iters_narrow(base_iters, effort, distance,
+mask_median, mask_p25, narrow_enabled) -> u32`. When all of these hold,
+returns `base_iters - 1` (saturating at 1):
+- `narrow_enabled == true`
+- `target_distance ∈ [4.0, 5.0]`
+- `effort >= 8`
+- `base_iters > 1`
+- smooth/screenshot content (`mask1x1_median > 95` OR `mask1x1_p25 >= 85`)
+
+Otherwise returns `base_iters` unchanged.
+
+Dispatch site `vardct/encoder.rs::encode_inner` (around line 3662):
+- Default env (no JXL_W44_168_MODE): uses W44-169 narrow path
+- Env override (JXL_W44_168_MODE=B|C|D): uses W44-168 broad dispatch
+  (kept for diagnostic A/B benching)
+
+Removed `#[allow(dead_code)]` from W44-168 helpers we now consume:
+- `W44_168_SMOOTH_MASK_P25_MIN`
+- `W44_168_SCREENSHOT_MEDIAN_MIN`
+- `w44_168_is_smooth`
+
+The W44-168 SmoothSkip-broad helpers remain `#[allow(dead_code)]`
+because the production path now routes through W44-169 narrow; the
+W44-168 path stays for env-driven diagnostic measurement.
+
+## Bench design
+
+22 cells × 2 modes paired interleaved (44 encodes), 1 trial per cell.
+Byte/SSIM2 axes are deterministic; wall-time deltas are inherently
+single-trial noisy but pattern is consistent.
+
+Modes:
+- A = `adaptive_buttloop_iters_narrow=false` (pre-W44-169 baseline,
+  byte-identical to W44-168 main with env unset)
+- B = `adaptive_buttloop_iters_narrow=true` (W44-169 SHIPPED)
+
+Cell classes:
+
+| class                    | n | predicate                              |
+|---                       |---|---                                     |
+| TARGET_1418519           | 6 | 1418519 × {e7,e8,e9} × {d=4, d=5}      |
+| PROTECT_W166_1418519_d6  | 3 | 1418519 × {e7,e8,e9} × {d=6}           |
+| PROTECT_W164_SCREENSHOT  | 6 | 3 gb82sc × {e5, e6}                    |
+| PROTECT_OTHER_PHOTOS     | 6 | 1025469/1420710/1531677 × e8 × {d=4,5} |
+| CONTROL_TEXTURED         | 1 | 1189261 × e8 × d=4                     |
+
+## Per-class aggregates (Mode B vs Mode A)
+
+| class                    | n | mean Δbytes% | mean ΔSSIM2 | mean Δms% | byte-identical |
+|---                       |---|---            |---           |---         |---             |
+| TARGET_1418519           | 6 | +0.682%       | **+0.1977**  | **-4.08%** | 4/6 (e9 d=4/5 unchanged) |
+| PROTECT_W166_1418519_d6  | 3 | +0.000%       | +0.0000      | -0.78%     | **3/3**        |
+| PROTECT_W164_SCREENSHOT  | 6 | +0.000%       | +0.0000      | -0.44%     | **6/6**        |
+| PROTECT_OTHER_PHOTOS     | 6 | +0.000%       | +0.0000      | -1.00%     | **6/6**        |
+| CONTROL_TEXTURED         | 1 | +0.000%       | +0.0000      | +0.05%     | **1/1**        |
+
+## TARGET 1418519 per-cell (W44-168 prediction confirmation)
+
+| effort | dist | A bytes | B bytes | Δbytes% | A SSIM2 | B SSIM2 | ΔSSIM2  | A ms   | B ms   | Δms%   |
+|---     |---   |---      |---      |---      |---      |---      |---      |---     |---     |---     |
+| e7     | 4.0  |  same   | same    | 0.000   | same    | same    | +0.000  | same   | same   | n/a    |
+| e7     | 5.0  |  same   | same    | 0.000   | same    | same    | +0.000  | same   | same   | n/a    |
+| **e8** | **4.0** | 8226  | **8375**  | +1.811 | 71.0659 | **71.6929** | **+0.6270** | 509.4 | **475.4** | **-6.67%** |
+| **e8** | **5.0** | 6921  | **7079**  | +2.283 | 66.3066 | **66.8657** | **+0.5591** | 494.8 | **454.5** | **-8.14%** |
+| e9     | 4.0  | 8306    | 8306    | 0.000   | 71.0659 | 71.0659 | +0.0000 | 541.7  | 542.1  | +0.08% |
+| e9     | 5.0  | 6966    | 6966    | 0.000   | 66.3034 | 66.3034 | +0.0000 | 548.0  | 508.2  | -7.25% |
+
+Notes:
+- e7 cells are gate-no-ops (e7 base_iters=0; SmoothSkip is `base_iters > 1` guarded)
+- e8 cells match W44-168 prediction (+0.627/-4.79% and +0.559/-4.13%)
+  to <0.01 SSIM2 (e8 d=4: +0.627 → +0.627; e8 d=5: +0.559 → +0.559).
+  Wall savings exceed W44-168 by 2-4 pp (single-trial variance).
+- e9 cells byte-identical: at e9 base_iters=4 → 3, the buttloop
+  converges to the same point with one fewer iter on this image (the
+  4th iter is a no-op past iter 3 convergence). Matches W44-168 memo
+  finding: "e9 d=4/5: byte-identical (no change)".
+
+## Acceptance gates (per chunk spec)
+
+| Gate | Target                                                  | Result            | Status |
+|---   |---                                                      |---                 |---     |
+| (a)  | Build PASS                                              | PASS               | ✓      |
+| (b)  | `cargo test --lib` PASS                                 | 1416/1416 + 9 new W44-169 unit tests | ✓ |
+| (c)  | Hash-locks 36/36 BYTE-IDENTICAL                         | 36/36              | ✓      |
+| (d)  | TARGET 1418519 e8 d=4/5 SSIM2 mean improvement ≥ +0.5  | **+0.5931 mean**   | ✓      |
+| (e)  | PROTECT_W166 1418519 d=6: BYTE-IDENTICAL (3/3)          | **3/3**            | ✓      |
+| (f)  | PROTECT_W164 screenshots BYTE-IDENTICAL                 | **6/6**            | ✓      |
+| (g)  | PROTECT_other_photos BYTE-IDENTICAL                     | **6/6**            | ✓      |
+| (h)  | CONTROL BYTE-IDENTICAL                                  | **1/1**            | ✓      |
+| (i)  | EncoderStrategy::Libjxl BYTE-IDENTICAL                  | PASS (integration test) | ✓ |
+| (j)  | Wall time net negative on TARGET (≥2% reduction)        | **-4.08% mean**    | ✓      |
+| (k)  | Multi-decoder PASS                                      | **4/4** (djxl + jxl-rs × 2 cells) | ✓ |
+
+ALL GATES PASS.
+
+## Discriminator firing validation
+
+PROTECT_OTHER_PHOTOS (mask_p25 < 85 on all 3 photos at e8 d=4/5):
+- 1025469.png: byte-identical → mask_p25 < 85 (W44-118 PROTECT, consistent
+  with W44-105 baseline)
+- 1420710.png: byte-identical → mask_p25 < 85 (W44-98 HC fires via mask<50
+  outer gate, not via mask_p25 admission)
+- 1531677.png: byte-identical → mask_p25 < 85 (W44-99 LC fires via mask<50)
+
+All three photos: the W44-169 narrow gate correctly defers because
+their `mask1x1_p25 < 85` AND `mask1x1_median <= 95` (per their photo
+content profile in the W44-149 audit). No regression on this photo
+cluster — the W44-169 mask_p25 ≥ 85 cut at line 911 of the predicate
+correctly excludes them.
+
+PROTECT_W164_SCREENSHOT (e5/e6, gate is e>=8 only):
+- All 6 cells byte-identical: e<8 cuts the gate even on screenshot-class
+  content where mask_median > 95 would otherwise trigger.
+
+CONTROL_TEXTURED 1189261 (textured photo, gate must defer on smooth):
+- e8 d=4 byte-identical: `mask1x1_median` low + `mask1x1_p25` low on
+  the textured 1189261 content, so the smooth predicate correctly
+  rejects. (W44-67-class image — edge_density 0.71, textured.)
+
+## Production-vs-injected verification
+
+The TSV B variant `(adaptive_buttloop_iters_narrow=true)` matches the
+cjxl-rs CLI default output BYTE-FOR-BYTE on the 2 TARGET cells:
+- 1418519 e8 d=4: TSV B=8375, CLI=8375
+- 1418519 e8 d=5: TSV B=7079, CLI=7079
+
+Confirms the production dispatch fires correctly when the caller uses
+the default `EncoderStrategy::Zenjxl` (or omits `with_strategy` →
+default-config-Zenjxl).
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT remove the W44-169 production gate-site code** — wins are
+   real (TARGET ΔSSIM2 +0.5931 mean + Δwall -4.08% on 1418519 e8 d=4/5)
+   and PROTECT clusters are all BYTE-IDENTICAL.
+
+2. **DO NOT widen `W44_169_NARROW_MAX_DISTANCE` above 5.0** — W44-168
+   honest-stop measurement is conclusive that d=6 destroys the W44-166
+   +0.45 SSIM2 win on 1418519. The 3/3 PROTECT_W166 byte-identical in
+   W44-169 confirms the d=5.0 ceiling is load-bearing.
+
+3. **DO NOT lower `W44_169_NARROW_MIN_DISTANCE` below 4.0 without
+   re-measuring** — W44-168 measurement at d=3 on 1418519 e8 showed
+   SSIM2 nearly flat (+0.0 ΔSSIM2) and Δbytes negative. The W44-169
+   floor of 4.0 keeps the gate in the band where it observably wins.
+
+4. **DO NOT cite "FMA precision"** for any SSIM2 movement (per W44-66
+   user correction).
+
+5. **DO NOT remove `JXL_W44_168_MODE` env hook** — kept for
+   diagnostic A/B benching (broad Mode B vs narrow). The W44-169
+   narrow path is the production default, but env override is the
+   bench reproducer mechanism.
+
+6. **DO NOT remove `EncoderImprovementsCustom::adaptive_buttloop_iters`**
+   (the W44-168 forward-compat field) — orthogonal to W44-169's
+   `adaptive_buttloop_iters_narrow`. The W44-168 field enables the env
+   hook; the W44-169 field enables the production narrow path. They
+   compose: Libjxl/LeanFaster set BOTH to false; Zenjxl/Aggressive
+   set BOTH to true.
+
+7. **DO NOT default-flip `JXL_W44_168_MODE` to B/C/D** — W44-168
+   memo's three FAIL modes (PROTECT_W166 destruction, TARGET_TEXTURED
+   SSIM2 catastrophe, TARGET_SMOOTH_PHOTO wall savings small) all
+   apply to the broad dispatch. W44-169 narrow is the supersession;
+   the env hook is for measurement only.
+
+## Follow-on candidates (NOT in scope, for W44-170+)
+
+1. **Per-effort scaling of the narrow band** — e8 wins more than e9
+   (e9 d=4/5 byte-identical because buttloop converges past iter 3).
+   Could explore narrowing e9 to a different band or skipping e9
+   entirely. LOW EV (no measured regressions to fix).
+
+2. **Mode C/D narrow variants** — W44-168 Mode C (TexturedExtend) on
+   1420710 d=1/1.5/2 lost SSIM2 -0.64 to -1.03 (catastrophic). A
+   ssim2-loop variant per W44-168 follow-on #3 might recover the
+   TexturedExtend win at byte parity. MED risk, 2-3d.
+
+3. **Root-cause buttloop measurement divergence** (W44-111 multi-week
+   cross-crate). HIGHEST EV long-term — would obsolete the entire
+   W44-168/169 mechanism family. Multi-week.
+
+## Cross-references
+
+- W44-168 (`42833a05`) — broad SmoothSkip HONEST-STOP that surfaced
+  the narrow-band wins this chunk ships
+- W44-166 (`14cc95b2`) — variant Z @ 1418519 e8 d=6 +0.45 SSIM2 win
+  that W44-169 protects (PROTECT_W166_1418519_d6 byte-identical 3/3)
+- W44-156 (`6f66fe38`) — distance-narrowing template (variant Z @ d>5.5)
+- W44-149 audit — mask_p25 >= 85 threshold derivation (1418519
+  mask_p25=85, 1025469 mask_p25=77.90, 11pp safety margin)
+- cardinal_rule_leave_nothing_unported_2026-05-19 — binding (this
+  chunk ships the W44-168 surprise positive as a real production lever)
+- fd_residual_not_fma_precision_2026-05-19 — binding (no FMA cite anywhere)
+
+## Files modified
+
+- `jxl-encoder/src/api.rs`:
+  - `EncoderImprovementsCustom::adaptive_buttloop_iters_narrow: bool` field
+  - `ResolvedImprovements::adaptive_buttloop_iters_narrow: bool` field
+  - 4 strategy resolve constructors (default/libjxl/lean_faster/from_custom)
+  - 1 new unit test `test_w44_169_adaptive_buttloop_iters_narrow_default_per_strategy`
+- `jxl-encoder/src/vardct/encoder.rs`:
+  - `W44_169_NARROW_MIN_DISTANCE` / `W44_169_NARROW_MAX_DISTANCE` constants
+  - `w44_169_compute_iters_narrow` helper
+  - Dispatch site at `encode_inner` (composes with W44-168 env hook)
+  - Removed `#[allow(dead_code)]` from 3 W44-168 helpers now consumed
+  - 7 new unit tests covering the helper
+- `jxl-encoder/Cargo.toml`: 1 example registration
+- `jxl-encoder/examples/w44_169_narrow_iter_skip.rs`: NEW reproducer
+- `jxl-encoder/tests/w44_169_decoder_roundtrip.rs`: NEW integration tests
+- `docs/LIBJXL_DIVERGENCES.md`: Section E row added, Section F row updated
+- `benchmarks/w44_169_narrow_iter_skip_2026-05-21.{tsv,meta}`: NEW

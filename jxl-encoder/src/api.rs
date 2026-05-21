@@ -4312,6 +4312,45 @@ pub struct EncoderImprovementsCustom {
     /// **Hash-locks**: BYTE-IDENTICAL with default env unset (Mode A
     /// = no override).
     pub adaptive_buttloop_iters: bool,
+
+    /// **W44-169 (Smart-Zenjxl chunk 6, 2026-05-21)**: distance-narrowed
+    /// SmoothSkip iter-reduction (production default; ships ON for
+    /// Zenjxl/Aggressive).
+    ///
+    /// W44-168 broad SmoothSkip honest-stopped because it destroyed
+    /// the W44-166 +0.45 SSIM2 win on 1418519 e8 d=6. The same
+    /// measurement found STRICT WINS at the narrow d=4/5 band:
+    /// - 1418519 e8 d=4: ΔSSIM2 **+0.627** + Δwall **-4.79%**
+    /// - 1418519 e8 d=5: ΔSSIM2 **+0.559** + Δwall **-4.13%**
+    ///
+    /// This flag enables the narrow `iters - 1` saturating at 1
+    /// (effectively converting the W44-168 broad Mode B into a
+    /// distance-gated production default) when ALL of the following
+    /// hold:
+    /// - `target_distance ∈ [4.0, 5.0]` (excludes d=6 to preserve the
+    ///   W44-166 variant Z full-iter budget)
+    /// - `effort >= 8`
+    /// - `butteraugli_iters > 1` (no decrement below 1)
+    /// - Smooth/screenshot content (`mask1x1_median > 95` OR
+    ///   `mask1x1_p25 >= 85`) — same discriminator as W44-168 Mode B
+    ///
+    /// Mirrors the W44-156 distance-narrowing pattern applied to the
+    /// W44-168 mechanism layer.
+    ///
+    /// **Precedence**: when the `JXL_W44_168_MODE=B|C|D` env hook is
+    /// set, the W44-168 broad dispatch wins (kept for diagnostic
+    /// benching). Default env unset = W44-169 narrow path active when
+    /// this flag is on.
+    ///
+    /// **Default**: `true` for [`EncoderStrategy::Zenjxl`] and
+    /// [`EncoderStrategy::Aggressive`]; `false` for
+    /// [`EncoderStrategy::Libjxl`] (strict per-effort iter parity) and
+    /// [`EncoderStrategy::LeanFaster`] (skip per-image gate cost).
+    ///
+    /// **Hash-locks**: BYTE-IDENTICAL — synthetic 32×32/48×48 gradient
+    /// fixtures don't trigger `pixel_domain_loss` so `mask1x1` stays
+    /// `None` and the smooth predicate cannot fire.
+    pub adaptive_buttloop_iters_narrow: bool,
 }
 
 impl Default for EncoderImprovementsCustom {
@@ -4382,6 +4421,14 @@ impl Default for EncoderImprovementsCustom {
             // Libjxl / LeanFaster override to `false` to preserve strict
             // per-effort iter parity / skip per-image content gates.
             adaptive_buttloop_iters: true,
+            // W44-169: Zenjxl default enables the narrow SmoothSkip
+            // iter-reduction at d ∈ [4.0, 5.0] (production SHIPPED).
+            // Closes the W44-168 surprise positive (1418519 e8 d=4/5
+            // ΔSSIM2 +0.6 + Δwall -4.5% mean) without re-introducing
+            // the W44-168 broad-mode regressions (PROTECT_W166 d=6).
+            // Libjxl / LeanFaster override to `false` to preserve
+            // strict per-effort parity / skip per-image gate cost.
+            adaptive_buttloop_iters_narrow: true,
         }
     }
 }
@@ -4455,6 +4502,18 @@ pub(crate) struct ResolvedImprovements {
     // bumps iters from 0→2 on textured content at e==7 (blends e7
     // upward toward e8 quality). Mode D applies both.
     pub(crate) adaptive_buttloop_iters: bool,
+
+    // W44-169 — Smart-Zenjxl chunk 6: distance-narrowed SmoothSkip
+    // (production SHIPPED). At `effort >= 8` on smooth/screenshot
+    // content with `target_distance ∈ [4.0, 5.0]`, decrement iters
+    // by 1 (saturating at 1). Closes the W44-168 honest-stop's
+    // surprise positive on 1418519 e8 d=4/5 (ΔSSIM2 +0.6 + Δwall
+    // -4.5% mean) without re-introducing the W44-168 broad-mode
+    // regression on PROTECT_W166 1418519 e8 d=6 (preserved at
+    // byte-identical because d=6 is outside the [4.0, 5.0] band).
+    // W44-168 env hook `JXL_W44_168_MODE=B|C|D` overrides this path
+    // when set (diagnostic A/B benching).
+    pub(crate) adaptive_buttloop_iters_narrow: bool,
 }
 
 impl Default for ResolvedImprovements {
@@ -4510,6 +4569,12 @@ impl Default for ResolvedImprovements {
             // pre-W44-168 fixed-per-effort schedule). Libjxl / LeanFaster
             // constructors below override to `false`.
             adaptive_buttloop_iters: true,
+            // W44-169: Zenjxl default enables the narrow SmoothSkip
+            // iter-reduction at d ∈ [4.0, 5.0] (production SHIPPED).
+            // Libjxl / LeanFaster constructors below override to
+            // `false` for strict per-effort iter parity / skip per-image
+            // gate cost.
+            adaptive_buttloop_iters_narrow: true,
         }
     }
 }
@@ -4790,6 +4855,9 @@ impl ResolvedImprovements {
             // effort; W44-168's discriminator is unobservable for
             // strict-parity callers.
             adaptive_buttloop_iters: false,
+            // W44-169: strict libjxl parity — keep the fixed per-effort
+            // schedule (no narrow distance-band iter reduction).
+            adaptive_buttloop_iters_narrow: false,
         }
     }
 
@@ -4827,6 +4895,10 @@ impl ResolvedImprovements {
             // median / edge_density) are the same ones LeanFaster
             // already drops for other per-image gates.
             adaptive_buttloop_iters: false,
+            // W44-169: LeanFaster also drops the narrow SmoothSkip
+            // (same `mask1x1_p25` / `mask_median` per-image proxy
+            // cost as `adaptive_buttloop_iters`).
+            adaptive_buttloop_iters_narrow: false,
             ..Default::default()
         }
     }
@@ -4870,6 +4942,7 @@ impl ResolvedImprovements {
             photo_variant_z_admit: c.photo_variant_z_admit,
             find_best_32_per_m3_lift: c.find_best_32_per_m3_lift,
             adaptive_buttloop_iters: c.adaptive_buttloop_iters,
+            adaptive_buttloop_iters_narrow: c.adaptive_buttloop_iters_narrow,
         }
     }
 }
@@ -14587,6 +14660,44 @@ mod tests {
             EncoderStrategy::Custom(Box::new(custom)).resolve(&StrategyOverrides::default());
         assert!(
             !resolved.adaptive_buttloop_iters,
+            "Custom with field set false must propagate"
+        );
+    }
+
+    /// W44-169 (Smart-Zenjxl chunk 6): `adaptive_buttloop_iters_narrow`
+    /// defaults per strategy. Mirrors the W44-168 per-strategy test.
+    #[test]
+    fn test_w44_169_adaptive_buttloop_iters_narrow_default_per_strategy() {
+        let zenjxl = EncoderStrategy::Zenjxl.resolve(&StrategyOverrides::default());
+        assert!(
+            zenjxl.adaptive_buttloop_iters_narrow,
+            "Zenjxl must enable W44-169 narrow SmoothSkip (production SHIPPED)"
+        );
+        let aggressive = EncoderStrategy::Aggressive.resolve(&StrategyOverrides::default());
+        assert!(
+            aggressive.adaptive_buttloop_iters_narrow,
+            "Aggressive must enable W44-169 narrow SmoothSkip"
+        );
+        let libjxl = EncoderStrategy::Libjxl.resolve(&StrategyOverrides::default());
+        assert!(
+            !libjxl.adaptive_buttloop_iters_narrow,
+            "Libjxl must disable W44-169 (strict per-effort iter parity)"
+        );
+        let lean = EncoderStrategy::LeanFaster.resolve(&StrategyOverrides::default());
+        assert!(
+            !lean.adaptive_buttloop_iters_narrow,
+            "LeanFaster must disable W44-169 (skip per-image proxy gate cost)"
+        );
+        let mut custom = EncoderImprovementsCustom::default();
+        assert!(
+            custom.adaptive_buttloop_iters_narrow,
+            "EncoderImprovementsCustom::default() matches Zenjxl"
+        );
+        custom.adaptive_buttloop_iters_narrow = false;
+        let resolved =
+            EncoderStrategy::Custom(Box::new(custom)).resolve(&StrategyOverrides::default());
+        assert!(
+            !resolved.adaptive_buttloop_iters_narrow,
             "Custom with field set false must propagate"
         );
     }
