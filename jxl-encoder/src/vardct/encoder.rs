@@ -1571,6 +1571,17 @@ pub struct VarDctEncoder {
     pub intensity_target: f32,
     /// Minimum display luminance in nits for ToneMapping. Default 0.0.
     pub min_nits: f32,
+    /// `ToneMapping.relative_to_max_display` (default `false`). When
+    /// `true`, [`Self::linear_below`] is interpreted as a ratio in
+    /// `[0, 1]` of the maximum display brightness rather than an
+    /// absolute nit value. Mirrors libjxl `ToneMapping`
+    /// (`image_metadata.h:169`). Closes issue #46 chunk 1a.
+    pub relative_to_max_display: bool,
+    /// `ToneMapping.linear_below` (default `0.0`). Tone mapping leaves
+    /// pixels strictly below this value unchanged. Interpretation
+    /// depends on [`Self::relative_to_max_display`]. Mirrors libjxl
+    /// `ToneMapping` (`image_metadata.h:174`). Closes issue #46 chunk 1a.
+    pub linear_below: f32,
     /// Intrinsic display size `(width, height)`, if different from coded dimensions.
     pub intrinsic_size: Option<(u32, u32)>,
     /// When `true`, the alpha extra-channel header is emitted with
@@ -1813,6 +1824,8 @@ impl Default for VarDctEncoder {
             color_encoding: None,
             intensity_target: 255.0,
             min_nits: 0.0,
+            relative_to_max_display: false,
+            linear_below: 0.0,
             intrinsic_size: None,
             alpha_associated: false,
             bits_per_sample_override: None,
@@ -1906,6 +1919,8 @@ impl VarDctEncoder {
             color_encoding: None,
             intensity_target: 255.0,
             min_nits: 0.0,
+            relative_to_max_display: false,
+            linear_below: 0.0,
             intrinsic_size: None,
             alpha_associated: false,
             bits_per_sample_override: None,

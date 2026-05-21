@@ -4,7 +4,7 @@
 
 //! Tests for the encoder — uses the public LosslessConfig/LossyConfig API.
 
-use crate::{LosslessConfig, LossyConfig, PixelLayout, ProgressiveMode};
+use crate::{ImageMetadata, LosslessConfig, LossyConfig, PixelLayout, ProgressiveMode};
 
 mod tests {
     use crate::{LosslessConfig, LossyConfig, PixelLayout};
@@ -10798,5 +10798,321 @@ fn modular_knobs_predictor_meta_modes_fall_back_to_gradient() {
     assert_eq!(
         gradient, variable,
         "predictor=15 (Variable) must fall back to Gradient on non-tree path"
+    );
+}
+
+// ── ToneMapping.relative_to_max_display + linear_below (issue #46 chunk 1a) ──
+
+/// Closes issue #46 chunk 1a: the JXL `ToneMapping` bundle has four
+/// fields. Two of them (`intensity_target`, `min_nits`) have been
+/// caller-tunable for a while; `relative_to_max_display` +
+/// `linear_below` were hardcoded to defaults at the write site
+/// (`headers/file_header.rs:594-595`) and not surfaced anywhere in the
+/// API. This test verifies both new fields round-trip through the
+/// codestream when set via the request-level builder
+/// [`EncodeRequest::with_relative_to_max_display`] /
+/// [`EncodeRequest::with_linear_below`].
+#[test]
+fn test_request_with_relative_to_max_display_and_linear_below_roundtrip() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels_u16: Vec<u16> = (0..(w as usize * h as usize * 3))
+        .map(|i| (i * 1000 % 65535) as u16)
+        .collect();
+    let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
+
+    let cfg = LossyConfig::new(1.0).with_effort(7);
+    // `relative_to_max_display=true` + `linear_below=0.25` means "the
+    // tone-mapper leaves the lower 25 % of the display brightness
+    // range unchanged (linear)".
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb16)
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .with_intensity_target(10000.0)
+        .with_min_nits(0.005)
+        .with_relative_to_max_display(true)
+        .with_linear_below(0.25)
+        .encode(pixels)
+        .expect("encode with ToneMapping rest fields");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    let tone = &image.image_header().metadata.tone_mapping;
+    assert!(
+        tone.relative_to_max_display,
+        "relative_to_max_display should be true, got false",
+    );
+    // `linear_below` is stored as F16, so check with f16 precision.
+    assert!(
+        (tone.linear_below - 0.25).abs() < 1.0 / 1024.0,
+        "linear_below {} != 0.25 (F16 tolerance ~1/1024)",
+        tone.linear_below,
+    );
+    // The pair that already existed should still round-trip.
+    assert!(
+        (tone.intensity_target - 10000.0).abs() < 1.0,
+        "intensity_target {} != 10000",
+        tone.intensity_target,
+    );
+}
+
+/// jxl-rs primary-decoder roundtrip for the new ToneMapping fields.
+/// User directive: "ALWAYS use jxl-rs as the primary decoder for
+/// roundtrip validation tests." This test asserts the encoded
+/// codestream produces sensible pixels on the primary decoder path
+/// when the new fields are non-default.
+#[test]
+fn test_request_with_tonemapping_rest_jxl_rs_roundtrip() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 32u32;
+    let h = 32;
+    let pixels: Vec<u8> = (0..(w as usize * h as usize * 3))
+        .map(|i| (i % 251) as u8)
+        .collect();
+
+    let cfg = LossyConfig::new(1.0).with_effort(5);
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_color_encoding(ColorEncoding::bt2100_hlg())
+        .with_intensity_target(4000.0)
+        .with_relative_to_max_display(false)
+        .with_linear_below(2.5) // absolute nits — below the SDR knee
+        .encode(&pixels)
+        .expect("encode with absolute linear_below");
+
+    let decoded = crate::test_helpers::decode_with_jxl_rs(&bytes)
+        .expect("jxl-rs decode of new-ToneMapping-fields codestream");
+    assert_eq!(decoded.width, w as usize);
+    assert_eq!(decoded.height, h as usize);
+    assert_eq!(decoded.channels, 3);
+}
+
+/// `ImageMetadata`-level setters carry the new fields (parity with
+/// the request-level path).
+#[test]
+fn test_image_metadata_relative_to_max_display_and_linear_below() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w as usize * h as usize * 3))
+        .map(|i| (i % 251) as u8)
+        .collect();
+
+    let meta = ImageMetadata::new()
+        .with_intensity_target(2000.0)
+        .with_min_nits(0.05)
+        .with_relative_to_max_display(true)
+        .with_linear_below(0.10);
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .with_metadata(&meta)
+        .encode(&pixels)
+        .expect("metadata-level ToneMapping rest");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    let tone = &image.image_header().metadata.tone_mapping;
+    assert!(tone.relative_to_max_display);
+    assert!((tone.linear_below - 0.10).abs() < 1.0 / 1024.0);
+
+    // Round-trip the getters too.
+    assert_eq!(meta.relative_to_max_display(), Some(true));
+    assert_eq!(meta.linear_below(), Some(0.10));
+}
+
+/// Request-level setter overrides the metadata-level value. Mirrors
+/// the existing `intensity_target` / `min_nits` precedence
+/// (`api.rs:8073-8079` + `api.rs:8862-8867`).
+#[test]
+fn test_request_tonemapping_rest_overrides_metadata() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w as usize * h as usize * 3))
+        .map(|i| (i % 251) as u8)
+        .collect();
+
+    // Metadata says relative=false, linear_below=5.0 (absolute nits).
+    let meta = ImageMetadata::new()
+        .with_intensity_target(1000.0)
+        .with_relative_to_max_display(false)
+        .with_linear_below(5.0);
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    // Request says relative=true, linear_below=0.5 — should win.
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .with_metadata(&meta)
+        .with_relative_to_max_display(true)
+        .with_linear_below(0.5)
+        .encode(&pixels)
+        .expect("request-level override encode");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    let tone = &image.image_header().metadata.tone_mapping;
+    assert!(
+        tone.relative_to_max_display,
+        "request-level relative=true should override metadata-level relative=false",
+    );
+    assert!(
+        (tone.linear_below - 0.5).abs() < 1.0 / 1024.0,
+        "request-level linear_below should win (got {}, expected 0.5)",
+        tone.linear_below,
+    );
+}
+
+/// Validator catches `linear_below > 1.0` when `relative_to_max_display=true`
+/// (the libjxl `image_metadata.cc:406` check).
+#[test]
+fn test_validator_rejects_relative_linear_below_above_one() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w as usize * h as usize * 3))
+        .map(|i| (i % 251) as u8)
+        .collect();
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let result = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .with_relative_to_max_display(true)
+        .with_linear_below(1.5) // out of range when relative
+        .encode(&pixels);
+    let err = result.expect_err("validator must reject linear_below > 1 when relative");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("linear_below") && msg.contains("relative"),
+        "error message should mention linear_below and relative; got: {msg}",
+    );
+}
+
+/// Validator accepts `linear_below > 1.0` when `relative_to_max_display=false`
+/// (absolute nits — values above 1 are perfectly valid).
+#[test]
+fn test_validator_accepts_absolute_linear_below_above_one() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w as usize * h as usize * 3))
+        .map(|i| (i % 251) as u8)
+        .collect();
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    // No relative_to_max_display set → defaults to false → absolute nits.
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .with_linear_below(100.0) // 100 nits — perfectly valid absolute
+        .encode(&pixels)
+        .expect("absolute linear_below=100 nits should encode");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    let tone = &image.image_header().metadata.tone_mapping;
+    assert!(!tone.relative_to_max_display);
+    assert!((tone.linear_below - 100.0).abs() < 1.0);
+}
+
+/// Streaming `LossyEncoder` exposes the new setters (parity with
+/// one-shot path).
+#[test]
+fn test_streaming_lossy_encoder_with_tonemapping_rest_fields() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w as usize * h as usize * 3))
+        .map(|i| (i % 251) as u8)
+        .collect();
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let mut enc = cfg
+        .encoder(w, h, PixelLayout::Rgb8)
+        .unwrap()
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .with_intensity_target(4000.0)
+        .with_relative_to_max_display(true)
+        .with_linear_below(0.30);
+    enc.push_rows(&pixels, h).unwrap();
+    let bytes = enc.finish().unwrap();
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    let tone = &image.image_header().metadata.tone_mapping;
+    assert!(tone.relative_to_max_display);
+    assert!((tone.linear_below - 0.30).abs() < 1.0 / 1024.0);
+}
+
+/// Streaming `LosslessEncoder` exposes the new setters (parity with
+/// one-shot path).
+#[test]
+fn test_streaming_lossless_encoder_with_tonemapping_rest_fields() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w as usize * h as usize * 3))
+        .map(|i| (i % 251) as u8)
+        .collect();
+
+    let cfg = LosslessConfig::new().with_effort(3);
+    let mut enc = cfg
+        .encoder(w, h, PixelLayout::Rgb8)
+        .unwrap()
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .with_intensity_target(4000.0)
+        .with_relative_to_max_display(true)
+        .with_linear_below(0.40);
+    enc.push_rows(&pixels, h).unwrap();
+    let bytes = enc.finish().unwrap();
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    let tone = &image.image_header().metadata.tone_mapping;
+    assert!(tone.relative_to_max_display);
+    assert!((tone.linear_below - 0.40).abs() < 1.0 / 1024.0);
+}
+
+/// `extra_fields` flag must trigger when either new field is non-default
+/// (the wire-format gate at `file_header.rs:483-489`). Without this,
+/// non-default `relative_to_max_display=true` with default
+/// `intensity_target=255.0` + `min_nits=0.0` would not write the
+/// ToneMapping bundle at all, dropping the flag silently.
+#[test]
+fn test_extra_fields_triggers_on_relative_to_max_display_alone() {
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w as usize * h as usize * 3))
+        .map(|i| (i % 251) as u8)
+        .collect();
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    // Default intensity_target / min_nits — only flip
+    // relative_to_max_display.
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_relative_to_max_display(true)
+        .encode(&pixels)
+        .expect("encode with relative_to_max_display alone");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    let tone = &image.image_header().metadata.tone_mapping;
+    assert!(
+        tone.relative_to_max_display,
+        "relative_to_max_display=true alone should round-trip even when \
+         intensity_target/min_nits are at defaults",
     );
 }

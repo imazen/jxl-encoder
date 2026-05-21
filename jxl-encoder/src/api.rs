@@ -1090,6 +1090,14 @@ pub struct ImageMetadata<'a> {
     intensity_target: Option<f32>,
     /// Minimum display luminance in nits. `None` uses the JXL default (0.0).
     min_nits: Option<f32>,
+    /// `ToneMapping.relative_to_max_display` (default `false`). `None`
+    /// uses the JXL default. Issue #46 chunk 1a.
+    relative_to_max_display: Option<bool>,
+    /// `ToneMapping.linear_below` (default `0.0`). `None` uses the JXL
+    /// default. Interpretation depends on
+    /// [`Self::relative_to_max_display`] (ratio when `true`, absolute
+    /// nits when `false`). Issue #46 chunk 1a.
+    linear_below: Option<f32>,
     /// Intrinsic display size `(width, height)`, if different from coded dimensions.
     intrinsic_size: Option<(u32, u32)>,
 }
@@ -1225,6 +1233,31 @@ impl<'a> ImageMetadata<'a> {
         self
     }
 
+    /// Set `ToneMapping.relative_to_max_display`.
+    ///
+    /// When `true`, [`Self::with_linear_below`] is interpreted as a
+    /// ratio in `[0, 1]` of the maximum display brightness. When
+    /// `false` (the default), it is an absolute nit value. Mirrors
+    /// libjxl `JxlBasicInfo::relative_to_max_display`. Closes issue
+    /// #46 chunk 1a.
+    pub fn with_relative_to_max_display(mut self, relative: bool) -> Self {
+        self.relative_to_max_display = Some(relative);
+        self
+    }
+
+    /// Set `ToneMapping.linear_below`.
+    ///
+    /// Tone-mapping leaves pixels strictly below this value unchanged
+    /// (linear). Default is `0.0` (always tone-map). Interpretation
+    /// depends on [`Self::with_relative_to_max_display`] — when
+    /// `true`, this is a ratio in `[0, 1]`; otherwise an absolute nit
+    /// value. Mirrors libjxl `JxlBasicInfo::linear_below`. Closes
+    /// issue #46 chunk 1a.
+    pub fn with_linear_below(mut self, value: f32) -> Self {
+        self.linear_below = Some(value);
+        self
+    }
+
     /// Get the intensity target, if set.
     pub fn intensity_target(&self) -> Option<f32> {
         self.intensity_target
@@ -1233,6 +1266,16 @@ impl<'a> ImageMetadata<'a> {
     /// Get the min nits, if set.
     pub fn min_nits(&self) -> Option<f32> {
         self.min_nits
+    }
+
+    /// Get the `relative_to_max_display` flag, if set.
+    pub fn relative_to_max_display(&self) -> Option<bool> {
+        self.relative_to_max_display
+    }
+
+    /// Get the `linear_below` value, if set.
+    pub fn linear_below(&self) -> Option<f32> {
+        self.linear_below
     }
 
     /// Set the intrinsic display size.
@@ -2968,6 +3011,8 @@ impl LosslessConfig {
             color_encoding: None,
             intensity_target: None,
             min_nits: None,
+            relative_to_max_display: None,
+            linear_below: None,
             premultiplied_alpha: false,
             premultiplied_alpha_mode: None,
             bits_per_sample: None,
@@ -6684,6 +6729,8 @@ impl LossyConfig {
             color_encoding: None,
             intensity_target: None,
             min_nits: None,
+            relative_to_max_display: None,
+            linear_below: None,
             premultiplied_alpha: false,
             premultiplied_alpha_mode: None,
             bits_per_sample: None,
@@ -6789,6 +6836,14 @@ pub struct EncodeRequest<'a> {
     color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
     intensity_target: Option<f32>,
     min_nits: Option<f32>,
+    /// `ToneMapping.relative_to_max_display` override. `None` falls
+    /// back to the metadata-level value (or the JXL default `false`).
+    /// Issue #46 chunk 1a.
+    relative_to_max_display: Option<bool>,
+    /// `ToneMapping.linear_below` override. `None` falls back to the
+    /// metadata-level value (or the JXL default `0.0`). Issue #46
+    /// chunk 1a.
+    linear_below: Option<f32>,
     premultiplied_alpha: bool,
     /// Premultiplied-alpha policy when the caller wants explicit auto
     /// detection (libjxl `--premultiply -1|0|1`). When `Some(_)` this
@@ -7126,6 +7181,31 @@ impl<'a> EncodeRequest<'a> {
         self
     }
 
+    /// Set `ToneMapping.relative_to_max_display`.
+    ///
+    /// When `true`, [`Self::with_linear_below`] is interpreted as a
+    /// ratio in `[0, 1]` of the maximum display brightness rather
+    /// than an absolute nit value. Default is `false`. If both this
+    /// builder and an attached [`ImageMetadata`] set this value, the
+    /// request-level value wins. Closes issue #46 chunk 1a.
+    pub fn with_relative_to_max_display(mut self, relative: bool) -> Self {
+        self.relative_to_max_display = Some(relative);
+        self
+    }
+
+    /// Set `ToneMapping.linear_below`.
+    ///
+    /// Tone mapping leaves pixels strictly below this value
+    /// unchanged. Interpretation depends on
+    /// [`Self::with_relative_to_max_display`] — ratio in `[0, 1]`
+    /// when `true`, absolute nits when `false`. Default is `0.0`. If
+    /// both this builder and an attached [`ImageMetadata`] set this
+    /// value, the request-level value wins. Closes issue #46 chunk 1a.
+    pub fn with_linear_below(mut self, value: f32) -> Self {
+        self.linear_below = Some(value);
+        self
+    }
+
     /// Signal that the input alpha channel is premultiplied (associated).
     ///
     /// Standard for GPU pipelines (Skia, Cairo, Metal, Vulkan,
@@ -7353,7 +7433,13 @@ impl<'a> EncodeRequest<'a> {
         let mn = self
             .min_nits
             .or_else(|| self.metadata.and_then(|m| m.min_nits));
-        validate_tone_mapping(it, mn)?;
+        let rtmd = self
+            .relative_to_max_display
+            .or_else(|| self.metadata.and_then(|m| m.relative_to_max_display));
+        let lb = self
+            .linear_below
+            .or_else(|| self.metadata.and_then(|m| m.linear_below));
+        validate_tone_mapping_full(it, mn, rtmd, lb)?;
         // Source gamma + intrinsic size up-front checks.
         validate_source_gamma(self.source_gamma)?;
         validate_intrinsic_size(self.metadata.and_then(|m| m.intrinsic_size))?;
@@ -8060,21 +8146,34 @@ impl<'a> EncodeRequest<'a> {
             if let Some(mn) = meta.min_nits {
                 file_header.metadata.min_nits = mn;
             }
+            if let Some(r) = meta.relative_to_max_display {
+                file_header.metadata.relative_to_max_display = r;
+            }
+            if let Some(lb) = meta.linear_below {
+                file_header.metadata.linear_below = lb;
+            }
             if let Some((w, h)) = meta.intrinsic_size {
                 file_header.metadata.have_intrinsic_size = true;
                 file_header.metadata.intrinsic_width = w;
                 file_header.metadata.intrinsic_height = h;
             }
         }
-        // Request-level intensity_target / min_nits override the
-        // metadata-level values. Lets callers do
+        // Request-level overrides win over metadata-level values. Lets
+        // callers do
         //   `cfg.encode_request(...).with_intensity_target(10000.0)`
-        // without constructing an ImageMetadata. Closes #21.
+        // without constructing an ImageMetadata. Closes #21 (intensity
+        // pair) + issue #46 chunk 1a (ToneMapping rest).
         if let Some(it) = self.intensity_target {
             file_header.metadata.intensity_target = it;
         }
         if let Some(mn) = self.min_nits {
             file_header.metadata.min_nits = mn;
+        }
+        if let Some(r) = self.relative_to_max_display {
+            file_header.metadata.relative_to_max_display = r;
+        }
+        if let Some(lb) = self.linear_below {
+            file_header.metadata.linear_below = lb;
         }
 
         // Write codestream
@@ -8853,17 +8952,30 @@ impl<'a> EncodeRequest<'a> {
             if let Some(mn) = meta.min_nits {
                 enc.min_nits = mn;
             }
+            if let Some(r) = meta.relative_to_max_display {
+                enc.relative_to_max_display = r;
+            }
+            if let Some(lb) = meta.linear_below {
+                enc.linear_below = lb;
+            }
             if meta.intrinsic_size.is_some() {
                 enc.intrinsic_size = meta.intrinsic_size;
             }
         }
-        // Request-level intensity_target / min_nits override the
-        // metadata-level values. Closes #21.
+        // Request-level overrides win over metadata-level values.
+        // Closes #21 (intensity pair) + issue #46 chunk 1a
+        // (ToneMapping rest).
         if let Some(it) = self.intensity_target {
             enc.intensity_target = it;
         }
         if let Some(mn) = self.min_nits {
             enc.min_nits = mn;
+        }
+        if let Some(r) = self.relative_to_max_display {
+            enc.relative_to_max_display = r;
+        }
+        if let Some(lb) = self.linear_below {
+            enc.linear_below = lb;
         }
 
         // ICC profile from metadata
@@ -9126,6 +9238,12 @@ pub struct LossyEncoder {
     color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
     intensity_target: f32,
     min_nits: f32,
+    /// `ToneMapping.relative_to_max_display` (default `false`). When
+    /// `true`, [`Self::linear_below`] is interpreted as a ratio in
+    /// `[0, 1]` of the maximum display brightness. Issue #46 chunk 1a.
+    relative_to_max_display: bool,
+    /// `ToneMapping.linear_below` (default `0.0`). Issue #46 chunk 1a.
+    linear_below: f32,
     intrinsic_size: Option<(u32, u32)>,
     /// Premultiplied (associated) alpha signaling. On lossy this is a
     /// no-op until the unpremultiplication pre-pass lands (#13);
@@ -9198,6 +9316,21 @@ impl LossyEncoder {
     /// Set the minimum display luminance in nits.
     pub fn with_min_nits(mut self, nits: f32) -> Self {
         self.min_nits = nits;
+        self
+    }
+
+    /// Set `ToneMapping.relative_to_max_display`. When `true`,
+    /// [`Self::with_linear_below`] is a ratio in `[0, 1]` rather than
+    /// absolute nits. Closes issue #46 chunk 1a.
+    pub fn with_relative_to_max_display(mut self, relative: bool) -> Self {
+        self.relative_to_max_display = relative;
+        self
+    }
+
+    /// Set `ToneMapping.linear_below`. Tone mapping leaves pixels
+    /// strictly below this value unchanged. Closes issue #46 chunk 1a.
+    pub fn with_linear_below(mut self, value: f32) -> Self {
+        self.linear_below = value;
         self
     }
 
@@ -9718,13 +9851,16 @@ impl LossyEncoder {
             self.xmp.as_deref(),
             self.jumbf.as_deref(),
         )?;
-        // Tone-mapping numeric range checks. Stored as plain f32 on
-        // the encoder; pass `Some(_)` only when set away from the
+        // Tone-mapping numeric range checks. Stored as plain f32 / bool
+        // on the encoder; pass `Some(_)` only when set away from the
         // libjxl default so a caller who never touched these knobs
-        // gets the encoder default behavior.
+        // gets the encoder default behavior. Issue #46 chunk 1a adds
+        // `relative_to_max_display` and `linear_below` to the bundle.
         let it = (self.intensity_target != 255.0).then_some(self.intensity_target);
         let mn = (self.min_nits != 0.0).then_some(self.min_nits);
-        validate_tone_mapping(it, mn)?;
+        let rtmd = self.relative_to_max_display.then_some(true);
+        let lb = (self.linear_below != 0.0).then_some(self.linear_below);
+        validate_tone_mapping_full(it, mn, rtmd, lb)?;
         validate_source_gamma(self.source_gamma)?;
         validate_intrinsic_size(self.intrinsic_size)?;
         let cfg = &self.cfg;
@@ -9939,6 +10075,8 @@ impl LossyEncoder {
             });
             enc.intensity_target = self.intensity_target;
             enc.min_nits = self.min_nits;
+            enc.relative_to_max_display = self.relative_to_max_display;
+            enc.linear_below = self.linear_below;
             enc.intrinsic_size = self.intrinsic_size;
             enc.alpha_associated = self.premultiplied_alpha;
             enc.bits_per_sample_override = self.bits_per_sample;
@@ -10073,9 +10211,18 @@ const F16_MAX_NITS: f32 = 65504.0;
 /// - `min_nits` must be finite, `>= 0`, and `<= intensity_target`
 ///   (or `<= 65504` if `intensity_target` is unset). A min above
 ///   the peak is physically nonsensical and would confuse decoders.
-fn validate_tone_mapping(
+/// - `linear_below` must be finite and `>= 0`. When
+///   `relative_to_max_display=Some(true)`, additionally constrained
+///   to `<= 1.0` (it represents a ratio of max display brightness).
+///   Mirrors libjxl `image_metadata.cc:406`.
+///
+/// Closes issue #46 chunk 1a — `relative_to_max_display` /
+/// `linear_below` are now caller-tunable and validated.
+fn validate_tone_mapping_full(
     intensity_target: Option<f32>,
     min_nits: Option<f32>,
+    relative_to_max_display: Option<bool>,
+    linear_below: Option<f32>,
 ) -> core::result::Result<(), EncodeError> {
     let it = intensity_target;
     if let Some(it) = it {
@@ -10113,6 +10260,34 @@ fn validate_tone_mapping(
             return Err(EncodeError::InvalidInput {
                 message: format!(
                     "min_nits {mn} exceeds intensity_target {cap} (min cannot exceed peak)",
+                ),
+            });
+        }
+    }
+    if let Some(lb) = linear_below {
+        if !lb.is_finite() {
+            return Err(EncodeError::InvalidInput {
+                message: format!("linear_below must be finite (got {lb})"),
+            });
+        }
+        if lb < 0.0 {
+            return Err(EncodeError::InvalidInput {
+                message: format!("linear_below must be >= 0 (got {lb})"),
+            });
+        }
+        if lb > F16_MAX_NITS {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "linear_below {lb} exceeds f16 max ({F16_MAX_NITS}); the codestream cannot represent it",
+                ),
+            });
+        }
+        // libjxl `image_metadata.cc:406`: when relative, linear_below
+        // must be in [0, 1]. When absolute, only the >= 0 check applies.
+        if relative_to_max_display == Some(true) && lb > 1.0 {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "linear_below {lb} > 1.0 with relative_to_max_display=true (must be a ratio in [0, 1])",
                 ),
             });
         }
@@ -10324,6 +10499,8 @@ impl LossyConfig {
             color_encoding: None,
             intensity_target: 255.0,
             min_nits: 0.0,
+            relative_to_max_display: false,
+            linear_below: 0.0,
             intrinsic_size: None,
             premultiplied_alpha: false,
             bits_per_sample: None,
@@ -10376,6 +10553,11 @@ pub struct LosslessEncoder {
     color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
     intensity_target: f32,
     min_nits: f32,
+    /// `ToneMapping.relative_to_max_display` (default `false`). Issue
+    /// #46 chunk 1a.
+    relative_to_max_display: bool,
+    /// `ToneMapping.linear_below` (default `0.0`). Issue #46 chunk 1a.
+    linear_below: f32,
     intrinsic_size: Option<(u32, u32)>,
     /// Premultiplied (associated) alpha signaling. When `true`, the
     /// alpha extra channel header is written with `alpha_associated=true`.
@@ -10450,6 +10632,21 @@ impl LosslessEncoder {
     /// Set the minimum display luminance in nits.
     pub fn with_min_nits(mut self, nits: f32) -> Self {
         self.min_nits = nits;
+        self
+    }
+
+    /// Set `ToneMapping.relative_to_max_display`. When `true`,
+    /// [`Self::with_linear_below`] is a ratio in `[0, 1]` rather than
+    /// absolute nits. Closes issue #46 chunk 1a.
+    pub fn with_relative_to_max_display(mut self, relative: bool) -> Self {
+        self.relative_to_max_display = relative;
+        self
+    }
+
+    /// Set `ToneMapping.linear_below`. Tone mapping leaves pixels
+    /// strictly below this value unchanged. Closes issue #46 chunk 1a.
+    pub fn with_linear_below(mut self, value: f32) -> Self {
+        self.linear_below = value;
         self
     }
 
@@ -10741,10 +10938,14 @@ impl LosslessEncoder {
             self.jumbf.as_deref(),
         )?;
         // Tone-mapping numeric range checks. See the lossy-encoder
-        // mirror above for the `Some(_) iff non-default` shape.
+        // mirror above for the `Some(_) iff non-default` shape. Issue
+        // #46 chunk 1a extends the validator to cover
+        // `relative_to_max_display` + `linear_below`.
         let it = (self.intensity_target != 255.0).then_some(self.intensity_target);
         let mn = (self.min_nits != 0.0).then_some(self.min_nits);
-        validate_tone_mapping(it, mn)?;
+        let rtmd = self.relative_to_max_display.then_some(true);
+        let lb = (self.linear_below != 0.0).then_some(self.linear_below);
+        validate_tone_mapping_full(it, mn, rtmd, lb)?;
         validate_source_gamma(self.source_gamma)?;
         validate_intrinsic_size(self.intrinsic_size)?;
 
@@ -10882,6 +11083,8 @@ impl LosslessEncoder {
             }
             file_header.metadata.intensity_target = self.intensity_target;
             file_header.metadata.min_nits = self.min_nits;
+            file_header.metadata.relative_to_max_display = self.relative_to_max_display;
+            file_header.metadata.linear_below = self.linear_below;
             if let Some((w, h)) = self.intrinsic_size {
                 file_header.metadata.have_intrinsic_size = true;
                 file_header.metadata.intrinsic_width = w;
@@ -11052,6 +11255,8 @@ impl LosslessConfig {
             color_encoding: None,
             intensity_target: 255.0,
             min_nits: 0.0,
+            relative_to_max_display: false,
+            linear_below: 0.0,
             intrinsic_size: None,
             premultiplied_alpha: false,
             bits_per_sample: None,
@@ -15167,10 +15372,7 @@ mod tests {
             resolved.smooth_photo_dct64_admission,
             SmoothPhotoDct64Policy::ForceAdmit
         );
-        assert_eq!(
-            resolved.dct64_search_policy,
-            Dct64SearchPolicy::ForceAllow
-        );
+        assert_eq!(resolved.dct64_search_policy, Dct64SearchPolicy::ForceAllow);
         assert_eq!(
             resolved.dct32_search_policy,
             Dct32SearchPolicy::KeepWhenDct64Suppressed
