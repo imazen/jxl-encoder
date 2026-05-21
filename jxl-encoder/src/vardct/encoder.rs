@@ -732,8 +732,45 @@ pub const W44_150_PHOTO_W44_117_MIN_DISTANCE: f32 = 4.0;
 /// Referenced by the W44-151 unit tests + the W44-149-aligned
 /// `test_w44_151_mask_p25_threshold_matches_w44_149_audit` invariant
 /// (the threshold MUST stay aligned with [`W44_150_PHOTO_W44_117_MASK_P25_MIN`]).
-#[allow(dead_code)]
+///
+/// **W44-152 (2026-05-21)**: now CONSUMED in production by the W44-29
+/// outer gate's `mask_p25 >= 85 AND target_distance ∈ [3.0, 5.0]`
+/// admission branch. The distance bounds are
+/// [`W44_152_W44_151_MIN_DISTANCE`] / [`W44_152_W44_151_MAX_DISTANCE`].
 pub const W44_151_HIGH_MASK_P25_MIN: f32 = 85.0;
+
+/// W44-152: lower distance bound (inclusive) for the W44-151 mask_p25
+/// admission OR-branch on the W44-29 outer gate.
+///
+/// W44-151 honest-stopped on the broad `d >= HIGH_D_PHOTO_MIN_DISTANCE`
+/// (3.0) gate because the default `high_d_photo_smooth_suppressed()`
+/// table over-fires at d=6 on 1418519 (+4.3-4.6% bytes for only
+/// +0.07-0.28 SSIM2). The d=4 cluster was a clean win (-3% bytes +
+/// +0.55 SSIM2 mean) and the d=5 cluster was strong at e8+ (+1.13
+/// SSIM2). W44-152 captures the win region by bounding the gate to
+/// `[3.0, 5.0]`; d=6 cells stay byte-identical (gate doesn't fire).
+///
+/// Lower bound coincides with [`HIGH_D_PHOTO_MIN_DISTANCE`] (3.0) — the
+/// existing W44-29 sibling gates use the same floor. Below 3.0 the
+/// W44-29 outer gate cannot fire under any branch, so this bound is
+/// load-bearing only if a future change lowers `HIGH_D_PHOTO_MIN_DISTANCE`.
+///
+/// Referenced by [`test_w44_152_distance_gate_edges`].
+pub const W44_152_W44_151_MIN_DISTANCE: f32 = 3.0;
+
+/// W44-152: upper distance bound (inclusive) for the W44-151 mask_p25
+/// admission OR-branch. See [`W44_152_W44_151_MIN_DISTANCE`] for the
+/// honest-stop history motivating the distance narrowing.
+///
+/// `5.0` excludes the d=6 cluster where the W44-151 bench measured
+/// +4.3-4.6% byte regression for only +0.07-0.28 SSIM2 gain on 1418519.
+/// Above 5.0 the gate degrades to off and the encode falls back to the
+/// libjxl stock entropy_mul table (no W44-29 lift).
+///
+/// Note: this bound is sibling to [`HIGH_D_PHOTO_W44_91_MAX_DISTANCE`]
+/// (also 5.0); the two are independently tunable so a future change
+/// to one doesn't drag the other.
+pub const W44_152_W44_151_MAX_DISTANCE: f32 = 5.0;
 
 /// W36-3 patches photo-skip dispatch threshold on the per-block-mean
 /// median of `mask1x1` (same statistic the auto-splines
@@ -2133,25 +2170,42 @@ impl VarDctEncoder {
                             p.m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN
                                 && p.flat_color_block_ratio < W44_91_FCBR_MAX
                         });
-                    // W44-151 HONEST-STOP (2026-05-21): the
-                    // `mask1x1_p25 >= W44_151_HIGH_MASK_P25_MIN AND
-                    // distance >= HIGH_D_PHOTO_MIN_DISTANCE` admission
-                    // branch was measured (72-cell A/B, see
-                    // `benchmarks/w44_151_w44_29_widen_2026-05-21.{tsv,meta}`)
-                    // and REVERTED. The discriminator works perfectly
-                    // (1025469 15/15 + 4 SPOT photos 48/48 byte-identical;
-                    // gate fires only on 1418519 across the corpus) but
-                    // the default `high_d_photo_smooth_suppressed()`
-                    // table over-fires at d=6 (+4.3-4.6% bytes for only
-                    // +0.07-0.28 SSIM2). Mean SSIM2 across d=5/6 cells
-                    // = +0.544 vs the +1.0 acceptance bar. The narrower
-                    // d∈[4,5] band passes the W44-149 audit's expected
-                    // EV and is a W44-152 candidate. Constant +
-                    // `mask1x1_p25` plumbing KEPT for follow-on.
+                    // W44-152 (2026-05-21): re-introduces the W44-151
+                    // `mask1x1_p25 >= W44_151_HIGH_MASK_P25_MIN` admission
+                    // branch with the distance narrowed to
+                    // [`W44_152_W44_151_MIN_DISTANCE`,
+                    //  `W44_152_W44_151_MAX_DISTANCE`] = [3.0, 5.0].
                     //
-                    // _ = mask1x1_p25; // silence unused — re-enable via W44-152+
-                    let _ = mask1x1_p25;
-                    w44_29_gate || w44_91_gate
+                    // W44-151 honest-stopped on the broad d ≥ 3.0 gate
+                    // because the default `high_d_photo_smooth_suppressed()`
+                    // table over-fires at d=6 on 1418519 (+4.3-4.6% bytes
+                    // for only +0.07-0.28 SSIM2). d=4 + d=5 clusters were
+                    // clean wins. Excluding d=6 captures the win region.
+                    //
+                    // The env hook `JXL_W44_152_DISABLE=1` (and the legacy
+                    // `JXL_W44_151_DISABLE=1` alias) disable the admission
+                    // for A/B benches.
+                    let w44_152_distance_in_band = self.distance >= W44_152_W44_151_MIN_DISTANCE
+                        && self.distance <= W44_152_W44_151_MAX_DISTANCE;
+                    let w44_152_disable_env = {
+                        #[cfg(feature = "std")]
+                        {
+                            std::env::var("JXL_W44_152_DISABLE")
+                                .map(|s| s == "1")
+                                .unwrap_or(false)
+                                || std::env::var("JXL_W44_151_DISABLE")
+                                    .map(|s| s == "1")
+                                    .unwrap_or(false)
+                        }
+                        #[cfg(not(feature = "std"))]
+                        {
+                            false
+                        }
+                    };
+                    let w44_152_admit = !w44_152_disable_env
+                        && w44_152_distance_in_band
+                        && mask1x1_p25.is_some_and(|p25| p25 >= W44_151_HIGH_MASK_P25_MIN);
+                    w44_29_gate || w44_91_gate || w44_152_admit
                 }
                 crate::api::HighDPhotoEntropyMulPolicy::ForceOn => true,
                 crate::api::HighDPhotoEntropyMulPolicy::ForceOff => false,
@@ -3485,22 +3539,42 @@ impl VarDctEncoder {
                             p.m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN
                                 && p.flat_color_block_ratio < W44_91_FCBR_MAX
                         });
-                    // (c) **W44-151 HONEST-STOP (2026-05-21)**: the
-                    // `mask1x1_p25 >= W44_151_HIGH_MASK_P25_MIN AND
-                    // distance >= HIGH_D_PHOTO_MIN_DISTANCE` admission
-                    // branch was measured (72-cell A/B,
-                    // `benchmarks/w44_151_w44_29_widen_2026-05-21.{tsv,meta}`)
-                    // and REVERTED. Discriminator works perfectly (51/51
-                    // protection cells byte-identical) but the DEFAULT
-                    // `high_d_photo_smooth_suppressed()` table over-fires
-                    // at d=6 on 1418519 (+4.3 to +4.6% bytes for only
-                    // +0.07 to +0.28 SSIM2). Mean SSIM2 across d=5/6
-                    // = +0.544 vs +1.0 acceptance bar. Narrower d∈[4,5]
-                    // band IS Pareto-positive (W44-152 candidate).
-                    // [`W44_151_HIGH_MASK_P25_MIN`] constant +
-                    // `mask1x1_p25` plumbing KEPT for follow-on chunks.
-                    let _ = mask1x1_p25;
-                    w44_29_gate || w44_91_gate
+                    // (c) **W44-152 (2026-05-21)**: re-introduces the
+                    // W44-151 `mask1x1_p25 >= W44_151_HIGH_MASK_P25_MIN`
+                    // admission branch with the distance narrowed to
+                    // [`W44_152_W44_151_MIN_DISTANCE`,
+                    //  `W44_152_W44_151_MAX_DISTANCE`] = [3.0, 5.0].
+                    //
+                    // W44-151 honest-stopped on the broad d ≥ 3.0 gate
+                    // because the default `high_d_photo_smooth_suppressed()`
+                    // table over-fires at d=6 on 1418519 (+4.3-4.6% bytes
+                    // for only +0.07-0.28 SSIM2). Excluding d=6 captures
+                    // the d=4 + d=5 win region.
+                    //
+                    // The env hook `JXL_W44_152_DISABLE=1` (and the legacy
+                    // `JXL_W44_151_DISABLE=1` alias) disable the admission
+                    // for A/B benches.
+                    let w44_152_distance_in_band = self.distance >= W44_152_W44_151_MIN_DISTANCE
+                        && self.distance <= W44_152_W44_151_MAX_DISTANCE;
+                    let w44_152_disable_env = {
+                        #[cfg(feature = "std")]
+                        {
+                            std::env::var("JXL_W44_152_DISABLE")
+                                .map(|s| s == "1")
+                                .unwrap_or(false)
+                                || std::env::var("JXL_W44_151_DISABLE")
+                                    .map(|s| s == "1")
+                                    .unwrap_or(false)
+                        }
+                        #[cfg(not(feature = "std"))]
+                        {
+                            false
+                        }
+                    };
+                    let w44_152_admit = !w44_152_disable_env
+                        && w44_152_distance_in_band
+                        && mask1x1_p25.is_some_and(|p25| p25 >= W44_151_HIGH_MASK_P25_MIN);
+                    w44_29_gate || w44_91_gate || w44_152_admit
                 }
                 crate::api::HighDPhotoEntropyMulPolicy::ForceOn => true,
                 crate::api::HighDPhotoEntropyMulPolicy::ForceOff => false,
@@ -5599,12 +5673,62 @@ mod tests {
         // discriminator (1418519 mask_p25=88.88 admitted; 7552578
         // mask_p25=77.90 next-nearest CONTROL rejected; 11pp margin).
         assert_eq!(
-            W44_151_HIGH_MASK_P25_MIN,
-            W44_150_PHOTO_W44_117_MASK_P25_MIN,
+            W44_151_HIGH_MASK_P25_MIN, W44_150_PHOTO_W44_117_MASK_P25_MIN,
             "W44-151 threshold must equal W44-150 audit threshold"
         );
         assert!(W44_151_HIGH_MASK_P25_MIN >= 80.0);
         assert!(W44_151_HIGH_MASK_P25_MIN <= 90.0);
+    }
+
+    /// W44-152: verify the distance-narrowed admission predicate fires
+    /// only inside the closed band [`W44_152_W44_151_MIN_DISTANCE`,
+    /// `W44_152_W44_151_MAX_DISTANCE`] (3.0..=5.0).
+    ///
+    /// The closed-interval semantics matter: at d=3.0 the gate MUST
+    /// fire (lower bound inclusive); at d=5.0 the gate MUST fire
+    /// (upper bound inclusive); at d=2.99 / d=5.01 the gate MUST NOT
+    /// fire (W44-151 honest-stop ruled out d=6 cells).
+    #[test]
+    fn test_w44_152_distance_gate_edges() {
+        // Mirror the production predicate (`w44_152_distance_in_band`
+        // in compute_profile_for_search + encode_inner) on the bounds.
+        let in_band = |d: f32| -> bool {
+            d >= W44_152_W44_151_MIN_DISTANCE && d <= W44_152_W44_151_MAX_DISTANCE
+        };
+
+        // Below the lower bound: gate must NOT fire (would re-enable
+        // the W44-151 broad-gate behaviour the W44-150 audit excluded).
+        assert!(!in_band(2.99), "d=2.99 should reject (below lower bound)");
+        assert!(!in_band(0.0), "d=0.0 should reject");
+
+        // Lower bound inclusive: gate MUST fire at exactly d=3.0.
+        // This aligns with HIGH_D_PHOTO_MIN_DISTANCE (the W44-29
+        // sibling gate's floor).
+        assert!(in_band(3.0), "d=3.0 should admit (lower bound inclusive)");
+
+        // Inside the band: gate MUST fire (these are the d=4 + d=5
+        // cells where the W44-151 bench measured -3% bytes + +0.55 SSIM2
+        // on 1418519 d=4 and +1.13 SSIM2 on d=5 e8+).
+        assert!(in_band(3.5));
+        assert!(in_band(4.0));
+        assert!(in_band(4.5));
+        assert!(in_band(5.0));
+
+        // Upper bound inclusive at d=5.0: see assertion above.
+        // d=5.01 must reject (W44-151 honest-stop measured +4.3-4.6%
+        // bytes regression at d=6 for only +0.07-0.28 SSIM2).
+        assert!(!in_band(5.01), "d=5.01 should reject (above upper bound)");
+        assert!(!in_band(6.0), "d=6.0 should reject (W44-151 regress)");
+        assert!(!in_band(7.0));
+
+        // Constants sanity: lower < upper, and bounds match the
+        // documented values (defends against accidental edits that
+        // would silently flip the W44-152 measurement basis).
+        assert!(W44_152_W44_151_MIN_DISTANCE < W44_152_W44_151_MAX_DISTANCE);
+        assert_eq!(W44_152_W44_151_MIN_DISTANCE, 3.0);
+        assert_eq!(W44_152_W44_151_MAX_DISTANCE, 5.0);
+        // Lower bound aligns with the sibling W44-29 floor.
+        assert_eq!(W44_152_W44_151_MIN_DISTANCE, HIGH_D_PHOTO_MIN_DISTANCE);
     }
 
     #[test]

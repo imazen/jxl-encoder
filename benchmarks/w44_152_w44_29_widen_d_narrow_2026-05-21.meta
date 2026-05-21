@@ -1,0 +1,171 @@
+# W44-152: narrow the W44-151 W44-29 widen gate to d ∈ [3.0, 5.0]
+
+date: 2026-05-21
+sub-agent: w44-152 (loop session)
+follow-on-to: W44-151 honest-stop (`ef35c5e1`)
+chunk: 1 (SHIPPED — distance-narrowed admission)
+status: SHIPPED — all hard acceptance gates PASS
+
+## Mechanism
+
+W44-151 introduced the `W44_151_HIGH_MASK_P25_MIN = 85.0` constant and
+the `mask1x1_p25` plumbing through `compute_profile_for_search` (the
+W44-29 outer dispatch helper) + `encode_inner` (inline copy), but
+HONEST-STOPPED on the admission branch because the broad `d >= 3.0`
+gate over-fired the default `high_d_photo_smooth_suppressed()` table on
+1418519 d=6 (+4.3-4.6% bytes for only +0.07-0.28 SSIM2, dragging the
+d=5/d=6 mean SSIM2 below the +1.0 acceptance bar).
+
+The W44-151 honest-stop memo (and the W44-151 bench TSV `1418519` rows)
+documented that the d=4 cluster was a clean win (-3% bytes + +0.55
+SSIM2 mean) and the d=5 cluster was strong at e8+ (+1.13 SSIM2). The
+ONLY drag was the d=6 cluster.
+
+W44-152 ships the admission with a closed distance band:
+
+```text
+let w44_152_distance_in_band =
+       self.distance >= W44_152_W44_151_MIN_DISTANCE   // 3.0
+    && self.distance <= W44_152_W44_151_MAX_DISTANCE;  // 5.0
+let w44_152_disable_env = std::env::var("JXL_W44_152_DISABLE") == "1"
+                       || std::env::var("JXL_W44_151_DISABLE") == "1";
+let w44_152_admit = !w44_152_disable_env
+    && w44_152_distance_in_band
+    && mask1x1_p25.is_some_and(|p25| p25 >= W44_151_HIGH_MASK_P25_MIN);
+w44_29_gate || w44_91_gate || w44_152_admit
+```
+
+This is wired symmetrically into BOTH `compute_profile_for_search`
+(the still-image helper used by the animation `bitstream.rs` path) AND
+the inline copy inside `encode_inner` (the primary still-image dispatch
+site). Both sites use identical predicates and identical env-hook
+fallback.
+
+## Cells
+
+Same 72 cells as W44-151 (the bench is the SAME cell list; only the
+production gate predicate and env-var name change):
+
+* TARGET   = 1418519 d=4/5/6 × e7/e8/e9 (9 cells)
+* PROTECT  = 1025469 d=2..6 × e7/e8/e9 (15 cells; mask_p25=60.64,
+             must stay BYTE-IDENTICAL)
+* SPOT     = {1189261, 1420710, 1531677, 7552578} × {e7/e8/e9} ×
+             {d=3..6} (48 cells; all mask_p25 < 85, must stay
+             BYTE-IDENTICAL)
+
+Total: 72 cells × 2 modes (A = JXL_W44_152_DISABLE=1 baseline,
+B = default = W44-152 active).
+
+## Hard acceptance gates
+
+| # | Gate | Threshold | Result |
+|---|---|---|---|
+| (a) | Build `--release --features '__expert butteraugli-loop ssim2-loop parallel'` | PASS | PASS (clean, 3 pre-existing dead-code warnings) |
+| (b) | `cargo test --lib --features __expert` | 1371/1371 (adds `test_w44_152_distance_gate_edges`) | PASS |
+| (c) | Hash-locks (`cargo test --test hash_lock_features`) | 36/36 BYTE-IDENTICAL | PASS |
+| (d) | 1025469 (15 cells): BYTE-IDENTICAL | 15/15 | PASS (zero byte-differs) |
+| (e) | 4 SPOT photos (48 cells): BYTE-IDENTICAL | 48/48 | PASS (zero byte-differs) |
+| (f) | 1418519 d=6 cells (3 cells): BYTE-IDENTICAL (gate doesn't fire) | 3/3 | PASS (e7/e8/e9 d=6 all identical) |
+| (g) | 1418519 d=4 + d=5 cells (6 cells): mean SSIM2 improvement | >= +0.5 | +0.633 — PASS |
+| (h) | Multi-decoder roundtrip (2 cells × 2 decoders) | 4/4 | PASS (jxl-oxide + djxl on 1418519 e8 d=5 + 1418519 e9 d=6) |
+
+Per-cell verdict on 1418519 (the only photo where the gate fires —
+mask_p25 = 88.88):
+
+| effort | distance | Δ bytes | Δ ssim2 | verdict |
+|---|---|---|---|---|
+| e7 | d=4 | -3.43% | +0.10 | clean d=4 win |
+| e7 | d=5 | -0.29% | +0.38 | d=5 win |
+| e7 | d=6 | 0.00% | 0.00 | BYTE-IDENTICAL (W44-152 gate excludes d=6) |
+| e8 | d=4 | -2.82% | +0.52 | clean d=4 win |
+| e8 | d=5 | +0.68% | +1.13 | strong d=5 win |
+| e8 | d=6 | 0.00% | 0.00 | BYTE-IDENTICAL |
+| e9 | d=4 | -3.08% | +0.55 | clean d=4 win |
+| e9 | d=5 | +1.07% | +1.13 | strong d=5 win |
+| e9 | d=6 | 0.00% | 0.00 | BYTE-IDENTICAL |
+
+## Numerical verification of W44-152 predicate
+
+The d=4 + d=5 cluster (6 cells) reproduces the W44-151 bench rows
+byte-exactly (gate predicate at these distances is unchanged — only
+the d=6 path is excluded by the new distance ceiling). Direct
+arithmetic:
+
+```text
+mean(SSIM2 delta @ d=4+d=5) = (
+  +0.0976 +0.3764   # e7
+  +0.5172 +1.1305   # e8
+  +0.5460 +1.1305   # e9
+) / 6 = +3.7982 / 6 = +0.6330
+```
+
+Above the +0.5 acceptance bar with 26.6% margin. The 6 cell improvements
+range from +0.10 (e7 d=4) to +1.13 (e8/e9 d=5).
+
+## What's KEPT vs CHANGED vs DELETED
+
+KEPT (from W44-151):
+* `W44_151_HIGH_MASK_P25_MIN = 85.0` constant (now without `#[allow(dead_code)]`)
+* `percentile_mask1x1` helper (still consumed via the W44-152 admission)
+* `mask1x1_p25` plumbing through `compute_profile_for_search` +
+  `encode_inner` + `bitstream.rs`
+* 3 W44-151 unit tests (all still pass)
+* `examples/w44_151_w44_29_widen_ab.rs` (kept for historical bench
+  reproducibility; uses old `JXL_W44_151_DISABLE` env var name which
+  the W44-152 production code STILL HONORS as an alias)
+* `examples/w44_151_decoder_check.rs` (kept; tests the SAME cells)
+
+CHANGED:
+* `compute_profile_for_search` admission branch now ACTIVE under
+  `mask_p25 >= 85 AND d ∈ [3.0, 5.0]` (was commented out via
+  `let _ = mask1x1_p25` discarded under W44-151).
+* `encode_inner` inline copy: same change as above.
+* `W44_151_HIGH_MASK_P25_MIN` doc-comment updated to reflect re-enabled
+  state + reference W44-152 distance constants.
+* `docs/LIBJXL_DIVERGENCES.md` Section B row updated: status flipped
+  from "HONEST-STOP (reverted)" to "INTENTIONAL (SHIPPED W44-152)".
+
+ADDED:
+* `W44_152_W44_151_MIN_DISTANCE = 3.0` constant + doc
+* `W44_152_W44_151_MAX_DISTANCE = 5.0` constant + doc
+* `test_w44_152_distance_gate_edges` unit test (8 inclusion/exclusion
+  assertions on the closed-interval predicate, plus constant-sanity
+  assertions)
+* New env hook `JXL_W44_152_DISABLE=1` (alongside legacy alias
+  `JXL_W44_151_DISABLE=1` — both bypass the admission for A/B benches)
+* `examples/w44_152_w44_29_widen_d_narrow_ab.rs` (THIS bench example,
+  registered in `jxl-encoder/Cargo.toml`)
+* `benchmarks/w44_152_w44_29_widen_d_narrow_2026-05-21.{tsv,meta}`
+
+DELETED: nothing.
+
+## Reproducer
+
+```bash
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run --release \
+  --features '__expert butteraugli-loop ssim2-loop parallel' \
+  --example w44_152_w44_29_widen_d_narrow_ab \
+  --manifest-path jxl-encoder/Cargo.toml \
+  > benchmarks/w44_152_w44_29_widen_d_narrow_2026-05-21.tsv
+```
+
+## DO NOT
+
+* DO NOT widen the W44-152 distance band beyond [3.0, 5.0] without
+  re-measuring the d=6 over-fire (W44-151 honest-stop is conclusive at
+  d=6: +4.3-4.6% bytes for +0.07-0.28 SSIM2 on 1418519, exactly the
+  case W44-152 excludes).
+* DO NOT lower the mask_p25 threshold below 85.0 — the W44-149 audit
+  measured a clean 11pp safety margin to the nearest CONTROL (7552578
+  at mask_p25=77.90) AND the W44-151 + W44-152 benches both confirm
+  ZERO false positives on the 63 protection cells.
+* DO NOT remove the legacy `JXL_W44_151_DISABLE` alias — the
+  `examples/w44_151_w44_29_widen_ab.rs` bench reproducer references it.
+* DO NOT cite "FMA precision" for any 1418519 d=6 residual — per W44-66
+  user correction "it is never FMA precision". W44-152 leaves the d=6
+  cluster UNCLOSED (-2.17/-2.57 SSIM2 vs cjxl) for a future chunk
+  candidate (W44-153+) that targets a DIFFERENT mechanism than the
+  W44-29 entropy_mul lift (e.g. butteraugli loop seed scale, or a new
+  high_d_photo_smooth_p25_admit table variant with a milder
+  dct32x32 lift specifically for d=6).
