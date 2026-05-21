@@ -706,6 +706,16 @@ required-features = ["__expert", "butteraugli-loop", "ssim2-loop"]
 name = "w44_151_decoder_check"
 path = "examples/w44_151_decoder_check.rs"
 
+# W44-152 W44-29 distance-narrowed A/B — measure the W44-151 admission
+# branch with `target_distance ∈ [3.0, 5.0]` narrowing. Skips W44-151's
+# d=6 regression cluster on 1418519, harvests d=4 (-3% bytes + +0.55
+# SSIM2) and d=5 (+1.13 SSIM2 e8+) wins. Same 72 cells as W44-151 —
+# d=6 cells MUST stay byte-identical (gate doesn't fire above d=5.0).
+[[example]]
+name = "w44_152_w44_29_widen_d_narrow_ab"
+path = "examples/w44_152_w44_29_widen_d_narrow_ab.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop"]
+
 # W44-119 chain-disable A/B — paired A/B comparison of the
 # W44-105/107/108/109 qac-scale chain ON vs OFF, after the W44-117/118
 # EPF sharpness seed fix. Tests whether the chain is still needed now
