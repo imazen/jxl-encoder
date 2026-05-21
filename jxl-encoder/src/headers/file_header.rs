@@ -174,6 +174,21 @@ pub struct ImageMetadata {
     pub intensity_target: f32,
     /// Minimum nits for tone mapping.
     pub min_nits: f32,
+    /// `ToneMapping.relative_to_max_display` (default `false`). When
+    /// `true`, [`Self::linear_below`] is interpreted as a ratio in
+    /// `[0, 1]` of the maximum display brightness rather than an
+    /// absolute nit value. Mirrors libjxl `ToneMapping`
+    /// (`image_metadata.h:169`) / jxl-rs `ToneMapping`
+    /// (`headers/image_metadata.rs:147`). Closes issue #46 chunk 1a.
+    pub relative_to_max_display: bool,
+    /// `ToneMapping.linear_below` (default `0.0`). The tone-mapping
+    /// curve leaves pixels strictly below this value unchanged
+    /// (linear). Interpretation depends on
+    /// [`Self::relative_to_max_display`] — ratio when `true`, absolute
+    /// nits when `false`. Mirrors libjxl `ToneMapping`
+    /// (`image_metadata.h:174`) / jxl-rs `ToneMapping`
+    /// (`headers/image_metadata.rs:149`). Closes issue #46 chunk 1a.
+    pub linear_below: f32,
     /// Whether intrinsic size differs from coded size.
     pub have_intrinsic_size: bool,
     /// Intrinsic width (if have_intrinsic_size).
@@ -194,6 +209,8 @@ impl Default for ImageMetadata {
             animation: None,
             intensity_target: 255.0,
             min_nits: 0.0,
+            relative_to_max_display: false,
+            linear_below: 0.0,
             have_intrinsic_size: false,
             intrinsic_width: 0,
             intrinsic_height: 0,
@@ -479,12 +496,19 @@ impl FileHeader {
             return Ok(());
         }
 
-        // extra_fields flag
+        // extra_fields flag — any non-default field in the ImageMetadata
+        // "extra_fields" cluster must trigger this (file_header.rs:485
+        // and jxl-rs `headers/image_metadata.rs:184-200`). The
+        // ToneMapping sub-bundle has 4 fields; any non-default value on
+        // any of them needs `extra_fields = true` so the decoder reads
+        // the bundle.
         let extra_fields = meta.animation.is_some()
             || meta.orientation != Orientation::Identity
             || meta.have_intrinsic_size
             || meta.intensity_target != 255.0
-            || meta.min_nits != 0.0;
+            || meta.min_nits != 0.0
+            || meta.relative_to_max_display
+            || meta.linear_below != 0.0;
         crate::trace::debug_eprintln!(
             "META [bit {}]: extra_fields = {}",
             writer.bits_written(),
@@ -585,14 +609,27 @@ impl FileHeader {
         crate::trace::debug_eprintln!("META [bit {}]: After color_encoding", writer.bits_written());
 
         // tone_mapping - only if extra_fields
+        //
+        // ToneMapping is an `all_default`-gated bundle (jxl-rs
+        // `headers/image_metadata.rs:139-150`): the bundle short-circuits
+        // when every field is at its spec default
+        // (intensity_target=255.0, min_nits=0.0,
+        // relative_to_max_display=false, linear_below=0.0). When any
+        // field differs, the encoder writes `all_default=0` followed by
+        // the four field values in spec order. Closes issue #46 chunk
+        // 1a: `relative_to_max_display` and `linear_below` are no
+        // longer hardcoded to the default.
         if extra_fields {
-            let tone_all_default = meta.intensity_target == 255.0 && meta.min_nits == 0.0;
+            let tone_all_default = meta.intensity_target == 255.0
+                && meta.min_nits == 0.0
+                && !meta.relative_to_max_display
+                && meta.linear_below == 0.0;
             writer.write_bit(tone_all_default)?;
             if !tone_all_default {
                 crate::f16::write_f16(meta.intensity_target, writer)?;
                 crate::f16::write_f16(meta.min_nits, writer)?;
-                writer.write_bit(false)?; // relative_to_max_display
-                crate::f16::write_f16(0.0, writer)?; // linear_below
+                writer.write_bit(meta.relative_to_max_display)?;
+                crate::f16::write_f16(meta.linear_below, writer)?;
             }
         }
 

@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### Added
+
+- **W44-162 — HDR ToneMapping `relative_to_max_display` + `linear_below`
+  surfaced through public API (issue #46 chunk 1a closed)**
+  (`jxl-encoder/src/headers/file_header.rs`, `jxl-encoder/src/api.rs`,
+  `jxl-encoder/src/vardct/encoder.rs`,
+  `jxl-encoder/src/vardct/bitstream.rs`,
+  `jxl-encoder/src/api_tests.rs`,
+  `docs/LIBJXL_DIVERGENCES.md` Section E new row). Pre-W44-162 the
+  remaining two `ToneMapping` fields were hardcoded to spec defaults
+  at the write site (`file_header.rs:594-595`) and not surfaced
+  anywhere in the API; this was the only remaining HDR + gainmap
+  sub-chunk left after W44-137 confirmed chunks 1b/2/3/4/5 all
+  shipped in prior commits. W44-162 plumbs both fields through the
+  full stack: `ImageMetadata<'a>` setters
+  (`with_relative_to_max_display`, `with_linear_below`) with
+  matching getters; request-level setters on `EncodeRequest<'a>`
+  with documented "request wins over metadata" precedence (mirrors
+  the existing `intensity_target` / `min_nits` pattern); streaming
+  `LossyEncoder` + `LosslessEncoder` setters for streaming parity;
+  field added to internal `VarDctEncoder` + `FileHeader::ImageMetadata`
+  with propagation through `vardct/bitstream.rs:871-882`; write-site
+  reads from the struct instead of hardcoded literals. The
+  `extra_fields` trigger at `file_header.rs:483-489` extended so
+  non-default `relative_to_max_display=true` with default
+  `intensity_target/min_nits` still writes the bundle; the
+  `tone_all_default` short-circuit at `file_header.rs:589` extended
+  to gate on all 4 fields (matches jxl-rs `#[all_default]` semantics
+  on the `ToneMapping` struct in
+  `jxl/src/headers/image_metadata.rs:139-150`). Validator extended
+  to `validate_tone_mapping_full(it, mn, rtmd, lb)` with libjxl
+  `image_metadata.cc:406` rule: reject `linear_below > 1.0` when
+  `relative_to_max_display=true`; accept any `linear_below >= 0`
+  (capped at f16 max) when absolute nits. 9 new tests in
+  `api_tests.rs`: jxl-oxide field roundtrip (both fields), jxl-rs
+  primary-decoder roundtrip, `ImageMetadata`-level setters,
+  request-level overrides metadata, validator rejects relative
+  `linear_below > 1.0`, validator accepts absolute
+  `linear_below > 1.0`, streaming `LossyEncoder` parity, streaming
+  `LosslessEncoder` parity, `extra_fields` triggers on
+  `relative_to_max_display` alone. Hash-locks 36/36 BYTE-IDENTICAL
+  (fields default to spec defaults so hardcoded-literal →
+  struct-reads-default produces the same bitstream).
+  `cargo test --lib`: 1335 passed, 0 failed.
+
 ### Measured
 
 - **W44-121 — codec_wiki d=3 per-strategy + per-region SSIM2 dump**
