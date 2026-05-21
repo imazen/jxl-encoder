@@ -723,6 +723,30 @@ name = "w44_140_default_check"
 path = "examples/w44_140_default_check.rs"
 required-features = ["butteraugli-loop", "ssim2-loop"]
 
+# W44-142 codec_wiki EPF seed suppression A/B — verifies the
+# zenanalyze-driven sub-gate inside W44-117/140 EPF seed admission closes
+# the codec_wiki d=1.2/1.6/1.8 SSIM2 regression cluster that the W44-141
+# ledger refresh surfaced as a follow-on to W44-140.
+[[example]]
+name = "w44_142_codec_wiki_suppress_ab"
+path = "examples/w44_142_codec_wiki_suppress_ab.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
+# W44-142 max_distance bisection harness — sweeps {1.5, 1.7, 2.0} suppression
+# distance caps to find the pareto-optimal cutoff that closes codec_wiki
+# d=1.2/1.6/1.8 SSIM2 regressions without new collateral.
+[[example]]
+name = "w44_142_max_distance_bisect"
+path = "examples/w44_142_max_distance_bisect.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
+# W44-142 multi-decoder roundtrip — encodes codec_wiki e9 d=1.2 with the
+# W44-142 gate active and verifies decode via jxl-oxide + djxl + jxl-rs.
+[[example]]
+name = "w44_142_decoder_check"
+path = "examples/w44_142_decoder_check.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
 # RFC#45 chunk 1: e10/e11 paired A/B/C bench.
 # Needs the butteraugli-loop feature to enable e10/e11 iter extensions.
 [[example]]

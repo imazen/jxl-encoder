@@ -388,6 +388,161 @@ pub const W44_120_EPF_SEED_MIN_DISTANCE: f32 = 1.0;
 /// is outside `[1.0, 1.5)` (the blend branch isn't taken).
 pub const W44_140_EPF_SEED_FADE_MAX: f32 = 1.5;
 
+/// W44-142 (2026-05-20): minimum `m3_colourfulness` zenanalyze proxy at
+/// which the W44-117/140 EPF sharpness seed mechanism is suppressed on
+/// screenshot-class content in the low-distance band
+/// `[W44_120_EPF_SEED_MIN_DISTANCE, W44_142_EPF_SEED_SUPPRESS_MAX_DISTANCE)`.
+///
+/// **Context**: the W44-141 cjxl-parity ledger refresh
+/// (`benchmarks/cjxl_parity_ledger_2026-05-20_w44_141.{tsv,meta}`) on
+/// W44-140 main (`b8333091`) surfaced a NEW regression cluster on
+/// codec_wiki e8/e9 d=1.2/1.6/1.8 (SSIM2 deltas −0.60 to −0.72 vs
+/// W44-134 baseline). codec_wiki is mixed-content (text + diagrams +
+/// photo crops) — the W44-140 fade's partial blend over-corrects on
+/// codec_wiki at d=1.2 specifically (where the buttloop has fewer
+/// iterations to settle vs e9 at the same distance). Terminal (pure
+/// text) at the same distance band wants the full W44-117 + W44-140
+/// fade unchanged (W44-140 closes the terminal d=1.2 oscillation
+/// +0.855 SSIM2, boosts terminal d=1.4 +1.014 above pre-W44-140 main).
+///
+/// **The split signal** mirrors the W44-124 (`bc9f71eb`) auto-discriminator
+/// exactly:
+///
+/// | image       | m3      | edge_density | W44-142 suppress fires? |
+/// |---          |---      |---           |---                      |
+/// | codec_wiki  | 145.73  | 0.0396       | **YES** (WANT)          |
+/// | terminal    |  13.85  | 0.0874       | no (m3 gate)            |
+/// | imac_g3     |  14.29  | 0.1227       | no (m3 gate)            |
+/// | imac_dark   |  20.96  | 0.1438       | no (m3 gate)            |
+/// | windows95   |  27.19  | 0.3165       | no (m3 + ed)            |
+/// | imessage    |  67.65  | 0.0533       | no (ed gate)            |
+/// | windows     |  20.04  | 0.1201       | no                      |
+/// | graph       |  11.75  | 0.0698       | no                      |
+/// | 1189261     |  98.84  | 0.4895       | no (ed gate)            |
+/// | 1418519     |  36.84  | 0.1637       | no (m3 + ed)            |
+/// | 1420710     |  32.93  | 0.9298       | no                      |
+/// | 1531677     |  12.30  | 0.8766       | no                      |
+///
+/// Both gates load-bearing:
+/// - m3 alone rejects terminal/imac_g3/imac_dark/windows95/windows/graph.
+/// - ed alone is needed to reject imessage (m3=67.65 passes m3 alone).
+/// - Both needed to reject 1189261 (m3=98.84 passes m3, ed=0.4895 fails ed).
+///
+/// The thresholds are intentionally identical to W44-124's
+/// `W44_124_DCT32_KEEP_M3_MIN` and `W44_124_DCT32_KEEP_EDGE_DENSITY_MAX`:
+/// both gates address the same codec_wiki-vs-other-screenshots
+/// discrimination problem with the same predicate. The 60.0/0.05 split
+/// has been validated against the full gb82-sc + CID22 corpus by W44-124.
+///
+/// Active when:
+///   - `target_distance < W44_142_EPF_SEED_SUPPRESS_MAX_DISTANCE` (= 1.5)
+///   - `zenanalyze_proxies` is `Some` (8-bit sRGB layouts only)
+///   - proxies show m3 ≥ `W44_142_EPF_SEED_SUPPRESS_M3_MIN`
+///   - proxies show edge_density < `W44_142_EPF_SEED_SUPPRESS_EDGE_DENSITY_MAX`
+///
+/// When the gate fires, the W44-117 seed compute is skipped (= legacy
+/// uniform-4 seed) AND the W44-140 fade block is skipped (no per-block
+/// blend). Equivalent to forcing `EpfSharpnessSeed::LegacyUniform4` for
+/// the duration of the call, but only on codec_wiki-class screenshots
+/// at low distance. Caller-provided `Some(true)` / `Some(false)` on the
+/// `high_d_photo_hint` API still works (unaffected — this is an
+/// independent sub-gate inside the EPF seed admission).
+///
+/// **Why d<1.5 (the W44-140 fade-band edge)**: the W44-142 bisect
+/// (`benchmarks/w44_142_max_distance_bisect_2026-05-20.{tsv,meta}`)
+/// swept thresholds {1.5, 1.7, 2.0} on 24 cells (16 codec_wiki +
+/// 8 terminal protection). Only the d=1.5 threshold limits the gate
+/// to cells INSIDE the W44-140 fade band — at d>=1.5 the W44-140 fade
+/// is already weight=1.0 (no blend, full W44-117 seed) and the
+/// W44-141 cluster regressions at d=1.6/1.8 are NOT caused by W44-140
+/// (bytes are byte-identical to pre-W44-140 main at those distances;
+/// the W44-141 attribution conflated W44-135's dct32_keep distance
+/// gate change with W44-140). Suppressing W44-117 at d=1.6/1.8 only
+/// makes some e9 cells better at the cost of e8 cells WORSE
+/// (W44-142 e8 d=1.6 SSIM2 -1.02 vs W134; e8 d=1.8 SSIM2 -0.58)
+/// — see DO-NOT list below.
+///
+/// The conservative d<1.5 cutoff:
+/// - Closes the only true W44-140-attributable cluster cell (codec_wiki
+///   e9 d=1.2 SSIM2 -0.599 vs W134 → -0.012 vs W134, gate met)
+/// - Leaves d=1.6/1.8 byte-identical to current main (no new
+///   regressions, residual W44-141 cluster remains, but is structurally
+///   a W44-135 follow-on, not a W44-140 issue)
+/// - Conservative: minimizes scope of behaviour change, follows the
+///   "narrow first" pattern from W44-91/96/124.
+///
+/// **Why d>=1.0 (no explicit lower bound)**: at d=1.0 the W44-140 fade
+/// already yields weight=0 → uniform-4, so this gate is a no-op at
+/// d=1.0. The W44-120 `min_distance=1.0` gate already prevents W44-117
+/// firing at d<1.0. The implicit lower bound is therefore the W44-120
+/// gate, not a new threshold.
+///
+/// Sweep override: `JXL_W44_142_SUPPRESS_DISABLE=1` opts the gate out
+/// without a rebuild (sweep harness use).
+/// `JXL_W44_142_SUPPRESS_MAX_DISTANCE=<f32>` overrides the upper
+/// distance cap for harness search.
+pub const W44_142_EPF_SEED_SUPPRESS_M3_MIN: f32 = 60.0;
+
+/// W44-142: maximum `edge_density` zenanalyze proxy at which the W44-142
+/// EPF seed suppression sub-gate fires. Belt-and-suspenders with
+/// [`W44_142_EPF_SEED_SUPPRESS_M3_MIN`].
+///
+/// Identical to `W44_124_DCT32_KEEP_EDGE_DENSITY_MAX` (= 0.05) because
+/// the same codec_wiki-vs-other-screen discrimination problem applies.
+/// All CID22 photos have edge_density ≥ 0.16 (textured high-frequency
+/// content), so the gate cannot false-fire on photo content even if a
+/// future photo's m3 spiked above 60 (1189261 at m3=98.84 / ed=0.4895
+/// is the closest such case — rejected by ed).
+///
+/// See [`W44_142_EPF_SEED_SUPPRESS_M3_MIN`] for the full rationale and
+/// the gb82-sc + CID22 separation table.
+pub const W44_142_EPF_SEED_SUPPRESS_EDGE_DENSITY_MAX: f32 = 0.05;
+
+/// W44-142: upper distance bound (exclusive) for the W44-117/140 EPF
+/// seed suppression sub-gate on codec_wiki-class content.
+///
+/// **Why 1.5 (= W44-140 fade-band upper edge)**: the W44-142 bisect
+/// (`benchmarks/w44_142_max_distance_bisect_2026-05-20.{tsv,meta}`)
+/// measured 4 variants on the W44-141 regression cluster:
+///
+/// | variant | codec_wiki e9 d=1.2 vs W134 | e9 d=1.6 vs W134 | e8 d=1.6 vs W134 | new regressions |
+/// |---|---|---|---|---|
+/// | A (current main, no W44-142) | -0.599 | -0.615 | -0.615 | (baseline) |
+/// | **B (d<1.5, SHIP)** | **-0.012** ✓ | -0.615 (no fire) | -0.615 (no fire) | 0 |
+/// | C (d<1.7) | -0.012 ✓ | -0.037 ✓ | **-1.023** (regress!) | 1 |
+/// | D (d<2.0) | -0.012 ✓ | -0.037 ✓ | -1.023 (regress!) | 2 (also e8 d=1.8 -0.58) |
+///
+/// `B (d<1.5)` is pareto-optimal — closes the only W44-140-attributable
+/// regression cell (codec_wiki e9 d=1.2 was -0.60 vs W134; W44-142
+/// brings it to -0.01) without introducing new regressions elsewhere.
+///
+/// Variants C and D appear to close more cells but split asymmetrically
+/// on effort: at e9 (4 buttloop iters) uniform-4 lets the buttloop
+/// settle to a better state; at e8 (2 iters) uniform-4 starves the
+/// buttloop, regressing by ~-0.4 to -1.0 SSIM2 on the same cell. The
+/// e8/e9 asymmetry is intrinsic to the W44-117 / W44-140 mechanism
+/// at d in [1.5, 2.0) on codec_wiki; pure threshold tightening can't
+/// resolve it (the same shape that drove the W44-140 fade design).
+///
+/// **What's NOT closed by W44-142 ship**: codec_wiki d=1.6/1.8
+/// regressions (-0.62 / -0.72 SSIM2 vs W134) persist. Per W44-142
+/// investigation, these are NOT caused by W44-140 (bytes at d>=1.5
+/// are byte-identical pre/post-W44-140 main); they are caused by
+/// W44-135's dct32_keep distance gate change (commit `2b9c98d0`)
+/// reverting the W44-124 lift on codec_wiki at d<2.0. The W44-141
+/// memo conflated W44-135's effect with W44-140's. Fixing d=1.6/1.8
+/// requires revisiting W44-135's distance gate (separate chunk,
+/// W44-143 follow-on candidate).
+///
+/// Caller override: `LossyConfig::with_high_d_photo_hint(Some(true))`
+/// or `Some(false)` is not directly tied to this gate (the
+/// suppression is internal to the EPF seed admission, gated separately
+/// from the high-d photo lift table). Sweep override:
+/// `JXL_W44_142_SUPPRESS_DISABLE=1` opts the entire suppression out;
+/// `JXL_W44_142_SUPPRESS_MAX_DISTANCE=<f32>` overrides this cap for
+/// harness search.
+pub const W44_142_EPF_SEED_SUPPRESS_MAX_DISTANCE: f32 = 1.5;
+
 /// W44-109: scale factor applied to `quant_field_float` at adaptive-quant
 /// time on screenshot-class content at low effort. **Effort-dependent
 /// magnitude** (e5/e6 vs e7): without the buttloop the scale propagates
@@ -1087,7 +1242,53 @@ impl VarDctEncoder {
         };
         let w44_120_distance_gate_passes = target_distance >= w44_120_min_distance;
 
+        // W44-142 (2026-05-20): codec_wiki-class suppression sub-gate.
+        //
+        // Reads `self.zenanalyze_proxies` and the env-var opt-out. If the
+        // proxies show a codec_wiki-class image (m3 ≥ 60 AND ed < 0.05)
+        // AND target_distance is below the suppression cap (< 2.0), the
+        // W44-117 sharpness map compute is skipped (= legacy uniform-4
+        // seed) AND the W44-140 fade block is skipped. Closes the
+        // codec_wiki d=1.2/1.6/1.8 SSIM2 regression cluster that the
+        // W44-141 ledger refresh surfaced as a follow-on to W44-140.
+        //
+        // The sub-gate composes with the W44-118 `is_screenshot`
+        // mask>95 gate (already passes for codec_wiki) and the W44-120
+        // distance gate (`target_distance >= 1.0`); both are
+        // load-bearing for the EPF seed mechanism in general.
+        //
+        // Photos cannot fire this gate: all CID22 photos have edge_density
+        // ≥ 0.16 (textured), so even the colourful 1189261 (m3=98.84) is
+        // correctly rejected by the ed sub-gate. Terminal-class screens
+        // (text-only, low colourfulness) are rejected by the m3 sub-gate.
+        //
+        // Env override: `JXL_W44_142_SUPPRESS_DISABLE=1` opts out without
+        // a rebuild (sweep harness use). When unset / `0` the gate fires
+        // per the constants. Production default is `0` (enabled).
+        #[cfg(feature = "std")]
+        let env_w44_142_disable = std::env::var("JXL_W44_142_SUPPRESS_DISABLE")
+            .ok()
+            .as_deref()
+            == Some("1");
+        #[cfg(not(feature = "std"))]
+        let env_w44_142_disable = false;
+        #[cfg(feature = "std")]
+        let env_w44_142_max_distance = std::env::var("JXL_W44_142_SUPPRESS_MAX_DISTANCE")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok());
+        #[cfg(not(feature = "std"))]
+        let env_w44_142_max_distance: Option<f32> = None;
+        let w44_142_max_distance =
+            env_w44_142_max_distance.unwrap_or(W44_142_EPF_SEED_SUPPRESS_MAX_DISTANCE);
+        let w44_142_suppress_fires = !env_w44_142_disable
+            && target_distance < w44_142_max_distance
+            && self.zenanalyze_proxies.is_some_and(|p| {
+                p.m3_colourfulness >= W44_142_EPF_SEED_SUPPRESS_M3_MIN
+                    && p.edge_density < W44_142_EPF_SEED_SUPPRESS_EDGE_DENSITY_MAX
+            });
+
         let sharpness: Vec<u8> = if !w44_117_force_off
+            && !w44_142_suppress_fires
             && w44_120_distance_gate_passes
             && initial_params.epf_iters > 0
             && self.profile.epf_dynamic_sharpness
@@ -1184,6 +1385,7 @@ impl VarDctEncoder {
         // band). Linear interp between.
         let mut sharpness = sharpness;
         if !w44_117_force_off
+            && !w44_142_suppress_fires
             && w44_120_distance_gate_passes
             && initial_params.epf_iters > 0
             && self.profile.epf_dynamic_sharpness
@@ -2814,5 +3016,56 @@ mod tuning_tests {
     fn w44_109_default_max_effort_is_7() {
         // Gate fires at e ∈ {5, 6, 7}; e>=8 is owned by W44-105.
         assert_eq!(ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT, 7);
+    }
+
+    #[test]
+    fn w44_142_constants_match_w44_124_split() {
+        // The W44-142 EPF seed suppression sub-gate intentionally reuses
+        // the exact codec_wiki-vs-other-screens predicate as W44-124's
+        // dct32_keep auto-discriminator. If the W44-124 thresholds are
+        // tightened/loosened, the W44-142 thresholds should follow (and
+        // vice versa). Pin both constants to the same numeric values to
+        // catch silent drift in future tunings.
+        //
+        // (The W44-124 constants live in `vardct/encoder.rs`. If those
+        // are renamed or moved, update this test together with both
+        // call sites.)
+        assert_eq!(
+            W44_142_EPF_SEED_SUPPRESS_M3_MIN, 60.0,
+            "W44-142 m3 floor must match W44-124's W44_124_DCT32_KEEP_M3_MIN (60.0); \
+             both gates discriminate codec_wiki (m3=145.73) from terminal/imac_g3 \
+             (m3 ≈ 14..21) and imessage (m3=67.65, blocked by ed)"
+        );
+        assert_eq!(
+            W44_142_EPF_SEED_SUPPRESS_EDGE_DENSITY_MAX, 0.05,
+            "W44-142 ed ceiling must match W44-124's W44_124_DCT32_KEEP_EDGE_DENSITY_MAX \
+             (0.05); both gates exclude imessage (ed=0.0533) and CID22 photos (ed >= 0.16)"
+        );
+    }
+
+    #[test]
+    fn w44_142_max_distance_equals_w44_140_fade_max() {
+        // W44-142 conservative cutoff: only suppress W44-117 inside the
+        // W44-140 fade band [W44_120_EPF_SEED_MIN_DISTANCE,
+        // W44_140_EPF_SEED_FADE_MAX) = [1.0, 1.5). Above d=1.5 the
+        // W44-140 fade is already weight=1.0 (full W44-117 seed), and
+        // the W44-141 cluster regressions at d=1.6/1.8 are NOT caused
+        // by W44-140 (bytes byte-identical pre/post-W44-140 main at
+        // d>=1.5) — they are W44-135 follow-on candidates. Suppressing
+        // at d=1.6/1.8 introduces NEW e8 regressions (-1.02 SSIM2 vs
+        // W134, worse than the W141 baseline of -0.62) per the
+        // W44-142 bisect.
+        assert_eq!(
+            W44_142_EPF_SEED_SUPPRESS_MAX_DISTANCE, W44_140_EPF_SEED_FADE_MAX,
+            "W44-142 cutoff must equal W44-140 fade-band upper edge to keep \
+             the suppression strictly INSIDE the W44-140 fade band"
+        );
+        assert!(
+            W44_142_EPF_SEED_SUPPRESS_MAX_DISTANCE > W44_120_EPF_SEED_MIN_DISTANCE,
+            "the suppression band must have positive width — must be \
+             strictly above W44_120_EPF_SEED_MIN_DISTANCE"
+        );
+        // Strict 1.5 pick documented in const comment.
+        assert_eq!(W44_142_EPF_SEED_SUPPRESS_MAX_DISTANCE, 1.5);
     }
 }

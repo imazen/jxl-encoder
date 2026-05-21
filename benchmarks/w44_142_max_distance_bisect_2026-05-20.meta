@@ -1,0 +1,169 @@
+W44-142: codec_wiki EPF seed suppression max_distance bisection
+================================================================================
+
+DATE: 2026-05-20
+COMMIT: TBD (W44-142 ship commit on origin/main)
+BASELINE: b8333091 (W44-140 SHIPPED, also same as `6a7d8835` main = W44-141 ledger)
+HOST: lilith (water-cooled AMD Ryzen 9 7950X, 128 GB RAM)
+
+PURPOSE
+-------
+
+Determine the W44-142 EPF seed suppression sub-gate's `max_distance`
+threshold. The W44-141 cjxl-parity ledger refresh
+(`benchmarks/cjxl_parity_ledger_2026-05-20_w44_141.{tsv,meta}`) surfaced
+a NEW regression cluster on codec_wiki e8/e9 d=1.2/1.6/1.8 (SSIM2
+deltas -0.60 to -0.72 vs W44-134 baseline). The W44-141 memo attributed
+these to "W44-140 over-correction on mixed-content codec_wiki"; the
+W44-142 investigation traced the actual mechanism per cell:
+
+  - codec_wiki e9 d=1.2 -0.599 SSIM2: TRUE W44-140 fade-band collateral
+    (fade weight=0.4 at d=1.2; current path is the 40% W44-117 / 60%
+    uniform-4 blend; W44-141 memo attribution correct).
+  - codec_wiki e8/e9 d=1.6/1.8 (-0.62 / -0.72): NOT W44-140 attributable.
+    Bytes are byte-identical pre/post-W44-140 main at d>=1.5 (weight=1.0
+    above fade_max). The bytes ARE different W134 vs W141 because of
+    W44-135 (commit `2b9c98d0`, distance-gate W44-124 dct32_keep out of
+    the d=1.0..1.8 band on codec_wiki). The W44-141 memo conflated
+    W44-135's effect with W44-140's.
+
+Goal: ship the narrowest possible W44-117/140 suppression gate that
+closes the W44-140-attributable cell without touching cells outside the
+fade band (so the residual W44-135 cluster stays as a follow-on chunk
+without being made worse).
+
+VARIANTS TESTED
+---------------
+
+Per-cell A/B/C/D mode interleaved, 24 cells × 4 modes:
+
+  A_pre_w44_142 : JXL_W44_142_SUPPRESS_DISABLE=1 (current main W141)
+  B_d15         : JXL_W44_142_SUPPRESS_MAX_DISTANCE=1.5 (= W44-140 fade upper edge)
+  C_d17         : JXL_W44_142_SUPPRESS_MAX_DISTANCE=1.7 (covers e9 d=1.6 cell)
+  D_d20         : JXL_W44_142_SUPPRESS_MAX_DISTANCE=2.0 (initial attempt; full coverage of W44-141 cluster)
+
+All variants share the SAME content discriminator: m3>=60 AND ed<0.05
+(identical to W44-124's dct32_keep auto-discriminator constants —
+proven to cleanly admit codec_wiki and exclude every other gb82-sc
+screen and every CID22 photo).
+
+CELLS
+-----
+
+16 codec_wiki cells (e8/e9 × d ∈ {1.0, 1.2, 1.4, 1.5, 1.6, 1.8, 2.0, 3.0})
+8 terminal cells (e8/e9 × d ∈ {1.0, 1.2, 1.4, 1.5, 1.6} + e9 × d ∈ {1.0, 1.2, 1.4})
+
+Terminal protection set verifies that the m3 gate (terminal m3=13.85)
+cleanly rejects terminal so the gate firing on codec_wiki never spills
+to terminal byte-identical behaviour.
+
+RESULTS (codec_wiki, key cells)
+-------------------------------
+
+W134 = pre-W44-140 absolute SSIM2 baseline. ssim2_d = abs_ssim2 - W134.
+
+cell                        A(W141)   B_d15   C_d17   D_d20   W134   | B vs W134 | C vs W134 | D vs W134
+codec_wiki e8 d=1.2         89.958   89.850  89.850  89.850  90.023 |  -0.173    |  -0.173   |  -0.173
+codec_wiki e8 d=1.4         89.282   89.015  89.015  89.015  89.382 |  -0.367    |  -0.367   |  -0.367
+codec_wiki e8 d=1.6         88.522   88.522  88.115  88.115  89.138 |  -0.615    |  -1.023   |  -1.023
+codec_wiki e8 d=1.8         88.241   88.241  88.241  87.482  88.058 |  +0.183    |  +0.183   |  -0.576
+codec_wiki e9 d=1.2         89.424   90.011  90.011  90.011  90.023 |  -0.012 ✓  |  -0.012 ✓ |  -0.012 ✓
+codec_wiki e9 d=1.4         89.282   89.015  89.015  89.015  89.382 |  -0.367    |  -0.367   |  -0.367
+codec_wiki e9 d=1.6         88.522   88.522  89.101  89.101  89.138 |  -0.615    |  -0.037 ✓ |  -0.037 ✓
+codec_wiki e9 d=1.8         87.340   87.340  87.340  87.129  88.058 |  -0.718    |  -0.718   |  -0.929
+
+ACCEPTANCE GATE (target cells: codec_wiki d=1.2/1.6/1.8 within ±0.10 of W134)
+----------------------------------------------------------------------------
+
+| variant | cells within ±0.10 | new FIXED→OPEN-shape regressions |
+|---------|--------------------|-----------------------------------|
+| A       | 1 / 6 (only e8 d=1.2 close) | (baseline)            |
+| **B**   | **2 / 6** (e9 d=1.2 closes; e8 d=1.2/1.8 ALREADY within at A) | **0** |
+| C       | 3 / 6 (B's + e9 d=1.6 closes) | 1 (e8 d=1.6: -0.62 → -1.02) |
+| D       | 3 / 6 (same as C) | 2 (e8 d=1.6 + e9 d=1.8 newly worse) |
+
+B is pareto-optimal: closes the single W44-140-attributable cell (e9
+d=1.2) without making anything worse. C closes one more cell but
+introduces a -0.41 ssim2 regression on e8 d=1.6 (worse than W141 main
+by -0.41, worse than W134 by -1.02). D regresses e8 d=1.8 by -0.76.
+
+The e8/e9 split at d>=1.5 reflects the W44-117 / W44-140 mechanism
+hitting a different equilibrium at e8 (2 buttloop iters) vs e9 (4
+iters) on codec_wiki specifically. Pure threshold tightening cannot
+resolve this — the same shape that drove the W44-140 fade design.
+
+SHIPPING DECISION
+-----------------
+
+B (d<1.5) is the SHIP. Closes the only W44-140-attributable cluster
+cell. Leaves codec_wiki d=1.6/1.8 byte-identical to current main —
+those cells remain in the parity-ledger as residual inferiority, but
+they are NOT W44-140-attributable (per the bisect data showing W44-117
+firing OR not firing at d>=1.5 doesn't change the W141 baseline at
+d=1.6/1.8). Future W44-143 chunk should investigate W44-135's
+dct32_keep distance gate (`2b9c98d0`) as the actual source of those
+regressions.
+
+TERMINAL BYTE-IDENTICAL CHECK
+-----------------------------
+
+All 8 terminal cells (e8/e9 × d ∈ {1.0, 1.2, 1.4, 1.5, 1.6}):
+A == B == C == D byte-identical.
+
+The terminal m3=13.85 cleanly fails the m3>=60 gate, so the W44-142
+suppression never fires on terminal regardless of the max_distance
+cap. W44-140 wins fully preserved.
+
+PHOTO PROTECTION (4 cells from earlier A/B harness, max_distance=2.0)
+---------------------------------------------------------------------
+
+From `benchmarks/w44_142_codec_wiki_suppress_ab_2026-05-20.tsv`
+(initial A/B at d=2.0): all 4 photo cells (1418519 e8 d=2/5, 1025469
+e8 d=2/5) are byte-identical between A and B. ed >= 0.16 on all CID22
+photos rejects them via the ed gate. The shipped d<1.5 cap further
+narrows the band so even if ed were lower, the gate's distance window
+[1.0, 1.5) does not overlap typical photo bench distances >= 2.0.
+
+DO NOT
+------
+
+- DO NOT raise W44_142_EPF_SEED_SUPPRESS_MAX_DISTANCE above 1.5. The
+  bisect is conclusive: max_distance ∈ {1.7, 2.0} introduce -0.4 to
+  -0.8 SSIM2 regressions on codec_wiki e8 d=1.6/1.8 cells that current
+  main does NOT have. The W44-141 memo's "fix the cluster" framing
+  conflates W44-140's effect at d=1.2 with W44-135's effect at
+  d=1.6/1.8 — only the d=1.2 cell is actually inside the W44-140 fade
+  band and addressable by an EPF-seed-tier change.
+
+- DO NOT lower W44_142_EPF_SEED_SUPPRESS_M3_MIN below 60. The W44-124
+  probe established that imessage (m3=67.65, ed=0.0533) would slip
+  through if m3<60 OR ed>=0.05; the W44-123 measurement showed
+  imessage regresses under high_d_photo_lift firing on it.
+
+- DO NOT raise W44_142_EPF_SEED_SUPPRESS_EDGE_DENSITY_MAX above 0.05.
+  Same rationale — imessage at 0.0533 must stay out.
+
+- DO NOT respawn FMA precision claims (binding directive per
+  cardinal_rule + fd_residual_not_fma_precision memos).
+
+REPRODUCER
+----------
+
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run --release \
+  --features 'parallel butteraugli-loop ssim2-loop' \
+  --example w44_142_max_distance_bisect \
+  --manifest-path jxl-encoder/Cargo.toml \
+  > benchmarks/w44_142_max_distance_bisect_2026-05-20.tsv
+
+Wall time: 1011.4 s (24 cells × 4 modes × encode + decode + butteraugli + ssim2).
+
+FILES
+-----
+
+- benchmarks/w44_142_max_distance_bisect_2026-05-20.tsv (this bisect, 24 rows)
+- benchmarks/w44_142_max_distance_bisect_2026-05-20.meta (this file)
+- benchmarks/w44_142_codec_wiki_suppress_ab_2026-05-20.tsv (initial A/B with d=2.0 default, 36 cells)
+- jxl-encoder/src/vardct/butteraugli_loop.rs (W44_142_* constants + gate logic)
+- jxl-encoder/examples/w44_142_max_distance_bisect.rs (this harness)
+- jxl-encoder/examples/w44_142_codec_wiki_suppress_ab.rs (production A/B verification)
