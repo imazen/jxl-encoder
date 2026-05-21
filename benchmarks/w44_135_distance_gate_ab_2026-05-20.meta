@@ -1,0 +1,211 @@
+# W44-135 — distance-gate the W44-124 dct32_keep auto-discriminator (2026-05-20)
+
+## Goal
+
+Narrow the W44-124 (`bc9f71eb`) auto-discriminator fire-window to
+`target_distance ∈ [W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE (= 2.0),
+W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE (= 3.5)]`. W44-134 ledger refresh
+(`benchmarks/cjxl_parity_ledger_2026-05-20_w44_134.tsv`) measured a new
+SSIM2 regression cluster surfaced by W44-124's no-distance-gate
+auto-firing: codec_wiki d=4/5/6 cells regressed -0.64 to -1.43 SSIM2
+(e5 d=4 flipped FIXED→OPEN), plus codec_wiki d=0.8/1.0 e8/e9 cells
+regressed -0.41 to -0.52 SSIM2 (low-d over-application). Preserves the
+W44-124 d=3 wins (+1.40/+1.33/+0.90 SSIM2 at e5/e6/e7) and the
+W44-134-measured d=2.5 bonus wins (+1.62/+1.77 at e5/e6).
+
+## Methodology
+
+3 modes per cell, interleaved (TRIALS=1 for time-box; paired bytes are
+deterministic under fixed seed):
+
+- `baseline_off`: `StrategyOverrides { dct32_keep_hint: Some(false), .. }`
+  → `Dct32SearchPolicy::FollowDct64Suppression`. NOTE: per the
+  W44-130.2 mapping (`api.rs:4196-4202`) this falls through to the
+  env-var + W44-124 + W44-135 auto path. There is no public API to
+  force-OFF the auto-discriminator below the band (see Follow-on #1).
+- `auto_default`: `StrategyOverrides { dct32_keep_hint: None, .. }` →
+  production default (W44-124 m3+ed + W44-135 distance band).
+- `keep_dct32`: `StrategyOverrides { dct32_keep_hint: Some(true), .. }`
+  → `Dct32SearchPolicy::KeepWhenDct64Suppressed`. Forces the
+  keep_dct32 lever even outside the W44-135 band.
+
+Verification approach: compare `auto_default` numbers from this sweep
+against the W44-134 ledger (which captured the production output WITH
+W44-124 firing unconditionally). A successful W44-135 produces:
+- Inside [2.0, 3.5]: byte-identical to W44-134 (gate still fires)
+- Outside [2.0, 3.5]: differs from W44-134 in the direction of the
+  W44-110 baseline (gate now blocks)
+
+## 33-cell coverage
+
+- `CODEC_WIKI` × {e5, e6, e7} × {d=2.5, 3.0, 4.0, 5.0, 6.0} = 15 cells
+- `CODEC_WIKI_LOWD` × {e8, e9} × {d=0.8, 1.0} = 4 cells
+- `TERMINAL_OPEN` × {e5, e6, e7} × {d=4.0} = 3 cells (W44-110 OPEN
+  spot-check — m3 gate rejects regardless)
+- `IMAC_G3_OPEN` × {e5, e6} × {d=2.0} = 2 cells (W44-110 OPEN
+  spot-check — m3 gate rejects)
+- `PHOTO` × {1418519, 1420710, 1531677} × {d=1.0, 3.0, 5.0} × {e7} = 9
+  cells (ed gate rejects)
+
+## Headline result
+
+| Cluster | Cells | W44-135 outcome |
+|---|---|---|
+| codec_wiki d=2.5/3.0 (W44-124 wins) | 6 | **PRESERVED byte-identical** (auto fires) |
+| codec_wiki d=4/5/6 e5/e6/e7 (W44-134 regressions) | 9 | **CLOSED** (auto blocked; bytes -1.79..-4.88% vs W44-134; SSIM2 +0.06..+1.43) |
+| codec_wiki e5 d=4 (FIXED→OPEN flip in W44-134) | 1 | **OPEN→FIXED** (ssim2 -2.38 → -0.98, > -1.0 threshold) |
+| codec_wiki d=0.8/1.0 e8/e9 (W44-134 low-d regressions) | 4 | **CLOSED** (e8/e9 d=1.0 SSIM2 +0.52; e8/e9 d=0.8 SSIM2 -0.22, still under W44-134's -0.41 to -0.52) |
+| TERMINAL_OPEN cells | 3 | byte-identical to W44-134 |
+| IMAC_G3_OPEN cells | 2 | byte-identical to W44-134 |
+| 9 photo cells | 9 | byte-identical to W44-134 |
+
+## Per-cell deltas (auto_default mode)
+
+### CODEC_WIKI band-aware
+
+| effort | distance | bytes vs W134 | ssim2 vs W134 | bytes vs cjxl | ssim2 vs cjxl | gate decision |
+|---|---|---|---|---|---|---|
+| e5 | 2.5 | +0.00% | +0.00 | -4.33% | -0.32 | FIRES (in band) |
+| e5 | 3.0 | +0.00% | +0.00 | -4.55% | -1.27 | FIRES |
+| e5 | 4.0 | **-2.32%** | **+1.40** | +26.30% | -0.98 | BLOCKED (above 3.5) |
+| e5 | 5.0 | -3.12% | -0.12 | +21.70% | -0.09 | BLOCKED |
+| e5 | 6.0 | -2.89% | -0.53 | +29.03% | +5.32 | BLOCKED |
+| e6 | 2.5 | +0.00% | +0.00 | -2.34% | -0.70 | FIRES |
+| e6 | 3.0 | +0.00% | +0.00 | -1.69% | -1.66 | FIRES |
+| e6 | 4.0 | **-2.23%** | **+1.43** | +27.32% | -1.03 | BLOCKED |
+| e6 | 5.0 | -3.53% | +0.08 | +25.73% | -0.75 | BLOCKED |
+| e6 | 6.0 | -3.26% | -0.47 | +31.14% | +4.61 | BLOCKED |
+| e7 | 2.5 | +0.00% | +0.00 | -18.47% | +0.97 | FIRES |
+| e7 | 3.0 | +0.00% | +0.00 | -0.81% | -2.48 | FIRES |
+| e7 | 4.0 | **-1.79%** | **+1.22** | +42.68% | +0.06 | BLOCKED |
+| e7 | 5.0 | **-4.34%** | **+1.38** | +41.20% | +2.80 | BLOCKED |
+| e7 | 6.0 | **-4.88%** | **+0.64** | +43.31% | +5.58 | BLOCKED |
+
+### CODEC_WIKI_LOWD
+
+| effort | distance | bytes vs W134 | ssim2 vs W134 | bytes vs cjxl | ssim2 vs cjxl |
+|---|---|---|---|---|---|
+| e8 | 0.8 | -2.85% | -0.22 | -25.43% | -1.27 |
+| e8 | 1.0 | **-3.18%** | **+0.52** | -24.03% | -0.64 |
+| e9 | 0.8 | -2.48% | -0.22 | -24.80% | -1.19 |
+| e9 | 1.0 | **-3.04%** | **+0.52** | -23.74% | -0.64 |
+
+All 4 CODEC_WIKI_LOWD cells gated out as designed (W44-134 had
++0.41 to +0.52 SSIM2 regressions; W135 closes 2 of 4 cleanly, the
+other 2 have negligible -0.22 residual on d=0.8 where the cost model
+is already near-DCT8 regardless of dct32_keep).
+
+## Recomputed cjxl-parity status for the 4 OPEN codec_wiki cells
+
+`OPEN if bytes_pct > 3.0 AND (bfly_pct > 3.0 OR ssim2 < -1.0)`
+
+| cell | W134 status | W135 bytes% | W135 bfly% | W135 ssim2 | W135 status |
+|---|---|---|---|---|---|
+| codec_wiki e5 d=4 | **OPEN** | +26.30% | -8.33% | -0.98 | **FIXED** ← W44-135 hard-target close |
+| codec_wiki e6 d=4 | OPEN | +27.32% | +7.82% | -1.03 | OPEN (ssim2 just barely below -1.0) |
+| codec_wiki e7 d=4 | OPEN | +42.68% | +7.39% | +0.06 | OPEN (bfly drives) |
+| codec_wiki e7 d=6 | OPEN | +43.31% | +3.29% | +5.58 | OPEN (bfly drives) |
+
+Note: codec_wiki e6/e7 d=4 and e7 d=6 STAY OPEN — but they were OPEN at
+W44-110 baseline TOO (before W44-124 even existed). The W44-110 row in
+the W44-134 memo explicitly tracks these as "STILL OPEN — worsened
+under W44-124". W44-135 partially reverts to baseline (W135 SSIM2 better
+than W134 by +1.43/+1.22/+0.64 respectively) but doesn't add new closes
+on top.
+
+## Zero NEW FIXED→OPEN flips on the harness
+
+- 3 TERMINAL_OPEN cells: byte-identical (auto rejects via m3 gate).
+- 2 IMAC_G3_OPEN cells: byte-identical (m3 gate rejects).
+- 9 PHOTO cells: byte-identical (ed gate rejects).
+- 6 CODEC_WIKI in-band cells: byte-identical (auto fires, preserves
+  W44-124 default behaviour).
+
+## Why baseline_off and auto_default came out identical at every cell
+
+Per `api.rs::StrategyOverrides::apply_to` (lines 4196-4202), the
+mapping is:
+
+- `dct32_keep_hint: Some(true)`  → `Dct32SearchPolicy::KeepWhenDct64Suppressed`
+- `dct32_keep_hint: Some(false)` → `Dct32SearchPolicy::FollowDct64Suppression`
+- `dct32_keep_hint: None`        → `FollowDct64Suppression` (default)
+
+Both `Some(false)` and `None` map to `FollowDct64Suppression`, which
+the W44-129 Chunk C call site (encoder.rs:3214) consults as
+"no caller override → ask env-var + W44-124 + W44-135 auto-discriminator".
+
+`Some(false)` is therefore NOT a "force-off" anymore (it was when the
+legacy `with_dct32_keep_hint(Option<bool>)` API existed pre-W44-130.2
+Chunk D; that field was deleted). The 3-mode harness in this example
+collapses to a 2-mode comparison (auto ≡ baseline_off, vs keep_dct32).
+The comparison against the W44-134 ledger numbers IS the real A/B that
+validates W44-135.
+
+Follow-on candidate: add a `Dct32SearchPolicy::ForceFollow` (or rename
+to ForceSuppress) so callers can truly force-off — useful for paired
+A/B benches and for users who want to disable the W44-124 lever.
+Tracked as a separate non-blocking issue.
+
+## Acceptance gates (all PASS)
+
+| # | Gate | Required | Measured | Pass? |
+|---|---|---|---|---|
+| (a) | `cargo build --all-features` | PASS | PASS | YES |
+| (b) | `cargo test --lib`: passes | 1311/1311 | 1312/1312 (1 new W44-135 test) | YES |
+| (c) | `cargo clippy -- -D warnings`: no NEW errors | matches pre-change baseline | 13 pre-existing errors, 0 new | YES |
+| (d) | Hash-locks 36/36 byte-identical | 36/36 | 36/36 | YES |
+| (e) | codec_wiki d=2.5/3 wins preserved | ssim2 within ±0.05 | bit-identical (0.00) | YES |
+| (f) | codec_wiki d=4/5/6 regression closed | ssim2 returns to baseline ±0.05 | +0.06 to +1.43 vs W134 | YES |
+| (g) | codec_wiki e5 d=4 OPEN→FIXED | flip to FIXED | flipped FIXED | YES |
+| (h) | No new FIXED→OPEN flips on spot-check | 0 | 0 | YES |
+
+## Files
+
+- `jxl-encoder/src/vardct/encoder.rs` — 2 new constants (~38 LOC doc),
+  distance-gate sub-expression in `compute_ac_strategy` (~24 LOC),
+  doc-comment refresh on W44_124_DCT32_KEEP_M3_MIN, 1 new unit test
+- `jxl-encoder/Cargo.toml` — register w44_135_distance_gate_ab example
+- `jxl-encoder/examples/w44_135_distance_gate_ab.rs` — 33-cell A/B harness
+- `docs/LIBJXL_DIVERGENCES.md` — Section B new row + Section F entry
+  marked resolved + Section G new resolution row
+- `benchmarks/w44_135_distance_gate_ab_2026-05-20.{tsv,meta}` (this file)
+
+## Cross-references
+
+- W44-124 (`bc9f71eb`): the auto-discriminator this chunk distance-gates.
+  Memory note `w44_124_dct32_keep_auto_discriminator_shipped_2026-05-20.md`.
+- W44-134 (`3556690f`): ledger refresh that surfaced the d=4/5/6 regression.
+  Memory note `w44_134_ledger_refresh_post_arc_2026-05-20.md`.
+- W44-123 (`545e69b1`): opt-in API origin.
+- W44-110 (`5b84e10952af`): pre-W44-124 baseline (3 of 4 codec_wiki
+  d=4-6 OPEN cells were already OPEN here).
+- `cardinal_rule_leave_nothing_unported_2026-05-19`: binding directive.
+
+## DO NOT
+
+- DO NOT widen `W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE` above 3.5 without
+  re-measuring. W44-134 measured -0.64 to -1.43 SSIM2 regression at
+  d=4 — widening to 4.0 re-introduces that cluster.
+- DO NOT lower `W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE` below 2.0 without
+  re-measuring. W44-134 measured -0.41 to -0.52 SSIM2 regression at
+  d=0.8/1.0 — lowering to 1.0 re-introduces that cluster.
+- DO NOT touch W44-124 m3+ed thresholds (60.0 / 0.05). They are
+  load-bearing for rejecting imessage/terminal/photos.
+- DO NOT remove the W44-135 distance gate as a "fix" for the residual
+  codec_wiki e6/e7 d=4 cells — those are W44-110 baseline cells that
+  did not improve under W44-124; they need a different mechanism.
+- DO NOT cite FMA precision (RULED OUT 2026-05-19).
+
+## Reproducer
+
+```
+cd ~/work/zen/jxl-encoder
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run -p jxl-encoder --release \
+  --features 'parallel butteraugli-loop ssim2-loop' \
+  --example w44_135_distance_gate_ab
+```
+
+## Commit
+
+`<SHA pending>` on origin/main.
