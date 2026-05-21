@@ -1,0 +1,126 @@
+# W44-173 clic_097cb426 per-strategy AC tokenization analysis
+# Source: 1024x1024 → 128x128 8x8-cells
+# Dumps: /tmp/w44_173_dumps/{zenjxl,libjxl,cjxl}_e{7,8}_d5/per_block_*.tsv
+
+## Phase 1: per-cell + per-region SSIM2/bfly (from W44-173 TSV)
+
+encoder  strat     eff  dist   bytes   ssim2    bfly     ms
+ours     zenjxl      6   3.0   25097  66.690   3.102    207
+ours     libjxl      6   3.0   25347  66.355   3.116    152
+cjxl     NA          6   3.0   24699  69.863   3.082    263
+ours     zenjxl      6   4.0   19312  62.668   3.936    224
+ours     libjxl      6   4.0   19326  61.629   3.937    181
+cjxl     NA          6   4.0   18969  64.539   3.915    279
+ours     zenjxl      6   5.0   16176  57.277   4.803    205
+ours     libjxl      6   5.0   15584  55.805   4.803    166
+cjxl     NA          6   5.0   15750  59.868   4.264    242
+ours     zenjxl      7   3.0   25344  66.350   3.116    218
+ours     libjxl      7   3.0   25344  66.350   3.116    228
+cjxl     NA          7   3.0   24469  69.897   3.082    365
+ours     zenjxl      7   4.0   19322  61.629   3.937    267
+ours     libjxl      7   4.0   19322  61.629   3.937    259
+cjxl     NA          7   4.0   18707  64.548   3.915    376
+ours     zenjxl      7   5.0   15581  55.796   4.803    254
+ours     libjxl      7   5.0   15581  55.796   4.803    246
+cjxl     NA          7   5.0   15610  59.864   4.264    355
+ours     zenjxl      8   3.0   23247  65.723   3.250   2289
+ours     libjxl      8   3.0   23247  65.723   3.250   2293
+cjxl     NA          8   3.0   22962  68.940   3.264   1342
+ours     zenjxl      8   4.0   17357  60.518   3.890   2320
+ours     libjxl      8   4.0   17357  60.518   3.890   2635
+cjxl     NA          8   4.0   17203  62.955   4.079   1297
+ours     zenjxl      8   5.0   13977  53.116   4.801   2270
+ours     libjxl      8   5.0   13977  53.116   4.801   2243
+cjxl     NA          8   5.0   14334  57.606   4.685   1300
+
+## Phase 1b: per-region SSIM2 deltas (ours - cjxl) for e7 d=5 (worst cell)
+
+  region[0,0]: cjxl=78.394  zen=72.869 (Δ-5.525)  lib=72.869 (Δ-5.525)
+  region[0,1]: cjxl=50.195  zen=48.794 (Δ-1.401)  lib=48.794 (Δ-1.401)
+  region[0,2]: cjxl=84.123  zen=77.079 (Δ-7.044)  lib=77.079 (Δ-7.044)
+  region[1,0]: cjxl=49.311  zen=47.062 (Δ-2.249)  lib=47.062 (Δ-2.249)
+  region[1,1]: cjxl=60.641  zen=58.317 (Δ-2.324)  lib=58.317 (Δ-2.324)
+  region[1,2]: cjxl=84.333  zen=76.605 (Δ-7.729)  lib=76.605 (Δ-7.729)
+  region[2,0]: cjxl=58.717  zen=54.645 (Δ-4.073)  lib=54.645 (Δ-4.073)
+  region[2,1]: cjxl=58.167  zen=55.287 (Δ-2.881)  lib=55.287 (Δ-2.881)
+  region[2,2]: cjxl=84.632  zen=77.653 (Δ-6.980)  lib=77.653 (Δ-6.980)
+
+## Phase 2: per-strategy attribution (e7_d5)
+
+strat           zen_fb  lib_fb cjxl_fb    Δzen    Δlib  zen_cells  cjxl_cells zen_meanqac cjxl_meanqac
+DCT8                33      33      33      +0      +0         33          33        6.88         6.88
+Hornuss              1       1       1      +0      +0          1           1        8.00         8.00
+DCT2X2               4       4       4      +0      +0          4           4        6.50         6.50
+DCT16X16            34      34      33      +1      +1        136         132        6.88         6.76
+DCT32X32           181     181     181      +0      +0       2896        2896        5.93         5.92
+DCT16X8             16      16      14      +2      +2         32          28        7.00         6.86
+DCT8X16             17      17      17      +0      +0         34          34        6.35         6.35
+DCT32X16            59      59      60      -1      -1        472         480        6.66         6.60
+DCT16X32            37      37      37      +0      +0        296         296        5.95         5.97
+DCT64X64           171     171     171      +0      +0      10944       10944        7.82         7.82
+DCT64X32            34      34      38      -4      -4       1088        1216        6.76         6.76
+DCT32X64            14      14      10      +4      +4        448         320        6.00         5.70
+
+  Strategy agreement (zenjxl vs cjxl): 98.63% of 16384 cells
+
+  Top disagreement pairs (zenjxl → cjxl) [cell counts]:
+    DCT32X32   → DCT64X32   :     64
+    DCT32X64   → DCT32X32   :     64
+    DCT32X64   → DCT64X32   :     64
+    DCT32X32   → DCT32X16   :     16
+    DCT32X16   → DCT32X32   :      8
+    DCT16X8    → DCT32X32   :      4
+    DCT16X16   → DCT32X32   :      4
+
+## Phase 2: per-strategy attribution (e8_d5)
+
+strat           zen_fb  lib_fb cjxl_fb    Δzen    Δlib  zen_cells  cjxl_cells zen_meanqac cjxl_meanqac
+DCT8                33      33      33      +0      +0         33          33        5.91         6.45
+Hornuss              1       1       1      +0      +0          1           1        6.00         6.00
+DCT2X2               4       4       4      +0      +0          4           4        5.75         6.00
+DCT16X16            34      34      33      +1      +1        136         132        5.26         5.79
+DCT32X32           181     181     181      +0      +0       2896        2896        4.87         5.34
+DCT16X8             16      16      14      +2      +2         32          28        5.56         5.86
+DCT8X16             17      17      17      +0      +0         34          34        5.12         5.35
+DCT32X16            59      59      60      -1      -1        472         480        5.14         5.67
+DCT16X32            37      37      37      +0      +0        296         296        4.92         5.38
+DCT64X64           171     171     171      +0      +0      10944       10944        5.46         5.40
+DCT64X32            34      34      38      -4      -4       1088        1216        4.97         5.29
+DCT32X64            14      14      10      +4      +4        448         320        4.71         5.10
+
+  Strategy agreement (zenjxl vs cjxl): 98.63% of 16384 cells
+
+  Top disagreement pairs (zenjxl → cjxl) [cell counts]:
+    DCT32X32   → DCT64X32   :     64
+    DCT32X64   → DCT32X32   :     64
+    DCT32X64   → DCT64X32   :     64
+    DCT32X32   → DCT32X16   :     16
+    DCT32X16   → DCT32X32   :      8
+    DCT16X8    → DCT32X32   :      4
+    DCT16X16   → DCT32X32   :      4
+
+## Phase 3: cluster-pattern comparison
+
+clic_097cb426 ZenanalyzeProxies (see proxies file):
+  m3_colourfulness      = 15.76  (LOW colour)
+  flat_color_block_ratio = 0.592 (VERY HIGH — 59% flat blocks)
+  edge_density          = 0.128  (LOW)
+
+Comparison to existing clusters (from W44-91/96/98/99/166/124/168 thresholds):
+
+cluster                  image               m3    fcbr    edge  mask_med  mask_p25 gate fires?       
+  ───────────────────────────────────────────────────────────────────────────────────────
+  W44-91 widen (m>=80,fcbr<0.01) clic_097cb426    15.76   0.592   0.128         ?         ? NO (m3<80 AND fcbr>>0.01)
+  W44-96 var Z (edge>=0.7,fcbr<0.01,m<50) clic_097cb426    15.76   0.592   0.128         ?         ? NO (edge<0.7 AND fcbr>>0.01)
+  W44-98 HC (within W96, m>=25) clic_097cb426    15.76   0.592   0.128         ?         ? NO (W96 disqualifies)
+  W44-99 LC (within W96, m<25) clic_097cb426    15.76   0.592   0.128         ?         ? NO (W96 disqualifies)
+  W44-124 DCT32 keep (m<25,edge<0.16,d>=1.4) clic_097cb426    15.76   0.592   0.128         ?         ? PARTIAL (m3,edge match; need mask_p25)
+  W44-166 admit Z (mask_p25>=85,d>=4.5) clic_097cb426    15.76   0.592   0.128         ?         ? PARTIAL (need mask_p25)
+  W44-168 SmoothSkip (mask_p25>=85) clic_097cb426    15.76   0.592   0.128         ?         ? PARTIAL (need mask_p25)
+
+Note: mask1x1 stats not yet captured (need access to internal mask1x1 field).
+      However, given fcbr=0.59 (very high flat-block fraction), the mask1x1
+      median is likely HIGH (>>50), placing clic_097cb426 outside the W44-96/29
+      mask<50 firing class. The W44-166/168 admission via mask_p25>=85 is the
+      candidate that might fire — needs measurement.
+

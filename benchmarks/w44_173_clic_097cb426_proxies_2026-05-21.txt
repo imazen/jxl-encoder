@@ -1,0 +1,48 @@
+# W44-173 zenanalyze proxies for clic_097cb426
+image	clic_097cb426
+src	/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png
+width	1024
+height	1024
+m3_colourfulness	15.7586
+flat_color_block_ratio	0.592224
+edge_density	0.128038
+
+# Discriminator gates (compare to thresholds):
+# W44-91 m3>=80 + fcbr<0.01 → high-d photo widen
+# W44-96 edge_density>=0.7 + fcbr<0.01 + mask<50 → variant Z
+# W44-98 m3>=25 (within W44-96) → HC variant Z
+# W44-99 m3<25 (within W44-96) → LC variant Z
+# W44-124 m3<25 + edge_density<0.16 + mask_p25>=W44_124_MIN+distance gate
+# W44-166 mask_p25>=85 + distance>=4.5 → variant Z admit
+# W44-168 mask_p25>=85 → smooth-photo iter skip; edge_density>=0.5 → textured iter bump
+
+## mask1x1 percentiles (from W44-173 mask_probe)
+e7_d5	mask1x1_med=66.43	mask1x1_p25=47.73	mask1x1_p75=75.43	mask1x1_p90=81.26
+e8_d5	mask1x1_med=66.43	mask1x1_p25=47.73	mask1x1_p75=75.43	mask1x1_p90=81.26
+
+## mask1x1 percentiles (from w44_173_mask_probe at e7 d=5 and e8 d=5)
+mask1x1_median	66.43
+mask1x1_p10	32.37
+mask1x1_p25	47.73
+mask1x1_p75	75.43
+mask1x1_p90	81.26
+masking_field_median	0.1462
+
+## Discriminator firing summary (clic_097cb426 vs all known gates)
+gate_W44_91_widen_m_ge_80	NO (m3=15.76 < 80)
+gate_W44_91_widen_fcbr_lt_001	NO (fcbr=0.592 >> 0.01)
+gate_W44_29_high_d_mask_lt_50	NO (mask_med=66.43 >= 50)
+gate_W44_96_var_z_edge_ge_07	NO (edge=0.128 < 0.7)
+gate_W44_96_var_z_fcbr_lt_001	NO (fcbr=0.592 >> 0.01)
+gate_W44_166_admit_z_p25_ge_85	NO (mask_p25=47.73 << 85)
+gate_W44_168_smoothskip_p25_ge_85	NO (mask_p25=47.73 << 85)
+gate_W44_168_textured_edge_ge_05	NO (edge=0.128 < 0.5)
+gate_W44_124_dct32_keep_m_ge_60	NO (m3=15.76 < 60)
+gate_W44_124_dct32_keep_edge_le_005	NO (edge=0.128 > 0.05)
+gate_W22_1_screenshot_lift_med_gt_95	NO (mask_med=66.43 < 95)
+
+## Verdict: clic_097cb426 falls in a discriminator GAP — NO existing
+## zen content-aware gate fires on this image at e>=7. This explains
+## why EncoderStrategy::Zenjxl and ::Libjxl produce BYTE-IDENTICAL
+## output at e7/e8/e9 (verified in W44-173 TSV). The SSIM2 deficit is
+## entirely structural — affects both strategies equally.
