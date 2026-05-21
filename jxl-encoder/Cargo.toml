@@ -703,6 +703,22 @@ name = "w44_165_restore_epf_seed_photos_ab"
 path = "examples/w44_165_restore_epf_seed_photos_ab.rs"
 required-features = ["butteraugli-loop", "ssim2-loop", "__expert"]
 
+# W44-166 Smart-Zenjxl chunk 3 (B1 pick) — paired interleaved A/B/C
+# bench testing whether admitting high-mask photos (1418519,
+# mask_p25=88.88) to the W44-96 variant Z dispatch COMPOSES with
+# W44-152's W44-29 outer-table mechanism, or COMPETES like W44-165's
+# EPF seed admission did. 36-cell harness × 3 modes:
+#   A = baseline (env unset; w44_166_photo_admit always false)
+#   B = JXL_W44_166_VARIANT_Z_ADMIT_MODE=B (mask_p25 >= 85)
+#   C = JXL_W44_166_VARIANT_Z_ADMIT_MODE=C (mask_p25 >= 85 AND m3 >= 25)
+# Per W44-165 binding lesson: measure on CURRENT main, not on the
+# W44-150 baseline that may give a different sign due to intervening
+# mechanism shipments (W44-152 captured wins via a competing mechanism).
+[[example]]
+name = "w44_166_variant_z_admit_ab"
+path = "examples/w44_166_variant_z_admit_ab.rs"
+required-features = ["butteraugli-loop", "ssim2-loop", "__expert"]
+
 # W44-151 W44-29 widen A/B — measure the Mechanism B photo admission
 # gate (mask_p25 >= 85.0 AND distance >= 3.0) on the W44-147 1418519
 # d=5/6 cluster + W44-118 protection set (1025469) + 4 SPOT photos.

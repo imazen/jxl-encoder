@@ -4202,6 +4202,41 @@ pub struct EncoderImprovementsCustom {
     /// is observed) and [`EncoderStrategy::LeanFaster`] (skip heavy
     /// per-image gates).
     pub photo_epf_seed_admit: bool,
+
+    /// W44-166 (Smart-Zenjxl chunk 3, 2026-05-21): admit high-mask
+    /// photos to the W44-96 variant Z dispatch via a `mask1x1_p25 >=
+    /// 85` discriminator, in addition to the default W44-96 outer gate
+    /// (`mask1x1_median < 50 AND edge_density >= 0.7 AND fcbr < 0.01`)
+    /// that fires on the {1420710, 1531677} sub-class only.
+    ///
+    /// **Mechanism**: 1418519 (mask=92, mask_p25=88.88, m3=36.84)
+    /// currently fails the W44-96 outer gate (mask >= 50) so it never
+    /// reaches variant Z's stronger entropy_mul lift even though
+    /// W44-152 already admits it to the OUTER `high_d_photo_smooth_suppressed`
+    /// table via the same mask_p25 predicate at d ∈ [3.0, 5.0]. The
+    /// W44-163 B1 audit proposed extending the admission INTO the
+    /// variant Z inner gate so the m3 sub-dispatch (W44-98/99) can
+    /// route 1418519-class images to the appropriate inner table.
+    ///
+    /// Per the user directive 2026-05-21 ("restore any superior options
+    /// according to the current encode strategy selection"), this flag
+    /// enables that admission on Zenjxl when measurement validates the
+    /// approach. Default-enabled but the env hook
+    /// `JXL_W44_166_VARIANT_Z_ADMIT_MODE=A|B|C` controls the dispatch
+    /// at the gate site (default A = baseline = no change vs main;
+    /// B = `mask_p25 >= 85`; C = `mask_p25 >= 85 AND m3 >= 25`).
+    ///
+    /// **Default**: `true` for [`EncoderStrategy::Zenjxl`] and
+    /// [`EncoderStrategy::Aggressive`]; `false` for
+    /// [`EncoderStrategy::Libjxl`] (strict parity — the W44-148
+    /// "1418519 OUTSIDE variant Z reach" DO-NOT is observed) and
+    /// [`EncoderStrategy::LeanFaster`] (skip heavy per-image gates).
+    ///
+    /// W44-166 measured Mode B vs Mode C vs Mode A baseline on a
+    /// 27-cell paired interleaved harness; result documented in
+    /// `benchmarks/w44_166_variant_z_admit_zenjxl_2026-05-21.{tsv,meta}`
+    /// and `memory/w44_166_variant_z_zenjxl_<result>_2026-05-21.md`.
+    pub photo_variant_z_admit: bool,
 }
 
 impl Default for EncoderImprovementsCustom {
@@ -4252,6 +4287,13 @@ impl Default for EncoderImprovementsCustom {
             // sharpness seed. Libjxl / LeanFaster override this to
             // `false` in their resolved-improvements constructors.
             photo_epf_seed_admit: true,
+            // W44-166: Zenjxl default enables the photo admit-mode
+            // env hook for the W44-96 variant Z dispatch (default Mode
+            // A = no change vs main; production benches set
+            // JXL_W44_166_VARIANT_Z_ADMIT_MODE=B|C). Libjxl /
+            // LeanFaster override to `false` to preserve the W44-148
+            // DO-NOT "1418519 OUTSIDE variant Z reach" disposition.
+            photo_variant_z_admit: true,
         }
     }
 }
@@ -4301,6 +4343,13 @@ pub(crate) struct ResolvedImprovements {
     // W44-165 — Smart-Zenjxl: admit high-mask photos to the W44-117 EPF
     // sharpness seed (in addition to the W44-118 `is_screenshot` gate).
     pub(crate) photo_epf_seed_admit: bool,
+
+    // W44-166 — Smart-Zenjxl chunk 3: admit high-mask photos to the
+    // W44-96 variant Z dispatch via the `mask_p25 >= 85` discriminator
+    // (in addition to the default W44-96 mask<50 outer gate). Gate site
+    // also respects `JXL_W44_166_VARIANT_Z_ADMIT_MODE=A|B|C` env hook
+    // for A/B/C benching (Mode A = no change vs main).
+    pub(crate) photo_variant_z_admit: bool,
 }
 
 impl Default for ResolvedImprovements {
@@ -4342,6 +4391,10 @@ impl Default for ResolvedImprovements {
             // W44-117 EPF sharpness seed. Libjxl / LeanFaster
             // constructors below override to `false`.
             photo_epf_seed_admit: true,
+            // W44-166: Zenjxl default enables the variant Z admit-mode
+            // env hook. Libjxl / LeanFaster constructors below override
+            // to `false` to preserve strict parity / drop per-image gates.
+            photo_variant_z_admit: true,
         }
     }
 }
@@ -4602,6 +4655,13 @@ impl ResolvedImprovements {
             // above, so this flag is redundant on Libjxl in practice;
             // kept explicit for clarity / forward-compat.
             photo_epf_seed_admit: false,
+            // W44-166: strict libjxl parity — preserve the W44-148
+            // DO-NOT "1418519 OUTSIDE variant Z reach" disposition.
+            // The Libjxl variant already sets
+            // `high_d_photo_entropy_mul: HighDPhotoEntropyMulPolicy::Disabled`
+            // above, so this flag is redundant on Libjxl in practice;
+            // kept explicit for clarity / forward-compat.
+            photo_variant_z_admit: false,
         }
     }
 
@@ -4626,6 +4686,10 @@ impl ResolvedImprovements {
             // seed admission (it computes a percentile on the mask
             // plane — a per-image cost).
             photo_epf_seed_admit: false,
+            // W44-166: LeanFaster also drops the per-image variant Z
+            // admit gate (depends on mask_p25 which is the same
+            // per-image cost as the W44-165 photo_epf_seed_admit).
+            photo_variant_z_admit: false,
             ..Default::default()
         }
     }
@@ -4666,6 +4730,7 @@ impl ResolvedImprovements {
             block_ctx_map_15_cluster: c.block_ctx_map_15_cluster,
             content_class_auto_classify: c.content_class_auto_classify,
             photo_epf_seed_admit: c.photo_epf_seed_admit,
+            photo_variant_z_admit: c.photo_variant_z_admit,
         }
     }
 }
@@ -14263,6 +14328,47 @@ mod tests {
             EncoderStrategy::Custom(Box::new(custom)).resolve(&StrategyOverrides::default());
         assert!(
             !resolved.photo_epf_seed_admit,
+            "Custom with field set false must propagate"
+        );
+    }
+
+    /// W44-166: ResolvedImprovements.photo_variant_z_admit defaults
+    /// per strategy. Zenjxl + Aggressive enable; Libjxl + LeanFaster
+    /// disable. Mirrors the W44-165 photo_epf_seed_admit pattern.
+    #[test]
+    fn test_w44_166_photo_variant_z_admit_default_per_strategy() {
+        let zenjxl = EncoderStrategy::Zenjxl.resolve(&StrategyOverrides::default());
+        assert!(
+            zenjxl.photo_variant_z_admit,
+            "Zenjxl must enable W44-166 photo variant Z admission"
+        );
+        let aggressive = EncoderStrategy::Aggressive.resolve(&StrategyOverrides::default());
+        assert!(
+            aggressive.photo_variant_z_admit,
+            "Aggressive must enable W44-166 photo variant Z admission"
+        );
+        let libjxl = EncoderStrategy::Libjxl.resolve(&StrategyOverrides::default());
+        assert!(
+            !libjxl.photo_variant_z_admit,
+            "Libjxl must disable W44-166 (strict parity — W44-148 DO-NOT \
+             '1418519 OUTSIDE variant Z reach' disposition)"
+        );
+        let lean = EncoderStrategy::LeanFaster.resolve(&StrategyOverrides::default());
+        assert!(
+            !lean.photo_variant_z_admit,
+            "LeanFaster must disable W44-166 (skip per-image mask percentile cost)"
+        );
+        // Custom inherits whatever the user set on EncoderImprovementsCustom.
+        let mut custom = EncoderImprovementsCustom::default();
+        assert!(
+            custom.photo_variant_z_admit,
+            "EncoderImprovementsCustom::default() matches Zenjxl"
+        );
+        custom.photo_variant_z_admit = false;
+        let resolved =
+            EncoderStrategy::Custom(Box::new(custom)).resolve(&StrategyOverrides::default());
+        assert!(
+            !resolved.photo_variant_z_admit,
             "Custom with field set false must propagate"
         );
     }

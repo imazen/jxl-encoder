@@ -285,6 +285,32 @@ const W44_96_FCBR_MAX: f32 = 0.01;
 /// distance gate here is belt-and-suspenders).
 const W44_96_VARIANT_Z_MIN_DISTANCE: f32 = 4.5;
 
+/// W44-166 (Smart-Zenjxl chunk 3 — B1 candidate): minimum `mask1x1_p25`
+/// to admit a high-mask photo (e.g. 1418519) to the W44-96 variant Z
+/// dispatch even though its `mask1x1_median` exceeds the W44-96 outer
+/// gate's `HIGH_D_PHOTO_SMOOTH_THRESHOLD = 50`.
+///
+/// **Context**: W44-152 admits high-mask photos to the OUTER W44-29
+/// table (`high_d_photo_smooth_suppressed`) via the same `mask_p25 >=
+/// 85` predicate. The B1 audit (W44-163) proposed extending that
+/// admission INTO the variant Z inner gate so 1418519-class photos
+/// can also reach the stronger lift (`dct32x32 = 1.22` for default
+/// variant Z, `dct16x32 = 1.30` for high_colour Z').
+///
+/// W44-166 measured whether this composes with W44-152's outer-table
+/// win or competes (per W44-165's binding lesson that W44-150's
+/// pre-W44-152 prediction was falsified on current main). See
+/// `benchmarks/w44_166_variant_z_admit_zenjxl_2026-05-21.{tsv,meta}`
+/// for the load-bearing measurement.
+///
+/// **Threshold 85.0**: shared with [`W44_151_HIGH_MASK_P25_MIN`] for
+/// per-image discriminator parity. The W44-149 audit found a 10.98pp
+/// gap between 1418519 (mask_p25 = 88.88) and the nearest CONTROL
+/// (7552578 at mask_p25 = 77.90), confirming this is a clean
+/// single-axis discriminator for 1418519.
+#[allow(dead_code)]
+pub const W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN: f32 = 85.0;
+
 /// W44-98 sub-discriminator: minimum `m3_colourfulness` to escalate from
 /// the default variant Z table
 /// ([`crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z`])
@@ -523,6 +549,72 @@ fn w44_156_threshold_override() -> Option<f32> {
 #[inline]
 fn w44_156_effective_threshold() -> f32 {
     w44_156_threshold_override().unwrap_or(W44_156_VARIANT_Z_D_HIGH_THRESHOLD)
+}
+
+/// W44-166 admit modes for the photo-admission branch of variant Z.
+///
+/// **Mode A (baseline)** — current production behaviour. Variant Z is
+/// gated on `mask1x1_median < HIGH_D_PHOTO_SMOOTH_THRESHOLD = 50`
+/// (the W44-96 outer gate). High-mask photos like 1418519 (mask=92)
+/// cannot reach variant Z.
+///
+/// **Mode B** — admits photos to variant Z via
+/// `mask1x1_p25 >= W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN = 85`. Once
+/// admitted, the existing W44-98/99 m3 sub-dispatch routes the image
+/// to the appropriate inner table (high_colour Z' if m3 >= 25, else
+/// low_colour Z'').
+///
+/// **Mode C** — like Mode B but ALSO requires `m3_colourfulness >=
+/// W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN = 25`, restricting admission
+/// to images that will land on the high_colour Z' table. (For
+/// 1418519 with m3=36.84, Mode C ≡ Mode B; Mode C exists to test
+/// future high-m3 candidates without admitting low-m3 outliers.)
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum W44_166VariantZAdmitMode {
+    Baseline,
+    BMaskP25,
+    CMaskP25HighM3,
+}
+
+/// W44-166 (2026-05-21): admit-mode env hook for the
+/// `JXL_W44_166_VARIANT_Z_ADMIT_MODE=A|B|C` selector.
+///
+/// **Production default: Mode B** (the SHIPPED mode per the W44-166
+/// measurement that closed the chunk acceptance). Env values:
+/// - `A` → [`W44_166VariantZAdmitMode::Baseline`] (disable W44-166
+///   admission; reverts to pre-W44-166 behaviour for A/B/C benching)
+/// - `B` (or unset) → [`W44_166VariantZAdmitMode::BMaskP25`] (SHIPPED)
+/// - `C` → [`W44_166VariantZAdmitMode::CMaskP25HighM3`] (stricter
+///   variant requiring `m3_colourfulness >= 25` in addition to
+///   `mask_p25 >= 85`; kept reachable for future bisection of
+///   discriminator tuning)
+///
+/// Has effect only when [`ResolvedImprovements::photo_variant_z_admit`]
+/// is true (Zenjxl / Aggressive default) AND the resolved policy is
+/// `Auto`. On `EncoderStrategy::Libjxl` / `LeanFaster` (which set
+/// `photo_variant_z_admit = false`) the env var is ignored entirely.
+#[inline]
+#[allow(dead_code)]
+fn w44_166_admit_mode_env() -> W44_166VariantZAdmitMode {
+    #[cfg(feature = "std")]
+    {
+        match std::env::var("JXL_W44_166_VARIANT_Z_ADMIT_MODE")
+            .ok()
+            .as_deref()
+        {
+            Some("A") => W44_166VariantZAdmitMode::Baseline,
+            Some("C") => W44_166VariantZAdmitMode::CMaskP25HighM3,
+            // Default (unset OR "B" OR any other unrecognised value)
+            // is Mode B per W44-166 SHIP.
+            _ => W44_166VariantZAdmitMode::BMaskP25,
+        }
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        // no_std path: default to SHIPPED Mode B.
+        W44_166VariantZAdmitMode::BMaskP25
+    }
 }
 
 /// W44-135 (2026-05-20): maximum `target_distance` at which the W44-124
@@ -2329,7 +2421,41 @@ impl VarDctEncoder {
         };
 
         // ── W44-96/98/99 variant Z sub-discriminators ──
-        let w44_96_variant_z = w44_29_lower
+        //
+        // W44-166 (Smart-Zenjxl chunk 3, 2026-05-21): the default W44-96
+        // admit predicate requires `mask1x1_median < 50` (the W44-29
+        // outer threshold). High-mask photos like 1418519 (mask=92)
+        // never reach variant Z under this gate. The W44-166 admit-mode
+        // env hook layers an OR-branch that admits via `mask1x1_p25 >=
+        // W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN = 85` (Mode B) or via
+        // mask_p25 AND `m3_colourfulness >= 25` (Mode C). The OR-branch
+        // is gated on `ResolvedImprovements::photo_variant_z_admit`
+        // (true on Zenjxl / Aggressive; false on Libjxl / LeanFaster
+        // per strict-parity discipline). Default Mode A = baseline =
+        // no change.
+        let w44_166_admit_mode = w44_166_admit_mode_env();
+        let w44_166_photo_admit_allowed = self
+            .resolved_improvements
+            .photo_variant_z_admit
+            && matches!(
+                high_d_photo_policy,
+                crate::api::HighDPhotoEntropyMulPolicy::Auto
+            )
+            && self.distance >= W44_96_VARIANT_Z_MIN_DISTANCE;
+        let w44_166_photo_admit = w44_166_photo_admit_allowed
+            && match w44_166_admit_mode {
+                W44_166VariantZAdmitMode::Baseline => false,
+                W44_166VariantZAdmitMode::BMaskP25 => {
+                    mask1x1_p25.is_some_and(|p25| p25 >= W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN)
+                }
+                W44_166VariantZAdmitMode::CMaskP25HighM3 => {
+                    mask1x1_p25.is_some_and(|p25| p25 >= W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN)
+                        && self.zenanalyze_proxies.is_some_and(|p| {
+                            p.m3_colourfulness >= W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN
+                        })
+                }
+            };
+        let w44_96_default_admit = w44_29_lower
             && matches!(
                 high_d_photo_policy,
                 crate::api::HighDPhotoEntropyMulPolicy::Auto
@@ -2340,6 +2466,7 @@ impl VarDctEncoder {
                 p.edge_density >= W44_96_EDGE_DENSITY_MIN
                     && p.flat_color_block_ratio < W44_96_FCBR_MAX
             });
+        let w44_96_variant_z = w44_96_default_admit || w44_166_photo_admit;
         let w44_98_variant_z_high_colour = w44_96_variant_z
             && self
                 .zenanalyze_proxies
@@ -2358,13 +2485,17 @@ impl VarDctEncoder {
         // 1420710 e5 d=6 OPEN cell per W44-155 strategy-shift diagnosis.
         let w44_156_d_high = w44_96_variant_z && self.distance > w44_156_effective_threshold();
 
-        if !(w22_1_lift || w44_29_lower || w44_65_suppress_dct64) {
+        if !(w22_1_lift || w44_29_lower || w44_65_suppress_dct64 || w44_166_photo_admit) {
             return None;
         }
         let mut p = self.profile.clone();
         if w22_1_lift {
             p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
-        } else if w44_29_lower {
+        } else if w44_29_lower || w44_166_photo_admit {
+            // W44-166: when ONLY w44_166_photo_admit fires (w44_29_lower
+            // false — i.e. d outside W44-152's [3.0, 5.0] band, typically
+            // d=6 on 1418519), we still route through the variant Z table
+            // chain. The W44-156 d_high split handles d>5.5.
             p.entropy_mul_table = if w44_98_variant_z_high_colour {
                 if w44_156_d_high {
                     crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour_d_high()
@@ -3806,7 +3937,36 @@ impl VarDctEncoder {
         // override" via `StrategyOverrides::apply_to`. The legacy
         // `self.high_d_photo_hint.is_none()` redundant guard was
         // deleted with the field in Chunk D.
-        let w44_96_variant_z = w44_29_lower
+        //
+        // W44-166 (Smart-Zenjxl chunk 3, 2026-05-21): mirror of the
+        // `compute_profile_for_search` site above. Adds an OR-branch
+        // that admits high-mask photos (1418519-class) via mask1x1_p25
+        // >= 85, gated on the resolved `photo_variant_z_admit` flag.
+        // Env hook `JXL_W44_166_VARIANT_Z_ADMIT_MODE=A|B|C` controls
+        // the discriminator (default A = baseline = no change).
+        let w44_166_admit_mode = w44_166_admit_mode_env();
+        let w44_166_photo_admit_allowed = self
+            .resolved_improvements
+            .photo_variant_z_admit
+            && matches!(
+                high_d_photo_policy,
+                crate::api::HighDPhotoEntropyMulPolicy::Auto
+            )
+            && self.distance >= W44_96_VARIANT_Z_MIN_DISTANCE;
+        let w44_166_photo_admit = w44_166_photo_admit_allowed
+            && match w44_166_admit_mode {
+                W44_166VariantZAdmitMode::Baseline => false,
+                W44_166VariantZAdmitMode::BMaskP25 => {
+                    mask1x1_p25.is_some_and(|p25| p25 >= W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN)
+                }
+                W44_166VariantZAdmitMode::CMaskP25HighM3 => {
+                    mask1x1_p25.is_some_and(|p25| p25 >= W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN)
+                        && self.zenanalyze_proxies.is_some_and(|p| {
+                            p.m3_colourfulness >= W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN
+                        })
+                }
+            };
+        let w44_96_default_admit = w44_29_lower
             && matches!(
                 high_d_photo_policy,
                 crate::api::HighDPhotoEntropyMulPolicy::Auto
@@ -3817,6 +3977,7 @@ impl VarDctEncoder {
                 p.edge_density >= W44_96_EDGE_DENSITY_MIN
                     && p.flat_color_block_ratio < W44_96_FCBR_MAX
             });
+        let w44_96_variant_z = w44_96_default_admit || w44_166_photo_admit;
 
         // W44-98 variant Z' sub-discriminator: when `w44_96_variant_z`
         // fires AND the image's `m3_colourfulness` exceeds
@@ -3877,11 +4038,16 @@ impl VarDctEncoder {
         // DCT32X32 consolidation than cjxl picks at d > 5.5).
         let w44_156_d_high = w44_96_variant_z && self.distance > w44_156_effective_threshold();
 
-        let profile_for_search = if w22_1_lift || w44_29_lower || w44_65_suppress_dct64 {
+        let profile_for_search =
+            if w22_1_lift || w44_29_lower || w44_65_suppress_dct64 || w44_166_photo_admit {
             let mut p = self.profile.clone();
             if w22_1_lift {
                 p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
-            } else if w44_29_lower {
+            } else if w44_29_lower || w44_166_photo_admit {
+                // W44-166: when ONLY w44_166_photo_admit fires
+                // (w44_29_lower false — i.e. d outside W44-152's
+                // [3.0, 5.0] band), still route through the variant Z
+                // chain. The W44-156 d_high split handles d>5.5.
                 p.entropy_mul_table = if w44_98_variant_z_high_colour {
                     if w44_156_d_high {
                         crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour_d_high()
