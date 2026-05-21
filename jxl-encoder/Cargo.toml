@@ -1229,6 +1229,21 @@ name = "w44_171_dc_tree_gate_perf_ab"
 path = "examples/w44_171_dc_tree_gate_perf_ab.rs"
 required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-172 (2026-05-21): perf A/B for the DC-tree e8 predictor-set fix.
+# After W44-171 (`d22c61f`) gated `kLearn` at effort >= 8, the residual e8
+# wall wedge (terminal e8 d=0.5: 32× cjxl) is now in
+# `build_tree_recursive_variable` — it evaluates all 14 predictors per
+# split. libjxl at e8 (kKitten) uses `Predictor::Best` (Weighted + Gradient
+# only) per `enc_modular.cc:1593-1594`. This bench measures the wall-time
+# win + bytes/SSIM2 cost of restoring that parity. Mode A reproduces the
+# pre-W44-172 Variable-at-e8 behaviour via the JXL_W44_172_FORCE_VARIABLE_AT_E8
+# env hook; Mode B is the libjxl-parity default (Best at e8, Variable at
+# e9+). Single-threaded encode matches the W44-170 + W44-171 protocol.
+[[example]]
+name = "w44_172_dc_tree_e8_predictor_set_ab"
+path = "examples/w44_172_dc_tree_e8_predictor_set_ab.rs"
+required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
+
 [[example]]
 name = "w44_20_codec_wiki_coverage"
 path = "examples/w44_20_codec_wiki_coverage.rs"

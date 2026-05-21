@@ -89,6 +89,65 @@ const MAX_TREE_DEPTH: usize = 8;
 /// Minimum samples per leaf to prevent overfitting.
 const MIN_SAMPLES_PER_LEAF: usize = 64;
 
+/// Predictor set evaluated by [`learn_dc_tree_variable_with_set`].
+///
+/// Mirrors libjxl's `Predictor::Variable` (all 14 simple predictors) vs
+/// `Predictor::Best` (only Weighted + Gradient) meta-modes from
+/// `modular/encoding/enc_ma.cc:542-552`.
+///
+/// libjxl picks one of these based on `speed_tier`
+/// (`enc_modular.cc:1591-1597`):
+///   - `speed_tier < SpeedTier::kKitten` (effort >= 9): `Predictor::Variable`
+///   - `speed_tier < SpeedTier::kSquirrel` AND `speed_tier >= SpeedTier::kKitten`
+///     (effort == 8): `Predictor::Best`
+///   - otherwise (effort <= 7): `kWPFixedDC` (no `kLearn`)
+///
+/// W44-172 (2026-05-21): the W44-54 implementation always used
+/// `Predictor::Variable` regardless of effort, evaluating 14 predictors per
+/// split candidate × ~32 candidates × per node. This made
+/// `build_tree_recursive_variable` consume ~48% of e8 CPU on 5+ MP
+/// screenshots (terminal e8 d=0.5: 32× cjxl wall ratio). `PredictorSet::Best`
+/// at e8 restores libjxl parity by limiting the predictor set to the same 2
+/// predictors libjxl evaluates at kKitten.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PredictorSet {
+    /// All 14 simple predictors (libjxl `Predictor::Variable`).
+    /// Used at libjxl `speed_tier < kKitten` (our effort >= 9).
+    Variable,
+    /// Only Weighted (6) + Gradient (5) (libjxl `Predictor::Best`).
+    /// Used at libjxl `speed_tier == kKitten` (our effort == 8).
+    Best,
+}
+
+impl PredictorSet {
+    /// Iterator over predictor indices to evaluate. For `Best` mode this is
+    /// `&[Weighted, Gradient]` mirroring libjxl `enc_ma.cc:549`. For
+    /// `Variable` it covers `0..=13` matching `enc_ma.cc:543`.
+    #[inline]
+    pub fn predictor_indices(self) -> &'static [u32] {
+        match self {
+            // Order matches libjxl `enc_ma.cc:543-547`: Variable swaps
+            // Weighted → predictors[0], Gradient → predictors[1], then the
+            // remaining 12 predictors in enum order.
+            PredictorSet::Variable => &[
+                6, // Weighted (swapped to slot 0 by libjxl)
+                5, // Gradient (swapped to slot 1 by libjxl)
+                0, // Zero
+                1, // Left
+                2, // Top
+                3, // Average0
+                4, // Select
+                7, // TopRight
+                8, // TopLeft
+                9, // LeftLeft
+                10, 11, 12, 13,
+            ],
+            // libjxl `enc_ma.cc:549`: `predictors = {Weighted, Gradient}`.
+            PredictorSet::Best => &[6, 5],
+        }
+    }
+}
+
 /// HybridUint config for sample gathering: {4, 1, 2}.
 const GATHER_SPLIT: u32 = 16; // 1 << 4
 const GATHER_MSB_IN_TOKEN: u32 = 1;
@@ -681,19 +740,29 @@ fn build_tree_recursive(
 fn estimate_subset_cost_per_predictor(
     samples: &DcTreeSamples,
     indices: &[usize],
-    _max_token: u32,
+    max_token: u32,
+    predictor_set: PredictorSet,
 ) -> [f64; NUM_PREDICTORS_VARIABLE] {
-    let mut out = [0.0f64; NUM_PREDICTORS_VARIABLE];
+    // Predictors not in the active set return INFINITY so the `pick_best`
+    // reduction skips them — matches libjxl's "only consider configured
+    // predictors" semantic from `enc_ma.cc:542-552` even though that code
+    // stores predictors in a vector instead of a fixed array.
+    let mut out = [f64::INFINITY; NUM_PREDICTORS_VARIABLE];
     if indices.is_empty() || !samples.has_variable_residuals() {
-        return out;
+        // Mirror prior behaviour for empty subsets: zero cost across the
+        // board so the caller's gain accounting is a no-op.
+        return [0.0f64; NUM_PREDICTORS_VARIABLE];
     }
 
-    // Find true max token across all predictors for histogram sizing.
-    // Mirrors libjxl `enc_ma.cc:207-213`. Without this, large residuals
-    // overflow the histogram and entropy is undercounted, making
-    // wide-distribution predictors look misleadingly cheap.
+    // Find true max token across the predictors we're actually going to
+    // evaluate (mirrors libjxl `enc_ma.cc:207-213` but scoped to the active
+    // set so `Best` mode doesn't oversize the histogram for predictors it
+    // never touches). Falls back to `max_token` if the active set is empty
+    // (defensive — predictor_indices() is never empty in practice).
+    let pred_indices = predictor_set.predictor_indices();
     let mut true_max_token: u32 = 0;
-    for pred_tokens in &samples.residual_tokens_per_predictor {
+    for &pred in pred_indices {
+        let pred_tokens = &samples.residual_tokens_per_predictor[pred as usize];
         for &idx in indices {
             let t = pred_tokens[idx];
             if t > true_max_token {
@@ -701,10 +770,14 @@ fn estimate_subset_cost_per_predictor(
             }
         }
     }
+    if pred_indices.is_empty() {
+        true_max_token = max_token;
+    }
     let histogram_size = (true_max_token + 1) as usize;
     let mut counts = vec![0u32; histogram_size];
 
-    for pred in 0..NUM_PREDICTORS_VARIABLE {
+    for &pred_id in pred_indices {
+        let pred = pred_id as usize;
         counts.iter_mut().for_each(|c| *c = 0);
         let mut total = 0u32;
         let mut extra_bits = 0.0f64;
@@ -753,6 +826,7 @@ fn find_best_split_variable(
     max_token: u32,
     current_predictor: u32,
     threshold: f64,
+    predictor_set: PredictorSet,
 ) -> Option<(usize, i32, Vec<usize>, Vec<usize>, u32, u32, f64)> {
     if indices.len() < MIN_SAMPLES_PER_LEAF * 2 {
         return None;
@@ -762,7 +836,8 @@ fn find_best_split_variable(
     }
 
     // Current (unsplit) cost with the current predictor — used as baseline.
-    let base_per_pred = estimate_subset_cost_per_predictor(samples, indices, max_token);
+    let base_per_pred =
+        estimate_subset_cost_per_predictor(samples, indices, max_token, predictor_set);
     let base_cost = base_per_pred[current_predictor as usize];
 
     let mut best_gain = 0.0f64;
@@ -772,6 +847,8 @@ fn find_best_split_variable(
     // estimates → discourage switching predictors. We use threshold=0 for DC
     // (libjxl ModularOptions default), but match the formula anyway.
     let change_pred_penalty = 800.0 / (100.0 + threshold);
+
+    let pred_indices = predictor_set.predictor_indices();
 
     for &prop_idx in SPLIT_PROPERTIES_VARIABLE {
         let props = &samples.props[prop_idx];
@@ -802,19 +879,29 @@ fn find_best_split_variable(
                 continue;
             }
 
-            let left_costs = estimate_subset_cost_per_predictor(samples, &left, max_token);
-            let right_costs = estimate_subset_cost_per_predictor(samples, &right, max_token);
+            let left_costs =
+                estimate_subset_cost_per_predictor(samples, &left, max_token, predictor_set);
+            let right_costs =
+                estimate_subset_cost_per_predictor(samples, &right, max_token, predictor_set);
 
             // Per-side best-predictor selection with libjxl penalties
             // (enc_ma.cc:376-390): change-pred penalty if differs from
             // current_predictor & current isn't Weighted; favour Zero (-1e-8);
             // disfavour Weighted (+1e-8).
+            //
+            // W44-172: scoped to the active predictor set so `Best` mode
+            // doesn't pretend to consider predictors whose `out[]` is INFINITY.
+            // For `Variable` this still walks all 14 (pred_indices covers
+            // 0..=13 in libjxl order); for `Best` it only walks {6, 5}.
             let pick_best = |costs: &[f64; NUM_PREDICTORS_VARIABLE]| -> (f64, u32) {
                 let mut best_cost = f64::MAX;
-                let mut best_pred: u32 = 0;
-                for (i, &c) in costs.iter().enumerate() {
+                let mut best_pred: u32 = pred_indices[0];
+                for &pred_id in pred_indices {
+                    let c = costs[pred_id as usize];
+                    if !c.is_finite() {
+                        continue;
+                    }
                     let mut penalty = 0.0;
-                    let pred_id = i as u32;
                     let cur_pred_is_weighted =
                         current_predictor == crate::modular::Predictor::Weighted as u32;
                     if pred_id != current_predictor && !cur_pred_is_weighted {
@@ -872,6 +959,7 @@ fn build_tree_recursive_variable(
     tree: &mut DcTree,
     next_context: &mut u32,
     max_token: u32,
+    predictor_set: PredictorSet,
 ) -> usize {
     let node_idx = tree.len();
     tree.push(DcTreeNode::default());
@@ -890,7 +978,14 @@ fn build_tree_recursive_variable(
     let threshold = 0.0f64;
 
     if let Some((prop_idx, splitval, left_indices, right_indices, lpred, rpred, _gain)) =
-        find_best_split_variable(samples, indices, max_token, current_predictor, threshold)
+        find_best_split_variable(
+            samples,
+            indices,
+            max_token,
+            current_predictor,
+            threshold,
+            predictor_set,
+        )
     {
         let lchild = build_tree_recursive_variable(
             samples,
@@ -900,6 +995,7 @@ fn build_tree_recursive_variable(
             tree,
             next_context,
             max_token,
+            predictor_set,
         );
         let rchild = build_tree_recursive_variable(
             samples,
@@ -909,6 +1005,7 @@ fn build_tree_recursive_variable(
             tree,
             next_context,
             max_token,
+            predictor_set,
         );
 
         tree[node_idx].property = prop_idx as i32;
@@ -937,6 +1034,30 @@ fn build_tree_recursive_variable(
 /// initialises tree root predictor from `predictors[0]` at `enc_ma.cc:546-547,
 /// 513`; for DC the per-leaf reseed via penalties dominates the initial choice).
 pub fn learn_dc_tree_variable(samples: &DcTreeSamples, max_token: u32) -> (DcTree, u32) {
+    learn_dc_tree_variable_with_set(samples, max_token, PredictorSet::Variable)
+}
+
+/// Like [`learn_dc_tree_variable`] but restricted to the libjxl `Predictor::Best`
+/// predictor set (Weighted + Gradient only). Used at effort 8 to mirror
+/// `enc_modular.cc:1593-1594` which selects `Predictor::Best` when
+/// `cparams_.speed_tier == kKitten`.
+///
+/// W44-172: drop-in replacement for `learn_dc_tree_variable` at e8. Cuts the
+/// per-split predictor evaluation count from 14 → 2, removing ~48 % of e8 CPU
+/// on 5+ MP screenshots (terminal e8 d=0.5 was 32 × cjxl wall ratio; this fix
+/// drops it back into ≤ 3 × cjxl territory matching e9's overhead).
+pub fn learn_dc_tree_best(samples: &DcTreeSamples, max_token: u32) -> (DcTree, u32) {
+    learn_dc_tree_variable_with_set(samples, max_token, PredictorSet::Best)
+}
+
+/// Shared learner driven by [`PredictorSet`]. Both `learn_dc_tree_variable`
+/// (all 14) and `learn_dc_tree_best` (2) route through this — keeping a single
+/// implementation of the BFS search + leaf-predictor selection.
+pub fn learn_dc_tree_variable_with_set(
+    samples: &DcTreeSamples,
+    max_token: u32,
+    predictor_set: PredictorSet,
+) -> (DcTree, u32) {
     if samples.num_samples == 0 || !samples.has_variable_residuals() {
         // Empty / not variable-mode: single-leaf gradient-predictor tree
         // matches the stage 1-6 fallback.
@@ -967,6 +1088,7 @@ pub fn learn_dc_tree_variable(samples: &DcTreeSamples, max_token: u32) -> (DcTre
         &mut tree,
         &mut next_context,
         max_token,
+        predictor_set,
     );
 
     (tree, next_context)
@@ -1270,6 +1392,98 @@ mod tests {
         // Leaf emits 5 tokens: property marker, predictor, offset, multiplier, unused
         assert_eq!(tokens.len(), 5);
         assert_eq!(tokens[0], (1, 0)); // property = -1 (leaf marker)
+    }
+
+    /// W44-172: verify `PredictorSet::Best` returns exactly Weighted + Gradient
+    /// in libjxl order (`enc_ma.cc:549`: `{Predictor::Weighted, Predictor::Gradient}`).
+    #[test]
+    fn test_predictor_set_best_indices() {
+        let indices = PredictorSet::Best.predictor_indices();
+        assert_eq!(indices, &[6, 5]);
+        assert_eq!(crate::modular::Predictor::Weighted as u32, 6);
+        assert_eq!(crate::modular::Predictor::Gradient as u32, 5);
+    }
+
+    /// W44-172: verify `PredictorSet::Variable` covers all 14 predictors with
+    /// libjxl's swap (Weighted → slot 0, Gradient → slot 1, then the rest).
+    /// Mirrors `enc_ma.cc:543-547`.
+    #[test]
+    fn test_predictor_set_variable_indices() {
+        let indices = PredictorSet::Variable.predictor_indices();
+        assert_eq!(indices.len(), 14);
+        // libjxl swaps: slot 0 = Weighted, slot 1 = Gradient
+        assert_eq!(indices[0], 6); // Weighted
+        assert_eq!(indices[1], 5); // Gradient
+        // Remaining slots are the leftover predictors (any permutation OK so
+        // long as all 0..=13 appear exactly once).
+        let mut sorted: alloc::vec::Vec<u32> = indices.iter().copied().collect();
+        sorted.sort_unstable();
+        let expected: alloc::vec::Vec<u32> = (0..14).collect();
+        assert_eq!(sorted, expected);
+    }
+
+    /// W44-172: `learn_dc_tree_best` produces a valid tree on real-looking
+    /// DC samples. Smoke test: must return at least one leaf, no panic.
+    #[test]
+    fn test_learn_dc_tree_best_smoke() {
+        // 32×32 channel mixing two flat regions — enough samples to admit splits
+        // and exercise the Best (2-predictor) path.
+        let mut channel = alloc::vec![alloc::vec![0i16; 32]; 32];
+        for (y, row) in channel.iter_mut().enumerate() {
+            for (x, v) in row.iter_mut().enumerate() {
+                *v = if x < 16 {
+                    50 + (y as i16)
+                } else {
+                    200 - (y as i16)
+                };
+            }
+        }
+        let quant_dc: [alloc::vec::Vec<alloc::vec::Vec<i16>>; 3] =
+            [channel.clone(), channel.clone(), channel];
+
+        let mut samples = DcTreeSamples::new();
+        gather_dc_samples_variable(&mut samples, &quant_dc);
+
+        let (tree_best, n_ctx_best) = learn_dc_tree_best(&samples, 64);
+        let (tree_var, n_ctx_var) = learn_dc_tree_variable(&samples, 64);
+
+        // Both should produce at least the root.
+        assert!(!tree_best.is_empty());
+        assert!(!tree_var.is_empty());
+        assert!(n_ctx_best >= 1);
+        assert!(n_ctx_var >= 1);
+
+        // Every leaf in the Best tree must use a predictor from the Best set
+        // (Weighted=6 or Gradient=5). Variable tree leaves may use any predictor.
+        for node in &tree_best {
+            if node.property == -1 {
+                let p = node.predictor;
+                assert!(
+                    p == 5 || p == 6,
+                    "Best-mode leaf predictor {p} outside {{Gradient=5, Weighted=6}}"
+                );
+            }
+        }
+    }
+
+    /// W44-172: shared `_with_set` core handles empty samples gracefully for
+    /// both predictor sets (gradient-only single-leaf fallback).
+    #[test]
+    fn test_learn_dc_tree_variable_with_set_empty_samples() {
+        let samples = DcTreeSamples::new();
+        let (tree_best, n_best) = learn_dc_tree_variable_with_set(&samples, 64, PredictorSet::Best);
+        let (tree_var, n_var) =
+            learn_dc_tree_variable_with_set(&samples, 64, PredictorSet::Variable);
+        for (tree, n) in [(tree_best, n_best), (tree_var, n_var)] {
+            assert_eq!(tree.len(), 1);
+            assert_eq!(tree[0].property, -1);
+            assert_eq!(n, 1);
+            // Empty-samples fallback uses Gradient as the default leaf predictor.
+            assert_eq!(
+                tree[0].predictor,
+                crate::modular::Predictor::Gradient as u32
+            );
+        }
     }
 }
 

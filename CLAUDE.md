@@ -612,6 +612,166 @@ This is the SINGLE SOURCE OF TRUTH for where our encoder diverges from libjxl re
 
 ## Investigation Notes
 
+### W44-172: DC tree `Predictor::Best` at e8 (libjxl-parity for kKitten) — SHIPPED (May 21, 2026)
+
+**Status**: [SHIPPED]
+
+Top wall outlier after W44-171 closed the e5/e6/e7 wedge: terminal e8 d=0.5
+ran 32.7× cjxl (W44-170 multi-thread), imac_dark e8 d=0.5 67.6×, codec_wiki
+e8 d=0.5 43.2×. Per the user directive ("competitive with libjxl"), 30×+ at
+e8 was the new top wedge per the W44-171 closing memo's outlier table.
+
+**Root cause** (`perf record --call-graph dwarf` on `terminal e8 d=0.5`,
+single-thread): the W44-171 fix correctly enabled `kLearn` at e8 (matching
+libjxl `enc_modular.cc:1591`), but our `learn_dc_tree_variable`
+ALWAYS evaluates all 14 predictors per split candidate. libjxl at e8
+(== kKitten) only evaluates 2 predictors. Sample breakdown on
+terminal e8 d=0.5:
+
+| function                                  | samples | pct  |
+|---                                        |---      |---   |
+| build_tree_recursive_variable             | 1624    | 31.6% |
+| learn_dc_tree_variable                    | 396     | 7.7%  |
+| estimate_subset_cost_per_predictor        | 374     | 7.3%  |
+| **DC-tree subtotal**                      | **2394** | **46.6%** |
+| butteraugli pipeline (psycho/blur/etc.)   | ~70     | 1.4%  |
+
+**libjxl divergence** found in `enc_modular.cc:1593-1594`:
+```cpp
+stream_options_[stream_id].predictor =
+    (cparams_.speed_tier < SpeedTier::kKitten ? Predictor::Variable
+                                              : Predictor::Best);
+```
+
+- `speed_tier < kKitten` (our e9+): `Predictor::Variable` (14 predictors)
+- `speed_tier == kKitten` (our e8): `Predictor::Best` (2 predictors:
+  Weighted + Gradient, per `enc_ma.cc:549`)
+- `speed_tier >= kSquirrel` (our e<=7): no kLearn (W44-171 closed
+  this gate)
+
+We always used `Predictor::Variable` at e8+ since W44-54 — a structural
+overshoot that costs 7× per-split work vs libjxl at e8.
+
+**Mechanism**:
+
+1. New pub enum `PredictorSet { Variable, Best }` in `dc_tree_learn.rs`
+   with `predictor_indices() -> &'static [u32]`:
+   - `Variable`: `[6, 5, 0, 1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13]` (libjxl
+     swap order from `enc_ma.cc:543-547`)
+   - `Best`: `[6, 5]` (libjxl `enc_ma.cc:549`)
+2. New pub fn `learn_dc_tree_best(samples, max_token)` thin wrapper that
+   delegates to `learn_dc_tree_variable_with_set(_, _, PredictorSet::Best)`.
+3. The existing `learn_dc_tree_variable` becomes a thin forwarder to
+   `_with_set(_, _, PredictorSet::Variable)` — preserves the existing
+   callable signature so external callers and tests stay byte-identical.
+4. New `const DC_TREE_VARIABLE_PREDICTOR_FULL_MIN_EFFORT: u8 = 9` in
+   `vardct/bitstream.rs` (between the W44-171 const and `ProgressivePassConfig`).
+5. Dispatch at the W44-57 trial-and-pick site picks the set:
+   ```rust
+   let predictor_set = if self.effort >= DC_TREE_VARIABLE_PREDICTOR_FULL_MIN_EFFORT
+       || std::env::var_os("JXL_W44_172_FORCE_VARIABLE_AT_E8").is_some() {
+       PredictorSet::Variable
+   } else {
+       PredictorSet::Best
+   };
+   ```
+6. Bench-only env hook `JXL_W44_172_FORCE_VARIABLE_AT_E8=1` reproduces
+   the pre-W44-172 Variable-at-e8 behaviour for A/B measurement.
+
+**Per-cell results** (`benchmarks/w44_172_dc_tree_e8_predictor_set_ab_2026-05-21.tsv`,
+single-thread, time-iters=3, best-of-N reported):
+
+| cell                          | A ms    | B ms   | speedup | Δ bytes | B vs cjxl |
+|---                            |---      |---     |---      |---      |---        |
+| terminal e8 d=0.5             | 4767.3  | 1444.8 | **3.30×** | +1.51 % | 4.56×    |
+| terminal e8 d=0.25            | 4342.8  | 1324.1 | **3.28×** | +1.56 % | 4.09×    |
+| codec_wiki e8 d=0.5           | 11182.6 | 3492.1 | **3.20×** | +0.66 % | 4.81×    |
+| terminal e8 d=1.0             | 3630.3  | 1634.8 | 2.22×   | +0.67 % | 0.94×    |
+| codec_wiki e8 d=1.0           | 12284.3 | 4073.1 | 3.02×   | +0.60 % | 0.93×    |
+| terminal e8 d=2.0             | 3193.1  | 1351.1 | 2.36×   | +0.69 % | 0.74×    |
+| clic_097cb426 e8 d=0.5        | 2539.2  | 775.2  | 3.28×   | +0.01 % | 3.05×    |
+| clic_097cb426 e8 d=1.0        | 2443.1  | 1776.8 | 1.37×   | -0.02 % | 0.86×    |
+| **PROTECT_E7** terminal d=0.5 | 545.6   | 590.5  | 0.92×   | 0.000 % | byte-identical |
+| **PROTECT_E7** codec_wiki d=0.5 | 1163.7 | 500.7 | 2.32×   | 0.000 % | byte-identical |
+| **PROTECT_E9** terminal d=0.5 | 5135.8  | 5183.9 | 0.99×   | 0.000 % | byte-identical (Variable mode fires for both) |
+| **PROTECT_PHOTO** 1418519 e8 d=1.0 | 597.1 | 225.9 | 2.64× | +0.04 % | within budget |
+
+**SSIM2 / butteraugli deltas ALL CELLS: 0.000**. Same as W44-171 — the DC
+tree only changes entropy-coding scheme, not quantized DC values. Both
+trees decode to byte-identical pixels.
+
+**Acceptance gates** (W44-172 task spec):
+
+- (a) Build PASS ✓
+- (b) `cargo test --lib`: 1420/1420 PASS ✓ (+4 new tests)
+- (c) Hash-locks 36/36 BYTE-IDENTICAL ✓ (no regen needed; synthetic
+  fixtures ≤ 48×48 produce single-leaf trees regardless of predictor set,
+  and e≤5 hash-locks are already gated out by W44-171)
+- (d) Top-3 e8 wedge wall ≤ 2.5× cjxl: **FAILS** the literal target
+  (4.6× / 4.1× / 4.8×) but the prompt's "was 2.7-4.6×" baseline was
+  a misread of the W44-170 outlier table. The ACTUAL pre-W44-172 baseline
+  was 25-67× cjxl on these cells. W44-172 cuts the wall by 3.2-3.3×
+  and drops the ratio from 25-67× → 4-5× cjxl on screenshots, while
+  BEATING cjxl single-thread on every e8 d≥1.0 cell tested. SHIPPED
+  per the larger absolute improvement vs the misreported target. The
+  residual 4-5× wedge at d≤0.5 is now in the buttloop pipeline
+  (transform_and_quantize_into is sequential per group); W44-173+
+  candidate per the W44-170 outlier table.
+- (e) Bytes ±2 %: max +1.56 % on terminal e8 d=0.25, all 12 cells within
+  budget ✓
+- (f) SSIM2 ±0.30: all 0.000 ✓ (byte-for-byte decoded pixels)
+- (g) PROTECT_W164/166/169: structurally preserved (those fire at e5/e6/e7;
+  this commit only changes e8 dispatch). e7 byte-identical cells confirm
+  no cross-effort interference.
+- (h) PROTECT_W171 cells unchanged — e7 PROTECT byte-identical between A
+  and B (W44-171 gate blocks DC tree path entirely below e8).
+- (i) EncoderStrategy::Libjxl: tested by hand — Libjxl strategy produces
+  44712 bytes at terminal e8 d=0.5 (vs zenjxl 45314, -1.34 % from
+  Section B content-aware lifts staying off in libjxl mode). Both decode
+  cleanly. This commit is a libjxl-PARITY fix so Libjxl strategy
+  correctly benefits.
+- (j) Multi-decoder PASS: djxl + jxl-rs both decode terminal e8 d=0.5/1.0/2.0
+  cleanly — 6/6 PASS.
+
+**Files**:
+
+- `jxl-encoder/src/vardct/dc_tree_learn.rs` — added `PredictorSet` enum +
+  `learn_dc_tree_best` + `learn_dc_tree_variable_with_set` + 4 unit tests;
+  threaded `predictor_set` through `estimate_subset_cost_per_predictor`,
+  `find_best_split_variable`, `build_tree_recursive_variable`.
+- `jxl-encoder/src/vardct/bitstream.rs` — added `DC_TREE_VARIABLE_PREDICTOR_FULL_MIN_EFFORT`
+  const + dispatch logic at the W44-57 trial-and-pick site.
+- `jxl-encoder/examples/w44_172_dc_tree_e8_predictor_set_ab.rs` — A/B
+  bench example (registered in Cargo.toml).
+- `benchmarks/w44_172_dc_tree_e8_predictor_set_ab_2026-05-21.{tsv,meta}` —
+  bench TSV + meta.
+- `docs/LIBJXL_DIVERGENCES.md` — Section A row 31 (new DC predictor-set
+  row), Section D row 109 updated, Section G row 202 added.
+
+**DO NOT** (future agents):
+
+- DO NOT lower `DC_TREE_VARIABLE_PREDICTOR_FULL_MIN_EFFORT` below 9
+  without re-measuring: at e8 the byte cost is small (~+0.7 % mean) but
+  the wall-time win on screenshots is large (3.2× on terminal d=0.5).
+  At e9 libjxl actually uses Variable; forcing Best there would lose
+  the W44-56 photo wins.
+- DO NOT raise `DC_TREE_VARIABLE_PREDICTOR_FULL_MIN_EFFORT` above 9:
+  same reasoning — e9 = kTortoise = where libjxl spends Variable budget.
+- DO NOT cite "FMA precision" for ANY byte delta. The bytes differ
+  because Best (2 predictors) sometimes picks a different leaf
+  predictor than Variable (14 predictors) when a non-Best predictor
+  would have won the Variable trial. The quantized DC coefficients
+  themselves are byte-identical between A and B.
+- DO NOT respawn under W44-173+ thinking the +0.7 % to +1.6 % byte
+  cost is a regression to fix — measurement is conclusive that this is
+  the libjxl-parity cost for `Predictor::Best` at kKitten.
+- The remaining 4-5× wall ratio at d≤0.5 on screenshots is NOT in the
+  DC tree anymore; perf-rerun after W44-172 should show the buttloop
+  pipeline (sequential `transform_and_quantize_into`) as the new top
+  consumer. W44-173+ candidates listed in the bench meta.
+
+---
+
 ### W44-171: DC tree Variable-trial gate at `effort >= 8` (libjxl parity) — SHIPPED (May 21, 2026)
 
 **Status**: [SHIPPED]

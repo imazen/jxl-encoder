@@ -58,6 +58,24 @@ use crate::headers::frame_header::{BlendMode, FrameHeader, FrameOptions};
 /// Production behaviour with the env unset is the libjxl-parity gate.
 const DC_TREE_VARIABLE_TRIAL_MIN_EFFORT: u8 = 8;
 
+/// W44-172 (2026-05-21): minimum effort to use the all-14 `Predictor::Variable`
+/// DC tree learner. At effort 8 (= libjxl `speed_tier == kKitten`) libjxl
+/// uses `Predictor::Best` — `enc_modular.cc:1593-1594`:
+///   `(cparams_.speed_tier < SpeedTier::kKitten ? Predictor::Variable : Predictor::Best)`
+/// `Predictor::Best` evaluates only `{Weighted, Gradient}` (`enc_ma.cc:549`),
+/// 7× less work per candidate split than `Predictor::Variable`. At effort >= 9
+/// (= libjxl `speed_tier <= kTortoise`) the full 14-predictor Variable mode
+/// fires to recover the W44-56 photo wins.
+///
+/// W44-171 hit the wedge from "we run kLearn at all" — that's now correctly
+/// gated at `DC_TREE_VARIABLE_TRIAL_MIN_EFFORT = 8` and matches libjxl. W44-172
+/// hits the residual wedge from "when we do run kLearn at e8, we run the
+/// expensive Variable trial instead of the cheap Best trial".
+///
+/// Production source: dispatch picks `learn_dc_tree_best` at effort 8,
+/// `learn_dc_tree_variable` at effort >= 9. Both share the `_with_set` core.
+const DC_TREE_VARIABLE_PREDICTOR_FULL_MIN_EFFORT: u8 = 9;
+
 /// Progressive pass configuration computed from ProgressiveMode.
 struct ProgressivePassConfig {
     /// Number of passes (1 for Single mode).
@@ -2493,10 +2511,31 @@ impl VarDctEncoder {
             // `max_token` is a legacy parameter — the cost estimator now
             // determines the true max per call (libjxl parity).
             let max_token = 64u32;
+            // W44-172: pick `Best` (2 preds) at e8, `Variable` (14 preds)
+            // at e9+. Mirrors libjxl `enc_modular.cc:1593-1594` which
+            // chooses Variable only when `speed_tier < kKitten` (our
+            // e9+; at e8 == kKitten it picks Best). The shared learner
+            // returns the same `DcTree` shape — only the per-leaf predictor
+            // assignment + the search space differ. Honest-stop note:
+            // setting `JXL_W44_172_FORCE_VARIABLE_AT_E8=1` keeps the
+            // pre-W44-172 Variable-at-e8 behaviour for A/B reproduction.
+            let predictor_set = if self.effort >= DC_TREE_VARIABLE_PREDICTOR_FULL_MIN_EFFORT
+                || std::env::var_os("JXL_W44_172_FORCE_VARIABLE_AT_E8").is_some()
+            {
+                super::dc_tree_learn::PredictorSet::Variable
+            } else {
+                super::dc_tree_learn::PredictorSet::Best
+            };
             let (learned_tree, learned_num_contexts) =
-                super::dc_tree_learn::learn_dc_tree_variable(&samples, max_token);
+                super::dc_tree_learn::learn_dc_tree_variable_with_set(
+                    &samples,
+                    max_token,
+                    predictor_set,
+                );
 
-            // Candidate A: Variable learner (W44-56).
+            // Candidate A: Variable learner (W44-56). With W44-172, this is
+            // either the full `Predictor::Variable` (e9+) or the libjxl
+            // `Predictor::Best` (e8) tree — selected by `predictor_set` above.
             let (a_wrapped, a_num_ctx, a_dc_remap, a_ctx_map) =
                 super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
                     &learned_tree,
