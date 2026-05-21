@@ -434,6 +434,130 @@ impl EntropyMulTable {
             ..Self::reference()
         }
     }
+
+    /// W44-156 **variant Z (d-high)** — distance-band sub-variant of the
+    /// default variant Z table for `target_distance > W44_156_VARIANT_Z_D_HIGH_THRESHOLD`
+    /// (5.5 by default). Mirror of
+    /// [`high_d_photo_smooth_suppressed_z_high_colour`] (W44-98) and
+    /// [`high_d_photo_smooth_suppressed_z_low_colour`] (W44-99/100) sub-discriminator
+    /// pattern, but split on the DISTANCE axis instead of the
+    /// `m3_colourfulness` axis.
+    ///
+    /// **Source**: W44-155 (`6739107c`) per-strategy AC tokenization dump on
+    /// 1420710 e5 d=5 vs d=6 showed:
+    /// - Our model over-consolidates into DCT32X32 (78.6% of first-blocks at
+    ///   d=5 vs cjxl's 51.8%, 76.2% at d=6 vs cjxl's 57.2%).
+    /// - We don't shed small blocks at the d=5→d=6 transition (DCT8: cjxl
+    ///   39→16, ours 10→2).
+    /// - Per-region qac is AT PARITY — pure strategy selection issue.
+    /// - Variant Z dct32x32 = 1.22 (W44-154) is right for d=4/d=5 but too
+    ///   aggressive at d=6 (it MORE strongly suppresses small blocks, the
+    ///   OPPOSITE of what cjxl does at d=6).
+    ///
+    /// At d > 5.5 we want a WEAKER dct32x32 lift (1.20, pre-W44-148
+    /// baseline) to let DCT32X32 win less often, giving more room for
+    /// DCT32X16 / DCT16X32 / DCT16X16 / DCT8 picks — closer to cjxl's
+    /// strategy distribution at high d.
+    ///
+    /// **Changes vs [`high_d_photo_smooth_suppressed_z`]**:
+    /// - `dct32x32`: 1.22 → **1.20** (weaker DCT32X32 lift at high d)
+    /// - `dct16x32`: auto-scaled from `dct32x32` via the libjxl 1.49/1.48
+    ///   ratio (so 1.20 * 1.49/1.48 ≈ 1.208)
+    /// - all other transforms: unchanged from variant Z
+    ///
+    /// **Gate** (ALL must hold, on top of every W44-96 gate condition):
+    ///   * `target_distance > W44_156_VARIANT_Z_D_HIGH_THRESHOLD` (5.5)
+    ///   * Sub-variant Z' (high-colour) and Z'' (low-colour) gates are
+    ///     checked FIRST — the d-high split applies only to the PLAIN
+    ///     variant Z dispatch (when neither HC nor LC fires).
+    ///
+    /// **Why this is a distance split, not an m3 split**: the W44-155
+    /// diagnosis identified the cell's failure as a d=5→d=6 strategy-shift
+    /// problem, not a colourfulness problem. The 1420710 image has m3=32.93
+    /// (HIGH colour, fires W44-98 Z'), so this d-high split applies to
+    /// variant Z' (HC) too — see
+    /// [`high_d_photo_smooth_suppressed_z_high_colour_d_high`] for the HC
+    /// d-high mirror. The plain Z d-high table here covers any
+    /// hypothetical future image that fires plain variant Z (today, none
+    /// of the gated CID22 photos do — 1420710 fires HC and 1531677 fires
+    /// LC, but Z' / Z'' d-high mirror the same dct32x32 = 1.20 logic).
+    ///
+    /// **Bench**: `benchmarks/w44_156_distance_aware_variant_z_2026-05-21.{tsv,meta}`.
+    pub fn high_d_photo_smooth_suppressed_z_d_high() -> Self {
+        Self {
+            dct16x16: 1.27,
+            // Pre-W44-148 baseline: weaker DCT32X32 lift at high d
+            // (per W44-155 diagnosis — cjxl keeps DCT32X32 flat from d=5 to
+            // d=6 and sheds small blocks instead, requiring LESS dct32x32
+            // suppression at d=6 than at d=5).
+            dct32x32: 1.20,
+            // Auto-scaled by the libjxl 1.49/1.48 ratio (matches W44-148-era
+            // variant Z scaling).
+            dct16x32: 1.20 * (1.49 / 1.48),
+            ..Self::reference()
+        }
+    }
+
+    /// W44-156 **variant Z' (high-colour, d-high)** — distance-band
+    /// sub-variant of [`high_d_photo_smooth_suppressed_z_high_colour`] for
+    /// `target_distance > W44_156_VARIANT_Z_D_HIGH_THRESHOLD` (5.5).
+    ///
+    /// **Source**: same W44-155 diagnosis as
+    /// [`high_d_photo_smooth_suppressed_z_d_high`]. The HC d-high table
+    /// applies when both the W44-98 HC gate fires AND `target_distance >
+    /// 5.5`. 1420710 fires HC (m3=32.93) and is the W44-156 target image
+    /// (e5 d=6 is the cell to close).
+    ///
+    /// **Changes vs [`high_d_photo_smooth_suppressed_z_high_colour`]**:
+    /// - `dct32x32`: 1.22 → **1.20** (weaker DCT32X32 lift at high d)
+    /// - `dct16x32`: unchanged at 1.30 (W44-98 independent lift, mirrors
+    ///   the relationship Z' has to Z — the d-high split affects only the
+    ///   dct32x32 axis).
+    /// - all other transforms: unchanged from Z'
+    pub fn high_d_photo_smooth_suppressed_z_high_colour_d_high() -> Self {
+        Self {
+            dct16x16: 1.27,
+            dct32x32: 1.20,
+            // dct16x32 stays at 1.30 (W44-98 independent lift, mirrors
+            // the parent HC's W44-148-era relationship: dct16x32 ratio
+            // to dct32x32 = 1.30/1.20 = 1.083, even larger gap than
+            // W44-154-era 1.30/1.22 = 1.066, keeping DCT16X32 strictly
+            // more expensive than DCT32X32).
+            dct16x32: 1.30,
+            ..Self::reference()
+        }
+    }
+
+    /// W44-156 **variant Z'' (low-colour, d-high)** — distance-band
+    /// sub-variant of [`high_d_photo_smooth_suppressed_z_low_colour`] for
+    /// `target_distance > W44_156_VARIANT_Z_D_HIGH_THRESHOLD` (5.5).
+    ///
+    /// **Source**: same W44-155 diagnosis as
+    /// [`high_d_photo_smooth_suppressed_z_d_high`]. The LC d-high table
+    /// applies when both the W44-99 LC gate fires AND `target_distance >
+    /// 5.5`. 1531677 fires LC (m3=12.30); its d=6 cluster sits at
+    /// SSIM2 -0.247 post-W44-154 — the d-high split protects this cluster
+    /// from over-rotation.
+    ///
+    /// **Changes vs [`high_d_photo_smooth_suppressed_z_low_colour`]**:
+    /// - `dct32x32`: 1.22 → **1.20** (weaker DCT32X32 lift at high d)
+    /// - `dct16x32`: unchanged at 1.23 (W44-100 micro-bisect value,
+    ///   mirrors the relationship LC has to Z — the d-high split affects
+    ///   only the dct32x32 axis).
+    /// - all other transforms: unchanged from LC
+    pub fn high_d_photo_smooth_suppressed_z_low_colour_d_high() -> Self {
+        Self {
+            dct16x16: 1.27,
+            dct32x32: 1.20,
+            // dct16x32 stays at 1.23 (W44-100 micro-bisect). With
+            // dct32x32 = 1.20 (this table) the relationship LC vs Z
+            // becomes: LC dct16x32 = 1.23 > Z d_high auto-scaled
+            // ≈ 1.208, restoring the W44-99/100 "LC ABOVE Z" semantic
+            // at high d (mirroring the post-W44-154 state at d<=5.5).
+            dct16x32: 1.23,
+            ..Self::reference()
+        }
+    }
 }
 
 /// All effort-derived encoder decisions, centralized.
@@ -3038,6 +3162,135 @@ mod tests {
 
         // Every OTHER field MUST match reference (same shape as the
         // variant Z table — Z'' only lifts dct16x32 vs Z).
+        assert_eq!(t.dct8, r.dct8);
+        assert_eq!(t.dct4x4, r.dct4x4);
+        assert_eq!(t.dct4x8, r.dct4x8);
+        assert_eq!(t.identity, r.identity);
+        assert_eq!(t.dct2x2, r.dct2x2);
+        assert_eq!(t.afv, r.afv);
+        assert_eq!(t.dct16x8, r.dct16x8);
+        assert_eq!(t.dct64x32, r.dct64x32);
+        assert_eq!(t.dct64x64, r.dct64x64);
+    }
+
+    #[test]
+    fn test_entropy_mul_table_high_d_photo_smooth_suppressed_z_d_high_values() {
+        // W44-156 variant Z (d-high): dct32x32 = 1.20 (weaker than the
+        // post-W44-154 1.22 in variant Z), used when
+        // target_distance > W44_156_VARIANT_Z_D_HIGH_THRESHOLD (5.5).
+        // W44-155 per-strategy dump on 1420710 e5 d=6 showed cjxl sheds
+        // small blocks at d=5→d=6 transition; the W44-154 1.22 lift is
+        // TOO aggressive at d=6 (forces more DCT32X32 consolidation
+        // instead of letting smaller blocks win). The pre-W44-148 1.20
+        // baseline matches cjxl's strategy distribution better at high d.
+        let t = EntropyMulTable::high_d_photo_smooth_suppressed_z_d_high();
+        let z = EntropyMulTable::high_d_photo_smooth_suppressed_z();
+        let d = EntropyMulTable::high_d_photo_smooth_suppressed();
+        let r = EntropyMulTable::reference();
+
+        // d-high variant: dct32x32 strictly LOWER than variant Z (the
+        // weaker-lift direction).
+        assert_eq!(t.dct16x16, z.dct16x16); // unchanged at 1.27
+        assert_eq!(t.dct32x32, 1.20); // W44-156: 1.20 at d > 5.5
+        assert!(t.dct32x32 < z.dct32x32); // strict-lower than variant Z
+        let expected_dct16x32 = 1.20 * (1.49 / 1.48);
+        assert!((t.dct16x32 - expected_dct16x32).abs() < 1e-6);
+
+        // Still strict-lower than default suppressed (variant Z direction).
+        assert!(t.dct32x32 < d.dct32x32);
+        assert!(t.dct16x32 < d.dct16x32);
+        // Lower than reference too.
+        assert!(t.dct32x32 < r.dct32x32);
+        assert!(t.dct16x32 < r.dct16x32);
+
+        // Every OTHER field MUST match reference (same shape as the
+        // default suppressed table — Z d-high only re-tunes dct32x32).
+        assert_eq!(t.dct8, r.dct8);
+        assert_eq!(t.dct4x4, r.dct4x4);
+        assert_eq!(t.dct4x8, r.dct4x8);
+        assert_eq!(t.identity, r.identity);
+        assert_eq!(t.dct2x2, r.dct2x2);
+        assert_eq!(t.afv, r.afv);
+        assert_eq!(t.dct16x8, r.dct16x8);
+        assert_eq!(t.dct64x32, r.dct64x32);
+        assert_eq!(t.dct64x64, r.dct64x64);
+    }
+
+    #[test]
+    fn test_entropy_mul_table_high_d_photo_smooth_suppressed_z_high_colour_d_high_values() {
+        // W44-156 variant Z' (high-colour, d-high): dct32x32 = 1.20
+        // (weaker than W44-154 HC's 1.22), dct16x32 unchanged at 1.30
+        // (W44-98 independent lift). Mirrors plain Z d-high but keeps
+        // the W44-98 dct16x32 = 1.30 lift for the high-colourfulness
+        // sub-class. Applies when both W44-98 HC gate fires AND
+        // target_distance > 5.5.
+        let t = EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour_d_high();
+        let hc = EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour();
+        let z_d_high = EntropyMulTable::high_d_photo_smooth_suppressed_z_d_high();
+        let r = EntropyMulTable::reference();
+
+        // Same dct16x16 / dct32x32 as plain Z d-high (only dct16x32 differs).
+        assert_eq!(t.dct16x16, z_d_high.dct16x16);
+        assert_eq!(t.dct32x32, z_d_high.dct32x32);
+        assert_eq!(t.dct32x32, 1.20); // W44-156: 1.20 at d > 5.5
+
+        // dct32x32 strictly LOWER than HC (the weaker-lift direction).
+        assert!(t.dct32x32 < hc.dct32x32);
+
+        // dct16x32 = 1.30 (mirrors HC — W44-98 independent lift).
+        assert_eq!(t.dct16x32, 1.30);
+        assert_eq!(t.dct16x32, hc.dct16x32);
+        // Strict-higher than plain Z d-high on dct16x32 (the HC lift).
+        assert!(t.dct16x32 > z_d_high.dct16x32);
+        // Still below the libjxl reference (1.49) — strict reduction.
+        assert!(t.dct16x32 < r.dct16x32);
+
+        // Every OTHER field MUST match reference.
+        assert_eq!(t.dct8, r.dct8);
+        assert_eq!(t.dct4x4, r.dct4x4);
+        assert_eq!(t.dct4x8, r.dct4x8);
+        assert_eq!(t.identity, r.identity);
+        assert_eq!(t.dct2x2, r.dct2x2);
+        assert_eq!(t.afv, r.afv);
+        assert_eq!(t.dct16x8, r.dct16x8);
+        assert_eq!(t.dct64x32, r.dct64x32);
+        assert_eq!(t.dct64x64, r.dct64x64);
+    }
+
+    #[test]
+    fn test_entropy_mul_table_high_d_photo_smooth_suppressed_z_low_colour_d_high_values() {
+        // W44-156 variant Z'' (low-colour, d-high): dct32x32 = 1.20
+        // (weaker than W44-154 LC's 1.22), dct16x32 unchanged at 1.23
+        // (W44-100 micro-bisect value). Mirrors plain Z d-high but keeps
+        // the W44-99/100 dct16x32 = 1.23 lift for the low-colourfulness
+        // sub-class. Applies when both W44-99 LC gate fires AND
+        // target_distance > 5.5.
+        let t = EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour_d_high();
+        let lc = EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour();
+        let z_d_high = EntropyMulTable::high_d_photo_smooth_suppressed_z_d_high();
+        let hc_d_high = EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour_d_high();
+        let r = EntropyMulTable::reference();
+
+        // Same dct16x16 / dct32x32 as plain Z d-high.
+        assert_eq!(t.dct16x16, z_d_high.dct16x16);
+        assert_eq!(t.dct32x32, z_d_high.dct32x32);
+        assert_eq!(t.dct32x32, 1.20); // W44-156: 1.20 at d > 5.5
+
+        // dct32x32 strictly LOWER than LC (the weaker-lift direction).
+        assert!(t.dct32x32 < lc.dct32x32);
+
+        // dct16x32 = 1.23 (mirrors LC — W44-100 micro-bisect).
+        assert_eq!(t.dct16x32, 1.23);
+        assert_eq!(t.dct16x32, lc.dct16x32);
+        // Strict-higher than plain Z d-high on dct16x32 (LC above Z
+        // semantic at d-high, mirroring the d <= 5.5 relationship).
+        assert!(t.dct16x32 > z_d_high.dct16x32);
+        // Strict-LOWER than HC d-high on dct16x32 (LC milder lift than HC).
+        assert!(t.dct16x32 < hc_d_high.dct16x32);
+        // Still below the libjxl reference (1.49) — strict reduction.
+        assert!(t.dct16x32 < r.dct16x32);
+
+        // Every OTHER field MUST match reference.
         assert_eq!(t.dct8, r.dct8);
         assert_eq!(t.dct4x4, r.dct4x4);
         assert_eq!(t.dct4x8, r.dct4x8);

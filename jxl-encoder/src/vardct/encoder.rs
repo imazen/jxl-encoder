@@ -309,6 +309,45 @@ const W44_96_VARIANT_Z_MIN_DISTANCE: f32 = 4.5;
 /// table (safer for SSIM2).
 const W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN: f32 = 25.0;
 
+/// W44-156 distance threshold ABOVE which the d-high variant Z table
+/// chain ([`crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_d_high`],
+/// [`...z_high_colour_d_high`], [`...z_low_colour_d_high`]) fires
+/// instead of the W44-154 default (dct32x32 = 1.22).
+///
+/// **Context**: W44-154 micro-bisected variant Z `dct32x32` to 1.22 (down
+/// from W44-148's 1.24, up from W44-96's 1.20). W44-155 spot-checked the
+/// W44-154 ship and ran a per-strategy AC tokenization dump on 1420710
+/// e5 d=5 vs d=6 (the one cell that W44-154 did NOT close at any of
+/// {1.22, 1.23, 1.24}). The dump revealed:
+///
+/// - At d=5: our model picks DCT32X32 78.6% of first-blocks vs cjxl 51.8%
+/// - At d=6: our model picks DCT32X32 76.2% of first-blocks vs cjxl 57.2%
+/// - Strategy agreement only 86.8% (d=5) / 89.6% (d=6) — many DCT32X32
+///   picks where cjxl picks DCT32X16 / DCT16X32 / DCT16X16
+/// - At d=5→d=6 transition, cjxl DRAMATICALLY sheds small blocks (DCT8:
+///   39→16, DCT16X8: 19→6); our DCT8 counts were already much lower
+///   (10/2) — over-consolidated into DCT32X32 from the start
+/// - Per-region quantization AT PARITY — pure strategy selection issue
+///
+/// The W44-154 dct32x32 = 1.22 lift OVER-FIRES at d > 5.5: it strengthens
+/// the DCT32X32 incentive at exactly the distance where cjxl is going
+/// the OPPOSITE direction (keeping DCT32X32 flat ~200 and shedding small
+/// blocks). A weaker lift (1.20, pre-W44-148 baseline) at d > 5.5 lets
+/// DCT32X32 win less often, freeing the cost model to pick smaller
+/// blocks closer to cjxl's distribution.
+///
+/// **Threshold 5.5**: sits between the W44-154 wins at d=5 (we keep the
+/// 1.22 lift to preserve W44-154's DEFICIT_LC SSIM2 +0.257 mean) and
+/// the W44-155-diagnosed regression at d=6 (we shift to 1.20 to close
+/// 1420710 e5 d=6). The W44-156 bisect tested 5.5 vs 5.0 to find the
+/// best split point; see
+/// `benchmarks/w44_156_distance_aware_variant_z_2026-05-21.{tsv,meta}`.
+///
+/// **Env hook**: `__JXL_W44_156_THRESHOLD` overrides this constant at
+/// runtime for A/B benching. `0.0` (disable) keeps the W44-154 behaviour
+/// at every distance (no d-high split). Production default = 5.5.
+const W44_156_VARIANT_Z_D_HIGH_THRESHOLD: f32 = 5.5;
+
 /// W44-124 auto-discriminator: minimum `m3_colourfulness` to AUTO-fire the
 /// W44-123 [`VarDctEncoder::dct32_keep_hint`] lever when the caller does
 /// not pass an explicit `Some(bool)`.
@@ -455,6 +494,35 @@ fn w44_143_min_distance_override() -> Option<f32> {
 #[inline]
 fn w44_143_effective_min_distance() -> f32 {
     w44_143_min_distance_override().unwrap_or(W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE)
+}
+
+/// W44-156 (2026-05-21): runtime env hook for bisecting the
+/// [`W44_156_VARIANT_Z_D_HIGH_THRESHOLD`] constant. Returns the parsed
+/// override if `__JXL_W44_156_THRESHOLD` is set, else `None`.
+///
+/// Special values:
+/// - `0.0` (or any value > 99.0): disable the d-high split (no threshold
+///   ever exceeded, so plain variant Z / Z' / Z'' fire as in W44-154).
+/// - Any `f32 > 0.0 && <= 99.0`: use that distance as the split point.
+fn w44_156_threshold_override() -> Option<f32> {
+    #[cfg(feature = "std")]
+    {
+        std::env::var("__JXL_W44_156_THRESHOLD")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        None
+    }
+}
+
+/// W44-156 (2026-05-21): effective distance threshold for the d-high
+/// variant Z split. Returns the env-var override if set, else the
+/// production [`W44_156_VARIANT_Z_D_HIGH_THRESHOLD`] constant (5.5).
+#[inline]
+fn w44_156_effective_threshold() -> f32 {
+    w44_156_threshold_override().unwrap_or(W44_156_VARIANT_Z_D_HIGH_THRESHOLD)
 }
 
 /// W44-135 (2026-05-20): maximum `target_distance` at which the W44-124
@@ -2245,6 +2313,14 @@ impl VarDctEncoder {
                 .zenanalyze_proxies
                 .is_some_and(|p| p.m3_colourfulness < W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN);
 
+        // W44-156 distance-band sub-discriminator inside variant Z: when
+        // any variant Z gate fires AND target_distance >
+        // W44_156_VARIANT_Z_D_HIGH_THRESHOLD (5.5 default, env hook
+        // __JXL_W44_156_THRESHOLD), use the d-high table (dct32x32 = 1.20)
+        // instead of the W44-154 default (dct32x32 = 1.22). Closes
+        // 1420710 e5 d=6 OPEN cell per W44-155 strategy-shift diagnosis.
+        let w44_156_d_high = w44_96_variant_z && self.distance > w44_156_effective_threshold();
+
         if !(w22_1_lift || w44_29_lower || w44_65_suppress_dct64) {
             return None;
         }
@@ -2253,11 +2329,23 @@ impl VarDctEncoder {
             p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
         } else if w44_29_lower {
             p.entropy_mul_table = if w44_98_variant_z_high_colour {
-                crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour()
+                if w44_156_d_high {
+                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour_d_high()
+                } else {
+                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour()
+                }
             } else if w44_99_variant_z_low_colour {
-                crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour()
+                if w44_156_d_high {
+                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour_d_high()
+                } else {
+                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour()
+                }
             } else if w44_96_variant_z {
-                crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z()
+                if w44_156_d_high {
+                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_d_high()
+                } else {
+                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z()
+                }
             } else {
                 crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed()
             };
@@ -3741,17 +3829,42 @@ impl VarDctEncoder {
                 .zenanalyze_proxies
                 .is_some_and(|p| p.m3_colourfulness < W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN);
 
+        // W44-156 distance-band sub-discriminator inside variant Z (mirror
+        // of compute_ac_strategy). When any variant Z gate fires AND
+        // target_distance > W44_156_VARIANT_Z_D_HIGH_THRESHOLD (5.5
+        // default; env hook __JXL_W44_156_THRESHOLD), use the d-high
+        // table (dct32x32 = 1.20) instead of the W44-154 default
+        // (dct32x32 = 1.22). Closes 1420710 e5 d=6 OPEN cell per
+        // W44-155 strategy-shift diagnosis (cjxl sheds small blocks at
+        // d=5→d=6; we don't, because the W44-154 1.22 lift forces more
+        // DCT32X32 consolidation than cjxl picks at d > 5.5).
+        let w44_156_d_high = w44_96_variant_z && self.distance > w44_156_effective_threshold();
+
         let profile_for_search = if w22_1_lift || w44_29_lower || w44_65_suppress_dct64 {
             let mut p = self.profile.clone();
             if w22_1_lift {
                 p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
             } else if w44_29_lower {
                 p.entropy_mul_table = if w44_98_variant_z_high_colour {
-                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour()
+                    if w44_156_d_high {
+                        crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour_d_high()
+                    } else {
+                        crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour(
+                        )
+                    }
                 } else if w44_99_variant_z_low_colour {
-                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour()
+                    if w44_156_d_high {
+                        crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour_d_high()
+                    } else {
+                        crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour(
+                        )
+                    }
                 } else if w44_96_variant_z {
-                    crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z()
+                    if w44_156_d_high {
+                        crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_d_high()
+                    } else {
+                        crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z()
+                    }
                 } else {
                     crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed()
                 };
