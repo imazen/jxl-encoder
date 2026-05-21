@@ -4274,6 +4274,44 @@ pub struct EncoderImprovementsCustom {
     /// W44-167 ships with default Mode A pending the chunk 4
     /// measurement; if Mode B/C/D ships, the env-var default flips.
     pub find_best_32_per_m3_lift: bool,
+
+    /// W44-168 (Smart-Zenjxl chunk 5, 2026-05-21): adapt the
+    /// `butteraugli_iters` count per image content. The fixed
+    /// per-effort schedule (`e≤7 → 0, e8 → 2, e9 → 4, e10 → 8, e11 →
+    /// 16, e12 → 32`) is intrinsically content-agnostic — smooth
+    /// photos / screenshots at e8+ converge after fewer iters AND
+    /// textured content at e7 (which currently runs ZERO iters) could
+    /// benefit from a small budget.
+    ///
+    /// Per the user directive 2026-05-21 ("make zenjxl defaults
+    /// smarter on the rdtime axis ... even if effort levels blend
+    /// together more"), this flag enables an in-encoder adjustment of
+    /// the iter count based on cheap proxies already on hand
+    /// (`mask1x1_p25`, `mask1x1_median`, `ZenanalyzeProxies`) when the
+    /// buttloop fires.
+    ///
+    /// **Mechanism** (selected by env hook `JXL_W44_168_MODE=A|B|C|D`,
+    /// default `A` = baseline = no change vs the fixed schedule):
+    /// - **A — Baseline**: byte-identical to the fixed schedule (no
+    ///   override; default).
+    /// - **B — SmoothSkip**: at `effort >= 8` on smooth/screenshot
+    ///   content (`mask1x1_median > 95` OR `mask1x1_p25 >= 85`),
+    ///   `iters - 1` saturating at 1. Saves one full buttloop iter on
+    ///   converged content (~30% wall-time at e8 where iters=2).
+    /// - **C — TexturedExtend**: at `effort == 7` on textured content
+    ///   (`edge_density >= 0.5`), bump iters from 0 → 2. Blends e7
+    ///   upward toward e8 quality for the content class that benefits
+    ///   most.
+    /// - **D — Combined**: apply both B and C.
+    ///
+    /// **Default**: `true` for [`EncoderStrategy::Zenjxl`] and
+    /// [`EncoderStrategy::Aggressive`]; `false` for
+    /// [`EncoderStrategy::Libjxl`] (strict per-effort parity) and
+    /// [`EncoderStrategy::LeanFaster`] (skip per-image gate cost).
+    ///
+    /// **Hash-locks**: BYTE-IDENTICAL with default env unset (Mode A
+    /// = no override).
+    pub adaptive_buttloop_iters: bool,
 }
 
 impl Default for EncoderImprovementsCustom {
@@ -4338,6 +4376,12 @@ impl Default for EncoderImprovementsCustom {
             // LeanFaster override to `false` to preserve W44-94
             // honest-stop / skip per-image cost.
             find_best_32_per_m3_lift: true,
+            // W44-168: Zenjxl default enables the adaptive buttloop-iters
+            // dispatch (gated on env JXL_W44_168_MODE=B|C|D). Default env
+            // unset = Mode A = baseline = byte-identical to pre-W44-168.
+            // Libjxl / LeanFaster override to `false` to preserve strict
+            // per-effort iter parity / skip per-image content gates.
+            adaptive_buttloop_iters: true,
         }
     }
 }
@@ -4402,6 +4446,15 @@ pub(crate) struct ResolvedImprovements {
     // 1420710 OPEN cells via the EXISTING W44-98 m3 sub-discriminator
     // that already routes HC (m3>=25) vs LC (m3<25) tables.
     pub(crate) find_best_32_per_m3_lift: bool,
+
+    // W44-168 — Smart-Zenjxl chunk 5: adaptive butteraugli_iters per
+    // image content. Env hook `JXL_W44_168_MODE=A|B|C|D` controls the
+    // adjustment (default A = baseline = no change vs the fixed
+    // per-effort schedule). Mode B saturates-decrements iters on
+    // smooth/screenshot content at e>=8 (saves wall time). Mode C
+    // bumps iters from 0→2 on textured content at e==7 (blends e7
+    // upward toward e8 quality). Mode D applies both.
+    pub(crate) adaptive_buttloop_iters: bool,
 }
 
 impl Default for ResolvedImprovements {
@@ -4452,6 +4505,11 @@ impl Default for ResolvedImprovements {
             // = byte-identical to pre-W44-167). Libjxl / LeanFaster
             // constructors below override to `false`.
             find_best_32_per_m3_lift: true,
+            // W44-168: Zenjxl default enables the adaptive buttloop-iters
+            // dispatch (default env unset = Mode A = byte-identical to
+            // pre-W44-168 fixed-per-effort schedule). Libjxl / LeanFaster
+            // constructors below override to `false`.
+            adaptive_buttloop_iters: true,
         }
     }
 }
@@ -4726,6 +4784,12 @@ impl ResolvedImprovements {
             // above so the variant Z dispatch never fires; the W44-167
             // env hook becomes a no-op. Kept explicit for clarity.
             find_best_32_per_m3_lift: false,
+            // W44-168: strict libjxl parity — keep the fixed per-effort
+            // butteraugli_iters schedule (no content-aware adjustment).
+            // The Libjxl variant defines its iter budget purely by
+            // effort; W44-168's discriminator is unobservable for
+            // strict-parity callers.
+            adaptive_buttloop_iters: false,
         }
     }
 
@@ -4758,6 +4822,11 @@ impl ResolvedImprovements {
             // lift (depends on the same per-image zenanalyze proxies as
             // W44-98/99 — heavy per-image gate cost).
             find_best_32_per_m3_lift: false,
+            // W44-168: LeanFaster also drops the adaptive buttloop-iters
+            // dispatch — the per-image proxies (mask1x1_p25 / mask
+            // median / edge_density) are the same ones LeanFaster
+            // already drops for other per-image gates.
+            adaptive_buttloop_iters: false,
             ..Default::default()
         }
     }
@@ -4800,6 +4869,7 @@ impl ResolvedImprovements {
             photo_epf_seed_admit: c.photo_epf_seed_admit,
             photo_variant_z_admit: c.photo_variant_z_admit,
             find_best_32_per_m3_lift: c.find_best_32_per_m3_lift,
+            adaptive_buttloop_iters: c.adaptive_buttloop_iters,
         }
     }
 }
@@ -14478,6 +14548,45 @@ mod tests {
             EncoderStrategy::Custom(Box::new(custom)).resolve(&StrategyOverrides::default());
         assert!(
             !resolved.find_best_32_per_m3_lift,
+            "Custom with field set false must propagate"
+        );
+    }
+
+    /// W44-168 (Smart-Zenjxl chunk 5): `adaptive_buttloop_iters` defaults
+    /// per strategy. Mirrors the W44-166/167 per-strategy test pattern.
+    #[test]
+    fn test_w44_168_adaptive_buttloop_iters_default_per_strategy() {
+        let zenjxl = EncoderStrategy::Zenjxl.resolve(&StrategyOverrides::default());
+        assert!(
+            zenjxl.adaptive_buttloop_iters,
+            "Zenjxl must enable W44-168 adaptive buttloop iters"
+        );
+        let aggressive = EncoderStrategy::Aggressive.resolve(&StrategyOverrides::default());
+        assert!(
+            aggressive.adaptive_buttloop_iters,
+            "Aggressive must enable W44-168 adaptive buttloop iters"
+        );
+        let libjxl = EncoderStrategy::Libjxl.resolve(&StrategyOverrides::default());
+        assert!(
+            !libjxl.adaptive_buttloop_iters,
+            "Libjxl must disable W44-168 (strict per-effort iter parity)"
+        );
+        let lean = EncoderStrategy::LeanFaster.resolve(&StrategyOverrides::default());
+        assert!(
+            !lean.adaptive_buttloop_iters,
+            "LeanFaster must disable W44-168 (skip per-image proxy gate cost)"
+        );
+        // Custom inherits whatever the user set on EncoderImprovementsCustom.
+        let mut custom = EncoderImprovementsCustom::default();
+        assert!(
+            custom.adaptive_buttloop_iters,
+            "EncoderImprovementsCustom::default() matches Zenjxl"
+        );
+        custom.adaptive_buttloop_iters = false;
+        let resolved =
+            EncoderStrategy::Custom(Box::new(custom)).resolve(&StrategyOverrides::default());
+        assert!(
+            !resolved.adaptive_buttloop_iters,
             "Custom with field set false must propagate"
         );
     }

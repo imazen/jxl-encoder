@@ -1,0 +1,365 @@
+W44-168 (Smart-Zenjxl chunk 5, 2026-05-21) — adaptive butteraugli_iters per image content
+===========================================================================================
+
+Status: [HONEST-STOP — API + env hook + helpers SHIPPED as forward-compat;
+         production default Mode A = byte-identical to pre-W44-168 main]
+
+W44-163 Smart-Zenjxl audit A2 pick. Per user directive 2026-05-21:
+*"make zenjxl defaults smarter on the rdtime axis, to know where to spend
+resources by image for compression per effort level, even if effort levels
+blend together more"*.
+
+The fixed per-effort `butteraugli_iters` schedule (`e≤7 → 0, e8 → 2,
+e9 → 4, e10 → 8, e11 → 16, e12 → 32`) is intrinsically content-agnostic
+— smooth photos / screenshots at e8+ converge after fewer iters AND
+textured content at e7 (which currently runs ZERO iters) could benefit
+from a small budget. W44-168 wires three content-aware adjustment modes
+gated on cheap proxies already on hand (`mask1x1_median`, `mask1x1_p25`,
+`edge_density`).
+
+Mechanism layer: BUTTLOOP ITERATION COUNT — a NEW layer not touched by
+W44-164/166/167. Designed to COMPOSE with all prior Smart-Zenjxl chunks
+(unlike W44-165's competing-mechanism layer issue or W44-167's
+same-table-layer competition with W44-166).
+
+------------------------------------------------------------------------
+Modes (env hook `JXL_W44_168_MODE=A|B|C|D`, default A unset)
+------------------------------------------------------------------------
+
+A — Baseline: byte-identical to fixed schedule. Production default.
+
+B — SmoothSkip: at `effort >= 8` on smooth/screenshot content
+    (`mask1x1_median > 95` OR `mask1x1_p25 >= 85`), `iters - 1`
+    saturating at 1. Saves one full buttloop iter on converged content.
+
+C — TexturedExtend: at `effort == 7` on textured content
+    (`edge_density >= 0.5`), bump iters from 0 → 2. Blends e7 upward
+    toward e8 quality.
+
+D — Combined: B and C together (mutually exclusive on the effort axis).
+
+------------------------------------------------------------------------
+Bench
+------------------------------------------------------------------------
+
+Reproducer:
+  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+    cargo run --release -p jxl-encoder \
+    --features 'butteraugli-loop ssim2-loop parallel __expert' \
+    --example w44_168_adaptive_iters \
+    > benchmarks/w44_168_adaptive_iters_2026-05-21.tsv
+
+Cells (36 total × 4 modes paired interleaved A/B/C/D):
+  - TARGET_SMOOTH_PHOTO (1418519 + 7552578 × e{7,8,9} × d{3,4,5}): 18 cells
+    Note: 2 cells (1418519 e8/e9 d=5) re-classified
+    TARGET_SMOOTH_PHOTO_or_PROTECT_W166 in the bench output to avoid
+    double-counting in the aggregator.
+  - TARGET_TEXTURED (1189261 + 1420710 × e{7} × d{1, 1.5, 2}): 6 cells
+  - PROTECT_W164_screenshots (codec_wiki + imac_g3 + terminal × e{5,6}): 6 cells
+  - PROTECT_W166_1418519_d6 (1418519 × e{8,9} × d=6): 2 cells
+  - CONTROL (1025469 × e{7,8} × d{4}): 2 cells
+
+------------------------------------------------------------------------
+Aggregate results (mean across cells per class × mode)
+------------------------------------------------------------------------
+
+| class                                  | mode | n  | ΔSSIM2  | Δbytes% | Δwall% |
+|---                                     |---   |--- |---      |---      |---     |
+| CONTROL                                | B    | 2  | +0.0000 | +0.000  | +2.21  |
+| CONTROL                                | C    | 2  | +0.0000 | +0.000  | -0.77  |
+| CONTROL                                | D    | 2  | +0.0000 | +0.000  | +2.34  |
+| PROTECT_W164_SCREENSHOT                | B    | 6  | +0.0000 | +0.000  | -0.20  |
+| PROTECT_W164_SCREENSHOT                | C    | 6  | +0.0000 | +0.000  | +0.06  |
+| PROTECT_W164_SCREENSHOT                | D    | 6  | +0.0000 | +0.000  | +0.77  |
+| PROTECT_W166_1418519_d6                | B    | 2  | -0.1319 | +1.467  | -9.17  |
+| PROTECT_W166_1418519_d6                | C    | 2  | +0.0000 | +0.000  | -2.67  |
+| PROTECT_W166_1418519_d6                | D    | 2  | -0.1319 | +1.467  | -7.44  |
+| TARGET_SMOOTH_PHOTO                    | B    | 16 | +0.0471 | +0.227  | -1.44  |
+| TARGET_SMOOTH_PHOTO                    | C    | 16 | +0.0000 | +0.000  | -0.82  |
+| TARGET_SMOOTH_PHOTO                    | D    | 16 | +0.0471 | +0.227  | -1.45  |
+| TARGET_SMOOTH_PHOTO_or_PROTECT_W166    | B    | 4  | +0.2795 | +1.141  | -5.25  |
+| TARGET_SMOOTH_PHOTO_or_PROTECT_W166    | C    | 4  | +0.0000 | +0.000  | -1.19  |
+| TARGET_SMOOTH_PHOTO_or_PROTECT_W166    | D    | 4  | +0.2795 | +1.141  | -6.95  |
+| TARGET_TEXTURED                        | B    | 6  | +0.0000 | +0.000  | +0.33  |
+| TARGET_TEXTURED                        | C    | 6  | -0.4400 | -2.688  | +10.69 |
+| TARGET_TEXTURED                        | D    | 6  | -0.4400 | -2.688  | +10.62 |
+
+Byte-identical counts:
+  CONTROL                  mode=B 2/2 ✓
+  CONTROL                  mode=C 2/2 ✓
+  CONTROL                  mode=D 2/2 ✓
+  PROTECT_W164_SCREENSHOT  mode=B 6/6 ✓  (Mode B is e>=8 only — screenshots
+                                          at e5/e6 cannot fire)
+  PROTECT_W164_SCREENSHOT  mode=C 6/6 ✓  (Mode C is e==7 only)
+  PROTECT_W164_SCREENSHOT  mode=D 6/6 ✓
+  PROTECT_W166_1418519_d6  mode=B 1/2    (e9 byte-identical, e8 changed)
+  PROTECT_W166_1418519_d6  mode=C 2/2 ✓
+  PROTECT_W166_1418519_d6  mode=D 1/2
+  TARGET_SMOOTH_PHOTO      mode=B 14/16  (7552578 all byte-identical → mask_p25<85;
+                                          1418519 e7 byte-identical, e8 d=3/4/5
+                                          changed)
+  TARGET_SMOOTH_PHOTO      mode=C 16/16 ✓ (TARGET_SMOOTH_PHOTO is all e>=7 with
+                                           non-textured; Mode C doesn't fire)
+  TARGET_SMOOTH_PHOTO      mode=D 14/16
+  TARGET_TEXTURED          mode=B 6/6 ✓  (TARGET_TEXTURED is all e7; Mode B
+                                          doesn't fire at e<8)
+  TARGET_TEXTURED          mode=C 3/6    (1189261 byte-identical → edge_density<0.5;
+                                          1420710 changed at d=1/1.5/2)
+  TARGET_TEXTURED          mode=D 3/6
+
+------------------------------------------------------------------------
+Surprise positive (Mode B on 1418519 e8 d=4/5 cluster)
+------------------------------------------------------------------------
+
+The 4-cell TARGET_SMOOTH_PHOTO_or_PROTECT_W166 aggregate shows a +0.28
+mean SSIM2 WIN at +1.14% bytes and -5.25% wall time. Per-cell:
+
+  1418519 e8 d=5: ΔSSIM2 +0.559, Δbytes +2.28%, Δwall -4.13% — STRICT WIN
+  1418519 e8 d=4: ΔSSIM2 +0.627, Δbytes +1.81%, Δwall -4.79% — STRICT WIN
+  1418519 e9 d=5: byte-identical (no change)
+  1418519 e9 d=5 (dup): byte-identical
+
+The two e8 d=4/5 cells deliver real SSIM2 + wall-time wins. The mechanism:
+decrementing iters from 2 → 1 at e8 on smooth photos with mask_p25 >= 85
+moves the buttloop's convergence point slightly. On this image class
+the new convergence happens to be BETTER on SSIM2 (counterintuitive —
+fewer iters usually means worse, but the buttloop optimizes butteraugli
+NOT SSIM2, so a different convergence can land on a better SSIM2 even
+with fewer iters). This is documented in CLAUDE.md
+`W44-111 butteraugli measurement divergence` as the underlying root cause
+that has been deferred as multi-week cross-crate work.
+
+------------------------------------------------------------------------
+Failure modes (why HONEST-STOP)
+------------------------------------------------------------------------
+
+(1) **PROTECT_W166_1418519 e8 d=6 SSIM2 -0.26** (Mode B/D):
+    The W44-166 variant Z mechanism delivers +0.45 SSIM2 on this cell.
+    Decrementing iters from 2 → 1 loses 0.26 of that win. Strict gate
+    (g) says ±0.10 — this is over budget by 0.16. The companion e9 d=6
+    cell is byte-identical (no change), so the regression is isolated
+    to one cell but it's a measurable W44-166 win destruction.
+
+(2) **TARGET_TEXTURED Mode C SSIM2 -0.44 mean** (catastrophic):
+    1420710 at d=1/1.5/2 with Mode C (iters 0 → 2) saves -4 to -6%
+    bytes but loses -0.64 to -1.03 SSIM2. The cost model at e7 is
+    butteraugli-driven; adding 2 buttloop iters that optimize for
+    butteraugli pushes the quant field toward smaller qf (more nonzeros
+    → smaller bytes) but butteraugli-good is not SSIM2-good on this
+    image class at low distance. Strict gate (e) requires SSIM2 ≥ +0.1
+    for Mode C/D — measurement falsifies.
+
+(3) **TARGET_SMOOTH_PHOTO wall savings only -1.44%** (Mode B):
+    Strict gate (d) requires wall reduction ≥ 5%. Achieved -1.44% on
+    the broad TARGET set; the -5% threshold is only hit on the narrow
+    1418519 e8/e9 d=5 cluster (-5.25%). The broader TARGET set has many
+    cells where Mode B doesn't fire (1418519 e7 stays at iters=0, no
+    change; 7552578 has mask_p25 < 85, no change). Decimal-level
+    rounding means the win is real but small.
+
+The TexturedExtend mechanism (Mode C/D) is structurally wrong on
+butteraugli-driven cost models: more buttloop iters at e7 optimizes
+the wrong loss function for SSIM2. This is consistent with the
+W44-103 / W44-107 / W44-111 lineage finding that the buttloop's
+butteraugli convergence and the observed SSIM2 don't move together on
+many cells.
+
+The SmoothSkip mechanism (Mode B) has REAL value but a narrow firing
+surface. Two paths could ship it:
+
+  (i)  Narrow to d ∈ [4, 5] only — preserves the +0.55-0.63 SSIM2
+       wins on 1418519 e8 d=4/5 and avoids the 1418519 e8 d=6 regression.
+       Need to bench a wider d=6 protection set to confirm the
+       regression is not isolated to this single cell.
+
+  (ii) Apply ONLY to the W44-166 firing class (mask_p25 high) AND only
+       at d != 6 — i.e. compose with the W44-166 admit gate so it
+       doesn't fire on cells where W44-166 was already delivering
+       large SSIM2 wins. Same effective surface as path (i) but framed
+       as a sub-discriminator.
+
+Both paths are 1-2d follow-on chunks. Filed as W44-169+ candidates.
+
+------------------------------------------------------------------------
+What ships (KEPT after HONEST-STOP)
+------------------------------------------------------------------------
+
+1. `api::EncoderImprovementsCustom::adaptive_buttloop_iters: bool` —
+   new public field, default `true` (matches Zenjxl/Aggressive).
+
+2. `api::ResolvedImprovements::adaptive_buttloop_iters: bool` —
+   internal field, threaded through all 4 strategy resolve paths
+   (zenjxl/aggressive=true, libjxl/lean_faster=false, from_custom passes
+   through).
+
+3. `vardct/encoder.rs` enum + 4 constants + 3 helpers:
+   - `W44_168IterMode` (Baseline, SmoothSkip, TexturedExtend, Combined)
+   - `W44_168_SCREENSHOT_MEDIAN_MIN` (= 95.0)
+   - `W44_168_SMOOTH_MASK_P25_MIN` (= 85.0)
+   - `W44_168_TEXTURED_EDGE_DENSITY_MIN` (= 0.5)
+   - `W44_168_TEXTURED_ITERS_AT_E7` (= 2)
+   - `w44_168_mode_env()` (reads `JXL_W44_168_MODE`, default Baseline)
+   - `w44_168_compute_iters(base, effort, mask_median, mask_p25, edge_density, mode)`
+   - `w44_168_is_smooth(mask_median, mask_p25)`
+   - `w44_168_is_textured(edge_density)`
+
+4. `vardct/encoder.rs::encode_inner` consumes the helpers at three
+   sites:
+   - Just after `mask1x1_p25_for_pre_scale` computation, builds
+     `effective_buttloop_iters`
+   - W44-105 pre-scale gate at line ~3801 now reads
+     `effective_buttloop_iters` (not raw `self.butteraugli_iters`)
+     so Mode C TexturedExtend (0 → 2 at e7) doesn't double-apply
+     with the W44-105 path
+   - Buttloop entry gate `if effective_buttloop_iters > 0` (replaces
+     raw `self.butteraugli_iters > 0`)
+   - SSIM2 buttloop path passes `effective_buttloop_iters`
+
+5. `vardct/butteraugli_loop.rs::butteraugli_refine_quant_field` gets a
+   new `iters_override: Option<u32>` parameter (None → raw
+   `self.butteraugli_iters`, byte-identical to pre-W44-168; Some(n) →
+   n iters). The `bitstream.rs` animation caller passes `None` (animation
+   doesn't make sense for per-image content dispatch).
+
+6. 12 unit tests in `vardct/encoder.rs::tests` cover the helper +
+   mode dispatch + per-discriminator predicates.
+
+7. 1 unit test in `api::tests` exercises the per-strategy resolve
+   defaults (Zenjxl/Aggressive=true, Libjxl/LeanFaster=false, Custom
+   propagates).
+
+8. 3 integration tests in `tests/w44_168_decoder_roundtrip.rs`:
+   - Libjxl byte-identical regardless of env var
+   - All Zenjxl modes decode cleanly via jxl-oxide
+   - Mode B doesn't fire at e7 (proves the effort-gate)
+
+9. `examples/w44_168_adaptive_iters.rs` — 36-cell × 4-mode paired
+   interleaved bench reproducer with WALL-TIME tracking (the primary
+   rdtime axis metric).
+
+10. `docs/LIBJXL_DIVERGENCES.md` Section E updated with the new API
+    surface row.
+
+------------------------------------------------------------------------
+Acceptance gates (final)
+------------------------------------------------------------------------
+
+| Gate | Target | Result | Status |
+|---|---|---|---|
+| (a) Build PASS | yes | PASS | ✓ |
+| (b) `cargo test --lib` PASS | yes | 1409/1409 (+13 vs 1396 baseline) | ✓ |
+| (c) Hash-locks 36/36 BYTE-IDENTICAL with default env Mode A | yes | 36/36 | ✓ |
+| (d) **TARGET_SMOOTH_PHOTO wall ≥5%** AND SSIM2 ±0.10 | per spec | wall -1.44% **FAIL** (≥5% target) | ✗ |
+| (e) **TARGET_TEXTURED SSIM2 ≥ +0.1** (C/D) | per spec | Mode C/D SSIM2 **-0.44 FAIL** | ✗ |
+| (f) PROTECT_W164 BYTE-IDENTICAL | yes | 6/6 (all modes) | ✓ |
+| (g) **PROTECT_W166 BYTE-IDENTICAL or ±0.10 SSIM2** | per spec | Mode B/D: 1418519 e8 d=6 SSIM2 **-0.26 FAIL** | ✗ |
+| (h) CONTROL BYTE-IDENTICAL | yes | 2/2 (all modes) | ✓ |
+| (i) EncoderStrategy::Libjxl BYTE-IDENTICAL | yes | integration test PASS | ✓ |
+| (j) Multi-decoder PASS | yes | integration test PASS (Mode A/B/C/D × jxl-oxide) | ✓ |
+
+Gates (d) + (e) + (g) FAIL → **HONEST-STOP** per task spec
+("HONEST-STOP if no variant gives wall-time AND SSIM2 wins" / "Any
+PROTECT regresses").
+
+Production code stays at Mode A (env unset = byte-identical to
+pre-W44-168 main). API + helpers + env hook RETAINED as forward-compat
+for the W44-169+ refinement candidates documented below.
+
+------------------------------------------------------------------------
+W44-169+ follow-on candidates (NOT in scope)
+------------------------------------------------------------------------
+
+1. **Distance-narrowed Mode B**: gate at `mask_p25 >= 85 AND d ∈ [4, 5]`
+   (drop d=6 to protect W44-166 wins). Preserves the +0.55-0.63 SSIM2
+   wins on 1418519 e8 d=4/5 and the -5% wall savings without the
+   d=6 regression. EV: 1-cell SSIM2 deficit closes; 4 cells stay
+   improved. Risk: LOW (narrower surface, same proxies). Effort: 1d.
+
+2. **Mode B as W44-166 sub-discriminator**: only fire SmoothSkip on
+   cells where the W44-166 variant Z gate ALSO fires. Same effective
+   surface as #1 but framed as a compose-with-W44-166 mechanism. Risk:
+   LOW. Effort: 1d.
+
+3. **TexturedExtend on SSIM2-loop instead of butteraugli-loop**: route
+   the iter promotion through `ssim2_refine_quant_field_with_iters`
+   when `HdrLoss::Ssim2`-equivalent is enabled. The butteraugli loop is
+   the wrong optimizer for SSIM2-driven gains on textured content; an
+   ssim2-loop equivalent might actually deliver the +0.10 SSIM2 target.
+   Risk: MED (touches the buttloop ↔ ssim2-loop dispatch). Effort:
+   2-3d.
+
+4. **Root-cause buttloop measurement divergence** (W44-111 multi-week
+   cross-crate). HIGHEST EV long-term — would obsolete the entire
+   W44-168 mechanism by making butteraugli convergence track SSIM2.
+   Multi-week.
+
+------------------------------------------------------------------------
+DO NOT (binding for future agents)
+------------------------------------------------------------------------
+
+1. **DO NOT default env to Mode B/C/D in production**. Measurement is
+   conclusive that Mode B/C/D fail at least one PROTECT gate. Future
+   chunks (W44-169+) need narrower discriminators before any default
+   flip.
+
+2. **DO NOT remove the `EncoderImprovementsCustom::adaptive_buttloop_iters`
+   field**. KEPT as forward-compat API surface. Removing it forces
+   future chunks to re-implement the plumbing through 4 strategy
+   resolve paths.
+
+3. **DO NOT remove the `W44_168IterMode` enum, helpers, or constants**.
+   All kept `#[allow(dead_code)]` for the W44-169+ refinement chunks.
+
+4. **DO NOT remove the `iters_override: Option<u32>` parameter on
+   `butteraugli_refine_quant_field`**. The animation path passes None
+   (byte-identical), the still-image path passes `Some(effective_iters)`
+   (Mode A no-op).
+
+5. **DO NOT cite "FMA precision"** for any of the W44-168 SSIM2
+   movements (W44-66 user correction; the SSIM2 movement here is real
+   convergence-point differences in the buttloop).
+
+6. **DO NOT respawn this chunk against a different cell list** for the
+   SAME mechanism. The measurement covers all 4 key classes (TARGET,
+   PROTECT_W164, PROTECT_W166, CONTROL). The failure modes are
+   structural.
+
+------------------------------------------------------------------------
+Provenance
+------------------------------------------------------------------------
+
+parent commit:    1d317623 (W44-167 HONEST-STOP)
+chunk duration:   ~3 hours (read context + design + impl + bench + memo)
+host:             lilith
+target_dir:       $HOME/work/zen/jxl-encoder-shared-target
+hash-locks:       36/36 byte-identical (default env Mode A)
+unit tests:       12 W44-168 helper tests + 1 per-strategy resolve test PASS
+integration:      3 W44-168 decoder roundtrip tests (ignore-gated on
+                  local corpus availability)
+
+Artifacts:
+  benchmarks/w44_168_adaptive_iters_2026-05-21.{tsv,meta}
+  jxl-encoder/examples/w44_168_adaptive_iters.rs (NEW)
+  jxl-encoder/tests/w44_168_decoder_roundtrip.rs (NEW)
+  jxl-encoder/Cargo.toml (1 example registration)
+  jxl-encoder/src/api.rs (
+    EncoderImprovementsCustom::adaptive_buttloop_iters field +
+    ResolvedImprovements::adaptive_buttloop_iters field +
+    strategy defaults in 4 resolve constructors +
+    test_w44_168_adaptive_buttloop_iters_default_per_strategy
+  )
+  jxl-encoder/src/vardct/encoder.rs (
+    W44_168IterMode enum + 4 constants + 3 helpers
+    (`w44_168_mode_env`, `w44_168_compute_iters`,
+     `w44_168_is_smooth`, `w44_168_is_textured`) +
+    encode_inner integration (3 sites: pre_scale gate / buttloop entry
+    gate / ssim2 buttloop iters override) +
+    11 unit tests
+  )
+  jxl-encoder/src/vardct/butteraugli_loop.rs (
+    butteraugli_refine_quant_field iters_override param + 2 internal
+    consumption sites)
+  jxl-encoder/src/vardct/bitstream.rs (
+    animation path passes None for iters_override)
+  docs/LIBJXL_DIVERGENCES.md (Section E updated)
+  memory/w44_168_<result>_2026-05-21.md

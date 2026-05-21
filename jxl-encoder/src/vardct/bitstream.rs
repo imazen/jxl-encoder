@@ -2000,6 +2000,13 @@ impl VarDctEncoder {
                     // uniform-4 sharpness seed (byte-identical to
                     // pre-W44-117 animation hash-locks).
                     None,
+                    // W44-168: animation frames don't make sense for
+                    // the per-image content-aware iter dispatch (the
+                    // proxies are computed per-still-image at API
+                    // entry, not per-frame). `None` → use the
+                    // encoder's fixed `self.butteraugli_iters` for
+                    // byte-identical pre-W44-168 animation behaviour.
+                    None,
                 )?;
             }
         }

@@ -1011,6 +1011,16 @@ impl VarDctEncoder {
         // path), falls back to the legacy uniform-4 seed (byte-identical
         // to pre-W44-117 behaviour).
         mask1x1: Option<&[f32]>,
+        // W44-168 (Smart-Zenjxl chunk 5, 2026-05-21): optional iters
+        // override. When `Some(n)`, the buttloop runs `n` iters
+        // instead of `self.butteraugli_iters`. Used for the
+        // content-aware iter dispatch (Mode B SmoothSkip / Mode C
+        // TexturedExtend / Mode D Combined). `None` falls back to
+        // `self.butteraugli_iters` (default, byte-identical to
+        // pre-W44-168). The caller is responsible for the gate
+        // condition `iters_override.unwrap_or(self.butteraugli_iters)
+        // > 0` so the buttloop isn't entered with iters=0.
+        iters_override: Option<u32>,
     ) -> Result<DistanceParams> {
         use crate::budget::MemoryBudget;
 
@@ -1051,6 +1061,12 @@ impl VarDctEncoder {
         let num_blocks = xsize_blocks * ysize_blocks;
         let padded_pixels = padded_width * padded_height;
 
+        // W44-168: resolve the iter count once — override (if Some)
+        // wins, else fall back to the encoder's fixed-per-effort
+        // `self.butteraugli_iters`. Mode A (Baseline) callers pass
+        // `None` and get byte-identical pre-W44-168 behaviour.
+        let resolved_iter_count = iters_override.unwrap_or(self.butteraugli_iters);
+
         // W39-2 diagnostic — gated by env var so it's free in normal
         // runs. Set `JXL_BUTTLOOP_W39_DEBUG=1` to see the screenshot
         // classification + cap-resolution per encode.
@@ -1059,7 +1075,7 @@ impl VarDctEncoder {
             let cap = resolved_max_increase_with_class(target_distance as f64, is_screenshot);
             eprintln!(
                 "[W39-2 buttloop] dist={:.3} is_screenshot={} resolved_max_increase={:.3} iters={}",
-                target_distance, is_screenshot, cap, self.butteraugli_iters,
+                target_distance, is_screenshot, cap, resolved_iter_count,
             );
         }
 
@@ -1538,7 +1554,11 @@ impl VarDctEncoder {
         // values > MAX_QUANT_LOOP_ITERS with IterCountOutOfRange). Each
         // iteration runs a full butteraugli pipeline; capping prevents
         // a malicious or buggy caller from DoS-ing the encoder.
-        let iters = (self.butteraugli_iters.min(crate::api::MAX_QUANT_LOOP_ITERS)) as usize;
+        //
+        // W44-168: use the resolved iter count (`iters_override` or
+        // `self.butteraugli_iters`) so Mode C TexturedExtend (0 → 2 at
+        // e7) and Mode B SmoothSkip (iters - 1 at e8+) take effect.
+        let iters = (resolved_iter_count.min(crate::api::MAX_QUANT_LOOP_ITERS)) as usize;
         // RFC#45 chunk 1 + chunk 2: e10/e11/e12 push butteraugli_iters to
         // 8/16/32 via the effort table (see effort.rs). The saturating
         // `.min()` above already bounds the loop; this debug-assert documents
