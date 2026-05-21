@@ -1629,6 +1629,18 @@ pub struct ZenanalyzeProxies {
     /// SSIM2. Computed in the same O(W·H) pass as the other proxies via
     /// BT.601 luma `0.299·R + 0.587·G + 0.114·B`.
     pub edge_density: f32,
+    /// W44-176: BT.601 luma variance on sRGB u8 source pixels (raw
+    /// `Var(0.299·R + 0.587·G + 0.114·B)`, in `[0, 65025]` scale).
+    /// Used as a terminal-class sub-discriminator within the W44-108
+    /// low-colour band (`m3 < 30`) — separates "dark terminal-like"
+    /// screenshots where the W44-109 qf seed lift over-allocates
+    /// (terminal `luma_var ≈ 1706`) from "very-dark message-like"
+    /// screenshots where the lift IS net-positive
+    /// (gmessages/gui `luma_var ≈ 1050`) and from "mixed-content"
+    /// macOS-style screenshots where the lift gains real SSIM2
+    /// (graph 415, imac_dark 3303, imac_g3 5244). Computed in the
+    /// same O(W·H) pass as `m3_colourfulness` — zero added cost.
+    pub luma_var: f32,
 }
 
 impl ZenanalyzeProxies {
@@ -1653,14 +1665,21 @@ impl ZenanalyzeProxies {
                 m3_colourfulness: 0.0,
                 flat_color_block_ratio: 0.0,
                 edge_density: 0.0,
+                luma_var: 0.0,
             };
         }
 
-        // --- M3 colourfulness: one pass over pixels -----------------------
+        // --- M3 colourfulness + W44-176 luma_var: one pass over pixels -----
         let mut rg_sum = 0.0_f64;
         let mut rg_sq_sum = 0.0_f64;
         let mut yb_sum = 0.0_f64;
         let mut yb_sq_sum = 0.0_f64;
+        // W44-176: BT.601 luma sum + sum-of-squares (running variance via
+        // E[Y²] − μ_Y²). Same per-pixel arithmetic as the Sobel edge_density
+        // helper below — folded into this first pass to avoid an extra
+        // O(W·H) sweep at the discriminator site.
+        let mut y_sum = 0.0_f64;
+        let mut y_sq_sum = 0.0_f64;
         for y in 0..height {
             for x in 0..width {
                 let off = (y * width + x) * bpp;
@@ -1673,6 +1692,9 @@ impl ZenanalyzeProxies {
                 rg_sq_sum += rg * rg;
                 yb_sum += yb;
                 yb_sq_sum += yb * yb;
+                let yl = 0.299 * r + 0.587 * g + 0.114 * b;
+                y_sum += yl;
+                y_sq_sum += yl * yl;
             }
         }
         let mu_rg = rg_sum / n_pix;
@@ -1680,6 +1702,8 @@ impl ZenanalyzeProxies {
         let var_rg = (rg_sq_sum / n_pix - mu_rg * mu_rg).max(0.0);
         let var_yb = (yb_sq_sum / n_pix - mu_yb * mu_yb).max(0.0);
         let m3 = (var_rg + var_yb).sqrt() + 0.3 * (mu_rg * mu_rg + mu_yb * mu_yb).sqrt();
+        let mu_y = y_sum / n_pix;
+        let luma_var = (y_sq_sum / n_pix - mu_y * mu_y).max(0.0) as f32;
 
         // --- flat_color_block_ratio: per-8×8-block channel range -----------
         let blocks_x = width / 8;
@@ -1775,6 +1799,7 @@ impl ZenanalyzeProxies {
             m3_colourfulness: m3 as f32,
             flat_color_block_ratio: fcbr,
             edge_density,
+            luma_var,
         }
     }
 }
@@ -3908,6 +3933,15 @@ impl VarDctEncoder {
             // existing W44-105 / W44-109 short-circuit
             // (`butteraugli_iters > 0` → return 1.0) then correctly
             // declines the pre-scale on cells the buttloop will own.
+            // W44-176: pass the full `ZenanalyzeProxies` and the
+            // `terminal_class_exclude` flag so the helper can suppress
+            // the W44-109 lift on terminal-class screenshots
+            // (luma_var ∈ [1500, 2200] AND fcbr ≥ 0.70). Composes
+            // underneath the existing W44-108 m3 sub-gate; only fires
+            // when the gate WOULD have fired. graph/imac_g3/imac_dark/
+            // gmessages/gui SSIM2 wins from the lift are preserved
+            // (their proxies fail the discriminator).
+            let terminal_class_exclude = self.resolved_improvements.terminal_class_exclude;
             let qf_pre_scale =
                 super::butteraugli_loop::resolved_adaptive_quant_qf_seed_scale_with_policy(
                     self.effort,
@@ -3916,6 +3950,8 @@ impl VarDctEncoder {
                     self.distance,
                     m3,
                     adaptive_quant_qf_seed_policy,
+                    self.zenanalyze_proxies.as_ref(),
+                    terminal_class_exclude,
                 );
             if qf_pre_scale != 1.0 {
                 // W44-145 INVESTIGATION HONEST-STOP (2026-05-21): per-block
@@ -6925,6 +6961,47 @@ mod tests {
             p.flat_color_block_ratio < 0.01,
             "noise fcbr expected ~0 got {}",
             p.flat_color_block_ratio
+        );
+    }
+
+    /// W44-176: `luma_var` field on [`ZenanalyzeProxies`] computes
+    /// `Var(0.299·R + 0.587·G + 0.114·B)` over sRGB u8 pixels.
+    /// - Solid color: variance = 0
+    /// - Counter-pattern grayscale (R=G=B=i%256, 32×32 image, i ∈ [0, 1023]):
+    ///   luma values are i%256, so distribution is roughly uniform on [0, 256)
+    ///   → variance ≈ (256² − 1)/12 ≈ 5462 by uniform-distribution formula.
+    #[test]
+    fn test_zenanalyze_proxies_luma_var() {
+        // Solid red: luma_var = 0
+        let w = 32;
+        let h = 32;
+        let mut pixels = vec![0u8; w * h * 3];
+        for chunk in pixels.chunks_mut(3) {
+            chunk[0] = 200;
+            chunk[1] = 100;
+            chunk[2] = 50;
+        }
+        let p = ZenanalyzeProxies::compute_srgb_u8(&pixels, w, h, 3, 0, 1, 2);
+        assert!(
+            p.luma_var.abs() < 1e-3,
+            "solid color luma_var expected ~0 got {}",
+            p.luma_var
+        );
+        // Counter pattern (i%256 R=G=B grayscale) on 32×32 = 1024 pixels:
+        // values cycle 0..256 four times → variance ≈ 5461 (uniform on [0, 256)).
+        let mut pixels = vec![0u8; w * h * 3];
+        for (i, chunk) in pixels.chunks_mut(3).enumerate() {
+            let v = (i % 256) as u8;
+            chunk[0] = v;
+            chunk[1] = v;
+            chunk[2] = v;
+        }
+        let p = ZenanalyzeProxies::compute_srgb_u8(&pixels, w, h, 3, 0, 1, 2);
+        // Uniform on [0, 256) has variance (256² − 1)/12 ≈ 5462; allow ±50.
+        assert!(
+            (p.luma_var - 5461.0).abs() < 50.0,
+            "counter-pattern grayscale luma_var expected ~5461 got {}",
+            p.luma_var
         );
     }
 

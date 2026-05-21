@@ -268,6 +268,72 @@ pub const BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE: f32 = 2.0;
 /// belt-and-braces).
 pub const BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX: f32 = 30.0;
 
+/// W44-176: terminal-class exclude sub-discriminator — `luma_var` lower
+/// bound. Inside the W44-108 firing class (`is_screenshot AND m3 < 30`),
+/// this gate excludes terminal-like images where the W44-109 lift is
+/// net-negative pareto (terminal e7 d=4: bytes +28% AND SSIM2 -1.94 vs
+/// cjxl; the lift buys +2.70 SSIM2 over baseline but cjxl is still 1.94
+/// above the lifted result — quality NOT competitive with cjxl, bytes
+/// substantially over).
+///
+/// **Why this exists** (W44-174 diagnosis + W44-176 probe): the W44-108
+/// firing class contains a mix of pareto wins (graph d=5 +12 SSIM2,
+/// imac_dark d=5 +9, imac_g3 d=5 +6, gmessages d=5 +2.4, gui d=5 +4.5)
+/// and one regression (terminal d=4-5). Distance-narrow [2.0, 3.0]
+/// would sacrifice EVERY win in d=4-5 to fix the one regression. A
+/// per-image discriminator targeting just terminal is preferable.
+///
+/// **Discriminator** (W44-176 probe `examples/w44_176_terminal_proxy_probe.rs`,
+/// 17-image corpus = 8 gb82-sc + 6 CID22 + 3 borderline):
+/// `luma_var ∈ [1500, 2200] AND fcbr > 0.70`. Fires ONLY on terminal
+/// across the entire probe corpus:
+///
+/// | image       | luma_var | fcbr   | in_band? |
+/// |---          |---       |---     |---       |
+/// | terminal    | 1706     | 0.833  | **YES**  |
+/// | graph       |  415     | 0.809  | below    |
+/// | imac_g3     | 5244     | 0.775  | above    |
+/// | imac_dark   | 3303     | 0.728  | above    |
+/// | gmessages   | 1046     | 0.899  | below    |
+/// | gui         | 1051     | 0.858  | below    |
+/// | windows95   | 4478     | 0.360  | above + fcbr |
+/// | codec_wiki  | 1374     | 0.904  | below    |
+/// | imessage    | 2774     | 0.864  | above    |
+/// | windows     | 3434     | 0.769  | above    |
+/// | 1418519     | 1620     | 0.098  | in band but fcbr=0.098 |
+/// | 1025469     | 2468     | 0.017  | above + fcbr |
+/// | 1531677     | 2068     | 0.000  | in band but fcbr=0.000 |
+/// | 1189261     | 3087     | 0.003  | above + fcbr |
+/// | 1420710     | 2171     | 0.000  | in band but fcbr=0.000 |
+/// | 2389166     | 1920     | 0.134  | in band but fcbr=0.134 |
+///
+/// **Safety margins** (all ≥10% per task spec):
+/// - `luma_var` lower bound 1500: terminal 1706 = +13.7% above. Nearest
+///   in-class excluded: gui 1051 (29.9% below). Nearest in-band photo:
+///   1418519 luma_var=1620 (excluded by fcbr=0.098 ≪ 0.70).
+/// - `luma_var` upper bound 2200: terminal 1706 = -22.4% below. Nearest
+///   in-class excluded: imac_dark 3303 (+50% above). Nearest in-band
+///   photo: 1420710 luma_var=2171 (excluded by fcbr=0.000 ≪ 0.70).
+/// - `fcbr > 0.70`: terminal 0.833 = +19.0% above. Nearest in-band
+///   excluded by fcbr: 2389166 photo at 0.134 (-80.9% below). All
+///   photos excluded by fcbr (max photo fcbr in corpus = 0.134).
+///
+/// All margins exceed the 10% acceptance threshold.
+pub const W44_176_TERMINAL_CLASS_LUMA_VAR_MIN: f32 = 1500.0;
+
+/// W44-176: terminal-class exclude — `luma_var` upper bound. See
+/// [`W44_176_TERMINAL_CLASS_LUMA_VAR_MIN`] for the full discriminator
+/// design + probe corpus + safety margins.
+pub const W44_176_TERMINAL_CLASS_LUMA_VAR_MAX: f32 = 2200.0;
+
+/// W44-176: terminal-class exclude — `fcbr` (flat_color_block_ratio)
+/// lower bound. Excludes photos (max corpus fcbr = 0.134) and screens
+/// with high chroma activity (windows95 = 0.360). Keeps terminal-class
+/// pure-text screenshots in the firing-via-exclude class. See
+/// [`W44_176_TERMINAL_CLASS_LUMA_VAR_MIN`] for the full discriminator
+/// design + probe corpus + safety margins.
+pub const W44_176_TERMINAL_CLASS_FCBR_MIN: f32 = 0.70;
+
 /// W44-109: maximum effort at which the screenshot-class adaptive-quant
 /// pre-scale fires. Mirrors the W44-105 buttloop seed-scale mechanism
 /// but at adaptive_quant time, before the buttloop runs (the buttloop
@@ -615,7 +681,32 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale(
         target_distance,
         m3_colourfulness,
         crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+        /* proxies */ None,
+        /* terminal_class_exclude */ false,
     )
+}
+
+/// W44-176: returns `true` when the [`crate::vardct::encoder::ZenanalyzeProxies`]
+/// proxies indicate a terminal-class screenshot — `luma_var` in
+/// `[`W44_176_TERMINAL_CLASS_LUMA_VAR_MIN`,
+/// [`W44_176_TERMINAL_CLASS_LUMA_VAR_MAX`]] AND `fcbr` ≥
+/// [`W44_176_TERMINAL_CLASS_FCBR_MIN`].
+///
+/// Returns `false` when proxies are absent (non-sRGB-u8 layouts,
+/// streaming/animation paths). The W44-176 exclude is a defence-in-depth
+/// narrow — it only fires when both proxies are present AND in the
+/// terminal band, otherwise the W44-108 sub-gate behaviour is
+/// preserved.
+#[inline]
+pub(crate) fn w44_176_is_terminal_class(
+    proxies: Option<&crate::vardct::encoder::ZenanalyzeProxies>,
+) -> bool {
+    let Some(p) = proxies else {
+        return false;
+    };
+    p.luma_var >= W44_176_TERMINAL_CLASS_LUMA_VAR_MIN
+        && p.luma_var <= W44_176_TERMINAL_CLASS_LUMA_VAR_MAX
+        && p.flat_color_block_ratio >= W44_176_TERMINAL_CLASS_FCBR_MIN
 }
 
 /// W44-129 Chunk C variant of [`resolved_adaptive_quant_qf_seed_scale`]
@@ -626,6 +717,14 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale(
 /// `AutoScalePerEffort` to preserve the pre-Chunk-C behaviour for any
 /// remaining callers (tests / examples) that don't carry a resolved
 /// policy.
+///
+/// W44-176 (2026-05-21): if `terminal_class_exclude` is `true` AND the
+/// `proxies` indicate a terminal-class screenshot (per
+/// [`w44_176_is_terminal_class`]), the gate is bypassed (returns 1.0)
+/// even when the W44-108 m3 sub-gate would otherwise fire. Excludes
+/// terminal.png e7 d=4-5 net-negative pareto without disabling the
+/// gate for graph/imac_g3/imac_dark/gmessages/gui (which buy real
+/// SSIM2 with the +28-50% bytes overhead per W44-174 measurement).
 #[cfg_attr(not(feature = "std"), allow(unused_variables))]
 pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     effort: u8,
@@ -634,6 +733,8 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     target_distance: f32,
     m3_colourfulness: Option<f32>,
     policy: crate::api::AdaptiveQuantQfSeedPolicy,
+    proxies: Option<&crate::vardct::encoder::ZenanalyzeProxies>,
+    terminal_class_exclude: bool,
 ) -> f32 {
     // Off policy short-circuits before the gate evaluation: Libjxl
     // strategy never pre-scales.
@@ -655,6 +756,23 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     let gate_fires = target_distance >= BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE
         || (w44_108_low_colour && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE);
     if !gate_fires {
+        return 1.0;
+    }
+    // W44-176: terminal-class exclude — suppress the W44-109 lift on
+    // terminal-class screenshots where the lift over-allocates bytes
+    // without catching cjxl's SSIM2 (terminal e7 d=4: lift buys +2.70
+    // SSIM2 from 81.40→84.10 but cjxl is at 87.62 — STILL 3.52 above
+    // the lifted result, AND bytes are +28% vs cjxl). graph/imac_g3/
+    // imac_dark/gmessages/gui benefit from the lift (it carries them
+    // ABOVE cjxl SSIM2 — true wins) and are preserved.
+    //
+    // Env hook for A/B: `JXL_W44_176_DISABLE=1` forces the exclude OFF.
+    let exclude_env = std::env::var_os("JXL_W44_176_DISABLE")
+        .is_some_and(|v| v != "0" && v != "");
+    if terminal_class_exclude
+        && !exclude_env
+        && w44_176_is_terminal_class(proxies)
+    {
         return 1.0;
     }
     // Effort-dependent magnitude: e5/e6 cap at 2.0 to bound bytes
@@ -3159,6 +3277,146 @@ mod tuning_tests {
     fn w44_109_default_max_effort_is_7() {
         // Gate fires at e ∈ {5, 6, 7}; e>=8 is owned by W44-105.
         assert_eq!(ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT, 7);
+    }
+
+    // W44-176: terminal-class exclude sub-discriminator tests.
+
+    /// Helper: construct a `ZenanalyzeProxies` with the W44-176-relevant
+    /// fields set. The other proxies (m3, edge_density) are unused by
+    /// `w44_176_is_terminal_class` so default to representative values.
+    fn proxies(luma_var: f32, fcbr: f32, m3: f32) -> crate::vardct::encoder::ZenanalyzeProxies {
+        crate::vardct::encoder::ZenanalyzeProxies {
+            m3_colourfulness: m3,
+            flat_color_block_ratio: fcbr,
+            edge_density: 0.087, // terminal-like default
+            luma_var,
+        }
+    }
+
+    #[test]
+    fn w44_176_is_terminal_class_terminal_fires() {
+        // terminal proxies (W44-176 probe): luma_var=1706, fcbr=0.833
+        let p = proxies(1706.0, 0.833, 13.85);
+        assert!(
+            w44_176_is_terminal_class(Some(&p)),
+            "terminal proxies must fire the discriminator"
+        );
+    }
+
+    #[test]
+    fn w44_176_is_terminal_class_keep_fire_screens_rejected() {
+        // graph: luma_var=415 (BELOW band) → rejected
+        assert!(!w44_176_is_terminal_class(Some(&proxies(415.0, 0.809, 11.75))));
+        // imac_g3: luma_var=5244 (ABOVE band) → rejected
+        assert!(!w44_176_is_terminal_class(Some(&proxies(5244.0, 0.775, 14.29))));
+        // imac_dark: luma_var=3303 (ABOVE band) → rejected
+        assert!(!w44_176_is_terminal_class(Some(&proxies(3303.0, 0.728, 20.96))));
+        // gmessages: luma_var=1046 (BELOW band) → rejected
+        assert!(!w44_176_is_terminal_class(Some(&proxies(1046.0, 0.899, 10.16))));
+        // gui: luma_var=1051 (BELOW band) → rejected
+        assert!(!w44_176_is_terminal_class(Some(&proxies(1051.0, 0.858, 10.05))));
+    }
+
+    #[test]
+    fn w44_176_is_terminal_class_photos_rejected() {
+        // 1418519: luma_var=1620 in band but fcbr=0.098 ≪ 0.70 → rejected
+        assert!(!w44_176_is_terminal_class(Some(&proxies(1620.0, 0.098, 36.84))));
+        // 1531677: luma_var=2068 in band but fcbr=0.000 → rejected
+        assert!(!w44_176_is_terminal_class(Some(&proxies(2068.0, 0.000, 12.30))));
+        // 1420710: luma_var=2171 in band but fcbr=0.000 → rejected
+        assert!(!w44_176_is_terminal_class(Some(&proxies(2171.0, 0.000, 32.93))));
+        // 2389166: luma_var=1920 in band but fcbr=0.134 → rejected
+        assert!(!w44_176_is_terminal_class(Some(&proxies(1920.0, 0.134, 48.00))));
+    }
+
+    #[test]
+    fn w44_176_is_terminal_class_none_proxies_rejected() {
+        // No proxies = streaming / animation / non-sRGB-u8 layout → never fire
+        assert!(!w44_176_is_terminal_class(None));
+    }
+
+    #[test]
+    fn w44_176_constants_are_documented_values() {
+        // Guard against accidental constant flips; these tie the
+        // discriminator to the W44-176 probe corpus measurements.
+        assert_eq!(W44_176_TERMINAL_CLASS_LUMA_VAR_MIN, 1500.0);
+        assert_eq!(W44_176_TERMINAL_CLASS_LUMA_VAR_MAX, 2200.0);
+        assert_eq!(W44_176_TERMINAL_CLASS_FCBR_MIN, 0.70);
+    }
+
+    #[test]
+    fn w44_176_exclude_suppresses_gate_for_terminal() {
+        // With `terminal_class_exclude = true` AND terminal proxies, the
+        // W44-109 lift is suppressed (returns 1.0) even when the W44-108
+        // sub-gate would fire (d=4, m3=14 low_colour, is_screenshot).
+        let p = proxies(1706.0, 0.833, 13.85);
+        let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
+            7,
+            0,
+            true,
+            4.0,
+            Some(13.85),
+            crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+            Some(&p),
+            true, // terminal_class_exclude
+        );
+        assert_eq!(
+            scale, 1.0,
+            "W44-176 exclude should suppress the W44-109 lift on terminal proxies"
+        );
+    }
+
+    #[test]
+    fn w44_176_exclude_off_preserves_w44_109_lift_for_terminal() {
+        // With `terminal_class_exclude = false`, the W44-109 lift still
+        // fires on terminal proxies — Libjxl/LeanFaster strategies must
+        // see the same behaviour as pre-W44-176.
+        let p = proxies(1706.0, 0.833, 13.85);
+        let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
+            7,
+            0,
+            true,
+            4.0,
+            Some(13.85),
+            crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+            Some(&p),
+            false, // terminal_class_exclude OFF
+        );
+        assert_eq!(
+            scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
+            "W44-176 exclude OFF must preserve W44-109 lift on terminal"
+        );
+    }
+
+    #[test]
+    fn w44_176_exclude_preserves_lift_for_keep_fire_screens() {
+        // graph, imac_g3, imac_dark, gmessages, gui all FAIL the
+        // W44-176 discriminator and KEEP the W44-109 lift regardless
+        // of `terminal_class_exclude` (Zenjxl default `true`).
+        let keep_fire = [
+            ("graph", 415.0, 0.809, 11.75),
+            ("imac_g3", 5244.0, 0.775, 14.29),
+            ("imac_dark", 3303.0, 0.728, 20.96),
+            ("gmessages", 1046.0, 0.899, 10.16),
+            ("gui", 1051.0, 0.858, 10.05),
+        ];
+        for (name, lv, fcbr, m3) in keep_fire {
+            let p = proxies(lv, fcbr, m3);
+            let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
+                7,
+                0,
+                true,
+                4.0,
+                Some(m3),
+                crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+                Some(&p),
+                true, // terminal_class_exclude ON
+            );
+            assert_eq!(
+                scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
+                "{name} must keep W44-109 lift (fails W44-176 discriminator)"
+            );
+        }
     }
 
     // W44-145: per-block adaptive qac scaling tests.

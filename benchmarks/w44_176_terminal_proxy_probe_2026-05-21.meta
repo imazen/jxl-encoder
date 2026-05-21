@@ -1,0 +1,59 @@
+# W44-176 terminal-class proxy probe — provenance + analysis
+
+## Provenance
+- Date: 2026-05-21
+- Workspace: ~/work/zen/jxl-encoder--w44-176-w108-narrow
+- Branch: W44-176 chunk based on origin/main `a0e29ec4` (W44-174 diag commit)
+- Host: lilith
+- Probe binary: `cargo run --release -p jxl-encoder --example w44_176_terminal_proxy_probe --features __pre_quantized`
+
+## Purpose
+Find a per-image discriminator that excludes terminal-class from the W44-108
+sub-gate without sacrificing graph/imac_g3/imac_dark/gmessages/gui SSIM2 wins.
+
+W44-174 (`a0e29ec4`) READ-ONLY diagnosis identified terminal e7 d=4-5 as the
+ONLY net-negative pareto cell in the W44-108 firing class. Distance-narrow
+(Candidate 1) would sacrifice ALL W44-109 wins at d=4-5; per-image
+discriminator is preferable if one exists.
+
+## Method
+Extended the existing [`ZenanalyzeProxies`] with a 4th sRGB-only field
+(`luma_var` = BT.601 luma variance, computed in the same single-pass O(W·H)
+loop as `m3_colourfulness` — zero added cost). Probed all 8 gb82-sc
+screenshots + 6 CID22 photos + 3 borderline images, computing all available
+features (proxies + W44-149 wider audit features: chroma, luma_var,
+chroma_blk_ratio, mean_luma, edge_density, fcbr, etc).
+
+## Findings
+- terminal alone shows `luma_var ∈ [1500, 2200] AND fcbr ≥ 0.70`.
+- gmessages and gui surprisingly fail (luma_var ≈ 1050, BELOW band) — their
+  chroma_blk_ratio is similar to terminal but luma_var separates them.
+- imac_g3/imac_dark fail (luma_var 3303-5244, ABOVE band).
+- All CID22 photos fail (fcbr ≪ 0.70, max corpus fcbr = 0.134).
+
+## Safety margins (all ≥ 10%)
+| Axis | terminal | Threshold | Margin | Nearest excluded |
+|---|---|---|---|---|
+| luma_var lower | 1706 | 1500 | +13.7% | gui 1051 (-29.9%) |
+| luma_var upper | 1706 | 2200 | -22.4% | imac_dark 3303 (+50.1%) |
+| fcbr lower | 0.833 | 0.70 | +19.0% | 2389166 0.134 (-80.9%) |
+
+## Output TSV header
+```
+class | image | w | h | m3 | fcbr | edge_dens | mask_med | mask_p10 |
+mask_p25 | mask_p75 | mask_p90 | var_x | var_y | var_b | chroma |
+xb_var_ratio | flat_x | masking_med | masking_p10 | masking_p90 |
+high_qff | hfer | plog2 | chroma_blk_ratio | low_luma_ratio |
+high_luma_ratio | mean_luma | luma_var
+```
+
+`luma_var` is the W44-176-added field — last column. The XYB-derived
+columns (var_x/var_y/var_b/chroma) are reported for analysis context but
+NOT used in the W44-176 discriminator (the dispatch site only sees the
+sRGB-only [`ZenanalyzeProxies`] struct fields).
+
+## Reproducer
+```bash
+cargo run --release -p jxl-encoder --example w44_176_terminal_proxy_probe \
+  --features __pre_quantized
+```

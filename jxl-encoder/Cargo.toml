@@ -1871,5 +1871,34 @@ name = "w44_164_auto_classify_ab"
 path = "examples/w44_164_auto_classify_ab.rs"
 required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 
+# W44-176 terminal-class proxy probe — adapts the W44-149 wider-features
+# probe to the W44-108 firing cluster (5 screenshots + controls) to find
+# any axis where terminal sits OUTSIDE the [min, max] of graph/imac_g3/
+# imac_dark. If no clean discriminator found, ship distance-narrow
+# Pareto-trade fix.
+[[example]]
+name = "w44_176_terminal_proxy_probe"
+path = "examples/w44_176_terminal_proxy_probe.rs"
+required-features = ["__pre_quantized"]
+
+# W44-176 pareto-direction probe for gmessages/gui — determines whether the
+# W44-109 lift is NET-NEGATIVE (terminal-like) or NET-POSITIVE (graph-like)
+# on the 2 extra screens caught by the chroma_blk_ratio<0.18 AND chroma<0.16
+# predicate. Uses JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=1.0 env hook for A/B.
+[[example]]
+name = "w44_176_gmessages_gui_pareto_probe"
+path = "examples/w44_176_gmessages_gui_pareto_probe.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-176 production-vs-disabled A/B for the terminal-class exclude.
+# Uses JXL_W44_176_DISABLE=1 (Mode A) vs env-unset (Mode B = Zenjxl
+# default). Verifies acceptance gates: TARGET terminal e7 d=4/4.5/5
+# behaviour, PROTECT_KEEP byte-identical (gmessages/gui/graph/imac_g3/
+# imac_dark), PROTECT_PHOTOS byte-identical.
+[[example]]
+name = "w44_176_terminal_exclude_ab"
+path = "examples/w44_176_terminal_exclude_ab.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+
 [lints]
 workspace = true

@@ -1,0 +1,49 @@
+# W44-176 gmessages/gui pareto-direction probe — provenance + analysis
+
+## Provenance
+- Date: 2026-05-21
+- Workspace: ~/work/zen/jxl-encoder--w44-176-w108-narrow
+- Branch: W44-176 chunk based on origin/main `a0e29ec4`
+- Host: lilith
+- Bench binary: `cargo run --release -p jxl-encoder --example w44_176_gmessages_gui_pareto_probe --features '__expert butteraugli-loop ssim2-loop parallel'`
+
+## Purpose
+W44-174 measured pareto direction on terminal/graph/imac_g3/imac_dark
++ windows95 + codec_wiki — but gmessages and gui were not in scope.
+The W44-176 proxy probe found these two ALSO match a 3-feature
+`chroma_blk_ratio < 0.18 AND chroma < 0.16` discriminator that catches
+terminal. Question: are gmessages/gui net-NEGATIVE (terminal-like) or
+net-POSITIVE (graph-like)?
+
+## Method
+Paired interleaved A=baseline (W44-109 lift ON) vs B=`JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=1.0`
+(lift OFF) at e7 d ∈ {4, 5}. Same env-var lever the W44-174 diagnosis used.
+
+## Headline finding
+gmessages and gui are NET-POSITIVE pareto wins:
+- gmessages d=4: B-A bytes -33.1%, B-A SSIM2 **-2.27** (lift buys real SSIM2)
+- gmessages d=5: B-A bytes -34.1%, B-A SSIM2 **-2.39**
+- gui d=4: B-A bytes -35.7%, B-A SSIM2 **-4.81**
+- gui d=5: B-A bytes -37.0%, B-A SSIM2 **-4.46**
+
+terminal also shows lift buys SSIM2 (+2.7) but the bytes-cost is large
+without catching cjxl SSIM2 (still -1.94 below cjxl with lift ON). The
+graph/imac_g3 lifts achieve net-positive vs cjxl (carry SSIM2 ABOVE cjxl);
+terminal does not.
+
+## Conclusion
+The `chroma_blk_ratio<0.18 AND chroma<0.16` 2-feature predicate would
+sacrifice gmessages and gui SSIM2 wins. Need a stronger discriminator
+that excludes ONLY terminal. The `luma_var ∈ [1500, 2200] AND fcbr ≥
+0.70` 2-feature predicate from the W44-176 main proxy probe does
+exactly that (gmessages luma_var=1046, gui luma_var=1051 both BELOW
+the 1500 floor).
+
+## Reproducer
+```bash
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run --release -p jxl-encoder \
+  --example w44_176_gmessages_gui_pareto_probe \
+  --features '__expert butteraugli-loop ssim2-loop parallel' \
+  > benchmarks/w44_176_gmessages_gui_pareto_2026-05-21.tsv
+```
