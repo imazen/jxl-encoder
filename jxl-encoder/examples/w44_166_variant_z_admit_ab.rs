@@ -253,9 +253,7 @@ fn score_cell(
 }
 
 fn main() {
-    eprintln!(
-        "W44-166 A/B/C: A=baseline / B=mask_p25>=85 / C=mask_p25>=85 AND m3>=25"
-    );
+    eprintln!("W44-166 A/B/C: A=baseline / B=mask_p25>=85 / C=mask_p25>=85 AND m3>=25");
     eprintln!("Cells (interleaved A,B,C): {}", CELLS.len());
 
     println!(
@@ -301,15 +299,41 @@ fn main() {
                 let (w, h) = img.dimensions();
                 let rgb = img.to_rgb8().into_raw();
                 let linear = srgb_u8_to_linear(&rgb, w, h);
-                let srgb_pixels: Vec<[u8; 3]> =
-                    rgb.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
+                let srgb_pixels: Vec<[u8; 3]> = rgb.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
                 let srgb_img = Img::new(srgb_pixels, w as usize, h as usize);
                 (w, h, rgb, linear, srgb_img)
             });
 
-        let sa = score_cell(raw, *w, *h, effort, d, Mode::A, orig_linear_img, orig_srgb_img);
-        let sb = score_cell(raw, *w, *h, effort, d, Mode::B, orig_linear_img, orig_srgb_img);
-        let sc = score_cell(raw, *w, *h, effort, d, Mode::C, orig_linear_img, orig_srgb_img);
+        let sa = score_cell(
+            raw,
+            *w,
+            *h,
+            effort,
+            d,
+            Mode::A,
+            orig_linear_img,
+            orig_srgb_img,
+        );
+        let sb = score_cell(
+            raw,
+            *w,
+            *h,
+            effort,
+            d,
+            Mode::B,
+            orig_linear_img,
+            orig_srgb_img,
+        );
+        let sc = score_cell(
+            raw,
+            *w,
+            *h,
+            effort,
+            d,
+            Mode::C,
+            orig_linear_img,
+            orig_srgb_img,
+        );
 
         let class = if image == "1418519.png" {
             "TARGET"
