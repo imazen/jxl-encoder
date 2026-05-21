@@ -344,6 +344,13 @@ const W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN: f32 = 25.0;
 ///
 /// Paired with [`W44_124_DCT32_KEEP_EDGE_DENSITY_MAX`] (see below) to
 /// reject imessage (m3=67.65 passes m3 alone but ed=0.0533 fails ed).
+///
+/// **W44-135 (2026-05-20)**: also paired with
+/// [`W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE`] +
+/// [`W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE`] distance gate that limits
+/// the auto-fire to `target_distance ∈ [2.0, 3.5]`. Explicit opt-in via
+/// `StrategyOverrides { dct32_keep_hint: Some(true) }` bypasses the
+/// distance gate.
 const W44_124_DCT32_KEEP_M3_MIN: f32 = 60.0;
 
 /// W44-124 auto-discriminator: maximum `edge_density` to AUTO-fire the
@@ -361,6 +368,45 @@ const W44_124_DCT32_KEEP_M3_MIN: f32 = 60.0;
 /// rejected by this gate (ed=0.4895). Belt-and-suspenders against
 /// false-fires on unseen photo content.
 const W44_124_DCT32_KEEP_EDGE_DENSITY_MAX: f32 = 0.05;
+
+/// W44-135 (2026-05-20): minimum `target_distance` at which the W44-124
+/// auto-discriminator is allowed to fire.
+///
+/// **Context**: W44-124 (`bc9f71eb`) shipped the auto-discriminator with NO
+/// distance gate. The W44-134 ledger refresh
+/// (`benchmarks/cjxl_parity_ledger_2026-05-20_w44_134.tsv`) measured the
+/// downstream impact across the full distance grid:
+///
+/// | distance band | codec_wiki SSIM2 vs W44-119 | mechanism |
+/// |---            |---                          |---        |
+/// | d=2.5 (e5/e6) | **+1.62 / +1.77** (BONUS WIN) | DCT32X32 beats 4×DCT16X16 on smooth pages |
+/// | d=3.0 (e5/e6/e7) | **+1.40 / +1.33 / +0.90** (W44-124 TARGET) | DCT32X32 beats 4×DCT16X16 |
+/// | d=4.0 (e5/e6/e7) | **-1.40 / -1.43 / -1.22** (NEW REGRESSION) | cost model prefers DCT64X64 over DCT32X32 here; forcing keep_dct32 selects strictly-worse 4×DCT16X16 + DCT32 mix |
+/// | d=5.0 (e7) | **-1.38** | same mechanism as d=4 |
+/// | d=6.0 (e7) | **-0.64** | same mechanism |
+/// | d=0.8/1.0 (e8/e9) | **-0.41 / -0.52** | cost model is at DCT16X16/DCT8 region; keep_dct32 inert but slightly redistributes byte allocation |
+///
+/// The 2.0 floor protects the d=0.8/d=1.0/d=1.6 cluster (low-d cost model
+/// already at small-transform regime, keep_dct32 is net-negative).
+pub const W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE: f32 = 2.0;
+
+/// W44-135 (2026-05-20): maximum `target_distance` at which the W44-124
+/// auto-discriminator is allowed to fire.
+///
+/// Companion to [`W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE`]. The 3.5 ceiling
+/// protects the d=4.0/5.0/6.0 cluster where the cost model prefers
+/// DCT64X64 over DCT32X32 on smooth screen content — forcing keep_dct32
+/// selects strictly-worse 4×DCT16X16 + DCT32 mix and regresses SSIM2 by
+/// -0.64 to -1.43 (W44-134 measurement).
+///
+/// 3.5 (rather than 3.0) admits any future bisect cells in (3.0, 3.5) where
+/// the W44-124 mechanism may still net-win. Acceptance gated to the
+/// codec_wiki d=2.5..3.0 window measured in W44-124 + W44-134.
+///
+/// Caller-side `Dct32SearchPolicy::KeepWhenDct64Suppressed` (explicit
+/// opt-in) bypasses this gate — the distance window only narrows the
+/// AUTO fire path, not the explicit override path.
+pub const W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE: f32 = 3.5;
 
 /// W44-87 single-pass-entropy dispatch — smooth-photo `median(mask1x1)`
 /// upper bound. Same direction as [`HIGH_D_PHOTO_SMOOTH_THRESHOLD`]
@@ -3183,6 +3229,24 @@ impl VarDctEncoder {
                 // codec_wiki d=3 close-out preserved, zero new FIXED→OPEN
                 // flips on regression set.
                 //
+                // W44-135 (2026-05-20): the auto-discriminator is now ALSO
+                // gated on `distance ∈ [W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE,
+                // W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE]` ([2.0, 3.5]). The
+                // W44-134 ledger refresh
+                // (`benchmarks/cjxl_parity_ledger_2026-05-20_w44_134.tsv`)
+                // measured codec_wiki SSIM2 regressions at d=4/5/6 (-0.64
+                // to -1.43) and d=0.8/1.0 (-0.41 to -0.52) under
+                // W44-124's unconditional firing. Root cause: at d>=4 the
+                // cost model prefers DCT64X64 over DCT32X32 even on smooth
+                // pages; at d<2 it's in the DCT16X16/DCT8 regime where
+                // keep_dct32 is inert-or-negative. The [2.0, 3.5] band
+                // preserves the W44-124 d=3 wins and the W44-134-measured
+                // d=2.5 bonus wins, reverts the regression cells to
+                // baseline. Explicit opt-in via
+                // `StrategyOverrides { dct32_keep_hint: Some(true) }` (=
+                // `Dct32SearchPolicy::KeepWhenDct64Suppressed`) bypasses
+                // the distance gate.
+                //
                 // Explicit `Some(true)` / `Some(false)` overrides the
                 // auto-discriminator (caller's choice always wins). For
                 // development / paired benchmarks the env var
@@ -3200,10 +3264,35 @@ impl VarDctEncoder {
                         false
                     }
                 };
-                let w44_124_auto_keep = self.zenanalyze_proxies.is_some_and(|p| {
-                    p.m3_colourfulness >= W44_124_DCT32_KEEP_M3_MIN
-                        && p.edge_density < W44_124_DCT32_KEEP_EDGE_DENSITY_MAX
-                });
+                // W44-135 (2026-05-20): distance-band the W44-124
+                // auto-discriminator to `[W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE,
+                // W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE]`. W44-124 shipped with
+                // NO distance gate; the W44-134 ledger refresh
+                // (`benchmarks/cjxl_parity_ledger_2026-05-20_w44_134.tsv`)
+                // measured codec_wiki SSIM2 wins at d=2.5/d=3 (+1.40 to +1.77)
+                // but NEW regressions at d=4/d=5/d=6 (-0.64 to -1.43) and at
+                // d=0.8/d=1.0 (-0.41 to -0.52). Root cause: at d>=4 the cost
+                // model prefers DCT64X64 over DCT32X32 even on smooth screen
+                // pages, so forcing keep_dct32 selects strictly-worse
+                // 4×DCT16X16 + DCT32 mix. At d<2 the cost model is in the
+                // DCT16X16/DCT8 regime where keep_dct32 is inert-or-negative.
+                // The [2.0, 3.5] band preserves the W44-124 codec_wiki d=3
+                // close-out wins plus the d=2.5 bonus wins, reverts the
+                // d=4/5/6 + d=0.8/1.0 cells to baseline.
+                //
+                // Explicit `Some(true)` via the `StrategyOverrides`
+                // `dct32_keep_hint` field (which maps to
+                // `Dct32SearchPolicy::KeepWhenDct64Suppressed`) bypasses
+                // this distance gate — opt-in callers still get the
+                // unconditional W44-123 behaviour.
+                let w44_124_distance_in_band = self.distance
+                    >= W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE
+                    && self.distance <= W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE;
+                let w44_124_auto_keep = w44_124_distance_in_band
+                    && self.zenanalyze_proxies.is_some_and(|p| {
+                        p.m3_colourfulness >= W44_124_DCT32_KEEP_M3_MIN
+                            && p.edge_density < W44_124_DCT32_KEEP_EDGE_DENSITY_MAX
+                    });
                 // W44-129 Chunk C + W44-130 Chunk D: read the resolved
                 // `dct32_search_policy` directly. Legacy `dct32_keep_hint`
                 // `Option<bool>` field deleted; overrides flow via
@@ -5361,6 +5450,34 @@ mod tests {
         // pass m3 alone): m3=98.84 passes m3 but ed=0.4895 fails.
         assert!(98.84_f32 >= W44_124_DCT32_KEEP_M3_MIN);
         assert!(0.4895_f32 >= W44_124_DCT32_KEEP_EDGE_DENSITY_MAX);
+    }
+
+    /// W44-135 — pin the distance-band constants for the W44-124
+    /// auto-discriminator. The band protects the d=4/5/6 SSIM2
+    /// regression cluster (W44-134 measurement) and the d=0.8/1.0
+    /// low-d over-application cluster while preserving the W44-124
+    /// d=3 wins and the d=2.5 bonus wins.
+    #[test]
+    fn test_w44_135_dct32_keep_distance_gate() {
+        // Window is inclusive on both ends per the `>=` / `<=` checks
+        // in the dispatch site.
+        assert!(W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE > 1.0);
+        assert!(W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE < 4.0);
+        assert!(W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE < W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE);
+
+        // W44-134 wins to preserve.
+        assert!(2.5_f32 >= W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE);
+        assert!(2.5_f32 <= W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE);
+        assert!(3.0_f32 >= W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE);
+        assert!(3.0_f32 <= W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE);
+
+        // W44-134 regression cells to gate out.
+        assert!(4.0_f32 > W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE);
+        assert!(5.0_f32 > W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE);
+        assert!(6.0_f32 > W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE);
+        assert!(0.8_f32 < W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE);
+        assert!(1.0_f32 < W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE);
+        assert!(1.6_f32 < W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE);
     }
 
     #[test]
