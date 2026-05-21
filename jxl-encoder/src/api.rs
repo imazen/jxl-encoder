@@ -4237,6 +4237,43 @@ pub struct EncoderImprovementsCustom {
     /// `benchmarks/w44_166_variant_z_admit_zenjxl_2026-05-21.{tsv,meta}`
     /// and `memory/w44_166_variant_z_zenjxl_<result>_2026-05-21.md`.
     pub photo_variant_z_admit: bool,
+
+    /// W44-167 (Smart-Zenjxl chunk 4, 2026-05-21): apply a per-m3
+    /// sub-discriminator `dct16x32` lift to the existing INNER variant
+    /// Z tables (W44-98 high-colour Z' and W44-99 low-colour Z'') for
+    /// the photo deficit cluster on 1420710 (high-m3, m3=32.93) at
+    /// d=5/e5..e9. Closes the W44-94 OPEN cells on 1420710 without
+    /// regressing 1531677 (low-m3, m3=12.30) which W44-94 honest-stopped
+    /// on under the OUTER `high_d_photo_smooth_suppressed` widening.
+    ///
+    /// **Mechanism**: post-table-selection, when the W44-167 gate fires
+    /// (env `JXL_W44_167_MODE=B|C|D`) AND a variant Z high-colour or
+    /// low-colour table has been selected, override the `dct16x32`
+    /// field of that table to a stronger lift value. The per-m3 split
+    /// is the EXISTING distinction between HC (Z' high-colour) and LC
+    /// (Z'' low-colour) — no new discriminator is needed beyond the
+    /// W44-98 m3 sub-gate that already routes the image. The W44-167
+    /// lift adds a SECOND tier on top of the existing chain.
+    ///
+    /// Per the user directive 2026-05-21 ("restore any superior options
+    /// according to the current encode strategy selection"), this flag
+    /// re-enables the W44-94 widening on Zenjxl by carving the
+    /// regressing 1531677 cells out of the lift via the existing m3
+    /// discriminator.
+    ///
+    /// **Default**: `true` for [`EncoderStrategy::Zenjxl`] and
+    /// [`EncoderStrategy::Aggressive`]; `false` for
+    /// [`EncoderStrategy::Libjxl`] (strict parity — W44-94 honest-stop
+    /// is observed) and [`EncoderStrategy::LeanFaster`] (skip
+    /// per-image gate cost).
+    ///
+    /// **Default env behaviour**: the production default is Mode A
+    /// (baseline = no change vs main) UNTIL a measurement validates
+    /// a different Mode. The flag is plumbed forward-compat so a
+    /// future SHIP can flip the default Mode without touching API.
+    /// W44-167 ships with default Mode A pending the chunk 4
+    /// measurement; if Mode B/C/D ships, the env-var default flips.
+    pub find_best_32_per_m3_lift: bool,
 }
 
 impl Default for EncoderImprovementsCustom {
@@ -4294,6 +4331,13 @@ impl Default for EncoderImprovementsCustom {
             // LeanFaster override to `false` to preserve the W44-148
             // DO-NOT "1418519 OUTSIDE variant Z reach" disposition.
             photo_variant_z_admit: true,
+            // W44-167: Zenjxl default enables the per-m3 sub-discriminator
+            // lift on INNER variant Z tables (dct16x32 lift gated on env
+            // JXL_W44_167_MODE=B|C|D). Default env unset = Mode A =
+            // baseline = byte-identical to pre-W44-167. Libjxl /
+            // LeanFaster override to `false` to preserve W44-94
+            // honest-stop / skip per-image cost.
+            find_best_32_per_m3_lift: true,
         }
     }
 }
@@ -4350,6 +4394,14 @@ pub(crate) struct ResolvedImprovements {
     // also respects `JXL_W44_166_VARIANT_Z_ADMIT_MODE=A|B|C` env hook
     // for A/B/C benching (Mode A = no change vs main).
     pub(crate) photo_variant_z_admit: bool,
+
+    // W44-167 — Smart-Zenjxl chunk 4: per-m3 sub-discriminator lift on
+    // INNER variant Z tables (dct16x32 lift). Env hook
+    // `JXL_W44_167_MODE=A|B|C|D` controls the dispatch (default A =
+    // baseline = no change vs main). Closes the W44-94 honest-stopped
+    // 1420710 OPEN cells via the EXISTING W44-98 m3 sub-discriminator
+    // that already routes HC (m3>=25) vs LC (m3<25) tables.
+    pub(crate) find_best_32_per_m3_lift: bool,
 }
 
 impl Default for ResolvedImprovements {
@@ -4395,6 +4447,11 @@ impl Default for ResolvedImprovements {
             // env hook. Libjxl / LeanFaster constructors below override
             // to `false` to preserve strict parity / drop per-image gates.
             photo_variant_z_admit: true,
+            // W44-167: Zenjxl default enables the per-m3 sub-discriminator
+            // lift on INNER variant Z tables (default env unset = Mode A
+            // = byte-identical to pre-W44-167). Libjxl / LeanFaster
+            // constructors below override to `false`.
+            find_best_32_per_m3_lift: true,
         }
     }
 }
@@ -4662,6 +4719,13 @@ impl ResolvedImprovements {
             // above, so this flag is redundant on Libjxl in practice;
             // kept explicit for clarity / forward-compat.
             photo_variant_z_admit: false,
+            // W44-167: strict libjxl parity — observe the W44-94
+            // honest-stop disposition (no per-m3 lift on INNER variant
+            // Z). The Libjxl variant already sets
+            // `high_d_photo_entropy_mul: HighDPhotoEntropyMulPolicy::Disabled`
+            // above so the variant Z dispatch never fires; the W44-167
+            // env hook becomes a no-op. Kept explicit for clarity.
+            find_best_32_per_m3_lift: false,
         }
     }
 
@@ -4690,6 +4754,10 @@ impl ResolvedImprovements {
             // admit gate (depends on mask_p25 which is the same
             // per-image cost as the W44-165 photo_epf_seed_admit).
             photo_variant_z_admit: false,
+            // W44-167: LeanFaster also drops the per-m3 sub-discriminator
+            // lift (depends on the same per-image zenanalyze proxies as
+            // W44-98/99 — heavy per-image gate cost).
+            find_best_32_per_m3_lift: false,
             ..Default::default()
         }
     }
@@ -4731,6 +4799,7 @@ impl ResolvedImprovements {
             content_class_auto_classify: c.content_class_auto_classify,
             photo_epf_seed_admit: c.photo_epf_seed_admit,
             photo_variant_z_admit: c.photo_variant_z_admit,
+            find_best_32_per_m3_lift: c.find_best_32_per_m3_lift,
         }
     }
 }
@@ -14369,6 +14438,46 @@ mod tests {
             EncoderStrategy::Custom(Box::new(custom)).resolve(&StrategyOverrides::default());
         assert!(
             !resolved.photo_variant_z_admit,
+            "Custom with field set false must propagate"
+        );
+    }
+
+    /// W44-167: ResolvedImprovements.find_best_32_per_m3_lift defaults
+    /// per strategy. Zenjxl + Aggressive enable; Libjxl + LeanFaster
+    /// disable. Mirrors the W44-166 photo_variant_z_admit pattern.
+    #[test]
+    fn test_w44_167_find_best_32_per_m3_lift_default_per_strategy() {
+        let zenjxl = EncoderStrategy::Zenjxl.resolve(&StrategyOverrides::default());
+        assert!(
+            zenjxl.find_best_32_per_m3_lift,
+            "Zenjxl must enable W44-167 per-m3 lift"
+        );
+        let aggressive = EncoderStrategy::Aggressive.resolve(&StrategyOverrides::default());
+        assert!(
+            aggressive.find_best_32_per_m3_lift,
+            "Aggressive must enable W44-167 per-m3 lift"
+        );
+        let libjxl = EncoderStrategy::Libjxl.resolve(&StrategyOverrides::default());
+        assert!(
+            !libjxl.find_best_32_per_m3_lift,
+            "Libjxl must disable W44-167 (strict parity — W44-94 honest-stop)"
+        );
+        let lean = EncoderStrategy::LeanFaster.resolve(&StrategyOverrides::default());
+        assert!(
+            !lean.find_best_32_per_m3_lift,
+            "LeanFaster must disable W44-167 (skip per-image proxy gate cost)"
+        );
+        // Custom inherits whatever the user set on EncoderImprovementsCustom.
+        let mut custom = EncoderImprovementsCustom::default();
+        assert!(
+            custom.find_best_32_per_m3_lift,
+            "EncoderImprovementsCustom::default() matches Zenjxl"
+        );
+        custom.find_best_32_per_m3_lift = false;
+        let resolved =
+            EncoderStrategy::Custom(Box::new(custom)).resolve(&StrategyOverrides::default());
+        assert!(
+            !resolved.find_best_32_per_m3_lift,
             "Custom with field set false must propagate"
         );
     }

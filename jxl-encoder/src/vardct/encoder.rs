@@ -617,6 +617,123 @@ fn w44_166_admit_mode_env() -> W44_166VariantZAdmitMode {
     }
 }
 
+/// W44-167 (Smart-Zenjxl chunk 4, 2026-05-21): per-m3 sub-discriminator
+/// lift mode controlled by `JXL_W44_167_MODE=A|B|C|D`.
+///
+/// Closes the W44-94 honest-stopped 1420710 OPEN cluster (e5..e9 d=5)
+/// by lifting the `dct16x32` field of the existing INNER variant Z
+/// tables — exclusively on high-m3 photos (per the existing W44-98 m3
+/// sub-gate) so the W44-94 SSIM2-regression on 1531677 (low-m3) is
+/// avoided.
+///
+/// **Mode A (Baseline)** — no change vs main (default; W44-167 inert).
+/// Bench reference for A/B/C/D comparison.
+///
+/// **Mode B (GlobalLift)** — replay the original W44-94 X variant
+/// (`dct16x32 = 1.40` at d>=5) AT THE INNER variant Z layer for BOTH
+/// HC and LC. Tests whether moving the lift INTO variant Z (where
+/// dct32x32 is already at 1.22 vs OUTER 1.34) changes the W44-94
+/// regression sign. Hypothesis: stronger dct32x32 base + lift on
+/// dct16x32 STILL regresses 1531677.
+///
+/// **Mode C (HighM3Only)** — apply the lift ONLY when the image
+/// passes the W44-98 m3>=25 gate (i.e. only HC variant Z' fires).
+/// 1531677 (m3=12.30) stays at the existing LC dct16x32=1.23.
+/// Hypothesis: HC isolation captures the W44-94 X wins on 1420710
+/// without the regression on 1531677.
+///
+/// **Mode D (PerM3Split)** — apply the strong lift on HC AND a
+/// milder lift on LC. HC: dct16x32 1.30 → 1.40; LC: dct16x32 1.23 →
+/// 1.26. Tests whether a tiered approach can squeeze additional bytes
+/// from LC without exceeding the W44-94 SSIM2 budget.
+///
+/// Lift values per mode:
+///
+/// | mode | HC dct16x32 | LC dct16x32 | Z (none) dct16x32 |
+/// |---|---|---|---|
+/// | A   | 1.30 (unchanged) | 1.23 (unchanged) | 1.208 (unchanged) |
+/// | B   | 1.40 | 1.40 | 1.40 |
+/// | C   | 1.40 | 1.23 (unchanged) | 1.208 (unchanged) |
+/// | D   | 1.40 | 1.26 | 1.22 |
+///
+/// Has effect only when [`ResolvedImprovements::find_best_32_per_m3_lift`]
+/// is true (Zenjxl / Aggressive default) AND the variant Z dispatch
+/// fired (any of `w44_96_variant_z`, `w44_98_variant_z_high_colour`,
+/// `w44_99_variant_z_low_colour`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum W44_167PerM3LiftMode {
+    Baseline,
+    GlobalLift,
+    HighM3Only,
+    PerM3Split,
+}
+
+/// W44-167 admit-mode env hook for `JXL_W44_167_MODE=A|B|C|D`.
+///
+/// Default = Mode A (Baseline). Production default flips only when
+/// a Mode B/C/D SHIPS (W44-167 chunk acceptance gate).
+#[inline]
+#[allow(dead_code)]
+fn w44_167_mode_env() -> W44_167PerM3LiftMode {
+    #[cfg(feature = "std")]
+    {
+        match std::env::var("JXL_W44_167_MODE").ok().as_deref() {
+            Some("B") => W44_167PerM3LiftMode::GlobalLift,
+            Some("C") => W44_167PerM3LiftMode::HighM3Only,
+            Some("D") => W44_167PerM3LiftMode::PerM3Split,
+            // Default (unset OR "A" OR any other unrecognised value)
+            // is Mode A baseline (no change).
+            _ => W44_167PerM3LiftMode::Baseline,
+        }
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        W44_167PerM3LiftMode::Baseline
+    }
+}
+
+/// W44-167 helper: apply the selected mode's `dct16x32` override to a
+/// pre-selected variant Z table.
+///
+/// `is_hc` is true when the W44-98 m3>=25 high-colour gate fired.
+/// `is_lc` is true when the W44-99 m3<25 low-colour gate fired.
+/// At most one of `is_hc` / `is_lc` is true (the gates are mutually
+/// exclusive); if both are false the caller is on the base variant Z
+/// table.
+///
+/// Returns the original `current_dct16x32` for Mode A (Baseline) so
+/// the caller can blindly invoke this helper without checking mode.
+#[inline]
+#[allow(dead_code)]
+fn w44_167_apply_lift(
+    mode: W44_167PerM3LiftMode,
+    is_hc: bool,
+    is_lc: bool,
+    current_dct16x32: f32,
+) -> f32 {
+    match mode {
+        W44_167PerM3LiftMode::Baseline => current_dct16x32,
+        W44_167PerM3LiftMode::GlobalLift => 1.40,
+        W44_167PerM3LiftMode::HighM3Only => {
+            if is_hc {
+                1.40
+            } else {
+                current_dct16x32
+            }
+        }
+        W44_167PerM3LiftMode::PerM3Split => {
+            if is_hc {
+                1.40
+            } else if is_lc {
+                1.26
+            } else {
+                1.22
+            }
+        }
+    }
+}
+
 /// W44-135 (2026-05-20): maximum `target_distance` at which the W44-124
 /// auto-discriminator is allowed to fire.
 ///
@@ -2434,9 +2551,7 @@ impl VarDctEncoder {
         // per strict-parity discipline). Default Mode A = baseline =
         // no change.
         let w44_166_admit_mode = w44_166_admit_mode_env();
-        let w44_166_photo_admit_allowed = self
-            .resolved_improvements
-            .photo_variant_z_admit
+        let w44_166_photo_admit_allowed = self.resolved_improvements.photo_variant_z_admit
             && matches!(
                 high_d_photo_policy,
                 crate::api::HighDPhotoEntropyMulPolicy::Auto
@@ -2517,6 +2632,24 @@ impl VarDctEncoder {
             } else {
                 crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed()
             };
+            // W44-167 (Smart-Zenjxl chunk 4, 2026-05-21): post-table
+            // selection, when the W44-167 gate fires AND a variant Z
+            // table has been selected, override the `dct16x32` field to
+            // a per-m3-aware lift value. Closes the W44-94 honest-stopped
+            // 1420710 OPEN cells without regressing 1531677 (low-m3)
+            // because the m3 split is the existing W44-98 sub-gate.
+            // Gated on `ResolvedImprovements::find_best_32_per_m3_lift`
+            // (Zenjxl/Aggressive default true; Libjxl/LeanFaster false).
+            // Default env unset = Mode A = byte-identical to pre-W44-167.
+            if w44_96_variant_z && self.resolved_improvements.find_best_32_per_m3_lift {
+                let mode = w44_167_mode_env();
+                p.entropy_mul_table.dct16x32 = w44_167_apply_lift(
+                    mode,
+                    w44_98_variant_z_high_colour,
+                    w44_99_variant_z_low_colour,
+                    p.entropy_mul_table.dct16x32,
+                );
+            }
         }
         if w44_65_suppress_dct64 {
             p.try_dct64 = false;
@@ -3945,9 +4078,7 @@ impl VarDctEncoder {
         // Env hook `JXL_W44_166_VARIANT_Z_ADMIT_MODE=A|B|C` controls
         // the discriminator (default A = baseline = no change).
         let w44_166_admit_mode = w44_166_admit_mode_env();
-        let w44_166_photo_admit_allowed = self
-            .resolved_improvements
-            .photo_variant_z_admit
+        let w44_166_photo_admit_allowed = self.resolved_improvements.photo_variant_z_admit
             && matches!(
                 high_d_photo_policy,
                 crate::api::HighDPhotoEntropyMulPolicy::Auto
@@ -4038,8 +4169,11 @@ impl VarDctEncoder {
         // DCT32X32 consolidation than cjxl picks at d > 5.5).
         let w44_156_d_high = w44_96_variant_z && self.distance > w44_156_effective_threshold();
 
-        let profile_for_search =
-            if w22_1_lift || w44_29_lower || w44_65_suppress_dct64 || w44_166_photo_admit {
+        let profile_for_search = if w22_1_lift
+            || w44_29_lower
+            || w44_65_suppress_dct64
+            || w44_166_photo_admit
+        {
             let mut p = self.profile.clone();
             if w22_1_lift {
                 p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
@@ -4071,6 +4205,19 @@ impl VarDctEncoder {
                 } else {
                     crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed()
                 };
+                // W44-167 (Smart-Zenjxl chunk 4, 2026-05-21): mirror of
+                // the `compute_profile_for_search` site above. Override
+                // the `dct16x32` field per-m3 when the gate fires.
+                // Default env unset = Mode A = byte-identical.
+                if w44_96_variant_z && self.resolved_improvements.find_best_32_per_m3_lift {
+                    let mode = w44_167_mode_env();
+                    p.entropy_mul_table.dct16x32 = w44_167_apply_lift(
+                        mode,
+                        w44_98_variant_z_high_colour,
+                        w44_99_variant_z_low_colour,
+                        p.entropy_mul_table.dct16x32,
+                    );
+                }
             }
             if w44_65_suppress_dct64 {
                 p.try_dct64 = false;

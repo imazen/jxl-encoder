@@ -1,0 +1,210 @@
+# W44-167 per-m3 find_best_32x32 sub-discriminator lift — HONEST-STOP
+# (Smart-Zenjxl chunk 4, 2026-05-21)
+#
+# bench TSV: benchmarks/w44_167_per_m3_find_best_32_2026-05-21.tsv
+# example:   jxl-encoder/examples/w44_167_per_m3_find_best_32.rs
+# parent:    14cc95b2 (W44-166 SHIP)
+# host:      lilith
+# target:    $HOME/work/zen/jxl-encoder-shared-target
+# command:
+#   CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+#     cargo run --release -p jxl-encoder \
+#     --features 'parallel butteraugli-loop ssim2-loop __expert' \
+#     --example w44_167_per_m3_find_best_32 \
+#     > benchmarks/w44_167_per_m3_find_best_32_2026-05-21.tsv
+#
+# Status: HONEST-STOP — production gate-site INERT (default env Mode A
+# = byte-identical to pre-W44-167). API surface KEPT as forward-compat.
+#
+# CHUNK 4 GOAL (per W44-163 B4 audit):
+#
+# W44-94 attempted to widen the find_best_32x32_transform tightening
+# at the OUTER `high_d_photo_smooth_suppressed` table. The honest-stop
+# was caused by 1420710 (high-m3) benefitting but 1531677 (low-m3)
+# regressing under the same global lift. W44-167 was queued to apply
+# the W44-98/99 per-m3 sub-discriminator pattern: HC images get the
+# W44-94 lift, LC images get a milder (or no) lift.
+#
+# CRITICAL CONTEXT (revealed during W44-167 read):
+#
+# The W44-94 chunk PRE-dated the W44-148/154/156 variant Z chain. The
+# current main ALREADY routes 1420710 (m3=32.93) to HC variant Z' and
+# 1531677 (m3=12.30) to LC variant Z'' via the W44-98 m3 sub-gate. The
+# per-m3 split IS ALREADY IN PRODUCTION at the table level.
+#
+# The W44-167 chunk re-frames the W44-94 mechanism: apply the
+# dct16x32=1.40 lift (the W44-94 X variant) at the INNER variant Z
+# layer, not the OUTER layer. The hypothesis was that lifting HC's
+# dct16x32 (currently 1.30) to 1.40 would close the 1420710 OPEN
+# cluster (e5/e6/e7/e8/e9 d=5 still OPEN per W44-157 ledger) while
+# the m3 split would protect 1531677 from the W44-94 regression.
+#
+# MEASUREMENT (29-cell paired interleaved A/B/C/D):
+#
+# Modes:
+#   A = baseline (JXL_W44_167_MODE unset OR A)
+#   B = GlobalLift: HC + LC + Z all → dct16x32 = 1.40
+#   C = HighM3Only: HC → 1.40, LC stays at 1.23, Z stays at 1.208
+#   D = PerM3Split: HC → 1.40, LC → 1.26, Z → 1.22
+#
+# === HARD ACCEPTANCE GATES (per chunk spec) ===
+#
+# (d) TARGET 1420710: at least one variant net positive (>=+0.10 SSIM2
+#     mean) AND bytes within ±3.0%
+#     → FAILS. ALL three modes regress 1420710 d=5 by mean SSIM2 -0.20
+#       (worst -0.30 on e8/e9 d=5 — at the budget limit). 1420710 d=6
+#       mean SSIM2 -0.07. No variant nets positive.
+#
+# (e) TARGET 1531677: NO SSIM2 regression > 0.30 on chosen variant
+#     → Mode B FAILS catastrophically (-0.71 mean at d=5, worst -0.75).
+#     → Mode C PASSES (byte-identical — discriminator correctly rejects).
+#     → Mode D PASSES (-0.17 mean at d=5, worst -0.22, all within budget).
+#
+# (f) PROTECT_W166 1418519: byte-identical OR SSIM2 within ±0.10
+#     → ALL three modes FAIL on 1418519 d=6: mean SSIM2 -0.41 (worst
+#       -0.46 on e8/e9 d=6). Bytes regress +1.7-2.5% too.
+#     → Regresses the W44-166 +0.4501 mean SSIM2 win.
+#     → ROOT CAUSE: 1418519 (m3=36.84 ≥ 25) is admitted to HC via
+#       W44-166's mask_p25 gate. The W44-167 HC lift fires on it, and
+#       the 1.40 lift damages 1418519's d=6 SSIM2.
+#
+# (g) PROTECT_W164 screenshots: BYTE-IDENTICAL — not in this bench
+#     (W44-164 GB82-SC screenshots are correctly excluded because the
+#     W44-167 gate only fires inside variant Z dispatch which itself
+#     requires either the W44-29 mask<50 gate OR W44-166 mask_p25>=85
+#     gate; screenshots fire neither).
+#
+# (h) CONTROL_NOGATE (1189261 + 1025469): BYTE-IDENTICAL
+#     → PASSES. 2/2 byte-identical on all 3 modes (mask=69.08 / 76.08,
+#       fail variant Z gate, gate cannot fire).
+#
+# (i) EncoderStrategy::Libjxl: BYTE-IDENTICAL — verified via integration
+#     test (`photo_variant_z_admit = false` AND
+#     `find_best_32_per_m3_lift = false` on Libjxl, so the gate cannot
+#     fire regardless of env).
+#
+# (j) Multi-decoder PASS — verified for Mode D 1420710 e7 d=5 via
+#     integration test.
+#
+# === RESULT: FAILS gates (d), (e:Mode B), (f). HONEST-STOP. ===
+#
+# THREE INDEPENDENT FAILURE MODES:
+#
+# 1. The W44-94 mechanism does NOT close 1420710 in current main. The
+#    1420710 d=5 OPEN cluster is structurally inferior under the current
+#    variant Z chain (dct32x32=1.22, dct16x32=1.30); pushing dct16x32
+#    HIGHER moves the cost model toward smaller blocks but
+#    1420710-class content suffers SSIM2 from the rebalance, not gains.
+#    The W44-94 X variant only closed those cells when the BASE table
+#    was OUTER (dct32x32=1.34) — applying the same delta inside variant
+#    Z (where dct32x32 already at 1.22) over-tightens.
+#
+# 2. The W44-166 admission widens 1418519 to HC. When W44-167 modifies
+#    HC, it also modifies 1418519's table. The W44-166 +0.45 SSIM2 mean
+#    on 1418519 d=5/6 is FRAGILE — any modification to HC kills it.
+#    This is the mechanism-LAYER lesson from W44-165: changes to the
+#    same dispatch table compete because they target the same image.
+#
+# 3. The 1531677 d=6 result under Mode D (+0.58 SSIM2 GAIN, byte-
+#    identical bytes) is a SURPRISE positive but it's a SINGLE-CELL
+#    win on a narrowly-scoped LC table tweak. Insufficient to justify
+#    shipping (per chunk acceptance gates).
+#
+# DECISION: HONEST-STOP per task spec ("REVERT and ship measurement-
+# only if: No variant satisfies BOTH 1420710 win + 1531677 protection;
+# Any PROTECT cell regresses").
+#
+# What ships:
+#   - `EncoderImprovementsCustom::find_best_32_per_m3_lift: bool` API
+#     surface KEPT (forward-compat). Default Zenjxl/Aggressive=true,
+#     Libjxl/LeanFaster=false (parity).
+#   - `ResolvedImprovements::find_best_32_per_m3_lift: bool` field.
+#   - `W44_167PerM3LiftMode` enum + `w44_167_mode_env()` helper +
+#     `w44_167_apply_lift()` helper (all `#[allow(dead_code)]`).
+#   - Env hook `JXL_W44_167_MODE=A|B|C|D` — production gate-site CODE
+#     IS PRESENT but env DEFAULT IS Mode A (byte-identical to pre-W44-
+#     167 main). API field is ALWAYS-ON (true) on Zenjxl/Aggressive
+#     but ONLY HAS EFFECT when env explicitly sets B/C/D.
+#   - Unit test `test_w44_167_find_best_32_per_m3_lift_default_per_strategy`.
+#   - Integration tests `w44_167_libjxl_strategy_byte_identical_regardless_of_env`
+#     + `w44_167_non_firing_photo_byte_identical_all_modes` + multi-decoder
+#     smoke.
+#   - Bench example `w44_167_per_m3_find_best_32` (paired A/B/C/D).
+#   - This .tsv + this .meta + LIBJXL_DIVERGENCES.md updates.
+#
+# What does NOT ship:
+#   - No production behavioural change. Default env unset = Mode A =
+#     pre-W44-167 main byte-identical.
+#   - Hash-locks 36/36 BYTE-IDENTICAL (verified).
+#
+# Provenance:
+#   - 29 cells × 4 modes (A/B/C/D) paired interleaved
+#   - Images: 1420710 (HC target, m3=32.93), 1531677 (LC target,
+#     m3=12.30), 1418519 (PROTECT_W166, m3=36.84 → HC via W44-166 admit
+#     gate), 1189261 + 1025469 (CONTROL_NOGATE, mask>=50 fails variant Z)
+#   - Efforts × distances: e7/e8/e9 × d=4/5/6 for the 3 photo images
+#     (9 cells each) + 1189261/1025469 at e7 d=4 (1 cell each) = 29
+#
+# DO NOT (binding for future agents):
+#
+# 1. DO NOT re-attempt the W44-94 widening (dct16x32 ≥ 1.30 or 1.40)
+#    at the variant Z layer. Measurement is conclusive: it regresses
+#    1420710 (the target) in current main even with per-m3 isolation
+#    because the current variant Z dct32x32=1.22 base already
+#    over-tightens with the W44-148/154 chain.
+#
+# 2. DO NOT widen `find_best_32_per_m3_lift` field default to anything
+#    other than {true on Zenjxl/Aggressive + Mode A baseline env} OR
+#    {false on Libjxl/LeanFaster}. The default ships byte-identical.
+#
+# 3. DO NOT remove the API surface — kept as forward-compat for
+#    follow-on chunks that may pair the m3 sub-discriminator with a
+#    DIFFERENT mechanism (e.g. dct32x32 lift instead of dct16x32, or a
+#    distance-band gate within the lift).
+#
+# 4. DO NOT cite "FMA precision" for the SSIM2 movements (W44-66 user
+#    correction).
+#
+# 5. DO NOT respawn this chunk against a different cell list —
+#    measurement covered the full 1420710 OPEN cluster (e7/e8/e9 d=5)
+#    and the 1531677 protection set + W44-166 protection set. The
+#    failure modes are structural, not cell-specific.
+#
+# Follow-on candidates (NOT in scope; document for W44-168+):
+#
+# A. **W44-167 narrow Mode D to 1531677 d=6 only**: the +0.58 SSIM2
+#    win on 1531677 d=6 under Mode D's LC=1.26 milder lift is real.
+#    Scope it to JUST that distance via a sub-band gate. Risk: narrow
+#    surface, may not justify a chunk.
+#
+# B. **Variant Z dct32x32 micro-bisect** at d=5 for 1420710 only.
+#    W44-154 chose 1.22 globally; testing 1.18 / 1.20 at d=5 only on
+#    HC may help 1420710 SSIM2 without 1531677 / 1418519 regression.
+#    Risk: same per-m3 isolation as W44-167 — would need similar
+#    structure.
+#
+# C. **Root-cause buttloop measurement divergence** (W44-111 multi-week
+#    cross-crate). HIGHEST EV long-term. Would obsolete the entire
+#    W44-148/154/156/166/167 chain.
+#
+# D. **W44-166 d=6 admission narrowing**: the W44-166 admit gate
+#    currently has no distance ceiling above W44_96_VARIANT_Z_MIN_
+#    DISTANCE = 4.5. Per W44-167 measurement, the 1418519 d=6 cells
+#    are the most SSIM2-fragile. Narrowing W44-166 to d ∈ [4.5, 5.5]
+#    would protect them from future HC table changes. Risk: loses the
+#    W44-166 +0.45 win at 1418519 d=6.
+#
+# E. **Move the W44-94 lift to find_best_16x16_transform OR
+#    find_best_64x64_transform** — different decision sites in
+#    ac_strategy_search.rs. The W44-167 chunk targeted the
+#    32x32-class transform decision; testing 16x16-class or 64x64-class
+#    would be a different mechanism entirely.
+
+# === Cross-references ===
+# - memory/w44_163_smart_zenjxl_audit_2026-05-21.md (B4 source)
+# - memory/w44_94_find_best_32_widen_honest_stop_2026-05-19.md (W44-94 source)
+# - memory/w44_165_photo_epf_seed_zenjxl_honest_stop_2026-05-21.md (COMPETE pattern)
+# - memory/w44_166_variant_z_zenjxl_shipped_2026-05-21.md (COMPOSE pattern + 1418519 win)
+# - benchmarks/w44_94_find_best_32_widen_ab_2026-05-19.{tsv,meta} (W44-94 measurement)
+# - docs/LIBJXL_DIVERGENCES.md Section E (this commit adds W44-167 row)
+# - docs/LIBJXL_DIVERGENCES.md Section F (this commit notes the 1420710 OPEN persists)

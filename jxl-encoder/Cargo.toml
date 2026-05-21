@@ -719,6 +719,17 @@ name = "w44_166_variant_z_admit_ab"
 path = "examples/w44_166_variant_z_admit_ab.rs"
 required-features = ["butteraugli-loop", "ssim2-loop", "__expert"]
 
+# W44-167 (Smart-Zenjxl chunk 4, 2026-05-21) — paired A/B/C/D bench for
+# per-m3 sub-discriminator lift on INNER variant Z tables. Replays the
+# W44-94 widening attempt at the INNER (variant Z) layer where the
+# W44-98 m3 split already isolates HC vs LC; tests whether HC-only
+# (Mode C) or per-m3 split (Mode D) lifts can close the W44-94 OPEN
+# cluster on 1420710 without regressing 1531677.
+[[example]]
+name = "w44_167_per_m3_find_best_32"
+path = "examples/w44_167_per_m3_find_best_32.rs"
+required-features = ["butteraugli-loop", "ssim2-loop", "__expert"]
+
 # W44-151 W44-29 widen A/B — measure the Mechanism B photo admission
 # gate (mask_p25 >= 85.0 AND distance >= 3.0) on the W44-147 1418519
 # d=5/6 cluster + W44-118 protection set (1025469) + 4 SPOT photos.
