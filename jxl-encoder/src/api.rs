@@ -4351,6 +4351,48 @@ pub struct EncoderImprovementsCustom {
     /// fixtures don't trigger `pixel_domain_loss` so `mask1x1` stays
     /// `None` and the smooth predicate cannot fire.
     pub adaptive_buttloop_iters_narrow: bool,
+
+    /// W44-176 (Smart-Zenjxl follow-on, 2026-05-21): when `true`,
+    /// excludes terminal-class screenshots from the W44-108 sub-gate
+    /// (W44-109 adaptive_quant qf seed lift at e ∈ {5, 6, 7}).
+    ///
+    /// **Why**: W44-174 (`a0e29ec4`) diagnosed terminal e7 d=4-5 as the
+    /// only NET-NEGATIVE pareto cell in the W44-108 firing cluster —
+    /// bytes +28% AND SSIM2 -1.94 vs cjxl simultaneously. The W44-109
+    /// lift buys +2.70 SSIM2 over baseline but cjxl is still 1.94 above
+    /// the lifted result; the lift over-allocates without catching cjxl
+    /// quality.
+    ///
+    /// graph/imac_g3/imac_dark/gmessages/gui at d=4-5 buy real SSIM2
+    /// from the lift (carry them ABOVE cjxl SSIM2 — true wins) and
+    /// MUST stay in the firing class.
+    ///
+    /// **Discriminator** (W44-176 probe
+    /// `examples/w44_176_terminal_proxy_probe.rs`, 17-image corpus):
+    /// `luma_var ∈ [1500, 2200] AND fcbr ≥ 0.70`. Fires ONLY on
+    /// terminal across the probe corpus. Safety margins ≥ 10% per
+    /// task spec on every axis. See
+    /// [`crate::vardct::butteraugli_loop::W44_176_TERMINAL_CLASS_LUMA_VAR_MIN`]
+    /// for the detailed proxy table + margins.
+    ///
+    /// **Env hook**: `JXL_W44_176_DISABLE=1` forces the exclude OFF
+    /// (for A/B benching). Production default: this flag is `true` on
+    /// Zenjxl / Aggressive.
+    ///
+    /// **Default**: `true` for [`EncoderStrategy::Zenjxl`] and
+    /// [`EncoderStrategy::Aggressive`]; `false` for
+    /// [`EncoderStrategy::Libjxl`] (strict parity — the W44-109 lift
+    /// itself is off via `adaptive_quant_qf_seed:
+    /// AdaptiveQuantQfSeedPolicy::Off` so this flag is moot there but
+    /// kept explicit for clarity) and [`EncoderStrategy::LeanFaster`]
+    /// (same reasoning — adaptive_quant_qf_seed: Off).
+    ///
+    /// **Hash-locks**: BYTE-IDENTICAL — the W44-108 sub-gate only fires
+    /// on screenshot-class inputs (`mask_median > 95 AND m3 < 30`) and
+    /// the synthetic 32×32/48×48 gradient hash-lock fixtures don't
+    /// produce those proxies; the W44-176 exclude composes underneath
+    /// and is moot on those.
+    pub terminal_class_exclude: bool,
 }
 
 impl Default for EncoderImprovementsCustom {
@@ -4429,6 +4471,14 @@ impl Default for EncoderImprovementsCustom {
             // Libjxl / LeanFaster override to `false` to preserve
             // strict per-effort parity / skip per-image gate cost.
             adaptive_buttloop_iters_narrow: true,
+            // W44-176: Zenjxl default excludes terminal-class screenshots
+            // from the W44-108 sub-gate (W44-109 lift at e ∈ {5, 6, 7}).
+            // Closes the W44-174-diagnosed terminal e7 d=4-5 net-negative
+            // pareto cell. Libjxl / LeanFaster override to `false` —
+            // moot on those strategies anyway because
+            // `adaptive_quant_qf_seed: Off` already suppresses the
+            // gate, but kept explicit for forward-compat.
+            terminal_class_exclude: true,
         }
     }
 }
@@ -4514,6 +4564,16 @@ pub(crate) struct ResolvedImprovements {
     // W44-168 env hook `JXL_W44_168_MODE=B|C|D` overrides this path
     // when set (diagnostic A/B benching).
     pub(crate) adaptive_buttloop_iters_narrow: bool,
+
+    // W44-176 — Smart-Zenjxl follow-on (2026-05-21): exclude
+    // terminal-class screenshots (luma_var ∈ [1500, 2200] AND fcbr
+    // ≥ 0.70) from the W44-108 sub-gate at e ∈ {5, 6, 7}. Closes the
+    // W44-174-diagnosed terminal e7 d=4-5 net-negative pareto cell.
+    // graph/imac_g3/imac_dark/gmessages/gui d=4-5 SSIM2 wins are
+    // preserved (those images fail the discriminator and stay in
+    // the firing class). Env hook `JXL_W44_176_DISABLE=1` forces
+    // the exclude OFF.
+    pub(crate) terminal_class_exclude: bool,
 }
 
 impl Default for ResolvedImprovements {
@@ -4575,6 +4635,13 @@ impl Default for ResolvedImprovements {
             // `false` for strict per-effort iter parity / skip per-image
             // gate cost.
             adaptive_buttloop_iters_narrow: true,
+            // W44-176: Zenjxl default excludes terminal-class screenshots
+            // from the W44-108 sub-gate at e ∈ {5, 6, 7}. Closes the
+            // W44-174-diagnosed terminal e7 d=4-5 net-negative pareto.
+            // Libjxl / LeanFaster constructors below override to `false`
+            // — moot on those (their `adaptive_quant_qf_seed: Off` already
+            // suppresses the lift), kept explicit for forward-compat.
+            terminal_class_exclude: true,
         }
     }
 }
@@ -4858,6 +4925,12 @@ impl ResolvedImprovements {
             // W44-169: strict libjxl parity — keep the fixed per-effort
             // schedule (no narrow distance-band iter reduction).
             adaptive_buttloop_iters_narrow: false,
+            // W44-176: strict libjxl parity — `adaptive_quant_qf_seed:
+            // Off` already suppresses the W44-109 lift entirely, so
+            // this exclude flag is moot. Kept explicit for clarity:
+            // strict-parity callers never see the terminal-class
+            // discrimination logic execute.
+            terminal_class_exclude: false,
         }
     }
 
@@ -4899,6 +4972,13 @@ impl ResolvedImprovements {
             // (same `mask1x1_p25` / `mask_median` per-image proxy
             // cost as `adaptive_buttloop_iters`).
             adaptive_buttloop_iters_narrow: false,
+            // W44-176: LeanFaster also drops the per-image
+            // terminal-class discriminator (depends on the same
+            // per-image `ZenanalyzeProxies` as the other Smart-Zenjxl
+            // gates LeanFaster opts out of). Moot in practice because
+            // `adaptive_quant_qf_seed: Off` above already suppresses
+            // the W44-109 lift, but kept explicit for clarity.
+            terminal_class_exclude: false,
             ..Default::default()
         }
     }
@@ -4943,6 +5023,7 @@ impl ResolvedImprovements {
             find_best_32_per_m3_lift: c.find_best_32_per_m3_lift,
             adaptive_buttloop_iters: c.adaptive_buttloop_iters,
             adaptive_buttloop_iters_narrow: c.adaptive_buttloop_iters_narrow,
+            terminal_class_exclude: c.terminal_class_exclude,
         }
     }
 }
@@ -14324,6 +14405,7 @@ mod tests {
             m3_colourfulness: 10.67,
             flat_color_block_ratio: 0.907,
             edge_density: 0.021,
+            luma_var: 0.0,
         };
         assert_eq!(classify_from_proxies(&p), ImageContentClass::Screenshot);
         // gb82-sc windows95 (real corpus, outlier): fcbr=0.360. Above
@@ -14332,6 +14414,7 @@ mod tests {
             m3_colourfulness: 27.19,
             flat_color_block_ratio: 0.360,
             edge_density: 0.268,
+            luma_var: 0.0,
         };
         assert_eq!(classify_from_proxies(&p), ImageContentClass::Screenshot);
         // gb82-sc imac_g3 (real corpus): fcbr=0.709, m3=15.32
@@ -14339,6 +14422,7 @@ mod tests {
             m3_colourfulness: 15.32,
             flat_color_block_ratio: 0.709,
             edge_density: 0.079,
+            luma_var: 0.0,
         };
         assert_eq!(classify_from_proxies(&p), ImageContentClass::Screenshot);
     }
@@ -14352,6 +14436,7 @@ mod tests {
             m3_colourfulness: 98.84,
             flat_color_block_ratio: 0.0034,
             edge_density: 0.633,
+            luma_var: 0.0,
         };
         assert_eq!(classify_from_proxies(&p), ImageContentClass::Photo);
         // 1025469 (W44-91 REGRESSION cell, real corpus): fcbr=0.0166,
@@ -14362,6 +14447,7 @@ mod tests {
             m3_colourfulness: 45.45,
             flat_color_block_ratio: 0.0166,
             edge_density: 0.300,
+            luma_var: 0.0,
         };
         assert_eq!(classify_from_proxies(&p), ImageContentClass::Photo);
         // 297394 (high-colour photo, fcbr=0.0957) — just below the
@@ -14370,6 +14456,7 @@ mod tests {
             m3_colourfulness: 103.70,
             flat_color_block_ratio: 0.0957,
             edge_density: 0.300,
+            luma_var: 0.0,
         };
         assert_eq!(classify_from_proxies(&p), ImageContentClass::Photo);
     }
@@ -14387,6 +14474,7 @@ mod tests {
                 m3_colourfulness: 50.0,
                 flat_color_block_ratio: fcbr,
                 edge_density: 0.2,
+                luma_var: 0.0,
             };
             assert_eq!(
                 classify_from_proxies(&p),
@@ -14401,6 +14489,7 @@ mod tests {
             m3_colourfulness: 2.0,
             flat_color_block_ratio: 0.05,
             edge_density: 0.1,
+            luma_var: 0.0,
         };
         assert_eq!(classify_from_proxies(&p), ImageContentClass::Unknown);
     }
