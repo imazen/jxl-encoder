@@ -124,6 +124,11 @@ pub fn output_dir(subdir: &str) -> std::path::PathBuf {
 /// (or `/mnt/v/output`) as the base, then appends the given project/subdir.
 /// Use for output paths like `/mnt/v/output/jpeg-reencoding/...` or
 /// `/mnt/v/output/jxl-encoder/...`.
+///
+/// **WARNING** — `subdir` must be a *directory* component, not a file
+/// basename. Calling this with a basename like `"test.jpg"` will create
+/// the path as a *directory*, which is almost never what callers want.
+/// Use [`output_file_for`] when you need an output **file** path.
 pub fn output_dir_for(project: &str, subdir: &str) -> std::path::PathBuf {
     let base = match std::env::var("JXL_ENCODER_OUTPUT_DIR") {
         Ok(dir) => {
@@ -140,6 +145,27 @@ pub fn output_dir_for(project: &str, subdir: &str) -> std::path::PathBuf {
     let fallback = std::env::temp_dir().join(format!("{project}/{subdir}"));
     let _ = std::fs::create_dir_all(&fallback);
     fallback
+}
+
+/// Returns an output **file path** under a project directory.
+///
+/// Resolves the project directory the same way as
+/// [`output_dir_for`]`(project, "")` — i.e. `<base>/<project>/` where
+/// `<base>` is the parent of `$JXL_ENCODER_OUTPUT_DIR` or
+/// `/mnt/v/output`. Creates the project directory if it doesn't exist,
+/// then joins `filename` onto it. Does NOT create the file.
+///
+/// This is the right helper for *test fixture file paths* — e.g.
+/// `output_file_for("jpeg-reencoding", "test64_444.jpg")` returns
+/// `<base>/jpeg-reencoding/test64_444.jpg`. Contrast with the (often
+/// misused) [`output_dir_for`] which always treats its second arg as a
+/// **directory** name.
+///
+/// Falls back to `$TMPDIR/<project>/<filename>` when the preferred
+/// project directory cannot be created (CI, sandboxed environments,
+/// other machines without `/mnt/v/`).
+pub fn output_file_for(project: &str, filename: &str) -> std::path::PathBuf {
+    output_dir_for(project, "").join(filename)
 }
 
 // --- Everything below requires test (dev) dependencies ---
