@@ -290,10 +290,23 @@ fn assert_lossless_field_changes_output(field_name: &str, params: LosslessIntern
 
 #[test]
 fn lossless_override_nb_rcts_to_try() {
+    // `nb_rcts_to_try = 0` is the wrong test signal: when the search is
+    // disabled, the fallback is `RctType::GBR_SUBGR` (RCT-10) per
+    // `modular/encode.rs::select_best_rct`. The synthetic test image
+    // happens to produce GBR_SUBGR as the WINNER of the default e7
+    // 7-candidate search too — so 0 vs 7 emit byte-identical output
+    // (verified against `select_best_rct`'s `RCT_CANDIDATES` table:
+    // index 3 = `GBR_SUBGR`, and `estimate_cost` picks it on
+    // `synthetic_rgb8()`). Override to `1` instead: that limits the
+    // search to candidate 0 (identity, RCT 0), which always wins by
+    // default (no competition) and produces a measurably different
+    // bitstream from the default GBR_SUBGR winner. This was the
+    // original W44-94 "pre-existing test failure"; the test signal
+    // itself was wrong, fixed in W44-137.
     assert_lossless_field_changes_output(
         "nb_rcts_to_try",
         LosslessInternalParams {
-            nb_rcts_to_try: Some(0),
+            nb_rcts_to_try: Some(1),
             ..Default::default()
         },
     );
