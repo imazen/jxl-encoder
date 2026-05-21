@@ -1683,5 +1683,16 @@ name = "w44_148_variant_z_dct32_bisect"
 path = "examples/w44_148_variant_z_dct32_bisect.rs"
 required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
 
+# W44-149 Phase 1 photo discriminator audit — computes ZenanalyzeProxies
+# fields + auxiliary candidate features (luma ratios, chroma_block_ratio,
+# mask1x1 percentiles) across all 41 CID22 validation photos to find a
+# discriminator that splits 1418519 (W44-117 admission candidate per
+# W44-147 Mechanism A) from 1025469 (W44-118 protected REJECT). NO
+# production code change, audit-only.
+[[example]]
+name = "w44_149_photo_proxy_audit"
+path = "examples/w44_149_photo_proxy_audit.rs"
+required-features = ["__pre_quantized"]
+
 [lints]
 workspace = true
