@@ -1,0 +1,36 @@
+# W44-170 comprehensive cjxl-parity corpus
+# 20 images across 3 content classes; selected for varied content per the W44-170 task spec.
+#
+# Selection rationale:
+# - 10 CID22 (512×512 photos, validation split, ~3.8× faster than 1024² → enables full grid).
+#   Picks: known-hard wedges (1418519, 1025469, 1531677, 1420710, 1189261) +
+#   varied content (textile/portrait/landscape/urban/macro/animals).
+# - 6 GB82-SC screenshots: UI text/icons/diagrams (terminal, codec_wiki, imac_g3,
+#   imac_dark, windows95, graph). Mix of low-color pixel-art (windows95) and
+#   high-resolution screenshots.
+# - 4 CLIC2025-1024 (1024×1024): high-quality photo content at ~4× pixel count.
+#
+# All paths are relative to CODEC_CORPUS_DIR (default /home/lilith/work/codec-corpus).
+# Format: relative_path\tclass\tname_for_ledger
+#
+# class is one of: cid22, screenshot, clic
+CID22/CID22-512/validation/1025469.png	cid22	1025469
+CID22/CID22-512/validation/1189261.png	cid22	1189261
+CID22/CID22-512/validation/1418519.png	cid22	1418519
+CID22/CID22-512/validation/1420710.png	cid22	1420710
+CID22/CID22-512/validation/1475938.png	cid22	1475938
+CID22/CID22-512/validation/1531677.png	cid22	1531677
+CID22/CID22-512/validation/2389166.png	cid22	2389166
+CID22/CID22-512/validation/297394.png	cid22	297394
+CID22/CID22-512/validation/3637739.png	cid22	3637739
+CID22/CID22-512/validation/7062219.png	cid22	7062219
+gb82-sc/codec_wiki.png	screenshot	codec_wiki
+gb82-sc/imac_dark.png	screenshot	imac_dark
+gb82-sc/imac_g3.png	screenshot	imac_g3
+gb82-sc/graph.png	screenshot	graph
+gb82-sc/terminal.png	screenshot	terminal
+gb82-sc/windows95.png	screenshot	windows95
+clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	clic	clic_02809272
+clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png	clic	clic_097cb426
+clic2025-1024/0369d229ba4c9965d5caeb38c359a027a810968eee930b81520b604e76b4df14.png	clic	clic_0369d229
+clic2025-1024/0c49a5cce349020bbba2f97ae41e90ba.png	clic	clic_0c49a5cc

@@ -12,6 +12,23 @@ rd-regression-hd:
 cid22-vs-webp:
     bash scripts/cid22_vs_webp.sh
 
+# W44-170: full comprehensive cjxl-parity sweep at step 0.25 across 20-image
+# varied corpus, 5 efforts, both Libjxl and Zenjxl strategies. ~15-30 min
+# wall on the workstation. Writes per-strategy TSVs to benchmarks/, then
+# runs Python analysis producing charts + markdown report.
+w44-170-sweep:
+    cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' \
+        --example w44_170_cjxl_step025_sweep -- \
+        --corpus-manifest benchmarks/corpora/w44_170_varied_corpus.tsv \
+        --output-prefix benchmarks/cjxl_step025 \
+        --strategies zenjxl,libjxl
+    python3 benchmarks/scripts/w44_170_analyze.py \
+        --zenjxl $(ls -1t benchmarks/cjxl_step025_zenjxl_*.tsv | head -1) \
+        --libjxl $(ls -1t benchmarks/cjxl_step025_libjxl_*.tsv | head -1) \
+        --output-md benchmarks/w44_170_analysis_$(date +%Y-%m-%d).md \
+        --chart-dir benchmarks/charts \
+        --chart-tag w44_170
+
 # Cross-compile and test for 32-bit x86 (requires cross: cargo install cross --git https://github.com/cross-rs/cross)
 test-i686:
     cross test --workspace --no-default-features --lib --target i686-unknown-linux-gnu
