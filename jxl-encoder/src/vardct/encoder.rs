@@ -734,6 +734,198 @@ fn w44_167_apply_lift(
     }
 }
 
+// ── W44-168: content-aware butteraugli_iters dispatch ──────────────────────
+
+/// W44-168 (Smart-Zenjxl chunk 5, 2026-05-21): smooth-content `mask1x1`
+/// 25th-percentile threshold for the SmoothSkip path.
+///
+/// At `effort >= 8` on photos with `mask1x1_p25 >= 85`, the buttloop is
+/// already converging on a low-frequency residual — one fewer iter
+/// (saturating at 1) trades ~30% wall time at e8 for negligible SSIM2
+/// loss (chunk spec budget: ±0.10 SSIM2 mean).
+///
+/// Mirrors the `W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN` semantic — the
+/// same `mask_p25` discriminator the W44-150/166 lineage uses, applied
+/// to the orthogonal "iter budget" mechanism layer.
+#[allow(dead_code)]
+pub const W44_168_SMOOTH_MASK_P25_MIN: f32 = 85.0;
+
+/// W44-168 (Smart-Zenjxl chunk 5, 2026-05-21): screenshot `mask1x1`
+/// median threshold for the SmoothSkip path.
+///
+/// Mirrors `CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD` (= 95.0) used by
+/// every screenshot-class gate (W22-1, W44-105 buttloop seed scale,
+/// etc.). On screenshot-class content the buttloop's per-iter quant
+/// adjustment is mostly a no-op (libjxl's coarse quant on flat regions
+/// converges in a single iter) — `iters - 1` saturating at 1 saves
+/// ~30% wall time at e8 with byte-identical or near-identical output.
+#[allow(dead_code)]
+pub const W44_168_SCREENSHOT_MEDIAN_MIN: f32 = 95.0;
+
+/// W44-168 (Smart-Zenjxl chunk 5, 2026-05-21): textured `edge_density`
+/// threshold for the TexturedExtend path.
+///
+/// At `effort == 7` on photos with `edge_density >= 0.5` (high-edge
+/// textured content like 1189261-class wedges), the fixed schedule
+/// gives `butteraugli_iters = 0`. Bumping to 2 iters (effectively a
+/// "soft e8" budget for textured content) bridges the F-row deficit
+/// without forcing the caller up to a real e8.
+///
+/// Threshold = 0.5: the 5 W44-67-class photos cluster at
+/// edge_density ∈ [0.30, 0.78]; the 0.50 cut admits 1189261 / 1420710
+/// while keeping smoother photos (1418519 ed=0.32, 7552578 ed=0.41) on
+/// the e7 baseline (iters=0 → no spurious wall-time addition on smooth
+/// content at e7).
+#[allow(dead_code)]
+pub const W44_168_TEXTURED_EDGE_DENSITY_MIN: f32 = 0.5;
+
+/// W44-168 (Smart-Zenjxl chunk 5, 2026-05-21): TexturedExtend iter
+/// count at `effort == 7` on textured content.
+///
+/// Default 2 iters (matching the e8 baseline schedule). Could be bumped
+/// to 4 to match e9 if measurement shows the win, but starting
+/// conservative.
+#[allow(dead_code)]
+pub const W44_168_TEXTURED_ITERS_AT_E7: u32 = 2;
+
+/// W44-168 (Smart-Zenjxl chunk 5, 2026-05-21): adaptive
+/// `butteraugli_iters` mode controlled by env hook
+/// `JXL_W44_168_MODE=A|B|C|D`.
+///
+/// Per user directive 2026-05-21 ("make zenjxl defaults smarter on the
+/// rdtime axis ... even if effort levels blend together more"), this
+/// gate adjusts the fixed per-effort iter schedule based on cheap
+/// proxies already on hand (`mask1x1_median`, `mask1x1_p25`,
+/// `edge_density`).
+///
+/// **Mode A (Baseline)** — no change vs the fixed schedule (`e≤7 → 0,
+/// e8 → 2, e9 → 4, e10 → 8, e11 → 16, e12 → 32`). Bench reference.
+///
+/// **Mode B (SmoothSkip)** — at `effort >= 8` on
+/// smooth/screenshot content (`mask1x1_median > 95` OR
+/// `mask1x1_p25 >= 85`), `iters - 1` saturating at 1. Saves one full
+/// buttloop iter on converged content (~30% wall time at e8).
+///
+/// **Mode C (TexturedExtend)** — at `effort == 7` on textured
+/// content (`edge_density >= 0.5`), bump iters from 0 → 2. Blends e7
+/// upward toward e8 quality for textured content.
+///
+/// **Mode D (Combined)** — apply both B and C.
+///
+/// Has effect only when
+/// [`crate::api::ResolvedImprovements::adaptive_buttloop_iters`] is
+/// true (Zenjxl / Aggressive default).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum W44_168IterMode {
+    Baseline,
+    SmoothSkip,
+    TexturedExtend,
+    Combined,
+}
+
+/// W44-168 admit-mode env hook for `JXL_W44_168_MODE=A|B|C|D`.
+///
+/// Default = Mode A (Baseline). Production default flips only when a
+/// Mode B/C/D SHIPS (W44-168 chunk acceptance gate).
+#[inline]
+#[allow(dead_code)]
+pub(crate) fn w44_168_mode_env() -> W44_168IterMode {
+    #[cfg(feature = "std")]
+    {
+        match std::env::var("JXL_W44_168_MODE").ok().as_deref() {
+            Some("B") => W44_168IterMode::SmoothSkip,
+            Some("C") => W44_168IterMode::TexturedExtend,
+            Some("D") => W44_168IterMode::Combined,
+            // Default (unset OR "A" OR any other unrecognised value)
+            // is Mode A baseline (no change).
+            _ => W44_168IterMode::Baseline,
+        }
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        W44_168IterMode::Baseline
+    }
+}
+
+/// W44-168 helper: compute the adjusted `butteraugli_iters` value for
+/// this image and effort.
+///
+/// `base_iters` is the fixed per-effort iter count from
+/// [`crate::effort::EffortProfile::butteraugli_iters`] /
+/// [`crate::vardct::encoder::VarDctEncoder::butteraugli_iters`].
+///
+/// Returns the original `base_iters` when:
+/// - `mode == Baseline`
+/// - The chosen mode's content discriminator doesn't fire
+/// - `base_iters == 0` AND mode is SmoothSkip-only (no extension into
+///   the zero-iter regime)
+///
+/// **SmoothSkip** is `iters - 1` saturating at 1 (never goes to 0 —
+/// keep at least one iter so the buttloop still runs).
+///
+/// **TexturedExtend** sets iters to [`W44_168_TEXTURED_ITERS_AT_E7`]
+/// (= 2) when `base_iters == 0 AND effort == 7 AND edge_density >=
+/// 0.5`. Bridges textured e7 toward e8 quality.
+#[inline]
+#[allow(dead_code)]
+pub(crate) fn w44_168_compute_iters(
+    base_iters: u32,
+    effort: u8,
+    mask1x1_median: Option<f32>,
+    mask1x1_p25: Option<f32>,
+    edge_density: Option<f32>,
+    mode: W44_168IterMode,
+) -> u32 {
+    match mode {
+        W44_168IterMode::Baseline => base_iters,
+        W44_168IterMode::SmoothSkip => {
+            if effort >= 8 && base_iters > 1 && w44_168_is_smooth(mask1x1_median, mask1x1_p25) {
+                base_iters - 1
+            } else {
+                base_iters
+            }
+        }
+        W44_168IterMode::TexturedExtend => {
+            if effort == 7 && base_iters == 0 && w44_168_is_textured(edge_density) {
+                W44_168_TEXTURED_ITERS_AT_E7
+            } else {
+                base_iters
+            }
+        }
+        W44_168IterMode::Combined => {
+            // Combined: SmoothSkip on e8+, TexturedExtend on e7. They
+            // are mutually exclusive on the effort axis (e==7 vs e>=8),
+            // so the order of evaluation doesn't matter.
+            if effort >= 8 && base_iters > 1 && w44_168_is_smooth(mask1x1_median, mask1x1_p25) {
+                base_iters - 1
+            } else if effort == 7 && base_iters == 0 && w44_168_is_textured(edge_density) {
+                W44_168_TEXTURED_ITERS_AT_E7
+            } else {
+                base_iters
+            }
+        }
+    }
+}
+
+/// W44-168: smooth-content discriminator. Smooth = high mask1x1_median
+/// (screenshot-class) OR high mask1x1_p25 (smooth-photo-class).
+#[inline]
+#[allow(dead_code)]
+pub(crate) fn w44_168_is_smooth(mask1x1_median: Option<f32>, mask1x1_p25: Option<f32>) -> bool {
+    let screen = mask1x1_median.is_some_and(|m| m > W44_168_SCREENSHOT_MEDIAN_MIN);
+    let smooth_photo = mask1x1_p25.is_some_and(|p| p >= W44_168_SMOOTH_MASK_P25_MIN);
+    screen || smooth_photo
+}
+
+/// W44-168: textured-content discriminator. Textured = high
+/// `edge_density` (Sobel gradient hits per interior pixel).
+#[inline]
+#[allow(dead_code)]
+pub(crate) fn w44_168_is_textured(edge_density: Option<f32>) -> bool {
+    edge_density.is_some_and(|ed| ed >= W44_168_TEXTURED_EDGE_DENSITY_MIN)
+}
+
 /// W44-135 (2026-05-20): maximum `target_distance` at which the W44-124
 /// auto-discriminator is allowed to fire.
 ///
@@ -3448,6 +3640,49 @@ impl VarDctEncoder {
             .as_deref()
             .map(|m| median_mask1x1(m, padded_width, width, height));
 
+        // W44-168 (Smart-Zenjxl chunk 5, 2026-05-21): compute the
+        // adaptive `butteraugli_iters` override EARLY so the W44-105
+        // qf pre-scale gate (just below) sees the corrected value and
+        // doesn't double-apply with the buttloop. Also computed here
+        // so it can be used to gate the buttloop entry block (line
+        // ~4690) which currently reads `self.butteraugli_iters > 0`
+        // directly — Mode C (TexturedExtend) needs to flip that gate
+        // when `self.butteraugli_iters == 0`.
+        //
+        // Compute `mask_p25_for_pre_scale` from the existing
+        // `mask1x1_for_pre_scale` (no extra mask compute cost — the
+        // mask is already in scope). `edge_density` comes from
+        // `self.zenanalyze_proxies` (already on the encoder for 8-bit
+        // sRGB layouts).
+        let mask1x1_p25_for_pre_scale: Option<f32> = mask1x1_for_pre_scale
+            .as_deref()
+            .map(|m| percentile_mask1x1(m, padded_width, width, height, 0.25));
+        let edge_density_for_pre_scale: Option<f32> =
+            self.zenanalyze_proxies.map(|p| p.edge_density);
+        #[cfg(feature = "butteraugli-loop")]
+        let effective_buttloop_iters = {
+            let w44_168_mode = if self.resolved_improvements.adaptive_buttloop_iters {
+                w44_168_mode_env()
+            } else {
+                W44_168IterMode::Baseline
+            };
+            w44_168_compute_iters(
+                self.butteraugli_iters,
+                self.effort,
+                mask1x1_median_for_pre_scale,
+                mask1x1_p25_for_pre_scale,
+                edge_density_for_pre_scale,
+                w44_168_mode,
+            )
+        };
+        #[cfg(not(feature = "butteraugli-loop"))]
+        let effective_buttloop_iters: u32 = {
+            // Silence unused-variable warnings when buttloop is off —
+            // the W44-168 inputs only feed the buttloop dispatch.
+            let _ = (mask1x1_p25_for_pre_scale, edge_density_for_pre_scale);
+            0
+        };
+
         // Step 1: Compute float quant field on pre-gaborish XYB.
         //
         // libjxl effort gating (enc_heuristics.cc:1097-1128):
@@ -3556,10 +3791,17 @@ impl VarDctEncoder {
             // callers). `Off` short-circuits the scale to 1.0 (Libjxl
             // strategy).
             let adaptive_quant_qf_seed_policy = self.resolved_improvements.adaptive_quant_qf_seed;
+            // W44-168: feed the W44-168-adjusted `effective_buttloop_iters`
+            // (not the raw `self.butteraugli_iters`) so the W44-105
+            // pre-scale gate doesn't double-apply when Mode C
+            // (TexturedExtend) bumps iters from 0 → 2 at e7. The
+            // existing W44-105 / W44-109 short-circuit
+            // (`butteraugli_iters > 0` → return 1.0) then correctly
+            // declines the pre-scale on cells the buttloop will own.
             let qf_pre_scale =
                 super::butteraugli_loop::resolved_adaptive_quant_qf_seed_scale_with_policy(
                     self.effort,
-                    self.butteraugli_iters,
+                    effective_buttloop_iters,
                     is_screenshot,
                     self.distance,
                     m3,
@@ -4494,8 +4736,14 @@ impl VarDctEncoder {
         // handles global convergence, zensim adds SSIM-aware spatial fine-tuning.
         // Works in float quant field domain with per-iteration global_scale
         // recomputation (matching libjxl FindBestQuantization).
+        // W44-168: gate the buttloop on the ADJUSTED iter count
+        // (not the raw `self.butteraugli_iters`) so Mode C
+        // (TexturedExtend) can promote 0 → 2 at e7 on textured
+        // content. Mode A (Baseline, default) preserves the original
+        // gate semantics because `effective_buttloop_iters ==
+        // self.butteraugli_iters`.
         #[cfg(feature = "butteraugli-loop")]
-        if self.butteraugli_iters > 0 {
+        if effective_buttloop_iters > 0 {
             let initial_qf_float = quant_field_float.clone();
             // W43-3 chunk 1: HdrLoss::Ssim2 dispatch.
             //
@@ -4546,8 +4794,13 @@ impl VarDctEncoder {
                     // needing `with_ssim2_iters`. The legacy
                     // `with_ssim2_iters` path (below) still works for
                     // backward-compat experiments.
+                    //
+                    // W44-168: pass `effective_buttloop_iters` (not
+                    // raw `self.butteraugli_iters`) so the adaptive
+                    // adjustment also applies on the ssim2 buttloop
+                    // path.
                     params = self.ssim2_refine_quant_field_with_iters(
-                        self.butteraugli_iters,
+                        effective_buttloop_iters,
                         linear_rgb,
                         width,
                         height,
@@ -4736,6 +4989,13 @@ impl VarDctEncoder {
                     } else {
                         None
                     },
+                    // W44-168: pass the adaptive iter count via
+                    // `iters_override` so Mode B (SmoothSkip e8+ — 1)
+                    // / Mode C (TexturedExtend e7 0 → 2) / Mode D
+                    // (Combined) take effect. Mode A (Baseline)
+                    // resolves to `self.butteraugli_iters`, byte-
+                    // identical to pre-W44-168.
+                    Some(effective_buttloop_iters),
                 )?;
             }
         }
@@ -7362,5 +7622,215 @@ mod tests {
         // (responsive=0 path still runs).
         enc.alpha_squeeze = false;
         assert!(!enc.alpha_squeeze_engaged(), "flag off wins");
+    }
+
+    // ─────────────────────────── W44-168 helper tests ───────────────────────────
+
+    #[test]
+    fn test_w44_168_baseline_is_noop() {
+        // Mode A (Baseline) must return base_iters unchanged for every
+        // (effort, proxies) input — that's the byte-identical contract.
+        for effort in 0u8..=12 {
+            for base in [0u32, 1, 2, 4, 8, 16, 32] {
+                assert_eq!(
+                    w44_168_compute_iters(
+                        base,
+                        effort,
+                        Some(99.0),
+                        Some(95.0),
+                        Some(0.9),
+                        W44_168IterMode::Baseline,
+                    ),
+                    base,
+                    "Baseline must not modify iters (effort={}, base={})",
+                    effort,
+                    base
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_w44_168_smooth_skip_decrements_at_e8plus_on_smooth() {
+        // Mode B (SmoothSkip): at e>=8 AND smooth (mask_p25>=85 OR
+        // mask_median>95), iters = iters - 1 saturating at 1.
+        // base=2 → 1; base=4 → 3; base=8 → 7.
+        for effort in 8u8..=12 {
+            let r = w44_168_compute_iters(
+                4,
+                effort,
+                Some(50.0),         // not screenshot
+                Some(90.0),         // smooth-photo (>=85)
+                Some(0.1),
+                W44_168IterMode::SmoothSkip,
+            );
+            assert_eq!(r, 3, "smooth photo at e{} should decrement 4→3", effort);
+        }
+
+        // Screenshot path (high mask_median): decrement
+        let r = w44_168_compute_iters(
+            2,
+            8,
+            Some(99.0), // screenshot
+            Some(50.0), // doesn't matter
+            None,
+            W44_168IterMode::SmoothSkip,
+        );
+        assert_eq!(r, 1, "screenshot at e8 should decrement 2→1");
+    }
+
+    #[test]
+    fn test_w44_168_smooth_skip_saturates_at_1() {
+        // base=1 stays at 1 (saturation — never go to 0 in SmoothSkip)
+        let r = w44_168_compute_iters(
+            1,
+            8,
+            Some(99.0),
+            Some(90.0),
+            None,
+            W44_168IterMode::SmoothSkip,
+        );
+        assert_eq!(r, 1, "iters=1 must not decrement to 0 (saturation)");
+    }
+
+    #[test]
+    fn test_w44_168_smooth_skip_does_not_fire_at_e7() {
+        // At e7 base_iters is typically 0; even if proxies look smooth,
+        // SmoothSkip should not change anything (only e>=8).
+        let r = w44_168_compute_iters(
+            7,
+            7,
+            Some(99.0),
+            Some(90.0),
+            None,
+            W44_168IterMode::SmoothSkip,
+        );
+        assert_eq!(r, 7, "SmoothSkip is e>=8 only");
+    }
+
+    #[test]
+    fn test_w44_168_smooth_skip_does_not_fire_on_textured() {
+        // Mode B on textured content (mask_p25 < 85 AND median <= 95)
+        // must NOT decrement.
+        let r = w44_168_compute_iters(
+            4,
+            8,
+            Some(50.0), // not screenshot
+            Some(60.0), // not smooth-photo
+            Some(0.7),  // textured
+            W44_168IterMode::SmoothSkip,
+        );
+        assert_eq!(r, 4, "textured content at e8 must NOT decrement");
+    }
+
+    #[test]
+    fn test_w44_168_textured_extend_fires_at_e7_on_textured() {
+        // Mode C: e==7 AND base_iters==0 AND edge_density>=0.5 → 2 iters.
+        let r = w44_168_compute_iters(
+            0,
+            7,
+            Some(50.0),
+            Some(60.0),
+            Some(0.7),
+            W44_168IterMode::TexturedExtend,
+        );
+        assert_eq!(
+            r, W44_168_TEXTURED_ITERS_AT_E7,
+            "textured photo at e7 (base=0) should extend to {}",
+            W44_168_TEXTURED_ITERS_AT_E7
+        );
+    }
+
+    #[test]
+    fn test_w44_168_textured_extend_does_not_fire_at_e8plus() {
+        // Mode C only fires at e==7; at e>=8 base_iters > 0 already.
+        let r = w44_168_compute_iters(
+            2,
+            8,
+            Some(50.0),
+            Some(60.0),
+            Some(0.7),
+            W44_168IterMode::TexturedExtend,
+        );
+        assert_eq!(r, 2, "TexturedExtend must not fire at e8 (base already >0)");
+    }
+
+    #[test]
+    fn test_w44_168_textured_extend_does_not_fire_on_smooth() {
+        // Mode C on smooth content (edge_density < 0.5) must NOT extend.
+        let r = w44_168_compute_iters(
+            0,
+            7,
+            Some(99.0),
+            Some(90.0),
+            Some(0.1), // smooth
+            W44_168IterMode::TexturedExtend,
+        );
+        assert_eq!(r, 0, "smooth content at e7 must NOT extend");
+    }
+
+    #[test]
+    fn test_w44_168_combined_applies_both() {
+        // Mode D combines B and C. The effort axis (e==7 vs e>=8) makes
+        // them mutually exclusive per-cell.
+        // e7 textured → extend 0→2 (C arm)
+        assert_eq!(
+            w44_168_compute_iters(
+                0,
+                7,
+                None,
+                None,
+                Some(0.6),
+                W44_168IterMode::Combined,
+            ),
+            2
+        );
+        // e8 smooth → decrement 2→1 (B arm)
+        assert_eq!(
+            w44_168_compute_iters(
+                2,
+                8,
+                None,
+                Some(90.0),
+                None,
+                W44_168IterMode::Combined,
+            ),
+            1
+        );
+        // e9 textured → no change (neither arm fires)
+        assert_eq!(
+            w44_168_compute_iters(
+                4,
+                9,
+                Some(50.0),
+                Some(60.0),
+                Some(0.6),
+                W44_168IterMode::Combined,
+            ),
+            4
+        );
+    }
+
+    #[test]
+    fn test_w44_168_is_smooth_predicate() {
+        // mask_median > 95 → smooth (screenshot)
+        assert!(w44_168_is_smooth(Some(99.0), None));
+        assert!(!w44_168_is_smooth(Some(95.0), None)); // strict >
+        // mask_p25 >= 85 → smooth (smooth-photo)
+        assert!(w44_168_is_smooth(None, Some(85.0))); // inclusive
+        assert!(w44_168_is_smooth(None, Some(90.0)));
+        assert!(!w44_168_is_smooth(None, Some(84.9)));
+        // Neither → not smooth
+        assert!(!w44_168_is_smooth(Some(50.0), Some(60.0)));
+        assert!(!w44_168_is_smooth(None, None));
+    }
+
+    #[test]
+    fn test_w44_168_is_textured_predicate() {
+        assert!(w44_168_is_textured(Some(0.5))); // inclusive
+        assert!(w44_168_is_textured(Some(0.7)));
+        assert!(!w44_168_is_textured(Some(0.49)));
+        assert!(!w44_168_is_textured(Some(0.0)));
+        assert!(!w44_168_is_textured(None));
     }
 }

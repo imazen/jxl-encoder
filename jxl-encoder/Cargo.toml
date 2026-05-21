@@ -730,6 +730,19 @@ name = "w44_167_per_m3_find_best_32"
 path = "examples/w44_167_per_m3_find_best_32.rs"
 required-features = ["butteraugli-loop", "ssim2-loop", "__expert"]
 
+# W44-168 (Smart-Zenjxl chunk 5, 2026-05-21) — paired A/B/C/D bench for
+# adaptive `butteraugli_iters` per image content. Mode B (SmoothSkip)
+# saves wall time on smooth/screenshot at e>=8 via iters-1 saturating
+# at 1. Mode C (TexturedExtend) extends e7 textured-content iters from
+# 0→2 (effort blending up). Mode D = both. Per user directive
+# 2026-05-21: "make zenjxl defaults smarter on the rdtime axis ... even
+# if effort levels blend together more". Measures bytes / SSIM2 /
+# butteraugli AND wall-time deltas (the primary rdtime axis metric).
+[[example]]
+name = "w44_168_adaptive_iters"
+path = "examples/w44_168_adaptive_iters.rs"
+required-features = ["butteraugli-loop", "ssim2-loop", "__expert"]
+
 # W44-151 W44-29 widen A/B — measure the Mechanism B photo admission
 # gate (mask_p25 >= 85.0 AND distance >= 3.0) on the W44-147 1418519
 # d=5/6 cluster + W44-118 protection set (1025469) + 4 SPOT photos.
