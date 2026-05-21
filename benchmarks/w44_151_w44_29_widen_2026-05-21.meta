@@ -1,0 +1,197 @@
+W44-151 Mechanism B W44-29 widen — paired interleaved A/B bench (72 cells × 2 modes)
+====================================================================================
+
+Date: 2026-05-21
+Commit (post-revert): <commit>
+Branch: main
+Host: $(hostname)
+Run: cargo run --release --features '__expert butteraugli-loop ssim2-loop parallel' \
+       --example w44_151_w44_29_widen_ab > benchmarks/w44_151_w44_29_widen_2026-05-21.tsv
+
+Status: HONEST-STOP — gate REVERTED; constants + helpers + bench KEPT
+================================================================================
+
+MECHANISM
+=========
+
+Widened W44-29 outer dispatch gate by ORing in a new branch:
+
+    w44_151_gate = (distance >= HIGH_D_PHOTO_MIN_DISTANCE)            // 3.0
+                && (percentile_mask1x1(25) >= W44_151_HIGH_MASK_P25_MIN) // 85.0
+
+Composes with W44-29 (mask_median<50) and W44-91 (mask_median∈[50,80)) by OR.
+Does NOT escalate to variant Z (W44-96 requires mask_median<50 which 1418519
+fails at mask=92). 1418519 lands on the DEFAULT `high_d_photo_smooth_suppressed()`
+table (dct32x32=1.34 vs libjxl stock 1.48, ~9.5% lift).
+
+Reuses the W44-149 audit's `mask_p25 >= 85` discriminator
+(W44_150_PHOTO_W44_117_MASK_P25_MIN). On the 41 CID22 validation photos,
+only 1418519 (mask_p25=88.88) crosses the threshold; nearest CONTROL is
+7552578 at 77.90 (11pp safety margin). 1025469 REJECT at 60.64.
+
+ACCEPTANCE GATE RESULTS
+========================
+
+  Gate      Description                                  Result
+  -------   ------------------------------------------   ------------------
+  (a)       Build with all features                      PASS
+  (b)       cargo test --lib --features __expert         PASS (3 new tests)
+  (c)       Hash-locks 36/36 BYTE-IDENTICAL              PASS
+  (d)       1025469 15/15 BYTE-IDENTICAL                 PASS
+  (e)       4 SPOT photos 48/48 BYTE-IDENTICAL           PASS
+  (f)       1418519 d=5/6 mean SSIM2 >= +1.0             **FAIL** (+0.544)
+  (g)       1418519 d=4 mean SSIM2 >= -0.30              PASS (+0.387)
+  (h)       Multi-decoder roundtrip 4/4                  N/A (gate reverted)
+
+DISCRIMINATOR WORKS PERFECTLY
+==============================
+
+  Mode comparison         Cells       byte-identical
+  ------------------     ------      ---------------
+  Total                  72          63 (87.5%)
+  TARGET (1418519)        9           0 ← all 9 changed (gate fires)
+  PROTECT (1025469)      15          15 (100%) ← gate correctly rejects
+  SPOT (4 photos)        48          48 (100%) ← gate correctly rejects
+
+Hash-locks: 36/36 BYTE-IDENTICAL (gate cannot fire on synthetic 32×32
+fixtures — mask plane not computed, gate degrades to off).
+
+PER-CELL DETAIL on 1418519 (the only image where gate fires)
+=============================================================
+
+  cell                 Δbytes      Δssim2      verdict
+  ------------------   ---------   ---------   ------------------
+  1418519 e7 d=4       -3.43%      +0.0976     win
+  1418519 e8 d=4       -2.82%      +0.5172     strong win
+  1418519 e9 d=4       -3.08%      +0.5460     strong win
+  1418519 e7 d=5       -0.29%      +0.3764     win
+  1418519 e8 d=5       +0.68%      +1.1305     strong win
+  1418519 e9 d=5       +1.07%      +1.1305     strong win
+  1418519 e7 d=6       +4.27%      +0.0696     bytes regress, no SSIM2
+  1418519 e8 d=6       +4.62%      +0.2787     bytes regress, weak SSIM2
+  1418519 e9 d=6       +4.31%      +0.2787     bytes regress, weak SSIM2
+
+d=4 cluster: -2.8 to -3.4% bytes AND +0.10 to +0.55 SSIM2 — universal win.
+d=5 cluster: at parity bytes AND +0.38 to +1.13 SSIM2 — strong win at e8+.
+d=6 cluster: +4.3 to +4.6% bytes for only +0.07 to +0.28 SSIM2 — REGRESSION.
+
+The d=6 cells drag the d=5/6 mean from a clear win (d=5 mean = +0.871) down
+to +0.544, FAILING the +1.0 hard gate that the task spec required (50%
+closure of the W44-147-measured -2.17/-2.57 SSIM2 deficit).
+
+WHY THE D=6 CELLS LOSE BYTES
+==============================
+
+At d=6 the libjxl-faithful entropy_mul table's dct32x32=1.48 was already
+selecting DCT32X32 aggressively for 1418519's flat regions (mask=92). The
+W44-151 lift (1.34) shifts MORE blocks to DCT32X32, but at d=6 the quantizer
+is so coarse that those new DCT32X32 picks produce MORE non-zero
+coefficients (due to LF-band quantization spread) than the DCT16X16 splits
+they replace. The +4.3-4.6% bytes is the cost of those extra non-zero LF
+coefficients. The marginal SSIM2 recovery (+0.07 to +0.28) is small because
+DCT32X32's spatial averaging at d=6 already produces visible blocking on
+1418519's mid-frequency texture; pushing more blocks into that mode doesn't
+help quality.
+
+HONEST-STOP DISPOSITION
+========================
+
+Per W44-151 task spec, gate REVERTED. The change to:
+
+  jxl-encoder/src/vardct/encoder.rs:
+    - `W44_151_HIGH_MASK_P25_MIN = 85.0` constant: KEPT (documentation +
+      reuse — see W44-152+ candidates below)
+    - `compute_profile_for_search` signature extension (added
+      `mask1x1_p25: Option<f32>` parameter): KEPT (passes p25 through
+      so future chunks don't need plumbing rewire)
+    - W44-151 OR-branch in both inline dispatch (encode_inner) and helper
+      (compute_profile_for_search): REVERTED to a no-op (env hook removed,
+      branch returns false unconditionally) — the constant + helper +
+      threading remain so a follow-on chunk can re-enable with a
+      tighter gate.
+    - `percentile_mask1x1` helper: KEPT non-dead (consumed by
+      `mask1x1_p25` plumbing even though gate is no-op).
+  jxl-encoder/src/vardct/bitstream.rs:
+    - `mask1x1_p25_for_search` compute: KEPT (negligible cost, threaded
+      through helper).
+  jxl-encoder/examples/w44_151_w44_29_widen_ab.rs: KEPT as measurement
+    reproducer. Env hook `JXL_W44_151_DISABLE=1` no longer wired since
+    both modes are byte-identical post-revert.
+  jxl-encoder/examples/w44_151_decoder_check.rs: KEPT — produces files
+    via the default path (now byte-identical to the legacy path), so
+    PASS is trivial.
+  docs/LIBJXL_DIVERGENCES.md Section B: W44-151 row added with HONEST-STOP
+    status + the d=6 falsification.
+  docs/LIBJXL_DIVERGENCES.md Section F (KNOWN-BUG clusters): 1418519
+    d=5/6 cluster entry updated to mention W44-151 ruled out the broad
+    [d=3..6] band; the cluster remains OPEN with a narrower W44-152
+    candidate.
+
+PIVOT RECOMMENDATIONS (W44-152+)
+=================================
+
+1. **W44-152 candidate A**: re-fire the same gate but cap distance at
+   d <= 5 (drop d=6 cells). Predicted result: 1418519 e8/e9 d=5 ship
+   the +1.13 SSIM2 / +1% bytes win; d=4 cells ship -3% bytes / +0.55
+   SSIM2 win; d=6 stays on legacy. Mean SSIM2 across the now-5-cell
+   d=4..5 band = +0.71 (passes a relaxed +0.5 acceptance bar; FAILS
+   the W44-151 spec's +1.0 bar which assumes the full d=4..6 range).
+   EV: medium (the d=6 deficit stays open).
+
+2. **W44-152 candidate B**: pair the W44-149 discriminator with a
+   DIFFERENT mechanism at d=6 — variant Z's dct32x32=1.24 lift might
+   be too coarse for high-mask 1418519. A milder lift (e.g.,
+   `dct32x32=1.40`, narrowing the gap from 1.48) might produce strong
+   d=5/6 SSIM2 wins without the +4% bytes cost at d=6. Requires a new
+   `high_d_photo_smooth_p25_admit()` table variant. 1d work.
+
+3. **W44-152 candidate C**: route 1418519 to a per-image content
+   classifier that picks DIFFERENT entropy_mul values for different
+   distance bands. Mirrors the W44-105/107 (buttloop scale) +
+   W44-91/96 (variant Z) nested-discriminator pattern but applied to
+   the table itself, not the gate. Multi-day.
+
+4. **W44-152 candidate D (highest-EV)**: root-cause the underlying
+   1418519 d=5/6 -2.17/-2.57 SSIM2 deficit. Likely a buttloop
+   measurement / strategy-selection issue at d>=4 on high-mask content
+   that no entropy_mul lift can fix. Mirrors W44-103's terminal d=4
+   per-strategy dump methodology. Multi-day.
+
+DO NOT
+======
+
+- DO NOT re-attempt the original [d=3, d=∞) gate without first verifying
+  d=6 1418519 bytes — measurement is conclusive that the dct32x32 lift
+  hurts bytes at very-coarse-quantizer territory.
+- DO NOT lower W44_151_HIGH_MASK_P25_MIN below 85 — the W44-149 audit's
+  11pp safety margin would shrink and could admit unintended photos
+  (7552578 at p25=77.90 is the next-nearest CONTROL).
+- DO NOT cite "FMA precision" for the d=6 byte regression
+  (per W44-66 user correction — it is NEVER FMA precision).
+- DO NOT respawn the W44-151 chunk with the same gate — the falsification
+  is robust across all 3 effort levels (e7/e8/e9).
+
+REPRODUCTION
+============
+
+  cd ~/work/zen/jxl-encoder
+  cargo build --release --features '__expert butteraugli-loop ssim2-loop parallel'
+  cargo test --lib --features '__expert' percentile_mask1x1
+  cargo test --lib --features '__expert' w44_151
+  cargo test --release --features '__expert butteraugli-loop ssim2-loop parallel' \
+    --test hash_lock_features
+  # The env hook JXL_W44_151_DISABLE is removed in the revert. To re-measure
+  # the WIDENED gate, restore the env-gated branch shown in the W44-151
+  # pre-revert diff (encoder.rs `w44_151_gate`).
+
+FILES
+=====
+
+  benchmarks/w44_151_w44_29_widen_2026-05-21.tsv (this run, 72 cells × 2 modes)
+  benchmarks/w44_151_w44_29_widen_2026-05-21.meta (this file)
+  jxl-encoder/examples/w44_151_w44_29_widen_ab.rs (registered reproducer)
+  jxl-encoder/examples/w44_151_decoder_check.rs (decoder check, trivially PASS post-revert)
+  jxl-encoder/src/vardct/encoder.rs (W44_151_HIGH_MASK_P25_MIN + revert comment)
+  jxl-encoder/src/vardct/bitstream.rs (mask1x1_p25_for_search compute, threads through helper)
+  docs/LIBJXL_DIVERGENCES.md Section B + F (W44-151 row added with HONEST-STOP status)
+  ~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_151_mechanism_b_w44_29_widen_2026-05-21.md

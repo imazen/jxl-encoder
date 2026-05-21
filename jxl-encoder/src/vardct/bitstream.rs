@@ -1825,7 +1825,14 @@ impl VarDctEncoder {
         let mask1x1_median_for_search = mask1x1
             .as_deref()
             .map(|m| super::encoder::median_mask1x1(m, padded_width, width, height));
-        let profile_for_search = self.compute_profile_for_search(mask1x1_median_for_search);
+        // W44-151: also compute mask1x1 p25 for the new mask_p25 >= 85
+        // admission branch in the W44-29 outer gate. Same None-semantics
+        // (mask1x1 unavailable → gate degrades to off).
+        let mask1x1_p25_for_search = mask1x1
+            .as_deref()
+            .map(|m| super::encoder::percentile_mask1x1(m, padded_width, width, height, 0.25));
+        let profile_for_search =
+            self.compute_profile_for_search(mask1x1_median_for_search, mask1x1_p25_for_search);
         let active_profile_for_search = profile_for_search.as_ref().unwrap_or(&self.profile);
 
         // `ac_strategy` may be refined by the zensim loop below, which

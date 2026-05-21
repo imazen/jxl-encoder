@@ -690,6 +690,22 @@ name = "w44_150_phase2_ab"
 path = "examples/w44_150_phase2_ab.rs"
 required-features = ["butteraugli-loop", "ssim2-loop"]
 
+# W44-151 W44-29 widen A/B — measure the Mechanism B photo admission
+# gate (mask_p25 >= 85.0 AND distance >= 3.0) on the W44-147 1418519
+# d=5/6 cluster + W44-118 protection set (1025469) + 4 SPOT photos.
+# 72 cells × 2 modes (A = JXL_W44_151_DISABLE=1 baseline, B = default).
+[[example]]
+name = "w44_151_w44_29_widen_ab"
+path = "examples/w44_151_w44_29_widen_ab.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop"]
+
+# W44-151 decoder check — verify multi-decoder roundtrip (jxl-oxide +
+# djxl) on the 2 changed cells (1418519 e8 d=5 + e9 d=6) under the
+# Mechanism B photo admission gate.
+[[example]]
+name = "w44_151_decoder_check"
+path = "examples/w44_151_decoder_check.rs"
+
 # W44-119 chain-disable A/B — paired A/B comparison of the
 # W44-105/107/108/109 qac-scale chain ON vs OFF, after the W44-117/118
 # EPF sharpness seed fix. Tests whether the chain is still needed now
