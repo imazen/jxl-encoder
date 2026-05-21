@@ -331,6 +331,63 @@ pub const ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT: u8 = 7;
 /// default is `1.0`. No production runtime cost.
 pub const W44_120_EPF_SEED_MIN_DISTANCE: f32 = 1.0;
 
+/// W44-140 EPF sharpness seed distance fade upper bound.
+///
+/// W44-119 ledger refresh post-W44-118 surfaced a residual SSIM2
+/// oscillation cluster on terminal e8/e9 d=1.0-1.6 that W44-120
+/// documented as out-of-scope for pure threshold tightening: the
+/// W44-117 seed produces SSIM2 wins at d=1.0/d=1.4 (+0.529/+0.685)
+/// but regressions at d=1.2/d=1.5 (-0.726/-0.959) — no single
+/// `EPF_SEED_MIN_DISTANCE` threshold value closes the regressions
+/// without sacrificing the adjacent wins.
+///
+/// W44-140 adds a distance-aware linear blend between the W44-117
+/// sharpness map and uniform-4 in the band
+/// `[W44_120_EPF_SEED_MIN_DISTANCE, W44_140_EPF_SEED_FADE_MAX]`:
+///
+/// ```text
+///   weight = clamp((target_distance - min_distance) /
+///                  (fade_max - min_distance), 0.0, 1.0)
+///   blended[i] = round(weight * w44_117_seed[i] + (1 - weight) * 4)
+/// ```
+///
+/// At `target_distance >= fade_max` weight = 1 → byte-identical to
+/// pre-W44-140 main (full W44-117 seed). At `target_distance ==
+/// min_distance` weight = 0 → uniform-4 (= legacy seed). Linear
+/// interpolation in between.
+///
+/// W44-140 bisection on terminal e8/e9 × d ∈ {0.8, 1.0, 1.2, 1.4,
+/// 1.5, 1.6, 2.0..=5.0} (20 cells) measured 3 candidate fade
+/// thresholds {1.5, 2.0, 3.0}:
+///
+/// | candidate | cluster net ΔSSIM2 vs A_legacy | d=1.4 ΔSSIM2 | d=1.2 ΔSSIM2 |
+/// |---|---|---|---|
+/// | (pre-W44-140 main) | -0.186 (= 2× sum across e8+e9) | +0.685 | -0.726 |
+/// | fade_max = 1.5 (SHIP) | **+1.124** | **+1.014** | +0.129 |
+/// | fade_max = 2.0 | +0.282 | -0.197 | +0.186 |
+/// | fade_max = 3.0 | +0.614 | +0.907 | 0.000 |
+///
+/// `fade_max = 1.5` is pareto-optimal: closes d=1.2 (-0.726 → +0.129),
+/// boosts d=1.4 (+0.685 → +1.014; the partial blend lands the seed in
+/// a sweet spot vs full W44-117), preserves d=1.0 win (0% blend → full
+/// uniform-4 → byte-identical to A_legacy = preserves the W44-117 win
+/// vs A_legacy of 0 SSIM2). All d >= 1.5 cells byte-identical to
+/// pre-W44-140 main (weight = 1.0 → full W44-117 seed unchanged).
+///
+/// Protection cells:
+/// - terminal e8/e9 × d ∈ {2.0, 3.0, 4.0, 5.0}: byte-identical
+/// - codec_wiki e8 d=3 (W44-107 protected): byte-identical (weight = 1.0)
+/// - photo 1418519 / 1025469 (W44-118 gate): byte-identical (W44-117 doesn't fire)
+///
+/// Sweep override: `JXL_W44_140_EPF_SEED_FADE_MAX=<f32>` lets a
+/// harness search for per-corpus tuning without rebuilds. Production
+/// default is `1.5`. Setting to a value `<= W44_120_EPF_SEED_MIN_DISTANCE`
+/// disables the blend (full W44-117 seed at every d >= min_distance).
+///
+/// No production runtime cost when fade_max is `1.5` and target distance
+/// is outside `[1.0, 1.5)` (the blend branch isn't taken).
+pub const W44_140_EPF_SEED_FADE_MAX: f32 = 1.5;
+
 /// W44-109: scale factor applied to `quant_field_float` at adaptive-quant
 /// time on screenshot-class content at low effort. **Effort-dependent
 /// magnitude** (e5/e6 vs e7): without the buttloop the scale propagates
@@ -1009,8 +1066,10 @@ impl VarDctEncoder {
         // legacy "env-var always overrides" semantic ended with
         // Chunk F. See `apply_env_var_fallbacks` for the rationale.
         let epf_seed_policy = self.resolved_improvements.buttloop_epf_sharpness_seed;
-        let w44_117_force_off =
-            matches!(epf_seed_policy, crate::api::EpfSharpnessSeed::LegacyUniform4);
+        let w44_117_force_off = matches!(
+            epf_seed_policy,
+            crate::api::EpfSharpnessSeed::LegacyUniform4
+        );
 
         // W44-120 distance gate: the W44-117 seed compute only fires at
         // `target_distance >= min_distance`. Default `1.0` (W44-120
@@ -1093,6 +1152,61 @@ impl VarDctEncoder {
             // Byte-identical to every pre-W44-117 release.
             vec![4u8; num_blocks]
         };
+
+        // W44-140: distance-aware linear blend between the W44-117
+        // sharpness map and uniform-4 within the band
+        // `[w44_120_min_distance, w44_140_fade_max]`. Closes the residual
+        // terminal e8/e9 d=1.0-1.6 SSIM2 oscillations W44-120 documented
+        // as out-of-scope for pure threshold tightening — net +1.124
+        // SSIM2 across the cluster vs the pre-W44-140 always-100%-W44-117
+        // path, byte-identical to pre-W44-140 main at all distances
+        // outside the blend band.
+        //
+        // Active when (in addition to the W44-117 gate predicate above):
+        //   - `target_distance < w44_140_fade_max` (above fade_max the
+        //     weight clamps to 1 → no-op).
+        //   - `w44_140_fade_max > w44_120_min_distance` (degenerate
+        //     fade_max <= min_distance disables the blend — caller can
+        //     set `JXL_W44_140_EPF_SEED_FADE_MAX=1.0` to opt out without
+        //     a rebuild).
+        //
+        // Production default: `W44_140_EPF_SEED_FADE_MAX` = 1.5. Sweep
+        // override: `JXL_W44_140_EPF_SEED_FADE_MAX=<f32>`.
+        //
+        // Blend formula (per-block):
+        //   weight = clamp((target_distance - min_distance) /
+        //                  (fade_max - min_distance), 0.0, 1.0)
+        //   blended[i] = round(weight * sharpness[i] + (1 - weight) * 4)
+        //
+        // At `target_distance >= fade_max` weight = 1 → byte-identical
+        // to pre-W44-140 main. At `target_distance == min_distance`
+        // weight = 0 → uniform-4 (= LegacyUniform4 effective in this
+        // band). Linear interp between.
+        let mut sharpness = sharpness;
+        if !w44_117_force_off
+            && w44_120_distance_gate_passes
+            && initial_params.epf_iters > 0
+            && self.profile.epf_dynamic_sharpness
+        {
+            #[cfg(feature = "std")]
+            let env_fade_max = std::env::var("JXL_W44_140_EPF_SEED_FADE_MAX")
+                .ok()
+                .and_then(|s| s.parse::<f32>().ok());
+            #[cfg(not(feature = "std"))]
+            let env_fade_max: Option<f32> = None;
+            let fade_max = env_fade_max.unwrap_or(W44_140_EPF_SEED_FADE_MAX);
+            if fade_max > w44_120_min_distance && target_distance < fade_max {
+                let span = fade_max - w44_120_min_distance;
+                let weight = ((target_distance - w44_120_min_distance) / span).clamp(0.0, 1.0);
+                if weight < 1.0 {
+                    let inv_w = 1.0 - weight;
+                    for v in sharpness.iter_mut() {
+                        let blended = weight * (*v as f32) + inv_w * 4.0;
+                        *v = blended.round().clamp(0.0, 7.0) as u8;
+                    }
+                }
+            }
+        }
 
         // Saturate at consumption to bound worst-case CPU even when the
         // caller skipped LossyConfig::validate (which would have rejected

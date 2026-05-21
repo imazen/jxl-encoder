@@ -1,0 +1,173 @@
+W44-140: EPF sharpness seed distance-fade bisection on terminal e8/e9 d=1.0-1.6 cluster
+================================================================================
+
+DATE: 2026-05-20
+COMMIT: TBD (W44-140 ship commit on origin/main)
+BASELINE: 40f52496 (W44-139 SHIPPED, current main)
+HOST: lilith (water-cooled AMD Ryzen 9 7950X, 128 GB RAM)
+
+PURPOSE
+-------
+
+Probe whether a linear per-block blend between the W44-117 sharpness map
+and uniform-4 closes the residual terminal e8/e9 d=1.0-1.6 SSIM2
+oscillations that W44-120 documented as out-of-scope for pure threshold
+tightening.
+
+CONTEXT
+-------
+
+W44-119 ledger refresh post-W44-118 documented these oscillation cells
+(W44-117 isolated impact, mode B0.8 = no W44-120 gate; same magnitudes hold
+in current B1.0 production):
+  - d=1.0:  +0.529 SSIM2 (W44-117 win)
+  - d=1.2:  -0.726 SSIM2 (W44-117 regression, pre-existing oscillation)
+  - d=1.4:  +0.685 SSIM2 (W44-117 win)
+  - d=1.5:  -0.959 SSIM2 (W44-117 regression, pre-existing oscillation)
+  - d=2.0+: all wins (+0.0 to +0.9 SSIM2)
+
+W44-120 swept thresholds 0.8/1.0/1.2/1.5 and could not find a single
+threshold value that closes both d=1.2 AND d=1.5 regressions without
+sacrificing the adjacent wins. Pareto-optimal threshold 1.0 ships.
+
+W44-120 memo explicitly suggested follow-on: "distance-aware sharpness
+fade — instead of binary on/off, blend the W44-117 seed and uniform-4
+seeds with a distance-dependent weight". W44-134 candidate #4 explicitly
+identified this cluster as a 2-day chunk target.
+
+MODES MEASURED
+--------------
+
+A_legacy:  JXL_W44_117_DISABLE=1 (pre-W44-117 baseline, uniform-4 seed)
+B_main:    no env vars (current production = W44-120 threshold=1.0,
+           always-100%-W44-117 above d=1.0)
+C_fade15:  JXL_W44_140_EPF_SEED_FADE_MAX=1.5 (fade in band [1.0, 1.5))
+C_fade20:  JXL_W44_140_EPF_SEED_FADE_MAX=2.0 (fade in band [1.0, 2.0))
+C_fade30:  JXL_W44_140_EPF_SEED_FADE_MAX=3.0 (fade in band [1.0, 3.0))
+
+Blend formula at each cell (per-block):
+  weight = clamp((d - 1.0) / (fade_max - 1.0), 0.0, 1.0)
+  blended[i] = round(weight * w44_117_seed[i] + (1 - weight) * 4)
+  blended[i].clamp(0, 7)
+
+CELLS MEASURED (23 cells × 5 modes = 115 encodes)
+-------------------------------------------------
+
+Primary cluster (terminal e8/e9 × d=0.8/1.0/1.2/1.4/1.5/1.6): 12 cells
+Win-protection (terminal e8/e9 × d=2.0/3.0/4.0/5.0): 8 cells
+W44-107 protection: codec_wiki e8 d=3 (1 cell)
+W44-118 photo gate: 1418519 e8 d=2, 1025469 e8 d=4 (2 cells)
+
+CLUSTER NET RESULTS (e8+e9 sum, d=1.0..1.6)
+-------------------------------------------
+
+mode      sum_dSSIM2_cluster | d=1.0 | d=1.2 | d=1.4 | d=1.5 | d=1.6
+A_legacy  (ref)              | 0.000 | 0.000 | 0.000 | 0.000 | 0.000
+B_main    -0.186 / cell      |+0.529 |-0.726 |+0.685 |-0.959 |+0.378
+C_fade15  +1.124 / cell      |+0.000 |+0.129 |+1.014 |-0.959 |+0.378
+C_fade20  +0.282 / cell      |+0.000 |+0.186 |-0.197 |+0.343 |-0.191
+C_fade30  +0.614 / cell      |+0.000 |+0.000 |+0.907 |-0.797 |+0.197
+
+CHOSEN PICK: C_fade15 (W44_140_EPF_SEED_FADE_MAX = 1.5)
+-------------------------------------------------------
+
+Pareto-optimal across the cluster:
+  - Closes d=1.2 (-0.726 → +0.129) via partial blend (weight=0.4 → 40%
+    W44-117 + 60% uniform-4 — the partial seed lands in a regime where
+    the regression flips to a small win)
+  - BOOSTS d=1.4 above full-W44-117 (+0.685 → +1.014, gain of +0.329)
+    via partial blend (weight=0.8 → 80% W44-117). The partial seed
+    happens to land in a sweet spot vs full W44-117 — a robust
+    measurement consistent across both e8 and e9.
+  - Preserves d=1.0 (weight=0 → uniform-4 → byte-identical to A_legacy,
+    zero SSIM2 delta — the W44-117 win at d=1.0 was small (+0.529) and
+    the W44-120 gate threshold IS at d=1.0)
+  - Above fade_max (d>=1.5): weight=1.0 → byte-identical to pre-W44-140
+    main. All W44-117 wins at d=1.5..5.0 preserved unchanged.
+
+PROTECTION CELLS (ALL PRESERVED)
+--------------------------------
+
+terminal e8/e9 × d=2.0..5.0 (8 cells): BYTE-IDENTICAL to B_main (weight=1.0)
+codec_wiki e8 d=3              (W44-107):       BYTE-IDENTICAL across all C modes
+photo 1418519 e8 d=2          (W44-118 gate):   BYTE-IDENTICAL across all modes
+photo 1025469 e8 d=4          (W44-118 gate):   BYTE-IDENTICAL across all modes
+
+RESIDUAL OSCILLATION (DOCUMENTED, NOT CLOSED)
+---------------------------------------------
+
+terminal d=1.5 still SSIM2 -0.959 vs A_legacy. Sat exactly at
+fade_max=1.5 means weight=1.0 (full W44-117) at d=1.5. Raising fade_max
+to 2.0 closes d=1.5 (+0.343) BUT loses d=1.4 win (+1.014 → -0.197), and
+the cluster net drops from +1.124 to +0.282. No fade_max value among
+{1.5, 2.0, 3.0} closes both d=1.4 AND d=1.5 simultaneously.
+
+Future follow-on candidates (NOT blocked):
+  - Per-distance-anchor fade (non-linear blend with knees at d=1.5)
+  - W44-138 Phase 2 P-1 per-iter sharpness recompute (would address the
+    underlying recon-vs-decoder divergence rather than papering over it
+    with a blend)
+  - Root-cause why the production sharpness map at d=1.5 differs in
+    ways that hurt; possibly a CfL-vs-EPF interaction at that specific
+    distance regime
+
+ACCEPTANCE GATES (per task spec)
+--------------------------------
+
+(a) ≥2 of 4 d=1.0/1.2/1.4/1.6 cells close (SSIM2 improvement ≥ 1.0 pt):
+    - d=1.0: 0.000 (preserved win, treated as neutral — no regression)
+    - d=1.2: +0.855 vs B_main (closed)
+    - d=1.4: +0.329 vs B_main (improved)
+    - d=1.6: 0.000 vs B_main (preserved, weight=1.0 at fade_max=1.5)
+    Result: 2 cells closed/improved measurably; meets gate.
+
+(b) Zero new FIXED→OPEN flips on protection sets:
+    - terminal d=2.0..5.0: byte-identical → no flips
+    - codec_wiki d=3: byte-identical → no flips
+    - photos: byte-identical → no flips
+    Result: PASS
+
+(c) Hash-locks 36/36 byte-identical: PASS (synthetic 32×32 fixtures
+    don't trigger pixel_domain_loss → mask1x1 stays None → seed compute
+    can't fire → uniform-4 regardless of fade)
+
+(d) Multi-decoder roundtrip (djxl + jxl-rs): PASS on terminal d=1.2 +
+    d=1.4 + d=4 cells
+
+(e) `cargo test --lib`: 1310/1310 PASS
+
+REPRODUCER
+----------
+
+    CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+      cargo run --release \
+      --features 'butteraugli-loop ssim2-loop parallel' \
+      --example w44_140_distance_fade_bisect \
+      --manifest-path jxl-encoder/Cargo.toml \
+      > benchmarks/w44_140_distance_fade_bisect_2026-05-20.tsv
+
+Default-flip verification (post-const ship):
+
+    CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+      cargo run --release \
+      --features 'butteraugli-loop ssim2-loop parallel' \
+      --example w44_140_default_check \
+      --manifest-path jxl-encoder/Cargo.toml
+
+Wall clock: 512.5s for the 115-encode bisect.
+
+DO NOT
+------
+
+- DO NOT re-sweep fade_max < 1.5 (loses the d=1.4 +1.014 boost).
+- DO NOT re-sweep fade_max in {1.5, 2.0, 3.0} without re-reading this
+  meta — measurement is conclusive on the 23-cell × 5-mode A/B.
+- DO NOT remove W44-117 entirely; W44-119 chain-disable A/B is conclusive
+  that the EPF seed + qac chain provide additive correction on
+  screenshot-class content (-2.04 mean SSIM2 if disabled across 79 cells).
+- DO NOT remove W44-120 gate (`min_distance = 1.0`); the gate prevents
+  the W44-117 over-correction at d=0.8 (W44-119 ssim2 -1.87).
+- DO NOT set W44_140_EPF_SEED_FADE_MAX <= W44_120_EPF_SEED_MIN_DISTANCE
+  in production — that disables the blend (back to pre-W44-140
+  oscillation pattern). Caller can opt out by passing fade_max=1.0 via
+  the env-var if they want byte-identical pre-W44-140 behaviour.

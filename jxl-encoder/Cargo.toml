@@ -706,6 +706,23 @@ name = "w44_120_decoder_check"
 path = "examples/w44_120_decoder_check.rs"
 required-features = ["butteraugli-loop"]
 
+# W44-140 distance-fade bisection — probes whether a linear per-block
+# blend between the W44-117 sharpness map and uniform-4 closes the
+# residual terminal e8/e9 d=1.0-1.6 SSIM2 oscillations that W44-120
+# documented as out-of-scope for pure threshold tightening.
+[[example]]
+name = "w44_140_distance_fade_bisect"
+path = "examples/w44_140_distance_fade_bisect.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
+# W44-140 default-flip verification — confirms the new const default
+# (fade_max=1.5) matches the prior C_fade15 bisect winner, and the
+# fade-off path (env=1.0) matches prior B_main behavior.
+[[example]]
+name = "w44_140_default_check"
+path = "examples/w44_140_default_check.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
 # RFC#45 chunk 1: e10/e11 paired A/B/C bench.
 # Needs the butteraugli-loop feature to enable e10/e11 iter extensions.
 [[example]]
