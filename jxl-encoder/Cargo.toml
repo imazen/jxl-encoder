@@ -1244,6 +1244,19 @@ name = "w44_172_dc_tree_e8_predictor_set_ab"
 path = "examples/w44_172_dc_tree_e8_predictor_set_ab.rs"
 required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-175: parallel `transform_and_quantize_into` (buttloop per-iter group
+# fan-out) + parallel `find_best_split_variable` (DC tree property scan).
+# Mode A forces both back to sequential via env hooks; Mode B is the W44-175
+# default (both parallel via rayon). Output is byte-identical A vs B because
+# the parallel reductions are deterministic — only wall-time changes.
+# Multi-threaded encode (default rayon pool) to demonstrate that the buttloop
+# pipeline now actually scales with thread count, which pre-W44-175 it did
+# not (single-thread wall == multi-thread wall on every wedge cell).
+[[example]]
+name = "w44_175_parallel_buttloop_ab"
+path = "examples/w44_175_parallel_buttloop_ab.rs"
+required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
+
 [[example]]
 name = "w44_20_codec_wiki_coverage"
 path = "examples/w44_20_codec_wiki_coverage.rs"
