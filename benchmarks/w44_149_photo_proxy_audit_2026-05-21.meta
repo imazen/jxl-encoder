@@ -1,0 +1,130 @@
+W44-149 Phase 1: Photo discriminator audit for 1418519 W44-117 admission
+==========================================================================
+
+DATE       2026-05-21
+GIT_REV    2a303428fe46443d3d5dca26ec7925df579ed616  (W44-148 main)
+HOST       lilith
+TARGET_DIR $HOME/work/zen/jxl-encoder-shared-target
+TSV        benchmarks/w44_149_photo_proxy_audit_2026-05-21.tsv
+ANALYSIS   ~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_149_mechanism_a_proxy_audit_2026-05-21.md
+
+PURPOSE
+-------
+Find a sub-discriminator that admits the 1418519 photo to the W44-117
+EPF sharpness seed (closes -2.57 SSIM2 deficit per W44-147 audit) while
+EXCLUDING 1025469 (W44-118 protected; -0.85 SSIM2 regression if W44-117
+fires there) and the other 39 CID22 validation photos.
+
+PROBE BATTERY (28 features per image)
+-------------------------------------
+Reused W44-91 + W44-96 ZenanalyzeProxies definitions (bit-equivalent to
+zenanalyze tier1.rs):
+- m3_colourfulness (Hasler-Süsstrunk sRGB u8)
+- flat_color_block_ratio (per-channel range <= 4 on every 8x8)
+- edge_density (Sobel BT.601 luma, threshold 30)
+
+Plus mask1x1 percentiles (median, p10, p25, p75, p90) from the existing
+pipeline's pixel_domain_loss path (computed once at d=5 e7 reference).
+
+Plus auxiliary candidates (W44-149 additions, all O(W*H) cheap):
+- mean_luma (BT.601)
+- low_luma_ratio (Y < 32)
+- high_luma_ratio (Y > 224)
+- chroma_block_ratio (8x8 blocks with X+B variance > 0.001)
+- XYB-plane variances (X/Y/B)
+- xb_var_ratio ((var_x+var_b)/var_y)
+- flat_x_block_ratio
+- masking field percentiles
+- high_freq_energy_ratio (Y plane)
+- palette_log2_size
+
+CORPUS
+------
+All 41 CID22-512 validation photos at
+~/work/codec-corpus/CID22/CID22-512/validation/
+(canonical reference set per W44-101 ledger).
+
+CLASSES
+-------
+WANT    = 1418519.png — admit to W44-117 (closes -2.57 SSIM2 deficit)
+REJECT  = 1025469.png — must stay excluded (W44-118 closed -0.85 SSIM2)
+CONTROL = remaining 39 CID22 validation photos — default-suppress for
+          safety (no measured W44-117 EV)
+
+REPRO
+-----
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run --release \
+    --features __pre_quantized \
+    --example w44_149_photo_proxy_audit \
+    --manifest-path jxl-encoder/Cargo.toml \
+    > benchmarks/w44_149_photo_proxy_audit_2026-05-21.tsv
+
+RUNTIME    ~6 minutes (41 EncoderPrecomputed::compute calls at d=5 e7)
+
+KEY FINDING (full analysis in memory note)
+------------------------------------------
+SINGLE-AXIS CLEAN SPLITTER: `mask_p25 >= 85`
+
+- 1418519 (WANT): mask_p25 = 88.880  ← FIRES
+- 1025469 (REJECT): mask_p25 = 60.639 ← blocked
+- nearest CONTROL: 7552578.png at 77.900 (gap = 10.98)
+- all other 38 CONTROL photos at mask_p25 < 78
+
+Fires on exactly 1 of 41 photos (1418519 only). Gap to next-closest
+control is 11.0 percentage points — strong safety margin.
+
+ALSO RAN: `mask_med >= 92.0`, `mask_p10 >= 71.0` (both fire on 1418519
+only with similar safety margins). `mask_p25` chosen as primary
+recommendation because the WANT-to-nearest-CONTROL gap is widest (10.98
+vs mask_med's 0.85, mask_p10's 2.20).
+
+ALSO RAN: Single-axis high_luma_ratio, mean_luma, fcbr, m3_colour —
+NONE cleanly separate WANT from CONTROL (multiple CONTROL photos
+land above WANT's value on every one).
+
+VERDICT
+-------
+CLEAN DISCRIMINATOR EXISTS at proxy level: `mask_p25 >= 85`.
+
+W44-150 Phase 2 (separate chunk) needs to:
+1. Add a new admission path in vardct/encoder.rs:3867 (the W44-118
+   is_screenshot gate site) that ALSO admits when:
+     mask_p25(mask1x1) >= W44_150_PHOTO_W44_117_MASK_P25_MIN (85.0)
+   AND target_distance >= 4.0 (avoid low-d where W44-120 already
+   excludes screen content for the same reason).
+2. Validate that admitting 1418519 actually moves SSIM2 (per W44-139,
+   the +0.034 R divergence exists but ssim2-cost is unverified — Phase
+   2 measurement must confirm before shipping).
+3. Re-verify 1025469 e8/e9 d=4 stays byte-identical (W44-118
+   protection set) since its mask_p25 = 60.64 fails the new gate.
+4. Sweep the remaining 39 CONTROL CID22 photos at d=5/6 e7/e8/e9 to
+   confirm zero unintended fires (predicted from this audit: zero).
+
+CONCERN: Single-image discriminator (1 of 41). Could be brittle — the
+PROXY threshold works for the AVAILABLE measurement set, but other
+1418519-class photos (uniform-bright-smooth photos) in the wider corpus
+universe might or might not benefit similarly. Phase 2 acceptance
+should include a "broader corpus dry-run" on ~50 photos outside CID22
+to confirm the gate firing rate stays low and predictable.
+
+CROSS-REFS
+----------
+- memory/w44_147_photo_audit_2026-05-21.md (origin; ranked
+  Mechanism A as candidate #2)
+- memory/w44_148_variant_z_dct32_raise_2026-05-21.md (Mechanism B
+  shipped; left 1418519 untouched)
+- memory/w44_117_epf_sharpness_seed_shipped_2026-05-20.md (W44-117
+  origin, screenshot-only)
+- memory/w44_118_screenshot_gate_shipped_2026-05-20.md (W44-118 hard
+  gate, REJECT mechanism for 1025469)
+- memory/w44_139_ssim2_cost_gate_2026-05-20.md (CAVEAT: measured the
+  +0.034 R divergence is real but ssim2-neutral in PRODUCTION today;
+  Phase 2 must add a bypass hook to validate the SSIM2 prediction
+  before shipping)
+- memory/w44_91_zenanalyze_dispatch_1189261_shipped_2026-05-19.md
+  (template for adding a new discriminator using the existing
+  ZenanalyzeProxies infrastructure — note: mask_p25 would need to be
+  added to ZenanalyzeProxies if Phase 2 wants to use the existing
+  struct, OR computed on-demand at the gate site since mask1x1 is
+  already passed in)
