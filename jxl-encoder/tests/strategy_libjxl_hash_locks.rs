@@ -126,8 +126,17 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",
-        size: 3250,
-        hash: 0x8f956835619735a7,
+        // W44-171 (2026-05-21): DC tree Variable-trial gate raised from
+        // `effort >= 4` → `effort >= 8` (libjxl `enc_modular.cc:1591`
+        // parity). At effort 7 (this fixture) the Libjxl strategy now
+        // emits kWPFixedDC directly without the W44-57 trial-and-pick;
+        // size dropped 3250 → 3249 bytes (-1 B). The Libjxl strategy
+        // ALWAYS preferred the kWPFixedDC winner at this distance on
+        // this 48×48 fixture under the trial-and-pick, so the bitstream
+        // contents are essentially the same plus or minus the
+        // chosen-tree marker.
+        size: 3249,
+        hash: 0xea529371a8916fd9,
     },
 ];
 

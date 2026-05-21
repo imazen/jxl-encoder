@@ -1217,6 +1217,18 @@ name = "w44_170_cjxl_step025_sweep"
 path = "examples/w44_170_cjxl_step025_sweep.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-171: focused A/B for the DC tree Variable-trial effort gate fix.
+# Targets the W44-170 e5 wall-time wedge on large screenshots
+# (imac_dark 65× cjxl, imac_g3 50×, codec_wiki 40×). Mode A reproduces
+# the pre-W44-171 trial-at-every-effort behaviour via the
+# JXL_W44_171_FORCE_TRIAL_ALL_EFFORTS env hook; Mode B is the libjxl-
+# parity default (trial only at effort >= 8). Single-threaded encode
+# to match the W44-170 measurement protocol.
+[[example]]
+name = "w44_171_dc_tree_gate_perf_ab"
+path = "examples/w44_171_dc_tree_gate_perf_ab.rs"
+required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
+
 [[example]]
 name = "w44_20_codec_wiki_coverage"
 path = "examples/w44_20_codec_wiki_coverage.rs"
