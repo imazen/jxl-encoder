@@ -1,0 +1,185 @@
+# cjxl parity ledger — W44-141 refresh post-W44-140 EPF seed distance-fade
+#
+# Measures the state on origin/main HEAD `b8333091` (W44-140
+# distance-fade for the W44-117 EPF sharpness seed). The cluster
+# closure target was the terminal e8/e9 d=1.0-1.6 SSIM2 oscillation
+# documented in W44-119 ledger refresh and ranked candidate #4 in
+# W44-134.
+#
+# This ledger refresh captures the cumulative effect of:
+#
+#   W44-135 (2b9c98d0)  Distance-gate W44-124 dct32_keep to d ∈ [2.0, 3.5]
+#   W44-138 (5b22837a)  Per-stage diff dump for EPF photo divergence (investigate only)
+#   W44-139 (40f52496)  SSIM2 cost gate for W44-138 (HONEST-STOP)
+#   W44-140 (b8333091)  EPF sharpness seed per-block distance-fade in [1.0, 1.5)
+#
+# Note: W44-138/W44-139 are investigate-only — no production code change.
+# Only W44-135 and W44-140 produce byte-different output vs W44-134.
+#
+# Compare against:
+#   benchmarks/cjxl_parity_ledger_2026-05-20_w44_134.tsv  (post-W44-133.4 = 8691aafc)
+#   benchmarks/cjxl_parity_ledger_2026-05-20_w44_119.tsv  (post-W44-118 = f543288c)
+#   benchmarks/cjxl_parity_ledger_2026-05-20_w44_110.tsv  (pre-W44-117 = 4f82e864)
+#
+git_rev: b8333091c62853c7168e5afbb1811bfe6f9603e6 (W44-140 EPF seed distance-fade — main HEAD)
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1418519.png", "1531677.png", "1189261.png", "1420710.png", "terminal.png", "codec_wiki.png", "imac_g3.png"]
+corpus: /home/lilith/work/codec-corpus
+wall_seconds: 870.9
+total_rows: 591
+cells_this_run: 600
+update_mode: false
+status_filter: None
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
+#
+# Failed cells (9) — pre-existing OOM/budget on 2940x1912 imac_g3 at
+# high effort + 1024x1024 codec_wiki at e9 d=4-6. NOT regressions; same
+# failure cluster as W44-134:
+#   imac_g3.png e8 d4, e8 d5, e8 d6
+#   imac_g3.png e9 d4, e9 d5, e9 d6
+#   codec_wiki.png e9 d4, e9 d5, e9 d6
+#
+# Result: 591 cells captured (same as W44-134).
+#
+# === vs W44-134 baseline (post-W44-133.4) ===
+#   OPEN delta:    9 → 8 (-1)
+#   OPEN closures (W134 OPEN → W141 FIXED): 1
+#     codec_wiki e5 d=4.0 (SSIM2 -2.377 → -0.977; bytes +29.30% → +26.30%)
+#   OPEN regressions (W134 FIXED → W141 OPEN): 0
+#   byte-identical to W134: 511 cells
+#   byte-different from W134: 80 cells
+#     (split: W44-135 effect on codec_wiki d=1/d=4-6 + W44-140 effect on
+#      terminal/codec_wiki/imac_g3 e8/e9 d∈[1.0, 1.5))
+#
+# Photos: ALL 375 photo cells BYTE-IDENTICAL to W134 — W44-140 fade is
+# gated under W44-118 screenshot gate, never fires on CID22 photos.
+# Confirms W44-140 acceptance gate (d).
+#
+# terminal d>=2: ALL 30 cells BYTE-IDENTICAL to W134 — W44-140 fade
+# weight=1.0 at d>=1.5, so no change in production output. Confirms
+# W44-140 acceptance gate (b protection).
+#
+# Inferiority axes (W44-141):
+#   bytes_inf (>+3%):  53 (9.0%)
+#   bfly_inf  (>+3%): 101 (17.1%)
+#   ssim2_inf (<-1.0): 109 (18.4%)
+#   any_axis_inf:    222 (37.6%)
+# (W44-134 was: 53/100/110/221 → essentially flat: -1 bytes/bfly tied,
+# -1 ssim2_inf, +1 any_axis_inf. Net: ssim2 inferior count drops by 1
+# while distribution slightly redistributes.)
+#
+# Per-cluster mean SSIM2 shift (W44-134 → W44-141):
+#   photo      (n=375): -0.392 → -0.392 (flat, gate works)
+#   terminal   (n= 75): -0.198 → -0.181 (+0.017 shift)
+#   codec_wiki (n= 72): -0.299 → -0.268 (+0.031 shift)
+#   imac_g3    (n= 69): +0.949 → +0.949 (flat — W44-117 wasn't firing
+#                                         in W44-134 because the W44-118
+#                                         gate doesn't enable on these
+#                                         imac_g3 d∈[1,1.5) cells; W44-140
+#                                         changes some e8/e9 cells but
+#                                         small net shift)
+#
+# === W44-140 verification ===
+#
+# Predicted by W44-140 23-cell bisect:
+#   terminal e8/e9 d=1.0: weight=0 → byte-identical to A_legacy
+#                         (W44-134 was post-W44-117 with +0.529 win)
+#   terminal e8/e9 d=1.2: weight=0.4 → SSIM2 +0.855 vs W44-134 (closes
+#                         -0.726 regression)
+#   terminal e8/e9 d=1.4: weight=0.8 → SSIM2 +0.330 vs W44-134
+#                         (BOOSTS above full W44-117 +0.685 → +1.014)
+#   terminal e8/e9 d>=1.5: weight=1.0 → byte-identical to W44-134
+#
+# Measured at W44-141:
+#   terminal e8 d=1.0 | ΔSSIM2=-0.529 | bytes-same=False  (matches predicted
+#                                                          weight=0 fallback)
+#   terminal e9 d=1.0 | ΔSSIM2=-0.529 | bytes-same=False  (matches)
+#   terminal e8 d=1.2 | ΔSSIM2=+0.855 | bytes-same=False  ← W44-140 WIN, predicted
+#   terminal e9 d=1.2 | ΔSSIM2=+0.855 | bytes-same=False  ← W44-140 WIN, predicted
+#   terminal e8 d=1.4 | ΔSSIM2=+0.330 | bytes-same=False  ← W44-140 BOOST, predicted
+#   terminal e9 d=1.4 | ΔSSIM2=+0.330 | bytes-same=False  ← W44-140 BOOST, predicted
+#   terminal e8 d=1.6 | ΔSSIM2=0.000  | bytes-same=True   ← protected
+#   terminal e9 d=1.6 | ΔSSIM2=0.000  | bytes-same=True   ← protected
+#
+# All W44-140 predictions match exactly to 3 decimal places.
+#
+# Top SSIM2 wins (W141 vs W134):
+#   codec_wiki e6 d=4.0: +1.425  ← W44-135 reverts W44-124 collateral
+#   codec_wiki e5 d=4.0: +1.399  ← W44-135 closes only OPEN→FIXED
+#   codec_wiki e7 d=5.0: +1.377  ← W44-135 reverts W44-124 collateral
+#   codec_wiki e7 d=4.0: +1.224  ← W44-135 reverts W44-124 collateral
+#   terminal e8 d=1.2: +0.855  ← W44-140 cluster closure
+#   terminal e9 d=1.2: +0.855  ← W44-140 cluster closure
+#   codec_wiki e8 d=1.0: +0.450 ← W44-140 fade benefits codec_wiki d=1.0
+#   codec_wiki e9 d=1.0: +0.450 ← W44-140 fade benefits codec_wiki d=1.0
+#
+# Top SSIM2 regressions (W141 vs W134) — NONE flip FIXED→OPEN:
+#   codec_wiki e9 d=1.8: -0.718 | -1.173→-1.891 (stays FIXED, no protection break)
+#   codec_wiki e8 d=1.6: -0.615 | -0.648→-1.264 (stays FIXED)
+#   codec_wiki e9 d=1.6: -0.615 | -0.687→-1.302 (stays FIXED)
+#   codec_wiki e9 d=1.2: -0.600 | -0.914→-1.514 (stays FIXED)
+#   terminal e8 d=1.0:  -0.529 | -2.210→-2.740 (stays FIXED)
+#
+# The codec_wiki d=1.6/d=1.8 cluster (-0.6 to -0.7 SSIM2) is a NEW
+# cluster surfaced by the W44-140 fade — within band [1.0, 1.5) the
+# fade applies but on codec_wiki the W44-117 sharpness map was already
+# pareto-optimal at these cells. Documented as W44-141 follow-on
+# candidate. NOT blocking — both prev and cur stay FIXED, both are
+# bytes-better than cjxl by 22-25%.
+#
+# === Final OPEN cells (8) ===
+# 1. codec_wiki e6 d=4.0  | bytes +27.32%, bfly +7.82%, ssim2 -1.032
+# 2. codec_wiki e7 d=4.0  | bytes +42.68%, bfly +7.39%, ssim2 +0.055
+# 3. codec_wiki e7 d=6.0  | bytes +43.31%, bfly +3.29%, ssim2 +5.579 (pareto: bigger but much better quality)
+# 4. imac_g3 e5 d=2.0    | bytes +23.09%, bfly +22.45%, ssim2 +2.900 (pareto)
+# 5. imac_g3 e6 d=2.0    | bytes +23.27%, bfly +25.60%, ssim2 +2.480 (pareto)
+# 6. terminal e5 d=4.0   | bytes +32.77%, bfly -36.64%, ssim2 -1.932
+# 7. terminal e6 d=4.0   | bytes +32.35%, bfly -41.33%, ssim2 -1.603
+# 8. terminal e7 d=4.0   | bytes +29.20%, bfly -20.75%, ssim2 -1.941
+#
+# === W44-142 ranked candidates ===
+#
+# 1. **codec_wiki d=1.6/1.8 SSIM2 regression cluster** (LOW-MED EV, 1d)
+#    NEW cluster from W44-140 fade interacting with W44-117 sharpness
+#    map on codec_wiki. d=1.6 and d=1.8 sit above fade_max=1.5 so they
+#    get full W44-117, which is over-correcting on codec_wiki specifically.
+#    Possible mechanism: a per-image (not just per-distance) gate refining
+#    W44-118's mask>95 with a second-order classifier (e.g., the W44-91
+#    zenanalyze proxy pattern) to disable W44-117 on codec_wiki-class
+#    while keeping the terminal/imac_g3 wins. Risk: another zenanalyze
+#    discriminator added to the production default gate stack.
+#
+# 2. **terminal e5/e6/e7 d=4.0 cluster** (HIGH EV, 2-3d)
+#    Three remaining OPEN cells. terminal d=4 at low-effort lacks the
+#    buttloop entirely (kKitten gate at e>=8), so W44-117/140 don't fire.
+#    Per W44-103 dump: DCT16X16 over-fires 25× and DCT64 family ENTIRELY
+#    absent at all efforts. Top W44-104 candidates: (A) DCT64 search audit
+#    or (B) find_best_64x64_transform cost-model audit per W44-121 follow-on.
+#
+# 3. **terminal d=1.0 W44-140 regression** (LOW-MED EV, 1-2d)
+#    Surfaced THIS run: at d=1.0 the W44-140 fade weight=0 collapses to
+#    A_legacy uniform-4, losing the W44-134 W44-117 +0.529 win on terminal
+#    e8/e9 d=1.0. NET: stays FIXED but SSIM2 drops -0.529. Possible fix:
+#    distance-aware fade with non-zero floor (e.g., weight = max(0.2, blend))
+#    at d=1.0 to preserve a fraction of the W44-117 sharpness map. Risk:
+#    breaks the W44-120 gate semantics; needs re-bisect.
+#
+# 4. **codec_wiki e6 d=4.0 residual** (LOW EV, 1d)
+#    Already documented in W44-110 candidates. Single cell at SSIM2 -1.032.
+#    W44-141 only closed e5 d=4.0 (not e6/e7). May require different fix
+#    (similar to candidate #2 but distance-specific).
+#
+# 5. **1418519 photo d=5/6** (LOW-MED EV, 2-3d, NOT surfaced anew)
+#    No change from W44-134 — still on the W44-134 list. Pre-existing.
+#
+# See memory/w44_141_ledger_refresh_post_w44_140_2026-05-20.md for full
+# analysis + per-image breakdown + ranked W44-142 candidates.
