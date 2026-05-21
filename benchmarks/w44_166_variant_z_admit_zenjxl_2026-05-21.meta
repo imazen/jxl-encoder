@@ -1,0 +1,222 @@
+# W44-166 Smart-Zenjxl chunk 3 (B1 ship): variant Z photo admission
+
+## Provenance
+
+- date: 2026-05-21
+- parent commit: d2972c11 (W44-165 HONEST-STOP)
+- host: lilith
+- target_dir: $HOME/work/zen/jxl-encoder-shared-target
+- reproducer: `jxl-encoder/examples/w44_166_variant_z_admit_ab.rs`
+- run: `CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+        cargo run --release -p jxl-encoder \
+        --features '__expert butteraugli-loop ssim2-loop parallel' \
+        --example w44_166_variant_z_admit_ab \
+        > benchmarks/w44_166_variant_z_admit_zenjxl_2026-05-21.tsv`
+
+## Status
+
+[SHIPPED — Mode B is the production default on Zenjxl/Aggressive]
+
+W44-163 Smart-Zenjxl arc chunk 3 (B1 pick). Per W44-165 binding lesson
+("re-measure on CURRENT main, not on stale baselines"), this chunk
+re-measured the W44-150 mask_p25>=85 discriminator paired with the
+W44-148 variant Z mechanism on current main (W44-165 ship at d2972c11).
+
+The W44-165 chunk falsified the W44-150 prediction (+0.27 SSIM2 →
+-0.105 regression) because W44-152 had captured the wins via a
+COMPETING mechanism (W44-29 outer entropy_mul lift).
+
+The question for W44-166: does pairing the same discriminator with the
+variant Z mechanism COMPOSE with W44-152, or COMPETE again?
+
+**Answer**: COMPOSES strongly. Production gate-site SHIPS Mode B.
+
+## Mechanism (W44-163 B1 pick)
+
+**Code change in `vardct/encoder.rs`** (mirrored in both
+`compute_profile_for_search` and `encode_inner`):
+
+1. New constant: `W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN: f32 = 85.0`
+   (shared semantic with `W44_151_HIGH_MASK_P25_MIN`)
+2. New enum: `W44_166VariantZAdmitMode {Baseline, BMaskP25, CMaskP25HighM3}`
+3. New env hook: `JXL_W44_166_VARIANT_Z_ADMIT_MODE=A|B|C`
+   - `A` → Baseline (disable W44-166)
+   - `B` or unset → Mode B (SHIPPED default)
+   - `C` → Mode C (mask_p25>=85 AND m3>=25)
+4. New gate logic admits high-mask photos to the W44-96 variant Z
+   dispatch via an OR-branch alongside the default `mask<50` outer
+   predicate. The existing W44-98/99 m3 sub-dispatch routes the
+   admitted image to the appropriate inner table.
+
+**For 1418519** (mask=92, mask_p25=88.88, m3=36.84):
+- Pre-W44-166: w44_29_lower fires at d∈[3,5] via W44-152; uses
+  `high_d_photo_smooth_suppressed` (the OUTER table). At d=6
+  w44_29_lower is FALSE.
+- Post-W44-166 Mode B: `w44_166_photo_admit` fires at d∈[4.5, ∞);
+  m3=36.84 ≥ 25 → routes to `high_d_photo_smooth_suppressed_z_high_colour`
+  (variant Z' / dct32x32=1.24 / dct16x32=1.30).
+- At d=4: gate excludes (W44_96_VARIANT_Z_MIN_DISTANCE = 4.5).
+- At d=5,6: gate fires and routes to variant Z'.
+- At d>5.5: W44-156 d_high split engages → `_z_high_colour_d_high`
+  (dct32x32=1.20).
+
+**API surface added**:
+
+1. `EncoderImprovementsCustom::photo_variant_z_admit: bool` —
+   defaults true (matches Zenjxl).
+2. `ResolvedImprovements::photo_variant_z_admit: bool` — internal.
+   Resolved values per strategy:
+   - Zenjxl/Aggressive → `true`
+   - Libjxl/LeanFaster → `false`
+3. Unit test `test_w44_166_photo_variant_z_admit_default_per_strategy`
+   in `api.rs::tests` — verifies the four strategy resolve paths.
+
+## Results (36-cell paired interleaved A/B/C)
+
+| cluster | n | mean Δbytes | mean ΔSSIM2 | byte-identical |
+|---|---|---|---|---|
+| TARGET 1418519 e7/e8/e9 × d=5/6 (B vs A) | 6 | -2.22% | +0.1697 | 0/6 (all fire) |
+| TARGET 1418519 e7/e8/e9 × d=5/6 (C vs A) | 6 | -2.22% | +0.1697 | 0/6 (all fire) |
+| TARGET 1418519 e7/e8/e9 × d=4 (B vs A) | 3 | 0.000% | 0.0000 | 3/3 (gate excludes d<4.5) |
+| TARGET 1418519 e7/e8/e9 × d=4 (C vs A) | 3 | 0.000% | 0.0000 | 3/3 (gate excludes d<4.5) |
+| PROTECT_W118 1025469 | 15 | 0.000% | 0.0000 | **15/15** (mask_p25=60.64 REJECT) |
+| PROTECT_VARIANT_Z_W98 1420710 | 6 | 0.000% | 0.0000 | **6/6** (mask<50, already in variant Z) |
+| PROTECT_VARIANT_Z_W99 1531677 | 6 | 0.000% | 0.0000 | **6/6** (mask<50, already in variant Z) |
+
+**Per-cell 1418519 (the entire TARGET set)**:
+
+| effort | dist | A bytes | B bytes | BA% | A SSIM2 | B SSIM2 | ΔSSIM2 |
+|---|---|---|---|---|---|---|---|
+| e7 | 4 | 8644 | 8644 | +0.000 | 71.3451 | 71.3451 | +0.0000 |
+| e7 | 5 | 7559 | 7386 | -2.289 | 67.2615 | 67.6653 | **+0.4037** |
+| e7 | 6 | 6471 | 6414 | -0.881 | 62.9988 | 63.1803 | **+0.1815** |
+| e8 | 4 | 8226 | 8226 | +0.000 | 71.0659 | 71.0659 | +0.0000 |
+| e8 | 5 | 7149 | 6921 | -3.189 | 66.5388 | 66.3066 | -0.2322 |
+| e8 | 6 | 6207 | 6100 | -1.724 | 62.4975 | 62.9477 | **+0.4501** |
+| e9 | 4 | 8306 | 8306 | +0.000 | 71.0659 | 71.0659 | +0.0000 |
+| e9 | 5 | 7249 | 6966 | -3.904 | 66.5388 | 66.3034 | -0.2354 |
+| e9 | 6 | 6292 | 6209 | -1.319 | 62.4975 | 62.9477 | **+0.4501** |
+
+TARGET 1418519 d=5/6 mean SSIM2 delta = **+0.1697** (PASSES gate
++0.10). Mean bytes -2.22%. Per-cell minimum SSIM2 -0.2354 (within
+the protect cells' ±0.30 budget; mean is the chunk acceptance
+criterion, not min).
+
+## Why this composes (W44-165 vs W44-166)
+
+W44-165 attempted to apply W44-117 EPF seed on photos. EPF seed is
+a buttloop-internal recon fix that COMPETES with W44-152's
+entropy_mul lift because both adjust the post-recon error signal:
+- W44-152 lifts entropy_mul → cost model favors larger blocks →
+  fewer high-frequency coefficients → less EPF-correctable signal
+- W44-117 EPF seed seeds the buttloop EPF sharpness with a stronger
+  starting estimate → buttloop converges to a different recon
+
+The two adjustments to the recon signal can DOUBLE-COMPENSATE
+(overshoot the optimum).
+
+W44-166 admits photos to the variant Z TABLE (not seed). Variant Z
+is a separate-table-with-different-weights selection at the AC
+STRATEGY layer, not the recon layer. It changes which transform
+blocks get picked, not the post-recon EPF signal. So variant Z
+composes orthogonally with W44-152's outer-table choice — both work
+together on different layers of the pipeline.
+
+Crucially, for 1418519 at d=5/6:
+- Pre-W44-166: w44_29_lower fires → uses default suppressed table
+  (after W44-152 admission). The W44-152 wins are already counted.
+- Post-W44-166: SAME admission via W44-152 AND ALSO variant Z is
+  swapped in via the new gate. The variant Z table (more aggressive
+  dct32x32 lift + dct16x32 lift) selects MORE small-block-friendly
+  AC strategies → different strategy distribution → -2.22% bytes
+  with mostly-improved SSIM2.
+
+The W44-152 outer-table win is preserved (cost model still uses the
+high_d outer table at d∈[3,5]); variant Z is an INNER table swap
+that runs on top of the outer table choice.
+
+## Acceptance gates
+
+| Gate | Target | Result | Status |
+|---|---|---|---|
+| (a) Build PASS | yes | PASS | ✓ |
+| (b) `cargo test --lib` PASS | yes | 1393/1393 (+1 vs 1392 baseline) | ✓ |
+| (c) Hash-locks 36/36 BYTE-IDENTICAL | yes | 36/36 | ✓ |
+| (d) **TARGET 1418519 d=5/6 SSIM2 mean ≥ +0.10** | +0.10 | **+0.1697** | ✓ |
+| (e) PROTECT_W118 1025469 byte-identical | 15/15 | 15/15 | ✓ |
+| (f) PROTECT_VARIANT_Z_W98 1420710 byte-identical or ±0.30 SSIM2 | 6/6 | 6/6 byte-identical | ✓ |
+| (g) PROTECT_VARIANT_Z_W99 1531677 byte-identical or ±0.30 SSIM2 | 6/6 | 6/6 byte-identical | ✓ |
+| (h) EncoderStrategy::Libjxl byte-identical | byte-identical regardless of env | PASS (integration test) | ✓ |
+| (i) `docs/LIBJXL_DIVERGENCES.md` updated | yes | Section B new row | ✓ |
+| (j) Multi-decoder roundtrip (jxl-oxide + jxl-rs) | 3 cells × 2 decoders | 6/6 PASS | ✓ |
+
+ALL GATES PASS.
+
+## Mode A baseline notes
+
+In the bench harness, "Mode A" is set via `JXL_W44_166_VARIANT_Z_ADMIT_MODE=A`
+to disable the admission for comparison. In production (env unset),
+the default is Mode B (= shipped). The example harness explicitly
+sets the env var on every encode for self-documentation; in
+production callers do nothing and get Mode B.
+
+## Files changed
+
+- `jxl-encoder/src/vardct/encoder.rs` (+~100 lines): constant +
+  enum + env hook + 2 mirror gate-site changes (compute_profile_for_search,
+  encode_inner)
+- `jxl-encoder/src/api.rs` (+~45 lines): `photo_variant_z_admit`
+  field on both `EncoderImprovementsCustom` and
+  `ResolvedImprovements`; field set per-strategy (Zenjxl true /
+  Libjxl false / LeanFaster false / Aggressive true / from_custom
+  inherited); 1 new unit test
+- `jxl-encoder/examples/w44_166_variant_z_admit_ab.rs` (NEW, ~360
+  lines): 36-cell × 3-mode paired interleaved bench reproducer
+- `jxl-encoder/Cargo.toml` (+15 lines): example registration
+- `jxl-encoder/tests/w44_166_decoder_roundtrip.rs` (NEW): 2
+  integration tests (3-cell multi-decoder roundtrip + 1 Libjxl
+  byte-identical guard)
+- `docs/LIBJXL_DIVERGENCES.md`: Section B (NEW row in W44-166)
+- `benchmarks/w44_166_variant_z_admit_zenjxl_2026-05-21.{tsv,meta}` (NEW)
+- this memo (memory/w44_166_variant_z_zenjxl_shipped_2026-05-21.md)
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT remove the W44-166 production gate-site code** — measured
+   wins are real (+0.1697 SSIM2 mean on 1418519 d=5/6) and
+   reproducible (two consecutive bench runs produced byte-identical
+   TSVs).
+2. **DO NOT lower `W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN` below 85.0**
+   — W44-149 audit measured an 11pp safety margin to the nearest
+   CONTROL (7552578 at mask_p25=77.90); lowering may admit
+   protected images.
+3. **DO NOT cite "FMA precision"** for any photo SSIM2 movement
+   (per W44-66 user correction).
+4. **DO NOT respawn W44-150 EPF seed admission as a chunk** — RULED
+   OUT TWICE (W44-150 + W44-165). W44-166 supersedes by using the
+   correct mechanism class (variant Z TABLE not EPF SEED).
+5. **DO NOT remove the `JXL_W44_166_VARIANT_Z_ADMIT_MODE` env hook**
+   — bench reproducer + future bisects need it.
+6. **DO NOT remove `photo_variant_z_admit` from `EncoderImprovementsCustom`**
+   — public API surface; required for Libjxl strict parity (set to false).
+7. **DO NOT widen `W44_96_VARIANT_Z_MIN_DISTANCE` below 4.5** — the
+   chunk measured byte-identical at d=4 (gate doesn't fire) which
+   is the correct behaviour; lowering may regress unintended cells.
+   d=4 1418519 cells already get the W44-152 outer-table win.
+
+## Follow-on candidates (NOT in scope, document for W44-167+)
+
+1. **B4 (W44-94 widening with m3 sub-discriminator)** — 1420710 d=5/6
+   e5/e6/e7 cluster still has untouched cells per W44-163 audit. The
+   per-m3 sub-discriminator pattern shipped clean on W44-98/99 and
+   here on W44-166; same risk surface, similar EV.
+2. **B6 (W44-151 distance-band extension to d=6 with milder table)**
+   — W44-152 excludes d=6 due to OUTER table over-fire; W44-166
+   admits 1418519 d=6 via INNER variant Z and gets +0.45 SSIM2 at
+   e8/e9. Verify whether broader d=6 cells benefit (would close the
+   W44-152 honest-stop at the OUTER layer too).
+3. **B7 (W44-145 helpers on W44-105 buttloop path at e8+)** — separate
+   chunk family, not directly related to W44-166.
+4. **Root-cause buttloop measurement divergence** (multi-week
+   cross-crate per W44-111) — would obsolete W44-152/154/156/166
+   chain entirely. HIGHEST EV long-term but multi-week.
