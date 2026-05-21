@@ -621,6 +621,17 @@ name = "w44_116_per_step_dump"
 path = "examples/w44_116_per_step_dump.rs"
 required-features = ["__internal_recon_hook", "butteraugli-loop"]
 
+# W44-138 Phase 1 root cause: builds on W44-116 by adding (a) per-block
+# AC-strategy spatial attribution of after_recon_xyb diff; (b) per-cell
+# A/B between default (W44-117 conditional firing) and JXL_W44_117_DISABLE=1;
+# (c) first-non-monotonic step detection; (d) argmax-position reporting.
+# Investigation only; TSV stdout. See W44-138 memory note for the Phase 2
+# fix candidates this dump informs.
+[[example]]
+name = "w44_138_recon_root_cause"
+path = "examples/w44_138_recon_root_cause.rs"
+required-features = ["__internal_recon_hook", "butteraugli-loop"]
+
 # W44-117: paired A/B comparing legacy uniform-4 EPF sharpness seed
 # (env JXL_W44_117_DISABLE=1) vs the new compute_epf_sharpness seed
 # (default) on the W44-105/107/108/109 screenshot-class qac-scale chain

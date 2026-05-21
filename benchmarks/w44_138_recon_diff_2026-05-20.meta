@@ -1,0 +1,126 @@
+# W44-138 Phase 1: buttloop recon vs decoder per-stage divergence dump
+#
+# Date: 2026-05-20
+# Branch: main (post W44-117/118/120 chain on commit 50f6fac9)
+# Run on: water-cooled AMD Ryzen 9 7950X, archmage X64V3 SIMD
+#
+# Command:
+#
+#   CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+#     cargo run --release --example w44_138_recon_root_cause \
+#     --features '__internal_recon_hook butteraugli-loop' \
+#     --manifest-path jxl-encoder/Cargo.toml \
+#     > benchmarks/w44_138_recon_diff_2026-05-20.tsv
+#
+# Background — must read in order:
+#   W44-111: butteraugli metric ruled out
+#   W44-112: SetQuantField / parallel AdjustQuantBlockAC ruled out (qf_drift, parallel-vs-seq)
+#   W44-113: read-only audit of reconstruct_xyb vs decoder
+#   W44-114: AFV IDCT bit-parity verified
+#   W44-115: all per-strategy IDCT bit-parity verified
+#   W44-116: per-step XYB capture (this is the foundation chunk for W44-138)
+#   W44-117: EPF sharpness one-shot seed (Option B fix, default ON)
+#   W44-118: gated W44-117 to is_screenshot only (avoid -0.85 SSIM2 photo regression)
+#   W44-120: distance-gated W44-117 to d>=1.0 (avoid d=0.8 regression)
+#   W44-119: chain cannot be retired even with W44-117 — orthogonal corrections
+#
+# Cells (8 total = 4 × 2 modes):
+#   terminal e8 d=4   (screenshot, W44-117 FIRES on default mode)
+#   codec_wiki e8 d=4 (screenshot, W44-117 FIRES on default mode)
+#   1418519 e8 d=5    (photo, mask~76, W44-117 BLOCKED by W44-118 screenshot gate)
+#   1025469 e8 d=2    (photo, mask=76.08, W44-117 BLOCKED by W44-118 screenshot gate)
+#
+# Modes:
+#   default     = W44-117 EPF seed active (gated on is_screenshot)
+#   disable_117 = JXL_W44_117_DISABLE=1 (legacy uniform-4 EPF sharpness)
+#
+# TSV schema (22 columns):
+#   image, distance, effort, width, height,
+#   w44_117_mode (default | disable_117),
+#   step (after_recon_xyb | after_gab | after_epf | after_patches | after_splines
+#         | per_strategy/<NAME>),
+#   step_ran (0 or 1),
+#   max_overall, max_r, max_g, max_b,
+#   mean_r, mean_g, mean_b,
+#   delta_vs_prev_max_overall (negative = stage brought us CLOSER to jxl-rs,
+#                              positive = stage made it WORSE),
+#   argmax_x, argmax_y, argmax_ch (R/G/B), argmax_mag,
+#   first_nonmonotonic (the FIRST stage whose delta_vs_prev was > 0;
+#                       empty if monotonic decrease),
+#   bytes
+#
+# Per-strategy rows: max_overall = max over per-8x8-block max-abs diffs in that
+#                    strategy's blocks (sampling after_recon_xyb stage); mean_r
+#                    = mean of per-8x8-block max-abs; delta_vs_prev_max_overall
+#                    is overloaded as block count for that strategy. argmax_*
+#                    unused for these rows.
+#
+# Findings (see memory/w44_138_buttloop_recon_root_cause_2026-05-20.md):
+#
+# 1. PHOTO 1418519 d=5 e8: EPF stage INCREASES max-abs by +0.034 R
+#    after_recon_xyb=0.388 → after_gab=0.206 (Δ=-0.182) → after_epf=0.240 (Δ=+0.034)
+#    first_nonmonotonic = after_epf
+#    default == disable_117 byte-identical (W44-117 never fires on this photo).
+#    → The W44-117 fix would close this but is GATED OFF by W44-118 for photos.
+#
+# 2. PHOTO 1025469 d=2 e8: stages MONOTONICALLY DECREASE
+#    after_recon=0.507 → after_gab=0.067 → after_epf=0.061
+#    No bug stage. W44-117 never fires (byte-identical).
+#    → The mask~76 band is the "sweet spot" where uniform-4 EPF works fine.
+#
+# 3. SCREENSHOT terminal d=4 e8: EPF stage AT PARITY in default, slight
+#    improvement (-0.000725) in disable_117. Both close after patches step.
+#    default bytes=36559, disable_117 bytes=36788 → W44-117 saves 0.6%.
+#    The huge pre-patches divergence (0.989) is patches-pending, not a bug.
+#
+# 4. SCREENSHOT codec_wiki d=4 e8: all stage max-abs clamped at 1.0 until
+#    patches; mean values track. default mean R=0.00403 vs disable 0.00413 —
+#    W44-117 reduces post-EPF mean by ~0.0001.
+#
+# 5. Per-strategy attribution on 1418519 d=5:
+#    DCT2X2  (8 blocks):   mean=0.164 (highest per-block diff)
+#    IDENTITY (6 blocks):  mean=0.125 (close second)
+#    DCT8 (80 blocks):     mean=0.128
+#    DCT32X32 (736 blocks): mean=0.028 (smooth content dominates)
+#
+# 6. Per-strategy attribution on codec_wiki d=4:
+#    IDENTITY (191):  mean=0.509 (highest! — text glyphs)
+#    DCT2X2 (340):    mean=0.372
+#    AFV3 (191):      mean=0.343
+#    DCT8X4 (403):    mean=0.303
+#    AFV1 (225):      mean=0.307
+#    DCT16X16 (57332 blocks): mean=0.0097 (dominant smooth-content strategy)
+#
+# Root cause for the photo wedge (1418519 d=5, +0.034 EPF):
+#   The EPF stage uses a per-block sharpness map. Buttloop seeds with uniform-4
+#   (libjxl default) on photos because W44-118 disabled the W44-117 seed fix
+#   for photos due to the -0.85 SSIM2 regression at d=4 on 1025469. The
+#   production sharpness map computed AFTER the buttloop differs from
+#   uniform-4 on a small number of high-detail blocks; the decoder uses the
+#   production map, the buttloop measures uniform-4 → buttloop measures the
+#   wrong target → optimizes for a quant_field that the decoder cannot match.
+#
+# Phase 2 candidates (see memory note for ranked plan):
+#   (P-1) Per-iter sharpness recompute instead of one-shot (closes residual
+#         on screenshots, may also work for photos if SSIM2 regression was a
+#         consequence of stale-iter-0 sharpness, not the seed fix itself).
+#         Risk: 10-30% buttloop slowdown.
+#   (P-2) Photo-class sharpness seed with conservative threshold — e.g., only
+#         fire W44-117 when median(mask1x1) < 50 AND distance >= 3 (smooth
+#         photo, large quant errors). Avoids the 1025469 mask=76 cliff.
+#   (P-3) Hold the encoder-side sharpness map and pass it through to the
+#         decoder match-up — confirm the sharpness map is being encoded
+#         correctly (the bitstream encodes the post-buttloop production
+#         sharpness; buttloop computes its own).
+#   (P-4) Investigate whether the +0.034 EPF delta on 1418519 d=5 is the
+#         actual SSIM2 cause (it may be a metric red herring — the high
+#         max-abs at single pixels doesn't necessarily mean overall worse
+#         butteraugli/SSIM2).
+#
+# DO NOT (per W44-119 / W44-118):
+#   - Retire the W44-105/107/108/109 qac chain. W44-119 measured chain-off
+#     regresses every screenshot by -1.85 to -5.58 SSIM2 even with W44-117 on.
+#   - Re-extend W44-117 to all photos. W44-118 measured 1025469 e8/e9 d=4
+#     SSIM2 -0.85 when W44-117 fires on photos.
+#   - Lower W44-120 distance gate below 1.0. W44-120 measured terminal d=0.8
+#     SSIM2 -1.87 from W44-117 firing at low d.
