@@ -743,6 +743,20 @@ name = "w44_168_adaptive_iters"
 path = "examples/w44_168_adaptive_iters.rs"
 required-features = ["butteraugli-loop", "ssim2-loop", "__expert"]
 
+# W44-169 (Smart-Zenjxl chunk 6, 2026-05-21) — paired A/B bench for the
+# distance-narrowed SmoothSkip. W44-168 honest-stopped because broad
+# Mode B destroyed the W44-166 +0.45 SSIM2 win on 1418519 e8 d=6, but
+# the same measurement found STRICT WINS at the narrow d=4/5 band
+# (1418519 e8 d=4 ΔSSIM2 +0.627 + Δwall -4.79%; e8 d=5 +0.559/-4.13%).
+# W44-169 ships the narrow-band Mode B as the production default
+# (`target_distance ∈ [4.0, 5.0]` ONLY). API surface:
+# `EncoderImprovementsCustom::adaptive_buttloop_iters_narrow: bool`.
+# Mirror of the W44-156 distance-narrowing pattern.
+[[example]]
+name = "w44_169_narrow_iter_skip"
+path = "examples/w44_169_narrow_iter_skip.rs"
+required-features = ["butteraugli-loop", "ssim2-loop", "__expert"]
+
 # W44-151 W44-29 widen A/B — measure the Mechanism B photo admission
 # gate (mask_p25 >= 85.0 AND distance >= 3.0) on the W44-147 1418519
 # d=5/6 cluster + W44-118 protection set (1025469) + 4 SPOT photos.

@@ -747,7 +747,11 @@ fn w44_167_apply_lift(
 /// Mirrors the `W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN` semantic — the
 /// same `mask_p25` discriminator the W44-150/166 lineage uses, applied
 /// to the orthogonal "iter budget" mechanism layer.
-#[allow(dead_code)]
+///
+/// W44-169 (Smart-Zenjxl chunk 6, 2026-05-21) consumes this constant
+/// via [`w44_169_compute_iters_narrow`] — the `#[allow(dead_code)]`
+/// from the W44-168 honest-stop was removed when W44-169 shipped the
+/// narrow gate.
 pub const W44_168_SMOOTH_MASK_P25_MIN: f32 = 85.0;
 
 /// W44-168 (Smart-Zenjxl chunk 5, 2026-05-21): screenshot `mask1x1`
@@ -759,7 +763,11 @@ pub const W44_168_SMOOTH_MASK_P25_MIN: f32 = 85.0;
 /// adjustment is mostly a no-op (libjxl's coarse quant on flat regions
 /// converges in a single iter) — `iters - 1` saturating at 1 saves
 /// ~30% wall time at e8 with byte-identical or near-identical output.
-#[allow(dead_code)]
+///
+/// W44-169 (Smart-Zenjxl chunk 6, 2026-05-21) consumes this constant
+/// via [`w44_169_compute_iters_narrow`] — the `#[allow(dead_code)]`
+/// from the W44-168 honest-stop was removed when W44-169 shipped the
+/// narrow gate.
 pub const W44_168_SCREENSHOT_MEDIAN_MIN: f32 = 95.0;
 
 /// W44-168 (Smart-Zenjxl chunk 5, 2026-05-21): textured `edge_density`
@@ -910,8 +918,12 @@ pub(crate) fn w44_168_compute_iters(
 
 /// W44-168: smooth-content discriminator. Smooth = high mask1x1_median
 /// (screenshot-class) OR high mask1x1_p25 (smooth-photo-class).
+///
+/// W44-169 (Smart-Zenjxl chunk 6, 2026-05-21) consumes this helper via
+/// [`w44_169_compute_iters_narrow`] — the `#[allow(dead_code)]` from
+/// the W44-168 honest-stop was removed when W44-169 shipped the narrow
+/// gate.
 #[inline]
-#[allow(dead_code)]
 pub(crate) fn w44_168_is_smooth(mask1x1_median: Option<f32>, mask1x1_p25: Option<f32>) -> bool {
     let screen = mask1x1_median.is_some_and(|m| m > W44_168_SCREENSHOT_MEDIAN_MIN);
     let smooth_photo = mask1x1_p25.is_some_and(|p| p >= W44_168_SMOOTH_MASK_P25_MIN);
@@ -924,6 +936,72 @@ pub(crate) fn w44_168_is_smooth(mask1x1_median: Option<f32>, mask1x1_p25: Option
 #[allow(dead_code)]
 pub(crate) fn w44_168_is_textured(edge_density: Option<f32>) -> bool {
     edge_density.is_some_and(|ed| ed >= W44_168_TEXTURED_EDGE_DENSITY_MIN)
+}
+
+/// W44-169 (Smart-Zenjxl chunk 6, 2026-05-21): minimum `target_distance`
+/// at which the narrow SmoothSkip iter-decrement is allowed to fire.
+///
+/// W44-168 (`42833a05`) honest-stopped on broad Mode B because it
+/// destroyed W44-166's +0.45 SSIM2 win on 1418519 e8 d=6 (SSIM2 -0.26).
+/// The same measurement found STRICT WINS at the narrow d=4/5 band on
+/// 1418519:
+/// - e8 d=4: ΔSSIM2 +0.627 + Δwall -4.79%
+/// - e8 d=5: ΔSSIM2 +0.559 + Δwall -4.13%
+///
+/// The narrow window `[W44_169_NARROW_MIN_DISTANCE,
+/// W44_169_NARROW_MAX_DISTANCE]` = `[4.0, 5.0]` captures the wins
+/// without touching d=6 (where W44-166 needs the full iter budget to
+/// land its variant Z win) or low-d cells where the buttloop's
+/// per-iter quant adjustment is doing meaningful SSIM2 work.
+///
+/// Mirrors the W44-156 distance-narrowing pattern (variant Z @ d > 5.5)
+/// applied to the W44-168 mechanism layer.
+pub const W44_169_NARROW_MIN_DISTANCE: f32 = 4.0;
+
+/// W44-169 (Smart-Zenjxl chunk 6, 2026-05-21): maximum `target_distance`
+/// at which the narrow SmoothSkip iter-decrement is allowed to fire.
+///
+/// Excludes d=6 specifically to preserve the W44-166 +0.45 SSIM2 win on
+/// 1418519 e8 d=6 (the surface that broad Mode B destroyed). See
+/// [`W44_169_NARROW_MIN_DISTANCE`] for the full design rationale.
+pub const W44_169_NARROW_MAX_DISTANCE: f32 = 5.0;
+
+/// W44-169 helper: compute the adjusted `butteraugli_iters` value for
+/// the narrow SmoothSkip dispatch.
+///
+/// Equivalent to [`w44_168_compute_iters`] called with `mode =
+/// W44_168IterMode::SmoothSkip` **GATED on `target_distance ∈
+/// [W44_169_NARROW_MIN_DISTANCE, W44_169_NARROW_MAX_DISTANCE]`**.
+///
+/// Outside the distance band, returns `base_iters` unchanged (pre-W44-169
+/// behaviour). Inside the band on smooth/screenshot content at
+/// `effort >= 8` with `base_iters > 1`, returns `base_iters - 1`
+/// (saturating at 1).
+///
+/// Mode A baseline (when `narrow_enabled = false`) returns `base_iters`
+/// always — byte-identical to pre-W44-169.
+#[inline]
+pub(crate) fn w44_169_compute_iters_narrow(
+    base_iters: u32,
+    effort: u8,
+    target_distance: f32,
+    mask1x1_median: Option<f32>,
+    mask1x1_p25: Option<f32>,
+    narrow_enabled: bool,
+) -> u32 {
+    if !narrow_enabled {
+        return base_iters;
+    }
+    let in_band = target_distance >= W44_169_NARROW_MIN_DISTANCE
+        && target_distance <= W44_169_NARROW_MAX_DISTANCE;
+    if !in_band {
+        return base_iters;
+    }
+    if effort >= 8 && base_iters > 1 && w44_168_is_smooth(mask1x1_median, mask1x1_p25) {
+        base_iters - 1
+    } else {
+        base_iters
+    }
 }
 
 /// W44-135 (2026-05-20): maximum `target_distance` at which the W44-124
@@ -3661,19 +3739,51 @@ impl VarDctEncoder {
             self.zenanalyze_proxies.map(|p| p.edge_density);
         #[cfg(feature = "butteraugli-loop")]
         let effective_buttloop_iters = {
+            // W44-169 (Smart-Zenjxl chunk 6, 2026-05-21): production
+            // default narrow path. Mirrors the W44-156 distance-narrowing
+            // pattern applied to the W44-168 mechanism layer. Fires
+            // Mode B (SmoothSkip) ONLY when `target_distance ∈ [4.0,
+            // 5.0]` on smooth/screenshot content at `effort >= 8`. The
+            // narrow band drops the d=6 cell where broad Mode B
+            // destroyed the W44-166 +0.45 SSIM2 win on 1418519 e8 d=6
+            // (W44-168 honest-stop).
+            //
+            // **Precedence**: W44-168 env hook (`JXL_W44_168_MODE=B|C|D`)
+            // OVERRIDES the W44-169 narrow path when set — kept for
+            // diagnostic A/B benching (e.g. measuring broad Mode B vs
+            // the narrow shipped default). Default env unset =
+            // W44-169 narrow path active when the flag is on.
             let w44_168_mode = if self.resolved_improvements.adaptive_buttloop_iters {
                 w44_168_mode_env()
             } else {
                 W44_168IterMode::Baseline
             };
-            w44_168_compute_iters(
-                self.butteraugli_iters,
-                self.effort,
-                mask1x1_median_for_pre_scale,
-                mask1x1_p25_for_pre_scale,
-                edge_density_for_pre_scale,
-                w44_168_mode,
-            )
+            let env_overrides = !matches!(w44_168_mode, W44_168IterMode::Baseline);
+            if env_overrides {
+                // Diagnostic env override: keep W44-168 broad dispatch
+                // alive for measurement (Mode B/C/D as documented).
+                w44_168_compute_iters(
+                    self.butteraugli_iters,
+                    self.effort,
+                    mask1x1_median_for_pre_scale,
+                    mask1x1_p25_for_pre_scale,
+                    edge_density_for_pre_scale,
+                    w44_168_mode,
+                )
+            } else {
+                // W44-169 production default narrow path. Suppress the
+                // unused-binding warning for `edge_density_for_pre_scale`
+                // (the narrow path only consumes the smooth predicate).
+                let _ = edge_density_for_pre_scale;
+                w44_169_compute_iters_narrow(
+                    self.butteraugli_iters,
+                    self.effort,
+                    self.distance,
+                    mask1x1_median_for_pre_scale,
+                    mask1x1_p25_for_pre_scale,
+                    self.resolved_improvements.adaptive_buttloop_iters_narrow,
+                )
+            }
         };
         #[cfg(not(feature = "butteraugli-loop"))]
         let effective_buttloop_iters: u32 = {
@@ -7659,8 +7769,8 @@ mod tests {
             let r = w44_168_compute_iters(
                 4,
                 effort,
-                Some(50.0),         // not screenshot
-                Some(90.0),         // smooth-photo (>=85)
+                Some(50.0), // not screenshot
+                Some(90.0), // smooth-photo (>=85)
                 Some(0.1),
                 W44_168IterMode::SmoothSkip,
             );
@@ -7775,26 +7885,12 @@ mod tests {
         // them mutually exclusive per-cell.
         // e7 textured → extend 0→2 (C arm)
         assert_eq!(
-            w44_168_compute_iters(
-                0,
-                7,
-                None,
-                None,
-                Some(0.6),
-                W44_168IterMode::Combined,
-            ),
+            w44_168_compute_iters(0, 7, None, None, Some(0.6), W44_168IterMode::Combined,),
             2
         );
         // e8 smooth → decrement 2→1 (B arm)
         assert_eq!(
-            w44_168_compute_iters(
-                2,
-                8,
-                None,
-                Some(90.0),
-                None,
-                W44_168IterMode::Combined,
-            ),
+            w44_168_compute_iters(2, 8, None, Some(90.0), None, W44_168IterMode::Combined,),
             1
         );
         // e9 textured → no change (neither arm fires)
@@ -7832,5 +7928,94 @@ mod tests {
         assert!(!w44_168_is_textured(Some(0.49)));
         assert!(!w44_168_is_textured(Some(0.0)));
         assert!(!w44_168_is_textured(None));
+    }
+
+    // ── W44-169 (Smart-Zenjxl chunk 6, 2026-05-21) narrow SmoothSkip ──
+
+    #[test]
+    fn test_w44_169_disabled_is_noop() {
+        // narrow_enabled = false → always returns base_iters
+        for &d in &[1.0_f32, 3.0, 4.0, 4.5, 5.0, 6.0] {
+            for &iters in &[0u32, 1, 2, 4, 8] {
+                for &eff in &[1u8, 5, 7, 8, 9] {
+                    let r =
+                        w44_169_compute_iters_narrow(iters, eff, d, Some(99.0), Some(90.0), false);
+                    assert_eq!(
+                        r, iters,
+                        "narrow disabled MUST be no-op at d={d}, e={eff}, iters={iters}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_w44_169_decrements_inside_band_on_smooth_at_e8plus() {
+        // d=4.0 (lower bound, inclusive), smooth via mask_p25=90,
+        // e8, iters=2 → 1
+        let r = w44_169_compute_iters_narrow(2, 8, 4.0, None, Some(90.0), true);
+        assert_eq!(r, 1, "narrow MUST fire at d=4.0 inclusive");
+        // d=5.0 (upper bound, inclusive), smooth via mask_median=99,
+        // e9, iters=4 → 3
+        let r = w44_169_compute_iters_narrow(4, 9, 5.0, Some(99.0), None, true);
+        assert_eq!(r, 3, "narrow MUST fire at d=5.0 inclusive");
+    }
+
+    #[test]
+    fn test_w44_169_does_not_fire_at_d_eq_6() {
+        // d=6.0 OUTSIDE narrow band → preserve W44-166 win
+        let r = w44_169_compute_iters_narrow(2, 8, 6.0, Some(99.0), Some(90.0), true);
+        assert_eq!(r, 2, "narrow MUST NOT fire at d=6 (W44-166 PROTECT)");
+        // Just above upper bound
+        let r = w44_169_compute_iters_narrow(2, 8, 5.01, Some(99.0), Some(90.0), true);
+        assert_eq!(r, 2, "narrow MUST NOT fire just above 5.0");
+    }
+
+    #[test]
+    fn test_w44_169_does_not_fire_below_d_eq_4() {
+        // d=3.5 below narrow band
+        let r = w44_169_compute_iters_narrow(2, 8, 3.5, Some(99.0), Some(90.0), true);
+        assert_eq!(r, 2, "narrow MUST NOT fire below 4.0");
+        // d=3.99 just below lower bound
+        let r = w44_169_compute_iters_narrow(2, 8, 3.99, Some(99.0), Some(90.0), true);
+        assert_eq!(r, 2, "narrow MUST NOT fire just below 4.0");
+    }
+
+    #[test]
+    fn test_w44_169_does_not_fire_at_e7() {
+        // narrow path is e>=8 only — e7 cells must be unchanged
+        // (this is also why textured TexturedExtend would be a
+        // different mechanism, deferred to a future chunk if needed)
+        let r = w44_169_compute_iters_narrow(2, 7, 4.5, Some(99.0), Some(90.0), true);
+        assert_eq!(r, 2, "narrow MUST NOT fire at e7");
+    }
+
+    #[test]
+    fn test_w44_169_saturates_at_1() {
+        // base iters = 1 stays at 1 (don't decrement to 0)
+        let r = w44_169_compute_iters_narrow(1, 8, 4.5, Some(99.0), Some(90.0), true);
+        assert_eq!(r, 1, "narrow MUST saturate at 1");
+        // base iters = 0 stays at 0 (no buttloop to begin with)
+        let r = w44_169_compute_iters_narrow(0, 8, 4.5, Some(99.0), Some(90.0), true);
+        assert_eq!(r, 0, "narrow MUST NOT promote iters=0");
+    }
+
+    #[test]
+    fn test_w44_169_does_not_fire_on_textured() {
+        // Smooth predicate must fail (mask_median below 95 AND mask_p25 below 85)
+        let r = w44_169_compute_iters_narrow(2, 8, 4.5, Some(50.0), Some(40.0), true);
+        assert_eq!(r, 2, "narrow MUST NOT fire on textured content");
+        // None mask → cannot fire
+        let r = w44_169_compute_iters_narrow(2, 8, 4.5, None, None, true);
+        assert_eq!(r, 2, "narrow MUST NOT fire when no mask data");
+    }
+
+    #[test]
+    fn test_w44_169_constants_match_design() {
+        // Constants are part of the public API surface for this chunk
+        // (documented in CLAUDE.md + LIBJXL_DIVERGENCES.md). Lock them
+        // here so future moves are deliberate.
+        assert_eq!(W44_169_NARROW_MIN_DISTANCE, 4.0);
+        assert_eq!(W44_169_NARROW_MAX_DISTANCE, 5.0);
     }
 }
