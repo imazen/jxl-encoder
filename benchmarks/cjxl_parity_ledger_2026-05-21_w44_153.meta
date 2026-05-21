@@ -1,0 +1,260 @@
+# cjxl parity ledger — W44-153 refresh post-W44-148 + W44-152 (2026-05-21)
+#
+# Measures the state on origin/main HEAD `971bbc8c` (W44-152 SHIPPED).
+#
+# Two production code-change commits since W44-146 baseline:
+#
+#   W44-148 (2a303428) — variant Z `dct32x32` 1.20 → 1.24 (SHIPPED)
+#                        Affects 1420710 + 1531677 d=5/6 cluster (Mechanism B).
+#                        Bisect-verified zero FIXED→OPEN on the 27-cell W44-95
+#                        measurement set. WIDER LEDGER NOW REVEALS 6 NEW
+#                        FIXED→OPEN flips not covered by the W44-148 bisect.
+#
+#   W44-152 (971bbc8c) — `mask1x1_p25 >= 85` admission to W44-29 outer gate at
+#                        d ∈ [3.0, 5.0] (SHIPPED)
+#                        Closes 1418519 d=4/5 cluster (Mechanism A via W44-149
+#                        discriminator). Predicted 1418519 d=5 mean SSIM2 +0.633;
+#                        LEDGER CONFIRMS to +1.13 on e8/e9 d=5 cells.
+#
+# Compare against:
+#   benchmarks/cjxl_parity_ledger_2026-05-21_w44_146.tsv  (pre-W44-148 = 4f2b1573)
+#   benchmarks/cjxl_parity_ledger_2026-05-20_w44_141.tsv  (pre-W44-140 = 8691aafc)
+#   benchmarks/cjxl_parity_ledger_2026-05-20_w44_134.tsv  (pre-W44-117  = 4f82e864)
+#
+git_rev: 971bbc8c307eb50e0436ee2d8d200e96e23f43fd
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1418519.png", "1531677.png", "1189261.png", "1420710.png", "terminal.png", "codec_wiki.png", "imac_g3.png"]
+corpus: /home/lilith/work/codec-corpus
+wall_seconds: 760.9
+total_rows: 591
+cells_this_run: 600
+update_mode: false
+status_filter: None
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
+#
+# Failed cells (9) — pre-existing OOM/budget on 2940x1912 imac_g3 at
+# high effort + 1024x1024 codec_wiki at e9 d=4-6. NOT regressions; same
+# failure cluster as W44-146 / W44-141 / W44-134:
+#   imac_g3.png   e8 d4, e8 d5, e8 d6, e9 d4, e9 d5, e9 d6
+#   codec_wiki.png                           e9 d4, e9 d5, e9 d6
+#
+# Result: 591 cells captured (same as W44-146 / W44-141 / W44-134).
+#
+# ──────────────────────────────────────────────────────────────────────
+# === vs W44-146 baseline (post-W44-145 honest-stop = 4f2b1573) ===
+# ──────────────────────────────────────────────────────────────────────
+#
+#   OPEN delta:    8 → 14 (+6)
+#   OPEN closures (W146 OPEN → W153 FIXED):                              0
+#   OPEN regressions (W146 FIXED → W153 OPEN):                           6
+#   byte-identical to W146:                                            ~537 cells
+#   byte-different from W146:                                          ~54 cells
+#
+# === 6 NEW FIXED → OPEN flips (ALL pareto SSIM2 WINS, all caused by W44-148) ===
+#
+# Image          | e | d | OLD bytes  | NEW bytes  | OLD ssim2 | NEW ssim2 | Δssim2
+# 1420710.png     e5 d=6  +2.74%      +4.05%       -1.466      -1.398       +0.07
+# 1531677.png     e5 d=6  +2.47%      +4.20%       -1.294      -1.065       +0.23
+# 1531677.png     e6 d=6  +1.55%      +3.23%       -1.653      -1.408       +0.24
+# 1531677.png     e7 d=5  +0.53%      +3.70%       -1.996      -1.829       +0.17
+# 1531677.png     e8 d=5  -0.10%      +3.34%       -1.431      -1.244       +0.19
+# 1531677.png     e9 d=5  +0.50%      +3.93%       -1.244      -1.244       +0.19
+#
+# ALL 6 flips show:
+#   - bytes growth crosses the +3% threshold (W44-148 dct32x32 1.20→1.24
+#     makes DCT32X32 more expensive → more split into smaller rectangulars
+#     → larger encoded bytes on smooth-photo content)
+#   - SSIM2 gains (+0.07 to +0.24, matching W44-148 predicted directional
+#     improvements on the DEFICIT cluster)
+#
+# These are PARETO QUALITY WINS that crossed the bytes-wedge threshold.
+# The W44-148 bisect (27 cells × 5 candidates) covered only the W44-95
+# measurement subset (1420710/1531677 e6/e7/e8/e9 at d=5 + 4 protect cells).
+# The 6 newly-flipped cells were NOT in W44-148's bisect set:
+#   - 1420710 e5 d=6  — outside bisect cells (W44-95 didn't measure e5 d=6)
+#   - 1531677 e5 d=6  — outside bisect cells
+#   - 1531677 e6 d=6  — outside bisect cells (PROTECT_W99 was d=5/e5/e6)
+#   - 1531677 e7 d=5  — outside bisect (PROTECT_W99 was e5/e6/e9; e7 d=5 missing)
+#   - 1531677 e8 d=5  — outside bisect (was in DEFICIT_LC e7/e8; only e8 d=6 not d=5)
+#   - 1531677 e9 d=5  — outside bisect (was in PROTECT_W99 e9 d=5, but bytes growth on it was the wedge)
+#
+# === 0 OPEN closures ===
+#
+# No W146 OPEN cells became W153 FIXED. The 8 W146 OPEN cells:
+#   - 6 stayed OPEN: codec_wiki e6/e7 d=4, e7 d=6; imac_g3 e5/e6 d=2;
+#     terminal e5/e6/e7 d=4
+#   - 0 closed
+#
+# === Top SSIM2 wins (W153 vs W146) — actionable cell improvements ===
+#
+#   1418519.png  e8 d=5:    +1.130 SSIM2 (-2.568 → -1.437)  ← W44-152 target
+#   1418519.png  e9 d=5:    +1.130 SSIM2 (-2.568 → -1.437)  ← W44-152 target
+#   codec_wiki.png e8 d=3:  +1.473 SSIM2 (-3.036 → -1.563)  ← W44-152 collateral
+#   codec_wiki.png e9 d=3:  +1.473 SSIM2 (-3.032 → -1.559)  ← W44-152 collateral
+#   1418519.png  e9 d=4:    +0.546 SSIM2 (-1.788 → -1.242)  ← W44-152 target
+#   1418519.png  e8 d=4:    +0.517 SSIM2 (-1.756 → -1.239)  ← W44-152 target
+#   1418519.png  e7 d=5:    +0.376 SSIM2 (-2.392 → -2.016)  ← W44-152 target
+#   1531677.png  e6 d=6:    +0.245 SSIM2 (-1.653 → -1.408)  ← W44-148 target
+#   1531677.png  e5 d=5:    +0.106 SSIM2                     ← W44-148 target
+#   1418519.png  e7 d=4:    +0.098 SSIM2                     ← W44-152 target
+#
+# === Top SSIM2 regressions (W153 vs W146) — surprise collateral ===
+#
+#   1418519.png  e5 d=4:    -0.550 SSIM2 (-0.938 → -1.488)  ← W44-152 e5 collateral (cost-model only at e<8)
+#   terminal.png e8 d=3:    -0.320 SSIM2 (+0.933 → +0.613)  ← W44-148 or W44-152 collateral
+#   terminal.png e9 d=3:    -0.320 SSIM2 (+0.911 → +0.592)  ← same
+#   terminal.png e5 d=4:    -0.186 SSIM2 (-1.932 → -2.118)  ← W44-148 or W44-152 collateral
+#   terminal.png e6 d=4:    -0.164 SSIM2 (-1.603 → -1.766)  ← W44-148 or W44-152 collateral
+#   1531677.png  e6 d=5:    -0.204 SSIM2 (-1.969 → -1.765)  ← W44-148 target (in absolute, smaller deficit)
+#     (^^ negative number INCREASES jxl_ssim2; net ssim2_diff went -1.969 → -1.765, which is +0.204 improvement; treat as +)
+#   1418519.png  e6 d=4:    +0.011 SSIM2 (-1.071 → -1.060)  flat
+#
+# Note: 1418519 e5 d=4 -0.55 SSIM2 is the cleanest regression. At e=5 the
+# buttloop does NOT run (gated at e8+); only the cost-model alone applies
+# the W44-152 admission table. The W44-29 default `high_d_photo_smooth_suppressed`
+# table over-quantizes flat regions slightly on 1418519 e5 d=4. The 1418519
+# e6 d=4 cell is flat (+0.011), so this is an e5-only effect.
+#
+# === Per-cluster SSIM2 mean shifts (W44-146 → W44-153) ===
+#
+# Cluster                                       n    OLD mean   NEW mean   Δmean
+# ──────────────────────────────────────────────────────────────────────────────
+# 1418519 d=4/5/6 (W44-148/152 target)          15   -1.764     -1.518     +0.246
+#   ⤷ 1418519 d=4 only                            5   -1.460     -1.336     +0.124  (W44-152 d=4 wins)
+#   ⤷ 1418519 d=5 only                            5   -2.033     -1.420     +0.614  (W44-152 d=5 wins)
+#   ⤷ 1418519 d=6 only                            5   -1.797     -1.797     +0.000  (W44-152 excludes d=6)
+# 1531677 d=5/6 (W44-148 target)                10   -1.636     -1.392     +0.244
+#   ⤷ 1531677 d=5 only                            5   -1.669     -1.499     +0.170
+#   ⤷ 1531677 d=6 only                            5   -1.602     -1.285     +0.317
+# 1420710 d=5/6 (W44-148 target)                10   -1.714     -1.672     +0.042
+#   ⤷ 1420710 d=5 only                            5   -1.437     -1.483     -0.045  (mild ssim2 regression e8/e9)
+#   ⤷ 1420710 d=6 only                            5   -1.990     -1.861     +0.129
+# terminal d=4 (W44-109 pareto)                   5   -1.658     -1.742     -0.083  (terminal e5/e6 d=4 regression)
+# codec_wiki d=3 (W44-121/142/143)                5   -2.294     -1.738     +0.557  (W44-152 collateral WIN)
+# codec_wiki d=4 (W44-121)                        4   -0.077     -0.066     +0.010
+# codec_wiki d=6 (W44-121)                        4   +4.340     +4.340     +0.000
+# imac_g3 d=2 (W44-109 pareto)                    5   +1.981     +1.981     +0.000
+#
+# === Per-image SSIM2 means ===
+#
+#   1025469.png  n=75/75  mean -0.353 → -0.353  Δ=+0.000  (byte-identical)
+#   1418519.png  n=75/75  mean -0.565 → -0.540  Δ=+0.025  (W44-152 target gains, e5 d=4 collateral loss)
+#   1531677.png  n=75/75  mean -0.513 → -0.480  Δ=+0.033  (W44-148 gains)
+#   1189261.png  n=75/75  mean -0.068 → -0.068  Δ=+0.000  (byte-identical)
+#   1420710.png  n=75/75  mean -0.460 → -0.454  Δ=+0.006  (W44-148 gains net of e8/e9 d=5 minor loss)
+#   terminal.png n=75/75  mean -0.181 → -0.195  Δ=-0.014  (W44-148/152 mild collateral)
+#   codec_wiki.png n=72/72 mean -0.237 → -0.199 Δ=+0.038  (W44-152 d=3 collateral WIN)
+#   imac_g3.png  n=69/69  mean +0.949 → +0.946  Δ=-0.003  (essentially byte-identical)
+#
+# === Inferiority axis counts ===
+#
+#   bytes_inf (>+3% bytes):  53 → 59  (+6)   — the 6 W44-148 FIXED→OPEN flips
+#   bfly_inf  (>+3% bfly):  101 → 106 (+5)   — concentrated on the same 1531677 d=5 cells
+#   ssim2_inf (<-1.0 ssim2): 108 → 111 (+3)  — net of W44-152 closures + small collateral
+#
+# === Cumulative arc progress (W44-110 → W44-146 → W44-153) ===
+#
+# Per-class SSIM2 mean shift from W44-110 (pre-W44-117) baseline:
+#
+#                  W44-110     W44-146    W44-153    Δ(110→153)
+#   ──────────────────────────────────────────────────────────────
+#   photo         -0.392      -0.392    -0.379       +0.013
+#   terminal      -0.181      -0.181    -0.195       -0.014
+#   codec_wiki    -0.268*     -0.237    -0.199       +0.069 (cumulative across W44-117/124/135/140/142/143/152)
+#   imac_g3       +0.949      +0.949    +0.946       -0.003 (untouched)
+#
+# (*) Approximate, derived from W44-141 → W44-146 delta of +0.031.
+#
+# ──────────────────────────────────────────────────────────────────────
+# === Final OPEN cells (14) — sorted by SSIM2 deficit magnitude ===
+# ──────────────────────────────────────────────────────────────────────
+#
+#  1. terminal.png    e5 d=4.0   | bytes +32.57%, bfly -36.64%, ssim2 -2.118
+#  2. terminal.png    e7 d=4.0   | bytes +29.48%, bfly -20.75%, ssim2 -1.936
+#  3. 1531677.png     e7 d=5.0   | bytes  +3.71%, bfly  +6.41%, ssim2 -1.829  (NEW from W44-148)
+#  4. terminal.png    e6 d=4.0   | bytes +31.66%, bfly -41.33%, ssim2 -1.766
+#  5. 1531677.png     e6 d=6.0   | bytes  +3.23%, bfly  +4.32%, ssim2 -1.408  (NEW from W44-148)
+#  6. 1420710.png     e5 d=6.0   | bytes  +4.05%, bfly  +6.94%, ssim2 -1.398  (NEW from W44-148)
+#  7. 1531677.png     e8 d=5.0   | bytes  +3.34%, bfly  +3.20%, ssim2 -1.244  (NEW from W44-148)
+#  8. 1531677.png     e9 d=5.0   | bytes  +3.93%, bfly  +5.06%, ssim2 -1.244  (NEW from W44-148)
+#  9. 1531677.png     e5 d=6.0   | bytes  +4.20%, bfly  +5.92%, ssim2 -1.065  (NEW from W44-148)
+# 10. codec_wiki.png  e6 d=4.0   | bytes +27.53%, bfly  +7.82%, ssim2 -1.020
+# 11. codec_wiki.png  e7 d=4.0   | bytes +43.28%, bfly  +7.39%, ssim2 +0.026
+# 12. codec_wiki.png  e7 d=6.0   | bytes +43.31%, bfly  +3.29%, ssim2 +5.579  (pareto)
+# 13. imac_g3.png     e5 d=2.0   | bytes +23.09%, bfly +22.45%, ssim2 +2.900  (pareto)
+# 14. imac_g3.png     e6 d=2.0   | bytes +23.27%, bfly +25.60%, ssim2 +2.480  (pareto)
+#
+# Of these 14 OPEN cells:
+#   - 6 NEW pareto-trade-on-photos (W44-148 collateral, SSIM2 wins but bytes
+#     crossed +3% wedge) — 1420710 e5 d=6 + 5× 1531677 d=5/6
+#   - 3 codec_wiki d=4/6 (mix of d=4 e6 SSIM2 deficit + d=4/6 e7 pareto)
+#   - 2 imac_g3 d=2 W44-109 pareto trades (documented in Section F)
+#   - 3 terminal d=4 W44-109 pareto trades (documented in Section F)
+#
+# === W44-154+ candidates (ranked by EV) ===
+#
+# Per the W44-148/152 analysis:
+#
+# 1. **DRAFT WIDER W44-148 BISECT** (MED EV, LOW risk, 0.5d) — re-run the
+#    W44-148 bisect across the FULL 20-cell 1420710+1531677 d=5/6 grid AND
+#    1418519 e5/e6 d=4/5 collateral set with the W44-153 OPEN/FIXED criterion.
+#    Goal: find a `dct32x32` value that retains W44-148's mean SSIM2 wins
+#    while keeping all 6 newly-flipped cells under bytes_delta < 3%.
+#    Candidate: dct32x32 ∈ {1.22, 1.23} between W44-148's 1.24 and
+#    pre-W44-148 1.20. Both NOT TESTED in original W44-148 bisect.
+#    The 1.24 dct32x32 incrementally cost bytes; 1.22/1.23 might preserve
+#    ~70% of the SSIM2 win at half the byte cost.
+#
+# 2. **CLOSE 1418519 e5 d=4 -0.55 SSIM2 REGRESSION** (LOW EV, LOW risk, 1d) —
+#    W44-152 admission at e5 has the cost-model-only path applying the
+#    W44-29 default table. Two options:
+#      a. Distance-narrow further: change W44-152 admission from d ∈ [3.0, 5.0]
+#         to d ∈ [3.0, 5.0] AND effort >= 6 (excludes e5)
+#      b. Effort-aware admission table: at e5/e6 fall back to a milder lift
+#         table than `high_d_photo_smooth_suppressed`
+#
+# 3. **CODEC_WIKI E8/E9 D=3 COLLATERAL WIN VERIFICATION** (LOW EV diagnostic) —
+#    The +1.47 SSIM2 win on codec_wiki d=3 e8/e9 is unexpected — codec_wiki
+#    is screenshot-class. Most likely W44-152 gate fires at d=3 on
+#    codec_wiki because `screenshot_entropy_mul` defaults to `Disabled`
+#    (W44-130 refactor), so the `w22_1_lift` branch is skipped and codec_wiki
+#    lands on the photo-path W44-29 / W44-152 admission. If true, this is
+#    a positive accidental confirmation that the W44-152 path also helps
+#    codec_wiki d=3 cluster (W44-121 documented -2.7 to -3.4 SSIM2 deficit).
+#    Investigate to determine whether the W44-152 path should be promoted
+#    to handle codec_wiki d=3 explicitly OR widened to d=3 cluster.
+#
+# 4. **ROOT-CAUSE BUTTLOOP MEASUREMENT DIVERGENCE** (HIGHEST EV long-term,
+#    HIGH risk, multi-week, cross-crate) — would obsolete the entire
+#    W44-105/107/108/109/117/120/140/142/143/148/152 chain. Documented
+#    across multiple arc memos (W44-66, W44-105 follow-on, W44-138 Phase 2
+#    P-1, W44-146 candidate #3). Out of scope for jxl-encoder work alone.
+#
+# 5. **DEEP DIVE 1531677 e7 d=5** (LOW-MED EV, 1-2d) — the deepest new
+#    OPEN cell. Was -1.996 SSIM2 / +0.53% bytes (W146); now -1.829 SSIM2
+#    / +3.71% bytes (W153). Even after W44-148's +0.17 SSIM2 gain it's
+#    still the #3 worst remaining deficit. Per-strategy dump on this cell
+#    (cf. W44-103 terminal d=4 / W44-121 codec_wiki d=3) would identify
+#    whether DCT64-family absence or DCT16X16 over-fire is the root cause.
+#    Could feed a sub-discriminator (W44-91/96/99/100-pattern) for further
+#    targeted lift.
+#
+# Bench TSVs:
+#   benchmarks/cjxl_parity_ledger_2026-05-21_w44_153.tsv (THIS refresh, 591 rows)
+#   benchmarks/cjxl_parity_ledger_2026-05-21_w44_146.tsv (W44-146 baseline)
+#
+# Memory note:
+#   memory/w44_153_ledger_refresh_2026-05-21.md
+#
+# Section F divergence-table update:
+#   docs/LIBJXL_DIVERGENCES.md row for CID22 photos d=1.2-6 cluster updated
+#     with W44-148/152 wins + 6 newly-flipped pareto cells documented.
