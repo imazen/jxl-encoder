@@ -1542,6 +1542,15 @@ required-features = ["parallel", "butteraugli-loop"]
 name = "w44_124_smoke"
 path = "examples/w44_124_smoke.rs"
 
+# W44-135 A/B: distance-gate the W44-124 auto-discriminator to d ∈ [2.0, 3.5].
+# Sweeps codec_wiki d={2.5, 3.0, 4.0, 5.0, 6.0} × e5/e6/e7 to verify d=2.5/3
+# wins preserved, d=4/5/6 regression cluster reverts to baseline. Spot-checks
+# terminal d=4 + imac_g3 d=2 + 3 photos for invariance.
+[[example]]
+name = "w44_135_distance_gate_ab"
+path = "examples/w44_135_distance_gate_ab.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
 # W44-104 proxy probe: dump zenanalyze proxies for 11 gb82-sc screenshots
 # to identify a discriminator separating terminal-class (admit DCT64) from
 # codec_wiki-class (keep W44-65/W44-68 suppression).
