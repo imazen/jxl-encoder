@@ -1808,6 +1808,26 @@ impl VarDctEncoder {
             )
         };
 
+        // W22-1 / W44-29 / W44-65+W44-68 content-aware AC-strategy-search
+        // profile gates. Mirrors the still-image path at
+        // `vardct/encoder.rs::encode` so the animation path produces
+        // bitstreams equivalent to a single-frame still encode. Pre-fix
+        // this call passed `&self.profile` directly, bypassing every
+        // content-aware dispatcher and producing a >700-byte divergence
+        // vs the still path on screenshot-class content (caught by
+        // `test_animation_lossy_runs_cfl_pass_2`).
+        //
+        // Originally extracted in W44-70 (`d2396131`, sibling branch
+        // never merged) and re-introduced in W44-137 on top of the
+        // W44-129/130 `resolved_improvements` path. See
+        // [`super::encoder::VarDctEncoder::compute_profile_for_search`]
+        // for the gate cascade.
+        let mask1x1_median_for_search = mask1x1
+            .as_deref()
+            .map(|m| super::encoder::median_mask1x1(m, padded_width, width, height));
+        let profile_for_search = self.compute_profile_for_search(mask1x1_median_for_search);
+        let active_profile_for_search = profile_for_search.as_ref().unwrap_or(&self.profile);
+
         // `ac_strategy` may be refined by the zensim loop below, which
         // splits large transforms with high perceptual error. The `mut`
         // is unused when the `zensim-loop` cargo feature is disabled.
@@ -1831,7 +1851,7 @@ impl VarDctEncoder {
                 &cfl_map,
                 mask1x1.as_deref(),
                 padded_width,
-                &self.profile,
+                active_profile_for_search,
             )
         };
 

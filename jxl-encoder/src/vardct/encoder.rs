@@ -699,7 +699,7 @@ fn patches_dispatch_block_mask_median(
 /// expected, no allocation outside the temporary buffer) — exact median
 /// rather than histogram approximation because the field is small
 /// (≤ 12 MP) and `mask1x1` is allocated once per encode anyway.
-fn median_mask1x1(mask: &[f32], stride: usize, width: usize, height: usize) -> f32 {
+pub(super) fn median_mask1x1(mask: &[f32], stride: usize, width: usize, height: usize) -> f32 {
     if width == 0 || height == 0 {
         return 0.0;
     }
@@ -1806,6 +1806,159 @@ impl VarDctEncoder {
     /// backwards-compatible (hash-lock byte-identical).
     pub(crate) fn alpha_squeeze_engaged(&self) -> bool {
         self.alpha_squeeze && matches!(self.alpha_distance, Some(d) if d > 0.0)
+    }
+
+    /// W22-1 / W44-29 / W44-65+W44-68 content-aware AC-strategy-search
+    /// profile gate cascade. Produces a `Some(profile_clone)` with the
+    /// appropriate entropy_mul table swap and/or `try_dct64` /
+    /// `try_dct32` suppression applied when one of the dispatchers
+    /// fires; returns `None` when no gate fires (caller uses
+    /// `&self.profile` directly).
+    ///
+    /// Shared between [`Self::encode`] (still-image path) and
+    /// [`super::bitstream::VarDctEncoder::encode_frame_to_writer`]
+    /// (animation per-frame path) so both paths produce
+    /// byte-equivalent bitstreams for the same input.
+    ///
+    /// Originally extracted in W44-70 (`d2396131`) to fix the
+    /// `test_animation_lossy_runs_cfl_pass_2` regression caused by
+    /// W44-65/68 default-on DCT suppression landing in `encode` but
+    /// not in `encode_frame_to_writer`. The helper was lost between
+    /// `d2396131` (sibling branch never merged) and the present W44-129/130
+    /// EncoderStrategy refactor. W44-137 re-extracts it on top of the
+    /// post-refactor `resolved_improvements` path.
+    ///
+    /// `mask1x1_median` is `None` when the mask wasn't computed
+    /// (pixel_domain_loss off / PixelLossDispatch::AlwaysOff /
+    /// !ac_strategy_enabled) — all auto gates degrade to "don't fire"
+    /// in that case unless the caller supplied a `ForceOn/ForceOff`
+    /// policy via `EncoderStrategy::Custom` / `StrategyOverrides`.
+    pub(super) fn compute_profile_for_search(
+        &self,
+        mask1x1_median: Option<f32>,
+    ) -> Option<crate::effort::EffortProfile> {
+        // ── W22-1 screenshot lift ──
+        let screenshot_policy = self.resolved_improvements.screenshot_entropy_mul;
+        let w22_1_lift = match screenshot_policy {
+            crate::api::ScreenshotEntropyMulPolicy::Auto => {
+                mask1x1_median.is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD)
+            }
+            crate::api::ScreenshotEntropyMulPolicy::ForceOn => true,
+            crate::api::ScreenshotEntropyMulPolicy::ForceOff => false,
+            crate::api::ScreenshotEntropyMulPolicy::Disabled => false,
+        };
+
+        // ── W44-29 high-distance smooth-photo lowering (auto + W44-91 widen) ──
+        let high_d_photo_policy = self.resolved_improvements.high_d_photo_entropy_mul;
+        let w44_29_lower = if w22_1_lift {
+            false
+        } else {
+            match high_d_photo_policy {
+                crate::api::HighDPhotoEntropyMulPolicy::Auto => {
+                    let w44_29_gate = self.distance >= HIGH_D_PHOTO_MIN_DISTANCE
+                        && mask1x1_median.is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD);
+                    let w44_91_gate = (HIGH_D_PHOTO_MIN_DISTANCE
+                        ..=HIGH_D_PHOTO_W44_91_MAX_DISTANCE)
+                        .contains(&self.distance)
+                        && mask1x1_median.is_some_and(|med| {
+                            (HIGH_D_PHOTO_SMOOTH_THRESHOLD..HIGH_D_PHOTO_W44_91_MASK_UPPER)
+                                .contains(&med)
+                        })
+                        && self.zenanalyze_proxies.is_some_and(|p| {
+                            p.m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN
+                                && p.flat_color_block_ratio < W44_91_FCBR_MAX
+                        });
+                    w44_29_gate || w44_91_gate
+                }
+                crate::api::HighDPhotoEntropyMulPolicy::ForceOn => true,
+                crate::api::HighDPhotoEntropyMulPolicy::ForceOff => false,
+                crate::api::HighDPhotoEntropyMulPolicy::Disabled => false,
+            }
+        };
+
+        // ── W44-65 + W44-68 DCT64/DCT32 suppression ──
+        let dct64_policy = self.resolved_improvements.dct64_search_policy;
+        let w44_65_suppress_dct64 = match dct64_policy {
+            crate::api::Dct64SearchPolicy::Auto => {
+                mask1x1_median.is_some_and(|med| med >= W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD)
+            }
+            crate::api::Dct64SearchPolicy::ForceSuppress => true,
+            crate::api::Dct64SearchPolicy::ForceAllow => false,
+        };
+
+        // ── W44-96/98/99 variant Z sub-discriminators ──
+        let w44_96_variant_z = w44_29_lower
+            && matches!(
+                high_d_photo_policy,
+                crate::api::HighDPhotoEntropyMulPolicy::Auto
+            )
+            && self.distance >= W44_96_VARIANT_Z_MIN_DISTANCE
+            && mask1x1_median.is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD)
+            && self.zenanalyze_proxies.is_some_and(|p| {
+                p.edge_density >= W44_96_EDGE_DENSITY_MIN
+                    && p.flat_color_block_ratio < W44_96_FCBR_MAX
+            });
+        let w44_98_variant_z_high_colour = w44_96_variant_z
+            && self
+                .zenanalyze_proxies
+                .is_some_and(|p| p.m3_colourfulness >= W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN);
+        let w44_99_variant_z_low_colour = w44_96_variant_z
+            && !w44_98_variant_z_high_colour
+            && self
+                .zenanalyze_proxies
+                .is_some_and(|p| p.m3_colourfulness < W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN);
+
+        if !(w22_1_lift || w44_29_lower || w44_65_suppress_dct64) {
+            return None;
+        }
+        let mut p = self.profile.clone();
+        if w22_1_lift {
+            p.entropy_mul_table = crate::effort::EntropyMulTable::screenshot_suppressed();
+        } else if w44_29_lower {
+            p.entropy_mul_table = if w44_98_variant_z_high_colour {
+                crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour()
+            } else if w44_99_variant_z_low_colour {
+                crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour()
+            } else if w44_96_variant_z {
+                crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z()
+            } else {
+                crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed()
+            };
+        }
+        if w44_65_suppress_dct64 {
+            p.try_dct64 = false;
+            // W44-123/124/135 dct32_keep_hint sub-dispatch:
+            let w44_123_env_keep = {
+                #[cfg(feature = "std")]
+                {
+                    std::env::var("__JXL_W44_123_KEEP_DCT32")
+                        .map(|s| s == "1")
+                        .unwrap_or(false)
+                }
+                #[cfg(not(feature = "std"))]
+                {
+                    false
+                }
+            };
+            let w44_124_distance_in_band = self.distance >= W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE
+                && self.distance <= W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE;
+            let w44_124_auto_keep = w44_124_distance_in_band
+                && self.zenanalyze_proxies.is_some_and(|zp| {
+                    zp.m3_colourfulness >= W44_124_DCT32_KEEP_M3_MIN
+                        && zp.edge_density < W44_124_DCT32_KEEP_EDGE_DENSITY_MAX
+                });
+            let dct32_policy = self.resolved_improvements.dct32_search_policy;
+            let w44_123_keep_dct32 = match dct32_policy {
+                crate::api::Dct32SearchPolicy::FollowDct64Suppression => {
+                    w44_123_env_keep || w44_124_auto_keep
+                }
+                crate::api::Dct32SearchPolicy::KeepWhenDct64Suppressed => true,
+            };
+            if !w44_123_keep_dct32 {
+                p.try_dct32 = false;
+            }
+        }
+        Some(p)
     }
 
     /// Encode an image in linear sRGB format, optionally with an alpha channel.
@@ -2927,8 +3080,9 @@ impl VarDctEncoder {
             //
             // `Auto` here fires the W22-1 mask1x1 discriminator
             // directly (no longer guarded by a separate enable bit).
-            crate::api::ScreenshotEntropyMulPolicy::Auto => mask1x1_median
-                .is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD),
+            crate::api::ScreenshotEntropyMulPolicy::Auto => {
+                mask1x1_median.is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD)
+            }
             crate::api::ScreenshotEntropyMulPolicy::ForceOn => true,
             crate::api::ScreenshotEntropyMulPolicy::ForceOff => false,
             crate::api::ScreenshotEntropyMulPolicy::Disabled => false,
@@ -2995,8 +3149,7 @@ impl VarDctEncoder {
                     // images none match (each fails at least one of the
                     // colourfulness/fcbr gates per W44-79 discriminator C3).
                     let w44_29_gate = self.distance >= HIGH_D_PHOTO_MIN_DISTANCE
-                        && mask1x1_median
-                            .is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD);
+                        && mask1x1_median.is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD);
                     let w44_91_gate = (HIGH_D_PHOTO_MIN_DISTANCE
                         ..=HIGH_D_PHOTO_W44_91_MAX_DISTANCE)
                         .contains(&self.distance)
@@ -3116,7 +3269,10 @@ impl VarDctEncoder {
         // `self.high_d_photo_hint.is_none()` redundant guard was
         // deleted with the field in Chunk D.
         let w44_96_variant_z = w44_29_lower
-            && matches!(high_d_photo_policy, crate::api::HighDPhotoEntropyMulPolicy::Auto)
+            && matches!(
+                high_d_photo_policy,
+                crate::api::HighDPhotoEntropyMulPolicy::Auto
+            )
             && self.distance >= W44_96_VARIANT_Z_MIN_DISTANCE
             && mask1x1_median.is_some_and(|med| med < HIGH_D_PHOTO_SMOOTH_THRESHOLD)
             && self.zenanalyze_proxies.is_some_and(|p| {
