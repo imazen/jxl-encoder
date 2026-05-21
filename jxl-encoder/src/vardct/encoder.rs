@@ -2907,6 +2907,39 @@ impl VarDctEncoder {
                     adaptive_quant_qf_seed_policy,
                 );
             if qf_pre_scale != 1.0 {
+                // W44-145 INVESTIGATION HONEST-STOP (2026-05-21): per-block
+                // adaptive qf scaling via mask1x1 lookup was implemented
+                // (`super::butteraugli_loop::w44_145_per_block_qf_scale`
+                // + `super::butteraugli_loop::per_block_mask1x1_mean`) and
+                // bisected at LOW thresholds {70, 95}. Mechanism works
+                // directionally (blank-mask blocks get smaller scale,
+                // text-mask blocks get full scale, mirroring cjxl's
+                // bimodal qac at e8+) BUT cannot close the terminal d=4
+                // e5/e6/e7 SSIM2/bytes budget the W44-145 task targeted:
+                //
+                //   v1 LOW=70: bytes -3% to -8.5% (target was -18 to
+                //              -23pp toward +10-15% overhead) but SSIM2
+                //              -0.34 to -0.50 (BUDGET WAS ±0.30)
+                //   v2 LOW=95: SSIM2 -0.08 to -0.16 (within budget) but
+                //              bytes +0.6% to +2.7% (WRONG DIRECTION)
+                //
+                // Root cause: cjxl at e5/e6/e7 ALSO has flat per-region
+                // qac (~7-9), NOT bimodal. cjxl's bimodal qac only
+                // emerges at e8+ post-buttloop. Therefore the right
+                // mechanism for the e5-e7 bytes overhead is NOT per-block
+                // mimicry of cjxl's e8+ bimodal structure (cjxl isn't
+                // bimodal at e5-e7) but rather a LOWER uniform scale
+                // (W44-144 Candidate 1: shrink the 2.0/3.0 constants).
+                //
+                // The helper functions are retained for future use
+                // (potential e8+ application where cjxl actually IS
+                // bimodal) but the production path keeps the uniform
+                // multiply (pre-W44-145 behaviour) to honour the
+                // W44-109 SSIM2 trade documented in
+                // `docs/LIBJXL_DIVERGENCES.md` Section F line 160.
+                //
+                // See `benchmarks/w44_145_per_block_qac_ab_*_2026-05-21.tsv`
+                // for the full A/B bisection (35 cells × 2 LOW values).
                 for v in quant_field_float.iter_mut() {
                     *v *= qf_pre_scale;
                 }

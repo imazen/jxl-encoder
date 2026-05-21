@@ -698,6 +698,129 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     base_scale
 }
 
+/// W44-145: lower edge of the per-block mask1x1 band where the W44-109
+/// adaptive-quant qf scale ramps from baseline (1.0) to the full
+/// per-effort scale ([`DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6`]
+/// or [`DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7`]).
+///
+/// **Why this exists**: W44-144 Phase 1 dump confirmed W44-109 raises
+/// qac UNIFORMLY by 2-3× on terminal d=4 e5/e6/e7 — every block now
+/// runs at the lifted scale. cjxl's buttloop on the same content
+/// produces a BIMODAL qac pattern (text-glyph blocks at qac ~80-97,
+/// blank background blocks at qac ~7). The blanket scale costs +30%
+/// bytes by over-quantizing blank regions where cjxl spends ~1× qac.
+///
+/// `mask1x1` in `compute_mask1x1` is `1 / (log1p(diff) + 0.01)` — HIGH
+/// values mark uniform / flat regions (blank), LOW values mark sharp
+/// edges (text glyphs). On terminal blocks:
+/// - blank background: mask1x1 saturates at ~100 (`log1p(0) = 0` → 1/0.01 = 100)
+/// - text glyphs: mask1x1 drops to 20-60 (`log1p(0.5..1.5) = 0.4..0.9`)
+/// - mixed edges: mask1x1 in between
+///
+/// W44-145 routes the W44-109 scale through a per-block lookup:
+/// - per-block mask1x1 mean ≥ [`W44_145_PER_BLOCK_MASK_HIGH`] (= 99.5): scale = 1.0
+///   (blank — no scaling, keeps qac at baseline ~7-8)
+/// - per-block mask1x1 mean ≤ [`W44_145_PER_BLOCK_MASK_LOW`] (= 70.0): scale = full W44-109
+///   (text — gets the full 2×/3× lift, matching cjxl's bimodal text-qac)
+/// - linear interpolation in between
+///
+/// The thresholds sit inside the screenshot-class mask range (median > 95
+/// from `SCREENSHOT_MEDIAN_THRESHOLD`): blank screenshot blocks saturate
+/// above 99.5, text/glyph blocks fall below 70. Synthetic flat
+/// fixtures (hash-locks) stay at mask ≈ 100 (smooth gradient → no Laplacian
+/// activity → 1/0.01), so the per-block scale collapses to 1.0 everywhere
+/// and the gate's outer is_screenshot predicate is also false on those
+/// fixtures (W44-109 gate predicates are inherited unchanged).
+pub const W44_145_PER_BLOCK_MASK_LOW: f32 = 70.0;
+
+/// W44-145: upper edge of the per-block mask1x1 band. See
+/// [`W44_145_PER_BLOCK_MASK_LOW`] for full context.
+pub const W44_145_PER_BLOCK_MASK_HIGH: f32 = 99.5;
+
+/// W44-145: linearly interpolate the W44-109 per-effort `full_scale` based
+/// on a single 8×8 block's mean `mask1x1`. Returns the per-block scale
+/// to apply to `quant_field_float` for that block.
+///
+/// `block_mask_mean = mean(mask1x1[y*W+x] for (x,y) in block_pixels)`.
+/// `full_scale` is the W44-109 per-effort scale (2.0 at e5/e6, 3.0 at e7).
+///
+/// Mapping:
+/// - `block_mask_mean >= W44_145_PER_BLOCK_MASK_HIGH` → returns 1.0 (no scaling)
+/// - `block_mask_mean <= W44_145_PER_BLOCK_MASK_LOW` → returns `full_scale`
+/// - between thresholds: linear blend
+///
+/// Hot path: this runs once per 8×8 block (≈xsize_blocks × ysize_blocks
+/// iterations), which is `nblocks` = padded_width × padded_height / 64.
+/// A 1646×1062 terminal image has ~27k blocks. Pure arithmetic; no
+/// allocation. The mean lookup table is computed once per encode via
+/// [`per_block_mask1x1_mean`].
+///
+/// **Currently unused in production** (W44-145 HONEST-STOP — see
+/// `vardct/encoder.rs` qf_pre_scale apply site). Retained for the
+/// reproducer + potential future e8+ application where cjxl actually
+/// has bimodal qac structure (terminal e8/e9 post-buttloop).
+#[inline]
+#[allow(dead_code)]
+pub(crate) fn w44_145_per_block_qf_scale(block_mask_mean: f32, full_scale: f32) -> f32 {
+    if full_scale == 1.0 {
+        return 1.0;
+    }
+    if block_mask_mean >= W44_145_PER_BLOCK_MASK_HIGH {
+        return 1.0;
+    }
+    if block_mask_mean <= W44_145_PER_BLOCK_MASK_LOW {
+        return full_scale;
+    }
+    // Linear blend: scale = 1 + t * (full_scale - 1) where t is the
+    // distance from HIGH (blank) toward LOW (text). HIGH → t=0 (scale=1),
+    // LOW → t=1 (scale=full).
+    let t = (W44_145_PER_BLOCK_MASK_HIGH - block_mask_mean)
+        / (W44_145_PER_BLOCK_MASK_HIGH - W44_145_PER_BLOCK_MASK_LOW);
+    1.0 + t * (full_scale - 1.0)
+}
+
+/// W44-145: compute per-8×8-block mean of a per-pixel `mask1x1` plane
+/// of dimensions `padded_width × padded_height` where
+/// `padded_width = xsize_blocks * 8` and `padded_height = ysize_blocks * 8`.
+///
+/// Returns a `Vec<f32>` of length `xsize_blocks * ysize_blocks` in
+/// row-major block order (by * xsize_blocks + bx). Each entry is the
+/// mean of the 64 mask1x1 pixels covering that block.
+///
+/// **No size budget reservation**: callers already account a `nblocks`
+/// f32 buffer when they own `quant_field_float`; the returned vector
+/// is the same size and lives for the duration of the qf-pre-scale
+/// pass (dropped after the multiply loop).
+///
+/// **Currently unused in production** (W44-145 HONEST-STOP — see
+/// [`w44_145_per_block_qf_scale`]). Retained for the reproducer +
+/// potential future e8+ application.
+#[allow(dead_code)]
+pub(crate) fn per_block_mask1x1_mean(
+    mask1x1: &[f32],
+    padded_width: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+) -> alloc::vec::Vec<f32> {
+    let nblocks = xsize_blocks * ysize_blocks;
+    let mut means = alloc::vec::Vec::with_capacity(nblocks);
+    for by in 0..ysize_blocks {
+        for bx in 0..xsize_blocks {
+            let mut sum: f32 = 0.0;
+            for dy in 0..8 {
+                let y = by * 8 + dy;
+                let row_off = y * padded_width;
+                for dx in 0..8 {
+                    let x = bx * 8 + dx;
+                    sum += mask1x1[row_off + x];
+                }
+            }
+            means.push(sum * (1.0 / 64.0));
+        }
+    }
+    means
+}
+
 /// Resolve `cur_pow` for the current iter + `target_distance`, honouring
 /// any sweep overrides set in `CUR_POW_X1000_{LOW,HIGH}`.
 ///
@@ -3016,6 +3139,129 @@ mod tuning_tests {
     fn w44_109_default_max_effort_is_7() {
         // Gate fires at e ∈ {5, 6, 7}; e>=8 is owned by W44-105.
         assert_eq!(ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT, 7);
+    }
+
+    // W44-145: per-block adaptive qac scaling tests.
+
+    #[test]
+    fn w44_145_per_block_scale_collapses_when_full_scale_is_1() {
+        // When the outer W44-109 gate doesn't fire, full_scale == 1.0;
+        // per-block scale must be exactly 1.0 regardless of mask value
+        // (no per-block compute should run, but the helper still
+        // short-circuits defensively).
+        assert_eq!(w44_145_per_block_qf_scale(0.0, 1.0), 1.0);
+        assert_eq!(w44_145_per_block_qf_scale(50.0, 1.0), 1.0);
+        assert_eq!(w44_145_per_block_qf_scale(100.0, 1.0), 1.0);
+    }
+
+    #[test]
+    fn w44_145_per_block_scale_high_mask_returns_1() {
+        // Blank background blocks (mask saturates near 100) → return 1.0
+        // (no scaling), matching cjxl's qac ≈ 7 in those regions.
+        assert_eq!(w44_145_per_block_qf_scale(99.5, 2.0), 1.0);
+        assert_eq!(w44_145_per_block_qf_scale(100.0, 2.0), 1.0);
+        assert_eq!(w44_145_per_block_qf_scale(150.0, 3.0), 1.0);
+    }
+
+    #[test]
+    fn w44_145_per_block_scale_low_mask_returns_full() {
+        // Text-glyph blocks (mask ≤ LOW threshold) → return full W44-109
+        // scale, matching cjxl's qac ≈ 97 in those regions.
+        let e5_full = DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6;
+        let e7_full = DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7;
+        assert_eq!(w44_145_per_block_qf_scale(W44_145_PER_BLOCK_MASK_LOW, e5_full), e5_full);
+        assert_eq!(w44_145_per_block_qf_scale(50.0, e5_full), e5_full);
+        assert_eq!(w44_145_per_block_qf_scale(20.0, e7_full), e7_full);
+        assert_eq!(w44_145_per_block_qf_scale(0.0, e7_full), e7_full);
+    }
+
+    #[test]
+    fn w44_145_per_block_scale_interpolates_linearly() {
+        // Midpoint of [70, 99.5] is 84.75; at full_scale = 2.0 returns
+        // 1.0 + 0.5 * (2.0 - 1.0) = 1.5.
+        let mid = (W44_145_PER_BLOCK_MASK_LOW + W44_145_PER_BLOCK_MASK_HIGH) * 0.5;
+        let v = w44_145_per_block_qf_scale(mid, 2.0);
+        assert!((v - 1.5).abs() < 1e-6, "midpoint scale: expected 1.5, got {v}");
+        // 1/4 from HIGH: t = 0.25 → scale = 1.0 + 0.25 * (3.0 - 1.0) = 1.5
+        let quarter_high = W44_145_PER_BLOCK_MASK_HIGH
+            - 0.25 * (W44_145_PER_BLOCK_MASK_HIGH - W44_145_PER_BLOCK_MASK_LOW);
+        let v = w44_145_per_block_qf_scale(quarter_high, 3.0);
+        assert!((v - 1.5).abs() < 1e-5, "quarter-from-HIGH e7 scale: expected 1.5, got {v}");
+    }
+
+    #[test]
+    fn w44_145_per_block_scale_monotonic_in_mask() {
+        // As mask drops from HIGH to LOW, scale rises monotonically from
+        // 1.0 to full_scale. This invariant catches sign flips or
+        // accidental clamping bugs.
+        let full = 2.0_f32;
+        let mut prev = 1.0_f32;
+        let n_steps = 32_usize;
+        for i in 0..=n_steps {
+            let frac = i as f32 / n_steps as f32;
+            let mask = W44_145_PER_BLOCK_MASK_HIGH
+                - frac * (W44_145_PER_BLOCK_MASK_HIGH - W44_145_PER_BLOCK_MASK_LOW);
+            let v = w44_145_per_block_qf_scale(mask, full);
+            assert!(
+                v >= prev - 1e-6,
+                "monotonicity broken at mask={mask}: scale {v} < prev {prev}"
+            );
+            prev = v;
+        }
+        // Endpoints: HIGH → 1.0, LOW → full
+        let lo = w44_145_per_block_qf_scale(W44_145_PER_BLOCK_MASK_LOW, full);
+        let hi = w44_145_per_block_qf_scale(W44_145_PER_BLOCK_MASK_HIGH, full);
+        assert!((lo - full).abs() < 1e-6);
+        assert!((hi - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn w44_145_per_block_mask_mean_uniform_field() {
+        // 2x2 blocks (16x16 padded plane), mask = uniform 100.0 → every
+        // block mean = 100.0.
+        let xsize_blocks = 2;
+        let ysize_blocks = 2;
+        let padded_width = xsize_blocks * 8;
+        let padded_height = ysize_blocks * 8;
+        let mask = vec![100.0_f32; padded_width * padded_height];
+        let means = per_block_mask1x1_mean(&mask, padded_width, xsize_blocks, ysize_blocks);
+        assert_eq!(means.len(), 4);
+        for m in &means {
+            assert!((m - 100.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn w44_145_per_block_mask_mean_split_field() {
+        // Top-left block (8x8) all 100, top-right all 50, bottom-left
+        // all 80, bottom-right all 20. Verify the row-major block order
+        // and per-block reduction land the right means in the right slots.
+        let xsize_blocks = 2;
+        let ysize_blocks = 2;
+        let padded_width = xsize_blocks * 8;
+        let padded_height = ysize_blocks * 8;
+        let mut mask = vec![0.0_f32; padded_width * padded_height];
+        for by in 0..ysize_blocks {
+            for bx in 0..xsize_blocks {
+                let val = match (by, bx) {
+                    (0, 0) => 100.0,
+                    (0, 1) => 50.0,
+                    (1, 0) => 80.0,
+                    (1, 1) => 20.0,
+                    _ => unreachable!(),
+                };
+                for dy in 0..8 {
+                    for dx in 0..8 {
+                        mask[(by * 8 + dy) * padded_width + (bx * 8 + dx)] = val;
+                    }
+                }
+            }
+        }
+        let means = per_block_mask1x1_mean(&mask, padded_width, xsize_blocks, ysize_blocks);
+        assert!((means[0] - 100.0).abs() < 1e-6);
+        assert!((means[1] - 50.0).abs() < 1e-6);
+        assert!((means[2] - 80.0).abs() < 1e-6);
+        assert!((means[3] - 20.0).abs() < 1e-6);
     }
 
     #[test]
