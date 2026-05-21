@@ -1,0 +1,260 @@
+# W44-154 micro-bisect variant Z dct32x32 ∈ {1.22, 1.23, 1.24} (2026-05-21)
+
+## Source
+
+- Branch: main
+- Parent commit: `1a988fc8` (W44-153 ledger refresh post-W44-148/152)
+- Tool: `jxl-encoder/examples/w44_154_dct32x32_micro_bisect.rs`
+- Reference encoder: cjxl `0.12.0` (libjxl build at `/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl`)
+- Host: lilith (Ryzen 9 7950X, 128 GB)
+- Date: 2026-05-21
+- Target dir: `$HOME/work/zen/jxl-encoder-shared-target`
+
+## Provenance
+
+W44-148 (commit `2a303428`) raised variant Z `dct32x32` 1.20 → 1.24 across all 3
+variant Z tables (default Z + HC + LC) after broader-corpus measurement showed
+1.20 over-fires DCT32X32 (W44-147 audit). The 27-cell W44-148 bisect found 1.24
+was Pareto-optimal among {1.20, 1.24, 1.28, 1.30, 1.34}.
+
+W44-153 (`1a988fc8`) full-ledger refresh (591 cells) found 6 cells flipped
+FIXED→OPEN at the W44-148 boundary, ALL PARETO SSIM2 WINS (bytes grew past
++3% wedge but SSIM2 IMPROVED +0.07 to +0.24 per cell). These 6 cells were
+NOT in the W44-148 27-cell bisect coverage:
+
+* 1420710 e5 d=6 — W44-148 bisect was e6/e7/e8/e9 only
+* 1531677 e5/e6 d=6 — W44-148 PROTECT_W99 was at d=5 only
+* 1531677 e7 d=5 — W44-148 PROTECT_W99 was e5/e6/e9
+* 1531677 e8 d=5 — W44-148 DEFICIT_LC was e7/e8 d=5/6; e8 d=5 was HC class
+* 1531677 e9 d=5 — same gap
+
+W44-154 (this chunk) MICRO-bisects {1.22, 1.23} between W44-148's 1.24 and
+pre-W44-148 1.20 to find a value that closes ≥4 of the 6 newly-flipped cells
+while preserving ≥80% of W44-148's SSIM2 wins on the 1418519 d=5 cluster
+(W44-148/W44-152 +0.614 mean).
+
+## Cell coverage (30 cells)
+
+| Class | n | Cells |
+|---|---|---|
+| FLIPPED_W148 | 6 | 1420710 e5 d=6; 1531677 e5/e6 d=6; 1531677 e7/e8/e9 d=5 |
+| DEF_1418519_D5 | 3 | 1418519 e7/e8/e9 d=5 (W44-148/152 win cluster) |
+| DEF_1418519_D4 | 3 | 1418519 e7/e8/e9 d=4 (W44-152 win cluster) |
+| DEF_1418519_D6 | 3 | 1418519 e7/e8/e9 d=6 (W44-148 target — gate doesn't fire there) |
+| PROTECT_1420710_D4 | 3 | 1420710 e7/e8/e9 d=4 |
+| PROTECT_1420710_D5 | 3 | 1420710 e7/e8/e9 d=5 |
+| PROTECT_1531677_D4 | 3 | 1531677 e7/e8/e9 d=4 |
+| COLLATERAL_CW_D3 | 3 | codec_wiki e7/e8/e9 d=3 (W44-152 collateral wins) |
+| CONTROL_NOGATE | 3 | 1189261/1044329/2389166 e7 d=4 (off all gates — must be byte-identical) |
+
+## Build
+
+```
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+cargo run --release -p jxl-encoder \
+    --features '__expert butteraugli-loop ssim2-loop parallel' \
+    --example w44_154_dct32x32_micro_bisect
+```
+
+## Aggregate results
+
+```
+Variant              Δvs_cjxl    n   FIXED→OPEN_vs_A  OPEN→FIXED_vs_A  Δssim2_avg  ssim2[min, max]
+A_dct32_124_w148     -46034 B    30  0                0                +0.0000     [+0.0000, +0.0000]
+B_dct32_122          -46337 B    30  1                0                +0.0106     [-0.0717, +0.1572]
+C_dct32_123          -45709 B    30  1                0                +0.0093     [-0.0242, +0.1678]
+```
+
+## FLIPPED_W148 closure counts (must close ≥4 of 6)
+
+```
+A_dct32_124_w148     0/6 closed (baseline — all 6 OPEN)
+B_dct32_122          5/6 closed  ← WINNER
+C_dct32_123          3/6 closed
+```
+
+### Per-cell closure detail
+
+| image | e/d | A_bp | B_bp (1.22) | C_bp (1.23) | B closes | C closes |
+|---|---|---|---|---|---|---|
+| 1420710.png | e5 d=6 | +4.051% | +4.115% | +3.051% | NO | NO |
+| 1531677.png | e5 d=6 | +4.203% | +2.362% | +3.114% | YES | NO |
+| 1531677.png | e6 d=6 | +3.234% | +1.439% | +2.175% | YES | YES |
+| 1531677.png | e7 d=5 | +3.705% | +0.533% | +2.624% | YES | YES |
+| 1531677.png | e8 d=5 | +3.344% | +1.476% | +2.532% | YES | YES |
+| 1531677.png | e9 d=5 | +3.925% | +1.936% | +3.122% | YES | NO |
+
+## Per-class SSIM2 deltas (vs A_dct32_124_w148 baseline)
+
+| Class | n | B_dct32_122 Δssim2 | C_dct32_123 Δssim2 |
+|---|---|---|---|
+| FLIPPED_W148 | 6 | +0.0036 | -0.0102 |
+| DEF_1418519_D4 | 3 | +0.0000 (gate doesn't fire) | +0.0000 |
+| DEF_1418519_D5 | 3 | +0.0000 (gate doesn't fire) | +0.0000 |
+| DEF_1418519_D6 | 3 | +0.0000 (gate doesn't fire) | +0.0000 |
+| PROTECT_1420710_D4 | 3 | +0.0000 (gate doesn't fire at d=4) | +0.0000 |
+| **PROTECT_1420710_D5** | 3 | **+0.0986** (NET WIN) | **+0.1139** (NET WIN) |
+| PROTECT_1531677_D4 | 3 | +0.0000 (gate doesn't fire at d=4) | +0.0000 |
+| COLLATERAL_CW_D3 | 3 | +0.0000 (gate doesn't fire) | +0.0000 |
+| CONTROL_NOGATE | 3 | +0.0000 (gate doesn't fire) | +0.0000 |
+
+## CONTROL byte-identity verification
+
+```
+B_dct32_122    OK (3/3 CONTROL cells byte-identical to A baseline)
+C_dct32_123    OK (3/3 CONTROL cells byte-identical to A baseline)
+```
+
+## Worst-case SSIM2 regressions (must be ≤ 0.30; ZERO observed)
+
+```
+B_dct32_122    worst Δssim2 = -0.0717 (1420710 e5 d=6, FLIPPED_W148)  — well under 0.30 budget
+C_dct32_123    worst Δssim2 = -0.0242                                  — well under 0.30 budget
+```
+
+Neither variant produces any SSIM2 regression > 0.30 on any cell across the
+30-cell coverage.
+
+## Acceptance gate verdict
+
+### B_dct32_122 (winner)
+
+| Gate | Required | Achieved | Status |
+|---|---|---|---|
+| FLIPPED_W148 closures | ≥4 of 6 | 5/6 | PASS |
+| DEF_1418519_D5 SSIM2 preservation | Δmean ≥ -0.123 (= ≥80% of +0.614 W148 win) | +0.0000 (100% preserved) | PASS |
+| DEF_1418519_D4 SSIM2 preservation | Δmean ≥ -0.05 (loose) | +0.0000 (100% preserved) | PASS |
+| DEF_1418519_D6 SSIM2 preservation | Δmean ≥ -0.10 (loose) | +0.0000 (100% preserved) | PASS |
+| PROTECT no SSIM2 regression > 0.30 | 0 cells | 0 cells | PASS |
+| COLLATERAL_CW_D3 SSIM2 preservation | Δmean ≥ -0.279 (= ≥50% of +0.557 W153 win) | +0.0000 (100% preserved) | PASS |
+| CONTROL byte-identical | 0 violations | 0 violations | PASS |
+
+**7/7 gates PASS → B_dct32_122 SHIPS.**
+
+### C_dct32_123 (alternative, REJECTED)
+
+| Gate | Required | Achieved | Status |
+|---|---|---|---|
+| FLIPPED_W148 closures | ≥4 of 6 | 3/6 | **FAIL** |
+| (others) | (same) | (all pass) | PASS |
+
+**6/7 gates PASS → C_dct32_123 fails closure gate.**
+
+## Why B (1.22) is the Pareto winner
+
+The W44-153 ledger's 6 FIXED→OPEN flips at W44-148's 1.24 were ALL on
+1531677 + 1420710 d=5/6. B (1.22) reduces the dct32x32 entropy_mul penalty
+slightly, allowing more DCT32X32 selection on smooth-photo content — which
+shaves bytes back below the +3% threshold on 5 of the 6 cells. Critically:
+
+* **1418519 cluster fully preserved**: 1418519 (mask=76, m3=23, fcbr=0.05)
+  fails the W44-29/96 outer gate, so variant Z dispatch does NOT fire on
+  1418519 at any distance. The W44-148/W44-152 wins on 1418519 d=4/5 (mean
+  +0.124 / +0.614 SSIM2) come from the W44-29 default
+  `high_d_photo_smooth_suppressed()` table via W44-152 admission, NOT variant
+  Z. W44-154 changes ONLY variant Z, so 1418519 is byte-identical.
+
+* **codec_wiki d=3 cluster fully preserved**: same reasoning — codec_wiki
+  fires through W44-152 admission to the W44-29 outer table, not variant Z.
+
+* **PROTECT_1420710_D5 is a NET SSIM2 WIN under both B and C**: B gains
+  +0.099 mean, C gains +0.114 mean. The 1 FIXED→OPEN flip is on 1420710
+  e7 d=5 (bytes +1.6% → +3.77% under B), but the butteraugli stays at
+  +16.81% (identical to A) — pareto trade matching the W44-153 documented
+  pattern.
+
+* **1420710 e5 d=6 stays OPEN**: this is the one FLIPPED cell that B
+  doesn't fully close (+4.115% bytes under B vs +4.051% under A — slightly
+  worse). The 1.49/1.48 scaling of dct16x32 from a smaller dct32x32 means
+  this particular cell wants different geometry than the global lift can
+  give. Future W44-155+ candidate: per-distance entropy_mul values.
+
+## Code change
+
+`jxl-encoder/src/effort.rs`:
+- `high_d_photo_smooth_suppressed_z()`: dct32x32 1.24 → 1.22 + dct16x32
+  auto-scaled (1.24 * 1.49/1.48 ≈ 1.248 → 1.22 * 1.49/1.48 ≈ 1.228)
+- `high_d_photo_smooth_suppressed_z_high_colour()`: dct32x32 1.24 → 1.22
+  (dct16x32=1.30 unchanged, W44-98 independent lift)
+- `high_d_photo_smooth_suppressed_z_low_colour()`: dct32x32 1.24 → 1.22
+  (dct16x32=1.23 unchanged, W44-100 micro-bisect value)
+- Updated 3 unit test assertions: dct32x32 1.24 → 1.22; the LC test's
+  Z↔LC dct16x32 relationship RE-INVERTS back to "LC ABOVE Z" (1.23 >
+  Z's auto-scaled 1.228), restoring the original W44-99/100 design
+  intent.
+
+## Acceptance gates (production)
+
+1. `cargo build --release -p jxl-encoder --features '__expert butteraugli-loop ssim2-loop parallel'`: PASS
+2. `cargo test --lib --features '__expert'`: PASS (1369 / 1369)
+3. `cargo test --test hash_lock_features` (36 lossy + lossless hash-locks): PASS (36/36 BYTE-IDENTICAL)
+4. `cargo test --test strategy_libjxl_hash_locks`: PASS (5/5)
+5. Multi-decoder roundtrip via djxl + jxl-rs on 2 cells (1531677 e7 d=5
+   closed-flipped + 1418519 e8 d=5 preserved-win): 4/4 PASS
+
+## Concurrent-workspace notes
+
+- Primary checkout `/home/lilith/work/zen/jxl-encoder/`
+- Marker `.workongoing` written before any work
+- Built with `CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target`
+  per standing directive (per-workspace target/ pollution at 51× cost)
+
+## Follow-on candidates (NOT in scope, document for W44-155+)
+
+1. **1420710 e5 d=6 still OPEN under B** — the one cell B doesn't close.
+   Bytes are +4.115% (slightly worse than A's +4.051%). Hypothesis: this
+   cell wants a per-distance entropy_mul where d=6 uses a slightly
+   higher dct32x32 than d=5. Would need a distance-band sub-discriminator
+   inside variant Z dispatch.
+
+2. **Re-bisect LC's `dct16x32` against the new `dct32x32 = 1.22`** —
+   W44-100's 1.23 was bisected against pre-W44-148 dct32=1.20. After
+   W44-148, the LC ABOVE Z semantic inverted. After W44-154 (this commit),
+   it re-inverts back. Re-bisecting LC's dct16x32 against the new 1.22
+   baseline may find a slightly different optimum.
+
+3. **Mechanism A for 1418519 admission** (W44-147 audit candidate A1,
+   W44-150 honest-stop) — still unaddressed. The variant Z micro-bisect
+   does NOT help 1418519 since the W44-29/96 outer gate blocks variant Z
+   dispatch there. The 1418519 d=5 e7 cell still has -2.02 SSIM2 deficit
+   per W44-153 ledger. Requires a non-variant-Z mechanism.
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT lower variant Z dct32x32 back to 1.20** — measurement
+   conclusive across multiple bisects that 1.20 over-fires across the
+   broader d=5/6 corpus (W44-147 audit + W44-148 bisect).
+
+2. **DO NOT raise variant Z dct32x32 above 1.22 without re-bisect** —
+   W44-148 measured 1.28 / 1.30 / 1.34 flipping 1-3 cells FIXED→OPEN;
+   W44-154 measured 1.24 itself producing 6 pareto FIXED→OPEN flips on
+   the full ledger (W44-153 finding).
+
+3. **DO NOT update LC's dct16x32 in a follow-up chunk without
+   re-bisecting** — see candidate 2 above. The LC-vs-Z relationship has
+   already inverted twice in the W44-148 → W44-154 arc.
+
+4. **DO NOT cite "FMA precision"** for photo SSIM2 gaps (per W44-66
+   user correction).
+
+5. **DO NOT re-investigate the 1418519 cluster as Mechanism B** —
+   variant Z does NOT fire there (W44-29/96 outer gates block); requires
+   Mechanism A (new discriminator) instead.
+
+6. **DO NOT respawn micro-bisect of {1.21, 1.22, 1.23} at finer step** —
+   the W44-154 bisect is conclusive that B (1.22) is the Pareto winner
+   among the {1.20, 1.22, 1.23, 1.24} candidate set. Further micro-stepping
+   at this scale is below measurement noise.
+
+## Provenance
+
+```
+parent commit:    1a988fc8 (W44-153 ledger refresh)
+chunk duration:   ~1 hour (bench + analysis + commit)
+artifacts:        benchmarks/w44_154_dct32x32_micro_bisect_2026-05-21.{tsv,meta}
+                  jxl-encoder/examples/w44_154_dct32x32_micro_bisect.rs
+                  jxl-encoder/src/effort.rs (production code + 3 test updates)
+                  docs/LIBJXL_DIVERGENCES.md (Section B + F updates)
+host:             lilith
+target_dir:       $HOME/work/zen/jxl-encoder-shared-target
+```
