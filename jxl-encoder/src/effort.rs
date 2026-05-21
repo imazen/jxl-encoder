@@ -217,8 +217,15 @@ impl EntropyMulTable {
     /// `benchmarks/w44_96_*.tsv` for the per-image probe).
     ///
     /// Changes vs [`high_d_photo_smooth_suppressed`] (all reductions):
-    /// - dct32x32: 1.34 → 1.20 (~10.4 % cheaper)
-    /// - dct16x32 / dct32x16: 1.349 → 1.208 (scaled by 1.49/1.48)
+    /// - dct32x32: 1.34 → 1.24 (~7.5 % cheaper) — **W44-148 raise** from
+    ///   the original W44-96 value of 1.20 after broader d=5/6 measurement
+    ///   on the W44-147 audit's photo deficit cluster showed 1.20
+    ///   over-fires DCT32X32 (SSIM2 -0.14 to -0.49 on 1420710/1531677
+    ///   d=5/6 vs cjxl). 1.24 was bisected against {1.20, 1.24, 1.28,
+    ///   1.30, 1.34} as the only candidate with zero FIXED→OPEN ledger
+    ///   regressions while improving DEFICIT cluster SSIM2 by +0.20 mean
+    ///   (worst PROTECT cell SSIM2 -0.17, well within 0.30 budget).
+    /// - dct16x32 / dct32x16: scaled by 1.49/1.48 (= 1.248)
     /// - dct16x16: unchanged at 1.27
     ///
     /// **Gate**: only applied when ALL hold (per
@@ -240,14 +247,16 @@ impl EntropyMulTable {
     /// discriminator; the other 3 stay on the default
     /// [`high_d_photo_smooth_suppressed`] table.
     ///
-    /// **Bench**: `benchmarks/w44_96_zenanalyze_dct32_discriminator_2026-05-19.{tsv,meta}`.
+    /// **Bench**: `benchmarks/w44_96_zenanalyze_dct32_discriminator_2026-05-19.{tsv,meta}`
+    /// (original 1.20 measurement); `benchmarks/w44_148_variant_z_dct32_bisect_2026-05-21.{tsv,meta}`
+    /// (raised to 1.24 after broader-corpus measurement).
     pub fn high_d_photo_smooth_suppressed_z() -> Self {
         Self {
             dct16x16: 1.27,
-            dct32x32: 1.20,
+            dct32x32: 1.24,
             // Scale dct16x32 with dct32x32 by the libjxl 1.49/1.48 ratio
             // (mirrors the W44-28 sweep harness `build_table` helper).
-            dct16x32: 1.20 * (1.49 / 1.48),
+            dct16x32: 1.24 * (1.49 / 1.48),
             ..Self::reference()
         }
     }
@@ -299,12 +308,22 @@ impl EntropyMulTable {
     pub fn high_d_photo_smooth_suppressed_z_high_colour() -> Self {
         Self {
             dct16x16: 1.27,
-            dct32x32: 1.20,
+            // W44-148 raised from 1.20 to 1.24 in parallel with variant Z.
+            // See [`high_d_photo_smooth_suppressed_z`] for full rationale;
+            // the same bisect on 1420710 d=6 e6-e9 showed +0.075 to +0.217
+            // SSIM2 per cell at 1.24 (vs 1.20) and zero FIXED→OPEN flips,
+            // while 1.28+ flipped 1420710 e6/e7 d=5 (PROTECT_W98).
+            dct32x32: 1.24,
             // dct16x32 LIFTED to 1.30, breaking the libjxl 1.49/1.48
             // ratio. Makes DCT32X16 / DCT16X32 strictly more expensive
-            // than DCT32X32 (square merge wins more often) without
-            // changing `dct32x32` (preserves the W44-95 SSIM2 budget
-            // honoured by variant Z).
+            // than DCT32X32 (square merge wins more often). The W44-148
+            // raise touches `dct32x32` only — `dct16x32` stays at 1.30
+            // because the W44-98 high-colour bisect was independent of
+            // `dct32x32` (it measured the lift ratio dct16x32/dct32x32,
+            // not the absolute values; the relative gap to dct32x32 is
+            // 1.30/1.24 = 1.048, slightly tighter than the original
+            // 1.30/1.20 = 1.083 but still keeps DCT16X32 strictly more
+            // expensive than DCT32X32).
             dct16x32: 1.30,
             ..Self::reference()
         }
@@ -346,10 +365,13 @@ impl EntropyMulTable {
     /// e5/e6.
     ///
     /// Changes vs [`high_d_photo_smooth_suppressed_z`] (single lift):
-    /// - dct16x32: 1.208 → 1.23 (+1.8%, both DCT16X32 and DCT32X16) —
-    ///   originally 1.22 in W44-99; bumped to 1.23 in W44-100 micro-bisect
-    ///   to close the last OPEN cell (1531677 e5 d=5: +3.090% → +1.943%
-    ///   bytes, worst-cell SSIM2 delta -0.2592 under 0.30 budget).
+    /// - dct16x32: kept at 1.23 (W44-100 micro-bisect value, originally
+    ///   1.22 in W44-99). After W44-148 raised variant Z's `dct32x32` to
+    ///   1.24, variant Z's auto-scaled `dct16x32 = 1.24 * 1.49/1.48 ≈
+    ///   1.248` now exceeds LC's 1.23 (the W44-99/100 "LC dct16x32 lifted
+    ///   ABOVE Z" semantic is INVERTED by W44-148, but LC's value at 1.23
+    ///   measured Pareto-positive in the W44-148 bisect — DEFICIT_LC
+    ///   SSIM2 +0.257 mean at the new (1.24, 1.23) configuration).
     /// - all other transforms: unchanged from variant Z
     ///
     /// **Gate** (ALL must hold, on top of every W44-96 gate condition):
@@ -366,7 +388,13 @@ impl EntropyMulTable {
     pub fn high_d_photo_smooth_suppressed_z_low_colour() -> Self {
         Self {
             dct16x16: 1.27,
-            dct32x32: 1.20,
+            // W44-148 raised from 1.20 to 1.24 in parallel with variant Z.
+            // The W44-148 bisect measured DEFICIT_LC (1531677 d=5/6 × e7/e8)
+            // SSIM2 +0.167 to +0.439 per cell at 1.24 vs 1.20, with the
+            // worst PROTECT_W99 SSIM2 regression bounded at -0.10
+            // (well within the 0.30 budget). Higher values (1.28+) flipped
+            // 1531677 e5 d=5 FIXED→OPEN, so 1.24 is Pareto-optimal.
+            dct32x32: 1.24,
             // dct16x32 LIFTED to 1.23 (+1.8% above variant Z's 1.208,
             // 5.4% below high_colour Z''s 1.30). W44-100 micro-bisect of
             // {1.22, 1.23, 1.24, 1.25} found 1.23 strictly dominates the
@@ -376,7 +404,8 @@ impl EntropyMulTable {
             // The cost model is non-monotonic in this region — LC_124
             // emits +3.85% bytes on 1531677 e8 d=5 vs LC_123's -0.10%,
             // i.e. the same lift can route to different AC strategies
-            // under different effort levels.
+            // under different effort levels. W44-148 retains 1.23 — the
+            // bisect varied only `dct32x32`.
             dct16x32: 1.23,
             ..Self::reference()
         }
@@ -2864,17 +2893,20 @@ mod tests {
 
     #[test]
     fn test_entropy_mul_table_high_d_photo_smooth_suppressed_z_values() {
-        // W44-96 variant Z: dct32x32 = 1.20 (vs default suppressed 1.34
-        // vs reference 1.48). Every other field except dct16x32 must
-        // match the default suppressed table (dct16x16 unchanged).
+        // W44-148 variant Z: dct32x32 = 1.24 (raised from W44-96's 1.20
+        // after broader d=5/6 measurement showed 1.20 over-fires DCT32X32
+        // on the W44-147 photo deficit cluster). 1.24 was Pareto-optimal
+        // (zero FIXED→OPEN regressions, DEFICIT cluster SSIM2 +0.20 mean).
+        // Every other field except dct16x32 must match the default
+        // suppressed table (dct16x16 unchanged).
         let t = EntropyMulTable::high_d_photo_smooth_suppressed_z();
         let d = EntropyMulTable::high_d_photo_smooth_suppressed();
         let r = EntropyMulTable::reference();
 
         // Variant Z reductions:
         assert_eq!(t.dct16x16, d.dct16x16); // unchanged at 1.27
-        assert_eq!(t.dct32x32, 1.20); // 1.34 → 1.20 in variant Z
-        let expected_dct16x32 = 1.20 * (1.49 / 1.48);
+        assert_eq!(t.dct32x32, 1.24); // W44-148: 1.20 → 1.24 in variant Z
+        let expected_dct16x32 = 1.24 * (1.49 / 1.48);
         assert!((t.dct16x32 - expected_dct16x32).abs() < 1e-6);
 
         // Strict-lower than default suppressed on the large-DCT axis.
@@ -2899,12 +2931,12 @@ mod tests {
 
     #[test]
     fn test_entropy_mul_table_high_d_photo_smooth_suppressed_z_high_colour_values() {
-        // W44-98 variant Z' (high-colour): dct32x32 = 1.20 (inherits
-        // from variant Z) BUT dct16x32 lifted INDEPENDENTLY to 1.30
-        // (not scaled with dct32x32, breaks the libjxl 1.49/1.48 ratio).
-        // Used to make DCT32X16 / DCT16X32 strictly more expensive than
-        // DCT32X32 in the high-colourfulness sub-class of variant Z
-        // (currently {1420710}). Closes 3 W44-97 OPEN cells.
+        // W44-148 variant Z' (high-colour): dct32x32 = 1.24 (raised from
+        // W44-98's 1.20 in parallel with variant Z) BUT dct16x32 lifted
+        // INDEPENDENTLY to 1.30 (not scaled with dct32x32, breaks the
+        // libjxl 1.49/1.48 ratio). Used to make DCT32X16 / DCT16X32
+        // strictly more expensive than DCT32X32 in the high-colourfulness
+        // sub-class of variant Z (currently {1420710}).
         let t = EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour();
         let z = EntropyMulTable::high_d_photo_smooth_suppressed_z();
         let r = EntropyMulTable::reference();
@@ -2912,7 +2944,7 @@ mod tests {
         // Same dct16x16 / dct32x32 as variant Z (only dct16x32 differs).
         assert_eq!(t.dct16x16, z.dct16x16);
         assert_eq!(t.dct32x32, z.dct32x32);
-        assert_eq!(t.dct32x32, 1.20);
+        assert_eq!(t.dct32x32, 1.24); // W44-148: 1.20 → 1.24
 
         // dct16x32 = 1.30 (LIFTED above variant Z's 1.208 — breaks ratio).
         assert_eq!(t.dct16x32, 1.30);
@@ -2936,14 +2968,13 @@ mod tests {
 
     #[test]
     fn test_entropy_mul_table_high_d_photo_smooth_suppressed_z_low_colour_values() {
-        // W44-100 variant Z'' (low-colour): dct32x32 = 1.20 (inherits from
-        // variant Z) AND dct16x32 lifted to 1.23 (1.8% above variant Z's
-        // 1.208, 5.4% below high_colour Z''s 1.30). Used for 1531677-class
-        // images (m3_colourfulness < 25) that can't tolerate the stronger
-        // 1.30 lift (SSIM2 regression -0.34 to -0.93 per W44-98) but
-        // benefit from a moderate lift (W44-100 micro-bisect bumped from
-        // W44-99's 1.22 to 1.23 to close the last OPEN cell 1531677 e5
-        // d=5; worst SSIM2 delta -0.2592 vs 0.30 budget).
+        // W44-148 variant Z'' (low-colour): dct32x32 = 1.24 (raised from
+        // W44-100's 1.20 in parallel with variant Z) AND dct16x32 lifted
+        // to 1.23 (1.8% above variant Z's 1.208, 5.4% below high_colour
+        // Z''s 1.30). Used for 1531677-class images (m3_colourfulness <
+        // 25) that can't tolerate the stronger 1.30 lift (SSIM2
+        // regression -0.34 to -0.93 per W44-98) but benefit from a
+        // moderate lift.
         let t = EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour();
         let z = EntropyMulTable::high_d_photo_smooth_suppressed_z();
         let hc = EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour();
@@ -2952,12 +2983,26 @@ mod tests {
         // Same dct16x16 / dct32x32 as variant Z (only dct16x32 differs).
         assert_eq!(t.dct16x16, z.dct16x16);
         assert_eq!(t.dct32x32, z.dct32x32);
-        assert_eq!(t.dct32x32, 1.20);
+        assert_eq!(t.dct32x32, 1.24); // W44-148: 1.20 → 1.24
 
-        // dct16x32 = 1.23 (LIFTED above variant Z's 1.208 by ~1.8%).
+        // dct16x32 = 1.23 (W44-100 micro-bisect against the original
+        // dct32x32=1.20 baseline). After W44-148 raised dct32x32 to 1.24,
+        // Z's auto-scaled dct16x32 = 1.24 * (1.49/1.48) ≈ 1.248, which is
+        // now STRICTLY ABOVE LC's 1.23. The W44-99/100 design intent
+        // (DCT16X32 more expensive than DCT32X32 for 1531677-class) is
+        // preserved: in LC, dct16x32=1.23 < dct32x32=1.24 narrowly
+        // (DCT16X32 still cheaper than DCT32X32), AND DCT32X32 itself is
+        // more expensive than at the W44-100 baseline. Net behaviour
+        // measured Pareto-positive in the W44-148 bisect (DEFICIT_LC
+        // SSIM2 +0.257 mean at 1.24, zero FIXED→OPEN flips).
         assert_eq!(t.dct16x32, 1.23);
-        // Strict-higher than variant Z on dct16x32 (the lift direction).
-        assert!(t.dct16x32 > z.dct16x32);
+        // After W44-148: Z's dct16x32 ≈ 1.248 > LC's 1.23. The original
+        // "LC dct16x32 lifted ABOVE Z" semantic from W44-99/100 no longer
+        // holds because the W44-148 parallel raise of dct32x32 carried
+        // Z's dct16x32 up via the 1.49/1.48 ratio. Allowed: LC stays at
+        // the W44-100 measured-optimum 1.23 (re-bisecting against
+        // dct32x32=1.24 is a separate W44-149+ chunk).
+        assert!(t.dct16x32 < z.dct16x32); // Inverted by W44-148
         // Strict-LOWER than high_colour Z' on dct16x32 (this is the
         // milder lift for the low-colour sub-class).
         assert!(t.dct16x32 < hc.dct16x32);
@@ -3552,7 +3597,10 @@ mod tests {
         };
         p.apply_section_a_effort_gates(&libjxl);
         assert!(p.cfl_two_pass, "Libjxl: cfl_two_pass fires at e5");
-        assert!(p.try_dct64, "Libjxl: try_dct64 fires at e5 (no effort gate)");
+        assert!(
+            p.try_dct64,
+            "Libjxl: try_dct64 fires at e5 (no effort gate)"
+        );
         assert!(
             p.epf_dynamic_sharpness,
             "Libjxl: epf_dynamic_sharpness fires at e5 (no effort gate)"

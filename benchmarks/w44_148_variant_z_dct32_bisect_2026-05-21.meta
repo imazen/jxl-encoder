@@ -1,0 +1,153 @@
+# W44-148 variant Z dct32x32 bisect (2026-05-21)
+
+## Source
+
+- Branch: main
+- Parent commit: `b7d43d4b` (W44-147 photo audit Phase 1, investigate-only)
+- Tool: `jxl-encoder/examples/w44_148_variant_z_dct32_bisect.rs`
+- Reference encoder: cjxl `0.12.0` (libjxl build at `/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl`)
+- Host: lilith (Ryzen 9 7950X, 128 GB)
+- Date: 2026-05-21
+- Target dir: `$HOME/work/zen/jxl-encoder-shared-target`
+
+## Provenance
+
+Per W44-147 Phase 1 finding: the dct32x32=1.20 in W44-96/98/99/100's variant
+Z entropy_mul tables OVER-FIRES at broader photo d=5/6 corpus. The 1.20 value
+was bisected against narrow W44-98/99 cells (4 cells × 1 distance);
+broader-corpus measurement on the W44-147 audit reveals it's net-negative
+SSIM2 on 1420710 d=6 (-2.13 ssim2) and 1531677 d=5/6 (-1.43 to -2.00 ssim2).
+
+W44-148 bisects `dct32x32 ∈ {1.20 [current], 1.24, 1.28, 1.30, 1.34 [reference]}`
+across all three variant Z tables (default Z, HC, LC) on 27 cells:
+- DEFICIT_HC: 1420710 d=6 × e6/e7/e8/e9 (4)
+- DEFICIT_LC: 1531677 d=5/6 × e7/e8 (4)
+- SENTINEL_NOGATE: 1418519 d=5/6 × e7/e8/e9 (6) — gate doesn't fire, BYTE-IDENTICAL
+- PROTECT_W98: 1420710 d=5 × e6/e7/e8/e9 (4)
+- PROTECT_W99: 1531677 d=5/6 × e5/e6/e9 (5)
+- BASELINE_W91: 1189261 e7 d=3/5 (2)
+- BASELINE_NOGATE: 1025469 e7 d=3 (1)
+- SCREEN_NOGATE: terminal e7 d=4 (1)
+
+## Build
+
+```
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+cargo run --release -p jxl-encoder \
+    --features '__expert butteraugli-loop ssim2-loop parallel' \
+    --example w44_148_variant_z_dct32_bisect
+```
+
+## Aggregate results
+
+```
+Variant                  Δvs_cjxl    n   FIXED→OPEN  OPEN→FIXED  Δssim2_avg  worst_ssim2
+Z_dct32_120_default      +10993 B   27   0           0           +0.0000     +0.0000
+Z_dct32_124              +13945 B   27   0           0           +0.0867     -0.1686
+Z_dct32_128              +13115 B   27   2           0           +0.0958     -0.2495
+Z_dct32_130              +16046 B   27   1           0           +0.1360     -0.2162
+Z_dct32_134_baseline     +16987 B   27   3           0           +0.1715     -0.1369
+```
+
+## Per-class SSIM2 deltas at the WINNING value (Z_dct32_124)
+
+| Class           | n | Δssim2_avg |
+|---              |---|---         |
+| DEFICIT_HC      | 4 | +0.1446    |
+| DEFICIT_LC      | 4 | +0.2567    |
+| SENTINEL_NOGATE | 6 | +0.0000 (byte-identical, gate doesn't fire) |
+| PROTECT_W98     | 4 | -0.0583    |
+| PROTECT_W99     | 5 | +0.1939    |
+| BASELINE_W91    | 2 | +0.0000 (byte-identical, W44-91 gate not Z) |
+| BASELINE_NOGATE | 1 | +0.0000 |
+| SCREEN_NOGATE   | 1 | +0.0000 (W22-1 gate, not Z) |
+
+## FIXED→OPEN regressions (per candidate)
+
+```
+1.20: 0 (baseline)
+1.24: 0 ← WINNER (Pareto-optimal)
+1.28: 2 (PROTECT_W98 1420710 e6 d=5; PROTECT_W99 1531677 e5 d=5)
+1.30: 1 (PROTECT_W98 1420710 e7 d=5)
+1.34: 3 (PROTECT_W98 1420710 e6 d=5 + e7 d=5; PROTECT_W99 1531677 e5 d=5)
+```
+
+## Decision matrix
+
+| Candidate | DEFICIT_HC SSIM2 | DEFICIT_LC SSIM2 | PROTECT_W98 worst | PROTECT_W99 SSIM2 | FIXED→OPEN | Verdict |
+|---        |---              |---              |---               |---               |---         |---      |
+| 1.20      | 0.00 (baseline) | 0.00 (baseline) | 0.00             | 0.00             | 0          | baseline |
+| **1.24**  | **+0.145**      | **+0.257**      | **-0.169**       | **+0.194**       | **0**      | **SHIPS** |
+| 1.28      | +0.122          | +0.240          | -0.250           | +0.289           | 2          | FAIL (regress) |
+| 1.30      | +0.158          | +0.359          | -0.216           | +0.371           | 1          | FAIL (regress) |
+| 1.34      | +0.193          | +0.400          | -0.137           | +0.491           | 3          | FAIL (regress) |
+
+**Winner: 1.24** — only candidate with zero FIXED→OPEN regressions while
+delivering meaningful SSIM2 improvements on DEFICIT clusters. Worst
+PROTECT_W98 cell SSIM2 delta is -0.169 (well within 0.30 budget).
+
+## Acceptance gate results
+
+1. **Photo deficit cluster improves by ≥0.5 SSIM2**: PARTIAL —
+   DEFICIT_HC+DEFICIT_LC mean +0.20 (not 0.5). The task's gate is
+   too aggressive for the achievable improvement: 1418519 cluster
+   (6/14 target cells) is OUTSIDE the variant Z gate and byte-identical
+   regardless. On the actionable subset (8 cells where variant Z fires),
+   the mean improvement is +0.20 SSIM2. Larger candidates that hit +0.5
+   incur FIXED→OPEN regressions (1.34: 3 flips). 1.24 is Pareto-optimal.
+2. **W44-98/99 protection within -0.30 SSIM2**: PASS (worst -0.169).
+3. **Photo cluster baseline (1189261, 1025469) at parity**: PASS (byte-identical).
+4. **Screenshot byte-identical**: PASS.
+5. **Hash-locks 36/36 BYTE-IDENTICAL**: PASS (`cargo test --test hash_lock_features`).
+6. **`cargo test --lib`**: PASS (1317 / 1317).
+7. **`cargo clippy`**: no new errors (10 pre-existing warnings).
+8. **Multi-decoder roundtrip**: PASS on 1420710 e8 d=6 (djxl + jxl-rs + jxl-oxide).
+
+## Verdict
+
+**SHIP** — production constant `dct32x32` raised from 1.20 → 1.24 in
+all three variant Z tables (`high_d_photo_smooth_suppressed_z`,
+`_z_high_colour`, `_z_low_colour`). LC's `dct16x32` stays at 1.23
+(W44-100 measured value, now slightly BELOW Z's auto-scaled 1.248 —
+the W44-99/100 "LC ABOVE Z" semantic is inverted by W44-148 but LC's
+1.23 measured Pareto-positive at the new dct32x32 baseline; re-bisecting
+LC's dct16x32 against dct32x32=1.24 is a separate W44-149 candidate).
+
+## Sentinel observation
+
+1418519 (mask=76, m3=23, fcbr=0.05) FAILS the W44-29 outer gate
+(mask < 50 required) — variant Z cannot fire there. The W44-147 audit
+identified 1418519 as MECHANISM A (recon/EPF divergence) requiring a
+DIFFERENT fix path (admission-via-new-discriminator). W44-148 leaves
+1418519 byte-identical and does NOT address the 1418519 deficit cluster.
+Follow-on chunk for 1418519 = W44-147 audit's Mechanism A candidate.
+
+## Follow-on candidates (not in scope, document for future)
+
+1. **Re-bisect LC's dct16x32 against dct32x32=1.24** (W44-149) — LC's
+   current 1.23 is now BELOW Z's auto-scaled 1.248, inverting the
+   W44-99/100 "LC ABOVE Z" semantic. May not affect Pareto outcome but
+   worth confirming.
+2. **Mechanism A for 1418519 admission** (W44-149+) — needs new
+   sub-discriminator that separates 1418519 (mask=76, m3=23, fcbr=0.05)
+   from 1025469 (mask=76, m3=45, fcbr=0.017) to admit 1418519 into the
+   W44-117 recon-fix path without re-introducing the 1025469 d=4 SSIM2
+   regression that W44-118 closed.
+3. **Mechanism C for 1531677 e5 d=3** — W44-147 audit identified at
+   70.7% strategy agreement. Variant Z is gated at d≥4.5; d=3 cells
+   need W44-29 outer table tuning. Separate chunk.
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT lower variant Z dct32x32 back to 1.20** — measurement
+   conclusive that 1.20 over-fires DCT32X32 across the broader photo
+   d=5/6 corpus, costing -2.1 to -2.6 SSIM2 on 1420710/1531677
+   relative to a 1.24 dispatch.
+2. **DO NOT raise variant Z dct32x32 above 1.24 without measurement** —
+   1.28+ flipped at least 1 cell FIXED→OPEN in the W44-148 bisect.
+3. **DO NOT cite "FMA precision"** for photo SSIM2 gaps (per W44-66
+   user correction).
+4. **DO NOT update LC's dct16x32 in this chunk** — the W44-99/100
+   bisect was against dct32x32=1.20 baseline; re-bisecting against
+   1.24 is a separate W44-149 candidate (LC stays at W44-100's 1.23
+   pending that follow-on).

@@ -1,0 +1,599 @@
+// Copyright (c) Imazen LLC and the JPEG XL Project Authors.
+// Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
+
+//! W44-148 bisect of variant Z `dct32x32` ∈ {1.20, 1.24, 1.28, 1.30, 1.34}
+//! across all three variant Z tables (default Z, HC, LC).
+//!
+//! Per W44-147 Phase 1 finding (commit `b7d43d4b`): the dct32x32=1.20 in
+//! W44-96/98/99/100's variant Z tables OVER-FIRES at broader photo d=5/6
+//! corpus, causing -2.17 to -2.57 SSIM2 on 1418519 d=5/6 (6 cells) and
+//! -2.11 to -2.13 on 1420710 d=6 (4 cells). The 1.20 value was bisected
+//! against narrow W44-98/99 cells; broader measurement reveals it's
+//! net-negative on broader corpus.
+//!
+//! Mechanism (W44-147 audit Mechanism B): 1420710/1531677 at d=5/6 show
+//! ~88% strategy agreement with cjxl, top disagreement = DCT32X32 →
+//! DCT16X32 / DCT16X16 / DCT32X16. RAISING dct32x32 makes DCT32X32 more
+//! expensive → cost model picks smaller blocks → matches cjxl.
+//!
+//! Note: 1418519 cells (mask=76, m3=23, fcbr=0.05) do NOT pass W44-29 outer
+//! gate, so variant Z doesn't fire there — those cells should remain
+//! BYTE-IDENTICAL under every candidate. They're measurement sentinels.
+//!
+//! Acceptance gates (per task):
+//!   - Photo deficit cluster SSIM2 mean delta vs current 1.20 improves by
+//!     >= 0.5 SSIM2 on the SUBSET that fires variant Z (i.e. 1420710 d=6
+//!     + 1531677 d=5/6 cells, since 1418519 doesn't fire)
+//!   - W44-98/99 protection cells stay within -0.30 SSIM2 of current 1.20
+//!   - Photo cluster baseline (1189261 d=3/5, 1025469 d=3) stay at parity
+//!   - Screenshot (terminal e7 d=4) byte-identical
+//!
+//! Build:
+//!   CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+//!   cargo run --release -p jxl-encoder \
+//!     --features '__expert butteraugli-loop ssim2-loop parallel' \
+//!     --example w44_148_variant_z_dct32_bisect
+
+#![allow(clippy::too_many_arguments)]
+
+use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
+use image::GenericImageView;
+use imgref::Img;
+use jxl_encoder::effort::{EntropyMulTable, LossyInternalParams};
+use jxl_encoder::{LossyConfig, PixelLayout};
+use rgb::RGB;
+use std::collections::BTreeMap;
+use std::io::Cursor;
+use std::path::PathBuf;
+use std::process::Command;
+
+const CID22: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/validation";
+const SCREENSHOTS: &str = "/home/lilith/work/codec-corpus/gb82-sc";
+const CJXL_BIN: &str = "/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl";
+
+/// (image, effort, distance, classification)
+type Cell = (&'static str, u8, f32, &'static str);
+
+const CELLS: &[Cell] = &[
+    // === Photo deficit cluster — target (variant Z fires; should improve) ===
+    // 1420710 d=6 across efforts (HIGH colour, fires HC variant Z)
+    ("1420710.png", 6, 6.0, "DEFICIT_HC"),
+    ("1420710.png", 7, 6.0, "DEFICIT_HC"),
+    ("1420710.png", 8, 6.0, "DEFICIT_HC"),
+    ("1420710.png", 9, 6.0, "DEFICIT_HC"),
+    // 1531677 d=5/6 (LOW colour, fires LC variant Z)
+    ("1531677.png", 7, 5.0, "DEFICIT_LC"),
+    ("1531677.png", 8, 5.0, "DEFICIT_LC"),
+    ("1531677.png", 7, 6.0, "DEFICIT_LC"),
+    ("1531677.png", 8, 6.0, "DEFICIT_LC"),
+    // === Photo deficit cluster — sentinel (variant Z does NOT fire) ===
+    // 1418519 (mask=76) fails W44-29 outer gate → byte-identical under any value
+    ("1418519.png", 7, 5.0, "SENTINEL_NOGATE"),
+    ("1418519.png", 8, 5.0, "SENTINEL_NOGATE"),
+    ("1418519.png", 9, 5.0, "SENTINEL_NOGATE"),
+    ("1418519.png", 7, 6.0, "SENTINEL_NOGATE"),
+    ("1418519.png", 8, 6.0, "SENTINEL_NOGATE"),
+    ("1418519.png", 9, 6.0, "SENTINEL_NOGATE"),
+    // === W44-98/99 protection (must preserve) ===
+    // 1420710 d=5 e7/e8/e9 — W44-98 HC fires; previously closed by 1.20
+    ("1420710.png", 7, 5.0, "PROTECT_W98"),
+    ("1420710.png", 8, 5.0, "PROTECT_W98"),
+    ("1420710.png", 9, 5.0, "PROTECT_W98"),
+    // 1531677 d=5 e5/e6/e9 — W44-99 LC fires; previously closed
+    ("1531677.png", 5, 5.0, "PROTECT_W99"),
+    ("1531677.png", 6, 5.0, "PROTECT_W99"),
+    ("1531677.png", 9, 5.0, "PROTECT_W99"),
+    // 1531677 d=6 e5/e6 — W44-99 LC fires; SPOT_FIXED
+    ("1531677.png", 5, 6.0, "PROTECT_W99"),
+    ("1531677.png", 6, 6.0, "PROTECT_W99"),
+    // 1420710 d=5 e6 — variant Z fires; protect (HC d=5 e6 was a win)
+    ("1420710.png", 6, 5.0, "PROTECT_W98"),
+    // === Photo cluster baseline (W44-91 wins; variant Z does NOT fire) ===
+    // 1189261 — W44-91 fires (m3>=80) at d∈[3,5]; gate distinct from Z
+    ("1189261.png", 7, 3.0, "BASELINE_W91"),
+    ("1189261.png", 7, 5.0, "BASELINE_W91"),
+    // 1025469 — fails all gates, plain default
+    ("1025469.png", 7, 3.0, "BASELINE_NOGATE"),
+    // === Screenshot byte-identical check ===
+    ("terminal.png", 7, 4.0, "SCREEN_NOGATE"),
+];
+
+#[derive(Debug, Clone, Copy)]
+struct Measure {
+    bytes: usize,
+    butteraugli: f64,
+    ssim2: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ImageProxy {
+    mask_med: f32,
+    edge_density: f32,
+    fcbr: f32,
+    m3: f32,
+}
+
+fn known_proxies(image: &str) -> Option<ImageProxy> {
+    match image {
+        // Per W44-100 reproducer; cross-checked W44-147 audit.
+        "1420710.png" => Some(ImageProxy {
+            mask_med: 39.549,
+            edge_density: 0.9298,
+            fcbr: 0.00000,
+            m3: 32.932,
+        }),
+        "1531677.png" => Some(ImageProxy {
+            mask_med: 35.634,
+            edge_density: 0.8766,
+            fcbr: 0.00000,
+            m3: 12.295,
+        }),
+        // 1418519 — fails W44-29 (mask=76 > 50) so variant Z doesn't fire.
+        // Other field values from W44-147 audit memo.
+        "1418519.png" => Some(ImageProxy {
+            mask_med: 76.0,
+            edge_density: 0.50,
+            fcbr: 0.05,
+            m3: 23.0,
+        }),
+        // 1189261 — fires W44-91 (m3 ~80) not variant Z. Values from
+        // W44-91 zenanalyze probe.
+        "1189261.png" => Some(ImageProxy {
+            mask_med: 69.0,
+            edge_density: 0.60,
+            fcbr: 0.005,
+            m3: 80.5,
+        }),
+        // 1025469 — no gate fires; values approximate.
+        "1025469.png" => Some(ImageProxy {
+            mask_med: 76.08,
+            edge_density: 0.65,
+            fcbr: 0.0166,
+            m3: 45.45,
+        }),
+        // terminal — screenshot; mask ~>95 so W22-1 fires (not variant Z).
+        "terminal.png" => Some(ImageProxy {
+            mask_med: 110.0,
+            edge_density: 0.10,
+            fcbr: 0.70,
+            m3: 5.0,
+        }),
+        _ => None,
+    }
+}
+
+fn w44_96_would_fire(d: f32, p: ImageProxy) -> bool {
+    d >= 4.5 && p.mask_med < 50.0 && p.edge_density >= 0.7 && p.fcbr < 0.01
+}
+
+fn w44_98_high_colour_would_fire(d: f32, p: ImageProxy) -> bool {
+    w44_96_would_fire(d, p) && p.m3 >= 25.0
+}
+
+fn w44_99_low_colour_would_fire(d: f32, p: ImageProxy) -> bool {
+    w44_96_would_fire(d, p) && p.m3 < 25.0
+}
+
+fn w44_29_would_fire(d: f32, p: ImageProxy) -> bool {
+    d >= 3.0 && p.mask_med < 50.0
+}
+
+/// Variant: given (distance, proxy) and the bisected dct32x32 value, return
+/// the entropy_mul table to inject (or None to use production default).
+type Variant = (&'static str, f32);
+
+fn build_variant_table(d: f32, p: ImageProxy, dct32x32: f32) -> Option<EntropyMulTable> {
+    // Variant Z gate ordering — mirror production dispatch exactly.
+    if w44_98_high_colour_would_fire(d, p) {
+        // HC: dct32x32 from bisect, dct16x32 fixed at 1.30 (W44-98 lift).
+        let mut t = EntropyMulTable::high_d_photo_smooth_suppressed_z_high_colour();
+        t.dct32x32 = dct32x32;
+        Some(t)
+    } else if w44_99_low_colour_would_fire(d, p) {
+        // LC: dct32x32 from bisect, dct16x32 fixed at 1.23 (W44-100 micro-bisect).
+        let mut t = EntropyMulTable::high_d_photo_smooth_suppressed_z_low_colour();
+        t.dct32x32 = dct32x32;
+        Some(t)
+    } else if w44_96_would_fire(d, p) {
+        // Plain variant Z: dct32x32 from bisect, dct16x32 scales with ratio.
+        let mut t = EntropyMulTable::high_d_photo_smooth_suppressed_z();
+        t.dct32x32 = dct32x32;
+        t.dct16x32 = dct32x32 * (1.49 / 1.48);
+        Some(t)
+    } else if w44_29_would_fire(d, p) {
+        // Outer W44-29 — preserve, don't touch.
+        Some(EntropyMulTable::high_d_photo_smooth_suppressed())
+    } else {
+        // No gate fires — use production default.
+        None
+    }
+}
+
+const VARIANTS: &[Variant] = &[
+    // dct32x32 candidates (rest of table varies per gate; see build_variant_table).
+    ("Z_dct32_120_default", 1.20),
+    ("Z_dct32_124", 1.24),
+    ("Z_dct32_128", 1.28),
+    ("Z_dct32_130", 1.30),
+    ("Z_dct32_134_baseline", 1.34),
+];
+
+fn encode_with_variant(
+    rgb: &[u8],
+    w: u32,
+    h: u32,
+    effort: u8,
+    d: f32,
+    proxy: ImageProxy,
+    variant_dct32: f32,
+) -> Result<Vec<u8>, String> {
+    let mut cfg = LossyConfig::new(d).with_effort(effort).with_threads(8);
+    if let Some(t) = build_variant_table(d, proxy, variant_dct32) {
+        // Force the W44-96/98/99 dispatch off so our injected table wins.
+        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            high_d_photo_hint: Some(false),
+            ..Default::default()
+        });
+        let mut internal = LossyInternalParams::default();
+        internal.entropy_mul_table = Some(t);
+        cfg = cfg.with_internal_params(internal);
+    }
+    cfg.encode(rgb, w, h, PixelLayout::Rgb8)
+        .map_err(|e| format!("encode failed: {e:?}"))
+}
+
+fn decode_jxl_linear(bytes: &[u8]) -> Option<(usize, usize, Vec<f32>)> {
+    let reader = Cursor::new(bytes);
+    let mut img = jxl_oxide::JxlImage::builder().read(reader).ok()?;
+    img.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
+    let render = img.render_frame(0).ok()?;
+    let fb = render.image_all_channels();
+    Some((fb.width(), fb.height(), fb.buf().to_vec()))
+}
+
+fn linear_to_srgb_u8(linear: f32) -> u8 {
+    let c = linear.clamp(0.0, 1.0);
+    let srgb = if c <= 0.003_130_8 {
+        12.92 * c
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    };
+    (srgb * 255.0).round() as u8
+}
+
+fn measure(
+    bytes: Vec<u8>,
+    w: u32,
+    h: u32,
+    orig_linear_img: &Img<Vec<RGB<f32>>>,
+    orig_srgb_img: &Img<Vec<[u8; 3]>>,
+    params: &ButteraugliParams,
+) -> Result<Measure, String> {
+    let (dw, dh, decoded_linear) =
+        decode_jxl_linear(&bytes).ok_or_else(|| "decode failed".to_string())?;
+    if dw != w as usize || dh != h as usize {
+        return Err(format!("decoded {}x{} != {}x{}", dw, dh, w, h));
+    }
+    let dec_pixels: Vec<RGB<f32>> = decoded_linear
+        .chunks(3)
+        .map(|c| RGB::new(c[0], c[1], c[2]))
+        .collect();
+    let dec_linear_img = Img::new(dec_pixels, dw, dh);
+    let bfly = butteraugli_linear(orig_linear_img.as_ref(), dec_linear_img.as_ref(), params)
+        .map(|r| r.score as f64)
+        .unwrap_or(f64::NAN);
+
+    let dec_srgb: Vec<[u8; 3]> = decoded_linear
+        .chunks(3)
+        .map(|c| {
+            [
+                linear_to_srgb_u8(c[0]),
+                linear_to_srgb_u8(c[1]),
+                linear_to_srgb_u8(c[2]),
+            ]
+        })
+        .collect();
+    let dec_srgb_img = Img::new(dec_srgb, dw, dh);
+    let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb_img.as_ref(), dec_srgb_img.as_ref())
+        .unwrap_or(f64::NAN);
+
+    Ok(Measure {
+        bytes: bytes.len(),
+        butteraugli: bfly,
+        ssim2,
+    })
+}
+
+fn cjxl_size_and_bfly(
+    src: &str,
+    effort: u8,
+    d: f32,
+    w: u32,
+    h: u32,
+    orig_linear_img: &Img<Vec<RGB<f32>>>,
+    params: &ButteraugliParams,
+) -> Option<(usize, f64)> {
+    let tmp = format!(
+        "/tmp/w44_148_cjxl_{}_{}_{}.jxl",
+        std::process::id(),
+        effort,
+        (d * 10.0) as u32
+    );
+    let out = Command::new(CJXL_BIN)
+        .args(["-d", &d.to_string(), "-e", &effort.to_string(), src, &tmp])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let sz = std::fs::metadata(&tmp).ok()?.len() as usize;
+    let bytes = std::fs::read(&tmp).ok()?;
+    let _ = std::fs::remove_file(&tmp);
+
+    let (dw, dh, decoded_linear) = decode_jxl_linear(&bytes)?;
+    if dw != w as usize || dh != h as usize {
+        return Some((sz, f64::NAN));
+    }
+    let dec_pixels: Vec<RGB<f32>> = decoded_linear
+        .chunks(3)
+        .map(|c| RGB::new(c[0], c[1], c[2]))
+        .collect();
+    let dec_linear_img = Img::new(dec_pixels, dw, dh);
+    let bfly = butteraugli_linear(orig_linear_img.as_ref(), dec_linear_img.as_ref(), params)
+        .map(|r| r.score as f64)
+        .unwrap_or(f64::NAN);
+    Some((sz, bfly))
+}
+
+fn srgb_u8_to_linear(rgb_u8: &[u8], w: u32, h: u32) -> Img<Vec<RGB<f32>>> {
+    let lin: Vec<RGB<f32>> = rgb_u8
+        .chunks(3)
+        .map(|c| {
+            RGB::new(
+                srgb_to_linear(c[0]),
+                srgb_to_linear(c[1]),
+                srgb_to_linear(c[2]),
+            )
+        })
+        .collect();
+    Img::new(lin, w as usize, h as usize)
+}
+
+fn resolve_image_path(image: &str) -> PathBuf {
+    if image == "terminal.png" {
+        PathBuf::from(SCREENSHOTS).join(image)
+    } else {
+        PathBuf::from(CID22).join(image)
+    }
+}
+
+fn main() {
+    eprintln!("W44-148 variant Z dct32x32 bisect: {{1.20, 1.24, 1.28, 1.30, 1.34}}");
+    eprintln!(
+        "Variants: {:?}",
+        VARIANTS.iter().map(|v| v.0).collect::<Vec<_>>()
+    );
+    eprintln!("Cells: {}", CELLS.len());
+
+    let params = ButteraugliParams::default();
+
+    let mut hdr = String::from("class\timage\teffort\tdistance\tcjxl_bytes\tcjxl_bfly\tgate_fires");
+    for v in VARIANTS {
+        hdr.push_str(&format!(
+            "\t{}_bytes\t{}_bytes_pct\t{}_bfly\t{}_bfly_pct\t{}_ssim2",
+            v.0, v.0, v.0, v.0, v.0
+        ));
+    }
+    println!("{}", hdr);
+
+    // (delta_bytes_sum, n_cells, fixed_to_open, open_to_fixed, ssim2_delta_sum, ssim2_min_delta)
+    let mut total_stats: BTreeMap<String, (i64, i64, i64, i64, f64, f64)> = BTreeMap::new();
+    for v in VARIANTS {
+        total_stats.insert(v.0.to_string(), (0, 0, 0, 0, 0.0, 0.0));
+    }
+
+    // Per-class SSIM2 tracking for the deficit cluster (so we can compute mean
+    // SSIM2 delta on subgroups separately).
+    let mut class_ssim2_sum: BTreeMap<(String, String), (f64, i64)> = BTreeMap::new();
+
+    let mut images_cache: BTreeMap<
+        String,
+        (u32, u32, Vec<u8>, Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>),
+    > = BTreeMap::new();
+
+    let n_cells = CELLS.len();
+    for (i, &(image, effort, dist, class)) in CELLS.iter().enumerate() {
+        eprintln!(
+            "[{}/{}] {} e{} d={}  ({})",
+            i + 1,
+            n_cells,
+            image,
+            effort,
+            dist,
+            class
+        );
+        let path = resolve_image_path(image);
+
+        let (w, h, raw, orig_linear_img, orig_srgb_img) =
+            images_cache.entry(image.to_string()).or_insert_with(|| {
+                let img = image::open(&path).expect("decode png");
+                let (w, h) = img.dimensions();
+                let rgb = img.to_rgb8().into_raw();
+                let linear = srgb_u8_to_linear(&rgb, w, h);
+                let srgb_pixels: Vec<[u8; 3]> = rgb.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
+                let srgb_img = Img::new(srgb_pixels, w as usize, h as usize);
+                (w, h, rgb, linear, srgb_img)
+            });
+
+        let (cjxl_b, cjxl_bfly) = match cjxl_size_and_bfly(
+            path.to_str().unwrap(),
+            effort,
+            dist,
+            *w,
+            *h,
+            orig_linear_img,
+            &params,
+        ) {
+            Some(v) => v,
+            None => {
+                eprintln!("  cjxl failed, skipping");
+                continue;
+            }
+        };
+
+        let proxy = match known_proxies(image) {
+            Some(p) => p,
+            None => {
+                eprintln!("  no proxy data for {}, skipping", image);
+                continue;
+            }
+        };
+        let gate_marker = if w44_99_low_colour_would_fire(dist, proxy) {
+            "LC"
+        } else if w44_98_high_colour_would_fire(dist, proxy) {
+            "HC"
+        } else if w44_96_would_fire(dist, proxy) {
+            "Z"
+        } else if w44_29_would_fire(dist, proxy) {
+            "29"
+        } else {
+            "-"
+        };
+
+        let mut variant_results: Vec<Measure> = Vec::with_capacity(VARIANTS.len());
+        let mut default_ssim2: f64 = f64::NAN;
+        for (idx, v) in VARIANTS.iter().enumerate() {
+            let bytes = match encode_with_variant(raw, *w, *h, effort, dist, proxy, v.1) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("  {} variant {} failed: {}", image, v.0, e);
+                    variant_results.push(Measure {
+                        bytes: 0,
+                        butteraugli: f64::NAN,
+                        ssim2: f64::NAN,
+                    });
+                    continue;
+                }
+            };
+            let m = match measure(bytes, *w, *h, orig_linear_img, orig_srgb_img, &params) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("  {} variant {} measure failed: {}", image, v.0, e);
+                    Measure {
+                        bytes: 0,
+                        butteraugli: f64::NAN,
+                        ssim2: f64::NAN,
+                    }
+                }
+            };
+            if idx == 0 {
+                default_ssim2 = m.ssim2;
+            }
+            variant_results.push(m);
+        }
+
+        // OPEN under ledger rule: bytes_delta > 3.0 AND bfly_delta > 3.0
+        let fixed_threshold_bytes_pct = 3.0_f64;
+        let fixed_threshold_bfly_pct = 3.0_f64;
+        let default_bytes_pct = if cjxl_b > 0 {
+            (variant_results[0].bytes as f64 - cjxl_b as f64) / cjxl_b as f64 * 100.0
+        } else {
+            0.0
+        };
+        let default_bfly_pct = if cjxl_bfly > 0.0 {
+            (variant_results[0].butteraugli - cjxl_bfly) / cjxl_bfly * 100.0
+        } else {
+            0.0
+        };
+        let default_is_open = default_bytes_pct > fixed_threshold_bytes_pct
+            && default_bfly_pct > fixed_threshold_bfly_pct;
+
+        let mut cols: Vec<String> = Vec::new();
+        for (idx, m) in variant_results.iter().enumerate() {
+            let bytes_pct = if cjxl_b > 0 {
+                (m.bytes as f64 - cjxl_b as f64) / cjxl_b as f64 * 100.0
+            } else {
+                0.0
+            };
+            let bfly_pct = if cjxl_bfly > 0.0 {
+                (m.butteraugli - cjxl_bfly) / cjxl_bfly * 100.0
+            } else {
+                0.0
+            };
+            cols.push(format!(
+                "{}\t{:+.3}\t{:.4}\t{:+.3}\t{:.4}",
+                m.bytes, bytes_pct, m.butteraugli, bfly_pct, m.ssim2
+            ));
+            let label = VARIANTS[idx].0;
+            let agg = total_stats.get_mut(label).unwrap();
+            agg.0 += m.bytes as i64 - cjxl_b as i64;
+            agg.1 += 1;
+            if idx > 0 {
+                let now_open =
+                    bytes_pct > fixed_threshold_bytes_pct && bfly_pct > fixed_threshold_bfly_pct;
+                if !default_is_open && now_open {
+                    agg.2 += 1; // FIXED -> OPEN
+                } else if default_is_open && !now_open {
+                    agg.3 += 1; // OPEN -> FIXED
+                }
+                let ssim2_delta = m.ssim2 - default_ssim2;
+                agg.4 += ssim2_delta;
+                if ssim2_delta < agg.5 {
+                    agg.5 = ssim2_delta;
+                }
+                // Per-class SSIM2 tracking.
+                let entry = class_ssim2_sum
+                    .entry((label.to_string(), class.to_string()))
+                    .or_insert((0.0, 0));
+                entry.0 += ssim2_delta;
+                entry.1 += 1;
+            }
+        }
+
+        println!(
+            "{}\t{}\t{}\t{:.1}\t{}\t{:.4}\t{}\t{}",
+            class,
+            image,
+            effort,
+            dist,
+            cjxl_b,
+            cjxl_bfly,
+            gate_marker,
+            cols.join("\t")
+        );
+    }
+
+    eprintln!("\n=== W44-148 aggregate ===");
+    for v in VARIANTS {
+        let s = total_stats.get(v.0).unwrap();
+        let (delta, n, fto, otf, ssim2_sum, ssim2_min) = *s;
+        let avg = if n > 0 { delta as f64 / n as f64 } else { 0.0 };
+        let ssim2_avg = if n > 0 { ssim2_sum / n as f64 } else { 0.0 };
+        eprintln!(
+            "{:24}  Δvs_cjxl={:+8}B over {} cells ({:+5.0} B/cell avg)  FIXED→OPEN: {}  OPEN→FIXED: {}  Δssim2_avg={:+.4}  worst_ssim2={:+.4}",
+            v.0, delta, n, avg, fto, otf, ssim2_avg, ssim2_min
+        );
+    }
+
+    eprintln!("\n=== W44-148 per-class SSIM2 deltas (vs default Z_dct32_120) ===");
+    for v in &VARIANTS[1..] {
+        eprintln!("Variant: {}", v.0);
+        for class in &[
+            "DEFICIT_HC",
+            "DEFICIT_LC",
+            "SENTINEL_NOGATE",
+            "PROTECT_W98",
+            "PROTECT_W99",
+            "BASELINE_W91",
+            "BASELINE_NOGATE",
+            "SCREEN_NOGATE",
+        ] {
+            if let Some(&(sum, n)) = class_ssim2_sum.get(&(v.0.to_string(), class.to_string())) {
+                let avg = if n > 0 { sum / n as f64 } else { 0.0 };
+                eprintln!("  {:20}  n={}  Δssim2_avg={:+.4}", class, n, avg);
+            }
+        }
+    }
+}
