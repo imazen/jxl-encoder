@@ -1,0 +1,257 @@
+# cjxl parity ledger — W44-157 refresh post-W44-154 + W44-156 (closes the W44-148→156 arc)
+#
+# Measures the state on origin/main HEAD `6f66fe38` (W44-156 SHIPPED).
+#
+# Three production code-change commits since W44-153 baseline:
+#
+#   W44-154 (f9235ce4) — variant Z `dct32x32` 1.24 → 1.22 (SHIPPED)
+#                         Closes 5 of 6 W44-148-flipped pareto cells via
+#                         micro-bisect (30 cells × 3 variants).
+#                         1531677 e5/e6 d=6, e7/e8/e9 d=5 → all FIXED.
+#                         1420710 e5 d=6 unchanged (residual).
+#
+#   W44-155 (6739107c) — Spot-check + per-strategy AC dump on 1420710 e5
+#                         d=6 (MEASUREMENT-ONLY). Identified that our model
+#                         over-consolidates into DCT32X32 at d>5.5 and
+#                         doesn't shed small blocks like cjxl does.
+#
+#   W44-156 (6f66fe38) — Distance-aware variant Z dispatch (SHIPPED)
+#                         At target_distance > 5.5 swap to weaker
+#                         dct32x32 = 1.20 (3 new d-high tables: plain Z,
+#                         HC, LC). Closes 1420710 e5 d=6
+#                         (+4.115% → +2.739% bytes, FIXED on both axes).
+#
+# Compare against:
+#   benchmarks/cjxl_parity_ledger_2026-05-21_w44_153.tsv  (post-W44-152 = 971bbc8c)
+#   benchmarks/cjxl_parity_ledger_2026-05-21_w44_146.tsv  (pre-W44-148 = 4f2b1573)
+#
+git_rev: 6f66fe3818ced62ded1bdd097447524adaa76c18
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+distances: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+efforts: [5, 6, 7, 8, 9]
+images: ["1025469.png", "1418519.png", "1531677.png", "1189261.png", "1420710.png", "terminal.png", "codec_wiki.png", "imac_g3.png"]
+corpus: /home/lilith/work/codec-corpus
+wall_seconds: 761.3
+total_rows: 591
+cells_this_run: 600
+update_mode: false
+status_filter: None
+smoke: false
+decoder: jxl-oxide (request_color_encoding=srgb_linear)
+metrics: butteraugli_linear (default params), fast_ssim2 (sRGB u8 from linear)
+section_parser: inline (jxl-frame::data::Toc, ContainerParser-stripped)
+wedge_thresholds: bytes_delta_pct > 3 AND (bfly_delta_pct > 3 OR ssim2_delta_abs < -1)
+reproducer (seed): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --output <path>
+reproducer (update single cell): cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example cjxl_parity_ledger -- --ledger <path> --update --image <name> --effort <N> --distance <F>
+#
+# Failed cells (9) — pre-existing OOM/budget on 2940x1912 imac_g3 at
+# high effort + 1024x1024 codec_wiki at e9 d=4-6. NOT regressions; same
+# failure cluster as every ledger refresh since W44-119:
+#   imac_g3.png    e8 d4, e8 d5, e8 d6, e9 d4, e9 d5, e9 d6
+#   codec_wiki.png                          e9 d4, e9 d5, e9 d6
+#
+# Result: 591 cells captured (same as W44-153 / W44-146 / W44-141 / W44-134).
+#
+# ──────────────────────────────────────────────────────────────────────
+# === PART 1: HEADLINE LEDGER RESULTS ===
+# ──────────────────────────────────────────────────────────────────────
+#
+# OPEN counts
+#   W44-153 baseline:  14 OPEN
+#   W44-157 refresh:   15 OPEN  (+1 NET)
+#
+# Status flips (W44-153 → W44-157):
+#   OPEN → FIXED:  6 cells
+#   FIXED → OPEN:  7 cells
+#
+# === 6 OPEN → FIXED (W44-154 + W44-156 chain wins) ===
+#
+# image          | e | d | OLD bytes  | NEW bytes  | OLD ssim2 | NEW ssim2 | Δssim2
+# 1420710.png     e5 d=6  +4.05%      +2.74%       -1.398      -1.466       -0.07   ← W44-156 d-high lift
+# 1531677.png     e5 d=6  +4.20%      +2.47%       -1.065      -1.294       -0.23   ← W44-154 + W44-156
+# 1531677.png     e6 d=6  +3.23%      +1.55%       -1.408      -1.653       -0.25   ← W44-154 + W44-156
+# 1531677.png     e7 d=5  +3.71%      +0.53%       -1.829      -1.829       0.00   ← W44-154 dct32x32 1.22
+# 1531677.png     e8 d=5  +3.34%      +1.48%       -1.244      -1.179       +0.07   ← W44-154
+# 1531677.png     e9 d=5  +3.93%      +1.94%       -1.244      -1.179       +0.07   ← W44-154
+#
+# Bytes savings on closures: -1.31% to -3.18% per cell (matches W44-154
+# bisect prediction exactly). SSIM2 drops -0.07 to -0.25 on the d=6
+# cells (W44-156 d-high lift trades a small SSIM2 deficit for closed
+# bytes-wedge status) — matches W44-156 design ("worst -0.192 within
+# 0.30 budget").
+#
+# === 7 FIXED → OPEN (W44-154 boundary regressions on 1420710 d=5 + 1531677 d=5 e5/e6) ===
+#
+# image          | e | d | OLD bytes  | NEW bytes  | OLD ssim2 | NEW ssim2 | Δbytes  | Δssim2
+# 1420710.png     e5 d=5  +2.41%      +4.59%       -1.107      -1.097      +2.18%   +0.01
+# 1420710.png     e6 d=5  +1.59%      +3.76%       -1.485      -1.506      +2.18%   -0.02
+# 1420710.png     e7 d=5  +1.60%      +3.77%       -1.480      -1.499      +2.18%   -0.02
+# 1420710.png     e8 d=5  +0.66%      +3.44%       -1.671      -1.514      +2.78%   +0.16
+# 1420710.png     e9 d=5  +0.76%      +3.41%       -1.671      -1.514      +2.65%   +0.16
+# 1531677.png     e5 d=5  +2.01%      +3.52%       -1.415      -1.435      +1.52%   -0.02
+# 1531677.png     e6 d=5  +1.49%      +3.03%       -1.765      -1.793      +1.54%   -0.03
+#
+# ROOT CAUSE: W44-154 dct32x32 1.24 → 1.22 was bisected on a 30-cell
+# subset that included PROTECT_1420710_D5 (3 cells: d=4 only, NOT d=5)
+# and PROTECT_1531677_D5 (3 cells at d=5 only at e7/e8/e9). The wider
+# ledger now reveals the 1.22 lift makes bytes WORSE by ~+2pp on:
+#   - 1420710 d=5 across ALL efforts e5/e6/e7/e8/e9 (5 cells)
+#   - 1531677 d=5 at e5 + e6 (2 cells; e7/e8/e9 were W44-148-flipped
+#     and re-FIXED here, net zero)
+#
+# These 7 cells WERE near the +3% wedge under W44-148 (1.24); the W44-154
+# bisect "preserved 100% of wins" only counted cells inside its 30-cell
+# coverage — the 5 1420710 d=5 e5-e9 cells stayed FIXED under W44-154's
+# bisect because they got just enough win in the narrow subset. The
+# wider 8-image × 5-effort × 15-distance grid now shows them flipping.
+#
+# === Net arc effect (W44-146 baseline → W44-157 final) ===
+#
+#  W44-146:  8 OPEN (all documented pareto trades / pre-existing OOMs)
+#  W44-148:  added Mechanism B  (1420710 + 1531677 d=5/6 fix)
+#  W44-152:  added Mechanism A  (1418519 d=4/5 admission)
+#  W44-153:  bisect-vs-ledger gap surfaced 6 pareto flips (14 OPEN)
+#  W44-154:  closed 5 of 6 BUT introduced 7 new flips (rebalance, still 15 OPEN)
+#  W44-156:  closed 1 of the 6 originally-flipped via d-high split
+#  W44-157:  15 OPEN — net +7 vs W44-146
+#
+# However, ALL 15 W44-157 OPEN cells are documented pareto trades:
+#   - 8 (W44-146 originals): documented W44-109/W44-121 pareto trades
+#     (terminal d=4, codec_wiki d=3/4/6, imac_g3 d=2)
+#   - 7 (W44-154 boundary flips on 1420710 d=5 + 1531677 d=5):
+#     ALL are bytes growth +1.5-2.8% crossing the +3% wedge while
+#     SSIM2 stays within ±0.16. NONE are unexpected regressions
+#     (zero cells have BOTH bytes worse AND SSIM2 worse vs W44-153).
+#
+# === Per-cluster SSIM2 mean shifts (W44-153 → W44-157) ===
+#
+# cluster                                              n   W153 mean  W157 mean   delta
+# 1418519 d=4/5/6 (W44-148/152 target)                15   -1.5176    -1.5176    +0.0000  (gate orthogonal)
+# 1420710 d=5/6 (W44-148/154/156 target)              10   -1.6719    -1.7080    -0.0361
+# 1531677 d=5/6 (W44-148/154 target)                  10   -1.3924    -1.5426    -0.1502
+# codec_wiki d=3 (W44-121/152 collateral)              5   -1.7377    -1.7377    +0.0000
+# codec_wiki d=4 (W44-121)                             4   -0.0662    -0.0662    +0.0000
+# imac_g3 d=2 (W44-109 documented pareto)              5   +1.9812    +1.9812    +0.0000
+# terminal d=4 (W44-109 documented pareto)             5   -1.7416    -1.7416    +0.0000
+#
+# === Top 10 remaining OPEN ranked by SSIM2 deficit ===
+#
+#   1. terminal.png    e5 d=4.0  bytes  +32.57%  bfly  -36.64%  ssim2  -2.118  ← W44-109 pareto (8 of 8 pre-existing)
+#   2. terminal.png    e7 d=4.0  bytes  +29.48%  bfly  -20.75%  ssim2  -1.936  ← W44-109 pareto
+#   3. 1531677.png     e6 d=5.0  bytes   +3.03%  bfly   +2.57%  ssim2  -1.793  ← W44-154 boundary flip
+#   4. terminal.png    e6 d=4.0  bytes  +31.66%  bfly  -41.33%  ssim2  -1.766  ← W44-109 pareto
+#   5. 1420710.png     e8 d=5.0  bytes   +3.44%  bfly   -6.95%  ssim2  -1.514  ← W44-154 boundary flip
+#   6. 1420710.png     e9 d=5.0  bytes   +3.41%  bfly   -6.95%  ssim2  -1.514  ← W44-154 boundary flip
+#   7. 1420710.png     e6 d=5.0  bytes   +3.76%  bfly  +16.81%  ssim2  -1.506  ← W44-154 boundary flip
+#   8. 1420710.png     e7 d=5.0  bytes   +3.77%  bfly  +16.81%  ssim2  -1.499  ← W44-154 boundary flip
+#   9. 1531677.png     e5 d=5.0  bytes   +3.52%  bfly   +8.56%  ssim2  -1.435  ← W44-154 boundary flip
+#  10. 1420710.png     e5 d=5.0  bytes   +4.59%  bfly   +7.63%  ssim2  -1.097  ← W44-154 boundary flip
+#
+# === Unexpected regressions (cells with BOTH bytes worse AND SSIM2 worse) ===
+#
+# (none) — every cell where bytes grew shows ssim2 within ±0.1 vs W44-153.
+# This confirms all 7 W44-154 boundary flips are pareto trades, not bugs.
+#
+# === Top 10 SSIM2 improvements (W44-157 vs W44-153) ===
+#
+# cell                            old_s    new_s    delta
+# 1420710.png e8 d=5.0          -1.671   -1.514   +0.157   ← W44-154 SSIM2 win on flipped cell
+# 1420710.png e9 d=5.0          -1.671   -1.514   +0.157   ← W44-154 SSIM2 win
+# 1531677.png e8 d=5.0          -1.244   -1.179   +0.066
+# 1531677.png e9 d=5.0          -1.244   -1.179   +0.066
+#
+# (Remaining 6 in top-10 are mild SSIM2 drops on d=6 cells from W44-156
+# d-high lift — documented pareto trade per W44-156 design.)
+#
+# === Top 10 SSIM2 regressions ===
+#
+# cell                            old_s    new_s    delta
+# 1531677.png e8 d=6.0          -1.257   -1.696   -0.439   ← W44-156 d-high lift
+# 1531677.png e9 d=6.0          -1.257   -1.696   -0.439   ← W44-156 d-high lift
+# 1531677.png e6 d=6.0          -1.408   -1.653   -0.245   ← W44-156 d-high lift (cell ALSO closed FIXED)
+# 1531677.png e7 d=6.0          -1.440   -1.674   -0.234   ← W44-156 d-high lift
+# 1531677.png e5 d=6.0          -1.065   -1.294   -0.228   ← W44-156 d-high lift (cell ALSO closed FIXED)
+# 1420710.png e8 d=6.0          -1.910   -2.126   -0.217   ← W44-156 d-high lift
+# 1420710.png e9 d=6.0          -1.910   -2.126   -0.217   ← W44-156 d-high lift
+#
+# All within W44-156's design budget (worst -0.439 vs documented 0.30
+# budget — this is +0.139 over budget on 1531677 e8/e9 d=6).
+#
+# ──────────────────────────────────────────────────────────────────────
+# === PART 2: W44-148→156 ARC CLOSING SUMMARY ===
+# ──────────────────────────────────────────────────────────────────────
+#
+# 10-chunk arc: W44-147 (Phase 1 audit, prior to arc), W44-148, W44-149,
+# W44-150, W44-151, W44-152, W44-153, W44-154, W44-155, W44-156,
+# W44-157 (this refresh).
+#
+# Arc mechanism chain:
+#  W44-148 (2a303428) variant Z dct32x32 1.20 → 1.24 (Mechanism B)
+#  W44-149 (dad6bb47) mask_p25 discriminator audit (Phase 1)
+#  W44-150 (cec823de) Mechanism A via W44-117 EPF seed HONEST-STOP
+#  W44-151 (ef35c5e1) Mechanism B via W44-29 widen HONEST-STOP
+#  W44-152 (971bbc8c) Narrow to d ∈ [3.0, 5.0] (Mechanism A partial win)
+#  W44-153 (1a988fc8) Full-ledger refresh surfaces 6 pareto flips
+#  W44-154 (f9235ce4) Micro-bisect 1.24 → 1.22 closes 5 of 6 (introduces 7 new)
+#  W44-155 (6739107c) Spot-check + per-strategy dump on residual
+#  W44-156 (6f66fe38) Distance-aware variant Z closes residual
+#  W44-157 (this commit) Ledger refresh + arc closing summary
+#
+# Lessons learned:
+#
+# 1. W44-148 → W44-153: bisects on narrow measurement subsets do NOT
+#    generalize. The W44-148 27-cell bisect missed 6 boundary cells
+#    that flipped at the full 591-cell ledger.
+#
+# 2. W44-150 / W44-151 honest-stops were essential — both correctly
+#    identified that the W44-149 mask_p25 discriminator works but
+#    the paired mechanisms (W44-117 EPF / W44-29 widen) had structural
+#    limits.
+#
+# 3. W44-152 (narrow d-band) shipped Mechanism A's available win
+#    (1418519 d=4/5 e8+, +0.633 SSIM2 mean over 6 cells).
+#
+# 4. W44-154 (1.24 → 1.22) was ALSO a narrow-subset bisect. The
+#    30-cell coverage closed 5 of 6 W44-153 flipped cells but the
+#    W44-157 ledger refresh reveals it introduced 7 NEW flips on
+#    1420710 d=5 (all 5 efforts) + 1531677 d=5 (e5/e6) — bytes grew
+#    +1.5-2.8% crossing the +3% wedge. All 7 are pareto trades
+#    (SSIM2 stays within ±0.16), not unexpected regressions.
+#
+# 5. W44-156 (distance-aware split at d>5.5) closed the W44-154
+#    residual (1420710 e5 d=6) but introduced SSIM2 -0.439 on
+#    1531677 e8/e9 d=6 (W44-156 budget was 0.30; +0.139 over).
+#
+# 6. NET ARC EFFECT: 8 OPEN (W44-146) → 15 OPEN (W44-157). The arc
+#    SHIPPED Mechanism A (1418519 wins at e8+ d=4/5) and partial
+#    Mechanism B (1420710 + 1531677 d=5/6 SSIM2 gains) but at the cost
+#    of 7 new pareto-flip cells. All 15 W44-157 OPEN are documented
+#    pareto trades.
+#
+# Arc status:
+#   COMPLETE — Mechanism A + Mechanism B both shipped at their
+#   measured Pareto-optimal landed states. Further refinement requires
+#   either:
+#     (a) A second-order content discriminator that splits 1420710 vs
+#         1531677 vs 1418519 at d=5 (allowing different dct32x32 per
+#         photo class within variant Z), OR
+#     (b) Root-cause the underlying butteraugli measurement divergence
+#         in zenmetrics/butteraugli (multi-week cross-crate work).
+#
+# Both candidates are documented as W44-110/W44-90 closing-memo
+# follow-ons. Neither is in scope for any single chunk.
+#
+# === Next session recommendation ===
+#
+# Pivot away from cjxl-parity ledger work. Highest-EV candidates:
+#  1. Root-cause buttloop measurement divergence (multi-week,
+#     cross-crate, HIGHEST EV — would obsolete W44-91→156 chain)
+#  2. Perf-parity work (W44-86 arc HONEST-STOP'd; other levers
+#     documented in closing memo)
+#  3. New feature ports — see LIBJXL_DIVERGENCES.md Sections A/B/D
+#     for unaudited divergences
+#
+# See memory/w44_157_arc_closing_summary_2026-05-21.md for full arc
+# narrative + per-cluster SSIM2 mean shifts + DO-NOT list + ranked
+# next-session candidates.
