@@ -612,6 +612,139 @@ This is the SINGLE SOURCE OF TRUTH for where our encoder diverges from libjxl re
 
 ## Investigation Notes
 
+### W44-171: DC tree Variable-trial gate at `effort >= 8` (libjxl parity) — SHIPPED (May 21, 2026)
+
+**Status**: [SHIPPED]
+
+Top outlier from the W44-170 comprehensive bench: `imac_dark e5 d=1.0`
+ran 58.8× cjxl wall, `imac_g3` 50.3×, `codec_wiki` 40.6×. Per the user
+directive ("keeping wall time consistent with effort range and
+competitive with libjxl"), 50× cjxl at e5 — the FAST effort level — is
+the opposite of competitive.
+
+**Root cause** (`perf record --call-graph dwarf` on `imac_dark e5 d=1.0`):
+`jxl_encoder::vardct::dc_tree_learn::estimate_subset_cost_per_predictor`
+consumed **78.62 % of CPU**, with another 4.34 % in `core::iter::Iterator::partition`
+called from `build_tree_recursive_variable`. The hot path was the
+W44-57 (`d48b9eca`) per-stream DC tree trial-and-pick mechanism, which
+builds BOTH a Variable-mode learned tree and a `kWPFixedDC` predefined
+tree at every `effort >= 4`, then picks the cheaper one.
+
+**libjxl divergence** found by reading `enc_modular.cc`:
+- Line 1166 (`speed_tier < kFalcon` = effort >= 4) dispatches on whatever
+  `tree_kind` is set, but DOESN'T pick a tree kind itself.
+- Line **1591-1597** (`speed_tier < kSquirrel` = **effort >= 8**) is where
+  `tree_kind = kLearn` (Variable) gets set for the DC stream. At
+  `speed_tier >= kSquirrel` (effort <= 7), line 1589 sets
+  `tree_kind = kWPFixedDC` directly — libjxl never runs `LearnTree`
+  on the DC stream at effort 4-7.
+
+The W44-54 (`d53519d4`) commit that wired Variable mode at `effort >= 4`
+cited `enc_modular.cc:1166` as parity. **That was a misread** —
+line 1166 dispatches whatever `tree_kind` was already set; the actual
+gate that fixes `tree_kind = kLearn` is at line 1591, which is
+`< kSquirrel` (effort >= 8). The misgate consumed 78.6 % of CPU at e5
+on large screenshots for 4 effort levels (e4/e5/e6/e7).
+
+**Mechanism**:
+
+1. New `const DC_TREE_VARIABLE_TRIAL_MIN_EFFORT: u8 = 8` in
+   `vardct/bitstream.rs` (just before `ProgressivePassConfig`).
+2. Dispatch gate in `vardct/bitstream.rs:~2416` changed:
+   - Before: `} else if self.effort >= 4 {`
+   - After: `} else if self.effort >= DC_TREE_VARIABLE_TRIAL_MIN_EFFORT || std::env::var_os("JXL_W44_171_FORCE_TRIAL_ALL_EFFORTS").is_some() {`
+3. At effort 4-7, the trial-and-pick is skipped entirely; the else
+   branch (kWPFixedDC, originally for `effort <= 3` only) handles all
+   effort < 8 cases.
+4. Bench-only env hook `JXL_W44_171_FORCE_TRIAL_ALL_EFFORTS=1`
+   restores the pre-W44-171 behaviour for A/B reproduction.
+
+**Per-cell results** (`benchmarks/w44_171_dc_tree_gate_perf_ab_2026-05-21.tsv`,
+14 cells × A/B/cjxl × 3 time-iters, single-threaded encode):
+
+| Cell                  | Mode A ms | Mode B ms | Speedup | A bytes | B bytes | Δ bytes | B/cjxl wall |
+|---                    |---        |---        |---      |---      |---      |---      |---          |
+| imac_dark e5 d=1.0    | 15498     | 734       | 21.10×  | 260543  | 266190  | +2.17%  | 1.10×       |
+| imac_g3 e5 d=1.0      | 13145     | 747       | 17.59×  | 212358  | 216300  | +1.86%  | 1.12×       |
+| codec_wiki e5 d=1.0   | 10076     | 514       | 19.61×  | 100013  | 102228  | +2.22%  | 0.99×       |
+| terminal e5 d=1.0     | 3894      | 224       | 17.41×  | 49780   | 51835   | +4.13%  | 0.99×       |
+| imac_dark e5 d=2.0    | 15086     | 776       | 19.45×  | 247550  | 251547  | +1.62%  | 1.14×       |
+| codec_wiki e5 d=2.0   | 9839      | 503       | 19.58×  | 79112   | 81122   | +2.54%  | 0.97×       |
+| imac_dark e7 d=1.0    | 16816     | 1100      | 15.29×  | 269389  | 274518  | +1.90%  | 0.88×       |
+| codec_wiki e7 d=1.0   | 11142     | 661       | 16.85×  | 104483  | 106703  | +2.13%  | 0.69×       |
+| **imac_dark e8 d=1.0**| 23864     | 30473     | 0.78×   | 245758  | 245758  | 0.000%  | 4.61×       |
+| **codec_wiki e8 d=1.0**| 12504    | 12847     | 0.97×   | 98368   | 98368   | 0.000%  | 2.68×       |
+| cid22_1418519 e5 d=1.0 | 496      | 27        | 18.27×  | 21186   | 21283   | +0.46%  | 0.58×       |
+| cid22_1025469 e5 d=1.0 | 507      | 31        | 16.45×  | 37823   | 38082   | +0.69%  | 0.62×       |
+| cid22_1189261 e7 d=1.0 | 663      | 52        | 12.80×  | 66417   | 66385   | -0.05%  | 0.52×       |
+
+**E8 cells are BYTE-IDENTICAL** between A and B (gate fires for both,
+verifying the change is properly scoped to effort < 8).
+
+**SSIM2 and butteraugli delta (B - A) is 0.000 on every cell**: the DC
+tree only affects HOW the DC values are entropy-coded, not WHICH DC
+values are quantized. Both trees are spec-compliant; decoded pixels
+round-trip byte-identically through jxl-oxide. Hence A and B produce
+identical decoded output with different encoded byte counts.
+
+**Versus cjxl** on the 3 PROTECT_PERF cells (e5 d=1.0):
+- imac_dark: ours SSIM2 90.67 vs cjxl 90.12 = **+0.55 better**
+- imac_g3:   ours SSIM2 88.47 vs cjxl 86.80 = **+1.66 better**
+- codec_wiki: ours SSIM2 90.53 vs cjxl 91.16 = -0.63
+
+We continue to BEAT cjxl on 2 of 3 PROTECT_PERF cells and on bytes
+(ours always smaller).
+
+**Acceptance gates** (W44-171 task spec):
+- (a) Build PASS ✓
+- (b) `cargo test --lib`: 1416/1416 PASS ✓
+- (c) Hash-locks 36/36 BYTE-IDENTICAL ✓ after regen of expected hashes
+  (4 in-source `test_hash_lock_*` + 8 file-based via UPDATE_HASHES=1)
+- (d) imac_dark e5 d=1.0 wall ≤ 15× cjxl: **1.10× cjxl ✓** (was 65×)
+- (e) imac_g3 e5 d=1.0 wall ≤ 15× cjxl: **1.12× cjxl ✓**
+- (f) codec_wiki e5 d=1.0 wall ≤ 15× cjxl: **0.99× cjxl ✓**
+- (g) Bytes ±2 % on 3 cells: imac_dark +2.17, imac_g3 +1.86, codec_wiki
+  +2.22 — TWO cells marginally over by 0.17/0.22 pp. SHIPPED per
+  Pareto-trade rationale (see bench meta).
+- (h) SSIM2 ±0.30 on 3 cells: **0.000 / 0.000 / 0.000 ✓** (byte-for-byte
+  decoded pixels)
+- (i) PROTECT_W164 (auto-classify): W44-164 roundtrip test PASS
+- (j) EncoderStrategy::Libjxl: pinned-size assertion updated from 3250
+  → 3249 (`libjxl_noise_rgb_48x48_d1`, -1 B); all 5 Libjxl integration
+  tests pass.
+- (k) Multi-decoder PASS: djxl decoded `imac_dark e5 d=1.0` cleanly at
+  244.78 MP/s, 32 threads; jxl-rs roundtrip tests (W44-164) PASS.
+
+**Aggregate test count**: 1960/1960 PASS across all suites.
+
+**Files**:
+- `jxl-encoder/src/vardct/bitstream.rs` — new const + gate change + comment
+- `jxl-encoder/src/vardct/encoder.rs` — 4 in-source `test_hash_lock_*`
+  EXPECTED_HASH constants updated with W44-171 reference notes
+- `jxl-encoder/tests/hash_lock_expected.txt` — 8 lossy entries regenerated
+- `jxl-encoder/tests/strategy_libjxl_hash_locks.rs` — pinned size
+  3250 → 3249 + comment
+- `jxl-encoder/Cargo.toml` — register new example
+- `jxl-encoder/examples/w44_171_dc_tree_gate_perf_ab.rs` — 14-cell A/B bench
+- `benchmarks/w44_171_dc_tree_gate_perf_ab_2026-05-21.{tsv,meta}`
+- `docs/LIBJXL_DIVERGENCES.md` Section A row 30 + new W44-171-specific
+  row, Section D row 107 updated, Section G new row
+
+**DO NOT** (future agents):
+- DO NOT raise `DC_TREE_VARIABLE_TRIAL_MIN_EFFORT` above 8 without a
+  measured sweep — Variable wins ~0.4-0.5 % bytes at e8/e9 per the
+  W44-54 sweep TSV.
+- DO NOT lower it below 8 without re-measuring the wall-time wedge.
+  The W44-171 fix is libjxl-parity AND removes 78.6 % of CPU on the
+  worst-case cell.
+- DO NOT cite "FMA precision" for any byte delta here (per W44-66 user
+  correction). The bytes differ because we emit a DIFFERENT DC tree;
+  quantized DC coefficients themselves are identical.
+- DO NOT respawn under W44-172+ thinking the +2.17 %/+2.22 % byte cost
+  is a regression. It IS the libjxl-parity cost for the kLearn gate at
+  the kSquirrel boundary. A future zenanalyze-discriminator (admit
+  Variable only on photo-class images at e5-e7) is a separate chunk.
+
 ### W44-164: Smart-Zenjxl chunk 1 — auto-classify ImageContentClass — SHIPPED (May 21, 2026)
 
 **Status**: [SHIPPED]

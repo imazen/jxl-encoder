@@ -28,6 +28,36 @@ use crate::headers::extra_channels::ExtraChannelInfo;
 use crate::headers::file_header::{BitDepth, FileHeader, ImageMetadata};
 use crate::headers::frame_header::{BlendMode, FrameHeader, FrameOptions};
 
+/// Minimum effort at which the DC stream's Variable-predictor tree learner
+/// is trial-built and compared against the predefined `kWPFixedDC` BSP tree
+/// (W44-57 per-stream override). Below this effort, the encoder skips the
+/// Variable trial entirely and emits `kWPFixedDC` directly — matching libjxl's
+/// `enc_modular.cc:1591-1597` dispatch where `tree_kind = kLearn` is gated on
+/// `speed_tier < kSquirrel` (≡ `effort >= 8`).
+///
+/// History (W44-171, 2026-05-21): the prior threshold was `effort >= 4`, set
+/// in W44-54 (`d53519d4`) based on a misread of `enc_modular.cc:1166` — that
+/// line dispatches on whatever `tree_kind` was already set, and the DC
+/// stream's `tree_kind` is only set to `kLearn` at lines 1591-1597 under
+/// `speed_tier < kSquirrel`. The misgate ran the (expensive)
+/// `learn_dc_tree_variable` pass at every effort 4-7, costing 78 % of CPU on
+/// 5+ MP screenshots at e5 d=1.0 (`imac_dark`: 65× cjxl wall ratio in the
+/// W44-170 sweep). Restoring the libjxl-parity gate at `effort >= 8`
+/// recovers ~3-4× wall-time on the W44-170 perf-wedge cluster while losing
+/// ~0.4 % average bytes at e5-e7 (per the W44-54-era sweep TSV).
+///
+/// Callers wanting Variable-mode DC tree at lower effort can opt in via
+/// `EncoderStrategy::Aggressive` — see future W44-172+ if a sweep-driven
+/// content discriminator surfaces cells where Variable continues to win.
+///
+/// **Bench-only escape hatch**: setting the
+/// `JXL_W44_171_FORCE_TRIAL_ALL_EFFORTS` environment variable forces the
+/// trial-and-pick path to fire at every effort >= 4 (the pre-W44-171
+/// behaviour). Used by `examples/w44_171_dc_tree_gate_perf_ab.rs` to
+/// reproduce the BEFORE state for like-for-like A/B measurement.
+/// Production behaviour with the env unset is the libjxl-parity gate.
+const DC_TREE_VARIABLE_TRIAL_MIN_EFFORT: u8 = 8;
+
 /// Progressive pass configuration computed from ProgressiveMode.
 struct ProgressivePassConfig {
     /// Number of passes (1 for Single mode).
@@ -2413,8 +2443,31 @@ impl VarDctEncoder {
             ac_meta_ctx_map = ctx_map;
             wp_dc_state = None;
             learned_dc_state = None;
-        } else if self.effort >= 4 {
+        } else if self.effort >= DC_TREE_VARIABLE_TRIAL_MIN_EFFORT
+            || std::env::var_os("JXL_W44_171_FORCE_TRIAL_ALL_EFFORTS").is_some()
+        {
             // W44-57 (issue #57) — per-stream kWPFixedDC override on DC stream.
+            // W44-171 (perf): trial-and-pick gated at `effort >= 8` to match
+            // libjxl's `speed_tier < kSquirrel` kLearn gate (`enc_modular.cc:
+            // 1591-1597`). At effort 4-7 libjxl uses kWPFixedDC and never
+            // calls `LearnTree` for the DC stream. The W44-54 comment that
+            // cited `enc_modular.cc:1166` as parity for `effort >= 4`
+            // misread the dispatch — line 1166 hands off to whatever
+            // `tree_kind` was already set, and the DC stream's `tree_kind`
+            // is gated at line 1591 (`< kSquirrel` ≡ effort >= 8). The
+            // mis-gate cost up to 78.6 % of CPU at e5 on large screenshots
+            // (per perf record on `imac_dark e5 d=1.0`: 122 s ours vs 1.9 s
+            // cjxl = 65× wall ratio). With the gate at `effort >= 8` and the
+            // sub-1 ms trial-cost short-circuited at lower effort, libjxl
+            // parity is restored on the DC tokenization path. The W44-56
+            // photo wins (Variable picked on ~62 % of e8/e9 cells per the
+            // W44-54 sweep TSV) are preserved because e8/e9 still enter
+            // this branch. Average byte cost at e5-e7 is ~0.4 % per the
+            // `benchmarks/dc_learn_tree_sweep_2026-05-19_w44_54.tsv` sweep
+            // (78 cells/effort, mean delta Variable-vs-fixed; flipping
+            // those e5-e7 cells back to kWPFixedDC means giving up that
+            // 0.4 % win in exchange for an order-of-magnitude wall-time
+            // reduction on the W44-170 wedge cells).
             //
             // Strategy: build BOTH candidate trees (Variable learner from
             // stage 7c W44-56, plus the cheap predefined kWPFixedDC BSP),

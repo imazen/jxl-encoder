@@ -27,7 +27,8 @@ Gates where we fire features at different effort levels than libjxl.
 | `effort.rs` `try_dct64` | `effort >= 7` (default `EffortGate::Ours`); no effort gate under `EncoderStrategy::Libjxl` | `decoding_speed_tier < 4` (default 0, NO effort gate) | RESOLVED via opt-in | W44-133 Chunk G `<commit>` — consultation wired. Default `Ours` preserves pre-Chunk-G hash-locks. W44-93 `ca2da622` ruled-out the widening at default; available via `Libjxl` for callers wanting bit-for-bit libjxl. See Section G. |
 | `effort.rs` `epf_dynamic_sharpness` | `effort >= 6` (default `EffortGate::Ours`); no effort gate under `EncoderStrategy::Libjxl` | not gated on effort | RESOLVED via opt-in | W44-133 Chunk G `<commit>` — consultation wired. Default `Ours` preserves pre-Chunk-G hash-locks. See Section G. |
 | `butteraugli loop` | `effort >= 8` (kKitten) | `speed_tier <= kKitten` ≡ `effort >= 8` | AT PARITY | W44-2 audit | NOT a divergence; documented to prevent re-investigation |
-| Tree learning `Predictor::Variable` | `effort >= 4` | `effort >= 4` | AT PARITY | W44-54/56 `bb39a784/ddb94f27/4f626bd4` | DC LearnTree port complete |
+| Tree learning `Predictor::Variable` (DC stream) | `effort >= 8` (W44-171 fix; was `effort >= 4` W44-54..W44-170) | `speed_tier < kSquirrel` ≡ `effort >= 8` (`enc_modular.cc:1591-1597`) | AT PARITY (post-W44-171) | W44-54/56 `bb39a784/ddb94f27/4f626bd4` (Variable learner shipped); W44-171 (this commit) corrected the gate to libjxl-parity | The W44-54 era cited `enc_modular.cc:1166` for `effort >= 4` — that line dispatches whatever `tree_kind` was already set; the actual `tree_kind = kLearn` gate is at line 1591 (`< kSquirrel`). Misgate consumed 78.6 % of CPU at e5 d=1.0 on large screenshots. See Section D row "DC tree (Variable-mode trial-and-pick)" for the full bench results. |
+| Tree learning `Predictor::Variable` (AC modular / non-DC) | `effort >= 4` (unchanged) | `effort >= 4` (libjxl `enc_modular.cc:1591` non-DC path uses kLearn from earlier speed tiers) | AT PARITY | W44-54/56 | W44-171 ONLY changed the DC stream's `tree_kind` selection; non-DC modular tree learning is unaffected. |
 
 ---
 
@@ -104,7 +105,7 @@ Where we pick a different algorithm or skip a libjxl path.
 
 | Component | Ours | libjxl | Status | Notes |
 |---|---|---|---|---|
-| DC tree | LearnTree at `effort >= 4`, kWPFixedDC at e<4 | LearnTree at `effort >= 4`, kWPFixedDC at e<4, per-stream override picks min cost | AT PARITY | W44-54/56/57 (`d53519d4`, `bb39a784`, `b62d3462`) |
+| DC tree (Variable-mode trial-and-pick) | Variable+kWPFixedDC trial-and-pick at `effort >= 8`; kWPFixedDC-only at `effort < 8` | LearnTree (Variable / Best predictor) at `speed_tier < kSquirrel` ≡ `effort >= 8`; kWPFixedDC at `speed_tier >= kSquirrel` ≡ `effort <= 7` (`enc_modular.cc:1588-1597`) | AT PARITY (post-W44-171) | W44-54/56/57 (`d53519d4`, `bb39a784`, `b62d3462`) shipped the Variable learner; **W44-171** (this commit) corrected the dispatch gate from `effort >= 4` → `effort >= 8` after `perf record` on `imac_dark e5 d=1.0` showed `learn_dc_tree_variable` at 78.6 % of CPU (15.5 s wall ours vs 0.22 s wall cjxl, 70× wall ratio). The pre-W44-171 W44-54 comment cited `enc_modular.cc:1166` as parity for `effort >= 4` — that line dispatches on whatever `tree_kind` was already set; the actual `tree_kind = kLearn` gate is at line 1591 (`< kSquirrel`). Costs ~0.4 % bytes average at e5-e7 per the W44-54 sweep TSV; **byte cost on the W44-170 perf-wedge cells is +1.86 % to +2.21 %** (imac_g3/imac_dark/codec_wiki e5 d=1.0). Bench-only env hook `JXL_W44_171_FORCE_TRIAL_ALL_EFFORTS=1` restores pre-W44-171 behaviour for A/B reproduction. |
 | ANS histogram strategy (VarDCT) | Approximate at e<9 | Approximate at e<9 | AT PARITY | W44-43 ported |
 | TryMergeAcs(DCT64X32) non-aligned pass | implemented | implemented | AT PARITY | W44-61 ported, ~260 LOC |
 | `find_best_32x32_transform` 32X32-vs-split | matches libjxl logic | reference | AT PARITY | W44-77 fix `d8a4701f` |
@@ -196,6 +197,7 @@ Bugs/divergences that WERE active and are now at parity. Kept here so future age
 | Patches ref-frame GroupSizeShift wrong | W42-2 | Per-cell heuristic ported |
 | Modular ANS histogram strategy missing | W44-43 | ANSHistogramStrategy::Approximate ported |
 | DC LearnTree not implemented | W44-54+W44-56+W44-57 | Full Variable predictor + WP + per-stream override |
+| DC Variable-trial gate misset to `effort >= 4` | W44-171 (this commit) | Corrected to `effort >= 8` for libjxl `enc_modular.cc:1591` parity; recovers 17.5× wall-time on `imac_dark e5 d=1.0` (15.5 s → 0.88 s single-thread, 65× cjxl → 4.6× cjxl wall ratio) at ~+2 % byte cost on the W44-170 perf-wedge cells (imac_dark/imac_g3/codec_wiki e5 d=1.0). The W44-54 commit cited `enc_modular.cc:1166` as parity for `effort >= 4` — that line dispatches whatever `tree_kind` was already set; the actual `kLearn` gate is at line 1591 (`< kSquirrel` ≡ `effort >= 8`). |
 | TryMergeAcs(DCT64X32) non-aligned pass missing | W44-61 | ~260 LOC port |
 | find_best_32x32_transform 32X32-vs-split divergence | W44-77 | Fixed per source-diff |
 | LZ77 missing in write_context_map_nonsimple | W44-73 | Ported (RLE + greedy) |

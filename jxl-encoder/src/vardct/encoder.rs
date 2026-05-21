@@ -7255,10 +7255,13 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated W44-54: LearnTree DC tree at effort >= 4 (libjxl parity,
-        // enc_modular.cc:1166). 8x8 gradient image now produces 112 bytes
-        // via gradient-predicted DC + adaptive single-leaf tree.
-        const EXPECTED_HASH: u64 = 0x8236b7d776017b61;
+        // Updated W44-171: DC tree Variable trial gated at effort >= 8
+        // (libjxl `enc_modular.cc:1591` parity, was effort >= 4 from W44-54).
+        // 8x8 gradient image stays 112 bytes (small fixtures already favoured
+        // kWPFixedDC under trial-and-pick; skipping the trial keeps the
+        // emitted bitstream at the same size, but the per-stream chosen tree
+        // changes from W44-57's-cost-model-pick to direct-kWPFixedDC).
+        const EXPECTED_HASH: u64 = 0xfde7b582460edebc;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -7286,10 +7289,12 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated W44-54: LearnTree DC tree at effort >= 4 (libjxl parity,
-        // enc_modular.cc:1166). 16x16 solid gray now 97 bytes via single-leaf
-        // tree (constant input → no useful splits).
-        const EXPECTED_HASH: u64 = 0x65ced4d61ad0736c;
+        // Updated W44-171: DC tree Variable trial gated at effort >= 8
+        // (libjxl `enc_modular.cc:1591` parity). 16x16 solid gray stays 97
+        // bytes: single-leaf tree regardless of trial-and-pick vs direct
+        // kWPFixedDC, since the constant input gives no useful splits in
+        // either path. Only the chosen-tree marker in the bitstream differs.
+        const EXPECTED_HASH: u64 = 0xb71172a676faf64d;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -7329,12 +7334,15 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated W44-73: ANS+LZ77 in write_context_map_nonsimple. 64x64
-        // checkerboard now 467 bytes (was 468 pre-W44-73, -1 byte). Larger
-        // context maps with high-repetition entries are where the LZ77+ANS
-        // path wins; small images saw 1-byte improvements (or stayed flat).
+        // Updated W44-171: DC tree Variable trial gated at effort >= 8
+        // (libjxl `enc_modular.cc:1591` parity). 64x64 checkerboard now 507
+        // bytes (was 467 post-W44-73). The +40 byte cost is the W44-57
+        // Variable-mode win this fixture used to harvest at e=7 — checkerboard
+        // pattern has enough structure to make Variable's 14-leaf predictor
+        // adaptation worth the extra LfGlobal tree overhead. With the trial
+        // gated to e>=8, e=7 emits kWPFixedDC directly and pays the +40 B.
         // Pre-W44-73 history: 673 bytes (W44-56), 729 (W44-54).
-        const EXPECTED_HASH: u64 = 0x563a514804f622ca;
+        const EXPECTED_HASH: u64 = 0x6fc3722d337dab13;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -7369,9 +7377,12 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated W44-54: LearnTree DC tree at effort >= 4 (libjxl parity,
-        // enc_modular.cc:1166). 13x17 noise now 502 bytes.
-        const EXPECTED_HASH: u64 = 0xb3ec5b525a65798b;
+        // Updated W44-171: DC tree Variable trial gated at effort >= 8
+        // (libjxl `enc_modular.cc:1591` parity). 13x17 noise stays 502 bytes
+        // (small fixture has too few DC samples for Variable to win the
+        // trial; skipping the trial keeps the bytes identical, only the
+        // chosen-tree marker in the bitstream differs).
+        const EXPECTED_HASH: u64 = 0x8a3db6460320e743;
         assert_eq!(
             hash,
             EXPECTED_HASH,
