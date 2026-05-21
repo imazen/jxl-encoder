@@ -1,0 +1,15 @@
+class                  name               w     h         m3     fcbr  edge_dens  predicate(m3>60 AND ed<0.05)
+--------------------------------------------------------------------------------------------------------------
+WANT-FIRE              codec_wiki      2560  1664    145.733   0.9040    0.03959  FIRES
+WANT-FIRE              terminal        1646  1062     13.849   0.8327    0.08743  reject
+REGRESSED-W44-123      graph            796   481     11.753   0.8088    0.06984  reject
+REGRESSED-W44-123      windows         2560  1392     20.037   0.7692    0.12007  reject
+REGRESSED-W44-123      imessage        1206  2622     67.645   0.8644    0.05327  reject
+BORDERLINE-W44-123     imac_g3         2940  1912     14.289   0.7747    0.12267  reject
+BORDERLINE-W44-123     imac_dark       2940  1912     20.960   0.7278    0.14380  reject
+SAFE-NOREGRESS         windows95        640   480     27.185   0.3600    0.31647  reject
+REJECT-PHOTO           1418519          512   512     36.843   0.0984    0.16374  reject
+REJECT-PHOTO           1189261          512   512     98.839   0.0034    0.48950  reject
+REJECT-PHOTO           1025469          512   512     45.446   0.0166    0.17192  reject
+REJECT-PHOTO           1420710          512   512     32.932   0.0000    0.92975  reject
+REJECT-PHOTO           1531677          512   512     12.295   0.0000    0.87663  reject

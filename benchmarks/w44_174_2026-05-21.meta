@@ -1,0 +1,20 @@
+# W44-174 read-only diagnosis bench provenance
+# Date: 2026-05-21
+# Status: READ-ONLY DIAGNOSIS — no production code change
+# Hardware: AMD Ryzen 9 7950X, 128GB RAM
+# Workspace: ~/work/zen/jxl-encoder--w44-174-terminal-diag
+# Parent commit: 1d22c61f (W44-171 DC tree Variable-trial)
+# Building with: CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target
+# Features: '__expert __pre_quantized parallel'
+# cjxl-rs: built at workspace HEAD
+#
+# Methodology:
+# - Phase 1: extracted from existing benchmarks/cjxl_step025_{zenjxl,libjxl}_2026-05-21.tsv
+# - Phase 2: Python comparison script over the existing TSVs, no re-encoding needed
+# - Phase 3: paired A/B with JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=1.0 env var disabling
+#   the W44-109 adaptive_quant qf_seed scale (e5/e6/e7 screenshot-class lift).
+#
+# Artifacts:
+# - w44_174_proxy_probe_2026-05-21.txt — m3/fcbr/edge_density for 13 corpus images
+# - w44_174_w109_disable_ab_2026-05-21.txt — 6 screenshots × 3 distances paired A/B
+# - w44_174_terminal_e7_over_allocation_2026-05-21.md — memory note (Phase 4)
