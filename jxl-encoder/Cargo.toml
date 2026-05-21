@@ -1257,6 +1257,23 @@ name = "w44_175_parallel_buttloop_ab"
 path = "examples/w44_175_parallel_buttloop_ab.rs"
 required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-173: per-region + per-strategy SSIM2 attribution on clic_097cb426
+# (CLIC 2025 smooth photo). Diagnoses the persistent W44-170 SSIM2
+# deficit -3 to -4.5 vs cjxl at d=3+ which affects BOTH
+# EncoderStrategy::Zenjxl AND ::Libjxl. Read-only measurement —
+# captures per-strategy W44-76 per-block dump on worst cell (e7 d=5).
+[[example]]
+name = "w44_173_clic_097cb426_dump"
+path = "examples/w44_173_clic_097cb426_dump.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
+# W44-173 mask1x1 probe — gets the mask1x1 percentiles + masking-field
+# median for clic_097cb426 via __pre_quantized, so we can place this image
+# against the W44-91/96/166/168 discriminator thresholds.
+[[example]]
+name = "w44_173_mask_probe"
+path = "examples/w44_173_mask_probe.rs"
+required-features = ["__pre_quantized"]
 [[example]]
 name = "w44_20_codec_wiki_coverage"
 path = "examples/w44_20_codec_wiki_coverage.rs"
