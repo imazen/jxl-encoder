@@ -386,9 +386,76 @@ const W44_124_DCT32_KEEP_EDGE_DENSITY_MAX: f32 = 0.05;
 /// | d=6.0 (e7) | **-0.64** | same mechanism |
 /// | d=0.8/1.0 (e8/e9) | **-0.41 / -0.52** | cost model is at DCT16X16/DCT8 region; keep_dct32 inert but slightly redistributes byte allocation |
 ///
-/// The 2.0 floor protects the d=0.8/d=1.0/d=1.6 cluster (low-d cost model
-/// already at small-transform regime, keep_dct32 is net-negative).
-pub const W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE: f32 = 2.0;
+/// **W44-143 (2026-05-20)**: lowered 2.0 → 1.4 after the W44-142 attribution
+/// memo identified codec_wiki e8/e9 d=1.6/1.8 cells as the residual cluster
+/// regressed by W44-135's overly-conservative 2.0 floor (NOT by the W44-140
+/// EPF fade as the W44-141 ledger memo initially claimed). 30-cell × 5-variant
+/// bisect on origin/main (`benchmarks/w44_143_min_distance_bisect_2026-05-20.{tsv,meta}`)
+/// swept candidates `{2.0, 1.8, 1.6, 1.4, 1.2}`:
+///
+/// | candidate | gates passed | new wins on codec_wiki d∈[1.4, 1.8] | regressions |
+/// |---        |---           |---                                   |---          |
+/// | 2.0 (W44-135) | 6/6 baseline | 0 | 0 |
+/// | 1.8       | 5/6          | 1 (e9 d=1.8 +0.72)                  | 1 (e8 d=1.8 -0.18) |
+/// | 1.6       | 6/6          | 3 (e8 d=1.6 +0.62, e9 d=1.6 +0.62, e9 d=1.8 +0.72) | 1 (e8 d=1.8 -0.18) |
+/// | **1.4 (SHIP)** | **6/6**  | **5** (+ e8/e9 d=1.4 +0.31 each)    | **1** (e8 d=1.8 -0.18) |
+/// | 1.2       | 5/6          | 5 + e9 d=1.2 -0.43, e8 d=1.2 -0.27  | 3 (G2 fails) |
+///
+/// 1.4 is pareto-optimal: strictly more wins than 1.6 (adds d=1.4 cells)
+/// while still passing all six acceptance gates (G1 codec_wiki d=1.6/1.8
+/// improvement, G2 d=1.0-1.4 preservation, G3 d=3 W44-124 win, G4 d=4-6
+/// W44-135 protection, G5 terminal protection, G6 photo byte-identical).
+/// The single remaining regression (e8 d=1.8 -0.18 SSIM2) is unavoidable
+/// at any floor ≤ 1.8 — the e8/e9 split at d=1.8 reflects buttloop iter
+/// asymmetry (e8 has 2 iters, e9 has 4): e9 settles to +0.72 SSIM2 under
+/// the lift while e8 starves to -0.18. Same structural pattern as the
+/// W44-140 EPF fade design.
+///
+/// **DO NOT lower below 1.4** — d=1.2 cells regress -0.27 to -0.43 SSIM2
+/// under the lift (W44-142 had to specifically suppress the EPF seed at
+/// e9 d=1.2; further loosening would re-introduce a strategy-tier
+/// regression on top of the EPF-seed mechanism).
+///
+/// Distance-window summary:
+/// - `d < 1.4`: gate does NOT fire (W44-142 owns the codec_wiki d ∈ [1.0, 1.5) suppression on a different code path).
+/// - `d ∈ [1.4, 3.5]`: gate fires on codec_wiki-class (W44-124 m3+ed predicate).
+/// - `d > 3.5`: gate does NOT fire (W44-135 MAX ceiling preserved).
+///
+/// The original [W44-135 documentation](https://github.com/imazen/jxl-encoder)
+/// stated "2.0 floor protects the d=0.8/d=1.0/d=1.6 cluster" — verified
+/// empirically: d=0.8/1.0 ARE protected (gate still doesn't fire there at
+/// MIN=1.4), but d=1.6 turned out to BENEFIT from the lift, not be hurt
+/// by it. The W44-135 conclusion was extrapolated from a narrower
+/// measurement set that didn't span d=1.6/1.8 specifically.
+pub const W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE: f32 = 1.4;
+
+/// W44-143 (2026-05-20): env-var override for
+/// [`W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE`] used by the W44-143 bisect
+/// harness only. Set `JXL_W44_143_MIN_DISTANCE=<f32>` to override the
+/// W44-135 floor for paired A/B sweeps. Returns `None` (no override)
+/// when unset or on no-std builds. Documented as debug-only; production
+/// callers should never set it.
+#[inline]
+fn w44_143_min_distance_override() -> Option<f32> {
+    #[cfg(feature = "std")]
+    {
+        std::env::var("JXL_W44_143_MIN_DISTANCE")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        None
+    }
+}
+
+/// W44-143 (2026-05-20): effective minimum distance for the W44-124
+/// auto-discriminator. Returns the env-var override if set, else the
+/// production [`W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE`] constant.
+#[inline]
+fn w44_143_effective_min_distance() -> f32 {
+    w44_143_min_distance_override().unwrap_or(W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE)
+}
 
 /// W44-135 (2026-05-20): maximum `target_distance` at which the W44-124
 /// auto-discriminator is allowed to fire.
@@ -1940,7 +2007,7 @@ impl VarDctEncoder {
                     false
                 }
             };
-            let w44_124_distance_in_band = self.distance >= W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE
+            let w44_124_distance_in_band = self.distance >= w44_143_effective_min_distance()
                 && self.distance <= W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE;
             let w44_124_auto_keep = w44_124_distance_in_band
                 && self.zenanalyze_proxies.is_some_and(|zp| {
@@ -3442,7 +3509,7 @@ impl VarDctEncoder {
                 // this distance gate — opt-in callers still get the
                 // unconditional W44-123 behaviour.
                 let w44_124_distance_in_band = self.distance
-                    >= W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE
+                    >= w44_143_effective_min_distance()
                     && self.distance <= W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE;
                 let w44_124_auto_keep = w44_124_distance_in_band
                     && self.zenanalyze_proxies.is_some_and(|p| {
@@ -5613,6 +5680,12 @@ mod tests {
     /// regression cluster (W44-134 measurement) and the d=0.8/1.0
     /// low-d over-application cluster while preserving the W44-124
     /// d=3 wins and the d=2.5 bonus wins.
+    ///
+    /// **W44-143 (2026-05-20)**: floor lowered 2.0 → 1.4 per the
+    /// 30-cell × 5-variant bisect (`benchmarks/w44_143_min_distance_bisect_2026-05-20.tsv`)
+    /// which found the gate fires beneficially on codec_wiki at
+    /// d∈[1.4, 1.8] (max +0.72 SSIM2 at e9 d=1.8). The 1.4 floor still
+    /// protects d=0.8/1.0/1.2 (W44-142 + low-d cluster preservation).
     #[test]
     fn test_w44_135_dct32_keep_distance_gate() {
         // Window is inclusive on both ends per the `>=` / `<=` checks
@@ -5633,7 +5706,37 @@ mod tests {
         assert!(6.0_f32 > W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE);
         assert!(0.8_f32 < W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE);
         assert!(1.0_f32 < W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE);
-        assert!(1.6_f32 < W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE);
+        // W44-142 protection — d=1.2 must stay OUT (EPF seed lever owns
+        // that distance via a different mechanism). 1.2 < 1.4 ✓.
+        assert!(1.2_f32 < W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE);
+    }
+
+    /// W44-143 (2026-05-20) — pin the new W44-124 lower bound at 1.4.
+    /// The bisect (`benchmarks/w44_143_min_distance_bisect_2026-05-20.tsv`)
+    /// confirmed d∈[1.4, 1.8] cells on codec_wiki BENEFIT from the
+    /// W44-124 lift (max +0.72 SSIM2 at e9 d=1.8). The 1.4 floor (vs
+    /// W44-135's 2.0) opens up 5 new SSIM2 wins (e8/e9 d=1.4 +0.31,
+    /// e8/e9 d=1.6 +0.62, e9 d=1.8 +0.72) at the cost of a single
+    /// minor regression (e8 d=1.8 -0.18 SSIM2) which is unavoidable
+    /// at any floor ≤ 1.8 (e8 buttloop has only 2 iters vs e9's 4).
+    #[test]
+    fn test_w44_143_dct32_keep_min_distance() {
+        // The exact ship value (any drift triggers re-bisect).
+        assert!((W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE - 1.4).abs() < 1e-6);
+
+        // W44-143 NEW wins must be inside the gate.
+        assert!(1.4_f32 >= W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE);
+        assert!(1.4_f32 <= W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE);
+        assert!(1.6_f32 >= W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE);
+        assert!(1.6_f32 <= W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE);
+        assert!(1.8_f32 >= W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE);
+        assert!(1.8_f32 <= W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE);
+
+        // d=1.2 must STAY OUT — W44-143 bisect showed -0.27 to -0.43
+        // SSIM2 regression on codec_wiki under the lift at d=1.2.
+        // W44-142 owns d ∈ [1.0, 1.5) on a different mechanism
+        // (EPF seed suppression).
+        assert!(1.2_f32 < W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE);
     }
 
     #[test]

@@ -747,6 +747,23 @@ name = "w44_142_decoder_check"
 path = "examples/w44_142_decoder_check.rs"
 required-features = ["butteraugli-loop", "ssim2-loop"]
 
+# W44-143 MIN_DISTANCE bisection — sweeps W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE
+# candidates {2.0, 1.8, 1.6, 1.4, 1.2} on codec_wiki/terminal/photo cells to
+# test whether widening the lower bound closes codec_wiki d=1.6/1.8 SSIM2
+# regressions (W44-142 attribution finding) without new collateral.
+[[example]]
+name = "w44_143_min_distance_bisect"
+path = "examples/w44_143_min_distance_bisect.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
+# W44-143 multi-decoder roundtrip — encodes codec_wiki e8 d=1.6 (the cell
+# where the W44-143 lower-bound widening admits the W44-124 dct32_keep lift)
+# and verifies djxl, jxl-oxide, and jxl-rs all parse it.
+[[example]]
+name = "w44_143_decoder_check"
+path = "examples/w44_143_decoder_check.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
 # RFC#45 chunk 1: e10/e11 paired A/B/C bench.
 # Needs the butteraugli-loop feature to enable e10/e11 iter extensions.
 [[example]]

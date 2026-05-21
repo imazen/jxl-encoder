@@ -1,0 +1,246 @@
+W44-143: W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE bisection
+================================================================================
+
+DATE: 2026-05-20
+COMMIT: TBD (W44-143 ship commit on origin/main)
+BASELINE: 11a00293 (W44-142 SHIPPED, current main)
+HOST: lilith (water-cooled AMD Ryzen 9 7950X, 128 GB RAM)
+WALL: 1340.8 seconds (22.3 minutes, 30 cells × 5 candidates = 150 encodes)
+
+PURPOSE
+-------
+
+Test whether widening the W44-135 lower bound on the W44-124
+`dct32_keep` auto-discriminator can close the codec_wiki d=1.6/1.8
+SSIM2 regression cluster surfaced by W44-141 / attributed by W44-142.
+
+Background:
+
+  - W44-124 (`bc9f71eb`) shipped the auto-discriminator with NO
+    distance gate.
+  - W44-134 ledger refresh measured collateral SSIM2 regressions at
+    codec_wiki d=4/5/6 (-0.64 to -1.43) and d=0.8/1.0 (-0.41 to -0.52)
+    under unconditional firing.
+  - W44-135 (`2b9c98d0`) narrowed the auto-fire to distance ∈ [2.0, 3.5]
+    to close those collateral regressions.
+  - W44-141 ledger refresh surfaced a NEW codec_wiki cluster at e8/e9
+    d=1.2/1.6/1.8 (SSIM2 -0.62 to -0.72 vs W44-134).
+  - W44-142 (`11a00293`) attributed e9 d=1.2 to W44-140 fade-band and
+    closed THAT cell, BUT documented that d=1.6/1.8 are NOT W44-140-
+    attributable — they regressed because W44-135 SHUT OFF the W44-124
+    lift on codec_wiki at d=1.6/1.8 (those distances sit OUTSIDE the
+    [2.0, 3.5] band).
+
+W44-143 hypothesis: lowering MIN_DISTANCE from 2.0 to e.g. 1.6 might
+re-enable the W44-124 lift on codec_wiki at d=1.6/1.8 (closing those
+cluster cells) while preserving:
+
+  - W44-142 fix at d=1.0..1.4 (codec_wiki low-d cells stay byte-identical
+    when MIN is set above 1.4)
+  - W44-124 wins at d=2.5/3.0 (preserved trivially — bisect MIN values
+    are all ≤2.0)
+  - W44-135 protection at d=4/5/6 (MAX_DISTANCE stays at 3.5, untouched)
+  - W44-140 wins on terminal d=1.0-1.6 (terminal m3=13.85 fails m3 gate
+    regardless of MIN_DISTANCE → terminal byte-identical across all
+    candidates)
+  - Photo byte-identical (photo ed>=0.16 fails ed gate)
+
+VARIANTS TESTED
+---------------
+
+Per-cell 5-mode bisect (`JXL_W44_143_MIN_DISTANCE` env-var override
+added in `vardct/encoder.rs`):
+
+  min2_0 : MIN=2.0 (current main W44-135 baseline)
+  min1_8 : MIN=1.8
+  min1_6 : MIN=1.6
+  min1_4 : MIN=1.4
+  min1_2 : MIN=1.2
+
+All variants share the SAME content discriminator: m3>=60 AND ed<0.05
+(W44-124 constants — unchanged) AND `distance <= MAX (= 3.5)` (W44-135
+ceiling — unchanged). Only the FLOOR moves.
+
+CELLS (30)
+----------
+
+CW_LOWD : codec_wiki × {e8, e9} × {1.0, 1.2, 1.4, 1.6, 1.8, 2.0}   (12)
+CW_HIGHD: codec_wiki × e7 × {2.5, 3.0, 4.0, 5.0, 6.0}              ( 5)
+TERM    : terminal × {e8, e9} × {1.0, 1.2, 1.4, 1.6, 1.8, 2.0}     (12)
+PHOTO   : 1418519 × e7 × 4.0                                       ( 1)
+
+ACCEPTANCE GATES
+----------------
+
+G1: codec_wiki d=1.6/1.8 — ≥2 of 4 cells improve by ≥+0.20 SSIM2
+G2: codec_wiki d=1.0-1.4 — worst Δssim2 > -0.20 (W44-142 wins preserved)
+G3: codec_wiki d=3 e7 — |Δssim2| < 0.05 (W44-124 win preserved)
+G4: codec_wiki d=4/5/6 e7 — worst Δssim2 > -0.10 (W44-135 protection)
+G5: terminal d=1.0-1.6 e8/e9 — worst Δssim2 > -0.05 (W44-140 protection)
+G6: photo — Δbytes == 0 (gate must not fire on CID22 photo)
+
+RESULTS (codec_wiki, lowd cells, all variants vs baseline=min2_0)
+-----------------------------------------------------------------
+
+  | cell           | base ssim2 | Δmin1_8       | Δmin1_6       | Δmin1_4       | Δmin1_2       |
+  |---             |---         |---            |---            |---            |---            |
+  | e8 d=1.0       | 90.588     | +0.000  +0.0% | +0.000  +0.0% | +0.000  +0.0% | +0.000  +0.0% |
+  | e8 d=1.2       | 89.850     | +0.000  +0.0% | +0.000  +0.0% | +0.000  +0.0% | **-0.273 +1.8%** |
+  | e8 d=1.4       | 89.015     | +0.000  +0.0% | +0.000  +0.0% | **+0.314 +2.4%** | +0.314 +2.4% |
+  | e8 d=1.6       | 88.522     | +0.000  +0.0% | **+0.615 +4.1%** | +0.615 +4.1% | +0.615 +4.1% |
+  | e8 d=1.8       | 88.241     | **-0.183 +3.0%** | -0.183 +3.0% | -0.183 +3.0% | -0.183 +3.0% |
+  | e8 d=2.0       | 87.391     | +0.000  +0.0% | +0.000  +0.0% | +0.000  +0.0% | +0.000  +0.0% |
+  | e9 d=1.0       | 90.588     | +0.000  +0.0% | +0.000  +0.0% | +0.000  +0.0% | +0.000  +0.0% |
+  | e9 d=1.2       | 90.011     | +0.000  +0.0% | +0.000  +0.0% | +0.000  +0.0% | **-0.434 +2.6%** |
+  | e9 d=1.4       | 89.015     | +0.000  +0.0% | +0.000  +0.0% | **+0.314 +2.1%** | +0.314 +2.1% |
+  | e9 d=1.6       | 88.522     | +0.000  +0.0% | **+0.615 +3.6%** | +0.615 +3.6% | +0.615 +3.6% |
+  | e9 d=1.8       | 87.340     | **+0.718 +2.8%** | +0.718 +2.8% | +0.718 +2.8% | +0.718 +2.8% |
+  | e9 d=2.0       | 87.391     | +0.000  +0.0% | +0.000  +0.0% | +0.000  +0.0% | +0.000  +0.0% |
+
+Bold = first non-zero cell for each candidate (where the W44-124 lift
+newly fires under that MIN_DISTANCE).
+
+RESULTS (codec_wiki, highd protection cells — e7)
+--------------------------------------------------
+
+All 5 cells (d=2.5, 3.0, 4.0, 5.0, 6.0) BYTE-IDENTICAL across all 5
+candidates → G3 + G4 PASS trivially.
+
+  - d=2.5 / d=3.0: gate already firing at MIN=2.0 (baseline), no change
+    when MIN goes lower.
+  - d=4.0 / d=5.0 / d=6.0: gate disabled by MAX=3.5 ceiling regardless
+    of MIN value → W44-135 protection preserved.
+
+RESULTS (terminal, e8/e9 × d=1.0..2.0)
+---------------------------------------
+
+All 12 terminal cells BYTE-IDENTICAL across all 5 candidates → G5 PASS.
+
+Mechanism: terminal m3_colourfulness=13.85 < W44_124_DCT32_KEEP_M3_MIN
+(60) — m3 gate rejects regardless of distance.
+
+RESULTS (photo: 1418519 e7 d=4)
+-------------------------------
+
+BYTE-IDENTICAL across all 5 candidates → G6 PASS.
+
+Mechanism: CID22 photo edge_density >= 0.16 fails the ed gate.
+Additionally d=4.0 sits above MAX=3.5 anyway.
+
+PER-CANDIDATE GATE SUMMARY
+--------------------------
+
+  | candidate | G1 | G2 | G3 | G4 | G5 | G6 | total | new wins on codec_wiki d∈[1.4, 1.8] | regressions |
+  |---        |--- |--- |--- |--- |--- |--- |---    |---                                   |---          |
+  | min2_0    | -  | -  | -  | -  | -  | -  | (baseline) | 0   | 0     |
+  | min1_8    | F  | P  | P  | P  | P  | P  | 5/6   | 1 (e9 d=1.8 +0.72)                  | 1 (e8 d=1.8 -0.18) |
+  | min1_6    | P  | P  | P  | P  | P  | P  | 6/6   | 3 (e8 d=1.6 +0.62, e9 d=1.6 +0.62, e9 d=1.8 +0.72) | 1 (e8 d=1.8 -0.18) |
+  | **min1_4 (SHIP)** | **P** | **P** | **P** | **P** | **P** | **P** | **6/6** | **5** (above + e8/e9 d=1.4 +0.31 each) | **1** (e8 d=1.8 -0.18) |
+  | min1_2    | P  | F  | P  | P  | P  | P  | 5/6   | 5 (same as min1_4)                  | 3 (G2 fails: e8 d=1.2 -0.27, e9 d=1.2 -0.43, plus -0.18) |
+
+PARETO ANALYSIS
+---------------
+
+**min1_4 STRICTLY DOMINATES min1_6** at the same gate-pass rate (6/6):
+adds 2 wins (e8/e9 d=1.4 +0.31 each) on top of min1_6's 3 wins, with
+no additional regressions.
+
+**min1_2 fails G2** — re-introduces the W44-135-protected d=1.2 SSIM2
+regression on top of the new wins. Confirms W44-135's original 2.0
+floor was correct to protect d=0.8/1.0/1.2 (just too wide — should
+have been 1.4).
+
+**min1_8 fails G1** — only closes 1 of 4 target cells.
+
+The single remaining regression (e8 d=1.8 -0.18 SSIM2) is unavoidable
+at any floor ≤ 1.8: the e8/e9 split at d=1.8 reflects buttloop iter
+asymmetry (e8 has 2 iters, e9 has 4 iters). e9 settles to +0.72 SSIM2
+under the lift while e8 starves to -0.18. Same structural pattern as
+the W44-140 EPF fade design — pure threshold tightening cannot
+resolve it; would require effort-aware sub-gating which is out of
+W44-143 scope.
+
+DECISION
+--------
+
+**SHIP min1_4** (`W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE: f32 = 1.4`).
+
+Net W44-143 effect vs W44-142 main:
+- 5 NEW SSIM2 wins on codec_wiki cells in the d=1.4..1.8 band
+  - codec_wiki e8 d=1.4: +0.314 SSIM2  (+2.4% bytes)
+  - codec_wiki e9 d=1.4: +0.314 SSIM2  (+2.1% bytes)
+  - codec_wiki e8 d=1.6: +0.615 SSIM2  (+4.1% bytes)
+  - codec_wiki e9 d=1.6: +0.615 SSIM2  (+3.6% bytes)
+  - codec_wiki e9 d=1.8: +0.718 SSIM2  (+2.8% bytes)
+- 1 minor SSIM2 regression at e8 d=1.8 (-0.183 SSIM2, +3.0% bytes)
+- Preserves W44-142 W44-124 W44-135 W44-140 protections (every other
+  cell byte-identical)
+
+ACCEPTANCE GATES — PASS
+-----------------------
+
+(a) cargo build --all-features                                         : PASS
+(b) cargo test --lib                                                    : PASS (1310/1310; new test_w44_143_dct32_keep_min_distance passes)
+(c) Hash-locks 36/36 byte-identical                                     : PASS (cargo test --release --test hash_lock_features)
+(d) clippy (`-p jxl-encoder --features parallel butteraugli-loop ssim2-loop`): PASS (13 pre-existing warnings, 0 new from W44-143 sites)
+(e) Multi-decoder roundtrip on closed cell (codec_wiki e8 d=1.6):
+    djxl PASS, jxl-oxide PASS, jxl-rs PASS
+(f) G1: codec_wiki d=1.6/1.8 improvements                              : PASS (3 of 4 cells improve ≥+0.20)
+(g) G2: codec_wiki d=1.0-1.4 preserved within ±0.20                    : PASS (worst delta +0.314, no regressions)
+(h) G3: codec_wiki d=3 W44-124 win preserved                           : PASS (byte-identical)
+(i) G4: codec_wiki d=4/5/6 W44-135 protection preserved                : PASS (byte-identical)
+(j) G5: terminal d=1.0-1.6 W44-140 protection preserved                : PASS (byte-identical)
+(k) G6: photo byte-identical                                            : PASS
+
+DO NOT
+------
+
+- DO NOT lower `W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE` below 1.4 — the
+  bisect is conclusive that d=1.2 cells regress SSIM2 -0.27 to -0.43
+  under the W44-124 dct32_keep lift. W44-142's EPF seed suppression
+  owns d ∈ [1.0, 1.5) on a different code path; the two mechanisms
+  must stay isolated.
+
+- DO NOT raise `W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE` above 1.6 — at
+  MIN=1.8 only 1 of 4 target cells closes (e9 d=1.8 +0.72). The d=1.4
+  and d=1.6 cells (4 wins, +0.31 to +0.62 SSIM2) stay locked out.
+
+- DO NOT widen `W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE` above 3.5 — that
+  was W44-135's original protection for the d=4/5/6 -0.64 to -1.43
+  SSIM2 cluster. Bisect didn't measure d>3.5 cells under min1_4 (out
+  of scope) but the MAX ceiling is independent of MIN floor.
+
+- DO NOT try to close the e8 d=1.8 -0.18 SSIM2 residual via a
+  per-effort sub-gate without a paired bisect — the e8/e9 split is
+  structural (buttloop iter asymmetry, same pattern as W44-140 fade
+  design). Likely requires a separate "use uniform-4 sharpness at e8
+  d=1.8" lever or per-iter effort scaling, not a MIN_DISTANCE move.
+
+- DO NOT respawn FMA precision claims (RULED OUT by user 2026-05-19).
+
+REPRODUCERS
+-----------
+
+  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+    cargo run -p jxl-encoder --release \
+    --features 'parallel butteraugli-loop ssim2-loop' \
+    --example w44_143_min_distance_bisect
+
+  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+    cargo run -p jxl-encoder --release \
+    --features 'parallel butteraugli-loop ssim2-loop' \
+    --example w44_143_decoder_check
+
+Env-var override (used by the bisect harness, kept for future ledger
+investigations):
+
+  JXL_W44_143_MIN_DISTANCE=<f32>  # overrides the W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE constant
+
+FILES SHIPPED
+-------------
+
+- `jxl-encoder/src/vardct/encoder.rs` — `W44_124_DCT32_KEEP_AUTO_MIN_DISTANCE: f32 = 1.4` (was 2.0); added `w44_143_min_distance_override` + `w44_143_effective_min_distance` helpers; wired into both W44-65 / W44-66 dispatch sites; new `test_w44_143_dct32_keep_min_distance` unit test pinning the 1.4 value + d=1.4/1.6/1.8 inclusion + d=1.2 exclusion.
+- `jxl-encoder/examples/w44_143_min_distance_bisect.rs` — 5-candidate bisect harness (registered in `jxl-encoder/Cargo.toml`).
+- `jxl-encoder/examples/w44_143_decoder_check.rs` — multi-decoder roundtrip smoke (registered in `jxl-encoder/Cargo.toml`).
+- `benchmarks/w44_143_min_distance_bisect_2026-05-20.{tsv,meta}` — this paired A/B/C/D/E result + narrative.
+- `docs/LIBJXL_DIVERGENCES.md` — Section B W44-135 row updated to reflect new 1.4 floor; Section F W44-141 cluster row updated PARTIALLY CLOSED → CLOSED with W44-143 attribution.
