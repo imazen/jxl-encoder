@@ -467,10 +467,7 @@ fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp = path.with_extension(format!(
-        "tsv.tmp.{}",
-        std::process::id()
-    ));
+    let tmp = path.with_extension(format!("tsv.tmp.{}", std::process::id()));
     {
         let mut f = OpenOptions::new()
             .create(true)
@@ -527,15 +524,15 @@ fn read_existing(path: &Path) -> HashMap<CellKey, String> {
         };
         let effort: u8 = cols[5].parse().unwrap_or(0);
         let distance: f32 = cols[6].parse().unwrap_or(0.0);
-        map.insert(cell_key(&image, strategy, effort, distance), line.to_string());
+        map.insert(
+            cell_key(&image, strategy, effort, distance),
+            line.to_string(),
+        );
     }
     map
 }
 
-fn write_ledger(
-    path: &Path,
-    rows: &HashMap<CellKey, String>,
-) -> std::io::Result<()> {
+fn write_ledger(path: &Path, rows: &HashMap<CellKey, String>) -> std::io::Result<()> {
     let mut keys: Vec<&CellKey> = rows.keys().collect();
     keys.sort_by(|a, b| {
         a.image
@@ -663,11 +660,7 @@ fn parse_args() -> Args {
                 image_filter = Some(vec![v]);
             }
             "--time-iters" => {
-                time_iters = it
-                    .next()
-                    .expect("--time-iters VALUE")
-                    .parse()
-                    .expect("u32")
+                time_iters = it.next().expect("--time-iters VALUE").parse().expect("u32")
             }
             "--smoke" => smoke = true,
             other => panic!("unknown arg: {other}"),
@@ -687,13 +680,10 @@ fn parse_args() -> Args {
         efforts = vec![7];
     }
     let corpus_dir = corpus_dir.unwrap_or_else(default_corpus_dir);
-    let manifest = manifest.unwrap_or_else(|| {
-        PathBuf::from("benchmarks/corpora/w44_170_varied_corpus.tsv")
-    });
+    let manifest =
+        manifest.unwrap_or_else(|| PathBuf::from("benchmarks/corpora/w44_170_varied_corpus.tsv"));
     let date = chrono_today();
-    let output_prefix = output_prefix.unwrap_or_else(|| {
-        PathBuf::from(format!("benchmarks/cjxl_step025"))
-    });
+    let output_prefix = output_prefix.unwrap_or_else(|| PathBuf::from("benchmarks/cjxl_step025"));
     let output_meta = PathBuf::from(format!("{}_{}.meta", output_prefix.display(), date));
     Args {
         output_prefix,
@@ -736,7 +726,7 @@ fn build_distance_grid(min: f32, max: f32, step: f32) -> Vec<f32> {
     let mut x = min;
     // Inclusive on max with floating-point tolerance.
     while x <= max + step * 0.5 {
-        out.push(((x * 10000.0).round() / 10000.0) as f32);
+        out.push((x * 10000.0).round() / 10000.0);
         x += step;
     }
     out
@@ -786,17 +776,15 @@ fn get_or_compute_cjxl(
     distance: f32,
     work_dir: &Path,
 ) -> Option<CjxlResult> {
-    let key = (img.entry.name.clone(), effort, (distance * 10000.0).round() as i32);
+    let key = (
+        img.entry.name.clone(),
+        effort,
+        (distance * 10000.0).round() as i32,
+    );
     if let Some(r) = cache.lock().unwrap().get(&key) {
         return Some(r.clone());
     }
-    let (bytes, ms) = encode_cjxl(
-        &img.entry.path,
-        distance,
-        effort,
-        work_dir,
-        &img.entry.name,
-    )?;
+    let (bytes, ms) = encode_cjxl(&img.entry.path, distance, effort, work_dir, &img.entry.name)?;
     let (bfly, ssim2) = score_jxl(&bytes, &img.linear, &img.srgb, img.width, img.height)?;
     let result = CjxlResult {
         bytes: bytes.len() as u64,
@@ -926,29 +914,28 @@ fn main() {
     let mut images = match load_manifest(&args.manifest, &args.corpus_dir) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!(
-                "Failed to load manifest {}: {}",
-                args.manifest.display(),
-                e
-            );
+            eprintln!("Failed to load manifest {}: {}", args.manifest.display(), e);
             std::process::exit(2);
         }
     };
     if let Some(filt) = &args.image_filter {
-        images.retain(|i| filt.iter().any(|n| i.name == *n));
+        images.retain(|i| filt.contains(&i.name));
     }
     if images.is_empty() {
         eprintln!("No images matched manifest+filter.");
         std::process::exit(2);
     }
-    eprintln!("Loaded {} images from {}", images.len(), args.manifest.display());
+    eprintln!(
+        "Loaded {} images from {}",
+        images.len(),
+        args.manifest.display()
+    );
 
     let distances = build_distance_grid(args.distance_min, args.distance_max, args.distance_step);
     let efforts = args.efforts.clone();
     let strategies = args.strategies.clone();
 
-    let work_dir =
-        std::env::temp_dir().join(format!("w44_170_cjxl_sweep_{}", std::process::id()));
+    let work_dir = std::env::temp_dir().join(format!("w44_170_cjxl_sweep_{}", std::process::id()));
     std::fs::create_dir_all(&work_dir).expect("create workdir");
 
     let commit = Command::new("git")
@@ -1011,7 +998,10 @@ fn main() {
     }
 
     // Prepare images (load + linear + sRGB precompute).
-    eprintln!("Preparing {} images (load+linear+sRGB precompute)...", images.len());
+    eprintln!(
+        "Preparing {} images (load+linear+sRGB precompute)...",
+        images.len()
+    );
     let prepared: Vec<PreparedImage> = images
         .into_iter()
         .filter_map(|e| {
@@ -1050,7 +1040,10 @@ fn main() {
     );
     eprintln!("  distance grid: {:?}", distances);
     eprintln!("  efforts:       {:?}", efforts);
-    eprintln!("  strategies:    {:?}", strategies.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+    eprintln!(
+        "  strategies:    {:?}",
+        strategies.iter().map(|s| s.as_str()).collect::<Vec<_>>()
+    );
     eprintln!("  commit:        {}", commit);
     eprintln!("  cjxl_version:  {}", cjxl_ver);
     eprintln!("  host:          {}", host);
@@ -1063,7 +1056,19 @@ fn main() {
 
     if total_cells == 0 {
         eprintln!("All cells already done — nothing to do.");
-        write_meta(&args, &commit, &cjxl_ver, &host, &date, &strategy_paths, &distances, &efforts, &strategies, 0.0, 0);
+        write_meta(
+            &args,
+            &commit,
+            &cjxl_ver,
+            &host,
+            &date,
+            &strategy_paths,
+            &distances,
+            &efforts,
+            &strategies,
+            0.0,
+            0,
+        );
         return;
     }
 
@@ -1114,12 +1119,12 @@ fn main() {
         let n = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
 
         // Flush each strategy's ledger every 16 cells (or at the very end).
-        if n % 16 == 0 || n == total_cells {
+        if n.is_multiple_of(16) || n == total_cells {
             for (s, p) in &strategy_paths {
-                if let Some(rows) = guard.get(s) {
-                    if let Err(e) = write_ledger(p, rows) {
-                        eprintln!("  ! flush failed for {}: {}", s.as_str(), e);
-                    }
+                if let Some(rows) = guard.get(s)
+                    && let Err(e) = write_ledger(p, rows)
+                {
+                    eprintln!("  ! flush failed for {}: {}", s.as_str(), e);
                 }
             }
             eprintln!(
@@ -1145,10 +1150,10 @@ fn main() {
     {
         let guard = rows_per_strategy.lock().unwrap();
         for (s, p) in &strategy_paths {
-            if let Some(rows) = guard.get(s) {
-                if let Err(e) = write_ledger(p, rows) {
-                    eprintln!("  ! final flush failed for {}: {}", s.as_str(), e);
-                }
+            if let Some(rows) = guard.get(s)
+                && let Err(e) = write_ledger(p, rows)
+            {
+                eprintln!("  ! final flush failed for {}: {}", s.as_str(), e);
             }
         }
     }
