@@ -840,9 +840,6 @@ fn find_best_split_variable(
         estimate_subset_cost_per_predictor(samples, indices, max_token, predictor_set);
     let base_cost = base_per_pred[current_predictor as usize];
 
-    let mut best_gain = 0.0f64;
-    let mut best_split: Option<(usize, i32, Vec<usize>, Vec<usize>, u32, u32)> = None;
-
     // Change-predictor penalty (libjxl enc_ma.cc:302): lower threshold = more noisy
     // estimates → discourage switching predictors. We use threshold=0 for DC
     // (libjxl ModularOptions default), but match the formula anyway.
@@ -850,20 +847,58 @@ fn find_best_split_variable(
 
     let pred_indices = predictor_set.predictor_indices();
 
-    for &prop_idx in SPLIT_PROPERTIES_VARIABLE {
+    // W44-175: per-property parallel scan.
+    //
+    // Each property's (sort + dedup + per-quantile cost evaluation) is fully
+    // independent — no shared mutable state, no order dependency on the
+    // cost numbers themselves. The only ordering concern is tie-breaking:
+    // the sequential code's `if net_gain > best_gain` keeps the FIRST
+    // candidate when two split candidates produce equal `net_gain`, walking
+    // properties in `SPLIT_PROPERTIES_VARIABLE` order and quantiles in
+    // ascending `q` order within each property. We preserve that exact
+    // tiebreaker by:
+    //   (1) Computing each property's best candidate independently in
+    //       parallel, returning `(prop_rank, q, net_gain, split-data)`
+    //       where `prop_rank` is the index INTO `SPLIT_PROPERTIES_VARIABLE`
+    //       (NOT the property ID itself).
+    //   (2) Reducing serially across properties in `prop_rank` order with
+    //       `if best.net_gain > current_best.net_gain` (strict >) — so on
+    //       ties the first property wins, matching the sequential walk.
+    //   (3) Within a single property, the inner `q` loop stays sequential
+    //       (same per-property reduction order as before) so the inner
+    //       tiebreaker also matches.
+    //
+    // Hash-lock invariant: this produces the SAME `(prop_idx, splitval,
+    // left_indices, right_indices, lpred, rpred)` choice as the sequential
+    // code on every input.
+    //
+    // Profiling baseline (terminal e8 d=0.5 single-thread, pre-W44-175):
+    // `estimate_subset_cost_per_predictor` consumes ~23 % of CPU and
+    // `partition` consumes ~8 %. Combined ~31 % of single-thread wall.
+    // Parallelizing across the 14 properties gives up to 14× speedup on
+    // the work inside this function — the actual wall-time win depends on
+    // tree depth and the cost-vs-overhead trade of rayon dispatch per
+    // node. See `benchmarks/w44_175_*_2026-05-21.{tsv,meta}`.
+    type Candidate = (usize, i32, Vec<usize>, Vec<usize>, u32, u32, f64);
+
+    let scan_property = |prop_rank: usize| -> Option<Candidate> {
+        let prop_idx = SPLIT_PROPERTIES_VARIABLE[prop_rank];
         let props = &samples.props[prop_idx];
         let mut values: Vec<i32> = indices.iter().map(|&i| props[i]).collect();
         values.sort_unstable();
         values.dedup();
 
         if values.len() < 2 {
-            continue;
+            return None;
         }
         // Quantile-based split candidates (matches stage 1-6 strategy)
         let num_quantiles = 32.min(values.len() - 1);
         if num_quantiles == 0 {
-            continue;
+            return None;
         }
+
+        let mut prop_best_gain = 0.0f64;
+        let mut prop_best: Option<Candidate> = None;
 
         for q in 0..num_quantiles {
             let split_idx = (values.len() * (q + 1)) / (num_quantiles + 1);
@@ -936,14 +971,32 @@ fn find_best_split_variable(
             let overhead = 60.0;
             let net_gain = gain - overhead;
 
-            if net_gain > best_gain {
-                best_gain = net_gain;
-                best_split = Some((prop_idx, splitval, left, right, lpred, rpred));
+            // Inner tiebreaker matches the sequential code: keep the first
+            // candidate that strictly improves the running best.
+            if net_gain > prop_best_gain {
+                prop_best_gain = net_gain;
+                prop_best = Some((prop_idx, splitval, left, right, lpred, rpred, net_gain));
             }
+        }
+        prop_best
+    };
+
+    let property_results: Vec<Option<Candidate>> =
+        crate::parallel::parallel_map(SPLIT_PROPERTIES_VARIABLE.len(), scan_property);
+
+    // Serial reduction in `prop_rank` order so on ties (equal `net_gain`)
+    // the FIRST property in `SPLIT_PROPERTIES_VARIABLE` wins — matching
+    // the sequential walk exactly.
+    let mut best_gain = 0.0f64;
+    let mut best_split: Option<Candidate> = None;
+    for cand in property_results.into_iter().flatten() {
+        if cand.6 > best_gain {
+            best_gain = cand.6;
+            best_split = Some(cand);
         }
     }
 
-    best_split.map(|(p, sv, l, r, lp, rp)| (p, sv, l, r, lp, rp, best_gain))
+    best_split
 }
 
 /// Stage 7c: recursively build a DC tree with per-leaf best-predictor selection.
@@ -1484,6 +1537,57 @@ mod tests {
                 crate::modular::Predictor::Gradient as u32
             );
         }
+    }
+
+    /// W44-175: `find_best_split_variable` default (parallel) path returns
+    /// a self-consistent tree shape on a small non-trivial channel. The
+    /// parallel-vs-sequential equivalence proof lives in the bench harness
+    /// (`examples/w44_175_parallel_buttloop_ab.rs`) which sets the env
+    /// hook `JXL_W44_175_FORCE_SEQUENTIAL_DC_TREE_SPLIT=1` from `examples/`
+    /// scope (where `unsafe` for `env::set_var` is allowed; the lib crate
+    /// forbids `unsafe`). The bench measures byte-identical output across
+    /// 10 cells × 2 modes. Hash-lock regression tests (36/36 BYTE-IDENTICAL)
+    /// cover the integration-level invariant.
+    ///
+    /// This unit test is a smoke check that the parallel path produces a
+    /// reasonable tree shape (non-empty, predictor field set per leaf,
+    /// at least one context) — it does NOT itself toggle the env hook.
+    #[test]
+    fn test_find_best_split_variable_parallel_smoke() {
+        // 32×32 channel with two sharp regions + a gradient slope to give
+        // the splitter actual work (multiple beneficial splits available).
+        let mut channel = alloc::vec![alloc::vec![0i16; 32]; 32];
+        for (y, row) in channel.iter_mut().enumerate() {
+            for (x, v) in row.iter_mut().enumerate() {
+                *v = if x < 16 {
+                    (50 + (y as i16)) * (if x < 8 { 1 } else { 2 })
+                } else {
+                    (200 - (y as i16)) - (x as i16)
+                };
+            }
+        }
+        let quant_dc: [alloc::vec::Vec<alloc::vec::Vec<i16>>; 3] =
+            [channel.clone(), channel.clone(), channel];
+
+        let mut samples = DcTreeSamples::new();
+        gather_dc_samples_variable(&mut samples, &quant_dc);
+
+        let (tree_var, nctx_var) = learn_dc_tree_variable(&samples, 64);
+        assert!(!tree_var.is_empty(), "Variable mode: tree must not be empty");
+        assert!(nctx_var >= 1, "Variable mode: context count must be >= 1");
+        for node in &tree_var {
+            if node.property == -1 {
+                let p = node.predictor;
+                assert!(
+                    (0..=13).contains(&p),
+                    "Variable-mode leaf predictor {p} outside the [0, 13] candidate range"
+                );
+            }
+        }
+
+        let (tree_best, nctx_best) = learn_dc_tree_best(&samples, 64);
+        assert!(!tree_best.is_empty(), "Best mode: tree must not be empty");
+        assert!(nctx_best >= 1, "Best mode: context count must be >= 1");
     }
 }
 

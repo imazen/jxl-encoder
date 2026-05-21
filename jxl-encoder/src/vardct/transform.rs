@@ -1308,11 +1308,43 @@ impl VarDctEncoder {
         Ok(out)
     }
 
-    /// Fill pre-allocated `TransformOutput` buffers (sequential, for butteraugli loop).
+    /// Fill pre-allocated `TransformOutput` buffers (parallel across groups,
+    /// for buttloop / ssim2-loop / zensim-loop iterations).
     ///
-    /// Processes groups sequentially via `transform_blocks_into` and scatters
-    /// results into the pre-allocated output. Used by the butteraugli quantization
-    /// loop which reuses the same `TransformOutput` across iterations.
+    /// Processes groups via `transform_blocks_into` and scatters results into
+    /// the pre-allocated `out`. Used by every per-iter quantization loop that
+    /// reuses the same `TransformOutput` across iterations.
+    ///
+    /// # W44-175: per-group parallelism (rayon)
+    ///
+    /// Pre-W44-175 this loop was a sequential `for gy { for gx { … } }`. The
+    /// sibling [`Self::transform_and_quantize`] (called once per encode for the
+    /// AC-strategy-search pass) ALREADY ran parallel across groups via
+    /// [`crate::parallel::parallel_map`] (W44-89, `e0178b550c38`), but the
+    /// `_into` variant — invoked once per buttloop iter (typically 2-4× per
+    /// encode at e8+) — was left sequential. On large screenshots that ate
+    /// 50-200 ms of buttloop wall per encode.
+    ///
+    /// ## Why the parallelization is safe
+    ///
+    /// `transform_blocks_into` takes `quant_field` by `&[u8]` (read-only) and
+    /// writes its per-block quant adjustments into
+    /// `GroupTransformResult.quant_adjustments`. The "Apply quant adjustments
+    /// immediately so later groups see them" comment in the pre-W44-175 code
+    /// was misleading: groups process DISJOINT block ranges (a group covers
+    /// `[start_by..end_by, start_bx..end_bx]`), so the `quant_field[idx]`
+    /// reads in one group cannot observe writes from another. Sequencing the
+    /// writes within a single iter changes nothing about the per-block
+    /// output. The merge phase (after the parallel fan-out) applies every
+    /// group's adjustments to `quant_field` before the NEXT buttloop iter
+    /// reads it — same observation order as the sequential code.
+    ///
+    /// ## Output ordering
+    ///
+    /// [`crate::parallel::parallel_map`] uses `into_par_iter().map(f).collect()`,
+    /// which preserves index order in the returned `Vec`. We then iterate
+    /// the results in order to merge into `out` and `quant_field`, so the
+    /// final state is byte-identical to the sequential version.
     #[allow(dead_code, clippy::too_many_arguments)]
     pub(crate) fn transform_and_quantize_into(
         &self,
@@ -1330,39 +1362,62 @@ impl VarDctEncoder {
     ) {
         let xsize_groups = div_ceil(xsize_blocks, GROUP_DIM_IN_BLOCKS);
         let ysize_groups = div_ceil(ysize_blocks, GROUP_DIM_IN_BLOCKS);
+        let num_groups = xsize_groups * ysize_groups;
 
-        for gy in 0..ysize_groups {
-            for gx in 0..xsize_groups {
-                let start_bx = gx * GROUP_DIM_IN_BLOCKS;
-                let start_by = gy * GROUP_DIM_IN_BLOCKS;
-                let end_bx = (start_bx + GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
-                let end_by = (start_by + GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
-                let width = end_bx - start_bx;
-                let height = end_by - start_by;
+        // W44-175: parallel per-group fan-out. Mirrors `transform_and_quantize`
+        // (the AC-strategy-search variant). `quant_field` is captured as
+        // `&[u8]` inside the closure — `transform_blocks_into` only reads it;
+        // writes are recorded into `GroupTransformResult.quant_adjustments`
+        // and applied serially after collection so the merge order is
+        // deterministic.
+        let quant_field_ro: &[u8] = quant_field;
+        let group_results = crate::parallel::parallel_map(num_groups, |group_idx| {
+            let gy = group_idx / xsize_groups;
+            let gx = group_idx % xsize_groups;
+            let start_bx = gx * GROUP_DIM_IN_BLOCKS;
+            let start_by = gy * GROUP_DIM_IN_BLOCKS;
+            let end_bx = (start_bx + GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+            let end_by = (start_by + GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+            let width = end_bx - start_bx;
+            let height = end_by - start_by;
 
-                let mut result = GroupTransformResult::new(start_bx, start_by, width, height);
-                self.transform_blocks_into(
-                    xyb_x,
-                    xyb_y,
-                    xyb_b,
-                    padded_width,
-                    xsize_blocks,
-                    params,
-                    quant_field,
-                    cfl_map,
-                    ac_strategy,
-                    start_by,
-                    end_by,
-                    start_bx,
-                    end_bx,
-                    &mut result,
-                );
-                // Apply quant adjustments immediately so later groups see them.
-                for &(idx, val) in &result.quant_adjustments {
-                    quant_field[idx] = val;
-                }
-                result.scatter_into(out, xsize_blocks);
+            let mut result = GroupTransformResult::new(start_bx, start_by, width, height);
+            self.transform_blocks_into(
+                xyb_x,
+                xyb_y,
+                xyb_b,
+                padded_width,
+                xsize_blocks,
+                params,
+                quant_field_ro,
+                cfl_map,
+                ac_strategy,
+                start_by,
+                end_by,
+                start_bx,
+                end_bx,
+                &mut result,
+            );
+            // W44-27 parity: flush worker thread's AdjustQuantBlockAC firing
+            // counts to the global aggregate before this rayon task returns,
+            // matching the sibling `transform_and_quantize` invariant. Without
+            // this, the main-thread emit_and_reset would see only the main
+            // thread's contributions on rayon-parallel callers.
+            #[cfg(feature = "investigate-adjust-quant-block-ac")]
+            super::aqba_diag::flush_tl_to_global();
+            result
+        });
+
+        // Merge phase: apply quant_adjustments serially (in group order) and
+        // scatter each group's output into `out`. This preserves the exact
+        // post-merge state of `quant_field` and `out` from the sequential
+        // version — see the function doc-comment for the disjoint-indices
+        // argument.
+        for result in group_results {
+            for &(idx, val) in &result.quant_adjustments {
+                quant_field[idx] = val;
             }
+            result.scatter_into(out, xsize_blocks);
         }
     }
 }
