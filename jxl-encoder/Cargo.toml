@@ -1274,6 +1274,34 @@ required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 name = "w44_173_mask_probe"
 path = "examples/w44_173_mask_probe.rs"
 required-features = ["__pre_quantized"]
+
+# W44-178 Phase 1: pixel-domain diff of clic_097cb426 e7 d=5 between our
+# encoder and cjxl. Reads BOTH bitstreams through jxl-oxide (linear sRGB
+# request) and writes per-block max-abs aggregated by AC strategy and
+# per-3x3 region, to isolate whether the W44-173 SSIM2 deficit on the
+# right column lives specifically in DCT64X64 blocks or also in adjacent
+# strategies. Read-only — no production code change.
+[[example]]
+name = "w44_178_recon_diff"
+path = "examples/w44_178_recon_diff.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
+# W44-178 Phase 1.5: verify the W44-173 per-region SSIM2 finding by
+# computing both (ours-vs-source) AND (ours-vs-cjxl) SSIM2 for each
+# region. If ours/cjxl decoded are very close (max_abs < 0.005) yet
+# ours-vs-source is 7 SSIM2 worse, the discrepancy lives elsewhere.
+[[example]]
+name = "w44_178_region_ssim2"
+path = "examples/w44_178_region_ssim2.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
+# W44-178 Phase 2: bisect the recon pipeline by toggling gaborish + EPF
+# to localize WHICH stage shifts the right-column DCT64X64 pixels by the
+# small sub-pixel amount that SSIM2 amplifies to a -7 deficit.
+[[example]]
+name = "w44_178_bisect_pipeline"
+path = "examples/w44_178_bisect_pipeline.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 [[example]]
 name = "w44_20_codec_wiki_coverage"
 path = "examples/w44_20_codec_wiki_coverage.rs"

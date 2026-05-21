@@ -1,0 +1,49 @@
+W44-178 Phase 1 — recon-diff for clic_097cb426 e7 d=5
+Date: 2026-05-21
+Image: 1024×1024 (16384 blocks)
+
+Methodology:
+  1. Encode the source PNG once with our Zenjxl encoder (e7 d=5).
+  2. Encode the source PNG once with cjxl (-e 7 -d 5 --num_threads 1).
+  3. Decode BOTH bitstreams via jxl-oxide with linear sRGB output
+     (RenderingIntent::Relative) — same color path, same TF, no metadata bias.
+  4. Per-pixel max-abs and RMSE in linear-light space.
+  5. Per-8x8-block max-abs aggregated by OUR encoder's AC strategy.
+  6. Per-3x3 region attribution of WHICH strategies dominate WHERE the diff is.
+
+Headline:
+  global max_abs (linear RGB) = 0.089285 @ (438,183) ch=R
+  global RMSE                 = 0.002692
+  pixels w/ diff > 0.001      = 1082516
+  pixels w/ diff > 0.01       = 40746
+  blocks  w/ diff > 0.01      = 1232
+
+Per-strategy mean of per-block-max-abs (top contributors):
+  DCT2X2     cells=4      mean_max_abs=0.01708 max_max_abs=0.03858
+  DCT8       cells=33     mean_max_abs=0.01674 max_max_abs=0.08928
+  DCT16X8    cells=32     mean_max_abs=0.01017 max_max_abs=0.05751
+  DCT16X32   cells=296    mean_max_abs=0.00944 max_max_abs=0.07471
+  DCT16X16   cells=136    mean_max_abs=0.00908 max_max_abs=0.06793
+  DCT32X32   cells=2896   mean_max_abs=0.00789 max_max_abs=0.08692
+  DCT32X16   cells=472    mean_max_abs=0.00756 max_max_abs=0.07757
+  DCT8X16    cells=34     mean_max_abs=0.00723 max_max_abs=0.02503
+  IDENTITY   cells=1      mean_max_abs=0.00667 max_max_abs=0.00667
+  DCT32X64   cells=448    mean_max_abs=0.00488 max_max_abs=0.05283
+
+Per-region mean / max (3x3 grid):
+  r[0,0] cells=1764   mean=0.00366 max=0.05937
+  r[0,1] cells=1764   mean=0.00954 max=0.08928
+  r[0,2] cells=1848   mean=0.00250 max=0.00797
+  r[1,0] cells=1764   mean=0.00577 max=0.04044
+  r[1,1] cells=1764   mean=0.00674 max=0.07757
+  r[1,2] cells=1848   mean=0.00247 max=0.00740
+  r[2,0] cells=1848   mean=0.00242 max=0.01211
+  r[2,1] cells=1848   mean=0.00296 max=0.03040
+  r[2,2] cells=1936   mean=0.00167 max=0.00638
+
+Outputs:
+  benchmarks/w44_178_recon_diff_clic_097cb426_2026-05-21.tsv
+  benchmarks/w44_178_recon_diff_clic_097cb426_2026-05-21.blocks.tsv
+
+Files (parsing):
+  W44-76 per-block dump: /tmp/w44_178_ours_dump/per_block_ours.tsv

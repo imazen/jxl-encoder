@@ -1,0 +1,7 @@
+# W44-178 Phase 2 — bisect pipeline on clic_097cb426 e7 d=5
+# cell	bytes	global_ssim2	right_ssim2_avg	right_ssim2_deficit_vs_cjxl	right_bfly_avg	max_abs_right_vs_cjxl
+cjxl_baseline	15610	59.8645	84.3628	0.0	1.2864	0.0
+default(gab=ON,epf=auto)	15581	55.7962	77.1120	-7.2508	1.6997	0.0080
+gab=OFF,epf=auto	19895	60.3801	77.6890	-6.6738	1.5454	0.0080
+gab=ON,epf=0	14197	54.8796	76.3826	-7.9802	1.6969	0.0108
+gab=OFF,epf=0	17986	58.9604	76.1648	-8.1980	1.5978	0.0123
