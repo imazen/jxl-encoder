@@ -1,0 +1,111 @@
+# W44-173 clic_097cb426 per-region + per-strategy SSIM2 attribution
+# Bench: encode clic_097cb426 (1024x1024 CLIC 2025 smooth photo) at
+# d={3,4,5} × effort {6,7,8}, threads=1, with both EncoderStrategy::Zenjxl
+# and ::Libjxl. cjxl reference v0.12.0.
+# Source: /home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png
+# Date: 2026-05-21
+# Predecessor: W44-103 (terminal d=4), W44-121 (codec_wiki d=3).
+#
+# Reads/writes:
+#   IN:  benchmarks/cjxl_step025_{zenjxl,libjxl}_2026-05-21.tsv (W44-170)
+#   OUT: benchmarks/w44_173_clic_097cb426_dump_2026-05-21.tsv (Phase 1 data)
+#   OUT: benchmarks/w44_173_clic_097cb426_proxies_2026-05-21.txt
+#   OUT: benchmarks/w44_173_clic_097cb426_analysis_2026-05-21.txt (Phase 2/3)
+#   OUT: /tmp/w44_173_dumps/*/per_block_*.tsv (W44-76 per-block dumps)
+#
+# ============================================================================
+# HEADLINE FINDING (do not skim)
+# ============================================================================
+# 1. Zen vs Libjxl strategies produce BYTE-IDENTICAL output at e7/e8/e9 on
+#    clic_097cb426 — NO content-aware zen gate fires on this image. The
+#    SSIM2 deficit (-3 to -4.5 vs cjxl) is STRUCTURAL, not strategy-specific.
+# 2. Strategy distribution matches cjxl to within 1-4 first-blocks per
+#    strategy at e7 d=5 AND e8 d=5. **98.63% strategy agreement** across
+#    all 16384 8x8-cells. This is DRAMATICALLY DIFFERENT from W44-103
+#    terminal d=4 (16-25%) and W44-121 codec_wiki d=3 (10-13%) where
+#    strategy-selection IS the bug.
+# 3. At e7 d=5 (no buttloop), QAC distribution matches cjxl essentially
+#    perfectly (mean 6.74 vs 6.72, identical histogram shape).
+# 4. At e8 d=5 (buttloop ON), our QAC distribution collapses to a tighter
+#    band (mean 5.18) vs cjxl's wider band (mean 5.49) — we over-allocate
+#    qac=4 to 133 blocks vs cjxl's 61, and under-allocate qac=7 (15 vs 61).
+# 5. The right column of the image (cells_x >= 80) is ENTIRELY covered by
+#    DCT64X64 at e7 d=5 in BOTH ours and cjxl — same first-block count
+#    (96/96), same mean qac (8.68/8.68), same coverage (6144 cells / region).
+#    Yet that region's SSIM2 is -7 points worse (right column regions:
+#    r[0,2]=-7.04, r[1,2]=-7.73, r[2,2]=-6.98). The deficit MUST be in
+#    post-quantization reconstruction (IDCT/dequant/EPF/gaborish/CfL).
+#
+# ============================================================================
+# DISCRIMINATOR ANALYSIS
+# ============================================================================
+# clic_097cb426 ZenanalyzeProxies (from w44_173_mask_probe + local computation):
+#   m3_colourfulness       = 15.76   (LOW)
+#   flat_color_block_ratio = 0.592   (VERY HIGH — 59% of 8x8 blocks flat)
+#   edge_density           = 0.128   (LOW — 13% high-gradient pixels)
+#   mask1x1_median         = 66.43   (MIDDLE — not <50, not >95)
+#   mask1x1_p25            = 47.73   (MIDDLE — <85)
+#   mask1x1_p90            = 81.26
+#   masking_field_median   = 0.1462
+#
+# Gate-firing matrix (all NO):
+#   W44-91   m3>=80 + fcbr<0.01:       NO (m3<80, fcbr>>0.01)
+#   W44-29   mask_median<50:           NO (66 >= 50)
+#   W44-96   variant Z (edge>=0.7,...):NO (edge<0.7, fcbr>>0.01)
+#   W44-124  DCT32 keep (m3>=60,...):  NO (m3<60, edge>0.05)
+#   W44-166  admit Z (p25>=85,d>=4.5): NO (p25<85)
+#   W44-168  SmoothSkip (p25>=85):     NO (p25<85)
+#   W22-1    screenshot (med>95):      NO (66<95)
+#
+# clic_097cb426 falls into a DISCRIMINATOR GAP — high fcbr (smooth content)
+# but ALSO non-trivial texture (edge_density 0.128, mask_p25 47.73 means
+# 25% of pixels are textured). The existing discriminator stack splits
+# photos into:
+#   (a) very-smooth low-mask (W44-29 mask<50) — handled
+#   (b) very-smooth high-mask (W44-166 mask_p25>=85) — handled
+#   (c) screenshot-class (W22-1 mask_med>95) — handled
+#   (d) colourful textured (W44-91 m3>=80) — handled
+# clic_097cb426 is type (e) — moderately smooth, low colour, low edge —
+# a "boring" smooth photo with broad mid-range mask values. No gate matches.
+#
+# ============================================================================
+# RANKED FIX CANDIDATES (see W44-173 memory note for details)
+# ============================================================================
+# Top 3 (by EV):
+#   1. Root-cause the e7 d=5 right-column DCT64X64 SSIM2 -7 deficit
+#      (same strategy + same qac + same input → recon-path divergence).
+#      HIGHEST EV (closes ALL clic_097cb426 deficit AT-LEAST), high risk
+#      (multi-week recon-pipeline audit).
+#   2. Buttloop qac-distribution divergence at e8+ (ours collapses,
+#      cjxl spreads). MEDIUM EV, MEDIUM risk, 2-3d.
+#   3. New discriminator gate for "boring smooth photos" (mask 50-80,
+#      m3<25, fcbr>0.3). LOW-MED EV (may not have a mechanism that
+#      helps — cluster pattern doesn't match any existing). 1-2d to
+#      MEASURE, multi-week to ship a new mechanism if it helps.
+#
+# ============================================================================
+# RELATED CHUNKS
+# ============================================================================
+# - W44-103 terminal d=4 dump: similar methodology, OPPOSITE finding
+#   (strategy disagreement was the bug)
+# - W44-121 codec_wiki d=3 dump: same — strategy disagreement was the bug
+# - W44-148/154/156/166/167/168/169: 1418519 cluster (high-mask smooth
+#   photo) — different cluster, different mechanism stack
+# - W44-91/96/98/99: variant Z mechanism stack — clic_097cb426 doesn't
+#   fire any of these
+# - W44-170: parent bench that surfaced this image
+#
+# Reproducers:
+#   cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' \
+#     --example w44_173_clic_097cb426_dump
+#   cargo run -p jxl-encoder --release --features '__pre_quantized' \
+#     --example w44_173_mask_probe
+#   python3 benchmarks/scripts/w44_173_analyze.py
+#
+# Per-strategy dumps (separate-process — needed because per_block_dump uses a
+# once-per-process static initializer):
+#   for s in zenjxl libjxl; do for c in "7 5.0" "8 5.0"; do
+#     d=/tmp/w44_173_dumps/${s}_e${c%% *}_d${c#* }_ours; mkdir -p $d
+#     JXL_W44_76_PER_BLOCK_DUMP=$d cjxl-rs --threads 1 -e ${c%% *} -d ${c#* } --strategy $s \
+#       clic_097cb426.png /tmp/out.jxl
+#   done; done
