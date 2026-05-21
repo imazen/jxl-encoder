@@ -306,7 +306,10 @@ fn encode_with_variant(
     let v_table = (variant.1)(d, proxy);
     if let Some(t) = v_table {
         // Disable W44-29 auto-fire so the encoder doesn't double-swap.
-        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() });
+        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            high_d_photo_hint: Some(false),
+            ..Default::default()
+        });
         let mut internal = LossyInternalParams::default();
         internal.entropy_mul_table = Some(t);
         cfg = cfg.with_internal_params(internal);

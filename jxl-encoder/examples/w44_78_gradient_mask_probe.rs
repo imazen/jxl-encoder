@@ -62,8 +62,14 @@ fn probe(name: &str, rgb: &[u8], w: u32, h: u32, distance: f32) {
     let cfg = LossyConfig::new(distance)
         .with_effort(7)
         .with_threads(1)
-        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct_suppress_hint: Some(false), ..Default::default() })
-        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() });
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            dct_suppress_hint: Some(false),
+            ..Default::default()
+        })
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            high_d_photo_hint: Some(false),
+            ..Default::default()
+        });
     let _ = cfg.encode(rgb, w, h, PixelLayout::Rgb8).expect("encode");
 }
 

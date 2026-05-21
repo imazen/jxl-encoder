@@ -119,7 +119,10 @@ fn decode_cell(label: &str, src: &Path, effort: u8, distance: f32, expect_change
     let pinned_bytes = LossyConfig::new(distance)
         .with_effort(effort)
         .with_threads(1)
-        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct_suppress_hint: Some(false), ..Default::default() })
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            dct_suppress_hint: Some(false),
+            ..Default::default()
+        })
         .encode(rgb.as_raw(), w, h, PixelLayout::Rgb8)
         .expect("encode pinned");
     let default_bytes = LossyConfig::new(distance)
@@ -130,7 +133,10 @@ fn decode_cell(label: &str, src: &Path, effort: u8, distance: f32, expect_change
     let force_bytes = LossyConfig::new(distance)
         .with_effort(effort)
         .with_threads(1)
-        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct_suppress_hint: Some(true), ..Default::default() })
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            dct_suppress_hint: Some(true),
+            ..Default::default()
+        })
         .encode(rgb.as_raw(), w, h, PixelLayout::Rgb8)
         .expect("encode force");
     eprintln!(
@@ -178,7 +184,10 @@ fn assert_pixel_art_invariant(label: &str, src: &Path, effort: u8, distance: f32
     let pinned = LossyConfig::new(distance)
         .with_effort(effort)
         .with_threads(1)
-        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct_suppress_hint: Some(false), ..Default::default() })
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            dct_suppress_hint: Some(false),
+            ..Default::default()
+        })
         .encode(rgb.as_raw(), w, h, PixelLayout::Rgb8)
         .expect("encode pinned");
     let default = LossyConfig::new(distance)

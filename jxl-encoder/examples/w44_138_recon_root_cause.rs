@@ -70,22 +70,22 @@ mod inner {
     use std::path::PathBuf;
 
     const STRATEGY_NAMES: [&str; 16] = [
-        "DCT8",      // 0
-        "DCT16X8",   // 1
-        "DCT8X16",   // 2
-        "DCT16X16",  // 3
-        "DCT32X32",  // 4
-        "DCT4X8",    // 5
-        "DCT8X4",    // 6
-        "DCT4X4",    // 7
-        "IDENTITY",  // 8
-        "DCT2X2",    // 9
-        "DCT32X16",  // 10
-        "DCT16X32",  // 11
-        "AFV0",      // 12
-        "AFV1",      // 13
-        "AFV2",      // 14
-        "AFV3",      // 15
+        "DCT8",     // 0
+        "DCT16X8",  // 1
+        "DCT8X16",  // 2
+        "DCT16X16", // 3
+        "DCT32X32", // 4
+        "DCT4X8",   // 5
+        "DCT8X4",   // 6
+        "DCT4X4",   // 7
+        "IDENTITY", // 8
+        "DCT2X2",   // 9
+        "DCT32X16", // 10
+        "DCT16X32", // 11
+        "AFV0",     // 12
+        "AFV1",     // 13
+        "AFV2",     // 14
+        "AFV3",     // 15
     ];
 
     /// sRGB normalized [0,1] f32 → linear light.
@@ -409,17 +409,13 @@ mod inner {
                 },
                 Cell {
                     image: "1418519".into(),
-                    path: PathBuf::from(format!(
-                        "{corpus}/CID22/CID22-512/validation/1418519.png"
-                    )),
+                    path: PathBuf::from(format!("{corpus}/CID22/CID22-512/validation/1418519.png")),
                     distance: 5.0,
                     effort: 8,
                 },
                 Cell {
                     image: "1025469".into(),
-                    path: PathBuf::from(format!(
-                        "{corpus}/CID22/CID22-512/validation/1025469.png"
-                    )),
+                    path: PathBuf::from(format!("{corpus}/CID22/CID22-512/validation/1025469.png")),
                     distance: 2.0,
                     effort: 8,
                 },
@@ -428,10 +424,7 @@ mod inner {
     }
 
     /// One-shot encode + per-stage capture for one cell.
-    fn run_one(
-        cell: &Cell,
-        force_w44_117_off: bool,
-    ) -> Option<RunResult> {
+    fn run_one(cell: &Cell, force_w44_117_off: bool) -> Option<RunResult> {
         if !cell.path.exists() {
             eprintln!("MISSING {}: {}", cell.image, cell.path.display());
             return None;
@@ -451,10 +444,14 @@ mod inner {
         let prev_env = std::env::var("JXL_W44_117_DISABLE").ok();
         if force_w44_117_off {
             // SAFETY: single-threaded test scope; we restore below.
-            unsafe { std::env::set_var("JXL_W44_117_DISABLE", "1"); }
+            unsafe {
+                std::env::set_var("JXL_W44_117_DISABLE", "1");
+            }
         } else {
             // SAFETY: same.
-            unsafe { std::env::remove_var("JXL_W44_117_DISABLE"); }
+            unsafe {
+                std::env::remove_var("JXL_W44_117_DISABLE");
+            }
         }
 
         let cfg = LossyConfig::new(cell.distance).with_effort(cell.effort);
@@ -646,9 +643,7 @@ mod inner {
         );
 
         for cell in &cells {
-            for &(mode_label, force_off) in
-                &[("default", false), ("disable_117", true)]
-            {
+            for &(mode_label, force_off) in &[("default", false), ("disable_117", true)] {
                 eprintln!(
                     "cell={} d={} e={} mode={}",
                     cell.image, cell.distance, cell.effort, mode_label

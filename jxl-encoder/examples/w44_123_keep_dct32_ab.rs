@@ -138,7 +138,10 @@ fn encode_with_mode(
 ) -> (Vec<u8>, f64) {
     let cfg = LossyConfig::new(d)
         .with_effort(effort)
-        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct32_keep_hint: mode.hint(), ..Default::default() });
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            dct32_keep_hint: mode.hint(),
+            ..Default::default()
+        });
     let lim = Limits::default().with_max_memory_bytes(8u64 * 1024 * 1024 * 1024);
     let t = Instant::now();
     let bytes = cfg

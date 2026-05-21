@@ -134,7 +134,10 @@ fn encode_with_min_distance(
     // SAFETY: single-threaded test harness; no other code reads this var
     // concurrently.
     unsafe {
-        std::env::set_var("JXL_W44_143_MIN_DISTANCE", format!("{min_distance_override}"));
+        std::env::set_var(
+            "JXL_W44_143_MIN_DISTANCE",
+            format!("{min_distance_override}"),
+        );
     }
     let cfg = LossyConfig::new(d).with_effort(effort);
     let lim = Limits::default().with_max_memory_bytes(8u64 * 1024 * 1024 * 1024);

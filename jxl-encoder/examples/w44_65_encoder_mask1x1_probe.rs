@@ -56,7 +56,10 @@ fn probe(name: &str) {
     let cfg = LossyConfig::new(1.0)
         .with_effort(7)
         .with_threads(1)
-        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { dct_suppress_hint: Some(false), ..Default::default() });
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            dct_suppress_hint: Some(false),
+            ..Default::default()
+        });
     let _ = cfg.encode(&raw, w, h, PixelLayout::Rgb8).expect("encode");
 }
 

@@ -122,7 +122,10 @@ fn encode_with_table(
     // doesn't fire either.
     LossyConfig::new(d)
         .with_effort(effort)
-        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() })
+        .with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            high_d_photo_hint: Some(false),
+            ..Default::default()
+        })
         .with_internal_params(params)
         .encode(rgb_u8, w, h, PixelLayout::Rgb8)
         .unwrap()

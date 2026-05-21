@@ -72,7 +72,10 @@ fn main() {
         ] {
             let cfg = LossyConfig::new(d).with_effort(effort);
             let cfg = match hint {
-                Some(h) => cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: *h, ..Default::default() }),
+                Some(h) => cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+                    high_d_photo_hint: *h,
+                    ..Default::default()
+                }),
                 None => cfg,
             };
             let bytes = cfg.encode(rgb.as_raw(), w, h, PixelLayout::Rgb8).unwrap();

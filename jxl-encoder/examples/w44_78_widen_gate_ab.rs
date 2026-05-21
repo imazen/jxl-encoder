@@ -64,11 +64,17 @@ fn would_fire(dist: f32, mask: Option<f32>, dist_gate: f32, mask_gate: f32) -> b
 fn encode_with_variant(rgb: &[u8], w: u32, h: u32, d: f32, force_w44_29: bool) -> usize {
     let mut cfg = LossyConfig::new(d).with_effort(7).with_threads(8);
     if force_w44_29 {
-        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(true), ..Default::default() });
+        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            high_d_photo_hint: Some(true),
+            ..Default::default()
+        });
     } else {
         // Force OFF so we get a clean baseline that isn't accidentally
         // hit by the existing default gate.
-        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides { high_d_photo_hint: Some(false), ..Default::default() });
+        cfg = cfg.with_strategy_overrides(jxl_encoder::api::StrategyOverrides {
+            high_d_photo_hint: Some(false),
+            ..Default::default()
+        });
     }
     cfg.encode(rgb, w, h, PixelLayout::Rgb8)
         .expect("encode")

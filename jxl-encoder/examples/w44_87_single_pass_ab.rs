@@ -82,7 +82,12 @@ fn main() {
             for _ in 0..runs_per_cell {
                 let cfg = LossyConfig::new(distance)
                     .with_effort(effort)
-                    .with_strategy(jxl_encoder::api::EncoderStrategy::Custom(Box::new(jxl_encoder::api::EncoderImprovementsCustom { single_pass_entropy_dispatch: SinglePassEntropyDispatch::AlwaysTwoPass, ..Default::default() })));
+                    .with_strategy(jxl_encoder::api::EncoderStrategy::Custom(Box::new(
+                        jxl_encoder::api::EncoderImprovementsCustom {
+                            single_pass_entropy_dispatch: SinglePassEntropyDispatch::AlwaysTwoPass,
+                            ..Default::default()
+                        },
+                    )));
                 let t0 = Instant::now();
                 let out = cfg.encode(&raw, w, h, PixelLayout::Rgb8).expect("encode");
                 let ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -100,7 +105,12 @@ fn main() {
             for _ in 0..runs_per_cell {
                 let cfg = LossyConfig::new(distance)
                     .with_effort(effort)
-                    .with_strategy(jxl_encoder::api::EncoderStrategy::Custom(Box::new(jxl_encoder::api::EncoderImprovementsCustom { single_pass_entropy_dispatch: SinglePassEntropyDispatch::Auto, ..Default::default() })));
+                    .with_strategy(jxl_encoder::api::EncoderStrategy::Custom(Box::new(
+                        jxl_encoder::api::EncoderImprovementsCustom {
+                            single_pass_entropy_dispatch: SinglePassEntropyDispatch::Auto,
+                            ..Default::default()
+                        },
+                    )));
                 let t0 = Instant::now();
                 let out = cfg.encode(&raw, w, h, PixelLayout::Rgb8).expect("encode");
                 let ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -118,7 +128,13 @@ fn main() {
             for _ in 0..runs_per_cell {
                 let cfg = LossyConfig::new(distance)
                     .with_effort(effort)
-                    .with_strategy(jxl_encoder::api::EncoderStrategy::Custom(Box::new(jxl_encoder::api::EncoderImprovementsCustom { single_pass_entropy_dispatch: SinglePassEntropyDispatch::AlwaysSinglePass, ..Default::default() })));
+                    .with_strategy(jxl_encoder::api::EncoderStrategy::Custom(Box::new(
+                        jxl_encoder::api::EncoderImprovementsCustom {
+                            single_pass_entropy_dispatch:
+                                SinglePassEntropyDispatch::AlwaysSinglePass,
+                            ..Default::default()
+                        },
+                    )));
                 let t0 = Instant::now();
                 let out = cfg.encode(&raw, w, h, PixelLayout::Rgb8).expect("encode");
                 let ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -176,9 +192,14 @@ fn main() {
         let rgb = img.to_rgb8();
         let (w, h) = (rgb.width(), rgb.height());
         let raw = rgb.as_raw().clone();
-        let cfg = LossyConfig::new(1.0)
-            .with_effort(5)
-            .with_strategy(jxl_encoder::api::EncoderStrategy::Custom(Box::new(jxl_encoder::api::EncoderImprovementsCustom { single_pass_entropy_dispatch: SinglePassEntropyDispatch::Auto, ..Default::default() })));
+        let cfg = LossyConfig::new(1.0).with_effort(5).with_strategy(
+            jxl_encoder::api::EncoderStrategy::Custom(Box::new(
+                jxl_encoder::api::EncoderImprovementsCustom {
+                    single_pass_entropy_dispatch: SinglePassEntropyDispatch::Auto,
+                    ..Default::default()
+                },
+            )),
+        );
         let bytes = cfg
             .encode(&raw, w, h, PixelLayout::Rgb8)
             .expect("encode smoke");

@@ -96,7 +96,13 @@ struct Measure {
     encode_ms: f64,
 }
 
-fn encode_production(rgb: &[u8], w: u32, h: u32, effort: u8, d: f32) -> Result<(Vec<u8>, f64), String> {
+fn encode_production(
+    rgb: &[u8],
+    w: u32,
+    h: u32,
+    effort: u8,
+    d: f32,
+) -> Result<(Vec<u8>, f64), String> {
     let cfg = LossyConfig::new(d).with_effort(effort).with_threads(8);
     let start = Instant::now();
     let bytes = cfg
@@ -412,7 +418,11 @@ fn main() {
         let nf = *n as f64;
         eprintln!(
             "  {:<20}  n={}  Δbytes={:+.2}%  Δbfly={:+.2}%  Δssim2={:+.3}",
-            class, n, b / nf, bf / nf, s / nf
+            class,
+            n,
+            b / nf,
+            bf / nf,
+            s / nf
         );
     }
 
