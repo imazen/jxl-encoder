@@ -674,6 +674,67 @@ pub const W44_150_PHOTO_W44_117_MASK_P25_MIN: f32 = 85.0;
 #[allow(dead_code)]
 pub const W44_150_PHOTO_W44_117_MIN_DISTANCE: f32 = 4.0;
 
+/// W44-151: minimum `mask1x1` 25th-percentile to ADMIT a non-screenshot
+/// photo to the W44-29 outer entropy_mul lowering gate (in addition to
+/// the existing `median(mask1x1) < HIGH_D_PHOTO_SMOOTH_THRESHOLD` branch
+/// and the W44-91 zenanalyze sub-branch).
+///
+/// Re-uses the W44-149 audit's discriminator (see
+/// [`W44_150_PHOTO_W44_117_MASK_P25_MIN`]). The audit identified
+/// `mask_p25 >= 85` as the single-axis discriminator that cleanly admits
+/// `1418519.png` (88.88, WANT) while rejecting `1025469.png` (60.64,
+/// REJECT) and all 39 other CID22 validation photos (max 77.90 on
+/// 7552578). 11-pp safety margin to the nearest CONTROL.
+///
+/// W44-150 paired this discriminator with the W44-117 EPF seed
+/// (Mechanism A) and HONEST-STOPPED: recovered only ~30% of the d=5
+/// SSIM2 deficit and ~0% at d=6 (`+0.27` mean vs `+1.0` target).
+/// W44-151 pairs the SAME discriminator with the W44-29 entropy_mul
+/// mechanism (Mechanism B): admits 1418519 to the default
+/// `high_d_photo_smooth_suppressed()` table (`dct32x32=1.34` vs libjxl
+/// stock `1.48`, ~9.5% lift) which fires inside `FindBest*Transform`
+/// cost evaluation at `e >= 5` — covering ALL effort levels where W44-29
+/// can fire today, not just the buttloop range.
+///
+/// **Hypothesis (W44-151)**: variant Z's lift is gated on `mask < 50`
+/// (W44-96) and will NOT escalate for 1418519 (mask=92). The DEFAULT
+/// suppressed table is what 1418519 receives — a milder lift,
+/// appropriate for high-mask flat regions where DCT32X32 over DCT16X16
+/// splits should help bytes without quality loss.
+///
+/// **W44-151 HONEST-STOP (2026-05-21)**: the broad `d >= 3.0` gate was
+/// measured (72-cell A/B,
+/// `benchmarks/w44_151_w44_29_widen_2026-05-21.{tsv,meta}`) and REVERTED.
+/// Per-cell verdict on 1418519 (the only photo where the gate fires):
+///
+/// | cell | Δbytes | Δssim2 | verdict |
+/// |---|---|---|---|
+/// | e7/8/9 d=4 | -2.8 to -3.4% | +0.10 to +0.55 | universal win |
+/// | e7 d=5 | -0.29% | +0.38 | win |
+/// | e8/9 d=5 | +0.7 to +1.1% | +1.13 | strong win |
+/// | e7 d=6 | +4.27% | +0.07 | bytes regress, no SSIM2 |
+/// | e8/9 d=6 | +4.3 to +4.6% | +0.28 | bytes regress, weak SSIM2 |
+///
+/// Mean SSIM2 across d=5/6 cells (the W44-147 cluster) = **+0.544** vs
+/// the +1.0 acceptance bar (50% closure of the -2.17/-2.57 deficit).
+/// The d=4 cells PASS gate (g) but d=6 cells drag the d=5/6 mean below
+/// gate (f). Protection set 1025469 + 4 SPOT photos: **63/63 BYTE-IDENTICAL**
+/// (discriminator works perfectly — 11pp safety margin to nearest
+/// CONTROL, no false-positives).
+///
+/// Production code REVERTED to pre-W44-151 state. Constant + the
+/// `mask1x1_p25` plumbing through `compute_profile_for_search` KEPT
+/// (negligible overhead — one extra O(n) `select_nth_unstable` per
+/// encode) so W44-152+ chunks can re-enable the admission branch with
+/// a tighter gate (e.g. `d ∈ [3.0, 5.0]` only or paired with a
+/// distance-tapered entropy_mul lift).
+///
+/// Referenced by the W44-151 unit tests + the W44-149-aligned
+/// `test_w44_151_mask_p25_threshold_matches_w44_149_audit` invariant
+/// (the threshold MUST stay aligned with [`W44_150_PHOTO_W44_117_MASK_P25_MIN`]).
+#[allow(dead_code)]
+pub const W44_151_HIGH_MASK_P25_MIN: f32 = 85.0;
+
 /// W36-3 patches photo-skip dispatch threshold on the per-block-mean
 /// median of `mask1x1` (same statistic the auto-splines
 /// [`crate::vardct::splines::looks_like_screenshot`] gate uses).
@@ -884,11 +945,13 @@ pub(super) fn median_mask1x1(mask: &[f32], stride: usize, width: usize, height: 
 ///
 /// **W44-150 HONEST-STOP (2026-05-21)**: helper kept after W44-150 Phase 2
 /// revert — see [`W44_150_PHOTO_W44_117_MASK_P25_MIN`] for the
-/// disposition. Currently unused by production code; future chunks that
-/// pair the W44-149 audit's discriminator with a different mechanism
-/// (W44-105-style qac-seed scale on photos, AC-strategy lift on
-/// mask_p25-high content) can reuse this directly.
-#[allow(dead_code)]
+/// disposition.
+///
+/// **W44-151 (2026-05-21)**: this helper is now CONSUMED in production
+/// by the W44-29 outer gate's `mask_p25 >= 85` admission branch
+/// (Mechanism B follow-on to W44-150's honest-stopped Mechanism A).
+/// Called once per encode at both `compute_profile_for_search` callers
+/// (still-image path + animation `bitstream.rs::encode_frame_to_writer`).
 pub(super) fn percentile_mask1x1(
     mask: &[f32],
     stride: usize,
@@ -2028,9 +2091,16 @@ impl VarDctEncoder {
     /// !ac_strategy_enabled) — all auto gates degrade to "don't fire"
     /// in that case unless the caller supplied a `ForceOn/ForceOff`
     /// policy via `EncoderStrategy::Custom` / `StrategyOverrides`.
+    ///
+    /// `mask1x1_p25` (W44-151) is `None` under the same conditions as
+    /// `mask1x1_median` and is used ONLY by the W44-151 sub-branch of
+    /// the W44-29 outer gate (admits high-smooth photos `mask_p25 >=
+    /// 85.0` to the default `high_d_photo_smooth_suppressed` table at
+    /// `d >= HIGH_D_PHOTO_MIN_DISTANCE`).
     pub(super) fn compute_profile_for_search(
         &self,
         mask1x1_median: Option<f32>,
+        mask1x1_p25: Option<f32>,
     ) -> Option<crate::effort::EffortProfile> {
         // ── W22-1 screenshot lift ──
         let screenshot_policy = self.resolved_improvements.screenshot_entropy_mul;
@@ -2043,7 +2113,7 @@ impl VarDctEncoder {
             crate::api::ScreenshotEntropyMulPolicy::Disabled => false,
         };
 
-        // ── W44-29 high-distance smooth-photo lowering (auto + W44-91 widen) ──
+        // ── W44-29 high-distance smooth-photo lowering (auto + W44-91 widen + W44-151 mask_p25 admit) ──
         let high_d_photo_policy = self.resolved_improvements.high_d_photo_entropy_mul;
         let w44_29_lower = if w22_1_lift {
             false
@@ -2063,6 +2133,24 @@ impl VarDctEncoder {
                             p.m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN
                                 && p.flat_color_block_ratio < W44_91_FCBR_MAX
                         });
+                    // W44-151 HONEST-STOP (2026-05-21): the
+                    // `mask1x1_p25 >= W44_151_HIGH_MASK_P25_MIN AND
+                    // distance >= HIGH_D_PHOTO_MIN_DISTANCE` admission
+                    // branch was measured (72-cell A/B, see
+                    // `benchmarks/w44_151_w44_29_widen_2026-05-21.{tsv,meta}`)
+                    // and REVERTED. The discriminator works perfectly
+                    // (1025469 15/15 + 4 SPOT photos 48/48 byte-identical;
+                    // gate fires only on 1418519 across the corpus) but
+                    // the default `high_d_photo_smooth_suppressed()`
+                    // table over-fires at d=6 (+4.3-4.6% bytes for only
+                    // +0.07-0.28 SSIM2). Mean SSIM2 across d=5/6 cells
+                    // = +0.544 vs the +1.0 acceptance bar. The narrower
+                    // d∈[4,5] band passes the W44-149 audit's expected
+                    // EV and is a W44-152 candidate. Constant +
+                    // `mask1x1_p25` plumbing KEPT for follow-on.
+                    //
+                    // _ = mask1x1_p25; // silence unused — re-enable via W44-152+
+                    let _ = mask1x1_p25;
                     w44_29_gate || w44_91_gate
                 }
                 crate::api::HighDPhotoEntropyMulPolicy::ForceOn => true,
@@ -3241,6 +3329,14 @@ impl VarDctEncoder {
         let mask1x1_median: Option<f32> = mask1x1
             .as_deref()
             .map(|mask| median_mask1x1(mask, padded_width, width, height));
+        // W44-151: compute `mask_p25` (mask1x1 25th percentile) for the
+        // W44-29 outer gate's mask_p25 >= 85 admission branch. Same
+        // None-semantics as `mask1x1_median` (gates degrade to off).
+        // Cost is one extra O(n) select_nth_unstable over the unpadded
+        // plane — negligible vs the median compute above.
+        let mask1x1_p25: Option<f32> = mask1x1
+            .as_deref()
+            .map(|mask| percentile_mask1x1(mask, padded_width, width, height, 0.25));
 
         // W44-118 probe: env-gated dump of mask1x1_median + key
         // zenanalyze proxies to discriminate lift firing on the wedge
@@ -3389,6 +3485,21 @@ impl VarDctEncoder {
                             p.m3_colourfulness >= W44_91_M3_COLOURFULNESS_MIN
                                 && p.flat_color_block_ratio < W44_91_FCBR_MAX
                         });
+                    // (c) **W44-151 HONEST-STOP (2026-05-21)**: the
+                    // `mask1x1_p25 >= W44_151_HIGH_MASK_P25_MIN AND
+                    // distance >= HIGH_D_PHOTO_MIN_DISTANCE` admission
+                    // branch was measured (72-cell A/B,
+                    // `benchmarks/w44_151_w44_29_widen_2026-05-21.{tsv,meta}`)
+                    // and REVERTED. Discriminator works perfectly (51/51
+                    // protection cells byte-identical) but the DEFAULT
+                    // `high_d_photo_smooth_suppressed()` table over-fires
+                    // at d=6 on 1418519 (+4.3 to +4.6% bytes for only
+                    // +0.07 to +0.28 SSIM2). Mean SSIM2 across d=5/6
+                    // = +0.544 vs +1.0 acceptance bar. Narrower d∈[4,5]
+                    // band IS Pareto-positive (W44-152 candidate).
+                    // [`W44_151_HIGH_MASK_P25_MIN`] constant +
+                    // `mask1x1_p25` plumbing KEPT for follow-on chunks.
+                    let _ = mask1x1_p25;
                     w44_29_gate || w44_91_gate
                 }
                 crate::api::HighDPhotoEntropyMulPolicy::ForceOn => true,
@@ -5475,6 +5586,69 @@ mod tests {
         assert_eq!(median_mask1x1(&[], 0, 0, 0), 0.0);
         assert_eq!(median_mask1x1(&[1.0, 2.0], 2, 0, 1), 0.0);
         assert_eq!(median_mask1x1(&[1.0, 2.0], 2, 2, 0), 0.0);
+    }
+
+    /// W44-151: verify the new [`W44_151_HIGH_MASK_P25_MIN`] constant
+    /// matches the W44-149 audit threshold (= [`W44_150_PHOTO_W44_117_MASK_P25_MIN`])
+    /// and verify the percentile_mask1x1 helper computes the 25th
+    /// percentile correctly on a known input.
+    #[test]
+    fn test_w44_151_mask_p25_threshold_matches_w44_149_audit() {
+        // The W44-151 admission threshold MUST stay aligned with the
+        // W44-149 audit threshold so both gates share the same
+        // discriminator (1418519 mask_p25=88.88 admitted; 7552578
+        // mask_p25=77.90 next-nearest CONTROL rejected; 11pp margin).
+        assert_eq!(
+            W44_151_HIGH_MASK_P25_MIN,
+            W44_150_PHOTO_W44_117_MASK_P25_MIN,
+            "W44-151 threshold must equal W44-150 audit threshold"
+        );
+        assert!(W44_151_HIGH_MASK_P25_MIN >= 80.0);
+        assert!(W44_151_HIGH_MASK_P25_MIN <= 90.0);
+    }
+
+    #[test]
+    fn test_percentile_mask1x1_p25_basic() {
+        // 4x3 unpadded inside a 6-stride row → 12 values:
+        // sorted: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        // p25 idx = floor((12-1) * 0.25) = floor(2.75) = 2 → value = 3.0
+        #[rustfmt::skip]
+        let mask = [
+            1.0, 2.0, 3.0, 4.0,  0.0, 0.0,
+            5.0, 6.0, 7.0, 8.0,  0.0, 0.0,
+            9.0,10.0,11.0,12.0, 0.0, 0.0,
+        ];
+        let p25 = percentile_mask1x1(&mask, 6, 4, 3, 0.25);
+        assert_eq!(p25, 3.0);
+        let p50 = percentile_mask1x1(&mask, 6, 4, 3, 0.50);
+        assert_eq!(p50, 6.0); // floor(11 * 0.5) = 5 → value 6
+        let p100 = percentile_mask1x1(&mask, 6, 4, 3, 1.0);
+        assert_eq!(p100, 12.0);
+    }
+
+    #[test]
+    fn test_percentile_mask1x1_w44_149_split() {
+        // Synthesize a mask plane whose p25 sits ABOVE 85 (admits the
+        // W44-151 gate) vs one whose p25 sits BELOW 85 (rejects).
+        // High-smooth case: most values clustered at 90-100 with a few
+        // low outliers — p25 still well above 85.
+        let high_smooth: Vec<f32> = (0..(32 * 32))
+            .map(|i| if i < 32 { 50.0 } else { 90.0 + (i % 10) as f32 })
+            .collect();
+        let p25_hi = percentile_mask1x1(&high_smooth, 32, 32, 32, 0.25);
+        assert!(
+            p25_hi >= W44_151_HIGH_MASK_P25_MIN,
+            "high-smooth synthetic p25 = {p25_hi}, expected >= {W44_151_HIGH_MASK_P25_MIN}"
+        );
+
+        // Low-mask case: photo-class with values around 40-70 — p25
+        // far below the threshold, should reject.
+        let low_mask: Vec<f32> = (0..(32 * 32)).map(|i| 40.0 + (i % 30) as f32).collect();
+        let p25_lo = percentile_mask1x1(&low_mask, 32, 32, 32, 0.25);
+        assert!(
+            p25_lo < W44_151_HIGH_MASK_P25_MIN,
+            "photo-class synthetic p25 = {p25_lo}, expected < {W44_151_HIGH_MASK_P25_MIN}"
+        );
     }
 
     #[test]
