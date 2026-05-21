@@ -3,7 +3,7 @@ W44-169 (Smart-Zenjxl chunk 6, 2026-05-21) — distance-narrowed SmoothSkip
 
 Status: SHIPPED — production gate-site ACTIVE on Zenjxl/Aggressive
 parent commit: 42833a05 (W44-168 HONEST-STOP)
-this commit:   <SHA filled at commit time>
+this commit:   3dfd53e9
 host:          lilith
 target_dir:    $HOME/work/zen/jxl-encoder-shared-target
 
