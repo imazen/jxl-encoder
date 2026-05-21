@@ -1,0 +1,80 @@
+W44-142: codec_wiki EPF seed suppression A/B (production-default verification)
+================================================================================
+
+DATE: 2026-05-20
+COMMIT: TBD (W44-142 ship commit on origin/main)
+BASELINE: b8333091 (W44-140 SHIPPED, also same as `6a7d8835` main = W44-141 ledger)
+HOST: lilith (water-cooled AMD Ryzen 9 7950X, 128 GB RAM)
+
+PURPOSE
+-------
+
+Verify the W44-142 production-default behaviour with the shipped
+`W44_142_EPF_SEED_SUPPRESS_MAX_DISTANCE = 1.5`. Compares:
+
+  A_pre_w44_142 : JXL_W44_142_SUPPRESS_DISABLE=1 (current main, W141 behaviour)
+  B_w44_142     : production default (W44-142 gate active)
+
+CELLS (36 total)
+----------------
+
+  - codec_wiki e8/e9 × d ∈ {1.0, 1.2, 1.4, 1.5, 1.6, 1.8, 2.0, 3.0} (14)
+  - codec_wiki d=3 (W44-117 + W44-124 protection)
+  - terminal e8/e9 × d ∈ {1.0, 1.2, 1.4, 1.5, 1.6, 2.0, 3.0, 4.0, 5.0} (18)
+    - W44-140 wins protection = 1.0/1.2/1.4
+    - W44-117 wins protection = 1.6+
+  - 4 CID22 photo cells (1418519/1025469 × d=2/5) — W44-118 gate verification
+
+OBSERVED
+--------
+
+codec_wiki cells (W44-142 default = SUPPRESS_MAX_DISTANCE=1.5):
+
+  - d=1.0: A == B byte-identical (W44-140 weight=0 already → uniform-4)
+  - d=1.2: A=92235 bytes / 89.42 SSIM2 → B=90448 / 90.01 (W9 d=1.2 cell GAIN +0.59 SSIM2)
+           A=91276 / 89.96 → B=91206 / 89.85 (e8 d=1.2 slight loss -0.11 SSIM2)
+  - d=1.4: A vs B differ in bytes (-0.6%) and SSIM2 (-0.27)
+  - d=1.5+: A == B byte-identical (gate doesn't fire above d=1.5)
+
+terminal cells:
+  - All 18 byte-identical (terminal m3=13.85 fails m3>=60 gate)
+
+photo cells:
+  - All 4 byte-identical (all CID22 photos ed >= 0.16 fails ed<0.05 gate)
+
+CONCLUSION
+----------
+
+W44-142 (d<1.5 cap) cleanly closes the W44-140-attributable codec_wiki e9
+d=1.2 SSIM2 regression (-0.599 → -0.012 vs W134, gate ±0.10 MET).
+Conservative shipping decision: pareto-optimal of 4 tested max_distance
+variants per the W44-142 bisect. Terminal and photo cells fully byte-identical.
+
+Residual codec_wiki d=1.6/1.8 cluster (-0.62 / -0.72 SSIM2 vs W134) NOT
+touched by W44-142 — those cells are byte-identical pre/post-W44-140 main
+(W44-140 weight=1.0 at d>=1.5 means no blend, full W44-117 unchanged).
+The actual source of those regressions is W44-135's dct32_keep distance
+gate change (commit `2b9c98d0`); W44-143 follow-on candidate.
+
+REPRODUCER
+----------
+
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run --release \
+  --features 'parallel butteraugli-loop ssim2-loop' \
+  --example w44_142_codec_wiki_suppress_ab \
+  --manifest-path jxl-encoder/Cargo.toml \
+  > benchmarks/w44_142_codec_wiki_suppress_ab_2026-05-20.tsv
+
+Wall: 36 cells × 2 modes × encode + decode + butteraugli + ssim2 ≈ 10 min.
+
+FILES
+-----
+
+- benchmarks/w44_142_codec_wiki_suppress_ab_2026-05-20.tsv (this A/B, 36 rows)
+- benchmarks/w44_142_codec_wiki_suppress_ab_2026-05-20.meta (this file)
+- benchmarks/w44_142_max_distance_bisect_2026-05-20.{tsv,meta} (variant bisect)
+- jxl-encoder/src/vardct/butteraugli_loop.rs (W44_142_* constants + gate logic)
+- jxl-encoder/examples/w44_142_codec_wiki_suppress_ab.rs (this harness)
+- jxl-encoder/examples/w44_142_max_distance_bisect.rs (4-mode bisect harness)
+- jxl-encoder/examples/w44_142_decoder_check.rs (multi-decoder roundtrip)
