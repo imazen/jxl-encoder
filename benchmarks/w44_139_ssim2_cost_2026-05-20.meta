@@ -1,0 +1,137 @@
+# W44-139 SSIM2 cost gate for the W44-138 Phase 1 photo-EPF +0.034 R max-abs
+#
+# Date: 2026-05-20
+# Branch: main (post W44-138 Phase 1 commit 5b22837a)
+# Run on: water-cooled AMD Ryzen 9 7950X, archmage X64V3 SIMD
+#
+# Command:
+#
+#   CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+#     cargo run --release \
+#     --features 'butteraugli-loop ssim2-loop parallel' \
+#     --example w44_139_ssim2_cost_gate \
+#     --manifest-path jxl-encoder/Cargo.toml \
+#     > benchmarks/w44_139_ssim2_cost_2026-05-20.tsv
+#
+# Background — must read in order:
+#   W44-138 Phase 1: per-stage XYB capture identified +0.034 R max-abs
+#     at after_epf on 1418519 d=5 e8 (and similar smooth-photo cells at
+#     d>=3). Both default and JXL_W44_117_DISABLE=1 modes produce
+#     byte-identical output on photos because the W44-118 is_screenshot
+#     gate blocks W44-117 firing on the photo class.
+#   W44-117 (shipped): EPF sharpness one-shot seed for buttloop —
+#     closes the recon-vs-decoder EPF mismatch on screenshots.
+#   W44-118 (shipped): gated W44-117 to is_screenshot=true to avoid the
+#     -0.85 SSIM2 regression on 1025469 (mask=76) at d=4.
+#   W44-120 (shipped): distance-gated W44-117 to d>=1.0 to avoid the
+#     terminal d=0.8 regression.
+#   W44-119: chain-disable A/B verified the qac chain and EPF seed are
+#     orthogonal additive corrections — chain cannot be retired.
+#
+# Cells (6 total):
+#   PHOTO CLASS (4 cells — W44-118 BLOCKS W44-117 on these):
+#     1418519 e8 d=5    (W44-138 wedge cell — biggest +0.034 max-abs)
+#     1418519 e8 d=4    (spot-check at lower d on same image)
+#     1420710 e8 d=5    (W44-95/98 cluster photo)
+#     1531677 e8 d=5    (W44-99 cluster photo)
+#   SCREEN CLASS (2 cells — W44-117 FIRES on these):
+#     terminal e8 d=4   (W44-105/107/108/109/117 territory)
+#     codec_wiki e8 d=4 (W44-117 territory, codec_wiki d=4 family)
+#
+# Modes:
+#   A = JXL_W44_117_DISABLE=1     (legacy uniform-4 EPF sharpness across all classes)
+#   B = production default        (EpfSharpnessSeed::AutoW44_117 { min_distance: 1.0 },
+#                                   firing gated by W44-118 is_screenshot AND W44-120 d>=1.0)
+#
+# TSV schema (15 columns):
+#   image, corpus, effort, distance, class (photo|screen),
+#   A_bytes, B_bytes, bytes_delta_pct,
+#   A_bfly, B_bfly, bfly_delta_pct,
+#   A_ssim2, B_ssim2, ssim2_delta_abs
+#
+# Note: Memory cap lifted to 8 GiB on the encode harness (Limits::new()
+#       .with_max_memory_bytes(8 * 1024^3)) because codec_wiki e8 d=4 with
+#       buttloop hits ~2.1 GiB working set (production default cap is 2 GiB).
+#       This is a measurement-only harness; production code path unchanged.
+#
+# Findings:
+#
+# 1. PHOTOS (all 4 cells): bytes-identical AND ssim2-identical between
+#    A and B modes (delta = +0.0000 SSIM2 on EVERY photo cell).
+#    Confirms the W44-138 prediction: W44-118 is_screenshot gate blocks
+#    BOTH modes from firing W44-117 on photos, so the bitstream is
+#    byte-identical in either env-var configuration.
+#
+#    → The W44-138 +0.034 R max-abs at after_epf is REAL (verified by
+#      per-stage capture on the encoder side) but STRUCTURALLY INVISIBLE
+#      to production: the code path that consumes it does not run on
+#      photos.
+#
+# 2. SCREENSHOTS (2 cells):
+#    - terminal e8 d=4: W44-117 saves 0.622% bytes, +0.8969 SSIM2,
+#      +1.911% butteraugli (B is slightly worse on bfly).
+#    - codec_wiki e8 d=4: W44-117 costs +0.809% bytes, +0.0420 SSIM2,
+#      +0.007% butteraugli (negligible).
+#
+#    Mean screen SSIM2 delta: +0.4694, max|Δ|: +0.8969.
+#
+#    → The metric IS internally consistent: W44-117 firing produces
+#      meaningful SSIM2 movement (terminal +0.90) and small bitstream
+#      bytes deltas (-0.62% / +0.81%) consistent with W44-138 meta's
+#      "W44-117 saves 0.6%" finding on terminal.
+#
+# VERDICT: HONEST-STOP W44-138 Phase 2 P-1 / P-2 (root-cause arc) AS
+#          CURRENTLY SPECIFIED.
+#
+#   Both P-1 (per-iter sharpness recompute) and P-2 (mask<50 admission)
+#   presuppose forcing W44-117 to fire on photos in some way. The
+#   measurement here cannot answer whether THAT would help or hurt,
+#   because the production code does not fire W44-117 on photos under
+#   any env-var configuration accessible from the public API today.
+#
+#   The +0.034 max-abs on photos exists in a code path that does NOT
+#   run in production on photos. The W44-118 gate is the production
+#   answer to "what does the encoder do on photos at high d" — uniform-4
+#   sharpness. There is no production failure mode for the +0.034.
+#
+# Recommended action:
+#   (a) Update docs/LIBJXL_DIVERGENCES.md Section F to mark the W44-138
+#       "buttloop EPF over-smoothing on photos" entry as "real but
+#       ssim2-neutral in production; no fix planned per W44-139".
+#   (b) Do NOT spawn W44-140/141 chunks for P-1 or P-2 with the current
+#       scope. If the user wants to evaluate W44-117 firing on photos,
+#       scope a separate chunk that:
+#         (i)  Bypasses the W44-118 is_screenshot gate via a measurement
+#              hook (env-var or LossyConfig override).
+#         (ii) Measures across the W44-118 protection set (1025469
+#              mask=76, all d=2-4 cells where the -0.85 SSIM2 regression
+#              originally fired).
+#         (iii)If photos with mask<50 specifically benefit, ship P-2
+#              with the conservative threshold. If 1025469 still
+#              regresses, abandon both P-1 and P-2 entirely.
+#
+# DO NOT (binding for future W44-139 follow-ons):
+#   - Spawn P-1 / P-2 chunks against the current measurement set. Both
+#     would land production-source changes that this chunk cannot
+#     justify because the chunk measured the WRONG question. The
+#     question we measured: "does the W44-138 +0.034 photo divergence
+#     affect production SSIM2?" Answer: no, because the W44-118 gate
+#     suppresses it. To measure the actual P-1/P-2 EV requires a
+#     different gate bypass.
+#
+#   - Lower the W44-118 mask threshold (loosen is_screenshot to admit
+#     more photos) per the W44-118 -0.85 SSIM2 regression measurement
+#     on 1025469. That measurement IS load-bearing.
+#
+#   - Retire the W44-117/118/120 chain. W44-119 chain-disable A/B
+#     verified the qac chain and EPF seed are orthogonal corrections.
+#
+#   - Re-investigate "FMA precision" or "decoder pipeline drift" for
+#     the +0.034 — W44-114/115/116 already verified all IDCTs and
+#     reconstruct_xyb at bit-parity (mode 4 of W44-116 hits 4e-6).
+#
+# Phase 2 P-3 ("hold the encoder-side sharpness map and pass it through
+# to the decoder") and P-4 ("verify reconstruct_xyb at parity") from
+# the W44-138 menu remain available for future investigation, but
+# neither requires the photo measurement that W44-139 was meant to
+# unlock.
