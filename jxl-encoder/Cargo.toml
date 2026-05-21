@@ -641,6 +641,17 @@ name = "w44_117_paired_ab"
 path = "examples/w44_117_paired_ab.rs"
 required-features = ["butteraugli-loop", "ssim2-loop"]
 
+# W44-139: SSIM2 cost gate for the W44-138 Phase 1 photo-EPF +0.034
+# R max-abs divergence. Paired A/B (JXL_W44_117_DISABLE=1 vs default)
+# on 4 photo cells (where W44-118 BLOCKS W44-117, expected delta = 0)
+# + 2 screenshot cells (where W44-117 FIRES, real metric baseline).
+# Decides whether to proceed with W44-138 Phase 2 P-1/P-2 or
+# honest-stop the root-cause arc.
+[[example]]
+name = "w44_139_ssim2_cost_gate"
+path = "examples/w44_139_ssim2_cost_gate.rs"
+required-features = ["butteraugli-loop", "ssim2-loop"]
+
 # W44-117 decoder-roundtrip check on 3 cells × 2 decoders (djxl + jxl-oxide).
 [[example]]
 name = "w44_117_decoder_check"
