@@ -1673,5 +1673,15 @@ name = "w44_145_per_block_qac_ab"
 path = "examples/w44_145_per_block_qac_ab.rs"
 required-features = ["butteraugli-loop", "ssim2-loop"]
 
+# W44-148 variant Z dct32x32 bisect — per W44-147 audit's Mechanism B,
+# bisects dct32x32 ∈ {1.20, 1.24, 1.28, 1.30, 1.34} across all three
+# variant Z tables (default Z / HC / LC) to test whether RAISING
+# dct32x32 closes the photo deficit cluster (1420710 d=6, 1531677
+# d=5/6) without sacrificing the W44-98/99 e8/e9 d=5 wins.
+[[example]]
+name = "w44_148_variant_z_dct32_bisect"
+path = "examples/w44_148_variant_z_dct32_bisect.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
 [lints]
 workspace = true
