@@ -24,7 +24,7 @@ use crate::headers::frame_header::{Encoding, FrameHeader};
 use crate::vardct::ac_context;
 use crate::vardct::ac_group::{collect_ac_coefficients_into, predict_from_top_and_left};
 use crate::vardct::ac_strategy::AcStrategyMap;
-use crate::vardct::chroma_from_luma::CflMap;
+use crate::vardct::chroma_from_luma::{CFL_FIXED_POINT_PRECISION, CflMap, DEFAULT_COLOR_FACTOR};
 use crate::vardct::coeff_order::{
     NUM_ORDER_BUCKETS as NUM_ORDER_BUCKETS_JPEG, build_and_write_coeff_orders,
     compute_custom_orders, get_custom_order, tokenize_coeff_orders,
@@ -161,24 +161,56 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
     let ysize_tiles = div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS);
     let is_444 = jpeg_upsampling.iter().all(|&u| u == 0);
     let cfl_map = if !is_gray && is_444 && num_components == 3 {
-        // Build scaled_qtable per chroma channel: position-transposed
-        // `(1 << 11) * qt_y[pos] / qt_c[pos]`. quant_ac is already
-        // transposed (block[x*8+y] = JPEG[y*8+x]), so we use the
-        // raw qtables and transpose to match.
+        // Build scaled_qtable per chroma channel for the JPEG-CfL search.
+        //
+        // libjxl reference (`enc_frame.cc:830-841`):
+        //   for y, x in 0..8:
+        //       coeffpos = y*8 + x                              // NATURAL
+        //       scaled_qtable[c*64 + 8*x+y]                     // store slot
+        //         = (1<<11) * qt[64 + coeffpos] / qt[c*64 + coeffpos]
+        // where `qt` is libjxl's transposed-stored quant table
+        // (`qt[c*64 + 8*x+y] = jpeg_quant[8*y+x]`, line 819).
+        //
+        // The CfL search then computes `row_m[coeffpos] * scaled_qtable[coeffpos]`
+        // where `row_m` is *natural-order* JPEG coefficients (line 897-898).
+        // Substituting the qt definition: `scaled_qtable[c*64 + i] =
+        // (1<<11) * jpeg_natural_qy[i] / jpeg_natural_qc[i]` (since
+        // both numerator and denominator transpose by the same amount,
+        // the transpose cancels under like-indexing).
+        //
+        // OUR storage convention differs from libjxl in ONE place:
+        // `quant_ac` is *also* transposed (`block[x*8+y] = JPEG[y*8+x]`,
+        // see `map_jpeg_coefficients` line 619), while libjxl keeps
+        // `row_m` in natural order. Our `build_raw_qtables` already
+        // matches libjxl's transposed `qt` layout (line 660).
+        //
+        // Since our `luma_block[s] = jpeg_natural_y_coeff[transpose(s)]`,
+        // the libjxl pairing translates to: `scaled_qtable[s]` must
+        // equal `(1<<11) * jpeg_natural_qy[transpose(s)] /
+        // jpeg_natural_qc[transpose(s)]`. With our transposed-stored
+        // `qt`, the expression `qt[64 + s] / qt[c*64 + s]` already
+        // evaluates to exactly that (both terms transpose, both reads
+        // hit the same `s` slot). So the storage layout collapses:
+        // index slot `s` directly on both sides.
+        //
+        // W44-161 (issue #63): pre-WIP code used
+        // `scaled_qtable[c][coeffpos] = qt[64+transposed] / qt[c*64+transposed]`
+        // — that paired `natural` qt-ratio storage slot with
+        // `transposed` coefficient storage slot, giving the search
+        // `coeff[transpose(s)] * ratio_at_natural(s)`, a mixed pairing.
+        // W44-160 WIP swapped it to `scaled_qtable[c][transposed] =
+        // qt[64+natural] / qt[c*64+natural]` — equivalent mismatch
+        // in the opposite direction (same bug).
+        //
+        // Correct: `scaled_qtable[c][s] = (1<<11) * qt[64+s] / qt[c*64+s]`.
         let qt = build_raw_qtables(jpeg, &jpeg_c_map)?;
         let mut scaled_qtable = [[0i32; 64]; 3];
         for c in 0..3 {
-            for y in 0..8usize {
-                for x in 0..8usize {
-                    let coeffpos = y * 8 + x;
-                    let transposed = x * 8 + y;
-                    // qt is already transposed in build_raw_qtables, so
-                    // index directly. Guard against zero divisor.
-                    let qy = qt[64 + transposed];
-                    let qc = qt[64 * c + transposed];
-                    if qc != 0 {
-                        scaled_qtable[c][coeffpos] = ((1 << 11) * qy) / qc;
-                    }
+            for s in 0..64usize {
+                let qy = qt[64 + s];
+                let qc = qt[64 * c + s];
+                if qc != 0 {
+                    scaled_qtable[c][s] = ((1 << 11) * qy) / qc;
                 }
             }
         }
@@ -200,6 +232,75 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
             &quant_ac[2],
             &scaled_qtable[2],
         );
+
+        // W44-161 (issue #63): apply JPEG-CfL correction to chroma
+        // coefficients. The decoder reads the per-tile multipliers
+        // from `cfl_map` and ADDS the predicted chroma values during
+        // reconstruction. Our encoded chroma must therefore carry the
+        // *residual* (`QChroma - cfl_factor`), not the raw JPEG
+        // coefficients, or the decoder's reconstructed chroma drifts
+        // away from the original.
+        //
+        // Mirrors libjxl `enc_frame.cc:1015-1037`. libjxl iterates
+        // natural (y, x) and writes the result to a transposed slot
+        // `block[x*8+y]`. Our `quant_ac` is *already* transposed-
+        // stored (`block[x*8+y] = JPEG_natural[y*8+x]`, see
+        // `map_jpeg_coefficients` line 619), so we can iterate
+        // storage slot `s` directly on both input (Y, QChroma) and
+        // output (modified chroma) sides — both transposes cancel.
+        //
+        // Skip coeffpos=0 (DC) — libjxl CfL only modifies AC.
+        let cfl_offset_x = 127i32;
+        let fp_round = 1i32 << (CFL_FIXED_POINT_PRECISION - 1);
+        for ty in 0..ysize_tiles {
+            for tx in 0..xsize_tiles {
+                let y0 = ty * TILE_DIM_IN_BLOCKS;
+                let x0 = tx * TILE_DIM_IN_BLOCKS;
+                let y1 = ((ty + 1) * TILE_DIM_IN_BLOCKS).min(ysize_blocks);
+                let x1 = ((tx + 1) * TILE_DIM_IN_BLOCKS).min(xsize_blocks);
+                let tile_idx = ty * xsize_tiles + tx;
+                let ytox = map.ytox[tile_idx] as i32;
+                let ytob = map.ytob[tile_idx] as i32;
+                // RatioJPEG(factor) = factor << 11 / 84 — matches
+                // libjxl `ColorCorrelation::RatioJPEG(cm[...])` at
+                // line 1016 with `cm` = the raw signed-byte tile
+                // value (kOffset already pre-applied by the decoder
+                // when it computes the YtoX/YtoB ratio).
+                let scale_x = (ytox * (1 << CFL_FIXED_POINT_PRECISION)) / DEFAULT_COLOR_FACTOR;
+                let scale_b = (ytob * (1 << CFL_FIXED_POINT_PRECISION)) / DEFAULT_COLOR_FACTOR;
+                let _ = cfl_offset_x; // kOffset=127 is applied by the search; map[] already stores the signed delta
+                for by in y0..y1 {
+                    for bx in x0..x1 {
+                        // Y luma block (read-only; never modified)
+                        let y_block = quant_ac[1][by][bx];
+                        // X channel (c=0) and B channel (c=2) blocks
+                        for &(c, scale) in &[(0usize, scale_x), (2usize, scale_b)] {
+                            let chroma_block = &mut quant_ac[c][by][bx];
+                            let mut nz_count: u16 = 0;
+                            // Coefficient slot 0 = DC, unchanged in `quant_ac`
+                            // (DC lives in `quant_dc`); skip s=0.
+                            for s in 1..64usize {
+                                let yv = y_block[s];
+                                let coeff_scale = (scale * scaled_qtable[c][s] + fp_round)
+                                    >> CFL_FIXED_POINT_PRECISION;
+                                let cfl_factor =
+                                    (yv * coeff_scale + fp_round) >> CFL_FIXED_POINT_PRECISION;
+                                chroma_block[s] -= cfl_factor;
+                                if chroma_block[s] != 0 {
+                                    nz_count += 1;
+                                }
+                            }
+                            // Recompute nzeros / raw_nzeros for the modified
+                            // chroma block (subtraction may have created or
+                            // destroyed zero coefficients).
+                            raw_nzeros[c][by][bx] = nz_count;
+                            nzeros[c][by][bx] = nz_count as u8;
+                        }
+                    }
+                }
+            }
+        }
+
         map
     } else {
         CflMap::zeros(xsize_tiles, ysize_tiles)
