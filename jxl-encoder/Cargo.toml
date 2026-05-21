@@ -1720,6 +1720,20 @@ name = "w44_148_variant_z_dct32_bisect"
 path = "examples/w44_148_variant_z_dct32_bisect.rs"
 required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
 
+# W44-154 micro-bisect of variant Z dct32x32 ∈ {1.22, 1.23, 1.24} —
+# refinement of W44-148. The W44-153 full-ledger refresh (`1a988fc8`)
+# found 6 cells flipped FIXED→OPEN at W44-148's 1.24 boundary, all
+# pareto SSIM2 wins (bytes growth crossed +3% wedge but SSIM2 IMPROVED
+# +0.07 to +0.24 per cell). W44-148's 27-cell bisect did NOT cover
+# these cells (1420710 e5 d=6; 1531677 e5/e6 d=6 + e7/e8/e9 d=5).
+# This bisect tests whether 1.22 or 1.23 (between W44-148's 1.24 and
+# pre-W44-148 1.20) closes ≥4 of those 6 cells while preserving ≥80%
+# of W44-148's SSIM2 wins on the 1418519 d=5 cluster.
+[[example]]
+name = "w44_154_dct32x32_micro_bisect"
+path = "examples/w44_154_dct32x32_micro_bisect.rs"
+required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
+
 # W44-149 Phase 1 photo discriminator audit — computes ZenanalyzeProxies
 # fields + auxiliary candidate features (luma ratios, chroma_block_ratio,
 # mask1x1 percentiles) across all 41 CID22 validation photos to find a
