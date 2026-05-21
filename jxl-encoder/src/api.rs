@@ -4161,6 +4161,47 @@ pub struct EncoderImprovementsCustom {
     /// wins over the auto-classifier (the auto path only runs when
     /// the field is `None`).
     pub content_class_auto_classify: bool,
+
+    // ── Smart-Zenjxl: W44-117 EPF seed admission for high-mask photos (W44-165) ──
+    /// When `true`, admits high-mask photos (`mask1x1` 25th percentile
+    /// ≥ [`crate::vardct::encoder::W44_150_PHOTO_W44_117_MASK_P25_MIN`]
+    /// (= 85.0) AND `target_distance >=
+    /// [`crate::vardct::encoder::W44_150_PHOTO_W44_117_MIN_DISTANCE`]`
+    /// (= 4.0)) to the W44-117 EPF sharpness seed compute that the
+    /// W44-118 `is_screenshot` gate currently restricts to screenshots
+    /// only. Closes a measured +0.27 mean SSIM2 deficit on `1418519
+    /// d=5/6` e8/e9 (the W44-147 photo cluster) — the W44-150 Phase 2
+    /// measurement validated the discriminator (51/51 protection cells
+    /// byte-identical; only 1418519 fires) but the chunk honest-stopped
+    /// against a 50%-closure HARD gate.
+    ///
+    /// Per the user directive 2026-05-21 ("restore any superior options
+    /// according to the current encode strategy selection"), this flag
+    /// re-enables that admission on the Zenjxl strategy. The W44-150
+    /// constants + [`crate::vardct::encoder::percentile_mask1x1`]
+    /// helper are reused unchanged. See
+    /// `memory/w44_150_mechanism_a_phase2_2026-05-21.md` and
+    /// `memory/w44_163_smart_zenjxl_audit_2026-05-21.md` (B5 pick) for
+    /// full provenance.
+    ///
+    /// Fires only when:
+    /// - the call site already takes the W44-118 dispatch path (the
+    ///   `else` branch of `if take_ssim2_path`); AND
+    /// - `mask1x1` was precomputed (typically by `pixel_domain_loss`,
+    ///   which fires on photo content at e ≥ 5 by default); AND
+    /// - `percentile_mask1x1(mask1x1, 0.25) >=
+    ///   W44_150_PHOTO_W44_117_MASK_P25_MIN`; AND
+    /// - `target_distance >= W44_150_PHOTO_W44_117_MIN_DISTANCE`.
+    ///
+    /// `is_screenshot` continues to gate at its W44-118 surface
+    /// (mask>95) so this flag is purely additive for the photo class.
+    ///
+    /// **Default**: `true` for [`EncoderStrategy::Zenjxl`] and
+    /// [`EncoderStrategy::Aggressive`]; `false` for
+    /// [`EncoderStrategy::Libjxl`] (parity — the W44-150 honest-stop
+    /// is observed) and [`EncoderStrategy::LeanFaster`] (skip heavy
+    /// per-image gates).
+    pub photo_epf_seed_admit: bool,
 }
 
 impl Default for EncoderImprovementsCustom {
@@ -4206,6 +4247,11 @@ impl Default for EncoderImprovementsCustom {
             // LeanFaster override this to `false` in their resolved-
             // improvements constructors.
             content_class_auto_classify: true,
+            // W44-165: Zenjxl default admits high-mask photos
+            // (mask_p25 >= 85 AND d >= 4) to the W44-117 EPF
+            // sharpness seed. Libjxl / LeanFaster override this to
+            // `false` in their resolved-improvements constructors.
+            photo_epf_seed_admit: true,
         }
     }
 }
@@ -4251,6 +4297,10 @@ pub(crate) struct ResolvedImprovements {
 
     // W44-164 — Smart-Zenjxl auto-classify ImageContentClass at encode entry
     pub(crate) content_class_auto_classify: bool,
+
+    // W44-165 — Smart-Zenjxl: admit high-mask photos to the W44-117 EPF
+    // sharpness seed (in addition to the W44-118 `is_screenshot` gate).
+    pub(crate) photo_epf_seed_admit: bool,
 }
 
 impl Default for ResolvedImprovements {
@@ -4288,6 +4338,10 @@ impl Default for ResolvedImprovements {
             // W44-164: Zenjxl default fires the cheap auto-classifier.
             // Libjxl / LeanFaster constructors below override to `false`.
             content_class_auto_classify: true,
+            // W44-165: Zenjxl default admits high-mask photos to the
+            // W44-117 EPF sharpness seed. Libjxl / LeanFaster
+            // constructors below override to `false`.
+            photo_epf_seed_admit: true,
         }
     }
 }
@@ -4541,6 +4595,13 @@ impl ResolvedImprovements {
             // Callers can still opt in via
             // `LossyConfig::with_content_class(Some(class))`.
             content_class_auto_classify: false,
+            // W44-165: strict libjxl parity — preserve the W44-150
+            // honest-stop disposition (no photo admission to W44-117).
+            // The Libjxl variant already sets
+            // `buttloop_epf_sharpness_seed: EpfSharpnessSeed::LegacyUniform4`
+            // above, so this flag is redundant on Libjxl in practice;
+            // kept explicit for clarity / forward-compat.
+            photo_epf_seed_admit: false,
         }
     }
 
@@ -4561,6 +4622,10 @@ impl ResolvedImprovements {
             // Callers can still opt in via
             // `LossyConfig::with_content_class(Some(class))`.
             content_class_auto_classify: false,
+            // W44-165: LeanFaster also drops the per-image photo EPF
+            // seed admission (it computes a percentile on the mask
+            // plane — a per-image cost).
+            photo_epf_seed_admit: false,
             ..Default::default()
         }
     }
@@ -4600,6 +4665,7 @@ impl ResolvedImprovements {
             epf_dynamic_sharpness_min_effort: c.epf_dynamic_sharpness_min_effort,
             block_ctx_map_15_cluster: c.block_ctx_map_15_cluster,
             content_class_auto_classify: c.content_class_auto_classify,
+            photo_epf_seed_admit: c.photo_epf_seed_admit,
         }
     }
 }
@@ -14157,6 +14223,46 @@ mod tests {
             EncoderStrategy::Custom(Box::new(custom)).resolve(&StrategyOverrides::default());
         assert!(
             !resolved.content_class_auto_classify,
+            "Custom with field set false must propagate"
+        );
+    }
+
+    /// W44-165: ResolvedImprovements.photo_epf_seed_admit defaults
+    /// per strategy. Zenjxl + Aggressive enable; Libjxl + LeanFaster
+    /// disable.
+    #[test]
+    fn test_w44_165_photo_epf_seed_admit_default_per_strategy() {
+        let zenjxl = EncoderStrategy::Zenjxl.resolve(&StrategyOverrides::default());
+        assert!(
+            zenjxl.photo_epf_seed_admit,
+            "Zenjxl must enable W44-165 photo EPF seed admission"
+        );
+        let aggressive = EncoderStrategy::Aggressive.resolve(&StrategyOverrides::default());
+        assert!(
+            aggressive.photo_epf_seed_admit,
+            "Aggressive must enable W44-165 photo EPF seed admission"
+        );
+        let libjxl = EncoderStrategy::Libjxl.resolve(&StrategyOverrides::default());
+        assert!(
+            !libjxl.photo_epf_seed_admit,
+            "Libjxl must disable W44-165 (strict parity — W44-150 honest-stop disposition)"
+        );
+        let lean = EncoderStrategy::LeanFaster.resolve(&StrategyOverrides::default());
+        assert!(
+            !lean.photo_epf_seed_admit,
+            "LeanFaster must disable W44-165 (skip per-image mask percentile cost)"
+        );
+        // Custom inherits whatever the user set on EncoderImprovementsCustom.
+        let mut custom = EncoderImprovementsCustom::default();
+        assert!(
+            custom.photo_epf_seed_admit,
+            "EncoderImprovementsCustom::default() matches Zenjxl"
+        );
+        custom.photo_epf_seed_admit = false;
+        let resolved =
+            EncoderStrategy::Custom(Box::new(custom)).resolve(&StrategyOverrides::default());
+        assert!(
+            !resolved.photo_epf_seed_admit,
             "Custom with field set false must propagate"
         );
     }

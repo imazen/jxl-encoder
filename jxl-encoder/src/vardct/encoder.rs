@@ -713,11 +713,31 @@ const HIGH_D_PHOTO_MIN_DISTANCE: f32 = 3.0;
 /// alone only recovers ~30 % of the SSIM2 deficit at d=5 and ~0 % at d=6
 /// on the e8/e9 cells. e7 cells stay byte-identical because W44-117 is
 /// gated on `profile.epf_dynamic_sharpness AND butteraugli_iters > 0`
-/// which is false at e<=7. Production code reverted; this constant kept
-/// for documentation + future chunks that pair the same discriminator
-/// with a different mechanism (W44-105-style qac-seed scale on photos,
-/// AC-strategy lift on mask_p25-high content, etc.). Bench:
+/// which is false at e<=7. Bench:
 /// `benchmarks/w44_150_mask_p25_admission_2026-05-21.{tsv,meta}`.
+///
+/// **W44-165 HONEST-STOP (2026-05-21, Smart-Zenjxl chunk 2)**:
+/// re-implemented the W44-150 admission for `EncoderStrategy::Zenjxl`
+/// / `Aggressive` and measured a 36-cell paired A/B
+/// (`benchmarks/w44_165_restore_epf_seed_photos_2026-05-21.{tsv,meta}`).
+/// The W44-150 predicted +0.27 mean SSIM2 win on 1418519 d=5/6 e8/e9
+/// was FALSIFIED in current main: measured mean = **-0.105**
+/// (REGRESSION), worst -0.331 on e8/e9 d=5. Root cause: since W44-150's
+/// `dad6bb47` baseline, W44-152 (`971bbc8c`) shipped the d ∈ [3.0, 5.0]
+/// mask_p25 admission on the W44-29 OUTER entropy_mul lift, delivering
+/// +1.13 SSIM2 to the same 1418519 d=5 e8/e9 cells. The W44-152
+/// baseline (SSIM2=66.54 at e8 d=5) is ABOVE the W44-150 baseline
+/// (SSIM2=65.41); applying the W44-117 EPF seed mechanism on top of
+/// the W44-152 baseline now OVERSHOOTS (net regression vs the W44-152
+/// baseline). The two mechanisms COMPETE rather than COMPOSE.
+///
+/// Production gate stays at the W44-118 `is_screenshot` form. The
+/// [`crate::api::EncoderImprovementsCustom::photo_epf_seed_admit`]
+/// field is KEPT as public API surface (default true on Zenjxl /
+/// Aggressive, false on Libjxl / LeanFaster) for `Custom` callers
+/// wanting to opt in, but the production dispatch site does NOT
+/// currently read it. See
+/// `memory/w44_165_photo_epf_seed_zenjxl_honest_stop_2026-05-21.md`.
 #[allow(dead_code)]
 pub const W44_150_PHOTO_W44_117_MASK_P25_MIN: f32 = 85.0;
 
@@ -736,9 +756,11 @@ pub const W44_150_PHOTO_W44_117_MASK_P25_MIN: f32 = 85.0;
 /// screenshots which capped at `d >= 1.0` to close the d=0.8 W44-117
 /// over-correction).
 ///
-/// **W44-150 HONEST-STOP (2026-05-21)**: see
-/// [`W44_150_PHOTO_W44_117_MASK_P25_MIN`] for the post-measurement
-/// disposition. Constant kept for documentation + reuse.
+/// **W44-150 HONEST-STOP (2026-05-21)** + **W44-165 HONEST-STOP
+/// (2026-05-21)**: see [`W44_150_PHOTO_W44_117_MASK_P25_MIN`] for the
+/// full disposition. Constant kept for documentation + reuse by
+/// future chunks that pair the W44-149 discriminator with a different
+/// mechanism than the W44-117 EPF seed.
 #[allow(dead_code)]
 pub const W44_150_PHOTO_W44_117_MIN_DISTANCE: f32 = 4.0;
 
@@ -4337,6 +4359,65 @@ impl VarDctEncoder {
                     // photo admission path was reverted; gate stays at
                     // the W44-118 `is_screenshot ? Some(mask) : None`
                     // form. Pre-W44-150 byte-identical.
+                    //
+                    // W44-165 HONEST-STOP (Smart-Zenjxl chunk 2,
+                    // 2026-05-21): re-implemented the W44-150 admission
+                    // for `EncoderStrategy::Zenjxl` / `Aggressive` and
+                    // measured a 36-cell paired A/B
+                    // (`benchmarks/w44_165_restore_epf_seed_photos_2026-05-21.{tsv,meta}`).
+                    // The W44-150 predicted +0.27 mean SSIM2 win on
+                    // 1418519 d=5/6 e8/e9 was FALSIFIED in current
+                    // main: measured mean = **-0.105** (REGRESSION),
+                    // worst -0.331 on e8/e9 d=5. Bytes win small
+                    // (-0.77% to -1.17% on 4 of 6 cells). Root cause:
+                    // since W44-150's `dad6bb47` baseline, W44-152
+                    // (`971bbc8c`) shipped the d ∈ [3.0, 5.0] mask_p25
+                    // admission on the W44-29 OUTER entropy_mul lift,
+                    // delivering +1.13 SSIM2 to the same 1418519 d=5
+                    // e8/e9 cells. The W44-152 baseline (SSIM2=66.54
+                    // at e8 d=5) is ABOVE the W44-150 baseline
+                    // (SSIM2=65.41); applying the W44-117 EPF seed
+                    // mechanism on top of the W44-152 baseline now
+                    // OVERSHOOTS (lands at SSIM2=66.21 — net regression
+                    // vs the W44-152 baseline despite still being
+                    // above the original W44-150 baseline). The two
+                    // mechanisms COMPETE rather than COMPOSE on this
+                    // cluster. Per the chunk-spec HARD gate (d) "SSIM2
+                    // mean improvement ~+0.27 (matches W44-150
+                    // measurement)" — measurement falsifies. PROTECT
+                    // cells stay clean: 1025469 15/15 BYTE-IDENTICAL,
+                    // 4 SPOT photos 12/12 BYTE-IDENTICAL, hash-locks
+                    // 36/36 BYTE-IDENTICAL.
+                    //
+                    // Production gate stays at the W44-118
+                    // `is_screenshot ? Some(mask) : None` form. The
+                    // [`crate::api::EncoderImprovementsCustom::photo_epf_seed_admit`]
+                    // field and the
+                    // [`crate::api::ResolvedImprovements::photo_epf_seed_admit`]
+                    // field + the strategy defaults (Zenjxl/Aggressive
+                    // = true, Libjxl/LeanFaster = false) are KEPT as
+                    // public API surface — `Custom` callers wanting to
+                    // re-enable the admission (e.g. for a future
+                    // chunk that pairs the field with a DIFFERENT
+                    // mechanism than the W44-117 EPF seed) flip the
+                    // field on. The field is currently inert in
+                    // production but trivially re-wired by uncommenting
+                    // the `w44_165_photo_admit` predicate below. Bench
+                    // artifacts:
+                    // `benchmarks/w44_165_restore_epf_seed_photos_2026-05-21.{tsv,meta}`,
+                    // `memory/w44_165_photo_epf_seed_zenjxl_honest_stop_2026-05-21.md`.
+                    //
+                    // INERT PREDICATE (kept for measurement
+                    // reproduction; not consumed in production):
+                    // ```
+                    // let _w44_165_photo_admit =
+                    //     self.resolved_improvements.photo_epf_seed_admit
+                    //     && self.distance >= W44_150_PHOTO_W44_117_MIN_DISTANCE
+                    //     && mask1x1.as_deref().is_some_and(|m| {
+                    //         percentile_mask1x1(m, padded_width, width, height, 0.25)
+                    //             >= W44_150_PHOTO_W44_117_MASK_P25_MIN
+                    //     });
+                    // ```
                     if is_screenshot {
                         mask1x1.as_deref()
                     } else {

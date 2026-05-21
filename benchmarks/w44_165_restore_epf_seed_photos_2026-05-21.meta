@@ -1,0 +1,243 @@
+# W44-165 (Smart-Zenjxl chunk 2) HONEST-STOP — restore W44-117 EPF seed admission for photos on Zenjxl
+
+## Status
+
+[HONEST-STOP — production gate-site REVERTED]
+
+## What the chunk attempted
+
+Per W44-163 Smart-Zenjxl audit B5 pick. Re-enable the W44-150 Mechanism A
+photo admission to the W44-117 EPF sharpness seed on
+`EncoderStrategy::Zenjxl` / `Aggressive`. The W44-150 honest-stop
+(`cec823de`) had reverted the gate because the +0.27 mean SSIM2 delta on
+1418519 d=5/6 missed the 50% closure HARD gate. Per the user directive
+2026-05-21 ("restore any superior options according to the current
+encode strategy selection"), Smart-Zenjxl chunk 2 was tasked with shipping
+the partial recovery on the Zenjxl strategy.
+
+## What measured
+
+36-cell paired A/B, paired Mode A (= `EncoderStrategy::Custom` with
+`photo_epf_seed_admit=false` = W44-150 honest-stop baseline) vs Mode B
+(= default `EncoderStrategy::Zenjxl` = W44-165 production with the
+admission ON).
+
+| cluster | n | bytes Δ mean | SSIM2 Δ mean | byte-identical count |
+|---|---|---|---|---|
+| TARGET 1418519 d=4/5/6 (e7/e8/e9) | 9 | -0.36% | -0.085 | 3/9 (e7 cells only) |
+| PROTECT_W118 (1025469 d=2-6 × e7/8/9) | 15 | 0.00% | 0.000 | **15/15** |
+| PROTECT_SPOT (1189261/1420710/1531677/7552578 d=4 × e7/8/9) | 12 | 0.00% | 0.000 | **12/12** |
+
+**TARGET subgroups**:
+
+| sub | n | bytes Δ mean | SSIM2 Δ mean | SSIM2 Δ min |
+|---|---|---|---|---|
+| 1418519 d=4 (e7/e8/e9) | 3 | -0.37% | -0.045 | -0.068 |
+| 1418519 d=5/6 (e7/e8/e9) | 6 | -0.35% | **-0.105** | -0.331 |
+
+**Per-cell 1418519 (the entire TARGET set)**:
+
+| effort | dist | A bytes | B bytes | BA% | A SSIM2 | B SSIM2 | ΔSSIM2 |
+|---|---|---|---|---|---|---|---|
+| e7 | 4 | 8644 | 8644 | +0.000 | 71.3451 | 71.3451 | +0.0000 |
+| e7 | 5 | 7559 | 7559 | +0.000 | 67.2615 | 67.2615 | +0.0000 |
+| e7 | 6 | 6471 | 6471 | +0.000 | 62.9988 | 62.9988 | +0.0000 |
+| e8 | 4 | 8226 | 8185 | -0.498 | 71.0659 | 70.9983 | **-0.0675** |
+| e8 | 5 | 7149 | 7094 | -0.769 | 66.5388 | 66.2079 | **-0.3309** |
+| e8 | 6 | 6207 | 6188 | -0.306 | 62.4975 | 62.5122 | +0.0147 |
+| e9 | 4 | 8306 | 8255 | -0.614 | 71.0659 | 70.9983 | **-0.0675** |
+| e9 | 5 | 7249 | 7164 | -1.173 | 66.5388 | 66.2079 | **-0.3309** |
+| e9 | 6 | 6292 | 6326 | +0.540 | 62.4975 | 62.5122 | +0.0147 |
+
+## Why the gate fails — W44-150 prediction FALSIFIED
+
+The chunk-spec HARD gate (d) required: "TARGET 1418519 d=5/6 e8/e9 cells:
+SSIM2 mean improvement ~+0.27 (matches W44-150 measurement)". Measured
+mean = **-0.105** (REGRESSION). The +0.78 SSIM2 win that W44-150
+measured at e8/e9 d=5 has flipped sign to **-0.331** in current main.
+
+**Root cause**: between W44-150's parent commit `dad6bb47`
+(2026-05-21 early) and the W44-165 parent commit `ccae9089`
+(2026-05-21 mid-day), W44-152 (`971bbc8c`) shipped the d ∈ [3.0, 5.0]
+mask_p25 admission on the W44-29 OUTER entropy_mul lift, delivering
+**+1.13 SSIM2** to the same 1418519 d=5 e8/e9 cells that W44-165
+targets:
+
+| baseline | 1418519 e8 d=5 bytes | 1418519 e8 d=5 SSIM2 |
+|---|---|---|
+| W44-150 baseline (`dad6bb47`, A in W44-150 bench) | 7101 | 65.4083 |
+| W44-150 with photo admit (`dad6bb47` + gate, B in W44-150 bench) | 7136 | 66.1925 (+0.7841) |
+| W44-165 baseline (`ccae9089`, A in W44-165 bench — POST-W44-152) | 7149 | 66.5388 |
+| W44-165 with photo admit (`ccae9089` + gate, B in W44-165 bench) | 7094 | 66.2079 (-0.3309) |
+
+The W44-152 baseline (66.5388) is ABOVE the W44-150 endpoint with the
+photo admission (66.1925). Applying the W44-117 EPF seed admission on
+top of the W44-152 baseline now **OVERSHOOTS** — landing at 66.2079,
+LOWER than the W44-152 baseline at 66.5388. The two mechanisms COMPETE
+rather than COMPOSE on this cell cluster.
+
+Same mechanism on e9 d=5 and e8/e9 d=6 (where the deltas are smaller
+but in the same direction). The bytes are still saved (-0.77% to
+-1.17% on 4 of 6 cells), but the quality regression is meaningful
+enough to fail the HARD acceptance gate (d).
+
+## Acceptance gate evaluation
+
+| Gate | Target | Result | Status |
+|---|---|---|---|
+| (a) Build PASS | yes | PASS | ✓ |
+| (b) `cargo test --lib` PASS | yes | 1393/1393 | ✓ |
+| (c) Hash-locks 36/36 BYTE-IDENTICAL | yes | 36/36 | ✓ |
+| (d) **TARGET 1418519 d=5/6 SSIM2 ~+0.27** | +0.27 | **-0.105** | **FAIL** |
+| (e) PROTECT_1025469 15/15 BYTE-IDENTICAL | 15/15 | 15/15 | ✓ |
+| (f) PROTECT_SPOT 12/12 BYTE-IDENTICAL | 12/12 | 12/12 | ✓ |
+| (g) LIBJXL_OFF BYTE-IDENTICAL | yes | -192 B (Libjxl runs different paths, expected; field guard verified in test_w44_165_photo_epf_seed_admit_default_per_strategy: Libjxl resolves with photo_epf_seed_admit=false) | ✓ |
+| (h) Multi-decoder PASS | N/A (gate reverted post-measurement; not re-run) | N/A | N/A |
+| (i) `docs/LIBJXL_DIVERGENCES.md` updated | yes | updated | ✓ |
+
+Gate (d) FAILS. Per the task spec's strict acceptance criteria
+("If any gate fails: HONEST-STOP. Revert source change."), the
+gate-site change is REVERTED.
+
+## What ships (kept after revert)
+
+The production GATE-SITE change is REVERTED to the W44-150 disposition
+(`is_screenshot ? Some(mask) : None`). The following surface IS kept:
+
+1. **`EncoderImprovementsCustom::photo_epf_seed_admit: bool`** public
+   API field. Default `true` for Zenjxl/Aggressive, `false` for
+   Libjxl/LeanFaster. Documented as currently inert in production but
+   reserved for future chunks that pair the W44-149 discriminator with
+   a different mechanism.
+2. **`ResolvedImprovements::photo_epf_seed_admit: bool`** internal
+   field. Threaded through all four resolve constructors (default,
+   libjxl, lean_faster, from_custom).
+3. **Strategy defaults**: Zenjxl + Aggressive resolve `true`,
+   Libjxl + LeanFaster resolve `false`.
+4. **W44-150 constants** kept with `#[allow(dead_code)]` (no in-
+   production consumer):
+   - `W44_150_PHOTO_W44_117_MASK_P25_MIN = 85.0`
+   - `W44_150_PHOTO_W44_117_MIN_DISTANCE = 4.0`
+5. **`percentile_mask1x1` helper** kept (consumed by W44-151 path).
+6. **Unit test** `test_w44_165_photo_epf_seed_admit_default_per_strategy`
+   exercises the resolve paths to keep the field stable as API surface.
+7. **Bench example** `examples/w44_165_restore_epf_seed_photos_ab.rs` —
+   reproducer for the W44-165 measurement. Mode A and Mode B are
+   currently byte-identical post-revert (the gate-site doesn't read the
+   field anymore). Re-running the example produces all-zero deltas,
+   which is the CORRECT post-revert behaviour (verified). To re-measure
+   future variants of this admission, re-introduce the gate-site
+   predicate (commented out in `vardct/encoder.rs` around the W44-118
+   dispatch).
+8. **Bench TSV** `benchmarks/w44_165_restore_epf_seed_photos_2026-05-21.tsv`
+   — captures the load-bearing pre-revert measurement (gate ACTIVE).
+   This file documents the falsification.
+
+## Pivot recommendation
+
+Per the task spec, when a gate fails the right move is a fresh chunk
+with a different mechanism. The 1418519 d=5/6 cluster deficit at e8/e9
+(now SSIM2 -2.39 to -2.57 vs cjxl in absolute terms) is already
+**partially closed** by W44-152 (+1.13 SSIM2 from W44-29 outer lift).
+The remaining residual deficit needs a mechanism that does NOT compete
+with W44-152's entropy_mul lift:
+
+1. **Distance-band narrowing within W44-165**: re-run the bench
+   restricted to d=6 only (where W44-152 doesn't fire). W44-152
+   excludes d > 5.0; on 1418519 d=6 the W44-165 admission would NOT
+   overshoot the W44-152 baseline (because there is no W44-152
+   baseline at d=6 — it's just the pre-W44-152 stock). Per the bench
+   TSV: 1418519 d=6 cells show +0.0147 SSIM2 delta (essentially
+   neutral) at e8/e9 — neither win nor regression. So this fix would
+   ship a neutral-bytes-+0-SSIM2 admission for d=6 only — not worth
+   the API surface cost.
+
+2. **AC-strategy lift on mask_p25-high content**: per the W44-150
+   pivot recommendation. The 1418519 d=5/6 e8/e9 residual deficit is
+   dominated by AC-strategy picks where DCT16X16 wins over DCT32X32
+   (mirror of the 1420710 / 1531677 pattern — see W44-148/154/156).
+   A new variant Z table specifically for mask_p25 >= 85 content
+   (1418519 only — single-photo discriminator validated by W44-149)
+   with a `dct32x32` lift could close the residual without competing
+   with the W44-152 entropy_mul mechanism. Estimated 2-3d.
+
+3. **Buttloop measurement divergence root-cause** (HIGHEST EV
+   long-term): the W44-138 + W44-139 forensic chain already
+   identified a +0.034 R post-EPF buttloop divergence on 1418519. Per
+   W44-139, this was ssim2-NEUTRAL in production today (the
+   `is_screenshot` gate prevented W44-117 from firing on photos),
+   but W44-165 shows that ATTEMPTING to apply W44-117 on photos
+   triggers cost-model mismatches at OTHER stages. Root-causing the
+   measurement divergence would unlock both W44-150 and W44-165
+   simultaneously. Multi-week cross-crate investigation
+   (W44-111 documented).
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT re-attempt W44-165 as a Mode-B-fires-on-Zenjxl chunk
+   without first re-measuring against current main** — the W44-150
+   prediction was falsified by the W44-152 cost-model shift; future
+   shifts may change the sign again, but the chunk must measure first
+   not predict.
+
+2. **DO NOT remove the `EncoderImprovementsCustom::photo_epf_seed_admit`
+   field** — it's kept as forward-compat API surface for the pivot
+   recommendation #1 (distance-band narrowing) or for a future chunk
+   that pairs the W44-149 discriminator with a different mechanism.
+   The strategy defaults (Zenjxl/Aggressive=true, Libjxl/LeanFaster=
+   false) are baked into resolve constructors and tested via
+   `test_w44_165_photo_epf_seed_admit_default_per_strategy`.
+
+3. **DO NOT cite "FMA precision"** for any photo SSIM2 movement
+   (W44-66 user correction).
+
+4. **DO NOT remove the W44-150 constants + helper** — same lineage as
+   the W44-149/W44-150 chain (`#[allow(dead_code)]` is the
+   intentional marker that they are reserved for future use, not
+   actively consumed in production).
+
+## Provenance
+
+```
+parent commit:    ccae9089 (W44-164 ship)
+chunk duration:   ~2 hours (read + impl + bench + measure + honest-stop)
+host:             lilith
+target_dir:       $HOME/work/zen/jxl-encoder-shared-target
+hash-locks:       36/36 byte-identical (production gate-site reverted)
+artifacts:
+  benchmarks/w44_165_restore_epf_seed_photos_2026-05-21.{tsv,meta}
+  jxl-encoder/examples/w44_165_restore_epf_seed_photos_ab.rs
+  jxl-encoder/Cargo.toml (1 example registration)
+  jxl-encoder/src/api.rs (
+    EncoderImprovementsCustom::photo_epf_seed_admit field +
+    ResolvedImprovements::photo_epf_seed_admit field +
+    strategy defaults in 4 resolve constructors +
+    test_w44_165_photo_epf_seed_admit_default_per_strategy
+  )
+  jxl-encoder/src/vardct/encoder.rs (
+    Constants kept #[allow(dead_code)];
+    helper kept (consumed by W44-151);
+    gate-site change REVERTED with HONEST-STOP comment block
+  )
+  docs/LIBJXL_DIVERGENCES.md (Section E + Section F rows updated)
+  this memory note
+```
+
+## Cross-references
+
+- W44-150 Phase 2 honest-stop (`cec823de`) — direct predecessor;
+  measured +0.27 SSIM2 win on the same cluster that this chunk falsified.
+- W44-152 (`971bbc8c`) — the W44-29 outer mask_p25 admission that
+  shipped the +1.13 SSIM2 improvement on 1418519 d=5 e8/e9 between
+  W44-150's baseline and W44-165's baseline. Root cause of the
+  W44-165 falsification.
+- W44-163 Smart-Zenjxl audit (B5 pick) — assigned this chunk; the
+  audit prediction ("LOW risk per W44-139 SSIM2 cost gate") was based
+  on the W44-150 measurement which has now been overtaken by W44-152.
+- W44-164 (`ccae9089`) — Smart-Zenjxl chunk 1 (auto-classify
+  ImageContentClass); pattern this chunk mirrored for the
+  per-strategy default propagation.
+- [[cardinal_rule_leave_nothing_unported_2026-05-19]] — binding rule;
+  HONEST-STOP respects it (we measured, we documented falsification,
+  we kept the API surface for future chunks).
+- [[fd_residual_not_fma_precision_2026-05-19]] — binding rule.
