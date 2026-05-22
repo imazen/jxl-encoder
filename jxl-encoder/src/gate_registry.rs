@@ -194,6 +194,12 @@ jxl_encoder_macros::strategy_def! {
             // Safe here because every other divergence is also flipped
             // (no W44-29..W44-172 calibration to throw off).
             cfl_newton_libjxl_parity = true,
+            // W44-197 Candidate B: enable LS-only Pass-2 at e=5/6 to
+            // match libjxl `fast=true` dispatch. Pairs with the
+            // `cfl_two_pass_min_effort = EffortGate::Libjxl` widening
+            // above so Libjxl strategy ships TRUE Pass-2 parity (LS at
+            // e=5/6, Newton at e>=7) — closes W44-189 D12 audit finding.
+            cfl_pass2_ls_at_low_effort = true,
         },
 
         /// LeanFaster — drops the heavy per-image content gates
@@ -239,6 +245,9 @@ jxl_encoder_macros::strategy_def! {
             // cost-model calibration which is incompatible with the
             // libjxl-parity Newton (W44-183 measured 25/27 regressions).
             cfl_newton_libjxl_parity = false,
+            // W44-197: same cost-model-calibration concern — LeanFaster
+            // keeps the e=5/6 no-Pass-2 baseline.
+            cfl_pass2_ls_at_low_effort = false,
         },
 
         /// Zenjxl — production-shipping bundle. Every field matches
@@ -276,6 +285,9 @@ jxl_encoder_macros::strategy_def! {
             adaptive_buttloop_iters_narrow = true,
             terminal_class_exclude = true,
             cfl_newton_libjxl_parity = false,
+            // W44-197: Zenjxl preserves cost-model calibration; no LS-only
+            // Pass-2 at e=5/6.
+            cfl_pass2_ls_at_low_effort = false,
         },
 
         /// Aggressive — currently equivalent to `Zenjxl` after
@@ -308,6 +320,9 @@ jxl_encoder_macros::strategy_def! {
             adaptive_buttloop_iters_narrow = true,
             terminal_class_exclude = true,
             cfl_newton_libjxl_parity = false,
+            // W44-197: Aggressive mirrors Zenjxl on Section C calibration
+            // concerns.
+            cfl_pass2_ls_at_low_effort = false,
         },
     }
 
@@ -504,6 +519,44 @@ jxl_encoder_macros::strategy_def! {
             env_hook = "JXL_W44_184_FORCE_LIBJXL_NEWTON" => parse_bool_one,
             divergence_section = "C",
             divergence_row_ref = "W44-184/W44-195 CfL Newton libjxl parity (Pass-1 dispatch + Pass-2 internals, eps=100, max_iters=20)",
+        },
+
+        /// **W44-197 Candidate B**: enable CfL Pass-2 with LS-only solver
+        /// (libjxl `fast=true`) at effort ∈ {5, 6} on top of the existing
+        /// `cfl_two_pass: effort >= 7` Newton path.
+        ///
+        /// libjxl `enc_heuristics.cc:1190-1194` runs Pass-2 at
+        /// `speed_tier <= kHare` (effort >= 5) with
+        /// `fast = (speed_tier >= kWombat)` (true at e=5/6 → LS, false at
+        /// e>=7 → Newton). We currently gate Pass-2 entirely at effort >= 7
+        /// (W44-102 RULED OUT widening with FULL Newton because the
+        /// downstream cost model was calibrated against no-Pass-2 at e=5/6
+        /// and Newton-widened Pass-2 introduced 2 SSIM2 regressions).
+        ///
+        /// W44-197 ships the DIFFERENT mechanism (LS-only at e=5/6) gated
+        /// to `EncoderStrategy::Libjxl` only. The full Newton widening
+        /// remains opt-in via `EffortGate::Libjxl` on
+        /// `cfl_two_pass_min_effort`; the LS-only widening adds a SEPARATE
+        /// axis. Both gates can fire simultaneously under `Libjxl`
+        /// (cfl_two_pass=true at e>=5 AND cfl_pass2_ls_at_low_effort=true
+        /// at e=5/6 → Newton at e>=7, but at e=5/6 we use LS regardless of
+        /// Newton because the speed_tier dispatch in libjxl picks LS there).
+        ///
+        /// Default (Zenjxl/Aggressive/LeanFaster): `false` — preserves
+        /// W44-29..W44-172 calibration; Pass-2 stays off at e=5/6.
+        /// Libjxl strategy: `true` — fires LS-only Pass-2 at e=5/6 to
+        /// match libjxl `fast=true` dispatch bit-for-bit.
+        ///
+        /// Section C (CfL parity, like W44-184/W44-195).
+        ///
+        /// See `docs/LIBJXL_DIVERGENCES.md` Section A (the `cfl_two_pass`
+        /// effort-gate row already documents the Newton widening RULED
+        /// OUT by W44-102; this gate is the orthogonal LS-only widening
+        /// recommended by W44-189 D12 as a candidate the W44-102
+        /// measurement did NOT cover).
+        cfl_pass2_ls_at_low_effort: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W44-197 CfL Pass-2 LS-only at e=5/6 (libjxl fast=true)",
         },
     }
 }
@@ -765,6 +818,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         row_ref: "W44-184/W44-195 CfL Newton libjxl parity (Pass-1 dispatch + Pass-2 internals, eps=100, max_iters=20)",
         raw: __CUSTOM_DIVERGENCE_CFL_NEWTON_LIBJXL_PARITY,
     },
+    // Section C — W44-197 CfL Pass-2 LS-only at e=5/6
+    DivergenceEntry {
+        gate_name: "cfl_pass2_ls_at_low_effort",
+        section: "C",
+        row_ref: "W44-197 CfL Pass-2 LS-only at e=5/6 (libjxl fast=true)",
+        raw: __CUSTOM_DIVERGENCE_CFL_PASS2_LS_AT_LOW_EFFORT,
+    },
 ];
 
 /// Internal helper: count of declared divergence entries. Used by the
@@ -834,6 +894,7 @@ mod tests {
         assert!(d.terminal_class_exclude);
         // Section C
         assert!(!d.cfl_newton_libjxl_parity);
+        assert!(!d.cfl_pass2_ls_at_low_effort);
     }
 
     /// Sanity: `CustomResolvedImprovements::default()` matches
@@ -867,6 +928,8 @@ mod tests {
         assert_ne!(l.block_ctx_map_15_cluster, z.block_ctx_map_15_cluster);
         assert_ne!(l.content_class_auto_classify, z.content_class_auto_classify);
         assert_ne!(l.cfl_newton_libjxl_parity, z.cfl_newton_libjxl_parity);
+        // W44-197: Libjxl flips Pass-2 LS-only at e=5/6 on; Zenjxl off.
+        assert_ne!(l.cfl_pass2_ls_at_low_effort, z.cfl_pass2_ls_at_low_effort);
     }
 
     /// Aggressive == Zenjxl (forward-compat slot per W44-124).

@@ -1363,6 +1363,17 @@ name = "w44_184_libjxl_cfl_newton_ab"
 path = "examples/w44_184_libjxl_cfl_newton_ab.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-197 Candidate B + C perf + A/B measurement. Replaces per-coefficient
+# `q / qw_x[i]` with `q * inv_qw_x[i]` (Candidate C, byte-identical) and
+# wires the new `cfl_pass2_ls_at_low_effort` gate on `Libjxl` strategy
+# (Candidate B). This bench measures wall-time win from Candidate C on
+# Zenjxl e7 and documents that Libjxl bytes are unchanged for Candidate
+# B (since the Section A widening already covers the same dispatch path).
+[[example]]
+name = "w44_197_cfl_pass2_perf"
+path = "examples/w44_197_cfl_pass2_perf.rs"
+required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
+
 [[example]]
 name = "w44_20_codec_wiki_coverage"
 path = "examples/w44_20_codec_wiki_coverage.rs"

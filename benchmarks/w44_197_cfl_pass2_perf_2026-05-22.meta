@@ -1,0 +1,183 @@
+W44-197 CfL Pass-2 Candidates B + C
+====================================
+
+git_commit: (will be filled in commit message)
+host: AMD Ryzen 9 7950X (Linux 6.6.114.1-microsoft-standard-WSL2 / WSL2)
+date: 2026-05-22 (UTC)
+release_build: yes (best-of-5 wall ms)
+features: __expert parallel butteraugli-loop ssim2-loop
+
+Setup
+-----
+
+W44-197 ships two CfL improvements identified in the W44-189 deep audit:
+
+- **Candidate B (Pass-2 LS-only at e=5/6 under Libjxl strategy)**:
+  closes W44-189 D12 finding. Adds gate `cfl_pass2_ls_at_low_effort: bool`
+  on `EncoderImprovementsCustom` + `ResolvedImprovements` + `EffortProfile`.
+  `EncoderStrategy::Libjxl` sets it to `true`; all other strategies stay at
+  `false` to preserve W44-29..W44-172 cost-model calibration.
+
+  Wired at the Pass-2 dispatch site (`vardct/encoder.rs:~4920`):
+    ```
+    let effort_in_5_6 = self.effort == 5 || self.effort == 6;
+    let pass2_fires = self.profile.cfl_two_pass
+        || (self.profile.cfl_pass2_ls_at_low_effort && effort_in_5_6);
+    let pass2_use_newton = self.profile.cfl_two_pass && self.profile.cfl_newton;
+    ```
+
+  Under `EncoderStrategy::Libjxl` the existing Section A `cfl_two_pass_min_effort
+  = EffortGate::Libjxl` widening already fires Pass-2 at e>=5 (via
+  `apply_section_a_effort_gates`), and `cfl_newton: effort >= 7` evaluates
+  false at e=5/6 — so Pass-2 LS at e=5/6 was ALREADY happening on Libjxl
+  before W44-197. The new gate is structurally redundant on `Libjxl` but
+  provides an orthogonal axis for `Custom` strategy callers who want
+  Pass-2 LS at e=5/6 WITHOUT the full Newton-at-e>=7 widening (Section A's
+  EffortGate widens BOTH the e>=5 dispatch AND the Pass-2 inclusion).
+
+- **Candidate C (perf, byte-identical default)**: closes W44-189 D13
+  finding. Replaces per-coefficient `q / qw_x[i]` division in
+  `refine_cfl_map` (`vardct/chroma_from_luma.rs:~597`) with multiplication
+  `q * inv_qw_x[i]` where `inv_qw_x` is the existing precomputed reciprocal
+  table from `quant::dequant_weights(strategy, channel)`. Mirrors libjxl
+  `enc_chroma_from_luma.cc:337-343` which uses
+  `Mul(qv, Load(df, qm_x + i))` with `qm_x = dequant.InvMatrix(...)`.
+
+  Eliminates two f32 divisions per coefficient on the Pass-2 hot loop.
+  At i8 CfL output granularity the multiplication form rounds to the same
+  i8 multiplier as the division form on realistic inputs (a/b vs a*(1/b)
+  differ at the last 1-2 bits of `qqm_x`; the dot products integrate over
+  many coefficients and the final bias_and_quantize clamps to i8).
+
+Per-cell results
+----------------
+
+(Best-of-5 wall ms on 512x512 photos + ~1500x1500 codec_wiki screenshot.
+Note: small-image perf signal is noisy; the W44-189 D13 prediction was
+5-10 ms saved per 12 MP at e>=7. At 0.25 MP the predicted saving is
+~0.1-0.2 ms, well within measurement noise here.)
+
+Candidate C (Zenjxl e7):
+  cid22_1025469  d=1.0   38086 B   63.9 ms
+  cid22_1025469  d=3.0   16615 B   74.1 ms
+  cid22_1418519  d=1.0   21675 B   65.2 ms
+  cid22_1418519  d=3.0   11007 B   76.3 ms
+  gb82_codec_wiki d=1.0 106910 B  938.6 ms
+  gb82_codec_wiki d=3.0  73339 B  928.4 ms
+
+Candidate B (Libjxl strategy at e5/e6):
+  cid22_1025469  e5 d=1.0  38843 B  52.5 ms
+  cid22_1025469  e6 d=1.0  37998 B  55.4 ms
+  cid22_1418519  e5 d=1.0  21853 B  49.4 ms
+  cid22_1418519  e6 d=1.0  21685 B  50.2 ms
+  gb82_codec_wiki e5 d=1.0 135311 B 648.2 ms
+  gb82_codec_wiki e6 d=1.0 133407 B 694.2 ms
+
+Acceptance gates
+----------------
+
+(a) Build PASS
+(b) `cargo test --lib --features '__expert __internals butteraugli-loop ssim2-loop parallel'`:
+    1450/1450 PASS (count unchanged — W44-197 adds 1 unit test in
+    gate_registry::tests::default_matches_zenjxl_byte_for_byte for the new
+    field but it's part of the same `assert!()` body).
+(c) Hash-locks 36/36 Zenjxl BYTE-IDENTICAL (Candidate C is pure perf at i8
+    output granularity; Candidate B is gated to `Libjxl`-only).
+(d) Libjxl byte-lock 4/4 BYTE-IDENTICAL (Cand B is structurally redundant
+    on `Libjxl` per Section A widening; no cell shifts).
+(e) `cargo test --test divergence_table_drift --features '__internals'`:
+    7/7 PASS. `EXPECTED_DIVERGENCE_GATE_COUNT: 24 → 25`. New row added to
+    `docs/LIBJXL_DIVERGENCES.md` Section C for `cfl_pass2_ls_at_low_effort`
+    + perf row for D13 division→multiplication; D12 KNOWN-GAP row updated
+    to RESOLVED via opt-in (W44-197).
+(f) `cargo test --test strategy_libjxl_hash_locks` + multi-decoder
+    roundtrip via jxl-rs + jxl-oxide on `libjxl_noise_rgb_48x48_d1`:
+    5/5 + 1 ignored PASS. The Libjxl strategy output decodes cleanly on
+    both decoders. (djxl validation deferred — test gated on binary
+    availability; previous W44-195/196 djxl validation confirmed cleanly.)
+(g) Candidate C perf measured: see TSV above. Wall-time delta on the
+    sampled cells is within measurement noise at 0.25 MP — confirmed
+    byte-identity at i8 output granularity is the load-bearing acceptance
+    criterion. The per-coefficient division→multiplication replacement is
+    a textbook perf win on modern f32 pipes (LLVM may auto-vectorize the
+    multiplication form better, since the constant qw[i] is now loaded
+    from a precomputed table and can sit in a register lane).
+(h) Candidate B EV measured: bytes UNCHANGED on Libjxl byte-lock (Section A
+    widening already fires the same dispatch path). Custom-strategy callers
+    can now opt into the orthogonal Pass-2-LS-at-e=5/6 capability without
+    flipping the Section A EffortGate.
+
+What this RULES OUT (binding for future agents)
+-----------------------------------------------
+
+1. **DO NOT default-flip `cfl_pass2_ls_at_low_effort` on Zenjxl**. Same
+   W44-29..W44-172 calibration concern as the W44-184 Pass-2 Newton flip
+   (W44-183 measured 25/27 regressions). The default path stays at NO
+   Pass-2 at e=5/6.
+
+2. **DO NOT cite "FMA precision" for any byte difference here** (per user
+   directive 2026-05-19 "it is never fma precision"). The Cand C change
+   replaces division with multiplication using pre-computed reciprocals;
+   the resulting f32 differs at the last 1-2 bits but rounds to the same
+   i8 CfL output on realistic data.
+
+3. **DO NOT remove the Pass-2 OOB-safety clamp** (`take = num_coeffs.min(buf_remaining)`).
+   It's defensive against synthetic ac_strategy injections (e.g., GPU
+   strat-search). W44-189 D14.
+
+4. **DO NOT widen the Candidate B gate to non-Libjxl strategies without
+   first re-running the W44-102 measurement with LS-only Pass-2 at e=5/6**.
+   W44-102 ruled out FULL Newton widening; LS-only widening at e=5/6 was
+   NEVER measured at the default path. The risk profile is unknown.
+
+5. **DO NOT extend the W44-197 gate to the animation Pass-2 path
+   (`bitstream.rs:1947`)**. Animation Zenjxl bitstream stability is
+   the priority; W44-195 conservative pattern applies. Callers needing
+   Pass-2 LS at e=5/6 in animation should opt in explicitly via Custom
+   strategy + override (or future per-frame discriminator).
+
+Follow-on candidates (NOT this chunk)
+-------------------------------------
+
+1. **Audit whether downstream W44-29..W44-172 cost-model calibration can
+   be re-tuned for libjxl Pass-2 LS at e=5/6 at the default path.** Would
+   close the W44-189 D12 row entirely (no opt-in needed). Multi-week
+   effort tied to the same W44-184 cost-model retune candidate.
+
+2. **Extend the W44-197 gate to animation paths** if a future per-frame
+   discriminator surfaces a need. ~1 day chunk + animation hash-lock
+   regen.
+
+3. **W44-189 D9 AC metadata tree topology** (Section C, LOW-EV). At
+   e>=8 (where libjxl doesn't pre-set TreeKind → falls back to `kLearn`
+   for AC metadata), we could learn the tree adaptively. Probably not
+   worth a chunk per W44-189 audit; the bytes are small (~50 B per DC
+   group max).
+
+Cross-references
+----------------
+
+- W44-189 (`memory/w44_189_cfl_deep_audit_2026-05-22.md`): READ-ONLY
+  audit that identified D12 (Pass-2 LS-only at e=5/6) and D13
+  (division→multiplication) as W44-190 candidates B + C.
+- W44-184 (`memory/w44_184_libjxl_strategy_only_cfl_newton_2026-05-22.md`):
+  shipped the Pass-2 Newton internals flip. W44-197 mirrors the
+  per-strategy gate pattern.
+- W44-195 (`memory/w44_195_pass1_libjxl_parity_2026-05-22.md`): shipped
+  Pass-1 dispatch flip. W44-197 follows the same `apply_section_c_cfl_newton_libjxl_parity`
+  plumbing convention.
+- W44-102 (`memory/w44_102_cfl_two_pass_e5_ruled_out_2026-05-19.md`):
+  measured FULL Newton widening to e>=5; RULED OUT. W44-197 ships the
+  ORTHOGONAL LS-only widening — a different mechanism the W44-102
+  measurement did NOT cover.
+- libjxl source: `enc_heuristics.cc:1190-1194` (Pass-2 dispatch with
+  `fast = speed_tier >= kWombat`); `enc_chroma_from_luma.cc:337-343`
+  (the `Mul(qv, Load(df, qm_x + i))` form Candidate C ports).
+- Our source: `jxl-encoder/src/vardct/chroma_from_luma.rs:496-654`
+  (`refine_cfl_map`); `jxl-encoder/src/vardct/encoder.rs:~4900-4940`
+  (Pass-2 dispatch site); `jxl-encoder/src/gate_registry.rs:507-540`
+  (gate macro entry); `jxl-encoder/src/effort.rs:695-715`
+  (`EffortProfile.cfl_pass2_ls_at_low_effort` field + lossy/lossless
+  defaults); `jxl-encoder/src/effort.rs:~2050`
+  (`apply_section_c_cfl_newton_libjxl_parity` wired through the new
+  field).

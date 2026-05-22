@@ -692,6 +692,29 @@ pub struct EffortProfile {
     /// strategy preset.
     pub cfl_newton_libjxl_parity: bool,
 
+    /// **W44-197 Candidate B**: enable CfL Pass-2 with LS-only solver at
+    /// effort ∈ {5, 6} (matches libjxl `fast=true` dispatch at
+    /// `speed_tier >= kWombat`). When `true` AND effort is 5 or 6, the
+    /// encoder fires `refine_cfl_map(..., use_newton=false, ...)` AT
+    /// THOSE EFFORTS in addition to the existing `cfl_two_pass: effort >=
+    /// 7` Newton path.
+    ///
+    /// Default `false` — Zenjxl / Aggressive / LeanFaster keep the
+    /// no-Pass-2-at-e=5/6 baseline that W44-29..W44-172 cost-model
+    /// calibration was tuned against (W44-102 measured that adding FULL
+    /// Newton Pass-2 at e=5/6 regressed 2 cells beyond the -0.3 SSIM2
+    /// budget — the same calibration concern applies to LS-only Pass-2,
+    /// possibly with smaller magnitude). Set to `true` by
+    /// [`Self::apply_section_c_cfl_newton_libjxl_parity`] when
+    /// [`crate::api::ResolvedImprovements::cfl_pass2_ls_at_low_effort`]
+    /// is `true` — i.e. only under [`crate::api::EncoderStrategy::Libjxl`].
+    ///
+    /// W44-189 D12 audit identified this as the MED-HIGH-EV unsalvaged
+    /// CfL Pass-2 item (W44-102 measured FULL Newton; LS-only at e=5/6
+    /// was NEVER measured). Mirrors libjxl `enc_heuristics.cc:1190-1194`
+    /// where the dispatch shape is `if e>=5 { ComputeTile(..., fast = e<=6, ...) }`.
+    pub cfl_pass2_ls_at_low_effort: bool,
+
     // ─── Quantization ────────────────────────────────────────────────────
     /// Use adaptive (content-dependent) quant field via InitialQuantField.
     /// When false (effort < 5), uses flat quant field = 0.79/distance.
@@ -1244,6 +1267,11 @@ impl EffortProfile {
             // `apply_section_c_cfl_newton_libjxl_parity` when
             // `EncoderStrategy::Libjxl` is selected.
             cfl_newton_libjxl_parity: false,
+            // W44-197: default `false` — only flipped by
+            // `apply_section_c_cfl_newton_libjxl_parity` when
+            // `EncoderStrategy::Libjxl` is selected. See field doc on
+            // `EffortProfile::cfl_pass2_ls_at_low_effort`.
+            cfl_pass2_ls_at_low_effort: false,
 
             // ── Quantization ──
             use_adaptive_quant: effort >= 5,
@@ -1386,6 +1414,9 @@ impl EffortProfile {
             // W44-184: default `false` (Lossless mode never runs Newton
             // anyway since `cfl_newton: false`).
             cfl_newton_libjxl_parity: false,
+            // W44-197: default `false` — Lossless mode never runs Pass-2
+            // anyway since `cfl_two_pass: false`.
+            cfl_pass2_ls_at_low_effort: false,
 
             // ── Quantization (N/A for lossless) ──
             use_adaptive_quant: false,
@@ -2042,6 +2073,17 @@ impl EffortProfile {
         // want to clobber them.
         if resolved.cfl_newton_libjxl_parity {
             self.cfl_newton_libjxl_parity = true;
+        }
+        // W44-197: same NO-OP semantic. Only `EncoderStrategy::Libjxl`
+        // sets `cfl_pass2_ls_at_low_effort = true` in its
+        // `ResolvedImprovements`. When `true`, the encoder fires
+        // `refine_cfl_map` with `use_newton=false` at effort ∈ {5, 6}
+        // in addition to the existing `cfl_two_pass: effort >= 7`
+        // Newton path. See field docstring on
+        // `EffortProfile::cfl_pass2_ls_at_low_effort` + W44-189 D12
+        // audit memo.
+        if resolved.cfl_pass2_ls_at_low_effort {
+            self.cfl_pass2_ls_at_low_effort = true;
         }
     }
 

@@ -4117,8 +4117,7 @@ impl VarDctEncoder {
         // See `docs/LIBJXL_DIVERGENCES.md` Section C and the W44-184 commit
         // memo for the Pass-2 half of the same `cfl_newton_libjxl_parity`
         // dispatch.
-        let pass1_use_newton =
-            self.profile.cfl_newton && self.profile.cfl_newton_libjxl_parity;
+        let pass1_use_newton = self.profile.cfl_newton && self.profile.cfl_newton_libjxl_parity;
         let mut cfl_map = if self.cfl_enabled {
             compute_cfl_map(
                 &xyb_x,
@@ -4896,7 +4895,33 @@ impl VarDctEncoder {
         // → :1250-1252 (FindBestQuantizer/buttloop). See drift investigation
         // 2026-05-15 (chunk-3) — running CfL pass 2 AFTER the buttloop caused
         // the buttloop to converge on a target the decoder never delivered.
-        if self.profile.cfl_two_pass && self.cfl_enabled {
+        // **W44-197 Candidate B**: extend the Pass-2 gate with an LS-only
+        // path at effort ∈ {5, 6} when `cfl_pass2_ls_at_low_effort` is true
+        // (Libjxl strategy only). This matches libjxl
+        // `enc_heuristics.cc:1190-1194` which runs Pass-2 at
+        // `speed_tier <= kHare` (effort >= 5) with
+        // `fast = (speed_tier >= kWombat)` — i.e. LS at e=5/6, Newton at
+        // e>=7. The existing `cfl_two_pass: effort >= 7` Newton gate stays
+        // as-is; the new gate fires ONLY when the strategy resolves it
+        // true AND the effort is in {5, 6}.
+        //
+        // Why not just widen `cfl_two_pass: effort >= 5`? Because W44-102
+        // (`c1d699e2`) measured FULL Newton widening (which is what that
+        // gate does) and ruled it out — 2 cells exceeded the -0.3 SSIM2
+        // budget. W44-197 ships the ORTHOGONAL LS-only widening
+        // (recommended by W44-189 D12 audit) which was NEVER measured at
+        // a default path until now. Production default stays OFF; only
+        // Libjxl strategy flips it ON to deliver TRUE libjxl Pass-2
+        // dispatch parity.
+        let effort_in_5_6 = self.effort == 5 || self.effort == 6;
+        let pass2_fires =
+            self.profile.cfl_two_pass || (self.profile.cfl_pass2_ls_at_low_effort && effort_in_5_6);
+        // When ONLY the W44-197 LS gate fires (i.e. cfl_two_pass is
+        // false at e=5/6), use LS (use_newton=false) — matches libjxl
+        // `fast=true`. When the standard cfl_two_pass gate fires
+        // (effort >= 7), use the existing Newton path (cfl_newton).
+        let pass2_use_newton = self.profile.cfl_two_pass && self.profile.cfl_newton;
+        if pass2_fires && self.cfl_enabled {
             super::chroma_from_luma::refine_cfl_map(
                 &mut cfl_map,
                 &xyb_x,
@@ -4908,7 +4933,7 @@ impl VarDctEncoder {
                 &ac_strategy,
                 &quant_field,
                 params.scale,
-                self.profile.cfl_newton,
+                pass2_use_newton,
                 self.profile.cfl_newton_eps,
                 self.profile.cfl_newton_max_iters,
                 // W44-184: pass 2 IS the cfl-Newton site that the
@@ -4916,7 +4941,8 @@ impl VarDctEncoder {
                 // `true` (under EncoderStrategy::Libjxl), the bit-exact
                 // libjxl Newton params (eps=100, iters=20, x0=0, no LS
                 // fallback) drive the iteration regardless of the
-                // eps/iters values supplied above.
+                // eps/iters values supplied above. Ignored when
+                // `pass2_use_newton == false` (LS path doesn't read it).
                 self.profile.cfl_newton_libjxl_parity,
             );
         }
