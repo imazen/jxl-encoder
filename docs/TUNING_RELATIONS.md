@@ -113,6 +113,29 @@ or the default. Production builds without the feature pay ZERO cost —
 the runtime layer compiles to nothing and consumers read the const
 directly so the compiler inlines.
 
+### Downstream consumers (W44-212+)
+
+| consumer | path | reads | enables `tuning-override`? |
+|---|---|---|---|
+| Production encoder (`cjxl-rs`, library API) | every source file | each const through its source-of-truth path | NO — production binaries pay zero cost for the runtime layer |
+| W44-212 [`zenjxl-tuning-runner`](../zenjxl-tuning-runner/) | per-cell sweep worker | calls `tuning::runtime::install_from_postcard_file(<blob>)` once per cell, emits `params_blob` Parquet column | YES (`--features tuning-override`) |
+
+**Scaffolding caveat (W44-212)**: as of W44-211, the runtime override
+layer is wired through `install_from_postcard_file` but NO production
+encoder consumer reads `tuning::runtime::get(...)`. The W44-212 runner
+captures the postcard `params_blob` in its Parquet output for join
+purposes, but the actual encoder bytes are produced from the
+source-of-truth consts. Per-cell variance for W44-211 fields
+(`smart_zenjxl_photo_mask_p25_min`,
+`screenshot_median_threshold`,
+`buttloop_default_screenshot_qf_seed_scale`,
+`buttloop_qf_seed_scale_min_distance`,
+`adaptive_quant_screenshot_qf_seed_scale_e5_e6`,
+`adaptive_quant_screenshot_qf_seed_scale_e7`)
+in the runner's Parquet sweep does NOT influence encoded bytes until
+W44-213+ wires the consumer sites. Other tuning axes (effort,
+distance, strategy, image features) ARE actively varied by W44-212.
+
 ---
 
 ## Section 1: Const inventory
