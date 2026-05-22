@@ -129,3 +129,146 @@ pub fn dump_block(
     _qac: u8,
 ) {
 }
+
+// ── W44-201 per-position coefficient VALUE dump ──────────────────────
+//
+// Localizes the W44-200 finding: DCT32x32 Y custom scan order emits 308
+// nonzero Lehmer codes in Zenjxl mode but only 5 in Libjxl mode on the
+// 3637739 cell. Same `used_orders=0x5d` bitmask. The divergence MUST be
+// in per-position zero patterns within DCT32x32 Y blocks (or whichever
+// strategy/channel triggers the dump). This dump captures the raw
+// quantized coefficient values per (bx, by, position) for whichever
+// (strategy_wire, channel) combinations the caller wants.
+//
+// Set `JXL_W44_201_COEFFS_DUMP=<dir>` and optionally
+// `JXL_W44_201_COEFFS_STRATEGY=<wire>` (default: 5 = DCT32X32) and
+// `JXL_W44_201_COEFFS_CHANNEL=<c>` (default: 1 = Y). One TSV per
+// caller-invocation is overwritten; zero overhead when env var unset.
+
+#[cfg(feature = "std")]
+static COEFFS_STATE: Mutex<Option<CoeffsDumpState>> = Mutex::new(None);
+
+#[cfg(feature = "std")]
+struct CoeffsDumpState {
+    file: std::io::BufWriter<std::fs::File>,
+    rows: usize,
+    dir: std::path::PathBuf,
+    target_strategy_wire: u8,
+    target_channel: u8,
+}
+
+#[cfg(feature = "std")]
+fn coeffs_dump_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("JXL_W44_201_COEFFS_DUMP").map(std::path::PathBuf::from)
+}
+
+#[cfg(feature = "std")]
+fn coeffs_target_strategy_wire() -> u8 {
+    std::env::var("JXL_W44_201_COEFFS_STRATEGY")
+        .ok()
+        .and_then(|s| s.parse::<u8>().ok())
+        .unwrap_or(5) // DCT32X32 wire code
+}
+
+#[cfg(feature = "std")]
+fn coeffs_target_channel() -> u8 {
+    std::env::var("JXL_W44_201_COEFFS_CHANNEL")
+        .ok()
+        .and_then(|s| s.parse::<u8>().ok())
+        .unwrap_or(1) // Y channel
+}
+
+#[cfg(feature = "std")]
+fn ensure_coeffs_initialized(dir: &std::path::Path) {
+    let mut guard = COEFFS_STATE.lock().unwrap();
+    if let Some(state) = guard.as_ref() {
+        if state.dir == dir {
+            return;
+        }
+    }
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let path = dir.join("per_position_coeffs.tsv");
+    let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+    else {
+        return;
+    };
+    use std::io::Write;
+    let mut bw = std::io::BufWriter::new(file);
+    let target_strategy_wire = coeffs_target_strategy_wire();
+    let target_channel = coeffs_target_channel();
+    let _ = writeln!(
+        bw,
+        "# W44-201 per-position coefficient dump (strategy_wire={}, channel={})",
+        target_strategy_wire, target_channel
+    );
+    let _ = writeln!(bw, "bx\tby\tposition\tvalue");
+    *guard = Some(CoeffsDumpState {
+        file: bw,
+        rows: 0,
+        dir: dir.to_path_buf(),
+        target_strategy_wire,
+        target_channel,
+    });
+}
+
+/// Append per-position coefficients for a block, but ONLY if the
+/// (raw_strategy, channel) match the env-configured target.
+///
+/// `full_block` is the assembled coefficient block (size = coverage *
+/// 64). `raw_strategy` is the INTERNAL Rust enum (DCT32X32 = 4); the
+/// dump converts to the libjxl-wire code for env comparison.
+#[cfg(feature = "std")]
+pub fn dump_coeffs(
+    bx: usize,
+    by: usize,
+    raw_strategy: u8,
+    channel: usize,
+    full_block: &[i32],
+) {
+    let Some(dir) = coeffs_dump_dir() else {
+        return;
+    };
+    ensure_coeffs_initialized(&dir);
+    let mut guard = COEFFS_STATE.lock().unwrap();
+    let Some(state) = guard.as_mut() else { return };
+    let strategy_wire = STRATEGY_CODE_LUT[raw_strategy as usize];
+    if strategy_wire != state.target_strategy_wire {
+        return;
+    }
+    if channel as u8 != state.target_channel {
+        return;
+    }
+    use std::io::Write;
+    // Emit a sentinel row per block first so we can count blocks even when
+    // all coefficients are zero (which DOES happen at high distances on
+    // very smooth tiles). pos=-1, value=0 marks "block exists".
+    let _ = writeln!(state.file, "{}\t{}\t-1\t0", bx, by);
+    state.rows += 1;
+    for (pos, &v) in full_block.iter().enumerate() {
+        if v != 0 {
+            // Only dump non-zero positions to keep file size manageable.
+            // For zero-vs-nonzero comparison, that's all we need; the
+            // post-processor reconstructs the per-position zero count.
+            let _ = writeln!(state.file, "{}\t{}\t{}\t{}", bx, by, pos, v);
+            state.rows += 1;
+        }
+    }
+    let _ = state.file.flush();
+}
+
+#[cfg(not(feature = "std"))]
+#[inline(always)]
+pub fn dump_coeffs(
+    _bx: usize,
+    _by: usize,
+    _raw_strategy: u8,
+    _channel: usize,
+    _full_block: &[i32],
+) {
+}

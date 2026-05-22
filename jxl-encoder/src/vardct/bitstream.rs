@@ -489,6 +489,12 @@ fn tokenize_ac_group(
                     &full_block_scratch[..size]
                 };
 
+                // W44-201: env-gated per-position coefficient dump (zero
+                // overhead when JXL_W44_201_COEFFS_DUMP unset). Localizes
+                // the W44-200 DCT32x32 Y scan-order divergence by capturing
+                // which positions hold non-zero values per first-block.
+                super::w44_76_dump::dump_coeffs(bx, by, raw_strategy, c, full_block);
+
                 if !pass_config.is_progressive() {
                     // Single-pass: use original nzeros and collect directly
                     let nz = raw_nzeros[c][by][bx];
@@ -2764,7 +2770,14 @@ impl VarDctEncoder {
                     xsize_blocks,
                     ysize_blocks,
                 );
-                let (orders, used) = super::coeff_order::compute_custom_orders(&zero_counts);
+                let (orders, used) = super::coeff_order::compute_custom_orders_with_options(
+                    &zero_counts,
+                    // W44-201: skip buckets 3 (DCT32x32) and 6
+                    // (DCT32x16/DCT16x32) from cost-benefit admission when
+                    // the Zenjxl-default gate is on. Libjxl strategy keeps
+                    // the gate off to preserve libjxl-parity behaviour.
+                    self.resolved_improvements.coeff_orders_disable_large_buckets,
+                );
                 if used != 0 {
                     (Some(orders), used)
                 } else {

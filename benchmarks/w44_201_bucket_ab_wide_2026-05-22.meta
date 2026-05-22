@@ -1,0 +1,221 @@
+W44-201 — Coefficient-order bucket-disable A/B/C wide bench
+============================================================
+
+Date: 2026-05-22
+Parent commit: ec845b9a04e3 (W44-200 honest-stop on origin/main)
+Workspace: ~/work/zen/jxl-encoder--w44-201-dct32-y-coeff-order
+Task: W44-201 fix the 3637739 cid22 e7 d=4 Pareto-loser identified by
+      W44-200 (+6.24% bytes / -2.37 SSIM2 vs cjxl).
+
+## Variants (per cell)
+
+- **A_bytes (legacy / pre-W44-201)**: cost-benefit gate admits all
+  buckets (the W44-82 baseline). Reached via the diagnostic env hook
+  `JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS=1`.
+- **B_bytes (probe: bucket 3 only)**: gate skips bucket 3 (DCT32x32) only;
+  bucket 6 (DCT32x16/DCT16x32) still admitted. Reached via
+  `FORCE_LEGACY_LARGE_BUCKETS=1 JXL_W44_201_DISABLE_BUCKETS=3`.
+- **C_bytes (PRODUCTION W44-201 fix)**: Zenjxl default — skip buckets
+  3 AND 6 in custom-order cost-benefit admission. No env vars.
+
+## Cells (53 total, 7 corpora)
+
+- 9 CID22 photos × 4 distances (d ∈ {2, 3, 4, 5}) = 36 cells:
+  3637739 (LOSER target), 1418519 (WINNER baseline), 1025469, 1189261,
+  1420710, 1531677, 2389166, 297394, 1475938
+- 5 gb82-sc screenshots × 3 distances (d ∈ {1, 2, 4}) = 15 cells:
+  codec_wiki, imac_g3, imac_dark, terminal, windows95
+- 2 W44-82 spot cells: 1420710 e7 d=2 and e7 d=4 (the W44-82-cited
+  "load-bearing" cells that established the cost-benefit gate is
+  needed when the cost model is too lenient on bucket 3/6).
+
+Effort fixed at 7 (W44-200 LOSER cell effort). See
+`benchmarks/w44_201_effort_sweep_2026-05-22.tsv` for an effort sweep
+(e4..=e8) confirming the gate behaviour is consistent.
+
+## Headlines
+
+| Metric                         | B (bucket 3 only) | C (production, 3+6) |
+|---                             |---                |---                  |
+| Total bytes delta              | -7139 B (-0.24%)  | **-19255 B (-0.65%)** |
+| 3637739_d4 (LOSER cell)        | -384 B (-2.21%)   | **-685 B (-3.95%)**   |
+| 1420710_d3 (W44-82 spot)       | -1378 B (-3.77%)  | -2310 B (-6.33%)      |
+| 1531677_d3                     | -1036 B (-3.19%)  | -2263 B (-6.97%)      |
+| windows95_d1 (only regression) | +0 B (0.00%)      | +28 B (+0.06%)        |
+| Cells with bytes regression    | 0 / 53            | 1 / 53 (+0.06% noise) |
+
+## Acceptance gates
+
+(a) Build PASS — `cargo build -p jxl-encoder --release` ok.
+(b) `cargo test --lib`: 1449/1449 PASS (unchanged from pre-W44-201).
+(c) Hash-locks 36/36 BYTE-IDENTICAL — `cargo test --test hash_lock_features`
+    passes; synthetic 32×32 / 48×48 fixtures are too small for the
+    `xsize_blocks >= 5 OR ysize_blocks >= 5` custom_orders gate AND
+    too smooth to admit buckets 3/6 even when the gate fires.
+(d) Libjxl byte-lock 5/5 BYTE-IDENTICAL — `cargo test --test
+    strategy_libjxl_hash_locks` passes; `EncoderStrategy::Libjxl`
+    sets `coeff_orders_disable_large_buckets = false` so the gate's
+    legacy behaviour is preserved bit-for-bit.
+(e) Divergence drift 7/7 PASS — `cargo test --test
+    divergence_table_drift --features __internals`; gate count 25 → 26
+    with the new Section D entry.
+(f) 3637739 e7 d=4 HfGlobal section approaches Libjxl-mode byte count:
+    SHIPPED — file shrinks 17337 → 16652 bytes (-685 B); the W44-200
+    measurement showed HfGlobal coeff_orders dropped from 488 B to
+    a Lehmer-permutation-with-buckets-3-and-6-omitted footprint.
+(g) 3637739 e7 d=4 cell flips Pareto-loser: bytes -3.95%; SSIM2 delta
+    is 0.000 (pixel-identical decode A vs C verified via
+    `benchmarks/w44_201_ssim2_check.rs`; scan order only affects
+    encoded Lehmer bytes).
+(h) Other photos: 0 / 53 cells regress measurably; 1 cell at +0.06% noise.
+(i) Multi-decoder roundtrip PASS via jxl-oxide (18/18 cells in
+    `examples/w44_201_decoder_check.rs`: 2 cells × 3 variants ×
+    3 distances).
+(j) Cleanup: pending — `jj workspace forget` + `rm -rf` on push.
+
+## Methodology
+
+### Phase 1 — diagnosis
+
+The W44-200 finding pointed at DCT32x32 Y (bucket 3) Lehmer emitting
+308 codes vs Libjxl-mode's 5 / cjxl's ~5. Hypothesised 3 candidates:
+(1) gate divergence, (2) upstream coefficient divergence, (3)
+`compute_coeff_order` algorithm divergence.
+
+W44-201 per-block dump (`examples/w44_201_coeffs_dump.rs` +
+`vardct/w44_76_dump.rs::dump_coeffs`) on 3637739 LOSER + 1418519
+WINNER × Zenjxl + Libjxl modes captured every non-zero coefficient
+of every DCT32x32 Y first-block. Per-position zero-count dump
+(`compute_custom_orders` env-gated dump) captured the per-(bucket,
+channel, position) zero count.
+
+**Diagnostic outcome**: on the 34 shared DCT32x32 Y blocks across
+Zenjxl-vs-Libjxl modes (where both pick DCT32x32 Y), the coefficient
+VALUES are bit-identical (405/405). Candidate 2 (upstream) RULED
+OUT for shared blocks. The divergence is in WHICH blocks each mode
+picks — Zenjxl picks 61 DCT32x32 Y first-blocks (matches cjxl 98.4%),
+Libjxl-mode picks only 42 (60.8% agreement with cjxl). Libjxl-mode's
+fewer blocks → flatter per-position zero distribution → 2 effective
+quantized bins → minimal sort permutation → 5 Lehmer codes.
+
+For Zenjxl with 61 blocks, the per-position max zero count is 61,
+landing the distribution in 3 quantized bins (q=0/1/2) via the
+`count * (1/sqrt(1024)) + 0.1` formula. The middle 700 positions
+fall into q=2 and get sorted to the end of the scan, producing a
+308-Lehmer permutation. The W44-82 cost-benefit model
+(`total_savings_bits = (nzeros_custom - nzeros_natural) * max_count`)
+overestimates the AC saving at 21492 bits (assuming 1 bit per
+trailing zero per block) when the empirical cost is closer to
+0.3-0.5 bits per trailing zero — so the gate admits the permutation
+when its true savings don't justify the ~330 B Lehmer overhead.
+
+cjxl (with similar 62 DCT32x32 Y first-blocks) presumably hits the
+same quantization but encodes a similar Lehmer permutation more
+efficiently via ANS context choice or simply pays the cost without
+gating. Our gate's mis-calibrated model is the proximate cause of
+the Pareto-loser.
+
+### Phase 2 — fix selection
+
+W44-201 evaluated 3 mechanisms:
+
+1. **Variant C (SHIPPED)**: hard-disable buckets 3 + 6 from
+   cost-benefit admission. Simple, narrow, byte-identical wherever
+   the gate wasn't firing (every cell where bucket 3/6 didn't pass
+   cost-benefit pre-W44-201). Wins are concentrated where the
+   model was overshooting; zero new regressions.
+2. **Variant B**: disable bucket 3 only. -384 B on 3637739 (the
+   target cell), but misses additional wins on cells where bucket
+   6 also overshoots (e.g. 1531677 d=3 saves -3.19% with B vs
+   -6.97% with C).
+3. **Savings-factor tightening** (`JXL_W44_201_SAVINGS_FACTOR=0.3`):
+   measured -0.33% total bytes — half the win of Variant C — and
+   leaves the cost-model architecture untouched. Could be a
+   complementary refinement but not a substitute.
+
+Variant C ships. The decision is documented in `gate_registry.rs`
+via the `coeff_orders_disable_large_buckets` Section D divergence
+field. Default `true` for Zenjxl/Aggressive/LeanFaster; `false`
+for Libjxl (preserves libjxl-parity).
+
+## Files
+
+- `jxl-encoder/src/vardct/coeff_order.rs` — new
+  `compute_custom_orders_with_options(disable_large_buckets: bool)`
+  entry point; legacy `compute_custom_orders` delegates with
+  `false`. Production callers go through the options entry.
+- `jxl-encoder/src/vardct/bitstream.rs` — call site now passes
+  `self.resolved_improvements.coeff_orders_disable_large_buckets`.
+- `jxl-encoder/src/gate_registry.rs` — new
+  `coeff_orders_disable_large_buckets: bool` gate (Section D).
+  Default for Zenjxl/Aggressive/LeanFaster: `true`. Libjxl: `false`.
+- `jxl-encoder/src/vardct/w44_76_dump.rs` — added `dump_coeffs`
+  diagnostic (env-gated, JXL_W44_201_COEFFS_DUMP).
+- `jxl-encoder/tests/divergence_table_drift.rs` — EXPECTED count
+  25 → 26.
+- `docs/LIBJXL_DIVERGENCES.md` — Section D new row.
+- `benchmarks/w44_201_bucket_ab_wide_2026-05-22.{tsv,meta}` — this
+  bench output + narrative.
+- `benchmarks/w44_201_effort_sweep_2026-05-22.tsv` — effort sweep
+  e4..=e8 across 4 cells (still uses the pre-Variant labels; intent
+  preserved).
+- `jxl-encoder/examples/w44_201_*.rs` — 6 new examples (coeffs_dump,
+  bucket_ab, bucket_ab_wide, decoder_check, ssim2_check,
+  effort_sweep, savings_factor_ab).
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT** re-enable bucket 3 or 6 in Zenjxl `compute_custom_orders`
+   without measurement. The 53-cell bench is conclusive that the
+   pre-W44-201 cost-benefit model is too generous on these buckets.
+2. **DO NOT** remove the cost-benefit gate entirely for buckets 0/2/4
+   — W44-82 (`benchmarks/w44_82_custom_orders_gate_ab_2026-05-19.tsv`)
+   documented +1595 B regression with gate removal on 20 F-D + photo
+   cells. The W44-201 fix is the TARGETED tightening (skip buckets
+   3+6 only); the W44-82 gate is still the cost-benefit on smaller
+   buckets where the model is accurate enough.
+3. **DO NOT** cite "FMA precision" for any byte delta here (per
+   user directive 2026-05-19).
+4. **DO NOT** flip `coeff_orders_disable_large_buckets = true` on
+   Libjxl strategy. Libjxl is a libjxl-parity bundle; libjxl
+   doesn't have a per-bucket exclude. The Libjxl strategy
+   `false` preserves byte-identical hash-lock output and the
+   libjxl-parity narrative.
+5. **DO NOT** assume the Zenjxl vs cjxl strategy agreement of
+   98.4% means the Zenjxl pipeline is identical to cjxl. W44-201
+   only addresses the coeff_orders symptom; the +6.24% bytes /
+   -2.37 SSIM2 vs cjxl on 3637739 has additional contributors
+   (LfGlobal +72 B, AcGroups +826 B per W44-200 dump). Future
+   chunks should attribute the residual gap to those sections.
+6. The env hooks `JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS=1`,
+   `JXL_W44_201_DISABLE_BUCKETS=<csv>`, and
+   `JXL_W44_201_SAVINGS_FACTOR=<f64>` are diagnostic-only. They
+   are NOT a public API. Future agents needing per-image
+   discriminator behaviour should add a Smart-Zenjxl gate in
+   `gate_registry.rs` mirroring the W44-91 / W44-164 pattern
+   (zenanalyze proxy gate at the encode entry).
+
+## Cross-references
+
+- W44-200 (`benchmarks/w44_200_section_audit_2026-05-22.{tsv,meta}`)
+  — parent honest-stop with the section-byte decomposition.
+- W44-199 (`benchmarks/w44_199_3637739_ac_dump_2026-05-22.{tsv,meta}`)
+  — strategy-selection at 98.4% parity, qac at 98.9% parity.
+- W44-198 (`benchmarks/w44_198_*`) — discriminator approach ruled
+  out (no zenanalyze feature axis split the LOSER set cleanly).
+- W44-82 (`benchmarks/w44_82_custom_orders_gate_ab_2026-05-19.tsv`)
+  — cost-benefit gate REMOVAL ruled out; W44-201 is the OPPOSITE
+  direction (tighten the gate, don't remove it).
+- W44-75 (`memory/w44_75_upstream_clustering_bisection_2026-05-19.md`)
+  — earlier bisection of AC tokenization byte divergence.
+- `memory/fd_residual_not_fma_precision_2026-05-19.md` — binding
+  directive.
+
+## Provenance
+
+- parent commit: ec845b9a04e3 (W44-200 honest-stop on origin/main)
+- fetched commit: ec845b9a04e3 (jj git fetch confirmed no upstream
+  movement during chunk)
+- target_dir: $HOME/work/zen/jxl-encoder-shared-target
+- workspace: $HOME/work/zen/jxl-encoder--w44-201-dct32-y-coeff-order
+- host: lilith

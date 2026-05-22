@@ -2075,5 +2075,51 @@ name = "w44_200_section_audit"
 path = "examples/w44_200_section_audit.rs"
 required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 
+# W44-201 per-position coefficient VALUE dump on 3637739 LOSER + 1418519
+# WINNER, Zenjxl vs Libjxl mode. Localizes the W44-200 DCT32x32 Y scan-order
+# divergence by capturing which positions hold non-zero values in each mode.
+# Output: /tmp/w44_201_dumps/{cell}_{mode}/per_position_coeffs.tsv
+[[example]]
+name = "w44_201_coeffs_dump"
+path = "examples/w44_201_coeffs_dump.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-201 Phase 2 A/B bench: disable specific buckets in custom coeff orders
+# and measure bytes on 9 CID22 photos including the 3637739 LOSER.
+[[example]]
+name = "w44_201_bucket_ab"
+path = "examples/w44_201_bucket_ab.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-201 decoder roundtrip — confirm bucket-disable variants decode cleanly.
+[[example]]
+name = "w44_201_decoder_check"
+path = "examples/w44_201_decoder_check.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-201 wide A/B: bucket-disable across photos + screenshots + W44-82 spot cells
+[[example]]
+name = "w44_201_bucket_ab_wide"
+path = "examples/w44_201_bucket_ab_wide.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-201 effort sweep: A/B/C across e4..=e8 for 4 representative cells
+[[example]]
+name = "w44_201_effort_sweep"
+path = "examples/w44_201_effort_sweep.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-201 quality verification: pixel-identical decoding A vs C
+[[example]]
+name = "w44_201_ssim2_check"
+path = "examples/w44_201_ssim2_check.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-201 savings factor A/B: bisect the cost-benefit gate's savings multiplier
+[[example]]
+name = "w44_201_savings_factor_ab"
+path = "examples/w44_201_savings_factor_ab.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
 [lints]
 workspace = true
