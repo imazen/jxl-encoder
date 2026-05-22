@@ -55,10 +55,12 @@ RANGES = {
     "adaptive_quant_screenshot_qf_seed_scale_e7": (1.5, 5.5),     # default 3
 }
 
-# Sweep grid (per-image)
-EFFORTS = [5, 6, 7, 8]
-DISTANCES = [0.5, 1.0, 2.0, 3.0, 4.0, 5.0]
-STRATEGIES = ["zenjxl"]  # libjxl/aggressive are spot-checks not full grid
+# Sweep grid (per-image). W44-216 expanded: e9 added so we cover the
+# full effort range RuntimeTuning fields care about; strategies include
+# libjxl so the MLP can learn the cross-strategy delta surface.
+EFFORTS = [5, 6, 7, 8, 9]
+DISTANCES = [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0]
+STRATEGIES = ["zenjxl", "libjxl"]
 
 
 def latin_hypercube(n_samples: int, n_dims: int, seed: int) -> list[list[float]]:
