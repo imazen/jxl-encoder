@@ -2129,5 +2129,28 @@ name = "w44_203_oom_repro"
 path = "examples/w44_203_oom_repro.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-205 Phase 1 probe: tests buckets 2 (DCT16x16) + 4 (DCT16x8/DCT8x16)
+# disable on top of W44-201's buckets 3+6 via the existing
+# `JXL_W44_201_DISABLE_BUCKETS` env hook. 4 variants A/B/C/D across 22 cells
+# (16 LOSER + 5 PROTECT + 6 SCRN). Phase-1 measurement — no production code.
+[[example]]
+name = "w44_205_bucket_probe"
+path = "examples/w44_205_bucket_probe.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-205 Phase 3 production validation: paired A/B between forced-legacy
+# (`JXL_W44_205_FORCE_LEGACY_MEDIUM_BUCKETS=1`) and production default.
+# Confirms the production wire matches the Phase-1 probe results.
+[[example]]
+name = "w44_205_production_ab"
+path = "examples/w44_205_production_ab.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-205 jxl-oxide smoke check: confirms bitstream is decodable.
+[[example]]
+name = "w44_205_decoder_check"
+path = "examples/w44_205_decoder_check.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
 [lints]
 workspace = true

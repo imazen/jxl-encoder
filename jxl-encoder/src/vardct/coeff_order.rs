@@ -343,26 +343,39 @@ pub fn count_zero_coefficients(
 /// - `orders[bucket][channel]` is the custom order (positions sorted by ascending zero count)
 /// - `used_orders` is a bitmask of buckets that have non-default orders
 ///
-/// Calls [`compute_custom_orders_with_options`] with the default
-/// `disable_large_buckets=false` for backwards-compatible behaviour.
-/// Production callers go through the options variant with
-/// `resolved_improvements.coeff_orders_disable_large_buckets`.
+/// Calls [`compute_custom_orders_with_options`] with both bucket-disable
+/// gates `false` for backwards-compatible behaviour. Production callers
+/// go through the options variant with
+/// `resolved_improvements.coeff_orders_disable_{large,medium}_buckets`.
 pub fn compute_custom_orders(zero_counts: &[Vec<Vec<i64>>]) -> (Vec<Vec<Vec<u32>>>, u32) {
-    compute_custom_orders_with_options(zero_counts, false)
+    compute_custom_orders_with_options(zero_counts, false, false)
 }
 
-/// W44-201: extended entry that exposes the
-/// `coeff_orders_disable_large_buckets` gate. When `disable_large_buckets`
-/// is `true`, the cost-benefit admission loop skips buckets 3 (DCT32x32)
-/// and 6 (DCT32x16/DCT16x32) — the W44-200 measurement on `3637739.png`
-/// e7 d=4 traced the +6.24% bytes Pareto-loser to a 488 B
-/// `coeff_orders` overspend dominated by DCT32x32 Y emitting 308
-/// nonzero Lehmer codes (vs cjxl's ~5). See
+/// W44-201 + W44-205: extended entry that exposes the
+/// `coeff_orders_disable_large_buckets` + `coeff_orders_disable_medium_buckets`
+/// gates.
+///
+/// When `disable_large_buckets` (W44-201) is `true`, the cost-benefit
+/// admission loop skips buckets 3 (DCT32x32) and 6 (DCT32x16/DCT16x32) —
+/// the W44-200 measurement on `3637739.png` e7 d=4 traced the +6.24%
+/// bytes Pareto-loser to a 488 B `coeff_orders` overspend dominated by
+/// DCT32x32 Y emitting 308 nonzero Lehmer codes (vs cjxl's ~5). See
 /// [`crate::gate_registry::CustomEncoderImprovements.coeff_orders_disable_large_buckets`]
 /// for the bench narrative.
+///
+/// When `disable_medium_buckets` (W44-205) is `true`, additionally
+/// skips buckets 2 (DCT16x16) and 4 (DCT16x8/DCT8x16). W44-204 audit
+/// ranked this as the #1 EV follow-on to W44-201 because the W44-82
+/// cost-model overshoot is per-bucket and the same root-cause
+/// over-admission applies to medium buckets when per-position zero
+/// counts span 3+ quantized bins. W44-205 Phase-1 probe
+/// (`benchmarks/w44_205_bucket_probe_2026-05-22.tsv`, 27 cells)
+/// measured -0.97% total bytes vs W44-201 baseline with ZERO PROTECT
+/// regressions; worst regression +0.14% noise on `SCRN_terminal_d4.0`.
 pub fn compute_custom_orders_with_options(
     zero_counts: &[Vec<Vec<i64>>],
     disable_large_buckets: bool,
+    disable_medium_buckets: bool,
 ) -> (Vec<Vec<Vec<u32>>>, u32) {
     let mut orders: Vec<Vec<Vec<u32>>> = (0..NUM_ORDER_BUCKETS)
         .map(|_| vec![Vec::new(); 3])
@@ -469,11 +482,7 @@ pub fn compute_custom_orders_with_options(
                 .append(true)
                 .open(&dump_path)
             {
-                let _ = writeln!(
-                    f,
-                    "# bucket={} cx={} cy={} size={}",
-                    bucket, cx, cy, size
-                );
+                let _ = writeln!(f, "# bucket={} cx={} cy={} size={}", bucket, cx, cy, size);
                 let _ = writeln!(f, "# bucket\tchannel\tpos\tcustom_order\tnatural_order");
                 for c in 0..3usize {
                     let order = &orders[bucket][c];
@@ -481,11 +490,8 @@ pub fn compute_custom_orders_with_options(
                         continue;
                     }
                     for i in 0..size {
-                        let _ = writeln!(
-                            f,
-                            "{}\t{}\t{}\t{}\t{}",
-                            bucket, c, i, order[i], natural[i]
-                        );
+                        let _ =
+                            writeln!(f, "{}\t{}\t{}\t{}\t{}", bucket, c, i, order[i], natural[i]);
                     }
                 }
                 let _ = f.flush();
@@ -605,22 +611,42 @@ pub fn compute_custom_orders_with_options(
             // where cjxl emits ~5. Variant C in the 53-cell bench:
             // -0.65% total bytes, zero regressions.
             //
-            // Env hook `JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS=1` restores
-            // the pre-W44-201 behaviour (always admit buckets 3+6) for
-            // diagnostic A/B benching from outside the production path.
+            // W44-205 production gate: same mechanism extended to medium
+            // buckets 2 (DCT16x16) and 4 (DCT16x8/DCT8x16). Phase-1
+            // probe (`benchmarks/w44_205_bucket_probe_2026-05-22.tsv`)
+            // measured -0.97% total bytes vs W44-201 baseline (variant
+            // B = additionally disable buckets 2+4 via env hook), ZERO
+            // PROTECT regressions, worst noise +0.14% on
+            // `SCRN_terminal_d4.0`.
+            //
+            // Env hooks:
+            // - `JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS=1` restores the
+            //   pre-W44-201 behaviour (always admit buckets 3+6) for
+            //   diagnostic A/B benching from outside the production path.
+            // - `JXL_W44_205_FORCE_LEGACY_MEDIUM_BUCKETS=1` restores the
+            //   pre-W44-205 behaviour (always admit buckets 2+4) for
+            //   the same purpose.
             #[cfg(feature = "std")]
-            let disable_resolved = if std::env::var_os(
-                "JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS",
-            )
-            .is_some()
-            {
-                false
-            } else {
-                disable_large_buckets
-            };
+            let disable_large_resolved =
+                if std::env::var_os("JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS").is_some() {
+                    false
+                } else {
+                    disable_large_buckets
+                };
             #[cfg(not(feature = "std"))]
-            let disable_resolved = disable_large_buckets;
-            let skip_bucket = disable_resolved && (bucket == 3 || bucket == 6);
+            let disable_large_resolved = disable_large_buckets;
+            #[cfg(feature = "std")]
+            let disable_medium_resolved =
+                if std::env::var_os("JXL_W44_205_FORCE_LEGACY_MEDIUM_BUCKETS").is_some() {
+                    false
+                } else {
+                    disable_medium_buckets
+                };
+            #[cfg(not(feature = "std"))]
+            let disable_medium_resolved = disable_medium_buckets;
+            let skip_large = disable_large_resolved && (bucket == 3 || bucket == 6);
+            let skip_medium = disable_medium_resolved && (bucket == 2 || bucket == 4);
+            let skip_bucket = skip_large || skip_medium;
 
             if !skip_bucket && total_savings_bits * savings_factor > total_lehmer_cost {
                 used_orders |= 1 << bucket;
@@ -633,6 +659,7 @@ pub fn compute_custom_orders_with_options(
     // disables bucket 3 (DCT32x32). Applied AFTER the cost-benefit gate
     // so the bench can A/B-compare against the production gate. The
     // production `disable_large_buckets` does the same for buckets {3, 6}
+    // (W44-201) and `disable_medium_buckets` for buckets {2, 4} (W44-205)
     // — this env var is retained as a diagnostic to test other bucket
     // combinations.
     #[cfg(feature = "std")]
@@ -694,8 +721,7 @@ pub fn tokenize_coeff_orders(orders: &[Vec<Vec<u32>>], used_orders: u32) -> Vec<
     // W44-200: env-var-gated per-bucket per-channel token-count dump.
     // `JXL_W44_200_COEFFORDER_DUMP=<file>` captures end-llf (token count
     // proportional to Lehmer code length) per bucket+channel.
-    let w44_200_co_dump: Option<String> =
-        std::env::var("JXL_W44_200_COEFFORDER_DUMP").ok();
+    let w44_200_co_dump: Option<String> = std::env::var("JXL_W44_200_COEFFORDER_DUMP").ok();
     let w44_200_label: String =
         std::env::var("JXL_W44_200_LABEL").unwrap_or_else(|_| "unlabeled".into());
 
@@ -749,8 +775,7 @@ pub fn tokenize_coeff_orders(orders: &[Vec<Vec<u32>>], used_orders: u32) -> Vec<
                              nonzero_lehmer_count"
                         );
                     }
-                    let nonzero =
-                        lehmer[llf..end].iter().filter(|&&v| v != 0).count();
+                    let nonzero = lehmer[llf..end].iter().filter(|&&v| v != 0).count();
                     let _ = writeln!(
                         f,
                         "{label}\t{b}\t{c}\t{sz}\t{lf}\t{e}\t{lc}\t{nz}",
