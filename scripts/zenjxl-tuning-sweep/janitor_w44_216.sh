@@ -50,6 +50,35 @@ while true; do
     loop_count=$((loop_count + 1))
     now_s=$(date -u +%s)
 
+    # 0. Rescue any chunks-in-flight whose age >= 600s. Workers either
+    # crashed or stopped without re-queueing; move them back to chunks/.
+    if (( loop_count % 2 == 1 )); then  # every other loop (10 min)
+        STALE_CHUNKS=$(AWS_PROFILE=r2 aws s3 ls --endpoint-url="$R2_ENDPOINT" \
+            "s3://$SWEEP_BUCKET/$SWEEP_ID/chunks-in-flight/" 2>/dev/null | python3 -c "
+import sys, datetime
+now = datetime.datetime.utcnow()
+for line in sys.stdin:
+    parts = line.split()
+    if len(parts) < 4: continue
+    ts = parts[0] + ' ' + parts[1]
+    try:
+        dt = datetime.datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
+        age = (now - dt).total_seconds()
+        if age >= 600:
+            print(parts[3])
+    except Exception:
+        pass
+" || echo "")
+        if [[ -n "$STALE_CHUNKS" ]]; then
+            for c in $STALE_CHUNKS; do
+                echo "[janitor] RESCUING stale in-flight chunk $c"
+                AWS_PROFILE=r2 aws s3 mv --endpoint-url="$R2_ENDPOINT" \
+                    "s3://$SWEEP_BUCKET/$SWEEP_ID/chunks-in-flight/$c" \
+                    "s3://$SWEEP_BUCKET/$SWEEP_ID/chunks/$c" 2>&1 | tail -1
+            done
+        fi
+    fi
+
     # 1. Fetch instances
     INSTANCES_JSON=$(vastai show instances --raw 2>&1 | grep -v "^DEPRECATED" || echo "[]")
     if ! echo "$INSTANCES_JSON" | python3 -c "import json,sys; json.loads(sys.stdin.read())" 2>/dev/null; then
