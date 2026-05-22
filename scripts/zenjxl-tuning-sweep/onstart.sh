@@ -47,6 +47,16 @@ WORKER_ID="${W44_212_WORKER_ID:-$(hostname)-$$}"
 
 echo "[w44-212-onstart] sweep=$SWEEP_ID worker=$WORKER_ID bucket=$SWEEP_BUCKET starting loop"
 
+# W44-216: graceful exit on chunks-empty.
+#
+# If we see EMPTY_POLL_BUDGET consecutive empty polls (no chunks
+# available AND no successful claim), we treat the sweep as drained
+# and exit cleanly. Before exiting, write a worker-done marker so the
+# host-side janitor knows this pod's safe to stop.
+EMPTY_POLL_BUDGET="${W44_216_EMPTY_POLL_BUDGET:-2}"
+EMPTY_POLL_SLEEP_S="${W44_216_EMPTY_POLL_SLEEP_S:-30}"
+empty_polls=0
+
 # Each "chunk" is a JSON file containing N cell specs. The launcher
 # generates them ahead of time and writes them under
 # s3://<bucket>/<sweep_id>/<chunk_prefix>/<chunk_id>.json. The worker
@@ -59,8 +69,18 @@ while true; do
            | shuf \
            | head -32) || LIST=""
     if [[ -z "$LIST" ]]; then
-        echo "[w44-212-onstart] no chunks available; sleeping 60s"
-        sleep 60
+        empty_polls=$((empty_polls + 1))
+        echo "[w44-212-onstart] no chunks available (empty_poll=${empty_polls}/${EMPTY_POLL_BUDGET})"
+        if (( empty_polls >= EMPTY_POLL_BUDGET )); then
+            echo "[w44-216-onstart] queue drained (${empty_polls} consecutive empty polls); writing worker-done marker"
+            DONE_MARKER="s3://$SWEEP_BUCKET/$SWEEP_ID/worker-done/${WORKER_ID}.txt"
+            echo "drained: $(date -u +%FT%TZ) host=$(hostname) worker=$WORKER_ID reason=chunks-empty" \
+                | s5cmd pipe "$DONE_MARKER" 2>&1 || \
+                echo "[w44-216-onstart] WARN: failed to write done marker $DONE_MARKER"
+            echo "[w44-216-onstart] exiting cleanly"
+            exit 0
+        fi
+        sleep "$EMPTY_POLL_SLEEP_S"
         continue
     fi
     CLAIMED=""
@@ -75,10 +95,22 @@ while true; do
         fi
     done
     if [[ -z "$CLAIMED" ]]; then
-        echo "[w44-212-onstart] failed to claim any chunk; sleeping 30s"
-        sleep 30
+        empty_polls=$((empty_polls + 1))
+        echo "[w44-212-onstart] failed to claim any chunk (empty_poll=${empty_polls}/${EMPTY_POLL_BUDGET}); sleeping ${EMPTY_POLL_SLEEP_S}s"
+        if (( empty_polls >= EMPTY_POLL_BUDGET )); then
+            echo "[w44-216-onstart] claim contention drained; writing worker-done marker"
+            DONE_MARKER="s3://$SWEEP_BUCKET/$SWEEP_ID/worker-done/${WORKER_ID}.txt"
+            echo "drained: $(date -u +%FT%TZ) host=$(hostname) worker=$WORKER_ID reason=claim-contention" \
+                | s5cmd pipe "$DONE_MARKER" 2>&1 || \
+                echo "[w44-216-onstart] WARN: failed to write done marker $DONE_MARKER"
+            echo "[w44-216-onstart] exiting cleanly"
+            exit 0
+        fi
+        sleep "$EMPTY_POLL_SLEEP_S"
         continue
     fi
+    # Reset the empty-poll counter — we got real work.
+    empty_polls=0
     echo "[w44-212-onstart] claimed chunk=$CLAIMED"
     # Pull chunk JSON down and hand to worker.sh
     LOCAL=/sweep-state/$CLAIMED
