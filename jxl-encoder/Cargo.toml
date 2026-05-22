@@ -2121,5 +2121,13 @@ name = "w44_201_savings_factor_ab"
 path = "examples/w44_201_savings_factor_ab.rs"
 required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
 
+# W44-203 OOM repro: single-cell encode that prints the actual error type
+# (no FAILED swallowing). Used by the bisect to confirm whether a commit
+# OOMs or not on the regressed cells from the W44-202 sweep.
+[[example]]
+name = "w44_203_oom_repro"
+path = "examples/w44_203_oom_repro.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
 [lints]
 workspace = true

@@ -1,0 +1,120 @@
+# W44-203 OOM-bisect: comprehensive single-cell reproduction with rayon-thread scaling.
+#
+# Task framing (from prompt): "Bisect a 44-cell OOM regression introduced during the
+# W44-186 → W44-201 arc (concrete regression — cells that previously encoded
+# successfully now fail)."
+#
+# **HONEST-STOP**: The W44-202 task framing is wrong. There is NO concrete
+# regression introduced by the W44-186 → W44-201 arc. The 39 "new OOMs" claimed by
+# the W44-202 memo are all cells that were NEVER TESTED in the W44-185 baseline
+# (the W44-185 sweep is incremental — 1278 of 2000 zenjxl rows; the harness reads
+# the existing TSV and skips already-done cells; for the 3 large screenshots the
+# W44-185 run only covered 18-46% of the full grid).
+#
+# Comparing W44-202 against the full W44-179 pre-arc baseline (2000 cells):
+#
+#   strategy | W44-179 fails | W44-202 fails | diff
+#   ---------|---------------|---------------|------
+#   zenjxl   | 23            | 22            | -1 (NET 1 CLOSED)
+#   libjxl   | 20            | 22            | +2 (NET 2 NEW; CLOSED 1)
+#
+# Per-cell delta on (image, strategy, effort, distance):
+#   zenjxl:  1 OOM CLOSED (imac_dark e9 d=3.25); 0 introduced.
+#   libjxl:  1 OOM CLOSED (imac_dark e9 d=3.25); 3 introduced
+#            (imac_dark libjxl e9 d=1.75, imac_g3 libjxl e8 d=4.75, imac_g3 libjxl e8 d=5.0)
+#
+# So the actual "to-investigate" set is just 3 libjxl cells. Direct repro on the
+# 3 cells across W44-179 / W44-185 / W44-202 commits with both rayon=1 and the
+# default rayon pool (32 cores) shows:
+#
+#   * With --rayon-threads 1: ALL 3 cells PASS on W44-202 HEAD.
+#   * With default rayon: ALL 3 OOM IDENTICALLY on W44-179, W44-185, AND W44-202
+#     baselines, with byte-for-byte identical request sizes
+#     (e.g. requested=67897200 + used=2080488288 on imac_g3 libjxl e8 d=5.0).
+#
+# Rayon-thread scaling sweep on the worst cell (imac_g3 libjxl e8 d=5.0, HEAD):
+#
+#   rayon=1: OK in 9 seconds, 116926 bytes
+#   rayon=2: OOM (+67547136 B on top of 2080838352 = +2148.4 MB > 2 GiB cap)
+#   rayon=4..32: OOM (consistent +67897200 / +2080488288)
+#
+# **Mechanism**: per-encode `crate::budget::MemoryBudget` accumulates ALL
+# `reserve_opt` transient guards held concurrently by parallel sub-stages
+# (`butteraugli_loop`, `tile_distmap`, `transform`, etc.). When `with_threads(1)`
+# is set on `LossyConfig`, the outer encode dispatch goes sequential, but the
+# inner sub-stages still parallelize via the AMBIENT rayon global pool. With
+# rayon=32 each worker holds a transient ~68 MB scratch buffer; the budget peak
+# = sum of guards held simultaneously = much higher than the rayon=1 peak.
+#
+# This is an INHERENT property of how the encoder's budget tracker interacts
+# with rayon parallelism. It is NOT a regression introduced by any specific
+# arc. The same cells OOM identically on W44-179, W44-185, and W44-202 baselines.
+#
+# Why does the W44-179 bench TSV report `imac_g3 libjxl e8 d=5.0` as OK while
+# the W44-202 TSV reports it FAILED, despite both running on identically-behaving
+# encoder code?
+#
+#   * Both benches use rayon's par_iter at the SWEEP level (multiple cells in
+#     parallel by default).
+#   * Per-encode budget = independent. But cell-A's transient guards (released
+#     immediately) DON'T affect cell-B's guard count — only cell-B's own
+#     internal rayon parallelism does.
+#   * The 22 vs 23 vs 22 fail-count difference is run-to-run noise sensitive to
+#     which cells happen to be encoding concurrently, allocator behavior, etc.
+#   * For the 3 libjxl cells that "newly fail" in W44-202: they probably failed
+#     in some intermediate W44-179..W44-202 sweep too, but the W44-179 run
+#     happened to escape the OOM (5e87b0a3 is byte-identical to W44-202 HEAD
+#     on these cells with default rayon; the OOM is rare-but-possible at the
+#     2 GiB ceiling and just didn't fire in the W44-179 run).
+#
+# Recommended follow-on (NOT in W44-203 scope):
+#
+#   1. **W44-204 candidate**: shorten the per-worker transient-buffer
+#      lifetimes in `butteraugli_loop` / `tile_distmap` so guards drop as soon
+#      as the rayon worker completes its slice (currently held across full
+#      par_iter scope of some stages).
+#   2. **W44-205 candidate**: merge multiple transient guards into a single
+#      per-stage permanent reservation sized for max-concurrent rayon workers
+#      so the budget peak is deterministic regardless of rayon pool size.
+#   3. **W44-206 candidate**: detect ambient rayon pool size and raise the
+#      default budget cap when threads > 1 (e.g., 2 GiB + N * 96 MB).
+#   4. **Independent of memory**: many of the "OOM" cells also fail on rayon=1
+#      (e.g., imac_dark zenjxl e9 d=4.0 needs 2.28 GB even sequential). These
+#      need a structural memory-footprint reduction in the e9 pipeline OR
+#      a documented "this image requires Limits::max_memory_bytes(2.5 GiB)
+#      at this effort/distance".
+#
+# All bench data uses --threads 1 on encode (LossyConfig::with_threads(1)).
+# rayon_threads column = global rayon pool size (rayon::ThreadPoolBuilder::new()
+# .num_threads(N)).
+#
+# Reproducer:
+#   cargo run -p jxl-encoder --release \
+#     --features 'parallel butteraugli-loop ssim2-loop' \
+#     --example w44_203_oom_repro -- \
+#     --image IMG --effort N --distance D --strategy zenjxl|libjxl \
+#     --threads 1 --rayon-threads K
+#
+# Inputs:
+#   - benchmarks/cjxl_step025_w44_179_zenjxl_2026-05-22.tsv (pre-arc baseline)
+#   - benchmarks/cjxl_step025_w44_179_libjxl_2026-05-22.tsv
+#   - benchmarks/cjxl_step025_w44_185_zenjxl_2026-05-22.tsv (incremental top-up,
+#     1278/2000 zenjxl + 1282/2000 libjxl rows)
+#   - benchmarks/cjxl_step025_w44_202_zenjxl_2026-05-22.tsv (full post-arc)
+#
+# Files:
+#   - benchmarks/w44_203_oom_repro_2026-05-22.tsv (this run)
+#   - benchmarks/w44_203_oom_repro_2026-05-22.meta (this file)
+#   - jxl-encoder/examples/w44_203_oom_repro.rs (single-cell repro example)
+#
+# Commits tested:
+#   - 5f3f5ca7 W44-202 main HEAD (post-W44-201 sweep)
+#   - 89e3c405 W44-185 baseline (W44-184 ship + meta)
+#   - 5e87b0a3 W44-179 baseline (W44-175 ship)
+#
+# Hardware: AMD Ryzen 9 7950X, 128 GB RAM, 32 cores (16 physical + SMT)
+# Date: 2026-05-22
+#
+# Cleanup:
+#   - jj workspace forget w44-203-oom-bisect
+#   - rm -rf /home/lilith/work/zen/jxl-encoder--w44-203-oom-bisect

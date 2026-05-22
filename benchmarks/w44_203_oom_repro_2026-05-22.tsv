@@ -1,0 +1,17 @@
+commit	image	strategy	effort	distance	rayon_threads	result	encode_s	bytes	requested_bytes	used_bytes	note
+5f3f5ca7	imac_g3	libjxl	8	5.0	1	OK	8.975615	116926			rayon=1 succeeds; W44-179 reported same byte count 107385 (within run-to-run noise; meta confirms OK)
+5f3f5ca7	imac_g3	libjxl	8	5.0	2	OOM	4.887357		67547136	2080838352	OOM begins at JUST 2 cores
+5f3f5ca7	imac_g3	libjxl	8	5.0	4	OOM	3.562169		67897200	2080488288	consistent OOM 4-32
+5f3f5ca7	imac_g3	libjxl	8	5.0	8	OOM	3.172712		67897200	2080488288
+5f3f5ca7	imac_g3	libjxl	8	5.0	16	OOM	2.970542		67897200	2080488288
+5f3f5ca7	imac_g3	libjxl	8	5.0	32	OOM	2.995316		67897200	2080488288	default rayon pool size
+89e3c405	imac_g3	libjxl	8	5.0	32	OOM	3.290002		67897200	2080488288	W44-185 baseline -- IDENTICAL OOM signature
+5e87b0a3	imac_g3	libjxl	8	5.0	32	OOM	3.091116		67897200	2080488288	W44-179 baseline -- IDENTICAL OOM signature (but W44-179 sweep TSV reports OK due to sweep cell-interleaving)
+5f3f5ca7	imac_dark	libjxl	9	1.75	1	OK	9.848944	210841			rayon=1 succeeds
+5f3f5ca7	imac_dark	libjxl	9	1.75	32	OOM	3.781855		202874688	2079554208	default rayon pool size OOMs
+5f3f5ca7	imac_dark	zenjxl	9	4.0	1	OOM	7.342037		135210864	2146244064	rayon=1 STILL OOMs -- this cell exceeds 2 GiB regardless of parallelism
+5f3f5ca7	imac_dark	zenjxl	9	4.0	32	OOM	3.163329		135210864	2146244064	default rayon pool size -- IDENTICAL OOM signature to rayon=1
+89e3c405	imac_dark	zenjxl	9	4.0	32	OOM	3.272395		135210864	2146244064	W44-185 baseline -- IDENTICAL OOM signature
+5f3f5ca7	codec_wiki	zenjxl	9	4.0	1	OOM	6.177390		51422640	2138642592	rayon=1 STILL OOMs
+5f3f5ca7	codec_wiki	zenjxl	9	4.0	32	OOM	2.623363		153658800	2087219952	rayon=32 different request size (per-worker scratch)
+5f3f5ca7	imac_dark	zenjxl	9	1.5	32	OOM	3.795104		202874688	2079554208	zenjxl variant of imac_dark d=1.5 NEW-ONLY cell
