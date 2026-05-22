@@ -51,6 +51,7 @@ section(s) before commit.
 - [Section 5: Shipped-win patterns](#section-5-shipped-win-patterns) — repeatable templates
 - [Section 6: Cross-arc connections](#section-6-cross-arc-connections) — how W44-N corrected earlier W44-M
 - [Section 7: DO NOT (binding for future agents)](#section-7-do-not-binding-for-future-agents)
+- [Section 8: Empirical coupling structure (W44-217)](#section-8-empirical-coupling-structure-w44-217) — pointer to `PARAM_INTERACTIONS.md`
 
 ---
 
@@ -1072,6 +1073,78 @@ chunk that wants to revisit these MUST first re-read the cited memo.
 - **DO NOT touch `vardct/ac_strategy.rs` `K_BIAS` / `K_POW_*`** —
   libjxl-spec distance scaling exponents; picker tunes BASE values
   via `EffortProfile`, not these exponents.
+
+---
+
+## Section 8: Empirical coupling structure (W44-217)
+
+The 6 W44-213-wired [`crate::tuning::runtime::RuntimeTuning`] fields have
+been empirically characterized via Tier-1 numerical analysis on the
+W44-216 Stage B sweep corpus (4,938 cells, 27 images, 5 efforts, 7
+distances, 2 strategies, 13 params blobs).
+
+**See [`PARAM_INTERACTIONS.md`](PARAM_INTERACTIONS.md)** for the full
+analysis: per-outcome ANOVA decomposition, 15 marginal PDP surfaces × 2
+outcomes, 8 per-stratum PDPs, mutual information matrices, conditional
+cross-term regressions across 31 strata, classification of each pair as
+ADDITIVE / SUPPRESSIVE / SYNERGISTIC / GATED / SHARED-DISCRIMINATOR /
+WEAKLY-COUPLED, and Tier-2 knob design recommendations.
+
+### Top empirical findings
+
+- The 6 RuntimeTuning fields have ZERO effect on `EncoderStrategy::Libjxl`
+  (W44-213 wiring deliberately routes only through the zenjxl dispatches).
+  Bytes CV across all 13 param blobs is ≤ 0.03 % on libjxl strategy.
+- Pairwise interaction terms DOMINATE main effects: single-param effects
+  explain 0.3–5.4 % of variance; pairwise interactions explain 6–22 % each.
+- Marginal PDPs are ADDITIVE; conditional PDPs on `class=screen +
+  dist_band=very_high` show strong SUPPRESSIVE/SYNERGISTIC structure with
+  cross-term magnitudes up to 0.26 (normalized by σ_y).
+- A Tier-2 knob set of 3 (`smoothness_bias`, `screen_quant_lift`,
+  `buttloop_screen_d_gate`) covers the structure modulo (p1, p3) which
+  is structurally mutually-exclusive (no image fires both dispatches).
+
+### Coupling-skeleton module
+
+Empirical findings are encoded as `unimplemented!()` function skeletons
+in [`crate::tuning::coupling`](../jxl-encoder/src/tuning.rs#L387) (the
+new module added by W44-217). Each fn has a doc-comment hypothesis +
+expected mechanism + Tier-2 reparameterisation; marker tests in
+`tuning::coupling::tests` assert the skeletons stay `unimplemented!()`
+until a W44-218+ chunk implements them. The `expand_knobs_to_runtime`
+fn (W44-222 scope) composes the per-pair fns into the 6-vector the
+production encoder consumes.
+
+### Analysis artefacts
+
+`benchmarks/sweeps/w44-216-stage-b/analysis/`:
+- `scripts/` — 7 Python scripts (`prep_data.py`, `anova_analysis.py`,
+  `mi_analysis.py`, `pdp_analysis.py`, `conditional_analysis.py`,
+  `stratum_pdp.py`, `sanity_check.py`)
+- `anova_<outcome>.tsv` × 5 + `anova_summary_per_param.tsv`
+- `mi_param_outcome.tsv`, `mi_feature_outcome.tsv`,
+  `mi_param_x_feature_<outcome>.tsv` × 2
+- `pdp_<pi>_x_<pj>_<outcome>.png` × 30 (15 marginal pairs × 2 outcomes)
+- `stratum_pdp/pdp_*_class*_<outcome>.png` × 8 (top conditional couplings)
+- `coupling_classification.tsv`, `stratum_interactions.tsv`,
+  `interaction_ranking.tsv`
+- `params_blob_decode.json` — 13 params blob sha256 → (p1..p6) decoding
+
+### Successor work
+
+- **W44-218** (next chunk): derive the algebraic form of the strongest
+  pair couplings (p3_p6 saturation curve, p4_p5/p4_p6 GATED-by-p4
+  composition, p5_p6 effort-conditional diagonal). Hypothesised
+  mechanisms in this file + per-pair PDP surfaces give the form; the
+  W44-216 corpus calibrates the constants.
+- **W44-219**: design a follow-up sweep targeting the open questions in
+  `PARAM_INTERACTIONS.md` §9 (more images, more LHS samples, denser low/
+  high distance bands, content-class-stratified LHS).
+- **W44-220**: replace the `unimplemented!()` bodies with the validated
+  formulas. Update `PARAM_INTERACTIONS.md` §6 to point at the implemented
+  fns.
+- **W44-221+**: the 3-tier zenjxl mode architecture (Tier-2 knobs, then
+  Tier-3 MLP from features → knobs).
 
 ---
 
