@@ -1,0 +1,28 @@
+W44-216 MLP smoke fit
+parquet: /tmp/w44-216-merged-early/merged.parquet
+rows: 1511, features: 22
+R^2 (test): 0.8409
+
+importance (sorted):
+  feat_mask_p25	+3.9324	0.2609
+  feat_mask_median	+2.6982	0.1426
+  feat_aspect	+1.3432	0.1638
+  feat_n_pixels	+1.2790	0.0820
+  feat_mask_p75	+1.0251	0.0276
+  feat_byte_entropy_bits	+0.7051	0.0442
+  distance	+0.5151	0.0256
+  strat_zenjxl	+0.4554	0.0487
+  strat_libjxl	+0.4538	0.0128
+  feat_fcbr	+0.4315	0.0171
+  feat_luma_mean	+0.4175	0.0522
+  feat_edge_density	+0.2330	0.0308
+  adaptive_quant_screenshot_qf_seed_scale_e7	+0.1531	0.0229
+  feat_luma_var	+0.1203	0.0095
+  screenshot_median_threshold	+0.0935	0.0100
+  adaptive_quant_screenshot_qf_seed_scale_e5_e6	+0.0862	0.0079
+  buttloop_qf_seed_scale_min_distance	+0.0846	0.0186
+  feat_m3_colourfulness	+0.0540	0.0071
+  smart_zenjxl_photo_mask_p25_min	+0.0443	0.0111
+  buttloop_default_screenshot_qf_seed_scale	+0.0428	0.0069
+  effort	+0.0171	0.0011
+  feat_bpp_source	+0.0000	0.0000

@@ -1,0 +1,25 @@
+# W44-216 partial-corpus MLP smoke fit
+# Run on partial fleet output (1511 of 25480 target cells, ~6%).
+# Wall-time: fleet ran ~17 min on 9 → 7 pods before this snapshot.
+# Inputs: /tmp/w44-216-cells/*.parquet → /tmp/w44-216-merged-early/merged.parquet
+#
+# Hypothesis: RuntimeTuning params (the W44-213 wired struct) actually
+# affect encoded output bytes — i.e. the wiring is plumbed end-to-end
+# correctly and the params have measurable response in the cost model.
+#
+# Result: R^2 = 0.8409 (well above the 0.7 threshold).
+# All 6 RuntimeTuning params are statistically responsive
+# (permutation importance > 0.001 each).
+# Top-responding param: adaptive_quant_screenshot_qf_seed_scale_e7
+# (importance 0.153 ± 0.023).
+#
+# This confirms the W44-216 fleet infrastructure produces useful
+# training data; the full 25K+ cell run will give the MLP enough
+# resolution per (image, effort, distance, strategy) cell to learn
+# the local response surface for Bayesian-opt seeding.
+#
+# Provenance:
+#   commit_sha: ad639aa86782355552ca0d2464b102a0f60cc8d3
+#   sweep_id: w44-216-stage-b
+#   bucket: s3://zen-tuning-ephemeral/w44-216-stage-b/cells/
+#   image: ghcr.io/lilith/zenjxl-tuning-sweep:v2-w44-216
