@@ -1323,6 +1323,21 @@ name = "w44_181_dc_quant_probe"
 path = "examples/w44_181_dc_quant_probe.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-182: third hypothesis-falsification cycle for clic_097cb426
+# right-column structural recon bug. W44-178 falsified DCT64X64 IDCT.
+# W44-181 falsified DC quantization precision + DC CfL params. Next
+# highest-EV per W44-181 leaves-open list: CfL AC tile aggregation in
+# compute_cfl_map + refine_cfl_map. This probe instruments BOTH passes
+# via env-gated dump (JXL_W44_182_DUMP_CFL=<dir>, zero overhead when
+# unset), encodes clic_097cb426 e7 d=5, and analyzes per-tile
+# (tx, ty, pass, ytox, ytob) for the 16×16 cmap grid. Reports
+# pass-1 → pass-2 deltas, per-column mean cmap values, and right-column
+# (tx=15) highlight to test whether divergence concentrates there.
+[[example]]
+name = "w44_182_cfl_tile_probe"
+path = "examples/w44_182_cfl_tile_probe.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
 [[example]]
 name = "w44_20_codec_wiki_coverage"
 path = "examples/w44_20_codec_wiki_coverage.rs"

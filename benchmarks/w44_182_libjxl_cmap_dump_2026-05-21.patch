@@ -1,0 +1,55 @@
+diff --git a/lib/jxl/enc_chroma_from_luma.cc b/lib/jxl/enc_chroma_from_luma.cc
+index b89ff4b..f7089a0 100644
+--- a/lib/jxl/enc_chroma_from_luma.cc
++++ b/lib/jxl/enc_chroma_from_luma.cc
+@@ -8,10 +8,13 @@
+ #include <jxl/memory_manager.h>
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <cmath>
++#include <cstdio>
+ #include <cstdlib>
+ #include <hwy/base.h>  // HWY_ALIGN_MAX
+ #include <limits>
++#include <mutex>
+ 
+ #include "lib/jxl/ac_strategy.h"
+ #include "lib/jxl/base/compiler_specific.h"
+@@ -350,6 +353,36 @@ Status ComputeTile(const Image3F& opsin, const Rect& opsin_rect,
+   row_out_b[tx] =
+       FindBestMultiplier(coeffs_yb, coeffs_b, num_ac, jxl::cms::kYToBRatio,
+                          kDistanceMultiplierAC, fast);
++  // W44-182 per-tile cmap dump. Gated on JXL_W44_182_DUMP_CFL_CJXL env var.
++  // pass=1 when use_dct8 (first call, pass-1 forced-DCT8), pass=2 when
++  // !use_dct8 (second call, pass-2 real ac_strategy + raw_quant_field).
++  {
++    static std::atomic<bool> w44_inited{false};
++    static FILE* w44_file = nullptr;
++    static std::mutex w44_mu;
++    bool init_now = !w44_inited.exchange(true);
++    if (init_now) {
++      const char* dir = std::getenv("JXL_W44_182_DUMP_CFL_CJXL");
++      if (dir != nullptr && dir[0] != '\0') {
++        char path[1024];
++        std::snprintf(path, sizeof(path), "%s/cfl_tiles_cjxl.tsv", dir);
++        w44_file = std::fopen(path, "w");
++        if (w44_file != nullptr) {
++          std::fprintf(w44_file, "# W44-182 cjxl per-tile CfL map dump\n");
++          std::fprintf(w44_file, "tx\tty\tpass\tytox\tytob\n");
++        }
++      }
++    }
++    if (w44_file != nullptr) {
++      std::lock_guard<std::mutex> lk(w44_mu);
++      uint8_t pass = use_dct8 ? 1u : 2u;
++      std::fprintf(w44_file, "%d\t%d\t%u\t%d\t%d\n",
++                   tx, ty, static_cast<unsigned>(pass),
++                   static_cast<int>(row_out_x[tx]),
++                   static_cast<int>(row_out_b[tx]));
++      std::fflush(w44_file);
++    }
++  }
+   return true;
+ }
+ 

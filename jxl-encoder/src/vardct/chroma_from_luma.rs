@@ -308,12 +308,20 @@ pub fn compute_cfl_map(
         newton_max_iters,
     );
 
-    CflMap {
+    let cfl = CflMap {
         ytox,
         ytob,
         xsize_tiles,
         ysize_tiles,
-    }
+    };
+
+    // W44-182 probe: dump pass-1 CfL map for diagnostic correlation with
+    // W44-178 per-block max-abs RGB shift. Env-gated, zero overhead when
+    // JXL_W44_182_DUMP_CFL is unset.
+    #[cfg(feature = "std")]
+    super::w44_182_dump::dump_map(1, cfl.xsize_tiles, cfl.ysize_tiles, &cfl.ytox, &cfl.ytob);
+
+    cfl
 }
 
 /// Per-tile-rectangle variant of [`compute_cfl_map`]: computes CfL
@@ -613,6 +621,17 @@ pub fn refine_cfl_map(
         cfl_map.ytox[tile_idx] = tx_val;
         cfl_map.ytob[tile_idx] = tb_val;
     }
+
+    // W44-182 probe: dump pass-2 CfL map. See [`compute_cfl_map`] for
+    // env hook. Pass=2 distinguishes pass-2 results from pass-1 (pass=1).
+    #[cfg(feature = "std")]
+    super::w44_182_dump::dump_map(
+        2,
+        cfl_map.xsize_tiles,
+        cfl_map.ysize_tiles,
+        &cfl_map.ytox,
+        &cfl_map.ytob,
+    );
 }
 
 #[cfg(test)]
