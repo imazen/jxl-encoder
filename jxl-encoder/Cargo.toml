@@ -1348,6 +1348,19 @@ name = "w44_183_cfl_newton_spotcheck"
 path = "examples/w44_183_cfl_newton_spotcheck.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-184 (2026-05-22): A/B reproducer for the libjxl-strategy-only
+# CfL Newton parameter port (W44-183 salvage). Encodes the W44-183
+# spot-check cells under both `EncoderStrategy::Zenjxl` (W44-183-shipped
+# default-path Newton) and `EncoderStrategy::Libjxl` (libjxl-bit-exact
+# Newton: eps=100, max_iters=20, start x=0, no LS fallback) and reports
+# bytes/ssim2/butteraugli for both vs cjxl. The Zenjxl path should match
+# pre-W44-184 hash-locks byte-for-byte; the Libjxl path is the new
+# wiring.
+[[example]]
+name = "w44_184_libjxl_cfl_newton_ab"
+path = "examples/w44_184_libjxl_cfl_newton_ab.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
 [[example]]
 name = "w44_20_codec_wiki_coverage"
 path = "examples/w44_20_codec_wiki_coverage.rs"

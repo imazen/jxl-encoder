@@ -4352,6 +4352,42 @@ pub struct EncoderImprovementsCustom {
     /// `None` and the smooth predicate cannot fire.
     pub adaptive_buttloop_iters_narrow: bool,
 
+    /// **W44-184 (2026-05-22)**: when `true`, the CfL Newton solver in
+    /// `jxl-encoder-simd::cfl::find_best_multiplier_newton_*` uses the
+    /// libjxl-bit-exact parameters (`eps=100`, `max_iters=20`, start
+    /// `x=0`, no LS fallback — mirrors libjxl
+    /// `enc_chroma_from_luma.cc:152-167`) regardless of any other
+    /// `cfl_newton_eps` / `cfl_newton_max_iters` overrides.
+    /// When `false` (default), the W44-183-shipped default path runs:
+    /// `eps=1.0`, `max_iters=10`, `ls_x` warm-start, LS fallback on
+    /// non-convergence. That default-path Newton effectively emits the
+    /// LS solution on most tiles because `eps=1` produces noisy local
+    /// second derivatives.
+    ///
+    /// **W44-183 measurement** (`286bf5f1`): flipping this to `true` at
+    /// the default path REGRESSED 25/27 spot-checked photo cells by
+    /// 0.25-13.02 SSIM2 and +7.82% mean bytes (worst:
+    /// `cid22_1531677 e7 d=5` SSIM2 -13.02 / +26% bytes). Root cause:
+    /// the rest of the encoder (W44-29..W44-172 entropy_mul tables, AC
+    /// strategy gates, buttloop seeds, adaptive_quant) is incrementally
+    /// tuned against the broken effective-LS baseline; correcting CfL
+    /// in isolation throws off the calibration. **W44-184 SALVAGE**:
+    /// expose the parity port behind [`EncoderStrategy::Libjxl`] only,
+    /// where the rest of the cost model is ALSO flipped to libjxl-parity
+    /// defaults (Section A effort gates widen, Section B content-aware
+    /// gates disable, Section D KNOWN-BUGs re-enable) so the +7.82%
+    /// SSIM2 regression observed at the default-path port does not
+    /// apply — the entire pipeline is uniformly libjxl-parity.
+    ///
+    /// **Default**: `true` for [`EncoderStrategy::Libjxl`] (strict
+    /// parity — closes Section C divergence); `false` for
+    /// [`EncoderStrategy::Zenjxl`] / [`EncoderStrategy::Aggressive`] /
+    /// [`EncoderStrategy::LeanFaster`] (the W44-183 finding stands).
+    ///
+    /// **Hash-locks**: BYTE-IDENTICAL on Zenjxl (default `false`).
+    /// `EncoderStrategy::Libjxl` produces different output by design.
+    pub cfl_newton_libjxl_parity: bool,
+
     /// W44-176 (Smart-Zenjxl follow-on, 2026-05-21): when `true`,
     /// excludes terminal-class screenshots from the W44-108 sub-gate
     /// (W44-109 adaptive_quant qf seed lift at e ∈ {5, 6, 7}).
@@ -4479,6 +4515,14 @@ impl Default for EncoderImprovementsCustom {
             // `adaptive_quant_qf_seed: Off` already suppresses the
             // gate, but kept explicit for forward-compat.
             terminal_class_exclude: true,
+            // W44-184: Zenjxl default keeps the W44-183-shipped
+            // default-path Newton (effective LS on most tiles, calibrated
+            // against by W44-29..W44-172 downstream cost model). Libjxl
+            // overrides to `true` for strict libjxl-parity Newton. The
+            // W44-183 measurement found the parity port regressed 25/27
+            // photo cells at the default path; only the all-libjxl-parity
+            // strategy can absorb that regression without cascading damage.
+            cfl_newton_libjxl_parity: false,
         }
     }
 }
@@ -4574,6 +4618,15 @@ pub(crate) struct ResolvedImprovements {
     // the firing class). Env hook `JXL_W44_176_DISABLE=1` forces
     // the exclude OFF.
     pub(crate) terminal_class_exclude: bool,
+
+    // W44-184 — Section C CfL Newton libjxl-parity (W44-183 salvage).
+    // When `true`, the CfL Newton solver uses libjxl-bit-exact params
+    // (eps=100, max_iters=20, start x=0, no LS fallback). Set ONLY by
+    // `EncoderStrategy::Libjxl`'s constructor — the W44-183 measurement
+    // demonstrated this regresses 25/27 photo cells at the default
+    // path (the rest of our cost model is calibrated against the
+    // effective-LS baseline).
+    pub(crate) cfl_newton_libjxl_parity: bool,
 }
 
 impl Default for ResolvedImprovements {
@@ -4642,6 +4695,10 @@ impl Default for ResolvedImprovements {
             // — moot on those (their `adaptive_quant_qf_seed: Off` already
             // suppresses the lift), kept explicit for forward-compat.
             terminal_class_exclude: true,
+            // W44-184: Zenjxl default keeps the W44-183-shipped
+            // default-path Newton (effective LS on most tiles). Libjxl
+            // constructor below overrides to `true` for strict parity.
+            cfl_newton_libjxl_parity: false,
         }
     }
 }
@@ -4851,6 +4908,29 @@ fn apply_env_var_fallbacks(r: &mut ResolvedImprovements) {
             r.adaptive_quant_qf_seed =
                 AdaptiveQuantQfSeedPolicy::AutoScaleCustom { e5_e6: v, e7: v };
         }
+
+        // ── cfl_newton_libjxl_parity (W44-184) ─────────────────────
+        // Default value: `false`. Env-var
+        // `JXL_W44_184_FORCE_LIBJXL_NEWTON=1` force-flips the bit ON
+        // for any strategy (so the SIMD CfL Newton uses libjxl's
+        // bit-exact parameters: eps=100, max_iters=20, start x=0, no
+        // LS fallback). Only applies when the resolved field is at its
+        // default (`false`) — `EncoderStrategy::Libjxl` already sets
+        // `true` so this env-var is a no-op there; `Custom` payloads
+        // that explicitly set `true` also win over the env-var.
+        //
+        // Useful for A/B benching the W44-184 salvage WITHOUT switching
+        // to `EncoderStrategy::Libjxl` (which would also flip Section
+        // A/B/D divergences). Sets ONLY the CfL Newton bit — the rest
+        // of the cost model stays at Zenjxl defaults. The W44-183
+        // measurement demonstrated this flip-in-isolation regresses
+        // 25/27 photo cells; the env hook exists for diagnostic A/B
+        // bench reproduction, not for production use.
+        if !r.cfl_newton_libjxl_parity
+            && std::env::var("JXL_W44_184_FORCE_LIBJXL_NEWTON").as_deref() == Ok("1")
+        {
+            r.cfl_newton_libjxl_parity = true;
+        }
     }
 }
 
@@ -4931,6 +5011,16 @@ impl ResolvedImprovements {
             // strict-parity callers never see the terminal-class
             // discrimination logic execute.
             terminal_class_exclude: false,
+            // W44-184: strict libjxl parity — flip the CfL Newton to
+            // the bit-exact libjxl parameters (eps=100, max_iters=20,
+            // start x=0, no LS fallback). Safe here because every other
+            // Section A/B/C/D divergence is also flipped to libjxl-parity
+            // on this strategy, so the downstream cost-model calibration
+            // (W44-29..W44-172) that caused the W44-183 default-path
+            // regression is uniformly absent — there is no calibration
+            // to throw off. Closes the Section C CfL Newton divergence
+            // documented in `docs/LIBJXL_DIVERGENCES.md`.
+            cfl_newton_libjxl_parity: true,
         }
     }
 
@@ -4979,6 +5069,14 @@ impl ResolvedImprovements {
             // `adaptive_quant_qf_seed: Off` above already suppresses
             // the W44-109 lift, but kept explicit for clarity.
             terminal_class_exclude: false,
+            // W44-184: LeanFaster does NOT flip the CfL Newton to
+            // libjxl-parity — the W44-183 regression is a function of
+            // the cost-model calibration, not the per-image gate cost,
+            // and LeanFaster keeps the same cost-model calibration as
+            // Zenjxl (it only drops per-image content discrimination).
+            // Strict parity here would re-introduce the W44-183 photo
+            // SSIM2 regressions.
+            cfl_newton_libjxl_parity: false,
             ..Default::default()
         }
     }
@@ -5024,6 +5122,7 @@ impl ResolvedImprovements {
             adaptive_buttloop_iters: c.adaptive_buttloop_iters,
             adaptive_buttloop_iters_narrow: c.adaptive_buttloop_iters_narrow,
             terminal_class_exclude: c.terminal_class_exclude,
+            cfl_newton_libjxl_parity: c.cfl_newton_libjxl_parity,
         }
     }
 }
@@ -5704,6 +5803,15 @@ impl LossyConfig {
             // still re-flip the field to the libjxl gate value if the
             // strategy requests it.
             p.apply_section_a_effort_gates(&resolved);
+            // W44-184: Section C CfL Newton libjxl-parity flip. Sets
+            // `cfl_newton_libjxl_parity = true` when the resolved field
+            // is true (i.e. under `EncoderStrategy::Libjxl`). The W44-183
+            // honest-stop demonstrated that flipping this in isolation
+            // regresses 25/27 photo cells — only safe when the rest of
+            // the cost-model calibration (Section A/B/D divergences) is
+            // ALSO flipped to libjxl-parity, which `EncoderStrategy::Libjxl`
+            // does. Default (`false`) preserves byte-identical hash-locks.
+            p.apply_section_c_cfl_newton_libjxl_parity(&resolved);
         }
         p
     }
@@ -16111,6 +16219,12 @@ mod tests {
         // Section D KNOWN-BUG re-enable
         assert!(resolved.block_ctx_map_15_cluster);
 
+        // W44-184: Section C CfL Newton libjxl-parity flip
+        assert!(
+            resolved.cfl_newton_libjxl_parity,
+            "Libjxl strategy must set cfl_newton_libjxl_parity = true"
+        );
+
         // Perf dispatches: at Default (orthogonal to libjxl byte parity)
         assert_eq!(resolved.epf_dispatch, EpfDispatch::default());
         assert_eq!(resolved.pixel_loss_dispatch, PixelLossDispatch::default());
@@ -16119,6 +16233,45 @@ mod tests {
             SinglePassEntropyDispatch::default()
         );
         assert_eq!(resolved.patches_dispatch, PatchesDispatch::default());
+    }
+
+    /// W44-184: Zenjxl / LeanFaster / Aggressive / Custom-default must
+    /// resolve `cfl_newton_libjxl_parity = false` so hash-locks stay
+    /// byte-identical and the W44-183 default-path regression doesn't
+    /// fire. ONLY `Libjxl` flips this bit.
+    #[test]
+    fn test_resolve_cfl_newton_libjxl_parity_only_libjxl() {
+        assert!(
+            !EncoderStrategy::Zenjxl
+                .resolve(&StrategyOverrides::default())
+                .cfl_newton_libjxl_parity,
+            "Zenjxl must NOT set cfl_newton_libjxl_parity"
+        );
+        assert!(
+            !EncoderStrategy::LeanFaster
+                .resolve(&StrategyOverrides::default())
+                .cfl_newton_libjxl_parity,
+            "LeanFaster must NOT set cfl_newton_libjxl_parity (W44-183 \
+             regression would fire on its Zenjxl-tuned cost model)"
+        );
+        assert!(
+            !EncoderStrategy::Aggressive
+                .resolve(&StrategyOverrides::default())
+                .cfl_newton_libjxl_parity,
+            "Aggressive must NOT set cfl_newton_libjxl_parity"
+        );
+        assert!(
+            !EncoderStrategy::Custom(Box::new(EncoderImprovementsCustom::default()))
+                .resolve(&StrategyOverrides::default())
+                .cfl_newton_libjxl_parity,
+            "Custom(default) must NOT set cfl_newton_libjxl_parity"
+        );
+        assert!(
+            EncoderStrategy::Libjxl
+                .resolve(&StrategyOverrides::default())
+                .cfl_newton_libjxl_parity,
+            "Libjxl MUST set cfl_newton_libjxl_parity"
+        );
     }
 
     /// `EncoderStrategy::Zenjxl.resolve(&StrategyOverrides::default())`

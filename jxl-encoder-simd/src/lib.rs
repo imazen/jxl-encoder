@@ -243,7 +243,9 @@ pub use adaptive_quant::{compute_pre_erosion, per_block_modulations};
 pub use block_l2::compute_block_l2_errors;
 pub use cfl::find_best_multiplier as cfl_find_best_multiplier;
 pub use cfl::find_best_multiplier_newton as cfl_find_best_multiplier_newton;
-pub use cfl::{NEWTON_EPS_DEFAULT, NEWTON_MAX_ITERS_DEFAULT};
+pub use cfl::{
+    NEWTON_EPS_DEFAULT, NEWTON_EPS_LIBJXL, NEWTON_MAX_ITERS_DEFAULT, NEWTON_MAX_ITERS_LIBJXL,
+};
 pub use dct4::{
     dct_4x4_full, dct_4x8_full, dct_8x4_full, idct_4x4_full, idct_4x8_full, idct_8x4_full,
 };

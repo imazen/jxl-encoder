@@ -237,6 +237,14 @@ impl CflMap {
 ///   Minimizes `1/3 * sum((|ax+b|+1)^2 - 1) + distance_mul * x^2 * num`
 ///   via Newton's method with perceptual cost. More robust to outliers.
 ///   Matches libjxl enc_chroma_from_luma.cc at speed_tier <= kSquirrel.
+///
+/// **W44-184**: `newton_libjxl_parity = true` (set only when
+/// [`crate::api::EncoderStrategy::Libjxl`] is selected) runs the
+/// libjxl-bit-exact Newton (eps=100, max_iters=20, start x=0, no LS
+/// fallback). When `false` (default), uses the W44-183-shipped
+/// behaviour that downstream cost-model calibration is tuned against.
+/// Ignored entirely when `use_newton == false`. See `jxl-encoder-simd`
+/// `cfl::NEWTON_EPS_DEFAULT` docstring + `EncoderImprovementsCustom::cfl_newton_libjxl_parity`.
 #[allow(clippy::too_many_arguments)]
 fn find_best_multiplier(
     values_m: &[f32],
@@ -247,6 +255,7 @@ fn find_best_multiplier(
     use_newton: bool,
     newton_eps: f32,
     newton_max_iters: usize,
+    newton_libjxl_parity: bool,
 ) -> i8 {
     if use_newton {
         jxl_simd::cfl_find_best_multiplier_newton(
@@ -257,6 +266,7 @@ fn find_best_multiplier(
             distance_mul,
             newton_eps,
             newton_max_iters,
+            newton_libjxl_parity,
         )
     } else {
         jxl_simd::cfl_find_best_multiplier(values_m, values_s, num, base, distance_mul)
@@ -285,6 +295,7 @@ pub fn compute_cfl_map(
     use_newton: bool,
     newton_eps: f32,
     newton_max_iters: usize,
+    newton_libjxl_parity: bool,
 ) -> CflMap {
     let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
     let xsize_tiles = div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS);
@@ -306,6 +317,7 @@ pub fn compute_cfl_map(
         use_newton,
         newton_eps,
         newton_max_iters,
+        newton_libjxl_parity,
     );
 
     let cfl = CflMap {
@@ -353,6 +365,7 @@ pub(crate) fn compute_cfl_map_for_tiles(
     use_newton: bool,
     newton_eps: f32,
     newton_max_iters: usize,
+    newton_libjxl_parity: bool,
 ) -> (Vec<i8>, Vec<i8>) {
     let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
     let num_region_tiles = region_w * region_h;
@@ -438,6 +451,7 @@ pub(crate) fn compute_cfl_map_for_tiles(
             use_newton,
             newton_eps,
             newton_max_iters,
+            newton_libjxl_parity,
         );
         let tb_val = find_best_multiplier(
             &coeffs_yb,
@@ -448,6 +462,7 @@ pub(crate) fn compute_cfl_map_for_tiles(
             use_newton,
             newton_eps,
             newton_max_iters,
+            newton_libjxl_parity,
         );
 
         (tx_val, tb_val)
@@ -492,6 +507,7 @@ pub fn refine_cfl_map(
     use_newton: bool,
     newton_eps: f32,
     newton_max_iters: usize,
+    newton_libjxl_parity: bool,
 ) {
     let xsize_tiles = cfl_map.xsize_tiles;
     let ysize_tiles = cfl_map.ysize_tiles;
@@ -601,6 +617,7 @@ pub fn refine_cfl_map(
             use_newton,
             newton_eps,
             newton_max_iters,
+            newton_libjxl_parity,
         );
         let tb_val = find_best_multiplier(
             &coeffs_yb,
@@ -611,6 +628,7 @@ pub fn refine_cfl_map(
             use_newton,
             newton_eps,
             newton_max_iters,
+            newton_libjxl_parity,
         );
 
         (tx_val, tb_val)
@@ -655,7 +673,7 @@ mod tests {
     #[test]
     fn test_find_best_multiplier_zero_input() {
         assert_eq!(
-            find_best_multiplier(&[], &[], 0, 0.0, 1e-3, false, 1.0, 10),
+            find_best_multiplier(&[], &[], 0, 0.0, 1e-3, false, 1.0, 10, false),
             0
         );
     }
@@ -665,7 +683,7 @@ mod tests {
         // When values_m and values_s are uncorrelated, the multiplier should be near 0
         let m = [1.0, 0.0, -1.0, 0.0];
         let s = [0.0, 1.0, 0.0, -1.0];
-        let result = find_best_multiplier(&m, &s, 4, 0.0, 1e-3, false, 1.0, 10);
+        let result = find_best_multiplier(&m, &s, 4, 0.0, 1e-3, false, 1.0, 10, false);
         assert_eq!(result, 0);
     }
 
@@ -679,7 +697,7 @@ mod tests {
         let base = 0.0;
         let m: Vec<f32> = (0..64).map(|i| (i as f32 - 32.0) * 10.0).collect();
         let s: Vec<f32> = m.iter().map(|&v| base * v + factor / 84.0 * v).collect();
-        let result = find_best_multiplier(&m, &s, 64, base, 1e-3, false, 1.0, 10);
+        let result = find_best_multiplier(&m, &s, 64, base, 1e-3, false, 1.0, 10, false);
         // Optimization yields ~42.0, towards_zero bias subtracts 2.6 → ~39
         let expected = (factor - 2.6).round();
         assert!(
@@ -724,6 +742,7 @@ mod tests {
             false, // use_newton
             1.0,
             10,
+            false, // newton_libjxl_parity (W44-184): default path
         );
 
         // Uniform image: all AC coefficients are 0 except DC,
@@ -778,6 +797,7 @@ mod tests {
             true,
             1e-3,
             10,
+            false, // newton_libjxl_parity (W44-184): default path
         );
         let pre_ytox: Vec<i8> = cfl.ytox.clone();
         let pre_ytob: Vec<i8> = cfl.ytob.clone();
@@ -798,6 +818,7 @@ mod tests {
             true, // use_newton
             1e-3,
             10,
+            false, // newton_libjxl_parity (W44-184): default path
         );
         // The function ran without panic on a real input. Whether it
         // mutated the map depends on how much the per-block-weighted
@@ -851,6 +872,7 @@ mod tests {
             true,
             1e-3,
             10,
+            false, // newton_libjxl_parity (W44-184): default path
         );
         let pre_ytox = cfl.ytox.clone();
         let pre_ytob = cfl.ytob.clone();
@@ -885,6 +907,7 @@ mod tests {
             true,
             1e-3,
             10,
+            false, // newton_libjxl_parity (W44-184): default path
         );
 
         let changed = (0..cfl.ytox.len())
@@ -979,6 +1002,7 @@ mod tests {
             false, // use_newton — keep this fast (no iteration loop)
             1e-3,
             10,
+            false, // newton_libjxl_parity (W44-184): default path
         );
 
         // Build the pathological ac_strategy: default DCT8 everywhere,
@@ -1025,6 +1049,7 @@ mod tests {
             false, // use_newton (fast path, no iterations needed)
             1e-3,
             10,
+            false, // newton_libjxl_parity (W44-184): default path
         );
 
         // Sensibility check: every cfl entry must remain a valid i8

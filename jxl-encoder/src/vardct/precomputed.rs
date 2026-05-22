@@ -1511,6 +1511,11 @@ pub(crate) fn compute_dc_group(
             profile.cfl_newton,
             profile.cfl_newton_eps,
             profile.cfl_newton_max_iters,
+            // W44-184: same plumbing as the whole-image
+            // `compute_cfl_map` site in `encoder.rs` — pass the
+            // libjxl-parity bool through so per-DC-group precomputed
+            // CfL matches what the still-image path would have produced.
+            profile.cfl_newton_libjxl_parity,
         )
     } else {
         (

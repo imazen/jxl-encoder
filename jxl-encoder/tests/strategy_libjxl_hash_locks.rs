@@ -104,15 +104,33 @@ struct LibjxlPin {
 const LIBJXL_PINS: &[LibjxlPin] = &[
     // Synthetic 32×32 gradient at d=1.0 with EncoderStrategy::Libjxl.
     // Captured 2026-05-20 as part of W44-133 Chunk G initial wiring.
+    //
+    // **W44-184 (2026-05-22)**: re-pinned after flipping CfL Newton to
+    // libjxl-bit-exact parameters under `EncoderStrategy::Libjxl`
+    // (`eps=100`, `max_iters=20`, start `x=0`, no LS fallback —
+    // `enc_chroma_from_luma.cc:152-167`). Per-fixture deltas vs the
+    // W44-171 pins:
+    // - `_d1` (e7): size unchanged (211 B), HASH drift only (cmap
+    //   multipliers shift slightly; bit-packed identically).
+    // - `_d4` (e7): size 157 → 169 (+12 B). Newton finds nonzero
+    //   cmap multipliers at the higher distance where the LS fallback
+    //   would have snapped to 0 → larger cfl_map signal → more bits to
+    //   code the multipliers, fewer X/B coefficient bits (net +12 B on
+    //   this synthetic fixture).
+    // - `_d1_e5` / `_d1_e3`: BYTE-IDENTICAL (the EffortProfile has
+    //   `cfl_newton: false` at effort < 7, so the `libjxl_parity` bool
+    //   is ignored — the SIMD code path runs the fast LS path, not
+    //   Newton at all). Confirms the W44-184 gate fires correctly.
+    // - `_d1_noise` (e7): size 3249 → 3245 (-4 B), hash drift.
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1",
         size: 211,
-        hash: 0xd216993172080a3a,
+        hash: 0x8e9537a247638fae,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
-        size: 157,
-        hash: 0x6bfc035635595cc9,
+        size: 169,
+        hash: 0x83dd3b0b265acc41,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",
@@ -126,6 +144,9 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",
+        // W44-184 (2026-05-22): size 3249 → 3245 (-4 B), hash drift.
+        // CfL Newton at libjxl parity reduces the cmap quantization
+        // error on noise content, freeing 4 bytes downstream.
         // W44-171 (2026-05-21): DC tree Variable-trial gate raised from
         // `effort >= 4` → `effort >= 8` (libjxl `enc_modular.cc:1591`
         // parity). At effort 7 (this fixture) the Libjxl strategy now
@@ -135,8 +156,8 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // this 48×48 fixture under the trial-and-pick, so the bitstream
         // contents are essentially the same plus or minus the
         // chosen-tree marker.
-        size: 3249,
-        hash: 0xea529371a8916fd9,
+        size: 3245,
+        hash: 0x9b08f8bd3e7c3adb,
     },
 ];
 
