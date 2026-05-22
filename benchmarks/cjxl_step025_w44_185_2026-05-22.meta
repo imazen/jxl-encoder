@@ -1,0 +1,52 @@
+# W44-185 ARC-CLOSING comprehensive cjxl-parity sweep
+# Same harness as W44-170 / W44-179; re-run on post-W44-184 HEAD to measure
+# CUMULATIVE impact of the 15-chunk arc (W44-170 → W44-184) shipped 2026-05-21
+# through 2026-05-22.
+date: 2026-05-22
+commit: 89e3c405809a53c2872179d05bda80a69503b2fb
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+manifest: benchmarks/corpora/w44_170_varied_corpus.tsv
+corpus_dir: /home/lilith/work/codec-corpus
+strategies: ["zenjxl", "libjxl"]
+distance_grid: [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0, 4.25, 4.5, 4.75, 5.0]
+efforts: [5, 6, 7, 8, 9]
+time_iters: 1
+smoke: false
+decoder: jxl-oxide (srgb_linear)
+metrics: butteraugli_linear (default params); fast_ssim2 (sRGB u8 from linear)
+tsv_outputs:
+  libjxl: benchmarks/cjxl_step025_w44_185_libjxl_2026-05-22.tsv
+  zenjxl: benchmarks/cjxl_step025_w44_185_zenjxl_2026-05-22.tsv
+reproducer (full sweep):
+  cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example w44_170_cjxl_step025_sweep -- --corpus-manifest benchmarks/corpora/w44_170_varied_corpus.tsv --output-prefix benchmarks/cjxl_step025_w44_185 --strategies zenjxl,libjxl
+
+# Baselines for comparison:
+#   W44-170 baseline (initial bench, pre-arc):
+#     benchmarks/cjxl_step025_zenjxl_2026-05-21.tsv
+#     benchmarks/cjxl_step025_libjxl_2026-05-21.tsv
+#     ↑ commit 73f85d3e (pre-W44-170 — anchor of the arc)
+#   W44-179 mid-arc (post-W44-171/172/175/176, pre-W44-180/182/184):
+#     benchmarks/cjxl_step025_w44_179_zenjxl_2026-05-22.tsv
+#     benchmarks/cjxl_step025_w44_179_libjxl_2026-05-22.tsv
+#     ↑ commit 5e87b0a3 (W44-175 HEAD)
+#
+# Arc commits in chronological order:
+#   dac4b7b1  feat(bench): W44-170 comprehensive cjxl-parity sweep infra
+#   b5436714  fix(bench): W44-170 fmt/clippy + 100% bench completion (4000/4000)
+#   1d22c61f  perf(vardct): W44-171 DC tree Variable-trial gated at effort >= 8
+#   70ae9b3c  perf(vardct): W44-172 DC tree Predictor::Best at e8
+#   c8cf470b  docs(W44-172): backfill commit SHA in LIBJXL_DIVERGENCES.md
+#   a0e29ec4  diag(W44-174): terminal/graph e7 d=2-5 over-allocation root-cause
+#   a75d8c38  perf(vardct): W44-176 SHIP — terminal-class exclude sub-discriminator
+#   5e87b0a3  perf(vardct): W44-175 parallelize buttloop transform_and_quantize_into
+#   7695e354  diag(W44-173): clic_097cb426 photo SSIM2 deficit (bench infra)
+#   3e6a05ac  bench(W44-177): W44-173 outputs + memo (recovery from agent crash)
+#   1a2d1ee7  investigate(vardct): W44-178 HONEST-STOP — right-column DCT64X64 hypothesis FALSIFIED
+#   8575ca36  bench(W44-179): re-run W44-170 comprehensive cjxl-parity sweep
+#   31d66289  perf(vardct): W44-180 port libjxl incremental histogram updates
+#   524e2159  probe(W44-181): DC quant precision drift FALSIFIED on clic_097cb426
+#   3c2026b2  probe(W44-182): CfL Newton bug IDENTIFIED — clic_097cb426 root cause
+#   286bf5f1  investigate(cfl): W44-183 HONEST-STOP — libjxl Newton parameter port FALSIFIED
+#   b8517c09  feat(cfl): W44-184 libjxl-strategy-only Newton parameter port (W44-183 salvage)
+#   89e3c405  docs(W44-184): backfill commit SHA in LIBJXL_DIVERGENCES.md + bench meta
