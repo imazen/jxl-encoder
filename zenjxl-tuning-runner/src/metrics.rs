@@ -108,20 +108,25 @@ pub fn score_cell(
             .map(|o| o.status.success())
             .unwrap_or(false);
         if zm_present {
-            // SSIM2 GPU
-            let r = invoke_zen_metric(&source_path, &decoded_path, "ssim2");
+            // SSIM2 GPU — score field is `scores.ssim2_gpu`
+            let r = invoke_zen_metric(&source_path, &decoded_path, "ssim2-gpu", "ssim2_gpu");
             bundle.ssim2 = r.value;
             bundle.ssim2_backend = r.backend;
             gpu_total_ms += r.elapsed_ms;
             gpu_peak_mb = gpu_peak_mb.max(r.peak_mb);
-            // Butteraugli norm-3 GPU
-            let r = invoke_zen_metric(&source_path, &decoded_path, "butteraugli-pnorm3");
+            // Butteraugli norm-3 GPU — score field is `scores.butteraugli_pnorm3_gpu`
+            let r = invoke_zen_metric(
+                &source_path,
+                &decoded_path,
+                "butteraugli-gpu",
+                "butteraugli_pnorm3_gpu",
+            );
             bundle.butter_norm3 = r.value;
             bundle.butter_norm3_backend = r.backend;
             gpu_total_ms += r.elapsed_ms;
             gpu_peak_mb = gpu_peak_mb.max(r.peak_mb);
-            // CVVDP GPU (Python pycvvdp under-the-hood per zenmetrics fleet pattern)
-            let r = invoke_zen_metric(&source_path, &decoded_path, "cvvdp");
+            // CVVDP — score field is `scores.cvvdp_imazen_v0_0_1`
+            let r = invoke_zen_metric(&source_path, &decoded_path, "cvvdp", "cvvdp_imazen_v0_0_1");
             bundle.cvvdp = r.value;
             bundle.cvvdp_backend = r.backend;
             gpu_total_ms += r.elapsed_ms;
@@ -185,12 +190,22 @@ struct MetricRunResult {
     peak_mb: u32,
 }
 
-/// Invoke `zen-metrics score --metric <name> <source> <decoded>`. The
-/// zen-metrics CLI emits one JSON object per call with a `score` field
-/// and (for GPU paths) a `gpu_peak_vram_mb` / `gpu_kernel_ms` field.
-/// Schema mirrors `zen_metrics_cli::output::ScoreOutput` from the
-/// zenmetrics workspace.
-fn invoke_zen_metric(src: &Path, dist: &Path, metric: &str) -> MetricRunResult {
+/// Invoke `zen-metrics score --metric <name> --reference <src>
+/// --distorted <dist> --output json`. The zen-metrics CLI emits one
+/// JSON object per call with shape
+/// `{"metric":"<metric-name>","scores":{"<score-field>":f64,...}}`
+/// where `<score-field>` differs per metric (e.g. `ssim2_gpu`,
+/// `butteraugli_pnorm3_gpu`, `cvvdp_imazen_v0_0_1`). W44-214 smoke
+/// test established the contract by reading the CLI's actual output;
+/// the runner extracts `scores.<score_field>` and falls back to the
+/// first numeric field in the `scores` map if the named field is
+/// missing.
+///
+/// GPU resource columns (`gpu_peak_vram_mb` / `gpu_kernel_ms`) are
+/// NOT emitted by zen-metrics 0.6.0; the runner tracks wall-clock
+/// `elapsed_ms` as a proxy for GPU kernel time, and peak VRAM stays
+/// 0 until zen-metrics gains a `--report-resource` flag.
+fn invoke_zen_metric(src: &Path, dist: &Path, metric: &str, score_field: &str) -> MetricRunResult {
     let t0 = std::time::Instant::now();
     let out = Command::new("zen-metrics")
         .args([
@@ -201,22 +216,36 @@ fn invoke_zen_metric(src: &Path, dist: &Path, metric: &str) -> MetricRunResult {
             src.to_str().unwrap_or(""),
             "--distorted",
             dist.to_str().unwrap_or(""),
-            "--json",
+            "--output",
+            "json",
         ])
         .output();
     let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
     match out {
         Ok(o) if o.status.success() => {
-            // Best-effort JSON parse. zen-metrics typically emits
-            // `{"score": <f64>, "gpu_peak_vram_mb": <u32>?,
-            // "gpu_kernel_ms": <f64>?}`. We're lenient: any of the
-            // GPU fields may be missing on CPU codepaths.
             let parsed: serde_json::Value =
                 serde_json::from_slice(&o.stdout).unwrap_or(serde_json::Value::Null);
+            // Primary path: scores.<score_field>
             let value = parsed
-                .get("score")
+                .get("scores")
+                .and_then(|s| s.get(score_field))
                 .and_then(|v| v.as_f64())
-                .map(|x| x as f32);
+                .map(|x| x as f32)
+                // Fallback: scores.<first-numeric-field>
+                .or_else(|| {
+                    parsed.get("scores").and_then(|s| {
+                        s.as_object()
+                            .and_then(|m| m.values().find_map(|v| v.as_f64().map(|x| x as f32)))
+                    })
+                })
+                // Legacy fallback: top-level `score` field (kept for
+                // forward-compat if zen-metrics adds it).
+                .or_else(|| {
+                    parsed
+                        .get("score")
+                        .and_then(|v| v.as_f64())
+                        .map(|x| x as f32)
+                });
             let peak_mb = parsed
                 .get("gpu_peak_vram_mb")
                 .and_then(|v| v.as_u64())
