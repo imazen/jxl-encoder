@@ -418,15 +418,73 @@ patterns. Plan:
 7. Run multi-decoder roundtrips on at least 3 strategies × 2 cells: 6/6
    expected PASS.
 
-**W44-194** (later chunk) — add CI:
+**W44-194** (SHIPPED 2026-05-22) — added CI gates:
 
-1. Per-cell hash lock for `EncoderStrategy::Libjxl` against cjxl output
-   (RFC Solution C).
-2. Build-script that auto-generates `docs/LIBJXL_DIVERGENCES.md` from
-   the per-gate `divergence_section` / `divergence_row_ref` macro
-   metadata (RFC G5).
-3. CI fails if either (1) drifts vs cjxl or (2) the table drifts from
-   the macro metadata.
+**Part A — per-cell SHA256 byte lock for `EncoderStrategy::Libjxl`**:
+- New `jxl-encoder/tests/strategy_libjxl_byte_lock.rs` pins SHA256
+  hashes for 10 cells (mix of synthetic gradient, noise, RGBA at
+  effort × distance × layout matrix coverage) against
+  `tests/strategy_libjxl_byte_lock.golden`.
+- Failure mode: per-cell drift report with expected vs observed
+  SHA256 + byte sizes.
+- Regen on intentional drift: `UPDATE_LIBJXL_BYTE_LOCK=1 cargo test
+  --features __expert --test strategy_libjxl_byte_lock`.
+- Distinct from `strategy_libjxl_hash_locks.rs` (which uses FNV-1a +
+  inline `LibjxlPin` rows for 5 fixtures) — the new file uses
+  SHA256 + an external golden, scales to 10+ cells, and gives
+  per-cell drift diffs.
+
+**Part B — divergence-table-vs-macro-metadata drift test**:
+- New `jxl-encoder/tests/divergence_table_drift.rs` reads every
+  gate's `divergence_section + divergence_row_ref` metadata via
+  `__internals::divergence_entries()` (which projects the
+  `__CUSTOM_DIVERGENCE_<GATE>: &str` consts emitted by the macro).
+- For each gate, extracts **stable anchors** (W-codes like `W22-1`,
+  `W44-184`, or fallback identifiers for the 4 gates without a
+  W-code) and asserts at least one anchor appears in
+  `docs/LIBJXL_DIVERGENCES.md`.
+- Failure mode lists each drifted gate + its missing anchors +
+  actionable fix instructions.
+- Cross-checks: gate count matches expected 24, gate names are
+  unique, metadata is well-formed, `raw` field round-trips through
+  the macro schema.
+- **Why anchor-based instead of full table auto-gen**: the divergence
+  table has dozens of rows per section (each chunk's lift gets its
+  own row); the macro carries ONE metadata entry per gate. Anchors
+  let the test enforce "the macro's W-code reference IS findable in
+  the table" — the right granularity for catching gate-add /
+  gate-remove drift without requiring richer per-row metadata.
+  Build-script-driven full auto-gen is deferred to a future chunk
+  if/when richer metadata lands (see W44-190 RFC §G5).
+
+**What's auto-enforced now**:
+- Adding a new gate without adding it to `ALL_DIVERGENCE_ENTRIES` →
+  count assertion fails.
+- Adding a gate to `ALL_DIVERGENCE_ENTRIES` without adding a
+  table row that mentions the chunk's W-code → anchor assertion
+  fails.
+- Editing a gate's section / row_ref without updating the `raw`
+  field → schema assertion fails.
+- Editing a gate's value (e.g. flipping `cfl_newton_libjxl_parity`
+  to `false` under `Libjxl`) → byte-lock fails on the affected
+  cells with per-cell SHA diff.
+
+**Workflow for new gates**:
+
+1. Add the gate to `strategy_def! { ... }` in
+   `jxl-encoder/src/gate_registry.rs` (per-strategy values + per-gate
+   `divergence_section` / `divergence_row_ref`).
+2. Add the matching row in `ALL_DIVERGENCE_ENTRIES` (same file).
+3. Add a row in `docs/LIBJXL_DIVERGENCES.md` Section X that mentions
+   the gate's W-code (or other anchor).
+4. Bump `EXPECTED_DIVERGENCE_GATE_COUNT` in
+   `jxl-encoder/tests/divergence_table_drift.rs`.
+5. Run `cargo test --features "__expert __internals" --test
+   divergence_table_drift` to verify.
+6. If the gate affects `EncoderStrategy::Libjxl` output, regen the
+   byte-lock golden:
+   `UPDATE_LIBJXL_BYTE_LOCK=1 cargo test --features __expert --test
+   strategy_libjxl_byte_lock`.
 
 ---
 

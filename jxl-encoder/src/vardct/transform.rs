@@ -857,7 +857,14 @@ impl VarDctEncoder {
                             // W44-181 read-only probe (DCT8 raw_strategy=0).
                             #[cfg(feature = "std")]
                             super::w44_181_dump::dump_dc(
-                                bx, by, c, 0, dc, y_dc, inv_factor, dc_cfl_factor,
+                                bx,
+                                by,
+                                c,
+                                0,
+                                dc,
+                                y_dc,
+                                inv_factor,
+                                dc_cfl_factor,
                             );
                         }
                         RAW_STRATEGY_DCT16X8 => {
