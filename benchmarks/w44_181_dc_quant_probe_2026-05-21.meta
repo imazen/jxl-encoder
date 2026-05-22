@@ -1,0 +1,29 @@
+W44-181 DC quant precision probe
+=================================
+Date: 2026-05-21
+Image: clic_097cb426 (1024×1024)
+Effort: 7 Distance: 5
+Encoder: EncoderStrategy::Zenjxl
+Raw dump: /tmp/w44_181_dump/dc_quant_inputs.tsv
+
+Strategies dumped: DCT8 (raw=0), DCT32X32 (raw=4), DCT64X64 (raw=15)
+Channels dumped: X (c=0) and B (c=2)
+X has dc_cfl_factor=0, so ours and libjxl expressions coincide.
+B has dc_cfl_factor=0.5, so f32-order divergence can occur.
+
+Methodology:
+- Per-block dumps (bx, by, channel, raw_strategy, dc, y_dc, inv_factor, dc_cfl_factor)
+  recorded via env-gated JXL_W44_181_DUMP_DC=<dir> infrastructure
+  (added to vardct/w44_181_dump.rs + 3 instrumentation sites in transform.rs).
+- For each row, compute:
+    q_ours   = (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16
+    q_libjxl = ((dc - y_dc * dc_cfl_factor / inv_factor) * inv_factor).round() as i16
+  Both in f32 (matching production codepath bit-exact).
+- Count rows where q_ours != q_libjxl. These are the candidate
+  precision-drift sites.
+
+Reproducer:
+  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+    cargo run --release --manifest-path jxl-encoder/Cargo.toml \
+    --features 'parallel butteraugli-loop ssim2-loop' \
+    --example w44_181_dc_quant_probe

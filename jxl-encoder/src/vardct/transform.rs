@@ -854,6 +854,11 @@ impl VarDctEncoder {
                             let y_dc = quant_dc[1][(by - yoff) * width + (bx - xoff)] as f32;
                             quant_dc[c][(by - yoff) * width + (bx - xoff)] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
+                            // W44-181 read-only probe (DCT8 raw_strategy=0).
+                            #[cfg(feature = "std")]
+                            super::w44_181_dump::dump_dc(
+                                bx, by, c, 0, dc, y_dc, inv_factor, dc_cfl_factor,
+                            );
                         }
                         RAW_STRATEGY_DCT16X8 => {
                             let dcs = dc_from_dct_16x8(as_array_ref::<128>(&dct_coeffs[c], 0));
@@ -902,6 +907,18 @@ impl VarDctEncoder {
                                     quant_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         (dcs[iy * 4 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
+                                    // W44-181 read-only probe.
+                                    #[cfg(feature = "std")]
+                                    super::w44_181_dump::dump_dc(
+                                        bx + ix,
+                                        by + iy,
+                                        c,
+                                        RAW_STRATEGY_DCT32X32,
+                                        dcs[iy * 4 + ix],
+                                        y_dc,
+                                        inv_factor,
+                                        dc_cfl_factor,
+                                    );
                                 }
                             }
                         }
@@ -947,6 +964,20 @@ impl VarDctEncoder {
                                     quant_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         (dcs[iy * 8 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
+                                    // W44-181 read-only probe: dump DC quant inputs to
+                                    // measure f32 evaluation-order divergence vs libjxl.
+                                    // Zero overhead when JXL_W44_181_DUMP_DC env unset.
+                                    #[cfg(feature = "std")]
+                                    super::w44_181_dump::dump_dc(
+                                        bx + ix,
+                                        by + iy,
+                                        c,
+                                        RAW_STRATEGY_DCT64X64,
+                                        dcs[iy * 8 + ix],
+                                        y_dc,
+                                        inv_factor,
+                                        dc_cfl_factor,
+                                    );
                                 }
                             }
                         }

@@ -1311,6 +1311,18 @@ name = "w44_180_inc_hist_ab"
 path = "examples/w44_180_inc_hist_ab.rs"
 required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-181 READ-ONLY PROBE: DC quantization f32 evaluation-order divergence.
+# Follow-on to W44-178 honest-stop. Instruments transform.rs DCT8/DCT32X32/
+# DCT64X64 DC quant sites (gated on JXL_W44_181_DUMP_DC env var, zero
+# overhead when unset). Encodes clic_097cb426 e7 d=5, post-processes the
+# dump to count divergences between ours' `(dc*if - y_dc*0.5).round()` and
+# libjxl's `((dc - y_dc*0.5/if) * if).round()` on the same f32 inputs,
+# joins with W44-178 per-block max-abs RGB to test correlation.
+[[example]]
+name = "w44_181_dc_quant_probe"
+path = "examples/w44_181_dc_quant_probe.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
 [[example]]
 name = "w44_20_codec_wiki_coverage"
 path = "examples/w44_20_codec_wiki_coverage.rs"
