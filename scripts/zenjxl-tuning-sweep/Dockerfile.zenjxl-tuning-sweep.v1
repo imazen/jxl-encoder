@@ -1,0 +1,123 @@
+# Dockerfile.zenjxl-tuning-sweep.v1 — fleet image for W44-212+ tuning sweeps.
+#
+# Single-cell worker. Each container instance pulls one chunk of cell
+# specs from R2, invokes the baked `zenjxl-tuning-runner` binary per
+# cell, uploads the resulting Parquet to the per-sweep ephemeral
+# bucket, and loops.
+#
+# Layer plan (cheap → expensive, per CLAUDE.md fleet rule):
+#
+#   ┌──────────────────────────────────────────────────────────────┐
+#   │ L1: ubuntu:24.04                       ~80 MB   biennial      │
+#   │ L2: stable apt deps (curl, jq, ca-c)   ~80 MB   per quarter   │
+#   │ L3: s5cmd binary                       ~12 MB   per quarter   │
+#   │ L4: zen-metrics binary (GPU scoring)   ~280 MB  per code push │
+#   │ L5: zenjxl-tuning-runner binary        ~25 MB   per code push │
+#   │ L6: onstart + worker scripts           ~50 KB   per script    │
+#   │ L7: corpus index (image_sha → R2 key)  ~100 KB  per refresh   │
+#   │ L8: ENV + LABELs + ENTRYPOINT          0 B      ~never        │
+#   └──────────────────────────────────────────────────────────────┘
+#
+# We deliberately do NOT bake the test corpus. Cells reference
+# images by `image_path = /corpus/<sha>.png`; the worker uses the
+# corpus index in L7 to fetch the missing images from R2 lazily on
+# first reference (cached in the container for the lifetime of the
+# instance). This keeps the image small enough for fleet hot-start.
+#
+# Build:
+#
+#   # 1. Build the runner binary (host: ubuntu 24.04 x86_64).
+#   #
+#   # We share the encoder target dir across siblings (CARGO_TARGET_DIR)
+#   # so the rebuild is fast.
+#   cd ~/work/zen/jxl-encoder
+#   CARGO_TARGET_DIR=~/work/zen/jxl-encoder-shared-target \
+#       cargo build --release -p zenjxl-tuning-runner \
+#       --no-default-features
+#   cp ~/work/zen/jxl-encoder-shared-target/release/zenjxl-tuning-runner \
+#       ./zenjxl-tuning-runner
+#
+#   # 2. Pull a fresh zen-metrics binary from the zenmetrics workspace
+#   #    (already built for the v26 sweep image — we re-use it here for
+#   #    GPU scoring shellouts).
+#   cp ~/work/zen/zenmetrics/target/release/zen-metrics ./zen-metrics
+#
+#   # 3. Build the image:
+#   docker build \
+#       -f scripts/zenjxl-tuning-sweep/Dockerfile.zenjxl-tuning-sweep.v1 \
+#       --build-arg RUNNER_BINARY=./zenjxl-tuning-runner \
+#       --build-arg ZEN_METRICS_BINARY=./zen-metrics \
+#       -t ghcr.io/imazen/zenjxl-tuning-sweep:v1-$(git rev-parse --short HEAD) \
+#       -t ghcr.io/imazen/zenjxl-tuning-sweep:v1 \
+#       .
+
+FROM ubuntu:24.04
+
+LABEL org.opencontainers.image.source="https://github.com/imazen/jxl-encoder"
+LABEL org.opencontainers.image.description="W44-212 zenjxl-tuning-runner sweep worker (encode + decode + GPU/CPU metric scoring + per-cell Parquet emit)"
+LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── L2: stable apt deps ─────────────────────────────────────────────────
+#
+# Same minimal set as the v26 zenmetrics image, dropping pyarrow
+# (we emit Parquet from the runner directly via arrow-rs). gcc is
+# not needed — runner is statically linked aside from libc.
+RUN apt-get update -qq && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg jq \
+        libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── L3: s5cmd 2.2.2 binary ─────────────────────────────────────────────
+#
+# s5cmd is our R2 client (massively faster than aws-cli for the
+# small-file chunk-claim + per-cell-Parquet upload pattern).
+RUN curl -sSL -o /tmp/s5cmd.tgz \
+        https://github.com/peak/s5cmd/releases/download/v2.2.2/s5cmd_2.2.2_Linux-64bit.tar.gz \
+    && tar -xzf /tmp/s5cmd.tgz -C /usr/local/bin s5cmd \
+    && chmod +x /usr/local/bin/s5cmd \
+    && rm /tmp/s5cmd.tgz \
+    && s5cmd version
+
+# ── L4: zen-metrics binary (out-of-process GPU scoring) ───────────────
+#
+# The W44-212 runner shells out to `zen-metrics score --metric ...`
+# for GPU butter-norm3 / ssim2 / cvvdp. The binary is built in the
+# zenmetrics workspace; we COPY it in pre-built (~280 MB) here so
+# the image build stays fast.
+ARG ZEN_METRICS_BINARY=./zen-metrics
+COPY --chmod=0755 ${ZEN_METRICS_BINARY} /usr/local/bin/zen-metrics
+
+# ── L5: zenjxl-tuning-runner binary ───────────────────────────────────
+#
+# The W44-212 worker itself. Re-built per code push; lands as the
+# only layer that changes on most rebuilds.
+ARG RUNNER_BINARY=./zenjxl-tuning-runner
+COPY --chmod=0755 ${RUNNER_BINARY} /usr/local/bin/zenjxl-tuning-runner
+
+# ── L6: onstart + worker scripts ──────────────────────────────────────
+#
+# `onstart.sh` is the vast.ai entrypoint that hydrates env from
+# /proc/1/environ, verifies the baked tools exist, fetches the
+# chunk queue, and loops calling `worker.sh` per cell.
+COPY --chmod=0755 scripts/zenjxl-tuning-sweep/onstart.sh /usr/local/bin/onstart.sh
+COPY --chmod=0755 scripts/zenjxl-tuning-sweep/worker.sh /usr/local/bin/worker.sh
+
+# ── L7: corpus index (optional; fetched at boot if absent) ─────────────
+#
+# Index file maps image sha256 → R2 key + local cache path. Fleet
+# launcher pre-stages this into the image OR the onstart fetches it
+# from R2 if missing. The index is small (~100 KB per 10k images).
+RUN mkdir -p /corpus /sweep-state /sweep-output
+
+# ── L8: env + entrypoint ──────────────────────────────────────────────
+ENV W44_212_SWEEP_BUCKET=zen-tuning-ephemeral
+ENV W44_212_CORPUS_BUCKET=zen-corpus
+ENV W44_212_CHUNK_QUEUE_PREFIX=chunks
+ENV W44_212_OUTPUT_PREFIX=cells
+
+# Default to `onstart.sh` which loops over the chunk queue. Override
+# with `--entrypoint /usr/local/bin/zenjxl-tuning-runner` for
+# ad-hoc single-cell runs (smoke testing on the fleet image).
+ENTRYPOINT ["/usr/local/bin/onstart.sh"]

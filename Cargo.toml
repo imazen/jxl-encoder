@@ -11,7 +11,18 @@ opt-level = 3
 opt-level = 2
 
 [workspace]
-members = ["jxl-encoder", "jxl-encoder-cli", "jxl-encoder-macros", "jxl-encoder-simd"]
+members = [
+    "jxl-encoder",
+    "jxl-encoder-cli",
+    "jxl-encoder-macros",
+    "jxl-encoder-simd",
+    # W44-212: tuning-sweep worker binary. Builds independently with
+    # `cargo build -p zenjxl-tuning-runner --release`. Pulled into the
+    # workspace member list so `cargo check --workspace` covers it; the
+    # binary itself stays opt-in for fleet builds (Dockerfile uses
+    # `cargo build -p zenjxl-tuning-runner --release`).
+    "zenjxl-tuning-runner",
+]
 resolver = "2"
 
 [workspace.lints.clippy]
