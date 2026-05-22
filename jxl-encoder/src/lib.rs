@@ -41,6 +41,12 @@ pub(crate) mod parallel;
 #[cfg(feature = "hdr-gainmap")]
 pub mod hdr;
 pub mod profile_phases;
+// W44-192: side-by-side prototype proving the `strategy_def!` proc-macro
+// generates code equivalent to the hand-written gate plumbing in `api.rs`.
+// Phase 1 of the W44-190 RFC; W44-193 will migrate the production
+// `EncoderImprovementsCustom` / `ResolvedImprovements` to the macro.
+// pub(crate) — never wired into the production encoder.
+pub(crate) mod strategy_def_prototype;
 pub mod trace;
 pub mod validation;
 #[cfg(test)]
@@ -159,6 +165,31 @@ pub mod __bench_internals {
 #[cfg(feature = "__internals")]
 #[doc(hidden)]
 pub mod __internals {
+    // ── W44-192 strategy_def! prototype env-fallback test hooks ─────
+    //
+    // The prototype types are `pub(crate)` so the integration test
+    // (which can't reach `pub(crate)` items) drives the env-var
+    // fallback layer via these thin pub wrappers. Mirrors the pattern
+    // used by `resolve_strategy_for_test` below for the production
+    // W44-132 Chunk F env-var fallbacks. See W44-190 RFC +
+    // STRATEGY_DEF_MACRO.md.
+    pub use crate::strategy_def_prototype::{
+        IterMode as PrototypeIterMode,
+        resolve_prototype_strategy_named_for_test as resolve_prototype_strategy_named_for_test_impl,
+    };
+
+    /// Resolve one of the four named prototype strategies (no Custom
+    /// payload) and return the three prototype-gate fields as a tuple
+    /// in declaration order:
+    /// `(cfl_newton_libjxl_parity, content_class_auto_classify, adaptive_buttloop_iters)`.
+    ///
+    /// `strategy_name` must be one of `"Libjxl" | "Zenjxl" | "LeanFaster" | "Aggressive"`.
+    pub fn resolve_prototype_strategy_named_for_test(
+        strategy_name: &str,
+    ) -> (bool, bool, PrototypeIterMode) {
+        resolve_prototype_strategy_named_for_test_impl(strategy_name)
+    }
+
     // Pub re-exports of already-pub items in private/pub(crate) modules.
     pub use crate::vardct::chroma_from_luma::{ytob_ratio, ytox_ratio};
     pub use crate::vardct::quant::INV_DC_QUANT;

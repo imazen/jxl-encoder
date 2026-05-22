@@ -1,0 +1,5 @@
+error: strategy_def!: strategy `Zenjxl` is missing gate `y` (every strategy must provide a value for every gate)
+  --> tests/ui_fail/strategy_missing_gate.rs:13:9
+   |
+13 |         Zenjxl { x = true, /* missing y */ },
+   |         ^^^^^^
