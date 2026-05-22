@@ -1,0 +1,17 @@
+cell	strategy	effort	distance	bytes	wall_ms_best
+# Candidate C (perf, byte-identical): Zenjxl encode at e7
+cid22_1025469	Zenjxl	7	1.0	38086	63.9
+cid22_1025469	Zenjxl	7	3.0	16615	74.1
+cid22_1418519	Zenjxl	7	1.0	21675	65.2
+cid22_1418519	Zenjxl	7	3.0	11007	76.3
+gb82_codec_wiki	Zenjxl	7	1.0	106910	938.6
+gb82_codec_wiki	Zenjxl	7	3.0	73339	928.4
+# Candidate B (Libjxl strategy at e=5/6): structurally redundant on Libjxl
+# (Section A widening already covers same dispatch path); bytes unchanged
+# vs pre-W44-197 byte-lock (4/4 cells BYTE-IDENTICAL).
+cid22_1025469	Libjxl	5	1.0	38843	52.5
+cid22_1025469	Libjxl	6	1.0	37998	55.4
+cid22_1418519	Libjxl	5	1.0	21853	49.4
+cid22_1418519	Libjxl	6	1.0	21685	50.2
+gb82_codec_wiki	Libjxl	5	1.0	135311	648.2
+gb82_codec_wiki	Libjxl	6	1.0	133407	694.2

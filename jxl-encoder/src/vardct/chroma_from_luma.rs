@@ -573,8 +573,27 @@ pub fn refine_cfl_map(
                 let qq = quant_field[by * xsize_blocks + bx] as f32;
                 let q = quant_scale * 128.0 * qq;
 
-                let qw_x = quant::quant_weights(raw_strategy as usize, 0);
-                let qw_b = quant::quant_weights(raw_strategy as usize, 2);
+                // **W44-197 Candidate C (perf)**: replace per-coefficient
+                // division `q / qw_x[i]` with multiplication
+                // `q * inv_qw_x[i]` using the static precomputed reciprocal
+                // tables (`quant::dequant_weights`, which already exist and
+                // OnceBox-cache the `1/w` values per (strategy, channel)).
+                // Mirrors libjxl `enc_chroma_from_luma.cc:337-343` which
+                // loads `qm_x = dequant.InvMatrix(...)` and applies
+                // `Mul(qv, Load(df, qm_x + i))`.
+                //
+                // Saves two f32 divisions per coefficient (multiplications
+                // are 3-5× faster than divisions on modern f32 pipes; ~4M
+                // divisions eliminated per 12 MP at e>=7 or when W44-197
+                // Candidate B widens the gate to e=5/6). W44-189 D13
+                // identified this as the LOW-EV-but-cheap perf chunk.
+                //
+                // Output is within ULP of the divide form (a/b vs a*(1/b)
+                // are different bit-patterns at the last 1-2 bits, but CfL
+                // output is i8 — both forms round to the same integer
+                // multiplier on realistic inputs).
+                let inv_qw_x = quant::dequant_weights(raw_strategy as usize, 0);
+                let inv_qw_b = quant::dequant_weights(raw_strategy as usize, 2);
 
                 let num_coeffs = cx * cy * DCT_BLOCK_SIZE;
                 // Bound by accumulator buffer size. libjxl's heuristic at
@@ -594,8 +613,8 @@ pub fn refine_cfl_map(
                 let buf_remaining = buf_cap.saturating_sub(num_ac);
                 let take = num_coeffs.min(buf_remaining);
                 for i in 0..take {
-                    let qqm_x = q / qw_x[i];
-                    let qqm_b = q / qw_b[i];
+                    let qqm_x = q * inv_qw_x[i];
+                    let qqm_b = q * inv_qw_b[i];
                     coeffs_yx[num_ac + i] = dct_y[i] * qqm_x;
                     coeffs_x[num_ac + i] = dct_x[i] * qqm_x;
                     coeffs_yb[num_ac + i] = dct_y[i] * qqm_b;

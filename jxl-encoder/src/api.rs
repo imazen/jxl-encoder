@@ -15335,6 +15335,12 @@ mod tests {
             "Libjxl strategy must set cfl_newton_libjxl_parity = true"
         );
 
+        // W44-197: Section C CfL Pass-2 LS-only at e=5/6 flip
+        assert!(
+            resolved.cfl_pass2_ls_at_low_effort,
+            "Libjxl strategy must set cfl_pass2_ls_at_low_effort = true (W44-197)"
+        );
+
         // Perf dispatches: at Default (orthogonal to libjxl byte parity)
         assert_eq!(resolved.epf_dispatch, EpfDispatch::default());
         assert_eq!(resolved.pixel_loss_dispatch, PixelLossDispatch::default());
@@ -15381,6 +15387,44 @@ mod tests {
                 .resolve(&StrategyOverrides::default())
                 .cfl_newton_libjxl_parity,
             "Libjxl MUST set cfl_newton_libjxl_parity"
+        );
+    }
+
+    /// W44-197: Zenjxl / LeanFaster / Aggressive / Custom-default must
+    /// resolve `cfl_pass2_ls_at_low_effort = false` so the W44-29..W44-172
+    /// downstream cost-model calibration (which assumes no Pass-2 at e=5/6
+    /// on the default path) stays intact. ONLY `Libjxl` flips this bit.
+    #[test]
+    fn test_resolve_cfl_pass2_ls_at_low_effort_only_libjxl() {
+        assert!(
+            !EncoderStrategy::Zenjxl
+                .resolve(&StrategyOverrides::default())
+                .cfl_pass2_ls_at_low_effort,
+            "Zenjxl must NOT set cfl_pass2_ls_at_low_effort"
+        );
+        assert!(
+            !EncoderStrategy::LeanFaster
+                .resolve(&StrategyOverrides::default())
+                .cfl_pass2_ls_at_low_effort,
+            "LeanFaster must NOT set cfl_pass2_ls_at_low_effort"
+        );
+        assert!(
+            !EncoderStrategy::Aggressive
+                .resolve(&StrategyOverrides::default())
+                .cfl_pass2_ls_at_low_effort,
+            "Aggressive must NOT set cfl_pass2_ls_at_low_effort"
+        );
+        assert!(
+            !EncoderStrategy::Custom(Box::new(EncoderImprovementsCustom::default()))
+                .resolve(&StrategyOverrides::default())
+                .cfl_pass2_ls_at_low_effort,
+            "Custom(default) must NOT set cfl_pass2_ls_at_low_effort"
+        );
+        assert!(
+            EncoderStrategy::Libjxl
+                .resolve(&StrategyOverrides::default())
+                .cfl_pass2_ls_at_low_effort,
+            "Libjxl MUST set cfl_pass2_ls_at_low_effort (W44-197 Candidate B)"
         );
     }
 
