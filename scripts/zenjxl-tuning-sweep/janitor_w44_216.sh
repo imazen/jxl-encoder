@@ -115,35 +115,48 @@ for p in data:
         exit 2
     fi
 
-    # 5. Per-pod evaluation
-    echo "$MY_PODS" | python3 -c "
+    # 5. Per-pod evaluation. We use process-substitution (`< <(...)`) instead
+    # of pipe-to-while so the assoc-array idle_since survives across pods.
+    # Also: util may be 'None' for loading pods — coerce to 0 in python.
+    POD_LIST=$(echo "$MY_PODS" | python3 -c "
 import json, sys
 data = json.loads(sys.stdin.read())
 for p in data:
-    print(f\"{p['id']}\t{p['label']}\t{p['status']}\t{p['gpu_util']}\t{p['dph']}\")
-" | while IFS=$'\t' read -r pid label status util dph; do
+    util = p.get('gpu_util') or 0.0
+    try:
+        util = float(util)
+    except (TypeError, ValueError):
+        util = 0.0
+    print(f\"{p['id']}\t{p['label']}\t{p['status']}\t{util}\t{p['dph']}\")
+")
+    # Check for worker-done marker ONCE per loop (not per pod) — it's the
+    # same R2 prefix for all pods. aws s3 ls returns rc=1 for empty/non-
+    # existent prefix; the `|| true` keeps set -e from killing the script.
+    HAS_MARKER=$( (AWS_PROFILE=r2 aws s3 ls --endpoint-url="$R2_ENDPOINT" "s3://$SWEEP_BUCKET/$SWEEP_ID/worker-done/" 2>/dev/null || true) | wc -l)
+    while IFS=$'\t' read -r pid label status util dph; do
         [[ -z "$pid" ]] && continue
 
         if [[ "$status" != "running" ]]; then
-            # Track state
-            unset idle_since[$pid] 2>/dev/null || true
+            unset 'idle_since[$pid]' 2>/dev/null || true
             continue
         fi
 
-        # Check for worker-done marker
-        HAS_MARKER=$(s5cmd ls "s3://$SWEEP_BUCKET/$SWEEP_ID/worker-done/" 2>/dev/null | wc -l)
-
-        # Compute idleness
-        is_idle=$(python3 -c "print(1 if float('$util') < 1.0 else 0)")
+        # Coerce util to 0 if not numeric (set -u safety)
+        is_idle=$(python3 -c "
+try:
+    print(1 if float('$util') < 1.0 else 0)
+except Exception:
+    print(1)
+")
         if [[ "$is_idle" == "1" ]]; then
             if [[ -z "${idle_since[$pid]:-}" ]]; then
                 idle_since[$pid]=$now_s
-                echo "[janitor]   pod $pid ($label) idle=0% — marking idle_since=$now_s"
+                echo "[janitor]   pod $pid ($label) idle=${util}% — marking idle_since=$now_s"
                 continue
             fi
             idle_for=$((now_s - ${idle_since[$pid]}))
         else
-            unset idle_since[$pid] 2>/dev/null || true
+            unset 'idle_since[$pid]' 2>/dev/null || true
             idle_for=0
         fi
 
@@ -162,11 +175,11 @@ for p in data:
             echo "[janitor]   STOPPING pod $pid ($label) — $reason"
             vastai stop instance "$pid" 2>&1 | head -3 || echo "[janitor]   WARN: stop $pid failed"
             total_stopped=$((total_stopped + 1))
-            unset idle_since[$pid] 2>/dev/null || true
+            unset 'idle_since[$pid]' 2>/dev/null || true
         else
             echo "[janitor]   keeping pod $pid ($label) — util=${util}% idle_for=${idle_for}s"
         fi
-    done
+    done < <(echo "$POD_LIST")
 
     # 6. Update cost estimate (rough: hourly burn * poll interval)
     est_increment=$(python3 -c "print($HOURLY_BURN * $POLL_INTERVAL_S / 3600)")
