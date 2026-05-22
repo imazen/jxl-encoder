@@ -58,6 +58,13 @@ pub(crate) mod strategy_def_prototype;
 // and the W44-120 dual-env-var supplement.
 pub(crate) mod gate_registry;
 pub mod trace;
+// W44-211: canonical access path to every VarDCT tunable constant.
+// See `docs/TUNING_RELATIONS.md` for the relation graph and
+// `memory/w44_210_a_const_inventory_2026-05-22.md` for the inventory.
+// Re-exports owned by their source-of-truth modules; the optional
+// `tuning-override` feature adds a `runtime` submodule with a postcard
+// runtime override layer for the sweep runner.
+pub mod tuning;
 pub mod validation;
 #[cfg(test)]
 mod validation_tests;

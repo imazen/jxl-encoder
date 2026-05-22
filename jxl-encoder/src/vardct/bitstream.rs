@@ -56,7 +56,7 @@ use crate::headers::frame_header::{BlendMode, FrameHeader, FrameOptions};
 /// behaviour). Used by `examples/w44_171_dc_tree_gate_perf_ab.rs` to
 /// reproduce the BEFORE state for like-for-like A/B measurement.
 /// Production behaviour with the env unset is the libjxl-parity gate.
-const DC_TREE_VARIABLE_TRIAL_MIN_EFFORT: u8 = 8;
+pub(crate) const DC_TREE_VARIABLE_TRIAL_MIN_EFFORT: u8 = 8;
 
 /// W44-172 (2026-05-21): minimum effort to use the all-14 `Predictor::Variable`
 /// DC tree learner. At effort 8 (= libjxl `speed_tier == kKitten`) libjxl
@@ -74,7 +74,7 @@ const DC_TREE_VARIABLE_TRIAL_MIN_EFFORT: u8 = 8;
 ///
 /// Production source: dispatch picks `learn_dc_tree_best` at effort 8,
 /// `learn_dc_tree_variable` at effort >= 9. Both share the `_with_set` core.
-const DC_TREE_VARIABLE_PREDICTOR_FULL_MIN_EFFORT: u8 = 9;
+pub(crate) const DC_TREE_VARIABLE_PREDICTOR_FULL_MIN_EFFORT: u8 = 9;
 
 /// Progressive pass configuration computed from ProgressiveMode.
 struct ProgressivePassConfig {

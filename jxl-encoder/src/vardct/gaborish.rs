@@ -27,7 +27,7 @@
 ///   R = kGaborish[2] (orthogonal distance 2)
 ///   L = kGaborish[3] (knight's move distance)
 ///   D = kGaborish[4] (corner distance 2*sqrt(2))
-const K_GABORISH: [f64; 5] = [
+pub(crate) const K_GABORISH: [f64; 5] = [
     -0.09495815671340026,   // [0] r: orthogonal dist 1
     -0.041031725066768575,  // [1] d: diagonal dist sqrt(2)
     0.013710004822696948,   // [2] R: orthogonal dist 2
@@ -95,10 +95,10 @@ fn apply_channel(data: &mut [f32], scratch: &mut [f32], width: usize, height: us
 /// Tile size used for the adaptive contrast lookup. Matches the AC block
 /// alignment (BLOCK_DIM * 2) so per-tile `mul` shifts at the same granularity
 /// as AC strategy decisions.
-const ADAPTIVE_TILE: usize = 16;
+pub(crate) const ADAPTIVE_TILE: usize = 16;
 
 /// Kernel radius (5x5 kernel → radius 2).
-const ADAPTIVE_RADIUS: usize = 2;
+pub(crate) const ADAPTIVE_RADIUS: usize = 2;
 
 /// Map a tile's mean absolute Laplacian to a per-tile multiplier.
 ///

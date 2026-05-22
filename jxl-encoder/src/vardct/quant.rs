@@ -115,7 +115,7 @@ fn generate_dct_quant_weights_rect(
 
 /// DCT8 band parameters from libjxl quant_weights.cc:535-561.
 /// 6 distance bands per channel.
-const DCT8_PARAMS: [[f64; 6]; 3] = [
+pub(crate) const DCT8_PARAMS: [[f64; 6]; 3] = [
     // X channel
     [3150.0, 0.0, -0.4, -0.4, -0.4, -2.0],
     // Y channel
@@ -126,7 +126,7 @@ const DCT8_PARAMS: [[f64; 6]; 3] = [
 
 /// DCT16x16 band parameters from libjxl quant_weights.cc:647-676.
 /// 7 distance bands per channel.
-const DCT16X16_PARAMS: [[f64; 7]; 3] = [
+pub(crate) const DCT16X16_PARAMS: [[f64; 7]; 3] = [
     // X channel
     [
         8996.8725711814115328,
@@ -164,7 +164,7 @@ const DCT16X16_PARAMS: [[f64; 7]; 3] = [
 ///
 /// Note: libjxl names this "DCT8X16" in the QuantTable enum (column-major naming),
 /// but the GetQuantWeights call uses (ROWS=8, COLS=16).
-const DCT16X8_PARAMS: [[f64; 7]; 3] = [
+pub(crate) const DCT16X8_PARAMS: [[f64; 7]; 3] = [
     // X channel
     [7240.7734393502, -0.7, -0.7, -0.2, -0.2, -0.2, -0.5],
     // Y channel
@@ -175,7 +175,7 @@ const DCT16X8_PARAMS: [[f64; 7]; 3] = [
 
 /// DCT32x32 band parameters from libjxl quant_weights.cc:680-712.
 /// 8 distance bands per channel.
-const DCT32X32_BAND_PARAMS: [[f64; 8]; 3] = [
+pub(crate) const DCT32X32_BAND_PARAMS: [[f64; 8]; 3] = [
     // X channel
     [
         15718.40830982518931456,
@@ -213,7 +213,7 @@ const DCT32X32_BAND_PARAMS: [[f64; 8]; 3] = [
 
 /// DCT16X32 band parameters from jxl-rs quant_weights.rs:561-590 (Dct16x32 case).
 /// 8 distance bands per channel. Used for both DCT32X16 and DCT16X32.
-const DCT16X32_BAND_PARAMS: [[f64; 8]; 3] = [
+pub(crate) const DCT16X32_BAND_PARAMS: [[f64; 8]; 3] = [
     // X channel
     [
         13844.97076442300573,
@@ -251,7 +251,7 @@ const DCT16X32_BAND_PARAMS: [[f64; 8]; 3] = [
 
 /// DCT64X64 band parameters from libjxl quant_weights.cc:899-931.
 /// 8 distance bands per channel.
-const DCT64X64_BAND_PARAMS: [[f64; 8]; 3] = [
+pub(crate) const DCT64X64_BAND_PARAMS: [[f64; 8]; 3] = [
     // X channel (0.9 * 26629.073922049845 = 23966.16653...)
     [
         23966.16652984486,
@@ -289,7 +289,7 @@ const DCT64X64_BAND_PARAMS: [[f64; 8]; 3] = [
 
 /// DCT32X64/DCT64X32 band parameters from libjxl quant_weights.cc:935-968.
 /// 8 distance bands per channel. Used for both DCT64X32 and DCT32X64.
-const DCT32X64_BAND_PARAMS: [[f64; 8]; 3] = [
+pub(crate) const DCT32X64_BAND_PARAMS: [[f64; 8]; 3] = [
     // X channel (0.65 * 23629.073922049845 = 15358.898...)
     [
         15358.898049332399,
@@ -318,7 +318,7 @@ const DCT32X64_BAND_PARAMS: [[f64; 8]; 3] = [
 
 /// DCT4X8 band parameters from jxl-oxide dequant.rs:44-48.
 /// 4 distance bands per channel.
-const DCT4X8_BAND_PARAMS: [[f64; 4]; 3] = [
+pub(crate) const DCT4X8_BAND_PARAMS: [[f64; 4]; 3] = [
     // X channel
     [2198.0505, -0.96269625, -0.7619425, -0.65511405],
     // Y channel
@@ -329,7 +329,7 @@ const DCT4X8_BAND_PARAMS: [[f64; 4]; 3] = [
 
 /// DCT4X4 band parameters from jxl-oxide dequant.rs:49-53.
 /// 4 distance bands per channel.
-const DCT4_BAND_PARAMS: [[f64; 4]; 3] = [
+pub(crate) const DCT4_BAND_PARAMS: [[f64; 4]; 3] = [
     // X channel
     [2200.0, 0.0, 0.0, 0.0],
     // Y channel
@@ -341,7 +341,7 @@ const DCT4_BAND_PARAMS: [[f64; 4]; 3] = [
 /// DCT4X4 LLF multiplier parameters from jxl-oxide dequant.rs:257-277.
 /// params[0] is used for LLF positions 1 and 8.
 /// params[1] is used for LLF position 9.
-const DCT4_LLF_PARAMS: [[f64; 2]; 3] = [
+pub(crate) const DCT4_LLF_PARAMS: [[f64; 2]; 3] = [
     // X channel
     [1.0, 1.0],
     // Y channel
@@ -355,7 +355,7 @@ const DCT4_LLF_PARAMS: [[f64; 2]; 3] = [
 /// - dc_tend0, dc_tend1: weights for positions (0,1) and (1,0)
 /// - corner0, corner1, corner2: weights for positions (0,2), (2,0), (2,2)
 /// - band0-3: distance bands for interpolating other AFV positions
-const AFV_WEIGHTS: [[f64; 9]; 3] = [
+pub(crate) const AFV_WEIGHTS: [[f64; 9]; 3] = [
     // X channel
     [3072.0, 3072.0, 256.0, 256.0, 256.0, 414.0, 0.0, 0.0, 0.0],
     // Y channel
@@ -366,7 +366,7 @@ const AFV_WEIGHTS: [[f64; 9]; 3] = [
 
 /// Frequency lookup table for AFV interpolation.
 /// From libjxl quant_weights.cc kFreqs array.
-const AFV_FREQS: [f64; 16] = [
+pub(crate) const AFV_FREQS: [f64; 16] = [
     0.0,                // (0,0) - not used
     0.0,                // (1,0) - not used
     0.8517778890324296, // (2,0)
@@ -658,7 +658,7 @@ fn quant_weights_dct4x4() -> &'static [f32] {
 /// IDENTITY quantization weights from libjxl defaults.
 /// 3 weights per channel: [DC, AC_pos1_pos8, AC_pos9].
 /// All other positions use the DC weight.
-const IDENTITY_WEIGHTS: [[f32; 3]; 3] = [
+pub(crate) const IDENTITY_WEIGHTS: [[f32; 3]; 3] = [
     [280.0, 3160.0, 3160.0], // X channel
     [60.0, 864.0, 864.0],    // Y channel
     [18.0, 200.0, 200.0],    // B channel
@@ -696,7 +696,7 @@ fn quant_weights_identity() -> &'static [f32] {
 
 /// DCT2X2 dequantization weights from libjxl defaults.
 /// 6 weights per channel for hierarchical frequency bands.
-const DCT2_WEIGHTS: [[f32; 6]; 3] = [
+pub(crate) const DCT2_WEIGHTS: [[f32; 6]; 3] = [
     [3840.0, 2560.0, 1280.0, 640.0, 480.0, 300.0], // X channel
     [960.0, 640.0, 320.0, 180.0, 140.0, 120.0],    // Y channel
     [640.0, 320.0, 128.0, 64.0, 32.0, 16.0],       // B channel

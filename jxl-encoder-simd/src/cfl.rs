@@ -7,7 +7,7 @@
 //! `find_best_multiplier`: least-squares fitting of integer CfL coefficient.
 //! Inner loop is a dual dot product (sum_aa, sum_ab) over up to 4096 elements.
 
-const K_INV_COLOR_FACTOR: f32 = 1.0 / 84.0;
+pub const K_INV_COLOR_FACTOR: f32 = 1.0 / 84.0;
 
 /// Bias towards zero and quantize to i8 (libjxl enc_chroma_from_luma.cc:176-183).
 ///
@@ -98,11 +98,11 @@ pub const NEWTON_MAX_ITERS_DEFAULT: usize = 10;
 /// (`enc_chroma_from_luma.cc:152-167`).
 pub const NEWTON_EPS_LIBJXL: f32 = 100.0;
 pub const NEWTON_MAX_ITERS_LIBJXL: usize = 20;
-const NEWTON_CLAMP: f32 = 20.0;
-const NEWTON_COEFF: f32 = 1.0 / 3.0;
-const NEWTON_THRES: f32 = 100.0;
-const NEWTON_STABILIZER: f32 = 0.85;
-const NEWTON_CONVERGENCE: f32 = 3e-3;
+pub const NEWTON_CLAMP: f32 = 20.0;
+pub const NEWTON_COEFF: f32 = 1.0 / 3.0;
+pub const NEWTON_THRES: f32 = 100.0;
+pub const NEWTON_STABILIZER: f32 = 0.85;
+pub const NEWTON_CONVERGENCE: f32 = 3e-3;
 
 /// Find the best integer CfL multiplier via regularized least-squares.
 ///

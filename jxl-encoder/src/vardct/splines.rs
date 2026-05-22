@@ -180,22 +180,22 @@ pub(crate) struct SplinesData {
 // ── Constants ───────────────────────────────────────────────────────────────
 
 /// Channel weights for quantization: [X, Y, B, sigma].
-const CHANNEL_WEIGHT: [f32; 4] = [0.0042, 0.075, 0.07, 0.3333];
+pub(crate) const CHANNEL_WEIGHT: [f32; 4] = [0.0042, 0.075, 0.07, 0.3333];
 
 /// Number of entropy contexts for spline encoding.
-const NUM_SPLINE_CONTEXTS: usize = 6;
+pub(crate) const NUM_SPLINE_CONTEXTS: usize = 6;
 
 /// Target rendering distance between sample points along the curve.
-const DESIRED_RENDERING_DISTANCE: f32 = 1.0;
+pub(crate) const DESIRED_RENDERING_DISTANCE: f32 = 1.0;
 
 /// 1 / (2 * sqrt(2)), used in Gaussian splatting.
-const ONE_OVER_2S2: f32 = 0.353_553_38;
+pub(crate) const ONE_OVER_2S2: f32 = 0.353_553_38;
 
 /// Exponent for maximum_distance computation (fast mode, matches jxl-rs default).
-const DISTANCE_EXP: f32 = 3.0;
+pub(crate) const DISTANCE_EXP: f32 = 3.0;
 
 /// Number of sub-points per Catmull-Rom segment.
-const NUM_POINTS_PER_SEGMENT: usize = 16;
+pub(crate) const NUM_POINTS_PER_SEGMENT: usize = 16;
 
 // ── Fast math ───────────────────────────────────────────────────────────────
 
@@ -692,7 +692,9 @@ pub(crate) fn add_splines(
 /// Tunable detection thresholds. All values were picked to ride on the
 /// conservative side of the cost-benefit gate so the default-config
 /// hash-lock invariants stay intact on photo content.
-mod detect_params {
+///
+/// W44-211: `pub(crate)` to allow `crate::tuning::splines` to re-export.
+pub(crate) mod detect_params {
     /// Minimum gradient magnitude (in linearised Y intensity) for a
     /// pixel to be a ridge candidate. The Y channel after XYB
     /// conversion has roughly `[-0.5, +0.5]` range; 0.15 picks up only
