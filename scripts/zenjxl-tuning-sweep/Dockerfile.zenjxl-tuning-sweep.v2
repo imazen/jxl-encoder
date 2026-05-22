@@ -1,0 +1,141 @@
+# Dockerfile.zenjxl-tuning-sweep.v2 — fleet image for W44-212+ tuning sweeps.
+#
+# Supersedes v1 (added 2026-05-22 by W44-212; v1 lacked CUDA NVRTC +
+# cudart + cuda_dlsym_stub.so, which the W44-215 fleet smoke audit
+# identified as required for zen-metrics GPU scoring on vast.ai
+# driver pool 525+). v2 imports the L4/L7 layers + LD_PRELOAD env
+# from zenmetrics Dockerfile.sweep.v26 (the proven gold-standard).
+#
+# Single-cell worker. Each container instance pulls one chunk of cell
+# specs from R2, invokes the baked `zenjxl-tuning-runner` binary per
+# cell, uploads the resulting Parquet to the per-sweep ephemeral
+# bucket, and loops.
+#
+# Layer plan (cheap-changes-rarely → expensive-changes-often):
+#
+#   ┌──────────────────────────────────────────────────────────────┐
+#   │ L1: ubuntu:24.04                       ~80 MB   biennial      │
+#   │ L2: stable apt deps (curl, jq, ca-c)   ~80 MB   per quarter   │
+#   │ L3: CUDA NVRTC + cudart 12-6 + dev hdr ~280 MB  per CUDA bump │
+#   │ L4: helpers (s5cmd 2.2.2 + jq 1.7.1)   ~18 MB   per quarter   │
+#   │ L5: cuda_dlsym_stub.so (compiled here) ~15 KB   rare          │
+#   │ L6: zen-metrics binary (GPU scoring)   ~280 MB  per code push │
+#   │ L7: zenjxl-tuning-runner binary        ~280 MB  per code push │
+#   │ L8: onstart + worker scripts           ~50 KB   per script    │
+#   │ L9: ENV + LABELs + ENTRYPOINT          0 B      ~never        │
+#   └──────────────────────────────────────────────────────────────┘
+#
+# We deliberately do NOT bake the test corpus. Cells reference
+# images by `image_path = /corpus/<sha>.png`; the worker uses the
+# corpus index in onstart to fetch the missing images from R2 lazily
+# on first reference (cached for the instance's lifetime).
+#
+# Build:
+#
+#   cd ~/work/zen/jxl-encoder--w44-215-fleet-fanout
+#   # binaries already staged at ./zenjxl-tuning-runner-bin + ./zen-metrics-bin
+#   docker build \
+#     -f scripts/zenjxl-tuning-sweep/Dockerfile.zenjxl-tuning-sweep.v2 \
+#     --build-arg ZEN_METRICS_BINARY=./zen-metrics-bin \
+#     --build-arg RUNNER_BINARY=./zenjxl-tuning-runner-bin \
+#     -t ghcr.io/lilith/zenjxl-tuning-sweep:v2-$(git -C . rev-parse --short HEAD) \
+#     -t ghcr.io/lilith/zenjxl-tuning-sweep:v2 \
+#     .
+
+FROM ubuntu:24.04
+
+LABEL org.opencontainers.image.source="https://github.com/imazen/jxl-encoder"
+LABEL org.opencontainers.image.description="W44-212 zenjxl-tuning-runner sweep worker v2 (CUDA NVRTC + cuda_dlsym_stub + per-cell Parquet emit)"
+LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── L2: stable apt deps ─────────────────────────────────────────────────
+RUN apt-get update -qq && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg jq \
+        libssl3 \
+        gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── L3: CUDA NVRTC + cudart 12-6 + dev headers ──────────────────────────
+#
+# Brought forward from zenmetrics Dockerfile.sweep.v26. cubecl-cuda
+# dlopens libnvrtc.so.12 at runtime; dev headers required for kernel
+# JIT compilation. Pinned to 12-6 (vast.ai driver pool compat).
+RUN export PATH="/usr/local/sbin:/usr/sbin:/sbin:${PATH}" \
+    && curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
+        -o /tmp/cuda-keyring.deb \
+    && dpkg -i /tmp/cuda-keyring.deb \
+    && rm /tmp/cuda-keyring.deb \
+    && apt-get update -qq \
+    && apt-get install -y --no-install-recommends \
+        cuda-nvrtc-12-6 cuda-cudart-12-6 cuda-cudart-dev-12-6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo "/usr/local/cuda-12.6/lib64" > /etc/ld.so.conf.d/cuda-12.6.conf \
+    && ldconfig \
+    && ln -sf /usr/local/cuda-12.6 /usr/local/cuda \
+    && test -f /usr/local/cuda/include/cuda_runtime.h \
+    && test -f /usr/local/cuda/lib64/libcudart.so.12 \
+    && ldconfig -p | grep -q libnvrtc.so.12
+
+# ── L4: helpers (s5cmd) ─────────────────────────────────────────────────
+RUN curl -sSL -o /tmp/s5cmd.tgz \
+        https://github.com/peak/s5cmd/releases/download/v2.2.2/s5cmd_2.2.2_Linux-64bit.tar.gz \
+    && tar -xzf /tmp/s5cmd.tgz -C /usr/local/bin s5cmd \
+    && chmod +x /usr/local/bin/s5cmd \
+    && rm /tmp/s5cmd.tgz \
+    && s5cmd version
+
+# ── L5: cuda_dlsym_stub.so LD_PRELOAD shim ──────────────────────────────
+#
+# Compiled here from zenmetrics' scripts/sweep/cuda_dlsym_stub.c (pulled
+# into our build context via the build script's stage-prep step).
+# Without this, cubecl-cuda 0.19.4 panics at init on vast.ai boxes
+# with newer (580+) drivers that dropped coredump-callback symbols.
+COPY scripts/zenjxl-tuning-sweep/cuda_dlsym_stub.c /tmp/cuda_dlsym_stub.c
+RUN gcc -shared -fPIC -O2 -o /usr/local/lib/cuda_dlsym_stub.so \
+        /tmp/cuda_dlsym_stub.c -ldl \
+    && rm /tmp/cuda_dlsym_stub.c \
+    && test -s /usr/local/lib/cuda_dlsym_stub.so \
+    && nm -D --defined-only /usr/local/lib/cuda_dlsym_stub.so 2>/dev/null \
+        | grep -q ' T dlsym$' \
+        || (echo "v2 cuda_dlsym_stub.so missing exported dlsym override" >&2 && exit 1) \
+    && echo "v2 cuda_dlsym_stub universal cu* shim baked"
+
+# ── L9 env (BEFORE the heavy binary smoke tests so they inherit it) ─────
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
+    CUDA_PATH=/usr/local/cuda \
+    PATH=/usr/local/cuda/bin:/usr/local/sbin:/usr/sbin:/sbin:/usr/local/bin:/usr/bin:/bin \
+    LD_PRELOAD=/usr/local/lib/cuda_dlsym_stub.so
+
+# ── L6: zen-metrics binary (out-of-process GPU scoring) ────────────────
+ARG ZEN_METRICS_BINARY=./zen-metrics-bin
+COPY --chmod=0755 ${ZEN_METRICS_BINARY} /usr/local/bin/zen-metrics
+
+# Smoke (LD_PRELOAD active, so cuda_dlsym_stub absorbs missing symbols
+# from this box's host loader). --version is the safe one — does not
+# dlopen libcuda. The cubecl-cuda dispatcher only initialises on the
+# first metric call.
+RUN /usr/local/bin/zen-metrics --version
+
+# ── L7: zenjxl-tuning-runner binary ─────────────────────────────────────
+ARG RUNNER_BINARY=./zenjxl-tuning-runner-bin
+COPY --chmod=0755 ${RUNNER_BINARY} /usr/local/bin/zenjxl-tuning-runner
+
+RUN /usr/local/bin/zenjxl-tuning-runner --help 2>&1 | head -3
+
+# ── L8: onstart + worker scripts ────────────────────────────────────────
+COPY --chmod=0755 scripts/zenjxl-tuning-sweep/onstart.sh /usr/local/bin/onstart.sh
+COPY --chmod=0755 scripts/zenjxl-tuning-sweep/worker.sh /usr/local/bin/worker.sh
+
+RUN mkdir -p /corpus /sweep-state /sweep-output
+
+# ── L9: env + entrypoint ────────────────────────────────────────────────
+ENV W44_212_SWEEP_BUCKET=zen-tuning-ephemeral
+ENV W44_212_CORPUS_BUCKET=codec-corpus
+ENV W44_212_CHUNK_QUEUE_PREFIX=chunks
+ENV W44_212_OUTPUT_PREFIX=cells
+
+WORKDIR /sweep-state
+
+ENTRYPOINT ["/usr/local/bin/onstart.sh"]

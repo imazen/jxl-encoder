@@ -69,3 +69,5 @@ fuzz-*.log
 
 # Picker oracle TSVs (large; archived to /mnt/v/output/jxl-encoder/picker-oracle-*/ until we decide on git-lfs vs direct)
 jxl-encoder/benchmarks/*.tsv
+zenjxl-tuning-runner-bin
+zen-metrics-bin
