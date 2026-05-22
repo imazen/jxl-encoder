@@ -1,0 +1,9 @@
+label	image	mask_med	m3_colour	fcbr	edge_density	fires_w44_29_outer	fires_w44_96_variant_z	zenjxl_loser_count_at_d_ge_3	notes
+W44-29 OUTER-only candidate (REJECT_Z by W44-96)	2389166.png	46.241	47.996	0.13354	0.4409	yes	no (fcbr>=0.01)	0	no zenjxl losers in W44-202 → no target for OUTER widening
+W44-29 OUTER-only candidate (REJECT_Z by W44-96)	1044329.png	48.029	65.031	0.12158	0.5486	yes	no (fcbr>=0.01)	0	W44-94 e5 d=5 cell measured Z120 = -1.92% bytes vs default but cell is FIXED on cjxl ledger
+W44-29 OUTER-only candidate (REJECT_Z by W44-96)	7062219.png	47.795	51.141	0.01099	0.6332	yes	no (fcbr>=0.01)	0	W44-205 already harvested via coeff_orders bucket-skip (-1.5% to -2.4% bytes e7)
+W44-96 variant Z (W44-167 INNER honest-stop)	1420710.png	39.549	32.932	0.00000	0.9298	yes	yes (HC m3>=25)	0 at d>=3	cluster #3 cited by C3; current variant Z path handles all OPEN. W44-202 zenjxl losers ZERO at d>=3 (bytes already -1 to -7%)
+W44-96 variant Z (W44-167 INNER honest-stop)	1531677.png	35.634	12.295	0.00000	0.8766	yes	yes (LC m3<25)	0 at d>=3	cluster #3 cited by C3; per-m3 split at INNER falsified by W44-167
+W44-91 mid-band only	3637739.png	75.827	12.208	0.09155	0.2962	no (mask>=50)	no	many (W44-202)	largest zenjxl loser cluster — but doesn't fire OUTER. W44-198 ruled out entropy_mul.
+W44-91 mid-band candidate	1189261.png	69.078	98.839	0.00342	0.4895	no (mask>=50)	no	some at low-d	W44-91 mid-band handles d∈[3,5]; no OUTER firing
+Above OUTER gate (control)	1418519.png	92.331	36.843	0.09839	0.1637	no (mask>=50)	yes via W44-166 admit at mask_p25>=85	0 at d>=3	W44-152+W44-166+W44-167 stack handles this; not an OUTER target
