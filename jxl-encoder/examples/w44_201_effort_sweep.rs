@@ -47,17 +47,27 @@ fn encode(pixels: &[u8], w: u32, h: u32, distance: f32, effort: u8, v: Variant) 
 
 fn main() {
     let imgs = &[
-        ("3637739", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/3637739.png"),
-        ("1420710", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png"),
-        ("1418519", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png"),
-        ("imac_g3", "/home/lilith/work/codec-corpus/gb82-sc/imac_g3.png"),
+        (
+            "3637739",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/3637739.png",
+        ),
+        (
+            "1420710",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png",
+        ),
+        (
+            "1418519",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png",
+        ),
+        (
+            "imac_g3",
+            "/home/lilith/work/codec-corpus/gb82-sc/imac_g3.png",
+        ),
     ];
     let efforts = [4u8, 5, 6, 7, 8];
     let distances = [1.0_f32, 2.0, 4.0, 6.0];
 
-    println!(
-        "label\tdistance\teffort\tA_bytes\tB_bytes\tC_bytes\tdelta_B\tdelta_C\tpct_B\tpct_C"
-    );
+    println!("label\tdistance\teffort\tA_bytes\tB_bytes\tC_bytes\tdelta_B\tdelta_C\tpct_B\tpct_C");
     let mut sum_a = 0i64;
     let mut sum_b = 0i64;
     let mut sum_c = 0i64;

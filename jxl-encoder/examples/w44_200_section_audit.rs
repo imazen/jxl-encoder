@@ -162,8 +162,7 @@ fn parse_sections(bytes: &[u8]) -> Option<Sections> {
         }
         // Sort by (group, pass) to get a stable per-group ordering.
         ac_per_group_raw.sort_by_key(|&(g, p, _)| (g, p));
-        let ac_per_group_main: Vec<u32> =
-            ac_per_group_raw.iter().map(|&(_, _, s)| s).collect();
+        let ac_per_group_main: Vec<u32> = ac_per_group_raw.iter().map(|&(_, _, s)| s).collect();
         let frame_bytes = all + lf_global + hf_global + lf_groups + ac_groups;
 
         match frame_header.frame_type {
@@ -495,8 +494,12 @@ fn print_delta_table(results: &[CellResult]) {
         };
         eprintln!();
         eprintln!("─── {label} (cjxl baseline) ───");
-        let cjxl_ac_str: Vec<String> = cjxl.sections.ac_per_group.iter()
-            .map(|s| format!("{:>5}", s)).collect();
+        let cjxl_ac_str: Vec<String> = cjxl
+            .sections
+            .ac_per_group
+            .iter()
+            .map(|s| format!("{:>5}", s))
+            .collect();
         eprintln!(
             "  cjxl     : {:>8} B  (lf_glob={:>5} lf_grp={:>5} hf_glob={:>6} ac_grp={:>6})  ac=[{}]",
             cjxl.bytes,
@@ -510,8 +513,7 @@ fn print_delta_table(results: &[CellResult]) {
             let Some(r) = r else {
                 continue;
             };
-            let total_delta_pct =
-                (r.bytes as f64 - cjxl.bytes as f64) / cjxl.bytes as f64 * 100.0;
+            let total_delta_pct = (r.bytes as f64 - cjxl.bytes as f64) / cjxl.bytes as f64 * 100.0;
             let ac_delta_str: Vec<String> = r
                 .sections
                 .ac_per_group

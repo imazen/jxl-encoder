@@ -97,7 +97,18 @@ fn main() {
         for &(effort, distance) in &[(7u8, 5.0f32), (8u8, 5.0f32)] {
             let profile = EffortProfile::lossy(effort, EncoderMode::Reference);
             let pre = EncoderPrecomputed::compute(
-                w, h, &linear_rgb, distance, true, true, true, false, false, true, None, &profile,
+                w,
+                h,
+                &linear_rgb,
+                distance,
+                true,
+                true,
+                true,
+                false,
+                false,
+                true,
+                None,
+                &profile,
                 None,
             )
             .expect("EncoderPrecomputed::compute");

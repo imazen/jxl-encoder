@@ -39,20 +39,76 @@ fn encode(pixels: &[u8], w: u32, h: u32, distance: f32, savings_factor: Option<f
 
 fn main() {
     let cells: Vec<(&str, &str, f32)> = vec![
-        ("cid22_3637739_d4", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/3637739.png", 4.0),
-        ("cid22_3637739_d2", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/3637739.png", 2.0),
-        ("cid22_3637739_d6", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/3637739.png", 6.0),
-        ("cid22_1418519_d4", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png", 4.0),
-        ("cid22_1420710_d4", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png", 4.0),
-        ("cid22_1420710_d6", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png", 6.0),
-        ("cid22_1531677_d4", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png", 4.0),
-        ("cid22_1189261_d4", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1189261.png", 4.0),
-        ("cid22_1025469_d4", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1025469.png", 4.0),
-        ("cid22_2389166_d4", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/2389166.png", 4.0),
-        ("gb82_codec_wiki_d2", "/home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png", 2.0),
-        ("gb82_imac_g3_d2", "/home/lilith/work/codec-corpus/gb82-sc/imac_g3.png", 2.0),
-        ("gb82_terminal_d2", "/home/lilith/work/codec-corpus/gb82-sc/terminal.png", 2.0),
-        ("gb82_windows95_d2", "/home/lilith/work/codec-corpus/gb82-sc/windows95.png", 2.0),
+        (
+            "cid22_3637739_d4",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/3637739.png",
+            4.0,
+        ),
+        (
+            "cid22_3637739_d2",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/3637739.png",
+            2.0,
+        ),
+        (
+            "cid22_3637739_d6",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/3637739.png",
+            6.0,
+        ),
+        (
+            "cid22_1418519_d4",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png",
+            4.0,
+        ),
+        (
+            "cid22_1420710_d4",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png",
+            4.0,
+        ),
+        (
+            "cid22_1420710_d6",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png",
+            6.0,
+        ),
+        (
+            "cid22_1531677_d4",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png",
+            4.0,
+        ),
+        (
+            "cid22_1189261_d4",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1189261.png",
+            4.0,
+        ),
+        (
+            "cid22_1025469_d4",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1025469.png",
+            4.0,
+        ),
+        (
+            "cid22_2389166_d4",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/2389166.png",
+            4.0,
+        ),
+        (
+            "gb82_codec_wiki_d2",
+            "/home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png",
+            2.0,
+        ),
+        (
+            "gb82_imac_g3_d2",
+            "/home/lilith/work/codec-corpus/gb82-sc/imac_g3.png",
+            2.0,
+        ),
+        (
+            "gb82_terminal_d2",
+            "/home/lilith/work/codec-corpus/gb82-sc/terminal.png",
+            2.0,
+        ),
+        (
+            "gb82_windows95_d2",
+            "/home/lilith/work/codec-corpus/gb82-sc/windows95.png",
+            2.0,
+        ),
     ];
 
     print!("label");
@@ -64,7 +120,9 @@ fn main() {
     let mut sums = [0i64; 4];
     let factors = [1.0_f32, 0.7, 0.5, 0.3];
     for (label, path, d) in &cells {
-        let Some((pixels, w, h)) = load_png(Path::new(path)) else { continue };
+        let Some((pixels, w, h)) = load_png(Path::new(path)) else {
+            continue;
+        };
         print!("{}", label);
         for (i, &f) in factors.iter().enumerate() {
             let bytes = encode(&pixels, w, h, *d, Some(f));

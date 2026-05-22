@@ -1,0 +1,180 @@
+# W44-206 — savings_factor multiplier recalibration probe
+
+## Status
+
+[HONEST-STOP — measurement shipped, NO production code change]
+
+W44-204 C2 chunk (recalibrate W44-82 coeff_orders cost-model multiplier
+from 1.0 → ~0.4) FALSIFIED by 3-phase paired A/B bench. The multiplier
+DOES find a strict-dominant value (f=0.3 wins on every cell where any
+factor differs, zero regressions), but its EV is dominated by the
+already-shipped W44-201 + W44-205 per-bucket gates.
+
+## Headline
+
+- **Phase 1** (multiplier alone, W44-201+205 gates DISABLED via env
+  hooks `JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS=1` +
+  `JXL_W44_205_FORCE_LEGACY_MEDIUM_BUCKETS=1`):
+  best multiplier f=0.3 → -0.289% bytes across 34 cells.
+- **Phase 2** (multiplier on top of production gates): best f=0.3 →
+  -0.059% additional bytes.
+- **Phase 3** (effort sweep, gates ON): -0.10% to -0.13% per effort.
+- Hard acceptance gate (f) requires ≥ -0.5% improvement: FAILS by ~8×.
+
+## Gate model
+
+`vardct/coeff_order.rs:651`:
+```rust
+if !skip_bucket && total_savings_bits * savings_factor > total_lehmer_cost {
+    used_orders |= 1 << bucket;
+}
+```
+
+`savings_factor < 1.0` tightens the gate (savings must be LARGER vs
+Lehmer cost to admit a custom order). f=0.3 means savings need to be
+3.33× the Lehmer cost.
+
+## Phase 1 results (multiplier alone, gates OFF)
+
+Cell set: 34 cells (16 LOSER + 10 PROTECT + 8 SCRN) at e7, d∈{1,2,3,4,5}.
+
+| factor | total bytes | delta vs 1.0 | pct    |
+|--------|-------------|--------------|--------|
+| 1.0    | 1505618     | +0           | +0.000%|
+| 0.3    | 1501273     | -4345        | -0.289%|
+| 0.4    | 1503371     | -2247        | -0.149%|
+| 0.5    | 1503977     | -1641        | -0.109%|
+| 0.6    | 1504125     | -1493        | -0.099%|
+| 0.7    | 1504180     | -1438        | -0.096%|
+| 0.8    | 1504778     | -840         | -0.056%|
+
+f=0.3 strictly dominates every other factor on every cell. Zero PROTECT
+regressions, zero SCRN regressions. Largest single-cell win:
+PROTECT_1531677_d4.0 -4.69% (1151 B).
+
+The W44-201+W44-205 baseline-vs-OFF wins on the SAME bench:
+TOTAL Phase 2 baseline (gates ON, f=1.0) = 1477792 B
+TOTAL Phase 1 baseline (gates OFF, f=1.0) = 1505618 B
+→ gates alone deliver -27826 B = -1.85% across this 34-cell set.
+
+**The multiplier-alone (-0.289%) is 6.4× SMALLER than the gates-alone
+(-1.85%).** Outcome A (multiplier subsumes gates) is FALSIFIED.
+
+## Phase 2 results (multiplier additive to gates)
+
+| factor | total bytes | delta vs 1.0 | pct    |
+|--------|-------------|--------------|--------|
+| 1.0    | 1477792     | +0           | +0.000%|
+| 0.3    | 1476924     | -868         | -0.059%|
+| 0.4    | 1477147     | -645         | -0.044%|
+| 0.5    | 1477409     | -383         | -0.026%|
+| 0.6    | 1477508     | -284         | -0.019%|
+| 0.7    | 1477694     | -98          | -0.007%|
+| 0.8    | 1477738     | -54          | -0.004%|
+
+The multiplier IS additive (Outcome B), but the additional EV is tiny
+(-0.059%). Largest single-cell additional win: LOSER_3637739_d5.0
+-0.65% (-92 B). Most cells are byte-identical because the gates already
+skip the heavy-overshoot buckets, leaving only buckets {0, 5} (DCT8 and
+DCT32x8/8x32) for the multiplier to act on — and on these buckets the
+W44-82 cost model is closer to the empirical truth.
+
+## Phase 3 results (effort sweep, gates ON)
+
+| effort | f=1.0   | f=0.3   | delta  | pct    |
+|--------|---------|---------|--------|--------|
+| e4     | 491298  | 491298  | +0     | +0.000%|
+| e5     | 434077  | 433519  | -558   | -0.129%|
+| e6     | 441776  | 441286  | -490   | -0.111%|
+| e7     | 445545  | 445115  | -430   | -0.097%|
+
+e4 doesn't fire the gate (custom orders are skipped at low effort by
+the legacy code path). e5/6/7 each get small additional -0.1% wins.
+Pattern is CONSISTENT (not a one-cell anomaly) but EV is too small to
+justify a new gate field.
+
+## Acceptance gate verdict
+
+- (a) Build PASS
+- (b) Tests pass: not run yet (no production change)
+- (c) Hash-locks: N/A (no production change)
+- (d) Libjxl byte-lock: N/A (no production change)
+- (e) divergence_table_drift: N/A (no production change)
+- (f) **Bench delta ≥ -0.5% IMPROVEMENT vs W44-201+205 baseline:
+  FAILS** (-0.059% additional vs gates).
+- (g) Zero new Pareto-loser cells: PASS (zero regressions across all
+  3 phases).
+- (h) Multi-decoder: N/A (no production change).
+- (i) CLEANUP: forge + rm-rf after push.
+
+The probe found a strict-dominant multiplier value with zero
+regressions — but the EV is far below the acceptance threshold. The
+gates from W44-201/W44-205 stay as the best fix.
+
+## Why the multiplier doesn't reach the gate's EV
+
+The W44-201 dump found that for bucket 3 (DCT32x32) on 3637739 e7 d=4,
+Zenjxl emits 308 nonzero Lehmer codes vs cjxl's 5. The cost-model
+estimate of `total_savings_bits` was clearly inflated, but the actual
+ratio (308/5 = 61.6×) suggests the per-position zero distribution
+on these buckets is so divergent from the empirical truth that NO
+single global multiplier value would map our savings model onto cjxl's
+behaviour. Per-bucket SKIP (the W44-201+205 gates) avoids this
+modelling failure entirely.
+
+For the OTHER buckets (0, 5, 7+), the cost model is closer to
+correct — the wins from a tighter multiplier are real but small
+(-0.06% to -0.13%).
+
+A future per-bucket multiplier (e.g. `bits_per_zero[bucket]` with
+distinct values for each bucket) MIGHT outperform both approaches by
+keeping the bucket gates open while applying bucket-specific tightening,
+but designing that requires a per-(bucket × cell) cost-model audit,
+not a single-scalar bisection. Out of scope for W44-206.
+
+## Files
+
+- `examples/w44_206_savings_factor_isolated_ab.rs` — Phase 1 probe
+  (34 cells × 7 factors, gates OFF)
+- `examples/w44_206_savings_factor_additive_ab.rs` — Phase 2 probe
+  (34 cells × 7 factors, gates ON)
+- `examples/w44_206_savings_factor_effort_sweep.rs` — Phase 3 effort
+  sweep (5 photos × 4 efforts × 3 distances × 4 factors)
+- `benchmarks/w44_206_savings_factor_isolated_ab_2026-05-22.tsv`
+- `benchmarks/w44_206_savings_factor_additive_ab_2026-05-22.tsv`
+- `benchmarks/w44_206_savings_factor_effort_sweep_2026-05-22.tsv`
+
+Env hooks used:
+- `JXL_W44_201_SAVINGS_FACTOR=<f>` (pre-existing, vardct/coeff_order.rs:598)
+- `JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS=1` (pre-existing, line 631)
+- `JXL_W44_205_FORCE_LEGACY_MEDIUM_BUCKETS=1` (pre-existing, line 640)
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT re-attempt single-scalar `savings_factor` recalibration**
+   as a C2 replacement for W44-201+W44-205. Measurement is conclusive:
+   the multiplier EV is dominated by the per-bucket gates.
+2. **DO NOT cite "FMA precision" for any byte delta** (per W44-66
+   user correction).
+3. **DO NOT remove `JXL_W44_201_SAVINGS_FACTOR` env hook** —
+   retained as a diagnostic A/B knob and used by the W44-201
+   `savings_factor_ab` reproducer.
+4. **DO NOT lower the multiplier production default from 1.0** without
+   a per-bucket cost model — the W44-82 protection on buckets 0+5+7+ is
+   load-bearing for the F-D cells (W44-82 ruled out gate removal at
+   +1595 B on the F-D cluster).
+5. The follow-on candidate IS per-bucket multipliers (different
+   `bits_per_zero` per bucket index), but that's a multi-day audit
+   requiring per-(bucket × cell × strategy) measurement. NOT W44-206
+   scope.
+
+## Provenance
+
+```
+audit date:    2026-05-22
+audit type:    paired interleaved A/B bench (3 phases)
+parent commit: 8fe99fb5 (W44-205 on main)
+host:          lilith
+production source change: ZERO
+artifacts:     3 TSVs + 3 examples + 1 meta + memory note + divergence table update
+```

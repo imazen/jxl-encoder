@@ -52,8 +52,7 @@ const DISTANCE: f32 = 5.0;
 const SHORT_NAME: &str = "clic_097cb426";
 
 const DUMP_DIR: &str = "/tmp/w44_181_dump";
-const W178_BLOCKS_TSV: &str =
-    "benchmarks/w44_178_recon_diff_clic_097cb426_2026-05-21.blocks.tsv";
+const W178_BLOCKS_TSV: &str = "benchmarks/w44_178_recon_diff_clic_097cb426_2026-05-21.blocks.tsv";
 const OUT_TSV: &str = "benchmarks/w44_181_dc_quant_probe_2026-05-21.tsv";
 const OUT_META: &str = "benchmarks/w44_181_dc_quant_probe_2026-05-21.meta";
 
@@ -123,7 +122,13 @@ struct BlockAgg {
     max_abs_quant_diff: i16,
 }
 
-fn parse_inputs_tsv(path: &Path) -> std::io::Result<(Vec<DumpRow>, [ChannelStats; 3], HashMap<(u32, u32), BlockAgg>)> {
+fn parse_inputs_tsv(
+    path: &Path,
+) -> std::io::Result<(
+    Vec<DumpRow>,
+    [ChannelStats; 3],
+    HashMap<(u32, u32), BlockAgg>,
+)> {
     let file = std::fs::File::open(path)?;
     let reader = BufReader::new(file);
     let mut rows: Vec<DumpRow> = Vec::new();
@@ -151,8 +156,7 @@ fn parse_inputs_tsv(path: &Path) -> std::io::Result<(Vec<DumpRow>, [ChannelStats
         let inv_factor: f32 = parts[6].parse().unwrap_or(0.0);
         let dc_cfl_factor: f32 = parts[7].parse().unwrap_or(0.0);
 
-        let (q_ours, q_libjxl, near_boundary) =
-            compute_both(dc, y_dc, inv_factor, dc_cfl_factor);
+        let (q_ours, q_libjxl, near_boundary) = compute_both(dc, y_dc, inv_factor, dc_cfl_factor);
 
         let s = &mut per_channel[channel as usize];
         s.rows += 1;
@@ -379,15 +383,19 @@ fn main() {
     eprintln!("[W44-181] Phase 2: encode + dump DC quant inputs");
     let src = Path::new(SRC_PNG);
     let (rgb, w, h) = load_png(src).expect("load PNG");
-    eprintln!("[W44-181] loaded {} ({}×{}, {} bytes)", SHORT_NAME, w, h, rgb.len());
+    eprintln!(
+        "[W44-181] loaded {} ({}×{}, {} bytes)",
+        SHORT_NAME,
+        w,
+        h,
+        rgb.len()
+    );
 
-    let bytes = encode_with_dump(&rgb, w, h, DISTANCE, EFFORT, DUMP_DIR)
-        .expect("encode failed");
+    let bytes = encode_with_dump(&rgb, w, h, DISTANCE, EFFORT, DUMP_DIR).expect("encode failed");
     eprintln!("[W44-181] encoded {} bytes", bytes.len());
 
     let dump_path = PathBuf::from(DUMP_DIR).join("dc_quant_inputs.tsv");
-    let (rows, per_channel, per_block) =
-        parse_inputs_tsv(&dump_path).expect("parse dump TSV");
+    let (rows, per_channel, per_block) = parse_inputs_tsv(&dump_path).expect("parse dump TSV");
 
     eprintln!("[W44-181] parsed {} rows", rows.len());
     eprintln!(
@@ -404,11 +412,7 @@ fn main() {
             .open(OUT_TSV)
             .expect("open out tsv"),
     );
-    writeln!(
-        out,
-        "# W44-181 DC quant precision probe — channel summary"
-    )
-    .unwrap();
+    writeln!(out, "# W44-181 DC quant precision probe — channel summary").unwrap();
     writeln!(
         out,
         "# image={} effort={} distance={}",
@@ -451,7 +455,11 @@ fn main() {
         let joined = join_with_w178_blocks(&per_block, w178_path).expect("join W178");
         let summary = analyze_join(&joined);
         writeln!(out, "").unwrap();
-        writeln!(out, "# W44-178 blocks.tsv join (B-channel divergent blocks)").unwrap();
+        writeln!(
+            out,
+            "# W44-178 blocks.tsv join (B-channel divergent blocks)"
+        )
+        .unwrap();
         writeln!(
             out,
             "div_count\tnon_div_count\tdiv_mean_rgb\tnon_div_mean_rgb\tdiv_max_rgb\tnon_div_max_rgb\tdiv_p95_rgb\tnon_div_p95_rgb"
@@ -473,7 +481,11 @@ fn main() {
 
         // Per-strategy join breakdown.
         writeln!(out, "").unwrap();
-        writeln!(out, "# Per-raw_strategy divergence (DCT8=0, DCT32X32=4, DCT64X64=15)").unwrap();
+        writeln!(
+            out,
+            "# Per-raw_strategy divergence (DCT8=0, DCT32X32=4, DCT64X64=15)"
+        )
+        .unwrap();
         writeln!(
             out,
             "raw_strategy\tblocks\tdivergent\tdiv_pct\tmean_max_abs_rgb\tdiv_mean_rgb\tnon_div_mean_rgb"
@@ -484,7 +496,9 @@ fn main() {
             if r.samples == 0 {
                 continue;
             }
-            let entry = by_strat.entry(r.raw_strategy).or_insert((0, 0, vec![], vec![]));
+            let entry = by_strat
+                .entry(r.raw_strategy)
+                .or_insert((0, 0, vec![], vec![]));
             entry.0 += 1;
             if r.dc_divergences > 0 {
                 entry.1 += 1;
@@ -498,8 +512,7 @@ fn main() {
         for s in strats {
             let (blocks, div, ref div_v, ref non_div_v) = by_strat[&s];
             let mean_all: f32 = if blocks > 0 {
-                (div_v.iter().sum::<f32>() + non_div_v.iter().sum::<f32>())
-                    / blocks as f32
+                (div_v.iter().sum::<f32>() + non_div_v.iter().sum::<f32>()) / blocks as f32
             } else {
                 0.0
             };
@@ -526,7 +539,10 @@ fn main() {
             .unwrap();
         }
     } else {
-        eprintln!("[W44-181] WARNING: W44-178 blocks.tsv not found at {} — skipping join", W178_BLOCKS_TSV);
+        eprintln!(
+            "[W44-181] WARNING: W44-178 blocks.tsv not found at {} — skipping join",
+            W178_BLOCKS_TSV
+        );
     }
     out.flush().unwrap();
     eprintln!("[W44-181] wrote {}", OUT_TSV);
@@ -548,26 +564,78 @@ fn main() {
     writeln!(meta, "Encoder: EncoderStrategy::Zenjxl").unwrap();
     writeln!(meta, "Raw dump: {}", dump_path.display()).unwrap();
     writeln!(meta, "").unwrap();
-    writeln!(meta, "Strategies dumped: DCT8 (raw=0), DCT32X32 (raw=4), DCT64X64 (raw=15)").unwrap();
+    writeln!(
+        meta,
+        "Strategies dumped: DCT8 (raw=0), DCT32X32 (raw=4), DCT64X64 (raw=15)"
+    )
+    .unwrap();
     writeln!(meta, "Channels dumped: X (c=0) and B (c=2)").unwrap();
-    writeln!(meta, "X has dc_cfl_factor=0, so ours and libjxl expressions coincide.").unwrap();
-    writeln!(meta, "B has dc_cfl_factor=0.5, so f32-order divergence can occur.").unwrap();
+    writeln!(
+        meta,
+        "X has dc_cfl_factor=0, so ours and libjxl expressions coincide."
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "B has dc_cfl_factor=0.5, so f32-order divergence can occur."
+    )
+    .unwrap();
     writeln!(meta, "").unwrap();
     writeln!(meta, "Methodology:").unwrap();
-    writeln!(meta, "- Per-block dumps (bx, by, channel, raw_strategy, dc, y_dc, inv_factor, dc_cfl_factor)").unwrap();
-    writeln!(meta, "  recorded via env-gated JXL_W44_181_DUMP_DC=<dir> infrastructure").unwrap();
-    writeln!(meta, "  (added to vardct/w44_181_dump.rs + 3 instrumentation sites in transform.rs).").unwrap();
+    writeln!(
+        meta,
+        "- Per-block dumps (bx, by, channel, raw_strategy, dc, y_dc, inv_factor, dc_cfl_factor)"
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "  recorded via env-gated JXL_W44_181_DUMP_DC=<dir> infrastructure"
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "  (added to vardct/w44_181_dump.rs + 3 instrumentation sites in transform.rs)."
+    )
+    .unwrap();
     writeln!(meta, "- For each row, compute:").unwrap();
-    writeln!(meta, "    q_ours   = (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16").unwrap();
-    writeln!(meta, "    q_libjxl = ((dc - y_dc * dc_cfl_factor / inv_factor) * inv_factor).round() as i16").unwrap();
-    writeln!(meta, "  Both in f32 (matching production codepath bit-exact).").unwrap();
-    writeln!(meta, "- Count rows where q_ours != q_libjxl. These are the candidate").unwrap();
+    writeln!(
+        meta,
+        "    q_ours   = (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16"
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "    q_libjxl = ((dc - y_dc * dc_cfl_factor / inv_factor) * inv_factor).round() as i16"
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "  Both in f32 (matching production codepath bit-exact)."
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "- Count rows where q_ours != q_libjxl. These are the candidate"
+    )
+    .unwrap();
     writeln!(meta, "  precision-drift sites.").unwrap();
     writeln!(meta, "").unwrap();
     writeln!(meta, "Reproducer:").unwrap();
-    writeln!(meta, "  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \\").unwrap();
-    writeln!(meta, "    cargo run --release --manifest-path jxl-encoder/Cargo.toml \\").unwrap();
-    writeln!(meta, "    --features 'parallel butteraugli-loop ssim2-loop' \\").unwrap();
+    writeln!(
+        meta,
+        "  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \\"
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "    cargo run --release --manifest-path jxl-encoder/Cargo.toml \\"
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "    --features 'parallel butteraugli-loop ssim2-loop' \\"
+    )
+    .unwrap();
     writeln!(meta, "    --example w44_181_dc_quant_probe").unwrap();
     meta.flush().unwrap();
     eprintln!("[W44-181] wrote {}", OUT_META);

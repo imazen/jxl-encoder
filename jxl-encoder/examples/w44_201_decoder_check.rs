@@ -14,7 +14,14 @@ fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     (rgb.into_raw(), w, h)
 }
 
-fn encode(pixels: &[u8], w: u32, h: u32, disable_spec: Option<&str>, distance: f32, effort: u8) -> Vec<u8> {
+fn encode(
+    pixels: &[u8],
+    w: u32,
+    h: u32,
+    disable_spec: Option<&str>,
+    distance: f32,
+    effort: u8,
+) -> Vec<u8> {
     unsafe {
         match disable_spec {
             Some(spec) => std::env::set_var("JXL_W44_201_DISABLE_BUCKETS", spec),
@@ -45,7 +52,11 @@ fn decode_jxl_oxide(bytes: &[u8]) -> Result<(u32, u32), String> {
 fn main() {
     for (path, label) in &[(IMG_3637739, "3637739"), (IMG_1418519, "1418519")] {
         let (pixels, w, h) = load_png(Path::new(path));
-        for (spec, sl) in &[(None, "A_default"), (Some("3"), "B_no_bucket3"), (Some("3,6"), "C_no_bucket3_6")] {
+        for (spec, sl) in &[
+            (None, "A_default"),
+            (Some("3"), "B_no_bucket3"),
+            (Some("3,6"), "C_no_bucket3_6"),
+        ] {
             for d in &[2.0f32, 4.0, 6.0] {
                 let buf = encode(&pixels, w, h, *spec, *d, 7);
                 let dec = decode_jxl_oxide(&buf);
@@ -54,7 +65,14 @@ fn main() {
                     Ok((dw, dh)) => &format!("FAIL_DIM: got {}x{} expected {}x{}", dw, dh, w, h),
                     Err(e) => &format!("FAIL: {}", e),
                 };
-                println!("{}\td={}\t{}\tbytes={}\t{}", label, d, sl, buf.len(), result);
+                println!(
+                    "{}\td={}\t{}\tbytes={}\t{}",
+                    label,
+                    d,
+                    sl,
+                    buf.len(),
+                    result
+                );
             }
         }
     }

@@ -381,7 +381,11 @@ fn compute_proxies(pixels: &[u8], width: usize, height: usize) -> LocalProxies {
             }
         }
     }
-    let fcbr = if total == 0 { 0.0 } else { flat as f32 / total as f32 };
+    let fcbr = if total == 0 {
+        0.0
+    } else {
+        flat as f32 / total as f32
+    };
 
     // edge_density: Sobel luma gradient magnitude > 30 (BT.601)
     let mut high = 0usize;
@@ -404,10 +408,8 @@ fn compute_proxies(pixels: &[u8], width: usize, height: usize) -> LocalProxies {
             let b = ((y + 1) * width + x) * 3;
             let br = ((y + 1) * width + (x + 1)) * 3;
             let _ = center; // not used; Sobel skips center
-            let gx = -luma(tl) - 2.0 * luma(l) - luma(bl)
-                + luma(tr) + 2.0 * luma(r) + luma(br);
-            let gy = -luma(tl) - 2.0 * luma(t) - luma(tr)
-                + luma(bl) + 2.0 * luma(b) + luma(br);
+            let gx = -luma(tl) - 2.0 * luma(l) - luma(bl) + luma(tr) + 2.0 * luma(r) + luma(br);
+            let gy = -luma(tl) - 2.0 * luma(t) - luma(tr) + luma(bl) + 2.0 * luma(b) + luma(br);
             let mag = (gx * gx + gy * gy).sqrt();
             if mag > 30.0 {
                 high += 1;
@@ -450,20 +452,37 @@ fn main() {
     writeln!(pf, "width\t{}", w).unwrap();
     writeln!(pf, "height\t{}", h).unwrap();
     writeln!(pf, "m3_colourfulness\t{:.4}", proxies.m3_colourfulness).unwrap();
-    writeln!(pf, "flat_color_block_ratio\t{:.6}", proxies.flat_color_block_ratio).unwrap();
-    writeln!(pf, "edge_density\t{:.6}", proxies.edge_density).unwrap();
     writeln!(
         pf,
-        "\n# Discriminator gates (compare to thresholds):"
+        "flat_color_block_ratio\t{:.6}",
+        proxies.flat_color_block_ratio
     )
     .unwrap();
+    writeln!(pf, "edge_density\t{:.6}", proxies.edge_density).unwrap();
+    writeln!(pf, "\n# Discriminator gates (compare to thresholds):").unwrap();
     writeln!(pf, "# W44-91 m3>=80 + fcbr<0.01 → high-d photo widen").unwrap();
-    writeln!(pf, "# W44-96 edge_density>=0.7 + fcbr<0.01 + mask<50 → variant Z").unwrap();
+    writeln!(
+        pf,
+        "# W44-96 edge_density>=0.7 + fcbr<0.01 + mask<50 → variant Z"
+    )
+    .unwrap();
     writeln!(pf, "# W44-98 m3>=25 (within W44-96) → HC variant Z").unwrap();
     writeln!(pf, "# W44-99 m3<25 (within W44-96) → LC variant Z").unwrap();
-    writeln!(pf, "# W44-124 m3<25 + edge_density<0.16 + mask_p25>=W44_124_MIN+distance gate").unwrap();
-    writeln!(pf, "# W44-166 mask_p25>=85 + distance>=4.5 → variant Z admit").unwrap();
-    writeln!(pf, "# W44-168 mask_p25>=85 → smooth-photo iter skip; edge_density>=0.5 → textured iter bump").unwrap();
+    writeln!(
+        pf,
+        "# W44-124 m3<25 + edge_density<0.16 + mask_p25>=W44_124_MIN+distance gate"
+    )
+    .unwrap();
+    writeln!(
+        pf,
+        "# W44-166 mask_p25>=85 + distance>=4.5 → variant Z admit"
+    )
+    .unwrap();
+    writeln!(
+        pf,
+        "# W44-168 mask_p25>=85 → smooth-photo iter skip; edge_density>=0.5 → textured iter bump"
+    )
+    .unwrap();
 
     let orig_lin = rgb_to_linear_img(&rgb, w, h);
     let orig_srgb = rgb_to_srgb_arr3(&rgb, w, h);
@@ -493,8 +512,10 @@ fn main() {
                 // OURS — with W44-76 dump only on the worst cell (e7 d=5) for each strategy
                 let dump_this = effort == WORST_EFFORT_FOR_DUMP
                     && (distance - WORST_DISTANCE_FOR_DUMP).abs() < 0.01;
-                let ours_dump = dump_root
-                    .join(format!("{}_e{}_d{}_ours", strat_name, effort, distance as i32));
+                let ours_dump = dump_root.join(format!(
+                    "{}_e{}_d{}_ours",
+                    strat_name, effort, distance as i32
+                ));
                 if dump_this {
                     std::fs::create_dir_all(&ours_dump).unwrap();
                     unsafe {
@@ -556,8 +577,7 @@ fn main() {
             eprintln!("=== cjxl e{} d={} ===", effort, distance);
             let dump_this = effort == WORST_EFFORT_FOR_DUMP
                 && (distance - WORST_DISTANCE_FOR_DUMP).abs() < 0.01;
-            let cjxl_dump =
-                dump_root.join(format!("cjxl_e{}_d{}", effort, distance as i32));
+            let cjxl_dump = dump_root.join(format!("cjxl_e{}_d{}", effort, distance as i32));
             if dump_this {
                 std::fs::create_dir_all(&cjxl_dump).unwrap();
             }
@@ -570,8 +590,7 @@ fn main() {
                 eprintln!("  cjxl encode FAILED");
                 continue;
             };
-            let Some(cjxl_r) = measure(&cjxl_bytes, cjxl_ms, &orig_lin, &orig_srgb, w, h)
-            else {
+            let Some(cjxl_r) = measure(&cjxl_bytes, cjxl_ms, &orig_lin, &orig_srgb, w, h) else {
                 eprintln!("  cjxl measure FAILED");
                 continue;
             };

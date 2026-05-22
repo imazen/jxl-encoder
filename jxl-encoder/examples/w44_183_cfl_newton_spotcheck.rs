@@ -114,7 +114,9 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 fn decode_jxl_linear(bytes: &[u8]) -> Option<(u32, u32, Vec<f32>)> {
-    let mut img = jxl_oxide::JxlImage::builder().read(Cursor::new(bytes)).ok()?;
+    let mut img = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(bytes))
+        .ok()?;
     img.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
         jxl_oxide::RenderingIntent::Relative,
     ));
@@ -181,8 +183,7 @@ fn encode_ours(rgb: &[u8], w: u32, h: u32, distance: f32) -> Vec<u8> {
 
 fn encode_cjxl(src_png: &Path, distance: f32) -> Option<Vec<u8>> {
     let stem = src_png.file_stem()?.to_string_lossy().into_owned();
-    let out_path =
-        std::env::temp_dir().join(format!("w44_183_cjxl_{stem}_d{distance}.jxl"));
+    let out_path = std::env::temp_dir().join(format!("w44_183_cjxl_{stem}_d{distance}.jxl"));
     let status = Command::new(cjxl_bin())
         .arg(src_png)
         .arg(&out_path)
@@ -263,12 +264,10 @@ fn main() {
             let ours_srgb = linear_planar_to_srgb_arr3(&ours_lin, w, h);
             let cjxl_srgb = linear_planar_to_srgb_arr3(&cjxl_lin, w, h);
 
-            let ours_ssim2 =
-                fast_ssim2::compute_ssimulacra2(src_srgb.as_ref(), ours_srgb.as_ref())
-                    .unwrap_or(0.0);
-            let cjxl_ssim2 =
-                fast_ssim2::compute_ssimulacra2(src_srgb.as_ref(), cjxl_srgb.as_ref())
-                    .unwrap_or(0.0);
+            let ours_ssim2 = fast_ssim2::compute_ssimulacra2(src_srgb.as_ref(), ours_srgb.as_ref())
+                .unwrap_or(0.0);
+            let cjxl_ssim2 = fast_ssim2::compute_ssimulacra2(src_srgb.as_ref(), cjxl_srgb.as_ref())
+                .unwrap_or(0.0);
             let ours_bfly = butteraugli_linear(
                 src_lin.as_ref(),
                 ours_img.as_ref(),
@@ -284,8 +283,7 @@ fn main() {
             .map(|s| s.score as f32)
             .unwrap_or(99.0);
 
-            let bytes_delta =
-                (ours.len() as f32 - cjxl.len() as f32) / cjxl.len() as f32 * 100.0;
+            let bytes_delta = (ours.len() as f32 - cjxl.len() as f32) / cjxl.len() as f32 * 100.0;
             let ssim2_delta = ours_ssim2 as f32 - cjxl_ssim2 as f32;
             let bfly_delta = (ours_bfly - cjxl_bfly) / cjxl_bfly * 100.0;
 

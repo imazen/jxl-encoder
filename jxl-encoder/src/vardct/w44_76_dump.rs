@@ -224,13 +224,7 @@ fn ensure_coeffs_initialized(dir: &std::path::Path) {
 /// 64). `raw_strategy` is the INTERNAL Rust enum (DCT32X32 = 4); the
 /// dump converts to the libjxl-wire code for env comparison.
 #[cfg(feature = "std")]
-pub fn dump_coeffs(
-    bx: usize,
-    by: usize,
-    raw_strategy: u8,
-    channel: usize,
-    full_block: &[i32],
-) {
+pub fn dump_coeffs(bx: usize, by: usize, raw_strategy: u8, channel: usize, full_block: &[i32]) {
     let Some(dir) = coeffs_dump_dir() else {
         return;
     };

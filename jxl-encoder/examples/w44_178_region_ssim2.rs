@@ -117,7 +117,14 @@ fn encode_cjxl(src_png: &Path) -> Vec<u8> {
     bytes
 }
 
-fn extract_lin(full: &[f32], width: usize, x0: usize, y0: usize, rw: usize, rh: usize) -> Img<Vec<RGB<f32>>> {
+fn extract_lin(
+    full: &[f32],
+    width: usize,
+    x0: usize,
+    y0: usize,
+    rw: usize,
+    rh: usize,
+) -> Img<Vec<RGB<f32>>> {
     let mut out = Vec::with_capacity(rw * rh);
     for y in y0..(y0 + rh) {
         for x in x0..(x0 + rw) {
@@ -128,11 +135,7 @@ fn extract_lin(full: &[f32], width: usize, x0: usize, y0: usize, rw: usize, rh: 
     Img::new(out, rw, rh)
 }
 
-fn linear_planar_to_srgb_packed(
-    lin: &[f32],
-    width: usize,
-    height: usize,
-) -> Vec<u8> {
+fn linear_planar_to_srgb_packed(lin: &[f32], width: usize, height: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(width * height * 3);
     for px in lin.chunks(3) {
         out.push(linear_to_srgb_u8(px[0]));
@@ -142,7 +145,14 @@ fn linear_planar_to_srgb_packed(
     out
 }
 
-fn region_srgb(src_srgb: &[u8], width: usize, x0: usize, y0: usize, rw: usize, rh: usize) -> Img<Vec<[u8; 3]>> {
+fn region_srgb(
+    src_srgb: &[u8],
+    width: usize,
+    x0: usize,
+    y0: usize,
+    rw: usize,
+    rh: usize,
+) -> Img<Vec<[u8; 3]>> {
     let mut out = Vec::with_capacity(rw * rh);
     for y in y0..(y0 + rh) {
         for x in x0..(x0 + rw) {
@@ -187,10 +197,19 @@ fn main() {
     let region_w = (width / 3) & !31;
     let region_h = (height / 3) & !31;
 
-    eprintln!("\nregion sizing: {}×{} (W44-173-compatible)", region_w, region_h);
+    eprintln!(
+        "\nregion sizing: {}×{} (W44-173-compatible)",
+        region_w, region_h
+    );
     eprintln!(
         "\n{:<8} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}",
-        "region", "ours-src", "cjxl-src", "delta-ssim2", "ours-cjxl-ssim2", "ours-cjxl-bfly", "ours-cjxl-maxabs"
+        "region",
+        "ours-src",
+        "cjxl-src",
+        "delta-ssim2",
+        "ours-cjxl-ssim2",
+        "ours-cjxl-bfly",
+        "ours-cjxl-maxabs"
     );
     let mut total_delta = 0.0;
     for ry in 0..3 {
@@ -229,9 +248,15 @@ fn main() {
             let ours_srgb_reg = region_srgb(&ours_srgb_packed, width, x0, y0, rw, rh);
             let cjxl_srgb_reg = region_srgb(&cjxl_srgb_packed, width, x0, y0, rw, rh);
 
-            let ours_ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb_reg.as_ref(), ours_srgb_reg.as_ref()).unwrap();
-            let cjxl_ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb_reg.as_ref(), cjxl_srgb_reg.as_ref()).unwrap();
-            let ours_cjxl_ssim2 = fast_ssim2::compute_ssimulacra2(ours_srgb_reg.as_ref(), cjxl_srgb_reg.as_ref()).unwrap();
+            let ours_ssim2 =
+                fast_ssim2::compute_ssimulacra2(orig_srgb_reg.as_ref(), ours_srgb_reg.as_ref())
+                    .unwrap();
+            let cjxl_ssim2 =
+                fast_ssim2::compute_ssimulacra2(orig_srgb_reg.as_ref(), cjxl_srgb_reg.as_ref())
+                    .unwrap();
+            let ours_cjxl_ssim2 =
+                fast_ssim2::compute_ssimulacra2(ours_srgb_reg.as_ref(), cjxl_srgb_reg.as_ref())
+                    .unwrap();
             let ours_cjxl_bfly = butteraugli_linear(
                 ours_lin_reg.as_ref(),
                 cjxl_lin_reg.as_ref(),
@@ -242,12 +267,22 @@ fn main() {
 
             let mut max_abs = 0.0_f32;
             for (a, b) in ours_lin_reg.buf().iter().zip(cjxl_lin_reg.buf().iter()) {
-                max_abs = max_abs.max((a.r - b.r).abs()).max((a.g - b.g).abs()).max((a.b - b.b).abs());
+                max_abs = max_abs
+                    .max((a.r - b.r).abs())
+                    .max((a.g - b.g).abs())
+                    .max((a.b - b.b).abs());
             }
 
             println!(
                 "r[{},{}]  {:>10.4} {:>10.4} {:>10.4} {:>10.4} {:>10.4} {:>10.4}",
-                ry, rx, ours_ssim2, cjxl_ssim2, ours_ssim2 - cjxl_ssim2, ours_cjxl_ssim2, ours_cjxl_bfly, max_abs
+                ry,
+                rx,
+                ours_ssim2,
+                cjxl_ssim2,
+                ours_ssim2 - cjxl_ssim2,
+                ours_cjxl_ssim2,
+                ours_cjxl_bfly,
+                max_abs
             );
             total_delta += ours_ssim2 - cjxl_ssim2;
             let _ = orig_lin_reg;

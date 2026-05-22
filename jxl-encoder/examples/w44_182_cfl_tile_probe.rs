@@ -134,7 +134,13 @@ fn parse_dump(path: &Path) -> std::io::Result<Vec<TileEntry>> {
         let pass: u8 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
         let ytox: i8 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
         let ytob: i8 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-        out.push(TileEntry { tx, ty, pass, ytox, ytob });
+        out.push(TileEntry {
+            tx,
+            ty,
+            pass,
+            ytox,
+            ytob,
+        });
     }
     Ok(out)
 }
@@ -152,7 +158,10 @@ fn main() {
     eprintln!("[W44-182] loaded {}×{} RGB8", w, h);
 
     // 2. Encode ours with dump enabled
-    eprintln!("[W44-182] encoding ours (effort={} distance={})", EFFORT, DISTANCE);
+    eprintln!(
+        "[W44-182] encoding ours (effort={} distance={})",
+        EFFORT, DISTANCE
+    );
     let our_jxl = match encode_with_dump(&rgb, w, h, DISTANCE, EFFORT, DUMP_DIR) {
         Some(b) => b,
         None => {
@@ -161,7 +170,11 @@ fn main() {
         }
     };
     let _ = std::fs::write(OUR_JXL_OUT, &our_jxl);
-    eprintln!("[W44-182] encoded {} bytes → {}", our_jxl.len(), OUR_JXL_OUT);
+    eprintln!(
+        "[W44-182] encoded {} bytes → {}",
+        our_jxl.len(),
+        OUR_JXL_OUT
+    );
 
     // 3. Encode cjxl reference (same effort, same distance)
     eprintln!("[W44-182] encoding cjxl reference");
@@ -175,7 +188,11 @@ fn main() {
     let entries = match parse_dump(&dump_path) {
         Ok(e) => e,
         Err(err) => {
-            eprintln!("ERROR: failed to parse dump {}: {}", dump_path.display(), err);
+            eprintln!(
+                "ERROR: failed to parse dump {}: {}",
+                dump_path.display(),
+                err
+            );
             std::process::exit(1);
         }
     };
@@ -215,18 +232,26 @@ fn main() {
     let mut p1_to_p2_b_delta: HashMap<i32, u32> = HashMap::new();
     for (key, &p2_x) in &pass2_ytox {
         if let Some(&p1_x) = pass1_ytox.get(key) {
-            *p1_to_p2_delta.entry((p2_x as i32) - (p1_x as i32)).or_insert(0) += 1;
+            *p1_to_p2_delta
+                .entry((p2_x as i32) - (p1_x as i32))
+                .or_insert(0) += 1;
         }
     }
     for (key, &p2_b) in &pass2_ytob {
         if let Some(&p1_b) = pass1_ytob.get(key) {
-            *p1_to_p2_b_delta.entry((p2_b as i32) - (p1_b as i32)).or_insert(0) += 1;
+            *p1_to_p2_b_delta
+                .entry((p2_b as i32) - (p1_b as i32))
+                .or_insert(0) += 1;
         }
     }
-    eprintln!("[W44-182] pass1→pass2 ytox delta histogram: {:?}",
-        sorted_entries(&p1_to_p2_delta));
-    eprintln!("[W44-182] pass1→pass2 ytob delta histogram: {:?}",
-        sorted_entries(&p1_to_p2_b_delta));
+    eprintln!(
+        "[W44-182] pass1→pass2 ytox delta histogram: {:?}",
+        sorted_entries(&p1_to_p2_delta)
+    );
+    eprintln!(
+        "[W44-182] pass1→pass2 ytob delta histogram: {:?}",
+        sorted_entries(&p1_to_p2_b_delta)
+    );
 
     // 8. Write per-tile TSV
     let mut tsv = std::io::BufWriter::new(
@@ -238,11 +263,23 @@ fn main() {
             .expect("open tsv"),
     );
     writeln!(tsv, "# W44-182 per-tile CfL map dump").unwrap();
-    writeln!(tsv, "# image: {} ({}×{}), effort {}, distance {}",
-        SHORT_NAME, w, h, EFFORT, DISTANCE).unwrap();
-    writeln!(tsv, "# tile grid: {}×{} (each tile = 8×8 blocks = 64×64 px)",
-        max_tx, max_ty).unwrap();
-    writeln!(tsv, "tx\tty\tp1_ytox\tp1_ytob\tp2_ytox\tp2_ytob\tΔytox\tΔytob").unwrap();
+    writeln!(
+        tsv,
+        "# image: {} ({}×{}), effort {}, distance {}",
+        SHORT_NAME, w, h, EFFORT, DISTANCE
+    )
+    .unwrap();
+    writeln!(
+        tsv,
+        "# tile grid: {}×{} (each tile = 8×8 blocks = 64×64 px)",
+        max_tx, max_ty
+    )
+    .unwrap();
+    writeln!(
+        tsv,
+        "tx\tty\tp1_ytox\tp1_ytob\tp2_ytox\tp2_ytob\tΔytox\tΔytob"
+    )
+    .unwrap();
     for ty in 0..max_ty {
         for tx in 0..max_tx {
             let key = (tx, ty);
@@ -252,8 +289,12 @@ fn main() {
             let p2b = *pass2_ytob.get(&key).unwrap_or(&p1b);
             let dx = (p2x as i32) - (p1x as i32);
             let db = (p2b as i32) - (p1b as i32);
-            writeln!(tsv, "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                tx, ty, p1x, p1b, p2x, p2b, dx, db).unwrap();
+            writeln!(
+                tsv,
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                tx, ty, p1x, p1b, p2x, p2b, dx, db
+            )
+            .unwrap();
         }
     }
     tsv.flush().unwrap();
@@ -317,25 +358,57 @@ fn main() {
     writeln!(meta, "Date: 2026-05-21").unwrap();
     writeln!(meta, "Image: {} ({}×{})", SHORT_NAME, w, h).unwrap();
     writeln!(meta, "Effort: {} Distance: {}", EFFORT, DISTANCE).unwrap();
-    writeln!(meta, "Tile grid: {}×{} (each = 8×8 blocks = 64×64 px)",
-        max_tx, max_ty).unwrap();
+    writeln!(
+        meta,
+        "Tile grid: {}×{} (each = 8×8 blocks = 64×64 px)",
+        max_tx, max_ty
+    )
+    .unwrap();
     writeln!(meta, "Encoder: EncoderStrategy::Zenjxl").unwrap();
     writeln!(meta, "Raw dump: {}", dump_path.display()).unwrap();
     writeln!(meta, "").unwrap();
     writeln!(meta, "Methodology:").unwrap();
-    writeln!(meta, "- Encoded clic_097cb426 e7 d=5 with JXL_W44_182_DUMP_CFL=<dir>").unwrap();
-    writeln!(meta, "  (added to vardct/w44_182_dump.rs + 2 call sites in chroma_from_luma.rs).").unwrap();
-    writeln!(meta, "- Pass 1 = compute_cfl_map (forced DCT8 + Newton at e>=7)").unwrap();
-    writeln!(meta, "- Pass 2 = refine_cfl_map (real ac_strategy + raw_quant_field, e>=7)").unwrap();
-    writeln!(meta, "- Both run sequentially in the encoder (W44-102 verified gate at e>=7).").unwrap();
+    writeln!(
+        meta,
+        "- Encoded clic_097cb426 e7 d=5 with JXL_W44_182_DUMP_CFL=<dir>"
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "  (added to vardct/w44_182_dump.rs + 2 call sites in chroma_from_luma.rs)."
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "- Pass 1 = compute_cfl_map (forced DCT8 + Newton at e>=7)"
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "- Pass 2 = refine_cfl_map (real ac_strategy + raw_quant_field, e>=7)"
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "- Both run sequentially in the encoder (W44-102 verified gate at e>=7)."
+    )
+    .unwrap();
     writeln!(meta, "").unwrap();
     writeln!(meta, "Pass1 → Pass2 delta histograms:").unwrap();
     writeln!(meta, "  ytox: {:?}", sorted_entries(&p1_to_p2_delta)).unwrap();
     writeln!(meta, "  ytob: {:?}", sorted_entries(&p1_to_p2_b_delta)).unwrap();
     writeln!(meta, "").unwrap();
     writeln!(meta, "Per-column mean ytox/ytob:").unwrap();
-    writeln!(meta, "  tx | p1_ytox | p2_ytox | p1_ytob | p2_ytob | p1|ytox| | p2|ytox| | p1|ytob| | p2|ytob|").unwrap();
-    writeln!(meta, "  ---|---------|---------|---------|---------|----------|----------|----------|----------").unwrap();
+    writeln!(
+        meta,
+        "  tx | p1_ytox | p2_ytox | p1_ytob | p2_ytob | p1|ytox| | p2|ytox| | p1|ytob| | p2|ytob|"
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "  ---|---------|---------|---------|---------|----------|----------|----------|----------"
+    )
+    .unwrap();
     for tx in 0..max_tx as usize {
         writeln!(meta, "  {:>2} | {:>+7.3} | {:>+7.3} | {:>+7.3} | {:>+7.3} | {:>8.3} | {:>8.3} | {:>8.3} | {:>8.3}",
             tx,
@@ -350,7 +423,12 @@ fn main() {
         ).unwrap();
     }
     writeln!(meta, "").unwrap();
-    writeln!(meta, "Right-column tx={} highlight (the W44-178 -7 SSIM2 region):", max_tx - 1).unwrap();
+    writeln!(
+        meta,
+        "Right-column tx={} highlight (the W44-178 -7 SSIM2 region):",
+        max_tx - 1
+    )
+    .unwrap();
     let right = (max_tx - 1) as usize;
     writeln!(meta, "  pass1 mean |ytox|: {:.3}", per_col_p1_x_abs[right]).unwrap();
     writeln!(meta, "  pass2 mean |ytox|: {:.3}", per_col_p2_x_abs[right]).unwrap();
@@ -358,19 +436,49 @@ fn main() {
     writeln!(meta, "  pass2 mean |ytob|: {:.3}", per_col_p2_b_abs[right]).unwrap();
     writeln!(meta, "").unwrap();
     if cjxl_ok {
-        writeln!(meta, "cjxl reference encoded at {} ({} bytes)",
+        writeln!(
+            meta,
+            "cjxl reference encoded at {} ({} bytes)",
             CJXL_JXL_OUT,
-            std::fs::metadata(CJXL_JXL_OUT).map(|m| m.len()).unwrap_or(0)).unwrap();
-        writeln!(meta, "  cjxl cmap extraction NOT performed in this probe (deferred — needs").unwrap();
-        writeln!(meta, "  patching djxl with cmap dump or instrumented libjxl decoder build).").unwrap();
-        writeln!(meta, "  Compare ours pass-2 cmap structure against the W44-178 spatial pattern").unwrap();
+            std::fs::metadata(CJXL_JXL_OUT)
+                .map(|m| m.len())
+                .unwrap_or(0)
+        )
+        .unwrap();
+        writeln!(
+            meta,
+            "  cjxl cmap extraction NOT performed in this probe (deferred — needs"
+        )
+        .unwrap();
+        writeln!(
+            meta,
+            "  patching djxl with cmap dump or instrumented libjxl decoder build)."
+        )
+        .unwrap();
+        writeln!(
+            meta,
+            "  Compare ours pass-2 cmap structure against the W44-178 spatial pattern"
+        )
+        .unwrap();
         writeln!(meta, "  via the per-tile TSV + per-column heatmap above.").unwrap();
     }
     writeln!(meta, "").unwrap();
     writeln!(meta, "Reproducer:").unwrap();
-    writeln!(meta, "  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \\").unwrap();
-    writeln!(meta, "    cargo run --release --manifest-path jxl-encoder/Cargo.toml \\").unwrap();
-    writeln!(meta, "    --features 'parallel butteraugli-loop ssim2-loop' \\").unwrap();
+    writeln!(
+        meta,
+        "  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \\"
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "    cargo run --release --manifest-path jxl-encoder/Cargo.toml \\"
+    )
+    .unwrap();
+    writeln!(
+        meta,
+        "    --features 'parallel butteraugli-loop ssim2-loop' \\"
+    )
+    .unwrap();
     writeln!(meta, "    --example w44_182_cfl_tile_probe").unwrap();
     meta.flush().unwrap();
     eprintln!("[W44-182] wrote {}", OUT_META);

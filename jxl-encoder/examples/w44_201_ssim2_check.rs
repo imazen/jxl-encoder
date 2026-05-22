@@ -31,7 +31,9 @@ fn encode(pixels: &[u8], w: u32, h: u32, disable_spec: Option<&str>, distance: f
 fn decode_to_rgb8(bytes: &[u8]) -> (Vec<u8>, u32, u32) {
     use std::io::Cursor;
     let cursor = Cursor::new(bytes.to_vec());
-    let image = jxl_oxide::JxlImage::builder().read(cursor).expect("oxide read");
+    let image = jxl_oxide::JxlImage::builder()
+        .read(cursor)
+        .expect("oxide read");
     let render = image.render_frame(0).expect("oxide render");
     let stream = render.stream();
     let w = stream.width();
@@ -48,8 +50,14 @@ fn decode_to_rgb8(bytes: &[u8]) -> (Vec<u8>, u32, u32) {
 
 fn main() {
     let imgs = &[
-        ("3637739", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/3637739.png"),
-        ("1420710", "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png"),
+        (
+            "3637739",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/3637739.png",
+        ),
+        (
+            "1420710",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png",
+        ),
     ];
     for (label, path) in imgs {
         let (pixels, w, h) = load_png(Path::new(path));

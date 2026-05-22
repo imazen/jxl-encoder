@@ -522,37 +522,13 @@ fn main() {
         ("EXTRA-SCREEN", "gmessages", "gb82-sc/gmessages.png"),
         ("EXTRA-SCREEN", "gui", "gb82-sc/gui.png"),
         ("EXTRA-SCREEN", "imac_g3_strip", "gb82-sc/imac_g3_strip.png"),
-        (
-            "PHOTO",
-            "1418519",
-            "CID22/CID22-512/validation/1418519.png",
-        ),
-        (
-            "PHOTO",
-            "1025469",
-            "CID22/CID22-512/validation/1025469.png",
-        ),
+        ("PHOTO", "1418519", "CID22/CID22-512/validation/1418519.png"),
+        ("PHOTO", "1025469", "CID22/CID22-512/validation/1025469.png"),
         // Additional CID22 photos to verify NO false-fires
-        (
-            "PHOTO",
-            "1531677",
-            "CID22/CID22-512/validation/1531677.png",
-        ),
-        (
-            "PHOTO",
-            "1189261",
-            "CID22/CID22-512/validation/1189261.png",
-        ),
-        (
-            "PHOTO",
-            "2389166",
-            "CID22/CID22-512/validation/2389166.png",
-        ),
-        (
-            "PHOTO",
-            "1420710",
-            "CID22/CID22-512/validation/1420710.png",
-        ),
+        ("PHOTO", "1531677", "CID22/CID22-512/validation/1531677.png"),
+        ("PHOTO", "1189261", "CID22/CID22-512/validation/1189261.png"),
+        ("PHOTO", "2389166", "CID22/CID22-512/validation/2389166.png"),
+        ("PHOTO", "1420710", "CID22/CID22-512/validation/1420710.png"),
     ];
 
     println!(

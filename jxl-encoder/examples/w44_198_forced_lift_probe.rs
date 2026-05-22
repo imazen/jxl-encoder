@@ -56,7 +56,14 @@ const CELLS: &[(&str, &str, &str)] = &[
 const DISTANCES: &[f32] = &[2.0, 3.0, 4.0, 5.0];
 const EFFORTS: &[u8] = &[5, 7];
 
-fn encode_with_hint(rgb: &[u8], w: u32, h: u32, d: f32, effort: u8, force: Option<bool>) -> Vec<u8> {
+fn encode_with_hint(
+    rgb: &[u8],
+    w: u32,
+    h: u32,
+    d: f32,
+    effort: u8,
+    force: Option<bool>,
+) -> Vec<u8> {
     let mut cfg = LossyConfig::new(d).with_effort(effort);
     cfg = cfg.with_strategy_overrides(StrategyOverrides {
         high_d_photo_hint: force,
@@ -105,10 +112,7 @@ fn cjxl_encode(src: &str, d: f32, effort: u8) -> Vec<u8> {
     data
 }
 
-fn compute_ssim2(
-    bytes: &[u8],
-    orig_srgb: &Img<Vec<[u8; 3]>>,
-) -> (usize, f64) {
+fn compute_ssim2(bytes: &[u8], orig_srgb: &Img<Vec<[u8; 3]>>) -> (usize, f64) {
     let (dw, dh, dec_linear) = decode_linear(bytes).expect("decode failed");
     let dec_srgb_pix: Vec<[u8; 3]> = dec_linear
         .chunks(3)
@@ -144,14 +148,17 @@ delta_bytes_pct_vs_cjxl\tdelta_ssim2_vs_cjxl"
         let (w, h) = img.dimensions();
         let rgb_u8 = img.to_rgb8().into_raw();
         // Build orig_srgb Img<Vec<[u8;3]>>
-        let orig_srgb_pix: Vec<[u8; 3]> = rgb_u8
-            .chunks(3)
-            .map(|c| [c[0], c[1], c[2]])
-            .collect();
+        let orig_srgb_pix: Vec<[u8; 3]> = rgb_u8.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
         let orig_srgb_img = Img::new(orig_srgb_pix, w as usize, h as usize);
         let _orig_linear_for_butt: Vec<RGB<f32>> = rgb_u8
             .chunks(3)
-            .map(|c| RGB::new(srgb_to_linear(c[0]), srgb_to_linear(c[1]), srgb_to_linear(c[2])))
+            .map(|c| {
+                RGB::new(
+                    srgb_to_linear(c[0]),
+                    srgb_to_linear(c[1]),
+                    srgb_to_linear(c[2]),
+                )
+            })
             .collect();
 
         for &effort in EFFORTS {
@@ -171,11 +178,25 @@ delta_bytes_pct_vs_cjxl\tdelta_ssim2_vs_cjxl"
 
                 println!(
                     "{}\t{}\te{}\td={:.2}\tAUTO\t{}\t{:.4}\t{:+.3}\t{:+.4}",
-                    label, mask_class, effort, d, len_auto, ssim_auto, dba, ssim_auto - ssim_cjxl
+                    label,
+                    mask_class,
+                    effort,
+                    d,
+                    len_auto,
+                    ssim_auto,
+                    dba,
+                    ssim_auto - ssim_cjxl
                 );
                 println!(
                     "{}\t{}\te{}\td={:.2}\tFORCE_ON\t{}\t{:.4}\t{:+.3}\t{:+.4}",
-                    label, mask_class, effort, d, len_force, ssim_force, dbf, ssim_force - ssim_cjxl
+                    label,
+                    mask_class,
+                    effort,
+                    d,
+                    len_force,
+                    ssim_force,
+                    dbf,
+                    ssim_force - ssim_cjxl
                 );
                 println!(
                     "{}\t{}\te{}\td={:.2}\tcjxl\t{}\t{:.4}\t{:+.3}\t{:+.4}",
@@ -183,10 +204,19 @@ delta_bytes_pct_vs_cjxl\tdelta_ssim2_vs_cjxl"
                 );
                 eprintln!(
                     "{}/{} e{} d={:.2}: AUTO {}B SSIM2 {:.3} ({:+.3}vsCJXL) | FORCE {}B SSIM2 {:.3} (Δb={:+.2}%vsAUTO,Δss={:+.3}vsAUTO) | cjxl {}B SSIM2 {:.3}",
-                    label, mask_class, effort, d,
-                    len_auto, ssim_auto, ssim_auto - ssim_cjxl,
-                    len_force, ssim_force, dbf_vs_auto, ssim_force - ssim_auto,
-                    len_cjxl, ssim_cjxl
+                    label,
+                    mask_class,
+                    effort,
+                    d,
+                    len_auto,
+                    ssim_auto,
+                    ssim_auto - ssim_cjxl,
+                    len_force,
+                    ssim_force,
+                    dbf_vs_auto,
+                    ssim_force - ssim_auto,
+                    len_cjxl,
+                    ssim_cjxl
                 );
             }
         }

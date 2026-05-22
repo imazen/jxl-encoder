@@ -624,6 +624,73 @@ This is the SINGLE SOURCE OF TRUTH for where our encoder diverges from libjxl re
 
 ## Investigation Notes
 
+### W44-206: single-scalar `savings_factor` recalibration of W44-82 coeff_orders cost-model — RULED OUT (May 22, 2026)
+
+**Status**: [RULED OUT — measurement shipped, ZERO production source change]
+
+W44-204 C2 chunk attempt. Hypothesis: recalibrating the implicit
+`bits_per_zero` from 1.0 → ~0.4 (env hook
+`JXL_W44_201_SAVINGS_FACTOR=0.4`) would tighten the W44-82
+cost-benefit gate principled-ly and subsume the W44-201+W44-205
+per-bucket gates (or at least add ≥ -0.5 % bytes on top).
+
+**3-phase paired A/B bench falsifies all three outcomes**
+(`benchmarks/w44_206_savings_factor_*_2026-05-22.{tsv,meta}`):
+
+- **Phase 1** (multiplier alone, W44-201 + W44-205 gates DISABLED via
+  env hooks `JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS=1` +
+  `JXL_W44_205_FORCE_LEGACY_MEDIUM_BUCKETS=1`, 34 cells): f=0.3 strict
+  dominant on every cell where any factor differs, total **-4345 B /
+  -0.289 %** vs f=1.0. Zero PROTECT regressions. **But** the gates
+  alone deliver -27826 B / -1.85 % on the same cell set — the
+  multiplier-alone is **6.4× SMALLER**. Outcome A (subsume gates)
+  FALSIFIED.
+- **Phase 2** (multiplier additive to production gates, 34 cells):
+  f=0.3 still strict-dominant but additional EV is only **-868 B /
+  -0.059 %** — far below the ≥ -0.5 % acceptance gate. 15 cells improve
+  marginally, 19 byte-identical (gates already skip the heavy-
+  overshoot buckets {2, 3, 4, 6}; multiplier only acts on {0, 5, 7}
+  where the W44-82 model is closer to truth).
+- **Phase 3** (effort sweep e=4..=7, gates ON, 5 LOSER photos × 3
+  distances): -0.10 % to -0.13 % per effort at e=5/6/7, e=4
+  byte-identical. Pattern is CONSISTENT but EV remains far below
+  threshold.
+
+**Root cause of the EV ceiling**: the W44-201 dump found bucket 3
+(DCT32x32) on `3637739.png` e7 d=4 emits 308 nonzero Lehmer codes
+vs cjxl's 5 (61.6× ratio). This is so far from the empirical truth
+that NO single global multiplier value can map our savings model to
+cjxl's behaviour. The per-bucket SKIP (W44-201+205 gates) avoids the
+modelling failure entirely — it doesn't try to estimate savings on
+broken buckets; it just opts out.
+
+**Acceptance gates**:
+- (a) Build PASS
+- (b) `cargo test --lib`: 1449/1449 PASS
+- (c) Hash-locks 36/36 BYTE-IDENTICAL (no production code change)
+- (d) Libjxl byte-locks 5/5 PASS
+- (e) divergence_table_drift 7/7 PASS
+- (f) Bench delta ≥ -0.5 % IMPROVEMENT: **FAILS** (-0.059 % additive)
+- (g) Zero new Pareto-losers: PASS
+- (h) Multi-decoder 15/15 PASS via jxl-oxide (5 cells × 3 modes)
+
+Source state: production code UNCHANGED. Only new artifacts:
+- 4 examples (`w44_206_savings_factor_isolated_ab.rs`,
+  `_additive_ab.rs`, `_effort_sweep.rs`, `_decoder_check.rs`)
+- 3 bench TSVs + 1 meta
+- 1 Section F HONEST-STOP row in `docs/LIBJXL_DIVERGENCES.md`
+- 1 memory note
+
+**Files modified**: `jxl-encoder/Cargo.toml` (4 new `[[example]]`
+registrations), `docs/LIBJXL_DIVERGENCES.md` (1 row), this note.
+
+**DO NOT** re-attempt single-scalar `savings_factor` recalibration —
+measurement is conclusive. Future per-bucket multiplier
+(`bits_per_zero: [f32; 8]`) IS a legitimate candidate but requires
+multi-day per-(bucket × cell × strategy) measurement, not a
+single-scalar bisection. Reference memo:
+`memory/w44_206_savings_factor_recalibration_ruled_out_2026-05-22.md`.
+
 ### W44-193: big-bang `strategy_def!` migration of 24 production gates — SHIPPED (May 22, 2026)
 
 **Status**: [SHIPPED]

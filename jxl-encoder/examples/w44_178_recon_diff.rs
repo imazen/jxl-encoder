@@ -200,11 +200,7 @@ const RAW_TO_WIRE: [u8; 19] = [
 /// Returns per-(bx, by) (raw_strategy, covered_x, covered_y) for first-blocks
 /// of the Y channel (channel == 1). Returns dense map of size
 /// xsize_blocks * ysize_blocks, with raw_strategy=255 for non-first cells.
-fn parse_per_block_dump(
-    path: &Path,
-    xsize_blocks: usize,
-    ysize_blocks: usize,
-) -> Vec<u8> {
+fn parse_per_block_dump(path: &Path, xsize_blocks: usize, ysize_blocks: usize) -> Vec<u8> {
     let mut strat = vec![255u8; xsize_blocks * ysize_blocks];
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
@@ -356,17 +352,18 @@ fn main() {
     let rmse = (total_sq_err / (width * height * 3) as f64).sqrt();
     eprintln!(
         "\n[global] max_abs={:.4} @ ({},{}) ch={}  RMSE={:.5}  pixels>0.001={}  pixels>0.01={}",
-        max_abs,
-        max_abs_loc.0,
-        max_abs_loc.1,
-        max_abs_loc.2,
-        rmse,
-        over_001,
-        over_01
+        max_abs, max_abs_loc.0, max_abs_loc.1, max_abs_loc.2, rmse, over_001, over_01
     );
 
     // Stage 4: per-8x8-block max-abs
-    let per_block_diff = per_block_max_abs(&ours_lin, &cjxl_lin, width, height, xsize_blocks, ysize_blocks);
+    let per_block_diff = per_block_max_abs(
+        &ours_lin,
+        &cjxl_lin,
+        width,
+        height,
+        xsize_blocks,
+        ysize_blocks,
+    );
 
     // Stage 5: encode AGAIN with the W44-76 dump enabled to learn our per-block strategy.
     let dump_dir = std::env::temp_dir().join("w44_178_ours_dump");
@@ -378,7 +375,9 @@ fn main() {
     }
     let _ = encode_ours(&src_rgb, w, h, DISTANCE, EFFORT, EncoderStrategy::Zenjxl)
         .expect("re-encode ours for dump");
-    unsafe { std::env::remove_var("JXL_W44_76_PER_BLOCK_DUMP"); }
+    unsafe {
+        std::env::remove_var("JXL_W44_76_PER_BLOCK_DUMP");
+    }
 
     let dump_path = dump_dir.join("per_block_ours.tsv");
     let our_strategy = parse_per_block_dump(&dump_path, xsize_blocks, ysize_blocks);
@@ -413,8 +412,20 @@ fn main() {
     for by in 0..ysize_blocks {
         for bx in 0..xsize_blocks {
             let i = by * xsize_blocks + bx;
-            let ry = if by < third_y { 0 } else if by < 2 * third_y { 1 } else { 2 };
-            let rx = if bx < third_x { 0 } else if bx < 2 * third_x { 1 } else { 2 };
+            let ry = if by < third_y {
+                0
+            } else if by < 2 * third_y {
+                1
+            } else {
+                2
+            };
+            let rx = if bx < third_x {
+                0
+            } else if bx < 2 * third_x {
+                1
+            } else {
+                2
+            };
             let d = per_block_diff[i];
             if d > region_max[ry][rx] {
                 region_max[ry][rx] = d;
@@ -442,7 +453,11 @@ fn main() {
             .truncate(true)
             .open(&tsv_path)
             .unwrap();
-        writeln!(f, "# W44-178 Phase 1 — pixel-domain diff aggregation (ours vs cjxl decoded)").unwrap();
+        writeln!(
+            f,
+            "# W44-178 Phase 1 — pixel-domain diff aggregation (ours vs cjxl decoded)"
+        )
+        .unwrap();
         writeln!(f, "# image\teffort\tdistance\tours_bytes\tcjxl_bytes\tmax_abs\trmse\tpixels_over_0.001\tpixels_over_0.01\tblocks_over_0.01").unwrap();
         writeln!(
             f,
@@ -457,9 +472,18 @@ fn main() {
             over_001,
             over_01,
             over_01_count,
-        ).unwrap();
-        writeln!(f, "# === per-strategy aggregation (ours' strategy, where strategy COVERS the cell) ===").unwrap();
-        writeln!(f, "# raw_strategy\tname\tcell_count\tmean_max_abs\tmax_max_abs").unwrap();
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "# === per-strategy aggregation (ours' strategy, where strategy COVERS the cell) ==="
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "# raw_strategy\tname\tcell_count\tmean_max_abs\tmax_max_abs"
+        )
+        .unwrap();
         for (s, &(cnt, sum_m, max_m)) in by_strategy.iter().enumerate() {
             if cnt == 0 {
                 continue;
@@ -472,19 +496,32 @@ fn main() {
                 cnt,
                 sum_m / cnt as f64,
                 max_m,
-            ).unwrap();
+            )
+            .unwrap();
         }
         writeln!(f, "# === per-region (3x3 grid in BLOCKS) ===").unwrap();
         writeln!(f, "# region\tby_lo\tby_hi\tbx_lo\tbx_hi\tcell_count\tmean_max_abs\tmax_max_abs\ttop3_strategies").unwrap();
         for ry in 0..3 {
             for rx in 0..3 {
                 let cnt = region_count[ry][rx];
-                let mean = if cnt > 0 { region_sum[ry][rx] / cnt as f64 } else { 0.0 };
+                let mean = if cnt > 0 {
+                    region_sum[ry][rx] / cnt as f64
+                } else {
+                    0.0
+                };
                 let max = region_max[ry][rx];
                 let by_lo = ry * third_y;
-                let by_hi = if ry == 2 { ysize_blocks } else { (ry + 1) * third_y };
+                let by_hi = if ry == 2 {
+                    ysize_blocks
+                } else {
+                    (ry + 1) * third_y
+                };
                 let bx_lo = rx * third_x;
-                let bx_hi = if rx == 2 { xsize_blocks } else { (rx + 1) * third_x };
+                let bx_hi = if rx == 2 {
+                    xsize_blocks
+                } else {
+                    (rx + 1) * third_x
+                };
                 let mut strat_pairs: Vec<(usize, u64)> = region_strat_count[ry][rx]
                     .iter()
                     .enumerate()
@@ -501,7 +538,8 @@ fn main() {
                     f,
                     "r[{},{}]\t{}\t{}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{}",
                     ry, rx, by_lo, by_hi, bx_lo, bx_hi, cnt, mean, max, top3,
-                ).unwrap();
+                )
+                .unwrap();
             }
         }
     }
@@ -514,7 +552,11 @@ fn main() {
             .open(&blocks_path)
             .unwrap();
         writeln!(f, "# W44-178 Phase 1 — per-block max-abs diff (linear RGB)").unwrap();
-        writeln!(f, "# bx\tby\tour_strategy_raw\tour_strategy_name\tmax_abs_lin_rgb").unwrap();
+        writeln!(
+            f,
+            "# bx\tby\tour_strategy_raw\tour_strategy_name\tmax_abs_lin_rgb"
+        )
+        .unwrap();
         // Only emit blocks with diff > 0.001 to keep file manageable.
         for by in 0..ysize_blocks {
             for bx in 0..xsize_blocks {
@@ -537,27 +579,74 @@ fn main() {
             .truncate(true)
             .open(&meta_path)
             .unwrap();
-        writeln!(f, "W44-178 Phase 1 — recon-diff for {} e{} d={}", SHORT_NAME, EFFORT, DISTANCE).unwrap();
+        writeln!(
+            f,
+            "W44-178 Phase 1 — recon-diff for {} e{} d={}",
+            SHORT_NAME, EFFORT, DISTANCE
+        )
+        .unwrap();
         writeln!(f, "Date: 2026-05-21").unwrap();
-        writeln!(f, "Image: {}×{} ({} blocks)", width, height, xsize_blocks * ysize_blocks).unwrap();
+        writeln!(
+            f,
+            "Image: {}×{} ({} blocks)",
+            width,
+            height,
+            xsize_blocks * ysize_blocks
+        )
+        .unwrap();
         writeln!(f).unwrap();
         writeln!(f, "Methodology:").unwrap();
-        writeln!(f, "  1. Encode the source PNG once with our Zenjxl encoder (e{} d={}).", EFFORT, DISTANCE).unwrap();
-        writeln!(f, "  2. Encode the source PNG once with cjxl (-e {} -d {} --num_threads 1).", EFFORT, DISTANCE).unwrap();
-        writeln!(f, "  3. Decode BOTH bitstreams via jxl-oxide with linear sRGB output").unwrap();
-        writeln!(f, "     (RenderingIntent::Relative) — same color path, same TF, no metadata bias.").unwrap();
+        writeln!(
+            f,
+            "  1. Encode the source PNG once with our Zenjxl encoder (e{} d={}).",
+            EFFORT, DISTANCE
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "  2. Encode the source PNG once with cjxl (-e {} -d {} --num_threads 1).",
+            EFFORT, DISTANCE
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "  3. Decode BOTH bitstreams via jxl-oxide with linear sRGB output"
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "     (RenderingIntent::Relative) — same color path, same TF, no metadata bias."
+        )
+        .unwrap();
         writeln!(f, "  4. Per-pixel max-abs and RMSE in linear-light space.").unwrap();
-        writeln!(f, "  5. Per-8x8-block max-abs aggregated by OUR encoder's AC strategy.").unwrap();
-        writeln!(f, "  6. Per-3x3 region attribution of WHICH strategies dominate WHERE the diff is.").unwrap();
+        writeln!(
+            f,
+            "  5. Per-8x8-block max-abs aggregated by OUR encoder's AC strategy."
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "  6. Per-3x3 region attribution of WHICH strategies dominate WHERE the diff is."
+        )
+        .unwrap();
         writeln!(f).unwrap();
         writeln!(f, "Headline:").unwrap();
-        writeln!(f, "  global max_abs (linear RGB) = {:.6} @ ({},{}) ch={}", max_abs, max_abs_loc.0, max_abs_loc.1, max_abs_loc.2).unwrap();
+        writeln!(
+            f,
+            "  global max_abs (linear RGB) = {:.6} @ ({},{}) ch={}",
+            max_abs, max_abs_loc.0, max_abs_loc.1, max_abs_loc.2
+        )
+        .unwrap();
         writeln!(f, "  global RMSE                 = {:.6}", rmse).unwrap();
         writeln!(f, "  pixels w/ diff > 0.001      = {}", over_001).unwrap();
         writeln!(f, "  pixels w/ diff > 0.01       = {}", over_01).unwrap();
         writeln!(f, "  blocks  w/ diff > 0.01      = {}", over_01_count).unwrap();
         writeln!(f).unwrap();
-        writeln!(f, "Per-strategy mean of per-block-max-abs (top contributors):").unwrap();
+        writeln!(
+            f,
+            "Per-strategy mean of per-block-max-abs (top contributors):"
+        )
+        .unwrap();
         let mut sorted: Vec<(usize, u64, f64, f64)> = by_strategy
             .iter()
             .enumerate()
@@ -571,16 +660,30 @@ fn main() {
             .collect();
         sorted.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
         for (s, c, mean, max) in sorted.iter().take(10) {
-            writeln!(f, "  {:<10} cells={:<6} mean_max_abs={:.5} max_max_abs={:.5}", STRATEGY_NAMES[*s], c, mean, max).unwrap();
+            writeln!(
+                f,
+                "  {:<10} cells={:<6} mean_max_abs={:.5} max_max_abs={:.5}",
+                STRATEGY_NAMES[*s], c, mean, max
+            )
+            .unwrap();
         }
         writeln!(f).unwrap();
         writeln!(f, "Per-region mean / max (3x3 grid):").unwrap();
         for ry in 0..3 {
             for rx in 0..3 {
                 let cnt = region_count[ry][rx];
-                let mean = if cnt > 0 { region_sum[ry][rx] / cnt as f64 } else { 0.0 };
+                let mean = if cnt > 0 {
+                    region_sum[ry][rx] / cnt as f64
+                } else {
+                    0.0
+                };
                 let max = region_max[ry][rx];
-                writeln!(f, "  r[{},{}] cells={:<6} mean={:.5} max={:.5}", ry, rx, cnt, mean, max).unwrap();
+                writeln!(
+                    f,
+                    "  r[{},{}] cells={:<6} mean={:.5} max={:.5}",
+                    ry, rx, cnt, mean, max
+                )
+                .unwrap();
             }
         }
         writeln!(f).unwrap();
