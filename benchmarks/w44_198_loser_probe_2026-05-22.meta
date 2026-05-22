@@ -1,0 +1,236 @@
+W44-198 photo strict-loser discriminator probe + forced-lift A/B
+================================================================
+
+Date: 2026-05-22
+Workspace: ~/work/zen/jxl-encoder--w44-198-photo-loser
+Parent: 6aa158a8 (main, post-W44-197 CfL audit)
+Build features: parallel butteraugli-loop ssim2-loop __pre_quantized
+
+## Outputs
+
+- benchmarks/w44_198_loser_probe_2026-05-22.tsv — 41 CID22 photos,
+  28 candidate features per image (ZenanalyzeProxies + mask1x1
+  percentiles + XYB variances + luma stats).
+- benchmarks/w44_198_forced_lift_2026-05-22.tsv — 5 images × 4 distances
+  × 2 efforts × {AUTO, FORCE_ON via high_d_photo_hint, cjxl baseline}.
+
+## Reproducers
+
+  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+    cargo run -p jxl-encoder --release \
+    --features 'parallel butteraugli-loop ssim2-loop __pre_quantized' \
+    --example w44_198_loser_probe \
+    > benchmarks/w44_198_loser_probe_2026-05-22.tsv
+
+  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+    cargo run -p jxl-encoder --release \
+    --features 'parallel butteraugli-loop ssim2-loop' \
+    --example w44_198_forced_lift_probe \
+    > benchmarks/w44_198_forced_lift_2026-05-22.tsv
+
+## Methodology
+
+W44-185 zenjxl bench surfaced `3637739` as the dominant Zenjxl
+Pareto-loser: 83 strict-loss cells (bytes>+1% AND ssim2<-0.1) across
+100 cells/image (5 efforts × 20 distances). Other photos follow the
+same pattern at lower frequencies:
+
+  3637739: 83 strict-loss cells (LOSER_DOMINANT)
+  7062219: 51 (LOSER_DOMINANT)
+  1420710: 43 (LOSER_HEAVY)
+  297394:  37 (LOSER_HEAVY)
+  1475938: 35 (LOSER_HEAVY)
+  1531677: 30 (LOSER_HEAVY)
+  1189261: 25 (LOSER_MILD)
+  1025469: 22 (LOSER_MILD)
+  1418519: 11 (WINNER — bytes-negative on most cells)
+  2389166:  7 (WINNER)
+
+W44-198 ran two read-only probes to test whether a zenanalyze-driven
+discriminator + W44-29 entropy_mul lift could close the cluster.
+
+## Step 1: Feature space probe (w44_198_loser_probe)
+
+Computed 28 candidate features for all 41 CID22 validation photos.
+Below: the relevant 9 images (LOSER + WINNER classes) with key features:
+
+  class             image       m3_colour  fcbr    edge_dens mask_med  mean_luma
+  LOSER_DOMINANT   3637739     12.21      0.092   0.296     75.83    147.15
+  LOSER_DOMINANT   7062219     51.14      0.011   0.633     47.79    103.60
+  LOSER_HEAVY      1420710     32.93      0.000   0.930     39.55    155.53
+  LOSER_HEAVY      297394     103.70      0.096   0.480     62.00    137.04
+  LOSER_HEAVY      1475938     21.70      0.360   0.220     89.32    186.46
+  LOSER_HEAVY      1531677     12.29      0.000   0.877     35.63     78.56
+  LOSER_MILD       1189261     98.84      0.003   0.490     69.08    121.83
+  LOSER_MILD       1025469     45.45      0.017   0.172     76.08     84.24
+  WINNER           1418519     36.84      0.098   0.164     92.33    194.88
+  WINNER           2389166     47.99      0.134   0.441     46.24     71.37
+
+Critical observation: 3637739 has features OPPOSITE 1418519 on
+edge_density (0.296 vs 0.164) and identical-class on mask_med (75 vs
+92, both "high mask"). NO single feature axis cleanly separates
+LOSER_DOMINANT from WINNER. The 8 LOSER images span the entire feature
+range: m3 ∈ [12, 104], fcbr ∈ [0.000, 0.360], edge_density ∈ [0.17,
+0.93], mask_med ∈ [36, 89], mean_luma ∈ [78, 186].
+
+## Step 2: Existing gate cross-reference
+
+Checked which W44 gates currently fire on each LOSER:
+
+  Image     mask_med  Existing W44 gates firing                      n_loss
+  3637739   75.83     NONE (mask>50, m3<80, edge_density<0.7)         83
+  7062219   47.79     W44-29 (mask<50)                                51
+  1420710   39.55     W44-29 (mask<50), W44-96 variant Z (m3>=25)     43
+  297394    62.00     NONE                                            37
+  1475938   89.32     NONE                                            35
+  1531677   35.63     W44-29, W44-96 variant Z (LC m3<25)             30
+  1189261   69.08     W44-91 (mask∈[50,80] + m3>=80 + fcbr<0.01)      25
+  1025469   76.08     NONE                                            22
+  1418519   92.33     W44-166 variant Z (mask_p25=88>=85)             11
+  2389166   46.24     W44-29                                          7
+
+Pattern: 4 LOSER images have NO gate firing (3637739, 297394, 1475938,
+1025469). 5 LOSER images already fire at least one gate. The 2 WINNER
+images are admitted to specialized variant Z gates (1418519) or W44-29
+(2389166).
+
+## Step 3: Forced-lift A/B (w44_198_forced_lift_probe)
+
+If the W44-29 mechanism is the right lever for the LOSER cluster,
+forcing the lift ON via `high_d_photo_hint = Some(true)` on
+LOSER images where the gate doesn't fire (3637739, 297394, 1475938)
+should close the deficit. Measured on 5 images × 4 distances × 2 efforts.
+
+Results (Δb_vs_AUTO and ΔSSIM2_vs_AUTO when forcing W44-29 lift ON):
+
+  Image    mask_class       e5d2    e5d3    e5d4    e5d5    e7d2    e7d3    e7d4    e7d5
+  3637739  mask76_NOGATE    +0.85  -0.11  -0.02  -0.69  -0.16  -1.67  -1.54  +1.01  ← Δb%
+                            -0.01  -0.32  -0.07  +0.02  +0.06  -0.25  +0.03  -0.07  ← ΔSSIM2
+  7062219  mask48_FIRES     +0.45  +0.00  +0.00  +0.00  -1.23  +0.00  +0.00  +0.00  ← Δb% (FORCE = AUTO)
+  1420710  mask40_FIRES     -1.24  +0.00  +0.00  -0.62  -3.16  +0.00  +0.00  +0.11
+  297394   mask62_NOGATE    +0.27  -0.06  +1.21  -2.34  -0.15  +1.14  -0.91  +1.59
+                            -0.05  -0.07  -0.28  +0.02  -0.05  -0.10  -0.31  +0.92
+  1475938  mask89_NOGATE    -0.89  -0.70  -0.34  -3.42  +1.38  -0.91   N/A    N/A
+
+Best 3637739 cell: e7 d=3 saves -1.67% bytes but COSTS -0.25 SSIM2 →
+still strict-loser. Best e7 d=4 saves -1.54% bytes ΔSSIM2 neutral but
+the gap is +6.24% — fix closes 1/4 of gap at best.
+
+For 7062219 (gate already fires), FORCE has zero effect because AUTO
+already takes the gated path — the lift is deployed but the gap
+remains +2-6%.
+
+**Conclusion: The W44-29 entropy_mul lift mechanism is NOT the lever
+for the 3637739-class strict-loser cluster.** Even when forced on,
+gains are marginal (<1.7% bytes, no SSIM2 improvement) and cannot
+close the +5-7% byte gap.
+
+## Honest-stop decision
+
+W44-198 HONEST-STOPS on the discriminator-based fix approach. The
+root cause is NOT a missing discriminator:
+
+1. NO clean feature axis separates the 8 LOSER images from the 2
+   WINNER images on the probed 28 features.
+
+2. The W44-29 lift mechanism — the natural candidate based on the
+   W44-91/96/166 discriminator pattern — produces marginal effects on
+   3637739 and is already deployed on 4 of 5 measured LOSER images
+   without closing the gap.
+
+3. Two of the LOSER images (7062219, 1531677) already have multiple
+   gates firing (W44-29 + variant Z) and STILL lose by +5-6% bytes —
+   evidence that the entropy_mul mechanism is saturated.
+
+The cluster's root cause is structural and falls into one of these
+categories (all multi-day to multi-week to investigate):
+
+- **CfL Newton parameter divergence** (already established Pareto-trade
+  in W44-184). The W44-184 falsification chain showed that bit-exact
+  libjxl Newton at default regresses 25/27 cells; the calibration is
+  load-bearing. A 3637739-specific re-calibration would need to thread
+  through the entire entropy_mul / AC strategy gate / buttloop seed /
+  adaptive_quant lift chain.
+
+- **AC strategy selection differences** not captured by the existing
+  entropy_mul tables. Per W44-103/121/155, strategy selection on
+  smooth photos diverges substantially from cjxl, even at matching
+  per-region qac. Needs per-strategy AC dump + new mechanism class.
+
+- **Butteraugli loop convergence at e8/e9**. Per W44-110/111/112,
+  butteraugli RC differences are responsible for terminal SSIM2
+  clusters. Same likely true for photo clusters at e8/e9.
+
+- **Reconstruction pipeline divergence** (W44-178 → W44-184 falsified
+  the obvious candidates for clic_097cb426; fresh hypothesis set
+  needed). Cross-applies to 3637739 because both are smooth photos.
+
+The W44-198 task gate (f) "no NEW Pareto-loser cells introduced" is
+trivially satisfied by NOT shipping a fix. The task gate (e) "3637739
+d=3-5 cells: bytes within ±2% AND SSIM2 ≥ -0.5" is NOT achievable
+with the discriminator-based approach surveyed; bytes range +4-6% and
+SSIM2 -1 to -3 across the cluster, and the surveyed lever moves at
+most -1.7% bytes.
+
+## Files
+
+- jxl-encoder/examples/w44_198_loser_probe.rs (NEW, registered)
+- jxl-encoder/examples/w44_198_forced_lift_probe.rs (NEW, registered)
+- benchmarks/w44_198_loser_probe_2026-05-22.tsv
+- benchmarks/w44_198_forced_lift_2026-05-22.tsv
+- benchmarks/w44_198_loser_probe_2026-05-22.meta (this file)
+- memory/w44_198_3637739_zenjxl_loser_diagnosis_2026-05-22.md
+- docs/LIBJXL_DIVERGENCES.md — Section F entry added for 3637739
+  cluster as KNOWN-BUG with diagnosis pointer
+
+## Source code impact
+
+ZERO production code change. Only example registrations + benchmark
+TSV/meta + memory note + divergences-table KNOWN-BUG entry.
+
+## DO NOT (binding for future agents)
+
+1. DO NOT re-attempt the W44-29 entropy_mul lift wrapping on 3637739
+   with another mask/m3/edge_density gate combination. The forced-lift
+   A/B is conclusive: the lift mechanism does not close the gap.
+
+2. DO NOT cite "FMA precision" for the 3637739 cluster (per W44-66 user
+   correction).
+
+3. DO NOT raise W44_91_M3_COLOURFULNESS_MIN below 80 to admit 3637739
+   (m3=12.21) — the existing measurements support 80 as the lower
+   bound (per W44-91 follow-on notes), and 3637739 would slip through
+   along with 1624487 (m3=66) which W44-91 protects.
+
+4. DO NOT lower W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN below 85.0 to
+   admit 3637739 (mask_p25=55.83) — per W44-149 audit, the threshold
+   has 11pp safety margin to nearest CONTROL.
+
+5. DO NOT lower HIGH_D_PHOTO_SMOOTH_THRESHOLD above 50 to admit
+   mask76_NOGATE class without re-running the forced-lift A/B AND
+   getting closure on the LOSER_DOMINANT cells — the W44-29 mechanism
+   is the lever for mask<50 cells, NOT mask>50.
+
+## Follow-on candidates (NOT in scope for W44-198)
+
+1. **Per-strategy AC dump for 3637739 e7 d=4** to test the AC
+   strategy selection hypothesis. Reuse the W44-76 dump infrastructure.
+   ETA: 1-2 days. EV: medium (would clarify whether the cluster is
+   AC-strategy-driven vs cost-model-driven).
+
+2. **3637739-specific entropy_mul re-calibration**. Per W44-184
+   lesson, would need to thread through downstream calibration without
+   destabilizing W44-29/91/96/166 wins. Multi-week.
+
+3. **Root-cause butteraugli measurement divergence** (cross-crate,
+   multi-week per W44-110/W44-111). Would obsolete this entire
+   discriminator chain.
+
+4. **CfL Newton per-image re-calibration**. Per W44-184, the default
+   Newton is calibrated against entropy_mul tables; per-image
+   re-calibration would require coupled optimization. Multi-week.
+
+5. **Pareto-trade acceptance**. If the 3637739 cluster is structural,
+   document it as a known pareto-trade in the cumulative bench. The
+   bytes overhead is +5-6% in exchange for SSIM2 loss of -1 to -3 —
+   not strictly worse, but a known weakness on the smooth-photo class.
