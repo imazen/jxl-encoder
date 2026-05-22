@@ -1,0 +1,5 @@
+image	class	strategy	effort	distance	status_base	status_new	status_change
+imac_dark	screenshot	zenjxl	9	1.5	OK	FAILED	OK->FAILED
+imac_dark	screenshot	zenjxl	9	3.25	OK	FAILED	OK->FAILED
+imac_dark	screenshot	libjxl	9	1.75	FAILED	OK	FAILED->OK
+imac_dark	screenshot	libjxl	9	3.25	OK	FAILED	OK->FAILED

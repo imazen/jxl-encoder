@@ -29,6 +29,30 @@ w44-170-sweep:
         --chart-dir benchmarks/charts \
         --chart-tag w44_170
 
+# W44-179: re-run the W44-170 comprehensive sweep with output-prefix tagged
+# w44_179. Same corpus, same params — only the output file naming differs so
+# the new run can be diffed against the W44-170 baseline TSVs.
+w44-179-rerun:
+    cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' \
+        --example w44_170_cjxl_step025_sweep -- \
+        --corpus-manifest benchmarks/corpora/w44_170_varied_corpus.tsv \
+        --output-prefix benchmarks/cjxl_step025_w44_179 \
+        --strategies zenjxl,libjxl
+    python3 benchmarks/scripts/w44_170_analyze.py \
+        --zenjxl $(ls -1t benchmarks/cjxl_step025_w44_179_zenjxl_*.tsv | head -1) \
+        --libjxl $(ls -1t benchmarks/cjxl_step025_w44_179_libjxl_*.tsv | head -1) \
+        --output-md benchmarks/w44_179_analysis_$(date +%Y-%m-%d).md \
+        --chart-dir benchmarks/charts \
+        --chart-tag w44_179
+    python3 benchmarks/scripts/w44_179_compare_vs_baseline.py \
+        --baseline-zenjxl $(ls -1t benchmarks/cjxl_step025_zenjxl_*.tsv | grep -v w44_179 | head -1) \
+        --baseline-libjxl $(ls -1t benchmarks/cjxl_step025_libjxl_*.tsv | grep -v w44_179 | head -1) \
+        --new-zenjxl $(ls -1t benchmarks/cjxl_step025_w44_179_zenjxl_*.tsv | head -1) \
+        --new-libjxl $(ls -1t benchmarks/cjxl_step025_w44_179_libjxl_*.tsv | head -1) \
+        --output-md benchmarks/w44_179_vs_w44_170_comparison_$(date +%Y-%m-%d).md \
+        --output-tsv-prefix benchmarks/w44_179_vs_w44_170 \
+        --top-n 20
+
 # Cross-compile and test for 32-bit x86 (requires cross: cargo install cross --git https://github.com/cross-rs/cross)
 test-i686:
     cross test --workspace --no-default-features --lib --target i686-unknown-linux-gnu
