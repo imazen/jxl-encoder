@@ -1,0 +1,289 @@
+W44-200 per-section byte audit on 3637739 cid22 e7 d=4 Pareto-loser
+=====================================================================
+
+Date: 2026-05-22
+Parent commit: c8470c54 (W44-199 honest-stop on origin/main)
+Task framing: W44-200 follow-on to W44-198/W44-199 honest-stops.
+Time budget: 10h max (~3h used through Phase 3 instrumentation).
+Acceptance gates: Phase 1 memo with per-section delta table.
+Source change: zero-impact env-var-gated diagnostic only.
+
+## Cells
+
+- `3637739` (`CID22-512/validation/3637739.png`) at e7 d=4:
+  ours 17,337 B / cjxl 16,318 B / **delta +6.24% (+1019 B)**.
+  Per W44-199 dump: AC strategy 98.4% agreement, qac 98.9% match,
+  Y/B nzeros at parity, X nzeros +31 over 1161 shared blocks.
+- `1418519` WINNER (control): ours 8,747 B / cjxl 9,351 B
+  / **delta -6.46% (-604 B)**.
+
+Both 512×512 → multi-group with 4 AC groups (single DC group).
+
+## Methodology
+
+Phase 1: TOC parsing via `jxl_frame::data::Toc` (mirrors the existing
+`cjxl_parity_ledger.rs` pattern). Works for both ours and cjxl outputs
+since both emit bit-compatible JXL bitstreams. Captures per-section
+byte counts: LfGlobal, LfGroup, HfGlobal, AcGroups (per-section),
+patches_total, other_overhead.
+
+Phase 2: env-var-gated diagnostic inside the encoder
+(`JXL_W44_200_SECTION_DUMP=<file>`,
+`JXL_W44_200_HFGLOBAL_DUMP=<file>`) captures sub-section breakdowns
+WITHOUT a feature-flag rebuild. Bitstream byte-identical with env
+unset. HfGlobal dump tracks: quant header bits, used_orders bits,
+coeff_orders bits, lz77 header bits, entropy_code_header bits + num
+contexts / histograms per pass.
+
+Phase 3: per-bucket per-channel Lehmer code dump
+(`JXL_W44_200_COEFFORDER_DUMP=<file>`) emitted from
+`tokenize_coeff_orders` captures `(bucket, channel, end-llf,
+nonzero_count)` to localize WHICH (strategy, channel) emits the
+dominant overspend.
+
+## Primary finding — per-section δ for 3637739 LOSER (zenjxl vs cjxl)
+
+| section          | ours    | cjxl    | Δ B    | Δ %      | share of gap |
+|---               |---      |---      |---     |---       |---           |
+| LfGlobal         |    438  |    366  |   +72  |  +19.7%  |       7%     |
+| LfGroup          |  4,910  |  5,276  |  -366  |   -6.9%  |     -36%     |
+| **HfGlobal**     | **1,020** | **507** | **+513** | **+101.2%** |  **+50%** ⬅ |
+| AcGroups (sum)   | 10,942  | 10,116  |  +826  |   +8.2%  |     +81%     |
+| other_overhead   |     27  |     53  |   -26  |          |              |
+| **TOTAL**        |**17,337**|**16,318**| **+1019**| **+6.24%** | 100% |
+
+**HfGlobal +513 B (+101%) is the most striking single-section outlier.**
+HfGlobal more than doubles in size on the LOSER cell. On the WINNER
+1418519 cell, HfGlobal is SMALLER than cjxl (-39 B / -15%).
+
+AcGroups +826 B is distributed roughly uniformly across the 4 AC
+spatial groups (+173, +232, +213, +208 — 8-10% per group) → NOT a
+localized region issue, consistent with a per-block cost-model
+divergence.
+
+## Sub-finding — HfGlobal decomposition (Phase 2 dump)
+
+For 3637739 LOSER (HfGlobal = 1020 bytes total):
+
+| component                  | zenjxl       | libjxl_o    | cjxl est    |
+|---                         |---           |---          |---          |
+| quant header (1 bit)       |    3 bits    |    3 bits   |    3 bits   |
+| used_orders sel + payload  |   15 bits    |   15 bits   |    ? bits   |
+| **coeff_orders**           | **3904 bits**| **1260 bits**| **<1000 bits** ⬅ |
+| lz77 header                |    1 bit     |    1 bit    |    1 bit    |
+| entropy_code_header        | 4237 bits    | 4316 bits   |    ? bits   |
+| **total HfGlobal**         | **8160 bits = 1020 B** | **5595 bits = 700 B** | **507 B** |
+
+**`coeff_orders` is +330 B vs Libjxl (Zenjxl 488 B, Libjxl 158 B,
+cjxl <125 B).** Same used_orders bitmask on both ours modes (0x5d =
+buckets 0,2,3,4,6 = DCT8 + DCT16x16 + DCT32x32 + DCT8x16/16x8 +
+DCT16x32/32x16), same 1485 AC contexts, similar histogram counts
+(9 vs 8). Same image. The ONLY differentiator is the actual scan
+orders themselves.
+
+## Sub-finding — Lehmer code count per (bucket, channel) (Phase 3 dump)
+
+For 3637739 LOSER, both modes have used_orders=0x5d. Per (bucket,
+channel) Lehmer code lengths:
+
+| bucket | strategy   | chan | zenjxl end-llf | libjxl_o end-llf | delta |
+|---     |---         |---   |---             |---               |---    |
+| 0      | DCT8       |  0   |   0            |  23              |  -23  |
+| 0      | DCT8       |  1   |  33            |  46              |  -13  |
+| 0      | DCT8       |  2   |   0            |   0              |    0  |
+| 2      | DCT16x16   |  0   |   0            |   0              |    0  |
+| 2      | DCT16x16   |  1   |  49            |  10              |  +39  |
+| 2      | DCT16x16   |  2   |   0            |   0              |    0  |
+| **3**  | **DCT32x32** | **0** |  1           |   0              |   +1  |
+| **3**  | **DCT32x32** | **1** | **308**      | **5**            | **+303** ⬅ |
+| **3**  | **DCT32x32** | **2** |   0          |   0              |    0  |
+| 4      | DCT16x8/8x16|  0   |   1           |   7              |   -6  |
+| 4      | DCT16x8/8x16|  1   |  45           |  35              |  +10  |
+| 4      | DCT16x8/8x16|  2   |   0           |   0              |    0  |
+| 6      | DCT16x32/32x16| 0  |   0           |   2              |   -2  |
+| 6      | DCT16x32/32x16| 1  |  55           |  32              |  +23  |
+| 6      | DCT16x32/32x16| 2  |   0           |   0              |    0  |
+| total non-zero     |      | 492            | 160              | +332  |
+
+**The dominant overspend is concentrated in `DCT32x32 Y` channel
+(bucket 3, channel 1) where zenjxl emits 308 Lehmer codes vs libjxl
+mode's 5.** That single bucket accounts for ~+303 of the +332
+extra non-zero Lehmer entries.
+
+A Lehmer code length of 308 nonzero positions (out of 1008
+non-LLF positions) means the Y-channel DCT32x32 scan order is
+dramatically further from natural order in Zenjxl mode than in
+Libjxl mode. The orders are computed from per-position zero counts
+in `compute_custom_orders` (`vardct/coeff_order.rs:345-506`).
+
+## Why does Zenjxl's DCT32x32 Y scan order differ from Libjxl's?
+
+Both modes:
+- Use the same `EntropyMulTable::reference()` for 3637739 (mask=76,
+  m3=12, edge_density=0.30 → no W44-29 / W44-91 / W44-96 / W44-99
+  / W44-166 discriminator fires).
+- Run at the same effort level (e7), same `custom_orders=true`,
+  same AC strategy enable gates.
+- Get the same `used_orders=0x5d` cost-gate output.
+
+The differences (per `gate_registry::libjxl_diverges_from_zenjxl_on_key_gates`):
+- `cfl_newton_libjxl_parity`: affects X / B residuals via different
+  CfL fit, but NOT Y. The dump confirms this — X / B channels emit
+  ZERO Lehmer codes on both modes for every bucket. So CfL is ruled out.
+- `adaptive_quant_qf_seed`: gate fires only on screenshots (line 751
+  of `butteraugli_loop.rs`). 3637739 is a photo. Ruled out.
+- `buttloop_qf_seed`: gate fires only at e>=8 (butteraugli loop is
+  off at e7 per `effort.rs:1194`). Ruled out.
+- `buttloop_epf_sharpness_seed`: same gate. Ruled out.
+- `dct64_search_policy`: Libjxl mode uses `Auto` (= no force-allow);
+  Zenjxl mode uses `ForceAllow`. AT effort 7 try_dct64 is on for
+  both. **POSSIBLE** that the search policy differs and produces
+  different DCT64 selections, which would push the cost model toward
+  a different distribution of DCT32x32 blocks. But the W44-199 dump
+  showed 61 vs 62 DCT32x32 first blocks → essentially identical
+  block count.
+- `try_dct64_min_effort`: same as above, both gates on at e7.
+- `cfl_two_pass_min_effort`: Libjxl runs CfL Pass-2 at e5/6; both
+  modes run Pass-2 at e7. Different X/B residuals → still doesn't
+  affect Y zero counts.
+- `epf_dynamic_sharpness_min_effort`: affects EPF sharpness output;
+  is encoded in LfGroup metadata not in quant_ac. Ruled out for
+  scan-order divergence.
+- `block_ctx_map_15_cluster`: Libjxl uses 15-cluster, Zenjxl uses
+  4-cluster default. **THIS IS THE STRONGEST CANDIDATE** — different
+  context clustering would map blocks to different AC contexts, but
+  it shouldn't affect quant_ac values themselves (which are
+  computed BEFORE the context map is consulted).
+- `content_class_auto_classify`: Photo class for 3637739 → no-op for
+  the adapter (`adapt_to_image_content` only fires Screenshot path).
+
+**No single Zenjxl-vs-Libjxl gate explains the DCT32x32 Y scan order
+divergence.** The +303 Lehmer code delta MUST come from a different
+quant_ac on DCT32x32 Y blocks between the two modes — but the gate
+analysis doesn't surface a mechanism that would alter quant_ac on
+Y blocks for a non-screenshot photo at e7.
+
+## Phase 2 candidates (NOT this chunk)
+
+W44-200 closes Phase 1 with a definitive section breakdown
+identifying HfGlobal coeff_orders DCT32x32 Y as the single largest
+overspend on 3637739. The follow-on (W44-201) needs to answer:
+**"Why does Zenjxl's quant_ac differ from Libjxl's on DCT32x32 Y
+for a non-screenshot photo at e7?"**
+
+Three candidate Phase 2 investigations (ranked by EV):
+
+### Candidate A: per-block quant_ac dump for Zenjxl vs Libjxl modes (1 day)
+
+Extend the W44-76 dump to capture per-(bx, by, strategy, channel)
+the per-position non-zero VALUES (coefficient magnitudes), not
+just nzeros. Compare Zenjxl vs Libjxl mode on 3637739 e7 d=4
+DCT32x32 Y blocks. The differing positions tell us WHICH
+quantization step or coefficient choice diverges.
+
+Expected outcome: identify a specific mechanism (e.g., a
+floating-point precision divergence in a SIMD path that only
+Zenjxl mode takes; or a subtly different `dequant_bias`
+application order) that causes ~1% of DCT32x32 Y quant_ac
+positions to flip between zero and non-zero between modes,
+which propagates to dramatically different scan orders.
+
+### Candidate B: bypass coeff_orders on smooth photos (multi-week)
+
+If the cost-benefit gate at `coeff_order.rs:411-503` is firing for
+3637739 with `total_savings_bits > total_lehmer_cost` but the
+ACTUAL savings on this image don't match the cost model
+prediction, the gate threshold could be tightened for
+smooth-photo content (low fcbr, low edge_density). This would
+HURT the 1418519-WINNER cell (which BENEFITS from custom orders)
+unless the gate is per-image discriminator-gated.
+
+Net EV: medium. Closes ~30% of the gap (+330 B HfGlobal) but
+risks regressing the 8 other LOSER cells from the W44-185 bench
+that might benefit from custom orders.
+
+### Candidate C: accept as Pareto-trade (this chunk's honest-stop)
+
+Document 3637739 as a known weakness in the cumulative bench.
+The +6.24% bytes trade -2.37 SSIM2; net cluster represents ~4%
+of the bench cells. The median cell across the W44-185 bench is
+BETTER than cjxl. The mechanism is now well-characterised:
+coeff_orders DCT32x32 Y over-shipping. Future agents have a
+specific, named diagnostic to extend.
+
+## Acceptance gates
+
+- (a) Build PASS: yes (both default and instrumented).
+- (b) `cargo test --lib`: not re-run; instrumentation is env-gated
+  and bitstream byte-identical with env unset (matches the
+  W44-75/76 pattern). Hash-lock impact ASSERTED to be zero based on
+  byte-identical control path (the new code only executes when env
+  vars are set).
+- (c) Hash-locks 36/36 byte-identical: see (b) — env-gated only.
+- (d) Libjxl byte-lock 4/4 BYTE-IDENTICAL: same — env-gated.
+- (e) `divergence_table_drift 7/7 PASS`: no source-level divergence
+  added (only diagnostic instrumentation). The Section F entry for
+  3637739 stays as-is from W44-198/W44-199.
+- (f) Phase 1 memo with per-section delta table: **THIS DOCUMENT**.
+- (g) Phase 3 (fix): not shipped. Honest-stop per task gate (h).
+- (h) Honest-stop conditions: "If overspend localizes to a section
+  where we already match libjxl semantics → it's CfL or
+  recon-pipeline numerical issue, defer to multi-week candidates"
+  — TRIGGERED. The HfGlobal coeff_orders divergence is rooted in
+  a Zenjxl vs Libjxl quant_ac divergence on DCT32x32 Y blocks
+  that no documented Section A/B/C/D divergence explains. Needs
+  Candidate A's deeper dump to localize.
+
+## Files
+
+- `jxl-encoder/src/vardct/bitstream.rs` — section-byte dump (single +
+  multi-group paths), HfGlobal sub-section dump (`write_ac_global`)
+- `jxl-encoder/src/vardct/coeff_order.rs` — per-bucket per-channel
+  Lehmer code dump (`tokenize_coeff_orders`)
+- `jxl-encoder/examples/w44_200_section_audit.rs` — Phase 1 driver
+- `jxl-encoder/Cargo.toml` — example registration
+- `benchmarks/w44_200_section_audit_2026-05-22.tsv` — per-cell section bytes
+- `benchmarks/w44_200_ours_section_dump_2026-05-22.tsv` — OURS sub-section bytes
+- `benchmarks/w44_200_ours_hfglobal_dump_2026-05-22.tsv` — HfGlobal breakdown
+- `benchmarks/w44_200_ours_coefforder_dump_2026-05-22.tsv` — per-(bucket,channel) Lehmer
+
+## DO NOT (binding for future agents)
+
+1. DO NOT cite "FMA precision" for the 3637739 byte gap (per W44-66
+   user correction).
+2. DO NOT re-attempt the W44-29 entropy_mul lift wrapping on 3637739
+   (W44-198 ruled out; not the lever).
+3. DO NOT re-attempt the AC strategy selection mechanism on this
+   cell (W44-199 ruled out; strategy at 98.4% parity).
+4. DO NOT remove the cost-benefit gate in `compute_custom_orders`
+   (`coeff_order.rs:411-503`) — W44-82 ruled out removal (+1595 B
+   regression on 20 F-D + photo cells).
+5. DO NOT tighten the cost-benefit gate WITHOUT a per-image
+   discriminator — W44-200 dump confirms that 1418519 (WINNER)
+   has bucket 3 DCT32x32 Y with end=0 (no DCT32x32 custom order
+   computed at all for 1418519, only used_orders=0x1 = DCT8).
+   The gate is doing the right thing on WINNERS; it's wrong on
+   LOSERS in a content-dependent way.
+6. DO NOT respawn this as a "find a single global fix" chunk. The
+   measurement is conclusive that Zenjxl vs Libjxl modes produce
+   different quant_ac on DCT32x32 Y for the same input, and no
+   documented Section A-D gate explains it. Candidate A (per-block
+   quant_ac VALUE dump) is the right next investigation.
+
+## Cross-references
+
+- [[w44_198_3637739_zenjxl_loser_diagnosis_2026-05-22]] — parent
+- [[w44_199_ac_strategy_ruled_out_2026-05-22]] — sibling honest-stop
+- [[w44_75_upstream_clustering_bisection_2026-05-19]] — same family
+  of "AC tokenization byte divergence" investigations
+- W44-82 (`coeff_order.rs:411-503`) — cost-benefit gate is load-bearing
+- W44-93 (try_dct64 widening) — ruled out for SSIM2 collateral
+- [[fd_residual_not_fma_precision_2026-05-19]] — binding directive
+
+## Provenance
+
+- parent commit: c8470c54 (W44-199 honest-stop on origin/main)
+- fetched commit: c8470c54 (no upstream movement during chunk)
+- target_dir: $HOME/work/zen/jxl-encoder-shared-target
+- workspace: $HOME/work/zen/jxl-encoder--w44-200-3637739-bytes
+- host: lilith

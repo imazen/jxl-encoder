@@ -1257,16 +1257,29 @@ impl VarDctEncoder {
         #[cfg(feature = "debug-tokens")]
         let start_bits = writer.bits_written();
 
+        // W44-200: env-var-gated HfGlobal sub-section breakdown. Writes to
+        // `JXL_W44_200_HFGLOBAL_DUMP=<file>` (separate from the main
+        // section dump). Captures the bit counts for: quant header,
+        // coeff_orders, lz77 header, entropy_code_header (cluster headers
+        // + ANS histograms) per pass.
+        let w44_200_hfg_dump: Option<String> =
+            std::env::var("JXL_W44_200_HFGLOBAL_DUMP").ok();
+        let w44_200_label: String =
+            std::env::var("JXL_W44_200_LABEL").unwrap_or_else(|_| "unlabeled".into());
+        let w44_200_start_bits = writer.bits_written();
+
         writer.write(1, 1)?; // all default quant matrices
 
         let num_histo_bits = ceil_log2_nonzero(num_groups);
         if num_histo_bits != 0 {
             writer.write(num_histo_bits as usize, 0)?;
         }
+        let w44_200_after_quant_header_bits = writer.bits_written();
 
         // Per-pass: used_orders, coeff_orders, histograms
         let num_passes = ac_codes.len();
         for pass in 0..num_passes {
+            let w44_200_pass_start_bits = writer.bits_written();
             // Write used_orders via u2S(0x5F, 0x13, 0x00, U(13))
             if used_orders == 0x5F {
                 writer.write(2, 0)?; // selector 0 = 0x5F
@@ -1283,15 +1296,18 @@ impl VarDctEncoder {
             if let Some(tokens) = coeff_order_tokens.filter(|_| used_orders != 0) {
                 super::coeff_order::build_and_write_coeff_orders(tokens, self.use_ans, writer)?;
             }
+            let w44_200_after_coeff_orders_bits = writer.bits_written();
 
             // Write LZ77 params for this pass
             Self::write_lz77_header(ac_lz77_params[pass].as_ref(), writer)?;
+            let w44_200_after_lz77_bits = writer.bits_written();
 
             #[cfg(feature = "debug-tokens")]
             let before_ac_code = writer.bits_written();
 
             // Write entropy code for this pass
             self.write_entropy_code_header(&ac_codes[pass], writer)?;
+            let w44_200_after_entropy_header_bits = writer.bits_written();
 
             #[cfg(feature = "debug-tokens")]
             {
@@ -1304,6 +1320,53 @@ impl VarDctEncoder {
                     ac_codes[pass].num_contexts(),
                     ac_codes[pass].num_histograms()
                 );
+            }
+
+            // W44-200 HfGlobal dump emission per pass.
+            if let Some(path) = w44_200_hfg_dump.as_ref() {
+                let new_file = !std::path::Path::new(path).exists();
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                {
+                    use std::io::Write as _;
+                    if new_file {
+                        let _ = writeln!(
+                            f,
+                            "label\tnum_groups\tused_orders\tpass\t\
+                             quant_header_bits\tused_orders_bits\tcoeff_orders_bits\t\
+                             lz77_header_bits\tentropy_code_header_bits\t\
+                             num_ac_contexts\tnum_ac_histograms\tlz77_enabled"
+                        );
+                    }
+                    let _ = writeln!(
+                        f,
+                        "{label}\t{ng}\t0x{uo:x}\t{p}\t{qh}\t{uob}\t{cob}\t{lzb}\t{ehb}\t{nc}\t{nh}\t{lz}",
+                        label = w44_200_label,
+                        ng = num_groups,
+                        uo = used_orders,
+                        p = pass,
+                        qh = w44_200_after_quant_header_bits - w44_200_start_bits,
+                        // pass-local: used_orders bits (selector + optional payload)
+                        uob = if used_orders == 0 || used_orders == 0x5F || used_orders == 0x13 {
+                            2
+                        } else {
+                            15
+                        },
+                        cob = w44_200_after_coeff_orders_bits - w44_200_pass_start_bits
+                            - (if used_orders == 0 || used_orders == 0x5F || used_orders == 0x13 {
+                                2
+                            } else {
+                                15
+                            }),
+                        lzb = w44_200_after_lz77_bits - w44_200_after_coeff_orders_bits,
+                        ehb = w44_200_after_entropy_header_bits - w44_200_after_lz77_bits,
+                        nc = ac_codes[pass].num_contexts(),
+                        nh = ac_codes[pass].num_histograms(),
+                        lz = ac_lz77_params[pass].is_some(),
+                    );
+                }
             }
         }
 
@@ -3188,6 +3251,19 @@ impl VarDctEncoder {
 
         let num_extra_channels = extras.len();
 
+        // W44-200: env-var-gated per-section byte dump. Set
+        // `JXL_W44_200_SECTION_DUMP=<file>` to emit a TSV row per encode
+        // containing sub-section byte counts (LfGlobal, LfGroup, HfGlobal,
+        // AcGroups, frame header + TOC overhead). Bitstream byte-identical
+        // with env unset. Used by `examples/w44_200_section_audit.rs` to
+        // localize the +6.24% byte overspend on 3637739 cid22 e7 d=4 vs
+        // cjxl libjxl reference (W44-198/199 honest-stop follow-on).
+        let w44_200_dump_path: Option<String> =
+            std::env::var("JXL_W44_200_SECTION_DUMP").ok();
+        let w44_200_label: String =
+            std::env::var("JXL_W44_200_LABEL").unwrap_or_else(|_| "unlabeled".into());
+        let w44_200_frame_header_start_bits = writer.bits_written();
+
         // Write frame header
         {
             let mut fh = FrameHeader::lossy();
@@ -3305,6 +3381,7 @@ impl VarDctEncoder {
 
             fh.write(writer)?;
         }
+        let w44_200_frame_header_end_bits = writer.bits_written();
 
         let num_blocks = xsize_blocks * ysize_blocks;
         // Single combined section: only when 1 group AND 1 pass (non-progressive)
@@ -3391,6 +3468,14 @@ impl VarDctEncoder {
                 &mut ac_group_writer,
             )?;
 
+            // W44-200: capture sub-section bit counts BEFORE we consume
+            // the BitWriters into the combined buffer. Reported via the
+            // env-var dump below. No-op when env unset.
+            let w44_200_dc_global_bits = dc_global.bits_written();
+            let w44_200_dc_group_bits = dc_group.bits_written();
+            let w44_200_ac_global_bits = ac_global.bits_written();
+            let w44_200_ac_group_bits = ac_group_writer.bits_written();
+
             let mut combined = dc_global;
             combined.append_unaligned(&dc_group)?;
             combined.append_unaligned(&ac_global)?;
@@ -3398,8 +3483,47 @@ impl VarDctEncoder {
             combined.zero_pad_to_byte();
             let combined_bytes = combined.finish();
 
+            let w44_200_toc_start_bits = writer.bits_written();
             write_toc(&[combined_bytes.len()], writer)?;
+            let w44_200_toc_end_bits = writer.bits_written();
             writer.append_bytes(&combined_bytes)?;
+
+            // W44-200 dump emission (single-group path).
+            if let Some(path) = w44_200_dump_path.as_ref() {
+                let new_file = !std::path::Path::new(path).exists();
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                {
+                    use std::io::Write as _;
+                    if new_file {
+                        let _ = writeln!(
+                            f,
+                            "label\tpath\tnum_groups\tnum_dc_groups\tnum_passes\t\
+                             frame_header_bits\ttoc_bits\tdc_global_bits\t\
+                             dc_group_bits\tac_global_bits\tac_group_bits\t\
+                             combined_section_bytes\ttotal_bytes_at_finish"
+                        );
+                    }
+                    let _ = writeln!(
+                        f,
+                        "{label}\tsingle_group\t{ng}\t{ndg}\t{np}\t{fh}\t{tc}\t{dcg}\t{dcgr}\t{acg}\t{acgr}\t{csb}\t{tot}",
+                        label = w44_200_label,
+                        ng = num_groups,
+                        ndg = num_dc_groups,
+                        np = num_passes,
+                        fh = w44_200_frame_header_end_bits - w44_200_frame_header_start_bits,
+                        tc = w44_200_toc_end_bits - w44_200_toc_start_bits,
+                        dcg = w44_200_dc_global_bits,
+                        dcgr = w44_200_dc_group_bits,
+                        acg = w44_200_ac_global_bits,
+                        acgr = w44_200_ac_group_bits,
+                        csb = combined_bytes.len(),
+                        tot = writer.bits_written() / 8,
+                    );
+                }
+            }
         } else {
             // Multi-group: byte-aligned sections
             let mut sections: Vec<Vec<u8>> = Vec::with_capacity(num_sections);
@@ -3621,6 +3745,64 @@ impl VarDctEncoder {
                         String::new()
                     };
                     eprintln!("  section[{}]: {} = {} bytes{}", i, label, sz, pass_group);
+                }
+            }
+
+            // W44-200 dump emission (multi-group path).
+            // Aggregates per-section bytes by kind: LfGlobal, LfGroup (sum),
+            // HfGlobal, per-AC-group sizes. The TOC parser in the example
+            // reads the same data from the encoded bitstream, but having
+            // the dump enables per-AC-group spatial analysis and verifies
+            // parity with the TOC-side numbers.
+            if let Some(path) = w44_200_dump_path.as_ref() {
+                let new_file = !std::path::Path::new(path).exists();
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                {
+                    use std::io::Write as _;
+                    if new_file {
+                        let _ = writeln!(
+                            f,
+                            "label\tpath\tnum_groups\tnum_dc_groups\tnum_passes\t\
+                             frame_header_bits\tlf_global_bytes\tlf_groups_sum_bytes\t\
+                             hf_global_bytes\tac_groups_sum_bytes\tac_groups_per_section_bytes"
+                        );
+                    }
+                    let lf_global_bytes = section_sizes.first().copied().unwrap_or(0);
+                    let lf_groups_sum: usize =
+                        section_sizes.iter().skip(1).take(num_dc_groups).sum();
+                    let hf_global_bytes = section_sizes
+                        .get(1 + num_dc_groups)
+                        .copied()
+                        .unwrap_or(0);
+                    let ac_section_start = 2 + num_dc_groups;
+                    let ac_sizes: Vec<usize> = section_sizes
+                        .iter()
+                        .skip(ac_section_start)
+                        .copied()
+                        .collect();
+                    let ac_sum: usize = ac_sizes.iter().sum();
+                    let ac_per_section_str = ac_sizes
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let _ = writeln!(
+                        f,
+                        "{label}\tmulti_group\t{ng}\t{ndg}\t{np}\t{fh}\t{lfg}\t{lfgs}\t{hfg}\t{acg}\t{acp}",
+                        label = w44_200_label,
+                        ng = num_groups,
+                        ndg = num_dc_groups,
+                        np = num_passes,
+                        fh = w44_200_frame_header_end_bits - w44_200_frame_header_start_bits,
+                        lfg = lf_global_bytes,
+                        lfgs = lf_groups_sum,
+                        hfg = hf_global_bytes,
+                        acg = ac_sum,
+                        acp = ac_per_section_str,
+                    );
                 }
             }
 

@@ -1,0 +1,5 @@
+label	path	num_groups	num_dc_groups	num_passes	frame_header_bits	lf_global_bytes	lf_groups_sum_bytes	hf_global_bytes	ac_groups_sum_bytes	ac_groups_per_section_bytes
+3637739_LOSER_zenjxl	multi_group	4	1	1	42	438	4910	1020	10942	2399,2556,2591,3396
+3637739_LOSER_libjxl	multi_group	4	1	1	42	470	5271	700	11546	2255,2654,2880,3757
+1418519_WINNER_zenjxl	multi_group	4	1	1	42	358	4246	213	3904	991,775,1030,1108
+1418519_WINNER_libjxl	multi_group	4	1	1	42	377	4443	458	4508	1080,859,1182,1387

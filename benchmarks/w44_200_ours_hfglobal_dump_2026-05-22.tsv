@@ -1,0 +1,5 @@
+label	num_groups	used_orders	pass	quant_header_bits	used_orders_bits	coeff_orders_bits	lz77_header_bits	entropy_code_header_bits	num_ac_contexts	num_ac_histograms	lz77_enabled
+3637739_LOSER_zenjxl	4	0x5d	0	3	15	3904	1	4237	1485	9	false
+3637739_LOSER_libjxl	4	0x5d	0	3	15	1260	1	4316	1485	8	false
+1418519_WINNER_zenjxl	4	0x1	0	3	15	186	1	1492	1485	4	false
+1418519_WINNER_libjxl	4	0x5d	0	3	15	1186	1	2452	1485	5	false
