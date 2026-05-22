@@ -1,0 +1,148 @@
+W44-180 incremental-histogram DC tree split scan — paired A/B/cjxl bench
+========================================================================
+
+Date:      2026-05-22
+Commit:    pending (see git log -- jxl-encoder/src/vardct/dc_tree_learn.rs)
+Host:      water-cooled AMD Ryzen 9 7950X, 128 GB RAM (Lilith River workstation)
+Build:     cargo run --release --features '__expert parallel butteraugli-loop ssim2-loop' \
+             --example w44_180_inc_hist_ab
+cjxl:      v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}, default threads
+Threads:   32 (default rayon pool for ours; cjxl default)
+Time iters: 3 per cell, best-of-3 wall reported
+
+What this measures
+==================
+
+Mode A (BEFORE, pre-W44-180): per-quantile re-scan via
+  `JXL_W44_180_FORCE_LEGACY_DC_TREE_SPLIT=1` env var. Each of the 32
+  quantile candidate splitvals re-partitions the indices and re-builds the
+  per-side histograms from scratch (O(N · P) per side × 32 × 2 = 64
+  O(N · P) scans per node).
+
+Mode B (AFTER, W44-180 default): incremental-histogram update via libjxl
+  `enc_ma.cc:280-439` pattern. Pre-compute parent totals once, then sweep
+  candidate splitvals in ascending order while transferring buckets
+  incrementally from `counts_above` → `counts_below`. Per-candidate cost
+  evaluation is O(P · S) where S = max_token + 1.
+
+cjxl: reference encoder at the same effort/distance, default threads.
+
+Cells
+=====
+
+Top-3 e8 d=0.5 wedges from W44-175:
+- terminal_e8_d05      (gb82-sc/terminal.png)
+- codec_wiki_e8_d05    (gb82-sc/codec_wiki.png)
+- imac_dark_e8_d05     (gb82-sc/imac_dark.png)
+
+Observation cells at d=1:
+- terminal_e8_d1
+- codec_wiki_e8_d1
+
+PROTECT cells (W44-180 must NOT affect these):
+- terminal_e5_d1_PROTECT   (e<8, DC tree learning gated off)
+- terminal_e7_d05_PROTECT  (e<8, DC tree learning gated off)
+- codec_wiki_e7_d05_PROTECT (e<8, DC tree learning gated off)
+- terminal_e9_d05_PROTECT  (e9 uses PredictorSet::Variable, 14 preds)
+- cid22_1418519_e8_d1_PROTECT (photo cell — should also be byte-identical)
+
+System load context
+===================
+
+Concurrent rustc/cargo builds from W44-178, W44-179, zenmetrics, and
+zensim-gpu agents were active during this bench. Load avg ranged from
+177 to 304 throughout. Both A and B modes (and cjxl) ran under the same
+contention, so wall-time A/B ratios are still meaningful but the absolute
+numbers (a_ms, b_ms, cjxl_ms) are ~5-30× slower than they would be on an
+idle machine. Cross-comparison with the W44-175 baseline TSV
+(`benchmarks/w44_175_parallel_buttloop_ab_2026-05-21.tsv`) is NOT
+apples-to-apples for wall time — only the byte-identical and SSIM2-delta
+columns are directly comparable.
+
+Acceptance gates
+================
+
+The W44-180 task spec's PRIMARY acceptance criterion is byte-identical
+output. The bench TSV confirms this on all 10 cells:
+
+- bytes_identical_a_b == 1 on every row ✓
+- ssim2_delta_b_minus_a = +0.000000 on every row ✓
+- bfly_delta_b_minus_a  = +0.000000 on every row ✓
+
+The wall ratio target (≤2.5× cjxl on top-3 e8 wedges) is NOT met under
+this load. Even on an idle machine, the wall ratio cap would require
+algorithmic improvements ELSEWHERE in the buttloop pipeline (transform,
+quant, AC strategy search, EPF, etc.). W44-180 is scoped to just the DC
+tree split-scan inner cost evaluation — that single function's wall
+contribution is bounded by Amdahl on the parallelized W44-175 shape.
+
+Notable wall-time results
+=========================
+
+- **terminal_e9_d05_PROTECT: 9.06× speedup (13.1s → 1.4s)** — e9 uses
+  `PredictorSet::Variable` (14 predictors); the per-quantile re-scan
+  legacy path was paying 14× the cost vs Best mode. This is the cleanest
+  measurement in the harness because both A and B ran under the same
+  system load and the e9 wall is dominated by the DC tree learning path
+  (W44-172 measured ~47% CPU on this path pre-W44-172, ~22% post-W44-172).
+- **terminal_e8_d1: 1.63× speedup (9.2s → 5.6s)** — e8 uses
+  `PredictorSet::Best` (2 predictors).
+- **imac_dark_e8_d05: 1.35× speedup (28.2s → 20.8s)**
+- terminal_e8_d05: 1.05× (load noise, but byte-identical)
+- codec_wiki_e8_d05: 0.98× (load noise, but byte-identical)
+- PROTECT cells: byte-identical, noisy timing (system load dominates)
+
+Why the wall-time delta varies across cells
+===========================================
+
+The DC tree learning runs ONCE per encode. With W44-175's 14-way per-
+property parallel fan-out, the function's wall-time contribution is
+roughly:
+
+  wall_dc_tree = sum_over_props(per_property_serial_work) / parallelism
+
+For a 14-prop parallel call on 14+ cores, the per-property serial work
+dominates. The pre-W44-180 per-property work was O(N · P · Q · 2). The
+W44-180 incremental update reduces this to O(N · P + Q · P · S), a
+~30× algorithmic speedup on typical e9 inputs (N≈100k, P=14, Q=32, S≈30).
+
+Net wall-time savings = saved_dc_tree_time × (1 - other_pipeline / total)
+
+When the buttloop runs more iterations (e9 or higher distance), the DC
+tree path is called more often per encode → larger wall fraction → larger
+absolute wall savings. When the buttloop runs few iterations (e8 d=0.5
+on a small screenshot), the DC tree path is a small fraction → savings
+get lost in load noise.
+
+Cross-comparison with W44-175 wall ratios (different machine state, less load)
+=============================================================================
+
+W44-175 measured wall_ratio_b_cjxl on an idler machine:
+  terminal_e8_d05: 7.350
+  codec_wiki_e8_d05: 9.185
+  imac_dark_e8_d05: 10.991
+  terminal_e9_d05_PROTECT: 15.225
+
+W44-180 under heavy load measures:
+  terminal_e8_d05: 4.983 (-32%)
+  codec_wiki_e8_d05: 9.274 (~equal, load noise)
+  imac_dark_e8_d05: 6.055 (-45%)
+  terminal_e9_d05_PROTECT: 12.016 (-21%)
+
+The improvements ARE real but the load-noise envelope is ~20-30% on
+these timings. Hitting the 2.5× target requires additional algorithmic
+work (W44-181+ scope per the W44-180 task memo).
+
+DO NOT
+======
+
+- DO NOT cite "FMA precision" for any byte movement (per W44-66 user correction).
+- DO NOT regen the hash-lock fixtures based on this bench — they were already
+  verified BYTE-IDENTICAL by `cargo test --test hash_lock_features` (36/36)
+  and `cargo test --test strategy_libjxl_hash_locks` (5/5).
+- DO NOT remove the `JXL_W44_180_FORCE_LEGACY_DC_TREE_SPLIT` env hook. It's
+  the bisection lever for any future divergence A/B repro.
+- DO NOT widen the candidate splitval set from 32-quantile to libjxl's
+  "every distinct value". That would require hash-lock regen + re-measurement
+  on every existing bench. W44-180 is scoped to the inner cost-evaluation
+  algorithm ONLY.
