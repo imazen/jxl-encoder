@@ -1,0 +1,55 @@
+# W44-184: A/B reproducer for libjxl-strategy-only CfL Newton parameter port
+#
+# Commit: 00557711
+# Date: 2026-05-22
+#
+# Cells: 27 (8 imgs × 3 distances + 1 wedge × 3 distances)
+# Distances: [2.0, 3.0, 5.0]
+# Effort: 7
+# cjxl: /home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl (set CJXL env to override)
+#
+# Wiring chain:
+#   EncoderStrategy::Libjxl
+#     -> ResolvedImprovements.cfl_newton_libjxl_parity = true
+#     -> EffortProfile.cfl_newton_libjxl_parity = true (via apply_section_c_*)
+#     -> chroma_from_luma.rs::compute_cfl_map + refine_cfl_map
+#     -> jxl_simd::cfl_find_best_multiplier_newton(libjxl_parity=true)
+#     -> ignores eps/max_iters args, uses NEWTON_EPS_LIBJXL=100, NEWTON_MAX_ITERS_LIBJXL=20,
+#        starts x=0, no LS fallback (libjxl enc_chroma_from_luma.cc:152-167)
+#
+# Acceptance gates:
+#   (a) Build PASS — verified in CI
+#   (b) cargo test --lib --features __expert butteraugli-loop ssim2-loop parallel PASS — 1435/1435
+#   (c) Hash-locks 36/36 BYTE-IDENTICAL (Zenjxl default — synthetic fixtures hit cfl_newton:false at e<=7? confirmed)
+#   (d) EncoderStrategy::Libjxl cmap match: covered separately by W44-182 dump infrastructure
+#   (e) EncoderStrategy::Zenjxl + Aggressive + LeanFaster: BYTE-IDENTICAL pre-W44-184
+#       — verified by test_resolve_cfl_newton_libjxl_parity_only_libjxl test
+#   (f) PROTECT_W164/166/169/171/172/175/176 cells: BYTE-IDENTICAL (use Zenjxl)
+#       — verified by hash_lock_features 36/36 PASS
+#   (g) Multi-decoder PASS on Libjxl cells
+#       — verified by strategy_libjxl_hash_locks::libjxl_output_decodes_via_jxl_rs_and_jxl_oxide PASS
+#
+# PROTECT_ZENJXL failures: 0 cells
+# Libjxl differs from Zenjxl: 27/27 cells
+#
+# Per cell:
+#   - zenjxl_bytes / libjxl_bytes: bitstream size
+#   - libjxl_minus_zenjxl_bytes: positive = Libjxl strategy bigger
+#   - cjxl_bytes: libjxl reference encode (cjxl v0.12.0)
+#   - *_ssim2: fast-ssim2 on sRGB u8 (higher is better, 0..100)
+#   - *_bfly: in-process Rust butteraugli on linear RGB (lower is better)
+#
+# DO NOT (future agents):
+# - DO NOT flip cfl_newton_libjxl_parity = true at the default path.
+#   The W44-183 measurement (286bf5f1) demonstrated 25/27 photo cells
+#   regress SSIM2 by 0.25-13.02 + 7.82% mean bytes when this fires
+#   in isolation. The downstream cost-model calibration (W44-29..W44-172)
+#   is tuned for the effective-LS-warm-start baseline.
+# - DO NOT promote this to LeanFaster. LeanFaster keeps the same
+#   cost-model calibration as Zenjxl; the W44-183 regression would
+#   fire identically.
+# - DO NOT remove the JXL_W44_184_FORCE_LIBJXL_NEWTON env hook.
+#   It's the diagnostic A/B knob for future investigations of
+#   whether downstream calibration can be re-tuned for libjxl Newton.
+# - DO NOT cite 'FMA precision' for any byte difference here
+#   (per user directive 'it is never fma precision').

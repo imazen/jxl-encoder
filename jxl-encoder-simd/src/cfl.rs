@@ -28,21 +28,24 @@ fn bias_and_quantize(x: f32) -> i8 {
 
 /// Newton's method constants.
 ///
-/// **W44-183 INTENTIONAL DIVERGENCE FROM LIBJXL** (do not "fix" without measurement):
+/// **W44-183 INTENTIONAL DIVERGENCE FROM LIBJXL AT THE DEFAULT PATH** (do not
+/// "fix" without measurement):
 ///
 /// libjxl `enc_chroma_from_luma.cc:152-159` uses `eps = 100`, `max_iters = 20`,
 /// starts Newton at `x = 0`, and uses the last `x` regardless of convergence.
-/// We diverge on ALL FOUR (`eps = 1.0`, `max_iters = 10`, start at LS warm-start
-/// `ls_x`, fallback to `ls_x` on non-convergence).
+/// At the default (`libjxl_parity = false`) path we diverge on ALL FOUR
+/// (`eps = 1.0`, `max_iters = 10`, start at LS warm-start `ls_x`, fallback to
+/// `ls_x` on non-convergence).
 ///
 /// The W44-183 spot-check (`benchmarks/w44_183_cfl_newton_spotcheck_2026-05-22.{pre,post}.tsv`)
-/// measured the bit-exact libjxl port: 0/27 SSIM2 wins, 25/27 SSIM2 regressions
-/// (worst -13.02 SSIM2 / +26% bytes on `cid22_1531677` e7 d=5), mean +7.82% bytes.
-/// libjxl-parity Newton produces the libjxl-correct ytox/ytob multipliers — but
-/// the rest of our encoder (W44-29..W44-172 entropy_mul tables, AC strategy gates,
-/// buttloop seeds, adaptive_quant) has been incrementally tuned against the
-/// effective-LS baseline produced by these parameters. Correcting Newton to
-/// libjxl parity throws off the downstream calibration.
+/// measured the bit-exact libjxl port at the default path: 0/27 SSIM2 wins,
+/// 25/27 SSIM2 regressions (worst -13.02 SSIM2 / +26% bytes on
+/// `cid22_1531677` e7 d=5), mean +7.82% bytes. libjxl-parity Newton produces
+/// the libjxl-correct ytox/ytob multipliers — but the rest of our encoder
+/// (W44-29..W44-172 entropy_mul tables, AC strategy gates, buttloop seeds,
+/// adaptive_quant) has been incrementally tuned against the effective-LS
+/// baseline produced by these parameters. Correcting Newton to libjxl parity
+/// at the default path throws off the downstream calibration.
 ///
 /// W44-182 (`3c2026b2`) identified this as a SUSPECTED root cause for the
 /// `clic_097cb426` right-column SSIM2 deficit (-7.0). W44-183 falsified that:
@@ -52,16 +55,33 @@ fn bias_and_quantize(x: f32) -> i8 {
 /// **The previous docstring here ("libjxl uses eps=100 which causes oscillation")
 /// was empirically FALSE**: cjxl's Newton with eps=100 converges fine (134-186/256
 /// nonzero tiles on `clic_097cb426`). The right framing is "OUR pipeline is
-/// calibrated against this divergence; reverting it would require re-calibrating
-/// W44-29..W44-172 from scratch." See `docs/LIBJXL_DIVERGENCES.md` Section C +
-/// Section F.
+/// calibrated against this divergence at the default path; reverting it would
+/// require re-calibrating W44-29..W44-172 from scratch." See
+/// `docs/LIBJXL_DIVERGENCES.md` Section C + Section F.
 ///
-/// `NEWTON_EPS` and `NEWTON_MAX_ITERS` are defaults; callers can override
-/// via function parameters (e.g. an `EncoderStrategy::Libjxl` opt-in path
-/// could pass `eps = 100`, `max_iters = 20` to get libjxl-parity Newton,
-/// accepting the +7.82% bytes / -SSIM2 regression in exchange for parity).
+/// **W44-184 SALVAGE — `libjxl_parity = true` path**: the four-parameter
+/// libjxl port IS wired, but ONLY when the caller selects
+/// [`crate::api::EncoderStrategy::Libjxl`] (the all-divergence libjxl-parity
+/// preset). Under that strategy the rest of the cost model is also flipped
+/// to libjxl-parity defaults (Section A effort gates widen, content-aware
+/// gates disable, etc.) so the +7.82% SSIM2 regression observed at the
+/// default-path port does not apply — the downstream calibration is
+/// uniformly absent. See `EncoderImprovementsCustom::cfl_newton_libjxl_parity`
+/// and `EffortProfile::apply_section_c_cfl_newton_libjxl_parity` for the
+/// dispatch, plus the W44-184 commit memo for measurements.
+///
+/// `NEWTON_EPS_DEFAULT` and `NEWTON_MAX_ITERS_DEFAULT` are defaults for the
+/// `libjxl_parity = false` path; callers can override via function parameters
+/// to tune CfL fitting precision vs. convergence. These defaults are IGNORED
+/// when `libjxl_parity = true` — the SIMD code unconditionally uses
+/// `NEWTON_EPS_LIBJXL` (100) and `NEWTON_MAX_ITERS_LIBJXL` (20) on that path,
+/// matching libjxl `enc_chroma_from_luma.cc:152-167` bit-exactly.
 pub const NEWTON_EPS_DEFAULT: f32 = 1.0;
 pub const NEWTON_MAX_ITERS_DEFAULT: usize = 10;
+/// libjxl-bit-exact parameters used when `libjxl_parity=true`
+/// (`enc_chroma_from_luma.cc:152-167`).
+pub const NEWTON_EPS_LIBJXL: f32 = 100.0;
+pub const NEWTON_MAX_ITERS_LIBJXL: usize = 20;
 const NEWTON_CLAMP: f32 = 20.0;
 const NEWTON_COEFF: f32 = 1.0 / 3.0;
 const NEWTON_THRES: f32 = 100.0;
@@ -298,6 +318,18 @@ pub fn find_best_multiplier_wasm128(
 ///
 /// libjxl uses this at effort >= 7 (speed_tier <= kSquirrel).
 /// At effort 5-6, the fast (least-squares) path is used instead.
+///
+/// **W44-184**: when `libjxl_parity == true`, ignores `eps` / `max_iters`
+/// and runs the libjxl-bit-exact Newton: `eps = NEWTON_EPS_LIBJXL` (100),
+/// `max_iters = NEWTON_MAX_ITERS_LIBJXL` (20), starting `x = 0`, NO LS
+/// fallback (uses last `x` even on non-convergence). Mirrors libjxl
+/// `enc_chroma_from_luma.cc:152-167`.
+/// When `false` (default), uses the W44-183-shipped behaviour: `eps` and
+/// `max_iters` as supplied, starting `x = ls_x` (warm-start), LS fallback
+/// on non-convergence. This default is calibrated against by
+/// W44-29..W44-172 downstream cost-model tuning; only flip `libjxl_parity`
+/// when running under `EncoderStrategy::Libjxl` where the rest of the
+/// pipeline is also strict-libjxl-parity.
 pub fn find_best_multiplier_newton(
     values_m: &[f32],
     values_s: &[f32],
@@ -306,6 +338,7 @@ pub fn find_best_multiplier_newton(
     distance_mul: f32,
     eps: f32,
     max_iters: usize,
+    libjxl_parity: bool,
 ) -> i8 {
     #[cfg(target_arch = "x86_64")]
     {
@@ -320,6 +353,7 @@ pub fn find_best_multiplier_newton(
                 distance_mul,
                 eps,
                 max_iters,
+                libjxl_parity,
             );
         }
     }
@@ -337,31 +371,47 @@ pub fn find_best_multiplier_newton(
                 distance_mul,
                 eps,
                 max_iters,
+                libjxl_parity,
             );
         }
     }
 
-    find_best_multiplier_newton_scalar(values_m, values_s, num, base, distance_mul, eps, max_iters)
+    find_best_multiplier_newton_scalar(
+        values_m,
+        values_s,
+        num,
+        base,
+        distance_mul,
+        eps,
+        max_iters,
+        libjxl_parity,
+    )
 }
 
 /// Scalar Newton's method for CfL multiplier.
 ///
-/// Seeds Newton from the least-squares solution (warm start) so it begins
-/// near the optimum. With eps=1 (our W44-183-divergent default), Newton
-/// refines the LS solution toward the smoothed-L1 optimum in a few iterations
-/// — when it converges. In practice eps=1 produces noisy local second
-/// derivatives → Newton frequently fails to converge → falls back to ls_x.
-/// This means our default Newton path is effectively the LS path on most tiles.
+/// **`libjxl_parity = false` (default)**: seeds Newton from the
+/// least-squares solution (warm start) so it begins near the optimum.
+/// With `eps = NEWTON_EPS_DEFAULT` (1.0), Newton tries to refine the LS
+/// solution toward the smoothed-L1 optimum in a few iterations. Falls
+/// back to LS if Newton doesn't converge. This is the W44-183-shipped
+/// default that the downstream cost model (W44-29..W44-172) is calibrated
+/// against. In practice `eps = 1` produces noisy local second derivatives
+/// → Newton frequently fails to converge → the encoder effectively emits
+/// LS-warm-start values on most tiles. The downstream cost model is tuned
+/// for THAT effective baseline (W44-183 measurement: porting libjxl's
+/// parameters here regresses our pipeline by 0.25-13 SSIM2 and +7.82%
+/// bytes; see `NEWTON_EPS_DEFAULT` docstring for the full narrative).
 ///
-/// libjxl `enc_chroma_from_luma.cc:152-167` uses different parameters
-/// (`eps=100`, `max_iters=20`, start at `x=0`, use last `x` regardless of
-/// convergence). The W44-183 measurement (`benchmarks/w44_183_cfl_newton_*`)
-/// confirmed: porting libjxl's parameters produces the libjxl-correct ytox/ytob
-/// multipliers BUT regresses our pipeline by 0.25-13 SSIM2 and +7.82% bytes
-/// because downstream calibration (W44-29..W44-172) is tuned against this
-/// effective-LS-warm-start baseline. See `NEWTON_EPS_DEFAULT` docstring.
-///
-/// Falls back to LS if Newton doesn't converge (common with our eps=1).
+/// **`libjxl_parity = true` (W44-184)**: bit-exact mirror of libjxl
+/// `enc_chroma_from_luma.cc:152-167`. Ignores supplied `eps` /
+/// `max_iters`; uses `NEWTON_EPS_LIBJXL` (100), `NEWTON_MAX_ITERS_LIBJXL`
+/// (20), starting `x = 0`, NO fallback (writes whatever `x` is at loop
+/// exit regardless of convergence). Wired only under
+/// [`crate::api::EncoderStrategy::Libjxl`] where the W44-29..W44-172
+/// downstream calibration is also turned off (Section A effort gates
+/// widen, content-aware gates disable) so the +7.82% SSIM2 regression
+/// observed at the default-path port does not apply.
 pub fn find_best_multiplier_newton_scalar(
     values_m: &[f32],
     values_s: &[f32],
@@ -370,12 +420,17 @@ pub fn find_best_multiplier_newton_scalar(
     distance_mul: f32,
     eps: f32,
     max_iters: usize,
+    libjxl_parity: bool,
 ) -> i8 {
     if num == 0 {
         return 0;
     }
 
-    // Compute LS solution as starting point for Newton.
+    // Compute LS solution (always used at `libjxl_parity=false` as both
+    // start and fallback). At `libjxl_parity=true` it's not the start
+    // but we still need it as a stable reference value in case `num` is
+    // tiny — libjxl itself uses it implicitly because `x` starts at 0
+    // and the regularizer keeps the loop near the LS minimum.
     let mut sum_aa = 0.0_f32;
     let mut sum_ab = 0.0_f32;
     for i in 0..num {
@@ -386,8 +441,13 @@ pub fn find_best_multiplier_newton_scalar(
     }
     let ls_x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
 
+    // W44-184: at libjxl_parity, override the loop parameters and start.
+    let (eps, max_iters, mut x) = if libjxl_parity {
+        (NEWTON_EPS_LIBJXL, NEWTON_MAX_ITERS_LIBJXL, 0.0_f32)
+    } else {
+        (eps, max_iters, ls_x)
+    };
     let coeffx2 = NEWTON_COEFF * 2.0;
-    let mut x = ls_x;
     let mut converged = false;
 
     for _ in 0..max_iters {
@@ -447,10 +507,15 @@ pub fn find_best_multiplier_newton_scalar(
         }
     }
 
-    if converged {
+    // W44-184: at libjxl_parity, write whatever `x` is at loop exit
+    // (libjxl `enc_chroma_from_luma.cc:167` has no else branch — `x`
+    // is used regardless of convergence). At default (`libjxl_parity =
+    // false`), fall back to LS on non-convergence (W44-183 finding:
+    // most tiles never converge at eps=1, so the encoder effectively
+    // emits LS solutions — the downstream calibration is tuned for that).
+    if libjxl_parity || converged {
         bias_and_quantize(x)
     } else {
-        // Newton didn't converge — fall back to LS
         bias_and_quantize(ls_x)
     }
 }
@@ -467,6 +532,7 @@ pub fn find_best_multiplier_newton_avx2(
     distance_mul: f32,
     eps: f32,
     max_iters: usize,
+    libjxl_parity: bool,
 ) -> i8 {
     use magetypes::simd::f32x8;
 
@@ -507,7 +573,13 @@ pub fn find_best_multiplier_newton_avx2(
     }
     let ls_x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
 
-    let mut x = ls_x;
+    // W44-184: at libjxl_parity, override loop params + start (see
+    // scalar variant for the rationale + libjxl source ref).
+    let (eps, max_iters, mut x) = if libjxl_parity {
+        (NEWTON_EPS_LIBJXL, NEWTON_MAX_ITERS_LIBJXL, 0.0_f32)
+    } else {
+        (eps, max_iters, ls_x)
+    };
     let mut converged = false;
 
     for _ in 0..max_iters {
@@ -607,10 +679,13 @@ pub fn find_best_multiplier_newton_avx2(
         }
     }
 
-    if converged {
+    // W44-184: at libjxl_parity, use whatever `x` is at loop exit (no
+    // fallback). At default, fall back to LS on non-convergence (the
+    // W44-183-shipped behaviour the downstream calibration is tuned
+    // against).
+    if libjxl_parity || converged {
         bias_and_quantize(x)
     } else {
-        // Newton didn't converge — fall back to LS (already computed)
         bias_and_quantize(ls_x)
     }
 }
@@ -627,6 +702,7 @@ pub fn find_best_multiplier_newton_neon(
     distance_mul: f32,
     eps: f32,
     max_iters: usize,
+    libjxl_parity: bool,
 ) -> i8 {
     use magetypes::simd::f32x4;
 
@@ -667,7 +743,13 @@ pub fn find_best_multiplier_newton_neon(
     }
     let ls_x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
 
-    let mut x = ls_x;
+    // W44-184: at libjxl_parity, override loop params + start (see
+    // scalar variant for the rationale + libjxl source ref).
+    let (eps, max_iters, mut x) = if libjxl_parity {
+        (NEWTON_EPS_LIBJXL, NEWTON_MAX_ITERS_LIBJXL, 0.0_f32)
+    } else {
+        (eps, max_iters, ls_x)
+    };
     let mut converged = false;
 
     for _ in 0..max_iters {
@@ -764,10 +846,11 @@ pub fn find_best_multiplier_newton_neon(
         }
     }
 
-    if converged {
+    // W44-184: at libjxl_parity, use whatever `x` is at loop exit (no
+    // fallback). At default, fall back to LS on non-convergence.
+    if libjxl_parity || converged {
         bias_and_quantize(x)
     } else {
-        // Newton didn't converge — fall back to LS (already computed)
         bias_and_quantize(ls_x)
     }
 }
@@ -836,7 +919,13 @@ mod tests {
                 1e-9,
                 NEWTON_EPS_DEFAULT,
                 NEWTON_MAX_ITERS_DEFAULT,
+                false,
             ),
+            0,
+        );
+        // W44-184: libjxl_parity also handles empty input safely.
+        assert_eq!(
+            find_best_multiplier_newton(&[], &[], 0, 0.0, 1e-9, 0.0, 0, true),
             0,
         );
     }
@@ -851,23 +940,27 @@ mod tests {
         let eps = NEWTON_EPS_DEFAULT;
         let iters = NEWTON_MAX_ITERS_DEFAULT;
 
-        let ref0 =
-            find_best_multiplier_newton_scalar(&values_m, &values_s, num, 0.0, 1e-9, eps, iters);
-        let ref1 =
-            find_best_multiplier_newton_scalar(&values_m, &values_s, num, 1.0, 1e-9, eps, iters);
+        let ref0 = find_best_multiplier_newton_scalar(
+            &values_m, &values_s, num, 0.0, 1e-9, eps, iters, false,
+        );
+        let ref1 = find_best_multiplier_newton_scalar(
+            &values_m, &values_s, num, 1.0, 1e-9, eps, iters, false,
+        );
 
         let report = archmage::testing::for_each_token_permutation(
             archmage::testing::CompileTimePolicy::Warn,
             |perm| {
-                let test0 =
-                    find_best_multiplier_newton(&values_m, &values_s, num, 0.0, 1e-9, eps, iters);
+                let test0 = find_best_multiplier_newton(
+                    &values_m, &values_s, num, 0.0, 1e-9, eps, iters, false,
+                );
                 assert_eq!(
                     ref0, test0,
                     "newton base=0.0: scalar={ref0} dispatch={test0} [{perm}]"
                 );
 
-                let test1 =
-                    find_best_multiplier_newton(&values_m, &values_s, num, 1.0, 1e-9, eps, iters);
+                let test1 = find_best_multiplier_newton(
+                    &values_m, &values_s, num, 1.0, 1e-9, eps, iters, false,
+                );
                 assert_eq!(
                     ref1, test1,
                     "newton base=1.0: scalar={ref1} dispatch={test1} [{perm}]"
@@ -875,6 +968,69 @@ mod tests {
             },
         );
         std::eprintln!("{report}");
+    }
+
+    /// W44-184: scalar vs dispatched SIMD agreement on the
+    /// `libjxl_parity=true` path. Verifies all three SIMD variants
+    /// (scalar / AVX2 / NEON) consume the new bool and produce the
+    /// same i8 result given identical inputs.
+    #[test]
+    fn test_newton_libjxl_parity_scalar_vs_dispatch() {
+        let num = 256;
+        let values_m: alloc::vec::Vec<f32> = (0..num).map(|i| (i as f32 - 128.0) * 0.1).collect();
+        let values_s: alloc::vec::Vec<f32> =
+            (0..num).map(|i| (i as f32 - 128.0) * 0.05 + 0.3).collect();
+
+        let ref0 = find_best_multiplier_newton_scalar(
+            &values_m, &values_s, num, 0.0, 1e-9, 999.0, 99, true,
+        );
+        let ref1 = find_best_multiplier_newton_scalar(
+            &values_m, &values_s, num, 1.0, 1e-9, 999.0, 99, true,
+        );
+
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let test0 = find_best_multiplier_newton(
+                    &values_m, &values_s, num, 0.0, 1e-9, 999.0, 99, true,
+                );
+                assert_eq!(
+                    ref0, test0,
+                    "newton libjxl_parity base=0.0: scalar={ref0} dispatch={test0} [{perm}]"
+                );
+
+                let test1 = find_best_multiplier_newton(
+                    &values_m, &values_s, num, 1.0, 1e-9, 999.0, 99, true,
+                );
+                assert_eq!(
+                    ref1, test1,
+                    "newton libjxl_parity base=1.0: scalar={ref1} dispatch={test1} [{perm}]"
+                );
+            },
+        );
+        std::eprintln!("{report}");
+    }
+
+    /// W44-184: confirm `libjxl_parity=true` ignores the supplied
+    /// `eps` and `max_iters` arguments. Two calls with identical inputs
+    /// but wildly different `eps`/`max_iters` must produce the same
+    /// quantized i8 — the supplied params are dead args on this path.
+    #[test]
+    fn test_newton_libjxl_parity_ignores_args() {
+        let num = 256;
+        let values_m: alloc::vec::Vec<f32> = (0..num).map(|i| (i as f32 - 128.0) * 0.1).collect();
+        let values_s: alloc::vec::Vec<f32> =
+            (0..num).map(|i| (i as f32 - 128.0) * 0.05 + 0.3).collect();
+
+        let a =
+            find_best_multiplier_newton_scalar(&values_m, &values_s, num, 0.0, 1e-9, 1.0, 5, true);
+        let b = find_best_multiplier_newton_scalar(
+            &values_m, &values_s, num, 0.0, 1e-9, 999.0, 999, true,
+        );
+        assert_eq!(
+            a, b,
+            "libjxl_parity must ignore eps/max_iters args (a={a} b={b})",
+        );
     }
 
     #[test]
@@ -887,7 +1043,7 @@ mod tests {
         let ls_result = find_best_multiplier(&m, &s, 64, 0.0, 1e-9);
         let eps = NEWTON_EPS_DEFAULT;
         let iters = NEWTON_MAX_ITERS_DEFAULT;
-        let newton_result = find_best_multiplier_newton(&m, &s, 64, 0.0, 1e-9, eps, iters);
+        let newton_result = find_best_multiplier_newton(&m, &s, 64, 0.0, 1e-9, eps, iters, false);
 
         // Both should be in the right ballpark (Newton uses perceptual cost, not MSE)
         let expected = (factor - 2.6).round() as i8;

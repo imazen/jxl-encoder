@@ -667,11 +667,30 @@ pub struct EffortProfile {
     /// Use Newton's method (perceptual cost model) for CfL fitting (effort >= 7 in libjxl).
     /// When false, uses fast least-squares fitting (quadratic cost, single-pass).
     pub cfl_newton: bool,
-    /// Newton finite-difference epsilon for CfL fitting.
-    /// Controls second-derivative accuracy. Default 1.0 (libjxl uses 100.0, which oscillates).
+    /// Newton finite-difference epsilon for CfL fitting (default
+    /// `false`-path). Default 1.0; libjxl-parity uses 100.0. See
+    /// `cfl_newton_libjxl_parity` for the strategy gate.
     pub cfl_newton_eps: f32,
-    /// Maximum Newton iterations for CfL fitting. Default 10 (libjxl uses 20).
+    /// Maximum Newton iterations for CfL fitting (default
+    /// `false`-path). Default 10; libjxl-parity uses 20.
     pub cfl_newton_max_iters: usize,
+    /// **W44-184**: when `true`, the CfL Newton call sites pass
+    /// `libjxl_parity = true` into [`jxl_simd::cfl_find_best_multiplier_newton`],
+    /// which ignores `cfl_newton_eps` / `cfl_newton_max_iters` and runs
+    /// the libjxl-bit-exact Newton (eps=100, max_iters=20, start `x=0`,
+    /// no LS fallback — mirrors libjxl `enc_chroma_from_luma.cc:152-167`).
+    /// When `false` (default), the existing eps/iters parameters drive
+    /// the loop with `ls_x` warm-start and LS fallback (the W44-183-shipped
+    /// behaviour that the downstream cost model is calibrated against).
+    ///
+    /// Set to `true` by [`crate::effort::EffortProfile::apply_section_c_cfl_newton_libjxl_parity`]
+    /// when [`crate::api::ResolvedImprovements::cfl_newton_libjxl_parity`]
+    /// is `true` — i.e. only under [`crate::api::EncoderStrategy::Libjxl`].
+    /// W44-183 (`286bf5f1`) honest-stop demonstrated that flipping this
+    /// at the default path regresses 25/27 photo cells by 0.25-13.02
+    /// SSIM2 + 7.82% mean bytes — only safe under the all-libjxl-parity
+    /// strategy preset.
+    pub cfl_newton_libjxl_parity: bool,
 
     // ─── Quantization ────────────────────────────────────────────────────
     /// Use adaptive (content-dependent) quant field via InitialQuantField.
@@ -1221,6 +1240,10 @@ impl EffortProfile {
             cfl_newton: effort >= 7,
             cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
             cfl_newton_max_iters: jxl_simd::NEWTON_MAX_ITERS_DEFAULT,
+            // W44-184: default `false` — only flipped by
+            // `apply_section_c_cfl_newton_libjxl_parity` when
+            // `EncoderStrategy::Libjxl` is selected.
+            cfl_newton_libjxl_parity: false,
 
             // ── Quantization ──
             use_adaptive_quant: effort >= 5,
@@ -1360,6 +1383,9 @@ impl EffortProfile {
             cfl_newton: false,
             cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
             cfl_newton_max_iters: jxl_simd::NEWTON_MAX_ITERS_DEFAULT,
+            // W44-184: default `false` (Lossless mode never runs Newton
+            // anyway since `cfl_newton: false`).
+            cfl_newton_libjxl_parity: false,
 
             // ── Quantization (N/A for lossless) ──
             use_adaptive_quant: false,
@@ -1977,6 +2003,45 @@ impl EffortProfile {
             self.epf_dynamic_sharpness = resolved
                 .epf_dynamic_sharpness_min_effort
                 .evaluate(effort, /*ours=*/ 6, /*libjxl=*/ 0);
+        }
+    }
+
+    /// Apply the W44-184 Section C CfL Newton libjxl-parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::cfl_newton_libjxl_parity`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// flips [`Self::cfl_newton_libjxl_parity`] to `true` so the
+    /// downstream Newton call sites pass `libjxl_parity = true` into
+    /// [`jxl_simd::cfl_find_best_multiplier_newton`].
+    ///
+    /// The Section C divergence is documented as INTENTIONAL at the
+    /// default path (W44-183 measurement: 25/27 photo cells regress
+    /// SSIM2 by 0.25-13.02 + 7.82% mean bytes). Under
+    /// `EncoderStrategy::Libjxl` the downstream cost model is also
+    /// flipped to libjxl-parity (Section A effort gates widen, Section
+    /// B content-aware gates disable, Section D KNOWN-BUGs re-enable),
+    /// so the +7.82% regression observed at the default-path port does
+    /// NOT apply on that strategy — the entire pipeline is uniformly
+    /// libjxl-parity.
+    ///
+    /// Called from
+    /// [`crate::api::LossyConfig::effective_profile_for_image_with_smoothness`]
+    /// alongside `apply_section_a_effort_gates`. Default (`false`)
+    /// preserves pre-W44-184 byte-identical output on Zenjxl / LeanFaster
+    /// / Aggressive strategies (their `ResolvedImprovements` carries
+    /// `cfl_newton_libjxl_parity: false`).
+    pub(crate) fn apply_section_c_cfl_newton_libjxl_parity(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        // W44-184: NO-OP semantic when the resolved field is `false`
+        // (mirrors `EffortGate::Ours` in `apply_section_a_effort_gates`):
+        // preserve any prior adapter-set value. Today only the strict
+        // `EncoderStrategy::Libjxl` constructor sets this `true`; future
+        // per-image discriminators could set it differently and we don't
+        // want to clobber them.
+        if resolved.cfl_newton_libjxl_parity {
+            self.cfl_newton_libjxl_parity = true;
         }
     }
 
@@ -3917,6 +3982,57 @@ mod tests {
         assert!(p.cfl_two_pass); // e4 >= 4
         assert!(!p.try_dct64); // e4 < 5
         assert!(p.epf_dynamic_sharpness); // e4 >= 3
+    }
+
+    /// W44-184: `apply_section_c_cfl_newton_libjxl_parity` is a no-op
+    /// when the resolved field is `false` (preserves the W44-183-shipped
+    /// default-path behaviour byte-identically). Zenjxl / LeanFaster /
+    /// Aggressive / Custom-with-default-flag all produce false here.
+    #[test]
+    fn test_apply_section_c_cfl_newton_libjxl_parity_default_is_noop() {
+        let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
+        assert!(!p.cfl_newton_libjxl_parity);
+        let resolved = crate::api::ResolvedImprovements::default();
+        assert!(!resolved.cfl_newton_libjxl_parity);
+        p.apply_section_c_cfl_newton_libjxl_parity(&resolved);
+        assert!(
+            !p.cfl_newton_libjxl_parity,
+            "default resolved.cfl_newton_libjxl_parity must NOT flip the profile bit"
+        );
+    }
+
+    /// W44-184: `apply_section_c_cfl_newton_libjxl_parity` flips the
+    /// profile bit when the resolved field is `true` (set by
+    /// `EncoderStrategy::Libjxl` ONLY).
+    #[test]
+    fn test_apply_section_c_cfl_newton_libjxl_parity_libjxl_flips() {
+        let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
+        assert!(!p.cfl_newton_libjxl_parity);
+        let resolved = crate::api::ResolvedImprovements {
+            cfl_newton_libjxl_parity: true,
+            ..Default::default()
+        };
+        p.apply_section_c_cfl_newton_libjxl_parity(&resolved);
+        assert!(
+            p.cfl_newton_libjxl_parity,
+            "resolved.cfl_newton_libjxl_parity = true must flip the profile bit"
+        );
+    }
+
+    /// W44-184: when the profile bit is ALREADY `true` (set by some prior
+    /// adapter — not currently possible, but forward-compat), a default
+    /// resolved value must NOT clobber it back to `false`. Mirrors the
+    /// `EffortGate::Ours` NO-OP semantic for Section A.
+    #[test]
+    fn test_apply_section_c_cfl_newton_libjxl_parity_default_preserves_prior_true() {
+        let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
+        p.cfl_newton_libjxl_parity = true; // simulate a prior adapter flip
+        let resolved = crate::api::ResolvedImprovements::default();
+        p.apply_section_c_cfl_newton_libjxl_parity(&resolved);
+        assert!(
+            p.cfl_newton_libjxl_parity,
+            "default resolved field must NOT clobber a prior-flipped profile bit"
+        );
     }
 
     #[test]

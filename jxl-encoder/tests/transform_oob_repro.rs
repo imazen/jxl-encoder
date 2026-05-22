@@ -163,6 +163,7 @@ fn dct64x64_at_group_boundary_does_not_panic() {
         true,
         1e-3,
         10,
+        false, // W44-184: default-path Newton (libjxl_parity off)
     );
     let distance = 1.0_f32;
     let (quant_field_float, masking) = compute_quant_field_float_free(

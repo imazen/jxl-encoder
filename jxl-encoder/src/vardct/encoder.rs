@@ -4098,6 +4098,12 @@ impl VarDctEncoder {
                 false,
                 self.profile.cfl_newton_eps,
                 self.profile.cfl_newton_max_iters,
+                // W44-184: pass 1 uses use_newton=false above so the
+                // libjxl_parity bool is ignored in the SIMD code path
+                // (the LS path takes no Newton params). Still threaded
+                // for shape consistency with pass 2 and future-proofing
+                // if pass 1 ever switches to Newton.
+                self.profile.cfl_newton_libjxl_parity,
             )
         } else {
             CflMap::zeros(
@@ -4872,6 +4878,13 @@ impl VarDctEncoder {
                 self.profile.cfl_newton,
                 self.profile.cfl_newton_eps,
                 self.profile.cfl_newton_max_iters,
+                // W44-184: pass 2 IS the cfl-Newton site that the
+                // W44-182/183 measurement focused on. When this is
+                // `true` (under EncoderStrategy::Libjxl), the bit-exact
+                // libjxl Newton params (eps=100, iters=20, x0=0, no LS
+                // fallback) drive the iteration regardless of the
+                // eps/iters values supplied above.
+                self.profile.cfl_newton_libjxl_parity,
             );
         }
 
@@ -6209,6 +6222,8 @@ impl VarDctEncoder {
                 false,
                 self.profile.cfl_newton_eps,
                 self.profile.cfl_newton_max_iters,
+                // W44-184: use_newton=false above → bool ignored.
+                self.profile.cfl_newton_libjxl_parity,
             ))
         } else {
             None

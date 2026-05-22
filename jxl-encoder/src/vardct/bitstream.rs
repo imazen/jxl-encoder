@@ -1850,6 +1850,13 @@ impl VarDctEncoder {
                 self.profile.cfl_newton,
                 self.profile.cfl_newton_eps,
                 self.profile.cfl_newton_max_iters,
+                // W44-184: threads the libjxl-parity bool through the
+                // animation path identically to the still-image path
+                // (encoder.rs:4090). Pass 1 in this branch invokes
+                // Newton when `cfl_newton` is true (animation default
+                // at e>=7), so the bool actively governs the SIMD code
+                // path here for EncoderStrategy::Libjxl animation frames.
+                self.profile.cfl_newton_libjxl_parity,
             )
         } else {
             CflMap::zeros(
@@ -1952,6 +1959,10 @@ impl VarDctEncoder {
                 self.profile.cfl_newton,
                 self.profile.cfl_newton_eps,
                 self.profile.cfl_newton_max_iters,
+                // W44-184: same plumbing rationale as the pass-1 call
+                // above. Pass-2 IS the libjxl Newton site (W44-182 dump
+                // measurement; W44-183 falsification).
+                self.profile.cfl_newton_libjxl_parity,
             );
         }
 
