@@ -1,0 +1,74 @@
+# W44-202 POST-W44-201 comprehensive cjxl-parity sweep
+# Same harness as W44-170 / W44-179 / W44-185; re-run on post-W44-201 HEAD
+# to measure CUMULATIVE impact of the 16-chunk arc W44-186 → W44-201
+# shipped between W44-185 arc-closing bench (89e3c405) and this bench.
+date: 2026-05-22
+parent_commit: 56c9bd805f3beea0f5e0f6dacf8964f4132754d0
+bench_change_id: 36f0224bfe804308e77482827e6b832a33a5fa7f
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+manifest: benchmarks/corpora/w44_170_varied_corpus.tsv
+corpus_dir: /home/lilith/work/codec-corpus
+strategies: ["zenjxl", "libjxl"]
+distance_grid: [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0, 4.25, 4.5, 4.75, 5.0]
+efforts: [5, 6, 7, 8, 9]
+time_iters: 1
+smoke: false
+wall_seconds: 1570.5
+wall_minutes: 26.2
+cells_total: 4000
+cells_failed: 44
+cells_ok: 3956
+decoder: jxl-oxide (srgb_linear)
+metrics: butteraugli_linear (default params); fast_ssim2 (sRGB u8 from linear)
+tsv_outputs:
+  zenjxl: benchmarks/cjxl_step025_w44_202_zenjxl_2026-05-22.tsv
+  libjxl: benchmarks/cjxl_step025_w44_202_libjxl_2026-05-22.tsv
+reproducer (full sweep):
+  cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example w44_170_cjxl_step025_sweep -- --corpus-manifest benchmarks/corpora/w44_170_varied_corpus.tsv --output-prefix benchmarks/cjxl_step025_w44_202 --strategies zenjxl,libjxl
+
+# Failures (44 cells): all OOM/limit-exceeded on the 3 large screenshots
+# (codec_wiki 2560x1664, imac_dark 4032x1908, imac_g3 1620x1212) at high
+# effort (e8/e9) and high distance (d>=4) — same root-cause class as the
+# W44-185 baseline's 5 OOM failures, but expanded from 5 to 44. Likely
+# memory increase from W44-192/193 strategy_def! macro refactor or W44-197
+# Pass-2 LS feature; does NOT trace to W44-201 (which is a coeff_orders
+# gate fix, not memory-affecting).
+
+# W44-185 baseline TSVs for comparison (same corpus + harness):
+#   benchmarks/cjxl_step025_w44_185_zenjxl_2026-05-22.tsv
+#   benchmarks/cjxl_step025_w44_185_libjxl_2026-05-22.tsv
+#   ↑ commit 89e3c405 (arc anchor)
+
+# Arc commits W44-186 → W44-201 in chronological order (chunks executed
+# between W44-185 arc-closing bench at 89e3c405 and W44-202 bench HEAD):
+#
+#   bc475a89  bench(W44-185): arc-closing comprehensive bench + cumulative-impact memo
+#   ecc0ad44  investigate(W44-186): READ-ONLY audit of LIBJXL_DIVERGENCES.md Sections A + G
+#   05cf6b47  investigate(W44-187): READ-ONLY audit of LIBJXL_DIVERGENCES.md Sections B + F
+#   77a735b8  investigate(audit): W44-188 Section C/D/E divergence-table audit
+#   06408fbf  docs(W44-190): RFC for strategy & divergence refactor (rapid-experimentation foundation)
+#   caa4e36c  docs(divergences): W44-191 consolidate W44-186/187/188/189 audits + W44-190 RFC
+#   c9213548  feat(api): W44-192 strategy_def! macro + 3-gate prototype validation (RFC Phase 1)
+#   ed0ffda3  refactor(api): W44-193 big-bang migrate 24 gates to strategy_def! macro (RFC Phase 2)
+#   24a9dae2  feat(ci): W44-194 libjxl-parity per-cell hash CI + divergence drift test (RFC Phase 4)
+#   297d5a81  feat(cfl): W44-195 extend libjxl-parity Newton to Pass-1 dispatch (W44-189 D1, Libjxl-only)
+#   6aa158a8  perf+feat(cfl): W44-197 Candidates B + C (Libjxl Pass-2 LS + perf, B-I perf for all)
+#   228ba2c3  investigate(W44-198): photo Pareto-loser 3637739 cluster — HONEST-STOP
+#   c8470c54  investigate(vardct): W44-199 3637739 AC strategy dump — HONEST-STOP
+#   ec845b9a  investigate(vardct): W44-200 per-section byte audit 3637739 — HONEST-STOP
+#   56c9bd80  feat(vardct): W44-201 skip DCT32X32 + DCT32X16/16x32 from coeff_orders cost-benefit (Zenjxl)
+#
+# Chunks by class:
+#   read-only audits (no source change):   W44-186, W44-187, W44-188 (3 chunks)
+#   docs/RFC:                              W44-190, W44-191 (2 chunks)
+#   refactor (byte-identical):             W44-192, W44-193, W44-194 (3 chunks)
+#   Libjxl-only byte change:               W44-195 (Pass-1 CfL parity), W44-197 Candidate B (Pass-2 LS)
+#   perf (byte-identical for all):         W44-197 Candidate C
+#   honest-stops (no source change):       W44-198, W44-199, W44-200 (3 chunks)
+#   Zenjxl byte change THIS ARC:           W44-201 (1 chunk, DCT32 coeff_orders gate)
+#
+# Only one chunk produced Zenjxl-strategy byte changes: W44-201.
+# Expected W44-202 impact on Zenjxl is dominated by W44-201's coeff_orders
+# gate-fix targeting the 3637739 Pareto-loser cluster (and propagating to
+# all photos with DCT32-family coefficients above the cost-benefit threshold).
