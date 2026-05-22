@@ -204,6 +204,9 @@ jxl_encoder_macros::strategy_def! {
             // ALL buckets to the custom-order cost-benefit gate (the
             // W44-201 Zenjxl-only tightening is OFF on Libjxl strategy).
             coeff_orders_disable_large_buckets = false,
+            // W44-205: same — Libjxl preserves the libjxl `is_nondefault`
+            // admission of ALL buckets, including medium 2 + 4.
+            coeff_orders_disable_medium_buckets = false,
         },
 
         /// LeanFaster — drops the heavy per-image content gates
@@ -258,6 +261,11 @@ jxl_encoder_macros::strategy_def! {
             // is a strict improvement on the photo cluster with zero
             // measured regressions across 53 cells.
             coeff_orders_disable_large_buckets = true,
+            // W44-205: same — LeanFaster keeps the extension to medium
+            // buckets 2 + 4 (DCT16x16 + DCT16x8/8x16). Per-bucket
+            // extension is strictly additive to the W44-201 fix and
+            // not per-image / calibration-sensitive.
+            coeff_orders_disable_medium_buckets = true,
         },
 
         /// Zenjxl — production-shipping bundle. Every field matches
@@ -304,6 +312,10 @@ jxl_encoder_macros::strategy_def! {
             // when the per-position zero count distribution spans 3+
             // distinct quantized bins (Variant C, 53-cell paired bench).
             coeff_orders_disable_large_buckets = true,
+            // W44-205: extend the W44-201 cost-benefit skip to medium
+            // buckets 2 (DCT16x16) + 4 (DCT16x8/DCT8x16). Phase-1 probe
+            // measured -0.97% on 27 cells with ZERO PROTECT regressions.
+            coeff_orders_disable_medium_buckets = true,
         },
 
         /// Aggressive — currently equivalent to `Zenjxl` after
@@ -342,6 +354,8 @@ jxl_encoder_macros::strategy_def! {
             // W44-201: same as Zenjxl — skip buckets 3 + 6 in
             // custom-order cost-benefit. Strict improvement on photos.
             coeff_orders_disable_large_buckets = true,
+            // W44-205: same as Zenjxl — extend to medium buckets 2 + 4.
+            coeff_orders_disable_medium_buckets = true,
         },
     }
 
@@ -627,6 +641,47 @@ jxl_encoder_macros::strategy_def! {
             divergence_section = "D",
             divergence_row_ref = "W44-201 coeff_orders skip buckets 3+6 (Zenjxl tightening of W44-82 cost-benefit gate)",
         },
+
+        /// **W44-205**: extension of W44-201's coeff_orders bucket-skip
+        /// to the MEDIUM-sized buckets 2 (DCT16x16) and 4
+        /// (DCT16x8/DCT8x16). Same mechanism, same root cause, same
+        /// `compute_custom_orders_with_options` call site
+        /// (`vardct/coeff_order.rs:603-623`).
+        ///
+        /// W44-204 audit C1: ranked as the #1 EV chunk follow-on to
+        /// W44-201 because the W44-82 cost-model
+        /// `total_savings_bits = (nzeros_custom - nzeros_natural) *
+        /// max_count` is per-bucket and the same 1-bit-per-extra-zero
+        /// overshoot that hurt buckets 3+6 also applies to medium
+        /// buckets when per-position zero counts span 3+ quantized
+        /// bins.
+        ///
+        /// W44-205 Phase 1 probe
+        /// (`benchmarks/w44_205_bucket_probe_2026-05-22.tsv`, 27 cells:
+        /// 16 LOSER_DOMINANT photos × 4 d at e=7 + 5 PROTECT cells +
+        /// 6 SCRN cells) under env-hook `JXL_W44_201_DISABLE_BUCKETS=2,4`
+        /// (on top of production buckets 3+6 disable): **-0.97% total
+        /// bytes vs W44-201 baseline, ZERO PROTECT regressions, worst
+        /// regression +0.14% noise on `SCRN_terminal_d4.0` (single
+        /// cell)**. Per-bucket isolation (variant C bucket 2 only:
+        /// -0.24%; variant D bucket 4 only: -0.73%) confirms most of
+        /// the win comes from bucket 4 with bucket 2 contributing
+        /// independently.
+        ///
+        /// Default (Zenjxl/Aggressive/LeanFaster): `true` — apply the
+        /// extension. Libjxl strategy: `false` — preserves libjxl
+        /// behaviour (libjxl admits ALL buckets via single
+        /// `is_nondefault` check).
+        ///
+        /// Env hook `JXL_W44_205_FORCE_LEGACY_MEDIUM_BUCKETS=1` restores
+        /// the pre-W44-205 behaviour (admit buckets 2 + 4) for
+        /// diagnostic A/B benching. The pre-existing
+        /// `JXL_W44_201_DISABLE_BUCKETS` env hook is preserved for
+        /// arbitrary bucket-set tests.
+        coeff_orders_disable_medium_buckets: bool {
+            divergence_section = "D",
+            divergence_row_ref = "W44-205 coeff_orders skip buckets 2+4 (Zenjxl extension of W44-201)",
+        },
     }
 }
 
@@ -900,6 +955,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "D",
         row_ref: "W44-201 coeff_orders skip buckets 3+6 (Zenjxl tightening of W44-82 cost-benefit gate)",
         raw: __CUSTOM_DIVERGENCE_COEFF_ORDERS_DISABLE_LARGE_BUCKETS,
+    },
+    // Section D — W44-205 extension of W44-201 to medium buckets 2 + 4
+    DivergenceEntry {
+        gate_name: "coeff_orders_disable_medium_buckets",
+        section: "D",
+        row_ref: "W44-205 coeff_orders skip buckets 2+4 (Zenjxl extension of W44-201)",
+        raw: __CUSTOM_DIVERGENCE_COEFF_ORDERS_DISABLE_MEDIUM_BUCKETS,
     },
 ];
 

@@ -1268,8 +1268,7 @@ impl VarDctEncoder {
         // section dump). Captures the bit counts for: quant header,
         // coeff_orders, lz77 header, entropy_code_header (cluster headers
         // + ANS histograms) per pass.
-        let w44_200_hfg_dump: Option<String> =
-            std::env::var("JXL_W44_200_HFGLOBAL_DUMP").ok();
+        let w44_200_hfg_dump: Option<String> = std::env::var("JXL_W44_200_HFGLOBAL_DUMP").ok();
         let w44_200_label: String =
             std::env::var("JXL_W44_200_LABEL").unwrap_or_else(|_| "unlabeled".into());
         let w44_200_start_bits = writer.bits_written();
@@ -1360,7 +1359,8 @@ impl VarDctEncoder {
                         } else {
                             15
                         },
-                        cob = w44_200_after_coeff_orders_bits - w44_200_pass_start_bits
+                        cob = w44_200_after_coeff_orders_bits
+                            - w44_200_pass_start_bits
                             - (if used_orders == 0 || used_orders == 0x5F || used_orders == 0x13 {
                                 2
                             } else {
@@ -2776,7 +2776,13 @@ impl VarDctEncoder {
                     // (DCT32x16/DCT16x32) from cost-benefit admission when
                     // the Zenjxl-default gate is on. Libjxl strategy keeps
                     // the gate off to preserve libjxl-parity behaviour.
-                    self.resolved_improvements.coeff_orders_disable_large_buckets,
+                    self.resolved_improvements
+                        .coeff_orders_disable_large_buckets,
+                    // W44-205: extension — skip medium buckets 2 (DCT16x16)
+                    // and 4 (DCT16x8/DCT8x16) too, same Zenjxl default,
+                    // same libjxl-parity opt-out on Libjxl strategy.
+                    self.resolved_improvements
+                        .coeff_orders_disable_medium_buckets,
                 );
                 if used != 0 {
                     (Some(orders), used)
@@ -3271,8 +3277,7 @@ impl VarDctEncoder {
         // with env unset. Used by `examples/w44_200_section_audit.rs` to
         // localize the +6.24% byte overspend on 3637739 cid22 e7 d=4 vs
         // cjxl libjxl reference (W44-198/199 honest-stop follow-on).
-        let w44_200_dump_path: Option<String> =
-            std::env::var("JXL_W44_200_SECTION_DUMP").ok();
+        let w44_200_dump_path: Option<String> = std::env::var("JXL_W44_200_SECTION_DUMP").ok();
         let w44_200_label: String =
             std::env::var("JXL_W44_200_LABEL").unwrap_or_else(|_| "unlabeled".into());
         let w44_200_frame_header_start_bits = writer.bits_written();
@@ -3786,10 +3791,8 @@ impl VarDctEncoder {
                     let lf_global_bytes = section_sizes.first().copied().unwrap_or(0);
                     let lf_groups_sum: usize =
                         section_sizes.iter().skip(1).take(num_dc_groups).sum();
-                    let hf_global_bytes = section_sizes
-                        .get(1 + num_dc_groups)
-                        .copied()
-                        .unwrap_or(0);
+                    let hf_global_bytes =
+                        section_sizes.get(1 + num_dc_groups).copied().unwrap_or(0);
                     let ac_section_start = 2 + num_dc_groups;
                     let ac_sizes: Vec<usize> = section_sizes
                         .iter()

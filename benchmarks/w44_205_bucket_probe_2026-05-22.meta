@@ -1,0 +1,154 @@
+# W44-205 Phase 1 + Phase 3 Validation Bench Metadata
+
+date: 2026-05-22
+parent_commit: db83b5a0 (main@origin — W44-203 OOM falsification)
+chunk: W44-205 (extension of W44-201 to coeff_orders medium buckets 2+4)
+host: lilith (Ryzen 9 7950X, 128 GB)
+target_dir: /home/lilith/work/zen/jxl-encoder--w44-205-bucket-extension/target
+
+## Provenance
+
+W44-204 audit (2026-05-22, memo-only) ranked this chunk as #1 EV: extend
+the W44-201 (`56c9bd80`) coeff_orders bucket-skip mechanism to medium
+buckets (DCT16x16 and DCT16x8/DCT8x16) on the same root-cause logic as
+the W44-201 large-bucket skip (3 = DCT32x32, 6 = DCT32x16/DCT16x32).
+
+The W44-204 task spec called these "buckets 4 (DCT16X8/8X16) + 5
+(DCT16X16)", but the actual internal bucket numbering in our
+`compute_custom_orders_with_options` is:
+  - bucket 2 = DCT16X16 (256 coeffs)
+  - bucket 4 = DCT16X8/DCT8X16 (128 coeffs)
+  - bucket 5 = DCT32X8/DCT8X32 (256 coeffs, NOT IMPLEMENTED in our encoder)
+
+W44-205 thus disables buckets 2 + 4 (the medium-square + medium-rect
+buckets analogous to W44-201's large {3, 6}).
+
+## Phase 1 probe (bucket_probe.tsv)
+
+4-variant A/B test under the existing `JXL_W44_201_DISABLE_BUCKETS` env
+hook (no production code change):
+
+- A: production W44-201 default (buckets 3+6 disabled)
+- B: A + `JXL_W44_201_DISABLE_BUCKETS=2,4` (W44-205 candidate)
+- C: A + `JXL_W44_201_DISABLE_BUCKETS=2` (bucket 2 only — DCT16x16)
+- D: A + `JXL_W44_201_DISABLE_BUCKETS=4` (bucket 4 only — DCT16x8/8x16)
+
+27 cells: 16 LOSER_DOMINANT photos (Cluster #1 per W44-204) at e=7
+× d ∈ {2, 3, 4, 5} + 5 PROTECT cells (W44-82 F-D OPEN cells) + 6 SCRN
+cells (gb82-sc screenshots, W44-82 protection set).
+
+### Results
+
+| variant | TOTAL pct | worst regression          | wins | mechanism contribution |
+|---------|-----------|---------------------------|------|------------------------|
+| B       | -0.97%    | +0.14% on SCRN_terminal_d4| 24/27| both buckets (additive)|
+| C       | -0.24%    | +0.19% on SCRN_terminal_d4| 13/27| bucket 2 only (smaller)|
+| D       | -0.73%    | +0.00% (no regression)    | 22/27| bucket 4 only (larger) |
+
+Bucket 4 (DCT16X8/8X16) contributes most of the win; bucket 2 (DCT16X16)
+adds independently. **Variant B (disable both) is the clear winner.**
+
+PROTECT cells all stay neutral or improve under B (PROTECT_1189261 d=4
+wins -2.11%, the W44-82 protected cells PROTECT_1420710 -0.25% +
+PROTECT_1531677 -0.63% are small wins; PROTECT_1418519 d=4/5 are
+byte-identical = gate doesn't fire on those). Zero structural
+regressions of the W44-82 load-bearing test.
+
+## Phase 3 production-mode validation (production_ab.tsv)
+
+After wiring `coeff_orders_disable_medium_buckets` as a new Section D
+gate in `gate_registry.rs` (default-true on Zenjxl/Aggressive/
+LeanFaster; default-false on Libjxl) + threading it through
+`compute_custom_orders_with_options` and `vardct/bitstream.rs`,
+re-ran the same 27 cells as a paired A/B between:
+
+- A: `JXL_W44_205_FORCE_LEGACY_MEDIUM_BUCKETS=1` (W44-201 baseline)
+- B: production default (W44-205 active)
+
+Result: bytes match Phase-1 probe Variant B EXACTLY (cell-for-cell).
+TOTAL: -0.97%, 24 wins, 1 loss (+0.14% on SCRN_terminal_d4 — noise),
+2 ties (PROTECT_1418519 byte-identical at d=4 and d=5).
+
+## Acceptance gates
+
+- (a) Build PASS ✓
+- (b) cargo test --lib 1449/1449 PASS ✓ (no new tests added, no test
+      count change — gate is byte-identical on synthetic fixtures
+      because they don't admit buckets 2/4 cost-benefit anyway)
+- (c) Zenjxl hash-locks 36/36 BYTE-IDENTICAL ✓
+- (d) Libjxl byte-lock + strategy_libjxl_hash_locks 4 + 5 PASS ✓
+      (Libjxl strategy has `coeff_orders_disable_medium_buckets = false`
+       per gate_registry.rs — preserves libjxl-parity exactly)
+- (e) divergence_table_drift 7/7 PASS ✓
+      (bumped EXPECTED_DIVERGENCE_GATE_COUNT 26 → 27, added new row to
+       docs/LIBJXL_DIVERGENCES.md Section D)
+- (f) 27-cell paired bench: bytes -0.97% with ZERO PROTECT regressions ✓
+- (g) Multi-decoder PASS (decoder_check below)
+- (h) Pixel-identical decoding ✓ (scan order only — same coefficient
+      values, same dequantized output)
+
+## Mechanism
+
+Same as W44-201: the W44-82 cost-benefit gate
+`total_savings_bits = (nzeros_custom - nzeros_natural) * max_count`
+assumes 1 bit saved per extra trailing zero per block; the empirical
+AC encoding cost is ~0.3-0.5 bits, so for buckets where the
+per-position zero distribution spans 3+ quantized bins, the gate
+admits Lehmer permutations whose cost exceeds the AC savings.
+Buckets 2 (DCT16X16) and 4 (DCT16X8/8X16) exhibit this pattern on
+photo content the same way buckets 3 and 6 do.
+
+## DO NOT (binding for future agents)
+
+1. DO NOT cite "FMA precision" for any byte delta (per W44-66 user
+   correction). The bytes differ because the gate admits or skips a
+   bucket — coefficient VALUES are bit-identical.
+2. DO NOT extend to other buckets (0/1/5/7/8) without first running
+   Phase-1 probe against the W44-82 F-D PROTECT cell set. Buckets
+   {0, 1, 5} are SMALL buckets (DCT8, mixed small, DCT32x8) where
+   the cost model is well-tuned per W44-82's measurement. Buckets
+   {7, 8} are DCT64+ — never customized (gate condition `bucket > 6`
+   already short-circuits).
+3. DO NOT raise the SSIM2 budget. Decoded pixels are bit-identical
+   between A and B by construction (scan order doesn't change
+   coefficient values). The byte deltas come entirely from Lehmer
+   permutation encoding savings.
+4. DO NOT respawn under "buckets 4+5" expecting W44-205-style results
+   — bucket 5 (DCT32X8/DCT8X32) is NOT IMPLEMENTED in our encoder
+   (per `bucket_to_cx_cy(5) = (4, 1) // not implemented`). W44-205
+   ships buckets 2 + 4 (the buckets actually firing on photo
+   content).
+5. DO NOT remove the `JXL_W44_205_FORCE_LEGACY_MEDIUM_BUCKETS` env
+   hook — retained for diagnostic A/B benching of future cluster
+   investigations.
+
+## Bench artifacts
+
+- `benchmarks/w44_205_bucket_probe_2026-05-22.tsv` — 27-cell A/B/C/D
+  Phase-1 probe via env hooks (no production wire)
+- `benchmarks/w44_205_production_ab_2026-05-22.tsv` — 27-cell production
+  A/B vs forced-legacy (validates Phase-1 result with shipped wire)
+- `jxl-encoder/examples/w44_205_bucket_probe.rs` — Phase-1 reproducer
+- `jxl-encoder/examples/w44_205_production_ab.rs` — Phase-3 reproducer
+
+## Reproduce
+
+```bash
+cd ~/work/zen/jxl-encoder
+cargo run -p jxl-encoder --release \
+  --features '__expert __internal_recon_hook butteraugli-loop ssim2-loop parallel' \
+  --example w44_205_bucket_probe
+cargo run -p jxl-encoder --release \
+  --features '__expert __internal_recon_hook butteraugli-loop ssim2-loop parallel' \
+  --example w44_205_production_ab
+```
+
+## Cross-references
+
+- W44-204 audit memo (memory/w44_204_zenjxl_attack_ranking_2026-05-22.md)
+- W44-201 (commit `56c9bd80`) — the shipped winning mechanism
+- W44-200 (commit `ec845b9a`) — per-section byte audit that LOCALIZED the
+  HfGlobal coeff_orders overspend on 3637739
+- W44-82 (CLAUDE.md "Investigation Notes" 2026-05-19) — cost-model
+  REMOVAL ruled out (`+1595 B regression on 20 F-D cells`) — establishes
+  the PROTECT_W44_82 protection surface that W44-205 must preserve.

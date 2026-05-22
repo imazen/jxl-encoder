@@ -85,7 +85,8 @@ use std::path::PathBuf;
 /// [`jxl_encoder::__internals::divergence_entries`].
 /// W44-197 added `cfl_pass2_ls_at_low_effort` Section C gate → 25.
 /// W44-201 added `coeff_orders_disable_large_buckets` Section D gate → 26.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 26;
+/// W44-205 added `coeff_orders_disable_medium_buckets` Section D gate → 27.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 27;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
