@@ -169,6 +169,28 @@
 
 ### Performance
 
+- **W44-207 — W44-94 OUTER `find_best_32x32_transform` widening with
+  per-m3 sub-discriminator HONEST-STOP** (no source change;
+  `benchmarks/w44_207_outer_per_m3_analysis_2026-05-22.{tsv,meta}`,
+  `docs/LIBJXL_DIVERGENCES.md` Section F row 211 appended,
+  `CLAUDE.md` "Investigation Notes" W44-207 entry). W44-204 C3 chunk
+  proposed re-applying the W44-167 per-m3 split mechanism at the OUTER
+  `high_d_photo_smooth_suppressed()` table instead of the INNER variant
+  Z layer. Phase 1 read-only analysis falsified the hypothesis on three
+  structural grounds: (1) the cluster #3 cells (1420710, 1531677) fire
+  variant Z (W44-96 admit), NOT OUTER — OUTER cannot affect their
+  bytes; (2) the 3 OUTER-only REJECT_Z images (2389166 m3=47.996,
+  1044329 m3=65.031, 7062219 m3=51.141) sit at m3 ∈ [48, 65] with no
+  LOW-m3 image to PROTECT (per-m3 split has nothing to gate); (3) zero
+  zenjxl losers on the 3 REJECT_Z images at d>=3 in W44-202
+  (`benchmarks/w44_202_vs_w44_185.per_cell_diff.tsv`) — W44-205
+  (`8fe99fb5`) already harvested -1.5% to -2.4% bytes there. The
+  variant-Z-routed cells on zenjxl are bytes-axis WINNERS but SSIM2
+  LOSERS; wider OUTER lift would push deeper into the SSIM2 deficit
+  (wrong direction). Pivot recommendations: (a) W44-168+ distance-
+  narrowed Mode D on LC (W44-167 surprise positive); (b) 3637739-class
+  cluster #1 with fresh multi-week hypothesis; (c) root-cause buttloop
+  measurement divergence (W44-167 follow-on #5).
 - **W44-99 — low-colour sub-discriminator (m3 < 25) of variant Z**
   (`jxl-encoder/src/effort.rs`, `jxl-encoder/src/vardct/encoder.rs`,
   `benchmarks/w44_99_1531677_d5_attack_2026-05-19.{tsv,meta}`).

@@ -624,6 +624,106 @@ This is the SINGLE SOURCE OF TRUTH for where our encoder diverges from libjxl re
 
 ## Investigation Notes
 
+### W44-207: W44-94 OUTER `find_best_32x32_transform` widening with per-m3 sub-discriminator — HONEST-STOP (May 22, 2026)
+
+**Status**: [HONEST-STOP — Phase 1 read-only analysis, ZERO production source change]
+
+W44-204 C3 chunk attempt. Hypothesis: port the W44-167 per-m3 split
+mechanism from the INNER variant Z layer to the OUTER
+`high_d_photo_smooth_suppressed()` table, closing the W44-94
+honest-stopped 1420710 OPEN cluster without regressing 1531677.
+
+**Phase 1 falsified the hypothesis on three structural grounds** (no
+encoding required; read-only analysis of W44-202 zenjxl loser data +
+W44-96 zenanalyze proxy probe + W44-94 historical sweep TSV):
+
+1. **The cluster #3 cells fire variant Z, not OUTER.** Since W44-96
+   (`f4ffbb2b`), {1420710, 1531677} pass the W44-96 admit gate
+   (`edge_density >= 0.7 AND fcbr < 0.01`) at d>=4.5 and route through
+   the variant Z chain (HC for 1420710 m3=32.93, LC for 1531677
+   m3=12.30, with d_high split at d>5.5). The OUTER table never fires
+   for them. The W44-148/154/156/166/167 stack handles them; an OUTER
+   change cannot help.
+
+2. **The OUTER-only REJECT_Z images have ZERO zenjxl losers at d>=3.**
+   Of the 5 CID22 photos that fire W44-29 (mask<50, d>=3):
+   - {1420710, 1531677}: routed to variant Z (item 1)
+   - {2389166 m3=47.996, 1044329 m3=65.031, 7062219 m3=51.141}: REJECT_Z
+     → default OUTER table
+
+   Per `benchmarks/w44_202_vs_w44_185.per_cell_diff.tsv`, all 3
+   REJECT_Z images have zero `delta_bytes_pct_new > 3.0` cells on
+   zenjxl strategy at d>=3. W44-205 (`8fe99fb5`) already harvested
+   -1.5% to -2.4% bytes on 7062219 e7 via the coeff_orders bucket-skip
+   extension. There is no remaining wedge to close on the OUTER path.
+
+3. **The implicit target cells (1420710/1531677 at d∈[3,4.5))** on
+   zenjxl strategy at W44-202 state are bytes-axis WINNERS (-1.9% to
+   -7.6% vs cjxl) but SSIM2-axis LOSERS (-0.57 to -1.33). Wider OUTER
+   lift (`dct32x32 = 1.27` per W44-94's W variant) would push the cost
+   model FURTHER toward bytes-saving at the expense of SSIM2 — the
+   opposite direction needed. The cells need a SOFTER lift, not a
+   stronger one.
+
+**Bonus failure mode**: All 3 OUTER REJECT_Z images sit at m3 ∈ [48, 65];
+there is no LOW-m3 image to PROTECT. A per-m3 split has nothing to gate
+— it degenerates to a uniform lift on the 3 REJECT_Z images, which is
+exactly what W44-94 already measured and rejected.
+
+**Acceptance gates (per W44-207 chunk spec)**:
+- (a) Build PASS — `cargo check` clean on parent commit (49763e26)
+- (b) Tests pass — no code change, no test impact
+- (c) Hash-locks 36/36 BYTE-IDENTICAL — no source change
+- (d) Libjxl byte-lock BYTE-IDENTICAL — no source change
+- (e) divergence_table_drift PASS — Section F row 211 updated
+- (f) **NOT MET**: ≥6 of 13 OPEN cells close — the proposed mechanism
+  is at the wrong layer for the target cluster
+- (g) 1531677 byte-identical — N/A (no source change)
+- (h) Multi-decoder PASS — N/A (no source change)
+
+Per task spec: "If m3 threshold can't cleanly split: honest-stop, document"
+AND "If wider lift introduces unforeseen regressions: revert".
+
+**Files** (no source code change; documentation + analysis only):
+- `benchmarks/w44_207_outer_per_m3_analysis_2026-05-22.tsv` — 8-row
+  per-image routing + W44-202 loser-count analysis
+- `benchmarks/w44_207_outer_per_m3_analysis_2026-05-22.meta` — full
+  honest-stop narrative + DO-NOT list + follow-on candidates
+- `docs/LIBJXL_DIVERGENCES.md` Section F row 211 — appended W44-207
+  HONEST-STOP note alongside W44-167
+
+**DO NOT** (binding for future agents):
+
+1. **DO NOT respawn C3 against a different cell subset.** Measurement
+   shows no OUTER-only cell wants the lift, and no variant-Z cell can
+   be helped by an OUTER-layer change.
+2. **DO NOT lower `HIGH_D_PHOTO_SMOOTH_THRESHOLD = 50`** to pull more
+   images into OUTER — W44-151 honest-stop (`ef35c5e1`) already measured
+   this; the W44-152 narrow [3.0, 5.0] band IS the surgical fix.
+3. **DO NOT raise OUTER `dct32x32 = 1.34` to 1.27 or lower without a
+   discriminator** — would risk untested SSIM2 collateral on the 2 other
+   REJECT_Z images for sub-2% bytes savings on already-FIXED cells.
+4. **DO NOT cite "FMA precision"** for the residual cluster (per W44-66
+   user correction).
+5. **DO NOT spawn another OUTER-table chunk for cluster #3** — variant Z
+   path pre-empts OUTER on the target images.
+6. **DO NOT re-attempt W44-94 widening at any layer** without first
+   addressing the buttloop measurement divergence (W44-167 follow-on #5).
+
+**Follow-on candidates (NOT in W44-207 scope)**:
+
+1. **W44-168+ distance-narrowed Mode D on LC** — W44-167 surprise
+   positive (1531677 d=6 +0.58 SSIM2 GAIN at byte-identical bytes) is
+   the next-cleanest 1-cell win; needs a sub-d-band gate.
+2. **3637739-class root cause** — cluster #1 (132 cells, 100K bytes)
+   is the highest-EV surface remaining but W44-198/199/200 all
+   honest-stopped; needs multi-week fresh hypothesis set.
+3. **Root-cause buttloop measurement divergence** — W44-167 follow-on
+   #5, highest long-term EV, multi-week cross-crate work.
+
+**Sibling-workspace**: `~/work/zen/jxl-encoder--w44-207-outer-m3` (jj
+workspace `w44-207-outer-m3`). Cleaned up after commit per W44-207 spec.
+
 ### W44-206: single-scalar `savings_factor` recalibration of W44-82 coeff_orders cost-model — RULED OUT (May 22, 2026)
 
 **Status**: [RULED OUT — measurement shipped, ZERO production source change]
