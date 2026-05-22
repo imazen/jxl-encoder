@@ -84,7 +84,8 @@ use std::path::PathBuf;
 /// Cross-checks against the macro-emitted const count via
 /// [`jxl_encoder::__internals::divergence_entries`].
 /// W44-197 added `cfl_pass2_ls_at_low_effort` Section C gate → 25.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 25;
+/// W44-201 added `coeff_orders_disable_large_buckets` Section D gate → 26.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 26;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");

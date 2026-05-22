@@ -342,11 +342,63 @@ pub fn count_zero_coefficients(
 /// Returns `(orders, used_orders)` where:
 /// - `orders[bucket][channel]` is the custom order (positions sorted by ascending zero count)
 /// - `used_orders` is a bitmask of buckets that have non-default orders
+///
+/// Calls [`compute_custom_orders_with_options`] with the default
+/// `disable_large_buckets=false` for backwards-compatible behaviour.
+/// Production callers go through the options variant with
+/// `resolved_improvements.coeff_orders_disable_large_buckets`.
 pub fn compute_custom_orders(zero_counts: &[Vec<Vec<i64>>]) -> (Vec<Vec<Vec<u32>>>, u32) {
+    compute_custom_orders_with_options(zero_counts, false)
+}
+
+/// W44-201: extended entry that exposes the
+/// `coeff_orders_disable_large_buckets` gate. When `disable_large_buckets`
+/// is `true`, the cost-benefit admission loop skips buckets 3 (DCT32x32)
+/// and 6 (DCT32x16/DCT16x32) — the W44-200 measurement on `3637739.png`
+/// e7 d=4 traced the +6.24% bytes Pareto-loser to a 488 B
+/// `coeff_orders` overspend dominated by DCT32x32 Y emitting 308
+/// nonzero Lehmer codes (vs cjxl's ~5). See
+/// [`crate::gate_registry::CustomEncoderImprovements.coeff_orders_disable_large_buckets`]
+/// for the bench narrative.
+pub fn compute_custom_orders_with_options(
+    zero_counts: &[Vec<Vec<i64>>],
+    disable_large_buckets: bool,
+) -> (Vec<Vec<Vec<u32>>>, u32) {
     let mut orders: Vec<Vec<Vec<u32>>> = (0..NUM_ORDER_BUCKETS)
         .map(|_| vec![Vec::new(); 3])
         .collect();
     let mut used_orders = 0u32;
+
+    // W44-201: env-gated dump of per-(bucket, channel, position) zero
+    // counts to discriminate whether the scan-order divergence between
+    // Zenjxl and Libjxl modes comes from:
+    //   (a) different per-position zero counts (i.e. upstream divergence
+    //       in coefficient values), OR
+    //   (b) identical per-position counts but different sort outcome
+    //       (i.e. compute_custom_orders divergence).
+    #[cfg(feature = "std")]
+    if let Ok(dump_path) = std::env::var("JXL_W44_201_ZEROCOUNTS_DUMP") {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&dump_path)
+        {
+            let _ = writeln!(f, "# W44-201 per-(bucket,channel,position) zero counts");
+            let _ = writeln!(f, "bucket\tchannel\tposition\tzero_count");
+            for (bucket, by_chan) in zero_counts.iter().enumerate() {
+                for (c, counts) in by_chan.iter().enumerate() {
+                    for (pos, &cnt) in counts.iter().enumerate() {
+                        if cnt != 0 {
+                            let _ = writeln!(f, "{}\t{}\t{}\t{}", bucket, c, pos, cnt);
+                        }
+                    }
+                }
+            }
+            let _ = f.flush();
+        }
+    }
 
     for bucket in 0..NUM_ORDER_BUCKETS {
         // libjxl's ComputeUsedOrders (enc_coeff_order.cc:53-58) skips buckets > 6.
@@ -405,6 +457,39 @@ pub fn compute_custom_orders(zero_counts: &[Vec<Vec<i64>>]) -> (Vec<Vec<Vec<u32>
             }
 
             orders[bucket][c] = order;
+        }
+
+        // W44-201: env-gated dump of the FINAL computed scan order per
+        // bucket/channel, with natural order alongside for diff.
+        #[cfg(feature = "std")]
+        if let Ok(dump_path) = std::env::var("JXL_W44_201_ORDERS_DUMP") {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&dump_path)
+            {
+                let _ = writeln!(
+                    f,
+                    "# bucket={} cx={} cy={} size={}",
+                    bucket, cx, cy, size
+                );
+                let _ = writeln!(f, "# bucket\tchannel\tpos\tcustom_order\tnatural_order");
+                for c in 0..3usize {
+                    let order = &orders[bucket][c];
+                    if order.is_empty() {
+                        continue;
+                    }
+                    for i in 0..size {
+                        let _ = writeln!(
+                            f,
+                            "{}\t{}\t{}\t{}\t{}",
+                            bucket, c, i, order[i], natural[i]
+                        );
+                    }
+                }
+                let _ = f.flush();
+            }
         }
 
         if bucket_has_custom {
@@ -497,8 +582,64 @@ pub fn compute_custom_orders(zero_counts: &[Vec<Vec<i64>>]) -> (Vec<Vec<Vec<u32>
                 total_savings_bits += (nzeros_custom - nzeros_natural) * max_count as f64;
             }
 
-            if total_savings_bits > total_lehmer_cost {
+            // W44-201 probe: tighten the cost-benefit gate by scaling the
+            // savings estimate. The empirical AC encoding cost per trailing
+            // zero is closer to 0.3-0.5 bits (run-length) than the model's
+            // implicit 1.0 bit. Env-gated for diagnostic A/B; production
+            // ships `disable_large_buckets` instead (cleaner narrative,
+            // no calibration to maintain).
+            #[cfg(feature = "std")]
+            let savings_factor = std::env::var("JXL_W44_201_SAVINGS_FACTOR")
+                .ok()
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(1.0);
+            #[cfg(not(feature = "std"))]
+            let savings_factor: f64 = 1.0;
+
+            // W44-201 production gate: skip buckets 3 (DCT32x32) and 6
+            // (DCT32x16/DCT16x32) from custom-order admission when the
+            // Zenjxl-default `disable_large_buckets` is set. The cost
+            // model overshoots on these buckets when the per-position
+            // zero distribution spans 3+ quantized bins — a Lehmer
+            // permutation up to 308 codes for DCT32x32 Y is emitted
+            // where cjxl emits ~5. Variant C in the 53-cell bench:
+            // -0.65% total bytes, zero regressions.
+            //
+            // Env hook `JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS=1` restores
+            // the pre-W44-201 behaviour (always admit buckets 3+6) for
+            // diagnostic A/B benching from outside the production path.
+            #[cfg(feature = "std")]
+            let disable_resolved = if std::env::var_os(
+                "JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS",
+            )
+            .is_some()
+            {
+                false
+            } else {
+                disable_large_buckets
+            };
+            #[cfg(not(feature = "std"))]
+            let disable_resolved = disable_large_buckets;
+            let skip_bucket = disable_resolved && (bucket == 3 || bucket == 6);
+
+            if !skip_bucket && total_savings_bits * savings_factor > total_lehmer_cost {
                 used_orders |= 1 << bucket;
+            }
+        }
+    }
+
+    // W44-201: env-gated probe to disable specific buckets in used_orders.
+    // Comma-separated bucket numbers, e.g. `JXL_W44_201_DISABLE_BUCKETS=3`
+    // disables bucket 3 (DCT32x32). Applied AFTER the cost-benefit gate
+    // so the bench can A/B-compare against the production gate. The
+    // production `disable_large_buckets` does the same for buckets {3, 6}
+    // — this env var is retained as a diagnostic to test other bucket
+    // combinations.
+    #[cfg(feature = "std")]
+    if let Ok(spec) = std::env::var("JXL_W44_201_DISABLE_BUCKETS") {
+        for s in spec.split(',') {
+            if let Ok(b) = s.trim().parse::<u32>() {
+                used_orders &= !(1u32 << b);
             }
         }
     }

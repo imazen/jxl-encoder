@@ -200,6 +200,10 @@ jxl_encoder_macros::strategy_def! {
             // above so Libjxl strategy ships TRUE Pass-2 parity (LS at
             // e=5/6, Newton at e>=7) — closes W44-189 D12 audit finding.
             cfl_pass2_ls_at_low_effort = true,
+            // W44-201: keep libjxl-parity coeff_orders behaviour — admit
+            // ALL buckets to the custom-order cost-benefit gate (the
+            // W44-201 Zenjxl-only tightening is OFF on Libjxl strategy).
+            coeff_orders_disable_large_buckets = false,
         },
 
         /// LeanFaster — drops the heavy per-image content gates
@@ -248,6 +252,12 @@ jxl_encoder_macros::strategy_def! {
             // W44-197: same cost-model-calibration concern — LeanFaster
             // keeps the e=5/6 no-Pass-2 baseline.
             cfl_pass2_ls_at_low_effort = false,
+            // W44-201: LeanFaster keeps the Zenjxl bucket-disable fix
+            // (Variant C: skip buckets 3 + 6 in custom-order cost-benefit).
+            // The fix is not per-image and not calibration-sensitive; it
+            // is a strict improvement on the photo cluster with zero
+            // measured regressions across 53 cells.
+            coeff_orders_disable_large_buckets = true,
         },
 
         /// Zenjxl — production-shipping bundle. Every field matches
@@ -288,6 +298,12 @@ jxl_encoder_macros::strategy_def! {
             // W44-197: Zenjxl preserves cost-model calibration; no LS-only
             // Pass-2 at e=5/6.
             cfl_pass2_ls_at_low_effort = false,
+            // W44-201: skip buckets 3 (DCT32x32) + 6 (DCT32x16/16x32) in
+            // the custom-order cost-benefit gate. The W44-82-RULED-OUT
+            // cost model overestimates AC savings for these large buckets
+            // when the per-position zero count distribution spans 3+
+            // distinct quantized bins (Variant C, 53-cell paired bench).
+            coeff_orders_disable_large_buckets = true,
         },
 
         /// Aggressive — currently equivalent to `Zenjxl` after
@@ -323,6 +339,9 @@ jxl_encoder_macros::strategy_def! {
             // W44-197: Aggressive mirrors Zenjxl on Section C calibration
             // concerns.
             cfl_pass2_ls_at_low_effort = false,
+            // W44-201: same as Zenjxl — skip buckets 3 + 6 in
+            // custom-order cost-benefit. Strict improvement on photos.
+            coeff_orders_disable_large_buckets = true,
         },
     }
 
@@ -557,6 +576,56 @@ jxl_encoder_macros::strategy_def! {
         cfl_pass2_ls_at_low_effort: bool {
             divergence_section = "C",
             divergence_row_ref = "W44-197 CfL Pass-2 LS-only at e=5/6 (libjxl fast=true)",
+        },
+
+        // ── Section D Zenjxl tightening of W44-82 cost-benefit gate ──
+        /// **W44-201**: skip buckets 3 (DCT32x32) and 6 (DCT32x16/DCT16x32)
+        /// when admitting custom coefficient orders via the W44-82
+        /// cost-benefit gate in `compute_custom_orders`
+        /// (`vardct/coeff_order.rs:441-566`).
+        ///
+        /// W44-200 measurement on `3637739.png` e7 d=4 traced the
+        /// Pareto-loser (+6.24% bytes / -2.37 SSIM2 vs cjxl) to a 488 B
+        /// `coeff_orders` overspend in HfGlobal vs cjxl's <125 B. The
+        /// dominant offender was DCT32x32 Y emitting 308 nonzero Lehmer
+        /// codes vs cjxl's ~5. W44-201 per-block dump confirmed
+        /// coefficient VALUES are bit-identical on shared blocks
+        /// (98.4% strategy agreement with cjxl); the divergence is
+        /// purely in the per-position zero count distribution falling
+        /// into 3 distinct quantized bins (vs cjxl's 2 effective bins)
+        /// causing the sort to produce a 308-Lehmer permutation.
+        ///
+        /// The W44-82-RULED-OUT cost-benefit model
+        /// (`total_savings_bits = (nzeros_custom - nzeros_natural) *
+        /// max_count`) assumes 1 bit saved per extra trailing zero
+        /// per block; the empirical AC encoding cost per trailing zero
+        /// is closer to 0.3-0.5 bits, leading the gate to admit
+        /// permutations for buckets 3 and 6 that cost more bits in
+        /// Lehmer encoding than they save in AC tokenization.
+        ///
+        /// Variant C bench (53 cells: 9 CID22 photos × 4 d + 5
+        /// gb82-sc screenshots × 3 d + 2 W44-82 spot cells) shows
+        /// **-0.65% total bytes, ZERO regressions** (worst +0.06%
+        /// noise on `windows95_d1.0`). Effort sweep (e4..=e8) confirms
+        /// gate fires at e5..=e8 on photos, never on the 4 screenshot
+        /// cells (W44-82 cost-benefit was already not admitting
+        /// bucket 3/6 there).
+        ///
+        /// Default (Zenjxl/Aggressive/LeanFaster): `true` — apply the
+        /// fix. Libjxl strategy: `false` — preserves libjxl-parity
+        /// (libjxl admits all buckets without per-bucket exclusion;
+        /// the divergence is documented in Section D).
+        ///
+        /// Pixel-identical decoding verified A/C across 6 cells × 3
+        /// distances via jxl-oxide (scan order only affects encoded
+        /// Lehmer bytes, not coefficient values).
+        ///
+        /// Promoted from env var `JXL_W44_201_DISABLE_BUCKETS=3,6`
+        /// (which can disable any comma-separated bucket set; the
+        /// gate field hard-codes the W44-201 chosen set {3, 6}).
+        coeff_orders_disable_large_buckets: bool {
+            divergence_section = "D",
+            divergence_row_ref = "W44-201 coeff_orders skip buckets 3+6 (Zenjxl tightening of W44-82 cost-benefit gate)",
         },
     }
 }
@@ -824,6 +893,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "C",
         row_ref: "W44-197 CfL Pass-2 LS-only at e=5/6 (libjxl fast=true)",
         raw: __CUSTOM_DIVERGENCE_CFL_PASS2_LS_AT_LOW_EFFORT,
+    },
+    // Section D — W44-201 Zenjxl tightening of W44-82 cost-benefit gate
+    DivergenceEntry {
+        gate_name: "coeff_orders_disable_large_buckets",
+        section: "D",
+        row_ref: "W44-201 coeff_orders skip buckets 3+6 (Zenjxl tightening of W44-82 cost-benefit gate)",
+        raw: __CUSTOM_DIVERGENCE_COEFF_ORDERS_DISABLE_LARGE_BUCKETS,
     },
 ];
 
