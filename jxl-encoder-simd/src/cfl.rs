@@ -28,12 +28,38 @@ fn bias_and_quantize(x: f32) -> i8 {
 
 /// Newton's method constants.
 ///
-/// eps=1 (not 100) gives accurate local second derivatives, enabling
-/// convergence. libjxl uses eps=100 which causes oscillation on most tiles
-/// (see CFL_NEWTON_CONVERGENCE_BUG.md in the libjxl repo).
+/// **W44-183 INTENTIONAL DIVERGENCE FROM LIBJXL** (do not "fix" without measurement):
+///
+/// libjxl `enc_chroma_from_luma.cc:152-159` uses `eps = 100`, `max_iters = 20`,
+/// starts Newton at `x = 0`, and uses the last `x` regardless of convergence.
+/// We diverge on ALL FOUR (`eps = 1.0`, `max_iters = 10`, start at LS warm-start
+/// `ls_x`, fallback to `ls_x` on non-convergence).
+///
+/// The W44-183 spot-check (`benchmarks/w44_183_cfl_newton_spotcheck_2026-05-22.{pre,post}.tsv`)
+/// measured the bit-exact libjxl port: 0/27 SSIM2 wins, 25/27 SSIM2 regressions
+/// (worst -13.02 SSIM2 / +26% bytes on `cid22_1531677` e7 d=5), mean +7.82% bytes.
+/// libjxl-parity Newton produces the libjxl-correct ytox/ytob multipliers — but
+/// the rest of our encoder (W44-29..W44-172 entropy_mul tables, AC strategy gates,
+/// buttloop seeds, adaptive_quant) has been incrementally tuned against the
+/// effective-LS baseline produced by these parameters. Correcting Newton to
+/// libjxl parity throws off the downstream calibration.
+///
+/// W44-182 (`3c2026b2`) identified this as a SUSPECTED root cause for the
+/// `clic_097cb426` right-column SSIM2 deficit (-7.0). W44-183 falsified that:
+/// the port makes the right-column cmap BYTE-EXACT to cjxl, but the
+/// right-column SSIM2 stays at -7.0/-7.7/-7.4 — CfL Newton was NOT the cause.
+///
+/// **The previous docstring here ("libjxl uses eps=100 which causes oscillation")
+/// was empirically FALSE**: cjxl's Newton with eps=100 converges fine (134-186/256
+/// nonzero tiles on `clic_097cb426`). The right framing is "OUR pipeline is
+/// calibrated against this divergence; reverting it would require re-calibrating
+/// W44-29..W44-172 from scratch." See `docs/LIBJXL_DIVERGENCES.md` Section C +
+/// Section F.
 ///
 /// `NEWTON_EPS` and `NEWTON_MAX_ITERS` are defaults; callers can override
-/// via function parameters to tune CfL fitting precision vs. convergence.
+/// via function parameters (e.g. an `EncoderStrategy::Libjxl` opt-in path
+/// could pass `eps = 100`, `max_iters = 20` to get libjxl-parity Newton,
+/// accepting the +7.82% bytes / -SSIM2 regression in exchange for parity).
 pub const NEWTON_EPS_DEFAULT: f32 = 1.0;
 pub const NEWTON_MAX_ITERS_DEFAULT: usize = 10;
 const NEWTON_CLAMP: f32 = 20.0;
@@ -321,10 +347,21 @@ pub fn find_best_multiplier_newton(
 /// Scalar Newton's method for CfL multiplier.
 ///
 /// Seeds Newton from the least-squares solution (warm start) so it begins
-/// near the optimum. With eps=1, Newton refines the LS solution toward the
-/// smoothed-L1 optimum in a few iterations.
+/// near the optimum. With eps=1 (our W44-183-divergent default), Newton
+/// refines the LS solution toward the smoothed-L1 optimum in a few iterations
+/// — when it converges. In practice eps=1 produces noisy local second
+/// derivatives → Newton frequently fails to converge → falls back to ls_x.
+/// This means our default Newton path is effectively the LS path on most tiles.
 ///
-/// Falls back to LS if Newton doesn't converge (rare with eps=1 + warm start).
+/// libjxl `enc_chroma_from_luma.cc:152-167` uses different parameters
+/// (`eps=100`, `max_iters=20`, start at `x=0`, use last `x` regardless of
+/// convergence). The W44-183 measurement (`benchmarks/w44_183_cfl_newton_*`)
+/// confirmed: porting libjxl's parameters produces the libjxl-correct ytox/ytob
+/// multipliers BUT regresses our pipeline by 0.25-13 SSIM2 and +7.82% bytes
+/// because downstream calibration (W44-29..W44-172) is tuned against this
+/// effective-LS-warm-start baseline. See `NEWTON_EPS_DEFAULT` docstring.
+///
+/// Falls back to LS if Newton doesn't converge (common with our eps=1).
 pub fn find_best_multiplier_newton_scalar(
     values_m: &[f32],
     values_s: &[f32],

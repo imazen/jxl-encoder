@@ -1338,6 +1338,16 @@ name = "w44_182_cfl_tile_probe"
 path = "examples/w44_182_cfl_tile_probe.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-183: CfL Newton parameter port spot-check.
+# 9 images (5 CID22 photos + 3 GB82-SC screenshots + clic_097cb426 wedge)
+# × 3 distances (d=2/3/5) × bytes/ssim2/butteraugli vs cjxl reference.
+# Validates the W44-183 bit-exact port of libjxl's CfL Newton parameters
+# from enc_chroma_from_luma.cc:152-167.
+[[example]]
+name = "w44_183_cfl_newton_spotcheck"
+path = "examples/w44_183_cfl_newton_spotcheck.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
 [[example]]
 name = "w44_20_codec_wiki_coverage"
 path = "examples/w44_20_codec_wiki_coverage.rs"
