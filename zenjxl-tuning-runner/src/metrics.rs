@@ -233,7 +233,10 @@ fn invoke_zen_metric(src: &Path, dist: &Path, metric: &str) -> MetricRunResult {
             let stderr = String::from_utf8_lossy(&o.stderr);
             MetricRunResult {
                 value: None,
-                backend: format!("gpu-cli-failed: {}", stderr.trim().chars().take(120).collect::<String>()),
+                backend: format!(
+                    "gpu-cli-failed: {}",
+                    stderr.trim().chars().take(120).collect::<String>()
+                ),
                 elapsed_ms,
                 peak_mb: 0,
             }
@@ -276,12 +279,7 @@ fn write_rgb_as_png(path: &Path, rgb: &[u8], w: usize, h: usize) -> Result<(), S
 }
 
 #[cfg(feature = "cpu-metrics")]
-fn compute_cpu_metrics(
-    source: &[u8],
-    decoded: &[u8],
-    w: usize,
-    h: usize,
-) -> Option<(f32, f32)> {
+fn compute_cpu_metrics(source: &[u8], decoded: &[u8], w: usize, h: usize) -> Option<(f32, f32)> {
     use butteraugli::butteraugli;
     use imgref::Img;
 

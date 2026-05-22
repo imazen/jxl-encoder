@@ -925,8 +925,14 @@ pub(crate) fn w44_168_compute_iters(
 /// gate.
 #[inline]
 pub(crate) fn w44_168_is_smooth(mask1x1_median: Option<f32>, mask1x1_p25: Option<f32>) -> bool {
-    let screen = mask1x1_median.is_some_and(|m| m > W44_168_SCREENSHOT_MEDIAN_MIN);
-    let smooth_photo = mask1x1_p25.is_some_and(|p| p >= W44_168_SMOOTH_MASK_P25_MIN);
+    // W44-213: route both thresholds through the tuning-override macro
+    // so sweep-runner builds can swap them at runtime.
+    let median_threshold =
+        crate::runtime_or_default!(W44_168_SCREENSHOT_MEDIAN_MIN, screenshot_median_threshold,);
+    let p25_threshold =
+        crate::runtime_or_default!(W44_168_SMOOTH_MASK_P25_MIN, smart_zenjxl_photo_mask_p25_min,);
+    let screen = mask1x1_median.is_some_and(|m| m > median_threshold);
+    let smooth_photo = mask1x1_p25.is_some_and(|p| p >= p25_threshold);
     screen || smooth_photo
 }
 
@@ -2752,7 +2758,13 @@ impl VarDctEncoder {
         let screenshot_policy = self.resolved_improvements.screenshot_entropy_mul;
         let w22_1_lift = match screenshot_policy {
             crate::api::ScreenshotEntropyMulPolicy::Auto => {
-                mask1x1_median.is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD)
+                // W44-213: route the threshold through the tuning-override
+                // macro so sweep-runner builds can swap it at runtime.
+                let median_threshold = crate::runtime_or_default!(
+                    CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD,
+                    screenshot_median_threshold,
+                );
+                mask1x1_median.is_some_and(|med| med > median_threshold)
             }
             crate::api::ScreenshotEntropyMulPolicy::ForceOn => true,
             crate::api::ScreenshotEntropyMulPolicy::ForceOff => false,
@@ -2811,9 +2823,14 @@ impl VarDctEncoder {
                             false
                         }
                     };
+                    // W44-213: tuning-override-aware p25 threshold lookup.
+                    let w44_151_p25_threshold = crate::runtime_or_default!(
+                        W44_151_HIGH_MASK_P25_MIN,
+                        smart_zenjxl_photo_mask_p25_min,
+                    );
                     let w44_152_admit = !w44_152_disable_env
                         && w44_152_distance_in_band
-                        && mask1x1_p25.is_some_and(|p25| p25 >= W44_151_HIGH_MASK_P25_MIN);
+                        && mask1x1_p25.is_some_and(|p25| p25 >= w44_151_p25_threshold);
                     w44_29_gate || w44_91_gate || w44_152_admit
                 }
                 crate::api::HighDPhotoEntropyMulPolicy::ForceOn => true,
@@ -2852,14 +2869,21 @@ impl VarDctEncoder {
                 crate::api::HighDPhotoEntropyMulPolicy::Auto
             )
             && self.distance >= W44_96_VARIANT_Z_MIN_DISTANCE;
+        // W44-213: tuning-override-aware p25 threshold lookup (W44-166
+        // photo admission; shares the canonical 85.0 value with W44-150
+        // / W44-151 / W44-168, all unified under `smart_zenjxl_photo_mask_p25_min`).
+        let w44_166_p25_threshold = crate::runtime_or_default!(
+            W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN,
+            smart_zenjxl_photo_mask_p25_min,
+        );
         let w44_166_photo_admit = w44_166_photo_admit_allowed
             && match w44_166_admit_mode {
                 W44_166VariantZAdmitMode::Baseline => false,
                 W44_166VariantZAdmitMode::BMaskP25 => {
-                    mask1x1_p25.is_some_and(|p25| p25 >= W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN)
+                    mask1x1_p25.is_some_and(|p25| p25 >= w44_166_p25_threshold)
                 }
                 W44_166VariantZAdmitMode::CMaskP25HighM3 => {
-                    mask1x1_p25.is_some_and(|p25| p25 >= W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN)
+                    mask1x1_p25.is_some_and(|p25| p25 >= w44_166_p25_threshold)
                         && self.zenanalyze_proxies.is_some_and(|p| {
                             p.m3_colourfulness >= W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN
                         })
@@ -3916,8 +3940,13 @@ impl VarDctEncoder {
         // scale stays at 1.0 → byte-identical to pre-W44-109. Only
         // low-effort screenshot-class hits the lossy gate.
         {
-            let is_screenshot = mask1x1_median_for_pre_scale
-                .is_some_and(|med| med > super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD);
+            // W44-213: tuning-override-aware threshold lookup.
+            let median_threshold = crate::runtime_or_default!(
+                super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD,
+                screenshot_median_threshold,
+            );
+            let is_screenshot =
+                mask1x1_median_for_pre_scale.is_some_and(|med| med > median_threshold);
             let m3 = self.zenanalyze_proxies.map(|p| p.m3_colourfulness);
             // W44-129 Chunk C / W44-130 Chunk D: read the resolved
             // `adaptive_quant_qf_seed` enum directly from
@@ -4274,7 +4303,12 @@ impl VarDctEncoder {
             // `Auto` here fires the W22-1 mask1x1 discriminator
             // directly (no longer guarded by a separate enable bit).
             crate::api::ScreenshotEntropyMulPolicy::Auto => {
-                mask1x1_median.is_some_and(|med| med > CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD)
+                // W44-213: tuning-override-aware threshold lookup.
+                let median_threshold = crate::runtime_or_default!(
+                    CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD,
+                    screenshot_median_threshold,
+                );
+                mask1x1_median.is_some_and(|med| med > median_threshold)
             }
             crate::api::ScreenshotEntropyMulPolicy::ForceOn => true,
             crate::api::ScreenshotEntropyMulPolicy::ForceOff => false,
@@ -4386,9 +4420,14 @@ impl VarDctEncoder {
                             false
                         }
                     };
+                    // W44-213: tuning-override-aware p25 threshold lookup.
+                    let w44_151_p25_threshold = crate::runtime_or_default!(
+                        W44_151_HIGH_MASK_P25_MIN,
+                        smart_zenjxl_photo_mask_p25_min,
+                    );
                     let w44_152_admit = !w44_152_disable_env
                         && w44_152_distance_in_band
-                        && mask1x1_p25.is_some_and(|p25| p25 >= W44_151_HIGH_MASK_P25_MIN);
+                        && mask1x1_p25.is_some_and(|p25| p25 >= w44_151_p25_threshold);
                     w44_29_gate || w44_91_gate || w44_152_admit
                 }
                 crate::api::HighDPhotoEntropyMulPolicy::ForceOn => true,
@@ -4510,14 +4549,21 @@ impl VarDctEncoder {
                 crate::api::HighDPhotoEntropyMulPolicy::Auto
             )
             && self.distance >= W44_96_VARIANT_Z_MIN_DISTANCE;
+        // W44-213: tuning-override-aware p25 threshold lookup (W44-166
+        // photo admission; shares the canonical 85.0 value with W44-150
+        // / W44-151 / W44-168, all unified under `smart_zenjxl_photo_mask_p25_min`).
+        let w44_166_p25_threshold = crate::runtime_or_default!(
+            W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN,
+            smart_zenjxl_photo_mask_p25_min,
+        );
         let w44_166_photo_admit = w44_166_photo_admit_allowed
             && match w44_166_admit_mode {
                 W44_166VariantZAdmitMode::Baseline => false,
                 W44_166VariantZAdmitMode::BMaskP25 => {
-                    mask1x1_p25.is_some_and(|p25| p25 >= W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN)
+                    mask1x1_p25.is_some_and(|p25| p25 >= w44_166_p25_threshold)
                 }
                 W44_166VariantZAdmitMode::CMaskP25HighM3 => {
-                    mask1x1_p25.is_some_and(|p25| p25 >= W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN)
+                    mask1x1_p25.is_some_and(|p25| p25 >= w44_166_p25_threshold)
                         && self.zenanalyze_proxies.is_some_and(|p| {
                             p.m3_colourfulness >= W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN
                         })
@@ -5050,9 +5096,13 @@ impl VarDctEncoder {
                 // `pixel_domain_loss`); falling back to `false` when it
                 // wasn't computed keeps the photo-default (no cap, libjxl
                 // faithful, byte-identical).
+                // W44-213: tuning-override-aware threshold lookup.
+                let median_threshold = crate::runtime_or_default!(
+                    super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD,
+                    screenshot_median_threshold,
+                );
                 let is_screenshot = mask1x1.as_deref().is_some_and(|m| {
-                    median_mask1x1(m, padded_width, width, height)
-                        > super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD
+                    median_mask1x1(m, padded_width, width, height) > median_threshold
                 });
                 // W44-150 Phase 2 HONEST-STOP (2026-05-21): the
                 // Mechanism A photo-admission path (was: admit

@@ -18,8 +18,8 @@
 //! 2. Computes [`jxl_encoder::vardct::encoder::ZenanalyzeProxies`] +
 //!    extended features (W44-91 / W44-96 / W44-164 discriminators)
 //! 3. Optionally installs the [`SweepCellSpec::params_blob_path`]
-//!    `RuntimeTuning` override (best-effort: see W44-211 note in
-//!    [`crate::SCAFFOLDING_NOTE`])
+//!    `RuntimeTuning` override (W44-213 wires this through the
+//!    production encoder; see [`crate::SCAFFOLDING_NOTE`])
 //! 4. Encodes via [`jxl_encoder::LossyConfig::encode`] with CPU `rusage`
 //!    + wall timing
 //! 5. Decodes the JXL back via `jxl` (jxl-rs)
@@ -57,20 +57,30 @@ pub mod spec;
 
 pub use spec::{SweepCellRow, SweepCellSpec, run_cell};
 
-/// W44-212 scaffolding note. The W44-211 [`crate::params::RuntimeTuning`]
-/// override layer is installed in this worker via
-/// [`jxl_encoder::tuning::runtime::install_from_postcard_file`], but no
-/// production encoder code path reads from it yet (W44-211 commit
-/// 7164197e shipped re-export hub + struct only). Until W44-213+ wires
-/// consumers, the `params_blob` Parquet column captures the postcard
-/// payload the worker INTENDED to apply; downstream MLP training must
-/// treat tuning-axis variance for the W44-211 fields as zero until the
-/// downstream consumer site exists. See `docs/TUNING_RELATIONS.md`
-/// Section 0 for the canonical re-export hub paths.
+/// W44-213 wiring closed (2026-05-22). The W44-211
+/// [`crate::params::RuntimeTuning`] override layer is installed in this
+/// worker via
+/// [`jxl_encoder::tuning::runtime::install_from_postcard_file`]; W44-213
+/// shipped the [`jxl_encoder::runtime_or_default!`] macro and wired all
+/// 6 RuntimeTuning fields at their production consumer sites. Per-cell
+/// `params_blob` variance now MATERIALLY changes encoded bytes — the
+/// `(params_blob, encoded_bytes)` pairs the sweep emits are now suitable
+/// for downstream MLP training. Verified by
+/// `jxl-encoder/tests/w44_213_runtime_tuning_wiring.rs` (doubling
+/// `buttloop_default_screenshot_qf_seed_scale` 4.0 → 8.0 yields ≥1%
+/// byte delta on a screenshot at e8 d=4).
+///
+/// Future `RuntimeTuning` extensions for additional tunables follow the
+/// pattern documented in `docs/TUNING_RELATIONS.md` Section 0.
 pub const SCAFFOLDING_NOTE: &str = "\
 W44-212 worker uses jxl_encoder::tuning::runtime::install_from_postcard_file. \
-RuntimeTuning installation is a no-op at the encoder until consumer sites \
-land in W44-213+.";
+W44-213 shipped the runtime_or_default! macro + consumer wiring for the 6 \
+RuntimeTuning fields (smart_zenjxl_photo_mask_p25_min, \
+screenshot_median_threshold, buttloop_default_screenshot_qf_seed_scale, \
+buttloop_qf_seed_scale_min_distance, \
+adaptive_quant_screenshot_qf_seed_scale_e5_e6, \
+adaptive_quant_screenshot_qf_seed_scale_e7). Per-cell params_blob variance \
+now materially changes encoded bytes.";
 
 /// Pointer to the fleet scripts. The bash launcher + Dockerfile mirror
 /// the [`zenmetrics`](https://github.com/imazen/zenmetrics) sweep

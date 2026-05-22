@@ -753,7 +753,13 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     }
     let w44_108_low_colour =
         m3_colourfulness.is_some_and(|m3| m3 < BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX);
-    let gate_fires = target_distance >= BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE
+    // W44-213: route the W44-107 min-distance threshold through the
+    // tuning-override macro so sweep-runner builds can swap it at runtime.
+    let min_distance = crate::runtime_or_default!(
+        BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE,
+        buttloop_qf_seed_scale_min_distance,
+    );
+    let gate_fires = target_distance >= min_distance
         || (w44_108_low_colour && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE);
     if !gate_fires {
         return 1.0;
@@ -784,10 +790,17 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     //   * `Off` → handled above (early return 1.0).
     let base_scale = match policy {
         crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort => {
+            // W44-213: tuning-override-aware per-effort scale lookups.
             if effort >= 7 {
-                DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7
+                crate::runtime_or_default!(
+                    DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
+                    adaptive_quant_screenshot_qf_seed_scale_e7,
+                )
             } else {
-                DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6
+                crate::runtime_or_default!(
+                    DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6,
+                    adaptive_quant_screenshot_qf_seed_scale_e5_e6,
+                )
             }
         }
         crate::api::AdaptiveQuantQfSeedPolicy::AutoScaleCustom { e5_e6, e7 } => {
@@ -1340,14 +1353,22 @@ impl VarDctEncoder {
         let w44_108_low_colour = self
             .zenanalyze_proxies
             .is_some_and(|p| p.m3_colourfulness < BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX);
+        // W44-213: tuning-override-aware min-distance + scale lookups.
+        let buttloop_min_distance = crate::runtime_or_default!(
+            BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE,
+            buttloop_qf_seed_scale_min_distance,
+        );
         let auto_gate_fires = is_screenshot
-            && (target_distance >= BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE
+            && (target_distance >= buttloop_min_distance
                 || (w44_108_low_colour
                     && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE));
         let buttloop_qf_seed_scale = match buttloop_qf_seed_policy {
             crate::api::ButtloopQfSeedPolicy::AutoScale4 => {
                 if auto_gate_fires {
-                    DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE
+                    crate::runtime_or_default!(
+                        DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE,
+                        buttloop_default_screenshot_qf_seed_scale,
+                    )
                 } else {
                     1.0
                 }

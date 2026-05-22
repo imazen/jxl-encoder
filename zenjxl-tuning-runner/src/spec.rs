@@ -228,9 +228,16 @@ pub fn run_cell(spec: &SweepCellSpec, output_parquet: &Path) -> Result<SweepCell
 
     let rusage_pre = RUsageDelta::snapshot();
     let wall_pre = Instant::now();
-    let encoded =
-        encode_with_strategy(&rgb_bytes, w, h, spec.distance, spec.effort, strategy, threads)
-            .map_err(CellError::Encode)?;
+    let encoded = encode_with_strategy(
+        &rgb_bytes,
+        w,
+        h,
+        spec.distance,
+        spec.effort,
+        strategy,
+        threads,
+    )
+    .map_err(CellError::Encode)?;
     let encode_ms = wall_pre.elapsed().as_secs_f64() * 1000.0;
     let rusage_post = RUsageDelta::snapshot();
     let encode_rusage = rusage_post.diff(&rusage_pre);
@@ -238,8 +245,8 @@ pub fn run_cell(spec: &SweepCellSpec, output_parquet: &Path) -> Result<SweepCell
     // ── 5. Decode roundtrip via jxl-rs ──────────────────────────────
     let decode_pre = Instant::now();
     let rusage_decode_pre = RUsageDelta::snapshot();
-    let decoded_rgb = decode_roundtrip(&encoded, w as usize, h as usize)
-        .map_err(CellError::Decode)?;
+    let decoded_rgb =
+        decode_roundtrip(&encoded, w as usize, h as usize).map_err(CellError::Decode)?;
     let decode_ms = decode_pre.elapsed().as_secs_f64() * 1000.0;
     let rusage_decode_post = RUsageDelta::snapshot();
     let decode_rusage = rusage_decode_post.diff(&rusage_decode_pre);
@@ -255,13 +262,7 @@ pub fn run_cell(spec: &SweepCellSpec, output_parquet: &Path) -> Result<SweepCell
         cvvdp_backend,
         gpu_peak_vram_mb,
         gpu_kernel_ms,
-    } = score_cell(
-        &rgb_bytes,
-        &decoded_rgb,
-        w as usize,
-        h as usize,
-        backend,
-    );
+    } = score_cell(&rgb_bytes, &decoded_rgb, w as usize, h as usize, backend);
 
     // ── 7. Build row ────────────────────────────────────────────────
     let row = SweepCellRow {
@@ -314,7 +315,11 @@ fn parse_strategy(s: &str) -> Result<jxl_encoder::api::EncoderStrategy, String> 
         "libjxl" => EncoderStrategy::Libjxl,
         "lean-faster" | "leanfaster" | "lean_faster" => EncoderStrategy::LeanFaster,
         "aggressive" => EncoderStrategy::Aggressive,
-        other => return Err(format!("unknown strategy {other:?}; expected one of: zenjxl, libjxl, lean-faster, aggressive")),
+        other => {
+            return Err(format!(
+                "unknown strategy {other:?}; expected one of: zenjxl, libjxl, lean-faster, aggressive"
+            ));
+        }
     })
 }
 
@@ -376,7 +381,9 @@ fn decode_roundtrip(bytes: &[u8], w: usize, h: usize) -> Result<Vec<u8>, String>
     let basic_info = decoder.basic_info().clone();
     let (width, height) = basic_info.size;
     if width != w || height != h {
-        return Err(format!("size mismatch: decoder {width}x{height} != source {w}x{h}"));
+        return Err(format!(
+            "size mismatch: decoder {width}x{height} != source {w}x{h}"
+        ));
     }
     let channels = 3usize;
     decoder.set_pixel_format(JxlPixelFormat {

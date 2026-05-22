@@ -53,8 +53,7 @@ pub fn materialise_params(path: Option<&Path>) -> Result<ParamsRecord, String> {
             installed: false,
         });
     };
-    let bytes =
-        std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     // Validate the bytes deserialise BEFORE installing — postcard
     // requires a known struct shape. The install path also validates,
     // but doing it here gives us a clean error message before mutating
