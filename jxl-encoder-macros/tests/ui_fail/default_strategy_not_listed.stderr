@@ -1,0 +1,5 @@
+error: strategy_def!: `default_strategy = NotAStrategy` does not name any of the declared strategies
+ --> tests/ui_fail/default_strategy_not_listed.rs:8:24
+  |
+8 |     default_strategy = NotAStrategy;
+  |                        ^^^^^^^^^^^^

@@ -22,6 +22,8 @@ autoexamples = false
 enough = "0.4.3"
 once_cell = { version = "1.21", default-features = false, features = ["race", "alloc"] }
 hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
+# W44-192: strategy_def! proc-macro for declarative gate registries.
+jxl_encoder_macros = { package = "jxl-encoder-macros", version = "0.3.2", path = "../jxl-encoder-macros" }
 whereat = { version = "0.1.5"}
 bytemuck = { version = "1.25", features = ["derive"] }
 thiserror = { version = "2.0", default-features = false }

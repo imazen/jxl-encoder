@@ -1,0 +1,12 @@
+error: strategy_def!: missing `default_strategy = <Ident>;` top-level key
+  --> tests/ui_fail/missing_default_strategy.rs:5:1
+   |
+ 5 | / jxl_encoder_macros::strategy_def! {
+ 6 | |     name = Missing;
+ 7 | |
+ 8 | |     enums {}
+...  |
+17 | | }
+   | |_^
+   |
+   = note: this error originates in the macro `jxl_encoder_macros::strategy_def` (in Nightly builds, run with -Z macro-backtrace for more info)

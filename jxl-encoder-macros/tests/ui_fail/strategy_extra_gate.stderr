@@ -1,0 +1,5 @@
+error: strategy_def!: strategy `Zenjxl` lists unknown gate `surprise` (not declared in `gates { ... }`)
+  --> tests/ui_fail/strategy_extra_gate.rs:13:28
+   |
+13 |         Zenjxl { x = true, surprise = false, },
+   |                            ^^^^^^^^

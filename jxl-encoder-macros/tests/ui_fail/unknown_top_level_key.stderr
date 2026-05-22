@@ -1,0 +1,5 @@
+error: strategy_def!: unknown top-level key `typo_key` (expected one of `name`, `default_strategy`, `enums`, `strategies`, `gates`)
+ --> tests/ui_fail/unknown_top_level_key.rs:8:5
+  |
+8 |     typo_key = 42;
+  |     ^^^^^^^^

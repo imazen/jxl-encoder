@@ -11,7 +11,7 @@ opt-level = 3
 opt-level = 2
 
 [workspace]
-members = ["jxl-encoder", "jxl-encoder-cli", "jxl-encoder-simd"]
+members = ["jxl-encoder", "jxl-encoder-cli", "jxl-encoder-macros", "jxl-encoder-simd"]
 resolver = "2"
 
 [workspace.lints.clippy]
