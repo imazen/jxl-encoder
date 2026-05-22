@@ -59,16 +59,32 @@ fn bias_and_quantize(x: f32) -> i8 {
 /// require re-calibrating W44-29..W44-172 from scratch." See
 /// `docs/LIBJXL_DIVERGENCES.md` Section C + Section F.
 ///
-/// **W44-184 SALVAGE — `libjxl_parity = true` path**: the four-parameter
-/// libjxl port IS wired, but ONLY when the caller selects
-/// [`crate::api::EncoderStrategy::Libjxl`] (the all-divergence libjxl-parity
-/// preset). Under that strategy the rest of the cost model is also flipped
-/// to libjxl-parity defaults (Section A effort gates widen, content-aware
-/// gates disable, etc.) so the +7.82% SSIM2 regression observed at the
-/// default-path port does not apply — the downstream calibration is
-/// uniformly absent. See `EncoderImprovementsCustom::cfl_newton_libjxl_parity`
-/// and `EffortProfile::apply_section_c_cfl_newton_libjxl_parity` for the
-/// dispatch, plus the W44-184 commit memo for measurements.
+/// **W44-184 SALVAGE (Pass-2) + W44-195 EXTENSION (Pass-1) —
+/// `libjxl_parity = true` path**: the four-parameter libjxl Newton is wired,
+/// but ONLY when the caller selects [`crate::api::EncoderStrategy::Libjxl`]
+/// (the all-divergence libjxl-parity preset). Under that strategy the rest
+/// of the cost model is also flipped to libjxl-parity defaults (Section A
+/// effort gates widen, content-aware gates disable, etc.) so the +7.82%
+/// SSIM2 regression observed at the default-path port does not apply — the
+/// downstream calibration is uniformly absent.
+///
+/// **Coverage**: BOTH the Pass-1 CfL dispatch
+/// (`jxl_encoder::vardct::encoder::compute_cfl_map` call site, libjxl
+/// `enc_heuristics.cc:1170-1174` with `fast=false`) AND the Pass-2 CfL
+/// Newton internals (`jxl_encoder::vardct::chroma_from_luma::refine_cfl_map`,
+/// libjxl `enc_heuristics.cc:1190-1194`) consult this flag.
+///
+/// W44-184 (`b8517c09`) wired Pass-2 internals. W44-189 D1 audit
+/// (`memory/w44_189_cfl_deep_audit_2026-05-22.md`) identified that Pass-1
+/// dispatch was still hardcoded to LS regardless of the flag — a
+/// half-baked libjxl parity. W44-195 closes that gap by extending the flag
+/// to gate Pass-1's `use_newton` dispatch too: when the flag is `true`,
+/// Pass-1 dispatches to Newton at e>=7 (matching libjxl) and the SIMD
+/// code path applies the libjxl-bit-exact Newton parameters defined here.
+///
+/// See `EncoderImprovementsCustom::cfl_newton_libjxl_parity` and
+/// `EffortProfile::apply_section_c_cfl_newton_libjxl_parity` for the
+/// dispatch wiring, plus the W44-184 + W44-195 commit memos for measurements.
 ///
 /// `NEWTON_EPS_DEFAULT` and `NEWTON_MAX_ITERS_DEFAULT` are defaults for the
 /// `libjxl_parity = false` path; callers can override via function parameters

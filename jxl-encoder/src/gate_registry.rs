@@ -482,13 +482,28 @@ jxl_encoder_macros::strategy_def! {
         },
 
         // ── Section C CfL Newton parity ──────────────────────────────
-        /// W44-184: bit-exact libjxl CfL Newton parameters (eps=100,
-        /// max_iters=20, start x=0, no LS fallback). Promoted from env
-        /// var `JXL_W44_184_FORCE_LIBJXL_NEWTON`. Section C.
+        /// W44-184 (Pass-2) + W44-195 (Pass-1): bit-exact libjxl CfL Newton
+        /// parameters (eps=100, max_iters=20, start x=0, no LS fallback)
+        /// applied at BOTH Pass-1 and Pass-2 CfL dispatch sites.
+        ///
+        /// - **Pass-1** (`encoder::compute_cfl_map` call site): when this
+        ///   field is `true`, Pass-1 dispatches to Newton at e>=7 (matching
+        ///   libjxl `enc_heuristics.cc:1170-1174` with `fast=false`). When
+        ///   `false` (Zenjxl default), Pass-1 stays on LS to preserve the
+        ///   W44-29..W44-172 downstream cost-model calibration. Wired by
+        ///   W44-195 (closes W44-189 D1 audit finding).
+        /// - **Pass-2** (`chroma_from_luma::refine_cfl_map`): when this
+        ///   field is `true`, the SIMD Newton kernel
+        ///   ([`jxl_simd::cfl_find_best_multiplier_newton`]) overrides
+        ///   eps/max_iters/start-x/fallback with libjxl-bit-exact values
+        ///   (matching libjxl `enc_chroma_from_luma.cc:152-167`). Wired
+        ///   by W44-184 (`b8517c09`).
+        ///
+        /// Promoted from env var `JXL_W44_184_FORCE_LIBJXL_NEWTON`. Section C.
         cfl_newton_libjxl_parity: bool {
             env_hook = "JXL_W44_184_FORCE_LIBJXL_NEWTON" => parse_bool_one,
             divergence_section = "C",
-            divergence_row_ref = "W44-184 CfL Newton libjxl parity (eps=100, max_iters=20)",
+            divergence_row_ref = "W44-184/W44-195 CfL Newton libjxl parity (Pass-1 dispatch + Pass-2 internals, eps=100, max_iters=20)",
         },
     }
 }
@@ -747,7 +762,7 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
     DivergenceEntry {
         gate_name: "cfl_newton_libjxl_parity",
         section: "C",
-        row_ref: "W44-184 CfL Newton libjxl parity (eps=100, max_iters=20)",
+        row_ref: "W44-184/W44-195 CfL Newton libjxl parity (Pass-1 dispatch + Pass-2 internals, eps=100, max_iters=20)",
         raw: __CUSTOM_DIVERGENCE_CFL_NEWTON_LIBJXL_PARITY,
     },
 ];

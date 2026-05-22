@@ -108,20 +108,26 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
     // **W44-184 (2026-05-22)**: re-pinned after flipping CfL Newton to
     // libjxl-bit-exact parameters under `EncoderStrategy::Libjxl`
     // (`eps=100`, `max_iters=20`, start `x=0`, no LS fallback —
-    // `enc_chroma_from_luma.cc:152-167`). Per-fixture deltas vs the
-    // W44-171 pins:
-    // - `_d1` (e7): size unchanged (211 B), HASH drift only (cmap
-    //   multipliers shift slightly; bit-packed identically).
-    // - `_d4` (e7): size 157 → 169 (+12 B). Newton finds nonzero
-    //   cmap multipliers at the higher distance where the LS fallback
-    //   would have snapped to 0 → larger cfl_map signal → more bits to
-    //   code the multipliers, fewer X/B coefficient bits (net +12 B on
-    //   this synthetic fixture).
-    // - `_d1_e5` / `_d1_e3`: BYTE-IDENTICAL (the EffortProfile has
-    //   `cfl_newton: false` at effort < 7, so the `libjxl_parity` bool
-    //   is ignored — the SIMD code path runs the fast LS path, not
-    //   Newton at all). Confirms the W44-184 gate fires correctly.
-    // - `_d1_noise` (e7): size 3249 → 3245 (-4 B), hash drift.
+    // `enc_chroma_from_luma.cc:152-167`). W44-184 wired Pass-2 internals.
+    //
+    // **W44-195 (2026-05-22)**: re-pinned after extending the SAME
+    // `cfl_newton_libjxl_parity` flag to gate Pass-1 dispatch too (matches
+    // libjxl `enc_heuristics.cc:1170-1174` with `fast=false`). W44-189 D1
+    // audit identified the gap: Pass-1 dispatch was hardcoded LS regardless
+    // of the flag. Per-fixture deltas vs W44-184 pins:
+    // - `_d1` (e7): BYTE-IDENTICAL (32×32 gradient is too small/smooth
+    //   for Pass-1 Newton vs LS to diverge; both converge to the same
+    //   i8-clamped multipliers).
+    // - `_d4` (e7): BYTE-IDENTICAL (same — Pass-2 was already wired by
+    //   W44-184 + the 32×32 input doesn't surface Pass-1 dispatch
+    //   differences at this distance).
+    // - `_d1_e5` / `_d1_e3`: BYTE-IDENTICAL (`cfl_newton: false` at
+    //   effort < 7, so Pass-1 dispatch matches the W44-184 `use_newton=false`
+    //   default regardless of the flag — `pass1_use_newton = cfl_newton &&
+    //   cfl_newton_libjxl_parity` evaluates `false` here).
+    // - `_d1_noise` (e7): size 3245 → 3228 (-17 B), hash drift. Pass-1
+    //   Newton on noise content produces different cmap multipliers
+    //   from the prior LS dispatch, freeing additional bits downstream.
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1",
         size: 211,
@@ -144,9 +150,13 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",
+        // W44-195 (2026-05-22): size 3245 → 3228 (-17 B), hash drift.
+        // Pass-1 Newton dispatch on noise content produces different
+        // cmap multipliers from the prior LS dispatch, freeing
+        // additional bits downstream.
         // W44-184 (2026-05-22): size 3249 → 3245 (-4 B), hash drift.
-        // CfL Newton at libjxl parity reduces the cmap quantization
-        // error on noise content, freeing 4 bytes downstream.
+        // CfL Pass-2 Newton at libjxl parity reduces the cmap
+        // quantization error on noise content, freeing 4 bytes downstream.
         // W44-171 (2026-05-21): DC tree Variable-trial gate raised from
         // `effort >= 4` → `effort >= 8` (libjxl `enc_modular.cc:1591`
         // parity). At effort 7 (this fixture) the Libjxl strategy now
@@ -156,8 +166,8 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // this 48×48 fixture under the trial-and-pick, so the bitstream
         // contents are essentially the same plus or minus the
         // chosen-tree marker.
-        size: 3245,
-        hash: 0x9b08f8bd3e7c3adb,
+        size: 3228,
+        hash: 0xeeeead9ae77fc4f5,
     },
 ];
 
