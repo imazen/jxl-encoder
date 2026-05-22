@@ -1988,6 +1988,27 @@ name = "w44_149_photo_proxy_audit"
 path = "examples/w44_149_photo_proxy_audit.rs"
 required-features = ["__pre_quantized"]
 
+# W44-198 photo strict-loser discriminator probe (measurement-only).
+# Computes ZenanalyzeProxies fields + mask1x1 percentiles + XYB
+# variances + luma stats for 41 CID22 validation photos. Classifies
+# images by W44-185 strict-loss count (bytes>+1% AND ssim2<-0.1) and
+# emits TSV. Goal: find a discriminator axis splitting LOSER_DOMINANT
+# (3637739/7062219) from WINNER (1418519/2389166).
+[[example]]
+name = "w44_198_loser_probe"
+path = "examples/w44_198_loser_probe.rs"
+required-features = ["__pre_quantized"]
+
+# W44-198 forced-lift probe (measurement-only). Verifies whether
+# forcing high_d_photo_hint = Some(true) on LOSER images (where the
+# W44-29 mask<50 gate doesn't fire) closes the SSIM2 deficit and
+# reduces bytes. If the lift HELPS LOSER_DOMINANT on the gated cells,
+# a discriminator port is justified. If it HURTS, the LIFT MECHANISM
+# itself is not the lever and W44-198 honest-stops.
+[[example]]
+name = "w44_198_forced_lift_probe"
+path = "examples/w44_198_forced_lift_probe.rs"
+
 # W44-164 Smart-Zenjxl chunk 1 — auto-classifier A/B bench. Paired
 # comparison of `EncoderStrategy::Zenjxl` (auto-classify ON by default)
 # vs `EncoderStrategy::Custom { content_class_auto_classify: false, .. }`
