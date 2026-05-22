@@ -1,0 +1,17 @@
+# W44-181 DC quant precision probe — channel summary
+# image=clic_097cb426 effort=7 distance=5
+# raw dump: /tmp/w44_181_dump/dc_quant_inputs.tsv
+channel	rows	div_count	div_plus1	div_minus1	div_other	div_pct	inv_factor_min	inv_factor_max	near_boundary_rows	near_boundary_diffs
+0	13873	0	0	0	0	0.0000	1469.1250	1469.1250	2094	0
+1	0	0	0	0	0	0.0000	340282346638528859811704183484516925440.0000	-340282346638528859811704183484516925440.0000	0	0
+2	13873	0	0	0	0	0.0000	91.8203	91.8203	1162	0
+
+# W44-178 blocks.tsv join (B-channel divergent blocks)
+div_count	non_div_count	div_mean_rgb	non_div_mean_rgb	div_max_rgb	non_div_max_rgb	div_p95_rgb	non_div_p95_rgb
+0	12553	0.000000	0.004171	0.000000	0.089285	0.000000	0.012832
+
+# Per-raw_strategy divergence (DCT8=0, DCT32X32=4, DCT64X64=15)
+raw_strategy	blocks	divergent	div_pct	mean_max_abs_rgb	div_mean_rgb	non_div_mean_rgb
+0	33	0	0.00	0.016735	0.000000	0.016735
+4	2792	0	0.00	0.008159	0.000000	0.008159
+16	9728	0	0.00	0.002984	0.000000	0.002984
