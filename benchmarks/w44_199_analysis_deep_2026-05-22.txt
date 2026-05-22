@@ -1,0 +1,54 @@
+# W44-199 Phase 1 DEEP analysis — same-strategy nzeros + qac
+# Asks: at shared (bx, by, strategy) positions, do nzeros/qac match?
+# (bytes+ssim2 numbers vs cjxl in parentheses)
+
+
+## 3637739_LOSER  (ours vs cjxl: bytes +6.24%, ssim2 -2.3700)
+  shared (bx, by, strategy, channel) keys: 3483
+
+  Per-strategy at SHARED (bx,by) positions:
+    strategy          n  qac_match  qac_diff  qac_mean_abs_diff   nz_Y_delta  nz_X_delta  nz_B_delta
+    ----------------------------------------------------------------------------------------------------
+    DCT8              231       231         0       0.000             +0         +0         +0
+    IDENTITY            4         4         0       0.000             +0         +0         +0
+    DCT2X2             28        28         0       0.000             +0         +0         +0
+    DCT16X16           86        82         4       0.047             +0        +10         +0
+    DCT32X32           61        57         4       0.066             +0        +22         +0
+    DCT16X8           108       108         0       0.000             +0         +0         +0
+    DCT8X16           178       178         0       0.000             +0         +0         +0
+    DCT32X16           69        67         2       0.029             +0         +1         +0
+    DCT16X32           77        75         2       0.026             +0         +2         +0
+    DCT4X8             45        45         0       0.000             +0         +0         +0
+    DCT8X4             68        68         0       0.000             +0         +0         +0
+    AFV0               59        59         0       0.000             +0         +0         +0
+    AFV1               33        33         0       0.000             +0         +0         +0
+    AFV2               61        61         0       0.000             +0         -1         +0
+    AFV3               42        42         0       0.000             +0         +1         +0
+    DCT64X32            4         4         0       0.000             +0         +0         +0
+    DCT32X64            7         6         1       0.143             +0         -4         +0
+    TOTAL            1161      1148        13           -             +0        +31         +0
+
+## 1418519_WINNER  (ours vs cjxl: bytes -6.46%, ssim2 -1.6500)
+  shared (bx, by, strategy, channel) keys: 879
+
+  Per-strategy at SHARED (bx,by) positions:
+    strategy          n  qac_match  qac_diff  qac_mean_abs_diff   nz_Y_delta  nz_X_delta  nz_B_delta
+    ----------------------------------------------------------------------------------------------------
+    DCT8               52        52         0       0.000             +0         +0         +0
+    IDENTITY            2         2         0       0.000             +0         +0         +0
+    DCT16X16           15        14         1       0.067             +0         +0         +0
+    DCT32X32           46        45         1       0.022             +1        +13         +1
+    DCT16X8            22        22         0       0.000             +0         +0         +0
+    DCT8X16             8         8         0       0.000             +0         +0         +0
+    DCT32X16           21        20         1       0.048             +1         +2         +0
+    DCT16X32           26        25         1       0.038             +1         +3         -1
+    DCT4X8              6         6         0       0.000             +0         +0         +0
+    DCT8X4             23        23         0       0.000             +0         +0         +0
+    AFV0                9         9         0       0.000             +0         +0         +0
+    AFV1                8         8         0       0.000             +0         +0         +0
+    AFV2                7         7         0       0.000             +0         +0         +0
+    AFV3                8         8         0       0.000             +0         +0         +0
+    DCT64X64           34        34         0       0.000             +0         +0         +0
+    DCT64X32            2         2         0       0.000             +0         +0         +0
+    DCT32X64            4         4         0       0.000             +0         +0         +0
+    TOTAL             293       289         4           -             +3        +18         +0

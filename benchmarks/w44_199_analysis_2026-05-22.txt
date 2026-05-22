@@ -1,0 +1,106 @@
+# W44-199 Phase 1 per-block strategy analysis
+# Cells: 3637739 (worst loser) + 1418519 (winner baseline), e7 d=4.
+# Inputs: /tmp/w44_199_dumps/*/per_block_{ours,libjxl}.tsv
+
+
+## 3637739_LOSER
+
+  strategy       ours-fb cjxl-fb   delta   ours-qac cjxl-qac
+  ------------------------------------------------------------
+  DCT8               231     231      +0     7.01     7.01
+  IDENTITY             5       4      +1     6.60     6.50
+  DCT2X2              28      29      -1     6.39     6.41
+  DCT16X16            86      87      -1     7.31     7.28
+  DCT32X32            61      62      -1     7.74     7.68
+  DCT16X8            108     109      -1     7.02     7.03
+  DCT8X16            178     178      +0     6.94     6.94
+  DCT32X16            69      70      -1     7.61     7.57
+  DCT16X32            77      81      -4     7.57     7.59
+  DCT4X8              45      45      +0     5.58     5.58
+  DCT8X4              68      69      -1     6.22     6.23
+  AFV0                64      67      -3     6.66     6.72
+  AFV1                40      38      +2     6.40     6.29
+  AFV2                64      62      +2     6.59     6.58
+  AFV3                43      45      -2     6.37     6.40
+  DCT64X64             1       0      +1     8.00     0.00
+  DCT64X32             4       5      -1     7.75     7.60
+  DCT32X64             8       7      +1     7.75     7.86
+  TOTAL             1180    1189
+
+  total first-block positions:  ours=1180  cjxl=1189
+  shared positions: 1180  ours-only:    0  cjxl-only:    9
+  shared positions strategy-agree: 1161/1180 (98.4%)
+  top mismatched (ours -> cjxl) pairs at shared positions:
+    AFV1       -> AFV0           7
+    AFV0       -> AFV1           5
+    AFV2       -> AFV3           3
+    DCT64X64   -> DCT32X32       1
+    IDENTITY   -> DCT2X2         1
+    AFV3       -> AFV2           1
+    DCT32X64   -> DCT16X32       1
+
+## 1418519_WINNER
+
+  strategy       ours-fb cjxl-fb   delta   ours-qac cjxl-qac
+  ------------------------------------------------------------
+  DCT8                52      70     -18     6.75     6.43
+  IDENTITY             2       2      +0     8.00     8.00
+  DCT16X16            22      19      +3     6.41     7.16
+  DCT32X32            60      48     +12     7.77     7.71
+  DCT16X8             22      33     -11     7.41     6.52
+  DCT8X16              8      18     -10     7.12     6.78
+  DCT32X16            27      23      +4     7.11     7.52
+  DCT16X32            32      28      +4     7.69     7.64
+  DCT4X8               6       9      -3     5.00     4.67
+  DCT8X4              23      29      -6     5.91     5.66
+  AFV0                10      12      -2     6.70     6.17
+  AFV1                 8       9      -1     6.25     6.44
+  AFV2                 7       9      -2     7.29     6.67
+  AFV3                 8      10      -2     7.62     7.00
+  DCT64X64            34      34      +0     8.00     8.00
+  DCT64X32             2       5      -3     8.00     8.00
+  DCT32X64             5       8      -3     8.20     8.12
+  TOTAL              328     366
+
+  total first-block positions:  ours= 328  cjxl= 366
+  shared positions:  318  ours-only:   10  cjxl-only:   48
+  shared positions strategy-agree: 293/318 (92.1%)
+  top mismatched (ours -> cjxl) pairs at shared positions:
+    DCT32X16   -> DCT16X8        3
+    DCT32X32   -> DCT32X64       3
+    DCT32X32   -> DCT64X32       3
+    DCT32X32   -> DCT8X16        2
+    DCT16X32   -> DCT8X16        2
+    DCT16X16   -> DCT16X8        2
+    DCT16X16   -> DCT32X16       1
+    DCT16X16   -> DCT8X4         1
+    DCT16X32   -> DCT32X64       1
+    DCT16X16   -> DCT8X16        1
+    DCT16X16   -> DCT16X32       1
+    AFV0       -> AFV1           1
+    DCT32X16   -> AFV3           1
+    DCT16X16   -> DCT8           1
+    DCT16X32   -> DCT32X32       1
+
+## Cross-cell strategy ratio comparison (ours/cjxl)
+
+  strategy       3637739 ratio  1418519 ratio   diff (loser-winner)
+  -----------------------------------------------------------------
+  DCT8                  1.000            0.743       +0.257
+  IDENTITY              1.250            1.000       +0.250
+  DCT2X2                0.966            1.000       -0.034
+  DCT16X16              0.989            1.158       -0.169
+  DCT32X32              0.984            1.250       -0.266
+  DCT16X8               0.991            0.667       +0.324
+  DCT8X16               1.000            0.444       +0.556
+  DCT32X16              0.986            1.174       -0.188
+  DCT16X32              0.951            1.143       -0.192
+  DCT4X8                1.000            0.667       +0.333
+  DCT8X4                0.986            0.793       +0.192
+  AFV0                  0.955            0.833       +0.122
+  AFV1                  1.053            0.889       +0.164
+  AFV2                  1.032            0.778       +0.254
+  AFV3                  0.956            0.800       +0.156
+  DCT64X64                inf            1.000         +inf
+  DCT64X32              0.800            0.400       +0.400
+  DCT32X64              1.143            0.625       +0.518

@@ -36,14 +36,21 @@ static DUMP_STATE: Mutex<Option<DumpState>> = Mutex::new(None);
 struct DumpState {
     file: std::io::BufWriter<std::fs::File>,
     rows: usize,
+    dir: std::path::PathBuf,
 }
 
-/// Initialize the dump (once per process) and write the TSV header.
+/// Initialize the dump (or re-init if the env var now points to a different
+/// directory than the last opened state — useful when an example driver
+/// encodes multiple images in the same process and wants per-image dumps).
 #[cfg(feature = "std")]
 fn ensure_initialized(dir: &std::path::Path) {
     let mut guard = DUMP_STATE.lock().unwrap();
-    if guard.is_some() {
-        return;
+    if let Some(state) = guard.as_ref() {
+        if state.dir == dir {
+            return;
+        }
+        // Dir changed — flush old handle and re-init for the new dir.
+        // We intentionally drop the old state below.
     }
     if std::fs::create_dir_all(dir).is_err() {
         return;
@@ -62,7 +69,11 @@ fn ensure_initialized(dir: &std::path::Path) {
     // Tab-separated: bx,by,strategy_wire,channel,nzeros,qac
     let _ = writeln!(bw, "# W44-76 per-block dump (ours, libjxl-wire strategy)");
     let _ = writeln!(bw, "bx\tby\tstrategy\tchannel\tnzeros\tqac");
-    *guard = Some(DumpState { file: bw, rows: 0 });
+    *guard = Some(DumpState {
+        file: bw,
+        rows: 0,
+        dir: dir.to_path_buf(),
+    });
 }
 
 /// Append a single (block, channel) tokenization sample.

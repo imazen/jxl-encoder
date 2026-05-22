@@ -1808,6 +1808,19 @@ name = "w44_121_codec_wiki_d3_dump"
 path = "examples/w44_121_codec_wiki_d3_dump.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-199 Phase 1: 3637739 vs 1418519 per-block AC strategy + qac dump @
+# e7 d=4. W44-198 honest-stop ruled out discriminator-based fix for the
+# 3637739 cluster; this chunk tests Candidate (b) AC strategy selection
+# mechanism by comparing per-block strategy distributions between ours
+# (Zenjxl default) and cjxl (libjxl v0.12.0 with W44-76 dump patch) on
+# the worst-loser cell (3637739 e7 d=4) and the WINNER baseline (1418519
+# e7 d=4). Outputs benchmarks/w44_199_3637739_ac_dump_2026-05-22.tsv +
+# /tmp/w44_199_dumps/<image>_e7_d4_{ours,cjxl}/per_block_*.tsv.
+[[example]]
+name = "w44_199_3637739_ac_dump"
+path = "examples/w44_199_3637739_ac_dump.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
 # W44-104: probe whether bypassing W44-65/W44-68 DCT32+DCT64 suppression
 # on terminal-class content (via `with_dct_suppress_hint(Some(false))`)
 # recovers SSIM2 vs cjxl. Background: W44-103 dump found ours emits 0
