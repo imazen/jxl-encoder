@@ -999,6 +999,352 @@ fn find_best_split_variable(
     best_split
 }
 
+/// W44-180: incremental-histogram port of [`find_best_split_variable`].
+///
+/// libjxl reference: `enc_ma.cc:280-439` (`FindBestSplit`, the per-property
+/// `for prop in 0..num_properties` loop). The libjxl pattern:
+///   1. Pre-compute parent totals once: `counts[pred * max_symbols + tok]` and
+///      `tot_extra_bits[pred]` (one O(N · P) pass).
+///   2. For each property:
+///      a. Bucket samples by property value: `prop_value_used_count[i]`,
+///         `count_increase[i * max_symbols + sym]`,
+///         `extra_bits_increase[i]` per predictor (`enc_ma.cc:140-156`,
+///         `CollectExtraBitsIncrease`).
+///      b. Sweep i = first_used..last_used: transfer bucket `i` from
+///         `counts_above` → `counts_below`, then compute lcost / rcost
+///         from running histograms via `EstimateBits` (`enc_ma.cc:359-403`).
+///   3. The candidate split count is `last_used - first_used` (one per
+///      distinct property value), NOT a fixed quantile grid.
+///
+/// **Byte-identical preservation strategy**: this Rust port keeps the SAME
+/// 32-quantile candidate set as the pre-W44-180 code (the `values[split_idx-1]`
+/// formula), but evaluates each candidate's cost via running incremental
+/// histograms instead of re-scanning the subset. The candidates ARE a subset
+/// of libjxl's "every distinct value" sweep — we honour the existing
+/// quantile-coarsening for output stability, only replacing the inner cost
+/// computation with the libjxl-style incremental pattern.
+///
+/// Complexity:
+///   - Pre-W44-180: O(N · P · Q · 2)        — Q=32 quantiles × 2 sides ×
+///                                            re-scan
+///   - W44-180:     O(N · P + N log N + Q · S · P) — sort O(N log N) once,
+///                                            bucket O(N · P) once, then
+///                                            Q EstimateBits calls per side
+///                                            (S = histogram size, typically
+///                                            ≤ ~64 for DC tokens at e8+).
+///
+/// On terminal e8 d=0.5 (W44-175 baseline), `estimate_subset_cost_per_predictor`
+/// + `partition` were 31 % of single-thread CPU. The incremental pattern
+/// collapses both: histogram building is O(N · P) once per property (vs Q
+/// times in the old code), and partitioning happens only once at the end
+/// for the winning split.
+///
+/// Returns the SAME tuple shape as [`find_best_split_variable`].
+/// Hash-lock invariant: byte-identical output to the sequential path
+/// (verified via `cargo test --lib` + the 36/36 hash-lock fixtures).
+fn find_best_split_variable_incremental(
+    samples: &DcTreeSamples,
+    indices: &[usize],
+    max_token: u32,
+    current_predictor: u32,
+    threshold: f64,
+    predictor_set: PredictorSet,
+) -> Option<(usize, i32, Vec<usize>, Vec<usize>, u32, u32, f64)> {
+    if indices.len() < MIN_SAMPLES_PER_LEAF * 2 {
+        return None;
+    }
+    if !samples.has_variable_residuals() {
+        return None;
+    }
+
+    let pred_indices = predictor_set.predictor_indices();
+    if pred_indices.is_empty() {
+        return None;
+    }
+
+    // ─── Step 1: compute parent totals (mirrors libjxl enc_ma.cc:206-227) ───
+    //
+    // `true_max_token` is the maximum token value across the active predictor
+    // set on this subset — sets the histogram width for `estimate_bits`. We
+    // also accumulate `counts_total[pred * S + tok]` and
+    // `extra_bits_total[pred]` so the per-property sweep starts from the
+    // parent's totals (matches `counts_above = counts.data() + pred * S`
+    // initialization at `enc_ma.cc:353`).
+    let mut true_max_token: u32 = 0;
+    for &pred in pred_indices {
+        let pred_tokens = &samples.residual_tokens_per_predictor[pred as usize];
+        for &idx in indices {
+            let t = pred_tokens[idx];
+            if t > true_max_token {
+                true_max_token = t;
+            }
+        }
+    }
+    let s = (true_max_token + 1) as usize;
+    let _ = max_token; // parent-supplied; superseded by true_max_token per libjxl.
+
+    // Per-predictor totals laid out as [pred_slot * s + tok].
+    // `pred_slot` is the position in `pred_indices` (NOT the raw Predictor enum
+    // index), so the histogram is dense across the active set even for
+    // `PredictorSet::Best` (which only walks {Weighted, Gradient}).
+    let p = pred_indices.len();
+    let mut counts_total = vec![0u32; p * s];
+    let mut total_per_pred = vec![0u32; p];
+    let mut extra_bits_total = vec![0.0f64; p];
+
+    for (pred_slot, &pred_id) in pred_indices.iter().enumerate() {
+        let pred = pred_id as usize;
+        let tokens = &samples.residual_tokens_per_predictor[pred];
+        let base = pred_slot * s;
+        let mut total = 0u32;
+        let mut eb = 0.0f64;
+        for &idx in indices {
+            let tok = tokens[idx];
+            counts_total[base + tok as usize] += 1;
+            total += 1;
+            // HybridUint {4,1,2} extra bits — must match
+            // `estimate_subset_cost_per_predictor` exactly so the per-side
+            // costs sum back to the parent's base_per_pred values.
+            if tok >= GATHER_SPLIT {
+                let n_minus_split_exp =
+                    (tok - GATHER_SPLIT) / (GATHER_MSB_IN_TOKEN + GATHER_LSB_IN_TOKEN);
+                eb += (n_minus_split_exp as f64) + 2.0;
+            }
+        }
+        total_per_pred[pred_slot] = total;
+        extra_bits_total[pred_slot] = eb;
+    }
+
+    // Base cost = cost under current predictor (used to compute gain).
+    // Equivalent to `estimate_subset_cost_per_predictor(..)[current_predictor]`
+    // — we compute it from the totals we already built instead of doing a
+    // second O(N) pass. If `current_predictor` is NOT in the active set, the
+    // sequential path would have returned `INFINITY` for it and the gain
+    // would compare against +inf (always positive). Mirror that here.
+    let base_cost = match pred_indices
+        .iter()
+        .position(|&p_id| p_id == current_predictor)
+    {
+        Some(slot) => {
+            let base_offset = slot * s;
+            estimate_bits(
+                &counts_total[base_offset..base_offset + s],
+                total_per_pred[slot],
+            ) + extra_bits_total[slot]
+        }
+        None => f64::INFINITY,
+    };
+
+    let change_pred_penalty = 800.0 / (100.0 + threshold);
+    let pick_best = |costs: &[f64]| -> (f64, u32) {
+        let mut best_cost = f64::MAX;
+        let mut best_pred: u32 = pred_indices[0];
+        let cur_pred_is_weighted = current_predictor == crate::modular::Predictor::Weighted as u32;
+        for (slot, &pred_id) in pred_indices.iter().enumerate() {
+            let c = costs[slot];
+            if !c.is_finite() {
+                continue;
+            }
+            let mut penalty = 0.0;
+            if pred_id != current_predictor && !cur_pred_is_weighted {
+                penalty += change_pred_penalty;
+            }
+            if pred_id == crate::modular::Predictor::Weighted as u32 {
+                penalty += 1e-8;
+            }
+            if pred_id == crate::modular::Predictor::Zero as u32 {
+                penalty -= 1e-8;
+            }
+            if c + penalty < best_cost {
+                best_cost = c + penalty;
+                best_pred = pred_id;
+            }
+        }
+        (best_cost, best_pred)
+    };
+
+    type Candidate = (usize, i32, Vec<usize>, Vec<usize>, u32, u32, f64);
+
+    // ─── Step 2: per-property incremental scan ───
+    //
+    // Each property gets its own bucket allocation (small for Variable mode:
+    // 14 properties × P predictors × S tokens × |unique values| u32s — the
+    // largest term is the bucket grid, but it's sized to the property's
+    // actual distinct-value count plus indices, not to N).
+    //
+    // The parallelism shape matches the prior `scan_property`-by-prop_rank
+    // pattern so the tiebreaker stays identical (first property in
+    // `SPLIT_PROPERTIES_VARIABLE` order wins on equal net_gain).
+    let scan_property = |prop_rank: usize| -> Option<Candidate> {
+        let prop_idx = SPLIT_PROPERTIES_VARIABLE[prop_rank];
+        let props = &samples.props[prop_idx];
+
+        // Sort INDICES by property value (libjxl sorts samples themselves
+        // via `SplitTreeSamples`; we keep `indices` immutable and build a
+        // parallel sort permutation so the partition step at the end can
+        // produce the exact left/right vectors the sequential path produced).
+        //
+        // Stable sort: preserves original `indices` order on ties — matches
+        // the sequential partition's stability (Vec::partition preserves
+        // element order within each side).
+        let mut sorted: Vec<usize> = indices.to_vec();
+        sorted.sort_by_key(|&i| props[i]);
+
+        // Build the unique-values list (matches the pre-W44-180 sort+dedup).
+        // We sweep `sorted` once to extract unique values in ascending order.
+        let mut values: Vec<i32> = sorted.iter().map(|&i| props[i]).collect();
+        values.dedup(); // already sorted, dedup() leaves unique ascending.
+
+        if values.len() < 2 {
+            return None;
+        }
+        let num_quantiles = 32.min(values.len() - 1);
+        if num_quantiles == 0 {
+            return None;
+        }
+
+        // Generate quantile splitvals in ascending order. This is the SAME
+        // candidate set as the pre-W44-180 code: `values[split_idx-1]` where
+        // `split_idx = values.len() * (q+1) / (num_quantiles+1)`.
+        //
+        // We pre-collect them so we can sweep `sorted` once and accumulate
+        // into `counts_below` as the splitval boundary advances. Dedup on
+        // splitval values keeps the work tight (different `q` indices can
+        // collide on the same splitval when num_quantiles ~ values.len()).
+        let mut splitvals: Vec<(usize, i32)> = Vec::with_capacity(num_quantiles);
+        for q in 0..num_quantiles {
+            let split_idx = (values.len() * (q + 1)) / (num_quantiles + 1);
+            if split_idx == 0 || split_idx >= values.len() {
+                continue;
+            }
+            splitvals.push((q, values[split_idx - 1]));
+        }
+        if splitvals.is_empty() {
+            return None;
+        }
+
+        // Running histograms: counts_below grows, counts_above shrinks
+        // (libjxl `enc_ma.cc:353-355`, `enc_ma.cc:365-369`).
+        let mut counts_below = vec![0u32; p * s];
+        let mut counts_above = counts_total.clone();
+        let mut total_below = vec![0u32; p];
+        let mut total_above = total_per_pred.clone();
+        let mut eb_below = vec![0.0f64; p];
+        let mut eb_above = extra_bits_total.clone();
+
+        // Allocate per-predictor cost scratch (used by `pick_best`).
+        let mut left_costs = vec![0.0f64; p];
+        let mut right_costs = vec![0.0f64; p];
+
+        let mut prop_best_gain = 0.0f64;
+        let mut prop_best: Option<Candidate> = None;
+
+        // Sweep sorted samples in ascending prop_value, advancing through
+        // splitvals in lockstep. At each splitval boundary, compute the cost.
+        //
+        // `cursor`: next index in `sorted` to move from above → below.
+        let mut cursor = 0usize;
+        let n = sorted.len();
+
+        for &(_q, splitval) in &splitvals {
+            // Advance cursor: move all samples with props[sample] <= splitval
+            // from `above` to `below`. Mirrors libjxl `enc_ma.cc:359-369`
+            // (move bucket `i` from counts_above to counts_below); we
+            // collapse it into a single sample-stream sweep because we
+            // already have the sorted order.
+            while cursor < n {
+                let idx = sorted[cursor];
+                if props[idx] > splitval {
+                    break;
+                }
+                // Move this sample's contribution to all predictors from
+                // counts_above → counts_below.
+                for (pred_slot, &pred_id) in pred_indices.iter().enumerate() {
+                    let pred = pred_id as usize;
+                    let tok = samples.residual_tokens_per_predictor[pred][idx] as usize;
+                    let base = pred_slot * s;
+                    counts_below[base + tok] += 1;
+                    counts_above[base + tok] -= 1;
+                    total_below[pred_slot] += 1;
+                    total_above[pred_slot] -= 1;
+                    // Match `estimate_subset_cost_per_predictor` extra-bits
+                    // formula exactly.
+                    let tok_u32 = tok as u32;
+                    if tok_u32 >= GATHER_SPLIT {
+                        let n_minus_split_exp =
+                            (tok_u32 - GATHER_SPLIT) / (GATHER_MSB_IN_TOKEN + GATHER_LSB_IN_TOKEN);
+                        let eb_delta = (n_minus_split_exp as f64) + 2.0;
+                        eb_below[pred_slot] += eb_delta;
+                        eb_above[pred_slot] -= eb_delta;
+                    }
+                }
+                cursor += 1;
+            }
+
+            // Min-leaf gate: same as pre-W44-180 (left = cursor, right = n-cursor).
+            let left_count = cursor;
+            let right_count = n - cursor;
+            if left_count < MIN_SAMPLES_PER_LEAF || right_count < MIN_SAMPLES_PER_LEAF {
+                continue;
+            }
+
+            // Compute per-predictor costs from running histograms.
+            // Equivalent to `estimate_subset_cost_per_predictor` on the
+            // implicit left/right subsets, but at O(P · S) per call instead
+            // of O(N · P).
+            for pred_slot in 0..p {
+                let base = pred_slot * s;
+                left_costs[pred_slot] = estimate_bits(
+                    &counts_below[base..base + s],
+                    total_below[pred_slot],
+                ) + eb_below[pred_slot];
+                right_costs[pred_slot] = estimate_bits(
+                    &counts_above[base..base + s],
+                    total_above[pred_slot],
+                ) + eb_above[pred_slot];
+            }
+
+            let (lcost, lpred) = pick_best(&left_costs);
+            let (rcost, rpred) = pick_best(&right_costs);
+            let new_cost = lcost + rcost;
+            let gain = base_cost - new_cost;
+
+            // Same overhead constant as pre-W44-180 (see comment in
+            // `find_best_split_variable` for derivation).
+            let overhead = 60.0;
+            let net_gain = gain - overhead;
+
+            // Strict-> tiebreaker matches sequential code: first candidate
+            // (smaller `q`) wins on equal `net_gain`.
+            if net_gain > prop_best_gain {
+                prop_best_gain = net_gain;
+                // Reconstruct left/right vectors by partitioning indices the
+                // same way the sequential code did. We do this only ONCE per
+                // property (for the winning splitval) — that's the main
+                // O(N) savings vs the per-quantile partition.
+                let (left, right): (Vec<usize>, Vec<usize>) =
+                    indices.iter().copied().partition(|&i| props[i] <= splitval);
+                prop_best = Some((prop_idx, splitval, left, right, lpred, rpred, net_gain));
+            }
+        }
+        prop_best
+    };
+
+    let property_results: Vec<Option<Candidate>> =
+        crate::parallel::parallel_map(SPLIT_PROPERTIES_VARIABLE.len(), scan_property);
+
+    let mut best_gain = 0.0f64;
+    let mut best_split: Option<Candidate> = None;
+    for cand in property_results.into_iter().flatten() {
+        if cand.6 > best_gain {
+            best_gain = cand.6;
+            best_split = Some(cand);
+        }
+    }
+
+    best_split
+}
+
 /// Stage 7c: recursively build a DC tree with per-leaf best-predictor selection.
 ///
 /// Mirrors libjxl `FindBestSplit` BFS queue (`enc_ma.cc:177-525`) — at each
@@ -1030,7 +1376,24 @@ fn build_tree_recursive_variable(
     // default). enc_modular.cc:1166-1217 doesn't override.
     let threshold = 0.0f64;
 
-    if let Some((prop_idx, splitval, left_indices, right_indices, lpred, rpred, _gain)) =
+    // W44-180: default to incremental-histogram split scan (libjxl
+    // `enc_ma.cc:280-439` pattern, O(N · P + N log N + Q · S · P)).
+    // Env hook `JXL_W44_180_FORCE_LEGACY_DC_TREE_SPLIT=1` falls back to the
+    // pre-W44-180 per-quantile re-scan path for byte-equivalence diagnostics.
+    // The two paths MUST produce byte-identical tree shape on every input —
+    // the env hook exists only so a future agent can A/B-bisect if any cell
+    // shows divergence, NOT because the legacy path is preferred.
+    let use_legacy = {
+        #[cfg(feature = "std")]
+        {
+            std::env::var_os("JXL_W44_180_FORCE_LEGACY_DC_TREE_SPLIT").is_some()
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            false
+        }
+    };
+    let split = if use_legacy {
         find_best_split_variable(
             samples,
             indices,
@@ -1039,7 +1402,17 @@ fn build_tree_recursive_variable(
             threshold,
             predictor_set,
         )
-    {
+    } else {
+        find_best_split_variable_incremental(
+            samples,
+            indices,
+            max_token,
+            current_predictor,
+            threshold,
+            predictor_set,
+        )
+    };
+    if let Some((prop_idx, splitval, left_indices, right_indices, lpred, rpred, _gain)) = split {
         let lchild = build_tree_recursive_variable(
             samples,
             &left_indices,
@@ -1588,6 +1961,150 @@ mod tests {
         let (tree_best, nctx_best) = learn_dc_tree_best(&samples, 64);
         assert!(!tree_best.is_empty(), "Best mode: tree must not be empty");
         assert!(nctx_best >= 1, "Best mode: context count must be >= 1");
+    }
+
+    /// W44-180: `find_best_split_variable_incremental` must produce the SAME
+    /// (prop_idx, splitval, left_indices, right_indices, lpred, rpred) tuple
+    /// as the legacy `find_best_split_variable` on every input.
+    ///
+    /// The legacy path's tie-breaking and quantile-grid choices are part of
+    /// the contract — the incremental port only changes the per-candidate
+    /// cost-evaluation algorithm, not the candidate set or the reduction.
+    ///
+    /// This test exercises the equivalence on a small synthetic channel
+    /// (sufficient samples to get past `MIN_SAMPLES_PER_LEAF * 2 = 128` so
+    /// the split logic actually fires). The hash-lock fixtures and the
+    /// `examples/w44_180_inc_hist_ab.rs` bench cover the integration-level
+    /// invariant on real corpus images.
+    #[test]
+    fn test_find_best_split_variable_legacy_vs_incremental_byte_equivalent() {
+        // 32×32 channel with structured content so the splitter has actual
+        // beneficial splits to find (NUM_DC_PROPERTIES > 0 distinct property
+        // values per axis).
+        let mut channel = alloc::vec![alloc::vec![0i16; 32]; 32];
+        for (y, row) in channel.iter_mut().enumerate() {
+            for (x, v) in row.iter_mut().enumerate() {
+                *v = if x < 16 {
+                    (50 + (y as i16)) * (if x < 8 { 1 } else { 2 })
+                } else {
+                    (200 - (y as i16)) - (x as i16)
+                };
+            }
+        }
+        let quant_dc: [alloc::vec::Vec<alloc::vec::Vec<i16>>; 3] =
+            [channel.clone(), channel.clone(), channel];
+
+        let mut samples = DcTreeSamples::new();
+        gather_dc_samples_variable(&mut samples, &quant_dc);
+
+        // Get max_token consistently for both paths.
+        let max_token = samples
+            .residual_tokens_per_predictor
+            .iter()
+            .flat_map(|v| v.iter())
+            .copied()
+            .max()
+            .unwrap_or(0);
+
+        let indices: alloc::vec::Vec<usize> = (0..samples.num_samples).collect();
+
+        // Skip if too few samples for either path to attempt a split — both
+        // would return None, which is trivially equivalent.
+        if indices.len() < MIN_SAMPLES_PER_LEAF * 2 {
+            return;
+        }
+
+        // Test both predictor sets (Best at e8, Variable at e9+).
+        for predictor_set in [PredictorSet::Best, PredictorSet::Variable] {
+            // current_predictor follows the same seed as `build_tree_recursive_variable`:
+            // first entry in `pred_indices` for the predictor set.
+            let current_predictor = predictor_set.predictor_indices()[0];
+
+            let legacy = find_best_split_variable(
+                &samples,
+                &indices,
+                max_token,
+                current_predictor,
+                0.0,
+                predictor_set,
+            );
+            let inc = find_best_split_variable_incremental(
+                &samples,
+                &indices,
+                max_token,
+                current_predictor,
+                0.0,
+                predictor_set,
+            );
+
+            match (&legacy, &inc) {
+                (None, None) => continue,
+                (Some(_), None) | (None, Some(_)) => {
+                    panic!(
+                        "W44-180 divergence (predictor_set={:?}): one path returned a split, \
+                         the other returned None. legacy={:?} inc={:?}",
+                        predictor_set,
+                        legacy.as_ref().map(|c| (c.0, c.1, c.4, c.5)),
+                        inc.as_ref().map(|c| (c.0, c.1, c.4, c.5)),
+                    );
+                }
+                (Some(l), Some(r)) => {
+                    assert_eq!(
+                        l.0, r.0,
+                        "W44-180 prop_idx divergence (predictor_set={:?}): legacy={} inc={}",
+                        predictor_set, l.0, r.0
+                    );
+                    assert_eq!(
+                        l.1, r.1,
+                        "W44-180 splitval divergence (predictor_set={:?}, prop={}): \
+                         legacy={} inc={}",
+                        predictor_set, l.0, l.1, r.1
+                    );
+                    assert_eq!(
+                        l.2, r.2,
+                        "W44-180 left_indices divergence (predictor_set={:?})",
+                        predictor_set
+                    );
+                    assert_eq!(
+                        l.3, r.3,
+                        "W44-180 right_indices divergence (predictor_set={:?})",
+                        predictor_set
+                    );
+                    assert_eq!(
+                        l.4, r.4,
+                        "W44-180 lpred divergence (predictor_set={:?})",
+                        predictor_set
+                    );
+                    assert_eq!(
+                        l.5, r.5,
+                        "W44-180 rpred divergence (predictor_set={:?})",
+                        predictor_set
+                    );
+                    // gain is f64 — allow microscopic float jitter from the
+                    // re-ordering of additions (the running update accumulates
+                    // bucket additions in sorted-by-property order; the legacy
+                    // re-scan accumulates in original-index order). Both
+                    // produce the SAME unique-symbol-count histograms, so
+                    // `estimate_bits` returns the same value, but the per-
+                    // candidate extra_bits accumulation order differs.
+                    // 1e-9 relative tolerance is well below the gain
+                    // discrimination threshold (split decisions hinge on
+                    // gain differences of bits, ~order 1-100).
+                    let abs_diff = (l.6 - r.6).abs();
+                    let rel_diff = abs_diff / l.6.abs().max(r.6.abs()).max(1e-9);
+                    assert!(
+                        abs_diff < 1e-6 || rel_diff < 1e-9,
+                        "W44-180 net_gain divergence (predictor_set={:?}): \
+                         legacy={:.9} inc={:.9} (abs_diff={:.3e}, rel_diff={:.3e})",
+                        predictor_set,
+                        l.6,
+                        r.6,
+                        abs_diff,
+                        rel_diff
+                    );
+                }
+            }
+        }
     }
 }
 

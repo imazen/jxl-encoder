@@ -1302,6 +1302,15 @@ required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 name = "w44_178_bisect_pipeline"
 path = "examples/w44_178_bisect_pipeline.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
+# W44-180: paired A/B for the incremental-histogram DC tree split scan port
+# (legacy per-quantile re-scan vs libjxl-style running histogram update). Same
+# multi-thread default-rayon-pool measurement methodology as W44-175.
+[[example]]
+name = "w44_180_inc_hist_ab"
+path = "examples/w44_180_inc_hist_ab.rs"
+required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
+
 [[example]]
 name = "w44_20_codec_wiki_coverage"
 path = "examples/w44_20_codec_wiki_coverage.rs"
