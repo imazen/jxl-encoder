@@ -16,11 +16,11 @@ use super::quant;
 /// Inverse of the color factor used in CfL ratio conversion.
 /// `ytox_ratio(x) = x * K_INV_COLOR_FACTOR`
 /// `ytob_ratio(b) = 1.0 + b * K_INV_COLOR_FACTOR`
-const K_INV_COLOR_FACTOR: f32 = 1.0 / 84.0;
+pub(crate) const K_INV_COLOR_FACTOR: f32 = 1.0 / 84.0;
 
 /// Regularization multiplier for AC coefficient fitting.
 /// libjxl uses 1e-9 (essentially no regularization). Matches libjxl.
-const K_DISTANCE_MULTIPLIER_AC: f32 = 1e-9;
+pub(crate) const K_DISTANCE_MULTIPLIER_AC: f32 = 1e-9;
 
 /// Convert a ytox i8 value to the ratio used for CfL subtraction.
 #[inline]

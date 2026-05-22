@@ -628,22 +628,22 @@ impl AcStrategyMap {
 
 /// Channel offsets for pixel-domain loss masking.
 /// From libjxl enc_ac_strategy.cc:446
-const MASK_CHANNEL_OFFSET: [f32; 3] = [12.0, 0.0, 4.0];
+pub(crate) const MASK_CHANNEL_OFFSET: [f32; 3] = [12.0, 0.0, 4.0];
 
 /// Channel multipliers for pixel-domain loss (8th power).
 /// From libjxl enc_ac_strategy.cc:479
 /// Pre-computed: 8.2^8 ≈ 2.088e7, 1.0^8 = 1.0, 1.03^8 ≈ 1.267
-const CHANNEL_MUL: [f64; 3] = [
+pub(crate) const CHANNEL_MUL: [f64; 3] = [
     20882706.4655936, // X channel: 8.2^8
     1.0,              // Y channel: 1.0^8
     1.26677008064,    // B channel: 1.03^8
 ];
 
 /// Distance scaling exponents from libjxl enc_ac_strategy.cc:1115-1120
-const K_BIAS: f32 = 0.137_317_43;
-const K_POW_INFO_LOSS: f32 = 0.336_778_07;
-const K_POW_ZEROS_MUL: f32 = 0.509_909_3;
-const K_POW_COST_DELTA: f32 = 0.367_029_4;
+pub(crate) const K_BIAS: f32 = 0.137_317_43;
+pub(crate) const K_POW_INFO_LOSS: f32 = 0.336_778_07;
+pub(crate) const K_POW_ZEROS_MUL: f32 = 0.509_909_3;
+pub(crate) const K_POW_COST_DELTA: f32 = 0.367_029_4;
 
 /// Constants for coefficient-domain mode (libjxl-tiny style, not distance-scaled).
 /// Order: (info_loss_mul, cost_delta, zeros_mul) — matches compute_scaled_constants output.

@@ -18,7 +18,9 @@ pub(crate) mod ac_strategy;
 mod ac_strategy_search;
 pub(crate) mod adaptive_quant;
 mod afv;
-mod bitstream;
+// W44-211: `pub(crate)` so `crate::tuning::dc_tree` can re-export
+// `DC_TREE_VARIABLE_TRIAL_MIN_EFFORT` / `_PREDICTOR_FULL_MIN_EFFORT`.
+pub(crate) mod bitstream;
 mod block_extract;
 #[cfg(feature = "butteraugli-loop")]
 pub(crate) mod butteraugli_loop;

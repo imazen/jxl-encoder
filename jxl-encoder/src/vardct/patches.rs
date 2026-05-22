@@ -45,42 +45,42 @@ fn safe_trunc_to_i32(val: f32) -> i32 {
 const PATCH_FRAME_REFERENCE_ID: u32 = 3;
 
 /// Maximum patch dimension (pixels).
-const MAX_PATCH_SIZE: usize = 32;
+pub(crate) const MAX_PATCH_SIZE: usize = 32;
 
 /// Grid scan block size for flatness detection.
-const PATCH_SIDE: usize = 4;
+pub(crate) const PATCH_SIDE: usize = 4;
 
 /// Weighted XYB distance threshold for background flood-fill.
-const SIMILAR_THRESHOLD: f32 = 0.8;
+pub(crate) const SIMILAR_THRESHOLD: f32 = 0.8;
 
 /// Weighted XYB distance threshold for border color similarity.
-const VERY_SIMILAR_THRESHOLD: f32 = 0.03;
+pub(crate) const VERY_SIMILAR_THRESHOLD: f32 = 0.03;
 
 /// Maximum BFS distance from seed for background detection.
-const DISTANCE_LIMIT: usize = 50;
+pub(crate) const DISTANCE_LIMIT: usize = 50;
 
 /// Minimum occurrences for a patch to be worth encoding.
-const MIN_PATCH_OCCURRENCES: usize = 2;
+pub(crate) const MIN_PATCH_OCCURRENCES: usize = 2;
 
 /// Minimum size (in pixels) of the largest patch to enable patches.
-const MIN_MAX_PATCH_SIZE: usize = 20;
+pub(crate) const MIN_MAX_PATCH_SIZE: usize = 20;
 
 /// Bin packing slackness factor.
-const BIN_PACKING_SLACKNESS: f32 = 1.05;
+pub(crate) const BIN_PACKING_SLACKNESS: f32 = 1.05;
 
 /// XYB channel dequantization constants (quantize float patch pixels to i8).
-const CHANNEL_DEQUANT_XYB: [f32; 3] = [0.01615, 0.08875, 0.1922];
+pub(crate) const CHANNEL_DEQUANT_XYB: [f32; 3] = [0.01615, 0.08875, 0.1922];
 
 /// XYB channel weights for distance computation.
-const CHANNEL_WEIGHTS_XYB: [f32; 3] = [30.0, 3.0, 1.0];
+pub(crate) const CHANNEL_WEIGHTS_XYB: [f32; 3] = [30.0, 3.0, 1.0];
 
 /// RGB channel dequantization constants for non-XYB (lossless) patches.
 /// From libjxl: kChannelDequant when !is_xyb = {20/255, 22/255, 20/255}.
-const CHANNEL_DEQUANT_RGB: [f32; 3] = [20.0 / 255.0, 22.0 / 255.0, 20.0 / 255.0];
+pub(crate) const CHANNEL_DEQUANT_RGB: [f32; 3] = [20.0 / 255.0, 22.0 / 255.0, 20.0 / 255.0];
 
 /// RGB channel weights for non-XYB (lossless) patches.
 /// From libjxl: kChannelWeights when !is_xyb = {0.017*255, 0.02*255, 0.017*255}.
-const CHANNEL_WEIGHTS_RGB: [f32; 3] = [0.017 * 255.0, 0.02 * 255.0, 0.017 * 255.0];
+pub(crate) const CHANNEL_WEIGHTS_RGB: [f32; 3] = [0.017 * 255.0, 0.02 * 255.0, 0.017 * 255.0];
 
 /// Colorspace-dependent constants for patch detection.
 struct PatchColorspaceInfo {
@@ -108,7 +108,7 @@ impl PatchColorspaceInfo {
 const NUM_PATCH_CONTEXTS: usize = 10;
 
 /// Minimum neighbor ratio for screenshot-like blocks (8 of 9).
-const SCREENSHOT_FLAT_NEIGHBOR_RATIO: usize = 8;
+pub(crate) const SCREENSHOT_FLAT_NEIGHBOR_RATIO: usize = 8;
 
 /// Minimum quantized value peak for a valid patch.
 ///
@@ -120,13 +120,13 @@ const SCREENSHOT_FLAT_NEIGHBOR_RATIO: usize = 8;
 /// (trial-encodes the reference frame, requires 2× savings/overhead ratio) is
 /// what actually prevents the looser threshold from regressing photo content
 /// where the extra accepted patches would not amortize their overhead.
-const MIN_PEAK: i32 = 1;
+pub(crate) const MIN_PEAK: i32 = 1;
 
 /// Radius for has_similar spatial consistency check.
-const HAS_SIMILAR_RADIUS: usize = 2;
+pub(crate) const HAS_SIMILAR_RADIUS: usize = 2;
 
 /// Threshold for has_similar check.
-const HAS_SIMILAR_THRESHOLD: f32 = 0.03;
+pub(crate) const HAS_SIMILAR_THRESHOLD: f32 = 0.03;
 
 /// Bytes-per-patch-pixel savings constant for the lossless
 /// [`PatchesData::is_cost_effective_lossless`] gate (RFC#45 lossless
@@ -173,7 +173,7 @@ const HAS_SIMILAR_THRESHOLD: f32 = 0.03;
 /// 1.81 (imac_g3) — the 3 imac entries are smooth-dark-UI heavy and
 /// gain the most from the lossless-shape encoder; the other 5 are
 /// near-parity. Mean overshoot 1.32×.
-const SAVINGS_BYTES_PER_PIXEL_LOSSLESS: f64 = 0.35;
+pub(crate) const SAVINGS_BYTES_PER_PIXEL_LOSSLESS: f64 = 0.35;
 
 // ── Calibration Stats Sink ────────────────────────────────────────────────────
 //

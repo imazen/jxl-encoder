@@ -115,16 +115,16 @@ pub struct VarDctOutput {
 /// Squeeze quality factor (libjxl `enc_modular.cc:82`).
 /// "Decrease this number for higher quality."
 #[allow(dead_code)]
-const SQUEEZE_QUALITY_FACTOR_CONST: f32 = 0.35;
+pub(crate) const SQUEEZE_QUALITY_FACTOR_CONST: f32 = 0.35;
 
 /// Squeeze luma factor (libjxl `enc_modular.cc:85`).
 /// "Decrease this number for higher quality luma."
 #[allow(dead_code)]
-const SQUEEZE_LUMA_FACTOR_CONST: f32 = 1.1;
+pub(crate) const SQUEEZE_LUMA_FACTOR_CONST: f32 = 1.1;
 
 /// Length of the per-shift quantization table.
 #[allow(dead_code)]
-const SQUEEZE_LUMA_QTABLE_LEN: usize = 16;
+pub(crate) const SQUEEZE_LUMA_QTABLE_LEN: usize = 16;
 
 /// Per-shift quantization multipliers for the luma (and "anything
 /// non-chroma" — e.g. alpha) channels in the responsive=1 modular
@@ -137,7 +137,7 @@ const SQUEEZE_LUMA_QTABLE_LEN: usize = 16;
 /// integer rounding) quickly — that is where the responsive=1
 /// compression win on alpha comes from.
 #[allow(dead_code)]
-const SQUEEZE_LUMA_QTABLE: [f32; SQUEEZE_LUMA_QTABLE_LEN] = [
+pub(crate) const SQUEEZE_LUMA_QTABLE: [f32; SQUEEZE_LUMA_QTABLE_LEN] = [
     163.84, 81.92, 40.96, 20.48, 10.24, 5.12, 2.56, 1.28, 0.64, 0.32, 0.16, 0.08, 0.04, 0.02, 0.01,
     0.005,
 ];
@@ -156,7 +156,7 @@ const SQUEEZE_LUMA_QTABLE: [f32; SQUEEZE_LUMA_QTABLE_LEN] = [
 /// screenshot/photo split (`vardct_gpu_dropped_optimizations_resurrection_2026-05-17.md`,
 /// item #3) and is empirically derived from CID22 (photos median ≈ 10–40)
 /// vs the gb82-sc screenshot corpus (medians ≈ 110–180).
-const CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD: f32 = 95.0;
+pub(crate) const CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD: f32 = 95.0;
 
 /// W44-65 default-on DCT64-suppress discriminator. **Tighter** than
 /// [`CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD`] (`> 95`) because the
@@ -186,7 +186,7 @@ const CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD: f32 = 95.0;
 /// because they're opt-in (`content_aware_entropy_mul`) so a 95-99.5
 /// false-positive on windows95-class is a deliberate caller choice
 /// rather than a default-behaviour regression.
-const W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD: f32 = 99.5;
+pub(crate) const W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD: f32 = 99.5;
 
 /// W44-29 high-distance smooth-photo discriminator on `median(mask1x1)`.
 /// Smooth photos cluster in the 10-40 range per the CID22 medians cited
@@ -197,7 +197,7 @@ const W44_65_DCT_SUPPRESS_MEDIAN_THRESHOLD: f32 = 99.5;
 /// thresholds is the "ambiguous" band where neither gate fires — the
 /// content is either mixed photo+text or a noisy photo, and we'd rather
 /// preserve the libjxl reference tuple than over-fit either direction.
-const HIGH_D_PHOTO_SMOOTH_THRESHOLD: f32 = 50.0;
+pub(crate) const HIGH_D_PHOTO_SMOOTH_THRESHOLD: f32 = 50.0;
 
 /// W44-91 zenanalyze-proxy upper bound on `median(mask1x1)` for the
 /// **textured colourful photo** sub-band. The W44-79 follow-on identified
@@ -223,20 +223,20 @@ const HIGH_D_PHOTO_SMOOTH_THRESHOLD: f32 = 50.0;
 /// gate: low colourfulness or high fcbr). See
 /// `benchmarks/w44_91_zenanalyze_dispatch_2026-05-19.{tsv,meta}` for the
 /// per-image proxy values + paired A/B sweep evidence.
-const HIGH_D_PHOTO_W44_91_MASK_UPPER: f32 = 80.0;
+pub(crate) const HIGH_D_PHOTO_W44_91_MASK_UPPER: f32 = 80.0;
 
 /// W44-91 zenanalyze-proxy upper bound on `distance`. Above this the
 /// W44-79 hint-true measurement regressed 1189261 by +560 B at d=6
 /// (vs -679/-452/-319 B saves at d=3/4/5). The d=5 cap protects the
 /// d=6 regression from the auto-fire path.
-const HIGH_D_PHOTO_W44_91_MAX_DISTANCE: f32 = 5.0;
+pub(crate) const HIGH_D_PHOTO_W44_91_MAX_DISTANCE: f32 = 5.0;
 
 /// W44-91 zenanalyze-proxy minimum on Hasler-Süsstrunk M3 colourfulness
 /// computed over sRGB u8 source pixels (matches zenanalyze tier1.rs
 /// `M3 = sqrt(σ_rg² + σ_yb²) + 0.3 * sqrt(μ_rg² + μ_yb²)` exactly up to
 /// FP precision). Verified: 1189261 = 98.84 (passes), 297394 = 103.70
 /// (passes — but stopped by the fcbr gate below).
-const W44_91_M3_COLOURFULNESS_MIN: f32 = 80.0;
+pub(crate) const W44_91_M3_COLOURFULNESS_MIN: f32 = 80.0;
 
 /// W44-91 zenanalyze-proxy maximum on per-8×8-block flat-color-block
 /// ratio. A block is "flat" when its per-channel sRGB u8 range (max-min)
@@ -244,7 +244,7 @@ const W44_91_M3_COLOURFULNESS_MIN: f32 = 80.0;
 /// Verified: 1189261 = 0.34 % (passes), 297394 = 9.57 % (fails →
 /// 297394 stays on the libjxl reference table). All 6 W44-78
 /// regression-band images have fcbr ≥ 0.89 %, all failing this gate.
-const W44_91_FCBR_MAX: f32 = 0.01;
+pub(crate) const W44_91_FCBR_MAX: f32 = 0.01;
 
 /// W44-96 sub-discriminator on `ZenanalyzeProxies::edge_density` for the
 /// **variant Z DCT32X32 lift** within the W44-29 firing class.
@@ -267,7 +267,7 @@ const W44_91_FCBR_MAX: f32 = 0.01;
 /// The threshold (0.7) sits in the gap between 0.6332 (7062219, REJECT)
 /// and 0.8766 (1531677, WANT). Paired with [`W44_96_FCBR_MAX`] for
 /// double-safety against false-fires on unseen images.
-const W44_96_EDGE_DENSITY_MIN: f32 = 0.7;
+pub(crate) const W44_96_EDGE_DENSITY_MIN: f32 = 0.7;
 
 /// W44-96 sub-discriminator on `ZenanalyzeProxies::flat_color_block_ratio`
 /// for the variant Z DCT32X32 lift. Both WANT-Z images have fcbr=0.0
@@ -275,7 +275,7 @@ const W44_96_EDGE_DENSITY_MIN: f32 = 0.7;
 /// images have fcbr ≥ 0.011. The 0.01 threshold also matches the W44-91
 /// fcbr gate exactly — semantically these are the SAME "textured, not
 /// flat-color" predicate.
-const W44_96_FCBR_MAX: f32 = 0.01;
+pub(crate) const W44_96_FCBR_MAX: f32 = 0.01;
 
 /// W44-96 minimum distance for the variant Z lift sub-dispatch. Set to
 /// 4.5 to cover the W44-95 measured wins at d∈{5, 6} on {1420710,
@@ -283,7 +283,7 @@ const W44_96_FCBR_MAX: f32 = 0.01;
 /// task identifies it as a W44-95 regression cell — but since 3637739
 /// has mask1x1=75.83 > 50 it doesn't fire W44-29 at all, so the
 /// distance gate here is belt-and-suspenders).
-const W44_96_VARIANT_Z_MIN_DISTANCE: f32 = 4.5;
+pub(crate) const W44_96_VARIANT_Z_MIN_DISTANCE: f32 = 4.5;
 
 /// W44-166 (Smart-Zenjxl chunk 3 — B1 candidate): minimum `mask1x1_p25`
 /// to admit a high-mask photo (e.g. 1418519) to the W44-96 variant Z
@@ -333,7 +333,7 @@ pub const W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN: f32 = 85.0;
 /// on the REJECT side. Errs toward the WANT side: a hypothetical
 /// unseen image with m3 ∈ [20, 25] stays on the default variant Z
 /// table (safer for SSIM2).
-const W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN: f32 = 25.0;
+pub(crate) const W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN: f32 = 25.0;
 
 /// W44-156 distance threshold ABOVE which the d-high variant Z table
 /// chain ([`crate::effort::EntropyMulTable::high_d_photo_smooth_suppressed_z_d_high`],
@@ -372,7 +372,7 @@ const W44_98_VARIANT_Z_HIGH_COLOUR_M3_MIN: f32 = 25.0;
 /// **Env hook**: `__JXL_W44_156_THRESHOLD` overrides this constant at
 /// runtime for A/B benching. `0.0` (disable) keeps the W44-154 behaviour
 /// at every distance (no d-high split). Production default = 5.5.
-const W44_156_VARIANT_Z_D_HIGH_THRESHOLD: f32 = 5.5;
+pub(crate) const W44_156_VARIANT_Z_D_HIGH_THRESHOLD: f32 = 5.5;
 
 /// W44-124 auto-discriminator: minimum `m3_colourfulness` to AUTO-fire the
 /// W44-123 [`VarDctEncoder::dct32_keep_hint`] lever when the caller does
@@ -416,7 +416,7 @@ const W44_156_VARIANT_Z_D_HIGH_THRESHOLD: f32 = 5.5;
 /// the auto-fire to `target_distance ∈ [2.0, 3.5]`. Explicit opt-in via
 /// `StrategyOverrides { dct32_keep_hint: Some(true) }` bypasses the
 /// distance gate.
-const W44_124_DCT32_KEEP_M3_MIN: f32 = 60.0;
+pub(crate) const W44_124_DCT32_KEEP_M3_MIN: f32 = 60.0;
 
 /// W44-124 auto-discriminator: maximum `edge_density` to AUTO-fire the
 /// W44-123 [`VarDctEncoder::dct32_keep_hint`] lever. Belt-and-suspenders
@@ -432,7 +432,7 @@ const W44_124_DCT32_KEEP_M3_MIN: f32 = 60.0;
 /// content), so even the colourful 1189261 (m3=98.84) is correctly
 /// rejected by this gate (ed=0.4895). Belt-and-suspenders against
 /// false-fires on unseen photo content.
-const W44_124_DCT32_KEEP_EDGE_DENSITY_MAX: f32 = 0.05;
+pub(crate) const W44_124_DCT32_KEEP_EDGE_DENSITY_MAX: f32 = 0.05;
 
 /// W44-135 (2026-05-20): minimum `target_distance` at which the W44-124
 /// auto-discriminator is allowed to fire.
@@ -1034,7 +1034,7 @@ pub const W44_124_DCT32_KEEP_AUTO_MAX_DISTANCE: f32 = 3.5;
 /// `build_codes` phases save 2-4 % bytes vs the pre-computed static
 /// codes — a poor trade against ~30 % wall-clock savings
 /// (`benchmarks/lossy_phase_baseline_low_effort_2026-05-19.tsv`).
-const SINGLE_PASS_ENTROPY_SMOOTH_PHOTO_MAX_MEDIAN: f32 = 50.0;
+pub(crate) const SINGLE_PASS_ENTROPY_SMOOTH_PHOTO_MAX_MEDIAN: f32 = 50.0;
 
 /// W44-87 single-pass-entropy dispatch — maximum effort at which the
 /// `Auto` policy will flip to single-pass. Bound matches the W38
@@ -1044,14 +1044,14 @@ const SINGLE_PASS_ENTROPY_SMOOTH_PHOTO_MAX_MEDIAN: f32 = 50.0;
 /// entropy savings stop being the largest knob. Keeping the gate
 /// at `<= 5` also dodges the e7+ `try_dct64` / patches features
 /// which require the two-pass plumbing.
-const SINGLE_PASS_ENTROPY_MAX_EFFORT: u8 = 5;
+pub(crate) const SINGLE_PASS_ENTROPY_MAX_EFFORT: u8 = 5;
 
 /// W44-87 single-pass-entropy dispatch — maximum distance at which
 /// the `Auto` policy will flip to single-pass. At `d > 1.0` the
 /// per-image-tuned codes start saving > 4 % bytes (the histogram
 /// shifts as quantization coarsens), tilting the trade back toward
 /// two-pass on the typical smooth photo.
-const SINGLE_PASS_ENTROPY_MAX_DISTANCE: f32 = 1.0;
+pub(crate) const SINGLE_PASS_ENTROPY_MAX_DISTANCE: f32 = 1.0;
 
 /// W44-29 minimum distance for the auto smooth-photo gate.
 ///
@@ -1143,7 +1143,7 @@ const SINGLE_PASS_ENTROPY_MAX_DISTANCE: f32 = 1.0;
 /// `benchmarks/w44_91_zenanalyze_dispatch_2026-05-19.tsv` (reproducer:
 /// `cargo run --release -p jxl-encoder --features parallel --example
 /// w44_91_dispatch_ab`).
-const HIGH_D_PHOTO_MIN_DISTANCE: f32 = 3.0;
+pub(crate) const HIGH_D_PHOTO_MIN_DISTANCE: f32 = 3.0;
 
 /// W44-150: minimum `mask1x1` 25th-percentile to ADMIT a non-screenshot
 /// photo to the W44-117 EPF sharpness seed (in addition to the W44-118
@@ -1368,7 +1368,7 @@ pub const W44_152_W44_151_MAX_DISTANCE: f32 = 5.0;
 /// 60, the worst case is still byte-identical output (the patches
 /// scan runs and produces empty `PatchesData`) — only the wall-clock
 /// win disappears for that image.
-const PATCHES_DISPATCH_BLOCK_MASK_THRESHOLD: f32 = 60.0;
+pub(crate) const PATCHES_DISPATCH_BLOCK_MASK_THRESHOLD: f32 = 60.0;
 
 /// W38-2 pixel-loss dispatch threshold on the raw per-pixel `median(mask1x1)`
 /// (the same statistic the content-aware entropy_mul dispatch at W22-1
@@ -1397,7 +1397,7 @@ const PATCHES_DISPATCH_BLOCK_MASK_THRESHOLD: f32 = 60.0;
 /// strategy pick change (the loss term is skipped). The W22-1
 /// content_aware_entropy_mul precedent suggests this is a small
 /// effect at e5 where the strategy search is already shallow.
-const PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD: f32 = 80.0;
+pub(crate) const PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD: f32 = 80.0;
 
 /// W38-2 pixel-loss dispatch predicate: returns `true` when the
 /// per-image `median(mask1x1)` exceeds

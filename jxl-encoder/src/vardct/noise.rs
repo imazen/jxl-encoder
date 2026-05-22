@@ -22,10 +22,10 @@ use crate::error::Result;
 pub const NUM_NOISE_POINTS: usize = 8;
 
 /// Precision for noise parameter encoding (10 bits → 1024).
-const NOISE_PRECISION: f32 = 1024.0;
+pub(crate) const NOISE_PRECISION: f32 = 1024.0;
 
 /// Maximum encodable noise value.
-const NOISE_LUT_MAX: f32 = 1023.4999 / NOISE_PRECISION;
+pub(crate) const NOISE_LUT_MAX: f32 = 1023.4999 / NOISE_PRECISION;
 
 /// Noise parameters: an 8-point lookup table mapping intensity to noise level.
 #[derive(Debug, Clone)]
@@ -754,25 +754,25 @@ pub fn noise_quality_coef(distance: f32) -> f32 {
 
 /// Photons absorbed per lx·s per μm² under a daylight-like spectrum.
 /// <https://www.strollswithmydog.com/effective-quantum-efficiency-of-sensor/>
-const PHOTONS_PER_LX_S_PER_UM2: f32 = 11260.0;
+pub(crate) const PHOTONS_PER_LX_S_PER_UM2: f32 = 11260.0;
 
 /// Order-of-magnitude effective quantum efficiency for 2010-2020 cameras
 /// after Colour Filter Array (CFA) attenuation.
-const EFFECTIVE_QUANTUM_EFFICIENCY: f32 = 0.20;
+pub(crate) const EFFECTIVE_QUANTUM_EFFICIENCY: f32 = 0.20;
 
 /// Photo response non-uniformity (PRNU) — pixel-to-pixel sensitivity
 /// variation.
-const PHOTO_RESPONSE_NON_UNIFORMITY: f32 = 0.005;
+pub(crate) const PHOTO_RESPONSE_NON_UNIFORMITY: f32 = 0.005;
 
 /// Input-referred read noise, in electrons RMS.
-const INPUT_REFERRED_READ_NOISE: f32 = 3.0;
+pub(crate) const INPUT_REFERRED_READ_NOISE: f32 = 3.0;
 
 /// Sensor area in μm² — assumes a 35 mm full-frame sensor (36 × 24 mm).
-const SENSOR_AREA_UM2: f32 = 36_000.0 * 24_000.0;
+pub(crate) const SENSOR_AREA_UM2: f32 = 36_000.0 * 24_000.0;
 
 /// Opsin absorbance bias for the Y channel — matches
 /// `lib/jxl/cms/opsin_params.h::kOpsinAbsorbanceBias[1]`.
-const OPSIN_ABSORBANCE_BIAS_Y: f32 = 0.0037930732552754493;
+pub(crate) const OPSIN_ABSORBANCE_BIAS_Y: f32 = 0.0037930732552754493;
 
 #[inline]
 fn square(x: f32) -> f32 {

@@ -22,16 +22,16 @@ use crate::error::Result;
 use alloc::sync::Arc;
 
 /// Constants from libjxl epf.h
-const K_INV_SIGMA_NUM: f32 = -1.171_572_9;
+pub(crate) const K_INV_SIGMA_NUM: f32 = -1.171_572_9;
 
 /// Default EPF parameters from libjxl loop_filter.cc
-const EPF_QUANT_MUL: f32 = 0.46;
-const EPF_PASS0_SIGMA_SCALE: f32 = 0.9;
-const EPF_PASS2_SIGMA_SCALE: f32 = 6.5;
-const EPF_BORDER_SAD_MUL: f32 = 2.0 / 3.0;
+pub(crate) const EPF_QUANT_MUL: f32 = 0.46;
+pub(crate) const EPF_PASS0_SIGMA_SCALE: f32 = 0.9;
+pub(crate) const EPF_PASS2_SIGMA_SCALE: f32 = 6.5;
+pub(crate) const EPF_BORDER_SAD_MUL: f32 = 2.0 / 3.0;
 
 /// Channel importance weights for SAD computation
-const EPF_CHANNEL_SCALE: [f32; 3] = [40.0, 5.0, 3.5];
+pub(crate) const EPF_CHANNEL_SCALE: [f32; 3] = [40.0, 5.0, 3.5];
 
 /// Default per-block sharpness emitted by [`uniform_default_sharpness_map`]
 /// and the [`crate::api::EpfDispatch::AlwaysDefault`] /
@@ -89,7 +89,7 @@ pub(crate) fn mask1x1_is_smooth_enough_to_skip_sharpness(mask1x1: &[f32]) -> boo
 }
 
 /// Default sharpness LUT: epf_sharp_lut[i] = i / 7.0
-const EPF_SHARP_LUT: [f32; 8] = [
+pub(crate) const EPF_SHARP_LUT: [f32; 8] = [
     0.0,
     1.0 / 7.0,
     2.0 / 7.0,

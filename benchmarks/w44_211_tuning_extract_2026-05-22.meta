@@ -1,0 +1,161 @@
+# W44-211 — tuning extract verification meta
+
+Source state: working copy on top of `main = badacc0f` (post-W44-210).
+Branch / workspace: `w44-211-tuning-extract` sibling.
+
+## Scope
+
+Move all VarDCT numeric tunable consts under a single canonical access
+path `jxl_encoder::tuning::<module>::*` + add opt-in
+`tuning-override` cargo feature for the future sweep runner.
+
+Production binary MUST be BYTE-IDENTICAL.
+
+## What shipped
+
+### New module: `jxl-encoder/src/tuning.rs` (731 lines)
+
+14 submodules + 1 opt-in `runtime` submodule:
+
+- `discriminator_thresholds` — 36 entries (mask/m3/edge_density/fcbr/distance windows)
+- `entropy_mul_tables` — re-exports `EntropyMulTable`
+- `buttloop` — 25 entries (qf seed, EPF seed, adaptive_quant qf pre-scale, etc.)
+- `coeff_orders` — 3 entries (per-bucket gates stay in gate_registry.rs)
+- `epf` — 9 entries
+- `patches` — 17 entries
+- `splines` — 12 entries
+- `gaborish` — 3 entries
+- `noise` — 9 entries
+- `cfl` — 12 entries (4 Newton consts exposed at simd crate root)
+- `quant_weights` — 17 libjxl-spec band-param tables (READ-ONLY)
+- `ac_strategy` — 6 cost-model exponents (READ-ONLY)
+- `dc_tree` — 2 effort gates
+- `gates` — 6 top-level effort/pixel/distance gates
+- `squeeze` — 4 modular alpha extra-channel quantizer consts
+- `runtime` (opt-in `tuning-override`) — `RuntimeTuning` + `install` + `install_from_postcard_file`
+
+### 2 new `pub const` aliases (NEW, NOT replacing existing sites)
+
+- `SMART_ZENJXL_PHOTO_MASK_P25_MIN: f32 = 85.0`
+- `SCREENSHOT_MEDIAN_THRESHOLD: f32 = 95.0`
+
+Both protected by compile-time `const _: () = assert!(...)` that every
+constituent site agrees with the alias. If any site drifts the
+constant won't compile.
+
+### Visibility bumps: 67 `const` → `pub(crate) const`
+
+Across 9 files:
+
+- `vardct/encoder.rs`: 24 (all file-level consts)
+- `vardct/butteraugli_loop.rs`: 0 (all already `pub`/`pub(crate)`)
+- `vardct/epf.rs`: 7 (skipped 2 structural: `EPF_STRIP_H`, `EPF0_NEIGHBORS`)
+- `vardct/bitstream.rs`: 2 (DC tree effort gates)
+- `vardct/chroma_from_luma.rs`: 2 (Newton inv-color-factor + AC distance multiplier)
+- `vardct/splines.rs`: 6 (file-level only; also bumped `detect_params` module to `pub(crate)`)
+- `vardct/patches.rs`: 17 (detection + cost-benefit)
+- `vardct/quant.rs`: 14 (parametric quant-weight tables — spec)
+- `vardct/ac_strategy.rs`: 6 (cost-model exponents — spec)
+- `vardct/gaborish.rs`: 3
+- `vardct/noise.rs`: 8
+
+Also bumped:
+
+- `vardct/mod.rs::bitstream` from `mod` to `pub(crate) mod` (allow `tuning::dc_tree` re-export)
+- `vardct/splines.rs::detect_params` from `mod` to `pub(crate) mod`
+- `jxl-encoder-simd/src/cfl.rs`: 6 internal consts to `pub` (NEWTON_CLAMP etc.) — already
+  reachable via the simd crate root re-export pattern; same crate consumes them privately
+  so the bump is cosmetic.
+
+### Cargo.toml additions
+
+- `tuning-override = ["std", "dep:serde", "dep:postcard"]` opt-in feature
+- `serde` + `postcard` as optional deps (only pulled when feature enabled)
+
+### docs updates (mandatory per CLAUDE.md)
+
+- `docs/TUNING_RELATIONS.md`: new Section 0 "Canonical access paths
+  (W44-211)" with 16-row table of `tuning::<module>` → source-of-truth
+- `docs/LIBJXL_DIVERGENCES.md`: paragraph in front matter noting the
+  W44-211 hub + the maintenance impact (no double-edit for table rows)
+
+## Acceptance gates
+
+| Gate | Status |
+|---|---|
+| (a) Build PASS (default + `--features tuning-override`) | YES — both build clean |
+| (b) Tests pass (1449+) | YES — 1453/1453 default, 1455/1455 with override (+2 runtime tests) |
+| (c) Hash-locks 36/36 BYTE-IDENTICAL | YES — both default and `tuning-override` |
+| (d) Libjxl byte-lock byte-identical | YES — `strategy_libjxl_hash_locks`: 5/5 PASS |
+| (e) `divergence_table_drift` 7/7 PASS | YES |
+| (f) NEW `tuning_drift` golden test | YES — `tuning::tests` 5 tests + 2 runtime tests = 7 |
+| (g) `docs/TUNING_RELATIONS.md` updated | YES — Section 0 added |
+| (h) Multi-decoder smoke | YES — `decoder_validation`: 36/36 PASS |
+
+## Notable design decisions
+
+1. **Re-export hub, NOT physical relocation**. Every existing
+   `pub(crate) const` stays in its source-of-truth file. The tuning
+   module is a `pub use` aggregator. This kept the diff small + made
+   the BYTE-IDENTICAL guarantee structurally obvious.
+
+2. **`pub(crate) use` re-exports** for everything except the 2 NEW
+   shared-value aliases. This avoids broadening the public API surface
+   (per CLAUDE.md "DO NOT change the public API without approval").
+   Sweep runners that live in the same crate (as binaries / examples)
+   can read every tunable; external consumers cannot.
+
+3. **Compile-time alias drift assertions**. Both
+   `SMART_ZENJXL_PHOTO_MASK_P25_MIN` (4-site) and
+   `SCREENSHOT_MEDIAN_THRESHOLD` (4-site) carry
+   `const _: () = assert!(...)` so a future drift on any constituent
+   site (e.g. someone changing `W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN`
+   from 85.0 to 90.0 alone) will fail to compile, not silently diverge.
+
+4. **`#[allow(unused_imports)]` per submodule**. Production code reads
+   each const through its source-of-truth path; the re-exports look
+   unused unless a sweep-runner binary consumes them. Allowed
+   per-submodule (not crate-wide) so only the intentional re-exports
+   are silenced.
+
+5. **`tuning-override` feature opts in std-only**. The runtime override
+   layer uses `std::sync::OnceLock` (Rust 1.70+) for single-shot
+   global install. Production builds without the feature pay zero cost
+   — the runtime module compiles to nothing. Postcard is the wire
+   format because the future sweep runner will emit binary configs;
+   serde with `default` per-field tolerates additive struct evolution.
+
+## DO NOT (binding for future agents)
+
+- DO NOT add new `pub const` to `src/tuning.rs` that shadow originals.
+  Use `pub(crate) use crate::vardct::<file>::CONST_NAME;`. The only
+  exception is the existing 2 shared aliases, both with compile-time
+  drift assertions.
+- DO NOT remove the compile-time alias assertions. They are the only
+  safeguard against silent drift of the 4-site shared values.
+- DO NOT plumb `RuntimeTuning` reads into production code paths.
+  Consumers read the source const directly; the override layer is for
+  the sweep runner binary ONLY. Mixing them in production code would
+  defeat the const-fold-friendly design.
+- DO NOT touch `quant_weights` or `ac_strategy::K_BIAS` / `K_POW_*`
+  values without decoder agreement — these are libjxl-spec values.
+- DO NOT change the values in submodules. They are re-exports; the
+  source site owns the value. Any edit happens in the source-of-truth
+  file (and triggers the W44-194 divergence-table maintenance rule).
+
+## Follow-ons (NOT in W44-211 scope)
+
+1. **Expand `RuntimeTuning` field set**. The current scaffold carries
+   only 6 fields (the highest-EV bisect targets). Future sweep-runner
+   chunks will extend additively as new sweeps land.
+2. **Move 4-site duplicates to single source**. The alias drift
+   assertions catch divergence but the 4 constituent sites still
+   exist. A future chunk could collapse them to a single source +
+   `pub(crate) use` re-exports under the old names for back-compat.
+   Not done here because each constituent has independent
+   `docs/LIBJXL_DIVERGENCES.md` provenance + commit refs; collapsing
+   prematurely would lose that history.
+3. **Sweep-runner binary**. Live in `jxl-encoder/` as a `[[bin]]` or
+   sibling `tuning-sweep-bin/` crate. Reads postcard config, calls
+   `install()`, runs the standard encode pipeline, reports
+   bytes/SSIM2/butteraugli/wall.

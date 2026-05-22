@@ -43,6 +43,7 @@ section(s) before commit.
 
 ## Table of contents
 
+- [Section 0: Canonical access paths (W44-211)](#section-0-canonical-access-paths-w44-211) — `crate::tuning::*` re-export hub
 - [Section 1: Const inventory](#section-1-const-inventory) — 180-entry index from W44-210-A
 - [Section 2: Mechanism layers](#section-2-mechanism-layers) — 5 orthogonal composition layers
 - [Section 3: Discriminator chains](#section-3-discriminator-chains) — 5 content discriminators + shared-threshold map
@@ -50,6 +51,67 @@ section(s) before commit.
 - [Section 5: Shipped-win patterns](#section-5-shipped-win-patterns) — repeatable templates
 - [Section 6: Cross-arc connections](#section-6-cross-arc-connections) — how W44-N corrected earlier W44-M
 - [Section 7: DO NOT (binding for future agents)](#section-7-do-not-binding-for-future-agents)
+
+---
+
+## Section 0: Canonical access paths (W44-211)
+
+Every tunable in this file is also reachable through the
+[`jxl_encoder::tuning`](../jxl-encoder/src/tuning.rs) module, organised
+into 14 submodules that mirror the W44-210-A section structure.
+
+| `tuning::<module>` path | source-of-truth file | what's covered |
+|---|---|---|
+| `tuning::discriminator_thresholds` | `vardct/encoder.rs` + duplicates | per-image content discriminator thresholds (mask/m3/edge_density/fcbr/distance windows) |
+| `tuning::entropy_mul_tables` | `effort.rs` | `EntropyMulTable` per-strategy variants |
+| `tuning::buttloop` | `vardct/butteraugli_loop.rs` | buttloop QF seed, EPF sharpness seed, adaptive_quant qf pre-scale, kPow / max-increase deviation, terminal-class exclude |
+| `tuning::coeff_orders` | `vardct/coeff_order.rs` | order-bucket / permutation-context counts (W44-82 cost-gate constants stay inline) |
+| `tuning::epf` | `vardct/epf.rs` | EPF sharpness search constants |
+| `tuning::patches` | `vardct/patches.rs` | detection + cost-benefit guards |
+| `tuning::splines` | `vardct/splines.rs::detect_params` | spline auto-detection thresholds |
+| `tuning::gaborish` | `vardct/gaborish.rs` | gaborish sharpening + adaptive params |
+| `tuning::noise` | `vardct/noise.rs` | sensor physics constants |
+| `tuning::cfl` | `vardct/chroma_from_luma.rs` + `jxl_simd` re-exports | CfL Newton tuning (4-const subset exposed at simd crate root) |
+| `tuning::quant_weights` | `vardct/quant.rs` | parametric DCT quant-weight bands (libjxl-spec; READ-ONLY for sweep, decoder mandated) |
+| `tuning::ac_strategy` | `vardct/ac_strategy.rs` | cost-model exponents + channel offsets (libjxl-spec; READ-ONLY for sweep) |
+| `tuning::dc_tree` | `vardct/bitstream.rs` | DC tree effort gates |
+| `tuning::gates` | `effort.rs` | top-level effort / pixel-count / distance gate constants |
+| `tuning::squeeze` | `vardct/encoder.rs` | modular alpha extra-channel squeeze quantizer |
+| `tuning::runtime` (opt-in `tuning-override`) | `src/tuning.rs` | runtime override `RuntimeTuning` + `install` / `install_from_postcard_file` for the future sweep runner |
+
+### Shared-value aliases
+
+Two semantic clusters that occurred 4× each in the inventory are exposed
+as canonical aliases (with compile-time `const _ : () = assert!(…)`
+gates ensuring every original site agrees):
+
+| alias | value | replaces 4 sites |
+|---|---|---|
+| `tuning::discriminator_thresholds::SMART_ZENJXL_PHOTO_MASK_P25_MIN` | 85.0 | `W44_166_*`, `W44_150_*`, `W44_151_*`, `W44_168_SMOOTH_*` |
+| `tuning::discriminator_thresholds::SCREENSHOT_MEDIAN_THRESHOLD` | 95.0 | `CONTENT_AWARE_*`, `buttloop::SCREENSHOT_*`, `W44_168_SCREENSHOT_*`, `splines::SCREENSHOT_*` |
+
+These aliases are intentionally `pub const` (the only NEW `pub const`s
+W44-211 added). Sweep runners SHOULD reference these aliases when
+expressing the *semantic* threshold; the original per-owner constants
+remain for back-compat and per-W44 commit traceability. The
+`tuning_drift` golden test (`src/tuning.rs::tests`) protects every
+alias against drift from its constituent sites.
+
+### Production-binary safety guarantee
+
+The `tuning` module is purely re-exports. Production source still reads
+each const through its source-of-truth path. The `cargo build` artifact
+is byte-identical pre-vs-post W44-211. Verified by `hash_lock_features`
+36/36 + `strategy_libjxl_hash_locks` 5/5.
+
+### Opt-in `tuning-override` feature
+
+When enabled, `crate::tuning::runtime` exposes a postcard-deserialisable
+`RuntimeTuning` struct mirroring the const paths. `install()` is
+single-shot per process; `get(|t| t.field)` returns the installed value
+or the default. Production builds without the feature pay ZERO cost —
+the runtime layer compiles to nothing and consumers read the const
+directly so the compiler inlines.
 
 ---
 
