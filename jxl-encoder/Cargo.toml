@@ -2064,5 +2064,16 @@ name = "w44_176_terminal_exclude_ab"
 path = "examples/w44_176_terminal_exclude_ab.rs"
 required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 
+# W44-200 Phase 1: per-section byte audit for 3637739 cid22 high-d photo
+# Pareto-loser at e7 d=4. Runs OURS (Zenjxl + Libjxl) vs cjxl on 3637739
+# (LOSER) and 1418519 (WINNER baseline) at e7 d=4, parses TOC for both via
+# `jxl_frame::data::Toc`, and emits per-section delta table. Identifies
+# which JXL section accounts for the +6.24% bytes vs cjxl on the LOSER.
+# Follow-on to W44-198 / W44-199 honest-stops on the same cluster.
+[[example]]
+name = "w44_200_section_audit"
+path = "examples/w44_200_section_audit.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+
 [lints]
 workspace = true

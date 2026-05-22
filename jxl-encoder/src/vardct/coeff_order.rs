@@ -550,6 +550,14 @@ fn bucket_to_cx_cy(bucket: usize) -> (usize, usize) {
 pub fn tokenize_coeff_orders(orders: &[Vec<Vec<u32>>], used_orders: u32) -> Vec<Token> {
     let mut tokens = Vec::new();
 
+    // W44-200: env-var-gated per-bucket per-channel token-count dump.
+    // `JXL_W44_200_COEFFORDER_DUMP=<file>` captures end-llf (token count
+    // proportional to Lehmer code length) per bucket+channel.
+    let w44_200_co_dump: Option<String> =
+        std::env::var("JXL_W44_200_COEFFORDER_DUMP").ok();
+    let w44_200_label: String =
+        std::env::var("JXL_W44_200_LABEL").unwrap_or_else(|_| "unlabeled".into());
+
     for (bucket, bucket_orders) in orders.iter().enumerate().take(NUM_ORDER_BUCKETS) {
         if used_orders & (1 << bucket) == 0 {
             continue;
@@ -566,7 +574,7 @@ pub fn tokenize_coeff_orders(orders: &[Vec<Vec<u32>>], used_orders: u32) -> Vec<
         let llf_norm = cx_norm * cy_norm;
         let size = llf_norm * DCT_BLOCK_SIZE;
 
-        for order in bucket_orders {
+        for (channel, order) in bucket_orders.iter().enumerate() {
             if order.is_empty() {
                 continue;
             }
@@ -582,6 +590,39 @@ pub fn tokenize_coeff_orders(orders: &[Vec<Vec<u32>>], used_orders: u32) -> Vec<
             let mut end = size;
             while end > llf && lehmer[end - 1] == 0 {
                 end -= 1;
+            }
+
+            // W44-200 dump per bucket+channel.
+            if let Some(path) = w44_200_co_dump.as_ref() {
+                let new_file = !std::path::Path::new(path).exists();
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                {
+                    use std::io::Write as _;
+                    if new_file {
+                        let _ = writeln!(
+                            f,
+                            "label\tbucket\tchannel\tsize\tllf\tend\tlehmer_codes_count\t\
+                             nonzero_lehmer_count"
+                        );
+                    }
+                    let nonzero =
+                        lehmer[llf..end].iter().filter(|&&v| v != 0).count();
+                    let _ = writeln!(
+                        f,
+                        "{label}\t{b}\t{c}\t{sz}\t{lf}\t{e}\t{lc}\t{nz}",
+                        label = w44_200_label,
+                        b = bucket,
+                        c = channel,
+                        sz = size,
+                        lf = llf,
+                        e = end,
+                        lc = end.saturating_sub(llf),
+                        nz = nonzero,
+                    );
+                }
             }
 
             // First token: end - skip (how many Lehmer codes to read)
