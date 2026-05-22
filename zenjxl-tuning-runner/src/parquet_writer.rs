@@ -26,8 +26,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use arrow_array::{
-    ArrayRef, BinaryArray, Float32Array, Float64Array, RecordBatch, StringArray, UInt32Array,
-    UInt64Array, UInt8Array,
+    ArrayRef, BinaryArray, Float32Array, Float64Array, RecordBatch, StringArray, UInt8Array,
+    UInt32Array, UInt64Array,
 };
 // Needed in tests; re-export at module scope so `cargo test` doesn't
 // warn about an unused import behind `#[cfg(test)]`.
@@ -52,11 +52,14 @@ pub fn write_single_row_parquet(row: &SweepCellRow, path: &Path) -> Result<u64, 
     let batch = RecordBatch::try_new(schema.clone(), arrays)
         .map_err(|e| format!("RecordBatch::try_new: {e}"))?;
 
-    let file = std::fs::File::create(path)
-        .map_err(|e| format!("create {}: {e}", path.display()))?;
+    let file =
+        std::fs::File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
     let props = WriterProperties::builder()
         .set_compression(Compression::ZSTD(ZstdLevel::try_new(3).unwrap()))
-        .set_created_by(format!("zenjxl-tuning-runner v{}", env!("CARGO_PKG_VERSION")))
+        .set_created_by(format!(
+            "zenjxl-tuning-runner v{}",
+            env!("CARGO_PKG_VERSION")
+        ))
         .build();
     let mut writer = ArrowWriter::try_new(file, schema, Some(props))
         .map_err(|e| format!("ArrowWriter::try_new: {e}"))?;

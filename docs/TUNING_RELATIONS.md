@@ -120,21 +120,50 @@ directly so the compiler inlines.
 | Production encoder (`cjxl-rs`, library API) | every source file | each const through its source-of-truth path | NO — production binaries pay zero cost for the runtime layer |
 | W44-212 [`zenjxl-tuning-runner`](../zenjxl-tuning-runner/) | per-cell sweep worker | calls `tuning::runtime::install_from_postcard_file(<blob>)` once per cell, emits `params_blob` Parquet column | YES (`--features tuning-override`) |
 
-**Scaffolding caveat (W44-212)**: as of W44-211, the runtime override
-layer is wired through `install_from_postcard_file` but NO production
-encoder consumer reads `tuning::runtime::get(...)`. The W44-212 runner
-captures the postcard `params_blob` in its Parquet output for join
-purposes, but the actual encoder bytes are produced from the
-source-of-truth consts. Per-cell variance for W44-211 fields
-(`smart_zenjxl_photo_mask_p25_min`,
-`screenshot_median_threshold`,
-`buttloop_default_screenshot_qf_seed_scale`,
-`buttloop_qf_seed_scale_min_distance`,
-`adaptive_quant_screenshot_qf_seed_scale_e5_e6`,
-`adaptive_quant_screenshot_qf_seed_scale_e7`)
-in the runner's Parquet sweep does NOT influence encoded bytes until
-W44-213+ wires the consumer sites. Other tuning axes (effort,
-distance, strategy, image features) ARE actively varied by W44-212.
+**W44-213 wiring (SHIPPED 2026-05-22)**: the 6 `RuntimeTuning` fields
+listed below are now wired through the
+[`runtime_or_default!`](../jxl-encoder/src/tuning.rs) macro at every
+production consumer site. With `--features tuning-override` disabled
+(default for production builds) the macro expands to the const
+reference (zero overhead, compiler inlines). With the feature enabled
+(sweep-runner builds) the macro calls
+[`tuning::runtime::get_or_default`](../jxl-encoder/src/tuning.rs)
+which short-circuits to the default const when no override is
+installed (single atomic-OnceLock load + branch).
+
+Wired-and-proven fields (W44-213, verified by
+[`w44_213_runtime_tuning_wiring`](../jxl-encoder/tests/w44_213_runtime_tuning_wiring.rs)
+integration test that installs a non-default override and asserts
+encoded bytes change):
+
+| RuntimeTuning field | source-of-truth const | call sites | wired |
+|---|---|---|---|
+| `smart_zenjxl_photo_mask_p25_min` | W44_168_SMOOTH_MASK_P25_MIN, W44_151_HIGH_MASK_P25_MIN, W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN (= 85.0 in 4 sites) | `vardct/encoder.rs:929, 2832, 2880, 2883, 4417, 4543, 4546` (5 hot-path sites: `w44_168_is_smooth`, W44-151 admit ×2, W44-166 admit ×4) | YES |
+| `screenshot_median_threshold` | CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD, butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD, W44_168_SCREENSHOT_MEDIAN_MIN (= 95.0 in 3 sites) | `vardct/encoder.rs:929, 2755, 3920, 4277, 5055` (5 hot-path sites: `w44_168_is_smooth`, W22-1 screenshot lift ×2, W44-109 adaptive_quant pre-scale, W39-2 buttloop HIGH-regime classify) | YES |
+| `buttloop_default_screenshot_qf_seed_scale` | DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE (= 4.0) | `vardct/butteraugli_loop.rs:1361` (W44-105 buttloop QF seed scale gate) | YES |
+| `buttloop_qf_seed_scale_min_distance` | BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE (= 3.5) | `vardct/butteraugli_loop.rs:758, 1348` (W44-107 distance gate × 2: adaptive_quant + buttloop) | YES |
+| `adaptive_quant_screenshot_qf_seed_scale_e5_e6` | DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6 (= 2.0) | `vardct/butteraugli_loop.rs:793` (W44-109 per-effort scale) | YES |
+| `adaptive_quant_screenshot_qf_seed_scale_e7` | DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7 (= 3.0) | `vardct/butteraugli_loop.rs:790` (W44-109 per-effort scale) | YES |
+
+**Verification**: with the wiring proof test running, doubling
+`buttloop_default_screenshot_qf_seed_scale` from 4.0 → 8.0 on a 512×512
+screenshot at e8 d=4 produces a +30.85% byte delta vs the default-tuning
+baseline. The byte change is FAR above the float-precision drift floor
+(~0.001%), proving the production code path reads the runtime override
+when the feature is enabled. Hash-locks 36/36 + Libjxl byte-locks 5/5
+stay BYTE-IDENTICAL at the `tuning-override` feature default (i.e. no
+override installed) — `RuntimeTuning::default()` matches every
+source-of-truth const exactly, enforced by the
+`tuning::runtime::tests::default_matches_production_consts` unit test.
+
+**Remaining unwired fields**: future `RuntimeTuning` extensions for
+other tunables (e.g. `W44_91_M3_COLOURFULNESS_MIN`,
+`W44_124_DCT32_KEEP_*`, `LIBJXL_INIT_MUL`, `DEFAULT_CUR_POW_LOW`, the
+EPF sharpness thresholds) follow the same wiring pattern: (1) add the
+field to `RuntimeTuning` (with serde-default helper + `Default` impl
+update), (2) wrap the consumer site with
+`crate::runtime_or_default!(const, field)`, (3) update this table.
+The W44-213 macro infrastructure is the reusable plumbing.
 
 ---
 

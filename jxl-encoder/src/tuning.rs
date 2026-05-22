@@ -386,6 +386,74 @@ pub mod squeeze {
     pub(crate) use crate::vardct::encoder::SQUEEZE_QUALITY_FACTOR_CONST;
 }
 
+// ─── Section: production consumer macro (W44-213) ──────────────────────
+//
+// The `runtime_or_default!` macro is the canonical access path for every
+// production code site that needs a RuntimeTuning-aware lookup. With the
+// `tuning-override` feature DISABLED (default for production builds), the
+// macro expands to the raw const reference — the compiler inlines this
+// to an immediate value at every call site, so production binaries pay
+// ZERO runtime cost. With the feature ENABLED (sweep-runner builds), the
+// macro calls [`runtime::get_or_default`] which short-circuits to the
+// default const when no override is installed (single atomic-OnceLock
+// load + branch).
+//
+// ## Usage
+//
+// ```ignore
+// // Before W44-213:
+// let scale = tuning::buttloop::DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE;
+//
+// // After W44-213:
+// let scale = jxl_encoder::runtime_or_default!(
+//     tuning::buttloop::DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE,
+//     buttloop_default_screenshot_qf_seed_scale,
+// );
+// ```
+//
+// The macro takes two arguments:
+// 1. The source-of-truth const path (used both for the default fast-path
+//    AND for the `accessor` closure's return-value type inference).
+// 2. The `RuntimeTuning` field name (without the `RuntimeTuning::` prefix).
+//
+// ## Hash-lock invariant
+//
+// `RuntimeTuning::default()` MUST match every source-of-truth const
+// exactly. The unit test `tuning::runtime::tests::default_matches_production_consts`
+// enforces this so production hash-locks (36 lossy + 13 lossless fixtures)
+// stay byte-identical at the `tuning-override` feature default value.
+//
+// The W44-213 wiring touches 6 RuntimeTuning fields:
+// - `smart_zenjxl_photo_mask_p25_min` (4-site duplicate; macro applied
+//   at every site)
+// - `screenshot_median_threshold` (4-site duplicate)
+// - `buttloop_default_screenshot_qf_seed_scale` (1 site)
+// - `buttloop_qf_seed_scale_min_distance` (2 sites)
+// - `adaptive_quant_screenshot_qf_seed_scale_e5_e6` (1 site)
+// - `adaptive_quant_screenshot_qf_seed_scale_e7` (1 site)
+
+/// W44-213 production consumer macro for runtime-tuning-aware const reads.
+/// See [`tuning`] module docs for the full rationale.
+///
+/// **Production builds** (default, `tuning-override` OFF): expands to
+/// `$const_path` — zero overhead, compiler inlines.
+///
+/// **Sweep-runner builds** (`tuning-override` ON): expands to
+/// `crate::tuning::runtime::get_or_default($const_path, |t| t.$field)`.
+#[macro_export]
+macro_rules! runtime_or_default {
+    ($const_path:path, $field:ident $(,)?) => {{
+        #[cfg(not(feature = "tuning-override"))]
+        {
+            $const_path
+        }
+        #[cfg(feature = "tuning-override")]
+        {
+            $crate::tuning::runtime::get_or_default($const_path, |t| t.$field)
+        }
+    }};
+}
+
 // ─── Section: runtime override (opt-in for the future sweep runner) ────
 //
 // Enabled by `--features tuning-override`. The struct mirrors the const
@@ -563,6 +631,44 @@ pub mod runtime {
             field(t)
         } else {
             field(&RuntimeTuning::default())
+        }
+    }
+
+    /// Read a tunable through the runtime override, supplying an
+    /// explicit default for the fast-path when no override is installed.
+    ///
+    /// **W44-213**: the production consumer macro
+    /// [`super::runtime_or_default`] calls this fn through the
+    /// `tuning-override` feature gate. With the feature DISABLED the
+    /// macro expands to the const directly (zero overhead); with the
+    /// feature ENABLED the macro calls this fn which short-circuits
+    /// to `default` when the global tuning hasn't been installed.
+    ///
+    /// The fast-path (no installed override) is `GLOBAL_TUNING.get()`
+    /// returning `None` → a single atomic-OnceLock load + branch. The
+    /// slow-path (override installed) invokes `accessor(&tuning)` once.
+    #[inline]
+    pub fn get_or_default<F>(default: f32, accessor: F) -> f32
+    where
+        F: FnOnce(&RuntimeTuning) -> f32,
+    {
+        match GLOBAL_TUNING.get() {
+            Some(t) => accessor(t),
+            None => default,
+        }
+    }
+
+    /// Same as [`get_or_default`] for `usize` fields. Not currently
+    /// used by any of the 6 W44-211 fields (all are `f32`) but
+    /// future RuntimeTuning extensions may need integer plumbing.
+    #[inline]
+    pub fn get_or_default_usize<F>(default: usize, accessor: F) -> usize
+    where
+        F: FnOnce(&RuntimeTuning) -> usize,
+    {
+        match GLOBAL_TUNING.get() {
+            Some(t) => accessor(t),
+            None => default,
         }
     }
 

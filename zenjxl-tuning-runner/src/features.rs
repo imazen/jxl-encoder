@@ -190,7 +190,11 @@ pub fn compute_extended_features(
         mask_p75,
         luma_mean,
         n_pixels: (width * height) as f32,
-        aspect: if height == 0 { 0.0 } else { width as f32 / height as f32 },
+        aspect: if height == 0 {
+            0.0
+        } else {
+            width as f32 / height as f32
+        },
         bpp_source: bpp as f32,
         byte_entropy_bits: h as f32,
     }
@@ -211,11 +215,27 @@ mod tests {
         // gradient), m3 ≈ 0, edge_density ≈ 0, fcbr ≈ 1.0.
         let pixels = vec![128u8; 32 * 32 * 4];
         let f = compute_extended_features(&pixels, 32, 32, 4, 0, 1, 2);
-        assert!(f.m3_colourfulness < 0.01, "m3 expected ~0, got {}", f.m3_colourfulness);
-        assert!(f.flat_color_block_ratio > 0.99, "fcbr expected ~1, got {}", f.flat_color_block_ratio);
-        assert!(f.edge_density < 0.01, "edge_density expected ~0, got {}", f.edge_density);
+        assert!(
+            f.m3_colourfulness < 0.01,
+            "m3 expected ~0, got {}",
+            f.m3_colourfulness
+        );
+        assert!(
+            f.flat_color_block_ratio > 0.99,
+            "fcbr expected ~1, got {}",
+            f.flat_color_block_ratio
+        );
+        assert!(
+            f.edge_density < 0.01,
+            "edge_density expected ~0, got {}",
+            f.edge_density
+        );
         // mask_median should be high (saturated by the +0.01 epsilon) on flat content
-        assert!(f.mask_median > 50.0, "mask_median expected high on flat, got {}", f.mask_median);
+        assert!(
+            f.mask_median > 50.0,
+            "mask_median expected high on flat, got {}",
+            f.mask_median
+        );
         assert!(f.n_pixels == 1024.0);
         assert!(f.aspect == 1.0);
         assert!(f.bpp_source == 4.0);
@@ -235,7 +255,11 @@ mod tests {
         let mut pixels = vec![0u8; 32 * 32 * 4];
         for y in 0..32usize {
             for x in 0..32usize {
-                let v = if ((x / 4) + (y / 4)) % 2 == 0 { 255u8 } else { 0u8 };
+                let v = if ((x / 4) + (y / 4)) % 2 == 0 {
+                    255u8
+                } else {
+                    0u8
+                };
                 let off = (y * 32 + x) * 4;
                 pixels[off] = v;
                 pixels[off + 1] = v;
