@@ -767,12 +767,8 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     // ABOVE cjxl SSIM2 — true wins) and are preserved.
     //
     // Env hook for A/B: `JXL_W44_176_DISABLE=1` forces the exclude OFF.
-    let exclude_env = std::env::var_os("JXL_W44_176_DISABLE")
-        .is_some_and(|v| v != "0" && v != "");
-    if terminal_class_exclude
-        && !exclude_env
-        && w44_176_is_terminal_class(proxies)
-    {
+    let exclude_env = std::env::var_os("JXL_W44_176_DISABLE").is_some_and(|v| v != "0" && v != "");
+    if terminal_class_exclude && !exclude_env && w44_176_is_terminal_class(proxies) {
         return 1.0;
     }
     // Effort-dependent magnitude: e5/e6 cap at 2.0 to bound bytes
@@ -3306,27 +3302,45 @@ mod tuning_tests {
     #[test]
     fn w44_176_is_terminal_class_keep_fire_screens_rejected() {
         // graph: luma_var=415 (BELOW band) → rejected
-        assert!(!w44_176_is_terminal_class(Some(&proxies(415.0, 0.809, 11.75))));
+        assert!(!w44_176_is_terminal_class(Some(&proxies(
+            415.0, 0.809, 11.75
+        ))));
         // imac_g3: luma_var=5244 (ABOVE band) → rejected
-        assert!(!w44_176_is_terminal_class(Some(&proxies(5244.0, 0.775, 14.29))));
+        assert!(!w44_176_is_terminal_class(Some(&proxies(
+            5244.0, 0.775, 14.29
+        ))));
         // imac_dark: luma_var=3303 (ABOVE band) → rejected
-        assert!(!w44_176_is_terminal_class(Some(&proxies(3303.0, 0.728, 20.96))));
+        assert!(!w44_176_is_terminal_class(Some(&proxies(
+            3303.0, 0.728, 20.96
+        ))));
         // gmessages: luma_var=1046 (BELOW band) → rejected
-        assert!(!w44_176_is_terminal_class(Some(&proxies(1046.0, 0.899, 10.16))));
+        assert!(!w44_176_is_terminal_class(Some(&proxies(
+            1046.0, 0.899, 10.16
+        ))));
         // gui: luma_var=1051 (BELOW band) → rejected
-        assert!(!w44_176_is_terminal_class(Some(&proxies(1051.0, 0.858, 10.05))));
+        assert!(!w44_176_is_terminal_class(Some(&proxies(
+            1051.0, 0.858, 10.05
+        ))));
     }
 
     #[test]
     fn w44_176_is_terminal_class_photos_rejected() {
         // 1418519: luma_var=1620 in band but fcbr=0.098 ≪ 0.70 → rejected
-        assert!(!w44_176_is_terminal_class(Some(&proxies(1620.0, 0.098, 36.84))));
+        assert!(!w44_176_is_terminal_class(Some(&proxies(
+            1620.0, 0.098, 36.84
+        ))));
         // 1531677: luma_var=2068 in band but fcbr=0.000 → rejected
-        assert!(!w44_176_is_terminal_class(Some(&proxies(2068.0, 0.000, 12.30))));
+        assert!(!w44_176_is_terminal_class(Some(&proxies(
+            2068.0, 0.000, 12.30
+        ))));
         // 1420710: luma_var=2171 in band but fcbr=0.000 → rejected
-        assert!(!w44_176_is_terminal_class(Some(&proxies(2171.0, 0.000, 32.93))));
+        assert!(!w44_176_is_terminal_class(Some(&proxies(
+            2171.0, 0.000, 32.93
+        ))));
         // 2389166: luma_var=1920 in band but fcbr=0.134 → rejected
-        assert!(!w44_176_is_terminal_class(Some(&proxies(1920.0, 0.134, 48.00))));
+        assert!(!w44_176_is_terminal_class(Some(&proxies(
+            1920.0, 0.134, 48.00
+        ))));
     }
 
     #[test]

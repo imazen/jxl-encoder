@@ -175,6 +175,32 @@ pub mod __bench_internals {
 #[cfg(feature = "__internals")]
 #[doc(hidden)]
 pub mod __internals {
+    // ── W44-194 divergence-metadata harvester (CI drift test) ───────
+    //
+    // The W44-194 inline drift test reads every gate's
+    // `divergence_section + divergence_row_ref` macro metadata via
+    // [`divergence_entries`] and asserts each `row_ref` appears in
+    // `docs/LIBJXL_DIVERGENCES.md`. Catches the failure mode where a
+    // new gate is added to the macro but never gets a divergence-table
+    // row (or where a row is deleted without removing the gate).
+    //
+    // The function returns `(gate_name, section_letter, row_ref,
+    // raw_const_value)` tuples in macro declaration order. Stable
+    // wire-format for downstream consumers (future build-script that
+    // auto-generates the table) — same shape as the
+    // `__CUSTOM_DIVERGENCE_<GATE>` consts emitted by the macro.
+    pub fn divergence_entries() -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
+        // The const slice in `gate_registry` is `pub(crate)` so we
+        // project it through this fn (which gives the integration test
+        // a stable signature without leaking the `DivergenceEntry`
+        // struct shape). Allocates a fresh Vec per call (~24 entries,
+        // test-only — cost is negligible).
+        crate::gate_registry::ALL_DIVERGENCE_ENTRIES
+            .iter()
+            .map(|e| (e.gate_name, e.section, e.row_ref, e.raw))
+            .collect()
+    }
+
     // ── W44-192 strategy_def! prototype env-fallback test hooks ─────
     //
     // The prototype types are `pub(crate)` so the integration test

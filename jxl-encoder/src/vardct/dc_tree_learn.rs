@@ -1294,14 +1294,12 @@ fn find_best_split_variable_incremental(
             // of O(N · P).
             for pred_slot in 0..p {
                 let base = pred_slot * s;
-                left_costs[pred_slot] = estimate_bits(
-                    &counts_below[base..base + s],
-                    total_below[pred_slot],
-                ) + eb_below[pred_slot];
-                right_costs[pred_slot] = estimate_bits(
-                    &counts_above[base..base + s],
-                    total_above[pred_slot],
-                ) + eb_above[pred_slot];
+                left_costs[pred_slot] =
+                    estimate_bits(&counts_below[base..base + s], total_below[pred_slot])
+                        + eb_below[pred_slot];
+                right_costs[pred_slot] =
+                    estimate_bits(&counts_above[base..base + s], total_above[pred_slot])
+                        + eb_above[pred_slot];
             }
 
             let (lcost, lpred) = pick_best(&left_costs);
@@ -1946,7 +1944,10 @@ mod tests {
         gather_dc_samples_variable(&mut samples, &quant_dc);
 
         let (tree_var, nctx_var) = learn_dc_tree_variable(&samples, 64);
-        assert!(!tree_var.is_empty(), "Variable mode: tree must not be empty");
+        assert!(
+            !tree_var.is_empty(),
+            "Variable mode: tree must not be empty"
+        );
         assert!(nctx_var >= 1, "Variable mode: context count must be >= 1");
         for node in &tree_var {
             if node.property == -1 {

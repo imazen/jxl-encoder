@@ -571,6 +571,194 @@ pub(crate) fn apply_env_var_fallbacks(r: &mut ResolvedImprovements) {
     apply_w44_120_min_distance_env_fallback(r);
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// W44-194: divergence-metadata harvesting hook for the CI drift test.
+//
+// The `strategy_def!` macro emits one `pub const __CUSTOM_DIVERGENCE_<GATE>:
+// &str` constant per gate that carries a `divergence_section` clause. The
+// string format is `"section=X ; row_ref=Y"`. The
+// [`crate::__internals::gate_registry::all_divergence_metadata`] re-export
+// (cfg-gated on `__internals`) gives the W44-194 inline drift test a
+// canonical list. We hand-curate the slice here rather than syn-walking
+// the macro at compile time — the maintenance cost is "add one line when
+// you add a gate" which is the SAME cost as adding the gate row to
+// `docs/LIBJXL_DIVERGENCES.md` (which the drift test catches).
+//
+// Per-row schema: `(gate_name, section_letter, row_ref_substring,
+// raw_const_value)`. The drift test only consults `(gate_name, section,
+// row_ref)`; `raw_const_value` is exposed so future tooling (e.g. a
+// build-script that auto-generates docs) can read the format-string
+// authoritatively without re-parsing.
+pub(crate) struct DivergenceEntry {
+    pub gate_name: &'static str,
+    pub section: &'static str,
+    pub row_ref: &'static str,
+    pub raw: &'static str,
+}
+
+/// All gates that carry divergence metadata (= every gate in the
+/// `strategy_def!` invocation above with a `divergence_section` clause).
+/// Order matches the macro declaration order.
+pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
+    // Section B — content-aware gates
+    DivergenceEntry {
+        gate_name: "screenshot_entropy_mul",
+        section: "B",
+        row_ref: "W22-1 screenshot entropy_mul lift",
+        raw: __CUSTOM_DIVERGENCE_SCREENSHOT_ENTROPY_MUL,
+    },
+    DivergenceEntry {
+        gate_name: "high_d_photo_entropy_mul",
+        section: "B",
+        row_ref: "W44-29 high-d photo entropy_mul lowering",
+        raw: __CUSTOM_DIVERGENCE_HIGH_D_PHOTO_ENTROPY_MUL,
+    },
+    DivergenceEntry {
+        gate_name: "dct64_search_policy",
+        section: "B",
+        row_ref: "W44-65/68 DCT64 screenshot suppression",
+        raw: __CUSTOM_DIVERGENCE_DCT64_SEARCH_POLICY,
+    },
+    DivergenceEntry {
+        gate_name: "dct32_search_policy",
+        section: "B",
+        row_ref: "W44-123/124 DCT32 retention on m3>=60 / edge_density<0.05",
+        raw: __CUSTOM_DIVERGENCE_DCT32_SEARCH_POLICY,
+    },
+    DivergenceEntry {
+        gate_name: "smooth_photo_dct64_admission",
+        section: "B",
+        row_ref: "W44-34/35 smooth-photo DCT64 smart-dispatch admit",
+        raw: __CUSTOM_DIVERGENCE_SMOOTH_PHOTO_DCT64_ADMISSION,
+    },
+    DivergenceEntry {
+        gate_name: "buttloop_qf_seed",
+        section: "B",
+        row_ref: "W44-105/107/108 buttloop qf seed scale (effort >= 8)",
+        raw: __CUSTOM_DIVERGENCE_BUTTLOOP_QF_SEED,
+    },
+    DivergenceEntry {
+        gate_name: "adaptive_quant_qf_seed",
+        section: "B",
+        row_ref: "W44-109 adaptive_quant qf seed (effort 5..=7)",
+        raw: __CUSTOM_DIVERGENCE_ADAPTIVE_QUANT_QF_SEED,
+    },
+    DivergenceEntry {
+        gate_name: "buttloop_epf_sharpness_seed",
+        section: "B",
+        row_ref: "W44-117/118/120 EPF seed (buttloop sharpness)",
+        raw: __CUSTOM_DIVERGENCE_BUTTLOOP_EPF_SHARPNESS_SEED,
+    },
+    // Section E — perf dispatches
+    DivergenceEntry {
+        gate_name: "epf_dispatch",
+        section: "E",
+        row_ref: "W37-2 EPF dispatch (perf-only)",
+        raw: __CUSTOM_DIVERGENCE_EPF_DISPATCH,
+    },
+    DivergenceEntry {
+        gate_name: "pixel_loss_dispatch",
+        section: "E",
+        row_ref: "W38-2/W44-90 pixel_loss dispatch (perf-only)",
+        raw: __CUSTOM_DIVERGENCE_PIXEL_LOSS_DISPATCH,
+    },
+    DivergenceEntry {
+        gate_name: "single_pass_entropy_dispatch",
+        section: "E",
+        row_ref: "W44-87 single-pass entropy dispatch (e=5 smooth photos)",
+        raw: __CUSTOM_DIVERGENCE_SINGLE_PASS_ENTROPY_DISPATCH,
+    },
+    DivergenceEntry {
+        gate_name: "patches_dispatch",
+        section: "E",
+        row_ref: "W37-1/W41-2 patches dispatch (perf-only)",
+        raw: __CUSTOM_DIVERGENCE_PATCHES_DISPATCH,
+    },
+    // Section A — effort gates (Libjxl-only flips)
+    DivergenceEntry {
+        gate_name: "cfl_two_pass_min_effort",
+        section: "A",
+        row_ref: "cfl_two_pass effort gate (ours >=7, libjxl >=5)",
+        raw: __CUSTOM_DIVERGENCE_CFL_TWO_PASS_MIN_EFFORT,
+    },
+    DivergenceEntry {
+        gate_name: "try_dct64_min_effort",
+        section: "A",
+        row_ref: "try_dct64 effort gate (ours >=7, libjxl none)",
+        raw: __CUSTOM_DIVERGENCE_TRY_DCT64_MIN_EFFORT,
+    },
+    DivergenceEntry {
+        gate_name: "epf_dynamic_sharpness_min_effort",
+        section: "A",
+        row_ref: "epf_dynamic_sharpness effort gate (ours >=6, libjxl none)",
+        raw: __CUSTOM_DIVERGENCE_EPF_DYNAMIC_SHARPNESS_MIN_EFFORT,
+    },
+    // Section D — KNOWN-BUG re-enables (Libjxl-only)
+    DivergenceEntry {
+        gate_name: "block_ctx_map_15_cluster",
+        section: "D",
+        row_ref: "BlockCtxMap 15-cluster default (issue #59 KNOWN-BUG)",
+        raw: __CUSTOM_DIVERGENCE_BLOCK_CTX_MAP_15_CLUSTER,
+    },
+    // Section B — Smart-Zenjxl content-class dispatch
+    DivergenceEntry {
+        gate_name: "content_class_auto_classify",
+        section: "B",
+        row_ref: "W44-164 auto_classify_content_class_from_layout",
+        raw: __CUSTOM_DIVERGENCE_CONTENT_CLASS_AUTO_CLASSIFY,
+    },
+    DivergenceEntry {
+        gate_name: "photo_epf_seed_admit",
+        section: "B",
+        row_ref: "W44-165 photo EPF seed admit (mask_p25 >= 85)",
+        raw: __CUSTOM_DIVERGENCE_PHOTO_EPF_SEED_ADMIT,
+    },
+    DivergenceEntry {
+        gate_name: "photo_variant_z_admit",
+        section: "B",
+        row_ref: "W44-166 photo variant Z admit (mask_p25 >= 85)",
+        raw: __CUSTOM_DIVERGENCE_PHOTO_VARIANT_Z_ADMIT,
+    },
+    DivergenceEntry {
+        gate_name: "find_best_32_per_m3_lift",
+        section: "B",
+        row_ref: "W44-167 find_best_32 per-m3 dct16x32 lift",
+        raw: __CUSTOM_DIVERGENCE_FIND_BEST_32_PER_M3_LIFT,
+    },
+    DivergenceEntry {
+        gate_name: "adaptive_buttloop_iters",
+        section: "B",
+        row_ref: "W44-168 adaptive butteraugli_iters (JXL_W44_168_MODE)",
+        raw: __CUSTOM_DIVERGENCE_ADAPTIVE_BUTTLOOP_ITERS,
+    },
+    DivergenceEntry {
+        gate_name: "adaptive_buttloop_iters_narrow",
+        section: "B",
+        row_ref: "W44-169 distance-narrowed buttloop iter reduction",
+        raw: __CUSTOM_DIVERGENCE_ADAPTIVE_BUTTLOOP_ITERS_NARROW,
+    },
+    DivergenceEntry {
+        gate_name: "terminal_class_exclude",
+        section: "B",
+        row_ref: "W44-176 terminal-class exclude from W44-108",
+        raw: __CUSTOM_DIVERGENCE_TERMINAL_CLASS_EXCLUDE,
+    },
+    // Section C — CfL Newton parity
+    DivergenceEntry {
+        gate_name: "cfl_newton_libjxl_parity",
+        section: "C",
+        row_ref: "W44-184 CfL Newton libjxl parity (eps=100, max_iters=20)",
+        raw: __CUSTOM_DIVERGENCE_CFL_NEWTON_LIBJXL_PARITY,
+    },
+];
+
+/// Internal helper: count of declared divergence entries. Used by the
+/// W44-194 inline test as a count-vs-macro-gate-count cross-check (catches
+/// the case where someone adds a gate to the macro without adding a row
+/// here).
+#[allow(dead_code)]
+pub(crate) const ALL_DIVERGENCE_ENTRIES_LEN: usize = ALL_DIVERGENCE_ENTRIES.len();
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -654,10 +842,7 @@ mod tests {
         assert_ne!(l.dct64_search_policy, z.dct64_search_policy);
         assert_ne!(l.buttloop_qf_seed, z.buttloop_qf_seed);
         assert_ne!(l.adaptive_quant_qf_seed, z.adaptive_quant_qf_seed);
-        assert_ne!(
-            l.buttloop_epf_sharpness_seed,
-            z.buttloop_epf_sharpness_seed
-        );
+        assert_ne!(l.buttloop_epf_sharpness_seed, z.buttloop_epf_sharpness_seed);
         assert_ne!(l.cfl_two_pass_min_effort, z.cfl_two_pass_min_effort);
         assert_ne!(l.try_dct64_min_effort, z.try_dct64_min_effort);
         assert_ne!(
@@ -665,10 +850,7 @@ mod tests {
             z.epf_dynamic_sharpness_min_effort
         );
         assert_ne!(l.block_ctx_map_15_cluster, z.block_ctx_map_15_cluster);
-        assert_ne!(
-            l.content_class_auto_classify,
-            z.content_class_auto_classify
-        );
+        assert_ne!(l.content_class_auto_classify, z.content_class_auto_classify);
         assert_ne!(l.cfl_newton_libjxl_parity, z.cfl_newton_libjxl_parity);
     }
 
