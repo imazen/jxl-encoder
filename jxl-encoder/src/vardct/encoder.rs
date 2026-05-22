@@ -4082,10 +4082,43 @@ impl VarDctEncoder {
 
         let _ms_gaborish = _t_gaborish.elapsed().as_secs_f64() * 1000.0;
         let _t_cfl1 = std::time::Instant::now();
-        // Compute per-tile chroma-from-luma map on GABORISHED XYB
-        // Pass 1 always uses LS (use_newton=false): with distance_mul=1e-9, the
-        // perceptual cost function collapses to LS, so Newton adds no value.
-        // Newton is only useful in pass 2 where actual quant weighting matters.
+        // Compute per-tile chroma-from-luma map on GABORISHED XYB.
+        //
+        // **W44-195: Pass-1 dispatch is gated on `cfl_newton_libjxl_parity`.**
+        //
+        // libjxl `enc_heuristics.cc:1170-1174` runs Pass-1 with `fast=false`
+        // (Newton, smoothed-L1 cost) at `speed_tier <= kSquirrel` (effort >= 7).
+        // The W44-189 D1 audit (`memory/w44_189_cfl_deep_audit_2026-05-22.md`)
+        // identified that we previously hardcoded `use_newton=false` here for
+        // ALL strategies, contradicting libjxl Pass-1's Newton dispatch.
+        //
+        // The previous docstring rationale ("Newton collapses to LS at
+        // distance_mul=1e-9") was empirically wrong: the Newton cost function
+        // `1/3 * sum((|ax+b|+1)^2 - 1) + distance_mul * x^2 * num` has both L2
+        // (quadratic) AND L1 (absolute-value) components. LS minimizes pure L2.
+        // These are DIFFERENT minimizers unless residuals are tiny — for
+        // typical CfL inputs with residuals O(10-100), the difference is
+        // significant. `distance_mul=1e-9` zeros only the regularization, not
+        // the L1 term.
+        //
+        // **`cfl_newton_libjxl_parity == true`** (set ONLY by
+        // `EncoderStrategy::Libjxl`): Pass-1 dispatches to Newton at e>=7
+        // (matches libjxl bit-for-bit). `cfl_newton_libjxl_parity` propagates
+        // into the SIMD code path, forcing eps=100, max_iters=20, start x=0,
+        // no LS fallback (W44-184 Pass-2 internals already covered the same).
+        //
+        // **`cfl_newton_libjxl_parity == false`** (Zenjxl / Aggressive /
+        // LeanFaster): Pass-1 stays on LS (`use_newton=false`). The
+        // W44-29..W44-172 downstream cost-model calibration was tuned against
+        // the effective-LS Pass-1 baseline; flipping to Newton at the default
+        // path regressed 25/27 photo cells in W44-183 (-13 SSIM2 / +26% bytes
+        // worst case). The default keeps the calibrated baseline.
+        //
+        // See `docs/LIBJXL_DIVERGENCES.md` Section C and the W44-184 commit
+        // memo for the Pass-2 half of the same `cfl_newton_libjxl_parity`
+        // dispatch.
+        let pass1_use_newton =
+            self.profile.cfl_newton && self.profile.cfl_newton_libjxl_parity;
         let mut cfl_map = if self.cfl_enabled {
             compute_cfl_map(
                 &xyb_x,
@@ -4095,14 +4128,14 @@ impl VarDctEncoder {
                 padded_height,
                 xsize_blocks,
                 ysize_blocks,
-                false,
+                pass1_use_newton,
                 self.profile.cfl_newton_eps,
                 self.profile.cfl_newton_max_iters,
-                // W44-184: pass 1 uses use_newton=false above so the
-                // libjxl_parity bool is ignored in the SIMD code path
-                // (the LS path takes no Newton params). Still threaded
-                // for shape consistency with pass 2 and future-proofing
-                // if pass 1 ever switches to Newton.
+                // W44-195: when `pass1_use_newton` is true the SIMD code
+                // path consumes this bool to apply libjxl-bit-exact Newton
+                // parameters (eps=100, max_iters=20, start x=0, no LS
+                // fallback). When false (Zenjxl default), Pass-1 runs LS
+                // and this bool is ignored.
                 self.profile.cfl_newton_libjxl_parity,
             )
         } else {
@@ -6210,6 +6243,12 @@ impl VarDctEncoder {
         // mismatched strategy + patched XYB regressed file size by
         // 0.5-2% on gb82-sc screenshots in measurements 2026-05-15.
         let _t_cfl = std::time::Instant::now();
+        // W44-195: same dispatch shape as the main Pass-1 site above —
+        // Newton at e>=7 when `cfl_newton_libjxl_parity` is true (Libjxl
+        // strategy), LS otherwise (Zenjxl / Aggressive / LeanFaster).
+        // See the main Pass-1 docstring for the rationale + W44-189 D1.
+        let patched_pass1_use_newton =
+            self.profile.cfl_newton && self.profile.cfl_newton_libjxl_parity;
         let cfl_map_patched: Option<CflMap> = if patched_xyb.is_some() && self.cfl_enabled {
             Some(compute_cfl_map(
                 xyb_x_for_dct,
@@ -6219,10 +6258,12 @@ impl VarDctEncoder {
                 precomputed.padded_height,
                 xsize_blocks,
                 ysize_blocks,
-                false,
+                patched_pass1_use_newton,
                 self.profile.cfl_newton_eps,
                 self.profile.cfl_newton_max_iters,
-                // W44-184: use_newton=false above → bool ignored.
+                // W44-195: when `patched_pass1_use_newton` is true the SIMD
+                // path applies libjxl-bit-exact Newton parameters; ignored
+                // when LS is used.
                 self.profile.cfl_newton_libjxl_parity,
             ))
         } else {
