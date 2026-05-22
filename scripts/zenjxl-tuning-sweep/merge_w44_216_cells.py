@@ -65,16 +65,20 @@ def main():
     merged = pa.concat_tables(tables, promote_options="default")
     print(f"[merge] concat: {len(merged)} rows × {len(merged.column_names)} cols")
 
-    # Dedup on (image_sha256, effort, distance, strategy, params_blob_sha256)
-    # if those columns exist; else just dedup on (image_path, effort, distance,
-    # strategy, params_blob_path)
+    # Dedup on (image_sha256, effort, distance, strategy, params_blob_sha256).
+    # The raw `params_blob` column is bytes; hash it to a sha256 string so the
+    # dedup key is hashable.
     df = merged.to_pandas()
+    if "params_blob" in df.columns and "params_blob_sha256" not in df.columns:
+        df["params_blob_sha256"] = df["params_blob"].apply(
+            lambda b: hashlib.sha256(b).hexdigest() if b is not None else ""
+        )
     key_cols = []
     for c in ["image_sha256", "image_path"]:
         if c in df.columns:
             key_cols.append(c)
             break
-    for c in ["effort", "distance", "strategy", "params_blob_sha256", "params_blob_path"]:
+    for c in ["effort", "distance", "strategy", "params_blob_sha256"]:
         if c in df.columns:
             key_cols.append(c)
     print(f"[merge] dedup key: {key_cols}")
@@ -83,13 +87,12 @@ def main():
     after = len(df)
     print(f"[merge] dedup: {before} → {after} rows ({before-after} dups removed)")
 
-    # Variance check: group by params blob path or sha + count
-    # distinct encoded_bytes values. If a single (params, image, effort, distance,
-    # strategy) cell produces multiple encoded_bytes values, that's a non-determinism
-    # red flag.
+    # Variance check: group by params blob sha + count distinct encoded_bytes
+    # values. If a single (params, image, effort, distance, strategy) cell
+    # produces multiple encoded_bytes values, that's a non-determinism flag.
     variance_path = out_dir / "merged.variance_check.tsv"
     if "encoded_bytes" in df.columns:
-        params_col = "params_blob_sha256" if "params_blob_sha256" in df.columns else "params_blob_path"
+        params_col = "params_blob_sha256"
         photo_or_image_col = "image_sha256" if "image_sha256" in df.columns else "image_path"
         keys = [photo_or_image_col, "effort", "distance", "strategy", params_col]
         # Count distinct encoded_bytes per group
@@ -110,7 +113,7 @@ def main():
     # Also: did params variance affect encoded_bytes? Group by image+effort+distance+strategy
     # and check encoded_bytes stddev across params variants.
     if "encoded_bytes" in df.columns and len(df) > 100:
-        params_col = "params_blob_sha256" if "params_blob_sha256" in df.columns else "params_blob_path"
+        params_col = "params_blob_sha256"
         photo_or_image_col = "image_sha256" if "image_sha256" in df.columns else "image_path"
         keys_no_params = [photo_or_image_col, "effort", "distance", "strategy"]
         param_response = df.groupby(keys_no_params, dropna=False).agg(
