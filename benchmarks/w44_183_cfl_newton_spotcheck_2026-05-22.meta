@@ -1,0 +1,151 @@
+# W44-183 HONEST-STOP — CfL Newton libjxl-parity port REGRESSES on every cell
+# Date: 2026-05-22
+# Cells: 9 images x 3 distances = 27 cells (5 CID22 photos + 3 GB82-SC screens + clic_097cb426)
+# Effort: e7 (Newton gate fires at speed_tier <= kSquirrel)
+# Status: RULED OUT — fix abandoned, ZERO production code change shipped
+#
+# ── Background ────────────────────────────────────────────────────────────────
+#
+# W44-178 → W44-181 → W44-182 chain (commits 1a2d1ee70c0f → 524e2159 → 3c2026b2):
+# clic_097cb426 e7 d=5 has a right-column SSIM2 deficit of -7 vs cjxl. W44-178
+# falsified the DCT64X64 IDCT/dequant/CfL/EPF/gaborish hypothesis (right column
+# has the SMALLEST per-pixel diff in the image despite the -7 SSIM2 — sub-pixel
+# shift on smooth content). W44-181 falsified DC quant precision drift (0/13873
+# divergences). W44-182 found that find_best_multiplier_newton diverges from
+# libjxl in 4 parameters:
+#
+#     | param         | ours       | libjxl |
+#     |---            |---         |---     |
+#     | eps           | 1.0        | 100    |
+#     | max_iters     | 10         | 20     |
+#     | starting x    | ls_x       | 0      |
+#     | non-converge  | fall to ls | last x |
+#
+# AND on the W44-182 cmap dump, ours produced ytox=0 for ALL 256 tiles while
+# cjxl produced 134/256 nonzero (pass 2). The right column tx=15 had the
+# highest |Δytox| 4.68-6.04 per tile, matching the -7 SSIM2 zone.
+#
+# W44-182's hypothesis: porting libjxl's 4 parameters bit-exactly would close
+# the SSIM2 deficit. W44-183 (this chunk) tested that hypothesis.
+#
+# ── Method ────────────────────────────────────────────────────────────────────
+#
+# 1. Wrote the W44-183 fix at jxl-encoder-simd/src/cfl.rs:
+#    - NEWTON_EPS_DEFAULT: 1.0 → 100.0
+#    - NEWTON_MAX_ITERS_DEFAULT: 10 → 20
+#    - Removed LS warm-start; start Newton at x = 0
+#    - Removed LS fallback; use last x regardless of convergence
+#    Applied to all 3 paths (scalar, AVX2, NEON).
+#
+# 2. Re-ran W44-182 probe — confirmed right-column tx=15 now BYTE-EXACT to cjxl
+#    (every one of 16 ty positions matches exactly):
+#       ty | ours(ytox,ytob) | cjxl(ytox,ytob)
+#        0 | ( +5,   -4)    | ( +5,   -4)   <- bit-exact
+#        1 | ( +4,  -11)    | ( +4,  -11)   <- bit-exact
+#       ...
+#       15 | ( +6,  -14)    | ( +6,  -14)   <- bit-exact
+#
+# 3. Re-ran W44-178 region_ssim2 — STILL -7.0/-7.7/-7.4 right-column SSIM2.
+#    The CfL fix did NOT close the SSIM2 deficit.
+#
+# 4. Spot-check on 9 images × 3 distances (this TSV): the fix REGRESSED 25/27
+#    cells with a mean +7.82% byte overhead. Worst cases:
+#       cid22_1531677 d=5: SSIM2 -13.02, bytes +26.4%
+#       cid22_1420710 d=5: SSIM2 -11.92, bytes +12.9%
+#       cid22_1531677 d=3: SSIM2 -10.46, bytes +16.5%
+#       cid22_1418519 d=5: SSIM2  -6.35, bytes  +5.7%
+#
+# ── Decision: HONEST-STOP, REVERT ─────────────────────────────────────────────
+#
+# Per the W44-183 task spec ("Fix produces large regressions on other corpus
+# images → ANALYZE before reverting"):
+#
+# The W44-183 production code change has been REVERTED. The committed artefacts
+# document the falsification:
+#
+#   benchmarks/w44_183_cfl_newton_spotcheck_2026-05-22.pre.tsv  (W44-182 baseline)
+#   benchmarks/w44_183_cfl_newton_spotcheck_2026-05-22.post.tsv (W44-183 fix)
+#   jxl-encoder/examples/w44_183_cfl_newton_spotcheck.rs        (reproducer)
+#
+# ── Root-cause analysis ───────────────────────────────────────────────────────
+#
+# The W44-178 → W44-182 chain mis-attributed the SSIM2 deficit to CfL Newton.
+# CfL Newton IS a measurable divergence vs libjxl (W44-182 verified the cmap
+# dump shows 0/256 nonzero on ours vs 134/256 cjxl pre-fix; bit-exact match on
+# right column post-fix). But fixing Newton to libjxl parity:
+#
+#   1. Does NOT close the right-column SSIM2 deficit (W44-178 region SSIM2
+#      unchanged at -7.0/-7.7/-7.4).
+#   2. CAUSES a categorical SSIM2 regression on every other image tested
+#      (25/27 cells worse, 0 cells better).
+#
+# Why does libjxl-parity Newton REGRESS our pipeline?  Likely cause: the rest of
+# our encoder (quant decisions, AC strategy selection, butteraugli loop seeds,
+# adaptive_quant, entropy_mul tables) has been incrementally tuned over W44-29
+# through W44-172 against the broken CfL-Newton baseline (which converged to
+# ls_x via the warm-start + low-eps + fallback path, effectively producing
+# LS solutions almost everywhere). Suddenly producing libjxl-correct ytox/ytob
+# multipliers throws off the downstream calibration. This is the same class of
+# integrated-pipeline-divergence that W44-86 / W44-87 / W44-90 / W44-95
+# hit when trying isolated lever changes.
+#
+# Cardinal-rule "leave nothing unported" tension: there IS a divergence here,
+# but porting it regresses real-world quality. The right move is to ship the
+# falsification (this memo + TSVs) so future agents do NOT re-attempt a naive
+# port. Future work should either (a) tackle the downstream calibration that
+# compensates for the broken CfL Newton, or (b) find the actual root cause of
+# the clic_097cb426 right-column SSIM2 deficit (a fourth candidate after
+# W44-178/181/182 all falsified).
+#
+# ── Hard acceptance gates: all FAILED ─────────────────────────────────────────
+#
+# (a) Build PASS               YES — fix compiles cleanly
+# (b) cargo test --lib         PASS (1825/1825) with the fix
+# (c) Hash-locks                Would regen 22 lossy fixtures (32 → 1825 tests
+#                               pass after regen) — REVERTED, byte-identical to
+#                               pre-W44-183 baseline.
+# (d) clic_097cb426 right-col SSIM2 <= -1.0: FAILED (stays at -7.0)
+# (e) clic_097cb426 overall SSIM2 <= -1.0:   FAILED (stays at -3 to -4.5)
+# (f) Other cells within +-5% bytes / +-0.30 SSIM2: FAILED (mean +7.82% bytes,
+#                                                 worst SSIM2 -13 on 1531677 d=5)
+# (g) PROTECT cells SSIM2 +-0.30: would FAIL — categorical regression
+# (h) EncoderStrategy::Libjxl more byte-identical to cjxl: 4/5 fixtures byte-
+#     drifted, ONE (32x32_d1) stayed at same size but with different hash
+# (i) Multi-decoder PASS:       YES — fixed output decodes cleanly via
+#                               jxl-rs/jxl-oxide/djxl. The output is VALID; it
+#                               just measures worse.
+#
+# ── DO NOT (future agents) ────────────────────────────────────────────────────
+#
+# - DO NOT re-attempt the bit-exact libjxl Newton parameter port at the
+#   DEFAULT path. Measurement (this TSV) is conclusive: 0/27 SSIM2 wins,
+#   25/27 SSIM2 regressions.
+# - DO NOT cite "CfL Newton" as the cause of the clic_097cb426 right-column
+#   SSIM2 deficit (W44-173/177/178/181/182 are all FALSIFIED).
+# - DO consider porting libjxl-correct Newton ONLY under EncoderStrategy::Libjxl
+#   (where all-libjxl-parity is the contract and bytes/SSIM2 changes are
+#   expected). That would require updating LIBJXL_PINS sizes and adding a
+#   per-EncoderStrategy gate on NEWTON_EPS_DEFAULT.
+# - DO investigate other root causes for the clic_097cb426 deficit. The W44-178
+#   per-pixel diff is tiny (0.008 max-abs RGB) but the SSIM2 amplification is
+#   -7 — investigate sub-pixel-shift amplification, low-frequency DC stability,
+#   or pipeline-level interaction (LF/HF coefficient quantization rounding,
+#   strategy selection on smooth content).
+#
+# ── Reproducer ────────────────────────────────────────────────────────────────
+#
+#   CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+#     cargo run --release --features 'parallel butteraugli-loop ssim2-loop' \
+#     --manifest-path jxl-encoder/Cargo.toml \
+#     --example w44_183_cfl_newton_spotcheck
+#
+# This regenerates the .tsv on the CURRENT state of cfl.rs. To reproduce the
+# W44-183 fix measurement (post.tsv), apply the diff documented in this memo
+# to jxl-encoder-simd/src/cfl.rs:
+#
+#     pub const NEWTON_EPS_DEFAULT: f32 = 100.0;           // was 1.0
+#     pub const NEWTON_MAX_ITERS_DEFAULT: usize = 20;      // was 10
+#     // delete LS warm-start; start at x = 0
+#     // delete LS fallback; use last x
+#
+# Apply to all 3 paths (scalar, AVX2, NEON) in jxl-encoder-simd/src/cfl.rs.
