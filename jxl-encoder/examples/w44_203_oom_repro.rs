@@ -77,7 +77,12 @@ fn main() {
     let rgb = img.to_rgb8();
     let (w, h) = (rgb.width(), rgb.height());
     let rgb_bytes = rgb.into_raw();
-    eprintln!("[w44-203] dim={}x{} = {:.2} MP", w, h, (w as f64 * h as f64) / 1.0e6);
+    eprintln!(
+        "[w44-203] dim={}x{} = {:.2} MP",
+        w,
+        h,
+        (w as f64 * h as f64) / 1.0e6
+    );
 
     let cfg = LossyConfig::new(distance)
         .with_effort(effort)

@@ -22,8 +22,10 @@ struct Cell {
 fn cells() -> Vec<Cell> {
     let mut v = Vec::new();
     // Original W44-201 LOSER / WINNER batch at e7 d=4
-    for img in &["3637739", "1418519", "1025469", "1189261", "1420710", "1531677",
-                 "2389166", "297394", "1475938"] {
+    for img in &[
+        "3637739", "1418519", "1025469", "1189261", "1420710", "1531677", "2389166", "297394",
+        "1475938",
+    ] {
         for &d in &[2.0_f32, 3.0, 4.0, 5.0] {
             v.push(Cell {
                 label: Box::leak(format!("cid22_{}_d{:.1}", img, d).into_boxed_str()),
@@ -41,13 +43,18 @@ fn cells() -> Vec<Cell> {
     }
     // Screenshots from gb82-sc (test that the gate's W44-82 load-bearing
     // hypothesis doesn't regress on screen content)
-    for img in &["codec_wiki", "imac_g3", "imac_dark", "terminal", "windows95"] {
+    for img in &[
+        "codec_wiki",
+        "imac_g3",
+        "imac_dark",
+        "terminal",
+        "windows95",
+    ] {
         for &d in &[1.0_f32, 2.0, 4.0] {
             v.push(Cell {
                 label: Box::leak(format!("gb82_{}_d{:.1}", img, d).into_boxed_str()),
                 path: Box::leak(
-                    format!("/home/lilith/work/codec-corpus/gb82-sc/{}.png", img)
-                        .into_boxed_str(),
+                    format!("/home/lilith/work/codec-corpus/gb82-sc/{}.png", img).into_boxed_str(),
                 ),
                 distance: d,
                 effort: 7,

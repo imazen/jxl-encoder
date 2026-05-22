@@ -2152,5 +2152,39 @@ name = "w44_205_decoder_check"
 path = "examples/w44_205_decoder_check.rs"
 required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
 
+# W44-206 Phase-1: savings_factor multiplier bisection with W44-201 +
+# W44-205 gates DISABLED (env hooks JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS=1
+# + JXL_W44_205_FORCE_LEGACY_MEDIUM_BUCKETS=1). Tests {0.3..0.8} step 0.1
+# vs baseline 1.0 across 34 cells (LOSER + PROTECT + SCRN).
+[[example]]
+name = "w44_206_savings_factor_isolated_ab"
+path = "examples/w44_206_savings_factor_isolated_ab.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-206 Phase-2: same bisect but with the W44-201 + W44-205 gates ON
+# (production defaults). Tests whether the multiplier is additive to the
+# gates (outcome B), redundant (outcome A), or fights them (outcome C').
+[[example]]
+name = "w44_206_savings_factor_additive_ab"
+path = "examples/w44_206_savings_factor_additive_ab.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-206 Phase-3: effort sweep at e=4/5/6/7 to spot-check whether the
+# multiplier delivers wins at lower efforts where the gates may not fire
+# as aggressively.
+[[example]]
+name = "w44_206_savings_factor_effort_sweep"
+path = "examples/w44_206_savings_factor_effort_sweep.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+# W44-206 multi-decoder sanity check: jxl-oxide roundtrip on 5 cells ×
+# 3 modes (baseline f=1.0 / isolated f=0.3 gates-off / additive f=0.3
+# gates-on). Belt-and-suspenders on the spec-compliance of the
+# scan-order changes.
+[[example]]
+name = "w44_206_decoder_check"
+path = "examples/w44_206_decoder_check.rs"
+required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+
 [lints]
 workspace = true

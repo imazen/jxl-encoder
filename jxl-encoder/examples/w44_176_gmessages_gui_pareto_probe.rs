@@ -184,7 +184,9 @@ fn score_cell(
 
 fn main() {
     eprintln!("W44-176 pareto-direction probe: A=baseline (W44-109 lift on) vs B=lift off");
-    eprintln!("Question: are gmessages/gui NET-NEGATIVE (like terminal) or NET-POSITIVE (like graph)?");
+    eprintln!(
+        "Question: are gmessages/gui NET-NEGATIVE (like terminal) or NET-POSITIVE (like graph)?"
+    );
     eprintln!("Cells (interleaved A,B): {}", CELLS.len());
 
     println!(
@@ -192,7 +194,10 @@ fn main() {
     );
 
     use std::collections::BTreeMap;
-    let mut images_cache: BTreeMap<String, (u32, u32, Vec<u8>, Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>)> = BTreeMap::new();
+    let mut images_cache: BTreeMap<
+        String,
+        (u32, u32, Vec<u8>, Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>),
+    > = BTreeMap::new();
 
     for (i, &(image, effort, d)) in CELLS.iter().enumerate() {
         eprintln!("[{}/{}] {} e{} d={}", i + 1, CELLS.len(), image, effort, d);
@@ -222,7 +227,18 @@ fn main() {
             let ba_s2 = b.ssim2 - a.ssim2;
             println!(
                 "{}\te{}\t{}\t{}\t{}\t{:+.3}\t{:.4}\t{:.4}\t{:+.4}\t{:.4}\t{:.4}\t{:+.4}",
-                image, effort, d, a.bytes, b.bytes, ba_pct, a.butteraugli, b.butteraugli, ba_bfly, a.ssim2, b.ssim2, ba_s2,
+                image,
+                effort,
+                d,
+                a.bytes,
+                b.bytes,
+                ba_pct,
+                a.butteraugli,
+                b.butteraugli,
+                ba_bfly,
+                a.ssim2,
+                b.ssim2,
+                ba_s2,
             );
         }
     }
@@ -233,6 +249,10 @@ fn main() {
     eprintln!("BA_ssim2 > 0 → disabling W44-109 lift IMPROVES SSIM2 (lift was hurting quality)");
     eprintln!("BA_ssim2 < 0 → disabling W44-109 lift HURTS SSIM2 (lift was buying real quality)");
     eprintln!();
-    eprintln!("Net-NEGATIVE pareto (terminal-class, want EXCLUDE): BA_pct < 0 AND BA_ssim2 >= -0.10");
-    eprintln!("Net-POSITIVE pareto (graph-class, want KEEP): BA_ssim2 < -1.0 (lift buys real SSIM2)");
+    eprintln!(
+        "Net-NEGATIVE pareto (terminal-class, want EXCLUDE): BA_pct < 0 AND BA_ssim2 >= -0.10"
+    );
+    eprintln!(
+        "Net-POSITIVE pareto (graph-class, want KEEP): BA_ssim2 < -1.0 (lift buys real SSIM2)"
+    );
 }

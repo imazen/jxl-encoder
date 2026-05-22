@@ -226,7 +226,10 @@ fn w44_176_env_disable_decodes_cleanly() {
         }
     }
 
-    eprintln!("[{cell_name}] Zenjxl(W44-176-disabled) bytes={}", bytes.len());
+    eprintln!(
+        "[{cell_name}] Zenjxl(W44-176-disabled) bytes={}",
+        bytes.len()
+    );
 
     let (ow, oh) = decode_oxide(&bytes).expect("jxl-oxide decode");
     assert_eq!(ow, w);

@@ -214,14 +214,19 @@ fn score_cell(
 }
 
 fn main() {
-    eprintln!("W44-176 terminal-class exclude A/B: A=force OFF (pre-W44-176) vs B=Zenjxl default (exclude ON)");
+    eprintln!(
+        "W44-176 terminal-class exclude A/B: A=force OFF (pre-W44-176) vs B=Zenjxl default (exclude ON)"
+    );
     eprintln!("Cells (interleaved A,B): {}", CELLS.len());
 
     println!(
         "class\timage\teffort\tdistance\tA_bytes\tB_bytes\tBA_pct\tA_bfly\tB_bfly\tBA_bfly\tA_ssim2\tB_ssim2\tBA_ssim2"
     );
 
-    let mut images_cache: BTreeMap<String, (u32, u32, Vec<u8>, Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>)> = BTreeMap::new();
+    let mut images_cache: BTreeMap<
+        String,
+        (u32, u32, Vec<u8>, Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>),
+    > = BTreeMap::new();
 
     let mut target_ba_pct = Vec::<f64>::new();
     let mut target_ba_ssim2 = Vec::<f64>::new();
@@ -235,7 +240,15 @@ fn main() {
     let mut protect_photos_total = 0usize;
 
     for (i, &(class, dir, image, effort, d)) in CELLS.iter().enumerate() {
-        eprintln!("[{}/{}] {} {} e{} d={}", i + 1, CELLS.len(), class, image, effort, d);
+        eprintln!(
+            "[{}/{}] {} {} e{} d={}",
+            i + 1,
+            CELLS.len(),
+            class,
+            image,
+            effort,
+            d
+        );
         let path = PathBuf::from(dir).join(image);
         let cache_key = format!("{dir}/{image}");
         let (w, h, raw, orig_linear, orig_srgb) =
@@ -262,7 +275,19 @@ fn main() {
             let ba_s2 = b.ssim2 - a.ssim2;
             println!(
                 "{}\t{}\te{}\t{}\t{}\t{}\t{:+.3}\t{:.4}\t{:.4}\t{:+.4}\t{:.4}\t{:.4}\t{:+.4}",
-                class, image, effort, d, a.bytes, b.bytes, ba_pct, a.butteraugli, b.butteraugli, ba_bfly, a.ssim2, b.ssim2, ba_s2,
+                class,
+                image,
+                effort,
+                d,
+                a.bytes,
+                b.bytes,
+                ba_pct,
+                a.butteraugli,
+                b.butteraugli,
+                ba_bfly,
+                a.ssim2,
+                b.ssim2,
+                ba_s2,
             );
 
             match class {
@@ -308,28 +333,42 @@ fn main() {
         let mean = sum / n as f64;
         let min = v.iter().copied().fold(f64::INFINITY, f64::min);
         let max = v.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        eprintln!("{}: n={} mean={:+.4}{} min={:+.4}{} max={:+.4}{}",
-            label, n, mean, unit, min, unit, max, unit);
+        eprintln!(
+            "{}: n={} mean={:+.4}{} min={:+.4}{} max={:+.4}{}",
+            label, n, mean, unit, min, unit, max, unit
+        );
     };
 
     eprintln!();
     eprintln!("=== Summary ===");
     stats("TARGET terminal BA_pct", &target_ba_pct, "%");
     stats("TARGET terminal BA_ssim2", &target_ba_ssim2, "");
-    eprintln!("PROTECT_KEEP byte-identical: {}/{}",
-        protect_keep_byte_identical, protect_keep_total);
-    eprintln!("PROTECT_NOFIRE byte-identical: {}/{}",
-        protect_nofire_byte_identical, protect_nofire_total);
-    eprintln!("PROTECT_DIFF_GATE byte-identical: {}/{}",
-        protect_diff_gate_byte_identical, protect_diff_gate_total);
-    eprintln!("PROTECT_PHOTOS byte-identical: {}/{}",
-        protect_photos_byte_identical, protect_photos_total);
+    eprintln!(
+        "PROTECT_KEEP byte-identical: {}/{}",
+        protect_keep_byte_identical, protect_keep_total
+    );
+    eprintln!(
+        "PROTECT_NOFIRE byte-identical: {}/{}",
+        protect_nofire_byte_identical, protect_nofire_total
+    );
+    eprintln!(
+        "PROTECT_DIFF_GATE byte-identical: {}/{}",
+        protect_diff_gate_byte_identical, protect_diff_gate_total
+    );
+    eprintln!(
+        "PROTECT_PHOTOS byte-identical: {}/{}",
+        protect_photos_byte_identical, protect_photos_total
+    );
 
     eprintln!();
     eprintln!("Acceptance gates:");
     eprintln!("  (d) TARGET bytes ≤ +5% AND SSIM2 ≥ -0.10: see TARGET stats");
-    eprintln!("  (e) PROTECT_KEEP BYTE-IDENTICAL: {}/{}",
-        protect_keep_byte_identical, protect_keep_total);
-    eprintln!("  (f) PROTECT_PHOTOS BYTE-IDENTICAL: {}/{}",
-        protect_photos_byte_identical, protect_photos_total);
+    eprintln!(
+        "  (e) PROTECT_KEEP BYTE-IDENTICAL: {}/{}",
+        protect_keep_byte_identical, protect_keep_total
+    );
+    eprintln!(
+        "  (f) PROTECT_PHOTOS BYTE-IDENTICAL: {}/{}",
+        protect_photos_byte_identical, protect_photos_total
+    );
 }

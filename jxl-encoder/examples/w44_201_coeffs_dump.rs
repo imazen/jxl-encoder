@@ -30,12 +30,7 @@ fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     (rgb.into_raw(), w, h)
 }
 
-fn encode(
-    label: &str,
-    img_path: &str,
-    strategy: EncoderStrategy,
-    dump_dir: &str,
-) -> usize {
+fn encode(label: &str, img_path: &str, strategy: EncoderStrategy, dump_dir: &str) -> usize {
     let (pixels, w, h) = load_png(Path::new(img_path));
     eprintln!(
         "  [{}] encoding {} ({} x {}) with {:?}, dump → {}",
@@ -63,11 +58,7 @@ fn encode(
         .encode_request(w, h, PixelLayout::Rgb8)
         .encode(&pixels)
         .expect("encode");
-    eprintln!(
-        "  [{}] encoded {} bytes",
-        label,
-        buf.len()
-    );
+    eprintln!("  [{}] encoded {} bytes", label, buf.len());
     buf.len()
 }
 
@@ -84,7 +75,15 @@ fn main() {
         let libjxl_dir = format!("{}/{}_libjxl", outdir, label);
         let z = encode(label, img_path, EncoderStrategy::Zenjxl, &zenjxl_dir);
         let l = encode(label, img_path, EncoderStrategy::Libjxl, &libjxl_dir);
-        eprintln!("  bytes: zenjxl={} libjxl={} delta={:+}", z, l, l as i64 - z as i64);
+        eprintln!(
+            "  bytes: zenjxl={} libjxl={} delta={:+}",
+            z,
+            l,
+            l as i64 - z as i64
+        );
     }
-    eprintln!("\nDumps in {}/{{3637739_LOSER,1418519_WINNER}}_{{zenjxl,libjxl}}/per_position_coeffs.tsv", outdir);
+    eprintln!(
+        "\nDumps in {}/{{3637739_LOSER,1418519_WINNER}}_{{zenjxl,libjxl}}/per_position_coeffs.tsv",
+        outdir
+    );
 }
