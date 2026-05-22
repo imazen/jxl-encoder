@@ -1,0 +1,335 @@
+W44-182 CfL AC tile aggregation probe — ROOT CAUSE IDENTIFIED
+==================================================================
+Date: 2026-05-21
+Image: clic_097cb426 (1024×1024)
+Effort: 7 Distance: 5
+Tile grid: 16×16 (each = 8×8 blocks = 64×64 px)
+Encoder: EncoderStrategy::Zenjxl
+
+Headline
+--------
+**The clic_097cb426 right-column SSIM2 -7 deficit is caused by our CfL
+Newton solver producing ALL ZEROS for ytox across the entire image,
+while cjxl produces nonzero ytox at 134-186 of 256 tiles.**
+
+Specifically: our `find_best_multiplier_newton_*` (`jxl-encoder-simd/src/cfl.rs`)
+uses parameters `NEWTON_EPS_DEFAULT = 1.0`, `NEWTON_MAX_ITERS_DEFAULT = 10`,
+warm-starts from `ls_x`, and **falls back to `ls_x` on non-convergence**.
+libjxl `enc_chroma_from_luma.cc:152-171` uses `eps = 100`, `max_iters = 20`,
+starts from `x = 0`, and **uses whatever `x` is at the last iteration**
+(no fallback). The "eps=100 causes oscillation" docstring claim is
+falsified by direct measurement on clic_097cb426 e7 d=5.
+
+Per-channel divergence vs cjxl:
+- Pass 1 (compute_cfl_map, forced DCT8 + Newton at e>=7):
+  - ytox: ours 0/256 nonzero vs cjxl 186/256 nonzero
+  - ytob: ours 90/256 nonzero (mean -2.73) vs cjxl 86/256 nonzero (mean -0.06)
+- Pass 2 (refine_cfl_map, real ac_strategy + raw_quant_field):
+  - ytox: ours 0/256 nonzero vs cjxl 134/256 nonzero
+  - ytob: ours 78/256 nonzero (mean -4.98) vs cjxl 167/256 nonzero (mean -2.93)
+
+Per-pass divergent-tile counts (ours vs cjxl):
+- Pass 1: ytox 186/256 divergent (72.7%), ytob 164/256 (64.1%)
+- Pass 2: ytox 134/256 divergent (52.3%), ytob 108/256 (42.2%)
+
+Per-pass mean |Δ|:
+- Pass 1: mean |Δytox| = 2.84, mean |Δytob| = 4.31
+- Pass 2: mean |Δytox| = 2.75, mean |Δytob| = 2.39
+
+The Pass-1 → Pass-2 narrowing happens because cjxl's pass 2 re-converges
+some ytox tiles back to 0 (cjxl pass-1 has 186 nonzero, pass-2 has 134),
+while ours stays at 0 in both passes.
+
+Spatial correlation with W44-178 right-column SSIM2 -7 deficit
+----------------------------------------------------------------
+Per-region (3x3 grid) mean |Δ| at pass 2:
+
+| region    | mean |Δytox| | mean |Δytob| | W44-178 max_abs_rgb |
+|---        |---           |---           |---                  |
+| top-left  |  4.76        |  9.48        | 0.05937             |
+| top-mid   |  1.00        |  1.27        | 0.08928             |
+| top-right |  4.68        |  3.40        | 0.00797             |
+| mid-left  |  0.10        |  0.17        | 0.04044             |
+| mid-mid   |  1.00        |  0.72        | 0.07757             |
+| mid-right |  5.50        |  2.03        | 0.00740             |
+| bot-left  |  1.84        |  1.08        | 0.01211             |
+| bot-mid   |  1.20        |  0.80        | 0.03040             |
+| bot-right |  6.04        |  4.36        | 0.00638             |
+
+**Right column (top-right, mid-right, bot-right) has the HIGHEST
+|Δytox| values in the image (4.68, 5.50, 6.04 mean per tile) — exactly
+the region with the W44-178 -7 SSIM2 deficit.** The W44-178 max-abs RGB
+in the right column is small (0.0074-0.008) precisely because the
+content there is smooth — but on smooth content, even a ±5 unit cmap
+divergence integrated across an entire 64×64 tile produces sub-pixel
+chroma shifts that SSIM2 amplifies.
+
+Right-column tx=15 pass-2 per-tile detail:
+- Every single one of the 16 tiles has nonzero Δytox (we say 0, cjxl says +4/+5/+6/+7).
+- ty=15 has Δytob = -10 (we say -24, cjxl says -14) — the worst single
+  tile in the right column.
+
+Methodology
+-----------
+1. Added env-gated dump module `vardct/w44_182_dump.rs` (95 LOC, env
+   `JXL_W44_182_DUMP_CFL=<dir>`, zero overhead when unset). Records
+   per-tile (tx, ty, pass, ytox, ytob).
+2. Added 2 dump-call sites in `vardct/chroma_from_luma.rs` (pass=1 at
+   end of `compute_cfl_map`, pass=2 at end of `refine_cfl_map`).
+3. Encoded clic_097cb426 e7 d=5 with ours, captured 512 dump rows
+   (256 tiles × 2 passes).
+4. Patched libjxl `lib/jxl/enc_chroma_from_luma.cc` with a small (32
+   LOC) env-gated cmap dump (full diff:
+   `benchmarks/w44_182_libjxl_cmap_dump_2026-05-21.patch`). Rebuilt
+   cjxl, encoded same image with `JXL_W44_182_DUMP_CFL_CJXL=<dir>`
+   set. Captured 512 dump rows (256 tiles × 2 passes). Reverted the
+   libjxl patch + rebuilt to original binary (md5sum verified).
+5. Diffed per-tile, computed per-pass/per-channel divergence stats
+   and per-region/per-column heatmap.
+
+Source-diff: our `find_best_multiplier_newton_*` vs libjxl `FindBestMultiplier(fast=false)`
+-----------------------------------------------------------------------------------------
+
+`jxl-encoder-simd/src/cfl.rs:328-419` (scalar Newton, similar for AVX2/NEON/WASM128):
+
+    pub const NEWTON_EPS_DEFAULT: f32 = 1.0;        # <-- libjxl uses 100
+    pub const NEWTON_MAX_ITERS_DEFAULT: usize = 10;  # <-- libjxl uses 20
+
+    pub fn find_best_multiplier_newton_scalar(...) -> i8 {
+        # 1. Compute LS warm-start (libjxl does NOT compute warm-start)
+        let ls_x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
+        let mut x = ls_x;        # <-- libjxl starts at x = 0
+        let mut converged = false;
+        for _ in 0..max_iters {
+            # ... Newton iteration with eps=1 finite differences ...
+            if step.abs() < NEWTON_CONVERGENCE {
+                converged = true;
+                break;
+            }
+        }
+        if converged {
+            bias_and_quantize(x)
+        } else {
+            bias_and_quantize(ls_x)   # <-- libjxl uses last `x` regardless
+        }
+    }
+
+`libjxl/lib/jxl/enc_chroma_from_luma.cc:154-171`:
+
+    constexpr float eps = 100;     // wide aperture for smoothed derivatives
+    constexpr float kClamp = 20.0f;
+    CFLFunction fn(values_m, values_s, num, base, distance_mul);
+    x = 0;                          // start at origin
+    for (size_t i = 0; i < 20; i++) {   // up to 20 iters
+        float dfpeps; float dfmeps;
+        float d_f = fn.Compute(x, eps, &dfpeps, &dfmeps);
+        float ddf = (dfpeps - dfmeps) / (2 * eps);
+        float kExperimentalInsignificantStabilizer = 0.85;
+        float step = d_f / (ddf + kExperimentalInsignificantStabilizer);
+        x -= std::min(kClamp, std::max(-kClamp, step));
+        if (std::abs(step) < 3e-3) break;
+    }
+    // Whatever `x` is now, that's the answer. No fallback.
+
+**The 4 production divergences**:
+
+| Parameter         | Ours                  | libjxl     |
+|-------------------|----------------------|------------|
+| eps               | 1.0                   | 100        |
+| max_iters         | 10                    | 20         |
+| starting x        | ls_x (warm start)     | 0          |
+| non-convergence   | fall back to ls_x     | use last x |
+
+The "eps=1 ... convergence; libjxl uses eps=100 which causes
+oscillation" docstring claim (`cfl.rs:30-34`) is FALSIFIED by direct
+measurement: cjxl with eps=100 produces nonzero ytox in 134-186/256
+tiles; ours with eps=1 produces 0/256.
+
+Why eps=100 is correct (smoothed-L1 motivation)
+-------------------------------------------------
+The cost function is `1/3 sum((|ax+b|+1)^2 - 1) + dm*x^2*N` — a sum of
+piecewise quadratic terms with kinks at each `b/a` where the absolute
+value crosses zero. The exact second derivative is a sum of
+delta-function-modulated quadratics; locally evaluating it via finite
+differences with small `eps` produces wildly noisy values that prevent
+Newton from converging. The libjxl comment EXPLICITLY says this:
+
+    // Up to 20 Newton iterations, with approximate derivatives.
+    // Derivatives are approximate due to the high amount of noise in the exact
+    // derivatives.
+
+`eps=100` smooths the second derivative over a wide aperture, making
+Newton on the smoothed quasi-convex problem converge robustly to the
+local minimum.
+
+Our `eps=1` finds the LOCAL second derivative at each iteration, which
+oscillates between values of opposite signs near kinks, so step length
+oscillates, so step.abs() never drops below the 3e-3 convergence
+threshold, so Newton fails to converge, so we fall back to `ls_x` —
+which is the OLS solution (no smoothing, dominated by outlier
+residuals). For X-channel CfL on smooth photo content, `ls_x` is small
+(< 2.6) and gets snapped to 0 by `bias_and_quantize`.
+
+Per-column data (PASS 2 mean |Δ|)
+----------------------------------
+
+| tx | mean |Δytox| | mean |Δytob| |
+|----|--------------|---------------|
+|  0 |  2.81        |  4.44         |
+|  1 |  2.56        |  5.56         |
+|  2 |  2.69        |  4.38         |
+|  3 |  2.00        |  2.00         |
+|  4 |  0.44        |  0.44         |
+|  5 |  0.00        |  0.00         |
+|  6 |  0.00        |  0.31         |
+|  7 |  0.00        |  0.12         |
+|  8 |  0.00        |  0.00         |
+|  9 |  1.50        |  1.38         |
+| 10 |  4.88        |  3.69         |
+| 11 |  5.25        |  3.25         |
+| 12 |  5.81        |  2.88         |
+| 13 |  5.56        |  3.12         |
+| 14 |  5.12        |  3.12         |
+| 15 |  5.31        |  3.56         |
+
+Columns 4-9 have very small deltas (content is highly correlated luma,
+where ls_x dominates and matches). Columns 0-2 and 10-15 have large
+deltas (smooth high-chroma content where Newton convergence is critical).
+
+Per-pass pre-comparison statistics (ours only, for reference)
+---------------------------------------------------------------
+
+Pass1 → Pass2 delta histograms (ours):
+  ytox: [(0, 256)]  — ALL TILES at pass 2 match their pass 1 (still all zero)
+  ytob: [(-17, 2), (-16, 2), (-14, 1), (-13, 4), (-12, 1), (-11, 4),
+         (-10, 3), (-9, 3), (-8, 5), (-7, 8), (-6, 9), (-5, 13),
+         (-4, 14), (-3, 21), (-2, 13), (-1, 30), (0, 89), (1, 18),
+         (2, 11), (3, 3), (5, 2)]
+  (pass 2 actively refines ytob on 167/256 tiles)
+
+What this rules out
+-------------------
+1. **DC quantization precision** (W44-181 ruled out, 0 divergences).
+2. **DC CfL parameters** (W44-181 ruled out, libjxl uses defaults).
+3. **DC dequant precision** (W44-181 ruled out, 4.77e-7 max).
+4. **DCT64X64 IDCT** (W44-178 ruled out, parity test passes).
+5. **Gaborish** (W44-178 ruled out).
+6. **EPF** (W44-178 ruled out).
+7. **CfL AC tile aggregation algorithm structure** — W44-182
+   verified pass-1/pass-2 dispatch order matches libjxl
+   (`enc_heuristics.cc:1170` then `:1191`), `compute_cfl_map` uses
+   forced DCT8 + Newton, `refine_cfl_map` uses real ac_strategy +
+   raw_quant_field. The aggregation LOOP STRUCTURE matches; only the
+   Newton solver parameters diverge.
+
+What this leaves open (ranked fix candidates)
+----------------------------------------------
+
+### W44-183 candidate 1 (HIGH EV, ~1-2 days): port libjxl's Newton exactly
+
+Change in `jxl-encoder-simd/src/cfl.rs`:
+1. `NEWTON_EPS_DEFAULT: 1.0 -> 100.0`
+2. `NEWTON_MAX_ITERS_DEFAULT: 10 -> 20`
+3. Starting `x = ls_x -> x = 0`
+4. Remove fallback-to-ls_x: always return `bias_and_quantize(x)`
+   regardless of convergence
+
+Then re-encode clic_097cb426 e7 d=5 and verify:
+- Per-tile cmap matches cjxl bit-exactly OR within ±1 unit
+- Right-column SSIM2 deficit closes (target: -7.0 -> -1.0 or better)
+- Bytes within ±2% of baseline (different cmap shifts AC tokenization)
+- Hash-lock regen + multi-decoder roundtrip
+
+**Risk**: medium-low. The 4-parameter port is small. The bytes impact
+may be significant (cmap is on the wire, but at ~5 bits per tile-pair
+* 256 tiles ~ 1280 bits = 160 bytes per frame, small relative to
+~15000 byte total). The SSIM2 impact may be large since CfL drives
+chroma reconstruction.
+
+### W44-183 candidate 2 (LOW-MED EV): per-tile bias_and_quantize variance
+
+The libjxl comment notes that the `towards_zero=2.6` bias would
+benefit from per-area variance heuristics ("would give about 1%
+more compression density"). NOT shipped in libjxl. Probably skip.
+
+### Already-falsified candidates (DO NOT pursue)
+
+- DC quant expression order (W44-181)
+- DC CfL parameters (W44-181)
+- DC dequant FMA precision (W44-181)
+- DCT64X64 IDCT (W44-178)
+- Gaborish (W44-178)
+- EPF (W44-178)
+
+DO NOT (binding for future agents)
+----------------------------------
+1. **DO NOT re-investigate DC pipeline precision** (W44-181 conclusive).
+2. **DO NOT cite "FMA precision"** for the SSIM2 deficit.
+3. **DO NOT leave the W44-182 CfL Newton docstring claim ("libjxl uses
+   eps=100 which causes oscillation") in place** when shipping the
+   fix — it's empirically wrong on clic_097cb426. The fix commit
+   should DELETE the "CFL_NEWTON_CONVERGENCE_BUG.md" reference.
+4. **DO NOT remove the W44-182 dump infrastructure** — env-gated, zero
+   overhead when unset, useful for future CfL probes.
+
+Reproducer
+----------
+Ours (with dump):
+  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+    cargo run --release --manifest-path jxl-encoder/Cargo.toml \
+    --features 'parallel butteraugli-loop ssim2-loop' \
+    --example w44_182_cfl_tile_probe
+
+cjxl (with dump): Apply benchmarks/w44_182_libjxl_cmap_dump_2026-05-21.patch
+to ~/work/jxl-efforts/libjxl/lib/jxl/enc_chroma_from_luma.cc, rebuild cjxl,
+then:
+
+  JXL_W44_182_DUMP_CFL_CJXL=/tmp/dump \
+    ~/work/jxl-efforts/libjxl/build/tools/cjxl \
+    /home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png \
+    /tmp/out.jxl -e 7 -d 5 --num_threads 1
+
+THEN REVERT THE LIBJXL PATCH:
+  cd ~/work/jxl-efforts/libjxl && git checkout lib/jxl/enc_chroma_from_luma.cc
+  cd build && cmake --build . --target cjxl -j4
+
+Comparison: `python3 /tmp/w44_182_compare.py` (script archived as
+inline content in `benchmarks/w44_182_cmap_vs_cjxl_2026-05-21.txt` —
+read first 25 lines of the .txt for the Python source).
+
+Artifacts
+---------
+- `jxl-encoder/src/vardct/w44_182_dump.rs` — NEW (95 LOC, env-gated)
+- `jxl-encoder/src/vardct/mod.rs` (+1 line — mod registration)
+- `jxl-encoder/src/vardct/chroma_from_luma.rs` (+~12 lines, 2 dump
+  call sites in compute_cfl_map + refine_cfl_map, all in
+  `#[cfg(feature = "std")]`)
+- `jxl-encoder/examples/w44_182_cfl_tile_probe.rs` — NEW (~340 LOC)
+- `jxl-encoder/Cargo.toml` (+10 lines — example registration)
+- `benchmarks/w44_182_cfl_tile_probe_2026-05-21.tsv` (per-tile diff
+  between pass 1 and pass 2 ours)
+- `benchmarks/w44_182_cfl_tile_probe_2026-05-21.meta` (this file)
+- `benchmarks/w44_182_cfl_tiles_cjxl_2026-05-21.tsv` (cjxl per-tile dump)
+- `benchmarks/w44_182_cmap_vs_cjxl_2026-05-21.txt` (comparison script
+  output: per-pass/per-channel divergence stats + per-region heatmap
+  + right-column zoom)
+- `benchmarks/w44_182_libjxl_cmap_dump_2026-05-21.patch` (libjxl
+  measurement patch — DO NOT APPLY in production; reverted after use)
+
+Cross-references
+----------------
+- W44-178 (`memory/w44_178_recon_diff_falsifies_dct64_2026-05-21.md`):
+  falsified DCT64 IDCT + gaborish + EPF as the bug location.
+- W44-181 (`memory/w44_181_dc_quant_precision_probe_2026-05-21.md`):
+  falsified DC quant precision + DC CfL params + DC dequant precision.
+- W44-173 (`memory/w44_173_clic_097cb426_diagnosis_2026-05-21.md`):
+  original diagnostic surfacing right-column -7 SSIM2 (CORRECT
+  measurement, INCORRECT first attribution to "DCT64X64 path").
+- W44-102 (`memory/w44_102_cfl_two_pass_e5_ruled_out_2026-05-19.md`):
+  cfl_two_pass widening RULED OUT at e>=5 — but for a DIFFERENT reason
+  (effort gate, not Newton parameters). The Newton bug ships even at
+  e>=7 where pass 2 IS gated on.
+- libjxl source: `lib/jxl/enc_chroma_from_luma.cc:127-185` (FindBestMultiplier).
+- Our source: `jxl-encoder-simd/src/cfl.rs:29-43` (Newton constants),
+  `:275-318` (top dispatch), `:321-419` (scalar Newton),
+  `:421-579` (AVX2), `:581+` (NEON, WASM).

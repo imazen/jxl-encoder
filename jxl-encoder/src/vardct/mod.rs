@@ -100,6 +100,7 @@ mod static_codes;
 pub mod transform;
 pub(crate) mod w44_76_dump;
 pub(crate) mod w44_181_dump;
+pub(crate) mod w44_182_dump;
 pub(crate) mod xyb;
 
 pub use encoder::{VarDctEncoder, VarDctOutput};
