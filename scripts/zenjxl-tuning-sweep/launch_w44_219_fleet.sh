@@ -80,6 +80,42 @@ for o in d[:n]:
 ")
 [[ -z "$OFFER_IDS" ]] && { echo "ERROR: no offers matched" >&2; exit 1; }
 
+# W44-219 hot-fix: build the Python patch script LOCALLY and base64-encode
+# it for inclusion in BOOTSTRAP_SCRIPT. Avoids heredoc-in-heredoc escape
+# nightmare. The patch replaces the broken s5cmd | awk | shuf | head -32
+# pipeline with a file-redirect equivalent.
+W44_219_PATCH_SRC=$(cat <<'PATCHEOF'
+import sys
+from pathlib import Path
+p = Path('/usr/local/bin/onstart.sh')
+src = p.read_text()
+mark_a = 'while true; do'
+mark_b = 'if [[ -z'
+a = src.find(mark_a)
+b = src.find(mark_b, a)
+if a < 0 or b < 0:
+    print('[bootstrap] WARN: W44-219 hot-fix markers not found', file=sys.stderr)
+    sys.exit(0)
+old_block = src[a:b]
+if 's5cmd ls' not in old_block or 'head -32' not in old_block:
+    print(f'[bootstrap] WARN: W44-219 hot-fix block has unexpected content (len={len(old_block)})', file=sys.stderr)
+    sys.exit(0)
+new_block = (
+    'while true; do\n'
+    '    # W44-219 hot-fix: pipe -> file-redirect (one-shot pipe loses output on big input)\n'
+    '    _w219_s5out=/tmp/w219_s5cmd_out.txt\n'
+    '    s5cmd ls "s3://$SWEEP_BUCKET/$SWEEP_ID/$CHUNK_PREFIX/*.json" \\\n'
+    '        > "$_w219_s5out" 2>/dev/null || true\n'
+    "    LIST=$(awk '{print $NF}' < \"$_w219_s5out\" | shuf | head -32) || LIST=\"\"\n"
+    '    '
+)
+out = src[:a] + new_block + src[b:]
+p.write_text(out)
+print(f'[bootstrap] W44-219 hot-fix applied (replaced {len(old_block)} -> {len(new_block)} bytes)')
+PATCHEOF
+)
+W44_219_PATCH_B64=$(printf '%s' "$W44_219_PATCH_SRC" | base64 -w0)
+
 # Build the bootstrap script ONCE, reuse across all boxes
 BOOTSTRAP_SCRIPT=$(cat <<EOF
 set -e
@@ -99,36 +135,10 @@ echo "[bootstrap] env hydrated"
 # image. The original onstart pipeline
 #   LIST=\$(s5cmd ls ... | awk | shuf | head -32)
 # silently returns 0 lines on some pods when the s5cmd output is large
-# (~4793 chunks for W44-219), likely a SIGPIPE-vs-go-runtime
-# interaction on the head -32 closing the pipe before s5cmd finishes
-# writing. Reproduced on smoke pod 37399636 (2026-05-22): both bash
-# stages succeeded individually but the one-shot pipe returned empty.
-# File-redirect equivalent (s5cmd > file then awk < file | ...) works.
-# Patched here so all W44-219 fleet pods get the fix without an image
-# rebuild. Drop this block once a v3 image with the fix is pushed.
-python3 - <<'PYEOF'
-import re, sys
-from pathlib import Path
-p = Path("/usr/local/bin/onstart.sh")
-src = p.read_text()
-old = '''    LIST=\$(s5cmd ls "s3://\$SWEEP_BUCKET/\$SWEEP_ID/\$CHUNK_PREFIX/*.json" 2>/dev/null \\\\
-           | awk '{print \$NF}' \\\\
-           | shuf \\\\
-           | head -32) || LIST=""
-'''
-new = '''    # W44-219 hot-fix: split pipe → file redirects (some pods fail the
-    # one-shot pipe with SIGPIPE on big input, returning empty LIST).
-    _w219_s5out=/tmp/w219_s5cmd_out.txt
-    s5cmd ls "s3://\$SWEEP_BUCKET/\$SWEEP_ID/\$CHUNK_PREFIX/*.json" \\\\
-        > "\$_w219_s5out" 2>/dev/null || true
-    LIST=\$(awk '{print \$NF}' < "\$_w219_s5out" | shuf | head -32) || LIST=""
-'''
-if old not in src:
-    print("[bootstrap] WARN: W44-219 hot-fix target not found; skipping", file=sys.stderr)
-else:
-    p.write_text(src.replace(old, new))
-    print("[bootstrap] W44-219 hot-fix applied to /usr/local/bin/onstart.sh")
-PYEOF
+# (~4793 chunks for W44-219). See memory/w44_219_densify_sweep_2026-05-22.md.
+# Patch script is base64-encoded to avoid heredoc-in-heredoc escape pain.
+echo "${W44_219_PATCH_B64}" | base64 -d > /tmp/w44-219-patch.py
+python3 /tmp/w44-219-patch.py 2>&1 || echo "[bootstrap] WARN: patch script failed (continuing without fix)"
 
 exec /usr/local/bin/onstart.sh
 EOF
