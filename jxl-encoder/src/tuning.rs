@@ -409,16 +409,32 @@ pub mod coupling {
     //! remains `unimplemented!()` until the corresponding chunk
     //! lands the full Tier-2 → RuntimeTuning compose.
     //!
+    //! **W44-220 status** (2026-05-22): per-pair response R² REFIT
+    //! attempt on the W44-216+W44-219 combined corpus (267 blobs,
+    //! 21× density) HONEST-STOPPED below the 0.5 acceptance gate.
+    //! 0 of 7 pairs clear the gate with linear+cross-term forms;
+    //! 0 of 7 pairs clear with GBR-pair-only; 3 of 14 (pair, outcome)
+    //! cells clear with GBR-all-6-params — all on `log_bytes_resid`
+    //! at `class=screen/dist_band=very_high` (exactly R²=0.5009,
+    //! shared across p3_p6/p4_p5/p4_p6 because they fit the same
+    //! 6-param surface on the same data). The structural ceiling
+    //! on the highest-signal stratum is `ssim2 R² ≈ 0.41`,
+    //! `log_bytes R² ≈ 0.44` — below the gate even for an
+    //! upper-bound non-parametric 6-param GBR. **The algebraic
+    //! forms are wrong, not the corpus** — re-derivation queued
+    //! as W44-221 (six-knob expansion / per-class formula families
+    //! / RD-theoretic derivation / Tier-3 zenanalyze conditioning).
+    //!
     //! **Calibration source**: ridge bounds + saturation strengths
     //! come from the W44-216 LHS empirical ranges (13 param blobs,
     //! 27 images, 4938 cells). Per-pair response R² fits were
-    //! ATTEMPTED in W44-218 Phase 3 but all came in below the 0.5
-    //! acceptance gate — the corpus is too sparse in the param
-    //! dimension (13 distinct blobs) to identify pair-coupling
-    //! coefficients individually. The ridges are therefore calibrated
-    //! to (a) round-trip defaults byte-exact and (b) cover the
-    //! empirical envelope. W44-219 denser sweep (50+ blobs) will
-    //! enable a follow-on per-pair RESPONSE fit inside the ridge.
+    //! ATTEMPTED in W44-218 Phase 3 + W44-220 on the densified
+    //! corpus — neither attempt cleared the 0.5 acceptance gate.
+    //! The ridges are therefore calibrated to (a) round-trip
+    //! defaults byte-exact and (b) cover the empirical envelope.
+    //! See `docs/PARAM_INTERACTIONS.md` "W44-220 status" and
+    //! `benchmarks/sweeps/w44-219-densify/analysis/w44_220/README.md`
+    //! for the gate-failure measurement.
     //!
     //! **Single source of truth** for the interaction structure:
     //! [`docs/PARAM_INTERACTIONS.md`](../../../docs/PARAM_INTERACTIONS.md).

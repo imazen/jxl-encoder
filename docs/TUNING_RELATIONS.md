@@ -1119,8 +1119,22 @@ response R² fits were attempted but came in below the 0.5 acceptance
 gate (best ~0.08) — corpus is too sparse in param dimension. Ridges
 are calibrated from empirical envelope, with HONEST-STOP documented
 for the response-fit deferred to W44-220 after the W44-219 denser sweep.
-See [`PARAM_INTERACTIONS.md`](PARAM_INTERACTIONS.md) "W44-218 status"
-section for the per-pair shipped formulas.
+
+**W44-220 status (HONEST-STOP 2026-05-22)**: per-pair response R²
+REFIT attempt on the 21×-denser W44-216+W44-219 combined corpus
+(267 blobs, 13991 rows) HONEST-STOPPED below the 0.5 gate. 0 of 7
+pairs clear with linear+cross-term; 0 of 7 with GBR-pair-only; 3 of 14
+(pair, outcome) cells with GBR-all-6 (all on `log_bytes_resid` at
+`class=screen/dist_band=very_high`, shared across p3_p6/p4_p5/p4_p6).
+**The algebraic forms are wrong, not the corpus** — the structural
+ceiling on the highest-signal stratum is `ssim2 R² ≈ 0.41`,
+`log_bytes R² ≈ 0.44`. Re-derivation queued as W44-221+. The W44-218
+geometric-calibration ridges REMAIN SHIPPED.
+
+See [`PARAM_INTERACTIONS.md`](PARAM_INTERACTIONS.md) "W44-220 status"
+and [`benchmarks/sweeps/w44-219-densify/analysis/w44_220/README.md`](../benchmarks/sweeps/w44-219-densify/analysis/w44_220/README.md)
+for the per-pair gate failure measurement and W44-221+ re-derivation
+candidates.
 
 The `expand_knobs_to_runtime` fn (W44-222 scope) composes the per-pair
 fns into the 6-vector the production encoder consumes; it remains
@@ -1151,11 +1165,19 @@ fns into the 6-vector the production encoder consumes; it remains
 - **W44-219** (queued): design a follow-up sweep targeting the open
   questions in `PARAM_INTERACTIONS.md` §9 (50+ LHS samples, 100+
   images, denser low/high distance bands, content-class-stratified LHS).
-- **W44-220** (queued): refit the W44-218 ridge saturation strengths +
-  endpoints from the W44-219 denser corpus, with per-pair response
-  R² ≥ 0.5 acceptance gate now achievable.
-- **W44-221+**: the 3-tier zenjxl mode architecture (Tier-2 knobs, then
-  Tier-3 MLP from features → knobs).
+- **W44-220** (HONEST-STOP 2026-05-22): refit attempted on
+  W44-216+W44-219 combined corpus (267 blobs, 21× density). 0/7
+  pairs cleared the 0.5 R² gate with linear+cross forms; 3/14
+  (pair, outcome) cells cleared with GBR-all-6 (all
+  log_bytes_resid on screen/very_high). The W44-218 algebraic
+  forms are STRUCTURALLY underfit, not corpus-sparse. W44-218
+  geometric ridges RETAINED. See
+  [`benchmarks/sweeps/w44-219-densify/analysis/w44_220/`](../benchmarks/sweeps/w44-219-densify/analysis/w44_220/)
+  for measurement and W44-221+ re-derivation candidates.
+- **W44-221+** (next): pick a re-derivation direction (six-knob
+  expansion, per-class formula families, RD-theoretic derivation,
+  or Tier-3 MLP conditioning). Drop the per-pair-ridge approach
+  per W44-220 findings.
 - **W44-222** (queued): implement `expand_knobs_to_runtime` —
   compose the 7 per-pair ridge fns into the full 6-vector
   `RuntimeTuning` consumed by the production encoder.
