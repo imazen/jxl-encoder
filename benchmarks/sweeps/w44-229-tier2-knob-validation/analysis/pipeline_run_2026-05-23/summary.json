@@ -1,0 +1,322 @@
+{
+  "parquet": "/mnt/tower/output/zenjxl-tuning/2026-05-23/w44-229-tier2-knob-validation/merged.parquet",
+  "n_rows": 21667,
+  "stages": [
+    {
+      "name": "kitchen_sink_gbr",
+      "status": "PASS",
+      "duration_s": 2.748728036880493,
+      "headlines": {
+        "per_outcome": {
+          "encoded_bytes": {
+            "r2_train": 0.9988765140104716,
+            "r2_test": 0.9979783613057259,
+            "n_train": 16932,
+            "n_test": 4234
+          },
+          "ssim2": {
+            "r2_train": 0.9890836178140697,
+            "r2_test": 0.9917281032120668,
+            "n_train": 16932,
+            "n_test": 4234
+          },
+          "butter_norm3": {
+            "r2_train": 0.9932472692440125,
+            "r2_test": 0.9888636940237795,
+            "n_train": 16932,
+            "n_test": 4234
+          },
+          "cvvdp": {
+            "r2_train": 0.9657459906608327,
+            "r2_test": 0.9805258912166914,
+            "n_train": 16932,
+            "n_test": 4234
+          },
+          "encode_ms": {
+            "r2_train": 0.8764849789685997,
+            "r2_test": 0.861478926714121,
+            "n_train": 16932,
+            "n_test": 4234
+          }
+        },
+        "input_cols": [
+          "p1",
+          "p2",
+          "p3",
+          "p4",
+          "p5",
+          "p6",
+          "feat_m3_colourfulness",
+          "feat_fcbr",
+          "feat_edge_density",
+          "feat_luma_var",
+          "feat_mask_p25",
+          "feat_mask_median",
+          "feat_mask_p75",
+          "feat_luma_mean",
+          "feat_n_pixels",
+          "feat_aspect",
+          "feat_bpp_source",
+          "feat_byte_entropy_bits",
+          "effort",
+          "distance"
+        ]
+      },
+      "error": null
+    },
+    {
+      "name": "per_pair_gbr",
+      "status": "PASS",
+      "duration_s": 0.14841580390930176,
+      "headlines": {
+        "per_outcome": {
+          "encoded_bytes": {
+            "r2_test": 0.008287930027019219,
+            "n": 21166
+          },
+          "ssim2": {
+            "r2_test": 0.014644665131698265,
+            "n": 21166
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "name": "anova",
+      "status": "PASS",
+      "duration_s": 0.9084982872009277,
+      "headlines": {
+        "per_outcome_r2": {
+          "encoded_bytes": {
+            "r2": 0.7323620069389012,
+            "r2_adj": 0.7316647028357103,
+            "n": 21166
+          },
+          "ssim2": {
+            "r2": 0.8135127061818563,
+            "r2_adj": 0.8130268321335381,
+            "n": 21166
+          },
+          "butter_norm3": {
+            "r2": 0.8296650491787861,
+            "r2_adj": 0.829221258449503,
+            "n": 21166
+          },
+          "cvvdp": {
+            "r2": 0.677828732838318,
+            "r2_adj": 0.6769893477272857,
+            "n": 21166
+          },
+          "encode_ms": {
+            "r2": 0.757165395882713,
+            "r2_adj": 0.756532714536126,
+            "n": 21166
+          }
+        },
+        "top3_params_for_log_bytes": "z_p3_butt_qf_scale=0.11%, z_p6_aq_qf_e7=0.06%, z_p5_aq_qf_e56=0.06%"
+      },
+      "error": null
+    },
+    {
+      "name": "marginal_pdps",
+      "status": "PASS",
+      "duration_s": 6.0103466510772705,
+      "headlines": {
+        "encoded_bytes": {
+          "train_r2": 0.9988849922938215,
+          "n": 21166,
+          "n_pairs": 15
+        },
+        "ssim2": {
+          "train_r2": 0.9934809497612317,
+          "n": 21166,
+          "n_pairs": 15
+        },
+        "coupling_class_counts": {
+          "ADDITIVE": 29,
+          "GATED": 1
+        }
+      },
+      "error": null
+    },
+    {
+      "name": "stratum_pdps",
+      "status": "PASS",
+      "duration_s": 9.478583812713623,
+      "headlines": {
+        "n_plotted": 8,
+        "n_skipped": 0,
+        "per_pair": [
+          {
+            "suffix": "p4-p6-screen",
+            "label": "class=screen",
+            "outcome": "ssim2",
+            "status": "PASS",
+            "n": 6774,
+            "train_r2": 0.9789997437382723
+          },
+          {
+            "suffix": "p4-p6-screen-bytes",
+            "label": "class=screen",
+            "outcome": "log_encoded_bytes",
+            "status": "PASS",
+            "n": 6774,
+            "train_r2": 0.9986554283028523
+          },
+          {
+            "suffix": "p2-p5-screen",
+            "label": "class=screen",
+            "outcome": "ssim2",
+            "status": "PASS",
+            "n": 6774,
+            "train_r2": 0.9789997437382723
+          },
+          {
+            "suffix": "p5-p6-screen",
+            "label": "class=screen",
+            "outcome": "ssim2",
+            "status": "PASS",
+            "n": 6774,
+            "train_r2": 0.9789997437382723
+          },
+          {
+            "suffix": "p5-p6-screen-e8",
+            "label": "class=screen/e=8",
+            "outcome": "ssim2",
+            "status": "PASS",
+            "n": 1736,
+            "train_r2": 0.9459564994103618
+          },
+          {
+            "suffix": "p1-p5-screen",
+            "label": "class=screen",
+            "outcome": "ssim2",
+            "status": "PASS",
+            "n": 6774,
+            "train_r2": 0.9789997437382723
+          },
+          {
+            "suffix": "p3-p4-photo-highd",
+            "label": "class=photo/d>=3",
+            "outcome": "log_encoded_bytes",
+            "status": "PASS",
+            "n": 7177,
+            "train_r2": 0.9981796865566803
+          },
+          {
+            "suffix": "p3-p6-screen",
+            "label": "class=screen",
+            "outcome": "ssim2",
+            "status": "PASS",
+            "n": 6774,
+            "train_r2": 0.9789997437382723
+          }
+        ]
+      },
+      "error": null
+    },
+    {
+      "name": "svd_basis",
+      "status": "PASS",
+      "duration_s": 10.530054092407227,
+      "headlines": {
+        "n_anchors": 32,
+        "joint_train_r2": {
+          "ssim2_resid": 0.9723445912953513,
+          "log_bytes_resid": 0.9842913953926858
+        },
+        "rank_4_cumulative_pct": 90.24081136243338,
+        "rank_5_cumulative_pct": 96.3765169351294,
+        "singular_values": [
+          11.616024712892205,
+          10.761759480093529,
+          8.245925531473171,
+          8.06298729279607,
+          5.108078095574569,
+          3.9254404252642483
+        ],
+        "explained_variance": [
+          0.3172959357325334,
+          0.2723428749466725,
+          0.15989256568240903,
+          0.15287673726271883,
+          0.06135705572696012,
+          0.03623483064870597
+        ],
+        "rank_for_80pct": 4,
+        "rank_for_85pct": 4,
+        "rank_for_90pct": 4,
+        "rank_for_95pct": 5,
+        "rank_for_99pct": 6
+      },
+      "error": null
+    },
+    {
+      "name": "mi_matrices",
+      "status": "PASS",
+      "duration_s": 12.189074516296387,
+      "headlines": {
+        "top5_encoded_bytes": [
+          "p5_aq_qf_e56\u00d7feat_luma_mean=0.355",
+          "p5_aq_qf_e56\u00d7feat_luma_var=0.347",
+          "p5_aq_qf_e56\u00d7feat_m3_colourfulness=0.341",
+          "p5_aq_qf_e56\u00d7feat_edge_density=0.333",
+          "p3_butt_qf_scale\u00d7feat_luma_var=0.312"
+        ],
+        "top5_ssim2": [
+          "p5_aq_qf_e56\u00d7feat_m3_colourfulness=0.411",
+          "p5_aq_qf_e56\u00d7feat_luma_var=0.405",
+          "p5_aq_qf_e56\u00d7feat_luma_mean=0.388",
+          "p5_aq_qf_e56\u00d7feat_edge_density=0.379",
+          "p1_mask_p25_min\u00d7feat_luma_var=0.370"
+        ],
+        "top_param_for_encoded_bytes": "p1_mask_p25_min=0.000",
+        "top_param_for_ssim2": "p1_mask_p25_min=0.000",
+        "top_param_for_butter_norm3": "p1_mask_p25_min=0.000",
+        "top_param_for_cvvdp": "p1_mask_p25_min=0.000",
+        "top_param_for_encode_ms": "p1_mask_p25_min=0.000"
+      },
+      "error": null
+    },
+    {
+      "name": "pareto_coverage",
+      "status": "PASS",
+      "duration_s": 45.329070806503296,
+      "headlines": {
+        "knob_grid_per_axis": 7,
+        "n_strata": 5,
+        "per_stratum": {
+          "all": {
+            "cov4_max_pct": 0.307463546787079,
+            "cov5_max_pct": 0.0,
+            "improvement_max_pp": 0.307463546787079
+          },
+          "screen": {
+            "cov4_max_pct": 0.5026472688616446,
+            "cov5_max_pct": 0.0,
+            "improvement_max_pp": 0.5026472688616446
+          },
+          "screen/very_high": {
+            "cov4_max_pct": 1.1627174984980337,
+            "cov5_max_pct": 0.0,
+            "improvement_max_pp": 1.1627174984980337
+          },
+          "photo": {
+            "cov4_max_pct": 0.0,
+            "cov5_max_pct": 0.0,
+            "improvement_max_pp": 0.0
+          },
+          "photo/very_high": {
+            "cov4_max_pct": 0.6231489172667137,
+            "cov5_max_pct": 0.0,
+            "improvement_max_pp": 0.6231489172667137
+          }
+        },
+        "screen_very_high_5knob_max_pct": 0.0,
+        "screen_very_high_improvement_pp": 1.1627174984980337
+      },
+      "error": null
+    }
+  ]
+}
