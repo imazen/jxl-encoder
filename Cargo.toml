@@ -71,3 +71,11 @@ jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4
 # (version 0.8.4 unpublished) carries the fix. Path-patch until published.
 # Required for the `jpeg-reencoding` feature to build.
 zenjpeg = { path = "../zenjpeg/zenjpeg" }
+# Use local butteraugli workspace (not crates.io 0.9.2) so the buttloop +
+# Lock-Zenjxl regression-gate consume the latest unpublished fixes. Per user
+# direction 2026-05-23: "we should be using the local butteraugli and
+# butteraugli-gpu not cratesio".
+# butteraugli-gpu (~/work/zen/zenmetrics/crates/butteraugli-gpu) will be
+# added here when a jxl-encoder workspace crate first depends on it; cargo
+# warns on unused patches so we add the line lazily.
+butteraugli = { path = "../../butteraugli/butteraugli" }
