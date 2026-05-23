@@ -64,19 +64,23 @@ empty_polls=0
 # (s5cmd mv is atomic on R2). If the rename fails another worker
 # beat us — try the next chunk. Same pattern as zenmetrics v26.
 while true; do
-    # W44-219 fix (2026-05-22): split the pipeline into a file-redirect
-    # write + read. The original one-shot pipe
-    #   LIST=$(s5cmd ls ... | awk | shuf | head -32)
-    # silently returned 0 lines on some pods when the s5cmd output was
-    # large (4793 chunks for W44-219), reproduced on pod 37399636.
-    # Each individual stage works (s5cmd ls, awk, shuf, head all OK),
-    # but the one-shot pipe loses everything. Likely SIGPIPE-vs-go-runtime
-    # interaction when `head -32` closes the pipe before s5cmd flushes.
-    # File-redirect form is robust.
+    # W44-219 fix (2026-05-22): two-part fix:
+    # (1) split s5cmd output into a file (the one-shot pipe lost
+    #     output on big input — reproduced on pod 37399636)
+    # (2) replace `shuf | head -32` with `shuf -n 32`. The original
+    #     pipe failed under `set -o pipefail` (set on line 8): when
+    #     head -32 takes its 32 lines and closes the pipe, shuf gets
+    #     SIGPIPE on its remaining writes → exits non-zero → pipefail
+    #     fires → `$()` returns failure → `|| LIST=""` triggers →
+    #     LIST is empty even though all 4793 chunks were listed.
+    #     `shuf -n 32` samples 32 inside shuf without needing head.
+    #     W44-216 (850 chunks) happened to never hit SIGPIPE because
+    #     shuf finished writing before head closed; W44-219 (4793
+    #     chunks) deterministically triggers it.
     _w219_s5out=/tmp/w219_s5cmd_out.txt
     s5cmd ls "s3://$SWEEP_BUCKET/$SWEEP_ID/$CHUNK_PREFIX/*.json" \
         > "$_w219_s5out" 2>/dev/null || true
-    LIST=$(awk '{print $NF}' < "$_w219_s5out" | shuf | head -32) || LIST=""
+    LIST=$(awk '{print $NF}' < "$_w219_s5out" | shuf -n 32) || LIST=""
     if [[ -z "$LIST" ]]; then
         empty_polls=$((empty_polls + 1))
         echo "[w44-212-onstart] no chunks available (empty_poll=${empty_polls}/${EMPTY_POLL_BUDGET})"
