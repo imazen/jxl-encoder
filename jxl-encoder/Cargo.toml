@@ -2235,5 +2235,14 @@ name = "b1_butteraugli_stride_probe"
 path = "examples/b1_butteraugli_stride_probe.rs"
 required-features = ["butteraugli-loop"]
 
+# T2B (2026-05-23): end-to-end DCT16X8 / DCT8X16 transpose-indexing
+# audit. Forces the encoder to pick DCT16X8 (resp. DCT8X16) on every
+# block via `LossyConfig::with_force_strategy`, encodes a 32×16 (resp.
+# 16×32) non-symmetric image, decodes with jxl-oxide + djxl, and
+# asserts max-abs-diff is below a sane tolerance. Catches any 8↔16
+# axis swap the cross-agent consolidated audit suspected.
+[[example]]
+name = "t2b_dct16x8_roundtrip"
+path = "examples/t2b_dct16x8_roundtrip.rs"
 [lints]
 workspace = true
