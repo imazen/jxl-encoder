@@ -618,6 +618,22 @@ This is the SINGLE SOURCE OF TRUTH for where our encoder diverges from libjxl re
 
 **Verification**: `git log --oneline -- docs/LIBJXL_DIVERGENCES.md jxl-encoder/src/gate_registry.rs` should show updates roughly synchronized with commits touching `effort.rs`, `vardct/encoder.rs`, `butteraugli_loop.rs`, `vardct/ac_strategy_search.rs`, `vardct/dc_tree_learn.rs`, `modular/tree_learn.rs`, or any cost-model constant table.
 
+## Research methodology (binding for tuning chunks)
+
+Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled from the W44-218→W44-221 retrospective. Canonical doc: `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/research_methodology_9_rules_2026-05-22.md`. Highlights:
+
+1. **Ablation-first** — kitchen-sink GBR with ALL axes (params + features + effort + distance) before pre-imposing structure. The W44-218 R²=0.08 honest-stop was caused by dropped confounder axes, not corpus density.
+2. **Pre-registered pipeline** — every new sweep gets `scripts/zenjxl-tuning-sweep/run_all_analyses.py <merged.parquet> <out>` run once, producing kitchen-sink GBR + per-pair baseline + ANOVA + PDPs + SVD basis + Pareto coverage in one job. Add new stages to the pipeline rather than writing one-offs.
+3. **Parallel hypothesis chunks** — data-only chunks that don't consume each other's source changes spawn concurrently in one message.
+4. **Bigger sweeps, fewer of them** — target 30-50K cells per sweep, ≤$30, all 6 params × all axes upfront.
+5. **Persistent ML scratchpad** per sweep at `benchmarks/sweeps/<id>/analysis/notebook/` with `_arrays/` cache.
+6. **Hypothesis ledger** at `docs/HYPOTHESIS_LEDGER.md` — every chunk's acceptance memo updates ≥1 entry or notes "no belief change."
+7. **Kill heartbeat noise** — silent ScheduleWakeup re-arm on stale `/loop` ticks; no preamble text.
+8. **Skip speculative algebraic forms** — for empirical surfaces, use non-parametric fit + SVD basis discovery + post-hoc semantic naming, not pre-imposed "additive/multiplicative/gated" templates.
+9. **Use vast.ai interruptible** — `--bid_price` is ~50-70% cheaper than on-demand; fleet already takes eviction hits handled by chunk-rescue. Reference: `scripts/zenjxl-tuning-sweep/launch_w44_216_fleet.sh` (env-toggleable via `INTERRUPTIBLE=0` for smoke pods).
+
+When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
+
 ## Known Bugs (ACTIVE)
 
 (none currently)

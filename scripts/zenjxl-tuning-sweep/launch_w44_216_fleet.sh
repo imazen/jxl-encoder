@@ -112,6 +112,18 @@ ENV_STR+=" -e W44_212_CORPUS_BUCKET=zen-tuning-ephemeral"
 ENV_STR+=" -e W44_216_EMPTY_POLL_BUDGET=2"
 ENV_STR+=" -e W44_216_EMPTY_POLL_SLEEP_S=30"
 
+# Per research methodology Rule 9 (research_methodology_9_rules_2026-05-22.md):
+# default to interruptible (~50-70% cheaper). Janitor + chunk-rescue handles
+# the eviction risk we were already taking. Set INTERRUPTIBLE=0 to opt out
+# (e.g. smoke runs that must definitely complete in 5 minutes).
+INTERRUPTIBLE="${INTERRUPTIBLE:-1}"
+BID_PRICE="${BID_PRICE:-0.10}"  # $/hr cap; set conservatively for production fleets
+BID_ARGS=()
+if [[ "$INTERRUPTIBLE" == "1" ]]; then
+    BID_ARGS=(--bid_price "$BID_PRICE")
+    echo "[w44-216-fleet] interruptible mode: bid_price=\$${BID_PRICE}/hr"
+fi
+
 LAUNCHED=()
 N=0
 for offer_id in $OFFER_IDS; do
@@ -122,6 +134,7 @@ for offer_id in $OFFER_IDS; do
         --image "$IMAGE" --login "$LOGIN_STR" \
         --onstart-cmd "$ONSTART_CMD" \
         --disk "$MIN_DISK_GB" --label "$LABEL" --env "$ENV_STR" \
+        "${BID_ARGS[@]}" \
         --raw 2>&1) || { echo "[w44-216-fleet] WARN: create failed: $OUT" >&2; continue; }
     ID=$(echo "$OUT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('new_contract', d.get('id','')))" 2>/dev/null || echo "")
     [[ -z "$ID" ]] && { echo "[w44-216-fleet] WARN: no id in $OUT" >&2; continue; }
