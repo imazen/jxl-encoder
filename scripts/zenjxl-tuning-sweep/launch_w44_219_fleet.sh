@@ -93,15 +93,43 @@ export S3_ENDPOINT_URL="${R2_ENDPOINT}"
 export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}"
 export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}"
 export AWS_DEFAULT_REGION=auto
-# W44-219 diagnostic: print s5cmd ls output BEFORE handing off to onstart
-# so we can see whether the chunks are visible from this pod's network
-# path. Should print 4793+ JSON keys.
-echo "[bootstrap] DIAGNOSTIC: s5cmd ls test for sweep ${SWEEP_ID}"
-s5cmd ls "s3://zen-tuning-ephemeral/${SWEEP_ID}/chunks/*.json" 2>&1 | head -3 || \
-    echo "[bootstrap] DIAG s5cmd ls returned non-zero"
-N=\$(s5cmd ls "s3://zen-tuning-ephemeral/${SWEEP_ID}/chunks/*.json" 2>/dev/null | wc -l)
-echo "[bootstrap] DIAG s5cmd ls saw \$N chunks"
-echo "[bootstrap] env hydrated, exec'ing onstart.sh"
+echo "[bootstrap] env hydrated"
+
+# W44-219 HOT-FIX: live-patch /usr/local/bin/onstart.sh in the baked
+# image. The original onstart pipeline
+#   LIST=\$(s5cmd ls ... | awk | shuf | head -32)
+# silently returns 0 lines on some pods when the s5cmd output is large
+# (~4793 chunks for W44-219), likely a SIGPIPE-vs-go-runtime
+# interaction on the head -32 closing the pipe before s5cmd finishes
+# writing. Reproduced on smoke pod 37399636 (2026-05-22): both bash
+# stages succeeded individually but the one-shot pipe returned empty.
+# File-redirect equivalent (s5cmd > file then awk < file | ...) works.
+# Patched here so all W44-219 fleet pods get the fix without an image
+# rebuild. Drop this block once a v3 image with the fix is pushed.
+python3 - <<'PYEOF'
+import re, sys
+from pathlib import Path
+p = Path("/usr/local/bin/onstart.sh")
+src = p.read_text()
+old = '''    LIST=\$(s5cmd ls "s3://\$SWEEP_BUCKET/\$SWEEP_ID/\$CHUNK_PREFIX/*.json" 2>/dev/null \\\\
+           | awk '{print \$NF}' \\\\
+           | shuf \\\\
+           | head -32) || LIST=""
+'''
+new = '''    # W44-219 hot-fix: split pipe → file redirects (some pods fail the
+    # one-shot pipe with SIGPIPE on big input, returning empty LIST).
+    _w219_s5out=/tmp/w219_s5cmd_out.txt
+    s5cmd ls "s3://\$SWEEP_BUCKET/\$SWEEP_ID/\$CHUNK_PREFIX/*.json" \\\\
+        > "\$_w219_s5out" 2>/dev/null || true
+    LIST=\$(awk '{print \$NF}' < "\$_w219_s5out" | shuf | head -32) || LIST=""
+'''
+if old not in src:
+    print("[bootstrap] WARN: W44-219 hot-fix target not found; skipping", file=sys.stderr)
+else:
+    p.write_text(src.replace(old, new))
+    print("[bootstrap] W44-219 hot-fix applied to /usr/local/bin/onstart.sh")
+PYEOF
+
 exec /usr/local/bin/onstart.sh
 EOF
 )
