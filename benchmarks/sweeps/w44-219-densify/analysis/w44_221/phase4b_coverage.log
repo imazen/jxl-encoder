@@ -1,0 +1,84 @@
+Fitting joint GBR...
+Anchor cells: 40; full-param candidates: 267
+Knob grid: 2401 points (7^4)
+
+======================================================================
+Stratum: all  (n_corpus=11485)
+======================================================================
+  anchors in stratum: 40
+  full-param Pareto: 35 of 267
+  knob-grid Pareto: 121 of 2401
+  asymmetric coverage (full-Pareto → nearest knob):
+    max ssim2 deficit:     0.1919
+    max log_bytes deficit: 0.0156  (1.57%)
+    mean ssim2 deficit:    0.0152
+    mean log_bytes deficit:0.0023  (0.23%)
+  REACH: full max ssim2 = +2.6964, knob max ssim2 = +2.5326
+         full min log_b = +0.0115, knob min log_b = -0.0101
+
+======================================================================
+Stratum: screen  (n_corpus=2585)
+======================================================================
+  anchors in stratum: 20
+  full-param Pareto: 32 of 267
+  knob-grid Pareto: 122 of 2401
+  asymmetric coverage (full-Pareto → nearest knob):
+    max ssim2 deficit:     0.2151
+    max log_bytes deficit: 0.0266  (2.69%)
+    mean ssim2 deficit:    0.0275
+    mean log_bytes deficit:0.0019  (0.19%)
+  REACH: full max ssim2 = +1.1528, knob max ssim2 = +1.3286
+         full min log_b = -0.1568, knob min log_b = -0.1955
+
+======================================================================
+Stratum: screen/very_high  (n_corpus=684)
+======================================================================
+  anchors in stratum: 5
+  full-param Pareto: 28 of 267
+  knob-grid Pareto: 99 of 2401
+  asymmetric coverage (full-Pareto → nearest knob):
+    max ssim2 deficit:     0.2998
+    max log_bytes deficit: 0.0757  (7.86%)
+    mean ssim2 deficit:    0.0239
+    mean log_bytes deficit:0.0077  (0.77%)
+  REACH: full max ssim2 = -3.7108, knob max ssim2 = -3.4521
+         full min log_b = -0.6126, knob min log_b = -0.7108
+
+======================================================================
+Stratum: photo  (n_corpus=8900)
+======================================================================
+  anchors in stratum: 20
+  full-param Pareto: 28 of 267
+  knob-grid Pareto: 59 of 2401
+  asymmetric coverage (full-Pareto → nearest knob):
+    max ssim2 deficit:     0.4608
+    max log_bytes deficit: 0.0013  (0.13%)
+    mean ssim2 deficit:    0.0173
+    mean log_bytes deficit:0.0002  (0.02%)
+  REACH: full max ssim2 = +4.2400, knob max ssim2 = +3.7792
+         full min log_b = +0.1788, knob min log_b = +0.1754
+
+======================================================================
+Stratum: photo/very_high  (n_corpus=2589)
+======================================================================
+  anchors in stratum: 5
+  full-param Pareto: 37 of 267
+  knob-grid Pareto: 92 of 2401
+  asymmetric coverage (full-Pareto → nearest knob):
+    max ssim2 deficit:     0.6621
+    max log_bytes deficit: 0.0056  (0.56%)
+    mean ssim2 deficit:    0.0450
+    mean log_bytes deficit:0.0006  (0.06%)
+  REACH: full max ssim2 = -13.5608, knob max ssim2 = -14.2229
+         full min log_b = -0.6871, knob min log_b = -0.6975
+
+======================================================================
+HEADLINE: asymmetric coverage (full-Pareto → nearest knob point)
+======================================================================
+             stratum  n_full  n_knob      max%     mean%   g0.5max     g2max  g0.5mean    g2mean
+----------------------------------------------------------------------------------------------------
+                 all      35     121    +1.573    +0.230      FAIL      PASS      PASS      PASS
+              screen      32     122    +2.693    +0.186      FAIL      FAIL      PASS      PASS
+    screen/very_high      28      99    +7.859    +0.772      FAIL      FAIL      FAIL      PASS
+               photo      28      59    +0.134    +0.016      PASS      PASS      PASS      PASS
+     photo/very_high      37      92    +0.562    +0.055      FAIL      PASS      PASS      PASS

@@ -1,0 +1,97 @@
+OK: defaults round-trip exactly: [85.  95.   4.   3.5  2.   3. ]
+
+Fitting joint GBR on full corpus (~5s × 2 outcomes)
+  ssim2_resid: train R² = +0.9920
+  log_bytes_resid: train R² = +0.9862
+
+Anchor cells: 40 (across content × dist_band × effort)
+
+Extracting unique LHS param vectors from corpus
+  267 unique 6-param blobs in corpus
+  625 knob-grid points
+
+======================================================================
+Stratum: all  (n_corpus=11485)
+======================================================================
+  anchors in stratum: 40
+  predicting full-param (corpus LHS)...
+  full-param: 267 candidates → 35 Pareto points
+  predicting knob-grid expansions...
+  knob-grid : 625 candidates → 86 Pareto points
+  Hausdorff (normalised) = 1.0517
+  Full-front raw ssim2 range = [0.5401, 2.6964]  log_bytes range = [0.0115, 0.1875]
+  Knob-front raw ssim2 range = [0.1240, 2.5326]  log_bytes range = [-0.0096, 0.2011]
+  Pareto-front Hausdorff (raw): Δssim2 = 0.4162, Δlog_bytes = 0.0210
+  Coverage: max_distance_full_to_knob_set (normalised) = 0.4559, mean = 0.1468
+  Approx Pareto bytes-axis gap: 2.13% (0.0210 log units)
+
+======================================================================
+Stratum: screen  (n_corpus=2585)
+======================================================================
+  anchors in stratum: 20
+  predicting full-param (corpus LHS)...
+  full-param: 267 candidates → 32 Pareto points
+  predicting knob-grid expansions...
+  knob-grid : 625 candidates → 91 Pareto points
+  Hausdorff (normalised) = 0.9675
+  Full-front raw ssim2 range = [-2.0919, 1.1528]  log_bytes range = [-0.1568, 0.1260]
+  Knob-front raw ssim2 range = [-2.7693, 1.3280]  log_bytes range = [-0.1945, 0.1697]
+  Pareto-front Hausdorff (raw): Δssim2 = 0.6774, Δlog_bytes = 0.0437
+  Coverage: max_distance_full_to_knob_set (normalised) = 0.3956, mean = 0.1010
+  Approx Pareto bytes-axis gap: 4.47% (0.0437 log units)
+
+======================================================================
+Stratum: screen/very_high  (n_corpus=684)
+======================================================================
+  anchors in stratum: 5
+  predicting full-param (corpus LHS)...
+  full-param: 267 candidates → 28 Pareto points
+  predicting knob-grid expansions...
+  knob-grid : 625 candidates → 77 Pareto points
+  Hausdorff (normalised) = 1.0900
+  Full-front raw ssim2 range = [-11.6078, -3.7108]  log_bytes range = [-0.6126, -0.0002]
+  Knob-front raw ssim2 range = [-13.5821, -3.4914]  log_bytes range = [-0.7093, 0.0721]
+  Pareto-front Hausdorff (raw): Δssim2 = 1.9743, Δlog_bytes = 0.0967
+  Coverage: max_distance_full_to_knob_set (normalised) = 0.4750, mean = 0.0880
+  Approx Pareto bytes-axis gap: 10.15% (0.0967 log units)
+
+======================================================================
+Stratum: photo  (n_corpus=8900)
+======================================================================
+  anchors in stratum: 20
+  predicting full-param (corpus LHS)...
+  full-param: 267 candidates → 28 Pareto points
+  predicting knob-grid expansions...
+  knob-grid : 625 candidates → 40 Pareto points
+  Hausdorff (normalised) = 3.8216
+  Full-front raw ssim2 range = [3.1672, 4.2400]  log_bytes range = [0.1788, 0.2489]
+  Knob-front raw ssim2 range = [3.0173, 3.7770]  log_bytes range = [0.1753, 0.2271]
+  Pareto-front Hausdorff (raw): Δssim2 = 0.4629, Δlog_bytes = 0.0218
+  Coverage: max_distance_full_to_knob_set (normalised) = 4.8593, mean = 0.2885
+  Approx Pareto bytes-axis gap: 2.20% (0.0218 log units)
+
+======================================================================
+Stratum: photo/very_high  (n_corpus=2589)
+======================================================================
+  anchors in stratum: 5
+  predicting full-param (corpus LHS)...
+  full-param: 267 candidates → 37 Pareto points
+  predicting knob-grid expansions...
+  knob-grid : 625 candidates → 44 Pareto points
+  Hausdorff (normalised) = 1.9588
+  Full-front raw ssim2 range = [-15.7354, -13.5608]  log_bytes range = [-0.6871, -0.5141]
+  Knob-front raw ssim2 range = [-16.2093, -14.2277]  log_bytes range = [-0.6978, -0.5626]
+  Pareto-front Hausdorff (raw): Δssim2 = 0.6670, Δlog_bytes = 0.0485
+  Coverage: max_distance_full_to_knob_set (normalised) = 2.5297, mean = 0.2343
+  Approx Pareto bytes-axis gap: 4.97% (0.0485 log units)
+
+======================================================================
+HEADLINE: per-stratum knob-Pareto vs full-Pareto gap
+======================================================================
+             stratum    n_full_p    n_knob_p        Δlog     Δbytes%    0.5pp    2pp
+--------------------------------------------------------------------------------
+                 all          35          86     +0.0210       +2.13     FAIL   FAIL
+              screen          32          91     +0.0437       +4.47     FAIL   FAIL
+    screen/very_high          28          77     +0.0967      +10.15     FAIL   FAIL
+               photo          28          40     +0.0218       +2.20     FAIL   FAIL
+     photo/very_high          37          44     +0.0485       +4.97     FAIL   FAIL

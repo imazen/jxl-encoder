@@ -405,9 +405,20 @@ pub mod coupling {
     //!
     //! **W44-218 status** (shipped 2026-05-22): 7 of 7 ridge fns
     //! implemented as closed-form curves through the production
-    //! defaults. The W44-222 `expand_knobs_to_runtime` expander
-    //! remains `unimplemented!()` until the corresponding chunk
-    //! lands the full Tier-2 → RuntimeTuning compose.
+    //! defaults.
+    //!
+    //! **W44-221 status** (shipped 2026-05-22): [`Tier2Knobs`] + the
+    //! [`Tier2Knobs::expand_to_runtime_tuning`] expander compose the 4
+    //! W44-218 ridges into the full 6-param [`super::runtime::RuntimeTuning`]
+    //! vector via additive deviation-from-default composition. Defaults
+    //! round-trip byte-exact. The W44-221 Phase 2b gradient-SVD found a
+    //! natural rank of 4-5 in the joint response surface (4 components
+    //! explain 88.3 % of variance; 5 components explain 96.1 %). The 4
+    //! W44-218 ridges span 68.5 % of joint gradient variance; the
+    //! remaining 31.5 % lives in directions the mechanism-derived ridges
+    //! do not span (filed as W44-222+ follow-on for a data-driven 5th
+    //! knob if measurement-validation shows the missing directions
+    //! matter at the Pareto level).
     //!
     //! **W44-220 status** (2026-05-22): per-pair response R² REFIT
     //! attempt on the W44-216+W44-219 combined corpus (267 blobs,
@@ -920,36 +931,214 @@ pub mod coupling {
         (p3, p4)
     }
 
-    /// **PROPOSED** (W44-222): rebuild the full
-    /// [`super::runtime::RuntimeTuning`] from the Tier-2 knob set.
+    /// W44-221 Tier-2 high-level interpretable knob set.
     ///
-    /// Composes the individual coupling fns above into the 6-vector
-    /// the production encoder consumes. Tier-2 knobs (W44-221):
-    /// - `smoothness_bias` ∈ [0, 1] → (p1, p2)
-    /// - `screen_quant_lift` ∈ [0.5, 2.0] → (p5, p6) + interacts
-    ///   with p3 via [`p3_p6_screenshot_qac_lift`]
-    /// - `buttloop_screen_d_gate` ∈ [1.5, 5.0] → p4 + interacts
-    ///   with p3/p5/p6 via the gated couplings above
+    /// Each knob is a normalised direction in 6-param
+    /// [`super::runtime::RuntimeTuning`] space. The
+    /// [`Tier2Knobs::expand_to_runtime_tuning`] expander composes them
+    /// additively into the full 6-vector consumed by the production
+    /// encoder.
     ///
-    /// The default values of all 3 knobs MUST produce the production
-    /// defaults `(85, 95, 4, 3.5, 2, 3)` byte-for-byte (regression
-    /// test contract for W44-222).
+    /// **Design provenance**: the 4 knobs are exactly the W44-218
+    /// per-pair ridge knobs, validated by W44-221 Phase 2b
+    /// gradient-SVD on the W44-216+W44-219 combined corpus
+    /// (13,991 rows, 267 LHS blobs). Rank-4 explains **88.3 %** of joint
+    /// `(ssim2, log_bytes)` response variance to param perturbations;
+    /// rank-5 explains 96.1 %. The 4 W44-218 ridges span **68.5 %** of
+    /// gradient variance (not orthogonal to the data-driven PCs, but
+    /// each ridge is mechanism-derived per W44-217 §6 narratives).
+    ///
+    /// **Knob meanings** (from W44-217 + W44-218 mechanism analysis):
+    /// - `smoothness_bias ∈ [0, 1]` (default 0.5): jointly moves p1
+    ///   (`smart_zenjxl_photo_mask_p25_min`) and p2 (`screenshot_median_threshold`)
+    ///   along the W44-216 LHS ridge. Lower = admit more images to the
+    ///   screen-class dispatch path (W44-29/91/166).
+    /// - `screenshot_quant_aggressiveness ∈ [0, 2]` (default 1.0):
+    ///   multiplicatively scales p3 (buttloop screen seed) AND p6
+    ///   (e7 adaptive_quant screen scale) along a soft-saturating ridge
+    ///   (W44-217 SUPPRESSIVE pattern).
+    /// - `screen_quant_lift ∈ [0.5, 2.0]` (default 1.0): scales p5
+    ///   (e5/e6 adaptive_quant scale) along a soft-saturating ridge.
+    ///   When this knob and `screenshot_quant_aggressiveness` BOTH
+    ///   move p6 away from default, the contributions sum (additive
+    ///   composition).
+    /// - `buttloop_screen_d_gate ∈ [1.5, 5.5]` (default 3.5): direct
+    ///   p4 (buttloop dispatch distance threshold). Lower = open
+    ///   buttloop screen dispatch at more cells.
+    ///
+    /// **Default round-trip contract**: with all 4 knobs at their
+    /// documented defaults, `expand_to_runtime_tuning()` MUST return
+    /// `RuntimeTuning::default()` byte-for-byte. This preserves the
+    /// hash-lock contract (36/36 lossy + 13/13 lossless fixtures
+    /// byte-identical when the expander is wired into production).
+    ///
+    /// **Bounds**: knob values outside the documented ranges are clamped
+    /// to the documented range; the underlying ridges have their own
+    /// saturation caps.
+    ///
+    /// Gated on `feature = "tuning-override"` because the return type
+    /// `super::runtime::RuntimeTuning` only exists under that feature.
+    #[cfg(feature = "tuning-override")]
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct Tier2Knobs {
+        pub smoothness_bias: f32,
+        pub screenshot_quant_aggressiveness: f32,
+        pub screen_quant_lift: f32,
+        pub buttloop_screen_d_gate: f32,
+    }
+
+    #[cfg(feature = "tuning-override")]
+    impl Default for Tier2Knobs {
+        /// Defaults defined so [`Tier2Knobs::expand_to_runtime_tuning`]
+        /// round-trips to [`super::runtime::RuntimeTuning::default()`]
+        /// byte-for-byte.
+        fn default() -> Self {
+            Self {
+                smoothness_bias: 0.5,
+                screenshot_quant_aggressiveness: 1.0,
+                screen_quant_lift: 1.0,
+                buttloop_screen_d_gate: DEFAULT_P4,
+            }
+        }
+    }
+
+    #[cfg(feature = "tuning-override")]
+    impl Tier2Knobs {
+        /// Default smoothness_bias (defaults round-trip).
+        pub const DEFAULT_SMOOTHNESS_BIAS: f32 = 0.5;
+        /// Default screenshot_quant_aggressiveness (defaults round-trip).
+        pub const DEFAULT_SCREENSHOT_QUANT_AGGRESSIVENESS: f32 = 1.0;
+        /// Default screen_quant_lift (defaults round-trip).
+        pub const DEFAULT_SCREEN_QUANT_LIFT: f32 = 1.0;
+        /// Default buttloop_screen_d_gate (defaults round-trip == DEFAULT_P4).
+        pub const DEFAULT_BUTTLOOP_SCREEN_D_GATE: f32 = DEFAULT_P4;
+
+        /// Knob range bounds. Values outside the range are clamped.
+        pub const SMOOTHNESS_BIAS_MIN: f32 = 0.0;
+        pub const SMOOTHNESS_BIAS_MAX: f32 = 1.0;
+        pub const SCREENSHOT_QUANT_AGGRESSIVENESS_MIN: f32 = 0.0;
+        pub const SCREENSHOT_QUANT_AGGRESSIVENESS_MAX: f32 = 2.0;
+        pub const SCREEN_QUANT_LIFT_MIN: f32 = 0.5;
+        pub const SCREEN_QUANT_LIFT_MAX: f32 = 2.0;
+        pub const BUTTLOOP_SCREEN_D_GATE_MIN: f32 = 1.5;
+        pub const BUTTLOOP_SCREEN_D_GATE_MAX: f32 = 5.5;
+
+        /// Expand the 4 high-level knobs into a full
+        /// [`super::runtime::RuntimeTuning`] vector via additive composition
+        /// of the W44-218 per-pair ridges.
+        ///
+        /// **Composition rule** (additive deviations from defaults):
+        /// for each of the 6 params, we sum the deviations contributed
+        /// by each ridge that touches it, then add the result to the
+        /// param's default:
+        /// ```text
+        /// p_i(knobs) = DEFAULT_P_i + Σ_{knob_j touching p_i} (ridge_j(knob_j)_p_i - DEFAULT_P_i)
+        /// ```
+        ///
+        /// The `Σ` over ridges is additive (not multiplicative) so each
+        /// knob can be reasoned about in isolation. At all-defaults, every
+        /// ridge returns its default → every deviation is 0 → expansion
+        /// equals defaults exactly.
+        ///
+        /// **Per-param contributors**:
+        /// - p1 ← `smoothness_bias` (via [`p1_p2_smoothness_dispatch_ridge`])
+        /// - p2 ← `smoothness_bias` (via same ridge)
+        /// - p3 ← `screenshot_quant_aggressiveness` (via [`p3_p6_screenshot_qac_lift`])
+        /// - p4 ← `buttloop_screen_d_gate` (direct, with clamp [1.5, 5.5])
+        /// - p5 ← `screen_quant_lift` (via [`p5_p6_effort_conditional_lift`])
+        /// - p6 ← `screenshot_quant_aggressiveness` + `screen_quant_lift`
+        ///   (BOTH contribute via additive deviation; matches the W44-217
+        ///   p3_p6 + p5_p6 SUPPRESSIVE pattern that both ridges touch p6)
+        pub fn expand_to_runtime_tuning(self) -> super::runtime::RuntimeTuning {
+            // Clamp knob values to documented ranges.
+            let smoothness_bias = clamp_f32(
+                self.smoothness_bias,
+                Self::SMOOTHNESS_BIAS_MIN,
+                Self::SMOOTHNESS_BIAS_MAX,
+            );
+            let screenshot_quant_aggressiveness = clamp_f32(
+                self.screenshot_quant_aggressiveness,
+                Self::SCREENSHOT_QUANT_AGGRESSIVENESS_MIN,
+                Self::SCREENSHOT_QUANT_AGGRESSIVENESS_MAX,
+            );
+            let screen_quant_lift = clamp_f32(
+                self.screen_quant_lift,
+                Self::SCREEN_QUANT_LIFT_MIN,
+                Self::SCREEN_QUANT_LIFT_MAX,
+            );
+            let buttloop_screen_d_gate = clamp_f32(
+                self.buttloop_screen_d_gate,
+                Self::BUTTLOOP_SCREEN_D_GATE_MIN,
+                Self::BUTTLOOP_SCREEN_D_GATE_MAX,
+            );
+
+            // Compute each ridge's per-param contribution.
+            let (p1_smooth, p2_smooth) = p1_p2_smoothness_dispatch_ridge(smoothness_bias);
+            let (p3_aggr, p6_aggr) = p3_p6_screenshot_qac_lift(screenshot_quant_aggressiveness);
+            let (p5_lift, p6_lift) = p5_p6_effort_conditional_lift(screen_quant_lift);
+
+            // Additive composition: deviation from default per ridge.
+            // At all-defaults each ridge returns the default for the
+            // params it touches → every (val - default) term is 0 →
+            // expanded param == default.
+            let p1 = DEFAULT_P1 + (p1_smooth - DEFAULT_P1);
+            let p2 = DEFAULT_P2 + (p2_smooth - DEFAULT_P2);
+            let p3 = DEFAULT_P3 + (p3_aggr - DEFAULT_P3);
+            let p4 = buttloop_screen_d_gate;
+            let p5 = DEFAULT_P5 + (p5_lift - DEFAULT_P5);
+            let p6 = DEFAULT_P6
+                + (p6_aggr - DEFAULT_P6)
+                + (p6_lift - DEFAULT_P6);
+
+            // p1, p2 must stay non-negative (encoder semantics: a mask
+            // threshold cannot be negative; matches the
+            // p1_p2_smoothness_dispatch_ridge clamp).
+            let p1 = p1.max(0.0);
+            let p2 = p2.max(0.0);
+            // p3..p6 are physical quant seed scales — must stay > 0.
+            let p3 = p3.max(0.0);
+            let p5 = p5.max(0.0);
+            let p6 = p6.max(0.0);
+
+            super::runtime::RuntimeTuning {
+                smart_zenjxl_photo_mask_p25_min: p1,
+                screenshot_median_threshold: p2,
+                buttloop_default_screenshot_qf_seed_scale: p3,
+                buttloop_qf_seed_scale_min_distance: p4,
+                adaptive_quant_screenshot_qf_seed_scale_e5_e6: p5,
+                adaptive_quant_screenshot_qf_seed_scale_e7: p6,
+            }
+        }
+    }
+
+    /// W44-221 / W44-222 thin functional wrapper around
+    /// [`Tier2Knobs::expand_to_runtime_tuning`].
+    ///
+    /// Retained as a free fn (with the W44-217-original signature) for
+    /// backwards-compat with the original W44-222 task spec. New
+    /// callers should prefer the struct API
+    /// ([`Tier2Knobs::expand_to_runtime_tuning`]) which supports adding
+    /// future knobs without an API break.
     ///
     /// Gated on `feature = "tuning-override"` because the return type
     /// `super::runtime::RuntimeTuning` only exists under that feature.
     #[cfg(feature = "tuning-override")]
     pub fn expand_knobs_to_runtime(
-        _smoothness_bias: f32,
-        _screen_quant_lift: f32,
-        _buttloop_screen_d_gate: f32,
+        smoothness_bias: f32,
+        screen_quant_lift: f32,
+        buttloop_screen_d_gate: f32,
     ) -> super::runtime::RuntimeTuning {
-        unimplemented!(
-            "W44-222 scope (NOT W44-217 or W44-218): compose the per-\
-             pair coupling fns above into a full RuntimeTuning expansion. \
-             Default (smoothness_bias=0.5, screen_quant_lift=1.0, \
-             buttloop_screen_d_gate=3.5) MUST round-trip to \
-             RuntimeTuning::default() byte-for-byte."
-        )
+        // The original W44-217 signature only carried 3 knobs (it omitted
+        // `screenshot_quant_aggressiveness`). For backwards compatibility
+        // we treat the missing knob as its default value (1.0) which is
+        // the no-op for the p3_p6_screenshot_qac_lift ridge.
+        Tier2Knobs {
+            smoothness_bias,
+            screenshot_quant_aggressiveness: 1.0,
+            screen_quant_lift,
+            buttloop_screen_d_gate,
+        }
+        .expand_to_runtime_tuning()
     }
 
     #[cfg(test)]
@@ -967,8 +1156,10 @@ pub mod coupling {
         //! to round-trip + range assertions when the implementations
         //! shipped.
         //!
-        //! The expander `expand_knobs_to_runtime` STAYS
-        //! `unimplemented!()` until W44-222 lands.
+        //! W44-221 SHIPPED tests: [`Tier2Knobs`] +
+        //! [`Tier2Knobs::expand_to_runtime_tuning`] now have round-trip,
+        //! range, additive-composition, single-knob-locality, and
+        //! physical-floor assertions (all `tuning-override`-gated).
 
         use super::*;
 
@@ -1120,42 +1311,202 @@ pub mod coupling {
             assert_eq!(p5_a, p5_b, "p5 should match across composition fns");
         }
 
-        // ─── W44-222 expander stays unimplemented ───
+        // ─── W44-221 Tier-2 knob expander ───
+        //
+        // These tests are `tuning-override`-gated because Tier2Knobs +
+        // expand_to_runtime_tuning live behind the feature flag (their
+        // return type `runtime::RuntimeTuning` only exists under it).
 
-        fn expect_unimplemented<F>(f: F, expected_prefix: &str)
-        where
-            F: FnOnce() + std::panic::UnwindSafe,
-        {
-            let result = std::panic::catch_unwind(f);
-            assert!(result.is_err(), "expected unimplemented!() panic");
-            let panic_payload = result.unwrap_err();
-            let msg = if let Some(s) = panic_payload.downcast_ref::<&'static str>() {
-                (*s).to_string()
-            } else if let Some(s) = panic_payload.downcast_ref::<String>() {
-                s.clone()
-            } else {
-                String::new()
-            };
-            assert!(
-                msg.contains(expected_prefix),
-                "expected panic message containing {:?}, got {:?}",
-                expected_prefix,
-                msg
+        /// W44-221 hash-lock contract: defaults must round-trip byte-exact.
+        #[cfg(feature = "tuning-override")]
+        #[test]
+        fn tier2_knobs_default_roundtrips_to_runtime_default() {
+            let knobs = Tier2Knobs::default();
+            let runtime = knobs.expand_to_runtime_tuning();
+            let expected = super::super::runtime::RuntimeTuning::default();
+            assert_eq!(
+                runtime.smart_zenjxl_photo_mask_p25_min,
+                expected.smart_zenjxl_photo_mask_p25_min,
+                "p1 default round-trip"
+            );
+            assert_eq!(
+                runtime.screenshot_median_threshold,
+                expected.screenshot_median_threshold,
+                "p2 default round-trip"
+            );
+            assert_eq!(
+                runtime.buttloop_default_screenshot_qf_seed_scale,
+                expected.buttloop_default_screenshot_qf_seed_scale,
+                "p3 default round-trip"
+            );
+            assert_eq!(
+                runtime.buttloop_qf_seed_scale_min_distance,
+                expected.buttloop_qf_seed_scale_min_distance,
+                "p4 default round-trip"
+            );
+            assert_eq!(
+                runtime.adaptive_quant_screenshot_qf_seed_scale_e5_e6,
+                expected.adaptive_quant_screenshot_qf_seed_scale_e5_e6,
+                "p5 default round-trip"
+            );
+            assert_eq!(
+                runtime.adaptive_quant_screenshot_qf_seed_scale_e7,
+                expected.adaptive_quant_screenshot_qf_seed_scale_e7,
+                "p6 default round-trip"
             );
         }
 
-        // The expander test is `tuning-override`-gated because the
-        // fn returns `runtime::RuntimeTuning`, which is only in scope
-        // under that feature.
+        /// Backwards-compat: the W44-217-original 3-knob signature defaults
+        /// (`smoothness_bias=0.5, screen_quant_lift=1.0, buttloop_screen_d_gate=3.5`)
+        /// must also round-trip to defaults.
         #[cfg(feature = "tuning-override")]
         #[test]
-        fn expand_knobs_to_runtime_unimplemented() {
-            expect_unimplemented(
-                || {
-                    let _ = expand_knobs_to_runtime(0.5, 1.0, 3.5);
-                },
-                "W44-222 scope",
+        fn expand_knobs_to_runtime_3knob_default_roundtrips() {
+            let runtime = expand_knobs_to_runtime(0.5, 1.0, 3.5);
+            let expected = super::super::runtime::RuntimeTuning::default();
+            assert_eq!(runtime.smart_zenjxl_photo_mask_p25_min, expected.smart_zenjxl_photo_mask_p25_min);
+            assert_eq!(runtime.screenshot_median_threshold, expected.screenshot_median_threshold);
+            assert_eq!(runtime.buttloop_default_screenshot_qf_seed_scale, expected.buttloop_default_screenshot_qf_seed_scale);
+            assert_eq!(runtime.buttloop_qf_seed_scale_min_distance, expected.buttloop_qf_seed_scale_min_distance);
+            assert_eq!(runtime.adaptive_quant_screenshot_qf_seed_scale_e5_e6, expected.adaptive_quant_screenshot_qf_seed_scale_e5_e6);
+            assert_eq!(runtime.adaptive_quant_screenshot_qf_seed_scale_e7, expected.adaptive_quant_screenshot_qf_seed_scale_e7);
+        }
+
+        /// Range coverage: knobs at min/max produce param values within
+        /// the W44-216 LHS empirical envelope.
+        #[cfg(feature = "tuning-override")]
+        #[test]
+        fn tier2_knobs_smoothness_bias_range() {
+            // smoothness=0 → p1 at P1_RIDGE_MAX, p2 at P2_RIDGE_MAX
+            let knobs_lo_smooth = Tier2Knobs {
+                smoothness_bias: 0.0,
+                ..Default::default()
+            };
+            let rt = knobs_lo_smooth.expand_to_runtime_tuning();
+            assert!((rt.smart_zenjxl_photo_mask_p25_min - P1_RIDGE_MAX).abs() < EPS);
+            assert!((rt.screenshot_median_threshold - P2_RIDGE_MAX).abs() < EPS);
+
+            // smoothness=1 → p1 mirrored low (clamped ≥ 0), p2 mirrored low
+            let knobs_hi_smooth = Tier2Knobs {
+                smoothness_bias: 1.0,
+                ..Default::default()
+            };
+            let rt = knobs_hi_smooth.expand_to_runtime_tuning();
+            assert!(rt.smart_zenjxl_photo_mask_p25_min < DEFAULT_P1);
+            assert!(rt.screenshot_median_threshold < DEFAULT_P2);
+        }
+
+        /// Out-of-range knob values clamp.
+        #[cfg(feature = "tuning-override")]
+        #[test]
+        fn tier2_knobs_out_of_range_values_clamp() {
+            // smoothness=-1 → clamped to 0
+            let rt_neg = Tier2Knobs {
+                smoothness_bias: -1.0,
+                ..Default::default()
+            }
+            .expand_to_runtime_tuning();
+            let rt_zero = Tier2Knobs {
+                smoothness_bias: 0.0,
+                ..Default::default()
+            }
+            .expand_to_runtime_tuning();
+            assert_eq!(rt_neg.smart_zenjxl_photo_mask_p25_min, rt_zero.smart_zenjxl_photo_mask_p25_min);
+
+            // buttloop_screen_d_gate=10 → clamped to 5.5
+            let rt_huge = Tier2Knobs {
+                buttloop_screen_d_gate: 10.0,
+                ..Default::default()
+            }
+            .expand_to_runtime_tuning();
+            assert_eq!(rt_huge.buttloop_qf_seed_scale_min_distance, 5.5);
+        }
+
+        /// Additive composition on p6: both `screenshot_quant_aggressiveness`
+        /// and `screen_quant_lift` touch p6; sum of deviations should compose.
+        #[cfg(feature = "tuning-override")]
+        #[test]
+        fn tier2_knobs_p6_additive_composition() {
+            // Knob A only
+            let rt_a = Tier2Knobs {
+                screenshot_quant_aggressiveness: 1.5,
+                ..Default::default()
+            }
+            .expand_to_runtime_tuning();
+            let dev_a = rt_a.adaptive_quant_screenshot_qf_seed_scale_e7 - DEFAULT_P6;
+            // Knob B only
+            let rt_b = Tier2Knobs {
+                screen_quant_lift: 1.5,
+                ..Default::default()
+            }
+            .expand_to_runtime_tuning();
+            let dev_b = rt_b.adaptive_quant_screenshot_qf_seed_scale_e7 - DEFAULT_P6;
+            // Both at once → sum of deviations
+            let rt_ab = Tier2Knobs {
+                screenshot_quant_aggressiveness: 1.5,
+                screen_quant_lift: 1.5,
+                ..Default::default()
+            }
+            .expand_to_runtime_tuning();
+            let dev_ab = rt_ab.adaptive_quant_screenshot_qf_seed_scale_e7 - DEFAULT_P6;
+            assert!(
+                (dev_ab - (dev_a + dev_b)).abs() < 1e-4,
+                "p6 deviations should sum: dev_ab={} vs dev_a+dev_b={}",
+                dev_ab,
+                dev_a + dev_b
             );
+        }
+
+        /// Single-knob deviations: changing one knob only moves the params
+        /// that knob touches.
+        #[cfg(feature = "tuning-override")]
+        #[test]
+        fn tier2_knobs_single_knob_locality() {
+            // Move smoothness_bias only — p1, p2 should change; p3..p6 unchanged.
+            let rt = Tier2Knobs {
+                smoothness_bias: 0.0, // off-default
+                ..Default::default()
+            }
+            .expand_to_runtime_tuning();
+            assert!(rt.smart_zenjxl_photo_mask_p25_min != DEFAULT_P1);
+            assert!(rt.screenshot_median_threshold != DEFAULT_P2);
+            assert_eq!(rt.buttloop_default_screenshot_qf_seed_scale, DEFAULT_P3);
+            assert_eq!(rt.buttloop_qf_seed_scale_min_distance, DEFAULT_P4);
+            assert_eq!(rt.adaptive_quant_screenshot_qf_seed_scale_e5_e6, DEFAULT_P5);
+            assert_eq!(rt.adaptive_quant_screenshot_qf_seed_scale_e7, DEFAULT_P6);
+
+            // Move buttloop_screen_d_gate only — only p4 changes.
+            let rt = Tier2Knobs {
+                buttloop_screen_d_gate: 2.0,
+                ..Default::default()
+            }
+            .expand_to_runtime_tuning();
+            assert_eq!(rt.smart_zenjxl_photo_mask_p25_min, DEFAULT_P1);
+            assert_eq!(rt.screenshot_median_threshold, DEFAULT_P2);
+            assert_eq!(rt.buttloop_default_screenshot_qf_seed_scale, DEFAULT_P3);
+            assert_eq!(rt.buttloop_qf_seed_scale_min_distance, 2.0);
+            assert_eq!(rt.adaptive_quant_screenshot_qf_seed_scale_e5_e6, DEFAULT_P5);
+            assert_eq!(rt.adaptive_quant_screenshot_qf_seed_scale_e7, DEFAULT_P6);
+        }
+
+        /// Non-negativity: physical floors are respected.
+        #[cfg(feature = "tuning-override")]
+        #[test]
+        fn tier2_knobs_physical_floors() {
+            // Push all knobs to extremes — every param value stays ≥ 0.
+            let rt = Tier2Knobs {
+                smoothness_bias: 1.0,
+                screenshot_quant_aggressiveness: 0.0,
+                screen_quant_lift: 0.5,
+                buttloop_screen_d_gate: 1.5,
+            }
+            .expand_to_runtime_tuning();
+            assert!(rt.smart_zenjxl_photo_mask_p25_min >= 0.0);
+            assert!(rt.screenshot_median_threshold >= 0.0);
+            assert!(rt.buttloop_default_screenshot_qf_seed_scale >= 0.0);
+            assert!(rt.buttloop_qf_seed_scale_min_distance >= 1.5);
+            assert!(rt.adaptive_quant_screenshot_qf_seed_scale_e5_e6 >= 0.0);
+            assert!(rt.adaptive_quant_screenshot_qf_seed_scale_e7 >= 0.0);
         }
 
         /// CouplingClass enum stability — variant names referenced from

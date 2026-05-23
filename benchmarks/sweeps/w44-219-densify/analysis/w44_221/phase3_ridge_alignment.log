@@ -1,0 +1,40 @@
+Phase 2b PC variance fractions: PC1:0.445, PC2:0.193, PC3:0.136, PC4:0.109, PC5:0.078, PC6:0.039
+
+W44-218 ridge tangent directions (normalized) — central diff at default:
+                   smoothness_bias  raw_delta=[-0.14158572 -0.08087331  0.          0.          0.          0.        ], ‖Δ‖=0.1631
+                                    unit_vec=-0.868, -0.496, +0.000, +0.000, +0.000, +0.000
+   screenshot_quant_aggressiveness  raw_delta=[0.         0.         0.0504451  0.         0.         0.06763926], ‖Δ‖=0.0844
+                                    unit_vec=+0.000, +0.000, +0.598, +0.000, +0.000, +0.802
+                 screen_quant_lift  raw_delta=[0.         0.         0.         0.         0.06896552 0.07161804], ‖Δ‖=0.0994
+                                    unit_vec=+0.000, +0.000, +0.000, +0.000, +0.694, +0.720
+            buttloop_screen_d_gate  raw_delta=[0.         0.         0.         0.05524862 0.         0.        ], ‖Δ‖=0.0552
+                                    unit_vec=+0.000, +0.000, +0.000, +1.000, +0.000, +0.000
+
+Cosine similarity between W44-218 ridge directions and PC1-PC6:
+                             ridge  PC 1  PC 2  PC 3  PC 4  PC 5  PC 6
+                   smoothness_bias  +0.691  +0.096  +0.081  +0.134  +0.443  +0.541
+   screenshot_quant_aggressiveness  +0.244  +0.577  +0.010  +0.641  +0.282  +0.341
+                 screen_quant_lift  +0.190  +0.151  +0.774  +0.528  +0.236  +0.091
+            buttloop_screen_d_gate  +0.349  +0.428  +0.279  +0.687  +0.078  +0.373
+
+  Ridge-matrix rank: 4 (4 rows)
+
+  PC projection norms onto W44-218 ridge span (4-dim):
+    PC1: ‖proj‖ = 0.8136  (1.0 = fully in span; lost: 33.8%)
+    PC2: ‖proj‖ = 0.7588  (1.0 = fully in span; lost: 42.4%)
+    PC3: ‖proj‖ = 0.9845  (1.0 = fully in span; lost: 3.1%)
+    PC4: ‖proj‖ = 0.9687  (1.0 = fully in span; lost: 6.2%)
+    PC5: ‖proj‖ = 0.5384  (1.0 = fully in span; lost: 71.0%)
+    PC6: ‖proj‖ = 0.7515  (1.0 = fully in span; lost: 43.5%)
+
+  Total fraction of joint-gradient variance reachable by 4 W44-218 ridges: 0.6845
+  Remaining variance: 0.3155
+
+  Ridge → PC1..PC4 projection (decomposition of each ridge in PC basis):
+                             ridge  PC 1  PC 2  PC 3  PC 4  ‖proj‖²
+                   smoothness_bias  +0.691  +0.096  +0.081  -0.134  0.5109
+   screenshot_quant_aggressiveness  +0.244  +0.577  -0.010  -0.641  0.8043
+                 screen_quant_lift  +0.190  +0.151  -0.774  -0.528  0.9362
+            buttloop_screen_d_gate  +0.349  +0.428  -0.279  +0.687  0.8549
+
+  Wrote: phase3_ridge_directions.tsv
