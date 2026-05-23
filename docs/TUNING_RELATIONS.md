@@ -1106,14 +1106,25 @@ WEAKLY-COUPLED, and Tier-2 knob design recommendations.
 
 ### Coupling-skeleton module
 
-Empirical findings are encoded as `unimplemented!()` function skeletons
-in [`crate::tuning::coupling`](../jxl-encoder/src/tuning.rs#L387) (the
+Empirical findings are encoded as function skeletons in
+[`crate::tuning::coupling`](../jxl-encoder/src/tuning.rs#L387) (the
 new module added by W44-217). Each fn has a doc-comment hypothesis +
-expected mechanism + Tier-2 reparameterisation; marker tests in
-`tuning::coupling::tests` assert the skeletons stay `unimplemented!()`
-until a W44-218+ chunk implements them. The `expand_knobs_to_runtime`
-fn (W44-222 scope) composes the per-pair fns into the 6-vector the
-production encoder consumes.
+expected mechanism + Tier-2 reparameterisation.
+
+**W44-218 status (shipped 2026-05-22)**: all 7 per-pair skeletons now
+have closed-form ridge implementations. 15 round-trip / range /
+saturation / composition tests assert byte-exact default round-trip,
+W44-216 LHS envelope coverage, and saturation cap engagement. Per-pair
+response R² fits were attempted but came in below the 0.5 acceptance
+gate (best ~0.08) — corpus is too sparse in param dimension. Ridges
+are calibrated from empirical envelope, with HONEST-STOP documented
+for the response-fit deferred to W44-220 after the W44-219 denser sweep.
+See [`PARAM_INTERACTIONS.md`](PARAM_INTERACTIONS.md) "W44-218 status"
+section for the per-pair shipped formulas.
+
+The `expand_knobs_to_runtime` fn (W44-222 scope) composes the per-pair
+fns into the 6-vector the production encoder consumes; it remains
+`unimplemented!()` until W44-222 lands.
 
 ### Analysis artefacts
 
@@ -1132,19 +1143,22 @@ production encoder consumes.
 
 ### Successor work
 
-- **W44-218** (next chunk): derive the algebraic form of the strongest
-  pair couplings (p3_p6 saturation curve, p4_p5/p4_p6 GATED-by-p4
-  composition, p5_p6 effort-conditional diagonal). Hypothesised
-  mechanisms in this file + per-pair PDP surfaces give the form; the
-  W44-216 corpus calibrates the constants.
-- **W44-219**: design a follow-up sweep targeting the open questions in
-  `PARAM_INTERACTIONS.md` §9 (more images, more LHS samples, denser low/
-  high distance bands, content-class-stratified LHS).
-- **W44-220**: replace the `unimplemented!()` bodies with the validated
-  formulas. Update `PARAM_INTERACTIONS.md` §6 to point at the implemented
-  fns.
+- **W44-218** (SHIPPED 2026-05-22): per-pair ridges through default,
+  calibrated from empirical envelope. 7 of 7 skeletons replaced with
+  closed-form fns; 15 unit tests; hash-locks byte-identical.
+  Per-pair response R² fits HONEST-STOPPED below 0.5 acceptance gate
+  pending W44-219 denser sweep.
+- **W44-219** (queued): design a follow-up sweep targeting the open
+  questions in `PARAM_INTERACTIONS.md` §9 (50+ LHS samples, 100+
+  images, denser low/high distance bands, content-class-stratified LHS).
+- **W44-220** (queued): refit the W44-218 ridge saturation strengths +
+  endpoints from the W44-219 denser corpus, with per-pair response
+  R² ≥ 0.5 acceptance gate now achievable.
 - **W44-221+**: the 3-tier zenjxl mode architecture (Tier-2 knobs, then
   Tier-3 MLP from features → knobs).
+- **W44-222** (queued): implement `expand_knobs_to_runtime` —
+  compose the 7 per-pair ridge fns into the full 6-vector
+  `RuntimeTuning` consumed by the production encoder.
 
 ---
 

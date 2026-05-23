@@ -1,0 +1,57 @@
+ridge	knob	p1	p2	p5	p6	p3	p4
+p1_p2_smoothness_bias	0.0	192.86105346679688	108.15492248535156				
+p1_p2_smoothness_bias	0.1	171.28884277343752	105.52393798828125				
+p1_p2_smoothness_bias	0.2	149.7166320800781	102.89295349121093				
+p1_p2_smoothness_bias	0.30000000000000004	128.14442138671873	100.26196899414063				
+p1_p2_smoothness_bias	0.4	106.57221069335937	97.63098449707032				
+p1_p2_smoothness_bias	0.5	85.0	95.0				
+p1_p2_smoothness_bias	0.6000000000000001	63.427789306640605	92.36901550292968				
+p1_p2_smoothness_bias	0.7000000000000001	41.85557861328124	89.73803100585937				
+p1_p2_smoothness_bias	0.8	20.283367919921872	87.10704650878907				
+p1_p2_smoothness_bias	0.9	-1.2888427734375085	84.47606201171875				
+p1_p2_smoothness_bias	1.0	-22.861053466796875	81.84507751464844				
+screen_quant_lift	0.5			1.0	1.5		
+screen_quant_lift	0.6			1.2	1.7999999999999998		
+screen_quant_lift	0.7			1.4	2.0999999999999996		
+screen_quant_lift	0.8			1.6	2.4000000000000004		
+screen_quant_lift	0.9			1.8	2.7		
+screen_quant_lift	1.0			2.0	3.0		
+screen_quant_lift	1.1			2.16	3.24		
+screen_quant_lift	1.2000000000000002			2.3200000000000003	3.4800000000000004		
+screen_quant_lift	1.3			2.48	3.7199999999999998		
+screen_quant_lift	1.4			2.6399999999999997	3.9599999999999995		
+screen_quant_lift	1.5			2.8	4.199999999999999		
+screen_quant_lift	1.6			2.96	4.4399999999999995		
+screen_quant_lift	1.7000000000000002			3.12	4.68		
+screen_quant_lift	1.8			3.2800000000000002	4.92		
+screen_quant_lift	1.9000000000000001			3.4400000000000004	5.16		
+screen_quant_lift	2.0			3.6	5.4		
+screenshot_quant_aggressiveness	0.0				0.0	0.0	
+screenshot_quant_aggressiveness	0.1				0.30000000000000004	0.4	
+screenshot_quant_aggressiveness	0.2				0.6000000000000001	0.8	
+screenshot_quant_aggressiveness	0.30000000000000004				0.9000000000000001	1.2000000000000002	
+screenshot_quant_aggressiveness	0.4				1.2000000000000002	1.6	
+screenshot_quant_aggressiveness	0.5				1.5	2.0	
+screenshot_quant_aggressiveness	0.6000000000000001				1.8000000000000003	2.4000000000000004	
+screenshot_quant_aggressiveness	0.7000000000000001				2.1	2.8000000000000003	
+screenshot_quant_aggressiveness	0.8				2.4000000000000004	3.2	
+screenshot_quant_aggressiveness	0.9				2.7	3.6	
+screenshot_quant_aggressiveness	1.0				3.0	4.0	
+screenshot_quant_aggressiveness	1.1				3.21	4.28	
+screenshot_quant_aggressiveness	1.2000000000000002				3.4200000000000004	4.5600000000000005	
+screenshot_quant_aggressiveness	1.3				3.63	4.84	
+screenshot_quant_aggressiveness	1.4000000000000001				3.84	5.12	
+screenshot_quant_aggressiveness	1.5				4.050000000000001	5.4	
+screenshot_quant_aggressiveness	1.6				4.26	5.68	
+screenshot_quant_aggressiveness	1.7000000000000002				4.470000000000001	5.960000000000001	
+screenshot_quant_aggressiveness	1.8				4.68	6.24	
+screenshot_quant_aggressiveness	1.9000000000000001				4.89	6.52	
+screenshot_quant_aggressiveness	2.0				5.1	6.8	
+buttloop_screen_d_gate	1.5						1.5
+buttloop_screen_d_gate	2.0						2.0
+buttloop_screen_d_gate	2.5						2.5
+buttloop_screen_d_gate	3.0						3.0
+buttloop_screen_d_gate	3.5						3.5
+buttloop_screen_d_gate	4.0						4.0
+buttloop_screen_d_gate	4.5						4.5
+buttloop_screen_d_gate	5.0						5.0
