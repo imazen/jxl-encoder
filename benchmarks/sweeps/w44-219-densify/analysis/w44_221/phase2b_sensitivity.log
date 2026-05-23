@@ -1,0 +1,92 @@
+Loaded corpus: 11485 rows
+======================================================================
+Step 1: fit joint GBR on full corpus
+======================================================================
+  ssim2_resid: train R² = +0.9920  (3.5s)
+  log_bytes_resid: train R² = +0.9862  (2.9s)
+
+======================================================================
+Step 2: select anchor cells (one per content/effort/dist_band stratum)
+======================================================================
+  selected 40 anchors (across content × effort × dist_band)
+
+======================================================================
+Step 3: central-difference gradient at defaults; h = ±5% of LHS range
+======================================================================
+  X_query shape: (520, 20)
+  gradient tensor shape: (40, 2, 6)
+  mean |gradient| per (outcome, param):
+               outcome        p1        p2        p3        p4        p5        p6
+           ssim2_resid  0.0002119   0.01264    0.0358   0.06555    0.1373  0.007682
+       log_bytes_resid  3.653e-05  0.0008361  0.006997  0.007994   0.01073  0.009347
+
+======================================================================
+Step 4: SVD on standardised stacked gradient matrix [N_anchors*N_outcomes × 6]
+======================================================================
+  G shape: (80, 6)
+
+  Variance explained per singular value (6 total):
+    σ1: SV=14.9744  σ²/σ²_total=0.4451  cumulative=0.4451
+    σ2: SV=9.8525  σ²/σ²_total=0.1927  cumulative=0.6378
+    σ3: SV=8.2804  σ²/σ²_total=0.1361  cumulative=0.7740
+    σ4: SV=7.4072  σ²/σ²_total=0.1089  cumulative=0.8829
+    σ5: SV=6.2634  σ²/σ²_total=0.0779  cumulative=0.9608
+    σ6: SV=4.4464  σ²/σ²_total=0.0392  cumulative=1.0000
+  rank ≥ 80% variance: 4
+  rank ≥ 85% variance: 4
+  rank ≥ 90% variance: 5
+  rank ≥ 95% variance: 5
+  rank ≥ 99% variance: 6
+
+======================================================================
+Step 5: V (right singular vectors) = the basis directions in param space
+======================================================================
+  V (each row = one direction, components = param loading):
+  dir   σ_frac        p1        p2        p3        p4        p5        p6   dominant_params
+    1   0.4451    -0.495    -0.526    +0.490    +0.349    +0.336    -0.061   -p1 -p2 +p3 +p4 +p5
+    2   0.1927    -0.062    -0.084    -0.003    +0.428    -0.532    +0.723   +p4 -p5 +p6
+    3   0.1361    -0.024    -0.122    +0.492    -0.279    -0.721    -0.380   +p3 -p5 -p6
+    4   0.1089    +0.237    -0.144    -0.339    +0.687    -0.193    -0.547   -p3 +p4 -p6
+    5   0.0779    -0.796    +0.499    -0.237    +0.078    -0.158    -0.175   -p1 +p2
+    6   0.0392    -0.248    -0.657    -0.589    -0.373    -0.145    +0.014   -p2 -p3 -p4
+
+======================================================================
+Step 6: param-only R² when projecting onto top-k basis directions
+======================================================================
+  k=1: Frobenius ratio reduced/full = 0.6672 (variance explained ≈ 0.4451)
+  k=2: Frobenius ratio reduced/full = 0.7986 (variance explained ≈ 0.6378)
+  k=3: Frobenius ratio reduced/full = 0.8797 (variance explained ≈ 0.7740)
+  k=4: Frobenius ratio reduced/full = 0.9396 (variance explained ≈ 0.8829)
+  k=5: Frobenius ratio reduced/full = 0.9802 (variance explained ≈ 0.9608)
+  k=6: Frobenius ratio reduced/full = 1.0000 (variance explained ≈ 1.0000)
+
+======================================================================
+Step 7: per-stratum mean gradients — gradient shape variation across content class
+======================================================================
+
+  ssim2_resid:
+    [                   all] n= 40  -0.0001538  -0.008288   +0.0343  -0.004205   +0.1373  -0.007682
+    [            screen/low] n=  5  -0.0001712  +0.005282  +0.01637  +0.01228  +0.02079        +0
+    [            screen/mid] n=  5  -0.0001712  +0.004953  +0.01637  -0.02497   +0.1057        +0
+    [           screen/high] n=  5  -0.0005862  -0.02448  +0.04691  -0.01059   +0.3312  -0.004203
+    [      screen/very_high] n=  5  -0.0003787  -0.04792   +0.1936  +0.06436   +0.3948  -0.01261
+    [             photo/low] n=  5  +3.632e-05  -0.0005097  -0.005485   -0.0118  +0.01075  -0.004203
+    [             photo/mid] n=  5  +3.632e-05  +0.002145        +0  -0.02892  +0.09569  -0.01261
+    [            photo/high] n=  5  -3.214e-05  +0.001662        +0  -0.02757  +0.08789  -0.02363
+    [       photo/very_high] n=  5  +3.632e-05  -0.007428  +0.006611  -0.006445  +0.05151  -0.004203
+
+  log_bytes_resid:
+    [                   all] n= 40  -1.121e-06  +0.0002569  +0.006849  -0.006284  +0.009342  +0.00825
+    [            screen/low] n=  5  +1.096e-05  +0.0008768  +0.003533  +0.001965  +0.01627  -0.0009889
+    [            screen/mid] n=  5  +9.997e-06  +0.0008183  +0.003479  +0.0002611   +0.0175  +0.01317
+    [           screen/high] n=  5  -9.138e-05  -0.0006464  +0.01902  -0.01366  +0.01871  +0.02414
+    [      screen/very_high] n=  5  +7.108e-05  +0.0001597  +0.02585  -0.03176   +0.0179  +0.01885
+    [             photo/low] n=  5  -1.047e-05  +0.000242  +0.001244  -0.001094  +0.0007104  +0.001877
+    [             photo/mid] n=  5  -2.213e-06  +0.0003651  +7.752e-05  -0.001198  +0.0006569  +0.002633
+    [            photo/high] n=  5  -7.201e-06  +0.0005929  -0.0001206  -0.0001334  -7.29e-05  +9.116e-05
+    [       photo/very_high] n=  5  +1.026e-05  -0.0003536  +0.001708  -0.004657  +0.003062  +0.006231
+
+  Wrote: phase2b_gradient_svd.tsv
+         phase2b_basis_loadings.tsv
+         phase2b_anchor_gradients.tsv
+         phase2b_arrays.npz

@@ -1174,13 +1174,25 @@ fns into the 6-vector the production encoder consumes; it remains
   geometric ridges RETAINED. See
   [`benchmarks/sweeps/w44-219-densify/analysis/w44_220/`](../benchmarks/sweeps/w44-219-densify/analysis/w44_220/)
   for measurement and W44-221+ re-derivation candidates.
-- **W44-221+** (next): pick a re-derivation direction (six-knob
-  expansion, per-class formula families, RD-theoretic derivation,
-  or Tier-3 MLP conditioning). Drop the per-pair-ridge approach
-  per W44-220 findings.
-- **W44-222** (queued): implement `expand_knobs_to_runtime` —
-  compose the 7 per-pair ridge fns into the full 6-vector
-  `RuntimeTuning` consumed by the production encoder.
+- **W44-221** (SHIPPED 2026-05-22): Tier-2 4-knob expander
+  ([`Tier2Knobs::expand_to_runtime_tuning()`](../jxl-encoder/src/tuning.rs))
+  composes the W44-218 ridges into the 6-param `RuntimeTuning` via
+  additive deviation. Phase 1 joint GBR R² ≥ 0.85 on all strata
+  (vastly exceeds W44-220 ceiling). Phase 2b gradient-SVD: rank-4
+  explains 88.3% of joint response variance. Phase 4b Pareto
+  validation: mean coverage gap < 0.5pp on most strata, max gap 7.86%
+  on `screen/very_high` (the W44-220 hard stratum). HONEST-STOP on
+  the strict 0.5pp-max gate but ships per the 2pp-mean gate. Full
+  spec: [`TIER_2_KNOBS.md`](TIER_2_KNOBS.md). Analysis:
+  [`benchmarks/sweeps/w44-219-densify/analysis/w44_221/`](../benchmarks/sweeps/w44-219-densify/analysis/w44_221/).
+- **W44-222+** (queued): (a) `LossyConfig::with_knobs(Tier2Knobs)`
+  builder wiring, (b) 5th data-driven knob to span the missing 31.5%
+  of joint gradient variance (the screen/very_high gap),
+  (c) per-stratum default knobs (screen vs photo content-class
+  conditioning).
+- **W44-226+** (Phase C of goal anchor): Tier-3 MLP from zenanalyze
+  features → 4 knobs. Small input (~25 features), small output (4
+  knobs); can't escape the interpretable knob space.
 
 ---
 

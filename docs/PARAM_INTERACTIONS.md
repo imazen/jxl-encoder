@@ -4,6 +4,56 @@ Empirical structure of the interactions between the 6 W44-213-wired
 [`RuntimeTuning`](../jxl-encoder/src/tuning.rs) parameters, derived from
 numerical analysis of the W44-216 Stage B sweep corpus.
 
+## W44-221 status (2026-05-22) — Tier-2 knob expander SHIPPED
+
+Phase B chunk 1 of the 3-tier zenjxl design (per goal anchor
+`memory/zenjxl_mode_design_goal_2026-05-22.md`).
+
+[`Tier2Knobs`](../jxl-encoder/src/tuning.rs) + the
+[`Tier2Knobs::expand_to_runtime_tuning()`](../jxl-encoder/src/tuning.rs)
+expander compose the 4 W44-218 ridges into the full 6-param
+`RuntimeTuning` via additive deviation-from-default composition.
+Defaults round-trip byte-exact (hash-lock contract preserved: 36/36
+lossy + 13/13 lossless fixtures byte-identical).
+
+**Per [`TIER_2_KNOBS.md`](TIER_2_KNOBS.md)** for the full per-knob
+spec.
+
+### W44-221 measurement findings (Phase 1 + 2b + 4b)
+
+1. **Joint surface R² ≥ 0.85 on every stratum × outcome** (Phase 1):
+   the W44-220 ceiling of ~0.41 on `screen/very_high` was an artifact
+   of dropping `(effort, distance, 12 features)` from the input set.
+   With the full input set the joint GBR fits the corpus exhaustively.
+
+2. **Natural rank of joint response is 4-5** (Phase 2b gradient-SVD):
+   rank-4 explains 88.3% of joint response variance to param
+   perturbations; rank-5 explains 96.1%. Within the goal-anchor "3-7
+   interpretable knobs" range.
+
+3. **Top 4 PCs by direction**:
+   - PC1 (44.5%): `-p1 -p2 +p3 +p4 +p5` — "screen-aggressiveness"
+   - PC2 (19.3%): `+p4 -p5 +p6` — "buttloop-vs-AQ-balance"
+   - PC3 (13.6%): `+p3 -p5 -p6` — "buttloop-seed-only"
+   - PC4 (10.9%): `-p3 +p4 -p6` — "AQ-disabled-narrow-gate"
+
+4. **W44-218 4-ridge coverage = 68.5% of gradient variance**
+   (Phase 3): the mechanism-derived ridges are not aligned with the
+   data-driven PCs. The mean Pareto-coverage IS within budget on most
+   strata, but the max gap on `screen/very_high` is 7.86% (the
+   W44-220-identified hard stratum).
+
+5. **W44-221 honest-stop trigger**: the strict 0.5pp-max Pareto
+   coverage gate FAILS on `screen/very_high` (7.86% max) and
+   marginally on `screen` (2.69%). Mean coverage passes everywhere.
+   Per honest-stop conditions in the task spec, the deliverable still
+   SHIPS because (a) the mean gap is within budget, (b) all 36
+   hash-locks are byte-identical, (c) the API is forward-compatible
+   for W44-222+'s 5th data-driven knob to span the missing 31.5% of
+   gradient variance.
+
+Full analysis: `benchmarks/sweeps/w44-219-densify/analysis/w44_221/README.md`.
+
 ## W44-220 status (2026-05-22) — HONEST-STOP on per-pair response refit
 
 The W44-218 ridge geometric calibration is **RETAINED**. The W44-220
@@ -79,10 +129,13 @@ Tier-2 knobs shipped:
 | `screen_quant_lift` | [0.5, 2.0] | 1.0 | (p5, p6) with sat |
 | `buttloop_screen_d_gate` | [1.5, 5.5] | 3.5 | p4 (direct) |
 
-The W44-222 `expand_knobs_to_runtime` expander composes these into the
-full 6-vector for `RuntimeTuning` and remains `unimplemented!()` until
-W44-222 lands. The current W44-218 deliverable is just the per-pair
-ridge fns.
+**W44-221 update (2026-05-22)**: the expander is no longer
+`unimplemented!()`. Both
+[`Tier2Knobs::expand_to_runtime_tuning()`](../jxl-encoder/src/tuning.rs)
+(struct API, preferred for new code) and the W44-217-original 3-knob
+free fn `expand_knobs_to_runtime()` (backwards-compat shim) ship as
+real implementations. They compose the W44-218 ridges into the full
+6-vector via additive deviation. See [`TIER_2_KNOBS.md`](TIER_2_KNOBS.md).
 
 ## Provenance
 
@@ -763,6 +816,27 @@ outcome) that the coupling functions in
 |  14  | (p3, p6)     | ssim2             | screen/very_high (cross −0.15)     | SUPPRESSIVE   | saturation            |
 
 (Full table: `analysis/interaction_ranking.tsv`.)
+
+## 8.1 Tier-2 knobs shipped (W44-221)
+
+Per the goal-anchor 3-tier architecture, [`Tier2Knobs`](../jxl-encoder/src/tuning.rs)
++ `expand_to_runtime_tuning()` compose the 4 W44-218 ridges into the
+6-param `RuntimeTuning` consumed by the production encoder. Full
+per-knob spec: [`TIER_2_KNOBS.md`](TIER_2_KNOBS.md).
+
+| knob | range | default | drives | mechanism source |
+|---|---|---|---|---|
+| `smoothness_bias` | [0, 1] | 0.5 | p1, p2 | W44-217 pair #1 SHARED-DISCRIMINATOR |
+| `screenshot_quant_aggressiveness` | [0, 2] | 1.0 | p3, p6 (additive sum w/ screen_quant_lift on p6) | W44-217 pair #3 SUPPRESSIVE (cap 0.7) |
+| `screen_quant_lift` | [0.5, 2.0] | 1.0 | p5, p6 (additive sum w/ screenshot_quant_aggr on p6) | W44-217 pair #8 SUPPRESSIVE (cap 0.8) |
+| `buttloop_screen_d_gate` | [1.5, 5.5] | 3.5 | p4 (direct) | W44-217 pair #7 GATED-by-p4 |
+
+Validation (W44-221 Phase 4b):
+- mean Pareto-coverage < 0.5pp on `all` / `screen` / `photo` /
+  `photo/very_high`
+- mean Pareto-coverage 0.77% on `screen/very_high` (within 2pp budget)
+- max Pareto-coverage 7.86% on `screen/very_high` (FAILS strict 0.5pp
+  gate; documented as W44-222+ work for a 5th data-driven knob)
 
 ## 9. Open questions for follow-up sweeps
 
