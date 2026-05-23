@@ -1,0 +1,31 @@
+cell	width	height	pw	label	ref_stride	cmp_stride	score	delta_vs_A
+256x256	256	256	256	A_both_unpadded	W	W	9.751573	+0.000000
+256x256	256	256	256	B_production	W	PW	9.751573	+0.000000
+256x256	256	256	256	C_both_padded	PW	PW	9.751573	+0.000000
+256x256	256	256	256	D_crop_to_W	W	W*	9.751573	+0.000000
+250x200	250	200	256	A_both_unpadded	W	W	8.969608	+0.000000
+250x200	250	200	256	B_production	W	PW	8.969608	+0.000000
+250x200	250	200	256	C_both_padded	PW	PW	8.969608	+0.000000
+250x200	250	200	256	D_crop_to_W	W	W*	8.969608	+0.000000
+253x253	253	253	256	A_both_unpadded	W	W	9.701501	+0.000000
+253x253	253	253	256	B_production	W	PW	9.701501	+0.000000
+253x253	253	253	256	C_both_padded	PW	PW	9.701501	+0.000000
+253x253	253	253	256	D_crop_to_W	W	W*	9.701501	+0.000000
+1080x720	1080	720	1080	A_both_unpadded	W	W	13.954395	+0.000000
+1080x720	1080	720	1080	B_production	W	PW	13.954395	+0.000000
+1080x720	1080	720	1080	C_both_padded	PW	PW	13.954395	+0.000000
+1080x720	1080	720	1080	D_crop_to_W	W	W*	13.954395	+0.000000
+1075x715	1075	715	1080	A_both_unpadded	W	W	13.935720	+0.000000
+1075x715	1075	715	1080	B_production	W	PW	13.935720	+0.000000
+1075x715	1075	715	1080	C_both_padded	PW	PW	13.935720	+0.000000
+1075x715	1075	715	1080	D_crop_to_W	W	W*	13.935720	+0.000000
+513x100	513	100	520	A_both_unpadded	W	W	3.616921	+0.000000
+513x100	513	100	520	B_production	W	PW	3.616921	+0.000000
+513x100	513	100	520	C_both_padded	PW	PW	3.616921	+0.000000
+513x100	513	100	520	D_crop_to_W	W	W*	3.616921	+0.000000
+
+# Interpretation:
+# - If |B.score - A.score| < 1e-3 on EVERY non-multiple-of-8 cell:
+#   audit Candidate 1 is FALSIFIED — stride API is correct.
+# - If B.score != A.score on non-multiple-of-8 cells:
+#   bug is real, magnitude shown in delta_vs_A column.
