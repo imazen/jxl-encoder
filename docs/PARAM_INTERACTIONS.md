@@ -4,10 +4,54 @@ Empirical structure of the interactions between the 6 W44-213-wired
 [`RuntimeTuning`](../jxl-encoder/src/tuning.rs) parameters, derived from
 numerical analysis of the W44-216 Stage B sweep corpus.
 
-## W44-218 status (2026-05-22)
+## W44-220 status (2026-05-22) — HONEST-STOP on per-pair response refit
+
+The W44-218 ridge geometric calibration is **RETAINED**. The W44-220
+attempt to refit per-pair response surfaces on the 21×-denser W44-216
++ W44-219 combined corpus (267 distinct param blobs vs 13 in W44-216;
+13,991 unique rows vs 4,938) **failed to clear the test R² ≥ 0.5 gate
+on any pair** (0 of 7 with linear+cross, 0 of 7 with GBR-pair-only,
+3 of 14 (pair, outcome) cells with GBR-all-6-params — all on
+`log_bytes_resid` for the same `class=screen / dist_band=very_high`
+stratum, exactly at R² = 0.5009).
+
+**Root cause is STRUCTURAL, not corpus density.** The 6-parameter
+NON-LINEAR ceiling (GBR with all 6 params, 5-fold CV) on the
+highest-signal stratum (`class=screen / dist_band=very_high`, n=684)
+is `ssim2 R² ≈ 0.41`, `log_bytes R² ≈ 0.44`. On photo strata (77% of
+the corpus), the ceiling is `R² ≈ 0.02-0.07` because the 6 zenjxl
+RuntimeTuning params have essentially no signal on photo content
+(matches the W44-217 finding that couplings live on screen).
+
+The W44-218 algebraic forms (per-pair linear ridges with cross-term)
+cannot reach the gate because they are STRUCTURALLY underfit relative
+to the true response surface — they would need to escape the per-pair
+framing to capture the joint 6-param non-linear ceiling, which the
+PDP analysis in §5 already documented.
+
+Per the W44-220 task spec's honest-stop trigger:
+> If <4 pairs reach R² ≥ 0.5 even on the 21× denser corpus: that's
+> evidence the W44-218 algebraic forms are wrong, not the corpus.
+> Document which forms need re-derivation in a follow-on chunk W44-221.
+
+The W44-218 ridges in `crate::tuning::coupling` REMAIN SHIPPED in
+their geometric-calibration form (defaults round-trip byte-exact +
+LHS envelope coverage). The W44-220 deliverable is:
+
+1. **The honest-stop measurement** documenting the gate failure on
+   the denser corpus.
+2. **A ceiling analysis** showing the structural R² ceiling per
+   stratum (`ceiling_per_stratum.tsv`).
+3. **A recommendation table** for W44-221+ re-derivation candidates.
+
+See `benchmarks/sweeps/w44-219-densify/analysis/w44_220/README.md`
+for the full per-pair and per-stratum tables, plus the W44-221+
+candidate re-derivations.
+
+## W44-218 status (2026-05-22) — historical (geometric calibration)
 
 7 of 7 coupling skeleton fns in
-[`crate::tuning::coupling`](../jxl-encoder/src/tuning.rs) now have
+[`crate::tuning::coupling`](../jxl-encoder/src/tuning.rs) have
 shipped closed-form ridge implementations. Each ridge:
 
 1. Round-trips defaults byte-exact (hash-lock contract: 36/36 lossy +
@@ -17,15 +61,14 @@ shipped closed-form ridge implementations. Each ridge:
    a composition of independent knobs.
 
 **Per-pair response R² (ssim2 ~ f(p_i, p_j)) was BELOW the 0.5
-acceptance gate for every pair** (best ~0.08). Root cause: the W44-216
-corpus has only 13 distinct param blobs against 27 images × 5 efforts
-× 7 distances of confound. Per the honest-stop conditions in the
-W44-218 task spec, the ridge **geometry** is calibrated from the
-empirical envelope (max bounds, saturation cap from top-N best-ssim2
-blobs) rather than from a per-pair response fit. The W44-219 denser
-sweep (50+ LHS blobs queued per `PARAM_INTERACTIONS.md` §9) is the
-fix; that sweep will let a follow-on chunk (W44-220+) fit per-pair
-response surfaces INSIDE the W44-218 ridge envelope.
+acceptance gate for every pair** (best ~0.08 in W44-218; W44-220's
+21×-denser corpus confirmed 0/7 pairs pass with the same algebraic
+forms). The ridge **geometry** is calibrated from the empirical
+envelope (max bounds, saturation cap from top-N best-ssim2 blobs)
+rather than from a per-pair response fit. Per W44-220 ceiling analysis,
+the structural 6-param GBR ceiling on the highest-signal stratum is
+~0.41 (ssim2) / 0.44 (log_bytes) — the gate cannot be cleared by ANY
+per-pair model.
 
 Tier-2 knobs shipped:
 
@@ -337,10 +380,13 @@ Both move together (positive slope through default). Default `s=0.5` →
 `(85, 95)` byte-exact. Range bounds (192.86, 108.15) come from the W44-216
 LHS max values. Per-pair response R² (ssim2 ~ f(p1, p2)) is BELOW the 0.5
 acceptance gate — ridge geometry calibrated from empirical envelope,
-not response fit. Validation: 13 LHS blobs not enough to identify per-pair
-response cleanly; W44-219 denser sweep (50+ blobs) needed. Calibration
-metric: ridge round-trips defaults byte-exact + ridge knob range covers
-the empirical p1/p2 bounding box of the LHS samples.
+not response fit. **W44-220 refit on 21×-denser corpus**: test
+R²=+0.0484 (linear+cross, ssim2_resid, n=11442); GBR-all-6-params
+test R²=+0.0662. The 6-param ceiling matches the 2-param fit because
+p1/p2 are the dominant discriminator-routing pair and other params
+contribute negligibly. Algebraic form re-derivation queued as W44-221+.
+Calibration metric: ridge round-trips defaults byte-exact + ridge knob
+range covers the empirical p1/p2 bounding box of the LHS samples.
 
 ### (p1, p3) — STRUCTURALLY MUTUALLY EXCLUSIVE
 
@@ -373,6 +419,8 @@ p3 ← screenshot_quant_aggressiveness ridge (p3 component of p3_p6_screenshot_q
 Defaults `(s=0.5, a=1.0)` → `(85, 4.0)` byte-exact. No coupling
 introduced; the W44-217 mutual-exclusion claim is preserved because
 the encoder dispatch layer (W44-166 vs W44-176/29) picks per-image.
+**W44-220 refit**: composition only — p1 and p3 are mutually exclusive
+per-image so per-pair R² is structural noise (R²=−0.00 to +0.07).
 
 ### (p1, p4) — WEAKLY_COUPLED
 
@@ -481,6 +529,10 @@ p4 ← buttloop_screen_d_gate (direct, clamped to [1.5, 5.5])
 
 Defaults `(d=3.5, a=1.0)` → `(4.0, 3.5)` byte-exact. The encoder
 dispatch picks W44-176 terminal-class for the relevant photo subset.
+**W44-220 refit on `class=photo/dist_band=very_high` (n=2581)**:
+test R² = −0.01 to +0.06 across all model variants. Photo strata
+have essentially no params signal (GBR ceiling ≈ 0.07); the W44-217
+photo SYNERGISTIC term is sub-noise on the held-out fold.
 
 ### (p3, p5) — WEAKLY_COUPLED
 
@@ -535,6 +587,13 @@ kicks in past `a=1.0`. Per-pair response R² did NOT meet the 0.5 gate
 (best ~0.05); ridge is geometrically defensible from the empirical
 top-3 best-ssim2 blob mean `(p3, p6) ≈ (5.4, 4.0) = 1.35× default`
 which corresponds to `a ≈ 1.5` under the shipped formula.
+**W44-220 refit on `class=screen/dist_band=very_high` (n=684)**:
+linear+cross test R²=+0.005 (ssim2_resid) / +0.049 (log_bytes_resid);
+GBR-pair test R²=+0.247 (ssim2) / +0.305 (log_bytes); **GBR-all-6
+test R²=+0.411 (ssim2) / +0.5009 (log_bytes — the ONE cell that
+clears the gate, marginally)**. The gate-clearance on log_bytes is
+shared across (p3_p6, p4_p5, p4_p6) because all three pairs' GBR-all-6
+model fits the same 6-param surface on the same stratum data.
 
 ### (p4, p5) — GATED-by-p4
 
@@ -563,6 +622,10 @@ Defaults `(d=3.5, k=1.0)` → `(3.5, 2.0)` byte-exact. Two orthogonal
 knobs at the Tier-2 layer; the GATED-by-p4 structure emerges
 naturally because the encoder only fires the buttloop screen lift
 above the p4 distance threshold.
+**W44-220 refit on `class=screen/dist_band=very_high` (n=684)**:
+linear+cross test R²=+0.002 (ssim2) / +0.031 (log_bytes); GBR-pair
+test R²=+0.216 (ssim2) / +0.339 (log_bytes); GBR-all-6 R²=+0.411 /
++0.5009 (shared gate-clearance cell with p3_p6, p4_p6).
 
 ### (p4, p6) — GATED-by-p4 → SYNERGISTIC inside
 
@@ -593,6 +656,10 @@ same two knobs with `p4_p5_*`. The SYNERGISTIC surface (cross_norm
 +0.256, strongest in corpus) is preserved structurally — low p4 +
 high p6 → both lifts fire, ssim2 climbs. Tier-2 user controls both
 knobs separately.
+**W44-220 refit on `class=screen/dist_band=very_high` (n=684)**:
+linear+cross test R²=+0.005 (ssim2) / +0.027 (log_bytes); GBR-pair
+test R²=+0.196 (ssim2) / +0.266 (log_bytes); GBR-all-6 R²=+0.411 /
++0.5009 (shared gate-clearance cell with p3_p6, p4_p5).
 
 ### (p5, p6) — SUPPRESSIVE / SATURATION
 
@@ -636,6 +703,12 @@ cell. At `k=2.0` → effective lift `1 + 1*0.8 = 1.8×`, giving
 `(3.6, 5.4)` — within the W44-216 LHS max `p5 ≈ 3.80, p6 ≈ 5.41`.
 Per-pair response R² did NOT meet 0.5 gate; ridge calibrated from
 empirical envelope.
+**W44-220 refit on `class=screen/effort>=8` (n=868)**: linear+cross
+test R²=−0.030 (ssim2) / −0.016 (log_bytes); GBR-pair test R²=
+−0.107 (ssim2) / +0.026 (log_bytes); GBR-all-6 R²=−0.094 / +0.014.
+Negative R² indicates the model is WORSE than just predicting the
+mean on held-out cells — the screen/e8+ stratum (868 rows) is
+too narrow + heterogeneous for the signal to generalize.
 
 ## 7. Per-content-class sensitivity
 
