@@ -93,6 +93,14 @@ export S3_ENDPOINT_URL="${R2_ENDPOINT}"
 export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}"
 export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}"
 export AWS_DEFAULT_REGION=auto
+# W44-219 diagnostic: print s5cmd ls output BEFORE handing off to onstart
+# so we can see whether the chunks are visible from this pod's network
+# path. Should print 4793+ JSON keys.
+echo "[bootstrap] DIAGNOSTIC: s5cmd ls test for sweep ${SWEEP_ID}"
+s5cmd ls "s3://zen-tuning-ephemeral/${SWEEP_ID}/chunks/*.json" 2>&1 | head -3 || \
+    echo "[bootstrap] DIAG s5cmd ls returned non-zero"
+N=\$(s5cmd ls "s3://zen-tuning-ephemeral/${SWEEP_ID}/chunks/*.json" 2>/dev/null | wc -l)
+echo "[bootstrap] DIAG s5cmd ls saw \$N chunks"
 echo "[bootstrap] env hydrated, exec'ing onstart.sh"
 exec /usr/local/bin/onstart.sh
 EOF
@@ -112,8 +120,16 @@ ENV_STR+=" -e S3_ENDPOINT_URL=${R2_ENDPOINT}"
 ENV_STR+=" -e W44_212_SWEEP_ID=${SWEEP_ID}"
 ENV_STR+=" -e W44_212_SWEEP_BUCKET=zen-tuning-ephemeral"
 ENV_STR+=" -e W44_212_CORPUS_BUCKET=zen-tuning-ephemeral"
-ENV_STR+=" -e W44_216_EMPTY_POLL_BUDGET=2"
-ENV_STR+=" -e W44_216_EMPTY_POLL_SLEEP_S=30"
+# W44-219: increased graceful-exit budget from 2 polls × 30s = 60s to
+# 10 polls × 60s = 10 min. Rationale: the W44-219 smoke pod
+# (37398803, 2026-05-22) exited cleanly after 2 empty polls with the
+# 4793-chunk queue PRESENT in R2 — likely a cold-listing race or
+# transient s5cmd error. W44-216 never hit this code path because its
+# queue never drained. Defensive widening so a single transient list
+# failure doesn't kill the worker. Knob still adjustable via env at
+# launcher invocation time.
+ENV_STR+=" -e W44_216_EMPTY_POLL_BUDGET=${W44_216_EMPTY_POLL_BUDGET:-10}"
+ENV_STR+=" -e W44_216_EMPTY_POLL_SLEEP_S=${W44_216_EMPTY_POLL_SLEEP_S:-60}"
 
 LAUNCHED=()
 N=0
