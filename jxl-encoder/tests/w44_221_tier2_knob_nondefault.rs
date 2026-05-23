@@ -116,7 +116,10 @@ fn nondefault_tier2_knobs_change_bytes_and_decode() {
     // Bytes must differ — non-default p3 + p6 must wire through.
     let abs_delta = (modified.len() as isize - baseline.len() as isize).unsigned_abs();
     let pct_delta = 100.0 * (abs_delta as f64) / (baseline.len() as f64);
-    eprintln!("delta = {} bytes ({:.2}% of baseline)", abs_delta, pct_delta);
+    eprintln!(
+        "delta = {} bytes ({:.2}% of baseline)",
+        abs_delta, pct_delta
+    );
 
     assert_ne!(
         baseline.len(),

@@ -4591,6 +4591,21 @@ pub struct LossyConfig {
     /// `crate::vardct::chroma_subsampling` are ready for the wire-up.
     /// See [`Self::with_chroma_subsampling`].
     chroma_subsampling: ChromaSubsampling,
+    /// W44-222 Tier-2 knobs (5 high-level interpretable knobs that
+    /// expand to a full 6-param [`crate::tuning::runtime::RuntimeTuning`]
+    /// override). When `Some`, [`Self::encode`] / `encode_inner` calls
+    /// [`crate::tuning::runtime::install_or_check_idempotent`] with the
+    /// expanded `RuntimeTuning` before encoding starts. Default `None`
+    /// → no override is installed → the production code path stays
+    /// const-fold-friendly and every existing hash-lock fixture
+    /// remains byte-identical.
+    ///
+    /// Gated on the `tuning-override` cargo feature; the underlying
+    /// types only exist under that feature.
+    ///
+    /// See [`Self::with_knobs`].
+    #[cfg(feature = "tuning-override")]
+    tier2_knobs: Option<crate::tuning::coupling::Tier2Knobs>,
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -4723,6 +4738,8 @@ impl LossyConfig {
             auto_delta_frames: false,
             buffering: Buffering::Auto,
             chroma_subsampling: ChromaSubsampling::Full444,
+            #[cfg(feature = "tuning-override")]
+            tier2_knobs: None,
         }
     }
 
@@ -4949,6 +4966,41 @@ impl LossyConfig {
         params.apply_to(&mut profile);
         self.profile_override = Some(profile);
         self
+    }
+
+    /// W44-222: install a Tier-2 knob set for this encode.
+    ///
+    /// The knobs are expanded to a full 6-param
+    /// [`crate::tuning::runtime::RuntimeTuning`] at encode start and
+    /// installed via [`crate::tuning::runtime::install_or_check_idempotent`].
+    /// At [`crate::tuning::coupling::Tier2Knobs::default()`] the expander
+    /// returns `RuntimeTuning::default()` byte-for-byte → no install is
+    /// attempted → the production code path stays unaffected and every
+    /// existing hash-lock fixture remains byte-identical.
+    ///
+    /// **Single-shot semantics** (W44-222 known limitation; see W44-223+):
+    /// the underlying `runtime::install` uses a `OnceLock`, so a process
+    /// can only install ONE distinct `RuntimeTuning`. Subsequent encodes
+    /// with the SAME knobs no-op (idempotent); subsequent encodes with
+    /// DIFFERENT knobs return [`EncodeError::InvalidConfig`]. Production
+    /// callers should set knobs at process start; sweep runners install
+    /// once per worker. A thread-local override is queued as W44-227.
+    ///
+    /// Pass `None` (or do not call this method) to keep the default
+    /// behaviour (no override installed).
+    ///
+    /// Gated on `tuning-override`; the underlying types only exist
+    /// under that feature.
+    #[cfg(feature = "tuning-override")]
+    pub fn with_knobs(mut self, knobs: crate::tuning::coupling::Tier2Knobs) -> Self {
+        self.tier2_knobs = Some(knobs);
+        self
+    }
+
+    /// W44-222: get the currently-set Tier-2 knobs (if any).
+    #[cfg(feature = "tuning-override")]
+    pub fn knobs(&self) -> Option<crate::tuning::coupling::Tier2Knobs> {
+        self.tier2_knobs
     }
 
     /// Create from a [`Quality`] specification.
@@ -7264,6 +7316,28 @@ impl<'a> EncodeRequest<'a> {
         match self.config {
             ConfigRef::Lossy(cfg) => cfg.validate()?,
             ConfigRef::Lossless(cfg) => cfg.validate()?,
+        }
+        // W44-222: install Tier-2 knobs (if any) into the runtime-tuning
+        // override before encoding starts. Default knobs (the round-trip
+        // case) are detected by comparing against `Tier2Knobs::default()`
+        // and skipped — keeps the no-override-installed fast path so
+        // every existing hash-lock fixture stays byte-identical.
+        #[cfg(feature = "tuning-override")]
+        if let ConfigRef::Lossy(cfg) = self.config {
+            if let Some(knobs) = cfg.tier2_knobs {
+                if knobs != crate::tuning::coupling::Tier2Knobs::default() {
+                    let rt = knobs.expand_to_runtime_tuning();
+                    crate::tuning::runtime::install_or_check_idempotent(rt).map_err(
+                        |_existing| EncodeError::InvalidConfig {
+                            message: "with_knobs: a different RuntimeTuning is already \
+                                      installed in this process; the runtime override \
+                                      is single-shot (see W44-222 known limitation, \
+                                      W44-227+ for thread-local follow-on)"
+                                .into(),
+                        },
+                    )?;
+                }
+            }
         }
         if let Some(ref ce) = self.color_encoding {
             crate::vardct::xyb::validate_color_encoding(ce).map_err(EncodeError::from)?;

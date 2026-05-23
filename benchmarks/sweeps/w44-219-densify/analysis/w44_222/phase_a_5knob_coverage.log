@@ -1,0 +1,91 @@
+5-knob default round-trip OK: [85.  95.   4.   3.5  2.   3. ]
+Fitting joint GBR (identical to Phase 4b)...
+Anchor cells: 40; full-param candidates: 267
+5-knob grid: 16807 points (7^5)
+4-knob grid (reference): 2401 points (7^4)
+
+======================================================================
+Stratum: all  (n_corpus=11485)
+======================================================================
+  anchors in stratum: 40
+  full-param Pareto: 35 of 267
+  5-knob-grid Pareto: 148 of 16807
+  5-KNOB asymmetric coverage (full-Pareto → nearest knob):
+    max ssim2 deficit:     0.1621
+    max log_bytes deficit: 0.0066  (0.66%)
+    mean ssim2 deficit:    0.0126
+    mean log_bytes deficit:0.0004  (0.04%)
+  4-KNOB REF asymmetric coverage:
+    max pct_bytes: 1.57%  (vs 5-knob 0.66%)
+    mean pct_bytes: 0.23%  (vs 5-knob 0.04%)
+
+======================================================================
+Stratum: screen  (n_corpus=2585)
+======================================================================
+  anchors in stratum: 20
+  full-param Pareto: 32 of 267
+  5-knob-grid Pareto: 153 of 16807
+  5-KNOB asymmetric coverage (full-Pareto → nearest knob):
+    max ssim2 deficit:     0.1359
+    max log_bytes deficit: 0.0067  (0.67%)
+    mean ssim2 deficit:    0.0080
+    mean log_bytes deficit:0.0004  (0.04%)
+  4-KNOB REF asymmetric coverage:
+    max pct_bytes: 2.69%  (vs 5-knob 0.67%)
+    mean pct_bytes: 0.19%  (vs 5-knob 0.04%)
+
+======================================================================
+Stratum: screen/very_high  (n_corpus=684)
+======================================================================
+  anchors in stratum: 5
+  full-param Pareto: 28 of 267
+  5-knob-grid Pareto: 159 of 16807
+  5-KNOB asymmetric coverage (full-Pareto → nearest knob):
+    max ssim2 deficit:     0.0710
+    max log_bytes deficit: 0.0114  (1.15%)
+    mean ssim2 deficit:    0.0061
+    mean log_bytes deficit:0.0005  (0.05%)
+  4-KNOB REF asymmetric coverage:
+    max pct_bytes: 7.86%  (vs 5-knob 1.15%)
+    mean pct_bytes: 0.77%  (vs 5-knob 0.05%)
+
+======================================================================
+Stratum: photo  (n_corpus=8900)
+======================================================================
+  anchors in stratum: 20
+  full-param Pareto: 28 of 267
+  5-knob-grid Pareto: 108 of 16807
+  5-KNOB asymmetric coverage (full-Pareto → nearest knob):
+    max ssim2 deficit:     0.3331
+    max log_bytes deficit: 0.0009  (0.09%)
+    mean ssim2 deficit:    0.0122
+    mean log_bytes deficit:0.0000  (0.00%)
+  4-KNOB REF asymmetric coverage:
+    max pct_bytes: 0.13%  (vs 5-knob 0.09%)
+    mean pct_bytes: 0.02%  (vs 5-knob 0.00%)
+
+======================================================================
+Stratum: photo/very_high  (n_corpus=2589)
+======================================================================
+  anchors in stratum: 5
+  full-param Pareto: 37 of 267
+  5-knob-grid Pareto: 146 of 16807
+  5-KNOB asymmetric coverage (full-Pareto → nearest knob):
+    max ssim2 deficit:     0.3887
+    max log_bytes deficit: 0.0037  (0.37%)
+    mean ssim2 deficit:    0.0151
+    mean log_bytes deficit:0.0003  (0.03%)
+  4-KNOB REF asymmetric coverage:
+    max pct_bytes: 0.56%  (vs 5-knob 0.37%)
+    mean pct_bytes: 0.06%  (vs 5-knob 0.03%)
+
+====================================================================================================
+HEADLINE: W44-222 5-knob vs W44-221 4-knob Pareto coverage
+====================================================================================================
+             stratum   4k_max%   5k_max%      Δmax   4k_mean%   5k_mean%     Δmean    gate_2pp
+--------------------------------------------------------------------------------------------------------------
+                 all    +1.573    +0.661    +0.912     +0.230     +0.041    +0.189        PASS
+              screen    +2.693    +0.668    +2.025     +0.186     +0.036    +0.151        PASS
+    screen/very_high    +7.859    +1.147    +6.712     +0.772     +0.050    +0.721        PASS
+               photo    +0.134    +0.086    +0.048     +0.016     +0.003    +0.013        PASS
+     photo/very_high    +0.562    +0.367    +0.194     +0.055     +0.033    +0.023        PASS

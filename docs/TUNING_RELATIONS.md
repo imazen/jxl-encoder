@@ -1185,14 +1185,34 @@ fns into the 6-vector the production encoder consumes; it remains
   the strict 0.5pp-max gate but ships per the 2pp-mean gate. Full
   spec: [`TIER_2_KNOBS.md`](TIER_2_KNOBS.md). Analysis:
   [`benchmarks/sweeps/w44-219-densify/analysis/w44_221/`](../benchmarks/sweeps/w44-219-densify/analysis/w44_221/).
-- **W44-222+** (queued): (a) `LossyConfig::with_knobs(Tier2Knobs)`
-  builder wiring, (b) 5th data-driven knob to span the missing 31.5%
-  of joint gradient variance (the screen/very_high gap),
-  (c) per-stratum default knobs (screen vs photo content-class
-  conditioning).
+- **W44-222** (SHIPPED 2026-05-22):
+  - **(a) `LossyConfig::with_knobs(Tier2Knobs)` builder**: production
+    callers wire Tier-2 knobs through encoder entry without manually
+    calling `runtime::install`. Default-knob short-circuit preserves
+    the no-override fast path → 36/36 hash-locks byte-identical.
+    Plumbing uses `runtime::install_or_check_idempotent` (single-shot
+    per process; idempotent re-encode with same knobs OK; mismatched
+    knobs → `EncodeError::InvalidConfig`). Thread-local override
+    queued as W44-227+.
+  - **(b) 5th data-driven knob** `buttloop_aq_balance ∈ [-1, +1]`
+    (default 0): direction from orthogonal-complement SVD of W44-221
+    PC residuals, captures 76.5% of weighted residual variance.
+    Mechanism matches W44-217 §6 PC2 "buttloop-vs-AQ-balance".
+    Validation: `screen/very_high` max bytes coverage gap
+    **7.86 % → 1.15 %** (-6.71pp); ALL 5 strata PASS 2pp-max gate.
+    Closes the W44-221 honest-stop. Full Phase A coverage analysis:
+    [`benchmarks/sweeps/w44-219-densify/analysis/w44_222/`](../benchmarks/sweeps/w44-219-densify/analysis/w44_222/).
+- **W44-224+** (queued): per-stratum default knobs (screen vs photo
+  content-class conditioning, W44-91/96/166 pattern).
+- **W44-225+** (queued): wire `EncoderStrategy::Zenjxl` to use
+  `Tier2Knobs::default()` via the expander layer (structurally
+  byte-identical at defaults; sets up the per-stratum dispatch path
+  for W44-224).
 - **W44-226+** (Phase C of goal anchor): Tier-3 MLP from zenanalyze
-  features → 4 knobs. Small input (~25 features), small output (4
+  features → 5 knobs. Small input (~25 features), small output (5
   knobs); can't escape the interpretable knob space.
+- **W44-227+** (queued): per-encode thread-local override for
+  `Tier2Knobs` to lift the single-shot `runtime::install` limitation.
 
 ---
 

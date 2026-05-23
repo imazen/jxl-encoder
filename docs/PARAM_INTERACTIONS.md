@@ -4,6 +4,58 @@ Empirical structure of the interactions between the 6 W44-213-wired
 [`RuntimeTuning`](../jxl-encoder/src/tuning.rs) parameters, derived from
 numerical analysis of the W44-216 Stage B sweep corpus.
 
+## W44-222 status (2026-05-22) — 5th knob + `LossyConfig::with_knobs` SHIPPED
+
+Phase B chunk 2 of the 3-tier zenjxl design. Adds the 5th
+data-driven knob (`buttloop_aq_balance`) to [`Tier2Knobs`](../jxl-encoder/src/tuning.rs)
+and ships [`LossyConfig::with_knobs(Tier2Knobs)`](../jxl-encoder/src/api.rs)
+plus [`crate::tuning::runtime::install_or_check_idempotent`](../jxl-encoder/src/tuning.rs)
+for per-config plumbing.
+
+**5th-knob mechanism**: rebalance screenshot quant budget along the
+dominant uncovered direction in the orthogonal complement of the 4
+W44-218 ridges. Captures 76.5% of weighted residual variance.
+Direction matches W44-217 §6 PC2 "buttloop-vs-AQ-balance" narrative
+(p3 ↓ + p5 ↓ + p6 ↑ = shift weight from buttloop seed + e5/e6 AQ to
+e7 AQ).
+
+**Validation (Phase A)**: re-running W44-221 Phase 4b with the 5-knob
+7^5 grid CLOSES the W44-221 honest-stop:
+
+- `screen/very_high` max bytes coverage gap: **7.86 % → 1.15 %**
+  (-6.71pp).
+- ALL 5 strata now PASS the 2pp-max gate.
+- Mean coverage stays <0.1 % everywhere.
+- Defaults round-trip byte-exact: 36/36 hash-locks BYTE-IDENTICAL,
+  4/4 libjxl byte-locks BYTE-IDENTICAL.
+
+**Phase C — `LossyConfig::with_knobs(Tier2Knobs)` builder**:
+production callers can wire Tier-2 knobs through the encoder entry
+directly:
+
+```rust
+let cfg = LossyConfig::new(2.0)
+    .with_effort(7)
+    .with_knobs(Tier2Knobs { buttloop_aq_balance: 0.5, ..Default::default() });
+let bytes = cfg.encode(&rgb, w, h, PixelLayout::Rgb8)?;
+```
+
+The builder calls `runtime::install_or_check_idempotent` at encode
+start when the knobs are non-default. At `Tier2Knobs::default()` the
+install is skipped (preserves the no-override fast path). Single-shot
+limitation: identical knobs idempotently no-op; mismatched knobs
+return `EncodeError::InvalidConfig`. Thread-local override queued as
+W44-227+.
+
+Phase D (`EncoderStrategy::Zenjxl` default = Tier2Knobs::default()
+expansion) is DEFERRED to W44-224 because it is structurally a no-op
+at defaults (the production fast path already short-circuits to the
+const when no override is installed). Per-stratum defaults (W44-224)
+is the right time to wire it.
+
+Full Phase A coverage analysis:
+`benchmarks/sweeps/w44-219-densify/analysis/w44_222/`.
+
 ## W44-221 status (2026-05-22) — Tier-2 knob expander SHIPPED
 
 Phase B chunk 1 of the 3-tier zenjxl design (per goal anchor
@@ -817,26 +869,59 @@ outcome) that the coupling functions in
 
 (Full table: `analysis/interaction_ranking.tsv`.)
 
-## 8.1 Tier-2 knobs shipped (W44-221)
+## 8.1 Tier-2 knobs shipped (W44-221 + W44-222)
 
 Per the goal-anchor 3-tier architecture, [`Tier2Knobs`](../jxl-encoder/src/tuning.rs)
-+ `expand_to_runtime_tuning()` compose the 4 W44-218 ridges into the
-6-param `RuntimeTuning` consumed by the production encoder. Full
-per-knob spec: [`TIER_2_KNOBS.md`](TIER_2_KNOBS.md).
++ `expand_to_runtime_tuning()` compose the 4 W44-218 ridges PLUS the
+W44-222 5th data-driven direction into the 6-param `RuntimeTuning`
+consumed by the production encoder. Full per-knob spec:
+[`TIER_2_KNOBS.md`](TIER_2_KNOBS.md).
 
-| knob | range | default | drives | mechanism source |
-|---|---|---|---|---|
-| `smoothness_bias` | [0, 1] | 0.5 | p1, p2 | W44-217 pair #1 SHARED-DISCRIMINATOR |
-| `screenshot_quant_aggressiveness` | [0, 2] | 1.0 | p3, p6 (additive sum w/ screen_quant_lift on p6) | W44-217 pair #3 SUPPRESSIVE (cap 0.7) |
-| `screen_quant_lift` | [0.5, 2.0] | 1.0 | p5, p6 (additive sum w/ screenshot_quant_aggr on p6) | W44-217 pair #8 SUPPRESSIVE (cap 0.8) |
-| `buttloop_screen_d_gate` | [1.5, 5.5] | 3.5 | p4 (direct) | W44-217 pair #7 GATED-by-p4 |
+| knob | range | default | drives | mechanism source | shipped |
+|---|---|---|---|---|---|
+| `smoothness_bias` | [0, 1] | 0.5 | p1, p2 | W44-217 pair #1 SHARED-DISCRIMINATOR | W44-221 |
+| `screenshot_quant_aggressiveness` | [0, 2] | 1.0 | p3, p6 (additive sum w/ screen_quant_lift on p6) | W44-217 pair #3 SUPPRESSIVE (cap 0.7) | W44-221 |
+| `screen_quant_lift` | [0.5, 2.0] | 1.0 | p5, p6 (additive sum w/ screenshot_quant_aggr on p6) | W44-217 pair #8 SUPPRESSIVE (cap 0.8) | W44-221 |
+| `buttloop_screen_d_gate` | [1.5, 5.5] | 3.5 | p4 (direct) | W44-217 pair #7 GATED-by-p4 | W44-221 |
+| **`buttloop_aq_balance`** | **[-1, +1]** | **0.0** | **(p1, p2, p3, p5, p6) via K5_DIR (mostly p3, p5, p6)** | **W44-217 §6 PC2 "buttloop vs AQ"; W44-222 orthogonal-complement SVD** | **W44-222** |
 
-Validation (W44-221 Phase 4b):
-- mean Pareto-coverage < 0.5pp on `all` / `screen` / `photo` /
-  `photo/very_high`
-- mean Pareto-coverage 0.77% on `screen/very_high` (within 2pp budget)
-- max Pareto-coverage 7.86% on `screen/very_high` (FAILS strict 0.5pp
-  gate; documented as W44-222+ work for a 5th data-driven knob)
+Validation (W44-221 Phase 4b → W44-222 Phase A):
+
+| stratum | 4-knob max % bytes | 5-knob max % bytes | gate_2pp_max (5-knob) |
+|---|---|---|---|
+| `all` | 1.57 % | 0.66 % | PASS |
+| `screen` | 2.69 % | 0.67 % | PASS |
+| `screen/very_high` | 7.86 % | **1.15 %** (-6.71pp) | PASS (was FAIL) |
+| `photo` | 0.13 % | 0.09 % | PASS |
+| `photo/very_high` | 0.56 % | 0.37 % | PASS |
+
+- All 5 strata mean Pareto-coverage < 0.1 % (W44-222)
+- All 5 strata PASS 2pp-max gate (W44-222 closes the W44-221
+  honest-stop on `screen/very_high`)
+- Defaults round-trip byte-exact: 36/36 hash-locks + 4/4 libjxl
+  byte-locks BYTE-IDENTICAL (`buttloop_aq_balance = 0` → K5_DIR
+  contribution is 0)
+
+### `LossyConfig::with_knobs(Tier2Knobs)` builder (W44-222)
+
+Production callers wire the knobs through the encoder entry:
+
+```rust
+let cfg = LossyConfig::new(distance)
+    .with_effort(effort)
+    .with_knobs(Tier2Knobs {
+        buttloop_aq_balance: 0.5,  // 5th knob
+        ..Default::default()
+    });
+let bytes = cfg.encode(&rgb, w, h, PixelLayout::Rgb8)?;
+```
+
+At `Tier2Knobs::default()`, no runtime override is installed (the
+encoder detects the default case and skips `install_or_check_idempotent`
+→ the production fast path stays unchanged). Single-shot per process:
+re-encoding with the SAME knobs is idempotent; re-encoding with
+DIFFERENT knobs returns `EncodeError::InvalidConfig`. Thread-local
+override plumbing is queued as W44-227+.
 
 ## 9. Open questions for follow-up sweeps
 
@@ -891,6 +976,10 @@ structure between the W44-213 RuntimeTuning fields.
 - Replacing a coupling skeleton fn in `crate::tuning::coupling` with a
   real implementation (W44-218+) → update the "Tier-2 use" of the
   affected per-pair section to point at the implemented fn.
+- Adding a new Tier-2 knob (W44-222+ pattern) → update the §8.1 table
+  with knob name + range + default + drives + mechanism source; rerun
+  the Pareto-coverage check with the new k-knob grid and update the
+  validation table.
 - Changing the default value of a W44-213 RuntimeTuning field → re-run
   the analysis and confirm the new defaults still fall on the
   knob-defaults ridge.
