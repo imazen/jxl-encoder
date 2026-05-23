@@ -1,0 +1,5 @@
+src	probe_w	probe_h	n	lut_max_diff	px_max_diff	px_mean_diff	px_above_1em4	px_above_1em5	px_above_1em6	score_jxl_ref	score_bu_ref	score_delta	score_pct
+/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png	256	256	196608	1.788e-7	1.788e-7	8.938e-8	0	0	0	4.045186	4.045187	9.537e-7	0.0000
+/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1025469.png	256	256	196608	1.788e-7	1.788e-7	3.421e-9	0	0	0	12.191590	12.191590	0.000e0	0.0000
+/home/lilith/work/codec-corpus/gb82-sc/terminal.png	256	256	196608	1.788e-7	1.788e-7	2.606e-9	0	0	0	9.729402	9.729402	0.000e0	0.0000
+/home/lilith/work/codec-corpus/CID22/CID22-512/validation/2936831.png	256	256	196608	1.788e-7	1.788e-7	5.374e-8	0	0	0	7.275857	7.275857	4.768e-7	0.0000

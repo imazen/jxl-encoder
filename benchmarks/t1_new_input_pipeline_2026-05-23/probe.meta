@@ -1,0 +1,202 @@
+# T1-new (W44-B1 follow-on): input-pipeline probe meta
+
+## Status
+
+[RULED OUT — no production source change]
+
+## Hypothesis (paraphrased from task spec)
+
+The W44-111/138 buttloop-internal vs post-decode butteraugli measurement
+gap is in the INPUT PIPELINE that builds the REFERENCE image fed to
+butteraugli, not the encoder recon (which B1/T2A/T2B already verified
+clean).
+
+Two paths feed linear-RGB to butteraugli:
+- **buttloop**: source sRGB u8 → forward_xyb → quantize+iterate →
+  inverse_xyb → linear-RGB → butteraugli (vs inverse_xyb-of-source
+  linear-RGB)
+- **post-decode**: encoded JXL → jxl-oxide decode (request_color_encoding
+  srgb_linear) → linear-RGB → butteraugli (vs srgb_to_linear of source
+  sRGB u8)
+
+The REFERENCE images fed to butteraugli are different. Same source
+pixels but different f32 linear-RGB representations.
+
+## Source-reading audit BEFORE the probe
+
+Verified against current code (NOT the W44-138 memo which is 2 days old):
+
+1. **`vardct/butteraugli_loop.rs:1100-1264`** —
+   `butteraugli_refine_quant_field` takes `linear_rgb: &[f32]` from the
+   caller. The reference (`ref_r/g/b` lines 1223-1231) is a planar
+   deinterleave of THIS caller-supplied buffer. NO `xyb_to_linear`,
+   NO forward/inverse XYB round-trip. The buffer is exactly what the
+   caller passed.
+
+2. **`api.rs:12461-12472`** — `srgb_u8_to_linear_f32` is the only path
+   that converts sRGB u8 → linear f32 inside the encoder. It reads
+   from the const-fn LUT `SRGB_U8_TO_LINEAR` (lines 12413-12453) which
+   computes each entry in f64 via Newton's fifth-root for x^2.4, then
+   `as f32` truncates.
+
+3. **`tests/quality_compare.rs:175-184`** — the post-decode RD path's
+   REFERENCE is built via `butteraugli::srgb_to_linear` (imported line
+   12), which reads from the butteraugli crate's lazy `SRGB_TO_LINEAR_LUT`
+   in `butteraugli/src/opsin.rs:309-326`. That LUT computes each entry
+   via `((v as f32 / 255.0 + 0.055) / 1.055).powf(2.4)` in f32 throughout.
+
+So the hypothesis is **partially mis-stated**: NEITHER reference goes
+through XYB round-trip. The buttloop's reference is just `srgb →
+linear` via the jxl-encoder LUT; the post-decode reference is `srgb →
+linear` via the butteraugli LUT. The two LUTs implement the same math
+in different precisions (f64 + Newton vs f32 + powf).
+
+The hypothesis was therefore re-scoped to: **the two LUTs' ULP-level
+precision difference is the W44-111/138 score gap.**
+
+## Probe design
+
+`jxl-encoder/examples/t1_input_pipeline_probe.rs` (registered in
+`jxl-encoder/Cargo.toml`, requires `butteraugli-loop` feature).
+
+For each cell:
+1. Load source PNG, crop to top-left 256×256 (controlled probe region).
+2. Build linear-RGB via Path A (jxl-encoder Newton-fifth-root LUT,
+   recomputed in-probe bit-for-bit identical to api.rs:12413-12453).
+3. Build linear-RGB via Path B (`butteraugli::srgb_to_linear`).
+4. Compare LUT entries directly (256 entries, the source of all
+   difference).
+5. Compare per-pixel linear-RGB: max abs diff, mean abs diff, count
+   of pixels above 1e-4 / 1e-5 / 1e-6.
+6. Build a synthetic "distorted" image via 5-bit-per-channel
+   quantization of Path A's linear-RGB (identical regardless of which
+   reference). Run butteraugli twice: (ref_A vs distorted) and
+   (ref_B vs distorted). Score delta = impact of reference precision.
+
+Decision thresholds per task spec:
+- max_abs < 1e-5: hypothesis FALSIFIED at pixel layer.
+- max_abs > 1e-3: hypothesis CONFIRMED at pixel layer; probe
+  butteraugli score delta.
+- score delta < 1%: hypothesis FALSIFIED at metric layer.
+- score delta >= 1%: hypothesis CONFIRMED; recommend aligning paths.
+
+## Cells measured
+
+4 cells × 256×256 crops:
+- 1418519.png (CID22 photo — W44-138 wedge cell)
+- 1025469.png (CID22 photo — W44-111 wedge cell)
+- terminal.png (gb82-sc screenshot — W44-105 SHIP cell)
+- 2936831.png (CID22 photo — random validator)
+
+## Results
+
+| cell        | lut_max | px_max  | px_mean | px>1e-5 | score_A   | score_B   | score_pct |
+|---          |---      |---      |---      |---      |---        |---        |---        |
+| 1418519     | 1.79e-7 | 1.79e-7 | 8.94e-8 | 0       | 4.045186  | 4.045187  | 0.0000%   |
+| 1025469     | 1.79e-7 | 1.79e-7 | 3.42e-9 | 0       | 12.191590 | 12.191590 | 0.0000%   |
+| terminal    | 1.79e-7 | 1.79e-7 | 2.61e-9 | 0       | 9.729402  | 9.729402  | 0.0000%   |
+| 2936831     | 1.79e-7 | 1.79e-7 | 5.37e-8 | 0       | 7.275857  | 7.275857  | 0.0000%   |
+
+Every cell: max abs diff = **1.788e-7** (exactly 1 ULP at f32 for
+values around 0.1). Mean abs diff is 1-2 orders of magnitude smaller
+than max (most pixels hit LUT entries that ARE bit-identical between
+both impls; only a subset of the 256 entries differ by 1 ULP).
+Butteraugli score deltas are **6 to 7 orders of magnitude below the
+W44-111/138 gap** (the gap is ~50-170× the 1e-3 threshold per
+W44-111's R/G channel max-abs analysis; the LUT precision delta is
+4 orders of magnitude UNDER the threshold).
+
+LUT entries differing at all: 214 of 256. Per-pixel diff is bounded
+by the LUT diff because both paths just look up the same u8 value.
+
+## Verdict
+
+**HYPOTHESIS FALSIFIED.** Reference-construction precision is NOT the
+W44-111/138 buttloop-vs-postdecode score gap.
+
+- Pixel layer: max abs diff 1.788e-7 < 1e-5 falsification threshold.
+- Metric layer: butteraugli score delta < 1e-6 absolute, < 1e-4%
+  relative. Far below the 1% confirmation threshold.
+
+The W44-111 memo measured the buttloop's INTERNAL RECON vs the
+DECODED bitstream's RECON having max-abs linear-RGB delta R=0.05-0.13,
+G=0.04-0.09, B=0.05-0.17 (50-170× above the 1e-3 threshold). That
+divergence is **0.05 / 1.79e-7 ≈ 280,000× larger** than the LUT-
+precision delta this probe measured. The reference is not the issue;
+the distorted (internal recon vs decoded recon) is.
+
+## Why the hypothesis was wrong
+
+The task spec asserted "buttloop uses an XYB-roundtripped source"
+which is not what the current code does. The buttloop's reference is
+just a planar deinterleave of the caller-supplied linear-RGB; the
+caller (api.rs encode_inner → vardct/bitstream.rs encode_frame_to_writer
+→ vardct/encoder.rs encode) computes that linear-RGB via the SAME
+srgb_u8_to_linear_f32 LUT that everything else in the encoder uses.
+
+The two paths DO differ in LUT IMPLEMENTATION (jxl-encoder Newton vs
+butteraugli powf), but the resulting precision delta is 1 ULP, which
+butteraugli's multi-resolution masking integrates over the entire
+image and discards as noise.
+
+## Recommendation (next candidate)
+
+Per W44-111 RULED-IN analysis, the remaining candidates for the
+buttloop-vs-decoded gap are downstream of the reference:
+
+1. **Buttloop's INTERNAL RECON pipeline divergence from the DECODER**
+   — already partially diagnosed by W44-138 Phase 1. The EPF stage on
+   1418519 d=5 shows +0.034 R max-abs vs decoder; W44-138 Phase 2
+   candidate P-1 (per-iter sharpness recompute) is the highest-EV next
+   chunk and the explicit P-1 recommendation in W44-138 still stands.
+
+2. **Float-domain SetQuantField recompute drift** (W44-111 chunk-2
+   candidate, partial fix in chunk-3 collapsed B-channel divergence
+   5.4×; R/G residual remains). Bisect via the existing
+   `drift_block_map.rs` infrastructure extended to R/G channels.
+
+3. **NOT this chunk's scope**: pixel-prep / sRGB-to-linear precision.
+   The probe rules this out exhaustively.
+
+## DO NOT (future agents)
+
+- DO NOT respawn an input-pipeline-precision chunk. The 4-cell probe
+  is exhaustive across W44-111/138 wedge cells + W44-105 SHIP cell +
+  a random validator. All show max-abs LUT diff ≤ 1.788e-7 and
+  butteraugli score delta < 1e-6.
+- DO NOT change `api.rs:12413-12453 SRGB_U8_TO_LINEAR` to use
+  `butteraugli::srgb_to_linear` for "alignment". The LUT precision
+  is not the gap, and altering the jxl-encoder LUT would regenerate
+  every hash-lock in the tree for zero score impact.
+- DO NOT change `butteraugli_loop.rs:1227-1231` to re-derive the
+  reference from anywhere else. The current planar deinterleave of
+  the caller's linear-RGB is exactly correct and matches what the
+  decoder produces from the SHIPPED bitstream (modulo the W44-111
+  internal-recon-vs-decoded divergence, which is a DIFFERENT layer
+  entirely).
+- DO NOT cite "XYB round-trip on the reference" as a candidate
+  mechanism. Source-reading verifies neither path does this.
+
+## Production state
+
+- No source file modified in `jxl-encoder/src/`.
+- New example registered in `jxl-encoder/Cargo.toml` (gated on
+  `butteraugli-loop` feature).
+- New TSV + meta in `benchmarks/t1_new_input_pipeline_2026-05-23/`.
+- No hash-lock impact (no source change).
+- Multi-decoder roundtrip: N/A (probe is metric-only, no encoder
+  output produced).
+
+## Reproducer
+
+```
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo build --release --example t1_input_pipeline_probe \
+    --features 'butteraugli-loop' \
+    --manifest-path jxl-encoder/Cargo.toml
+
+$HOME/work/zen/jxl-encoder-shared-target/release/examples/t1_input_pipeline_probe \
+  /path/to/source.png
+```
+
+Default cell: `/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png`.

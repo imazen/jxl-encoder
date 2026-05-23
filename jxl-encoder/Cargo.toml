@@ -2253,5 +2253,16 @@ path = "examples/t2b_dct16x8_roundtrip.rs"
 name = "w44_t2a_dc_cfl_probe"
 path = "examples/w44_t2a_dc_cfl_probe.rs"
 
+# T1-new (W44-B1 follow-on): probe the linear-RGB REFERENCE pipeline fed to
+# butteraugli by the buttloop-internal path vs the post-decode RD path.
+# Hypothesis under test: the two paths use DIFFERENT sRGB→linear LUT
+# implementations (jxl-encoder Newton's 5th-root in f64 vs butteraugli
+# powf(2.4) in f32), and the precision divergence is the W44-111/138 score
+# gap. Measurement-only — no production source change. See:
+# `memory/w44_t1new_input_pipeline_2026-05-23.md`.
+[[example]]
+name = "t1_input_pipeline_probe"
+path = "examples/t1_input_pipeline_probe.rs"
+required-features = ["butteraugli-loop"]
 [lints]
 workspace = true
