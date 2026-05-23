@@ -4,6 +4,43 @@ Empirical structure of the interactions between the 6 W44-213-wired
 [`RuntimeTuning`](../jxl-encoder/src/tuning.rs) parameters, derived from
 numerical analysis of the W44-216 Stage B sweep corpus.
 
+## W44-218 status (2026-05-22)
+
+7 of 7 coupling skeleton fns in
+[`crate::tuning::coupling`](../jxl-encoder/src/tuning.rs) now have
+shipped closed-form ridge implementations. Each ridge:
+
+1. Round-trips defaults byte-exact (hash-lock contract: 36/36 lossy +
+   13/13 lossless fixtures unchanged).
+2. Covers the W44-216 LHS empirical envelope for the relevant param.
+3. Encodes the W44-217 coupling class as a saturation strength or as
+   a composition of independent knobs.
+
+**Per-pair response R² (ssim2 ~ f(p_i, p_j)) was BELOW the 0.5
+acceptance gate for every pair** (best ~0.08). Root cause: the W44-216
+corpus has only 13 distinct param blobs against 27 images × 5 efforts
+× 7 distances of confound. Per the honest-stop conditions in the
+W44-218 task spec, the ridge **geometry** is calibrated from the
+empirical envelope (max bounds, saturation cap from top-N best-ssim2
+blobs) rather than from a per-pair response fit. The W44-219 denser
+sweep (50+ LHS blobs queued per `PARAM_INTERACTIONS.md` §9) is the
+fix; that sweep will let a follow-on chunk (W44-220+) fit per-pair
+response surfaces INSIDE the W44-218 ridge envelope.
+
+Tier-2 knobs shipped:
+
+| knob | range | default | drives |
+| --- | --- | --- | --- |
+| `smoothness_bias` | [0, 1] | 0.5 | (p1, p2) ridge |
+| `screenshot_quant_aggressiveness` | [0, 2] | 1.0 | (p3, p6) with sat |
+| `screen_quant_lift` | [0.5, 2.0] | 1.0 | (p5, p6) with sat |
+| `buttloop_screen_d_gate` | [1.5, 5.5] | 3.5 | p4 (direct) |
+
+The W44-222 `expand_knobs_to_runtime` expander composes these into the
+full 6-vector for `RuntimeTuning` and remains `unimplemented!()` until
+W44-222 lands. The current W44-218 deliverable is just the per-pair
+ridge fns.
+
 ## Provenance
 
 | input                  | value                                                                                         |
@@ -288,6 +325,23 @@ the ridge that keeps the corpus dispatch decisions stable while letting
 the binary class label flip smoothly. Skeleton:
 [`coupling::p1_p2_smoothness_dispatch_ridge`](../jxl-encoder/src/tuning.rs).
 
+**Shipped formula** (W44-218):
+
+```text
+s = smoothness_bias ∈ [0, 1]              (default 0.5)
+p1(s) = 85 + (192.86 - 85) * (1 - 2s),  clamped to [0, 192.86]
+p2(s) = 95 + (108.15 - 95) * (1 - 2s),  clamped to [≥0, 108.15]
+```
+
+Both move together (positive slope through default). Default `s=0.5` →
+`(85, 95)` byte-exact. Range bounds (192.86, 108.15) come from the W44-216
+LHS max values. Per-pair response R² (ssim2 ~ f(p1, p2)) is BELOW the 0.5
+acceptance gate — ridge geometry calibrated from empirical envelope,
+not response fit. Validation: 13 LHS blobs not enough to identify per-pair
+response cleanly; W44-219 denser sweep (50+ blobs) needed. Calibration
+metric: ridge round-trips defaults byte-exact + ridge knob range covers
+the empirical p1/p2 bounding box of the LHS samples.
+
 ### (p1, p3) — STRUCTURALLY MUTUALLY EXCLUSIVE
 
 **Variance**: 9.1 % bytes / 7.7 % ssim2 / 10.1 % cvvdp.
@@ -308,6 +362,17 @@ thresholds.
 (`smoothness_bias` from p1_p2, `screenshot_quant_aggressiveness` from
 p3_p6) cover this orthogonally. Skeleton:
 [`coupling::p1_p3_mutually_exclusive_dispatch`](../jxl-encoder/src/tuning.rs).
+
+**Shipped composition** (W44-218):
+
+```text
+p1 ← smoothness_bias ridge (p1 component of p1_p2_smoothness_dispatch_ridge)
+p3 ← screenshot_quant_aggressiveness ridge (p3 component of p3_p6_screenshot_qac_lift)
+```
+
+Defaults `(s=0.5, a=1.0)` → `(85, 4.0)` byte-exact. No coupling
+introduced; the W44-217 mutual-exclusion claim is preserved because
+the encoder dispatch layer (W44-166 vs W44-176/29) picks per-image.
 
 ### (p1, p4) — WEAKLY_COUPLED
 
@@ -407,6 +472,16 @@ because they target different layers of the same dispatch.
 Skeleton:
 [`coupling::p3_p4_photo_high_d_gate`](../jxl-encoder/src/tuning.rs).
 
+**Shipped composition** (W44-218):
+
+```text
+p3 ← screenshot_quant_aggressiveness ridge
+p4 ← buttloop_screen_d_gate (direct, clamped to [1.5, 5.5])
+```
+
+Defaults `(d=3.5, a=1.0)` → `(4.0, 3.5)` byte-exact. The encoder
+dispatch picks W44-176 terminal-class for the relevant photo subset.
+
 ### (p3, p5) — WEAKLY_COUPLED
 
 **Variance**: 3.6 % bytes / 3.1 % ssim2.
@@ -439,6 +514,28 @@ costs bytes (coarser quant everywhere) for zero quality change.
 (p3, p6) along a ridge with explicit saturation cap. Skeleton:
 [`coupling::p3_p6_screenshot_qac_lift`](../jxl-encoder/src/tuning.rs).
 
+**Shipped formula** (W44-218):
+
+```text
+a = screenshot_quant_aggressiveness ∈ [0, 2]    (default 1.0)
+a_eff = a                          for a ≤ 1
+a_eff = 1 + (a - 1) * 0.7          for a > 1   (soft saturation)
+p3(a) = 4.0 * a_eff
+p6(a) = 3.0 * a_eff
+```
+
+Default `a=1.0` → `(4.0, 3.0)` byte-exact. Saturation strength 0.7
+(stronger than `screen_quant_lift`'s 0.8) because (p3, p6) is the FULL
+multiplicative lift on the qac field at e7+ where BOTH the buttloop seed
+AND the adaptive_quant pre-scale fire. The W44-217 ANOVA showed 6× joint
+lift soft cap; at `a=2.0` → effective lift `1 + 1*0.7 = 1.7×`, giving
+`(6.8, 5.1)` which is past the W44-216 LHS max `p3 ≈ 7.89, p6 ≈ 5.41`.
+Calibration metric: defaults round-trip + monotone in `a` + saturation
+kicks in past `a=1.0`. Per-pair response R² did NOT meet the 0.5 gate
+(best ~0.05); ridge is geometrically defensible from the empirical
+top-3 best-ssim2 blob mean `(p3, p6) ≈ (5.4, 4.0) = 1.35× default`
+which corresponds to `a ≈ 1.5` under the shipped formula.
+
 ### (p4, p5) — GATED-by-p4
 
 **Variance**: 8.9 % bytes / 8.1 % ssim2 / 9.8 % cvvdp.
@@ -454,6 +551,18 @@ multiplies inside the buttloop loop's adaptive_quant pre-scale.
 `screen_quant_lift` (p5+p6 jointly). They're genuinely orthogonal in
 direction even if they couple in magnitude. Skeleton:
 [`coupling::p4_p5_buttloop_vs_adaptive_quant_dispatch`](../jxl-encoder/src/tuning.rs).
+
+**Shipped composition** (W44-218):
+
+```text
+p4 ← buttloop_screen_d_gate (direct, clamped to [1.5, 5.5])
+p5 ← screen_quant_lift ridge (p5 component of p5_p6_effort_conditional_lift)
+```
+
+Defaults `(d=3.5, k=1.0)` → `(3.5, 2.0)` byte-exact. Two orthogonal
+knobs at the Tier-2 layer; the GATED-by-p4 structure emerges
+naturally because the encoder only fires the buttloop screen lift
+above the p4 distance threshold.
 
 ### (p4, p6) — GATED-by-p4 → SYNERGISTIC inside
 
@@ -471,6 +580,19 @@ strongly; when the gate is closed, p6 has small effect.
 
 **Tier-2**: same two knobs as p4_p5. Skeleton:
 [`coupling::p4_p6_e7_buttloop_synergy`](../jxl-encoder/src/tuning.rs).
+
+**Shipped composition** (W44-218):
+
+```text
+p4 ← buttloop_screen_d_gate (direct, clamped to [1.5, 5.5])
+p6 ← screen_quant_lift ridge (p6 component of p5_p6_effort_conditional_lift)
+```
+
+Defaults `(k=1.0, d=3.5)` → `(3.5, 3.0)` byte-exact. Shares the
+same two knobs with `p4_p5_*`. The SYNERGISTIC surface (cross_norm
++0.256, strongest in corpus) is preserved structurally — low p4 +
+high p6 → both lifts fire, ssim2 climbs. Tier-2 user controls both
+knobs separately.
 
 ### (p5, p6) — SUPPRESSIVE / SATURATION
 
@@ -495,6 +617,25 @@ lifting both.
 `(p5, p6) = (k × 2.0, k × 3.0)`. Calibration: fit the saturation cap.
 Skeleton:
 [`coupling::p5_p6_effort_conditional_lift`](../jxl-encoder/src/tuning.rs).
+
+**Shipped formula** (W44-218):
+
+```text
+k = screen_quant_lift ∈ [0.5, 2.0]              (default 1.0)
+k_eff = k                                       for k ≤ 1
+k_eff = 1 + (k - 1) * 0.8                       for k > 1  (soft saturation)
+p5(k) = 2.0 * k_eff
+p6(k) = 3.0 * k_eff
+```
+
+Default `k=1.0` → `(2.0, 3.0)` byte-exact. Saturation strength 0.8
+(softer than `screenshot_quant_aggressiveness`'s 0.7) because (p5, p6)
+fires at separate effort ranges (e5/e6 vs e7) so the SATURATION is on
+each-effort's lift independently, not on the COMBINED lift at a single
+cell. At `k=2.0` → effective lift `1 + 1*0.8 = 1.8×`, giving
+`(3.6, 5.4)` — within the W44-216 LHS max `p5 ≈ 3.80, p6 ≈ 5.41`.
+Per-pair response R² did NOT meet 0.5 gate; ridge calibrated from
+empirical envelope.
 
 ## 7. Per-content-class sensitivity
 

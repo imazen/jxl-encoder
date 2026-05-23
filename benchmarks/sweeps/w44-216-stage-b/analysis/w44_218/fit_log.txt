@@ -1,0 +1,36 @@
+
+=== p4 × p6 (SYNERGISTIC) on ssim2 @ class=screen/dist_band=very_high ===
+  synergistic              train_r2= 0.0723 test_r2= 0.0244 mae= 3.065 n=206 params=['7.847']
+  multiplicative           train_r2= 0.0810 test_r2=-0.0834 mae= 3.155 n=206 params=['1.741']
+  additive                 train_r2= 0.0723 test_r2=-0.1107 mae= 3.180 n=206 params=['1.204', '2.267']
+  synergistic_gated        train_r2= 0.0522 test_r2=-0.1182 mae= 3.177 n=206 params=['2.979', '5.000', '5.500']
+  gated                    train_r2= 0.0546 test_r2=-0.1201 mae= 3.177 n=206 params=['3.955', '5.000', '5.500']
+
+=== p2 × p5 (SUPPRESSIVE) on ssim2 @ class=screen/dist_band=very_high ===
+  additive                 train_r2= 0.1687 test_r2= 0.0895 mae= 2.957 n=206 params=['-10.000', '1.800']
+  synergistic              train_r2= 0.0456 test_r2= 0.0487 mae= 2.995 n=206 params=['-10.000']
+  multiplicative           train_r2= 0.0033 test_r2=-0.0099 mae= 3.042 n=206 params=['0.465']
+  suppressive_sat          train_r2= 0.0702 test_r2=-0.0203 mae= 2.955 n=206 params=['1.268', '0.114']
+
+=== p3 × p6 (SUPPRESSIVE) on ssim2 @ class=screen/dist_band=very_high ===
+  synergistic              train_r2= 0.0020 test_r2=-0.0028 mae= 3.078 n=206 params=['-0.818']
+  multiplicative           train_r2= 0.1291 test_r2=-0.1869 mae= 3.115 n=206 params=['1.833']
+  additive                 train_r2= 0.1840 test_r2=-0.1968 mae= 3.108 n=206 params=['2.918', '1.790']
+  suppressive_sat          train_r2= 0.2041 test_r2=-0.2095 mae= 3.037 n=206 params=['2.873', '0.640']
+
+=== p5 × p6 (SUPPRESSIVE) on ssim2 @ class=screen/effort=8 ===
+  synergistic              train_r2= 0.0045 test_r2= 0.0308 mae= 2.764 n=140 params=['-1.053']
+  suppressive_sat          train_r2= 0.0383 test_r2=-0.0108 mae= 2.867 n=140 params=['0.941', '0.553']
+  multiplicative           train_r2= 0.0141 test_r2=-0.0452 mae= 2.848 n=140 params=['0.453']
+  additive                 train_r2= 0.0325 test_r2=-0.0820 mae= 2.965 n=140 params=['0.191', '1.382']
+
+=== p3 × p4 (SYNERGISTIC) on log_bytes @ class=photo/dist_band=very_high ===
+  additive                 train_r2= 0.0091 test_r2= 0.0055 mae= 0.241 n=521 params=['-0.007', '-0.083']
+  multiplicative           train_r2= 0.0031 test_r2= 0.0032 mae= 0.242 n=521 params=['-0.020']
+  synergistic              train_r2= 0.0051 test_r2=-0.0074 mae= 0.246 n=521 params=['0.112']
+  gated                    train_r2= 0.0270 test_r2=-0.0106 mae= 0.245 n=521 params=['-0.246', '0.593', '5.500']
+
+=== p1 × p2 (SHARED-DISCRIMINATOR) on ssim2 @ ALL zenjxl ===
+  additive                 train_r2= 0.0028 test_r2= 0.0035 mae= 4.892 n=2475 params=['0.153', '-3.498']
+  synergistic              train_r2= 0.0013 test_r2= 0.0003 mae= 4.877 n=2475 params=['-5.191']
+  multiplicative           train_r2= 0.0000 test_r2=-0.0004 mae= 4.880 n=2475 params=['0.110']

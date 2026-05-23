@@ -1,0 +1,60 @@
+{
+  "defaults": {
+    "p1": 85.0,
+    "p2": 95.0,
+    "p3": 4.0,
+    "p4": 3.5,
+    "p5": 2.0,
+    "p6": 3.0
+  },
+  "p1_max_empirical": 192.86105346679688,
+  "p2_max_empirical": 108.15492248535156,
+  "p1_p2_smoothness_bias": {
+    "knob_range": [
+      0.0,
+      1.0
+    ],
+    "knob_default": 0.5,
+    "p1_max": 192.86105346679688,
+    "p2_max": 108.15492248535156,
+    "p1_min": -22.861053466796875,
+    "p2_min": 81.84507751464844,
+    "mechanism": "SHARED-DISCRIMINATOR: linear ridge through (85, 95), positive slope (both move together)",
+    "coverage_median": 0.14251467244891455,
+    "coverage_max": 0.1942620399103657
+  },
+  "screenshot_quant_aggressiveness": {
+    "knob_range": [
+      0.0,
+      2.0
+    ],
+    "knob_default": 1.0,
+    "saturation_strength": 0.7,
+    "mechanism": "SUPPRESSIVE/SATURATION: joint lift on (p3, p6), soft cap at ~6\u00d7 combined",
+    "coverage_median": 0.2699163046541551,
+    "coverage_max": 0.732705066732526
+  },
+  "screen_quant_lift": {
+    "knob_range": [
+      0.5,
+      2.0
+    ],
+    "knob_default": 1.0,
+    "saturation_strength": 0.8,
+    "mechanism": "MULTIPLICATIVE-with-saturation: diagonal (k*2.0, k*3.0)",
+    "coverage_median": 0.17579109681060676,
+    "coverage_max": 0.7094166269092158
+  },
+  "buttloop_screen_d_gate": {
+    "knob_range": [
+      1.5,
+      5.0
+    ],
+    "knob_default": 3.5,
+    "empirical_range": [
+      1.714562177658081,
+      5.3264546394348145
+    ],
+    "mechanism": "GATED: direct distance threshold for buttloop screen lift"
+  }
+}

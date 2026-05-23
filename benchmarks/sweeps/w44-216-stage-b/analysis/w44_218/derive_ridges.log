@@ -1,0 +1,50 @@
+Loaded 13 unique param blobs
+               p1          p2         p3         p4         p5         p6
+count   13.000000   13.000000  13.000000  13.000000  13.000000  13.000000
+mean   118.768994   92.984764   4.462288   3.525242   2.469494   3.465019
+std     48.199262    9.990176   2.039949   1.127153   0.872568   1.181627
+min     40.500015   75.633545   1.152988   1.714562   1.185987   1.636798
+25%     85.000000   86.505363   3.071418   2.548646   1.752665   2.802414
+50%    118.809616   94.738945   4.284813   3.500000   2.423724   3.343357
+75%    156.008789   99.453285   5.826739   4.392857   3.194407   4.276758
+max    192.861053  108.154922   7.893644   5.326455   3.797088   5.412161
+
+=== (p1, p2) ridge sample ===
+  s=0.00 → p1= 192.86 p2= 108.15
+  s=0.25 → p1= 138.93 p2= 101.58
+  s=0.50 → p1=  85.00 p2=  95.00
+  s=0.75 → p1=  31.07 p2=  88.42
+  s=1.00 → p1= -22.86 p2=  81.85
+
+=== screen_quant_lift sample ===
+  k=0.50 → p5=1.000 p6=1.500
+  k=0.75 → p5=1.500 p6=2.250
+  k=1.00 → p5=2.000 p6=3.000
+  k=1.25 → p5=2.400 p6=3.600
+  k=1.50 → p5=2.800 p6=4.200
+  k=2.00 → p5=3.600 p6=5.400
+
+=== screenshot_quant_aggressiveness sample ===
+  a=0.00 → p3=0.000 p6=0.000
+  a=0.50 → p3=2.000 p6=1.500
+  a=1.00 → p3=4.000 p6=3.000
+  a=1.50 → p3=5.400 p6=4.050
+  a=2.00 → p3=6.800 p6=5.100
+
+=== DEFAULT roundtrip check ===
+  p1=85.0000 (expected 85.0)
+  p2=95.0000 (expected 95.0)
+  p3=4.0000 (expected 4.0)
+  p4=3.5000 (expected 3.5)
+  p5=2.0000 (expected 2.0)
+  p6 (from p5_p6_ridge) = 3.0000 (expected 3.0)
+  p6 (from p3_p6_ridge) = 3.0000 (expected 3.0)
+  ✓ All defaults round-trip cleanly
+
+=== Coverage of LHS blobs against ridges ===
+  (p1, p2) ridge: median blob distance = 0.143, max = 0.194
+  (p3, p6) ridge: median blob distance = 0.270, max = 0.733
+  (p5, p6) ridge: median blob distance = 0.176, max = 0.709
+
+Wrote /tmp/w44-218/ridges.json
+Wrote /tmp/w44-218/ridge_coverage.tsv
