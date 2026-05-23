@@ -69,7 +69,7 @@ for line in sys.stdin:
     try:
         dt = datetime.datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
         age = (now - dt).total_seconds()
-        if age >= 600:
+        if age >= 1800:  # W44-219: bumped from 600s — at 50 cells/chunk × ~12 min/chunk processing on 4-thread pods, 600s rescues every chunk before completion. 1800s lets chunks complete + only rescues truly dead workers.
             print(parts[3])
     except Exception:
         pass
