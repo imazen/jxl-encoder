@@ -2226,5 +2226,14 @@ name = "w44_229_parity_check"
 path = "examples/w44_229_parity_check.rs"
 required-features = ["tuning-override"]
 
+# B1 candidate stride-bug probe: tests the (ref-stride, compare-stride)
+# truth table on butteraugli's planar API directly, without invoking the
+# encoder. Falsifies or confirms the audit Candidate 1 hypothesis (audit
+# at benchmarks/buttloop_recon_audit_2026-05-23/buttloop_vs_postdecode.md).
+[[example]]
+name = "b1_butteraugli_stride_probe"
+path = "examples/b1_butteraugli_stride_probe.rs"
+required-features = ["butteraugli-loop"]
+
 [lints]
 workspace = true
