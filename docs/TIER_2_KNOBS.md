@@ -346,6 +346,78 @@ calibration on the W44-216 corpus — they encode the SUPPRESSIVE
 coupling structure (joint < sum past the qac field's dynamic range
 cap).
 
+## Per-stratum defaults (W44-228b)
+
+W44-228a derived per-stratum optimal `Tier2Knobs` values via a 7^5 grid
+search over the W44-219 densified corpus (9018 zenjxl rows, 267 LHS
+blobs). W44-228b ships them as an **OPT-IN API**:
+`Tier2Knobs::default_for_stratum(stratum) -> Tier2Knobs` plus
+`Tier2Knobs::auto_for_distance(class, distance) -> Tier2Knobs`. The
+production default behaviour is **unchanged** — callers must explicitly
+chain `LossyConfig::with_knobs(Tier2Knobs::auto_for_distance(...))` to
+opt in.
+
+**Distance binning** (W44-217 / W44-228a convention):
+`low: d < 1.0`, `mid: [1.0, 2.0)`, `high: [2.0, 3.5)`, `very_high: d >= 3.5`.
+This is the binning the W44-228a optima TSV was computed against.
+
+**Lookup table** (source: `benchmarks/sweeps/w44-219-densify/analysis/w44_228a/per_stratum_optima.tsv`):
+
+| stratum             | k1 smoothness | k2 aggressiveness | k3 screen_lift | k4 d_gate | k5 aq_balance | max_gap_default % | max_gap_optimum % | Δ pp     |
+|---                  |---            |---                |---             |---        |---            |---                |---                |---       |
+| screen / very_high  | 0.0000        | 0.0               | 0.5000         | 1.5000    | +0.0000       | 49.668            | 0.000             | +49.668  |
+| screen / high       | 0.0000        | 0.0               | 0.5000         | 3.5000    | −0.3333       | 16.721            | 0.000             | +16.721  |
+| screen / mid        | 0.0000        | 0.0               | 0.5000         | 3.5000    | +0.0000       | 4.029             | 0.000             | +4.029   |
+| screen / low        | 1.0000        | 0.0               | 0.5000         | 2.1667    | +0.0000       | 5.083             | 0.235             | +4.848   |
+| photo / very_high   | 0.3333        | 0.0               | 0.5000         | 4.8333    | −0.6667       | 2.053             | 0.000             | +2.053   |
+| photo / high        | 0.1667        | 0.0               | 1.2500         | 4.8333    | −0.6667       | 1.592             | 0.000             | +1.592   |
+| photo / mid         | 1.0000        | 0.0               | 2.0000         | 2.8333    | +0.3333       | 2.196             | 0.923             | +1.273   |
+| photo / low         | 0.8333        | 0.0               | 0.5000         | 2.1667    | +0.6667       | 1.180             | 0.000             | +1.180   |
+
+**Surprising finding** (encoded in
+`tuning::coupling::tests::w44_228b_every_stratum_disables_screenshot_quant_aggressiveness`):
+every per-stratum optimum has `screenshot_quant_aggressiveness = 0`,
+which DISABLES the W44-105 buttloop screen seed lift. Two possible
+explanations (from the W44-228a memo §Surprising finding):
+
+1. **GBR over-fitting**: the W44-219 corpus distribution may have
+   sampled knobs around the SUPPRESSIVE coupling cap (W44-217 §p3_p6)
+   and missed the bands where `p3 > 0` helps.
+2. **Real signal**: the universal default `p3 = 4.0` is too aggressive
+   globally, and a per-stratum lookup table would correctly disable it
+   for most strata.
+
+**W44-105 SHIP-cell caveat (binding)**: the W44-228a optimisation
+corpus DID NOT INCLUDE the W44-105 SHIP cells (terminal / imac_g3 /
+codec_wiki e8+ d=4-6, where W44-105 closed SSIM2 wins via the buttloop
+screen seed lift). Callers using `Tier2Knobs::auto_for_distance` on
+screen-class content at d=4-6 should validate encode-decode roundtrip
+themselves against representative cells before deploying.
+
+**Default-on flip gate**: production default flip is W44-228c. Required
+acceptance criteria for W44-228c to ship:
+
+1. Paired encode-decode bench on the W44-105 SHIP cells (terminal /
+   imac_g3 / codec_wiki e8+ d=4-6) — A = current production default, B =
+   per-stratum-on. Net SSIM2 across the SHIP-cell set must not regress
+   by more than 0.1 mean (with explicit user signoff if it does).
+2. Bytes within +1.5% mean on the same SHIP cells (sets a budget for
+   the win-elsewhere tradeoff).
+3. ≥20-anchor stratified-bootstrap re-measurement on at least 3 strata
+   (closes W44-228a caveat #2: 5 anchors is the same density that
+   produced ±1-2pp variance in W44-227).
+4. Hash-lock re-bake plan documented — flipping the default WILL change
+   every hash-lock fixture that triggers the screen dispatch on
+   relevant strata; the cardinality of the change must be estimated up
+   front (W44-228c can ship if and only if the rebake is bounded).
+
+See also:
+- `memory/w44_228a_per_stratum_optima_2026-05-22.md` (derivation
+  methodology + 5 caveats)
+- `memory/w44_228b_per_stratum_optin_api_2026-05-22.md` (W44-228b
+  shipping memo + W44-228c gate criteria)
+- `docs/HYPOTHESIS_LEDGER.md` belief #18 (updated 2026-05-22)
+
 ## MANDATORY maintenance rule
 
 When adding a new Tier-2 knob (W44-222+):

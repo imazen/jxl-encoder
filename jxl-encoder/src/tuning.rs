@@ -1236,6 +1236,207 @@ pub mod coupling {
         .expand_to_runtime_tuning()
     }
 
+    // ─── W44-228b: per-stratum optimal Tier2Knobs lookup (OPT-IN API) ───
+    //
+    // Derived from a 7^5 grid search over the W44-219 densified corpus
+    // (9018 zenjxl rows). Each of the 8 (content_class × dist_band)
+    // strata gets a `Tier2Knobs` value that minimised the Pareto coverage
+    // gap on that stratum. Source-of-truth TSV:
+    // `benchmarks/sweeps/w44-219-densify/analysis/w44_228a/per_stratum_optima.tsv`.
+    //
+    // SHIPPED in W44-228b as OPT-IN: callers must explicitly chain
+    // `.with_knobs(Tier2Knobs::auto_for_distance(class, distance))`. The
+    // production default (no `.with_knobs(...)`) is byte-identical to
+    // pre-W44-228b — every hash-lock fixture passes byte-for-byte.
+    // Default-on flip is gated on W44-228c encode-decode validation
+    // against the W44-105 SHIP cells (terminal / imac_g3 / codec_wiki
+    // e8+ d=4-6 SSIM2 wins, which the W44-228a per-stratum optima
+    // recommend disabling via `screenshot_quant_aggressiveness=0`).
+
+    /// W44-228b: distance-band stratification matching the W44-217 / W44-228a
+    /// corpus binning convention.
+    ///
+    /// **Convention** (from `tuning.rs` line ~504 W44-217 + the W44-228a
+    /// derivation script): `low: d < 1.0`, `mid: 1.0 ≤ d < 2.0`,
+    /// `high: 2.0 ≤ d < 3.5`, `very_high: d ≥ 3.5`. This is the binning
+    /// the W44-228a optima TSV was computed against; do not change the
+    /// boundaries without re-deriving the lookup table.
+    ///
+    /// Note: an earlier W44-228b task draft documented an INCORRECT
+    /// convention (`{very_high: d<1.5, high: [1.5, 3.0), mid: [3.0, 5.0),
+    /// low: d>=5.0}`). The W44-217 / W44-228a convention is the one bound
+    /// to the data; this enum and [`Tier2Knobs::default_for_stratum`] are
+    /// canonical against the TSV.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ContentStratum {
+        ScreenVeryHigh,
+        ScreenHigh,
+        ScreenMid,
+        ScreenLow,
+        PhotoVeryHigh,
+        PhotoHigh,
+        PhotoMid,
+        PhotoLow,
+    }
+
+    impl ContentStratum {
+        /// W44-228b: derive the stratum from a content-class + distance pair.
+        ///
+        /// Returns `None` for `ImageContentClass::{Unknown, Other}` —
+        /// only `Photo` and `Screenshot` map to a stratum (matches the
+        /// W44-228a corpus, which only stratified those two classes).
+        ///
+        /// Distance binning follows the W44-217 / W44-228a convention
+        /// (see the [`ContentStratum`] doc). NaN / negative `distance`
+        /// inputs are treated as `0.0` → `Low`.
+        pub fn from_distance_band(
+            class: crate::effort::ImageContentClass,
+            distance: f32,
+        ) -> Option<Self> {
+            use crate::effort::ImageContentClass;
+            // Normalise NaN / negative distances to 0 so the comparison
+            // chain below always lands in a finite band.
+            let d = if distance.is_finite() && distance >= 0.0 {
+                distance
+            } else {
+                0.0
+            };
+            match class {
+                ImageContentClass::Screenshot => Some(if d < 1.0 {
+                    Self::ScreenLow
+                } else if d < 2.0 {
+                    Self::ScreenMid
+                } else if d < 3.5 {
+                    Self::ScreenHigh
+                } else {
+                    Self::ScreenVeryHigh
+                }),
+                ImageContentClass::Photo => Some(if d < 1.0 {
+                    Self::PhotoLow
+                } else if d < 2.0 {
+                    Self::PhotoMid
+                } else if d < 3.5 {
+                    Self::PhotoHigh
+                } else {
+                    Self::PhotoVeryHigh
+                }),
+                // Unknown / Other → no per-stratum mapping.
+                _ => None,
+            }
+        }
+    }
+
+    #[cfg(feature = "tuning-override")]
+    impl Tier2Knobs {
+        /// W44-228b: return the optimal Tier2Knobs for a given
+        /// `(content_class × dist_band)` stratum, derived from the W44-228a
+        /// 7^5 grid search on the W44-219 densified corpus.
+        ///
+        /// **Source data**: `benchmarks/sweeps/w44-219-densify/analysis/w44_228a/per_stratum_optima.tsv`
+        /// (8 rows, one per stratum). Each row was the knob tuple that
+        /// minimised the Pareto coverage gap on that stratum (max_gap_pct
+        /// across all candidate knob points). The W44-228a derivation
+        /// memo (`memory/w44_228a_per_stratum_optima_2026-05-22.md`)
+        /// documents the methodology + 5 caveats.
+        ///
+        /// **W44-105 caveat**: the W44-228a optimisation corpus did NOT
+        /// include the W44-105 SHIP cells (terminal / imac_g3 / codec_wiki
+        /// e8+ d=4-6, where W44-105 closed SSIM2 wins via the buttloop
+        /// screen seed lift `p3_buttloop_default_screenshot_qf_seed_scale =
+        /// 4.0`). Every screen-stratum optimum here sets
+        /// `screenshot_quant_aggressiveness = 0.0`, which DISABLES the
+        /// W44-105 lift. Callers using this method on screen-class content
+        /// at d=4-6 should validate encode-decode roundtrip themselves
+        /// against representative cells before deploying. The default-on
+        /// flip in production is gated on W44-228c paired encode-decode
+        /// bench against the W44-105 SHIP cells.
+        ///
+        /// **Hash-lock invariant**: this method does NOT change the
+        /// production default behaviour. Callers must explicitly opt in
+        /// via `.with_knobs(Tier2Knobs::auto_for_distance(...))` (or
+        /// `.with_knobs(Tier2Knobs::default_for_stratum(...))`). The
+        /// no-opt-in path stays byte-identical to pre-W44-228b.
+        pub fn default_for_stratum(stratum: ContentStratum) -> Self {
+            // Source: per_stratum_optima.tsv columns (k1..k5).
+            // The TSV was generated by W44-228a (commit aed37da8) from
+            // the W44-219-densify corpus. DO NOT EDIT these tuples
+            // without re-deriving the table.
+            #[allow(clippy::approx_constant)]
+            let (k1, k2, k3, k4, k5) = match stratum {
+                // ── screen strata ──
+                // screen/very_high (n=478, delta_pp=+49.668, L2=2.345)
+                ContentStratum::ScreenVeryHigh => (0.0, 0.0, 0.5, 1.5, 0.0),
+                // screen/high (n=550, delta_pp=+16.721, L2=1.269)
+                ContentStratum::ScreenHigh => (0.0, 0.0, 0.5, 3.5, -0.3333333333333334_f32),
+                // screen/mid (n=585, delta_pp=+4.029, L2=1.225)
+                ContentStratum::ScreenMid => (0.0, 0.0, 0.5, 3.5, 0.0),
+                // screen/low (n=282, delta_pp=+4.848, L2=1.810)
+                ContentStratum::ScreenLow => (1.0, 0.0, 0.5, 2.1666666666666665_f32, 0.0),
+                // ── photo strata ──
+                // photo/very_high (n=2071, delta_pp=+2.053, L2=1.871)
+                ContentStratum::PhotoVeryHigh => (
+                    0.3333333333333333_f32,
+                    0.0,
+                    0.5,
+                    4.833333333333333_f32,
+                    -0.6666666666666667_f32,
+                ),
+                // photo/high (n=1997, delta_pp=+1.592, L2=1.843)
+                ContentStratum::PhotoHigh => (
+                    0.16666666666666666_f32,
+                    0.0,
+                    1.25,
+                    4.833333333333333_f32,
+                    -0.6666666666666667_f32,
+                ),
+                // photo/mid (n=2018, delta_pp=+1.273, L2=1.675)
+                ContentStratum::PhotoMid => (
+                    1.0,
+                    0.0,
+                    2.0,
+                    2.833333333333333_f32,
+                    0.33333333333333326_f32,
+                ),
+                // photo/low (n=1037, delta_pp=+1.180, L2=1.180)
+                ContentStratum::PhotoLow => (
+                    0.8333333333333333_f32,
+                    0.0,
+                    0.5,
+                    2.1666666666666665_f32,
+                    0.6666666666666665_f32,
+                ),
+            };
+            Tier2Knobs {
+                smoothness_bias: k1,
+                screenshot_quant_aggressiveness: k2,
+                screen_quant_lift: k3,
+                buttloop_screen_d_gate: k4,
+                buttloop_aq_balance: k5,
+            }
+        }
+
+        /// W44-228b convenience: combine [`ContentStratum::from_distance_band`]
+        /// + [`Tier2Knobs::default_for_stratum`] in one call.
+        ///
+        /// For `ImageContentClass::{Unknown, Other}` (where no stratum is
+        /// defined), returns `Tier2Knobs::default()` — the universal W44-222
+        /// default — so callers can route every encode through this method
+        /// without a per-class branch. The default preserves byte-identical
+        /// production behaviour (defaults round-trip → no `RuntimeTuning`
+        /// install fires).
+        ///
+        /// **Opt-in semantics**: production default is unchanged unless
+        /// the caller explicitly chains `.with_knobs(...)`. See
+        /// [`Tier2Knobs::default_for_stratum`] for the W44-105 SHIP-cell
+        /// caveat that applies to screen strata.
+        pub fn auto_for_distance(class: crate::effort::ImageContentClass, distance: f32) -> Self {
+            match ContentStratum::from_distance_band(class, distance) {
+                Some(stratum) => Self::default_for_stratum(stratum),
+                None => Self::default(),
+            }
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         //! W44-218 SHIPPED tests: each coupling fn has a measured ridge
@@ -1898,6 +2099,103 @@ pub mod coupling {
                 CouplingClass::Synergistic,
                 CouplingClass::WeaklyCoupled,
             ];
+        }
+
+        // ─── W44-228b per-stratum default lookup unit tests ───
+
+        /// W44-228b: every stratum maps to a finite, well-clamped
+        /// `Tier2Knobs` value (no NaN, every field within its documented
+        /// range). Also asserts knob fields are within their own
+        /// MIN/MAX bounds — defends against TSV transcription errors.
+        #[cfg(feature = "tuning-override")]
+        #[test]
+        fn w44_228b_default_for_stratum_values_in_range() {
+            for s in [
+                ContentStratum::ScreenVeryHigh,
+                ContentStratum::ScreenHigh,
+                ContentStratum::ScreenMid,
+                ContentStratum::ScreenLow,
+                ContentStratum::PhotoVeryHigh,
+                ContentStratum::PhotoHigh,
+                ContentStratum::PhotoMid,
+                ContentStratum::PhotoLow,
+            ] {
+                let k = Tier2Knobs::default_for_stratum(s);
+                assert!(
+                    k.smoothness_bias.is_finite()
+                        && k.smoothness_bias >= Tier2Knobs::SMOOTHNESS_BIAS_MIN
+                        && k.smoothness_bias <= Tier2Knobs::SMOOTHNESS_BIAS_MAX,
+                    "stratum {:?}: smoothness_bias {} out of range",
+                    s,
+                    k.smoothness_bias
+                );
+                assert!(
+                    k.screenshot_quant_aggressiveness.is_finite()
+                        && k.screenshot_quant_aggressiveness
+                            >= Tier2Knobs::SCREENSHOT_QUANT_AGGRESSIVENESS_MIN
+                        && k.screenshot_quant_aggressiveness
+                            <= Tier2Knobs::SCREENSHOT_QUANT_AGGRESSIVENESS_MAX,
+                    "stratum {:?}: screenshot_quant_aggressiveness {} out of range",
+                    s,
+                    k.screenshot_quant_aggressiveness
+                );
+                assert!(
+                    k.screen_quant_lift.is_finite()
+                        && k.screen_quant_lift >= Tier2Knobs::SCREEN_QUANT_LIFT_MIN
+                        && k.screen_quant_lift <= Tier2Knobs::SCREEN_QUANT_LIFT_MAX,
+                    "stratum {:?}: screen_quant_lift {} out of range",
+                    s,
+                    k.screen_quant_lift
+                );
+                assert!(
+                    k.buttloop_screen_d_gate.is_finite()
+                        && k.buttloop_screen_d_gate >= Tier2Knobs::BUTTLOOP_SCREEN_D_GATE_MIN
+                        && k.buttloop_screen_d_gate <= Tier2Knobs::BUTTLOOP_SCREEN_D_GATE_MAX,
+                    "stratum {:?}: buttloop_screen_d_gate {} out of range",
+                    s,
+                    k.buttloop_screen_d_gate
+                );
+                assert!(
+                    k.buttloop_aq_balance.is_finite()
+                        && k.buttloop_aq_balance >= Tier2Knobs::BUTTLOOP_AQ_BALANCE_MIN
+                        && k.buttloop_aq_balance <= Tier2Knobs::BUTTLOOP_AQ_BALANCE_MAX,
+                    "stratum {:?}: buttloop_aq_balance {} out of range",
+                    s,
+                    k.buttloop_aq_balance
+                );
+                // Sanity: the expander never panics on any per-stratum
+                // tuple (catches accidental floor underflows).
+                let _rt = k.expand_to_runtime_tuning();
+            }
+        }
+
+        /// W44-228b: the W44-228a finding "every per-stratum optimum
+        /// has `screenshot_quant_aggressiveness == 0`" is encoded in the
+        /// table. Pin this fact as a regression — if a future re-derivation
+        /// shifts any stratum off zero, the test fires and the
+        /// `docs/TIER_2_KNOBS.md` table must be updated alongside.
+        #[cfg(feature = "tuning-override")]
+        #[test]
+        fn w44_228b_every_stratum_disables_screenshot_quant_aggressiveness() {
+            for s in [
+                ContentStratum::ScreenVeryHigh,
+                ContentStratum::ScreenHigh,
+                ContentStratum::ScreenMid,
+                ContentStratum::ScreenLow,
+                ContentStratum::PhotoVeryHigh,
+                ContentStratum::PhotoHigh,
+                ContentStratum::PhotoMid,
+                ContentStratum::PhotoLow,
+            ] {
+                let k = Tier2Knobs::default_for_stratum(s);
+                assert_eq!(
+                    k.screenshot_quant_aggressiveness, 0.0,
+                    "W44-228a finding (memo §Surprising finding): every per-stratum \
+                     optimum has aggressiveness=0. Stratum {:?} broke this — \
+                     update docs/TIER_2_KNOBS.md and the W44-228b memo if intentional.",
+                    s
+                );
+            }
         }
     }
 }
