@@ -41,7 +41,10 @@ def main():
         sys.exit(2)
     print(f"[smoke-verify] found {len(parquets)} cell parquets")
 
-    tables = [pq.read_table(p) for p in parquets[:20]]  # sample
+    # Read ALL parquets so multi-blob detection has enough samples
+    # (each parquet is 1 cell; multi-blob requires hitting same image/
+    # effort/distance/strategy via different blobs).
+    tables = [pq.read_table(p) for p in parquets]
     import pyarrow as pa
     merged = pa.concat_tables(tables, promote_options="default")
     df = merged.to_pandas()
