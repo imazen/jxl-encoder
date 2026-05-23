@@ -1,0 +1,186 @@
+W44-228a — per-stratum optimal Tier2Knobs lookup table
+========================================================
+
+Date: 2026-05-22
+Script: benchmarks/sweeps/w44-219-densify/analysis/scripts/w44_228a_per_stratum_knobs.py
+Corpus: /mnt/tower/output/zenjxl-tuning/2026-05-22/w44-219-densify/merged.parquet
+        (9065 rows; 9018 zenjxl-strategy rows after NaN/inf filter)
+TSV:    per_stratum_optima.tsv (8 rows = 8 standard strata)
+Log:    w44_228a_run.log
+
+Methodology
+-----------
+1. Load W44-219 densified corpus; restrict to strategy=zenjxl;
+   compute per-image residuals on (ssim2, log_bytes); decode params_blob
+   to p1..p6.
+2. Fit joint GradientBoostingRegressor (n_estimators=300, max_depth=4,
+   learning_rate=0.05, subsample=0.8, seed=42) on
+   (p1..p6, effort, distance, 12 image features) → ssim2_resid,
+   log_bytes_resid. Identical configuration to W44-221/222/227.
+3. Sample anchors at 1 per (content_class × dist_band × effort) cell,
+   seed=42; 40 anchors total.
+4. Build the 7^5 = 16807-point Tier2Knobs grid using the verbatim
+   W44-222 5-knob expander (knob ranges per docs/TIER_2_KNOBS.md).
+5. For each of the 8 strata `(content_class × dist_band)`:
+   a. Compute the full-param Pareto front on (encoded_bytes, ssim2)
+      over 255 unique full-param rows in the corpus.
+   b. Predict every knob candidate × stratum-anchor and compute the
+      asymmetric coverage (full-Pareto → nearest knob).
+   c. Record `max_gap_at_default_knobs` = the gap if every encode is
+      pinned at Tier2Knobs::default() (the W44-222 baseline).
+   d. Grid-search the 16807 candidates; pick the one with minimum
+      `max_pct_gap` (tie-break by minimum `mean_pct_gap`).
+   e. Compute `delta_pp = max_gap_default - max_gap_optimum`.
+
+Metric interpretation (IMPORTANT — differs from W44-222 baseline)
+------------------------------------------------------------------
+The "default-knob max gap" measured here PINS every encode at the
+W44-222 default knob settings and asks "how far is the worst stratum
+Pareto point from optimum?" This is a stricter metric than W44-222's
+"5-knob max gap" (which measures: "given the BEST candidate in the
+entire 16807-point knob grid, how far is the worst stratum Pareto
+point from optimum?").
+
+Both metrics are legitimate but answer different questions:
+- W44-222 "5-knob max gap" answers: *Does the knob space CONTAIN
+  good operating points?*
+- W44-228a "default-knob max gap" answers: *Are the SHIPPED defaults
+  good operating points?*
+
+W44-222 measured the former at 1.15% (PASS the 2pp gate). W44-228a
+measures the latter at 49.67% (FAIL → per-stratum defaults can help).
+
+Sanity cross-check with W44-227 density sweep:
+- W44-227 screen/very_high 5-knob 7^5 max_pct_gap = 1.147%
+  (best-over-grid metric, matches W44-222)
+- W44-228a screen/very_high default-knob max_pct_gap = 49.668%
+  (default-pinned metric)
+- These reconcile: the knob space CAN cover screen/very_high well,
+  but the default knobs DON'T sit at the per-stratum optimum for
+  screen/very_high.
+
+Headline table (sorted by delta_pp descending)
+-----------------------------------------------
+            stratum | n_corpus | def_gap% | opt_gap% | delta_pp |  L2
+------------------------------------------------------------------------
+   screen/very_high |      478 |   49.668 |    0.000 |  +49.668 | 2.345
+        screen/high |      550 |   16.721 |    0.000 |  +16.721 | 1.269
+         screen/low |      282 |    5.083 |    0.235 |   +4.848 | 1.810
+         screen/mid |      585 |    4.029 |    0.000 |   +4.029 | 1.225
+    photo/very_high |     2071 |    2.053 |    0.000 |   +2.053 | 1.871
+         photo/high |     1997 |    1.592 |    0.000 |   +1.592 | 1.843
+          photo/mid |     2018 |    2.196 |    0.923 |   +1.273 | 1.675
+          photo/low |     1037 |    1.180 |    0.000 |   +1.180 | 1.180
+
+Aggregate: mean(delta_pp) = +10.171, max = +49.668, min = +1.180
+
+Per-stratum optimal knobs (interpretation)
+-------------------------------------------
+For reference, the W44-222 defaults are:
+  smoothness=0.5, aggressiveness=1.0, lift=1.0, d_gate=3.5, k5=0.0
+  → (p1=85, p2=95, p3=4.0, p4=3.5, p5=2.0, p6=3.0)
+
+Every per-stratum optimum has `screenshot_quant_aggressiveness=0`,
+which collapses p3 (buttloop_default_screenshot_qf_seed_scale) to 0.
+Mechanically this DISABLES the W44-105 buttloop screen-seed lift. The
+GBR-predicted Pareto frontier on every stratum is reached without
+the lift active.
+
+This is a surprising result that warrants caution: the GBR test R² on
+ssim2 is 0.996 (joint surface) but per-stratum, the residual variance
+absorbed by knob movement is small. The aggressive recommendation of
+"disable buttloop lift everywhere" may be a GBR artifact from the
+W44-219 corpus's sparse coverage of the (p3 ≠ default) region, or
+may be a real signal that the buttloop default is over-tuned. Either
+way, deployment of W44-228b MUST validate against actual encode-decode
+output before flipping defaults (per the W44-105/107 honest-stop
+pattern).
+
+Top-2 most-affected strata + optimum knobs
+-------------------------------------------
+1. screen/very_high (delta = +49.67 pp):
+   smoothness=0.000, aggr=0.000, lift=0.500, d_gate=1.500, k5=+0.000
+   → (p1=192.86, p2=108.15, p3=0.0, p4=1.5, p5=1.0, p6=0.0)
+   Mechanism: loose mask thresholds (high p1/p2) admit fewer images
+   to screenshot dispatch; buttloop disabled (p3=0); narrow d_gate
+   (p4=1.5) means buttloop fires at all distances if re-enabled; e7
+   AQ scale halved (p5=1.0) and zeroed (p6=0).
+
+2. screen/high (delta = +16.72 pp):
+   smoothness=0.000, aggr=0.000, lift=0.500, d_gate=3.500, k5=-0.333
+   → (p1=192.98, p2=107.93, p3=0.54, p4=3.5, p5=1.42, p6=0.0)
+   Mechanism: same loose thresholds; very small buttloop seed lift;
+   d_gate at default; k5 negative shifts weight toward (p3, p5) and
+   away from p6 → p6=0.
+
+Decision: SHIP-W44-228b
+------------------------
+Per-stratum defaults DO measurably improve coverage across every
+stratum (every delta is positive; min=+1.18 pp on photo/low).
+Per the task spec decision rule:
+  - mean(delta_pp) = +10.171 (≥ 0.3 pp threshold)
+  - max(delta_pp)  = +49.668 (≥ 1.0 pp threshold)
+→ KILL-CHUNK-W44-228b is NOT justified; SHIP-W44-228b IS justified.
+
+Caveats for W44-228b
+---------------------
+1. **Encoder-side validation required.** The W44-228a recommendations
+   come from a GBR model whose ssim2 test R² is 0.996 (joint surface).
+   That's high but not perfect; small per-stratum biases can amplify
+   the predicted Pareto gap. Before flipping any per-stratum default,
+   W44-228b MUST run a paired A/B encode-decode bench on a representative
+   subset of each stratum and verify the GBR-predicted improvement
+   materialises in measured ssim2 / bytes.
+
+2. **Anchor-selection variance** (Belief #17). Per-stratum measurements
+   here use 5 anchors per stratum (one per effort × dist_band cell);
+   W44-227 showed ~±1-2 pp variance from anchor selection on small
+   anchor sets. The very_high strata are most sensitive. Re-running
+   with a larger anchor pool (≥20 per stratum) is the right confirmation
+   before W44-228b ships.
+
+3. **"Disable buttloop everywhere" recommendation needs cross-check.**
+   Every per-stratum optimum sets aggressiveness=0, which disables the
+   buttloop screen-seed lift (p3=0). This contradicts the W44-105 SHIP
+   measurement (which closed terminal/imac_g3/codec_wiki e8+ regressions
+   via the seed lift). The contradiction may be:
+   (a) GBR over-fitting to W44-219 corpus distribution (which sampled
+       knobs around the SUPPRESSIVE coupling cap and may have missed
+       the bands where p3 > 0 helps), OR
+   (b) A real signal that the per-stratum-uniform default p3=4.0 is
+       too aggressive globally and a per-stratum lookup would correctly
+       set it lower on most strata.
+   Either way, W44-228b MUST encode-decode-verify the screen strata
+   on the cells from W44-105 (terminal/imac_g3/codec_wiki e8+) before
+   flipping the default p3.
+
+4. **The KNOWN-BUG-cluster ledger should be re-checked post-deployment.**
+   Section F of LIBJXL_DIVERGENCES.md has open clusters tied to the
+   buttloop screen seed scale (W44-105 family). Per-stratum p3=0 would
+   reopen those clusters.
+
+5. **Hash-lock invariant.** Any per-stratum default change for the
+   Zenjxl strategy WILL break hash-lock parity unless gated behind a
+   new opt-in API. The "knobs-default round-trips byte-identical"
+   contract (W44-221 invariant) must NOT be violated. Deployment must
+   add a new selector (e.g. `LossyConfig::with_per_stratum_defaults`)
+   that defaults OFF.
+
+DO NOT
+------
+- DO NOT cite "FMA precision" for any per-stratum gap (per W44-66 user
+  correction). Gaps are real cost-model effects, not numerical drift.
+- DO NOT auto-deploy per-stratum defaults without encode-decode
+  validation (per caveat #1).
+- DO NOT change Tier2Knobs::default() values to "average optima" — that
+  would silently regress the W44-105/107 screen-buttloop wins.
+- DO NOT skip W44-227 follow-on (≥20-anchor per-stratum bootstrap) if
+  W44-228b ships into production. Belief #17 demands it for any
+  per-stratum action.
+
+Reproducibility
+---------------
+$ cd /home/lilith/work/zen/jxl-encoder
+$ python3 benchmarks/sweeps/w44-219-densify/analysis/scripts/w44_228a_per_stratum_knobs.py
+
+Wall time: ~10s (GBR fit + 8 × 16807-candidate predict). Idempotent.
