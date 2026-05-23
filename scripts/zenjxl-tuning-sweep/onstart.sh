@@ -64,10 +64,19 @@ empty_polls=0
 # (s5cmd mv is atomic on R2). If the rename fails another worker
 # beat us — try the next chunk. Same pattern as zenmetrics v26.
 while true; do
-    LIST=$(s5cmd ls "s3://$SWEEP_BUCKET/$SWEEP_ID/$CHUNK_PREFIX/*.json" 2>/dev/null \
-           | awk '{print $NF}' \
-           | shuf \
-           | head -32) || LIST=""
+    # W44-219 fix (2026-05-22): split the pipeline into a file-redirect
+    # write + read. The original one-shot pipe
+    #   LIST=$(s5cmd ls ... | awk | shuf | head -32)
+    # silently returned 0 lines on some pods when the s5cmd output was
+    # large (4793 chunks for W44-219), reproduced on pod 37399636.
+    # Each individual stage works (s5cmd ls, awk, shuf, head all OK),
+    # but the one-shot pipe loses everything. Likely SIGPIPE-vs-go-runtime
+    # interaction when `head -32` closes the pipe before s5cmd flushes.
+    # File-redirect form is robust.
+    _w219_s5out=/tmp/w219_s5cmd_out.txt
+    s5cmd ls "s3://$SWEEP_BUCKET/$SWEEP_ID/$CHUNK_PREFIX/*.json" \
+        > "$_w219_s5out" 2>/dev/null || true
+    LIST=$(awk '{print $NF}' < "$_w219_s5out" | shuf | head -32) || LIST=""
     if [[ -z "$LIST" ]]; then
         empty_polls=$((empty_polls + 1))
         echo "[w44-212-onstart] no chunks available (empty_poll=${empty_polls}/${EMPTY_POLL_BUDGET})"
