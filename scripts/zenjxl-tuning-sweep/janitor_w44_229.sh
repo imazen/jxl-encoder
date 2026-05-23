@@ -110,6 +110,7 @@ for i in data:
         'label': label,
         'status': i.get('actual_status', '?'),
         'gpu_util': float(i.get('gpu_util', 0) or 0),
+        'cpu_util': float(i.get('cpu_util', 0) or 0),
         'dph': float(i.get('dph_total', 0) or 0),
         'duration_s': float(i.get('duration', 0) or 0),
     })
@@ -159,9 +160,14 @@ for p in data:
 import json, sys
 data = json.loads(sys.stdin.read())
 for p in data:
-    util = p.get('gpu_util') or 0.0
+    # W44-229j fix: workers are CPU-bound (JXL encode) with brief GPU spikes
+    # (zen-metrics scoring). Use MAX(cpu, gpu) so worker is "idle" only if
+    # both axes are low. Original code used gpu_util alone and false-killed
+    # active CPU workers — see W44-229i postmortem.
+    cpu = p.get('cpu_util') or 0.0
+    gpu = p.get('gpu_util') or 0.0
     try:
-        util = float(util)
+        cpu = float(cpu); gpu = float(gpu); util = max(cpu, gpu)
     except (TypeError, ValueError):
         util = 0.0
     print(f\"{p['id']}\t{p['label']}\t{p['status']}\t{util}\t{p['dph']}\")
