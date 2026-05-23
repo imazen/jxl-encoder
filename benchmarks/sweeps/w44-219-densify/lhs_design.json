@@ -1,0 +1,1202 @@
+[
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 88.09388199441855,
+    "p2_screenshot_median_threshold": 93.01653148494566,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.655735296545007,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.3190857288402995,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.0897546139325545,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.155392056200826
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 74.72807246093043,
+    "p2_screenshot_median_threshold": 102.07171836933739,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.595014357352282,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.9535575841084887,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.848120757793737,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.583334227775351
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 136.85105959890194,
+    "p2_screenshot_median_threshold": 106.63064008917935,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.225711785947199,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.1633460850688415,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.0157343218297035,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.1282417114136853
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 95.79803636332737,
+    "p2_screenshot_median_threshold": 93.9353465874823,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.8779062380637725,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.233465090662688,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.579878873979775,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.440409057434508
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 128.85434190867102,
+    "p2_screenshot_median_threshold": 88.49265590801008,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.967644621972765,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.542232975191277,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.5169241592973415,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.2266108262203854
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 99.59199865344135,
+    "p2_screenshot_median_threshold": 90.35676442543341,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.7064843984868436,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.5049493491271577,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.720999290902311,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.555468373999588
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 182.3431616991217,
+    "p2_screenshot_median_threshold": 96.78945707783245,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.8468069564780727,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.919981725342653,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.734042710957945,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.798460944913198
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 116.71062769468938,
+    "p2_screenshot_median_threshold": 105.96592530016613,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.2141376561526847,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.837129843047967,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.8495657049846477,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.3542930705620604
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 72.53304399576129,
+    "p2_screenshot_median_threshold": 95.46310599425277,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.0528185214742445,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.0283086417159804,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.8389120666235803,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.5846979287497884
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 44.84618812222459,
+    "p2_screenshot_median_threshold": 96.25318488794207,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.493978128810555,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.192756846254744,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.9691044320842157,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.4237582467461407
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 62.40853953260721,
+    "p2_screenshot_median_threshold": 90.06376140729299,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.1381705017889487,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.4186704884689387,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.8992769951531667,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.011155958766919
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 173.40120071942593,
+    "p2_screenshot_median_threshold": 81.16029185476552,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.540902395369166,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.9752556362823066,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.838502094524692,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.454996560819862
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 40.70099309286107,
+    "p2_screenshot_median_threshold": 79.81399000682549,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.1268939090821803,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.855344825442537,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.603398867903017,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.253700021676121
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 95.36367138133181,
+    "p2_screenshot_median_threshold": 84.88310722023557,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.4315707090919059,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.037879908314328,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.0267093717891638,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.540636752660739
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 150.3791841512136,
+    "p2_screenshot_median_threshold": 82.31681165841728,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.940183165810414,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.228192559113296,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.058368792304446,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.902355171267336
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 100.35080585684709,
+    "p2_screenshot_median_threshold": 98.25922353539548,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.5601222409460265,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.252820575565558,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.4463826995847786,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.062616425617133
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 187.65633806014802,
+    "p2_screenshot_median_threshold": 76.86586972306857,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.493668175735606,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.2380304632054373,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.3715180414788315,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.1906238455459426
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 181.5538858312627,
+    "p2_screenshot_median_threshold": 93.82864858375568,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.092711964676039,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.579209038123842,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.666432478432787,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.806943968416443
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 69.40416953744189,
+    "p2_screenshot_median_threshold": 87.49244405619704,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.178229159763495,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.864866020981136,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.1606608008428503,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.515913314216728
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 48.35349270987325,
+    "p2_screenshot_median_threshold": 99.07512382356272,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.1627990326179365,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.671431786985012,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.1686692541309656,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.0396741499003648
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 83.39722412743504,
+    "p2_screenshot_median_threshold": 99.9217789704581,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.522876584928332,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.915549310063283,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.173931064635397,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.071072569721058
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 196.37344346339495,
+    "p2_screenshot_median_threshold": 93.64125613180427,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.523966687886569,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.280950657297334,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.4030489573562774,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.4998259896394295
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 56.22770973427288,
+    "p2_screenshot_median_threshold": 103.14850899162559,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.775288977781805,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.8985175784431307,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.548712481638976,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.7884904704811073
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 84.92327753999794,
+    "p2_screenshot_median_threshold": 83.35964271302973,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.84334661422203,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.822621129947914,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.7831556194206546,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.313313360390035
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 49.842586042615864,
+    "p2_screenshot_median_threshold": 83.88509422186213,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.088346327838951,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.549849631729157,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.4700442446089865,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.643399965230124
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 71.8434457174536,
+    "p2_screenshot_median_threshold": 86.38346023841862,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.6443372756483057,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.944154016335668,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.0667861445505293,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.490145955730935
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 192.58836078087867,
+    "p2_screenshot_median_threshold": 86.93970114962829,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.87549212378169,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.7460883551271753,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.251972722950856,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.111336867625976
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 172.99689085566456,
+    "p2_screenshot_median_threshold": 100.90858732472378,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.3410152502067723,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.152990453846089,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.3071947236168806,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.5602137289469342
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 133.41457064455847,
+    "p2_screenshot_median_threshold": 77.03416683250647,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.261141071929059,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.5462647072630895,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.510281269646356,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.720318638074135
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 120.31235540130412,
+    "p2_screenshot_median_threshold": 103.3995170638074,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.384572083076307,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.438162068744138,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.6444869110650746,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.6260364176653117
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 198.7211236606716,
+    "p2_screenshot_median_threshold": 82.65039362202714,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.849431722638405,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.5746894517929566,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.273672686753466,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.178675804665934
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 86.37088983656648,
+    "p2_screenshot_median_threshold": 87.74657590004632,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.27565529207166,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.784429965652319,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.1131270043173545,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.9540299855667422
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 45.70383147532602,
+    "p2_screenshot_median_threshold": 88.71233406755199,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.977895337947777,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.64495360082289,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.095597197567229,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.196294941458279
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 157.39296306278987,
+    "p2_screenshot_median_threshold": 90.54464375662613,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.6048916322939366,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.82368785016237,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.206459527342526,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.915279225139166
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 197.573011740278,
+    "p2_screenshot_median_threshold": 75.96381736476874,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.1748221833546633,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.272432650122817,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.9022183026254247,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.57923014005449
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 98.20327233477221,
+    "p2_screenshot_median_threshold": 95.28340507629919,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.463702317102535,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.079907706545515,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.3775977234751924,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.0410119135388696
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 115.55710565523353,
+    "p2_screenshot_median_threshold": 81.91653721719968,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.292129528419124,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.8000045104794715,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.4758985496791093,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.257230089601573
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 47.3284145300218,
+    "p2_screenshot_median_threshold": 101.66132752178001,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.4382437818411615,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.814111929400527,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.6356197373698849,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.1503848672771655
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 131.45659156488773,
+    "p2_screenshot_median_threshold": 97.01392901597885,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.807457477034464,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.382052573723028,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.563477023298204,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.261488477409065
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 105.8630515640778,
+    "p2_screenshot_median_threshold": 86.65400878126381,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.860292699576378,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.1070502399751643,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.950617568479154,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.266534095665067
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 148.686136551608,
+    "p2_screenshot_median_threshold": 105.10594378865503,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.785276646105011,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.9021266770530645,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.256864887820781,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.5616148715560008
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 170.2640668638693,
+    "p2_screenshot_median_threshold": 104.715224079823,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.6575943892706198,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.271087937442654,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.326836760042726,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.1190509326103038
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 193.84288621975801,
+    "p2_screenshot_median_threshold": 101.59464355240203,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.401735175964006,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.2756036222207685,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.5873137382632465,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.590279222466174
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 104.1046624325366,
+    "p2_screenshot_median_threshold": 102.47801992186322,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.82968267339108,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.6441510778478625,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.498040777084272,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.9100741508239478
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 152.08573822560436,
+    "p2_screenshot_median_threshold": 79.06587311052152,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.8139295242410585,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.487932570961158,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.5536302471946724,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.8376686620868625
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 106.17363267693874,
+    "p2_screenshot_median_threshold": 104.27010262390667,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.017920288327694,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.5146656139504302,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.073166947522459,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.3499449333863582
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 153.33989649877884,
+    "p2_screenshot_median_threshold": 97.37601373741913,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.9127527003424882,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.270120583474126,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.2737002572968708,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.921188520403548
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 49.50344924979305,
+    "p2_screenshot_median_threshold": 91.85790225618449,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.57457007871192,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.104920958313289,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.236371909264041,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.3922999067585895
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 123.51086726133121,
+    "p2_screenshot_median_threshold": 78.00566128399383,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.651382880552472,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.9689629289757415,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.6360914976032204,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.372797834800988
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 77.26441575061386,
+    "p2_screenshot_median_threshold": 97.55759764662083,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.115398861269761,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.7092635218804055,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.1567785286144785,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.027413496865665
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 184.65352708296135,
+    "p2_screenshot_median_threshold": 96.51141910306872,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.00105374772138,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.691109677215693,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.4299250460598139,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.710978031564316
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 70.59585343347159,
+    "p2_screenshot_median_threshold": 86.0406395818636,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.959708948496022,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.2070711843654918,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.881223073082764,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.3404702419224312
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 158.8275708220321,
+    "p2_screenshot_median_threshold": 77.21187574430368,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.3617584673843375,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.364262647942349,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.6952124756462053,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.315903986231847
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 113.85601129307457,
+    "p2_screenshot_median_threshold": 78.81699394580055,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.9288993387133293,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.470863146408684,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.4468752231651263,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.7893955006142566
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 90.05233767104758,
+    "p2_screenshot_median_threshold": 98.53013584610997,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.094458000818678,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.598577986381458,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.5880593104063503,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.524496940806324
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 81.29770454775975,
+    "p2_screenshot_median_threshold": 89.32834771248486,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.621038367909044,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.4883517152743244,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.0991360229214395,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.9553074555552568
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 169.04603941881012,
+    "p2_screenshot_median_threshold": 88.02720133044924,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.02893779913393,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.655512855411741,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.608386246050638,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.8981979895540366
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 199.9991771657579,
+    "p2_screenshot_median_threshold": 105.35929459279593,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.585487222506671,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.1996404686135227,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.2058088008424848,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.859144479941289
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 87.41850804870408,
+    "p2_screenshot_median_threshold": 85.58949445591661,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.434686390001293,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.41147605458457,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.7096121371571216,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.7336538024966877
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 132.74613369516817,
+    "p2_screenshot_median_threshold": 84.79805751609831,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.058649833142628,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.421906381685754,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.4199964564437226,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.860395698583428
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 190.9941654011732,
+    "p2_screenshot_median_threshold": 83.12537701116831,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.6921464930805254,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.994586379984181,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.9892765232042677,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.9981758888581305
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 137.58842837120747,
+    "p2_screenshot_median_threshold": 83.46246610613353,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.265161421489483,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.162524533036712,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.202652402894711,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.6624583285736225
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 141.90946162312412,
+    "p2_screenshot_median_threshold": 92.83482450982088,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.933190768587861,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.167223908987321,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.294315978311093,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.4229273378318377
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 42.13678642248723,
+    "p2_screenshot_median_threshold": 89.60461855974413,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.217229486560034,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.106587874356082,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.5611101999774593,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.220229395690504
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 75.50248841967863,
+    "p2_screenshot_median_threshold": 99.66148334633213,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.036350119429416,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.8151542799251725,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.5394359869310943,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.272755304504706
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 53.76568800790829,
+    "p2_screenshot_median_threshold": 78.72463598694131,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.2428995332020862,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.7600436621765665,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.4199852262123946,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.2678622921102614
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 134.70085172215312,
+    "p2_screenshot_median_threshold": 94.69239279886062,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.048563958895169,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.619388972939745,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.107932068400498,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.6677849072819653
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 60.74605210221459,
+    "p2_screenshot_median_threshold": 80.70937921959111,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.207421841310728,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.714455276507501,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.7748021529841416,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.0609520246242745
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 93.59140634496069,
+    "p2_screenshot_median_threshold": 106.95579351079128,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.9129625092296139,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.007218085498832,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.73778023872781,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.7176876263065894
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 145.6120942738659,
+    "p2_screenshot_median_threshold": 79.92941835927797,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.7082987017061653,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.0980492485978406,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.816480866451656,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.488957296597449
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 122.61325700553988,
+    "p2_screenshot_median_threshold": 95.03421482937043,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.07576191650735,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.489983356637831,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.834728549760463,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.768140895731949
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 144.6096742184736,
+    "p2_screenshot_median_threshold": 105.62093004881001,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.527739018887368,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.3182375498099272,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.940033114284363,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.962968215506695
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 126.91871839341816,
+    "p2_screenshot_median_threshold": 91.76427239644222,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.7042233491085566,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.0974767990104457,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.792012547422393,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.048881283230631
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 77.83222520920248,
+    "p2_screenshot_median_threshold": 106.23842779624684,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.340807869741182,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.5800043983985022,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.6747655691545678,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.928828592917161
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 119.2869901244537,
+    "p2_screenshot_median_threshold": 77.46440602061338,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.340989382271161,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.7065758670802045,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.4897782479055202,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.7583738726902816
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 66.08355466398615,
+    "p2_screenshot_median_threshold": 104.49482784883583,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.7535548773620695,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.8933138672736913,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.1245752769149422,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.6053886887679427
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 41.357065929450144,
+    "p2_screenshot_median_threshold": 89.75988307510418,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.617225256453854,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.4726510507114785,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.229655162028553,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.8662567603920652
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 68.40984434221949,
+    "p2_screenshot_median_threshold": 108.53247483296934,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.613306415735574,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.468566276497456,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.382772541080772,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.617092582064193
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 93.16971029069164,
+    "p2_screenshot_median_threshold": 95.72036122141448,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.126458639915304,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.945216718133946,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.9256334743927237,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.7084400472819845
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 155.7201005566492,
+    "p2_screenshot_median_threshold": 88.92325184668834,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.699578592784845,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.3146193263487636,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.8191110027029684,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.9282799080410906
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 140.8497837491876,
+    "p2_screenshot_median_threshold": 95.92291046043314,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.065659557382638,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.1237609761052454,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.312460710880262,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.6865081339517318
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 161.44660681740095,
+    "p2_screenshot_median_threshold": 81.5176338857656,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.9078649059079935,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.617374249397005,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.9791567286912486,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.384948735330121
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 147.48059025284113,
+    "p2_screenshot_median_threshold": 108.8727365247911,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.47327551644637,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.3503951847283937,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.2657076671258505,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.8344714626394256
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 163.63878170423473,
+    "p2_screenshot_median_threshold": 106.97704256411025,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.644268755593474,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.330597197696852,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.881979489130401,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.194644677951967
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 160.33228320549512,
+    "p2_screenshot_median_threshold": 88.28846929350314,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.806310604911111,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.56582289596255,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.7528212600943314,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.134468808884076
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 156.9955519399022,
+    "p2_screenshot_median_threshold": 99.38999787203255,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.451304814164564,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.8266212061151847,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.461930291907168,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.9696850774124233
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 177.43364831286232,
+    "p2_screenshot_median_threshold": 84.10625239628953,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.080743118731825,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.5693017582138458,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.7665522512010026,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.807008791081179
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 143.26665320014285,
+    "p2_screenshot_median_threshold": 109.20209989571651,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.90937428843827,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.780572847433245,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.4558036974983732,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.5130758960500563
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 51.2794009395406,
+    "p2_screenshot_median_threshold": 76.460504718137,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.391069271504416,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.960492986605944,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.9152620055337222,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.21467776152307
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 135.8889593939722,
+    "p2_screenshot_median_threshold": 94.55731208976742,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.75586378251634,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.868600495330546,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.5063508991340715,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.382284771198314
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 67.25469544390285,
+    "p2_screenshot_median_threshold": 92.06532933338971,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.916204435871959,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.7828733990460506,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.9147598600529716,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.109939336806262
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 188.28304188150378,
+    "p2_screenshot_median_threshold": 87.21463345651344,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.268379000332484,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.3086389999906034,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.1976427527959173,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.319159423199338
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 79.15050653559547,
+    "p2_screenshot_median_threshold": 108.2106228100316,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.5702764512165315,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.9189816050953805,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.3926666705111863,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.480293401212216
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 178.77522202376457,
+    "p2_screenshot_median_threshold": 75.58089235933072,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.702457132111219,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.0787405931221805,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.8487427547115145,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.3508200080174415
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 63.58803852733383,
+    "p2_screenshot_median_threshold": 97.69940608486826,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.084966885921637,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.6911354981423727,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.3436378851023676,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.7519605976060273
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 97.48400683036024,
+    "p2_screenshot_median_threshold": 82.88763870302242,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.865378819943274,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.30006657924268,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.191184219390148,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.073488559179225
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 111.35423960025349,
+    "p2_screenshot_median_threshold": 102.83301147719422,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.570221623355332,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.243536861104378,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.766842563587759,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.8068470577170823
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 80.35697405678309,
+    "p2_screenshot_median_threshold": 76.39748117556194,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.990983729523991,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.273293806762986,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.0402156976132444,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.4158953666560112
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 125.23683390496119,
+    "p2_screenshot_median_threshold": 103.81872027949946,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.775842081195194,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.416907112720037,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.111383483513107,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.433833038730937
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 61.814973364983196,
+    "p2_screenshot_median_threshold": 98.09582374386707,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.651478664887881,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.6170020231872697,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.6814204441570375,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.8270939663547203
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 143.65431696850476,
+    "p2_screenshot_median_threshold": 101.34518662297585,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.836673828215651,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.6773779140757994,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.649323097864501,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.654234814898812
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 101.07246521745338,
+    "p2_screenshot_median_threshold": 100.68670781119314,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.738809866337929,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.752767629947293,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.0247573487755597,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.6128373737197412
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 183.85766787866217,
+    "p2_screenshot_median_threshold": 104.03450144141746,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.9753426389975686,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.910997192776074,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.0733712183704915,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.6886368850080062
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 164.15991128477316,
+    "p2_screenshot_median_threshold": 82.2264468938503,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.2057344525661104,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.36459010798799,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.5376747549956526,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.676928750655416
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 125.74154734322407,
+    "p2_screenshot_median_threshold": 100.28903317943237,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.5095949214409967,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.600053662935043,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.652830465318407,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.302461718657467
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 166.24947396687892,
+    "p2_screenshot_median_threshold": 108.04133915666299,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.2089764319767915,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.387695004507883,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.143899725160675,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.301997723998002
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 73.94082540729113,
+    "p2_screenshot_median_threshold": 81.6676477661222,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.627494400788951,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.196941745242655,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.247632777284509,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.340714794106763
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 151.30339725383217,
+    "p2_screenshot_median_threshold": 100.04202194985221,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.423452001043334,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.4459112428946463,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.0111668942773346,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.44865141143388
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 175.41937358148266,
+    "p2_screenshot_median_threshold": 78.31356051613233,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.401551057871779,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.0127722333936493,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.872472615805157,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.516313446563243
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 117.92497140491025,
+    "p2_screenshot_median_threshold": 98.63959505349969,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.7958489548803378,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.5201815645864265,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.620829991686182,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.003698737099142
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 149.5839187770224,
+    "p2_screenshot_median_threshold": 109.47594813246093,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.000186489018441,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.897790342716884,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.6947999843076094,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.7074485499433134
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 55.71654357597332,
+    "p2_screenshot_median_threshold": 109.72268009336895,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.947215372033996,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.510093309776494,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.5326145561816669,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.6239313886889404
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 59.42379441659341,
+    "p2_screenshot_median_threshold": 92.26679759776763,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.752229026986354,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.85994047904982,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.8078565968105755,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.092903958289728
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 189.9714105710152,
+    "p2_screenshot_median_threshold": 91.04875455083823,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.4985137234255035,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.0225052576184215,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.938907710309721,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.1731730613394316
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 57.84244971619354,
+    "p2_screenshot_median_threshold": 91.33764512286032,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.361016095034368,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.344369252719853,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.131847242961733,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.8672544513156928
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 139.85952786804233,
+    "p2_screenshot_median_threshold": 85.16804802331102,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.309870286751349,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.305782544727175,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.580092929679431,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.2066161691603945
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 54.22757959344855,
+    "p2_screenshot_median_threshold": 86.72896048860576,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.255276284929703,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.988968313261349,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.1346833107792356,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.7494753989981566
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 155.03910494368486,
+    "p2_screenshot_median_threshold": 103.69598191494339,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.7616390672151634,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.146462303058891,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.7137782230670895,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.9962853393113322
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 64.66204304261534,
+    "p2_screenshot_median_threshold": 91.29071378948373,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.0864911527385,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.034112304492366,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.3512043745967373,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.1773503488134383
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 170.01577457020863,
+    "p2_screenshot_median_threshold": 81.01375326018183,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.334831171231972,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.149607967013242,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.866855481827546,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.1256160054846625
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 43.82024087674168,
+    "p2_screenshot_median_threshold": 104.9562674927448,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.466990976948141,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.4723665200313554,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.0133109561953157,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.465823593785176
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 91.25955138397455,
+    "p2_screenshot_median_threshold": 106.35944123527844,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.32660120671661,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.06220770245452,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.4312816182677324,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.113749989034913
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 107.93324037938352,
+    "p2_screenshot_median_threshold": 90.66537511375344,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.592833433745805,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.448453155071201,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.3186545054211627,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.746794472266947
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 84.52145068273693,
+    "p2_screenshot_median_threshold": 107.36080384190018,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.337025981082255,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.64943838222692,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.676980410837348,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.003690652617614
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 186.4286786052072,
+    "p2_screenshot_median_threshold": 101.94501253177614,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.257063623568686,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.176642942647846,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.0226461747022009,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.233257901952726
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 58.18674850580686,
+    "p2_screenshot_median_threshold": 83.74363887875553,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.037787255462818,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.94511094944315,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.97002003431825,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.5958022092196362
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 128.20377479863868,
+    "p2_screenshot_median_threshold": 108.76073175516294,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.463014306467604,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.0519513417519546,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.607918467249848,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.7533200641995794
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 117.02328980463508,
+    "p2_screenshot_median_threshold": 80.37482992627857,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.236902921540465,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.419973876554986,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.044924836859294,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.418342261675205
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 138.90379042894267,
+    "p2_screenshot_median_threshold": 94.29993678730088,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.653549677627328,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.5699235129186793,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.9547359021705746,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.81459772718794
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 102.85743915968163,
+    "p2_screenshot_median_threshold": 75.39243460028244,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.2917125657297204,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.682160936856713,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.335137676632498,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.950930430968835
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 165.5727239233415,
+    "p2_screenshot_median_threshold": 75.90538336574578,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.184026440902201,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.362844219536427,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.5524473114716455,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.008127280506016
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 82.55326982968188,
+    "p2_screenshot_median_threshold": 77.78959238743788,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.4274428537159527,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.7429348929083828,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.4268398564105795,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.15151337680593
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 172.1472669723584,
+    "p2_screenshot_median_threshold": 84.53858319382371,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.421316001846684,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.9962312086088987,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.4892682056418876,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.451398029107421
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 129.93119587829028,
+    "p2_screenshot_median_threshold": 99.03087808505863,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.164533744219894,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.203927354428895,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.7033433005269325,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.886789184147899
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 176.37589626690303,
+    "p2_screenshot_median_threshold": 102.67677481084318,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.004512252937779,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.3892243502653634,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.320937791537949,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.5010497206200366
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 192.46037006000736,
+    "p2_screenshot_median_threshold": 107.47471488217647,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.8501509133289353,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.1689193847172192,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.1561785818551964,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.884366431266713
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 167.9944934053509,
+    "p2_screenshot_median_threshold": 85.39201214683081,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.775109570269252,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.6421865980046872,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.295065130570566,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.8654959124129773
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 178.5010464957722,
+    "p2_screenshot_median_threshold": 92.56142801799409,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.3824426490999195,
+    "p4_buttloop_qf_seed_scale_min_distance": 5.075073301135966,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.7918877423028312,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.067918423276532
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 179.7350876020784,
+    "p2_screenshot_median_threshold": 107.78685941559598,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.464011068422385,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.5258217667994236,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.3598318750026395,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.394935098532098
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 91.03972047665806,
+    "p2_screenshot_median_threshold": 100.51912059591689,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 1.0143055508364522,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.727125738646442,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.7457601863548646,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 5.369477674251981
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 113.54998214825838,
+    "p2_screenshot_median_threshold": 89.22552705822653,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 3.716140260995002,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.12388751650425,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.9306025753127734,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.937694831925843
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 52.6826009120184,
+    "p2_screenshot_median_threshold": 79.35434007283838,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.5374758964521185,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.813235132715878,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.984237588409921,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.983075347470624
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 161.89222036349025,
+    "p2_screenshot_median_threshold": 79.50990937402946,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.144260904619077,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.9969347394657695,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.2967235501660594,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 1.5272487370358516
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 109.05037890086304,
+    "p2_screenshot_median_threshold": 93.40843363407966,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.882832160044598,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.88128115272505,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.3706798725120075,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.643553912961849
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 185.2131842400382,
+    "p2_screenshot_median_threshold": 109.95449444679839,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 6.152280769955807,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.0569032781386305,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.2396395626015388,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.288306649164541
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 195.20839802466898,
+    "p2_screenshot_median_threshold": 75.07384639026552,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.368862155382363,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.771697745591505,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.7406839250944646,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.2823445785002403
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 110.25659079903924,
+    "p2_screenshot_median_threshold": 96.18107838790972,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 4.702601155308039,
+    "p4_buttloop_qf_seed_scale_min_distance": 3.7482997184387443,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.8673444689139918,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.234550890710919
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 103.28108998099172,
+    "p2_screenshot_median_threshold": 85.75275920383558,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 7.711065288046752,
+    "p4_buttloop_qf_seed_scale_min_distance": 2.714687423246352,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 1.1869108596363862,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 4.298482152250569
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 111.91919228563137,
+    "p2_screenshot_median_threshold": 78.21077276404493,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 2.3010093459988132,
+    "p4_buttloop_qf_seed_scale_min_distance": 4.401949796125004,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 2.995806786102383,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 3.7871832177309535
+  },
+  {
+    "p1_smart_zenjxl_photo_mask_p25_min": 121.56141779861328,
+    "p2_screenshot_median_threshold": 80.2166141728888,
+    "p3_buttloop_default_screenshot_qf_seed_scale": 5.286488784619687,
+    "p4_buttloop_qf_seed_scale_min_distance": 1.674751284752357,
+    "p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6": 3.3947254621899523,
+    "p6_adaptive_quant_screenshot_qf_seed_scale_e7": 2.6572845509312963
+  }
+]
