@@ -1,0 +1,107 @@
+[load] /mnt/tower/output/zenjxl-tuning/2026-05-22/w44-216+219-combined/merged.parquet
+[load] 13991 rows × 45 cols
+[prep] decoded params_blob → p1..p6 (13991 rows)
+[prep] zenjxl rows after NaN/inf filter: 11485
+[prep] feats_present=12 INPUT_COLS=20
+
+[gbr] fitting joint models (subsample=0.8, seed=42)…
+[gbr] fit done in 7.1s
+[anchors] total 40 cells
+[full] unique full-param vectors: 267
+
+[full-pareto] computing per-stratum full-param Pareto fronts…
+[full-pareto]                all: n_anchors=40  full-Pareto=35/267
+[full-pareto]   screen/very_high: n_anchors=5  full-Pareto=28/267
+[full-pareto]    photo/very_high: n_anchors=5  full-Pareto=37/267
+
+==============================================================================
+TASK A — Pareto-coverage grid-density sweep
+==============================================================================
+
+[grid=5] 4-knob=625  5-knob=3125
+[grid=5]                all: 4k max=  1.67% mean=  0.28%  5k max=  1.10% mean=  0.18%  (dt: 4k=0.0s 5k=0.2s)
+[grid=5]   screen/very_high: 4k max=  7.71% mean=  0.91%  5k max=  6.62% mean=  0.61%  (dt: 4k=0.0s 5k=0.0s)
+[grid=5]    photo/very_high: 4k max=  1.04% mean=  0.10%  5k max=  1.04% mean=  0.06%  (dt: 4k=0.0s 5k=0.0s)
+
+[grid=7] 4-knob=2401  5-knob=16807
+[grid=7]                all: 4k max=  1.57% mean=  0.23%  5k max=  0.66% mean=  0.04%  (dt: 4k=0.2s 5k=1.5s)
+[grid=7]   screen/very_high: 4k max=  7.86% mean=  0.77%  5k max=  1.15% mean=  0.05%  (dt: 4k=0.0s 5k=0.2s)
+[grid=7]    photo/very_high: 4k max=  0.56% mean=  0.06%  5k max=  0.37% mean=  0.03%  (dt: 4k=0.0s 5k=0.2s)
+
+[grid=9] 4-knob=6561  5-knob=59049
+[grid=9]                all: 4k max=  1.58% mean=  0.15%  5k max=  1.05% mean=  0.15%  (dt: 4k=0.5s 5k=5.6s)
+[grid=9]   screen/very_high: 4k max=  6.24% mean=  0.50%  5k max=  6.60% mean=  0.44%  (dt: 4k=0.1s 5k=0.6s)
+[grid=9]    photo/very_high: 4k max=  1.00% mean=  0.07%  5k max=  0.27% mean=  0.02%  (dt: 4k=0.1s 5k=0.6s)
+
+[grid=11] 4-knob=14641  5-knob=161051
+[grid=11]                all: 4k max=  1.04% mean=  0.07%  5k max=  0.59% mean=  0.02%  (dt: 4k=1.3s 5k=15.2s)
+[grid=11]   screen/very_high: 4k max=  6.06% mean=  0.26%  5k max=  0.00% mean=  0.00%  (dt: 4k=0.1s 5k=2.0s)
+[grid=11]    photo/very_high: 4k max=  0.09% mean=  0.01%  5k max=  0.09% mean=  0.00%  (dt: 4k=0.1s 5k=2.0s)
+
+[task-A] wrote 24 rows → /home/lilith/work/zen/jxl-encoder/benchmarks/sweeps/w44-219-densify/analysis/w44_227/density_sweep.tsv
+
+==============================================================================
+TASK B — MI replicate across n_neighbors
+==============================================================================
+[mi] outcomes available: ['encoded_bytes', 'ssim2', 'butter_norm3', 'cvvdp', 'encode_ms']
+[mi] params present: ['p1_mask_p25_min', 'p2_screen_median', 'p3_butt_qf_scale', 'p4_butt_min_dist', 'p5_aq_qf_e56', 'p6_aq_qf_e7']
+
+[mi] n_neighbors=3
+   encoded_bytes  top3: p4_butt_min_dist=0.0604  p1_mask_p25_min=0.0542  p3_butt_qf_scale=0.0481
+           ssim2  top3: p1_mask_p25_min=0.0946  p3_butt_qf_scale=0.0945  p4_butt_min_dist=0.0940
+    butter_norm3  top3: p2_screen_median=0.0725  p3_butt_qf_scale=0.0608  p1_mask_p25_min=0.0600
+           cvvdp  top3: p1_mask_p25_min=0.1007  p4_butt_min_dist=0.0946  p2_screen_median=0.0927
+       encode_ms  top3: p2_screen_median=0.0153  p4_butt_min_dist=0.0080  p1_mask_p25_min=0.0071
+
+[mi] n_neighbors=5
+   encoded_bytes  top3: p2_screen_median=0.0453  p4_butt_min_dist=0.0425  p1_mask_p25_min=0.0409
+           ssim2  top3: p2_screen_median=0.0786  p1_mask_p25_min=0.0759  p4_butt_min_dist=0.0728
+    butter_norm3  top3: p2_screen_median=0.0611  p3_butt_qf_scale=0.0527  p1_mask_p25_min=0.0498
+           cvvdp  top3: p2_screen_median=0.0812  p4_butt_min_dist=0.0795  p1_mask_p25_min=0.0795
+       encode_ms  top3: p3_butt_qf_scale=0.0112  p2_screen_median=0.0100  p4_butt_min_dist=0.0024
+
+[mi] n_neighbors=7
+   encoded_bytes  top3: p4_butt_min_dist=0.0352  p2_screen_median=0.0330  p1_mask_p25_min=0.0329
+           ssim2  top3: p1_mask_p25_min=0.0674  p2_screen_median=0.0643  p4_butt_min_dist=0.0620
+    butter_norm3  top3: p2_screen_median=0.0482  p3_butt_qf_scale=0.0437  p4_butt_min_dist=0.0406
+           cvvdp  top3: p1_mask_p25_min=0.0751  p2_screen_median=0.0710  p4_butt_min_dist=0.0685
+       encode_ms  top3: p3_butt_qf_scale=0.0054  p2_screen_median=0.0042  p6_aq_qf_e7=0.0001
+
+[mi] n_neighbors=10
+   encoded_bytes  top3: p3_butt_qf_scale=0.0376  p4_butt_min_dist=0.0324  p2_screen_median=0.0304
+           ssim2  top3: p2_screen_median=0.0473  p1_mask_p25_min=0.0465  p4_butt_min_dist=0.0444
+    butter_norm3  top3: p4_butt_min_dist=0.0396  p3_butt_qf_scale=0.0381  p2_screen_median=0.0364
+           cvvdp  top3: p4_butt_min_dist=0.0600  p2_screen_median=0.0585  p1_mask_p25_min=0.0530
+       encode_ms  top3: p3_butt_qf_scale=0.0085  p5_aq_qf_e56=0.0060  p2_screen_median=0.0052
+
+[mi] n_neighbors=15
+   encoded_bytes  top3: p3_butt_qf_scale=0.0257  p2_screen_median=0.0249  p1_mask_p25_min=0.0208
+           ssim2  top3: p2_screen_median=0.0335  p1_mask_p25_min=0.0269  p4_butt_min_dist=0.0261
+    butter_norm3  top3: p2_screen_median=0.0352  p4_butt_min_dist=0.0346  p3_butt_qf_scale=0.0307
+           cvvdp  top3: p2_screen_median=0.0406  p4_butt_min_dist=0.0384  p3_butt_qf_scale=0.0338
+       encode_ms  top3: p4_butt_min_dist=0.0055  p5_aq_qf_e56=0.0040  p6_aq_qf_e7=0.0038
+
+[task-B] wrote 75 rows → /home/lilith/work/zen/jxl-encoder/benchmarks/sweeps/w44-219-densify/analysis/w44_227/mi_replicate.tsv
+
+==============================================================================
+HEADLINES
+==============================================================================
+
+Pareto coverage max_pct_gap as function of (grid, knob_count) — 4-knob then 5-knob:
+           stratum | knob | g=5     | g=7     | g=9     | g=11   
+------------------------------------------------------------------------------
+               all | 4k   |  1.667% |  1.573% |  1.580% |  1.042%
+               all | 5k   |  1.098% |  0.661% |  1.048% |  0.590%
+  screen/very_high | 4k   |  7.708% |  7.859% |  6.237% |  6.055%
+  screen/very_high | 5k   |  6.623% |  1.147% |  6.599% |  0.000%
+   photo/very_high | 4k   |  1.045% |  0.562% |  1.005% |  0.089%
+   photo/very_high | 5k   |  1.045% |  0.367% |  0.269% |  0.089%
+
+MI top-1 param per outcome × n_neighbors:
+       outcome | k= 3       | k= 5       | k= 7       | k=10       | k=15      
+------------------------------------------------------------------------------
+ encoded_bytes | p4_butt_min_dist(0.060) | p2_screen_median(0.045) | p4_butt_min_dist(0.035) | p3_butt_qf_scale(0.038) | p3_butt_qf_scale(0.026)
+         ssim2 | p1_mask_p25_min(0.095) | p2_screen_median(0.079) | p1_mask_p25_min(0.067) | p2_screen_median(0.047) | p2_screen_median(0.033)
+  butter_norm3 | p2_screen_median(0.072) | p2_screen_median(0.061) | p2_screen_median(0.048) | p4_butt_min_dist(0.040) | p2_screen_median(0.035)
+         cvvdp | p1_mask_p25_min(0.101) | p2_screen_median(0.081) | p1_mask_p25_min(0.075) | p4_butt_min_dist(0.060) | p2_screen_median(0.041)
+     encode_ms | p2_screen_median(0.015) | p3_butt_qf_scale(0.011) | p3_butt_qf_scale(0.005) | p3_butt_qf_scale(0.008) | p4_butt_min_dist(0.005)
