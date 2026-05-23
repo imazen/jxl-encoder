@@ -1,0 +1,185 @@
+# W44-228c1 SHIP-cell validation — meta
+
+**Status**: FAIL → KEEP-OPT-IN-ONLY (W44-228b state stands as final)
+
+**Date**: 2026-05-23
+**Host**: lilith-wsl2 (water-cooled AMD Ryzen 9 7950X, 128 GB RAM)
+**Commit**: encoded against tree at jj parent `b8a60ca0` (W44-228b shipped opt-in API)
+**Reproducer**: `cargo run --release -p jxl-encoder --features '__expert tuning-override parallel butteraugli-loop ssim2-loop' --example w44_228c1_ship_cell_validation -- --output benchmarks/w44_228c1_ship_cell_validation_2026-05-23.tsv`
+**TSV**: `benchmarks/w44_228c1_ship_cell_validation_2026-05-23.tsv` (12 rows, 1 cell per row)
+
+## Goal
+
+Resolve `docs/HYPOTHESIS_LEDGER.md` belief #18 (W44-228a per-stratum
+optimum claim, status PROVEN at the global-coverage scale) against the
+W44-105 SHIP-cell caveat surfaced in the W44-228a memo: every per-stratum
+optimum on screen-class content sets
+`screenshot_quant_aggressiveness = 0`, which effectively DISABLES the
+W44-105 buttloop screen-seed lift. W44-105 was a measured SHIP that fixed
+SSIM2 wins on terminal / imac_g3 / codec_wiki text at d=4-6, e8+.
+
+Two competing explanations from the W44-228a memo / phase B closeout
+memo:
+
+- (a) **Corpus-composition artifact**: the W44-219 corpus that informed
+  the W44-228a per-stratum optima under-represents the W44-105 SHIP
+  cells, so the "reroute via the other 4 knobs" looks equivalent on the
+  W44-219 corpus but is not equivalent on the W44-105 SHIP cells
+  themselves.
+- (b) **Genuine improvement**: the 4-knob reroute IS an equivalent or
+  better operating point on screen-class generally, including the
+  W44-105 SHIP cells.
+
+W44-228c1 measures DIRECTLY on the SHIP cells to falsify (a) or (b).
+
+## Method
+
+12 W44-105 SHIP cells (3 images × 4 (effort, distance)):
+- terminal.png, imac_g3.png, codec_wiki.png from `~/work/codec-corpus/gb82-sc/`
+- (effort, distance) ∈ {(8, 4.0), (8, 5.0), (9, 4.0), (9, 5.0)}
+
+Per cell, encode twice with `EncoderStrategy::Zenjxl`, 8 threads, 8 GiB
+memory budget:
+- **A (default)**: `LossyConfig::with_knobs(Tier2Knobs::default())`
+- **B (auto)**: `LossyConfig::with_knobs(Tier2Knobs::auto_for_distance(ImageContentClass::Screenshot, distance))`
+
+For ScreenVeryHigh stratum (`d ≥ 3.5`, which covers all 12 cells) the
+auto knob tuple is `(k1=0.0, k2=0.0, k3=0.5, k4=1.5, k5=0.0)`. Per
+[`expand_to_runtime_tuning`](../jxl-encoder/src/tuning.rs) this expands
+to roughly:
+- `p1_smart_zenjxl_photo_mask_p25_min ≈ 192.86` (loosest screen
+  admission via smoothness_bias=0)
+- `p2_screenshot_median_threshold ≈ 108.15` (loosest, same axis)
+- `p3_buttloop_default_screenshot_qf_seed_scale ≈ 0.0` (W44-105 lift
+  DISABLED via screenshot_quant_aggressiveness=0)
+- `p4_buttloop_qf_seed_scale_min_distance = 1.5` (gate fires at all
+  d ≥ 1.5, but with p3 ≈ 0 the gate is moot)
+- `p5_adaptive_quant_screenshot_qf_seed_scale_e5_e6 ≈ 1.0` (half of
+  default 2.0)
+- `p6_adaptive_quant_screenshot_qf_seed_scale_e7 ≈ 1.5` (half of
+  default 3.0 via screen_quant_lift=0.5; aggressiveness=0 zeros out
+  the other contributor)
+
+3 trials per (cell, mode) — best-of-N reported for `encode_ms`; bytes
+and metrics are deterministic so first trial wins.
+
+**Critical sequencing**: ALL mode-A encodes ran first (no override
+installed), THEN ALL mode-B encodes (single `runtime::install` for the
+single ScreenVeryHigh knob tuple that covers all 12 cells). Interleaving
+within the same process would silently corrupt mode-A measurements after
+the first mode-B encode because `runtime::install` uses a `OnceLock` —
+every consumer reads the installed override regardless of
+`cfg.tier2_knobs`. The v1 bench attempt produced byte-identical A/B on
+cells 2-12 because of this — falsified the very first encoded row of v2.
+
+## Result
+
+| Gate | Spec | Observed | Pass? |
+|---|---|---|---|
+| (1) Mean Δssim2 | ≥ -0.1 | **-5.7137** | **FAIL** |
+| (2) Mean Δbytes_pct | ≤ +1.5% | **-30.2616%** | PASS |
+| (3) Worst Δssim2 | ≥ -0.5 | **-8.5948** on codec_wiki e8 d=5.0 | **FAIL** |
+| (4) Worst Δbytes_pct | ≤ +5.0% | **-23.8273%** on terminal e9 d=4.0 | PASS |
+
+**OVERALL: FAIL** (2/4 gates fail catastrophically).
+
+### Per-cell delta table
+
+| image | effort | distance | Δbytes_pct | Δssim2 |
+|---|---|---|---|---|
+| terminal.png | e8 | 4.0 | -33.40 % | -4.93 |
+| terminal.png | e8 | 5.0 | -34.64 % | -4.60 |
+| terminal.png | e9 | 4.0 | -23.83 % | -4.14 |
+| terminal.png | e9 | 5.0 | -25.12 % | -3.72 |
+| imac_g3.png | e8 | 4.0 | -31.94 % | -6.87 |
+| imac_g3.png | e8 | 5.0 | -34.11 % | **-8.11** |
+| imac_g3.png | e9 | 4.0 | -24.62 % | -5.84 |
+| imac_g3.png | e9 | 5.0 | -26.64 % | -6.59 |
+| codec_wiki.png | e8 | 4.0 | -36.03 % | -5.46 |
+| codec_wiki.png | e8 | 5.0 | -36.85 % | **-8.59** ← worst |
+| codec_wiki.png | e9 | 4.0 | -27.63 % | -4.07 |
+| codec_wiki.png | e9 | 5.0 | -28.33 % | -5.64 |
+
+Every cell loses 3.7-8.6 SSIM2 points (default 0.1 budget exceeded by
+**~50-90×**). Every cell saves 23-37 % bytes. This is the W44-228 surface
+"reroute via 4 other knobs" doing its job at the Pareto level the
+W44-219 corpus rewards, but the operating point is on the wrong side of
+the W44-105 cells' Pareto curve — they want quality, not bytes, in the
+text-heavy d=4-6 regime.
+
+## Decision
+
+**Hypothesis (a) PROVEN, hypothesis (b) RULED-OUT**. The W44-219 corpus
+under-represents the W44-105 SHIP cells. The W44-228 surface looks
+equivalent on the W44-219 corpus aggregate but is catastrophically worse
+on these specific cells.
+
+**Production state retained**: `Tier2Knobs::default()` remains the
+default behaviour. `Tier2Knobs::auto_for_distance` remains OPT-IN
+behind an explicit `LossyConfig::with_knobs(...)` call. Default-on flip
+**is structurally BLOCKED** on screen-class content at d ≥ 3.5; it would
+revert the W44-105 SHIP wins on the only cells that explicitly motivated
+that fix.
+
+**Recommendation**: SKIP W44-228c2 (the planned 20-anchor stratified
+bootstrap re-measurement is moot — even if it tightened the per-stratum
+optimum, it cannot escape the W44-105 mechanism mismatch that
+`screenshot_quant_aggressiveness=0` causes on screen/very_high text
+content). W44-228b API is the final state.
+
+## Follow-on candidates (NOT in W44-228c1 scope)
+
+1. **Per-cell zenanalyze sub-discriminator** for ScreenVeryHigh: detect
+   text-heavy screenshots (high edge_density + low flat_color_block_ratio)
+   AT ENCODE TIME and route them through `Tier2Knobs::default()` while
+   text-light screenshots use the W44-228a auto knobs. Same pattern as
+   W44-91 / W44-96 in-encoder discriminator. Cost: ~5-10 ms per image,
+   covers the W44-105 mechanism boundary directly. EV: re-opens W44-228c
+   default-flip path with the W44-105 cells protected.
+
+2. **Re-derive the W44-228a optima on a corpus that INCLUDES the W44-105
+   SHIP cells**. Per the W44-228a memo §Surprising finding the
+   "screenshot_quant_aggressiveness=0 on every screen optimum" pattern
+   may be a corpus artifact specifically because the W44-219 corpus
+   sampled the SUPPRESSIVE coupling cap. Adding the W44-105 cells to
+   the optimization corpus might shift the optima to non-zero `k2`.
+   Multi-week chunk (requires another sweep run + GBR fit + per-stratum
+   grid search).
+
+3. **Drop per-stratum dispatch in favor of per-cell zenanalyze MLP**
+   (Phase B closeout memo Option 2 / Tier-3 MLP design). Bypasses the
+   per-stratum aggregation entirely. Higher cost, more flexibility.
+
+## DO NOT (binding for future agents)
+
+- **DO NOT spawn W44-228c2 (20-anchor bootstrap)** — the FAIL is so deep
+  (mean -5.71 SSIM2 vs -0.1 budget) that no anchor-set tightening can
+  flip the decision.
+- **DO NOT default-flip per-stratum dispatch for any screen stratum**
+  without first solving the W44-105 mechanism mismatch (e.g. via
+  follow-on #1 above).
+- **DO NOT cite "FMA precision" for any byte / SSIM2 delta** (per W44-66
+  user correction). The bytes / SSIM2 differ because the auto knobs
+  expand to a fundamentally different `RuntimeTuning` (`p3 ≈ 0` vs
+  default `p3 = 4.0`), which routes the encoder through a different
+  quant-field generation path on screenshot-class content.
+- **DO NOT modify `EncoderStrategy::Libjxl` hashes** (this chunk
+  preserved them — the runtime override only affects Zenjxl).
+- **DO NOT re-bisect ScreenVeryHigh knob values without a per-cell
+  discriminator** — the W44-219 corpus optimum is the wrong Pareto point
+  for these cells, full stop. Bisection within the same Pareto region
+  cannot fix that.
+
+## Cross-refs
+
+- `docs/HYPOTHESIS_LEDGER.md` belief #18 (updated 2026-05-23 with PROVEN
+  for hypothesis (a) and RULED-OUT for hypothesis (b))
+- `docs/TIER_2_KNOBS.md` §Per-stratum defaults (W44-228b) — explicit
+  W44-105 SHIP-cell caveat documented; W44-228c1 measurement now
+  validates that caveat as binding
+- `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/phase_b_tier2_complete_2026-05-23.md`
+- `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_228a_per_stratum_optima_2026-05-22.md`
+- `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_228b_per_stratum_optin_api_2026-05-22.md`
+- `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_228c1_ship_cell_validation_2026-05-23.md` (this chunk)
+- CLAUDE.md "W44-105 buttloop quant field seed scale" investigation note
+- Reproducer: `jxl-encoder/examples/w44_228c1_ship_cell_validation.rs`

@@ -2199,5 +2199,32 @@ name = "w44_206_decoder_check"
 path = "examples/w44_206_decoder_check.rs"
 required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
 
+# W44-228c1 SHIP-cell validation: paired encode-decode bench on the
+# W44-105 SHIP cells (terminal / imac_g3 / codec_wiki × e8/e9 × d=4/5)
+# comparing `Tier2Knobs::default()` (production default) vs
+# `Tier2Knobs::auto_for_distance(Screenshot, distance)` (W44-228b
+# opt-in per-stratum). Resolves belief #18: does the W44-228 surface
+# reroute via the other 4 knobs hold up on the cells W44-105 fixed?
+# 4-gate decision: (1) mean Δssim2 ≤ 0.1 regression, (2) mean
+# Δbytes_pct ≤ +1.5%, (3) worst Δssim2 ≥ -0.5, (4) worst Δbytes_pct
+# ≤ +5%. PASS → W44-228c2 follows; FAIL → W44-228b opt-in stands.
+[[example]]
+name = "w44_228c1_ship_cell_validation"
+path = "examples/w44_228c1_ship_cell_validation.rs"
+required-features = ["__expert", "tuning-override", "parallel", "butteraugli-loop", "ssim2-loop"]
+
+# W44-229 Python-Rust expander parity check: validates the Python
+# `tier2_expand_5knob` mirror in
+# `scripts/zenjxl-tuning-sweep/build_w44_229_chunks.py` reproduces
+# `Tier2Knobs::expand_to_runtime_tuning` byte-for-byte. Prints CSV
+# with the 24-byte LE postcard-equivalent blob hex for 4 samples.
+# Run the Python mirror separately and diff — failing parity here
+# means the W44-229 sweep would emit blobs whose actual encoder
+# behaviour differs from the Python labels (analysis would be wrong).
+[[example]]
+name = "w44_229_parity_check"
+path = "examples/w44_229_parity_check.rs"
+required-features = ["tuning-override"]
+
 [lints]
 workspace = true
