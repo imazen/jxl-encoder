@@ -2244,5 +2244,14 @@ required-features = ["butteraugli-loop"]
 [[example]]
 name = "t2b_dct16x8_roundtrip"
 path = "examples/t2b_dct16x8_roundtrip.rs"
+
+# T2A DC CfL probe: verify algebraic identity
+# 0.5 == y_factor * inv_factor_b * cfl_factor_default at extra_precision=0,
+# kInvDCQuant = [4096, 512, 256], base_correlation_b = kYToBRatio = 1.0.
+# See ~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_t2a_dc_cfl_2026-05-23.md
+[[example]]
+name = "w44_t2a_dc_cfl_probe"
+path = "examples/w44_t2a_dc_cfl_probe.rs"
+
 [lints]
 workspace = true
