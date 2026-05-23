@@ -1,0 +1,66 @@
+[
+  {
+    "suffix": "p4-p6-screen",
+    "label": "class=screen",
+    "outcome": "ssim2",
+    "status": "PASS",
+    "n": 2585,
+    "train_r2": 0.9975677773693359
+  },
+  {
+    "suffix": "p4-p6-screen-bytes",
+    "label": "class=screen",
+    "outcome": "log_encoded_bytes",
+    "status": "PASS",
+    "n": 2585,
+    "train_r2": 0.9996439991140977
+  },
+  {
+    "suffix": "p2-p5-screen",
+    "label": "class=screen",
+    "outcome": "ssim2",
+    "status": "PASS",
+    "n": 2585,
+    "train_r2": 0.9975677773693359
+  },
+  {
+    "suffix": "p5-p6-screen",
+    "label": "class=screen",
+    "outcome": "ssim2",
+    "status": "PASS",
+    "n": 2585,
+    "train_r2": 0.9975677773693359
+  },
+  {
+    "suffix": "p5-p6-screen-e8",
+    "label": "class=screen/e=8",
+    "outcome": "ssim2",
+    "status": "PASS",
+    "n": 528,
+    "train_r2": 0.9961552814833889
+  },
+  {
+    "suffix": "p1-p5-screen",
+    "label": "class=screen",
+    "outcome": "ssim2",
+    "status": "PASS",
+    "n": 2585,
+    "train_r2": 0.9975677773693359
+  },
+  {
+    "suffix": "p3-p4-photo-highd",
+    "label": "class=photo/d>=3",
+    "outcome": "log_encoded_bytes",
+    "status": "PASS",
+    "n": 3832,
+    "train_r2": 0.9992837345673515
+  },
+  {
+    "suffix": "p3-p6-screen",
+    "label": "class=screen",
+    "outcome": "ssim2",
+    "status": "PASS",
+    "n": 2585,
+    "train_r2": 0.9975677773693359
+  }
+]
