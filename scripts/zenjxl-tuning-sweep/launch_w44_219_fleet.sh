@@ -102,11 +102,14 @@ if 's5cmd ls' not in old_block or 'head -32' not in old_block:
     sys.exit(0)
 new_block = (
     'while true; do\n'
-    '    # W44-219 hot-fix: pipe -> file-redirect (one-shot pipe loses output on big input)\n'
+    '    # W44-219 hot-fix: replace pipe-with-head (which fails under\n'
+    '    # `set -o pipefail` because head -32 closes the pipe early\n'
+    '    # → shuf gets SIGPIPE → pipefail fires → $() returns empty)\n'
+    '    # with shuf -n 32 (samples 32 inside shuf without needing head).\n'
     '    _w219_s5out=/tmp/w219_s5cmd_out.txt\n'
     '    s5cmd ls "s3://$SWEEP_BUCKET/$SWEEP_ID/$CHUNK_PREFIX/*.json" \\\n'
     '        > "$_w219_s5out" 2>/dev/null || true\n'
-    "    LIST=$(awk '{print $NF}' < \"$_w219_s5out\" | shuf | head -32) || LIST=\"\"\n"
+    "    LIST=$(awk '{print $NF}' < \"$_w219_s5out\" | shuf -n 32) || LIST=\"\"\n"
     '    '
 )
 out = src[:a] + new_block + src[b:]
