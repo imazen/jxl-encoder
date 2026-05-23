@@ -32,18 +32,19 @@ Per the zenjxl-mode design goal anchor (2026-05-22):
 > Tier 3 (optional final layer; MLP allowed): zenanalyze features →
 > high-level knobs MLP.
 
-W44-221 ships Tier-2.
+W44-221 ships Tier-2 (4 knobs); W44-222 adds the 5th data-driven knob.
 
-## The 4 knobs
+## The 5 knobs
 
-| knob | range | default | unit | drives |
-|---|---|---|---|---|
-| `smoothness_bias` | [0, 1] | **0.5** | unitless | `p1` (`smart_zenjxl_photo_mask_p25_min`), `p2` (`screenshot_median_threshold`) |
-| `screenshot_quant_aggressiveness` | [0, 2] | **1.0** | unitless multiplier | `p3` (`buttloop_default_screenshot_qf_seed_scale`), `p6` (`adaptive_quant_screenshot_qf_seed_scale_e7`) |
-| `screen_quant_lift` | [0.5, 2.0] | **1.0** | unitless multiplier | `p5` (`adaptive_quant_screenshot_qf_seed_scale_e5_e6`), `p6` (additive composition with `screenshot_quant_aggressiveness`) |
-| `buttloop_screen_d_gate` | [1.5, 5.5] | **3.5** | distance units | `p4` (`buttloop_qf_seed_scale_min_distance`, direct expose) |
+| knob | range | default | unit | drives | shipped |
+|---|---|---|---|---|---|
+| `smoothness_bias` | [0, 1] | **0.5** | unitless | `p1` (`smart_zenjxl_photo_mask_p25_min`), `p2` (`screenshot_median_threshold`) | W44-221 |
+| `screenshot_quant_aggressiveness` | [0, 2] | **1.0** | unitless multiplier | `p3` (`buttloop_default_screenshot_qf_seed_scale`), `p6` (`adaptive_quant_screenshot_qf_seed_scale_e7`) | W44-221 |
+| `screen_quant_lift` | [0.5, 2.0] | **1.0** | unitless multiplier | `p5` (`adaptive_quant_screenshot_qf_seed_scale_e5_e6`), `p6` (additive composition with `screenshot_quant_aggressiveness`) | W44-221 |
+| `buttloop_screen_d_gate` | [1.5, 5.5] | **3.5** | distance units | `p4` (`buttloop_qf_seed_scale_min_distance`, direct expose) | W44-221 |
+| `buttloop_aq_balance` | [-1, +1] | **0.0** | normalised | (p1, p2, p3, p5, p6) via [`K5_DIR`](../jxl-encoder/src/tuning.rs) — rebalance screenshot quant budget along PC2 ("buttloop vs AQ") | **W44-222** |
 
-At all 4 defaults, the expander returns
+At all 5 defaults, the expander returns
 `RuntimeTuning::default()` **byte-for-byte** — preserving the
 hash-lock contract (36/36 lossy + 13/13 lossless fixtures
 byte-identical).
@@ -54,18 +55,19 @@ The expander uses **additive deviation from defaults**:
 
 ```text
 p_i(knobs) = DEFAULT_P_i + Σ_{knob_j touching p_i} (ridge_j(knob_j)_p_i - DEFAULT_P_i)
+                          + K5_SCALE × k5 × K5_DIR[i]      (W44-222 5th-knob contribution)
 ```
 
 Per-param contributors:
 
 | param | default | knob contributors | composition |
 |---|---|---|---|
-| `p1` | 85.0 | `smoothness_bias` | single |
-| `p2` | 95.0 | `smoothness_bias` | single |
-| `p3` | 4.0 | `screenshot_quant_aggressiveness` | single |
-| `p4` | 3.5 | `buttloop_screen_d_gate` | direct (no ridge) |
-| `p5` | 2.0 | `screen_quant_lift` | single |
-| `p6` | 3.0 | `screenshot_quant_aggressiveness` + `screen_quant_lift` | **additive sum** of deviations |
+| `p1` | 85.0 | `smoothness_bias` + `buttloop_aq_balance` | **additive sum** of deviations |
+| `p2` | 95.0 | `smoothness_bias` + `buttloop_aq_balance` | **additive sum** of deviations |
+| `p3` | 4.0 | `screenshot_quant_aggressiveness` + `buttloop_aq_balance` | **additive sum** of deviations |
+| `p4` | 3.5 | `buttloop_screen_d_gate` | direct (no ridge); `K5_DIR[3] = 0` |
+| `p5` | 2.0 | `screen_quant_lift` + `buttloop_aq_balance` | **additive sum** of deviations |
+| `p6` | 3.0 | `screenshot_quant_aggressiveness` + `screen_quant_lift` + `buttloop_aq_balance` | **additive sum** of deviations |
 
 The `p6` additive composition mirrors the W44-217 finding that BOTH the
 `(p3, p6)` and `(p5, p6)` ridges touch `p6` (W44-217 §6 SUPPRESSIVE
@@ -160,6 +162,66 @@ typical encode distance range).
 
 **Implementation**: clamp(`d`, 1.5, 5.5) returned directly as `p4`.
 
+### `buttloop_aq_balance ∈ [-1, +1]` (default 0.0) **[W44-222]**
+
+**Mechanism**: rebalances screenshot quant budget along the dominant
+data-driven direction in the orthogonal complement of the W44-218
+4-ridge span. Matches W44-217 §6 PC2 "buttloop-vs-AQ-balance"
+narrative: shifts weight between `(p3, p5)` (buttloop seed + e5/e6 AQ
+scale) and `p6` (e7 AQ scale).
+
+**Empirical provenance (W44-221 Phase 2b + W44-222 Phase A)**: the
+direction comes from a singular-value decomposition of the
+orthogonal-complement projection of the W44-221 PC residuals (the
+component of each PC NOT spanned by the 4 W44-218 mechanism-ridges).
+The dominant uncovered direction captures **76.5 %** of weighted
+residual variance (the 2nd captures the remaining 23.5 %; the 4-ridge
+span fully covers the p4 axis, so the orthogonal complement is
+rank-2 in 6-param space).
+
+**Direction vector** ([`K5_DIR`](../jxl-encoder/src/tuning.rs)):
+```text
+K5_DIR = [-0.148, +0.259, -0.650, 0.000, -0.504, +0.485]
+          (p1)   (p2)   (p3)  (p4)  (p5)   (p6)
+```
+
+Note `K5_DIR[3] = 0` exactly: `buttloop_screen_d_gate` already covers
+the p4 axis fully, so the orthogonal complement has zero component
+on p4.
+
+**Scale** ([`K5_SCALE`](../jxl-encoder/src/tuning.rs)): `2.5`. At
+`|k5| = 1`, the deviation magnitude stays inside the W44-216 LHS
+empirical envelope. At `k5 = +1`: p3 → 2.37, p5 → 0.74, p6 → 4.21;
+at `k5 = -1`: p3 → 5.62, p5 → 3.26, p6 → 1.79. No param crosses its
+physical floor (0.0) when `|k5| ≤ 1` and the other 4 knobs are at
+defaults.
+
+**Direction**: `k5 = 0` → defaults (round-trip byte-exact).
+`k5 = +1` → shift weight toward `p6` (e7 AQ scale) and away from
+`(p3, p5)`. `k5 = -1` → opposite.
+
+**Validation status (W44-222 Phase A)**: the W44-221 Phase 4b Pareto
+coverage check re-run with a 5-knob 7^5 grid CLOSES the
+`screen/very_high` honest-stop:
+
+| stratum | 4-knob max % | 5-knob max % | improvement |
+|---|---|---|---|
+| `all` | 1.57 % | **0.66 %** | -0.91 pp |
+| `screen` | 2.69 % | **0.67 %** | -2.02 pp |
+| `screen/very_high` | 7.86 % | **1.15 %** | **-6.71 pp** |
+| `photo` | 0.13 % | 0.09 % | -0.04 pp |
+| `photo/very_high` | 0.56 % | 0.37 % | -0.19 pp |
+
+All 5 strata now PASS the 2pp-max gate; mean coverage stays <0.1 %
+everywhere. Coverage TSV:
+`benchmarks/sweeps/w44-219-densify/analysis/w44_222/phase_a_5knob_coverage.tsv`.
+
+**Implementation**: per-param contribution computed as
+`K5_SCALE * k5 * K5_DIR[i]`, added to the additive deviation sum
+inside `Tier2Knobs::expand_to_runtime_tuning()`. At `k5 = 0` every
+contribution is 0 → expanded params identical to the 4-knob
+expander at the same other-knob values.
+
 ## Knob basis validation (W44-221 measurement)
 
 Per `benchmarks/sweeps/w44-219-densify/analysis/w44_221/`:
@@ -171,53 +233,77 @@ Per `benchmarks/sweeps/w44-219-densify/analysis/w44_221/`:
 - **W44-218 4-ridge coverage**: 4 mechanism-derived ridges span 68.5%
   of gradient variance (not orthogonal to data-driven PCs but
   mechanism-aligned per the goal anchor "math/stats grounded" rule).
+- **W44-222 5-knob coverage**: the W44-222 `buttloop_aq_balance`
+  direction captures 76.5% of the remaining 31.5% un-spanned variance
+  (i.e., spans an additional ~24pp of joint gradient variance for a
+  combined 4+1 knob coverage near the rank-5 budget).
 - **Pareto coverage** (asymmetric: full-Pareto → nearest knob point):
-  mean coverage gap < 0.5pp on `all` / `screen` / `photo`; max gap up
-  to 7.86% on `screen/very_high` (the W44-220-identified hard
-  stratum). Documented as a W44-222+ candidate for a 5th data-driven
-  knob.
+  with 4 knobs, mean < 0.5pp on `all` / `screen` / `photo`; max up to
+  7.86% on `screen/very_high`. With 5 knobs (W44-222 ships), max drops
+  to 1.15% on `screen/very_high`; ALL 5 strata PASS the 2pp gate; mean
+  stays <0.1% everywhere.
 
 ## API usage
+
+### Recommended: `LossyConfig::with_knobs` builder (W44-222)
 
 ```rust
 #[cfg(feature = "tuning-override")]
 use jxl_encoder::tuning::coupling::Tier2Knobs;
+use jxl_encoder::{LossyConfig, PixelLayout};
 
 // Defaults — produces byte-identical encode to current Zenjxl behaviour.
-let knobs = Tier2Knobs::default();
+// (LossyConfig::encode skips the runtime install when knobs == default →
+// no override is installed → the production fast-path stays untouched →
+// every existing hash-lock fixture remains byte-identical.)
+let cfg = LossyConfig::new(2.0)
+    .with_effort(7)
+    .with_knobs(Tier2Knobs::default());
 
-// Tighten the screen-class dispatch (admit more images to screen path).
-let knobs = Tier2Knobs {
-    smoothness_bias: 0.8,
-    ..Default::default()
-};
+// Move the W44-222 5th knob → rebalance screenshot quant budget
+// toward p6 (e7 AQ scale) and away from (p3, p5).
+let cfg = LossyConfig::new(4.0)
+    .with_effort(7)
+    .with_knobs(Tier2Knobs {
+        buttloop_aq_balance: 0.5,
+        ..Default::default()
+    });
 
-// Both screen-quant knobs maxed, narrow buttloop gate.
-let knobs = Tier2Knobs {
-    screenshot_quant_aggressiveness: 1.5,
-    screen_quant_lift: 1.5,
-    buttloop_screen_d_gate: 2.5,
-    ..Default::default()
-};
+// All 5 knobs at non-default values.
+let cfg = LossyConfig::new(4.0)
+    .with_effort(7)
+    .with_knobs(Tier2Knobs {
+        smoothness_bias: 0.7,
+        screenshot_quant_aggressiveness: 1.3,
+        screen_quant_lift: 1.2,
+        buttloop_screen_d_gate: 2.5,
+        buttloop_aq_balance: -0.4,
+    });
 
-#[cfg(feature = "tuning-override")]
-let runtime_tuning = knobs.expand_to_runtime_tuning();
-// runtime_tuning is a `jxl_encoder::tuning::runtime::RuntimeTuning`
-// suitable for `runtime::install(runtime_tuning)`.
+let bytes = cfg.encode(&rgb, w, h, PixelLayout::Rgb8)?;
 ```
 
-For sweep runners (`tuning-sweep-bin`), the recommended pattern is:
+The `with_knobs` builder calls `runtime::install_or_check_idempotent`
+at encode start when the knobs are non-default. The install is
+**single-shot per process** (idempotent re-install with the SAME
+knobs is a no-op; a mismatched re-install returns
+`EncodeError::InvalidConfig`). Tier-3 thread-local-override plumbing
+is queued as W44-227+.
+
+### Sweep runner alternative: explicit `runtime::install`
+
+For sweep runners that need to install the same `RuntimeTuning`
+across many `LossyConfig` instances:
 
 ```rust
 let knobs = sample_from_grid(...);
 let rt = knobs.expand_to_runtime_tuning();
-jxl_encoder::tuning::runtime::install(rt)?;
+jxl_encoder::tuning::runtime::install(rt)?;  // ONCE per process
 encode_with_strategy(EncoderStrategy::Zenjxl, ...)
 ```
 
-A `LossyConfig::with_knobs(Tier2Knobs)` builder method is queued for
-W44-222 — it will plumb the knobs through the encoder entry without
-requiring callers to interact with the runtime-tuning layer directly.
+The `with_knobs` builder is the recommended path for production
+callers; `install` is the recommended path for sweep workers.
 
 ## Default round-trip contract (hash-lock invariant)
 
