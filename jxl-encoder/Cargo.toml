@@ -125,6 +125,17 @@ chroma-subsampling = ["dep:zenyuv"]
 # Default-off because it requires the rayon dependency; opt-in for callers
 # that already enable `parallel`.
 parallel-tree-learning = ["parallel"]
+# Zenjxl regression-gate test: opt-in nightly CI test that locks the W44-202
+# baseline numbers (per-cell + aggregate bytes/SSIM2/butteraugli/wall-time
+# vs cjxl e7) as an invariant. Lives at `tests/zenjxl_regression_gate.rs`,
+# additionally `#[ignore]`-d (use `--include-ignored`) so a casual
+# `cargo test --features zenjxl-regression-gate` won't run it. Requires
+# the codec corpus at `$CODEC_CORPUS_DIR` (default
+# `/home/lilith/work/codec-corpus`). Pulls in `butteraugli-loop` +
+# `ssim2-loop` + `parallel` because the test re-runs the W44-170 sweep
+# scoring pipeline (butteraugli_linear + fast_ssim2 via jxl-oxide). See the
+# test module docstring for the rebaseline procedure.
+zenjxl-regression-gate = ["butteraugli-loop", "ssim2-loop", "parallel"]
 # Picker training / sweep escape hatch: exposes the segmented
 # LossyInternalParams / LosslessInternalParams structs and the
 # LossyConfig::with_internal_params / LosslessConfig::with_internal_params

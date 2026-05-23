@@ -1,0 +1,86 @@
+name: Nightly regression gates
+
+# Long-running tests that don't belong in the per-push CI gate but must run
+# at least daily so drift is caught within ~24h of landing. Currently:
+#
+# - **zenjxl_regression_gate** locks the W44-202 baseline (12 cells from a
+#   1978-cell paired sweep) as an invariant against any tuning change that
+#   silently regresses Zenjxl's bytes/quality/wall-time profile vs cjxl e7.
+#   See `jxl-encoder/tests/zenjxl_regression_gate.rs` module doc for the
+#   rebaseline procedure when a regression is intentional.
+
+on:
+  schedule:
+    # 08:30 UTC daily — after typical EU/US working hours so failures don't
+    # collide with the per-push CI matrix demand.
+    - cron: '30 8 * * *'
+  workflow_dispatch:
+    # Allow manual triggering from the Actions tab when investigating a
+    # suspected regression after a tuning change.
+
+concurrency:
+  group: nightly-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+
+jobs:
+  zenjxl-regression-gate:
+    name: Zenjxl regression gate (W44-202 baseline lock)
+    runs-on: ubuntu-latest
+    # 30 min budget: the 12-cell test runs in ~10s on the 7950X reference;
+    # on GitHub-hosted ubuntu-latest (~3-4x slower) expect ~40-60s. The
+    # surplus absorbs cache-miss workspace builds.
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Clone sibling path-dep repos
+        uses: ./.github/actions/clone-siblings
+
+      - name: Sparse-checkout codec corpus (test images only)
+        run: |
+          set -euxo pipefail
+          # The full imazen/codec-corpus repo is ~2.2 GB; we only need 9 PNG
+          # files (~2.4 MB) for the 12 locked cells. Sparse-checkout fetches
+          # only the paths the test reads.
+          mkdir -p "$RUNNER_TEMP/codec-corpus"
+          cd "$RUNNER_TEMP/codec-corpus"
+          git init -q
+          git remote add origin https://github.com/imazen/codec-corpus.git
+          git config core.sparseCheckout true
+          cat > .git/info/sparse-checkout <<'EOF'
+          CID22/CID22-512/validation/1025469.png
+          CID22/CID22-512/validation/1189261.png
+          CID22/CID22-512/validation/1418519.png
+          CID22/CID22-512/validation/1420710.png
+          CID22/CID22-512/validation/1475938.png
+          CID22/CID22-512/validation/1531677.png
+          gb82-sc/terminal.png
+          gb82-sc/graph.png
+          gb82-sc/windows95.png
+          EOF
+          git pull --depth=1 origin main
+          ls -la CID22/CID22-512/validation/ gb82-sc/
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust-nightly
+
+      - name: Run zenjxl regression gate
+        env:
+          CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
+        run: |
+          cargo test \
+            --release \
+            -p jxl-encoder \
+            --features "parallel butteraugli-loop ssim2-loop zenjxl-regression-gate" \
+            --test zenjxl_regression_gate \
+            -- --include-ignored --nocapture
