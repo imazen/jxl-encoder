@@ -1,0 +1,110 @@
+# W44-223 post-local-butteraugli-patch comprehensive cjxl-parity sweep
+# Re-runs the W44-202 4000-cell step-0.25 sweep on commit 399ad8ee (current main)
+# after the local-butteraugli patch (commit 399ad8ee) replaced crates.io
+# butteraugli 0.9.2 with a workspace path dep to ~/work/zen/butteraugli.
+#
+# PURPOSE: confirm or refute whether the local-butteraugli patch shifted
+# butteraugli scores (which would invalidate the W44-202 Lock-Zenjxl
+# baselines locked at 0d5edbfd).
+date: 2026-05-23
+parent_commit: 399ad8ee710acda621a6a02057ebce3d1d20f10f
+working_copy: 44c8be367ca8a3918e67d3d2b62de9e0169cdee5
+host: lilith
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] {GNU 11.4.0}
+manifest: benchmarks/corpora/w44_170_varied_corpus.tsv
+corpus_dir: /home/lilith/work/codec-corpus
+strategies: ["zenjxl", "libjxl"]
+distance_grid: [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0, 4.25, 4.5, 4.75, 5.0]
+efforts: [5, 6, 7, 8, 9]
+time_iters: 1
+smoke: false
+wall_seconds: 1518.6
+wall_minutes: 25.3
+cells_total: 4000
+cells_failed: 39
+cells_failed_zenjxl: 19
+cells_failed_libjxl: 20
+cells_ok_zenjxl: 1981
+cells_ok_libjxl: 1980
+decoder: jxl-oxide (srgb_linear)
+metrics: butteraugli_linear (default params, LOCAL butteraugli at ../../butteraugli/butteraugli); fast_ssim2 (sRGB u8 from linear)
+tsv_outputs:
+  zenjxl: benchmarks/cjxl_step025_w44_223_zenjxl_2026-05-23.tsv
+  libjxl: benchmarks/cjxl_step025_w44_223_libjxl_2026-05-23.tsv
+analysis_text: benchmarks/cjxl_step025_w44_223_analysis_2026-05-23.txt
+lock_cross_check: benchmarks/cjxl_step025_w44_223_lock_check_2026-05-23.txt
+reproducer (full sweep):
+  cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example w44_170_cjxl_step025_sweep -- --corpus-manifest benchmarks/corpora/w44_170_varied_corpus.tsv --output-prefix benchmarks/cjxl_step025_w44_223 --strategies zenjxl,libjxl
+
+# === Aggregate comparison to W44-202 baseline (1978 OK cells per strategy) ===
+#   Metric                    W44-202        W44-223        Delta
+#   Zenjxl mean delta_bytes_pct  -5.876 %      -6.672 %      -0.80 pp (better)
+#   Zenjxl mean delta_ssim2      +0.484        +0.483        -0.001 (unchanged)
+#   Zenjxl mean delta_bfly_pct   -6.684 %      -6.706 %      -0.02 pp (unchanged)
+#   Zenjxl mean delta_ms_pct     +7.754 %      +34.252 %     +26.5 pp (slower under load)
+#   Libjxl mean delta_bytes_pct  +0.756 %      +1.342 %      +0.59 pp
+#   Libjxl mean delta_ssim2      -1.945        -1.945        unchanged
+#
+# === Per-matched-cell diff (n=1978 zenjxl, n=1977 libjxl) ===
+#
+#   Zenjxl:
+#     ours_bytes_diff       mean=-467.120  median=-210.000   (bytes shifted by
+#                                                              4 commits between
+#                                                              56c9bd80 and 399ad8ee)
+#     ours_ssim2_diff       mean=+0.000 median=+0.000        BYTE-IDENTICAL
+#     ours_bfly_diff        mean=+0.000 median=+0.000        BYTE-IDENTICAL
+#     |ours_bfly_diff|      max=+0.000                       BYTE-IDENTICAL
+#     |cjxl_bfly_diff|      max=+0.000                       BYTE-IDENTICAL
+#
+#   Libjxl:
+#     ours_bytes_diff       mean=+0.000 median=+0.000        BYTE-IDENTICAL (Libjxl
+#                                                              strategy is byte-locked
+#                                                              and W44-T1-T2 work did
+#                                                              not change Libjxl path)
+#     ours_ssim2_diff       mean=+0.000 median=+0.000        BYTE-IDENTICAL
+#     ours_bfly_diff        mean=+0.000 median=+0.000        BYTE-IDENTICAL
+#
+# === CRITICAL FINDING ===
+#
+# The local butteraugli is producing the EXACT SAME numerical scores as
+# crates.io butteraugli 0.9.2 was producing at the W44-202 baseline.
+# Per-matched-cell ours_bfly and cjxl_bfly are byte-identical f64 across
+# all 1978 matched OK cells in both strategies.
+#
+# The alleged "5x shift" that motivated the local-butteraugli patch (per
+# the parent task's W44-AUDIT-RECON context) is NOT visible in this
+# rebench. The local butteraugli is at numerical parity with crates.io
+# 0.9.2 on these inputs at default ButteraugliParams.
+#
+# === LOCK-ZENJXL TRANSCRIPTION ERROR (separate issue) ===
+#
+# Several Lock-Zenjxl `base_ours_bfly` and `base_cjxl_bfly` values DO
+# NOT match either the W44-202 TSV or the W44-223 TSV — for example,
+# `terminal e5 d=1.0` has lock=2.106914 but both TSVs report 0.742616
+# (a 2.84x discrepancy). However, `1025469 e5 d=1.0` matches exactly
+# (lock=1.411649, TSVs=1.411649).
+#
+# Pattern (across the 12 locked cells, see lock_check.txt):
+#   lock/W202 ratios: min=0.98, max=3.03, mean=1.58
+#   lock/W223 ratios: min=0.98, max=3.03, mean=1.58  (identical to W202)
+#
+# This is NOT a butteraugli version shift (which would produce a UNIFORM
+# multiplier across all cells). It is a transcription/source mismatch:
+# some cells were transcribed from the W44-202 TSV correctly, others
+# were taken from a different measurement source (possibly a different
+# bench harness, different ButteraugliParams, or a partial rerun TSV
+# that didn't get checked in).
+#
+# All delta_bytes_pct, delta_ssim2, delta_bfly_pct, delta_ms_pct
+# entries in the lock baselines DO correctly match the TSV's delta
+# columns — only the absolute base_ours_bfly and base_cjxl_bfly are off.
+#
+# === RECOMMENDATION ===
+#
+# RE-BASELINE Lock-Zenjxl by re-extracting all 12 cells from the W44-202
+# (or W44-223 — they are byte-identical for ours_bfly / ours_ssim2 /
+# cjxl_bfly) TSV. The `delta_*` slack tolerances stay the same; only
+# the absolute reference numbers need to match the TSV source-of-truth.
+# Suggested patch is fully derivable from
+# benchmarks/cjxl_step025_w44_202_zenjxl_2026-05-22.tsv via
+# scripts/w44_223_lock_check.py.

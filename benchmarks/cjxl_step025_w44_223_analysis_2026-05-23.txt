@@ -1,0 +1,206 @@
+# W44-223 rebench: new_zenjxl=1981 new_libjxl=1980
+
+# Aggregate: W44-223 Zenjxl vs cjxl-e7 (n=1981)
+  delta_bytes_pct          n= 1981 mean=  -6.6718% median=  -2.1860% p25=  -6.6540 p75=  -0.1130
+  delta_ssim2              n= 1981 mean=   0.4833 median=  -0.2953 p25=  -0.8728 p75=   0.1153
+  delta_bfly_pct           n= 1981 mean=  -6.7060% median=  -0.7110% p25=  -6.7790 p75=   1.3390
+  delta_ms_pct             n= 1981 mean=  34.2522% median=   2.8610% p25= -22.4280 p75=  39.1410
+  ours_bytes               n= 1981 mean=74338.5305 B median=40542.0000 B p25=22968.0000 p75=88550.0000
+  ours_ssim2               n= 1981 mean=  77.7060 median=  80.7860 p25=  68.2441 p75=  87.2367
+  ours_bfly                n= 1981 mean=   2.4734 median=   2.3320 p25=   1.3648 p75=   3.5732
+  ours_ms                  n= 1981 mean=5535.0589 ms median=1284.1280 ms p25= 358.8940 p75=3278.4430
+
+# Aggregate: W44-223 Libjxl vs cjxl-e7 (n=1980)
+  delta_bytes_pct          n= 1980 mean=   1.3418% median=   3.1765% p25=   0.5150 p75=   6.6790
+  delta_ssim2              n= 1980 mean=  -1.9449 median=  -1.1313 p25=  -2.9385 p75=  -0.2836
+  delta_bfly_pct           n= 1980 mean=   1.0999% median=   0.4570% p25=  -3.1150 p75=   4.9690
+  delta_ms_pct             n= 1980 mean=  53.1624% median=  12.9585% p25= -13.3400 p75=  51.5960
+  ours_bytes               n= 1980 mean=86129.7293 B median=44554.5000 B p25=25166.0000 p75=98444.0000
+  ours_ssim2               n= 1980 mean=  75.2773 median=  76.9433 p25=  65.9842 p75=  85.0976
+  ours_bfly                n= 1980 mean=   2.7179 median=   2.7634 p25=   1.5702 p75=   3.8325
+  ours_ms                  n= 1980 mean=5212.2905 ms median=1428.7135 ms p25= 409.0880 p75=3377.5690
+
+# By-effort: W44-223 Zenjxl by effort
+  e5 delta_bytes_pct      n= 400 mean= -10.2791% median=  -2.1275%
+  e5 delta_ssim2          n= 400 mean=   0.8938 median=  -0.0274
+  e5 delta_bfly_pct       n= 400 mean=  -6.5237% median=  -0.6370%
+  e5 delta_ms_pct         n= 400 mean=  15.7466% median=  -6.2900%
+
+  e6 delta_bytes_pct      n= 400 mean=  -9.8099% median=  -1.6770%
+  e6 delta_ssim2          n= 400 mean=   0.7106 median=  -0.0934
+  e6 delta_bfly_pct       n= 400 mean=  -5.6297% median=  -0.7770%
+  e6 delta_ms_pct         n= 400 mean=  18.1619% median=   2.9905%
+
+  e7 delta_bytes_pct      n= 400 mean=  -0.5993% median=  -1.5250%
+  e7 delta_ssim2          n= 400 mean=   0.3488 median=  -0.4206
+  e7 delta_bfly_pct       n= 400 mean=  -6.5847% median=  -0.3555%
+  e7 delta_ms_pct         n= 400 mean=  21.9384% median=   8.1600%
+
+  e8 delta_bytes_pct      n= 394 mean=  -6.1447% median=  -3.5380%
+  e8 delta_ssim2          n= 394 mean=   0.3121 median=  -0.5106
+  e8 delta_bfly_pct       n= 394 mean=  -7.8539% median=  -1.2635%
+  e8 delta_ms_pct         n= 394 mean=  34.0880% median=   2.0320%
+
+  e9 delta_bytes_pct      n= 387 mean=  -6.5130% median=  -3.0060%
+  e9 delta_ssim2          n= 387 mean=   0.1374 median=  -0.5608
+  e9 delta_bfly_pct       n= 387 mean=  -6.9638% median=  -0.7170%
+  e9 delta_ms_pct         n= 387 mean=  82.9046% median=   3.3400%
+
+
+# W44-202 baseline: old_zenjxl=1978 old_libjxl=1978
+
+# Aggregate: W44-202 Zenjxl vs cjxl-e7 (n=1978)
+  delta_bytes_pct          n= 1978 mean=  -5.8760% median=  -0.9530% p25=  -6.1660 p75=   0.6480
+  delta_ssim2              n= 1978 mean=   0.4843 median=  -0.2953 p25=  -0.8711 p75=   0.1153
+  delta_bfly_pct           n= 1978 mean=  -6.6840% median=  -0.6985% p25=  -6.7790 p75=   1.3440
+  delta_ms_pct             n= 1978 mean=   7.7539% median= -15.1470% p25= -33.4500 p75=  10.6220
+  ours_bytes               n= 1978 mean=74586.6158 B median=40707.0000 B p25=23100.0000 p75=89100.0000
+  ours_ssim2               n= 1978 mean=  77.6910 median=  80.7548 p25=  68.2386 p75=  87.1975
+  ours_bfly                n= 1978 mean=   2.4749 median=   2.3322 p25=   1.3648 p75=   3.5739
+  ours_ms                  n= 1978 mean=4947.1062 ms median=1390.9780 ms p25= 357.0280 p75=3929.9100
+
+# Per-cell diff (matched n=1978)
+  ours_bytes_diff      mean=    -467.120 median=    -210.000
+  ours_ssim2_diff      mean=   +0.000000 median=   +0.000000
+  ours_bfly_diff       mean=   +0.000000 median=   +0.000000
+  |ours_bfly_diff|     mean=   +0.000000 median=   +0.000000 max=   +0.000000
+  |cjxl_bfly_diff|     mean=   +0.000000 median=   +0.000000 max=   +0.000000
+
+# Sample-cell per-cell:
+  image        eff dist   metric                OLD        NEW          Δ
+  1025469      e5 d=0.25 ours_bytes     104912.0000 104794.0000  -118.0000
+  1025469      e5 d=0.25 ours_ssim2        95.0271    95.0271    +0.0000
+  1025469      e5 d=0.25 ours_bfly          0.4566     0.4566    +0.0000
+  1025469      e5 d=0.25 cjxl_bfly          0.4746     0.4746    +0.0000
+  1025469      e5 d=0.25 ours_ms          179.0140   230.0030   +50.9890
+  1025469      e5 d=0.25 cjxl_ms          179.4260   111.7470   -67.6790
+
+  1418519      e5 d=1.00 ours_bytes     21283.0000 21209.0000   -74.0000
+  1418519      e5 d=1.00 ours_ssim2        87.9388    87.9388    +0.0000
+  1418519      e5 d=1.00 ours_bfly          1.1460     1.1460    +0.0000
+  1418519      e5 d=1.00 cjxl_bfly          1.1425     1.1425    +0.0000
+  1418519      e5 d=1.00 ours_ms          177.0630   190.8980   +13.8350
+  1418519      e5 d=1.00 cjxl_ms          221.2880   237.0250   +15.7370
+
+  1531677      e7 d=5.00 ours_bytes     19486.0000 19444.0000   -42.0000
+  1531677      e7 d=5.00 ours_ssim2        50.1680    50.1680    +0.0000
+  1531677      e7 d=5.00 ours_bfly          4.6163     4.6163    +0.0000
+  1531677      e7 d=5.00 cjxl_bfly          4.4983     4.4983    +0.0000
+  1531677      e7 d=5.00 ours_ms          476.4820   313.2680  -163.2140
+  1531677      e7 d=5.00 cjxl_ms          353.0140   317.9450   -35.0690
+
+  3637739      e7 d=4.00 ours_bytes     16652.0000 16407.0000  -245.0000
+  3637739      e7 d=4.00 ours_ssim2        70.0925    70.0925    +0.0000
+  3637739      e7 d=4.00 ours_bfly          3.8018     3.8018    +0.0000
+  3637739      e7 d=4.00 cjxl_bfly          3.9473     3.9473    +0.0000
+  3637739      e7 d=4.00 ours_ms          372.7100   416.2180   +43.5080
+  3637739      e7 d=4.00 cjxl_ms          607.4610   503.0600  -104.4010
+
+  1189261      e6 d=2.00 ours_bytes     39714.0000 39385.0000  -329.0000
+  1189261      e6 d=2.00 ours_ssim2        78.8523    78.8523    +0.0000
+  1189261      e6 d=2.00 ours_bfly          2.3450     2.3450    +0.0000
+  1189261      e6 d=2.00 cjxl_bfly          2.3295     2.3295    +0.0000
+  1189261      e6 d=2.00 ours_ms          286.3290   327.4390   +41.1100
+  1189261      e6 d=2.00 cjxl_ms          271.8360   273.1710    +1.3350
+
+  terminal     e7 d=0.50 ours_bytes     49899.0000 49881.0000   -18.0000
+  terminal     e7 d=0.50 ours_ssim2        94.7568    94.7568    +0.0000
+  terminal     e7 d=0.50 ours_bfly          0.3958     0.3958    +0.0000
+  terminal     e7 d=0.50 cjxl_bfly          0.4282     0.4282    +0.0000
+  terminal     e7 d=0.50 ours_ms         1793.0360  2487.4260  +694.3900
+  terminal     e7 d=0.50 cjxl_ms         1770.6230  1242.5030  -528.1200
+
+  windows95    e7 d=1.00 ours_bytes     50688.0000 50690.0000    +2.0000
+  windows95    e7 d=1.00 ours_ssim2        90.3974    90.3974    +0.0000
+  windows95    e7 d=1.00 ours_bfly          1.1841     1.1841    +0.0000
+  windows95    e7 d=1.00 cjxl_bfly          1.2033     1.2033    +0.0000
+  windows95    e7 d=1.00 ours_ms          451.2410   618.7800  +167.5390
+  windows95    e7 d=1.00 cjxl_ms          663.2430   567.6510   -95.5920
+
+  graph        e7 d=2.00 ours_bytes     28790.0000 28582.0000  -208.0000
+  graph        e7 d=2.00 ours_ssim2        91.0138    91.0138    +0.0000
+  graph        e7 d=2.00 ours_bfly          0.8519     0.8519    +0.0000
+  graph        e7 d=2.00 cjxl_bfly          1.8089     1.8089    +0.0000
+  graph        e7 d=2.00 ours_ms          581.0690   500.8250   -80.2440
+  graph        e7 d=2.00 cjxl_ms         1147.8760   498.5540  -649.3220
+
+  1420710      e5 d=5.00 ours_bytes     22486.0000 22486.0000    +0.0000
+  1420710      e5 d=5.00 ours_ssim2        56.9300    56.9300    +0.0000
+  1420710      e5 d=5.00 ours_bfly          4.7829     4.7829    +0.0000
+  1420710      e5 d=5.00 cjxl_bfly          4.4438     4.4438    +0.0000
+  1420710      e5 d=5.00 ours_ms          138.1900   167.4330   +29.2430
+  1420710      e5 d=5.00 cjxl_ms          328.5690   169.7680  -158.8010
+
+
+# Per-cell diff (matched n=1977)
+  ours_bytes_diff      mean=      +0.000 median=      +0.000
+  ours_ssim2_diff      mean=   +0.000000 median=   +0.000000
+  ours_bfly_diff       mean=   +0.000000 median=   +0.000000
+  |ours_bfly_diff|     mean=   +0.000000 median=   +0.000000 max=   +0.000000
+  |cjxl_bfly_diff|     mean=   +0.000000 median=   +0.000000 max=   +0.000000
+
+# Sample-cell per-cell:
+  image        eff dist   metric                OLD        NEW          Δ
+  1025469      e5 d=0.25 ours_bytes     105091.0000 105091.0000    +0.0000
+  1025469      e5 d=0.25 ours_ssim2        95.0033    95.0033    +0.0000
+  1025469      e5 d=0.25 ours_bfly          0.4564     0.4564    +0.0000
+  1025469      e5 d=0.25 cjxl_bfly          0.4746     0.4746    +0.0000
+  1025469      e5 d=0.25 ours_ms          176.6080   277.6570  +101.0490
+  1025469      e5 d=0.25 cjxl_ms          179.4260   111.7470   -67.6790
+
+  1418519      e5 d=1.00 ours_bytes     21853.0000 21853.0000    +0.0000
+  1418519      e5 d=1.00 ours_ssim2        87.7726    87.7726    +0.0000
+  1418519      e5 d=1.00 ours_bfly          1.1404     1.1404    +0.0000
+  1418519      e5 d=1.00 cjxl_bfly          1.1425     1.1425    +0.0000
+  1418519      e5 d=1.00 ours_ms          328.1880   283.6460   -44.5420
+  1418519      e5 d=1.00 cjxl_ms          221.2880   237.0250   +15.7370
+
+  1531677      e7 d=5.00 ours_bytes     29320.0000 29320.0000    +0.0000
+  1531677      e7 d=5.00 ours_ssim2        39.2709    39.2709    +0.0000
+  1531677      e7 d=5.00 ours_bfly          5.3054     5.3054    +0.0000
+  1531677      e7 d=5.00 cjxl_bfly          4.4983     4.4983    +0.0000
+  1531677      e7 d=5.00 ours_ms          422.6600   434.9570   +12.2970
+  1531677      e7 d=5.00 cjxl_ms          353.0140   317.9450   -35.0690
+
+  3637739      e7 d=4.00 ours_bytes     18014.0000 18014.0000    +0.0000
+  3637739      e7 d=4.00 ours_ssim2        67.8090    67.8090    +0.0000
+  3637739      e7 d=4.00 ours_bfly          3.7482     3.7482    +0.0000
+  3637739      e7 d=4.00 cjxl_bfly          3.9473     3.9473    +0.0000
+  3637739      e7 d=4.00 ours_ms          453.0500   516.5280   +63.4780
+  3637739      e7 d=4.00 cjxl_ms          607.4610   503.0600  -104.4010
+
+  1189261      e6 d=2.00 ours_bytes     40238.0000 40238.0000    +0.0000
+  1189261      e6 d=2.00 ours_ssim2        78.6188    78.6188    +0.0000
+  1189261      e6 d=2.00 ours_bfly          2.3467     2.3467    +0.0000
+  1189261      e6 d=2.00 cjxl_bfly          2.3295     2.3295    +0.0000
+  1189261      e6 d=2.00 ours_ms          268.3850   330.0160   +61.6310
+  1189261      e6 d=2.00 cjxl_ms          271.8360   273.1710    +1.3350
+
+  terminal     e7 d=0.50 ours_bytes     51655.0000 51655.0000    +0.0000
+  terminal     e7 d=0.50 ours_ssim2        95.1733    95.1733    +0.0000
+  terminal     e7 d=0.50 ours_bfly          0.3951     0.3951    +0.0000
+  terminal     e7 d=0.50 cjxl_bfly          0.4282     0.4282    +0.0000
+  terminal     e7 d=0.50 ours_ms         2008.1230  1964.5110   -43.6120
+  terminal     e7 d=0.50 cjxl_ms         1770.6230  1242.5030  -528.1200
+
+  windows95    e7 d=1.00 ours_bytes     62361.0000 62361.0000    +0.0000
+  windows95    e7 d=1.00 ours_ssim2        88.6528    88.6528    +0.0000
+  windows95    e7 d=1.00 ours_bfly          1.2404     1.2404    +0.0000
+  windows95    e7 d=1.00 cjxl_bfly          1.2033     1.2033    +0.0000
+  windows95    e7 d=1.00 ours_ms          554.1660   528.2170   -25.9490
+  windows95    e7 d=1.00 cjxl_ms          663.2430   567.6510   -95.5920
+
+  graph        e7 d=2.00 ours_bytes     21020.0000 21020.0000    +0.0000
+  graph        e7 d=2.00 ours_ssim2        86.1067    86.1067    +0.0000
+  graph        e7 d=2.00 ours_bfly          1.4558     1.4558    +0.0000
+  graph        e7 d=2.00 cjxl_bfly          1.8089     1.8089    +0.0000
+  graph        e7 d=2.00 ours_ms          730.7950   673.7790   -57.0160
+  graph        e7 d=2.00 cjxl_ms         1147.8760   498.5540  -649.3220
+
+  1420710      e5 d=5.00 ours_bytes     24951.0000 24951.0000    +0.0000
+  1420710      e5 d=5.00 ours_ssim2        59.4827    59.4827    +0.0000
+  1420710      e5 d=5.00 ours_bfly          5.0792     5.0792    +0.0000
+  1420710      e5 d=5.00 cjxl_bfly          4.4438     4.4438    +0.0000
+  1420710      e5 d=5.00 ours_ms          459.4770   317.0930  -142.3840
+  1420710      e5 d=5.00 cjxl_ms          328.5690   169.7680  -158.8010
+
