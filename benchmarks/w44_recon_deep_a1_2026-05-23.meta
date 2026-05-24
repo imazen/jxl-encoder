@@ -1,0 +1,87 @@
+W44-A1 butteraugli source-diff audit
+2026-05-23 (UTC: 2026-05-24T00:47Z)
+Agent: claude-w44-recon-a1
+
+Verdict: RULED OUT — no divergence found that would shift the buttloop's
+target metric meaningfully. The Rust butteraugli crate (v0.9.2) is at
+parity with libjxl C++ butteraugli at <0.001 relative score (0.1%), and
+observed max drift is 0.002% per the CLAUDE.md and the reference_parity
+test on 908 cases.
+
+Tests run during audit (release mode, ~/work/butteraugli/butteraugli):
+  cargo test --release --test reference_parity   → 4/4 PASS
+  cargo test --release --test conformance        → 6/6 PASS, 2 ignored
+  cargo test --release --test cross_arch_parity  → 2/2 PASS, 1 ignored
+
+reference_parity covers 908 reference cases captured from libjxl's
+butteraugli_main (FIR blur path, recursive Comparator, hardcoded scores).
+Tolerance is 0.001 relative; observed max ~2e-5.
+
+Divergence audit table:
+  benchmarks/w44_recon_deep_a1_2026-05-23.tsv
+  16 rows, ranked by severity. All low/none.
+
+Top-3 highest-EV "fix" candidates (NONE recommended for shipping):
+  1. None — every divergence found is at-or-below the 1e-5 score impact
+     threshold. Shipping any change would risk regressing the existing
+     908-case parity gate.
+  2. Document the f64→f32 mask precision compromise (already documented
+     in CLAUDE.md "Optimization session 5"); no code change.
+  3. If a buttloop wedge cell EVER produces score drift > 0.01 between
+     buttloop's internal recon scoring and the post-buttloop final-encode
+     scoring, the bug is in the RECONSTRUCTION (not the metric). Per
+     W44-138 P-1 candidate: per-iter EPF sharpness recompute. Per W44-111
+     candidate: drift_block_map.rs R/G channel residual investigation.
+
+What this audit does NOT prove:
+  - It does NOT prove our buttloop targets match libjxl's buttloop. The
+    buttloop's target is a function of (a) the metric and (b) what's
+    being scored. (a) is at parity per this audit. (b) is the
+    reconstruction divergence W44-111 / W44-113 / W44-138 already
+    identified as the residual root cause and partially patched via
+    W44-105/107/108/109/117/118/120 chain.
+  - It does NOT prove libjxl uses our exact code paths internally
+    (e.g. archmage vs hwy SIMD dispatch, FIR vs IIR). It proves the
+    OUTPUT scores are within 0.002% on 908 reference cases.
+
+What was checked side-by-side:
+  - ButteraugliComparator::Diffmap (libjxl 1828-1857) ↔ compute_butteraugli_linear_impl (diff.rs:731)
+  - DiffmapPsychoImage (libjxl 1893-1951)             ↔ compute_diffmap_single_resolution_linear (diff.rs:626)
+  - MaltaDiffMap/MaltaDiffMapLF (libjxl 987-1106)     ↔ malta_diff_map (malta.rs:1280)
+  - L2Diff/SetL2Diff/L2DiffAsymmetric (libjxl 1318-1402) ↔ l2_diff/l2_diff_write/l2_diff_asymmetric (diff.rs:131-224)
+  - Mask + MaskPsychoImage (libjxl 1213-1264)         ↔ mask_psycho_image + compute_mask_from_hf_uhf (diff.rs:389-397, mask.rs:344-385)
+  - DiffPrecompute (libjxl 1135-1148)                 ↔ diff_precompute + combine_and_precompute (mask.rs:64-84, 312-342)
+  - FuzzyErosion + StoreMin3 (libjxl 1156-1208)       ↔ fuzzy_erosion + update_min3 (mask.rs:110-286)
+  - MaskY + MaskDcY (libjxl 1267-1283)                ↔ mask_y + mask_dc_y (mask.rs:288-306)
+  - CombineChannelsForMasking (libjxl 1109-1133)      ↔ combine_channels_for_masking (mask.rs:29-57)
+  - CombineChannelsToDiffmap (libjxl 1289-1316)       ↔ combine_channels_to_diffmap_fused (diff.rs:403-471)
+  - OpsinDynamicsImage + OpsinAbsorbance (libjxl 1467-1538) ↔ opsin_dynamics_image + opsin_absorbance (opsin.rs:153-251)
+  - Gamma + FastLog2f (libjxl 1407-1421)              ↔ gamma + fast_log2f (opsin.rs:53-112)
+  - SeparateFrequencies family (libjxl 403-535)       ↔ separate_frequencies (psycho.rs:507-523)
+  - Blur + ConvolutionWithTranspose + ConvolveBorderColumn (libjxl 88-263) ↔ gaussian_blur + convolve_horizontal_borders + convolve_vertical_* (blur.rs:866-960)
+  - AddSupersampled2x (libjxl 1767-1777)              ↔ add_supersampled_2x (diff.rs:80-111)
+  - SubSample2x (libjxl 1732-1764)                    ↔ subsample_linear_rgb_2x (diff.rs:550-623)
+  - ButteraugliScoreFromDiffmap (libjxl 1955-1962)    ↔ compute_score_from_diffmap (diff.rs:484-547)
+  - Constants: wMfMalta, norm1Mf, wMfMaltaX, norm1MfX, wHfMalta, norm1Hf, wHfMaltaX, norm1HfX, wUhfMalta, norm1Uhf, wUhfMaltaX, norm1UhfX, wmul[9], MIXI0..MIXI11, MASK_MUL, MASK_BIAS, MASK_RADIUS, MASK_TO_ERROR_MUL, MASK_Y_{OFFSET,SCALER,MUL}, MASK_DC_Y_{OFFSET,SCALER,MUL}, GLOBAL_SCALE, INTENSITY_TARGET_NORMALIZATION, kHeuristicMixingValue, kMul (MaximumClamp), kSigmaLf/Hf/Uhf, kRemoveMfRange, kAddMfRange, kRemoveHfRange, kAddHfRange, kRemoveUhfRange, kMaxclampHf, kMaxclampUhf, kMulYHf, kMulYUhf, XmulLfToVals, YmulLfToVals, BmulLfToVals, YToBMulLfToVals, COMBINE_CHANNELS_MULS, kWeight0, kWeight1, mulli (Malta non-LF and LF). ALL constants verified bit-equivalent.
+
+DO NOT respawn:
+  - "find the butteraugli divergence" chunks. RULED OUT. The 908-case
+    reference_parity test at 0.1% tolerance closes this hypothesis.
+  - FMA precision investigations (per W44-66 user correction).
+  - Any sub-percent-impact "fix" to the butteraugli crate that would
+    risk regressing the 908-case parity gate.
+
+Next-EV follow-ons (NOT this chunk):
+  - W44-RECON-DEEP/A2: drift_block_map.rs R/G channel extension
+    (per W44-111 Option B candidate 1). Still unfinished.
+  - W44-RECON-DEEP/A3: W44-138 P-1 per-iter EPF sharpness recompute
+    (highest EV, multi-day, multi-divergence-table-aware).
+  - W44-RECON-DEEP/A4: real-encode-decode in buttloop (W44-111 Option
+    A, 3-5d). Triples buttloop cost, obsoletes W44-105/107/108/109.
+
+Source state: production butteraugli + jxl-encoder unchanged. Only
+new artifacts:
+  - benchmarks/w44_recon_deep_a1_2026-05-23.tsv (this audit's diff table)
+  - benchmarks/w44_recon_deep_a1_2026-05-23.meta (this file)
+  - ~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_recon_deep_a1_butteraugli_source_diff_2026-05-23.md
+

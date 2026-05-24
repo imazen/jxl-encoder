@@ -1,0 +1,282 @@
+# W44-RECON-DEEP-A4 per-iter EPF sharpness recompute A/B — META
+
+## Run info
+
+- Date: 2026-05-23 UTC
+- Workspace: ~/work/zen/jxl-encoder--w44-recon-deep-a4
+- Parent commit: 05e3bdf0 (jj change ttvzwsvo) on origin/main
+  ("investigate(W44-recovery): e9 perf profile on 1418519 d=1.0 —
+   rayon coordination 30% dominant")
+- Source change: SIBLING-WORKSPACE WIP ONLY (not on main yet)
+  - jxl-encoder/src/vardct/butteraugli_loop.rs: env-name alias
+    JXL_W44_RECON_DEEP_A4_PER_ITER_SHARPNESS=1 wired alongside
+    existing JXL_W44_118_PER_ITER_SHARPNESS (~3 LOC) + optional
+    debug eprintln gated on JXL_W44_RECON_DEEP_A4_DEBUG=1 (~14 LOC).
+  - jxl-encoder/Cargo.toml: new [[example]] registration.
+  - jxl-encoder/examples/w44_recon_deep_a4_per_iter_sharpness_ab.rs
+    (NEW, paired A/B harness).
+- Build: `CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target`
+- Features: `butteraugli-loop ssim2-loop parallel`
+
+## TSV schema
+
+Paired A/B per cell, one row per cell:
+
+| col | meaning |
+|---|---|
+| image | filename |
+| corpus | "CID22" or "gb82-sc" |
+| effort | e8 (all cells) |
+| distance | f32 distance |
+| role | one of: p1_target, w117_win, w118_canary, variantZ, w120_lowd, screen_d3, photo_d3 |
+| mode_a_bytes | default (W44-117 one-shot seed) encoded byte count |
+| mode_b_bytes | JXL_W44_RECON_DEEP_A4_PER_ITER_SHARPNESS=1 encoded byte count |
+| delta_bytes_pct | 100 * (B - A) / A |
+| mode_a_bfly | butteraugli (Rust crate) on mode A |
+| mode_b_bfly | butteraugli (Rust crate) on mode B |
+| delta_bfly_pct | 100 * (B - A) / A |
+| mode_a_ssim2 | fast_ssim2 (Rust crate) on mode A |
+| mode_b_ssim2 | fast_ssim2 on mode B |
+| delta_ssim2 | absolute B - A |
+| mode_a_ms | encode wall ms on mode A |
+| mode_b_ms | encode wall ms on mode B |
+| delta_ms_pct | 100 * (B - A) / A |
+
+## Cell selection rationale
+
+12 cells × e8 × 2 modes (A/B paired):
+
+| role | image | d | rationale |
+|---|---|---|---|
+| p1_target | 1418519 | 5.0 | W44-138 Phase 1 identified +0.034 R after_epf delta (the "photo wedge"); EV: closes the wedge if Mode D works |
+| w117_win | terminal | 4.0 | W44-117 +0.90 SSIM2 win; W44-118 Mode D regressed -3.06 SSIM2 here (catastrophic) |
+| w117_win | codec_wiki | 4.0 | W44-117 win; OOM at 2GB memory budget on this image (known per W44-118) |
+| w118_canary | 1025469 | 2.0 | W44-118 control |
+| w118_canary | 1025469 | 4.0 | W44-118 regression cell (-0.85 SSIM2 from W44-117); Mode D recovered only +0.16 |
+| variantZ | 1420710 | 5.0 | W44-99/100 variant Z photo (entropy_mul lift active) |
+| variantZ | 1531677 | 5.0 | W44-99/100 variant Z photo (LOW colour variant) |
+| w120_lowd | terminal | 0.8 | W44-120 distance gate test (W44-117 disabled below d=1.0 per gate) |
+| screen_d3 | terminal | 3.0 | screenshot ledger residual at d=3 |
+| screen_d3 | codec_wiki | 3.0 | screenshot ledger residual at d=3 |
+| photo_d3 | 1189261 | 3.0 | photo control at d=3 |
+| photo_d3 | 1025469 | 3.0 | photo control at d=3 |
+
+## Results summary
+
+11 cells produced data; 1 cell (codec_wiki e8 d=4) failed at A
+encode with memory budget exceeded (known limit per W44-118 memo,
+unrelated to W44-RECON-DEEP-A4).
+
+### Photos (7 cells): ALL BYTE-IDENTICAL between A and B
+
+| image | d | bytes A == B | bfly A == B | ssim2 A == B |
+|---|---|---|---|---|
+| 1418519 | 5.0 | 7064 / 7064 | 4.2824 | 66.8657 |
+| 1025469 | 2.0 | 20469 / 20469 | 2.0662 | 78.5585 |
+| 1025469 | 3.0 | 14564 / 14564 | 3.0948 | 69.6399 |
+| 1025469 | 4.0 | 11513 / 11513 | 3.8201 | 62.6040 |
+| 1420710 | 5.0 | 20550 / 20550 | 4.8898 | 57.3028 |
+| 1531677 | 5.0 | 17546 / 17546 | 4.7903 | 47.1102 |
+| 1189261 | 3.0 | 26783 / 26783 | 2.9179 | 70.4681 |
+
+**Mode B is structurally a no-op on photos** because the W44-118
+`is_screenshot` gate at the buttloop call site
+(`encoder.rs:5255-5259`) passes `mask1x1 = None` for non-screenshot
+content, and the per-iter Mode D guard inside
+`butteraugli_refine_quant_field_inner_seed` requires
+`mask1x1.is_some() && len == padded_pixels`
+(`butteraugli_loop.rs:2018-2019`). On photos the guard fails and
+the per-iter `compute_epf_sharpness` recompute never runs.
+
+**This falsifies the W44-138 P-1 hypothesis as scoped.** The
+hypothesis was "per-iter sharpness recompute closes the photo
++0.034 EPF wedge on 1418519 d=5 e8". The per-iter mechanism IS
+structurally incapable of firing on photos in the current code,
+because the same W44-118 gate that prevents the W44-117 one-shot
+seed from regressing photos also prevents Mode D from running on
+them.
+
+### Screenshots (4 cells with valid A+B data): Mode B HURTS
+
+| image | d | role | Δbytes_pct | Δbfly_pct | Δssim2 | Δms_pct |
+|---|---|---|---|---|---|---|
+| terminal | 4.0 | w117_win | +0.04% | 0.0% | -0.032 | +15.6% |
+| terminal | 0.8 | w120_lowd | -0.05% | +6.9% | **-0.483** | +21.6% |
+| terminal | 3.0 | screen_d3 | +0.30% | +9.9% | -0.131 | +22.0% |
+| codec_wiki | 3.0 | screen_d3 | -0.93% | -13.6% | **-1.717** | +20.2% |
+
+**No cell within the W44-RECON-DEEP-A4 acceptance gates passes.**
+SSIM2 regression budget was ≤ -0.5; codec_wiki d=3 regresses by
+-1.72, terminal d=0.8 by -0.48 (right at the edge of the gate).
+Wall-time penalty is +15.6% to +22.0% — within the predicted
+10-30% slowdown but consistently at the high end.
+
+Note: terminal e8 d=0.8 SHOULD be byte-identical between A and B
+because W44-120 distance gate disables W44-117 below d=1.0, so the
+per-iter recompute path should also be inactive — but the
+measurement shows non-zero deltas. Investigation: the W44-120 gate
+guards the one-shot seed compute (`butteraugli_loop.rs:1564-1626`);
+the per-iter mechanism inside the inner-seed loop checks only
+`current_params.epf_iters > 0 && epf_dynamic_sharpness &&
+mask1x1.is_some()` without re-checking the distance gate. So at d=0.8
+on a screenshot, Mode A sees `sharpness = vec![4u8; num_blocks]`
+(W44-120 fallback) and Mode B sees per-iter recomputed sharpness
+(skipping the W44-120 gate). This is a Mode D scaffolding gap, not
+a fundamental Mode D problem — but it shows up here.
+
+The codec_wiki d=3 cell deserves special attention: bfly IMPROVES
+by -13.6% (lower is better) while SSIM2 REGRESSES by -1.72. The
+two metrics disagree on whether the per-iter map is better. Mode B
+produces a smaller file (-0.93%) AND has lower bfly score, but
+SSIM2 sees worse-quality output. This is consistent with the W44-66
+"butteraugli and SSIM2 disagree on screenshot artifacts" observation
+documented elsewhere — the per-iter recompute may be steering the
+encoder toward bfly-optimized but SSIM2-hostile configurations on
+screenshot content.
+
+### Comparison vs W44-118 Mode D (2026-05-20)
+
+| cell | A4 ΔSSIM2 (this run) | W44-118 D vs B ΔSSIM2 | gap |
+|---|---|---|---|
+| terminal e8 d=4 | -0.032 | -3.06 (D=83.09 vs B=86.15) | **+3.03 (A4 much milder)** |
+| terminal e8 d=3 | -0.131 | -0.38 (D=88.73 vs B=89.11) | +0.25 |
+| 1025469 e8 d=4 | 0.000 (no fire) | +0.16 (D=61.92 vs B=61.76) | (W44-118 measured BEFORE W44-118 gate landed) |
+
+W44-118 measured terminal e8 d=4 at -3.06 SSIM2 vs B = catastrophic.
+Today (post-W44-118 + W44-140 fade + W44-142 suppress + W44-176
+exclude + other RFC#45 chunks), the same cell measures -0.032 SSIM2
+vs B = essentially noise. The per-iter mechanism is much less
+disruptive in the current code path because:
+
+1. The W44-140 fade band [1.0, 1.5) doesn't apply at d=4 (Mode B
+   gets the full W44-117 seed too).
+2. The W44-176 terminal-class exclude discriminator may be active
+   at d=4 — TBD without further probe.
+3. The buttloop has 4 iters at e8 now (per RFC#45 chunk 2 effort
+   table updates) instead of the W44-118-era 2 iters; per-iter
+   recompute may converge differently with more iters.
+4. The W44-129 RuntimeTuning refactor may have changed
+   sharpness-related caching behaviour.
+
+The W44-118 -3.06 result is still load-bearing as a historical
+warning, but the current production code paths are different enough
+that today's result is not strictly comparable.
+
+## Verdict: HONEST-STOP (PHOTO TARGET STRUCTURALLY UNREACHABLE)
+
+**The W44-138 P-1 hypothesis is FALSIFIED as scoped.** The per-iter
+EPF sharpness recompute mechanism cannot improve the 1418519 e8 d=5
+P-1 target photo because the W44-118 `is_screenshot` gate prevents
+the mechanism from firing on photos. The gate was load-bearing
+(W44-118 documented -0.85 SSIM2 regression on 1025469 e8 d=4 when
+W44-117 fired on photos), so lifting it to enable per-iter on photos
+would re-introduce that regression.
+
+**Mode B does not obsolete W44-117/118/120 on screenshots either.**
+Of 4 screenshot cells tested, Mode B regresses SSIM2 on every one:
+-0.032 (terminal d=4, mild), -0.131 (terminal d=3), -0.483
+(terminal d=0.8, large), -1.717 (codec_wiki d=3, catastrophic).
+Plus wall-time penalty of +15.6% to +22.0%.
+
+The verdict matches the W44-138 P-1 design risk note: "Risk: 10-30%
+buttloop slowdown" — measured. Plus an unexpected risk: Mode B
+hurts SSIM2 on every screenshot cell tested, even when bfly
+improves.
+
+## Possible next chunks (NOT in W44-RECON-DEEP-A4 scope)
+
+The P-1 hypothesis is falsified, but the W44-138 P-1 framing
+("per-iter sharpness might close the photo wedge") implicitly
+assumed that lifting the W44-118 gate is acceptable. A separate
+chunk could test a HYBRID that:
+
+1. Lifts W44-118 gate JUST for the 1418519-class photos via a
+   zenanalyze discriminator (mask1x1 must be high enough to make
+   per-iter recompute pay off without re-triggering the 1025469
+   regression). Estimated EV: 1-2 photos closed on the cjxl-parity
+   ledger. Estimated risk: HIGH — needs a tight discriminator AND
+   the per-iter mechanism needs to actually produce SSIM2 gains
+   (which the screenshot evidence DOESN'T support).
+
+2. Investigate the codec_wiki d=3 bfly-vs-SSIM2 disagreement. The
+   per-iter mechanism IMPROVES butteraugli substantially (-13.6%)
+   on this cell while DESTROYING SSIM2 (-1.72). If the buttloop
+   is being misled by butteraugli measurement bias on screenshots,
+   per-iter Mode D may actually be the RIGHT mechanism but the
+   wrong scoring metric is steering convergence. This connects
+   to the W44-138 follow-on #5 "root-cause buttloop measurement
+   divergence" — multi-week investigation, not a chunk.
+
+3. Hybrid: per-iter recompute on the LAST iter only. Mode D
+   currently recomputes every iter; the seed compute is correct on
+   iter 0 (= W44-117), the converged sharpness is what matters on
+   iter N. Recomputing once at iter N-1 would have:
+   - 1/N the wall-time cost
+   - Correct converged-state targeting for the final-iter compare
+   - Different middle-iter convergence behaviour (still W44-117
+     for iters 1..N-1)
+   Could be tested with a small extension to the existing env hook.
+
+4. Investigate the W44-120 distance gate gap in Mode D (per-iter
+   doesn't re-check distance gate). At d<1.0, per-iter Mode D
+   activates while Mode A correctly skips. The cost is the
+   terminal e8 d=0.8 -0.48 regression measured here. Quick fix:
+   add `target_distance >= w44_120_min_distance` to the per-iter
+   guard.
+
+## DO NOT (binding for future agents)
+
+- **DO NOT lift the W44-118 `is_screenshot` gate** without
+  re-reading the W44-118 memo. The gate is load-bearing for the
+  1025469 e8 d=4 -0.85 SSIM2 regression.
+- **DO NOT cite "FMA precision"** for any byte / metric delta in
+  this run (per W44-66 binding directive).
+- **DO NOT respawn W44-RECON-DEEP-A4 as currently scoped.** The
+  hypothesis is falsified; the per-iter mechanism cannot reach
+  the photo target through the production gate.
+- **DO NOT ship Mode D to production default.** Measurements
+  conclusively show it hurts SSIM2 on every screenshot cell
+  tested AND adds 15-22% wall time. The 2026-05-20 W44-118 Mode F
+  (is_screenshot gate around the one-shot seed) is still the
+  shipped pareto-optimal answer.
+- **DO NOT remove the JXL_W44_118_PER_ITER_SHARPNESS env hook**
+  OR the new JXL_W44_RECON_DEEP_A4_PER_ITER_SHARPNESS alias —
+  they're needed for future hybrid investigations and document
+  the Option A design alternative.
+
+## Files in this run
+
+- `jxl-encoder/src/vardct/butteraugli_loop.rs` — env-name alias
+  + optional debug print (~17 LOC, gated; production source
+  semantically unchanged with the new env unset)
+- `jxl-encoder/Cargo.toml` — registered new example (~8 LOC)
+- `jxl-encoder/examples/w44_recon_deep_a4_per_iter_sharpness_ab.rs`
+  — paired A/B harness (~290 LOC, NEW)
+- `benchmarks/w44_recon_deep_a4_per_iter_sharpness_ab_2026-05-23.tsv`
+  — 11-row TSV (1 cell OOM'd at memory budget)
+- `benchmarks/w44_recon_deep_a4_per_iter_sharpness_ab_2026-05-23.meta`
+  — this file
+- `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_recon_deep_a4_per_iter_sharpness_2026-05-23.md`
+  — memory note
+
+## Cross-references
+
+- `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_138_buttloop_recon_root_cause_2026-05-20.md` — P-1 design
+- `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_117_epf_sharpness_seed_shipped_2026-05-20.md` — one-shot seed
+- `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_118_screenshot_gate_shipped_2026-05-20.md` — the gate that blocks Mode D on photos AND the prior Mode D measurement (-3.06 terminal d=4)
+- `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_120_epf_seed_distance_gate_shipped_2026-05-20.md` — distance gate scaffolding
+
+## Reproducer
+
+```bash
+cd ~/work/zen/jxl-encoder--w44-recon-deep-a4
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run --release \
+  --features 'butteraugli-loop ssim2-loop parallel' \
+  --example w44_recon_deep_a4_per_iter_sharpness_ab \
+  --manifest-path jxl-encoder/Cargo.toml \
+  > benchmarks/w44_recon_deep_a4_per_iter_sharpness_ab_2026-05-23.tsv
+```
+
+Add `JXL_W44_RECON_DEEP_A4_DEBUG=1` to emit per-iter sharpness
+max-abs change to stderr.
