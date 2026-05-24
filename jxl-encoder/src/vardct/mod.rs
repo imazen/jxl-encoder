@@ -23,6 +23,8 @@ mod afv;
 pub(crate) mod bitstream;
 mod block_extract;
 #[cfg(feature = "butteraugli-loop")]
+pub(crate) mod butteraugli_backend;
+#[cfg(feature = "butteraugli-loop")]
 pub(crate) mod butteraugli_loop;
 pub(crate) mod chroma_from_luma;
 /// Chroma subsampling helpers — RGB → YCbCr conversion and

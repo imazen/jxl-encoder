@@ -1284,50 +1284,58 @@ impl VarDctEncoder {
         // existing initialiser in vardct/encoder.rs:549.
         let vdp2_intensity_target = self.intensity_target;
 
-        let reference: Option<butteraugli::ButteraugliReference> = if use_vdp2 {
-            // VDP2 path: hold onto the planar refs permanently (one
-            // n*4*3 reservation) and skip the butteraugli precompute.
-            MemoryBudget::reserve_permanent_opt(budget, (n as u64).saturating_mul(4 * 3))?;
-            None
-        } else {
-            // Butteraugli path: transient n*4*3 reservation released as
-            // soon as the reference precompute owns its internal copy.
-            let _g = MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
-            // W44-RECON-DEEP/A10: dispatch `intensity_target` on the
-            // encoded transfer function (libjxl-parity with
-            // `enc_adaptive_quantization.cc:949-953`). SDR (sRGB /
-            // Linear / Bt709 / Dci / Unknown / no color_encoding) →
-            // 80 cd/m²; PQ / HLG → metadata `intensity_target` (typically
-            // 10000.0 / 1000.0). Without this, HDR encodes computed
-            // butteraugli at SDR luminance and the buttloop converged on
-            // the wrong perceptual target.
-            let metric_intensity_target = match self.color_encoding.as_ref() {
-                Some(ce) => libjxl_butteraugli_intensity_target(
-                    ce.transfer_function,
-                    self.intensity_target,
-                ),
-                // No color_encoding override: treat as SDR (matches the
-                // default `ColorEncoding::srgb()` path which has
-                // `transfer_function = Srgb` → returns 80.0).
-                None => LIBJXL_BUTTERAUGLI_SDR_INTENSITY_TARGET,
+        // W44-phase3-B1: replace the inline `ButteraugliReference::new_linear_planar` +
+        // per-iter `compare_linear_planar` calls with a pluggable
+        // [`ButteraugliBackend`]. The CPU backend wraps the same two calls
+        // verbatim — bit-identical to pre-W44-phase3-B1 behaviour when
+        // `self.gpu_butteraugli == false` (production default). When the
+        // caller opts in via [`LossyConfig::with_gpu_butteraugli`] AND the
+        // `gpu-butteraugli` cargo feature is on AND CUDA initialises, the
+        // backend dispatches to the GPU pipeline (~27× faster at 1024²+
+        // per W44-RECON-DEEP/A7).
+        let backend: Option<alloc::boxed::Box<dyn super::butteraugli_backend::ButteraugliBackend>> =
+            if use_vdp2 {
+                // VDP2 path: hold onto the planar refs permanently (one
+                // n*4*3 reservation) and skip the butteraugli precompute.
+                MemoryBudget::reserve_permanent_opt(budget, (n as u64).saturating_mul(4 * 3))?;
+                None
+            } else {
+                // Butteraugli path: transient n*4*3 reservation released as
+                // soon as the reference precompute owns its internal copy.
+                let _g = MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
+                // W44-RECON-DEEP/A10: dispatch `intensity_target` on the
+                // encoded transfer function (libjxl-parity with
+                // `enc_adaptive_quantization.cc:949-953`). SDR (sRGB /
+                // Linear / Bt709 / Dci / Unknown / no color_encoding) →
+                // 80 cd/m²; PQ / HLG → metadata `intensity_target` (typically
+                // 10000.0 / 1000.0). Without this, HDR encodes computed
+                // butteraugli at SDR luminance and the buttloop converged on
+                // the wrong perceptual target.
+                let metric_intensity_target = match self.color_encoding.as_ref() {
+                    Some(ce) => libjxl_butteraugli_intensity_target(
+                        ce.transfer_function,
+                        self.intensity_target,
+                    ),
+                    // No color_encoding override: treat as SDR (matches the
+                    // default `ColorEncoding::srgb()` path which has
+                    // `transfer_function = Srgb` → returns 80.0).
+                    None => LIBJXL_BUTTERAUGLI_SDR_INTENSITY_TARGET,
+                };
+                let butteraugli_params = butteraugli::ButteraugliParams::new()
+                    .with_intensity_target(metric_intensity_target)
+                    .with_compute_diffmap(true);
+                let mut b = super::butteraugli_backend::construct_backend(
+                    width as u32,
+                    height as u32,
+                    butteraugli_params,
+                    metric_intensity_target,
+                    self.gpu_butteraugli,
+                );
+                if let Err(_) = b.set_reference(&ref_r, &ref_g, &ref_b, width, height) {
+                    return Ok(initial_params.clone());
+                }
+                Some(b)
             };
-            let butteraugli_params = butteraugli::ButteraugliParams::new()
-                .with_intensity_target(metric_intensity_target)
-                .with_compute_diffmap(true);
-            let r = match butteraugli::ButteraugliReference::new_linear_planar(
-                &ref_r,
-                &ref_g,
-                &ref_b,
-                width,
-                height,
-                width,
-                butteraugli_params,
-            ) {
-                Ok(r) => r,
-                Err(_) => return Ok(initial_params.clone()),
-            };
-            Some(r)
-        };
 
         // Compute deviation bounds from the FLOAT initial field (libjxl lines 968-976).
         // These prevent the quant field from diverging too far from the initial field.
@@ -1819,6 +1827,13 @@ impl VarDctEncoder {
         // W44-117 one-shot seed verbatim).
         let mut sharpness_mut = sharpness;
 
+        // W44-phase3-B1: backend handle is `&mut` inside the seed loop
+        // because GPU backends need &mut self for kernel dispatch (and
+        // for the host-side sRGB pack scratch buffer). The Option dance
+        // matches the legacy `reference: Option<ButteraugliReference>`
+        // semantics: VDP2 path = None, butteraugli path = Some(_).
+        let mut backend = backend;
+
         for &k_init_mul in seeds {
             // Restore starting state for this seed (skipped on seed 0 because
             // quant_field/quant_field_float already hold it, but cheap enough
@@ -1842,7 +1857,7 @@ impl VarDctEncoder {
                 ac_strategy,
                 patches_data,
                 splines_data,
-                reference.as_ref(),
+                backend.as_deref_mut(),
                 &ref_r,
                 &ref_g,
                 &ref_b,
@@ -1967,10 +1982,17 @@ impl VarDctEncoder {
         ac_strategy: &AcStrategyMap,
         patches_data: Option<&super::patches::PatchesData>,
         splines_data: Option<&super::splines::SplinesData>,
-        // `Some(reference)` for the butteraugli path (chunk-1 default).
+        // `Some(backend)` for the butteraugli path (chunk-1 default).
         // `None` for the VDP2-lite path (chunk-2 opt-in via
         // `HdrLoss::Vdp2`) — the metric reads `ref_r/g/b` directly.
-        reference: Option<&butteraugli::ButteraugliReference>,
+        // W44-phase3-B1: pluggable backend trait — CPU (default) or GPU
+        // (opt-in via `LossyConfig::with_gpu_butteraugli` + cargo feature
+        // `gpu-butteraugli`). The CPU backend wraps the same
+        // `ButteraugliReference::compare_linear_planar` call the pre-
+        // W44-phase3-B1 code used inline. Explicit lifetime: bound to
+        // `'_` (= the call's lifetime) so the borrow checker doesn't
+        // promote the trait-object lifetime to `'static`.
+        backend: Option<&mut (dyn super::butteraugli_backend::ButteraugliBackend + '_)>,
         // Planar linear-RGB reference planes (always populated by the
         // top-level call). Sized `width × height` with stride = width.
         // Owned by the caller for the duration of the seed loop so we
@@ -2022,7 +2044,11 @@ impl VarDctEncoder {
         debug_assert_eq!(ref_r.len(), width * height);
         debug_assert_eq!(ref_g.len(), width * height);
         debug_assert_eq!(ref_b.len(), width * height);
-        debug_assert!(use_vdp2 == reference.is_none());
+        debug_assert!(use_vdp2 == backend.is_none());
+        // Re-bind as mutable Option for in-loop re-borrowing. Each iter
+        // takes `backend.as_deref_mut()` so the compare call doesn't
+        // consume the outer Option.
+        let mut backend = backend;
         debug_assert_eq!(padded_pixels, recon_r.len());
         let mut current_params;
         // Score from the final compare-only iteration (i == iters).
@@ -2331,27 +2357,24 @@ impl VarDctEncoder {
                     }
                 }
             } else {
-                let bref = reference.expect(
-                    "non-VDP2 path must carry a butteraugli reference (top-level invariant)",
+                // W44-phase3-B1: dispatch to the pluggable backend trait.
+                // The CPU backend wraps the same
+                // `ButteraugliReference::compare_linear_planar` call used
+                // pre-W44-phase3-B1; the GPU backend (opt-in) wraps
+                // `butteraugli_gpu::Butteraugli<CudaRuntime>::compute_with_reference`.
+                let bref = backend.as_deref_mut().expect(
+                    "non-VDP2 path must carry a butteraugli backend (top-level invariant)",
                 );
-                let result =
-                    match bref.compare_linear_planar(recon_r, recon_g, recon_b, padded_width) {
-                        Ok(r) => r,
-                        Err(_) => {
-                            let mean_qf = mean_qf_float(quant_field_float);
-                            return Ok(SeedOutcome {
-                                params: current_params,
-                                quant_field: quant_field.to_vec(),
-                                quant_field_float: quant_field_float.to_vec(),
-                                final_score: last_score,
-                                mean_qf,
-                                k_init_mul,
-                            });
-                        }
-                    };
-                let dm = match result.diffmap {
-                    Some(dm) => dm,
-                    None => {
+                let result = match bref.compare_with_reference(
+                    recon_r,
+                    recon_g,
+                    recon_b,
+                    padded_width,
+                    width,
+                    height,
+                ) {
+                    Ok(r) => r,
+                    Err(_) => {
                         let mean_qf = mean_qf_float(quant_field_float);
                         return Ok(SeedOutcome {
                             params: current_params,
@@ -2363,11 +2386,7 @@ impl VarDctEncoder {
                         });
                     }
                 };
-                // ImgVec is contiguous when produced by the butteraugli
-                // crate (stride == width — confirmed in lib.rs:510). Take
-                // ownership of the backing Vec to match the VDP2 branch's
-                // owned-Vec return type without re-allocating.
-                (result.score, dm.into_buf())
+                (result.score, result.diffmap)
             };
 
             // Record metric score for the picker (rewritten every iter;

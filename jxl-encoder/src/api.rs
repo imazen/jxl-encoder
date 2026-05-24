@@ -4606,6 +4606,25 @@ pub struct LossyConfig {
     /// See [`Self::with_knobs`].
     #[cfg(feature = "tuning-override")]
     tier2_knobs: Option<crate::tuning::coupling::Tier2Knobs>,
+    /// W44-phase3-B1: opt-in GPU butteraugli backend for the buttloop.
+    /// When `true` AND the `gpu-butteraugli` cargo feature is enabled AND
+    /// CUDA initialises successfully, the buttloop's per-iter compare runs
+    /// on the GPU (~27× faster than rayon+avx512 CPU at 1024² multires per
+    /// W44-RECON-DEEP/A7). Default `false` — production path unchanged.
+    ///
+    /// When `true` but the feature is OFF, or feature is ON but CUDA fails
+    /// to init, the buttloop silently falls back to the CPU backend
+    /// (defense-in-depth: GPU misconfiguration never breaks an encode).
+    ///
+    /// Field always present so hash-lock fixtures don't depend on the
+    /// `gpu-butteraugli` cargo feature; the field is consulted only inside
+    /// the `#[cfg(feature = "butteraugli-loop")]` buttloop and only takes
+    /// effect under `#[cfg(feature = "gpu-butteraugli")]`. Default `false`
+    /// keeps every hash-lock byte-identical.
+    ///
+    /// See [`Self::with_gpu_butteraugli`].
+    #[cfg(feature = "butteraugli-loop")]
+    gpu_butteraugli: bool,
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -4740,6 +4759,8 @@ impl LossyConfig {
             chroma_subsampling: ChromaSubsampling::Full444,
             #[cfg(feature = "tuning-override")]
             tier2_knobs: None,
+            #[cfg(feature = "butteraugli-loop")]
+            gpu_butteraugli: false,
         }
     }
 
@@ -6354,6 +6375,53 @@ impl LossyConfig {
     #[cfg(feature = "butteraugli-loop")]
     pub fn hdr_loss(&self) -> HdrLoss {
         self.hdr_loss
+    }
+
+    /// Opt-in to the GPU butteraugli backend for the buttloop's per-iter
+    /// compare (W44-phase3-B1).
+    ///
+    /// When `true` AND the `gpu-butteraugli` cargo feature was enabled at
+    /// build time AND CUDA initialises successfully, the buttloop uses
+    /// `butteraugli_gpu::Butteraugli<CudaRuntime>` instead of the CPU
+    /// `butteraugli` crate. W44-RECON-DEEP/A7 measured ~27× speedup on
+    /// 1024×1024 multires comparisons; end-to-end e9 wall reduction is
+    /// 8-12% (the buttloop is 30-40% of e9 per W44-170).
+    ///
+    /// **Defense-in-depth fallback**: if any of the three preconditions
+    /// fail at runtime (`gpu-butteraugli` feature off, CUDA missing,
+    /// runtime init panics), the buttloop silently falls back to the CPU
+    /// backend. The encoded bytes are byte-identical to a CPU-only
+    /// invocation in that case.
+    ///
+    /// **Output divergence vs CPU**: the GPU pipeline routes through an
+    /// sRGB-u8 packed representation (linear-f32 → sRGB-u8 → GPU-linear-f32);
+    /// W44-RECON-DEEP/A7 measured the resulting score drift at 0.02-0.03%
+    /// relative on real corpus images (max 0.05% across 64 cells). The
+    /// buttloop's per-tile distance computation is robust to this — the
+    /// 8x8-block median + MAD aggregation washes out per-pixel noise below
+    /// the quant-decision threshold (W44-RECON-DEEP/A11 measured zero byte
+    /// movement under similar perturbations).
+    ///
+    /// Default `false`. Hash-lock fixtures are byte-identical at the
+    /// default regardless of the `gpu-butteraugli` cargo feature.
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn with_gpu_butteraugli(mut self, enable: bool) -> Self {
+        self.gpu_butteraugli = enable;
+        self
+    }
+
+    /// Currently configured GPU butteraugli preference (W44-phase3-B1).
+    /// `false` (default) routes the buttloop through the CPU
+    /// `butteraugli` crate; `true` opts in to the GPU backend when the
+    /// `gpu-butteraugli` cargo feature is enabled. See
+    /// [`Self::with_gpu_butteraugli`] for the runtime fallback policy.
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn gpu_butteraugli(&self) -> bool {
+        self.gpu_butteraugli
     }
 
     /// Resolve the configured [`HdrLoss`] into the concrete loss that
@@ -8803,6 +8871,8 @@ impl<'a> EncodeRequest<'a> {
             // HLG content lands on `Vdp2`; everything else on
             // `Butteraugli` (SDR hash-locks stay byte-identical).
             enc.hdr_loss = cfg.resolve_hdr_loss(self.layout, self.color_encoding.as_ref());
+            // W44-phase3-B1: propagate GPU butteraugli opt-in (still-image path).
+            enc.gpu_butteraugli = cfg.gpu_butteraugli;
         }
         #[cfg(feature = "ssim2-loop")]
         {
@@ -9981,6 +10051,8 @@ impl LossyEncoder {
                 // the resolution rationale. Auto → Vdp2 on PQ/HLG,
                 // Butteraugli otherwise.
                 enc.hdr_loss = cfg.resolve_hdr_loss(self.layout, self.color_encoding.as_ref());
+                // W44-phase3-B1: propagate GPU butteraugli opt-in.
+                enc.gpu_butteraugli = cfg.gpu_butteraugli;
             }
             #[cfg(feature = "ssim2-loop")]
             {
@@ -11925,6 +11997,9 @@ fn encode_animation_lossy(
         // PQ / HLG f32 layouts will route to `Vdp2`, everything
         // else to `Butteraugli`.
         enc.hdr_loss = cfg.resolve_hdr_loss(layout, None);
+        // W44-phase3-B1: propagate GPU butteraugli opt-in to the
+        // animation frame encoder too.
+        enc.gpu_butteraugli = cfg.gpu_butteraugli;
     }
     #[cfg(feature = "ssim2-loop")]
     {

@@ -57,6 +57,16 @@ ultrahdr-core = { version = "0.5.0", default-features = false, features = ["std"
 # don't pull serde/postcard transitively unless the feature is enabled.
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"], optional = true }
 postcard = { version = "1.1", default-features = false, features = ["use-std"], optional = true }
+# W44-phase3-B1: GPU butteraugli backend (CUDA via CubeCL). Opt-in via the
+# `gpu-butteraugli` cargo feature; requires CUDA runtime at build + load
+# time. Path-patched in the workspace `[patch.crates-io]` to point at
+# `~/work/zen/zenmetrics/crates/butteraugli-gpu` because butteraugli-gpu
+# 0.0.1 is `publish = false`. CubeCL is pulled in as a direct dep so the
+# `CudaRuntime` type is reachable from the backend module.
+butteraugli-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types"], optional = true }
+# cubecl is pinned via `[patch.crates-io]` in the workspace `Cargo.toml`
+# to the same git rev butteraugli-gpu is tested against.
+cubecl = { version = "0.10.0-pre.4", default-features = false, features = ["std", "cuda"], optional = true }
 
 [features]
 std = ["thiserror/std", "archmage/std", "jxl_simd/std"]
@@ -89,6 +99,12 @@ debug-rect = []
 rate-control = ["dep:jxl-oxide", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 # Butteraugli quantization loop: iteratively refines quant field using butteraugli distmap.
 butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
+# W44-phase3-B1: GPU butteraugli backend for the buttloop. Implies
+# `butteraugli-loop` (the trait surface lives there). Opt-in only — when
+# enabled the caller still has to set `LossyConfig::with_gpu_butteraugli(true)`
+# AND CUDA must be present at runtime; otherwise the buttloop silently
+# falls back to the CPU backend.
+gpu-butteraugli = ["butteraugli-loop", "dep:butteraugli-gpu", "dep:cubecl"]
 ssim2-loop = ["dep:fast-ssim2", "dep:imgref"]
 zensim-loop = ["dep:zensim"]
 # Convenience encode functions that accept imgref::ImgRef with typed pixel formats.
@@ -1287,6 +1303,17 @@ required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
 name = "w44_172_dc_tree_e8_predictor_set_ab"
 path = "examples/w44_172_dc_tree_e8_predictor_set_ab.rs"
 required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
+
+# W44-phase3-B1: paired GPU vs CPU butteraugli backend A/B bench.
+# Single-threaded. Requires the `gpu-butteraugli` feature (which pulls in
+# butteraugli-gpu + cubecl-cuda) AND CUDA at /usr/local/cuda. CPU column
+# is the production default; GPU column opts in via
+# LossyConfig::with_gpu_butteraugli(true). Per-cell columns: bytes, wall
+# time, butteraugli, SSIM2, and the relative deltas.
+[[example]]
+name = "w44_phase3_b1_gpu_buttloop_ab"
+path = "examples/w44_phase3_b1_gpu_buttloop_ab.rs"
+required-features = ["gpu-butteraugli", "butteraugli-loop", "ssim2-loop", "parallel", "__expert"]
 
 # W44-175: parallel `transform_and_quantize_into` (buttloop per-iter group
 # fan-out) + parallel `find_best_split_variable` (DC tree property scan).
