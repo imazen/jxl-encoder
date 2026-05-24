@@ -1268,6 +1268,17 @@ pub mod coupling {
     // newly have `screenshot_quant_aggressiveness = 0.333` (was 0.0 in
     // W44-228a) — these moves are AWAY from the catastrophe regime,
     // not toward it. No new W44-228c1 violation.
+    //
+    // **W44-PHASE4-S2-refit-c1 HONEST-STOP (2026-05-24)**: c1 attempted
+    // to floor screen/very_high k2 ≥ 0.333 to close the W44-228c1
+    // violation S2-validate (`e9054b53`) caught on the opt-in path.
+    // Per-knob ablation proved k2 is NOT the catastrophe driver — k1=0
+    // (smoothness_bias=0 → p1 saturates at RIDGE_MAX) is. Source
+    // reverted; the W44-105 SHIP-cell catastrophe on the opt-in path
+    // for screen/very_high remains unfixed; W44-228c1 RULED-OUT default-
+    // flip stays in force. See the in-source comment on the
+    // ScreenVeryHigh tuple + CLAUDE.md §"W44-PHASE4-S2-refit-c1
+    // HONEST-STOP" for the ablation table + follow-on candidates.
 
     /// W44-228b: distance-band stratification matching the W44-217 / W44-228a
     /// corpus binning convention.
@@ -1389,6 +1400,40 @@ pub mod coupling {
                 // OLD W44-228a: (0.0, 0.0, 0.5, 1.5, 0.0)
                 // NEW W44-PHASE4-S2: (0.0, 0.0, 0.5, 2.167, -0.333)
                 // Δ: k4 1.500 → 2.167 (+0.667), k5 0.000 → -0.333 (-0.333)
+                //
+                // **W44-PHASE4-S2-refit-c1 (2026-05-24) — HONEST-STOP**:
+                // attempted to floor k2 at 0.333 (and sweep up to 1.5) to
+                // preserve W44-105 SHIP cells. Per-k2 sweep on terminal
+                // e8 d=4 found bytes BYTE-IDENTICAL (SHA256 33c32773…)
+                // and SSIM2=81.98 at EVERY k2 in {0, 0.333, 0.5, 0.75,
+                // 1.0, 1.25, 1.5} — even when expand_to_runtime_tuning
+                // produced p3=5.94 (well above DEFAULT_P3=4.0). Single-
+                // knob ablation against true-defaults proved: k2 alone
+                // is NOT the catastrophe driver; isolated k4=2.167 +
+                // defaults is byte-identical to baseline; isolated
+                // k3=0.5 + defaults is byte-identical; **isolated k1=0
+                // + defaults REPRODUCES the catastrophe** (28185 B /
+                // SSIM2 81.98 — same SHA as full S2-refit tuple).
+                //
+                // Mechanism: `k1 = smoothness_bias = 0` drives
+                // `p1 = smart_zenjxl_photo_mask_p25_min` to its RIDGE
+                // MAX (~145), which disrupts the W44-91/96/166 photo
+                // admit gates inside the screen-class W44-105 chain. The
+                // c1 floor on k2 cannot close this because k2 only
+                // touches p3/p6 (buttloop seed scale + e7 aq lift), not
+                // p1 (the admit-gate threshold).
+                //
+                // Source REVERTED to the S2-refit raw optimum. Follow-on
+                // chunks should bisect a k1 floor (target: k1 ≥ 0.25
+                // brings p1 within ±10 of DEFAULT_P1=85, which is the
+                // band the W44-105 chain was tuned against) and/or per-
+                // stratum opt-in gates that route screen/very_high SHIP
+                // cells around the S2-refit lookup. The W44-228c1
+                // RULED-OUT default-flip constraint stays in force on
+                // the opt-in path until a follow-on closes the cliff.
+                // Reference: `/home/lilith/work/zen/jxl-encoder/CLAUDE.md`
+                // §"W44-PHASE4-S2-refit-c1 HONEST-STOP" for the full
+                // per-cell measurement table and DO-NOT list.
                 ContentStratum::ScreenVeryHigh => (
                     0.0,
                     0.0,
@@ -2245,12 +2290,18 @@ pub mod coupling {
         /// `docs/TIER_2_KNOBS.md` + the W44-PHASE4-S2-refit memo + the
         /// W44-105 SHIP-cell caveat alongside the table swap.
         ///
-        /// **W44-105 protection invariant**: screen/very_high MUST stay
-        /// at `aggressiveness == 0` (matches W44-228a) — the W44-105
-        /// SHIP-cell catastrophe regime lives in that stratum, so the
-        /// W44-228c1 RULED-OUT default-flip constraint depends on this
-        /// pin not regressing to a non-zero value derived from a corpus
-        /// that omits the SHIP cells.
+        /// **W44-105 protection invariant (binding, but not enforced
+        /// here)**: screen/very_high carries `aggressiveness == 0` from
+        /// the S1 raw optimum. W44-PHASE4-S2-validate (`e9054b53`)
+        /// caught a -4.93 SSIM2 cliff on terminal e8 d=4 on the opt-in
+        /// path. W44-PHASE4-S2-refit-c1 (HONEST-STOP, 2026-05-24)
+        /// proved the cliff is driven by `k1 = smoothness_bias = 0`
+        /// (which saturates `p1` at the ridge max), NOT by `k2`.
+        /// Future closures of the cliff must touch k1, not k2; this
+        /// test still pins k2=0 on screen/very_high to track the raw
+        /// S2-refit optimum until a follow-on chunk lands a per-stratum
+        /// k1 floor. See the in-source comment on the ScreenVeryHigh
+        /// tuple for the per-knob ablation that drove the diagnosis.
         #[cfg(feature = "tuning-override")]
         #[test]
         fn w44_phase4_s2_refit_strata_aggressiveness_membership() {

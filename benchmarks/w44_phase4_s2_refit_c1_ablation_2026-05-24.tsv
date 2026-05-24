@@ -1,0 +1,12 @@
+probe	image	effort	distance	k1	k2	k3	k4	k5	rt_p3	rt_p4	rt_p5	rt_p6	bytes	bfly	ssim2	sha256_8	verdict
+baseline_default_knobs	terminal.png	e8	4.00	0.5	1.0	1.0	3.5	0.0	4.000	3.500	2.000	3.000	42322	1.86481	86.90835	943d2b8ba7e31188	baseline_OK
+s2_refit_raw_k2_0	terminal.png	e8	4.00	0.0	0.0	0.5	2.1667	-0.3333	~0	2.1667	1.4196	0	28185	2.77887	81.97724	33c32773071a217b	catastrophe_VIOLATES_W44_228c1
+c1_attempt_k2_0.333	terminal.png	e8	4.00	0.0	0.3333	0.5	2.1667	-0.3333	~1.13	2.1667	1.4196	~0.346	28185	2.77887	81.97724	33c32773071a217b	c1_FAILS_to_close
+sweep_k2_0.5	terminal.png	e8	4.00	0.0	0.5	0.5	2.1667	-0.3333	2.542	2.1667	1.4196	0	28185	2.77887	81.97724	33c32773071a217b	k2_sweep_no_effect
+sweep_k2_0.75	terminal.png	e8	4.00	0.0	0.75	0.5	2.1667	-0.3333	3.542	2.1667	1.4196	0.346	28185	2.77887	81.97724	33c32773071a217b	k2_sweep_no_effect
+sweep_k2_1.0	terminal.png	e8	4.00	0.0	1.0	0.5	2.1667	-0.3333	4.542	2.1667	1.4196	1.096	28185	2.77887	81.97724	33c32773071a217b	k2_sweep_no_effect
+sweep_k2_1.25	terminal.png	e8	4.00	0.0	1.25	0.5	2.1667	-0.3333	5.242	2.1667	1.4196	1.621	28185	2.77887	81.97724	33c32773071a217b	k2_sweep_no_effect
+sweep_k2_1.5	terminal.png	e8	4.00	0.0	1.5	0.5	2.1667	-0.3333	5.942	2.1667	1.4196	2.146	28185	2.77887	81.97724	33c32773071a217b	k2_sweep_no_effect
+isolated_k4_2.167	terminal.png	e8	4.00	0.5	1.0	1.0	2.1667	0.0	4.000	2.1667	2.000	3.000	42322	1.86481	86.90835	943d2b8ba7e31188	k4_alone_byte_identical
+isolated_k3_0.5	terminal.png	e8	4.00	0.5	1.0	0.5	3.5	0.0	4.000	3.500	1.000	1.500	42322	1.86481	86.90835	943d2b8ba7e31188	k3_alone_byte_identical
+isolated_k1_0	terminal.png	e8	4.00	0.0	1.0	1.0	3.5	0.0	4.000	3.500	2.000	3.000	28185	2.77887	81.97724	33c32773071a217b	k1_alone_REPRODUCES_catastrophe
