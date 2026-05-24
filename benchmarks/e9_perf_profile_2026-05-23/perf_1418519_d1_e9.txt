@@ -1,0 +1,46 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 37K of event 'cycles:Pu'
+# Event count (approx.): 30526776924
+#
+# Overhead  Command  Shared Object         Symbol                                                                                                                                                                                                                                               
+# ........  .......  ....................  .....................................................................................................................................................................................................................................................
+#
+    11.89%  cjxl-rs  cjxl-rs               [.] core::ops::function::impls::<impl core::ops::function::FnMut<A> for &F>::call_mut
+     8.60%  cjxl-rs  cjxl-rs               [.] crossbeam_epoch::default::with_handle
+     7.44%  cjxl-rs  cjxl-rs               [.] butteraugli::blur::__arcane_gaussian_blur_dispatch_v4
+     6.79%  cjxl-rs  cjxl-rs               [.] _ZN15crossbeam_epoch8internal6Global11try_advance17h20cfcb3677c77373E.llvm.1375858368437821767
+     6.27%  cjxl-rs  cjxl-rs               [.] jxl_encoder::vardct::ac_strategy_search::__arcane_find_best_16x16_transform_avx2
+     3.68%  cjxl-rs  libc.so.6             [.] __memmove_avx512_unaligned_erms
+     3.24%  cjxl-rs  cjxl-rs               [.] butteraugli::malta::__arcane_malta_diff_map_dispatch_v4
+     2.81%  cjxl-rs  libc.so.6             [.] __memset_avx512_unaligned_erms
+     2.63%  cjxl-rs  cjxl-rs               [.] jxl_encoder_simd::epf::sad_3x3_plus_simd
+     2.57%  cjxl-rs  cjxl-rs               [.] jxl_encoder::entropy_coding::lz77::HashChain::find_match
+     2.48%  cjxl-rs  cjxl-rs               [.] jxl_encoder::vardct::transform::<impl jxl_encoder::vardct::encoder::VarDctEncoder>::transform_blocks_into
+     1.76%  cjxl-rs  cjxl-rs               [.] jxl_encoder::vardct::encoder::ZenanalyzeProxies::compute_srgb_u8
+     1.53%  cjxl-rs  cjxl-rs               [.] crossbeam_deque::deque::Stealer<T>::steal
+     1.27%  cjxl-rs  cjxl-rs               [.] jxl_encoder_simd::entropy::__arcane_entropy_coeffs_impl_v3
+     1.13%  cjxl-rs  cjxl-rs               [.] core::iter::traits::iterator::Iterator::partition
+     0.97%  cjxl-rs  cjxl-rs               [.] core::slice::sort::stable::quicksort::quicksort
+     0.96%  cjxl-rs  cjxl-rs               [.] butteraugli::malta::__arcane_malta_compute_scaled_diffs_v4
+     0.88%  cjxl-rs  cjxl-rs               [.] jxl_encoder::vardct::patches::find_text_like_patches_with_min_peak
+     0.81%  cjxl-rs  cjxl-rs               [.] jxl_encoder_simd::epf::__arcane_epf_step1_avx2
+     0.77%  cjxl-rs  cjxl-rs               [.] jxl_encoder_simd::xyb::__arcane_forward_xyb_impl_v3
+     0.77%  cjxl-rs  cjxl-rs               [.] butteraugli::opsin::__arcane_opsin_dynamics_image_v4
+     0.71%  cjxl-rs  cjxl-rs               [.] _ZN16jxl_encoder_simd5dct6423__arcane_dct_64x64_avx217hbf92965e131376a8E.llvm.4555600133640467394
+     0.67%  cjxl-rs  cjxl-rs               [.] jxl_encoder::vardct::ac_strategy::estimate_entropy_full_impl::_$u7b$$u7b$closure$u7d$$u7d$::h5625138f74df6fbc
+     0.67%  cjxl-rs  cjxl-rs               [.] butteraugli::blur::__arcane_blur_mirrored_5x5_v4
+     0.66%  cjxl-rs  cjxl-rs               [.] <core::iter::adapters::chain::Chain<A,B> as core::iter::traits::iterator::Iterator>::try_fold
+     0.65%  cjxl-rs  cjxl-rs               [.] jxl_encoder_simd::idct32::__arcane_idct1d_32_core_batch
+     0.63%  cjxl-rs  cjxl-rs               [.] jxl_encoder_simd::dct32::__arcane_dct1d_32_batch
+     0.62%  cjxl-rs  cjxl-rs               [.] jxl_encoder::entropy_coding::ans::ANSEncodingHistogram::from_histogram_cached
+     0.54%  cjxl-rs  cjxl-rs               [.] jxl_encoder::vardct::reconstruct::__arcane_reconstruct_xyb_avx2
+     0.54%  cjxl-rs  cjxl-rs               [.] _ZN16jxl_encoder_simd6idct6424__arcane_idct_64x64_avx217ha202de193669fb47E.llvm.4555600133640467394
+
+
+#
+# (Tip: To record callchains for each sample: perf record -g)
+#
