@@ -382,6 +382,43 @@ pub const W44_176_TERMINAL_CLASS_LUMA_VAR_MAX: f32 = 2200.0;
 /// design + probe corpus + safety margins.
 pub const W44_176_TERMINAL_CLASS_FCBR_MIN: f32 = 0.70;
 
+/// W44-AUDIT-6 Phase 1 (2026-05-24): high-colour-class exclude — minimum
+/// [`crate::vardct::encoder::ZenanalyzeProxies::m3_colourfulness`] at which
+/// the W44-109 adaptive-quant qf seed lift is suppressed (returns `1.0`).
+///
+/// **Why this is 80.0**: W44-AUDIT-4 (`benchmarks/w44_audit_4_e7_d4_breakdown_2026-05-24.tsv`)
+/// PROVED `DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7 = 3.0` owns
+/// the codec_wiki e7 d=4 +44% bytes wedge. The lift IS buying quality
+/// (+4.36 SSIM2 above the no-lift baseline, matching cjxl's 84.86) but at
+/// a 44% byte cost. AUDIT-4 measured `m3_colourfulness`:
+///
+/// - codec_wiki (the wedge cell): M3 = 145.73
+/// - W44-109 win cluster (gb82-sc text-class screenshots, mask<50 firing
+///   sub-cluster): terminal M3 ≈ 14, graph M3 ≈ 17, imac_dark M3 ≈ 21,
+///   imac_g3 M3 ≈ 27, gmessages M3 ≈ 16, gui M3 ≈ 18 — all in [14, 29]
+///
+/// The 80 threshold gives ~3.5× margin above the win cluster (29 × 3.5 ≈
+/// 102, leaving even windows95 M3 ≈ 38 well inside the keep-class) and
+/// ~1.8× margin below the codec_wiki wedge (145 / 80 = 1.82). The deadband
+/// `[30, 80)` is intentionally wide so we don't accidentally classify any
+/// borderline gb82-sc cell as high-colour.
+///
+/// **Mirror pattern**: W44-176 luma_var+fcbr terminal-class exclude
+/// (Section B row 8 of `docs/LIBJXL_DIVERGENCES.md`). Same gate-narrowing
+/// pattern at a different proxy axis: W44-176 protects pure-text terminal
+/// from over-allocating bytes when SSIM2 is structurally below cjxl;
+/// W44-AUDIT-6 protects mixed-content high-colour screenshots
+/// (codec_wiki) from over-allocating bytes when SSIM2 matches cjxl AT a
+/// huge byte cost.
+///
+/// **Semantics**: when proxies are present AND `m3_colourfulness >=
+/// [`W44_AUDIT_6_HIGH_COLOUR_M3_MIN`]`, the W44-109 lift is suppressed
+/// regardless of the W44-176 terminal predicate (composes via OR — either
+/// exclude fires the bypass). When proxies are absent (non-sRGB-u8
+/// layouts, streaming/animation paths), this exclude cannot fire — the
+/// existing W44-176 behaviour is preserved verbatim.
+pub const W44_AUDIT_6_HIGH_COLOUR_M3_MIN: f32 = 80.0;
+
 /// W44-109: maximum effort at which the screenshot-class adaptive-quant
 /// pre-scale fires. Mirrors the W44-105 buttloop seed-scale mechanism
 /// but at adaptive_quant time, before the buttloop runs (the buttloop
@@ -731,6 +768,7 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale(
         crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
         /* proxies */ None,
         /* terminal_class_exclude */ false,
+        /* high_colour_class_exclude */ false,
     )
 }
 
@@ -757,6 +795,30 @@ pub(crate) fn w44_176_is_terminal_class(
         && p.flat_color_block_ratio >= W44_176_TERMINAL_CLASS_FCBR_MIN
 }
 
+/// W44-AUDIT-6 Phase 1: returns `true` when the
+/// [`crate::vardct::encoder::ZenanalyzeProxies`] proxies indicate a
+/// high-colour mixed-content screenshot — `m3_colourfulness >=
+/// [`W44_AUDIT_6_HIGH_COLOUR_M3_MIN`]` (= 80.0).
+///
+/// Returns `false` when proxies are absent (non-sRGB-u8 layouts,
+/// streaming/animation paths). The W44-AUDIT-6 high-colour exclude is a
+/// defence-in-depth narrow — it only fires when proxies are present AND
+/// `m3` exceeds the cutoff; otherwise the existing W44-109/W44-176
+/// behaviour is preserved.
+///
+/// Companion of [`w44_176_is_terminal_class`]; the two compose with OR
+/// inside the W44-109 gate (either predicate matching bypasses the
+/// lift).
+#[inline]
+pub(crate) fn w44_audit_6_is_high_colour_class(
+    proxies: Option<&crate::vardct::encoder::ZenanalyzeProxies>,
+) -> bool {
+    let Some(p) = proxies else {
+        return false;
+    };
+    p.m3_colourfulness >= W44_AUDIT_6_HIGH_COLOUR_M3_MIN
+}
+
 /// W44-129 Chunk C variant of [`resolved_adaptive_quant_qf_seed_scale`]
 /// that consults the resolved [`crate::api::AdaptiveQuantQfSeedPolicy`]
 /// enum from `ResolvedImprovements`.
@@ -773,6 +835,16 @@ pub(crate) fn w44_176_is_terminal_class(
 /// terminal.png e7 d=4-5 net-negative pareto without disabling the
 /// gate for graph/imac_g3/imac_dark/gmessages/gui (which buy real
 /// SSIM2 with the +28-50% bytes overhead per W44-174 measurement).
+///
+/// W44-AUDIT-6 Phase 1 (2026-05-24): if `high_colour_class_exclude` is
+/// `true` AND the `proxies` indicate a high-colour mixed-content
+/// screenshot (per [`w44_audit_6_is_high_colour_class`] — `m3 >= 80.0`),
+/// the gate is bypassed (returns 1.0). Composes with the W44-176
+/// terminal exclude via OR — either predicate matching bypasses the
+/// lift. Excludes codec_wiki e7 d=4-5 +44% bytes wedge documented by
+/// W44-AUDIT-4 (`benchmarks/w44_audit_4_e7_d4_breakdown_2026-05-24.tsv`)
+/// without disabling the gate for the W44-109 win cluster (text-class
+/// screenshots at m3 ∈ [14, 29]).
 #[cfg_attr(not(feature = "std"), allow(unused_variables))]
 pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     effort: u8,
@@ -783,6 +855,7 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     policy: crate::api::AdaptiveQuantQfSeedPolicy,
     proxies: Option<&crate::vardct::encoder::ZenanalyzeProxies>,
     terminal_class_exclude: bool,
+    high_colour_class_exclude: bool,
 ) -> f32 {
     // Off policy short-circuits before the gate evaluation: Libjxl
     // strategy never pre-scales.
@@ -823,6 +896,22 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     // Env hook for A/B: `JXL_W44_176_DISABLE=1` forces the exclude OFF.
     let exclude_env = std::env::var_os("JXL_W44_176_DISABLE").is_some_and(|v| v != "0" && v != "");
     if terminal_class_exclude && !exclude_env && w44_176_is_terminal_class(proxies) {
+        return 1.0;
+    }
+    // W44-AUDIT-6 Phase 1: high-colour-class exclude — suppress the
+    // W44-109 lift on mixed-content screenshots whose
+    // `m3_colourfulness >= W44_AUDIT_6_HIGH_COLOUR_M3_MIN` (= 80.0). The
+    // lift IS buying SSIM2 on these cells (per AUDIT-4 measurement on
+    // codec_wiki e7 d=4: +4.36 SSIM2 above no-lift baseline, matching
+    // cjxl) but at a 44% byte cost — a structurally-bad pareto trade
+    // mirroring W44-176's terminal case. The W44-109 win cluster
+    // (text-class screenshots at m3 ∈ [14, 29]) is preserved (their
+    // proxies fail the m3 >= 80 discriminator).
+    //
+    // Env hook for A/B: `JXL_W44_AUDIT_6_DISABLE=1` forces OFF.
+    let audit_6_env =
+        std::env::var_os("JXL_W44_AUDIT_6_DISABLE").is_some_and(|v| v != "0" && v != "");
+    if high_colour_class_exclude && !audit_6_env && w44_audit_6_is_high_colour_class(proxies) {
         return 1.0;
     }
     // Effort-dependent magnitude: e5/e6 cap at 2.0 to bound bytes
@@ -2381,9 +2470,9 @@ impl VarDctEncoder {
                 // (B7a: now buffer-recycling) used pre-W44-phase3-B1; the
                 // GPU backend (opt-in) wraps
                 // `butteraugli_gpu::Butteraugli<CudaRuntime>::compute_with_reference`.
-                let bref = backend.as_deref_mut().expect(
-                    "non-VDP2 path must carry a butteraugli backend (top-level invariant)",
-                );
+                let bref = backend
+                    .as_deref_mut()
+                    .expect("non-VDP2 path must carry a butteraugli backend (top-level invariant)");
                 let result = match bref.compare_with_reference(
                     recon_r,
                     recon_g,
@@ -3500,7 +3589,8 @@ mod tuning_tests {
             Some(13.85),
             crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
             Some(&p),
-            true, // terminal_class_exclude
+            true,  // terminal_class_exclude
+            false, // high_colour_class_exclude
         );
         assert_eq!(
             scale, 1.0,
@@ -3523,6 +3613,7 @@ mod tuning_tests {
             crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
             Some(&p),
             false, // terminal_class_exclude OFF
+            false, // high_colour_class_exclude OFF
         );
         assert_eq!(
             scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
@@ -3552,13 +3643,170 @@ mod tuning_tests {
                 Some(m3),
                 crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
                 Some(&p),
-                true, // terminal_class_exclude ON
+                true,  // terminal_class_exclude ON
+                false, // high_colour_class_exclude OFF (these all have m3 < 30)
             );
             assert_eq!(
                 scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
                 "{name} must keep W44-109 lift (fails W44-176 discriminator)"
             );
         }
+    }
+
+    // W44-AUDIT-6 Phase 1 (2026-05-24): high-colour exclude tests.
+
+    #[test]
+    fn w44_audit_6_constants_are_documented_values() {
+        // Guard against accidental constant flips; ties the discriminator
+        // to the AUDIT-4 measurement: codec_wiki M3=145.73 vs W44-109 win
+        // cluster M3 ∈ [14, 29]. Threshold 80 gives ~3.5× margin above
+        // the win cluster and ~1.8× margin below the wedge cell.
+        assert_eq!(W44_AUDIT_6_HIGH_COLOUR_M3_MIN, 80.0);
+    }
+
+    #[test]
+    fn w44_audit_6_is_high_colour_class_codec_wiki_fires() {
+        // codec_wiki proxies (AUDIT-4 probe): M3=145.73
+        let p = proxies(1374.0, 0.904, 145.73);
+        assert!(
+            w44_audit_6_is_high_colour_class(Some(&p)),
+            "codec_wiki should fire W44-AUDIT-6 high-colour discriminator (M3=145.73 >= 80.0)"
+        );
+    }
+
+    #[test]
+    fn w44_audit_6_is_high_colour_class_w44_109_winners_dont_fire() {
+        // Win-cluster proxies (gb82-sc text-class screenshots, W44-109
+        // probe corpus): max M3 in cluster ≈ 29 (imac_dark 20.96 +
+        // safety). All MUST stay below 80 to keep the W44-109 lift.
+        for (name, lv, fcbr, m3) in [
+            ("terminal", 1706.0, 0.833, 13.85),
+            ("graph", 415.0, 0.809, 11.75),
+            ("imac_g3", 5244.0, 0.775, 14.29),
+            ("imac_dark", 3303.0, 0.728, 20.96),
+            ("gmessages", 1046.0, 0.899, 10.16),
+            ("gui", 1051.0, 0.858, 10.05),
+        ] {
+            let p = proxies(lv, fcbr, m3);
+            assert!(
+                !w44_audit_6_is_high_colour_class(Some(&p)),
+                "{name} M3={m3} must NOT fire W44-AUDIT-6 (below 80.0 cutoff)"
+            );
+        }
+    }
+
+    #[test]
+    fn w44_audit_6_is_high_colour_class_no_proxies_returns_false() {
+        // Non-sRGB-u8 / streaming / animation paths: proxies absent →
+        // discriminator cannot fire → existing W44-109/W44-176 behaviour
+        // preserved.
+        assert!(!w44_audit_6_is_high_colour_class(None));
+    }
+
+    #[test]
+    fn w44_audit_6_exclude_suppresses_gate_for_codec_wiki() {
+        // With `high_colour_class_exclude = true` AND codec_wiki proxies
+        // (M3=145.73), the W44-109 lift is suppressed (returns 1.0) even
+        // though the outer gate would fire (d=4, is_screenshot, m3 NOT
+        // low-colour so the d>=3.5 main branch fires).
+        let p = proxies(1374.0, 0.904, 145.73);
+        let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
+            7,
+            0,
+            true,
+            4.0,
+            Some(145.73),
+            crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+            Some(&p),
+            true, // terminal_class_exclude (Zenjxl default)
+            true, // high_colour_class_exclude (Zenjxl default after AUDIT-6)
+        );
+        assert_eq!(
+            scale, 1.0,
+            "W44-AUDIT-6 exclude should suppress the W44-109 lift on codec_wiki-class proxies"
+        );
+    }
+
+    #[test]
+    fn w44_audit_6_exclude_off_preserves_w44_109_lift_for_codec_wiki() {
+        // With `high_colour_class_exclude = false`, the W44-109 lift still
+        // fires on codec_wiki proxies — Libjxl/LeanFaster strategies and
+        // any caller opting out must see pre-AUDIT-6 behaviour.
+        let p = proxies(1374.0, 0.904, 145.73);
+        let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
+            7,
+            0,
+            true,
+            4.0,
+            Some(145.73),
+            crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+            Some(&p),
+            true,  // terminal_class_exclude (codec_wiki fails W44-176)
+            false, // high_colour_class_exclude OFF
+        );
+        assert_eq!(
+            scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
+            "W44-AUDIT-6 exclude OFF must preserve W44-109 lift on codec_wiki"
+        );
+    }
+
+    #[test]
+    fn w44_audit_6_exclude_preserves_lift_for_w44_109_winners() {
+        // The 6 W44-109 winners (terminal handled separately by W44-176;
+        // graph/imac_g3/imac_dark/gmessages/gui handled here) must KEEP
+        // the W44-109 lift even with W44-AUDIT-6 ON, because their M3 is
+        // far below the 80.0 cutoff.
+        //
+        // Note: terminal is excluded by W44-176 (luma_var+fcbr), which
+        // composes with W44-AUDIT-6 via OR — the assertion below uses
+        // `terminal_class_exclude = false` to isolate the AUDIT-6 gate.
+        let keep_fire = [
+            ("terminal", 1706.0, 0.833, 13.85),
+            ("graph", 415.0, 0.809, 11.75),
+            ("imac_g3", 5244.0, 0.775, 14.29),
+            ("imac_dark", 3303.0, 0.728, 20.96),
+            ("gmessages", 1046.0, 0.899, 10.16),
+            ("gui", 1051.0, 0.858, 10.05),
+        ];
+        for (name, lv, fcbr, m3) in keep_fire {
+            let p = proxies(lv, fcbr, m3);
+            let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
+                7,
+                0,
+                true,
+                4.0,
+                Some(m3),
+                crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+                Some(&p),
+                false, // terminal_class_exclude OFF (isolating AUDIT-6)
+                true,  // high_colour_class_exclude ON
+            );
+            assert_eq!(
+                scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
+                "{name} must keep W44-109 lift (M3={m3} below 80.0 cutoff)"
+            );
+        }
+    }
+
+    #[test]
+    fn w44_audit_6_exclude_no_proxies_preserves_lift() {
+        // Streaming/animation/non-sRGB-u8 paths: proxies absent → AUDIT-6
+        // discriminator cannot fire → existing W44-109 behaviour preserved.
+        let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
+            7,
+            0,
+            true,
+            4.0,
+            Some(145.73), // m3 supplied via legacy param but no proxies struct
+            crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+            None, // proxies absent
+            true,
+            true, // high_colour_class_exclude ON but no proxies → no-op
+        );
+        assert_eq!(
+            scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
+            "W44-AUDIT-6 must be a no-op when proxies absent"
+        );
     }
 
     // W44-145: per-block adaptive qac scaling tests.
