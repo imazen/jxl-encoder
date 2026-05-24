@@ -245,22 +245,54 @@ pub(crate) mod gpu {
     //! Constructed on demand by [`construct_backend`]. If CUDA init fails
     //! (e.g. no GPU, no driver), `try_new` returns `None` and the caller
     //! falls back to the CPU backend.
+    //!
+    //! ## W44-phase3-B4 — linear-planes bypass
+    //!
+    //! As of W44-phase3-B4 the backend uploads the encoder's host-side
+    //! linear-f32 planes directly to the GPU and calls
+    //! `set_reference_from_linear_planes` / `compute_with_reference_from_linear_planes`
+    //! (butteraugli-gpu's `internals`-gated entry points). This skips:
+    //! - the host-side linear→sRGB-u8 LUT pack (B1 path, ~5-15 ms / iter @ 1 MP)
+    //! - the GPU-side sRGB-u8 upload + sRGB→linear kernel
+    //!
+    //! Both the encoder and butteraugli-gpu use the same IEC 61966-2-1
+    //! sRGB transfer-function semantics; the bypass replaces one
+    //! round-trip with a single host→GPU f32 plane upload. Verified
+    //! bit-identical to the legacy path on 64×64 synthetic and within
+    //! 1e-7 relative on 256×256 (butteraugli-gpu test
+    //! `set_reference_from_linear_planes`).
 
     use super::*;
 
     use butteraugli_gpu::{Butteraugli, ButteraugliParams as GpuParams};
     use cubecl::cuda::CudaRuntime;
+    use cubecl::prelude::ComputeClient;
+    use cubecl::server::Handle;
     use cubecl::Runtime;
 
+    // Internal helper: cubecl `prelude` re-exports `as_bytes` via the
+    // `CubePrimitive`/`Pod` traits; the f32 `as_bytes` we need is the
+    // associated fn on `f32` itself.
+    use bytemuck;
+
     /// CUDA-backed butteraugli backend. Wraps `Butteraugli<CudaRuntime>`
-    /// and converts host-side linear-f32 planar input into the sRGB-u8
-    /// packed format the GPU pipeline consumes.
+    /// and uploads host-side linear-f32 planar input directly via
+    /// butteraugli-gpu's `internals` API (W44-phase3-B4 — was sRGB-u8
+    /// via a host-side LUT in W44-phase3-B1).
     pub(crate) struct GpuButteraugliBackend {
         inner: Butteraugli<CudaRuntime>,
-        /// Scratch buffer for the linear-f32 → sRGB-u8 packed conversion.
-        /// Sized `width * height * 3` bytes. Owned per-backend so the
-        /// host-side conversion is allocation-free across iters.
-        srgb_scratch: alloc::vec::Vec<u8>,
+        /// CubeCL compute client. Held for `create_from_slice` calls
+        /// that upload the encoder's host linear planes to GPU buffers
+        /// the inner pipeline adopts.
+        client: ComputeClient<CudaRuntime>,
+        /// Tight-stride f32 scratch for the distorted side's R/G/B
+        /// planes. The buttloop hands us strided `recon_r/g/b` with
+        /// `padded_width >= width`; we copy each row into this buffer
+        /// before upload because the inner pipeline expects tight
+        /// `width × height` planes (no padding). One plane's worth =
+        /// `width * height` f32. We allocate three planes once and
+        /// reuse the scratch every iter to avoid per-iter `Vec` churn.
+        dist_plane_scratch: [alloc::vec::Vec<f32>; 3],
         params: GpuParams,
         width: u32,
         height: u32,
@@ -301,75 +333,64 @@ pub(crate) mod gpu {
             };
 
             let inner = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                Butteraugli::<CudaRuntime>::new_multires(client, width, height)
+                Butteraugli::<CudaRuntime>::new_multires(client.clone(), width, height)
             }));
             let inner = match inner {
                 Ok(i) => i,
                 Err(_) => return None,
             };
 
-            let n = (width as usize)
-                .checked_mul(height as usize)?
-                .checked_mul(3)?;
+            let n = (width as usize).checked_mul(height as usize)?;
             let params = GpuParams::default().with_intensity_target(intensity_target);
 
             Some(Self {
                 inner,
-                srgb_scratch: alloc::vec![0u8; n],
+                client,
+                dist_plane_scratch: [
+                    alloc::vec![0.0f32; n],
+                    alloc::vec![0.0f32; n],
+                    alloc::vec![0.0f32; n],
+                ],
                 params,
                 width,
                 height,
             })
         }
 
-        /// Convert linear f32 planar RGB to sRGB-u8 packed RGB into
-        /// `self.srgb_scratch`. Reads `width * height` from each plane
-        /// (with `stride == width`).
-        fn pack_linear_to_srgb_tight(
-            &mut self,
-            r: &[f32],
-            g: &[f32],
-            b: &[f32],
-            width: usize,
-            height: usize,
-        ) {
-            let n = width * height;
-            debug_assert_eq!(r.len(), n);
-            debug_assert_eq!(g.len(), n);
-            debug_assert_eq!(b.len(), n);
-            debug_assert_eq!(self.srgb_scratch.len(), n * 3);
-            for i in 0..n {
-                let dst = i * 3;
-                self.srgb_scratch[dst] = linear_to_srgb_u8(r[i]);
-                self.srgb_scratch[dst + 1] = linear_to_srgb_u8(g[i]);
-                self.srgb_scratch[dst + 2] = linear_to_srgb_u8(b[i]);
-            }
+        /// Upload one tight (width*height) f32 plane to a fresh GPU
+        /// handle. Caller-supplied `plane.len()` MUST equal `n = width*height`.
+        fn upload_plane(&self, plane: &[f32]) -> Handle {
+            debug_assert_eq!(plane.len(), (self.width as usize) * (self.height as usize));
+            // bytemuck::cast_slice<f32, u8> — the f32 plane → byte view
+            // CubeCL needs for `create_from_slice`.
+            self.client.create_from_slice(bytemuck::cast_slice::<f32, u8>(plane))
         }
 
-        /// Same as [`pack_linear_to_srgb_tight`] but reads from a strided
-        /// distorted plane (the buttloop's `recon_r/g/b` use
-        /// `padded_width >= width`). Walks (x, y) and indexes with
-        /// `y * padded_width + x`.
-        fn pack_linear_to_srgb_strided(
-            &mut self,
-            r: &[f32],
-            g: &[f32],
-            b: &[f32],
+        /// Copy one strided plane into the tight scratch slot. Returns
+        /// a `&[f32]` view of the scratch which is then uploaded via
+        /// [`Self::upload_plane`]. Tight rows are width-wide; strided
+        /// input rows are padded_width-wide.
+        fn copy_strided_row_into_scratch(
+            scratch: &mut [f32],
+            src: &[f32],
             padded_width: usize,
             width: usize,
             height: usize,
         ) {
-            debug_assert_eq!(self.srgb_scratch.len(), width * height * 3);
+            debug_assert_eq!(scratch.len(), width * height);
+            // Fast path: stride == width means already tight; one
+            // contiguous copy beats per-row loops in LLVM.
+            if padded_width == width {
+                let n = width * height;
+                debug_assert!(src.len() >= n);
+                scratch.copy_from_slice(&src[..n]);
+                return;
+            }
             for y in 0..height {
                 let src_row = y * padded_width;
-                let dst_row = y * width * 3;
-                for x in 0..width {
-                    let src = src_row + x;
-                    let dst = dst_row + x * 3;
-                    self.srgb_scratch[dst] = linear_to_srgb_u8(r[src]);
-                    self.srgb_scratch[dst + 1] = linear_to_srgb_u8(g[src]);
-                    self.srgb_scratch[dst + 2] = linear_to_srgb_u8(b[src]);
-                }
+                let dst_row = y * width;
+                scratch[dst_row..dst_row + width]
+                    .copy_from_slice(&src[src_row..src_row + width]);
             }
         }
     }
@@ -393,12 +414,29 @@ pub(crate) mod gpu {
                     self.width, self.height, width, height,
                 )));
             }
-            self.pack_linear_to_srgb_tight(ref_r, ref_g, ref_b, width, height);
+            let n = width * height;
+            if ref_r.len() < n || ref_g.len() < n || ref_b.len() < n {
+                return Err(crate::error::Error::InvalidInput(format!(
+                    "GPU backend: reference plane too short: expected {}, got R={} G={} B={}",
+                    n,
+                    ref_r.len(),
+                    ref_g.len(),
+                    ref_b.len(),
+                )));
+            }
+            // Upload tight reference planes directly. Reference is tight
+            // by the trait contract (`set_reference` doesn't take a
+            // stride; `width == stride`).
+            let r_h = self.upload_plane(&ref_r[..n]);
+            let g_h = self.upload_plane(&ref_g[..n]);
+            let b_h = self.upload_plane(&ref_b[..n]);
             let params = self.params;
             self.inner
-                .set_reference_with_options(&self.srgb_scratch, &params)
+                .set_reference_from_linear_planes_with_options(r_h, g_h, b_h, &params)
                 .map_err(|e| {
-                    crate::error::Error::InvalidInput(format!("GPU butteraugli set_reference: {e}"))
+                    crate::error::Error::InvalidInput(format!(
+                        "GPU butteraugli set_reference_from_linear_planes: {e}"
+                    ))
                 })?;
             Ok(())
         }
@@ -418,19 +456,27 @@ pub(crate) mod gpu {
                     self.width, self.height, width, height,
                 )));
             }
-            self.pack_linear_to_srgb_strided(
-                dist_r,
-                dist_g,
-                dist_b,
-                padded_width,
-                width,
-                height,
-            );
+            // Strided → tight copy into the per-instance scratch, then
+            // upload each plane to its own GPU handle. The inner
+            // pipeline adopts the handles; CubeCL refcounts so dropping
+            // our local clones doesn't free the buffers prematurely.
+            let [s_r, s_g, s_b] = &mut self.dist_plane_scratch;
+            Self::copy_strided_row_into_scratch(s_r, dist_r, padded_width, width, height);
+            Self::copy_strided_row_into_scratch(s_g, dist_g, padded_width, width, height);
+            Self::copy_strided_row_into_scratch(s_b, dist_b, padded_width, width, height);
+            // Borrow self.client/self.inner separately — upload_plane
+            // borrows &self.client; the inner pipeline call borrows
+            // &mut self.inner.
+            let r_h = self.client.create_from_slice(bytemuck::cast_slice::<f32, u8>(s_r));
+            let g_h = self.client.create_from_slice(bytemuck::cast_slice::<f32, u8>(s_g));
+            let b_h = self.client.create_from_slice(bytemuck::cast_slice::<f32, u8>(s_b));
             let result = self
                 .inner
-                .compute_with_reference(&self.srgb_scratch)
+                .compute_with_reference_from_linear_planes(r_h, g_h, b_h)
                 .map_err(|e| {
-                    crate::error::Error::InvalidInput(format!("GPU butteraugli compare: {e}"))
+                    crate::error::Error::InvalidInput(format!(
+                        "GPU butteraugli compute_with_reference_from_linear_planes: {e}"
+                    ))
                 })?;
             let mut diffmap = alloc::vec![0.0f32; width * height];
             self.inner
@@ -445,6 +491,30 @@ pub(crate) mod gpu {
         }
     }
 
+    // ====================================================================
+    // W44-phase3-B4 — dead-code retained from B1 era
+    // ====================================================================
+    //
+    // The 8193-entry linear→sRGB-u8 LUT below was the B1 workaround for
+    // the API mismatch (butteraugli-gpu only accepted sRGB-u8 input on
+    // the reference side). B4 added `set_reference_from_linear_planes`
+    // upstream and the GPU backend now uploads linear-f32 planes
+    // directly, so the LUT is no longer reachable.
+    //
+    // We keep the code under `#[allow(dead_code)]` rather than deleting
+    // it because:
+    // 1. It documents the exact sRGB conversion semantics we used to
+    //    rely on (in case a future caller wants strict sRGB-u8 parity
+    //    against a CPU butteraugli reference).
+    // 2. If `internals` ever stops being on by default for our path
+    //    (e.g. the upstream renames the feature), this is a one-line
+    //    revert path.
+    // 3. Compiled-out unit tests are still useful as a smoke for the
+    //    LUT's correctness if it's ever resurrected.
+    //
+    // The unit tests are NOT compiled in this configuration to avoid
+    // dead-test warnings; they ride along inside `#[cfg(test)]`.
+
     /// LUT-based linear-light f32 → 8-bit sRGB conversion. 8193-entry
     /// table indexed by `(x.clamp(0, 1) * 8192) as u32` with linear
     /// interpolation in u8 space. ~30-50× faster than the scalar `powf`
@@ -452,13 +522,13 @@ pub(crate) mod gpu {
     /// 1 ULP of u8 (verified by unit test) — well under the 0.5%
     /// butteraugli divergence threshold W44-RECON-DEEP/A7 measured.
     ///
-    /// Without this LUT the buttloop's host-side pack at 1646×1062 (a
-    /// terminal-screenshot cell) would burn ~150-300 ms per iter in
-    /// `powf` and wipe out the GPU's ~30 ms butteraugli speedup. With
-    /// the LUT the pack drops to ~5 ms.
+    /// **Dead since W44-phase3-B4** — retained as documentation +
+    /// quick-revert path. See module-level comment.
+    #[allow(dead_code)]
     static LIN_TO_SRGB_LUT: once_cell::race::OnceBox<[u8; 8193]> =
         once_cell::race::OnceBox::new();
 
+    #[allow(dead_code)]
     fn build_lut() -> alloc::boxed::Box<[u8; 8193]> {
         let mut t = alloc::boxed::Box::new([0u8; 8193]);
         for (i, slot) in t.iter_mut().enumerate() {
@@ -478,6 +548,10 @@ pub(crate) mod gpu {
     /// Returns the 8-bit sRGB code. Matches the IEC 61966-2-1 piecewise
     /// transfer function used by `srgb_u8_to_linear_planar_kernel` in
     /// `butteraugli-gpu` (which is the inverse).
+    ///
+    /// **Dead since W44-phase3-B4** — retained as documentation +
+    /// quick-revert path. See module-level comment.
+    #[allow(dead_code)]
     #[inline]
     fn linear_to_srgb_u8(linear: f32) -> u8 {
         let table = LIN_TO_SRGB_LUT.get_or_init(build_lut);

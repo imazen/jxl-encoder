@@ -63,7 +63,7 @@ postcard = { version = "1.1", default-features = false, features = ["use-std"], 
 # `~/work/zen/zenmetrics/crates/butteraugli-gpu` because butteraugli-gpu
 # 0.0.1 is `publish = false`. CubeCL is pulled in as a direct dep so the
 # `CudaRuntime` type is reachable from the backend module.
-butteraugli-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types"], optional = true }
+butteraugli-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types", "internals"], optional = true }
 # cubecl is pinned via `[patch.crates-io]` in the workspace `Cargo.toml`
 # to the same git rev butteraugli-gpu is tested against.
 cubecl = { version = "0.10.0-pre.4", default-features = false, features = ["std", "cuda"], optional = true }
@@ -1313,6 +1313,17 @@ required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
 [[example]]
 name = "w44_phase3_b1_gpu_buttloop_ab"
 path = "examples/w44_phase3_b1_gpu_buttloop_ab.rs"
+required-features = ["gpu-butteraugli", "butteraugli-loop", "ssim2-loop", "parallel", "__expert"]
+
+# W44-phase3-B4: same 6-cell A/B as B1, re-run with the new
+# `set_reference_from_linear_planes` API wired into the GPU backend.
+# Identical source (no code change in the bench); the difference is at
+# the butteraugli-gpu API boundary — the bench uses the same
+# `LossyConfig::with_gpu_butteraugli(true)` toggle. Output path defaults
+# to the B4 TSV.
+[[example]]
+name = "w44_phase3_b4_gpu_linear_planes_ab"
+path = "examples/w44_phase3_b4_gpu_linear_planes_ab.rs"
 required-features = ["gpu-butteraugli", "butteraugli-loop", "ssim2-loop", "parallel", "__expert"]
 
 # W44-175: parallel `transform_and_quantize_into` (buttloop per-iter group
