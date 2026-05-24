@@ -4759,8 +4759,20 @@ impl LossyConfig {
             chroma_subsampling: ChromaSubsampling::Full444,
             #[cfg(feature = "tuning-override")]
             tier2_knobs: None,
+            // W44-phase3-B5-flip: default ON when the `gpu-butteraugli`
+            // cargo feature is compiled in, OFF otherwise. Users without
+            // the feature compiled get CPU (unchanged byte output, every
+            // hash-lock fixture stays byte-identical because the default
+            // feature set does NOT include `gpu-butteraugli`). Users WITH
+            // the feature compiled get GPU by default — the B5 38-cell
+            // sweep measured a median 1.107× wall speedup, with 36/38 cells
+            // within ±0.5 % bytes and 2/38 in the [-0.635 %, -0.551 %] band
+            // (both NEGATIVE — GPU produces SMALLER files via favorable
+            // buttloop-convergence drift). EncoderStrategy::Libjxl still
+            // forces CPU at encoder construction (strict cjxl-parity) via
+            // [`Self::resolve_gpu_butteraugli`].
             #[cfg(feature = "butteraugli-loop")]
-            gpu_butteraugli: false,
+            gpu_butteraugli: cfg!(feature = "gpu-butteraugli"),
         }
     }
 
@@ -6413,14 +6425,48 @@ impl LossyConfig {
     }
 
     /// Currently configured GPU butteraugli preference (W44-phase3-B1).
-    /// `false` (default) routes the buttloop through the CPU
-    /// `butteraugli` crate; `true` opts in to the GPU backend when the
-    /// `gpu-butteraugli` cargo feature is enabled. See
-    /// [`Self::with_gpu_butteraugli`] for the runtime fallback policy.
+    ///
+    /// **W44-phase3-B5-flip default**: this field defaults to `true`
+    /// when the `gpu-butteraugli` cargo feature is compiled in,
+    /// `false` otherwise. The actual runtime behavior also requires
+    /// CUDA to initialise successfully — see
+    /// [`Self::with_gpu_butteraugli`] for the full fallback policy.
+    ///
+    /// **Strategy-level override**: even when this returns `true`,
+    /// [`EncoderStrategy::Libjxl`] forces the GPU backend OFF at
+    /// encoder construction (strict cjxl-parity — see
+    /// [`Self::resolve_gpu_butteraugli`]). Inspect the effective value
+    /// for a given encode via `resolve_gpu_butteraugli()`.
     ///
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
     pub fn gpu_butteraugli(&self) -> bool {
+        self.gpu_butteraugli
+    }
+
+    /// W44-phase3-B5-flip: resolve the effective GPU-butteraugli
+    /// preference, accounting for the strategy-level override.
+    ///
+    /// Returns [`Self::gpu_butteraugli`] in every case EXCEPT
+    /// [`EncoderStrategy::Libjxl`], which forces `false` regardless of
+    /// the field value. The Libjxl strategy ships bit-for-bit cjxl
+    /// parity across all 24 gates (W44-126 user signoff:
+    /// "all-divergence parity"); the GPU butteraugli backend would
+    /// introduce ~1e-7 score drift that cascades into ~0.5 % byte
+    /// drift on rare cells (W44-phase3-B5 measurement), violating the
+    /// byte-lock invariant.
+    ///
+    /// All non-Libjxl strategies (Zenjxl, Aggressive, LeanFaster,
+    /// Custom) honor the field. Per-encode callers can still pin the
+    /// CPU backend explicitly via
+    /// `.with_gpu_butteraugli(false)`.
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub(crate) fn resolve_gpu_butteraugli(&self) -> bool {
+        if matches!(self.strategy, EncoderStrategy::Libjxl) {
+            return false;
+        }
         self.gpu_butteraugli
     }
 
@@ -8871,8 +8917,11 @@ impl<'a> EncodeRequest<'a> {
             // HLG content lands on `Vdp2`; everything else on
             // `Butteraugli` (SDR hash-locks stay byte-identical).
             enc.hdr_loss = cfg.resolve_hdr_loss(self.layout, self.color_encoding.as_ref());
-            // W44-phase3-B1: propagate GPU butteraugli opt-in (still-image path).
-            enc.gpu_butteraugli = cfg.gpu_butteraugli;
+            // W44-phase3-B1 + W44-phase3-B5-flip: propagate GPU butteraugli
+            // opt-in (still-image path). `resolve_gpu_butteraugli` honors
+            // the field for all strategies except `EncoderStrategy::Libjxl`,
+            // which forces CPU for strict cjxl-parity.
+            enc.gpu_butteraugli = cfg.resolve_gpu_butteraugli();
         }
         #[cfg(feature = "ssim2-loop")]
         {
@@ -10051,8 +10100,12 @@ impl LossyEncoder {
                 // the resolution rationale. Auto → Vdp2 on PQ/HLG,
                 // Butteraugli otherwise.
                 enc.hdr_loss = cfg.resolve_hdr_loss(self.layout, self.color_encoding.as_ref());
-                // W44-phase3-B1: propagate GPU butteraugli opt-in.
-                enc.gpu_butteraugli = cfg.gpu_butteraugli;
+                // W44-phase3-B1 + W44-phase3-B5-flip: propagate GPU
+                // butteraugli opt-in (streaming LossyEncoder path).
+                // `resolve_gpu_butteraugli` honors the field for all
+                // strategies except `EncoderStrategy::Libjxl`, which
+                // forces CPU for strict cjxl-parity.
+                enc.gpu_butteraugli = cfg.resolve_gpu_butteraugli();
             }
             #[cfg(feature = "ssim2-loop")]
             {
@@ -11997,9 +12050,12 @@ fn encode_animation_lossy(
         // PQ / HLG f32 layouts will route to `Vdp2`, everything
         // else to `Butteraugli`.
         enc.hdr_loss = cfg.resolve_hdr_loss(layout, None);
-        // W44-phase3-B1: propagate GPU butteraugli opt-in to the
-        // animation frame encoder too.
-        enc.gpu_butteraugli = cfg.gpu_butteraugli;
+        // W44-phase3-B1 + W44-phase3-B5-flip: propagate GPU butteraugli
+        // opt-in (animation frame encoder path). `resolve_gpu_butteraugli`
+        // honors the field for all strategies except
+        // `EncoderStrategy::Libjxl`, which forces CPU for strict
+        // cjxl-parity.
+        enc.gpu_butteraugli = cfg.resolve_gpu_butteraugli();
     }
     #[cfg(feature = "ssim2-loop")]
     {
@@ -16090,6 +16146,106 @@ mod tests {
         assert_eq!(
             resolved.buttloop_epf_sharpness_seed,
             custom.buttloop_epf_sharpness_seed
+        );
+    }
+
+    /// W44-phase3-B5-flip: `LossyConfig::gpu_butteraugli()` defaults to
+    /// `cfg!(feature = "gpu-butteraugli")`. When the cargo feature is
+    /// compiled in, the field defaults to `true` (GPU); when off, the
+    /// field defaults to `false` (CPU). The runtime can still fall back
+    /// to CPU if CUDA fails to initialise.
+    ///
+    /// Builder symmetry: explicit `.with_gpu_butteraugli(false)` always
+    /// overrides the default regardless of feature.
+    #[cfg(feature = "butteraugli-loop")]
+    #[test]
+    fn test_w44_phase3_b5_flip_gpu_butteraugli_default() {
+        let cfg = LossyConfig::new(1.0);
+        assert_eq!(
+            cfg.gpu_butteraugli(),
+            cfg!(feature = "gpu-butteraugli"),
+            "LossyConfig::gpu_butteraugli() default must match the \
+             `gpu-butteraugli` cargo feature flag"
+        );
+        // Explicit opt-out always wins.
+        let cfg_off = LossyConfig::new(1.0).with_gpu_butteraugli(false);
+        assert!(
+            !cfg_off.gpu_butteraugli(),
+            "Explicit .with_gpu_butteraugli(false) must override the default"
+        );
+        let cfg_on = LossyConfig::new(1.0).with_gpu_butteraugli(true);
+        assert!(
+            cfg_on.gpu_butteraugli(),
+            "Explicit .with_gpu_butteraugli(true) must override the default"
+        );
+    }
+
+    /// W44-phase3-B5-flip: `EncoderStrategy::Libjxl` forces GPU
+    /// butteraugli OFF via `resolve_gpu_butteraugli`, regardless of
+    /// the field value or cargo feature. This preserves strict
+    /// cjxl-parity for the Libjxl strategy (per W44-126 user signoff
+    /// "all-divergence parity"). All non-Libjxl strategies honor the
+    /// field.
+    #[cfg(feature = "butteraugli-loop")]
+    #[test]
+    fn test_w44_phase3_b5_flip_libjxl_strategy_forces_cpu() {
+        // Libjxl strategy: even if field is true, resolver returns false.
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Libjxl)
+            .with_gpu_butteraugli(true);
+        assert!(
+            cfg.gpu_butteraugli(),
+            "Field value must reflect the explicit setter"
+        );
+        assert!(
+            !cfg.resolve_gpu_butteraugli(),
+            "EncoderStrategy::Libjxl must force resolve_gpu_butteraugli() = false \
+             regardless of field value (strict cjxl-parity invariant)"
+        );
+
+        // Zenjxl strategy: resolver honors the field.
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Zenjxl)
+            .with_gpu_butteraugli(true);
+        assert!(
+            cfg.resolve_gpu_butteraugli(),
+            "EncoderStrategy::Zenjxl must honor with_gpu_butteraugli(true)"
+        );
+
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Zenjxl)
+            .with_gpu_butteraugli(false);
+        assert!(
+            !cfg.resolve_gpu_butteraugli(),
+            "EncoderStrategy::Zenjxl must honor with_gpu_butteraugli(false)"
+        );
+
+        // Aggressive / LeanFaster: same field-honoring behavior.
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Aggressive)
+            .with_gpu_butteraugli(true);
+        assert!(
+            cfg.resolve_gpu_butteraugli(),
+            "EncoderStrategy::Aggressive must honor with_gpu_butteraugli(true)"
+        );
+
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::LeanFaster)
+            .with_gpu_butteraugli(true);
+        assert!(
+            cfg.resolve_gpu_butteraugli(),
+            "EncoderStrategy::LeanFaster must honor with_gpu_butteraugli(true)"
+        );
+
+        // Custom strategy: also honors the field.
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Custom(Box::new(
+                EncoderImprovementsCustom::default(),
+            )))
+            .with_gpu_butteraugli(true);
+        assert!(
+            cfg.resolve_gpu_butteraugli(),
+            "EncoderStrategy::Custom must honor with_gpu_butteraugli(true)"
         );
     }
 }
