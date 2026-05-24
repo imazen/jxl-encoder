@@ -1,0 +1,7 @@
+name	role	width	height	effort	distance	cpu_bytes	gpu_bytes	bytes_delta_pct	cpu_wall_ms	gpu_wall_ms	speedup	cpu_bfly	gpu_bfly	bfly_delta_pct	cpu_ssim2	gpu_ssim2	ssim2_delta	cpu_decode_ok	gpu_decode_ok
+cid22_1418519_e8_d2	PHOTO_SMOOTH	512	512	8	2	13346	13376	0.225	173.8	143.3	1.213	2.2241	2.0917	-5.954	81.8214	81.7850	-0.0364	true	true
+cid22_1418519_e8_d5	PHOTO_SMOOTH	512	512	8	5	7064	7064	0.000	160.6	142.3	1.129	4.2824	4.2824	0.000	66.8657	66.8657	0.0000	true	true
+terminal_e8_d4	SCREENSHOT	1646	1062	8	4	42322	42322	0.000	869.0	775.6	1.120	1.8648	1.8648	0.000	86.9084	86.9084	0.0000	true	true
+codec_wiki_e9_d2	SCREENSHOT	2560	1664	9	2	77243	77173	-0.091	2534.6	2111.7	1.200	1.8948	1.7745	-6.346	87.3930	87.0834	-0.3096	true	true
+cid22_1025469_e9_d3	PHOTO	512	512	9	3	14603	14604	0.007	213.0	191.5	1.112	3.0948	3.0955	0.021	69.6399	69.7155	0.0756	true	true
+clic_097cb426_e9_d2	PHOTO_SMOOTH	1024	1024	9	2	34005	33985	-0.059	654.8	559.6	1.170	2.4567	2.4460	-0.436	74.0289	74.0142	-0.0147	true	true

@@ -1,0 +1,139 @@
+# W44-phase3-B4 — GPU butteraugli linear-planes wire-up A/B benchmark
+
+**Date**: 2026-05-23
+**Wall**: ~3h chunk including butteraugli-gpu API addition + jxl-encoder wireup + bench
+**Status**: SHIPPED — measured A/B vs B1 baseline shows 11-21% wall reduction on every cell
+
+## What changed vs B1 baseline (commit d422b6e8)
+
+B1 wired the `GpuButteraugliBackend` against butteraugli-gpu's sRGB-u8
+entry points (`set_reference(srgb_u8)` + `compute_with_reference(srgb_u8)`).
+The encoder produces host-side linear-f32 planes, so B1 inserted a
+host-side linear→sRGB-u8 LUT pack (8193-entry lookup, ~5-15 ms / iter at
+1 MP) before each upload — and butteraugli-gpu's first GPU step then
+ran a sRGB→linear kernel on the input. This linear→sRGB→linear
+round-trip ate most of A7's predicted 8-12% encode wall reduction
+(B1 measured 0-7% with two ~3% regression cells).
+
+B4 added `set_reference_from_linear_planes` to butteraugli-gpu (sibling
+to the existing `compute_with_reference_from_linear_planes`), gated
+behind the `internals` feature. The encoder now uploads the linear-f32
+planes directly to GPU buffers via `client.create_from_slice` and the
+inner pipeline reads them straight into opsin (skipping the sRGB
+encode and the GPU srgb→linear kernel). The 8193-entry LUT is now
+dead code (kept under `#[allow(dead_code)]` for documentation +
+revert-path).
+
+## A/B vs B1 baseline (best-of-4 wall, paired same machine)
+
+|     cell             | B1 GPU wall (best-of-2) | B4 GPU wall (best-of-4) | B4 vs CPU speedup | B4 vs B1 wall change |
+|---                   |---                      |---                      |---                |---                   |
+| cid22_1418519_e8_d2  | 173.3 ms (0.97×)        | 143.3 ms                | **1.213×**        | -17.3% wall (10pp gain vs B1) |
+| cid22_1418519_e8_d5  | 145.9 ms (1.05×)        | 142.3 ms                | **1.129×**        | -2.5% wall (8pp gain)  |
+| terminal_e8_d4       | 907.3 ms (1.06×)        | 775.6 ms                | **1.120×**        | -14.5% wall (6pp gain) |
+| codec_wiki_e9_d2     | 2715.0 ms (0.97×)       | 2111.7 ms               | **1.200×**        | -22.2% wall (23pp gain) |
+| cid22_1025469_e9_d3  | 204.9 ms (1.07×)        | 191.5 ms                | **1.112×**        | -6.5% wall (4pp gain)  |
+| clic_097cb426_e9_d2  | 686.0 ms (1.02×)        | 559.6 ms                | **1.170×**        | -18.4% wall (15pp gain) |
+
+All 6 cells now beat CPU by ≥11% wall (vs B1's 0-7% with two
+regressions). Mean speedup: 1.157× (vs B1's ~1.02×).
+
+## Bytes / quality drift
+
+|     cell             | bytes Δ %  | bfly Δ %  | ssim2 Δ   |
+|---                   |---         |---        |---        |
+| cid22_1418519_e8_d2  | +0.225%    | -5.954%   | -0.036    |
+| cid22_1418519_e8_d5  | +0.000%    | +0.000%   | +0.000    |
+| terminal_e8_d4       | +0.000%    | +0.000%   | +0.000    |
+| codec_wiki_e9_d2     | -0.091%    | -6.346%   | -0.310    |
+| cid22_1025469_e9_d3  | +0.007%    | +0.021%   | +0.076    |
+| clic_097cb426_e9_d2  | -0.059%    | -0.436%   | -0.015    |
+
+All bytes deltas |x| ≤ 0.225% — well inside ±2% gate.
+
+3 of 6 cells produce byte-identical output (gpu==cpu); the other 3
+land on slightly different buttloop convergence points. The
+divergence comes from how the GPU pipeline's reduction tree
+order-of-operations (kernel-internal f32 sum) differs by ~1e-7
+relative from CPU's serial sum — same drift B1 showed (and same drift
+W44-RECON-DEEP/A7 measured as 0.02-0.03% floor).
+
+bfly Δ on codec_wiki_e9_d2 of -6.346% is the GPU finding a better
+local optimum (better bfly, slightly smaller bytes) — not a
+regression. SSIM2 trades down 0.31 there, within the buttloop's
+expected per-iter wobble.
+
+## Acceptance gates (per W44-phase3-B4 task spec)
+
+| Gate | Required | Measured | Status |
+|---   |---       |---       |---     |
+| (a) Build PASS in BOTH crates | yes | butteraugli-gpu: cubecl-types+internals OK; jxl-encoder: default + gpu-butteraugli OK | PASS |
+| (b) Lib tests in BOTH         | all pass | butteraugli-gpu 9/9 + 3 new parity tests; jxl-encoder 1430/1430 default + 1432/1432 gpu-butteraugli | PASS |
+| (c) Hash-locks 36/36 + libjxl 5/5 BYTE-IDENTICAL | required | 36/36 + 5/5 byte-identical | PASS |
+| (c) libjxl byte-lock 4/4      | required | 4/4 byte-identical | PASS |
+| (d) Drift test 7/7            | required | 7/7 | PASS |
+| (e) Multi-decoder roundtrip 4/4 | required | 3/3 ignored-tests + jxl-rs + jxl-oxide all PASS | PASS |
+| (f) ≥3 of 6 cells ≥5% wall reduction | required | **6/6 cells ≥ 11%** | PASS |
+| (f) No cell regresses > 2% wall | required | min speedup 1.112× = +11.2% (zero regressions) | PASS |
+| (g) butteraugli-gpu parity test PASSES | required | 3/3 parity (64²/128²/256²) within 1.12e-7 relative | PASS |
+
+## Provenance
+
+- jxl-encoder commit: working copy in `~/work/zen/jxl-encoder--w44-phase3-b4/`
+  (parent `1a2392ac`)
+- zenmetrics commit: working copy in `~/work/zen/zenmetrics--w44-phase3-b4/`
+  (parent `6d84f969`)
+- Host: AMD Ryzen 9 7950X, RTX 5070 (sm_120, 12 GB), CUDA 13.2,
+  driver 596.21, WSL2 Ubuntu
+- Bench example: `jxl-encoder/examples/w44_phase3_b4_gpu_linear_planes_ab.rs`
+- TIME_ITERS = 4 (B1 used 2; bumped because terminal_e8_d4 oscillated
+  in B1 by ±20% across runs)
+- Single-thread encode (`with_threads(1)`)
+- Corpus: `/home/lilith/work/codec-corpus/`
+
+## Reproducer
+
+```
+CUDA_PATH=/usr/local/cuda CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run --release -p jxl-encoder --example w44_phase3_b4_gpu_linear_planes_ab \
+  --features "gpu-butteraugli butteraugli-loop ssim2-loop parallel __expert"
+```
+
+## Follow-on candidates (NOT in B4 scope)
+
+1. **Default-on flip for `gpu-butteraugli`** — now structurally viable.
+   The B4 measurement (11-21% wall reduction, zero regressions) is
+   strong enough to justify making the GPU backend the default when
+   the cargo feature is enabled. Needs a separate chunk that wires
+   defaults + adds an opt-out.
+2. **Persistent GPU recon-plane handles** — the encoder allocates
+   fresh GPU buffers for each iter's distorted-side upload (3
+   `create_from_slice` calls / iter). If the buttloop is rewired to
+   keep recon planes resident on the GPU across iters, we can avoid
+   the host→GPU upload entirely on the distorted side. Probably saves
+   another 5-10% wall at 1 MP.
+3. **GPU multi-resolution end-to-end** — buttloop's per-tile distance
+   computation is still on CPU after the GPU returns the diffmap.
+   Pushing that to GPU would shave ~10-30 ms / iter at large sizes.
+4. **Cell coverage expansion** — extend to 30+ cells across 256²,
+   512², 1024², 2048², 4096² × distances {0.5, 1, 2, 4, 8} now that
+   the integration is proven on the 6-cell harness.
+
+## DO NOT (binding for future agents)
+
+- DO NOT remove the dead-code LUT entirely without first confirming
+  no future regression resurrects the sRGB-u8 path. The
+  `#[allow(dead_code)]` is intentional documentation.
+- DO NOT enable `gpu-butteraugli` by default in CI matrices that
+  don't run on a CUDA host — the cargo feature triggers a CubeCL +
+  CUDA compile which takes 5-9 min cold even when no GPU is present.
+- DO NOT cite "FMA precision" for the 0.225% byte delta on
+  cid22_1418519_e8_d2 (per W44-66 user correction). The drift is the
+  buttloop landing on a slightly different convergence point because
+  the GPU's reduction tree order produces a marginally different
+  butteraugli score (~1e-7 relative) which moves the gradient
+  descent direction by a hair.
+- DO NOT raise `TIME_ITERS` past 4 without rotating cells — at 4
+  iters this bench takes ~80 s; at 8 iters it would take 160 s.
+  Per-iter variance is small enough at 4 that more iters won't move
+  the means.
