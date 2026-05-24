@@ -1521,7 +1521,29 @@ impl VarDctEncoder {
             BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE,
             buttloop_qf_seed_scale_min_distance,
         );
+        // W44-AUDIT-6 Phase 2C (2026-05-24): symmetric high-colour exclude
+        // for the W44-105 buttloop seed scale. The Phase 1 helper
+        // suppresses the W44-109 adaptive_quant lift at e=5/6/7 (pre-
+        // buttloop) on `m3_colourfulness >= 80`. At e>=8 the W44-105
+        // buttloop seed scale (default 4.0) takes over the same role —
+        // and per AUDIT-4 measurement, codec_wiki e8/e9 d=4 shows the
+        // SAME +20.72%/+4.88% byte overhead pattern (Zenjxl vs cjxl)
+        // that AUDIT-6 Phase 1 closed for e7. Mirror the discriminator
+        // here so the production default suppresses the W44-105 lift on
+        // codec_wiki-class screenshots while preserving the W44-105 win
+        // cluster (M3 ∈ [10, 29]: terminal/imac_g3/imac_dark/etc.).
+        //
+        // Env hook for A/B: `JXL_W44_AUDIT_6_DISABLE=1` forces OFF
+        // (shared with the Phase 1 W44-109 site). Both lifts gate on
+        // the same `high_colour_class_exclude` resolved field.
+        let audit_6_env_e8e9 =
+            std::env::var_os("JXL_W44_AUDIT_6_DISABLE").is_some_and(|v| v != "0" && v != "");
+        let high_colour_class_exclude_e8e9 =
+            self.resolved_improvements.high_colour_class_exclude
+                && !audit_6_env_e8e9
+                && w44_audit_6_is_high_colour_class(self.zenanalyze_proxies.as_ref());
         let auto_gate_fires = is_screenshot
+            && !high_colour_class_exclude_e8e9
             && (target_distance >= buttloop_min_distance
                 || (w44_108_low_colour
                     && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE));
