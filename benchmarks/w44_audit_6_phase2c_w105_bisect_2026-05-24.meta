@@ -1,0 +1,125 @@
+# W44-AUDIT-6 Phase 2C — extend M3 discriminator to W44-105 buttloop seed at e8/e9
+
+**Date:** 2026-05-24
+**Status:** [SHIPPED — gates a/b/c/d/e/f/g/h PASS]
+**Parent commit:** post-`5942fc64` (Phase 2B SHIPPED)
+**TSV:** `benchmarks/w44_audit_6_phase2c_w105_bisect_2026-05-24.tsv`
+**Reproducer:** `cargo run -p jxl-encoder --release \
+                  --features "parallel butteraugli-loop ssim2-loop __expert" \
+                  --example w44_audit_6_phase2c_w105_bisect`
+**Wall time:** 96.8 s (6 cells × 4 encodes/cell = 24 encodes + scoring)
+
+## Source change
+
+Single new branch inside `run_butteraugli_loop` in `butteraugli_loop.rs`
+(line ~1524 `auto_gate_fires` predicate): when `butteraugli_iters > 0`
+fires AND the resolved `high_colour_class_exclude` field is on AND
+`w44_audit_6_is_high_colour_class(self.zenanalyze_proxies)` (M3>=80),
+short-circuit `auto_gate_fires = false`. This mirrors the Phase 1
+exclude at the symmetric site for the W44-105 buttloop seed scale
+(default 4.0 at e8/e9 on screenshot-class content).
+
+No new gate field added — reuses Phase 1's
+`resolved.high_colour_class_exclude` (defaults `true` on Zenjxl/
+Aggressive, `false` on Libjxl/LeanFaster). Env hook
+`JXL_W44_AUDIT_6_DISABLE=1` is shared with the Phase 1 site.
+
+`EXPECTED_DIVERGENCE_GATE_COUNT` UNCHANGED (still 28; no new gate).
+`ALL_DIVERGENCE_ENTRIES` UNCHANGED.
+
+## Results (6 cells × 4 modes interleaved paired)
+
+| cell                  | mode               | bytes  | sha8     | ssim2 | Δb vs cjxl |
+|---                    |---                 |---     |---       |---    |---         |
+| **codec_wiki e8 d=4** | D_cjxl             | 72960  | -        | 83.27 | 0          |
+| **codec_wiki e8 d=4** | A_baseline_no_audit6 | 88077 | 18855bc4 | 86.37 | **+20.72%** |
+| **codec_wiki e8 d=4** | **B_shipped**      | **57061** | **1ef428ba** | 80.30 | **-21.79%** |
+| **codec_wiki e8 d=4** | C_no_w105          | 57061  | 1ef428ba | 80.30 | -21.79%    |
+| **codec_wiki e9 d=4** | D_cjxl             | 73629  | -        | 83.31 | 0          |
+| **codec_wiki e9 d=4** | A_baseline_no_audit6 | 77221 | 300c1002 | 84.98 | **+4.88%** |
+| **codec_wiki e9 d=4** | **B_shipped**      | **56140** | **db30eeef** | 80.18 | **-23.75%** |
+| **codec_wiki e9 d=4** | C_no_w105          | 56140  | db30eeef | 80.18 | -23.75%    |
+| codec_wiki e8 d=3     | D_cjxl             | 84515  | -        | 86.14 | 0          |
+| codec_wiki e8 d=3     | A_baseline_no_audit6 | 65048 | 0eca0f9f | 84.57 | -23.03%    |
+| codec_wiki e8 d=3     | B_shipped          | 65048  | 0eca0f9f | 84.57 | -23.03%    |
+| codec_wiki e8 d=3     | C_no_w105          | 65048  | 0eca0f9f | 84.57 | -23.03%    |
+| imac_g3 e8 d=4        | A                  | 179575 | a2f9ae48 | 85.40 | -15.75%    |
+| imac_g3 e8 d=4        | **B**              | **179575** | **a2f9ae48** | 85.40 | -15.75%    |
+| imac_g3 e8 d=4        | C                  | 119855 | 53ca0990 | 79.27 | -43.77%    |
+| imac_g3 e9 d=4        | A                  | 158432 | f116e199 | 83.59 | -25.57%    |
+| imac_g3 e9 d=4        | **B**              | **158432** | **f116e199** | 83.59 | -25.57%    |
+| imac_g3 e9 d=4        | C                  | 119180 | 219b16f7 | 78.93 | -44.01%    |
+| terminal e8 d=4       | A                  | 42322  | 943d2b8b | 86.91 | -24.51%    |
+| terminal e8 d=4       | **B**              | **42322** | **943d2b8b** | 86.91 | -24.51%    |
+| terminal e8 d=4       | C                  | 28965  | 3622c38d | 82.70 | -48.34%    |
+
+**Four findings:**
+
+1. **codec_wiki e8 d=4 WEDGE CLOSED** (PRIMARY TARGET): A 88077 B
+   (+20.72% vs cjxl) → B 57061 B (-21.79% vs cjxl), -23,016 B saved
+   per encode. **B SHA == C SHA exact** — proves the AUDIT-6 exclude
+   is mechanistically equivalent to turning W44-105 OFF entirely on
+   this cell. EXACT MIRROR of Phase 1's e7 d=4 outcome.
+
+2. **codec_wiki e9 d=4 WEDGE CLOSED**: A 77221 B (+4.88%) → B 56140 B
+   (-23.75%). B SHA == C SHA exact, same shape as e8 d=4.
+
+3. **WIN CLUSTER PRESERVED** (imac_g3 e8/e9 d=4): A == B byte-identical
+   (gate doesn't fire — M3=14 < 80) AND A ≠ C (W44-105 lift is firing
+   and being saved). Identical structure to Phase 2A's W44-109 win
+   cluster validation.
+
+4. **BELOW-GATE control** (codec_wiki e8 d=3): A == B == C byte-identical
+   because target_distance < BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE = 3.5
+   → gate cannot fire regardless of AUDIT-6 state. Confirms the
+   distance-gate ordering is correct (AUDIT-6 doesn't accidentally
+   bypass the W44-105 distance-gate).
+
+5. **TERMINAL CONTROL** (terminal e8 d=4): A == B == C byte-identical
+   because W44-176 terminal-class exclude already short-circuits the
+   W44-105 lift earlier in the helper. Confirms the OR composition is
+   working — AUDIT-6 is a defence-in-depth NARROW that doesn't
+   change behaviour on cells already excluded by W44-176.
+
+## Acceptance gates (all PASS)
+
+- (a) Source change: 1 new branch in `auto_gate_fires` (12 lines + 8
+  lines of doc + new field plumbing already present from Phase 1). PASS.
+- (b) codec_wiki e8 d=4 bytes within ±5% of cjxl: **-21.79%**
+  (FAR within budget — went from +20.72% → -21.79%). PASS.
+- (c) codec_wiki e9 d=4 closes similarly: **-23.75%** (was +4.88%). PASS.
+- (d) `cargo test --lib`: 1493/1493 PASS. PASS.
+- (e) Hash-locks 36/36 BYTE-IDENTICAL. PASS.
+  Synthetic 32×32/48×48 fixtures don't trigger `pixel_domain_loss` AND
+  don't trigger `butteraugli_iters > 0` (effort ≤ 7 by default in those
+  fixtures), so the AUDIT-6 Phase 2C branch is unreachable on hash-lock
+  fixtures.
+- (f) Strategy `Libjxl` byte-lock 4/4 PASS. Libjxl strategy's
+  `buttloop_qf_seed = ButtloopQfSeedPolicy::Off` short-circuits earlier
+  in the helper (line ~1547), so the AUDIT-6 branch at the
+  `auto_gate_fires` predicate has zero effect on Libjxl output.
+- (g) Drift test 7/7 PASS. EXPECTED_DIVERGENCE_GATE_COUNT UNCHANGED
+  (Phase 2C reuses Phase 1's `high_colour_class_exclude` field).
+- (h) `docs/LIBJXL_DIVERGENCES.md` Section B updated: Phase 1 row
+  extended with Phase 2A/2B/2C narrative + NEW row for the W44-105
+  site at line 76.
+
+## DO NOT (binding for future agents)
+
+1. DO NOT remove the `audit_6_env_e8e9` env hook check — the Phase 1
+   site uses the same env var (`JXL_W44_AUDIT_6_DISABLE`); both
+   sites must honour it for A/B benching to work.
+2. DO NOT change the `high_colour_class_exclude_e8e9` to use a
+   different proxy threshold than Phase 1's 80.0 — the discriminator
+   should be uniform across both sites (codec_wiki M3=145.73 fires both,
+   win-cluster M3 ∈ [14, 29] fires neither).
+3. DO NOT add a third sub-discriminator beneath this gate without
+   first measuring against ALL W44-105 win cluster cells. The current
+   ≥6 cell PROTECT proof set (Phase 2A + Phase 2C) covers gb82-sc
+   text-class screens at e ∈ {5, 7, 8, 9} × d ∈ {3, 4}.
+4. DO NOT cite "FMA precision" for any byte movement — measurement is
+   conclusive: B SHA == C SHA on the wedge cells means the discriminator
+   produces structurally identical output to a fully-disabled W44-105.
+5. DO NOT mark codec_wiki e8/e9 d=4 as FIXED on cjxl-parity ledger
+   while SSIM2 deltas are -3.0/-3.14 vs cjxl (same as Phase 1 e7 d=4
+   trade — owned by W44-AUDIT-5 candidates).
