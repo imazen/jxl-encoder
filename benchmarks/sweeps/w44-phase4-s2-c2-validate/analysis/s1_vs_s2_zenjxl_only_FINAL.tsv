@@ -1,0 +1,9 @@
+stratum	n	mean_dBytes_pct	median_dBytes_pct	pct_shifted_gt_0p5	max_abs_dBytes_pct	mean_dSsim2	mean_dButter
+photo/high	825	-0.0001	0.0	0.0	0.0187	0.0	-1e-04
+photo/low	1651	-0.0	0.0	0.0	0.0954	0.0002	0.0
+photo/mid	825	0.0	0.0	0.0	0.0051	1e-04	-0.0
+photo/very_high	1654	0.0	0.0	0.0	0.0464	0.0	0.0
+screen/high	437	0.0006	0.0	0.0	0.245	0.0022	-0.0035
+screen/low	907	0.0017	0.0	0.1103	0.8023	0.0096	-0.0004
+screen/mid	438	0.004	0.0	0.4566	0.9774	0.0601	-0.0
+screen/very_high	730	0.0008	0.0	0.0	0.3993	0.0385	0.0

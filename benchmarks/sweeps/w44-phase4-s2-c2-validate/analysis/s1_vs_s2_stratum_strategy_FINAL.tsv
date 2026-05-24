@@ -1,0 +1,17 @@
+stratum	strategy	n	mean_dBytes_pct	median_dBytes_pct	max_abs_dBytes_pct	n_shifted_gt_0p5	n_shifted_gt_2p0	mean_dSsim2
+photo/high	libjxl	20	0.0	0.0	0.0	0	0	0.0
+photo/high	zenjxl	825	-0.0001	0.0	0.0187	0	0	0.0
+photo/low	libjxl	40	0.0	0.0	0.0	0	0	-0.0
+photo/low	zenjxl	1651	-0.0	0.0	0.0954	0	0	0.0002
+photo/mid	libjxl	20	0.0	0.0	0.0	0	0	-0.0
+photo/mid	zenjxl	825	0.0	0.0	0.0051	0	0	1e-04
+photo/very_high	libjxl	39	0.0	0.0	0.0	0	0	-0.0
+photo/very_high	zenjxl	1654	0.0	0.0	0.0464	0	0	0.0
+screen/high	libjxl	10	0.0	0.0	0.0	0	0	0.0007
+screen/high	zenjxl	437	0.0006	0.0	0.245	0	0	0.0022
+screen/low	libjxl	21	0.0	0.0	0.0007	0	0	0.0
+screen/low	zenjxl	907	0.0017	0.0	0.8023	1	0	0.0096
+screen/mid	libjxl	11	0.0	0.0	0.0	0	0	-0.0003
+screen/mid	zenjxl	438	0.004	0.0	0.9774	2	0	0.0601
+screen/very_high	libjxl	18	0.0	0.0	0.0007	0	0	-1.3376
+screen/very_high	zenjxl	730	0.0008	0.0	0.3993	0	0	0.0385
