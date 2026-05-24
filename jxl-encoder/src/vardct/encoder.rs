@@ -2031,6 +2031,19 @@ pub struct VarDctEncoder {
     /// brief at `docs/RFC_CVVDP_PHASE3_BRIEF.md`.
     #[cfg(feature = "butteraugli-loop")]
     pub cvvdp_loop: bool,
+    /// cvvdp-fork Phase 5 (2026-05-24): caller-supplied preference for
+    /// the CPU CVVDP backend over the GPU CVVDP backend. Only consulted
+    /// by [`crate::vardct::perceptual_backend::construct_backend`] when
+    /// [`Self::cvvdp_loop`] is also true. When `true` (and the
+    /// `cvvdp-loop-cpu` cargo feature is compiled in), the dispatch
+    /// returns the CPU CVVDP backend instead of the GPU CVVDP backend.
+    /// Default `false` preserves the W44-228b-style "respect caller
+    /// explicit opt-in only" policy — the field is always present so
+    /// hash-lock fixtures don't depend on the cvvdp cargo features.
+    /// See [`crate::api::LossyConfig::with_cvvdp_use_cpu`] and the
+    /// Phase 5 brief at `docs/RFC_CVVDP_PHASE5_BRIEF.md`.
+    #[cfg(feature = "butteraugli-loop")]
+    pub cvvdp_use_cpu: bool,
     /// Number of SSIM2 quantization loop iterations.
     /// Alternative to butteraugli loop: uses per-block linear RGB RMSE + full-image SSIM2.
     /// Requires the `ssim2-loop` feature.
@@ -2371,6 +2384,15 @@ impl Default for VarDctEncoder {
             // because the field defaults to `false`.
             #[cfg(feature = "butteraugli-loop")]
             cvvdp_loop: false,
+            // cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP preference
+            // defaults off (= prefer GPU when both backends compiled).
+            // LossyConfig sets it via `with_cvvdp_use_cpu`. Hash-locks
+            // stay byte-identical regardless of the `cvvdp-loop-cpu`
+            // cargo feature because the field defaults to `false` AND
+            // the entire cvvdp dispatch branch is gated on
+            // `cvvdp_loop = true` upstream.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_use_cpu: false,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]
@@ -2476,6 +2498,15 @@ impl VarDctEncoder {
             // because the field defaults to `false`.
             #[cfg(feature = "butteraugli-loop")]
             cvvdp_loop: false,
+            // cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP preference
+            // defaults off (= prefer GPU when both backends compiled).
+            // LossyConfig sets it via `with_cvvdp_use_cpu`. Hash-locks
+            // stay byte-identical regardless of the `cvvdp-loop-cpu`
+            // cargo feature because the field defaults to `false` AND
+            // the entire cvvdp dispatch branch is gated on
+            // `cvvdp_loop = true` upstream.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_use_cpu: false,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]

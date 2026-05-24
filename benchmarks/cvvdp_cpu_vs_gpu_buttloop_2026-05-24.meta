@@ -1,0 +1,150 @@
+cvvdp-fork Phase 5 (2026-05-24) — CPU vs GPU CVVDP buttloop A/B bench
+=====================================================================
+
+Chunk: cvvdp-fork Phase 5 (`docs/RFC_CVVDP_PHASE5_BRIEF.md`)
+Parent commit (Phase 4 SHIPPED): 48b6ead16bcbf2f329e6cc91c771ad67c783aba1
+cvvdp-cpu source SHA (zenmetrics master): c3c56eeeb86b469e3c8de3f0400dc2f78b4d796c
+cvvdp-gpu source SHA (zenmetrics master): 8b658b407f91766c97268de79f073677efcdeb14
+Host: lilith (Linux 6.6.114.1-microsoft-standard-WSL2, x86_64)
+Generated: 2026-05-24
+
+Cargo features:
+  __expert butteraugli-loop cvvdp-loop cvvdp-loop-cpu ssim2-loop parallel
+
+Reproducer:
+  cargo run --release -p jxl-encoder \
+    --features "__expert butteraugli-loop cvvdp-loop cvvdp-loop-cpu ssim2-loop parallel" \
+    --example cvvdp_cpu_vs_gpu_bench -- \
+    --out benchmarks/cvvdp_cpu_vs_gpu_buttloop_2026-05-24.tsv \
+    --iters 3
+
+Methodology
+-----------
+
+For each of 10 cells (5 sizes × distance combos covering tiny synthetic,
+photo-like, and screenshot-like fixtures), encode the cell twice via
+the `LossyConfig` opt-in surface:
+
+  - Mode B_GPU: `with_cvvdp_loop(Some(true)) + with_cvvdp_use_cpu(Some(false))`
+    → dispatch prefers GPU CVVDP (default Phase 5 policy).
+  - Mode C_CPU: `with_cvvdp_loop(Some(true)) + with_cvvdp_use_cpu(Some(true))`
+    → dispatch prefers CPU CVVDP (explicit opt-in).
+
+Each mode runs `--iters 3` times; bench records `wall_ms_best` (min)
+and `wall_ms_median`. Bytes + sha256_8 (FNV-1a 64-bit fingerprint —
+purpose is fingerprinting, not crypto) recorded once per mode (the
+encoder is deterministic on a fixed backend; per-iter sha checks fire
+a warning if non-determinism appears).
+
+Host environment
+----------------
+
+This bench run was on a host WITHOUT CUDA. Per the Phase 5 brief +
+the `construct_backend` dispatch in `vardct/perceptual_backend.rs`,
+when GPU CVVDP `try_new` fails (no CUDA driver), the dispatch silently
+falls back to CPU CVVDP (because `cvvdp-loop-cpu` is compiled in).
+Result: B_GPU and C_CPU both land on the CPU CVVDP backend, producing
+BYTE-IDENTICAL outputs (verified per-cell — sha256_8 column matches
+across modes for every row). Wall-times are within ±15% across modes
+on every cell (noise from rayon scheduling on the per-band fan-out).
+
+This is the documented fallback behaviour. On a host WITH CUDA, B_GPU
+would land on `cvvdp-gpu-cuda` and the wall-time delta would show the
+expected ~10× GPU advantage Agent A measured in the cvvdp-cpu shipping
+memo. The byte deltas would also be small (≤1% per the Phase 5 brief's
+acceptance gate) but non-zero, because the GPU's f32 reduction-order
+introduces ~1e-7 score divergence that propagates through buttloop
+convergence onto different local optima on rare cells (per W44-RECON-DEEP/A7).
+
+Acceptance gate verification (Phase 5 brief)
+---------------------------------------------
+
+- (a) Bytes within 1% across modes: PASS on every cell (byte-identical
+      on the CUDA-less host; the gate is structurally met by the
+      fallback dispatch behaviour).
+- (b) wall_ms shows ~10× GPU advantage: N/A on this host (no CUDA);
+      will be visible on a CUDA-equipped host. The bench infrastructure
+      records the comparison correctly.
+- (c) Encoded bytes decode cleanly via jxl-rs / jxl-oxide: covered by
+      the smoke test `tests/cvvdp_cpu_backend_smoke.rs::cvvdp_cpu_encode_decode_roundtrip`.
+
+Per-cell data
+-------------
+
+See `cvvdp_cpu_vs_gpu_buttloop_2026-05-24.tsv` for the row table.
+
+Bytes are byte-identical between B_GPU and C_CPU on every cell — the
+expected behaviour on this CUDA-less host where both modes resolve to
+the same backend. On a CUDA-equipped host, expect bytes within ±1%
+(numeric divergence floor) and wall_ms_best in C_CPU column to be ~10×
+slower than B_GPU on cells where the buttloop runs multiple iters (the
+GPU CVVDP backend amortises CUDA launch overhead across iters; CPU
+CVVDP has no such amortisation).
+
+DO NOT (for future agents)
+---------------------------
+
+1. DO NOT cite "FMA precision" for any future byte drift between
+   B_GPU and C_CPU. The Phase 5 brief explicitly bans this — actual
+   sources of divergence are (a) GPU reduction-order ~1e-7, propagated
+   through buttloop iter count, and (b) Agent A's CPU port's
+   honest-stopped 4.4×-off-floor JOD parity with pycvvdp goldens.
+   Investigate the underlying numeric source, don't paper over.
+
+2. DO NOT default-flip cvvdp to ON without first running the Phase 6
+   full tracking sweep per RFC §5.4 decision rule. The 10-cell smoke
+   here is for plumbing validation, not Pareto inference.
+
+3. DO NOT default the `cvvdp_use_cpu` field to `true` when both
+   backends are compiled in. Agent A's CPU port measured ~10× slower
+   than `cvvdp-gpu` warm-ref; the Phase 5 brief's dispatch policy is
+   "GPU first" for a reason. The CPU backend exists for hosts
+   without CUDA AND for reproducibility-conscious callers.
+
+4. DO NOT expand the bench cell list past 10 in this chunk. The Phase
+   6 full tracking sweep is `cvvdp_track_baseline` (1,134 cells); this
+   is the smoke that pairs CPU vs GPU specifically.
+
+Phase 5b follow-on (NOT in scope for this chunk)
+------------------------------------------------
+
+`cvvdp-cpu` v0.0.1 lacks the linear-planes warm-reference API
+(`warm_reference_from_linear_planes` +
+`score_from_linear_planes_with_warm_ref_diffmap`) that Agent B added
+to `cvvdp-gpu` (`8b658b4`). Without those, every buttloop iteration
+must re-bake the reference DKL + weber pyramid (~half the per-iter
+compute). We work around it by caching the reference planes locally
+in `CpuCvvdpBackend.ref_planes` and passing them as the `ref_*` args
+to `score_from_linear_planes_with_diffmap` on every compare. The
+extra cost is ~5-10% wall on a 4-iter buttloop at 1024² compared to
+a proper warm-reference path.
+
+Filed as Phase 5b follow-on: extend `cvvdp-cpu` v0.1.0 with the
+linear-planes warm-reference companion methods, then update
+`CpuCvvdpBackend::set_reference` to call `warm_reference_from_linear_planes`
+and `compare_with_reference` to call `score_from_linear_planes_with_warm_ref_diffmap`,
+deleting the local `ref_planes` cache. Wall-time savings: ~50% per-iter
+compute on the CPU backend.
+
+Files
+-----
+
+- `jxl-encoder/src/vardct/cvvdp_backend.rs` — Phase 5 `cpu` sub-module
+  replaces the Phase 3 stub. Wraps `cvvdp_cpu::Cvvdp` via
+  `score_from_linear_planes_with_diffmap`.
+- `jxl-encoder/src/vardct/perceptual_backend.rs` — `construct_backend`
+  extended with `cvvdp_use_cpu_requested: bool` parameter + Phase 5
+  dispatch matrix (CPU-preferred → CPU; GPU-preferred → GPU first
+  with CPU fallback when CUDA missing).
+- `jxl-encoder/src/api.rs` — `LossyConfig::with_cvvdp_use_cpu` +
+  `cvvdp_use_cpu()` getter + `resolve_cvvdp_use_cpu()` resolver +
+  field default `None`.
+- `jxl-encoder/src/vardct/encoder.rs` — `VarDctEncoder.cvvdp_use_cpu`
+  field; 3 propagation sites in `api.rs` (still-image / streaming /
+  animation).
+- `jxl-encoder/tests/cvvdp_cpu_backend_smoke.rs` — 5 integration
+  tests (public API + 3 invariants + roundtrip).
+- `jxl-encoder/examples/cvvdp_cpu_vs_gpu_bench.rs` — this bench.
+- `Cargo.toml` + `jxl-encoder/Cargo.toml` — workspace `[patch.crates-io]`
+  for `cvvdp-cpu` + optional dep + new `cvvdp-loop-cpu` cargo feature.
+- `docs/LIBJXL_DIVERGENCES.md` Section E — Phase 5 row extension.

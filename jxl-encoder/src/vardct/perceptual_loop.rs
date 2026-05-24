@@ -1345,8 +1345,8 @@ impl VarDctEncoder {
                     self.gpu_butteraugli,
                     // cvvdp-fork Phase 3: opt-in via
                     // `LossyConfig::with_cvvdp_loop`. cvvdp-fork Phase 4
-                    // (2026-05-24, this commit): the buttloop body now
-                    // consumes the cvvdp signal via the
+                    // (2026-05-24): the buttloop body now consumes the
+                    // cvvdp signal via the
                     // `effective_metric_target_distance` lookup
                     // (`super::cvvdp_targets::cvvdp_target_score_for_distance`)
                     // when this field is true AND the `cvvdp-loop`
@@ -1360,6 +1360,13 @@ impl VarDctEncoder {
                     // (it's the file's quality target, not the metric
                     // target).
                     self.cvvdp_loop,
+                    // cvvdp-fork Phase 5 (2026-05-24): CPU vs GPU CVVDP
+                    // preference. Only meaningful when `self.cvvdp_loop`
+                    // is also true; see `construct_backend` dispatch
+                    // matrix for the full backend-selection truth table.
+                    // Default-path callers don't set this; explicit opt-in
+                    // is via `LossyConfig::with_cvvdp_use_cpu`.
+                    self.cvvdp_use_cpu,
                 );
                 if let Err(_) = b.set_reference(&ref_r, &ref_g, &ref_b, width, height) {
                     return Ok(initial_params.clone());

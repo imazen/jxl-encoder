@@ -4654,6 +4654,34 @@ pub struct LossyConfig {
     /// `docs/RFC_CVVDP_PHASE3_BRIEF.md`.
     #[cfg(feature = "butteraugli-loop")]
     cvvdp_loop: Option<bool>,
+
+    /// cvvdp-fork Phase 5 (2026-05-24, RFC `docs/RFC_CVVDP_FORK.md` §4
+    /// Phase 5, brief `docs/RFC_CVVDP_PHASE5_BRIEF.md`): caller-supplied
+    /// preference for the CPU CVVDP backend over the GPU CVVDP backend
+    /// when [`Self::cvvdp_loop`] is `Some(true)` AND both backends are
+    /// compiled in.
+    ///
+    /// Tri-state semantics:
+    /// - `None` (default): **GPU when both compiled** (Agent A's CPU
+    ///   honest-stop measured 10× GPU advantage), CPU only when
+    ///   `cvvdp-loop-cpu` is compiled but `cvvdp-loop` GPU dispatch
+    ///   isn't available (CUDA missing OR `cvvdp-loop` cargo feature
+    ///   off).
+    /// - `Some(true)`: prefer CPU. Useful for hosts without CUDA AND
+    ///   for callers who want deterministic-to-1e-4-JOD parity vs
+    ///   pycvvdp v0.5.4 goldens (the CPU port carries no GPU
+    ///   reduction-order variance).
+    /// - `Some(false)`: explicitly pin GPU (same as `None` when both
+    ///   backends compiled — kept for symmetry with the
+    ///   [`Self::cvvdp_loop`] tri-state).
+    ///
+    /// Field is always present so hash-lock fixtures don't depend on
+    /// the `cvvdp-loop-cpu` cargo feature; it's consulted only inside
+    /// the `#[cfg(feature = "butteraugli-loop")]` buttloop and only
+    /// takes effect when [`Self::cvvdp_loop`] resolves to true.
+    /// See [`Self::with_cvvdp_use_cpu`] for the full dispatch matrix.
+    #[cfg(feature = "butteraugli-loop")]
+    cvvdp_use_cpu: Option<bool>,
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -4814,6 +4842,17 @@ impl LossyConfig {
             // existing test green.
             #[cfg(feature = "butteraugli-loop")]
             cvvdp_loop: None,
+            // cvvdp-fork Phase 5 (2026-05-24): default `None` ≡ "prefer
+            // GPU when both backends compiled". Agent A's CPU
+            // honest-stopped at 4.4× off the SIMD floor (≈10× slower
+            // than cvvdp-gpu warm-ref), so the default policy keeps
+            // every existing CUDA-enabled host on the faster path.
+            // Hosts without CUDA + the `cvvdp-loop-cpu` feature
+            // compiled fall back to CPU CVVDP automatically; hosts
+            // without either fall back to butteraugli (the standard
+            // dispatch chain).
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_use_cpu: None,
         }
     }
 
@@ -6589,6 +6628,92 @@ impl LossyConfig {
             return false;
         }
         self.cvvdp_loop.unwrap_or(false)
+    }
+
+    /// cvvdp-fork Phase 5 (2026-05-24): opt-in CPU CVVDP backend
+    /// preference for the quantization loop.
+    ///
+    /// Only effective when [`Self::cvvdp_loop`] also resolves to
+    /// `true` (the cvvdp dispatch is the outer opt-in; this is the
+    /// per-backend selector). When [`Self::cvvdp_loop`] is `None` or
+    /// `Some(false)` the buttloop runs butteraugli regardless of this
+    /// field — see [`Self::resolve_cvvdp_use_cpu`] for the full
+    /// dispatch matrix.
+    ///
+    /// Tri-state:
+    /// - `None` (default): "prefer GPU when both backends compiled".
+    ///   Agent A's CPU port measured 10× slower than `cvvdp-gpu`
+    ///   warm-ref, so the default keeps every CUDA-enabled host on
+    ///   the faster path. The CPU backend is still automatically
+    ///   used when (a) the `cvvdp-loop-cpu` cargo feature is
+    ///   compiled but the `cvvdp-loop` GPU feature is not, OR (b)
+    ///   both are compiled but CUDA init fails at runtime
+    ///   (defense-in-depth fallback — see
+    ///   [`crate::vardct::perceptual_backend::construct_backend`]).
+    /// - `Some(true)`: prefer the CPU CVVDP backend. Use for hosts
+    ///   without CUDA AND for callers who want deterministic-to-
+    ///   1e-4-JOD parity vs pycvvdp v0.5.4 goldens (the CPU port has
+    ///   no GPU reduction-order variance). Requires the
+    ///   `cvvdp-loop-cpu` cargo feature to be compiled in; without
+    ///   it the setter is callable but the dispatch silently falls
+    ///   back to GPU (when `cvvdp-loop` is compiled) or butteraugli
+    ///   (otherwise).
+    /// - `Some(false)`: explicitly pin GPU. Same effective behaviour
+    ///   as `None` when both backends are compiled; kept for symmetry
+    ///   with the [`Self::cvvdp_loop`] tri-state and for explicit
+    ///   documentation in caller code.
+    ///
+    /// **Hash-lock byte-identity**: default `None` keeps every
+    /// existing hash-lock byte-identical regardless of which cvvdp
+    /// cargo features are compiled in. The `cvvdp-loop-cpu` feature
+    /// being on does NOT auto-flip this — explicit opt-in is required.
+    ///
+    /// Requires the `butteraugli-loop` feature (the
+    /// [`crate::vardct::perceptual_backend::PerceptualBackend`] trait
+    /// surface lives there).
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn with_cvvdp_use_cpu(mut self, prefer_cpu: Option<bool>) -> Self {
+        self.cvvdp_use_cpu = prefer_cpu;
+        self
+    }
+
+    /// Currently configured CPU-vs-GPU CVVDP backend preference
+    /// (cvvdp-fork Phase 5). May be `None` (default = prefer GPU when
+    /// both backends compiled) — use [`Self::resolve_cvvdp_use_cpu`]
+    /// to see the effective bool that drives the dispatch.
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn cvvdp_use_cpu(&self) -> Option<bool> {
+        self.cvvdp_use_cpu
+    }
+
+    /// cvvdp-fork Phase 5 (2026-05-24): resolve the effective
+    /// "prefer CPU" preference for the CVVDP backend selector.
+    ///
+    /// Returns `true` only when the caller has explicitly set
+    /// `Some(true)` via [`Self::with_cvvdp_use_cpu`]. `None` and
+    /// `Some(false)` both resolve to `false` (prefer GPU).
+    ///
+    /// **Important**: this resolver is purely the field projection.
+    /// It does NOT consult [`Self::cvvdp_loop`] — that opt-in is the
+    /// outer gate. The dispatch in
+    /// [`crate::vardct::perceptual_backend::construct_backend`]
+    /// consults BOTH: the `(cvvdp_requested, cvvdp_use_cpu_requested)`
+    /// pair determines which of (CPU CVVDP, GPU CVVDP, butteraugli)
+    /// actually fires, given the compiled features + CUDA presence.
+    ///
+    /// Unlike [`Self::resolve_cvvdp_loop`], this resolver does NOT
+    /// short-circuit on [`EncoderStrategy::Libjxl`] because the Libjxl
+    /// invariant fires one layer up via `resolve_cvvdp_loop` returning
+    /// `false`, which makes the entire cvvdp dispatch branch unreachable
+    /// (the construct_backend dispatch consults `cvvdp_requested`
+    /// first, and that's already false for Libjxl).
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub(crate) fn resolve_cvvdp_use_cpu(&self) -> bool {
+        self.cvvdp_use_cpu.unwrap_or(false)
     }
 
     /// Resolve the configured [`HdrLoss`] into the concrete loss that
@@ -9049,6 +9174,13 @@ impl<'a> EncodeRequest<'a> {
             // backend dispatch stays on the butteraugli path unless the
             // caller explicitly opts in.
             enc.cvvdp_loop = cfg.resolve_cvvdp_loop();
+            // cvvdp-fork Phase 5 (2026-05-24): propagate CPU CVVDP
+            // preference. `resolve_cvvdp_use_cpu` returns false for
+            // None (default) AND for Some(false), so the dispatch
+            // sticks with GPU CVVDP unless the caller explicitly opts
+            // in. The flag is only meaningful when `cvvdp_loop` is
+            // also true; the construct_backend dispatch checks both.
+            enc.cvvdp_use_cpu = cfg.resolve_cvvdp_use_cpu();
         }
         #[cfg(feature = "ssim2-loop")]
         {
@@ -10237,6 +10369,10 @@ impl LossyEncoder {
                 // (streaming LossyEncoder path). Same semantics as the
                 // still-image site above.
                 enc.cvvdp_loop = cfg.resolve_cvvdp_loop();
+                // cvvdp-fork Phase 5 (2026-05-24): propagate CPU CVVDP
+                // preference (streaming LossyEncoder path). Same
+                // semantics as the still-image site above.
+                enc.cvvdp_use_cpu = cfg.resolve_cvvdp_use_cpu();
             }
             #[cfg(feature = "ssim2-loop")]
             {
@@ -12191,6 +12327,10 @@ fn encode_animation_lossy(
         // (animation frame encoder path). Same semantics as the
         // still-image site above.
         enc.cvvdp_loop = cfg.resolve_cvvdp_loop();
+        // cvvdp-fork Phase 5 (2026-05-24): propagate CPU CVVDP
+        // preference (animation frame encoder path). Same semantics
+        // as the still-image site above.
+        enc.cvvdp_use_cpu = cfg.resolve_cvvdp_use_cpu();
     }
     #[cfg(feature = "ssim2-loop")]
     {
