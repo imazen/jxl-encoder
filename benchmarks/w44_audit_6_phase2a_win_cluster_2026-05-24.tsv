@@ -1,0 +1,61 @@
+image_id	effort	distance	mode	bytes	sha8	bfly	ssim2	ms	delta_bytes_pct_vs_A	delta_ssim2_vs_A
+terminal	7	3	D_cjxl	37645	7922eee5	1.8711	88.1171	217		
+terminal	7	3	A_baseline_no_audit6	35567	86f188b2	2.0161	86.9118	486		
+terminal	7	3	B_shipped	35567	86f188b2	2.0161	86.9118	692	0.0000	0.0000
+terminal	7	3	C_no_w109	35567	86f188b2	2.0161	86.9118	443		
+terminal	5	4	D_cjxl	70434	1b830973	2.6499	83.8187	87		
+terminal	5	4	A_baseline_no_audit6	29092	6bc7d632	2.2438	83.0009	267		
+terminal	5	4	B_shipped	29092	6bc7d632	2.2438	83.0009	228	0.0000	0.0000
+terminal	5	4	C_no_w109	29092	6bc7d632	2.2438	83.0009	219		
+terminal	7	4	D_cjxl	33536	9b2ac584	2.1695	87.6210	223		
+terminal	7	4	A_baseline_no_audit6	32330	6f90ded8	2.0731	82.9886	376		
+terminal	7	4	B_shipped	32330	6f90ded8	2.0731	82.9886	363	0.0000	0.0000
+terminal	7	4	C_no_w109	32330	6f90ded8	2.0731	82.9886	364		
+imac_g3	7	3	D_cjxl	161648	126623ac	2.7271	83.4072	718		
+imac_g3	7	3	A_baseline_no_audit6	208529	83f703fd	2.5560	85.5980	1115		
+imac_g3	7	3	B_shipped	208529	83f703fd	2.5560	85.5980	1082	0.0000	0.0000
+imac_g3	7	3	C_no_w109	147092	83a86d8f	3.2645	81.8414	1104		
+imac_g3	5	4	D_cjxl	302783	40607feb	3.7461	76.5433	195		
+imac_g3	5	4	A_baseline_no_audit6	155252	31e1b31b	2.3688	84.5710	768		
+imac_g3	5	4	B_shipped	155252	31e1b31b	2.3688	84.5710	770	0.0000	0.0000
+imac_g3	5	4	C_no_w109	124150	c2473ff4	3.7853	80.8648	759		
+imac_g3	7	4	D_cjxl	146832	fdd0bdbd	3.2368	81.2636	705		
+imac_g3	7	4	A_baseline_no_audit6	188138	8b968fc2	2.2559	86.0038	1249		
+imac_g3	7	4	B_shipped	188138	8b968fc2	2.2559	86.0038	1248	0.0000	0.0000
+imac_g3	7	4	C_no_w109	134308	7497d893	3.3580	80.6287	1229		
+imac_dark	7	3	D_cjxl	179741	a64bf64c	2.8761	81.5879	687		
+imac_dark	7	3	A_baseline_no_audit6	247905	358c2caa	1.5255	88.5845	1125		
+imac_dark	7	3	B_shipped	247905	358c2caa	1.5255	88.5845	1133	0.0000	0.0000
+imac_dark	7	3	C_no_w109	170520	3c73d0be	2.9855	82.5229	1112		
+imac_dark	5	4	D_cjxl	330411	1b10dca2	3.9325	73.7178	193		
+imac_dark	5	4	A_baseline_no_audit6	183872	7a9af361	2.3672	83.6542	801		
+imac_dark	5	4	B_shipped	183872	7a9af361	2.3672	83.6542	792	0.0000	0.0000
+imac_dark	5	4	C_no_w109	143655	34e93d4e	3.7480	77.5478	788		
+imac_dark	7	4	D_cjxl	159084	cffc02d6	3.6007	77.8322	686		
+imac_dark	7	4	A_baseline_no_audit6	221009	e633b8ea	1.9053	86.6446	1273		
+imac_dark	7	4	B_shipped	221009	e633b8ea	1.9053	86.6446	1259	0.0000	0.0000
+imac_dark	7	4	C_no_w109	153213	d6fecc28	3.5614	78.0452	1245		
+graph	7	3	D_cjxl	15751	5b20fdc4	2.9502	83.1403	65		
+graph	7	3	A_baseline_no_audit6	24224	d267bd51	1.0405	89.8431	72		
+graph	7	3	B_shipped	24224	d267bd51	1.0405	89.8431	70	0.0000	0.0000
+graph	7	3	C_no_w109	16746	7697da27	2.8358	83.5925	69		
+graph	5	4	D_cjxl	14295	e511f881	2.8166	80.6322	31		
+graph	5	4	A_baseline_no_audit6	18103	641fa9c6	2.1370	84.7386	41		
+graph	5	4	B_shipped	18103	641fa9c6	2.1370	84.7386	41	0.0000	0.0000
+graph	5	4	C_no_w109	14315	7a4c55c6	2.8248	76.3159	40		
+graph	7	4	D_cjxl	14102	5c275eaa	3.2932	80.7459	65		
+graph	7	4	A_baseline_no_audit6	22022	46e77c7d	1.3229	88.0954	83		
+graph	7	4	B_shipped	22022	46e77c7d	1.3229	88.0954	84	0.0000	0.0000
+graph	7	4	C_no_w109	14771	bdac2cb2	3.2459	79.5156	79		
+gmessages	7	3	D_cjxl	86927	6d68d6ec	1.9505	87.7185	404		
+gmessages	7	3	A_baseline_no_audit6	134677	b4caebe9	1.3326	87.4194	845		
+gmessages	7	3	B_shipped	134677	b4caebe9	1.3326	87.4194	841	0.0000	0.0000
+gmessages	7	3	C_no_w109	92266	1ad98b57	1.9876	84.3770	821		
+gmessages	5	4	D_cjxl	77887	dda264ba	3.7963	85.2790	141		
+gmessages	5	4	A_baseline_no_audit6	99012	2ea37c5e	1.6564	84.7050	449		
+gmessages	5	4	B_shipped	99012	2ea37c5e	1.6564	84.7050	424	0.0000	0.0000
+gmessages	5	4	C_no_w109	75036	023c4093	3.8397	82.9153	421		
+gmessages	7	4	D_cjxl	76670	3a9684b0	3.3239	85.9447	436		
+gmessages	7	4	A_baseline_no_audit6	120477	cee34883	1.6562	85.0793	970		
+gmessages	7	4	B_shipped	120477	cee34883	1.6562	85.0793	970	0.0000	0.0000
+gmessages	7	4	C_no_w109	80800	1c6363f8	3.3682	82.8129	948		
