@@ -78,6 +78,14 @@ cubecl = { version = "0.10.0-pre.4", default-features = false, features = ["std"
 # pulled in optionally for `gpu-butteraugli` and is reused here when
 # `cvvdp-loop` is enabled.
 cvvdp-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types"], optional = true }
+# cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP backend for the perceptual
+# quantization loop. Opt-in via the `cvvdp-loop-cpu` cargo feature.
+# Pure Rust, no CUDA, no SIMD intrinsics — runs anywhere. Path-patched
+# in the workspace `[patch.crates-io]` to point at
+# `~/work/zen/zenmetrics/crates/cvvdp-cpu` (Agent A's deliverable,
+# `publish = false`). Default features include `std` + `parallel` for
+# the rayon-backed per-band fan-out (matches the buttloop's rayon usage).
+cvvdp-cpu = { version = "0.0.1", default-features = false, features = ["std", "parallel"], optional = true }
 
 [features]
 std = ["thiserror/std", "archmage/std", "jxl_simd/std"]
@@ -130,6 +138,23 @@ gpu-butteraugli = ["butteraugli-loop", "dep:butteraugli-gpu", "dep:cubecl"]
 # when ON-but-no-caller-opts-in (`LossyConfig::cvvdp_loop` defaults
 # `None` ≡ "use butteraugli").
 cvvdp-loop = ["butteraugli-loop", "dep:cvvdp-gpu", "dep:cubecl"]
+# cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP backend for the quantization
+# loop. Implies `cvvdp-loop` (shares the `PerceptualBackend` trait surface
+# + the per-distance JOD target table from Phase 4). Opt-in only — when
+# enabled the caller still has to set `LossyConfig::with_cvvdp_loop(Some(true))`
+# AND (when both backends are compiled in) either
+# `LossyConfig::with_cvvdp_use_cpu(Some(true))` OR a CUDA-init failure on
+# the GPU backend will trigger the CPU fallback. Default backend when
+# both are compiled remains **GPU** (Agent A's CPU port honest-stopped at
+# 4.4× off the SIMD floor, measured ~10× slower than cvvdp-gpu warm-ref);
+# the CPU backend exists for hosts without CUDA AND for callers who
+# explicitly opt in for deterministic-to-1e-4-JOD parity vs pycvvdp v0.5.4
+# goldens. See RFC `docs/RFC_CVVDP_FORK.md` §4 Phase 5 + Phase 5 brief.
+#
+# Hash-locks stay byte-identical when this feature is OFF AND when ON-but-
+# no-caller-opts-in. The CPU backend is reachable only via the explicit
+# `with_cvvdp_loop(Some(true))` opt-in, same as the GPU backend.
+cvvdp-loop-cpu = ["cvvdp-loop", "dep:cvvdp-cpu"]
 ssim2-loop = ["dep:fast-ssim2", "dep:imgref"]
 zensim-loop = ["dep:zensim"]
 # Convenience encode functions that accept imgref::ImgRef with typed pixel formats.
@@ -1395,6 +1420,17 @@ required-features = ["gpu-butteraugli", "butteraugli-loop", "ssim2-loop", "paral
 name = "cvvdp_loop_smoke_bench"
 path = "examples/cvvdp_loop_smoke_bench.rs"
 required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "ssim2-loop", "parallel"]
+
+# cvvdp-fork Phase 5 (2026-05-24): 10-cell A/B bench comparing CPU
+# vs GPU CVVDP backends in the buttloop. Self-contained synthetic
+# fixtures; tolerates missing CUDA (falls back through
+# construct_backend's dispatch chain). Output:
+# `benchmarks/cvvdp_cpu_vs_gpu_buttloop_<DATE>.tsv`. Run via
+# `cargo run --release -p jxl-encoder --features '__expert butteraugli-loop cvvdp-loop cvvdp-loop-cpu ssim2-loop parallel' --example cvvdp_cpu_vs_gpu_bench`.
+[[example]]
+name = "cvvdp_cpu_vs_gpu_bench"
+path = "examples/cvvdp_cpu_vs_gpu_bench.rs"
+required-features = ["__expert", "butteraugli-loop", "cvvdp-loop-cpu", "ssim2-loop", "parallel"]
 
 # W44-175: parallel `transform_and_quantize_into` (buttloop per-iter group
 # fan-out) + parallel `find_best_split_variable` (DC tree property scan).

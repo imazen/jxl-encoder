@@ -1,0 +1,21 @@
+cell	mode	backend_requested	bytes	sha256_8	wall_ms_best	wall_ms_median	n_iters
+gradient_64_d1.0	B_GPU	cvvdp-gpu-cuda (or fallback)	317	0c8177ae61622cbf	2.724	2.745	3
+gradient_64_d1.0	C_CPU	cvvdp-cpu (explicit opt-in)	317	0c8177ae61622cbf	2.462	2.742	3
+gradient_64_d3.0	B_GPU	cvvdp-gpu-cuda (or fallback)	250	6972ae29deea9ed6	2.771	2.816	3
+gradient_64_d3.0	C_CPU	cvvdp-cpu (explicit opt-in)	250	6972ae29deea9ed6	2.666	2.941	3
+noisy_96_d1.0	B_GPU	cvvdp-gpu-cuda (or fallback)	1128	23d4b12453b2f542	4.513	4.987	3
+noisy_96_d1.0	C_CPU	cvvdp-cpu (explicit opt-in)	1128	23d4b12453b2f542	4.374	4.424	3
+noisy_96_d2.0	B_GPU	cvvdp-gpu-cuda (or fallback)	777	e97bba000b38daeb	4.413	4.579	3
+noisy_96_d2.0	C_CPU	cvvdp-cpu (explicit opt-in)	777	e97bba000b38daeb	4.586	4.614	3
+noisy_96_d3.0	B_GPU	cvvdp-gpu-cuda (or fallback)	531	57a818333aa45a58	4.939	5.065	3
+noisy_96_d3.0	C_CPU	cvvdp-cpu (explicit opt-in)	531	57a818333aa45a58	4.710	4.921	3
+screenshot_128_d1.0	B_GPU	cvvdp-gpu-cuda (or fallback)	3194	6c03e9aeb72f9a43	9.322	9.618	3
+screenshot_128_d1.0	C_CPU	cvvdp-cpu (explicit opt-in)	3194	6c03e9aeb72f9a43	8.895	9.063	3
+screenshot_128_d3.0	B_GPU	cvvdp-gpu-cuda (or fallback)	1884	5bfb636ac1cc212f	10.603	10.644	3
+screenshot_128_d3.0	C_CPU	cvvdp-cpu (explicit opt-in)	1884	5bfb636ac1cc212f	10.229	10.259	3
+noisy_128_d2.0	B_GPU	cvvdp-gpu-cuda (or fallback)	1001	2982452312b87497	7.942	7.974	3
+noisy_128_d2.0	C_CPU	cvvdp-cpu (explicit opt-in)	1001	2982452312b87497	7.930	7.999	3
+noisy_128_d4.0	B_GPU	cvvdp-gpu-cuda (or fallback)	565	742f0d95c57f4ddb	9.634	9.647	3
+noisy_128_d4.0	C_CPU	cvvdp-cpu (explicit opt-in)	565	742f0d95c57f4ddb	10.755	10.812	3
+gradient_128_d2.0	B_GPU	cvvdp-gpu-cuda (or fallback)	521	f1173f9a6a0c22f1	7.271	7.841	3
+gradient_128_d2.0	C_CPU	cvvdp-cpu (explicit opt-in)	521	f1173f9a6a0c22f1	7.964	8.073	3

@@ -915,20 +915,37 @@ pub(crate) mod gpu {
 
 /// Construct the active perceptual-metric backend for one buttloop run.
 ///
-/// Routing (in priority order):
-/// 1. `cvvdp_requested == true` AND feature `cvvdp-loop` is ON AND CUDA
-///    init succeeds → [`GpuCvvdpBackend`](crate::vardct::cvvdp_backend::gpu::GpuCvvdpBackend)
-///    (cvvdp-fork Phase 3, opt-in via
-///    [`LossyConfig::with_cvvdp_loop(Some(true))`](crate::api::LossyConfig::with_cvvdp_loop)).
-/// 2. `gpu_requested == true` AND feature `gpu-butteraugli` is ON AND
-///    CUDA init succeeds → `GpuButteraugliBackend` (W44-phase3-B1).
-/// 3. Otherwise → [`CpuButteraugliBackend`] (always available).
+/// Routing priority order:
+///
+/// **(1)** `cvvdp_requested == true` — try CVVDP backends in this sub-order:
+/// **1a** if `cvvdp_use_cpu_requested == true` AND feature `cvvdp-loop-cpu`
+/// is ON → [`CpuCvvdpBackend`](crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend)
+/// (cvvdp-fork Phase 5; pure Rust, no CUDA; falls back to GPU CVVDP if CPU
+/// construction fails). **1b** else if feature `cvvdp-loop` is ON AND CUDA
+/// init succeeds → [`GpuCvvdpBackend`](crate::vardct::cvvdp_backend::gpu::GpuCvvdpBackend)
+/// (cvvdp-fork Phase 3, the default cvvdp branch). **1c** else if feature
+/// `cvvdp-loop-cpu` is ON → CPU CVVDP (Phase 5 silent fallback when GPU
+/// CVVDP is unavailable — hosts without CUDA still get CVVDP rather than
+/// dropping to butteraugli). **1d** else fall through to step 2.
+///
+/// **(2)** `gpu_requested == true` AND feature `gpu-butteraugli` is ON AND
+/// CUDA init succeeds → `GpuButteraugliBackend` (W44-phase3-B1).
+///
+/// **(3)** Otherwise → [`CpuButteraugliBackend`] (always available).
+///
+/// **Default policy when both CPU and GPU CVVDP are compiled in**:
+/// GPU wins (Agent A's CPU port honest-stopped at 4.4× off the SIMD
+/// floor — measured ~10× slower than `cvvdp-gpu` warm-ref). The CPU
+/// backend exists for hosts without CUDA AND for callers who
+/// explicitly opt in for deterministic-to-1e-4-JOD parity vs
+/// pycvvdp v0.5.4 goldens (the CPU port carries no GPU
+/// reduction-order variance).
 ///
 /// **CVVDP and GPU butteraugli are mutually exclusive at the
 /// construction site** — both wrap CudaRuntime; the caller's
 /// [`LossyConfig::resolve_cvvdp_loop`](crate::api::LossyConfig::resolve_cvvdp_loop)
 /// takes precedence when both fields are set, so the cvvdp branch fires
-/// first. If cvvdp falls back (feature OFF or CUDA init fails), the GPU
+/// first. If cvvdp falls back (all variants unavailable), the GPU
 /// butteraugli branch is consulted next (defense-in-depth).
 ///
 /// **CPU fallback** is silent (single `eprintln!` when a higher-priority
@@ -942,6 +959,7 @@ pub(crate) fn construct_backend(
     #[allow(unused_variables)] intensity_target: f32,
     #[allow(unused_variables)] gpu_requested: bool,
     #[allow(unused_variables)] cvvdp_requested: bool,
+    #[allow(unused_variables)] cvvdp_use_cpu_requested: bool,
 ) -> alloc::boxed::Box<dyn PerceptualBackend> {
     // Debug hook: `JXL_W44_PHASE3_B1_DEBUG=1` logs which backend the
     // dispatch picks. Off by default to keep production logs clean.
@@ -949,37 +967,105 @@ pub(crate) fn construct_backend(
     let debug_log = std::env::var("JXL_W44_PHASE3_B1_DEBUG").ok().as_deref() == Some("1");
     #[cfg(not(feature = "std"))]
     let debug_log = false;
-    // cvvdp-fork Phase 3: try the GPU CVVDP backend first when the
-    // caller has opted in via `LossyConfig::with_cvvdp_loop`. The
+    // cvvdp-fork Phase 3 + Phase 5: try the CVVDP backends first when
+    // the caller has opted in via `LossyConfig::with_cvvdp_loop`. The
     // cvvdp + gpu-butteraugli paths are mutually exclusive (both wrap
     // CudaRuntime); cvvdp wins when both are requested. Silent fallback
     // to the next dispatch tier on feature-off / CUDA-init-fail.
+    //
+    // Phase 5 (2026-05-24) introduces the CPU CVVDP backend. The
+    // dispatch ordering inside the cvvdp branch:
+    //   (a) `cvvdp_use_cpu_requested == true` AND `cvvdp-loop-cpu`
+    //       compiled: try CPU first; fall back to GPU if CPU
+    //       construction fails (e.g. dims < 8×8).
+    //   (b) else (default policy when both backends compiled): try
+    //       GPU first (10× faster per Agent A's honest-stop); fall
+    //       back to CPU if `cvvdp-loop-cpu` is compiled AND GPU
+    //       construction failed; otherwise fall through to the
+    //       butteraugli dispatch tier.
     #[cfg(feature = "cvvdp-loop")]
     {
         if cvvdp_requested {
             if debug_log {
                 eprintln!(
-                    "[cvvdp-fork P3] CVVDP requested @ {}×{} — trying CUDA init",
-                    width, height
+                    "[cvvdp-fork P3/P5] CVVDP requested @ {}×{} \
+                     (use_cpu_requested={cvvdp_use_cpu_requested}) — \
+                     trying backends in priority order",
+                    width, height,
                 );
             }
+
+            // Phase 5 (a): caller explicitly prefers CPU. Try CPU first.
+            #[cfg(feature = "cvvdp-loop-cpu")]
+            {
+                if cvvdp_use_cpu_requested {
+                    if let Some(c) =
+                        crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend::try_new(width, height)
+                    {
+                        if debug_log {
+                            eprintln!(
+                                "[cvvdp-fork P5] CPU CVVDP backend ACTIVE @ {}×{} \
+                                 (explicit opt-in)",
+                                width, height
+                            );
+                        }
+                        let _ = cpu_params;
+                        return alloc::boxed::Box::new(c);
+                    }
+                    // CPU construction failed (dims < 8×8); fall through
+                    // to GPU attempt + butteraugli fallback.
+                    if debug_log {
+                        eprintln!(
+                            "[cvvdp-fork P5] CPU CVVDP construction failed @ {}×{} \
+                             (dims likely below 8×8 minimum); trying GPU CVVDP next",
+                            width, height,
+                        );
+                    }
+                }
+            }
+
+            // Phase 3 (b default): try GPU CVVDP. This is the default
+            // path when both backends are compiled and the caller hasn't
+            // explicitly opted into CPU.
             if let Some(c) = crate::vardct::cvvdp_backend::gpu::GpuCvvdpBackend::try_new(
                 width as u32,
                 height as u32,
             ) {
                 if debug_log {
                     eprintln!(
-                        "[cvvdp-fork P3] CVVDP backend ACTIVE @ {}×{}",
+                        "[cvvdp-fork P3] GPU CVVDP backend ACTIVE @ {}×{}",
                         width, height
                     );
                 }
                 let _ = cpu_params;
                 return alloc::boxed::Box::new(c);
             }
-            // Fallback. One-shot warning so users see why CVVDP didn't fire.
+
+            // Phase 5 (c silent fallback): GPU CVVDP failed (no CUDA,
+            // driver issue, CubeCL panic). If `cvvdp-loop-cpu` is
+            // compiled in, try CPU CVVDP as the next-best perceptual
+            // metric — the caller asked for cvvdp, so we honour that
+            // rather than dropping all the way down to butteraugli.
+            #[cfg(feature = "cvvdp-loop-cpu")]
+            {
+                if let Some(c) =
+                    crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend::try_new(width, height)
+                {
+                    eprintln!(
+                        "[jxl-encoder cvvdp-fork P5] GPU CVVDP unavailable \
+                         (CUDA missing/failed); falling back to CPU CVVDP @ {}×{}",
+                        width, height,
+                    );
+                    let _ = cpu_params;
+                    return alloc::boxed::Box::new(c);
+                }
+            }
+
+            // All CVVDP variants failed; fall through to butteraugli.
             eprintln!(
-                "[jxl-encoder cvvdp-fork P3] CVVDP backend requested but \
-                 CUDA init failed; falling back to next dispatch tier ({}×{})",
+                "[jxl-encoder cvvdp-fork P3/P5] CVVDP backend requested but \
+                 unavailable (CUDA init failed, no CPU fallback compiled, \
+                 or dims invalid); falling back to next dispatch tier ({}×{})",
                 width, height,
             );
         } else if debug_log {
@@ -989,11 +1075,48 @@ pub(crate) fn construct_backend(
             );
         }
     }
-    #[cfg(not(feature = "cvvdp-loop"))]
+    // cvvdp-loop OFF but cvvdp-loop-cpu ON: still try CPU CVVDP when
+    // requested. This is the "CPU-only" host configuration (no CUDA,
+    // no GPU butteraugli, but the caller still wants cvvdp).
+    #[cfg(all(not(feature = "cvvdp-loop"), feature = "cvvdp-loop-cpu"))]
+    {
+        if cvvdp_requested {
+            if debug_log {
+                eprintln!(
+                    "[cvvdp-fork P5] CVVDP requested @ {}×{} \
+                     (cvvdp-loop feature off, cvvdp-loop-cpu on) — \
+                     trying CPU CVVDP",
+                    width, height
+                );
+            }
+            if let Some(c) =
+                crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend::try_new(width, height)
+            {
+                if debug_log {
+                    eprintln!(
+                        "[cvvdp-fork P5] CPU CVVDP backend ACTIVE @ {}×{} \
+                         (cvvdp-loop-cpu only)",
+                        width, height
+                    );
+                }
+                let _ = cpu_params;
+                let _ = cvvdp_use_cpu_requested;
+                return alloc::boxed::Box::new(c);
+            }
+            eprintln!(
+                "[jxl-encoder cvvdp-fork P5] CVVDP requested but CPU \
+                 construction failed (dims < 8×8?); falling back to \
+                 butteraugli ({}×{})",
+                width, height,
+            );
+        }
+    }
+    #[cfg(all(not(feature = "cvvdp-loop"), not(feature = "cvvdp-loop-cpu")))]
     if debug_log && cvvdp_requested {
         eprintln!(
-            "[cvvdp-fork P3] CVVDP requested but cargo feature `cvvdp-loop` \
-             is OFF; continuing dispatch ({}×{})",
+            "[cvvdp-fork P3/P5] CVVDP requested but neither `cvvdp-loop` \
+             nor `cvvdp-loop-cpu` cargo features are compiled in; \
+             continuing dispatch ({}×{})",
             width, height
         );
     }
@@ -1159,12 +1282,14 @@ mod tests {
     fn construct_backend_cpu_when_gpu_not_requested() {
         let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
         // cvvdp-fork Phase 3: construct_backend signature gained a
-        // `cvvdp_requested: bool` trailing parameter. `false` here
-        // mirrors the production default (`LossyConfig::cvvdp_loop`
-        // defaults to `None` → `resolve_cvvdp_loop()` returns
-        // `false`), so this test continues to assert the CPU
-        // butteraugli baseline.
-        let backend = construct_backend(64, 64, params, 80.0, false, false);
+        // `cvvdp_requested: bool` trailing parameter. cvvdp-fork
+        // Phase 5 added a second trailing parameter,
+        // `cvvdp_use_cpu_requested: bool`. Both `false` mirror the
+        // production default (`LossyConfig::cvvdp_loop` defaults to
+        // `None`, `LossyConfig::cvvdp_use_cpu` defaults to `None` →
+        // both resolvers return `false`), so this test continues to
+        // assert the CPU butteraugli baseline.
+        let backend = construct_backend(64, 64, params, 80.0, false, false, false);
         assert_eq!(backend.name(), "cpu");
     }
 
@@ -1177,8 +1302,51 @@ mod tests {
     #[test]
     fn construct_backend_cpu_when_cvvdp_not_requested() {
         let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
-        let backend = construct_backend(64, 64, params, 80.0, false, false);
+        let backend = construct_backend(64, 64, params, 80.0, false, false, false);
         assert_eq!(backend.name(), "cpu");
+    }
+
+    /// cvvdp-fork Phase 5 (2026-05-24): when `cvvdp_requested == true`
+    /// AND `cvvdp_use_cpu_requested == true` AND `cvvdp-loop-cpu` is
+    /// compiled in, the dispatch returns the CPU CVVDP backend. We
+    /// can only assert the backend's `name()` ends up as
+    /// `"cvvdp-cpu"`; on hosts without CUDA the GPU fallback path
+    /// would still be unreachable (we asked for CPU explicitly).
+    #[cfg(feature = "cvvdp-loop-cpu")]
+    #[test]
+    fn construct_backend_cvvdp_cpu_when_use_cpu_requested() {
+        let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
+        let backend = construct_backend(64, 64, params, 80.0, false, true, true);
+        assert_eq!(
+            backend.name(),
+            "cvvdp-cpu",
+            "explicit CPU CVVDP opt-in must return the CPU CVVDP backend \
+             on a 64×64 (≥ 8×8) buffer"
+        );
+    }
+
+    /// cvvdp-fork Phase 5: when `cvvdp_requested == true` AND
+    /// `cvvdp_use_cpu_requested == false` (default-policy GPU first),
+    /// the dispatch returns either:
+    /// - `"cvvdp-gpu-cuda"` on hosts with CUDA, OR
+    /// - `"cvvdp-cpu"` on hosts without CUDA but with `cvvdp-loop-cpu`
+    ///   compiled in (Phase 5 silent fallback per the dispatch matrix).
+    ///
+    /// Either is acceptable; the test fails only if the backend name
+    /// is `"cpu"` (= butteraugli fell through, which means the cvvdp
+    /// fallback chain didn't fire).
+    #[cfg(feature = "cvvdp-loop-cpu")]
+    #[test]
+    fn construct_backend_cvvdp_falls_back_to_cpu_when_no_cuda() {
+        let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
+        let backend = construct_backend(64, 64, params, 80.0, false, true, false);
+        let name = backend.name();
+        assert!(
+            name == "cvvdp-gpu-cuda" || name == "cvvdp-cpu",
+            "cvvdp_requested=true with cvvdp-loop-cpu compiled must \
+             land on a CVVDP backend (GPU when CUDA OK, CPU otherwise); \
+             got {name}"
+        );
     }
 
     /// W44-PHASE3-B5b: CPU backend never reports divergence (the

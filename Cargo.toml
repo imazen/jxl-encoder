@@ -84,6 +84,11 @@ butteraugli-gpu = { path = "../zenmetrics/crates/butteraugli-gpu" }
 # `examples/cvvdp_track_baseline.rs` (RFC `docs/RFC_CVVDP_FORK.md` §5).
 # `publish = false` upstream; path-pinned here.
 cvvdp-gpu = { path = "../zenmetrics/crates/cvvdp-gpu" }
+# cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP backend. Path-pinned because
+# the crate is `publish = false` (zenmetrics workspace deliverable from
+# Agent A; commits `da81694` + `a177c89` + `c3c56ee` on master).
+# Wrapped in jxl-encoder via the `cvvdp-loop-cpu` cargo feature.
+cvvdp-cpu = { path = "../zenmetrics/crates/cvvdp-cpu" }
 # cubecl is pinned to the lilith/cubecl `pr/pinned-v0.10.0` revision the
 # zenmetrics workspace uses (matches the cubecl rev butteraugli-gpu is
 # tested against). Required to keep the cubecl version consistent across
