@@ -229,6 +229,6 @@ fn b5b_detector_path_roundtrips_via_jxl_rs() {
 //     the env var entirely)
 //   - `b5b_counters_reset_zero_state` (reset clears counters)
 //   - `b5b_counters_record_round_trip` (record + snapshot round-trip)
-// — all in the in-source `vardct::butteraugli_backend::tests` module,
+// — all in the in-source `vardct::perceptual_backend::tests` module,
 // which is GPU-feature-gated but doesn't invoke the encoder at all so
 // is not subject to the env-var race.

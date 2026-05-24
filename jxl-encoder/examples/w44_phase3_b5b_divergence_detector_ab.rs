@@ -7,7 +7,7 @@
 //!   - `gpu`   — `LossyConfig::with_gpu_butteraugli(true)`, detector OFF
 //!   - `gpu_d` — `LossyConfig::with_gpu_butteraugli(true)`, detector ON
 //!     (env `JXL_W44_PHASE3_B5B_DETECTOR=1` set per-cell; counters reset
-//!     between cells via [`butteraugli_backend::b5b_counters::reset`])
+//!     between cells via [`perceptual_backend::b5b_counters::reset`])
 //!
 //! Acceptance gates (per W44-PHASE3-B5b task spec):
 //!
