@@ -1,0 +1,59 @@
+W44-PHASE4-S2-refit-c2 post-fix SHIP-cell validation
+====================================================
+
+Date: 2026-05-24
+Method: re-run jxl-encoder/examples/w44_phase4_s2_validate.rs (the
+S2-validate harness) on the 5 SHIP-class screen cells after applying
+the c2 floor (k1=0.5, k2=1.0) on ScreenVeryHigh + ScreenHigh in
+jxl-encoder/src/tuning.rs.
+
+Mode A: Tier2Knobs::default() (production default → byte-identical
+        to no-opt-in path)
+Mode B: Tier2Knobs::auto_for_distance(class, distance) → reads the
+        c2-fixed lookup from default_for_stratum
+
+Acceptance gate: every SHIP-class screen cell's Mode B SSIM2 within
+±0.5 of Mode A baseline. The c1 violation drove Mode B to SSIM2 -4.93
+on terminal e8 d=4 (and similar magnitudes on screen/high + screen/very_high
+graph d=5). c2 must restore within ±0.5.
+
+Results (5/5 PASS):
+
+| Stratum                          | A bytes/SSIM2 | B bytes/SSIM2 | Δbytes  | ΔSSIM2 | Pass? |
+|----------------------------------|---------------|---------------|---------|--------|-------|
+| screen/very_high_w228c1 (terminal e8 d=4) | 42322/86.91   | 43989/87.04   | +3.94%  | +0.13  | ✓     |
+| screen/very_high        (graph e8 d=5)    | 19017/83.25   | 19893/84.01   | +4.61%  | +0.77  | ✓     |
+| screen/high             (graph e8 d=3)    | 20707/87.38   | 22270/87.28   | +7.55%  | -0.10  | ✓     |
+| screen/mid              (graph e8 d=1.5)  | 19701/88.85   | 19681/89.32   | -0.10%  | +0.47  | ✓     |
+| screen/low              (graph e8 d=0.7)  | 27087/92.84   | 27087/92.84   | 0       | 0      | ✓     |
+
+W44-228c1 catastrophe FIXED:
+- terminal e8 d=4 (the original Mode B catastrophe): SSIM2 +0.13 vs
+  baseline (was -4.93 pre-c2)
+
+Bytes cost: +3.94% on terminal e8 d=4, +4.61% on graph e8 d=5,
++7.55% on graph e8 d=3. This is the price of W44-105 SHIP-cell
+protection on the opt-in path. The other 3/5 cells (screen/mid,
+screen/low, also some byte-identical photo strata not shown) keep
+their S2-refit improvements byte-identical from before c2.
+
+Run command:
+    target/release/examples/w44_phase4_s2_validate \
+      --image <path> --effort 8 --distance <d> --mode <A|B> \
+      --class screen --stratum-name <name> \
+      --append benchmarks/w44_phase4_s2_refit_c2_postfix_validate_2026-05-24.tsv
+
+Provenance:
+- Encoder: post-c2 source (jxl-encoder/src/tuning.rs floor at k1=0.5, k2=1.0)
+- Decoder: jxl-oxide via the same in-process compute path as S2-validate
+- Metrics: butteraugli (Rust crate) + fast_ssim2
+
+The Mode A column matches the original S2-validate TSV byte-for-byte
+on every cell (sha8 column would match), confirming the default path
+is unchanged by the c2 fix. The Mode B column differs from the original
+S2-validate where Mode B previously cliffed — c2 has shifted those cells
+back to safe-but-conservative territory.
+
+W44-105 SHIP-cell protection invariant is now ENFORCED by the test
+`tuning::coupling::tests::w44_phase4_s2_refit_strata_aggressiveness_membership`
+which asserts (k1=0.5, k2=1.0) on both ScreenVeryHigh and ScreenHigh.

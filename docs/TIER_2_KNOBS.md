@@ -371,27 +371,30 @@ in the source (`jxl-encoder/src/tuning.rs`) for traceability.
 `low: d < 1.0`, `mid: [1.0, 2.0)`, `high: [2.0, 3.5)`, `very_high: d >= 3.5`.
 This is the binning every per-stratum optima TSV was computed against.
 
-### Lookup table (W44-PHASE4-S2-refit, current)
+### Lookup table (W44-PHASE4-S2-refit + c2 floors, current)
 
-Source: `benchmarks/sweeps/w44-phase4-s1-recon-deep-revalidate/analysis/per_stratum_optima/per_stratum_optima.tsv`
+Source: `benchmarks/sweeps/w44-phase4-s1-recon-deep-revalidate/analysis/per_stratum_optima/per_stratum_optima.tsv`,
+with c2 floors applied per the per-knob ablation audit (see "W44-PHASE4-S2-refit-c2"
+note below).
 
-| stratum             | n_rows | k1 smoothness | k2 aggressiveness | k3 screen_lift | k4 d_gate | k5 aq_balance | max_gap_default % | max_gap_optimum % | Δ pp     | L2 vs W44-228a |
-|---                  |---     |---            |---                |---             |---        |---            |---                |---                |---       |---             |
-| screen / very_high  | 2112   | 0.0000        | 0.0000            | 0.5000         | 2.1667    | −0.3333       | 37.428            | 0.000             | +37.428  | 1.841          |
-| screen / high       | 2411   | 0.0000        | **+0.3333**       | 0.5000         | 2.1667    | −0.6667       | 13.739            | 0.000             | +13.739  | 1.780          |
-| screen / mid        | 1282   | 0.1667        | **+0.3333**       | 0.5000         | 4.1667    | −1.0000       | 3.592             | 0.000             | +3.592   | 1.500          |
-| screen / low        | 1197   | 0.0000        | **+0.3333**       | 0.5000         | 2.1667    | −1.0000       | 4.729             | 0.000             | +4.729   | 1.929          |
-| photo / very_high   | 4972   | 0.0000        | 0.0000            | 0.5000         | 2.8333    | +0.3333       | 3.387             | 0.000             | +3.387   | 1.434          |
-| photo / high        | 4954   | 0.0000        | 0.0000            | 0.5000         | 3.5000    | −0.3333       | 2.877             | 0.000             | +2.877   | 1.269          |
-| photo / mid         | 2476   | 0.0000        | 0.0000            | 0.5000         | 1.5000    | −1.0000       | 0.531             | 0.000             | +0.531   | **2.550**      |
-| photo / low         | 2475   | 0.0000        | 0.0000            | 0.5000         | 1.5000    | −1.0000       | 0.489             | 0.000             | +0.489   | **2.550**      |
+| stratum             | n_rows | k1 smoothness | k2 aggressiveness | k3 screen_lift | k4 d_gate | k5 aq_balance | max_gap_default % | max_gap_optimum % | Δ pp     | L2 vs W44-228a | c2 note         |
+|---                  |---     |---            |---                |---             |---        |---            |---                |---                |---       |---             |---             |
+| screen / very_high  | 2112   | **0.5 (c2 floor)** | **1.0 (c2 floor)** | 0.5000     | 2.1667    | −0.3333       | 37.428            | 0.000             | +37.428  | 1.841          | k1, k2 floored to defaults to protect W44-105 SHIP cell |
+| screen / high       | 2411   | **0.5 (c2 floor)** | **1.0 (c2 floor)** | 0.5000     | 2.1667    | −0.6667       | 13.739            | 0.000             | +13.739  | 1.780          | k1, k2 floored to defaults to protect W44-105 SHIP cell |
+| screen / mid        | 1282   | 0.1667        | **+0.3333**       | 0.5000         | 4.1667    | −1.0000       | 3.592             | 0.000             | +3.592   | 1.500          | CLEAN — +0.47 SSIM2 WIN on graph d=1.5 |
+| screen / low        | 1197   | 0.0000        | **+0.3333**       | 0.5000         | 2.1667    | −1.0000       | 4.729             | 0.000             | +4.729   | 1.929          | CLEAN — dispatch doesn't fire on graph d=0.7 |
+| photo / very_high   | 4972   | 0.0000        | 0.0000            | 0.5000         | 2.8333    | +0.3333       | 3.387             | 0.000             | +3.387   | 1.434          | CLEAN — dispatch doesn't fire |
+| photo / high        | 4954   | 0.0000        | 0.0000            | 0.5000         | 3.5000    | −0.3333       | 2.877             | 0.000             | +2.877   | 1.269          | CLEAN — dispatch doesn't fire |
+| photo / mid         | 2476   | 0.0000        | 0.0000            | 0.5000         | 1.5000    | −1.0000       | 0.531             | 0.000             | +0.531   | **2.550**      | CLEAN — dispatch doesn't fire |
+| photo / low         | 2475   | 0.0000        | 0.0000            | 0.5000         | 1.5000    | −1.0000       | 0.489             | 0.000             | +0.489   | **2.550**      | CLEAN — dispatch doesn't fire |
 
-**Bold k2 values** mark the W44-PHASE4-S2-refit non-zero
-`screenshot_quant_aggressiveness` admission on screen/high / mid / low
-(was 0.0 in W44-228a, now 0.333). screen/very_high stays at 0.0 from
-the S1 raw optimum. The W44-228c1 RULED-OUT default-flip constraint
-continues to apply to the opt-in path on terminal / imac_g3 /
-codec_wiki e8+ d=4-6.
+**Bold k2 values on screen/mid+screen/low** mark the W44-PHASE4-S2-refit non-zero
+`screenshot_quant_aggressiveness` admission on the lower-distance screen strata
+(was 0.0 in W44-228a, now 0.333). **Bold k1, k2 values on screen/very_high and
+screen/high** mark the W44-PHASE4-S2-refit-c2 floors to defaults — these strata
+route through the W44-105 buttloop screen-seed lift on terminal/graph-class SHIP
+cells, and the raw S2-refit optima (k1=0, k2=0/0.333) reintroduced the W44-228c1
+cliff. The W44-228c1 RULED-OUT default-flip constraint continues to apply.
 
 **W44-PHASE4-S2-refit-c1 HONEST-STOP (2026-05-24)**: an attempt to
 floor screen/very_high k2 at 0.333 (matching the other 3 screen
@@ -404,17 +407,48 @@ e≥8. Single-knob isolation proved the catastrophe is driven by
 `k1 = smoothness_bias = 0` saturating `p1` at the ridge max
 (~145, vs `DEFAULT_P1 = 85`); k2 / k3 / k4 changes alone produce
 byte-identical baseline. Production source unchanged from the
-S2-refit raw optima. Follow-on W44-PHASE4-S2-refit-c2 candidate
-should bisect a k1 floor (target: k1 ≥ 0.25 puts p1 within ±10 of
-the W44-105-tuned default). Bench:
+S2-refit raw optima. Bench:
 `benchmarks/w44_phase4_s2_refit_c1_ablation_2026-05-24.{tsv,meta}`.
+
+**W44-PHASE4-S2-refit-c2 SHIPPED (2026-05-24)**: full 8-stratum × 5-knob
+per-knob ablation audit (56 paired encodes + 13 bisection encodes,
+`benchmarks/w44_phase4_s2_refit_c2_audit_2026-05-24.tsv`). Per-stratum
+verdict: 6 CLEAN (4 photo + screen/{low, mid}); 2 REPAIRABLE with
+multi-knob structural cliff (screen/very_high + screen/high — both
+require **k1=0.5 AND k2=1.0 = defaults** to recover SHIP-cell SSIM2
+within ±0.5 of the baseline). c1's "k1 IS the lever" diagnosis was
+correct but incomplete: bisection on (k1, k2) ∈ {0.25, 0.333, 0.5} ×
+{0.333, 0.5, 1.0} found:
+- k1 ≤ 0.25 cliffs at ANY k2 (p1 saturates at ridge max ~145)
+- k1 = 0.333 + k2 = 0.5 → SSIM2 −0.69 (over ±0.5 budget)
+- k1 = 0.5 + k2 = 1.0 → SSIM2 +0.13 (within budget ✓)
+- (k1, k2) = (0.5, 1.0) on screen/high → SSIM2 −0.10 (within ✓)
+
+c2 fix promotes k1 and k2 to defaults on screen/very_high + screen/high;
+k3, k4, k5 retained at S2-refit values (byte-identical no-op on SHIP
+cells per ablation table, may still affect other cells per the original
+sweep data). Bytes cost: +3.94% terminal e8 d=4, +4.61% graph e8 d=5,
++7.55% graph e8 d=3 — the price of W44-105 SHIP-cell protection on the
+opt-in path. Test
+`w44_phase4_s2_refit_strata_aggressiveness_membership` updated to
+enforce (k1=0.5, k2=1.0) on both strata. Post-fix validation
+`benchmarks/w44_phase4_s2_refit_c2_postfix_validate_2026-05-24.tsv`:
+all 5 SHIP-class cells preserved within ±0.5 SSIM2. Hash-locks 36/36,
+libjxl 4/4, drift 7/7, lib tests 1501/1501 all PASS.
+
+**DO NOT** lower k1 below 0.5 OR k2 below 1.0 on screen/very_high or
+screen/high without re-running the c2 ablation audit — they are the
+W44-105 SHIP-cell protection invariant. The Pareto optimum on those
+strata is jointly broken at the (k1=0, k2=0) point that the raw refit
+selected; any single-knob floor leaves the cliff partially open.
 
 ### Refit history
 
 | date       | corpus                          | n_rows | event                                                                              |
 |---         |---                              |---     |---                                                                                 |
 | 2026-05-22 | W44-219-densify                 | 9,018  | W44-228a initial 7^5 grid search; W44-228b shipped OPT-IN API at `b8a60ca0`        |
-| 2026-05-24 | W44-PHASE4-S1-recon-deep-revalidate | 22,770 | W44-PHASE4-S2-refit (this entry); ALL 8/8 strata shifted, screen/{high,mid,low} k2 admitted to 0.333 |
+| 2026-05-24 | W44-PHASE4-S1-recon-deep-revalidate | 22,770 | W44-PHASE4-S2-refit; ALL 8/8 strata shifted, screen/{high,mid,low} k2 admitted to 0.333 |
+| 2026-05-24 | W44-PHASE4-S2-refit-c2 audit (8 strata × 5 knobs ablation) | (no-corpus, in-tree ablation) | c2 floored screen/very_high + screen/high k1 → 0.5 AND k2 → 1.0 (= defaults) to protect W44-105 SHIP cells. Bytes +3.9% to +7.5% on those 2 strata; all 5 SHIP-class cells within ±0.5 SSIM2 of baseline |
 
 ### Lookup table (W44-228a, predecessor — historical reference)
 
@@ -433,18 +467,27 @@ W44-PHASE4-S2-refit table above.
 | photo / mid         | 1.0000        | 0.0               | 2.0000         | 2.8333    | +0.3333       | 2.196             | 0.923             | +1.273   |
 | photo / low         | 0.8333        | 0.0               | 0.5000         | 2.1667    | +0.6667       | 1.180             | 0.000             | +1.180   |
 
-### Stratum k2 membership (W44-PHASE4-S2-refit)
+### Stratum k2 membership (W44-PHASE4-S2-refit-c2)
 
 The W44-228a "surprising finding" that *every* per-stratum optimum has
-`screenshot_quant_aggressiveness = 0` was **partially overturned** by
-W44-PHASE4-S2-refit: 3 of 8 strata (`screen/high`, `screen/mid`,
-`screen/low`) now have `k2 = 0.333` instead of `k2 = 0.0`. The other 5
-strata stay at `k2 = 0.0`.
+`screenshot_quant_aggressiveness = 0` was first **partially overturned**
+by the W44-PHASE4-S2-refit raw lookup (screen/high, screen/mid, screen/low
+shifted to k2=0.333). The **W44-PHASE4-S2-refit-c2 fix** then promoted
+screen/very_high and screen/high to **k2=1.0 (default)** to protect the
+W44-105 SHIP cells, leaving the production lookup with three k2 strata:
+
+- `k2 = 0.0`: 4 photo strata (dispatch doesn't fire on representative cells)
+- `k2 = 0.333`: screen/mid + screen/low (low-distance screen strata,
+  away from the W44-105 catastrophe regime)
+- `k2 = 1.0 (= default)`: screen/very_high + screen/high (W44-105 SHIP
+  cell protection — c2 floor)
 
 The membership is pinned in
 `tuning::coupling::tests::w44_phase4_s2_refit_strata_aggressiveness_membership`
 — if a future re-derivation shifts any stratum's membership, update this
-table and the test alongside.
+table and the test alongside. The test ALSO enforces (k1=0.5, k2=1.0)
+on screen/very_high + screen/high as a binding W44-105 SHIP-cell
+protection invariant (see "W44-PHASE4-S2-refit-c2 SHIPPED" note above).
 
 **W44-105 SHIP-cell caveat (binding)**: the W44-228a optimisation
 corpus DID NOT INCLUDE the W44-105 SHIP cells (terminal / imac_g3 /

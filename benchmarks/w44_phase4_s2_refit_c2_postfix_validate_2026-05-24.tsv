@@ -1,0 +1,11 @@
+stratum	image	effort	distance	mode	class	bytes	bfly	ssim2	encode_ms	sha256_8
+screen/very_high_w228c1	terminal.png	e8	4.00	A	screen	42322	1.86481	86.90835	946	943d2b8ba7e31188
+screen/very_high_w228c1	terminal.png	e8	4.00	B	screen	43989	1.85285	87.04180	952	a37031f328308379
+screen/very_high	graph.png	e8	5.00	A	screen	19017	1.90281	83.24860	200	7c95249f18ed5dd0
+screen/very_high	graph.png	e8	5.00	B	screen	19893	1.79582	84.01371	211	3435cd7e9ecd7d01
+screen/high	graph.png	e8	3.00	A	screen	20707	1.34477	87.37698	211	a19d196a904c5984
+screen/high	graph.png	e8	3.00	B	screen	22270	1.29353	87.27517	206	f9a4b05017fad819
+screen/mid	graph.png	e8	1.50	A	screen	19701	1.30115	88.84953	211	82835520cb16671a
+screen/mid	graph.png	e8	1.50	B	screen	19681	1.35381	89.32260	180	c5a445bce198ee10
+screen/low	graph.png	e8	0.70	A	screen	27087	0.71439	92.84304	182	1098731d0d48a632
+screen/low	graph.png	e8	0.70	B	screen	27087	0.71439	92.84304	180	1098731d0d48a632
