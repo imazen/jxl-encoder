@@ -2015,6 +2015,22 @@ pub struct VarDctEncoder {
     /// See [`crate::api::LossyConfig::with_gpu_butteraugli`].
     #[cfg(feature = "butteraugli-loop")]
     pub gpu_butteraugli: bool,
+    /// cvvdp-fork Phase 3 (2026-05-24): opt-in CVVDP backend for the
+    /// quantization loop. When `true` AND the `cvvdp-loop` cargo
+    /// feature is on AND CUDA init succeeds AND the active
+    /// [`EncoderStrategy`](crate::api::EncoderStrategy) is not
+    /// [`Libjxl`](crate::api::EncoderStrategy::Libjxl), the backend
+    /// construction in [`crate::vardct::perceptual_backend::construct_backend`]
+    /// returns a [`crate::vardct::cvvdp_backend::gpu::GpuCvvdpBackend`]
+    /// instead of the butteraugli CPU/GPU pair. Phase 3 ships the
+    /// backend impl only — the buttloop body still consumes butteraugli;
+    /// Phase 4 plumbs the cvvdp signal through `run_buttloop`. Default
+    /// `false` keeps every hash-lock byte-identical (including when
+    /// the `cvvdp-loop` feature is compiled in but no caller opts in).
+    /// See [`crate::api::LossyConfig::with_cvvdp_loop`] and the Phase 3
+    /// brief at `docs/RFC_CVVDP_PHASE3_BRIEF.md`.
+    #[cfg(feature = "butteraugli-loop")]
+    pub cvvdp_loop: bool,
     /// Number of SSIM2 quantization loop iterations.
     /// Alternative to butteraugli loop: uses per-block linear RGB RMSE + full-image SSIM2.
     /// Requires the `ssim2-loop` feature.
@@ -2349,6 +2365,12 @@ impl Default for VarDctEncoder {
             // sets it via with_gpu_butteraugli.
             #[cfg(feature = "butteraugli-loop")]
             gpu_butteraugli: false,
+            // cvvdp-fork Phase 3 (2026-05-24): CVVDP backend defaults off;
+            // LossyConfig sets it via `with_cvvdp_loop`. Hash-locks stay
+            // byte-identical regardless of the `cvvdp-loop` cargo feature
+            // because the field defaults to `false`.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_loop: false,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]
@@ -2448,6 +2470,12 @@ impl VarDctEncoder {
             // sets it via with_gpu_butteraugli.
             #[cfg(feature = "butteraugli-loop")]
             gpu_butteraugli: false,
+            // cvvdp-fork Phase 3 (2026-05-24): CVVDP backend defaults off;
+            // LossyConfig sets it via `with_cvvdp_loop`. Hash-locks stay
+            // byte-identical regardless of the `cvvdp-loop` cargo feature
+            // because the field defaults to `false`.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_loop: false,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]

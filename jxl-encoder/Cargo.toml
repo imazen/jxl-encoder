@@ -67,6 +67,17 @@ butteraugli-gpu = { version = "0.0.1", default-features = false, features = ["cu
 # cubecl is pinned via `[patch.crates-io]` in the workspace `Cargo.toml`
 # to the same git rev butteraugli-gpu is tested against.
 cubecl = { version = "0.10.0-pre.4", default-features = false, features = ["std", "cuda"], optional = true }
+# cvvdp-fork Phase 3: GPU CVVDP backend for the perceptual quantization
+# loop (RFC `docs/RFC_CVVDP_FORK.md` §2.1, Phase 3 brief
+# `docs/RFC_CVVDP_PHASE3_BRIEF.md`). Opt-in via the `cvvdp-loop` cargo
+# feature; requires CUDA runtime at build + load time. Path-patched in
+# the workspace `[patch.crates-io]` to point at
+# `~/work/zen/zenmetrics/crates/cvvdp-gpu`. `cubecl-types` enables the
+# `score_from_linear_planes*` helpers we wrap; `cuda` selects the
+# CudaRuntime backend at build time. The `cubecl` direct dep is already
+# pulled in optionally for `gpu-butteraugli` and is reused here when
+# `cvvdp-loop` is enabled.
+cvvdp-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types"], optional = true }
 
 [features]
 std = ["thiserror/std", "archmage/std", "jxl_simd/std"]
@@ -105,6 +116,20 @@ butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
 # AND CUDA must be present at runtime; otherwise the buttloop silently
 # falls back to the CPU backend.
 gpu-butteraugli = ["butteraugli-loop", "dep:butteraugli-gpu", "dep:cubecl"]
+# cvvdp-fork Phase 3: GPU CVVDP backend for the quantization loop.
+# Implies `butteraugli-loop` (the `PerceptualBackend` trait surface lives
+# there). Opt-in only — when enabled the caller still has to set
+# `LossyConfig::with_cvvdp_loop(Some(true))` AND CUDA must be present at
+# runtime; otherwise the buttloop silently falls back to the CPU
+# butteraugli backend (same defense-in-depth as `gpu-butteraugli`). See
+# RFC `docs/RFC_CVVDP_FORK.md` §2.1 + Phase 3 brief in `docs/`.
+#
+# Phase 3 ships the backend impl only — the buttloop body still consumes
+# butteraugli; Phase 4 will plumb the cvvdp signal into the per-iter
+# compare. Hash-locks stay byte-identical when this feature is OFF AND
+# when ON-but-no-caller-opts-in (`LossyConfig::cvvdp_loop` defaults
+# `None` ≡ "use butteraugli").
+cvvdp-loop = ["butteraugli-loop", "dep:cvvdp-gpu", "dep:cubecl"]
 ssim2-loop = ["dep:fast-ssim2", "dep:imgref"]
 zensim-loop = ["dep:zensim"]
 # Convenience encode functions that accept imgref::ImgRef with typed pixel formats.

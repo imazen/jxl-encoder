@@ -1331,6 +1331,17 @@ impl VarDctEncoder {
                     butteraugli_params,
                     metric_intensity_target,
                     self.gpu_butteraugli,
+                    // cvvdp-fork Phase 3: opt-in via
+                    // `LossyConfig::with_cvvdp_loop`. The buttloop body
+                    // still consumes butteraugli — only the backend
+                    // construction routes to cvvdp when the field is
+                    // set. Phase 4 will plumb the cvvdp signal through
+                    // `run_buttloop` proper (rename to
+                    // `perceptual_loop.rs`). Until then, the cvvdp
+                    // backend produces butteraugli-direction scores
+                    // (smaller = better) via the `10.0 - JOD` mapping
+                    // so the comparison surface stays uniform.
+                    self.cvvdp_loop,
                 );
                 if let Err(_) = b.set_reference(&ref_r, &ref_g, &ref_b, width, height) {
                     return Ok(initial_params.clone());
@@ -2382,9 +2393,9 @@ impl VarDctEncoder {
                 // (B7a: now buffer-recycling) used pre-W44-phase3-B1; the
                 // GPU backend (opt-in) wraps
                 // `butteraugli_gpu::Butteraugli<CudaRuntime>::compute_with_reference`.
-                let bref = backend.as_deref_mut().expect(
-                    "non-VDP2 path must carry a butteraugli backend (top-level invariant)",
-                );
+                let bref = backend
+                    .as_deref_mut()
+                    .expect("non-VDP2 path must carry a butteraugli backend (top-level invariant)");
                 let result = match bref.compare_with_reference(
                     recon_r,
                     recon_g,

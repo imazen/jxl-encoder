@@ -4625,6 +4625,35 @@ pub struct LossyConfig {
     /// See [`Self::with_gpu_butteraugli`].
     #[cfg(feature = "butteraugli-loop")]
     gpu_butteraugli: bool,
+    /// cvvdp-fork Phase 3 (2026-05-24): opt-in CVVDP backend for the
+    /// quantization loop. Tri-state:
+    /// - `None` (default): use the butteraugli backend (CPU or GPU per
+    ///   [`Self::with_gpu_butteraugli`]). Production path unchanged;
+    ///   every hash-lock byte-identical.
+    /// - `Some(true)`: route the quantization loop's per-iter compare
+    ///   through [`crate::vardct::cvvdp_backend::gpu::GpuCvvdpBackend`]
+    ///   when the `cvvdp-loop` cargo feature is enabled AND CUDA
+    ///   initialises successfully AND the active strategy is not
+    ///   [`EncoderStrategy::Libjxl`]. Defense-in-depth fallback to the
+    ///   butteraugli backend on any failure (matches the
+    ///   `gpu_butteraugli` shape).
+    /// - `Some(false)`: explicitly pin the butteraugli backend even if
+    ///   a future build promotes the cvvdp default. Mirrors the W44-128
+    ///   chunk-D opt-out semantics for the
+    ///   [`Self::with_strategy_overrides`] family.
+    ///
+    /// Phase 3 ships the backend impl only — the buttloop body still
+    /// consumes butteraugli. Phase 4 (separate chunk) plumbs the cvvdp
+    /// signal through `run_buttloop`. Field always present so hash-lock
+    /// fixtures don't depend on the `cvvdp-loop` cargo feature; the
+    /// field is consulted only inside the
+    /// `#[cfg(feature = "butteraugli-loop")]` buttloop and only takes
+    /// effect under `#[cfg(feature = "cvvdp-loop")]`.
+    ///
+    /// See [`Self::with_cvvdp_loop`] and the Phase 3 brief at
+    /// `docs/RFC_CVVDP_PHASE3_BRIEF.md`.
+    #[cfg(feature = "butteraugli-loop")]
+    cvvdp_loop: Option<bool>,
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -4773,6 +4802,18 @@ impl LossyConfig {
             // [`Self::resolve_gpu_butteraugli`].
             #[cfg(feature = "butteraugli-loop")]
             gpu_butteraugli: cfg!(feature = "gpu-butteraugli"),
+            // cvvdp-fork Phase 3 (2026-05-24): default `None` ≡ "use
+            // butteraugli". The `cvvdp-loop` cargo feature being
+            // compiled in does NOT auto-flip this — we explicitly want
+            // hash-locks to stay byte-identical even when the feature
+            // is enabled, so the caller has to opt in via
+            // `LossyConfig::with_cvvdp_loop(Some(true))`. The W44-228b
+            // tri-state precedent (Belief #20) is what we mirror here.
+            // Phase 4 / 5 may flip the default once measurement on
+            // SHIP-class cells lands; until then `None` keeps every
+            // existing test green.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_loop: None,
         }
     }
 
@@ -6468,6 +6509,86 @@ impl LossyConfig {
             return false;
         }
         self.gpu_butteraugli
+    }
+
+    /// cvvdp-fork Phase 3 (2026-05-24): opt-in CVVDP backend for the
+    /// quantization loop's per-iter compare step.
+    ///
+    /// Tri-state — see the doc on the
+    /// [`Self::cvvdp_loop`] field for the full semantics. Brief:
+    /// - `None` (default): use butteraugli (CPU or GPU per
+    ///   [`Self::with_gpu_butteraugli`]).
+    /// - `Some(true)`: opt in to CVVDP. Wraps
+    ///   `cvvdp_gpu::CvvdpOpaque` via the `*_from_linear_planes_*`
+    ///   API zenmetrics master `8b658b4` shipped. Defense-in-depth
+    ///   fallback to butteraugli on (a) `cvvdp-loop` cargo feature
+    ///   OFF, (b) CUDA init failure, (c) active strategy is
+    ///   [`EncoderStrategy::Libjxl`].
+    /// - `Some(false)`: explicitly pin butteraugli even if a future
+    ///   build promotes cvvdp to default.
+    ///
+    /// **Output direction**: the CVVDP backend maps its native JOD
+    /// score `[0, 10]` (10 = identical) onto butteraugli-direction
+    /// `[0, 10]` (0 = identical) via `score = (10.0 - jod).clamp(0.0,
+    /// 10.0)`. The buttloop body uses the resulting score against
+    /// `target_distance` unchanged — Phase 4 (separate chunk) ships
+    /// the per-distance JOD-target table that recalibrates the
+    /// comparison surface.
+    ///
+    /// **Hash-lock byte-identity**: default `None` keeps every
+    /// existing hash-lock byte-identical, regardless of whether the
+    /// `cvvdp-loop` feature is compiled in. Callers that opt in via
+    /// `Some(true)` accept the documented score-direction mapping and
+    /// the eventual Phase 4 calibration.
+    ///
+    /// Requires the `butteraugli-loop` feature (the
+    /// [`crate::vardct::perceptual_backend::PerceptualBackend`] trait
+    /// surface lives there).
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn with_cvvdp_loop(mut self, enable: Option<bool>) -> Self {
+        self.cvvdp_loop = enable;
+        self
+    }
+
+    /// Currently configured CVVDP opt-in (cvvdp-fork Phase 3). May be
+    /// `None` (default = use butteraugli) — use
+    /// [`Self::resolve_cvvdp_loop`] to see the effective bool that
+    /// actually drives the backend dispatch.
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn cvvdp_loop(&self) -> Option<bool> {
+        self.cvvdp_loop
+    }
+
+    /// cvvdp-fork Phase 3 (2026-05-24): resolve the effective CVVDP
+    /// preference, accounting for the strategy-level override.
+    ///
+    /// Returns `false` (use butteraugli) in every case EXCEPT when
+    /// ALL of the following hold:
+    /// 1. [`Self::cvvdp_loop`] is `Some(true)` (caller explicitly opted in).
+    /// 2. Active strategy is NOT [`EncoderStrategy::Libjxl`]. The Libjxl
+    ///    strategy ships bit-for-bit cjxl parity (W44-126 user signoff
+    ///    "all-divergence parity"); the cvvdp backend would introduce
+    ///    score-direction drift that cascades into byte drift,
+    ///    violating the byte-lock invariant. This mirrors the
+    ///    [`Self::resolve_gpu_butteraugli`] invariant.
+    ///
+    /// `None` (default) and `Some(false)` both resolve to `false`.
+    /// `Some(true)` resolves to `true` for all non-Libjxl strategies.
+    ///
+    /// The runtime CVVDP backend dispatch additionally requires the
+    /// `cvvdp-loop` cargo feature and successful CUDA init — see
+    /// [`crate::vardct::perceptual_backend::construct_backend`] for the
+    /// full dispatch matrix.
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub(crate) fn resolve_cvvdp_loop(&self) -> bool {
+        if matches!(self.strategy, EncoderStrategy::Libjxl) {
+            return false;
+        }
+        self.cvvdp_loop.unwrap_or(false)
     }
 
     /// Resolve the configured [`HdrLoss`] into the concrete loss that
@@ -8922,6 +9043,12 @@ impl<'a> EncodeRequest<'a> {
             // the field for all strategies except `EncoderStrategy::Libjxl`,
             // which forces CPU for strict cjxl-parity.
             enc.gpu_butteraugli = cfg.resolve_gpu_butteraugli();
+            // cvvdp-fork Phase 3 (2026-05-24): propagate CVVDP opt-in
+            // (still-image path). `resolve_cvvdp_loop` returns false for
+            // None (default) AND for `EncoderStrategy::Libjxl`, so the
+            // backend dispatch stays on the butteraugli path unless the
+            // caller explicitly opts in.
+            enc.cvvdp_loop = cfg.resolve_cvvdp_loop();
         }
         #[cfg(feature = "ssim2-loop")]
         {
@@ -10106,6 +10233,10 @@ impl LossyEncoder {
                 // strategies except `EncoderStrategy::Libjxl`, which
                 // forces CPU for strict cjxl-parity.
                 enc.gpu_butteraugli = cfg.resolve_gpu_butteraugli();
+                // cvvdp-fork Phase 3 (2026-05-24): propagate CVVDP opt-in
+                // (streaming LossyEncoder path). Same semantics as the
+                // still-image site above.
+                enc.cvvdp_loop = cfg.resolve_cvvdp_loop();
             }
             #[cfg(feature = "ssim2-loop")]
             {
@@ -12056,6 +12187,10 @@ fn encode_animation_lossy(
         // `EncoderStrategy::Libjxl`, which forces CPU for strict
         // cjxl-parity.
         enc.gpu_butteraugli = cfg.resolve_gpu_butteraugli();
+        // cvvdp-fork Phase 3 (2026-05-24): propagate CVVDP opt-in
+        // (animation frame encoder path). Same semantics as the
+        // still-image site above.
+        enc.cvvdp_loop = cfg.resolve_cvvdp_loop();
     }
     #[cfg(feature = "ssim2-loop")]
     {
@@ -16236,6 +16371,137 @@ mod tests {
             cfg.resolve_gpu_butteraugli(),
             "EncoderStrategy::LeanFaster must honor with_gpu_butteraugli(true)"
         );
+    }
+
+    /// cvvdp-fork Phase 3 (2026-05-24): `LossyConfig::cvvdp_loop()`
+    /// defaults to `None` (use butteraugli). Hash-locks stay
+    /// byte-identical regardless of the `cvvdp-loop` cargo feature
+    /// because the default is `None`.
+    ///
+    /// Builder symmetry: `.with_cvvdp_loop(None)` /
+    /// `.with_cvvdp_loop(Some(false))` / `.with_cvvdp_loop(Some(true))`
+    /// all set the field exactly as passed.
+    #[cfg(feature = "butteraugli-loop")]
+    #[test]
+    fn test_cvvdp_loop_default_none_and_setter_roundtrip() {
+        let cfg = LossyConfig::new(1.0);
+        assert!(
+            cfg.cvvdp_loop().is_none(),
+            "LossyConfig::cvvdp_loop() default must be None \
+             (regardless of the `cvvdp-loop` cargo feature)"
+        );
+        // Resolves to false at the default — butteraugli stays active.
+        assert!(
+            !cfg.resolve_cvvdp_loop(),
+            "resolve_cvvdp_loop() at default must be false"
+        );
+
+        let cfg_none = LossyConfig::new(1.0).with_cvvdp_loop(None);
+        assert_eq!(cfg_none.cvvdp_loop(), None);
+        assert!(!cfg_none.resolve_cvvdp_loop());
+
+        let cfg_false = LossyConfig::new(1.0).with_cvvdp_loop(Some(false));
+        assert_eq!(cfg_false.cvvdp_loop(), Some(false));
+        assert!(
+            !cfg_false.resolve_cvvdp_loop(),
+            "Some(false) must resolve to false"
+        );
+
+        let cfg_true = LossyConfig::new(1.0).with_cvvdp_loop(Some(true));
+        assert_eq!(cfg_true.cvvdp_loop(), Some(true));
+        assert!(
+            cfg_true.resolve_cvvdp_loop(),
+            "Some(true) on non-Libjxl strategy must resolve to true"
+        );
+    }
+
+    /// cvvdp-fork Phase 3: `EncoderStrategy::Libjxl` forces CVVDP OFF
+    /// via `resolve_cvvdp_loop` regardless of the field value. This
+    /// preserves strict cjxl-parity for the Libjxl strategy (mirrors
+    /// the `resolve_gpu_butteraugli` invariant from W44-phase3-B5-flip).
+    /// All non-Libjxl strategies honor the field.
+    #[cfg(feature = "butteraugli-loop")]
+    #[test]
+    fn test_libjxl_strategy_forces_butteraugli_even_with_cvvdp_loop() {
+        // Libjxl strategy: even if field is Some(true), resolver returns false.
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Libjxl)
+            .with_cvvdp_loop(Some(true));
+        assert_eq!(
+            cfg.cvvdp_loop(),
+            Some(true),
+            "Field value must reflect the explicit setter"
+        );
+        assert!(
+            !cfg.resolve_cvvdp_loop(),
+            "EncoderStrategy::Libjxl must force resolve_cvvdp_loop() = false \
+             regardless of field value (strict cjxl-parity invariant)"
+        );
+
+        // Zenjxl strategy: resolver honors the field.
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Zenjxl)
+            .with_cvvdp_loop(Some(true));
+        assert!(
+            cfg.resolve_cvvdp_loop(),
+            "EncoderStrategy::Zenjxl must honor with_cvvdp_loop(Some(true))"
+        );
+
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Zenjxl)
+            .with_cvvdp_loop(Some(false));
+        assert!(
+            !cfg.resolve_cvvdp_loop(),
+            "EncoderStrategy::Zenjxl must honor with_cvvdp_loop(Some(false))"
+        );
+
+        // Aggressive / LeanFaster: same field-honoring behavior.
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Aggressive)
+            .with_cvvdp_loop(Some(true));
+        assert!(
+            cfg.resolve_cvvdp_loop(),
+            "EncoderStrategy::Aggressive must honor with_cvvdp_loop(Some(true))"
+        );
+
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::LeanFaster)
+            .with_cvvdp_loop(Some(true));
+        assert!(
+            cfg.resolve_cvvdp_loop(),
+            "EncoderStrategy::LeanFaster must honor with_cvvdp_loop(Some(true))"
+        );
+    }
+
+    /// cvvdp-fork Phase 3: `cvvdp_loop` and `gpu_butteraugli` are
+    /// independent fields with independent resolvers — setting one
+    /// does not affect the other. The dispatch order
+    /// (cvvdp wins when both are requested) is enforced inside
+    /// `construct_backend`, not at the resolver level.
+    #[cfg(feature = "butteraugli-loop")]
+    #[test]
+    fn test_cvvdp_loop_independent_of_gpu_butteraugli() {
+        // CVVDP on, butteraugli-GPU off — resolver returns true for
+        // cvvdp, the gpu_butteraugli resolver is uninvolved.
+        let cfg = LossyConfig::new(1.0)
+            .with_cvvdp_loop(Some(true))
+            .with_gpu_butteraugli(false);
+        assert!(cfg.resolve_cvvdp_loop());
+        assert!(!cfg.resolve_gpu_butteraugli());
+
+        // Reverse: butteraugli-GPU on, CVVDP off.
+        let cfg = LossyConfig::new(1.0)
+            .with_cvvdp_loop(Some(false))
+            .with_gpu_butteraugli(true);
+        assert!(!cfg.resolve_cvvdp_loop());
+        assert!(cfg.resolve_gpu_butteraugli());
+
+        // Both on: each resolves independently to true.
+        let cfg = LossyConfig::new(1.0)
+            .with_cvvdp_loop(Some(true))
+            .with_gpu_butteraugli(true);
+        assert!(cfg.resolve_cvvdp_loop());
+        assert!(cfg.resolve_gpu_butteraugli());
 
         // Custom strategy: also honors the field.
         let cfg = LossyConfig::new(1.0)
