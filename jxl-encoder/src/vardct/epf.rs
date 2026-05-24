@@ -355,10 +355,22 @@ fn epf_step0(
     pad: usize,
     budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<[Vec<f32>; 3]> {
-    // Three w*h f32 planes, accounted permanently against the budget — they live
-    // for the rest of `apply_epf` (until *planes = result swap), which spans all
-    // the strip-parallel work below. Single permanent reservation keeps the
-    // peak high-water mark accurate and avoids per-strip churn.
+    // Three w*h f32 planes — transient against the budget. They live only for
+    // this `epf_step0` call (the caller `apply_epf` then swaps them into
+    // `*planes` and drops the old buffers, netting zero permanent change to
+    // the caller's working set). Holding them as a `BudgetGuard` keeps the
+    // peak high-water mark accurate (used briefly bumps by `n*4*3`) AND
+    // releases on Drop so repeat `apply_epf` calls (e.g. from each buttloop
+    // iter) don't accumulate leaked accounting. See W44-AUDIT-2 / d1c01c2f
+    // root-cause for why the prior `reserve_permanent_opt` was wrong.
+    //
+    // NOTE on timing: the guard drops at the end of this function (when
+    // `output` is moved into the returned `Result`). The caller then does
+    // `*planes = result`, which drops the caller's OLD planes (n*4*3
+    // freed) and stores the new ones (n*4*3 retained but already
+    // accounted by the caller's upstream `xyb_planes` reservation). Net
+    // permanent delta to caller: 0. The transient window above captures
+    // the real peak (old + new + scratch simultaneously) correctly.
     let n = width
         .checked_mul(height)
         .ok_or(crate::error::Error::DimensionOverflow {
@@ -366,7 +378,7 @@ fn epf_step0(
             height,
             channels: 3,
         })?;
-    MemoryBudget::reserve_permanent_opt(budget, (n as u64).saturating_mul(4 * 3))?;
+    let _output_guard = MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
     let mut output = [vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]];
 
     let pad_slices: [&[f32]; 3] = [&padded_planes[0], &padded_planes[1], &padded_planes[2]];
@@ -641,8 +653,15 @@ pub(crate) fn apply_epf(
         let pad = 3;
         let in_stride = width + 2 * pad;
         // Three padded f32 planes: stride * (height + 2*pad) each.
+        // W44-AUDIT-2: transient (not permanent) — these padded planes drop at the
+        // end of this `if` block, and `*planes = result` swaps in the new
+        // planes while dropping the old (net zero permanent delta). The prior
+        // `reserve_permanent_opt` leaked ~padded*12 bytes per call, which
+        // accumulated across buttloop iters (4 at e9) and blew the 2 GiB cap on
+        // 4 MP+ inputs at d>=4. See `compute_epf_sharpness`-callsite trace in
+        // the AUDIT-2 root-cause memo.
         let padded_len = in_stride.saturating_mul(height + 2 * pad);
-        MemoryBudget::reserve_permanent_opt(budget, (padded_len as u64).saturating_mul(4 * 3))?;
+        let _padded_guard = MemoryBudget::reserve_opt(budget, (padded_len as u64).saturating_mul(4 * 3))?;
         let padded: [Vec<f32>; 3] =
             core::array::from_fn(|c| jxl_simd::pad_plane(&planes[c], width, height, pad));
         let result = epf_step0(
@@ -668,8 +687,11 @@ pub(crate) fn apply_epf(
         let pad = 2;
         let in_stride = width + 2 * pad;
         let padded_len = in_stride.saturating_mul(height + 2 * pad);
-        // Three padded planes + three out planes, all f32, all dimension-driven.
-        MemoryBudget::reserve_permanent_opt(
+        // W44-AUDIT-2: transient — three padded planes (in scope only for this
+        // `if`) and three out planes (swapped into `planes` while old planes
+        // drop, net zero permanent). Was `reserve_permanent_opt` which leaked
+        // ~150 MB per call on 4 MP inputs and accumulated across buttloop iters.
+        let _step1_guard = MemoryBudget::reserve_opt(
             budget,
             (padded_len as u64)
                 .saturating_mul(4 * 3)
@@ -710,7 +732,8 @@ pub(crate) fn apply_epf(
         let pad = 1;
         let in_stride = width + 2 * pad;
         let padded_len = in_stride.saturating_mul(height + 2 * pad);
-        MemoryBudget::reserve_permanent_opt(
+        // W44-AUDIT-2: transient (see step-1 comment above for rationale).
+        let _step2_guard = MemoryBudget::reserve_opt(
             budget,
             (padded_len as u64)
                 .saturating_mul(4 * 3)
@@ -777,9 +800,10 @@ fn apply_epf_with_scratch(
         let pad = 3;
         let in_stride = width + 2 * pad;
         let padded_len = in_stride.saturating_mul(height + 2 * pad);
-        // Three padded planes built fresh each call; epf_step0 also reserves its
-        // own three output planes internally.
-        MemoryBudget::reserve_permanent_opt(budget, (padded_len as u64).saturating_mul(4 * 3))?;
+        // W44-AUDIT-2: transient — three padded planes built fresh each call,
+        // dropped at end of this `if` block. epf_step0 already accounts its own
+        // output internally (as transient). Was `reserve_permanent_opt`.
+        let _padded_guard = MemoryBudget::reserve_opt(budget, (padded_len as u64).saturating_mul(4 * 3))?;
         let padded: [Vec<f32>; 3] =
             core::array::from_fn(|c| jxl_simd::pad_plane(&planes[c], width, height, pad));
         let result = epf_step0(
