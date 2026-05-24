@@ -83,6 +83,20 @@ const SPLIT_PROPERTIES_VARIABLE: &[usize] = &[
     3,  // x position
 ];
 
+// W44-phase3-B3-RAYON-1 (2026-05-23) [RULED OUT]: chunking the
+// `parallel_map(SPLIT_PROPERTIES_VARIABLE.len(), scan_property)` fan-out
+// below — via `parallel_map_chunked(14, 7, ...)` — regressed 8-thread wall
+// by 4-11 % across all 4 test cells (paired bench
+// `benchmarks/w44_phase3_b3_rayon_1_dc_tree_batch_2026-05-23.{tsv,meta}`).
+// Root cause: 14 fine-grained tasks already saturate the 8-worker pool in
+// two waves; 2 chunked tasks of 7 leave 6 workers idle. Per-task overhead
+// recovery (~3 pp) is overwhelmed by parallelism loss (8-12 pp). DO NOT
+// respawn this chunk or its B3-RAYON-2 sibling (encode_ans histogram
+// guard) without re-validating the trade-off premise on the target site.
+// See `docs/LIBJXL_DIVERGENCES.md` Section F row "W44-phase3-B3-RAYON-1
+// RULED OUT" and memo `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/
+// memory/w44_phase3_b3_rayon_1_dc_tree_batch_2026-05-23.md`.
+
 /// Maximum tree depth to prevent overfitting.
 const MAX_TREE_DEPTH: usize = 8;
 

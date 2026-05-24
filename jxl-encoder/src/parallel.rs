@@ -67,6 +67,56 @@ where
     (0..n).map(f).collect()
 }
 
+/// Map `f` over `0..n`, collecting results in index order, but force rayon
+/// to keep at least `min_chunk` consecutive items per task. Useful when
+/// per-item work is small (~1-50 μs) so the rayon scheduling overhead
+/// (~1-3 μs per task) becomes a significant fraction of total work — by
+/// keeping `min_chunk` items batched per task, the per-task overhead is
+/// amortized over more useful work.
+///
+/// W44-phase3-B3-RAYON-1: introduced for a B2-ranked perf hypothesis — batch
+/// the DC tree per-property fan-out in
+/// [`crate::vardct::dc_tree_learn::find_best_split_variable`] /
+/// `_incremental` to amortize rayon scheduling overhead. The hypothesis was
+/// FALSIFIED by measurement (4-cell × 7-iter paired bench
+/// `benchmarks/w44_phase3_b3_rayon_1_dc_tree_batch_2026-05-23.tsv`): at 8
+/// threads, 14 fine-grained tasks already saturate the worker pool in two
+/// waves (~7 per wave), while 2 chunked tasks of 7 leave 6 workers idle —
+/// the parallelism loss (8-12 pp) overwhelms the per-task overhead recovery
+/// (~3 pp). All 4 test cells regressed 4-11 % wall at 8 threads. The helper
+/// is kept as future scaffolding (matching the W44-89 `parallel_map_min`
+/// pattern — helper added, never wired, retained for future investigations
+/// where the trade-off goes the other way; see the Section F row
+/// "W44-phase3-B3-RAYON-1 RULED OUT" in `docs/LIBJXL_DIVERGENCES.md`).
+///
+/// `min_chunk = 0` and `min_chunk = 1` behave the same as `parallel_map`
+/// (rayon's default is min length 1).
+#[cfg(feature = "parallel")]
+#[allow(dead_code)]
+pub fn parallel_map_chunked<T, F>(n: usize, min_chunk: usize, f: F) -> Vec<T>
+where
+    T: Send,
+    F: Fn(usize) -> T + Send + Sync,
+{
+    use rayon::prelude::*;
+    let min_chunk = min_chunk.max(1);
+    (0..n)
+        .into_par_iter()
+        .with_min_len(min_chunk)
+        .map(f)
+        .collect()
+}
+
+/// Sequential fallback for [`parallel_map_chunked`].
+#[cfg(not(feature = "parallel"))]
+#[allow(dead_code)]
+pub fn parallel_map_chunked<T, F>(n: usize, _min_chunk: usize, f: F) -> Vec<T>
+where
+    F: Fn(usize) -> T,
+{
+    (0..n).map(f).collect()
+}
+
 /// Map `f` over `0..n` where `f` returns `Result<T>`, collecting results in index order.
 ///
 /// Returns the first error encountered, or all results.

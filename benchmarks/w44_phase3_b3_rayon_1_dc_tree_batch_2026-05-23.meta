@@ -1,0 +1,235 @@
+# W44-phase3-B3-RAYON-1 — DC tree per-property rayon chunking [RULED OUT]
+
+**Date**: 2026-05-23
+**Status**: HONEST-STOP — measurement falsified the B2 hypothesis. Production source UNCHANGED.
+**Wall**: ~1.5 h (analysis + sibling-workspace + build + 4 builds × 2 binaries + 7-iter bench + cleanup).
+**Reference memo**: `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_phase3_b3_rayon_1_dc_tree_batch_2026-05-23.md`
+**Bench TSV**: `w44_phase3_b3_rayon_1_dc_tree_batch_2026-05-23.tsv` (this directory)
+**B2 source ranking memo**: `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_phase3_b2_rayon_coord_analysis_2026-05-23.md`
+
+## Hypothesis (B2 top-ranked candidate)
+
+Chunk the per-property fan-out in
+`vardct/dc_tree_learn.rs::find_best_split_variable` /
+`_incremental` from `parallel_map(SPLIT_PROPERTIES_VARIABLE.len() = 14,
+scan_property)` (14 fine-grained tasks per BFS call) to
+`parallel_map_chunked(14, 7, scan_property)` (⌈14/7⌉ = 2 chunked tasks
+per call). Expected to save **2-6 % e9 wall** by amortizing rayon
+per-task scheduling overhead (~1-3 μs/task × 420-2800 tasks/encode =
+0.4-8 ms) across 7× more useful work per task. Risk: LOW (byte-identity
+preserved by the existing serial reduction across the returned
+`Vec<Option<Candidate>>`).
+
+## Methodology
+
+1. **Source change**: added `parallel_map_chunked(n, min_chunk, f)` helper
+   to `jxl-encoder/src/parallel.rs` using rayon
+   `IndexedParallelIterator::with_min_len(min_chunk)`. Wired the two call
+   sites in `vardct/dc_tree_learn.rs:985` (`find_best_split_variable`) and
+   `:1332` (`find_best_split_variable_incremental`) to use `min_chunk = 7`.
+
+2. **Byte-identity sanity**: built release CLI binaries for both BEFORE
+   (parent commit `d422b6e8` main) and AFTER (with chunking wired) into
+   distinct `CARGO_TARGET_DIR` slots so neither clobbered the other.
+   Encoded 4 test cells at e9 with both binaries and compared SHA256:
+     - `1418519.png d=2.0`: 13501 bytes, **SHA256 BYTE-IDENTICAL**.
+     - `codec_wiki.png d=2.0`: 77243 bytes, **SHA256 BYTE-IDENTICAL**.
+     - `clic_097cb426 d=2.0`: 34005 bytes, **SHA256 BYTE-IDENTICAL**.
+     - `terminal.png d=4.0`: 36794 bytes, **SHA256 BYTE-IDENTICAL**.
+   Byte-identity is the strong proof that the chunked variant preserves
+   the W44-175 property-rank tie-break invariant (the serial reduction
+   walks the returned Vec in index order, so any worker's chunk produces
+   the same `Option<Candidate>` at the same position).
+
+3. **Paired interleaved A/B perf bench** (`/tmp/b3_perf_bench.sh`):
+   4 cells × {1-thread, 8-thread} × 2 arms × 7 iters = 112 encodes
+   (plus warmup). Each iter alternates arm order (odd: AFTER first,
+   even: BEFORE first) to remove first-warm cache bias. Wall time
+   measured via `date +%s%N` around each `cjxl-rs` invocation;
+   `RAYON_NUM_THREADS=N` controls thread count.
+
+4. **Analysis** (`/tmp/b3_analyze.py`): per-(cell, threads, arm) median +
+   best-of-N. Δ% reported as (AFTER - BEFORE) / BEFORE.
+
+## Results
+
+```
+cell              NT   B_med   A_med      Δ%  B_best  A_best      Δ%   n
+------------------------------------------------------------------------------
+1418519_d2         1     343     344  +0.29%     340     340  +0.00%   7
+1418519_d2         8     228     237  +3.95%     224     235  +4.91%   7
+codec_wiki_d2      1    5926    5949  +0.39%    5905    5923  +0.30%   7
+codec_wiki_d2      8    2950    3280 +11.19%    2936    3262 +11.10%   7
+clic_097_d2        1    1508    1516  +0.53%    1493    1505  +0.80%   7
+clic_097_d2        8     769     821  +6.76%     759     808  +6.46%   7
+terminal_d4        1    3015    3018  +0.10%    3007    3008  +0.03%   7
+terminal_d4        8    1325    1415  +6.79%    1316    1393  +5.85%   7
+```
+
+**Cells with ≥2 % improvement at 8-thread: 0** (gate wanted ≥1)
+**Cells with >1 % regression (median): 4/4**
+Worst regression: codec_wiki_d2 NT=8 Δmedian = +11.19 %
+Best result: 1418519_d2 NT=1 Δmedian = +0.10 % (within noise)
+
+**Single-thread**: all 4 cells within ±0.5 % (no-op as expected — chunking
+is irrelevant without parallelism).
+
+**8-thread**: all 4 cells REGRESS 4-11 % (severe).
+
+## Root cause (where B2 was wrong)
+
+B2 correctly identified per-task overhead as a real cost (~3 pp of
+e9 CPU in the perf-profile flat top-N), but its math was:
+
+> 14 props × 30-200 BFS calls = 420-2800 tasks per encode, each with
+> ~10-20 % per-task scheduling overhead. Reducing to 2 chunked tasks
+> saves 7× × 10-20 % = 70-140 % per call → 5-15 ms wall savings.
+
+The error: the "10-20 % per-task overhead" is OVERHEAD ON THE TASK ITSELF,
+not on the total wall time. Total wall depends on the **critical path**,
+not total CPU work. At 8 threads:
+
+- **14 fine-grained tasks**: dispatched in 2 waves (~7 per wave) on the
+  8-worker pool. Critical path = 2 × (max per-task work) = ~200 μs per
+  call. Total tasks scheduled = 420-2800, paying ~3 pp of CPU on
+  scheduling.
+
+- **2 chunked tasks of 7**: dispatched as 1 wave on 2 workers, 6 idle.
+  Critical path = 1 × (7 × per-task-work) = ~700 μs per call (3.5×
+  worse). Total tasks scheduled = 60-400, paying ~0.4 pp of CPU on
+  scheduling.
+
+Net: saved ~2.6 pp CPU (scheduling) at the cost of ~3.5× critical-path
+latency. The 8-12 pp wall regression matches this prediction: at 8
+threads, going from "all workers busy half the time" to "only 2 workers
+busy" leaves 75 % of the worker pool idle for every BFS call.
+
+**B2's framing was: total task count matters (overhead pp).** Actual
+framing must be: critical path × overhead pp matters, gated on whether
+the worker pool is already healthy at the current N. For N = 14 props
+on an 8-thread pool, 14 IS healthy (~2 waves of work fits the pool with
+good utilization). Reducing N below `thread_count × 2` removes
+parallelism faster than it removes overhead.
+
+## What the chunked variant DOES preserve
+
+- **Byte-identity**: SHA256 match on all 4 cells × multiple distances
+  (single-thread + 8-thread, both modes match). The W44-175 property-rank
+  serial-reduce tie-break works regardless of chunk size.
+- **Hash-locks**: 36/36 BYTE-IDENTICAL on `hash_lock_features`, 5/5 PASS
+  on `strategy_libjxl_hash_locks`, 7/7 PASS on `divergence_table_drift`.
+- **Library tests**: 1433/1433 PASS.
+- **Multi-decoder roundtrip**: djxl + jxl-rs + jxl-oxide all decode
+  cleanly on 2 cells × 3 decoders = 6/6 PASS.
+
+The hypothesis is invalidated purely by the perf measurement, not by
+correctness.
+
+## Acceptance gates (per task spec)
+
+| gate | required | actual | status |
+|---|---|---|---|
+| (a) Build PASS | yes | yes | ✓ |
+| (b) Lib tests PASS | yes | 1433/1433 | ✓ |
+| (c) Hash-locks BYTE-IDENTICAL | 36/36 + 5/5 | 36/36 + 5/5 | ✓ |
+| (d) Drift PASS | 7/7 | 7/7 | ✓ |
+| (e) Multi-decoder PASS | 4/4 | 6/6 | ✓ |
+| (f) ≥1 cell ≥2 % wall reduction at 8t AND no cell regresses > 1 % wall | 1 / 0 | 0 / 4 | **FAIL** |
+
+Per task spec: "If perf savings are <2% on every cell, honest-stop with
+the measurement (this is still useful: confirms B2's estimate was
+optimistic, and we know not to bother with B3-RAYON-2 / -3 either)."
+
+## What ships in this commit
+
+- **NO production source change** to `vardct/dc_tree_learn.rs` (reverted
+  to the W44-175 `parallel_map(14, scan_property)` shape).
+- **`parallel::parallel_map_chunked` helper** kept as `#[allow(dead_code)]`
+  scaffolding — matches the W44-89 `parallel_map_min` pattern (helper
+  added, never wired, retained for future use). Documented inline with
+  reference to the RULED-OUT measurement.
+- **In-source comment block** in `vardct/dc_tree_learn.rs` documenting
+  the RULED-OUT measurement at the call site so future agents see the
+  honest-stop before considering re-wiring.
+- **Section F row in `docs/LIBJXL_DIVERGENCES.md`** documenting the
+  RULED-OUT with the full per-cell data and DO-NOT list.
+- **This bench TSV + meta** + memory note.
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT respawn this chunk with smaller chunk values** (4, 3, 2). All
+   leave ≥1 worker idle per call at 8 threads, so all regress wall. The
+   trade-off curve is monotone: more chunks = more parallelism (good for
+   wall) up to N = thread_count, then more chunks = more overhead (bad
+   for wall). For N=14, thread_count=8 → 14 fine-grained tasks IS optimal.
+
+2. **DO NOT respawn B3-RAYON-2** (encode_ans histogram fan-out guard)
+   without first measuring the trade-off premise on that site. The
+   encode_ans call sites have N=7-15 histograms × 5-30 μs per histogram —
+   same regime as DC tree per-property. The B2 analysis applied the SAME
+   reasoning ("small N × small per-task work = overhead dominates"); this
+   measurement shows the reasoning is wrong in this regime.
+
+3. **DO NOT respawn B3-RAYON-3** (num_passes=1 short-circuit). EV < 0.5 %
+   per B2's own estimate; not worth the chunk wall.
+
+4. **DO NOT cite "FMA precision" for any byte/wall delta** (per W44-66
+   user correction). The chunked variant produces byte-identical output;
+   the regression is purely scheduling, not numerical.
+
+5. **DO NOT remove the `parallel_map_chunked` helper**. It's kept as
+   future scaffolding for cases where the trade-off goes the OTHER way
+   (e.g. very small N where 1 task is genuinely faster than 8 — extreme
+   case of the W44-89 `parallel_map_min` floor). Removing it forces a
+   re-write next time someone investigates a small-N rayon site.
+
+## Follow-on candidates (not blocking)
+
+The B2 30 % rayon-coord finding remains real. The OTHER attack surfaces
+in B2's enumerated table are:
+
+- **`vardct/bitstream.rs:3219`** — `parallel_map(num_passes=1, …)` is a
+  pure waste (1-elem fan-out). Wrap with `if num_passes > 1` short-circuit.
+  EV < 0.5 % per B2, but trivial fix. Low priority.
+
+- **GPU butteraugli backend** (W44-phase3-B1 already SHIPPED, see commit
+  `d422b6e8`). Expected to recover 8-12 % e9 wall at 1024² by replacing
+  ~28 % of CPU spent on butteraugli kernels. Orthogonal to rayon-coord.
+
+- **Replace rayon with a lighter scheduler**: multi-week, high risk,
+  ~2-3 pp recoverable per B2. B2 explicitly listed as NOT recommended.
+
+The rayon-coord 30 % overhead is now confirmed to be **structural floor**
+for our 8-thread, fine-grained-fan-out code shape. Future rayon-coord
+attacks must target either (a) the GPU offload of butteraugli (already
+shipped), or (b) sites where N >> thread_count so chunking can both
+remove overhead AND keep all workers busy. The DC tree per-property
+site has N=14 which is NOT >> 8, so it's structurally in the "fine
+grained is optimal" regime.
+
+## Files
+
+- `jxl-encoder/src/parallel.rs` — `parallel_map_chunked` helper added (kept as `#[allow(dead_code)]`).
+- `jxl-encoder/src/vardct/dc_tree_learn.rs` — inline comment block at the property-list constant documenting RULED-OUT measurement.
+- `docs/LIBJXL_DIVERGENCES.md` — Section F row "W44-phase3-B3-RAYON-1 RULED OUT".
+- `benchmarks/w44_phase3_b3_rayon_1_dc_tree_batch_2026-05-23.tsv` — paired bench (112 rows + header).
+- `benchmarks/w44_phase3_b3_rayon_1_dc_tree_batch_2026-05-23.meta` — this file.
+- `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_phase3_b3_rayon_1_dc_tree_batch_2026-05-23.md` — memory note.
+
+## Reproducer
+
+```bash
+# Build "before" binary (W44-175 baseline)
+cd ~/work/zen/jxl-encoder && \
+  CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target/b3_before \
+  cargo build --release --bin cjxl-rs -p jxl-encoder-cli \
+  --features 'butteraugli-loop ssim2-loop parallel'
+
+# Build "after" binary: apply the chunked-fan-out patch, then build
+git stash apply ...  # patch applied in this session, not preserved long-term
+cargo build --release ...  # into b3_after target dir
+
+# Bench
+/tmp/b3_perf_bench.sh /tmp/b3_perf_bench.tsv  # 7 iters, ~4 min
+python3 /tmp/b3_analyze.py /tmp/b3_perf_bench.tsv
+```
