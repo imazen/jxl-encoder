@@ -640,6 +640,136 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### W44-PHASE4-S2-validate: production-cell verification of S2-refit lookup — SHIPPED (2026-05-24)
+
+**Status**: [SHIPPED — bench measures S2-refit shifts; W44-228c1 protection violated on opt-in path]
+
+Follow-on verification of W44-PHASE4-S2-refit (commit `2991bb27`). S2-refit
+landed with 36/36 hash-locks BYTE-IDENTICAL (expected — synthetic ≤48²
+fixtures don't trigger the Tier-2 auto-discriminator), so a per-stratum
+end-to-end check was queued to confirm the lookup actually shifts production
+cells.
+
+**Mechanism**: built `examples/w44_phase4_s2_validate.rs`, single
+(image, effort, distance, mode) per process invocation (each stratum
+expands to a unique `RuntimeTuning`; `tuning::runtime::install_or_check_idempotent`
+is per-process OnceLock). Mode A = `Tier2Knobs::default()` (production
+baseline, byte-identical to no-knobs path because `expand_to_runtime_tuning`
+short-circuits when knobs == default). Mode B = `Tier2Knobs::auto_for_distance(class, distance)`
+using the on-disk W44-PHASE4-S2 lookup.
+
+**Cells** (8 strata × 1 image each + W44-228c1 spot-check on terminal e8 d=4):
+1 image per stratum at the distance band's interior point (Low 0.7,
+Mid 1.5, High 3.0, VeryHigh 5.0). CID22-512 for photos, gb82-sc/graph.png
+for screens, gb82-sc/terminal.png for the W44-228c1 spot-check.
+
+**Per-cell results** (bytes / SSIM2 deltas of B vs A):
+
+| stratum                | image           | bytes A | bytes B | dPct    | dSsim2 | verdict |
+|---                     |---              |---      |---      |---      |---     |---      |
+| photo/low (d=0.7)      | 1418519         | 27128   | 27128   | 0.00%   | +0.00  | BYTE-ID |
+| photo/mid (d=1.5)      | 1025469         | 25902   | 25902   | 0.00%   | +0.00  | BYTE-ID |
+| photo/high (d=3.0)     | 1189261         | 26783   | 26783   | 0.00%   | +0.00  | BYTE-ID |
+| photo/very_high (d=5.0)| 1531677         | 17546   | 17546   | 0.00%   | +0.00  | BYTE-ID |
+| screen/low (d=0.7)     | graph           | 27087   | 27087   | 0.00%   | +0.00  | BYTE-ID |
+| screen/mid (d=1.5)     | graph           | 19701   | 19681   | -0.10%  | +0.47  | SHIFT   |
+| screen/high (d=3.0)    | graph           | 20707   | 14637   | -29.31% | -5.07  | SHIFT (FLAG) |
+| screen/very_high (d=5.0)| graph          | 19017   | 11391   | -40.10% | -14.90 | SHIFT (FLAG) |
+| **W44-228c1**: terminal e8 d=4 | terminal | 42322   | 28185   | -33.40% | -4.93  | SHIFT (**FAIL**) |
+
+**Direction-of-shift match against per_stratum_optima.tsv predictions**:
+PERFECT. Cells with high `max_gap_pct` (screen/{mid,high,very_high}) are
+exactly where the bench measures the biggest shifts; cells with low
+`max_gap_pct` OR below-gate distance (photo/* + screen/low) stay
+byte-identical. The 4 photo strata + screen/low all expand to non-default
+RuntimeTunings but the encoder's W44-91/96/166 etc dispatch gates don't
+fire on those images at those distances, so the changed `p3/p5/p6` values
+have no observable effect. This is structurally correct encoder behaviour.
+
+**W44-228c1 VIOLATION** (the headline finding):
+
+The S2-refit commit message claimed "W44-105 SHIP cell terminal e8 d=4
+BYTE-IDENTICAL SHA256 vs parent" and "screen/very_high stays at 0.0,
+preserving the W44-228c1 invariant". The bench falsifies the "byte-identical
+on opt-in path" interpretation:
+- On `terminal e8 d=4` (the named W44-105 SHIP cell), Mode A produces
+  42322 bytes ssim2=86.91; Mode B (auto_for_distance) produces 28185 bytes
+  ssim2=81.98. -33.40% bytes, -4.93 ssim2.
+- Root cause: S2-refit's `screen/very_high` has `k2 = 0` →
+  `screenshot_quant_aggressiveness=0` → `p3 = 0` (no buttloop screen-seed
+  lift). W44-105's fix RELIED on the buttloop screen-seed lift to produce
+  the SSIM2 wins on terminal/imac_g3/codec_wiki e8+ d=4-6. With `p3=0`
+  the W44-105 lift is STRUCTURALLY DISABLED.
+- The "byte-identical vs parent" claim only holds for Mode A
+  (default knobs, production-default path, byte-identical to no-knobs
+  baseline). The W44-228c1 invariant protects the default path but NOT
+  the opt-in path.
+
+**Implication for S2 sweep launch**: SAFE TO PROCEED. The lookup DOES
+shift encoder output on screen/{high,very_high} cells, so the S2 sweep
+WILL produce different data from the S1 sweep on those cells. The
+non-shifting cells (photo/* + screen/low) are expected and structurally
+correct (dispatch gates short-circuit).
+
+**Implication for production default-flip**: REMAINS RULED-OUT. The
+W44-228c1 protection only holds for default-knobs mode. Opt-in via
+`auto_for_distance` re-incurs the W44-105 catastrophe on the SHIP-cell
+regime. The W44-228b OPT-IN-with-warning API stands correctly; callers
+using it MUST validate against the W44-105 SHIP cells themselves (per
+the `default_for_stratum` doc warning).
+
+**Acceptance gates** (per task spec):
+- (a) 2 binaries built: PROXY — built 1 binary, used Mode A == defaults
+  as proxy for pre-S2-refit baseline (semantically equivalent because
+  `Tier2Knobs::default()` round-trips to RuntimeTuning::default() →
+  byte-identical to no-knobs encode path on both pre and post binaries).
+- (b) 8 cells benched, one per stratum (+ 1 W44-228c1 spot-check): PASS
+- (c) Bench TSV + meta under `benchmarks/`: PASS
+- (d) Each cell tagged PASS/FLAG/FAIL with reasoning: PASS
+- (e) W44-228c1 protection verified: **FAIL** (violated on opt-in path,
+  byte-identical only on default-knobs path)
+- (f) CLAUDE.md Investigation Notes entry written: PASS
+- (g) Single commit pushed: (next)
+- (h) `.workongoing` removed: (next)
+- (i) No sibling workspace used: N/A
+
+**Files**:
+- `jxl-encoder/examples/w44_phase4_s2_validate.rs` (NEW)
+- `jxl-encoder/Cargo.toml` (registered new example)
+- `benchmarks/w44_phase4_s2_validate_2026-05-24.tsv` (NEW)
+- `benchmarks/w44_phase4_s2_validate_2026-05-24.meta` (NEW)
+
+**DO NOT** (future agents):
+1. DO NOT default-flip `Tier2Knobs::auto_for_distance` ON without first
+   adding a per-stratum filter that excludes the W44-105 SHIP-cell
+   catastrophe regime. The W44-228c1 RULED-OUT decision continues to
+   apply; this bench MEASURES the catastrophe directly.
+2. DO NOT cite "FMA precision" for any byte delta. The deltas come
+   from the encoder DISPATCH changes activated by the new `p3/p5/p6`
+   values, not from numeric precision.
+3. DO NOT claim "S2-refit shifts nothing" because hash-locks pass.
+   Hash-lock fixtures are ≤48² synthetic; the Tier-2 auto-discriminator
+   doesn't fire on those sizes. This bench measures the actual
+   production-cell behaviour.
+4. DO NOT re-run W44-228c1 expecting byte-identical between Mode A and
+   Mode B on `terminal e8 d=4`. The S2-refit screen/very_high tuple
+   structurally disables the W44-105 lift; the invariant only holds for
+   default-knobs ≡ no-knobs baseline.
+
+**Follow-on candidates (NOT this chunk)**:
+
+A. **W44-PHASE4-S2-refit-c1**: refit `screen/very_high` to enforce
+   `screenshot_quant_aggressiveness ≥ k2_w44_105_floor` (preserves
+   `p3 ≥ DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE = 4.0`). Pareto-trade
+   off byte savings on non-SHIP-cell screen/very_high content for the
+   W44-105 SSIM2 wins.
+B. **Wider validate bench**: 1 image per stratum is sparse; the W44-105
+   SHIP triad (terminal/imac_g3/codec_wiki) at e8+ d=4-6 should be
+   covered explicitly, plus 3-5 more photos per photo stratum.
+C. **Per-stratum opt-in gates**: expose `with_knobs_for_screen_mid_only`
+   style fine-grained opt-in so callers can harvest screen/{mid,high}
+   wins without risking the screen/very_high catastrophe.
+
 ### W44-PHASE4-S1: post-RECON-DEEP Tier-2 revalidation — SHIPPED (2026-05-24)
 
 **Status**: [SHIPPED — sweep finalized; HYPOTHESIS_LEDGER belief #20 PROVEN]

@@ -2303,6 +2303,21 @@ name = "w44_229_parity_check"
 path = "examples/w44_229_parity_check.rs"
 required-features = ["tuning-override"]
 
+# W44-PHASE4-S2-validate: production-cell verification of the
+# W44-PHASE4-S2-refit Tier2Knobs lookup. Encodes ONE
+# (image, effort, distance, mode, class) tuple per process invocation
+# and emits one TSV row. Single-process-per-cell is required to dodge
+# the `runtime::install_or_check_idempotent` OnceLock (each stratum
+# expands to a different RuntimeTuning; a single process can install
+# only one). Mode A = `Tier2Knobs::default()` (production default,
+# byte-identical to no-knobs path). Mode B =
+# `Tier2Knobs::auto_for_distance(class, distance)` (the on-disk
+# W44-PHASE4-S2 lookup).
+[[example]]
+name = "w44_phase4_s2_validate"
+path = "examples/w44_phase4_s2_validate.rs"
+required-features = ["__expert", "tuning-override", "parallel", "butteraugli-loop", "ssim2-loop"]
+
 # B1 candidate stride-bug probe: tests the (ref-stride, compare-stride)
 # truth table on butteraugli's planar API directly, without invoking the
 # encoder. Falsifies or confirms the audit Candidate 1 hypothesis (audit
