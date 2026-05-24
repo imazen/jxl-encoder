@@ -1,0 +1,185 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 33K of event 'cycles:Pu'
+# Event count (approx.): 29936875757
+#
+# Overhead  Command  Shared Object         Symbol                                                                                                                                                                                                                                                                 
+# ........  .......  ....................  .......................................................................................................................................................................................................................................................................
+#
+    12.12%  cjxl-rs  cjxl-rs               [.] core::ops::function::impls::<impl core::ops::function::FnMut<A> for &F>::call_mut
+            |          
+             --11.96%--core::ops::function::impls::<impl core::ops::function::FnMut<A> for &F>::call_mut
+
+     8.06%  cjxl-rs  cjxl-rs               [.] crossbeam_epoch::default::with_handle
+            |          
+             --8.03%--crossbeam_epoch::default::with_handle
+
+     7.64%  cjxl-rs  cjxl-rs               [.] butteraugli::blur::__arcane_gaussian_blur_dispatch_v4
+            |
+            ---butteraugli::blur::__arcane_gaussian_blur_dispatch_v4
+
+     6.78%  cjxl-rs  cjxl-rs               [.] _ZN15crossbeam_epoch8internal6Global11try_advance17h20cfcb3677c77373E.llvm.1375858368437821767
+            |          
+            |--0.63%--0x7b85a0001b00
+            |          |          
+            |           --0.62%--0x7b85a0001b00
+            |                     |          
+            |                      --0.62%--0x7b85a0001b00
+            |                                |          
+            |                                 --0.60%--0x7b85a0001b00
+            |                                           |          
+            |                                            --0.60%--0x7b85a0001b00
+            |                                                      |          
+            |                                                       --0.54%--0x7b85a0001b00
+            |                                                                 |          
+            |                                                                  --0.51%--0x7b85a0001b00
+            |          
+            |--0.62%--0x77a09c001b00
+            |          0x77a09c001b00
+            |          |          
+            |           --0.61%--0x77a09c001b00
+            |                     |          
+            |                      --0.57%--0x77a09c001b00
+            |                                |          
+            |                                 --0.55%--0x77a09c001b00
+            |                                           |          
+            |                                            --0.54%--0x77a09c001b00
+            |                                                      |          
+            |                                                       --0.50%--0x77a09c001b00
+            |          
+            |--0.60%--0x730ae0001b00
+            |          0x730ae0001b00
+            |          |          
+            |           --0.58%--0x730ae0001b00
+            |                     |          
+            |                      --0.57%--0x730ae0001b00
+            |                                |          
+            |                                 --0.56%--0x730ae0001b00
+            |                                           |          
+            |                                            --0.55%--0x730ae0001b00
+            |                                                      |          
+            |                                                       --0.52%--0x730ae0001b00
+            |                                                                 |          
+            |                                                                  --0.51%--0x730ae0001b00
+            |          
+            |--0.60%--0x7446a4001b00
+            |          |          
+            |           --0.59%--0x7446a4001b00
+            |                     |          
+            |                      --0.59%--0x7446a4001b00
+            |                                |          
+            |                                 --0.59%--0x7446a4001b00
+            |                                           |          
+            |                                            --0.57%--0x7446a4001b00
+            |                                                      |          
+            |                                                       --0.55%--0x7446a4001b00
+            |                                                                 |          
+            |                                                                  --0.52%--0x7446a4001b00
+            |                                                                            |          
+            |                                                                             --0.51%--0x7446a4001b00
+            |          
+            |--0.58%--0x7317d8001b00
+            |          0x7317d8001b00
+            |          |          
+            |           --0.57%--0x7317d8001b00
+            |                     |          
+            |                      --0.56%--0x7317d8001b00
+            |                                |          
+            |                                 --0.53%--0x7317d8001b00
+            |          
+            |--0.54%--0x7bdb9c001b00
+            |          |          
+            |           --0.54%--0x7bdb9c001b00
+            |                     |          
+            |                      --0.53%--0x7bdb9c001b00
+            |                                |          
+            |                                 --0.52%--0x7bdb9c001b00
+            |          
+            |--0.54%--0x76fbb4001b00
+            |          0x76fbb4001b00
+            |          |          
+            |           --0.53%--0x76fbb4001b00
+            |                     |          
+            |                      --0.52%--0x76fbb4001b00
+            |                                |          
+            |                                 --0.50%--0x76fbb4001b00
+            |          
+            |--0.53%--0x74c378001b00
+            |          0x74c378001b00
+            |          |          
+            |           --0.52%--0x74c378001b00
+            |                     |          
+            |                      --0.50%--0x74c378001b00
+            |          
+            |--0.53%--0x7bbb18001b00
+            |          |          
+            |           --0.53%--0x7bbb18001b00
+            |                     |          
+            |                      --0.52%--0x7bbb18001b00
+            |                                |          
+            |                                 --0.50%--0x7bbb18001b00
+            |          
+            |--0.53%--0x7a756c001b00
+            |          0x7a756c001b00
+            |          |          
+            |           --0.51%--0x7a756c001b00
+            |          
+             --0.50%--0x760b74001b00
+                       0x760b74001b00
+
+     5.98%  cjxl-rs  cjxl-rs               [.] jxl_encoder::vardct::ac_strategy_search::__arcane_find_best_16x16_transform_avx2
+            |          
+             --1.83%--jxl_encoder::vardct::ac_strategy_search::__arcane_find_best_16x16_transform_avx2
+
+     3.63%  cjxl-rs  libc.so.6             [.] __memmove_avx512_unaligned_erms
+            |          
+             --3.14%--__memmove_avx512_unaligned_erms
+
+     3.30%  cjxl-rs  cjxl-rs               [.] butteraugli::malta::__arcane_malta_diff_map_dispatch_v4
+            |
+            ---butteraugli::malta::__arcane_malta_diff_map_dispatch_v4
+
+     2.72%  cjxl-rs  cjxl-rs               [.] jxl_encoder::vardct::transform::<impl jxl_encoder::vardct::encoder::VarDctEncoder>::transform_blocks_into
+            |          
+             --0.70%--jxl_encoder::vardct::transform::<impl jxl_encoder::vardct::encoder::VarDctEncoder>::transform_blocks_into
+
+     2.61%  cjxl-rs  cjxl-rs               [.] jxl_encoder_simd::epf::sad_3x3_plus_simd
+            |          
+             --2.31%--jxl_encoder_simd::epf::sad_3x3_plus_simd
+
+     2.55%  cjxl-rs  cjxl-rs               [.] jxl_encoder::entropy_coding::lz77::HashChain::find_match
+            |
+            ---jxl_encoder::entropy_coding::lz77::HashChain::find_match
+
+     2.49%  cjxl-rs  libc.so.6             [.] __memset_avx512_unaligned_erms
+            |          
+             --1.06%--__memset_avx512_unaligned_erms
+
+     1.77%  cjxl-rs  cjxl-rs               [.] jxl_encoder::vardct::encoder::ZenanalyzeProxies::compute_srgb_u8
+            |          
+            |--1.19%--0xa4d5d1a4d5d1a3d4
+            |          jxl_encoder::vardct::encoder::ZenanalyzeProxies::compute_srgb_u8
+            |          
+             --0.58%--jxl_encoder::vardct::encoder::ZenanalyzeProxies::compute_srgb_u8
+
+     1.63%  cjxl-rs  cjxl-rs               [.] crossbeam_deque::deque::Stealer<T>::steal
+            |          
+             --1.63%--crossbeam_deque::deque::Stealer<T>::steal
+
+     1.38%  cjxl-rs  cjxl-rs               [.] jxl_encoder_simd::entropy::__arcane_entropy_coeffs_impl_v3
+            |          
+             --1.32%--jxl_encoder_simd::entropy::__arcane_entropy_coeffs_impl_v3
+
+     1.13%  cjxl-rs  cjxl-rs               [.] core::iter::traits::iterator::Iterator::partition
+     1.12%  cjxl-rs  cjxl-rs               [.] butteraugli::malta::__arcane_malta_compute_scaled_diffs_v4
+            |
+            ---butteraugli::malta::__arcane_malta_compute_scaled_diffs_v4
+
+
+
+#
+# (Tip: Sample related events with: perf record -e '{cycles,instructions}:S')
+#
