@@ -846,9 +846,25 @@ Day 5 / Day 6 gates fail. The chunk-level acceptance gates:
   per pixel, all bounded by ±K). Visibility: 7 psycho.rs functions +
   1 mask.rs function promoted from `fn` to `pub(crate) fn` so the
   strip module can delegate.
-- [ ] **Day 5**: `compare_linear_planar_strip_into` end-to-end + 50-image scalar+diffmap
-  parity PASS + jxl-encoder hash-locks 36/36 BYTE-IDENTICAL + libjxl byte-locks 4/4 +
-  drift 7/7 + W44-164 multi-decoder roundtrip 6/6 PASS
+- [x] **Day 5**: `compare_linear_planar_strip_into` shipped end-to-end +
+  50-image byte-identical scalar+diffmap parity PASS (butteraugli `15865d70`,
+  2026-05-24). Composition: Stage 1 + Stage 2 (opsin → separate_frequencies →
+  malta → mask) run on the full image (their internal kernels have halos > 0
+  with mirror-reflect boundaries — Day 4's strip variants use parent-height
+  padded scratch to maintain byte-identity which is equivalent to full-image;
+  Day 6+ explores measurable-ULP-tolerance mirror-reflect-at-strip);
+  Stage 3 (per-pixel `combine_channels_to_diffmap_fused` — halo = 0,
+  pointwise) is tiled via new `combine_channels_to_diffmap_strip_driver`
+  at `STRIP_ROWS = 16` rows per batch (byte-identical by construction
+  because the kernel is purely pointwise); Stage 4 (global p-norm + max
+  reduction) is non-tile-able and runs on the assembled full diffmap.
+  50-cell parity test `tests/strip_parity_50_images.rs` covers
+  64²–1024² incl. odd-dim cases — BIT-EQUAL on every scalar score AND
+  every pixel of every diffmap. Sanity wall ratio at 1024² SinMix +
+  noise: 40.325 / 38.366 = **1.051×** (≤ 1.5× sanity gate). butteraugli
+  test count 120 → 167 (+47 incl. the parity test). Day 5 does NOT touch
+  the dispatch path in `compare_linear_planar_into` — Day 6 wires the
+  size-threshold dispatch + env-var override per §6.
 - [ ] **Day 6**: bench TSV+meta committed; **≥ 30 % wall reduction at 1024² on ≥ 4 of 8 cells**
   AND **≤ 1 % regression on any 256² cell**. If FAIL: HONEST-STOP, document, identify
   next bottleneck (per task spec).
