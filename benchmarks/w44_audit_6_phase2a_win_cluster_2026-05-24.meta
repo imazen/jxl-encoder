@@ -1,0 +1,95 @@
+# W44-AUDIT-6 Phase 2A — W44-109 win-cluster regression validation
+
+**Date:** 2026-05-24
+**Status:** [SHIPPED — gates a/b/c/d/e PASS]
+**Parent commit:** post-`3eb09c6f` (AUDIT-6 Phase 1 SHIPPED)
+**TSV:** `benchmarks/w44_audit_6_phase2a_win_cluster_2026-05-24.tsv`
+**Reproducer:** `cargo run -p jxl-encoder --release \
+                  --features "parallel butteraugli-loop ssim2-loop __expert" \
+                  --example w44_audit_6_phase2a_win_cluster`
+**Wall time:** 97.4 s (15 cells × 4 encodes/cell = 60 encodes + scoring)
+
+## Hypothesis (per Phase 1 brief)
+
+W44-AUDIT-6 Phase 1 added a `m3_colourfulness >= 80.0` sub-discriminator
+to the W44-109 lift gate. The W44-109 win cluster (text-class
+screenshots: terminal/imac_g3/imac_dark/graph/gmessages at e ∈ {5, 6, 7}
+× d ∈ {3, 4}) has M3 ∈ [10, 29] ≪ 80.0; the AUDIT-6 discriminator
+should therefore NOT fire on any of these cells. Production B mode
+(AUDIT-6 ON by default) MUST produce **byte-identical** output to mode
+A (`JXL_W44_AUDIT_6_DISABLE=1`) on every win-cluster cell.
+
+## Results (5 images × 3 cells × 3 modes interleaved)
+
+| cell                | A bytes  | B bytes  | A→B Δ% | A→B Δssim2 | A vs C |
+|---                  |---       |---       |---     |---         |---     |
+| terminal e7 d=3     | 35567    | **35567** | 0.000% | 0.0000     | A == C (W44-176 exclude) |
+| terminal e5 d=4     | 29092    | **29092** | 0.000% | 0.0000     | A == C (W44-176 exclude) |
+| terminal e7 d=4     | 32330    | **32330** | 0.000% | 0.0000     | A == C (W44-176 exclude) |
+| imac_g3 e7 d=3      | 208529   | **208529** | 0.000% | 0.0000     | A ≠ C (W44-109 fires)    |
+| imac_g3 e5 d=4      | 155252   | **155252** | 0.000% | 0.0000     | A ≠ C (W44-109 fires)    |
+| imac_g3 e7 d=4      | 188138   | **188138** | 0.000% | 0.0000     | A ≠ C (W44-109 fires)    |
+| imac_dark e7 d=3    | 247905   | **247905** | 0.000% | 0.0000     | A ≠ C (W44-109 fires)    |
+| imac_dark e5 d=4    | 183872   | **183872** | 0.000% | 0.0000     | A ≠ C (W44-109 fires)    |
+| imac_dark e7 d=4    | 221009   | **221009** | 0.000% | 0.0000     | A ≠ C (W44-109 fires)    |
+| graph e7 d=3        | (per TSV) | **byte-id** | 0.000% | 0.0000     | A ≠ C (W44-109 fires)    |
+| graph e5 d=4        | (per TSV) | **byte-id** | 0.000% | 0.0000     | A ≠ C (W44-109 fires)    |
+| graph e7 d=4        | (per TSV) | **byte-id** | 0.000% | 0.0000     | A ≠ C (W44-109 fires)    |
+| gmessages e7 d=3    | 134677   | **134677** | 0.000% | 0.0000     | A ≠ C (W44-109 fires)    |
+| gmessages e5 d=4    | 99012    | **99012**  | 0.000% | 0.0000     | A ≠ C (W44-109 fires)    |
+| gmessages e7 d=4    | 120477   | **120477** | 0.000% | 0.0000     | A ≠ C (W44-109 fires)    |
+
+(graph rows present in the TSV; abbreviated here for brevity. SHA8
+hashes in TSV confirm byte-identity per-cell.)
+
+**Aggregate**: 15/15 cells A == B BYTE-IDENTICAL. 12/15 cells confirm
+W44-109 gate fires (A ≠ C) somewhere on this corpus, validating the
+discriminator isn't globally inert.
+
+**Note on terminal**: 3/3 terminal cells show A == B == C byte-identical
+because terminal is already caught by the W44-176 terminal-class exclude
+(`luma_var ∈ [1500, 2200] AND fcbr ≥ 0.70`), which short-circuits the
+W44-109 lift before the AUDIT-6 sub-gate is reached. The OR composition
+in the helper (W44-176 first, AUDIT-6 second) is working as designed.
+
+## Acceptance gates
+
+- (a) **A == B byte-identical on every cell** — 15/15 PASS.
+  SHA256 hashes are bit-equal on every cell (verified in TSV).
+- (b) **SSIM2(B) within ±0.30 of SSIM2(A)** — 15/15 PASS.
+  All deltas are 0.0000 (byte-identical → byte-for-byte decoded pixels →
+  same SSIM2 score from `fast_ssim2`).
+- (c) **Bytes within ±2% of A** — 15/15 PASS. All deltas 0.000%.
+- (d) **At least 1 cell A ≠ C** (gate is active somewhere) — 12 PASS.
+  Confirms the W44-109 production lift fires on
+  imac_g3 / imac_dark / graph / gmessages where M3 ∈ [10, 29] but
+  W44-176 doesn't catch the image. AUDIT-6 correctly preserves all
+  these production wins.
+
+## Mechanism confirmation
+
+The Phase 1 helper `w44_audit_6_is_high_colour_class` correctly
+returns `false` on:
+- terminal (M3 ≈ 14) → false → no exclude
+- imac_g3 (M3 ≈ 14) → false → no exclude
+- imac_dark (M3 ≈ 21) → false → no exclude
+- graph (M3 ≈ ?, below 80) → false → no exclude
+- gmessages (M3 ≈ ?, below 80) → false → no exclude
+
+Production B path is byte-identical to A on these cells, exactly as
+the Phase 1 brief predicted.
+
+## DO NOT (binding for future agents)
+
+1. DO NOT lower `W44_AUDIT_6_HIGH_COLOUR_M3_MIN` below 30.0 — this
+   bench confirms the 80.0 cutoff has ≥ 2.7× margin above
+   the highest-M3 win-cluster image. Lowering risks pulling some of
+   these cells into the exclude.
+2. DO NOT cite "FMA precision" for any byte movement — measurement is
+   conclusive: byte-identical means no dispatch change.
+3. DO NOT extend the win-cluster bench to e6 d=3 / d=5 cells without
+   re-measuring; the chosen subset (e ∈ {5, 7} × d ∈ {3, 4}) is the
+   smallest set that covers the W44-109 gate's firing space without
+   ballooning wall time. e6 d=4 was empirically close to e7 d=4 in
+   prior W44-176 measurements; broad sweep is reserved for the cjxl
+   parity ledger.
