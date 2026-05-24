@@ -95,6 +95,73 @@ if (( CHUNKS_AVAIL == 0 )); then
 fi
 echo "[phase4-s1-fleet] $CHUNKS_AVAIL chunks queued for sweep=$SWEEP_ID"
 
+# ── W44-PHASE4-S1h pre-flight: every image in chunks_manifest.tsv ─
+# must exist in the corpus bucket BEFORE we burn $$ on vast.ai boxes.
+#
+# The W44-PHASE4-S1 sweep silently lost 4,128 cells (4 corpus images
+# × 1,032 cells each) because images 1029604/2775196/297394/3637739
+# were referenced in pick_w44_phase4_s1_corpus() but never uploaded
+# to s3://zen-tuning-ephemeral/corpus/. Workers ran the full
+# fetch-fallback chain, all 404'd, marked the cells image_fetch_failed,
+# and moved on. Cost: ~$3 wasted + 4 corpus images missing from S1
+# analysis (forced 81.7% coverage instead of 96%+).
+#
+# This block lists chunks_manifest.tsv (REQUIRED to exist in R2 at
+# this point per the chunks-availability check above), extracts unique
+# image paths, and verifies each one is reachable in
+# s3://${W44_212_CORPUS_BUCKET}/<key>. Missing images → FAIL LOUD with
+# the list + suggested upload command. Single-shot list-objects ALL
+# requires reading at most ~1 KB of TSV + ~30 single-key HEADs (cheap).
+W44_212_CORPUS_BUCKET="${W44_212_CORPUS_BUCKET:-zen-tuning-ephemeral}"
+MANIFEST_LOCAL="/tmp/${SWEEP_ID}.chunks_manifest.tsv"
+echo "[phase4-s1-fleet] pre-flight: verifying corpus images present in s3://${W44_212_CORPUS_BUCKET}/"
+AWS_PROFILE=r2 aws s3 cp --endpoint-url="$R2_ENDPOINT" \
+    "s3://zen-tuning-ephemeral/${SWEEP_ID}/chunks_manifest.tsv" \
+    "$MANIFEST_LOCAL" 2>/dev/null || {
+        echo "ERROR: cannot fetch chunks_manifest.tsv from s3://zen-tuning-ephemeral/${SWEEP_ID}/" >&2
+        echo "  Builder should have uploaded it; re-run the manifest upload step." >&2
+        exit 1
+    }
+# Column 2 is image_path; skip header; unique sort
+UNIQUE_IMAGES=$(awk -F'\t' 'NR>1{print $2}' "$MANIFEST_LOCAL" | sort -u)
+N_IMAGES=$(echo "$UNIQUE_IMAGES" | wc -l)
+echo "[phase4-s1-fleet] $N_IMAGES unique images referenced in manifest"
+
+MISSING_IMAGES=()
+for img_path in $UNIQUE_IMAGES; do
+    # image_path is like "/corpus/1418519.png"; strip leading slash for R2 key
+    R2_KEY="${img_path#/}"
+    # Use head-object via aws-cli (faster than ls for single-key existence check)
+    if ! AWS_PROFILE=r2 aws s3api head-object \
+            --endpoint-url="$R2_ENDPOINT" \
+            --bucket "$W44_212_CORPUS_BUCKET" \
+            --key "$R2_KEY" >/dev/null 2>&1; then
+        MISSING_IMAGES+=("$img_path")
+    fi
+done
+
+if (( ${#MISSING_IMAGES[@]} > 0 )); then
+    echo "" >&2
+    echo "ERROR: ${#MISSING_IMAGES[@]} corpus image(s) missing from s3://${W44_212_CORPUS_BUCKET}/:" >&2
+    for img in "${MISSING_IMAGES[@]}"; do
+        echo "  MISSING: ${img}" >&2
+    done
+    echo "" >&2
+    echo "Upload them BEFORE launching the fleet. Example:" >&2
+    for img in "${MISSING_IMAGES[@]}"; do
+        basename="${img##*/}"
+        R2_KEY="${img#/}"
+        echo "  AWS_PROFILE=r2 aws s3 cp --endpoint-url=\"$R2_ENDPOINT\" \\" >&2
+        echo "    /path/to/local/${basename} \\" >&2
+        echo "    s3://${W44_212_CORPUS_BUCKET}/${R2_KEY}" >&2
+    done
+    echo "" >&2
+    echo "Refusing to launch fleet — workers would burn money on image_fetch_failed cells." >&2
+    exit 2
+fi
+echo "[phase4-s1-fleet] pre-flight OK: all $N_IMAGES images reachable in corpus bucket"
+rm -f "$MANIFEST_LOCAL"
+
 # ── pick the cheapest viable offers ─────────────────────────────────
 # Filter tuned 2026-05-24 from real measurements on running pods:
 #   - peak CPU 85% on 12 cores → 8 enough, 16 sweet spot, >24 wasted

@@ -52,6 +52,23 @@ Then upload:
     s3://zen-tuning-ephemeral/w44-phase4-s1-recon-deep-revalidate/chunks_manifest.tsv
   SWEEP_ID=w44-phase4-s1-recon-deep-revalidate BOXES=5 \
     bash scripts/zenjxl-tuning-sweep/launch_w44_phase4_s1_fleet.sh
+
+CORPUS DEPENDENCY (W44-PHASE4-S1h, 2026-05-24):
+  This script picks images by basename and produces image_path values
+  like "/corpus/<basename>.png" but does NOT stage the image bytes
+  itself. Every image referenced in `pick_w44_phase4_s1_corpus()` MUST
+  already exist in `s3://zen-tuning-ephemeral/corpus/<basename>.png`
+  BEFORE the launcher runs — otherwise workers will silently mark every
+  cell for that image as `image_fetch_failed` and you'll lose ~1k cells
+  per missing image. The W44-PHASE4-S1 sweep lost 4 × 1,032 = 4,128
+  cells this way (images 1029604/2775196/297394/3637739).
+
+  Mitigation: `launch_w44_phase4_s1_fleet.sh` runs a pre-flight
+  manifest-vs-corpus check and FAILS LOUD before creating any vast.ai
+  boxes. If your sweep adds new images, upload them with:
+    AWS_PROFILE=r2 aws s3 cp --endpoint-url=... \
+      /path/to/<basename>.png \
+      s3://zen-tuning-ephemeral/corpus/<basename>.png
 """
 import argparse
 import hashlib

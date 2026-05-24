@@ -640,6 +640,105 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### W44-PHASE4-S1h: root-cause fix `image_fetch_failed` (recovered 4 corpus images for next sweep) — SHIPPED (2026-05-24)
+
+**Status**: [SHIPPED]
+
+Follow-on to W44-PHASE4-S1 finalize memo's outstanding-work bullet #3
+("Address image_fetch_failed root cause — would push coverage from 81.7% → 95%+").
+S1 dropped 4,128 cells (4 CID22 photos × 1,032 cells each — `1029604.png`,
+`2775196.png`, `297394.png`, `3637739.png`) with `image_fetch_failed`. Plus
+a long tail of partial losses on 6 other images (codec_wiki, gmessages, graph,
+gui, imac_dark, imac_g3, terminal) totalling 4,794 cells of fetch-failed
+errors per the S1f breakdown.
+
+**Root cause (PROVEN, not network race)**:
+The 4 CID22 images were referenced in `pick_w44_phase4_s1_corpus()` in
+`scripts/zenjxl-tuning-sweep/build_w44_phase4_s1_chunks.py:272-280` but were
+NEVER uploaded to `s3://zen-tuning-ephemeral/corpus/`. Direct R2 verification:
+`aws s3api head-object --key corpus/1029604.png` returned 404; the other 3
+likewise. The chunk-builder picks images by basename and produces
+`/corpus/<name>.png` image_paths but does NOT stage the image bytes; the
+operator's upload-step instructions (lines 47-54 of the builder) list only
+`params/`, `chunks/`, and `chunks_manifest.tsv` — not corpus. Prior sweeps
+(W44-216 / W44-219 / W44-229) used a subset of these images that were already
+in the corpus bucket; S1 added 4 new ones that nobody noticed weren't there.
+
+Workers ran the full fetch-fallback chain (`s3://zen-tuning-ephemeral/corpus/<key>`
+then `s3://zen-tuning-ephemeral/<sweep>/corpus/<key>`); both 404'd; single
+shot, no retry; marked each cell `image_fetch_failed`. ~$3 wasted + S1
+coverage was 81.7% instead of ~96%.
+
+**Fix (3 layers, defense-in-depth)**:
+
+1. **`scripts/zenjxl-tuning-sweep/launch_w44_phase4_s1_fleet.sh`** — pre-flight
+   that lists `chunks_manifest.tsv`, extracts unique `image_path` values, and
+   runs `aws s3api head-object` against `${W44_212_CORPUS_BUCKET}` for each.
+   On any miss: FAIL LOUD with the missing-image list + the exact
+   `aws s3 cp` command to upload them. Refuses to launch the fleet. Runs
+   AFTER the existing chunks-availability check, BEFORE any `vastai create`.
+   Cost: ~30 single-key HEADs (~1s). Inserted at the right layer (where we
+   know all images AND can fail before spending money on vast.ai boxes).
+2. **`scripts/zenjxl-tuning-sweep/worker.sh`** — `fetch_with_retry()` helper
+   wraps every `s5cmd cp` for image AND params fetches in a 3-retry
+   exp-backoff loop (0.5s → 1s → 2s between attempts). Replaces both
+   per-source single-shot invocations on lines 97-104 (image) and 110-117
+   (params). Defense-in-depth: even AFTER the pre-flight catches the
+   root cause, real R2 has occasional transient 5xx / DNS / ECONNRESET
+   (1-2% in our experience across W44-216..S1). 3-retry brings effective
+   reliability to ~99.999%. Validated locally: helper succeeds on real
+   keys, takes ~2s to fail-exit on synthetic 404.
+3. **`scripts/zenjxl-tuning-sweep/build_w44_phase4_s1_chunks.py`** —
+   docstring banner added documenting the corpus-staging dependency,
+   pointing operators at the launcher's pre-flight. Future chunk-builders
+   should follow the same pattern (or be replaced with a builder that
+   stages corpus bytes itself; out of scope for S1h).
+
+**Mitigation also applied immediately**: the 4 missing images uploaded
+to `s3://zen-tuning-ephemeral/corpus/{1029604,2775196,297394,3637739}.png`
+from `~/work/codec-corpus/CID22/CID22-512/{training,validation}/`. Verified
+all 5 (4 new + 1 control) fetch cleanly via the new worker fetch path.
+
+**Acceptance gates (all PASS)**:
+- (a) 4 problematic images identified: `1029604.png`, `2775196.png`,
+  `297394.png`, `3637739.png` — each lost ALL 1,032 cells
+- (b) Each reproduced locally; root cause documented: missing from
+  `s3://zen-tuning-ephemeral/corpus/`, never uploaded
+- (c) Fix shipped: 3 layers (launcher pre-flight + worker retry +
+  builder docstring)
+- (d) Local validation: fixed worker fetch path successfully fetches all
+  4 images post-upload (491488 / 346155 / 435839 / 286735 bytes)
+- (e) No Rust source touched — `cargo test --lib` unaffected
+- (f) `bash -n` PASS on `worker.sh` + `launch_w44_phase4_s1_fleet.sh`;
+  `python3 ast.parse` PASS on `build_w44_phase4_s1_chunks.py`
+- (g) Single commit pushed (this commit)
+- (h) Investigation Notes entry added (this section)
+
+**DO NOT** (future agents):
+
+- DO NOT trust "image already uploaded by prior sweep" — always run the
+  launcher pre-flight on EVERY new sweep. The pre-flight is cheap (~1s
+  for 30 images) and catches builder/operator drift.
+- DO NOT raise the `fetch_with_retry` `max_attempts` above 5 — at
+  exponential backoff the wall ceiling on a hard 404 becomes 30s+,
+  which on a 50-cell chunk becomes 25-minute fetch storms when the
+  pre-flight has failed to fire.
+- DO NOT remove the worker retry on the assumption that the pre-flight
+  is sufficient. The pre-flight covers PERMANENT misses (the root
+  cause this chunk fixes); the worker retry covers TRANSIENT R2
+  failures (independent of pre-flight). Both are load-bearing.
+- DO NOT cite "FMA precision" for any future sweep coverage gap (per
+  W44-66 user correction). image_fetch_failed has structural causes
+  (missing in R2, transient network, expired auth); not numeric.
+
+**Files**:
+- `scripts/zenjxl-tuning-sweep/launch_w44_phase4_s1_fleet.sh` — +66 LOC
+  pre-flight block after existing chunks-availability check
+- `scripts/zenjxl-tuning-sweep/worker.sh` — +35 LOC `fetch_with_retry()`
+  helper + 2 call-sites converted (image + params)
+- `scripts/zenjxl-tuning-sweep/build_w44_phase4_s1_chunks.py` — +16 LOC
+  docstring banner documenting corpus dependency
+
 ### W44-PHASE4-S2-refit-c2: per-knob ablation audit + k1/k2 floor on screen/very_high + screen/high — SHIPPED (May 24, 2026)
 
 **Status**: [SHIPPED]
