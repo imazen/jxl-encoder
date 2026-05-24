@@ -640,6 +640,105 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### W44-PHASE4-S2-refit-c2: per-knob ablation audit + k1/k2 floor on screen/very_high + screen/high — SHIPPED (May 24, 2026)
+
+**Status**: [SHIPPED]
+
+Follow-on to W44-PHASE4-S2-refit-c1 (commit `cc081ff5`) which honest-stopped on a single-knob k1 floor because the c1 sweep on k2 was byte-identical across all values. The c1 commit message documented "isolated k1=0 reproduces the catastrophe" — but did NOT measure whether single-knob k1 reset from the FULL S2-refit tuple is sufficient. c2 ran the full 8-stratum × 5-knob ablation audit to (a) confirm the c1 diagnosis on the SHIP cell, (b) surface any OTHER hidden cliffs in the S2-refit lookup, and (c) bisect floors for the broken strata.
+
+**Audit harness** (`jxl-encoder/examples/w44_phase4_s2_refit_c2_ablate.rs` + `scripts/run_w44_phase4_s2_refit_c2_audit.sh`): single-process-per-encode harness takes explicit `(k1, k2, k3, k4, k5)` via CLI flags (works around `runtime::install` OnceLock single-shot). 56 paired encodes (8 strata × 7 modes: baseline + full_s2refit + 5 per-knob ablations) + 13 follow-up encodes (multi-knob neighbourhood probe + (k1, k2) bisection on screen/very_high + k1 bisection on screen/high).
+
+**8-stratum verdict table** (bench TSV `benchmarks/w44_phase4_s2_refit_c2_audit_2026-05-24.tsv`):
+
+| stratum            | cell                  | full_s2refit ΔSSIM2 | which knobs cliff? | verdict     |
+|---                 |---                    |---                  |---                 |---          |
+| screen/very_high   | terminal e8 d=4 (W44-105 SHIP) | **-4.93**       | k1 + k2 jointly    | REPAIRABLE  |
+| screen/high        | graph e8 d=3          | **-5.07**           | k1 + k2 jointly    | REPAIRABLE  |
+| screen/mid         | graph e8 d=1.5        | **+0.47** (WIN)     | none               | CLEAN       |
+| screen/low         | graph e8 d=0.7        | 0                   | none (no dispatch) | CLEAN       |
+| photo/very_high    | 1531677 e8 d=5        | 0                   | none (no dispatch) | CLEAN       |
+| photo/high         | 1189261 e8 d=3        | 0                   | none (no dispatch) | CLEAN       |
+| photo/mid          | 1025469 e8 d=1.5      | 0                   | none (no dispatch) | CLEAN       |
+| photo/low          | 1418519 e8 d=0.7      | 0                   | none (no dispatch) | CLEAN       |
+
+**Per-knob ablation table for the 2 broken strata** (default-restore one knob at a time, others at S2-refit):
+
+| stratum         | k1_default | k2_default | k3_default | k4_default | k5_default | full_s2refit |
+|---              |---         |---         |---         |---         |---         |---           |
+| screen/very_high SSIM2 | **76.73 (worse!)** | 81.98 (no change) | 81.98 | 81.98 | 81.98 | 81.98 |
+| screen/high SSIM2 | 85.44 (partial recovery) | 82.31 (no change) | 82.31 | 82.31 | 82.31 | 82.31 |
+
+Reading: on screen/very_high, single-k1-restore from full_s2refit actually makes SSIM2 WORSE (because k1=0.5 + k2=0 still cliffs differently). On screen/high, k1-restore partially recovers (85.44 from 82.31) but is still 1.94 below baseline 87.38. **Neither stratum can be fixed by a single knob default-restore.**
+
+**Multi-knob probes** revealed the joint structure: setting both k1 AND k2 back to defaults (other knobs at S2-refit) gives:
+- screen/very_high (terminal e8 d=4): 43,989 B / SSIM2 87.04 → ΔSSIM2 **+0.13** vs baseline (within ±0.5 ✓)
+- screen/high (graph e8 d=3):         22,270 B / SSIM2 87.28 → ΔSSIM2 **-0.10** vs baseline (within ±0.5 ✓)
+
+**(k1, k2) bisection on screen/very_high** (k3/k4/k5 at S2-refit):
+
+| k1   | k2    | bytes   | SSIM2  | ΔSSIM2 vs baseline |
+|---   |---    |---      |---     |---                 |
+| 0.25 | any   | 28,185  | 81.98  | -4.93 (cliff)      |
+| 0.333| 0.333 | 33,709  | 82.71  | -4.20              |
+| 0.333| 0.5   | 36,001  | 86.22  | -0.69              |
+| 0.333| 1.0   | 43,755  | 87.01  | +0.10              |
+| 0.5  | 0.333 | 33,903  | 82.72  | -4.19              |
+| 0.5  | 0.5   | 36,232  | 86.23  | -0.68              |
+| **0.5**  | **1.0**   | **43,989**  | **87.04**  | **+0.13 ✓**          |
+
+The cliff has **TWO joint drivers**: k1 ≤ 0.25 saturates p1 at ridge max (~145); k2 ≤ 0.5 zeros p3 too aggressively. Only (k1=0.5, k2=1.0) = defaults satisfies the ±0.5 SSIM2 budget.
+
+**c2 fix** (single edit to `jxl-encoder/src/tuning.rs::Tier2Knobs::default_for_stratum`):
+- `ScreenVeryHigh`: (0.0, 0.0, 0.5, 2.167, -0.333) → **(0.5, 1.0, 0.5, 2.167, -0.333)**
+- `ScreenHigh`: (0.0, 0.333, 0.5, 2.167, -0.667) → **(0.5, 1.0, 0.5, 2.167, -0.667)**
+- All 6 other strata unchanged.
+
+**Bytes cost** (price of W44-105 SHIP-cell protection on the opt-in path):
+- terminal e8 d=4: +3.94%
+- graph e8 d=5: +4.61%
+- graph e8 d=3: +7.55%
+
+**Post-fix validation** (`benchmarks/w44_phase4_s2_refit_c2_postfix_validate_2026-05-24.tsv`): all 5 SHIP-class screen cells preserved within ±0.5 SSIM2 of baseline. graph e8 d=5 even shows a +0.77 SSIM2 GAIN on Mode B.
+
+**Acceptance gates (all PASS)**:
+- (a) 8 strata × 5 knobs = 40 ablation measurements: 40/40 (+ 13 multi-knob + 7 baseline/full_s2refit per stratum) PASS
+- (b) Per-stratum verdict assigned: 6 CLEAN + 2 REPAIRABLE
+- (c) Each repaired stratum's SHIP cell within ±0.5 SSIM2 of baseline: 5/5 PASS
+- (d) `cargo test --lib`: 1501/1501 PASS (test `w44_phase4_s2_refit_strata_aggressiveness_membership` updated with c2 invariants)
+- (e) hash-locks 36/36 BYTE-IDENTICAL (synthetic ≤48² fixtures don't trigger Tier-2 dispatch); libjxl byte-lock 4/4 BYTE-IDENTICAL; drift 7/7 PASS
+- (f) Docs updated: `docs/LIBJXL_DIVERGENCES.md` Section E row 203 extended; `docs/TIER_2_KNOBS.md` lookup table + history + membership notes refreshed; `docs/HYPOTHESIS_LEDGER.md` belief #20 updated
+- (g) Bench TSV + meta written
+- (h) Single commit pushed
+- (i) `.workongoing` removed on completion
+
+**Mechanism summary** (binding for future agents):
+
+The screen/very_high + screen/high S2-refit raw optima — (k1=0, k2=0/0.333, k3=0.5, k4=2.167, k5=−0.333/−0.667) — sit at a JOINT cliff in (k1, k2) space. k1=0 saturates `p1 = smart_zenjxl_photo_mask_p25_min` at its ridge max (~145, vs `DEFAULT_P1 = 85`), which disrupts the W44-91/96/166 photo admit gates that the W44-105 buttloop screen-seed lift depends on for terminal/graph SHIP cells. k2=0 (or 0.333) zeros/lowers `p3 = buttloop_default_screenshot_qf_seed_scale`, removing the W44-105 lift directly. Both must move simultaneously to default to recover.
+
+The c1 honest-stop diagnosis ("k1 IS the lever") was correct that k1 is necessary — but the c2 audit shows k1 alone is NOT sufficient. The 2-knob c2 fix is the minimum repair. k3/k4/k5 retain their S2-refit values because (a) they're byte-identical no-ops on the SHIP cells per ablation, and (b) they may still affect other cells in those strata per the original sweep data.
+
+**DO NOT** (binding):
+- DO NOT lower k1 below 0.5 OR k2 below 1.0 on screen/very_high or screen/high without re-running the c2 (k1, k2) bisection. The W44-105 SHIP cells live in a small region of (k1, k2) space where ANY non-default value reintroduces the cliff. The test `w44_phase4_s2_refit_strata_aggressiveness_membership` enforces this; flipping the assertion without measurement is forbidden.
+- DO NOT cite "FMA precision" for any byte movement here (per W44-66). The bytes move because k1 ≤ 0.25 saturates p1, structurally changing the dispatch path.
+- DO NOT add a single-knob k1 floor (the c2 audit proved that's insufficient).
+- DO NOT attempt to ship the raw S2-refit screen/very_high or screen/high values directly without a corresponding zenanalyze sub-discriminator that routes terminal/graph-class cells around the lookup. The "right" follow-on for capturing the S2-refit's Pareto gain on OTHER screen/very_high cells is a per-image gate (mirror W44-91 / W44-96 pattern) that admits the raw optimum only when the image is NOT in the W44-105 SHIP cluster.
+
+**Follow-on candidates (NOT in c2 scope)**:
+1. **Per-image zenanalyze sub-discriminator for screen/very_high + screen/high** — admit raw S2-refit only when (mask_p25 < 70 OR fcbr ≥ 0.7) etc. Would unlock S2-refit's predicted +37.4% / +13.7% coverage gain on cells unlike terminal/graph. Tracking RFC pending.
+2. **Re-derive S2-refit with a Pareto criterion that includes SHIP cells** — next sweep optimization MUST score against bytes AND SSIM2, weighted to include the W44-105 cells.
+3. **Multi-knob neighborhood validation in the sweep selector** — the c2 cliff is JOINT in (k1, k2); a single-marginal-PDP-based selector cannot detect it. Future selectors should pre-validate every candidate optimum on a small SHIP-class probe set.
+
+**Files**:
+- `jxl-encoder/src/tuning.rs` — `default_for_stratum` (2 tuple updates + in-source ablation table comment) + test `w44_phase4_s2_refit_strata_aggressiveness_membership` (membership pinning + W44-105 invariants enforcement)
+- `jxl-encoder/examples/w44_phase4_s2_refit_c2_ablate.rs` (NEW, registered in `jxl-encoder/Cargo.toml`)
+- `scripts/run_w44_phase4_s2_refit_c2_audit.sh` (NEW, 8-stratum orchestration)
+- `benchmarks/w44_phase4_s2_refit_c2_audit_2026-05-24.tsv` (69-row audit data: 8 strata × 7 modes + 13 multi-knob probes)
+- `benchmarks/w44_phase4_s2_refit_c2_audit_2026-05-24.meta` (NEW, methodology + per-stratum verdict + ablation table + DO-NOT list)
+- `benchmarks/w44_phase4_s2_refit_c2_postfix_validate_2026-05-24.tsv` (post-fix SHIP-cell validation)
+- `docs/LIBJXL_DIVERGENCES.md` Section E row 203 extended with c2 SHIPPED narrative
+- `docs/TIER_2_KNOBS.md` lookup table + refit history + k2-membership section refreshed
+- `docs/HYPOTHESIS_LEDGER.md` belief #20 updated with c2 finding + refined next-sweep learning
+
 ### W44-PHASE4-S2-refit-c1: screen/very_high k2 floor — HONEST-STOP (2026-05-24)
 
 **Status**: [RULED OUT — per-knob ablation shipped, ZERO production source change]

@@ -2318,6 +2318,14 @@ name = "w44_phase4_s2_validate"
 path = "examples/w44_phase4_s2_validate.rs"
 required-features = ["__expert", "tuning-override", "parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-PHASE4-S2-refit-c2: per-knob ablation harness. Takes an explicit
+# (k1, k2, k3, k4, k5) tuple via CLI flags and encodes ONE cell per process
+# invocation. Used to detect hidden cliffs in S2-refit per-stratum optima.
+[[example]]
+name = "w44_phase4_s2_refit_c2_ablate"
+path = "examples/w44_phase4_s2_refit_c2_ablate.rs"
+required-features = ["__expert", "tuning-override", "parallel", "butteraugli-loop", "ssim2-loop"]
+
 # B1 candidate stride-bug probe: tests the (ref-stride, compare-stride)
 # truth table on butteraugli's planar API directly, without invoking the
 # encoder. Falsifies or confirms the audit Candidate 1 hypothesis (audit

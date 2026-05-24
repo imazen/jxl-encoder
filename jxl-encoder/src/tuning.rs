@@ -1434,9 +1434,27 @@ pub mod coupling {
                 // Reference: `/home/lilith/work/zen/jxl-encoder/CLAUDE.md`
                 // §"W44-PHASE4-S2-refit-c1 HONEST-STOP" for the full
                 // per-cell measurement table and DO-NOT list.
+                //
+                // **W44-PHASE4-S2-refit-c2 (2026-05-24)**: 8-stratum × 5-knob
+                // ablation audit (`benchmarks/w44_phase4_s2_refit_c2_audit_2026-05-24.tsv`)
+                // measured the W44-228c1 catastrophe on the W44-105 SHIP cell
+                // (terminal e8 d=4): full S2-refit → SSIM2 81.98 (baseline
+                // 86.91, Δ -4.93). Per-knob ablation found only k1 effects
+                // SSIM2 on this cell (k2/k3/k4/k5 single-default reverts are
+                // byte-identical to full s2refit). 2-knob ablation found
+                // (k1=0.5, k2=1.0) restores SSIM2 to 87.04 (Δ +0.13 vs
+                // baseline). Mechanism: k1=0 drives p1 to ridge max (~145),
+                // disrupting W44-91/96/166 photo admit gates the W44-105
+                // chain depends on; k2=0 zeros p3 (buttloop seed scale).
+                // BOTH must be at defaults for SHIP-cell SSIM2 preservation.
+                // c2 fix floors k1=0.5 (default) + k2=1.0 (default) on
+                // screen/very_high. k3/k4/k5 retained at S2-refit values
+                // (byte-identical no-op on terminal e8 d=4 per ablation;
+                // may still affect other screen/very_high cells per sweep
+                // data the S2-refit was derived from).
                 ContentStratum::ScreenVeryHigh => (
-                    0.0,
-                    0.0,
+                    0.5,
+                    1.0,
                     0.5,
                     2.1666666666666665_f32,
                     -0.3333333333333334_f32,
@@ -1446,9 +1464,18 @@ pub mod coupling {
                 // NEW W44-PHASE4-S2: (0.0, 0.333, 0.5, 2.167, -0.667)
                 // Δ: k2 0.000 → 0.333 (+0.333), k4 3.500 → 2.167 (-1.333),
                 //    k5 -0.333 → -0.667 (-0.333)
+                //
+                // **W44-PHASE4-S2-refit-c2 (2026-05-24)**: 8-stratum ablation
+                // audit found graph e8 d=3 cliffs to SSIM2 82.31 (baseline
+                // 87.38, Δ -5.07) at full S2-refit. Single-k1-default ablation
+                // recovers SSIM2 to 85.44 (Δ -1.94, still over ±0.5 budget).
+                // 2-knob (k1=0.5, k2=1.0) revert recovers SSIM2 to 87.28
+                // (Δ -0.10 ✓). Same mechanism as screen/very_high — k1=0
+                // disrupts photo admit gates, k2=0.333 zeros p3 too aggressively.
+                // c2 fix: floor k1=0.5 + k2=1.0 (defaults); keep k3/k4/k5.
                 ContentStratum::ScreenHigh => (
-                    0.0,
-                    0.3333333333333333_f32,
+                    0.5,
+                    1.0,
                     0.5,
                     2.1666666666666665_f32,
                     -0.6666666666666667_f32,
@@ -2283,31 +2310,33 @@ pub mod coupling {
         /// W44-PHASE4-S2-refit (2026-05-24)**: the post-W44-RECON-DEEP
         /// corpus shifted screen/high, screen/mid, screen/low optima to
         /// `aggressiveness == 0.333`. screen/very_high and all 4 photo
-        /// strata still pin to `aggressiveness == 0`.
+        /// strata still pinned to `aggressiveness == 0` in the raw refit.
+        ///
+        /// **W44-PHASE4-S2-refit-c2 (2026-05-24)**: 8-stratum × 5-knob
+        /// ablation audit (`benchmarks/w44_phase4_s2_refit_c2_audit_2026-05-24.tsv`)
+        /// found `aggressiveness=0` BROKE the W44-105 SHIP cell on
+        /// screen/very_high (terminal e8 d=4, ΔSSIM2 -4.93 vs baseline) AND
+        /// on screen/high (graph e8 d=3, ΔSSIM2 -5.07). 2-knob ablation
+        /// found (k1=0.5, k2=1.0) restores both within ±0.5 SSIM2. c2 fix
+        /// floors k1=0.5 + k2=1.0 (= defaults) on those 2 strata.
         ///
         /// This test pins which strata are at zero vs non-zero — if a
         /// future re-derivation shifts any stratum's membership, update
         /// `docs/TIER_2_KNOBS.md` + the W44-PHASE4-S2-refit memo + the
         /// W44-105 SHIP-cell caveat alongside the table swap.
         ///
-        /// **W44-105 protection invariant (binding, but not enforced
-        /// here)**: screen/very_high carries `aggressiveness == 0` from
-        /// the S1 raw optimum. W44-PHASE4-S2-validate (`e9054b53`)
-        /// caught a -4.93 SSIM2 cliff on terminal e8 d=4 on the opt-in
-        /// path. W44-PHASE4-S2-refit-c1 (HONEST-STOP, 2026-05-24)
-        /// proved the cliff is driven by `k1 = smoothness_bias = 0`
-        /// (which saturates `p1` at the ridge max), NOT by `k2`.
-        /// Future closures of the cliff must touch k1, not k2; this
-        /// test still pins k2=0 on screen/very_high to track the raw
-        /// S2-refit optimum until a follow-on chunk lands a per-stratum
-        /// k1 floor. See the in-source comment on the ScreenVeryHigh
-        /// tuple for the per-knob ablation that drove the diagnosis.
+        /// **W44-105 protection invariant (enforced here as of c2)**:
+        /// screen/very_high and screen/high MUST carry
+        /// `aggressiveness == 1.0` (default) AND `smoothness_bias == 0.5`
+        /// (default). These two strata route through the W44-105 buttloop
+        /// screen-seed lift on terminal/graph-class SHIP cells; any
+        /// non-default k1 or k2 reintroduces the c2 cliff.
         #[cfg(feature = "tuning-override")]
         #[test]
         fn w44_phase4_s2_refit_strata_aggressiveness_membership() {
-            // Strata that pin to aggressiveness == 0.
+            // Strata that pin to aggressiveness == 0 (photos + screen/very_high
+            // and screen/high were promoted to 1.0 = default in c2).
             for s in [
-                ContentStratum::ScreenVeryHigh,
                 ContentStratum::PhotoVeryHigh,
                 ContentStratum::PhotoHigh,
                 ContentStratum::PhotoMid,
@@ -2321,14 +2350,10 @@ pub mod coupling {
                     s
                 );
             }
-            // Strata that now hold aggressiveness == 0.333 (W44-PHASE4-S2
-            // refit — these are AWAY from the W44-105 catastrophe regime
-            // since they sit at d < 3.5 in the screen-class).
-            for s in [
-                ContentStratum::ScreenHigh,
-                ContentStratum::ScreenMid,
-                ContentStratum::ScreenLow,
-            ] {
+            // Strata that hold aggressiveness == 0.333 (W44-PHASE4-S2 refit —
+            // these are AWAY from the W44-105 catastrophe regime since they
+            // sit at d < 2 in the screen-class).
+            for s in [ContentStratum::ScreenMid, ContentStratum::ScreenLow] {
                 let k = Tier2Knobs::default_for_stratum(s);
                 assert!(
                     (k.screenshot_quant_aggressiveness - 0.3333333333333333_f32).abs() < 1e-5,
@@ -2336,6 +2361,28 @@ pub mod coupling {
                      got {}. If shifted, update docs/TIER_2_KNOBS.md.",
                     s,
                     k.screenshot_quant_aggressiveness
+                );
+            }
+            // W44-PHASE4-S2-refit-c2: screen/very_high and screen/high
+            // MUST hold (k1=0.5, k2=1.0) = defaults to preserve W44-105
+            // SHIP cells. The c2 ablation audit found ANY non-default k1
+            // OR k2 reintroduces the cliff on terminal/graph SHIP cells.
+            for s in [
+                ContentStratum::ScreenVeryHigh,
+                ContentStratum::ScreenHigh,
+            ] {
+                let k = Tier2Knobs::default_for_stratum(s);
+                assert_eq!(
+                    k.smoothness_bias, 0.5,
+                    "Stratum {:?} MUST hold smoothness_bias=0.5 (default) per W44-PHASE4-S2-refit-c2. \
+                     Lowering risks the W44-105 SHIP-cell SSIM2 cliff.",
+                    s
+                );
+                assert_eq!(
+                    k.screenshot_quant_aggressiveness, 1.0,
+                    "Stratum {:?} MUST hold screenshot_quant_aggressiveness=1.0 (default) per \
+                     W44-PHASE4-S2-refit-c2. Lowering risks the W44-105 SHIP-cell SSIM2 cliff.",
+                    s
                 );
             }
         }
