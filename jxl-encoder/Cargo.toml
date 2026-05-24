@@ -544,6 +544,12 @@ name = "w44_35_acceptance_check"
 path = "examples/w44_35_acceptance_check.rs"
 required-features = ["parallel"]
 
+# W44-RECON-DEEP/A10 HDR PQ → djxl roundtrip check.
+[[example]]
+name = "w44_recon_a10_hdr_pq_djxl_check"
+path = "examples/w44_recon_a10_hdr_pq_djxl_check.rs"
+required-features = ["__expert", "butteraugli-loop"]
+
 # W44-35 decoder roundtrip: 1418519 × 5 cells via jxl-oxide.
 [[example]]
 name = "w44_35_decoder_check"

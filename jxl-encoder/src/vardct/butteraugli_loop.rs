@@ -29,6 +29,54 @@ use crate::error::Result;
 /// value (bit-identical to libjxl).
 pub(crate) const LIBJXL_INIT_MUL: f64 = 0.6;
 
+/// SDR butteraugli `intensity_target` default (cd/m²) — matches libjxl's
+/// `FindBestQuantization` (`enc_adaptive_quantization.cc:949-953`):
+/// `params.intensity_target = tf.IsPQ() || tf.IsHLG()
+///     ? frame_header.nonserialized_metadata->m.IntensityTarget()
+///     : 80.f;`
+///
+/// This is the **butteraugli metric** intensity_target (not the encode
+/// metadata `IntensityTarget()`). For SDR (sRGB / Linear / gamma /
+/// unknown TFs) the butteraugli model is calibrated at 80 cd/m² regardless
+/// of what the file-header `intensity_target` says.
+pub(crate) const LIBJXL_BUTTERAUGLI_SDR_INTENSITY_TARGET: f32 = 80.0;
+
+/// Resolve butteraugli's `intensity_target` parameter (cd/m²) from the
+/// encoded transfer function + the encode's metadata intensity_target.
+///
+/// Mirrors libjxl `enc_adaptive_quantization.cc:949-953`:
+/// ```text
+/// params.intensity_target =
+///     tf.IsPQ() || tf.IsHLG()
+///         ? frame_header.nonserialized_metadata->m.IntensityTarget()
+///         : 80.f;
+/// ```
+///
+/// - `TransferFunction::Pq`  → `metadata_intensity_target` (typically 10000.0 cd/m²)
+/// - `TransferFunction::Hlg` → `metadata_intensity_target` (typically 1000.0 cd/m²)
+/// - Everything else (sRGB / Linear / Bt709 / Dci / Unknown) → 80.0 cd/m²
+///
+/// For SDR encodes the butteraugli model is calibrated at 80 cd/m²
+/// independently of the file-header `intensity_target`; only PQ/HLG
+/// route the metadata value through to the perceptual comparator.
+///
+/// Closes W44-RECON-DEEP/A10. Without this dispatch, HDR (PQ/HLG)
+/// encodes computed butteraugli at SDR luminance (80 cd/m²), making
+/// the buttloop converge on the wrong perceptual target — HDR
+/// highlights got over-quantized, HDR shadows got the wrong noise
+/// budget.
+#[inline]
+pub fn libjxl_butteraugli_intensity_target(
+    tf: crate::headers::color_encoding::TransferFunction,
+    metadata_intensity_target: f32,
+) -> f32 {
+    use crate::headers::color_encoding::TransferFunction;
+    match tf {
+        TransferFunction::Pq | TransferFunction::Hlg => metadata_intensity_target,
+        _ => LIBJXL_BUTTERAUGLI_SDR_INTENSITY_TARGET,
+    }
+}
+
 // ===== Distance-aware buttloop tuning scaffolding (W38-2 #3.1).
 //
 // Infrastructure ported from GPU `d75bf7c` (memory
@@ -1245,8 +1293,26 @@ impl VarDctEncoder {
             // Butteraugli path: transient n*4*3 reservation released as
             // soon as the reference precompute owns its internal copy.
             let _g = MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
+            // W44-RECON-DEEP/A10: dispatch `intensity_target` on the
+            // encoded transfer function (libjxl-parity with
+            // `enc_adaptive_quantization.cc:949-953`). SDR (sRGB /
+            // Linear / Bt709 / Dci / Unknown / no color_encoding) →
+            // 80 cd/m²; PQ / HLG → metadata `intensity_target` (typically
+            // 10000.0 / 1000.0). Without this, HDR encodes computed
+            // butteraugli at SDR luminance and the buttloop converged on
+            // the wrong perceptual target.
+            let metric_intensity_target = match self.color_encoding.as_ref() {
+                Some(ce) => libjxl_butteraugli_intensity_target(
+                    ce.transfer_function,
+                    self.intensity_target,
+                ),
+                // No color_encoding override: treat as SDR (matches the
+                // default `ColorEncoding::srgb()` path which has
+                // `transfer_function = Srgb` → returns 80.0).
+                None => LIBJXL_BUTTERAUGLI_SDR_INTENSITY_TARGET,
+            };
             let butteraugli_params = butteraugli::ButteraugliParams::new()
-                .with_intensity_target(80.0)
+                .with_intensity_target(metric_intensity_target)
                 .with_compute_diffmap(true);
             let r = match butteraugli::ButteraugliReference::new_linear_planar(
                 &ref_r,
@@ -1919,7 +1985,9 @@ impl VarDctEncoder {
         // EX-J11 chunk 2: select the perceptual metric.
         use_vdp2: bool,
         // VDP2-lite display-luminance target in cd/m². Unused on the
-        // butteraugli path (which hardcodes `intensity_target = 80`).
+        // butteraugli path (which dispatches `intensity_target` on the
+        // encoded TF — 80 for SDR, metadata `intensity_target` for
+        // PQ/HLG; see `libjxl_butteraugli_intensity_target`).
         vdp2_intensity_target: f32,
         qf_lower: f32,
         qf_higher: f32,
@@ -3635,5 +3703,85 @@ mod tuning_tests {
         );
         // Strict 1.5 pick documented in const comment.
         assert_eq!(W44_142_EPF_SEED_SUPPRESS_MAX_DISTANCE, 1.5);
+    }
+
+    // ===== W44-RECON-DEEP/A10 tests =====
+    //
+    // Verifies the butteraugli `intensity_target` dispatch matches libjxl
+    // `enc_adaptive_quantization.cc:949-953`:
+    //   params.intensity_target =
+    //       tf.IsPQ() || tf.IsHLG()
+    //           ? frame_header.nonserialized_metadata->m.IntensityTarget()
+    //           : 80.f;
+
+    #[test]
+    fn w44_recon_a10_intensity_target_pq_uses_metadata() {
+        use crate::headers::color_encoding::TransferFunction;
+        // PQ: typical HDR metadata intensity_target = 10000 cd/m²
+        let v = libjxl_butteraugli_intensity_target(TransferFunction::Pq, 10000.0);
+        assert!(
+            (v - 10000.0).abs() < 1e-6,
+            "PQ should pass metadata intensity_target through, got {v}"
+        );
+        // PQ with a non-standard metadata value (e.g. 4000 cd/m²)
+        let v4k = libjxl_butteraugli_intensity_target(TransferFunction::Pq, 4000.0);
+        assert!((v4k - 4000.0).abs() < 1e-6, "PQ @ 4000 → 4000, got {v4k}");
+    }
+
+    #[test]
+    fn w44_recon_a10_intensity_target_hlg_uses_metadata() {
+        use crate::headers::color_encoding::TransferFunction;
+        // HLG: typical HDR metadata intensity_target = 1000 cd/m²
+        let v = libjxl_butteraugli_intensity_target(TransferFunction::Hlg, 1000.0);
+        assert!(
+            (v - 1000.0).abs() < 1e-6,
+            "HLG should pass metadata intensity_target through, got {v}"
+        );
+        // HLG with a non-standard metadata value (e.g. 2000 cd/m²)
+        let v2k = libjxl_butteraugli_intensity_target(TransferFunction::Hlg, 2000.0);
+        assert!((v2k - 2000.0).abs() < 1e-6, "HLG @ 2000 → 2000, got {v2k}");
+    }
+
+    #[test]
+    fn w44_recon_a10_intensity_target_sdr_returns_80() {
+        use crate::headers::color_encoding::TransferFunction;
+        // SDR sRGB: 80.0 cd/m² regardless of metadata (the default 255.0
+        // metadata value is irrelevant for the butteraugli model on SDR).
+        let v_srgb = libjxl_butteraugli_intensity_target(TransferFunction::Srgb, 255.0);
+        assert!(
+            (v_srgb - 80.0).abs() < 1e-6,
+            "Srgb should return 80.0 regardless of metadata, got {v_srgb}"
+        );
+        // Even if the user mistakenly sets a huge metadata value on sRGB,
+        // the butteraugli model still uses 80.0 (libjxl-parity).
+        let v_srgb_huge = libjxl_butteraugli_intensity_target(TransferFunction::Srgb, 10000.0);
+        assert!(
+            (v_srgb_huge - 80.0).abs() < 1e-6,
+            "Srgb with metadata=10000 should still return 80.0, got {v_srgb_huge}"
+        );
+        // Linear sRGB → SDR
+        let v_lin = libjxl_butteraugli_intensity_target(TransferFunction::Linear, 255.0);
+        assert!((v_lin - 80.0).abs() < 1e-6);
+        // BT.709 → SDR
+        let v_bt709 = libjxl_butteraugli_intensity_target(TransferFunction::Bt709, 255.0);
+        assert!((v_bt709 - 80.0).abs() < 1e-6);
+        // DCI gamma → SDR
+        let v_dci = libjxl_butteraugli_intensity_target(TransferFunction::Dci, 255.0);
+        assert!((v_dci - 80.0).abs() < 1e-6);
+        // Unknown TF → SDR (defensive)
+        let v_unk = libjxl_butteraugli_intensity_target(TransferFunction::Unknown, 255.0);
+        assert!((v_unk - 80.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn w44_recon_a10_sdr_constant_matches_libjxl() {
+        // libjxl `enc_adaptive_quantization.cc:953` hardcodes `80.f` for
+        // SDR. This test makes the constant load-bearing — if anyone
+        // changes the SDR value, this test fails and they have to update
+        // the LIBJXL_DIVERGENCES.md table.
+        assert_eq!(
+            LIBJXL_BUTTERAUGLI_SDR_INTENSITY_TARGET, 80.0,
+            "SDR intensity_target must match libjxl's hardcoded 80.0 cd/m²"
+        );
     }
 }
