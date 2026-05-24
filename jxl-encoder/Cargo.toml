@@ -1277,6 +1277,16 @@ name = "w44_170_cjxl_step025_sweep"
 path = "examples/w44_170_cjxl_step025_sweep.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-AUDIT-1 (2026-05-24): fresh zenjxl-vs-cjxl bench post the
+# W44-158→W44-205 tuning arc + S2-refit-c2 + Phase-3 B1-B7d perf work.
+# 4 imgs × 3 efforts × 3 distances × {Zenjxl, Libjxl strategy} + cjxl
+# reference = 108 encodes. Prior cjxl_parity_ledger TSVs from W44-157
+# are stale (~50 commits behind); this is the headline snapshot.
+[[example]]
+name = "cjxl_parity_2026_05_24"
+path = "examples/cjxl_parity_2026_05_24.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
+
 # W44-171: focused A/B for the DC tree Variable-trial effort gate fix.
 # Targets the W44-170 e5 wall-time wedge on large screenshots
 # (imac_dark 65× cjxl, imac_g3 50×, codec_wiki 40×). Mode A reproduces
