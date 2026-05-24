@@ -110,6 +110,16 @@ pub(crate) trait ButteraugliBackend: core::fmt::Debug {
         height: usize,
         diffmap_out: &mut alloc::vec::Vec<f32>,
     ) -> Result<BackendCompareResult>;
+
+    /// W44-PHASE3-B5b: returns `Some((divergence_pct, fell_back))` if the
+    /// backend ran a divergence check during this cell, else `None`.
+    /// `divergence_pct` is in `[0.0, 1.0]` (symmetric relative). The CPU
+    /// backend always returns `None`. The GPU backend returns `Some(_)`
+    /// after the first `compare_with_reference` call when the detector
+    /// was enabled at construction.
+    fn divergence_status(&self) -> Option<(f64, bool)> {
+        None
+    }
 }
 
 // ============================================================================
@@ -241,21 +251,109 @@ impl ButteraugliBackend for CpuButteraugliBackend {
 // GPU backend — feature-gated, opt-in
 // ============================================================================
 
-/// Documented threshold for an in-loop GPU-vs-CPU score divergence check.
-/// **Not currently wired** — recorded as a follow-on note for future chunks
-/// that may want to add a per-iter sanity check. W44-RECON-DEEP/A7 measured
-/// a 0.02-0.03% drift floor on real corpus images; this 0.5% threshold is
-/// 25× higher (kept in source as the canonical "this much divergence is
-/// suspicious" magic number).
+/// W44-PHASE3-B5b (2026-05-24): in-loop GPU-vs-CPU score divergence check.
+/// On the FIRST `compare_with_reference` call the GPU backend (when the
+/// env var `JXL_W44_PHASE3_B5B_DETECTOR=1` is set) also runs a CPU
+/// butteraugli compare, then compares `|score_gpu - score_cpu| /
+/// max(|score_gpu|, |score_cpu|)`. If the relative divergence exceeds
+/// this threshold, the backend transparently falls back to its internal
+/// CPU shadow for all subsequent iters of the current cell.
 ///
-/// W44-phase3-B1 does NOT implement per-iter cross-checking because the
-/// buttloop's compare step is on the critical path and a CPU-shadow
-/// invocation would defeat the GPU speedup. A future follow-on chunk may
-/// add `--gpu-butteraugli-validate` that runs both backends on iter 0 and
-/// falls back to CPU if scores diverge by more than this threshold.
+/// The B5 wider-sweep (2026-05-23) measured 36/38 cells with relative
+/// score drift well under 0.5%; the 2 outlier cells (cid22_3637739 e8/e9
+/// d=2) had ~5.9% / ~2.6% butteraugli drift even though SSIM2 was
+/// unchanged, which is the documented buttloop-convergence signature
+/// (the ~1e-7 reduction-order divergence A7 measured perturbs the
+/// gradient-descent trajectory on rare images and converges to a
+/// slightly different local optimum). 0.5% is the W44-phase3-B1
+/// documented threshold (25× the measured drift floor on agreeing
+/// cells).
+///
+/// Default OFF — must be enabled per the W44-PHASE3-B5b task spec
+/// (`JXL_W44_PHASE3_B5B_DETECTOR=1`). Once measurement on the 38-cell
+/// sweep shows detector catches the 2 divergent cells without false
+/// positives on the other 36, a follow-on chunk will flip the default.
 #[cfg(feature = "gpu-butteraugli")]
-#[allow(dead_code)]
-pub(crate) const GPU_SCORE_DIVERGENCE_PCT: f64 = 0.5;
+pub(crate) const GPU_SCORE_DIVERGENCE_PCT: f64 = 0.005;
+
+/// Env var name that gates the W44-PHASE3-B5b divergence detector.
+#[cfg(feature = "gpu-butteraugli")]
+pub(crate) const W44_PHASE3_B5B_ENV: &str = "JXL_W44_PHASE3_B5B_DETECTOR";
+
+/// Process-global counters for the W44-PHASE3-B5b divergence detector.
+/// Reset to zero by [`reset_b5b_counters`] (called by the bench harness
+/// between cells); incremented by the GPU backend when the detector runs
+/// and / or fires. Exposed via [`b5b_counters`] for the bench harness
+/// only (the production encoder never reads these).
+#[cfg(feature = "gpu-butteraugli")]
+pub mod b5b_counters {
+    use core::sync::atomic::{AtomicU64, Ordering};
+
+    /// Number of cells where the iter-0 detector ran (i.e. GPU + shadow
+    /// CPU both invoked, score divergence computed).
+    pub static DETECTOR_RUN_COUNT: AtomicU64 = AtomicU64::new(0);
+    /// Number of cells where the iter-0 detector tripped fallback
+    /// (i.e. `|gpu-cpu|/max > 0.5%` → forced_to_cpu = true).
+    pub static FALLBACK_TRIGGERED_COUNT: AtomicU64 = AtomicU64::new(0);
+    /// Sum of absolute divergence percentages across all DETECTOR_RUN
+    /// cells (for mean computation).
+    pub static DIVERGENCE_PCT_SUM_MILLIONTHS: AtomicU64 = AtomicU64::new(0);
+    /// Max absolute divergence percentage seen across all cells.
+    pub static DIVERGENCE_PCT_MAX_MILLIONTHS: AtomicU64 = AtomicU64::new(0);
+
+    /// Reset all four counters to zero. Bench harnesses call this
+    /// once at the start of a run.
+    pub fn reset() {
+        DETECTOR_RUN_COUNT.store(0, Ordering::SeqCst);
+        FALLBACK_TRIGGERED_COUNT.store(0, Ordering::SeqCst);
+        DIVERGENCE_PCT_SUM_MILLIONTHS.store(0, Ordering::SeqCst);
+        DIVERGENCE_PCT_MAX_MILLIONTHS.store(0, Ordering::SeqCst);
+    }
+
+    /// Snapshot the four counters.
+    pub fn snapshot() -> Snapshot {
+        Snapshot {
+            run_count: DETECTOR_RUN_COUNT.load(Ordering::SeqCst),
+            fallback_count: FALLBACK_TRIGGERED_COUNT.load(Ordering::SeqCst),
+            divergence_pct_sum: (DIVERGENCE_PCT_SUM_MILLIONTHS.load(Ordering::SeqCst) as f64)
+                / 1_000_000.0,
+            divergence_pct_max: (DIVERGENCE_PCT_MAX_MILLIONTHS.load(Ordering::SeqCst) as f64)
+                / 1_000_000.0,
+        }
+    }
+
+    /// Record a single detector observation.
+    pub(crate) fn record(divergence_pct: f64, fell_back: bool) {
+        DETECTOR_RUN_COUNT.fetch_add(1, Ordering::SeqCst);
+        if fell_back {
+            FALLBACK_TRIGGERED_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+        let pct_int = (divergence_pct * 1_000_000.0) as u64;
+        DIVERGENCE_PCT_SUM_MILLIONTHS.fetch_add(pct_int, Ordering::SeqCst);
+        // Atomic max via CAS loop.
+        loop {
+            let cur = DIVERGENCE_PCT_MAX_MILLIONTHS.load(Ordering::SeqCst);
+            if pct_int <= cur {
+                break;
+            }
+            if DIVERGENCE_PCT_MAX_MILLIONTHS
+                .compare_exchange_weak(cur, pct_int, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                break;
+            }
+        }
+    }
+
+    /// Counter snapshot returned by [`snapshot`].
+    #[derive(Debug, Clone, Copy)]
+    pub struct Snapshot {
+        pub run_count: u64,
+        pub fallback_count: u64,
+        pub divergence_pct_sum: f64,
+        pub divergence_pct_max: f64,
+    }
+}
 
 #[cfg(feature = "gpu-butteraugli")]
 pub(crate) mod gpu {
@@ -284,10 +382,10 @@ pub(crate) mod gpu {
     use super::*;
 
     use butteraugli_gpu::{Butteraugli, ButteraugliParams as GpuParams};
+    use cubecl::Runtime;
     use cubecl::cuda::CudaRuntime;
     use cubecl::prelude::ComputeClient;
     use cubecl::server::Handle;
-    use cubecl::Runtime;
 
     // Internal helper: cubecl `prelude` re-exports `as_bytes` via the
     // `CubePrimitive`/`Pod` traits; the f32 `as_bytes` we need is the
@@ -315,6 +413,36 @@ pub(crate) mod gpu {
         params: GpuParams,
         width: u32,
         height: u32,
+        /// W44-PHASE3-B5b: optional CPU shadow backend used by the
+        /// in-loop divergence detector. `Some(_)` only when the
+        /// detector is enabled (env var `JXL_W44_PHASE3_B5B_DETECTOR=1`)
+        /// AND a CPU `ButteraugliParams` was threaded through
+        /// `construct_backend`. On the FIRST `compare_with_reference`
+        /// call after `set_reference`, the GPU backend also runs a CPU
+        /// compute via this shadow and compares scores. If divergence
+        /// exceeds [`GPU_SCORE_DIVERGENCE_PCT`], `forced_to_cpu` flips
+        /// `true` and subsequent compares route through the shadow
+        /// only (the GPU `inner` retains its uploaded reference but
+        /// is not re-invoked).
+        cpu_shadow: Option<alloc::boxed::Box<CpuButteraugliBackend>>,
+        /// Iter counter (per cell). 0 on the FIRST compare after
+        /// `set_reference`. Used to gate the once-per-cell detector
+        /// check so the shadow CPU compute only runs once.
+        compare_call_count: u32,
+        /// W44-PHASE3-B5b: tripped by the iter-0 divergence detector
+        /// when GPU and CPU scores diverge by more than
+        /// [`GPU_SCORE_DIVERGENCE_PCT`]. Once `true`, all subsequent
+        /// `compare_with_reference` calls route through `cpu_shadow`
+        /// instead of `inner`. Persists for the lifetime of the
+        /// backend (= one buttloop cell).
+        forced_to_cpu: bool,
+        /// W44-PHASE3-B5b: last measured GPU vs CPU score divergence
+        /// from the iter-0 detector run. `None` until iter 0 runs;
+        /// `Some(pct)` afterward where `pct` is the symmetric relative
+        /// divergence (0.0..=1.0). Exposed via [`Self::last_divergence_pct`]
+        /// so the bench harness can sample it via a getter on the
+        /// trait object (downcast).
+        last_divergence_pct: Option<f64>,
     }
 
     impl core::fmt::Debug for GpuButteraugliBackend {
@@ -322,6 +450,8 @@ pub(crate) mod gpu {
             f.debug_struct("GpuButteraugliBackend")
                 .field("width", &self.width)
                 .field("height", &self.height)
+                .field("forced_to_cpu", &self.forced_to_cpu)
+                .field("last_divergence_pct", &self.last_divergence_pct)
                 .finish()
         }
     }
@@ -334,19 +464,26 @@ pub(crate) mod gpu {
         /// default). `intensity_target` is captured at construction; the
         /// reference must be re-cached if it changes mid-encode (it doesn't
         /// today — the buttloop fixes it once per encode).
+        ///
+        /// `cpu_shadow_params` is the CPU `ButteraugliParams` to use when
+        /// constructing the W44-PHASE3-B5b shadow CPU backend for the
+        /// in-loop divergence detector. Pass `None` to disable the
+        /// detector (production default — the detector is opt-in via
+        /// the [`W44_PHASE3_B5B_ENV`] env var, gated inside
+        /// [`construct_backend`]).
         pub(crate) fn try_new(
             width: u32,
             height: u32,
             intensity_target: f32,
+            cpu_shadow_params: Option<butteraugli::ButteraugliParams>,
         ) -> Option<Self> {
             // CubeCL client init. `client(&Default::default())` returns
             // a `ComputeClient<CudaRuntime>`; a panic inside CubeCL on a
             // CUDA-less host would surface as `try_init` failure. We
             // catch_unwind so a missing CUDA driver doesn't crash the
             // entire encode.
-            let client = match std::panic::catch_unwind(|| {
-                CudaRuntime::client(&Default::default())
-            }) {
+            let client = match std::panic::catch_unwind(|| CudaRuntime::client(&Default::default()))
+            {
                 Ok(c) => c,
                 Err(_) => return None,
             };
@@ -362,6 +499,9 @@ pub(crate) mod gpu {
             let n = (width as usize).checked_mul(height as usize)?;
             let params = GpuParams::default().with_intensity_target(intensity_target);
 
+            let cpu_shadow =
+                cpu_shadow_params.map(|p| alloc::boxed::Box::new(CpuButteraugliBackend::new(p)));
+
             Some(Self {
                 inner,
                 client,
@@ -373,8 +513,19 @@ pub(crate) mod gpu {
                 params,
                 width,
                 height,
+                cpu_shadow,
+                compare_call_count: 0,
+                forced_to_cpu: false,
+                last_divergence_pct: None,
             })
         }
+
+        // W44-PHASE3-B5b note: the per-cell detector state
+        // (`last_divergence_pct`, `forced_to_cpu`) is exposed via the
+        // `ButteraugliBackend::divergence_status` trait method on the
+        // owning trait object (see `impl ButteraugliBackend for
+        // GpuButteraugliBackend` below). Bench harnesses use that
+        // method to count fallback rate per cell.
 
         /// Upload one tight (width*height) f32 plane to a fresh GPU
         /// handle. Caller-supplied `plane.len()` MUST equal `n = width*height`.
@@ -382,7 +533,8 @@ pub(crate) mod gpu {
             debug_assert_eq!(plane.len(), (self.width as usize) * (self.height as usize));
             // bytemuck::cast_slice<f32, u8> — the f32 plane → byte view
             // CubeCL needs for `create_from_slice`.
-            self.client.create_from_slice(bytemuck::cast_slice::<f32, u8>(plane))
+            self.client
+                .create_from_slice(bytemuck::cast_slice::<f32, u8>(plane))
         }
 
         /// Copy one strided plane into the tight scratch slot. Returns
@@ -408,15 +560,18 @@ pub(crate) mod gpu {
             for y in 0..height {
                 let src_row = y * padded_width;
                 let dst_row = y * width;
-                scratch[dst_row..dst_row + width]
-                    .copy_from_slice(&src[src_row..src_row + width]);
+                scratch[dst_row..dst_row + width].copy_from_slice(&src[src_row..src_row + width]);
             }
         }
     }
 
     impl ButteraugliBackend for GpuButteraugliBackend {
         fn name(&self) -> &'static str {
-            "gpu-cuda"
+            if self.forced_to_cpu {
+                "gpu-cuda-fallback-cpu"
+            } else {
+                "gpu-cuda"
+            }
         }
 
         fn set_reference(
@@ -457,6 +612,22 @@ pub(crate) mod gpu {
                         "GPU butteraugli set_reference_from_linear_planes: {e}"
                     ))
                 })?;
+            // W44-PHASE3-B5b: also cache the reference in the shadow
+            // CPU backend (if the detector was enabled at construction).
+            // This is cheap (just calls `ButteraugliReference::new_linear_planar`
+            // which copies the planes into its own owned storage); the
+            // savings of NOT running this once per encode would be
+            // negligible vs the detector's safety guarantee.
+            if let Some(shadow) = self.cpu_shadow.as_mut() {
+                shadow.set_reference(ref_r, ref_g, ref_b, width, height)?;
+            }
+            // Reset per-cell detector state on each new reference.
+            // (In practice `set_reference` is called once per buttloop
+            // cell, but this protects against future code paths that
+            // might re-cache mid-cell.)
+            self.compare_call_count = 0;
+            self.forced_to_cpu = false;
+            self.last_divergence_pct = None;
             Ok(())
         }
 
@@ -476,6 +647,28 @@ pub(crate) mod gpu {
                     self.width, self.height, width, height,
                 )));
             }
+
+            // W44-PHASE3-B5b: if a prior iter's detector run flipped
+            // `forced_to_cpu`, route this compare through the CPU
+            // shadow (skipping the GPU entirely). The shadow already
+            // has the reference cached (set by `set_reference`).
+            if self.forced_to_cpu {
+                let shadow = self
+                    .cpu_shadow
+                    .as_mut()
+                    .expect("forced_to_cpu=true requires cpu_shadow=Some (set by set_reference)");
+                self.compare_call_count = self.compare_call_count.saturating_add(1);
+                return shadow.compare_with_reference(
+                    dist_r,
+                    dist_g,
+                    dist_b,
+                    padded_width,
+                    width,
+                    height,
+                    diffmap_out,
+                );
+            }
+
             // Strided → tight copy into the per-instance scratch, then
             // upload each plane to its own GPU handle. The inner
             // pipeline adopts the handles; CubeCL refcounts so dropping
@@ -487,9 +680,15 @@ pub(crate) mod gpu {
             // Borrow self.client/self.inner separately — upload_plane
             // borrows &self.client; the inner pipeline call borrows
             // &mut self.inner.
-            let r_h = self.client.create_from_slice(bytemuck::cast_slice::<f32, u8>(s_r));
-            let g_h = self.client.create_from_slice(bytemuck::cast_slice::<f32, u8>(s_g));
-            let b_h = self.client.create_from_slice(bytemuck::cast_slice::<f32, u8>(s_b));
+            let r_h = self
+                .client
+                .create_from_slice(bytemuck::cast_slice::<f32, u8>(s_r));
+            let g_h = self
+                .client
+                .create_from_slice(bytemuck::cast_slice::<f32, u8>(s_g));
+            let b_h = self
+                .client
+                .create_from_slice(bytemuck::cast_slice::<f32, u8>(s_b));
             let result = self
                 .inner
                 .compute_with_reference_from_linear_planes(r_h, g_h, b_h)
@@ -503,14 +702,102 @@ pub(crate) mod gpu {
             let needed = width * height;
             diffmap_out.clear();
             diffmap_out.resize(needed, 0.0);
-            self.inner
-                .copy_diffmap_to(diffmap_out)
-                .map_err(|e| {
-                    crate::error::Error::InvalidInput(format!("GPU butteraugli copy_diffmap: {e}"))
-                })?;
-            Ok(BackendCompareResult {
-                score: result.score as f64,
-            })
+            self.inner.copy_diffmap_to(diffmap_out).map_err(|e| {
+                crate::error::Error::InvalidInput(format!("GPU butteraugli copy_diffmap: {e}"))
+            })?;
+            let gpu_score = result.score as f64;
+
+            // W44-PHASE3-B5b: iter-0 divergence detector. On the FIRST
+            // compare after `set_reference`, also run the shadow CPU
+            // compute and compare scores. If `|gpu - cpu| /
+            // max(|gpu|, |cpu|) > GPU_SCORE_DIVERGENCE_PCT`, flip
+            // `forced_to_cpu` and return the CPU result for this iter
+            // (so the buttloop's first refinement step already uses
+            // the CPU-aligned diffmap, matching what a pure-CPU run
+            // would have done).
+            //
+            // Iter 0 only — the buttloop converges from this point and
+            // a per-iter shadow would 5×-10× wall-cost (defeats the
+            // GPU speedup). On the W44-PHASE3-B5 2/38 divergent cells
+            // the score gap is visible at iter 0 (the gap originates
+            // in the GPU's reduction-tree-order, which is deterministic
+            // per-input — divergence at iter 0 implies divergence at
+            // iter N).
+            //
+            // Cost: ~1 full CPU butteraugli call per cell (only iter 0).
+            // For the 36 non-divergent cells, this adds ~1 CPU compute
+            // to a 2-4 GPU-compute buttloop = ~25-50% bytes-compute
+            // overhead per CELL; encode-wall overhead is much lower
+            // (buttloop is only 20-30% of encode wall; CPU-compute is
+            // only 30-50% of buttloop wall). Net expected: +1.5-3%
+            // encode wall.
+            self.compare_call_count = self.compare_call_count.saturating_add(1);
+            if self.compare_call_count == 1 {
+                if let Some(shadow) = self.cpu_shadow.as_mut() {
+                    // Use a separate scratch buffer for the CPU shadow's
+                    // diffmap so we don't clobber `diffmap_out` if the
+                    // GPU result wins (no divergence case).
+                    let mut shadow_diffmap: alloc::vec::Vec<f32> =
+                        alloc::vec::Vec::with_capacity(width * height);
+                    let cpu_result = shadow.compare_with_reference(
+                        dist_r,
+                        dist_g,
+                        dist_b,
+                        padded_width,
+                        width,
+                        height,
+                        &mut shadow_diffmap,
+                    )?;
+                    let cpu_score = cpu_result.score;
+                    let denom = gpu_score.abs().max(cpu_score.abs()).max(f64::MIN_POSITIVE);
+                    let divergence_pct = ((gpu_score - cpu_score).abs()) / denom;
+                    self.last_divergence_pct = Some(divergence_pct);
+                    let debug_log =
+                        std::env::var("JXL_W44_PHASE3_B5B_DEBUG").ok().as_deref() == Some("1");
+                    let trip = divergence_pct > super::GPU_SCORE_DIVERGENCE_PCT;
+                    // Record into the process-global counters so bench
+                    // harnesses can aggregate per-cell observations.
+                    super::b5b_counters::record(divergence_pct, trip);
+                    if trip {
+                        self.forced_to_cpu = true;
+                        if debug_log {
+                            eprintln!(
+                                "[W44-PHASE3-B5b] DIVERGENCE @ {}×{}: gpu={:.6} cpu={:.6} \
+                                 delta_pct={:.4}% > threshold={:.4}% → FALLBACK TO CPU \
+                                 for remainder of cell",
+                                self.width,
+                                self.height,
+                                gpu_score,
+                                cpu_score,
+                                divergence_pct * 100.0,
+                                super::GPU_SCORE_DIVERGENCE_PCT * 100.0,
+                            );
+                        }
+                        // Return the CPU result for THIS iter — buttloop's
+                        // first refinement step uses the CPU-aligned diffmap.
+                        *diffmap_out = shadow_diffmap;
+                        return Ok(cpu_result);
+                    } else if debug_log {
+                        eprintln!(
+                            "[W44-PHASE3-B5b] OK @ {}×{}: gpu={:.6} cpu={:.6} \
+                             delta_pct={:.4}% ≤ threshold={:.4}% → CONTINUE WITH GPU",
+                            self.width,
+                            self.height,
+                            gpu_score,
+                            cpu_score,
+                            divergence_pct * 100.0,
+                            super::GPU_SCORE_DIVERGENCE_PCT * 100.0,
+                        );
+                    }
+                }
+            }
+
+            Ok(BackendCompareResult { score: gpu_score })
+        }
+
+        fn divergence_status(&self) -> Option<(f64, bool)> {
+            self.last_divergence_pct
+                .map(|pct| (pct, self.forced_to_cpu))
         }
     }
 
@@ -548,8 +835,7 @@ pub(crate) mod gpu {
     /// **Dead since W44-phase3-B4** — retained as documentation +
     /// quick-revert path. See module-level comment.
     #[allow(dead_code)]
-    static LIN_TO_SRGB_LUT: once_cell::race::OnceBox<[u8; 8193]> =
-        once_cell::race::OnceBox::new();
+    static LIN_TO_SRGB_LUT: once_cell::race::OnceBox<[u8; 8193]> = once_cell::race::OnceBox::new();
 
     #[allow(dead_code)]
     fn build_lut() -> alloc::boxed::Box<[u8; 8193]> {
@@ -652,7 +938,26 @@ pub(crate) fn construct_backend(
                     width, height
                 );
             }
-            if let Some(g) = gpu::GpuButteraugliBackend::try_new(width, height, intensity_target) {
+            // W44-PHASE3-B5b: if the detector env var is set, also
+            // clone the cpu_params so the GPU backend can construct a
+            // CPU shadow for the iter-0 divergence check. Default
+            // (env unset) → `None` → no shadow → behaves exactly like
+            // pre-W44-PHASE3-B5b.
+            let detector_enabled = std::env::var(W44_PHASE3_B5B_ENV).ok().as_deref() == Some("1");
+            let shadow_params = if detector_enabled {
+                Some(cpu_params.clone())
+            } else {
+                None
+            };
+            if debug_log && detector_enabled {
+                eprintln!(
+                    "[W44-PHASE3-B5b] detector ENABLED via {}=1 — shadow CPU will be built",
+                    W44_PHASE3_B5B_ENV
+                );
+            }
+            if let Some(g) =
+                gpu::GpuButteraugliBackend::try_new(width, height, intensity_target, shadow_params)
+            {
                 if debug_log {
                     eprintln!("[W44-phase3-B1] GPU backend ACTIVE @ {}×{}", width, height);
                 }
@@ -787,5 +1092,65 @@ mod tests {
         let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
         let backend = construct_backend(64, 64, params, 80.0, false);
         assert_eq!(backend.name(), "cpu");
+    }
+
+    /// W44-PHASE3-B5b: CPU backend never reports divergence (the
+    /// detector is GPU-only — CPU is the reference).
+    #[test]
+    fn cpu_backend_divergence_status_always_none() {
+        let w = 32usize;
+        let h = 32usize;
+        let n = w * h;
+        let r = alloc::vec![0.5f32; n];
+        let g = alloc::vec![0.5f32; n];
+        let b = alloc::vec![0.5f32; n];
+        let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
+        let mut backend = CpuButteraugliBackend::new(params);
+        backend.set_reference(&r, &g, &b, w, h).unwrap();
+        let mut diffmap = alloc::vec::Vec::new();
+        let _ = backend
+            .compare_with_reference(&r, &g, &b, w, w, h, &mut diffmap)
+            .unwrap();
+        // Trait default impl returns None.
+        assert!(backend.divergence_status().is_none());
+    }
+
+    /// W44-PHASE3-B5b: counters reset works and exposes zero state.
+    #[cfg(feature = "gpu-butteraugli")]
+    #[test]
+    fn b5b_counters_reset_zero_state() {
+        super::b5b_counters::reset();
+        let snap = super::b5b_counters::snapshot();
+        assert_eq!(snap.run_count, 0);
+        assert_eq!(snap.fallback_count, 0);
+        assert_eq!(snap.divergence_pct_sum, 0.0);
+        assert_eq!(snap.divergence_pct_max, 0.0);
+    }
+
+    /// W44-PHASE3-B5b: counters record + snapshot round-trip.
+    #[cfg(feature = "gpu-butteraugli")]
+    #[test]
+    fn b5b_counters_record_round_trip() {
+        super::b5b_counters::reset();
+        // 3 observations: 0.001 (no trip), 0.003 (no trip), 0.010 (trip)
+        super::b5b_counters::record(0.001, false);
+        super::b5b_counters::record(0.003, false);
+        super::b5b_counters::record(0.010, true);
+        let snap = super::b5b_counters::snapshot();
+        assert_eq!(snap.run_count, 3);
+        assert_eq!(snap.fallback_count, 1);
+        // Sum: 0.001 + 0.003 + 0.010 = 0.014
+        assert!((snap.divergence_pct_sum - 0.014).abs() < 1e-6);
+        // Max: 0.010
+        assert!((snap.divergence_pct_max - 0.010).abs() < 1e-6);
+        super::b5b_counters::reset();
+    }
+
+    /// W44-PHASE3-B5b: the threshold constant is the documented 0.5%.
+    #[cfg(feature = "gpu-butteraugli")]
+    #[test]
+    fn b5b_threshold_constant_is_0_5_pct() {
+        assert!((super::GPU_SCORE_DIVERGENCE_PCT - 0.005).abs() < f64::EPSILON);
+        assert_eq!(super::W44_PHASE3_B5B_ENV, "JXL_W44_PHASE3_B5B_DETECTOR");
     }
 }
