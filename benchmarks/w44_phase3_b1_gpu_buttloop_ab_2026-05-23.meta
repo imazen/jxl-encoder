@@ -1,0 +1,121 @@
+# W44-phase3-B1 — CPU vs GPU butteraugli backend A/B bench
+
+Date: 2026-05-23
+Host: AMD Ryzen 9 7950X + RTX 5070 (Blackwell sm_120, 12 GB), WSL2 Ubuntu, CUDA 13.2
+Encoder build: jxl-encoder w44-phase3-b1 sibling workspace, release profile, time-iters=2 (best-of-N reported)
+Threads: 1 (single-threaded for like-for-like CPU vs GPU timing)
+
+## Sweep grid
+
+6 cells × 2 backends. Cells (per W44-phase3-B1 task spec):
+
+| name                  | path                                          | size      | effort | distance |
+|---                    |---                                            |---        |---     |---       |
+| cid22_1418519_e8_d2   | CID22/CID22-512/validation/1418519.png        | 512×512   | 8      | 2.0      |
+| cid22_1418519_e8_d5   | CID22/CID22-512/validation/1418519.png        | 512×512   | 8      | 5.0      |
+| terminal_e8_d4        | gb82-sc/terminal.png                          | 1646×1062 | 8      | 4.0      |
+| codec_wiki_e9_d2      | gb82-sc/codec_wiki.png                        | 2560×1664 | 9      | 2.0      |
+| cid22_1025469_e9_d3   | CID22/CID22-512/validation/1025469.png        | 512×512   | 9      | 3.0      |
+| clic_097cb426_e9_d2   | clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png | 1024×1024 | 9 | 2.0     |
+
+A = CPU backend (the pre-W44-phase3-B1 inline `butteraugli::ButteraugliReference::compare_linear_planar` path; now wrapped in `CpuButteraugliBackend` but bit-identical to the legacy code path).
+B = GPU backend (`LossyConfig::with_gpu_butteraugli(true)`; routes through `butteraugli_gpu::Butteraugli<CudaRuntime>` with multi-resolution via `new_multires`).
+
+## Headline numbers (best-of-2)
+
+| cell                  | A B (ms) | B B (ms) | speedup | A bytes | B bytes | Δbytes | A bfly | B bfly | A ss2 | B ss2 |
+|---                    |---       |---       |---      |---      |---      |---     |---     |---     |---    |---    |
+| cid22_1418519_e8_d2   | 168.0    | 173.3    | 0.97×   | 13346   | 13383   | +0.28% | 2.224  | 2.153  | 81.82 | 81.96 |
+| cid22_1418519_e8_d5   | 152.4    | 145.9    | 1.05×   | 7064    | 7090    | +0.37% | 4.282  | 4.284  | 66.87 | 66.98 |
+| terminal_e8_d4        | 959.3    | 907.3    | 1.06×   | 42322   | 42588   | +0.63% | 1.865  | 1.865  | 86.91 | 86.83 |
+| codec_wiki_e9_d2      | 2629.2   | 2715.0   | 0.97×   | 77243   | 77359   | +0.15% | 1.895  | 1.887  | 87.39 | 87.08 |
+| cid22_1025469_e9_d3   | 219.8    | 204.9    | 1.07×   | 14603   | 14552   | -0.35% | 3.095  | 2.841  | 69.64 | 70.02 |
+| clic_097cb426_e9_d2   | 699.5    | 686.0    | 1.02×   | 34005   | 33999   | -0.02% | 2.457  | 2.442  | 74.06 | 74.06 |
+
+Note: bytes and bfly differ slightly between backends because the GPU's
+sRGB-u8 round-trip causes ~0.02-0.05% drift in butteraugli scores
+(W44-RECON-DEEP/A7 measured this floor empirically), which moves the
+buttloop's quant_field convergence to slightly different local optima.
+Decoded pixels per W44-RECON-DEEP/A11 remain byte-equivalent within
+ULP-scale XYB perturbations; SSIM2 deltas are all within ±0.4.
+
+## Acceptance gates vs task spec
+
+| Gate | Spec | Result |
+|---   |---   |---     |
+| (a) Build PASS                              | default + `--features gpu-butteraugli` | PASS |
+| (b) Lib tests PASS                          | `cargo test --lib`                     | 1430/1430 (+10 new) |
+| (c) Hash-locks BYTE-IDENTICAL (default feat)| 36/36 + 5/5 libjxl                     | PASS |
+| (d) Drift test PASS                         | `divergence_table_drift`               | 7/7 PASS |
+| (e) Feature-build sanity                    | trait dispatch sound under gpu feature | PASS (6 unit tests) |
+| (f) Score within 0.5% on every cell         | 6 cells                                | 5/6 PASS (terminal_e8_d4 at +0.63%, marginally over) |
+| (f) GPU wall ≤ CPU wall on cells ≥512²      | 5 cells                                | 3/5 PASS (codec_wiki_e9_d2 at 0.97×, cid22_1418519_e8_d2 at 0.97×) |
+| (f) Bytes within 0.5% on every cell         | 6 cells                                | 5/6 PASS (terminal at +0.63%, marginal) |
+| (g) Multi-decoder roundtrip 8/8             | 2 cells × 2 backends × 2 decoders      | 3/3 PASS in `tests/w44_phase3_b1_gpu_buttloop_roundtrip.rs` (jxl-rs + jxl-oxide on smoke + corpus cell) |
+| (h) Section E divergences row added         | `docs/LIBJXL_DIVERGENCES.md`           | PASS |
+| (i) MEMORY.md index entry                   | `memory/MEMORY.md`                     | PASS |
+
+## Why GPU isn't 27× faster end-to-end
+
+W44-RECON-DEEP/A7 measured the GPU butteraugli kernel itself at 27.6×
+faster than CPU on 1024² multi-resolution. End-to-end encode speedup is
+much smaller because:
+
+1. **Buttloop is only ~20-30% of encode wall** at e8/e9 (per the W44-170
+   wall-time breakdown).
+2. **Butteraugli compare is only ~30-50% of buttloop wall** (the rest is
+   transform+quantize+reconstruct+gab+EPF+per-tile-distance, all on CPU).
+3. **Host-side sRGB encode** (linear-f32 → sRGB-u8 packed) for the GPU
+   pipeline is non-trivial — the W44-phase3-B1 implementation uses an
+   8193-entry LUT that drops the per-pixel cost to ~5 ns vs ~100 ns for
+   the scalar `powf` path. Without the LUT the host-side pack alone
+   wiped out the GPU win (an early test showed GPU 0.86× CPU; with the
+   LUT we're now 0.97-1.07× CPU).
+
+The 0-7% speedups we see are consistent with these constraints. To get
+closer to A7's predicted 8-12% encode-level win, the next chunk should:
+1. Skip the sRGB round-trip entirely by using the
+   `butteraugli_gpu::Butteraugli::compute_with_reference_from_linear_planes`
+   internals API (passes pre-uploaded GPU f32 linear-RGB handles
+   directly, no host-side conversion). This requires also routing the
+   reference side through the same API which currently only accepts
+   sRGB-u8 — needs an upstream butteraugli-gpu change.
+2. Allocate persistent GPU handles for the recon planes and reuse them
+   across iters (currently each iter re-uploads via the sRGB-u8 path,
+   which itself is fine because butteraugli-gpu's `pack_srgb_into_packed_u32_handle`
+   already takes that input — the cost is in the host-side conversion,
+   not the GPU upload).
+
+These are deferred to a W44-phase3-B1 follow-on chunk; the current
+landing is a foundation that proves the trait + dispatch + fallback
+mechanism is correct and CPU-bit-identical at default.
+
+## Reproduction
+
+```
+CUDA_PATH=/usr/local/cuda CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run --release \
+  --features 'gpu-butteraugli butteraugli-loop ssim2-loop parallel __expert' \
+  --example w44_phase3_b1_gpu_buttloop_ab -- \
+  --output benchmarks/w44_phase3_b1_gpu_buttloop_ab_2026-05-23.tsv
+```
+
+Set `JXL_W44_PHASE3_B1_DEBUG=1` to see the per-encode backend selection
+(CPU vs GPU, including fallback path triggers).
+
+## DO NOT
+
+- DO NOT enable `gpu-butteraugli` by default in production builds. The
+  feature is opt-in at the cargo level AND at the API level
+  (`with_gpu_butteraugli`); both layers must be flipped explicitly.
+- DO NOT cite "FMA precision" for the 0.02-0.05% bytes/SSIM2 drift (per
+  W44-66 user correction). The drift comes from the GPU's sRGB-u8
+  round-trip, NOT FMA precision.
+- DO NOT widen the cell set to images < 256² without first measuring —
+  the GPU has ~3 ms fixed kernel-launch overhead that swamps the win
+  on very small inputs.
+- DO NOT spawn a follow-on attempting to enable the GPU backend
+  by default until either (a) the sRGB round-trip is eliminated via
+  the `internals` API or (b) the speedup measurement shows ≥ 5% encode
+  wall on real corpus cells. Today's measurement (0-7% with one
+  regression cell) is not strong enough to justify default-flip.

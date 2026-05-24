@@ -75,7 +75,19 @@ zenjpeg = { path = "../zenjpeg/zenjpeg" }
 # Lock-Zenjxl regression-gate consume the latest unpublished fixes. Per user
 # direction 2026-05-23: "we should be using the local butteraugli and
 # butteraugli-gpu not cratesio".
-# butteraugli-gpu (~/work/zen/zenmetrics/crates/butteraugli-gpu) will be
-# added here when a jxl-encoder workspace crate first depends on it; cargo
-# warns on unused patches so we add the line lazily.
 butteraugli = { path = "../../butteraugli/butteraugli" }
+# W44-phase3-B1: GPU butteraugli backend lives in the zenmetrics workspace
+# at `crates/butteraugli-gpu`. `publish = false` so always path-pinned;
+# pulled in via the `gpu-butteraugli` cargo feature in `jxl-encoder/Cargo.toml`.
+butteraugli-gpu = { path = "../zenmetrics/crates/butteraugli-gpu" }
+# cubecl is pinned to the lilith/cubecl `pr/pinned-v0.10.0` revision the
+# zenmetrics workspace uses (matches the cubecl rev butteraugli-gpu is
+# tested against). Required to keep the cubecl version consistent across
+# the dep tree when the `gpu-butteraugli` feature is enabled.
+cubecl = { git = "https://github.com/lilith/cubecl.git", rev = "de2f98573902efe60717cbfc7f8e4f9d630d723e" }
+cubecl-runtime = { git = "https://github.com/lilith/cubecl.git", rev = "de2f98573902efe60717cbfc7f8e4f9d630d723e" }
+cubecl-core = { git = "https://github.com/lilith/cubecl.git", rev = "de2f98573902efe60717cbfc7f8e4f9d630d723e" }
+cubecl-common = { git = "https://github.com/lilith/cubecl.git", rev = "de2f98573902efe60717cbfc7f8e4f9d630d723e" }
+cubecl-ir = { git = "https://github.com/lilith/cubecl.git", rev = "de2f98573902efe60717cbfc7f8e4f9d630d723e" }
+cubecl-cuda = { git = "https://github.com/lilith/cubecl.git", rev = "de2f98573902efe60717cbfc7f8e4f9d630d723e" }
+cubecl-cpu = { git = "https://github.com/lilith/cubecl.git", rev = "de2f98573902efe60717cbfc7f8e4f9d630d723e" }

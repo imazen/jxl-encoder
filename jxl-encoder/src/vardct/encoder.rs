@@ -2007,6 +2007,14 @@ pub struct VarDctEncoder {
     /// Default: [`crate::vardct::hdr_metrics::HdrLoss::Butteraugli`]
     #[cfg(feature = "butteraugli-loop")]
     pub hdr_loss: crate::vardct::hdr_metrics::HdrLoss,
+    /// W44-phase3-B1 opt-in GPU butteraugli backend for the buttloop.
+    /// When `true` AND the `gpu-butteraugli` cargo feature is on AND
+    /// CUDA init succeeds, the buttloop's per-iter compare runs on the
+    /// GPU. Silently falls back to the CPU backend on any of those
+    /// failing. Default `false` keeps every hash-lock byte-identical.
+    /// See [`crate::api::LossyConfig::with_gpu_butteraugli`].
+    #[cfg(feature = "butteraugli-loop")]
+    pub gpu_butteraugli: bool,
     /// Number of SSIM2 quantization loop iterations.
     /// Alternative to butteraugli loop: uses per-block linear RGB RMSE + full-image SSIM2.
     /// Requires the `ssim2-loop` feature.
@@ -2337,6 +2345,10 @@ impl Default for VarDctEncoder {
             // EX-J11 chunk 1: default keeps every hash-lock byte-identical.
             #[cfg(feature = "butteraugli-loop")]
             hdr_loss: crate::vardct::hdr_metrics::HdrLoss::Butteraugli,
+            // W44-phase3-B1: GPU butteraugli backend defaults off; LossyConfig
+            // sets it via with_gpu_butteraugli.
+            #[cfg(feature = "butteraugli-loop")]
+            gpu_butteraugli: false,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]
@@ -2432,6 +2444,10 @@ impl VarDctEncoder {
             // EX-J11 chunk 1: default keeps every hash-lock byte-identical.
             #[cfg(feature = "butteraugli-loop")]
             hdr_loss: crate::vardct::hdr_metrics::HdrLoss::Butteraugli,
+            // W44-phase3-B1: GPU butteraugli backend defaults off; LossyConfig
+            // sets it via with_gpu_butteraugli.
+            #[cfg(feature = "butteraugli-loop")]
+            gpu_butteraugli: false,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]
