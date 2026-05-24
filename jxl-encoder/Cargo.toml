@@ -2341,5 +2341,10 @@ path = "examples/w44_t2a_dc_cfl_probe.rs"
 name = "t1_input_pipeline_probe"
 path = "examples/t1_input_pipeline_probe.rs"
 required-features = ["butteraugli-loop"]
+
+[[example]]
+name = "w44_phase3_b7_buffer_recycling_ab"
+path = "examples/w44_phase3_b7_buffer_recycling_ab.rs"
+required-features = ["__expert", "butteraugli-loop", "parallel"]
 [lints]
 workspace = true

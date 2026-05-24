@@ -2057,6 +2057,13 @@ impl VarDctEncoder {
         // unless every seed failed.
         let mut last_score: f64 = f64::INFINITY;
 
+        // B7a (W44-phase3-B7, 2026-05-23): persistent diffmap Vec reused
+        // across iters. The CPU + GPU backends fill this in-place via
+        // `compare_with_reference`'s `diffmap_out` parameter, eliminating
+        // the ~width*height*4 B/iter fresh allocation the prior
+        // `BackendCompareResult { diffmap: Vec<f32> }` path produced.
+        let mut diffmap_vec: alloc::vec::Vec<f32> = alloc::vec::Vec::new();
+
         // Loop runs iters+1 times (matching libjxl: last iteration is compare-only).
         // i=0..iters-1: SetQuantField + roundtrip + compare + adjust
         // i=iters: SetQuantField + roundtrip + compare + break
@@ -2325,12 +2332,17 @@ impl VarDctEncoder {
             //    planar planes through the multi-scale CSF pyramid in
             //    [`super::hdr_vdp2_lite::compare_vdp2_planar`].
             //
-            // Both metrics return `(score: f64, diffmap: Vec<f32>)` sized to
-            // the logical `width × height` extent. On compare failure (rare —
-            // typically NaN inputs the reconstruction shouldn't produce) we
-            // bail out with the previous iter's score so the picker prefers
-            // any seed that converged.
-            let (iter_score, diffmap_vec): (f64, alloc::vec::Vec<f32>) = if use_vdp2 {
+            // Both metrics produce `score: f64` and a per-pixel `diffmap`
+            // sized to the logical `width × height` extent. On compare
+            // failure (rare — typically NaN inputs the reconstruction
+            // shouldn't produce) we bail out with the previous iter's score
+            // so the picker prefers any seed that converged.
+            //
+            // B7a (2026-05-23): `diffmap_vec` is hoisted outside the iter
+            // loop and reused across iters via `&mut diffmap_vec`. The CPU
+            // backend's `compare_linear_planar_into` writes into it
+            // directly; the GPU backend resizes and overwrites.
+            let iter_score: f64 = if use_vdp2 {
                 match super::hdr_vdp2_lite::compare_vdp2_planar(
                     ref_r,
                     ref_g,
@@ -2343,7 +2355,13 @@ impl VarDctEncoder {
                     padded_width,
                     vdp2_intensity_target,
                 ) {
-                    Ok(r) => (r.score, r.diffmap),
+                    Ok(r) => {
+                        // VDP2-lite still returns its own owned Vec; move it
+                        // into the persistent buffer to preserve the same
+                        // shape downstream.
+                        diffmap_vec = r.diffmap;
+                        r.score
+                    }
                     Err(_) => {
                         let mean_qf = mean_qf_float(quant_field_float);
                         return Ok(SeedOutcome {
@@ -2359,8 +2377,9 @@ impl VarDctEncoder {
             } else {
                 // W44-phase3-B1: dispatch to the pluggable backend trait.
                 // The CPU backend wraps the same
-                // `ButteraugliReference::compare_linear_planar` call used
-                // pre-W44-phase3-B1; the GPU backend (opt-in) wraps
+                // `ButteraugliReference::compare_linear_planar_into` call
+                // (B7a: now buffer-recycling) used pre-W44-phase3-B1; the
+                // GPU backend (opt-in) wraps
                 // `butteraugli_gpu::Butteraugli<CudaRuntime>::compute_with_reference`.
                 let bref = backend.as_deref_mut().expect(
                     "non-VDP2 path must carry a butteraugli backend (top-level invariant)",
@@ -2372,6 +2391,7 @@ impl VarDctEncoder {
                     padded_width,
                     width,
                     height,
+                    &mut diffmap_vec,
                 ) {
                     Ok(r) => r,
                     Err(_) => {
@@ -2386,7 +2406,7 @@ impl VarDctEncoder {
                         });
                     }
                 };
-                (result.score, result.diffmap)
+                result.score
             };
 
             // Record metric score for the picker (rewritten every iter;

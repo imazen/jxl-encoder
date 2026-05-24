@@ -42,19 +42,14 @@ use alloc::format;
 use crate::error::Result;
 
 /// Result of one butteraugli comparison: aggregated max-norm score over the
-/// linear-RGB plane diff, and a per-pixel diffmap the buttloop uses to derive
-/// per-block tile distances. Mirrors the subset of
-/// `butteraugli::ButteraugliResult` the buttloop consumes.
+/// linear-RGB plane diff. The diffmap itself is written into a caller-owned
+/// `Vec<f32>` by [`ButteraugliBackend::compare_with_reference`], so it can be
+/// recycled across iterations (W44-phase3-B7a, 2026-05-23).
 #[derive(Debug)]
 pub(crate) struct BackendCompareResult {
     /// Max-norm score (the value the libjxl buttloop compares against
     /// `target_distance`). Same units as `butteraugli::ButteraugliResult::score`.
     pub(crate) score: f64,
-    /// Per-pixel diffmap (`width * height` f32 values, row-major contiguous,
-    /// stride == width). The buttloop p-norms this in
-    /// `K_TILE_NORM`-weighted 16th-power blocks to derive per-block tile
-    /// distance. Always populated when `Ok(_)`.
-    pub(crate) diffmap: alloc::vec::Vec<f32>,
 }
 
 /// Pluggable backend for the buttloop's per-iter compare step.
@@ -88,14 +83,18 @@ pub(crate) trait ButteraugliBackend: core::fmt::Debug {
         height: usize,
     ) -> Result<()>;
 
-    /// Compare against the cached reference.
+    /// Compare against the cached reference, writing the diffmap into the
+    /// caller-owned `diffmap_out` buffer (B7a, 2026-05-23). The caller is
+    /// expected to keep this Vec alive across iterations to reuse the
+    /// allocation; the backend resizes/refills it on each call.
     ///
     /// - `dist_r/g/b` are planar linear-RGB f32 with `padded_width` stride;
     ///   the logical extent is `width × height` (read with the buttloop's
     ///   crop convention: `dist_r[y * padded_width + x]` for x in 0..width,
     ///   y in 0..height).
-    /// - Returns a [`BackendCompareResult`] with the score + diffmap. The
-    ///   diffmap is sized to the logical extent (`width * height`).
+    /// - On success, `diffmap_out.len() == width * height` (row-major,
+    ///   stride == width) and the returned [`BackendCompareResult`] carries
+    ///   the max-norm score.
     ///
     /// Must return `Err(_)` only on dimension mismatch or transient GPU
     /// errors the caller should treat as "use the previous iter's score and
@@ -109,6 +108,7 @@ pub(crate) trait ButteraugliBackend: core::fmt::Debug {
         padded_width: usize,
         width: usize,
         height: usize,
+        diffmap_out: &mut alloc::vec::Vec<f32>,
     ) -> Result<BackendCompareResult>;
 }
 
@@ -191,30 +191,49 @@ impl ButteraugliBackend for CpuButteraugliBackend {
         padded_width: usize,
         width: usize,
         height: usize,
+        diffmap_out: &mut alloc::vec::Vec<f32>,
     ) -> Result<BackendCompareResult> {
         let bref = self
             .reference
             .as_ref()
             .ok_or_else(|| crate::error::Error::InvalidInput("CPU backend: no reference".into()))?;
-        let r = bref
-            .compare_linear_planar(dist_r, dist_g, dist_b, padded_width)
+
+        // B7a (2026-05-23): bench-only env hook `JXL_W44_B7_DISABLE=1`
+        // routes through the pre-B7 `compare_linear_planar` + `into_buf`
+        // path that always allocates a fresh `Vec<f32>` per call. Used by
+        // `examples/w44_phase3_b7_buffer_recycling_ab.rs` to produce a
+        // paired A/B against the production buffer-recycling path. Default
+        // (env unset) uses the new `_into` API.
+        if std::env::var_os("JXL_W44_B7_DISABLE").is_some() {
+            let r = bref
+                .compare_linear_planar(dist_r, dist_g, dist_b, padded_width)
+                .map_err(|e| {
+                    crate::error::Error::InvalidInput(format!("butteraugli compare: {e}"))
+                })?;
+            let dm = r.diffmap.ok_or_else(|| {
+                crate::error::Error::InvalidInput(
+                    "CPU backend: butteraugli returned no diffmap despite compute_diffmap=true"
+                        .into(),
+                )
+            })?;
+            let buf = dm.into_buf();
+            debug_assert_eq!(buf.len(), width * height);
+            *diffmap_out = buf;
+            let _ = (width, height);
+            return Ok(BackendCompareResult { score: r.score });
+        }
+
+        // Production path: `compare_linear_planar_into` recycles the
+        // diffmap backing allocation via the `ButteraugliReference`'s
+        // persistent pool, and fills the caller-owned `diffmap_out` Vec —
+        // eliminating the per-iter `width*height*4 B` allocation that the
+        // prior `compare_linear_planar` → `into_buf` path produced.
+        let (score, _pnorm_3) = bref
+            .compare_linear_planar_into(dist_r, dist_g, dist_b, padded_width, diffmap_out)
             .map_err(|e| crate::error::Error::InvalidInput(format!("butteraugli compare: {e}")))?;
-        // ButteraugliResult.diffmap is always Some(_) because we set
-        // `compute_diffmap = true` in `params`. On the impossible None branch
-        // we fail loudly so a downstream caller doesn't silently get an
-        // empty diffmap.
-        let dm = r.diffmap.ok_or_else(|| {
-            crate::error::Error::InvalidInput(
-                "CPU backend: butteraugli returned no diffmap despite compute_diffmap=true"
-                    .into(),
-            )
-        })?;
-        debug_assert_eq!(dm.buf().len(), width * height);
+        debug_assert_eq!(diffmap_out.len(), width * height);
         let _ = (width, height);
-        Ok(BackendCompareResult {
-            score: r.score,
-            diffmap: dm.into_buf(),
-        })
+        Ok(BackendCompareResult { score })
     }
 }
 
@@ -449,6 +468,7 @@ pub(crate) mod gpu {
             padded_width: usize,
             width: usize,
             height: usize,
+            diffmap_out: &mut alloc::vec::Vec<f32>,
         ) -> Result<BackendCompareResult> {
             if width as u32 != self.width || height as u32 != self.height {
                 return Err(crate::error::Error::InvalidInput(format!(
@@ -478,15 +498,18 @@ pub(crate) mod gpu {
                         "GPU butteraugli compute_with_reference_from_linear_planes: {e}"
                     ))
                 })?;
-            let mut diffmap = alloc::vec![0.0f32; width * height];
+            // B7a (2026-05-23): write into caller-owned Vec to recycle the
+            // diffmap allocation across iters.
+            let needed = width * height;
+            diffmap_out.clear();
+            diffmap_out.resize(needed, 0.0);
             self.inner
-                .copy_diffmap_to(&mut diffmap)
+                .copy_diffmap_to(diffmap_out)
                 .map_err(|e| {
                     crate::error::Error::InvalidInput(format!("GPU butteraugli copy_diffmap: {e}"))
                 })?;
             Ok(BackendCompareResult {
                 score: result.score as f64,
-                diffmap,
             })
         }
     }
@@ -678,15 +701,16 @@ mod tests {
         let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
         let mut backend = CpuButteraugliBackend::new(params);
         backend.set_reference(&r, &g, &b, w, h).unwrap();
+        let mut diffmap = alloc::vec::Vec::new();
         let result = backend
-            .compare_with_reference(&r, &g, &b, w, w, h)
+            .compare_with_reference(&r, &g, &b, w, w, h, &mut diffmap)
             .unwrap();
         assert!(
             result.score < 1e-4,
             "identical images should score ~0, got {}",
             result.score
         );
-        assert_eq!(result.diffmap.len(), n);
+        assert_eq!(diffmap.len(), n);
     }
 
     /// Smoke: CPU backend produces non-zero diffmap on perturbed input,
@@ -710,16 +734,45 @@ mod tests {
         let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
         let mut backend = CpuButteraugliBackend::new(params);
         backend.set_reference(&r, &g, &b, w, h).unwrap();
+        let mut diffmap = alloc::vec::Vec::new();
         let result = backend
-            .compare_with_reference(&r2, &g, &b, w, w, h)
+            .compare_with_reference(&r2, &g, &b, w, w, h, &mut diffmap)
             .unwrap();
-        assert_eq!(result.diffmap.len(), n);
+        assert_eq!(diffmap.len(), n);
         // Sanity — perturbation should produce a clearly non-zero score.
         assert!(
             result.score > 0.01,
             "perturbed image should score > 0.01, got {}",
             result.score
         );
+    }
+
+    /// B7a regression: calling compare_with_reference twice on the same
+    /// backend must reuse the caller-owned diffmap Vec across calls
+    /// (capacity should not grow between iters).
+    #[test]
+    fn cpu_backend_diffmap_recycles_across_calls() {
+        let w = 32usize;
+        let h = 32usize;
+        let n = w * h;
+        let r = alloc::vec![0.5f32; n];
+        let g = alloc::vec![0.5f32; n];
+        let b = alloc::vec![0.5f32; n];
+        let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
+        let mut backend = CpuButteraugliBackend::new(params);
+        backend.set_reference(&r, &g, &b, w, h).unwrap();
+        let mut diffmap = alloc::vec::Vec::new();
+        let _ = backend
+            .compare_with_reference(&r, &g, &b, w, w, h, &mut diffmap)
+            .unwrap();
+        let cap_after_first = diffmap.capacity();
+        assert!(cap_after_first >= n);
+        let _ = backend
+            .compare_with_reference(&r, &g, &b, w, w, h, &mut diffmap)
+            .unwrap();
+        // Second call must not grow the buffer.
+        assert_eq!(diffmap.capacity(), cap_after_first);
+        assert_eq!(diffmap.len(), n);
     }
 
     #[test]
