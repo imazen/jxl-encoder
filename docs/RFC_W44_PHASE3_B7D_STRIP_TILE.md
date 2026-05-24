@@ -815,8 +815,37 @@ Day 5 / Day 6 gates fail. The chunk-level acceptance gates:
   no bottom-halo at row 16 of a 32-row image), strided input (37×33, stride=48,
   forces SIMD-scalar tail), and `w_0gt1==0 && w_0lt1==0` short-circuit
   preservation. All assertions to_bits-equal.
-- [ ] **Day 4**: `separate_frequencies_strip` + `apply_mask_correction_precomputed_strip` +
-  `combine_channels_to_diffmap_fused_strip` per-kernel parity tests PASS
+- [x] **Day 4**: strip-tiled `separate_frequencies` chain + `PsychoImage::strip_view`
+  + per-pixel psycho + mask kernels per-kernel parity tests PASS (butteraugli
+  `3bb4dea6`, 2026-05-24). Adds 30 new unit tests (butteraugli lib 120 → 150).
+  Phase 1: `Image3F::strip_view` / `strip_view_mut` + `Image3FStripView` +
+  `Image3FStripViewMut` (3-channel mirror of Day 1's ImageF API) + 7 parity
+  tests. Phase 2: `separate_frequencies_halo()` = 16+7+3 = **26** (the SUM
+  of per-stage halos because the cascade has non-linear transforms between
+  blurs — NOT the max-of-halos as initially hypothesized) + scratch-delegated
+  `separate_frequencies_strip` orchestrator. Phase 3: 12 per-pixel strip
+  kernels — `xyb_low_freq_to_vals_strip`, `suppress_x_by_y_strip`,
+  `apply_remove_range_strip`, `apply_amplify_range_strip`,
+  `subtract_images_strip`, `process_uhf_hf_x_strip`, `process_uhf_hf_y_strip`,
+  `combine_channels_for_masking_strip`, `diff_precompute_strip`,
+  `accumulate_mask_to_error_strip`, `apply_masking_strip` (all halo=0,
+  pointwise), `fuzzy_erosion_strip` (halo=3, bounded K=3 dilation, tiles
+  cleanly — confirmed NOT recursive). Implementation pattern: copy strip
+  rows into pooled scratch ImageF, call the existing
+  `#[archmage::autoversion]` full-image kernel on the scratch, copy back —
+  guarantees byte-identical output on every SIMD tier (AVX-512 / AVX2 /
+  NEON / WASM-SIMD / scalar). The first impl draft reimplemented the
+  arithmetic inline and diverged from the SIMD path by 1+ ULP on
+  `fuzzy_erosion` / `process_uhf_hf_y`; scratch-delegation was the
+  byte-identical fix. Phase 4: `PsychoImage::strip_view` returns
+  `PsychoImageStripView` aliasing all 4 bands' rows. **Honest-stop list:
+  ZERO psycho kernels are non-tileable** — fuzzy_erosion has bounded
+  K=3 halo with no top-to-bottom row dependency. The §9.R3 risk
+  callout's "fuzzy_erosion may need full-image context" hypothesis
+  was wrong (verified by reading the C++ port: 8 + 1 store_min3 lookups
+  per pixel, all bounded by ±K). Visibility: 7 psycho.rs functions +
+  1 mask.rs function promoted from `fn` to `pub(crate) fn` so the
+  strip module can delegate.
 - [ ] **Day 5**: `compare_linear_planar_strip_into` end-to-end + 50-image scalar+diffmap
   parity PASS + jxl-encoder hash-locks 36/36 BYTE-IDENTICAL + libjxl byte-locks 4/4 +
   drift 7/7 + W44-164 multi-decoder roundtrip 6/6 PASS
