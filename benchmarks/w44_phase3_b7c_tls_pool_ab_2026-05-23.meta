@@ -1,0 +1,148 @@
+# W44-phase3-B7c — Butteraugli TLS pool vs Mutex pool — HONEST-STOP
+
+## Status
+
+[RULED OUT — measurement shipped, source change reverted on butteraugli/main]
+
+B6 audit ranked B7c as Tier-3 (MED risk, ~2d wall). Implementation went per
+spec; measurement showed +3.6 % wall regression on every cell. Reverted.
+
+## Methodology
+
+Paired interleaved A/B, two separate binaries linked against:
+- **PRE_B7C**: butteraugli `dd12b90f` (the B7a+b parent — Mutex<Vec<Vec<f32>>>)
+- **POST_B7C**: butteraugli `59aeb1a7` (the B7c TLS pool — reverted on main)
+
+Both binaries use the same `jxl-encoder` example
+`w44_phase3_b7c_tls_pool_ab.rs`. Encoder code is identical between the
+two; only the linked butteraugli changes.
+
+Per-binary: 4 cells × 6 timed encode iters at distance=1.0, effort=9,
+default 8-thread rayon pool, on Zen 4 7950X (water-cooled, no thermal
+throttling).
+
+Order: 3 outer ROUNDS alternating launch order (odd rounds PRE first,
+even rounds POST first) to remove run-order bias. Per cell, the
+median of 6 iters is reported; per round, the median of medians
+across PRE / POST is paired.
+
+## Cells
+
+4 random photos from `~/work/codec-corpus/clic2025-1024/`:
+- `02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png`
+- `097cb426910ba8ce2525dd8bb7fb1777.png`
+- `0c49a5cce349020bbba2f97ae41e90ba.png`
+- `11f2b039b293758398b1a7a8afa64bb2.png`
+
+All 1024 × 1024 RGB.
+
+## Acceptance gates
+
+| gate | target | result |
+|---   |---     |---     |
+| (a) Build PASS (default + `gpu-butteraugli`) | clean | PASS (default-features only verified; cubecl deps not available locally) |
+| (b) Lib tests | butteraugli 87+ / jxl-encoder 1477+ | PASS (87 + 1477) |
+| (c) Hash-locks 36/36 + libjxl 4/4 BYTE-IDENTICAL | mandatory | PASS — zero regen needed (pool internals are quantization-neutral) |
+| (d) Drift 7/7 PASS | mandatory | PASS |
+| (e) Multi-decoder roundtrip on 2 cells × 2 decoders | 4/4 | N/A (no encoder change — only butteraugli internal alloc behaviour) |
+| (f) **Wall-time improvement ≥ 1 % on 8-thread runs** | **median improved ≥ 1 %** | **FAIL — +3.6 % REGRESSION** |
+| (g) Single-thread wall ±0.5 % | parity | not measured (gate f already failed at 8 thread) |
+
+## Per-cell results (3-round paired A/B)
+
+| cell           | pre_median_ms | post_median_ms | delta_pct | per-round_pct                |
+|---             |---            |---             |---        |---                           |
+| 02809272b4ca   | 1101.02       | 1142.70        | **+3.79** | +3.79 / +7.01 / +1.39        |
+| 097cb426910b   |  769.81       |  813.77        | **+5.71** | +5.71 / +9.04 / +1.68        |
+| 0c49a5cce349   |  944.20       |  985.98        | **+4.42** | +4.42 / +8.66 / -3.04        |
+| 11f2b039b293   |  868.51       |  872.94        | **+0.51** | +0.51 / +5.67 / -2.90        |
+
+- Overall **median wall delta: +4.11 %** REGRESSION
+- Mean: +3.61 %
+- 0 / 4 cells improved
+- 3 / 4 cells regressed by ≥ 1 %
+
+## Root cause
+
+The TLS architecture INCREASED fresh allocations by segregating buffers
+per worker thread, undoing B7a+b's alloc-count reduction:
+
+- **Shared Mutex pool (pre-B7c)**: 48 globally-shared slots converge to
+  the steady-state working set. Thread A puts a 1 MB buffer → thread B
+  can reuse it on the next iter.
+- **TLS pool (B7c)**: cap 16 / thread × 8 threads = up to 128 slots
+  THEORETICALLY, but per-thread isolation means buffers stay pinned to
+  whichever thread first put them. Thread B that needs a 1 MB buffer
+  thread A holds has to either fall through to the shared overflow OR
+  fresh-allocate. The overflow path is rare because thread A's TLS
+  caps at 16 (so its puts succeed there).
+
+The B6 audit had pegged Mutex contention as the predicted bottleneck.
+Back-of-envelope: ~408 pool ops / encode × ~50 ns / op = ~20 µs of
+Mutex time out of ~900 ms wall = **0.002 %**. The Mutex was never
+the bottleneck. The TLS lookup overhead (`ThreadLocal::get_or` atomic
+load + `RefCell::borrow_mut` runtime check + best-fit scan) plus the
+EXTRA fresh allocations from per-thread segregation outweighed any
+contention savings.
+
+## Why this matters for B7d
+
+B7c is a STRONG signal that pool synchronisation is not the
+wall-time bottleneck in CPU butteraugli. The remaining win lives in
+the data-movement layer:
+
+- Multi-pass pipeline reads/writes 12 MB of XYB to DRAM, then re-reads
+  it 3× for LF/MF/HF blurs (B6 audit, "Cache behaviour" section).
+- Half-res pipeline parallels with full-res via `rayon::join`,
+  doubling the resident working set during the overlap window.
+
+B7d (strip-tile the entire UHF→MF→LF chain so intermediates stay
+L2-resident) is the only remaining B6 candidate that addresses the
+real bottleneck. B6 estimated 30-50 % wall reduction at 1024²+,
+HIGH risk, 5-7 d.
+
+## DO NOT respawn B7c
+
+- The +3.6 % regression is not a tuning artifact: ALL 4 cells regressed
+  in round 1 (when the binary was freshly warm). Variance across rounds
+  (cell #4 ranging -2.9 % to +5.7 %) is run-to-run noise; the central
+  tendency (+4.1 % median, +3.6 % mean) is clearly negative.
+- A different TLS cap (8 instead of 16) would just shift the
+  segregation / overflow balance. The structural problem is that
+  per-thread isolation is the WRONG architecture when the alloc-count
+  reduction is what matters — and B7a+b already achieved that with the
+  Mutex pool.
+- The `iir-blur` pre-existing non-determinism bug (B7a+b memo) is
+  still open; B7c neither caused nor fixed it.
+
+## Reproduction
+
+```bash
+BUTTERAUGLI_PRE_REF=dd12b90f \
+BUTTERAUGLI_POST_REF=59aeb1a7 \
+./scripts/run_w44_phase3_b7c_ab.sh
+```
+
+The bench example `w44_phase3_b7c_tls_pool_ab.rs` is retained in
+`jxl-encoder/examples/` because it works as a generic wall-time probe
+for B7d / future pool-design measurement work — pass `B7C_LABEL=…` to
+tag the output.
+
+## Files
+
+- `benchmarks/w44_phase3_b7c_tls_pool_ab_2026-05-23.tsv` — paired
+  6-iter A/B, 3 rounds × 2 binaries × 4 cells.
+- `benchmarks/w44_phase3_b7c_tls_pool_ab_2026-05-23.meta` — this file.
+- `scripts/run_w44_phase3_b7c_ab.sh` — reproducer driver.
+- `jxl-encoder/examples/w44_phase3_b7c_tls_pool_ab.rs` — bench
+  example (registered, requires `__expert butteraugli-loop parallel`).
+
+## Provenance
+
+- jxl-encoder commit (this chunk): TBD (in this commit)
+- butteraugli pre-B7c commit: `dd12b90f` (B7a+b parent)
+- butteraugli B7c commit (reverted): `59aeb1a7`
+- butteraugli revert commit (B7c removed from main): `aacfe3d4`
+- Hardware: Zen 4 7950X, 128 GB DDR5, water-cooled, 8 rayon worker
+  threads (default).
+- Date: 2026-05-23 (UTC).
