@@ -122,23 +122,51 @@ for BOTH the cvvdp-gpu extension and the cvvdp-cpu port):
    and channel weights from `CvvdpParams`. Output a single `W×H`
    row-major f32 plane.
 
-**Critical invariant** (test in both impls):
+### Invariants (PRACTICAL — Agent A 2026-05-24 honest-stop)
 
-```
-JOD_scalar  ==  10.0 - minkowski_p_norm(diffmap_flat, p = params.beta_sch)
-```
+The original RFC drafted a strict
+`JOD == 10.0 - minkowski_p_norm(diffmap, p = params.beta_sch)`
+invariant. **Agent A's cvvdp-cpu port measured that this strict form
+isn't achievable without restructuring the cvvdp pool order**
+(intermediate per-band/per-channel Minkowski folds don't cleanly
+factor back into a single base-res per-pixel pool — the canonical
+cvvdp algorithm pools per-channel then per-band, not the other way
+round). Per "honest-stop > false completion": ship the looser-but-
+honest invariants and document the strict form as aspirational.
 
-within 1e-5 relative. If they disagree, one of them is wrong.
+**Five PRACTICAL invariants** (every impl MUST hold):
 
-For matched inputs (ref ≡ dist), the diffmap must be all zeros to
-1e-7 absolute (no false-floor).
+1. **Identity → zero**: `diffmap(ref, ref) == 0` to 1e-7 absolute on
+   every pixel.
+2. **Non-negative**: every diffmap pixel is ≥ 0.
+3. **Monotone in distortion**: for two distorted images D1, D2 where
+   D1 differs from ref strictly more than D2 (in any normed sense),
+   `mean(diffmap_D1) ≥ mean(diffmap_D2)`.
+4. **Spatial localization**: a pixel-block perturbation in input
+   produces a diffmap response concentrated near that block (i.e.
+   the diffmap isn't a global average — the buttloop's per-block
+   median/MAD heuristic depends on this).
+5. **Warm-ref invariance**: `score_with_diffmap(ref, dist)` and
+   `warm_reference(ref); score_with_warm_ref_diffmap(dist)` produce
+   the same diffmap byte-for-byte (or within 1e-7 if the warm path
+   takes a different reduction order).
 
-**Reference for upstream**: pycvvdp has a `get_diff_map=True` debug
-flag we can mirror against; the official semantics are documented in
-`Mantiuk et al. 2024`. If our recipe differs from upstream's, this
-RFC's recipe is the contract — the JXL buttloop's per-block heuristic
-was designed against butteraugli's pre-pool spatial signal; we mirror
-that shape.
+These are TESTABLE in both cvvdp-gpu and cvvdp-cpu — match Agent A's
+6 invariant tests in `cvvdp-cpu/tests/diffmap_invariants.rs`.
+
+### Strict invariant (aspirational, deferred)
+
+The original `JOD == 10 - minkowski_p_norm(diffmap)` invariant is a
+strong design property — if it holds, callers can reason about diffmap
+norms == metric scores. Restructuring the cvvdp pool order to
+materialize this is a multi-week chunk; deferred until/unless the
+buttloop integration shows a need.
+
+**Reference for upstream**: pycvvdp v0.5.4 doesn't expose a per-pixel
+diffmap API; this recipe is our extension. Document any further
+divergence from upstream in
+`zenmetrics/crates/cvvdp-gpu/docs/DIFFMAP_DIVERGENCES.md` (or the
+cvvdp-cpu equivalent).
 
 ## §4. Phased ship plan
 
@@ -221,14 +249,17 @@ file documents commit, hostname, methodology.
 
 ### §5.1. Corpus
 
-- **CID22-512** (41 photos held out from training).
-- **GB82-SC** (10 screenshots).
-- **W44-PHASE4-S1 corpus subset** (50 stratified samples from the
-  recent S1 sweep — covers the production-relevant content range).
+- **CID22-512 validation** (41 photos held out from training).
+- **GB82-SC** (11 screenshots).
+- **W44-PHASE4-S1 extras** (2 lossless additions:
+  baby-lossless, bulb-lossless — the rest of S1's 27-image pick
+  overlaps with CID22 + GB82-SC).
 
-Total: 101 images. For each, sweep ⌊distance ∈ {0.5, 1.0, 1.5, 2.0,
-3.0, 4.0, 5.0}⌋ × effort ∈ {5, 7, 8} = 21 cells per image, 2,121
-cells per backend.
+**Actual: 54 distinct images** (per Agent D's measurement 2026-05-24;
+the original RFC's 101-image / 2,121-cell figure was aspirational
+based on a larger intended W44-S1 sample). For each, sweep ⌊distance
+∈ {0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0}⌋ × effort ∈ {5, 7, 8} = 21 cells
+per image, **1,134 cells per backend**.
 
 ### §5.2. Backends to compare
 
