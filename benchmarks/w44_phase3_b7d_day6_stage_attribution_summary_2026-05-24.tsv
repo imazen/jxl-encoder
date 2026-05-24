@@ -1,0 +1,14 @@
+# W44-PHASE3-B7d Day 6 per-stage attribution at 1024x1024 smooth, n=8 (warm skipped)
+#path	stage	n	median_us	min_us	max_us
+full	1_opsin	8	5304.329	4990.877	5911.448
+full	2_separate_freqs	8	16584.001	15861.685	20510.666
+full	3b_add_supersampled	8	247.258	123.984	570.368
+full	3_compute_diffmap	8	13025.641	12236.639	13472.366
+full	4_score	8	700.976	697.338	746.231
+strip	1_opsin	8	5439.527	5154.806	6152.353
+strip	2a_separate_freqs	8	16413.438	15660.424	20348.334
+strip	2b_malta	8	9502.740	8728.285	9849.517
+strip	2c_mask_correction	8	2336.749	2174.231	2861.812
+strip	3b_add_supersampled	8	1057.570	460.461	2839.730
+strip	3_combine_channels_tiled	8	3868.175	3748.007	4092.468
+strip	4_score	8	701.356	698.671	942.312

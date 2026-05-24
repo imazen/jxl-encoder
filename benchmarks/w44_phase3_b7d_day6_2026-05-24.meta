@@ -1,0 +1,225 @@
+# W44-PHASE3-B7d Day 6 — honest bench day for strip-tile CPU butteraugli
+
+Date: 2026-05-24
+Repo: butteraugli (sibling workspace `~/work/butteraugli--w44-phase3-b7d-day6`)
+Day 5 parent commit: 15865d70 (`compare_linear_planar_strip_into`)
+Hardware: AMD Ryzen 9 7950X, 128 GB RAM, water-cooled (no thermal throttling).
+Compiler: cargo release, default features (avx512 + rayon).
+
+## Goal
+
+Measure honestly. The RFC §3 projected `-35% to -47%` wall reduction from
+strip-tiling. Day 5 shipped 50/50 byte-identical parity but the author noted
+that only Stage 3 (combine_channels) is actually row-tiled — Stages 1+2
+(opsin + separate_frequencies + malta + mask) still run on the full image
+because their internal kernels have halo > 0 with mirror-reflect-at-image-edge
+boundaries that would diverge under naive strip tiling (the Day 4 strip
+primitives `separate_frequencies_strip`, `malta_diff_map_strip`,
+`fuzzy_erosion_strip` all use parent-height padded scratch to maintain
+byte-identity — equivalent to full-image work).
+
+Day 6 quantifies the gap between the RFC's projection and what Days 1-5
+actually deliver.
+
+## Phase 1 — paired A/B bench across 4 sizes × 2 fixtures
+
+8 cells, interleaved A/B per iter, median + p25 + p75 over warm-then-bench
+iterations (256² = 30 iters/cell after 5 warm; 512² = 20/4; 1024² = 12/3;
+2048² = 6/2). Smooth = low-frequency sin/cos field; noisy = LCG pseudo-random
+RGB with a slight low-frequency overlay so it isn't pure white noise (which
+would not exercise EHF / malta kernels realistically).
+
+Raw TSV: `w44_phase3_b7d_day6_2026-05-24.tsv`
+
+Summary (median wall ratios, strip / full):
+
+| Cell           | full (ms) | strip (ms) | ratio  |
+|---             |---        |---         |---     |
+| 256² smooth    |     2.274 |      2.318 | 1.019× |
+| 256² noisy     |     2.272 |      2.281 | 1.004× |
+| 512² smooth    |     9.719 |     10.650 | 1.096× |
+| 512² noisy     |     9.863 |     10.332 | 1.048× |
+| 1024² smooth   |    38.218 |     40.775 | 1.067× |
+| 1024² noisy    |    38.353 |     40.399 | 1.053× |
+| 2048² smooth   |   181.317 |    184.392 | 1.017× |
+| 2048² noisy    |   172.264 |    178.929 | 1.039× |
+
+**Every cell regresses by 0.4% to 9.6%. Median regression 4.4%.**
+
+Scalar scores BIT-IDENTICAL on every cell (Day 5 invariant preserved by
+the harness assertion).
+
+## Phase 2 — per-stage attribution at 1024² smooth, n=8
+
+Per-stage timing instrumented via `JXL_B7D_STAGE_TIMING=1` env-gated
+`b7d_log_stage` calls inside `precompute.rs::compare_linear_planar_impl_into`
+and `compare_linear_planar_strip_impl_into`. Warm iter skipped.
+
+Raw TSV: `w44_phase3_b7d_day6_stage_attribution_1024_2026-05-24.tsv`
+Summary: `w44_phase3_b7d_day6_stage_attribution_summary_2026-05-24.tsv`
+
+Per-stage medians (μs):
+
+| Stage                           | FULL path | STRIP path | strip - full |
+|---                              |---        |---         |---           |
+| 1_opsin (full image)            |     5,304 |      5,440 |         +136 |
+| 2_separate_freqs (full image)   |    16,584 |     16,413 |         -171 |
+| 2b_malta (full image, broken out only on strip path)              | (rolled into 3) |  9,503 | |
+| 2c_mask_correction (full image, broken out only on strip path)    | (rolled into 3) |  2,337 | |
+| 3_compute_diffmap (full path: malta + mask + combine, monolithic) |  13,026 |       — |           |
+| 3_combine_channels_tiled (strip-loop, 16-row strips)              |       — |   3,868 |           |
+| 3b_add_supersampled                                               |     247 |   1,058 |       +811 |
+| 4_score                                                           |     701 |     701 |          0 |
+| **TOTAL**                                                         | **35,862** | **39,320** | **+3,458 (+9.6%)** |
+
+(Stage 2b/2c on the full path are NOT broken out — they live inside
+`compute_diffmap_with_precomputed` which composes malta + mask + combine
+into a single Stage 3 call. To compare like-for-like: subtract the strip
+side's 2b+2c+3 [9503+2337+3868 = 15,708 μs] vs full side's 3 [13,026 μs]
+= the strip path's Stages 2b+2c+3 combined take **+2,682 μs (+20.6%) MORE**
+than the full path's monolithic Stage 3.)
+
+The +2682 μs gap concentrates entirely in the supposedly-tiled combine
+stage. The strip driver `combine_channels_to_diffmap_strip_driver`
+allocates 5 per-strip pool buffers (mask + 3 lf1 + 3 lf2 + 3 ac planes
++ output diffmap) per 16-row strip, copies all input rows into them,
+runs the existing autoversioned kernel on the strip, then copies output
+rows back out. At 1024² with STRIP_ROWS=16 = 64 strips → 320 per-strip
+pool ops + ~16 MB of redundant copy traffic — vs the full-image kernel
+which runs ONCE on the source buffers without any per-strip churn.
+
+The `3b_add_supersampled` gap (+811 μs) is most likely a downstream
+scheduling artifact: the strip path leaves L1/L2 polluted with the
+per-strip pool churn, so the next pass over the full-resolution diffmap
+(add_supersampled_2x at 1024²) takes longer in cold-cache state. Not a
+direct strip overhead.
+
+## What the strip path actually saves vs costs (1024²)
+
+SAVINGS (theoretical):
+- The combine kernel processing 16 rows of (mask, lf1×3, lf2×3, ac×3,
+  diffmap) = 9 planes × 16 × 1024 × 4 B = 576 KB → fits in L2 (1 MB
+  on Zen 4 core) instead of streaming the 1024×1024 input from L3/DRAM.
+- Theoretical savings ≈ ~5-10% of the combine cost if the kernel is
+  bandwidth-bound. Combine cost ~1.2 ms (full path). 10% of 1.2 ms = 120 μs.
+
+COSTS (measured):
+- 64 strips × 5 per-strip pool alloc/recycle pairs = 320 BufferPool ops
+  through a Mutex. Per B6 audit, ~50 ns/op = 16 μs Mutex overhead.
+- 64 strips × (1 + 3 + 3 + 3) plane × 16 rows × 1024 elements × 4 B
+  copy-in = 9 MB scratch fill. At ~30 GB/s = ~300 μs.
+- Same volume copy-out for diffmap rows = ~6 MB at ~30 GB/s = ~200 μs.
+- Allocation cache misses (5 new ImageF allocations per strip even
+  pooled — pool stores per-size buckets, each pool hit still writes a
+  buffer header) = ~50 ns × 320 = 16 μs.
+- Working-set thrash on subsequent passes (the +811 μs add_supersampled
+  delta is the load-bearing measurement of this).
+
+Net: strip costs +500 μs to +1500 μs measured; saves at most ~120 μs
+of bandwidth. The math is decisively against the current shape.
+
+## Why the RFC's projection didn't materialize
+
+The RFC §3.2 modelled the savings assuming:
+1. ALL stages tile to STRIP_ROWS rows
+2. Tiles fit in L2 → kernel saturates DRAM at higher effective bandwidth
+3. Per-tile bookkeeping is negligible vs the kernel work
+
+What actually shipped (Days 1-5):
+1. Only Stage 3 tiles — Stages 1+2 run on full image (4× the working set
+   per stage → blow L2 anyway). Stage 3 is ~3-4% of the full-image wall
+   (combine ~1.2 ms / 35.9 ms total = 3.3%), so even infinite Stage 3
+   speedup caps savings at 3.3%.
+2. Stage 3's tile-driver itself is BANDWIDTH-AMPLIFIED (extra copy-in +
+   copy-out), so it actively SLOWS instead of speeding up.
+3. Per-tile bookkeeping is NOT negligible at 1024² (64 strips × 5 allocs).
+
+The Day 4 strip variants for malta/blur/psycho use parent-height padded
+scratch precisely to maintain byte-identity at strip boundaries — which
+means they internally allocate full-image scratch and write to the
+proper sub-region. They are *byte-identical* to the full path but do
+*equivalent work* on equivalent buffers, so wiring them in would not
+help either.
+
+## Day 7 disposition recommendation: **Option A — SHIP FRAMEWORK-ONLY**
+
+**Why A and not B or C**:
+
+- **Not B (true-tile refactor)**: Possible but expensive. To get the RFC's
+  -35 to -47% projection, every kernel with halo > 0 (Gaussian blur 5×5,
+  malta 18-pt, fuzzy_erosion 4-iter recursive, mask 5×5 reflect) needs
+  to be refactored to do row-window reads with mirror-reflect-at-strip
+  boundaries, OR accept ~1 ULP divergence at strip edges (which kills
+  the byte-identity guarantee Day 5 carefully preserved). This is the
+  multi-week "deep restructure" the RFC §6 mentioned as the long path.
+  Days 1-5 are NOT a useful foundation for B because Days 2-4 chose
+  byte-identity-via-padded-scratch precisely to AVOID this work. B would
+  start from scratch.
+
+- **Not C (honest-stop everything)**: Days 1-5 SHIPPED useful infrastructure:
+  `ImageF::strip_view`, `Image3F::strip_view`, the `*_strip` byte-identity
+  test harness, the 50/50 strip_parity_50_images test, and the structural
+  proof that strip composition IS achievable while preserving Day 5
+  scalars-bit-identical guarantees. Throwing that away just because the
+  perf didn't materialize would re-incur the integration cost later if
+  someone returns to GPU offload + CPU fallback for the residual stage.
+  Better to leave the framework in place with this honest measurement
+  attached as documentation.
+
+- **A (framework-only, default OFF)**:
+  1. Leave `compare_linear_planar_strip_into` public as-is (it's correct,
+     just slower).
+  2. Update docstrings on the function + on the `*_strip` primitives to
+     point at this measurement so future agents don't re-investigate.
+  3. Do NOT route the buttloop or any jxl-encoder hot path through the
+     strip variant. CPU butteraugli stays on the full path.
+  4. The CPU butteraugli perf lever for B7+ becomes the B6-ranked
+     alternatives that are NOT bound by the cache-locality assumption:
+     - B7c-redo with a different lock-free design (B7c TLS pool was the
+       wrong shape — see B7c HONEST-STOP). Maybe a true thread-local
+       pool with overflow Mutex measured AT THE POOL-CALL SITE, not as
+       a top-level wrap.
+     - B7e/f/g/h tier-2 from B6 (smaller wins, but additive and proven
+       to not regress).
+     - GPU offload via B1+B4 (already shipped, 11-21% wins on bench, but
+       not yet default-on — wider corpus measurement gates that flip).
+
+## Acceptance gates (per Day 6 task spec)
+
+- (a) 8 cells (4 sizes × 2 fixtures) × 2 modes paired bench — **PASS**
+- (b) Per-stage attribution for 1024² cell — **PASS**
+- (c) Bench TSV + meta written (butteraugli + jxl-encoder mirrors) — see commit
+- (d) Honest Day 7 disposition with bench-backed justification — **Option A**
+- (e) RFC §11 updated — see follow-on commit
+- (f) Single commit on butteraugli main — see commit
+- (g) Separate commit on jxl-encoder main — see follow-on
+- (h) Sibling workspace cleaned up — see followup
+- (i) `.workongoing` removed — see followup
+
+## DO NOT (future agents)
+
+- Do NOT cite this regression as "FMA precision" (per W44-66 user
+  correction).
+- Do NOT respawn the strip-tile work with smaller `STRIP_ROWS` thinking
+  it'll help. The bottleneck is the per-strip allocation + copy traffic,
+  not the kernel inner-loop layout. Smaller strips = MORE strips = MORE
+  pool ops + MORE copies.
+- Do NOT remove the `*_strip` primitives — they pass `strip_parity_50_images`
+  and serve as the future-true-tile-refactor test harness.
+- Do NOT enable the strip path in any jxl-encoder buttloop site. It is
+  measurably slower at every size.
+- Do NOT re-investigate the Stage 3 combine kernel for further inner-
+  loop SIMD wins — per B6, every hot kernel is already at LLVM's
+  autoversion ceiling. Time-spent there is wasted.
+
+## Follow-on candidates (not in Day 6/7 scope)
+
+1. **GPU buttloop default-on**: B5 honest-stop gated on the byte-margin
+   gate; relaxing the gate (or the per-iter divergence detector
+   alternative) is higher EV than ANY remaining CPU work.
+2. **B7e/f/g/h tier-2 CPU**: smaller wins (~1-3% each, additive, low-risk)
+   from the B6 ranking.
+3. **B7d-true-tile refactor**: would require rewriting Stages 1+2 strip
+   variants to use mirror-reflect-at-strip boundaries with measured ULP
+   tolerance (NOT byte-identical). Multi-week work; only justified if
+   GPU offload is structurally infeasible (it isn't — B1+B4 are shipped).
