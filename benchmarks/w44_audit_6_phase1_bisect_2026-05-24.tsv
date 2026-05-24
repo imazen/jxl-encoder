@@ -1,0 +1,13 @@
+image_id	effort	distance	mode	bytes	bfly	ssim2	ms	delta_bytes_pct_vs_cjxl	delta_ssim2_vs_cjxl
+codec_wiki	7	3	D_cjxl	72232	2.0678	86.5591	414	0	0
+codec_wiki	7	3	A_baseline_no_audit6	72813	2.3481	84.0321	732	0.8044	-2.5269
+codec_wiki	7	3	B_shipped	72813	2.3481	84.0321	709	0.8044	-2.5269
+codec_wiki	7	3	C_no_w109	72813	2.3481	84.0321	712	0.8044	-2.5269
+codec_wiki	7	4	D_cjxl	62710	2.9915	84.8597	404	0	0
+codec_wiki	7	4	A_baseline_no_audit6	90323	3.2093	84.8859	851	44.0328	0.0262
+codec_wiki	7	4	B_shipped	62850	3.2160	80.5286	976	0.2232	-4.3311
+codec_wiki	7	4	C_no_w109	62850	3.2160	80.5286	839	0.2232	-4.3311
+codec_wiki	7	5	D_cjxl	57232	3.8946	81.8376	391	0	0
+codec_wiki	7	5	A_baseline_no_audit6	81817	3.0062	84.5870	787	42.9567	2.7494
+codec_wiki	7	5	B_shipped	55617	3.9940	79.5014	1399	-2.8218	-2.3361
+codec_wiki	7	5	C_no_w109	55617	3.9940	79.5014	1625	-2.8218	-2.3361

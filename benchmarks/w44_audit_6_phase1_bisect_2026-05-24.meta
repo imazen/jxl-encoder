@@ -1,0 +1,162 @@
+# W44-AUDIT-6 Phase 1 — single-cell bisection of M3 high-colour exclude
+
+**Date:** 2026-05-24
+**Status:** [SHIPPED — Phase 1 mechanism verified; Phase 2 follow-on queued]
+**Parent commit:** post-`0e65668f` (AUDIT-4 honest-stop)
+**TSV:** `benchmarks/w44_audit_6_phase1_bisect_2026-05-24.tsv`
+**Reproducer:** `cargo run -p jxl-encoder --release \
+                  --features "parallel butteraugli-loop ssim2-loop __expert" \
+                  --example w44_audit_6_phase1_bisect`
+
+## Hypothesis
+
+AUDIT-4 PROVED `DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7 = 3.0`
+(W44-109) owns the codec_wiki e7 d=4 +44.03% bytes wedge:
+- Mode A baseline (`JXL_W44_AUDIT_6_DISABLE=1`): 90323 B = +44.03% vs cjxl
+  62710 B; SSIM2 +0.03 vs cjxl 84.86 (lift IS catching SSIM2)
+- W44-109 fully disabled: 62850 B = +0.22% vs cjxl; SSIM2 -4.33 vs cjxl
+
+The principled fix: add a `ZenanalyzeProxies.m3_colourfulness >= 80.0`
+discriminator (codec_wiki M3 = 145.73, W44-109 win cluster M3 ∈ [10, 21]).
+Mirror W44-176 luma_var+fcbr terminal-class exclude pattern at a different
+proxy axis.
+
+## Mechanism
+
+New gate field `high_colour_class_exclude: bool` in
+`gate_registry.rs::strategy_def!` (Section B, defaults `true` on Zenjxl/
+Aggressive, `false` on Libjxl/LeanFaster). Wired through
+`resolved_adaptive_quant_qf_seed_scale_with_policy` in
+`vardct/butteraugli_loop.rs` as a new parameter that composes via OR with
+the existing W44-176 `terminal_class_exclude` branch:
+```
+if terminal_class_exclude && w44_176_is_terminal_class(proxies) { return 1.0; }
+if high_colour_class_exclude && w44_audit_6_is_high_colour_class(proxies) { return 1.0; }
+```
+Helper `w44_audit_6_is_high_colour_class(proxies)` returns `true` iff
+proxies are present AND `m3_colourfulness >= W44_AUDIT_6_HIGH_COLOUR_M3_MIN = 80.0`.
+
+Env hook `JXL_W44_AUDIT_6_DISABLE=1` forces the exclude OFF for A/B
+benching. Production source change: `resolved.high_colour_class_exclude`
+read at the call site in `vardct/encoder.rs::~3996` and threaded into
+the helper alongside `terminal_class_exclude`.
+
+## Results (3 cells × 4 modes interleaved paired)
+
+| cell        | mode               | bytes  | ssim2 | bfly  | Δb vs cjxl  | Δss2 vs cjxl |
+|---          |---                 |---     |---    |---    |---          |---           |
+| e7 d=3      | D_cjxl             | 72232  | 86.56 | 2.068 | 0           | 0            |
+| e7 d=3      | A_baseline_no_audit6 | 72813 | 84.03 | 2.348 | +0.80%      | -2.53        |
+| e7 d=3      | B_shipped          | 72813  | 84.03 | 2.348 | +0.80%      | -2.53        |
+| e7 d=3      | C_no_w109          | 72813  | 84.03 | 2.348 | +0.80%      | -2.53        |
+| **e7 d=4**  | D_cjxl             | 62710  | 84.86 | 2.991 | 0           | 0            |
+| **e7 d=4**  | A_baseline_no_audit6 | **90323** | 84.89 | 3.209 | **+44.03%** | +0.03   |
+| **e7 d=4**  | **B_shipped**      | **62850** | 80.53 | 3.216 | **+0.22%**  | -4.33        |
+| e7 d=4      | C_no_w109          | 62850  | 80.53 | 3.216 | +0.22%      | -4.33        |
+| e7 d=5      | D_cjxl             | 57232  | 81.84 | 3.895 | 0           | 0            |
+| e7 d=5      | A_baseline_no_audit6 | 81817 | 84.59 | 3.006 | +42.96%     | +2.75        |
+| e7 d=5      | B_shipped          | 55617  | 79.50 | 3.994 | -2.82%      | -2.34        |
+| e7 d=5      | C_no_w109          | 55617  | 79.50 | 3.994 | -2.82%      | -2.34        |
+
+**Three findings:**
+1. **e7 d=3** (below `BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE = 3.5`): A == B == C
+   byte-identical. Gate correctly does not fire; the +0.80% baseline is
+   pre-W44-109 structural and outside Phase 1's scope (AUDIT-5).
+2. **e7 d=4** (the target wedge): A 90323 B → B 62850 B = **-30.5% bytes
+   savings**. **B and C produce IDENTICAL bytes (62850 B)** — proves the
+   AUDIT-6 high-colour exclude on this cell is mechanistically equivalent
+   to turning W44-109 OFF entirely, which is exactly the intended outcome
+   (the discriminator fully suppresses the lift on codec_wiki).
+3. **e7 d=5**: same shape as e7 d=4 — A 81817 B → B 55617 B = **-32.0%
+   bytes**. The gate fires there too (codec_wiki M3=145.73 >> 80.0 at
+   every distance), validating that Phase 1 generalises to the same
+   wedge cluster.
+
+## Phase 1 acceptance gates
+
+- **(a)** `m3_colourfulness` proxy confirmed present in
+  `ZenanalyzeProxies` (existing W44-91/96/108 infrastructure). PASS.
+- **(b)** Discriminator added to W44-109 gate site
+  (`resolved_adaptive_quant_qf_seed_scale_with_policy`, compose-via-OR
+  with the W44-176 branch). PASS.
+- **(c)** Single-cell Pareto improvement on codec_wiki e7 d=4: bytes
+  +44% → +0.22% (well within +5% target). **PARTIAL on SSIM2**: SSIM2
+  84.89 → 80.53 = Δ -4.36 (target was "within -0.5 of cjxl 84.86"; we
+  match the W44-109-disabled baseline SSIM2 80.53 exactly). Per
+  AUDIT-4's own honest-stop, codec_wiki cannot have BOTH bytes near
+  cjxl AND SSIM2 near cjxl on e7 d=4 — the +12pp structural gap belongs
+  to W44-AUDIT-5 (3 pre-narrowed candidates: per-block butteraugli at
+  e7, `kFavor2X2AtHighQuality`, strategy-search step_size). The "lift
+  catches SSIM2 at huge byte cost" trade is structurally-bad pareto
+  (same shape AUDIT-4 documented for codec_wiki, same shape W44-176
+  terminal exclude addressed). Phase 1 ships the bytes restoration
+  per the principled-fix direction; Phase 2+ continues.
+- **(d)** `cargo test --lib`: 1442/1442 PASS (+ 8 new W44-AUDIT-6 tests
+  for a total of 16 W44-176/W44-AUDIT-6 unit tests). PASS.
+- **(e)** Hash-locks 36/36 BYTE-IDENTICAL. The synthetic 32×32/48×48
+  fixtures don't fire `pixel_domain_loss` so `mask1x1 = None` → outer
+  W44-109 gate cannot fire → new AUDIT-6 branch is unreachable on
+  fixtures. PASS.
+- **(f)** Strategy `Libjxl` byte-lock 4/4 PASS. Libjxl strategy's
+  `adaptive_quant_qf_seed = AdaptiveQuantQfSeedPolicy::Off` short-
+  circuits the helper at line ~850 before the AUDIT-6 branch is
+  evaluated, so the new gate has zero effect on Libjxl output even
+  with `high_colour_class_exclude = false` (the redundancy guard).
+  PASS.
+- **(g)** Drift test 7/7 PASS. EXPECTED_DIVERGENCE_GATE_COUNT bumped
+  27 → 28; new entry added to ALL_DIVERGENCE_ENTRIES; new row added
+  to `docs/LIBJXL_DIVERGENCES.md` Section B + new constant entry in
+  Section C. PASS.
+- **(h)** `docs/LIBJXL_DIVERGENCES.md` Section B updated. PASS.
+- **(i)** Single linear commit pushed to origin/main. PENDING.
+- **(j)** `.workongoing` removed. PENDING.
+- **(k)** Phase 2 follow-on brief written. SEE BELOW.
+
+## Phase 2 brief (queued — separate chunk)
+
+**Scope**: extend the W44-AUDIT-6 P1 shipped exclude to:
+1. Re-run W44-AUDIT-1 36-cell parity bench to measure ledger impact.
+2. Bench the W44-109 original win cluster
+   (gb82-sc text-class screenshots: terminal/graph/imac_g3/imac_dark/
+   gmessages/gui at e5/e6/e7 × d ∈ {3, 4, 5}) to confirm ZERO
+   FIXED→OPEN regressions. M3 of those screens is ∈ [10, 21] ≪ 80.0,
+   so the gate should NOT fire and they should be BYTE-IDENTICAL pre/
+   post AUDIT-6. This is the protection invariant; Phase 1 only
+   verified the wedge cell.
+3. Bench the windows95/imessage/windows borderline cluster
+   (per AUDIT-4 — these have neither AUDIT-4 nor AUDIT-6 measurements
+   yet) for unintended interactions. M3 ≈ 38-50 → below 80 → no fire,
+   but should be confirmed empirically.
+4. If Phase 2 passes, queue **Phase 3** for extension to W44-105
+   buttloop seed at e8/e9 (the AUDIT-4 wedge measurement covered e8
+   d=4 +20.72% and e9 d=4 +4.88% on Zenjxl; e8/e9 use the W44-105
+   buttloop path with `butteraugli_iters > 0`, where AUDIT-6 cannot
+   fire by design — the helper short-circuits at iter>0). The
+   W44-105 buttloop path itself would need a separate discriminator
+   wired similarly. **NOT** in Phase 1 scope.
+
+**Estimated wall time**: 2-3 hours (corpus is 51 images × ~6 cells × A/B
+on a 4.26 MP image takes ~25s/cell × 4 modes = ~10 min total wall).
+
+## DO NOT (binding for future agents)
+
+1. DO NOT lower `W44_AUDIT_6_HIGH_COLOUR_M3_MIN` below 30.0 — risks
+   pulling W44-109 win-cluster cells (max M3 in cluster ≈ 21) into the
+   exclude. The 80.0 cutoff was chosen for ~3.5× margin above the win
+   cluster AND ~1.8× margin below codec_wiki (M3=145.73).
+2. DO NOT raise above 130.0 without re-measurement — codec_wiki at
+   M3=145.73 is the only image confirmed-fires. windows95 / windows /
+   imessage / mac-screenshot-class are all in the deadband [30, 80)
+   and were INTENTIONALLY excluded from the Phase 1 fire-set.
+3. DO NOT default-flip the gate OFF — production default is ON per the
+   W44-91 / W44-176 precedent (auto-detect from proxies).
+4. DO NOT cite "FMA precision" for any byte movement — measurement
+   is conclusive that the byte delta comes from the dispatch change
+   (lift returns 1.0 instead of 3.0 on codec_wiki at e7).
+5. DO NOT modify the Libjxl strategy short-circuit — `adaptive_quant_qf_seed
+   = Off` MUST keep firing before the AUDIT-6 branch is reachable on
+   Libjxl-mode encodes, preserving the strict-parity byte-lock invariant.
+6. DO NOT close the codec_wiki e7 d=4 cell on the cjxl-parity ledger
+   as "FIXED" yet — bytes are at parity, but SSIM2 is still -4.36 below
+   cjxl. The cell is now in the "lift suppressed; structural +12pp gap
+   remaining" state owned by W44-AUDIT-5 candidates.

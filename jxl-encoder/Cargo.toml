@@ -2408,5 +2408,10 @@ required-features = ["__expert", "butteraugli-loop", "parallel"]
 name = "w44_audit_4_e7_d4_breakdown"
 path = "examples/w44_audit_4_e7_d4_breakdown.rs"
 required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+
+[[example]]
+name = "w44_audit_6_phase1_bisect"
+path = "examples/w44_audit_6_phase1_bisect.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 [lints]
 workspace = true

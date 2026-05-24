@@ -190,6 +190,11 @@ jxl_encoder_macros::strategy_def! {
             adaptive_buttloop_iters = false,
             adaptive_buttloop_iters_narrow = false,
             terminal_class_exclude = false,
+            // W44-AUDIT-6 Phase 1: strict libjxl parity → high-colour
+            // class exclude is OFF on Libjxl strategy (the W44-109 lift
+            // itself is already off via `adaptive_quant_qf_seed = Off`,
+            // making this a redundancy guard).
+            high_colour_class_exclude = false,
             // Section C CfL Newton: flip to libjxl bit-exact params.
             // Safe here because every other divergence is also flipped
             // (no W44-29..W44-172 calibration to throw off).
@@ -248,6 +253,12 @@ jxl_encoder_macros::strategy_def! {
             adaptive_buttloop_iters = false,
             adaptive_buttloop_iters_narrow = false,
             terminal_class_exclude = false,
+            // W44-AUDIT-6 Phase 1: LeanFaster drops every per-image
+            // content gate (matches the W44-176 pattern); the W44-109
+            // lift itself is already off via
+            // `adaptive_quant_qf_seed = Off` so this is a redundancy
+            // guard like terminal_class_exclude above.
+            high_colour_class_exclude = false,
             // W44-184: NOT a per-image gate; LeanFaster keeps Zenjxl's
             // cost-model calibration which is incompatible with the
             // libjxl-parity Newton (W44-183 measured 25/27 regressions).
@@ -302,6 +313,12 @@ jxl_encoder_macros::strategy_def! {
             adaptive_buttloop_iters = true,
             adaptive_buttloop_iters_narrow = true,
             terminal_class_exclude = true,
+            // W44-AUDIT-6 Phase 1 (2026-05-24): Zenjxl default ON —
+            // excludes codec_wiki-class high-colour mixed-content
+            // screenshots from the W44-109 lift (per AUDIT-4 measurement
+            // of the +44% bytes wedge at e7 d=4). Composes with the
+            // W44-176 terminal exclude via OR.
+            high_colour_class_exclude = true,
             cfl_newton_libjxl_parity = false,
             // W44-197: Zenjxl preserves cost-model calibration; no LS-only
             // Pass-2 at e=5/6.
@@ -347,6 +364,11 @@ jxl_encoder_macros::strategy_def! {
             adaptive_buttloop_iters = true,
             adaptive_buttloop_iters_narrow = true,
             terminal_class_exclude = true,
+            // W44-AUDIT-6 Phase 1: Aggressive mirrors Zenjxl per the
+            // standing pattern (Aggressive is a forward-compatible slot
+            // for the next opt-in chunk with a too-narrow auto-
+            // discriminator for the Zenjxl bundle).
+            high_colour_class_exclude = true,
             cfl_newton_libjxl_parity = false,
             // W44-197: Aggressive mirrors Zenjxl on Section C calibration
             // concerns.
@@ -527,6 +549,16 @@ jxl_encoder_macros::strategy_def! {
         terminal_class_exclude: bool {
             divergence_section = "B",
             divergence_row_ref = "W44-176 terminal-class exclude from W44-108",
+        },
+
+        /// W44-AUDIT-6 Phase 1 (2026-05-24): exclude high-colour
+        /// mixed-content screenshots (`m3_colourfulness >= 80.0`) from
+        /// the W44-109 adaptive-quant qf seed lift. Companion of
+        /// `terminal_class_exclude`; the two compose via OR inside the
+        /// W44-109 gate. Section B.
+        high_colour_class_exclude: bool {
+            divergence_section = "B",
+            divergence_row_ref = "W44-AUDIT-6 high-colour-class exclude from W44-109",
         },
 
         // ── Section C CfL Newton parity ──────────────────────────────
@@ -935,6 +967,12 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         row_ref: "W44-176 terminal-class exclude from W44-108",
         raw: __CUSTOM_DIVERGENCE_TERMINAL_CLASS_EXCLUDE,
     },
+    DivergenceEntry {
+        gate_name: "high_colour_class_exclude",
+        section: "B",
+        row_ref: "W44-AUDIT-6 high-colour-class exclude from W44-109",
+        raw: __CUSTOM_DIVERGENCE_HIGH_COLOUR_CLASS_EXCLUDE,
+    },
     // Section C — CfL Newton parity
     DivergenceEntry {
         gate_name: "cfl_newton_libjxl_parity",
@@ -1030,6 +1068,8 @@ mod tests {
         assert!(d.adaptive_buttloop_iters);
         assert!(d.adaptive_buttloop_iters_narrow);
         assert!(d.terminal_class_exclude);
+        // W44-AUDIT-6 Phase 1: Zenjxl default = ON.
+        assert!(d.high_colour_class_exclude);
         // Section C
         assert!(!d.cfl_newton_libjxl_parity);
         assert!(!d.cfl_pass2_ls_at_low_effort);
