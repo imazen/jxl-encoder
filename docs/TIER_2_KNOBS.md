@@ -346,22 +346,64 @@ calibration on the W44-216 corpus — they encode the SUPPRESSIVE
 coupling structure (joint < sum past the qac field's dynamic range
 cap).
 
-## Per-stratum defaults (W44-228b)
+## Per-stratum defaults (W44-228b / W44-PHASE4-S2-refit)
 
 W44-228a derived per-stratum optimal `Tier2Knobs` values via a 7^5 grid
-search over the W44-219 densified corpus (9018 zenjxl rows, 267 LHS
-blobs). W44-228b ships them as an **OPT-IN API**:
+search over the W44-219 densified corpus (9018 zenjxl rows). W44-228b
+shipped them as an **OPT-IN API**:
 `Tier2Knobs::default_for_stratum(stratum) -> Tier2Knobs` plus
 `Tier2Knobs::auto_for_distance(class, distance) -> Tier2Knobs`. The
 production default behaviour is **unchanged** — callers must explicitly
 chain `LossyConfig::with_knobs(Tier2Knobs::auto_for_distance(...))` to
 opt in.
 
-**Distance binning** (W44-217 / W44-228a convention):
-`low: d < 1.0`, `mid: [1.0, 2.0)`, `high: [2.0, 3.5)`, `very_high: d >= 3.5`.
-This is the binning the W44-228a optima TSV was computed against.
+**W44-PHASE4-S2-refit (2026-05-24)** rebaked the lookup from the
+post-W44-RECON-DEEP corpus (W44-PHASE4-S1 sweep, 22,770 zenjxl rows).
+The post-RECON-DEEP encoder (A10 HDR dispatch on TF, A11 XYB→linear
+FMA + INV_OPSIN constant fix, B1+B4 GPU butteraugli backend, B5
+default-ON GPU butteraugli when feature compiled, B7 buttloop diffmap
++ subsample buffer reuse) shifted optima on **ALL 8/8 strata** with L2
+distances in [1.27, 2.55]. The lookup table now contains the refit
+values; the W44-228a values are preserved as `OLD W44-228a:` comments
+in the source (`jxl-encoder/src/tuning.rs`) for traceability.
 
-**Lookup table** (source: `benchmarks/sweeps/w44-219-densify/analysis/w44_228a/per_stratum_optima.tsv`):
+**Distance binning** (W44-217 / W44-228a / W44-PHASE4-S1 convention):
+`low: d < 1.0`, `mid: [1.0, 2.0)`, `high: [2.0, 3.5)`, `very_high: d >= 3.5`.
+This is the binning every per-stratum optima TSV was computed against.
+
+### Lookup table (W44-PHASE4-S2-refit, current)
+
+Source: `benchmarks/sweeps/w44-phase4-s1-recon-deep-revalidate/analysis/per_stratum_optima/per_stratum_optima.tsv`
+
+| stratum             | n_rows | k1 smoothness | k2 aggressiveness | k3 screen_lift | k4 d_gate | k5 aq_balance | max_gap_default % | max_gap_optimum % | Δ pp     | L2 vs W44-228a |
+|---                  |---     |---            |---                |---             |---        |---            |---                |---                |---       |---             |
+| screen / very_high  | 2112   | 0.0000        | 0.0000            | 0.5000         | 2.1667    | −0.3333       | 37.428            | 0.000             | +37.428  | 1.841          |
+| screen / high       | 2411   | 0.0000        | **+0.3333**       | 0.5000         | 2.1667    | −0.6667       | 13.739            | 0.000             | +13.739  | 1.780          |
+| screen / mid        | 1282   | 0.1667        | **+0.3333**       | 0.5000         | 4.1667    | −1.0000       | 3.592             | 0.000             | +3.592   | 1.500          |
+| screen / low        | 1197   | 0.0000        | **+0.3333**       | 0.5000         | 2.1667    | −1.0000       | 4.729             | 0.000             | +4.729   | 1.929          |
+| photo / very_high   | 4972   | 0.0000        | 0.0000            | 0.5000         | 2.8333    | +0.3333       | 3.387             | 0.000             | +3.387   | 1.434          |
+| photo / high        | 4954   | 0.0000        | 0.0000            | 0.5000         | 3.5000    | −0.3333       | 2.877             | 0.000             | +2.877   | 1.269          |
+| photo / mid         | 2476   | 0.0000        | 0.0000            | 0.5000         | 1.5000    | −1.0000       | 0.531             | 0.000             | +0.531   | **2.550**      |
+| photo / low         | 2475   | 0.0000        | 0.0000            | 0.5000         | 1.5000    | −1.0000       | 0.489             | 0.000             | +0.489   | **2.550**      |
+
+**Bold k2 values** mark the W44-PHASE4-S2-refit non-zero
+`screenshot_quant_aggressiveness` admission on screen/high / mid / low
+(was 0.0 in W44-228a, now 0.333). screen/very_high stays at 0.0,
+preserving the W44-228c1 RULED-OUT invariant for the W44-105 SHIP-cell
+catastrophe regime (terminal / imac_g3 / codec_wiki e8+ d=4-6).
+
+### Refit history
+
+| date       | corpus                          | n_rows | event                                                                              |
+|---         |---                              |---     |---                                                                                 |
+| 2026-05-22 | W44-219-densify                 | 9,018  | W44-228a initial 7^5 grid search; W44-228b shipped OPT-IN API at `b8a60ca0`        |
+| 2026-05-24 | W44-PHASE4-S1-recon-deep-revalidate | 22,770 | W44-PHASE4-S2-refit (this entry); ALL 8/8 strata shifted, screen/{high,mid,low} k2 admitted to 0.333 |
+
+### Lookup table (W44-228a, predecessor — historical reference)
+
+Source: `benchmarks/sweeps/w44-219-densify/analysis/w44_228a/per_stratum_optima.tsv`.
+Preserved here for traceability; the production lookup is the
+W44-PHASE4-S2-refit table above.
 
 | stratum             | k1 smoothness | k2 aggressiveness | k3 screen_lift | k4 d_gate | k5 aq_balance | max_gap_default % | max_gap_optimum % | Δ pp     |
 |---                  |---            |---                |---             |---        |---            |---                |---                |---       |
@@ -374,18 +416,18 @@ This is the binning the W44-228a optima TSV was computed against.
 | photo / mid         | 1.0000        | 0.0               | 2.0000         | 2.8333    | +0.3333       | 2.196             | 0.923             | +1.273   |
 | photo / low         | 0.8333        | 0.0               | 0.5000         | 2.1667    | +0.6667       | 1.180             | 0.000             | +1.180   |
 
-**Surprising finding** (encoded in
-`tuning::coupling::tests::w44_228b_every_stratum_disables_screenshot_quant_aggressiveness`):
-every per-stratum optimum has `screenshot_quant_aggressiveness = 0`,
-which DISABLES the W44-105 buttloop screen seed lift. Two possible
-explanations (from the W44-228a memo §Surprising finding):
+### Stratum k2 membership (W44-PHASE4-S2-refit)
 
-1. **GBR over-fitting**: the W44-219 corpus distribution may have
-   sampled knobs around the SUPPRESSIVE coupling cap (W44-217 §p3_p6)
-   and missed the bands where `p3 > 0` helps.
-2. **Real signal**: the universal default `p3 = 4.0` is too aggressive
-   globally, and a per-stratum lookup table would correctly disable it
-   for most strata.
+The W44-228a "surprising finding" that *every* per-stratum optimum has
+`screenshot_quant_aggressiveness = 0` was **partially overturned** by
+W44-PHASE4-S2-refit: 3 of 8 strata (`screen/high`, `screen/mid`,
+`screen/low`) now have `k2 = 0.333` instead of `k2 = 0.0`. The other 5
+strata stay at `k2 = 0.0`.
+
+The membership is pinned in
+`tuning::coupling::tests::w44_phase4_s2_refit_strata_aggressiveness_membership`
+— if a future re-derivation shifts any stratum's membership, update this
+table and the test alongside.
 
 **W44-105 SHIP-cell caveat (binding)**: the W44-228a optimisation
 corpus DID NOT INCLUDE the W44-105 SHIP cells (terminal / imac_g3 /
