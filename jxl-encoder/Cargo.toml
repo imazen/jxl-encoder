@@ -1336,6 +1336,16 @@ name = "w44_phase3_b5_gpu_wider_sweep"
 path = "examples/w44_phase3_b5_gpu_wider_sweep.rs"
 required-features = ["gpu-butteraugli", "butteraugli-loop", "ssim2-loop", "parallel", "__expert"]
 
+# W44-PHASE3-B5b: divergence-detector validation on the same 38-cell wider
+# sweep. Three modes per cell: CPU baseline, GPU without detector, GPU with
+# detector (env JXL_W44_PHASE3_B5B_DETECTOR=1). Acceptance: detector
+# triggers on 2/38 B5 divergent cells, does NOT trigger on the other 36,
+# bytes within ±0.5% on all 38 vs CPU, wall overhead ≤ +1.5% median.
+[[example]]
+name = "w44_phase3_b5b_divergence_detector_ab"
+path = "examples/w44_phase3_b5b_divergence_detector_ab.rs"
+required-features = ["gpu-butteraugli", "butteraugli-loop", "ssim2-loop", "parallel", "__expert"]
+
 # W44-175: parallel `transform_and_quantize_into` (buttloop per-iter group
 # fan-out) + parallel `find_best_split_variable` (DC tree property scan).
 # Mode A forces both back to sequential via env hooks; Mode B is the W44-175

@@ -202,5 +202,20 @@ pub mod __buttloop_overrides {
     };
 }
 
+/// W44-PHASE3-B5b: process-global counters for the GPU butteraugli
+/// divergence detector. Bench harnesses
+/// (`examples/w44_phase3_b5b_divergence_detector_ab.rs`) call
+/// `reset()` between cells and `snapshot()` to read per-cell observations.
+///
+/// **Not part of the stable API.** Counters exist only to instrument the
+/// W44-PHASE3-B5b validation chunk; production encoder never reads
+/// them. Gated on `gpu-butteraugli` because the counters live alongside
+/// the GPU backend that updates them.
+#[cfg(feature = "gpu-butteraugli")]
+#[doc(hidden)]
+pub mod __b5b_counters {
+    pub use super::butteraugli_backend::b5b_counters::{Snapshot, reset, snapshot};
+}
+
 #[cfg(test)]
 mod tests;
