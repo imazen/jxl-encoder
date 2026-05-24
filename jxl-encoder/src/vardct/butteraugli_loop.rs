@@ -1286,14 +1286,15 @@ impl VarDctEncoder {
 
         // W44-phase3-B1: replace the inline `ButteraugliReference::new_linear_planar` +
         // per-iter `compare_linear_planar` calls with a pluggable
-        // [`ButteraugliBackend`]. The CPU backend wraps the same two calls
+        // [`PerceptualBackend`] (renamed from `ButteraugliBackend` in cvvdp-fork
+        // Phase 2, 2026-05-24). The CPU backend wraps the same two calls
         // verbatim — bit-identical to pre-W44-phase3-B1 behaviour when
         // `self.gpu_butteraugli == false` (production default). When the
         // caller opts in via [`LossyConfig::with_gpu_butteraugli`] AND the
         // `gpu-butteraugli` cargo feature is on AND CUDA initialises, the
         // backend dispatches to the GPU pipeline (~27× faster at 1024²+
         // per W44-RECON-DEEP/A7).
-        let backend: Option<alloc::boxed::Box<dyn super::butteraugli_backend::ButteraugliBackend>> =
+        let backend: Option<alloc::boxed::Box<dyn super::perceptual_backend::PerceptualBackend>> =
             if use_vdp2 {
                 // VDP2 path: hold onto the planar refs permanently (one
                 // n*4*3 reservation) and skip the butteraugli precompute.
@@ -1324,7 +1325,7 @@ impl VarDctEncoder {
                 let butteraugli_params = butteraugli::ButteraugliParams::new()
                     .with_intensity_target(metric_intensity_target)
                     .with_compute_diffmap(true);
-                let mut b = super::butteraugli_backend::construct_backend(
+                let mut b = super::perceptual_backend::construct_backend(
                     width as u32,
                     height as u32,
                     butteraugli_params,
@@ -1992,7 +1993,7 @@ impl VarDctEncoder {
         // W44-phase3-B1 code used inline. Explicit lifetime: bound to
         // `'_` (= the call's lifetime) so the borrow checker doesn't
         // promote the trait-object lifetime to `'static`.
-        backend: Option<&mut (dyn super::butteraugli_backend::ButteraugliBackend + '_)>,
+        backend: Option<&mut (dyn super::perceptual_backend::PerceptualBackend + '_)>,
         // Planar linear-RGB reference planes (always populated by the
         // top-level call). Sized `width × height` with stride = width.
         // Owned by the caller for the duration of the seed loop so we

@@ -2,17 +2,22 @@
 // Algorithms and constants derived from libjxl (BSD-3-Clause).
 // Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
 
-//! Pluggable butteraugli backend for the quantization loop (W44-phase3-B1).
+//! Pluggable perceptual-metric backend for the quantization loop
+//! (W44-phase3-B1; renamed from `ButteraugliBackend` for cvvdp-fork
+//! Phase 2 on 2026-05-24 — see `docs/RFC_CVVDP_FORK.md` §2.1).
 //!
-//! The buttloop calls butteraugli once per iteration to measure the perceptual
-//! distance between the original linear-RGB image and the current iteration's
-//! reconstructed linear-RGB image. The result drives both the global score
-//! (used to terminate / pick the best seed) and the per-pixel diffmap (used
-//! to compute per-block tile-distance for the next iter's qf adjustment).
+//! The buttloop calls a perceptual metric once per iteration to measure the
+//! perceptual distance between the original linear-RGB image and the current
+//! iteration's reconstructed linear-RGB image. The result drives both the
+//! global score (used to terminate / pick the best seed) and the per-pixel
+//! diffmap (used to compute per-block tile-distance for the next iter's
+//! qf adjustment).
 //!
-//! This module abstracts that step behind a [`ButteraugliBackend`] trait so a
+//! This module abstracts that step behind a [`PerceptualBackend`] trait so a
 //! GPU backend can be plugged in opt-in. The default backend remains the
-//! existing CPU `butteraugli` crate.
+//! existing CPU `butteraugli` crate. The trait will host a `CvvdpBackend`
+//! impl in cvvdp-fork Phase 3 (RFC §2.1) alongside the existing butteraugli
+//! implementations.
 //!
 //! ## Backends
 //!
@@ -41,9 +46,9 @@ use alloc::format;
 
 use crate::error::Result;
 
-/// Result of one butteraugli comparison: aggregated max-norm score over the
-/// linear-RGB plane diff. The diffmap itself is written into a caller-owned
-/// `Vec<f32>` by [`ButteraugliBackend::compare_with_reference`], so it can be
+/// Result of one perceptual-metric comparison: aggregated max-norm score over
+/// the linear-RGB plane diff. The diffmap itself is written into a caller-owned
+/// `Vec<f32>` by [`PerceptualBackend::compare_with_reference`], so it can be
 /// recycled across iterations (W44-phase3-B7a, 2026-05-23).
 #[derive(Debug)]
 pub(crate) struct BackendCompareResult {
@@ -64,7 +69,7 @@ pub(crate) struct BackendCompareResult {
 /// (`recon_r/g/b` from the buttloop) — backends may need to handle non-tight
 /// strides on the distorted side; the reference side is always tight
 /// (`width == stride`).
-pub(crate) trait ButteraugliBackend: core::fmt::Debug {
+pub(crate) trait PerceptualBackend: core::fmt::Debug {
     /// Backend identifier (for logging). e.g. `"cpu"`, `"gpu-cuda"`,
     /// `"gpu-fallback-cpu"`.
     fn name(&self) -> &'static str;
@@ -166,7 +171,7 @@ impl CpuButteraugliBackend {
 }
 
 #[cfg(feature = "butteraugli-loop")]
-impl ButteraugliBackend for CpuButteraugliBackend {
+impl PerceptualBackend for CpuButteraugliBackend {
     fn name(&self) -> &'static str {
         "cpu"
     }
@@ -522,8 +527,8 @@ pub(crate) mod gpu {
 
         // W44-PHASE3-B5b note: the per-cell detector state
         // (`last_divergence_pct`, `forced_to_cpu`) is exposed via the
-        // `ButteraugliBackend::divergence_status` trait method on the
-        // owning trait object (see `impl ButteraugliBackend for
+        // `PerceptualBackend::divergence_status` trait method on the
+        // owning trait object (see `impl PerceptualBackend for
         // GpuButteraugliBackend` below). Bench harnesses use that
         // method to count fallback rate per cell.
 
@@ -565,7 +570,7 @@ pub(crate) mod gpu {
         }
     }
 
-    impl ButteraugliBackend for GpuButteraugliBackend {
+    impl PerceptualBackend for GpuButteraugliBackend {
         fn name(&self) -> &'static str {
             if self.forced_to_cpu {
                 "gpu-cuda-fallback-cpu"
@@ -908,7 +913,7 @@ pub(crate) mod gpu {
 // Constructor: picks CPU or GPU based on caller policy + feature gate
 // ============================================================================
 
-/// Construct the active butteraugli backend for one buttloop run.
+/// Construct the active perceptual-metric backend for one buttloop run.
 ///
 /// Routing:
 /// - `gpu_requested == false` OR feature `gpu-butteraugli` is OFF → CPU backend.
@@ -922,7 +927,7 @@ pub(crate) fn construct_backend(
     cpu_params: butteraugli::ButteraugliParams,
     #[allow(unused_variables)] intensity_target: f32,
     #[allow(unused_variables)] gpu_requested: bool,
-) -> alloc::boxed::Box<dyn ButteraugliBackend> {
+) -> alloc::boxed::Box<dyn PerceptualBackend> {
     // Debug hook: `JXL_W44_PHASE3_B1_DEBUG=1` logs which backend the
     // dispatch picks. Off by default to keep production logs clean.
     #[cfg(feature = "std")]

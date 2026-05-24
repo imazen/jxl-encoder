@@ -23,9 +23,13 @@ mod afv;
 pub(crate) mod bitstream;
 mod block_extract;
 #[cfg(feature = "butteraugli-loop")]
-pub(crate) mod butteraugli_backend;
-#[cfg(feature = "butteraugli-loop")]
 pub(crate) mod butteraugli_loop;
+// Pluggable perceptual-metric backend (renamed from `butteraugli_backend`
+// in cvvdp-fork Phase 2, 2026-05-24 — see docs/RFC_CVVDP_FORK.md §2.1).
+// Hosts `PerceptualBackend` trait + CPU/GPU butteraugli impls; will
+// host the `CvvdpBackend` impl in Phase 3.
+#[cfg(feature = "butteraugli-loop")]
+pub(crate) mod perceptual_backend;
 pub(crate) mod chroma_from_luma;
 /// Chroma subsampling helpers — RGB → YCbCr conversion and
 /// Sharp YUV 4:2:0 chroma downsample via the zenyuv crate.
@@ -214,7 +218,7 @@ pub mod __buttloop_overrides {
 #[cfg(feature = "gpu-butteraugli")]
 #[doc(hidden)]
 pub mod __b5b_counters {
-    pub use super::butteraugli_backend::b5b_counters::{Snapshot, reset, snapshot};
+    pub use super::perceptual_backend::b5b_counters::{Snapshot, reset, snapshot};
 }
 
 #[cfg(test)]
