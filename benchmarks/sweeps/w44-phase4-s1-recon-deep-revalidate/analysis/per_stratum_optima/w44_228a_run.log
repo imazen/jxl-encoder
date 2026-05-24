@@ -1,0 +1,115 @@
+[load] /mnt/v/zen/jxl-encoder/sweeps/w44-phase4-s1-recon-deep-revalidate/merged/merged.parquet
+[load] 22770 rows × 44 cols
+[prep] decoded params_blob → p1..p6 (22770 rows)
+[prep] zenjxl rows after NaN/inf filter: 21879
+[prep] feats_present=12 INPUT_COLS=20
+
+[gbr] fitting joint models (subsample=0.8, seed=42)…
+[gbr] fit done in 10.7s
+[anchors] total 32 cells
+[full] unique full-param vectors: 49
+[grid] 5-knob 7^5 grid: 16807 candidates
+[grid] default-knob grid index: 8354 → tuple=(np.float64(0.5), np.float64(1.0), np.float64(1.0), np.float64(3.5), np.float64(0.0))
+[grid] default-knob 6-param distance from RuntimeTuning::default(): 0.000000e+00
+
+==============================================================================
+PER-STRATUM OPTIMUM SEARCH
+==============================================================================
+
+[stratum] photo/very_high
+  n_corpus=4972  n_anchors=4
+  full-param Pareto: 10 of 49
+  knob-search wall: 0.12s; best_idx=18
+  default-knob max gap:   3.3872%
+  optimum-knob max gap:   0.0000%  (Δ = +3.387 pp)
+  optimum knobs: smoothness=0.000  aggr=0.000  lift=0.500  d_gate=2.833  k5=+0.333
+  knob_distance_L2 from default: 1.4337
+
+[stratum] photo/high
+  n_corpus=4954  n_anchors=4
+  full-param Pareto: 17 of 49
+  knob-search wall: 0.12s; best_idx=23
+  default-knob max gap:   2.8771%
+  optimum-knob max gap:   0.0000%  (Δ = +2.877 pp)
+  optimum knobs: smoothness=0.000  aggr=0.000  lift=0.500  d_gate=3.500  k5=-0.333
+  knob_distance_L2 from default: 1.2693
+
+[stratum] photo/mid
+  n_corpus=2476  n_anchors=4
+  full-param Pareto: 2 of 49
+  knob-search wall: 0.11s; best_idx=0
+  default-knob max gap:   0.5306%
+  optimum-knob max gap:   0.0000%  (Δ = +0.531 pp)
+  optimum knobs: smoothness=0.000  aggr=0.000  lift=0.500  d_gate=1.500  k5=-1.000
+  knob_distance_L2 from default: 2.5495
+
+[stratum] photo/low
+  n_corpus=2475  n_anchors=4
+  full-param Pareto: 5 of 49
+  knob-search wall: 0.11s; best_idx=0
+  default-knob max gap:   0.4886%
+  optimum-knob max gap:   0.0000%  (Δ = +0.489 pp)
+  optimum knobs: smoothness=0.000  aggr=0.000  lift=0.500  d_gate=1.500  k5=-1.000
+  knob_distance_L2 from default: 2.5495
+
+[stratum] screen/very_high
+  n_corpus=2112  n_anchors=4
+  full-param Pareto: 22 of 49
+  knob-search wall: 0.12s; best_idx=9
+  default-knob max gap:  37.4284%
+  optimum-knob max gap:   0.0000%  (Δ = +37.428 pp)
+  optimum knobs: smoothness=0.000  aggr=0.000  lift=0.500  d_gate=2.167  k5=-0.333
+  knob_distance_L2 from default: 1.8409
+
+[stratum] screen/high
+  n_corpus=2411  n_anchors=4
+  full-param Pareto: 12 of 49
+  knob-search wall: 0.12s; best_idx=351
+  default-knob max gap:  13.7385%
+  optimum-knob max gap:   0.0000%  (Δ = +13.739 pp)
+  optimum knobs: smoothness=0.000  aggr=0.333  lift=0.500  d_gate=2.167  k5=-0.667
+  knob_distance_L2 from default: 1.7795
+
+[stratum] screen/mid
+  n_corpus=1282  n_anchors=4
+  full-param Pareto: 9 of 49
+  knob-search wall: 0.11s; best_idx=2772
+  default-knob max gap:   3.5925%
+  optimum-knob max gap:   0.0000%  (Δ = +3.592 pp)
+  optimum knobs: smoothness=0.167  aggr=0.333  lift=0.500  d_gate=4.167  k5=-1.000
+  knob_distance_L2 from default: 1.5000
+
+[stratum] screen/low
+  n_corpus=1197  n_anchors=4
+  full-param Pareto: 13 of 49
+  knob-search wall: 0.11s; best_idx=350
+  default-knob max gap:   4.7287%
+  optimum-knob max gap:   0.0000%  (Δ = +4.729 pp)
+  optimum knobs: smoothness=0.000  aggr=0.333  lift=0.500  d_gate=2.167  k5=-1.000
+  knob_distance_L2 from default: 1.9293
+
+[output] wrote 8 rows → /home/lilith/work/zen/jxl-encoder/benchmarks/sweeps/w44-phase4-s1-recon-deep-revalidate/analysis/per_stratum_optima/per_stratum_optima.tsv
+
+==============================================================================
+HEADLINES
+==============================================================================
+
+Per-stratum optima (sorted by delta_pp descending):
+           stratum | n_corpus |  def_gap% |  opt_gap% | delta_pp |     L2
+------------------------------------------------------------------------------
+  screen/very_high |     2112 |  +37.4284 |   +0.0000 | +37.428 |  1.841
+       screen/high |     2411 |  +13.7385 |   +0.0000 | +13.739 |  1.780
+        screen/low |     1197 |   +4.7287 |   +0.0000 |  +4.729 |  1.929
+        screen/mid |     1282 |   +3.5925 |   +0.0000 |  +3.592 |  1.500
+   photo/very_high |     4972 |   +3.3872 |   +0.0000 |  +3.387 |  1.434
+        photo/high |     4954 |   +2.8771 |   +0.0000 |  +2.877 |  1.269
+         photo/mid |     2476 |   +0.5306 |   +0.0000 |  +0.531 |  2.550
+         photo/low |     2475 |   +0.4886 |   +0.0000 |  +0.489 |  2.550
+
+Aggregate: mean(Δ_pp) = +8.346, max(Δ_pp) = +37.428, min(Δ_pp) = +0.489  (n_strata_eval=8/8)
+
+DECISION: SHIP-W44-228b
+  Rationale: max(Δ_pp)=37.428 ≥ 1.0 pp on screen/very_high. At least one stratum benefits substantially from per-stratum defaults; lookup table is the artifact.
+  Top-2 most-affected strata:
+    screen/very_high: Δ_pp = +37.428
+    screen/high: Δ_pp = +13.739

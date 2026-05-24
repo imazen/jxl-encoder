@@ -1,0 +1,7 @@
+param	butter_norm3	cvvdp	encode_ms	encoded_bytes	ssim2
+p1_mask_p25_min	0.0	0.0	0.0	0.0	0.0
+p2_screen_median	0.0	0.0	0.0	0.0	0.0
+p3_butt_qf_scale	0.0	0.0	0.0	0.0	0.0
+p4_butt_min_dist	0.0	0.0	0.0	0.0	0.0
+p5_aq_qf_e56	0.0	0.0	0.0	0.0	0.0
+p6_aq_qf_e7	0.0	0.0	0.0	0.0	0.0
