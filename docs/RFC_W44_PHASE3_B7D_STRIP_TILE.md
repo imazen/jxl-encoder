@@ -788,7 +788,20 @@ Day 5 / Day 6 gates fail. The chunk-level acceptance gates:
 
 - [x] **Day 1**: ImageF strip-view primitive + 10 unit tests + zero hash-lock impact
   (butteraugli `4270275e`, 2026-05-24)
-- [ ] **Day 2**: `gaussian_blur_strip` + `blur_mirrored_5x5_strip` per-kernel parity tests PASS
+- [x] **Day 2**: `gaussian_blur_strip` (H + V) + `blur_mirrored_5x5_strip` (H + V)
+  per-kernel parity tests PASS (butteraugli `187a8102`, 2026-05-24). Adds 7 new
+  unit tests (butteraugli lib 98 → 105): identity (single-strip = full-buffer),
+  two-strip 128-row split at sigma=7.156, 16-row many-strip, edge strips (no
+  top-halo / no bottom-halo), stride preservation (width=17 → stride=32),
+  sigma sweep {0.5, 1.0, 3.0, 7.156}, and 5x5 mirrored identity + split +
+  many-strip. Every assertion is **byte-identical** (not "within ULP") — strip
+  variants use the same `mul_add` chain + `f32x{8,16}` lane width as the
+  full-buffer kernels on every SIMD tier. Halo-math finding: `gaussian_blur_halo(7.156)
+  = 16` per side, not 17 as RFC §4 stated — the discrepancy was RFC §4
+  conflating kernel SIZE (33) with halo (kernel.len()/2 = 16). The
+  truncating cast `(2.25*sigma).max(1.0) as i32` matches the existing
+  `compute_kernel_stack` exactly; updated `gaussian_blur_halo` doc-comment
+  to clarify.
 - [ ] **Day 3**: `malta_diff_map_strip` + `l2_diff_*_strip` per-kernel parity tests PASS
 - [ ] **Day 4**: `separate_frequencies_strip` + `apply_mask_correction_precomputed_strip` +
   `combine_channels_to_diffmap_fused_strip` per-kernel parity tests PASS
