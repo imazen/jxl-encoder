@@ -246,6 +246,10 @@ zenbench = "0.1.8"
 # (used by `tests/nonfinite_xyb_repro.rs` to exercise scalar / SSE / AVX2 / etc.
 # fallback paths on the trigger fixtures).
 archmage = { version = "0.9.15", default-features = false, features = ["macros", "std"] }
+# cvvdp-vs-buttloop tracking baseline harness (docs/RFC_CVVDP_FORK.md §5).
+# Path-pinned via workspace [patch.crates-io] to the sibling zenmetrics
+# checkout. Only consumed by `examples/cvvdp_track_baseline.rs`.
+cvvdp-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types"] }
 
 # codec-corpus uses fd-lock which doesn't compile on WASM
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
@@ -1345,6 +1349,18 @@ required-features = ["gpu-butteraugli", "butteraugli-loop", "ssim2-loop", "paral
 name = "w44_phase3_b5b_divergence_detector_ab"
 path = "examples/w44_phase3_b5b_divergence_detector_ab.rs"
 required-features = ["gpu-butteraugli", "butteraugli-loop", "ssim2-loop", "parallel", "__expert"]
+
+# cvvdp-vs-buttloop tracking baseline (RFC `docs/RFC_CVVDP_FORK.md` §5).
+# Populates `benchmarks/cvvdp_vs_buttloop_tracking_<DATE>.tsv` with one row
+# per (image, distance, effort) using the existing butteraugli-default
+# encoder (`backend=B`). Scores every available perceptual metric
+# (butter_cpu / butter_gpu / cvvdp_gpu / ssim2). Requires CUDA at
+# /usr/local/cuda for the GPU metric columns; pass `--no-gpu-butter`
+# and/or `--no-cvvdp-gpu` to skip on CUDA-less hosts.
+[[example]]
+name = "cvvdp_track_baseline"
+path = "examples/cvvdp_track_baseline.rs"
+required-features = ["gpu-butteraugli", "butteraugli-loop", "ssim2-loop", "parallel"]
 
 # W44-175: parallel `transform_and_quantize_into` (buttloop per-iter group
 # fan-out) + parallel `find_best_split_variable` (DC tree property scan).
