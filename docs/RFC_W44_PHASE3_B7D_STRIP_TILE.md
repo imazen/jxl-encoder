@@ -802,7 +802,19 @@ Day 5 / Day 6 gates fail. The chunk-level acceptance gates:
   truncating cast `(2.25*sigma).max(1.0) as i32` matches the existing
   `compute_kernel_stack` exactly; updated `gaussian_blur_halo` doc-comment
   to clarify.
-- [ ] **Day 3**: `malta_diff_map_strip` + `l2_diff_*_strip` per-kernel parity tests PASS
+- [x] **Day 3**: `malta_diff_map_strip` + `l2_diff_*_strip` per-kernel parity tests PASS
+  (butteraugli `1135dcf6`, 2026-05-24). Adds 15 new unit tests (butteraugli lib
+  105 → 120). Strip variants are byte-identical to the existing kernels on every
+  SIMD tier; the Malta interior reuses `crate::malta`'s `malta_unit_interior` +
+  the 8x/16x SIMD helpers (promoted to `pub(crate)`) via the same
+  `malta_diff_map_impl(interior)` closure shape, so the f32 arithmetic chain
+  is preserved verbatim. Halo per kernel: `malta_diff_map` = 4 rows/side (matches
+  the existing PAD constant); `l2_diff` / `l2_diff_write` / `l2_diff_asymmetric`
+  / `accumulate_two` = 0 (pure pointwise). Tests cover: identity (single-strip
+  = full-buffer), 2-strip split, 16-row many-strip, edge strips (no top-halo /
+  no bottom-halo at row 16 of a 32-row image), strided input (37×33, stride=48,
+  forces SIMD-scalar tail), and `w_0gt1==0 && w_0lt1==0` short-circuit
+  preservation. All assertions to_bits-equal.
 - [ ] **Day 4**: `separate_frequencies_strip` + `apply_mask_correction_precomputed_strip` +
   `combine_channels_to_diffmap_fused_strip` per-kernel parity tests PASS
 - [ ] **Day 5**: `compare_linear_planar_strip_into` end-to-end + 50-image scalar+diffmap
