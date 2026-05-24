@@ -1,0 +1,17 @@
+strategy	stratum	n	mean_dBytes_pct	n_shifted_gt_0p5
+libjxl	photo/high	20	0.0	0
+libjxl	photo/low	40	0.0	0
+libjxl	photo/mid	20	0.0	0
+libjxl	photo/very_high	40	0.0	0
+libjxl	screen/high	11	0.0	0
+libjxl	screen/low	21	0.0	0
+libjxl	screen/mid	11	0.0	0
+libjxl	screen/very_high	18	0.0	0
+zenjxl	photo/high	840	495903.8319	11
+zenjxl	photo/low	1680	45671.8693	12
+zenjxl	photo/mid	840	12809.8617	1
+zenjxl	photo/very_high	1680	43184.5972	1
+zenjxl	screen/high	448	68100.2914	10
+zenjxl	screen/low	924	25696.3422	5
+zenjxl	screen/mid	442	53723.3816	5
+zenjxl	screen/very_high	747	29927.726	5
