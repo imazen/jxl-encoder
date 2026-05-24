@@ -1,0 +1,123 @@
+# cvvdp_loop_smoke_2026-05-24.tsv — Phase 4 smoke bench meta
+
+## Provenance
+
+- **Chunk**: cvvdp-fork Phase 4 (`docs/RFC_CVVDP_PHASE4_BRIEF.md`, Step 5)
+- **Date**: 2026-05-24
+- **Encoder branch**: `cvvdp-fork-rfc` (stacked on parent Phase 3 `9c1cfa3e`)
+- **Workspace**: `~/work/zen/jxl-encoder--cvvdp-loop-wiring`
+- **Reproducer**: `examples/cvvdp_loop_smoke_bench.rs`
+- **Run command**:
+  ```bash
+  cargo run --release -p jxl-encoder \
+    --features "__expert butteraugli-loop cvvdp-loop ssim2-loop parallel" \
+    --example cvvdp_loop_smoke_bench -- \
+    --out benchmarks/cvvdp_loop_smoke_2026-05-24.tsv
+  ```
+
+## Schema
+
+TSV header (RFC `docs/RFC_CVVDP_FORK.md` §5.3 master tracking schema):
+
+| col | type | meaning |
+|---|---|---|
+| `image` | str | fixture name (see Fixtures below) |
+| `corpus` | str | `synthetic` for all rows |
+| `effort` | int | encoder effort (= 8; see Effort below) |
+| `distance` | f32 | butteraugli `target_distance` |
+| `backend` | str | `B` (CPU butteraugli baseline) or `C_GPU` (cvvdp opt-in) |
+| `bytes` | int | encoded JXL size |
+| `wall_ms` | f32 | encode wall time (rough — best-of-one, no rep stats) |
+| `score_butter_cpu` | str | `NA` for this smoke bench (Phase 6 scores all metrics) |
+| `score_butter_gpu` | str | `NA` |
+| `score_cvvdp_gpu` | str | `NA` |
+| `score_cvvdp_cpu` | str | `NA` |
+| `score_ssim2` | str | `NA` |
+| `notes` | str | `encoder_sha=<short> smoke_phase4 [cvvdp_loop=Some(true)]` |
+
+## Fixtures
+
+5 synthetic miniatures (self-contained — no codec-corpus dep so the
+smoke bench runs anywhere):
+
+- `gradient_64`: 64×64 RGB R=x G=y B=128
+- `diagonal_128`: 128×128 RGB diagonal stripes (mid-frequency, exercises
+  AC strategy refinement)
+- `noisy_96`: 96×96 RGB radial brightness + high-frequency dithering
+  (photo-like statistics)
+- `flat_grey_32`: 32×32 RGB grey=128 (degenerate fixture — the buttloop
+  has nothing to refine; included as a control)
+- `checker_64`: 64×64 RGB 8×8 checker (high-contrast edges)
+
+## Distances
+
+`{0.5, 1.0, 2.0, 3.0}` — covers the butteraugli "very low" through
+"high" bands per the CVVDP_DISTANCE_TARGETS lookup table.
+
+## Effort
+
+`effort = 8`. The buttloop gates at `speed_tier <= kKitten`
+(`enc_adaptive_quantization.cc:1282`), which is `effort >= 8` in our
+mapping. At effort 7 (production Zenjxl default for many cells) the
+buttloop never invokes `compare_with_reference`, so the cvvdp opt-in
+would be a no-op and every cell would be byte-identical. Effort 8
+forces the buttloop to engage so the smoke bench exercises the Phase 4
+plumbing path.
+
+## Observations from this run
+
+- **CVVDP fires and changes bytes**: 16 of 20 cells show non-zero
+  Δbytes (the cvvdp-driven loop converges to a different quant_field
+  than butteraugli, as expected from the score-direction mapping +
+  1.05× tightened JOD target).
+- **C_GPU > B bytes on every non-degenerate cell**: the cvvdp target
+  table is more conservative than butteraugli's natural convergence at
+  the same nominal `target_distance`. Photo-like + text-like content
+  shows the largest deltas (noisy_96 d=3.0: +386%; diagonal_128 d=3.0:
+  +262%; checker_64 d=2.0: +104%). This is the Phase 4 expected
+  behaviour — the 1.05× tighter target translates to substantially
+  more bytes on content where cvvdp scores the butteraugli baseline
+  as "perceptually inadequate."
+- **Degenerate fixture (flat_grey_32) ≈ unchanged**: Δbytes within
+  ±5% across all 4 distances — flat content has nothing for the
+  perceptual metric to differentiate, so the loop converges to the
+  same outcome on both backends.
+- **Wall time**: C_GPU is slower (~2-10× the butteraugli baseline at
+  these tiny sizes) because the GPU compute kernel has fixed per-iter
+  overhead (CUDA launch + small-image scheduling) that dominates at
+  ≤128² sizes. The Phase 6 sweep on real CID22 + GB82-SC images will
+  show the GPU asymptote where the kernel speedup vs CPU butteraugli
+  matters; this smoke bench is sized to validate plumbing not perf.
+
+## What this bench is NOT
+
+- **Not a Pareto judgement.** Bigger files at the same nominal
+  distance does NOT mean cvvdp is "worse" — it means it's calibrated
+  differently. Phase 6 (RFC §5.4) is where SSIM2 / cvvdp / butteraugli
+  scores are jointly weighed against bytes to make the
+  default-flip / RD decision.
+- **Not a perf bench.** 1-run-best-of-1 wall_ms on synthetic
+  miniatures isn't representative of production-image throughput.
+- **Not a JOD calibration validation.** The CVVDP_DISTANCE_TARGETS
+  table was seeded from Agent D's 1,131-cell butteraugli baseline +
+  1.05× tightening. Phase 6 will re-validate / rebake the table from
+  a wider sweep against the post-Phase-4 encoder output.
+
+## Where this lands in the master tracking TSV
+
+This 40-row file (20 cells × {B, C_GPU} = 40 rows) supplements (does
+NOT replace) the master `benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv`
+which carries the Agent D 1,131-cell butteraugli-baseline rows. The
+master TSV will get a fresh full-sweep refresh in Phase 6 (per RFC
+§5.4) with the post-Phase-4 encoder, including the `C_GPU` rows the
+smoke bench prototypes here.
+
+## Cross-references
+
+- `docs/RFC_CVVDP_FORK.md` §2.1 + §4 Phase 4
+- `docs/RFC_CVVDP_PHASE4_BRIEF.md` Step 5
+- `jxl-encoder/src/vardct/cvvdp_targets.rs` (lookup table source)
+- `jxl-encoder/src/vardct/perceptual_loop.rs` (where the table reads)
+- `jxl-encoder/tests/cvvdp_loop_smoke.rs` (acceptance-gate parity test)
+- `docs/LIBJXL_DIVERGENCES.md` Section E row 205 (Phase 4 SHIPPED
+  extension)
