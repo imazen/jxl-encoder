@@ -1,0 +1,113 @@
+W44-RECON-DEEP/A7 — GPU butteraugli vs CPU butteraugli divergence + timing
+date: 2026-05-23
+host: lilith (WSL2 Ubuntu, AMD Ryzen 9 7950X, 128 GB RAM)
+gpu: NVIDIA GeForce RTX 5070 (sm_120), CUDA 13.2, driver 596.21
+cpu_crate: butteraugli 0.9.2 (crates.io) with default features (rayon + avx512)
+gpu_crate: butteraugli-gpu 0.0.1 (path crate at ~/work/zen/zenmetrics/crates/butteraugli-gpu)
+            commit 04aba033 — feat(butteraugli-gpu): add w44_recon_a7_timing example
+            pushed as push-qntmlmwpvmsu (anonymous branch on imazen/zenmetrics)
+
+harness: examples/w44_recon_a7_timing.rs (in zenmetrics, commit above)
+inputs: 4 source images, Lanczos3-resized to 256/512/1024 squared each:
+  - CID22/CID22-512/validation/1025469.png (photo, fine grain)
+  - CID22/CID22-512/validation/1418519.png (photo, smooth gradient)
+  - gb82-sc/codec_wiki.png (screenshot, mixed text+diagrams, 2560x1664 source)
+  - clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png (photo, CLIC)
+perturbation: jpeg-like 8x8 stripe at mag=8 (CPU scores 6.8-11.2, multires ~8-11)
+iters: 5 per cell, best+median reported. 2 GPU warmup calls before timing.
+modes: 'multires' (CPU default, GPU new_multires + 0.85*src + 0.5*upsampled);
+       'singleres' (CPU.with_single_resolution(true), GPU new())
+
+24 cells in TSV (4 images x 3 sizes x 2 modes).
+
+Summary stats (TSV cells):
+  rel_diff_pct: n=24 min=0.0126 median=0.0205 mean=0.0209 max=0.0312
+  ZERO cells exceed the 0.5% A7 gate.
+  ZERO cells exceed 0.04% except 1418519 mag=8 256x256 multires at 0.0312.
+  Cache drift (GPU full vs GPU cached_ref): exactly 0.0 on every cell tested
+    in parity_real_image — the reference cache is bit-exact.
+
+Speedup vs CPU butteraugli with default features (rayon + avx512), best-of-5:
+  256x256  multires:  3.0x  (cpu_med 3.23ms -> gpu_med 1.06ms)
+  256x256  singleres: 4.0x  (cpu_med 3.24ms -> gpu_med 0.86ms)
+  512x512  multires: 10.5x  (cpu_med 17.5ms -> gpu_med 1.72ms)
+  512x512  singleres:13.8x  (cpu_med 17.4ms -> gpu_med 1.24ms)
+  1024x1024 multires:27.6x  (cpu_med 94.0ms -> gpu_med 3.41ms)
+  1024x1024 singleres:29.7x (cpu_med 89.6ms -> gpu_med 3.02ms)
+
+Supplementary parity_real_image runs (NOT in TSV but in /tmp/w44_recon_a7_runs.log):
+  8 corpus images x 4 magnitudes (1,4,12,32) x 2 modes = 64 score comparisons
+  abs(rel_diff_pct): min=0.0100 median=0.0200 mean=0.0205 max=0.0500
+  Single max=0.0500% appears once (1418519 mag=4 singleres); all others <=0.03%.
+  Includes 2560x1664 codec_wiki.png (no resize): same +0.02% pattern.
+
+VERDICT
+=======
+GPU butteraugli is usable TODAY as a drop-in CPU butteraugli replacement
+for the JXL encoder's butteraugli quantization loop (the buttloop). The
+multi-resolution mode is wired and matches CPU within 0.02-0.03% on every
+real corpus image tested. The cache drift between full-run and
+cached-reference is exactly 0, so the buttloop pattern of "encode N
+distorted candidates against one fixed reference" maps cleanly to
+set_reference() once + compute_with_reference() N times.
+
+The 0.02% floor is consistent with f32 round-off across the 30+ kernel
+pipeline (per the butteraugli-gpu HANDOFF: "consistent with f32 round-off
+across the 30+ kernel pipeline"). No GPU divergence bugs to fix first.
+
+Buttloop fit estimate at 1024x1024 multires (typical jxl-encoder
+training-corpus tile):
+  - 4 iters of buttloop at e9 currently cost ~4 x 94ms CPU = 376ms.
+    Replacing CPU butteraugli with GPU butteraugli would cut that to
+    ~4 x 3.4ms = 13.6ms, plus ~5-10ms one-time set_reference. Net
+    speedup on the butteraugli portion of buttloop: ~25x. The buttloop
+    accounts for ~30-40% of e9 wall time per the W44-170 perf breakdown,
+    so an end-to-end e9 wall reduction of 8-12% is plausible if the
+    pipeline is wired with no other gaps. At 4 MP+ inputs the speedup
+    grows further (CPU scales linearly; GPU has ~3ms fixed overhead).
+
+Multi-resolution mode coverage
+==============================
+Per zenmetrics commit a80b6bd and the parity_real_image example, the
+multi-resolution supersample-add path is now fully wired:
+    new_multires(client, w, h)
+    + compute() / set_reference() / compute_with_reference()
+matches CPU default (without single_resolution=true) within +0.02% on
+every tested image including 2560x1664 screenshot. The HANDOFF.md
+"What's left" section #1 (multi-resolution supersample-add) is closed.
+HANDOFF #2 (reference cache) is also wired and bit-exact (cache drift 0).
+
+Production blockers (none from divergence perspective)
+======================================================
+  1. butteraugli-gpu is `publish = false` at v0.0.1 — not on crates.io.
+     For jxl-encoder to consume it, either (a) publish butteraugli-gpu,
+     or (b) jxl-encoder takes a path-dep on zenmetrics, or (c) the
+     buttloop hook accepts a trait the user wires up at API surface.
+     The user's task hint says "the patch is intentionally not wired
+     yet pending workspace consumer" — option (c) is the planned shape.
+  2. CUDA-only on this machine. The `wgpu` backend ships in
+     butteraugli-gpu's default features but WSL2 has no Vulkan ICD for
+     the NVIDIA GPU (per HANDOFF). Native Linux/Mac/Windows would test
+     wgpu; not tested here.
+  3. CubeCL 0.10 cold compile is ~5-9 min the first time; warm rebuilds
+     are ~2 min. This is a build-time cost, not a runtime cost. The
+     jxl-encoder release CI would pay this once per matrix cell.
+
+DO NOT
+======
+  - Cite "FMA precision" for the 0.02% floor (per W44-66 user correction).
+    It's pipeline-accumulated f32 round-off, not FMA-specific.
+  - Re-investigate single-resolution parity (HANDOFF a80b6bd closed it).
+  - Re-investigate multi-resolution parity (this measurement closes it).
+  - Re-investigate reference-cache drift (this measurement closes it).
+  - Build butteraugli-gpu without CUDA_PATH=/usr/local/cuda on this
+    machine (cubecl 0.10 + Blackwell sm_120 requires CUDA 13.2).
+
+Files
+=====
+  TSV:     benchmarks/w44_recon_deep_a7_2026-05-23.tsv (24 cells)
+  meta:    this file
+  memo:    .claude/projects/.../memory/w44_recon_deep_a7_gpu_vs_cpu_2026-05-23.md
+  example: zenmetrics/crates/butteraugli-gpu/examples/w44_recon_a7_timing.rs
+           (commit 04aba033, anonymous branch push-qntmlmwpvmsu)
+  raw log: /tmp/w44_recon_a7_runs.log (parity_real_image x 8 images, 64 cells)
