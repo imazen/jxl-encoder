@@ -1,0 +1,4 @@
+image_id	class	width	height	effort	distance	cjxl_bytes	cjxl_bfly	cjxl_ssim2	cjxl_encode_ms	zenjxl_bytes	zenjxl_bfly	zenjxl_ssim2	zenjxl_encode_ms	libjxl_strat_bytes	libjxl_strat_bfly	libjxl_strat_ssim2	libjxl_strat_encode_ms	zenjxl_dBytes_pct	zenjxl_dSsim2	zenjxl_dBfly	libjxl_dBytes_pct	libjxl_dSsim2	libjxl_dBfly
+codec_wiki	SCREEN	2560	1664	5	4	72551	3.5044	84.3697	175	74641	3.2126	84.5446	499	78404	3.4216	79.2482	569	2.881	0.175	-0.2918	8.067	-5.121	-0.0828
+codec_wiki	SCREEN	2560	1664	7	4	62710	2.9915	84.8597	395	90323	3.2093	84.8859	700	70217	3.2092	79.3481	700	44.033	0.026	0.2178	11.971	-5.512	0.2177
+codec_wiki	SCREEN	2560	1664	9	4	73629	3.5015	83.3110	4778	77221	2.2576	84.9766	2921	61628	3.4677	79.3939	2934	4.879	1.666	-1.2439	-16.299	-3.917	-0.0338

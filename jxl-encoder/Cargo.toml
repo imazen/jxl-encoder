@@ -1287,6 +1287,15 @@ name = "cjxl_parity_2026_05_24"
 path = "examples/cjxl_parity_2026_05_24.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
 
+# W44-AUDIT-3 (2026-05-24): focused 3-cell re-validation of codec_wiki d=4
+# post the W44-AUDIT-2 EPF budget-accounting OOM fix (commit 887cac54).
+# Re-runs JUST codec_wiki e5/e7/e9 d=4 with full bytes + butteraugli + SSIM2
+# scoring so the previously-FAIL e9 row in the parity table can be filled in.
+[[example]]
+name = "w44_audit_3_revalidate"
+path = "examples/w44_audit_3_revalidate.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
+
 # W44-171: focused A/B for the DC tree Variable-trial effort gate fix.
 # Targets the W44-170 e5 wall-time wedge on large screenshots
 # (imac_dark 65× cjxl, imac_g3 50×, codec_wiki 40×). Mode A reproduces
