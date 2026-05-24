@@ -33,7 +33,11 @@ fn synth_rgb(w: u32, h: u32) -> Vec<u8> {
             let gy = (y as f32) / (h as f32);
             let checker = ((x / 16) + (y / 16)) & 1;
             let base = (gx * 200.0 + gy * 55.0).clamp(0.0, 255.0) as u8;
-            let v = if checker == 1 { base } else { base.saturating_sub(80) };
+            let v = if checker == 1 {
+                base
+            } else {
+                base.saturating_sub(80)
+            };
             out.push(v);
             out.push((v as u32 * 7 / 10) as u8);
             out.push((255 - v) / 2);
@@ -47,7 +51,9 @@ fn decode_oxide(bytes: &[u8]) -> Result<(usize, usize), String> {
     let img = jxl_oxide::JxlImage::builder()
         .read(reader)
         .map_err(|e| format!("oxide read: {e}"))?;
-    let r = img.render_frame(0).map_err(|e| format!("oxide render: {e}"))?;
+    let r = img
+        .render_frame(0)
+        .map_err(|e| format!("oxide render: {e}"))?;
     let fb = r.image_all_channels();
     Ok((fb.width(), fb.height()))
 }
@@ -102,8 +108,8 @@ fn decode_jxl_rs(bytes: &[u8]) -> Result<(usize, usize), String> {
         }
     };
 
-    let mut output_image =
-        Image::<f32>::new((width * channels, height)).map_err(|e| format!("jxl-rs alloc: {e:?}"))?;
+    let mut output_image = Image::<f32>::new((width * channels, height))
+        .map_err(|e| format!("jxl-rs alloc: {e:?}"))?;
     let mut buffers = vec![JxlOutputBuffer::from_image_rect_mut(
         output_image
             .get_rect_mut(Rect {
@@ -141,7 +147,11 @@ fn gpu_backend_roundtrip_via_oxide_smoke() {
     let bytes = cfg
         .encode(&rgb, 256, 256, PixelLayout::Rgb8)
         .expect("encode failed under GPU butteraugli");
-    assert!(bytes.len() > 100, "encoded output too small: {}", bytes.len());
+    assert!(
+        bytes.len() > 100,
+        "encoded output too small: {}",
+        bytes.len()
+    );
     let (w, h) = decode_oxide(&bytes).expect("jxl-oxide failed to decode GPU-backend output");
     assert_eq!((w, h), (256, 256));
 }
@@ -168,7 +178,8 @@ fn gpu_backend_roundtrip_terminal_e8_d4_via_oxide() {
     // isn't present so the test is friendly to CI configurations that
     // didn't stage gb82-sc.
     let path = std::path::PathBuf::from(
-        std::env::var("CODEC_CORPUS_DIR").unwrap_or_else(|_| "/home/lilith/work/codec-corpus".into()),
+        std::env::var("CODEC_CORPUS_DIR")
+            .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".into()),
     )
     .join("gb82-sc/terminal.png");
     let img = match image::open(&path) {
