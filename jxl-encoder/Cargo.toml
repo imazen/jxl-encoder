@@ -1387,6 +1387,15 @@ name = "cvvdp_track_baseline"
 path = "examples/cvvdp_track_baseline.rs"
 required-features = ["gpu-butteraugli", "butteraugli-loop", "ssim2-loop", "parallel"]
 
+# cvvdp-fork Phase 4 (2026-05-24): 20-cell smoke bench producing the
+# `benchmarks/cvvdp_loop_smoke_<DATE>.tsv` file per the Phase 4 brief
+# Step 5. Self-contained synthetic fixtures (no codec-corpus dep);
+# silent-fallback to butteraugli when CUDA is missing.
+[[example]]
+name = "cvvdp_loop_smoke_bench"
+path = "examples/cvvdp_loop_smoke_bench.rs"
+required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "ssim2-loop", "parallel"]
+
 # W44-175: parallel `transform_and_quantize_into` (buttloop per-iter group
 # fan-out) + parallel `find_best_split_variable` (DC tree property scan).
 # Mode A forces both back to sequential via env hooks; Mode B is the W44-175

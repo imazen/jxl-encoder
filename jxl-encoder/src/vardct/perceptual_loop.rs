@@ -2,15 +2,27 @@
 // Algorithms and constants derived from libjxl (BSD-3-Clause).
 // Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
 
-//! Butteraugli quantization loop for iterative quality refinement.
+//! Perceptual-metric quantization loop for iterative quality refinement.
 //!
 //! Iteratively refines per-block quant_field by measuring perceptual distance
-//! (butteraugli) between the original and reconstructed image.
+//! between the original and reconstructed image. The metric is pluggable via
+//! the [`super::perceptual_backend::PerceptualBackend`] trait — the default
+//! backend is butteraugli (CPU `compare_linear_planar_into`), GPU backends
+//! are opt-in (`gpu-butteraugli`, `cvvdp-loop`).
 //!
 //! Matches libjxl's FindBestQuantization (enc_adaptive_quantization.cc:929-1115):
 //! - Works in float quant field domain (values ~0.3-1.5), NOT integer (1-255)
 //! - Recomputes global_scale each iteration via SetQuantField (median/MAD)
 //! - Returns final DistanceParams for use in CfL pass 2 and encoding
+//!
+//! ## File renaming history
+//!
+//! Was named `butteraugli_loop.rs` until cvvdp-fork Phase 4 (2026-05-24,
+//! see `docs/RFC_CVVDP_PHASE4_BRIEF.md`). The historical function names
+//! (`run_buttloop`, `BUTTLOOP_*` constants) are preserved — they're
+//! load-bearing in W44-* commit messages and in-source comments. A
+//! backward-compat alias `crate::vardct::butteraugli_loop = perceptual_loop`
+//! lives in `vardct/mod.rs` so the 30+ in-crate `use` sites keep working.
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
@@ -1332,15 +1344,21 @@ impl VarDctEncoder {
                     metric_intensity_target,
                     self.gpu_butteraugli,
                     // cvvdp-fork Phase 3: opt-in via
-                    // `LossyConfig::with_cvvdp_loop`. The buttloop body
-                    // still consumes butteraugli — only the backend
-                    // construction routes to cvvdp when the field is
-                    // set. Phase 4 will plumb the cvvdp signal through
-                    // `run_buttloop` proper (rename to
-                    // `perceptual_loop.rs`). Until then, the cvvdp
-                    // backend produces butteraugli-direction scores
-                    // (smaller = better) via the `10.0 - JOD` mapping
-                    // so the comparison surface stays uniform.
+                    // `LossyConfig::with_cvvdp_loop`. cvvdp-fork Phase 4
+                    // (2026-05-24, this commit): the buttloop body now
+                    // consumes the cvvdp signal via the
+                    // `effective_metric_target_distance` lookup
+                    // (`super::cvvdp_targets::cvvdp_target_score_for_distance`)
+                    // when this field is true AND the `cvvdp-loop`
+                    // feature is on AND CUDA init succeeded. The cvvdp
+                    // backend's per-iter compare returns scores in
+                    // butteraugli-direction (`score = 10.0 - JOD`); the
+                    // metric-target lookup table provides the
+                    // corresponding convergence threshold per
+                    // `target_distance`. The bitstream
+                    // `target_distance` stays butteraugli-direction
+                    // (it's the file's quality target, not the metric
+                    // target).
                     self.cvvdp_loop,
                 );
                 if let Err(_) = b.set_reference(&ref_r, &ref_g, &ref_b, width, height) {
@@ -1846,6 +1864,42 @@ impl VarDctEncoder {
         // semantics: VDP2 path = None, butteraugli path = Some(_).
         let mut backend = backend;
 
+        // cvvdp-fork Phase 4 (2026-05-24): compute the metric-direction
+        // target the inner seed loop will converge against. For the
+        // butteraugli backend (production default OR cvvdp-loop feature
+        // off OR `LossyConfig::cvvdp_loop` unset) this is the
+        // butteraugli-direction `target_distance` verbatim → byte-identical
+        // to pre-Phase-4 behaviour. For the cvvdp backend (opt-in via
+        // `LossyConfig::with_cvvdp_loop(Some(true))`) this is the
+        // cvvdp-direction target from `cvvdp_targets.rs`, so the inner
+        // loop's `td > target` and `tile_dist / target` math lives in
+        // the same units as the per-iter compare score (which the cvvdp
+        // GPU backend already maps to butteraugli-direction `10 - JOD`).
+        //
+        // Routing match: `cvvdp_loop` was resolved at API entry via
+        // `LossyConfig::resolve_cvvdp_loop` and propagated to
+        // `VarDctEncoder.cvvdp_loop`. The flag-on path here only fires
+        // when (a) the field is true AND (b) we're not on the VDP2
+        // branch (VDP2-lite is a separate metric) AND (c) the feature
+        // is compiled in. Outside the feature, `cvvdp_loop` defaults to
+        // `false` per the `VarDctEncoder::default()` initialiser, so
+        // the branch is dead-code-eliminated.
+        let effective_metric_target_distance: f32 = {
+            #[cfg(feature = "cvvdp-loop")]
+            {
+                if self.cvvdp_loop && !use_vdp2 {
+                    super::cvvdp_targets::cvvdp_target_score_for_distance(target_distance)
+                } else {
+                    target_distance
+                }
+            }
+            #[cfg(not(feature = "cvvdp-loop"))]
+            {
+                let _ = use_vdp2; // silence unused on no-feature builds
+                target_distance
+            }
+        };
+
         for &k_init_mul in seeds {
             // Restore starting state for this seed (skipped on seed 0 because
             // quant_field/quant_field_float already hold it, but cheap enough
@@ -1890,6 +1944,9 @@ impl VarDctEncoder {
                 is_screenshot,
                 w44_118_per_iter_sharpness,
                 mask1x1,
+                // cvvdp-fork Phase 4: metric-direction target for the
+                // inner loop's bad-block + accept-bound + diff_raw math.
+                effective_metric_target_distance,
             )?;
             outcomes.push(outcome);
         }
@@ -1899,7 +1956,13 @@ impl VarDctEncoder {
         //   2. Among those, pick the largest mean_qf (proxy for smallest bytes).
         //   3. If none meet bound, pick the smallest final_score (degenerates
         //      to single-seed worst-case because seed 0 = LIBJXL_INIT_MUL).
-        let accept_bound = K_BUTTERAUGLI_ACCEPT_FACTOR * target_distance as f64;
+        //
+        // cvvdp-fork Phase 4 (2026-05-24): the accept-bound multiplies
+        // the effective METRIC target (cvvdp-direction when the cvvdp
+        // backend is active, butteraugli-direction otherwise). The
+        // butteraugli case is byte-identical to pre-Phase-4 because
+        // `effective_metric_target_distance == target_distance` then.
+        let accept_bound = K_BUTTERAUGLI_ACCEPT_FACTOR * effective_metric_target_distance as f64;
         let winner_idx = {
             let qualifying: alloc::vec::Vec<usize> = (0..outcomes.len())
                 .filter(|&i| outcomes[i].final_score <= accept_bound)
@@ -2046,11 +2109,34 @@ impl VarDctEncoder {
         // seed. Env-gated; production default false.
         w44_118_per_iter_sharpness: bool,
         mask1x1: Option<&[f32]>,
+        // cvvdp-fork Phase 4 (2026-05-24): the "metric-direction"
+        // convergence target this seed uses for the per-block
+        // `td > effective_metric_target_distance` filter, the
+        // `tile_dist / effective_metric_target_distance` per-block bump
+        // ratio, and the picker's `K_BUTTERAUGLI_ACCEPT_FACTOR *
+        // effective_metric_target_distance` accept bound. When the
+        // active backend is butteraugli (production default), the
+        // caller passes `target_distance` here verbatim and behaviour
+        // is byte-identical to pre-Phase-4. When the cvvdp backend is
+        // active, the caller passes the cvvdp-direction target read
+        // from `super::cvvdp_targets::cvvdp_target_score_for_distance`,
+        // so the comparison surface for `iter_score`, `tile_dist`, and
+        // `accept_bound` all live in the same units. The bitstream
+        // `target_distance` (consumed by `DistanceParams::compute_from_quant_field`)
+        // is NOT remapped — that's the quality target encoded into the
+        // file, not the metric target. See
+        // `docs/RFC_CVVDP_PHASE4_BRIEF.md` Step 4.
+        effective_metric_target_distance: f32,
     ) -> Result<SeedOutcome> {
         use super::epf;
         use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
 
         let target_distance = self.distance;
+        // cvvdp-fork Phase 4: cached alias for the three metric-axis
+        // sites below. The bitstream-quality `target_distance` is read
+        // separately (it goes into DistanceParams + rate-control math
+        // and stays butteraugli-direction always).
+        let effective_metric_target_distance: f32 = effective_metric_target_distance;
         let num_blocks = xsize_blocks * ysize_blocks;
         let padded_pixels = padded_width * padded_height;
         debug_assert_eq!(ref_r.len(), width * height);
@@ -2485,18 +2571,24 @@ impl VarDctEncoder {
                 let qf_sum: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
                 let qf_avg = qf_sum / quant_field_float.len() as f64;
                 let td_max = tile_dist.iter().copied().reduce(f32::max).unwrap_or(0.0);
-                let bad_blocks = tile_dist.iter().filter(|&&d| d > target_distance).count();
+                // cvvdp-fork Phase 4: bad_blocks is metric-direction
+                // (compares tile_dist to the effective metric target).
+                let bad_blocks = tile_dist
+                    .iter()
+                    .filter(|&&d| d > effective_metric_target_distance)
+                    .count();
                 debug_rect!(
                     "bfly/iter",
                     0,
                     0,
                     width,
                     height,
-                    "iter={}/{} score={:.3} target={:.3} gs={} qf_avg={:.4} qf=[{:.4};{:.4}] td_max={:.2} bad={}",
+                    "iter={}/{} score={:.3} target={:.3} (metric_target={:.5}) gs={} qf_avg={:.4} qf=[{:.4};{:.4}] td_max={:.2} bad={}",
                     iter,
                     iters,
                     iter_score,
                     target_distance,
+                    effective_metric_target_distance,
                     current_params.global_scale,
                     qf_avg,
                     qf_min,
@@ -2600,7 +2692,11 @@ impl VarDctEncoder {
                          (clamps should keep this finite every iter)",
                         quant_field_float[bi]
                     );
-                    let diff_raw = tile_dist[bi] / target_distance;
+                    // cvvdp-fork Phase 4: diff_raw is the per-block bump
+                    // ratio in metric-direction units. Bitstream
+                    // `target_distance` is NOT used here — we want the
+                    // metric the buttloop is actually converging against.
+                    let diff_raw = tile_dist[bi] / effective_metric_target_distance;
                     // W38-2 #3.1: cap the per-iter bump (no-op in HIGH
                     // regime where max_increase = 100.0).
                     let diff = diff_raw.min(max_increase as f32);
@@ -2632,7 +2728,11 @@ impl VarDctEncoder {
                         "butteraugli loop: non-finite quant_field_float[{bi}] = {}",
                         quant_field_float[bi]
                     );
-                    let diff_raw = tile_dist[bi] / target_distance;
+                    // cvvdp-fork Phase 4: diff_raw is the per-block bump
+                    // ratio in metric-direction units. Bitstream
+                    // `target_distance` is NOT used here — we want the
+                    // metric the buttloop is actually converging against.
+                    let diff_raw = tile_dist[bi] / effective_metric_target_distance;
                     // W38-2 #3.1: cap the per-iter bump for bad blocks
                     // (no-op in HIGH regime where max_increase = 100.0,
                     // no-op for good blocks where diff <= 1.0 anyway).
@@ -2647,8 +2747,8 @@ impl VarDctEncoder {
                         // is finite, so the downstream assert can't catch it).
                         assert!(
                             diff.is_finite(),
-                            "butteraugli loop: non-finite diff = {diff} \
-                             (tile_dist={}, target_distance={target_distance})",
+                            "perceptual loop: non-finite diff = {diff} \
+                             (tile_dist={}, effective_metric_target={effective_metric_target_distance})",
                             tile_dist[bi]
                         );
                         // Negative diff would produce NaN through powf for
