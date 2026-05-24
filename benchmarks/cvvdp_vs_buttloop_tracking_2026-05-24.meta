@@ -24,11 +24,68 @@ For every (image, distance, effort, backend) cell:
 
 ## Corpus
 
-- **CID22-512** (41 photos, held out from W44 training)
-- **GB82-SC** (10 screenshots)
-- **W44-PHASE4-S1 corpus subset** (50 stratified images)
+- **CID22-512** (41 photos, held out from W44 training, validation/ dir)
+- **GB82-SC** (11 screenshots — codec_wiki/gmessages/graph/gui/imac_dark/imac_g3/imac_g3_strip/imessage/terminal/windows/windows95)
+- **W44-PHASE4-S1 extras** (2 distinct images: baby-lossless / bulb-lossless under codec-corpus/gb82/)
 
-Total 101 images × 7 distances × 3 efforts = 2,121 cells per backend.
+Note on W44-S1: the actual `pick_w44_phase4_s1_corpus()` selects 27 images,
+but 25 already overlap with CID22 validation + GB82-SC. Only baby-lossless
+and bulb-lossless are NEW vs the other two corpora. So 54 distinct images
+total.
+
+The RFC §5.1 figure of "101 images × 21 cells = 2,121" was aspirational
+(based on an early 50-image W44-S1 sample). The actual unique-image
+count from the available local corpora is 54 → 54 × 21 = **1,134 cells
+per backend**. The D1 baseline pass targets full coverage of these.
+
+## Backends populated by D1 (this commit)
+
+- `B` rows = production-default encoder (`EncoderStrategy::Zenjxl`,
+  `LossyConfig::new(d).with_effort(e)`, butteraugli CPU buttloop default)
+- `score_butter_cpu`: `butteraugli::butteraugli_linear` (linear-f32)
+- `score_butter_gpu`: `butteraugli_gpu::Butteraugli<CudaRuntime>::new_multires`
+  on sRGB-u8 — parity-check column. Both reference + distorted re-encoded
+  to sRGB-u8 from the decoded linear-f32, so this measures GPU butteraugli
+  on the SAME pixels as the CPU column.
+- `score_cvvdp_gpu`: `cvvdp_gpu::CvvdpOpaque::new(Cuda, w, h, default).compute_srgb_u8`
+- `score_cvvdp_cpu`: NA (Agent A's CPU port not landed yet)
+- `score_ssim2`: `fast_ssim2::compute_ssimulacra2` on sRGB-u8
+
+## Encode timing
+
+`wall_ms` is the median of 3 sequential encodes per cell, single-process,
+multi-threaded encoder (no `with_threads(1)` override — we let the
+default rayon pool fan out, matching production behaviour). The harness
+short-circuits to 1 sample when the first iter exceeds 30s.
+
+## Decode
+
+jxl-oxide 0.12.5 fork (imazen/jxl-oxide fd4e2c3 per workspace
+`[patch.crates-io]`) decoding to linear sRGB f32 via
+`request_color_encoding(srgb_linear, RenderingIntent::Relative)`. This
+matches the `quality_compare` harness and the CLAUDE.md "jxl-oxide
+linear output" rule.
+
+## Linear→sRGB-u8 round-trip
+
+For SSIM2 and the GPU metrics (which take sRGB u8), we re-encode the
+decoded linear-f32 via the explicit sRGB transfer function (linear
+segment below 0.003_130_8, then `1.055 * x^(1/2.4) - 0.055`). This
+matches the `quality_compare` `linear_to_srgb_u8`. We do NOT use the
+input PNG bytes for the metric source — that would invoke
+PNG-color-metadata divergence (see CLAUDE.md "CRITICAL: PNG Color
+Metadata"). We use the PNG's decoded sRGB u8 (i.e., the encoder input)
+as the reference; the GPU metric `ref_srgb` is the PNG's sRGB u8
+directly, since the encoder ingests sRGB-u8 → linear internally before
+encoding. This means butter_gpu's reference is `src_pixels_u8` and its
+distorted is `decoded_linear → linear_to_srgb_u8`. butter_cpu's
+reference is `src_pixels_u8 → srgb_to_linear` and distorted is the
+decoded linear directly.
+
+The two paths are NOT identical (CPU stays in linear domain
+end-to-end; GPU round-trips through sRGB). Expect butter_cpu ≈
+butter_gpu within ~5% on most cells; large divergences are documented
+in `notes`.
 
 ## Schema
 
@@ -67,3 +124,28 @@ Per RFC §5.4:
 Each row carries the commit SHA of the encoder at time of measurement.
 Append-only; never edit historical rows. Methodology changes get a new
 TSV file + meta with the date.
+
+## D1 run record (2026-05-24)
+
+- Host: `lilith` (Linux 6.6.114.1-microsoft-standard-WSL2 / RTX 5070 / CUDA 13.2)
+- Encoder commit: `bfd63efe` (parent of this commit, harness scaffold)
+- Run wall: 1226s (~20 min) for 1,134 cells (0.93 cells/s avg)
+- Rows populated: **1,131 of 1,134** (99.7%)
+- 3 cells failed encode with `LimitExceeded` ("memory budget exceeded:
+  requested ~203 MB on top of ~1.94 GiB, cap 2 GiB") — all GB82-SC e8
+  d=4.0 on the largest screenshots (imac_dark.png, imac_g3.png,
+  imac_g3_strip.png). These rows have `bytes=0 wall_ms=NaN
+  score_*=NA` with the LimitExceeded message captured in `notes`.
+  Multi-line panic backtraces were post-hoc sanitized to single-line
+  notes via the cleanup pass.
+- Per-corpus row counts (header excluded):
+  - CID22: 861 (41 imgs × 21 cells)
+  - GB82-SC: 231 (11 imgs × 21 cells)
+  - W44-S1: 42 (2 imgs × 21 cells)
+- Build features: `gpu-butteraugli butteraugli-loop ssim2-loop parallel`
+  (default `cargo --release`)
+- jxl-oxide: 0.12.5 (imazen fork fd4e2c3)
+- butteraugli: local path `../../butteraugli/butteraugli` (workspace patch)
+- butteraugli-gpu: local path `../zenmetrics/crates/butteraugli-gpu` (workspace patch)
+- cvvdp-gpu: local path `../zenmetrics/crates/cvvdp-gpu` (workspace patch)
+- cubecl: `git@lilith/cubecl#de2f9857` (workspace patch)

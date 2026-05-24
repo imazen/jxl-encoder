@@ -80,6 +80,10 @@ butteraugli = { path = "../../butteraugli/butteraugli" }
 # at `crates/butteraugli-gpu`. `publish = false` so always path-pinned;
 # pulled in via the `gpu-butteraugli` cargo feature in `jxl-encoder/Cargo.toml`.
 butteraugli-gpu = { path = "../zenmetrics/crates/butteraugli-gpu" }
+# cvvdp-gpu lives in the same zenmetrics workspace. Only used by
+# `examples/cvvdp_track_baseline.rs` (RFC `docs/RFC_CVVDP_FORK.md` §5).
+# `publish = false` upstream; path-pinned here.
+cvvdp-gpu = { path = "../zenmetrics/crates/cvvdp-gpu" }
 # cubecl is pinned to the lilith/cubecl `pr/pinned-v0.10.0` revision the
 # zenmetrics workspace uses (matches the cubecl rev butteraugli-gpu is
 # tested against). Required to keep the cubecl version consistent across
