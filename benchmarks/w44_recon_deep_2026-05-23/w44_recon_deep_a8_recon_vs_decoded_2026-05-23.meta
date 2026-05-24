@@ -1,0 +1,233 @@
+W44-RECON-DEEP/A8 — internal-recon vs decoded vs cjxl scoring
+================================================================
+
+Date            : 2026-05-23
+Chunk           : W44-RECON-DEEP/A8 (HONEST-STOP test for the entire arc)
+Parent commit   : ttvzwsvo 05e3bdf0 main (investigate(W44-recovery): e9 perf profile on 1418519 d=1.0)
+Workspace       : ~/work/zen/jxl-encoder--w44-recon-deep-a8 (jj workspace w44-recon-deep-a8)
+Host            : Lilith workstation (AMD Ryzen 9 7950X, 128 GB)
+Threads         : 8 (`with_threads(8)`)
+Memory cap      : 8 GiB (`Limits::new().with_max_memory_bytes(...)`)
+cjxl binary     : ~/work/jxl-efforts/libjxl/build/tools/cjxl (--num_threads 1)
+Decoders        : jxl 0.4.0 (jxl-rs PRIMARY), jxl-oxide 0.12.5 imazen/fd4e2c3 fork (cross-check)
+Metric libs     : butteraugli 0.9, fast-ssim2 0.7.1
+Feature set     : __internal_recon_hook butteraugli-loop ssim2-loop parallel
+
+Question
+--------
+Does the buttloop's internal-recon score (the target it converges
+toward) match the score of the SHIPPED bitstream as decoded by the
+real decoder? If yes within noise, W44-138 P-1 (per-iter sharpness
+recompute) has NEGLIGIBLE quality EV — pivot to perf/architecture.
+If no, P-1 is correctness-critical.
+
+Method
+------
+Per cell, four (bfly, ssim2) scores:
+  1. INTERNAL: source vs buttloop's last-iter `InternalRecon` (linear-RGB
+     captured via `__recon_hook`, gated on `__internal_recon_hook`
+     feature). Cropped, planar; converted to interleaved for metric calls.
+  2. DECODED: source vs jxl-rs decode of SHIPPED JXL bitstream
+     (linear-RGB derived from sRGB f32 → srgb_to_linear_val).
+  3. OXIDE: source vs jxl-oxide decode (request_color_encoding
+     `srgb_linear`). Cross-decoder sanity.
+  4. CJXL: source vs jxl-rs decode of cjxl-encoded bitstream at the
+     same (effort, distance). Reference target framing.
+
+Source-side preprocessing identical to W44-138 / W44-170 harnesses:
+  - PNG → u8 sRGB via `image` crate (`to_rgb8`).
+  - sRGB u8 → linear-RGB f32 (gamma-2.4 / linear-segment piecewise,
+    matching cjxl + jxl-oxide).
+
+Per-cell columns (TSV):
+  image, distance, effort, width, height, notes,
+  bfly_internal, bfly_decoded, bfly_oxide, bfly_cjxl,
+  ssim2_internal, ssim2_decoded, ssim2_oxide, ssim2_cjxl,
+  delta_bfly_internal_vs_decoded, delta_bfly_decoded_vs_cjxl,
+  delta_ssim2_internal_vs_decoded, delta_ssim2_decoded_vs_cjxl,
+  ours_bytes, cjxl_bytes, ours_encode_ms, cjxl_encode_ms, status
+
+Cells (12; all e=8 — buttloop is gated at `effort >= 8` so e7 cells
+have no internal-recon target to compare against)
+--------------------------------------------------------------------
+  1.  1418519 d=5  e=8  CID22  PHOTO  W44-138-P1-target
+  2.  terminal d=4  e=8  gb82   SCREEN W44-138 spec
+  3.  codec_wiki d=4 e=8  gb82  SCREEN W44-138 spec
+  4.  1025469 d=2  e=8  CID22  PHOTO  W44-138 spec (monotonic)
+  5.  1025469 d=4  e=8  CID22  PHOTO  W44-138 spec
+  6.  terminal d=0.8 e=8 gb82  SCREEN W44-117 low-d distance-gate
+  7.  1420710 d=5  e=8  CID22  PHOTO  W44-99 HC variant Z
+  8.  1531677 d=5  e=8  CID22  PHOTO  W44-99 LC variant Z
+  9.  3637739 d=4  e=8  CID22  PHOTO  W44-198 cluster (lifted e7→e8)
+ 10.  clic_097cb426 d=2 e=8 clic PHOTO  W44-178 CfL (lifted e7→e8)
+ 11.  imac_dark d=4 e=8  gb82  SCREEN large
+ 12.  graph d=0.5 e=8    gb82  SCREEN line-art (lifted e7→e8)
+
+Per-cell deltas (Δint-dec is positive = buttloop optimistic)
+------------------------------------------------------------
+image                 d  e  bfly_int bfly_dec  Δint-dec ssim2_int ssim2_dec Δssim2_id verdict
+1418519               5  8    4.1360   4.2844   -0.1484   64.8983   66.8540   -1.9557 MED-ssim2
+terminal              4  8    1.8563   1.8648   -0.0085   87.7201   86.8956   +0.8245 MED-ssim2
+codec_wiki            4  8    2.2559   2.2565   -0.0006   86.1397   86.3629   -0.2232 OK
+1025469               2  8    2.0734   2.0662   +0.0072   78.2590   78.5645   -0.3055 OK
+1025469               4  8    3.8528   3.8201   +0.0327   58.0866   62.6021   -4.5155 CRIT-ssim2
+terminal            0.8  8    0.6199   0.6242   -0.0043   93.8950   93.8392   +0.0557 OK
+1420710               5  8    4.7880   4.8937   -0.1056   54.5186   57.3050   -2.7865 CRIT-ssim2
+1531677               5  8    4.7897   4.7902   -0.0006   41.2918   47.1115   -5.8197 CRIT-ssim2
+3637739               4  8    3.7951   4.3539   -0.5588   68.2251   68.7159   -0.4908 CRIT-bfly
+clic_097cb426         2  8    2.5524   2.5684   -0.0160   73.6705   73.9745   -0.3040 OK
+imac_dark             4  8    1.6220   1.6074   +0.0145   85.4924   85.6344   -0.1420 OK
+graph               0.5  8    0.4451   0.4451   -0.0000   94.5329   94.5329   +0.0000 OK
+
+Aggregate (n=12)
+----------------
+  |Δbfly_internal_vs_decoded|:  median = 0.0115,  max = 0.5588
+  Δbfly signed:                  median = -0.0024, mean = -0.0657
+  |Δssim2_internal_vs_decoded|: median = 0.3982,  max = 5.8197
+  Δssim2 signed:                 median = -0.3047, mean = -1.3052
+
+Butteraugli buckets:
+  CRIT (|Δ| >= 0.50): 1  (3637739 d=4)
+  MED  (0.30 <= |Δ| < 0.50): 0
+  NEG  (|Δ| < 0.30): 11
+
+SSIM2 buckets:
+  CRIT (|Δ| >= 2.0): 3  (1025469 d=4, 1420710 d=5, 1531677 d=5)
+  MED  (0.5 <= |Δ| < 2.0): 2  (1418519 d=5, terminal d=4)
+  NEG  (|Δ| < 0.5): 7
+
+Decoded-vs-cjxl framing:
+  Δbfly_dec_vs_cjxl:  median = -0.1625 (ours better),  mean = -0.3877
+  Δssim2_dec_vs_cjxl: median = -0.7254 (cjxl better),  mean = +0.0544
+
+Cross-decoder sanity (jxl-rs vs jxl-oxide on SHIPPED bitstream):
+  max |bfly_decoded - bfly_oxide| = 0.003900  (FP noise, ✓)
+
+Verdict
+-------
+MIXED.
+
+By the butteraugli axis the buttloop IS a faithful proxy:
+  - 11/12 cells |Δbfly| < 0.30 (NEG)
+  - median |Δbfly| = 0.011 (≈ jxl-rs vs jxl-oxide cross-decoder FP noise)
+  - the buttloop's perception of "how close are we to source?" matches
+    what the user sees within noise on every cell EXCEPT 3637739 d=4
+
+By the SSIM2 axis the buttloop is SYSTEMATICALLY PESSIMISTIC:
+  - 3/12 cells |Δssim2| >= 2.0
+  - mean signed Δssim2 = -1.31 (internal score consistently LOWER than
+    decoded), max = -5.82 on 1531677 d=5
+  - The buttloop's internal reconstruction (uniform-4 EPF sharpness,
+    no patch subtraction in the recon pipeline, etc.) makes SSIM2
+    measurements on the encoder side substantially worse than what
+    the real decoder produces — because the production sharpness map
+    + production EPF + production patch overlay improve SSIM2
+
+Why MIXED, not clean either way:
+  - The W44-116 root-cause memo was correct: the EPF-sharpness mismatch
+    IS real (~0.05-0.17 R linear-RGB max-abs in pre-W44-117 conditions).
+  - But: the W44-117 / W44-118 / W44-120 chain has been actively
+    closing the GAP. The 11/12 cells with negligible bfly gap shows
+    the gap is mostly fixed by the W44-117 family for bfly.
+  - The SSIM2 gap is a DIFFERENT axis. SSIM2 weights luma structure
+    more heavily; the buttloop never optimizes SSIM2 directly, so
+    cells where the internal recon's structure differs from the
+    decoded structure (via EPF / patches / splines) will read
+    differently on SSIM2 even when bfly converges.
+  - But: in EVERY case where SSIM2 differs substantially, the
+    DECODED SSIM2 is HIGHER (better) than the internal — i.e. the
+    real decoder produces better-quality output than the buttloop's
+    target. This is NOT a quality bug — it's a metric divergence
+    where the buttloop's local minimum on bfly produces SUPERIOR
+    SSIM2 in the decoded output. P-1 (per-iter sharpness recompute)
+    would NOT help here; it would either move the buttloop's
+    convergence to a different point or just slow it down.
+
+Implications for Phase 2 plan
+-----------------------------
+1. P-1 (per-iter EPF sharpness recompute) has NEGLIGIBLE BFLY EV
+   on this 12-cell set. The buttloop's bfly target IS what users see.
+   For 11/12 cells closing the +0.034 R max-abs at after_epf (the
+   W44-138 wedge) would only marginally move bfly by < 0.30.
+2. P-1 may have UNPREDICTABLE SSIM2 EV. The 3 CRIT-ssim2 cells show
+   the decoder produces +2.8 to +5.8 BETTER ssim2 than the buttloop's
+   internal recon. Per-iter sharpness recompute would change which
+   point the buttloop converges to — not obviously toward improving
+   SSIM2 in the decoded output. Could regress SSIM2-axis just as easily.
+3. The 1 CRIT-bfly cell (3637739 d=4) DOES show a 0.56 bfly gap that
+   would benefit from P-1. But it's an outlier. The W44-198 cluster
+   handle on 3637739 may already address this via a different
+   mechanism (content discriminator).
+4. Decoded scores are at-or-better than cjxl on bfly (mean -0.39),
+   roughly at-parity on SSIM2 (mean +0.05) across the 12-cell set —
+   suggesting the encoder is converging well; what the buttloop
+   thinks vs what users see has small EV on average.
+5. The dominant remaining bfly gap (between us and cjxl, after
+   decoding both) lives in cells the W44-99/100 + W44-198 cluster
+   work is targeting — content-discriminator surface, not
+   buttloop-recon-fidelity surface.
+
+Recommended Phase 2 direction
+-----------------------------
+PIVOT to perf/architecture. P-1 has small bfly EV, ambiguous SSIM2
+EV, and known 10-30% buttloop slowdown cost (per W44-116 estimate).
+
+If a future chunk DOES want to revisit recon-vs-decoder fidelity:
+  - Re-measure ONLY on the 3637739-class cells (CRIT-bfly).
+  - Measure SSIM2 from a DIFFERENT proxy — e.g., per-block SSIM map
+    on the internal recon vs decoded — to discriminate "different
+    point, similar quality" from "worse point, worse quality".
+  - The 1025469/1420710/1531677 d=5 CRIT-ssim2 cells should be
+    re-examined for whether the buttloop's bfly-locally-optimal
+    convergence is producing SSIM2-suboptimal final output that
+    user-visible quality matrics catch.
+
+What this DOES NOT rule out
+---------------------------
+- The W44-138 +0.034 R max-abs at after_epf on 1418519 d=5 is real
+  (and was the original P-1 motivation), but A8 shows the resulting
+  bfly delta is only -0.148 (NEG bucket). The +0.034 max-abs is
+  a single-pixel outlier; it does not move bfly meaningfully.
+- The W44-117 family of fixes (one-shot sharpness seed at iter-0)
+  is doing its job — that's why 11/12 cells are NEG-bfly.
+- SSIM2-targeted optimization remains a separate axis the buttloop
+  doesn't address. The W44-105/107/108/109 qac-scale chain handles
+  the cells the bfly-only optimization misses on SSIM2; those
+  remain load-bearing per W44-119.
+
+DO NOT (binding for future agents)
+----------------------------------
+1. DO NOT ship W44-138 P-1 (per-iter sharpness recompute) as a
+   pure correctness fix. Measurement is conclusive: the
+   recon-vs-decoder gap is bfly-negligible on 11/12 cells. The 1
+   outlier needs targeted investigation, not a global mechanism.
+2. DO NOT cite "FMA precision" for the SSIM2 divergence (per W44-66
+   user correction).
+3. DO NOT re-investigate `reconstruct_xyb`, `gab_smooth`, AFV IDCT,
+   per-strategy IDCT, DC CfL, dequant_bias as candidate causes —
+   all RULED OUT in W44-113/114/115/116. The bfly gap is just
+   negligible NOW; the SSIM2 gap is a separate axis the buttloop
+   doesn't optimize.
+4. DO NOT respawn another HONEST-STOP measurement chunk on this
+   exact 12-cell set. The 4-decoder × 4-score sweep is conclusive.
+
+Reproducer
+----------
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run --release \
+    --example w44_recon_deep_a8_recon_vs_decoded \
+    --features '__internal_recon_hook butteraugli-loop ssim2-loop parallel' \
+    --manifest-path jxl-encoder/Cargo.toml \
+    > benchmarks/w44_recon_deep_a8_recon_vs_decoded_2026-05-23.tsv
+
+Files
+-----
+  jxl-encoder/examples/w44_recon_deep_a8_recon_vs_decoded.rs (NEW, ~570 LOC)
+  jxl-encoder/Cargo.toml (+11 lines: example registration)
+  benchmarks/w44_recon_deep_a8_recon_vs_decoded_2026-05-23.tsv (NEW, 13 rows)
+  benchmarks/w44_recon_deep_a8_recon_vs_decoded_2026-05-23.meta (THIS FILE)
+  memory/w44_recon_deep_a8_recon_vs_decoded_2026-05-23.md (verdict memo)
+
+Source code: zero production change. All instrumentation is in the
+example binary, behind the `__internal_recon_hook` cargo feature
+that's not enabled in any default build.

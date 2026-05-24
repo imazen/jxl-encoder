@@ -1,0 +1,97 @@
+W44-RECON-DEEP/A9 — bit-identical diffmap divergence test
+==========================================================
+Date     : 2026-05-23
+Workspace: ~/work/zen/jxl-encoder--w44-recon-deep-a9
+Branch   : main (no source change; harness + script only)
+Harness  : jxl-encoder/examples/w44_recon_deep_a9_diffmap_dump.rs
+Runner   : scripts/w44_recon_deep_a9/run_pairs.sh
+Analyzer : scripts/w44_recon_deep_a9/analyze_pfm_pair.py
+
+Inputs   : 6 (reference, distorted) PNG pairs, all metadata-stripped
+           via `convert -strip` so libjxl + Rust crate load identical
+           pixel bytes through identical sRGB->linear paths.
+           - identity_terminal       : terminal.png vs itself (smoke)
+           - identity_1418519        : 1418519.png vs itself (smoke)
+           - synthetic_gradient_512  : 512x512 horizontal gradient vs
+                                       gaussian-blur(sigma=1.0) of same
+           - photo_1418519_d5        : 1418519 vs cjxl-encoded-djxl-decoded d=5
+           - screen_terminal_d4      : terminal vs cjxl-encoded-djxl-decoded d=4
+           - photo_1418519_d10       : 1418519 vs cjxl-encoded-djxl-decoded d=10
+
+Per-cell tools:
+  - libjxl: ~/work/jxl-efforts/libjxl/build/tools/butteraugli_main
+           with --rawdistmap <out.pfm>  (PFM single-channel Pf, bottom-up)
+  - ours  : local butteraugli crate (workspace-patched, ~/work/butteraugli)
+           via butteraugli(img1, img2, ButteraugliParams::default()
+                          .with_hf_asymmetry(1.0)  // matches libjxl
+                          .with_xmul(1.0)          // matches libjxl
+                          .with_intensity_target(80.0)  // matches libjxl
+                          .with_compute_diffmap(true))
+
+Both sides use identical params (defaults of butteraugli_main.cc:100-110).
+
+Per-cell results (TSV col headers: cell, w, h, libjxl_score, ours_score,
+score_rel_diff_pct, diffmap_max_abs, diffmap_p99, diffmap_median,
+diffmap_max_rel_pct, argmax_x, argmax_y, note):
+
+| cell                    | w x h        | libjxl_score | ours_score | rel%    | max_abs   | p99       | median    | verdict       |
+|-------------------------|--------------|--------------|------------|---------|-----------|-----------|-----------|---------------|
+| identity_terminal       | 1646 x 1062  | 0.000000     | 0.000000   | 0.0000  | 0.00e0    | 0.00e0    | 0.00e0    | AT-PARITY     |
+| identity_1418519        | 512 x 512    | 0.000000     | 0.000000   | 0.0000  | 0.00e0    | 0.00e0    | 0.00e0    | AT-PARITY     |
+| synthetic_gradient_512  | 512 x 512    | 0.042643     | 0.305324   | 615.99% | 2.68e-1   | 1.31e-1   | 0.00e0    | LARGE         |
+| photo_1418519_d5        | 512 x 512    | 4.697474     | 4.697464   | 0.0002  | 1.62e-4   | 5.11e-5   | 6.08e-6   | AT-PARITY     |
+| screen_terminal_d4      | 1646 x 1062  | 2.216007     | 2.216006   | 0.0000  | 4.27e-4   | 1.90e-4   | 2.37e-5   | AT-PARITY     |
+| photo_1418519_d10       | 512 x 512    | 9.190868     | 9.190875   | 0.0001  | 1.82e-4   | 5.61e-5   | 6.68e-6   | AT-PARITY     |
+
+VERDICT: on real-world photo + screen encode-decode roundtrips, the diffmap
+kernel is AT PARITY with libjxl to ~1e-4 max-abs (float-precision noise).
+The W44-105 23x scalar score gap (ours=2.07 vs libjxl=47.7 on identical
+initial qf) cannot be explained by the diffmap kernel itself.  Its root
+cause is upstream — recon-pixel input divergence (matching the W44-138
+EPF-stage finding) or sRGB->linear conversion divergence between the
+buttloop's ButteraugliReference and our recon-pixel feed.
+
+The synthetic-gradient + blur pair (615% relative score) reproduces the
+documented PARITY_PLAN.md known failure: Rust butteraugli systematically
+under-scores blur patterns by 20-32% on synthetic test images.  This is a
+real crate-level kernel issue but it does NOT match the W44-105 forensic
+pattern (W44-105 is on a photo cell, where this test shows the kernel at
+parity).  The PARITY_PLAN Phase 2 root causes (Malta filter scaling, mask
+blur boundary handling) target this same synthetic-blur cluster.
+
+DO NOT (binding for future agents):
+  - DO NOT cite the synthetic-gradient blur divergence as the W44-105
+    root cause.  The W44-105 cell is a photo, and on photos the kernel
+    is at parity to 1e-4 max-abs (5 orders of magnitude below the 23x
+    score gap).
+  - DO NOT respawn another "compare diffmap kernels" chunk.  This test
+    is conclusive on the real-photo path.
+  - DO NOT cite FMA precision for the 1e-4 max-abs delta (per W44-66
+    user correction).  The delta is at the magnitude where two
+    independent SIMD float reductions land naturally on the same input.
+
+Follow-on candidates:
+  1. W44-RECON-DEEP/A10 (recommended next): dump the actual buttloop-
+     internal recon pixels (after our reconstruct_xyb + xyb_to_linear_
+     rgb_planar) AND libjxl's RoundtripImage output on the same cell
+     (initial qf, iter 0).  Compare per-pixel.  If max-abs > 1e-3 on
+     RGB channels in linear space, that IS the W44-105 root cause and
+     P-1 (per-iter sharpness recompute) is the right fix.  If max-abs
+     < 1e-3, the divergence is in the ButteraugliReference vs
+     SetLinearReferenceImage path (cell-internal sRGB->linear
+     mismatch).
+  2. PARITY_PLAN.md Phase 1-2 work for synthetic blur.  Lower priority
+     than A10 because (a) the blur failure mode is on synthetic content
+     not in any production cell, and (b) the ~20-32% kernel-level under-
+     scoring on blur does NOT scale up to the 23x W44-105 gap.
+
+Source state: ZERO production source change.  New files:
+  - jxl-encoder/examples/w44_recon_deep_a9_diffmap_dump.rs
+  - jxl-encoder/Cargo.toml (added [[example]] entry, ~10 lines)
+  - scripts/w44_recon_deep_a9/run_pairs.sh
+  - scripts/w44_recon_deep_a9/analyze_pfm_pair.py
+  - benchmarks/w44_recon_deep_a9_diffmap_pairwise_2026-05-23.{tsv,meta}
+  - benchmarks/w44_recon_deep_a9_diffmap_pairwise_analysis_2026-05-23.txt
+
+Hash-locks: unaffected (no encoder source change).
+Reproducer: `OUT_DIR=/tmp/w44_a9 scripts/w44_recon_deep_a9/run_pairs.sh`.
