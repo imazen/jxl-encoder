@@ -26,10 +26,9 @@ mod block_extract;
 pub(crate) mod butteraugli_loop;
 // Pluggable perceptual-metric backend (renamed from `butteraugli_backend`
 // in cvvdp-fork Phase 2, 2026-05-24 — see docs/RFC_CVVDP_FORK.md §2.1).
-// Hosts `PerceptualBackend` trait + CPU/GPU butteraugli impls; will
-// host the `CvvdpBackend` impl in Phase 3.
-#[cfg(feature = "butteraugli-loop")]
-pub(crate) mod perceptual_backend;
+// Hosts `PerceptualBackend` trait + CPU/GPU butteraugli impls + (cvvdp-fork
+// Phase 3, 2026-05-24) routes to the cvvdp impls in `cvvdp_backend`
+// when the caller opts in via `LossyConfig::with_cvvdp_loop`.
 pub(crate) mod chroma_from_luma;
 /// Chroma subsampling helpers — RGB → YCbCr conversion and
 /// Sharp YUV 4:2:0 chroma downsample via the zenyuv crate.
@@ -42,6 +41,18 @@ pub(crate) mod cluster;
 pub(crate) mod coeff_order;
 pub(crate) mod common;
 pub(crate) mod context_tree;
+#[cfg(feature = "butteraugli-loop")]
+pub(crate) mod perceptual_backend;
+// cvvdp-fork Phase 3 (2026-05-24): cvvdp-based `PerceptualBackend`
+// implementations. Gated on the `cvvdp-loop` cargo feature (which
+// itself implies `butteraugli-loop` — the trait surface lives in
+// `perceptual_backend`). Hosts `GpuCvvdpBackend` (wraps
+// `cvvdp_gpu::CvvdpOpaque` via Agent B's `*_from_linear_planes_*` API,
+// zenmetrics master `8b658b4`) plus a stub `CpuCvvdpBackend` reserved
+// for Phase 5 `cvvdp-cpu` integration. See `docs/RFC_CVVDP_FORK.md` §2.1
+// and `docs/RFC_CVVDP_PHASE3_BRIEF.md` for the deliverable shape.
+#[cfg(feature = "cvvdp-loop")]
+pub(crate) mod cvvdp_backend;
 pub(crate) mod dc_coding;
 mod dc_tree_learn;
 pub mod dct;
