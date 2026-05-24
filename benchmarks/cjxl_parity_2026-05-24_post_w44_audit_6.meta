@@ -1,0 +1,87 @@
+# cjxl parity 36-cell bench — W44-AUDIT-6 Phase 2B snapshot 2026-05-24
+
+**Date:** 2026-05-24
+**Status:** [SHIPPED — measurement-only, post-Phase 1]
+**Parent commit:** post-`7513a5d8` (Phase 2A SHIPPED) → post-`3eb09c6f` (Phase 1 SHIPPED)
+**TSV:** `benchmarks/cjxl_parity_2026-05-24_post_w44_audit_6.tsv`
+**MD:** `benchmarks/cjxl_parity_2026-05-24_post_w44_audit_6.md`
+**Reproducer:** `cargo run -p jxl-encoder --release \
+                  --features "parallel butteraugli-loop ssim2-loop __expert" \
+                  --example cjxl_parity_2026_05_24 -- \
+                  --output benchmarks/cjxl_parity_2026-05-24_post_w44_audit_6.tsv`
+**Wall time:** 84.7 s (36 cells × ~3 encodes/cell = 108 encodes + cjxl + scoring)
+
+## Headline finding
+
+The W44-AUDIT-6 Phase 1 (`high_colour_class_exclude` defaulting ON for
+Zenjxl/Aggressive strategies, `m3 >= 80` discriminator) **closes the
+codec_wiki e5/e7 d=4 wedges** discovered by W44-AUDIT-1/4:
+
+| cell                | pre-AUDIT-6 Δb% | post-AUDIT-6 Δb% | shipped |
+|---                  |---              |---               |---      |
+| codec_wiki e5 d=4   | +2.881%         | **-20.869%**     | -23.75 pp BYTES SAVING |
+| codec_wiki e7 d=4   | **+44.033%**    | **+0.223%**      | -43.81 pp BYTES SAVING (PRIMARY WEDGE CLOSED) |
+| codec_wiki e9 d=4   | (was FAIL OOM)  | +4.879%          | -- (W44-105 path still uncovered; Phase 2C target) |
+
+The W44-105 e8/e9 buttloop seed scale (Section E, separate gate site)
+still shows the same overhead pattern on codec_wiki — Phase 2C extends
+the same discriminator to that site. Phase 2B is purely measurement;
+Phase 2C is the symmetric source change.
+
+## Photo cells: ZERO change (gate didn't fire)
+
+The 27 PHOTO/PHOTO_SMOOTH cells (1025469, 1418519, 1531677 at all 3
+distances × all 3 efforts) are **byte-identical** to the pre-AUDIT-6
+TSV (only codec_wiki cells differ). This validates the M3>=80 cutoff:
+photo M3 values are far below 80 (m3 ≈ 50 for noisy CID22 photos,
+much lower for smooth). Verified by spot-checking SHA8 hashes in the
+TSV — no photo cell shifted in bytes or SSIM2.
+
+## Aggregate movement
+
+Bytes Δ vs cjxl MEAN:
+- pre-AUDIT-6:  zen-e5 -4.52, zen-e7 -1.42, zen-e9 -6.37  (all 36 cells)
+- post-AUDIT-6: zen-e5 **-6.50**, zen-e7 **-5.07**, zen-e9 -6.37
+- Delta: zen-e5 -1.98 pp, zen-e7 **-3.65 pp** (PRIMARY WIN), zen-e9 unchanged
+
+SSIM2 Δ vs cjxl MEAN:
+- pre-AUDIT-6:  zen-e5 -0.36, zen-e7 -0.52, zen-e9 -0.35
+- post-AUDIT-6: zen-e5 **-0.64**, zen-e7 **-0.88**, zen-e9 -0.35
+- Delta: zen-e5 -0.28 pp, zen-e7 -0.36 pp, zen-e9 unchanged
+
+The SSIM2 cost on codec_wiki e5/e7 d=4 (-3.28/-4.33 vs cjxl) is the
+known AUDIT-4 honest-stop trade — owned by W44-AUDIT-5 candidates.
+
+## Libjxl-strategy invariant preserved
+
+All 36 `libjxl-eN` cells are byte-identical to pre-AUDIT-6 (verified
+by reading the TSV `libjxl_strat_bytes` column). Libjxl strategy
+forces `adaptive_quant_qf_seed = Off` which short-circuits the helper
+before the AUDIT-6 branch is reachable — the new gate has zero effect
+on Libjxl-mode encodes regardless of `high_colour_class_exclude`
+field value.
+
+## Phase 2C extension (next chunk)
+
+The W44-105 buttloop seed scale path at e8/e9 d>=3.5 currently still
+applies a 4× lift on codec_wiki (and any other M3>=80 screenshot the
+buttloop encounters). Phase 2C adds the AUDIT-6 exclude symmetrically
+to that path. Expected impact (per AUDIT-4 measurements):
+
+| cell                | current Δb% | expected post-2C Δb% |
+|---                  |---          |---                   |
+| codec_wiki e8 d=4   | ~+20.7%     | ~+0.5%               |
+| codec_wiki e9 d=4   | +4.88%      | ~+0.5%               |
+
+W44-105 win cluster preservation (gb82-sc text-class) should mirror
+Phase 2A's result: byte-identical because M3 ∈ [10, 29] << 80.
+
+## DO NOT (binding for future agents)
+
+1. DO NOT re-run this 36-cell bench at the same revision — it's a
+   snapshot, not a continuously-rebuilt artifact. Re-run only after
+   landing a code change that's expected to shift cells.
+2. DO NOT cite "FMA precision" for any byte movement (per W44-66).
+3. DO NOT mark codec_wiki e5/e7 d=4 as FIXED on the cjxl-parity ledger
+   while SSIM2 deltas exceed -3 — bytes are now at parity, but the
+   structural SSIM2 gap is W44-AUDIT-5 territory.
