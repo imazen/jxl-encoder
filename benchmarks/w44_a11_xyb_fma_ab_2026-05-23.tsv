@@ -1,0 +1,9 @@
+comment	image	effort	distance	baseline_bytes	fixed_bytes	delta_bytes	delta_pct	baseline_ms	fixed_ms	decode_baseline_ok	decode_fixed_ok
+terminal_e8_d4_W44-105	/home/lilith/work/codec-corpus/gb82-sc/terminal.png	8	4.0	42322	42322	0	+0.000	1139.7	1086.7	OK	OK
+codec_wiki_e8_d4_W44-107	/home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png	8	4.0	88077	88077	0	+0.000	2435.4	2352.9	OK	OK
+codec_wiki_e8_d3_W44-121	/home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png	8	3.0	65048	65048	0	+0.000	2405.8	2348.1	OK	OK
+1418519_e8_d5_P1_target	/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png	8	5.0	7064	7064	0	+0.000	200.4	197.9	OK	OK
+1025469_e8_d2_W44-118	/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1025469.png	8	2.0	20469	20469	0	+0.000	217.2	210.7	OK	OK
+1025469_e8_d4	/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1025469.png	8	4.0	11513	11513	0	+0.000	238.9	239.4	OK	OK
+1420710_e8_d5_W44-98	/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png	8	5.0	20550	20550	0	+0.000	218.9	219.1	OK	OK
+1531677_e8_d5_W44-99_W44-100	/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png	8	5.0	17546	17546	0	+0.000	223.2	217.8	OK	OK

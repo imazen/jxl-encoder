@@ -640,6 +640,82 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### W44-RECON-DEEP/A11: XYB→linear FMA + INV_OPSIN constant fix — SHIPPED (May 23, 2026)
+
+**Status**: [SHIPPED — fix correct, A/B null on bytes]
+
+Closes the W44-RECON-DEEP/A2 finding (`memory/w44_recon_deep_a2_xyb_linear_path_2026-05-23.md`):
+two real numeric divergences in `inverse_xyb_planar_impl` vs every libjxl-derived
+decoder, accounting for the ~4e-6 max-abs linear-RGB residual W44-116 observed.
+
+**Fixes shipped**:
+
+1. **Cube+bias single FMA** (3 sites — `inverse_xyb_planar_scalar`,
+   `inverse_xyb_scalar`, SIMD `inverse_xyb_planar_impl`):
+   `g*g*g + neg_bias` (3 separate roundings) → `(g*g).mul_add(g, neg_bias)`
+   (1 mul + 1 fused FMA = 2 roundings). Matches libjxl's
+   `MulAdd(gamma_r2, gamma_r, neg_bias_r)` (`dec_xyb-inl.h:69-71`).
+2. **INV_OPSIN[0][2] and [1][2] 1-ULP fix**: replaced truncated literal
+   `-0.164_623` with full f64 `-0.164_622_996_470_588_26`. Both now bit-match
+   libjxl `kDefaultInverseOpsinAbsorbanceMatrix` (`cms/opsin_params.h:44-47`)
+   at f32 (bits `0xbe2892ee`).
+
+**Unit test added** (`xyb::tests::test_inverse_xyb_libjxl_single_fma_parity`):
+asserts our `inverse_xyb_planar_scalar` matches a hand-written libjxl-style
+reference (full-precision constants + single-FMA cube+bias) within 1e-5
+max-abs over 256 XYB samples. Without the fix the test fails by 18.6 max-abs;
+with the fix passes cleanly. This is the regression gate.
+
+**A/B SURPRISE NULL RESULT**: 8 W44-RECON-DEEP arc cells encoded with baseline
+vs fixed binaries — **100% BYTE-IDENTICAL output** (terminal e8 d=4, codec_wiki
+e8 d=3+4, 1418519 e8 d=5, 1025469 e8 d=2+4, 1420710 e8 d=5, 1531677 e8 d=5).
+Additional spot-checks at e9 with --butteraugli-iters 8 and --ssim2-iters 4:
+also byte-identical. djxl decodes all output cleanly.
+
+**Root-cause of insensitivity** (hypothesis): the buttloop's quant_field
+convergence consumes `butteraugli(source, recon).diffmap → median+MAD`. The
+~5e-6 max-abs perturbation at the XYB→linear input is smoothed by butteraugli's
+internal Gaussian blur (sigma~1.5 px) below the median-quantization noise
+floor. The 8x8-block median + MAD then rounds identical integer quant codes
+for both baseline and fixed paths. Same insensitivity for SSIM2 loop (per-block
+RMSE over 64 pixels washes out 5e-6 per-pixel noise).
+
+**Hash-locks**: 36/36 BYTE-IDENTICAL (zero regen needed). Libjxl byte-locks
+4/4 PASS. Drift test 7/7 PASS. Multi-decoder roundtrip via jxl-rs + jxl-oxide
+(W44-164 test) PASS. djxl on 8 cells PASS.
+
+**Acceptance gates**: ALL met (build, lib tests 1420/1420 + 6 xyb including
+A11, hash-locks, drift, multi-decoder, A/B measurement neutral, Pareto trivially
+preserved at byte-identical).
+
+**DO NOT** (future agents):
+
+1. DO NOT cite "FMA precision" OR "XYB precision" as the root cause of any
+   remaining cjxl-parity wedge. A11 measurement is conclusive that the 5e-6
+   linear-RGB divergence does NOT propagate to bytes or quant decisions on
+   production-relevant inputs.
+2. DO NOT remove the W44-117/118/120 EPF seed scaffolding on the basis of A11
+   landing — the W44-117 wedges they close are screen-class butteraugli-
+   measurement-bias wedges, NOT XYB-precision wedges. A11 byte-identical A/B
+   proves the EPF chain is orthogonal to XYB precision.
+3. DO NOT re-attempt this fix with different FMA association (e.g., aligning
+   matrix-mul left-to-right vs our right-to-left). A2 Fix-4 analysis proved
+   the matrix-mul FMA is a 3-way fork across decoders — there is no single
+   "correct" association.
+4. DO NOT change the sign convention on `NEG_CBRT_BIAS` or `OPSIN_BIAS`. Our
+   `[-cbrt_bias]` is the negation of libjxl's `+opsin_biases_cbrt` (which is
+   actually negative because libjxl initialises `opsin_biases` from
+   `kNegOpsinAbsorbanceBiasRGB`). Both produce bit-identical f32. The A11
+   unit test caught a sign error in the reference and was corrected — the
+   production code was always right.
+
+**Files**:
+- `jxl-encoder-simd/src/xyb.rs` — 149 lines added / 17 removed at 4 sites
+  (INV_OPSIN constants + 3 cube+bias FMA sites + new parity unit test)
+- `benchmarks/w44_a11_xyb_fma_ab_2026-05-23.{tsv,meta}` — bench TSV + meta
+- `docs/LIBJXL_DIVERGENCES.md` Section G — new resolved row
+- `memory/w44_recon_deep_a11_xyb_fma_fix_shipped_2026-05-23.md` — memo
+
 ### W44-207: W44-94 OUTER `find_best_32x32_transform` widening with per-m3 sub-discriminator — HONEST-STOP (May 22, 2026)
 
 **Status**: [HONEST-STOP — Phase 1 read-only analysis, ZERO production source change]
