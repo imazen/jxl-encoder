@@ -28,8 +28,9 @@
 # Env knobs (with defaults):
 #   SWEEP_ID         w44-phase4-s1-recon-deep-revalidate
 #   BOXES            5
-#   IMAGE            ghcr.io/lilith/zenjxl-tuning-sweep:v2-53b7655b
-#                    (rebuilt from origin/main 53b7655b post-W44-RECON-DEEP)
+#   IMAGE            ghcr.io/lilith/zenjxl-tuning-sweep:v3-schema-v2-dd4393c6
+#                    (rebuilt from origin/main dd4393c6 post-W44-PHASE4-M1
+#                     d2129886 + W44-PHASE4-S1g worker.sh artifact upload)
 #   MAX_DPH          0.20     (cap per-instance hourly cost USD)
 #   MIN_GPU_RAM_MB   10000
 #   MIN_DISK_GB      30
@@ -42,20 +43,26 @@ set -euo pipefail
 SWEEP_ID="${SWEEP_ID:-w44-phase4-s1-recon-deep-revalidate}"
 BOXES="${BOXES:-5}"
 # IMPORTANT: this image MUST contain a zenjxl-tuning-runner binary
-# built from origin/main 53b7655b or newer; if older the sweep tests
-# the wrong encoder state. See build_and_push_image.sh for the build
-# command — it stages from /home/lilith/work/zen/jxl-encoder-shared-target/.
+# built from origin/main dd4393c6 or newer (W44-PHASE4-M1 d2129886 is
+# the schema-v2 + artifact-persistence cut; without it sweeps silently
+# lose encoded bytes per CLAUDE.md §4). Build via
+# scripts/zenjxl-tuning-sweep/build_and_push_image.sh — it stages
+# from /home/lilith/work/zen/jxl-encoder-shared-target/.
 #
-# W44-PHASE4-M1 NOTE (2026-05-24): the parquet schema bumped 43 → 55
-# columns (SCHEMA_VERSION 1 → 2). Future builds MUST rebuild this
-# image AND tag it as `v3-schema-v2-<commit-sha>` so the launcher
-# tracking is clear about which schema the sweep produces. The
-# launcher worker.sh also needs a follow-on patch to upload the
-# `<output_parquet>/../artifacts/` dir contents (`s5cmd cp`-ing both
-# `artifacts/jxl/` and `artifacts/diffmap/` subtrees to the sweep
-# bucket) and to export the three `W44_PHASE4_M1_*` persistence env
-# vars per the CLAUDE.md `4. Always persist encoded variants` rule.
-IMAGE="${IMAGE:-ghcr.io/lilith/zenjxl-tuning-sweep:v2-53b7655b}"
+# W44-PHASE4-S1g (2026-05-24): tag scheme bumped from `v2-<sha>` to
+# `v3-schema-v2-<8sha>`. The new image MUST be built+pushed BEFORE
+# launching the next sweep — the prior v2-53b7655b runner doesn't
+# stage encoded JXL + diffmap artifacts, and the worker.sh in this
+# repo now expects to find + upload them per the artifact-persistence
+# protocol. The companion changes:
+#   - worker.sh exports W44_PHASE4_M1_SAVE_{ENCODED,DIFFMAP} +
+#     COMPUTE_MULTIMETRIC default-ON and s5cmd-cp's
+#     /sweep-output/artifacts/{jxl,diffmap}/ to the sweep bucket
+#   - build_and_push_image.sh uses --short=8 + the new tag prefix
+#   - this default below points the launcher at the new tag
+# CLAUDE.md §4 ("Always persist encoded variants when encoding is
+# expensive — NO EXCEPTIONS") is the binding rule.
+IMAGE="${IMAGE:-ghcr.io/lilith/zenjxl-tuning-sweep:v3-schema-v2-dd4393c6}"
 MAX_DPH="${MAX_DPH:-0.20}"
 MIN_GPU_RAM_MB="${MIN_GPU_RAM_MB:-10000}"
 MIN_DISK_GB="${MIN_DISK_GB:-30}"
