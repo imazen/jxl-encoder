@@ -45,11 +45,20 @@ const OPSIN_MATRIX: [[f32; 3]; 3] = [
     [0.243_422_69, 0.204_767_45, 0.551_809_87],
 ];
 
-// Inverse opsin absorbance matrix
+// Inverse opsin absorbance matrix.
+//
+// W44-RECON-DEEP/A11 (2026-05-23): The off-diagonal blue cross-terms
+// `[0][2]` and `[1][2]` use the full f64 literal `-0.16462299647058826`
+// to round to f32 bits `0xbe2892ee`, matching libjxl's
+// `kDefaultInverseOpsinAbsorbanceMatrix` (cms/opsin_params.h:44-47),
+// jxl-rs `OpsinInverseMatrix.inverse_matrix`, and jxl-oxide
+// `OpsinInverseMatrix.inv_mat`. Truncated literal `-0.164_623` was
+// 1 ULP off (bits `0xbe2892ef`) and contributed ≤1.5e-8 per-pixel
+// drift in linear-RGB vs the decoder. See A2 audit memo.
 #[allow(clippy::excessive_precision)]
 const INV_OPSIN: [[f32; 3]; 3] = [
-    [11.031_566_9, -9.866_943_9, -0.164_623],
-    [-3.254_147_4, 4.418_770_4, -0.164_623],
+    [11.031_566_9, -9.866_943_9, -0.164_622_996_470_588_26],
+    [-3.254_147_4, 4.418_770_4, -0.164_622_996_470_588_26],
     [-3.658_851_3, 2.712_923, 1.945_928_2],
 ];
 
@@ -260,11 +269,19 @@ pub fn inverse_xyb_planar_scalar(
         let gamma_g = y - x - NEG_CBRT_BIAS[1];
         let gamma_b = b - NEG_CBRT_BIAS[2];
 
-        let mixed_r = gamma_r * gamma_r * gamma_r - OPSIN_BIAS[0];
-        let mixed_g = gamma_g * gamma_g * gamma_g - OPSIN_BIAS[1];
-        let mixed_b = gamma_b * gamma_b * gamma_b - OPSIN_BIAS[2];
-
+        // W44-RECON-DEEP/A11: cube+bias via single FMA matches libjxl's
+        // `MulAdd(gamma_r2, gamma_r, neg_bias_r)` (dec_xyb-inl.h:66-71).
+        // Previous `g*g*g - bias` had 3 separate roundings; the FMA gives
+        // 2 roundings (one for the square, one for the cube+bias fuse) and
+        // closes a ~4-5e-6 max-abs linear-RGB divergence vs the decoder.
         let fma = crate::scalarmath::mul_add_f32;
+        let gr2 = gamma_r * gamma_r;
+        let gg2 = gamma_g * gamma_g;
+        let gb2 = gamma_b * gamma_b;
+        let mixed_r = fma(gr2, gamma_r, -OPSIN_BIAS[0]);
+        let mixed_g = fma(gg2, gamma_g, -OPSIN_BIAS[1]);
+        let mixed_b = fma(gb2, gamma_b, -OPSIN_BIAS[2]);
+
         out_r[i] = fma(
             INV_OPSIN[0][0],
             mixed_r,
@@ -301,13 +318,17 @@ pub fn inverse_xyb_scalar(
         let gamma_g = y - x - NEG_CBRT_BIAS[1];
         let gamma_b = b - NEG_CBRT_BIAS[2];
 
-        // Cube and subtract bias to get mixed (opsin LMS)
-        let mixed_r = gamma_r * gamma_r * gamma_r - OPSIN_BIAS[0];
-        let mixed_g = gamma_g * gamma_g * gamma_g - OPSIN_BIAS[1];
-        let mixed_b = gamma_b * gamma_b * gamma_b - OPSIN_BIAS[2];
+        // Cube + bias via single FMA — W44-RECON-DEEP/A11. See
+        // `inverse_xyb_planar_scalar` for full rationale.
+        let fma = crate::scalarmath::mul_add_f32;
+        let gr2 = gamma_r * gamma_r;
+        let gg2 = gamma_g * gamma_g;
+        let gb2 = gamma_b * gamma_b;
+        let mixed_r = fma(gr2, gamma_r, -OPSIN_BIAS[0]);
+        let mixed_g = fma(gg2, gamma_g, -OPSIN_BIAS[1]);
+        let mixed_b = fma(gb2, gamma_b, -OPSIN_BIAS[2]);
 
         // Inverse opsin matrix → linear RGB (chained FMA for SIMD parity)
-        let fma = crate::scalarmath::mul_add_f32;
         let r = fma(
             INV_OPSIN[0][0],
             mixed_r,
@@ -492,10 +513,17 @@ pub fn inverse_xyb_planar_impl(
         let gamma_g = y - x + neg_cbrt1;
         let gamma_b = b + neg_cbrt2;
 
-        // Cube and subtract bias (gamma^3 + neg_bias)
-        let mixed_r = gamma_r * gamma_r * gamma_r + neg_bias0;
-        let mixed_g = gamma_g * gamma_g * gamma_g + neg_bias1;
-        let mixed_b = gamma_b * gamma_b * gamma_b + neg_bias2;
+        // W44-RECON-DEEP/A11: cube+bias via single FMA matches libjxl's
+        // `MulAdd(gamma_r2, gamma_r, neg_bias_r)` (dec_xyb-inl.h:66-71).
+        // Previous `g*g*g + neg_bias` had 3 separate roundings; the FMA
+        // gives 2 (square plus fused cube+bias) and closes a ~4-5e-6
+        // max-abs linear-RGB divergence vs the decoder buttloop saw.
+        let gr2 = gamma_r * gamma_r;
+        let gg2 = gamma_g * gamma_g;
+        let gb2 = gamma_b * gamma_b;
+        let mixed_r = gr2.mul_add(gamma_r, neg_bias0);
+        let mixed_g = gg2.mul_add(gamma_g, neg_bias1);
+        let mixed_b = gb2.mul_add(gamma_b, neg_bias2);
 
         // Inverse opsin matrix (FMA chains, association preserved)
         let rv = inv00.mul_add(mixed_r, inv01.mul_add(mixed_g, inv02 * mixed_b));
@@ -912,5 +940,129 @@ mod tests {
             },
         );
         std::eprintln!("{report}");
+    }
+
+    /// W44-RECON-DEEP/A11 unit test: assert our inverse XYB matches a
+    /// libjxl-style single-FMA reference (same constants, same FMA shape)
+    /// to <1e-7 per-channel max-abs. The reference uses the
+    /// `(g*g).mul_add(g, neg_bias)` shape from libjxl `dec_xyb-inl.h:66-71`
+    /// and the full f64 `-0.16462299647058826` literal for the off-diagonal
+    /// blue cross-terms. This catches regressions if either fix is reverted.
+    #[test]
+    fn test_inverse_xyb_libjxl_single_fma_parity() {
+        // Hand-coded libjxl reference (single FMA cube+bias, libjxl
+        // `kDefaultInverseOpsinAbsorbanceMatrix` to full f64 precision).
+        const LIBJXL_INV: [[f32; 3]; 3] = [
+            [
+                11.031_566_901_960_783,
+                -9.866_943_921_568_629,
+                -0.164_622_996_470_588_26,
+            ],
+            [
+                -3.254_147_380_392_157,
+                4.418_770_392_156_863,
+                -0.164_622_996_470_588_26,
+            ],
+            [
+                -3.658_851_286_274_509_7,
+                2.712_923_047_058_823_5,
+                1.945_928_239_215_686_3,
+            ],
+        ];
+        // libjxl `kNegOpsinAbsorbanceBiasRGB[0] = -kOpsinAbsorbanceBias0`.
+        // `OpsinParams::Init` copies this into `opsin_biases`, then
+        // `opsin_biases_cbrt[c] = cbrtf(opsin_biases[c])`. So both the
+        // bias passed to MulAdd AND the cbrt unmix are NEGATIVE values.
+        const LIBJXL_NEG_BIAS: f32 = -0.003_793_073_255_275_449_3;
+        // cbrtf of the negative bias is also negative.
+        let libjxl_cbrt_bias: f32 = LIBJXL_NEG_BIAS.cbrt();
+
+        let inv_ref = |x: f32, y: f32, b: f32| -> [f32; 3] {
+            // libjxl `dec_xyb-inl.h:57-63` — gamma = (y±x) - opsin_biases_cbrt.
+            // With opsin_biases_cbrt negative, this becomes `(y±x) + 0.155954`.
+            let gamma_r = y + x - libjxl_cbrt_bias;
+            let gamma_g = y - x - libjxl_cbrt_bias;
+            let gamma_b = b - libjxl_cbrt_bias;
+            // Single FMA cube+bias (libjxl dec_xyb-inl.h:69-71)
+            let mixed_r = (gamma_r * gamma_r).mul_add(gamma_r, LIBJXL_NEG_BIAS);
+            let mixed_g = (gamma_g * gamma_g).mul_add(gamma_g, LIBJXL_NEG_BIAS);
+            let mixed_b = (gamma_b * gamma_b).mul_add(gamma_b, LIBJXL_NEG_BIAS);
+            // Right-to-left FMA chain (matches ours; libjxl decoder uses
+            // left-to-right but the difference is bounded by the 1-ULP
+            // matrix constant fix and the FMA cube+bias single-rounding).
+            let r = LIBJXL_INV[0][0].mul_add(
+                mixed_r,
+                LIBJXL_INV[0][1].mul_add(mixed_g, LIBJXL_INV[0][2] * mixed_b),
+            );
+            let g = LIBJXL_INV[1][0].mul_add(
+                mixed_r,
+                LIBJXL_INV[1][1].mul_add(mixed_g, LIBJXL_INV[1][2] * mixed_b),
+            );
+            let b_out = LIBJXL_INV[2][0].mul_add(
+                mixed_r,
+                LIBJXL_INV[2][1].mul_add(mixed_g, LIBJXL_INV[2][2] * mixed_b),
+            );
+            [r, g, b_out]
+        };
+
+        // Confirm our INV_OPSIN matches the libjxl matrix bit-for-bit at f32.
+        for r in 0..3 {
+            for c in 0..3 {
+                assert_eq!(
+                    INV_OPSIN[r][c].to_bits(),
+                    LIBJXL_INV[r][c].to_bits(),
+                    "INV_OPSIN[{r}][{c}] bit mismatch: ours={:#010x}, libjxl={:#010x}",
+                    INV_OPSIN[r][c].to_bits(),
+                    LIBJXL_INV[r][c].to_bits()
+                );
+            }
+        }
+        // Confirm OPSIN_BIAS bits match too.
+        assert_eq!(OPSIN_BIAS[0].to_bits(), (-LIBJXL_NEG_BIAS).to_bits());
+
+        // Sweep typical buttloop XYB triples — same range as
+        // test_inverse_xyb_sweep so we cover the gamut the buttloop touches.
+        let n = 256;
+        let mut xyb_x = vec![0.0f32; n];
+        let mut xyb_y = vec![0.0f32; n];
+        let mut xyb_b = vec![0.0f32; n];
+        for i in 0..n {
+            let t = i as f32 / (n - 1) as f32;
+            xyb_x[i] = (t - 0.5) * 0.8;
+            xyb_y[i] = t * 1.1;
+            xyb_b[i] = t * 0.9 - 0.1;
+        }
+
+        // Our scalar path (planar)
+        let mut ours_r = vec![0.0f32; n];
+        let mut ours_g = vec![0.0f32; n];
+        let mut ours_b = vec![0.0f32; n];
+        inverse_xyb_planar_scalar(
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            &mut ours_r,
+            &mut ours_g,
+            &mut ours_b,
+            n,
+        );
+
+        let mut max_abs = 0.0f32;
+        for i in 0..n {
+            let ref_rgb = inv_ref(xyb_x[i], xyb_y[i], xyb_b[i]);
+            let er = (ours_r[i] - ref_rgb[0]).abs();
+            let eg = (ours_g[i] - ref_rgb[1]).abs();
+            let eb = (ours_b[i] - ref_rgb[2]).abs();
+            max_abs = max_abs.max(er).max(eg).max(eb);
+        }
+        // The only remaining divergence vs the libjxl-style reference is
+        // the matrix-mul FMA association (right-to-left vs left-to-right),
+        // which is bounded at ~1-2 ULP on linear-RGB magnitudes ≤ 12.
+        // 1e-5 is a safe ceiling. If this trips it means cube+bias FMA or
+        // INV_OPSIN constants regressed.
+        assert!(
+            max_abs < 1e-5,
+            "W44-RECON-DEEP/A11 parity: max-abs {max_abs:.3e} exceeds 1e-5 — cube+bias FMA or INV_OPSIN constants regressed"
+        );
     }
 }

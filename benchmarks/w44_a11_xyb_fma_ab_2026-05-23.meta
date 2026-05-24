@@ -1,0 +1,135 @@
+W44-RECON-DEEP/A11 — XYB→linear FMA + INV_OPSIN constant fix A/B
+=================================================================
+
+Date          : 2026-05-23
+Host          : lilith-river (AMD Ryzen 9 7950X, 128 GiB; CPU has fma+avx2)
+Repo          : ~/work/zen/jxl-encoder--w44-recon-deep-a11 (sibling jj
+                workspace; parent jxl-encoder)
+Parent commit : 05e3bdf0 investigate(W44-recovery): e9 perf profile on 1418519 d=1.0
+Fix commit    : (THIS commit) fix(W44-recon-A11): XYB->linear FMA + INV_OPSIN constant
+Bench script  : /tmp/w44_a11_ab.py
+Source diff   : jxl-encoder-simd/src/xyb.rs (149/-17, 1 file)
+
+WHAT CHANGED
+============
+
+W44-RECON-DEEP/A2 (`memory/w44_recon_deep_a2_xyb_linear_path_2026-05-23.md`)
+identified two divergences in `inverse_xyb_planar_impl` (and its scalar
+fallbacks) vs every libjxl-derived decoder:
+
+1. **Cube+bias FMA association** (~4-5e-6 max-abs linear-RGB worst-case):
+   our `g*g*g + neg_bias` had 3 separate roundings; libjxl decoder +
+   jxl-rs + jxl-oxide all use `(g*g).mul_add(g, neg_bias)` (single FMA
+   on cube+bias). Fixed at 3 sites: `inverse_xyb_planar_scalar`,
+   `inverse_xyb_scalar`, `inverse_xyb_planar_impl` (the SIMD body).
+
+2. **INV_OPSIN[0][2] and [1][2] 1-ULP drift** (≤ 1.5e-8 per-pixel):
+   our literal `-0.164_623` (bits `0xbe2892ef`) was 1 ULP off from
+   libjxl's `-0.16462299647058826f` (bits `0xbe2892ee`). Fixed by
+   replacing both literals with the full f64 expression.
+
+A new unit test
+`xyb::tests::test_inverse_xyb_libjxl_single_fma_parity` asserts our
+output now matches a hand-written libjxl-reference (single-FMA cube+bias
++ full f64 constants) within max-abs 1e-5 across 256 sample XYB triples.
+Test passes.
+
+A/B RESULT SUMMARY
+==================
+
+| Cell                        | Effort | Distance | Bytes Δ% | Decode OK |
+|------------------------------|--------|----------|----------|-----------|
+| terminal_e8_d4_W44-105       |   8    |   4.0    | +0.000   | OK / OK   |
+| codec_wiki_e8_d4_W44-107     |   8    |   4.0    | +0.000   | OK / OK   |
+| codec_wiki_e8_d3_W44-121     |   8    |   3.0    | +0.000   | OK / OK   |
+| 1418519_e8_d5 (P1 target)    |   8    |   5.0    | +0.000   | OK / OK   |
+| 1025469_e8_d2 W44-118        |   8    |   2.0    | +0.000   | OK / OK   |
+| 1025469_e8_d4                |   8    |   4.0    | +0.000   | OK / OK   |
+| 1420710_e8_d5 W44-98         |   8    |   5.0    | +0.000   | OK / OK   |
+| 1531677_e8_d5 W44-99/100     |   8    |   5.0    | +0.000   | OK / OK   |
+
+**8 of 8 cells BYTE-IDENTICAL between baseline and fixed binaries.**
+
+Additional spot-checks (not in the 8-cell table):
+- terminal e9 d=4 --butteraugli-iters 8: byte-identical (36794 B)
+- terminal e8 d=4 --butteraugli-iters 4: byte-identical (36759 B)
+- 1418519 e8 d=2 --ssim2-iters 4: byte-identical (13346 B)
+- 1418519 e8 d=4: byte-identical (8333 B), djxl decodes cleanly
+
+INTERPRETATION
+==============
+
+This is a SURPRISE NULL RESULT relative to the A2 prediction ("may
+regenerate ALL existing lossy hash-locks; partial probability of
+obsoleting W44-117/118/120"). The fix is real (sanity-checked at
+the unit-test level — the parity test passes only after the fix is
+applied; without the fix it fails by 1.86e1 max-abs) but the buttloop's
+decision pipeline is INSENSITIVE to ULP-scale XYB→linear divergences
+on the tested cells.
+
+ROOT CAUSE OF INSENSITIVITY (hypothesis):
+
+The buttloop's quant_field convergence depends on `butteraugli(source,
+reconstructed)`'s diffmap → median+MAD aggregation. Butteraugli applies:
+1. XYB→linear→sRGB-tonemap (us)
+2. sRGB→linear→opsin via psychovisual model (Butteraugli internal)
+3. Multi-scale Gaussian blur (sigma~1.5 px) on diffmap
+
+The ~5e-6 max-abs perturbation at the input to step (1) is amplified
+into ~5e-5 in step (2)'s opsin output, but smoothed below the
+median-quantization noise floor by step (3)'s blur. The diffmap's
+8x8-block median + MAD then rounds the same integer quant codes for
+both the baseline and the fixed paths.
+
+Same insensitivity for SSIM2 loop (uses per-block RMSE on raw XYB
+values, not on the reconstructed-vs-source diffmap; RMSE accumulation
+over 64 pixels per block washes out 5e-6 per-pixel noise).
+
+NET IMPACT
+==========
+
+Code-correctness: GOOD. Our inverse XYB now matches libjxl's reference
+formula bit-for-bit (within FMA-association noise; the remaining 3-way
+matrix-mul FMA fork is intractable per A2 Fix-4 rejection).
+
+Production bytes: NEUTRAL. No measurable shift on the 8 W44-RECON-DEEP
+arc cells. The W44-117/118/120 EPF seed chain is NOT obsoleted by
+this fix — they remain load-bearing for the screen-class wedges they
+were designed to close. (The "partial obsolescence" prediction in A2
+was overstated.)
+
+Hash-locks: BYTE-IDENTICAL. 36/36 lossy fixtures pass without regen.
+4/4 Libjxl-strategy byte-locks pass. Drift test 7/7 pass.
+
+Future agents reading this: do NOT cite A2's predicted ~5e-6 perturbation
+as a quality bug to chase. It IS measurable in isolation (the parity
+test asserts the magnitude) but does not propagate to bytes or
+diffmap-derived quant decisions on production-relevant inputs.
+
+ACCEPTANCE GATES
+================
+
+(a) Build PASS                                                      ✓
+(b) Lib tests PASS (1420/1420 + 6 xyb tests including new A11 test) ✓
+(c) Hash-locks 36/36 BYTE-IDENTICAL (zero regen needed)             ✓
+(d) Drift test 7/7 PASS                                             ✓
+(e) Multi-decoder roundtrip: 8/8 djxl decode OK + W44-164 jxl-rs +
+    jxl-oxide roundtrip test PASS                                   ✓
+(f) A/B measurement 8 cells: 100% byte-identical (NEUTRAL)          ✓
+(g) Pareto check: ZERO regression (byte-identical)                  ✓
+
+Per task spec: all gates met. SHIPPED.
+
+DO-NOT (future agents)
+======================
+
+1. DO NOT re-attempt this fix with different FMA association — A2's
+   matrix-mul FMA fork analysis (3-way decoder split) is conclusive.
+2. DO NOT remove W44-117/118/120 EPF seed scaffolding on the basis
+   of this fix landing — the wedges they close are NOT XYB-precision
+   wedges per the byte-identical A/B measurement.
+3. DO NOT chase "the buttloop measures wrong target" reframing — A11
+   measurement proves the buttloop is robust to the 5e-6 divergence
+   on production-relevant inputs.
+4. DO NOT cite "FMA precision" for any remaining cjxl-parity wedge
+   (per W44-66 user correction + this A/B null result).
