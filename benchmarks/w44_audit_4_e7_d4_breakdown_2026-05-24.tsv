@@ -1,0 +1,6 @@
+image_id	effort	distance	cjxl_B	cjxl_bfly	cjxl_ssim2	cjxl_ms	libjxl_B	libjxl_bfly	libjxl_ssim2	libjxl_ms	zenjxl_B	zenjxl_bfly	zenjxl_ssim2	zenjxl_ms	zenjxl_no109_B	zenjxl_no109_bfly	zenjxl_no109_ssim2	zenjxl_no109_no105_B	zenjxl_no109_no105_bfly	zenjxl_no109_no105_ssim2	libjxl_dpct	zenjxl_dpct	zenjxl_no109_dpct	zenjxl_no109_no105_dpct
+codec_wiki	7	3	72232	2.068	86.56	414	77835	2.615	83.71	742	72813	2.348	84.03	665	72813	2.348	84.03	0	0.000	0.00	7.76	0.80	0.80	NaN
+codec_wiki	7	4	62710	2.991	84.86	396	70217	3.209	79.35	815	90323	3.209	84.89	826	62850	3.216	80.53	0	0.000	0.00	11.97	44.03	0.22	NaN
+codec_wiki	7	5	57232	3.895	81.84	369	63259	3.819	77.32	724	81817	3.006	84.59	732	55617	3.994	79.50	0	0.000	0.00	10.53	42.96	-2.82	NaN
+codec_wiki	8	4	72960	3.502	83.27	3168	62494	3.468	79.39	2195	88077	2.257	86.37	2100	0	0.000	0.00	57061	3.429	80.30	-14.34	20.72	NaN	-21.79
+codec_wiki	9	4	73629	3.502	83.31	4746	61628	3.468	79.39	3048	77221	2.258	84.98	2865	0	0.000	0.00	56140	3.523	80.18	-16.30	4.88	NaN	-23.75

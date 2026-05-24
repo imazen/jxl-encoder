@@ -1,0 +1,220 @@
+W44-AUDIT-4 — codec_wiki e7 d=4 +44% wedge breakdown
+====================================================
+
+Date:     2026-05-24
+Commit:   c68a3e89 (parent; this analysis adds bench + memo, no production source change)
+Image:    codec_wiki.png (2560×1664 = 4.26 MP, gb82-sc corpus)
+Decoder:  jxl-oxide 0.12 (linear-sRGB request for metric correctness)
+Encoders: cjxl v0.12.0, ours Zenjxl (default), ours Libjxl strategy
+
+Per-cell results
+----------------
+
+Cell         | cjxl  B | Libjxl  B (Δ%)     | Zenjxl  B (Δ%)    | Zenjxl_no109  B (Δ%)
+-------------|---------|--------------------|--------------------|---------------------
+e7 d=3       |  72232  |  77835  (+7.76%)   |  72813  (+0.80%)  |  72813  (+0.80%) [no-op, gate doesn't fire at d<3.5]
+e7 d=4       |  62710  |  70217  (+11.97%)  |  90323  (+44.03%) |  62850  (+0.22%) ← W44-109 owns +43.8pp
+e7 d=5       |  57232  |  63259  (+10.53%)  |  81817  (+42.96%) |  55617  (-2.82%) ← W44-109 owns +45.8pp
+e8 d=4       |  72960  |  62494  (-14.34%)  |  88077  (+20.72%) |  57061  (-21.79%) [no105 var; W44-105 owns +42.5pp]
+e9 d=4       |  73629  |  61628  (-16.30%)  |  77221  (+4.88%)  |  56140  (-23.75%) [no105 var; W44-105 owns +28.6pp]
+
+SSIM2 per-cell (for Pareto context)
+-----------------------------------
+
+Cell         | cjxl  SSIM2 | Libjxl  SSIM2 | Zenjxl  SSIM2 | Zenjxl_(no109|no105)  SSIM2
+-------------|-------------|---------------|---------------|----------------------------
+e7 d=3       |  86.56      |  83.71        |  84.03        |  84.03 (W44-109 no-op)
+e7 d=4       |  84.86      |  79.35        |  84.89 (+0.03 vs cjxl) | 80.53 (-4.33)
+e7 d=5       |  81.84      |  77.32        |  84.59 (+2.75)         | 79.50 (-2.34)
+e8 d=4       |  83.27      |  79.39        |  86.37 (+3.10)         | 80.30 (-2.97)
+e9 d=4       |  83.31      |  79.39        |  84.98 (+1.67)         | 80.18 (-3.13)
+
+Phase 2 classification: the +12pp "structural" gap (Libjxl-strategy at d=4)
+---------------------------------------------------------------------------
+
+The Libjxl-strategy (cjxl-parity mode) trails cjxl by +7-12% at d≥3 on
+codec_wiki even with all Zenjxl content-aware lifts disabled. The gap is
+distance-dependent (-14% to -17% at d=0.5/2, +7-12% at d=3-5).
+
+Candidates investigated (read-only):
+- `kAvoidEntropyOfTransforms = 0.5` (libjxl `enc_ac_strategy.cc:595`): we
+  already have it at parity (`effort.rs:1285`/`1430`,
+  `vardct/ac_strategy_search.rs:60` `avoid_entropy_of_transforms_mul`).
+  k_avoid_transforms_base = 0.5 at every effort. **NOT the structural gap.**
+- Multi-pass AC strategy search at e7 (libjxl 1-pass step=2): we run 1-pass
+  step=2 at e7 (per `effort.rs::ac_strategy_step_size`), so MATCHES.
+  **NOT the structural gap.**
+
+Remaining candidate (NOT investigated this chunk per task spec "diagnose
+only"):
+- cjxl's per-block butteraugli measurement passes at e7 (libjxl runs a
+  partial buttloop on small subsets even at e7 — check
+  `enc_butteraugli_pnorm.cc` and `EvalAcStrategy`'s outer dispatch).
+- `kFavor2X2AtHighQuality = 0.4` (libjxl `enc_ac_strategy.cc:588`): only
+  fires at `butteraugli_target < 5.0` → does fire at d=4 — check our
+  implementation. Quick grep shows we have a constant `K_FAVOR_2X2 = -0.4`
+  applied conditionally — likely at parity, but worth a measurement pass
+  in W44-AUDIT-5.
+- Per-block strategy search `step_size` choice for 32x32+ blocks at d>=4:
+  libjxl may converge differently on mixed-content screenshots where DCT16x16
+  vs DCT8 trade-off is closer-to-equal.
+
+Phase 2 verdict: +12pp gap is real and structural; NOT in W44-AUDIT-4 scope
+to fix; queued as W44-AUDIT-5 with the above 3 candidates pre-narrowed.
+
+Phase 3 classification: the +32pp "Zenjxl-only" gap at e7 d=4/5
+----------------------------------------------------------------
+
+**ROOT CAUSE PROVEN: W44-109 (`adaptive_quant` screenshot qf seed scale).**
+
+At effort 7, `butteraugli_iters = 0` per `effort.rs::profile.butteraugli_iters`
+(libjxl gates at speed_tier <= kKitten == effort >= 8) — so the
+W44-105 *buttloop* path CANNOT fire at e7. The W44-109 path (same lift,
+applied pre-buttloop at `adaptive_quant` time) DOES fire at e7 with
+per-effort scale `DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7 = 3.0`.
+
+Gate predicates that fire on codec_wiki at e7 d=4:
+- `is_screenshot` (mask1x1 median > 95): TRUE (codec_wiki is a screenshot)
+- `target_distance >= BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE` (= 3.5): TRUE at d=4/5
+- `effort <= ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT` (= 7): TRUE at e7
+- `butteraugli_iters == 0` (belt-and-braces): TRUE at e7
+- `policy != Off` (not Libjxl strategy): TRUE
+- W44-176 terminal-class exclude (`luma_var ∈ [1500, 2200] AND fcbr > 0.70`):
+  FALSE on codec_wiki (luma_var=1374 below band)
+
+→ W44-109 fires; quant_field multiplied by 3.0× → +43.8pp bytes,
++4.36 SSIM2 above cjxl. At d=3 the gate doesn't fire (d < 3.5), confirming
+the W44-109 attribution exactly.
+
+Confirming env-toggle measurement (`JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=1.0`):
+- e7 d=3: zenjxl 72813 → no109 72813 (byte-identical, W44-109 was inactive)
+- e7 d=4: zenjxl 90323 → no109 62850 (the +43.8pp goes away)
+- e7 d=5: zenjxl 81817 → no109 55617 (the +45.8pp goes away)
+
+Also confirmed: W44-105 owns the e8/e9 Zenjxl-only overshoot:
+- e8 d=4: zenjxl 88077 → no105 57061 (-31K bytes, -42.5pp)
+- e9 d=4: zenjxl 77221 → no105 56140 (-21K bytes, -28.6pp)
+  (the e9 buttloop recovers some, but W44-105's initial 4× seed still
+  inflates bytes meaningfully even after 4 convergence iters)
+
+Phase 4 verdict: HONEST-STOP
+----------------------------
+
+The +32pp Zenjxl-only wedge is owned by W44-109. **A naïve gate flip
+(disable W44-109 on codec_wiki) is NOT a clean win**:
+
+- W44-109 buys +4.36 SSIM2 on codec_wiki at e7 d=4 (84.89 vs no109 80.53).
+  cjxl is at 84.86. So Zenjxl with W44-109 is +0.03 ABOVE cjxl SSIM2 at
+  +44% bytes; Zenjxl without W44-109 is -4.33 BELOW cjxl SSIM2 at +0.22%
+  bytes. **Disabling W44-109 would change codec_wiki from a "byte-cost,
+  matches-cjxl-quality" cell to a "byte-parity, below-cjxl-quality" cell.**
+- The principled fix is **per-image discriminator** (mirror W44-176
+  pattern). Candidates:
+  - `M3_colourfulness < THRESHOLD` (codec_wiki M3=145.73 vs
+    terminal/graph/imac M3=14-29) — would exclude codec_wiki cleanly.
+    BUT: doesn't address whether the +4.36 SSIM2 codec_wiki gain is
+    actually wanted; just declares "don't lift on color-rich screenshots".
+  - Pareto-aware decision: compare estimated W44-109 lift cost vs the
+    SSIM2 delta it produces — would need a fast butteraugli or proxy
+    measurement at adaptive_quant time, which the e7 path explicitly
+    avoids (that's WHY butteraugli_iters=0).
+  - Restrict W44-109 to `effort <= 6` only (drop the e7 = 3.0 scale).
+    e8/e9 buttloop path already handles e>=8, e5/e6 keep the lift on
+    terminal-class — but loses the W44-109 wins on the terminal-class
+    images at e7 (per W44-109 ledger).
+
+None of these are 60-min-shippable without re-measuring against the
+full W44-109 win cluster (terminal/graph/imac_g3/imac_dark/gmessages/gui
+at e5/e6/e7 d=3-5). The W44-176 narrative warned exactly this: "the
+W44-108 firing class contains a mix of pareto wins and one regression
+(terminal d=4-5). Distance-narrow [2.0, 3.0] would sacrifice EVERY win
+in d=4-5 to fix the one regression. A per-image discriminator targeting
+just terminal is preferable."
+
+Same logic applies to codec_wiki: a per-image discriminator (e.g.
+`M3 >= 100`) would target codec_wiki without sacrificing the
+terminal/graph wins.
+
+DO NOT (future agents)
+----------------------
+
+1. DO NOT cite "FMA precision" for ANY byte movement here (per W44-66
+   user rule). Cause is the W44-109 multiplicative qac lift, mechanically
+   isolated by env hook.
+2. DO NOT default-flip W44-109 OFF on codec_wiki without a per-image
+   discriminator that preserves the W44-109 wins on terminal/graph/imac
+   classes at e5/e6/e7 d≥3.5.
+3. DO NOT chase the +12pp structural gap by attempting a multi-day port
+   in W44-AUDIT-5+ until the 3 pre-narrowed candidates above are
+   measured.
+4. DO NOT add a "buttloop at e7" without measuring perf — e7 is the
+   "fast practical" effort level; adding 2-4 iters of buttloop would
+   roughly 5× wall (per W44-172 perf table).
+5. DO NOT lower `DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7`
+   below 3.0 without re-running W44-109's original win measurement on
+   terminal/graph/imac_g3/imac_dark/gmessages/gui at e7 d=3.5-5.
+6. DO NOT remove the W44-176 luma_var+fcbr exclude — it solves the
+   terminal regression case which is structurally distinct from the
+   codec_wiki regression case.
+
+Follow-on candidates (NOT this chunk)
+-------------------------------------
+
+W44-AUDIT-5 — close the +12pp structural Libjxl-strategy gap:
+  (a) Read `enc_butteraugli_pnorm.cc` and `EvalAcStrategy`'s outer
+      dispatch for any e7-time per-block butteraugli measurement we
+      lack.
+  (b) Read `kFavor2X2AtHighQuality = 0.4` (`enc_ac_strategy.cc:588`)
+      and confirm our K_FAVOR_2X2 wiring at d=4 matches libjxl's
+      `pow((5-d)/5, 2.0)` weight curve.
+  (c) Investigate strategy-search `step_size` choice for 32x32+ blocks
+      at d≥4 on mixed-content; cjxl may converge differently.
+
+W44-AUDIT-6 — close the W44-109 codec_wiki-class regression:
+  (a) Probe `m3_colourfulness` on the full W44-109 win cluster
+      (terminal, graph, imac_g3, imac_dark, gmessages, gui) plus
+      windows95, imessage, windows, codec_wiki across all gb82-sc.
+  (b) Bisect `m3_threshold ∈ {50, 80, 100, 130}` — exclude codec_wiki
+      and any other high-M3 screenshots; preserve all wins.
+  (c) Add the gate inside `resolved_adaptive_quant_qf_seed_scale_with_policy`
+      as a new sub-discriminator (mirror W44-176 shape).
+  (d) Re-bench codec_wiki + all gb82-sc cells at e5/6/7 × d=3/4/5,
+      verify zero new FIXED→OPEN flips.
+  Estimate: 1-2 days (probe + bisect + 60-cell paired bench + verify).
+
+W44-AUDIT-7 — buttloop-at-e7 perf budget investigation:
+  (a) Measure walltime cost of 1-iter buttloop at e7 on terminal +
+      codec_wiki + 5 photos.
+  (b) If ≤2× e7 baseline: queue chunk to wire 1-iter buttloop at e7
+      ONLY for screenshot-class. Could subsume both W44-109 and the
+      W44-AUDIT-6 codec_wiki-class fix by letting the buttloop
+      converge naturally.
+
+Files
+-----
+
+- examples/w44_audit_4_e7_d4_breakdown.rs — 5-cell bench with env-toggle
+  of W44-109 (e5-e7) and W44-105 (e8-e9)
+- benchmarks/w44_audit_4_e7_d4_breakdown_2026-05-24.tsv — paired
+  cjxl/libjxl/zenjxl/no109/no105 measurements + Δ% columns
+- benchmarks/w44_audit_4_e7_d4_breakdown_2026-05-24.meta — this file
+
+Acceptance gates
+----------------
+
+(a) Phase 1 dump completed: PASS (per-cell bytes + SSIM2 + bfly for
+    cjxl + Libjxl + Zenjxl + W44-109/105-disabled variants).
+(b) Phase 2 classification: PASS — +12pp structural gap is NOT
+    `kAvoidEntropyOfTransforms` (already at parity); 3 candidates
+    pre-narrowed for W44-AUDIT-5.
+(c) Phase 3 classification: PASS — +32pp Zenjxl-only gap PROVEN to be
+    W44-109 by env-toggle isolation.
+(d) Phase 4: HONEST-STOP with W44-AUDIT-6 plan documented (per-image
+    discriminator on M3_colourfulness).
+(e) `cargo test --lib`: PASS (1485/1485).
+(f) Hash-locks: BYTE-IDENTICAL (no production source change).
+(g) Libjxl byte-lock: BYTE-IDENTICAL (no production source change).
+(h) Single commit: pending.
+(i) `.workongoing`: removed on completion.
+(j) `docs/LIBJXL_DIVERGENCES.md`: extends existing Section F row to
+    note the codec_wiki regression class + W44-AUDIT-6 followup.
