@@ -20,6 +20,25 @@
 //!
 //! Or pass `--cell-file <path.json>` to avoid shell-escape pain.
 //!
+//! ## W44-PHASE4-M1 artifact persistence env flags (default OFF)
+//!
+//! Per the global CLAUDE.md `4. Always persist encoded variants when
+//! encoding is expensive — NO EXCEPTIONS` rule (added 2026-05-24
+//! after the W44-PHASE4-S1 incident discarded $30 of encoded bytes),
+//! **production sweeps MUST set all three to `1`**:
+//!
+//! | env | what it adds |
+//! |---|---|
+//! | `W44_PHASE4_M1_SAVE_ENCODED=1` | stage encoded JXL bytes to artifacts dir, populate `encoded_jxl_sha256` + `encoded_jxl_r2_key` cols |
+//! | `W44_PHASE4_M1_SAVE_DIFFMAP=1` | stage per-pixel butteraugli diffmap blob, populate `diffmap_r2_key` col |
+//! | `W44_PHASE4_M1_COMPUTE_MULTIMETRIC=1` | populate `butter_max/p1/p2/p6` + `psnr_y/r/g/b` cols |
+//! | `W44_PHASE4_M1_ARTIFACTS_DIR=<path>` | override the artifact-stage dir (default: `<output_parquet>/../artifacts/`) |
+//!
+//! The runner only stages artifacts to local disk; `worker.sh`
+//! handles the actual R2 upload via `s5cmd cp` (matching the existing
+//! per-cell Parquet upload pattern). Smoke tests + CI leave the flags
+//! OFF for v1-shaped byte-identical output.
+//!
 //! Exit codes:
 //! - 0 success
 //! - 1 cell-spec parse error
