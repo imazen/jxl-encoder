@@ -27,6 +27,24 @@
 
 ## 1. Problem statement
 
+> **W44-PHASE3-B7d POST-IMPLEMENTATION NOTE (2026-05-24)**: This RFC's projected
+> `-35 to -47 %` wall reduction was NOT delivered by the shipped Days 1-5
+> implementation. The Day 6 honest A/B bench measured the strip path at
+> **+1.4 % to +9.6 % SLOWER** than the full path at every tested size on
+> AMD Zen 4 (256² / 512² / 1024² / 2048²). Root cause: Days 2-4 chose
+> byte-identity-via-padded-scratch to keep a strict regression-gate against
+> any future refactor, but padded-scratch delegates back to the existing
+> full-image kernels — which means only Stage 3 (combine_channels, halo=0,
+> pointwise) actually tiles, and Stage 3 is only ~3.3 % of total wall.
+> Day 7 disposition is **Option A — ship framework-only behind
+> `feature = "strip-tile-butteraugli"` (default OFF)** so the production
+> jxl-encoder buttloop can never accidentally call the slower path. A future
+> true-tile refactor that re-implements Days 2-4 with row-window reads
+> instead of scratch-delegation would restart ~3 days of work but yields
+> the RFC's original perf target. See §11 for full disposition + arc closing
+> notes; see `butteraugli/benchmarks/w44_phase3_b7d_day6_2026-05-24.meta`
+> for the bench narrative.
+
 The B6 audit (2026-05-23) measured the CPU butteraugli `compare_linear_planar`
 hot path at **~51 pool ImageF/Image3F allocations per full-res call**, doubled
 to **~102 with the half-res pass running in parallel via `rayon::join`**.
@@ -310,6 +328,21 @@ stay L2-resident.
 ---
 
 ## 5. Pipeline restructuring
+
+> **W44-PHASE3-B7d POST-IMPLEMENTATION NOTE (2026-05-24)**: The kernels in
+> Stages 1+2 below all have halo > 0 with mirror-reflect-at-image-edge
+> boundary handling. Maintaining byte-identity at non-edge strip boundaries
+> would require either (a) padded-to-parent scratch (the Day 2-4 choice —
+> byte-identical but equivalent to running full-image, so zero perf win), or
+> (b) row-window kernel re-implementations that mirror-reflect at the STRIP
+> edge (with measured ULP tolerance, NOT byte-identical). The shipped
+> Days 1-5 took path (a); only Stage 3 (per-pixel combine_channels, halo=0,
+> pointwise) actually tiles cheaply. The true-tile path (b) would require
+> rewriting `gaussian_blur` (LF/MF/HF — three halos), `blur_mirrored_5x5`,
+> `malta_diff_map` (interior halo 4), `fuzzy_erosion` (bounded K=3), and
+> the `separate_frequencies` cascade (sum halo 26) with explicit strip-edge
+> mirror reads — multi-week work that this RFC's Days 1-5 deliberately
+> avoided to ship a safe regression-gate first.
 
 The CPU butteraugli pipeline currently runs as 17 kernels in two `rayon::join`
 branches (full-res + half-res). The data-flow per branch:
@@ -700,7 +733,19 @@ Some kernels may have all-image dependencies we missed in the §5 audit
 internal blur). If found, the affected stage can't be tiled; we'd need to
 keep it as a full-buffer pass within the strip-tile shell.
 
-**Mitigation**:
+**RESOLVED (Day 4, 2026-05-24)**: zero psycho kernels are non-tileable.
+`fuzzy_erosion` was the most-suspect candidate (recursive 4-iter
+appearance) but reads confirm bounded `K=3` dilation with no top-to-bottom
+row dependency — tiles cleanly. `apply_mask_correction_precomputed` has
+an internal `gaussian_blur sigma_HF` whose halo (8 rows) was accounted in
+§4. The score reduction (Stage 3) is the only global-dep stage and Day 5
+(3a) post-pass kept it global. The risk that this would surface
+mid-implementation did NOT materialise — every kernel was successfully
+tile-able byte-identical via the Day 2-4 padded-scratch pattern. (The
+SEPARATE issue is that padded-scratch defeats the cache-locality benefit
+— see new R8 below.)
+
+**Mitigation** (kept for archaeology):
 - Day 1 includes a complete read of `psycho.rs` + `mask.rs` + `diff.rs`
   to catalog every kernel's data-flow shape BEFORE writing Day 2 code.
 - Score reduction (Stage 3) is the only known global-dep stage. Strategy
@@ -766,6 +811,40 @@ catch-and-fix is to revert to (3a) post-pass score.
 **Mitigation**: Day 5 integration test runs the same image through
 strip_rows ∈ {8, 16, 32} and asserts identical scores. If they differ,
 forces (3a) fallback.
+
+### R8. Padded-scratch delegation defeats cache-locality benefit (MATERIALISED)
+
+**Status: MATERIALISED 2026-05-24 (Day 6).** The Day 2-4 strip primitive
+implementations (`gaussian_blur_strip`, `malta_diff_map_strip`,
+`fuzzy_erosion_strip`, `separate_frequencies_strip`, etc.) all maintain
+strict byte-identity at non-edge strip boundaries by allocating
+parent-height padded scratch ImageF buffers, copying strip rows into the
+scratch, calling the existing `#[archmage::autoversion]` full-image
+kernel on the scratch, and copying the relevant output rows back out.
+This is byte-identical by construction — the autoversioned kernel's
+SIMD f32 op order is preserved verbatim — but it ALSO means the work
+performed per call is *equivalent to running the full-image kernel*,
+just with extra copy-in + copy-out overhead. The intermediate buffers
+do NOT stay L2-resident because they're full-image-sized scratch, not
+strip-sized data.
+
+**Net effect**: the only stage that actually benefits from cache locality
+in the shipped pipeline is Stage 3 (`combine_channels_to_diffmap_fused`,
+halo=0, pointwise — no scratch needed, true row-window). Stage 3 is
+~3.3 % of total wall (combine ~1.2 ms / 35.9 ms at 1024² smooth). The
+strip driver itself adds per-strip pool ops + copy traffic, so even the
+~3.3 % theoretical savings invert into a +1.4 % to +9.6 % wall regression
+across 256² / 512² / 1024² / 2048² (Day 6 paired A/B bench).
+
+**No mitigation possible without restructuring Days 2-4**. The Day 7
+disposition is Option A — ship the strip path behind a default-OFF feature
+flag (`strip-tile-butteraugli`) so the production buttloop can never call
+it. A future true-tile refactor would need to re-implement each
+halo-bearing kernel with row-window reads + mirror-reflect-at-strip
+boundaries with measured ULP tolerance (NOT byte-identical) to actually
+keep strip-sized scratch buffers in L2. That work is multi-week per kernel
+and was deliberately deferred by Days 1-5 in favour of shipping the safe
+regression-gate first.
 
 ---
 
@@ -898,22 +977,36 @@ Day 5 / Day 6 gates fail. The chunk-level acceptance gates:
   Math is decisively against the current shape.
 
 - [x] **Day 7** — disposition: **Option A — SHIP FRAMEWORK-ONLY (default OFF)**.
+  SHIPPED 2026-05-24 (butteraugli `c110a6b1`, jxl-encoder docs follow-on).
   - Days 1-5 stay in tree as future-true-tile-refactor scaffolding:
     `ImageF::strip_view`, `Image3F::strip_view`, the `*_strip` per-kernel
     byte-identity tests (47 new), and the 50-image `strip_parity_50_images`
     integration test. These remain valuable as the regression harness for any
-    future deeper restructure.
-  - `compare_linear_planar_strip_into` stays public but is documented as
-    "byte-identical alternative path, not perf-faster as of Day 6" via inline
-    docstring updates (already in place from Day 5 — re-affirmed here).
-  - jxl-encoder does NOT route any production hot path through the strip
-    variant. CPU butteraugli backend (`vardct/butteraugli_backend.rs`) keeps
-    calling `compare_linear_planar_into`. The strip variant is not used.
+    future deeper restructure. `PsychoImage::strip_view` is retained behind
+    `#[allow(dead_code)]` (publicly reachable via the `internals` feature).
+  - `compare_linear_planar_strip_into` (pub on `ButteraugliReference`) +
+    `compare_linear_planar_strip_impl_into` (private) +
+    `combine_channels_to_diffmap_strip_driver` (private fn) are all gated
+    behind `feature = "strip-tile-butteraugli"` (default OFF) in the
+    butteraugli crate. The `tests/strip_parity_50_images.rs` test runs under
+    the same feature gate (50/50 BYTE-IDENTICAL on PASS). The 3 example
+    binaries (`w44_phase3_b7d_day5_sanity_bench`, `_day6_ab`, `_day6_stage_probe`)
+    print a "skipped — rebuild with --features strip-tile-butteraugli" stub
+    main when feature is OFF and run the full bench when ON.
+  - The strip-view borrow primitives on `ImageF` / `Image3F` are NOT gated
+    because they are generally useful and have other test-side consumers
+    (per-kernel Days 1-4 strip parity tests). Only the public composition
+    callable + its supporting impl/driver are gated.
+  - jxl-encoder does NOT call the strip path anywhere (verified by grep
+    over `jxl-encoder/src/` `tests/` `examples/`). CPU butteraugli backend
+    (`vardct/butteraugli_backend.rs`) keeps calling `compare_linear_planar_into`.
+    The feature gate has zero effect on the jxl-encoder build, hash-locks,
+    libjxl byte-locks, or drift tests.
   - CPU butteraugli perf lever for B7+ moves to the B6-ranked alternatives
     (TLS pool variants, smaller tier-2 wins) OR GPU offload (B1+B4 shipped,
     default-on flip gated on wider corpus measurement per B5 honest-stop).
 - [x] All commits pushed to main on respective origins; CI green where applicable
-- [ ] `.workongoing` markers cleared in both crate workspaces — see Day 7 cleanup
+- [x] `.workongoing` markers cleared in both crate workspaces — see Day 7 cleanup
 
 ### Why Option A and not Option B (true-tile refactor) or Option C (revert everything)
 

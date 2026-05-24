@@ -640,6 +640,130 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### W44-PHASE3-B7d: CPU butteraugli strip-tile — FRAMEWORK SHIPPED, PERF NEGATIVE (2026-05-24)
+
+**Status**: [ARC CLOSED — framework-only, default-OFF feature gate]
+
+Seven-day arc to strip-tile the CPU butteraugli `compare_linear_planar`
+hot path so each strip's intermediate buffers stay L2-resident through the
+multi-pass kernel chain. RFC projected `-35 % to -47 %` wall reduction at
+1024². **Days 1-5 shipped useful framework infrastructure; Day 6 honest
+bench measured a regression instead of the projected win; Day 7 shipped
+the strip path as framework-only behind a default-OFF feature flag.**
+
+**Arc chunks**:
+1. **D1** (`4270275e`): `ImageF::strip_view` + `StripView` borrow primitive
+   + 10 unit tests (88 → 98 lib tests).
+2. **D2** (`187a8102`): `gaussian_blur_strip` (H + V) + `blur_mirrored_5x5_strip`
+   (H + V) per-kernel byte-identity tests + halo-math doc fix (`gaussian_blur_halo(7.156)
+   = 16` not 17). 7 new tests (98 → 105).
+3. **D3** (`1135dcf6`): `malta_diff_map_strip` + `l2_diff_*_strip` + Malta interior
+   `pub(crate)` promotion. 15 new tests (105 → 120).
+4. **D4** (`3bb4dea6`): `separate_frequencies_strip` cascade + `PsychoImage::strip_view`
+   + `Image3F::strip_view`/`strip_view_mut` + 12 per-pixel strip kernels (xyb LF,
+   suppress, remove/amplify range, subtract, uhf_hf_x/y, combine_for_masking,
+   diff_precompute, accumulate_mask, apply_masking, fuzzy_erosion). 30 new tests
+   (120 → 150). Honest-stop finding: ZERO psycho kernels are non-tileable
+   (`fuzzy_erosion` is bounded K=3, tiles cleanly — §9.R2 hypothesis was wrong).
+5. **D5** (`15865d70`): `compare_linear_planar_strip_into` end-to-end + 50-image
+   byte-identical parity test (`tests/strip_parity_50_images.rs`). Composition:
+   Stage 1+2 (opsin/separate_freqs/malta/mask) run on the full image, Stage 3
+   (combine_channels, halo=0, pointwise) tiled at `STRIP_ROWS=16` rows. Sanity
+   wall ratio at 1024² = 1.051× (≤ 1.5× gate).
+6. **D6** (`3d352b89`): paired A/B bench across 4 sizes × 2 fixtures. **Result:
+   strip path 1.4 % to 9.6 % SLOWER at every size.** Per-stage attribution at
+   1024² shows the supposedly-tiled Stage 3 combine_channels runs **3.3× SLOWER**
+   in the strip driver (3,868 µs vs ~1,186 µs) because of 320 per-strip pool
+   ops + ~9 MB copy-in + ~6 MB copy-out per call.
+7. **D7** (`c110a6b1`): feature-gate framework-only. New
+   `strip-tile-butteraugli` feature in butteraugli/Cargo.toml (default OFF);
+   gates `compare_linear_planar_strip_into` + impl + driver fn + parity test +
+   3 example binaries. Strip-view borrow primitives stay UNGATED. jxl-encoder
+   side: zero source change (verified by grep — encoder never calls the strip
+   path; CPU buttloop uses `compare_linear_planar_into`).
+
+**Total**: 14 commits (7 butteraugli + 7 jxl-encoder), 79 new tests (47 per-kernel
+strip parity + 50-image end-to-end + 4 unit). Every commit's tests are
+BYTE-IDENTICAL to the full path on every SIMD tier.
+
+**Honest perf result** (Day 6 paired bench, `butteraugli/benchmarks/w44_phase3_b7d_day6_2026-05-24.tsv`):
+
+| Cell           | full (ms) | strip (ms) | strip/full |
+|---             |---        |---         |---         |
+| 256² smooth    |     2.274 |      2.318 |     1.019× |
+| 256² noisy     |     2.272 |      2.281 |     1.004× |
+| 512² smooth    |     9.719 |     10.650 |     1.096× |
+| 512² noisy     |     9.863 |     10.332 |     1.048× |
+| 1024² smooth   |    38.218 |     40.775 |     1.067× |
+| 1024² noisy    |    38.353 |     40.399 |     1.053× |
+| 2048² smooth   |   181.317 |    184.392 |     1.017× |
+| 2048² noisy    |   172.264 |    178.929 |     1.039× |
+
+**Why it failed** (Day 6 + Day 7 attribution): Days 2-4 chose
+byte-identity-via-padded-scratch precisely to maintain a strict regression
+gate against any future refactor — every `_strip` kernel allocates
+parent-height padded ImageF scratch, copies strip rows into the scratch,
+calls the existing `#[archmage::autoversion]` full-image kernel on the
+scratch, and copies output rows back out. The autoversioned f32 op order
+is preserved verbatim, but the work performed per call is *equivalent to
+running the full-image kernel*. The intermediate buffers do NOT stay
+L2-resident because they're full-image-sized scratch. Only Stage 3
+(combine_channels, halo=0, pointwise) actually tiles cheaply — and Stage 3
+is only ~3.3 % of total wall, so even infinite Stage 3 speedup caps savings
+at 3.3 %. The strip driver itself is bandwidth-amplified (320 per-strip pool
+ops + ~15 MB extra copy traffic per call at 1024²), so the trade inverts.
+
+**What stays** (in tree post-Day-7):
+- `ImageF::strip_view` / `Image3F::strip_view` / `PsychoImage::strip_view`
+  borrow primitives (the latter `#[allow(dead_code)]`-marked).
+- 47 per-kernel `*_strip` byte-identity tests (Days 2-4) — exercise the
+  ungated primitives + Day-4 padded-scratch delegation.
+- 50-image `tests/strip_parity_50_images.rs` (gated under
+  `strip-tile-butteraugli`) — byte-identical regression gate for any future
+  true-tile refactor.
+- 3 example binaries (Day 5 sanity, Day 6 A/B, Day 6 stage probe) gated
+  with skip-stub `main()` when feature is OFF.
+
+**What's queued (future Phase 3 chunks)**:
+- B6 tier-2 candidates B7e/f/g/h (smaller wins, additive, low-risk).
+- GPU offload via B1+B4 (shipped, 11-21 % wins per B4 bench, default-on
+  flip gated on wider corpus measurement per B5 honest-stop).
+- True-tile refactor (multi-week per kernel): re-implement Days 2-4's
+  `*_strip` kernels with mirror-reflect-at-strip row-window reads instead
+  of padded scratch. Loses byte-identity (would need measured ULP tolerance),
+  but is the only path to the RFC's original -35 to -47 % projection.
+
+**DO NOT** (binding for future agents):
+- DO NOT default-ON `strip-tile-butteraugli`. The Day 6 measurement is
+  conclusive across 4 sizes × 2 fixtures.
+- DO NOT respawn the strip-tile chunk with smaller `STRIP_ROWS` thinking
+  it will help. The bottleneck is per-strip allocation + copy traffic, not
+  the kernel inner-loop layout. Smaller strips → more strips → more pool
+  ops + more copies.
+- DO NOT remove the `*_strip` primitives or the 50-image parity test —
+  they are the regression harness for the future true-tile refactor.
+- DO NOT enable the strip path in any jxl-encoder buttloop site (CPU
+  butteraugli backend `vardct/butteraugli_backend.rs`). It is measurably
+  slower at every size.
+- DO NOT re-investigate the Stage 3 combine kernel for further inner-loop
+  SIMD wins. Per B6, every hot kernel is already at LLVM's autoversion
+  ceiling.
+- DO NOT cite "FMA precision" for the strip-vs-full perf delta (per
+  W44-66 user correction). The delta is per-strip pool ops + memory copy
+  traffic, not numeric.
+
+**Files**:
+- butteraugli `c110a6b1`: `butteraugli/Cargo.toml` (new feature), `src/precompute.rs`
+  (gate 3 fns), `src/psycho.rs` (`#[allow(dead_code)]` on PsychoImage strip_view),
+  `tests/strip_parity_50_images.rs` (gate), 3 example files (skip-stub mains).
+- jxl-encoder: this CLAUDE.md note + `docs/RFC_W44_PHASE3_B7D_STRIP_TILE.md`
+  §1/§5/§9.R2/§9.R8/§11 honest disposition updates.
+- Memory: `~/.claude/projects/.../w44_phase3_b7d_arc_closed_framework_only_2026-05-24.md`.
+- Bench: `butteraugli/benchmarks/w44_phase3_b7d_day6_2026-05-24.{tsv,meta}`,
+  `jxl-encoder/benchmarks/w44_phase3_b7d_day6_2026-05-24.{tsv,meta}` (mirror).
+
+---
+
 ### W44-PHASE4-S1h: root-cause fix `image_fetch_failed` (recovered 4 corpus images for next sweep) — SHIPPED (2026-05-24)
 
 **Status**: [SHIPPED]
