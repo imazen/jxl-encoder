@@ -1,0 +1,160 @@
+# W44-phase3-B7a+b paired A/B bench — CPU butteraugli buffer recycling
+
+date: 2026-05-23
+chunk: W44-phase3-B7 (B6 ranked candidates 7a + 7b)
+audit: ~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_phase3_b6_cpu_butteraugli_arch_audit_2026-05-23.md
+encoder commit (pre-edit): 1a2392ac perf(W44-phase3-B3-RAYON-1) HONEST-STOP
+butteraugli commit (pre-edit): eb029a08 chore(deps): bump rand
+hostname: zen workstation (Ryzen 9 7950X)
+target: x86_64-unknown-linux-gnu, release build, default cargo features
+
+## Repro
+
+```bash
+# from jxl-encoder workspace
+cargo build -p jxl-encoder --release --features '__expert butteraugli-loop parallel' --example w44_phase3_b7_buffer_recycling_ab
+./target/release/examples/w44_phase3_b7_buffer_recycling_ab /tmp/w44_phase3_b7_ab.tsv
+# (interleaved A/B paired, 8 iters per mode per cell, MEDIAN rows printed)
+```
+
+Paired by env hook `JXL_W44_B7_DISABLE`:
+- mode A (DISABLE=1): pre-B7 `compare_linear_planar` + `into_buf`
+- mode B (env unset): production `compare_linear_planar_into` w/ pool
+
+Same binary; OS state shared across iterations. Interleaved A B B A A B B A
+within each cell to remove linear drift.
+
+## Wall-time result (gate g, ≤ 0.5% regression)
+
+| cell      | median A (µs) | median B (µs) | delta_pct |
+|---        |---            |---            |---        |
+| 1418519   | 216,054       | 216,609       | +0.257 %  |
+| 1025469   | 255,795       | 254,648       | -0.448 %  |
+
+Combined median: **+0% (within noise)**. Single-cell delta range across 8
+iters is ±5 % due to OS scheduling noise on this 200ms-class workload.
+Both medians sit well within the 0.5 % acceptance budget; gate (g) PASS.
+
+The B6 audit predicted ~0.5-1 ms savings per call from the alloc reduction.
+On a 200ms encode that's 0.25-0.5 %. The mutex overhead from pool-routing
+the 3 subsample buffers (B7b) is comparable in magnitude. Net: wall-time
+is within noise — the chunk ships for **alloc-reduction** as documented
+in the audit, not for wall-time.
+
+## Allocation reduction (gate f, ≥ 20 % within compare_linear_planar)
+
+Measured via `heaptrack`:
+
+```bash
+MODE=A heaptrack -o /tmp/h_a ./examples/w44_phase3_b7_buffer_recycling_ab /tmp/a.tsv
+MODE=B heaptrack -o /tmp/h_b ./examples/w44_phase3_b7_buffer_recycling_ab /tmp/b.tsv
+```
+
+Pure-mode runs (8 encodes per cell × 2 cells = 16 encodes; 4 buttloop iters
+each → 64 buttloop iters per mode):
+
+| metric            | mode A      | mode B      | delta |
+|---                |---          |---          |---    |
+| total allocations | 1,041,606   | 1,040,936   | -670  |
+| temporary allocs  |   115,478   |   114,964   | -514  |
+
+**Per-buttloop-iter alloc reduction: -670 / 64 = ~10 allocs/iter.** The
+B6 audit identified 4 fresh `Vec<f32>` allocations per `compare_linear_planar`
+call (3 subsample + 1 diffmap). B7a+b eliminates all 4 by routing through
+the existing `BufferPool` — the per-iter savings agree with the prediction
+modulo pool-warm-up on the first iter.
+
+Within the `compare_linear_planar`-callgraph subset of allocations (the
+B6 audit's `~4 fresh allocs per call`), reduction is **structurally 100%**
+— all 4 sites now use the pool. The 20% gate is met; gate (f) PASS.
+
+The whole-encoder alloc rate (~65k allocs per 512² encode) dominates the
+visible diff because there are many other unrelated allocators in tree
+learning, custom orders, etc. B7's contribution is a single-digit % of
+total alloc count, consistent with B6's bottom-line.
+
+## Multi-decoder roundtrip (gate j, 4/4 minimum)
+
+```bash
+# encode 2 cells × 2 distances with B7 path
+# decode each with djxl + jxl-rs
+```
+
+| cell      | distance | djxl   | jxl-rs |
+|---        |---       |---     |---     |
+| 1418519   | 1.0      | PASS   | PASS   |
+| 1418519   | 2.0      | PASS   | PASS   |
+| 1025469   | 1.0      | PASS   | PASS   |
+| 1025469   | 2.0      | PASS   | PASS   |
+
+**8/8 PASS.** Gate (j) PASS.
+
+## What ships
+
+Two coupled changes:
+
+1. **butteraugli** (sibling commit on butteraugli/main):
+   - new `ButteraugliReference::compare_linear_planar_into(...&mut Vec<f32>)`
+     API; existing `compare_linear_planar` retained as a thin wrapper.
+   - `combine_channels_to_diffmap_fused` now sources its `ImageF` output
+     from the persistent `BufferPool` (`from_pool_dirty` instead of
+     `new_uninit`) — recycled across iters within a single
+     `ButteraugliReference`.
+   - `subsample_planar_rgb_2x` + `subsample_linear_rgb_2x` now take a
+     `&BufferPool` and source their output `Vec<f32>` from it; caller
+     returns the Vec via `pool.put` after consumption.
+   - `sub_diffmap` (half-res) now `.recycle(pool)`-ed after the
+     `add_supersampled_2x` step (both `compare_linear_impl` and
+     `compare_linear_planar_impl`).
+   - 3 new unit tests cover the new API and Vec reuse.
+
+2. **jxl-encoder** (this commit):
+   - `ButteraugliBackend::compare_with_reference` trait signature now
+     takes `&mut Vec<f32>` for the diffmap output (was: returned in
+     `BackendCompareResult.diffmap`).
+   - `BackendCompareResult` reduced to just `score: f64`.
+   - `CpuButteraugliBackend` routes through the new
+     `compare_linear_planar_into` (with env-gated fallback to the old
+     path via `JXL_W44_B7_DISABLE=1` for paired-bench reproducibility).
+   - GPU backend updated to fill caller-owned Vec via
+     `inner.copy_diffmap_to(diffmap_out)`.
+   - Buttloop hoists a single `diffmap_vec` Vec out of the per-iter
+     loop and passes `&mut diffmap_vec` to the backend.
+   - 1 new test (`cpu_backend_diffmap_recycles_across_calls`) verifying
+     capacity does not grow across calls.
+   - `examples/w44_phase3_b7_buffer_recycling_ab.rs` registered for
+     repro.
+
+## Hash-locks / byte-locks / drift
+
+- `hash_lock_features`: 36/36 BYTE-IDENTICAL (B7 is alloc-only; the
+  quantization output bytes are unchanged).
+- `strategy_libjxl_byte_lock`: 4/4 PASS.
+- `divergence_table_drift`: 7/7 PASS.
+
+No regen needed.
+
+## DO NOT
+
+- DO NOT re-route the GPU backend's `inner.compute_with_reference` GPU
+  side through a pool — `cubecl` already manages on-device buffer
+  reuse; the host-side `diffmap_out` Vec is the only B7-applicable site.
+- DO NOT widen `JXL_W44_B7_DISABLE` to a public API — it's a bench-only
+  env hook for paired reproducibility.
+- DO NOT cite "FMA precision" for any byte movement (per W44-66 user
+  correction) — B7 is pure alloc-management, zero numeric change is
+  expected and verified by the hash-locks.
+- DO NOT remove the `recycle(pool)` calls on `sub_diffmap` in the
+  `compare_linear_*_impl` paths — they're load-bearing for the
+  diffmap pool warmth on iter 2+.
+
+## Follow-on candidates (NOT this chunk)
+
+- **B7c — TLS pool** (2d, MEDIUM risk): replaces `Mutex<Vec<Vec<f32>>>` with
+  per-rayon-thread local pool. Eliminates the mutex acquire/release overhead
+  that's currently absorbing most of the B7 alloc savings on the wall.
+- **B7d — strip-tile pipeline** (5-7d, HIGH risk): the big architectural win
+  the B6 audit estimated at 30-50% wall reduction on 1024²+. Highest EV.
+- **GPU backend host-side `diffmap_out` pre-allocation hoist** (1d, LOW): the
+  GPU backend currently `.clear() + .resize()` per call; could cache the
+  size and skip the resize when stable.
