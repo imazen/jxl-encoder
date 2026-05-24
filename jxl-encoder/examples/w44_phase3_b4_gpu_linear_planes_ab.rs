@@ -281,14 +281,13 @@ fn main() -> std::io::Result<()> {
             "[{}] {}×{} e{} d={} role={} starting CPU encode...",
             cell.name, w, h, cell.effort, cell.distance, cell.role
         );
-        let (cpu_bytes, cpu_ms) =
-            match encode_ours(&rgb, w, h, cell.distance, cell.effort, false) {
-                Some(t) => t,
-                None => {
-                    eprintln!("  CPU encode FAILED");
-                    continue;
-                }
-            };
+        let (cpu_bytes, cpu_ms) = match encode_ours(&rgb, w, h, cell.distance, cell.effort, false) {
+            Some(t) => t,
+            None => {
+                eprintln!("  CPU encode FAILED");
+                continue;
+            }
+        };
         let cpu_score = score(&cpu_bytes, &orig_linear, &orig_srgb, w, h);
         let (cpu_bfly, cpu_ssim2) = cpu_score.unwrap_or((f64::NAN, f64::NAN));
         let cpu_decode_ok = cpu_score.is_some();
@@ -302,14 +301,13 @@ fn main() -> std::io::Result<()> {
         );
 
         eprintln!("[{}] starting GPU encode...", cell.name);
-        let (gpu_bytes, gpu_ms) =
-            match encode_ours(&rgb, w, h, cell.distance, cell.effort, true) {
-                Some(t) => t,
-                None => {
-                    eprintln!("  GPU encode FAILED");
-                    continue;
-                }
-            };
+        let (gpu_bytes, gpu_ms) = match encode_ours(&rgb, w, h, cell.distance, cell.effort, true) {
+            Some(t) => t,
+            None => {
+                eprintln!("  GPU encode FAILED");
+                continue;
+            }
+        };
         let gpu_score = score(&gpu_bytes, &orig_linear, &orig_srgb, w, h);
         let (gpu_bfly, gpu_ssim2) = gpu_score.unwrap_or((f64::NAN, f64::NAN));
         let gpu_decode_ok = gpu_score.is_some();
@@ -340,12 +338,26 @@ fn main() -> std::io::Result<()> {
              {:.4}\t{:.4}\t{:.3}\t\
              {:.4}\t{:.4}\t{:.4}\t\
              {}\t{}",
-            cell.name, cell.role, w, h, cell.effort, cell.distance,
-            cpu_bytes.len(), gpu_bytes.len(), bytes_delta_pct,
-            cpu_ms, gpu_ms, speedup,
-            cpu_bfly, gpu_bfly, bfly_delta_pct,
-            cpu_ssim2, gpu_ssim2, ssim2_delta,
-            cpu_decode_ok, gpu_decode_ok,
+            cell.name,
+            cell.role,
+            w,
+            h,
+            cell.effort,
+            cell.distance,
+            cpu_bytes.len(),
+            gpu_bytes.len(),
+            bytes_delta_pct,
+            cpu_ms,
+            gpu_ms,
+            speedup,
+            cpu_bfly,
+            gpu_bfly,
+            bfly_delta_pct,
+            cpu_ssim2,
+            gpu_ssim2,
+            ssim2_delta,
+            cpu_decode_ok,
+            gpu_decode_ok,
         )?;
         out.flush()?;
     }

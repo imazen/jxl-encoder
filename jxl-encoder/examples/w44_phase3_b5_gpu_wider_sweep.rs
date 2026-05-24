@@ -172,54 +172,275 @@ struct Cell {
 
 const CELLS: &[Cell] = &[
     // ── 5 CID22 photos × {0.5, 1.0, 2.0, 5.0} × e8 (20 cells) ─────────────
-    Cell { name: "cid22_1418519_e8_d0_5", relpath: "CID22/CID22-512/validation/1418519.png", effort: 8, distance: 0.5, role: "PHOTO_SMOOTH" },
-    Cell { name: "cid22_1418519_e8_d1_0", relpath: "CID22/CID22-512/validation/1418519.png", effort: 8, distance: 1.0, role: "PHOTO_SMOOTH" },
-    Cell { name: "cid22_1418519_e8_d2_0", relpath: "CID22/CID22-512/validation/1418519.png", effort: 8, distance: 2.0, role: "PHOTO_SMOOTH" },
-    Cell { name: "cid22_1418519_e8_d5_0", relpath: "CID22/CID22-512/validation/1418519.png", effort: 8, distance: 5.0, role: "PHOTO_SMOOTH" },
-
-    Cell { name: "cid22_1025469_e8_d0_5", relpath: "CID22/CID22-512/validation/1025469.png", effort: 8, distance: 0.5, role: "PHOTO" },
-    Cell { name: "cid22_1025469_e8_d1_0", relpath: "CID22/CID22-512/validation/1025469.png", effort: 8, distance: 1.0, role: "PHOTO" },
-    Cell { name: "cid22_1025469_e8_d2_0", relpath: "CID22/CID22-512/validation/1025469.png", effort: 8, distance: 2.0, role: "PHOTO" },
-    Cell { name: "cid22_1025469_e8_d5_0", relpath: "CID22/CID22-512/validation/1025469.png", effort: 8, distance: 5.0, role: "PHOTO" },
-
-    Cell { name: "cid22_1531677_e8_d0_5", relpath: "CID22/CID22-512/validation/1531677.png", effort: 8, distance: 0.5, role: "PHOTO" },
-    Cell { name: "cid22_1531677_e8_d1_0", relpath: "CID22/CID22-512/validation/1531677.png", effort: 8, distance: 1.0, role: "PHOTO" },
-    Cell { name: "cid22_1531677_e8_d2_0", relpath: "CID22/CID22-512/validation/1531677.png", effort: 8, distance: 2.0, role: "PHOTO" },
-    Cell { name: "cid22_1531677_e8_d5_0", relpath: "CID22/CID22-512/validation/1531677.png", effort: 8, distance: 5.0, role: "PHOTO" },
-
-    Cell { name: "cid22_1420710_e8_d0_5", relpath: "CID22/CID22-512/validation/1420710.png", effort: 8, distance: 0.5, role: "PHOTO" },
-    Cell { name: "cid22_1420710_e8_d1_0", relpath: "CID22/CID22-512/validation/1420710.png", effort: 8, distance: 1.0, role: "PHOTO" },
-    Cell { name: "cid22_1420710_e8_d2_0", relpath: "CID22/CID22-512/validation/1420710.png", effort: 8, distance: 2.0, role: "PHOTO" },
-    Cell { name: "cid22_1420710_e8_d5_0", relpath: "CID22/CID22-512/validation/1420710.png", effort: 8, distance: 5.0, role: "PHOTO" },
-
-    Cell { name: "cid22_3637739_e8_d0_5", relpath: "CID22/CID22-512/validation/3637739.png", effort: 8, distance: 0.5, role: "PHOTO" },
-    Cell { name: "cid22_3637739_e8_d1_0", relpath: "CID22/CID22-512/validation/3637739.png", effort: 8, distance: 1.0, role: "PHOTO" },
-    Cell { name: "cid22_3637739_e8_d2_0", relpath: "CID22/CID22-512/validation/3637739.png", effort: 8, distance: 2.0, role: "PHOTO" },
-    Cell { name: "cid22_3637739_e8_d5_0", relpath: "CID22/CID22-512/validation/3637739.png", effort: 8, distance: 5.0, role: "PHOTO" },
-
+    Cell {
+        name: "cid22_1418519_e8_d0_5",
+        relpath: "CID22/CID22-512/validation/1418519.png",
+        effort: 8,
+        distance: 0.5,
+        role: "PHOTO_SMOOTH",
+    },
+    Cell {
+        name: "cid22_1418519_e8_d1_0",
+        relpath: "CID22/CID22-512/validation/1418519.png",
+        effort: 8,
+        distance: 1.0,
+        role: "PHOTO_SMOOTH",
+    },
+    Cell {
+        name: "cid22_1418519_e8_d2_0",
+        relpath: "CID22/CID22-512/validation/1418519.png",
+        effort: 8,
+        distance: 2.0,
+        role: "PHOTO_SMOOTH",
+    },
+    Cell {
+        name: "cid22_1418519_e8_d5_0",
+        relpath: "CID22/CID22-512/validation/1418519.png",
+        effort: 8,
+        distance: 5.0,
+        role: "PHOTO_SMOOTH",
+    },
+    Cell {
+        name: "cid22_1025469_e8_d0_5",
+        relpath: "CID22/CID22-512/validation/1025469.png",
+        effort: 8,
+        distance: 0.5,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1025469_e8_d1_0",
+        relpath: "CID22/CID22-512/validation/1025469.png",
+        effort: 8,
+        distance: 1.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1025469_e8_d2_0",
+        relpath: "CID22/CID22-512/validation/1025469.png",
+        effort: 8,
+        distance: 2.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1025469_e8_d5_0",
+        relpath: "CID22/CID22-512/validation/1025469.png",
+        effort: 8,
+        distance: 5.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1531677_e8_d0_5",
+        relpath: "CID22/CID22-512/validation/1531677.png",
+        effort: 8,
+        distance: 0.5,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1531677_e8_d1_0",
+        relpath: "CID22/CID22-512/validation/1531677.png",
+        effort: 8,
+        distance: 1.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1531677_e8_d2_0",
+        relpath: "CID22/CID22-512/validation/1531677.png",
+        effort: 8,
+        distance: 2.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1531677_e8_d5_0",
+        relpath: "CID22/CID22-512/validation/1531677.png",
+        effort: 8,
+        distance: 5.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1420710_e8_d0_5",
+        relpath: "CID22/CID22-512/validation/1420710.png",
+        effort: 8,
+        distance: 0.5,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1420710_e8_d1_0",
+        relpath: "CID22/CID22-512/validation/1420710.png",
+        effort: 8,
+        distance: 1.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1420710_e8_d2_0",
+        relpath: "CID22/CID22-512/validation/1420710.png",
+        effort: 8,
+        distance: 2.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1420710_e8_d5_0",
+        relpath: "CID22/CID22-512/validation/1420710.png",
+        effort: 8,
+        distance: 5.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_3637739_e8_d0_5",
+        relpath: "CID22/CID22-512/validation/3637739.png",
+        effort: 8,
+        distance: 0.5,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_3637739_e8_d1_0",
+        relpath: "CID22/CID22-512/validation/3637739.png",
+        effort: 8,
+        distance: 1.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_3637739_e8_d2_0",
+        relpath: "CID22/CID22-512/validation/3637739.png",
+        effort: 8,
+        distance: 2.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_3637739_e8_d5_0",
+        relpath: "CID22/CID22-512/validation/3637739.png",
+        effort: 8,
+        distance: 5.0,
+        role: "PHOTO",
+    },
     // ── 5 CID22 photos × {1.0, 2.0} × e9 (10 cells, high-effort coverage) ─
-    Cell { name: "cid22_1418519_e9_d1_0", relpath: "CID22/CID22-512/validation/1418519.png", effort: 9, distance: 1.0, role: "PHOTO_SMOOTH" },
-    Cell { name: "cid22_1418519_e9_d2_0", relpath: "CID22/CID22-512/validation/1418519.png", effort: 9, distance: 2.0, role: "PHOTO_SMOOTH" },
-    Cell { name: "cid22_1025469_e9_d1_0", relpath: "CID22/CID22-512/validation/1025469.png", effort: 9, distance: 1.0, role: "PHOTO" },
-    Cell { name: "cid22_1025469_e9_d2_0", relpath: "CID22/CID22-512/validation/1025469.png", effort: 9, distance: 2.0, role: "PHOTO" },
-    Cell { name: "cid22_1531677_e9_d1_0", relpath: "CID22/CID22-512/validation/1531677.png", effort: 9, distance: 1.0, role: "PHOTO" },
-    Cell { name: "cid22_1531677_e9_d2_0", relpath: "CID22/CID22-512/validation/1531677.png", effort: 9, distance: 2.0, role: "PHOTO" },
-    Cell { name: "cid22_1420710_e9_d1_0", relpath: "CID22/CID22-512/validation/1420710.png", effort: 9, distance: 1.0, role: "PHOTO" },
-    Cell { name: "cid22_1420710_e9_d2_0", relpath: "CID22/CID22-512/validation/1420710.png", effort: 9, distance: 2.0, role: "PHOTO" },
-    Cell { name: "cid22_3637739_e9_d1_0", relpath: "CID22/CID22-512/validation/3637739.png", effort: 9, distance: 1.0, role: "PHOTO" },
-    Cell { name: "cid22_3637739_e9_d2_0", relpath: "CID22/CID22-512/validation/3637739.png", effort: 9, distance: 2.0, role: "PHOTO" },
-
+    Cell {
+        name: "cid22_1418519_e9_d1_0",
+        relpath: "CID22/CID22-512/validation/1418519.png",
+        effort: 9,
+        distance: 1.0,
+        role: "PHOTO_SMOOTH",
+    },
+    Cell {
+        name: "cid22_1418519_e9_d2_0",
+        relpath: "CID22/CID22-512/validation/1418519.png",
+        effort: 9,
+        distance: 2.0,
+        role: "PHOTO_SMOOTH",
+    },
+    Cell {
+        name: "cid22_1025469_e9_d1_0",
+        relpath: "CID22/CID22-512/validation/1025469.png",
+        effort: 9,
+        distance: 1.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1025469_e9_d2_0",
+        relpath: "CID22/CID22-512/validation/1025469.png",
+        effort: 9,
+        distance: 2.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1531677_e9_d1_0",
+        relpath: "CID22/CID22-512/validation/1531677.png",
+        effort: 9,
+        distance: 1.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1531677_e9_d2_0",
+        relpath: "CID22/CID22-512/validation/1531677.png",
+        effort: 9,
+        distance: 2.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1420710_e9_d1_0",
+        relpath: "CID22/CID22-512/validation/1420710.png",
+        effort: 9,
+        distance: 1.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_1420710_e9_d2_0",
+        relpath: "CID22/CID22-512/validation/1420710.png",
+        effort: 9,
+        distance: 2.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_3637739_e9_d1_0",
+        relpath: "CID22/CID22-512/validation/3637739.png",
+        effort: 9,
+        distance: 1.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "cid22_3637739_e9_d2_0",
+        relpath: "CID22/CID22-512/validation/3637739.png",
+        effort: 9,
+        distance: 2.0,
+        role: "PHOTO",
+    },
     // ── 2 CLIC 1MP photos × {1.0, 2.0} × e8 (4 cells) ─────────────────────
-    Cell { name: "clic_097cb426_e8_d1_0", relpath: "clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png", effort: 8, distance: 1.0, role: "PHOTO_SMOOTH" },
-    Cell { name: "clic_097cb426_e8_d2_0", relpath: "clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png", effort: 8, distance: 2.0, role: "PHOTO_SMOOTH" },
-    Cell { name: "clic_0369d229_e8_d1_0", relpath: "clic2025-1024/0369d229ba4c9965d5caeb38c359a027a810968eee930b81520b604e76b4df14.png", effort: 8, distance: 1.0, role: "PHOTO" },
-    Cell { name: "clic_0369d229_e8_d2_0", relpath: "clic2025-1024/0369d229ba4c9965d5caeb38c359a027a810968eee930b81520b604e76b4df14.png", effort: 8, distance: 2.0, role: "PHOTO" },
-
+    Cell {
+        name: "clic_097cb426_e8_d1_0",
+        relpath: "clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png",
+        effort: 8,
+        distance: 1.0,
+        role: "PHOTO_SMOOTH",
+    },
+    Cell {
+        name: "clic_097cb426_e8_d2_0",
+        relpath: "clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png",
+        effort: 8,
+        distance: 2.0,
+        role: "PHOTO_SMOOTH",
+    },
+    Cell {
+        name: "clic_0369d229_e8_d1_0",
+        relpath: "clic2025-1024/0369d229ba4c9965d5caeb38c359a027a810968eee930b81520b604e76b4df14.png",
+        effort: 8,
+        distance: 1.0,
+        role: "PHOTO",
+    },
+    Cell {
+        name: "clic_0369d229_e8_d2_0",
+        relpath: "clic2025-1024/0369d229ba4c9965d5caeb38c359a027a810968eee930b81520b604e76b4df14.png",
+        effort: 8,
+        distance: 2.0,
+        role: "PHOTO",
+    },
     // ── Screen-class cells (4 cells) ──────────────────────────────────────
-    Cell { name: "terminal_e8_d1_0",    relpath: "gb82-sc/terminal.png",   effort: 8, distance: 1.0, role: "SCREENSHOT" },
-    Cell { name: "terminal_e8_d4_0",    relpath: "gb82-sc/terminal.png",   effort: 8, distance: 4.0, role: "SCREENSHOT" },
-    Cell { name: "codec_wiki_e8_d2_0",  relpath: "gb82-sc/codec_wiki.png", effort: 8, distance: 2.0, role: "SCREENSHOT" },
-    Cell { name: "imac_g3_e8_d2_0",     relpath: "gb82-sc/imac_g3.png",    effort: 8, distance: 2.0, role: "SCREENSHOT" },
+    Cell {
+        name: "terminal_e8_d1_0",
+        relpath: "gb82-sc/terminal.png",
+        effort: 8,
+        distance: 1.0,
+        role: "SCREENSHOT",
+    },
+    Cell {
+        name: "terminal_e8_d4_0",
+        relpath: "gb82-sc/terminal.png",
+        effort: 8,
+        distance: 4.0,
+        role: "SCREENSHOT",
+    },
+    Cell {
+        name: "codec_wiki_e8_d2_0",
+        relpath: "gb82-sc/codec_wiki.png",
+        effort: 8,
+        distance: 2.0,
+        role: "SCREENSHOT",
+    },
+    Cell {
+        name: "imac_g3_e8_d2_0",
+        relpath: "gb82-sc/imac_g3.png",
+        effort: 8,
+        distance: 2.0,
+        role: "SCREENSHOT",
+    },
 ];
 
 fn main() -> std::io::Result<()> {
@@ -295,38 +516,50 @@ fn main() -> std::io::Result<()> {
 
         eprintln!(
             "[{}/{}] {} ({}×{} = {:.2} MP) e{} d={} role={}",
-            idx + 1, total, cell.name, w, h, pixels_mp, cell.effort, cell.distance, cell.role
+            idx + 1,
+            total,
+            cell.name,
+            w,
+            h,
+            pixels_mp,
+            cell.effort,
+            cell.distance,
+            cell.role
         );
-        let (cpu_bytes, cpu_ms) =
-            match encode_ours(&rgb, w, h, cell.distance, cell.effort, false) {
-                Some(t) => t,
-                None => {
-                    eprintln!("  CPU encode FAILED");
-                    continue;
-                }
-            };
+        let (cpu_bytes, cpu_ms) = match encode_ours(&rgb, w, h, cell.distance, cell.effort, false) {
+            Some(t) => t,
+            None => {
+                eprintln!("  CPU encode FAILED");
+                continue;
+            }
+        };
         let cpu_score = score(&cpu_bytes, &orig_linear, &orig_srgb, w, h);
         let (cpu_bfly, cpu_ssim2) = cpu_score.unwrap_or((f64::NAN, f64::NAN));
         let cpu_decode_ok = cpu_score.is_some();
         eprintln!(
             "  CPU: {} bytes, {:.1} ms, bfly={:.3}, ssim2={:.3}",
-            cpu_bytes.len(), cpu_ms, cpu_bfly, cpu_ssim2,
+            cpu_bytes.len(),
+            cpu_ms,
+            cpu_bfly,
+            cpu_ssim2,
         );
 
-        let (gpu_bytes, gpu_ms) =
-            match encode_ours(&rgb, w, h, cell.distance, cell.effort, true) {
-                Some(t) => t,
-                None => {
-                    eprintln!("  GPU encode FAILED");
-                    continue;
-                }
-            };
+        let (gpu_bytes, gpu_ms) = match encode_ours(&rgb, w, h, cell.distance, cell.effort, true) {
+            Some(t) => t,
+            None => {
+                eprintln!("  GPU encode FAILED");
+                continue;
+            }
+        };
         let gpu_score = score(&gpu_bytes, &orig_linear, &orig_srgb, w, h);
         let (gpu_bfly, gpu_ssim2) = gpu_score.unwrap_or((f64::NAN, f64::NAN));
         let gpu_decode_ok = gpu_score.is_some();
         eprintln!(
             "  GPU: {} bytes, {:.1} ms, bfly={:.3}, ssim2={:.3}",
-            gpu_bytes.len(), gpu_ms, gpu_bfly, gpu_ssim2,
+            gpu_bytes.len(),
+            gpu_ms,
+            gpu_bfly,
+            gpu_ssim2,
         );
 
         let bytes_delta_pct =
@@ -352,12 +585,27 @@ fn main() -> std::io::Result<()> {
              {:.4}\t{:.4}\t{:.3}\t\
              {:.4}\t{:.4}\t{:.4}\t\
              {}\t{}",
-            cell.name, cell.role, w, h, pixels_mp, cell.effort, cell.distance,
-            cpu_bytes.len(), gpu_bytes.len(), bytes_delta_pct,
-            cpu_ms, gpu_ms, speedup,
-            cpu_bfly, gpu_bfly, bfly_delta_pct,
-            cpu_ssim2, gpu_ssim2, ssim2_delta,
-            cpu_decode_ok, gpu_decode_ok,
+            cell.name,
+            cell.role,
+            w,
+            h,
+            pixels_mp,
+            cell.effort,
+            cell.distance,
+            cpu_bytes.len(),
+            gpu_bytes.len(),
+            bytes_delta_pct,
+            cpu_ms,
+            gpu_ms,
+            speedup,
+            cpu_bfly,
+            gpu_bfly,
+            bfly_delta_pct,
+            cpu_ssim2,
+            gpu_ssim2,
+            ssim2_delta,
+            cpu_decode_ok,
+            gpu_decode_ok,
         )?;
         out.flush()?;
     }

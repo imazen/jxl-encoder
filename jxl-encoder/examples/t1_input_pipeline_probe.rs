@@ -36,9 +36,7 @@
 //!     --manifest-path jxl-encoder/Cargo.toml
 //! ```
 
-use butteraugli::{
-    ButteraugliParams, butteraugli_linear, srgb_to_linear as bu_srgb_to_linear,
-};
+use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear as bu_srgb_to_linear};
 use rgb::RGB;
 use std::path::PathBuf;
 
@@ -280,8 +278,14 @@ fn main() {
         .expect("butteraugli bu-ref failed");
 
     eprintln!("\n# Butteraugli-score probe (SAME distorted, DIFFERENT references)");
-    eprintln!("#   score (jxl-LUT ref)         : {:.6}", score_jxl_ref.score);
-    eprintln!("#   score (butteraugli-LUT ref) : {:.6}", score_bu_ref.score);
+    eprintln!(
+        "#   score (jxl-LUT ref)         : {:.6}",
+        score_jxl_ref.score
+    );
+    eprintln!(
+        "#   score (butteraugli-LUT ref) : {:.6}",
+        score_bu_ref.score
+    );
     let score_delta = (score_jxl_ref.score - score_bu_ref.score).abs();
     let score_pct = 100.0 * score_delta / score_bu_ref.score.max(1e-9);
     eprintln!("#   absolute delta              : {:.6e}", score_delta);
@@ -300,15 +304,11 @@ fn main() {
             "# Pixel diff is meaningful (max abs {:.3e}) but butteraugli",
             stats.max_abs
         );
-        eprintln!(
-            "# score delta is < 1% ({score_pct:.4}%). Reference precision"
-        );
+        eprintln!("# score delta is < 1% ({score_pct:.4}%). Reference precision");
         eprintln!("# does not move the metric.");
     } else if score_pct >= 1.0 {
         eprintln!("# HYPOTHESIS CONFIRMED.");
-        eprintln!(
-            "# Score delta of {score_pct:.4}% from reference-LUT precision"
-        );
+        eprintln!("# Score delta of {score_pct:.4}% from reference-LUT precision");
         eprintln!("# alone. Aligning buttloop's reference-construction to use");
         eprintln!("# butteraugli::srgb_to_linear is a candidate fix.");
     }

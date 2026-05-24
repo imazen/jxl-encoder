@@ -105,10 +105,7 @@ fn compute_metrics(
     params: &ButteraugliParams,
 ) -> (f64, f64) {
     if let Some((dw, dh, dec)) = decode_jxl_linear(bytes) {
-        let dec_pixels: Vec<RGB<f32>> = dec
-            .chunks(3)
-            .map(|c| RGB::new(c[0], c[1], c[2]))
-            .collect();
+        let dec_pixels: Vec<RGB<f32>> = dec.chunks(3).map(|c| RGB::new(c[0], c[1], c[2])).collect();
         let dec_linear_img = Img::new(dec_pixels, dw, dh);
         let bfly = butteraugli_linear(orig_linear.as_ref(), dec_linear_img.as_ref(), params)
             .map(|r| r.score as f64)
@@ -216,7 +213,8 @@ fn main() {
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
 
-    let header = "stratum\timage\teffort\tdistance\tmode\tclass\tbytes\tbfly\tssim2\tencode_ms\tsha256_8";
+    let header =
+        "stratum\timage\teffort\tdistance\tmode\tclass\tbytes\tbfly\tssim2\tencode_ms\tsha256_8";
     let sha8 = &sha256[..16];
     let row = format!(
         "{stratum}\t{img}\te{eff}\t{dist:.2}\t{mode}\t{cls}\t{bytes}\t{bfly:.5}\t{ssim2:.5}\t{ms}\t{sha8}",

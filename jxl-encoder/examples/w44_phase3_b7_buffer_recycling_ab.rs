@@ -45,8 +45,9 @@ fn main() {
     let out_path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "/tmp/w44_phase3_b7_buffer_recycling_ab.tsv".to_string());
-    let mut lines: Vec<String> =
-        vec!["cell\teffort\tdistance\titer\tmode_a_baseline_us\tmode_b_b7_us\tdelta_pct".to_string()];
+    let mut lines: Vec<String> = vec![
+        "cell\teffort\tdistance\titer\tmode_a_baseline_us\tmode_b_b7_us\tdelta_pct".to_string(),
+    ];
 
     const TIME_ITERS: usize = 8;
     const DISTANCE: f32 = 1.0;

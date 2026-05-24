@@ -195,7 +195,10 @@ fn max_abs_diff_with_loc(a: &[f32], b: &[f32], w: u32) -> (f32, usize) {
 }
 
 fn run_one_strategy(strategy: u8, name: &str, w: u32, h: u32, distance: f32) -> bool {
-    println!("\n--- T2B test: strategy {} ({}) on {}×{} d={} ---", strategy, name, w, h, distance);
+    println!(
+        "\n--- T2B test: strategy {} ({}) on {}×{} d={} ---",
+        strategy, name, w, h, distance
+    );
     let pixels = build_non_symmetric_image(w, h);
 
     let cfg = LossyConfig::new(distance)
@@ -287,7 +290,9 @@ fn main() {
     }
 
     if all_pass {
-        println!("\nT2B OVERALL: PASS — DCT16X8 and DCT8X16 round-trip cleanly through both decoders.");
+        println!(
+            "\nT2B OVERALL: PASS — DCT16X8 and DCT8X16 round-trip cleanly through both decoders."
+        );
         println!("Audit hypothesis FALSIFIED: production pre-transpose wrap is correct.");
     } else {
         eprintln!("\nT2B OVERALL: FAIL — see per-strategy diagnostics above.");
