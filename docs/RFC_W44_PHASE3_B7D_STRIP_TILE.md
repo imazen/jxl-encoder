@@ -1,8 +1,19 @@
 # RFC: W44-PHASE3-B7d — strip-tile the CPU butteraugli pipeline
 
-**Status**: DRAFT (design-only — no implementation in this chunk)
+**Status**: IN-PROGRESS
 **Author**: W44-PHASE3/B7d-design
 **Date**: 2026-05-24
+
+**Implementation status**:
+- **Day 1** — `ImageF::strip_view` borrow-window primitive + 10 unit tests:
+  **SHIPPED** in butteraugli commit `4270275e` (origin/main, 2026-05-24).
+  Lib tests 88 → 98 (+10). Zero encoder impact (no kernel touched).
+  See `~/work/butteraugli/butteraugli/src/image.rs` for the API surface
+  (`ImageF::strip_view`, `ImageF::strip_view_mut`, `StripView<'_>`,
+  `StripViewMut<'_>`).
+- **Day 2-7**: PENDING — strip-tile per-kernel ports + end-to-end wiring +
+  bench + ship. Per §7 below.
+
 **Companion docs / inputs**:
 - `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_phase3_b6_cpu_butteraugli_arch_audit_2026-05-23.md` — the ranked B7+ candidate list this RFC executes against
 - `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_phase3_b7_cpu_buffer_recycling_2026-05-23.md` — B7a+b (SHIPPED) — the alloc layer below B7d
@@ -775,7 +786,8 @@ forces (3a) fallback.
 Single ship at the end of Day 7 OR per-day commits with rollback if
 Day 5 / Day 6 gates fail. The chunk-level acceptance gates:
 
-- [ ] **Day 1**: ImageF strip-view primitive + 2 unit tests + zero hash-lock impact
+- [x] **Day 1**: ImageF strip-view primitive + 10 unit tests + zero hash-lock impact
+  (butteraugli `4270275e`, 2026-05-24)
 - [ ] **Day 2**: `gaussian_blur_strip` + `blur_mirrored_5x5_strip` per-kernel parity tests PASS
 - [ ] **Day 3**: `malta_diff_map_strip` + `l2_diff_*_strip` per-kernel parity tests PASS
 - [ ] **Day 4**: `separate_frequencies_strip` + `apply_mask_correction_precomputed_strip` +
