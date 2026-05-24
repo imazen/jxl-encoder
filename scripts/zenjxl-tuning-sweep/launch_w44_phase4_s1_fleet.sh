@@ -79,7 +79,13 @@ fi
 echo "[phase4-s1-fleet] $CHUNKS_AVAIL chunks queued for sweep=$SWEEP_ID"
 
 # ── pick the cheapest viable offers ─────────────────────────────────
-QUERY="rentable=true reliability>0.99 dph_total<${MAX_DPH} cpu_cores>=4 cpu_ram>=8 disk_space>${MIN_DISK_GB} gpu_total_ram>=$((MIN_GPU_RAM_MB / 1024)) gpu_frac>=1.0 cuda_max_good>=12.0 driver_version>=555.0.0 dlperf>=12 num_gpus=1"
+# Filter tuned 2026-05-24 from real measurements on running pods:
+#   - peak CPU 85% on 12 cores → 8 enough, 16 sweet spot, >24 wasted
+#   - peak mem 9.6 GB / 31.5 GB → 12 GB header is plenty
+#   - GPU util ~0-1% → runner doesn't currently use gpu-butteraugli;
+#     keep CUDA req (binary loads CUDA libs) but skip dlperf premium
+#   - inet_down 50+ for R2 upload latency
+QUERY="rentable=true reliability>0.96 dph_total<${MAX_DPH} cpu_cores>=8 cpu_cores<=24 cpu_ram>=12 disk_space>${MIN_DISK_GB} gpu_total_ram>=$((MIN_GPU_RAM_MB / 1024)) gpu_frac>=1.0 cuda_max_good>=12.0 dlperf>=10 num_gpus=1 inet_down>=50"
 echo "[phase4-s1-fleet] querying ${BOXES} offers"
 echo "  $QUERY"
 
