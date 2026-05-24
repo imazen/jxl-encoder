@@ -11,8 +11,12 @@
   - images: codec_wiki.png (SCREEN, 2560×1664), 1025469.png + 1418519.png (PHOTO, 512×512), 1531677.png (PHOTO_SMOOTH, 512×512)
   - distances: 0.5, 2.0, 4.0
   - efforts: 5, 7, 9
-- Anomalies: codec_wiki e9 d=4 produced zero bytes from BOTH Zenjxl and Libjxl strategies — encode failure (likely OOM at 4.26 MP + e9 effort + d=4 depth). cjxl handles it (73629 B). NOT cited as RD signal; flagged as a TODO.
-- Bench harness: ad-hoc Rust example built by W44-AUDIT-1 chunk on the W44-179/W44-202 template
+- Anomalies (W44-AUDIT-1): codec_wiki e9 d=4 produced zero bytes from BOTH Zenjxl and Libjxl strategies — encode failure (likely OOM at 4.26 MP + e9 effort + d=4 depth). cjxl handles it (73629 B). NOT cited as RD signal; flagged as a TODO.
+- W44-AUDIT-2 OOM fix (commit `887cac54`): EPF budget-accounting leak. The 4 `reserve_permanent_opt` sites in `vardct/epf.rs` were leaking ~150 MB per `apply_epf` call on 4 MP inputs; at e9 (4 buttloop iters on Zenjxl) the accumulated leak crossed the 2 GiB default `MemoryBudget` cap. Fix: switch to `reserve_opt` with function-scope `BudgetGuard`.
+- W44-AUDIT-3 re-validation (this update): focused 3-cell re-run of codec_wiki d=4 (e5/e7/e9) post-OOM-fix via `examples/w44_audit_3_revalidate.rs`. Merged TSV: `cjxl_parity_2026-05-24_post_w44_audit_2.tsv` (36 rows; rows 2/3 sanity-OK byte-identical to W44-AUDIT-1, row 4 = e9 d=4 now real values).
+  - codec_wiki e9 d=4 post-fix: zen=77,221 B / cjxl=73,629 B = +4.88% bytes; zen SSIM2=84.98, cjxl SSIM2=83.31 (+1.67 zen WINS); zen bfly=2.26, cjxl bfly=3.50 (-1.24 zen WINS). Strict Pareto win.
+  - codec_wiki e7 d=4 +44% wedge (diagnosed only, not fixed): Zenjxl=90,323 B / Libjxl-strategy=70,217 B / cjxl=62,710 B. Libjxl-strategy is +11.97% structural; the remaining ~32pp gap is Zenjxl-only (W44-105 buttloop seed + W44-94/96/98/167 variant Z lift interaction at e7 d=4 on mixed-content screenshots). Not present at e9 (where buttloop converges back to +4.88%). Out of scope for W44-AUDIT-3.
+- Bench harness: ad-hoc Rust example built by W44-AUDIT-1 chunk on the W44-179/W44-202 template; W44-AUDIT-3 added focused 3-cell variant for cheap re-validation
 
 # Commits
 
@@ -28,6 +32,6 @@
 
 # Known follow-ups
 
-- codec_wiki e9 d=4 OOM root-cause (file as W44-AUDIT-2)
+- W44-AUDIT-4 candidate: bisect W44-105 buttloop seed vs W44-94/96/98/167 variant Z lift contribution to codec_wiki e7 d=4 +44% wedge (single-cell A/B with each lift individually disabled via env hook)
 - Per-image content discriminator for photo d≥3 (bytes-vs-SSIM2 trade)
 - Wider corpus + d=1, d=3, d=5 fill-in for finer RD curve
