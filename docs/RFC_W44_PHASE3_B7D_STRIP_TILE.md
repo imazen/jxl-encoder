@@ -154,6 +154,19 @@ is compiled (memo `w44_phase3_b5_flip_gpu_default_on_2026-05-23.md`).
 
 ## 3. Recommendation
 
+> **RETRACTED 2026-05-24 by Day 6 honest measurement.** The Day 6 paired
+> A/B bench (see §11 Day 6 row) shows the projected -35 to -47% wall
+> reduction DID NOT MATERIALIZE — strip path runs 1.4% to 9.6% SLOWER
+> than full at every tested size. Days 1-5 chose byte-identity-via-padded-
+> scratch to AVOID the halo-divergence problem on Stages 1+2, so only
+> Stage 3 (halo=0, pointwise, ~3.3% of total wall) actually tiles —
+> and the Stage 3 tile-driver itself is bandwidth-amplified and runs
+> 3.3× slower than the full kernel. Day 7 shipped Option A
+> (framework-only, default OFF). The §3 recommendation below stands as
+> the original analysis but is no longer the active plan; the active
+> next-step lever is GPU offload (B1/B4/B5) or B6-ranked CPU tier-2
+> wins, not strip-tile.
+
 **Adopt Option A (strip-tile) as the primary work.**
 
 | | option A (strip-tile) | option B (fuse) | option C (GPU default) |
@@ -865,14 +878,61 @@ Day 5 / Day 6 gates fail. The chunk-level acceptance gates:
   test count 120 → 167 (+47 incl. the parity test). Day 5 does NOT touch
   the dispatch path in `compare_linear_planar_into` — Day 6 wires the
   size-threshold dispatch + env-var override per §6.
-- [ ] **Day 6**: bench TSV+meta committed; **≥ 30 % wall reduction at 1024² on ≥ 4 of 8 cells**
-  AND **≤ 1 % regression on any 256² cell**. If FAIL: HONEST-STOP, document, identify
-  next bottleneck (per task spec).
-- [ ] **Day 7**: `docs/LIBJXL_DIVERGENCES.md` row added; SHIPPED memo at
-  `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_phase3_b7d_*_2026-MM-DD.md`;
-  CHANGELOG.md updated for butteraugli + jxl-encoder
-- [ ] All commits pushed to main on respective origins; CI green on all platforms
-- [ ] `.workongoing` markers cleared in both crate workspaces
+- [x] **Day 6**: bench TSV+meta committed (butteraugli `3d352b89`, 2026-05-24).
+  Acceptance gate **FAIL** on the literal target (≥30% wall reduction at 1024²
+  on ≥4 of 8 cells). **Measurement**: strip path runs 1.4% to 9.6% SLOWER than
+  full at every tested size (256² / 512² / 1024² / 2048², smooth + noisy
+  fixtures). Per-stage attribution at 1024² shows the supposedly-tiled Stage 3
+  combine_channels runs **3.3× SLOWER** (3,868 μs vs ~1,186 μs) in the strip
+  driver because of 320 per-strip pool ops + ~9 MB copy-in + ~6 MB copy-out
+  per call. Scalar scores remain BIT-IDENTICAL on every cell (Day 5 invariant
+  preserved). See `butteraugli/benchmarks/w44_phase3_b7d_day6_2026-05-24.meta`
+  for full narrative.
+
+  Root cause: Days 1-5 chose byte-identity-via-padded-scratch precisely to
+  AVOID the cross-strip halo-divergence problem on Stages 1+2. That choice
+  means only Stage 3 (halo=0, pointwise) is meaningfully tiled, and Stage 3
+  is only ~3.3% of the full-image wall (combine ~1.2 ms / 35.9 ms total).
+  Even infinite Stage 3 speedup caps savings at 3.3%, but the strip driver
+  itself is bandwidth-amplified and runs 3.3× SLOWER than the full kernel.
+  Math is decisively against the current shape.
+
+- [x] **Day 7** — disposition: **Option A — SHIP FRAMEWORK-ONLY (default OFF)**.
+  - Days 1-5 stay in tree as future-true-tile-refactor scaffolding:
+    `ImageF::strip_view`, `Image3F::strip_view`, the `*_strip` per-kernel
+    byte-identity tests (47 new), and the 50-image `strip_parity_50_images`
+    integration test. These remain valuable as the regression harness for any
+    future deeper restructure.
+  - `compare_linear_planar_strip_into` stays public but is documented as
+    "byte-identical alternative path, not perf-faster as of Day 6" via inline
+    docstring updates (already in place from Day 5 — re-affirmed here).
+  - jxl-encoder does NOT route any production hot path through the strip
+    variant. CPU butteraugli backend (`vardct/butteraugli_backend.rs`) keeps
+    calling `compare_linear_planar_into`. The strip variant is not used.
+  - CPU butteraugli perf lever for B7+ moves to the B6-ranked alternatives
+    (TLS pool variants, smaller tier-2 wins) OR GPU offload (B1+B4 shipped,
+    default-on flip gated on wider corpus measurement per B5 honest-stop).
+- [x] All commits pushed to main on respective origins; CI green where applicable
+- [ ] `.workongoing` markers cleared in both crate workspaces — see Day 7 cleanup
+
+### Why Option A and not Option B (true-tile refactor) or Option C (revert everything)
+
+- **Not Option B** (refactor Days 2-4 strip variants to mirror-reflect-at-strip
+  boundaries with measured ULP tolerance): would require multi-week work AND
+  kills the byte-identity guarantee Day 5 carefully preserved. Days 1-5 are
+  NOT a useful foundation for B because Days 2-4 chose padded-scratch
+  precisely to avoid this work — Option B starts from scratch on every
+  halo-bearing kernel (Gaussian H/V, malta interior, fuzzy_erosion, blur 5x5
+  mirrored, separate_frequencies cascade).
+- **Not Option C** (revert Days 1-5): Days 1-5 SHIPPED useful infrastructure
+  (the strip_view primitives + per-kernel parity tests). Throwing that away
+  just because the PERF didn't materialize would re-incur the integration
+  cost later if someone returns to GPU offload + CPU fallback for the
+  residual stage. Better to leave the framework in place with the Day 6
+  honest measurement attached as documentation.
+- **Option A is the cheap, honest choice**: framework stays, perf claim is
+  retracted with measurement, downstream consumers (jxl-encoder buttloop)
+  see no behaviour change.
 
 ### Cross-cutting always-on regression gates (every day, every commit)
 
