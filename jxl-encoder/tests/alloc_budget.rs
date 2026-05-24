@@ -479,3 +479,80 @@ fn tree_learning_dim_driven_alloc_charged() {
         "expected LimitExceeded, got: {inner:?}"
     );
 }
+
+/// W44-AUDIT-2 regression: at e9 (4 buttloop iters) on a multi-megapixel
+/// screenshot at d>=4, the encoder must NOT spuriously OOM on the default
+/// 2 GiB budget.
+///
+/// Root cause (commit `d1c01c2f`, May 9): `apply_epf` and
+/// `apply_epf_with_scratch` used `MemoryBudget::reserve_permanent_opt` for
+/// padded scratch + output Vecs that were function-local. Each buttloop
+/// iter called `apply_epf` and leaked ~150 MB of budget accounting per
+/// call (4 MP image, EPF step 1 + 2 padded planes + outputs). At e9 with
+/// 4 iters, the leak accumulated to ~600 MB extra-charged, blowing the
+/// 2 GiB cap on cells whose actual peak working set was ~1.93 GB (which
+/// e8 with 2 iters could just fit). Both `Zenjxl` and `Libjxl` strategies
+/// were affected — the bug was in the always-on EPF reconstruction path.
+///
+/// Fix (W44-AUDIT-2): switch the four sites in `vardct/epf.rs` to
+/// `reserve_opt` with a function-scope `BudgetGuard`. Buffers still
+/// peak-track correctly (used briefly bumps by `padded*12 + n*12`) and
+/// the guard drops at scope end — so per-call accounting is net-zero
+/// (output planes swapped into caller's existing planes; old freed).
+///
+/// This test reproduces the exact failing cell from the W44-AUDIT-1
+/// fresh bench TSV `benchmarks/cjxl_parity_2026-05-24_post_w44_205_s2_refit_c2.tsv`
+/// — 2560×1664 (≈4.26 MP) screenshot-class content at e9 d=4. Pre-fix:
+/// errors with `LimitExceeded { requested: 153_658_800 bytes on top of
+/// 2_087_219_952 (cap 2_147_483_648) }`. Post-fix: encodes in ≈3 s,
+/// produces a valid JXL bitstream.
+///
+/// Uses synthetic high-frequency RGB to mimic screenshot content
+/// (lots of sharp edges → engages EPF non-trivially). Validates the
+/// default 2 GiB cap path (no explicit `with_max_memory_bytes`).
+#[test]
+fn w44_audit_2_e9_d4_large_screenshot_no_spurious_oom() {
+    use jxl_encoder::api::EncoderStrategy;
+    // 2560×1664 = 4_259_840 pixels = ~12.8 MB RGB8 source.
+    // Same shape as the W44-AUDIT-1 failing cell on codec_wiki.png.
+    let (w, h) = (2560u32, 1664u32);
+    let mut pixels = Vec::with_capacity((w as usize) * (h as usize) * 3);
+    // Mix of high-frequency text-like content (sharp edges) and gradients
+    // — should engage EPF, gaborish, and the buttloop fully. Without
+    // genuine sharp edges the buttloop converges too fast and the per-iter
+    // EPF leak doesn't manifest. With them, every iter calls apply_epf
+    // → reserves the ~150 MB transient (now correctly released).
+    for y in 0..h {
+        for x in 0..w {
+            // Periodic sharp transitions every 6 pixels → text-like.
+            let edge = ((x / 6) ^ (y / 6)) & 1;
+            let r = if edge == 0 { 240 } else { 16 };
+            let g = if edge == 0 { 200 } else { 32 };
+            let b = if edge == 0 { 160 } else { 48 };
+            pixels.push(r as u8);
+            pixels.push(g as u8);
+            pixels.push(b as u8);
+        }
+    }
+
+    for strategy in [EncoderStrategy::Zenjxl, EncoderStrategy::Libjxl] {
+        let cfg = LossyConfig::new(4.0)
+            .with_effort(9)
+            .with_strategy(strategy.clone());
+        // NOTE: explicitly NO `.with_limits()` — exercise the default
+        // 2 GiB cap (the path that was failing in production).
+        let bytes = cfg
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .encode(&pixels)
+            .unwrap_or_else(|e| panic!(
+                "W44-AUDIT-2 regression: e9 d=4 on 4 MP screenshot OOM'd \
+                 under default 2 GiB cap with strategy {strategy:?}: {e}"
+            ));
+        assert!(
+            bytes.len() > 1000 && bytes.len() < (w as usize * h as usize),
+            "expected non-trivial JXL output, got {} bytes",
+            bytes.len()
+        );
+        assert_eq!(&bytes[..2], &[0xFF, 0x0A], "JXL signature expected");
+    }
+}
