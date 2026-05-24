@@ -169,11 +169,19 @@ impl TileDistMap {
 /// local butteraugli distance at that pixel.
 ///
 /// Both images must be the same size and in linear RGB format.
+///
+/// `intensity_target` is the butteraugli metric's display-luminance
+/// parameter (cd/m²). For libjxl-parity callers should resolve this
+/// from the encoded TF via
+/// [`crate::vardct::butteraugli_loop::libjxl_butteraugli_intensity_target`]
+/// (80.0 for SDR, metadata `intensity_target` for PQ/HLG). Closes
+/// W44-RECON-DEEP/A10.
 pub(crate) fn compute_butteraugli_diffmap(
     original: &[f32],
     decoded: &[f32],
     width: usize,
     height: usize,
+    intensity_target: f32,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<Vec<f32>> {
     // Use the butteraugli crate's linear comparison function
@@ -214,8 +222,12 @@ pub(crate) fn compute_butteraugli_diffmap(
     let orig_img = Img::new(orig_rgb.as_slice(), width, height);
     let decoded_img = Img::new(decoded_rgb.as_slice(), width, height);
 
-    // Create params with diffmap computation enabled
-    let params = ButteraugliParams::new().with_compute_diffmap(true);
+    // Create params with diffmap computation enabled.
+    // W44-RECON-DEEP/A10: `intensity_target` flows from caller (typically
+    // 80.0 for SDR, 10000.0 for PQ, 1000.0 for HLG) via the encoded TF.
+    let params = ButteraugliParams::new()
+        .with_intensity_target(intensity_target)
+        .with_compute_diffmap(true);
 
     // butteraugli_linear returns Result<ButteraugliResult, ButteraugliError>
     Ok(match butteraugli_linear(orig_img, decoded_img, &params) {

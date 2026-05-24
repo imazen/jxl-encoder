@@ -116,12 +116,23 @@ pub fn encode_with_rate_control(
             }
         };
 
-        // Compute butteraugli diffmap
+        // Compute butteraugli diffmap.
+        // W44-RECON-DEEP/A10: dispatch `intensity_target` on the encoded
+        // TF (libjxl-parity with `enc_adaptive_quantization.cc:949-953`).
+        // SDR → 80 cd/m²; PQ/HLG → metadata `intensity_target`.
+        let intensity_target = match encoder.color_encoding.as_ref() {
+            Some(ce) => super::butteraugli_loop::libjxl_butteraugli_intensity_target(
+                ce.transfer_function,
+                encoder.intensity_target,
+            ),
+            None => super::butteraugli_loop::LIBJXL_BUTTERAUGLI_SDR_INTENSITY_TARGET,
+        };
         let diffmap = compute_butteraugli_diffmap(
             &precomputed.linear_rgb,
             &decoded,
             precomputed.width,
             precomputed.height,
+            intensity_target,
             encoder.budget.as_ref(),
         )?;
 
