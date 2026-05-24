@@ -1,0 +1,69 @@
+# cvvdp vs buttloop tracking benchmark
+
+**Started**: 2026-05-24
+**RFC**: `docs/RFC_CVVDP_FORK.md`
+
+## Methodology
+
+For every (image, distance, effort, backend) cell:
+
+1. Encode with the named backend (butteraugli or cvvdp; CPU or GPU).
+2. Decode via jxl-oxide (linear sRGB output).
+3. Compute every available perceptual metric on the decoded image vs
+   source. Persist all of them — single source-of-truth for any future
+   reweighting.
+
+## Backends
+
+| tag       | crate path                                   | feature flag                    |
+|---        |---                                           |---                              |
+| `B`       | `butteraugli::ButteraugliReference` (CPU)    | `butteraugli-loop` (default)    |
+| `B_GPU`   | `butteraugli-gpu::Butteraugli` (CUDA)        | `butteraugli-loop gpu-butteraugli` |
+| `C_GPU`   | `cvvdp-gpu::Cvvdp` (CUDA)                    | `cvvdp-loop`                    |
+| `C_CPU`   | `cvvdp-cpu::Cvvdp` (port, Phase 5)           | `cvvdp-loop cvvdp-loop-cpu`     |
+
+## Corpus
+
+- **CID22-512** (41 photos, held out from W44 training)
+- **GB82-SC** (10 screenshots)
+- **W44-PHASE4-S1 corpus subset** (50 stratified images)
+
+Total 101 images × 7 distances × 3 efforts = 2,121 cells per backend.
+
+## Schema
+
+- `image`: image basename (no path)
+- `corpus`: one of `CID22`, `GB82-SC`, `W44-S1`
+- `effort`: encoder effort 5/7/8
+- `distance`: encoder distance parameter
+- `backend`: one of `B`, `B_GPU`, `C_GPU`, `C_CPU`
+- `bytes`: encoded file size in bytes
+- `wall_ms`: encode wall time (best-of-3 median, single-thread unless noted)
+- `score_butter_cpu`: Rust butteraugli max-norm on decoded vs source (smaller = better)
+- `score_butter_gpu`: butteraugli-gpu max-norm (parity check)
+- `score_cvvdp_gpu`: cvvdp-gpu JOD (10 = perfect, lower = worse)
+- `score_cvvdp_cpu`: cvvdp-cpu JOD (Phase 5+)
+- `score_ssim2`: SSIMULACRA2 (legacy reference)
+- `notes`: free-form (e.g. backend fallbacks, divergence-detector trips)
+
+## Decision direction
+
+Per RFC §5.4:
+- Ship cvvdp default-ON only if it strictly Pareto-dominates butteraugli
+  on ≥1 corpus AND comes within 5% on the others (bytes axis).
+- Otherwise: ship opt-in only.
+
+## Phase tags (rows added per phase landing)
+
+- `phase1`: cvvdp-gpu diffmap API smoke (no encoder change, baseline)
+- `phase2`: PerceptualBackend rename (byte-identical, sanity row)
+- `phase3`: CvvdpBackend wired but not default
+- `phase4`: full cvvdp-loop opt-in encodes
+- `phase5`: cvvdp-cpu integrated
+- `phase6`: final tracking sweep + decision
+
+## Reproducibility
+
+Each row carries the commit SHA of the encoder at time of measurement.
+Append-only; never edit historical rows. Methodology changes get a new
+TSV file + meta with the date.
