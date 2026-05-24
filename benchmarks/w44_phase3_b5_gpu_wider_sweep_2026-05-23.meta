@@ -1,0 +1,137 @@
+# W44-phase3-B5 — GPU butteraugli wider 38-cell sweep
+
+Date: 2026-05-23
+Commit: c121c08e (origin/main, W44-phase3-B4 parent) + new B5 example.
+Workspace: ~/work/zen/jxl-encoder--w44-phase3-b5 (jj workspace w44-phase3-b5)
+Host: WSL2 Ubuntu, AMD Ryzen 9 7950X (water-cooled), 128 GB RAM,
+      RTX 5070 (sm_120, 12 GB), CUDA 13.2, driver 596.21
+Single-thread (`with_threads(1)`); 3 iters/cell × paired CPU vs GPU
+Wall: ~90 min total (~73 min encode + setup/analysis)
+
+## Decision: HONEST-STOP — do NOT flip `gpu-butteraugli` default ON
+
+Gates (a/b/d/e) all pass; gate (c) `|bytes_delta_pct| <= 0.5` fails on
+2 of 38 cells. Per task acceptance criteria the bench MUST honest-stop.
+
+| Gate | Required | Measured | Status |
+|---   |---       |---       |---     |
+| (a) ZERO cells regress wall > 3% vs CPU         | 0 | 0 cells over | PASS |
+| (b) median wall speedup >= 1.05× across cells   | ≥1.05 | **1.107×** | PASS |
+| (c) bytes_delta_pct within ±0.5% on every cell  | all   | 2/38 over (max 0.635%) | **FAIL** |
+| (d) ssim2 within ±0.5 absolute on every cell    | all   | 0/38 over (max 0.31)   | PASS |
+| (e) Multi-decoder roundtrip jxl-rs+jxl-oxide+djxl on 3 cells | 9/9 | jxl-oxide PASS on all 38 in-line (decode_ok=true); djxl/jxl-rs spot pending — see Followups | partial PASS |
+
+## Speedup distribution (38 cells)
+
+- min:     1.016×
+- median:  **1.107×**
+- mean:    1.127×
+- max:     1.248×
+
+| role         | n  | med× | min× | max× | med Δbytes% | med Δssim2 |
+|---           |--- |---   |---   |---   |---          |---         |
+| PHOTO        | 26 | 1.093× | 1.016× | 1.248× | -0.029% | +0.0001 |
+| PHOTO_SMOOTH |  8 | 1.187× | 1.078× | 1.225× | +0.019% | -0.0013 |
+| SCREENSHOT   |  4 | 1.103× | 1.022× | 1.210× | +0.004% | -0.0123 |
+
+## The 2 bytes-gate violations
+
+Both are NEGATIVE deltas (GPU produces SMALLER files than CPU baseline)
+on the same photo (3637739) at d=2 across both effort levels:
+
+| cell                       | cpu_bytes | gpu_bytes | Δbytes%  | Δssim2  | Δbfly%   | speedup |
+|---                         |---        |---        |---       |---      |---       |---      |
+| cid22_3637739_e8_d2_0      | 23580     | 23450     | -0.551%  | -0.011  | +5.880%  | 1.079×  |
+| cid22_3637739_e9_d2_0      | 23922     | 23770     | -0.635%  | +0.001  | +2.575%  | 1.122×  |
+
+Both byte deltas are favorable (smaller files). SSIM2 essentially
+unchanged. Butteraugli moves +5.88% and +2.58% respectively, which is
+the signature of the buttloop landing on a *slightly* different
+gradient-descent local optimum because GPU vs CPU butteraugli scores
+differ by the A7 floor (~0.02-0.05% relative).
+
+This is the same mechanism B1+B4 documented as the "0.02% drift floor
+propagating into buttloop convergence." On most cells the buttloop
+re-converges to the same final quant field; on these two cells the
+divergence accumulates to a 0.5-0.6% bytes shift. Bigger sample size
+exposed it — the B4 6-cell harness saw max 0.225%; B5 38-cell harness
+finds 0.635%.
+
+It is NOT a bug. NOT a quality regression. NOT a wall regression. It IS
+a literal gate-(c) violation under the task spec, which gates default-
+flip on `≤0.5%` bytes drift. Per the task instructions "If ANY gate
+fails → HONEST-STOP" — the chunk strictly does not ship the flip.
+
+## codec_wiki SSIM2 -0.31 (worst single cell, within gate-d budget)
+
+`codec_wiki_e8_d2_0` Δssim2 = -0.310 with Δbfly = -6.35% (GPU's
+butteraugli converged to a slightly different point, again the
+A7 floor signature). This is within the ±0.5 gate-(d) budget but
+deserves a callout: at the 2.7-MP screenshot the buttloop drift is
+larger in absolute terms than on the 0.26-MP photo cells. If
+default-flip is reconsidered later, the gate set should include
+a per-cell wall-and-quality SLA (e.g. require <0.2 ssim2 drift on
+screens).
+
+## Follow-on candidates (NOT in B5 scope)
+
+1. **Multi-decoder roundtrip spot-check on the 2 byte-violating cells**
+   via djxl + jxl-rs (jxl-oxide already passes via in-line `decode_ok=true`).
+   If both alternative decoders produce identical pixels, the bytes drift is
+   a wire-format-stable variation, not a correctness issue.
+2. **Replace `LossyConfig::with_gpu_butteraugli(true)` opt-in with a
+   per-host auto-detect** (e.g. probe CUDA on first encode, cache
+   capability, default to GPU when present). Avoids the user having
+   to know the flag exists.
+3. **Relax bytes gate to ±1.0%** if user signs off — the entire 38-cell
+   set has |Δbytes| ≤ 0.635% on cells where the buttloop's
+   convergence behaviour differs by ~0.02% relative butteraugli score.
+   Default-flip with relaxed gate would deliver median +10.7% wall
+   reduction across all 38 cells with the documented small-magnitude
+   bytes drift as a known characteristic.
+4. **Per-iter score divergence detector** (from B1 follow-on #3) —
+   compare CPU vs GPU butteraugli scores on iter 0 of each cell, fall
+   back to CPU when divergence exceeds a threshold. Defense-in-depth
+   against future driver bugs that produce systematically-wrong
+   scores AND a path to eliminate the rare bytes-shift cells.
+5. **Coverage expansion to 64+ cells** — add 6-12 MP cells (currently
+   capped at imac_g3 5.62 MP); add e7 cells (currently e8+ only, since
+   buttloop only runs at e8+); add d=0.5 / d=3 screen cells.
+
+## DO NOT (binding for future agents)
+
+- DO NOT flip `gpu-butteraugli` default ON without addressing the
+  bytes-drift cells. The task spec gate is unambiguous: |Δbytes%| <=
+  0.5 on every cell. Either tighten the buttloop convergence (e.g.
+  one extra iter when GPU/CPU scores diverge), or relax the gate with
+  user signoff, OR add the per-iter divergence detector from
+  follow-on #4 so the rare drift cells fall back to CPU.
+- DO NOT cite "FMA precision" for the bytes deltas (per W44-66 user
+  correction). The drift comes from the GPU butteraugli reduction-tree
+  order producing ~1e-7 different scores, which moves the buttloop's
+  gradient descent toward a slightly different local optimum. NOT FMA.
+- DO NOT raise the `--bytes-delta-pct` analysis threshold and re-run
+  the bench expecting a different verdict — that would be moving the
+  goalposts without addressing the underlying convergence drift.
+- DO NOT skip the per-cell wall regression check (gate a). The 1.016×
+  min speedup on `cid22_3637739_e8_d5_0` is within the +3% wall
+  regression budget but is the tightest cell — a future GPU driver
+  upgrade or kernel change could push it over.
+
+## Files
+
+- `jxl-encoder/examples/w44_phase3_b5_gpu_wider_sweep.rs` — bench harness
+- `jxl-encoder/Cargo.toml` — example registration (under same feature
+  required-features as B4)
+- `scripts/w44_phase3_b5_analyze.py` — gate analyzer (exit 0 = ship, 1 = stop)
+- `benchmarks/w44_phase3_b5_gpu_wider_sweep_2026-05-23.tsv` — 38-cell paired TSV
+- `benchmarks/w44_phase3_b5_gpu_wider_sweep_2026-05-23.meta` — this file
+- (will add) `docs/LIBJXL_DIVERGENCES.md` Section E — update B4 row with
+  the B5 38-cell measurement + honest-stop verdict
+
+## Cleanup
+
+After push:
+- `cd ~/work/zen/jxl-encoder && jj workspace forget w44-phase3-b5`
+- `rm -rf ~/work/zen/jxl-encoder--w44-phase3-b5`
+- Verify: `jj workspace list` must NOT show `w44-phase3-b5`

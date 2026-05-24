@@ -1326,6 +1326,16 @@ name = "w44_phase3_b4_gpu_linear_planes_ab"
 path = "examples/w44_phase3_b4_gpu_linear_planes_ab.rs"
 required-features = ["gpu-butteraugli", "butteraugli-loop", "ssim2-loop", "parallel", "__expert"]
 
+# W44-phase3-B5: wider 38-cell sweep of GPU butteraugli vs CPU baseline,
+# spanning 0.26-5.62 MP × e8/e9 × {0.5, 1.0, 2.0, 4.0, 5.0} × CID22/CLIC/gb82-sc.
+# Decides whether to default-flip `gpu-butteraugli` ON based on (a) zero >3% wall
+# regressions, (b) median speedup ≥ 1.05×, (c) bytes within ±0.5%, (d) ssim2
+# within ±0.5.
+[[example]]
+name = "w44_phase3_b5_gpu_wider_sweep"
+path = "examples/w44_phase3_b5_gpu_wider_sweep.rs"
+required-features = ["gpu-butteraugli", "butteraugli-loop", "ssim2-loop", "parallel", "__expert"]
+
 # W44-175: parallel `transform_and_quantize_into` (buttloop per-iter group
 # fan-out) + parallel `find_best_split_variable` (DC tree property scan).
 # Mode A forces both back to sequential via env hooks; Mode B is the W44-175
