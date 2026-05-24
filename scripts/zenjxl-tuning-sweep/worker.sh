@@ -64,6 +64,39 @@ export W44_PHASE4_M1_ARTIFACTS_DIR="${W44_PHASE4_M1_ARTIFACTS_DIR:-/sweep-output
 ARTIFACTS_DIR="$W44_PHASE4_M1_ARTIFACTS_DIR"
 ARTIFACT_R2_PREFIX="s3://$SWEEP_BUCKET/$SWEEP_ID/artifacts"
 
+# ── W44-PHASE4-S1h: image fetch retry helper ─────────────────────────
+# Pre-W44-S1h: a single s5cmd cp invocation per source. If R2 returned
+# a transient 5xx, ECONNRESET, or DNS hiccup, the cell was instantly
+# marked image_fetch_failed with no retry. This was paired with a
+# pre-flight gap (4 images never uploaded — see launcher), but even
+# AFTER the launcher pre-flight catches that root cause, real-world
+# R2 has occasional transient failures (1-2 % of fetches in our
+# experience across W44-216..S1). 3 retries with exponential backoff
+# (0.5s → 1s → 2s) brings effective fetch reliability to ~99.999 %.
+#
+# Returns 0 on success, non-zero on final failure. Errors go to stderr
+# so the caller's `|| { ... }` block fires correctly on hard failure.
+fetch_with_retry() {
+    local src="$1"
+    local dst="$2"
+    local label="${3:-fetch}"
+    local max_attempts=3
+    local delay=0.5
+    local attempt
+    for (( attempt = 1; attempt <= max_attempts; attempt++ )); do
+        if s5cmd cp "$src" "$dst" 2>/dev/null; then
+            return 0
+        fi
+        if (( attempt < max_attempts )); then
+            echo "[worker] WARN: $label attempt ${attempt}/${max_attempts} failed for $src; retrying in ${delay}s" >&2
+            sleep "$delay"
+            delay=$(echo "$delay * 2" | bc -l)
+        fi
+    done
+    echo "[worker] ERR: $label failed all ${max_attempts} attempts for $src" >&2
+    return 1
+}
+
 mkdir -p /corpus /sweep-state/params /sweep-output "$ARTIFACTS_DIR"
 
 CHUNK_ID="$(basename "$CHUNK_FILE" .json)"
@@ -92,11 +125,12 @@ while IFS= read -r line; do
     if [[ ! -f "$IMAGE_PATH" ]]; then
         # Derive R2 key from the absolute path (strip leading slash).
         R2_KEY="${IMAGE_PATH#/}"
+        # W44-PHASE4-S1h: 3-retry exp-backoff on each candidate path.
         # Try corpus bucket; fall back to the sweep bucket
         # (per-sweep image staging).
-        if ! s5cmd cp "s3://$CORPUS_BUCKET/$R2_KEY" "$IMAGE_PATH" 2>/dev/null; then
-            s5cmd cp "s3://$SWEEP_BUCKET/$SWEEP_ID/corpus/$R2_KEY" "$IMAGE_PATH" 2>&1 || {
-                echo "[worker] FAIL: cannot fetch image $IMAGE_PATH" >&2
+        if ! fetch_with_retry "s3://$CORPUS_BUCKET/$R2_KEY" "$IMAGE_PATH" "image-corpus"; then
+            fetch_with_retry "s3://$SWEEP_BUCKET/$SWEEP_ID/corpus/$R2_KEY" "$IMAGE_PATH" "image-sweep" || {
+                echo "[worker] FAIL: cannot fetch image $IMAGE_PATH (both buckets, 3 retries each)" >&2
                 echo "{\"chunk_claim_id\":\"$CHUNK_CLAIM\",\"status\":\"err\",\"error\":\"image_fetch_failed\"}" >> "$SUMMARY_LOG"
                 FAIL_COUNT=$((FAIL_COUNT + 1))
                 continue
@@ -107,13 +141,15 @@ while IFS= read -r line; do
     # Pull params blob if specified and not cached.
     if [[ -n "$PARAMS_BLOB" && ! -f "$PARAMS_BLOB" ]]; then
         R2_KEY="${PARAMS_BLOB#/}"
-        s5cmd cp "s3://$SWEEP_BUCKET/$SWEEP_ID/params/$(basename "$PARAMS_BLOB")" "$PARAMS_BLOB" 2>&1 || \
-            s5cmd cp "s3://$SWEEP_BUCKET/$SWEEP_ID/$R2_KEY" "$PARAMS_BLOB" 2>&1 || {
-                echo "[worker] FAIL: cannot fetch params $PARAMS_BLOB" >&2
+        # W44-PHASE4-S1h: 3-retry exp-backoff on each candidate path.
+        if ! fetch_with_retry "s3://$SWEEP_BUCKET/$SWEEP_ID/params/$(basename "$PARAMS_BLOB")" "$PARAMS_BLOB" "params-flat"; then
+            fetch_with_retry "s3://$SWEEP_BUCKET/$SWEEP_ID/$R2_KEY" "$PARAMS_BLOB" "params-fullpath" || {
+                echo "[worker] FAIL: cannot fetch params $PARAMS_BLOB (both paths, 3 retries each)" >&2
                 echo "{\"chunk_claim_id\":\"$CHUNK_CLAIM\",\"status\":\"err\",\"error\":\"params_fetch_failed\"}" >> "$SUMMARY_LOG"
                 FAIL_COUNT=$((FAIL_COUNT + 1))
                 continue
             }
+        fi
     fi
 
     # Run the cell.
