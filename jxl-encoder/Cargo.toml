@@ -664,6 +664,18 @@ name = "w44_138_recon_root_cause"
 path = "examples/w44_138_recon_root_cause.rs"
 required-features = ["__internal_recon_hook", "butteraugli-loop"]
 
+# W44-RECON-DEEP/A8: real-encode-decode discriminator harness. Measures
+# buttloop's internal-recon score vs the actual decoded-bitstream score
+# via jxl-rs/jxl-oxide on 12 cells. Used to confirm A11 closed (or did
+# not close) the recon-vs-decoded gap. A11 SURPRISE NULL: A11 ships at
+# libjxl-parity but A8 confirms the buttloop's diffmap-aggregation was
+# already robust to the ~5e-6 XYB precision delta. Harness preserved
+# for future architecture-redesign verification.
+[[example]]
+name = "w44_recon_deep_a8_recon_vs_decoded"
+path = "examples/w44_recon_deep_a8_recon_vs_decoded.rs"
+required-features = ["__internal_recon_hook", "butteraugli-loop", "ssim2-loop"]
+
 # W44-117: paired A/B comparing legacy uniform-4 EPF sharpness seed
 # (env JXL_W44_117_DISABLE=1) vs the new compute_epf_sharpness seed
 # (default) on the W44-105/107/108/109 screenshot-class qac-scale chain
