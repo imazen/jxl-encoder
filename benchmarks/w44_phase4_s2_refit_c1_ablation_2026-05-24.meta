@@ -1,0 +1,186 @@
+W44-PHASE4-S2-refit-c1 — HONEST-STOP per-knob ablation
+======================================================
+
+Date: 2026-05-24
+Parent commit: e9054b53 (W44-PHASE4-S2-validate)
+Status: RULED OUT — k2 is not the catastrophe driver
+Production source: REVERTED to S2-refit raw optima (no change shipped)
+
+Hypothesis
+----------
+
+W44-PHASE4-S2-validate (`e9054b53`) caught a W44-228c1 violation on the
+opt-in Tier2Knobs path: terminal e8 d=4 dropped from 42,322 B / SSIM2
+86.91 (Mode A, defaults) to 28,185 B / SSIM2 81.98 (Mode B,
+auto_for_distance — the W44-PHASE4-S2-refit lookup applied).
+
+The task spec proposed flooring screen/very_high
+`screenshot_quant_aggressiveness` (k2) at 0.333 (matching the other 3
+screen strata's value) to restore the W44-105 buttloop screen-seed
+lift on terminal/imac_g3/codec_wiki SHIP cells. Expected outcome: bytes
+around 35,000-40,000, SSIM2 around 85-87.
+
+Methodology
+-----------
+
+Surgical single-knob change in `src/tuning.rs` ScreenVeryHigh tuple,
+rebuild via `cargo build -p jxl-encoder --release --features
+'__expert tuning-override parallel butteraugli-loop ssim2-loop'
+--example w44_phase4_s2_validate`, re-encode terminal e8 d=4 in
+Mode B (opt-in path) with `EncoderStrategy::Zenjxl`, 8 threads, 8 GiB
+budget. Each row also records the expanded `RuntimeTuning` values
+(p3..p6) via a temporary debug `eprintln!` in the validate example
+(removed before commit).
+
+Per-cell measurement on terminal e8 d=4 in Mode B
+-------------------------------------------------
+
+See `w44_phase4_s2_refit_c1_ablation_2026-05-24.tsv`.
+
+Headline rows:
+
+| probe                | k1  | k2     | k3  | k4     | k5    | rt p3 | bytes | ssim2 | SHA256_8       |
+|---                   |---  |---     |---  |---     |---    |---    |---    |---    |---             |
+| baseline_default     | 0.5 | 1.0    | 1.0 | 3.5    | 0.0   | 4.000 | 42322 | 86.91 | 943d2b8b…      |
+| s2_refit_raw         | 0.0 | 0.0    | 0.5 | 2.167  | -0.33 | ~0    | 28185 | 81.98 | 33c32773…      |
+| c1_attempt_k2_0.333  | 0.0 | 0.333  | 0.5 | 2.167  | -0.33 | ~1.13 | 28185 | 81.98 | 33c32773…      |
+| sweep_k2_0.5         | 0.0 | 0.5    | 0.5 | 2.167  | -0.33 | 2.542 | 28185 | 81.98 | 33c32773…      |
+| sweep_k2_1.0         | 0.0 | 1.0    | 0.5 | 2.167  | -0.33 | 4.542 | 28185 | 81.98 | 33c32773…      |
+| sweep_k2_1.5         | 0.0 | 1.5    | 0.5 | 2.167  | -0.33 | 5.942 | 28185 | 81.98 | 33c32773…      |
+| isolated_k4_2.167    | 0.5 | 1.0    | 1.0 | 2.167  | 0.0   | 4.000 | 42322 | 86.91 | 943d2b8b…      |
+| isolated_k3_0.5      | 0.5 | 1.0    | 0.5 | 3.5    | 0.0   | 4.000 | 42322 | 86.91 | 943d2b8b…      |
+| **isolated_k1_0**    | 0.0 | 1.0    | 1.0 | 3.5    | 0.0   | 4.000 | **28185** | **81.98** | **33c32773…** |
+
+**Three conclusions** the ablation forces:
+
+1. **k2 is NOT the catastrophe driver.** Every value of k2 in {0, 0.333,
+   0.5, 0.75, 1.0, 1.25, 1.5} (with other knobs at S2-refit values)
+   produces BYTE-IDENTICAL output (SHA256 = 33c32773…) — even when
+   `expand_to_runtime_tuning` returns rt.p3 = 5.94 (substantially above
+   `DEFAULT_P3 = 4.0`). The W44-105 buttloop initial-seed scale is
+   apparently overridden by the buttloop's own convergence: at e8 the
+   loop iterates 4 times and the initial seed doesn't survive — the
+   final qac field converges to whatever the discriminator + loop says
+   is right.
+
+2. **k4 and k3 alone are also not the catastrophe driver.** With true
+   defaults everywhere except k4 = 2.167 (gate opens at d ≥ 2.167
+   instead of 3.5), output is BYTE-IDENTICAL to baseline. Same with
+   k3 = 0.5 (halved p5/p6). Both lower the screen-class lift, but at
+   d = 4 the gate fires regardless, and neither change reaches the
+   final qac field through the buttloop convergence.
+
+3. **k1 = 0 ALONE reproduces the catastrophe.** With true defaults on
+   every other knob, setting k1 = 0 (smoothness_bias = 0) produces
+   BYTE-IDENTICAL output to the full S2-refit tuple — same SHA, same
+   bytes, same SSIM2. This isolates k1 as the SOLE driver of the
+   W44-228c1 violation on this cell.
+
+Mechanism — k1 saturates p1 at ridge max
+----------------------------------------
+
+`k1 = smoothness_bias` feeds `p1 = smart_zenjxl_photo_mask_p25_min`
+via the `p1_p2_smoothness_dispatch_ridge`:
+
+   p1_unclamped = DEFAULT_P1 + (P1_RIDGE_MAX - DEFAULT_P1) * (1 - 2*s)
+
+At s = 0.5 (default): p1 = DEFAULT_P1 = 85.0.
+At s = 0     (k1=0):   p1 = P1_RIDGE_MAX (~145 per W44-218 ridge bounds).
+
+`p1` is the threshold the W44-91/96/166 photo admit gates compare
+mask1x1_p25 against — when p1 saturates at the ridge max, the gates
+admit MORE images to the smart-zenjxl photo-class lift, which on
+screen-class content disrupts the W44-105 screen-seed protection.
+
+The c1 floor on k2 cannot close this because k2 only touches p3 and p6
+(buttloop seed scale + e7 adaptive_quant lift), not p1 (the admit-gate
+threshold).
+
+Decision — HONEST-STOP
+----------------------
+
+Source REVERTED to S2-refit raw optima (k2 = 0 for screen/very_high).
+The W44-105 SHIP-cell catastrophe on the opt-in path remains unfixed;
+the W44-228c1 RULED-OUT default-flip constraint stays in force.
+
+Acceptance gates per W44-PHASE4-S2-refit-c1 task spec:
+  (a) screen/very_high k2 changed in src/tuning.rs                   N/A (reverted)
+  (b) terminal e8 d=4 SSIM2 within 1.0 of 86.91 baseline             FAIL (81.98, delta -4.93)
+  (c) 2 more W44-105 SHIP cells benched + verified protected         N/A (c1 mechanism doesn't work)
+  (d) `cargo test --lib` PASS                                        PASS (1501/1501 after revert)
+  (e) Strategy::Libjxl byte-lock + hash-lock all byte-identical      PASS (36/36 + 4/4)
+  (f) Test `…aggressiveness_membership` updated                      N/A (kept original, k2 unchanged)
+  (g) Documentation updated                                          PASS (in-source comment + this meta)
+  (h) Drift test PASS                                                PASS (7/7)
+  (i) Single commit pushed to main on origin                         (next step)
+  (j) `.workongoing` removed                                         (next step)
+
+Follow-on candidates (NOT in W44-PHASE4-S2-refit-c1 scope)
+----------------------------------------------------------
+
+A. **W44-PHASE4-S2-refit-c2**: bisect a k1 floor on screen/very_high.
+   Target: k1 ≥ 0.25 brings p1 within ±10 of `DEFAULT_P1 = 85`, the
+   band the W44-105 chain was tuned against. Likely values to probe:
+   {0.25, 0.333, 0.4, 0.5}. Must verify against terminal/imac_g3/
+   codec_wiki e8+ d=4-6 + the gb82-sc spot-check cell on graph
+   e8 d=5.0 (the OTHER big shifter S2-validate measured).
+
+B. **W44-PHASE4-S2-refit-c3**: per-stratum opt-in gates (e.g.,
+   `LossyConfig::with_knobs_for_screen_low_only(true)`) so callers can
+   harvest the screen/{mid,high} bytes wins without risking the
+   screen/very_high catastrophe.
+
+C. **Future Tier-2 sweep optimization criterion**: score per-stratum
+   optima against bytes AND SSIM2 (Pareto), not bytes alone. The S1
+   sweep's bytes-weighted criterion picked k1=0 because it minimizes
+   bytes on the W44-PHASE4-S1 corpus (which did NOT contain the
+   W44-105 SHIP cells). A Pareto criterion that weights SSIM2 cells
+   like terminal e8 d=4 would have rejected k1=0.
+
+DO NOT (future agents)
+----------------------
+
+1. DO NOT respawn W44-PHASE4-S2-refit-c1 expecting k2 to close this.
+   Per-knob ablation is conclusive: k2 is structurally orthogonal to
+   the catastrophe driver on this cell, even when expand returns
+   rt.p3 above DEFAULT_P3.
+
+2. DO NOT cite "FMA precision" for the -4.93 SSIM2 cliff. The
+   ablation isolated k1 as the driver; this is a deliberate
+   admit-gate threshold shift, not a numerical noise artifact.
+
+3. DO NOT promote the W44-228c default-flip while screen/very_high's
+   raw optimum carries k1=0. The W44-228c1 RULED-OUT memorandum
+   (`benchmarks/w44_228c1_ship_cell_validation_2026-05-23.tsv`) plus
+   this ablation are jointly load-bearing.
+
+4. DO NOT change the membership test
+   `w44_phase4_s2_refit_strata_aggressiveness_membership` without
+   first verifying which knob actually drives the SHIP-cell SSIM2 on
+   the cells the change would re-admit. k2 staying at 0 on
+   screen/very_high is now a TRACKING pin, not a PROTECTION pin.
+
+5. DO NOT re-launch sweep S2/S3 expecting different per-stratum k2
+   values without first attacking the optimization-criterion bug
+   (follow-on C above). The bytes-weighted criterion is structurally
+   guaranteed to pick k1=0 + k2=0 on every screen stratum, even if
+   that re-incurs the W44-105 catastrophe.
+
+Files (this chunk)
+------------------
+
+- jxl-encoder/src/tuning.rs (in-source HONEST-STOP comment block on the
+  ScreenVeryHigh tuple + the post-table status comment; membership
+  test doc string updated to point at this honest-stop; production
+  tuple values unchanged from S2-refit raw optimum)
+- benchmarks/w44_phase4_s2_refit_c1_ablation_2026-05-24.tsv (NEW)
+- benchmarks/w44_phase4_s2_refit_c1_ablation_2026-05-24.meta (NEW —
+  this file)
+- CLAUDE.md "Investigation Notes" — new W44-PHASE4-S2-refit-c1
+  HONEST-STOP entry
+- docs/LIBJXL_DIVERGENCES.md Section E row 203 extended with
+  W44-PHASE4-S2-refit-c1 honest-stop note
+- docs/HYPOTHESIS_LEDGER.md — appended note to Belief #20
+- docs/TIER_2_KNOBS.md §"Stratum k2 membership" — added c1 note
+
+End of meta.

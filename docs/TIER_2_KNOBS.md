@@ -388,9 +388,26 @@ Source: `benchmarks/sweeps/w44-phase4-s1-recon-deep-revalidate/analysis/per_stra
 
 **Bold k2 values** mark the W44-PHASE4-S2-refit non-zero
 `screenshot_quant_aggressiveness` admission on screen/high / mid / low
-(was 0.0 in W44-228a, now 0.333). screen/very_high stays at 0.0,
-preserving the W44-228c1 RULED-OUT invariant for the W44-105 SHIP-cell
-catastrophe regime (terminal / imac_g3 / codec_wiki e8+ d=4-6).
+(was 0.0 in W44-228a, now 0.333). screen/very_high stays at 0.0 from
+the S1 raw optimum. The W44-228c1 RULED-OUT default-flip constraint
+continues to apply to the opt-in path on terminal / imac_g3 /
+codec_wiki e8+ d=4-6.
+
+**W44-PHASE4-S2-refit-c1 HONEST-STOP (2026-05-24)**: an attempt to
+floor screen/very_high k2 at 0.333 (matching the other 3 screen
+strata's value) to close the W44-228c1 violation S2-validate caught
+on the opt-in path was RULED OUT by per-knob ablation. Sweeping k2 ∈
+{0, 0.333, 0.5, 0.75, 1.0, 1.25, 1.5} on terminal e8 d=4 in Mode B
+produced BYTE-IDENTICAL output (SHA256 33c32773…) at every k2 value —
+the buttloop's own convergence absorbs the initial-seed scale at
+e≥8. Single-knob isolation proved the catastrophe is driven by
+`k1 = smoothness_bias = 0` saturating `p1` at the ridge max
+(~145, vs `DEFAULT_P1 = 85`); k2 / k3 / k4 changes alone produce
+byte-identical baseline. Production source unchanged from the
+S2-refit raw optima. Follow-on W44-PHASE4-S2-refit-c2 candidate
+should bisect a k1 floor (target: k1 ≥ 0.25 puts p1 within ±10 of
+the W44-105-tuned default). Bench:
+`benchmarks/w44_phase4_s2_refit_c1_ablation_2026-05-24.{tsv,meta}`.
 
 ### Refit history
 
