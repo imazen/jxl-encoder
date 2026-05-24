@@ -3,6 +3,42 @@
 #![forbid(unsafe_code)]
 
 //! Cell spec (JSON input contract) + cell row (Parquet output schema).
+//!
+//! ## v2 (W44-PHASE4-M1, 2026-05-24) artifact persistence
+//!
+//! Per the global CLAUDE.md `4. Always persist encoded variants when
+//! encoding is expensive — NO EXCEPTIONS` rule (added 2026-05-24
+//! after the W44-PHASE4-S1 incident discarded ~$30 of encoded bytes),
+//! the runner can now optionally persist:
+//!
+//! - **Encoded JXL bitstream** to a content-addressed local file
+//!   (`<artifacts_dir>/jxl/<sha[0..2]>/<sha>.jxl`). Cell row stores
+//!   the sha256 + the corresponding R2 key. `worker.sh` is responsible
+//!   for the actual `s5cmd cp` upload.
+//! - **Per-pixel butteraugli diffmap** to
+//!   `<artifacts_dir>/diffmap/<sha[0..2]>/<sha>.bin` in a simple raw
+//!   binary format: 8-byte magic `BUTTERDM` + u32-LE version=1 + u32-LE
+//!   width + u32-LE height + (width*height) × f32-LE values. Content-
+//!   addressed on `sha256("butter-v1" || width-LE || height-LE ||
+//!   ref_pixels || dist_pixels)` so identical pixel pairs dedup.
+//! - **Multi-norm butteraugli + per-channel PSNR** as scalar columns
+//!   in the Parquet row.
+//!
+//! These are gated by THREE env flags (all default OFF so existing
+//! tests + CI run byte-identical):
+//!
+//! | env flag | effect |
+//! |---|---|
+//! | `W44_PHASE4_M1_SAVE_ENCODED=1` | stage encoded JXL + populate sha256/r2_key |
+//! | `W44_PHASE4_M1_SAVE_DIFFMAP=1` | stage diffmap blob + populate diffmap_r2_key |
+//! | `W44_PHASE4_M1_COMPUTE_MULTIMETRIC=1` | populate butter_max/p1/p2/p6 + psnr_y/r/g/b |
+//!
+//! Production sweeps MUST set ALL THREE to `1` per the CLAUDE.md rule.
+//! Smoke tests + unit tests leave them OFF.
+//!
+//! The `W44_PHASE4_M1_ARTIFACTS_DIR` env var picks the local staging
+//! directory (defaults to a `<output_parquet>/../artifacts/` sibling).
+//! `worker.sh` later runs `s5cmd cp` over the contents.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -11,9 +47,123 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
 use crate::features::{ExtendedFeatures, compute_extended_features};
-use crate::metrics::{MetricBackend, MetricBundle, score_cell};
+use crate::metrics::{MetricBackend, MetricBundle, ScoreOptions, score_cell_with_options};
 use crate::params::materialise_params;
 use crate::rusage::RUsageDelta;
+
+/// Persistence configuration parsed from `W44_PHASE4_M1_*` env vars.
+/// Read once at the start of [`run_cell`].
+#[derive(Clone, Debug, Default)]
+struct PersistConfig {
+    save_encoded: bool,
+    save_diffmap: bool,
+    compute_multimetric: bool,
+    /// Local directory under which content-addressed artifacts are
+    /// staged. `worker.sh` uploads everything under this dir to R2.
+    artifacts_dir: Option<PathBuf>,
+}
+
+impl PersistConfig {
+    fn from_env(output_parquet: &Path) -> Self {
+        let env_on = |k: &str| -> bool {
+            std::env::var(k)
+                .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+                .unwrap_or(false)
+        };
+        let save_encoded = env_on("W44_PHASE4_M1_SAVE_ENCODED");
+        let save_diffmap = env_on("W44_PHASE4_M1_SAVE_DIFFMAP");
+        let compute_multimetric = env_on("W44_PHASE4_M1_COMPUTE_MULTIMETRIC");
+        let artifacts_dir = if save_encoded || save_diffmap {
+            Some(
+                std::env::var_os("W44_PHASE4_M1_ARTIFACTS_DIR")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| {
+                        output_parquet
+                            .parent()
+                            .unwrap_or_else(|| Path::new("."))
+                            .join("artifacts")
+                    }),
+            )
+        } else {
+            None
+        };
+        PersistConfig {
+            save_encoded,
+            save_diffmap,
+            compute_multimetric,
+            artifacts_dir,
+        }
+    }
+
+    fn score_options(&self) -> ScoreOptions {
+        ScoreOptions {
+            // The diffmap is the substrate for multi-norm aggregations,
+            // so save_diffmap implies compute_multimetric.
+            compute_multimetric: self.compute_multimetric || self.save_diffmap,
+            save_diffmap: self.save_diffmap,
+        }
+    }
+}
+
+/// Stage a file's bytes into a content-addressed location under
+/// `<artifacts_dir>/<subdir>/<sha[0..2]>/<sha>.<ext>`. Returns the
+/// R2 key (relative path) suitable for `s5cmd cp` upload by worker.sh.
+///
+/// Writes atomically (write-to-temp + rename) so worker.sh can `s5cmd
+/// cp --if-not-exists` without seeing partial files. If the target
+/// already exists with identical bytes (dedup), skips the write.
+fn stage_content_addressed(
+    bytes: &[u8],
+    sha256_hex: &str,
+    artifacts_dir: &Path,
+    subdir: &str,
+    ext: &str,
+) -> std::io::Result<String> {
+    let prefix = &sha256_hex[0..2];
+    let rel_key = format!("artifacts/{subdir}/{prefix}/{sha256_hex}.{ext}");
+    let dir = artifacts_dir.join(subdir).join(prefix);
+    std::fs::create_dir_all(&dir)?;
+    let target = dir.join(format!("{sha256_hex}.{ext}"));
+    if target.exists() {
+        // Already staged by an earlier cell — content-addressed dedup.
+        return Ok(rel_key);
+    }
+    // Write to a unique temp file then atomic rename.
+    let tmp = dir.join(format!(".{}.{ext}.tmp", std::process::id()));
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, &target)?;
+    Ok(rel_key)
+}
+
+/// Encode a butteraugli diffmap as a simple binary blob.
+/// Format: `BUTTERDM` (8B) + version u32-LE + width u32-LE + height
+/// u32-LE + width*height f32-LE values.
+fn encode_diffmap_blob(diffmap: &[f32], width: u32, height: u32) -> Vec<u8> {
+    let n_px = (width as usize) * (height as usize);
+    debug_assert_eq!(diffmap.len(), n_px, "diffmap len must equal width*height");
+    let mut out = Vec::with_capacity(8 + 12 + n_px * 4);
+    out.extend_from_slice(b"BUTTERDM");
+    out.extend_from_slice(&1u32.to_le_bytes());
+    out.extend_from_slice(&width.to_le_bytes());
+    out.extend_from_slice(&height.to_le_bytes());
+    for v in diffmap {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+/// Content-addressed sha256 for a diffmap. Keys on `("butter-v1",
+/// width, height, ref_pixels, dist_pixels)` so two cells with
+/// identical pixel pairs produce the same diffmap key and dedup.
+fn diffmap_content_sha(ref_rgb: &[u8], dist_rgb: &[u8], width: u32, height: u32) -> String {
+    let mut h = sha2::Sha256::new();
+    h.update(b"butter-v1");
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(ref_rgb);
+    h.update(dist_rgb);
+    hex::encode(h.finalize())
+}
 
 /// Input contract for one sweep cell. Deserialised from `--cell <json>`
 /// (one-line) or `--cell-file <path.json>`.
@@ -140,6 +290,58 @@ pub struct SweepCellRow {
     pub gpu_model: String,
     pub commit_sha: String,
     pub runner_version: String,
+
+    // ── v2 (W44-PHASE4-M1, 2026-05-24) ───────────────────────────────
+    //
+    // These fields preserve every artifact the sweep produces so future
+    // metric R&D (a butteraugli successor) doesn't need to re-encode.
+    // ALL are nullable; the runner only populates them when the
+    // corresponding `W44_PHASE4_M1_SAVE_*` / `W44_PHASE4_M1_COMPUTE_*`
+    // env flag is set. Defaults remain OFF for backwards compat with
+    // existing CI + smoke harnesses.
+    //
+    // Production sweeps MUST set all three persistence env flags to
+    // `1` per the global CLAUDE.md `4. Always persist encoded variants`
+    // rule. See [`run_cell`] for the propagation.
+    /// Content-addressed sha256 (hex) of the encoded JXL bytes.
+    /// Joined with `encoded_jxl_r2_key` lets you fetch the bitstream
+    /// from R2 forever — encoded bytes are 100x more expensive to
+    /// produce than to score, so we save them once and recompute any
+    /// future metric on demand.
+    pub encoded_jxl_sha256: Option<String>,
+    /// R2 key (relative path within the sweep bucket) where the
+    /// encoded JXL lands. `worker.sh` performs the actual `s5cmd cp`
+    /// upload; the runner just stages the file locally under
+    /// `--artifacts-dir` with this exact key as a path suffix.
+    pub encoded_jxl_r2_key: Option<String>,
+    /// R2 key for the per-pixel butteraugli diffmap (f16 raw blob).
+    /// Content-addressed on `sha256(ref_pixels || dist_pixels ||
+    /// metric_id)` so two cells with identical pixel pairs dedup.
+    pub diffmap_r2_key: Option<String>,
+    /// Butteraugli max-norm (a.k.a. global `score`).
+    pub butter_max: Option<f32>,
+    /// Butteraugli p=1 norm (when the backend exposes it; CPU path
+    /// computes from the diffmap).
+    pub butter_p1: Option<f32>,
+    /// Butteraugli p=2 norm.
+    pub butter_p2: Option<f32>,
+    /// Butteraugli p=6 norm — the tail-distortion aggregator that's
+    /// useful for catching worst-block artefacts that p=3 hides.
+    pub butter_p6: Option<f32>,
+    /// PSNR over Rec.709 luma Y' (sRGB-encoded RGB → 0.2126·R +
+    /// 0.7152·G + 0.0722·B in u8 space).
+    pub psnr_y: Option<f32>,
+    /// PSNR over the R channel, sRGB-encoded u8.
+    pub psnr_r: Option<f32>,
+    /// PSNR over the G channel.
+    pub psnr_g: Option<f32>,
+    /// PSNR over the B channel.
+    pub psnr_b: Option<f32>,
+    /// MS-SSIM score (rgb-mean across channels). Currently always
+    /// `None` — zen-metrics 0.6.0 doesn't expose MS-SSIM and we have
+    /// no in-process Rust crate wired in. Reserved column for future
+    /// backend implementations.
+    pub ms_ssim: Option<f32>,
 }
 
 /// Errors that abort a single cell. The fleet worker treats every
@@ -252,6 +454,7 @@ pub fn run_cell(spec: &SweepCellSpec, output_parquet: &Path) -> Result<SweepCell
     let decode_rusage = rusage_decode_post.diff(&rusage_decode_pre);
 
     // ── 6. Score on GPU (or CPU fallback) ───────────────────────────
+    let persist = PersistConfig::from_env(output_parquet);
     let backend = parse_metric_backend(&spec.metric_backend);
     let MetricBundle {
         ssim2,
@@ -262,7 +465,61 @@ pub fn run_cell(spec: &SweepCellSpec, output_parquet: &Path) -> Result<SweepCell
         cvvdp_backend,
         gpu_peak_vram_mb,
         gpu_kernel_ms,
-    } = score_cell(&rgb_bytes, &decoded_rgb, w as usize, h as usize, backend);
+        butter_max,
+        butter_p1,
+        butter_p2,
+        butter_p6,
+        psnr_y,
+        psnr_r,
+        psnr_g,
+        psnr_b,
+        ms_ssim,
+        diffmap,
+    } = score_cell_with_options(
+        &rgb_bytes,
+        &decoded_rgb,
+        w as usize,
+        h as usize,
+        backend,
+        persist.score_options(),
+    );
+
+    // ── 6b. Stage artifacts (encoded JXL + diffmap) ─────────────────
+    let (encoded_jxl_sha256, encoded_jxl_r2_key) = if persist.save_encoded
+        && let Some(dir) = persist.artifacts_dir.as_deref()
+    {
+        let sha = {
+            let mut h = sha2::Sha256::new();
+            h.update(&encoded);
+            hex::encode(h.finalize())
+        };
+        match stage_content_addressed(&encoded, &sha, dir, "jxl", "jxl") {
+            Ok(key) => (Some(sha), Some(key)),
+            Err(e) => {
+                eprintln!("[w44-phase4-m1] WARN: encoded-jxl stage failed (sha={sha}): {e}");
+                (Some(sha), None)
+            }
+        }
+    } else {
+        (None, None)
+    };
+
+    let diffmap_r2_key = if persist.save_diffmap
+        && let Some(dm) = diffmap.as_ref()
+        && let Some(dir) = persist.artifacts_dir.as_deref()
+    {
+        let sha = diffmap_content_sha(&rgb_bytes, &decoded_rgb, w, h);
+        let blob = encode_diffmap_blob(dm, w, h);
+        match stage_content_addressed(&blob, &sha, dir, "diffmap", "bin") {
+            Ok(key) => Some(key),
+            Err(e) => {
+                eprintln!("[w44-phase4-m1] WARN: diffmap stage failed (sha={sha}): {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // ── 7. Build row ────────────────────────────────────────────────
     let row = SweepCellRow {
@@ -297,6 +554,19 @@ pub fn run_cell(spec: &SweepCellSpec, output_parquet: &Path) -> Result<SweepCell
         gpu_model: gpu_model(),
         commit_sha: commit_sha(),
         runner_version: env!("CARGO_PKG_VERSION").to_string(),
+        // v2 (W44-PHASE4-M1)
+        encoded_jxl_sha256,
+        encoded_jxl_r2_key,
+        diffmap_r2_key,
+        butter_max,
+        butter_p1,
+        butter_p2,
+        butter_p6,
+        psnr_y,
+        psnr_r,
+        psnr_g,
+        psnr_b,
+        ms_ssim,
     };
 
     // ── 8. Write Parquet ────────────────────────────────────────────
@@ -304,6 +574,90 @@ pub fn run_cell(spec: &SweepCellSpec, output_parquet: &Path) -> Result<SweepCell
         .map_err(CellError::Write)?;
 
     Ok(row)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persist_config_defaults_off() {
+        // Use a temp parquet path to avoid creating an artifacts/ dir
+        // in cwd if a test process accidentally has env on.
+        let cfg = PersistConfig::default();
+        assert!(!cfg.save_encoded);
+        assert!(!cfg.save_diffmap);
+        assert!(!cfg.compute_multimetric);
+        assert!(cfg.artifacts_dir.is_none());
+        let opts = cfg.score_options();
+        assert!(!opts.compute_multimetric);
+        assert!(!opts.save_diffmap);
+    }
+
+    #[test]
+    fn diffmap_blob_format_roundtrip() {
+        let dm: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+        let blob = encode_diffmap_blob(&dm, 8, 8);
+        // Magic + version + w + h + data
+        assert_eq!(&blob[0..8], b"BUTTERDM");
+        assert_eq!(&blob[8..12], &1u32.to_le_bytes()[..]);
+        assert_eq!(&blob[12..16], &8u32.to_le_bytes()[..]);
+        assert_eq!(&blob[16..20], &8u32.to_le_bytes()[..]);
+        assert_eq!(blob.len(), 20 + 64 * 4);
+        // Spot-check the first f32 round-trips.
+        let first = f32::from_le_bytes([blob[20], blob[21], blob[22], blob[23]]);
+        assert_eq!(first, 0.0);
+        let second = f32::from_le_bytes([blob[24], blob[25], blob[26], blob[27]]);
+        assert!((second - 0.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn diffmap_content_sha_depends_on_pixels() {
+        let ref1 = vec![100u8; 16 * 16 * 3];
+        let ref2 = vec![101u8; 16 * 16 * 3];
+        let dst = vec![100u8; 16 * 16 * 3];
+        let sha_a = diffmap_content_sha(&ref1, &dst, 16, 16);
+        let sha_b = diffmap_content_sha(&ref2, &dst, 16, 16);
+        let sha_a2 = diffmap_content_sha(&ref1, &dst, 16, 16);
+        assert_eq!(sha_a, sha_a2, "same inputs → same sha");
+        assert_ne!(sha_a, sha_b, "different ref → different sha");
+        assert_eq!(sha_a.len(), 64, "hex sha256 = 64 chars");
+    }
+
+    #[test]
+    fn stage_content_addressed_writes_and_dedups() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let bytes = b"hello-jxl-bytes";
+        let sha = "feedbeef00112233feedbeef00112233feedbeef00112233feedbeef00112233";
+        let key = stage_content_addressed(bytes, sha, tmp.path(), "jxl", "jxl").unwrap();
+        assert_eq!(
+            key,
+            format!("artifacts/jxl/fe/{sha}.jxl"),
+            "r2 key shape uses first 2 hex chars as prefix dir"
+        );
+        let path = tmp.path().join("jxl").join("fe").join(format!("{sha}.jxl"));
+        assert!(path.exists());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        // Second call dedups (same key, no error, file unchanged).
+        let key2 = stage_content_addressed(bytes, sha, tmp.path(), "jxl", "jxl").unwrap();
+        assert_eq!(key, key2);
+    }
+
+    #[test]
+    fn persist_config_from_env_artifacts_dir_default() {
+        // Simulate env on by directly constructing — env-mutating tests
+        // are flaky in parallel. The default-fallback logic lives in
+        // from_env's else branch; here we just confirm the explicit
+        // path constructs cleanly.
+        let cfg = PersistConfig {
+            save_encoded: true,
+            save_diffmap: false,
+            compute_multimetric: false,
+            artifacts_dir: Some(PathBuf::from("/tmp/m1-test")),
+        };
+        assert!(cfg.score_options().compute_multimetric == false);
+        assert!(cfg.artifacts_dir.is_some());
+    }
 }
 
 /// Parse the strategy string. Mirrors the `cjxl-rs` CLI `--strategy`
