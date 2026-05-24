@@ -640,6 +640,88 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### W44-PHASE4-S1: post-RECON-DEEP Tier-2 revalidation — SHIPPED (2026-05-24)
+
+**Status**: [SHIPPED — sweep finalized; HYPOTHESIS_LEDGER belief #20 PROVEN]
+
+The W44-PHASE4-S1 vast.ai sweep (`s3://zen-tuning-ephemeral/w44-phase4-s1-recon-deep-revalidate/`)
+drained with 22,770 unique cells (81.7% coverage; comparable to W44-229f's
+77.8%). Sweep ran on post-W44-RECON-DEEP encoder commit `53b7655b` with A10
+(HDR intensity_target dispatch), A11 (XYB FMA + INV_OPSIN 1-ULP fix), B1
+(GPU butteraugli backend trait), B4 (GPU butteraugli linear-planes wire-up),
+B5 (default-ON GPU butteraugli when feature compiled), B7 (CPU butteraugli
+diffmap+subsample buffer reuse) fixes. Total cost ≈$3-5 on interruptible
+fleet.
+
+**Pipeline**: All 8 stages of `scripts/zenjxl-tuning-sweep/run_all_analyses.py`
+PASS plus `w44_228a_per_stratum_knobs.py` re-run on S1 corpus. Outputs at
+`benchmarks/sweeps/w44-phase4-s1-recon-deep-revalidate/analysis/`.
+
+**Belief #20 verdict — PROVEN**:
+- **Per-stratum optima shifted on 8/8 strata** vs W44-228a/W44-219
+  baseline: 3-4 of 5 knobs changed per stratum; L2 knob-distance shifted
+  0.5-2.5 across strata. `k5_aq_balance` trended NEGATIVE everywhere
+  (was scattered in W44-219); `k2_aggressiveness` newly active 4/8 strata
+  (was 0 everywhere in W44-219). Screen default_gap improved on every
+  stratum (screen/vh 49.7% → 37.4%, screen/high 16.7% → 13.7%).
+- **SVD basis structurally shifted**: direction-1 (35.9% variance) now
+  dominated by (-p1, -p2, -p3, +p5) — `p2` newly entered primary axis vs
+  W44-229's (-p1, +p3, +p5). Rank-4 explanatory fraction dropped
+  90.2% → 85.7% (-4.5pp); rank-5 rose 96.4% → 98.2%.
+- **Pareto coverage IMPROVED**: 5-knob expander now covers full-param
+  Pareto frontier EXACTLY on every stratum. cov4_max_pct on
+  screen/very_high dropped W44-229 +1.16% → S1 +0.00%.
+- **Kitchen-sink R²**: encoded_bytes unchanged at 0.998, ssim2 drifted
+  0.992 → 0.975 (B5 GPU butteraugli measurement variance), encode_ms
+  IMPROVED 0.861 → 0.933 (B7 buffer reuse).
+
+**Per-cell example (screen/very_high)**: W44-219 optima
+`(k1=0, k2=0, k3=0.5, k4=1.5, k5=0)` shifted to S1
+`(k1=0, k2=0, k3=0.5, k4=2.17, k5=-0.33)`. `k4_d_gate` rose, `k5_aq_balance`
+went negative. Default_gap improved from 49.7% → 37.4% (the gap shrank
+because RECON-DEEP fixes lifted the floor on default behaviour).
+
+**Files**:
+- `benchmarks/sweeps/w44-phase4-s1-recon-deep-revalidate/analysis/summary.md` —
+  8-stage pipeline headline
+- `benchmarks/sweeps/w44-phase4-s1-recon-deep-revalidate/analysis/per_stratum_optima/per_stratum_optima.tsv` —
+  8-row Tier-2 optima per stratum
+- `benchmarks/sweeps/w44-phase4-s1-recon-deep-revalidate/analysis/svd_basis/phase2b_basis_loadings.tsv` —
+  SVD basis loadings vs W44-229
+- `benchmarks/sweeps/w44-phase4-s1-recon-deep-revalidate/analysis/pareto_coverage/phase_a_5knob_coverage.tsv` —
+  Pareto coverage by stratum
+- `/mnt/v/zen/jxl-encoder/sweeps/w44-phase4-s1-recon-deep-revalidate/merged/merged.parquet` —
+  merged canonical (1.07 MB zstd-15, 22,770 rows × 44 cols)
+- `/mnt/tower/output/zenjxl/sweeps/w44-phase4-s1-recon-deep-revalidate-2026-05-24/` —
+  Tower mirror (full cells + sidecars + merged, sha256-verified 3/3)
+- `docs/HYPOTHESIS_LEDGER.md` — belief #20 SUSPECTED → PROVEN, new pipeline
+  run history row
+- `memory/w44_phase4_s1_finalize_2026-05-24.md` — full finalize memo
+
+**Follow-on (NOT this chunk)**:
+1. **W44-PHASE4-S2-refit** — port S1 per_stratum_optima into
+   `Tier2Knobs::auto_for_distance` lookup table. 8 rows × 5 knobs. OPT-IN
+   API surface unchanged.
+2. Address image_fetch_failed root cause for 4 dropped images to push
+   coverage 81.7% → 95%+ on the next sweep.
+
+**DO NOT** (future agents):
+1. **DO NOT default-flip per-stratum optima on screen strata.**
+   W44-228c1 RULED-OUT constraint still applies regardless of which
+   corpus generated the optima — `screenshot_quant_aggressiveness=0`
+   catastrophically regresses W44-105 SHIP cells (codec_wiki / terminal /
+   imac_g3 e8 d=4-6) by -3.7 to -8.6 SSIM2 points. Ship S2-refit as
+   OPT-IN per W44-228b pattern.
+2. **DO NOT cite "FMA precision" for the SVD basis shift** (per W44-66
+   user correction). The shift is real and caused by B5+B7 backend
+   changes redistributing per-iteration butteraugli convergence.
+3. **DO NOT respawn S1 to chase 100% coverage**. 81.7% is comparable to
+   W44-229f's accepted 77.8%; the per-stratum signal is statistically
+   clear. The 4 dropped images do NOT change the qualitative finding
+   (all 8 strata shifted).
+4. **DO NOT delete R2 per-cell sidecars**. Tower IS the canonical archive
+   but R2 stays as warm cache.
+
 ### W44-RECON-DEEP/A11: XYB→linear FMA + INV_OPSIN constant fix — SHIPPED (May 23, 2026)
 
 **Status**: [SHIPPED — fix correct, A/B null on bytes]

@@ -1,0 +1,6 @@
+stratum	n_anchors	n_full_pareto	cov4_max_pct	cov4_mean_pct	cov5_max_pct	cov5_mean_pct	improvement_max	improvement_mean	gate_2pp_max_5k	gate_0.5pp_mean_5k
+all	32	11	0.058499218451291135	0.005316697179402752	0.0	0.0	0.058499218451291135	0.005316697179402752	PASS	PASS
+screen	16	10	0.0	0.0	0.0	0.0	0.0	0.0	PASS	PASS
+screen/very_high	4	24	0.0	0.0	0.0	0.0	0.0	0.0	PASS	PASS
+photo	16	5	0.0	0.0	0.0	0.0	0.0	0.0	PASS	PASS
+photo/very_high	4	9	0.0	0.0	0.0	0.0	0.0	0.0	PASS	PASS
