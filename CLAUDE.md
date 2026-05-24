@@ -640,6 +640,90 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### W44-PHASE4-S2f: c2 fix validation sweep — finalize (May 24, 2026)
+
+**Status**: [SHIPPED — measurement complete, c2 fix RULED-OUT as detectable on validation corpus]
+
+W44-PHASE4-S2 validation sweep (`w44-phase4-s2-c2-validate`) drained successfully:
+186/186 chunks, 14,190 cells, $1.78 spend, 6h fleet wall. Compared post-c2
+encoder (commit `bdd5f4fb`) against W44-PHASE4-S1's baseline (commit `53b7655b`)
+on 9 images (3 SHIP screens + 6 CID22 photos) × 4 efforts × 6 distances × 43 arms.
+
+**Hypothesis** (belief #21): post-c2 produces measurable byte/SSIM2 shifts on
+screen/{high, very_high} strata in opt-in Tier-2 mode. Default mode byte-identical.
+
+**Result**: RULED-OUT on the validation corpus.
+
+| stratum (zenjxl strategy) | n | mean dBytes_pct | max abs dBytes_pct | cells shifted >0.5% |
+|---|---|---|---|---|
+| photo/high | 825 | -0.0001 | 0.019 | 0 |
+| photo/low | 1651 | -0.0000 | 0.095 | 0 |
+| photo/mid | 825 | 0.0000 | 0.005 | 0 |
+| photo/very_high | 1654 | 0.0000 | 0.046 | 0 |
+| screen/high | 437 | 0.0006 | 0.245 | 0 |
+| screen/low | 907 | 0.0017 | 0.802 | 1 |
+| screen/mid | 438 | 0.0040 | 0.977 | 2 |
+| screen/very_high | 730 | 0.0008 | 0.399 | 0 |
+
+**libjxl strategy sanity**: 98.9% byte-identical, max 4 bytes drift on 2/179 cells.
+
+**Interpretation**: post-c2 encoder is functionally equivalent to pre-c2 on
+the 21-arm anchor overlap between S1 and S2 (mean overlap = 21.44 arms per cell).
+The c2 fix is either (a) inactive on the LHS-seed anchor arms (the fix fires
+only on Tier-2 knob tuples outside the anchor set), or (b) the joint k1/k2
+floor predicate doesn't engage on the 9-image validation corpus' anchor cells.
+The c2 fix DOES protect W44-105 SHIP cells (proven in W44-PHASE4-S2-refit-c2
+via terminal e8 d=4 cell-level validation) — this validation just confirms
+the fix is narrowly scoped enough not to perturb non-target cells.
+
+**Next-sweep methodology lesson**: any future Tier-2 refit must validate against
+BOTH (a) SHIP-cell protection AND (b) anchor-arm shift detection. Neither test
+alone is sufficient. The S2 validation corpus was scoped to detect (b) but
+couldn't because c2's surface didn't overlap S1's anchor surface. To detect
+changes from a narrow-predicate fix like c2 in future, the validator must
+sweep arms IN the fix's predicate firing region, not the LHS-seed anchor set.
+
+**Diagnostic gotcha**: S2's `encoded_bytes` is `uint32` in the sidecar parquet
+schema. Naive `s2 - s1` subtraction underflows when s2 < s1 by 1-2 bytes,
+producing dBytes_pct values in millions of % range. Cast to int64 before
+arithmetic on the diff column. (Caught at first-pass analysis; final TSVs
+use int64-cast arithmetic.)
+
+**Files**:
+- Local: `/mnt/v/zen/jxl-encoder/sweeps/w44-phase4-s2-c2-validate/`
+  - `merged.parquet` (14,190 rows × 56 cols)
+  - `cells/` (14,190 per-chunk parquets)
+  - `s1_vs_s2_stratum_strategy_FINAL.tsv` (per-stratum × strategy)
+  - `s1_vs_s2_zenjxl_only_FINAL.tsv` (zenjxl focused)
+  - `s1_vs_s2_shifted_cells_FINAL.tsv` (top 3 shifted cells)
+- Tower: `/mnt/tower/output/zenjxl/sweeps/w44-phase4-s2-c2-validate-2026-05-24/`
+  + `MANIFEST.md` describing scope, result, provenance
+  - 3 random sha256-verified vs local source
+- R2: `s3://zen-tuning-ephemeral/w44-phase4-s2-c2-validate/cells/`
+
+**Acceptance gates** (all PASS):
+- (a) cells synced to /mnt/v: 14,190 (242 MB)
+- (b) merged.parquet: 14,190 rows × 56 cols (>9000 expected)
+- (c) per-stratum diff produced (3 TSVs)
+- (d) Tower mirror sha256-verified (3/3 OK, 280 MB)
+- (e) HYPOTHESIS_LEDGER belief #21 added
+- (f) CLAUDE.md Investigation Notes entry (this one)
+- (g) Single commit pushed
+- (h) .workongoing removed
+
+**DO NOT**:
+- DO NOT cite "FMA precision" for any byte movement (per W44-66).
+- DO NOT respawn the validation sweep at higher density — the result is
+  conclusive on the anchor-arm overlap surface.
+- DO NOT interpret the lack of shift as "c2 fix doesn't work" — it works
+  on the W44-105 SHIP cells (proven independently). It just doesn't trigger
+  on the 9-image LHS-seed anchor arms used for cross-sweep validation.
+- DO NOT default-flip c2's per-stratum optima on screen strata — the W44-228c1
+  invariant (don't disable W44-105 SHIP cell protection) still applies; c2's
+  joint floor fix protects opt-in path but default path was never the issue.
+
+---
+
 ### W44-PHASE3-B7d: CPU butteraugli strip-tile — FRAMEWORK SHIPPED, PERF NEGATIVE (2026-05-24)
 
 **Status**: [ARC CLOSED — framework-only, default-OFF feature gate]
