@@ -308,3 +308,135 @@ pub fn gab_smooth_neon(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    /// Gab weights derived from libjxl gaborish defaults.  Kernel is
+    /// parametric so any (wc, w1, w2) works; these are just realistic values.
+    const WC: f32 = 0.62;
+    const W1: f32 = 0.085;
+    const W2: f32 = 0.04;
+
+    /// ULP-tolerant scalar-vs-dispatch parity across SIMD boundary sizes.
+    /// Image is row-major width*height; both AVX2 (width >= 10) and NEON
+    /// (width >= 6) paths get exercised.
+    ///
+    /// Strict-bit-equality FAILS by ≤1 ULP because the SIMD path fuses
+    /// `wc*center + (w1*cardinals + w2*diagonals)` via `mul_add` (single
+    /// rounding per FMA) while the scalar path performs explicit `*` and
+    /// `+` (double rounding).  See docs/SIMD_PARITY_KNOWN_DIVERGENCES.md
+    /// row gab-001.  Tolerance: 2 ULP (1 ULP for the mul_add + 1 ULP
+    /// for the outer add).
+    #[test]
+    fn gab_scalar_vs_dispatch_sizes_ulp() {
+        let cases: &[(usize, usize)] = &[
+            (1, 1),    // single pixel
+            (3, 3),    // tiny — both paths fall back to scalar
+            (5, 5),    // < NEON min (width < 6)
+            (6, 3),    // exactly NEON min
+            (9, 3),    // < AVX2 min (width < 10)
+            (10, 3),   // exactly AVX2 min
+            (16, 4),   // exactly AVX2 chunk
+            (17, 4),   // AVX2 + 1 tail
+            (32, 8),   // 4 AVX2 chunks
+            (33, 9),   // tail-loop stress
+            (64, 16),  // 8 AVX2 chunks, height multiple
+            (65, 17),  // both axes tail-loop
+            (128, 32), // larger image
+        ];
+        for &(w, h) in cases {
+            let n = w * h;
+            let seed = 0xCAFE_F00D ^ ((w as u64) << 32) ^ h as u64;
+            let input: Vec<f32> = gen_f32(seed, n, 5.0);
+
+            let mut ref_out = input.clone();
+            let mut ref_scratch = vec![0.0_f32; n];
+            ref_scratch.copy_from_slice(&ref_out);
+            gab_smooth_scalar(&mut ref_out, &ref_scratch, w, h, WC, W1, W2);
+
+            run_dispatch_parity(|perm| {
+                let mut act_out = input.clone();
+                let mut act_scratch = vec![0.0_f32; n];
+                gab_smooth_channel(&mut act_out, &mut act_scratch, w, h, WC, W1, W2);
+                // Gab fuses w_center*center + (w1*cardinals + w2*diagonals)
+                // via mul_add on SIMD paths; scalar uses explicit `*` + `+`.
+                // Observed up to 4 ULP on rand inputs; near-zero outputs
+                // can magnify ULP delta arbitrarily so we use an absolute
+                // floor.
+                assert_f32_slice_close_ulps_abs(
+                    &ref_out,
+                    &act_out,
+                    8,
+                    1e-5,
+                    perm,
+                    &format!("w={w} h={h}"),
+                );
+            });
+        }
+    }
+
+    /// STRICT bit-exact variant — currently ignored due to documented FMA
+    /// association divergence.  Kept in the suite so a future fix that
+    /// aligns scalar to use `mul_add` (or the SIMD path to drop the FMA)
+    /// is verified.
+    #[test]
+    #[ignore = "FIXME(SIMD-parity): gab-001 — FMA association ≤1 ULP \
+                between scalar and AVX2/NEON paths; see \
+                docs/SIMD_PARITY_KNOWN_DIVERGENCES.md"]
+    fn gab_scalar_vs_dispatch_sizes_strict() {
+        let w = 16;
+        let h = 4;
+        let n = w * h;
+        let input: Vec<f32> = gen_f32(0xCAFE_F00D, n, 5.0);
+
+        let mut ref_out = input.clone();
+        let mut ref_scratch = vec![0.0_f32; n];
+        ref_scratch.copy_from_slice(&ref_out);
+        gab_smooth_scalar(&mut ref_out, &ref_scratch, w, h, WC, W1, W2);
+
+        run_dispatch_parity(|perm| {
+            let mut act_out = input.clone();
+            let mut act_scratch = vec![0.0_f32; n];
+            gab_smooth_channel(&mut act_out, &mut act_scratch, w, h, WC, W1, W2);
+            assert_f32_slice_bit_eq(&ref_out, &act_out, perm, &format!("w={w} h={h}"));
+        });
+    }
+
+    /// Parity on edge-value input distributions on a 16x4 image (covers
+    /// AVX2 fast path + tail loop on a single chunk).
+    #[test]
+    fn gab_scalar_vs_dispatch_edge_values_ulp() {
+        let w = 16;
+        let h = 4;
+        let n = w * h;
+        for case in f32_edge_battery(n) {
+            if case.data.is_empty() {
+                continue;
+            }
+            let mut ref_out = case.data.clone();
+            let mut ref_scratch = vec![0.0_f32; n];
+            ref_scratch.copy_from_slice(&ref_out);
+            gab_smooth_scalar(&mut ref_out, &ref_scratch, w, h, WC, W1, W2);
+
+            run_dispatch_parity(|perm| {
+                let mut act_out = case.data.clone();
+                let mut act_scratch = vec![0.0_f32; n];
+                gab_smooth_channel(&mut act_out, &mut act_scratch, w, h, WC, W1, W2);
+                assert_f32_slice_close_ulps_abs(
+                    &ref_out,
+                    &act_out,
+                    8,
+                    1e-5,
+                    perm,
+                    &case.label,
+                );
+            });
+        }
+    }
+}

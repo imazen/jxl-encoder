@@ -203,6 +203,9 @@ pub(crate) fn scatter_col_strided(
     }
 }
 
+#[cfg(test)]
+mod test_helpers;
+
 mod adaptive_quant;
 mod block_l2;
 mod cfl;

@@ -225,3 +225,97 @@ fn transpose_4x4_neon(
 
     (out0, out1, out2, out3)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+    use alloc::vec::Vec;
+
+    /// Scalar reference: brute-force 8x8 transpose.
+    fn transpose_8x8_scalar_ref(input: &[f32], output: &mut [f32]) {
+        for row in 0..8 {
+            for col in 0..8 {
+                output[col * 8 + row] = input[row * 8 + col];
+            }
+        }
+    }
+
+    /// Pure data movement — guaranteed BIT-EXACT against scalar.  Failure
+    /// here indicates a real shuffle-mask bug, not float-precision noise.
+    /// Sweeps every f32_edge_battery distribution at n=64 (exact 8x8 block).
+    #[test]
+    fn transpose_8x8_scalar_vs_dispatch_edge_values() {
+        for case in f32_edge_battery(64) {
+            if case.data.is_empty() {
+                continue;
+            }
+            let mut ref_out = alloc::vec![0.0_f32; 64];
+            transpose_8x8_scalar_ref(&case.data, &mut ref_out);
+
+            run_dispatch_parity(|perm| {
+                let mut act_out = alloc::vec![0.0_f32; 64];
+                transpose_8x8(&case.data, &mut act_out);
+                assert_f32_slice_bit_eq(&ref_out, &act_out, perm, &case.label);
+            });
+        }
+    }
+
+    /// Distinguished-position test: each input element is unique so any
+    /// shuffle bug surfaces as a swap rather than a 0↔0 silent equality.
+    #[test]
+    fn transpose_8x8_unique_positions() {
+        // Use bit patterns so we can detect lane swaps unambiguously even
+        // if some FP optimization collapsed values to 0.
+        let input: Vec<f32> = (0..64)
+            .map(|i| f32::from_bits(0x4000_0000 | (i as u32))) // ~2.0 + tag
+            .collect();
+        let mut ref_out = alloc::vec![0.0_f32; 64];
+        transpose_8x8_scalar_ref(&input, &mut ref_out);
+
+        run_dispatch_parity(|perm| {
+            let mut act_out = alloc::vec![0.0_f32; 64];
+            transpose_8x8(&input, &mut act_out);
+            assert_f32_slice_bit_eq(&ref_out, &act_out, perm, "unique_positions");
+        });
+    }
+
+    /// Non-finite preservation: NaN, +/-Inf at every position must survive
+    /// transposition bit-identically (no arithmetic, so bit-preservation
+    /// is required).
+    #[test]
+    fn transpose_8x8_nonfinite_preserved() {
+        // Mix NaN, +Inf, -Inf into 64-element block.
+        let mut input = alloc::vec![1.0_f32; 64];
+        input[0] = f32::NAN;
+        input[7] = f32::INFINITY;
+        input[8] = f32::NEG_INFINITY;
+        input[15] = f32::NAN;
+        input[56] = f32::INFINITY; // bottom row
+        input[63] = f32::NEG_INFINITY; // bottom-right corner
+
+        let mut ref_out = alloc::vec![0.0_f32; 64];
+        transpose_8x8_scalar_ref(&input, &mut ref_out);
+
+        run_dispatch_parity(|perm| {
+            let mut act_out = alloc::vec![0.0_f32; 64];
+            transpose_8x8(&input, &mut act_out);
+            assert_f32_slice_bit_eq(&ref_out, &act_out, perm, "nonfinite_preserved");
+        });
+    }
+
+    /// Idempotence: transpose(transpose(x)) == x.
+    #[test]
+    fn transpose_8x8_self_inverse() {
+        let input: Vec<f32> = gen_f32(0xDEAD_BEEF_CAFE_BABE, 64, 100.0);
+
+        run_dispatch_parity(|perm| {
+            let mut once = alloc::vec![0.0_f32; 64];
+            let mut twice = alloc::vec![0.0_f32; 64];
+            transpose_8x8(&input, &mut once);
+            transpose_8x8(&once, &mut twice);
+            assert_f32_slice_bit_eq(&input, &twice, perm, "self_inverse");
+        });
+    }
+}

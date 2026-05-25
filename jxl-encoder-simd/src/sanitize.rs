@@ -399,4 +399,79 @@ mod tests {
         v_bad[500] = f32::NAN;
         assert!(!is_finite_plane(&v_bad));
     }
+
+    // ========================================================================
+    // for_each_token_permutation parity coverage
+    // ========================================================================
+    //
+    // sanitize_finite and is_finite_plane are explicitly designed to accept
+    // NaN/Inf input.  The output is a (bool, plane) pair where:
+    //   - the bool result MUST match scalar bit-for-bit (it's a u8)
+    //   - the post-sanitize plane MUST match scalar bit-for-bit (finite
+    //     values preserved, non-finite replaced with +0.0)
+    // is_finite_plane returns bool only and MUST match scalar exactly.
+
+    use crate::test_helpers::*;
+    use alloc::format;
+
+    #[test]
+    fn is_finite_plane_scalar_vs_dispatch_sizes() {
+        for &n in edge_case_sizes() {
+            for case in f32_nonfinite_battery(n) {
+                let ref_out = is_finite_plane_scalar(&case.data);
+                run_dispatch_parity(|perm| {
+                    let act_out = is_finite_plane(&case.data);
+                    assert_eq!(
+                        ref_out, act_out,
+                        "is_finite_plane divergence: scalar={ref_out} dispatch={act_out} \
+                         perm={perm} ctx={}",
+                        case.label
+                    );
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn sanitize_finite_scalar_vs_dispatch_sizes() {
+        for &n in edge_case_sizes() {
+            for case in f32_nonfinite_battery(n) {
+                let mut ref_plane = case.data.clone();
+                let ref_replaced = sanitize_finite_scalar(&mut ref_plane);
+                run_dispatch_parity(|perm| {
+                    let mut act_plane = case.data.clone();
+                    let act_replaced = sanitize_finite(&mut act_plane);
+                    assert_eq!(
+                        ref_replaced, act_replaced,
+                        "sanitize_finite replaced-flag divergence: scalar={ref_replaced} \
+                         dispatch={act_replaced} perm={perm} ctx={}",
+                        case.label
+                    );
+                    assert_f32_slice_bit_eq(&ref_plane, &act_plane, perm, &case.label);
+                });
+            }
+        }
+    }
+
+    /// Tail-stress: a non-finite value ONLY in the scalar tail (past the
+    /// SIMD chunked region).  This is the regression case the existing
+    /// fixed-input tests couldn't hit at every size.
+    #[test]
+    fn sanitize_finite_tail_nan_only() {
+        // For each size that has a tail (n % SIMD-width != 0), put a NaN
+        // strictly past the last full SIMD chunk on f32x8 boundary.
+        for &n in &[9_usize, 17, 33, 65, 129] {
+            let mut input = alloc::vec![1.0_f32; n];
+            input[n - 1] = f32::NAN; // tail position
+            let mut ref_plane = input.clone();
+            let ref_replaced = sanitize_finite_scalar(&mut ref_plane);
+            assert!(ref_replaced);
+            run_dispatch_parity(|perm| {
+                let mut act_plane = input.clone();
+                let act_replaced = sanitize_finite(&mut act_plane);
+                assert!(act_replaced, "tail NaN missed at n={n} perm={perm}");
+                assert_f32_slice_bit_eq(&ref_plane, &act_plane, perm, &format!("tail_nan(n={n})"));
+            });
+        }
+    }
 }

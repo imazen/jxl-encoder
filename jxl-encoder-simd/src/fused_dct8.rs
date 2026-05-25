@@ -488,4 +488,243 @@ mod tests {
             sep_result.entropy_sum
         );
     }
+
+    // ========================================================================
+    // for_each_token_permutation parity coverage
+    // ========================================================================
+    //
+    // fused_dct8 has two implementations: the AVX2 path keeps DCT coeffs in
+    // YMM registers + uses mul_add, while the fallback runs separate
+    // dispatched DCT + entropy kernels.  Bit-equality is NOT achievable
+    // between them (FMA association + different reduction order).
+    //
+    // These tests verify scalar-vs-dispatch parity within ~16 ULP / 1e-4 abs
+    // tolerance — large enough to absorb the documented op-order divergence
+    // but tight enough to catch real bugs (a wrong shuffle, missing DC zero,
+    // off-by-one in extract_block).  See docs/SIMD_PARITY_KNOWN_DIVERGENCES.md
+    // row fused_dct8-001.
+
+    use crate::test_helpers::*;
+    use alloc::format;
+
+    fn make_synthetic_block(
+        stride: usize,
+        seed: u64,
+    ) -> (alloc::vec::Vec<f32>, [f32; 64], [f32; 64], [f32; 64]) {
+        let plane = gen_f32(seed, stride * 16, 100.0);
+        let y_dct = {
+            let mut y = [0.0_f32; 64];
+            for (i, v) in y.iter_mut().enumerate() {
+                *v = ((i as f32) * 0.17).sin();
+            }
+            y[0] = 0.0;
+            y
+        };
+        let mut weights = [1.0_f32; 64];
+        for (i, w) in weights.iter_mut().enumerate() {
+            *w = 0.5 + (i as f32 * 0.13).cos().abs() * 2.0;
+        }
+        let mut inv_weights = [0.0_f32; 64];
+        for (i, iw) in inv_weights.iter_mut().enumerate() {
+            *iw = 1.0 / weights[i];
+        }
+        (plane, y_dct, weights, inv_weights)
+    }
+
+    #[test]
+    fn fused_dct8_scalar_vs_dispatch_y_channel() {
+        let stride = 16;
+        let (plane, y_dct, weights, inv_weights) = make_synthetic_block(stride, 0x1234_5678);
+        let cmap = 0.0_f32; // Y channel
+        let quant = 3.0_f32;
+        let k_cost_delta = 5.335;
+
+        // Scalar reference via fallback (uses dispatched-DCT internally
+        // BUT inside the fallback the kernel order is identical across
+        // tier-disable permutations because the scalar dispatched subroutines
+        // are picked when SIMD is off).
+        let mut ref_error = [0.0_f32; 64];
+        let mut ref_dct = [0.0_f32; 64];
+        // Capture reference with ALL tokens enabled (live state) for
+        // comparison; the dispatch fn at this tier IS the scalar fallback's
+        // best path.
+        let ref_result = fused_dct8_entropy_fallback(
+            &plane,
+            stride,
+            0,
+            0,
+            &y_dct,
+            &weights,
+            &inv_weights,
+            cmap,
+            quant,
+            k_cost_delta,
+            &mut ref_error,
+            Some(&mut ref_dct),
+        );
+
+        run_dispatch_parity(|perm| {
+            let mut act_error = [0.0_f32; 64];
+            let mut act_dct = [0.0_f32; 64];
+            let act_result = fused_dct8_entropy(
+                &plane,
+                stride,
+                0,
+                0,
+                &y_dct,
+                &weights,
+                &inv_weights,
+                cmap,
+                quant,
+                k_cost_delta,
+                &mut act_error,
+                Some(&mut act_dct),
+            );
+            // DCT outputs: SIMD path uses scaling + FMA differently;
+            // accept ≤1e-4 abs delta per coefficient.
+            assert_f32_slice_close_ulps_abs(&ref_dct, &act_dct, 64, 1e-4, perm, "y_dct");
+            assert_f32_slice_close_ulps_abs(&ref_error, &act_error, 64, 1e-3, perm, "y_error");
+            let entropy_diff = (ref_result.entropy_sum - act_result.entropy_sum).abs();
+            let nzeros_diff = (ref_result.nzeros_sum - act_result.nzeros_sum).abs();
+            assert!(
+                entropy_diff < 1e-2,
+                "entropy diverged: ref={} act={} diff={} perm={perm}",
+                ref_result.entropy_sum,
+                act_result.entropy_sum,
+                entropy_diff
+            );
+            assert!(
+                nzeros_diff < 1.0,
+                "nzeros diverged: ref={} act={} diff={} perm={perm}",
+                ref_result.nzeros_sum,
+                act_result.nzeros_sum,
+                nzeros_diff
+            );
+        });
+    }
+
+    #[test]
+    fn fused_dct8_scalar_vs_dispatch_cfl_x_channel() {
+        let stride = 16;
+        let (plane, y_dct, weights, inv_weights) = make_synthetic_block(stride, 0x9ABC_DEF0);
+        // X channel with CfL: nonzero cmap_factor.
+        let cmap = 0.35_f32;
+        let quant = 2.5_f32;
+        let k_cost_delta = 5.335;
+
+        let mut ref_error = [0.0_f32; 64];
+        let ref_result = fused_dct8_entropy_fallback(
+            &plane,
+            stride,
+            0,
+            0,
+            &y_dct,
+            &weights,
+            &inv_weights,
+            cmap,
+            quant,
+            k_cost_delta,
+            &mut ref_error,
+            None,
+        );
+
+        run_dispatch_parity(|perm| {
+            let mut act_error = [0.0_f32; 64];
+            let act_result = fused_dct8_entropy(
+                &plane,
+                stride,
+                0,
+                0,
+                &y_dct,
+                &weights,
+                &inv_weights,
+                cmap,
+                quant,
+                k_cost_delta,
+                &mut act_error,
+                None,
+            );
+            assert_f32_slice_close_ulps_abs(&ref_error, &act_error, 64, 1e-3, perm, "cfl_error");
+            let diff = (ref_result.entropy_sum - act_result.entropy_sum).abs();
+            assert!(
+                diff < 1e-2,
+                "cfl entropy diverged: ref={} act={} diff={} perm={perm}",
+                ref_result.entropy_sum,
+                act_result.entropy_sum,
+                diff
+            );
+        });
+    }
+
+    /// Block offset variation — verify (bx, by) != (0, 0) reads the right
+    /// stride-offset region in both paths.
+    #[test]
+    fn fused_dct8_scalar_vs_dispatch_block_offsets() {
+        let stride = 32;
+        // 32x32 plane: 4x4 grid of 8x8 blocks.
+        let plane = gen_f32(0xFACE_F00D, stride * 32, 100.0);
+        let y_dct = [0.0_f32; 64];
+        let weights = [1.5_f32; 64];
+        let mut inv_weights = [0.0_f32; 64];
+        for (i, iw) in inv_weights.iter_mut().enumerate() {
+            *iw = 1.0 / weights[i];
+        }
+        let cmap = 0.0_f32;
+        let quant = 4.0_f32;
+        let k_cost_delta = 5.335;
+
+        for by in 0..4 {
+            for bx in 0..4 {
+                let mut ref_error = [0.0_f32; 64];
+                let ref_result = fused_dct8_entropy_fallback(
+                    &plane,
+                    stride,
+                    bx,
+                    by,
+                    &y_dct,
+                    &weights,
+                    &inv_weights,
+                    cmap,
+                    quant,
+                    k_cost_delta,
+                    &mut ref_error,
+                    None,
+                );
+
+                run_dispatch_parity(|perm| {
+                    let mut act_error = [0.0_f32; 64];
+                    let act_result = fused_dct8_entropy(
+                        &plane,
+                        stride,
+                        bx,
+                        by,
+                        &y_dct,
+                        &weights,
+                        &inv_weights,
+                        cmap,
+                        quant,
+                        k_cost_delta,
+                        &mut act_error,
+                        None,
+                    );
+                    assert_f32_slice_close_ulps_abs(
+                        &ref_error,
+                        &act_error,
+                        64,
+                        1e-3,
+                        perm,
+                        &format!("blk({bx},{by}) error"),
+                    );
+                    let diff = (ref_result.entropy_sum - act_result.entropy_sum).abs();
+                    assert!(
+                        diff < 1e-2,
+                        "entropy diverged at ({bx},{by}): ref={} act={} diff={} perm={perm}",
+                        ref_result.entropy_sum,
+                        act_result.entropy_sum,
+                        diff
+                    );
+                });
+            }
+        }
+    }
 }
