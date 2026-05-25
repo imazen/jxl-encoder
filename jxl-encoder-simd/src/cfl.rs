@@ -346,6 +346,17 @@ pub fn find_best_multiplier_wasm128(
 /// W44-29..W44-172 downstream cost-model tuning; only flip `libjxl_parity`
 /// when running under `EncoderStrategy::Libjxl` where the rest of the
 /// pipeline is also strict-libjxl-parity.
+///
+/// **W44-AUDIT-5 Phase 2 (Mode C, NEW)**: when `libjxl_parity == false`
+/// AND `libjxl_math_with_ls_warm_start == true`, runs libjxl's Newton
+/// math (eps=100, max_iters=20) but starts from `x = ls_x` (warm-start)
+/// with the existing LS fallback on non-convergence. `libjxl_parity ==
+/// true` takes priority over this flag (the two are mutually-exclusive
+/// even though encoded as two booleans). Designed to recover cjxl-parity
+/// SSIM2 on screenshots (W44-AUDIT-5 Phase 1 codec_wiki e7 d=4 — Libjxl
+/// strategy was -5.51 SSIM2 vs cjxl) without sacrificing the
+/// W44-29..W44-172 photo cost-model wins that the LS-warm-start
+/// preserves.
 pub fn find_best_multiplier_newton(
     values_m: &[f32],
     values_s: &[f32],
@@ -355,6 +366,7 @@ pub fn find_best_multiplier_newton(
     eps: f32,
     max_iters: usize,
     libjxl_parity: bool,
+    libjxl_math_with_ls_warm_start: bool,
 ) -> i8 {
     #[cfg(target_arch = "x86_64")]
     {
@@ -370,6 +382,7 @@ pub fn find_best_multiplier_newton(
                 eps,
                 max_iters,
                 libjxl_parity,
+                libjxl_math_with_ls_warm_start,
             );
         }
     }
@@ -388,6 +401,7 @@ pub fn find_best_multiplier_newton(
                 eps,
                 max_iters,
                 libjxl_parity,
+                libjxl_math_with_ls_warm_start,
             );
         }
     }
@@ -401,6 +415,7 @@ pub fn find_best_multiplier_newton(
         eps,
         max_iters,
         libjxl_parity,
+        libjxl_math_with_ls_warm_start,
     )
 }
 
@@ -437,6 +452,7 @@ pub fn find_best_multiplier_newton_scalar(
     eps: f32,
     max_iters: usize,
     libjxl_parity: bool,
+    libjxl_math_with_ls_warm_start: bool,
 ) -> i8 {
     if num == 0 {
         return 0;
@@ -457,9 +473,16 @@ pub fn find_best_multiplier_newton_scalar(
     }
     let ls_x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
 
-    // W44-184: at libjxl_parity, override the loop parameters and start.
+    // W44-184 + W44-AUDIT-5 Phase 2: three modes.
+    //   * libjxl_parity=true: libjxl Newton math (eps=100, iters=20), x=0 start.
+    //   * libjxl_math_with_ls_warm_start=true (Mode C, NEW): libjxl Newton
+    //     math (eps=100, iters=20) but x=ls_x warm-start. `libjxl_parity`
+    //     takes priority.
+    //   * else: user eps/iters with ls_x warm-start (W44-183 default).
     let (eps, max_iters, mut x) = if libjxl_parity {
         (NEWTON_EPS_LIBJXL, NEWTON_MAX_ITERS_LIBJXL, 0.0_f32)
+    } else if libjxl_math_with_ls_warm_start {
+        (NEWTON_EPS_LIBJXL, NEWTON_MAX_ITERS_LIBJXL, ls_x)
     } else {
         (eps, max_iters, ls_x)
     };
@@ -549,6 +572,7 @@ pub fn find_best_multiplier_newton_avx2(
     eps: f32,
     max_iters: usize,
     libjxl_parity: bool,
+    libjxl_math_with_ls_warm_start: bool,
 ) -> i8 {
     use magetypes::simd::f32x8;
 
@@ -589,10 +613,11 @@ pub fn find_best_multiplier_newton_avx2(
     }
     let ls_x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
 
-    // W44-184: at libjxl_parity, override loop params + start (see
-    // scalar variant for the rationale + libjxl source ref).
+    // W44-184 + W44-AUDIT-5 Phase 2: see scalar variant for rationale.
     let (eps, max_iters, mut x) = if libjxl_parity {
         (NEWTON_EPS_LIBJXL, NEWTON_MAX_ITERS_LIBJXL, 0.0_f32)
+    } else if libjxl_math_with_ls_warm_start {
+        (NEWTON_EPS_LIBJXL, NEWTON_MAX_ITERS_LIBJXL, ls_x)
     } else {
         (eps, max_iters, ls_x)
     };
@@ -719,6 +744,7 @@ pub fn find_best_multiplier_newton_neon(
     eps: f32,
     max_iters: usize,
     libjxl_parity: bool,
+    libjxl_math_with_ls_warm_start: bool,
 ) -> i8 {
     use magetypes::simd::f32x4;
 
@@ -759,10 +785,11 @@ pub fn find_best_multiplier_newton_neon(
     }
     let ls_x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
 
-    // W44-184: at libjxl_parity, override loop params + start (see
-    // scalar variant for the rationale + libjxl source ref).
+    // W44-184 + W44-AUDIT-5 Phase 2: see scalar variant for rationale.
     let (eps, max_iters, mut x) = if libjxl_parity {
         (NEWTON_EPS_LIBJXL, NEWTON_MAX_ITERS_LIBJXL, 0.0_f32)
+    } else if libjxl_math_with_ls_warm_start {
+        (NEWTON_EPS_LIBJXL, NEWTON_MAX_ITERS_LIBJXL, ls_x)
     } else {
         (eps, max_iters, ls_x)
     };
@@ -936,12 +963,19 @@ mod tests {
                 NEWTON_EPS_DEFAULT,
                 NEWTON_MAX_ITERS_DEFAULT,
                 false,
+                false,
             ),
             0,
         );
         // W44-184: libjxl_parity also handles empty input safely.
         assert_eq!(
-            find_best_multiplier_newton(&[], &[], 0, 0.0, 1e-9, 0.0, 0, true),
+            find_best_multiplier_newton(&[], &[], 0, 0.0, 1e-9, 0.0, 0, true, false),
+            0,
+        );
+        // W44-AUDIT-5 Phase 2 Mode C: libjxl_math_with_ls_warm_start handles
+        // empty input safely too.
+        assert_eq!(
+            find_best_multiplier_newton(&[], &[], 0, 0.0, 1e-9, 0.0, 0, false, true),
             0,
         );
     }
@@ -957,17 +991,17 @@ mod tests {
         let iters = NEWTON_MAX_ITERS_DEFAULT;
 
         let ref0 = find_best_multiplier_newton_scalar(
-            &values_m, &values_s, num, 0.0, 1e-9, eps, iters, false,
+            &values_m, &values_s, num, 0.0, 1e-9, eps, iters, false, false,
         );
         let ref1 = find_best_multiplier_newton_scalar(
-            &values_m, &values_s, num, 1.0, 1e-9, eps, iters, false,
+            &values_m, &values_s, num, 1.0, 1e-9, eps, iters, false, false,
         );
 
         let report = archmage::testing::for_each_token_permutation(
             archmage::testing::CompileTimePolicy::Warn,
             |perm| {
                 let test0 = find_best_multiplier_newton(
-                    &values_m, &values_s, num, 0.0, 1e-9, eps, iters, false,
+                    &values_m, &values_s, num, 0.0, 1e-9, eps, iters, false, false,
                 );
                 assert_eq!(
                     ref0, test0,
@@ -975,7 +1009,7 @@ mod tests {
                 );
 
                 let test1 = find_best_multiplier_newton(
-                    &values_m, &values_s, num, 1.0, 1e-9, eps, iters, false,
+                    &values_m, &values_s, num, 1.0, 1e-9, eps, iters, false, false,
                 );
                 assert_eq!(
                     ref1, test1,
@@ -998,17 +1032,17 @@ mod tests {
             (0..num).map(|i| (i as f32 - 128.0) * 0.05 + 0.3).collect();
 
         let ref0 = find_best_multiplier_newton_scalar(
-            &values_m, &values_s, num, 0.0, 1e-9, 999.0, 99, true,
+            &values_m, &values_s, num, 0.0, 1e-9, 999.0, 99, true, false,
         );
         let ref1 = find_best_multiplier_newton_scalar(
-            &values_m, &values_s, num, 1.0, 1e-9, 999.0, 99, true,
+            &values_m, &values_s, num, 1.0, 1e-9, 999.0, 99, true, false,
         );
 
         let report = archmage::testing::for_each_token_permutation(
             archmage::testing::CompileTimePolicy::Warn,
             |perm| {
                 let test0 = find_best_multiplier_newton(
-                    &values_m, &values_s, num, 0.0, 1e-9, 999.0, 99, true,
+                    &values_m, &values_s, num, 0.0, 1e-9, 999.0, 99, true, false,
                 );
                 assert_eq!(
                     ref0, test0,
@@ -1016,7 +1050,7 @@ mod tests {
                 );
 
                 let test1 = find_best_multiplier_newton(
-                    &values_m, &values_s, num, 1.0, 1e-9, 999.0, 99, true,
+                    &values_m, &values_s, num, 1.0, 1e-9, 999.0, 99, true, false,
                 );
                 assert_eq!(
                     ref1, test1,
@@ -1038,14 +1072,103 @@ mod tests {
         let values_s: alloc::vec::Vec<f32> =
             (0..num).map(|i| (i as f32 - 128.0) * 0.05 + 0.3).collect();
 
-        let a =
-            find_best_multiplier_newton_scalar(&values_m, &values_s, num, 0.0, 1e-9, 1.0, 5, true);
+        let a = find_best_multiplier_newton_scalar(
+            &values_m, &values_s, num, 0.0, 1e-9, 1.0, 5, true, false,
+        );
         let b = find_best_multiplier_newton_scalar(
-            &values_m, &values_s, num, 0.0, 1e-9, 999.0, 999, true,
+            &values_m, &values_s, num, 0.0, 1e-9, 999.0, 999, true, false,
         );
         assert_eq!(
             a, b,
             "libjxl_parity must ignore eps/max_iters args (a={a} b={b})",
+        );
+    }
+
+    /// W44-AUDIT-5 Phase 2 Mode C: `libjxl_math_with_ls_warm_start=true`
+    /// must also ignore the supplied `eps` / `max_iters` arguments (they
+    /// get replaced with `NEWTON_EPS_LIBJXL` / `NEWTON_MAX_ITERS_LIBJXL`).
+    /// Mirrors `test_newton_libjxl_parity_ignores_args` for Mode C.
+    #[test]
+    fn test_newton_libjxl_math_with_ls_warm_start_ignores_args() {
+        let num = 256;
+        let values_m: alloc::vec::Vec<f32> = (0..num).map(|i| (i as f32 - 128.0) * 0.1).collect();
+        let values_s: alloc::vec::Vec<f32> =
+            (0..num).map(|i| (i as f32 - 128.0) * 0.05 + 0.3).collect();
+
+        let a = find_best_multiplier_newton_scalar(
+            &values_m, &values_s, num, 0.0, 1e-9, 1.0, 5, false, true,
+        );
+        let b = find_best_multiplier_newton_scalar(
+            &values_m, &values_s, num, 0.0, 1e-9, 999.0, 999, false, true,
+        );
+        assert_eq!(
+            a, b,
+            "libjxl_math_with_ls_warm_start must ignore eps/max_iters args (a={a} b={b})",
+        );
+    }
+
+    /// W44-AUDIT-5 Phase 2 Mode C: scalar vs dispatched SIMD agreement
+    /// on the `libjxl_math_with_ls_warm_start=true` path. Verifies all
+    /// three SIMD variants (scalar / AVX2 / NEON) consume the new bool
+    /// and produce the same i8 result given identical inputs.
+    #[test]
+    fn test_newton_libjxl_math_with_ls_warm_start_scalar_vs_dispatch() {
+        let num = 256;
+        let values_m: alloc::vec::Vec<f32> = (0..num).map(|i| (i as f32 - 128.0) * 0.1).collect();
+        let values_s: alloc::vec::Vec<f32> =
+            (0..num).map(|i| (i as f32 - 128.0) * 0.05 + 0.3).collect();
+
+        let ref0 = find_best_multiplier_newton_scalar(
+            &values_m, &values_s, num, 0.0, 1e-9, 999.0, 99, false, true,
+        );
+        let ref1 = find_best_multiplier_newton_scalar(
+            &values_m, &values_s, num, 1.0, 1e-9, 999.0, 99, false, true,
+        );
+
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let test0 = find_best_multiplier_newton(
+                    &values_m, &values_s, num, 0.0, 1e-9, 999.0, 99, false, true,
+                );
+                assert_eq!(
+                    ref0, test0,
+                    "newton ls-warm-start base=0.0: scalar={ref0} dispatch={test0} [{perm}]"
+                );
+
+                let test1 = find_best_multiplier_newton(
+                    &values_m, &values_s, num, 1.0, 1e-9, 999.0, 99, false, true,
+                );
+                assert_eq!(
+                    ref1, test1,
+                    "newton ls-warm-start base=1.0: scalar={ref1} dispatch={test1} [{perm}]"
+                );
+            },
+        );
+        std::eprintln!("{report}");
+    }
+
+    /// W44-AUDIT-5 Phase 2 Mode C: `libjxl_parity=true` takes priority
+    /// over `libjxl_math_with_ls_warm_start=true`. When both are set,
+    /// the result must equal the pure `libjxl_parity=true` result (x=0
+    /// start, no LS fallback).
+    #[test]
+    fn test_newton_libjxl_parity_takes_priority_over_mode_c() {
+        let num = 256;
+        let values_m: alloc::vec::Vec<f32> = (0..num).map(|i| (i as f32 - 128.0) * 0.1).collect();
+        let values_s: alloc::vec::Vec<f32> =
+            (0..num).map(|i| (i as f32 - 128.0) * 0.05 + 0.3).collect();
+
+        let pure_libjxl = find_best_multiplier_newton_scalar(
+            &values_m, &values_s, num, 0.0, 1e-9, 999.0, 99, true, false,
+        );
+        let both = find_best_multiplier_newton_scalar(
+            &values_m, &values_s, num, 0.0, 1e-9, 999.0, 99, true, true,
+        );
+        assert_eq!(
+            pure_libjxl, both,
+            "libjxl_parity must take priority over libjxl_math_with_ls_warm_start \
+             (pure={pure_libjxl} both={both})",
         );
     }
 
@@ -1059,7 +1182,8 @@ mod tests {
         let ls_result = find_best_multiplier(&m, &s, 64, 0.0, 1e-9);
         let eps = NEWTON_EPS_DEFAULT;
         let iters = NEWTON_MAX_ITERS_DEFAULT;
-        let newton_result = find_best_multiplier_newton(&m, &s, 64, 0.0, 1e-9, eps, iters, false);
+        let newton_result =
+            find_best_multiplier_newton(&m, &s, 64, 0.0, 1e-9, eps, iters, false, false);
 
         // Both should be in the right ballpark (Newton uses perceptual cost, not MSE)
         let expected = (factor - 2.6).round() as i8;

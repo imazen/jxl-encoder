@@ -4175,7 +4175,13 @@ impl VarDctEncoder {
         // See `docs/LIBJXL_DIVERGENCES.md` Section C and the W44-184 commit
         // memo for the Pass-2 half of the same `cfl_newton_libjxl_parity`
         // dispatch.
-        let pass1_use_newton = self.profile.cfl_newton && self.profile.cfl_newton_libjxl_parity;
+        // W44-AUDIT-5 Phase 2: Pass-1 fires Newton when EITHER `libjxl_parity`
+        // OR `libjxl_math_with_ls_warm_start` is on (and `cfl_newton` is set).
+        // The two are mutually-exclusive (libjxl_parity takes priority inside
+        // the SIMD kernel), but both engage Newton at the Pass-1 dispatch site.
+        let pass1_use_newton = self.profile.cfl_newton
+            && (self.profile.cfl_newton_libjxl_parity
+                || self.profile.cfl_newton_libjxl_math_with_ls_warm_start);
         let mut cfl_map = if self.cfl_enabled {
             compute_cfl_map(
                 &xyb_x,
@@ -4194,6 +4200,13 @@ impl VarDctEncoder {
                 // fallback). When false (Zenjxl default), Pass-1 runs LS
                 // and this bool is ignored.
                 self.profile.cfl_newton_libjxl_parity,
+                // W44-AUDIT-5 Phase 2 (Mode C): when `pass1_use_newton` is
+                // true AND `libjxl_parity` is false, this drives Pass-1
+                // Newton with libjxl math (eps=100, iters=20) starting
+                // from the LS warm-start. Closes the codec_wiki-class
+                // SSIM2 deficit on Zenjxl/Aggressive without sacrificing
+                // the W44-29..W44-172 photo cost-model wins.
+                self.profile.cfl_newton_libjxl_math_with_ls_warm_start,
             )
         } else {
             CflMap::zeros(
@@ -5019,6 +5032,15 @@ impl VarDctEncoder {
                 // eps/iters values supplied above. Ignored when
                 // `pass2_use_newton == false` (LS path doesn't read it).
                 self.profile.cfl_newton_libjxl_parity,
+                // W44-AUDIT-5 Phase 2 (Mode C): when this is `true` AND
+                // `libjxl_parity == false`, Pass-2 Newton runs libjxl
+                // math (eps=100, iters=20) starting from `ls_x`
+                // warm-start with LS fallback. Designed to close the
+                // codec_wiki SSIM2 deficit without regressing the
+                // photo cost-model. Ignored when `pass2_use_newton` is
+                // false (LS path doesn't read it) or when
+                // `libjxl_parity == true` (priority order inside SIMD).
+                self.profile.cfl_newton_libjxl_math_with_ls_warm_start,
             );
         }
 
@@ -6352,8 +6374,13 @@ impl VarDctEncoder {
         // Newton at e>=7 when `cfl_newton_libjxl_parity` is true (Libjxl
         // strategy), LS otherwise (Zenjxl / Aggressive / LeanFaster).
         // See the main Pass-1 docstring for the rationale + W44-189 D1.
-        let patched_pass1_use_newton =
-            self.profile.cfl_newton && self.profile.cfl_newton_libjxl_parity;
+        //
+        // W44-AUDIT-5 Phase 2 (Mode C): also engages Pass-1 Newton when
+        // `cfl_newton_libjxl_math_with_ls_warm_start` is true. The two
+        // are mutually-exclusive in the SIMD kernel (parity takes priority).
+        let patched_pass1_use_newton = self.profile.cfl_newton
+            && (self.profile.cfl_newton_libjxl_parity
+                || self.profile.cfl_newton_libjxl_math_with_ls_warm_start);
         let cfl_map_patched: Option<CflMap> = if patched_xyb.is_some() && self.cfl_enabled {
             Some(compute_cfl_map(
                 xyb_x_for_dct,
@@ -6370,6 +6397,9 @@ impl VarDctEncoder {
                 // path applies libjxl-bit-exact Newton parameters; ignored
                 // when LS is used.
                 self.profile.cfl_newton_libjxl_parity,
+                // W44-AUDIT-5 Phase 2 (Mode C): same propagation as the
+                // main Pass-1 site above.
+                self.profile.cfl_newton_libjxl_math_with_ls_warm_start,
             ))
         } else {
             None
