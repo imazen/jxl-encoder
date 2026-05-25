@@ -135,7 +135,19 @@ pub fn entropy_coeffs_scalar(
         let val_in = block_c[i];
         let val_y = block_y[i] * cmap_factor;
         let val = (val_in - val_y) * inv_weights[i] * quant;
-        let rval = crate::scalarmath::round_f32(val);
+        // W44-9ef2819 follow-on (SIMD-parity entropy-001): libjxl
+        // `enc_ac_strategy.cc::EstimateEntropy` uses Highway `Round` which
+        // is IEEE 754 round-to-nearest-ties-to-even. Rust's `f32::round`
+        // (and our `round_f32` helper) rounds ties AWAY from zero, biasing
+        // toward more non-zero rounded values and making downstream
+        // heuristics fire less consistently. The SIMD path on line 251
+        // uses `_mm256_round_ps(ROUND_TO_NEAREST_INT)` which IS ties-to-even
+        // — so before this fix scalar and SIMD diverged on the 0.5/-0.5 edge.
+        // The W44-9ef2819 sweep fixed 3 sites but missed this one;
+        // surfaced by the SIMD-vs-scalar parity infrastructure (eedc1877+
+        // fb871c83), entry `entropy-001` in
+        // docs/SIMD_PARITY_KNOWN_DIVERGENCES.md.
+        let rval = crate::scalarmath::round_ties_even_f32(val);
         let diff = val - rval;
 
         if pixel_domain {
@@ -1631,21 +1643,23 @@ mod expanded_coverage {
     /// entropy_estimate_coeffs across edge battery (n=64 representative block).
     /// Both pixel_domain modes (true/false).
     ///
-    /// IGNORED: real ROUNDING-MODE DIVERGENCE — `entropy_coeffs_scalar` uses
-    /// `scalarmath::round_f32` (= `f32::round()`, ties away from zero) while
-    /// SIMD `entropy_coeffs_impl` uses `f32x*::round()` which lowers to
-    /// `_mm512_roundscale_ps::<0x00>` (= round-to-nearest-EVEN on x86).
-    /// On half-integer inputs (e.g. exactly 0.5) the two paths quantize to
-    /// DIFFERENT integers, producing structurally different entropy sums.
-    /// See docs/SIMD_PARITY_KNOWN_DIVERGENCES.md row entropy-001.
+    /// Originally `#[ignore]`d as `entropy-001`: scalar used `f32::round`
+    /// (ties AWAY from zero) while SIMD uses `_mm256_round_ps ROUND_TO_NEAREST_INT`
+    /// (ties to even). Closed by switching scalar to `round_ties_even_f32`,
+    /// matching libjxl `enc_ac_strategy.cc::EstimateEntropy` which uses
+    /// Highway `Round` (IEEE 754 ties-to-even). W44-9ef2819 fixed 3 sites
+    /// and missed this one; the SIMD-parity harness (eedc1877+fb871c83)
+    /// caught it.
     #[test]
-    #[ignore = "FIXME(SIMD-parity): entropy-001 — entropy_coeffs_scalar uses \
-                round-ties-away-from-zero (f32::round) but SIMD uses \
-                round-ties-to-even (intrinsic). Halfway inputs (0.5) diverge \
-                by quantized integer. See docs/SIMD_PARITY_KNOWN_DIVERGENCES.md"]
     fn entropy_coeffs_scalar_vs_dispatch_edge_battery() {
         for case in f32_edge_battery(64) {
-            if case.data.is_empty() {
+            // Skip empty + `large_pos` (1e20 inputs): the 8-lane SIMD
+            // accumulator and the scalar 1-element accumulator produce
+            // sub-ULP-different f32 sums at e12 magnitude (~6e5 absolute
+            // diff at 3.3e12 sum). Mirrors the filter pattern in
+            // quantize-001/dct64/idct32 — documented as expected
+            // ordering noise on out-of-domain inputs.
+            if case.data.is_empty() || case.label.starts_with("large_pos") {
                 continue;
             }
             let block_c = case.data.clone();
