@@ -1,14 +1,29 @@
-//! cvvdp_track_baseline — populate butteraugli baseline rows of the cvvdp
-//! tracking benchmark.
+//! cvvdp_track_baseline — populate per-backend rows of the cvvdp tracking
+//! benchmark.
 //!
-//! Encodes every (image, distance, effort) cell with the existing
-//! default encoder (butteraugli CPU buttloop), decodes via jxl-oxide
-//! (linear sRGB f32), scores every available perceptual metric, and
-//! appends one row per cell to the tracking TSV.
+//! Encodes every (image, distance, effort) cell with the encoder
+//! configured for the chosen `--backend`, decodes via jxl-oxide (linear
+//! sRGB f32), scores every available perceptual metric, and appends one
+//! row per cell to the tracking TSV.
 //!
 //! See RFC `docs/RFC_CVVDP_FORK.md` §5 for methodology.
 //!
-//! Active metrics this pass:
+//! Backends:
+//! - `B` (default): butteraugli CPU buttloop encoder. Default Zenjxl
+//!   strategy with no extra opt-ins.
+//! - `B_GPU`: butteraugli buttloop, but the GPU butteraugli backend is
+//!   forced on via `LossyConfig::with_gpu_butteraugli(true)`.
+//! - `C_GPU`: cvvdp-driven buttloop. `with_cvvdp_loop(Some(true))`,
+//!   default CVVDP backend selector (GPU when both compiled).
+//! - `C_CPU`: cvvdp-driven buttloop pinned to the CPU backend via
+//!   `with_cvvdp_use_cpu(Some(true))`. Requires `cvvdp-loop-cpu`
+//!   feature; without it, `construct_backend` silently falls back per
+//!   Phase 5's documented dispatch chain.
+//!
+//! All backends use `EncoderStrategy::Zenjxl` (production default).
+//!
+//! Active metrics this pass (scored on the decoded output, INDEPENDENT
+//! of which backend drove the buttloop):
 //! - `score_butter_cpu`: `butteraugli::butteraugli_linear` on linear-f32
 //! - `score_butter_gpu`: `butteraugli_gpu::Butteraugli<CudaRuntime>::new_multires`
 //!   on sRGB-u8 (parity check; opt-out via `--no-gpu-butter`)
@@ -17,21 +32,21 @@
 //! - `score_ssim2`: `fast_ssim2::compute_ssimulacra2` on sRGB-u8
 //!
 //! Inactive (NA for this pass):
-//! - `score_cvvdp_cpu`: cvvdp-cpu port not yet shipped (Phase 5)
+//! - `score_cvvdp_cpu`: cvvdp-cpu metric scoring of decoded output not
+//!   yet wired in here. The CPU backend is exercised by `--backend C_CPU`
+//!   inside the buttloop, but the scoring scaffold still uses cvvdp-gpu.
 //!
-//! Backends ALL use `EncoderStrategy::Zenjxl` (production default).
-//! `backend=B` is the legacy butteraugli CPU buttloop encoder.
-//!
-//! Usage:
+//! Usage (Phase 6 sweep, run once per backend):
 //!
 //!     CUDA_PATH=/usr/local/cuda cargo run --release \
-//!       --features 'gpu-butteraugli butteraugli-loop ssim2-loop parallel' \
+//!       --features '__expert butteraugli-loop gpu-butteraugli cvvdp-loop cvvdp-loop-cpu ssim2-loop parallel' \
 //!       --example cvvdp_track_baseline -- \
-//!       --output benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv
+//!       --output benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv \
+//!       --backend B_GPU --commit <sha>
 //!
 //! Pass `--filter NAME` to limit to one image basename substring,
 //! `--max-cells N` to cap, `--no-gpu-butter` and `--no-cvvdp-gpu` to
-//! skip GPU paths when CUDA is unavailable / broken.
+//! skip GPU scoring paths when CUDA is unavailable / broken.
 
 use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
 use cubecl::Runtime;
@@ -58,6 +73,41 @@ const W44_S1_LOSSLESS: &[&str] = &["baby-lossless.png", "bulb-lossless.png"];
 
 const DISTANCES: &[f32] = &[0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0];
 const EFFORTS: &[u8] = &[5, 7, 8];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Backend {
+    /// Default Zenjxl + butteraugli CPU buttloop (Phase 4 baseline).
+    B,
+    /// Zenjxl + butteraugli buttloop with GPU butteraugli backend forced on.
+    BGpu,
+    /// Zenjxl + cvvdp buttloop, GPU CVVDP backend (default cvvdp selector).
+    CGpu,
+    /// Zenjxl + cvvdp buttloop, CPU CVVDP backend explicitly pinned.
+    CCpu,
+}
+
+impl Backend {
+    fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "B" => Ok(Backend::B),
+            "B_GPU" => Ok(Backend::BGpu),
+            "C_GPU" => Ok(Backend::CGpu),
+            "C_CPU" => Ok(Backend::CCpu),
+            other => Err(format!(
+                "unknown --backend {other}; expected one of B|B_GPU|C_GPU|C_CPU"
+            )),
+        }
+    }
+
+    fn as_tsv(&self) -> &'static str {
+        match self {
+            Backend::B => "B",
+            Backend::BGpu => "B_GPU",
+            Backend::CGpu => "C_GPU",
+            Backend::CCpu => "C_CPU",
+        }
+    }
+}
 
 #[derive(Clone)]
 struct SourceImage {
@@ -245,6 +295,7 @@ fn score_cell(
     h: u32,
     distance: f32,
     effort: u8,
+    backend: Backend,
     gpu: &mut GpuContext,
     want_gpu_butter: bool,
     want_cvvdp: bool,
@@ -252,8 +303,17 @@ fn score_cell(
     let mut cell = ScoredCell::default();
     let mut notes_parts: Vec<String> = Vec::new();
 
-    // Encode (best-of-3 wall median, full default zenjxl/butteraugli path)
+    // Encode (best-of-3 wall median, full Zenjxl path; backend selector
+    // toggles the buttloop perceptual backend).
     let cfg = LossyConfig::new(distance).with_effort(effort);
+    let cfg = match backend {
+        Backend::B => cfg,
+        Backend::BGpu => cfg.with_gpu_butteraugli(true),
+        Backend::CGpu => cfg.with_cvvdp_loop(Some(true)),
+        Backend::CCpu => cfg
+            .with_cvvdp_loop(Some(true))
+            .with_cvvdp_use_cpu(Some(true)),
+    };
 
     let mut wall_samples: Vec<f64> = Vec::with_capacity(3);
     let mut jxl_bytes: Option<Vec<u8>> = None;
@@ -394,6 +454,7 @@ struct Args {
     no_gpu_butter: bool,
     no_cvvdp_gpu: bool,
     encoder_commit: String,
+    backend: Backend,
 }
 
 fn parse_args() -> Args {
@@ -404,6 +465,7 @@ fn parse_args() -> Args {
     let mut no_gpu_butter = false;
     let mut no_cvvdp_gpu = false;
     let mut encoder_commit = ENCODER_COMMIT_SHA_DEFAULT.to_string();
+    let mut backend = Backend::B;
     let mut i = 1;
     while i < argv.len() {
         match argv[i].as_str() {
@@ -431,6 +493,13 @@ fn parse_args() -> Args {
                 encoder_commit = argv[i + 1].clone();
                 i += 2;
             }
+            "--backend" => {
+                backend = Backend::parse(&argv[i + 1]).unwrap_or_else(|e| {
+                    eprintln!("ERR: {e}");
+                    std::process::exit(2);
+                });
+                i += 2;
+            }
             other => {
                 eprintln!("Unknown arg: {other}");
                 std::process::exit(1);
@@ -444,6 +513,7 @@ fn parse_args() -> Args {
         no_gpu_butter,
         no_cvvdp_gpu,
         encoder_commit,
+        backend,
     }
 }
 
@@ -460,8 +530,11 @@ fn ensure_tsv_header(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn already_done(path: &Path) -> std::collections::HashSet<(String, u32, String)> {
-    // Key by (image, effort, distance) so resume skips populated rows.
+fn already_done(path: &Path, backend: Backend) -> std::collections::HashSet<(String, u32, String)> {
+    // Key by (image, effort, distance) within the CURRENT backend so
+    // resume skips populated rows for THIS sweep only. Each backend
+    // gets its own pass — they don't share cells in the TSV.
+    let want = backend.as_tsv();
     let mut out = std::collections::HashSet::new();
     let Ok(s) = std::fs::read_to_string(path) else {
         return out;
@@ -474,8 +547,8 @@ fn already_done(path: &Path) -> std::collections::HashSet<(String, u32, String)>
         let image = fields[0].to_string();
         let effort: u32 = fields[2].parse().unwrap_or(0);
         let distance = fields[3].to_string();
-        let backend = fields[4];
-        if backend == "B" {
+        let row_backend = fields[4];
+        if row_backend == want {
             out.insert((image, effort, distance));
         }
     }
@@ -505,10 +578,11 @@ fn main() {
         .unwrap_or_default();
 
     eprintln!(
-        "[cvvdp_track_baseline] host={} started={} commit={} output={}",
+        "[cvvdp_track_baseline] host={} started={} commit={} backend={} output={}",
         host,
         started,
         args.encoder_commit,
+        args.backend.as_tsv(),
         args.output.display()
     );
 
@@ -516,10 +590,11 @@ fn main() {
         std::fs::create_dir_all(p).ok();
     }
     ensure_tsv_header(&args.output).expect("write tsv header");
-    let done = already_done(&args.output);
+    let done = already_done(&args.output, args.backend);
     eprintln!(
-        "[cvvdp_track_baseline] {} cells already in TSV — will skip",
-        done.len()
+        "[cvvdp_track_baseline] {} cells already in TSV for backend={} — will skip",
+        done.len(),
+        args.backend.as_tsv()
     );
 
     let mut gpu = GpuContext::new();
@@ -584,6 +659,7 @@ fn main() {
                         h,
                         distance,
                         effort,
+                        args.backend,
                         &mut gpu,
                         want_gpu_butter,
                         want_cvvdp,
@@ -626,11 +702,12 @@ fn main() {
                     .expect("open tsv for append");
                 writeln!(
                     f,
-                    "{}\t{}\t{}\t{}\tB\t{}\t{:.3}\t{}\t{}\t{}\tNA\t{}\t{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\tNA\t{}\t{}",
                     src.name,
                     src.corpus,
                     effort,
                     dist_str,
+                    args.backend.as_tsv(),
                     bytes,
                     wall_ms,
                     fmt_f32(s_bcpu),
