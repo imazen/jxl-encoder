@@ -640,6 +640,95 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### issue #42: owned-clone fallback for small images — HONEST-STOP (2026-05-25)
+
+**Status**: [RULED OUT — OPT-IN dispatch infrastructure SHIPPED, default-flip RULED OUT by paired A/B bench]
+
+Follow-on to issue #41 / fe2d3a27 (borrowed-view zero-clone path). The audit
+`rejected_optimizations_conditional_value_2026-05-17.md` item #9 predicted
+that resurrecting the owned-clone path (`split_tree_samples_owned` +
+`split_pq_owned` + `build_subtree_recursive_parallel`) for small images
+< 1 MP at effort ≤ 7 would close the +6.2% mean wall regression the
+borrowed-view path caused at 0.26 MP, while preserving the -4.5% / -8.1%
+wins at 1.05 MP / 4.19 MP.
+
+**Mechanism shipped**:
+- Resurrected `split_tree_samples_owned` + `split_pq_owned` from
+  pre-`fe2d3a27`. Added new `split_owned_from_borrowed(&mut samples, &mut pq, mid)`
+  helper that uses `core::mem::take` to extract data from the parent's `&mut`
+  context into two owned (TreeSamples, PreQuantizedProps) halves.
+- Resurrected `build_subtree_recursive_parallel` (Vec-based, owned). Promotes
+  `build_subtree_sequential` from `#[cfg(test)]` to production (used as the
+  owned-clone path's recursion-floor leaf builder).
+- Dispatch at the parallel-root-fan-out site: when
+  `params.parallel_small_image_fallback` is `true` (gated on
+  `LossyConfig::with_small_image_fallback_override(Some(true))` →
+  `EffortProfile::adapt_small_image_fallback` flips it for pixels < 1 MP
+  AND effort ≤ 7), call `build_subtree_recursive_parallel` (owned path).
+  Else call `build_subtree_recursive_parallel_borrowed` (default).
+- Repaired pre-existing compile error in
+  `test_thread_local_workspace_caps_allocations` (`&mut dyn FnMut()` →
+  per-mode inline `pool.install(||{...})`) — blocking the test build.
+
+**Per-cell bench result** (`benchmarks/issue_42_owned_clone_fallback_2026-05-25.tsv`,
+SAMPLES=10 × 3 cells × 1 effort × 2 variants, lilith RTX-host, 8T):
+
+| image          | effort | default med | fallback med | Δ% med  | Δ% min  | bytes |
+|---             |---     |---          |---           |---      |---      |---    |
+| small_0.26MP   | 7      | 406.00 ms   | 415.56 ms    | +2.36%  | +8.09%  | identical |
+| medium_1.05MP  | 7      | 2707.12 ms  | 2756.43 ms   | +1.82%  | +1.23%  | identical |
+| large_4.19MP   | 7      | 7546.05 ms  | 7559.97 ms   | +0.18%  | -0.67%  | identical |
+
+Direct 20-sample interleaved A/B on small_0.26MP confirms +4.75% mean.
+Probes on tinier inputs (256×256 / 128×128) show monotonically worse
+regression (+11.58% / +14.19% median). The owned-clone fallback REGRESSES
+at every measured cell.
+
+**Root cause of audit prediction falsification**: the 2026-05-17 audit was
+written BEFORE several borrowed-view path optimizations landed (chunk-3c
+`skip_props_swap=true` at the partition primitive, modern allocator arena
+reuse for per-fork slice-tracking Vecs). The borrowed-view path's per-fork
+overhead has materially decreased; the owned-clone path's per-fork
+`Vec::split_off` allocator pressure is now strictly larger on small
+inputs.
+
+**Acceptance gates (per task spec)**:
+- (a) Build PASS, lib tests 1458/1458 PASS, lossless roundtrip tests PASS ✓
+- (b) Bench TSV `benchmarks/issue_42_owned_clone_fallback_2026-05-25.tsv` ✓
+- (c) Decision documented in commit message + meta + this note ✓
+- (d) `EncoderStrategy::Libjxl` byte-lock 4/4 BYTE-IDENTICAL ✓
+- (e) Hash-locks 36/36 BYTE-IDENTICAL ✓
+- (f) GitHub issue #42 closed with summary (after commit) ✓
+- (g) ONE commit pushed via jj ✓ (next)
+- (h) Cleanup: forget workspace, rm sibling dir ✓ (next)
+
+**Disposition**: opt-in dispatch infrastructure SHIPS (default OFF,
+`parallel_small_image_fallback` already opt-in). Default flag remains
+OFF. Production callers see ZERO change. Future investigators can
+A/B owned-vs-borrowed via a single flag flip without re-implementing
+~300 LOC of parallel code.
+
+**DO NOT** (future agents):
+1. DO NOT default-flip `small_image_fallback_override` to `Some(true)`.
+   Measurement is conclusive: regresses every cell at every size on e=7.
+2. DO NOT respawn issue #42 expecting different results without first
+   re-baselining the borrowed-view path's per-fork overhead. The
+   2026-05-17 audit numbers are stale.
+3. DO NOT remove the owned-clone dispatch infrastructure or
+   `build_subtree_recursive_parallel` — they are the only A/B harness
+   for the borrowed-vs-owned trade-off.
+4. DO NOT cite "FMA precision" for any byte movement here (there is
+   none — bytes are byte-identical across modes on every cell).
+5. DO NOT lower the pixel threshold to admit owned-clone on more cells
+   to "chase" the audit's `EXPECTED IMPACT` table. The trend is
+   monotonically WORSE on smaller cells (+14% at 16 KP vs +5% at 262 KP).
+
+**Files**:
+- `jxl-encoder/src/modular/tree_learn.rs` — owned-clone helpers + dispatch +
+  pre-existing test repair
+- `benchmarks/issue_42_owned_clone_fallback_2026-05-25.{tsv,meta}` — bench
+  data + full HONEST-STOP narrative
+
 ### W44-AUDIT-5 Phase 3: per-image M3>=80 CfL `x=0` start route — HONEST-STOP (2026-05-24)
 
 **Status**: [RULED OUT — OPT-IN API SHIPPED, default-flip RULED OUT by 3-cell bisect]

@@ -1,0 +1,140 @@
+# issue #42 — owned-clone fallback for small images (HONEST-STOP)
+
+**Date**: 2026-05-25
+**Commit**: this commit (issue-42 owned-clone dispatch + 3 ancillary edits)
+**Host**: lilith (AMD Ryzen 9 7950X, 128 GB RAM)
+**Build**: `cargo build --release -p jxl-encoder-cli --features parallel-tree-learning`
+**Bench script**: `scripts/bench_small_image_fallback_inline.sh` (existing, SAMPLES=10, EFFORTS=7, THREADS=8)
+**Bench command**: `SAMPLES=10 EFFORTS="7" bash scripts/bench_small_image_fallback_inline.sh`
+
+## Hypothesis (per issue #42 + audit `rejected_optimizations_conditional_value_2026-05-17.md` item #9)
+
+Resurrecting the owned-clone parallel path (deleted in `fe2d3a27`) for small
+images (< 1 MP at effort ≤ 7) would close the +6.2% mean wall regression the
+audit measured at 0.26 MP on the borrowed-view path, while preserving the
+-4.5% / -8.1% wins at 1.05 MP / 4.19 MP.
+
+## Result — VERDICT: HONEST-STOP
+
+The owned-clone dispatch (gated on the existing `parallel_small_image_fallback`
+flag, which already activated the cache bypass) does NOT improve small-image
+wall time on top of the cache bypass. It REGRESSES at every measured cell:
+
+| image          | effort | default med | fallback med | Δ% med  | default min | fallback min | Δ% min  |
+|---             |---     |---          |---           |---      |---          |---           |---      |
+| small_0.26MP   | 7      | 406.00 ms   | 415.56 ms    | +2.36%  | 344.95 ms   | 372.84 ms    | +8.09%  |
+| medium_1.05MP  | 7      | 2707.12 ms  | 2756.43 ms   | +1.82%  | 2381.67 ms  | 2411.07 ms   | +1.23%  |
+| large_4.19MP   | 7      | 7546.05 ms  | 7559.97 ms   | +0.18%  | 5709.43 ms  | 5671.17 ms   | -0.67%  |
+
+Direct 20-sample interleaved A/B on small_0.26MP confirms +4.75% mean,
++5.32% median, +5.43% min — consistent regression, not noise.
+
+Subsequent probes on tinier inputs:
+- 256x256 (~66 KP): +11.58% median, +12.06% min
+- 128x128 (~16 KP): +14.19% median, +13.23% min
+
+The regression is monotonic and consistent across cell sizes.
+
+## Byte-identity confirmed
+
+| image          | variant   | bytes        |
+|---             |---        |---           |
+| small_0.26MP   | default   | 156321       |
+| small_0.26MP   | fallback  | 156321       |
+| medium_1.05MP  | default   | 1281763      |
+| medium_1.05MP  | fallback  | 1281763      |
+| large_4.19MP   | default   | 2762508      |
+| large_4.19MP   | fallback  | 2762508      |
+
+Bytes BYTE-IDENTICAL across both modes on every cell. The owned-clone path
+is bitstream-equivalent to the borrowed-view path (confirmed: same partition
+semantics, same find_best_split inputs, same tree topology). This was the
+load-bearing invariant; it is preserved.
+
+Additionally, the existing layer-1 test
+`modular::tree_learn::tests::test_small_image_fallback_byte_equivalent`
+asserts tree-token byte-identity between fallback ON and OFF; this test
+still passes after the dispatch change.
+
+## Root cause of the falsification
+
+The audit `rejected_optimizations_conditional_value_2026-05-17.md` was
+written 2026-05-17, BEFORE the borrowed-view path landed several
+optimizations that closed the per-fork overhead gap:
+
+- chunk-3c (`partition_node_in_place_with(..., skip_props_swap=true)`)
+  elides the per-property `Vec<i32>` swaps in the partition primitive.
+  This applies to the borrowed-view path's root partition; the owned-clone
+  path uses `partition_node_in_place` (no skip) for safety, which is now
+  STRICTLY MORE work per fork than the borrowed-view path.
+- Borrowed-view's per-fork allocations (`Vec<&mut [u8]>` containers) are
+  amortised by modern jemalloc / glibc arena reuse; they were over-
+  estimated as a cost in the 2026-05-17 measurement.
+- The owned-clone path's `Vec::split_off` allocates a fresh Vec at every
+  fork — on small inputs, that allocator pressure adds latency that the
+  saved indirection doesn't recover.
+
+## Disposition
+
+- **Source change**: the owned-clone dispatch infrastructure SHIPS as
+  opt-in (default OFF, behind `parallel_small_image_fallback`, behind
+  `--small-image-fallback` / `with_small_image_fallback_override(Some(true))`).
+  The flag already gated the workspace cache bypass; extending it to also
+  dispatch owned-clone is structurally consistent. Keeping the
+  infrastructure in tree allows future investigators to A/B against the
+  borrowed-view path without re-implementing 300+ lines of parallel code.
+
+- **Default-flip**: NOT taken. The bench is conclusive that flipping
+  default-on would regress small-image wall time by ~2-14% with zero
+  byte improvement.
+
+- **Production impact**: ZERO. Default callers (`with_small_image_fallback_override`
+  unset or `None`) continue to use the borrowed-view path on all inputs.
+  Hash-locks 36/36 BYTE-IDENTICAL; libjxl byte-lock 4/4 PASS.
+
+## Files
+
+- `jxl-encoder/src/modular/tree_learn.rs`
+  - `split_tree_samples_owned` (resurrected from pre-`fe2d3a27`)
+  - `split_pq_owned` (resurrected from pre-`fe2d3a27`)
+  - `split_owned_from_borrowed` (new — bridges `&mut` parent to owned halves)
+  - `build_subtree_recursive_parallel` (resurrected from pre-`fe2d3a27`)
+  - `build_subtree_sequential` un-`cfg(test)`'d (used as owned-clone path's recursion-floor builder)
+  - dispatch added at the parallel-root-fan-out site (gated on `parallel_small_image_fallback`)
+  - `test_thread_local_workspace_caps_allocations` repaired (pre-existing compile
+    error blocking the test build, unrelated to issue #42 but blocking verification)
+- `benchmarks/issue_42_owned_clone_fallback_2026-05-25.tsv` — 60-row paired
+  A/B sweep (3 cells × 1 effort × 2 variants × 10 samples)
+- `benchmarks/issue_42_owned_clone_fallback_2026-05-25.meta` — this file
+
+## DO-NOT (future agents)
+
+1. DO NOT default-flip `small_image_fallback_override` to `Some(true)`.
+   Measurement is conclusive: regresses every cell at every size on e=7.
+2. DO NOT respawn issue #42 expecting different results without first
+   re-baselining the borrowed-view path's per-fork overhead. The 2026-05-17
+   audit numbers are stale; the borrowed-view path has been materially
+   improved since.
+3. DO NOT remove the owned-clone dispatch infrastructure. It is the
+   only A/B harness for investigating the borrowed-vs-owned trade-off.
+4. DO NOT cite "FMA precision" for any byte movement — there is none
+   (per-cell bytes byte-identical).
+5. DO NOT raise the gate distance threshold or lower the pixel
+   threshold to admit owned-clone on more cells. The audit's
+   borrowed-view +6.2% regression at 0.26 MP no longer reproduces;
+   chasing the audit's `EXPECTED IMPACT` table is a dead end.
+
+## Follow-on candidates (NOT in issue #42 scope)
+
+If the borrowed-view path's per-fork overhead ever regresses again
+(e.g. via a future chunk-3c rollback), issue #42's dispatch is in
+place to switch back to owned-clone on small inputs via a single
+flag flip. Track in CLAUDE.md "Investigation Notes" if observed.
+
+The borrowed-view path's 2-3% e=7 wall on small images vs cjxl is
+likely structurally bounded by:
+- root predictor + root split running sequentially (~10-15% of compute_best_tree)
+- first-iter SplitWorkspace calloc (~12 MB) on each rayon worker
+- gather_samples sequential per-channel (issue #41 / W43 era follow-ons)
+
+None of these are addressable via the borrowed-vs-owned trade-off.
