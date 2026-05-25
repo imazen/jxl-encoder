@@ -1,0 +1,7 @@
+strategy	channel	use_newton	libjxl_parity	libjxl_math_ls_warm	eps	max_iters	variant	call_count	cmap_count_zero	cmap_count_nonzero	cmap_min	cmap_max	output_bytes
+libjxl	X	true	true	false	1	10	Newton-libjxl-parity	512	153	359	-17	17	34414
+libjxl	B	true	true	false	1	10	Newton-libjxl-parity	512	225	287	-48	21	34414
+zenjxl	X	false	false	false	1	10	LS	256	225	31	-3	3	32489
+zenjxl	X	true	false	false	1	10	Newton-default	256	229	27	-6	4	32489
+zenjxl	B	false	false	false	1	10	LS	256	61	195	-50	16	32489
+zenjxl	B	true	false	false	1	10	Newton-default	256	68	188	-66	15	32489

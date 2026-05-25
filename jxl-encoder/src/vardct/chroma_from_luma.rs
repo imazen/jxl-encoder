@@ -266,6 +266,57 @@ fn find_best_multiplier(
     newton_libjxl_parity: bool,
     newton_libjxl_math_with_ls_warm_start: bool,
 ) -> i8 {
+    // SA-G Fix A diagnostic (sibling-workspace local, NOT for production).
+    // Env-gated dump of every find_best_multiplier dispatch. Prints to
+    // stderr when JXL_SA_G_FIX_A_DUMP_NEWTON_PARAMS is set. Used to
+    // confirm whether `newton_libjxl_parity` reaches the SIMD kernel on
+    // EncoderStrategy::Libjxl. Identifies which Pass + channel + Newton
+    // variant fires by encoding `base` (0.0 = X channel, 1.0 = B channel).
+    #[cfg(feature = "std")]
+    {
+        if std::env::var_os("JXL_SA_G_FIX_A_DUMP_NEWTON_PARAMS").is_some() {
+            let channel = if base == 0.0 { 'X' } else { 'B' };
+            let variant = if !use_newton {
+                "LS"
+            } else if newton_libjxl_parity {
+                "Newton-libjxl-parity"
+            } else if newton_libjxl_math_with_ls_warm_start {
+                "Newton-libjxl-math-LS-warmstart"
+            } else {
+                "Newton-default"
+            };
+            let result = if use_newton {
+                jxl_simd::cfl_find_best_multiplier_newton(
+                    values_m,
+                    values_s,
+                    num,
+                    base,
+                    distance_mul,
+                    newton_eps,
+                    newton_max_iters,
+                    newton_libjxl_parity,
+                    newton_libjxl_math_with_ls_warm_start,
+                )
+            } else {
+                jxl_simd::cfl_find_best_multiplier(values_m, values_s, num, base, distance_mul)
+            };
+            eprintln!(
+                "SA-G-FIX-A channel={} num={} base={:.1} use_newton={} libjxl_parity={} libjxl_math_ls_warm={} eps={} iters={} variant={} cmap_i8={}",
+                channel,
+                num,
+                base,
+                use_newton,
+                newton_libjxl_parity,
+                newton_libjxl_math_with_ls_warm_start,
+                newton_eps,
+                newton_max_iters,
+                variant,
+                result
+            );
+            return result;
+        }
+    }
+
     if use_newton {
         jxl_simd::cfl_find_best_multiplier_newton(
             values_m,
