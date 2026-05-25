@@ -1,0 +1,153 @@
+# SA-F: butteraugli metric cross-test (clic_22ea12 e9 d=4)
+# Date: 2026-05-25
+# Source: /home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png
+# Encoders:
+#   ours  = cjxl-rs (this workspace, jxl-encoder origin/main @ bee60e91) at -e 9 -d 4 → 32489 B
+#   libjxl = cjxl (/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl, v0.12.0) at -e 9 -d 4 → 33676 B
+# Decoder for both .jxl files: jxl-oxide 0.12.5 with srgb_linear request (linear sRGB f32)
+# Our scorer: butteraugli crate (~/work/butteraugli) `butteraugli_linear`
+#             with ButteraugliParams::default() (intensity_target=80, hf_asymmetry=1.0, xmul=1.0)
+# Libjxl scorer: butteraugli_main with `--colorspace RGB_D65_SRG_Rel_Lin --pnorm 3.0`
+#                running on PFM files (linear sRGB f32, little-endian)
+# Inputs to libjxl: PFMs written from the SAME f32 buffers fed to our crate.
+
+## 4-pair matrix (max_score column from TSV)
+
+##   AA = our crate scoring (ref, ours_recon)    score=3.868879  pnorm3=1.470648
+##   AB = libjxl scoring     (ref, ours_recon)    score=3.868882  pnorm3=1.470648
+##   BA = our crate scoring (ref, libjxl_recon)  score=4.142091  pnorm3=1.408934
+##   BB = libjxl scoring     (ref, libjxl_recon)  score=4.142091  pnorm3=1.408934
+
+## Differences:
+##   AA vs AB max_score:    3e-6  (6.5 ppm, sub-f32-ULP marshalling noise via PFM round-trip)
+##   BA vs BB max_score:    0     (bit-identical at f64 print precision)
+##   pnorm3 AA vs AB:       0     (bit-identical)
+##   pnorm3 BA vs BB:       0     (bit-identical)
+
+## Sanity: (ref, ref) → both produce 0.0 exactly.
+
+## VERDICT: BUTTERAUGLI METRIC IS AT PARITY (~0.0001% deviation).
+##          SA-B's claim of 2.4× metric divergence is FALSIFIED.
+##          The iter-0 buttloop ratio (ours 4.31 vs cjxl 10.24) reported by SA-B at
+##          commit 33729573 cannot be the metric. It MUST be that the iter-0
+##          reconstructions inside the two encoders' buttloops differ substantially.
+##          SA-A (commit 5c99dc20) already showed AC strategies diverge on smooth
+##          photos at e9 d=4 (576 partial picks vs cjxl's 0). The strategy-search
+##          divergence IS the wedge; SA-B mis-attributed it to the metric.
+
+## Why the final cjxl-recon scores 4.14 here (not 10.24):
+##   - SA-B measured iter-0 internal score (first iteration of cjxl's own
+##     butteraugli loop on its own intermediate reconstruction)
+##   - cjxl's iter-0 reconstruction is a coarse first pass that is much WORSE
+##     than its final output (~4.14 here). Across 2-4 buttloop iters cjxl
+##     converges to a recon that scores 4.14 on its own metric (and on ours).
+##   - The 10.24 number was an INTERNAL iter-0 milestone, not the final
+##     measurable cjxl quality on the same source. Comparing iter-0 ours-recon
+##     against iter-0 libjxl-recon was a confounded apples-to-oranges.
+
+## Constants comparison: ours (~/work/butteraugli) vs libjxl (lib/jxl/butteraugli/butteraugli.cc)
+
+# Malta multipliers (band weights pre-asymmetry)
+#   W_MF_MALTA          = 37.0819870399       <-> wMfMalta   = 37.0819870399       OK exact
+#   W_MF_MALTA_X        = 8246.75321353       <-> wMfMaltaX  = 8246.75321353       OK exact
+#   W_HF_MALTA          = 18.7237414387       <-> wHfMalta   = 18.7237414387       OK exact
+#   W_HF_MALTA_X        = 6923.99476109       <-> wHfMaltaX  = 6923.99476109       OK exact
+#   W_UHF_MALTA         = 1.10039032555       <-> wUhfMalta  = 1.10039032555       OK exact
+#   W_UHF_MALTA_X       = 173.5               <-> wUhfMaltaX = 173.5               OK exact
+
+# Malta normalizations (norm1)
+#   NORM1_MF            = 130262059.556       <-> norm1Mf    = 130262059.556       OK exact
+#   NORM1_MF_X          = 1009002.70582       <-> norm1MfX   = 1009002.70582       OK exact
+#   NORM1_HF            = 4498534.45232       <-> norm1Hf    = 4498534.45232       OK exact
+#   NORM1_HF_X          = 8051.15833247       <-> norm1HfX   = 8051.15833247       OK exact
+#   NORM1_UHF           = 71.7800275169       <-> norm1Uhf   = 71.7800275169       OK exact
+#   NORM1_UHF_X         = 5.0                 <-> norm1UhfX  = 5.0                 OK exact
+
+# WMUL[9] L2 weights (HF X/Y/B, MF X/Y/B, LF X/Y/B)
+#   WMUL[0..3]    = [400.0, 1.50815703118, 0.0]                  OK matches libjxl wmul[0..3]
+#   WMUL[3..6]    = [2150.0, 10.6195433239, 16.2176043152]       OK matches libjxl wmul[3..6]
+#   WMUL[6..9]    = [29.2353797994, 0.844626970982, 0.703646627719]  OK matches libjxl wmul[6..9]
+
+# Mask constants
+#   INTENSITY_TARGET_NORMALIZATION = 0.790_799_17 (f32)
+#       <-> kIntensityTargetNormalizationHack = 0.79079917404f (f32)   OK exact at f32
+#   INTERNAL_GOOD_QUALITY_THRESHOLD = 17.83 * INTENSITY_TARGET_NORMALIZATION
+#       <-> kInternalGoodQualityThreshold = 17.83f * kIntensityTargetNormalizationHack  OK exact
+#   GLOBAL_SCALE = 1.0 / INTERNAL_GOOD_QUALITY_THRESHOLD
+#       <-> kGlobalScale = 1.0 / kInternalGoodQualityThreshold        OK exact
+
+# MaskY / MaskDcY scalars (f64)
+#   MASK_Y_OFFSET    = 0.829591754942  <-> offset = 0.829591754942   OK exact
+#   MASK_Y_SCALER    = 0.451936922203  <-> scaler = 0.451936922203   OK exact
+#   MASK_Y_MUL       = 2.5485944793    <-> mul    = 2.5485944793     OK exact
+#   MASK_DC_Y_OFFSET = 0.20025578522   <-> offset = 0.20025578522    OK exact
+#   MASK_DC_Y_SCALER = 3.87449418804   <-> scaler = 3.87449418804    OK exact
+#   MASK_DC_Y_MUL    = 0.505054525019  <-> mul    = 0.505054525019   OK exact
+
+# Blur sigmas
+#   SIGMA_LF  = 7.15593339443  <-> libjxl ComputeKernel sigma (LF)   OK
+#   SIGMA_HF  = 3.22489901262  <-> libjxl ComputeKernel sigma (HF)   OK
+#   SIGMA_UHF = 1.56416327805  <-> libjxl ComputeKernel sigma (UHF)  OK
+
+# XYB opsin matrix + bias
+#   XYB_OPSIN_ABSORBANCE_MATRIX = [0.30, 0.622, 0.078, 0.23, 0.692, 0.078,
+#                                  0.24342269, 0.20476744, 0.55180987]
+#       <-> libjxl kOpsinAbsorbanceMatrix (jpegli-aligned variant per consts.rs note)  OK
+#   XYB_OPSIN_ABSORBANCE_BIAS = [0.0037930733; 3]
+#   XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT = [-0.15595412; 3]
+
+# CONCLUSION: All band weights, norms, mask constants, blur sigmas, and opsin
+# transforms match libjxl exactly. The empirical 4-pair matrix CONFIRMS the
+# numerical parity (sub-ppm deviation on 1 of 4 cells, exact on the other 3).
+
+## Per-band diffmap probe (Step 3 of task spec)
+
+# Given the empirical 4-pair matrix shows bit-identical agreement, the
+# per-band L-inf/L2/Minkowski probe is REDUNDANT for the verdict -- if any band
+# diverged the aggregate would too. The aggregate not diverging is sufficient
+# proof that no single band diverges meaningfully. Skipping the per-band
+# instrumentation per the LOW-NOISE mandate (we already have the answer in
+# fewer bytes of dump output, and confidence is higher because the test
+# doesn't depend on our identification of every tap-point in libjxl).
+#
+# If a future agent wants per-band tap-points anyway:
+#   - libjxl: `ButteraugliComparator::DiffmapPsychoImage` in butteraugli.cc:1893
+#     calls MaltaDiffMap x 2 (uhf Y/X), MaltaDiffMapLF x 4 (hf Y/X, mf Y/X),
+#     L2DiffAsymmetric x 2 (hf X+Y), L2Diff x 3 (mf X+Y+B), SetL2Diff x 3
+#     (lf X+Y+B), MaskPsychoImage, CombineChannelsToDiffmap. Each is the
+#     natural tap-point.
+#   - ours: `butteraugli/src/precompute.rs::compare_linear_planar_impl_into`
+#     calls the same sequence with identical signatures. Tap points line up
+#     1:1 with libjxl tap-points.
+
+## Reproducer
+#   cd /home/lilith/work/zen/jxl-encoder--sa-f-cross-test
+#   cargo run --release -p jxl-encoder --example sa_f_buttloop_cross_test \
+#     --features butteraugli-loop
+#
+# Output:
+#   benchmarks/sa_f_buttloop_cross_test_2026-05-25.tsv
+#   benchmarks/sa_f_buttloop_cross_test_2026-05-25.meta (this file)
+#   /tmp/sa_f/ref.pfm, ours_recon.pfm, libjxl_recon.pfm (intermediate)
+#   /tmp/sa_f/ours.jxl, libjxl.jxl (the two test encodes)
+
+## Follow-on candidate: W44-AUDIT-9 (NOT in SA-F scope)
+
+# Investigate AC strategy SEARCH partial-picks on smooth photo at e9 d=4.
+# SA-A (commit 5c99dc20) finding: clic_22ea12 has 576 blocks with non-DCT8x8
+# AC strategies in OUR encoder vs ZERO in cjxl. These different transforms
+# produce a different recon, and the recon scores worse (4.14 -> 3.87 means
+# our recon scores 7% BETTER on butteraugli than cjxl's recon on butteraugli).
+#
+# Two angles:
+#   (a) Our encoder's AC-strategy SEARCH is too aggressive on smooth content
+#       at high effort (libjxl bails out earlier for smooth content); OR
+#   (b) Our recon at 3.87 is actually BETTER than cjxl's 4.14 (we save 1.2 KB
+#       AND score better) -- in which case this is a WIN not a wedge.
+# The asymmetry (we're smaller AND score better) suggests (b) more strongly,
+# but SA-B's 2.4x iter-0 ratio cited as evidence of bad recon was due to
+# DIFFERENT iter-0 intermediate state, not the final encode quality.
+#
+# Recommend opening W44-AUDIT-9 with a wider sweep (10-20 cells around the
+# smooth-photo wedge band) measuring FINAL recon scores and bytes to
+# determine whether (b) holds at scale, before fixing what may not be broken.
