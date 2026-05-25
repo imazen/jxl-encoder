@@ -1,0 +1,263 @@
+SA-G Fix A — diagnostic plumbing audit of cfl_newton_libjxl_parity
+==================================================================
+
+Date: 2026-05-25
+Sibling jj workspace: ~/work/zen/jxl-encoder--sa-g-fix-a
+Parent commit: 29de0e44 style(clippy): fix 5 nitpicks in W44-AUDIT-5/6/176 env-var dispatch
+Reference: SA-G report `7d383785 diag(SA-G): AC strategy SEARCH on clic_22ea12 e9 d=4`
+Smoke cell: clic_22ea12 e9 d=4 (/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png)
+
+## Question
+
+SA-G report concluded the Phase-1 AC-strategy-search divergence on
+clic_22ea12 e9 d=4 was caused by `find_best_multiplier` returning a
+non-zero `cmap_x` (raw -0.119048 at tile (4,3)) where cjxl converges to 0.
+SA-G further claimed `cfl_newton_libjxl_parity = true` was "verified at
+parity" in W44-184, but its own per-block dump contradicts that.
+
+Fix A's binary question: when the user passes `--strategy libjxl`, is
+`cfl_newton_libjxl_parity = true` actually plumbed through to every CfL
+SIMD kernel call, or is some call site leaking with the flag stuck at
+`false`?
+
+## Mechanism
+
+Env-gated `eprintln!` added to
+`jxl-encoder/src/vardct/chroma_from_luma.rs::find_best_multiplier`
+(single chokepoint for all 4 CfL call sites — Pass-1 + Pass-2 +
+animation Pass-1 + animation Pass-2 + per-DC-group precomputed). The
+diagnostic prints `(channel, num, base, use_newton, libjxl_parity,
+libjxl_math_ls_warm, eps, max_iters, variant, cmap_i8)` per call when
+`JXL_SA_G_FIX_A_DUMP_NEWTON_PARAMS` is set. Gated on `feature = "std"`
+to keep no_std builds clean. ZERO production-source change otherwise.
+
+## Reproduction
+
+```
+cd ~/work/zen/jxl-encoder--sa-g-fix-a
+cargo build --release -p jxl-encoder-cli --features 'jxl_encoder/__expert'
+
+# Libjxl strategy
+JXL_SA_G_FIX_A_DUMP_NEWTON_PARAMS=1 ./target/release/cjxl-rs \
+  --strategy libjxl --distance 4 --effort 9 \
+  /home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png \
+  /tmp/clic_22ea12_libjxl_e9_d4.jxl 2>&1 | tee /tmp/sa_g_fix_a_libjxl.log
+
+# Zenjxl control
+JXL_SA_G_FIX_A_DUMP_NEWTON_PARAMS=1 ./target/release/cjxl-rs \
+  --strategy zenjxl --distance 4 --effort 9 \
+  /home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png \
+  /tmp/clic_22ea12_zenjxl_e9_d4.jxl 2>&1 | tee /tmp/sa_g_fix_a_zenjxl.log
+```
+
+Image is 1024x1024 = 128x128 blocks = 16x16 CfL tiles (TILE_DIM_IN_BLOCKS=8).
+Per pass: 256 tiles * 2 channels (X then B) = 512 calls.
+Pass-1 + Pass-2 at e=9 (both fire): 1024 calls total per strategy.
+
+## Verdict: CASE 1 — flag IS plumbed; bug is in the Newton kernel itself
+
+### Quantitative evidence
+
+| Strategy | Variant                  | Calls | libjxl_parity | use_newton | Coverage |
+|---       |---                       |---    |---            |---         |---       |
+| libjxl   | Newton-libjxl-parity     | 1024  | true          | true       | 100.0%   |
+| libjxl   | Newton-default           | 0     | -             | -          | 0.0%     |
+| libjxl   | Newton-libjxl-math-LS    | 0     | -             | -          | 0.0%     |
+| libjxl   | LS                       | 0     | -             | -          | 0.0%     |
+| zenjxl   | LS                       | 512   | false         | false      | 50.0% (Pass-1) |
+| zenjxl   | Newton-default           | 512   | false         | true       | 50.0% (Pass-2) |
+| zenjxl   | Newton-libjxl-parity     | 0     | -             | -          | 0.0%     |
+| zenjxl   | Newton-libjxl-math-LS    | 0     | -             | -          | 0.0%     |
+
+ZERO leak sites on `--strategy libjxl`: every one of the 1024 CfL
+SIMD-kernel calls received `libjxl_parity = true` and dispatched to
+the `Newton-libjxl-parity` SIMD path (the bit-exact libjxl Newton with
+`eps=100`, `iters=20`, `x=0` start, no LS fallback per
+`jxl_simd::cfl::find_best_multiplier_newton_scalar:482-488`).
+
+### Distribution of returned i8 multipliers
+
+Per `benchmarks/sa_g_fix_a_2026-05-25.tsv`:
+
+- **Libjxl X channel**: 153/512 cmap=0 (29.9%); 359 nonzero spanning -17..17.
+- **Zenjxl X channel (LS)**: 225/256 cmap=0 (87.9%); 31 nonzero spanning -3..3.
+- **Zenjxl X channel (Newton-default)**: 229/256 cmap=0 (89.5%); 27 nonzero spanning -6..4.
+
+cjxl's behaviour (per SA-G dump, not re-measured here): bias_and_quantize
+snaps |raw_x| < 2.6 to 0. cjxl X channel: 191749/(2 * tile_count)
+= matches Libjxl strategy distribution rough shape (~30% zero, ~70%
+nonzero with small magnitudes).
+
+The Libjxl strategy's X-channel distribution matches the cjxl reference
+in shape. Zenjxl's LS + Newton-default both produce ~88% zero in X
+channel because the LS solution itself sits in the zero-snap band for
+the smooth photo majority — Zenjxl `find_best_multiplier` returns
+`ls_x` on non-convergence (the W44-183 default).
+
+### How this falsifies SA-G's "verified at parity" claim is wrong-framing
+
+SA-G ROOT CAUSE said "our Newton converges to different optima than
+libjxl's, despite `cfl_newton_libjxl_parity = true` on `--strategy
+libjxl` and a verified bit-identical `bias_and_quantize` snap-to-zero
+post-step (W44-183)."
+
+Fix A confirms the FLAG plumbing works. The remaining gap is at the
+SIMD kernel level: our `find_best_multiplier_newton_scalar` /
+`_avx2` / `_neon` with `libjxl_parity = true` does NOT produce
+bit-identical output to libjxl `enc_chroma_from_luma.cc`
+`FindBestMultiplier` — even though the parameters match
+(`NEWTON_EPS_LIBJXL = 100`, `NEWTON_MAX_ITERS_LIBJXL = 20`,
+`x = 0`, no fallback per `cfl.rs:482-488`).
+
+### Where to bisect (Fix B scope)
+
+The kernel divergence has to live in ONE of these specific sub-pieces
+of `jxl-encoder-simd/src/cfl.rs::find_best_multiplier_newton_scalar`
+(and matching `_avx2` / `_neon`):
+
+1. **First/second-derivative formulas**. The libjxl reference (must
+   re-read `~/work/jxl-efforts/libjxl/lib/jxl/enc_chroma_from_luma.cc:127-185`
+   `FindBestMultiplier`) uses derived second derivative
+   `ddf = (fd_pe - fd_me) / (2*eps)` — same as ours at `cfl.rs:539`.
+   Same step formula `step = fd / (ddf + NEWTON_STABILIZER)` and
+   clamp at `±NEWTON_CLAMP=20`. **Likely at parity** — need a line-by-line
+   audit against libjxl src.
+
+2. **`NEWTON_CONVERGENCE = 3e-3`**: libjxl uses `kThres = 3e-3`
+   (`enc_chroma_from_luma.cc:152`). At parity.
+
+3. **`NEWTON_STABILIZER = 0.85`**: libjxl uses `kStabilizer = 0.85f`
+   (`enc_chroma_from_luma.cc:158`). At parity.
+
+4. **`NEWTON_THRES = 100.0` (per-sample threshold-clipping)**: libjxl
+   `kThres2 = 100.0f`. At parity.
+
+5. **`NEWTON_COEFF = 1.0/3.0`**: libjxl `kCoeff = 1.0f / 3.0f`. At
+   parity.
+
+6. **Inner reduction order**: scalar matches the libjxl scalar order
+   exactly. The AVX2 SIMD path uses `acc_aa = a.mul_add(a, acc_aa);
+   acc_ab = a.mul_add(b, acc_ab)` for the LS pre-pass — different
+   reduction tree than libjxl's scalar Hwy code. **PROBABLE SUSPECT**:
+   `acc_fd.reduce_add()` summation order in `cfl.rs:674-676` does
+   AVX2 8-way sum then 8-way tail-loop sum. libjxl reduces the
+   `Vec<256u8>` plus the partial-block tail in scalar order.
+
+7. **Initial loop iteration accumulator state**: scalar starts with
+   `fd = 2 * distance_mul * num * x` initial seed. AVX2 path does the
+   same at line 674. At parity.
+
+The most-likely culprits are (a) FMA-vs-non-FMA in the per-iteration
+gradient/Hessian accumulation, and (b) reduction-tree order difference
+in the AVX2 SIMD path. **Per CLAUDE.md W44-66 (user-mandated): the
+divergence is NOT "FMA precision"; the binary outcome of the
+quantisation must be deterministic across implementations of the same
+algorithm.** The bisect lives in either an off-by-one iteration bound,
+a sign error in the derivative, or a missing libjxl-side optimisation
+that our port silently dropped.
+
+## DO NOT (binding for Fix B/C)
+
+- DO NOT cite "FMA precision" for any cmap divergence between Libjxl
+  strategy and cjxl. W44-66 user-mandated rule repeated 2026-05-13 and
+  2026-05-24. Same applies here.
+- DO NOT widen the W44-184 audit to claim "all parity flags must be
+  bit-exact" without running this dump on every strategy first. Fix A
+  proved Libjxl is uniformly parity-true; Zenjxl is uniformly parity-
+  false. The leak hypothesis (Case 2/3) is structurally ruled out.
+- DO NOT modify the per-call-site dispatch logic in `vardct/encoder.rs`
+  or `vardct/bitstream.rs` (Pass-1 / Pass-2 / animation paths). The
+  composer `cfl_newton_libjxl_parity_effective = profile.cfl_newton_libjxl_parity ||
+  p3_force_libjxl_parity` is correct (verified by 1024/1024 flag pass-
+  through above).
+- DO NOT change `EncoderImprovementsCustom::default()` for the parity
+  flag — Zenjxl correctly defaults to `false` (W44-183 ruled out the
+  global flip).
+- DO NOT respawn Fix A for a different cell — the binary verdict is
+  structural (composed value is computed at dispatch-time in code, not
+  per-cell).
+- DO NOT remove `apply_section_c_cfl_newton_libjxl_parity` from
+  `api.rs:4974`. It IS the load-bearing adapter that flips the profile
+  bit when `EncoderStrategy::Libjxl` resolves.
+
+## Fix B / C scope (proposed for the NEXT chunk)
+
+### Fix B (most likely): Newton kernel bit-exact bisect (multi-day)
+
+Mechanism: add a side-by-side `eprintln!` in BOTH our
+`find_best_multiplier_newton_scalar` AND libjxl's `FindBestMultiplier`
+(libjxl side already authorised per the SA-G report — sibling worktree
+`~/work/jxl-efforts/libjxl--sa-g` exists). Dump per-iteration state:
+`(iter, x, fd, fd_pe, fd_me, ddf, step)`. Drive both with identical
+`values_m / values_s / num / base / distance_mul` from a SINGLE
+problem tile (use SA-G's tile (4,3) on clic_22ea12 e9 d=4 by reading
+the W44-182 dump's saved coefficient inputs). Compare per-iteration
+divergence:
+
+- If `step` diverges at iter 0: derivative formula bug (audit
+  `cfl.rs:493-536`).
+- If `step` matches at iter 0 but `x` diverges by iter 1: clamp /
+  break-condition bug (audit `cfl.rs:541-547`).
+- If matches for first 5+ iters then diverges: SIMD reduction-tree
+  order issue (audit AVX2 path `cfl.rs:626-720` vs libjxl Hwy).
+
+Likely-to-find: AVX2 path `acc_fd += blend(above, zero, d)` at
+`cfl.rs:667-669` may have a sign-extension bug on negative residuals,
+or the SIMD tail-loop scalar code path at `cfl.rs:679-711` may not
+match the libjxl scalar tail order.
+
+### Fix C (out-of-scope long-shot): force `cmap=zeros` for AC search
+
+SA-G already measured `JXL_SA_G_FORCE_ZERO_CMAP=1` produces 34208 B
+vs 34414 B Libjxl-strategy default (-0.6%). But W44-29..W44-172
+calibration assumes the current behaviour; flipping `cmap=zeros`
+globally would re-incur the W44-183 honest-stop pattern.
+
+## Acceptance gates (Fix A, per task spec)
+
+- (a) `jj status` shows ONLY diagnostic instrumentation: PASS
+  (`jxl-encoder/src/vardct/chroma_from_luma.rs` adds env-gated
+  `eprintln!` block; nothing else modified).
+- (b) Binary verdict stated explicitly with evidence: PASS (Case 1
+  above; per-call-site grep confirmed; runtime dump per
+  `/tmp/sa_g_fix_a_{libjxl,zenjxl}.log`).
+- (c) Fix-shape memo: PASS (this file, Fix B/C above).
+- (d) Bench TSV ≥ 4 rows showing parity flag value reaching kernel:
+  PASS (`benchmarks/sa_g_fix_a_2026-05-25.tsv` — 6 rows covering both
+  strategies × both channels × both Newton variants where applicable).
+- (e) Single commit with format `diag(SA-G Fix A): ...`: PENDING.
+- (f) Push to origin/main per jj discipline: PENDING.
+- (g) Cleanup sibling workspace: PENDING.
+- (h) Remove `.workongoing` before cleanup: PENDING.
+
+## Inputs / outputs
+
+- Source patch: `jxl-encoder/src/vardct/chroma_from_luma.rs`
+  (find_best_multiplier env-gated dump, ~40 LOC added at the dispatch
+  chokepoint).
+- Dispatch logs:
+  /tmp/sa_g_fix_a_libjxl.log (1024 SA-G-FIX-A lines)
+  /tmp/sa_g_fix_a_zenjxl.log (1024 SA-G-FIX-A lines)
+- Output JXL files:
+  /tmp/clic_22ea12_libjxl_e9_d4.jxl (34414 B)
+  /tmp/clic_22ea12_zenjxl_e9_d4.jxl (32489 B)
+- Bench TSV: `benchmarks/sa_g_fix_a_2026-05-25.tsv`
+- This meta: `benchmarks/sa_g_fix_a_2026-05-25.meta`
+
+## Source references
+
+- Dispatch chokepoint:
+  `jxl-encoder/src/vardct/chroma_from_luma.rs::find_best_multiplier:257-284`
+- 5 production CfL call sites (all verified flag pass-through):
+  1. `jxl-encoder/src/vardct/encoder.rs:4239` (Pass-1, still-image)
+  2. `jxl-encoder/src/vardct/encoder.rs:5066` (Pass-2, still-image)
+  3. `jxl-encoder/src/vardct/bitstream.rs:1933` (Pass-1, animation/streaming)
+  4. `jxl-encoder/src/vardct/bitstream.rs:2045` (Pass-2, animation/streaming)
+  5. `jxl-encoder/src/vardct/precomputed.rs:1499` (per-DC-group precomputed)
+- Strategy resolution: `jxl-encoder/src/gate_registry.rs:220` (Libjxl
+  preset sets `cfl_newton_libjxl_parity = true`).
+- Resolve adapter: `jxl-encoder/src/api.rs:4974`
+  (`apply_section_c_cfl_newton_libjxl_parity`).
+- Kernel where the bug actually lives:
+  `jxl-encoder-simd/src/cfl.rs::find_best_multiplier_newton_scalar:446-560`
+  (and matching `_avx2:565-732`, `_neon:737-...`).
