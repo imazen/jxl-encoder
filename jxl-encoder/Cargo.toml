@@ -1567,6 +1567,15 @@ name = "w44_audit_5_phase3_mode_bisect"
 path = "examples/w44_audit_5_phase3_mode_bisect.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__internals", "__expert"]
 
+# SA-G Fix B (2026-05-25): smoke test on clic_22ea12 e9 d=4 verifying that
+# the Highway-order CfL Newton reduction closes the +2.19% bytes / -3.87
+# SSIM2 wedge vs cjxl on the `EncoderStrategy::Libjxl` path AND keeps
+# `EncoderStrategy::Zenjxl` output byte-identical (regression check).
+[[example]]
+name = "sa_g_fix_b_smoke"
+path = "examples/sa_g_fix_b_smoke.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__internals", "__expert"]
+
 # W44-197 Candidate B + C perf + A/B measurement. Replaces per-coefficient
 # `q / qw_x[i]` with `q * inv_qw_x[i]` (Candidate C, byte-identical) and
 # wires the new `cfl_pass2_ls_at_low_effort` gate on `Libjxl` strategy
