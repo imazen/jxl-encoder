@@ -1287,6 +1287,17 @@ name = "cjxl_parity_2026_05_24"
 path = "examples/cjxl_parity_2026_05_24.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
 
+# W44-AUDIT-7 (2026-05-24): wider-corpus cjxl-parity bench. Extends AUDIT-1's
+# 4-image bench to 20 images × 6 content classes (screen-text/graphics,
+# photo-portrait/landscape/smooth, CLIC2025 web), sweeping efforts {5,7,9} ×
+# distances {0.5,1.0,2.0,4.0} × {Zenjxl, Libjxl} strategies vs cjxl 0.12.0.
+# Adds M3-colourfulness per image so Phase 2 can filter AUDIT-6 cells.
+# 240 cells × 3 encodes = 720. ~40-70 min wall on 7950X.
+[[example]]
+name = "w44_audit_7_wider_corpus"
+path = "examples/w44_audit_7_wider_corpus.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
+
 # W44-AUDIT-3 (2026-05-24): focused 3-cell re-validation of codec_wiki d=4
 # post the W44-AUDIT-2 EPF budget-accounting OOM fix (commit 887cac54).
 # Re-runs JUST codec_wiki e5/e7/e9 d=4 with full bytes + butteraugli + SSIM2
