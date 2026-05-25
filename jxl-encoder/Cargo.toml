@@ -1307,6 +1307,17 @@ name = "w44_audit_8_phase2_mode_c_on_cluster"
 path = "examples/w44_audit_8_phase2_mode_c_on_cluster.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
 
+# W44-AUDIT-8 Phase 5 (2026-05-24): validation bench for `extra_dc_precision = 1`
+# at effort ≤ 7 (libjxl `nl_dc` parity). Re-runs the Phase 2 30-cell cluster +
+# 4 W44-228c1 PROTECT_E8 cells against current post-Phase-5 encoder vs cjxl.
+# Primary bisect cell: clic_22ea12 e7 d=4 (Phase 4 worst, ds = -3.84).
+# Acceptance: clic_22ea12 e7 d=4 SSIM2 recovery ≥ +2.0; ≥50% cluster cells
+# improve SSIM2 Δ by ≥ +1.0; PROTECT_E8 cells stay structurally unchanged.
+[[example]]
+name = "w44_audit_8_phase5_cluster_validate"
+path = "examples/w44_audit_8_phase5_cluster_validate.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
+
 # W44-AUDIT-3 (2026-05-24): focused 3-cell re-validation of codec_wiki d=4
 # post the W44-AUDIT-2 EPF budget-accounting OOM fix (commit 887cac54).
 # Re-runs JUST codec_wiki e5/e7/e9 d=4 with full bytes + butteraugli + SSIM2

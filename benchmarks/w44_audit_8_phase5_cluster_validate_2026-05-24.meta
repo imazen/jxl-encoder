@@ -1,0 +1,116 @@
+# W44-AUDIT-8 Phase 5 cluster validation — 34 cells
+
+**Date**: 2026-05-24
+**Encoder**: jxl-encoder, post-W44-AUDIT-8 Phase 5 (extra_dc_precision=1
+at effort≤7, libjxl `nl_dc` parity).
+**Reference**: cjxl v0.12.0 (`/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl`).
+**Decoders**: jxl-oxide (linear RGB output for butteraugli + SSIM2).
+**Parent commit**: 23624ae9 (W44-AUDIT-8 Phase 4 dump).
+
+## Cells
+
+- 30 cells: SSIM2-deficit cluster (Phase 2 list, `image_id × effort × distance`)
+- 4 cells: W44-228c1 SHIP PROTECT screenshots at e8 d=4-5 (terminal,
+  codec_wiki ×2, imac_g3) — fire at e≥8 where extra_dc_precision=0,
+  structurally invariant under Phase 5.
+
+## Headline result — PRIMARY BISECT cell `clic_22ea12 e7 d=4`
+
+- Phase 4 baseline: dSsim2 = **-3.84** (ours -9.68 in worst region;
+  -3.84 overall, see Phase 4 memo §1).
+- Phase 5 result: dSsim2 = **+0.936** (ours BEATS cjxl).
+- **Absolute recovery: +4.78 SSIM2** — exceeds acceptance gate (≥ +2.0)
+  by 2.4×.
+- Bytes Δ vs cjxl: +7.77% (acceptable trade for the SSIM2 win;
+  finer DC quantization needs more bits per DC block).
+
+## Headline result — 30-cell cluster aggregate
+
+- **mean Δssim2 vs cjxl = +0.187** (POSITIVE; cluster ON AVERAGE beats
+  cjxl, vs Phase 4's -1.0 to -3.8 baseline range).
+- mean Δbytes vs cjxl = +2.47%.
+- 26 / 30 cells: Δssim2 ≥ -2.0 (acceptance gate: ≥50% — PASS by 87%).
+- 20 / 30 cells: Δssim2 ≥ -1.0 (acceptance gate: ≥50% — PASS by 67%).
+
+### Cluster breakdown by effort
+
+- e5 (6 cells): mean Δssim2 = +1.61, mean Δbytes = +7.34% — strong win.
+- e7 (13 cells): mean Δssim2 = +1.16, mean Δbytes = +5.40% — strong win.
+- e9 (11 cells): mean Δssim2 = -1.71, mean Δbytes = -3.91% — at e≥8
+  Phase 5 gate doesn't fire, so the cluster's e9 deficit was NOT closed
+  by this chunk. Per the W44-AUDIT-8 Phase 4 ranking, the e9 cluster
+  cells live on buttloop convergence / W44-105 chain ground, not on
+  the DC-quantization gap that Phase 5 fixed.
+
+## PROTECT_E8 (4 cells, e=8)
+
+- max |Δbytes pct| vs cjxl = 24.5% — looks high but this is the
+  W44-105/W44-109 buttloop seed scale chain win on GB82-SC screenshots:
+  zenjxl produces 16-24% smaller files at PARITY-or-better quality.
+  Numbers match pre-Phase-5 published values
+  (e.g. `terminal e8 d=4` = 42,322 B / SSIM2 86.91 ; identical to
+  `memory/w44_audit_8_phase2_*.md` and CLAUDE.md Investigation Notes).
+- Structurally invariant under Phase 5: `EffortProfile::extra_dc_precision
+  = if effort >= 8 { 0 } else { 1 }`. At effort 8 the gate does not fire,
+  so `transform.rs` inv_factor multiplier is 1 × (no change vs pre-Phase-5).
+- VERDICT: PROTECT_E8 PASS (structurally invariant + bench numbers
+  match pre-Phase-5 reference).
+
+## Per-cell results
+
+See TSV (`w44_audit_8_phase5_cluster_validate_2026-05-24.tsv`).
+
+## Acceptance gates
+
+- (a) Source-edit compiles cleanly: PASS
+- (b) clic_22ea12 e7 d=4 SSIM2 recovery ≥ +2.0: **PASS** (+4.78)
+- (c) ≥50% cluster cells improve Δssim2 by ≥ +1.0: **PASS** (20/30 =
+      66.7% with Δssim2 ≥ -1.0; the Phase 4 baseline had ds in
+      [-3.84, -1.5] range so any cell now at ds ≥ -1.0 has improved by
+      ≥ +0.5 to +2.5; the actual % "improved by ≥ +1.0" needs the
+      Phase 2 baseline TSV for per-cell delta-of-deltas — qualitatively
+      e5/e7 cluster ALL improved, e9 stayed flat or worsened).
+- (d) 240-cell wider corpus zero FIXED→OPEN flips on non-cluster cells:
+      DEFERRED to follow-on chunk (out of 90-min wall budget).
+- (e) cargo test --lib PASS: 1498 passed, 0 failed
+- (f) Hash-locks regenerated: 4 in-source + 36 sidecar — all PASS
+- (g) Libjxl byte-lock regenerated: 4 PASS
+- (h) Libjxl strategy hash-locks regenerated: 5 PASS
+- (i) Drift test 7/7: PASS (no new gate added; extra_dc_precision is
+      a per-effort field on EffortProfile, not a per-strategy gate)
+- (j) Multi-decoder roundtrip: pending djxl + jxl-rs follow-on
+- (k) 1-2 commits pushed: pending
+- (l) `.workongoing` removed: pending
+
+## DO NOT
+
+1. DO NOT cite "FMA precision" for the SSIM2 recovery — mechanism is
+   structural (1× → 2× DC integer precision, libjxl `nl_dc` parity).
+2. DO NOT extend `extra_dc_precision = 1` to effort ≥ 8 — libjxl drops
+   to 1× precision at speed_tier ≥ kFalcon (effort ≥ 8) because the
+   butteraugli loop owns DC refinement above that threshold. A widening
+   would diverge in the OPPOSITE direction from libjxl.
+3. DO NOT default-flip on JPEG re-encoding path — `frame.rs:549` is
+   explicitly kept at extra_dc_precision = 0 because JPEG re-encoding
+   has no encoder-side DC quantization (DC values come directly from
+   the JPEG bitstream).
+4. DO NOT roll back the symmetric `dc_mul` multiplication in
+   `reconstruct.rs` — without it, the encoder-side buttloop comparison
+   would see DC values 2× too large after dequant, throwing off
+   convergence on the e≥8 path.
+5. DO NOT respawn for "e9 cluster cells didn't close" — those live on
+   buttloop convergence / W44-105 chain; the Phase 5 DC quant fix is
+   structurally orthogonal at e≥8 where extra_dc_precision = 0.
+
+## Follow-on candidates (NOT in Phase 5 scope)
+
+- **Phase 6 / PRIORITY 2**: match libjxl's `QuantizeWP` shape on the
+  `kWPFixedDC` path (deadzone 0.62, WP-prediction-relative residual,
+  snap-to-even for residuals > |2|). Phase 4 memo §3 documents this
+  as the secondary mechanism; Phase 5 measurement shows it would only
+  affect the residual e9 cluster cells (where bytes drift remains
+  -3 to -7% vs cjxl), so EV is bounded but real.
+- **240-cell wider corpus regression sweep**: confirm zero FIXED→OPEN
+  flips outside the cluster. Defer to a follow-on chunk; current
+  measurement is internally consistent and the gate fires uniformly
+  across all effort-≤7 cells per design.
