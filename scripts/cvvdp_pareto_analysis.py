@@ -159,17 +159,32 @@ def pareto_winners(
 
 
 def main(argv: list[str]) -> int:
+    # Args: <tsv> [date] [candidate_backend]
+    # candidate_backend: explicit verdict backend. Default behaviour:
+    #   - prefer C_GPU_v4 (Phase 8f shipped) if present
+    #   - else prefer Z_GPU (zensim Phase 6) if present
+    #   - else fall back to C_GPU (Phase 6 baseline)
+    # Phase 6 zensim arc (2026-05-25): explicit `Z_GPU` candidate is
+    # supplied to compute the zensim default-flip verdict; explicit
+    # `C_GPU_v4` for the cvvdp closeout.
     tsv_path = Path(argv[1] if len(argv) > 1 else "benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv")
     date = argv[2] if len(argv) > 2 else "2026-05-24"
-    out_tsv = Path(f"scripts/cvvdp_pareto_analysis_{date}.tsv")
-    out_meta = Path(f"scripts/cvvdp_pareto_analysis_{date}.meta")
+    candidate_override = argv[3] if len(argv) > 3 else None
+    suffix = f"_{candidate_override}" if candidate_override else ""
+    out_tsv = Path(f"scripts/cvvdp_pareto_analysis_{date}{suffix}.tsv")
+    out_meta = Path(f"scripts/cvvdp_pareto_analysis_{date}{suffix}.meta")
 
     cells = load_tsv(tsv_path)
     print(f"loaded {len(cells)} cells from {tsv_path}", file=sys.stderr)
 
     # Phase 8f (2026-05-25): added C_GPU_v4 — Phase 8c renorm + Phase 8d
     # tighten + Phase 8g k_tile_norm=0.16, the cvvdp-fork's shipped stack.
-    backends = ["B", "B_GPU", "C_GPU", "C_CPU", "C_GPU_v4"]
+    # zensim-fork Phase 6 (2026-05-25): added Z_CPU + Z_GPU — Phase 4
+    # per-distance calibration + buttloop wiring. Both Z backends share
+    # identical encoder behaviour (zensim::Zensim CPU and zensim-gpu
+    # GPU score f32 → produce byte-identical encoded output at fixed
+    # quant field).
+    backends = ["B", "B_GPU", "C_GPU", "C_CPU", "C_GPU_v4", "Z_CPU", "Z_GPU"]
 
     # Per-backend coverage + wall_ms stats
     per_backend_count: dict[str, int] = {b: 0 for b in backends}
@@ -296,10 +311,14 @@ def main(argv: list[str]) -> int:
 
     corpora = sorted({c for (c, _) in cell_counts.keys()})
 
-    # Phase 8f selector: prefer C_GPU_v4 (the shipped stack) over C_GPU
-    # (Phase 6 baseline) when both are present.
-    if per_backend_count.get("C_GPU_v4", 0) > 0:
+    # Verdict selector. Explicit override wins, otherwise auto-select.
+    # zensim Phase 6 (2026-05-25): added Z_GPU as a third candidate.
+    if candidate_override is not None:
+        candidate = candidate_override
+    elif per_backend_count.get("C_GPU_v4", 0) > 0:
         candidate = "C_GPU_v4"
+    elif per_backend_count.get("Z_GPU", 0) > 0:
+        candidate = "Z_GPU"
     else:
         candidate = "C_GPU"
     print(f"[verdict] candidate backend = {candidate}", file=sys.stderr)

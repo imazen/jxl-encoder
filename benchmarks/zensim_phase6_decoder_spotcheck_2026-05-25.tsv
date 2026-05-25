@@ -1,0 +1,11 @@
+corpus	image	distance	effort	backend	encoded_bytes	decode_oxide	decode_djxl	decode_jxl_rs	decode_notes
+CID22	1025469.png	3.0	8	Z_GPU	6516	PASS	PASS	PASS	encode_ms=362.8
+CID22	1025469.png	3.0	8	Z_CPU	6516	PASS	PASS	PASS	encode_ms=161.0
+CID22	1418519.png	3.0	8	Z_GPU	5691	PASS	PASS	PASS	encode_ms=161.0
+CID22	1418519.png	3.0	8	Z_CPU	5691	PASS	PASS	PASS	encode_ms=167.8
+CID22	1189261.png	3.0	8	Z_GPU	11047	PASS	PASS	PASS	encode_ms=161.1
+CID22	1189261.png	3.0	8	Z_CPU	11047	PASS	PASS	PASS	encode_ms=161.8
+CID22	297394.png	3.0	8	Z_GPU	13690	PASS	PASS	PASS	encode_ms=162.8
+CID22	297394.png	3.0	8	Z_CPU	13690	PASS	PASS	PASS	encode_ms=164.1
+GB82-SC	terminal.png	3.0	8	Z_GPU	22377	PASS	PASS	PASS	encode_ms=904.1
+GB82-SC	terminal.png	3.0	8	Z_CPU	22377	PASS	PASS	PASS	encode_ms=817.8

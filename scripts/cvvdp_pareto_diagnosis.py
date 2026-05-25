@@ -216,7 +216,11 @@ def main(path: str) -> int:
     targets_to_test = [9.5, 9.7, 9.8, 9.9, 9.95, 9.98, 9.99]
     # Phase 8f (2026-05-25): added C_GPU_v4 = Phase 8c renorm + Phase 8d tighten
     # + Phase 8g k_tile_norm=0.16 (the cvvdp-fork's full shipped stack).
-    cvvdp_backends = ("C_GPU", "C_GPU_v2", "C_GPU_v3", "C_GPU_v4")
+    # zensim-fork Phase 6 (2026-05-25): added Z_CPU + Z_GPU. The equal-cvvdp
+    # comparison still makes sense for zensim-driven backends because every
+    # encoded output gets scored with cvvdp_gpu in the harness regardless of
+    # which metric drove the loop.
+    cvvdp_backends = ("C_GPU", "C_GPU_v2", "C_GPU_v3", "C_GPU_v4", "Z_CPU", "Z_GPU")
     by_image_backend: dict[tuple[str, str], list[tuple[float, float]]] = defaultdict(list)
     for (image, _), cells in e8_cells.items():
         for r in cells:
