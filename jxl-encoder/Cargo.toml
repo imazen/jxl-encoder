@@ -96,7 +96,7 @@ cvvdp-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "
 # `~/work/zen/zenmetrics/crates/cvvdp-cpu` (Agent A's deliverable,
 # `publish = false`). Default features include `std` + `parallel` for
 # the rayon-backed per-band fan-out (matches the buttloop's rayon usage).
-cvvdp-cpu = { version = "0.0.1", default-features = false, features = ["std", "parallel"], optional = true }
+cvvdp-cpu = { version = "0.1.0", default-features = false, features = ["std", "parallel"], optional = true }
 
 [features]
 std = ["thiserror/std", "archmage/std", "jxl_simd/std"]
@@ -1485,6 +1485,25 @@ required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "cvvdp-loop-t
 name = "cvvdp_loop_smoke_bench"
 path = "examples/cvvdp_loop_smoke_bench.rs"
 required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "ssim2-loop", "parallel"]
+
+# zensim-fork Phase 4 (2026-05-25): calibration-seed generator. Encodes
+# a small held-out corpus with butteraugli-default at each distance,
+# decodes via jxl-oxide, scores with zensim::Zensim, and emits a TSV
+# that scripts/zensim_calibration_seed.py consumes to produce the
+# Rust array snippet for vardct/zensim_targets.rs. See the example
+# module docs for full methodology.
+[[example]]
+name = "zensim_calibration_seed"
+path = "examples/zensim_calibration_seed.rs"
+required-features = ["__expert", "butteraugli-loop", "zensim-loop", "ssim2-loop", "parallel"]
+
+# zensim-fork Phase 4 (2026-05-25): 20-cell smoke bench mirroring
+# `cvvdp_loop_smoke_bench`. Encodes 5 synthetic fixtures × 4 distances
+# × 2 backends (B + Z_CPU) and writes a TSV in the tracking schema.
+[[example]]
+name = "zensim_loop_smoke_bench"
+path = "examples/zensim_loop_smoke_bench.rs"
+required-features = ["__expert", "butteraugli-loop", "zensim-loop", "ssim2-loop", "parallel"]
 
 # cvvdp-fork Phase 8b (2026-05-25): diffmap distribution capture
 # harness. Encodes 5 fixtures × 4 distances with both butteraugli + cvvdp
