@@ -1983,6 +1983,16 @@ name = "w44_199_3637739_ac_dump"
 path = "examples/w44_199_3637739_ac_dump.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-AUDIT-8 Phase 3: per-block AC strategy dump on the worst CLIC cell.
+# AUDIT-8 P1 diagnosed a 30-cell PHOTO/CLIC SSIM2-deficit cluster at d=4
+# (worst: clic_22ea12 e7 d=4, dSsim2=-3.84). P2 ruled out CfL Mode C
+# (30 NEUTRAL / 0 WIN / 0 LOSS). P3 attacks Candidate #1: per-block AC
+# strategy selection. Mirrors W44-103/121/199 pattern.
+[[example]]
+name = "w44_audit_8_phase3_clic_perblock_dump"
+path = "examples/w44_audit_8_phase3_clic_perblock_dump.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
 # W44-104: probe whether bypassing W44-65/W44-68 DCT32+DCT64 suppression
 # on terminal-class content (via `with_dct_suppress_hint(Some(false))`)
 # recovers SSIM2 vs cjxl. Background: W44-103 dump found ours emits 0
