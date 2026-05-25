@@ -1525,3 +1525,101 @@ mod tests {
         std::eprintln!("{report}");
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+
+    /// All 6 DCT4 variants × edge battery × bit-tolerant comparison.
+    ///
+    /// Skips `large_pos` (1e20) — FMA-vs-explicit-mul-add divergence
+    /// scales with magnitude and exceeds any sensible ULP budget at 1e20
+    /// inputs.  The structural cases (zeros, ramps, ones, alternating,
+    /// random) catch shuffle bugs without the noise.
+    #[test]
+    fn dct4_scalar_vs_dispatch_all_variants() {
+        for case in f32_edge_battery(64) {
+            if case.data.is_empty() || case.label.starts_with("large_pos") {
+                continue;
+            }
+            let input: &[f32; 64] = case.data.as_slice().try_into().unwrap();
+            let mut ref_4x4 = [0.0_f32; 64];
+            let mut ref_4x8 = [0.0_f32; 64];
+            let mut ref_8x4 = [0.0_f32; 64];
+            let mut iref_4x4 = [0.0_f32; 64];
+            let mut iref_4x8 = [0.0_f32; 64];
+            let mut iref_8x4 = [0.0_f32; 64];
+            dct_4x4_full_scalar(input, &mut ref_4x4);
+            dct_4x8_full_scalar(input, &mut ref_4x8);
+            dct_8x4_full_scalar(input, &mut ref_8x4);
+            idct_4x4_full_scalar(input, &mut iref_4x4);
+            idct_4x8_full_scalar(input, &mut iref_4x8);
+            idct_8x4_full_scalar(input, &mut iref_8x4);
+            run_dispatch_parity(|perm| {
+                let mut act_4x4 = [0.0_f32; 64];
+                let mut act_4x8 = [0.0_f32; 64];
+                let mut act_8x4 = [0.0_f32; 64];
+                let mut iact_4x4 = [0.0_f32; 64];
+                let mut iact_4x8 = [0.0_f32; 64];
+                let mut iact_8x4 = [0.0_f32; 64];
+                dct_4x4_full(input, &mut act_4x4);
+                dct_4x8_full(input, &mut act_4x8);
+                dct_8x4_full(input, &mut act_8x4);
+                idct_4x4_full(input, &mut iact_4x4);
+                idct_4x8_full(input, &mut iact_4x8);
+                idct_8x4_full(input, &mut iact_8x4);
+                let ctx = case.label.as_str();
+                assert_f32_slice_close_ulps_abs(
+                    &ref_4x4,
+                    &act_4x4,
+                    32,
+                    1e-3,
+                    perm,
+                    &format!("dct4x4::{ctx}"),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_4x8,
+                    &act_4x8,
+                    32,
+                    1e-3,
+                    perm,
+                    &format!("dct4x8::{ctx}"),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_8x4,
+                    &act_8x4,
+                    32,
+                    1e-3,
+                    perm,
+                    &format!("dct8x4::{ctx}"),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &iref_4x4,
+                    &iact_4x4,
+                    32,
+                    1e-3,
+                    perm,
+                    &format!("idct4x4::{ctx}"),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &iref_4x8,
+                    &iact_4x8,
+                    32,
+                    1e-3,
+                    perm,
+                    &format!("idct4x8::{ctx}"),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &iref_8x4,
+                    &iact_8x4,
+                    32,
+                    1e-3,
+                    perm,
+                    &format!("idct8x4::{ctx}"),
+                );
+            });
+        }
+    }
+}

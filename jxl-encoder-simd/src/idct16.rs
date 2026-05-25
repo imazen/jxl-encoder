@@ -1641,3 +1641,67 @@ mod tests {
         assert_simd_matches_scalar_128(idct_8x16_scalar, idct_8x16, &input, "IDCT8x16");
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+
+    /// idct_16x16 / idct_16x8 / idct_8x16 across edge battery.
+    #[test]
+    fn idct_16xN_scalar_vs_dispatch_edge_battery() {
+        for case in f32_edge_battery(256) {
+            if case.data.is_empty() || case.label.starts_with("large_pos") {
+                continue;
+            }
+            let input: &[f32; 256] = case.data.as_slice().try_into().unwrap();
+            let mut ref_out = [0.0_f32; 256];
+            idct_16x16_scalar(input, &mut ref_out);
+            run_dispatch_parity(|perm| {
+                let mut act = [0.0_f32; 256];
+                idct_16x16(input, &mut act);
+                assert_f32_slice_close_ulps_abs(
+                    &ref_out,
+                    &act,
+                    64,
+                    1e-3,
+                    perm,
+                    &format!("idct16x16::{}", case.label),
+                );
+            });
+        }
+        for case in f32_edge_battery(128) {
+            if case.data.is_empty() || case.label.starts_with("large_pos") {
+                continue;
+            }
+            let input: &[f32; 128] = case.data.as_slice().try_into().unwrap();
+            let mut ref_168 = [0.0_f32; 128];
+            let mut ref_816 = [0.0_f32; 128];
+            idct_16x8_scalar(input, &mut ref_168);
+            idct_8x16_scalar(input, &mut ref_816);
+            run_dispatch_parity(|perm| {
+                let mut act_168 = [0.0_f32; 128];
+                let mut act_816 = [0.0_f32; 128];
+                idct_16x8(input, &mut act_168);
+                idct_8x16(input, &mut act_816);
+                assert_f32_slice_close_ulps_abs(
+                    &ref_168,
+                    &act_168,
+                    64,
+                    1e-3,
+                    perm,
+                    &format!("idct16x8::{}", case.label),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_816,
+                    &act_816,
+                    64,
+                    1e-3,
+                    perm,
+                    &format!("idct8x16::{}", case.label),
+                );
+            });
+        }
+    }
+}

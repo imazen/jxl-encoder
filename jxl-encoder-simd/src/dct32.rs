@@ -1267,3 +1267,69 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+
+    /// dct_32x32 / dct_32x16 / dct_16x32 across the edge battery.
+    #[test]
+    fn dct_32xN_scalar_vs_dispatch_edge_battery() {
+        // 32x32
+        for case in f32_edge_battery(1024) {
+            if case.data.is_empty() {
+                continue;
+            }
+            let input: &[f32; 1024] = case.data.as_slice().try_into().unwrap();
+            let mut ref_out = [0.0_f32; 1024];
+            dct_32x32_scalar(input, &mut ref_out);
+            run_dispatch_parity(|perm| {
+                let mut act = [0.0_f32; 1024];
+                dct_32x32(input, &mut act);
+                assert_f32_slice_close_ulps_abs(
+                    &ref_out,
+                    &act,
+                    128,
+                    1e-2,
+                    perm,
+                    &format!("32x32::{}", case.label),
+                );
+            });
+        }
+        // 32x16 + 16x32
+        for case in f32_edge_battery(512) {
+            if case.data.is_empty() {
+                continue;
+            }
+            let input: &[f32; 512] = case.data.as_slice().try_into().unwrap();
+            let mut ref_3216 = [0.0_f32; 512];
+            let mut ref_1632 = [0.0_f32; 512];
+            dct_32x16_scalar(input, &mut ref_3216);
+            dct_16x32_scalar(input, &mut ref_1632);
+            run_dispatch_parity(|perm| {
+                let mut act_3216 = [0.0_f32; 512];
+                let mut act_1632 = [0.0_f32; 512];
+                dct_32x16(input, &mut act_3216);
+                dct_16x32(input, &mut act_1632);
+                assert_f32_slice_close_ulps_abs(
+                    &ref_3216,
+                    &act_3216,
+                    128,
+                    1e-2,
+                    perm,
+                    &format!("32x16::{}", case.label),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_1632,
+                    &act_1632,
+                    128,
+                    1e-2,
+                    perm,
+                    &format!("16x32::{}", case.label),
+                );
+            });
+        }
+    }
+}

@@ -1044,3 +1044,102 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+    use alloc::vec;
+
+    /// quantize_block_dct8 across edge-value batteries.  Both scalar and SIMD
+    /// use round_ties_even — bit-exact in the f32→i32 representable range.
+    ///
+    /// Skips `large_pos` (1e20) — f32→i32 saturation diverges between paths:
+    /// scalar `as i32` saturates to i32::MAX, SIMD intrinsic returns
+    /// 0x80000000 (i32::MIN) on overflow.  See
+    /// docs/SIMD_PARITY_KNOWN_DIVERGENCES.md row quantize-001.
+    #[test]
+    fn quantize_dct8_scalar_vs_dispatch_edge_battery() {
+        let weights: [f32; 64] = core::array::from_fn(|i| 0.5 + i as f32 * 0.05);
+        let qac_qm = 3.5_f32;
+        let thresholds = [0.6_f32, 0.7, 0.8, 0.9];
+
+        for case in f32_edge_battery(64) {
+            if case.data.is_empty() || case.label.starts_with("large_pos") {
+                continue;
+            }
+            let dct: &[f32; 64] = case.data.as_slice().try_into().unwrap();
+            let mut ref_out = [0_i32; 64];
+            quantize_dct8_scalar(dct, &weights, qac_qm, &thresholds, &mut ref_out);
+
+            run_dispatch_parity(|perm| {
+                let mut act_out = [0_i32; 64];
+                quantize_block_dct8(dct, &weights, qac_qm, &thresholds, &mut act_out);
+                assert_eq!(
+                    ref_out, act_out,
+                    "quantize_dct8 divergence: ref={ref_out:?} act={act_out:?} perm={perm} ctx={}",
+                    case.label
+                );
+            });
+        }
+    }
+
+    /// quantize_block_large across multiple non-square block shapes.
+    #[test]
+    fn quantize_large_scalar_vs_dispatch_shapes() {
+        let qac_qm = 3.5_f32;
+        let thresholds = [0.6_f32, 0.7, 0.8, 0.9];
+
+        let cases: &[(usize, usize)] = &[
+            (16, 8), // DCT16x8 layout
+            (8, 16),
+            (16, 16),
+            (32, 16),
+            (16, 32),
+            (32, 32),
+        ];
+        for &(gw, gh) in cases {
+            let size = gw * gh;
+            let llf_x = gw / 8;
+            let llf_y = gh / 8;
+            let dct = gen_f32(0x9AAA_7777 ^ ((gw as u64) << 32) ^ gh as u64, size, 4.0)
+                .iter()
+                .copied()
+                .collect::<alloc::vec::Vec<f32>>();
+            let weights: alloc::vec::Vec<f32> =
+                (0..size).map(|i| 0.5 + (i % 64) as f32 * 0.05).collect();
+
+            let mut ref_out = vec![0_i32; size];
+            quantize_large_scalar(
+                &dct,
+                &weights,
+                qac_qm,
+                &thresholds,
+                gw,
+                gh,
+                llf_x,
+                llf_y,
+                &mut ref_out,
+            );
+            run_dispatch_parity(|perm| {
+                let mut act_out = vec![0_i32; size];
+                quantize_block_large(
+                    &dct,
+                    &weights,
+                    qac_qm,
+                    &thresholds,
+                    gw,
+                    gh,
+                    llf_x,
+                    llf_y,
+                    &mut act_out,
+                );
+                assert_eq!(
+                    ref_out, act_out,
+                    "quantize_large divergence ({gw}x{gh}): perm={perm}"
+                );
+            });
+        }
+    }
+}

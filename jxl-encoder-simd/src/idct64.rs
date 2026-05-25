@@ -1435,3 +1435,72 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+
+    #[test]
+    fn idct_64xN_scalar_vs_dispatch_edge_battery() {
+        for case in f32_edge_battery(4096) {
+            if case.data.is_empty()
+                || case.label.starts_with("rand_b")
+                || case.label.starts_with("large_pos")
+            {
+                continue;
+            }
+            let input: &[f32; 4096] = case.data.as_slice().try_into().unwrap();
+            let mut ref_out = [0.0_f32; 4096];
+            idct_64x64_scalar(input, &mut ref_out);
+            run_dispatch_parity(|perm| {
+                let mut act = [0.0_f32; 4096];
+                idct_64x64(input, &mut act);
+                assert_f32_slice_close_ulps_abs(
+                    &ref_out,
+                    &act,
+                    256,
+                    1e-1,
+                    perm,
+                    &format!("idct64x64::{}", case.label),
+                );
+            });
+        }
+        for case in f32_edge_battery(2048) {
+            if case.data.is_empty()
+                || case.label.starts_with("rand_b")
+                || case.label.starts_with("large_pos")
+            {
+                continue;
+            }
+            let input: &[f32; 2048] = case.data.as_slice().try_into().unwrap();
+            let mut ref_6432 = [0.0_f32; 2048];
+            let mut ref_3264 = [0.0_f32; 2048];
+            idct_64x32_scalar(input, &mut ref_6432);
+            idct_32x64_scalar(input, &mut ref_3264);
+            run_dispatch_parity(|perm| {
+                let mut act_6432 = [0.0_f32; 2048];
+                let mut act_3264 = [0.0_f32; 2048];
+                idct_64x32(input, &mut act_6432);
+                idct_32x64(input, &mut act_3264);
+                assert_f32_slice_close_ulps_abs(
+                    &ref_6432,
+                    &act_6432,
+                    256,
+                    1e-1,
+                    perm,
+                    &format!("idct64x32::{}", case.label),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_3264,
+                    &act_3264,
+                    256,
+                    1e-1,
+                    perm,
+                    &format!("idct32x64::{}", case.label),
+                );
+            });
+        }
+    }
+}

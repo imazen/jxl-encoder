@@ -428,14 +428,7 @@ mod tests {
                 let mut act_out = case.data.clone();
                 let mut act_scratch = vec![0.0_f32; n];
                 gab_smooth_channel(&mut act_out, &mut act_scratch, w, h, WC, W1, W2);
-                assert_f32_slice_close_ulps_abs(
-                    &ref_out,
-                    &act_out,
-                    8,
-                    1e-5,
-                    perm,
-                    &case.label,
-                );
+                assert_f32_slice_close_ulps_abs(&ref_out, &act_out, 8, 1e-5, perm, &case.label);
             });
         }
     }

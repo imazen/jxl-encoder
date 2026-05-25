@@ -705,3 +705,76 @@ mod tests {
         std::eprintln!("{report}");
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    /// Sweep dimensions that exercise both AVX2 fast path (width >= 10) and
+    /// scalar fallback (width < 10), plus tail-loop boundaries.
+    #[test]
+    fn compute_mask1x1_scalar_vs_dispatch_sizes() {
+        let cases: &[(usize, usize)] = &[
+            (1, 1),
+            (3, 3),
+            (5, 5),
+            (9, 3),
+            (10, 3),
+            (16, 4),
+            (17, 4),
+            (32, 8),
+            (33, 9),
+            (64, 16),
+            (65, 17),
+        ];
+        for &(w, h) in cases {
+            let n = w * h;
+            let xyb_y: Vec<f32> = gen_f32(0xD15E_A5E_u64 ^ ((w as u64) << 32) ^ h as u64, n, 0.5);
+            let mut ref_out = vec![0.0_f32; n];
+            compute_mask1x1_scalar(&xyb_y, w, h, &mut ref_out);
+            run_dispatch_parity(|perm| {
+                let mut act_out = vec![0.0_f32; n];
+                compute_mask1x1(&xyb_y, w, h, &mut act_out);
+                // mask1x1 uses a polynomial approximation of log2 — SIMD and
+                // scalar paths diverge by small ULP counts.
+                assert_f32_slice_close_ulps_abs(
+                    &ref_out,
+                    &act_out,
+                    64,
+                    1e-4,
+                    perm,
+                    &format!("mask({w}x{h})"),
+                );
+            });
+        }
+    }
+
+    /// Constant-input edge cases (zeros, ones, ramp).
+    #[test]
+    fn compute_mask1x1_constant_inputs() {
+        let w = 32;
+        let h = 16;
+        let n = w * h;
+        for label_data in [
+            ("zeros", vec![0.0_f32; n]),
+            ("ones", vec![1.0_f32; n]),
+            (
+                "ramp",
+                (0..n).map(|i| (i as f32) / n as f32 * 0.3).collect(),
+            ),
+        ] {
+            let (label, data) = label_data;
+            let mut ref_out = vec![0.0_f32; n];
+            compute_mask1x1_scalar(&data, w, h, &mut ref_out);
+            run_dispatch_parity(|perm| {
+                let mut act_out = vec![0.0_f32; n];
+                compute_mask1x1(&data, w, h, &mut act_out);
+                assert_f32_slice_close_ulps_abs(&ref_out, &act_out, 32, 1e-5, perm, label);
+            });
+        }
+    }
+}

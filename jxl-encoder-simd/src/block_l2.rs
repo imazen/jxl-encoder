@@ -426,4 +426,135 @@ mod tests {
         );
         std::eprintln!("{report}");
     }
+
+    // ========================================================================
+    // Expanded coverage via test_helpers (Phase S3)
+    // ========================================================================
+
+    use crate::test_helpers::*;
+    use alloc::format;
+
+    /// Sweep multiple block-grid sizes including 1x1 (single block), 1xN row,
+    /// Nx1 column, and odd dimensions where the SIMD chunk boundary lands
+    /// mid-block.
+    #[test]
+    fn block_l2_scalar_vs_dispatch_grid_sizes() {
+        let cases: &[(usize, usize)] = &[
+            (1, 1), // single 8x8 block
+            (2, 1), // 2x1 grid — row-only
+            (1, 2), // 1x2 grid — column-only
+            (3, 3), // odd grid
+            (4, 4), // grid spanning multiple SIMD chunks
+            (5, 3), // x5 boundary
+            (8, 1), // wide row
+            (1, 8), // tall column
+            (9, 9), // tail-loop stress
+        ];
+
+        for &(xb, yb) in cases {
+            let padded_w = xb * 8;
+            let n = padded_w * yb * 8;
+            let orig: [Vec<f32>; 3] = core::array::from_fn(|c| {
+                gen_f32(
+                    0xBEEF_F00D ^ ((xb as u64) << 16) ^ ((yb as u64) << 8) ^ c as u64,
+                    n,
+                    1.0,
+                )
+            });
+            let recon: [Vec<f32>; 3] = core::array::from_fn(|c| {
+                gen_f32(
+                    0xFACE_CAFE ^ ((xb as u64) << 16) ^ ((yb as u64) << 8) ^ c as u64,
+                    n,
+                    1.0,
+                )
+            });
+            let mask = gen_f32_unit(0xDEAD_BEEF ^ ((xb as u64) << 8) ^ yb as u64, n);
+
+            let ref_result = compute_block_l2_errors_scalar(
+                [&orig[0], &orig[1], &orig[2]],
+                [&recon[0], &recon[1], &recon[2]],
+                &mask,
+                xb,
+                yb,
+                padded_w,
+                xb * yb,
+            );
+
+            run_dispatch_parity(|perm| {
+                let act = compute_block_l2_errors(
+                    [&orig[0], &orig[1], &orig[2]],
+                    [&recon[0], &recon[1], &recon[2]],
+                    &mask,
+                    xb,
+                    yb,
+                );
+                // Reductions diverge by mul_add vs explicit ops; absolute
+                // tolerance scaled by typical block-error magnitude.
+                assert_f32_slice_close_ulps_abs(
+                    &ref_result,
+                    &act,
+                    32,
+                    1e-3,
+                    perm,
+                    &format!("xb={xb} yb={yb}"),
+                );
+            });
+        }
+    }
+
+    /// Zero-input + ones-input edge case: should produce zero error or
+    /// uniform error matching the channel-weight constants exactly.
+    #[test]
+    fn block_l2_scalar_vs_dispatch_edge_inputs() {
+        let xb = 4;
+        let yb = 4;
+        let padded_w = xb * 8;
+        let n = padded_w * yb * 8;
+
+        // Test orig == recon → zero error everywhere.
+        let zeros = vec![0.0_f32; n];
+        let mask_ones = vec![1.0_f32; n];
+        let ref0 = compute_block_l2_errors_scalar(
+            [&zeros, &zeros, &zeros],
+            [&zeros, &zeros, &zeros],
+            &mask_ones,
+            xb,
+            yb,
+            padded_w,
+            xb * yb,
+        );
+        run_dispatch_parity(|perm| {
+            let act = compute_block_l2_errors(
+                [&zeros, &zeros, &zeros],
+                [&zeros, &zeros, &zeros],
+                &mask_ones,
+                xb,
+                yb,
+            );
+            assert_f32_slice_bit_eq(&ref0, &act, perm, "zeros_only");
+        });
+
+        // Test zero mask → zero error regardless of inputs.
+        let ones = vec![1.0_f32; n];
+        let mask_zeros = vec![0.0_f32; n];
+        let ref1 = compute_block_l2_errors_scalar(
+            [&ones, &ones, &ones],
+            [&zeros, &zeros, &zeros],
+            &mask_zeros,
+            xb,
+            yb,
+            padded_w,
+            xb * yb,
+        );
+        run_dispatch_parity(|perm| {
+            let act = compute_block_l2_errors(
+                [&ones, &ones, &ones],
+                [&zeros, &zeros, &zeros],
+                &mask_zeros,
+                xb,
+                yb,
+            );
+            assert_f32_slice_bit_eq(&ref1, &act, perm, "zero_mask");
+        });
+    }
 }

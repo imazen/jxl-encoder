@@ -505,3 +505,81 @@ mod tests {
         assert!(max_abs < 1e-4, "non-mul-of-8 max_abs = {max_abs}");
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    // Normalized 5x5 gaborish weights (must sum to 1.0).
+    const WC: f32 = 0.685_3;
+    const WR: f32 = 0.034_5;
+    const WD: f32 = 0.018_7;
+    const W_BIG_R: f32 = 0.012_2;
+    const WL: f32 = 0.009_1;
+    const W_BIG_D: f32 = 0.004_8;
+
+    /// Sweep image sizes including kernel-boundary cases.
+    #[test]
+    fn gaborish_5x5_scalar_vs_dispatch_sizes() {
+        let cases: &[(usize, usize)] = &[
+            (1, 1),
+            (5, 5),
+            (8, 8),
+            (9, 9),
+            (16, 16),
+            (17, 17),
+            (32, 16),
+            (33, 17),
+            (64, 32),
+        ];
+        for &(w, h) in cases {
+            let n = w * h;
+            let input: Vec<f32> = gen_f32(0x6A60_F00D ^ ((w as u64) << 32) ^ h as u64, n, 5.0);
+
+            let mut ref_out = input.clone();
+            let mut ref_scratch = vec![0.0_f32; n];
+            ref_scratch.copy_from_slice(&ref_out);
+            gaborish_5x5_scalar(
+                &mut ref_out,
+                &ref_scratch,
+                w,
+                h,
+                WC,
+                WR,
+                WD,
+                W_BIG_R,
+                WL,
+                W_BIG_D,
+            );
+
+            run_dispatch_parity(|perm| {
+                let mut act_out = input.clone();
+                let mut act_scratch = vec![0.0_f32; n];
+                gaborish_5x5_channel(
+                    &mut act_out,
+                    &mut act_scratch,
+                    w,
+                    h,
+                    WC,
+                    WR,
+                    WD,
+                    W_BIG_R,
+                    WL,
+                    W_BIG_D,
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_out,
+                    &act_out,
+                    16,
+                    1e-4,
+                    perm,
+                    &format!("gab5x5({w}x{h})"),
+                );
+            });
+        }
+    }
+}

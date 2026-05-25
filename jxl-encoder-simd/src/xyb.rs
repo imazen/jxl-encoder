@@ -1066,3 +1066,118 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+    use alloc::vec;
+
+    /// linear_rgb_to_xyb_batch across multiple sizes and edge inputs.
+    /// XYB uses cube-root via f64 Newton + 3x3 matrix.  SIMD vs scalar
+    /// diverges by ~1-2 ULP per matrix-mul FMA association.
+    #[test]
+    fn linear_rgb_to_xyb_scalar_vs_dispatch_sizes() {
+        // Use only NON-NEGATIVE inputs — cube root of negative produces
+        // NaN in the standard branch.  Use unit-range random values.
+        for &n in &[1_usize, 7, 8, 9, 16, 17, 64, 129] {
+            let r = gen_f32_unit(0xA001_AAAA ^ n as u64, n);
+            let g = gen_f32_unit(0xA002_BBBB ^ n as u64, n);
+            let b_in = gen_f32_unit(0xA003_CCCC ^ n as u64, n);
+
+            let mut ref_x = vec![0.0_f32; n];
+            let mut ref_y = vec![0.0_f32; n];
+            let mut ref_b = vec![0.0_f32; n];
+            forward_xyb_scalar(&r, &g, &b_in, &mut ref_x, &mut ref_y, &mut ref_b, n);
+
+            run_dispatch_parity(|perm| {
+                let mut act_x = vec![0.0_f32; n];
+                let mut act_y = vec![0.0_f32; n];
+                let mut act_b = vec![0.0_f32; n];
+                linear_rgb_to_xyb_batch(&r, &g, &b_in, &mut act_x, &mut act_y, &mut act_b);
+                assert_f32_slice_close_ulps_abs(
+                    &ref_x,
+                    &act_x,
+                    16,
+                    1e-5,
+                    perm,
+                    &format!("fwd_x(n={n})"),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_y,
+                    &act_y,
+                    16,
+                    1e-5,
+                    perm,
+                    &format!("fwd_y(n={n})"),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_b,
+                    &act_b,
+                    16,
+                    1e-5,
+                    perm,
+                    &format!("fwd_b(n={n})"),
+                );
+            });
+        }
+    }
+
+    /// xyb_to_linear_rgb_planar across sizes — exercises inverse cube +
+    /// 3x3 inverse matrix.  Bounded by W44-A11's 1e-5 max-abs invariant.
+    #[test]
+    fn xyb_to_linear_rgb_planar_scalar_vs_dispatch_sizes() {
+        for &n in &[1_usize, 7, 8, 9, 16, 17, 64, 129] {
+            // Use realistic XYB ranges: x small (~0.025), y small (~0.5), b ~0.5.
+            let xyb_x: alloc::vec::Vec<f32> =
+                (0..n).map(|i| (i as f32 * 0.001).sin() * 0.025).collect();
+            let xyb_y: alloc::vec::Vec<f32> = (0..n)
+                .map(|i| 0.5 + (i as f32 * 0.0013).cos() * 0.3)
+                .collect();
+            let xyb_b: alloc::vec::Vec<f32> = (0..n)
+                .map(|i| 0.5 + (i as f32 * 0.0017).sin() * 0.3)
+                .collect();
+
+            let mut ref_r = vec![0.0_f32; n];
+            let mut ref_g = vec![0.0_f32; n];
+            let mut ref_b = vec![0.0_f32; n];
+            inverse_xyb_planar_scalar(
+                &xyb_x, &xyb_y, &xyb_b, &mut ref_r, &mut ref_g, &mut ref_b, n,
+            );
+
+            run_dispatch_parity(|perm| {
+                let mut act_r = vec![0.0_f32; n];
+                let mut act_g = vec![0.0_f32; n];
+                let mut act_b = vec![0.0_f32; n];
+                xyb_to_linear_rgb_planar(
+                    &xyb_x, &xyb_y, &xyb_b, &mut act_r, &mut act_g, &mut act_b, n,
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_r,
+                    &act_r,
+                    16,
+                    1e-5,
+                    perm,
+                    &format!("inv_r(n={n})"),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_g,
+                    &act_g,
+                    16,
+                    1e-5,
+                    perm,
+                    &format!("inv_g(n={n})"),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_b,
+                    &act_b,
+                    16,
+                    1e-5,
+                    perm,
+                    &format!("inv_b(n={n})"),
+                );
+            });
+        }
+    }
+}
