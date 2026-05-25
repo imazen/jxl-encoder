@@ -214,11 +214,6 @@ jxl_encoder_macros::strategy_def! {
             // itself is already off via `adaptive_quant_qf_seed = Off`,
             // making this a redundancy guard).
             high_colour_class_exclude = false,
-            // W44-AUDIT-8 Phase 8: strict libjxl parity → SSIM2 early-exit
-            // gate is OFF on Libjxl strategy. The buttloop runs to full
-            // convergence on butteraugli per libjxl, even when the SSIM2
-            // local optimum disagrees.
-            buttloop_ssim2_early_exit = false,
             // Section C CfL Newton: flip to libjxl bit-exact params.
             // Safe here because every other divergence is also flipped
             // (no W44-29..W44-172 calibration to throw off).
@@ -294,9 +289,6 @@ jxl_encoder_macros::strategy_def! {
             // `adaptive_quant_qf_seed = Off` so this is a redundancy
             // guard like terminal_class_exclude above.
             high_colour_class_exclude = false,
-            // W44-AUDIT-8 Phase 8: LeanFaster drops every per-image
-            // content gate (matches the W44-176 / W44-AUDIT-6 pattern).
-            buttloop_ssim2_early_exit = false,
             // W44-184: NOT a per-image gate; LeanFaster keeps Zenjxl's
             // cost-model calibration which is incompatible with the
             // libjxl-parity Newton (W44-183 measured 25/27 regressions).
@@ -364,15 +356,6 @@ jxl_encoder_macros::strategy_def! {
             // of the +44% bytes wedge at e7 d=4). Composes with the
             // W44-176 terminal exclude via OR.
             high_colour_class_exclude = true,
-            // W44-AUDIT-8 Phase 8 (2026-05-24): Zenjxl default ON —
-            // SSIM2 early-exit gate fires on photo-class (m3>=25
-            // AND fcbr<0.10) e>=8 d>=4 cells where the buttloop
-            // butteraugli-minimum diverges from the SSIM2-minimum
-            // (AUDIT-8 Phase 7 finding). Discriminator is narrow:
-            // W44-105 SHIP cells (terminal/imac_g3 M3 ∈ [10, 21])
-            // stay safely below m3=25; codec_wiki (M3=145.73) is
-            // excluded by fcbr=0.904 > 0.10.
-            buttloop_ssim2_early_exit = true,
             cfl_newton_libjxl_parity = false,
             // W44-AUDIT-5 Phase 2 (Mode C): OPT-IN ONLY on Zenjxl. The
             // Phase 2 3-mode bisect (`benchmarks/w44_audit_5_phase2_mode_bisect_2026-05-24.tsv`,
@@ -453,9 +436,6 @@ jxl_encoder_macros::strategy_def! {
             // for the next opt-in chunk with a too-narrow auto-
             // discriminator for the Zenjxl bundle).
             high_colour_class_exclude = true,
-            // W44-AUDIT-8 Phase 8: Aggressive mirrors Zenjxl per the
-            // standing pattern.
-            buttloop_ssim2_early_exit = true,
             cfl_newton_libjxl_parity = false,
             // W44-AUDIT-5 Phase 2 (Mode C): OPT-IN ONLY. Aggressive
             // mirrors Zenjxl per the standing pattern; bench measured
@@ -655,43 +635,6 @@ jxl_encoder_macros::strategy_def! {
         high_colour_class_exclude: bool {
             divergence_section = "B",
             divergence_row_ref = "W44-AUDIT-6 high-colour-class exclude from W44-109",
-        },
-
-        /// W44-AUDIT-8 Phase 8 (2026-05-24): SSIM2 early-exit gate in the
-        /// butteraugli quantization loop. When ON, the buttloop measures
-        /// SSIM2 on the reconstructed pixels after each accepted iter
-        /// (using the existing `fast-ssim2` infrastructure from the
-        /// `ssim2-loop` feature). If SSIM2 regresses by more than
-        /// [`W44_AUDIT_8_P8_SSIM2_REGRESSION_TOLERANCE`] (= 0.5 absolute)
-        /// vs the previous iter, the loop ROLLS BACK to the prior iter's
-        /// quant_field_float and returns early. Targets the W44-AUDIT-8
-        /// Phase 7 finding (memo
-        /// `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_audit_8_phase7_e9_diagnosis_2026-05-24.md`):
-        /// the buttloop correctly minimises butteraugli on photo-cluster
-        /// e9 d=4 cells, but the butteraugli-minimum is NOT at the
-        /// SSIM2-minimum on these high-frequency CLIC photos. Disabling
-        /// the buttloop recovers +1.42 mean SSIM2 at +4.5 % bytes on the
-        /// 3 worst cluster cells; the early-exit gate captures most of
-        /// that win without paying the full bytes cost.
-        ///
-        /// Gate predicate (in addition to this field being ON):
-        /// - `effort >= 8` (buttloop only fires at e>=8 anyway)
-        /// - `distance >= 4.0` (the d>=4 photo cluster boundary per AUDIT-8 Phase 1)
-        /// - `ZenanalyzeProxies.m3_colourfulness >= 25.0` (AUDIT-6 M3 lower bound;
-        ///   text-class screenshots (terminal/imac_g3) sit at M3 ∈ [10, 21] and
-        ///   stay safely below; codec_wiki sits at M3 = 145.73 but its
-        ///   fcbr = 0.904 is excluded by the fcbr disjunct below)
-        /// - `ZenanalyzeProxies.flat_color_block_ratio < 0.10` (AUDIT-6 photo
-        ///   disjunct lower bound; excludes UI/text/screenshot content with
-        ///   high flat-region density — codec_wiki/terminal/etc all >0.10)
-        ///
-        /// Requires the `ssim2-loop` cargo feature for the SSIM2 measurement
-        /// itself. Without `ssim2-loop` compiled, the gate is structurally
-        /// inert (the early-exit branch is `#[cfg(feature = "ssim2-loop")]`
-        /// gated). Section B.
-        buttloop_ssim2_early_exit: bool {
-            divergence_section = "B",
-            divergence_row_ref = "W44-AUDIT-8 P8 SSIM2 early-exit in buttloop (photo cluster d>=4 e>=8)",
         },
 
         // ── Section C CfL Newton parity ──────────────────────────────
@@ -1184,13 +1127,6 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "B",
         row_ref: "W44-AUDIT-6 high-colour-class exclude from W44-109",
         raw: __CUSTOM_DIVERGENCE_HIGH_COLOUR_CLASS_EXCLUDE,
-    },
-    // Section B — W44-AUDIT-8 Phase 8 SSIM2 early-exit in buttloop
-    DivergenceEntry {
-        gate_name: "buttloop_ssim2_early_exit",
-        section: "B",
-        row_ref: "W44-AUDIT-8 P8 SSIM2 early-exit in buttloop (photo cluster d>=4 e>=8)",
-        raw: __CUSTOM_DIVERGENCE_BUTTLOOP_SSIM2_EARLY_EXIT,
     },
     // Section C — CfL Newton parity
     DivergenceEntry {

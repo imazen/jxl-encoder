@@ -474,108 +474,6 @@ pub const W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN: f32 = 0.5;
 /// enter the AUDIT-6 exclude regardless of fcbr/edge_density.
 pub const W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN: f32 = 0.45;
 
-/// W44-AUDIT-8 Phase 8 (2026-05-24): SSIM2-regression tolerance for the
-/// buttloop early-exit gate. When the gate fires and an iter's SSIM2
-/// drops by more than this absolute delta vs the previous iter's SSIM2,
-/// the loop rolls back to the prior iter's `quant_field_float` and
-/// returns early. The 0.5-point floor matches the W44-AUDIT-8 Phase 7
-/// recovery delta (+1.42 mean SSIM2 on the 3 worst cluster cells when
-/// the loop is fully disabled); rolling back at the FIRST iter that
-/// regresses by 0.5+ captures most of that win without sacrificing
-/// iters that genuinely improve both metrics in tandem (the W44-105
-/// SHIP cluster pattern). A smaller tolerance (e.g. 0.1) would fire
-/// on small step-1 wiggles where the post-buttloop production
-/// `compute_epf_sharpness` would have re-equilibrated anyway; a
-/// larger tolerance (e.g. 1.0) would miss most of the AUDIT-8 Phase 7
-/// e9 deficit cluster (where individual iter SSIM2 drops are
-/// ~0.5-1.5 per iter at e9 d=4 on the worst CLIC photos).
-pub const W44_AUDIT_8_P8_SSIM2_REGRESSION_TOLERANCE: f64 = 0.5;
-
-/// W44-AUDIT-8 Phase 8 (2026-05-24): minimum `target_distance` at
-/// which the SSIM2 early-exit gate fires. The Phase 7 diagnosis
-/// localised the buttloop's butteraugli-vs-SSIM2 measurement wedge
-/// to the d>=4 photo cluster (Phase 1 cell characterisation); at
-/// d<4 the buttloop helps both metrics in tandem on the same
-/// content class, so the gate is structurally bypassed. Combined
-/// with the [`W44_AUDIT_8_P8_M3_COLOURFULNESS_MIN`] +
-/// [`W44_AUDIT_8_P8_FCBR_MAX`] discriminator this keeps the
-/// W44-105 SHIP cluster (text-class screenshots) outside the gate
-/// regime.
-pub const W44_AUDIT_8_P8_MIN_DISTANCE: f32 = 4.0;
-
-/// W44-AUDIT-8 Phase 8 (2026-05-24): minimum `effort` at which the
-/// SSIM2 early-exit gate fires. The buttloop itself is gated at
-/// `effort >= 8` (e8 = 2 iters, e9 = 4 iters); at e<=7 the
-/// `butteraugli_iters == 0` short-circuit upstream means this loop
-/// is never entered. Setting the explicit gate at 8 here is a
-/// belt-and-braces invariant + makes the discriminator predicate
-/// readable.
-pub const W44_AUDIT_8_P8_MIN_EFFORT: u8 = 8;
-
-/// W44-AUDIT-8 Phase 8 (2026-05-24): minimum `m3_colourfulness` for the
-/// SSIM2 early-exit gate to fire. The 25-point floor is the
-/// W44-AUDIT-6 photo-class lower bound — text-class screenshots
-/// (terminal M3 = 14, imac_g3 M3 = 14, imac_dark M3 = 21) sit
-/// safely below; codec_wiki (M3 = 145.73) DOES pass this gate but
-/// is excluded by the [`W44_AUDIT_8_P8_FCBR_MAX`] disjunct below
-/// (codec_wiki fcbr = 0.904 ≫ 0.10).
-pub const W44_AUDIT_8_P8_M3_COLOURFULNESS_MIN: f32 = 25.0;
-
-/// W44-AUDIT-8 Phase 8 (2026-05-24): maximum `flat_color_block_ratio`
-/// for the SSIM2 early-exit gate to fire. The 0.10 ceiling is the
-/// W44-AUDIT-6 photo disjunct lower bound — UI / text / mixed-content
-/// screenshots all have fcbr >> 0.10 (codec_wiki = 0.904, terminal /
-/// imac_g3 ≈ 0.7-0.9). Real photos in the AUDIT-8 Phase 1 cluster
-/// (1418519, 1531677, clic_22ea12, clic_097cb4, clic_100a02) all sit
-/// well under 0.10 (single-digit-percent flat regions on dense
-/// photographic content).
-pub const W44_AUDIT_8_P8_FCBR_MAX: f32 = 0.10;
-
-/// W44-AUDIT-8 Phase 8 (2026-05-24): predicate for the SSIM2 early-exit
-/// gate. Returns `true` when (a) the resolved gate field is ON, (b)
-/// the encode is at e>=8, (c) target distance ≥ 4.0, AND (d) the
-/// zenanalyze proxies show a photo-class image (m3 ≥ 25 AND fcbr <
-/// 0.10). When any clause fails, the buttloop runs to full butteraugli
-/// convergence with no SSIM2 check — byte-identical to pre-AUDIT-8-P8
-/// behaviour.
-///
-/// Discriminator margins (verified against benches in
-/// `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_audit_8_phase7_e9_diagnosis_2026-05-24.md`
-/// and `benchmarks/w44_audit_8_phase7_e9_buttloop_isolate_2026-05-24.tsv`):
-///
-/// | Cell                | m3     | fcbr  | passes? |
-/// |---                  |---     |---    |---      |
-/// | terminal (W44-105)  | 14     | 0.85+ | NO (m3 < 25 AND fcbr > 0.10) |
-/// | imac_g3 (W44-105)   | 14     | 0.85+ | NO (m3 < 25 AND fcbr > 0.10) |
-/// | imac_dark (W44-105) | 21     | 0.85+ | NO (m3 < 25 AND fcbr > 0.10) |
-/// | codec_wiki          | 145.73 | 0.904 | NO (fcbr > 0.10)             |
-/// | 1418519 photo       | 50+    | <0.05 | YES                          |
-/// | 1531677 photo       | 50+    | <0.05 | YES                          |
-/// | clic_22ea12 photo   | 50+    | <0.05 | YES                          |
-/// | clic_097cb4 photo   | 50+    | <0.05 | YES                          |
-/// | clic_100a02 photo   | 50+    | <0.05 | YES                          |
-#[inline]
-pub(crate) fn w44_audit_8_p8_gate_fires(
-    enabled: bool,
-    effort: u8,
-    target_distance: f32,
-    proxies: Option<&super::encoder::ZenanalyzeProxies>,
-) -> bool {
-    if !enabled {
-        return false;
-    }
-    if effort < W44_AUDIT_8_P8_MIN_EFFORT {
-        return false;
-    }
-    if target_distance < W44_AUDIT_8_P8_MIN_DISTANCE {
-        return false;
-    }
-    proxies.is_some_and(|p| {
-        p.m3_colourfulness >= W44_AUDIT_8_P8_M3_COLOURFULNESS_MIN
-            && p.flat_color_block_ratio < W44_AUDIT_8_P8_FCBR_MAX
-    })
-}
-
 /// W44-109: maximum effort at which the screenshot-class adaptive-quant
 /// pre-scale fires. Mirrors the W44-105 buttloop seed-scale mechanism
 /// but at adaptive_quant time, before the buttloop runs (the buttloop
@@ -1390,133 +1288,6 @@ struct SeedOutcome {
     k_init_mul: f64,
 }
 
-/// W44-AUDIT-8 Phase 8 (2026-05-24): SSIM2 measurement + rollback
-/// state for the buttloop early-exit gate.
-///
-/// Owns the SSIM2 reference precompute + a reusable interleaved-RGB
-/// scratch buffer for the per-iter reconstruction. Tracks the best
-/// SSIM2 seen so far and the corresponding `quant_field_float`
-/// snapshot, so a regression > tolerance can be rolled back to the
-/// best-iter qf.
-///
-/// Gated behind `feature = "ssim2-loop"` because it pulls in
-/// `fast_ssim2::Ssimulacra2Reference` + `imgref::Img` — both
-/// optional dependencies of `jxl-encoder`.
-#[cfg(all(feature = "butteraugli-loop", feature = "ssim2-loop"))]
-struct W44AuditP8SsimState {
-    /// Precomputed SSIM2 reference from the source linear-RGB planes.
-    /// Built once before the iter loop, reused across every iter.
-    ssim2_ref: fast_ssim2::Ssimulacra2Reference,
-    /// Logical image width — passed to `imgref::Img::new`.
-    width: usize,
-    /// Logical image height.
-    height: usize,
-    /// Reusable interleaved-RGB scratch for per-iter SSIM2 measurement.
-    /// Sized `width * height` (the reconstructed image's logical extent,
-    /// NOT `padded_pixels`). Cleared + refilled each iter.
-    recon_rgb3: alloc::vec::Vec<[f32; 3]>,
-    /// Best SSIM2 seen so far across iters. Initialised to a very
-    /// negative sentinel so the FIRST iter always accepts.
-    best_ssim2: f64,
-    /// Snapshot of `quant_field_float` taken at the END of the best
-    /// iter (after step 4 reconstruction but before step 7-8
-    /// adjustments). When the loop rolls back, this is the qf
-    /// restored to `quant_field_float`.
-    best_qf_snapshot: alloc::vec::Vec<f32>,
-}
-
-#[cfg(all(feature = "butteraugli-loop", feature = "ssim2-loop"))]
-impl W44AuditP8SsimState {
-    /// Build the SSIM2 reference + scratch buffers. Returns `None` if
-    /// the reference precompute fails (e.g. non-finite input pixels);
-    /// in that case the caller treats the gate as inert (no SSIM2
-    /// check, no rollback) and the loop runs to full butteraugli
-    /// convergence — byte-identical to pre-AUDIT-8-P8 on that cell.
-    fn new(
-        ref_r: &[f32],
-        ref_g: &[f32],
-        ref_b: &[f32],
-        width: usize,
-        height: usize,
-        num_blocks: usize,
-    ) -> Option<Self> {
-        let n = width * height;
-        debug_assert_eq!(ref_r.len(), n);
-        debug_assert_eq!(ref_g.len(), n);
-        debug_assert_eq!(ref_b.len(), n);
-        let source_rgb3: alloc::vec::Vec<[f32; 3]> = (0..n)
-            .map(|i| [ref_r[i], ref_g[i], ref_b[i]])
-            .collect();
-        let source_img = imgref::Img::new(source_rgb3, width, height);
-        let ssim2_ref = fast_ssim2::Ssimulacra2Reference::new(source_img.as_ref()).ok()?;
-        Some(Self {
-            ssim2_ref,
-            width,
-            height,
-            recon_rgb3: alloc::vec::Vec::with_capacity(n),
-            best_ssim2: f64::NEG_INFINITY,
-            best_qf_snapshot: alloc::vec![0.0f32; num_blocks],
-        })
-    }
-
-    /// Measure SSIM2 on the per-iter reconstruction. The recon planes
-    /// are stride-`padded_width` (the buttloop's internal padded
-    /// buffer); we read only the logical `width × height` extent.
-    fn measure(
-        &mut self,
-        recon_r: &[f32],
-        recon_g: &[f32],
-        recon_b: &[f32],
-        padded_width: usize,
-    ) -> f64 {
-        self.recon_rgb3.clear();
-        for y in 0..self.height {
-            for x in 0..self.width {
-                let pi = y * padded_width + x;
-                self.recon_rgb3.push([recon_r[pi], recon_g[pi], recon_b[pi]]);
-            }
-        }
-        let recon_img = imgref::Img::new(self.recon_rgb3.as_slice(), self.width, self.height);
-        // `fast_ssim2::Ssimulacra2Reference::compare` returns
-        // `Result<f64, _>`; on the rare failure path (non-finite
-        // recon pixels — shouldn't occur on legitimate input) we
-        // fall back to `100.0` (the "perfect-match" sentinel value)
-        // so the comparison vs prior iter degenerates to "no
-        // regression" and the loop keeps going — same fallback as
-        // `ssim2_loop.rs:327`.
-        self.ssim2_ref
-            .compare(recon_img)
-            .unwrap_or(100.0)
-    }
-
-    /// Decide whether to accept or roll back this iter. Returns
-    /// `true` if the loop should roll back (and break). On accept,
-    /// updates `best_ssim2` + `best_qf_snapshot` so the next iter's
-    /// rollback target is THIS iter's qf.
-    ///
-    /// Accept criterion: `this_ssim2 >= best_ssim2 - tolerance`.
-    /// Strictly-better iters update the best; same-or-marginally-
-    /// worse iters keep the prior best snapshot (so two consecutive
-    /// marginally-worse iters that together exceed tolerance still
-    /// trigger a rollback to the BEST iter, not the previous one).
-    fn accept_or_rollback(&mut self, this_ssim2: f64, quant_field_float: &[f32]) -> bool {
-        let regressed = this_ssim2 < self.best_ssim2 - W44_AUDIT_8_P8_SSIM2_REGRESSION_TOLERANCE;
-        if regressed {
-            return true;
-        }
-        if this_ssim2 > self.best_ssim2 {
-            self.best_ssim2 = this_ssim2;
-            self.best_qf_snapshot.copy_from_slice(quant_field_float);
-        }
-        false
-    }
-
-    /// Restore `quant_field_float` from the best-iter snapshot.
-    fn restore_best(&self, quant_field_float: &mut [f32]) {
-        quant_field_float.copy_from_slice(&self.best_qf_snapshot);
-    }
-}
-
 impl VarDctEncoder {
     /// Butteraugli quantization loop: iteratively refines per-block quant_field
     /// by measuring perceptual distance (butteraugli) between the original image
@@ -2252,24 +2023,6 @@ impl VarDctEncoder {
         // semantics: VDP2 path = None, butteraugli path = Some(_).
         let mut backend = backend;
 
-        // W44-AUDIT-8 Phase 8 (2026-05-24): resolve the SSIM2 early-exit
-        // gate once per encode. The discriminator inputs (effort,
-        // target_distance, zenanalyze_proxies) are encoder-level — none
-        // vary across seeds or iters — so we evaluate once and pass the
-        // bool through to every seed. Default `false` for callers
-        // without the `ssim2-loop` feature compiled in, OR Libjxl /
-        // LeanFaster strategies, OR images outside the photo-cluster
-        // regime (most of the corpus). When true on Zenjxl / Aggressive
-        // with `ssim2-loop` compiled, the inner-seed loop measures
-        // SSIM2 each iter and rolls back when it regresses by more than
-        // [`W44_AUDIT_8_P8_SSIM2_REGRESSION_TOLERANCE`].
-        let w44_audit_8_p8_gate = w44_audit_8_p8_gate_fires(
-            self.resolved_improvements.buttloop_ssim2_early_exit,
-            self.effort,
-            target_distance,
-            self.zenanalyze_proxies.as_ref(),
-        );
-
         for &k_init_mul in seeds {
             // Restore starting state for this seed (skipped on seed 0 because
             // quant_field/quant_field_float already hold it, but cheap enough
@@ -2314,7 +2067,6 @@ impl VarDctEncoder {
                 is_screenshot,
                 w44_118_per_iter_sharpness,
                 mask1x1,
-                w44_audit_8_p8_gate,
             )?;
             outcomes.push(outcome);
         }
@@ -2471,20 +2223,6 @@ impl VarDctEncoder {
         // seed. Env-gated; production default false.
         w44_118_per_iter_sharpness: bool,
         mask1x1: Option<&[f32]>,
-        // W44-AUDIT-8 Phase 8 (2026-05-24): SSIM2 early-exit gate.
-        // When `true`, the loop measures SSIM2 after each iter's
-        // reconstruction; if SSIM2 regresses by more than
-        // [`W44_AUDIT_8_P8_SSIM2_REGRESSION_TOLERANCE`] vs the prior
-        // iter's SSIM2, the loop rolls back to the prior iter's
-        // `quant_field_float` AND returns early. When `false`
-        // (production default for most cells; always false on Libjxl/
-        // LeanFaster strategies), the loop runs to full butteraugli
-        // convergence with no SSIM2 check — byte-identical to
-        // pre-AUDIT-8-P8 behaviour. Gate is structurally inert when
-        // the `ssim2-loop` cargo feature is OFF (the measurement
-        // would require `fast-ssim2` + `imgref`); the `#[cfg]` arms
-        // below skip the check in that build configuration.
-        w44_audit_8_p8_gate: bool,
     ) -> Result<SeedOutcome> {
         use super::epf;
         use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
@@ -2514,38 +2252,6 @@ impl VarDctEncoder {
         // the ~width*height*4 B/iter fresh allocation the prior
         // `BackendCompareResult { diffmap: Vec<f32> }` path produced.
         let mut diffmap_vec: alloc::vec::Vec<f32> = alloc::vec::Vec::new();
-
-        // W44-AUDIT-8 Phase 8 (2026-05-24): SSIM2 early-exit gate setup.
-        // Only allocate the SSIM2 reference + per-iter scratch when the
-        // gate fires (cheap check: bool && f32 cmp). When `ssim2-loop`
-        // cargo feature is not compiled, the gate is structurally
-        // inert below (`#[cfg(feature = "ssim2-loop")]` arms skip the
-        // measurement) so we still spare the allocation cost there.
-        //
-        // The SSIM2 reference precompute (`Ssimulacra2Reference::new`)
-        // is independent of the per-iter reconstruction — built once
-        // from `ref_r/g/b` and reused across every iter. On the order
-        // of a single `compare` call's wall time (~5-10 ms at 1024²);
-        // amortised across 2-4 iters at e>=8 the per-iter cost is
-        // ~3-15 ms (vs the buttloop's ~150-400 ms per iter for a
-        // 1024² photo), so the overhead is bounded at a few % of the
-        // buttloop's wall when the gate fires AND the encode reaches
-        // full iter convergence. When the early-exit fires (the
-        // intended hot path on the photo cluster) we SAVE iters and
-        // therefore net wall-time wins.
-        //
-        // The gate-fires bool was computed once in the outer
-        // `butteraugli_refine_quant_field` and threaded through the
-        // seed loop, so each seed agrees on whether the gate is
-        // active for this encode.
-        #[cfg(feature = "ssim2-loop")]
-        let mut ssim2_state: Option<W44AuditP8SsimState> = if w44_audit_8_p8_gate {
-            W44AuditP8SsimState::new(ref_r, ref_g, ref_b, width, height, num_blocks)
-        } else {
-            None
-        };
-        #[cfg(not(feature = "ssim2-loop"))]
-        let _ = w44_audit_8_p8_gate; // unused without ssim2-loop feature
 
         // Loop runs iters+1 times (matching libjxl: last iteration is compare-only).
         // i=0..iters-1: SetQuantField + roundtrip + compare + adjust
@@ -2975,61 +2681,6 @@ impl VarDctEncoder {
                     td_max,
                     bad_blocks
                 );
-            }
-
-            // W44-AUDIT-8 Phase 8 (2026-05-24): SSIM2 early-exit check.
-            //
-            // When the gate fires (set once before the seed loop on
-            // photo-cluster cells where Phase 7 isolated the
-            // butteraugli-vs-SSIM2 measurement-objective wedge), we
-            // measure SSIM2 on the reconstructed pixels at the end of
-            // each iter and roll back to the previous iter's
-            // `quant_field_float` if SSIM2 regressed by more than
-            // [`W44_AUDIT_8_P8_SSIM2_REGRESSION_TOLERANCE`].
-            //
-            // The check happens AFTER the butteraugli compare (so
-            // `last_score` already reflects this iter) but BEFORE the
-            // step-7/8 quant_field adjustments that would otherwise
-            // diverge further from the SSIM2-optimal field. On rollback:
-            //   - `quant_field_float` is restored to the snapshot taken
-            //     at the start of the BEST iter (the one with the
-            //     highest accepted SSIM2 so far),
-            //   - The loop breaks, jumping to the post-loop
-            //     `compute_from_quant_field` that re-derives
-            //     `final_params` from the restored qf.
-            //
-            // Each accepted iter snapshots `quant_field_float` AFTER
-            // step 4 (reconstruction complete) but BEFORE step 7-8
-            // (next-iter adjustments) so the snapshot is the qf that
-            // produced the measured SSIM2.
-            //
-            // Gated by feature = "ssim2-loop"; without that feature
-            // compiled, `ssim2_state` was `let _ = ` and the entire
-            // block is structurally elided.
-            #[cfg(feature = "ssim2-loop")]
-            if let Some(state) = ssim2_state.as_mut() {
-                let this_ssim2 = state.measure(recon_r, recon_g, recon_b, padded_width);
-                let rollback = state.accept_or_rollback(this_ssim2, quant_field_float);
-                if rollback {
-                    // Replay the BEST-iter qf into `quant_field_float`;
-                    // skip remaining iters. The post-loop
-                    // `compute_from_quant_field` will derive the
-                    // definitive `final_params` from this restored qf.
-                    state.restore_best(quant_field_float);
-                    debug_rect!(
-                        "bfly/ssim2_early_exit",
-                        0,
-                        0,
-                        width,
-                        height,
-                        "iter={}/{} rollback_to_best ssim2_curr={:.4} ssim2_best={:.4}",
-                        iter,
-                        iters,
-                        this_ssim2,
-                        state.best_ssim2,
-                    );
-                    break;
-                }
             }
 
             // Last iteration is compare-only (libjxl: if (i == iters) break;)
@@ -4624,134 +4275,5 @@ mod tuning_tests {
             LIBJXL_BUTTERAUGLI_SDR_INTENSITY_TARGET, 80.0,
             "SDR intensity_target must match libjxl's hardcoded 80.0 cd/m²"
         );
-    }
-
-    // ===== W44-AUDIT-8 Phase 8 tests =====
-    //
-    // Verifies the SSIM2-early-exit gate discriminator predicate
-    // (`w44_audit_8_p8_gate_fires`). The predicate is `enabled AND
-    // effort >= 8 AND distance >= 4.0 AND proxies.m3 >= 25 AND
-    // proxies.fcbr < 0.10`. The constants are the named PHASE 8
-    // constants; this test makes them load-bearing.
-
-    fn make_proxies(m3: f32, fcbr: f32) -> super::super::encoder::ZenanalyzeProxies {
-        super::super::encoder::ZenanalyzeProxies {
-            m3_colourfulness: m3,
-            flat_color_block_ratio: fcbr,
-            edge_density: 0.5,
-            luma_var: 0.0,
-        }
-    }
-
-    #[test]
-    fn w44_audit_8_p8_gate_constants_match_documented_values() {
-        // Phase 7 memo nominates these values; keep them load-bearing
-        // so any future re-tune is loud.
-        assert_eq!(W44_AUDIT_8_P8_MIN_EFFORT, 8);
-        assert!((W44_AUDIT_8_P8_MIN_DISTANCE - 4.0).abs() < 1e-6);
-        assert!((W44_AUDIT_8_P8_M3_COLOURFULNESS_MIN - 25.0).abs() < 1e-6);
-        assert!((W44_AUDIT_8_P8_FCBR_MAX - 0.10).abs() < 1e-6);
-        assert!((W44_AUDIT_8_P8_SSIM2_REGRESSION_TOLERANCE - 0.5).abs() < 1e-9);
-    }
-
-    #[test]
-    fn w44_audit_8_p8_gate_off_when_disabled() {
-        let p = make_proxies(50.0, 0.05);
-        // All other clauses passing but enabled=false → false.
-        assert!(!w44_audit_8_p8_gate_fires(false, 9, 4.0, Some(&p)));
-    }
-
-    #[test]
-    fn w44_audit_8_p8_gate_off_when_effort_below_8() {
-        let p = make_proxies(50.0, 0.05);
-        for e in [0u8, 5, 7] {
-            assert!(
-                !w44_audit_8_p8_gate_fires(true, e, 4.0, Some(&p)),
-                "gate must not fire at effort {e}",
-            );
-        }
-    }
-
-    #[test]
-    fn w44_audit_8_p8_gate_off_when_distance_below_4() {
-        let p = make_proxies(50.0, 0.05);
-        for d in [0.5_f32, 1.0, 2.0, 3.0, 3.999] {
-            assert!(
-                !w44_audit_8_p8_gate_fires(true, 8, d, Some(&p)),
-                "gate must not fire at distance {d}",
-            );
-        }
-    }
-
-    #[test]
-    fn w44_audit_8_p8_gate_off_without_proxies() {
-        // 8-bit sRGB layouts populate proxies; other layouts (16-bit,
-        // linear-f32, grayscale, HDR) leave them None. Gate must defer
-        // to "no" rather than fire on the unknown content class.
-        assert!(!w44_audit_8_p8_gate_fires(true, 9, 4.0, None));
-    }
-
-    #[test]
-    fn w44_audit_8_p8_gate_off_on_text_class_screenshots() {
-        // W44-105 SHIP cells: terminal M3=14, imac_g3 M3=14, imac_dark
-        // M3=21. All sit below the m3>=25 floor. (fcbr is also
-        // typically high, but m3 alone excludes them.)
-        for m3 in [14.0_f32, 14.0, 21.0] {
-            let p = make_proxies(m3, 0.85);
-            assert!(
-                !w44_audit_8_p8_gate_fires(true, 9, 4.0, Some(&p)),
-                "gate must not fire on text-class screenshots (m3={m3})",
-            );
-        }
-    }
-
-    #[test]
-    fn w44_audit_8_p8_gate_off_on_codec_wiki() {
-        // codec_wiki has very high m3 (145.73) — passes the m3 clause
-        // — but high fcbr (0.904) — fails the fcbr clause. AUDIT-6
-        // disjunct keeps it excluded.
-        let p = make_proxies(145.73, 0.904);
-        assert!(
-            !w44_audit_8_p8_gate_fires(true, 9, 4.0, Some(&p)),
-            "gate must not fire on codec_wiki (fcbr disjunct)",
-        );
-    }
-
-    #[test]
-    fn w44_audit_8_p8_gate_fires_on_photo_cluster() {
-        // The AUDIT-8 Phase 1 deficit cluster (CLIC photos +
-        // 1418519/1531677): all photographic content with m3 in [50, 60+]
-        // and fcbr < 0.05.
-        for &(m3, fcbr) in &[(50.0_f32, 0.05_f32), (60.0, 0.02), (35.0, 0.08)] {
-            let p = make_proxies(m3, fcbr);
-            assert!(
-                w44_audit_8_p8_gate_fires(true, 9, 4.0, Some(&p)),
-                "gate must fire on photo (m3={m3}, fcbr={fcbr})",
-            );
-            assert!(
-                w44_audit_8_p8_gate_fires(true, 8, 5.0, Some(&p)),
-                "gate must fire on photo at e8 d=5 (m3={m3}, fcbr={fcbr})",
-            );
-        }
-    }
-
-    #[test]
-    fn w44_audit_8_p8_gate_boundary_m3_equal_to_min() {
-        // Exact-boundary: m3 == 25.0 admits (>=).
-        let p_admit = make_proxies(25.0, 0.05);
-        assert!(w44_audit_8_p8_gate_fires(true, 8, 4.0, Some(&p_admit)));
-        // m3 == 24.99 → just below floor → rejects.
-        let p_reject = make_proxies(24.99, 0.05);
-        assert!(!w44_audit_8_p8_gate_fires(true, 8, 4.0, Some(&p_reject)));
-    }
-
-    #[test]
-    fn w44_audit_8_p8_gate_boundary_fcbr_equal_to_max() {
-        // Strict <: fcbr == 0.10 rejects.
-        let p_reject = make_proxies(50.0, 0.10);
-        assert!(!w44_audit_8_p8_gate_fires(true, 8, 4.0, Some(&p_reject)));
-        // fcbr == 0.099 admits.
-        let p_admit = make_proxies(50.0, 0.099);
-        assert!(w44_audit_8_p8_gate_fires(true, 8, 4.0, Some(&p_admit)));
     }
 }
