@@ -2424,5 +2424,10 @@ name = "w44_audit_6_phase2c_w105_bisect"
 path = "examples/w44_audit_6_phase2c_w105_bisect.rs"
 required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 
+[[example]]
+name = "w44_audit_5_phase1_per_block_dump"
+path = "examples/w44_audit_5_phase1_per_block_dump.rs"
+required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+
 [lints]
 workspace = true
