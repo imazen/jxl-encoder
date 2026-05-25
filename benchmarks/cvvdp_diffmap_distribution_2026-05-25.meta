@@ -1,0 +1,122 @@
+# cvvdp-fork Phase 8b — diffmap distribution capture
+# Date: 2026-05-25
+# Encoder commit: cvvdp-fork-rfc + diffmap dump scaffolding (af80bfad)
+# Harness: jxl-encoder/examples/cvvdp_phase8b_diffmap_distribution.rs
+# Hook: maybe_dump_diffmap_stats() in jxl-encoder/src/vardct/perceptual_backend.rs
+#
+# Run:
+#   JXL_CVVDP_DIFFMAP_RENORM_SCALE=1.0 \
+#     ./target/release/examples/cvvdp_phase8b_diffmap_distribution \
+#     --dump-out /tmp/cvvdp_p8b_dump.tsv \
+#     --out benchmarks/cvvdp_diffmap_distribution_2026-05-25.tsv
+#
+# Fixtures (5 cells × 4 distances = 20 (image, distance) pairs):
+#   CID22/1025469.png  (photo, mid-mass)
+#   CID22/1418519.png  (photo, low-detail)
+#   CID22/1189261.png  (photo, high-detail)
+#   GB82-SC/terminal.png  (screenshot, text-heavy)
+#   GB82-SC/imac_g3.png   (screenshot, UI-heavy)
+# Distances: 0.5, 1.0, 2.0, 3.0
+# Effort: 8 (buttloop fires at e≥8)
+# Buttloop iters: 3 per encode (libjxl default at e=8 = 2 + 1 compare-only)
+#
+# Column schema (cvvdp_diffmap_distribution_2026-05-25.tsv):
+#   cell                  — "corpus/image|d=N" key
+#   n_iters_b             — number of B_CPU diffmap dumps captured (== buttloop iters)
+#   n_iters_c             — number of C_GPU_PRE / C_CPU_PRE diffmap dumps
+#   mean_b                — mean of per-iter butter diffmap means
+#   mean_c                — mean of per-iter cvvdp diffmap means (PRE-renorm)
+#   ratio_c_over_b        — mean_c / mean_b (single per-cell scalar)
+#
+# Headline aggregates (computed by the harness):
+#   n cells: 20
+#   median cvvdp/butter mean ratio: 1.5147
+#   p25..p75 range:                 [0.7048, 2.5220]
+#   global cvvdp/butter mean ratio: 2.1757
+#   geometric mean ratio:           1.3334
+#
+# **CORRECTION (2026-05-25 post-bench)**: The mean-ratio alone is NOT the
+# right scale. The buttloop's bad-block predicate fires on
+# `tile_dist / effective_metric_target > 1`, and `effective_metric_target`
+# differs between backends (butter: distance=2.0; cvvdp: 0.0724 at d=2).
+# The RIGHT scale satisfies:
+#   `(mean_c * scale) / target_c ≈ mean_b / target_b`
+#   → scale = (target_c / target_b) * (mean_b / mean_c)
+#
+# Per-cell target-aware scale (from this same Phase 8b data):
+#   median:  0.0177    geomean:  0.0163    mean: 0.0213
+#   p25:     0.0103    p75:      0.0234
+#   min:     0.0036 (terminal d=0.5)    max: 0.0707 (imac_g3 d=1.0)
+#
+# Per-distance medians:
+#   d=0.5: 0.0164    d=1.0: 0.0306
+#   d=2.0: 0.0224    d=3.0: 0.0178
+#
+# **===> SHIPPED Phase 8c CVVDP_DIFFMAP_RENORM_SCALE = 0.018**
+# (rounded median of target-aware per-cell scales; the placeholder 0.660
+# derived from mean-only ratio was wrong-direction by ~37× and verified
+# to make bytes WORSE in the Phase 8c first re-bench attempt).
+#
+# Per-(image, distance) ratio table (sorted by distance for readability):
+#
+#   image                        | d=0.5  | d=1.0  | d=2.0  | d=3.0
+#   ----------------------------------------------------------------
+#   CID22/1025469.png            | 0.57   | 1.20   | 2.52   | 3.94
+#   CID22/1189261.png            | 0.33   | 0.75   | 1.51   | 2.49
+#   CID22/1418519.png            | 0.34   | 0.78   | 1.62   | 2.50
+#   GB82-SC/imac_g3.png          | 0.35   | 0.34   | 0.70   | 1.42
+#   GB82-SC/terminal.png         | 1.61   | 6.52   | 7.84   | 4.83
+#
+# Patterns:
+#
+#   1. Photos: ratio MONOTONICALLY GROWS with distance. At d=0.5 cvvdp
+#      diffmap mean is ~1/3 of butter's (cvvdp is tame on subtle perturbations);
+#      at d=3.0 it's 2.5-3.9× larger (cvvdp's pyramid + CSF amplifies obvious
+#      artifacts more than butteraugli's max-norm).
+#
+#   2. Screenshots split:
+#      - imac_g3.png follows photo pattern (0.35 → 1.42), but lower magnitude.
+#      - terminal.png is anomalous: cvvdp 1.6-7.8× larger at every distance.
+#        Likely because terminal's high-contrast text edges trip cvvdp's CSF
+#        much harder than butter's max-norm averaging.
+#
+#   3. Single global scale CANNOT satisfy every cell. Median 1.5147 picks
+#      the central tendency; that's our Phase 8c production constant.
+#      Outliers (terminal, high-d photos) will remain slightly over-allocated
+#      under Phase 8c; Phase 8d bytes-tighten exit is the next lever.
+#
+# Decision rationale:
+#
+# We pick the MEDIAN cvvdp/butter ratio (1.5147) for the renorm scale because:
+#   (a) Median is robust to the per-(image, distance) outliers in the
+#       distribution (1.6-7.8× on terminal).
+#   (b) Half of cells will be slightly over-scaled, half slightly under-scaled
+#       — symmetric error tolerance.
+#   (c) Geometric mean (1.33) and median (1.51) agree within 14% — the central
+#       tendency is well-defined.
+#   (d) Global ratio (2.18) is pulled by the screenshot outliers; using it
+#       would over-scale most cells.
+#
+# What the renorm DOES to the per-block reducer:
+#
+#   Pre-renorm: tile_dist = K_TILE_NORM * (mean(cvvdp_diff^16))^(1/16)
+#               diff = tile_dist / effective_metric_target_distance
+#               bad-block if diff > 1.0
+#   Post-renorm (scale s=0.660): cvvdp_diff *= 0.660
+#                tile_dist_new = K_TILE_NORM * (mean((0.660 * cvvdp_diff)^16))^(1/16)
+#                             = 0.660 * tile_dist
+#   so the new diff = 0.660 * tile_dist / effective_metric_target_distance
+#   The bad-block threshold of 1.0 is unchanged; but cvvdp values that
+#   exceeded the threshold by ~1.51× now hover near 1.0 (the
+#   butteraugli-equivalent regime the W44 calibration was tuned for).
+#
+# Follow-on candidates (NOT in Phase 8c scope):
+#
+# Phase 8d: bytes-tighten exit pass. For each block, try qac+1; if JOD still
+#   ≤ target + ε, accept. Captures the residual outlier-cell over-allocation.
+# Phase 8g (Intervention B): per-distance scale lookup (replace single
+#   constant with `(d, scale)` table). Each distance band has a clear
+#   monotonic trend.
+# Phase 8h (Intervention BX): replace the per-block reducer entirely with
+#   a cvvdp-shaped one (different reduction kernel, possibly different
+#   percentile-based threshold instead of max-norm-shape predicate).
