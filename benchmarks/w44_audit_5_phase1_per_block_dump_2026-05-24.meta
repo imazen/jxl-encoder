@@ -1,0 +1,192 @@
+# W44-AUDIT-5 Phase 1 — diagnostic per-block dump + 3-candidate ranking
+# Date: 2026-05-24
+# Status: [HONEST-STOP — diagnostic only, no production source change]
+# Parent commit: 9f38e02f
+
+## Cell
+- Image:    /home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png (2560×1664 = 4.26 MP)
+- Effort:   7
+- Distance: 4.0
+
+## Bench reproducibility (Step 1)
+| encoder     | bytes  | bfly  | ssim2 | Δ% vs cjxl | ΔSSIM2 vs cjxl |
+|---          |---     |---    |---    |---         |---             |
+| cjxl 0.12.0 | 62,710 | 2.991 | 84.86 | (baseline) | (baseline)     |
+| Libjxl-ours | 70,217 | 3.209 | 79.35 | +11.97%    | -5.51          |
+| Zenjxl-ours | 62,850 | 3.216 | 80.53 | +0.22%     | -4.33          |
+
+Reproduces AUDIT-4 (`0e65668f`) exactly. The +12pp "structural" Libjxl-strategy gap
+is confirmed.
+
+Critical observation: Libjxl-strategy is STRICTLY WORSE than Zenjxl-strategy
+on this cell (more bytes AND lower SSIM2). The deficit Δbetween = -1.18 SSIM2
++ 11.7pp bytes is purely caused by the Libjxl-only divergences (Section A
+effort-gates + Section D KNOWN-BUG re-enables + Section C CfL Newton parity).
+
+## Per-block strategy histogram (Y channel only)
+strategy        libjxl    zenjxl     delta
+DCT8X16           2074      2356      +282
+DCT8              1198       952      -246
+DCT16X32           862         0      -862  ← Libjxl picks, Zenjxl doesn't
+AFV2               621       553       -68
+DCT16X8            573       595       +22
+DCT64X64           565         0      -565  ← Libjxl picks, Zenjxl doesn't
+DCT8X4             331       401       +70
+DCT2X2             318       339       +21
+DCT16X16           295     14358    +14063  ← Zenjxl fallback to 16X16
+AFV0               278       291       +13
+DCT32X64           253         0      -253
+Hornuss            232       191       -41
+DCT32X16           232         0      -232
+AFV1               219       224        +5
+AFV3               212       191       -21
+DCT4X8             116        84       -32
+DCT32X32           104         0      -104
+DCT64X32            59         0       -59
+DCT4X4               1         0        -1
+
+Libjxl picks ~2,075 large-DCT blocks (16X32/64X64/32X64/32X16/32X32/64X32);
+Zenjxl picks zero of these but emits 14,358 DCT16X16 blocks.
+
+This is NOT the structural gap driver — both are valid strategy mixes; cjxl
+manages to encode a similar-shaped strategy mix into 62,710 bytes with SSIM2
+84.86. Both Libjxl-strategy AND Zenjxl-strategy diverge from cjxl, but Zenjxl
+is closer on bytes (+0.22%) while Libjxl bleeds 11.7pp.
+
+## 3-candidate ranking (per AUDIT-4 pre-narrowing)
+
+### Candidate 1: Per-block butteraugli measurement at e7 → RULED OUT
+**Source verified**: `enc_adaptive_quantization.cc:1273-1287` —
+`FindBestQuantizer` only runs `FindBestQuantization` (the butteraugli loop)
+when `cparams.speed_tier <= SpeedTier::kKitten`. kKitten = 2 = cjxl effort 8.
+At e7 (kSquirrel = 3), `3 <= 2` is FALSE → buttloop OFF in cjxl. Our gate
+matches: `butteraugli_iters = 0` at e7 (per `effort.rs`).
+No per-block butteraugli probe exists in libjxl outside the loop.
+→ RULED OUT.
+
+### Candidate 2: kFavor2X2 weight curve at d=4 → RULED OUT
+**Source verified**: `enc_ac_strategy.cc:588-590`:
+  `kFavor2X2AtHighQuality = 0.4`
+  `weight = pow((5 - butteraugli_target) / 5, 2)`
+  `entropy_mul -= kFavor2X2 * weight`
+Ours (`vardct/ac_strategy_search.rs:415` + `favor_2x2_weight()` at line 40):
+  `k_favor_2x2 = -0.4`, `weight = ((5-d)/5)^2`
+  `entropy_mul += k_favor_2x2 * weight`  ← `-0.4 * 0.04 = -0.016` at d=4
+Bit-exact match in BOTH numerator and direction. At d=4 the magnitude is 0.04
+× 0.4 = 0.016, a tiny adjustment that affects only IDENTITY/DCT2X2 selection
+for 8x8-class blocks. Cannot account for +12pp wedge.
+→ RULED OUT.
+
+### Candidate 3: Strategy-search step_size for 32x32+ at d>=4 → RULED OUT
+**Source verified**: `enc_ac_strategy.cc:1046`:
+  `step = cparams.speed_tier >= SpeedTier::kTortoise ? 2 : 1`
+kTortoise = 1 = cjxl effort 9. At e7 (kSquirrel = 3), `3 >= 1` = TRUE → step=2.
+Ours (`effort.rs:1229`):
+  `fine_grained_step: if effort >= 10 { 1 } else { 2 }`
+At e7, both = step=2. Identical search density.
+→ RULED OUT.
+
+## NEW TOP candidates surfaced by Phase 1 evidence
+
+### NEW TOP CANDIDATE A: `block_ctx_map_15_cluster = true` (Section D KNOWN-BUG #59)
+- `gate_registry.rs:182` re-enables the libjxl 15-cluster `LIBJXL_DEFAULT_CTX_MAP`
+  for the Libjxl strategy (`ac_context.rs:80-84`).
+- W44-71 memo (`w44_71_15cluster_default_regression_2026-05-19.md`) measured
+  this re-enable as **+1.4-3.6% byte REGRESSION** on smaller cells. On
+  codec_wiki (4.26 MP — 16× larger than the W44-71 test cells), the
+  context-map cost compounds because:
+    - 4 → 15 clusters expands context-map from 1,980 to 7,425 entries (3.75×)
+    - Our writer in `encode_ans.rs:804` DOES now ship ANS+LZ77 alongside
+      Huffman+MTF (post-W44-71 fix), but the per-section breakdown that
+      W44-71 captured (HfGlobal +719 B from context-map writer cost alone)
+      still applies to the *post-Huffman fallback path* on larger cells.
+- Bytes-only mechanism (does NOT change pixels) → cannot explain the
+  -5.51 ΔSSIM2. But explains ~3-6 pp of the +11.7pp gap.
+
+### NEW TOP CANDIDATE B: `cfl_newton_libjxl_parity = true` (Section C flip)
+- `gate_registry.rs:201` flips to libjxl bit-exact Newton (eps=100, iters=20,
+  start x=0, no LS fallback) on the Libjxl strategy.
+- **W44-183 measurement** (`286bf5f1`, documented in W44-184 memo
+  `w44_184_libjxl_strategy_only_cfl_newton_2026-05-22.md`): flipping this
+  at default regresses **25/27 spot-checked photo cells by 0.25-13.02 SSIM2
+  and +7.82% mean bytes**.
+- Pixel-affecting at e=7 (Pass-2 CfL Newton fires when `cfl_two_pass = true`,
+  which is `effort >= 7` per `effort.rs:666`).
+- Magnitude on codec_wiki: untested directly, but the W44-183 reference
+  range (0.25-13.02 SSIM2 + 7.82% mean bytes on photos) is exactly the
+  shape of the codec_wiki Libjxl-strategy regression (-5.51 SSIM2 + 11.97%
+  bytes). codec_wiki is a screenshot, not a photo — so the magnitude is
+  unpredictable from the W44-183 photo set, but the mechanism aligns.
+- The downstream cost-model calibration (W44-29..W44-172 entropy_mul
+  tables, AC strategy gates, buttloop seeds, adaptive_quant) was tuned
+  against the LS-warm-start Newton baseline; flipping to libjxl-parity
+  Newton produces CfL maps the downstream pipeline cannot compensate for.
+
+## Verdict ranking
+
+- **TOP**: `cfl_newton_libjxl_parity = true` (likely dominant cause of
+  the SSIM2 deficit, possibly also dominant on bytes via downstream
+  cost-model mis-calibration)
+- **HIGH**: `block_ctx_map_15_cluster = true` (likely +3-6pp bytes,
+  zero SSIM2 impact)
+- **MEDIUM**: composition effect of TOP + HIGH (the bytes wedge and
+  SSIM2 deficit may be coupled through the downstream cost model)
+- **RULED OUT**: All 3 AUDIT-4 pre-narrowed candidates (per-block bfly
+  at e7, kFavor2X2 at d=4, step_size at d>=4) — verified bit-exact
+  matches against libjxl source.
+
+## Phase 2 concrete fix-shape proposals
+
+### Fix A: split `cfl_newton_libjxl_parity` from `cfl_pass2_ls_at_low_effort`
+The `gate_registry.rs:201` flip turns ON pure Newton parity (eps=100, iters=20,
+no LS fallback). The W44-183 measurement proves this regresses photos by
+0.25-13.02 SSIM2 — strict "cjxl parity" wedge.
+
+**Proposal**: Add a 3rd CfL mode "libjxl-bit-exact-with-LS-warm-start" that:
+- Uses libjxl eps=100, iters=20 (parity for the Newton math)
+- BUT keeps the LS warm-start that our downstream cost model is calibrated against
+This SHOULD close the SSIM2 gap WITHOUT requiring re-tuning W44-29..W44-172.
+
+**Files**: `src/effort.rs:693-716` (`cfl_newton_libjxl_parity` field + new variant),
+`src/vardct/encoder.rs:4998` (dispatch), `src/gate_registry.rs:201` (flip).
+**Estimated wall-time**: 2-3 hours implementation + 30 min A/B bench on
+codec_wiki e7 d=4 + 2 spot-check photos.
+
+### Fix B: lower the `block_ctx_map_15_cluster` per-cell wedge
+Issue #59 follow-on. The W44-71 honest-stop diagnosed the writer-side
+ANS+LZ77 port — partially shipped, but still has +1.4-3.6% gap on default
+because our `build_context_map_nonsimple_ans_lz77` (`encode_ans.rs:924`)
+doesn't fully match cjxl's `EncodeContextMap` pair-merge clustering.
+
+**Proposal**: Audit `build_context_map_nonsimple_ans_lz77` for missing
+LZ77-greedy + pair-merge histogram clustering. The W44-71 measurement
+predicts ~500-1100 bytes of savings per cell from closing the writer gap.
+**Files**: `src/entropy_coding/encode_ans.rs:924`, `src/entropy_coding/lz77.rs`.
+**Estimated wall-time**: 1-2 days implementation + hash-lock regen + A/B
+bench on 6-cell W44-71 set.
+
+### Order of operations for W44-AUDIT-5 Phase 2
+1. Ship Fix A FIRST (it's the higher-EV SSIM2 close).
+2. Re-measure codec_wiki e7 d=4 Libjxl-strategy bytes + SSIM2.
+3. If +ΔSSIM2 ≥ +4.0 → Fix A is the dominant cause; Fix B becomes optional.
+4. If +ΔSSIM2 < +4.0 → ship Fix B too; the remaining gap may be in another
+   Libjxl-only divergence we haven't yet classified.
+
+## DO NOT
+1. DO NOT cite "FMA precision" (per W44-66 rule).
+2. DO NOT re-run AUDIT-4's pre-narrowed candidates — Phase 1 verified
+   bit-exact source parity on all 3.
+3. DO NOT default-flip `cfl_newton_libjxl_parity` to false on
+   `EncoderStrategy::Libjxl` — that breaks the cjxl-parity invariant the
+   Libjxl strategy promises. Phase 2 Fix A introduces a NEW mode without
+   touching the Libjxl preset's value.
+4. DO NOT default-flip `block_ctx_map_15_cluster` to false on Libjxl —
+   same parity-invariant constraint. Phase 2 Fix B improves the writer,
+   not the gate.
+
+## Files
+- `jxl-encoder/examples/w44_audit_5_phase1_per_block_dump.rs` — diagnostic harness
+- `benchmarks/w44_audit_5_phase1_per_block_dump_2026-05-24.tsv` — per-strategy histogram
+- This `.meta` file
+- `docs/LIBJXL_DIVERGENCES.md` Section F row added pointing here
+- `~/.claude/projects/.../memory/w44_audit_5_phase1_structural_gap_diagnosis_2026-05-24.md`
