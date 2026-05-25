@@ -1492,6 +1492,19 @@ name = "w44_audit_5_phase2_mode_bisect"
 path = "examples/w44_audit_5_phase2_mode_bisect.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__internals"]
 
+# W44-AUDIT-5 Phase 3: 3-mode A/B/D bisect on the codec_wiki SSIM2 wedge
+# cell + 2 photo PROTECT cells. Mode A = current Zenjxl baseline (LS warm
+# start + LS-only refinement); Mode B = EncoderStrategy::Libjxl (bit-exact
+# libjxl Newton ALWAYS); Mode D = Zenjxl with `cfl_pass1_screenshot_x0_start
+# = true` opt-in (per-image M3>=80 router elevates screenshot-class to the
+# libjxl `x=0` start path for that single image only). Acceptance: codec_wiki
+# SSIM2 ≥ Mode B − 0.3 AND bytes within +5% of Mode A AND photos byte-
+# identical OR within ±1.0 SSIM2 + ±2% bytes of Mode A.
+[[example]]
+name = "w44_audit_5_phase3_mode_bisect"
+path = "examples/w44_audit_5_phase3_mode_bisect.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__internals", "__expert"]
+
 # W44-197 Candidate B + C perf + A/B measurement. Replaces per-coefficient
 # `q / qw_x[i]` with `q * inv_qw_x[i]` (Candidate C, byte-identical) and
 # wires the new `cfl_pass2_ls_at_low_effort` gate on `Libjxl` strategy

@@ -640,6 +640,140 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### W44-AUDIT-5 Phase 3: per-image M3>=80 CfL `x=0` start route — HONEST-STOP (2026-05-24)
+
+**Status**: [RULED OUT — OPT-IN API SHIPPED, default-flip RULED OUT by 3-cell bisect]
+
+Follow-on to Phase 2 (`133f8d85`). Phase 2 HONEST-STOP found that Mode C
+(libjxl-math + LS warm-start) was BYTE-IDENTICAL to Mode A (LS-only) on
+the codec_wiki SSIM2-wedge cell — both refinement paths land at the same
+`i8` chroma multiplier when started from `ls_x`. The codec_wiki -5.51
+SSIM2 deficit therefore lives on the START position (`x = 0` vs
+`x = ls_x`), NOT the refinement math. Phase 3's hypothesis: route only
+screenshot-class images (m3_colourfulness >= 80, per W44-AUDIT-6 Phase 1
+discriminator) through the libjxl-bit-exact `x = 0` start path while
+keeping photos on `ls_x` warm-start.
+
+**Mechanism shipped**:
+
+- New `EffortProfile.cfl_pass1_screenshot_x0_start: bool` (default
+  `false` on every strategy; opt-in only after HONEST-STOP).
+- New `strategy_def!{}` macro gate row + `ALL_DIVERGENCE_ENTRIES` row +
+  `EXPECTED_DIVERGENCE_GATE_COUNT 29 → 30`.
+- New helper `w44_audit_5_p3_force_libjxl_parity_for_screenshot(profile,
+  proxies) -> bool` in `vardct/encoder.rs` composes the field with the
+  W44-AUDIT-6 Phase 1 `w44_audit_6_is_high_colour_class` predicate.
+- Dispatch sites in `vardct/encoder.rs` (Pass-1, Pass-2, precomputed-mode
+  patched Pass-1) and `vardct/bitstream.rs` (animation Pass-1 + Pass-2)
+  compute `cfl_newton_libjxl_parity_effective = profile field || (Phase 3
+  field AND m3>=80)` and pass that into the SIMD call. Mutually-exclusive
+  with Phase 2 Mode C (Phase 3 forces parity ON → priority inside the
+  SIMD kernel).
+- NOT wired in `vardct/precomputed.rs` per-DC-group site (precedent:
+  `EncoderPrecomputedGlobal` doesn't carry proxies, same as W44-91
+  streaming exclusion).
+- Env hook `JXL_W44_AUDIT_5_P3_DISABLE=1` forces the route OFF at every
+  site (negative-hook pattern mirroring W44-176 / W44-AUDIT-6).
+
+**3-mode bisect** (`benchmarks/w44_audit_5_phase3_mode_bisect_2026-05-24.tsv`):
+
+| Cell                       | Mode | bytes | SSIM2 | Δbytes% | ΔSSIM2 vs cjxl |
+|---                         |---   |---    |---    |---      |---             |
+| gb82_codec_wiki e7 d=4     | A    | 62850 | 80.53 | +0.22   | -4.33          |
+| gb82_codec_wiki e7 d=4     | B    | 70217 | 79.35 | +11.97  | -5.51          |
+| **gb82_codec_wiki e7 d=4** | **D**| **68330** | **78.73** | **+8.96** | **-6.13** |
+| cid22_1418519 e7 d=4       | A    | 8747  | 71.35 | -6.46   | -1.65          |
+| cid22_1418519 e7 d=4       | D    | 8747  | 71.35 | -6.46   | -1.65 ← BYTE-IDENTICAL |
+| cid22_1531677 e7 d=4       | A    | 23375 | 56.57 | -6.19   | -1.26          |
+| cid22_1531677 e7 d=4       | D    | 23375 | 56.57 | -6.19   | -1.26 ← BYTE-IDENTICAL |
+
+**Acceptance gates** (Step 3, evaluated strictly per spec):
+- (a) Mode D codec_wiki SSIM2 ≥ Mode B − 0.3 (= 79.05): 78.73 → **FAIL**
+- (b) Mode D codec_wiki bytes within +5% of Mode A: 68330 vs 65993 ceiling → **FAIL** (+8.72%)
+- (c) Photos byte-identical OR within ±1.0 SSIM2 + ±2% bytes of Mode A: byte-identical → **PASS**
+
+2 of 3 hard gates FAIL on codec_wiki. **HONEST-STOP on default-flip.**
+
+**Root cause of Mode D failure** (not in Phase 1's diagnosis):
+
+The Phase 1 narrative ("deficit lives on the START position") was correct
+about the FULL Libjxl strategy in isolation. Mode B applies `x = 0`
+simultaneously with EVERY other Libjxl cost-model alignment (Section A
+effort gates widen, Section B content-aware gates disable, Section D
+KNOWN-BUGs re-enable) producing a SELF-CONSISTENT Libjxl pipeline that
+hits 79.35 SSIM2.
+
+Mode D applies ONLY `x = 0` for the per-image admitted set while
+KEEPING Zenjxl's cost-model gates (W44-29..W44-172, all calibrated
+against LS-warm-start chroma multipliers). The strategy selector picks
+different AC strategies given different multipliers, the entropy coder
+packs them with Zenjxl's clustering, and the buttloop converges on a
+quant field that matches neither pure-Libjxl nor pure-Zenjxl behaviour.
+Result: -1.80 SSIM2 + +8.72% bytes vs Mode A — STRICTLY WORSE.
+
+Photos correctly stay byte-identical to Mode A — the M3<80 discriminator
+excludes them, calibration undisturbed there. Confirms the discriminator
+IS firing on codec_wiki (M3=145.73 ≫ 80); the mechanism IS reaching the
+dispatch sites; the OUTPUT is wrong because the surrounding pipeline is
+wrong-shape for the chroma multipliers it now receives.
+
+**Files**:
+- `jxl-encoder/src/effort.rs` — new `cfl_pass1_screenshot_x0_start`
+  field + 2 default-init sites + `apply_section_c_cfl_newton_libjxl_parity`
+  adapter branch
+- `jxl-encoder/src/gate_registry.rs` — new gate row in `strategy_def!{}`
+  + 4 strategy preset assignments + 1 `ALL_DIVERGENCE_ENTRIES` row
+- `jxl-encoder/src/vardct/encoder.rs` — new pub(crate)
+  `w44_audit_5_p3_force_libjxl_parity_for_screenshot` helper + 3 CfL
+  dispatch sites compose effective parity flag
+- `jxl-encoder/src/vardct/bitstream.rs` — 2 animation CfL dispatch sites
+  compose effective parity flag (no-op today on streaming/animation)
+- `jxl-encoder/src/vardct/precomputed.rs` — comment-only update
+- `jxl-encoder/tests/divergence_table_drift.rs` —
+  `EXPECTED_DIVERGENCE_GATE_COUNT 29 → 30`
+- `jxl-encoder/examples/w44_audit_5_phase3_mode_bisect.rs` (NEW) +
+  registered in Cargo.toml
+- `benchmarks/w44_audit_5_phase3_mode_bisect_2026-05-24.{tsv,meta}` (NEW)
+- `docs/LIBJXL_DIVERGENCES.md` Section C row added
+
+**DO NOT** (binding for future agents):
+
+1. DO NOT default-flip `cfl_pass1_screenshot_x0_start` on Zenjxl or
+   Aggressive. Measurement is conclusive: Mode D loses both SSIM2
+   (-1.80) AND bytes (+8.72%) vs Mode A on the codec_wiki SSIM2 wedge
+   — the route makes things STRICTLY WORSE than no route.
+2. DO NOT lower the M3 threshold (= 80) thinking it's a discriminator
+   issue. codec_wiki M3 = 145.73 (per W44-AUDIT-4) sits 1.8× above the
+   threshold; the discriminator IS firing on the target cell. The route
+   IS routing; the route is what's wrong.
+3. DO NOT raise the M3 threshold above 80. Photos in the bisect are
+   byte-identical because their M3 < 80 — the gate is doing its job.
+4. DO NOT cite "FMA precision" for the SSIM2 deficit (per W44-66 user
+   correction). The deficit is from CfL multipliers picking different
+   `i8` values, which propagate through strategy selection + entropy
+   coding to byte-level pipeline mismatch.
+5. DO NOT remove the new field or unwire the dispatch sites. The OPT-IN
+   API surface IS a legitimate Phase 3 deliverable — callers and future
+   experimenters need it for A/B benching the route mechanism.
+6. DO NOT respawn Phase 3 with a "tighter" discriminator (e.g. M3 >=
+   100 OR fcbr<0.01 sub-conditions). The failure mode is CHROMA
+   MULTIPLIER MISMATCH WITH ZENJXL COST MODEL — per-image gating
+   improvements don't address that.
+
+**Phase 4 candidates** (NOT in Phase 3 scope, queued):
+
+1. Per-image dispatch to `EncoderStrategy::Libjxl` at the API boundary
+   for codec_wiki-class inputs. Bigger API change but
+   measurement-supported (Mode B IS strictly better than Mode A on
+   codec_wiki SSIM2: 79.35 vs 80.53). Estimate: 1-2 days for the
+   dispatcher + bisect on 10-20 screenshots + photo regression sweep.
+2. Per-stratum Zenjxl cost-model recalibration AGAINST a libjxl-CfL
+   baseline for screenshot-class inputs (multi-week effort; risk of
+   regressing the W44-29..W44-172 photo wins it was tuned for).
+3. Document Zenjxl's codec_wiki SSIM2 deficit as INTENTIONAL trade-off
+   (Zenjxl optimized for photos at -4.3 SSIM2 cost on codec_wiki-class
+   screenshots). Mention `EncoderStrategy::Libjxl` as the workaround.
+
 ### W44-AUDIT-5 Phase 2: Mode C (libjxl-Newton-with-LS-warm-start) — OPT-IN ONLY (HONEST-STOP on default-flip) — SHIPPED (2026-05-24)
 
 **Status**: [SHIPPED — opt-in API surface only; HONEST-STOP on default-flip]

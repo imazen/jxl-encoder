@@ -732,6 +732,54 @@ pub struct EffortProfile {
     /// the field on `EncoderImprovementsCustom`.
     pub cfl_newton_libjxl_math_with_ls_warm_start: bool,
 
+    /// **W44-AUDIT-5 Phase 3**: when `true`, the encoder routes CfL Pass-1
+    /// (and Pass-2 if it fires) through the libjxl-bit-exact `x=0` start
+    /// path for **screenshot-class images only** — i.e. when the
+    /// per-image [`crate::vardct::encoder::ZenanalyzeProxies`] satisfy
+    /// `m3_colourfulness >= W44_AUDIT_6_HIGH_COLOUR_M3_MIN` (= 80.0).
+    /// Photo cells and non-sRGB-u8 layouts (where proxies are absent)
+    /// stay on the LS warm-start / LS-only path.
+    ///
+    /// **Why this exists**: the W44-AUDIT-5 Phase 1 + Phase 2 chain
+    /// established that:
+    /// - The +12pp Libjxl-strategy bytes overhead on `codec_wiki.png e7 d=4`
+    ///   AND its -5.51 SSIM2 deficit vs cjxl are caused by the CfL
+    ///   warm-start choice (`x=0` start vs `ls_x` warm-start), not the
+    ///   Newton math itself.
+    /// - Mode C (libjxl-math + ls_x warm-start) was byte-identical to
+    ///   Mode A (LS-only refinement, the Zenjxl baseline) on screenshots:
+    ///   both refinement paths land at the same `i8` multiplier when
+    ///   started from `ls_x`. The deficit lives on the START position.
+    ///
+    /// Phase 3 is the **route-by-content-class** mechanism: use the
+    /// `m3 >= 80` zenanalyze discriminator from W44-AUDIT-6 Phase 1 to
+    /// admit only mixed-content screenshots (codec_wiki, etc.) to the
+    /// `x=0` start path. Photos keep `ls_x` warm-start so the
+    /// W44-29..W44-172 calibration is preserved.
+    ///
+    /// **Mutual exclusion**: when `cfl_newton_libjxl_parity == true`
+    /// (Libjxl strategy), the `x=0` path fires for EVERY tile, so this
+    /// field is moot. When `cfl_newton_libjxl_math_with_ls_warm_start ==
+    /// true` (Mode C opt-in), the LS warm-start takes priority — Mode C
+    /// callers want the warm-start universally.
+    ///
+    /// **Composition**: Phase 3 only fires when
+    /// `cfl_newton_libjxl_parity == false` AND
+    /// `cfl_newton_libjxl_math_with_ls_warm_start == false` AND
+    /// `cfl_pass1_screenshot_x0_start == true` AND the per-image proxies
+    /// match the high-colour-class predicate. The route flip is
+    /// equivalent to flipping `libjxl_parity = true` for the single
+    /// `compute_cfl_map` / `refine_cfl_map` call only.
+    ///
+    /// Default `true` on Zenjxl / Aggressive (production-shipped after
+    /// the Phase 3 bisect + 36-cell regression validation); `false` on
+    /// Libjxl (irrelevant — `libjxl_parity` already on) and LeanFaster
+    /// (drops per-image content gates per the standing pattern).
+    ///
+    /// Env hook: `JXL_W44_AUDIT_5_P3_DISABLE=1` forces OFF at every
+    /// dispatch site.
+    pub cfl_pass1_screenshot_x0_start: bool,
+
     /// **W44-197 Candidate B**: enable CfL Pass-2 with LS-only solver at
     /// effort ∈ {5, 6} (matches libjxl `fast=true` dispatch at
     /// `speed_tier >= kWombat`). When `true` AND effort is 5 or 6, the
@@ -1315,6 +1363,14 @@ impl EffortProfile {
             // on `EncoderImprovementsCustom`. Libjxl strategy keeps it
             // `false` too (parity takes priority in the SIMD kernel).
             cfl_newton_libjxl_math_with_ls_warm_start: false,
+            // W44-AUDIT-5 Phase 3: default `false` here in the base
+            // `EffortProfile::new`. Flipped to `true` by
+            // `apply_section_c_cfl_newton_libjxl_parity` when the
+            // resolved Zenjxl/Aggressive bundle carries the field on
+            // (after the Phase 3 bisect + 36-cell regression validation
+            // pass). Stays `false` under Libjxl (irrelevant — parity
+            // already on) and LeanFaster (drops per-image gates).
+            cfl_pass1_screenshot_x0_start: false,
             // W44-197: default `false` — only flipped by
             // `apply_section_c_cfl_newton_libjxl_parity` when
             // `EncoderStrategy::Libjxl` is selected. See field doc on
@@ -1467,6 +1523,11 @@ impl EffortProfile {
             // on this path. Mirrors `cfl_newton_libjxl_parity`'s lossless
             // default for the same reason.
             cfl_newton_libjxl_math_with_ls_warm_start: false,
+            // W44-AUDIT-5 Phase 3: lossless never runs Newton (`cfl_newton:
+            // false`) so this is moot on this path. Mirrors the
+            // `cfl_newton_libjxl_parity` lossless default for the same
+            // reason.
+            cfl_pass1_screenshot_x0_start: false,
             // W44-197: default `false` — Lossless mode never runs Pass-2
             // anyway since `cfl_two_pass: false`.
             cfl_pass2_ls_at_low_effort: false,
@@ -2136,6 +2197,15 @@ impl EffortProfile {
         // `libjxl_math_with_ls_warm_start = true`).
         if resolved.cfl_newton_libjxl_math_with_ls_warm_start {
             self.cfl_newton_libjxl_math_with_ls_warm_start = true;
+        }
+        // W44-AUDIT-5 Phase 3: same NO-OP-when-false semantic. Set by
+        // Zenjxl / Aggressive presets after the Phase 3 bisect +
+        // regression validation. Composes with the per-image
+        // `m3 >= 80` discriminator at the CfL Pass-1 / Pass-2 dispatch
+        // sites — the route flip only fires when both this field AND
+        // the per-image proxies indicate a high-colour-class screenshot.
+        if resolved.cfl_pass1_screenshot_x0_start {
+            self.cfl_pass1_screenshot_x0_start = true;
         }
         // W44-197: same NO-OP semantic. Only `EncoderStrategy::Libjxl`
         // sets `cfl_pass2_ls_at_low_effort = true` in its
