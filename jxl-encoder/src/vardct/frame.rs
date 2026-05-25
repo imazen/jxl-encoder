@@ -38,6 +38,20 @@ pub struct DistanceParams {
     pub b_qm_scale: u32,
     /// Number of EPF iterations (0-3).
     pub epf_iters: u32,
+    /// **W44-AUDIT-8 Phase 5**: extra DC precision (bitstream field).
+    ///
+    /// Mirrors libjxl `nl_dc = speed_tier < kFalcon` (effort ≤ 7) →
+    /// `extra_dc_precision = 1` → DC quantized at 2× the integer precision
+    /// (encoder multiplies `inv_factor` by `1 << extra_dc_precision`;
+    /// decoder applies the symmetric `mul = 1.0 / (1 << extra_dc_precision)`
+    /// dequant). Default `0` keeps every legacy [`Self::compute`] /
+    /// [`Self::compute_from_q`] / [`Self::compute_from_quant_field`]
+    /// caller at the pre-Phase-5 baseline (1× DC quant), so synthetic
+    /// fixtures and the butteraugli-loop adaptive path stay byte-identical.
+    /// [`Self::compute_for_profile`] / [`Self::compute_for_profile_with_original`]
+    /// populate this from
+    /// [`crate::effort::EffortProfile::extra_dc_precision`].
+    pub extra_dc_precision: u8,
 }
 
 /// Pixel-level statistics for chroma quantization adjustment.
@@ -214,8 +228,9 @@ impl DistanceParams {
     /// Compute distance-dependent parameters using fixed global_scale formula.
     /// This is the fallback when no quant field is available.
     pub fn compute(distance: f32) -> Self {
-        // Use median=AC_QUANT/distance, MAD=0 for fixed formula (matches libjxl-tiny)
-        Self::compute_internal(distance, distance, None)
+        // Use median=AC_QUANT/distance, MAD=0 for fixed formula (matches libjxl-tiny).
+        // No effort context here → extra_dc_precision = 0 preserves legacy callers.
+        Self::compute_internal(distance, distance, None, 0)
     }
 
     /// Compute distance-dependent parameters from the effort profile.
@@ -229,7 +244,7 @@ impl DistanceParams {
     /// global_scale after each iteration.
     pub fn compute_for_profile(distance: f32, profile: &crate::effort::EffortProfile) -> Self {
         let q = profile.initial_q_numerator / distance;
-        Self::compute_internal(distance, distance, Some(q))
+        Self::compute_internal(distance, distance, Some(q), profile.extra_dc_precision)
     }
 
     /// Same as [`Self::compute_for_profile`] but with an explicit
@@ -253,7 +268,7 @@ impl DistanceParams {
         profile: &crate::effort::EffortProfile,
     ) -> Self {
         let q = profile.initial_q_numerator / distance;
-        Self::compute_internal(distance, original_distance, Some(q))
+        Self::compute_internal(distance, original_distance, Some(q), profile.extra_dc_precision)
     }
 
     /// Compute distance-dependent parameters using content-adaptive global_scale.
@@ -292,7 +307,11 @@ impl DistanceParams {
             quant_median_absd,
             quant_median - quant_median_absd
         );
-        Self::compute_from_q(distance, quant_median - quant_median_absd)
+        // Buttloop-only adaptive path — no profile context here, but
+        // libjxl gates `nl_dc = speed_tier < kFalcon` (effort ≤ 7) and
+        // the buttloop only fires at effort ≥ 8, so extra_dc_precision
+        // is structurally 0 on this path. Match by passing 0 explicitly.
+        Self::compute_internal(distance, distance, Some(quant_median - quant_median_absd), 0)
     }
 
     /// Compute distance-dependent parameters from a given `q` value.
@@ -301,7 +320,8 @@ impl DistanceParams {
     /// This is the core formula from libjxl quantizer.cc:ComputeGlobalScaleAndQuant
     /// with quant_median_absd=0 (i.e. `q = quant_median - 0 = quant_median`).
     fn compute_from_q(distance: f32, q: f32) -> Self {
-        Self::compute_internal(distance, distance, Some(q))
+        // Test-only helper — no profile context, so extra_dc_precision = 0.
+        Self::compute_internal(distance, distance, Some(q), 0)
     }
 
     /// Internal implementation shared by all compute methods.
@@ -314,6 +334,7 @@ impl DistanceParams {
         distance: f32,
         original_distance: f32,
         q_for_global_scale: Option<f32>,
+        extra_dc_precision: u8,
     ) -> Self {
         const GLOBAL_SCALE_DENOM: i32 = 1 << 16;
         const GLOBAL_SCALE_NUMERATOR: i32 = 4096;
@@ -393,6 +414,7 @@ impl DistanceParams {
             x_qm_scale,
             b_qm_scale,
             epf_iters,
+            extra_dc_precision,
         }
     }
 
@@ -546,7 +568,13 @@ pub fn write_dc_group_from_tokens(
     let region_ysize = end_by - start_by;
 
     // DC group header
-    writer.write(2, 0)?; // extra_dc_precision = 0
+    // W44-AUDIT-8 Phase 5: JPEG re-encoding path keeps
+    // `extra_dc_precision = 0` — DC values are direct from the JPEG
+    // bitstream, with NO encoder-side quantization. The `nl_dc` gate
+    // applies only to the standard VarDCT encode path
+    // (`vardct/bitstream.rs::write_dc_group` + `transform.rs`); JPEG
+    // re-encoding bypasses both.
+    writer.write(2, 0)?; // extra_dc_precision = 0 (JPEG re-encoding only)
     writer.write(4, 3)?; // use global tree, default wp, no transforms
 
     // Write DC tokens

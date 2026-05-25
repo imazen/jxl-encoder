@@ -301,10 +301,15 @@ fn reconstruct_xyb_impl(
                 // DC is NOT subject to tile-level CfL (the generic path skips LLF
                 // positions in the CfL loop).
                 let dc_cfl_factor_b: f32 = 0.5;
+                // W44-AUDIT-8 Phase 5: symmetric inverse — multiply
+                // inv_factor by `dc_mul = 1 << extra_dc_precision` so the
+                // encoder-side reconstruction matches the decoder
+                // (`mul = 1.0 / dc_mul` applied to stored quant_dc).
+                let dc_mul = (1u32 << params.extra_dc_precision) as f32;
                 let inv_factor = [
-                    INV_DC_QUANT[0] * params.scale_dc,
-                    INV_DC_QUANT[1] * params.scale_dc,
-                    INV_DC_QUANT[2] * params.scale_dc,
+                    INV_DC_QUANT[0] * params.scale_dc * dc_mul,
+                    INV_DC_QUANT[1] * params.scale_dc * dc_mul,
+                    INV_DC_QUANT[2] * params.scale_dc * dc_mul,
                 ];
                 let dc_stored = [
                     quant_dc[0][by][bx] as f32,
@@ -494,7 +499,9 @@ fn restore_llf_from_dc(
     _block_width: usize,
 ) {
     let dc_cfl_factor: f32 = if channel == 2 { 0.5 } else { 0.0 };
-    let inv_factor = INV_DC_QUANT[channel] * params.scale_dc;
+    // W44-AUDIT-8 Phase 5: symmetric inverse — see other reconstruct.rs sites.
+    let dc_mul = (1u32 << params.extra_dc_precision) as f32;
+    let inv_factor = INV_DC_QUANT[channel] * params.scale_dc * dc_mul;
 
     // Helper: dequantize a DC value with CfL correction
     let dequant_dc = |iy: usize, ix: usize| -> f32 {

@@ -7585,14 +7585,17 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Lock the hash - if this changes, the encoding has changed
-        // Updated W44-171: DC tree Variable trial gated at effort >= 8
-        // (libjxl `enc_modular.cc:1591` parity, was effort >= 4 from W44-54).
-        // 8x8 gradient image stays 112 bytes (small fixtures already favoured
-        // kWPFixedDC under trial-and-pick; skipping the trial keeps the
-        // emitted bitstream at the same size, but the per-stream chosen tree
-        // changes from W44-57's-cost-model-pick to direct-kWPFixedDC).
-        const EXPECTED_HASH: u64 = 0xfde7b582460edebc;
+        // Lock the hash - if this changes, the encoding has changed.
+        // Updated W44-AUDIT-8 Phase 5: extra_dc_precision=1 at effort<=7
+        // (libjxl `enc_cache.cc:232-234` parity). DC quant scaled 1× → 2×
+        // (`transform.rs` inv_factor multiplied by `1 << extra_dc_precision`
+        // = 2); bitstream extra_dc_precision field now writes 1 (was 0);
+        // decoder applies symmetric `mul = 0.5` on dequant — same float
+        // values, finer integer precision on stored quant_dc.
+        // 8x8 gradient stays 112 bytes — gradient DC values fit at both
+        // 1× and 2× precision; only the quant_dc integers change.
+        // Pre-W44-AUDIT-8 history: see prior W44-171 comment in git log.
+        const EXPECTED_HASH: u64 = 0x38f51c9a23207f48;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -7620,12 +7623,13 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated W44-171: DC tree Variable trial gated at effort >= 8
-        // (libjxl `enc_modular.cc:1591` parity). 16x16 solid gray stays 97
-        // bytes: single-leaf tree regardless of trial-and-pick vs direct
-        // kWPFixedDC, since the constant input gives no useful splits in
-        // either path. Only the chosen-tree marker in the bitstream differs.
-        const EXPECTED_HASH: u64 = 0xb71172a676faf64d;
+        // Updated W44-AUDIT-8 Phase 5: extra_dc_precision=1 at effort<=7
+        // (libjxl `enc_cache.cc:232-234` parity). 16x16 solid gray stays 97
+        // bytes: single DC value, gradient predictor produces 0 residuals
+        // at any precision. Only the extra_dc_precision field (was 0, now 1)
+        // and the quant_dc integer (was N, now 2N) differ in the bitstream.
+        // Pre-W44-AUDIT-8 history: see prior W44-171 comment in git log.
+        const EXPECTED_HASH: u64 = 0xd930123d06f76a14;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -7665,15 +7669,13 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated W44-171: DC tree Variable trial gated at effort >= 8
-        // (libjxl `enc_modular.cc:1591` parity). 64x64 checkerboard now 507
-        // bytes (was 467 post-W44-73). The +40 byte cost is the W44-57
-        // Variable-mode win this fixture used to harvest at e=7 — checkerboard
-        // pattern has enough structure to make Variable's 14-leaf predictor
-        // adaptation worth the extra LfGlobal tree overhead. With the trial
-        // gated to e>=8, e=7 emits kWPFixedDC directly and pays the +40 B.
-        // Pre-W44-73 history: 673 bytes (W44-56), 729 (W44-54).
-        const EXPECTED_HASH: u64 = 0x6fc3722d337dab13;
+        // Updated W44-AUDIT-8 Phase 5: extra_dc_precision=1 at effort<=7
+        // (libjxl `enc_cache.cc:232-234` parity). 64x64 checkerboard now 509
+        // bytes (was 507 post-W44-171). The +2 B cost is the wider DC quant
+        // tokens (2× integer range needs +1 token bit per row of DC blocks).
+        // Pre-W44-AUDIT-8 history: 507 (W44-171), 467 (post-W44-73),
+        // 673 (W44-56), 729 (W44-54).
+        const EXPECTED_HASH: u64 = 0xec9482b0f99de88c;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -7708,12 +7710,13 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated W44-171: DC tree Variable trial gated at effort >= 8
-        // (libjxl `enc_modular.cc:1591` parity). 13x17 noise stays 502 bytes
-        // (small fixture has too few DC samples for Variable to win the
-        // trial; skipping the trial keeps the bytes identical, only the
-        // chosen-tree marker in the bitstream differs).
-        const EXPECTED_HASH: u64 = 0x8a3db6460320e743;
+        // Updated W44-AUDIT-8 Phase 5: extra_dc_precision=1 at effort<=7
+        // (libjxl `enc_cache.cc:232-234` parity). 13x17 noise now 506 bytes
+        // (was 502 post-W44-171). The +4 B cost is the wider DC tokens on
+        // noise content (2× integer range expands the per-row residual
+        // distribution into higher token classes).
+        // Pre-W44-AUDIT-8 history: 502 (W44-171).
+        const EXPECTED_HASH: u64 = 0x9c6e520cb3c0a2b5;
         assert_eq!(
             hash,
             EXPECTED_HASH,

@@ -413,8 +413,14 @@ impl VarDctEncoder {
 
                 // ── Step 2: Extract Y DC (before roundtrip quantization) ───
                 // Inlined instead of using extract_dc to avoid borrow conflict.
+                // W44-AUDIT-8 Phase 5: multiply inv_factor by
+                // `dc_mul = 1 << extra_dc_precision` (= 1 at e>=8, 2 at e<=7)
+                // to match libjxl's `nl_dc` gate (enc_modular.cc:1580
+                // `mul = 1 << extra_dc_precision`). Symmetric with
+                // `reconstruct.rs` so encoder-side buttloop dequant cancels.
                 {
-                    let inv_factor = INV_DC_QUANT[1] * params.scale_dc;
+                    let dc_mul = (1u32 << params.extra_dc_precision) as f32;
+                    let inv_factor = INV_DC_QUANT[1] * params.scale_dc * dc_mul;
                     match raw_strategy {
                         0 => {
                             #[cfg(feature = "debug-dc")]
@@ -833,9 +839,13 @@ impl VarDctEncoder {
                 }
 
                 // ── Step 7: Extract X/B DC + quantize X/B AC ───────────────
+                // W44-AUDIT-8 Phase 5: multiply inv_factor by
+                // `dc_mul = 1 << extra_dc_precision` to match libjxl
+                // `nl_dc` gate (see Step 2 comment for full ref).
+                let dc_mul = (1u32 << params.extra_dc_precision) as f32;
                 for &c in &[0usize, 2] {
                     let dc_cfl_factor = if c == 2 { 0.5f32 } else { 0.0f32 };
-                    let inv_factor = INV_DC_QUANT[c] * params.scale_dc;
+                    let inv_factor = INV_DC_QUANT[c] * params.scale_dc * dc_mul;
                     let qm_multiplier = if c == 0 {
                         x_qm_mul
                     } else if c == 2 {
