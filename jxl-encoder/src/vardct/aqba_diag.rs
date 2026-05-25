@@ -15,6 +15,77 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+// ── SA-A (2026-05-24) per-block dump extension ───────────────────────────
+//
+// W44-27 aggregates by (raw_strategy, channel). SA-A needs per-block
+// (bx, by, channel, orig_quant, new_quant, flags, raw_strategy) so we can
+// diff against a libjxl-instrumented dump on the same image.
+//
+// Activated by env var `JXL_AQBA_PERBLOCK_TSV=<path>`. Buffered per-thread,
+// flushed to global on `flush_tl_to_global`, written by `emit_and_reset`.
+
+#[derive(Debug, Clone, Copy)]
+pub struct PerBlockRecord {
+    pub bx: u32,
+    pub by: u32,
+    pub channel: u8,
+    pub raw_strategy: u8,
+    pub orig_quant: i32,
+    pub new_quant: i32,
+    pub heuristics: u8,
+}
+
+thread_local! {
+    static TL_PERBLOCK: RefCell<Vec<PerBlockRecord>> = RefCell::new(Vec::new());
+}
+
+static GLOBAL_PERBLOCK: Mutex<Vec<PerBlockRecord>> = Mutex::new(Vec::new());
+
+/// Record a per-block AdjustQuantBlockAC invocation when
+/// `JXL_AQBA_PERBLOCK_TSV` env var is set.
+pub fn record_perblock(
+    bx: u32,
+    by: u32,
+    channel: u8,
+    raw_strategy: u8,
+    orig_quant: i32,
+    new_quant: i32,
+    heuristics: u8,
+) {
+    // Cheap env-var gate: only collect if path is set.
+    if std::env::var_os("JXL_AQBA_PERBLOCK_TSV").is_none() {
+        return;
+    }
+    TL_PERBLOCK.with(|tl| {
+        tl.borrow_mut().push(PerBlockRecord {
+            bx,
+            by,
+            channel,
+            raw_strategy,
+            orig_quant,
+            new_quant,
+            heuristics,
+        });
+    });
+}
+
+fn flush_tl_perblock() {
+    TL_PERBLOCK.with(|tl| {
+        let mut tl_vec = tl.borrow_mut();
+        if tl_vec.is_empty() {
+            return;
+        }
+        let mut g = GLOBAL_PERBLOCK.lock().unwrap();
+        g.append(&mut tl_vec);
+    });
+}
+
+/// Public wrapper for `flush_tl_perblock` so worker rayon tasks can call it
+/// before returning (mirrors W44-27's `flush_tl_to_global`).
+pub fn flush_tl_perblock_public() {
+    flush_tl_perblock();
+}
+
 #[derive(Default, Debug, Clone, Copy)]
 pub struct FiringCounts {
     pub total: u64,
@@ -147,11 +218,72 @@ fn channel_label(c: u8) -> &'static str {
     }
 }
 
+/// Emit per-block TSV to `JXL_AQBA_PERBLOCK_TSV` (if set). Header is
+/// written only on first call; subsequent calls append. The header
+/// columns match the libjxl side instrumentation in
+/// `enc_adaptive_quantization.cc::AdjustQuantBlockAC` (SA-A 2026-05-24).
+pub fn emit_perblock(tag: &str) {
+    flush_tl_perblock();
+    let path = match std::env::var("JXL_AQBA_PERBLOCK_TSV") {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let records = {
+        let mut g = GLOBAL_PERBLOCK.lock().unwrap();
+        std::mem::take(&mut *g)
+    };
+    if records.is_empty() {
+        return;
+    }
+    use std::io::Write;
+    let path_obj = std::path::Path::new(&path);
+    let already_exists = path_obj.exists();
+    let mut f = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("[aqba_diag perblock] cannot open {}: {}", path, e);
+            return;
+        }
+    };
+    if !already_exists {
+        let _ = writeln!(
+            f,
+            "tag\tbx\tby\tchannel\traw_strategy\torig_quant\tnew_quant\theuristics_hex\tfired_a\tfired_b\tfired_c\tfired_d\tfired_e\tfired_f"
+        );
+    }
+    for r in records.iter() {
+        let h = r.heuristics;
+        let _ = writeln!(
+            f,
+            "{tag}\t{bx}\t{by}\t{ch}\t{strat}\t{oq}\t{nq}\t0x{h:02x}\t{a}\t{b}\t{c}\t{d}\t{e}\t{ff}",
+            tag = tag,
+            bx = r.bx,
+            by = r.by,
+            ch = r.channel,
+            strat = r.raw_strategy,
+            oq = r.orig_quant,
+            nq = r.new_quant,
+            h = h,
+            a = (h >> 0) & 1,
+            b = (h >> 1) & 1,
+            c = (h >> 2) & 1,
+            d = (h >> 3) & 1,
+            e = (h >> 4) & 1,
+            ff = (h >> 5) & 1,
+        );
+    }
+}
+
 /// Emit the aggregated TSV and reset both thread-local and global counts.
 /// Writes to the file named by `JXL_AQBA_DIAG_TSV`; if unset, writes a
 /// summary to stderr.
 pub fn emit_and_reset(tag: &str) {
     flush_tl_to_global();
+    emit_perblock(tag);
     let g = {
         let mut g = GLOBAL_COUNTS.lock().unwrap();
         g.take().unwrap_or_default()
