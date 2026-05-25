@@ -230,7 +230,34 @@ pub fn compute_block_ctx_map(
 
     // Small images: no benefit from adaptive context modeling
     // Matches libjxl: tot < (1 << 10) * distance
-    let size_for_ctx_model = ((1u64 << 10) as f64 * distance as f64) as usize;
+    //
+    // Issue #61 (W44-AUDIT post-W44-73 retry): env-gated diagnostic
+    // hook that widens the gate to a distance-independent value.
+    // - JXL_ISSUE_61_WIDEN_THRESHOLD=A   ⇒ tot < 1024 (drop distance scaling)
+    // - JXL_ISSUE_61_WIDEN_THRESHOLD=B   ⇒ tot < 512 * distance (half-scale)
+    // - JXL_ISSUE_61_WIDEN_THRESHOLD=C   ⇒ tot < 512 (very aggressive)
+    // - unset / other                    ⇒ libjxl parity (default)
+    //
+    // Used only by `examples/issue_61_block_ctx_map_widen_ab.rs` for AB
+    // measurement. Production code path is unchanged.
+    let size_for_ctx_model: usize = {
+        #[cfg(feature = "std")]
+        {
+            match std::env::var("JXL_ISSUE_61_WIDEN_THRESHOLD")
+                .ok()
+                .as_deref()
+            {
+                Some("A") => 1024,
+                Some("B") => ((1u64 << 9) as f64 * distance as f64) as usize,
+                Some("C") => 512,
+                _ => ((1u64 << 10) as f64 * distance as f64) as usize,
+            }
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            ((1u64 << 10) as f64 * distance as f64) as usize
+        }
+    };
     if tot < size_for_ctx_model {
         return BlockCtxMap::default_for_strategy(block_ctx_map_15_cluster);
     }

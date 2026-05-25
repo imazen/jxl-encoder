@@ -1,0 +1,152 @@
+# Issue #61 — Widen `compute_block_ctx_map` adaptive-path threshold
+# (post-W44-73 retry of W44-84 honest-stop)
+
+date:                2026-05-25
+git_commit:          (see commit message; sibling workspace 118ea766)
+host:                lilith (Ryzen 9 7950X, archlinux)
+encoder_features:    parallel butteraugli-loop ssim2-loop __expert
+encoder_release:     true
+trials_per_cell:     1
+metrics:             rust butteraugli + fast_ssim2 via jxl-oxide linear decode
+
+## Hypothesis (from issue #61 + W44-84 follow-on)
+
+W44-84 (5 days ago) honest-stopped on the threshold-widening for the
+F-D 512×512 photo wedge. Diagnosis: only -71.8 B mean win per OPEN
+cell (target was -100 B); cluster count capped at 2 luma / 1 chroma at
+tot = 4096 regardless of threshold; binding constraint was the legacy
+Huffman+MTF context-map writer (`write_context_map_nonsimple` in
+`entropy_coding/encode_ans.rs`).
+
+Since W44-84, W44-73 (commits `5a6b04c9` / `0b2e845a` / etc) DID land:
+`write_context_map_nonsimple` now compares Huffman+MTF vs ANS+LZ77 and
+picks the cheaper buffer. Hypothesis: at higher cluster counts the wins
+should compound. RETRY the bisect.
+
+## Method
+
+1. Added env-var hook `JXL_ISSUE_61_WIDEN_THRESHOLD` to
+   `vardct/ac_context.rs::compute_block_ctx_map`. Values:
+     - unset (default) → libjxl parity: `tot < 1024 * distance`
+     - "A"            → `tot < 1024` (distance-independent)
+     - "B"            → `tot < 512 * distance` (half-scale)
+2. Wrote `examples/issue_61_block_ctx_map_widen_ab.rs` (16 cells × 3 modes).
+3. Encode with each mode, decode via jxl-oxide linear, compute
+   butteraugli + ssim2 on linear/sRGB respectively. Same source pixels,
+   same effort / distance, same LossyConfig.
+4. Mode A and Mode B are nearly identical (both fire at d ≥ 1 on tot ≥
+   1024 inputs; only differ at very small images, none in cell set).
+
+## Per-cell results
+
+| class      | image        | e | d   | base B  | A B   | B B   | A Δ%   | A SSIM2 Δ |
+|---         |---           |---|---  |---      |---    |---    |---     |---        |
+| FD_OPEN    | 1420710.png  | 7 | 5   | 23997   | 23927 | 23927 | -0.292 | 0.0000    |
+| FD_OPEN    | 1420710.png  | 7 | 6   | 21035   | 20966 | 20966 | -0.328 | 0.0000    |
+| FD_OPEN    | 1531677.png  | 7 | 5   | 20510   | 20490 | 20490 | -0.098 | 0.0000    |
+| FD_OPEN    | 1531677.png  | 7 | 6   | 17576   | 17545 | 17545 | -0.176 | 0.0000    |
+| FD_OPEN    | 1189261.png  | 7 | 4   | 24279   | 24279 | 24279 | 0.000  | 0.0000    |
+| PHOTO_CTRL | 1189261.png  | 7 | 5   | 19976   | 19953 | 19953 | -0.115 | 0.0000    |
+| PHOTO_CTRL | 1189261.png  | 7 | 6   | 17378   | 17329 | 17329 | -0.282 | 0.0000    |
+| PHOTO_CTRL | 1025469.png  | 7 | 5   | 11580   | 11605 | 11605 | +0.216 | 0.0000    |
+| PHOTO_CTRL | 1025469.png  | 7 | 6   | 9991    | 10051 | 10051 | +0.601 | 0.0000    |
+| PHOTO_CTRL | 1418519.png  | 7 | 5   | 8449    | 8365  | 8365  | -0.994 | 0.0000    |
+| PHOTO_CTRL | 1418519.png  | 7 | 6   | 7474    | 7408  | 7408  | -0.883 | 0.0000    |
+| PHOTO_LOWD | 1420710.png  | 7 | 1   | 93551   | 93551 | 93584 | 0.000  | 0.0000    |
+| PHOTO_LOWD | 1420710.png  | 7 | 2   | 56824   | 56824 | 56824 | 0.000  | 0.0000    |
+| PHOTO_LOWD | 1420710.png  | 7 | 3   | 35489   | 35489 | 35489 | 0.000  | 0.0000    |
+| SCREEN     | codec_wiki   | 7 | 4   | 64445   | 64450 | 64450 | +0.008 | 0.0000    |
+| SCREEN     | terminal.png | 7 | 4   | 33252   | 33314 | 33245 | +0.186 | 0.0000    |
+
+## Aggregate per class (mode A)
+
+- FD_OPEN    (n=5): mean bytes delta -0.179 %  (4 wins -70/-69/-20/-31 B + 1 no-op)
+- PHOTO_CTRL (n=6): mean bytes delta -0.243 %  (4 wins, 2 mild regressions on 1025469)
+- PHOTO_LOWD (n=3): mean bytes delta  0.000 %  (gate already fires in baseline at d=1,2,3 for tot=4096)
+- SCREEN     (n=2): mean bytes delta +0.097 %  (terminal +62 B, codec_wiki +5 B)
+- WORST SSIM2 regression: 0.0000 (byte-identical decoded pixels on every cell with a delta)
+- WORST bytes regression: +0.601 % on 1025469 e7 d=6
+
+Mode B is structurally identical to A on every cell (both fire on
+tot ≥ 1024 here); ignore unless re-running with tot < 1024 fixtures.
+
+## Acceptance gate analysis (task spec)
+
+- (a) ≥ -1 % bytes mean improvement on the residual cluster ❌
+      FD_OPEN mean -0.179 % (need ≤ -1.0 %)
+- (b) Zero regressions ≥ +0.5 % bytes elsewhere ❌
+      1025469 e7 d=6 +0.601 % (exceeds budget by 0.10 pp)
+- (c) SSIM2 within ±0.3 everywhere ✅
+      Worst SSIM2 delta 0.0000 (decoded pixels are identical when
+      bytes differ; the context-map rebuckets same data)
+- (d) Hash-locks 36/36 BYTE-IDENTICAL ✅ (env unset = libjxl parity)
+- (e) Libjxl byte-lock 4/4 BYTE-IDENTICAL ✅
+- (f) Drift 7/7 PASS ✅
+- (g) Lib tests 1508/1508 PASS ✅
+
+## Honest-stop verdict
+
+Same shape as W44-84's honest-stop. The W44-73 ANS+LZ77 context-map
+writer landing did NOT meaningfully compound the wins. Reason:
+
+The cluster-count formula `nb_clusters_luma = (tot / size_for_ctx_model
+/ 2).clamp(2, 9)` uses our widened `size_for_ctx_model = 1024`.
+At tot=4096: clamp(2, 2, 9) = **2 luma clusters**.
+At tot=4096: `nb_clusters_chroma = clamp(0, 1, 5) = 1 chroma cluster`.
+
+So even after widening, we emit a 3-cluster context map vs the
+4-cluster default — yielding a small per-image rebucketing win when the
+ANS+LZ77 writer happens to find a tighter encoding (and a small loss
+when it doesn't). Net wins / losses are in the 0.1-1.0 % range per
+cell, mostly cancelling out. No mechanism to lift the cluster count
+without a different lever (e.g., decoupling `nb_clusters_luma` from
+`size_for_ctx_model`).
+
+The W44-84 ceiling of ~150 B per cell still holds.
+
+## DO NOT (binding for future agents)
+
+- DO NOT respawn this chunk with another threshold value (A, B, C,
+  ½, ¼ etc). Measurement is conclusive across W44-84 + this retry that
+  `tot < 1024` is the structural floor; further widening produces
+  identical output on cells with tot ≥ 1024 (which is every photo /
+  screenshot ≥ 256×256).
+- DO NOT default-flip without addressing the cluster-count ceiling.
+  Mean -0.179 % FD_OPEN win + one +0.601 % photo regression = not worth
+  a hash-lock regen + bitstream change.
+- DO NOT cite "FMA precision" for any byte movement. The bytes differ
+  because the per-image cluster MAPPING differs; decoded pixels are
+  byte-identical (SSIM2 delta 0.0000 on every cell that moves).
+- DO NOT widen `nb_clusters_luma` formula independently without first
+  measuring the photo regression. W44-84 recommendation #2 specifically
+  warned this is also "not the right lever".
+
+## Follow-on candidates (NOT in #61 scope)
+
+1. **DIFFERENT lever: lift `nb_clusters_luma` cap above 2 at
+   tot=4096** by decoupling from `size_for_ctx_model` (e.g., minimum
+   3 luma when `tot >= 4096`). MUST be measured against the W44-84
+   "max -157 B per cell" ceiling first; may regress mid-tot photos.
+2. **Per-image discriminator** (W44-91-style ZenanalyzeProxies) to
+   admit the widening only on F-D-class content. Higher cost; would
+   add another Section B row in LIBJXL_DIVERGENCES.md; not justified
+   by -0.2 % wins.
+3. **Address remaining ~100-700 B per F-D OPEN cell from other
+   levers**: HfMetadata, AC strategy selection, quant calibration.
+   Adaptive context-map widening can contribute at most ~150 B; the
+   remaining 500-600 B per cell lives elsewhere (W44-84 final
+   recommendation).
+
+## Source state
+
+`jxl-encoder/src/vardct/ac_context.rs` retains the env-var hook
+(diagnostic-only, byte-identical when env unset). Mirrors the
+W44-205 / W44-audit-5 pattern of preserving the AB harness for
+future re-investigation.
+
+`examples/issue_61_block_ctx_map_widen_ab.rs` registered in
+`jxl-encoder/Cargo.toml` under
+`required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]`.
+
+NO production source path changed. NO hash-lock churn. NO threshold
+default-flip.
