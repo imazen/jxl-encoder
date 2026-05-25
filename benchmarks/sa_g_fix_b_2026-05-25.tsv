@@ -1,0 +1,11 @@
+# SA-G Fix B smoke: clic_22ea12 e9 d=4 (1024x1024)
+# Mode: PRE = parent commit 29de0e44 (no Highway-order reduction)
+# Mode: POST = SA-G Fix B applied (Highway-order CfL Newton reduction)
+# cjxl: 0.12.0 at /home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl
+# All metrics via Rust butteraugli (linear) and fast_ssim2 (sRGB u8 round-trip)
+# decoded through jxl-oxide in linear sRGB. Single-threaded encode.
+mode	strategy	bytes	ssim2	butteraugli	cjxl_bytes	cjxl_ssim2	cjxl_bfly	delta_bytes_pct	delta_ssim2	delta_bfly
+PRE	Libjxl	34414	66.2395	3.9100	33676	70.1116	4.1420	+2.191	-3.872	-0.232
+PRE	Zenjxl	32489	66.5687	3.9423	33676	70.1116	4.1420	-3.525	-3.543	-0.200
+POST	Libjxl	34413	66.2291	3.9100	33676	70.1116	4.1420	+2.189	-3.882	-0.232
+POST	Zenjxl	32489	66.5687	3.9423	33676	70.1116	4.1420	-3.525	-3.543	-0.200

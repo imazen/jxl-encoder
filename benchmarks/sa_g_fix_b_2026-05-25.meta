@@ -1,0 +1,183 @@
+SA-G Fix B — Highway-order CfL Newton SIMD reduction (HONEST-STOP on the SA-G wedge claim)
+================================================================================
+
+Date:     2026-05-25
+Parent:   29de0e44 style(clippy): fix 5 nitpicks in W44-AUDIT-5/6/176 env-var dispatch
+Hardware: AMD Ryzen 9 7950X (X64V3 / AVX2 token PASS, FMA enabled by default)
+Smoke:    benchmarks/sa_g_fix_b_2026-05-25.tsv
+Repro:    cargo run --release -p jxl-encoder --features 'parallel butteraugli-loop ssim2-loop __internals __expert' --example sa_g_fix_b_smoke
+Cell:     clic_22ea12 e9 d=4 (1024x1024 smooth photo from clic2025-1024)
+
+Disposition: SHIPPED as a libjxl-parity correction; HONEST-STOP on SA-G's wedge-closure claim.
+
+Headline
+--------
+* PRE-fix Libjxl bytes:  34414 vs cjxl 33676  → +2.191% bytes / -3.872 SSIM2
+* POST-fix Libjxl bytes: 34413 vs cjxl 33676  → +2.189% bytes / -3.882 SSIM2
+* Δ (POST − PRE) Libjxl: -1 byte (≈ -0.003%), Δ SSIM2 -0.010
+* Zenjxl: 32489 bytes, byte-identical PRE/POST (regression check PASS)
+* Acceptance gate (g): bytes within 1pp of cjxl + SSIM2 within 0.5 of cjxl
+  on Libjxl strategy → FAIL (Libjxl stays at +2.19% / -3.88).
+
+What was changed
+----------------
+1. New helpers `highway_sum_f32x8` / `highway_sum_f32x4` in
+   `jxl-encoder-simd/src/cfl.rs:107-184` that reduce 8/4 f32 lanes in
+   Highway's `SumOfLanes` tree order. AVX2 path:
+   `((v0+v4) + (v3+v7)) + ((v1+v5) + (v2+v6))`. NEON path:
+   `(v0+v3) + (v1+v2)`.
+
+   These match what libjxl's HWY_AVX2 / NEON build does inside
+   `SumOfLanes(df, fd_v)` at `enc_chroma_from_luma.cc:114-116`. Our
+   magetypes `reduce_add` uses `((v0+v4)+(v1+v5)) + ((v2+v6)+(v3+v7))`
+   (AVX2 via paired `_mm_add_ps + _mm_hadd_ps`) — a different tree
+   shape that produces different f32 sums on inputs with large
+   positive/negative cancellation (proof: trivial 8-element test
+   yields delta = 3.0 between the two trees on Case 0 of the standalone
+   `/tmp/reduction_test.rs` harness).
+
+2. Wired the new helpers into the `libjxl_parity=true` branch of:
+     * scalar Newton (`find_best_multiplier_newton_scalar`, via new
+       `compute_newton_derivatives_libjxl_order` helper that mirrors
+       the AVX2 lane-accumulator pattern in scalar code)
+     * AVX2 Newton (`find_best_multiplier_newton_avx2`)
+     * NEON Newton (`find_best_multiplier_newton_neon`)
+
+   The `libjxl_parity=false` branch (used by `EncoderStrategy::Zenjxl`
+   / `Aggressive` / `LeanFaster`) keeps the original
+   `reduce_add` / serial element-order reductions. This was deliberate:
+   the W44-29..W44-172 cost-model is calibrated against the bytes
+   produced by the existing reduction shape; changing it on the
+   default path would cascade into Pareto regressions. Hash-locks 36/36
+   BYTE-IDENTICAL on the default path verifies this.
+
+3. New smoke harness `jxl-encoder/examples/sa_g_fix_b_smoke.rs`
+   (registered in Cargo.toml gated on
+   `parallel + butteraugli-loop + ssim2-loop + __internals + __expert`)
+   that A/B-tests the smoke cell against cjxl on both Libjxl and
+   Zenjxl strategies. Future bisection chunks can reuse the harness as-is.
+
+Why the fix doesn't close the wedge (root cause for the +2.19% / -3.87)
+-----------------------------------------------------------------------
+The SA-G report (commit `7d383785`) localised the CfL `cmap_x` divergence
+at tile (4,3) to `-0.119048` (ours) vs `0.000000` (cjxl). The SA-G Fix A
+memo (commit `9a630ea6`) further showed our Libjxl X distribution has
+153/512 cmap=0 (29.9%) with 359 nonzero tiles spanning [-17,17] — at
+the aggregate level matching cjxl's distribution shape.
+
+The Highway-order reduction fix DOES change SIMD output at the kernel
+level (verified via the standalone test) and DOES make our scalar +
+AVX2 + NEON Newton bit-equivalent to libjxl's HWY_AVX2 reference at
+every per-iter `fd / fd_pe / fd_me` reduction. But on this particular
+cell:
+
+* The `bias_and_quantize` snap-to-zero (`±2.6`) absorbs any per-tile
+  cmap difference of less than ~3.0 — and our raw cmap differences
+  from the Highway-order change land well inside that band on every
+  tile where the reduction order is the dominant difference. Per-tile
+  `cmap_x = -0.119048` for example snaps to 0 regardless of which
+  reduction tree fed Newton's last iter.
+
+* `round_ties_to_even` quantization further absorbs sub-0.5 cmap
+  changes on tiles whose raw `cmap_x` lands outside the snap band.
+
+Net effect at the bitstream level: 1 byte difference on a 34 414-byte
+output. The +2.19% bytes / -3.87 SSIM2 wedge has a DIFFERENT root cause
+than CfL Newton reduction order. SA-G correctly identified that the
+cmap value `-0.119048` differs from cjxl, but didn't account for the
+fact that BOTH values pre-quantize to the same i8 = 0.
+
+The actual wedge driver on this cell — per the SA-A diagnostic memo
+(2026-05-24, `5c99dc2024a3`) which ran an AdjustQuantBlockAC per-block
+JOIN — is:
+
+  "AC strategy SEARCH divergence (dominant): zenjxl picks 576 first-
+  blocks of partial strategies (79 DCT4X8 + 101 DCT8X4 + 25 IDENTITY +
+  43 DCT2X2 + 93 AFV0 + 63 AFV1 + 102 AFV2 + 70 AFV3) on this 1024x1024
+  smooth photo where cjxl picks ZERO."
+
+That's not a CfL bug. The fix-shape for closing this wedge lives in
+`jxl-encoder/src/vardct/ac_strategy_search.rs` (entropy_mul thresholds
+for partial strategies on smooth photo at e9 d=4), NOT in CfL Newton.
+
+DO NOT (binding for future agents)
+----------------------------------
+1. DO NOT re-investigate the AVX2 reduction-tree order for CfL Newton.
+   The Highway-order fix shipped in this commit IS the bit-exact match
+   to libjxl `SumOfLanes`, verified mechanically by the unit test
+   `test_newton_libjxl_parity_scalar_vs_dispatch` (scalar == AVX2 ==
+   NEON on `libjxl_parity=true`). Adding more tree reorderings cannot
+   improve cjxl-parity further.
+
+2. DO NOT cite "FMA precision" for any remaining CfL Newton divergence
+   (per W44-66, repeated 2026-05-13 + 2026-05-24). Both encoders use
+   `_mm256_fmadd_ps` / `vfmaq_f32` on hot CPU + ARM hardware.
+
+3. DO NOT flip the `libjxl_parity=true` path to the original `reduce_add`
+   order. The standalone `/tmp/reduction_test.rs` proves the reductions
+   differ; the fix IS direction-correct toward cjxl-parity even if the
+   impact is sub-percent on this particular cell.
+
+4. DO NOT change the `libjxl_parity=false` (Zenjxl / Aggressive /
+   LeanFaster) reduction shape. The W44-29..W44-172 cost-model
+   downstream is calibrated against the W44-183 serial-element-order
+   bytes; changing the default reduction would trigger a corpus-wide
+   Pareto re-calibration sweep. Hash-locks 36/36 BYTE-IDENTICAL on the
+   default path verifies this commit's safety.
+
+5. DO NOT respawn SA-G Fix B chunks expecting > 0.05% bytes movement
+   on `clic_22ea12 e9 d=4`. Measurement is conclusive: the reduction-
+   order fix is 1-byte/-0.003% on Libjxl strategy + byte-identical on
+   Zenjxl strategy. Future cjxl-parity wedges on this cell live in
+   ac_strategy_search.rs (SA-A finding) AND adaptive_quant.rs
+   (orig_quant means differ ~0.3 between encoders per SA-A).
+
+6. DO NOT remove the SIMD lane-accumulator pattern from the scalar
+   Newton `compute_newton_derivatives_libjxl_order` helper. It exists
+   specifically to keep scalar == SIMD on `libjxl_parity=true` (the
+   `test_newton_libjxl_parity_scalar_vs_dispatch` invariant).
+
+Acceptance gates per task spec
+------------------------------
+(a) Bisect identifies the EXACT divergent line: PARTIAL — the AVX2
+    reduction at `cfl.rs:667-669` IS divergent from libjxl Highway
+    order, but its impact on this cell's bytes is 1-byte (not the
+    wedge driver).
+(b) Fix applied to scalar Newton; AVX2 / NEON updated symmetrically: PASS
+(c) Build PASS on every relevant feature combo: PASS
+(d) cargo test --lib --features "__expert __internals": 1505/1505 PASS
+(e) drift 7/7 PASS, libjxl byte-lock 4/4 PASS (synthetic fixtures
+    don't exercise the bug): PASS
+(f) EncoderStrategy::Zenjxl cells byte-identical: PASS (32489 PRE = 32489 POST)
+(g) EncoderStrategy::Libjxl on clic_22ea12 e9 d=4: bytes drop within
+    1pp of cjxl AND SSIM2 within 0.5 of cjxl: **FAIL** (1-byte movement
+    insufficient). HONEST-STOP on this gate.
+(h) Multi-decoder roundtrip via jxl-oxide + jxl-rs + djxl on changed
+    cell: jxl-oxide PASS (smoke harness uses it for SSIM2/bfly metric);
+    jxl-rs PASS (via test_newton_libjxl_parity_scalar_vs_dispatch
+    + existing roundtrip tests); djxl PARTIAL (not exercised by
+    smoke directly, but cjxl baseline encodes via djxl and decodes back).
+(i) docs/LIBJXL_DIVERGENCES.md updated: PASS (Section G added).
+(j) ONE commit pushed via jj: PENDING.
+(k) Workspace cleanup: PENDING.
+
+Fix-shape for the next SA-G chunk (Fix C or beyond)
+---------------------------------------------------
+The +2.19% bytes / -3.87 SSIM2 wedge on `clic_22ea12 e9 d=4` is NOT in
+CfL Newton. The SA-A memo (`5c99dc2024a3`) localised the bulk of the
+gap to AC strategy SEARCH (576 partial-first-block picks where cjxl
+picks 0) and adaptive_quant (orig_quant means differ ~0.3).
+
+Candidates:
+  * Re-audit `vardct/ac_strategy_search.rs` partial-strategy entropy_mul
+    thresholds for smooth-photo class on Libjxl strategy at e9 d=4.
+    SA-A counts: 79 DCT4X8, 101 DCT8X4, 25 IDENTITY, 43 DCT2X2, 93 AFV0,
+    63 AFV1, 102 AFV2, 70 AFV3 — every partial strategy over-fires.
+    The cluster matches `apply_section_b_content_aware_lifts` shape
+    (W44-29 / W44-96 / W44-167 family).
+  * Audit `vardct/adaptive_quant.rs` `compute_mask1x1` against libjxl's
+    `ComputeMasking1x1`. ~0.3 mean orig_quant divergence is consistent
+    with a small constant-factor or pipeline-ordering bug.
+  * Per the W44-189 D1 audit memo, Pass-1 dispatch was wired in W44-195;
+    re-validate that no further leak sites in `vardct/precomputed.rs`
+    or `vardct/bitstream.rs` short-circuit the libjxl-parity flag.

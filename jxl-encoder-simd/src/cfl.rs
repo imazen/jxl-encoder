@@ -104,6 +104,223 @@ pub const NEWTON_THRES: f32 = 100.0;
 pub const NEWTON_STABILIZER: f32 = 0.85;
 pub const NEWTON_CONVERGENCE: f32 = 3e-3;
 
+/// **SA-G Fix B (2026-05-25)**: Reduce 8 lanes of a f32 SIMD accumulator
+/// in Highway's `SumOfLanes` order (matches libjxl HWY_AVX2 build).
+///
+/// Highway's f32x8 SumOfLanes on AVX2 expands to:
+/// 1. `ReduceAcrossBlocks`: `f(v, SwapAdjacentBlocks(v))` — yields
+///    `s[i] = v[i] + v[(i+4)%8]` in every lane of the result.
+/// 2. `ReduceWithinBlocks` (LANES_PER_BLOCK_D=4): on lower half
+///    `[s0,s1,s2,s3]` reverses to `[s3,s2,s1,s0]`, adds → `[s0+s3,
+///    s1+s2, s2+s1, s3+s0]`, then `Reverse2` + add → final lane 0 =
+///    `(s0+s3) + (s1+s2)`.
+///
+/// So the Highway-equivalent serial expression is
+/// `((v0+v4) + (v3+v7)) + ((v1+v5) + (v2+v6))`.
+///
+/// Our magetypes `reduce_add` for `f32x8` uses
+/// `((v0+v4) + (v1+v5)) + ((v2+v6) + (v3+v7))` — different tree shape.
+/// For CfL Newton accumulators on real photos the two trees produce
+/// different `fd / fdpe / fdme` values (catastrophic cancellation
+/// between large positive and large negative chroma residuals), which
+/// over 20 Newton iterations can land at completely different
+/// `cmap_x` values and even different post-`bias_and_quantize`
+/// snap-to-zero decisions.
+///
+/// **Only called on the `libjxl_parity=true` path** so the
+/// W44-29..W44-172 cost-model calibrated against the magetypes reduce
+/// order on the Zenjxl/Aggressive/LeanFaster paths stays byte-identical.
+#[inline(always)]
+pub fn highway_sum_f32x8(v: [f32; 8]) -> f32 {
+    let s0 = v[0] + v[4];
+    let s1 = v[1] + v[5];
+    let s2 = v[2] + v[6];
+    let s3 = v[3] + v[7];
+    // (s0 + s3) + (s1 + s2) — Highway ReduceWithinBlocks order.
+    (s0 + s3) + (s1 + s2)
+}
+
+/// **SA-G Fix B**: Highway `SumOfLanes` order for f32x4 (NEON,
+/// WASM128, magetypes single-block).
+///
+/// `f32x4` on NEON skips `ReduceAcrossBlocks` (V_SIZE_LE_D 16 → no-op)
+/// and runs `ReduceWithinBlocks` directly on `[v0,v1,v2,v3]`:
+/// Reverse4 → `[v3,v2,v1,v0]`, add → `[v0+v3, v1+v2, v2+v1, v3+v0]`,
+/// Reverse2 + add → lane 0 = `(v0+v3) + (v1+v2)`.
+///
+/// Our magetypes NEON `reduce_add` uses `vpaddq_f32` twice which
+/// yields `(v0+v1) + (v2+v3)`. Different tree — same divergence
+/// mechanism as the AVX2 case above.
+///
+/// `dead_code` allow because this function is only called on aarch64
+/// builds (the NEON Newton path); on x86_64 the rustc dead-code lint
+/// can't see through the cfg gate.
+#[allow(dead_code)]
+#[inline(always)]
+pub fn highway_sum_f32x4(v: [f32; 4]) -> f32 {
+    (v[0] + v[3]) + (v[1] + v[2])
+}
+
+/// **SA-G Fix B (2026-05-25)**: scalar reference for Newton's per-iter
+/// `(fd, fd_pe, fd_me)` reductions in Highway's HWY_AVX2 f32x8 tree
+/// reduction order — bit-matches cjxl's AVX2 build.
+///
+/// Maintains 8 lane accumulators (mirroring the AVX2 f32x8 SIMD path),
+/// then tree-reduces via `highway_sum_f32x8`. The 8 lane accumulators
+/// process input strided by 8 (lane 0 sees elements 0, 8, 16, ...) —
+/// exactly what the AVX2 vector loop does in hardware. The scalar tail
+/// loop is unreachable on production callers since `compute_cfl_map`
+/// always passes `num` as a multiple of `DCT_BLOCK_SIZE = 64`; it's
+/// here for unit-test inputs where `num % 8 != 0`.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn compute_newton_derivatives_libjxl_order(
+    values_m: &[f32],
+    values_s: &[f32],
+    num: usize,
+    base: f32,
+    distance_mul: f32,
+    eps: f32,
+    x: f32,
+    coeffx2: f32,
+) -> (f32, f32, f32) {
+    let mut acc_fd = [0.0_f32; 8];
+    let mut acc_fdpe = [0.0_f32; 8];
+    let mut acc_fdme = [0.0_f32; 8];
+    let simd_end = num & !7;
+    let mut i = 0;
+    while i < simd_end {
+        for lane in 0..8 {
+            let idx = i + lane;
+            let a = K_INV_COLOR_FACTOR * values_m[idx];
+            let b = base * values_m[idx] - values_s[idx];
+            let v = a * x + b;
+            let vpe = a * (x + eps) + b;
+            let vme = a * (x - eps) + b;
+            let av = v.abs();
+            let avpe = vpe.abs();
+            let avme = vme.abs();
+            let acoeffx2 = coeffx2 * a;
+            let mut d = acoeffx2 * (av + 1.0);
+            let mut dpe = acoeffx2 * (avpe + 1.0);
+            let mut dme = acoeffx2 * (avme + 1.0);
+            if v < 0.0 {
+                d = -d;
+            }
+            if vpe < 0.0 {
+                dpe = -dpe;
+            }
+            if vme < 0.0 {
+                dme = -dme;
+            }
+            if av < NEWTON_THRES {
+                acc_fd[lane] += d;
+            }
+            if avpe < NEWTON_THRES {
+                acc_fdpe[lane] += dpe;
+            }
+            if avme < NEWTON_THRES {
+                acc_fdme[lane] += dme;
+            }
+        }
+        i += 8;
+    }
+    let mut fd = 2.0 * distance_mul * num as f32 * x + highway_sum_f32x8(acc_fd);
+    let mut fd_pe = 2.0 * distance_mul * num as f32 * (x + eps) + highway_sum_f32x8(acc_fdpe);
+    let mut fd_me = 2.0 * distance_mul * num as f32 * (x - eps) + highway_sum_f32x8(acc_fdme);
+    // Scalar tail — unreachable on `compute_cfl_map` callers (num %
+    // 64 == 0) but tests may pass arbitrary `num`.
+    while i < num {
+        let a = K_INV_COLOR_FACTOR * values_m[i];
+        let b = base * values_m[i] - values_s[i];
+        let v = a * x + b;
+        let vpe = a * (x + eps) + b;
+        let vme = a * (x - eps) + b;
+        let av = v.abs();
+        let avpe = vpe.abs();
+        let avme = vme.abs();
+        let acoeffx2 = coeffx2 * a;
+        let mut d = acoeffx2 * (av + 1.0);
+        let mut dpe = acoeffx2 * (avpe + 1.0);
+        let mut dme = acoeffx2 * (avme + 1.0);
+        if v < 0.0 {
+            d = -d;
+        }
+        if vpe < 0.0 {
+            dpe = -dpe;
+        }
+        if vme < 0.0 {
+            dme = -dme;
+        }
+        if av < NEWTON_THRES {
+            fd += d;
+        }
+        if avpe < NEWTON_THRES {
+            fd_pe += dpe;
+        }
+        if avme < NEWTON_THRES {
+            fd_me += dme;
+        }
+        i += 1;
+    }
+    (fd, fd_pe, fd_me)
+}
+
+/// W44-183-shipped serial-element-order Newton reduction. Used at
+/// `libjxl_parity=false` (Zenjxl / Aggressive / LeanFaster). The
+/// W44-29..W44-172 cost model is calibrated against the exact bytes
+/// produced by this reduction shape — DO NOT change without a wide
+/// regression sweep.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn compute_newton_derivatives_serial(
+    values_m: &[f32],
+    values_s: &[f32],
+    num: usize,
+    base: f32,
+    distance_mul: f32,
+    eps: f32,
+    x: f32,
+    coeffx2: f32,
+) -> (f32, f32, f32) {
+    let mut fd = 2.0 * distance_mul * num as f32 * x;
+    let mut fd_pe = 2.0 * distance_mul * num as f32 * (x + eps);
+    let mut fd_me = 2.0 * distance_mul * num as f32 * (x - eps);
+    for i in 0..num {
+        let a = K_INV_COLOR_FACTOR * values_m[i];
+        let b = base * values_m[i] - values_s[i];
+        let v = a * x + b;
+        let vpe = a * (x + eps) + b;
+        let vme = a * (x - eps) + b;
+        let av = v.abs();
+        let avpe = vpe.abs();
+        let avme = vme.abs();
+        let acoeffx2 = coeffx2 * a;
+        let mut d = acoeffx2 * (av + 1.0);
+        let mut dpe = acoeffx2 * (avpe + 1.0);
+        let mut dme = acoeffx2 * (avme + 1.0);
+        if v < 0.0 {
+            d = -d;
+        }
+        if vpe < 0.0 {
+            dpe = -dpe;
+        }
+        if vme < 0.0 {
+            dme = -dme;
+        }
+        if av < NEWTON_THRES {
+            fd += d;
+        }
+        if avpe < NEWTON_THRES {
+            fd_pe += dpe;
+        }
+        if avme < NEWTON_THRES {
+            fd_me += dme;
+        }
+    }
+    (fd, fd_pe, fd_me)
+}
+
 /// Find the best integer CfL multiplier via regularized least-squares.
 ///
 /// Computes: `x = -sum_ab / (sum_aa + num * distance_mul * 0.5)`
@@ -490,50 +707,39 @@ pub fn find_best_multiplier_newton_scalar(
     let mut converged = false;
 
     for _ in 0..max_iters {
-        let mut fd = 2.0 * distance_mul * num as f32 * x;
-        let mut fd_pe = 2.0 * distance_mul * num as f32 * (x + eps);
-        let mut fd_me = 2.0 * distance_mul * num as f32 * (x - eps);
-
-        for i in 0..num {
-            let a = K_INV_COLOR_FACTOR * values_m[i];
-            let b = base * values_m[i] - values_s[i];
-
-            let v = a * x + b;
-            let vpe = a * (x + eps) + b;
-            let vme = a * (x - eps) + b;
-
-            let av = v.abs();
-            let avpe = vpe.abs();
-            let avme = vme.abs();
-
-            let acoeffx2 = coeffx2 * a;
-
-            let mut d = acoeffx2 * (av + 1.0);
-            let mut dpe = acoeffx2 * (avpe + 1.0);
-            let mut dme = acoeffx2 * (avme + 1.0);
-
-            // Sign flip for negative residuals
-            if v < 0.0 {
-                d = -d;
-            }
-            if vpe < 0.0 {
-                dpe = -dpe;
-            }
-            if vme < 0.0 {
-                dme = -dme;
-            }
-
-            // Threshold clipping: ignore large residuals
-            if av < NEWTON_THRES {
-                fd += d;
-            }
-            if avpe < NEWTON_THRES {
-                fd_pe += dpe;
-            }
-            if avme < NEWTON_THRES {
-                fd_me += dme;
-            }
-        }
+        // **SA-G Fix B (2026-05-25)**: branch on `libjxl_parity` to keep
+        // the W44-183 / Zenjxl-default serial reduction shape byte-identical
+        // while mirroring Highway's f32x8 tree reduction order on the
+        // libjxl-parity path. cjxl x86_64 runs HWY_AVX2 with 8 f32 lanes;
+        // we mirror that by maintaining 8 lane accumulators in scalar code
+        // and applying `highway_sum_f32x8` after the loop — same shape as
+        // the AVX2 / NEON SIMD variants now use on `libjxl_parity=true`.
+        // On callers (`compute_cfl_map`) `num` is always a multiple of
+        // `DCT_BLOCK_SIZE = 64` so the scalar tail in the libjxl-parity
+        // branch is unreachable in production.
+        let (fd, fd_pe, fd_me) = if libjxl_parity {
+            compute_newton_derivatives_libjxl_order(
+                values_m,
+                values_s,
+                num,
+                base,
+                distance_mul,
+                eps,
+                x,
+                coeffx2,
+            )
+        } else {
+            compute_newton_derivatives_serial(
+                values_m,
+                values_s,
+                num,
+                base,
+                distance_mul,
+                eps,
+                x,
+                coeffx2,
+            )
+        };
 
         // Second derivative via central difference
         let ddf = (fd_pe - fd_me) / (2.0 * eps);
@@ -671,9 +877,30 @@ pub fn find_best_multiplier_newton_avx2(
             i += 8;
         }
 
-        let mut fd: f32 = 2.0 * distance_mul * num as f32 * x + acc_fd.reduce_add();
-        let mut fd_pe: f32 = 2.0 * distance_mul * num as f32 * (x + eps) + acc_fdpe.reduce_add();
-        let mut fd_me: f32 = 2.0 * distance_mul * num as f32 * (x - eps) + acc_fdme.reduce_add();
+        // **SA-G Fix B (2026-05-25)**: on `libjxl_parity=true` reduce
+        // in Highway `SumOfLanes` order to bit-match cjxl's AVX2 build.
+        // On `libjxl_parity=false` keep our existing reduce_add order to
+        // preserve byte-identity on the W44-29..W44-172 calibrated
+        // Zenjxl/Aggressive/LeanFaster paths.
+        let (sum_fd, sum_fdpe, sum_fdme) = if libjxl_parity {
+            let fd_arr: [f32; 8] = acc_fd.into();
+            let fdpe_arr: [f32; 8] = acc_fdpe.into();
+            let fdme_arr: [f32; 8] = acc_fdme.into();
+            (
+                highway_sum_f32x8(fd_arr),
+                highway_sum_f32x8(fdpe_arr),
+                highway_sum_f32x8(fdme_arr),
+            )
+        } else {
+            (
+                acc_fd.reduce_add(),
+                acc_fdpe.reduce_add(),
+                acc_fdme.reduce_add(),
+            )
+        };
+        let mut fd: f32 = 2.0 * distance_mul * num as f32 * x + sum_fd;
+        let mut fd_pe: f32 = 2.0 * distance_mul * num as f32 * (x + eps) + sum_fdpe;
+        let mut fd_me: f32 = 2.0 * distance_mul * num as f32 * (x - eps) + sum_fdme;
 
         // Scalar tail
         while i < num {
@@ -841,9 +1068,28 @@ pub fn find_best_multiplier_newton_neon(
             i += 4;
         }
 
-        let mut fd: f32 = 2.0 * distance_mul * num as f32 * x + acc_fd.reduce_add();
-        let mut fd_pe: f32 = 2.0 * distance_mul * num as f32 * (x + eps) + acc_fdpe.reduce_add();
-        let mut fd_me: f32 = 2.0 * distance_mul * num as f32 * (x - eps) + acc_fdme.reduce_add();
+        // **SA-G Fix B (2026-05-25)**: see AVX2 path. On NEON/WASM128 the
+        // f32x4 Highway order is `(v[0]+v[3]) + (v[1]+v[2])`; magetypes
+        // uses `(v[0]+v[1]) + (v[2]+v[3])` via paired-add.
+        let (sum_fd, sum_fdpe, sum_fdme) = if libjxl_parity {
+            let fd_arr: [f32; 4] = acc_fd.into();
+            let fdpe_arr: [f32; 4] = acc_fdpe.into();
+            let fdme_arr: [f32; 4] = acc_fdme.into();
+            (
+                highway_sum_f32x4(fd_arr),
+                highway_sum_f32x4(fdpe_arr),
+                highway_sum_f32x4(fdme_arr),
+            )
+        } else {
+            (
+                acc_fd.reduce_add(),
+                acc_fdpe.reduce_add(),
+                acc_fdme.reduce_add(),
+            )
+        };
+        let mut fd: f32 = 2.0 * distance_mul * num as f32 * x + sum_fd;
+        let mut fd_pe: f32 = 2.0 * distance_mul * num as f32 * (x + eps) + sum_fdpe;
+        let mut fd_me: f32 = 2.0 * distance_mul * num as f32 * (x - eps) + sum_fdme;
 
         while i < num {
             let a = K_INV_COLOR_FACTOR * values_m[i];
