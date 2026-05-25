@@ -1,0 +1,85 @@
+Loaded 4536 rows from benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv
+
+## Pareto-front position per backend (bytes vs cvvdp_gpu, e=8 cells)
+# A point is Pareto-optimal if no other point in the same (image, e=8) cell
+# has both ≤ bytes AND ≥ cvvdp_gpu.
+
+backend	observations	pareto_wins	pareto_win_pct
+B	375	351	93.6
+B_GPU	375	349	93.1
+C_CPU	375	149	39.7
+C_GPU	375	151	40.3
+
+## Per-(backend, distance) Pareto win rate
+# At each distance, what fraction of cells does this backend land on the front?
+
+backend	distance	observations	wins	win_pct
+B	0.50	54	54	100.0
+B	1.00	54	50	92.6
+B	1.50	54	53	98.1
+B	2.00	54	47	87.0
+B	3.00	54	49	90.7
+B	4.00	51	45	88.2
+B	5.00	54	53	98.1
+B_GPU	0.50	54	54	100.0
+B_GPU	1.00	54	50	92.6
+B_GPU	1.50	54	53	98.1
+B_GPU	2.00	54	47	87.0
+B_GPU	3.00	54	49	90.7
+B_GPU	4.00	51	45	88.2
+B_GPU	5.00	54	51	94.4
+C_CPU	0.50	54	48	88.9
+C_CPU	1.00	54	36	66.7
+C_CPU	1.50	54	17	31.5
+C_CPU	2.00	54	12	22.2
+C_CPU	3.00	54	17	31.5
+C_CPU	4.00	51	12	23.5
+C_CPU	5.00	54	7	13.0
+C_GPU	0.50	54	50	92.6
+C_GPU	1.00	54	36	66.7
+C_GPU	1.50	54	17	31.5
+C_GPU	2.00	54	12	22.2
+C_GPU	3.00	54	17	31.5
+C_GPU	4.00	51	12	23.5
+C_GPU	5.00	54	7	13.0
+
+## Same-distance comparison: C_GPU bytes overhead AND cvvdp gain vs B
+# For each (image, distance) at e=8, compute:
+#   bytes_overhead_pct = (C_GPU.bytes - B.bytes) / B.bytes * 100
+#   cvvdp_gain         = C_GPU.cvvdp - B.cvvdp  (positive = C_GPU better on cvvdp metric)
+# Median + p25/p75 per distance.
+
+distance	n	median_bytes_overhead_pct	p25	p75	median_cvvdp_gain	p25	p75
+0.50	54	+153.27	+135.37	+164.78	+0.0027	+0.0007	+0.0057
+1.00	54	+182.65	+165.27	+203.06	+0.0197	+0.0133	+0.0326
+1.50	54	+196.70	+173.19	+218.77	+0.0403	+0.0269	+0.0617
+2.00	54	+210.13	+178.36	+239.87	+0.0621	+0.0390	+0.0883
+3.00	54	+234.83	+186.80	+270.91	+0.1166	+0.0720	+0.1611
+4.00	51	+250.39	+214.09	+290.57	+0.1796	+0.1322	+0.2522
+5.00	54	+258.77	+197.58	+304.75	+0.2484	+0.1554	+0.3414
+
+## Equal-cvvdp comparison: bytes ratio (C_GPU / B) at target cvvdp values
+# For each (image, e=8), interpolate bytes-at-target-cvvdp for both B and C_GPU.
+# Then ratio = C_GPU bytes / B bytes — < 1 means cvvdp uses fewer bytes for same cvvdp.
+
+target_cvvdp	n	median_C/B_bytes_ratio	p25	p75	cvvdp_wins	butter_wins
+9.900	5	2.157	1.463	2.254	0	5
+9.950	33	1.726	1.476	1.907	0	33
+9.980	49	1.559	1.224	1.848	3	46
+9.990	49	1.477	1.205	1.643	0	49
+
+## Per-corpus equal-cvvdp bytes ratio
+
+corpus	target_cvvdp	n	median_C/B	cvvdp_wins	butter_wins
+CID22	9.700	0	NA	0	0
+CID22	9.800	0	NA	0	0
+CID22	9.900	5	2.157	0	5
+CID22	9.950	26	1.766	0	26
+GB82-SC	9.700	0	NA	0	0
+GB82-SC	9.800	0	NA	0	0
+GB82-SC	9.900	0	NA	0	0
+GB82-SC	9.950	5	1.447	0	5
+W44-S1	9.700	0	NA	0	0
+W44-S1	9.800	0	NA	0	0
+W44-S1	9.900	0	NA	0	0
+W44-S1	9.950	2	1.942	0	2
