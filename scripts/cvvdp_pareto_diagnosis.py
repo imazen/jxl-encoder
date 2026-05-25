@@ -214,7 +214,9 @@ def main(path: str) -> int:
     print()
 
     targets_to_test = [9.5, 9.7, 9.8, 9.9, 9.95, 9.98, 9.99]
-    cvvdp_backends = ("C_GPU", "C_GPU_v2", "C_GPU_v3")
+    # Phase 8f (2026-05-25): added C_GPU_v4 = Phase 8c renorm + Phase 8d tighten
+    # + Phase 8g k_tile_norm=0.16 (the cvvdp-fork's full shipped stack).
+    cvvdp_backends = ("C_GPU", "C_GPU_v2", "C_GPU_v3", "C_GPU_v4")
     by_image_backend: dict[tuple[str, str], list[tuple[float, float]]] = defaultdict(list)
     for (image, _), cells in e8_cells.items():
         for r in cells:
@@ -286,33 +288,37 @@ def main(path: str) -> int:
         if cells:
             by_image_corpus[img] = cells[0].corpus
 
-    print("corpus\ttarget_cvvdp\tn\tmedian_C/B\tcvvdp_wins\tbutter_wins")
+    print("corpus\tvariant\ttarget_cvvdp\tn\tmedian_variant/B\tcvvdp_wins\tbutter_wins")
     for corpus_name in sorted(set(by_image_corpus.values())):
-        for target in [9.7, 9.8, 9.9, 9.95]:
-            ratios = []
-            c_wins = 0
-            b_wins = 0
-            for image in images:
-                if by_image_corpus.get(image) != corpus_name:
+        # Phase 8f (2026-05-25): per-corpus split now reports every active
+        # cvvdp variant so the Phase 8f default-flip decision can see
+        # CID22 / GB82-SC / W44-S1 splits explicitly per variant.
+        for variant in active_variants:
+            for target in [9.7, 9.8, 9.9, 9.95]:
+                ratios = []
+                c_wins = 0
+                b_wins = 0
+                for image in images:
+                    if by_image_corpus.get(image) != corpus_name:
+                        continue
+                    b_curve = by_image_backend.get((image, "B"), [])
+                    c_curve = by_image_backend.get((image, variant), [])
+                    b_bytes = bytes_at_cvvdp(b_curve, target)
+                    c_bytes = bytes_at_cvvdp(c_curve, target)
+                    if b_bytes is None or c_bytes is None or b_bytes == 0:
+                        continue
+                    ratio = c_bytes / b_bytes
+                    ratios.append(ratio)
+                    if ratio < 1.0:
+                        c_wins += 1
+                    else:
+                        b_wins += 1
+                n = len(ratios)
+                if n == 0:
+                    print(f"{corpus_name}\t{variant}\t{target:.3f}\t0\tNA\t0\t0")
                     continue
-                b_curve = by_image_backend.get((image, "B"), [])
-                c_curve = by_image_backend.get((image, "C_GPU"), [])
-                b_bytes = bytes_at_cvvdp(b_curve, target)
-                c_bytes = bytes_at_cvvdp(c_curve, target)
-                if b_bytes is None or c_bytes is None or b_bytes == 0:
-                    continue
-                ratio = c_bytes / b_bytes
-                ratios.append(ratio)
-                if ratio < 1.0:
-                    c_wins += 1
-                else:
-                    b_wins += 1
-            n = len(ratios)
-            if n == 0:
-                print(f"{corpus_name}\t{target:.3f}\t0\tNA\t0\t0")
-                continue
-            med = statistics.median(ratios)
-            print(f"{corpus_name}\t{target:.3f}\t{n}\t{med:.3f}\t{c_wins}\t{b_wins}")
+                med = statistics.median(ratios)
+                print(f"{corpus_name}\t{variant}\t{target:.3f}\t{n}\t{med:.3f}\t{c_wins}\t{b_wins}")
 
     return 0
 

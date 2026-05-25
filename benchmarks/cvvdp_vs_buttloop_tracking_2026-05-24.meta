@@ -15,12 +15,31 @@ For every (image, distance, effort, backend) cell:
 
 ## Backends
 
-| tag       | crate path                                   | feature flag                    |
-|---        |---                                           |---                              |
-| `B`       | `butteraugli::ButteraugliReference` (CPU)    | `butteraugli-loop` (default)    |
-| `B_GPU`   | `butteraugli-gpu::Butteraugli` (CUDA)        | `butteraugli-loop gpu-butteraugli` |
-| `C_GPU`   | `cvvdp-gpu::Cvvdp` (CUDA)                    | `cvvdp-loop`                    |
-| `C_CPU`   | `cvvdp-cpu::Cvvdp` (port, Phase 5)           | `cvvdp-loop cvvdp-loop-cpu`     |
+| tag         | crate path                                   | feature flag                                      |
+|---          |---                                           |---                                                |
+| `B`         | `butteraugli::ButteraugliReference` (CPU)    | `butteraugli-loop` (default)                      |
+| `B_GPU`     | `butteraugli-gpu::Butteraugli` (CUDA)        | `butteraugli-loop gpu-butteraugli`                |
+| `C_GPU`     | `cvvdp-gpu::Cvvdp` (CUDA)                    | `cvvdp-loop`                                      |
+| `C_CPU`     | `cvvdp-cpu::Cvvdp` (port, Phase 5)           | `cvvdp-loop cvvdp-loop-cpu`                       |
+| `C_GPU_v4`  | `cvvdp-gpu::Cvvdp` + Phase 8d tighten + Phase 8g constants | `cvvdp-loop cvvdp-loop-tighten`     |
+
+## Phase 8f (2026-05-25): C_GPU_v4 added
+
+C_GPU_v4 rows added 2026-05-25 by the Phase 8f validation sweep on the
+post-Phase-8g encoder (`commit=689ba0df`). The C_GPU_v4 dispatch:
+
+- `LossyConfig::with_cvvdp_loop(Some(true))` — enables the cvvdp buttloop
+  (same as `C_GPU`)
+- `LossyConfig::with_cvvdp_bytes_tighten(Some(true))` — enables the
+  Phase 8d tighten exit pass
+- Phase 8g k_tile_norm=0.16 per-block reducer constant applies
+  automatically when the `cvvdp-loop` feature is compiled in
+
+Required features: `gpu-butteraugli butteraugli-loop cvvdp-loop cvvdp-loop-cpu cvvdp-loop-tighten ssim2-loop parallel`.
+
+C_GPU_v4 is the cvvdp-fork's shipped production default when the cargo
+features are compiled in. See `docs/CVVDP_FORK_DECISION.md` for the
+Phase 8f decision-rule application.
 
 ## Corpus
 
@@ -93,7 +112,7 @@ in `notes`.
 - `corpus`: one of `CID22`, `GB82-SC`, `W44-S1`
 - `effort`: encoder effort 5/7/8
 - `distance`: encoder distance parameter
-- `backend`: one of `B`, `B_GPU`, `C_GPU`, `C_CPU`
+- `backend`: one of `B`, `B_GPU`, `C_GPU`, `C_CPU`, `C_GPU_v4`
 - `bytes`: encoded file size in bytes
 - `wall_ms`: encode wall time (best-of-3 median, single-thread unless noted)
 - `score_butter_cpu`: Rust butteraugli max-norm on decoded vs source (smaller = better)
@@ -124,6 +143,41 @@ Per RFC §5.4:
 Each row carries the commit SHA of the encoder at time of measurement.
 Append-only; never edit historical rows. Methodology changes get a new
 TSV file + meta with the date.
+
+## Pre-analysis row filter
+
+The Phase 6 sweep introduced multi-line panic backtraces from transient
+CUDA hiccups that break TSV row alignment (~9 rows per backend sweep).
+Phase 8f preserves the precedent: pre-filter via `awk -F'\t' 'NR==1 || NF==13'`
+before feeding to `scripts/cvvdp_pareto_*.py`. Phase 6 had 27 such rows
+filtered; Phase 8f added 60 more (totals: 87 malformed rows of 5757
+data rows). The clean derived file is NOT committed; the awk filter is
+documented here and runs deterministically off the raw TSV.
+
+## Phase 8f run record (2026-05-25)
+
+- Host: `lilith` (Linux 6.6.114.1-microsoft-standard-WSL2 / RTX 5070 / CUDA 13.2)
+- Encoder commit: `689ba0df` (Phase 8g — per-block reducer constants refit)
+- Backend swept: `C_GPU_v4` only (rows appended; B/B_GPU/C_GPU/C_CPU unchanged)
+- Run wall: 916s (~15.3 min) for 1,134 cells (1.24 cells/s avg)
+- Rows populated: **1,134 of 1,134** (100% emitted; 29 OOM cells have
+  bytes=0/score=NA but row exists; coverage of valid scoring cells:
+  1,105 / 1,134 = 97.4%)
+- 29 cells failed encode with `LimitExceeded` ("memory budget exceeded:
+  ~135-160 MB on top of ~2.0 GiB, cap 2 GiB"). All GB82-SC e=8 d≥1.5 on
+  6 of the 11 screenshots: codec_wiki, gmessages, imac_dark, imac_g3,
+  imac_g3_strip (each on 5 distances d∈{1.5,2,3,4,5}), imessage (d=4,5),
+  windows (d=4,5). The OOM cluster is larger than Phase 6's 3-cell OOM
+  set because the Phase 8d tighten exit pass adds extra per-iter encodes
+  that increase memory pressure on the same screenshots. Per Phase 6
+  precedent these cells are documented and the OOM is a memory budget
+  configuration issue, not a structural bitstream bug.
+- Per-corpus row counts (header excluded, C_GPU_v4 rows only):
+  - CID22: 861 (41 imgs × 21 cells)
+  - GB82-SC: 231 (11 imgs × 21 cells, 29 OOM)
+  - W44-S1: 42 (2 imgs × 21 cells)
+- Build features: `__expert butteraugli-loop cvvdp-loop cvvdp-loop-cpu
+  cvvdp-loop-tighten gpu-butteraugli ssim2-loop parallel`
 
 ## D1 run record (2026-05-24)
 
