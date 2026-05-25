@@ -1,0 +1,39 @@
+W44-AUDIT-8 P5b — 240-cell wider-corpus validation of Phase 5
+
+# Methodology
+- Pre  = `benchmarks/w44_audit_7_wider_corpus_2026-05-24.tsv` (AUDIT-7 baseline, pre-Phase-5)
+- Post = `benchmarks/w44_audit_7_wider_corpus_post_audit_8_p5_2026-05-24.tsv` (post commits f6f6c600 + 9d803db1)
+- Same harness `jxl-encoder/examples/w44_audit_7_wider_corpus.rs`
+- 20 images × 6 classes × 3 efforts × 4 distances = 240 cells per strategy
+- 11.3 min wall, 0 errors
+
+# Per-effort verdict (zenjxl, 80 cells per effort)
+- e5: +3.83% bytes / +1.10 SSIM2 — gate fires, big SSIM2 win
+- e7: +3.61% bytes / +1.21 SSIM2 — gate fires, even bigger SSIM2 win
+- e9: +0.00% bytes / +0.00 SSIM2 — gate OFF (perfect control, no behavior change at e>7)
+
+# Per-class verdict (zenjxl @ e7)
+- CLIC2025_WEB: +5.01% / +1.63   ← original problem cluster, now wins
+- SCREEN_TEXT:  +2.27% / +1.27
+- SCREEN_GRAPHICS: +1.52% / +0.73
+- PHOTO_PORTRAIT:  +5.54% / +1.42
+- PHOTO_LANDSCAPE: +3.18% / +0.81
+- PHOTO_SMOOTH:    +3.21% / +1.14
+
+# Aggregate (240 cells, zenjxl)
+- mean dB%   = +2.48%
+- mean dSSIM2 = +0.77
+- Classification: 70 WIN / 170 NEUTRAL / **0 LOSS**
+
+# Libjxl-strategy validation
+- mean dB% = +2.27% (close to zenjxl — Libjxl-strategy now also matches cjxl better)
+- mean dSSIM2 = +0.73
+
+# Verdict
+Phase 5 ships at ZERO regressions on the wider corpus. Trade of ~2.5% bytes mean for +0.77 SSIM2 mean is broadly Pareto-acceptable. The 0 LOSS is the headline: no cell suffered the AUDIT-7-feared SSIM2 trade.
+
+# Reproduction
+cargo run -p jxl-encoder --release \
+  --features "parallel butteraugli-loop ssim2-loop __expert" \
+  --example w44_audit_7_wider_corpus -- \
+  --output benchmarks/w44_audit_7_wider_corpus_post_audit_8_p5_2026-05-24.tsv
