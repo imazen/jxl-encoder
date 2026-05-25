@@ -242,6 +242,17 @@ jxl_encoder_macros::strategy_def! {
             // W44-205: same — Libjxl preserves the libjxl `is_nondefault`
             // admission of ALL buckets, including medium 2 + 4.
             coeff_orders_disable_medium_buckets = false,
+            // W44-AUDIT-9 / SA-G Fix C: force cmap=zeros during AC
+            // strategy SEARCH (only — the emitted bitstream cmap stays
+            // Newton-derived). Mirrors libjxl `enc_ac_strategy.cc`
+            // `speed_tier > kSquirrel` behaviour where the search-side
+            // CfL contribution is suppressed because the cost model was
+            // tuned against zero-decorrelated entropy estimates at
+            // higher speed tiers. On Libjxl strategy: ON by default —
+            // the SA-G report (`7d383785`) measured this brings
+            // clic_22ea12 e9 d=4 partial first-blocks 2,241 → 2,495
+            // (vs cjxl 2,499 = +0.16% parity) and bytes -0.6%.
+            cfl_zero_for_search = true,
         },
 
         /// LeanFaster — drops the heavy per-image content gates
@@ -314,6 +325,14 @@ jxl_encoder_macros::strategy_def! {
             // extension is strictly additive to the W44-201 fix and
             // not per-image / calibration-sensitive.
             coeff_orders_disable_medium_buckets = true,
+            // W44-AUDIT-9 / SA-G Fix C: LeanFaster preserves Zenjxl's
+            // cost-model calibration which is tuned against the current
+            // (non-zero) cmap baseline used during search. Default OFF
+            // — same risk profile as `cfl_newton_libjxl_parity` on
+            // LeanFaster (W44-183 demonstrated that flipping CfL
+            // behaviour at the search side regresses Zenjxl-class cost
+            // model assumptions).
+            cfl_zero_for_search = false,
         },
 
         /// Zenjxl — production-shipping bundle. Every field matches
@@ -400,6 +419,17 @@ jxl_encoder_macros::strategy_def! {
             // buckets 2 (DCT16x16) + 4 (DCT16x8/DCT8x16). Phase-1 probe
             // measured -0.97% on 27 cells with ZERO PROTECT regressions.
             coeff_orders_disable_medium_buckets = true,
+            // W44-AUDIT-9 / SA-G Fix C (2026-05-25): Zenjxl preserves
+            // its cost-model calibration (W44-29..W44-172) which is
+            // tuned against the current non-zero search-side cmap
+            // baseline. Default OFF — defaulting ON would replicate
+            // the W44-183 honest-stop pattern (CfL behaviour change at
+            // the default path regressed 25/27 photo cells SSIM2
+            // 0.25-13.02 + 7.82% mean bytes). Opt-in only via
+            // `EncoderImprovementsCustom::cfl_zero_for_search = true`.
+            // Default-flip discussion deferred to a follow-on chunk
+            // after wider-corpus measurement on the Zenjxl path.
+            cfl_zero_for_search = false,
         },
 
         /// Aggressive — currently equivalent to `Zenjxl` after
@@ -454,6 +484,10 @@ jxl_encoder_macros::strategy_def! {
             coeff_orders_disable_large_buckets = true,
             // W44-205: same as Zenjxl — extend to medium buckets 2 + 4.
             coeff_orders_disable_medium_buckets = true,
+            // W44-AUDIT-9 / SA-G Fix C: Aggressive mirrors Zenjxl per
+            // the standing pattern. See Zenjxl preset for the OPT-IN
+            // rationale.
+            cfl_zero_for_search = false,
         },
     }
 
@@ -777,6 +811,59 @@ jxl_encoder_macros::strategy_def! {
         cfl_pass2_ls_at_low_effort: bool {
             divergence_section = "C",
             divergence_row_ref = "W44-197 CfL Pass-2 LS-only at e=5/6 (libjxl fast=true)",
+        },
+
+        /// **W44-AUDIT-9 / SA-G Fix C** (2026-05-25): force `cmap = zeros`
+        /// during AC strategy SEARCH only, while keeping the actual emitted
+        /// `cfl_map` (Pass-1 / Pass-2 Newton-derived) intact in the
+        /// bitstream. The substitution applies a [`crate::vardct::chroma_from_luma::CflMap::zeros`]
+        /// to the `compute_ac_strategy_for_tiles` call sites; the
+        /// downstream `refine_cfl_map` (Pass-2), encode pipeline, and
+        /// decoder all see the original cmap unchanged.
+        ///
+        /// **Why this exists**: SA-G report (`7d383785`) diagnosed that
+        /// on `clic_22ea12 e9 d=4 --strategy libjxl` the AC strategy
+        /// search picks 2,241 partial first-blocks (vs cjxl 2,499) because
+        /// our SIMD `cfl_find_best_multiplier_newton` converges to
+        /// DIFFERENT optima than libjxl's scalar `FindBestMultiplier`
+        /// on smooth tiles. The wrong cmap_x inflates EstimateEntropy's
+        /// X-channel decorrelation cost on DCT8 candidates, making
+        /// partials relatively cheaper. SA-G env-hook `JXL_SA_G_FORCE_ZERO_CMAP=1`
+        /// (reverted, NOT shipped) measured this brings the partial
+        /// count to 2,495 (+0.16% parity with cjxl) and bytes -0.6%.
+        ///
+        /// **Fix B vs Fix C**: Fix B (parallel sibling) addresses the
+        /// root cause inside the SIMD Newton kernel. Fix C is the
+        /// independent workaround layer above. They compose; if Fix B
+        /// fully closes the cmap divergence, Fix C becomes a no-op (the
+        /// search-side cmap would already match libjxl's). Fix C ships
+        /// as the long-shot fallback escape hatch with a documented
+        /// trade-off (the W44-29..W44-172 cost model on Zenjxl is tuned
+        /// against the current cmap baseline; defaulting Fix C ON for
+        /// Zenjxl risks the W44-183 honest-stop pattern).
+        ///
+        /// **Why this is libjxl-shaped**: libjxl `enc_ac_strategy.cc`
+        /// at `speed_tier > kSquirrel` zeroes the search-side cmap
+        /// because at higher speed tiers the cost model is intentionally
+        /// simplified. Our Libjxl strategy mirrors this at every effort
+        /// because the byte-lock invariant requires strict cjxl parity
+        /// at the dispatch site (and the W44-183 cost-model concern
+        /// doesn't apply on Libjxl — every other divergence is also
+        /// flipped to libjxl-parity).
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — mirrors libjxl `enc_ac_strategy.cc`
+        ///   speed_tier > kSquirrel behaviour; closes the SA-G
+        ///   partial-first-block divergence (~+0.16% to cjxl parity).
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — preserves the
+        ///   W44-29..W44-172 cost-model calibration tuned against the
+        ///   current cmap baseline. Default-flip discussion deferred to
+        ///   a follow-on chunk after wider-corpus measurement.
+        ///
+        /// Section C.
+        cfl_zero_for_search: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W44-AUDIT-9 / SA-G Fix C — force cmap=zeros during AC strategy SEARCH (libjxl speed_tier > kSquirrel parity)",
         },
 
         // ── Section D Zenjxl tightening of W44-82 cost-benefit gate ──
@@ -1156,6 +1243,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         row_ref: "W44-197 CfL Pass-2 LS-only at e=5/6 (libjxl fast=true)",
         raw: __CUSTOM_DIVERGENCE_CFL_PASS2_LS_AT_LOW_EFFORT,
     },
+    // Section C — W44-AUDIT-9 / SA-G Fix C: zero cmap during AC strategy search
+    DivergenceEntry {
+        gate_name: "cfl_zero_for_search",
+        section: "C",
+        row_ref: "W44-AUDIT-9 / SA-G Fix C — force cmap=zeros during AC strategy SEARCH (libjxl speed_tier > kSquirrel parity)",
+        raw: __CUSTOM_DIVERGENCE_CFL_ZERO_FOR_SEARCH,
+    },
     // Section D — W44-201 Zenjxl tightening of W44-82 cost-benefit gate
     DivergenceEntry {
         gate_name: "coeff_orders_disable_large_buckets",
@@ -1245,6 +1339,10 @@ mod tests {
         // measured byte-identical to Mode A on bisect cells).
         assert!(!d.cfl_newton_libjxl_math_with_ls_warm_start);
         assert!(!d.cfl_pass2_ls_at_low_effort);
+        // W44-AUDIT-9 / SA-G Fix C: Zenjxl default OFF — preserves
+        // the W44-29..W44-172 cost-model calibration that's tuned
+        // against the current (non-zero) cmap baseline.
+        assert!(!d.cfl_zero_for_search);
     }
 
     /// Sanity: `CustomResolvedImprovements::default()` matches
@@ -1290,6 +1388,11 @@ mod tests {
             z.cfl_newton_libjxl_math_with_ls_warm_start
         );
         assert!(!l.cfl_newton_libjxl_math_with_ls_warm_start);
+        // W44-AUDIT-9 / SA-G Fix C: Libjxl flips this ON (libjxl-parity);
+        // Zenjxl keeps it OFF (cost-model calibration concern).
+        assert_ne!(l.cfl_zero_for_search, z.cfl_zero_for_search);
+        assert!(l.cfl_zero_for_search);
+        assert!(!z.cfl_zero_for_search);
     }
 
     /// Aggressive == Zenjxl (forward-compat slot per W44-124).

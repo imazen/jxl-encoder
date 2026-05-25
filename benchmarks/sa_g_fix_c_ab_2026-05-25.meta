@@ -1,0 +1,29 @@
+W44-AUDIT-9 / SA-G Fix C: A/B bench for `cfl_zero_for_search` gate
+Date: 2026-05-25
+Commit: (run before commit; see git log for SHA)
+Host: lilith
+
+Bands:
+- SMOKE: 1 cell (clic_22ea12 e9 d=4) — SA-G report prediction: ~-0.6% bytes on Libjxl strategy.
+- WIDER_LIBJXL: 9 cells × 3 distances at e7 — documents Libjxl-strategy bytes/quality deltas with the gate ON by default. NOT a default-flip for Zenjxl.
+
+Aggregate:
+- Total cells: 28
+- Zenjxl ≠ Libjxl byte differ count: 28 (100.0%) — the two strategies SHOULD differ on most cells because Fix C + Section A/B/D flips together change the Libjxl bitstream. Cells where they don't differ are 'gate doesn't fire' (synthetic / too-small input).
+
+Acceptance gates per task spec:
+- (f) SMOKE: bytes drop ~-0.6% on Libjxl strategy: SEE band=SMOKE row libjxl_minus_zenjxl_bytes.
+- (f) SMOKE: SSIM2 regression ≤ 0.5 on Libjxl: SEE band=SMOKE row libjxl_ssim2 vs zenjxl_ssim2.
+- (g) WIDER_LIBJXL: documented in TSV — count wins/losses on Libjxl strategy bytes. Catastrophic threshold: 10+ cells lose >2 SSIM2 → HONEST-STOP and revert.
+
+DO NOT (binding for future agents):
+- DO NOT default-flip Fix C on Zenjxl/Aggressive/LeanFaster. Cost model (W44-29..W44-172) is calibrated against the current cmap baseline; W44-183 honest-stop pattern likely to repeat.
+- DO NOT cite 'FMA precision' for ANY byte movement (per W44-66 user-mandated rule). The bytes change because the AC strategy search picks different transforms when fed a zero cmap.
+- DO NOT touch CfL APPLY behavior — the emitted cmap_x/cmap_b in the bitstream stays Newton-derived. ONLY the consumption-during-search is zeroed.
+- DO NOT widen scope to 'fix' the Newton kernel — that's Fix B (parallel sibling).
+
+Repro:
+CARGO_TARGET_DIR=$HOME/work/zen/jxl-encoder-shared-target \
+  cargo run --release --features 'parallel butteraugli-loop ssim2-loop' \
+  --manifest-path jxl-encoder/Cargo.toml \
+  --example sa_g_fix_c_ab

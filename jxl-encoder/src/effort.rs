@@ -803,6 +803,36 @@ pub struct EffortProfile {
     /// where the dispatch shape is `if e>=5 { ComputeTile(..., fast = e<=6, ...) }`.
     pub cfl_pass2_ls_at_low_effort: bool,
 
+    /// **W44-AUDIT-9 / SA-G Fix C** (2026-05-25): when `true`, the
+    /// encoder substitutes a zero-filled [`crate::vardct::chroma_from_luma::CflMap::zeros`]
+    /// for the `cfl_map` argument to `compute_ac_strategy_for_tiles`,
+    /// mirroring libjxl `enc_ac_strategy.cc` at `speed_tier > kSquirrel`.
+    /// The actual emitted `cfl_map` (Pass-1 / Pass-2 Newton-derived)
+    /// is NOT touched — the bitstream cmap stays libjxl-parity per
+    /// `cfl_newton_libjxl_parity`. Only the SEARCH consumption is
+    /// zeroed, not the EMIT.
+    ///
+    /// **Why this exists**: SA-G report (`7d383785`) measured that on
+    /// `clic_22ea12 e9 d=4 --strategy libjxl` our SIMD Newton
+    /// converges to different chroma multipliers than libjxl's scalar
+    /// `FindBestMultiplier` on smooth tiles. The wrong cmap_x inflates
+    /// the EstimateEntropy decorrelation cost for DCT8 candidates,
+    /// flipping the AC strategy search to pick partials. Zeroing the
+    /// search-side cmap brings partial first-blocks 2,241 → 2,495
+    /// (vs cjxl 2,499 = +0.16% parity) and bytes -0.6%. Fix C is the
+    /// independent workaround above the Newton kernel (Fix B);
+    /// composes — if Fix B closes the cmap divergence Fix C becomes a
+    /// no-op.
+    ///
+    /// Set to `true` by
+    /// [`Self::apply_section_c_cfl_newton_libjxl_parity`] when
+    /// [`crate::api::ResolvedImprovements::cfl_zero_for_search`] is
+    /// `true` — i.e. only under [`crate::api::EncoderStrategy::Libjxl`]
+    /// at the default. Opt-in callers can flip the field on
+    /// `EncoderImprovementsCustom` for Zenjxl/Aggressive/LeanFaster
+    /// A/B testing.
+    pub cfl_zero_for_search: bool,
+
     // ─── Quantization ────────────────────────────────────────────────────
     /// Use adaptive (content-dependent) quant field via InitialQuantField.
     /// When false (effort < 5), uses flat quant field = 0.79/distance.
@@ -1426,6 +1456,14 @@ impl EffortProfile {
             // `EncoderStrategy::Libjxl` is selected. See field doc on
             // `EffortProfile::cfl_pass2_ls_at_low_effort`.
             cfl_pass2_ls_at_low_effort: false,
+            // W44-AUDIT-9 / SA-G Fix C: default `false` — only flipped
+            // by `apply_section_c_cfl_newton_libjxl_parity` when
+            // `EncoderStrategy::Libjxl` is selected (mirrors libjxl
+            // `enc_ac_strategy.cc` speed_tier > kSquirrel). Zenjxl /
+            // Aggressive / LeanFaster keep this `false` to preserve
+            // the W44-29..W44-172 cost-model calibration (default-flip
+            // discussion deferred to a follow-on chunk).
+            cfl_zero_for_search: false,
 
             // ── Quantization ──
             use_adaptive_quant: effort >= 5,
@@ -1607,6 +1645,10 @@ impl EffortProfile {
             // W44-197: default `false` — Lossless mode never runs Pass-2
             // anyway since `cfl_two_pass: false`.
             cfl_pass2_ls_at_low_effort: false,
+            // W44-AUDIT-9 / SA-G Fix C: default `false` — lossless path
+            // never runs the AC strategy search (`ac_strategy_enabled =
+            // false` on the lossless modular path), so this is moot here.
+            cfl_zero_for_search: false,
 
             // ── Quantization (N/A for lossless) ──
             use_adaptive_quant: false,
@@ -2300,6 +2342,16 @@ impl EffortProfile {
         // audit memo.
         if resolved.cfl_pass2_ls_at_low_effort {
             self.cfl_pass2_ls_at_low_effort = true;
+        }
+        // W44-AUDIT-9 / SA-G Fix C: same NO-OP-when-false semantic.
+        // Set by `EncoderStrategy::Libjxl` to mirror libjxl
+        // `enc_ac_strategy.cc` speed_tier > kSquirrel behaviour (force
+        // cmap=zeros during AC strategy SEARCH only). Zenjxl /
+        // Aggressive / LeanFaster keep `false` to preserve their
+        // W44-29..W44-172 cost-model calibration baseline. See field
+        // docstring on `EffortProfile::cfl_zero_for_search`.
+        if resolved.cfl_zero_for_search {
+            self.cfl_zero_for_search = true;
         }
     }
 

@@ -1579,6 +1579,22 @@ pub(crate) fn compute_dc_group(
             }
         }
 
+        // W44-AUDIT-9 / SA-G Fix C: substitute zero cmap for SEARCH only
+        // when the profile says so (Libjxl strategy default). See
+        // encoder.rs equivalent site for the full rationale. The
+        // emitted bitstream cmap (`aggregated_cfl` + `cfl_region_*`
+        // returned in `PerDcGroupFill`) is untouched.
+        let zero_cfl_for_search;
+        let cfl_for_search: &super::chroma_from_luma::CflMap = if profile.cfl_zero_for_search {
+            zero_cfl_for_search = super::chroma_from_luma::CflMap::zeros(
+                local_cfl.xsize_tiles,
+                local_cfl.ysize_tiles,
+            );
+            &zero_cfl_for_search
+        } else {
+            &local_cfl
+        };
+
         super::ac_strategy::compute_ac_strategy_for_tiles(
             &global.xyb_x,
             &global.xyb_y,
@@ -1590,7 +1606,7 @@ pub(crate) fn compute_dc_group(
             distance,
             whole_quant_field,
             whole_masking,
-            &local_cfl,
+            cfl_for_search,
             whole_mask1x1,
             padded_width,
             profile,

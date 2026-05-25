@@ -1992,6 +1992,20 @@ impl VarDctEncoder {
         // `ac_strategy` may be refined by the zensim loop below, which
         // splits large transforms with high perceptual error. The `mut`
         // is unused when the `zensim-loop` cargo feature is disabled.
+        // W44-AUDIT-9 / SA-G Fix C: substitute zero cmap for SEARCH only
+        // when the active profile says so (Libjxl strategy default).
+        // The emitted `cfl_map` stays Newton-derived. See encoder.rs
+        // equivalent site for the full rationale.
+        let zero_cfl_map_for_search;
+        let cfl_map_for_search: &super::chroma_from_luma::CflMap = if active_profile_for_search
+            .cfl_zero_for_search
+        {
+            zero_cfl_map_for_search =
+                super::chroma_from_luma::CflMap::zeros(cfl_map.xsize_tiles, cfl_map.ysize_tiles);
+            &zero_cfl_map_for_search
+        } else {
+            &cfl_map
+        };
         #[cfg_attr(not(feature = "zensim-loop"), allow(unused_mut))]
         let mut ac_strategy = if let Some(forced) = self.force_strategy {
             super::encoder::force_strategy_map(xsize_blocks, ysize_blocks, forced)
@@ -2009,7 +2023,7 @@ impl VarDctEncoder {
                 self.distance,
                 &quant_field_float,
                 &masking,
-                &cfl_map,
+                cfl_map_for_search,
                 mask1x1.as_deref(),
                 padded_width,
                 active_profile_for_search,
