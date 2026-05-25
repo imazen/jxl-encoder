@@ -19,6 +19,14 @@
 //!   `with_cvvdp_use_cpu(Some(true))`. Requires `cvvdp-loop-cpu`
 //!   feature; without it, `construct_backend` silently falls back per
 //!   Phase 5's documented dispatch chain.
+//! - `C_GPU_v4`: Phase 8f validation backend. Same dispatch shape as
+//!   `C_GPU` (`with_cvvdp_loop(Some(true))`), but EXPLICITLY enables
+//!   the Phase 8d tighten exit pass via
+//!   `with_cvvdp_bytes_tighten(Some(true))`. Requires
+//!   `cvvdp-loop-tighten` cargo feature compiled. This is the
+//!   Phase 8c renorm + Phase 8d tighten + Phase 8g k_tile_norm=0.16
+//!   cumulative stack — the cvvdp-fork's current shipped production
+//!   default (when the cargo features are enabled).
 //!
 //! All backends use `EncoderStrategy::Zenjxl` (production default).
 //!
@@ -84,6 +92,10 @@ enum Backend {
     CGpu,
     /// Zenjxl + cvvdp buttloop, CPU CVVDP backend explicitly pinned.
     CCpu,
+    /// Phase 8f validation: cvvdp buttloop + Phase 8d tighten exit pass
+    /// (`with_cvvdp_bytes_tighten(Some(true))`). Phase 8g constants apply
+    /// automatically inside the cvvdp loop when feature is compiled.
+    CGpuV4,
 }
 
 impl Backend {
@@ -93,8 +105,9 @@ impl Backend {
             "B_GPU" => Ok(Backend::BGpu),
             "C_GPU" => Ok(Backend::CGpu),
             "C_CPU" => Ok(Backend::CCpu),
+            "C_GPU_v4" => Ok(Backend::CGpuV4),
             other => Err(format!(
-                "unknown --backend {other}; expected one of B|B_GPU|C_GPU|C_CPU"
+                "unknown --backend {other}; expected one of B|B_GPU|C_GPU|C_CPU|C_GPU_v4"
             )),
         }
     }
@@ -105,6 +118,7 @@ impl Backend {
             Backend::BGpu => "B_GPU",
             Backend::CGpu => "C_GPU",
             Backend::CCpu => "C_CPU",
+            Backend::CGpuV4 => "C_GPU_v4",
         }
     }
 }
@@ -313,6 +327,13 @@ fn score_cell(
         Backend::CCpu => cfg
             .with_cvvdp_loop(Some(true))
             .with_cvvdp_use_cpu(Some(true)),
+        // Phase 8f validation: explicit tighten opt-in. The Phase 8g
+        // k_tile_norm=0.16 constants apply automatically inside the cvvdp
+        // loop once `cvvdp-loop` is compiled; tighten is the extra Phase 8d
+        // exit pass that closes the remaining bytes gap.
+        Backend::CGpuV4 => cfg
+            .with_cvvdp_loop(Some(true))
+            .with_cvvdp_bytes_tighten(Some(true)),
     };
 
     let mut wall_samples: Vec<f64> = Vec::with_capacity(3);

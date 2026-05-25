@@ -1426,7 +1426,11 @@ path = "examples/cvvdp_track_baseline.rs"
 # The B and B_GPU paths don't need them but the example imports the
 # api setters under feature = "butteraugli-loop" only, so the extra
 # features are required-features-additive (no source #[cfg]).
-required-features = ["gpu-butteraugli", "butteraugli-loop", "cvvdp-loop", "cvvdp-loop-cpu", "ssim2-loop", "parallel"]
+# Phase 8f (2026-05-25): added cvvdp-loop-tighten so `--backend C_GPU_v4`
+# can engage the Phase 8d tighten exit pass. C_GPU_v4 is the full
+# Phase 8c+8d+8g stack (the cvvdp-fork's shipped production default
+# when the cargo features are compiled in).
+required-features = ["gpu-butteraugli", "butteraugli-loop", "cvvdp-loop", "cvvdp-loop-cpu", "cvvdp-loop-tighten", "ssim2-loop", "parallel"]
 
 # cvvdp-fork Phase 6 (2026-05-24) multi-decoder spot-check (acceptance
 # gate (e)): encodes 20 cells with C_GPU and C_CPU at e8 d∈{1.0, 3.0}
@@ -1435,6 +1439,14 @@ required-features = ["gpu-butteraugli", "butteraugli-loop", "cvvdp-loop", "cvvdp
 name = "cvvdp_phase6_decoder_spotcheck"
 path = "examples/cvvdp_phase6_decoder_spotcheck.rs"
 required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "cvvdp-loop-cpu", "ssim2-loop", "parallel"]
+
+# cvvdp-fork Phase 8f (2026-05-25) multi-decoder spot-check on the
+# C_GPU_v4 shipped stack (cvvdp-loop + bytes-tighten + Phase 8g
+# k_tile_norm=0.16). 10 cells × 3 decoders = 30 PASS checks required.
+[[example]]
+name = "cvvdp_phase8f_decoder_spotcheck"
+path = "examples/cvvdp_phase8f_decoder_spotcheck.rs"
+required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "cvvdp-loop-tighten", "ssim2-loop", "parallel"]
 
 # cvvdp-fork Phase 4 (2026-05-24): 20-cell smoke bench producing the
 # `benchmarks/cvvdp_loop_smoke_<DATE>.tsv` file per the Phase 4 brief

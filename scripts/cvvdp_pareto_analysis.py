@@ -167,7 +167,9 @@ def main(argv: list[str]) -> int:
     cells = load_tsv(tsv_path)
     print(f"loaded {len(cells)} cells from {tsv_path}", file=sys.stderr)
 
-    backends = ["B", "B_GPU", "C_GPU", "C_CPU"]
+    # Phase 8f (2026-05-25): added C_GPU_v4 — Phase 8c renorm + Phase 8d
+    # tighten + Phase 8g k_tile_norm=0.16, the cvvdp-fork's shipped stack.
+    backends = ["B", "B_GPU", "C_GPU", "C_CPU", "C_GPU_v4"]
 
     # Per-backend coverage + wall_ms stats
     per_backend_count: dict[str, int] = {b: 0 for b in backends}
@@ -283,12 +285,24 @@ def main(argv: list[str]) -> int:
     # within 5% on others.
     #
     # Operational interpretation: per (corpus, metric), pick the
-    # backend with the most Pareto wins. If C_GPU dominates ≥1 corpus
-    # on ≥1 of its native metrics (cvvdp_gpu, ssim2) and is within 5%
-    # of the leader on every other (corpus, metric), recommend default-
-    # flip. Otherwise recommend opt-in.
+    # backend with the most Pareto wins. If the candidate cvvdp variant
+    # dominates ≥1 corpus on ≥1 metric and is within 5% of leader on
+    # every other (corpus, metric), recommend default-flip.
+    #
+    # Phase 8f (2026-05-25): the verdict candidate is auto-selected.
+    # If `C_GPU_v4` rows exist in the input (Phase 8f's shipped stack),
+    # the verdict applies to C_GPU_v4. Otherwise falls back to `C_GPU`
+    # (Phase 6 baseline) for backwards-compatible output.
 
     corpora = sorted({c for (c, _) in cell_counts.keys()})
+
+    # Phase 8f selector: prefer C_GPU_v4 (the shipped stack) over C_GPU
+    # (Phase 6 baseline) when both are present.
+    if per_backend_count.get("C_GPU_v4", 0) > 0:
+        candidate = "C_GPU_v4"
+    else:
+        candidate = "C_GPU"
+    print(f"[verdict] candidate backend = {candidate}", file=sys.stderr)
 
     # Build per-(corpus, metric) winner-of-winners
     leaders: dict[tuple[str, str], tuple[str, float]] = {}
@@ -305,7 +319,7 @@ def main(argv: list[str]) -> int:
                 best_pct = pct
                 best_b = b
         leaders[(corpus, metric)] = (best_b, best_pct)
-        cgpu_pct[(corpus, metric)] = 100.0 * win_counts.get((corpus, metric, "C_GPU"), 0) / total
+        cgpu_pct[(corpus, metric)] = 100.0 * win_counts.get((corpus, metric, candidate), 0) / total
 
     cgpu_dominates_any = False
     cgpu_within_5_everywhere = True
@@ -314,7 +328,7 @@ def main(argv: list[str]) -> int:
 
     for (corpus, metric), (leader_b, leader_pct) in leaders.items():
         cgpu_p = cgpu_pct.get((corpus, metric), 0.0)
-        if leader_b == "C_GPU" and leader_pct >= 50.0:
+        if leader_b == candidate and leader_pct >= 50.0:
             cgpu_dominates_any = True
             if corpus not in cgpu_dominates_corpora:
                 cgpu_dominates_corpora.append(corpus)
@@ -335,18 +349,20 @@ def main(argv: list[str]) -> int:
     elif cgpu_dominates_any and cgpu_within_5_everywhere:
         verdict = "DEFAULT_FLIP"
         rationale = [
-            f"C_GPU Pareto-dominates on corpora: {', '.join(cgpu_dominates_corpora)}",
-            "C_GPU is within 5% of leader on every other (corpus, metric).",
+            f"{candidate} Pareto-dominates on corpora: {', '.join(cgpu_dominates_corpora)}",
+            f"{candidate} is within 5% of leader on every other (corpus, metric).",
             "RFC §5.4 default-flip rule met.",
         ]
     else:
         verdict = "OPT_IN_ONLY"
         reasons: list[str] = []
         if not cgpu_dominates_any:
-            reasons.append("C_GPU does not Pareto-dominate ≥50% of cells on any (corpus, metric).")
+            reasons.append(
+                f"{candidate} does not Pareto-dominate ≥50% of cells on any (corpus, metric)."
+            )
         if not cgpu_within_5_everywhere:
             reasons.append(
-                f"C_GPU is >5pp below leader on {len(cgpu_weak_cells)} (corpus, metric) cells."
+                f"{candidate} is >5pp below leader on {len(cgpu_weak_cells)} (corpus, metric) cells."
             )
         rationale = reasons + [
             "RFC §5.4 default-flip rule NOT met; ship as opt-in.",
@@ -363,8 +379,8 @@ def main(argv: list[str]) -> int:
             f.write(f"- {b}: {per_backend_count[b]} cells populated\n")
         f.write("\n")
 
-        f.write("## Per-(corpus, metric) leader + C_GPU placement\n\n")
-        f.write("corpus | metric | leader | leader_pct | C_GPU_pct | within_5pp?\n")
+        f.write(f"## Per-(corpus, metric) leader + {candidate} placement\n\n")
+        f.write(f"corpus | metric | leader | leader_pct | {candidate}_pct | within_5pp?\n")
         f.write("--- | --- | --- | --- | --- | ---\n")
         for (corpus, metric), (leader_b, leader_pct) in sorted(leaders.items()):
             cgp = cgpu_pct.get((corpus, metric), 0.0)

@@ -380,3 +380,20 @@ discipline):
   RFC §2.3 TBD and `CVVDP_FORK_DECISION.md` §11. The opt-in is
   callable today via `LossyConfig::with_cvvdp_loop(Some(true))` plus
   `--features cvvdp-loop` (GPU) or `--features cvvdp-loop-cpu` (CPU).
+- 2026-05-25: Phase 8 cumulative interventions (8a-8g) landed via
+  `0ab5a53d` + `7876ba95` + `689ba0df`. Diffmap renormalization
+  (8c) + bytes-tighten exit pass (8d, gated behind `cvvdp-loop-tighten`
+  cargo feature) + per-block reducer constants refit (8g
+  `k_tile_norm = 0.16`) close the +200% bytes overhead the Phase 6
+  verdict flagged. Phase 8f validation sweep on full 1,134-cell corpus
+  shows the combined `C_GPU_v4` stack at **97.7% Pareto-front position**
+  (vs B 69.6%, vs original C_GPU 32.5%), **-7.4% mean bytes vs B**,
+  **-27% mean wall vs B**, and **30/30 multi-decoder roundtrip PASS**.
+  Strict RFC §5.4 within-5pp gate fails on 6 (corpus, metric) cells
+  (CID22 butter by < 1pp, GB82-SC ALL metrics by 5.7-13.1pp largely
+  due to 29 OOM cells from the tighten pass on large screenshots).
+  Verdict stays **OPT_IN_ONLY (improved)**: the cvvdp-fork ships the
+  same opt-in features as Phase 7 but now strictly improves on
+  butteraugli at the macro level when compiled in. See
+  [`CVVDP_FORK_DECISION.md`](CVVDP_FORK_DECISION.md) §13 for the full
+  Phase 8f decision-rule application.

@@ -1,0 +1,55 @@
+Phase 6 Pareto analysis — cvvdp fork decision rule application
+input: benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.clean.tsv
+date: 2026-05-25
+
+## Coverage summary
+
+- B: 1134 cells populated
+- B_GPU: 1134 cells populated
+- C_GPU: 1134 cells populated
+- C_CPU: 1134 cells populated
+- C_GPU_v4: 1134 cells populated
+
+## Per-(corpus, metric) leader + C_GPU_v4 placement
+
+corpus | metric | leader | leader_pct | C_GPU_v4_pct | within_5pp?
+--- | --- | --- | --- | --- | ---
+CID22 | butter_cpu | C_GPU | 99.9% | 93.4% | N
+CID22 | butter_gpu | C_GPU | 99.8% | 92.9% | N
+CID22 | cvvdp_gpu | C_GPU_v4 | 100.0% | 100.0% | Y
+CID22 | ssim2 | C_GPU | 100.0% | 99.2% | Y
+GB82-SC | butter_cpu | B | 99.1% | 86.0% | N
+GB82-SC | butter_gpu | B | 98.7% | 86.0% | N
+GB82-SC | cvvdp_gpu | B | 93.4% | 87.7% | N
+GB82-SC | ssim2 | C_GPU | 96.5% | 88.6% | N
+W44-S1 | butter_cpu | C_GPU | 100.0% | 97.6% | Y
+W44-S1 | butter_gpu | C_GPU | 100.0% | 97.6% | Y
+W44-S1 | cvvdp_gpu | C_GPU | 100.0% | 100.0% | Y
+W44-S1 | ssim2 | C_GPU | 100.0% | 100.0% | Y
+
+## Wall-time comparison
+
+backend | n | p50 ms | p95 ms | mean ms | avg bytes
+--- | --- | --- | --- | --- | ---
+B | 1134 | 75.7 | 1023.5 | 262.1 | 52848
+B_GPU | 1134 | 65.1 | 896.8 | 215.9 | 52848
+C_GPU | 1134 | 61.4 | 893.9 | 218.9 | 77729
+C_CPU | 1134 | 73.0 | 1340.2 | 399.6 | 77732
+C_GPU_v4 | 1134 | 61.2 | 729.1 | 190.3 | 48912
+
+## VERDICT: OPT_IN_ONLY
+
+- C_GPU_v4 is >5pp below leader on 6 (corpus, metric) cells.
+- RFC §5.4 default-flip rule NOT met; ship as opt-in.
+
+## Methodology notes
+
+- Pareto frontier minimizes (bytes, score) for `smaller-is-better` metrics
+  (butter_cpu, butter_gpu) and minimizes (bytes, -score) for larger-is-better
+  metrics (cvvdp_gpu, ssim2).
+- A backend is on the frontier iff no other backend strictly dominates it.
+  Ties on identical (bytes, score) count both as on-frontier.
+- 'Pareto wins' counts only cells with ≥2 backends scored on that metric.
+- 'Within 5pp' means C_GPU's Pareto-win-percentage >= leader's - 5.
+- Decoder failures are detected from the `notes` column substring match
+  (`decode` or `panic_during_cell`).
