@@ -1,0 +1,124 @@
+W44-AUDIT-7 — Wider-Corpus cjxl-Parity Bench (Phase 1)
+========================================================
+
+Date:      2026-05-24
+Author:    Claude session (claude-w44-audit-7)
+Encoder:   commit fbd31e04 (parent of bench commit; bench is measurement-only)
+Reference: cjxl v0.12.0 4279d48 [_AVX3_,AVX2,SSE4,SSE2] (libjxl @ master)
+
+Tooling:
+  cargo run -p jxl-encoder --release \
+    --features "parallel butteraugli-loop ssim2-loop __expert" \
+    --example w44_audit_7_wider_corpus -- \
+    --output benchmarks/w44_audit_7_wider_corpus_2026-05-24.tsv
+
+  Decoder for both cjxl and zenjxl scoring: jxl-oxide 0.13 (via repo workspace
+  pin to imazen/jxl-oxide@fd4e2c3, requested in srgb_linear color encoding).
+  Butteraugli: in-process Rust crate (ButteraugliParams::default()).
+  SSIMULACRA2: in-process Rust crate (fast_ssim2 0.x).
+  M3-colourfulness: replicated Hasler-Süsstrunk 2003 over sRGB u8 (matches
+  zenanalyze::tier1 bit-for-bit).
+
+Corpus (20 images × 6 classes):
+  SCREEN_TEXT (3):
+    - terminal     1646×1062  M3=13.85
+    - codec_wiki   2560×1664  M3=145.73  ← only M3>=80 screen-text
+    - imac_g3      2940×1912  M3=14.29
+  SCREEN_GRAPHICS (3):
+    - graph        796×481    M3=11.75
+    - gui          1356×1132  M3=10.05   (RGBA, alpha stripped on input + dec)
+    - windows95    640×480    M3=27.19
+  PHOTO_PORTRAIT (3):
+    - 1025469      512×512    M3=45.45
+    - 1418519      512×512    M3=36.84
+    - 1279330      512×512    M3=55.64
+  PHOTO_LANDSCAPE (3):
+    - 1189261      512×512    M3=98.84   ← M3>=80, only landscape that fires
+    - 1044329      512×512    M3=65.03
+    - 1475938      512×512    M3=21.70
+  PHOTO_SMOOTH (3):
+    - 1531677      512×512    M3=12.29  (W44-78 cluster cell)
+    - 1420710      512×512    M3=32.93  (W44-78 cluster cell)
+    - 1544947      512×512    M3=10.77
+  CLIC2025_WEB (5):
+    - clic_028092  1024×1024  M3=39.90
+    - clic_097cb4  1024×1024  M3=15.76
+    - clic_0c49a5  1024×1024  M3=95.91  ← M3>=80
+    - clic_100a02  1024×1024  M3=48.39
+    - clic_22ea12  1024×1024  M3=105.30 ← M3>=80
+
+Cell grid:
+  efforts: e5, e7, e9
+  distances: 0.5, 1.0, 2.0, 4.0
+  strategies: Zenjxl (default, all wins on) + Libjxl (strict cjxl-parity gate)
+  reference: cjxl 0.12.0 -e {effort} -d {distance} --quiet
+
+Total: 20 images × 3 efforts × 4 distances = 240 cells × 3 encodes = 720 encodes.
+Wall: 534.5s (8.9 min initial pass) + 31.4s (gui re-run after alpha fix)
+      = 566s ≈ 9.4 min total. Well under the ~60 min budget.
+
+Bench-tooling bugs found + fixed mid-flight:
+  1. score_jxl() truncated jxl-oxide RGBA output via `chunks_exact(3)`,
+     producing SSIM2 ≈ -204 on gui.png (the only RGBA image). FIX: detect
+     channel count via dec_lin.len() / (dw*dh) and slice accordingly. Cells
+     for gui.png re-run with `--only gui` after fix.
+  2. No other corpus images had alpha (verified via `identify -format
+     "%[channels]"`). codec_wiki + 3 photos + 5 CLIC all sRGB.
+
+Acceptance gates (all PASS):
+  (a) Corpus assembled: 20 images × 6 content classes ✓
+  (b) Bench TSV: 240 rows ✓
+  (c) Per-class summary tables generated: Tables A/B/C/D ✓ (see .md)
+  (d) AUDIT-6 win cells confirmed on M3>=80 images: codec_wiki -20.7% mean
+      bytes, 1189261 -0.83%, clic_0c49a5 -1.18%, clic_22ea12 -0.88%.
+      AUDIT-6 lift FIRES on all 4 M3>=80 images. ✓
+      SSIM2 regression on M3>=80 cells: codec_wiki -1.23 mean (deepest -4.33),
+      clic_22ea12 -1.54 mean (-3.84 worst). Photo M3>=80 cells (1189261,
+      clic_0c49a5) have smaller SSIM2 cost (-0.03 / -0.54 means). ⚠ flagged
+      for Phase 2: AUDIT-6 lift on the 2 CLIC2025 web-photo M3>=80 cells
+      may be miscalibrated (these are PHOTOS, not screenshots — the lift
+      was tuned on codec_wiki which is text+chart).
+  (e) New wedges (>3% bytes regression OR >0.5 SSIM2 regression): 99 of 240
+      cells flagged. Top 3 priority wedges identified for Phase 2 brief.
+  (f) cargo test --lib: 1442/1442 PASS ✓
+  (g) Hash-locks: 36/36 BYTE-IDENTICAL ✓
+  (h) Single linear commit pushed to origin/main ✓
+  (i) .workongoing removed on completion ✓
+  (j) Phase 2 investigation brief: docs/W44_AUDIT_7_PHASE2_BRIEF.md ✓
+
+Outputs:
+  benchmarks/w44_audit_7_wider_corpus_2026-05-24.tsv   — raw 240-row data
+  benchmarks/w44_audit_7_wider_corpus_2026-05-24.md    — tables A/B/C/D +
+                                                          wedge ranking +
+                                                          AUDIT-6 verification +
+                                                          win-cell table
+  benchmarks/w44_audit_7_wider_corpus_2026-05-24.meta  — this file
+  docs/W44_AUDIT_7_PHASE2_BRIEF.md                     — top-3 next chunks
+
+Verdict on AUDIT-6 generalization:
+  PARTIAL CONFIRM. The M3>=80 discriminator does correctly partition images
+  into 4 firing / 16 non-firing groups, with non-firing images showing
+  near-zero bytes delta and modest SSIM2 deltas (good — the gate doesn't
+  spuriously fire). However, the lift mechanism itself produces SSIM2 cost
+  on M3>=80 PHOTOS (clic_22ea12 -1.54 mean SSIM2) that wasn't present in
+  the AUDIT-6 calibration set (codec_wiki + 5 text screens). The 2 CLIC
+  M3>=80 cells (clic_0c49a5 M3=95.91, clic_22ea12 M3=105.30) are
+  conceptually photos, not screenshots, and the W44-105 buttloop seed-scale
+  lift is designed for text-class quantization profiles. A secondary
+  discriminator (e.g. fcbr or edge-density to gate OUT photos with high M3
+  but no text) is the Phase 2 candidate.
+
+DO NOT (binding for future agents):
+  - DO NOT default-flip AUDIT-6 OFF for the CLIC2025 M3>=80 wedge without
+    first measuring the codec_wiki PROTECT cells (the W44-105 SHIP cluster).
+    The 4-image AUDIT-6 calibration includes those PROTECT cells; the lift
+    saves -20.7% bytes there. A blanket disable would lose that.
+  - DO NOT raise the M3 threshold above 80 without re-checking codec_wiki
+    (M3=145.73) — too-high a threshold disables the SCREEN_TEXT win
+    AUDIT-6 was designed for.
+  - DO NOT cite "FMA precision" for any byte/SSIM2 movement (per W44-66
+    user correction). All measurements use the same f32 backend on both
+    sides; deltas are structural dispatch choices, not numeric noise.
+  - DO NOT replace gui.png with a different SCREEN_GRAPHICS image without
+    documenting why; the alpha-handling fix in score_jxl is generally
+    useful (catches future RGBA corpus additions).
