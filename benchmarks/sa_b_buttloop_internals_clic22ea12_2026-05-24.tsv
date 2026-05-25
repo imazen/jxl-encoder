@@ -1,0 +1,34 @@
+# SA-B (W44-AUDIT-8 Phase 8b): per-iter buttloop state comparison —
+# OUR Zenjxl vs cjxl 0.12.0 on clic_22ea12 e9 d=4 (CID22 photo class).
+# Generated 2026-05-24 in jj workspace `sa-b-buttloop-internals`.
+#
+# Source image: /home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png (1024x1024 RGB8 photo).
+# Output bytes: ours=32489 cjxl=33676 (ours -3.6% bytes).
+# Output SSIM2 gap (per AUDIT-8 P7): cjxl ~+2.0 SSIM2 vs ours buttloop-off baseline.
+#
+# Both encoders run the SAME buttloop algorithm (iters=4 at e9, kInitMul=0.6,
+# kPow=[0.2,0.2,0,0,...], kOriginalComparisonRound=1, max_increase~=inf).
+# Both START WITH BYTE-IDENTICAL initial quant_field_float (iter=-1 row;
+# qf_min/p25/med/p75/max/avg all match to 5+ decimals — tiny differences from
+# percentile rounding in independent sort orders).
+# Both compute SAME deviation bounds qf_lower=0.003619 qf_higher=0.904635.
+#
+# Iter row schema:
+#  source iter iters score target gscale qf_min qf_p25 qf_median qf_p75 qf_max
+#  qf_avg td_max bad_blocks cur_pow max_increase seed_scale_applied is_screenshot
+#
+# Header row (iter=-1) is the pre-loop snapshot with score/td/bad sentinels.
+# Iter rows 0..4 are post-compare per-iter state (BEFORE next-iter qf adjust).
+source	iter	iters	iter_score	target	global_scale	qf_min	qf_p25	qf_median	qf_p75	qf_max	qf_avg	td_max	bad_blocks	cur_pow	max_increase	seed_scale_applied	is_screenshot
+ours	-1	4	-1.0000	4.0000	-1	0.073148	0.149301	0.153972	0.154336	0.179004	0.148939	-1.0000	-1	-1.0000	-1.0000	1.0000	false
+ours	0	4	4.310798	4.0000	2000	0.073148	0.149301	0.153972	0.154336	0.179004	0.148939	3.770720	0	0.2000	100.0000	1.0000	false
+ours	1	4	4.325564	4.0000	1620	0.061172	0.123560	0.126554	0.129451	0.162508	0.124252	4.087481	1	0.2000	100.0000	1.0000	false
+ours	2	4	4.299832	4.0000	1502	0.058301	0.115420	0.118170	0.122649	0.169938	0.117290	4.118046	1	0.0000	100.0000	1.0000	false
+ours	3	4	4.115880	4.0000	1502	0.058301	0.115420	0.118170	0.122649	0.169938	0.117291	3.677142	0	0.0000	100.0000	1.0000	false
+ours	4	4	4.115880	4.0000	1502	0.058301	0.115420	0.118170	0.122649	0.169938	0.117291	3.677142	0	0.0000	100.0000	1.0000	false
+cjxl	-1	4	-1.0000	4.0000	-1	0.073148	0.149320	0.153972	0.154340	0.179004	0.148948	-1.0000	-1	-1.0000	-1.0000	1.0000	false
+cjxl	0	4	10.239259	4.0000	2000	0.073148	0.149320	0.153972	0.154340	0.179004	0.148948	9.190544	137	0.2000	100.0000	1.0000	false
+cjxl	1	4	8.286519	4.0000	1436	0.061353	0.110853	0.117928	0.128899	0.313650	0.119150	7.512033	129	0.2000	100.0000	1.0000	false
+cjxl	2	4	7.672778	4.0000	1291	0.063370	0.098474	0.110315	0.121945	0.589037	0.111178	6.900253	126	0.0000	100.0000	1.0000	false
+cjxl	3	4	7.715406	4.0000	1291	0.063370	0.098474	0.110315	0.121945	0.904635	0.111469	6.972402	117	0.0000	100.0000	1.0000	false
+cjxl	4	4	7.715406	4.0000	1291	0.063370	0.098474	0.110315	0.121945	0.904635	0.111720	6.972402	119	0.0000	100.0000	1.0000	false
