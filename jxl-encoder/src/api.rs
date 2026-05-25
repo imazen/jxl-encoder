@@ -4606,82 +4606,50 @@ pub struct LossyConfig {
     /// See [`Self::with_knobs`].
     #[cfg(feature = "tuning-override")]
     tier2_knobs: Option<crate::tuning::coupling::Tier2Knobs>,
-    /// W44-phase3-B1: opt-in GPU butteraugli backend for the buttloop.
-    /// When `true` AND the `gpu-butteraugli` cargo feature is enabled AND
-    /// CUDA initialises successfully, the buttloop's per-iter compare runs
-    /// on the GPU (~27× faster than rayon+avx512 CPU at 1024² multires per
-    /// W44-RECON-DEEP/A7). Default `false` — production path unchanged.
+    /// Multi-metric Phase 0 (RFC #3, 2026-05-25): which perceptual metric
+    /// drives the buttloop's per-iter compare. See [`PerceptualMetric`]
+    /// for the variants and `docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md`
+    /// for the full design.
     ///
-    /// When `true` but the feature is OFF, or feature is ON but CUDA fails
-    /// to init, the buttloop silently falls back to the CPU backend
-    /// (defense-in-depth: GPU misconfiguration never breaks an encode).
+    /// Default: [`PerceptualMetric::Butteraugli`]. The default produces
+    /// byte-identical output to the pre-Phase-0
+    /// `gpu_butteraugli`/`cvvdp_loop = None` shape on every existing
+    /// hash-lock fixture.
     ///
-    /// Field always present so hash-lock fixtures don't depend on the
-    /// `gpu-butteraugli` cargo feature; the field is consulted only inside
-    /// the `#[cfg(feature = "butteraugli-loop")]` buttloop and only takes
-    /// effect under `#[cfg(feature = "gpu-butteraugli")]`. Default `false`
-    /// keeps every hash-lock byte-identical.
-    ///
-    /// See [`Self::with_gpu_butteraugli`].
+    /// See [`Self::with_perceptual_metric`] +
+    /// [`Self::resolve_perceptual_metric`].
     #[cfg(feature = "butteraugli-loop")]
-    gpu_butteraugli: bool,
-    /// cvvdp-fork Phase 3 (2026-05-24): opt-in CVVDP backend for the
-    /// quantization loop. Tri-state:
-    /// - `None` (default): use the butteraugli backend (CPU or GPU per
-    ///   [`Self::with_gpu_butteraugli`]). Production path unchanged;
-    ///   every hash-lock byte-identical.
-    /// - `Some(true)`: route the quantization loop's per-iter compare
-    ///   through [`crate::vardct::cvvdp_backend::gpu::GpuCvvdpBackend`]
-    ///   when the `cvvdp-loop` cargo feature is enabled AND CUDA
-    ///   initialises successfully AND the active strategy is not
-    ///   [`EncoderStrategy::Libjxl`]. Defense-in-depth fallback to the
-    ///   butteraugli backend on any failure (matches the
-    ///   `gpu_butteraugli` shape).
-    /// - `Some(false)`: explicitly pin the butteraugli backend even if
-    ///   a future build promotes the cvvdp default. Mirrors the W44-128
-    ///   chunk-D opt-out semantics for the
-    ///   [`Self::with_strategy_overrides`] family.
+    perceptual_metric: PerceptualMetric,
+    /// Multi-metric Phase 0 (RFC #3, 2026-05-25): compute-device
+    /// preference for the active perceptual metric. See
+    /// [`PerceptualDevice`] for the variants.
     ///
-    /// Phase 3 ships the backend impl only — the buttloop body still
-    /// consumes butteraugli. Phase 4 (separate chunk) plumbs the cvvdp
-    /// signal through `run_buttloop`. Field always present so hash-lock
-    /// fixtures don't depend on the `cvvdp-loop` cargo feature; the
-    /// field is consulted only inside the
-    /// `#[cfg(feature = "butteraugli-loop")]` buttloop and only takes
-    /// effect under `#[cfg(feature = "cvvdp-loop")]`.
+    /// Default: [`PerceptualDevice::Auto`]. With the
+    /// [`PerceptualMetric::Butteraugli`] default, `Auto` resolves to GPU
+    /// when the `gpu-butteraugli` cargo feature is compiled in (matches
+    /// the W44-PHASE3-B5-flip butteraugli default) and CPU otherwise.
+    /// With [`PerceptualMetric::Cvvdp`], `Auto` resolves to GPU when
+    /// `cvvdp-loop` is compiled (and CUDA inits), CPU when only
+    /// `cvvdp-loop-cpu` is compiled, butteraugli fallback otherwise.
     ///
-    /// See [`Self::with_cvvdp_loop`] and the Phase 3 brief at
-    /// `docs/RFC_CVVDP_PHASE3_BRIEF.md`.
+    /// See [`Self::with_perceptual_device`] +
+    /// [`Self::resolve_perceptual_device`].
     #[cfg(feature = "butteraugli-loop")]
-    cvvdp_loop: Option<bool>,
-
-    /// cvvdp-fork Phase 5 (2026-05-24, RFC `docs/RFC_CVVDP_FORK.md` §4
-    /// Phase 5, brief `docs/RFC_CVVDP_PHASE5_BRIEF.md`): caller-supplied
-    /// preference for the CPU CVVDP backend over the GPU CVVDP backend
-    /// when [`Self::cvvdp_loop`] is `Some(true)` AND both backends are
-    /// compiled in.
+    perceptual_device: PerceptualDevice,
+    /// Multi-metric Phase 0 (RFC #3, 2026-05-25): caller override for the
+    /// per-distance target table.
     ///
-    /// Tri-state semantics:
-    /// - `None` (default): **GPU when both compiled** (Agent A's CPU
-    ///   honest-stop measured 10× GPU advantage), CPU only when
-    ///   `cvvdp-loop-cpu` is compiled but `cvvdp-loop` GPU dispatch
-    ///   isn't available (CUDA missing OR `cvvdp-loop` cargo feature
-    ///   off).
-    /// - `Some(true)`: prefer CPU. Useful for hosts without CUDA AND
-    ///   for callers who want deterministic-to-1e-4-JOD parity vs
-    ///   pycvvdp v0.5.4 goldens (the CPU port carries no GPU
-    ///   reduction-order variance).
-    /// - `Some(false)`: explicitly pin GPU (same as `None` when both
-    ///   backends compiled — kept for symmetry with the
-    ///   [`Self::cvvdp_loop`] tri-state).
+    /// When `None` (default), the metric's built-in calibration table
+    /// (`vardct/cvvdp_targets.rs` for cvvdp; identity pass-through for
+    /// butteraugli) drives the buttloop's per-iter convergence target.
+    /// When `Some(score)`, the loop targets that score directly in the
+    /// metric's score-direction (smaller=better).
     ///
-    /// Field is always present so hash-lock fixtures don't depend on
-    /// the `cvvdp-loop-cpu` cargo feature; it's consulted only inside
-    /// the `#[cfg(feature = "butteraugli-loop")]` buttloop and only
-    /// takes effect when [`Self::cvvdp_loop`] resolves to true.
-    /// See [`Self::with_cvvdp_use_cpu`] for the full dispatch matrix.
+    /// Use for calibrating against a non-standard quality requirement
+    /// (e.g. matching a specific reference encoder's output). Default
+    /// `None` is the right choice for ~all production callers.
     #[cfg(feature = "butteraugli-loop")]
-    cvvdp_use_cpu: Option<bool>,
+    perceptual_target_score: Option<f32>,
 
     /// cvvdp-fork Phase 8d (2026-05-25, RFC
     /// `docs/RFC_CVVDP_PHASE8_PARETO_TARGETING.md` §3.3 Intervention C):
@@ -4715,12 +4683,75 @@ pub struct LossyConfig {
     /// **Field always present** so hash-lock fixtures don't depend on
     /// the `cvvdp-loop-tighten` cargo feature; consulted only inside
     /// the cvvdp seed loop's post-convergence section, gated on both the
-    /// cargo feature AND [`Self::resolve_cvvdp_loop`] returning true.
+    /// cargo feature AND [`Self::resolve_perceptual_metric`] returning
+    /// [`PerceptualMetric::Cvvdp`].
     ///
     /// See [`Self::with_cvvdp_bytes_tighten`] and
     /// [`Self::resolve_cvvdp_bytes_tighten`] for the dispatch matrix.
     #[cfg(feature = "butteraugli-loop")]
     cvvdp_bytes_tighten: Option<bool>,
+}
+
+/// Multi-metric Phase 0 (RFC #3, 2026-05-25): which perceptual metric
+/// drives the iterative quantization loop when
+/// [`LossyConfig::butteraugli_iters`] > 0.
+///
+/// All metrics share the
+/// [`PerceptualBackend`](crate::vardct::perceptual_backend::PerceptualBackend)
+/// trait surface — a per-cell `set_reference` followed by per-iter
+/// `compare_with_reference` calls that return a scalar score + per-pixel
+/// diffmap. The metric choice is fixed for the full encode; per-iter
+/// switching is not supported.
+///
+/// **Default**: [`Self::Butteraugli`]. The other metric is opt-in
+/// per its respective cargo features ([`Self::Cvvdp`] requires
+/// `cvvdp-loop` and/or `cvvdp-loop-cpu`).
+///
+/// **`EncoderStrategy::Libjxl` invariant**: when the active strategy is
+/// [`EncoderStrategy::Libjxl`], the resolved metric is forced to
+/// [`Self::Butteraugli`] regardless of this field (W44-126 strict
+/// cjxl-parity invariant). See [`LossyConfig::resolve_perceptual_metric`].
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PerceptualMetric {
+    /// Butteraugli (max-norm score; smaller=better; calibrated against
+    /// libjxl reference encoder). The default. CPU always available via
+    /// the `butteraugli-loop` cargo feature (default on). GPU
+    /// acceleration via the `gpu-butteraugli` cargo feature.
+    #[default]
+    Butteraugli,
+
+    /// CVVDP (Mantiuk et al. 2024; JOD-direction normalized to
+    /// butteraugli-direction at trait boundary). Opt-in via the
+    /// `cvvdp-loop` (GPU) or `cvvdp-loop-cpu` (CPU) cargo features.
+    /// See `docs/RFC_CVVDP_FORK.md`.
+    Cvvdp,
+}
+
+/// Multi-metric Phase 0 (RFC #3, 2026-05-25): compute-device preference
+/// for the active perceptual metric.
+///
+/// Both `Cpu` and `Gpu` are opt-in subject to their respective cargo
+/// features; `Auto` (default) prefers GPU when both backends are
+/// compiled in AND the CUDA runtime initialises successfully, falling
+/// back to CPU otherwise.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PerceptualDevice {
+    /// "Prefer GPU when available; fall back to CPU otherwise." Matches
+    /// the W44-PHASE3-B5-flip butteraugli default (GPU when
+    /// `gpu-butteraugli` is compiled, else CPU).
+    #[default]
+    Auto,
+
+    /// Force CPU. Required for reproducibility (CPU paths have no GPU
+    /// reduction-order variance — see W44-RECON-DEEP/A7).
+    Cpu,
+
+    /// Force GPU. Silently falls back to CPU (per the metric's cargo
+    /// features) if CUDA is unavailable — the encoder never panics on
+    /// missing CUDA driver.
+    Gpu,
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -4855,52 +4886,42 @@ impl LossyConfig {
             chroma_subsampling: ChromaSubsampling::Full444,
             #[cfg(feature = "tuning-override")]
             tier2_knobs: None,
-            // W44-phase3-B5-flip: default ON when the `gpu-butteraugli`
-            // cargo feature is compiled in, OFF otherwise. Users without
-            // the feature compiled get CPU (unchanged byte output, every
-            // hash-lock fixture stays byte-identical because the default
-            // feature set does NOT include `gpu-butteraugli`). Users WITH
-            // the feature compiled get GPU by default — the B5 38-cell
-            // sweep measured a median 1.107× wall speedup, with 36/38 cells
-            // within ±0.5 % bytes and 2/38 in the [-0.635 %, -0.551 %] band
-            // (both NEGATIVE — GPU produces SMALLER files via favorable
-            // buttloop-convergence drift). EncoderStrategy::Libjxl still
-            // forces CPU at encoder construction (strict cjxl-parity) via
-            // [`Self::resolve_gpu_butteraugli`].
+            // Multi-metric Phase 0 (RFC #3, 2026-05-25): default metric
+            // is butteraugli (RFC §5.2 — calibration depth, Pareto
+            // position, predictability cascade across the imageflow
+            // ecosystem). EncoderStrategy::Libjxl forces this at the
+            // resolver layer regardless of caller override (W44-126
+            // strict cjxl-parity invariant).
             #[cfg(feature = "butteraugli-loop")]
-            gpu_butteraugli: cfg!(feature = "gpu-butteraugli"),
-            // cvvdp-fork Phase 3 (2026-05-24): default `None` ≡ "use
-            // butteraugli". The `cvvdp-loop` cargo feature being
-            // compiled in does NOT auto-flip this — we explicitly want
-            // hash-locks to stay byte-identical even when the feature
-            // is enabled, so the caller has to opt in via
-            // `LossyConfig::with_cvvdp_loop(Some(true))`. The W44-228b
-            // tri-state precedent (Belief #20) is what we mirror here.
-            // Phase 4 / 5 may flip the default once measurement on
-            // SHIP-class cells lands; until then `None` keeps every
-            // existing test green.
+            perceptual_metric: PerceptualMetric::default(),
+            // Multi-metric Phase 0 (RFC #3, 2026-05-25): default device
+            // is Auto. For butteraugli, `Auto` resolves to GPU when the
+            // `gpu-butteraugli` cargo feature is compiled in
+            // (W44-PHASE3-B5-flip parity — measured median 1.107× wall
+            // speedup at byte-parity on the 38-cell sweep), CPU
+            // otherwise. For cvvdp, `Auto` follows the metric-internal
+            // dispatch matrix (GPU first when `cvvdp-loop` is compiled
+            // and CUDA inits, CPU when only `cvvdp-loop-cpu` is
+            // compiled, silent butteraugli fallback otherwise).
+            //
+            // Every existing hash-lock fixture stays byte-identical
+            // because the default feature set does NOT include
+            // `gpu-butteraugli` — so `Auto` resolves to CPU
+            // butteraugli, identical to the pre-Phase-0
+            // `gpu_butteraugli = false` resolution.
             #[cfg(feature = "butteraugli-loop")]
-            cvvdp_loop: None,
-            // cvvdp-fork Phase 5 (2026-05-24): default `None` ≡ "prefer
-            // GPU when both backends compiled". Agent A's CPU
-            // honest-stopped at 4.4× off the SIMD floor (≈10× slower
-            // than cvvdp-gpu warm-ref), so the default policy keeps
-            // every existing CUDA-enabled host on the faster path.
-            // Hosts without CUDA + the `cvvdp-loop-cpu` feature
-            // compiled fall back to CPU CVVDP automatically; hosts
-            // without either fall back to butteraugli (the standard
-            // dispatch chain).
+            perceptual_device: PerceptualDevice::default(),
+            // Multi-metric Phase 0 (RFC #3 §2.2): default `None` ≡
+            // "use the metric's built-in target table". For butteraugli
+            // that's the identity pass-through of `target_distance`; for
+            // cvvdp that's `cvvdp_target_score_for_distance`.
             #[cfg(feature = "butteraugli-loop")]
-            cvvdp_use_cpu: None,
+            perceptual_target_score: None,
             // cvvdp-fork Phase 8d (2026-05-25): default `None` ≡ "on
             // when both `cvvdp-loop-tighten` cargo feature is compiled
-            // AND `cvvdp_loop` resolves to true". When the feature is
-            // OFF or cvvdp_loop is OFF, this resolves to false and
-            // hash-locks stay byte-identical. The default of "on inside
-            // the feature gate" is deliberate: the Phase 8c renorm
-            // baseline sits at 60% Pareto-front; Phase 8d's role is to
-            // close the remaining gap to ≥85%, and the only way to
-            // measure that is to default-on when the feature is on.
+            // AND `resolve_perceptual_metric()` returns Cvvdp". When the
+            // feature is OFF or cvvdp is not the active metric, this
+            // resolves to false and hash-locks stay byte-identical.
             #[cfg(feature = "butteraugli-loop")]
             cvvdp_bytes_tighten: None,
         }
@@ -6519,251 +6540,162 @@ impl LossyConfig {
         self.hdr_loss
     }
 
-    /// Opt-in to the GPU butteraugli backend for the buttloop's per-iter
-    /// compare (W44-phase3-B1).
+    /// Multi-metric Phase 0 (RFC #3, 2026-05-25): set which perceptual
+    /// metric drives the buttloop's iterative quantization loop. See
+    /// [`PerceptualMetric`].
     ///
-    /// When `true` AND the `gpu-butteraugli` cargo feature was enabled at
-    /// build time AND CUDA initialises successfully, the buttloop uses
-    /// `butteraugli_gpu::Butteraugli<CudaRuntime>` instead of the CPU
-    /// `butteraugli` crate. W44-RECON-DEEP/A7 measured ~27× speedup on
-    /// 1024×1024 multires comparisons; end-to-end e9 wall reduction is
-    /// 8-12% (the buttloop is 30-40% of e9 per W44-170).
+    /// Default: [`PerceptualMetric::Butteraugli`].
     ///
-    /// **Defense-in-depth fallback**: if any of the three preconditions
-    /// fail at runtime (`gpu-butteraugli` feature off, CUDA missing,
-    /// runtime init panics), the buttloop silently falls back to the CPU
-    /// backend. The encoded bytes are byte-identical to a CPU-only
-    /// invocation in that case.
+    /// Choosing a non-default metric requires the corresponding cargo
+    /// feature to be compiled in. Without the feature, the dispatch
+    /// silently falls back to butteraugli (one-shot `eprintln!` warning
+    /// the first time the caller picks an unbuilt metric).
     ///
-    /// **Output divergence vs CPU**: the GPU pipeline routes through an
-    /// sRGB-u8 packed representation (linear-f32 → sRGB-u8 → GPU-linear-f32);
-    /// W44-RECON-DEEP/A7 measured the resulting score drift at 0.02-0.03%
-    /// relative on real corpus images (max 0.05% across 64 cells). The
-    /// buttloop's per-tile distance computation is robust to this — the
-    /// 8x8-block median + MAD aggregation washes out per-pixel noise below
-    /// the quant-decision threshold (W44-RECON-DEEP/A11 measured zero byte
-    /// movement under similar perturbations).
-    ///
-    /// Default `false`. Hash-lock fixtures are byte-identical at the
-    /// default regardless of the `gpu-butteraugli` cargo feature.
+    /// **Strategy-level override**: [`EncoderStrategy::Libjxl`] FORCES
+    /// the resolved metric back to [`PerceptualMetric::Butteraugli`]
+    /// regardless of this field (W44-126 strict cjxl-parity invariant
+    /// + RFC #1 §7.3). See [`Self::resolve_perceptual_metric`].
     ///
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
-    pub fn with_gpu_butteraugli(mut self, enable: bool) -> Self {
-        self.gpu_butteraugli = enable;
+    pub fn with_perceptual_metric(mut self, metric: PerceptualMetric) -> Self {
+        self.perceptual_metric = metric;
         self
     }
 
-    /// Currently configured GPU butteraugli preference (W44-phase3-B1).
-    ///
-    /// **W44-phase3-B5-flip default**: this field defaults to `true`
-    /// when the `gpu-butteraugli` cargo feature is compiled in,
-    /// `false` otherwise. The actual runtime behavior also requires
-    /// CUDA to initialise successfully — see
-    /// [`Self::with_gpu_butteraugli`] for the full fallback policy.
-    ///
-    /// **Strategy-level override**: even when this returns `true`,
-    /// [`EncoderStrategy::Libjxl`] forces the GPU backend OFF at
-    /// encoder construction (strict cjxl-parity — see
-    /// [`Self::resolve_gpu_butteraugli`]). Inspect the effective value
-    /// for a given encode via `resolve_gpu_butteraugli()`.
+    /// Currently configured perceptual metric (Phase 0). May differ
+    /// from the runtime-resolved value — call
+    /// [`Self::resolve_perceptual_metric`] to see what will actually
+    /// drive the loop after accounting for the Libjxl strict-parity
+    /// invariant and per-metric cargo-feature gates.
     ///
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
-    pub fn gpu_butteraugli(&self) -> bool {
-        self.gpu_butteraugli
+    pub fn perceptual_metric(&self) -> PerceptualMetric {
+        self.perceptual_metric
     }
 
-    /// W44-phase3-B5-flip: resolve the effective GPU-butteraugli
-    /// preference, accounting for the strategy-level override.
+    /// Multi-metric Phase 0 (RFC #3, 2026-05-25): set the compute-device
+    /// preference for the active perceptual metric. See
+    /// [`PerceptualDevice`].
     ///
-    /// Returns [`Self::gpu_butteraugli`] in every case EXCEPT
-    /// [`EncoderStrategy::Libjxl`], which forces `false` regardless of
-    /// the field value. The Libjxl strategy ships bit-for-bit cjxl
-    /// parity across all 24 gates (W44-126 user signoff:
-    /// "all-divergence parity"); the GPU butteraugli backend would
-    /// introduce ~1e-7 score drift that cascades into ~0.5 % byte
-    /// drift on rare cells (W44-phase3-B5 measurement), violating the
-    /// byte-lock invariant.
+    /// Default: [`PerceptualDevice::Auto`].
     ///
-    /// All non-Libjxl strategies (Zenjxl, Aggressive, LeanFaster,
-    /// Custom) honor the field. Per-encode callers can still pin the
-    /// CPU backend explicitly via
-    /// `.with_gpu_butteraugli(false)`.
+    /// `Auto` resolves per-metric: for butteraugli, GPU when the
+    /// `gpu-butteraugli` cargo feature is compiled in (W44-PHASE3-B5-flip
+    /// parity), CPU otherwise. For cvvdp, GPU first when `cvvdp-loop` is
+    /// compiled and CUDA inits; CPU when only `cvvdp-loop-cpu` is
+    /// compiled; butteraugli fallback if neither.
     ///
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
-    pub(crate) fn resolve_gpu_butteraugli(&self) -> bool {
+    pub fn with_perceptual_device(mut self, device: PerceptualDevice) -> Self {
+        self.perceptual_device = device;
+        self
+    }
+
+    /// Currently configured perceptual device (Phase 0).
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn perceptual_device(&self) -> PerceptualDevice {
+        self.perceptual_device
+    }
+
+    /// Multi-metric Phase 0 (RFC #3, 2026-05-25): override the metric's
+    /// per-distance target table.
+    ///
+    /// When `None` (default), the metric's built-in calibration table
+    /// drives the loop's target. When `Some(score)`, the loop targets
+    /// that score directly in the metric's score-direction
+    /// (smaller=better).
+    ///
+    /// Use for calibrating against a non-standard quality requirement
+    /// (e.g. matching a specific reference encoder's output). Default
+    /// `None` is the right choice for ~all production callers.
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn with_perceptual_target_score(mut self, score: Option<f32>) -> Self {
+        self.perceptual_target_score = score;
+        self
+    }
+
+    /// Currently configured per-distance target override (Phase 0).
+    /// May be `None` (default — use the metric's built-in calibration
+    /// table).
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn perceptual_target_score(&self) -> Option<f32> {
+        self.perceptual_target_score
+    }
+
+    /// Multi-metric Phase 0 (RFC #3, 2026-05-25): resolve the effective
+    /// perceptual metric, honouring the strict-parity invariant and the
+    /// per-metric cargo-feature gates.
+    ///
+    /// Returns the metric that will ACTUALLY drive the loop, which may
+    /// differ from [`Self::perceptual_metric`] when:
+    ///
+    /// - The active strategy is [`EncoderStrategy::Libjxl`] → ALWAYS
+    ///   `Butteraugli` (W44-126 strict parity).
+    /// - The configured metric's cargo feature is not compiled in →
+    ///   falls back to `Butteraugli` (silent fallback; the construct-
+    ///   backend dispatch emits a one-shot warning on the first
+    ///   silent downgrade).
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub(crate) fn resolve_perceptual_metric(&self) -> PerceptualMetric {
         if matches!(self.strategy, EncoderStrategy::Libjxl) {
-            return false;
+            return PerceptualMetric::Butteraugli;
         }
-        self.gpu_butteraugli
-    }
-
-    /// cvvdp-fork Phase 3 (2026-05-24): opt-in CVVDP backend for the
-    /// quantization loop's per-iter compare step.
-    ///
-    /// Tri-state — see the doc on the
-    /// [`Self::cvvdp_loop`] field for the full semantics. Brief:
-    /// - `None` (default): use butteraugli (CPU or GPU per
-    ///   [`Self::with_gpu_butteraugli`]).
-    /// - `Some(true)`: opt in to CVVDP. Wraps
-    ///   `cvvdp_gpu::CvvdpOpaque` via the `*_from_linear_planes_*`
-    ///   API zenmetrics master `8b658b4` shipped. Defense-in-depth
-    ///   fallback to butteraugli on (a) `cvvdp-loop` cargo feature
-    ///   OFF, (b) CUDA init failure, (c) active strategy is
-    ///   [`EncoderStrategy::Libjxl`].
-    /// - `Some(false)`: explicitly pin butteraugli even if a future
-    ///   build promotes cvvdp to default.
-    ///
-    /// **Output direction**: the CVVDP backend maps its native JOD
-    /// score `[0, 10]` (10 = identical) onto butteraugli-direction
-    /// `[0, 10]` (0 = identical) via `score = (10.0 - jod).clamp(0.0,
-    /// 10.0)`. The buttloop body uses the resulting score against
-    /// `target_distance` unchanged — Phase 4 (separate chunk) ships
-    /// the per-distance JOD-target table that recalibrates the
-    /// comparison surface.
-    ///
-    /// **Hash-lock byte-identity**: default `None` keeps every
-    /// existing hash-lock byte-identical, regardless of whether the
-    /// `cvvdp-loop` feature is compiled in. Callers that opt in via
-    /// `Some(true)` accept the documented score-direction mapping and
-    /// the eventual Phase 4 calibration.
-    ///
-    /// Requires the `butteraugli-loop` feature (the
-    /// [`crate::vardct::perceptual_backend::PerceptualBackend`] trait
-    /// surface lives there).
-    #[cfg(feature = "butteraugli-loop")]
-    pub fn with_cvvdp_loop(mut self, enable: Option<bool>) -> Self {
-        self.cvvdp_loop = enable;
-        self
-    }
-
-    /// Currently configured CVVDP opt-in (cvvdp-fork Phase 3). May be
-    /// `None` (default = use butteraugli) — use
-    /// [`Self::resolve_cvvdp_loop`] to see the effective bool that
-    /// actually drives the backend dispatch.
-    ///
-    /// Requires the `butteraugli-loop` feature.
-    #[cfg(feature = "butteraugli-loop")]
-    pub fn cvvdp_loop(&self) -> Option<bool> {
-        self.cvvdp_loop
-    }
-
-    /// cvvdp-fork Phase 3 (2026-05-24): resolve the effective CVVDP
-    /// preference, accounting for the strategy-level override.
-    ///
-    /// Returns `false` (use butteraugli) in every case EXCEPT when
-    /// ALL of the following hold:
-    /// 1. [`Self::cvvdp_loop`] is `Some(true)` (caller explicitly opted in).
-    /// 2. Active strategy is NOT [`EncoderStrategy::Libjxl`]. The Libjxl
-    ///    strategy ships bit-for-bit cjxl parity (W44-126 user signoff
-    ///    "all-divergence parity"); the cvvdp backend would introduce
-    ///    score-direction drift that cascades into byte drift,
-    ///    violating the byte-lock invariant. This mirrors the
-    ///    [`Self::resolve_gpu_butteraugli`] invariant.
-    ///
-    /// `None` (default) and `Some(false)` both resolve to `false`.
-    /// `Some(true)` resolves to `true` for all non-Libjxl strategies.
-    ///
-    /// The runtime CVVDP backend dispatch additionally requires the
-    /// `cvvdp-loop` cargo feature and successful CUDA init — see
-    /// [`crate::vardct::perceptual_backend::construct_backend`] for the
-    /// full dispatch matrix.
-    ///
-    /// Requires the `butteraugli-loop` feature.
-    #[cfg(feature = "butteraugli-loop")]
-    pub(crate) fn resolve_cvvdp_loop(&self) -> bool {
-        if matches!(self.strategy, EncoderStrategy::Libjxl) {
-            return false;
+        match self.perceptual_metric {
+            PerceptualMetric::Butteraugli => PerceptualMetric::Butteraugli,
+            PerceptualMetric::Cvvdp => {
+                #[cfg(any(feature = "cvvdp-loop", feature = "cvvdp-loop-cpu"))]
+                {
+                    PerceptualMetric::Cvvdp
+                }
+                #[cfg(not(any(feature = "cvvdp-loop", feature = "cvvdp-loop-cpu")))]
+                {
+                    PerceptualMetric::Butteraugli
+                }
+            }
         }
-        self.cvvdp_loop.unwrap_or(false)
     }
 
-    /// cvvdp-fork Phase 5 (2026-05-24): opt-in CPU CVVDP backend
-    /// preference for the quantization loop.
-    ///
-    /// Only effective when [`Self::cvvdp_loop`] also resolves to
-    /// `true` (the cvvdp dispatch is the outer opt-in; this is the
-    /// per-backend selector). When [`Self::cvvdp_loop`] is `None` or
-    /// `Some(false)` the buttloop runs butteraugli regardless of this
-    /// field — see [`Self::resolve_cvvdp_use_cpu`] for the full
-    /// dispatch matrix.
-    ///
-    /// Tri-state:
-    /// - `None` (default): "prefer GPU when both backends compiled".
-    ///   Agent A's CPU port measured 10× slower than `cvvdp-gpu`
-    ///   warm-ref, so the default keeps every CUDA-enabled host on
-    ///   the faster path. The CPU backend is still automatically
-    ///   used when (a) the `cvvdp-loop-cpu` cargo feature is
-    ///   compiled but the `cvvdp-loop` GPU feature is not, OR (b)
-    ///   both are compiled but CUDA init fails at runtime
-    ///   (defense-in-depth fallback — see
-    ///   [`crate::vardct::perceptual_backend::construct_backend`]).
-    /// - `Some(true)`: prefer the CPU CVVDP backend. Use for hosts
-    ///   without CUDA AND for callers who want deterministic-to-
-    ///   1e-4-JOD parity vs pycvvdp v0.5.4 goldens (the CPU port has
-    ///   no GPU reduction-order variance). Requires the
-    ///   `cvvdp-loop-cpu` cargo feature to be compiled in; without
-    ///   it the setter is callable but the dispatch silently falls
-    ///   back to GPU (when `cvvdp-loop` is compiled) or butteraugli
-    ///   (otherwise).
-    /// - `Some(false)`: explicitly pin GPU. Same effective behaviour
-    ///   as `None` when both backends are compiled; kept for symmetry
-    ///   with the [`Self::cvvdp_loop`] tri-state and for explicit
-    ///   documentation in caller code.
-    ///
-    /// **Hash-lock byte-identity**: default `None` keeps every
-    /// existing hash-lock byte-identical regardless of which cvvdp
-    /// cargo features are compiled in. The `cvvdp-loop-cpu` feature
-    /// being on does NOT auto-flip this — explicit opt-in is required.
-    ///
-    /// Requires the `butteraugli-loop` feature (the
-    /// [`crate::vardct::perceptual_backend::PerceptualBackend`] trait
-    /// surface lives there).
-    #[cfg(feature = "butteraugli-loop")]
-    pub fn with_cvvdp_use_cpu(mut self, prefer_cpu: Option<bool>) -> Self {
-        self.cvvdp_use_cpu = prefer_cpu;
-        self
-    }
-
-    /// Currently configured CPU-vs-GPU CVVDP backend preference
-    /// (cvvdp-fork Phase 5). May be `None` (default = prefer GPU when
-    /// both backends compiled) — use [`Self::resolve_cvvdp_use_cpu`]
-    /// to see the effective bool that drives the dispatch.
+    /// Multi-metric Phase 0 (RFC #3, 2026-05-25): resolve the effective
+    /// device preference (currently a pass-through — the construct-
+    /// backend dispatch consumes the field directly via
+    /// [`Self::resolve_perceptual_metric_selection`]).
     ///
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
-    pub fn cvvdp_use_cpu(&self) -> Option<bool> {
-        self.cvvdp_use_cpu
+    pub(crate) fn resolve_perceptual_device(&self) -> PerceptualDevice {
+        self.perceptual_device
     }
 
-    /// cvvdp-fork Phase 5 (2026-05-24): resolve the effective
-    /// "prefer CPU" preference for the CVVDP backend selector.
+    /// Multi-metric Phase 0 (RFC #3 §4, 2026-05-25): bundle the
+    /// resolved metric + device into a [`MetricSelection`] for
+    /// downstream construct-backend dispatch.
     ///
-    /// Returns `true` only when the caller has explicitly set
-    /// `Some(true)` via [`Self::with_cvvdp_use_cpu`]. `None` and
-    /// `Some(false)` both resolve to `false` (prefer GPU).
-    ///
-    /// **Important**: this resolver is purely the field projection.
-    /// It does NOT consult [`Self::cvvdp_loop`] — that opt-in is the
-    /// outer gate. The dispatch in
-    /// [`crate::vardct::perceptual_backend::construct_backend`]
-    /// consults BOTH: the `(cvvdp_requested, cvvdp_use_cpu_requested)`
-    /// pair determines which of (CPU CVVDP, GPU CVVDP, butteraugli)
-    /// actually fires, given the compiled features + CUDA presence.
-    ///
-    /// Unlike [`Self::resolve_cvvdp_loop`], this resolver does NOT
-    /// short-circuit on [`EncoderStrategy::Libjxl`] because the Libjxl
-    /// invariant fires one layer up via `resolve_cvvdp_loop` returning
-    /// `false`, which makes the entire cvvdp dispatch branch unreachable
-    /// (the construct_backend dispatch consults `cvvdp_requested`
-    /// first, and that's already false for Libjxl).
+    /// The Libjxl strict-parity short-circuit has already been applied
+    /// — `metric == Butteraugli` in the returned struct unconditionally
+    /// reflects "the encode will use butteraugli", regardless of what
+    /// the caller passed in.
     ///
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
-    pub(crate) fn resolve_cvvdp_use_cpu(&self) -> bool {
-        self.cvvdp_use_cpu.unwrap_or(false)
+    pub(crate) fn resolve_perceptual_metric_selection(
+        &self,
+    ) -> crate::vardct::perceptual_backend::MetricSelection {
+        crate::vardct::perceptual_backend::MetricSelection {
+            metric: self.resolve_perceptual_metric(),
+            device: self.resolve_perceptual_device(),
+            target_score: self.perceptual_target_score,
+        }
     }
 
     /// cvvdp-fork Phase 8d (2026-05-25): caller-supplied preference for
@@ -6772,14 +6704,24 @@ impl LossyConfig {
     /// semantics. Brief:
     ///
     /// - `None` (default): "on when both the `cvvdp-loop-tighten` cargo
-    ///   feature is compiled AND [`Self::cvvdp_loop`] resolves to true".
+    ///   feature is compiled AND
+    ///   [`Self::resolve_perceptual_metric`] returns
+    ///   [`PerceptualMetric::Cvvdp`]".
     /// - `Some(true)`: explicit opt-in. Same behaviour as `None` inside
     ///   the feature gate.
     /// - `Some(false)`: explicit opt-out. Skips the tighten pass even
-    ///   when the cargo feature is compiled and cvvdp_loop is on.
+    ///   when the cargo feature is compiled and cvvdp is the active
+    ///   metric.
     ///
     /// The tighten pass NEVER fires on the butteraugli loop regardless
     /// of this setting — see [`Self::resolve_cvvdp_bytes_tighten`].
+    ///
+    /// **Multi-metric Phase 0 rename**: this is now the LAST surviving
+    /// cvvdp-specific setter. The metric-selection setters
+    /// (`with_cvvdp_loop` / `with_cvvdp_use_cpu` / `with_gpu_butteraugli`)
+    /// were collapsed into [`Self::with_perceptual_metric`] +
+    /// [`Self::with_perceptual_device`]; this knob stays because it
+    /// tunes cvvdp's post-convergence pass, not the metric choice.
     ///
     /// Requires the `butteraugli-loop` feature (the underlying buttloop
     /// dispatch surface). The tighten pass itself further requires the
@@ -6793,7 +6735,7 @@ impl LossyConfig {
 
     /// Currently configured CVVDP bytes-tighten opt-in (cvvdp-fork
     /// Phase 8d). May be `None` (default — auto-on inside the feature
-    /// gate when cvvdp_loop is true) — use
+    /// gate when cvvdp is the active metric) — use
     /// [`Self::resolve_cvvdp_bytes_tighten`] to see the effective bool
     /// that actually drives the dispatch.
     ///
@@ -6806,9 +6748,10 @@ impl LossyConfig {
     /// cvvdp-fork Phase 8d: resolve the effective CVVDP bytes-tighten
     /// preference. Returns `true` (run the tighten pass) iff ALL of:
     ///
-    /// 1. [`Self::resolve_cvvdp_loop`] returns true (cvvdp is the active
-    ///    backend — the tighten pass NEVER fires on the butteraugli
-    ///    loop; see field doc for rationale).
+    /// 1. [`Self::resolve_perceptual_metric`] returns
+    ///    [`PerceptualMetric::Cvvdp`] (cvvdp is the active backend —
+    ///    the tighten pass NEVER fires on the butteraugli loop; see
+    ///    field doc for rationale).
     /// 2. The `cvvdp-loop-tighten` cargo feature is compiled in.
     /// 3. [`Self::cvvdp_bytes_tighten`] is `Some(true)` OR `None`
     ///    (default-on inside the feature gate).
@@ -6819,8 +6762,9 @@ impl LossyConfig {
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
     pub(crate) fn resolve_cvvdp_bytes_tighten(&self) -> bool {
-        // Outer gate: cvvdp must be the active backend.
-        if !self.resolve_cvvdp_loop() {
+        // Outer gate: cvvdp must be the active backend (resolver
+        // already applies the Libjxl strict-parity short-circuit).
+        if !matches!(self.resolve_perceptual_metric(), PerceptualMetric::Cvvdp) {
             return false;
         }
         // Feature gate: cargo feature must be compiled.
@@ -9284,29 +9228,22 @@ impl<'a> EncodeRequest<'a> {
             // HLG content lands on `Vdp2`; everything else on
             // `Butteraugli` (SDR hash-locks stay byte-identical).
             enc.hdr_loss = cfg.resolve_hdr_loss(self.layout, self.color_encoding.as_ref());
-            // W44-phase3-B1 + W44-phase3-B5-flip: propagate GPU butteraugli
-            // opt-in (still-image path). `resolve_gpu_butteraugli` honors
-            // the field for all strategies except `EncoderStrategy::Libjxl`,
-            // which forces CPU for strict cjxl-parity.
-            enc.gpu_butteraugli = cfg.resolve_gpu_butteraugli();
-            // cvvdp-fork Phase 3 (2026-05-24): propagate CVVDP opt-in
-            // (still-image path). `resolve_cvvdp_loop` returns false for
-            // None (default) AND for `EncoderStrategy::Libjxl`, so the
-            // backend dispatch stays on the butteraugli path unless the
-            // caller explicitly opts in.
-            enc.cvvdp_loop = cfg.resolve_cvvdp_loop();
-            // cvvdp-fork Phase 5 (2026-05-24): propagate CPU CVVDP
-            // preference. `resolve_cvvdp_use_cpu` returns false for
-            // None (default) AND for Some(false), so the dispatch
-            // sticks with GPU CVVDP unless the caller explicitly opts
-            // in. The flag is only meaningful when `cvvdp_loop` is
-            // also true; the construct_backend dispatch checks both.
-            enc.cvvdp_use_cpu = cfg.resolve_cvvdp_use_cpu();
+            // Multi-metric Phase 0 (RFC #3, 2026-05-25): propagate the
+            // resolved perceptual-metric selection. The
+            // [`crate::vardct::perceptual_backend::propagate_resolved_metric_to_encoder`]
+            // helper does the (metric, device) → (gpu_butteraugli,
+            // cvvdp_loop, cvvdp_use_cpu) legacy-field translation; the
+            // Libjxl strict-parity short-circuit already fired inside
+            // `resolve_perceptual_metric` (still-image path).
+            crate::vardct::perceptual_backend::propagate_resolved_metric_to_encoder(
+                cfg.resolve_perceptual_metric_selection(),
+                &mut enc,
+            );
             // cvvdp-fork Phase 8d (2026-05-25): propagate bytes-tighten
             // opt-in (still-image path). `resolve_cvvdp_bytes_tighten`
-            // returns true ONLY when cvvdp_loop is also true AND the
-            // `cvvdp-loop-tighten` cargo feature is compiled AND the
-            // field is `None` or `Some(true)`. Defaults to false in
+            // returns true ONLY when the resolved metric is Cvvdp AND
+            // the `cvvdp-loop-tighten` cargo feature is compiled AND
+            // the field is `None` or `Some(true)`. Defaults to false in
             // every other case → hash-locks byte-identical.
             enc.cvvdp_bytes_tighten = cfg.resolve_cvvdp_bytes_tighten();
         }
@@ -10487,20 +10424,14 @@ impl LossyEncoder {
                 // the resolution rationale. Auto → Vdp2 on PQ/HLG,
                 // Butteraugli otherwise.
                 enc.hdr_loss = cfg.resolve_hdr_loss(self.layout, self.color_encoding.as_ref());
-                // W44-phase3-B1 + W44-phase3-B5-flip: propagate GPU
-                // butteraugli opt-in (streaming LossyEncoder path).
-                // `resolve_gpu_butteraugli` honors the field for all
-                // strategies except `EncoderStrategy::Libjxl`, which
-                // forces CPU for strict cjxl-parity.
-                enc.gpu_butteraugli = cfg.resolve_gpu_butteraugli();
-                // cvvdp-fork Phase 3 (2026-05-24): propagate CVVDP opt-in
-                // (streaming LossyEncoder path). Same semantics as the
-                // still-image site above.
-                enc.cvvdp_loop = cfg.resolve_cvvdp_loop();
-                // cvvdp-fork Phase 5 (2026-05-24): propagate CPU CVVDP
-                // preference (streaming LossyEncoder path). Same
-                // semantics as the still-image site above.
-                enc.cvvdp_use_cpu = cfg.resolve_cvvdp_use_cpu();
+                // Multi-metric Phase 0 (RFC #3, 2026-05-25): propagate
+                // the resolved perceptual-metric selection (streaming
+                // LossyEncoder path). Same semantics as the still-image
+                // site above.
+                crate::vardct::perceptual_backend::propagate_resolved_metric_to_encoder(
+                    cfg.resolve_perceptual_metric_selection(),
+                    &mut enc,
+                );
                 // cvvdp-fork Phase 8d (2026-05-25): propagate
                 // bytes-tighten opt-in (streaming LossyEncoder path).
                 // Same semantics as the still-image site above.
@@ -12449,20 +12380,13 @@ fn encode_animation_lossy(
         // PQ / HLG f32 layouts will route to `Vdp2`, everything
         // else to `Butteraugli`.
         enc.hdr_loss = cfg.resolve_hdr_loss(layout, None);
-        // W44-phase3-B1 + W44-phase3-B5-flip: propagate GPU butteraugli
-        // opt-in (animation frame encoder path). `resolve_gpu_butteraugli`
-        // honors the field for all strategies except
-        // `EncoderStrategy::Libjxl`, which forces CPU for strict
-        // cjxl-parity.
-        enc.gpu_butteraugli = cfg.resolve_gpu_butteraugli();
-        // cvvdp-fork Phase 3 (2026-05-24): propagate CVVDP opt-in
-        // (animation frame encoder path). Same semantics as the
-        // still-image site above.
-        enc.cvvdp_loop = cfg.resolve_cvvdp_loop();
-        // cvvdp-fork Phase 5 (2026-05-24): propagate CPU CVVDP
-        // preference (animation frame encoder path). Same semantics
-        // as the still-image site above.
-        enc.cvvdp_use_cpu = cfg.resolve_cvvdp_use_cpu();
+        // Multi-metric Phase 0 (RFC #3, 2026-05-25): propagate the
+        // resolved perceptual-metric selection (animation frame
+        // encoder path). Same semantics as the still-image site above.
+        crate::vardct::perceptual_backend::propagate_resolved_metric_to_encoder(
+            cfg.resolve_perceptual_metric_selection(),
+            &mut enc,
+        );
         // cvvdp-fork Phase 8d (2026-05-25): propagate bytes-tighten
         // opt-in (animation frame encoder path). Same semantics as
         // the still-image site above.
@@ -16560,234 +16484,128 @@ mod tests {
         );
     }
 
-    /// W44-phase3-B5-flip: `LossyConfig::gpu_butteraugli()` defaults to
-    /// `cfg!(feature = "gpu-butteraugli")`. When the cargo feature is
-    /// compiled in, the field defaults to `true` (GPU); when off, the
-    /// field defaults to `false` (CPU). The runtime can still fall back
-    /// to CPU if CUDA fails to initialise.
-    ///
-    /// Builder symmetry: explicit `.with_gpu_butteraugli(false)` always
-    /// overrides the default regardless of feature.
+    /// Multi-metric Phase 0 (RFC #3, 2026-05-25): `LossyConfig`
+    /// defaults to [`PerceptualMetric::Butteraugli`] +
+    /// [`PerceptualDevice::Auto`]. Builder symmetry: every variant
+    /// of either setter round-trips through the getter unchanged.
     #[cfg(feature = "butteraugli-loop")]
     #[test]
-    fn test_w44_phase3_b5_flip_gpu_butteraugli_default() {
+    fn test_perceptual_metric_default_and_setter_roundtrip() {
         let cfg = LossyConfig::new(1.0);
         assert_eq!(
-            cfg.gpu_butteraugli(),
-            cfg!(feature = "gpu-butteraugli"),
-            "LossyConfig::gpu_butteraugli() default must match the \
-             `gpu-butteraugli` cargo feature flag"
+            cfg.perceptual_metric(),
+            PerceptualMetric::Butteraugli,
+            "default metric must be Butteraugli"
         );
-        // Explicit opt-out always wins.
-        let cfg_off = LossyConfig::new(1.0).with_gpu_butteraugli(false);
-        assert!(
-            !cfg_off.gpu_butteraugli(),
-            "Explicit .with_gpu_butteraugli(false) must override the default"
-        );
-        let cfg_on = LossyConfig::new(1.0).with_gpu_butteraugli(true);
-        assert!(
-            cfg_on.gpu_butteraugli(),
-            "Explicit .with_gpu_butteraugli(true) must override the default"
-        );
-    }
-
-    /// W44-phase3-B5-flip: `EncoderStrategy::Libjxl` forces GPU
-    /// butteraugli OFF via `resolve_gpu_butteraugli`, regardless of
-    /// the field value or cargo feature. This preserves strict
-    /// cjxl-parity for the Libjxl strategy (per W44-126 user signoff
-    /// "all-divergence parity"). All non-Libjxl strategies honor the
-    /// field.
-    #[cfg(feature = "butteraugli-loop")]
-    #[test]
-    fn test_w44_phase3_b5_flip_libjxl_strategy_forces_cpu() {
-        // Libjxl strategy: even if field is true, resolver returns false.
-        let cfg = LossyConfig::new(1.0)
-            .with_strategy(EncoderStrategy::Libjxl)
-            .with_gpu_butteraugli(true);
-        assert!(
-            cfg.gpu_butteraugli(),
-            "Field value must reflect the explicit setter"
-        );
-        assert!(
-            !cfg.resolve_gpu_butteraugli(),
-            "EncoderStrategy::Libjxl must force resolve_gpu_butteraugli() = false \
-             regardless of field value (strict cjxl-parity invariant)"
-        );
-
-        // Zenjxl strategy: resolver honors the field.
-        let cfg = LossyConfig::new(1.0)
-            .with_strategy(EncoderStrategy::Zenjxl)
-            .with_gpu_butteraugli(true);
-        assert!(
-            cfg.resolve_gpu_butteraugli(),
-            "EncoderStrategy::Zenjxl must honor with_gpu_butteraugli(true)"
-        );
-
-        let cfg = LossyConfig::new(1.0)
-            .with_strategy(EncoderStrategy::Zenjxl)
-            .with_gpu_butteraugli(false);
-        assert!(
-            !cfg.resolve_gpu_butteraugli(),
-            "EncoderStrategy::Zenjxl must honor with_gpu_butteraugli(false)"
-        );
-
-        // Aggressive / LeanFaster: same field-honoring behavior.
-        let cfg = LossyConfig::new(1.0)
-            .with_strategy(EncoderStrategy::Aggressive)
-            .with_gpu_butteraugli(true);
-        assert!(
-            cfg.resolve_gpu_butteraugli(),
-            "EncoderStrategy::Aggressive must honor with_gpu_butteraugli(true)"
-        );
-
-        let cfg = LossyConfig::new(1.0)
-            .with_strategy(EncoderStrategy::LeanFaster)
-            .with_gpu_butteraugli(true);
-        assert!(
-            cfg.resolve_gpu_butteraugli(),
-            "EncoderStrategy::LeanFaster must honor with_gpu_butteraugli(true)"
-        );
-    }
-
-    /// cvvdp-fork Phase 3 (2026-05-24): `LossyConfig::cvvdp_loop()`
-    /// defaults to `None` (use butteraugli). Hash-locks stay
-    /// byte-identical regardless of the `cvvdp-loop` cargo feature
-    /// because the default is `None`.
-    ///
-    /// Builder symmetry: `.with_cvvdp_loop(None)` /
-    /// `.with_cvvdp_loop(Some(false))` / `.with_cvvdp_loop(Some(true))`
-    /// all set the field exactly as passed.
-    #[cfg(feature = "butteraugli-loop")]
-    #[test]
-    fn test_cvvdp_loop_default_none_and_setter_roundtrip() {
-        let cfg = LossyConfig::new(1.0);
-        assert!(
-            cfg.cvvdp_loop().is_none(),
-            "LossyConfig::cvvdp_loop() default must be None \
-             (regardless of the `cvvdp-loop` cargo feature)"
-        );
-        // Resolves to false at the default — butteraugli stays active.
-        assert!(
-            !cfg.resolve_cvvdp_loop(),
-            "resolve_cvvdp_loop() at default must be false"
-        );
-
-        let cfg_none = LossyConfig::new(1.0).with_cvvdp_loop(None);
-        assert_eq!(cfg_none.cvvdp_loop(), None);
-        assert!(!cfg_none.resolve_cvvdp_loop());
-
-        let cfg_false = LossyConfig::new(1.0).with_cvvdp_loop(Some(false));
-        assert_eq!(cfg_false.cvvdp_loop(), Some(false));
-        assert!(
-            !cfg_false.resolve_cvvdp_loop(),
-            "Some(false) must resolve to false"
-        );
-
-        let cfg_true = LossyConfig::new(1.0).with_cvvdp_loop(Some(true));
-        assert_eq!(cfg_true.cvvdp_loop(), Some(true));
-        assert!(
-            cfg_true.resolve_cvvdp_loop(),
-            "Some(true) on non-Libjxl strategy must resolve to true"
-        );
-    }
-
-    /// cvvdp-fork Phase 3: `EncoderStrategy::Libjxl` forces CVVDP OFF
-    /// via `resolve_cvvdp_loop` regardless of the field value. This
-    /// preserves strict cjxl-parity for the Libjxl strategy (mirrors
-    /// the `resolve_gpu_butteraugli` invariant from W44-phase3-B5-flip).
-    /// All non-Libjxl strategies honor the field.
-    #[cfg(feature = "butteraugli-loop")]
-    #[test]
-    fn test_libjxl_strategy_forces_butteraugli_even_with_cvvdp_loop() {
-        // Libjxl strategy: even if field is Some(true), resolver returns false.
-        let cfg = LossyConfig::new(1.0)
-            .with_strategy(EncoderStrategy::Libjxl)
-            .with_cvvdp_loop(Some(true));
         assert_eq!(
-            cfg.cvvdp_loop(),
-            Some(true),
-            "Field value must reflect the explicit setter"
+            cfg.perceptual_device(),
+            PerceptualDevice::Auto,
+            "default device must be Auto"
         );
-        assert!(
-            !cfg.resolve_cvvdp_loop(),
-            "EncoderStrategy::Libjxl must force resolve_cvvdp_loop() = false \
-             regardless of field value (strict cjxl-parity invariant)"
+        assert_eq!(
+            cfg.perceptual_target_score(),
+            None,
+            "default target_score must be None"
         );
 
-        // Zenjxl strategy: resolver honors the field.
+        // Each setter round-trips.
+        for m in [PerceptualMetric::Butteraugli, PerceptualMetric::Cvvdp] {
+            let cfg = LossyConfig::new(1.0).with_perceptual_metric(m);
+            assert_eq!(cfg.perceptual_metric(), m);
+        }
+        for d in [
+            PerceptualDevice::Auto,
+            PerceptualDevice::Cpu,
+            PerceptualDevice::Gpu,
+        ] {
+            let cfg = LossyConfig::new(1.0).with_perceptual_device(d);
+            assert_eq!(cfg.perceptual_device(), d);
+        }
+        let cfg = LossyConfig::new(1.0).with_perceptual_target_score(Some(0.05));
+        assert_eq!(cfg.perceptual_target_score(), Some(0.05));
+        let cfg = cfg.with_perceptual_target_score(None);
+        assert_eq!(cfg.perceptual_target_score(), None);
+    }
+
+    /// Multi-metric Phase 0 (RFC #3 §1.3, 2026-05-25): the resolver
+    /// applies the EncoderStrategy::Libjxl strict-parity short-circuit
+    /// + the per-metric cargo-feature gate.
+    #[cfg(feature = "butteraugli-loop")]
+    #[test]
+    fn test_resolve_perceptual_metric_libjxl_short_circuit() {
+        // Libjxl strategy: explicit Cvvdp still resolves to Butteraugli
+        // (strict cjxl-parity invariant).
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Libjxl)
+            .with_perceptual_metric(PerceptualMetric::Cvvdp);
+        assert_eq!(
+            cfg.perceptual_metric(),
+            PerceptualMetric::Cvvdp,
+            "field value must reflect the explicit setter"
+        );
+        assert_eq!(
+            cfg.resolve_perceptual_metric(),
+            PerceptualMetric::Butteraugli,
+            "EncoderStrategy::Libjxl must force resolve_perceptual_metric() \
+             back to Butteraugli regardless of field value"
+        );
+
+        // Zenjxl strategy: resolver honors the field, modulo
+        // cargo-feature gate.
         let cfg = LossyConfig::new(1.0)
             .with_strategy(EncoderStrategy::Zenjxl)
-            .with_cvvdp_loop(Some(true));
-        assert!(
-            cfg.resolve_cvvdp_loop(),
-            "EncoderStrategy::Zenjxl must honor with_cvvdp_loop(Some(true))"
+            .with_perceptual_metric(PerceptualMetric::Cvvdp);
+        let resolved = cfg.resolve_perceptual_metric();
+        #[cfg(any(feature = "cvvdp-loop", feature = "cvvdp-loop-cpu"))]
+        assert_eq!(
+            resolved,
+            PerceptualMetric::Cvvdp,
+            "EncoderStrategy::Zenjxl + cvvdp feature compiled must honor Cvvdp"
+        );
+        #[cfg(not(any(feature = "cvvdp-loop", feature = "cvvdp-loop-cpu")))]
+        assert_eq!(
+            resolved,
+            PerceptualMetric::Butteraugli,
+            "Without a cvvdp cargo feature, the resolver silently \
+             falls back to Butteraugli"
         );
 
-        let cfg = LossyConfig::new(1.0)
-            .with_strategy(EncoderStrategy::Zenjxl)
-            .with_cvvdp_loop(Some(false));
-        assert!(
-            !cfg.resolve_cvvdp_loop(),
-            "EncoderStrategy::Zenjxl must honor with_cvvdp_loop(Some(false))"
-        );
-
-        // Aggressive / LeanFaster: same field-honoring behavior.
-        let cfg = LossyConfig::new(1.0)
-            .with_strategy(EncoderStrategy::Aggressive)
-            .with_cvvdp_loop(Some(true));
-        assert!(
-            cfg.resolve_cvvdp_loop(),
-            "EncoderStrategy::Aggressive must honor with_cvvdp_loop(Some(true))"
-        );
-
-        let cfg = LossyConfig::new(1.0)
-            .with_strategy(EncoderStrategy::LeanFaster)
-            .with_cvvdp_loop(Some(true));
-        assert!(
-            cfg.resolve_cvvdp_loop(),
-            "EncoderStrategy::LeanFaster must honor with_cvvdp_loop(Some(true))"
+        // Default (Butteraugli) always resolves to Butteraugli.
+        let cfg = LossyConfig::new(1.0);
+        assert_eq!(
+            cfg.resolve_perceptual_metric(),
+            PerceptualMetric::Butteraugli,
         );
     }
 
-    /// cvvdp-fork Phase 3: `cvvdp_loop` and `gpu_butteraugli` are
-    /// independent fields with independent resolvers — setting one
-    /// does not affect the other. The dispatch order
-    /// (cvvdp wins when both are requested) is enforced inside
-    /// `construct_backend`, not at the resolver level.
+    /// Multi-metric Phase 0: `resolve_perceptual_device` is a
+    /// pass-through; the construct-backend dispatch consumes it via
+    /// `resolve_perceptual_metric_selection`. Smoke for the bundling.
     #[cfg(feature = "butteraugli-loop")]
     #[test]
-    fn test_cvvdp_loop_independent_of_gpu_butteraugli() {
-        // CVVDP on, butteraugli-GPU off — resolver returns true for
-        // cvvdp, the gpu_butteraugli resolver is uninvolved.
-        let cfg = LossyConfig::new(1.0)
-            .with_cvvdp_loop(Some(true))
-            .with_gpu_butteraugli(false);
-        assert!(cfg.resolve_cvvdp_loop());
-        assert!(!cfg.resolve_gpu_butteraugli());
+    fn test_resolve_perceptual_metric_selection_bundles_metric_and_device() {
+        // Default — Butteraugli + Auto + None.
+        let cfg = LossyConfig::new(1.0);
+        let sel = cfg.resolve_perceptual_metric_selection();
+        assert_eq!(sel.metric, PerceptualMetric::Butteraugli);
+        assert_eq!(sel.device, PerceptualDevice::Auto);
+        assert_eq!(sel.target_score, None);
 
-        // Reverse: butteraugli-GPU on, CVVDP off.
+        // Libjxl-forced Butteraugli + explicit device still flows the
+        // device through (it's a no-op for the forced backend, but the
+        // selection struct is the carrier).
         let cfg = LossyConfig::new(1.0)
-            .with_cvvdp_loop(Some(false))
-            .with_gpu_butteraugli(true);
-        assert!(!cfg.resolve_cvvdp_loop());
-        assert!(cfg.resolve_gpu_butteraugli());
-
-        // Both on: each resolves independently to true.
-        let cfg = LossyConfig::new(1.0)
-            .with_cvvdp_loop(Some(true))
-            .with_gpu_butteraugli(true);
-        assert!(cfg.resolve_cvvdp_loop());
-        assert!(cfg.resolve_gpu_butteraugli());
-
-        // Custom strategy: also honors the field.
-        let cfg = LossyConfig::new(1.0)
-            .with_strategy(EncoderStrategy::Custom(Box::new(
-                EncoderImprovementsCustom::default(),
-            )))
-            .with_gpu_butteraugli(true);
-        assert!(
-            cfg.resolve_gpu_butteraugli(),
-            "EncoderStrategy::Custom must honor with_gpu_butteraugli(true)"
+            .with_strategy(EncoderStrategy::Libjxl)
+            .with_perceptual_metric(PerceptualMetric::Cvvdp)
+            .with_perceptual_device(PerceptualDevice::Cpu)
+            .with_perceptual_target_score(Some(0.05));
+        let sel = cfg.resolve_perceptual_metric_selection();
+        assert_eq!(
+            sel.metric,
+            PerceptualMetric::Butteraugli,
+            "Libjxl forces metric to Butteraugli in the bundle"
         );
+        assert_eq!(sel.device, PerceptualDevice::Cpu);
+        assert_eq!(sel.target_score, Some(0.05));
     }
 }

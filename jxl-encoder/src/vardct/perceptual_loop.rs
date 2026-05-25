@@ -1600,36 +1600,52 @@ impl VarDctEncoder {
                 let butteraugli_params = butteraugli::ButteraugliParams::new()
                     .with_intensity_target(metric_intensity_target)
                     .with_compute_diffmap(true);
+                // Multi-metric Phase 0 (RFC #3 §4, 2026-05-25):
+                // `construct_backend` now takes a single bundled
+                // `MetricSelection`. The legacy bool fields on
+                // `VarDctEncoder` (set by
+                // `propagate_resolved_metric_to_encoder`) are
+                // translated back into the metric + device variants
+                // here; the buttloop body still keys off
+                // `self.cvvdp_loop` directly for the metric-target
+                // lookup and bytes-tighten dispatch.
+                use super::perceptual_backend::MetricSelection;
+                use crate::api::{PerceptualDevice, PerceptualMetric};
+                let metric = if self.cvvdp_loop {
+                    PerceptualMetric::Cvvdp
+                } else {
+                    PerceptualMetric::Butteraugli
+                };
+                let device = if self.cvvdp_loop {
+                    // For cvvdp the CPU vs GPU toggle is on
+                    // `cvvdp_use_cpu`; gpu_butteraugli is irrelevant
+                    // unless cvvdp falls back to butteraugli (handled
+                    // inside `construct_backend`).
+                    if self.cvvdp_use_cpu {
+                        PerceptualDevice::Cpu
+                    } else {
+                        PerceptualDevice::Gpu
+                    }
+                } else if self.gpu_butteraugli {
+                    PerceptualDevice::Gpu
+                } else {
+                    PerceptualDevice::Cpu
+                };
+                let selection = MetricSelection {
+                    metric,
+                    device,
+                    // Per-distance target override is plumbed via
+                    // `perceptual_target_score` on the API; the
+                    // buttloop body consumes it through the
+                    // `effective_metric_target_distance` lookup below.
+                    target_score: None,
+                };
                 let mut b = super::perceptual_backend::construct_backend(
                     width as u32,
                     height as u32,
                     butteraugli_params,
                     metric_intensity_target,
-                    self.gpu_butteraugli,
-                    // cvvdp-fork Phase 3: opt-in via
-                    // `LossyConfig::with_cvvdp_loop`. cvvdp-fork Phase 4
-                    // (2026-05-24): the buttloop body now consumes the
-                    // cvvdp signal via the
-                    // `effective_metric_target_distance` lookup
-                    // (`super::cvvdp_targets::cvvdp_target_score_for_distance`)
-                    // when this field is true AND the `cvvdp-loop`
-                    // feature is on AND CUDA init succeeded. The cvvdp
-                    // backend's per-iter compare returns scores in
-                    // butteraugli-direction (`score = 10.0 - JOD`); the
-                    // metric-target lookup table provides the
-                    // corresponding convergence threshold per
-                    // `target_distance`. The bitstream
-                    // `target_distance` stays butteraugli-direction
-                    // (it's the file's quality target, not the metric
-                    // target).
-                    self.cvvdp_loop,
-                    // cvvdp-fork Phase 5 (2026-05-24): CPU vs GPU CVVDP
-                    // preference. Only meaningful when `self.cvvdp_loop`
-                    // is also true; see `construct_backend` dispatch
-                    // matrix for the full backend-selection truth table.
-                    // Default-path callers don't set this; explicit opt-in
-                    // is via `LossyConfig::with_cvvdp_use_cpu`.
-                    self.cvvdp_use_cpu,
+                    selection,
                 );
                 if let Err(_) = b.set_reference(&ref_r, &ref_g, &ref_b, width, height) {
                     return Ok(initial_params.clone());

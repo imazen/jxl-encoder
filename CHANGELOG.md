@@ -2,6 +2,63 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING — 2026-05-25)
+
+- **Multi-metric API refactor (RFC #3 Phase 0)**: the cvvdp-specific
+  builder methods `LossyConfig::with_cvvdp_loop` /
+  `LossyConfig::with_cvvdp_use_cpu` and the GPU butteraugli builder
+  `LossyConfig::with_gpu_butteraugli` have been **DELETED**. Use the
+  unified replacements:
+  - `LossyConfig::with_perceptual_metric(PerceptualMetric)` — pick the
+    metric: `Butteraugli` (default) or `Cvvdp`.
+  - `LossyConfig::with_perceptual_device(PerceptualDevice)` — pick the
+    device: `Auto` (default), `Cpu`, or `Gpu`.
+  - `LossyConfig::with_perceptual_target_score(Option<f32>)` — override
+    the metric's per-distance target table.
+
+  Migration cheat-sheet:
+  | pre-Phase-0                                  | Phase 0 replacement                                                                                     |
+  |---                                           |---                                                                                                      |
+  | `.with_gpu_butteraugli(true)`                | `.with_perceptual_device(PerceptualDevice::Gpu)`                                                        |
+  | `.with_gpu_butteraugli(false)`               | `.with_perceptual_device(PerceptualDevice::Cpu)`                                                        |
+  | `.with_cvvdp_loop(Some(true))`               | `.with_perceptual_metric(PerceptualMetric::Cvvdp)`                                                      |
+  | `.with_cvvdp_loop(Some(false))` / `None`     | `.with_perceptual_metric(PerceptualMetric::Butteraugli)` (or no call — that's the default)              |
+  | `.with_cvvdp_use_cpu(Some(true))`            | `.with_perceptual_device(PerceptualDevice::Cpu)` (independent of metric)                                |
+  | `.with_cvvdp_use_cpu(Some(false))` / `None`  | `.with_perceptual_device(PerceptualDevice::Auto)` (default) or `::Gpu`                                  |
+
+  `LossyConfig::with_cvvdp_bytes_tighten(Option<bool>)` is RETAINED —
+  it's a cvvdp-specific tuning knob (post-convergence bytes-tighten
+  exit pass), not a metric-selection setter. The resolver now keys off
+  `resolve_perceptual_metric() == Cvvdp` instead of the deleted
+  `resolve_cvvdp_loop`.
+
+  Cargo feature names UNCHANGED — `cvvdp-loop`, `cvvdp-loop-cpu`,
+  `cvvdp-loop-tighten`, and `gpu-butteraugli` all stay valid. Only the
+  runtime API changed.
+
+  Default behaviour is byte-identical to the pre-Phase-0
+  `LossyConfig::default()`: the default
+  `(PerceptualMetric::Butteraugli, PerceptualDevice::Auto)` resolves to
+  the same backend choice as the pre-Phase-0
+  `gpu_butteraugli = cfg!(feature = "gpu-butteraugli")` + `cvvdp_loop =
+  None` + `cvvdp_use_cpu = None` shape (verified hash-locks 36/36
+  BYTE-IDENTICAL on the default feature set).
+
+  `EncoderStrategy::Libjxl` strict cjxl-parity invariant preserved —
+  `resolve_perceptual_metric()` forces `Butteraugli` regardless of
+  caller selection (verified by the extended
+  `strategy_libjxl_byte_lock` test with the new
+  `(metric, device)` matrix).
+
+  Files: `jxl-encoder/src/api.rs` (new enums + setters + resolvers, old
+  setters deleted), `jxl-encoder/src/vardct/perceptual_backend.rs`
+  (new `MetricSelection` struct, `construct_backend` signature
+  collapsed from 7-arg to 5-arg + `propagate_resolved_metric_to_encoder`
+  helper), `jxl-encoder/src/vardct/perceptual_loop.rs` (call-site
+  update). 4 integration tests + 16 example files migrated. See
+  [`docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md`](docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md)
+  for the full design.
+
 ### Added
 
 - **cvvdp fork — opt-in ColorVideoVDP-driven quantization loop**

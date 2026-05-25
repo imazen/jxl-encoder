@@ -322,17 +322,17 @@ fn score_cell(
     let cfg = LossyConfig::new(distance).with_effort(effort);
     let cfg = match backend {
         Backend::B => cfg,
-        Backend::BGpu => cfg.with_gpu_butteraugli(true),
-        Backend::CGpu => cfg.with_cvvdp_loop(Some(true)),
+        Backend::BGpu => cfg.with_perceptual_device(jxl_encoder::api::PerceptualDevice::Gpu),
+        Backend::CGpu => cfg.with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp),
         Backend::CCpu => cfg
-            .with_cvvdp_loop(Some(true))
-            .with_cvvdp_use_cpu(Some(true)),
+            .with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp)
+            .with_perceptual_device(jxl_encoder::api::PerceptualDevice::Cpu),
         // Phase 8f validation: explicit tighten opt-in. The Phase 8g
         // k_tile_norm=0.16 constants apply automatically inside the cvvdp
         // loop once `cvvdp-loop` is compiled; tighten is the extra Phase 8d
         // exit pass that closes the remaining bytes gap.
         Backend::CGpuV4 => cfg
-            .with_cvvdp_loop(Some(true))
+            .with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp)
             .with_cvvdp_bytes_tighten(Some(true)),
     };
 

@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cfg = LossyConfig::new(d)
             .with_strategy(EncoderStrategy::Zenjxl)
             .with_effort(8)
-            .with_cvvdp_loop(Some(true));
+            .with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp);
         let encoded = cfg.encode(&pixels, w, h, PixelLayout::Rgb8)?;
         std::fs::write(out, &encoded)?;
         println!("Wrote {out} ({} bytes)", encoded.len());

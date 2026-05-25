@@ -44,6 +44,7 @@
 
 use alloc::format;
 
+use crate::api::{PerceptualDevice, PerceptualMetric};
 use crate::error::Result;
 
 /// Result of one perceptual-metric comparison: aggregated max-norm score over
@@ -55,6 +56,94 @@ pub(crate) struct BackendCompareResult {
     /// Max-norm score (the value the libjxl buttloop compares against
     /// `target_distance`). Same units as `butteraugli::ButteraugliResult::score`.
     pub(crate) score: f64,
+}
+
+/// Multi-metric Phase 0 (RFC #3 §4, 2026-05-25): bundled metric +
+/// device selection passed to [`construct_backend`].
+///
+/// Built by
+/// [`crate::api::LossyConfig::resolve_perceptual_metric_selection`].
+/// The Libjxl strict-parity short-circuit (W44-126) has already fired
+/// inside the resolver — `metric == Butteraugli` here unconditionally
+/// means "construct a butteraugli backend", even if the caller
+/// requested cvvdp with the Libjxl strategy.
+///
+/// The cargo-feature gate (silent fallback to butteraugli when the
+/// requested metric's feature isn't compiled) has also fired in the
+/// resolver, so `construct_backend` itself only needs to map the
+/// triple `(metric, device, target_score)` to a concrete `Box<dyn
+/// PerceptualBackend>` honouring per-backend `try_new` failures.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct MetricSelection {
+    pub(crate) metric: PerceptualMetric,
+    pub(crate) device: PerceptualDevice,
+    /// Caller-supplied per-distance target override. `None` = use the
+    /// metric's built-in calibration table; `Some(score)` = converge
+    /// the buttloop against this score directly. Plumbed through to
+    /// `perceptual_loop.rs::effective_metric_target_distance` rather
+    /// than consumed inside the backend ctor — included here so the
+    /// selection struct is the single carrier from API → dispatch.
+    pub(crate) target_score: Option<f32>,
+}
+
+/// Multi-metric Phase 0 (RFC #3, 2026-05-25): translate a resolved
+/// [`MetricSelection`] into the four legacy bool fields the buttloop
+/// body still reads on [`crate::vardct::VarDctEncoder`].
+///
+/// The buttloop body's internal field shape predates Phase 0; this
+/// helper keeps the body unchanged and centralises the translation.
+/// A future cleanup (out of scope for Phase 0) can pull the metric +
+/// device into a typed enum on `VarDctEncoder` directly.
+///
+/// **Semantics** mirror the pre-Phase-0 resolvers exactly:
+///
+/// - `Butteraugli + Auto` → `gpu_butteraugli = cfg!(feature =
+///   "gpu-butteraugli")` (matches W44-PHASE3-B5-flip default)
+/// - `Butteraugli + Gpu`  → `gpu_butteraugli = true` (with silent CPU
+///   fallback inside `construct_backend` when CUDA missing)
+/// - `Butteraugli + Cpu`  → `gpu_butteraugli = false`
+/// - `Cvvdp + Auto`       → `cvvdp_loop = true`, `cvvdp_use_cpu = false`
+///   (prefer GPU; `construct_backend` falls back to CPU cvvdp if GPU
+///   missing and `cvvdp-loop-cpu` is compiled, else butteraugli)
+/// - `Cvvdp + Gpu`        → `cvvdp_loop = true`, `cvvdp_use_cpu = false`
+///   (same as Auto for cvvdp; the GPU vs CPU CVVDP toggle is on
+///   `cvvdp_use_cpu`, GPU is the implicit preference)
+/// - `Cvvdp + Cpu`        → `cvvdp_loop = true`, `cvvdp_use_cpu = true`
+///
+/// Strategy::Libjxl short-circuit has already fired in the resolver
+/// (metric == Butteraugli for Libjxl regardless of caller field), so
+/// no Libjxl branch is needed here.
+#[cfg(feature = "butteraugli-loop")]
+pub(crate) fn propagate_resolved_metric_to_encoder(
+    selection: MetricSelection,
+    enc: &mut crate::vardct::VarDctEncoder,
+) {
+    match selection.metric {
+        PerceptualMetric::Butteraugli => {
+            enc.cvvdp_loop = false;
+            enc.cvvdp_use_cpu = false;
+            enc.gpu_butteraugli = match selection.device {
+                PerceptualDevice::Auto => cfg!(feature = "gpu-butteraugli"),
+                PerceptualDevice::Cpu => false,
+                PerceptualDevice::Gpu => true,
+            };
+        }
+        PerceptualMetric::Cvvdp => {
+            // cvvdp wins the construct_backend dispatch over
+            // butteraugli regardless of `gpu_butteraugli`; we leave
+            // `gpu_butteraugli` at the Auto-resolved value so that if
+            // cvvdp falls back to butteraugli at runtime (no CUDA + no
+            // cvvdp-loop-cpu), the butteraugli backend uses the
+            // caller-requested device.
+            enc.cvvdp_loop = true;
+            enc.cvvdp_use_cpu = matches!(selection.device, PerceptualDevice::Cpu);
+            enc.gpu_butteraugli = match selection.device {
+                PerceptualDevice::Auto => cfg!(feature = "gpu-butteraugli"),
+                PerceptualDevice::Cpu => false,
+                PerceptualDevice::Gpu => true,
+            };
+        }
+    }
 }
 
 // ============================================================================
@@ -1234,10 +1323,24 @@ pub(crate) fn construct_backend(
     height: u32,
     cpu_params: butteraugli::ButteraugliParams,
     #[allow(unused_variables)] intensity_target: f32,
-    #[allow(unused_variables)] gpu_requested: bool,
-    #[allow(unused_variables)] cvvdp_requested: bool,
-    #[allow(unused_variables)] cvvdp_use_cpu_requested: bool,
+    selection: MetricSelection,
 ) -> alloc::boxed::Box<dyn PerceptualBackend> {
+    // Multi-metric Phase 0 (RFC #3 §4, 2026-05-25): the 7-arg
+    // pre-Phase-0 signature collapsed into one bundled struct. The
+    // dispatch body below preserves the priority order exactly:
+    // cvvdp first when requested (mutually exclusive with butter-GPU
+    // at the CudaRuntime layer), then butter-GPU, then butter-CPU.
+    let gpu_requested = matches!(selection.device, PerceptualDevice::Gpu)
+        || (matches!(selection.device, PerceptualDevice::Auto)
+            && cfg!(feature = "gpu-butteraugli"));
+    let cvvdp_requested = matches!(selection.metric, PerceptualMetric::Cvvdp);
+    let cvvdp_use_cpu_requested = matches!(selection.device, PerceptualDevice::Cpu);
+    // The `target_score` field is plumbed through `perceptual_loop.rs`
+    // via `LossyConfig::perceptual_target_score`, not through the
+    // backend ctor. Silence the unused-field warning by binding to `_`
+    // here — the struct field stays for documentation + the
+    // single-carrier shape.
+    let _ = selection.target_score;
     // Debug hook: `JXL_W44_PHASE3_B1_DEBUG=1` logs which backend the
     // dispatch picks. Off by default to keep production logs clean.
     #[cfg(feature = "std")]
@@ -1558,42 +1661,71 @@ mod tests {
     #[test]
     fn construct_backend_cpu_when_gpu_not_requested() {
         let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
-        // cvvdp-fork Phase 3: construct_backend signature gained a
-        // `cvvdp_requested: bool` trailing parameter. cvvdp-fork
-        // Phase 5 added a second trailing parameter,
-        // `cvvdp_use_cpu_requested: bool`. Both `false` mirror the
-        // production default (`LossyConfig::cvvdp_loop` defaults to
-        // `None`, `LossyConfig::cvvdp_use_cpu` defaults to `None` →
-        // both resolvers return `false`), so this test continues to
-        // assert the CPU butteraugli baseline.
-        let backend = construct_backend(64, 64, params, 80.0, false, false, false);
+        // Multi-metric Phase 0 (RFC #3 §4): construct_backend now takes
+        // a single bundled `MetricSelection` struct instead of the
+        // four trailing bools. `Butteraugli + Cpu` mirrors the
+        // production default (`LossyConfig::default()` produces
+        // `Butteraugli + Auto`, which resolves to CPU when
+        // `gpu-butteraugli` is not compiled in — same baseline as
+        // pre-Phase-0).
+        let backend = construct_backend(
+            64,
+            64,
+            params,
+            80.0,
+            MetricSelection {
+                metric: PerceptualMetric::Butteraugli,
+                device: PerceptualDevice::Cpu,
+                target_score: None,
+            },
+        );
         assert_eq!(backend.name(), "cpu");
     }
 
-    /// cvvdp-fork Phase 3: when `cvvdp_requested == false` AND
-    /// `gpu_requested == false`, the dispatch returns the CPU
-    /// butteraugli backend regardless of the `cvvdp-loop` cargo
-    /// feature. Verifies the cvvdp branch doesn't accidentally fire
-    /// when the field is unset.
+    /// Multi-metric Phase 0: when `metric == Butteraugli` AND
+    /// `device == Cpu`, the dispatch returns the CPU butteraugli
+    /// backend regardless of the `cvvdp-loop` cargo feature.
+    /// Verifies the cvvdp branch doesn't accidentally fire when the
+    /// caller's metric is Butteraugli.
     #[cfg(feature = "cvvdp-loop")]
     #[test]
     fn construct_backend_cpu_when_cvvdp_not_requested() {
         let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
-        let backend = construct_backend(64, 64, params, 80.0, false, false, false);
+        let backend = construct_backend(
+            64,
+            64,
+            params,
+            80.0,
+            MetricSelection {
+                metric: PerceptualMetric::Butteraugli,
+                device: PerceptualDevice::Cpu,
+                target_score: None,
+            },
+        );
         assert_eq!(backend.name(), "cpu");
     }
 
-    /// cvvdp-fork Phase 5 (2026-05-24): when `cvvdp_requested == true`
-    /// AND `cvvdp_use_cpu_requested == true` AND `cvvdp-loop-cpu` is
-    /// compiled in, the dispatch returns the CPU CVVDP backend. We
-    /// can only assert the backend's `name()` ends up as
-    /// `"cvvdp-cpu"`; on hosts without CUDA the GPU fallback path
-    /// would still be unreachable (we asked for CPU explicitly).
+    /// Multi-metric Phase 0 (RFC #3 §4): when `metric == Cvvdp` AND
+    /// `device == Cpu` AND `cvvdp-loop-cpu` is compiled in, the
+    /// dispatch returns the CPU CVVDP backend. We can only assert the
+    /// backend's `name()` ends up as `"cvvdp-cpu"`; on hosts without
+    /// CUDA the GPU fallback path would still be unreachable (we
+    /// asked for CPU explicitly).
     #[cfg(feature = "cvvdp-loop-cpu")]
     #[test]
     fn construct_backend_cvvdp_cpu_when_use_cpu_requested() {
         let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
-        let backend = construct_backend(64, 64, params, 80.0, false, true, true);
+        let backend = construct_backend(
+            64,
+            64,
+            params,
+            80.0,
+            MetricSelection {
+                metric: PerceptualMetric::Cvvdp,
+                device: PerceptualDevice::Cpu,
+                target_score: None,
+            },
+        );
         assert_eq!(
             backend.name(),
             "cvvdp-cpu",
@@ -1602,9 +1734,8 @@ mod tests {
         );
     }
 
-    /// cvvdp-fork Phase 5: when `cvvdp_requested == true` AND
-    /// `cvvdp_use_cpu_requested == false` (default-policy GPU first),
-    /// the dispatch returns either:
+    /// Multi-metric Phase 0: when `metric == Cvvdp` AND `device == Auto`
+    /// (default-policy GPU first), the dispatch returns either:
     /// - `"cvvdp-gpu-cuda"` on hosts with CUDA, OR
     /// - `"cvvdp-cpu"` on hosts without CUDA but with `cvvdp-loop-cpu`
     ///   compiled in (Phase 5 silent fallback per the dispatch matrix).
@@ -1616,11 +1747,21 @@ mod tests {
     #[test]
     fn construct_backend_cvvdp_falls_back_to_cpu_when_no_cuda() {
         let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
-        let backend = construct_backend(64, 64, params, 80.0, false, true, false);
+        let backend = construct_backend(
+            64,
+            64,
+            params,
+            80.0,
+            MetricSelection {
+                metric: PerceptualMetric::Cvvdp,
+                device: PerceptualDevice::Auto,
+                target_score: None,
+            },
+        );
         let name = backend.name();
         assert!(
             name == "cvvdp-gpu-cuda" || name == "cvvdp-cpu",
-            "cvvdp_requested=true with cvvdp-loop-cpu compiled must \
+            "Cvvdp + Auto with cvvdp-loop-cpu compiled must \
              land on a CVVDP backend (GPU when CUDA OK, CPU otherwise); \
              got {name}"
         );

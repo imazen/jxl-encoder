@@ -35,7 +35,7 @@
 
 #![cfg(feature = "cvvdp-loop")]
 
-use jxl_encoder::api::EncoderStrategy;
+use jxl_encoder::api::{EncoderStrategy, PerceptualMetric};
 use jxl_encoder::{LossyConfig, PixelLayout};
 
 /// 64×64 RGB gradient: R=x, G=y, B=128. Same shape as the
@@ -55,23 +55,25 @@ fn gradient_rgb_64x64() -> Vec<u8> {
     out
 }
 
-/// Verify the public surface of `LossyConfig::with_cvvdp_loop` /
-/// `cvvdp_loop` / `resolve_cvvdp_loop` is reachable from an external
-/// integration-test compilation unit. Guards against accidental
-/// `pub(crate)` regressions on the setter / getter.
+/// Multi-metric Phase 0 (RFC #3): verify the public surface of
+/// `LossyConfig::with_perceptual_metric` / `perceptual_metric` is
+/// reachable from an external integration-test compilation unit.
+/// Guards against accidental `pub(crate)` regressions on the setter
+/// / getter.
 #[test]
 fn public_api_round_trip() {
     let cfg = LossyConfig::new(1.0);
-    assert!(cfg.cvvdp_loop().is_none(), "default must be None");
+    assert_eq!(
+        cfg.perceptual_metric(),
+        PerceptualMetric::Butteraugli,
+        "default must be Butteraugli"
+    );
 
-    let cfg = LossyConfig::new(1.0).with_cvvdp_loop(Some(true));
-    assert_eq!(cfg.cvvdp_loop(), Some(true));
+    let cfg = LossyConfig::new(1.0).with_perceptual_metric(PerceptualMetric::Cvvdp);
+    assert_eq!(cfg.perceptual_metric(), PerceptualMetric::Cvvdp);
 
-    let cfg = LossyConfig::new(1.0).with_cvvdp_loop(Some(false));
-    assert_eq!(cfg.cvvdp_loop(), Some(false));
-
-    let cfg = LossyConfig::new(1.0).with_cvvdp_loop(None);
-    assert_eq!(cfg.cvvdp_loop(), None);
+    let cfg = LossyConfig::new(1.0).with_perceptual_metric(PerceptualMetric::Butteraugli);
+    assert_eq!(cfg.perceptual_metric(), PerceptualMetric::Butteraugli);
 }
 
 /// End-to-end encode → decode smoke. Opt-in CVVDP backend (with
@@ -83,19 +85,19 @@ fn cvvdp_loop_some_true_encode_decode() {
     let pixels = gradient_rgb_64x64();
     let cfg = LossyConfig::new(1.0)
         .with_strategy(EncoderStrategy::Zenjxl)
-        .with_cvvdp_loop(Some(true));
+        .with_perceptual_metric(PerceptualMetric::Cvvdp);
 
-    // resolve_cvvdp_loop() is pub(crate) — exercise via the field
-    // observation instead.
+    // resolve_perceptual_metric() is pub(crate) — exercise via the
+    // field observation instead.
     assert_eq!(
-        cfg.cvvdp_loop(),
-        Some(true),
-        "field must reflect Some(true)"
+        cfg.perceptual_metric(),
+        PerceptualMetric::Cvvdp,
+        "field must reflect Cvvdp"
     );
 
     let encoded = cfg
         .encode(&pixels, 64, 64, PixelLayout::Rgb8)
-        .expect("encode 64×64 RGB at d=1.0 with cvvdp_loop=Some(true) must succeed");
+        .expect("encode 64×64 RGB at d=1.0 with Cvvdp metric must succeed");
     assert!(
         !encoded.is_empty(),
         "encode must produce a non-empty bitstream"
@@ -115,26 +117,26 @@ fn cvvdp_loop_some_true_encode_decode() {
     decode_with_djxl_if_available(&encoded);
 }
 
-/// Libjxl strategy forces butteraugli regardless of `with_cvvdp_loop`.
-/// This test verifies the encode still succeeds + produces a valid
-/// bitstream (the strict cjxl-parity invariant is also exercised by
-/// `strategy_libjxl_byte_lock`).
+/// Multi-metric Phase 0: Libjxl strategy forces butteraugli regardless
+/// of `with_perceptual_metric`. This test verifies the encode still
+/// succeeds + produces a valid bitstream (the strict cjxl-parity
+/// invariant is also exercised by `strategy_libjxl_byte_lock`).
 #[test]
 fn libjxl_strategy_with_cvvdp_loop_falls_back_to_butteraugli() {
     let pixels = gradient_rgb_64x64();
     let cfg = LossyConfig::new(1.0)
         .with_strategy(EncoderStrategy::Libjxl)
-        .with_cvvdp_loop(Some(true));
+        .with_perceptual_metric(PerceptualMetric::Cvvdp);
 
     assert_eq!(
-        cfg.cvvdp_loop(),
-        Some(true),
-        "field must reflect Some(true) even on Libjxl strategy"
+        cfg.perceptual_metric(),
+        PerceptualMetric::Cvvdp,
+        "field must reflect Cvvdp even on Libjxl strategy"
     );
 
     let encoded = cfg
         .encode(&pixels, 64, 64, PixelLayout::Rgb8)
-        .expect("encode under Libjxl + cvvdp_loop=Some(true) must succeed (cvvdp suppressed)");
+        .expect("encode under Libjxl + Cvvdp metric must succeed (cvvdp suppressed)");
     assert!(!encoded.is_empty());
 
     decode_with_jxl_rs(&encoded, 64, 64);

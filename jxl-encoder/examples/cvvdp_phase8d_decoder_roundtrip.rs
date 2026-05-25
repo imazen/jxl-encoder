@@ -121,7 +121,7 @@ fn main() {
         total += 1;
         let cfg = LossyConfig::new(*distance)
             .with_effort(8)
-            .with_cvvdp_loop(Some(true))
+            .with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp)
             .with_cvvdp_bytes_tighten(Some(true));
         let t0 = Instant::now();
         let encode_res = cfg

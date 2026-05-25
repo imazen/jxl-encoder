@@ -187,7 +187,11 @@ fn encode_cell(
     let cfg = LossyConfig::new(d)
         .with_strategy(EncoderStrategy::Zenjxl)
         .with_effort(effort)
-        .with_cvvdp_loop(if cvvdp_opt_in { Some(true) } else { None });
+        .with_perceptual_metric(if cvvdp_opt_in {
+            jxl_encoder::api::PerceptualMetric::Cvvdp
+        } else {
+            jxl_encoder::api::PerceptualMetric::Butteraugli
+        });
     let t = Instant::now();
     let encoded = cfg.encode(pixels, w, h, layout)?;
     let wall_ms = t.elapsed().as_secs_f64() * 1000.0;

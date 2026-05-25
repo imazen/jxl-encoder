@@ -56,7 +56,7 @@
 
 #![cfg(feature = "cvvdp-loop")]
 
-use jxl_encoder::api::EncoderStrategy;
+use jxl_encoder::api::{EncoderStrategy, PerceptualDevice, PerceptualMetric};
 use jxl_encoder::{LossyConfig, PixelLayout};
 
 // =============================================================================
@@ -221,14 +221,17 @@ fn cvvdp_loop_some_false_byte_identical_to_default() {
 
         let opt_out_bytes = LossyConfig::new(d)
             .with_strategy(EncoderStrategy::Zenjxl)
-            .with_cvvdp_loop(Some(false))
+            // Multi-metric Phase 0 rename: explicit Butteraugli is the
+            // "opt-out of cvvdp" form. Identical resolved selection to
+            // the default (which is also Butteraugli + Auto).
+            .with_perceptual_metric(PerceptualMetric::Butteraugli)
             .encode(&pixels, w, h, layout)
-            .unwrap_or_else(|e| panic!("[{name}] cvvdp_loop=Some(false) encode failed: {e:?}"));
+            .unwrap_or_else(|e| panic!("[{name}] explicit Butteraugli encode failed: {e:?}"));
 
         assert_eq!(
             default_bytes,
             opt_out_bytes,
-            "[{name}] cvvdp_loop=Some(false) MUST be byte-identical to default — \
+            "[{name}] PerceptualMetric::Butteraugli MUST be byte-identical to default — \
              default={} bytes, opt_out={} bytes",
             default_bytes.len(),
             opt_out_bytes.len()
@@ -236,9 +239,9 @@ fn cvvdp_loop_some_false_byte_identical_to_default() {
     }
 }
 
-/// `cvvdp_loop = None` (the tri-state default) must also produce the
-/// SAME bytes as the implicit default. Mirror of the `Some(false)`
-/// test for the third state of the tri-state field.
+/// The implicit default (no `with_perceptual_metric` call) round-trips
+/// through `with_perceptual_metric(PerceptualMetric::Butteraugli)` —
+/// belt-and-suspenders against accidental default-state drift.
 #[test]
 fn cvvdp_loop_none_byte_identical_to_default() {
     for cell in smoke_cells() {
@@ -255,15 +258,16 @@ fn cvvdp_loop_none_byte_identical_to_default() {
             .encode(&pixels, w, h, layout)
             .unwrap_or_else(|e| panic!("[{name}] default encode failed: {e:?}"));
 
-        let explicit_none_bytes = LossyConfig::new(d)
+        let explicit_default = LossyConfig::new(d)
             .with_strategy(EncoderStrategy::Zenjxl)
-            .with_cvvdp_loop(None)
+            .with_perceptual_metric(PerceptualMetric::Butteraugli)
+            .with_perceptual_device(PerceptualDevice::Auto)
             .encode(&pixels, w, h, layout)
-            .unwrap_or_else(|e| panic!("[{name}] cvvdp_loop=None encode failed: {e:?}"));
+            .unwrap_or_else(|e| panic!("[{name}] explicit Butteraugli+Auto encode failed: {e:?}"));
 
         assert_eq!(
-            default_bytes, explicit_none_bytes,
-            "[{name}] cvvdp_loop=None MUST be byte-identical to default (tri-state default)",
+            default_bytes, explicit_default,
+            "[{name}] explicit Butteraugli+Auto MUST be byte-identical to default",
         );
     }
 }
@@ -297,20 +301,33 @@ fn libjxl_strategy_byte_identical_regardless_of_cvvdp_loop() {
             .encode(&pixels, w, h, layout)
             .unwrap_or_else(|e| panic!("[{name}] Libjxl default encode failed: {e:?}"));
 
-        for opt in [Some(true), Some(false), None] {
-            let libjxl_with_opt = LossyConfig::new(d)
-                .with_strategy(EncoderStrategy::Libjxl)
-                .with_cvvdp_loop(opt)
-                .encode(&pixels, w, h, layout)
-                .unwrap_or_else(|e| {
-                    panic!("[{name}] Libjxl with_cvvdp_loop({opt:?}) encode failed: {e:?}")
-                });
+        // Multi-metric Phase 0: exercise every metric × device
+        // combination on the Libjxl strategy. The strict cjxl-parity
+        // invariant (`resolve_perceptual_metric` short-circuits to
+        // Butteraugli) MUST keep the bytes identical to the default
+        // Libjxl encode regardless of the explicit caller selection.
+        for metric in [PerceptualMetric::Butteraugli, PerceptualMetric::Cvvdp] {
+            for device in [
+                PerceptualDevice::Auto,
+                PerceptualDevice::Cpu,
+                PerceptualDevice::Gpu,
+            ] {
+                let libjxl_with_opt = LossyConfig::new(d)
+                    .with_strategy(EncoderStrategy::Libjxl)
+                    .with_perceptual_metric(metric)
+                    .with_perceptual_device(device)
+                    .encode(&pixels, w, h, layout)
+                    .unwrap_or_else(|e| {
+                        panic!("[{name}] Libjxl + {metric:?}/{device:?} encode failed: {e:?}")
+                    });
 
-            assert_eq!(
-                libjxl_default, libjxl_with_opt,
-                "[{name}] EncoderStrategy::Libjxl with cvvdp_loop={opt:?} MUST be byte-identical \
-                 to default Libjxl — Libjxl invariant violated",
-            );
+                assert_eq!(
+                    libjxl_default, libjxl_with_opt,
+                    "[{name}] EncoderStrategy::Libjxl with metric={metric:?} \
+                     device={device:?} MUST be byte-identical to default Libjxl \
+                     — strict cjxl-parity invariant violated",
+                );
+            }
         }
     }
 }
@@ -353,9 +370,9 @@ fn cvvdp_loop_some_true_encodes_and_decodes_via_jxl_rs() {
         } = cell;
         let encoded = LossyConfig::new(d)
             .with_strategy(EncoderStrategy::Zenjxl)
-            .with_cvvdp_loop(Some(true))
+            .with_perceptual_metric(PerceptualMetric::Cvvdp)
             .encode(&pixels, w, h, layout)
-            .unwrap_or_else(|e| panic!("[{name}] cvvdp_loop=Some(true) encode failed: {e:?}"));
+            .unwrap_or_else(|e| panic!("[{name}] Cvvdp metric encode failed: {e:?}"));
 
         assert!(
             !encoded.is_empty(),
@@ -419,22 +436,25 @@ fn cvvdp_loop_some_true_encodes_and_decodes_via_jxl_rs() {
 // coverage but pins to the Phase 4 invariants the brief calls out).
 // =============================================================================
 
-/// `LossyConfig::with_cvvdp_loop` / `cvvdp_loop` round-trip via the
-/// public API surface. Belt-and-suspenders against accidental
-/// `pub(crate)` regressions on the setter / getter (the Phase 3 smoke
-/// also covers this; this one is sized to the Phase 4 deliverable for
-/// completeness).
+/// Multi-metric Phase 0 (RFC #3): `LossyConfig::with_perceptual_metric`
+/// / `perceptual_metric` round-trip via the public API surface.
+/// Belt-and-suspenders against accidental `pub(crate)` regressions on
+/// the new setter / getter.
 #[test]
 fn public_api_round_trip_phase4() {
     let cfg = LossyConfig::new(1.0);
-    assert!(cfg.cvvdp_loop().is_none(), "default must be None");
+    assert_eq!(
+        cfg.perceptual_metric(),
+        PerceptualMetric::Butteraugli,
+        "default must be Butteraugli"
+    );
 
-    for opt in [Some(true), Some(false), None] {
-        let cfg = LossyConfig::new(1.0).with_cvvdp_loop(opt);
+    for m in [PerceptualMetric::Butteraugli, PerceptualMetric::Cvvdp] {
+        let cfg = LossyConfig::new(1.0).with_perceptual_metric(m);
         assert_eq!(
-            cfg.cvvdp_loop(),
-            opt,
-            "with_cvvdp_loop({opt:?}) round-trip via cvvdp_loop() getter"
+            cfg.perceptual_metric(),
+            m,
+            "with_perceptual_metric({m:?}) round-trip via perceptual_metric() getter"
         );
     }
 }
