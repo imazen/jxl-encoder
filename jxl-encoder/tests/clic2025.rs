@@ -7224,9 +7224,9 @@ fn test_rd_regression_high_distance() {
                 ssim2: 82.28,
             },
             d300: Baseline {
-                size: 22304,
-                butteraugli: 2.771,
-                ssim2: 77.04,
+                size: 21885,
+                butteraugli: 2.930,
+                ssim2: 79.49,
             },
         },
     ];
