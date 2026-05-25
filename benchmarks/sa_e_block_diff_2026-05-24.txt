@@ -1,0 +1,53 @@
+8x8 block max-diff stats: max=0.5254, mean=0.0334, median=0.0192
+Blocks with max-diff > 0.05: 2822 / 16384
+Blocks with max-diff > 0.10: 1043 / 16384
+Blocks with max-diff > 0.20: 186 / 16384
+
+Top-20 worst 8x8 blocks (by, bx, max_diff):
+  by= 35 bx= 71  max_diff=0.5254  pixel y=280..288 x=568..576
+  by= 35 bx= 69  max_diff=0.4438  pixel y=280..288 x=552..560
+  by= 35 bx= 64  max_diff=0.4294  pixel y=280..288 x=512..520
+  by= 92 bx= 17  max_diff=0.4236  pixel y=736..744 x=136..144
+  by= 87 bx= 53  max_diff=0.4193  pixel y=696..704 x=424..432
+  by= 89 bx= 72  max_diff=0.4142  pixel y=712..720 x=576..584
+  by= 34 bx= 71  max_diff=0.4070  pixel y=272..280 x=568..576
+  by= 63 bx= 62  max_diff=0.4055  pixel y=504..512 x=496..504
+  by= 87 bx= 52  max_diff=0.3989  pixel y=696..704 x=416..424
+  by= 34 bx= 64  max_diff=0.3890  pixel y=272..280 x=512..520
+  by= 35 bx= 70  max_diff=0.3848  pixel y=280..288 x=560..568
+  by= 95 bx= 65  max_diff=0.3835  pixel y=760..768 x=520..528
+  by= 97 bx= 60  max_diff=0.3719  pixel y=776..784 x=480..488
+  by= 80 bx= 38  max_diff=0.3717  pixel y=640..648 x=304..312
+  by= 98 bx= 60  max_diff=0.3593  pixel y=784..792 x=480..488
+  by= 79 bx= 38  max_diff=0.3540  pixel y=632..640 x=304..312
+  by= 67 bx= 62  max_diff=0.3499  pixel y=536..544 x=496..504
+  by= 34 bx= 31  max_diff=0.3453  pixel y=272..280 x=248..256
+  by= 30 bx= 28  max_diff=0.3435  pixel y=240..248 x=224..232
+  by= 32 bx= 68  max_diff=0.3381  pixel y=256..264 x=544..552
+
+64x64 block max-diff stats: max=0.5254, mean=0.1148
+  64x64 blocks > 0.3: 21
+    DC y=3 x=3  pixel y=192..256 x=192..256  max_diff=0.3435
+    DC y=3 x=7  pixel y=192..256 x=448..512  max_diff=0.3103
+    DC y=3 x=8  pixel y=192..256 x=512..576  max_diff=0.3204
+    DC y=4 x=3  pixel y=256..320 x=192..256  max_diff=0.3453
+    DC y=4 x=4  pixel y=256..320 x=256..320  max_diff=0.3252
+  64x64 blocks > 0.2: 47
+    DC y=3 x=0  pixel y=192..256 x=0..64  max_diff=0.2029
+    DC y=3 x=2  pixel y=192..256 x=128..192  max_diff=0.2751
+    DC y=3 x=3  pixel y=192..256 x=192..256  max_diff=0.3435
+    DC y=3 x=6  pixel y=192..256 x=384..448  max_diff=0.2582
+    DC y=3 x=7  pixel y=192..256 x=448..512  max_diff=0.3103
+  64x64 blocks > 0.1: 109
+    DC y=1 x=1  pixel y=64..128 x=64..128  max_diff=0.1099
+    DC y=2 x=0  pixel y=128..192 x=0..64  max_diff=0.1439
+    DC y=2 x=1  pixel y=128..192 x=64..128  max_diff=0.1452
+    DC y=2 x=2  pixel y=128..192 x=128..192  max_diff=0.1065
+    DC y=2 x=3  pixel y=128..192 x=192..256  max_diff=0.1866
+
+Per-region bias (ours - cjxl) for sanity (no sign-flip expected — look for systematic bias):
+  full: bias R/G/B = [-7.e-05  4.e-05 -1.e-05], RMS R/G/B = [0.02424 0.00812 0.01302]
+  top-right (>SSIM2 hit zone): bias R/G/B = [ 1.75e-03 -4.00e-05  0.00e+00], RMS R/G/B = [0.01035 0.00282 0.00601]
+  top-left: bias R/G/B = [-0.00303  0.00025 -0.00064], RMS R/G/B = [0.03402 0.01234 0.01512]
+  middle: bias R/G/B = [-0.00051  0.00028 -0.00127], RMS R/G/B = [0.02847 0.00789 0.01517]
+  middle-cols-480-608-rows-256-288 (worst row band): bias R/G/B = [-0.00358  0.00059  0.0002 ], RMS R/G/B = [0.08678 0.01386 0.01593]
