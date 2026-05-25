@@ -1611,12 +1611,27 @@ impl VarDctEncoder {
                 // lookup and bytes-tighten dispatch.
                 use super::perceptual_backend::MetricSelection;
                 use crate::api::{PerceptualDevice, PerceptualMetric};
-                let metric = if self.cvvdp_loop {
+                // zensim-fork Phase 3 (2026-05-25): zensim wins over cvvdp
+                // wins over butteraugli at the dispatch level. The
+                // `propagate_resolved_metric_to_encoder` helper sets
+                // exactly one of `zensim_loop` / `cvvdp_loop` true (or
+                // neither for butteraugli); the order below is just
+                // defense-in-depth in case a downstream caller poked
+                // both fields manually.
+                let metric = if self.zensim_loop {
+                    PerceptualMetric::Zensim
+                } else if self.cvvdp_loop {
                     PerceptualMetric::Cvvdp
                 } else {
                     PerceptualMetric::Butteraugli
                 };
-                let device = if self.cvvdp_loop {
+                let device = if self.zensim_loop {
+                    if self.zensim_use_cpu {
+                        PerceptualDevice::Cpu
+                    } else {
+                        PerceptualDevice::Gpu
+                    }
+                } else if self.cvvdp_loop {
                     // For cvvdp the CPU vs GPU toggle is on
                     // `cvvdp_use_cpu`; gpu_butteraugli is irrelevant
                     // unless cvvdp falls back to butteraugli (handled

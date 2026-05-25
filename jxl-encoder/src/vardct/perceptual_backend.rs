@@ -109,6 +109,12 @@ pub(crate) struct MetricSelection {
 ///   (same as Auto for cvvdp; the GPU vs CPU CVVDP toggle is on
 ///   `cvvdp_use_cpu`, GPU is the implicit preference)
 /// - `Cvvdp + Cpu`        → `cvvdp_loop = true`, `cvvdp_use_cpu = true`
+/// - `Zensim + Auto`      → `zensim_loop = true`, `zensim_use_cpu = false`
+///   (prefer GPU when `zensim-loop-gpu` is compiled; falls back to CPU
+///   zensim if GPU unavailable and `zensim-loop` is compiled, else
+///   butteraugli)
+/// - `Zensim + Gpu`       → `zensim_loop = true`, `zensim_use_cpu = false`
+/// - `Zensim + Cpu`       → `zensim_loop = true`, `zensim_use_cpu = true`
 ///
 /// Strategy::Libjxl short-circuit has already fired in the resolver
 /// (metric == Butteraugli for Libjxl regardless of caller field), so
@@ -122,6 +128,8 @@ pub(crate) fn propagate_resolved_metric_to_encoder(
         PerceptualMetric::Butteraugli => {
             enc.cvvdp_loop = false;
             enc.cvvdp_use_cpu = false;
+            enc.zensim_loop = false;
+            enc.zensim_use_cpu = false;
             enc.gpu_butteraugli = match selection.device {
                 PerceptualDevice::Auto => cfg!(feature = "gpu-butteraugli"),
                 PerceptualDevice::Cpu => false,
@@ -137,6 +145,24 @@ pub(crate) fn propagate_resolved_metric_to_encoder(
             // caller-requested device.
             enc.cvvdp_loop = true;
             enc.cvvdp_use_cpu = matches!(selection.device, PerceptualDevice::Cpu);
+            enc.zensim_loop = false;
+            enc.zensim_use_cpu = false;
+            enc.gpu_butteraugli = match selection.device {
+                PerceptualDevice::Auto => cfg!(feature = "gpu-butteraugli"),
+                PerceptualDevice::Cpu => false,
+                PerceptualDevice::Gpu => true,
+            };
+        }
+        PerceptualMetric::Zensim => {
+            // zensim-fork Phase 3 (2026-05-25): zensim wins the
+            // construct_backend dispatch over both cvvdp and butteraugli
+            // when its cargo feature is compiled in. `gpu_butteraugli` is
+            // left at the Auto-resolved value as the final-fallback
+            // butteraugli device choice (mirrors the cvvdp shape).
+            enc.cvvdp_loop = false;
+            enc.cvvdp_use_cpu = false;
+            enc.zensim_loop = true;
+            enc.zensim_use_cpu = matches!(selection.device, PerceptualDevice::Cpu);
             enc.gpu_butteraugli = match selection.device {
                 PerceptualDevice::Auto => cfg!(feature = "gpu-butteraugli"),
                 PerceptualDevice::Cpu => false,
@@ -1335,6 +1361,13 @@ pub(crate) fn construct_backend(
             && cfg!(feature = "gpu-butteraugli"));
     let cvvdp_requested = matches!(selection.metric, PerceptualMetric::Cvvdp);
     let cvvdp_use_cpu_requested = matches!(selection.device, PerceptualDevice::Cpu);
+    // zensim-fork Phase 3 (2026-05-25): zensim wins the dispatch over
+    // both cvvdp and butteraugli when its cargo feature is compiled
+    // in. Mutually exclusive with cvvdp at the dispatch level
+    // (`resolve_perceptual_metric` returns exactly one of Butteraugli /
+    // Cvvdp / Zensim).
+    let zensim_requested = matches!(selection.metric, PerceptualMetric::Zensim);
+    let zensim_use_cpu_requested = matches!(selection.device, PerceptualDevice::Cpu);
     // The `target_score` field is plumbed through `perceptual_loop.rs`
     // via `LossyConfig::perceptual_target_score`, not through the
     // backend ctor. Silence the unused-field warning by binding to `_`
@@ -1347,6 +1380,140 @@ pub(crate) fn construct_backend(
     let debug_log = std::env::var("JXL_W44_PHASE3_B1_DEBUG").ok().as_deref() == Some("1");
     #[cfg(not(feature = "std"))]
     let debug_log = false;
+
+    // zensim-fork Phase 3 (2026-05-25): try the zensim backends first
+    // when the caller has opted in via
+    // `LossyConfig::with_perceptual_metric(PerceptualMetric::Zensim)`.
+    // The zensim, cvvdp, and gpu-butteraugli paths are mutually
+    // exclusive at the dispatch level
+    // (`resolve_perceptual_metric` returns exactly one metric); zensim
+    // wins when its feature is compiled in. Silent fallback to the
+    // next dispatch tier on feature-off / CUDA-init-fail.
+    //
+    // Dispatch ordering inside the zensim branch (mirrors cvvdp Phase 5):
+    //   (a) `zensim_use_cpu_requested == true` AND `zensim-loop`
+    //       compiled: try CPU first; fall back to GPU if CPU
+    //       construction fails (dims < 8×8).
+    //   (b) else (default policy when both backends compiled): try
+    //       GPU first; fall back to CPU if `zensim-loop` is compiled
+    //       AND GPU construction failed; otherwise fall through to
+    //       the cvvdp/butteraugli dispatch tier.
+    //
+    // Phase 1 (zensim-gpu) honest-stop carryover: the current GPU
+    // diffmap delegates to the CPU pipeline (+1006% wall vs score-only
+    // GPU). Until Phase 1b (pure-GPU kernels) lands, callers
+    // prioritising wall time should explicitly select
+    // `PerceptualDevice::Cpu`.
+    #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+    {
+        if zensim_requested {
+            if debug_log {
+                eprintln!(
+                    "[zensim-fork P3] Zensim requested @ {}×{} \
+                     (use_cpu_requested={zensim_use_cpu_requested}) — \
+                     trying backends in priority order",
+                    width, height,
+                );
+            }
+
+            // (a) caller explicitly prefers CPU. Try CPU first.
+            #[cfg(feature = "zensim-loop")]
+            {
+                if zensim_use_cpu_requested {
+                    if let Some(c) =
+                        crate::vardct::zensim_backend::cpu::CpuZensimBackend::try_new(width, height)
+                    {
+                        if debug_log {
+                            eprintln!(
+                                "[zensim-fork P3] CPU zensim backend ACTIVE @ {}×{} \
+                                 (explicit opt-in)",
+                                width, height
+                            );
+                        }
+                        let _ = cpu_params;
+                        return alloc::boxed::Box::new(c);
+                    }
+                    if debug_log {
+                        eprintln!(
+                            "[zensim-fork P3] CPU zensim construction failed @ {}×{} \
+                             (dims likely below 8×8 minimum); trying GPU zensim next",
+                            width, height,
+                        );
+                    }
+                }
+            }
+
+            // (b default) try GPU zensim. This is the default path
+            // when both backends are compiled and the caller hasn't
+            // explicitly opted into CPU.
+            #[cfg(feature = "zensim-loop-gpu")]
+            {
+                if let Some(g) =
+                    crate::vardct::zensim_backend::gpu::GpuZensimBackend::try_new(width, height)
+                {
+                    if debug_log {
+                        eprintln!(
+                            "[zensim-fork P3] GPU zensim backend ACTIVE @ {}×{}",
+                            width, height
+                        );
+                    }
+                    let _ = cpu_params;
+                    return alloc::boxed::Box::new(g);
+                }
+            }
+
+            // (c silent fallback) GPU zensim failed (no CUDA, driver
+            // issue, CubeCL panic) OR `zensim-loop-gpu` feature off.
+            // If `zensim-loop` is compiled in, try CPU zensim as the
+            // next-best perceptual metric — the caller asked for
+            // zensim, so we honour that rather than dropping all the
+            // way down to butteraugli.
+            #[cfg(feature = "zensim-loop")]
+            {
+                if !zensim_use_cpu_requested {
+                    if let Some(c) =
+                        crate::vardct::zensim_backend::cpu::CpuZensimBackend::try_new(width, height)
+                    {
+                        eprintln!(
+                            "[jxl-encoder zensim-fork P3] GPU zensim unavailable \
+                             (CUDA missing/failed or `zensim-loop-gpu` off); \
+                             falling back to CPU zensim @ {}×{}",
+                            width, height,
+                        );
+                        let _ = cpu_params;
+                        return alloc::boxed::Box::new(c);
+                    }
+                }
+            }
+
+            // All zensim variants failed; fall through to cvvdp /
+            // butteraugli dispatch tiers below.
+            eprintln!(
+                "[jxl-encoder zensim-fork P3] Zensim backend requested but \
+                 unavailable (CUDA init failed, no CPU fallback compiled, \
+                 or dims invalid); falling back to next dispatch tier ({}×{})",
+                width, height,
+            );
+        } else if debug_log {
+            eprintln!(
+                "[zensim-fork P3] Zensim not requested @ {}×{}, continuing dispatch",
+                width, height
+            );
+        }
+    }
+    #[cfg(not(any(feature = "zensim-loop", feature = "zensim-loop-gpu")))]
+    if debug_log && zensim_requested {
+        eprintln!(
+            "[zensim-fork P3] Zensim requested but neither `zensim-loop` \
+             nor `zensim-loop-gpu` cargo features are compiled in; \
+             continuing dispatch ({}×{})",
+            width, height
+        );
+    }
+    // Silence unused-variable warnings when zensim features are not compiled.
+    let _ = zensim_requested;
+    let _ = zensim_use_cpu_requested;
+
     // cvvdp-fork Phase 3 + Phase 5: try the CVVDP backends first when
     // the caller has opted in via `LossyConfig::with_cvvdp_loop`. The
     // cvvdp + gpu-butteraugli paths are mutually exclusive (both wrap
