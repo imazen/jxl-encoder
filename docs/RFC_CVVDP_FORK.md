@@ -2,7 +2,7 @@
 
 **Author**: Lilith River (with Claude scaffolding)
 **Started**: 2026-05-24
-**Status**: SCOPING
+**Status**: SHIPPED-OPT-IN (Phase 6 verdict 2026-05-24, see [`CVVDP_FORK_DECISION.md`](CVVDP_FORK_DECISION.md))
 
 The jxl-encoder buttloop iteratively refines the quantization field by
 calling butteraugli once per iter to get (a) a global perceptual score
@@ -349,4 +349,34 @@ discipline):
   `zenmetrics--cvvdp-cpu-port`). CPU port agent spawned (background,
   agent id `a1a609e3ce6facf30`). Tracking benchmark skeleton TSV
   created.
-- TBD: Phase 1 ship target, Phase 2 ship target, ...
+- 2026-05-24: 6-phase implementation arc landed end-to-end on the
+  `cvvdp-fork-rfc` branch:
+  - Phase 1 (RFC + scope): this document.
+  - Phase 2 (`8c6e91cc`): `ButteraugliBackend` trait renamed →
+    `PerceptualBackend` per §2.1; existing CPU/GPU butteraugli
+    backends preserved.
+  - Phase 3 (`57757ff8`): `GpuCvvdpBackend` impl + `cvvdp-loop` cargo
+    feature + `LossyConfig::with_cvvdp_loop` builder API +
+    `resolve_cvvdp_loop` Libjxl-strict invariant.
+  - Phase 4 (`32581839`, seed `9c1cfa3e`): buttloop wiring + JOD
+    calibration seed table at `vardct/cvvdp_targets.rs`.
+  - Phase 5 (`206b874e`): CPU CVVDP backend integration via
+    `cvvdp-loop-cpu` feature + `with_cvvdp_use_cpu` builder API.
+    Output byte-identical to GPU backend; ~1.55× wall vs butteraugli
+    CPU at e=8.
+  - Phase 6 (`8b5a13a7`): 4-backend × 1,134-cell tracking sweep +
+    Pareto analysis. **Verdict: OPT_IN_ONLY** per RFC §5.4
+    (see [`CVVDP_FORK_DECISION.md`](CVVDP_FORK_DECISION.md)). cvvdp
+    Pareto-wins on its own metric on CID22 photos (100% of e=8 cells
+    score higher on `cvvdp_gpu`, mean +0.005 to +0.31 JOD across
+    distances); butteraugli leads on bytes-at-same-distance everywhere
+    because the cvvdp target table is uncalibrated (+155% to +286%
+    file size at the same `distance` parameter on CID22 photos).
+    60/60 multi-decoder roundtrips PASS (jxl-oxide + djxl + jxl-rs);
+    REVERT branch closed.
+- 2026-05-24: Phase 7 docs closeout. cvvdp + cvvdp-loop-cpu features
+  shipped behind opt-in API; CHANGELOG + README + this status line
+  updated. Distance-table calibration left as future work per
+  RFC §2.3 TBD and `CVVDP_FORK_DECISION.md` §11. The opt-in is
+  callable today via `LossyConfig::with_cvvdp_loop(Some(true))` plus
+  `--features cvvdp-loop` (GPU) or `--features cvvdp-loop-cpu` (CPU).

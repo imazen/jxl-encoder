@@ -4,6 +4,85 @@
 
 ### Added
 
+- **cvvdp fork — opt-in ColorVideoVDP-driven quantization loop**
+  (RFC [`docs/RFC_CVVDP_FORK.md`](docs/RFC_CVVDP_FORK.md), Phase 6
+  decision memo [`docs/CVVDP_FORK_DECISION.md`](docs/CVVDP_FORK_DECISION.md)).
+  Six-phase arc replaces the per-iteration butteraugli score+diffmap
+  inside the buttloop with cvvdp (Mantiuk et al. 2024) when the
+  caller opts in. **Default OFF** per Phase 6 verdict OPT_IN_ONLY —
+  cvvdp Pareto-wins on its own metric on CID22 photos (100% of e=8
+  cells score better on `cvvdp_gpu`, mean +0.005 to +0.31 JOD across
+  distances) but the uncalibrated distance-target table costs +155%
+  to +286% bytes at the same `distance` parameter (cvvdp targets
+  calibration left as future work per RFC §2.3 TBD). Surface:
+  - `--features cvvdp-loop` cargo feature (GPU backend, requires
+    CUDA at build + load time; wraps `cvvdp-gpu`) shipped in Phase 3
+    (`57757ff8`).
+  - `--features cvvdp-loop-cpu` cargo feature (pure-Rust CPU
+    backend, no CUDA, runs anywhere; wraps `cvvdp-cpu`) shipped in
+    Phase 5 (`206b874e`). ~1.55× wall vs butteraugli CPU at e=8;
+    output byte-identical to the GPU backend.
+  - `LossyConfig::with_cvvdp_loop(Option<bool>)` builder setter and
+    matching `cvvdp_loop()` getter shipped in Phase 3 (`57757ff8`).
+  - `LossyConfig::with_cvvdp_use_cpu(Option<bool>)` builder setter
+    and matching `cvvdp_use_cpu()` getter shipped in Phase 5
+    (`206b874e`). `Some(true)` pins the cvvdp buttloop to CPU even
+    when `cvvdp-loop` (GPU) is compiled in.
+  - Phase 4 wiring (`32581839`) routes the cvvdp backend through the
+    buttloop with the JOD calibration seed table at
+    `jxl-encoder/src/vardct/cvvdp_targets.rs` (`9c1cfa3e` seed).
+  - `EncoderStrategy::Libjxl` strict cjxl-parity invariant preserved
+    — the `resolve_cvvdp_loop` helper forces cvvdp OFF under Libjxl
+    regardless of caller field / cargo feature, so the W44 byte-lock
+    cells stay BYTE-IDENTICAL.
+
+### Changed
+
+- **Phase 2 refactor — `ButteraugliBackend` trait renamed to
+  `PerceptualBackend`** (`8c6e91cc`, shipped 2026-05-24). Trait shape
+  unchanged (still `name() / set_reference / compare_with_reference`);
+  the rename generalises the abstraction so the cvvdp backends slot in
+  alongside the existing CPU/GPU butteraugli backends from
+  W44-PHASE3-B1 (`c121c08e`). Crate-private trait (`pub(crate)`), no
+  public-API surface change.
+
+### Documentation
+
+- **`docs/RFC_CVVDP_FORK.md`** — 12-section RFC scoping the cvvdp fork
+  (architecture, calibration seeds, sweep design, RFC §5.4 ship-rule).
+  Status flipped from SCOPING → SHIPPED-OPT-IN with the full 6-phase
+  commit chain recorded in §9 (Phase 7 docs closeout this entry).
+- **`docs/CVVDP_FORK_DECISION.md`** — Phase 6 decision memo
+  (`8b5a13a7`). Per-corpus / per-metric Pareto wins, per-distance
+  bytes deltas, cvvdp_gpu score deltas, wall-time trade-offs, RFC §5.4
+  application, 11-point limitations + caveats. The OPT_IN_ONLY verdict
+  rests on this data.
+- **`docs/CVVDP_W44_GATE_TRANSFER.md`** — scoping audit of the W44
+  cost-model gate cluster (W44-91 / W44-96 / W44-105 / W44-117). Not
+  triggered in Phase 6; lives as forward-reference for a future
+  distance-table-calibration chunk that would re-enable the
+  default-flip discussion.
+- **Phase briefs**: `docs/RFC_CVVDP_PHASE3_BRIEF.md` through
+  `docs/RFC_CVVDP_PHASE7_OPTIN_BRIEF.md` archived alongside the RFC.
+
+### Measured
+
+- **`benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv`** — Phase 6
+  tracking benchmark (`8b5a13a7`). 4 backends × 54 images × 7 distances
+  × 3 efforts = 1,134 cells per backend (`B`, `B_GPU`, `C_GPU`,
+  `C_CPU`). Every encoded output decoded via jxl-oxide and scored
+  with butteraugli (CPU+GPU), cvvdp-gpu, and SSIMULACRA2.
+  4,536 rows total. Corpora: CID22 (photos, 41 images), GB82-SC
+  (screenshots, 11 images), W44-S1 (mixed, 2 images).
+- **`scripts/cvvdp_pareto_analysis.py`** + `_2026-05-24.tsv` +
+  `_2026-05-24.meta` — Pareto analyzer (`8b5a13a7`) computing
+  per-(corpus, metric) Pareto wins and applying the RFC §5.4
+  ship-rule. Verdict line: `VERDICT: OPT_IN_ONLY`.
+- **`benchmarks/cvvdp_phase6_decoder_spotcheck_2026-05-24.tsv`** —
+  60-check multi-decoder roundtrip on 20 cvvdp-encoded cells
+  (5 fixtures × 2 distances × 2 cvvdp backends) through jxl-oxide +
+  djxl + jxl-rs. **60/60 PASS.** REVERT branch of RFC §5.4 closed.
+
 - **W44-162 — HDR ToneMapping `relative_to_max_display` + `linear_below`
   surfaced through public API (issue #46 chunk 1a closed)**
   (`jxl-encoder/src/headers/file_header.rs`, `jxl-encoder/src/api.rs`,
