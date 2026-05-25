@@ -967,7 +967,8 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     // ABOVE cjxl SSIM2 — true wins) and are preserved.
     //
     // Env hook for A/B: `JXL_W44_176_DISABLE=1` forces the exclude OFF.
-    let exclude_env = std::env::var_os("JXL_W44_176_DISABLE").is_some_and(|v| v != "0" && v != "");
+    let exclude_env =
+        std::env::var_os("JXL_W44_176_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
     if terminal_class_exclude && !exclude_env && w44_176_is_terminal_class(proxies) {
         return 1.0;
     }
@@ -988,7 +989,7 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     //
     // Env hook for A/B: `JXL_W44_AUDIT_6_DISABLE=1` forces OFF.
     let audit_6_env =
-        std::env::var_os("JXL_W44_AUDIT_6_DISABLE").is_some_and(|v| v != "0" && v != "");
+        std::env::var_os("JXL_W44_AUDIT_6_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
     if high_colour_class_exclude && !audit_6_env && w44_audit_6_is_high_colour_class(proxies) {
         return 1.0;
     }
@@ -1615,7 +1616,7 @@ impl VarDctEncoder {
         // (shared with the Phase 1 W44-109 site). Both lifts gate on
         // the same `high_colour_class_exclude` resolved field.
         let audit_6_env_e8e9 =
-            std::env::var_os("JXL_W44_AUDIT_6_DISABLE").is_some_and(|v| v != "0" && v != "");
+            std::env::var_os("JXL_W44_AUDIT_6_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
         let high_colour_class_exclude_e8e9 = self.resolved_improvements.high_colour_class_exclude
             && !audit_6_env_e8e9
             && w44_audit_6_is_high_colour_class(self.zenanalyze_proxies.as_ref());
@@ -2395,7 +2396,7 @@ impl VarDctEncoder {
             #[cfg(feature = "__internal_recon_hook")]
             let capture_steps = iter == iters && recon_hook::steps_capture_enabled();
             #[cfg(not(feature = "__internal_recon_hook"))]
-            let capture_steps = false;
+            let _capture_steps = false;
 
             #[cfg(feature = "__internal_recon_hook")]
             let mut step_after_recon: Option<recon_hook::Xyb> = None;
