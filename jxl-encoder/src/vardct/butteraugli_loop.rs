@@ -412,12 +412,67 @@ pub const W44_176_TERMINAL_CLASS_FCBR_MIN: f32 = 0.70;
 /// huge byte cost.
 ///
 /// **Semantics**: when proxies are present AND `m3_colourfulness >=
-/// [`W44_AUDIT_6_HIGH_COLOUR_M3_MIN`]`, the W44-109 lift is suppressed
-/// regardless of the W44-176 terminal predicate (composes via OR — either
-/// exclude fires the bypass). When proxies are absent (non-sRGB-u8
-/// layouts, streaming/animation paths), this exclude cannot fire — the
-/// existing W44-176 behaviour is preserved verbatim.
+/// [`W44_AUDIT_6_HIGH_COLOUR_M3_MIN`]` AND (`flat_color_block_ratio >=
+/// [`W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN`]` OR `edge_density >=
+/// [`W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN`]`), the W44-109 lift is
+/// suppressed regardless of the W44-176 terminal predicate (composes via
+/// OR — either exclude fires the bypass). When proxies are absent
+/// (non-sRGB-u8 layouts, streaming/animation paths), this exclude cannot
+/// fire — the existing W44-176 behaviour is preserved verbatim.
 pub const W44_AUDIT_6_HIGH_COLOUR_M3_MIN: f32 = 80.0;
+
+/// W44-AUDIT-6 Phase 3 (2026-05-24): minimum
+/// [`crate::vardct::encoder::ZenanalyzeProxies::flat_color_block_ratio`]
+/// at which a high-colour image is admitted to the W44-AUDIT-6 exclude.
+///
+/// Disjunctive with [`W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN`]: either
+/// proxy clearing its threshold passes the screenshot/mixed-content
+/// admission, leaving photo-class high-colour images outside the exclude
+/// (so they keep the W44-109 lift).
+///
+/// **Why this is 0.5**: the AUDIT-7 wider-corpus bench
+/// (`benchmarks/w44_audit_7_wider_corpus_2026-05-24.tsv`) surfaced 2 CLIC
+/// web photos that fire the Phase 1 `m3 >= 80` predicate but DON'T want
+/// the W44-109 lift killed (the lift is a structurally-bad pareto trade
+/// for them: clic_22ea12 mean dSsim2 = -1.54, clic_0c49a5 mean dSsim2 =
+/// -0.54, both for only ~1% bytes saved). AUDIT-7 plus the Phase 3 probe
+/// at `benchmarks/w44_audit_6_phase3_proxy_probe_2026-05-24.tsv` measured
+/// `fcbr`:
+///
+/// - codec_wiki (FIRE-GOOD): fcbr = 0.904 (mixed text/UI screenshot)
+/// - 1189261    (FIRE-GOOD): fcbr = 0.003 (landscape photo — clears via
+///   edge_density disjunct instead)
+/// - clic_22ea12 (FIRE-BAD): fcbr = 0.278 (web photo)
+/// - clic_0c49a5 (FIRE-BAD): fcbr = 0.080 (web photo)
+///
+/// Threshold 0.5 sits in the 3.25× gap between codec_wiki's 0.904 (the
+/// only GOOD that clears this disjunct) and the highest BAD fcbr 0.278.
+/// `[0.28, 0.5)` is a deliberate safety margin — any future high-colour
+/// screenshot would need fcbr ≥ 0.5 to enter the exclude via this
+/// disjunct, well above any measured photo.
+pub const W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN: f32 = 0.5;
+
+/// W44-AUDIT-6 Phase 3 (2026-05-24): minimum
+/// [`crate::vardct::encoder::ZenanalyzeProxies::edge_density`] at which a
+/// high-colour image is admitted to the W44-AUDIT-6 exclude.
+///
+/// Disjunctive with [`W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN`]: either proxy
+/// clearing its threshold passes admission.
+///
+/// **Why this is 0.45**: 1189261 (FIRE-GOOD landscape photo) has fcbr
+/// 0.003 (well below the fcbr disjunct cutoff) but edge_density 0.490
+/// (the landscape's sharp horizon + foliage detail). The 2 CLIC FIRE-BAD
+/// images have edge_density 0.167 (clic_22ea12 — soft-focus web photo)
+/// and 0.336 (clic_0c49a5 — slightly more textured photo but still well
+/// below 0.45). Threshold 0.45 sits in the 1.46× gap between 1189261's
+/// 0.490 and clic_0c49a5's 0.336.
+///
+/// Note: several NO-FIRE (m3 < 80) photo images have edge_density above
+/// 0.45 (1420710 0.93, 1531677 0.88, 1044329 0.55, etc.). The
+/// disjunction is harmless on them because the outer m3 ≥ 80 predicate
+/// is short-circuited first — none of those NO-FIRE images can ever
+/// enter the AUDIT-6 exclude regardless of fcbr/edge_density.
+pub const W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN: f32 = 0.45;
 
 /// W44-109: maximum effort at which the screenshot-class adaptive-quant
 /// pre-scale fires. Mirrors the W44-105 buttloop seed-scale mechanism
@@ -795,16 +850,28 @@ pub(crate) fn w44_176_is_terminal_class(
         && p.flat_color_block_ratio >= W44_176_TERMINAL_CLASS_FCBR_MIN
 }
 
-/// W44-AUDIT-6 Phase 1: returns `true` when the
+/// W44-AUDIT-6 Phase 1+3: returns `true` when the
 /// [`crate::vardct::encoder::ZenanalyzeProxies`] proxies indicate a
-/// high-colour mixed-content screenshot — `m3_colourfulness >=
-/// [`W44_AUDIT_6_HIGH_COLOUR_M3_MIN`]` (= 80.0).
+/// high-colour mixed-content screenshot or high-edge-density landscape:
+/// `m3_colourfulness >= [`W44_AUDIT_6_HIGH_COLOUR_M3_MIN`]` (= 80.0) AND
+/// (`flat_color_block_ratio >= [`W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN`]` (=
+/// 0.5) OR `edge_density >= [`W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN`]`
+/// (= 0.45)).
+///
+/// Phase 3 tightens the Phase 1 `m3 >= 80` predicate with a
+/// fcbr-or-edge_density disjunction to exclude the 2 CLIC web photos
+/// (clic_22ea12 + clic_0c49a5) that fire `m3 >= 80` but take measurable
+/// SSIM2 loss (mean -1.54 / -0.54 vs cjxl) for negligible bytes gain
+/// (~1%). The 2 FIRE-GOOD images (codec_wiki / 1189261) split:
+/// codec_wiki passes via fcbr (0.904 ≥ 0.5); 1189261 passes via
+/// edge_density (0.490 ≥ 0.45). Calibration data:
+/// `benchmarks/w44_audit_6_phase3_proxy_probe_2026-05-24.tsv`.
 ///
 /// Returns `false` when proxies are absent (non-sRGB-u8 layouts,
 /// streaming/animation paths). The W44-AUDIT-6 high-colour exclude is a
 /// defence-in-depth narrow — it only fires when proxies are present AND
-/// `m3` exceeds the cutoff; otherwise the existing W44-109/W44-176
-/// behaviour is preserved.
+/// the (m3, fcbr-or-edge_density) admission passes; otherwise the
+/// existing W44-109/W44-176 behaviour is preserved.
 ///
 /// Companion of [`w44_176_is_terminal_class`]; the two compose with OR
 /// inside the W44-109 gate (either predicate matching bypasses the
@@ -816,7 +883,13 @@ pub(crate) fn w44_audit_6_is_high_colour_class(
     let Some(p) = proxies else {
         return false;
     };
-    p.m3_colourfulness >= W44_AUDIT_6_HIGH_COLOUR_M3_MIN
+    if p.m3_colourfulness < W44_AUDIT_6_HIGH_COLOUR_M3_MIN {
+        return false;
+    }
+    // Phase 3 disjunction: high fcbr (screenshot/mixed-content) OR high
+    // edge_density (sharp landscape). Either passes admission.
+    p.flat_color_block_ratio >= W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN
+        || p.edge_density >= W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN
 }
 
 /// W44-129 Chunk C variant of [`resolved_adaptive_quant_qf_seed_scale`]
@@ -898,15 +971,20 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     if terminal_class_exclude && !exclude_env && w44_176_is_terminal_class(proxies) {
         return 1.0;
     }
-    // W44-AUDIT-6 Phase 1: high-colour-class exclude — suppress the
-    // W44-109 lift on mixed-content screenshots whose
-    // `m3_colourfulness >= W44_AUDIT_6_HIGH_COLOUR_M3_MIN` (= 80.0). The
-    // lift IS buying SSIM2 on these cells (per AUDIT-4 measurement on
-    // codec_wiki e7 d=4: +4.36 SSIM2 above no-lift baseline, matching
-    // cjxl) but at a 44% byte cost — a structurally-bad pareto trade
-    // mirroring W44-176's terminal case. The W44-109 win cluster
-    // (text-class screenshots at m3 ∈ [14, 29]) is preserved (their
-    // proxies fail the m3 >= 80 discriminator).
+    // W44-AUDIT-6 Phase 1+3: high-colour-class exclude — suppress the
+    // W44-109 lift on mixed-content screenshots / sharp landscapes whose
+    // `m3_colourfulness >= W44_AUDIT_6_HIGH_COLOUR_M3_MIN` (= 80.0) AND
+    // (`fcbr >= 0.5` OR `edge_density >= 0.45`). Phase 1 used `m3 >= 80`
+    // alone; Phase 3 (per AUDIT-7 wider-corpus bench) added the
+    // fcbr-OR-edge_density disjunction to exclude CLIC web photos
+    // (clic_22ea12 + clic_0c49a5) where the lift costs SSIM2 with no
+    // bytes gain. The lift IS buying SSIM2 on the remaining FIRE-GOOD
+    // cells (per AUDIT-4 measurement on codec_wiki e7 d=4: +4.36 SSIM2
+    // above no-lift baseline, matching cjxl) but at a 44% byte cost —
+    // a structurally-bad pareto trade mirroring W44-176's terminal
+    // case. The W44-109 win cluster (text-class screenshots at m3 ∈
+    // [14, 29]) is preserved (their proxies fail the m3 >= 80 outer
+    // predicate).
     //
     // Env hook for A/B: `JXL_W44_AUDIT_6_DISABLE=1` forces OFF.
     let audit_6_env =
@@ -3528,6 +3606,23 @@ mod tuning_tests {
         }
     }
 
+    /// W44-AUDIT-6 Phase 3 test helper: builds proxies with explicit
+    /// edge_density so the Phase 3 fcbr-or-edge_density disjunction can
+    /// be exercised directly.
+    fn proxies_with_edge(
+        luma_var: f32,
+        fcbr: f32,
+        edge_density: f32,
+        m3: f32,
+    ) -> crate::vardct::encoder::ZenanalyzeProxies {
+        crate::vardct::encoder::ZenanalyzeProxies {
+            m3_colourfulness: m3,
+            flat_color_block_ratio: fcbr,
+            edge_density,
+            luma_var,
+        }
+    }
+
     #[test]
     fn w44_176_is_terminal_class_terminal_fires() {
         // terminal proxies (W44-176 probe): luma_var=1706, fcbr=0.833
@@ -3829,6 +3924,94 @@ mod tuning_tests {
             scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
             "W44-AUDIT-6 must be a no-op when proxies absent"
         );
+    }
+
+    // W44-AUDIT-6 Phase 3 (2026-05-24): fcbr-or-edge_density disjunction
+    // tests — tighten the Phase 1 `m3 >= 80` predicate to exclude CLIC
+    // web photos that fired AUDIT-6 in the wider-corpus bench.
+
+    #[test]
+    fn w44_audit_6_phase3_constants_are_documented_values() {
+        // Pin Phase 3 thresholds against the proxy-probe TSV
+        // `benchmarks/w44_audit_6_phase3_proxy_probe_2026-05-24.tsv`.
+        // codec_wiki passes via fcbr (0.904 ≥ 0.5); 1189261 passes via
+        // edge_density (0.490 ≥ 0.45); the 2 CLIC FIRE-BAD images
+        // (clic_22ea12 fcbr=0.278/ed=0.167, clic_0c49a5 fcbr=0.080/
+        // ed=0.336) clear neither.
+        assert_eq!(W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN, 0.5);
+        assert_eq!(W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN, 0.45);
+    }
+
+    #[test]
+    fn w44_audit_6_phase3_codec_wiki_passes_via_fcbr() {
+        // codec_wiki: M3=145.73 ≥ 80, fcbr=0.904 ≥ 0.5 → admitted.
+        let p = proxies_with_edge(1374.0, 0.904, 0.040, 145.73);
+        assert!(
+            w44_audit_6_is_high_colour_class(Some(&p)),
+            "codec_wiki must still fire post-Phase 3 (fcbr disjunct passes)"
+        );
+    }
+
+    #[test]
+    fn w44_audit_6_phase3_landscape_1189261_passes_via_edge_density() {
+        // 1189261: M3=98.84 ≥ 80, fcbr=0.003 ≪ 0.5 BUT edge_density=
+        // 0.490 ≥ 0.45 → admitted via edge_density disjunct.
+        let p = proxies_with_edge(3087.0, 0.003, 0.490, 98.84);
+        assert!(
+            w44_audit_6_is_high_colour_class(Some(&p)),
+            "1189261 must still fire post-Phase 3 (edge_density disjunct passes)"
+        );
+    }
+
+    #[test]
+    fn w44_audit_6_phase3_clic_22ea12_rejected_neither_disjunct() {
+        // clic_22ea12 (FIRE-BAD CLIC web photo): M3=105.30 ≥ 80, fcbr=
+        // 0.278 < 0.5, edge_density=0.167 < 0.45 → REJECTED post-Phase 3
+        // (firing in Phase 1 with -3.84 worst-cell SSIM2 cost).
+        let p = proxies_with_edge(1411.0, 0.278, 0.167, 105.30);
+        assert!(
+            !w44_audit_6_is_high_colour_class(Some(&p)),
+            "clic_22ea12 must NOT fire post-Phase 3 (clears neither fcbr nor edge_density disjunct)"
+        );
+    }
+
+    #[test]
+    fn w44_audit_6_phase3_clic_0c49a5_rejected_neither_disjunct() {
+        // clic_0c49a5 (FIRE-BAD CLIC web photo): M3=95.91 ≥ 80, fcbr=
+        // 0.080 < 0.5, edge_density=0.336 < 0.45 → REJECTED post-Phase 3.
+        let p = proxies_with_edge(4069.0, 0.080, 0.336, 95.91);
+        assert!(
+            !w44_audit_6_is_high_colour_class(Some(&p)),
+            "clic_0c49a5 must NOT fire post-Phase 3 (clears neither disjunct)"
+        );
+    }
+
+    #[test]
+    fn w44_audit_6_phase3_exclude_preserves_lift_for_clic_photos() {
+        // End-to-end at the W44-109 site: Phase 3 admission failure
+        // means the lift fires as it did pre-Phase 1 (no exclude).
+        let cases = [
+            ("clic_22ea12", 1411.0, 0.278, 0.167, 105.30),
+            ("clic_0c49a5", 4069.0, 0.080, 0.336, 95.91),
+        ];
+        for (name, lv, fcbr, ed, m3) in cases {
+            let p = proxies_with_edge(lv, fcbr, ed, m3);
+            let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
+                7,
+                0,
+                true,
+                4.0,
+                Some(m3),
+                crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+                Some(&p),
+                true, // terminal_class_exclude ON
+                true, // high_colour_class_exclude ON (Zenjxl default)
+            );
+            assert_eq!(
+                scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
+                "{name} must KEEP W44-109 lift post-Phase 3 (Phase 3 disjunction excludes it from the AUDIT-6 exclude)"
+            );
+        }
     }
 
     // W44-145: per-block adaptive qac scaling tests.
