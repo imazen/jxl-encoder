@@ -105,6 +105,7 @@ pub mod transform;
 pub(crate) mod w44_181_dump;
 pub(crate) mod w44_182_dump;
 pub(crate) mod w44_76_dump;
+pub(crate) mod w44_audit_8_p4_dump;
 pub(crate) mod xyb;
 
 pub use encoder::{VarDctEncoder, VarDctOutput};

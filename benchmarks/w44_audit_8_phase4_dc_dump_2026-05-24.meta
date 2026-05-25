@@ -1,0 +1,125 @@
+# W44-AUDIT-8 Phase 4: per-DC-block dump on clic_22ea12 e7 d=4.
+#
+# Predecessors:
+#   AUDIT-8 P1 (memory): 30-cell PHOTO/CLIC SSIM2-deficit cluster at d=4 (worst:
+#     clic_22ea12 e7 d=4, dSsim2 = -3.84 vs cjxl).
+#   AUDIT-8 P2 (commit bb96ca1f): CfL Mode C 30 NEUTRAL / 0 WIN / 0 LOSS — RULED OUT.
+#   AUDIT-8 P3 (commit 1bddf371): per-block AC strategy dump on clic_22ea12 e7 d=4.
+#     97.5% strategy agreement; 0/30 mismatches in the worst region; qac delta +0.024.
+#     Strategy + qac BOTH at parity. Pointed Phase 4 at the DC pipeline.
+#
+# Phase 4 mechanism:
+#   - Ours: added `vardct/w44_audit_8_p4_dump.rs` (env-gated TSV writer) +
+#     single dump call after Step 7 of `transform.rs::process_block_main`
+#     that iterates `covered_y x covered_x` and emits (bx, by, channel,
+#     raw_strategy, dc_raw, dc_quant) for ALL strategies and ALL channels.
+#     Env: JXL_W44_AUDIT_8_P4_DUMP=<dir>. Zero overhead when unset (36/36
+#     hash-locks BYTE-IDENTICAL).
+#   - Libjxl: patched `enc_modular.cc::AddVarDCTDC` `nl_dc` branch (the e7
+#     hot path: nl_dc=true via `enc_cache.cc` because speed_tier<kFalcon)
+#     to dump (bx, by, c, dc_raw, dc_quant) inside the `QuantizeWP` loop.
+#     Patch lives at /home/lilith/work/jxl-efforts/libjxl--w44-76-per-block-debug-dump/
+#     (local-only, NOT committed per CLAUDE.md "NEVER touch other repos").
+#
+# Raw data:
+#   /tmp/w44_audit_8_phase4_dc_dumps/clic_22ea12_WORST_e7_d4_ours/dc_per_block_ours.tsv
+#     (49,153 rows: 128*128 DC blocks * 3 channels, bx [0,127] by [0,127])
+#   /tmp/w44_audit_8_phase4_dc_dumps/clic_22ea12_WORST_e7_d4_cjxl/dc_per_block_libjxl.tsv
+#     (49,153 rows, same shape)
+#
+# Analyzer: w44_audit_8_phase4_analyze.py (output: w44_audit_8_phase4_analysis_2026-05-24.txt)
+#
+# Headline finding (RC IDENTIFIED, see analysis_2026-05-24.txt for full table):
+#
+#   ▸ libjxl quantizes DC at 2X the precision we do.
+#
+#   At effort 7 (kSquirrel < kFalcon), libjxl sets `nl_dc = true` per
+#   enc_cache.cc:233 ("speed_tier < kFalcon"), which sets
+#   `extra_dc_precision = 1` → `mul = 2` in AddVarDCTDC, which scales
+#   the per-channel `inv_factor` by 2. The Y channel quantized values
+#   come out 2x ours. Per-channel `qexact*2%` (rate where `2*ours_q ==
+#   cjxl_q`):
+#
+#     channel | n      | raw_max  | qexact% | qexact*2%
+#     Y       | 16384  | 2.94e-2  |   0.00  |   49.11
+#     X       | 16384  | 6.65e-4  |   1.19  |   54.30
+#     B       | 16384  | 2.86e-2  |  11.19  |   50.87
+#
+#   The other ~50% are off by EXACTLY ±1 in `cjxl_q - 2*ours_q`:
+#
+#     "Same dc_raw (within 1e-5) but |ours*2 - cjxl_q| >= 1"
+#     - total: 7929 / 16384 Y blocks (48.39%)
+#     - top diffs (ours*2 - cjxl): [(-1, 3888), (1, 4041)]
+#
+#   This is pure rounding-boundary noise at the half-step. EXACTLY what
+#   you'd see if both sides quantize the same `dc_raw * inv_factor`
+#   value to the nearest integer at scales differing by 2x.
+#
+#   Spatial: every 3x3 region of the Y channel shows ~46-52% 2x-exact
+#   match with mean residual 0.49-0.57. The pattern is structural and
+#   uniform — NOT localized to the top-right where SSIM2 dropped -9.68.
+#
+# Mechanism on our side:
+#   - vardct/transform.rs:417 + :838 — DC quantization computes
+#       `inv_factor = INV_DC_QUANT[c] * params.scale_dc`
+#     and writes `(dc * inv_factor).round() as i16` (Y) or
+#     `(dc * inv_factor - y_dc * dc_cfl_factor).round() as i16` (X/B).
+#     There is NO `mul = 2` for `nl_dc = true`.
+#   - vardct/bitstream.rs:1175, frame.rs:549, bitstream.rs:5016 —
+#     bitstream emits `extra_dc_precision = 0` HARDCODED, with no
+#     branch on effort/speed_tier.
+#   - We never enter the "QuantizeWP" path libjxl uses at e<=7. We
+#     also never apply the 0.62 deadzone or the snap-to-even-multiple
+#     of 2 (libjxl QuantizeWP lines 1549, 1558) that produce the
+#     residual-coding shape libjxl expects for non-linear DC.
+#
+# Libjxl divergence reference:
+#   - enc_cache.cc:232-234 — `nl_dc = speed_tier < kFalcon`
+#   - enc_modular.cc:1580-1582 — `extra_dc_precision = nl_dc ? 1 : 0`,
+#     `mul = 1 << extra_dc_precision`
+#   - enc_modular.cc:1640-1674 — `nl_dc` branch with `QuantizeWP`
+#   - quantizer.h:88 — `inv_mul_dc_[c] = GetInvDcStep(c)` (the per-channel
+#     scale we mirror with `INV_DC_QUANT[c] * scale_dc`)
+#
+# Reproducer:
+#   cargo run -p jxl-encoder --release \
+#     --features 'parallel butteraugli-loop ssim2-loop' \
+#     --example w44_audit_8_phase4_dc_dump
+#   python3 benchmarks/w44_audit_8_phase4_analyze.py \
+#     /tmp/w44_audit_8_phase4_dc_dumps/clic_22ea12_WORST_e7_d4_ours \
+#     /tmp/w44_audit_8_phase4_dc_dumps/clic_22ea12_WORST_e7_d4_cjxl
+#
+# Phase 5 fix-shape (PROPOSAL):
+#
+#   Plumb `nl_dc` (effort-gated, defaults true at e<=7) through to:
+#   (a) `params.scale_dc` so `inv_factor` doubles when nl_dc=true;
+#   (b) `extra_dc_precision` bitstream emission in DC group header;
+#   (c) DC entropy-coding path so the residual-coding shape matches
+#       libjxl's `QuantizeWP` output (deadzone 0.62, snap-to-even
+#       residuals > |2|, WP-prediction subtraction before round).
+#
+#   Estimated wall: 2-3 sessions to implement + measure (multi-site
+#   plumbing + bitstream symmetric change + per-cell decoder roundtrip
+#   verification + corpus sweep to confirm SSIM2 lifts vs bytes-neutral).
+#
+#   Bisection candidates if a single switch doesn't recover SSIM2:
+#   - Land scale-only (extra_dc_precision=1, double inv_factor, leave
+#     QuantizeWP path untouched). Measures how much SSIM2 comes from
+#     pure precision doubling vs the deadzone+WP-prediction shape.
+#   - Land QuantizeWP-only (keep inv_factor as-is, route DC through
+#     WP-prediction quantizer). Measures contribution of the WP path.
+#   - Land both together (full libjxl parity).
+#
+# DO NOT (binding for future agents):
+#   - DO NOT add a new entropy_mul / sub-discriminator on clic-class
+#     CLIC2025_WEB cells at d=4. Per-block evidence shows AC strategy AND
+#     DC scaling are the wedge; cost-model tweaks can't bridge a 2X
+#     quantizer-step gap.
+#   - DO NOT cite "FMA precision" for this cluster (per W44-66 user
+#     correction). The mechanism is structural: 1X vs 2X DC step.
+#   - DO NOT commit changes to /home/lilith/work/jxl-efforts/libjxl--w44-76-per-block-debug-dump/.
+#   - DO NOT remove the `dump_dc` env-gated probe — it's the only way to
+#     verify Phase 5 fix attempts produce DC values matching cjxl.
+#   - DO NOT widen the Phase 5 fix beyond effort 7 down (e<=7) without
+#     measuring at e8+. cjxl uses nl_dc=true only at speed_tier<kFalcon
+#     (e<=7); at e8+ both use 1X step already.

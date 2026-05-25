@@ -1,0 +1,61 @@
+ours rows: 49152, cjxl rows: 49152
+common (bx,by,channel): 49152
+
+=== Per-channel raw + quant divergence ===
+ chan        n     raw_max   raw_meanL1   qexact%   qexact*2%  qmean(ours)  qmean(cjxl)  qmedian(ours)  qmedian(cjxl)
+    0    16384   6.651e-04    2.064e-06     1.190      54.297       -6.201      -12.402             -9            -18
+    1    16384   2.943e-02    6.850e-05     0.000      49.115      135.628      271.247            143            285
+    2    16384   2.855e-02    6.198e-05    11.194      50.867        2.014        3.992              3              6
+
+=== 3x3 region: Y-channel dc_quant 2x-exact match rate ===
+  2x-exact match rate (ours*2 == cjxl_q):
+    top:  48.70%  50.68%  46.16%
+    mid:  51.47%  46.54%  51.35%
+    bot:  47.84%  50.22%  49.12%
+  mean(|cjxl_q - 2*ours_q|) [post-scale Y-quant residual]:
+    top:   0.573   0.494   0.538
+    mid:   0.494   0.548   0.486
+    bot:   0.535   0.552   0.524
+  max|raw_diff| (forward pipeline FP divergence):
+    top: 2.943e-02 4.305e-03 1.383e-05
+    mid: 7.253e-03 9.392e-03 1.276e-05
+    bot: 1.092e-02 2.877e-02 6.328e-03
+
+=== Top-right region (bx in [80,128), by in [0,40)) DRILL-DOWN ===
+  Y channel: first 10 disagreement candidates (ours*2 != cjxl):
+    bx=89 by=0: ours_raw=+6.350429e-01 cjxl_raw=+6.350481e-01 ours_q=139 cjxl_q=279 (ours*2=278, diff=-1) strat=16
+    bx=90 by=0: ours_raw=+6.347690e-01 cjxl_raw=+6.347682e-01 ours_q=139 cjxl_q=279 (ours*2=278, diff=-1) strat=16
+    bx=91 by=0: ours_raw=+6.348895e-01 cjxl_raw=+6.348986e-01 ours_q=139 cjxl_q=279 (ours*2=278, diff=-1) strat=16
+    bx=92 by=0: ours_raw=+6.342354e-01 cjxl_raw=+6.342316e-01 ours_q=139 cjxl_q=279 (ours*2=278, diff=-1) strat=16
+    bx=93 by=0: ours_raw=+6.347564e-01 cjxl_raw=+6.347528e-01 ours_q=139 cjxl_q=279 (ours*2=278, diff=-1) strat=16
+    bx=94 by=0: ours_raw=+6.357259e-01 cjxl_raw=+6.357241e-01 ours_q=140 cjxl_q=279 (ours*2=280, diff=1) strat=16
+    bx=95 by=0: ours_raw=+6.354694e-01 cjxl_raw=+6.354756e-01 ours_q=139 cjxl_q=279 (ours*2=278, diff=-1) strat=16
+    bx=96 by=0: ours_raw=+6.345071e-01 cjxl_raw=+6.345050e-01 ours_q=139 cjxl_q=279 (ours*2=278, diff=-1) strat=16
+    bx=97 by=0: ours_raw=+6.349582e-01 cjxl_raw=+6.349624e-01 ours_q=139 cjxl_q=279 (ours*2=278, diff=-1) strat=16
+    bx=98 by=0: ours_raw=+6.345825e-01 cjxl_raw=+6.345830e-01 ours_q=139 cjxl_q=279 (ours*2=278, diff=-1) strat=16
+
+=== Same dc_raw (within 1e-5) but |ours*2 - cjxl_q| >= 1 ===
+  total: 7929 / 16384 Y blocks (48.39%)
+  top diffs (ours*2 - cjxl): [(-1, 3888), (1, 4041)]
+
+=== Top-20 rows by |ours_q*2 - cjxl_q| (Y channel only) ===
+    bx= 60 by=101: ours_raw=+6.559237e-01 cjxl_raw=+6.846926e-01 ours_q= 144 cjxl_q= 301 (delta=13)
+    bx= 31 by= 30: ours_raw=+6.023012e-01 cjxl_raw=+6.312677e-01 ours_q= 132 cjxl_q= 277 (delta=13)
+    bx= 30 by= 30: ours_raw=+6.000724e-01 cjxl_raw=+6.295049e-01 ours_q= 132 cjxl_q= 276 (delta=12)
+    bx= 28 by= 30: ours_raw=+5.980188e-01 cjxl_raw=+6.244412e-01 ours_q= 131 cjxl_q= 274 (delta=12)
+    bx= 29 by= 30: ours_raw=+5.993689e-01 cjxl_raw=+6.270950e-01 ours_q= 132 cjxl_q= 275 (delta=11)
+    bx= 23 by= 29: ours_raw=+6.819657e-01 cjxl_raw=+7.072343e-01 ours_q= 150 cjxl_q= 311 (delta=11)
+    bx= 61 by=103: ours_raw=+6.590664e-01 cjxl_raw=+6.385806e-01 ours_q= 145 cjxl_q= 281 (delta=9)
+    bx= 61 by=102: ours_raw=+6.558300e-01 cjxl_raw=+6.340547e-01 ours_q= 144 cjxl_q= 279 (delta=9)
+    bx= 61 by=101: ours_raw=+6.543857e-01 cjxl_raw=+6.352825e-01 ours_q= 144 cjxl_q= 279 (delta=9)
+    bx= 60 by=102: ours_raw=+6.757869e-01 cjxl_raw=+6.958835e-01 ours_q= 148 cjxl_q= 305 (delta=9)
+    bx= 28 by= 29: ours_raw=+7.375560e-01 cjxl_raw=+7.193958e-01 ours_q= 162 cjxl_q= 315 (delta=9)
+    bx= 60 by=103: ours_raw=+6.860105e-01 cjxl_raw=+7.082994e-01 ours_q= 151 cjxl_q= 310 (delta=8)
+    bx= 30 by= 29: ours_raw=+7.363548e-01 cjxl_raw=+7.201924e-01 ours_q= 162 cjxl_q= 316 (delta=8)
+    bx= 60 by=100: ours_raw=+6.584346e-01 cjxl_raw=+6.762287e-01 ours_q= 145 cjxl_q= 297 (delta=7)
+    bx= 31 by= 31: ours_raw=+4.994060e-01 cjxl_raw=+4.869159e-01 ours_q= 110 cjxl_q= 213 (delta=7)
+    bx= 31 by= 29: ours_raw=+7.364479e-01 cjxl_raw=+7.198837e-01 ours_q= 162 cjxl_q= 317 (delta=7)
+    bx= 65 by=124: ours_raw=+6.651248e-01 cjxl_raw=+6.778392e-01 ours_q= 146 cjxl_q= 298 (delta=6)
+    bx= 61 by=100: ours_raw=+6.602672e-01 cjxl_raw=+6.450590e-01 ours_q= 145 cjxl_q= 284 (delta=6)
+    bx= 29 by= 29: ours_raw=+7.373798e-01 cjxl_raw=+7.252196e-01 ours_q= 162 cjxl_q= 318 (delta=6)
+    bx= 28 by= 31: ours_raw=+4.958985e-01 cjxl_raw=+4.840831e-01 ours_q= 109 cjxl_q= 212 (delta=6)
