@@ -184,7 +184,11 @@ pub fn gab_smooth_avx2(
             let diagonals = tl + tr + bl + br;
 
             // result = w_center * center + w1 * cardinals + w2 * diagonals
-            let result = wc_v.mul_add(center, w1_v.mul_add(cardinals, w2_v * diagonals));
+            // libjxl-parity: explicit Mul + Add (not MulAdd fusion). Matches
+            // libjxl `convolve_symmetric5.cc:66-69` `WeightedSum` which uses
+            // `Mul(wx2, Add(...))` + `Add(sum_2, Add(sum_1, sum_0))` — not FMA.
+            // See gab-001 in docs/SIMD_PARITY_KNOWN_DIVERGENCES.md.
+            let result = wc_v * center + w1_v * cardinals + w2_v * diagonals;
 
             // Store 8 results
             crate::store_f32x8(output, row_c + x, result);
@@ -281,7 +285,10 @@ pub fn gab_smooth_neon(
 
             let cardinals = top + bottom + left + right;
             let diagonals = tl + tr + bl + br;
-            let result = wc_v.mul_add(center, w1_v.mul_add(cardinals, w2_v * diagonals));
+            // libjxl-parity: explicit Mul + Add (not MulAdd fusion). Matches
+            // libjxl `convolve_symmetric5.cc:66-69` which uses `Mul + Add`
+            // (no FMA). See gab-001 in docs/SIMD_PARITY_KNOWN_DIVERGENCES.md.
+            let result = wc_v * center + w1_v * cardinals + w2_v * diagonals;
 
             let out_arr: &mut [f32; 4] =
                 (&mut output[row_c + x..row_c + x + 4]).try_into().unwrap();
@@ -381,14 +388,11 @@ mod tests {
         }
     }
 
-    /// STRICT bit-exact variant — currently ignored due to documented FMA
-    /// association divergence.  Kept in the suite so a future fix that
-    /// aligns scalar to use `mul_add` (or the SIMD path to drop the FMA)
-    /// is verified.
+    /// STRICT bit-exact variant — passes since gab-001 RESOLVED on 2026-05-25:
+    /// SIMD AVX2/NEON paths dropped `mul_add` fusion in favour of explicit
+    /// `*` + `+` matching libjxl `convolve_symmetric5.cc:66-69` `WeightedSum`
+    /// (which uses `Mul + Add`, not FMA).  Scalar path was already libjxl-shape.
     #[test]
-    #[ignore = "FIXME(SIMD-parity): gab-001 — FMA association ≤1 ULP \
-                between scalar and AVX2/NEON paths; see \
-                docs/SIMD_PARITY_KNOWN_DIVERGENCES.md"]
     fn gab_scalar_vs_dispatch_sizes_strict() {
         let w = 16;
         let h = 4;

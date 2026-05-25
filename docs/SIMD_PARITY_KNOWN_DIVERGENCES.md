@@ -40,36 +40,38 @@ cargo test -p jxl-encoder-simd --lib -- --include-ignored
 
 ## Active divergences
 
-### `gab-001` — `gab_smooth` FMA association
+(none)
 
-**Test**: `jxl-encoder-simd/src/gab.rs::tests::gab_scalar_vs_dispatch_sizes_strict`
+---
 
-**Symptom**: SIMD (AVX2 and NEON) output differs from `gab_smooth_scalar`
-by ≤1 ULP on most pixels.  Triggered by any non-trivial input distribution
-(observed on `rand_a`, `rand_b`, `ramp` cases).
+### ~~`gab-001`~~ — RESOLVED (2026-05-25)
 
-**Root cause**: The SIMD path fuses
-`w_center*center + (w1*cardinals + w2*diagonals)` via two `mul_add`
-intrinsics (1 rounding per FMA, 2 roundings total).  The scalar path
-performs explicit `*` then `+` operations
-(`w_center * center + w1 * (top + bottom + left + right) + w2 * (tl + tr + bl + br)`,
-which is 4 muls + 6 adds with explicit Rust precedence = up to 10
-roundings).  Cumulative rounding diverges in the LSB.
+**Resolution**: SIMD AVX2/NEON `gab_smooth` inner loops at
+`jxl-encoder-simd/src/gab.rs:187` (AVX2) and `:284` (NEON) now use
+explicit `wc_v * center + w1_v * cardinals + w2_v * diagonals` matching
+the scalar path AND libjxl `convolve_symmetric5.cc:66-69` `WeightedSum`
+which uses `Mul(wx2, Add(in_m2, in_p2))` + `Add(sum_2, Add(sum_1,
+sum_0))` (no FMA fusion). Previously the SIMD path fused via
+`wc_v.mul_add(center, w1_v.mul_add(cardinals, w2_v * diagonals))` which
+produced ≤1 ULP divergence from scalar on every non-trivial input.
 
-**Status**: Tolerated.  ULP-tolerant variant
-`gab_scalar_vs_dispatch_sizes_ulp` ships as a regression gate (8 ULP +
-1e-5 abs floor); the strict variant is `#[ignore]`d as documentation.
+`gab_scalar_vs_dispatch_sizes_strict` is no longer `#[ignore]`d; it
+passes bit-exact across all 13 size cases. The ULP-tolerant variant
+`gab_scalar_vs_dispatch_sizes_ulp` and the edge-battery test both stay
+in the suite as regression gates (also pass post-fix).
 
-**Fix path**: Either (a) rewrite `gab_smooth_scalar` to use
-`scalarmath::mul_add_f32` in the same chained pattern as the SIMD path
-(would close the divergence at the cost of slightly slower scalar
-fallback on non-FMA hardware), or (b) drop the SIMD `mul_add` calls in
-favor of explicit `*`+`+` (would close the divergence at the cost of
-slightly slower SIMD path on FMA hardware).  Either changes encoder
-output bytes and requires hash-lock regen.
+**Bench impact**: 5-cell paired A/B
+(`benchmarks/gab_001_fix_2026-05-25.{tsv,meta}`) measured 5/5 cells
+BYTES IDENTICAL between PRE-fix (mul_add) and POST-fix (Mul+Add)
+binaries — quantizer + entropy coder absorb the ULP-scale shift. 3/5
+SHA IDENTICAL, 2/5 cells (cid22_1418519, codec_wiki) had quant-code
+flips at the ±0.5 boundary that produced equivalent-length but
+differently-packed bitstreams. Hash-locks 36/36 + libjxl byte-locks
+4/4 + drift 7/7 BYTE-IDENTICAL (NO regen needed; synthetic fixtures
+don't expose the SHA-diverged cells' boundary effects).
 
-**Cite**: `jxl-encoder-simd/src/gab.rs:187` (SIMD mul_add fusion),
-`:96` (scalar `*`+`+` expression).
+**Cite**: `jxl-encoder-simd/src/gab.rs:191` (AVX2 fixed path),
+`:285` (NEON fixed path), libjxl `convolve_symmetric5.cc:66-69`.
 
 ---
 
