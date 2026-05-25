@@ -61,10 +61,7 @@ fn ensure_initialized(dir: &std::path::Path) {
     use std::io::Write;
     let mut bw = std::io::BufWriter::new(file);
     let _ = writeln!(bw, "# W44-AUDIT-8 Phase 4 per-DC-block dump (ours)");
-    let _ = writeln!(
-        bw,
-        "bx\tby\tchannel\traw_strategy\tdc_raw\tdc_quant"
-    );
+    let _ = writeln!(bw, "bx\tby\tchannel\traw_strategy\tdc_raw\tdc_quant");
     *guard = Some(DumpState { file: bw, rows: 0 });
 }
 
@@ -75,14 +72,7 @@ fn ensure_initialized(dir: &std::path::Path) {
 /// is the rounded i16 that lands in the DC channel of the modular stream.
 #[cfg(feature = "std")]
 #[inline]
-pub fn dump_dc(
-    bx: usize,
-    by: usize,
-    channel: usize,
-    raw_strategy: u8,
-    dc_raw: f32,
-    dc_quant: i16,
-) {
+pub fn dump_dc(bx: usize, by: usize, channel: usize, raw_strategy: u8, dc_raw: f32, dc_quant: i16) {
     let Some(dir) = dump_dir() else { return };
     ensure_initialized(&dir);
     let mut guard = DUMP_STATE.lock().unwrap();

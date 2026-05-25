@@ -661,7 +661,8 @@ pub(crate) fn apply_epf(
         // 4 MP+ inputs at d>=4. See `compute_epf_sharpness`-callsite trace in
         // the AUDIT-2 root-cause memo.
         let padded_len = in_stride.saturating_mul(height + 2 * pad);
-        let _padded_guard = MemoryBudget::reserve_opt(budget, (padded_len as u64).saturating_mul(4 * 3))?;
+        let _padded_guard =
+            MemoryBudget::reserve_opt(budget, (padded_len as u64).saturating_mul(4 * 3))?;
         let padded: [Vec<f32>; 3] =
             core::array::from_fn(|c| jxl_simd::pad_plane(&planes[c], width, height, pad));
         let result = epf_step0(
@@ -803,7 +804,8 @@ fn apply_epf_with_scratch(
         // W44-AUDIT-2: transient — three padded planes built fresh each call,
         // dropped at end of this `if` block. epf_step0 already accounts its own
         // output internally (as transient). Was `reserve_permanent_opt`.
-        let _padded_guard = MemoryBudget::reserve_opt(budget, (padded_len as u64).saturating_mul(4 * 3))?;
+        let _padded_guard =
+            MemoryBudget::reserve_opt(budget, (padded_len as u64).saturating_mul(4 * 3))?;
         let padded: [Vec<f32>; 3] =
             core::array::from_fn(|c| jxl_simd::pad_plane(&planes[c], width, height, pad));
         let result = epf_step0(

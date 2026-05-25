@@ -36,41 +36,87 @@ use std::time::Instant;
 const ENV_VARIANTS: &[(&str, &str, &str)] = &[
     ("", "", "BASELINE"),
     ("JXL_W44_117_DISABLE", "1", "W44_117_DISABLE_EPF_SEED"),
-    ("JXL_W44_120_EPF_SEED_MIN_DISTANCE", "99", "W44_120_EPF_NEVER"),
-    ("JXL_W44_AUDIT_5_P3_DISABLE", "1", "AUDIT_5_P3_DISABLE_MODE_D"),
+    (
+        "JXL_W44_120_EPF_SEED_MIN_DISTANCE",
+        "99",
+        "W44_120_EPF_NEVER",
+    ),
+    (
+        "JXL_W44_AUDIT_5_P3_DISABLE",
+        "1",
+        "AUDIT_5_P3_DISABLE_MODE_D",
+    ),
     ("JXL_W44_AUDIT_6_DISABLE", "1", "AUDIT_6_DISABLE_M3_GATE"),
     ("JXL_W44_156_DISABLE", "1", "W44_156_DISABLE_DIST_VARZ"),
-    ("JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP", "1", "AUDIT_8_P6_FORCE_WP"),
+    (
+        "JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP",
+        "1",
+        "AUDIT_8_P6_FORCE_WP",
+    ),
     ("JXL_W44_176_DISABLE", "1", "W44_176_DISABLE_BUTTLOOP_ITER"),
     ("JXL_W44_142_SUPPRESS_DISABLE", "1", "W44_142_DISABLE"),
     ("JXL_W44_152_DISABLE", "1", "W44_152_DISABLE"),
     ("JXL_W44_151_DISABLE", "1", "W44_151_DISABLE"),
-    ("JXL_W44_166_VARIANT_Z_ADMIT_MODE", "off", "W44_166_VARIANT_Z_OFF"),
+    (
+        "JXL_W44_166_VARIANT_Z_ADMIT_MODE",
+        "off",
+        "W44_166_VARIANT_Z_OFF",
+    ),
     ("JXL_W44_167_MODE", "off", "W44_167_MODE_OFF"),
     ("JXL_W44_168_MODE", "off", "W44_168_MODE_OFF"),
-    ("JXL_W44_171_FORCE_TRIAL_ALL_EFFORTS", "1", "W44_171_TRIAL_ALL"),
-    ("JXL_W44_172_FORCE_VARIABLE_AT_E8", "1", "W44_172_VARIABLE_AT_E8"),
-    ("__JXL_W44_57_FORCE_VARIABLE", "1", "W44_57_FORCE_VARIABLE_DC_TREE"),
-    ("__JXL_W44_57_FORCE_FIXED", "1", "W44_57_FORCE_FIXED_DC_TREE"),
-    ("JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS", "1", "W44_201_LEGACY_LARGE_BUCKETS"),
-    ("JXL_W44_205_FORCE_LEGACY_MEDIUM_BUCKETS", "1", "W44_205_LEGACY_MEDIUM_BUCKETS"),
-];
-
-const CELLS: &[(&str, &str, u8, f32)] = &[
     (
-        "clic_22ea12",
-        "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png",
-        9,
-        4.0,
+        "JXL_W44_171_FORCE_TRIAL_ALL_EFFORTS",
+        "1",
+        "W44_171_TRIAL_ALL",
+    ),
+    (
+        "JXL_W44_172_FORCE_VARIABLE_AT_E8",
+        "1",
+        "W44_172_VARIABLE_AT_E8",
+    ),
+    (
+        "__JXL_W44_57_FORCE_VARIABLE",
+        "1",
+        "W44_57_FORCE_VARIABLE_DC_TREE",
+    ),
+    (
+        "__JXL_W44_57_FORCE_FIXED",
+        "1",
+        "W44_57_FORCE_FIXED_DC_TREE",
+    ),
+    (
+        "JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS",
+        "1",
+        "W44_201_LEGACY_LARGE_BUCKETS",
+    ),
+    (
+        "JXL_W44_205_FORCE_LEGACY_MEDIUM_BUCKETS",
+        "1",
+        "W44_205_LEGACY_MEDIUM_BUCKETS",
     ),
 ];
 
+const CELLS: &[(&str, &str, u8, f32)] = &[(
+    "clic_22ea12",
+    "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png",
+    9,
+    4.0,
+)];
+
 fn srgb_u8_to_linear_f32(x: u8) -> f32 {
     let x = x as f32 / 255.0;
-    if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
+    if x <= 0.04045 {
+        x / 12.92
+    } else {
+        ((x + 0.055) / 1.055).powf(2.4)
+    }
 }
 fn linear_to_srgb_u8(x: f32) -> u8 {
-    let x = if x <= 0.0031308 { 12.92 * x } else { 1.055 * x.powf(1.0 / 2.4) - 0.055 };
+    let x = if x <= 0.0031308 {
+        12.92 * x
+    } else {
+        1.055 * x.powf(1.0 / 2.4) - 0.055
+    };
     (x * 255.0 + 0.5).clamp(0.0, 255.0) as u8
 }
 
@@ -113,12 +159,22 @@ fn score(
         .map(|c| RGB::new(c[0], c[1], c[2]))
         .collect();
     let dec_lin_img = Img::new(dec_p, dw, dh);
-    let bfly = butteraugli_linear(orig_lin.as_ref(), dec_lin_img.as_ref(), &ButteraugliParams::default())
-        .ok()?
-        .score as f64;
+    let bfly = butteraugli_linear(
+        orig_lin.as_ref(),
+        dec_lin_img.as_ref(),
+        &ButteraugliParams::default(),
+    )
+    .ok()?
+    .score as f64;
     let dec_srgb: Vec<[u8; 3]> = dec_lin
         .chunks_exact(ch)
-        .map(|c| [linear_to_srgb_u8(c[0]), linear_to_srgb_u8(c[1]), linear_to_srgb_u8(c[2])])
+        .map(|c| {
+            [
+                linear_to_srgb_u8(c[0]),
+                linear_to_srgb_u8(c[1]),
+                linear_to_srgb_u8(c[2]),
+            ]
+        })
         .collect();
     let dec_srgb_img = Img::new(dec_srgb, dw, dh);
     let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
@@ -136,7 +192,9 @@ fn encode_zenjxl(
 ) -> Option<(Vec<u8>, u128)> {
     if !env_var.is_empty() {
         // SAFETY: process-local, bench is single-threaded.
-        unsafe { std::env::set_var(env_var, env_val); }
+        unsafe {
+            std::env::set_var(env_var, env_val);
+        }
     }
     let cfg = LossyConfig::new(distance)
         .with_effort(effort)
@@ -147,7 +205,9 @@ fn encode_zenjxl(
         .encode(pixels)
         .ok()?;
     if !env_var.is_empty() {
-        unsafe { std::env::remove_var(env_var); }
+        unsafe {
+            std::env::remove_var(env_var);
+        }
     }
     Some((buf, t0.elapsed().as_millis()))
 }
@@ -195,7 +255,13 @@ fn main() {
         let (pixels, w, h) = load_png(pathobj);
         let lin: Vec<RGB<f32>> = pixels
             .chunks_exact(3)
-            .map(|c| RGB::new(srgb_u8_to_linear_f32(c[0]), srgb_u8_to_linear_f32(c[1]), srgb_u8_to_linear_f32(c[2])))
+            .map(|c| {
+                RGB::new(
+                    srgb_u8_to_linear_f32(c[0]),
+                    srgb_u8_to_linear_f32(c[1]),
+                    srgb_u8_to_linear_f32(c[2]),
+                )
+            })
             .collect();
         let srgb: Vec<[u8; 3]> = pixels.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
         let lin_img = Img::new(lin, w as usize, h as usize);
@@ -208,7 +274,8 @@ fn main() {
                 continue;
             }
         };
-        let (cjxl_bfly, cjxl_ssim2) = score(&cjxl_buf, &lin_img, &srgb_img, w, h).unwrap_or((f64::NAN, f64::NAN));
+        let (cjxl_bfly, cjxl_ssim2) =
+            score(&cjxl_buf, &lin_img, &srgb_img, w, h).unwrap_or((f64::NAN, f64::NAN));
         let cjxl_bytes = cjxl_buf.len();
 
         for &(env_var, env_val, label) in ENV_VARIANTS {
@@ -216,7 +283,10 @@ fn main() {
                 match encode_zenjxl(&pixels, w, h, effort, distance, env_var, env_val) {
                     Some(x) => x,
                     None => {
-                        eprintln!("ours encode failed {} e{} d={} variant={}", id, effort, distance, label);
+                        eprintln!(
+                            "ours encode failed {} e{} d={} variant={}",
+                            id, effort, distance, label
+                        );
                         continue;
                     }
                 };
@@ -229,7 +299,19 @@ fn main() {
             let dssim2 = ours_ssim2 - cjxl_ssim2;
             println!(
                 "{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{}\t{:.4}\t{:.4}\t{:+.3}\t{:+.4}\t{:+.4}",
-                id, effort, distance, label, ours_bytes, ours_bfly, ours_ssim2, cjxl_bytes, cjxl_bfly, cjxl_ssim2, dbytes_pct, dbfly, dssim2
+                id,
+                effort,
+                distance,
+                label,
+                ours_bytes,
+                ours_bfly,
+                ours_ssim2,
+                cjxl_bytes,
+                cjxl_bfly,
+                cjxl_ssim2,
+                dbytes_pct,
+                dbfly,
+                dssim2
             );
         }
     }

@@ -1522,13 +1522,7 @@ pub mod coupling {
                 // NEW W44-PHASE4-S2: (0.0, 0.0, 0.5, 3.5, -0.333)
                 // Δ: k1 0.167 → 0.000 (-0.167), k3 1.250 → 0.500 (-0.750),
                 //    k4 4.833 → 3.500 (-1.333), k5 -0.667 → -0.333 (+0.333)
-                ContentStratum::PhotoHigh => (
-                    0.0,
-                    0.0,
-                    0.5,
-                    3.5,
-                    -0.3333333333333334_f32,
-                ),
+                ContentStratum::PhotoHigh => (0.0, 0.0, 0.5, 3.5, -0.3333333333333334_f32),
                 // photo/mid (n=2476, delta_pp=+0.531, L2=2.550)
                 // OLD W44-228a: (1.0, 0.0, 2.0, 2.833, 0.333)
                 // NEW W44-PHASE4-S2: (0.0, 0.0, 0.5, 1.5, -1.0)
@@ -2367,10 +2361,7 @@ pub mod coupling {
             // MUST hold (k1=0.5, k2=1.0) = defaults to preserve W44-105
             // SHIP cells. The c2 ablation audit found ANY non-default k1
             // OR k2 reintroduces the cliff on terminal/graph SHIP cells.
-            for s in [
-                ContentStratum::ScreenVeryHigh,
-                ContentStratum::ScreenHigh,
-            ] {
+            for s in [ContentStratum::ScreenVeryHigh, ContentStratum::ScreenHigh] {
                 let k = Tier2Knobs::default_for_stratum(s);
                 assert_eq!(
                     k.smoothness_bias, 0.5,

@@ -309,10 +309,7 @@ mod inner {
             .output()
             .ok()?;
         if !status.status.success() {
-            eprintln!(
-                "  cjxl failed: {}",
-                String::from_utf8_lossy(&status.stderr)
-            );
+            eprintln!("  cjxl failed: {}", String::from_utf8_lossy(&status.stderr));
             return None;
         }
         let bytes = std::fs::read(&tmp).ok()?;

@@ -268,7 +268,12 @@ impl DistanceParams {
         profile: &crate::effort::EffortProfile,
     ) -> Self {
         let q = profile.initial_q_numerator / distance;
-        Self::compute_internal(distance, original_distance, Some(q), profile.extra_dc_precision)
+        Self::compute_internal(
+            distance,
+            original_distance,
+            Some(q),
+            profile.extra_dc_precision,
+        )
     }
 
     /// Compute distance-dependent parameters using content-adaptive global_scale.
@@ -311,7 +316,12 @@ impl DistanceParams {
         // libjxl gates `nl_dc = speed_tier < kFalcon` (effort ≤ 7) and
         // the buttloop only fires at effort ≥ 8, so extra_dc_precision
         // is structurally 0 on this path. Match by passing 0 explicitly.
-        Self::compute_internal(distance, distance, Some(quant_median - quant_median_absd), 0)
+        Self::compute_internal(
+            distance,
+            distance,
+            Some(quant_median - quant_median_absd),
+            0,
+        )
     }
 
     /// Compute distance-dependent parameters from a given `q` value.

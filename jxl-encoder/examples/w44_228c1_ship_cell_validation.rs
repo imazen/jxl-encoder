@@ -162,10 +162,7 @@ fn compute_metrics(
     params: &ButteraugliParams,
 ) -> (f64, f64) {
     if let Some((dw, dh, dec)) = decode_jxl_linear(bytes) {
-        let dec_pixels: Vec<RGB<f32>> = dec
-            .chunks(3)
-            .map(|c| RGB::new(c[0], c[1], c[2]))
-            .collect();
+        let dec_pixels: Vec<RGB<f32>> = dec.chunks(3).map(|c| RGB::new(c[0], c[1], c[2])).collect();
         let dec_linear_img = Img::new(dec_pixels, dw, dh);
         let bfly = butteraugli_linear(orig_linear.as_ref(), dec_linear_img.as_ref(), params)
             .map(|r| r.score as f64)
@@ -181,9 +178,8 @@ fn compute_metrics(
             })
             .collect();
         let dec_srgb_img = Img::new(dec_srgb, dw, dh);
-        let ssim2 =
-            fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref())
-                .unwrap_or(f64::NAN);
+        let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref())
+            .unwrap_or(f64::NAN);
         (bfly, ssim2)
     } else {
         (f64::NAN, f64::NAN)
@@ -191,17 +187,13 @@ fn compute_metrics(
 }
 
 fn main() {
-    eprintln!(
-        "# W44-228c1 SHIP-cell validation — Tier2Knobs::default() vs auto_for_distance"
-    );
+    eprintln!("# W44-228c1 SHIP-cell validation — Tier2Knobs::default() vs auto_for_distance");
     eprintln!(
         "# {} W44-105 SHIP cells × 2 modes × {} timing trials",
         SHIP_CELLS.len(),
         TRIALS
     );
-    eprintln!(
-        "# Phase ordering: ALL mode-A encodes FIRST (no override installed) → "
-    );
+    eprintln!("# Phase ordering: ALL mode-A encodes FIRST (no override installed) → ");
     eprintln!(
         "#                 ALL mode-B encodes SECOND (single OnceLock install — all SHIP cells"
     );
@@ -214,9 +206,7 @@ fn main() {
     eprintln!(
         "# encode in the process regardless of `cfg.tier2_knobs`. Interleaving A/B in the same"
     );
-    eprintln!(
-        "# process would silently corrupt mode-A measurements after the first B encode."
-    );
+    eprintln!("# process would silently corrupt mode-A measurements after the first B encode.");
 
     // Output destination: --output <path> or stdout (TSV is also echoed to stdout).
     let args: Vec<String> = env::args().collect();
@@ -267,8 +257,7 @@ fn main() {
                 let (w, h) = img.dimensions();
                 let rgb = img.to_rgb8().into_raw();
                 let linear = srgb_u8_to_linear(&rgb, w, h);
-                let srgb_pixels: Vec<[u8; 3]> =
-                    rgb.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
+                let srgb_pixels: Vec<[u8; 3]> = rgb.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
                 let srgb_img = Img::new(srgb_pixels, w as usize, h as usize);
                 (w, h, rgb, linear, srgb_img)
             });
@@ -371,10 +360,21 @@ fn main() {
 
         let row = format!(
             "{}\te{}\t{:.1}\t{}\t{}\t{:+}\t{:+.3}\t{:.4}\t{:.4}\t{:+.4}\t{:.4}\t{:.4}\t{:+.4}\t{}\t{}",
-            image, effort, distance, a.bytes, b.bytes, delta_b, delta_pct,
-            a.bfly, b.bfly, delta_bfly,
-            a.ssim2, b.ssim2, delta_ssim2,
-            a.ms_best, b.ms_best,
+            image,
+            effort,
+            distance,
+            a.bytes,
+            b.bytes,
+            delta_b,
+            delta_pct,
+            a.bfly,
+            b.bfly,
+            delta_bfly,
+            a.ssim2,
+            b.ssim2,
+            delta_ssim2,
+            a.ms_best,
+            b.ms_best,
         );
         println!("{}", row);
         if let Some(f) = out_file.as_mut() {

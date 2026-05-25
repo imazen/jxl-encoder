@@ -49,12 +49,7 @@ fn main() {
     //   block 2 (bot-left):     RGB(200, 100, 100)  — Y mid, B mid
     //   block 3 (bot-right):    RGB(0, 0, 0)        — all zero
     let mut rgb = vec![0u8; 16 * 16 * 3];
-    let block_colors = [
-        (255u8, 100, 50),
-        (50, 200, 200),
-        (200, 100, 100),
-        (0, 0, 0),
-    ];
+    let block_colors = [(255u8, 100, 50), (50, 200, 200), (200, 100, 100), (0, 0, 0)];
     for by in 0..2 {
         for bx in 0..2 {
             let (r, g, b) = block_colors[by * 2 + bx];
@@ -138,7 +133,20 @@ fn main() {
 
                 println!(
                     "  block({},{}) RGB orig=({:>3},{:>3},{:>3})   lin=({:.4},{:.4},{:.4})   decoded_mean=({:.4},{:.4},{:.4})   delta=({:+.4},{:+.4},{:+.4})",
-                    bx, by, orig_r, orig_g, orig_b, lin_r, lin_g, lin_b, mean_r, mean_g, mean_b, dr, dg, db
+                    bx,
+                    by,
+                    orig_r,
+                    orig_g,
+                    orig_b,
+                    lin_r,
+                    lin_g,
+                    lin_b,
+                    mean_r,
+                    mean_g,
+                    mean_b,
+                    dr,
+                    dg,
+                    db
                 );
             }
         }

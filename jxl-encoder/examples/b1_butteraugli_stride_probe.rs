@@ -63,11 +63,7 @@ struct ScoreRow {
     score: f64,
 }
 
-fn run_case(
-    width: usize,
-    height: usize,
-    bias: f32,
-) -> Vec<ScoreRow> {
+fn run_case(width: usize, height: usize, bias: f32) -> Vec<ScoreRow> {
     let pw = pad_width(width);
     let _ph = height; // height is always exact in this probe
 
@@ -90,7 +86,13 @@ fn run_case(
 
     // Case A: ref stride=W, compare stride=W (both unpadded). Control.
     let r_a = ButteraugliReference::new_linear_planar(
-        &ref_r_w, &ref_g_w, &ref_b_w, width, height, width, params(),
+        &ref_r_w,
+        &ref_g_w,
+        &ref_b_w,
+        width,
+        height,
+        width,
+        params(),
     )
     .expect("A ref");
     let s_a = r_a
@@ -111,7 +113,13 @@ fn run_case(
     // stride semantics, both sides should ONLY read the first `width`
     // pixels per row. If audit is right, score would diverge from A.
     let r_b = ButteraugliReference::new_linear_planar(
-        &ref_r_w, &ref_g_w, &ref_b_w, width, height, width, params(),
+        &ref_r_w,
+        &ref_g_w,
+        &ref_b_w,
+        width,
+        height,
+        width,
+        params(),
     )
     .expect("B ref");
     let s_b = r_b
@@ -130,7 +138,13 @@ fn run_case(
     // sees them so they cancel. If audit's "build reference with padded_width"
     // alternate fix is right, this should match A more closely than B does.
     let r_c = ButteraugliReference::new_linear_planar(
-        &ref_r_pw, &ref_g_pw, &ref_b_pw, width, height, pw, params(),
+        &ref_r_pw,
+        &ref_g_pw,
+        &ref_b_pw,
+        width,
+        height,
+        pw,
+        params(),
     )
     .expect("C ref");
     let s_c = r_c
@@ -160,7 +174,13 @@ fn run_case(
         }
     }
     let r_d = ButteraugliReference::new_linear_planar(
-        &ref_r_w, &ref_g_w, &ref_b_w, width, height, width, params(),
+        &ref_r_w,
+        &ref_g_w,
+        &ref_b_w,
+        width,
+        height,
+        width,
+        params(),
     )
     .expect("D ref");
     let s_d = r_d

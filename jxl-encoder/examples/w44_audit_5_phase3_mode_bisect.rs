@@ -34,9 +34,7 @@
 
 use butteraugli::{ButteraugliParams, butteraugli_linear};
 use imgref::{Img, ImgVec};
-use jxl_encoder::api::{
-    EncoderImprovementsCustom, EncoderStrategy, LossyConfig, PixelLayout,
-};
+use jxl_encoder::api::{EncoderImprovementsCustom, EncoderStrategy, LossyConfig, PixelLayout};
 use rgb::RGB;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -78,11 +76,19 @@ fn cjxl_bin() -> PathBuf {
 
 fn srgb_to_linear_f32(s: u8) -> f32 {
     let c = s as f32 / 255.0;
-    if c <= 0.040_45 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    if c <= 0.040_45 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
 }
 fn linear_to_srgb_u8(linear: f32) -> u8 {
     let c = linear.clamp(0.0, 1.0);
-    let s = if c <= 0.003_130_8 { 12.92 * c } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 };
+    let s = if c <= 0.003_130_8 {
+        12.92 * c
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    };
     (s * 255.0 + 0.5) as u8
 }
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
@@ -91,7 +97,9 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb.as_raw().clone(), rgb.width(), rgb.height()))
 }
 fn decode_jxl_linear(bytes: &[u8]) -> Option<(u32, u32, Vec<f32>)> {
-    let mut img = jxl_oxide::JxlImage::builder().read(Cursor::new(bytes)).ok()?;
+    let mut img = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(bytes))
+        .ok()?;
     img.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
         jxl_oxide::RenderingIntent::Relative,
     ));
@@ -155,8 +163,7 @@ fn encode_with_strategy(rgb: &[u8], w: u32, h: u32, strategy: EncoderStrategy) -
 
 fn encode_cjxl(src_png: &Path) -> Option<Vec<u8>> {
     let stem = src_png.file_stem()?.to_string_lossy().into_owned();
-    let out_path =
-        std::env::temp_dir().join(format!("w44_audit_5_p3_cjxl_{stem}_d{DISTANCE}.jxl"));
+    let out_path = std::env::temp_dir().join(format!("w44_audit_5_p3_cjxl_{stem}_d{DISTANCE}.jxl"));
     let status = Command::new(cjxl_bin())
         .arg(src_png)
         .arg(&out_path)
@@ -189,10 +196,7 @@ fn butteraugli_metric(src: &ImgVec<RGB<f32>>, decoded: &ImgVec<RGB<f32>>) -> f32
 fn main() {
     let mode = std::env::var("MODE").unwrap_or_else(|_| "D".to_string());
     let (strategy, mode_name): (EncoderStrategy, &str) = match mode.as_str() {
-        "A" => (
-            EncoderStrategy::Zenjxl,
-            "A_zenjxl_baseline_ls_warm_start",
-        ),
+        "A" => (EncoderStrategy::Zenjxl, "A_zenjxl_baseline_ls_warm_start"),
         "B" => (EncoderStrategy::Libjxl, "B_libjxl_strategy_bit_exact"),
         "D" => {
             // Mode D: Zenjxl with the Phase 3 per-image route opt-in.

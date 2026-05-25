@@ -31,34 +31,112 @@ fn main() {
     // part of AUDIT-6 sub-discriminator scope.
     let cases: &[(&str, &str, &str)] = &[
         // (verdict, image_id, abs_path)
-        ("FIRE-GOOD", "codec_wiki",  "/home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png"),
-        ("FIRE-GOOD", "1189261",     "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1189261.png"),
-        ("FIRE-BAD",  "clic_22ea12", "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png"),
-        ("FIRE-BAD",  "clic_0c49a5", "/home/lilith/work/codec-corpus/clic2025-1024/0c49a5cce349020bbba2f97ae41e90ba.png"),
+        (
+            "FIRE-GOOD",
+            "codec_wiki",
+            "/home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png",
+        ),
+        (
+            "FIRE-GOOD",
+            "1189261",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1189261.png",
+        ),
+        (
+            "FIRE-BAD",
+            "clic_22ea12",
+            "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png",
+        ),
+        (
+            "FIRE-BAD",
+            "clic_0c49a5",
+            "/home/lilith/work/codec-corpus/clic2025-1024/0c49a5cce349020bbba2f97ae41e90ba.png",
+        ),
         // Below: AUDIT-7 NON-firing images (M3<80). Probed for completeness +
         // to verify our gate-tightening does NOT pull any of them above the
         // new admit predicate.
-        ("NO-FIRE",   "clic_100a02", "/home/lilith/work/codec-corpus/clic2025-1024/100a02c269c5948392f283b2aa3bb4da.png"),
-        ("NO-FIRE",   "clic_028092", "/home/lilith/work/codec-corpus/clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png"),
-        ("NO-FIRE",   "clic_097cb4", "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png"),
-        ("NO-FIRE",   "1044329",     "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1044329.png"),
-        ("NO-FIRE",   "1475938",     "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1475938.png"),
-        ("NO-FIRE",   "1279330",     "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1279330.png"),
-        ("NO-FIRE",   "1025469",     "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1025469.png"),
-        ("NO-FIRE",   "1418519",     "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png"),
-        ("NO-FIRE",   "1420710",     "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png"),
-        ("NO-FIRE",   "1531677",     "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png"),
-        ("NO-FIRE",   "1544947",     "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1544947.png"),
-        ("NO-FIRE",   "windows95",   "/home/lilith/work/codec-corpus/gb82-sc/windows95.png"),
-        ("NO-FIRE",   "graph",       "/home/lilith/work/codec-corpus/gb82-sc/graph.png"),
-        ("NO-FIRE",   "gui",         "/home/lilith/work/codec-corpus/gb82-sc/gui.png"),
-        ("NO-FIRE",   "imac_g3",     "/home/lilith/work/codec-corpus/gb82-sc/imac_g3.png"),
-        ("NO-FIRE",   "terminal",    "/home/lilith/work/codec-corpus/gb82-sc/terminal.png"),
+        (
+            "NO-FIRE",
+            "clic_100a02",
+            "/home/lilith/work/codec-corpus/clic2025-1024/100a02c269c5948392f283b2aa3bb4da.png",
+        ),
+        (
+            "NO-FIRE",
+            "clic_028092",
+            "/home/lilith/work/codec-corpus/clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png",
+        ),
+        (
+            "NO-FIRE",
+            "clic_097cb4",
+            "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png",
+        ),
+        (
+            "NO-FIRE",
+            "1044329",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1044329.png",
+        ),
+        (
+            "NO-FIRE",
+            "1475938",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1475938.png",
+        ),
+        (
+            "NO-FIRE",
+            "1279330",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1279330.png",
+        ),
+        (
+            "NO-FIRE",
+            "1025469",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1025469.png",
+        ),
+        (
+            "NO-FIRE",
+            "1418519",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png",
+        ),
+        (
+            "NO-FIRE",
+            "1420710",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png",
+        ),
+        (
+            "NO-FIRE",
+            "1531677",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png",
+        ),
+        (
+            "NO-FIRE",
+            "1544947",
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1544947.png",
+        ),
+        (
+            "NO-FIRE",
+            "windows95",
+            "/home/lilith/work/codec-corpus/gb82-sc/windows95.png",
+        ),
+        (
+            "NO-FIRE",
+            "graph",
+            "/home/lilith/work/codec-corpus/gb82-sc/graph.png",
+        ),
+        (
+            "NO-FIRE",
+            "gui",
+            "/home/lilith/work/codec-corpus/gb82-sc/gui.png",
+        ),
+        (
+            "NO-FIRE",
+            "imac_g3",
+            "/home/lilith/work/codec-corpus/gb82-sc/imac_g3.png",
+        ),
+        (
+            "NO-FIRE",
+            "terminal",
+            "/home/lilith/work/codec-corpus/gb82-sc/terminal.png",
+        ),
     ];
 
-    println!(
-        "verdict\timage_id\twidth\theight\tm3\tfcbr\tedge_density\tluma_var"
-    );
+    println!("verdict\timage_id\twidth\theight\tm3\tfcbr\tedge_density\tluma_var");
     for (verdict, name, abs) in cases {
         let path = Path::new(abs);
         let (rgb, w, h) = match load_rgb8(path) {
