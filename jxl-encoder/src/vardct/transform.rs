@@ -679,6 +679,18 @@ impl VarDctEncoder {
                                 _orig_quant_c,
                                 quant_c,
                             );
+                            // SA-A (2026-05-24): per-block dump when
+                            // JXL_AQBA_PERBLOCK_TSV env var is set.
+                            #[cfg(feature = "investigate-adjust-quant-block-ac")]
+                            super::aqba_diag::record_perblock(
+                                bx as u32,
+                                by as u32,
+                                c as u8,
+                                raw_strategy,
+                                _orig_quant_c,
+                                quant_c,
+                                hflags,
+                            );
                             if c == 1 {
                                 thresholds_y = thres;
                                 debug_rect!(
@@ -1367,6 +1379,9 @@ impl VarDctEncoder {
             // sees only the main thread's contributions.
             #[cfg(feature = "investigate-adjust-quant-block-ac")]
             super::aqba_diag::flush_tl_to_global();
+            // SA-A (2026-05-24): also flush per-block dump TLS to global.
+            #[cfg(feature = "investigate-adjust-quant-block-ac")]
+            super::aqba_diag::flush_tl_perblock_public();
             result
         });
 
@@ -1477,6 +1492,9 @@ impl VarDctEncoder {
             // thread's contributions on rayon-parallel callers.
             #[cfg(feature = "investigate-adjust-quant-block-ac")]
             super::aqba_diag::flush_tl_to_global();
+            // SA-A (2026-05-24): also flush per-block dump TLS to global.
+            #[cfg(feature = "investigate-adjust-quant-block-ac")]
+            super::aqba_diag::flush_tl_perblock_public();
             result
         });
 

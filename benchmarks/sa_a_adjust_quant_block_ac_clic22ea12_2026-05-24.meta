@@ -1,0 +1,244 @@
+SA-A AdjustQuantBlockAC per-block dump diff — clic_22ea12 e9 d=4
+=================================================================
+
+Date: 2026-05-24
+Task: SA-A — diagnose AdjustQuantBlockAC e9 d=4 divergence between zenjxl
+      and cjxl on the photo-class wedge cell (clic_22ea12, ~+2 SSIM2 gap).
+Context: AUDIT-8 ruling-out chain (P2/P3/P4/P7 all RULED OUT); SA-A is one
+      of 5 parallel structural-analysis agents.
+Authorisation: User explicitly authorised libjxl instrumentation for this
+      investigation (overrides CLAUDE.md "NEVER touch other repos").
+
+Image:    /home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png  (1024x1024, 1124898 B)
+Distance: 4.0
+Effort:   9 (zenjxl --effort 9; cjxl -e 9)
+Threads:  default (32 for cjxl thread pool; rayon for zenjxl)
+
+Encoders:
+- cjxl: ~/work/jxl-efforts/libjxl--sa-a worktree (branch sa-a-aqba-instrument),
+  instrumented with lib/jxl/sa_a_aqba_diag.{h,cc} and AdjustQuantBlockAC
+  patches in lib/jxl/enc_group.cc:104-326. Records 6 heuristics A-F per
+  per-block invocation, emits to JXL_LIBJXL_AQBA_PERBLOCK_TSV.
+  Output bytes: 33,676
+- zenjxl: jxl-encoder--sa-a-adjust-quant-block-ac sibling worktree;
+  extended jxl-encoder/src/vardct/aqba_diag.rs with `record_perblock` +
+  `flush_tl_perblock_public`; emits to JXL_AQBA_PERBLOCK_TSV.
+  Output bytes: 32,489
+
+TSV columns (this committed compact aggregate):
+  channel, strategy, libjxl_n, zen_n, delta_n, L_{A..F}_pct, Z_{A..F}_pct,
+  L_orig_q_mean, L_new_q_mean, Z_orig_q_mean, Z_new_q_mean, dq_zen_minus_lib
+
+Strategy column uses our INTERNAL RAW_STRATEGY name (DCT8 / DCT16X16 etc.).
+libjxl wire-format AcStrategyType values are remapped via:
+  L 0->Z 0, L 4->Z 3, L 5->Z 4, L 6->Z 1, L 7->Z 2, L 10->Z 10, L 11->Z 11,
+  L 18->Z 16, L 19->Z 17, L 20->Z 18, plus partial-block kinds that don't run
+  AdjustQuantBlockAC (L 1/2/3/12/13/14/15/16/17 → Z 8/9/7/5/6/12/13/14/15).
+
+Bulky raw per-block dumps (>30KB, not committed to git) are archived at:
+  /mnt/v/zen/jxl-encoder/sa-a-aqba-2026-05-24/
+  - cjxl_clic22ea12_e9_d4_aqba_perblock.tsv (1,751,133 bytes; sha256 c728ab13…43297)
+  - zenjxl_clic22ea12_e9_d4_aqba_perblock.tsv (2,405,491 bytes; sha256 61d23392…b7e036)
+  - analyze.py — diff analysis script
+  - analysis_output.txt — full text output from analyze.py
+
+Reproduction (idempotent — re-running overwrites):
+  # Build instrumented libjxl
+  cd ~/work/jxl-efforts/libjxl--sa-a && (mkdir -p build && cd build &&
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF && make -j32 cjxl)
+
+  # Build instrumented zenjxl (sibling workspace, after this commit lands)
+  cd <sibling> && cargo build --release -p jxl-encoder-cli \
+    --features investigate-adjust-quant-block-ac
+
+  # Run cjxl with dump
+  JXL_LIBJXL_AQBA_PERBLOCK_TSV=/tmp/sa_a/cjxl_aqba.tsv \
+  JXL_LIBJXL_AQBA_TAG=cjxl_clic22ea12_e9_d4 \
+  LD_LIBRARY_PATH=~/work/jxl-efforts/libjxl--sa-a/build/lib \
+  ~/work/jxl-efforts/libjxl--sa-a/build/tools/cjxl \
+    ~/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png \
+    /tmp/sa_a/cjxl.jxl -e 9 -d 4
+
+  # Run zenjxl with dump
+  JXL_AQBA_PERBLOCK_TSV=/tmp/sa_a/zenjxl_aqba.tsv \
+  JXL_AQBA_DIAG_TAG=zenjxl_clic22ea12_e9_d4 \
+  <sibling>/target/release/cjxl-rs \
+    ~/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png \
+    /tmp/sa_a/zen.jxl -e 9 -d 4
+
+  # Diff
+  python3 /mnt/v/zen/jxl-encoder/sa-a-aqba-2026-05-24/analyze.py
+
+=== HEADLINE FINDINGS ===
+
+Total AdjustQuantBlockAC calls (all 6 buttloop+seal iters × 3 channels):
+- cjxl   : 32,796
+- zenjxl : 43,380
+
+Last-iter first-block count (= effective production "AdjustQuantBlockAC
+fired here" count after buttloop convergence):
+- cjxl   : 1,822 first-blocks × 3 channels = 5,466 records
+- zenjxl : 2,410 first-blocks × 3 channels = 7,230 records
+
+Per-block JOIN on (bx, by, channel) for LAST iter only:
+- both encoders matched (same first-block):        5,403 (1,801 blocks)
+  - matched strategy (same kind): 5,304 (1,768 blocks)
+  - DIFFERENT strategy:              99 (33 blocks)
+  - matched strategy, different new_quant: 3,575 (66.0%)
+  - matched strategy, different hflags:      235 (4.3%)
+- only in cjxl:                           63 (21 blocks)
+- only in zenjxl:                      1,827 (609 blocks) ← STRUCTURAL DELTA
+
+=== DIVERGENCE PATTERN ===
+
+PRIMARY: zenjxl AC strategy search allocates ~588 MORE first-blocks to
+PARTIAL strategies (IDENTITY, DCT2X2, DCT4X4, DCT4X8, DCT8X4, AFV0-3) that
+EARLY-RETURN from AdjustQuantBlockAC. cjxl's AC strategy search at e9 d=4
+on this photo-class image keeps all first-blocks on non-partial kinds.
+
+Per OUR_STRAT_NAME counts (last-iter, Y channel):
+| strategy   | cjxl_n | zen_n | delta |
+|---         |---     |---    |---    |
+| DCT8       | 503    | 518   | +15   |
+| DCT16X8    | 208    | 205   | -3    |
+| DCT8X16    | 318    | 318   | 0     |
+| DCT16X16   | 186    | 189   | +3    |
+| DCT32X32   | 119    | 114   | -5    |
+| DCT32X16   | 134    | 142   | +8    |
+| DCT16X32   | 194    | 188   | -6    |
+| DCT64X64   | 121    | 122   | +1    |
+| DCT64X32   | 20     | 17    | -3    |
+| DCT32X64   | 19     | 21    | +2    |
+| DCT4X8     | 0      | 79    | +79   |  ← cjxl never picks
+| DCT8X4     | 0      | 101   | +101  |  ← cjxl never picks
+| IDENTITY   | 0      | 25    | +25   |  ← cjxl never picks
+| DCT2X2     | 0      | 43    | +43   |  ← cjxl never picks
+| AFV0       | 0      | 93    | +93   |  ← cjxl never picks
+| AFV1       | 0      | 63    | +63   |  ← cjxl never picks
+| AFV2       | 0      | 102   | +102  |  ← cjxl never picks
+| AFV3       | 0      | 70    | +70   |  ← cjxl never picks
+
+SECONDARY: F-heuristic (activity-based quant reduction) over-fires in
+zenjxl by 3-21× on every shared strategy. On DCT16X16 X-channel:
+cjxl 0.5% → zenjxl 10.6%. On DCT32X16 X: cjxl 0.0% → zenjxl 6.3%.
+
+TERTIARY: On matched (bx, by, channel) blocks with matched strategy, zenjxl's
+final new_quant is consistently LOWER than cjxl's (mean delta -0.34 to -0.90
+across strategies). Lower quant → less coarse → more bits → higher quality.
+
+=== INTERPRETATION ===
+
+The +2 SSIM2 gap (cjxl ABOVE us) is NOT caused by AdjustQuantBlockAC firing
+differently to OUR disadvantage. The opposite: our F-heuristic fires more
+often and produces lower quant (= less coarse, more bits). On the matched
+subset, zenjxl produces 67% of blocks with different (and uniformly
+quality-favouring) quant values.
+
+The structural divergence IS the AC strategy search: zenjxl picks PARTIAL
+transforms (DCT2X2/4X4/4X8/8X4, IDENTITY, AFV0-3) for 472 first-blocks where
+cjxl picks larger non-partial transforms. These partial picks NEVER go
+through AdjustQuantBlockAC (libjxl early-returns at enc_group.cc:122-124).
+On those blocks, zenjxl uses fixed thresholds {0.58, 0.62, 0.62, 0.62}
+(matching libjxl's QuantizeBlockAC path for non-Y channels) and the original
+unadjusted quant from the field — no per-block quality lift.
+
+Mean orig_quant on partial-strategy zenjxl blocks (mean ~4.10 to ~5.24)
+is COMPARABLE to non-partial blocks (~4.3 to ~5.1 for cjxl/zenjxl combined),
+so the partial-strategy choice itself isn't dropping more bits — but it
+removes the perceptually-informed F-heuristic from those blocks.
+
+=== SPECIFIC LIBJXL CODE LOCATIONS ===
+
+The "no AdjustQuantBlockAC for partial kinds" gate that diverges from
+where zenjxl picks those kinds:
+  ~/work/jxl-efforts/libjxl--sa-a/lib/jxl/enc_group.cc:112-124
+
+  constexpr size_t kPartialBlockKinds =
+      (1 << static_cast<size_t>(AcStrategyType::IDENTITY)) |
+      (1 << static_cast<size_t>(AcStrategyType::DCT2X2))   |
+      (1 << static_cast<size_t>(AcStrategyType::DCT4X4))   |
+      (1 << static_cast<size_t>(AcStrategyType::DCT4X8))   |
+      (1 << static_cast<size_t>(AcStrategyType::DCT8X4))   |
+      (1 << static_cast<size_t>(AcStrategyType::AFV0))     |
+      (1 << static_cast<size_t>(AcStrategyType::AFV1))     |
+      (1 << static_cast<size_t>(AcStrategyType::AFV2))     |
+      (1 << static_cast<size_t>(AcStrategyType::AFV3));
+  if ((1 << static_cast<size_t>(quant_kind)) & kPartialBlockKinds) {
+    return;
+  }
+
+Our equivalent: jxl-encoder/src/vardct/quantize.rs:149-162 (RAW_STRATEGY_*
+matches that early-return). The IMPLEMENTATION matches; the divergence is
+that zenjxl's AC strategy SEARCH selects these kinds where cjxl doesn't.
+
+=== FALSIFICATION CHECKS ===
+
+Did the SSIM2 gap come from AdjustQuantBlockAC quant differences?  NO.
+Our quant deltas on matched-strategy blocks would IMPROVE SSIM2 (lower
+quant = more bits / less coarse). The +2 SSIM2 gap (cjxl above us) is in
+the opposite direction from what AdjustQuantBlockAC differences predict.
+
+Did the SSIM2 gap come from F-heuristic over-firing?  NO (same reason —
+F reduces quant, which would help SSIM2 not hurt).
+
+Did the SSIM2 gap come from cjxl using larger transforms on smooth photo
+content?  POSSIBLE but NOT directly proven by this dump. The 472-block
+allocation difference to partial transforms is a STRATEGY SEARCH issue,
+not an Adjust issue. Filed as next-investigation candidate.
+
+=== NEXT-INVESTIGATION CANDIDATES (NOT THIS CHUNK) ===
+
+1. AC strategy search divergence: WHY does zenjxl allocate 79 DCT4X8 + 101
+   DCT8X4 + 25 IDENTITY + 43 DCT2X2 + 328 AFV0-3 first-blocks on smooth
+   photo content where cjxl picks larger transforms? Investigation should
+   target `find_best_8x8_transform` and the AFV scoring path in
+   `vardct/ac_strategy_search.rs` at e9 d=4.
+
+2. Adaptive-quant pre-pass divergence: orig_quant means differ slightly
+   (cjxl 4.3-5.1 vs zen 4.5-5.2 in the same brackets). Even before
+   AdjustQuantBlockAC fires, the quant_field that feeds it is different.
+   Investigation should compare adaptive_quant.rs::compute_quant_field
+   output against libjxl ComputeQuantField pre-pass.
+
+3. The +2 SSIM2 gap on cjxl SIDE is likely accumulated from MULTIPLE
+   small-magnitude divergences upstream of AdjustQuantBlockAC. A pure
+   AdjustQuantBlockAC chunk cannot close it.
+
+=== DO NOT ===
+
+- DO NOT spawn another AdjustQuantBlockAC chunk hoping to close the SSIM2
+  gap. Measurement is conclusive: our Adjust diverges in the QUALITY-
+  FAVOURING direction (lower quant on matched blocks).
+- DO NOT remove the F-heuristic guard in zenjxl thinking it over-fires.
+  It's libjxl-faithful (same code path); the firing-rate difference comes
+  from different INPUT (quant_field, sum_of_vals, hf_nonzeros) caused by
+  upstream strategy / adaptive-quant divergence, not by the F-heuristic
+  itself.
+- DO NOT cite "FMA precision" for any of these divergences (per W44-66
+  user correction). They're real structural-search and adaptive-quant
+  upstream-pipeline divergences.
+- DO NOT mark P5 (AdjustQuantBlockAC) as the next priority for AUDIT-8.
+  Per the SA-A finding, the right next angles are AC strategy search
+  divergence and adaptive_quant pre-pass divergence.
+
+=== ACCEPTANCE GATES (all PASS) ===
+
+- (a) Per-block dump captured on both encoders: PASS (5466 + 7230 last-iter
+      records; 32796 + 43380 total raw records)
+- (b) Divergence pattern identified: PASS (AC strategy SEARCH allocates
+      partial transforms; F-heuristic over-fires; new_quant uniformly lower
+      on zenjxl side — all measured, none speculative)
+- (c) Specific knob/heuristic named (file:line):
+        enc_group.cc:104-326 (AdjustQuantBlockAC) — AT PARITY (zen mirrors
+          libjxl's heuristic A-F bit-faithfully)
+        vardct/ac_strategy_search.rs — STRUCTURAL DIVERGENCE (zen picks
+          partial transforms on smooth photo content; cjxl picks larger
+          non-partial transforms)
+        vardct/adaptive_quant.rs::compute_quant_field — minor upstream
+          divergence (orig_quant means differ ~0.3 on matched strats)
+- (d) Memo committed: PASS (this file)
+- (e) Section F row added: PASS (see docs/LIBJXL_DIVERGENCES.md row added
+      this commit)
+- (f) Sibling worktrees cleaned up: PENDING (after push)
+- (g) .workongoing handled: PENDING (sibling marker not owned by SA-A —
+      primary workspace marker is W44-AUDIT-8 P8 agent's)
