@@ -1,0 +1,258 @@
+# SA-G: AC strategy SEARCH divergence on clic_22ea12 e9 d=4 — DIAGNOSTIC
+
+Date: 2026-05-25
+Agent: SA-G (parallel structural-analysis #G, follow-on to SA-A `5c99dc20`)
+Cell: `clic_22ea12c903e41583b7c469cb86040157.png` e9 d=4.0 `--strategy libjxl`
+Encoders: zenjxl @ `bee60e91` (origin/main parent of SA-G workspace),
+          cjxl `4279d48` (libjxl 0.12.0 + SA-G `EstimateEntropy` per-call dump)
+
+Status: ROOT CAUSE IDENTIFIED — CfL pass-1 ytox/ytob divergence on smooth tiles
+        propagates through AC strategy search EstimateEntropy → biases DCT8 cost
+        upward 50-65% on affected tiles → partial transforms relatively cheaper →
+        merge-stage 8x8-class sums lower → larger transforms (DCT16X16/DCT32X32)
+        fail to dominate → SA-A's 576 partial-first-blocks survive.
+
+User explicitly authorised libjxl instrumentation (overrides CLAUDE.md "NEVER
+touch other repos"); libjxl side lives in `~/work/jxl-efforts/libjxl--sa-g`
+worktree, NOT committed to libjxl.
+
+## Inputs (block storage — NOT committed; CLAUDE.md >30 KB rule)
+
+- `/mnt/v/zen/jxl-encoder/sa-g-2026-05-25/zenjxl_cost_dump.tsv`
+  (24 MB, 193,893 rows: per-strategy `EstimateEntropy` cost per block on zenjxl)
+  sha256 `330f33fe8c3a7d30c8932ad90eb8e02f3759408a617f8a79dcd448fb79bbc74e`
+- `/mnt/v/zen/jxl-encoder/sa-g-2026-05-25/cjxl_cost_dump.tsv`
+  (21 MB, 191,749 rows: per-strategy `EstimateEntropy` cost per block on cjxl)
+  sha256 `a67cb31b8fa91ae671aa1d88a76ce7dc7a7fbaf71ed713631e5b0a014263593e`
+
+Schema (both files, tab-separated):
+strategy  x  y  entropy_mul  cx  cy  quant_norm16  cmap_x  cmap_b
+  entropy_pre_loss  loss_scalar  info_loss_mul  cost_delta  zeros_mul  final_entropy
+(zenjxl has one extra column `mask1x1_mean_y` at position 9 from W44-58 dump infra)
+
+Strategy codes (libjxl wire numbering, both sides):
+  0=DCT8 1=IDENTITY 2=DCT2X2 3=DCT4X4 4=DCT16X16 5=DCT32X32 6=DCT16X8 7=DCT8X16
+  12=DCT4X8 13=DCT8X4 14-17=AFV0-3 (5 below) 11=DCT64X64 (also)
+
+## Reproduction
+
+zenjxl side (in this worktree):
+```
+cargo build --release -p jxl-encoder-cli
+JXL_DUMP_COST_INPUTS_PATH=/tmp/sa-g/zenjxl_costs.tsv \
+  ./target/release/cjxl-rs -e 9 -d 4.0 --strategy libjxl \
+  ~/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png \
+  /tmp/sa-g/zenjxl.jxl
+```
+(`JXL_DUMP_COST_INPUTS_PATH` env hook was already in place from W44-58 / W44-76
+debug infrastructure at `vardct/ac_strategy.rs::dump_cost_inputs`.)
+
+libjxl side (sibling worktree `~/work/jxl-efforts/libjxl--sa-g`):
+- Patch `lib/jxl/enc_ac_strategy.cc::EstimateEntropy` to fprintf one row per call
+  (~30 LOC instrumentation, NOT committed).
+- `mkdir build && cd build && cmake .. -DJPEGXL_ENABLE_BENCHMARK=OFF
+    -DJPEGXL_ENABLE_JPEGLI=OFF -DJPEGXL_ENABLE_OPENEXR=OFF
+    -DJPEGXL_ENABLE_TRANSCODE_JPEG=OFF -DJPEGXL_ENABLE_PLUGINS=OFF
+    -DBUILD_TESTING=OFF -G Ninja && ninja cjxl`
+- `JXL_SA_G_DUMP_PATH=/tmp/sa-g/cjxl_costs.tsv \
+    ./tools/cjxl -e 9 -d 4.0 --num_threads 0 <input.png> /tmp/sa-g/cjxl.jxl`
+
+## Headline finding
+
+For block (272, 192) (= 8x8 block index (34, 24), CfL tile (4, 3)):
+
+| metric      | zenjxl   | cjxl     | delta   |
+| ---         | ---      | ---      | ---     |
+| quant_norm16| 0.098031 | 0.098031 | identical |
+| cmap_b      | 0.964286 | 0.964286 | identical |
+| **cmap_x**  | **-0.119048** | **0.000000** | **DIFFERENT (Δ = -0.119)** |
+| DCT8 final  | 1223.52  | 747.40   | ours +63.7% |
+| DCT2X2 final| 1153.20  | 814.06   | ours +41.7% |
+| DCT4X4 final| 1249.34  | 1091.80  | ours +14.4% |
+| AFV0 final  | 1255.55  | 947.58   | ours +32.5% |
+| WINNER      | DCT2X2 (1153.2) | DCT8 (747.4) | flips! |
+
+zenjxl's DCT8 cost is inflated by 63.7% on this block; partials inflate less
+(14-42%) because they touch fewer X-channel coefficients per pixel → the
+mis-applied CfL X-decorrelation does less damage → partials relatively cheaper.
+
+## Mechanism — confirmed via env-gated A/B test (ytox=0 forced)
+
+Added one-shot env hook `JXL_SA_G_FORCE_ZERO_CMAP` (REVERTED before commit) that
+zeros the CfL map passed to `compute_ac_strategy`. Re-encoded:
+
+| variant                              | output bytes | first-pick partials (8x8-class) | DCT8 first-picks |
+| ---                                  | ---          | ---                              | ---              |
+| zenjxl default (real CfL pass-1)     | 34,414 B     | 2,241 (13.7%)                    | 14,042           |
+| zenjxl `JXL_SA_G_FORCE_ZERO_CMAP=1`  | 34,208 B     | 2,495 (15.2%)                    | 13,793           |
+| cjxl (per-block dump aggregate)      | 33,676 B     | 2,499 (15.2%)                    | 13,788           |
+
+Zeroing CfL on our side brings the partial-count INTO PARITY with cjxl (2495 vs
+2499 = +0.16%) and DCT8 count into parity (13793 vs 13788 = -0.04%). The
+remaining 532-B output gap between zenjxl-zeroed-CfL (34,208) and cjxl (33,676)
+is OTHER divergences outside SA-G scope.
+
+Note: the "partial" count here is at the per-8x8-candidate stage BEFORE the
+`TryMergeAcs` 16x8/16x16/32x32 merge pass. SA-A's "576 partial first-blocks in
+emitted bitstream" is the POST-merge count — many partials get promoted to
+larger transforms during merge. The merge stage on our side fails to upgrade as
+many partials because the 4-block sum of best-8x8-class entropies is LOWER on
+zenjxl (partials having beaten DCT8 on individual blocks), giving the larger
+candidates LESS room to win the cost-benefit comparison.
+
+## Per-tile cmap_x divergence is widespread
+
+Distribution of distinct non-zero `cmap_x` values (i8 ytox / 84) used in
+`EstimateEntropy` calls:
+- zenjxl: 21 distinct values, ranges [-0.1428, 0.1071]; 2/3 of all rows non-zero
+- cjxl:   21 distinct values, ranges [-0.0833, 0.0833]; ~half of all rows zero
+
+In raw counts:
+- `cmap_x == 0.0` rows: zenjxl ~30%, cjxl ~52%
+- `cmap_x == -0.119048` rows: zenjxl has 14,015; cjxl has ZERO
+- `cmap_x` magnitudes ≥ 0.083: zenjxl has many; cjxl has zero
+
+This is consistent with libjxl's `FindBestMultiplier` post-step snap-to-zero:
+
+```c++
+float towards_zero = 2.6;
+if (x >= towards_zero) { x -= towards_zero; }
+else if (x <= -towards_zero) { x += towards_zero; }
+else { x = 0; }  // snap-to-zero if |x| < 2.6
+return Clamp1(round(x), -128, 127);
+```
+
+Our `bias_and_quantize` in `jxl-encoder-simd/src/cfl.rs:17` is BYTE-IDENTICAL.
+Both encoders snap |x|<2.6 to 0. So the Newton optimum itself diverges — both
+encoders are searching the same coefficient set but converging to DIFFERENT
+optima despite `cfl_newton_libjxl_parity = true` on `--strategy libjxl`.
+
+## Specific knobs / sites
+
+**Primary divergence site** (our side):
+- `jxl-encoder/src/vardct/precomputed.rs:1498-1572` — `compute_dc_group` runs
+  `compute_cfl_map_for_tiles` BEFORE `compute_ac_strategy_for_tiles`, using the
+  result as the cmap input to AC search.
+- `jxl-encoder/src/vardct/encoder.rs:4239-4264` — encoder pipeline calls
+  `compute_cfl_map(...)` then `compute_ac_strategy(..., &cfl_map, ...)`.
+- `jxl-encoder/src/vardct/chroma_from_luma.rs:257-284` — `find_best_multiplier`
+  dispatches to `jxl_simd::cfl_find_best_multiplier_newton` (or `_ls` fallback).
+
+**Parity site** (libjxl side):
+- `lib/jxl/enc_heuristics.cc:1167-1175` — runs `cfl_heuristics.ComputeTile()`
+  with `ac_strategy=nullptr` (i.e., pass-1 use_dct8=true) IFF
+  `speed_tier <= kSquirrel` (effort ≥ 7). At effort 9 (`kTortoise=1`), it DOES
+  run pass-1 CfL first.
+- `lib/jxl/enc_chroma_from_luma.cc:127-185` — `FindBestMultiplier` Newton inner
+  loop with `eps=100, max_iters=20, x=0` start.
+- `lib/jxl/enc_chroma_from_luma.cc:208-353` — `ComputeTile` zeros LFs, applies
+  `q=1` (for use_dct8=true), accumulates per-tile coefficient products, calls
+  `FindBestMultiplier`.
+
+**`encoding_speed_tier` gate ruled OUT**: libjxl `FindBest8x8Transform`
+(`enc_ac_strategy.cc:579-581`) does have a per-transform speed-tier limit, but
+at effort 9 (`speed_tier=kTortoise=1`) ALL 10 candidates pass the gate. So gate
+divergence is NOT the wedge. (Validated against the dump: cjxl evaluates all 10
+candidates at every block.)
+
+## Phase 2 fix-shape proposal
+
+This is a CfL Newton-convergence divergence, NOT an AC-strategy-search bug. The
+right fix sits in `chroma_from_luma.rs` / `jxl-encoder-simd/src/cfl.rs`, not in
+`ac_strategy_search.rs`.
+
+Three possible mechanisms (in priority order):
+
+### Fix A — Verify `cfl_newton_libjxl_parity` actually plumbed through
+
+(Quick, 1-2 hours.) Add an env hook + assertion in `compute_cfl_map_for_tiles`
+that dumps `(use_newton, newton_eps, newton_max_iters, newton_libjxl_parity)`
+per call. Confirm `--strategy libjxl` is actually setting `newton_libjxl_parity
+= true` at runtime. If it IS true, then the parity port itself has a precision
+bug.
+
+### Fix B — Bit-exact Newton port audit (multi-day)
+
+Compare our `jxl_simd::cfl_find_best_multiplier_newton_scalar` against libjxl
+`FindBestMultiplier` line-by-line:
+- `CFLFunction.Compute(x, eps, &dfpeps, &dfmeps)` parity
+- derivative formula `ddf = (dfpeps - dfmeps) / (2 * eps)`
+- step formula `step = d_f / (ddf + 0.85)`
+- clamp `step = min(20, max(-20, step))`
+- step-size break `if abs(step) < 3e-3`
+- final snap-to-zero (W44-183 verified at parity)
+
+W44-183 (`286bf5f1`) claimed to port these 4 params bit-exactly, but the dump
+shows we converge to DIFFERENT `x` values on at least these tiles. Either
+(a) the port misses a parity detail, or (b) the input coefficient set differs
+between encoders (different DCT precision, different LF-zeroing pattern, etc.).
+
+### Fix C — Pre-CfL AC strategy search (multi-week)
+
+The DEEPER libjxl behaviour at `speed_tier > kSquirrel` (effort ≤ 6) is to run
+`ProcessRectACS` with `cmap=defaults (all-zero ytox/ytob)`. We could mirror this
+unconditionally regardless of effort — search AC strategy with `cmap = zeros`,
+then run CfL pass-1, then proceed. The env-hook A/B above showed this gives
++0.6% bytes savings on this image (34,414 → 34,208).
+
+But this would break the W44-29..W44-172 / W44-89..W44-167 cost-model calibration
+that's tuned against the AC-strategy-sees-CfL-pass-1 baseline. The W44-183
+honest-stop pattern repeats: correcting in isolation throws off downstream
+compensation. Multi-week investigation if chosen.
+
+## Acceptance gates (SA-G chunk spec)
+
+- (a) Per-block-candidate cost dumps both encoders: PASS (193,893 + 191,749 rows
+  emitted; schema matched between encoders).
+- (b) Top divergence pattern identified: PASS — we pick partials because our
+  CfL pass-1 produces non-zero ytox at tiles where libjxl produces zero, and
+  the non-zero ytox biases DCT8's X-channel coefficients more than partials'
+  X-channel coefficients (DCT8 has more X coefficients per pixel).
+- (c) Specific knob named: PASS — `compute_cfl_map_for_tiles` → `find_best_multiplier`
+  → `jxl_simd::cfl_find_best_multiplier_newton` Newton convergence on smooth
+  tiles. Symmetric site libjxl `enc_chroma_from_luma.cc::FindBestMultiplier`
+  (`lib/jxl/enc_chroma_from_luma.cc:127-185`).
+- (d) Phase 2 fix-shape filed: PASS (Fix A / B / C above).
+- (e) Worktrees cleaned: pending (after commit).
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT** modify `ac_strategy_search.rs` or `EntropyMulTable` constants
+   based on this finding. The cost-model implementation is at parity with
+   libjxl — same `entropy_mul` reference values, same `kFavor2X2` / `kAvoid` /
+   `mul8x8` math, same `EstimateEntropy` `entropy + loss` aggregation, same
+   `c==0 && num_blocks>=2 ⇒ entropy *= w` X-channel penalty. The DIVERGENCE
+   lives upstream in the CfL map fed into the search.
+
+2. **DO NOT** spawn another "AC strategy SEARCH" diagnostic. SA-G's measurement
+   is conclusive: same code, same input pixels, same quant — but DIFFERENT
+   cmap_x → different per-block costs.
+
+3. **DO NOT** force `cfl_map = zeros` for AC strategy search without first
+   measuring downstream cost-model interaction. The W44-183 / W44-184 pattern
+   warns: correcting CfL in isolation re-prices every AC block downstream.
+
+4. **DO NOT** cite "FMA precision" for the cmap_x divergence (per W44-66 user
+   correction). The mechanism is Newton-convergence divergence, not numeric
+   noise from FMA association.
+
+5. **DO NOT** assume `--strategy libjxl` produces byte-identical output to
+   cjxl on this cell. The cmap divergence proves it does not. The
+   `EncoderStrategy::Libjxl` invariant only covers the documented W44-228c1
+   pinned-fixture byte-locks (synthetic ≤48×48 images that don't trigger
+   non-trivial CfL Newton); on real photos at d=4 e9 the path diverges.
+
+6. **DO NOT** add a new content-aware lift to recover partials. SA-A's 576
+   partial first-blocks AREN'T the disease; they're a symptom of the
+   upstream-CfL-makes-DCT8-look-expensive-everywhere divergence.
+
+## Files in this commit
+
+- `benchmarks/sa_g_ac_strategy_search_clic22ea12_2026-05-25.meta` (this file)
+- `docs/LIBJXL_DIVERGENCES.md` Section F: new SA-G row pointing here.
+- `/mnt/v/zen/jxl-encoder/sa-g-2026-05-25/{zenjxl,cjxl}_cost_dump.tsv` (block
+  storage, NOT committed; pointers above).
+
+NO production source change. The env-gated diagnostic infrastructure already
+existed (W44-58 / W44-76 added `JXL_DUMP_COST_INPUTS_PATH` to
+`ac_strategy.rs::dump_cost_inputs` for prior structural-analysis chunks).
