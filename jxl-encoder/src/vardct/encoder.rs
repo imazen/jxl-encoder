@@ -5519,7 +5519,7 @@ impl VarDctEncoder {
         // boundaries). The trait routes through `xyb_full()` for the
         // whole-image source; output is byte-identical to the direct
         // call.
-        let transform_out = self.transform_and_quantize_with_source(
+        let mut transform_out = self.transform_and_quantize_with_source(
             &xyb_source,
             xsize_blocks,
             ysize_blocks,
@@ -5528,6 +5528,31 @@ impl VarDctEncoder {
             &cfl_map,
             &ac_strategy,
         )?;
+
+        // W44-AUDIT-8 Phase 6: apply libjxl QuantizeWP shape to DC
+        // values when the gate fires (effort ≤ 7 by default; libjxl
+        // `nl_dc = speed_tier < kFalcon` parity). Post-pass over the
+        // already-computed `float_dc` + `quant_dc` from the transform
+        // pipeline. At effort ≥ 8 this is a no-op (the buttloop owns
+        // DC refinement and libjxl drops to plain `std::round`).
+        // Env hook `JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP=1` force-enables
+        // for the Phase 6 bisect bench + diagnostic A/B at any effort.
+        let phase6_env_on = std::env::var_os("JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP").is_some()
+            && self.profile.effort <= 7;
+        if self.profile.use_libjxl_wp_dc_quant || phase6_env_on {
+            super::quantize_wp::requantize_dc_group_wp(
+                &mut transform_out.quant_dc,
+                &transform_out.float_dc,
+                xsize_blocks,
+                0,
+                0,
+                xsize_blocks,
+                ysize_blocks,
+                params.scale_dc,
+                params.extra_dc_precision,
+            );
+        }
+
         let _ms_xform = _t_xform.elapsed().as_secs_f64() * 1000.0;
         let _t_sharp = std::time::Instant::now();
         let quant_dc = &transform_out.quant_dc;
@@ -6487,7 +6512,7 @@ impl VarDctEncoder {
             xyb_y_for_dct,
             xyb_b_for_dct,
         );
-        let transform_out = self.transform_and_quantize_with_source(
+        let mut transform_out = self.transform_and_quantize_with_source(
             &precomputed_source,
             xsize_blocks,
             ysize_blocks,
@@ -6496,6 +6521,25 @@ impl VarDctEncoder {
             cfl_map_for_encode,
             &precomputed.ac_strategy,
         )?;
+
+        // W44-AUDIT-8 Phase 6: apply libjxl QuantizeWP shape to DC
+        // (see primary call-site for full comment).
+        let phase6_env_on = std::env::var_os("JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP").is_some()
+            && self.profile.effort <= 7;
+        if self.profile.use_libjxl_wp_dc_quant || phase6_env_on {
+            super::quantize_wp::requantize_dc_group_wp(
+                &mut transform_out.quant_dc,
+                &transform_out.float_dc,
+                xsize_blocks,
+                0,
+                0,
+                xsize_blocks,
+                ysize_blocks,
+                params.scale_dc,
+                params.extra_dc_precision,
+            );
+        }
+
         // Chunk-8b drop seam (no-op on the borrowed source — the
         // precomputed XYB is owned by the caller, not by us).
         let xsize_dc_groups_seam = div_ceil(width, DC_GROUP_DIM);

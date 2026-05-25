@@ -1,0 +1,6 @@
+# W44-AUDIT-8 Phase 6 bisect
+image_id	role	effort	distance	ours_bytes	ours_bfly	ours_ssim2	cjxl_bytes	cjxl_bfly	cjxl_ssim2	dbytes_pct	dbfly	dssim2
+clic_22ea12	PRIMARY_E7	7	4	37767	3.7302	72.0698	36614	3.7672	71.8307	+3.149%	-0.0371	+0.2391
+clic_22ea12	PRIMARY_E9	9	4	32489	3.8689	66.5687	33676	4.1421	70.1116	-3.525%	-0.2732	-3.5429
+terminal	PROTECT_E8	8	4	42322	1.8648	86.9084	56066	2.5179	87.5455	-24.514%	-0.6531	-0.6372
+codec_wiki	PROTECT_E8	8	4	57061	3.4288	80.3028	72960	3.5015	83.2739	-21.791%	-0.0727	-2.9711

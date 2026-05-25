@@ -99,6 +99,7 @@ mod zensim_loop;
 pub mod aqba_diag;
 pub(crate) mod quant;
 pub(crate) mod quantize;
+pub(crate) mod quantize_wp;
 pub(crate) mod reconstruct;
 mod static_codes;
 pub mod transform;
