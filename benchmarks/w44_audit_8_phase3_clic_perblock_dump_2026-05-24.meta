@@ -1,0 +1,32 @@
+# W44-AUDIT-8 Phase 3: per-block AC strategy dump on the worst CLIC cell.
+# Bench: encode each image at d=4 effort 7 with cjxl-rs (Zenjxl default)
+# vs cjxl (libjxl reference v0.12.0, W44-76 dump patch).
+#
+# Predecessors:
+#   W44-AUDIT-8 Phase 1 (memory note 2026-05-24): 30-cell PHOTO/CLIC SSIM2-deficit
+#     cluster at d=4 characterized; env-bisect 11/11 NO_EFFECT confirms structural.
+#   W44-AUDIT-8 Phase 2 (commit bb96ca1f): CfL Mode C 30 NEUTRAL / 0 WIN / 0 LOSS —
+#     CfL infrastructure cannot move the i8 multiplier. RULED OUT.
+#   W44-103/121/199: per-block / per-region strategy dump pattern (predecessors).
+#   W44-76 dump infra: ours-side `vardct/w44_76_dump.rs` + libjxl-side patch at
+#     /home/lilith/work/jxl-efforts/libjxl--w44-76-per-block-debug-dump/.
+#
+# Diagnostic question (AUDIT-8 P1 Candidate #1):
+#   Does our AC strategy distribution on clic_22ea12 diverge from cjxl
+#   in a way that DOESN'T happen on 1418519 (mid-cluster control)?
+#
+# Per-block dumps (libjxl-wire space, both sides):
+#   /tmp/w44_audit_8_phase3_dumps/clic_22ea12_WORST_e7_d4_ours/per_block_ours.tsv
+#   /tmp/w44_audit_8_phase3_dumps/clic_22ea12_WORST_e7_d4_cjxl/per_block_libjxl.tsv
+#   /tmp/w44_audit_8_phase3_dumps/1418519_CONTROL_e7_d4_ours/per_block_ours.tsv
+#   /tmp/w44_audit_8_phase3_dumps/1418519_CONTROL_e7_d4_cjxl/per_block_libjxl.tsv
+#
+# 3x3 spatial region grid (region indices (ry, rx) where (0,0)=top-left):
+#   top: r00 r01 r02
+#   mid: r10 r11 r12
+#   bot: r20 r21 r22
+# Each region is `(w/3) & !31` x `(h/3) & !31` aligned to DCT32 blocks.
+#
+# Reproducer:
+#   cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' \
+#     --example w44_audit_8_phase3_clic_perblock_dump
