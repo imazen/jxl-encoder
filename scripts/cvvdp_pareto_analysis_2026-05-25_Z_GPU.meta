@@ -1,0 +1,60 @@
+Phase 6 Pareto analysis — cvvdp fork decision rule application
+input: benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv
+date: 2026-05-25
+
+## Coverage summary
+
+- B: 1134 cells populated
+- B_GPU: 1134 cells populated
+- C_GPU: 1134 cells populated
+- C_CPU: 1134 cells populated
+- C_GPU_v4: 1134 cells populated
+- Z_CPU: 1134 cells populated
+- Z_GPU: 1134 cells populated
+
+## Per-(corpus, metric) leader + Z_GPU placement
+
+corpus | metric | leader | leader_pct | Z_GPU_pct | within_5pp?
+--- | --- | --- | --- | --- | ---
+CID22 | butter_cpu | Z_CPU | 100.0% | 99.8% | Y
+CID22 | butter_gpu | Z_CPU | 100.0% | 99.8% | Y
+CID22 | cvvdp_gpu | C_GPU_v4 | 100.0% | 99.0% | Y
+CID22 | ssim2 | C_GPU | 100.0% | 100.0% | Y
+GB82-SC | butter_cpu | Z_GPU | 99.6% | 99.6% | Y
+GB82-SC | butter_gpu | Z_GPU | 99.6% | 99.6% | Y
+GB82-SC | cvvdp_gpu | Z_GPU | 98.2% | 98.2% | Y
+GB82-SC | ssim2 | Z_GPU | 99.1% | 99.1% | Y
+W44-S1 | butter_cpu | C_GPU | 100.0% | 100.0% | Y
+W44-S1 | butter_gpu | C_GPU | 100.0% | 100.0% | Y
+W44-S1 | cvvdp_gpu | C_GPU | 100.0% | 100.0% | Y
+W44-S1 | ssim2 | C_GPU | 100.0% | 100.0% | Y
+
+## Wall-time comparison
+
+backend | n | p50 ms | p95 ms | mean ms | avg bytes
+--- | --- | --- | --- | --- | ---
+B | 1134 | 75.7 | 1023.5 | 262.1 | 52848
+B_GPU | 1134 | 65.1 | 896.8 | 215.9 | 52848
+C_GPU | 1134 | 61.4 | 893.9 | 218.9 | 77729
+C_CPU | 1134 | 73.0 | 1340.2 | 399.6 | 77732
+C_GPU_v4 | 1134 | 61.2 | 729.1 | 190.3 | 48912
+Z_CPU | 1134 | 85.6 | 1667.8 | 375.1 | 43465
+Z_GPU | 1134 | 76.4 | 1173.8 | 253.7 | 43465
+
+## VERDICT: DEFAULT_FLIP
+
+- Z_GPU Pareto-dominates on corpora: GB82-SC
+- Z_GPU is within 5% of leader on every other (corpus, metric).
+- RFC §5.4 default-flip rule met.
+
+## Methodology notes
+
+- Pareto frontier minimizes (bytes, score) for `smaller-is-better` metrics
+  (butter_cpu, butter_gpu) and minimizes (bytes, -score) for larger-is-better
+  metrics (cvvdp_gpu, ssim2).
+- A backend is on the frontier iff no other backend strictly dominates it.
+  Ties on identical (bytes, score) count both as on-frontier.
+- 'Pareto wins' counts only cells with ≥2 backends scored on that metric.
+- 'Within 5pp' means C_GPU's Pareto-win-percentage >= leader's - 5.
+- Decoder failures are detected from the `notes` column substring match
+  (`decode` or `panic_during_cell`).

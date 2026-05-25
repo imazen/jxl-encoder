@@ -27,6 +27,14 @@
 //!   Phase 8c renorm + Phase 8d tighten + Phase 8g k_tile_norm=0.16
 //!   cumulative stack — the cvvdp-fork's current shipped production
 //!   default (when the cargo features are enabled).
+//! - `Z_CPU`: zensim-fork Phase 6 validation backend, CPU zensim.
+//!   `with_perceptual_metric(Zensim) + with_perceptual_device(Cpu)`.
+//!   Requires `zensim-loop` cargo feature compiled. Silent fallback
+//!   to butteraugli (one-shot warning) if the feature isn't compiled.
+//! - `Z_GPU`: zensim-fork Phase 6 validation backend, GPU zensim.
+//!   `with_perceptual_metric(Zensim) + with_perceptual_device(Gpu)`.
+//!   Requires `zensim-loop-gpu` cargo feature compiled. Silent
+//!   fallback path same as Z_CPU.
 //!
 //! All backends use `EncoderStrategy::Zenjxl` (production default).
 //!
@@ -96,6 +104,12 @@ enum Backend {
     /// (`with_cvvdp_bytes_tighten(Some(true))`). Phase 8g constants apply
     /// automatically inside the cvvdp loop when feature is compiled.
     CGpuV4,
+    /// Zensim Phase 6 validation: CPU zensim buttloop.
+    /// `with_perceptual_metric(Zensim) + with_perceptual_device(Cpu)`.
+    ZCpu,
+    /// Zensim Phase 6 validation: GPU zensim buttloop.
+    /// `with_perceptual_metric(Zensim) + with_perceptual_device(Gpu)`.
+    ZGpu,
 }
 
 impl Backend {
@@ -106,8 +120,10 @@ impl Backend {
             "C_GPU" => Ok(Backend::CGpu),
             "C_CPU" => Ok(Backend::CCpu),
             "C_GPU_v4" => Ok(Backend::CGpuV4),
+            "Z_CPU" => Ok(Backend::ZCpu),
+            "Z_GPU" => Ok(Backend::ZGpu),
             other => Err(format!(
-                "unknown --backend {other}; expected one of B|B_GPU|C_GPU|C_CPU|C_GPU_v4"
+                "unknown --backend {other}; expected one of B|B_GPU|C_GPU|C_CPU|C_GPU_v4|Z_CPU|Z_GPU"
             )),
         }
     }
@@ -119,6 +135,8 @@ impl Backend {
             Backend::CGpu => "C_GPU",
             Backend::CCpu => "C_CPU",
             Backend::CGpuV4 => "C_GPU_v4",
+            Backend::ZCpu => "Z_CPU",
+            Backend::ZGpu => "Z_GPU",
         }
     }
 }
@@ -334,6 +352,16 @@ fn score_cell(
         Backend::CGpuV4 => cfg
             .with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp)
             .with_cvvdp_bytes_tighten(Some(true)),
+        // zensim-fork Phase 6 (2026-05-25): CPU + GPU zensim buttloop
+        // backends. Silent fallback to butteraugli if the matching
+        // cargo feature wasn't compiled (one-shot warning emitted by
+        // the construct-backend dispatch).
+        Backend::ZCpu => cfg
+            .with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Zensim)
+            .with_perceptual_device(jxl_encoder::api::PerceptualDevice::Cpu),
+        Backend::ZGpu => cfg
+            .with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Zensim)
+            .with_perceptual_device(jxl_encoder::api::PerceptualDevice::Gpu),
     };
 
     let mut wall_samples: Vec<f64> = Vec::with_capacity(3);

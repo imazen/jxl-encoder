@@ -1459,7 +1459,11 @@ path = "examples/cvvdp_track_baseline.rs"
 # can engage the Phase 8d tighten exit pass. C_GPU_v4 is the full
 # Phase 8c+8d+8g stack (the cvvdp-fork's shipped production default
 # when the cargo features are compiled in).
-required-features = ["gpu-butteraugli", "butteraugli-loop", "cvvdp-loop", "cvvdp-loop-cpu", "cvvdp-loop-tighten", "ssim2-loop", "parallel"]
+# zensim-fork Phase 6 (2026-05-25): added zensim-loop + zensim-loop-gpu so
+# `--backend {Z_CPU, Z_GPU}` can wire the zensim backends. Same
+# additive-feature pattern as cvvdp — the example never #[cfg]s on
+# zensim-loop directly; the api dispatch handles silent fallback.
+required-features = ["gpu-butteraugli", "butteraugli-loop", "cvvdp-loop", "cvvdp-loop-cpu", "cvvdp-loop-tighten", "zensim-loop", "zensim-loop-gpu", "ssim2-loop", "parallel"]
 
 # cvvdp-fork Phase 6 (2026-05-24) multi-decoder spot-check (acceptance
 # gate (e)): encodes 20 cells with C_GPU and C_CPU at e8 d∈{1.0, 3.0}
@@ -1476,6 +1480,15 @@ required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "cvvdp-loop-c
 name = "cvvdp_phase8f_decoder_spotcheck"
 path = "examples/cvvdp_phase8f_decoder_spotcheck.rs"
 required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "cvvdp-loop-tighten", "ssim2-loop", "parallel"]
+
+# zensim-fork Phase 6 (2026-05-25) multi-decoder spot-check on the
+# Z_GPU + Z_CPU shipped backends (zensim-loop + zensim-loop-gpu +
+# Phase 4 per-distance calibration). 10 cells × 3 decoders = 30 PASS
+# checks required per acceptance gate (e).
+[[example]]
+name = "zensim_phase6_decoder_spotcheck"
+path = "examples/zensim_phase6_decoder_spotcheck.rs"
+required-features = ["__expert", "butteraugli-loop", "zensim-loop", "zensim-loop-gpu", "ssim2-loop", "parallel"]
 
 # cvvdp-fork Phase 4 (2026-05-24): 20-cell smoke bench producing the
 # `benchmarks/cvvdp_loop_smoke_<DATE>.tsv` file per the Phase 4 brief
