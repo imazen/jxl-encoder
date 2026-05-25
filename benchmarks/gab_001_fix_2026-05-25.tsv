@@ -1,0 +1,6 @@
+cell	label	effort	distance	width	pre_bytes	post_bytes	delta_bytes	delta_pct	pre_sha8	post_sha8	bytes_identical	sha_identical
+cid22_1418519	1418519_e7_d1	7	1.00	512	22950	22950	0	0.000	d7acb712	c2e45b09	YES	NO
+gb82_codec_wiki	codec_wiki_e7_d2	7	2.00	2560	87889	87889	0	0.000	6d689c23	d43dc8a3	YES	NO
+gb82_terminal	terminal_e8_d4	8	4.00	1646	42322	42322	0	0.000	943d2b8b	943d2b8b	YES	YES
+gb82_imac_dark	imac_dark_e6_d0.5	6	0.50	2940	321485	321485	0	0.000	ddb6bf88	ddb6bf88	YES	YES
+synthetic_gradient	gradient_64_e7_d1	7	1.00	64	413	413	0	0.000	110cb554	110cb554	YES	YES

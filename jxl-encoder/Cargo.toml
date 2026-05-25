@@ -2573,5 +2573,12 @@ name = "sa_g_fix_c_decoder_check"
 path = "examples/sa_g_fix_c_decoder_check.rs"
 required-features = ["parallel"]
 
+# gab-001 fix: 5-cell paired bench measuring bytes + SHA8 pre/post the
+# SIMD `gab_smooth` mul_add → explicit Mul+Add libjxl-parity fix.
+[[example]]
+name = "gab_001_bench"
+path = "examples/gab_001_bench.rs"
+required-features = ["__expert"]
+
 [lints]
 workspace = true

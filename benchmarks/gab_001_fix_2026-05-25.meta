@@ -1,0 +1,91 @@
+gab-001 fix: SIMD `gab_smooth` mul_add → explicit Mul+Add (libjxl-parity)
+============================================================================
+
+## What was measured
+
+5 production cells encoded twice from the same workspace at the same git
+parent (jj `oyozsvzm a11fd0e2`) with the ONLY difference being the
+SIMD `gab_smooth_avx2` / `gab_smooth_neon` inner loop:
+
+- PRE-fix: `wc_v.mul_add(center, w1_v.mul_add(cardinals, w2_v * diagonals))`
+  (2 FMAs + 1 mul → 3 chained roundings into a fused single-rounding tree)
+- POST-fix: `wc_v * center + w1_v * cardinals + w2_v * diagonals`
+  (3 muls + 2 adds → 5 explicit roundings, matches libjxl
+  `convolve_symmetric5.cc:66-69` `WeightedSum` `Mul` + `Add` pattern)
+
+Bench harness: `jxl-encoder/examples/gab_001_bench.rs`, registered under
+`required-features = ["__expert"]`, run via `cargo run --release
+--features __expert --example gab_001_bench`.
+
+Build command for both runs:
+  cargo run --release --features __expert --example gab_001_bench
+
+PRE-fix run: temporarily reverted gab.rs to the mul_add shape, ran the
+bench, recorded bytes + SHA8.
+POST-fix run: restored gab.rs to the explicit-Mul+Add shape, ran the
+bench, recorded bytes + SHA8.
+
+## Cells
+
+1. cid22_1418519 e7 d=1   (512x512 CID22 photo, photo-class)
+2. gb82_codec_wiki e7 d=2 (2560x1664 wiki-page screenshot, mixed-content)
+3. gb82_terminal e8 d=4   (1646x1078 terminal screenshot, text-heavy)
+4. gb82_imac_dark e6 d=0.5 (2940x1840 dark-themed screenshot, high-contrast)
+5. synthetic_gradient e7 d=1 (64x64 RGB gradient, smooth)
+
+## Headline result
+
+5/5 cells: BYTES IDENTICAL (delta_bytes = 0 on every cell, delta_pct = 0.000)
+3/5 cells: SHA IDENTICAL (terminal, imac_dark, gradient)
+2/5 cells: SHA DIVERGED but same byte count (cid22_1418519, codec_wiki)
+
+The byte counts being identical is structural: gab's f32 output is fed
+into the quantizer which integer-rounds; the ULP-scale shift from
+mul_add fusion vs explicit Mul+Add is absorbed by quantization rounding
+on every cell tested. The 2 SHA-diverged cells indicate that the
+QUANTIZED-coefficient bitstream layout shifted slightly (some quant
+codes flipped at the ±0.5 boundary) but the entropy coder produced the
+same total byte count.
+
+This is the SAME pattern documented in W44-RECON-DEEP/A11 (`91fb35a8`)
+where the XYB→linear FMA fix was BYTE-IDENTICAL on 8/8 cells. Buttloop
++ quantizer + entropy coder are robust to ULP-scale numeric divergence
+on production-relevant inputs; the right reason to make the fix is
+LIBJXL PARITY (decoder-side gaborish, byte-exact reconstruction
+consistency with the cjxl reference), not encoder bytes/quality
+improvement.
+
+## Acceptance gates (all PASS)
+
+(a) Build PASS on every feature combo touched.
+(b) `cargo test -p jxl-encoder-simd` 181/181 PASS. `gab` tests 7/7 PASS
+    INCLUDING the previously-`#[ignore]`d `gab_scalar_vs_dispatch_sizes_strict`.
+(c) `cargo test -p jxl-encoder --lib --features "__expert __internals"`
+    1505/1505 PASS.
+(d) drift 7/7 PASS, byte-lock 4/4 BYTE-IDENTICAL (NO regen needed),
+    hash-locks 36/36 BYTE-IDENTICAL (NO regen needed).
+(e) This bench TSV.
+(f) `docs/SIMD_PARITY_KNOWN_DIVERGENCES.md` gab-001 flipped to RESOLVED.
+(g) `docs/LIBJXL_DIVERGENCES.md` Section G new row for gab-001.
+(h) Single commit pushed via jj git push to origin/main.
+(i) Sibling workspace cleaned up per CLAUDE.md.
+
+## DO NOT
+
+- DO NOT cite "FMA precision" for the divergence (per W44-66 user
+  correction). The divergence is specifically the `mul_add` FUSION
+  tree-shape vs the explicit Mul+Add tree-shape — both fully precise.
+  libjxl chose Mul+Add; we now match.
+- DO NOT respawn this chunk thinking the byte-identical result is
+  evidence the fix is unnecessary. The fix's value is LIBJXL PARITY of
+  the gaborish convolution shape, which closes:
+    1. gab-001 SIMD-vs-scalar divergence (was tolerated via #[ignore])
+    2. SIMD-vs-libjxl convolution shape divergence
+    3. The last `#[ignore]`d SIMD-parity test in jxl-encoder-simd
+- DO NOT revert the AVX2 `mul_add` chain back. It is faster on FMA
+  hardware but produces output that does NOT match libjxl's
+  reference convolution — exactly the kind of divergence the
+  SIMD-parity audit (eedc1877 + fb871c83) was built to surface.
+- DO NOT add a runtime feature flag to switch back to mul_add on
+  encode-only paths. The scalar path was already libjxl-shape; SIMD
+  must match libjxl + scalar = ONE behaviour, not two.
