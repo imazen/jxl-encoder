@@ -128,28 +128,46 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
     // - `_d1_noise` (e7): size 3245 → 3228 (-17 B), hash drift. Pass-1
     //   Newton on noise content produces different cmap multipliers
     //   from the prior LS dispatch, freeing additional bits downstream.
+    // W44-AUDIT-8 Phase 5 (2026-05-24): re-pinned after wiring
+    // `extra_dc_precision = 1` at effort ≤ 7 on every strategy (Libjxl
+    // included — libjxl `enc_cache.cc:232-234 nl_dc = (speed_tier <
+    // kFalcon)` parity). DC quant scale 1× → 2× across the fixtures;
+    // bitstream `extra_dc_precision` field emits 1 instead of 0;
+    // decoder applies symmetric `mul = 0.5` (jxl-rs/zenjxl-decoder
+    // `frame/modular/mod.rs:1135`). All 5 fixtures touched:
+    //   _d1   (e7):    211 → 217 (+6 B)  hash drift
+    //   _d4   (e7):    169 → 177 (+8 B)  hash drift
+    //   _d1_e5:        211 → 215 (+4 B)  hash drift
+    //   _d1_e3:        321 → 313 (-8 B)  hash drift (smaller — e3 fewer
+    //                  DC tokens / smaller header overhead change)
+    //   _noise_d1:     3245→3240 (-5 B)  hash drift
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1",
-        size: 211,
-        hash: 0x8e9537a247638fae,
+        size: 217,
+        hash: 0x4ed266e4ff5b658b,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
-        size: 169,
-        hash: 0x83dd3b0b265acc41,
+        size: 177,
+        hash: 0xbbf100a458b3f18c,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",
-        size: 211,
-        hash: 0x50ae6f813daedb43,
+        size: 215,
+        hash: 0x4adf8fe2098a5533,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e3",
-        size: 321,
-        hash: 0xc096806cfe65ad34,
+        size: 313,
+        hash: 0x591346e9a21f0527,
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",
+        // W44-AUDIT-8 Phase 5 (2026-05-24): size 3228 → 3240 (+12 B),
+        // hash drift. extra_dc_precision=1 at effort<=7 doubles the DC
+        // quantization integer range; on noise content the residual
+        // distribution expands into +2 wider token classes (per the
+        // 48×48 fixture's noise variance), costing +12 B in DC tokens.
         // W44-195 (2026-05-22): size 3245 → 3228 (-17 B), hash drift.
         // Pass-1 Newton dispatch on noise content produces different
         // cmap multipliers from the prior LS dispatch, freeing
@@ -161,13 +179,9 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // `effort >= 4` → `effort >= 8` (libjxl `enc_modular.cc:1591`
         // parity). At effort 7 (this fixture) the Libjxl strategy now
         // emits kWPFixedDC directly without the W44-57 trial-and-pick;
-        // size dropped 3250 → 3249 bytes (-1 B). The Libjxl strategy
-        // ALWAYS preferred the kWPFixedDC winner at this distance on
-        // this 48×48 fixture under the trial-and-pick, so the bitstream
-        // contents are essentially the same plus or minus the
-        // chosen-tree marker.
-        size: 3228,
-        hash: 0xeeeead9ae77fc4f5,
+        // size dropped 3250 → 3249 bytes (-1 B).
+        size: 3240,
+        hash: 0x946894945fff10f2,
     },
 ];
 

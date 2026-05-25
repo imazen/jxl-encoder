@@ -833,6 +833,30 @@ pub struct EffortProfile {
     /// pickers exploring the threshold-vs-rate frontier per content class.
     pub adjust_thresholds: [f32; 4],
 
+    /// **W44-AUDIT-8 Phase 5**: DC precision bit-shift in the bitstream
+    /// `extra_dc_precision` field. `1 << extra_dc_precision` scales the
+    /// DC quantization inv_factor on the encoder side; the decoder applies
+    /// the symmetric `mul = 1.0 / (1 << extra_dc_precision)` dequant
+    /// (jxl-rs `frame/modular/mod.rs:1135`, zenjxl-decoder mirror).
+    ///
+    /// libjxl `enc_cache.cc:232-234`: `nl_dc = (speed_tier < kFalcon)`
+    /// → TRUE at effort ≤ 7 → `enc_modular.cc:1580` sets
+    /// `extra_dc_precision = 1` and `mul = 2`. At effort ≥ 8 the
+    /// butteraugli loop owns DC quantisation refinement and libjxl drops
+    /// back to `extra_dc_precision = 0` (1× precision).
+    ///
+    /// We mirror that gate **on every strategy** (Libjxl + Zenjxl +
+    /// Aggressive + LeanFaster) because the W44-AUDIT-8 Phase 4 DC dump
+    /// confirmed cjxl emits the 2× DC precision unconditionally at
+    /// effort ≤ 7. The bitstream `extra_dc_precision` field is part of
+    /// the strict cjxl byte-parity invariant on Libjxl strategy.
+    ///
+    /// Default `0` keeps every direct field literal (test fixtures,
+    /// `lossy_minimum_init()`, etc.) at the pre-Phase-5 baseline.
+    /// [`Self::lossy_reference`] / [`Self::lossy_experimental`] set
+    /// `1` at effort ≤ 7, `0` at effort ≥ 8.
+    pub extra_dc_precision: u8,
+
     // ─── Cost model constants ────────────────────────────────────────────
     // All five `k_*` constants below feed `vardct/ac_strategy_search.rs`
     // (the per-8×8 cost evaluator that picks DCT8 vs DCT4x4 vs IDENTITY vs
@@ -1383,6 +1407,12 @@ impl EffortProfile {
             initial_q_numerator: if effort >= 5 { 0.39 } else { 0.79 },
             fixed_thresholds_y: [0.56, 0.62, 0.62, 0.62],
             adjust_thresholds: [0.58, 0.64, 0.64, 0.64],
+            // W44-AUDIT-8 Phase 5: mirror libjxl `nl_dc = speed_tier <
+            // kFalcon` (effort ≤ 7 → 2× DC precision; effort ≥ 8 → 1×,
+            // butteraugli loop owns DC refinement). Applies to every
+            // strategy because cjxl emits this gate unconditionally;
+            // the bitstream field is part of strict cjxl byte-parity.
+            extra_dc_precision: if effort >= 8 { 0 } else { 1 },
 
             // ── Cost model constants (from libjxl) ──
             k_favor_2x2: -0.4,
@@ -1538,6 +1568,10 @@ impl EffortProfile {
             initial_q_numerator: 0.39,
             fixed_thresholds_y: [0.56, 0.62, 0.62, 0.62],
             adjust_thresholds: [0.58, 0.64, 0.64, 0.64],
+            // W44-AUDIT-8 Phase 5: lossless path doesn't quantize DC the
+            // same way (modular RCT, not VarDCT DC channel), so the field
+            // is moot here. Kept at `0` for the lossless default.
+            extra_dc_precision: 0,
 
             // ── Cost model constants (used for tree learning cost estimates) ──
             k_favor_2x2: -0.4,

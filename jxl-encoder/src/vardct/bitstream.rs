@@ -1172,7 +1172,15 @@ impl VarDctEncoder {
         );
 
         // DC group header
-        writer.write(2, 0)?; // extra_dc_precision = 0
+        // W44-AUDIT-8 Phase 5: mirror libjxl `nl_dc` gate
+        // (`enc_cache.cc:232-234`: `speed_tier < kFalcon` → 1 << 1 = 2).
+        // Per-effort default lives on `EffortProfile::extra_dc_precision`.
+        // The encoder-side DC quantization in `transform.rs` AND
+        // reconstruction in `reconstruct.rs` are kept symmetric so the
+        // emitted `quant_dc[c]` integers decode (via `mul = 1/(1<<n)`) to
+        // the same float magnitude as the encoder sees during buttloop.
+        let extra_dc_precision = self.profile.extra_dc_precision as u64;
+        writer.write(2, extra_dc_precision)?;
         writer.write(4, 3)?; // use global tree, default wp, no transforms
 
         #[cfg(feature = "debug-tokens")]
@@ -5013,7 +5021,9 @@ impl VarDctEncoder {
         // The decoder skips decode_vardct_lf() when has_lf_frame() is true.
         if !self.use_lf_frame {
             // DC group header
-            writer.write(2, 0)?; // extra_dc_precision = 0
+            // W44-AUDIT-8 Phase 5: see `write_dc_group` for narrative.
+            let extra_dc_precision = self.profile.extra_dc_precision as u64;
+            writer.write(2, extra_dc_precision)?;
             writer.write(4, 3)?; // use global tree, default wp, no transforms
 
             // Write DC tokens
