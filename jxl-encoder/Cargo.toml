@@ -1061,6 +1061,15 @@ name = "vardct_ac_dispatch_paired_ab"
 path = "examples/vardct_ac_dispatch_paired_ab.rs"
 required-features = ["__expert"]
 
+# Paired A/B for chunk 2a (issue #43) — tiny + very-low-d + e>=7 →
+# try_dct32=false. Variant A = dispatch ON (new default). Variant B =
+# dispatch OFF (force try_dct32=true AND try_dct64=true via __expert
+# override; chunk 1 fires on the same cell so we pin both for fair A/B).
+[[example]]
+name = "issue_43_chunk_2a_dct32_paired_ab"
+path = "examples/issue_43_chunk_2a_dct32_paired_ab.rs"
+required-features = ["__expert"]
+
 # NOTE: smart_fanout_sweep.rs lives under examples/ alongside the picker
 # oracle harnesses below — same deal: depends on the sibling zenanalyze
 # path dep and is NOT a registered cargo example. Run locally with:

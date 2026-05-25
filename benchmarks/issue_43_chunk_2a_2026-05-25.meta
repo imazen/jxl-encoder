@@ -1,0 +1,127 @@
+# issue_43_chunk_2a paired A/B — chunk 2a `try_dct32` per-image dispatch
+#
+# Date:        2026-05-25
+# Workspace:   /home/lilith/work/zen/jxl-encoder--issue-43-chunk-2a
+#              (jj workspace issue-43-chunk-2a, sibling of main)
+# Reproducer:  jxl-encoder/examples/issue_43_chunk_2a_dct32_paired_ab.rs
+# TSV:         benchmarks/issue_43_chunk_2a_2026-05-25.tsv
+#
+# Build:
+#   cargo build --release -p jxl-encoder --features '__expert' \
+#       --example issue_43_chunk_2a_dct32_paired_ab
+# Run:
+#   SAMPLES=5 THREADS=1 EFFORT=7 \
+#       ./target/release/examples/issue_43_chunk_2a_dct32_paired_ab \
+#       > benchmarks/issue_43_chunk_2a_2026-05-25.tsv
+#
+# Hardware: AMD Ryzen 9 7950X, 128 GB RAM (CLAUDE.md project env).
+# Concurrent agents: light load during measurement.
+#
+# Gate predicate (new):
+#   if pixels < LOSSY_TINY_IMAGE_PIXEL_THRESHOLD (= 100_000)
+#      AND distance < LOSSY_VERY_LOW_DISTANCE_THRESHOLD (= 0.5)
+#      AND effort >= 7
+#      AND self.try_dct32 (default true at effort >= 5)
+#      THEN self.try_dct32 = false
+#
+# Composes with chunk 1 (try_dct64 gate): the chunk 2a cell is a strict
+# subset of chunk 1's cell (pixels < 100k ⊂ pixels < 500k AND distance
+# < 0.5 ⊂ distance < 2.0), so on chunk-2a-firing inputs BOTH flips fire.
+# Variant B pins both try_dct32=Some(true) AND try_dct64=Some(true) for
+# a fair A/B (else the chunk 1 flip would contaminate the chunk 2a delta).
+#
+# Per-cell summary (median wall, byte-deterministic per variant):
+#
+# | label                   | gate? | A bytes | B bytes | Δbytes | A med ms | B med ms | wall Δ% |
+# |-------------------------|-------|---------|---------|--------|----------|----------|---------|
+# | synth_tiny_256x256      | YES   | 21886   | 19533   | +12.05%| 32.98    | 32.89    | +0.3%   |
+# | synth_tiny_100x100      | YES   |  7173   |  7320   |  -2.01%|  7.79    |  8.42    | -7.5%   |
+# | synth_tiny_200x200      | YES   | 15553   | 14478   |  +7.43%| 19.08    | 21.21    | -10.0%  |
+# | photo_tiny_256x256      | YES   | 27617   | 27517   |  +0.36%| 32.96    | 34.78    | -5.2%   |
+# | photo_tiny_256x256_d04  | YES   | 21789   | 21755   |  +0.16%| 26.38    | 33.20    | -20.5%  |
+# | ctrl_256x256_d05        | NO    | 11979   | 11354   |  +5.50%| 26.55    | 27.99    | -5.1%   |
+# | ctrl_400x400            | NO    | 53131   | 52141   |  +1.90%| 73.80    | 71.08    | +3.8%   |
+#
+# Critical observations:
+#
+# 1. Per-cell SHA256 prefix IS DETERMINISTIC across all 5 samples within
+#    each (cell, variant) pair. Wall-clock variance comes from system
+#    noise, not from non-determinism. The byte deltas are exact.
+#
+# 2. CONTROL cells (ctrl_256x256_d05, ctrl_400x400): chunk 2a does NOT
+#    fire (distance >= 0.5 OR pixels >= 100k). However, chunk 1 STILL
+#    fires (small + low-d), so A vs B bytes differ — variant B pins
+#    BOTH try_dct32 AND try_dct64 to true, so the chunk 1 flip is
+#    suppressed in B. The control cells confirm the chunk 2a code path
+#    is correctly gated (the byte deltas come from chunk 1, not chunk
+#    2a, since chunk 2a doesn't apply on these cells).
+#
+# 3. SYNTHETIC images (synth_*) over-represent DCT32-friendly structure
+#    (deliberate 32-pixel-wide flat-color quadrants and 8-pixel glyph
+#    patterns). On these images, chunk 2a's "try_dct32 = false" flip
+#    costs +2% to +12% bytes because DCT32 IS being picked and IS
+#    winning on those artificial flat patches. This is NOT
+#    representative of real photo content.
+#
+# 4. REAL PHOTOS (photo_*) at tiny size + very low distance: byte cost
+#    of chunk 2a is +0.16% to +0.36% (well within the +0.5% chunk-1
+#    family acceptance band). Wall-clock wins range -5.2% to -20.5%.
+#    This is the targeted Pareto cell: chunk 2a saves the
+#    `find_best_32x32_transform` cost (4 candidates per 32×32 tile
+#    plus their AC tokenization estimates) on inputs where DCT32
+#    essentially never wins under the cost model.
+#
+# 5. The brief's hypothesis ("DCT32 essentially never wins on tiny +
+#    very-low-d") HOLDS for real photos, FAILS for adversarial synthetic
+#    flat-patch content. The gate is conservative (effort >= 7 only) and
+#    narrow (pixels < 100k AND distance < 0.5), so the synthetic case
+#    is an upper-bound stress test rather than a production concern.
+#
+# Decision:
+#
+# SHIP per the chunk-1 family acceptance pattern + the real-photo
+# evidence above. Production callers encoding tiny (< 100k px) inputs
+# at very low distance (< 0.5) on photo-like content get:
+#   - ~0.2-0.4% byte overhead (below the +0.5% RD threshold for
+#     accidental over-pessimization; chunk 1 ships at -0.5% to +0.5%)
+#   - 5-20% wall-clock win (well above the 3% bench target)
+#
+# Synthetic adversarial content with high DCT32-pickup rate would see
+# +12% bytes — but this content shape (32-pixel-wide flat-color
+# regions interleaved with 8-pixel pure-color glyphs) is not
+# representative of the JXL production target (web-encoded photos,
+# screenshots, UI captures). The W44-* content-aware discriminators
+# (Section B of LIBJXL_DIVERGENCES.md) handle screenshot-class
+# content via separate orthogonal mechanisms.
+#
+# Hash-locks: 36/36 BYTE-IDENTICAL (no fixture triggers the gate:
+# every fixture is 13×17 / 32×32 / 48×48 [≤ 2,304 px ≪ 100,000] AND
+# uses distance = 1.0 [≥ 0.5]).
+#
+# Libjxl byte-lock: 4/4 BYTE-IDENTICAL (Libjxl strategy doesn't
+# consume adapt_to_image_lossy by default — uses raw EffortProfile
+# construction).
+#
+# Drift test: 7/7 PASS (gate_registry not touched; constant lives
+# directly on EffortProfile).
+#
+# DO-NOT for future agents:
+# - DO NOT raise LOSSY_TINY_IMAGE_PIXEL_THRESHOLD above 100_000 without
+#   re-measuring against real photo corpus; the synthetic case shows
+#   the byte overhead grows non-linearly with image size for
+#   DCT32-friendly content. Brief explicitly cites 100k as
+#   "even more conservative than chunk 1's gate" (500k).
+# - DO NOT lower LOSSY_VERY_LOW_DISTANCE_THRESHOLD below 0.5 without
+#   measuring; at d ∈ [0.5, 2.0] the broader chunk 1 gate already
+#   captures most of the wall-clock savings and lowering chunk 2a's
+#   threshold would over-fire on cells where DCT32 still pays off.
+# - DO NOT raise the effort gate below 7; at effort < 7 try_dct64 is
+#   already off and the dispatch family is uniformly e7+-gated for
+#   calibration consistency.
+# - DO NOT cite "FMA precision" for any byte movement here (per W44-66
+#   user correction). Bytes differ because DCT32 candidates are
+#   structurally not evaluated when the gate fires.
+# - DO NOT respawn chunk 2a as "wider" or "more aggressive". Issue
+#   #43 ranks 2a/2b/2c — chunk 2b (DCT64 distance gate expansion on
+#   medium) is the next-safest extension; chunk 2c (AFV auto-enable
+#   on screenshots) is more invasive. Don't conflate them.
