@@ -2580,5 +2580,14 @@ name = "gab_001_bench"
 path = "examples/gab_001_bench.rs"
 required-features = ["__expert"]
 
+# Issue #61 (post-W44-73 retry of W44-84 honest-stop): A/B bisect of
+# the `compute_block_ctx_map` adaptive-path gate threshold against the
+# F-D 512×512 photo wedge cells, with the ANS+LZ77 context-map writer
+# (W44-73) now in place.
+[[example]]
+name = "issue_61_block_ctx_map_widen_ab"
+path = "examples/issue_61_block_ctx_map_widen_ab.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
+
 [lints]
 workspace = true
