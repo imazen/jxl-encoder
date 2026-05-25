@@ -4344,6 +4344,34 @@ it carries `#[target_feature]` through the call chain.
 **Do NOT** create a `SimdDispatch` struct that wraps `Option<Token>`. That just moves the
 dispatch inside the function and doesn't solve the boundary problem.
 
+### SIMD parity testing (Phase S1-S4, 2026-05-25)
+
+Every kernel in `jxl-encoder-simd` MUST have a scalar-vs-dispatch parity test that
+exercises (a) all relevant tail-loop boundary sizes and (b) the f32_edge_battery
+input distribution. The canonical pattern lives in
+[`jxl-encoder-simd/src/test_helpers.rs`](jxl-encoder-simd/src/test_helpers.rs).
+
+Use the three-line wrapper:
+```rust
+let ref_out = my_kernel_scalar(&input);
+run_dispatch_parity(|perm| {
+    let act = my_kernel(&input);
+    assert_f32_slice_bit_eq(&ref_out, &act, perm, "context");
+});
+```
+
+For kernels that cannot be bit-exact (FMA association, reduction-tree order),
+use `assert_f32_slice_close_ulps_abs` with a documented tolerance and absolute
+floor. Known divergences are tracked at
+[`docs/SIMD_PARITY_KNOWN_DIVERGENCES.md`](docs/SIMD_PARITY_KNOWN_DIVERGENCES.md);
+any new `#[ignore]` MUST add an entry there.
+
+Motivation: SA-G commit `7d383785` found CfL Newton SIMD diverged from libjxl
+on real inputs because existing tests only checked scalar-vs-dispatch on 1-2
+fixed cases. The test_helpers module forces coverage of tail-loop boundaries
+at every SIMD width (f32x4, f32x8, f32x16) plus edge-value input distributions
+(zeros, denormals, alternating sign, large/small magnitudes).
+
 **Archmage annotation rules**:
 - `#[arcane]`: Top-level SIMD entry points. Adds `#[target_feature]`.
 - `#[rite]`: Inner helpers called from `#[arcane]`. Adds `#[target_feature]` + `#[inline]`.

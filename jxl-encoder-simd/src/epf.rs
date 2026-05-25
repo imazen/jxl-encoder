@@ -2232,3 +2232,179 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+    use alloc::vec;
+
+    /// epf_step1 and epf_step2 across small block grids (pixels = blocks*8).
+    /// Both kernels are the bilateral filter pass at distinct radii; the
+    /// kernel weights / SAD computation diverges between SIMD and scalar
+    /// via mul_add fusion.
+    #[test]
+    fn epf_step1_step2_scalar_vs_dispatch_grid_sizes() {
+        // Each pad must be small; (pixels W+2*pad) * (H+2*pad) padded.
+        for &(xb, yb) in &[(2_usize, 2_usize), (3, 3), (4, 4)] {
+            let w = xb * 8;
+            let h = yb * 8;
+            let pad = 4;
+            let in_stride = w + 2 * pad;
+            let in_h = h + 2 * pad;
+            let n = in_stride * in_h;
+
+            let in_x = gen_f32(0xE_F1_AAAA ^ ((xb as u64) << 16) ^ yb as u64, n, 0.5);
+            let in_y = gen_f32(0xE_F1_BBBB ^ ((xb as u64) << 16) ^ yb as u64, n, 0.5);
+            let in_b = gen_f32(0xE_F1_CCCC ^ ((xb as u64) << 16) ^ yb as u64, n, 0.5);
+            // inv_sigma is per-block.
+            let inv_sigma: alloc::vec::Vec<f32> =
+                gen_f32_unit(0xE_F1_DDDD ^ ((xb as u64) << 16) ^ yb as u64, xb * yb);
+
+            for (step_label, step_fn_ref, step_fn_disp) in [
+                (
+                    "step1",
+                    epf_step1_scalar
+                        as fn(
+                            &[f32],
+                            &[f32],
+                            &[f32],
+                            &mut [f32],
+                            &mut [f32],
+                            &mut [f32],
+                            &[f32],
+                            usize,
+                            usize,
+                            usize,
+                            usize,
+                            usize,
+                            f32,
+                            f32,
+                        ),
+                    epf_step1
+                        as fn(
+                            &[f32],
+                            &[f32],
+                            &[f32],
+                            &mut [f32],
+                            &mut [f32],
+                            &mut [f32],
+                            &[f32],
+                            usize,
+                            usize,
+                            usize,
+                            usize,
+                            usize,
+                            f32,
+                            f32,
+                        ),
+                ),
+                (
+                    "step2",
+                    epf_step2_scalar
+                        as fn(
+                            &[f32],
+                            &[f32],
+                            &[f32],
+                            &mut [f32],
+                            &mut [f32],
+                            &mut [f32],
+                            &[f32],
+                            usize,
+                            usize,
+                            usize,
+                            usize,
+                            usize,
+                            f32,
+                            f32,
+                        ),
+                    epf_step2
+                        as fn(
+                            &[f32],
+                            &[f32],
+                            &[f32],
+                            &mut [f32],
+                            &mut [f32],
+                            &mut [f32],
+                            &[f32],
+                            usize,
+                            usize,
+                            usize,
+                            usize,
+                            usize,
+                            f32,
+                            f32,
+                        ),
+                ),
+            ] {
+                let out_n = w * h;
+                let mut ref_x = vec![0.0_f32; out_n];
+                let mut ref_y = vec![0.0_f32; out_n];
+                let mut ref_b = vec![0.0_f32; out_n];
+                step_fn_ref(
+                    &in_x,
+                    &in_y,
+                    &in_b,
+                    &mut ref_x,
+                    &mut ref_y,
+                    &mut ref_b,
+                    &inv_sigma,
+                    xb,
+                    w,
+                    h,
+                    in_stride,
+                    pad,
+                    1.0,
+                    2.0 / 3.0,
+                );
+
+                run_dispatch_parity(|perm| {
+                    let mut act_x = vec![0.0_f32; out_n];
+                    let mut act_y = vec![0.0_f32; out_n];
+                    let mut act_b = vec![0.0_f32; out_n];
+                    step_fn_disp(
+                        &in_x,
+                        &in_y,
+                        &in_b,
+                        &mut act_x,
+                        &mut act_y,
+                        &mut act_b,
+                        &inv_sigma,
+                        xb,
+                        w,
+                        h,
+                        in_stride,
+                        pad,
+                        1.0,
+                        2.0 / 3.0,
+                    );
+                    assert_f32_slice_close_ulps_abs(
+                        &ref_x,
+                        &act_x,
+                        64,
+                        1e-4,
+                        perm,
+                        &format!("{step_label}::x ({xb}x{yb})"),
+                    );
+                    assert_f32_slice_close_ulps_abs(
+                        &ref_y,
+                        &act_y,
+                        64,
+                        1e-4,
+                        perm,
+                        &format!("{step_label}::y ({xb}x{yb})"),
+                    );
+                    assert_f32_slice_close_ulps_abs(
+                        &ref_b,
+                        &act_b,
+                        64,
+                        1e-4,
+                        perm,
+                        &format!("{step_label}::b ({xb}x{yb})"),
+                    );
+                });
+            }
+        }
+    }
+}

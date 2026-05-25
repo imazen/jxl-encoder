@@ -1324,3 +1324,85 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+
+    /// dct_64x64 across a representative subset of the edge battery.
+    /// Large kernel (4096 coeffs) so we skip the random cases that add
+    /// little signal beyond the structured cases.
+    #[test]
+    fn dct_64x64_scalar_vs_dispatch_edge_battery() {
+        for case in f32_edge_battery(4096) {
+            if case.data.is_empty() {
+                continue;
+            }
+            // Skip the very large random case to keep wall-time reasonable;
+            // structural cases (zeros, ramps, alternating) are what catch bugs.
+            if case.label.starts_with("rand_b") || case.label.starts_with("large_pos") {
+                continue;
+            }
+            let input: &[f32; 4096] = case.data.as_slice().try_into().unwrap();
+            let mut ref_out = [0.0_f32; 4096];
+            dct_64x64_scalar(input, &mut ref_out);
+            run_dispatch_parity(|perm| {
+                let mut act = [0.0_f32; 4096];
+                dct_64x64(input, &mut act);
+                // 64x64 is the largest DCT; FMA reduction tree has 6 layers
+                // so absolute floor 1e-1 accommodates the cumulative error
+                // budget at f32.
+                assert_f32_slice_close_ulps_abs(
+                    &ref_out,
+                    &act,
+                    256,
+                    1e-1,
+                    perm,
+                    &format!("64x64::{}", case.label),
+                );
+            });
+        }
+    }
+
+    /// dct_64x32 + dct_32x64 on structured edge cases.
+    #[test]
+    fn dct_64x32_32x64_scalar_vs_dispatch_edge_battery() {
+        for case in f32_edge_battery(2048) {
+            if case.data.is_empty()
+                || case.label.starts_with("rand_b")
+                || case.label.starts_with("large_pos")
+            {
+                continue;
+            }
+            let input: &[f32; 2048] = case.data.as_slice().try_into().unwrap();
+            let mut ref_6432 = [0.0_f32; 2048];
+            let mut ref_3264 = [0.0_f32; 2048];
+            dct_64x32_scalar(input, &mut ref_6432);
+            dct_32x64_scalar(input, &mut ref_3264);
+            run_dispatch_parity(|perm| {
+                let mut act_6432 = [0.0_f32; 2048];
+                let mut act_3264 = [0.0_f32; 2048];
+                dct_64x32(input, &mut act_6432);
+                dct_32x64(input, &mut act_3264);
+                assert_f32_slice_close_ulps_abs(
+                    &ref_6432,
+                    &act_6432,
+                    256,
+                    1e-1,
+                    perm,
+                    &format!("64x32::{}", case.label),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_3264,
+                    &act_3264,
+                    256,
+                    1e-1,
+                    perm,
+                    &format!("32x64::{}", case.label),
+                );
+            });
+        }
+    }
+}

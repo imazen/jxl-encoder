@@ -701,3 +701,133 @@ mod tests {
         std::eprintln!("{report}");
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+
+    /// Deterministic seeded integer generator for quant coeffs.
+    fn gen_i32(seed: u64, n: usize, range: i32) -> [i32; 64] {
+        let mut s = seed | 1;
+        let mut out = [0_i32; 64];
+        for v in out.iter_mut().take(n) {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            let u = (s.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 32) as u32;
+            *v = (u as i32 % (2 * range + 1)) - range;
+        }
+        out
+    }
+
+    /// Sweep dequant across edge weight distributions + edge quant patterns.
+    /// Quant integers vary by seed; weights swept via f32 battery.
+    #[test]
+    fn dequant_dct8_scalar_vs_dispatch_seeded_battery() {
+        for (seed_idx, &seed) in [0xCAFE_1111_u64, 0xBABE_2222, 0xF00D_3333]
+            .iter()
+            .enumerate()
+        {
+            let qx = gen_i32(seed, 64, 32);
+            let qy = gen_i32(seed.wrapping_mul(31), 64, 32);
+            let qb = gen_i32(seed.wrapping_mul(127), 64, 32);
+
+            // 3 weight distributions: small uniform, ramp, random.
+            for (w_idx, weights) in [
+                [0.01_f32; 64],
+                core::array::from_fn(|i| 0.01 + i as f32 * 0.001),
+                {
+                    let mut w = [0.0_f32; 64];
+                    let v = gen_f32(seed ^ 0xBEEF, 64, 0.5);
+                    for (slot, &val) in w.iter_mut().zip(v.iter()) {
+                        *slot = 0.005 + val.abs();
+                    }
+                    w
+                },
+            ]
+            .iter()
+            .enumerate()
+            {
+                let qac_qm = [3.5_f32, 4.0, 3.2];
+                let x_factor = 0.15_f32;
+                let b_factor = 1.05_f32;
+
+                let mut ref_x = [0.0_f32; 64];
+                let mut ref_y = [0.0_f32; 64];
+                let mut ref_b = [0.0_f32; 64];
+                dequant_dct8_scalar(
+                    &qx, &qy, &qb, weights, weights, weights, qac_qm, x_factor, b_factor,
+                    &mut ref_x, &mut ref_y, &mut ref_b,
+                );
+
+                run_dispatch_parity(|perm| {
+                    let mut act_x = [0.0_f32; 64];
+                    let mut act_y = [0.0_f32; 64];
+                    let mut act_b = [0.0_f32; 64];
+                    dequant_block_dct8(
+                        &qx, &qy, &qb, weights, weights, weights, qac_qm, x_factor, b_factor,
+                        &mut act_x, &mut act_y, &mut act_b,
+                    );
+                    let ctx = format!("seed{seed_idx} w{w_idx}");
+                    assert_f32_slice_close_ulps_abs(
+                        &ref_x,
+                        &act_x,
+                        16,
+                        1e-4,
+                        perm,
+                        &format!("dq_x::{ctx}"),
+                    );
+                    assert_f32_slice_close_ulps_abs(
+                        &ref_y,
+                        &act_y,
+                        16,
+                        1e-4,
+                        perm,
+                        &format!("dq_y::{ctx}"),
+                    );
+                    assert_f32_slice_close_ulps_abs(
+                        &ref_b,
+                        &act_b,
+                        16,
+                        1e-4,
+                        perm,
+                        &format!("dq_b::{ctx}"),
+                    );
+                });
+            }
+        }
+    }
+
+    /// All-zero quant input → all-zero output (sanity check for short-circuit).
+    #[test]
+    fn dequant_dct8_zero_quant_yields_zero() {
+        let q = [0_i32; 64];
+        let w = [0.01_f32; 64];
+        let qac_qm = [3.5_f32, 4.0, 3.2];
+
+        let mut ref_x = [0.0_f32; 64];
+        let mut ref_y = [0.0_f32; 64];
+        let mut ref_b = [0.0_f32; 64];
+        dequant_dct8_scalar(
+            &q, &q, &q, &w, &w, &w, qac_qm, 0.15, 1.05, &mut ref_x, &mut ref_y, &mut ref_b,
+        );
+        // All outputs MUST be zero (DC zeroed + zero quant → adjust_quant_bias(0)=0 everywhere).
+        assert!(ref_x.iter().all(|&v| v == 0.0));
+        assert!(ref_y.iter().all(|&v| v == 0.0));
+        assert!(ref_b.iter().all(|&v| v == 0.0));
+
+        run_dispatch_parity(|perm| {
+            let mut act_x = [0.0_f32; 64];
+            let mut act_y = [0.0_f32; 64];
+            let mut act_b = [0.0_f32; 64];
+            dequant_block_dct8(
+                &q, &q, &q, &w, &w, &w, qac_qm, 0.15, 1.05, &mut act_x, &mut act_y, &mut act_b,
+            );
+            assert_f32_slice_bit_eq(&ref_x, &act_x, perm, "zero_q::x");
+            assert_f32_slice_bit_eq(&ref_y, &act_y, perm, "zero_q::y");
+            assert_f32_slice_bit_eq(&ref_b, &act_b, perm, "zero_q::b");
+        });
+    }
+}

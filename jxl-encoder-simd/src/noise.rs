@@ -693,3 +693,52 @@ mod tests {
         std::eprintln!("{report}");
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    /// Sweep image sizes including tail-loop boundaries.
+    #[test]
+    fn denoise_channel_scalar_vs_dispatch_sizes() {
+        let cases: &[(usize, usize)] = &[
+            (4, 4),
+            (8, 4),
+            (9, 4),
+            (16, 8),
+            (17, 8),
+            (32, 8),
+            (33, 9),
+            (64, 16),
+            (65, 17),
+        ];
+        let noise_lut = [0.5_f32; 8];
+        let denoise_scale = 1.0_f32;
+
+        for &(w, h) in cases {
+            let n = w * h;
+            let orig: Vec<f32> = gen_f32(0x0EE0_BABE_u64 ^ ((w as u64) << 32) ^ h as u64, n, 1.0);
+            let y: Vec<f32> = gen_f32(0x44_DEAD ^ ((w as u64) << 32) ^ h as u64, n, 1.0);
+
+            let mut ref_dest = vec![0.0_f32; n];
+            denoise_channel_scalar(&mut ref_dest, &orig, &y, w, h, &noise_lut, denoise_scale);
+
+            run_dispatch_parity(|perm| {
+                let mut act_dest = vec![0.0_f32; n];
+                denoise_channel(&mut act_dest, &orig, &y, w, h, &noise_lut, denoise_scale);
+                assert_f32_slice_close_ulps_abs(
+                    &ref_dest,
+                    &act_dest,
+                    32,
+                    1e-4,
+                    perm,
+                    &format!("denoise({w}x{h})"),
+                );
+            });
+        }
+    }
+}

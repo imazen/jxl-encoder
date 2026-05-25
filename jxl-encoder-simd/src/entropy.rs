@@ -1620,3 +1620,148 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+    use alloc::vec::Vec;
+
+    /// entropy_estimate_coeffs across edge battery (n=64 representative block).
+    /// Both pixel_domain modes (true/false).
+    ///
+    /// IGNORED: real ROUNDING-MODE DIVERGENCE — `entropy_coeffs_scalar` uses
+    /// `scalarmath::round_f32` (= `f32::round()`, ties away from zero) while
+    /// SIMD `entropy_coeffs_impl` uses `f32x*::round()` which lowers to
+    /// `_mm512_roundscale_ps::<0x00>` (= round-to-nearest-EVEN on x86).
+    /// On half-integer inputs (e.g. exactly 0.5) the two paths quantize to
+    /// DIFFERENT integers, producing structurally different entropy sums.
+    /// See docs/SIMD_PARITY_KNOWN_DIVERGENCES.md row entropy-001.
+    #[test]
+    #[ignore = "FIXME(SIMD-parity): entropy-001 — entropy_coeffs_scalar uses \
+                round-ties-away-from-zero (f32::round) but SIMD uses \
+                round-ties-to-even (intrinsic). Halfway inputs (0.5) diverge \
+                by quantized integer. See docs/SIMD_PARITY_KNOWN_DIVERGENCES.md"]
+    fn entropy_coeffs_scalar_vs_dispatch_edge_battery() {
+        for case in f32_edge_battery(64) {
+            if case.data.is_empty() {
+                continue;
+            }
+            let block_c = case.data.clone();
+            // Use a different seeded distribution for block_y so cmap_factor*y is nontrivial.
+            let block_y = gen_f32(case.data.len() as u64 ^ 0x1234, 64, 1.0);
+            let weights: Vec<f32> = (0..64).map(|i| 0.5 + (i as f32) * 0.1).collect();
+            let inv_weights: Vec<f32> = weights.iter().map(|&w| 1.0 / w).collect();
+
+            for &(cmap, k_cost2, pd) in &[(0.0_f32, 0.0_f32, true), (0.35, 0.5, false)] {
+                let mut ref_err = alloc::vec![0.0_f32; 64];
+                let ref_res = entropy_coeffs_scalar(
+                    &block_c,
+                    &block_y,
+                    &weights,
+                    &inv_weights,
+                    64,
+                    cmap,
+                    2.5,
+                    5.335,
+                    k_cost2,
+                    pd,
+                    &mut ref_err,
+                );
+
+                run_dispatch_parity(|perm| {
+                    let mut act_err = alloc::vec![0.0_f32; 64];
+                    let act_res = entropy_estimate_coeffs(
+                        &block_c,
+                        &block_y,
+                        &weights,
+                        &inv_weights,
+                        64,
+                        cmap,
+                        2.5,
+                        5.335,
+                        k_cost2,
+                        pd,
+                        &mut act_err,
+                    );
+                    if pd {
+                        assert_f32_slice_close_ulps_abs(
+                            &ref_err,
+                            &act_err,
+                            32,
+                            1e-4,
+                            perm,
+                            &format!("err::pd={pd}::{}", case.label),
+                        );
+                    }
+                    let e_diff = (ref_res.entropy_sum - act_res.entropy_sum).abs();
+                    assert!(
+                        e_diff < 1e-2,
+                        "entropy diverged ({}): ref={} act={} diff={} perm={perm}",
+                        case.label,
+                        ref_res.entropy_sum,
+                        act_res.entropy_sum,
+                        e_diff
+                    );
+                    let nz_diff = (ref_res.nzeros_sum - act_res.nzeros_sum).abs();
+                    assert!(
+                        nz_diff < 1.0,
+                        "nzeros diverged ({}): ref={} act={} perm={perm}",
+                        case.label,
+                        ref_res.nzeros_sum,
+                        act_res.nzeros_sum
+                    );
+                });
+            }
+        }
+    }
+
+    /// shannon_entropy_bits across multiple count-distribution patterns.
+    #[test]
+    fn shannon_entropy_scalar_vs_dispatch_distributions() {
+        let cases: alloc::vec::Vec<(alloc::string::String, alloc::vec::Vec<i32>)> = alloc::vec![
+            (
+                alloc::string::String::from("uniform_16"),
+                alloc::vec![100_i32; 16]
+            ),
+            (alloc::string::String::from("skewed_one_big"), {
+                let mut v = alloc::vec![1_i32; 32];
+                v[0] = 1000;
+                v
+            }),
+            (
+                alloc::string::String::from("all_zero_one"),
+                alloc::vec![1_i32; 256]
+            ),
+            (alloc::string::String::from("alternating_zero"), {
+                let mut v = alloc::vec![0_i32; 64];
+                for i in (0..64).step_by(2) {
+                    v[i] = 10;
+                }
+                v
+            }),
+            (alloc::string::String::from("single_nonzero"), {
+                let mut v = alloc::vec![0_i32; 64];
+                v[7] = 500;
+                v
+            }),
+        ];
+        for (label, counts) in &cases {
+            let total: usize = counts.iter().map(|&c| c as usize).sum();
+            if total == 0 {
+                continue;
+            }
+            let ref_bits = shannon_entropy_scalar(counts, total);
+            run_dispatch_parity(|perm| {
+                let act_bits = shannon_entropy_bits(counts, total);
+                let diff = (ref_bits - act_bits).abs();
+                assert!(
+                    diff < 1e-2,
+                    "shannon_entropy diverged ({label}): ref={ref_bits} act={act_bits} \
+                     diff={diff} perm={perm}"
+                );
+            });
+        }
+    }
+}

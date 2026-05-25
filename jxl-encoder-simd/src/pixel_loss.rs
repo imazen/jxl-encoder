@@ -360,3 +360,92 @@ mod tests {
         assert!((result - 1.0).abs() < 1e-6, "Expected 1.0, got {}", result);
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+
+    /// Sweep block dimensions (width must be multiple of 8) + edge-value
+    /// inputs.  The kernel computes loss = sum((mask+offset)^2 * err^2)^8
+    /// summed; FMA association makes bit-exactness impossible but small
+    /// relative tolerance catches structural bugs.
+    #[test]
+    fn pixel_domain_loss_scalar_vs_dispatch_block_sizes() {
+        let cases: &[(usize, usize)] = &[
+            (8, 8),   // 1 SIMD chunk
+            (16, 8),  // 2 chunks wide
+            (8, 16),  // 2 chunks tall
+            (32, 32), // 4x4 chunks
+            (8, 64),  // tall + multiple rows
+            (64, 8),  // wide + single row
+        ];
+        let mask_offset = 0.5_f32;
+        for &(bw, bh) in cases {
+            let n = bw * bh;
+            let pixel_error: alloc::vec::Vec<f32> =
+                gen_f32(0xE220_1234 ^ ((bw as u64) << 32) ^ bh as u64, n, 0.5);
+            // Pad mask to a stride larger than bw to exercise mask_stride
+            // != block_width path.
+            let mask_stride = bw + 16;
+            let mask_h = bh + 4;
+            let mask: alloc::vec::Vec<f32> = gen_f32_unit(
+                0xFACE_5555 ^ ((bw as u64) << 32) ^ bh as u64,
+                mask_stride * mask_h,
+            );
+            let mask_row_base = 2 * mask_stride; // offset into mask
+
+            let ref_loss = pixel_domain_loss_scalar(
+                &pixel_error,
+                &mask,
+                mask_row_base,
+                mask_stride,
+                mask_offset,
+                bw,
+                bh,
+            );
+
+            run_dispatch_parity(|perm| {
+                let act_loss = pixel_domain_loss(
+                    &pixel_error,
+                    &mask,
+                    mask_row_base,
+                    mask_stride,
+                    mask_offset,
+                    bw,
+                    bh,
+                );
+                // 8th-power sums are extremely sensitive to ULP noise; compare
+                // by relative error.
+                let rel_err = if ref_loss.abs() > 1e-20 {
+                    ((act_loss - ref_loss).abs() / ref_loss.abs()) as f32
+                } else {
+                    (act_loss - ref_loss).abs() as f32
+                };
+                assert!(
+                    rel_err < 1e-3,
+                    "pixel_loss rel divergence ({bw}x{bh}): ref={} act={} rel_err={} perm={perm}",
+                    ref_loss,
+                    act_loss,
+                    rel_err
+                );
+            });
+        }
+    }
+
+    /// Zero error → zero loss.  Critical short-circuit invariant.
+    #[test]
+    fn pixel_domain_loss_zero_error_yields_zero() {
+        let bw = 16;
+        let bh = 16;
+        let pixel_error = alloc::vec![0.0_f32; bw * bh];
+        let mask = alloc::vec![1.0_f32; bw * bh];
+        let ref_loss = pixel_domain_loss_scalar(&pixel_error, &mask, 0, bw, 0.5, bw, bh);
+        assert_eq!(ref_loss, 0.0);
+        run_dispatch_parity(|perm| {
+            let act_loss = pixel_domain_loss(&pixel_error, &mask, 0, bw, 0.5, bw, bh);
+            assert_eq!(act_loss, 0.0, "perm={perm}");
+        });
+    }
+}

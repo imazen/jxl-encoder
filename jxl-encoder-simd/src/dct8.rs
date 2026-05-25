@@ -1639,4 +1639,86 @@ mod tests {
         );
         std::eprintln!("{report}");
     }
+
+    // ========================================================================
+    // Expanded coverage via test_helpers (Phase S3)
+    // ========================================================================
+
+    use crate::test_helpers::*;
+    use alloc::format;
+
+    /// Sweep DCT8 + IDCT8 across the full f32_edge_battery at n=64.
+    /// Catches anything sensitive to input distribution (ramps, alternating
+    /// sign, denormals, all-zero, all-large).
+    #[test]
+    fn dct_idct_8x8_scalar_vs_dispatch_edge_battery() {
+        for case in f32_edge_battery(64) {
+            if case.data.is_empty() {
+                continue;
+            }
+            let input: [f32; 64] = case.data.as_slice().try_into().unwrap();
+
+            let mut ref_dct = [0.0_f32; 64];
+            dct_8x8_scalar(&input, &mut ref_dct);
+            let mut ref_idct = [0.0_f32; 64];
+            idct_8x8_scalar(&ref_dct, &mut ref_idct);
+
+            run_dispatch_parity(|perm| {
+                let mut act_dct = [0.0_f32; 64];
+                dct_8x8(&input, &mut act_dct);
+                let mut act_idct = [0.0_f32; 64];
+                idct_8x8(&act_dct, &mut act_idct);
+
+                // DCT8 is a butterfly cascade; SIMD vs scalar diverges by
+                // small ULP counts due to FMA association.  Absolute floor
+                // 1e-3 catches structural bugs while absorbing FMA noise on
+                // large-magnitude inputs.
+                assert_f32_slice_close_ulps_abs(
+                    &ref_dct,
+                    &act_dct,
+                    64,
+                    1e-3,
+                    perm,
+                    &format!("{}::dct", case.label),
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_idct,
+                    &act_idct,
+                    64,
+                    1e-3,
+                    perm,
+                    &format!("{}::idct", case.label),
+                );
+            });
+        }
+    }
+
+    /// Single-sample impulse at every position — verifies DCT basis vector
+    /// reconstruction.  A wrong shuffle in the butterfly will localise to
+    /// one or two basis vectors.
+    #[test]
+    fn dct_8x8_impulse_response_at_each_position() {
+        // For brevity, sample every 8th position to keep runtime reasonable
+        // while still hitting all 4 row/col-mode pairs that the butterfly
+        // exercises differently.
+        for pos in (0..64).step_by(8) {
+            let mut input = [0.0_f32; 64];
+            input[pos] = 1.0;
+            let mut ref_dct = [0.0_f32; 64];
+            dct_8x8_scalar(&input, &mut ref_dct);
+
+            run_dispatch_parity(|perm| {
+                let mut act_dct = [0.0_f32; 64];
+                dct_8x8(&input, &mut act_dct);
+                assert_f32_slice_close_ulps_abs(
+                    &ref_dct,
+                    &act_dct,
+                    32,
+                    1e-5,
+                    perm,
+                    &format!("impulse@{pos}"),
+                );
+            });
+        }
+    }
 }

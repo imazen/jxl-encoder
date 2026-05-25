@@ -1580,3 +1580,117 @@ mod tests {
         std::eprintln!("{report}");
     }
 }
+
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::format;
+
+    /// compute_pre_erosion across multiple tile sizes (must be multiples of
+    /// 4 by signature contract).
+    #[test]
+    fn compute_pre_erosion_scalar_vs_dispatch_tile_sizes() {
+        let cases: &[(usize, usize)] = &[
+            (32, 32),
+            (64, 32),
+            (32, 64),
+            (64, 64),
+            (128, 64),
+            (64, 128),
+            (128, 128),
+        ];
+        for &(width, height) in cases {
+            let n = width * height;
+            let xyb_y = gen_f32(0x40A2_BEEF ^ ((width as u64) << 32) ^ height as u64, n, 0.5);
+            // Full-image tile (most representative — exercises borders).
+            let (ref_pre, ref_w, ref_h) =
+                compute_pre_erosion_scalar(&xyb_y, width, height, 0, 0, width, height);
+
+            run_dispatch_parity(|perm| {
+                let (act_pre, act_w, act_h) =
+                    compute_pre_erosion(&xyb_y, width, height, 0, 0, width, height);
+                assert_eq!(ref_w, act_w, "pre-erosion width mismatch perm={perm}");
+                assert_eq!(ref_h, act_h, "pre-erosion height mismatch perm={perm}");
+                assert_f32_slice_close_ulps_abs(
+                    &ref_pre,
+                    &act_pre,
+                    32,
+                    1e-5,
+                    perm,
+                    &format!("pre_erosion({width}x{height})"),
+                );
+            });
+        }
+    }
+
+    /// per_block_modulations across a few block-grid sizes.
+    #[test]
+    fn per_block_modulations_scalar_vs_dispatch_grid_sizes() {
+        for &(blocks_w, blocks_h) in &[(2_usize, 2_usize), (4, 4), (8, 4), (4, 8)] {
+            let pixels_w = blocks_w * 8;
+            let pixels_h = blocks_h * 8;
+            let stride = pixels_w;
+            let n = stride * pixels_h;
+            let xyb_x = gen_f32(
+                0x1010_AAAA ^ ((blocks_w as u64) << 16) ^ blocks_h as u64,
+                n,
+                0.3,
+            );
+            let xyb_y = gen_f32(
+                0x2020_BBBB ^ ((blocks_w as u64) << 16) ^ blocks_h as u64,
+                n,
+                0.3,
+            );
+            let xyb_b = gen_f32(
+                0x3030_CCCC ^ ((blocks_w as u64) << 16) ^ blocks_h as u64,
+                n,
+                0.3,
+            );
+
+            let aq_init: alloc::vec::Vec<f32> = gen_f32_unit(0x9999_DDDD, blocks_w * blocks_h);
+
+            let mut ref_aq = aq_init.clone();
+            per_block_modulations_scalar(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                stride,
+                1.0,
+                1.0,
+                0,
+                0,
+                blocks_w,
+                blocks_h,
+                &mut ref_aq,
+                blocks_w,
+            );
+
+            run_dispatch_parity(|perm| {
+                let mut act_aq = aq_init.clone();
+                per_block_modulations(
+                    &xyb_x,
+                    &xyb_y,
+                    &xyb_b,
+                    stride,
+                    1.0,
+                    1.0,
+                    0,
+                    0,
+                    blocks_w,
+                    blocks_h,
+                    &mut act_aq,
+                    blocks_w,
+                );
+                assert_f32_slice_close_ulps_abs(
+                    &ref_aq,
+                    &act_aq,
+                    64,
+                    1e-4,
+                    perm,
+                    &format!("per_block_mod({blocks_w}x{blocks_h})"),
+                );
+            });
+        }
+    }
+}

@@ -230,7 +230,6 @@ fn transpose_4x4_neon(
 mod tests {
     use super::*;
     use crate::test_helpers::*;
-    use alloc::format;
     use alloc::vec::Vec;
 
     /// Scalar reference: brute-force 8x8 transpose.
