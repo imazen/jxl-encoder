@@ -1,0 +1,138 @@
+issue_25_retry_2026-05-25
+========================
+
+Source: jxl-encoder/examples/issue_25_k_ac_quant_retry.rs (parent commit
+a11fd0e2 + sibling workspace issue-25-retry).
+
+Hypothesis under test
+---------------------
+
+GitHub issue #25 (https://github.com/imazen/jxl-encoder/issues/25) reports
+that the picker training oracle (April 30, 2026 sweep) found
+`k_ac_quant = 0.65` Pareto-dominant on `EncoderStrategy::Zenjxl` vs the
+libjxl default 0.765.
+
+Two hypotheses from the issue + the first-agent's intermediate description:
+
+* **H-A** (picker oracle): 0.65 is a real RD win on Zenjxl.
+* **H-B** (scaling-only): K_AC_QUANT is multiplicatively absorbed by a
+  reciprocal scaling somewhere downstream, so A/B output is byte-identical
+  and the picker oracle's "win" was an artifact of how it scored cells.
+
+Setup
+-----
+
+4 cells × 2 modes (A=0.765, B=0.65) × 6 paired-interleaved samples = 48
+encodes, single-process, `EncoderStrategy::Zenjxl`, 8 threads.
+
+Cells:
+  1418519 e7 d=1.0  (CID22 photo, small, mid quality)
+  codec_wiki e7 d=2.0  (gb82-sc screenshot, larger, mid quality)
+  terminal e8 d=4.0  (gb82-sc screenshot, W44-105 SHIP cell, buttloop active)
+  1531677 e9 d=5.0  (CID22 photo, very high distance, full buttloop)
+
+The 4 cells span e<8 (no buttloop) and e>=8 (buttloop) to test whether
+H-B holds at the buttloop-renormalized end (where global_scale gets
+re-derived from quant-field median+MAD per iteration, which COULD make
+the change scaling-only).
+
+Results
+-------
+
+| Cell                | A bytes | B bytes | Δ bytes  | Δ ssim2 | Δ bfly      |
+|---                  |---      |---      |---       |---      |---          |
+| 1418519 e7 d=1      |   22950 |   21084 |  -8.13%  |  -0.86  | +0.286 worse|
+| codec_wiki e7 d=2   |   87889 |   83136 |  -5.41%  |  -0.39  | -0.092 better|
+| terminal e8 d=4     |   42322 |   39350 |  -7.02%  |  -0.18  | -0.036 better|
+| 1531677 e9 d=5      |   17707 |   15931 | -10.03%  |  -4.15  | +0.576 worse|
+
+All 6 samples per (cell, mode) produced BYTE-IDENTICAL output (verified via
+sha256_8 column — same hash on every sample of each (cell, mode) pair).
+Encoder is fully deterministic per-cell; no paired-sample variance needed.
+
+Verdict
+-------
+
+**H-B falsified** at every effort level (e7, e8, e9): A and B differ by
+5-10% bytes and produce different SHA256s on every cell. K_AC_QUANT is
+NOT consumed reciprocally anywhere — it is a real RD lever.
+
+Code analysis confirms this:
+  * `let scale = k_ac_quant / distance` → `quant_field_float` scales
+    linearly with k_ac_quant.
+  * `inv_scale = 1/(scale_from_global_scale)` where
+    `scale_from_global_scale = global_scale_int / 65536` and
+    `global_scale_int = clamp((65536 * initial_q_numerator / distance / 5.0)
+    as i32, ...)`.
+  * `initial_q_numerator` is 0.39 (e>=5) or 0.79 (e<5) — INDEPENDENT of
+    `k_ac_quant`. So `inv_scale` is invariant under K_AC_QUANT changes.
+  * `quant_field[i] = clamp((quant_field_float[i] * inv_scale + 0.5)
+    as i32, 1, 255)` → integer quant codes shrink linearly with
+    K_AC_QUANT, producing coarser quantization (fewer bytes, lower
+    quality).
+
+At e>=8 the buttloop re-derives `global_scale` from `compute_from_quant_field`
+(quant_median - MAD), which DOES depend on k_ac_quant-scaled quant_field.
+This could plausibly make k_ac_quant scaling-only at the buttloop end —
+but the e8 and e9 measurements above falsify that hypothesis empirically.
+The buttloop's discrete integer rounding + per-block min-clamp prevents
+the reciprocal cancellation from completing.
+
+**H-A also falsified** as a clean Pareto win: B saves 5-10% bytes but
+LOSES SSIM2 on every cell (-0.18 to -4.15). The catastrophic -4.15 SSIM2
+on 1531677 e9 d=5 (full buttloop active) is decisive — the picker
+oracle's claim came from scoring cells by raw bytes/quality without
+Pareto-comparing.
+
+Per the brief's acceptance criteria:
+  * H-B confirmed → HONEST-STOP, document scaling chain → NOT applicable
+  * H-A confirmed (avg bytes -1% or better + zero >2% regressions) → flip
+    default → NOT applicable (4/4 cells regress SSIM2; 1531677 -4.15 is
+    >>2% catastrophic)
+  * Mixed → HONEST-STOP, leave issue #25 open with data added as comment
+    → APPLICABLE
+
+**Decision: HONEST-STOP, NO production source change.** Issue #25 is
+falsified by direct measurement. The picker oracle finding is artifactual
+(scored cells without Pareto-comparing the SSIM2 axis).
+
+DO NOT
+------
+
+1. DO NOT flip `k_ac_quant` default to 0.65 on `EncoderStrategy::Zenjxl`
+   without re-validating against a wider Pareto-aware sweep that
+   explicitly excludes cells losing >0.3 SSIM2.
+2. DO NOT cite "FMA precision" for any byte movement here (per W44-66
+   user correction). The deltas come from quant_field_float linearly
+   scaling with k_ac_quant; this is a deterministic algebraic
+   relationship, not numeric noise.
+3. DO NOT re-investigate H-B at higher efforts. The buttloop's discrete
+   integer min-clamp prevents reciprocal cancellation; e9 d=5 is
+   conclusive.
+4. DO NOT trust picker oracle "Pareto-dominant" claims without
+   verifying the oracle's scoring function actually Pareto-compares
+   (raw byte / score thresholds will appear "dominant" even on
+   strictly worse points).
+5. DO NOT spawn another issue #25 chunk hoping a different cell set
+   will change the conclusion. The 4 chosen cells cover e<8 + e=8 + e=9
+   + photo + screenshot. Any wider sweep would need to specify what
+   SSIM2 budget makes 0.65 acceptable.
+
+Follow-on candidates (NOT this chunk)
+-------------------------------------
+
+A. **Picker oracle audit**: re-run the picker training pipeline with a
+   Pareto-aware scoring function (require Δbytes < 0 AND Δssim2 >= -0.3)
+   on the same lossy_pareto_2026-04-30.tsv data. If 0.65 still appears
+   dominant under Pareto scoring, the discrepancy is in the bench
+   harness; if not, the oracle's findings need filtering before they
+   reach issue tracking.
+B. **Per-content-class K_AC_QUANT tuning**: if 0.65 helps SOME content
+   class (e.g. SCREEN cells at low distance), build a zenanalyze
+   discriminator (W44-91 / W44-164 pattern) admitting a smaller k_ac_quant
+   only on the admit class. NOT this chunk's scope; would need a 36+ cell
+   sweep with per-class breakdown.
+C. **Buttloop k_ac_quant interaction sweep**: e>=8 cells could be
+   re-tested with a quant_ac_rescale APPLIED post-buttloop to compensate
+   for the k_ac_quant shrink; this might recover the SSIM2 lost in B
+   while keeping the bytes saved. Out of scope.
