@@ -1045,6 +1045,9 @@ pub(crate) fn compute_epf_sharpness(
     let num_candidates = candidates.len();
     let num_contexts = num_candidates * num_candidates; // top * left contexts
     let mut histo = vec![vec![0u32; num_candidates]; num_contexts];
+    // SA-C dump: save Pass1 sharpness before Pass2 overwrites it.
+    let dump_path = std::env::var("JXL_SA_C_EPF_DUMP").ok();
+    let mut pass1_map: Vec<u8> = vec![4u8; nblocks];
 
     for by in 0..ysize_blocks {
         for bx in 0..xsize_blocks {
@@ -1102,6 +1105,7 @@ pub(crate) fn compute_epf_sharpness(
             };
 
             sharpness_map[block_idx] = candidates[selected_ci];
+            pass1_map[block_idx] = candidates[selected_ci];
 
             // Update histogram
             let ctx = candidate_lut[top_val] * num_candidates + candidate_lut[left_val];
@@ -1177,6 +1181,74 @@ pub(crate) fn compute_epf_sharpness(
             }
 
             sharpness_map[block_idx] = candidates[best_ci];
+        }
+    }
+
+    // SA-C dump: emit per-block (bx, by, sharp_pass1, sharp_pass2, sigma_pass1,
+    // sigma_pass2, err_c0, err_c1, [err_c2]). Sigma computed via the same
+    // formula as compute_inv_sigma_map; positive sign for readability.
+    if let Some(path) = dump_path {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::File::create(&path) {
+            let _ = writeln!(
+                f,
+                "bx\tby\traw_quant\tmask1x1\tsharp_p1\tsharp_p2\tsigma_p1\tsigma_p2\terr_c0\terr_c1\terr_c2\tcandidate_c0\tcandidate_c1\tcandidate_c2"
+            );
+            for by in 0..ysize_blocks {
+                for bx in 0..xsize_blocks {
+                    let idx = by * xsize_blocks + bx;
+                    let rq = quant_field[idx] as f32;
+                    // libjxl pattern: take mask1x1 sample at pixel (by*8, bx*8) center; use top-left.
+                    let mask_y = by * BLOCK_DIM;
+                    let mask_x = bx * BLOCK_DIM;
+                    let mask_stride = xsize_blocks * BLOCK_DIM;
+                    let mask_val = mask1x1
+                        .get(mask_y * mask_stride + mask_x)
+                        .copied()
+                        .unwrap_or(0.0);
+                    let s1 = pass1_map[idx].min(7) as usize;
+                    let s2 = sharpness_map[idx].min(7) as usize;
+                    let sigma_quant = EPF_QUANT_MUL / (params.scale * rq * K_INV_SIGMA_NUM);
+                    let sigma_p1 = (sigma_quant * EPF_SHARP_LUT[s1]).abs();
+                    let sigma_p2 = (sigma_quant * EPF_SHARP_LUT[s2]).abs();
+                    let err_c0 = error_maps[0].get(idx).copied().unwrap_or(f32::NAN);
+                    let err_c1 = error_maps
+                        .get(1)
+                        .and_then(|m| m.get(idx).copied())
+                        .unwrap_or(f32::NAN);
+                    let err_c2 = error_maps
+                        .get(2)
+                        .and_then(|m| m.get(idx).copied())
+                        .unwrap_or(f32::NAN);
+                    let c0 = candidates.first().copied().unwrap_or(255);
+                    let c1 = candidates.get(1).copied().unwrap_or(255);
+                    let c2 = candidates.get(2).copied().unwrap_or(255);
+                    let _ = writeln!(
+                        f,
+                        "{}\t{}\t{}\t{:.4}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{}\t{}\t{}",
+                        bx,
+                        by,
+                        rq as u32,
+                        mask_val,
+                        pass1_map[idx],
+                        sharpness_map[idx],
+                        sigma_p1,
+                        sigma_p2,
+                        err_c0,
+                        err_c1,
+                        err_c2,
+                        c0,
+                        c1,
+                        c2
+                    );
+                }
+            }
+            eprintln!(
+                "[SA-C dump] wrote {} blocks ({}x{}) to {}",
+                nblocks, xsize_blocks, ysize_blocks, path
+            );
+        } else {
+            eprintln!("[SA-C dump] failed to open {}", path);
         }
     }
 

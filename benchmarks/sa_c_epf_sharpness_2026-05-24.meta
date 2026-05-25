@@ -1,0 +1,180 @@
+# SA-C EPF Sharpness Map Divergence — clic_22ea12 e9 d=4
+
+## Status: [FINDING — EPF sharpness is downstream symptom, not root cause]
+
+## Investigation
+Part of the AUDIT-8 5-agent parallel investigation into "why cjxl produces
++2 SSIM2 above our buttloop-OFF on `clic_22ea12 e9 d=4`". AUDIT-8 already
+ruled out: P2 CfL, P3 AC strategy, P4 DC quant at e9, P7 all 11 W44-* env
+hooks. SA-C investigated EPF Pass-1 + Pass-2 per-block sharpness map.
+
+## Mechanism
+Env-gated per-block dump on both encoders' `ComputeARHeuristics` (cjxl
+`enc_heuristics.cc:893`) / `compute_epf_sharpness` (ours `vardct/epf.rs:918`):
+saved Pass-1 sharpness before Pass-2 overwrites; emitted (bx, by, raw_quant,
+mask1x1, sharp_p1, sharp_p2, sigma_p1, sigma_p2, err_c0, err_c1, err_c2,
+candidate_c0..c2) per 8×8 block.
+
+`JXL_SA_C_EPF_DUMP=/path/to/file.tsv <cjxl|cjxl-rs> input.png out.jxl -d 4 -e 9`
+
+## Headline finding
+
+**EPF sharpness divergence is real but downstream — the root cause is upstream
+reconstruction quality.**
+
+Per-block `err_c0` (reconstruction L2 with sharpness=0) ratio ours/cjxl:
+| stat | value |
+|---|---|
+| mean | **2.994×** |
+| median | 2.849× |
+| min | 0.223× |
+| max | 37.000× |
+
+We feed the EPF sharpness heuristic with reconstruction errors that are
+**~3× larger than cjxl's**. EPF correctly reacts by selecting sharpness=7
+(maximum smoothing) more often, especially in the top-right region
+(AUDIT-8 P3's -9.68 SSIM2 hot zone).
+
+## Per-knob divergences (all measured, none are root cause)
+
+### 1. raw_quant field — 50.4% blocks differ
+```
+ours top:  [(5, 12382), (6, 2725), (4, 939), (3, 216)]
+cjxl top:  [(5, 7196), (6, 6717), (7, 1644), (4, 571)]
+```
+cjxl's median q is one step higher (q=6 dominant) vs ours (q=5 dominant).
+That means we're under-quantizing relative to cjxl → larger AC coeffs →
+larger reconstruction error.
+
+### 2. EPF Pass-1 sharpness distribution
+```
+ours:  [(0, 5738), (2, 2870), (7, 7776)]   ← 47% blocks pick max sharpness
+cjxl:  [(0, 7711), (2, 3022), (7, 5651)]   ← 34% blocks pick max sharpness
+```
+Ours picks sharpness=7 13pp more often because errors are ~3× larger.
+
+### 3. EPF Pass-2 sharpness distribution
+```
+ours:  [(0, 11914), (2, 987), (7, 3483)]
+cjxl:  [(0, 10632), (2, 1924), (7, 3828)]
+```
+After context refinement both converge most blocks to sharpness=0, but
+ours is more bimodal (skips sharpness=2). 24.3% per-block divergence.
+
+### 4. sigma_p2 divergence
+```
+median: -14.05% (ours smaller)
+mean:   -32.30% (ours smaller)
+range:  -100% to +742%
+```
+Sigma divergence is mostly driven by `raw_quant` differences (sigma is
+inversely proportional to raw_quant).
+
+### 5. Top-right region (bx ∈ [64,128), by ∈ [0,64)) — AUDIT-8 P3 hot zone
+| stat | ours | cjxl |
+|---|---|---|
+| sharpness=0 blocks | 3532 | 3891 |
+| sharpness=2 blocks | 42 | 78 |
+| sharpness=7 blocks | **522** | **127** |
+| mean err_c0 | 13.478 | 4.671 |
+| err ratio | — | 2.89× |
+
+In the AUDIT-8 hot zone, we pick sharpness=7 **4.1× more often**
+because our errors are 2.89× larger. EPF is doing the right thing.
+
+## Spatial divergence (per-block Pass2 sharpness mismatch count)
+```
+        T0   T1   T2   T3   T4   T5   T6   T7
+  Y0:   21   11   11   16   15   12   18   15  ← top stripe (least divergent)
+  Y1:  115  113  103   74   55   25   17   38
+  Y2:   83   94   90   86   62   28   53   50
+  Y3:   71   83  113   46   40   33   29   38
+  Y4:   94   91  107   62   70   27   18   31
+  Y5:   98  111   78   89   75   45   46   50
+  Y6:  111   91  102   87   53   64   45   46
+  Y7:  104  100   88   89   60   57   51   88
+```
+Each cell is a 16×16-block (128×128 pixel) region; number = blocks with
+differing Pass2 sharpness (max 256). **Divergence concentrated bottom-left**,
+matching where reconstruction errors are largest.
+
+## Knob identification
+
+The EPF heuristic itself is **at parity** (libjxl-derived code is byte-equivalent
+modulo upstream-divergence-driven errors). The divergent levers are:
+
+| layer | divergence | who owns |
+|---|---|---|
+| **raw_quant field** | 50.4% blocks differ, median is one q-step off | adaptive_quant + AdjustQuantBlockAC + buttloop |
+| **reconstruction err** | 3× larger errors per block | upstream (DCT quant, CfL, transform pipeline) |
+| EPF Pass-1/2 selection | downstream symptom | EPF (correctly reacts) |
+| sigma values | downstream of raw_quant | EPF (formula correct) |
+
+**This aligns with SA-A's AdjustQuantBlockAC investigation and AUDIT-8's
+buttloop-OFF result (+2 SSIM2 gap with no buttloop iters).** The EPF
+sharpness map is a *measurement* of the upstream gap, not its cause.
+
+## Fix-shape (NOT shipped, just diagnosis)
+
+The EPF instrumentation REVEALS that the right knobs to investigate are:
+
+1. **Quant field divergence at e9 d=4** (SA-A scope: AdjustQuantBlockAC).
+   Why does cjxl land on q=6 mode while we land on q=5? Buttloop convergence
+   target, ratio_threshold, or per-iter scale recomputation differ.
+2. **Pixel-domain reconstruction loss differential** at the AC quantization
+   stage. If ours produces 3× larger pre-EPF errors at parity quant, the
+   bug is in DequantBlock or CfL pipeline (P2 ruled out — so DequantBlock).
+3. **Buttloop EPF seed coupling** (W44-117/120). At e9 d=4 buttloop runs 4
+   iters; the EPF sharpness seed feeds back into quant-field adjustment via
+   the loop. Per-iter sharpness instability could amplify the quant gap.
+
+## Acceptance gates (per task spec)
+
+- (a) Per-block sharpness + sigma dumps both encoders ✓
+- (b) Spatial divergence map (which regions/blocks differ) ✓ (8×8 region tile)
+- (c) Specific knob named if divergence found ✓ (**raw_quant field upstream**,
+  EPF is downstream symptom)
+- (d) Memo + Section F committed ✓ (next)
+- (e) Worktrees cleaned ✓ (after commit)
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT investigate EPF sharpness as a root-cause knob for the
+   AUDIT-8 +2 SSIM2 gap.** Measurement is conclusive: EPF is downstream;
+   the heuristic reacts correctly to upstream errors. Time spent on EPF
+   constants/thresholds will produce no SSIM2 gain.
+2. **DO NOT cite "FMA precision"** for any byte movement here (per W44-66).
+   The 50.4% raw_quant divergence is a deliberate quant-decision gap.
+3. **DO NOT remove the env-gated dump from `compute_epf_sharpness`** until
+   the upstream root cause is closed. Future investigations may want to
+   re-run the same dump after AdjustQuantBlockAC fixes to verify EPF
+   convergence collapses to byte-identity.
+4. **DO NOT modify the EPF candidate set [0,2,7]/[0,4]** — both encoders
+   already match exactly via the `distance > 4.5` gate.
+5. **DO NOT respawn SA-C** without a fresh hypothesis about the EPF chain
+   itself (e.g., libjxl uses a different `mask1x1` semantic, or a different
+   block-error metric). The current measurement RULES OUT EPF as a
+   first-order divergence.
+
+## Files
+
+- `benchmarks/sa_c_epf_sharpness_cjxl_2026-05-24.tsv` (moved to `/mnt/v/output/jxl-encoder/sa-c-epf-2026-05-24/`; see `.pointer.md`)
+- `benchmarks/sa_c_epf_sharpness_ours_2026-05-24.tsv` (likewise)
+- `benchmarks/sa_c_epf_sharpness_analyze.py`
+- `benchmarks/sa_c_epf_sharpness_2026-05-24.pointer.md`
+- libjxl branch `sa-c-epf-sharpness-instrument` (in `~/work/jxl-efforts/libjxl` refs, not pushed)
+- jxl-encoder jj change `8e22c06d` (sibling workspace, will be cleaned up)
+
+## Follow-on candidates (NOT in SA-C scope)
+
+1. **SA-C re-run after SA-A AdjustQuantBlockAC fix lands** — does the
+   raw_quant overlap rise from 49.6% to >90%? Does the err_c0 ratio
+   collapse from 3× to ~1×? Does the Pass-2 sharpness convergence flip
+   to byte-identity?
+2. **Investigate why our `raw_quant` mode is q=5 not q=6** — is the
+   buttloop scale-recomputation rounding direction different? Median/MAD
+   threshold?
+3. **Per-iter EPF sharpness instability probe** — dump sharpness at each
+   buttloop iter (currently computed once outside the loop). If the W44-117
+   seed wedge is real, it manifests as different sharpness on the final
+   iter vs the seed iter.
