@@ -1,0 +1,69 @@
+# W44-AUDIT-6 Phase 3 — defensive tightening bench (2026-05-24)
+
+Status: SHIPPED defensive narrowing; HONEST-STOP on CLIC SSIM2 recovery
+Commit: see git log near 2026-05-24
+Hostname: $(hostname)
+Encoder commit: see `git rev-parse HEAD` at bench time
+
+## Files
+
+- `w44_audit_6_phase3_proxy_probe_2026-05-24.tsv`
+  Per-image ZenanalyzeProxies (m3, fcbr, edge_density, luma_var) for
+  all 20 AUDIT-7 corpus images. Columns:
+    verdict, image_id, width, height, m3, fcbr, edge_density, luma_var
+  Verdict tagging: FIRE-GOOD (codec_wiki, 1189261) | FIRE-BAD
+  (clic_22ea12, clic_0c49a5) | NO-FIRE (16 m3<80 images).
+
+- `w44_audit_6_phase3_bisect_{codec_wiki,1189261,clic_22ea12,clic_0c49a5}_2026-05-24.tsv`
+  Per-image 12-cell (3 efforts × 4 distances) AUDIT-7 wider-corpus
+  harness output post-Phase-3 source change. Columns same as the AUDIT-7
+  bench (25 cols).
+
+## Methodology
+
+Phase 3 proposes a tighter AUDIT-6 admission predicate:
+  m3 >= 80 AND (fcbr >= 0.5 OR edge_density >= 0.45)
+
+vs the Phase 1 predicate:
+  m3 >= 80
+
+The disjunction protects codec_wiki (admits via fcbr 0.904) and 1189261
+(admits via edge_density 0.490) while excluding the 2 CLIC web photos
+with m3 >= 80 (clic_22ea12 fcbr=0.278/ed=0.167, clic_0c49a5
+fcbr=0.080/ed=0.336) that the AUDIT-7 wider-corpus bench surfaced.
+
+## Key finding
+
+The 4-cell bisect shows BYTE-IDENTICAL output to AUDIT-7 pre-Phase-3
+baseline on every (image, effort, distance) — confirming that AUDIT-6
+was NOT firing on the CLIC photos in production in the first place. The
+outer W44-109 `is_screenshot = mask1x1_median > 95` gate excludes them
+before the AUDIT-6 admission predicate is consulted. The CLIC SSIM2
+wedge (clic_22ea12 e7 d=4 -3.84 SSIM2) has a SEPARATE root cause that
+is orthogonal to AUDIT-6.
+
+Phase 3 ships as DEFENSIVE NARROWING: structurally correct (cannot
+enlarge the firing set), forward-compatible (kicks in if future
+`is_screenshot` promotion brings CLIC photos into the W44-109 admission
+class). Zero observable byte change today.
+
+## Validation
+
+`JXL_W44_AUDIT_6_DISABLE=1` measurement (pre-Phase-3 was the same):
+- codec_wiki e7 d=4: 90323 B / 84.886 SSIM2 (+44% vs cjxl) — AUDIT-6 firing
+- 1189261 e7 d=4:    23034 B / 65.226 SSIM2 — AUDIT-6 NOT firing
+- clic_22ea12 e7 d=4: 36258 B / 67.988 SSIM2 — AUDIT-6 NOT firing
+- clic_0c49a5 e7 d=4: 66740 B / 68.022 SSIM2 — AUDIT-6 NOT firing
+
+Tests: 1499 lib + 36 hash-locks + 4 byte-lock + 5 strategy hash + 7 drift
+all PASS.
+
+## DO NOT
+
+- Cite "FMA precision" for any byte movement (per W44-66 user correction).
+- Re-spawn expecting CLIC SSIM2 to close via this mechanism.
+- Lower fcbr below 0.30 or edge_density below 0.40 without re-probing.
+- Remove the disjunction as "dead code" — it's forward-compatible defence.
+
+See `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/w44_audit_6_phase3_discriminator_tightening_2026-05-24.md`
+for the full narrative + follow-on candidates.
