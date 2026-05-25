@@ -2540,5 +2540,14 @@ name = "w44_audit_5_phase1_per_block_dump"
 path = "examples/w44_audit_5_phase1_per_block_dump.rs"
 required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 
+# SA-F: butteraugli metric cross-test. Encodes clic_22ea12 e9 d=4 with both
+# cjxl-rs (ours) and cjxl (libjxl), decodes via jxl-oxide to linear-sRGB f32,
+# scores all 4 (ref, recon) combinations with both metrics. Discriminates
+# SA-B's claim of 2.4× metric divergence.
+[[example]]
+name = "sa_f_buttloop_cross_test"
+path = "examples/sa_f_buttloop_cross_test.rs"
+required-features = ["butteraugli-loop"]
+
 [lints]
 workspace = true
