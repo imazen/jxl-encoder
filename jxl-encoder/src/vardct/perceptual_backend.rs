@@ -2,17 +2,22 @@
 // Algorithms and constants derived from libjxl (BSD-3-Clause).
 // Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
 
-//! Pluggable butteraugli backend for the quantization loop (W44-phase3-B1).
+//! Pluggable perceptual-metric backend for the quantization loop
+//! (W44-phase3-B1; renamed from `ButteraugliBackend` for cvvdp-fork
+//! Phase 2 on 2026-05-24 — see `docs/RFC_CVVDP_FORK.md` §2.1).
 //!
-//! The buttloop calls butteraugli once per iteration to measure the perceptual
-//! distance between the original linear-RGB image and the current iteration's
-//! reconstructed linear-RGB image. The result drives both the global score
-//! (used to terminate / pick the best seed) and the per-pixel diffmap (used
-//! to compute per-block tile-distance for the next iter's qf adjustment).
+//! The buttloop calls a perceptual metric once per iteration to measure the
+//! perceptual distance between the original linear-RGB image and the current
+//! iteration's reconstructed linear-RGB image. The result drives both the
+//! global score (used to terminate / pick the best seed) and the per-pixel
+//! diffmap (used to compute per-block tile-distance for the next iter's
+//! qf adjustment).
 //!
-//! This module abstracts that step behind a [`ButteraugliBackend`] trait so a
+//! This module abstracts that step behind a [`PerceptualBackend`] trait so a
 //! GPU backend can be plugged in opt-in. The default backend remains the
-//! existing CPU `butteraugli` crate.
+//! existing CPU `butteraugli` crate. The trait will host a `CvvdpBackend`
+//! impl in cvvdp-fork Phase 3 (RFC §2.1) alongside the existing butteraugli
+//! implementations.
 //!
 //! ## Backends
 //!
@@ -39,17 +44,385 @@
 
 use alloc::format;
 
+use crate::api::{PerceptualDevice, PerceptualMetric};
 use crate::error::Result;
 
-/// Result of one butteraugli comparison: aggregated max-norm score over the
-/// linear-RGB plane diff. The diffmap itself is written into a caller-owned
-/// `Vec<f32>` by [`ButteraugliBackend::compare_with_reference`], so it can be
+/// Result of one perceptual-metric comparison: aggregated max-norm score over
+/// the linear-RGB plane diff. The diffmap itself is written into a caller-owned
+/// `Vec<f32>` by [`PerceptualBackend::compare_with_reference`], so it can be
 /// recycled across iterations (W44-phase3-B7a, 2026-05-23).
 #[derive(Debug)]
 pub(crate) struct BackendCompareResult {
     /// Max-norm score (the value the libjxl buttloop compares against
     /// `target_distance`). Same units as `butteraugli::ButteraugliResult::score`.
     pub(crate) score: f64,
+}
+
+/// Multi-metric Phase 0 (RFC #3 §4, 2026-05-25): bundled metric +
+/// device selection passed to [`construct_backend`].
+///
+/// Built by
+/// [`crate::api::LossyConfig::resolve_perceptual_metric_selection`].
+/// The Libjxl strict-parity short-circuit (W44-126) has already fired
+/// inside the resolver — `metric == Butteraugli` here unconditionally
+/// means "construct a butteraugli backend", even if the caller
+/// requested cvvdp with the Libjxl strategy.
+///
+/// The cargo-feature gate (silent fallback to butteraugli when the
+/// requested metric's feature isn't compiled) has also fired in the
+/// resolver, so `construct_backend` itself only needs to map the
+/// triple `(metric, device, target_score)` to a concrete `Box<dyn
+/// PerceptualBackend>` honouring per-backend `try_new` failures.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct MetricSelection {
+    pub(crate) metric: PerceptualMetric,
+    pub(crate) device: PerceptualDevice,
+    /// Caller-supplied per-distance target override. `None` = use the
+    /// metric's built-in calibration table; `Some(score)` = converge
+    /// the buttloop against this score directly. Plumbed through to
+    /// `perceptual_loop.rs::effective_metric_target_distance` rather
+    /// than consumed inside the backend ctor — included here so the
+    /// selection struct is the single carrier from API → dispatch.
+    pub(crate) target_score: Option<f32>,
+}
+
+/// Multi-metric Phase 0 (RFC #3, 2026-05-25): translate a resolved
+/// [`MetricSelection`] into the four legacy bool fields the buttloop
+/// body still reads on [`crate::vardct::VarDctEncoder`].
+///
+/// The buttloop body's internal field shape predates Phase 0; this
+/// helper keeps the body unchanged and centralises the translation.
+/// A future cleanup (out of scope for Phase 0) can pull the metric +
+/// device into a typed enum on `VarDctEncoder` directly.
+///
+/// **Semantics** mirror the pre-Phase-0 resolvers exactly:
+///
+/// - `Butteraugli + Auto` → `gpu_butteraugli = cfg!(feature =
+///   "gpu-butteraugli")` (matches W44-PHASE3-B5-flip default)
+/// - `Butteraugli + Gpu`  → `gpu_butteraugli = true` (with silent CPU
+///   fallback inside `construct_backend` when CUDA missing)
+/// - `Butteraugli + Cpu`  → `gpu_butteraugli = false`
+/// - `Cvvdp + Auto`       → `cvvdp_loop = true`, `cvvdp_use_cpu = false`
+///   (prefer GPU; `construct_backend` falls back to CPU cvvdp if GPU
+///   missing and `cvvdp-loop-cpu` is compiled, else butteraugli)
+/// - `Cvvdp + Gpu`        → `cvvdp_loop = true`, `cvvdp_use_cpu = false`
+///   (same as Auto for cvvdp; the GPU vs CPU CVVDP toggle is on
+///   `cvvdp_use_cpu`, GPU is the implicit preference)
+/// - `Cvvdp + Cpu`        → `cvvdp_loop = true`, `cvvdp_use_cpu = true`
+/// - `Zensim + Auto`      → `zensim_loop = true`, `zensim_use_cpu = false`
+///   (prefer GPU when `zensim-loop-gpu` is compiled; falls back to CPU
+///   zensim if GPU unavailable and `zensim-loop` is compiled, else
+///   butteraugli)
+/// - `Zensim + Gpu`       → `zensim_loop = true`, `zensim_use_cpu = false`
+/// - `Zensim + Cpu`       → `zensim_loop = true`, `zensim_use_cpu = true`
+///
+/// Strategy::Libjxl short-circuit has already fired in the resolver
+/// (metric == Butteraugli for Libjxl regardless of caller field), so
+/// no Libjxl branch is needed here.
+#[cfg(feature = "butteraugli-loop")]
+pub(crate) fn propagate_resolved_metric_to_encoder(
+    selection: MetricSelection,
+    enc: &mut crate::vardct::VarDctEncoder,
+) {
+    match selection.metric {
+        PerceptualMetric::Butteraugli => {
+            enc.cvvdp_loop = false;
+            enc.cvvdp_use_cpu = false;
+            enc.zensim_loop = false;
+            enc.zensim_use_cpu = false;
+            enc.gpu_butteraugli = match selection.device {
+                PerceptualDevice::Auto => cfg!(feature = "gpu-butteraugli"),
+                PerceptualDevice::Cpu => false,
+                PerceptualDevice::Gpu => true,
+            };
+        }
+        PerceptualMetric::Cvvdp => {
+            // cvvdp wins the construct_backend dispatch over
+            // butteraugli regardless of `gpu_butteraugli`; we leave
+            // `gpu_butteraugli` at the Auto-resolved value so that if
+            // cvvdp falls back to butteraugli at runtime (no CUDA + no
+            // cvvdp-loop-cpu), the butteraugli backend uses the
+            // caller-requested device.
+            enc.cvvdp_loop = true;
+            enc.cvvdp_use_cpu = matches!(selection.device, PerceptualDevice::Cpu);
+            enc.zensim_loop = false;
+            enc.zensim_use_cpu = false;
+            enc.gpu_butteraugli = match selection.device {
+                PerceptualDevice::Auto => cfg!(feature = "gpu-butteraugli"),
+                PerceptualDevice::Cpu => false,
+                PerceptualDevice::Gpu => true,
+            };
+        }
+        PerceptualMetric::Zensim => {
+            // zensim-fork Phase 3 (2026-05-25): zensim wins the
+            // construct_backend dispatch over both cvvdp and butteraugli
+            // when its cargo feature is compiled in. `gpu_butteraugli` is
+            // left at the Auto-resolved value as the final-fallback
+            // butteraugli device choice (mirrors the cvvdp shape).
+            enc.cvvdp_loop = false;
+            enc.cvvdp_use_cpu = false;
+            enc.zensim_loop = true;
+            enc.zensim_use_cpu = matches!(selection.device, PerceptualDevice::Cpu);
+            enc.gpu_butteraugli = match selection.device {
+                PerceptualDevice::Auto => cfg!(feature = "gpu-butteraugli"),
+                PerceptualDevice::Cpu => false,
+                PerceptualDevice::Gpu => true,
+            };
+        }
+    }
+}
+
+// ============================================================================
+// cvvdp-fork Phase 8b/8c — diffmap distribution analysis + renormalization
+// ============================================================================
+
+/// cvvdp-fork Phase 8c (2026-05-25): per-pixel diffmap renormalization scale
+/// applied INSIDE the cvvdp backends before returning to the buttloop.
+///
+/// The W44 cost-model / per-block reducer (`vardct/perceptual_loop.rs`,
+/// 16th-power norm + `tile_dist[bi] / effective_metric_target_distance > 1`
+/// bad-block predicate) was calibrated for butteraugli's per-pixel diffmap
+/// value range. cvvdp's JOD-derived per-pixel signal lives in a different
+/// numerical range; the Phase 8a Pareto diagnosis (40.3% Pareto-front
+/// position vs butteraugli's 93.6%) showed the cvvdp loop over-allocates
+/// qac to blocks the reducer flags as "bad" under cvvdp's distribution
+/// shape. Scaling cvvdp's per-pixel diffmap by this factor brings the
+/// reducer's bad-block predicate into the same statistical regime
+/// butteraugli operates in, so the W44 calibration applies 1:1.
+///
+/// Value seeded from Phase 8b distribution capture
+/// (`benchmarks/cvvdp_diffmap_distribution_2026-05-25.tsv` — see
+/// `examples/cvvdp_phase8b_diffmap_distribution.rs`).
+///
+/// **The right scale aligns the BAD-BLOCK PREDICATE, not just the diffmap mean.**
+/// The buttloop fires refinement when `tile_dist / effective_metric_target > 1`.
+/// `effective_metric_target` differs between backends:
+///
+///   - butter: `target_b = distance` (e.g. 2.0 at d=2)
+///   - cvvdp:  `target_c = CVVDP_DISTANCE_TARGETS` lookup (e.g. 0.0724 at d=2)
+///
+/// So the right scale satisfies
+/// `(mean_c * scale) / target_c ≈ mean_b / target_b`,
+/// i.e. `scale = (target_c / target_b) * (mean_b / mean_c)`.
+///
+/// Phase 8b 20-cell (5 fixtures × 4 distances) computation:
+/// - **median scale = 0.0177**
+/// - p25..p75: [0.0103, 0.0234]
+/// - geometric mean: 0.01629
+/// - range: 0.0036 (terminal d=0.5, outlier) — 0.0707 (imac_g3 d=1.0)
+///
+/// We pick **0.018** (rounded median) for the production constant. The
+/// scale is fairly distance-independent within a 2-3× band, suggesting
+/// a single global value is a reasonable Phase 8c shipping choice. Per-
+/// distance refinement is Phase 8g (Intervention B) follow-on.
+///
+/// **Sentinel value `1.0`** disables renormalization (Phase 8b harness
+/// behaviour when collecting raw cvvdp values for the ratio computation).
+///
+/// **Env override** `JXL_CVVDP_DIFFMAP_RENORM_SCALE=<float>` replaces
+/// this constant for bench harnesses. Only consulted when the env var
+/// is present AND parseable; production code uses the constant.
+#[cfg(feature = "cvvdp-loop")]
+pub(crate) const CVVDP_DIFFMAP_RENORM_SCALE: f32 = 0.018;
+
+/// Read the active renorm scale, honouring the
+/// `JXL_CVVDP_DIFFMAP_RENORM_SCALE` env override for Phase 8b harness use.
+/// Production callers should treat the env hook as bench-only.
+#[cfg(feature = "cvvdp-loop")]
+#[inline]
+pub(crate) fn resolved_cvvdp_diffmap_renorm_scale() -> f32 {
+    if let Ok(s) = std::env::var("JXL_CVVDP_DIFFMAP_RENORM_SCALE")
+        && let Ok(v) = s.parse::<f32>()
+        && v.is_finite()
+        && v > 0.0
+    {
+        return v;
+    }
+    CVVDP_DIFFMAP_RENORM_SCALE
+}
+
+// ============================================================================
+// Phase 8d (2026-05-25): bytes-tighten exit pass constants.
+// ============================================================================
+//
+// Variant 1 (batched single-probe) per
+// `docs/RFC_CVVDP_PHASE8_PARETO_TARGETING.md` §3.3. After the cvvdp seed
+// loop converges, run up to `MAX_OUTER_ITERS` iters where we globally
+// bump `quant_field_float` by a multiplicative factor and re-score. If
+// the new score still satisfies `iter_score <= target * (1 + TOLERANCE_FRAC)`
+// we accept the loosened state (gives back bytes everywhere); else we
+// revert to the last accepted state and either halve the step or break.
+//
+// The tightening pass is gated TWICE:
+//  1. The `cvvdp-loop-tighten` cargo feature must be compiled in.
+//  2. The runtime field `VarDctEncoder.cvvdp_bytes_tighten` must be true
+//     AND `VarDctEncoder.cvvdp_loop` must be true.
+//
+// Both gates default OFF outside the feature so hash-locks stay
+// byte-identical regardless of feature compilation. The default INSIDE
+// the feature is "on when cvvdp_loop is on" — see
+// `LossyConfig::resolve_cvvdp_bytes_tighten` for the full dispatch
+// matrix.
+//
+// The pass NEVER fires on the butteraugli loop: the butteraugli
+// per-block reducer is already calibrated to the W44 cost-model gates;
+// loosening it post-convergence over-tightens the bytes/quality tradeoff
+// (the buttloop's seed-picker mean_qf criterion already encodes the
+// "biggest qf" preference among qualifying seeds, which is the natural
+// bytes-tightening surface for butteraugli — see
+// `vardct/perceptual_loop.rs` `accept_bound` block).
+
+/// Maximum number of post-convergence tighten outer iters. Each iter
+/// costs ~1 cvvdp score (transform + reconstruct + compare), so total
+/// wall hit is bounded by `MAX_OUTER_ITERS × per_iter_wall`. At the
+/// e=8 default (`butteraugli_iters = 3` → `iters + 1 = 4` seed iters),
+/// this caps the additive wall at ~125% of the seed loop in the worst
+/// case where every probe is accepted. Typical case is 1-2 iters before
+/// the first reject closes the loop.
+#[cfg(feature = "cvvdp-loop-tighten")]
+pub(crate) const CVVDP_BYTES_TIGHTEN_MAX_OUTER_ITERS: u32 = 5;
+
+/// Initial multiplicative bump applied to `quant_field_float` on each
+/// tighten outer iter. `qf *= 1.0 + STEP` increases qac → coarser
+/// quantization → fewer bytes. The step decays geometrically (halves
+/// after each successful accept) so the search converges on the
+/// largest-bump-that-still-passes within `MAX_OUTER_ITERS`.
+///
+/// 0.04 = 4% bytes-saving probe per iter (a few global qac steps).
+#[cfg(feature = "cvvdp-loop-tighten")]
+pub(crate) const CVVDP_BYTES_TIGHTEN_INITIAL_STEP: f32 = 0.04;
+
+/// Tolerance fraction relative to the metric target. The probe is
+/// accepted iff `iter_score <= target * (1.0 + TOLERANCE_FRAC)`. For
+/// cvvdp at d=1.0 (target ~0.0314 in metric direction), this is a
+/// ~0.5% slack — small enough to stay near the original convergence
+/// point but large enough that the seed loop's residual under-shoot
+/// (a typical seed converges slightly under target) provides room
+/// for the probe to fit.
+#[cfg(feature = "cvvdp-loop-tighten")]
+pub(crate) const CVVDP_BYTES_TIGHTEN_TOLERANCE_FRAC: f32 = 0.005;
+
+/// cvvdp-fork Phase 8d: env-overridable settings for bench harnesses.
+/// `JXL_CVVDP_BYTES_TIGHTEN_MAX_ITERS=<u32>` overrides the max iter cap;
+/// `JXL_CVVDP_BYTES_TIGHTEN_STEP=<float>` overrides the initial step;
+/// `JXL_CVVDP_BYTES_TIGHTEN_TOL=<float>` overrides the tolerance fraction.
+/// All three are checked once per call; production callers should treat
+/// them as bench-only.
+#[cfg(feature = "cvvdp-loop-tighten")]
+#[inline]
+pub(crate) fn resolved_cvvdp_bytes_tighten_settings() -> (u32, f32, f32) {
+    let mut max_iters = CVVDP_BYTES_TIGHTEN_MAX_OUTER_ITERS;
+    let mut step = CVVDP_BYTES_TIGHTEN_INITIAL_STEP;
+    let mut tol = CVVDP_BYTES_TIGHTEN_TOLERANCE_FRAC;
+    if let Ok(s) = std::env::var("JXL_CVVDP_BYTES_TIGHTEN_MAX_ITERS")
+        && let Ok(v) = s.parse::<u32>()
+    {
+        max_iters = v;
+    }
+    if let Ok(s) = std::env::var("JXL_CVVDP_BYTES_TIGHTEN_STEP")
+        && let Ok(v) = s.parse::<f32>()
+        && v.is_finite()
+        && v > 0.0
+    {
+        step = v;
+    }
+    if let Ok(s) = std::env::var("JXL_CVVDP_BYTES_TIGHTEN_TOL")
+        && let Ok(v) = s.parse::<f32>()
+        && v.is_finite()
+        && v >= 0.0
+    {
+        tol = v;
+    }
+    (max_iters, step, tol)
+}
+
+/// cvvdp-fork Phase 8b (2026-05-25): when env var
+/// `JXL_PHASE8B_DIFFMAP_DUMP` is set to a writable file path, every
+/// `compare_with_reference` call appends one TSV row capturing the
+/// diffmap distribution stats (mean / median / p25 / p75 / p95 / max).
+/// Cheap (~one O(N) pass over the diffmap on top of the buttloop's
+/// per-iter compare) and unconditionally disabled when the env var is
+/// unset, so this has zero production cost.
+///
+/// Schema (tab-separated, header written once per file create):
+/// `backend\tcompare_call\twidth\theight\tn_pixels\tmean\tmedian\tp25\tp75\tp95\tmax\tscore`
+///
+/// The CALLER passes its own `compare_call_idx` (the buttloop iter
+/// number, or a synthetic counter for harness use); the dump function
+/// records it verbatim. The score is recorded post-(10-JOD) mapping for
+/// cvvdp backends and verbatim for butteraugli.
+#[cfg(feature = "std")]
+pub(crate) fn maybe_dump_diffmap_stats(
+    backend_name: &str,
+    compare_call_idx: u32,
+    width: usize,
+    height: usize,
+    diffmap: &[f32],
+    score: f64,
+) {
+    let path = match std::env::var("JXL_PHASE8B_DIFFMAP_DUMP") {
+        Ok(p) if !p.is_empty() => p,
+        _ => return,
+    };
+    // Compute stats. We allocate a sort buffer for percentiles —
+    // O(N log N) overhead but bench-only so it's tolerable.
+    if diffmap.is_empty() {
+        return;
+    }
+    let n = diffmap.len();
+    let mut sum = 0.0_f64;
+    let mut max = f32::NEG_INFINITY;
+    for &v in diffmap {
+        sum += v as f64;
+        if v > max {
+            max = v;
+        }
+    }
+    let mean = sum / n as f64;
+    let mut sorted: alloc::vec::Vec<f32> = diffmap.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+    let p25 = sorted[(n * 25 / 100).min(n - 1)];
+    let median = sorted[(n / 2).min(n - 1)];
+    let p75 = sorted[(n * 75 / 100).min(n - 1)];
+    let p95 = sorted[(n * 95 / 100).min(n - 1)];
+
+    use std::io::Write;
+    // O_APPEND atomic append on POSIX so multi-process safety is
+    // automatic. Header line is written by the harness on file creation
+    // (it knows the backend list); we always append data rows.
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path);
+    if let Ok(mut f) = file {
+        let _ = writeln!(
+            f,
+            "{backend}\t{idx}\t{w}\t{h}\t{n}\t{mean:.6e}\t{med:.6e}\t{p25:.6e}\t{p75:.6e}\t{p95:.6e}\t{max:.6e}\t{score:.6e}",
+            backend = backend_name,
+            idx = compare_call_idx,
+            w = width,
+            h = height,
+            mean = mean,
+            med = median,
+            p25 = p25,
+            p75 = p75,
+            p95 = p95,
+            max = max,
+            score = score,
+        );
+    }
+}
+
+#[cfg(not(feature = "std"))]
+#[inline]
+pub(crate) fn maybe_dump_diffmap_stats(
+    _backend_name: &str,
+    _compare_call_idx: u32,
+    _width: usize,
+    _height: usize,
+    _diffmap: &[f32],
+    _score: f64,
+) {
 }
 
 /// Pluggable backend for the buttloop's per-iter compare step.
@@ -64,7 +437,7 @@ pub(crate) struct BackendCompareResult {
 /// (`recon_r/g/b` from the buttloop) — backends may need to handle non-tight
 /// strides on the distorted side; the reference side is always tight
 /// (`width == stride`).
-pub(crate) trait ButteraugliBackend: core::fmt::Debug {
+pub(crate) trait PerceptualBackend: core::fmt::Debug {
     /// Backend identifier (for logging). e.g. `"cpu"`, `"gpu-cuda"`,
     /// `"gpu-fallback-cpu"`.
     fn name(&self) -> &'static str;
@@ -140,6 +513,11 @@ pub(crate) struct CpuButteraugliBackend {
     /// `libjxl_butteraugli_intensity_target` so callers don't need to know
     /// the dispatch matrix.
     params: butteraugli::ButteraugliParams,
+    /// Phase 8b: per-instance compare-call counter (bumped on each
+    /// successful `compare_with_reference`). Used only by the
+    /// `JXL_PHASE8B_DIFFMAP_DUMP` env-gated TSV dump. Zero production
+    /// cost when the env var is unset.
+    compare_call_count: u32,
 }
 
 #[cfg(feature = "butteraugli-loop")]
@@ -161,12 +539,13 @@ impl CpuButteraugliBackend {
         Self {
             reference: None,
             params,
+            compare_call_count: 0,
         }
     }
 }
 
 #[cfg(feature = "butteraugli-loop")]
-impl ButteraugliBackend for CpuButteraugliBackend {
+impl PerceptualBackend for CpuButteraugliBackend {
     fn name(&self) -> &'static str {
         "cpu"
     }
@@ -242,7 +621,16 @@ impl ButteraugliBackend for CpuButteraugliBackend {
             .compare_linear_planar_into(dist_r, dist_g, dist_b, padded_width, diffmap_out)
             .map_err(|e| crate::error::Error::InvalidInput(format!("butteraugli compare: {e}")))?;
         debug_assert_eq!(diffmap_out.len(), width * height);
-        let _ = (width, height);
+        // Phase 8b: optional diffmap distribution dump.
+        maybe_dump_diffmap_stats(
+            "B_CPU",
+            self.compare_call_count,
+            width,
+            height,
+            diffmap_out,
+            score,
+        );
+        self.compare_call_count = self.compare_call_count.saturating_add(1);
         Ok(BackendCompareResult { score })
     }
 }
@@ -522,8 +910,8 @@ pub(crate) mod gpu {
 
         // W44-PHASE3-B5b note: the per-cell detector state
         // (`last_divergence_pct`, `forced_to_cpu`) is exposed via the
-        // `ButteraugliBackend::divergence_status` trait method on the
-        // owning trait object (see `impl ButteraugliBackend for
+        // `PerceptualBackend::divergence_status` trait method on the
+        // owning trait object (see `impl PerceptualBackend for
         // GpuButteraugliBackend` below). Bench harnesses use that
         // method to count fallback rate per cell.
 
@@ -565,7 +953,7 @@ pub(crate) mod gpu {
         }
     }
 
-    impl ButteraugliBackend for GpuButteraugliBackend {
+    impl PerceptualBackend for GpuButteraugliBackend {
         fn name(&self) -> &'static str {
             if self.forced_to_cpu {
                 "gpu-cuda-fallback-cpu"
@@ -792,6 +1180,15 @@ pub(crate) mod gpu {
                 }
             }
 
+            // Phase 8b: optional diffmap distribution dump.
+            super::maybe_dump_diffmap_stats(
+                "B_GPU",
+                self.compare_call_count - 1,
+                width,
+                height,
+                diffmap_out,
+                gpu_score,
+            );
             Ok(BackendCompareResult { score: gpu_score })
         }
 
@@ -908,27 +1305,368 @@ pub(crate) mod gpu {
 // Constructor: picks CPU or GPU based on caller policy + feature gate
 // ============================================================================
 
-/// Construct the active butteraugli backend for one buttloop run.
+/// Construct the active perceptual-metric backend for one buttloop run.
 ///
-/// Routing:
-/// - `gpu_requested == false` OR feature `gpu-butteraugli` is OFF → CPU backend.
-/// - `gpu_requested == true` AND feature is ON AND CUDA init succeeds → GPU backend.
-/// - `gpu_requested == true` AND feature is ON AND CUDA init fails → CPU backend
-///   (silent fallback; emits one `eprintln!` so users can see why GPU didn't fire).
+/// Routing priority order:
+///
+/// **(1)** `cvvdp_requested == true` — try CVVDP backends in this sub-order:
+/// **1a** if `cvvdp_use_cpu_requested == true` AND feature `cvvdp-loop-cpu`
+/// is ON → [`CpuCvvdpBackend`](crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend)
+/// (cvvdp-fork Phase 5; pure Rust, no CUDA; falls back to GPU CVVDP if CPU
+/// construction fails). **1b** else if feature `cvvdp-loop` is ON AND CUDA
+/// init succeeds → [`GpuCvvdpBackend`](crate::vardct::cvvdp_backend::gpu::GpuCvvdpBackend)
+/// (cvvdp-fork Phase 3, the default cvvdp branch). **1c** else if feature
+/// `cvvdp-loop-cpu` is ON → CPU CVVDP (Phase 5 silent fallback when GPU
+/// CVVDP is unavailable — hosts without CUDA still get CVVDP rather than
+/// dropping to butteraugli). **1d** else fall through to step 2.
+///
+/// **(2)** `gpu_requested == true` AND feature `gpu-butteraugli` is ON AND
+/// CUDA init succeeds → `GpuButteraugliBackend` (W44-phase3-B1).
+///
+/// **(3)** Otherwise → [`CpuButteraugliBackend`] (always available).
+///
+/// **Default policy when both CPU and GPU CVVDP are compiled in**:
+/// GPU wins (Agent A's CPU port honest-stopped at 4.4× off the SIMD
+/// floor — measured ~10× slower than `cvvdp-gpu` warm-ref). The CPU
+/// backend exists for hosts without CUDA AND for callers who
+/// explicitly opt in for deterministic-to-1e-4-JOD parity vs
+/// pycvvdp v0.5.4 goldens (the CPU port carries no GPU
+/// reduction-order variance).
+///
+/// **CVVDP and GPU butteraugli are mutually exclusive at the
+/// construction site** — both wrap CudaRuntime; the caller's
+/// [`LossyConfig::resolve_cvvdp_loop`](crate::api::LossyConfig::resolve_cvvdp_loop)
+/// takes precedence when both fields are set, so the cvvdp branch fires
+/// first. If cvvdp falls back (all variants unavailable), the GPU
+/// butteraugli branch is consulted next (defense-in-depth).
+///
+/// **CPU fallback** is silent (single `eprintln!` when a higher-priority
+/// branch is requested but unavailable) so users can see why their
+/// requested backend didn't fire without breaking the encode.
 #[cfg(feature = "butteraugli-loop")]
 pub(crate) fn construct_backend(
     width: u32,
     height: u32,
     cpu_params: butteraugli::ButteraugliParams,
     #[allow(unused_variables)] intensity_target: f32,
-    #[allow(unused_variables)] gpu_requested: bool,
-) -> alloc::boxed::Box<dyn ButteraugliBackend> {
+    selection: MetricSelection,
+) -> alloc::boxed::Box<dyn PerceptualBackend> {
+    // Multi-metric Phase 0 (RFC #3 §4, 2026-05-25): the 7-arg
+    // pre-Phase-0 signature collapsed into one bundled struct. The
+    // dispatch body below preserves the priority order exactly:
+    // cvvdp first when requested (mutually exclusive with butter-GPU
+    // at the CudaRuntime layer), then butter-GPU, then butter-CPU.
+    let gpu_requested = matches!(selection.device, PerceptualDevice::Gpu)
+        || (matches!(selection.device, PerceptualDevice::Auto)
+            && cfg!(feature = "gpu-butteraugli"));
+    let cvvdp_requested = matches!(selection.metric, PerceptualMetric::Cvvdp);
+    let cvvdp_use_cpu_requested = matches!(selection.device, PerceptualDevice::Cpu);
+    // zensim-fork Phase 3 (2026-05-25): zensim wins the dispatch over
+    // both cvvdp and butteraugli when its cargo feature is compiled
+    // in. Mutually exclusive with cvvdp at the dispatch level
+    // (`resolve_perceptual_metric` returns exactly one of Butteraugli /
+    // Cvvdp / Zensim).
+    let zensim_requested = matches!(selection.metric, PerceptualMetric::Zensim);
+    let zensim_use_cpu_requested = matches!(selection.device, PerceptualDevice::Cpu);
+    // The `target_score` field is plumbed through `perceptual_loop.rs`
+    // via `LossyConfig::perceptual_target_score`, not through the
+    // backend ctor. Silence the unused-field warning by binding to `_`
+    // here — the struct field stays for documentation + the
+    // single-carrier shape.
+    let _ = selection.target_score;
     // Debug hook: `JXL_W44_PHASE3_B1_DEBUG=1` logs which backend the
     // dispatch picks. Off by default to keep production logs clean.
     #[cfg(feature = "std")]
     let debug_log = std::env::var("JXL_W44_PHASE3_B1_DEBUG").ok().as_deref() == Some("1");
     #[cfg(not(feature = "std"))]
     let debug_log = false;
+
+    // zensim-fork Phase 3 (2026-05-25): try the zensim backends first
+    // when the caller has opted in via
+    // `LossyConfig::with_perceptual_metric(PerceptualMetric::Zensim)`.
+    // The zensim, cvvdp, and gpu-butteraugli paths are mutually
+    // exclusive at the dispatch level
+    // (`resolve_perceptual_metric` returns exactly one metric); zensim
+    // wins when its feature is compiled in. Silent fallback to the
+    // next dispatch tier on feature-off / CUDA-init-fail.
+    //
+    // Dispatch ordering inside the zensim branch (mirrors cvvdp Phase 5):
+    //   (a) `zensim_use_cpu_requested == true` AND `zensim-loop`
+    //       compiled: try CPU first; fall back to GPU if CPU
+    //       construction fails (dims < 8×8).
+    //   (b) else (default policy when both backends compiled): try
+    //       GPU first; fall back to CPU if `zensim-loop` is compiled
+    //       AND GPU construction failed; otherwise fall through to
+    //       the cvvdp/butteraugli dispatch tier.
+    //
+    // Phase 1 (zensim-gpu) honest-stop carryover: the current GPU
+    // diffmap delegates to the CPU pipeline (+1006% wall vs score-only
+    // GPU). Until Phase 1b (pure-GPU kernels) lands, callers
+    // prioritising wall time should explicitly select
+    // `PerceptualDevice::Cpu`.
+    #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+    {
+        if zensim_requested {
+            if debug_log {
+                eprintln!(
+                    "[zensim-fork P3] Zensim requested @ {}×{} \
+                     (use_cpu_requested={zensim_use_cpu_requested}) — \
+                     trying backends in priority order",
+                    width, height,
+                );
+            }
+
+            // (a) caller explicitly prefers CPU. Try CPU first.
+            #[cfg(feature = "zensim-loop")]
+            {
+                if zensim_use_cpu_requested {
+                    if let Some(c) =
+                        crate::vardct::zensim_backend::cpu::CpuZensimBackend::try_new(width, height)
+                    {
+                        if debug_log {
+                            eprintln!(
+                                "[zensim-fork P3] CPU zensim backend ACTIVE @ {}×{} \
+                                 (explicit opt-in)",
+                                width, height
+                            );
+                        }
+                        let _ = cpu_params;
+                        return alloc::boxed::Box::new(c);
+                    }
+                    if debug_log {
+                        eprintln!(
+                            "[zensim-fork P3] CPU zensim construction failed @ {}×{} \
+                             (dims likely below 8×8 minimum); trying GPU zensim next",
+                            width, height,
+                        );
+                    }
+                }
+            }
+
+            // (b default) try GPU zensim. This is the default path
+            // when both backends are compiled and the caller hasn't
+            // explicitly opted into CPU.
+            #[cfg(feature = "zensim-loop-gpu")]
+            {
+                if let Some(g) =
+                    crate::vardct::zensim_backend::gpu::GpuZensimBackend::try_new(width, height)
+                {
+                    if debug_log {
+                        eprintln!(
+                            "[zensim-fork P3] GPU zensim backend ACTIVE @ {}×{}",
+                            width, height
+                        );
+                    }
+                    let _ = cpu_params;
+                    return alloc::boxed::Box::new(g);
+                }
+            }
+
+            // (c silent fallback) GPU zensim failed (no CUDA, driver
+            // issue, CubeCL panic) OR `zensim-loop-gpu` feature off.
+            // If `zensim-loop` is compiled in, try CPU zensim as the
+            // next-best perceptual metric — the caller asked for
+            // zensim, so we honour that rather than dropping all the
+            // way down to butteraugli.
+            #[cfg(feature = "zensim-loop")]
+            {
+                if !zensim_use_cpu_requested {
+                    if let Some(c) =
+                        crate::vardct::zensim_backend::cpu::CpuZensimBackend::try_new(width, height)
+                    {
+                        eprintln!(
+                            "[jxl-encoder zensim-fork P3] GPU zensim unavailable \
+                             (CUDA missing/failed or `zensim-loop-gpu` off); \
+                             falling back to CPU zensim @ {}×{}",
+                            width, height,
+                        );
+                        let _ = cpu_params;
+                        return alloc::boxed::Box::new(c);
+                    }
+                }
+            }
+
+            // All zensim variants failed; fall through to cvvdp /
+            // butteraugli dispatch tiers below.
+            eprintln!(
+                "[jxl-encoder zensim-fork P3] Zensim backend requested but \
+                 unavailable (CUDA init failed, no CPU fallback compiled, \
+                 or dims invalid); falling back to next dispatch tier ({}×{})",
+                width, height,
+            );
+        } else if debug_log {
+            eprintln!(
+                "[zensim-fork P3] Zensim not requested @ {}×{}, continuing dispatch",
+                width, height
+            );
+        }
+    }
+    #[cfg(not(any(feature = "zensim-loop", feature = "zensim-loop-gpu")))]
+    if debug_log && zensim_requested {
+        eprintln!(
+            "[zensim-fork P3] Zensim requested but neither `zensim-loop` \
+             nor `zensim-loop-gpu` cargo features are compiled in; \
+             continuing dispatch ({}×{})",
+            width, height
+        );
+    }
+    // Silence unused-variable warnings when zensim features are not compiled.
+    let _ = zensim_requested;
+    let _ = zensim_use_cpu_requested;
+
+    // cvvdp-fork Phase 3 + Phase 5: try the CVVDP backends first when
+    // the caller has opted in via `LossyConfig::with_cvvdp_loop`. The
+    // cvvdp + gpu-butteraugli paths are mutually exclusive (both wrap
+    // CudaRuntime); cvvdp wins when both are requested. Silent fallback
+    // to the next dispatch tier on feature-off / CUDA-init-fail.
+    //
+    // Phase 5 (2026-05-24) introduces the CPU CVVDP backend. The
+    // dispatch ordering inside the cvvdp branch:
+    //   (a) `cvvdp_use_cpu_requested == true` AND `cvvdp-loop-cpu`
+    //       compiled: try CPU first; fall back to GPU if CPU
+    //       construction fails (e.g. dims < 8×8).
+    //   (b) else (default policy when both backends compiled): try
+    //       GPU first (10× faster per Agent A's honest-stop); fall
+    //       back to CPU if `cvvdp-loop-cpu` is compiled AND GPU
+    //       construction failed; otherwise fall through to the
+    //       butteraugli dispatch tier.
+    #[cfg(feature = "cvvdp-loop")]
+    {
+        if cvvdp_requested {
+            if debug_log {
+                eprintln!(
+                    "[cvvdp-fork P3/P5] CVVDP requested @ {}×{} \
+                     (use_cpu_requested={cvvdp_use_cpu_requested}) — \
+                     trying backends in priority order",
+                    width, height,
+                );
+            }
+
+            // Phase 5 (a): caller explicitly prefers CPU. Try CPU first.
+            #[cfg(feature = "cvvdp-loop-cpu")]
+            {
+                if cvvdp_use_cpu_requested {
+                    if let Some(c) =
+                        crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend::try_new(width, height)
+                    {
+                        if debug_log {
+                            eprintln!(
+                                "[cvvdp-fork P5] CPU CVVDP backend ACTIVE @ {}×{} \
+                                 (explicit opt-in)",
+                                width, height
+                            );
+                        }
+                        let _ = cpu_params;
+                        return alloc::boxed::Box::new(c);
+                    }
+                    // CPU construction failed (dims < 8×8); fall through
+                    // to GPU attempt + butteraugli fallback.
+                    if debug_log {
+                        eprintln!(
+                            "[cvvdp-fork P5] CPU CVVDP construction failed @ {}×{} \
+                             (dims likely below 8×8 minimum); trying GPU CVVDP next",
+                            width, height,
+                        );
+                    }
+                }
+            }
+
+            // Phase 3 (b default): try GPU CVVDP. This is the default
+            // path when both backends are compiled and the caller hasn't
+            // explicitly opted into CPU.
+            if let Some(c) = crate::vardct::cvvdp_backend::gpu::GpuCvvdpBackend::try_new(
+                width as u32,
+                height as u32,
+            ) {
+                if debug_log {
+                    eprintln!(
+                        "[cvvdp-fork P3] GPU CVVDP backend ACTIVE @ {}×{}",
+                        width, height
+                    );
+                }
+                let _ = cpu_params;
+                return alloc::boxed::Box::new(c);
+            }
+
+            // Phase 5 (c silent fallback): GPU CVVDP failed (no CUDA,
+            // driver issue, CubeCL panic). If `cvvdp-loop-cpu` is
+            // compiled in, try CPU CVVDP as the next-best perceptual
+            // metric — the caller asked for cvvdp, so we honour that
+            // rather than dropping all the way down to butteraugli.
+            #[cfg(feature = "cvvdp-loop-cpu")]
+            {
+                if let Some(c) =
+                    crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend::try_new(width, height)
+                {
+                    eprintln!(
+                        "[jxl-encoder cvvdp-fork P5] GPU CVVDP unavailable \
+                         (CUDA missing/failed); falling back to CPU CVVDP @ {}×{}",
+                        width, height,
+                    );
+                    let _ = cpu_params;
+                    return alloc::boxed::Box::new(c);
+                }
+            }
+
+            // All CVVDP variants failed; fall through to butteraugli.
+            eprintln!(
+                "[jxl-encoder cvvdp-fork P3/P5] CVVDP backend requested but \
+                 unavailable (CUDA init failed, no CPU fallback compiled, \
+                 or dims invalid); falling back to next dispatch tier ({}×{})",
+                width, height,
+            );
+        } else if debug_log {
+            eprintln!(
+                "[cvvdp-fork P3] CVVDP not requested @ {}×{}, continuing dispatch",
+                width, height
+            );
+        }
+    }
+    // cvvdp-loop OFF but cvvdp-loop-cpu ON: still try CPU CVVDP when
+    // requested. This is the "CPU-only" host configuration (no CUDA,
+    // no GPU butteraugli, but the caller still wants cvvdp).
+    #[cfg(all(not(feature = "cvvdp-loop"), feature = "cvvdp-loop-cpu"))]
+    {
+        if cvvdp_requested {
+            if debug_log {
+                eprintln!(
+                    "[cvvdp-fork P5] CVVDP requested @ {}×{} \
+                     (cvvdp-loop feature off, cvvdp-loop-cpu on) — \
+                     trying CPU CVVDP",
+                    width, height
+                );
+            }
+            if let Some(c) =
+                crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend::try_new(width, height)
+            {
+                if debug_log {
+                    eprintln!(
+                        "[cvvdp-fork P5] CPU CVVDP backend ACTIVE @ {}×{} \
+                         (cvvdp-loop-cpu only)",
+                        width, height
+                    );
+                }
+                let _ = cpu_params;
+                let _ = cvvdp_use_cpu_requested;
+                return alloc::boxed::Box::new(c);
+            }
+            eprintln!(
+                "[jxl-encoder cvvdp-fork P5] CVVDP requested but CPU \
+                 construction failed (dims < 8×8?); falling back to \
+                 butteraugli ({}×{})",
+                width, height,
+            );
+        }
+    }
+    #[cfg(all(not(feature = "cvvdp-loop"), not(feature = "cvvdp-loop-cpu")))]
+    if debug_log && cvvdp_requested {
+        eprintln!(
+            "[cvvdp-fork P3/P5] CVVDP requested but neither `cvvdp-loop` \
+             nor `cvvdp-loop-cpu` cargo features are compiled in; \
+             continuing dispatch ({}×{})",
+            width, height
+        );
+    }
     #[cfg(feature = "gpu-butteraugli")]
     {
         if gpu_requested {
@@ -1090,8 +1828,110 @@ mod tests {
     #[test]
     fn construct_backend_cpu_when_gpu_not_requested() {
         let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
-        let backend = construct_backend(64, 64, params, 80.0, false);
+        // Multi-metric Phase 0 (RFC #3 §4): construct_backend now takes
+        // a single bundled `MetricSelection` struct instead of the
+        // four trailing bools. `Butteraugli + Cpu` mirrors the
+        // production default (`LossyConfig::default()` produces
+        // `Butteraugli + Auto`, which resolves to CPU when
+        // `gpu-butteraugli` is not compiled in — same baseline as
+        // pre-Phase-0).
+        let backend = construct_backend(
+            64,
+            64,
+            params,
+            80.0,
+            MetricSelection {
+                metric: PerceptualMetric::Butteraugli,
+                device: PerceptualDevice::Cpu,
+                target_score: None,
+            },
+        );
         assert_eq!(backend.name(), "cpu");
+    }
+
+    /// Multi-metric Phase 0: when `metric == Butteraugli` AND
+    /// `device == Cpu`, the dispatch returns the CPU butteraugli
+    /// backend regardless of the `cvvdp-loop` cargo feature.
+    /// Verifies the cvvdp branch doesn't accidentally fire when the
+    /// caller's metric is Butteraugli.
+    #[cfg(feature = "cvvdp-loop")]
+    #[test]
+    fn construct_backend_cpu_when_cvvdp_not_requested() {
+        let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
+        let backend = construct_backend(
+            64,
+            64,
+            params,
+            80.0,
+            MetricSelection {
+                metric: PerceptualMetric::Butteraugli,
+                device: PerceptualDevice::Cpu,
+                target_score: None,
+            },
+        );
+        assert_eq!(backend.name(), "cpu");
+    }
+
+    /// Multi-metric Phase 0 (RFC #3 §4): when `metric == Cvvdp` AND
+    /// `device == Cpu` AND `cvvdp-loop-cpu` is compiled in, the
+    /// dispatch returns the CPU CVVDP backend. We can only assert the
+    /// backend's `name()` ends up as `"cvvdp-cpu"`; on hosts without
+    /// CUDA the GPU fallback path would still be unreachable (we
+    /// asked for CPU explicitly).
+    #[cfg(feature = "cvvdp-loop-cpu")]
+    #[test]
+    fn construct_backend_cvvdp_cpu_when_use_cpu_requested() {
+        let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
+        let backend = construct_backend(
+            64,
+            64,
+            params,
+            80.0,
+            MetricSelection {
+                metric: PerceptualMetric::Cvvdp,
+                device: PerceptualDevice::Cpu,
+                target_score: None,
+            },
+        );
+        assert_eq!(
+            backend.name(),
+            "cvvdp-cpu",
+            "explicit CPU CVVDP opt-in must return the CPU CVVDP backend \
+             on a 64×64 (≥ 8×8) buffer"
+        );
+    }
+
+    /// Multi-metric Phase 0: when `metric == Cvvdp` AND `device == Auto`
+    /// (default-policy GPU first), the dispatch returns either:
+    /// - `"cvvdp-gpu-cuda"` on hosts with CUDA, OR
+    /// - `"cvvdp-cpu"` on hosts without CUDA but with `cvvdp-loop-cpu`
+    ///   compiled in (Phase 5 silent fallback per the dispatch matrix).
+    ///
+    /// Either is acceptable; the test fails only if the backend name
+    /// is `"cpu"` (= butteraugli fell through, which means the cvvdp
+    /// fallback chain didn't fire).
+    #[cfg(feature = "cvvdp-loop-cpu")]
+    #[test]
+    fn construct_backend_cvvdp_falls_back_to_cpu_when_no_cuda() {
+        let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
+        let backend = construct_backend(
+            64,
+            64,
+            params,
+            80.0,
+            MetricSelection {
+                metric: PerceptualMetric::Cvvdp,
+                device: PerceptualDevice::Auto,
+                target_score: None,
+            },
+        );
+        let name = backend.name();
+        assert!(
+            name == "cvvdp-gpu-cuda" || name == "cvvdp-cpu",
+            "Cvvdp + Auto with cvvdp-loop-cpu compiled must \
+             land on a CVVDP backend (GPU when CUDA OK, CPU otherwise); \
+             got {name}"
+        );
     }
 
     /// W44-PHASE3-B5b: CPU backend never reports divergence (the

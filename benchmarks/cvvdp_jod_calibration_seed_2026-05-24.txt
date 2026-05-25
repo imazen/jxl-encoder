@@ -1,0 +1,35 @@
+# Per-distance JOD seed table (backend=B / butteraugli buttloop default)
+#
+# Source: benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv
+# Backend rows analyzed: 1131
+#
+distance	n	p25_jod	median_jod	p75_jod	min_jod	max_jod
+0.50	162	9.9934	9.9972	9.9993	9.9689	10.0000
+1.00	162	9.9709	9.9774	9.9847	9.8811	9.9999
+1.50	162	9.9420	9.9561	9.9717	9.7992	9.9971
+2.00	162	9.9058	9.9311	9.9531	9.7480	10.0000
+3.00	162	9.8236	9.8728	9.9086	9.6370	9.9886
+4.00	159	9.7212	9.7953	9.8549	9.4921	9.9936
+5.00	162	9.6178	9.7138	9.8080	9.3055	9.9853
+
+# Ready-to-paste Rust snippet for vardct/cvvdp_targets.rs
+# Target = median JOD * 1.05 (slightly stricter than butteraugli baseline)
+# Direction-converted to butteraugli-style score: score = 10.0 - jod
+#
+/// Per-distance JOD targets, seeded from Agent D's tracking baseline
+/// (1,131 cells of butteraugli-default encoder output scored with cvvdp-gpu).
+/// Each target is the median cvvdp JOD across the corpus at that distance,
+/// scaled 1.05× tighter so the cvvdp-driven loop is slightly more demanding
+/// than what butteraugli converges to.
+/// Converted to butteraugli-direction score = (10.0 - jod).clamp(0.0, 10.0).
+pub(crate) static CVVDP_DISTANCE_TARGETS: &[(f32, f32)] = &[
+    (0.50, 0.0029),  // n=162, median JOD = 9.9972
+    (1.00, 0.0238),  // n=162, median JOD = 9.9774
+    (1.50, 0.0461),  // n=162, median JOD = 9.9561
+    (2.00, 0.0724),  // n=162, median JOD = 9.9311
+    (3.00, 0.1336),  // n=162, median JOD = 9.8728
+    (4.00, 0.2149),  // n=159, median JOD = 9.7953
+    (5.00, 0.3005),  // n=162, median JOD = 9.7138
+];
+
+// Linear interpolation between table points; clamp outside [min_d, max_d].

@@ -1,0 +1,41 @@
+image	corpus	effort	distance	backend	bytes	wall_ms	score_butter_cpu	score_butter_gpu	score_cvvdp_gpu	score_cvvdp_cpu	score_ssim2	notes
+gradient_64	synthetic	8	0.50	B	366	10.624	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+gradient_64	synthetic	8	0.50	C_GPU	620	482.166	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+gradient_64	synthetic	8	1.00	B	311	8.617	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+gradient_64	synthetic	8	1.00	C_GPU	494	13.200	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+gradient_64	synthetic	8	2.00	B	252	9.189	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+gradient_64	synthetic	8	2.00	C_GPU	393	13.990	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+gradient_64	synthetic	8	3.00	B	227	10.267	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+gradient_64	synthetic	8	3.00	C_GPU	336	14.914	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+diagonal_128	synthetic	8	0.50	B	13358	55.852	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+diagonal_128	synthetic	8	0.50	C_GPU	28500	261.885	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+diagonal_128	synthetic	8	1.00	B	10762	26.492	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+diagonal_128	synthetic	8	1.00	C_GPU	29405	43.838	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+diagonal_128	synthetic	8	2.00	B	5807	25.840	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+diagonal_128	synthetic	8	2.00	C_GPU	17876	39.625	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+diagonal_128	synthetic	8	3.00	B	4274	24.606	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+diagonal_128	synthetic	8	3.00	C_GPU	15489	52.788	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+noisy_96	synthetic	8	0.50	B	2473	13.892	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+noisy_96	synthetic	8	0.50	C_GPU	4760	30.773	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+noisy_96	synthetic	8	1.00	B	1337	16.786	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+noisy_96	synthetic	8	1.00	C_GPU	3741	20.700	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+noisy_96	synthetic	8	2.00	B	721	14.723	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+noisy_96	synthetic	8	2.00	C_GPU	2677	19.811	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+noisy_96	synthetic	8	3.00	B	452	14.166	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+noisy_96	synthetic	8	3.00	C_GPU	2197	24.786	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+flat_grey_32	synthetic	8	0.50	B	92	3.011	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+flat_grey_32	synthetic	8	0.50	C_GPU	89	7.788	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+flat_grey_32	synthetic	8	1.00	B	95	4.320	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+flat_grey_32	synthetic	8	1.00	C_GPU	96	11.269	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+flat_grey_32	synthetic	8	2.00	B	99	3.851	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+flat_grey_32	synthetic	8	2.00	C_GPU	94	13.366	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+flat_grey_32	synthetic	8	3.00	B	96	4.215	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+flat_grey_32	synthetic	8	3.00	C_GPU	94	12.324	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+checker_64	synthetic	8	0.50	B	176	6.628	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+checker_64	synthetic	8	0.50	C_GPU	178	23.226	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+checker_64	synthetic	8	1.00	B	506	13.191	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+checker_64	synthetic	8	1.00	C_GPU	1006	15.704	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+checker_64	synthetic	8	2.00	B	428	9.651	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+checker_64	synthetic	8	2.00	C_GPU	872	24.747	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)
+checker_64	synthetic	8	3.00	B	397	16.912	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4
+checker_64	synthetic	8	3.00	C_GPU	764	17.849	NA	NA	NA	NA	NA	encoder_sha=68e5f6e0364b smoke_phase4 cvvdp_loop=Some(true)

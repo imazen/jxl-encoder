@@ -1,0 +1,176 @@
+Loaded 7870 rows from /tmp/tracking_dedup.tsv
+
+## Pareto-front position per backend (bytes vs cvvdp_gpu, e=8 cells)
+# A point is Pareto-optimal if no other point in the same (image, e=8) cell
+# has both ≤ bytes AND ≥ cvvdp_gpu.
+
+backend	observations	pareto_wins	pareto_win_pct
+B	375	254	67.7
+B_GPU	375	252	67.2
+C_CPU	375	121	32.3
+C_GPU	375	122	32.5
+C_GPU_v4	349	333	95.4
+Z_CPU	375	243	64.8
+Z_GPU	349	228	65.3
+
+## Per-(backend, distance) Pareto win rate
+# At each distance, what fraction of cells does this backend land on the front?
+
+backend	distance	observations	wins	win_pct
+B	0.50	54	34	63.0
+B	1.00	54	34	63.0
+B	1.50	54	37	68.5
+B	2.00	54	35	64.8
+B	3.00	54	39	72.2
+B	4.00	51	34	66.7
+B	5.00	54	41	75.9
+B_GPU	0.50	54	34	63.0
+B_GPU	1.00	54	34	63.0
+B_GPU	1.50	54	37	68.5
+B_GPU	2.00	54	35	64.8
+B_GPU	3.00	54	39	72.2
+B_GPU	4.00	51	34	66.7
+B_GPU	5.00	54	39	72.2
+C_CPU	0.50	54	48	88.9
+C_CPU	1.00	54	35	64.8
+C_CPU	1.50	54	10	18.5
+C_CPU	2.00	54	5	9.3
+C_CPU	3.00	54	12	22.2
+C_CPU	4.00	51	9	17.6
+C_CPU	5.00	54	2	3.7
+C_GPU	0.50	54	49	90.7
+C_GPU	1.00	54	35	64.8
+C_GPU	1.50	54	10	18.5
+C_GPU	2.00	54	5	9.3
+C_GPU	3.00	54	12	22.2
+C_GPU	4.00	51	9	17.6
+C_GPU	5.00	54	2	3.7
+C_GPU_v4	0.50	54	53	98.1
+C_GPU_v4	1.00	54	52	96.3
+C_GPU_v4	1.50	49	48	98.0
+C_GPU_v4	2.00	49	46	93.9
+C_GPU_v4	3.00	49	46	93.9
+C_GPU_v4	4.00	47	44	93.6
+C_GPU_v4	5.00	47	44	93.6
+Z_CPU	0.50	54	19	35.2
+Z_CPU	1.00	54	11	20.4
+Z_CPU	1.50	54	18	33.3
+Z_CPU	2.00	54	43	79.6
+Z_CPU	3.00	54	50	92.6
+Z_CPU	4.00	51	49	96.1
+Z_CPU	5.00	54	53	98.1
+Z_GPU	0.50	51	19	37.3
+Z_GPU	1.00	51	10	19.6
+Z_GPU	1.50	50	19	38.0
+Z_GPU	2.00	50	39	78.0
+Z_GPU	3.00	50	48	96.0
+Z_GPU	4.00	47	45	95.7
+Z_GPU	5.00	50	48	96.0
+
+## Same-distance comparison: C_GPU bytes overhead AND cvvdp gain vs B
+# For each (image, distance) at e=8, compute:
+#   bytes_overhead_pct = (C_GPU.bytes - B.bytes) / B.bytes * 100
+#   cvvdp_gain         = C_GPU.cvvdp - B.cvvdp  (positive = C_GPU better on cvvdp metric)
+# Median + p25/p75 per distance.
+
+distance	n	median_bytes_overhead_pct	p25	p75	median_cvvdp_gain	p25	p75
+0.50	54	+153.27	+135.37	+164.78	+0.0027	+0.0007	+0.0057
+1.00	54	+182.65	+165.27	+203.06	+0.0197	+0.0133	+0.0326
+1.50	54	+196.70	+173.19	+218.77	+0.0403	+0.0269	+0.0617
+2.00	54	+210.13	+178.36	+239.87	+0.0621	+0.0390	+0.0883
+3.00	54	+234.83	+186.80	+270.91	+0.1166	+0.0720	+0.1611
+4.00	51	+250.39	+214.09	+290.57	+0.1796	+0.1322	+0.2522
+5.00	54	+258.77	+197.58	+304.75	+0.2484	+0.1554	+0.3414
+
+## Equal-cvvdp comparison: bytes ratio (CVVDP_variant / B) at target cvvdp values
+# For each (image, e=8), interpolate bytes-at-target-cvvdp for B and each
+# cvvdp variant. Ratio = variant / B — < 1 means the variant uses fewer bytes
+# for the same cvvdp score.
+
+
+### variant = C_GPU
+target_cvvdp	n	median_C_GPU/B_bytes_ratio	p25	p75	cvvdp_wins	butter_wins
+9.900	5	2.157	1.463	2.254	0	5
+9.950	33	1.726	1.476	1.907	0	33
+9.980	49	1.559	1.224	1.848	3	46
+9.990	49	1.477	1.205	1.643	0	49
+
+### variant = C_GPU_v4
+target_cvvdp	n	median_C_GPU_v4/B_bytes_ratio	p25	p75	cvvdp_wins	butter_wins
+9.500	2	0.995	0.995	0.995	2	0
+9.700	25	0.968	0.948	0.984	23	2
+9.800	42	0.974	0.953	0.987	41	1
+9.900	43	0.971	0.930	0.988	37	6
+9.950	45	0.972	0.879	1.006	33	12
+9.980	49	0.993	0.895	1.047	29	20
+9.990	47	0.961	0.919	1.003	33	14
+
+### variant = Z_CPU
+target_cvvdp	n	median_Z_CPU/B_bytes_ratio	p25	p75	cvvdp_wins	butter_wins
+9.500	6	1.401	1.243	1.490	0	6
+9.700	31	1.374	1.299	1.440	0	31
+9.800	39	1.311	1.228	1.387	0	39
+9.900	15	1.175	1.120	1.278	0	15
+9.950	3	0.701	0.671	0.825	3	0
+9.980	2	0.736	0.732	0.741	2	0
+
+### variant = Z_GPU
+target_cvvdp	n	median_Z_GPU/B_bytes_ratio	p25	p75	cvvdp_wins	butter_wins
+9.500	6	1.401	1.243	1.490	0	6
+9.700	30	1.370	1.299	1.428	0	30
+9.800	37	1.303	1.228	1.374	0	37
+9.900	15	1.175	1.120	1.278	0	15
+9.950	3	0.701	0.671	0.825	3	0
+9.980	2	0.736	0.732	0.741	2	0
+
+## Per-corpus equal-cvvdp bytes ratio
+
+corpus	variant	target_cvvdp	n	median_variant/B	cvvdp_wins	butter_wins
+CID22	C_GPU	9.700	0	NA	0	0
+CID22	C_GPU	9.800	0	NA	0	0
+CID22	C_GPU	9.900	5	2.157	0	5
+CID22	C_GPU	9.950	26	1.766	0	26
+CID22	C_GPU_v4	9.700	25	0.968	23	2
+CID22	C_GPU_v4	9.800	40	0.973	39	1
+CID22	C_GPU_v4	9.900	41	0.971	35	6
+CID22	C_GPU_v4	9.950	41	0.972	31	10
+CID22	Z_CPU	9.700	30	1.370	0	30
+CID22	Z_CPU	9.800	37	1.303	0	37
+CID22	Z_CPU	9.900	15	1.175	0	15
+CID22	Z_CPU	9.950	0	NA	0	0
+CID22	Z_GPU	9.700	30	1.370	0	30
+CID22	Z_GPU	9.800	37	1.303	0	37
+CID22	Z_GPU	9.900	15	1.175	0	15
+CID22	Z_GPU	9.950	0	NA	0	0
+GB82-SC	C_GPU	9.700	0	NA	0	0
+GB82-SC	C_GPU	9.800	0	NA	0	0
+GB82-SC	C_GPU	9.900	0	NA	0	0
+GB82-SC	C_GPU	9.950	5	1.447	0	5
+GB82-SC	C_GPU_v4	9.700	0	NA	0	0
+GB82-SC	C_GPU_v4	9.800	0	NA	0	0
+GB82-SC	C_GPU_v4	9.900	0	NA	0	0
+GB82-SC	C_GPU_v4	9.950	2	0.945	1	1
+GB82-SC	Z_CPU	9.700	0	NA	0	0
+GB82-SC	Z_CPU	9.800	0	NA	0	0
+GB82-SC	Z_CPU	9.900	0	NA	0	0
+GB82-SC	Z_CPU	9.950	3	0.701	3	0
+GB82-SC	Z_GPU	9.700	0	NA	0	0
+GB82-SC	Z_GPU	9.800	0	NA	0	0
+GB82-SC	Z_GPU	9.900	0	NA	0	0
+GB82-SC	Z_GPU	9.950	3	0.701	3	0
+W44-S1	C_GPU	9.700	0	NA	0	0
+W44-S1	C_GPU	9.800	0	NA	0	0
+W44-S1	C_GPU	9.900	0	NA	0	0
+W44-S1	C_GPU	9.950	2	1.942	0	2
+W44-S1	C_GPU_v4	9.700	0	NA	0	0
+W44-S1	C_GPU_v4	9.800	2	0.986	2	0
+W44-S1	C_GPU_v4	9.900	2	0.970	2	0
+W44-S1	C_GPU_v4	9.950	2	0.990	1	1
+W44-S1	Z_CPU	9.700	1	1.445	0	1
+W44-S1	Z_CPU	9.800	2	1.467	0	2
+W44-S1	Z_CPU	9.900	0	NA	0	0
+W44-S1	Z_CPU	9.950	0	NA	0	0
+W44-S1	Z_GPU	9.700	0	NA	0	0
+W44-S1	Z_GPU	9.800	0	NA	0	0
+W44-S1	Z_GPU	9.900	0	NA	0	0
+W44-S1	Z_GPU	9.950	0	NA	0	0

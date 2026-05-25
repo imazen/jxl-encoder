@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Algorithms and constants derived from libjxl (BSD-3-Clause).
+// Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
+
+//! cvvdp target-JOD → effective-distance calibration table (Phase 8b).
+//!
+//! Built from Phase 6 tracking TSV:
+//!   benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv
+//!
+//! For each (corpus, target_jod), the table records the MEDIAN distance
+//! at which butteraugli's buttloop achieves cvvdp_gpu ≈ target_jod on that
+//! corpus, across all images at effort=8.
+//!
+//! Use case: `LossyConfig::with_cvvdp_target_jod(jod)` looks up the
+//! distance that achieves `jod`, then runs the butteraugli buttloop at
+//! that distance. Output sits on the Pareto front per Phase 8a diagnosis.
+//!
+//! Linear interpolation between table points; clamp outside [min, max].
+
+/// Phase 6 commit SHA the table was extracted from.
+pub(crate) const CALIBRATION_SOURCE: &str = "Phase 6 sweep, cvvdp-fork-rfc 8b5a13a7";
+
+/// Default (blended across all corpora). Lookup: target_jod → distance.
+pub(crate) static CVVDP_DISTANCE_LOOKUP_DEFAULT: &[(f32, f32)] = &[
+    (9.500, 4.5726),
+    (9.600, 4.3587),
+    (9.700, 4.5221),
+    (9.800, 3.6330),
+    (9.850, 2.9966),
+    (9.900, 2.2925),
+    (9.930, 1.8606),
+    (9.950, 1.5579),
+    (9.970, 1.1902),
+    (9.980, 0.9863),
+    (9.990, 0.7380),
+];
+
+/// CID22 photos. Lookup: target_jod → distance.
+pub(crate) static CVVDP_DISTANCE_LOOKUP_CID22: &[(f32, f32)] = &[
+    (9.500, 4.5726),
+    (9.600, 4.3587),
+    (9.700, 4.1422),
+    (9.800, 3.3966),
+    (9.850, 2.9546),
+    (9.900, 2.2498),
+    (9.930, 1.7902),
+    (9.950, 1.4904),
+    (9.970, 1.0856),
+    (9.980, 0.8913),
+    (9.990, 0.6714),
+];
+
+/// GB82-SC screenshots. Lookup: target_jod → distance.
+pub(crate) static CVVDP_DISTANCE_LOOKUP_GB82_SC: &[(f32, f32)] = &[
+    (9.900, 4.9695),
+    (9.930, 4.2296),
+    (9.950, 4.0703),
+    (9.970, 2.1029),
+    (9.980, 1.1813),
+    (9.990, 0.8578),
+];
+
+/// W44-S1 extras (baby-lossless, bulb-lossless). Lookup: target_jod → distance.
+pub(crate) static CVVDP_DISTANCE_LOOKUP_W44_S1: &[(f32, f32)] = &[
+    (9.700, 4.9020),
+    (9.800, 3.8694),
+    (9.850, 3.0386),
+    (9.900, 2.2925),
+    (9.930, 1.8606),
+    (9.950, 1.5579),
+    (9.970, 1.1902),
+    (9.980, 0.9863),
+    (9.990, 0.7380),
+];
+
+
+/// Linear interpolation: given a target JOD, return the distance from
+/// the lookup table. Clamps outside the table range. Returns the table's
+/// max-distance entry if `target_jod` is below the table's min cvvdp;
+/// returns the table's min-distance entry if `target_jod` is above the max.
+pub(crate) fn lookup_distance_for_target_jod(table: &[(f32, f32)], target_jod: f32) -> f32 {
+    if table.is_empty() {
+        return 1.0;  // safe default
+    }
+    let first = table[0];
+    let last = table[table.len() - 1];
+    if target_jod <= first.0 {
+        return last.1;  // very lossy target → highest distance in table
+    }
+    if target_jod >= last.0 {
+        return first.1;  // very strict target → lowest distance in table
+    }
+    for w in table.windows(2) {
+        let (jod_lo, d_lo) = w[0];
+        let (jod_hi, d_hi) = w[1];
+        if jod_lo <= target_jod && target_jod <= jod_hi {
+            let t = (target_jod - jod_lo) / (jod_hi - jod_lo);
+            return d_lo + t * (d_hi - d_lo);
+        }
+    }
+    1.0  // unreachable in practice
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_table_monotone_in_jod() {
+        let t = CVVDP_DISTANCE_LOOKUP_DEFAULT;
+        assert!(t.len() >= 2);
+        for w in t.windows(2) {
+            assert!(w[0].0 < w[1].0, "jod must be strictly increasing");
+            assert!(w[0].1 >= w[1].1, "distance must be monotone non-increasing as jod target tightens");
+        }
+    }
+
+    #[test]
+    fn lookup_clamps_outside_range() {
+        let t = CVVDP_DISTANCE_LOOKUP_DEFAULT;
+        let very_lossy = lookup_distance_for_target_jod(t, 0.0);
+        let very_strict = lookup_distance_for_target_jod(t, 100.0);
+        assert!(very_lossy >= very_strict);
+    }
+
+    #[test]
+    fn lookup_interpolates_inside_range() {
+        let t = CVVDP_DISTANCE_LOOKUP_DEFAULT;
+        if t.len() >= 2 {
+            let mid_jod = (t[0].0 + t[t.len() - 1].0) / 2.0;
+            let d = lookup_distance_for_target_jod(t, mid_jod);
+            assert!(d > 0.0);
+            assert!(d < 100.0);
+        }
+    }
+}

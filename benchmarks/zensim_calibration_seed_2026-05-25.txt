@@ -1,0 +1,34 @@
+# Per-distance zensim seed table (backend=B / butteraugli buttloop default)
+#
+# Source: benchmarks/zensim_calibration_seed_2026-05-25.tsv
+# Rows analyzed: 21
+#
+distance	n	p25_zensim	median_zensim	p75_zensim	min_zensim	max_zensim
+0.50	3	93.3846	93.6780	96.1845	93.3846	96.1845
+1.00	3	89.3612	90.4802	93.5764	89.3612	93.5764
+1.50	3	85.8718	87.4183	91.5910	85.8718	91.5910
+2.00	3	82.3417	84.3139	89.8866	82.3417	89.8866
+3.00	3	76.0816	80.0179	86.2976	76.0816	86.2976
+4.00	3	70.4432	76.6355	89.1905	70.4432	89.1905
+5.00	3	64.9401	72.9182	88.5979	64.9401	88.5979
+
+# Ready-to-paste Rust snippet for vardct/zensim_targets.rs
+# Target = (100 - median_zensim_native) * 1.05  (slightly stricter than butteraugli baseline)
+# Direction: butter-direction `100 - zensim_native` (smaller=better)
+#
+/// Per-distance zensim targets, seeded from butteraugli-default
+/// encoder output scored with zensim::Zensim. Each target is the
+/// median butter-direction `100 - zensim_native` across the corpus at
+/// that distance, scaled 1.05× tighter so the zensim-driven loop is
+/// slightly more demanding than what butteraugli converges to.
+pub(crate) static ZENSIM_DISTANCE_TARGETS: &[(f32, f32)] = &[
+    (0.50, 6.6381),  // n=3, median zensim_native = 93.6780
+    (1.00, 9.9958),  // n=3, median zensim_native = 90.4802
+    (1.50, 13.2108),  // n=3, median zensim_native = 87.4183
+    (2.00, 16.4704),  // n=3, median zensim_native = 84.3139
+    (3.00, 20.9812),  // n=3, median zensim_native = 80.0179
+    (4.00, 24.5327),  // n=3, median zensim_native = 76.6355
+    (5.00, 28.4359),  // n=3, median zensim_native = 72.9182
+];
+
+// Linear interpolation between table points; clamp outside [min_d, max_d].

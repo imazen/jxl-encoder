@@ -44,7 +44,18 @@ butteraugli = { version = "0.9", optional = true }
 imgref = { version = "1.12", optional = true }
 rgb = { version = "0.8", optional = true }
 fast-ssim2 = { version = "0.7.1", features = ["imgref"], optional = true }
-zensim = { version = "0.2", optional = true }
+zensim = { version = "0.3.0", optional = true }
+# zensim-fork Phase 3 (2026-05-25): GPU zensim backend for the perceptual
+# quantization loop (RFC `docs/RFC_ZENSIM_FORK_PLAN.md` §5). Opt-in via
+# the `zensim-loop-gpu` cargo feature; requires CUDA runtime at build +
+# load time. Path-patched in the workspace `[patch.crates-io]` to point
+# at `~/work/zen/zenmetrics/crates/zensim-gpu` because zensim-gpu 0.0.1
+# is `publish = false`. `cubecl-types` enables the
+# `score_from_linear_planes*` helpers we wrap; `cuda` selects the
+# CudaRuntime backend at build time. The `cubecl` direct dep is already
+# pulled in optionally for `gpu-butteraugli` / `cvvdp-loop` and is
+# reused here when `zensim-loop-gpu` is enabled.
+zensim-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types"], optional = true }
 # Ultra HDR gain map math + ISO 21496-1 serializer.
 # `default-features = false` skips the `tonemap` feature (which transitively
 # pulls zentone); we only need the gain-map compute path + the ISO 21496-1
@@ -67,6 +78,25 @@ butteraugli-gpu = { version = "0.0.1", default-features = false, features = ["cu
 # cubecl is pinned via `[patch.crates-io]` in the workspace `Cargo.toml`
 # to the same git rev butteraugli-gpu is tested against.
 cubecl = { version = "0.10.0-pre.4", default-features = false, features = ["std", "cuda"], optional = true }
+# cvvdp-fork Phase 3: GPU CVVDP backend for the perceptual quantization
+# loop (RFC `docs/RFC_CVVDP_FORK.md` §2.1, Phase 3 brief
+# `docs/RFC_CVVDP_PHASE3_BRIEF.md`). Opt-in via the `cvvdp-loop` cargo
+# feature; requires CUDA runtime at build + load time. Path-patched in
+# the workspace `[patch.crates-io]` to point at
+# `~/work/zen/zenmetrics/crates/cvvdp-gpu`. `cubecl-types` enables the
+# `score_from_linear_planes*` helpers we wrap; `cuda` selects the
+# CudaRuntime backend at build time. The `cubecl` direct dep is already
+# pulled in optionally for `gpu-butteraugli` and is reused here when
+# `cvvdp-loop` is enabled.
+cvvdp-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types"], optional = true }
+# cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP backend for the perceptual
+# quantization loop. Opt-in via the `cvvdp-loop-cpu` cargo feature.
+# Pure Rust, no CUDA, no SIMD intrinsics — runs anywhere. Path-patched
+# in the workspace `[patch.crates-io]` to point at
+# `~/work/zen/zenmetrics/crates/cvvdp-cpu` (Agent A's deliverable,
+# `publish = false`). Default features include `std` + `parallel` for
+# the rayon-backed per-band fan-out (matches the buttloop's rayon usage).
+cvvdp-cpu = { version = "0.1.0", default-features = false, features = ["std", "parallel"], optional = true }
 
 [features]
 std = ["thiserror/std", "archmage/std", "jxl_simd/std"]
@@ -105,8 +135,68 @@ butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
 # AND CUDA must be present at runtime; otherwise the buttloop silently
 # falls back to the CPU backend.
 gpu-butteraugli = ["butteraugli-loop", "dep:butteraugli-gpu", "dep:cubecl"]
+# cvvdp-fork Phase 3: GPU CVVDP backend for the quantization loop.
+# Implies `butteraugli-loop` (the `PerceptualBackend` trait surface lives
+# there). Opt-in only — when enabled the caller still has to set
+# `LossyConfig::with_cvvdp_loop(Some(true))` AND CUDA must be present at
+# runtime; otherwise the buttloop silently falls back to the CPU
+# butteraugli backend (same defense-in-depth as `gpu-butteraugli`). See
+# RFC `docs/RFC_CVVDP_FORK.md` §2.1 + Phase 3 brief in `docs/`.
+#
+# Phase 3 ships the backend impl only — the buttloop body still consumes
+# butteraugli; Phase 4 will plumb the cvvdp signal into the per-iter
+# compare. Hash-locks stay byte-identical when this feature is OFF AND
+# when ON-but-no-caller-opts-in (`LossyConfig::cvvdp_loop` defaults
+# `None` ≡ "use butteraugli").
+cvvdp-loop = ["butteraugli-loop", "dep:cvvdp-gpu", "dep:cubecl"]
+# cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP backend for the quantization
+# loop. Implies `cvvdp-loop` (shares the `PerceptualBackend` trait surface
+# + the per-distance JOD target table from Phase 4). Opt-in only — when
+# enabled the caller still has to set `LossyConfig::with_cvvdp_loop(Some(true))`
+# AND (when both backends are compiled in) either
+# `LossyConfig::with_cvvdp_use_cpu(Some(true))` OR a CUDA-init failure on
+# the GPU backend will trigger the CPU fallback. Default backend when
+# both are compiled remains **GPU** (Agent A's CPU port honest-stopped at
+# 4.4× off the SIMD floor, measured ~10× slower than cvvdp-gpu warm-ref);
+# the CPU backend exists for hosts without CUDA AND for callers who
+# explicitly opt in for deterministic-to-1e-4-JOD parity vs pycvvdp v0.5.4
+# goldens. See RFC `docs/RFC_CVVDP_FORK.md` §4 Phase 5 + Phase 5 brief.
+#
+# Hash-locks stay byte-identical when this feature is OFF AND when ON-but-
+# no-caller-opts-in. The CPU backend is reachable only via the explicit
+# `with_cvvdp_loop(Some(true))` opt-in, same as the GPU backend.
+cvvdp-loop-cpu = ["cvvdp-loop", "dep:cvvdp-cpu"]
+# cvvdp-fork Phase 8d (2026-05-25): post-convergence bytes-tighten exit
+# pass on the cvvdp loop. After the inner seed loop converges qac to hit
+# the cvvdp metric target, run a batched multiplicative bump pass that
+# loosens qac while the score still satisfies `target + epsilon`. Gives
+# back bytes the converged state had headroom for. Opt-in via the
+# `with_cvvdp_bytes_tighten(Some(true))` API; default `None` resolves to
+# true ONLY when both the feature is compiled AND `cvvdp_loop` is active.
+# Implies `cvvdp-loop` (the pass only runs on the cvvdp dispatch path —
+# tightening the butteraugli loop is a documented anti-pattern, see
+# `docs/RFC_CVVDP_PHASE8_PARETO_TARGETING.md` §3.3).
+cvvdp-loop-tighten = ["cvvdp-loop"]
 ssim2-loop = ["dep:fast-ssim2", "dep:imgref"]
-zensim-loop = ["dep:zensim"]
+zensim-loop = ["butteraugli-loop", "dep:zensim"]
+# zensim-fork Phase 3 (2026-05-25): GPU zensim backend for the perceptual
+# quantization loop. Implies `butteraugli-loop` (the `PerceptualBackend`
+# trait surface lives there). Opt-in only — when enabled the caller still
+# has to set
+# `LossyConfig::with_perceptual_metric(PerceptualMetric::Zensim)` AND
+# CUDA must be present at runtime; otherwise the buttloop silently falls
+# back to the CPU zensim backend (if `zensim-loop` is also compiled)
+# else the CPU butteraugli backend. See RFC
+# `docs/RFC_ZENSIM_FORK_PLAN.md` §5 + RFC `docs/RFC_ZENSIM_BUTTLOOP_AUDIT.md`
+# §3.1 (Phase 1 zensim-gpu surface that this wraps).
+#
+# Phase 3 ships the backend impl + dispatch only — the buttloop body
+# still consumes butteraugli-direction targets; Phase 4 will plumb the
+# zensim signal through `run_buttloop` via `vardct/zensim_targets.rs`.
+# Hash-locks stay byte-identical when this feature is OFF AND when
+# ON-but-no-caller-opts-in (`LossyConfig::perceptual_metric` defaults
+# to `PerceptualMetric::Butteraugli`).
+zensim-loop-gpu = ["butteraugli-loop", "dep:zensim-gpu", "dep:cubecl"]
 # Convenience encode functions that accept imgref::ImgRef with typed pixel formats.
 convenience = ["dep:imgref", "dep:rgb"]
 jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
@@ -246,6 +336,10 @@ zenbench = "0.1.8"
 # (used by `tests/nonfinite_xyb_repro.rs` to exercise scalar / SSE / AVX2 / etc.
 # fallback paths on the trigger fixtures).
 archmage = { version = "0.9.15", default-features = false, features = ["macros", "std"] }
+# cvvdp-vs-buttloop tracking baseline harness (docs/RFC_CVVDP_FORK.md §5).
+# Path-pinned via workspace [patch.crates-io] to the sibling zenmetrics
+# checkout. Only consumed by `examples/cvvdp_track_baseline.rs`.
+cvvdp-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types"] }
 
 # codec-corpus uses fd-lock which doesn't compile on WASM
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
@@ -1436,6 +1530,178 @@ name = "w44_phase3_b5b_divergence_detector_ab"
 path = "examples/w44_phase3_b5b_divergence_detector_ab.rs"
 required-features = ["gpu-butteraugli", "butteraugli-loop", "ssim2-loop", "parallel", "__expert"]
 
+# cvvdp-vs-buttloop tracking baseline (RFC `docs/RFC_CVVDP_FORK.md` §5).
+# Populates `benchmarks/cvvdp_vs_buttloop_tracking_<DATE>.tsv` with one row
+# per (image, distance, effort) using the existing butteraugli-default
+# encoder (`backend=B`). Scores every available perceptual metric
+# (butter_cpu / butter_gpu / cvvdp_gpu / ssim2). Requires CUDA at
+# /usr/local/cuda for the GPU metric columns; pass `--no-gpu-butter`
+# and/or `--no-cvvdp-gpu` to skip on CUDA-less hosts.
+[[example]]
+name = "cvvdp_track_baseline"
+path = "examples/cvvdp_track_baseline.rs"
+# Phase 6 (2026-05-24): added cvvdp-loop + cvvdp-loop-cpu so the
+# --backend {C_GPU,C_CPU} dispatch can actually wire the cvvdp backends.
+# The B and B_GPU paths don't need them but the example imports the
+# api setters under feature = "butteraugli-loop" only, so the extra
+# features are required-features-additive (no source #[cfg]).
+# Phase 8f (2026-05-25): added cvvdp-loop-tighten so `--backend C_GPU_v4`
+# can engage the Phase 8d tighten exit pass. C_GPU_v4 is the full
+# Phase 8c+8d+8g stack (the cvvdp-fork's shipped production default
+# when the cargo features are compiled in).
+# zensim-fork Phase 6 (2026-05-25): added zensim-loop + zensim-loop-gpu so
+# `--backend {Z_CPU, Z_GPU}` can wire the zensim backends. Same
+# additive-feature pattern as cvvdp — the example never #[cfg]s on
+# zensim-loop directly; the api dispatch handles silent fallback.
+required-features = ["gpu-butteraugli", "butteraugli-loop", "cvvdp-loop", "cvvdp-loop-cpu", "cvvdp-loop-tighten", "zensim-loop", "zensim-loop-gpu", "ssim2-loop", "parallel"]
+
+# cvvdp-fork Phase 6 (2026-05-24) multi-decoder spot-check (acceptance
+# gate (e)): encodes 20 cells with C_GPU and C_CPU at e8 d∈{1.0, 3.0}
+# and pipes each output through jxl-oxide + djxl + jxl-rs.
+[[example]]
+name = "cvvdp_phase6_decoder_spotcheck"
+path = "examples/cvvdp_phase6_decoder_spotcheck.rs"
+required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "cvvdp-loop-cpu", "ssim2-loop", "parallel"]
+
+# cvvdp-fork Phase 8f (2026-05-25) multi-decoder spot-check on the
+# C_GPU_v4 shipped stack (cvvdp-loop + bytes-tighten + Phase 8g
+# k_tile_norm=0.16). 10 cells × 3 decoders = 30 PASS checks required.
+[[example]]
+name = "cvvdp_phase8f_decoder_spotcheck"
+path = "examples/cvvdp_phase8f_decoder_spotcheck.rs"
+required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "cvvdp-loop-tighten", "ssim2-loop", "parallel"]
+
+# zensim-fork Phase 6 (2026-05-25) multi-decoder spot-check on the
+# Z_GPU + Z_CPU shipped backends (zensim-loop + zensim-loop-gpu +
+# Phase 4 per-distance calibration). 10 cells × 3 decoders = 30 PASS
+# checks required per acceptance gate (e).
+[[example]]
+name = "zensim_phase6_decoder_spotcheck"
+path = "examples/zensim_phase6_decoder_spotcheck.rs"
+required-features = ["__expert", "butteraugli-loop", "zensim-loop", "zensim-loop-gpu", "ssim2-loop", "parallel"]
+
+# cvvdp-fork Phase 4 (2026-05-24): 20-cell smoke bench producing the
+# `benchmarks/cvvdp_loop_smoke_<DATE>.tsv` file per the Phase 4 brief
+# Step 5. Self-contained synthetic fixtures (no codec-corpus dep);
+# silent-fallback to butteraugli when CUDA is missing.
+[[example]]
+name = "cvvdp_loop_smoke_bench"
+path = "examples/cvvdp_loop_smoke_bench.rs"
+required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "ssim2-loop", "parallel"]
+
+# zensim-fork Phase 4 (2026-05-25): calibration-seed generator. Encodes
+# a small held-out corpus with butteraugli-default at each distance,
+# decodes via jxl-oxide, scores with zensim::Zensim, and emits a TSV
+# that scripts/zensim_calibration_seed.py consumes to produce the
+# Rust array snippet for vardct/zensim_targets.rs. See the example
+# module docs for full methodology.
+[[example]]
+name = "zensim_calibration_seed"
+path = "examples/zensim_calibration_seed.rs"
+required-features = ["__expert", "butteraugli-loop", "zensim-loop", "ssim2-loop", "parallel"]
+
+# zensim-fork Phase 4 (2026-05-25): 20-cell smoke bench mirroring
+# `cvvdp_loop_smoke_bench`. Encodes 5 synthetic fixtures × 4 distances
+# × 2 backends (B + Z_CPU) and writes a TSV in the tracking schema.
+[[example]]
+name = "zensim_loop_smoke_bench"
+path = "examples/zensim_loop_smoke_bench.rs"
+required-features = ["__expert", "butteraugli-loop", "zensim-loop", "ssim2-loop", "parallel"]
+
+# cvvdp-fork Phase 8b (2026-05-25): diffmap distribution capture
+# harness. Encodes 5 fixtures × 4 distances with both butteraugli + cvvdp
+# loops, dumping per-iter diffmap stats via the
+# `JXL_PHASE8B_DIFFMAP_DUMP` env hook in the backends. Output: scale
+# ratio TSV that seeds Phase 8c's `CVVDP_DIFFMAP_RENORM_SCALE` constant.
+[[example]]
+name = "cvvdp_phase8b_diffmap_distribution"
+path = "examples/cvvdp_phase8b_diffmap_distribution.rs"
+required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "ssim2-loop", "parallel"]
+
+# cvvdp-fork Phase 8c (2026-05-25): Pareto re-bench validating the
+# diffmap renormalization (scale 0.660). Encodes 5 fixtures × 4 distances
+# × 2 backends (B baseline + C_GPU_v2 post-renorm), scores each with
+# butteraugli + cvvdp-gpu + SSIMULACRA2 via jxl-oxide decode. Output
+# matches Phase 6 TSV schema for direct ingestion by
+# `scripts/cvvdp_pareto_diagnosis.py`.
+[[example]]
+name = "cvvdp_phase8c_pareto_rebench"
+path = "examples/cvvdp_phase8c_pareto_rebench.rs"
+required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "ssim2-loop", "parallel"]
+
+# cvvdp-fork Phase 8d (2026-05-25): Pareto re-bench with the bytes-tighten
+# exit pass active. 5 fixtures × 4 distances × 3 backends (B baseline +
+# C_GPU_v2 renorm-only + C_GPU_v3 renorm+tighten), scored via butteraugli
+# + cvvdp-gpu + SSIMULACRA2 through jxl-oxide. Output matches the Phase
+# 8c TSV schema; the new `C_GPU_v3` backend tag is independently
+# aggregated by `scripts/cvvdp_pareto_diagnosis.py`.
+[[example]]
+name = "cvvdp_phase8d_pareto_rebench"
+path = "examples/cvvdp_phase8d_pareto_rebench.rs"
+required-features = [
+    "__expert",
+    "butteraugli-loop",
+    "cvvdp-loop",
+    "cvvdp-loop-tighten",
+    "ssim2-loop",
+    "parallel",
+]
+
+# cvvdp-fork Phase 8d (2026-05-25): multi-decoder roundtrip spot-check
+# for the bytes-tighten exit pass. 6 cells × jxl-oxide + djxl + jxl-rs.
+# Hard acceptance gate (f): ANY decoder failure → revert.
+[[example]]
+name = "cvvdp_phase8d_decoder_roundtrip"
+path = "examples/cvvdp_phase8d_decoder_roundtrip.rs"
+required-features = [
+    "__expert",
+    "butteraugli-loop",
+    "cvvdp-loop",
+    "cvvdp-loop-tighten",
+    "parallel",
+]
+
+# cvvdp-fork Phase 8g (2026-05-25): per-block tile_dist distribution
+# capture for Intervention B per-block reducer constants refit.
+# Uses `JXL_PHASE8G_TILE_DIST_DUMP` env hook
+# (`maybe_dump_tile_dist_stats_phase8g` in `vardct/perceptual_loop.rs`)
+# to record per-iter tile_dist distribution + bad-block rate per backend.
+# Output: `benchmarks/cvvdp_block_signal_distribution_<DATE>.tsv`.
+[[example]]
+name = "cvvdp_phase8g_tile_dist_capture"
+path = "examples/cvvdp_phase8g_tile_dist_capture.rs"
+required-features = [
+    "__expert",
+    "butteraugli-loop",
+    "cvvdp-loop",
+    "ssim2-loop",
+    "parallel",
+]
+
+# cvvdp-fork Phase 8g Pareto re-bench. Mirror of phase8d_pareto_rebench
+# but emits C_GPU_v4 backend tag for the per-block constants refit run.
+[[example]]
+name = "cvvdp_phase8g_pareto_rebench"
+path = "examples/cvvdp_phase8g_pareto_rebench.rs"
+required-features = [
+    "__expert",
+    "butteraugli-loop",
+    "cvvdp-loop",
+    "ssim2-loop",
+    "parallel",
+]
+
+# cvvdp-fork Phase 5 (2026-05-24): 10-cell A/B bench comparing CPU
+# vs GPU CVVDP backends in the buttloop. Self-contained synthetic
+# fixtures; tolerates missing CUDA (falls back through
+# construct_backend's dispatch chain). Output:
+# `benchmarks/cvvdp_cpu_vs_gpu_buttloop_<DATE>.tsv`. Run via
+# `cargo run --release -p jxl-encoder --features '__expert butteraugli-loop cvvdp-loop cvvdp-loop-cpu ssim2-loop parallel' --example cvvdp_cpu_vs_gpu_bench`.
+[[example]]
+name = "cvvdp_cpu_vs_gpu_bench"
+path = "examples/cvvdp_cpu_vs_gpu_bench.rs"
+required-features = ["__expert", "butteraugli-loop", "cvvdp-loop-cpu", "ssim2-loop", "parallel"]
+
 # W44-175: parallel `transform_and_quantize_into` (buttloop per-iter group
 # fan-out) + parallel `find_best_split_variable` (DC tree property scan).
 # Mode A forces both back to sequential via env hooks; Mode B is the W44-175
@@ -2609,3 +2875,16 @@ required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
 
 [lints]
 workspace = true
+
+# cvvdp-fork Phase 8g (2026-05-25): smoke encoder for multi-decoder
+# spot-check (3 cells × 3 decoders). Output JXL files at /tmp/p8g_check_*.jxl
+# verified via jxl-oxide (in-process), jxl-rs (in-process), and djxl (CLI).
+[[example]]
+name = "cvvdp_phase8g_smoke_encode"
+path = "examples/cvvdp_phase8g_smoke_encode.rs"
+required-features = [
+    "__expert",
+    "butteraugli-loop",
+    "cvvdp-loop",
+    "parallel",
+]

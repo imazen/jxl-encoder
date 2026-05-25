@@ -2,15 +2,27 @@
 // Algorithms and constants derived from libjxl (BSD-3-Clause).
 // Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
 
-//! Butteraugli quantization loop for iterative quality refinement.
+//! Perceptual-metric quantization loop for iterative quality refinement.
 //!
 //! Iteratively refines per-block quant_field by measuring perceptual distance
-//! (butteraugli) between the original and reconstructed image.
+//! between the original and reconstructed image. The metric is pluggable via
+//! the [`super::perceptual_backend::PerceptualBackend`] trait — the default
+//! backend is butteraugli (CPU `compare_linear_planar_into`), GPU backends
+//! are opt-in (`gpu-butteraugli`, `cvvdp-loop`).
 //!
 //! Matches libjxl's FindBestQuantization (enc_adaptive_quantization.cc:929-1115):
 //! - Works in float quant field domain (values ~0.3-1.5), NOT integer (1-255)
 //! - Recomputes global_scale each iteration via SetQuantField (median/MAD)
 //! - Returns final DistanceParams for use in CfL pass 2 and encoding
+//!
+//! ## File renaming history
+//!
+//! Was named `butteraugli_loop.rs` until cvvdp-fork Phase 4 (2026-05-24,
+//! see `docs/RFC_CVVDP_PHASE4_BRIEF.md`). The historical function names
+//! (`run_buttloop`, `BUTTLOOP_*` constants) are preserved — they're
+//! load-bearing in W44-* commit messages and in-source comments. A
+//! backward-compat alias `crate::vardct::butteraugli_loop = perceptual_loop`
+//! lives in `vardct/mod.rs` so the 30+ in-crate `use` sites keep working.
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
@@ -293,6 +305,28 @@ pub const BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE: f32 = 3.5;
 /// BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE)` only when the image's
 /// `m3_colourfulness` proxy is below
 /// [`BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX`] — separating
+
+/// W44-AUDIT-6 Phase 2C (2026-05-24): minimum m3_colourfulness for high-colour exclude.
+pub const W44_AUDIT_6_HIGH_COLOUR_M3_MIN: f32 = 80.0;
+/// W44-AUDIT-6 Phase 3: minimum fcbr (disjunct with edge_density).
+pub const W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN: f32 = 0.5;
+/// W44-AUDIT-6 Phase 3: minimum edge_density (disjunct with fcbr).
+pub const W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN: f32 = 0.45;
+
+/// W44-AUDIT-6 Phase 3: returns true when proxies indicate a high-colour
+/// mixed-content screenshot (m3 >= 80 AND (fcbr >= 0.5 OR ed >= 0.45)).
+pub(crate) fn w44_audit_6_is_high_colour_class(
+    proxies: Option<&crate::vardct::encoder::ZenanalyzeProxies>,
+) -> bool {
+    let Some(p) = proxies else {
+        return false;
+    };
+    if p.m3_colourfulness < W44_AUDIT_6_HIGH_COLOUR_M3_MIN {
+        return false;
+    }
+    p.flat_color_block_ratio >= W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN
+        || p.edge_density >= W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN
+}
 /// terminal/imac_g3/imac_dark (M3 ≈ 14..21, monochrome / low-colour
 /// screenshots) from codec_wiki (M3 ≈ 146, richly-coloured wiki page
 /// with photos). Below this d the buttloop's HIGH-regime tuning does
@@ -381,98 +415,6 @@ pub const W44_176_TERMINAL_CLASS_LUMA_VAR_MAX: f32 = 2200.0;
 /// [`W44_176_TERMINAL_CLASS_LUMA_VAR_MIN`] for the full discriminator
 /// design + probe corpus + safety margins.
 pub const W44_176_TERMINAL_CLASS_FCBR_MIN: f32 = 0.70;
-
-/// W44-AUDIT-6 Phase 1 (2026-05-24): high-colour-class exclude — minimum
-/// [`crate::vardct::encoder::ZenanalyzeProxies::m3_colourfulness`] at which
-/// the W44-109 adaptive-quant qf seed lift is suppressed (returns `1.0`).
-///
-/// **Why this is 80.0**: W44-AUDIT-4 (`benchmarks/w44_audit_4_e7_d4_breakdown_2026-05-24.tsv`)
-/// PROVED `DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7 = 3.0` owns
-/// the codec_wiki e7 d=4 +44% bytes wedge. The lift IS buying quality
-/// (+4.36 SSIM2 above the no-lift baseline, matching cjxl's 84.86) but at
-/// a 44% byte cost. AUDIT-4 measured `m3_colourfulness`:
-///
-/// - codec_wiki (the wedge cell): M3 = 145.73
-/// - W44-109 win cluster (gb82-sc text-class screenshots, mask<50 firing
-///   sub-cluster): terminal M3 ≈ 14, graph M3 ≈ 17, imac_dark M3 ≈ 21,
-///   imac_g3 M3 ≈ 27, gmessages M3 ≈ 16, gui M3 ≈ 18 — all in [14, 29]
-///
-/// The 80 threshold gives ~3.5× margin above the win cluster (29 × 3.5 ≈
-/// 102, leaving even windows95 M3 ≈ 38 well inside the keep-class) and
-/// ~1.8× margin below the codec_wiki wedge (145 / 80 = 1.82). The deadband
-/// `[30, 80)` is intentionally wide so we don't accidentally classify any
-/// borderline gb82-sc cell as high-colour.
-///
-/// **Mirror pattern**: W44-176 luma_var+fcbr terminal-class exclude
-/// (Section B row 8 of `docs/LIBJXL_DIVERGENCES.md`). Same gate-narrowing
-/// pattern at a different proxy axis: W44-176 protects pure-text terminal
-/// from over-allocating bytes when SSIM2 is structurally below cjxl;
-/// W44-AUDIT-6 protects mixed-content high-colour screenshots
-/// (codec_wiki) from over-allocating bytes when SSIM2 matches cjxl AT a
-/// huge byte cost.
-///
-/// **Semantics**: when proxies are present AND `m3_colourfulness >=
-/// [`W44_AUDIT_6_HIGH_COLOUR_M3_MIN`]` AND (`flat_color_block_ratio >=
-/// [`W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN`]` OR `edge_density >=
-/// [`W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN`]`), the W44-109 lift is
-/// suppressed regardless of the W44-176 terminal predicate (composes via
-/// OR — either exclude fires the bypass). When proxies are absent
-/// (non-sRGB-u8 layouts, streaming/animation paths), this exclude cannot
-/// fire — the existing W44-176 behaviour is preserved verbatim.
-pub const W44_AUDIT_6_HIGH_COLOUR_M3_MIN: f32 = 80.0;
-
-/// W44-AUDIT-6 Phase 3 (2026-05-24): minimum
-/// [`crate::vardct::encoder::ZenanalyzeProxies::flat_color_block_ratio`]
-/// at which a high-colour image is admitted to the W44-AUDIT-6 exclude.
-///
-/// Disjunctive with [`W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN`]: either
-/// proxy clearing its threshold passes the screenshot/mixed-content
-/// admission, leaving photo-class high-colour images outside the exclude
-/// (so they keep the W44-109 lift).
-///
-/// **Why this is 0.5**: the AUDIT-7 wider-corpus bench
-/// (`benchmarks/w44_audit_7_wider_corpus_2026-05-24.tsv`) surfaced 2 CLIC
-/// web photos that fire the Phase 1 `m3 >= 80` predicate but DON'T want
-/// the W44-109 lift killed (the lift is a structurally-bad pareto trade
-/// for them: clic_22ea12 mean dSsim2 = -1.54, clic_0c49a5 mean dSsim2 =
-/// -0.54, both for only ~1% bytes saved). AUDIT-7 plus the Phase 3 probe
-/// at `benchmarks/w44_audit_6_phase3_proxy_probe_2026-05-24.tsv` measured
-/// `fcbr`:
-///
-/// - codec_wiki (FIRE-GOOD): fcbr = 0.904 (mixed text/UI screenshot)
-/// - 1189261    (FIRE-GOOD): fcbr = 0.003 (landscape photo — clears via
-///   edge_density disjunct instead)
-/// - clic_22ea12 (FIRE-BAD): fcbr = 0.278 (web photo)
-/// - clic_0c49a5 (FIRE-BAD): fcbr = 0.080 (web photo)
-///
-/// Threshold 0.5 sits in the 3.25× gap between codec_wiki's 0.904 (the
-/// only GOOD that clears this disjunct) and the highest BAD fcbr 0.278.
-/// `[0.28, 0.5)` is a deliberate safety margin — any future high-colour
-/// screenshot would need fcbr ≥ 0.5 to enter the exclude via this
-/// disjunct, well above any measured photo.
-pub const W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN: f32 = 0.5;
-
-/// W44-AUDIT-6 Phase 3 (2026-05-24): minimum
-/// [`crate::vardct::encoder::ZenanalyzeProxies::edge_density`] at which a
-/// high-colour image is admitted to the W44-AUDIT-6 exclude.
-///
-/// Disjunctive with [`W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN`]: either proxy
-/// clearing its threshold passes admission.
-///
-/// **Why this is 0.45**: 1189261 (FIRE-GOOD landscape photo) has fcbr
-/// 0.003 (well below the fcbr disjunct cutoff) but edge_density 0.490
-/// (the landscape's sharp horizon + foliage detail). The 2 CLIC FIRE-BAD
-/// images have edge_density 0.167 (clic_22ea12 — soft-focus web photo)
-/// and 0.336 (clic_0c49a5 — slightly more textured photo but still well
-/// below 0.45). Threshold 0.45 sits in the 1.46× gap between 1189261's
-/// 0.490 and clic_0c49a5's 0.336.
-///
-/// Note: several NO-FIRE (m3 < 80) photo images have edge_density above
-/// 0.45 (1420710 0.93, 1531677 0.88, 1044329 0.55, etc.). The
-/// disjunction is harmless on them because the outer m3 ≥ 80 predicate
-/// is short-circuited first — none of those NO-FIRE images can ever
-/// enter the AUDIT-6 exclude regardless of fcbr/edge_density.
-pub const W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN: f32 = 0.45;
 
 /// W44-109: maximum effort at which the screenshot-class adaptive-quant
 /// pre-scale fires. Mirrors the W44-105 buttloop seed-scale mechanism
@@ -850,48 +792,6 @@ pub(crate) fn w44_176_is_terminal_class(
         && p.flat_color_block_ratio >= W44_176_TERMINAL_CLASS_FCBR_MIN
 }
 
-/// W44-AUDIT-6 Phase 1+3: returns `true` when the
-/// [`crate::vardct::encoder::ZenanalyzeProxies`] proxies indicate a
-/// high-colour mixed-content screenshot or high-edge-density landscape:
-/// `m3_colourfulness >= [`W44_AUDIT_6_HIGH_COLOUR_M3_MIN`]` (= 80.0) AND
-/// (`flat_color_block_ratio >= [`W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN`]` (=
-/// 0.5) OR `edge_density >= [`W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN`]`
-/// (= 0.45)).
-///
-/// Phase 3 tightens the Phase 1 `m3 >= 80` predicate with a
-/// fcbr-or-edge_density disjunction to exclude the 2 CLIC web photos
-/// (clic_22ea12 + clic_0c49a5) that fire `m3 >= 80` but take measurable
-/// SSIM2 loss (mean -1.54 / -0.54 vs cjxl) for negligible bytes gain
-/// (~1%). The 2 FIRE-GOOD images (codec_wiki / 1189261) split:
-/// codec_wiki passes via fcbr (0.904 ≥ 0.5); 1189261 passes via
-/// edge_density (0.490 ≥ 0.45). Calibration data:
-/// `benchmarks/w44_audit_6_phase3_proxy_probe_2026-05-24.tsv`.
-///
-/// Returns `false` when proxies are absent (non-sRGB-u8 layouts,
-/// streaming/animation paths). The W44-AUDIT-6 high-colour exclude is a
-/// defence-in-depth narrow — it only fires when proxies are present AND
-/// the (m3, fcbr-or-edge_density) admission passes; otherwise the
-/// existing W44-109/W44-176 behaviour is preserved.
-///
-/// Companion of [`w44_176_is_terminal_class`]; the two compose with OR
-/// inside the W44-109 gate (either predicate matching bypasses the
-/// lift).
-#[inline]
-pub(crate) fn w44_audit_6_is_high_colour_class(
-    proxies: Option<&crate::vardct::encoder::ZenanalyzeProxies>,
-) -> bool {
-    let Some(p) = proxies else {
-        return false;
-    };
-    if p.m3_colourfulness < W44_AUDIT_6_HIGH_COLOUR_M3_MIN {
-        return false;
-    }
-    // Phase 3 disjunction: high fcbr (screenshot/mixed-content) OR high
-    // edge_density (sharp landscape). Either passes admission.
-    p.flat_color_block_ratio >= W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN
-        || p.edge_density >= W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN
-}
-
 /// W44-129 Chunk C variant of [`resolved_adaptive_quant_qf_seed_scale`]
 /// that consults the resolved [`crate::api::AdaptiveQuantQfSeedPolicy`]
 /// enum from `ResolvedImprovements`.
@@ -908,16 +808,6 @@ pub(crate) fn w44_audit_6_is_high_colour_class(
 /// terminal.png e7 d=4-5 net-negative pareto without disabling the
 /// gate for graph/imac_g3/imac_dark/gmessages/gui (which buy real
 /// SSIM2 with the +28-50% bytes overhead per W44-174 measurement).
-///
-/// W44-AUDIT-6 Phase 1 (2026-05-24): if `high_colour_class_exclude` is
-/// `true` AND the `proxies` indicate a high-colour mixed-content
-/// screenshot (per [`w44_audit_6_is_high_colour_class`] — `m3 >= 80.0`),
-/// the gate is bypassed (returns 1.0). Composes with the W44-176
-/// terminal exclude via OR — either predicate matching bypasses the
-/// lift. Excludes codec_wiki e7 d=4-5 +44% bytes wedge documented by
-/// W44-AUDIT-4 (`benchmarks/w44_audit_4_e7_d4_breakdown_2026-05-24.tsv`)
-/// without disabling the gate for the W44-109 win cluster (text-class
-/// screenshots at m3 ∈ [14, 29]).
 #[cfg_attr(not(feature = "std"), allow(unused_variables))]
 pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     effort: u8,
@@ -967,27 +857,11 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     // ABOVE cjxl SSIM2 — true wins) and are preserved.
     //
     // Env hook for A/B: `JXL_W44_176_DISABLE=1` forces the exclude OFF.
-    let exclude_env =
-        std::env::var_os("JXL_W44_176_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
+    let exclude_env = std::env::var_os("JXL_W44_176_DISABLE").is_some_and(|v| v != "0" && v != "");
     if terminal_class_exclude && !exclude_env && w44_176_is_terminal_class(proxies) {
         return 1.0;
     }
-    // W44-AUDIT-6 Phase 1+3: high-colour-class exclude — suppress the
-    // W44-109 lift on mixed-content screenshots / sharp landscapes whose
-    // `m3_colourfulness >= W44_AUDIT_6_HIGH_COLOUR_M3_MIN` (= 80.0) AND
-    // (`fcbr >= 0.5` OR `edge_density >= 0.45`). Phase 1 used `m3 >= 80`
-    // alone; Phase 3 (per AUDIT-7 wider-corpus bench) added the
-    // fcbr-OR-edge_density disjunction to exclude CLIC web photos
-    // (clic_22ea12 + clic_0c49a5) where the lift costs SSIM2 with no
-    // bytes gain. The lift IS buying SSIM2 on the remaining FIRE-GOOD
-    // cells (per AUDIT-4 measurement on codec_wiki e7 d=4: +4.36 SSIM2
-    // above no-lift baseline, matching cjxl) but at a 44% byte cost —
-    // a structurally-bad pareto trade mirroring W44-176's terminal
-    // case. The W44-109 win cluster (text-class screenshots at m3 ∈
-    // [14, 29]) is preserved (their proxies fail the m3 >= 80 outer
-    // predicate).
-    //
-    // Env hook for A/B: `JXL_W44_AUDIT_6_DISABLE=1` forces OFF.
+    // W44-AUDIT-6 Phase 1+3: high-colour-class exclude
     let audit_6_env =
         std::env::var_os("JXL_W44_AUDIT_6_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
     if high_colour_class_exclude && !audit_6_env && w44_audit_6_is_high_colour_class(proxies) {
@@ -1266,6 +1140,382 @@ pub(crate) fn init_mul_seeds(seeds: u8) -> &'static [f64] {
     &ALL[..n]
 }
 
+// ============================================================================
+// cvvdp-fork Phase 8g — per-block reducer constants (Intervention B, RFC §3.2)
+// ============================================================================
+//
+// The per-block reducer (`butteraugli_refine_quant_field_inner_seed`, around
+// the K_TILE_NORM literal at line ~2524 and the cur_pow / max_increase reads
+// at lines ~2664/2672) was calibrated against butteraugli's per-pixel diffmap
+// distribution (narrow-peak max-norm signal). cvvdp's per-pixel signal — even
+// AFTER Phase 8c's `CVVDP_DIFFMAP_RENORM_SCALE = 0.018` magnitude alignment —
+// retains a different DISTRIBUTION SHAPE (broader spatial support via the
+// Laplacian pyramid + per-band CSF + cross-channel masking). The Phase 8a
+// Pareto diagnosis (40.3% Pareto-front) → Phase 8c (60.0%) → Phase 8d (60.0%
+// binary; -55% continuous bytes-at-equal-cvvdp at cvvdp 9.99) sequence
+// confirmed magnitude alignment alone is insufficient.
+//
+// **What this struct ships**: a per-backend constants table consumed by the
+// per-block reducer. Production switches at runtime on
+// `self.cvvdp_loop && !use_vdp2 && feature("cvvdp-loop")`. When the
+// butteraugli backend is active OR cvvdp-loop is compiled-out, callers see
+// the [`BUTTER_BLOCK_CONSTANTS`] table whose values are EXACTLY the
+// pre-Phase-8g hardcoded literals (`K_TILE_NORM = 1.2`, etc.). Hash-locks
+// stay byte-identical at default features.
+//
+// **What this struct deliberately does NOT touch**:
+//  - The W44-105/W44-109/W44-117 cluster gate constants (RFC §6 explicit
+//    out-of-scope; multi-week re-calibration is a separate arc).
+//  - `cur_pow` / `max_increase` — these already have env hooks
+//    (`CUR_POW_X1000_{LOW,HIGH}`, `MAX_INCREASE_X1000_{LOW,HIGH}`) and
+//    distance-aware resolvers (`resolved_cur_pow`,
+//    `resolved_max_increase_with_class`). Per-backend dispatch goes through
+//    the same resolvers; see [`BlockReducerConstants::resolved_cur_pow`] /
+//    [`BlockReducerConstants::resolved_max_increase_for`] below.
+//  - `effective_metric_target_distance` — Phase 4 already picks
+//    `CVVDP_DISTANCE_TARGETS` lookup vs raw `target_distance` per backend.
+
+/// Per-backend block-reducer calibration constants.
+///
+/// Hot path: read once per outer call to
+/// `butteraugli_refine_quant_field_inner_seed` and pinned for the lifetime
+/// of the seed loop. The struct is `Copy` so the read is a single load
+/// per field.
+///
+/// **Active dispatch**: see
+/// [`block_reducer_constants_for_backend`]. Production sites should never
+/// construct this directly — go through the resolver so future backend
+/// kinds (e.g. cvvdp-cpu vs cvvdp-gpu split tuning) get picked up.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct BlockReducerConstants {
+    /// Pre-multiplier on the 16th-power-norm per-block tile distance.
+    /// The reducer computes
+    /// `tile_dist[block] = k_tile_norm * (Σ v^16 / pixels)^(1/16)`
+    /// where `v = diffmap[pixel]` (post any backend renormalization).
+    ///
+    /// libjxl's `TileDistMap` uses `K_TILE_NORM = 1.2` (matches butteraugli
+    /// distribution); cvvdp may want a different value once Phase 8g
+    /// calibration captures the post-renorm tile_dist distribution.
+    pub(crate) k_tile_norm: f32,
+}
+
+/// libjxl + butteraugli production constants. **Byte-identical to the
+/// pre-Phase-8g hardcoded literals.** This is the value
+/// [`block_reducer_constants_for_backend`] returns when cvvdp is not the
+/// active backend.
+pub(crate) const BUTTER_BLOCK_CONSTANTS: BlockReducerConstants = BlockReducerConstants {
+    // libjxl TileDistMap: enc_adaptive_quantization.cc, K_TILE_NORM = 1.2.
+    k_tile_norm: 1.2,
+};
+
+/// zensim-fork Phase 4 (2026-05-25): per-backend block-reducer
+/// constants for the zensim loop. Compiled only when a zensim cargo
+/// feature is on so the constants struct surface stays trivial outside
+/// the feature.
+///
+/// **Phase 4 initial values**: butter-parity (`k_tile_norm = 1.2`).
+/// The Phase 1 distribution data
+/// (`benchmarks/zensim_diffmap_distribution_2026-05-25.tsv`) shows
+/// zensim's per-pixel diffmap magnitudes vary by ~3 orders of magnitude
+/// across the synthetic-delta scale (mean ≈ 4e-5 at smallest delta to
+/// 0.12 at largest), whereas butteraugli's distribution shape is
+/// narrower at the median. A principled refit per the Phase 8g
+/// methodology (capture per-iter `tile_dist` distribution on a held-
+/// out corpus, scale `k_tile_norm` so cvvdp/zensim `td_p95` falls near
+/// `effective_target`) is queued as a Phase 8-zensim follow-on if the
+/// Phase 6 Pareto sweep shows the butter-default plateau below 85%.
+///
+/// Documented in source: "Zensim Phase 4 ships butter-parity constants;
+/// future Phase 8-zensim work may refit per zensim's distribution
+/// shape per Phase 8g pattern".
+///
+/// **Env override**: `JXL_ZENSIM_K_TILE_NORM=<float>` replaces
+/// `k_tile_norm` for bench harnesses. Only consulted when the env var
+/// is present, parseable, finite, and > 0. Production callers must
+/// not set this in non-bench paths.
+#[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+pub(crate) const ZENSIM_BLOCK_CONSTANTS: BlockReducerConstants = BlockReducerConstants {
+    // Phase 4 starts at butter-parity. Phase 8-zensim may refit per
+    // RFC §3.2 Intervention A using the same harness shape as
+    // `examples/cvvdp_phase8g_tile_dist_capture.rs`.
+    k_tile_norm: 1.2,
+};
+
+/// cvvdp-fork Phase 8g per-backend constants for the cvvdp loop. Compiled
+/// only when the `cvvdp-loop` cargo feature is on so the constants struct
+/// surface stays trivial outside the feature.
+///
+/// **Fit methodology**:
+///
+/// After Phase 8c (`CVVDP_DIFFMAP_RENORM_SCALE = 0.018`) the per-pixel
+/// diffmap magnitudes match butteraugli at the median. But the per-block
+/// 16th-power-norm reduction `(Σ v^16 / n)^(1/16)` is a near-max-norm
+/// operation; cvvdp's broader Laplacian-pyramid + cross-channel pooled
+/// signal has fewer extreme outliers than butteraugli's near-pointwise
+/// max-norm signal. Net effect: post-renorm cvvdp `tile_dist` ratios
+/// across blocks are MORE UNIFORM, but the per-block `diff_raw =
+/// tile_dist / effective_metric_target` predicate still over-fires
+/// because cvvdp's "moderate-magnitude many blocks" vs butteraugli's
+/// "high-magnitude few blocks" pushes more cells past the
+/// `diff > 1.0` bad-block threshold than the W44 calibration expects.
+///
+/// Phase 8g harness `examples/cvvdp_phase8g_tile_dist_capture.rs` measures
+/// per-iter `tile_dist` distribution + bad-block rate per backend; the
+/// linear-scale fit per Intervention A in the task spec sets
+/// `k_tile_norm` such that cvvdp's MEAN `tile_dist / target` ratio
+/// matches butteraugli's at the same nominal distance band. See the
+/// Phase 8g memo for the per-cell ratios that drove the value pick.
+///
+/// **Env override**: `JXL_CVVDP_K_TILE_NORM=<float>` replaces
+/// `k_tile_norm` for bench harnesses. Only consulted when the env var
+/// is present, parseable, finite, and > 0. Production callers must not
+/// set this in non-bench paths.
+#[cfg(feature = "cvvdp-loop")]
+pub(crate) const CVVDP_BLOCK_CONSTANTS: BlockReducerConstants = BlockReducerConstants {
+    // Phase 8g fit (2026-05-25, see
+    // `benchmarks/cvvdp_block_signal_distribution_2026-05-25.tsv`):
+    //
+    // The capture harness measured cvvdp's `tile_dist` distribution
+    // post-Phase-8c renorm vs butteraugli's on the same 5 fixtures × 4
+    // distances. Per-iter `bad_rate` (fraction of blocks where
+    // `tile_dist > effective_metric_target`) for cvvdp was 70-100% at
+    // every distance, vs butteraugli's 0-13%. This means the cvvdp loop
+    // was driving qac UP on ~80% of blocks per iter (bad-block
+    // tightening), while butteraugli was driving qac DOWN on ~90% of
+    // blocks (good-block loosening via `cur_pow=0.2`). Same nominal
+    // distance target → opposite per-iter dynamics → cvvdp's bytes-
+    // overhead vs butteraugli for the same achieved JOD.
+    //
+    // **Linear-scale fit per RFC §3.2 Intervention A**: scale
+    // `k_tile_norm` so cvvdp's `td_p95` falls near `effective_target`,
+    // matching butteraugli's near-zero `bad_rate` at iter=0.
+    //
+    // Per-distance scales needed to align td_p95 to target:
+    //   d=0.5: cvvdp_p95 = 0.028, target = 0.0029 → scale = 0.104
+    //   d=1.0: cvvdp_p95 = 0.105, target = 0.0238 → scale = 0.227
+    //   d=2.0: cvvdp_p95 = 0.49,  target = 0.0724 → scale = 0.148
+    //   d=3.0: cvvdp_p95 = 1.39,  target = 0.1336 → scale = 0.096
+    //
+    // Median across distances: ~0.13. We ship the median scaled value
+    // `1.2 * 0.13 = 0.156` rounded to **0.16**. The scale is not
+    // distance-independent (range 0.10-0.23), so this single-value fit
+    // is a Phase 8g starting point per RFC §3.2 Intervention A; per-
+    // distance refinement would be a follow-on chunk (Intervention BX
+    // RFC §3.4) if the Pareto re-bench shows the single value
+    // plateaus below 85%.
+    //
+    // Equivalent absolute value: cvvdp `k_tile_norm = 0.16` vs
+    // butteraugli's 1.2 (= 7.5× smaller). Documented in
+    // `docs/LIBJXL_DIVERGENCES.md` Section E.
+    k_tile_norm: 0.16,
+};
+
+/// Identifies which metric backend the perceptual loop is driving
+/// against for the purposes of selecting block-reducer constants. The
+/// `bool, bool` ctor pair is plumbed from the call site as
+/// `(self.cvvdp_loop && !use_vdp2, self.zensim_loop && !use_vdp2)` —
+/// the same dispatch invariant the metric-target lookup obeys. At most
+/// one flag may be true at a time (zensim wins if both are set, per
+/// the `propagate_resolved_metric_to_encoder` invariant).
+///
+/// zensim-fork Phase 4 (2026-05-25): added the `zensim` arm. The
+/// pre-Phase-4 single-bool `block_reducer_constants_for_backend` is
+/// preserved as a thin wrapper for source-compat with the test sites
+/// at line ~4686/~4700 that didn't carry a zensim flag.
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum ActiveMetric {
+    /// Butteraugli backend (CPU or GPU). The pre-Phase-8g production
+    /// default — every caller that doesn't opt into cvvdp or zensim
+    /// ends up here.
+    Butteraugli,
+    /// cvvdp backend (CPU or GPU). Fires when
+    /// `LossyConfig::with_perceptual_metric(PerceptualMetric::Cvvdp)`
+    /// is set AND the `cvvdp-loop` feature is compiled in AND the
+    /// active strategy is NOT `EncoderStrategy::Libjxl`.
+    #[cfg_attr(not(feature = "cvvdp-loop"), allow(dead_code))]
+    Cvvdp,
+    /// zensim backend (CPU or GPU). Fires when
+    /// `LossyConfig::with_perceptual_metric(PerceptualMetric::Zensim)`
+    /// is set AND a zensim cargo feature is compiled in AND the active
+    /// strategy is NOT `EncoderStrategy::Libjxl`.
+    #[cfg_attr(
+        not(any(feature = "zensim-loop", feature = "zensim-loop-gpu")),
+        allow(dead_code)
+    )]
+    Zensim,
+}
+
+/// Select the active per-backend block-reducer constants.
+///
+/// zensim-fork Phase 4 (2026-05-25): generalised the cvvdp-only
+/// dispatch to a 3-way enum. The cvvdp branch still consults the
+/// `JXL_CVVDP_K_TILE_NORM` env override; the zensim branch consults
+/// `JXL_ZENSIM_K_TILE_NORM`. Butteraugli branch returns
+/// [`BUTTER_BLOCK_CONSTANTS`] verbatim (byte-identical to the
+/// pre-Phase-8g hardcoded literals).
+///
+/// The env hooks are bench-only; production code MUST NOT set them.
+#[inline]
+pub(crate) fn block_reducer_constants_for_metric(metric: ActiveMetric) -> BlockReducerConstants {
+    match metric {
+        ActiveMetric::Butteraugli => BUTTER_BLOCK_CONSTANTS,
+        #[cfg(feature = "cvvdp-loop")]
+        ActiveMetric::Cvvdp => {
+            let mut c = CVVDP_BLOCK_CONSTANTS;
+            if let Ok(s) = std::env::var("JXL_CVVDP_K_TILE_NORM")
+                && let Ok(v) = s.parse::<f32>()
+                && v.is_finite()
+                && v > 0.0
+            {
+                c.k_tile_norm = v;
+            }
+            c
+        }
+        #[cfg(not(feature = "cvvdp-loop"))]
+        ActiveMetric::Cvvdp => BUTTER_BLOCK_CONSTANTS,
+        #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+        ActiveMetric::Zensim => {
+            let mut c = ZENSIM_BLOCK_CONSTANTS;
+            if let Ok(s) = std::env::var("JXL_ZENSIM_K_TILE_NORM")
+                && let Ok(v) = s.parse::<f32>()
+                && v.is_finite()
+                && v > 0.0
+            {
+                c.k_tile_norm = v;
+            }
+            c
+        }
+        #[cfg(not(any(feature = "zensim-loop", feature = "zensim-loop-gpu")))]
+        ActiveMetric::Zensim => BUTTER_BLOCK_CONSTANTS,
+    }
+}
+
+/// Pre-Phase-4 single-bool dispatch retained for source-compat with
+/// the unit tests at lines ~4686/~4700 and any external callers that
+/// didn't carry a zensim flag. Forwards to
+/// [`block_reducer_constants_for_metric`] picking Cvvdp when
+/// `cvvdp_loop_active` is true, Butteraugli otherwise.
+///
+/// New code SHOULD prefer [`block_reducer_constants_for_metric`] and
+/// the [`ActiveMetric`] enum — it disambiguates zensim from the legacy
+/// bool which would silently route zensim cells to the butter branch.
+#[allow(dead_code)]
+#[inline]
+pub(crate) fn block_reducer_constants_for_backend(
+    cvvdp_loop_active: bool,
+) -> BlockReducerConstants {
+    block_reducer_constants_for_metric(if cvvdp_loop_active {
+        ActiveMetric::Cvvdp
+    } else {
+        ActiveMetric::Butteraugli
+    })
+}
+
+/// Phase 8g (2026-05-25): env-gated per-iter `tile_dist` distribution
+/// dump. Activated via `JXL_PHASE8G_TILE_DIST_DUMP=<path>`; appends one
+/// TSV row per iter with summary stats sufficient to fit
+/// [`CVVDP_BLOCK_CONSTANTS::k_tile_norm`] empirically.
+///
+/// Columns: `backend\titer\teffective_target\ttarget_distance\tnblocks\
+/// tmin\tmax\tmedian\tp25\tp75\tp95\tmean\tbad_rate`.
+///
+/// `bad_rate` = fraction of blocks with `tile_dist > effective_target`
+/// (= the `diff > 1.0` predicate fire rate). This is the
+/// load-bearing metric for Intervention B calibration: at parity
+/// `bad_rate_c ≈ bad_rate_b` at the same nominal distance, then the
+/// per-block reducer's downstream bump magnitudes will fire equivalently.
+///
+/// Zero production cost when env unset (single `var_os` check).
+///
+/// zensim-fork Phase 4 (2026-05-25): added the `zensim_loop_active`
+/// flag so rows from the zensim loop tag as `zensim` rather than being
+/// silently bucketed as `butter`.
+#[inline]
+pub(crate) fn maybe_dump_tile_dist_stats_phase8g(
+    cvvdp_loop_active: bool,
+    zensim_loop_active: bool,
+    iter: usize,
+    effective_metric_target_distance: f32,
+    target_distance: f32,
+    tile_dist: &[f32],
+) {
+    // Fast-out: nothing to do if the env var isn't set.
+    let path = match std::env::var("JXL_PHASE8G_TILE_DIST_DUMP") {
+        Ok(p) if !p.is_empty() => p,
+        _ => return,
+    };
+
+    if tile_dist.is_empty() {
+        return;
+    }
+
+    // zensim wins over cvvdp wins over butter (matches
+    // `propagate_resolved_metric_to_encoder` invariant). At most one
+    // flag may be true at a time.
+    let backend_tag = if zensim_loop_active {
+        "zensim"
+    } else if cvvdp_loop_active {
+        "cvvdp"
+    } else {
+        "butter"
+    };
+
+    // Per-block bad-rate against the metric target.
+    let bad_count = tile_dist
+        .iter()
+        .filter(|&&d| d > effective_metric_target_distance)
+        .count();
+    let nblocks = tile_dist.len();
+    let bad_rate = bad_count as f64 / nblocks as f64;
+
+    // Summary stats.
+    let mut sorted: alloc::vec::Vec<f32> = tile_dist.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+    let pick = |frac: f64| -> f32 {
+        let idx = ((nblocks as f64 * frac).floor() as usize).min(nblocks - 1);
+        sorted[idx]
+    };
+    let min_v = sorted[0];
+    let max_v = sorted[nblocks - 1];
+    let median = pick(0.50);
+    let p25 = pick(0.25);
+    let p75 = pick(0.75);
+    let p95 = pick(0.95);
+    let mean: f64 = tile_dist.iter().map(|&v| v as f64).sum::<f64>() / nblocks as f64;
+
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+        // Write a header if file is new (empty length).
+        if let Ok(meta) = f.metadata()
+            && meta.len() == 0
+        {
+            let _ = writeln!(
+                f,
+                "backend\titer\teffective_target\ttarget_distance\tnblocks\ttd_min\ttd_max\ttd_median\ttd_p25\ttd_p75\ttd_p95\ttd_mean\tbad_rate"
+            );
+        }
+        let _ = writeln!(
+            f,
+            "{backend}\t{iter}\t{etgt}\t{tgt}\t{n}\t{minv}\t{maxv}\t{med}\t{p25}\t{p75}\t{p95}\t{mean:.6}\t{br:.6}",
+            backend = backend_tag,
+            iter = iter,
+            etgt = effective_metric_target_distance,
+            tgt = target_distance,
+            n = nblocks,
+            minv = min_v,
+            maxv = max_v,
+            med = median,
+            p25 = p25,
+            p75 = p75,
+            p95 = p95,
+            mean = mean,
+            br = bad_rate,
+        );
+    }
+}
+
 /// Outcome of one butteraugli-loop seed used by the multi-seed picker
 /// in [`VarDctEncoder::butteraugli_refine_quant_field`].
 #[derive(Clone)]
@@ -1454,14 +1704,15 @@ impl VarDctEncoder {
 
         // W44-phase3-B1: replace the inline `ButteraugliReference::new_linear_planar` +
         // per-iter `compare_linear_planar` calls with a pluggable
-        // [`ButteraugliBackend`]. The CPU backend wraps the same two calls
+        // [`PerceptualBackend`] (renamed from `ButteraugliBackend` in cvvdp-fork
+        // Phase 2, 2026-05-24). The CPU backend wraps the same two calls
         // verbatim — bit-identical to pre-W44-phase3-B1 behaviour when
         // `self.gpu_butteraugli == false` (production default). When the
         // caller opts in via [`LossyConfig::with_gpu_butteraugli`] AND the
         // `gpu-butteraugli` cargo feature is on AND CUDA initialises, the
         // backend dispatches to the GPU pipeline (~27× faster at 1024²+
         // per W44-RECON-DEEP/A7).
-        let backend: Option<alloc::boxed::Box<dyn super::butteraugli_backend::ButteraugliBackend>> =
+        let backend: Option<alloc::boxed::Box<dyn super::perceptual_backend::PerceptualBackend>> =
             if use_vdp2 {
                 // VDP2 path: hold onto the planar refs permanently (one
                 // n*4*3 reservation) and skip the butteraugli precompute.
@@ -1492,12 +1743,67 @@ impl VarDctEncoder {
                 let butteraugli_params = butteraugli::ButteraugliParams::new()
                     .with_intensity_target(metric_intensity_target)
                     .with_compute_diffmap(true);
-                let mut b = super::butteraugli_backend::construct_backend(
+                // Multi-metric Phase 0 (RFC #3 §4, 2026-05-25):
+                // `construct_backend` now takes a single bundled
+                // `MetricSelection`. The legacy bool fields on
+                // `VarDctEncoder` (set by
+                // `propagate_resolved_metric_to_encoder`) are
+                // translated back into the metric + device variants
+                // here; the buttloop body still keys off
+                // `self.cvvdp_loop` directly for the metric-target
+                // lookup and bytes-tighten dispatch.
+                use super::perceptual_backend::MetricSelection;
+                use crate::api::{PerceptualDevice, PerceptualMetric};
+                // zensim-fork Phase 3 (2026-05-25): zensim wins over cvvdp
+                // wins over butteraugli at the dispatch level. The
+                // `propagate_resolved_metric_to_encoder` helper sets
+                // exactly one of `zensim_loop` / `cvvdp_loop` true (or
+                // neither for butteraugli); the order below is just
+                // defense-in-depth in case a downstream caller poked
+                // both fields manually.
+                let metric = if self.zensim_loop {
+                    PerceptualMetric::Zensim
+                } else if self.cvvdp_loop {
+                    PerceptualMetric::Cvvdp
+                } else {
+                    PerceptualMetric::Butteraugli
+                };
+                let device = if self.zensim_loop {
+                    if self.zensim_use_cpu {
+                        PerceptualDevice::Cpu
+                    } else {
+                        PerceptualDevice::Gpu
+                    }
+                } else if self.cvvdp_loop {
+                    // For cvvdp the CPU vs GPU toggle is on
+                    // `cvvdp_use_cpu`; gpu_butteraugli is irrelevant
+                    // unless cvvdp falls back to butteraugli (handled
+                    // inside `construct_backend`).
+                    if self.cvvdp_use_cpu {
+                        PerceptualDevice::Cpu
+                    } else {
+                        PerceptualDevice::Gpu
+                    }
+                } else if self.gpu_butteraugli {
+                    PerceptualDevice::Gpu
+                } else {
+                    PerceptualDevice::Cpu
+                };
+                let selection = MetricSelection {
+                    metric,
+                    device,
+                    // Per-distance target override is plumbed via
+                    // `perceptual_target_score` on the API; the
+                    // buttloop body consumes it through the
+                    // `effective_metric_target_distance` lookup below.
+                    target_score: None,
+                };
+                let mut b = super::perceptual_backend::construct_backend(
                     width as u32,
                     height as u32,
                     butteraugli_params,
                     metric_intensity_target,
-                    self.gpu_butteraugli,
+                    selection,
                 );
                 if let Err(_) = b.set_reference(&ref_r, &ref_g, &ref_b, width, height) {
                     return Ok(initial_params.clone());
@@ -1600,28 +1906,7 @@ impl VarDctEncoder {
             BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE,
             buttloop_qf_seed_scale_min_distance,
         );
-        // W44-AUDIT-6 Phase 2C (2026-05-24): symmetric high-colour exclude
-        // for the W44-105 buttloop seed scale. The Phase 1 helper
-        // suppresses the W44-109 adaptive_quant lift at e=5/6/7 (pre-
-        // buttloop) on `m3_colourfulness >= 80`. At e>=8 the W44-105
-        // buttloop seed scale (default 4.0) takes over the same role —
-        // and per AUDIT-4 measurement, codec_wiki e8/e9 d=4 shows the
-        // SAME +20.72%/+4.88% byte overhead pattern (Zenjxl vs cjxl)
-        // that AUDIT-6 Phase 1 closed for e7. Mirror the discriminator
-        // here so the production default suppresses the W44-105 lift on
-        // codec_wiki-class screenshots while preserving the W44-105 win
-        // cluster (M3 ∈ [10, 29]: terminal/imac_g3/imac_dark/etc.).
-        //
-        // Env hook for A/B: `JXL_W44_AUDIT_6_DISABLE=1` forces OFF
-        // (shared with the Phase 1 W44-109 site). Both lifts gate on
-        // the same `high_colour_class_exclude` resolved field.
-        let audit_6_env_e8e9 =
-            std::env::var_os("JXL_W44_AUDIT_6_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
-        let high_colour_class_exclude_e8e9 = self.resolved_improvements.high_colour_class_exclude
-            && !audit_6_env_e8e9
-            && w44_audit_6_is_high_colour_class(self.zenanalyze_proxies.as_ref());
         let auto_gate_fires = is_screenshot
-            && !high_colour_class_exclude_e8e9
             && (target_distance >= buttloop_min_distance
                 || (w44_108_low_colour
                     && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE));
@@ -2023,6 +2308,66 @@ impl VarDctEncoder {
         // semantics: VDP2 path = None, butteraugli path = Some(_).
         let mut backend = backend;
 
+        // cvvdp-fork Phase 4 (2026-05-24): compute the metric-direction
+        // target the inner seed loop will converge against. For the
+        // butteraugli backend (production default OR cvvdp-loop feature
+        // off OR `LossyConfig::cvvdp_loop` unset) this is the
+        // butteraugli-direction `target_distance` verbatim → byte-identical
+        // to pre-Phase-4 behaviour. For the cvvdp backend (opt-in via
+        // `LossyConfig::with_cvvdp_loop(Some(true))`) this is the
+        // cvvdp-direction target from `cvvdp_targets.rs`, so the inner
+        // loop's `td > target` and `tile_dist / target` math lives in
+        // the same units as the per-iter compare score (which the cvvdp
+        // GPU backend already maps to butteraugli-direction `10 - JOD`).
+        //
+        // Routing match: `cvvdp_loop` was resolved at API entry via
+        // `LossyConfig::resolve_cvvdp_loop` and propagated to
+        // `VarDctEncoder.cvvdp_loop`. The flag-on path here only fires
+        // when (a) the field is true AND (b) we're not on the VDP2
+        // branch (VDP2-lite is a separate metric) AND (c) the feature
+        // is compiled in. Outside the feature, `cvvdp_loop` defaults to
+        // `false` per the `VarDctEncoder::default()` initialiser, so
+        // the branch is dead-code-eliminated.
+        // zensim-fork Phase 4 (2026-05-25): metric-target dispatch is
+        // now 3-way. Precedence (matches the
+        // `propagate_resolved_metric_to_encoder` dispatch invariant at
+        // metric backend construction): zensim > cvvdp > butteraugli.
+        // The flag-on branches only fire when (a) the corresponding
+        // field is true on `VarDctEncoder` AND (b) we're not on the
+        // VDP2 branch (VDP2-lite is a separate metric) AND (c) the
+        // feature is compiled in. Outside any feature, the matching
+        // field defaults to `false` per the
+        // `VarDctEncoder::default()` initialiser, so the branch is
+        // dead-code-eliminated.
+        #[allow(unused_labels)]
+        let effective_metric_target_distance: f32 = 'lookup: {
+            #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+            {
+                if self.zensim_loop && !use_vdp2 {
+                    break 'lookup super::zensim_targets::zensim_target_score_for_distance(
+                        target_distance,
+                    );
+                }
+            }
+            #[cfg(feature = "cvvdp-loop")]
+            {
+                if self.cvvdp_loop && !use_vdp2 {
+                    break 'lookup super::cvvdp_targets::cvvdp_target_score_for_distance(
+                        target_distance,
+                    );
+                }
+            }
+            #[cfg(not(any(
+                feature = "zensim-loop",
+                feature = "zensim-loop-gpu",
+                feature = "cvvdp-loop"
+            )))]
+            {
+                let _ = use_vdp2; // silence unused on no-feature builds
+            }
+            target_distance
+        };
+
         for &k_init_mul in seeds {
             // Restore starting state for this seed (skipped on seed 0 because
             // quant_field/quant_field_float already hold it, but cheap enough
@@ -2067,6 +2412,9 @@ impl VarDctEncoder {
                 is_screenshot,
                 w44_118_per_iter_sharpness,
                 mask1x1,
+                // cvvdp-fork Phase 4: metric-direction target for the
+                // inner loop's bad-block + accept-bound + diff_raw math.
+                effective_metric_target_distance,
             )?;
             outcomes.push(outcome);
         }
@@ -2076,7 +2424,13 @@ impl VarDctEncoder {
         //   2. Among those, pick the largest mean_qf (proxy for smallest bytes).
         //   3. If none meet bound, pick the smallest final_score (degenerates
         //      to single-seed worst-case because seed 0 = LIBJXL_INIT_MUL).
-        let accept_bound = K_BUTTERAUGLI_ACCEPT_FACTOR * target_distance as f64;
+        //
+        // cvvdp-fork Phase 4 (2026-05-24): the accept-bound multiplies
+        // the effective METRIC target (cvvdp-direction when the cvvdp
+        // backend is active, butteraugli-direction otherwise). The
+        // butteraugli case is byte-identical to pre-Phase-4 because
+        // `effective_metric_target_distance == target_distance` then.
+        let accept_bound = K_BUTTERAUGLI_ACCEPT_FACTOR * effective_metric_target_distance as f64;
         let winner_idx = {
             let qualifying: alloc::vec::Vec<usize> = (0..outcomes.len())
                 .filter(|&i| outcomes[i].final_score <= accept_bound)
@@ -2181,7 +2535,7 @@ impl VarDctEncoder {
         // W44-phase3-B1 code used inline. Explicit lifetime: bound to
         // `'_` (= the call's lifetime) so the borrow checker doesn't
         // promote the trait-object lifetime to `'static`.
-        backend: Option<&mut (dyn super::butteraugli_backend::ButteraugliBackend + '_)>,
+        backend: Option<&mut (dyn super::perceptual_backend::PerceptualBackend + '_)>,
         // Planar linear-RGB reference planes (always populated by the
         // top-level call). Sized `width × height` with stride = width.
         // Owned by the caller for the duration of the seed loop so we
@@ -2223,11 +2577,34 @@ impl VarDctEncoder {
         // seed. Env-gated; production default false.
         w44_118_per_iter_sharpness: bool,
         mask1x1: Option<&[f32]>,
+        // cvvdp-fork Phase 4 (2026-05-24): the "metric-direction"
+        // convergence target this seed uses for the per-block
+        // `td > effective_metric_target_distance` filter, the
+        // `tile_dist / effective_metric_target_distance` per-block bump
+        // ratio, and the picker's `K_BUTTERAUGLI_ACCEPT_FACTOR *
+        // effective_metric_target_distance` accept bound. When the
+        // active backend is butteraugli (production default), the
+        // caller passes `target_distance` here verbatim and behaviour
+        // is byte-identical to pre-Phase-4. When the cvvdp backend is
+        // active, the caller passes the cvvdp-direction target read
+        // from `super::cvvdp_targets::cvvdp_target_score_for_distance`,
+        // so the comparison surface for `iter_score`, `tile_dist`, and
+        // `accept_bound` all live in the same units. The bitstream
+        // `target_distance` (consumed by `DistanceParams::compute_from_quant_field`)
+        // is NOT remapped — that's the quality target encoded into the
+        // file, not the metric target. See
+        // `docs/RFC_CVVDP_PHASE4_BRIEF.md` Step 4.
+        effective_metric_target_distance: f32,
     ) -> Result<SeedOutcome> {
         use super::epf;
         use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
 
         let target_distance = self.distance;
+        // cvvdp-fork Phase 4: cached alias for the three metric-axis
+        // sites below. The bitstream-quality `target_distance` is read
+        // separately (it goes into DistanceParams + rate-control math
+        // and stays butteraugli-direction always).
+        let effective_metric_target_distance: f32 = effective_metric_target_distance;
         let num_blocks = xsize_blocks * ysize_blocks;
         let padded_pixels = padded_width * padded_height;
         debug_assert_eq!(ref_r.len(), width * height);
@@ -2252,58 +2629,6 @@ impl VarDctEncoder {
         // the ~width*height*4 B/iter fresh allocation the prior
         // `BackendCompareResult { diffmap: Vec<f32> }` path produced.
         let mut diffmap_vec: alloc::vec::Vec<f32> = alloc::vec::Vec::new();
-
-        // SA-B (W44-AUDIT-8 Phase 8b): pre-loop dump of initial
-        // quant_field_float + bounds. Captures the seed state that
-        // both encoders start from. NOTE: seed_scale_applied is NOT
-        // visible here (lives in outer `butteraugli_refine_quant_field`
-        // scope) — caller-side scaling is already baked into
-        // `quant_field_float` by the time we enter this inner seed
-        // function. Env-gated by `JXL_SA_B_DUMP=1`; zero-cost when
-        // env unset (mirrors W44-181/W44-200 diagnostic pattern).
-        #[cfg(feature = "std")]
-        if std::env::var("JXL_SA_B_DUMP").is_ok() {
-            let mut qf_sorted: alloc::vec::Vec<f32> = quant_field_float.iter().copied().collect();
-            qf_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
-            let pct = |p: f64| -> f32 {
-                let i = (((qf_sorted.len() as f64) - 1.0) * p).round() as usize;
-                qf_sorted[i.min(qf_sorted.len() - 1)]
-            };
-            let qf_min_s = qf_sorted[0];
-            let qf_p25 = pct(0.25);
-            let qf_median = pct(0.50);
-            let qf_p75 = pct(0.75);
-            let qf_max_s = qf_sorted[qf_sorted.len() - 1];
-            let qf_sum: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
-            let qf_avg = qf_sum / quant_field_float.len() as f64;
-            let path = std::env::var("JXL_SA_B_DUMP_PATH")
-                .unwrap_or_else(|_| "/tmp/sa_b_ours.tsv".to_string());
-            use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-            {
-                let _ = writeln!(
-                    f,
-                    "# ours: target={:.4} iters={} is_screenshot={} k_init_mul={:.4} qf_lower={:.6} qf_higher={:.6}",
-                    target_distance, iters, is_screenshot, k_init_mul, qf_lower, qf_higher,
-                );
-                let _ = writeln!(
-                    f,
-                    "ours\t-1\t{}\t-1.0000\t{:.4}\t-1\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t-1.0000\t-1\t-1.0000\t-1.0000\t1.0000\t{}",
-                    iters,
-                    target_distance,
-                    qf_min_s,
-                    qf_p25,
-                    qf_median,
-                    qf_p75,
-                    qf_max_s,
-                    qf_avg,
-                    is_screenshot,
-                );
-            }
-        }
 
         // Loop runs iters+1 times (matching libjxl: last iteration is compare-only).
         // i=0..iters-1: SetQuantField + roundtrip + compare + adjust
@@ -2396,7 +2721,7 @@ impl VarDctEncoder {
             #[cfg(feature = "__internal_recon_hook")]
             let capture_steps = iter == iters && recon_hook::steps_capture_enabled();
             #[cfg(not(feature = "__internal_recon_hook"))]
-            let _capture_steps = false;
+            let capture_steps = false;
 
             #[cfg(feature = "__internal_recon_hook")]
             let mut step_after_recon: Option<recon_hook::Xyb> = None;
@@ -2656,8 +2981,42 @@ impl VarDctEncoder {
             // compare-only last iteration is included.
             last_score = iter_score;
 
-            // Step 6: Compute per-block tile distance (16th-power norm, matching libjxl TileDistMap)
-            const K_TILE_NORM: f32 = 1.2;
+            // Step 6: Compute per-block tile distance (16th-power norm,
+            // matching libjxl TileDistMap).
+            //
+            // cvvdp-fork Phase 8g (2026-05-25, RFC §3.2 Intervention B):
+            // `k_tile_norm` is now backend-switched via
+            // [`block_reducer_constants_for_metric`]. For butteraugli
+            // (production default), the value is 1.2 — byte-identical to
+            // the pre-Phase-8g hardcoded literal. For cvvdp, the value
+            // is fitted to cvvdp's post-renormalization per-block
+            // distribution (see CVVDP_BLOCK_CONSTANTS). zensim-fork
+            // Phase 4 (2026-05-25): zensim branch added with butter-
+            // parity initial value (see ZENSIM_BLOCK_CONSTANTS — refit
+            // queued as Phase 8-zensim follow-on if the Phase 6 Pareto
+            // sweep shows the butter-default plateau below 85%).
+            let active_metric = {
+                #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+                {
+                    if self.zensim_loop && !use_vdp2 {
+                        ActiveMetric::Zensim
+                    } else if self.cvvdp_loop && !use_vdp2 {
+                        ActiveMetric::Cvvdp
+                    } else {
+                        ActiveMetric::Butteraugli
+                    }
+                }
+                #[cfg(not(any(feature = "zensim-loop", feature = "zensim-loop-gpu")))]
+                {
+                    if self.cvvdp_loop && !use_vdp2 {
+                        ActiveMetric::Cvvdp
+                    } else {
+                        ActiveMetric::Butteraugli
+                    }
+                }
+            };
+            let block_constants = block_reducer_constants_for_metric(active_metric);
+            let k_tile_norm = block_constants.k_tile_norm;
             let diffmap_buf: &[f32] = &diffmap_vec;
             tile_dist.fill(0.0);
             for by in 0..ysize_blocks {
@@ -2690,7 +3049,7 @@ impl VarDctEncoder {
                     if pixels == 0.0 {
                         pixels = 1.0;
                     }
-                    let td = K_TILE_NORM * (dist_norm / pixels).sqrt().sqrt().sqrt().sqrt() as f32;
+                    let td = k_tile_norm * (dist_norm / pixels).sqrt().sqrt().sqrt().sqrt() as f32;
                     for sy in 0..covered_y {
                         for sx in 0..covered_x {
                             tile_dist[(by + sy) * xsize_blocks + (bx + sx)] = td;
@@ -2698,6 +3057,33 @@ impl VarDctEncoder {
                     }
                 }
             }
+
+            // cvvdp-fork Phase 8g (2026-05-25): env-gated per-iter
+            // tile_dist distribution dump. Used by the Phase 8g calibration
+            // harness (`examples/cvvdp_phase8g_tile_dist_capture.rs`) to
+            // measure per-backend `tile_dist` distribution + bad-block
+            // rate so the per-backend `k_tile_norm` value can be fitted
+            // empirically. Zero production cost when env unset.
+            // zensim-fork Phase 4 (2026-05-25): zensim/cvvdp/butter
+            // 3-way tag at the bench dump site.
+            let zensim_active_now = {
+                #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+                {
+                    self.zensim_loop && !use_vdp2
+                }
+                #[cfg(not(any(feature = "zensim-loop", feature = "zensim-loop-gpu")))]
+                {
+                    false
+                }
+            };
+            maybe_dump_tile_dist_stats_phase8g(
+                self.cvvdp_loop && !use_vdp2 && !zensim_active_now,
+                zensim_active_now,
+                iter,
+                effective_metric_target_distance,
+                target_distance,
+                tile_dist,
+            );
 
             // Log per-iteration summary
             {
@@ -2714,18 +3100,24 @@ impl VarDctEncoder {
                 let qf_sum: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
                 let qf_avg = qf_sum / quant_field_float.len() as f64;
                 let td_max = tile_dist.iter().copied().reduce(f32::max).unwrap_or(0.0);
-                let bad_blocks = tile_dist.iter().filter(|&&d| d > target_distance).count();
+                // cvvdp-fork Phase 4: bad_blocks is metric-direction
+                // (compares tile_dist to the effective metric target).
+                let bad_blocks = tile_dist
+                    .iter()
+                    .filter(|&&d| d > effective_metric_target_distance)
+                    .count();
                 debug_rect!(
                     "bfly/iter",
                     0,
                     0,
                     width,
                     height,
-                    "iter={}/{} score={:.3} target={:.3} gs={} qf_avg={:.4} qf=[{:.4};{:.4}] td_max={:.2} bad={}",
+                    "iter={}/{} score={:.3} target={:.3} (metric_target={:.5}) gs={} qf_avg={:.4} qf=[{:.4};{:.4}] td_max={:.2} bad={}",
                     iter,
                     iters,
                     iter_score,
                     target_distance,
+                    effective_metric_target_distance,
                     current_params.global_scale,
                     qf_avg,
                     qf_min,
@@ -2733,68 +3125,6 @@ impl VarDctEncoder {
                     td_max,
                     bad_blocks
                 );
-            }
-
-            // SA-B (W44-AUDIT-8 Phase 8b): per-iter TSV dump for the
-            // buttloop-internals comparison vs cjxl. Gated by env
-            // `JXL_SA_B_DUMP=1`; writes TSV rows to the file pointed
-            // at by `JXL_SA_B_DUMP_PATH` (defaults to /tmp/sa_b_ours.tsv).
-            // Columns: source,iter,iters,iter_score,target,global_scale,
-            // qf_min,qf_p25,qf_median,qf_p75,qf_max,qf_avg,td_max,bad_blocks,
-            // cur_pow,max_increase,seed_scale_applied,is_screenshot.
-            // Zero-cost when env unset (mirrors W44-181/W44-200 diagnostic
-            // pattern).
-            #[cfg(feature = "std")]
-            if std::env::var("JXL_SA_B_DUMP").is_ok() {
-                let mut qf_sorted: alloc::vec::Vec<f32> =
-                    quant_field_float.iter().copied().collect();
-                qf_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
-                let pct = |p: f64| -> f32 {
-                    let i = (((qf_sorted.len() as f64) - 1.0) * p).round() as usize;
-                    qf_sorted[i.min(qf_sorted.len() - 1)]
-                };
-                let qf_min_s = qf_sorted[0];
-                let qf_p25 = pct(0.25);
-                let qf_median = pct(0.50);
-                let qf_p75 = pct(0.75);
-                let qf_max_s = qf_sorted[qf_sorted.len() - 1];
-                let qf_sum: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
-                let qf_avg = qf_sum / quant_field_float.len() as f64;
-                let td_max = tile_dist.iter().copied().reduce(f32::max).unwrap_or(0.0);
-                let bad_blocks = tile_dist.iter().filter(|&&d| d > target_distance).count();
-                let cur_pow_now = resolved_cur_pow(iter, target_distance as f64);
-                let max_inc =
-                    resolved_max_increase_with_class(target_distance as f64, is_screenshot);
-                let path = std::env::var("JXL_SA_B_DUMP_PATH")
-                    .unwrap_or_else(|_| "/tmp/sa_b_ours.tsv".to_string());
-                use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
-                {
-                    // seed_scale_applied=1.0 here (caller already baked it in).
-                    let _ = writeln!(
-                        f,
-                        "ours\t{}\t{}\t{:.6}\t{:.4}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{}\t{:.4}\t{:.4}\t1.0000\t{}",
-                        iter,
-                        iters,
-                        iter_score,
-                        target_distance,
-                        current_params.global_scale,
-                        qf_min_s,
-                        qf_p25,
-                        qf_median,
-                        qf_p75,
-                        qf_max_s,
-                        qf_avg,
-                        td_max,
-                        bad_blocks,
-                        cur_pow_now,
-                        max_inc,
-                        is_screenshot,
-                    );
-                }
             }
 
             // Last iteration is compare-only (libjxl: if (i == iters) break;)
@@ -2891,7 +3221,11 @@ impl VarDctEncoder {
                          (clamps should keep this finite every iter)",
                         quant_field_float[bi]
                     );
-                    let diff_raw = tile_dist[bi] / target_distance;
+                    // cvvdp-fork Phase 4: diff_raw is the per-block bump
+                    // ratio in metric-direction units. Bitstream
+                    // `target_distance` is NOT used here — we want the
+                    // metric the buttloop is actually converging against.
+                    let diff_raw = tile_dist[bi] / effective_metric_target_distance;
                     // W38-2 #3.1: cap the per-iter bump (no-op in HIGH
                     // regime where max_increase = 100.0).
                     let diff = diff_raw.min(max_increase as f32);
@@ -2923,7 +3257,11 @@ impl VarDctEncoder {
                         "butteraugli loop: non-finite quant_field_float[{bi}] = {}",
                         quant_field_float[bi]
                     );
-                    let diff_raw = tile_dist[bi] / target_distance;
+                    // cvvdp-fork Phase 4: diff_raw is the per-block bump
+                    // ratio in metric-direction units. Bitstream
+                    // `target_distance` is NOT used here — we want the
+                    // metric the buttloop is actually converging against.
+                    let diff_raw = tile_dist[bi] / effective_metric_target_distance;
                     // W38-2 #3.1: cap the per-iter bump for bad blocks
                     // (no-op in HIGH regime where max_increase = 100.0,
                     // no-op for good blocks where diff <= 1.0 anyway).
@@ -2938,8 +3276,8 @@ impl VarDctEncoder {
                         // is finite, so the downstream assert can't catch it).
                         assert!(
                             diff.is_finite(),
-                            "butteraugli loop: non-finite diff = {diff} \
-                             (tile_dist={}, target_distance={target_distance})",
+                            "perceptual loop: non-finite diff = {diff} \
+                             (tile_dist={}, effective_metric_target={effective_metric_target_distance})",
                             tile_dist[bi]
                         );
                         // Negative diff would produce NaN through powf for
@@ -2968,15 +3306,385 @@ impl VarDctEncoder {
             }
         }
 
-        // Final SetQuantField: compute definitive params from final float field
-        // (libjxl enc_adaptive_quantization.cc:1112-1113)
+        // cvvdp-fork Phase 8d (2026-05-25): post-convergence bytes-tighten
+        // exit pass (Variant 1 batched single-probe per RFC §3.3
+        // Intervention C). After the inner seed loop converges
+        // quant_field_float to satisfy the cvvdp metric target, run a
+        // multiplicative bump pass that LOOSENS qac while the score still
+        // satisfies `target * (1 + ε)`. Each accepted bump gives back
+        // bytes everywhere; the bump step halves after each accept so the
+        // search converges on the maximal-still-passing global step.
+        //
+        // The pass is gated on:
+        //  1. The `cvvdp-loop-tighten` cargo feature being compiled in.
+        //  2. `self.cvvdp_bytes_tighten` being true (propagated from
+        //     `LossyConfig::resolve_cvvdp_bytes_tighten`).
+        //  3. `self.cvvdp_loop` being true (the pass is structurally
+        //     unsuitable for the butteraugli loop — see Phase 8d field
+        //     doc + RFC §3.3).
+        //  4. `backend.is_some()` AND `!use_vdp2` (the pass uses the
+        //     same backend trait as the inner loop; no VDP2-lite pathway).
+        //
+        // When any gate fails, the pass is skipped and the function falls
+        // through to the original final SetQuantField — byte-identical
+        // to pre-Phase-8d.
+        //
+        // Wall hit: ~`(max_iters + 1)` cvvdp scores in the worst case
+        // (every probe accepted + one final reject). At
+        // `MAX_OUTER_ITERS = 5` and 4 seed iters, this is ~125% additive
+        // wall on the inner seed loop. Production callers can opt out via
+        // `LossyConfig::with_cvvdp_bytes_tighten(Some(false))` or via the
+        // env var `JXL_CVVDP_BYTES_TIGHTEN_MAX_ITERS=0` (which disables
+        // the pass).
+        #[cfg(feature = "cvvdp-loop-tighten")]
+        let tighten_active =
+            self.cvvdp_bytes_tighten && self.cvvdp_loop && !use_vdp2 && backend.is_some();
+        #[cfg(not(feature = "cvvdp-loop-tighten"))]
+        let tighten_active = false;
+
+        // Compute the converged final params from the seed loop's exit
+        // state. We do this BEFORE the Phase 8d tighten pass so that
+        // both the pass-skipped branch AND the pass-active branch share
+        // the same `final_params` derivation — and so the tighten pass
+        // can PIN these params across probes (see Phase 8d design note
+        // below).
         let mut final_params =
             DistanceParams::compute_from_quant_field(target_distance, quant_field_float);
         final_params.x_qm_scale = initial_params.x_qm_scale;
         final_params.b_qm_scale = initial_params.b_qm_scale;
         final_params.epf_iters = initial_params.epf_iters;
 
-        // Convert final float → u8 with definitive params
+        // cvvdp-fork Phase 8d (2026-05-25): post-convergence bytes-tighten
+        // exit pass (Variant 1 batched single-probe per RFC §3.3
+        // Intervention C). After the seed loop converges quant_field_float
+        // to satisfy the cvvdp metric target, probe larger qac integers
+        // (= coarser quantization = fewer bytes) while the score still
+        // satisfies `target * (1 + ε)`. Each accepted probe gives back
+        // bytes everywhere; the bump step halves after each accept so
+        // the search converges on the maximal-still-passing global step.
+        //
+        // **Critical design note**: a uniform multiplicative bump on
+        // `quant_field_float` is a NO-OP — the downstream
+        // `compute_from_quant_field` re-derives `global_scale` from the
+        // (now uniformly scaled) median/MAD, exactly cancelling the
+        // scale-back through `quantize_quant_field`. The bytes-axis
+        // intervention has to bump the QAC INTEGERS directly while
+        // keeping `final_params` (= the seed loop's converged
+        // global_scale + inv_scale) PINNED. We do that by:
+        //
+        //  1. PIN `final_params` before the probe loop (already done above).
+        //  2. Probe by bumping the qf_float values multiplicatively
+        //     (call this `qf_probe`) AND by computing the probed qac
+        //     integers via `quantize_quant_field(qf_probe,
+        //     final_params.inv_scale)`. Because `inv_scale` is FROZEN
+        //     to the converged value, a 4% bump on qf_float DOES yield
+        //     larger qac integers (the [1, 255] clamp + i8 floor are
+        //     the rounding mechanism — see `quantize_quant_field`).
+        //  3. On accept: persist the probed qf_float AND the probed
+        //     u8 qac as the new working state. The final SetQuantField
+        //     below uses the pinned `final_params`, so the saved state
+        //     reaches the bitstream encoder as-is.
+        //  4. On reject: restore both qf_float and qac to the last
+        //     accepted state.
+        //
+        // The pass is gated on:
+        //  1. The `cvvdp-loop-tighten` cargo feature being compiled in.
+        //  2. `self.cvvdp_bytes_tighten` being true (propagated from
+        //     `LossyConfig::resolve_cvvdp_bytes_tighten`).
+        //  3. `self.cvvdp_loop` being true (the pass is structurally
+        //     unsuitable for the butteraugli loop — see Phase 8d field
+        //     doc + RFC §3.3).
+        //  4. `backend.is_some()` AND `!use_vdp2` (the pass uses the
+        //     same backend trait as the inner loop; no VDP2-lite pathway).
+        //
+        // When any gate fails, the pass is skipped — byte-identical
+        // to pre-Phase-8d.
+        //
+        // Wall hit: ~`(max_iters + 1)` cvvdp scores in the worst case.
+        // At `MAX_OUTER_ITERS = 5` and 4 seed iters, this is ~125%
+        // additive wall on the inner seed loop. Production callers can
+        // opt out via `LossyConfig::with_cvvdp_bytes_tighten(Some(false))`
+        // or via env `JXL_CVVDP_BYTES_TIGHTEN_MAX_ITERS=0`.
+        #[cfg(feature = "cvvdp-loop-tighten")]
+        let tighten_active =
+            self.cvvdp_bytes_tighten && self.cvvdp_loop && !use_vdp2 && backend.is_some();
+        #[cfg(not(feature = "cvvdp-loop-tighten"))]
+        let tighten_active = false;
+
+        if tighten_active {
+            #[cfg(feature = "cvvdp-loop-tighten")]
+            {
+                let (max_iters, mut step, tol_frac) =
+                    super::perceptual_backend::resolved_cvvdp_bytes_tighten_settings();
+                // Sentinel: 0 iters → pass disabled (env-only escape
+                // hatch for benches that want the pre-Phase-8d behaviour
+                // without rebuilding).
+                if max_iters > 0 {
+                    // The accept tolerance is relative to the metric
+                    // target. cvvdp target ≈ 0.0314 at d=1.0 → tol ≈
+                    // 1.57e-4 at the default 0.005 fraction. Small
+                    // enough to stay near the converged operating point;
+                    // large enough that the seed loop's natural
+                    // under-shoot leaves room for the bump.
+                    let accept_threshold =
+                        (effective_metric_target_distance as f64) * (1.0 + tol_frac as f64);
+
+                    // PIN inv_scale at the converged value so that
+                    // bumping qf_float DOES change the quantized
+                    // integers. See Phase 8d design note above.
+                    let pinned_inv_scale = final_params.inv_scale;
+
+                    debug_rect!(
+                        "bfly/tighten",
+                        0,
+                        0,
+                        width,
+                        height,
+                        "Phase8d ENTER target={:.6} accept<={:.6} step0={:.4} max_iters={} \
+                         seed_last_score={:.6} pinned_inv_scale={:.6}",
+                        effective_metric_target_distance,
+                        accept_threshold,
+                        step,
+                        max_iters,
+                        last_score,
+                        pinned_inv_scale
+                    );
+
+                    // Save the converged state so we can revert if a
+                    // probe fails. This guarantees the final state is
+                    // at least as good as the seed loop's exit point.
+                    let mut accepted_qf_float: alloc::vec::Vec<f32> = quant_field_float.to_vec();
+                    let mut accepted_qf_u8: alloc::vec::Vec<u8> = quant_field.to_vec();
+                    let mut accepted_score: f64 = last_score;
+                    let mut accepts: u32 = 0;
+                    let mut rejects: u32 = 0;
+
+                    for outer in 0..max_iters {
+                        // Apply the multiplicative LOOSEN to the current
+                        // ACCEPTED state, not to whatever
+                        // quant_field_float currently holds. This makes
+                        // the search a coarse line-search rather than
+                        // a runaway multiplicative drift.
+                        //
+                        // **Direction note**: LOOSENING = `qf *= (1 - step)`,
+                        // not `qf *= (1 + step)`. The encoder's
+                        // `quantize_coeff_ac` formula is
+                        // `q = round(coef * inv_weight * qac)` where
+                        // `qac = params.scale * quant_int` and
+                        // `quant_int ≈ qf_float * inv_scale`. Bigger
+                        // qf_float → bigger qac → bigger `q` integers
+                        // → MORE entropy bytes (finer quantization).
+                        // Smaller qf_float → smaller qac → smaller `q`
+                        // → more zero coeffs → FEWER bytes (coarser
+                        // quantization). The Phase 8d v1 bench
+                        // 2026-05-25 measured `qf *= 1.04` producing
+                        // +1.5 to +4.3% bytes — exactly this direction
+                        // confusion. v2 (this code) uses `qf *= 0.96`
+                        // which is the actual bytes-tighten direction.
+                        let loosen_factor = 1.0_f32 - step;
+                        for bi in 0..num_blocks {
+                            let loosened = accepted_qf_float[bi] * loosen_factor;
+                            quant_field_float[bi] = loosened.clamp(qf_lower, qf_higher);
+                        }
+
+                        // PIN PARAMS: use `final_params` (which still
+                        // holds the seed loop's converged inv_scale)
+                        // for both quantize_quant_field AND the
+                        // downstream transform. This is the crucial
+                        // step — without it, compute_from_quant_field
+                        // re-derives global_scale from the bumped
+                        // median/MAD and the probe degenerates to a
+                        // no-op (verified by the Phase 8d v1 bench
+                        // 2026-05-25 which showed bytes UP +1.5 to +4.3%
+                        // before this fix landed).
+                        let qf_vec = quantize_quant_field(quant_field_float, pinned_inv_scale);
+                        quant_field.copy_from_slice(&qf_vec);
+
+                        // Transform + quantize with PINNED params.
+                        self.transform_and_quantize_into(
+                            xyb_x,
+                            xyb_y,
+                            xyb_b,
+                            padded_width,
+                            xsize_blocks,
+                            ysize_blocks,
+                            &final_params,
+                            quant_field,
+                            cfl_map,
+                            ac_strategy,
+                            &mut *transform_out,
+                        );
+
+                        // Reconstruct XYB with PINNED params.
+                        let mut planes = reconstruct_xyb(
+                            &transform_out.quant_dc,
+                            &transform_out.quant_ac,
+                            &final_params,
+                            quant_field,
+                            cfl_map,
+                            ac_strategy,
+                            xsize_blocks,
+                            ysize_blocks,
+                        );
+
+                        if self.enable_gaborish {
+                            gab_smooth(&mut planes, padded_width, padded_height);
+                        }
+                        if final_params.epf_iters > 0 {
+                            epf::apply_epf(
+                                &mut planes,
+                                quant_field,
+                                sharpness,
+                                final_params.scale,
+                                final_params.epf_iters,
+                                xsize_blocks,
+                                ysize_blocks,
+                                padded_width,
+                                padded_height,
+                                self.budget.as_ref(),
+                            )?;
+                        }
+                        if let Some(pd) = patches_data {
+                            super::patches::add_patches(&mut planes, padded_width, pd);
+                        }
+                        if let Some(sd) = splines_data {
+                            super::splines::add_splines(
+                                &mut planes,
+                                padded_width,
+                                width,
+                                height,
+                                sd,
+                            );
+                        }
+                        xyb_to_linear_rgb_planar(
+                            &planes[0],
+                            &planes[1],
+                            &planes[2],
+                            recon_r,
+                            recon_g,
+                            recon_b,
+                            padded_pixels,
+                        );
+
+                        // Score the probe. Backend invariant: !use_vdp2 +
+                        // backend.is_some() were checked when computing
+                        // `tighten_active`; we restate the same dispatch.
+                        let bref = backend
+                            .as_deref_mut()
+                            .expect("Phase 8d gate must have a backend");
+                        let probe_score = match bref.compare_with_reference(
+                            recon_r,
+                            recon_g,
+                            recon_b,
+                            padded_width,
+                            width,
+                            height,
+                            &mut diffmap_vec,
+                        ) {
+                            Ok(r) => r.score,
+                            Err(_) => {
+                                // Compare failed (rare; should be
+                                // upstream bug). Revert the probe and
+                                // exit the tighten loop conservatively.
+                                quant_field_float.copy_from_slice(&accepted_qf_float);
+                                quant_field.copy_from_slice(&accepted_qf_u8);
+                                debug_rect!(
+                                    "bfly/tighten",
+                                    0,
+                                    0,
+                                    width,
+                                    height,
+                                    "Phase8d ABORT outer={} compare_err — revert + break",
+                                    outer
+                                );
+                                break;
+                            }
+                        };
+
+                        let pass = probe_score <= accept_threshold;
+                        debug_rect!(
+                            "bfly/tighten",
+                            0,
+                            0,
+                            width,
+                            height,
+                            "Phase8d outer={}/{}: loosen={:.4} probe_score={:.6} \
+                             accept<={:.6} → {}",
+                            outer,
+                            max_iters,
+                            loosen_factor,
+                            probe_score,
+                            accept_threshold,
+                            if pass { "ACCEPT" } else { "REJECT" }
+                        );
+
+                        if pass {
+                            // Accept: copy probe into accepted state +
+                            // shrink step for next iter.
+                            accepted_qf_float.copy_from_slice(quant_field_float);
+                            accepted_qf_u8.copy_from_slice(quant_field);
+                            accepted_score = probe_score;
+                            accepts += 1;
+                            step *= 0.5;
+                            // Bail early if step underflows perceptibility
+                            // (qac differences below ~0.1% don't change
+                            // quantized integer output).
+                            if step < 0.001 {
+                                break;
+                            }
+                        } else {
+                            // Reject: revert quant_field_float AND qac
+                            // to last accepted state. transform_out
+                            // and recon_* buffers now hold the
+                            // (rejected) probe's pixels — that's fine;
+                            // the final SetQuantField below repopulates
+                            // them via the post-Phase-8d finalization
+                            // logic that mirrors the rejected state's
+                            // last-accepted quant_field_float.
+                            quant_field_float.copy_from_slice(&accepted_qf_float);
+                            quant_field.copy_from_slice(&accepted_qf_u8);
+                            rejects += 1;
+                            // First reject: stop (we've found the
+                            // cliff OR the seed loop's exit point
+                            // already had no headroom).
+                            break;
+                        }
+                    }
+
+                    // Propagate the final accepted score into last_score
+                    // so SeedOutcome.final_score reflects the
+                    // post-tighten value (matters for the seed picker's
+                    // accept_bound + mean_qf decision in the outer
+                    // driver).
+                    last_score = accepted_score;
+                    debug_rect!(
+                        "bfly/tighten",
+                        0,
+                        0,
+                        width,
+                        height,
+                        "Phase8d EXIT accepts={} rejects={} final_score={:.6} final_step={:.4}",
+                        accepts,
+                        rejects,
+                        accepted_score,
+                        step
+                    );
+                    let _ = accepts;
+                    let _ = rejects;
+                }
+            }
+        }
+
+        // Phase 8d finalization: regardless of whether the tighten pass
+        // ran, write the current `quant_field_float` through
+        // `quantize_quant_field(_, final_params.inv_scale)` to produce
+        // the bitstream qac. When the tighten pass was active, this
+        // pinned-params quantize matches the last accepted probe (so
+        // `accepted_qf_u8` == `quant_field` is invariant). When the
+        // tighten pass was skipped, this reproduces the pre-Phase-8d
+        // final SetQuantField behaviour byte-for-byte (because
+        // `final_params` was computed identically to the pre-Phase-8d
+        // path).
         let qf_vec = quantize_quant_field(quant_field_float, final_params.inv_scale);
         quant_field.copy_from_slice(&qf_vec);
 
@@ -3720,23 +4428,6 @@ mod tuning_tests {
         }
     }
 
-    /// W44-AUDIT-6 Phase 3 test helper: builds proxies with explicit
-    /// edge_density so the Phase 3 fcbr-or-edge_density disjunction can
-    /// be exercised directly.
-    fn proxies_with_edge(
-        luma_var: f32,
-        fcbr: f32,
-        edge_density: f32,
-        m3: f32,
-    ) -> crate::vardct::encoder::ZenanalyzeProxies {
-        crate::vardct::encoder::ZenanalyzeProxies {
-            m3_colourfulness: m3,
-            flat_color_block_ratio: fcbr,
-            edge_density,
-            luma_var,
-        }
-    }
-
     #[test]
     fn w44_176_is_terminal_class_terminal_fires() {
         // terminal proxies (W44-176 probe): luma_var=1706, fcbr=0.833
@@ -3820,7 +4511,7 @@ mod tuning_tests {
             Some(13.85),
             crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
             Some(&p),
-            true,  // terminal_class_exclude
+            true, // terminal_class_exclude
             false, // high_colour_class_exclude
         );
         assert_eq!(
@@ -3844,7 +4535,7 @@ mod tuning_tests {
             crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
             Some(&p),
             false, // terminal_class_exclude OFF
-            false, // high_colour_class_exclude OFF
+            false, // high_colour_class_exclude
         );
         assert_eq!(
             scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
@@ -3874,256 +4565,12 @@ mod tuning_tests {
                 Some(m3),
                 crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
                 Some(&p),
-                true,  // terminal_class_exclude ON
-                false, // high_colour_class_exclude OFF (these all have m3 < 30)
+                true, // terminal_class_exclude ON
+                false, // high_colour_class_exclude
             );
             assert_eq!(
                 scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
                 "{name} must keep W44-109 lift (fails W44-176 discriminator)"
-            );
-        }
-    }
-
-    // W44-AUDIT-6 Phase 1 (2026-05-24): high-colour exclude tests.
-
-    #[test]
-    fn w44_audit_6_constants_are_documented_values() {
-        // Guard against accidental constant flips; ties the discriminator
-        // to the AUDIT-4 measurement: codec_wiki M3=145.73 vs W44-109 win
-        // cluster M3 ∈ [14, 29]. Threshold 80 gives ~3.5× margin above
-        // the win cluster and ~1.8× margin below the wedge cell.
-        assert_eq!(W44_AUDIT_6_HIGH_COLOUR_M3_MIN, 80.0);
-    }
-
-    #[test]
-    fn w44_audit_6_is_high_colour_class_codec_wiki_fires() {
-        // codec_wiki proxies (AUDIT-4 probe): M3=145.73
-        let p = proxies(1374.0, 0.904, 145.73);
-        assert!(
-            w44_audit_6_is_high_colour_class(Some(&p)),
-            "codec_wiki should fire W44-AUDIT-6 high-colour discriminator (M3=145.73 >= 80.0)"
-        );
-    }
-
-    #[test]
-    fn w44_audit_6_is_high_colour_class_w44_109_winners_dont_fire() {
-        // Win-cluster proxies (gb82-sc text-class screenshots, W44-109
-        // probe corpus): max M3 in cluster ≈ 29 (imac_dark 20.96 +
-        // safety). All MUST stay below 80 to keep the W44-109 lift.
-        for (name, lv, fcbr, m3) in [
-            ("terminal", 1706.0, 0.833, 13.85),
-            ("graph", 415.0, 0.809, 11.75),
-            ("imac_g3", 5244.0, 0.775, 14.29),
-            ("imac_dark", 3303.0, 0.728, 20.96),
-            ("gmessages", 1046.0, 0.899, 10.16),
-            ("gui", 1051.0, 0.858, 10.05),
-        ] {
-            let p = proxies(lv, fcbr, m3);
-            assert!(
-                !w44_audit_6_is_high_colour_class(Some(&p)),
-                "{name} M3={m3} must NOT fire W44-AUDIT-6 (below 80.0 cutoff)"
-            );
-        }
-    }
-
-    #[test]
-    fn w44_audit_6_is_high_colour_class_no_proxies_returns_false() {
-        // Non-sRGB-u8 / streaming / animation paths: proxies absent →
-        // discriminator cannot fire → existing W44-109/W44-176 behaviour
-        // preserved.
-        assert!(!w44_audit_6_is_high_colour_class(None));
-    }
-
-    #[test]
-    fn w44_audit_6_exclude_suppresses_gate_for_codec_wiki() {
-        // With `high_colour_class_exclude = true` AND codec_wiki proxies
-        // (M3=145.73), the W44-109 lift is suppressed (returns 1.0) even
-        // though the outer gate would fire (d=4, is_screenshot, m3 NOT
-        // low-colour so the d>=3.5 main branch fires).
-        let p = proxies(1374.0, 0.904, 145.73);
-        let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
-            7,
-            0,
-            true,
-            4.0,
-            Some(145.73),
-            crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
-            Some(&p),
-            true, // terminal_class_exclude (Zenjxl default)
-            true, // high_colour_class_exclude (Zenjxl default after AUDIT-6)
-        );
-        assert_eq!(
-            scale, 1.0,
-            "W44-AUDIT-6 exclude should suppress the W44-109 lift on codec_wiki-class proxies"
-        );
-    }
-
-    #[test]
-    fn w44_audit_6_exclude_off_preserves_w44_109_lift_for_codec_wiki() {
-        // With `high_colour_class_exclude = false`, the W44-109 lift still
-        // fires on codec_wiki proxies — Libjxl/LeanFaster strategies and
-        // any caller opting out must see pre-AUDIT-6 behaviour.
-        let p = proxies(1374.0, 0.904, 145.73);
-        let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
-            7,
-            0,
-            true,
-            4.0,
-            Some(145.73),
-            crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
-            Some(&p),
-            true,  // terminal_class_exclude (codec_wiki fails W44-176)
-            false, // high_colour_class_exclude OFF
-        );
-        assert_eq!(
-            scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
-            "W44-AUDIT-6 exclude OFF must preserve W44-109 lift on codec_wiki"
-        );
-    }
-
-    #[test]
-    fn w44_audit_6_exclude_preserves_lift_for_w44_109_winners() {
-        // The 6 W44-109 winners (terminal handled separately by W44-176;
-        // graph/imac_g3/imac_dark/gmessages/gui handled here) must KEEP
-        // the W44-109 lift even with W44-AUDIT-6 ON, because their M3 is
-        // far below the 80.0 cutoff.
-        //
-        // Note: terminal is excluded by W44-176 (luma_var+fcbr), which
-        // composes with W44-AUDIT-6 via OR — the assertion below uses
-        // `terminal_class_exclude = false` to isolate the AUDIT-6 gate.
-        let keep_fire = [
-            ("terminal", 1706.0, 0.833, 13.85),
-            ("graph", 415.0, 0.809, 11.75),
-            ("imac_g3", 5244.0, 0.775, 14.29),
-            ("imac_dark", 3303.0, 0.728, 20.96),
-            ("gmessages", 1046.0, 0.899, 10.16),
-            ("gui", 1051.0, 0.858, 10.05),
-        ];
-        for (name, lv, fcbr, m3) in keep_fire {
-            let p = proxies(lv, fcbr, m3);
-            let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
-                7,
-                0,
-                true,
-                4.0,
-                Some(m3),
-                crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
-                Some(&p),
-                false, // terminal_class_exclude OFF (isolating AUDIT-6)
-                true,  // high_colour_class_exclude ON
-            );
-            assert_eq!(
-                scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
-                "{name} must keep W44-109 lift (M3={m3} below 80.0 cutoff)"
-            );
-        }
-    }
-
-    #[test]
-    fn w44_audit_6_exclude_no_proxies_preserves_lift() {
-        // Streaming/animation/non-sRGB-u8 paths: proxies absent → AUDIT-6
-        // discriminator cannot fire → existing W44-109 behaviour preserved.
-        let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
-            7,
-            0,
-            true,
-            4.0,
-            Some(145.73), // m3 supplied via legacy param but no proxies struct
-            crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
-            None, // proxies absent
-            true,
-            true, // high_colour_class_exclude ON but no proxies → no-op
-        );
-        assert_eq!(
-            scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
-            "W44-AUDIT-6 must be a no-op when proxies absent"
-        );
-    }
-
-    // W44-AUDIT-6 Phase 3 (2026-05-24): fcbr-or-edge_density disjunction
-    // tests — tighten the Phase 1 `m3 >= 80` predicate to exclude CLIC
-    // web photos that fired AUDIT-6 in the wider-corpus bench.
-
-    #[test]
-    fn w44_audit_6_phase3_constants_are_documented_values() {
-        // Pin Phase 3 thresholds against the proxy-probe TSV
-        // `benchmarks/w44_audit_6_phase3_proxy_probe_2026-05-24.tsv`.
-        // codec_wiki passes via fcbr (0.904 ≥ 0.5); 1189261 passes via
-        // edge_density (0.490 ≥ 0.45); the 2 CLIC FIRE-BAD images
-        // (clic_22ea12 fcbr=0.278/ed=0.167, clic_0c49a5 fcbr=0.080/
-        // ed=0.336) clear neither.
-        assert_eq!(W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN, 0.5);
-        assert_eq!(W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN, 0.45);
-    }
-
-    #[test]
-    fn w44_audit_6_phase3_codec_wiki_passes_via_fcbr() {
-        // codec_wiki: M3=145.73 ≥ 80, fcbr=0.904 ≥ 0.5 → admitted.
-        let p = proxies_with_edge(1374.0, 0.904, 0.040, 145.73);
-        assert!(
-            w44_audit_6_is_high_colour_class(Some(&p)),
-            "codec_wiki must still fire post-Phase 3 (fcbr disjunct passes)"
-        );
-    }
-
-    #[test]
-    fn w44_audit_6_phase3_landscape_1189261_passes_via_edge_density() {
-        // 1189261: M3=98.84 ≥ 80, fcbr=0.003 ≪ 0.5 BUT edge_density=
-        // 0.490 ≥ 0.45 → admitted via edge_density disjunct.
-        let p = proxies_with_edge(3087.0, 0.003, 0.490, 98.84);
-        assert!(
-            w44_audit_6_is_high_colour_class(Some(&p)),
-            "1189261 must still fire post-Phase 3 (edge_density disjunct passes)"
-        );
-    }
-
-    #[test]
-    fn w44_audit_6_phase3_clic_22ea12_rejected_neither_disjunct() {
-        // clic_22ea12 (FIRE-BAD CLIC web photo): M3=105.30 ≥ 80, fcbr=
-        // 0.278 < 0.5, edge_density=0.167 < 0.45 → REJECTED post-Phase 3
-        // (firing in Phase 1 with -3.84 worst-cell SSIM2 cost).
-        let p = proxies_with_edge(1411.0, 0.278, 0.167, 105.30);
-        assert!(
-            !w44_audit_6_is_high_colour_class(Some(&p)),
-            "clic_22ea12 must NOT fire post-Phase 3 (clears neither fcbr nor edge_density disjunct)"
-        );
-    }
-
-    #[test]
-    fn w44_audit_6_phase3_clic_0c49a5_rejected_neither_disjunct() {
-        // clic_0c49a5 (FIRE-BAD CLIC web photo): M3=95.91 ≥ 80, fcbr=
-        // 0.080 < 0.5, edge_density=0.336 < 0.45 → REJECTED post-Phase 3.
-        let p = proxies_with_edge(4069.0, 0.080, 0.336, 95.91);
-        assert!(
-            !w44_audit_6_is_high_colour_class(Some(&p)),
-            "clic_0c49a5 must NOT fire post-Phase 3 (clears neither disjunct)"
-        );
-    }
-
-    #[test]
-    fn w44_audit_6_phase3_exclude_preserves_lift_for_clic_photos() {
-        // End-to-end at the W44-109 site: Phase 3 admission failure
-        // means the lift fires as it did pre-Phase 1 (no exclude).
-        let cases = [
-            ("clic_22ea12", 1411.0, 0.278, 0.167, 105.30),
-            ("clic_0c49a5", 4069.0, 0.080, 0.336, 95.91),
-        ];
-        for (name, lv, fcbr, ed, m3) in cases {
-            let p = proxies_with_edge(lv, fcbr, ed, m3);
-            let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
-                7,
-                0,
-                true,
-                4.0,
-                Some(m3),
-                crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
-                Some(&p),
-                true, // terminal_class_exclude ON
-                true, // high_colour_class_exclude ON (Zenjxl default)
-            );
-            assert_eq!(
-                scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
-                "{name} must KEEP W44-109 lift post-Phase 3 (Phase 3 disjunction excludes it from the AUDIT-6 exclude)"
             );
         }
     }
@@ -4389,5 +4836,75 @@ mod tuning_tests {
             LIBJXL_BUTTERAUGLI_SDR_INTENSITY_TARGET, 80.0,
             "SDR intensity_target must match libjxl's hardcoded 80.0 cd/m²"
         );
+    }
+
+    // ========================================================================
+    // cvvdp-fork Phase 8g (2026-05-25) per-block reducer constants smoke tests
+    // ========================================================================
+    //
+    // Pure-read tests (no env mutation). The env-override tests live in
+    // `tests/cvvdp_block_constants_smoke.rs` (integration test) so the
+    // `unsafe { env::set_var }` calls don't violate the lib crate's
+    // `#![forbid(unsafe_code)]`.
+
+    #[test]
+    fn butter_block_constants_match_libjxl_literal() {
+        // libjxl TileDistMap: K_TILE_NORM = 1.2. This value must not
+        // move without a coordinated re-baseline of butteraugli-loop
+        // hash-locks and a libjxl-parity bench. Phase 8g is a cvvdp-only
+        // fit; we do not touch this value.
+        assert_eq!(
+            BUTTER_BLOCK_CONSTANTS.k_tile_norm, 1.2,
+            "BUTTER_BLOCK_CONSTANTS.k_tile_norm must stay at libjxl's 1.2"
+        );
+    }
+
+    #[cfg(feature = "cvvdp-loop")]
+    #[test]
+    fn cvvdp_block_constants_k_tile_norm_below_butter() {
+        // Phase 8g fit (2026-05-25): cvvdp's post-renorm tile_dist
+        // distribution requires a SMALLER k_tile_norm than butter's to
+        // bring `bad_rate` parity. The exact value may move chunk-to-
+        // chunk as we refine the fit, but it must always remain strictly
+        // below butter's 1.2 — otherwise Pareto-front-pct regresses
+        // toward Phase 8c's 60%.
+        assert!(
+            CVVDP_BLOCK_CONSTANTS.k_tile_norm < BUTTER_BLOCK_CONSTANTS.k_tile_norm,
+            "CVVDP_BLOCK_CONSTANTS.k_tile_norm = {} must be < BUTTER's {} (Phase 8g invariant)",
+            CVVDP_BLOCK_CONSTANTS.k_tile_norm,
+            BUTTER_BLOCK_CONSTANTS.k_tile_norm
+        );
+        // Sanity lower bound: too-aggressive scaling (< 0.05) would
+        // effectively disable bad-block firing entirely (cvvdp bad_rate
+        // ~ 0 always → no refinement work). 0.05 is the conservative
+        // lower bound; the production value should be in [0.10, 0.50].
+        assert!(
+            CVVDP_BLOCK_CONSTANTS.k_tile_norm >= 0.05,
+            "CVVDP_BLOCK_CONSTANTS.k_tile_norm = {} too small — bad_rate would saturate at 0",
+            CVVDP_BLOCK_CONSTANTS.k_tile_norm
+        );
+    }
+
+    #[test]
+    fn block_reducer_dispatch_butter_path() {
+        // When cvvdp is NOT the active backend, we always get the butter
+        // constants regardless of env hooks. This is the production-default
+        // path; hash-locks depend on byte-identity here.
+        let c = block_reducer_constants_for_backend(false);
+        assert_eq!(c.k_tile_norm, BUTTER_BLOCK_CONSTANTS.k_tile_norm);
+    }
+
+    #[cfg(feature = "cvvdp-loop")]
+    #[test]
+    fn block_reducer_dispatch_cvvdp_path_no_env() {
+        // When cvvdp IS the active backend and no env override is set,
+        // we get the cvvdp constants. We only check this if the env
+        // var isn't preset — otherwise we'd interfere with another
+        // test's setup.
+        if std::env::var("JXL_CVVDP_K_TILE_NORM").is_ok() {
+            return;
+        }
+        let c = block_reducer_constants_for_backend(true);
+        assert_eq!(c.k_tile_norm, CVVDP_BLOCK_CONSTANTS.k_tile_norm);
     }
 }

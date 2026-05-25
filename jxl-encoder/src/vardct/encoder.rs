@@ -1822,7 +1822,7 @@ impl ZenanalyzeProxies {
 ///   (`profile.cfl_pass1_screenshot_x0_start`)
 /// - The encoder has [`ZenanalyzeProxies`] available (8-bit sRGB layouts)
 /// - The proxies match the high-colour-class predicate
-///   ([`crate::vardct::butteraugli_loop::w44_audit_6_is_high_colour_class`])
+///   ([`crate::vardct::perceptual_loop::w44_audit_6_is_high_colour_class`])
 ///
 /// When `true`, the CfL Newton dispatch flips `libjxl_parity = true` for
 /// that single call, routing Pass-1 through `x=0` start + Newton math
@@ -1850,7 +1850,7 @@ pub(crate) fn w44_audit_5_p3_force_libjxl_parity_for_screenshot(
             return false;
         }
     }
-    crate::vardct::butteraugli_loop::w44_audit_6_is_high_colour_class(proxies)
+    crate::vardct::perceptual_loop::w44_audit_6_is_high_colour_class(proxies)
 }
 
 /// Tiny JPEG XL encoder.
@@ -2058,6 +2058,83 @@ pub struct VarDctEncoder {
     /// See [`crate::api::LossyConfig::with_gpu_butteraugli`].
     #[cfg(feature = "butteraugli-loop")]
     pub gpu_butteraugli: bool,
+    /// cvvdp-fork Phase 3 (2026-05-24): opt-in CVVDP backend for the
+    /// quantization loop. When `true` AND the `cvvdp-loop` cargo
+    /// feature is on AND CUDA init succeeds AND the active
+    /// [`EncoderStrategy`](crate::api::EncoderStrategy) is not
+    /// [`Libjxl`](crate::api::EncoderStrategy::Libjxl), the backend
+    /// construction in [`crate::vardct::perceptual_backend::construct_backend`]
+    /// returns a [`crate::vardct::cvvdp_backend::gpu::GpuCvvdpBackend`]
+    /// instead of the butteraugli CPU/GPU pair. Phase 3 ships the
+    /// backend impl only — the buttloop body still consumes butteraugli;
+    /// Phase 4 plumbs the cvvdp signal through `run_buttloop`. Default
+    /// `false` keeps every hash-lock byte-identical (including when
+    /// the `cvvdp-loop` feature is compiled in but no caller opts in).
+    /// See [`crate::api::LossyConfig::with_cvvdp_loop`] and the Phase 3
+    /// brief at `docs/RFC_CVVDP_PHASE3_BRIEF.md`.
+    #[cfg(feature = "butteraugli-loop")]
+    pub cvvdp_loop: bool,
+    /// cvvdp-fork Phase 5 (2026-05-24): caller-supplied preference for
+    /// the CPU CVVDP backend over the GPU CVVDP backend. Only consulted
+    /// by [`crate::vardct::perceptual_backend::construct_backend`] when
+    /// [`Self::cvvdp_loop`] is also true. When `true` (and the
+    /// `cvvdp-loop-cpu` cargo feature is compiled in), the dispatch
+    /// returns the CPU CVVDP backend instead of the GPU CVVDP backend.
+    /// Default `false` preserves the W44-228b-style "respect caller
+    /// explicit opt-in only" policy — the field is always present so
+    /// hash-lock fixtures don't depend on the cvvdp cargo features.
+    /// See [`crate::api::LossyConfig::with_cvvdp_use_cpu`] and the
+    /// Phase 5 brief at `docs/RFC_CVVDP_PHASE5_BRIEF.md`.
+    #[cfg(feature = "butteraugli-loop")]
+    pub cvvdp_use_cpu: bool,
+    /// zensim-fork Phase 3 (RFC `docs/RFC_ZENSIM_FORK_PLAN.md` §5,
+    /// 2026-05-25): caller-supplied opt-in for the zensim
+    /// perceptual-metric backend. Populated by
+    /// [`crate::vardct::perceptual_backend::propagate_resolved_metric_to_encoder`]
+    /// from [`crate::api::LossyConfig::with_perceptual_metric`]. Mutually
+    /// exclusive with [`Self::cvvdp_loop`] at the buttloop dispatch level
+    /// (zensim wins when both are true; see translation in
+    /// `vardct/perceptual_loop.rs::build_perceptual_backend`). When `true`
+    /// AND a zensim cargo feature is on AND the active strategy is not
+    /// `Libjxl`, the backend constructed in
+    /// [`crate::vardct::perceptual_backend::construct_backend`] is a
+    /// [`crate::vardct::zensim_backend::cpu::CpuZensimBackend`] /
+    /// [`crate::vardct::zensim_backend::gpu::GpuZensimBackend`] instead
+    /// of the cvvdp / butteraugli backends.
+    ///
+    /// Phase 3 ships the backend impl + dispatch only — the buttloop
+    /// body still consumes butteraugli-direction targets. Default `false`
+    /// keeps every hash-lock byte-identical (including when a zensim
+    /// cargo feature is compiled in but no caller opts in).
+    #[cfg(feature = "butteraugli-loop")]
+    pub zensim_loop: bool,
+    /// zensim-fork Phase 3 (2026-05-25): caller-supplied preference for
+    /// the CPU zensim backend over the GPU zensim backend. Only consulted
+    /// by [`crate::vardct::perceptual_backend::construct_backend`] when
+    /// [`Self::zensim_loop`] is also true. When `true` (and the
+    /// `zensim-loop` cargo feature is compiled in), the dispatch returns
+    /// the CPU zensim backend; when `false`, the dispatch prefers the
+    /// GPU zensim backend (with silent CPU fallback if GPU init fails
+    /// and `zensim-loop` is compiled). Default `false` mirrors the
+    /// cvvdp Phase 5 "respect caller explicit opt-in only" policy.
+    #[cfg(feature = "butteraugli-loop")]
+    pub zensim_use_cpu: bool,
+    /// cvvdp-fork Phase 8d (2026-05-25): opt-in post-convergence
+    /// bytes-tighten exit pass on the cvvdp seed loop. When `true`,
+    /// AND [`Self::cvvdp_loop`] is also true, AND the `cvvdp-loop-tighten`
+    /// cargo feature is compiled in, the inner seed loop's final
+    /// SetQuantField is preceded by a batched multiplicative bump pass
+    /// that loosens qac while the cvvdp score still satisfies
+    /// `target * (1 + ε)`. Gives back bytes the converged state had
+    /// headroom for. Default `false` keeps every hash-lock byte-identical
+    /// regardless of the `cvvdp-loop-tighten` cargo feature. NEVER fires
+    /// on the butteraugli loop (the butteraugli per-block reducer is
+    /// already calibrated to the W44 cost-model gates; loosening it
+    /// post-convergence breaks the tradeoff). See
+    /// [`crate::api::LossyConfig::with_cvvdp_bytes_tighten`] and the
+    /// Phase 8d brief in `docs/RFC_CVVDP_PHASE8_PARETO_TARGETING.md` §3.3.
+    #[cfg(feature = "butteraugli-loop")]
+    pub cvvdp_bytes_tighten: bool,
     /// Number of SSIM2 quantization loop iterations.
     /// Alternative to butteraugli loop: uses per-block linear RGB RMSE + full-image SSIM2.
     /// Requires the `ssim2-loop` feature.
@@ -2392,6 +2469,44 @@ impl Default for VarDctEncoder {
             // sets it via with_gpu_butteraugli.
             #[cfg(feature = "butteraugli-loop")]
             gpu_butteraugli: false,
+            // cvvdp-fork Phase 3 (2026-05-24): CVVDP backend defaults off;
+            // LossyConfig sets it via `with_cvvdp_loop`. Hash-locks stay
+            // byte-identical regardless of the `cvvdp-loop` cargo feature
+            // because the field defaults to `false`.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_loop: false,
+            // cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP preference
+            // defaults off (= prefer GPU when both backends compiled).
+            // LossyConfig sets it via `with_cvvdp_use_cpu`. Hash-locks
+            // stay byte-identical regardless of the `cvvdp-loop-cpu`
+            // cargo feature because the field defaults to `false` AND
+            // the entire cvvdp dispatch branch is gated on
+            // `cvvdp_loop = true` upstream.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_use_cpu: false,
+            // zensim-fork Phase 3 (2026-05-25): zensim backend defaults
+            // off; LossyConfig sets it via `with_perceptual_metric(Zensim)`.
+            // Hash-locks stay byte-identical regardless of the `zensim-loop`
+            // / `zensim-loop-gpu` cargo features because the field defaults
+            // to `false`.
+            #[cfg(feature = "butteraugli-loop")]
+            zensim_loop: false,
+            // zensim-fork Phase 3 (2026-05-25): CPU zensim preference
+            // defaults off (= prefer GPU when both backends compiled).
+            // Hash-locks stay byte-identical regardless of the zensim
+            // cargo features because the field defaults to `false` AND
+            // the entire zensim dispatch branch is gated on
+            // `zensim_loop = true` upstream.
+            #[cfg(feature = "butteraugli-loop")]
+            zensim_use_cpu: false,
+            // cvvdp-fork Phase 8d (2026-05-25): bytes-tighten exit pass
+            // defaults off. LossyConfig sets it via
+            // `with_cvvdp_bytes_tighten`. Hash-locks stay byte-identical
+            // regardless of the `cvvdp-loop-tighten` cargo feature
+            // because the field defaults to `false` AND the entire
+            // tighten branch is gated on `cvvdp_loop = true` upstream.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_bytes_tighten: false,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]
@@ -2491,6 +2606,44 @@ impl VarDctEncoder {
             // sets it via with_gpu_butteraugli.
             #[cfg(feature = "butteraugli-loop")]
             gpu_butteraugli: false,
+            // cvvdp-fork Phase 3 (2026-05-24): CVVDP backend defaults off;
+            // LossyConfig sets it via `with_cvvdp_loop`. Hash-locks stay
+            // byte-identical regardless of the `cvvdp-loop` cargo feature
+            // because the field defaults to `false`.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_loop: false,
+            // cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP preference
+            // defaults off (= prefer GPU when both backends compiled).
+            // LossyConfig sets it via `with_cvvdp_use_cpu`. Hash-locks
+            // stay byte-identical regardless of the `cvvdp-loop-cpu`
+            // cargo feature because the field defaults to `false` AND
+            // the entire cvvdp dispatch branch is gated on
+            // `cvvdp_loop = true` upstream.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_use_cpu: false,
+            // zensim-fork Phase 3 (2026-05-25): zensim backend defaults
+            // off; LossyConfig sets it via `with_perceptual_metric(Zensim)`.
+            // Hash-locks stay byte-identical regardless of the `zensim-loop`
+            // / `zensim-loop-gpu` cargo features because the field defaults
+            // to `false`.
+            #[cfg(feature = "butteraugli-loop")]
+            zensim_loop: false,
+            // zensim-fork Phase 3 (2026-05-25): CPU zensim preference
+            // defaults off (= prefer GPU when both backends compiled).
+            // Hash-locks stay byte-identical regardless of the zensim
+            // cargo features because the field defaults to `false` AND
+            // the entire zensim dispatch branch is gated on
+            // `zensim_loop = true` upstream.
+            #[cfg(feature = "butteraugli-loop")]
+            zensim_use_cpu: false,
+            // cvvdp-fork Phase 8d (2026-05-25): bytes-tighten exit pass
+            // defaults off. LossyConfig sets it via
+            // `with_cvvdp_bytes_tighten`. Hash-locks stay byte-identical
+            // regardless of the `cvvdp-loop-tighten` cargo feature
+            // because the field defaults to `false` AND the entire
+            // tighten branch is gated on `cvvdp_loop = true` upstream.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_bytes_tighten: false,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]
@@ -4001,7 +4154,7 @@ impl VarDctEncoder {
         {
             // W44-213: tuning-override-aware threshold lookup.
             let median_threshold = crate::runtime_or_default!(
-                super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD,
+                super::perceptual_loop::SCREENSHOT_MEDIAN_THRESHOLD,
                 screenshot_median_threshold,
             );
             let is_screenshot =
@@ -4043,7 +4196,7 @@ impl VarDctEncoder {
             let terminal_class_exclude = self.resolved_improvements.terminal_class_exclude;
             let high_colour_class_exclude = self.resolved_improvements.high_colour_class_exclude;
             let qf_pre_scale =
-                super::butteraugli_loop::resolved_adaptive_quant_qf_seed_scale_with_policy(
+                super::perceptual_loop::resolved_adaptive_quant_qf_seed_scale_with_policy(
                     self.effort,
                     effective_buttloop_iters,
                     is_screenshot,
@@ -4057,8 +4210,8 @@ impl VarDctEncoder {
             if qf_pre_scale != 1.0 {
                 // W44-145 INVESTIGATION HONEST-STOP (2026-05-21): per-block
                 // adaptive qf scaling via mask1x1 lookup was implemented
-                // (`super::butteraugli_loop::w44_145_per_block_qf_scale`
-                // + `super::butteraugli_loop::per_block_mask1x1_mean`) and
+                // (`super::perceptual_loop::w44_145_per_block_qf_scale`
+                // + `super::perceptual_loop::per_block_mask1x1_mean`) and
                 // bisected at LOW thresholds {70, 95}. Mechanism works
                 // directionally (blank-mask blocks get smaller scale,
                 // text-mask blocks get full scale, mirroring cjxl's
@@ -5218,7 +5371,7 @@ impl VarDctEncoder {
                 // faithful, byte-identical).
                 // W44-213: tuning-override-aware threshold lookup.
                 let median_threshold = crate::runtime_or_default!(
-                    super::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD,
+                    super::perceptual_loop::SCREENSHOT_MEDIAN_THRESHOLD,
                     screenshot_median_threshold,
                 );
                 let is_screenshot = mask1x1.as_deref().is_some_and(|m| {
