@@ -2253,6 +2253,60 @@ impl VarDctEncoder {
         // `BackendCompareResult { diffmap: Vec<f32> }` path produced.
         let mut diffmap_vec: alloc::vec::Vec<f32> = alloc::vec::Vec::new();
 
+        // SA-B (W44-AUDIT-8 Phase 8b): pre-loop dump of initial
+        // quant_field_float + bounds. Captures the seed state that
+        // both encoders start from. NOTE: seed_scale_applied is NOT
+        // visible here (lives in outer `butteraugli_refine_quant_field`
+        // scope) — caller-side scaling is already baked into
+        // `quant_field_float` by the time we enter this inner seed
+        // function. Env-gated by `JXL_SA_B_DUMP=1`; zero-cost when
+        // env unset (mirrors W44-181/W44-200 diagnostic pattern).
+        #[cfg(feature = "std")]
+        if std::env::var("JXL_SA_B_DUMP").is_ok() {
+            let mut qf_sorted: alloc::vec::Vec<f32> =
+                quant_field_float.iter().copied().collect();
+            qf_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+            let pct = |p: f64| -> f32 {
+                let i = (((qf_sorted.len() as f64) - 1.0) * p).round() as usize;
+                qf_sorted[i.min(qf_sorted.len() - 1)]
+            };
+            let qf_min_s = qf_sorted[0];
+            let qf_p25 = pct(0.25);
+            let qf_median = pct(0.50);
+            let qf_p75 = pct(0.75);
+            let qf_max_s = qf_sorted[qf_sorted.len() - 1];
+            let qf_sum: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
+            let qf_avg = qf_sum / quant_field_float.len() as f64;
+            let path = std::env::var("JXL_SA_B_DUMP_PATH")
+                .unwrap_or_else(|_| "/tmp/sa_b_ours.tsv".to_string());
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                let _ = writeln!(
+                    f,
+                    "# ours: target={:.4} iters={} is_screenshot={} k_init_mul={:.4} qf_lower={:.6} qf_higher={:.6}",
+                    target_distance, iters, is_screenshot, k_init_mul,
+                    qf_lower, qf_higher,
+                );
+                let _ = writeln!(
+                    f,
+                    "ours\t-1\t{}\t-1.0000\t{:.4}\t-1\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t-1.0000\t-1\t-1.0000\t-1.0000\t1.0000\t{}",
+                    iters,
+                    target_distance,
+                    qf_min_s,
+                    qf_p25,
+                    qf_median,
+                    qf_p75,
+                    qf_max_s,
+                    qf_avg,
+                    is_screenshot,
+                );
+            }
+        }
+
         // Loop runs iters+1 times (matching libjxl: last iteration is compare-only).
         // i=0..iters-1: SetQuantField + roundtrip + compare + adjust
         // i=iters: SetQuantField + roundtrip + compare + break
@@ -2681,6 +2735,70 @@ impl VarDctEncoder {
                     td_max,
                     bad_blocks
                 );
+            }
+
+            // SA-B (W44-AUDIT-8 Phase 8b): per-iter TSV dump for the
+            // buttloop-internals comparison vs cjxl. Gated by env
+            // `JXL_SA_B_DUMP=1`; writes TSV rows to the file pointed
+            // at by `JXL_SA_B_DUMP_PATH` (defaults to /tmp/sa_b_ours.tsv).
+            // Columns: source,iter,iters,iter_score,target,global_scale,
+            // qf_min,qf_p25,qf_median,qf_p75,qf_max,qf_avg,td_max,bad_blocks,
+            // cur_pow,max_increase,seed_scale_applied,is_screenshot.
+            // Zero-cost when env unset (mirrors W44-181/W44-200 diagnostic
+            // pattern).
+            #[cfg(feature = "std")]
+            if std::env::var("JXL_SA_B_DUMP").is_ok() {
+                let mut qf_sorted: alloc::vec::Vec<f32> =
+                    quant_field_float.iter().copied().collect();
+                qf_sorted
+                    .sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+                let pct = |p: f64| -> f32 {
+                    let i = (((qf_sorted.len() as f64) - 1.0) * p).round() as usize;
+                    qf_sorted[i.min(qf_sorted.len() - 1)]
+                };
+                let qf_min_s = qf_sorted[0];
+                let qf_p25 = pct(0.25);
+                let qf_median = pct(0.50);
+                let qf_p75 = pct(0.75);
+                let qf_max_s = qf_sorted[qf_sorted.len() - 1];
+                let qf_sum: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
+                let qf_avg = qf_sum / quant_field_float.len() as f64;
+                let td_max = tile_dist.iter().copied().reduce(f32::max).unwrap_or(0.0);
+                let bad_blocks =
+                    tile_dist.iter().filter(|&&d| d > target_distance).count();
+                let cur_pow_now = resolved_cur_pow(iter, target_distance as f64);
+                let max_inc =
+                    resolved_max_increase_with_class(target_distance as f64, is_screenshot);
+                let path = std::env::var("JXL_SA_B_DUMP_PATH")
+                    .unwrap_or_else(|_| "/tmp/sa_b_ours.tsv".to_string());
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                {
+                    // seed_scale_applied=1.0 here (caller already baked it in).
+                    let _ = writeln!(
+                        f,
+                        "ours\t{}\t{}\t{:.6}\t{:.4}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{}\t{:.4}\t{:.4}\t1.0000\t{}",
+                        iter,
+                        iters,
+                        iter_score,
+                        target_distance,
+                        current_params.global_scale,
+                        qf_min_s,
+                        qf_p25,
+                        qf_median,
+                        qf_p75,
+                        qf_max_s,
+                        qf_avg,
+                        td_max,
+                        bad_blocks,
+                        cur_pow_now,
+                        max_inc,
+                        is_screenshot,
+                    );
+                }
             }
 
             // Last iteration is compare-only (libjxl: if (i == iters) break;)
