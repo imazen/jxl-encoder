@@ -2103,13 +2103,23 @@ impl EffortProfile {
     }
 
     /// Pixel-count + distance gate for the lossy VarDCT
-    /// `try_dct64` evaluation. Always-on (NOT opt-in) — purely a
-    /// wall-clock win on the small + low-distance cell.
+    /// `try_dct64` (chunk 1) and `try_dct32` (chunk 2a / issue #43)
+    /// evaluations. Always-on (NOT opt-in) — purely a wall-clock win
+    /// on the small + low-distance cell.
     ///
-    /// When `pixels < LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD` (500_000)
-    /// AND `distance < LOSSY_LOW_DISTANCE_THRESHOLD` (2.0), drops
-    /// `try_dct64` from the effort default (`true` at effort ≥ 7) to
-    /// `false`. Skips the entire
+    /// **Chunk 1** (try_dct64): when `pixels < LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD`
+    /// (500_000) AND `distance < LOSSY_LOW_DISTANCE_THRESHOLD` (2.0),
+    /// drops `try_dct64` from the effort default (`true` at effort ≥ 7) to
+    /// `false`.
+    ///
+    /// **Chunk 2a** (try_dct32): independently, when
+    /// `pixels < LOSSY_TINY_IMAGE_PIXEL_THRESHOLD` (100_000) AND
+    /// `distance < LOSSY_VERY_LOW_DISTANCE_THRESHOLD` (0.5) AND
+    /// `effort >= 7`, drops `try_dct32` (default `true` at effort >= 5)
+    /// to `false`. The chunk 2a cell is a strict subset of the chunk 1
+    /// cell, so on chunk-2a-firing inputs both flips happen together.
+    ///
+    /// Skips the entire
     /// [`crate::vardct::ac_strategy_search::find_best_64x64_transform`]
     /// pipeline (DCT64x64, 2×DCT64x32, 2×DCT32x64 candidates plus their
     /// 4×`find_best_32x32_transform` reuse path).
@@ -2191,7 +2201,41 @@ impl EffortProfile {
         distance: f32,
         smooth_photo_hint: bool,
     ) {
-        // Only consider the gate when the cell holds (small + low-d).
+        // Chunk 2a (issue #43): drop `try_dct32` on tiny + very-low-d
+        // cells at effort >= 7. Independent of (and orthogonal to) the
+        // chunk 1 `try_dct64` gate below — chunk 2a's tiny+very-low-d
+        // cell is a strict subset of the chunk 1 small+low-d cell, so
+        // when chunk 2a fires chunk 1's `try_dct64 = false` flip also
+        // fires (only the chunk 2a `try_dct32 = false` is additional).
+        //
+        // Rule:
+        //   if pixels < LOSSY_TINY_IMAGE_PIXEL_THRESHOLD (100_000)
+        //      AND distance < LOSSY_VERY_LOW_DISTANCE_THRESHOLD (0.5)
+        //      AND effort >= 7
+        //      AND self.try_dct32 was true:
+        //         self.try_dct32 = false
+        //
+        // The `effort >= 7` gate matches the chunk 1 / try_dct64 effort
+        // gate. At effort < 7 the chunk 1 gate is a no-op (try_dct64
+        // already off at effort < 7); for chunk 2a try_dct32 is on at
+        // effort >= 5, so we explicitly cap at effort >= 7 to mirror
+        // the chunk 1 conservatism and keep the dispatch family
+        // calibrated against a single effort-band.
+        //
+        // Smoothness hint is NOT consulted for the try_dct32 gate —
+        // chunk 1's smooth-photo escape hatch (W44-35) applies only
+        // to try_dct64 because DCT64 is the strategy that wins on
+        // smooth photos; DCT32 trade-off is independent.
+        if pixels < LOSSY_TINY_IMAGE_PIXEL_THRESHOLD
+            && distance < LOSSY_VERY_LOW_DISTANCE_THRESHOLD
+            && self.effort >= 7
+            && self.try_dct32
+        {
+            self.try_dct32 = false;
+        }
+
+        // Only consider the (chunk 1 / try_dct64) gate when the cell
+        // holds (small + low-d).
         if pixels >= LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD || distance >= LOSSY_LOW_DISTANCE_THRESHOLD {
             return;
         }
@@ -2538,6 +2582,32 @@ pub const LOSSY_SMALL_IMAGE_PIXEL_THRESHOLD: u64 = 500_000;
 /// adapter disables the DCT64 strategy class on small images.
 /// See [`EffortProfile::adapt_to_image_lossy`].
 pub const LOSSY_LOW_DISTANCE_THRESHOLD: f32 = 2.0;
+
+/// Pixel-count threshold below which the lossy VarDCT
+/// `adapt_to_image_lossy` adapter (chunk 2a / issue #43) disables the
+/// DCT32 strategy class at very low distance + effort >= 7.
+///
+/// Tiny + very-low-d is a strict subset of the chunk 1 small + low-d
+/// cell. DCT32 evaluation runs four 32×32 candidates per 32×32 tile
+/// (DCT32X32 + DCT32X16 + DCT16X32 + 4×`find_best_32x32_transform`
+/// reuse path) and at very low distance + tiny image they essentially
+/// never win — the cost-model entropy_mul (1.48 base, 1024 coefficients)
+/// heavily penalises the 32×32 block on tiny images.
+///
+/// See [`EffortProfile::adapt_to_image_lossy_with_smoothness`].
+pub const LOSSY_TINY_IMAGE_PIXEL_THRESHOLD: u64 = 100_000;
+
+/// Distance below which the lossy VarDCT `adapt_to_image_lossy`
+/// adapter (chunk 2a / issue #43) disables the DCT32 strategy class
+/// on tiny images at effort >= 7.
+///
+/// Strict subset of [`LOSSY_LOW_DISTANCE_THRESHOLD`] (= 2.0). At
+/// very low distance the cost-model favours smaller blocks (DCT8 /
+/// DCT4X8 / DCT4X4) that capture fine detail at the bitrates achieved
+/// at d < 0.5.
+///
+/// See [`EffortProfile::adapt_to_image_lossy_with_smoothness`].
+pub const LOSSY_VERY_LOW_DISTANCE_THRESHOLD: f32 = 0.5;
 
 /// Minimum pixel count for content-class dispatch to consider firing.
 /// Below this the classifier is unreliable (synthetic / thumbnail content)
@@ -4016,6 +4086,129 @@ mod tests {
         assert!(
             !p.try_dct64,
             "lossy experimental e7 small + low-d: adapter still fires"
+        );
+    }
+
+    /// Chunk 2a (issue #43) VarDCT AC strategy dispatch:
+    /// `adapt_to_image_lossy` must flip `try_dct32` to `false` only on
+    /// the (`pixels < LOSSY_TINY_IMAGE_PIXEL_THRESHOLD`,
+    ///  `distance < LOSSY_VERY_LOW_DISTANCE_THRESHOLD`, `effort >= 7`)
+    /// cell, and only when `try_dct32` was already true (effort >= 5).
+    /// Composes orthogonally with the chunk 1 try_dct64 gate.
+    #[test]
+    fn test_adapt_to_image_lossy_dct32_gate_chunk2a() {
+        // 1. Tiny + very-low-d at e7+: dispatch fires (try_dct32 →
+        //    false). Note: chunk 1's try_dct64 also flips on the same
+        //    cell (chunk 2a cell ⊂ chunk 1 cell).
+        for effort in 7u8..=10 {
+            for &pixels in &[1u64, 1024, 65_535, 99_999] {
+                for &distance in &[0.01_f32, 0.1, 0.25, 0.4, 0.499] {
+                    let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+                    assert!(p.try_dct32, "baseline e{effort}: try_dct32 must be true");
+                    p.adapt_to_image_lossy(pixels, distance);
+                    assert!(
+                        !p.try_dct32,
+                        "chunk 2a: e{effort} pixels={pixels} d={distance}: \
+                         try_dct32 must drop to false"
+                    );
+                    // Chunk 1 still fires on the same cell.
+                    assert!(
+                        !p.try_dct64,
+                        "chunk 2a + chunk 1 compose: e{effort} pixels={pixels} d={distance}: \
+                         try_dct64 must also drop to false (chunk 2a cell ⊂ chunk 1 cell)"
+                    );
+                }
+            }
+        }
+
+        // 2. At or above tiny pixel threshold: no chunk 2a fire
+        //    (try_dct32 stays true). Some cells still fire chunk 1
+        //    (e.g. 100_000..500_000 px) but try_dct32 untouched.
+        for &pixels in &[
+            LOSSY_TINY_IMAGE_PIXEL_THRESHOLD,
+            262_144,
+            499_999,
+            1_048_576,
+        ] {
+            for &distance in &[0.1_f32, 0.25, 0.4] {
+                let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
+                p.adapt_to_image_lossy(pixels, distance);
+                assert!(
+                    p.try_dct32,
+                    "chunk 2a: pixels={pixels} d={distance}: \
+                     try_dct32 must stay true (pixel gate)"
+                );
+            }
+        }
+
+        // 3. At or above very-low-distance threshold: no chunk 2a fire.
+        for &distance in &[
+            LOSSY_VERY_LOW_DISTANCE_THRESHOLD,
+            0.7_f32,
+            1.0,
+            1.5,
+            2.0,
+            5.0,
+        ] {
+            for &pixels in &[1u64, 50_000, 99_999] {
+                let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
+                p.adapt_to_image_lossy(pixels, distance);
+                assert!(
+                    p.try_dct32,
+                    "chunk 2a: pixels={pixels} d={distance}: \
+                     try_dct32 must stay true (distance gate)"
+                );
+            }
+        }
+
+        // 4. Effort < 7: chunk 2a gate does NOT fire even on the
+        //    tiny + very-low-d cell. try_dct32 stays at its effort
+        //    default (true at effort >= 5, false at effort < 5).
+        for effort in 5u8..=6 {
+            let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert!(
+                p.try_dct32,
+                "baseline e{effort}: try_dct32 must be true (effort >= 5 default)"
+            );
+            p.adapt_to_image_lossy(50_000, 0.25);
+            assert!(
+                p.try_dct32,
+                "chunk 2a effort gate: e{effort} (< 7): try_dct32 must stay true"
+            );
+        }
+        for effort in 1u8..=4 {
+            let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert!(
+                !p.try_dct32,
+                "baseline e{effort}: try_dct32 must be false (effort < 5)"
+            );
+            p.adapt_to_image_lossy(50_000, 0.25);
+            assert!(
+                !p.try_dct32,
+                "chunk 2a: e{effort} (< 5): adapter must not flip false → true"
+            );
+        }
+
+        // 5. Smoothness hint must NOT affect chunk 2a (only chunk 1
+        //    consults the hint). try_dct32 always drops on the chunk
+        //    2a cell at effort >= 7 regardless of smooth_photo_hint.
+        for smooth_hint in [false, true] {
+            let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
+            p.adapt_to_image_lossy_with_smoothness(50_000, 0.25, smooth_hint);
+            assert!(
+                !p.try_dct32,
+                "chunk 2a is hint-agnostic: smooth_hint={smooth_hint}: \
+                 try_dct32 must drop to false"
+            );
+        }
+
+        // 6. Experimental mode covered (try_dct32 follows same effort
+        //    schedule as Reference).
+        let mut p = EffortProfile::lossy(7, EncoderMode::Experimental);
+        p.adapt_to_image_lossy(50_000, 0.25);
+        assert!(
+            !p.try_dct32,
+            "lossy experimental e7 tiny + very-low-d: chunk 2a still fires"
         );
     }
 
