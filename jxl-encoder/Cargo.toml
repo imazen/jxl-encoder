@@ -155,6 +155,17 @@ cvvdp-loop = ["butteraugli-loop", "dep:cvvdp-gpu", "dep:cubecl"]
 # no-caller-opts-in. The CPU backend is reachable only via the explicit
 # `with_cvvdp_loop(Some(true))` opt-in, same as the GPU backend.
 cvvdp-loop-cpu = ["cvvdp-loop", "dep:cvvdp-cpu"]
+# cvvdp-fork Phase 8d (2026-05-25): post-convergence bytes-tighten exit
+# pass on the cvvdp loop. After the inner seed loop converges qac to hit
+# the cvvdp metric target, run a batched multiplicative bump pass that
+# loosens qac while the score still satisfies `target + epsilon`. Gives
+# back bytes the converged state had headroom for. Opt-in via the
+# `with_cvvdp_bytes_tighten(Some(true))` API; default `None` resolves to
+# true ONLY when both the feature is compiled AND `cvvdp_loop` is active.
+# Implies `cvvdp-loop` (the pass only runs on the cvvdp dispatch path —
+# tightening the butteraugli loop is a documented anti-pattern, see
+# `docs/RFC_CVVDP_PHASE8_PARETO_TARGETING.md` §3.3).
+cvvdp-loop-tighten = ["cvvdp-loop"]
 ssim2-loop = ["dep:fast-ssim2", "dep:imgref"]
 zensim-loop = ["dep:zensim"]
 # Convenience encode functions that accept imgref::ImgRef with typed pixel formats.
@@ -1454,6 +1465,38 @@ required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "ssim2-loop",
 name = "cvvdp_phase8c_pareto_rebench"
 path = "examples/cvvdp_phase8c_pareto_rebench.rs"
 required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "ssim2-loop", "parallel"]
+
+# cvvdp-fork Phase 8d (2026-05-25): Pareto re-bench with the bytes-tighten
+# exit pass active. 5 fixtures × 4 distances × 3 backends (B baseline +
+# C_GPU_v2 renorm-only + C_GPU_v3 renorm+tighten), scored via butteraugli
+# + cvvdp-gpu + SSIMULACRA2 through jxl-oxide. Output matches the Phase
+# 8c TSV schema; the new `C_GPU_v3` backend tag is independently
+# aggregated by `scripts/cvvdp_pareto_diagnosis.py`.
+[[example]]
+name = "cvvdp_phase8d_pareto_rebench"
+path = "examples/cvvdp_phase8d_pareto_rebench.rs"
+required-features = [
+    "__expert",
+    "butteraugli-loop",
+    "cvvdp-loop",
+    "cvvdp-loop-tighten",
+    "ssim2-loop",
+    "parallel",
+]
+
+# cvvdp-fork Phase 8d (2026-05-25): multi-decoder roundtrip spot-check
+# for the bytes-tighten exit pass. 6 cells × jxl-oxide + djxl + jxl-rs.
+# Hard acceptance gate (f): ANY decoder failure → revert.
+[[example]]
+name = "cvvdp_phase8d_decoder_roundtrip"
+path = "examples/cvvdp_phase8d_decoder_roundtrip.rs"
+required-features = [
+    "__expert",
+    "butteraugli-loop",
+    "cvvdp-loop",
+    "cvvdp-loop-tighten",
+    "parallel",
+]
 
 # cvvdp-fork Phase 5 (2026-05-24): 10-cell A/B bench comparing CPU
 # vs GPU CVVDP backends in the buttloop. Self-contained synthetic

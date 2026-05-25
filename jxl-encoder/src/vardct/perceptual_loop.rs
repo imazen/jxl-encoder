@@ -2784,15 +2784,385 @@ impl VarDctEncoder {
             }
         }
 
-        // Final SetQuantField: compute definitive params from final float field
-        // (libjxl enc_adaptive_quantization.cc:1112-1113)
+        // cvvdp-fork Phase 8d (2026-05-25): post-convergence bytes-tighten
+        // exit pass (Variant 1 batched single-probe per RFC §3.3
+        // Intervention C). After the inner seed loop converges
+        // quant_field_float to satisfy the cvvdp metric target, run a
+        // multiplicative bump pass that LOOSENS qac while the score still
+        // satisfies `target * (1 + ε)`. Each accepted bump gives back
+        // bytes everywhere; the bump step halves after each accept so the
+        // search converges on the maximal-still-passing global step.
+        //
+        // The pass is gated on:
+        //  1. The `cvvdp-loop-tighten` cargo feature being compiled in.
+        //  2. `self.cvvdp_bytes_tighten` being true (propagated from
+        //     `LossyConfig::resolve_cvvdp_bytes_tighten`).
+        //  3. `self.cvvdp_loop` being true (the pass is structurally
+        //     unsuitable for the butteraugli loop — see Phase 8d field
+        //     doc + RFC §3.3).
+        //  4. `backend.is_some()` AND `!use_vdp2` (the pass uses the
+        //     same backend trait as the inner loop; no VDP2-lite pathway).
+        //
+        // When any gate fails, the pass is skipped and the function falls
+        // through to the original final SetQuantField — byte-identical
+        // to pre-Phase-8d.
+        //
+        // Wall hit: ~`(max_iters + 1)` cvvdp scores in the worst case
+        // (every probe accepted + one final reject). At
+        // `MAX_OUTER_ITERS = 5` and 4 seed iters, this is ~125% additive
+        // wall on the inner seed loop. Production callers can opt out via
+        // `LossyConfig::with_cvvdp_bytes_tighten(Some(false))` or via the
+        // env var `JXL_CVVDP_BYTES_TIGHTEN_MAX_ITERS=0` (which disables
+        // the pass).
+        #[cfg(feature = "cvvdp-loop-tighten")]
+        let tighten_active =
+            self.cvvdp_bytes_tighten && self.cvvdp_loop && !use_vdp2 && backend.is_some();
+        #[cfg(not(feature = "cvvdp-loop-tighten"))]
+        let tighten_active = false;
+
+        // Compute the converged final params from the seed loop's exit
+        // state. We do this BEFORE the Phase 8d tighten pass so that
+        // both the pass-skipped branch AND the pass-active branch share
+        // the same `final_params` derivation — and so the tighten pass
+        // can PIN these params across probes (see Phase 8d design note
+        // below).
         let mut final_params =
             DistanceParams::compute_from_quant_field(target_distance, quant_field_float);
         final_params.x_qm_scale = initial_params.x_qm_scale;
         final_params.b_qm_scale = initial_params.b_qm_scale;
         final_params.epf_iters = initial_params.epf_iters;
 
-        // Convert final float → u8 with definitive params
+        // cvvdp-fork Phase 8d (2026-05-25): post-convergence bytes-tighten
+        // exit pass (Variant 1 batched single-probe per RFC §3.3
+        // Intervention C). After the seed loop converges quant_field_float
+        // to satisfy the cvvdp metric target, probe larger qac integers
+        // (= coarser quantization = fewer bytes) while the score still
+        // satisfies `target * (1 + ε)`. Each accepted probe gives back
+        // bytes everywhere; the bump step halves after each accept so
+        // the search converges on the maximal-still-passing global step.
+        //
+        // **Critical design note**: a uniform multiplicative bump on
+        // `quant_field_float` is a NO-OP — the downstream
+        // `compute_from_quant_field` re-derives `global_scale` from the
+        // (now uniformly scaled) median/MAD, exactly cancelling the
+        // scale-back through `quantize_quant_field`. The bytes-axis
+        // intervention has to bump the QAC INTEGERS directly while
+        // keeping `final_params` (= the seed loop's converged
+        // global_scale + inv_scale) PINNED. We do that by:
+        //
+        //  1. PIN `final_params` before the probe loop (already done above).
+        //  2. Probe by bumping the qf_float values multiplicatively
+        //     (call this `qf_probe`) AND by computing the probed qac
+        //     integers via `quantize_quant_field(qf_probe,
+        //     final_params.inv_scale)`. Because `inv_scale` is FROZEN
+        //     to the converged value, a 4% bump on qf_float DOES yield
+        //     larger qac integers (the [1, 255] clamp + i8 floor are
+        //     the rounding mechanism — see `quantize_quant_field`).
+        //  3. On accept: persist the probed qf_float AND the probed
+        //     u8 qac as the new working state. The final SetQuantField
+        //     below uses the pinned `final_params`, so the saved state
+        //     reaches the bitstream encoder as-is.
+        //  4. On reject: restore both qf_float and qac to the last
+        //     accepted state.
+        //
+        // The pass is gated on:
+        //  1. The `cvvdp-loop-tighten` cargo feature being compiled in.
+        //  2. `self.cvvdp_bytes_tighten` being true (propagated from
+        //     `LossyConfig::resolve_cvvdp_bytes_tighten`).
+        //  3. `self.cvvdp_loop` being true (the pass is structurally
+        //     unsuitable for the butteraugli loop — see Phase 8d field
+        //     doc + RFC §3.3).
+        //  4. `backend.is_some()` AND `!use_vdp2` (the pass uses the
+        //     same backend trait as the inner loop; no VDP2-lite pathway).
+        //
+        // When any gate fails, the pass is skipped — byte-identical
+        // to pre-Phase-8d.
+        //
+        // Wall hit: ~`(max_iters + 1)` cvvdp scores in the worst case.
+        // At `MAX_OUTER_ITERS = 5` and 4 seed iters, this is ~125%
+        // additive wall on the inner seed loop. Production callers can
+        // opt out via `LossyConfig::with_cvvdp_bytes_tighten(Some(false))`
+        // or via env `JXL_CVVDP_BYTES_TIGHTEN_MAX_ITERS=0`.
+        #[cfg(feature = "cvvdp-loop-tighten")]
+        let tighten_active =
+            self.cvvdp_bytes_tighten && self.cvvdp_loop && !use_vdp2 && backend.is_some();
+        #[cfg(not(feature = "cvvdp-loop-tighten"))]
+        let tighten_active = false;
+
+        if tighten_active {
+            #[cfg(feature = "cvvdp-loop-tighten")]
+            {
+                let (max_iters, mut step, tol_frac) =
+                    super::perceptual_backend::resolved_cvvdp_bytes_tighten_settings();
+                // Sentinel: 0 iters → pass disabled (env-only escape
+                // hatch for benches that want the pre-Phase-8d behaviour
+                // without rebuilding).
+                if max_iters > 0 {
+                    // The accept tolerance is relative to the metric
+                    // target. cvvdp target ≈ 0.0314 at d=1.0 → tol ≈
+                    // 1.57e-4 at the default 0.005 fraction. Small
+                    // enough to stay near the converged operating point;
+                    // large enough that the seed loop's natural
+                    // under-shoot leaves room for the bump.
+                    let accept_threshold =
+                        (effective_metric_target_distance as f64) * (1.0 + tol_frac as f64);
+
+                    // PIN inv_scale at the converged value so that
+                    // bumping qf_float DOES change the quantized
+                    // integers. See Phase 8d design note above.
+                    let pinned_inv_scale = final_params.inv_scale;
+
+                    debug_rect!(
+                        "bfly/tighten",
+                        0,
+                        0,
+                        width,
+                        height,
+                        "Phase8d ENTER target={:.6} accept<={:.6} step0={:.4} max_iters={} \
+                         seed_last_score={:.6} pinned_inv_scale={:.6}",
+                        effective_metric_target_distance,
+                        accept_threshold,
+                        step,
+                        max_iters,
+                        last_score,
+                        pinned_inv_scale
+                    );
+
+                    // Save the converged state so we can revert if a
+                    // probe fails. This guarantees the final state is
+                    // at least as good as the seed loop's exit point.
+                    let mut accepted_qf_float: alloc::vec::Vec<f32> = quant_field_float.to_vec();
+                    let mut accepted_qf_u8: alloc::vec::Vec<u8> = quant_field.to_vec();
+                    let mut accepted_score: f64 = last_score;
+                    let mut accepts: u32 = 0;
+                    let mut rejects: u32 = 0;
+
+                    for outer in 0..max_iters {
+                        // Apply the multiplicative LOOSEN to the current
+                        // ACCEPTED state, not to whatever
+                        // quant_field_float currently holds. This makes
+                        // the search a coarse line-search rather than
+                        // a runaway multiplicative drift.
+                        //
+                        // **Direction note**: LOOSENING = `qf *= (1 - step)`,
+                        // not `qf *= (1 + step)`. The encoder's
+                        // `quantize_coeff_ac` formula is
+                        // `q = round(coef * inv_weight * qac)` where
+                        // `qac = params.scale * quant_int` and
+                        // `quant_int ≈ qf_float * inv_scale`. Bigger
+                        // qf_float → bigger qac → bigger `q` integers
+                        // → MORE entropy bytes (finer quantization).
+                        // Smaller qf_float → smaller qac → smaller `q`
+                        // → more zero coeffs → FEWER bytes (coarser
+                        // quantization). The Phase 8d v1 bench
+                        // 2026-05-25 measured `qf *= 1.04` producing
+                        // +1.5 to +4.3% bytes — exactly this direction
+                        // confusion. v2 (this code) uses `qf *= 0.96`
+                        // which is the actual bytes-tighten direction.
+                        let loosen_factor = 1.0_f32 - step;
+                        for bi in 0..num_blocks {
+                            let loosened = accepted_qf_float[bi] * loosen_factor;
+                            quant_field_float[bi] = loosened.clamp(qf_lower, qf_higher);
+                        }
+
+                        // PIN PARAMS: use `final_params` (which still
+                        // holds the seed loop's converged inv_scale)
+                        // for both quantize_quant_field AND the
+                        // downstream transform. This is the crucial
+                        // step — without it, compute_from_quant_field
+                        // re-derives global_scale from the bumped
+                        // median/MAD and the probe degenerates to a
+                        // no-op (verified by the Phase 8d v1 bench
+                        // 2026-05-25 which showed bytes UP +1.5 to +4.3%
+                        // before this fix landed).
+                        let qf_vec = quantize_quant_field(quant_field_float, pinned_inv_scale);
+                        quant_field.copy_from_slice(&qf_vec);
+
+                        // Transform + quantize with PINNED params.
+                        self.transform_and_quantize_into(
+                            xyb_x,
+                            xyb_y,
+                            xyb_b,
+                            padded_width,
+                            xsize_blocks,
+                            ysize_blocks,
+                            &final_params,
+                            quant_field,
+                            cfl_map,
+                            ac_strategy,
+                            &mut *transform_out,
+                        );
+
+                        // Reconstruct XYB with PINNED params.
+                        let mut planes = reconstruct_xyb(
+                            &transform_out.quant_dc,
+                            &transform_out.quant_ac,
+                            &final_params,
+                            quant_field,
+                            cfl_map,
+                            ac_strategy,
+                            xsize_blocks,
+                            ysize_blocks,
+                        );
+
+                        if self.enable_gaborish {
+                            gab_smooth(&mut planes, padded_width, padded_height);
+                        }
+                        if final_params.epf_iters > 0 {
+                            epf::apply_epf(
+                                &mut planes,
+                                quant_field,
+                                sharpness,
+                                final_params.scale,
+                                final_params.epf_iters,
+                                xsize_blocks,
+                                ysize_blocks,
+                                padded_width,
+                                padded_height,
+                                self.budget.as_ref(),
+                            )?;
+                        }
+                        if let Some(pd) = patches_data {
+                            super::patches::add_patches(&mut planes, padded_width, pd);
+                        }
+                        if let Some(sd) = splines_data {
+                            super::splines::add_splines(
+                                &mut planes,
+                                padded_width,
+                                width,
+                                height,
+                                sd,
+                            );
+                        }
+                        xyb_to_linear_rgb_planar(
+                            &planes[0],
+                            &planes[1],
+                            &planes[2],
+                            recon_r,
+                            recon_g,
+                            recon_b,
+                            padded_pixels,
+                        );
+
+                        // Score the probe. Backend invariant: !use_vdp2 +
+                        // backend.is_some() were checked when computing
+                        // `tighten_active`; we restate the same dispatch.
+                        let bref = backend
+                            .as_deref_mut()
+                            .expect("Phase 8d gate must have a backend");
+                        let probe_score = match bref.compare_with_reference(
+                            recon_r,
+                            recon_g,
+                            recon_b,
+                            padded_width,
+                            width,
+                            height,
+                            &mut diffmap_vec,
+                        ) {
+                            Ok(r) => r.score,
+                            Err(_) => {
+                                // Compare failed (rare; should be
+                                // upstream bug). Revert the probe and
+                                // exit the tighten loop conservatively.
+                                quant_field_float.copy_from_slice(&accepted_qf_float);
+                                quant_field.copy_from_slice(&accepted_qf_u8);
+                                debug_rect!(
+                                    "bfly/tighten",
+                                    0,
+                                    0,
+                                    width,
+                                    height,
+                                    "Phase8d ABORT outer={} compare_err — revert + break",
+                                    outer
+                                );
+                                break;
+                            }
+                        };
+
+                        let pass = probe_score <= accept_threshold;
+                        debug_rect!(
+                            "bfly/tighten",
+                            0,
+                            0,
+                            width,
+                            height,
+                            "Phase8d outer={}/{}: loosen={:.4} probe_score={:.6} \
+                             accept<={:.6} → {}",
+                            outer,
+                            max_iters,
+                            loosen_factor,
+                            probe_score,
+                            accept_threshold,
+                            if pass { "ACCEPT" } else { "REJECT" }
+                        );
+
+                        if pass {
+                            // Accept: copy probe into accepted state +
+                            // shrink step for next iter.
+                            accepted_qf_float.copy_from_slice(quant_field_float);
+                            accepted_qf_u8.copy_from_slice(quant_field);
+                            accepted_score = probe_score;
+                            accepts += 1;
+                            step *= 0.5;
+                            // Bail early if step underflows perceptibility
+                            // (qac differences below ~0.1% don't change
+                            // quantized integer output).
+                            if step < 0.001 {
+                                break;
+                            }
+                        } else {
+                            // Reject: revert quant_field_float AND qac
+                            // to last accepted state. transform_out
+                            // and recon_* buffers now hold the
+                            // (rejected) probe's pixels — that's fine;
+                            // the final SetQuantField below repopulates
+                            // them via the post-Phase-8d finalization
+                            // logic that mirrors the rejected state's
+                            // last-accepted quant_field_float.
+                            quant_field_float.copy_from_slice(&accepted_qf_float);
+                            quant_field.copy_from_slice(&accepted_qf_u8);
+                            rejects += 1;
+                            // First reject: stop (we've found the
+                            // cliff OR the seed loop's exit point
+                            // already had no headroom).
+                            break;
+                        }
+                    }
+
+                    // Propagate the final accepted score into last_score
+                    // so SeedOutcome.final_score reflects the
+                    // post-tighten value (matters for the seed picker's
+                    // accept_bound + mean_qf decision in the outer
+                    // driver).
+                    last_score = accepted_score;
+                    debug_rect!(
+                        "bfly/tighten",
+                        0,
+                        0,
+                        width,
+                        height,
+                        "Phase8d EXIT accepts={} rejects={} final_score={:.6} final_step={:.4}",
+                        accepts,
+                        rejects,
+                        accepted_score,
+                        step
+                    );
+                    let _ = accepts;
+                    let _ = rejects;
+                }
+            }
+        }
+
+        // Phase 8d finalization: regardless of whether the tighten pass
+        // ran, write the current `quant_field_float` through
+        // `quantize_quant_field(_, final_params.inv_scale)` to produce
+        // the bitstream qac. When the tighten pass was active, this
+        // pinned-params quantize matches the last accepted probe (so
+        // `accepted_qf_u8` == `quant_field` is invariant). When the
+        // tighten pass was skipped, this reproduces the pre-Phase-8d
+        // final SetQuantField behaviour byte-for-byte (because
+        // `final_params` was computed identically to the pre-Phase-8d
+        // path).
         let qf_vec = quantize_quant_field(quant_field_float, final_params.inv_scale);
         quant_field.copy_from_slice(&qf_vec);
 
