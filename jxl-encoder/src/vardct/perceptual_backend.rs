@@ -57,6 +57,164 @@ pub(crate) struct BackendCompareResult {
     pub(crate) score: f64,
 }
 
+// ============================================================================
+// cvvdp-fork Phase 8b/8c — diffmap distribution analysis + renormalization
+// ============================================================================
+
+/// cvvdp-fork Phase 8c (2026-05-25): per-pixel diffmap renormalization scale
+/// applied INSIDE the cvvdp backends before returning to the buttloop.
+///
+/// The W44 cost-model / per-block reducer (`vardct/perceptual_loop.rs`,
+/// 16th-power norm + `tile_dist[bi] / effective_metric_target_distance > 1`
+/// bad-block predicate) was calibrated for butteraugli's per-pixel diffmap
+/// value range. cvvdp's JOD-derived per-pixel signal lives in a different
+/// numerical range; the Phase 8a Pareto diagnosis (40.3% Pareto-front
+/// position vs butteraugli's 93.6%) showed the cvvdp loop over-allocates
+/// qac to blocks the reducer flags as "bad" under cvvdp's distribution
+/// shape. Scaling cvvdp's per-pixel diffmap by this factor brings the
+/// reducer's bad-block predicate into the same statistical regime
+/// butteraugli operates in, so the W44 calibration applies 1:1.
+///
+/// Value seeded from Phase 8b distribution capture
+/// (`benchmarks/cvvdp_diffmap_distribution_2026-05-25.tsv` — see
+/// `examples/cvvdp_phase8b_diffmap_distribution.rs`).
+///
+/// **The right scale aligns the BAD-BLOCK PREDICATE, not just the diffmap mean.**
+/// The buttloop fires refinement when `tile_dist / effective_metric_target > 1`.
+/// `effective_metric_target` differs between backends:
+///
+///   - butter: `target_b = distance` (e.g. 2.0 at d=2)
+///   - cvvdp:  `target_c = CVVDP_DISTANCE_TARGETS` lookup (e.g. 0.0724 at d=2)
+///
+/// So the right scale satisfies
+/// `(mean_c * scale) / target_c ≈ mean_b / target_b`,
+/// i.e. `scale = (target_c / target_b) * (mean_b / mean_c)`.
+///
+/// Phase 8b 20-cell (5 fixtures × 4 distances) computation:
+/// - **median scale = 0.0177**
+/// - p25..p75: [0.0103, 0.0234]
+/// - geometric mean: 0.01629
+/// - range: 0.0036 (terminal d=0.5, outlier) — 0.0707 (imac_g3 d=1.0)
+///
+/// We pick **0.018** (rounded median) for the production constant. The
+/// scale is fairly distance-independent within a 2-3× band, suggesting
+/// a single global value is a reasonable Phase 8c shipping choice. Per-
+/// distance refinement is Phase 8g (Intervention B) follow-on.
+///
+/// **Sentinel value `1.0`** disables renormalization (Phase 8b harness
+/// behaviour when collecting raw cvvdp values for the ratio computation).
+///
+/// **Env override** `JXL_CVVDP_DIFFMAP_RENORM_SCALE=<float>` replaces
+/// this constant for bench harnesses. Only consulted when the env var
+/// is present AND parseable; production code uses the constant.
+#[cfg(feature = "cvvdp-loop")]
+pub(crate) const CVVDP_DIFFMAP_RENORM_SCALE: f32 = 0.018;
+
+/// Read the active renorm scale, honouring the
+/// `JXL_CVVDP_DIFFMAP_RENORM_SCALE` env override for Phase 8b harness use.
+/// Production callers should treat the env hook as bench-only.
+#[cfg(feature = "cvvdp-loop")]
+#[inline]
+pub(crate) fn resolved_cvvdp_diffmap_renorm_scale() -> f32 {
+    if let Ok(s) = std::env::var("JXL_CVVDP_DIFFMAP_RENORM_SCALE")
+        && let Ok(v) = s.parse::<f32>()
+        && v.is_finite()
+        && v > 0.0
+    {
+        return v;
+    }
+    CVVDP_DIFFMAP_RENORM_SCALE
+}
+
+/// cvvdp-fork Phase 8b (2026-05-25): when env var
+/// `JXL_PHASE8B_DIFFMAP_DUMP` is set to a writable file path, every
+/// `compare_with_reference` call appends one TSV row capturing the
+/// diffmap distribution stats (mean / median / p25 / p75 / p95 / max).
+/// Cheap (~one O(N) pass over the diffmap on top of the buttloop's
+/// per-iter compare) and unconditionally disabled when the env var is
+/// unset, so this has zero production cost.
+///
+/// Schema (tab-separated, header written once per file create):
+/// `backend\tcompare_call\twidth\theight\tn_pixels\tmean\tmedian\tp25\tp75\tp95\tmax\tscore`
+///
+/// The CALLER passes its own `compare_call_idx` (the buttloop iter
+/// number, or a synthetic counter for harness use); the dump function
+/// records it verbatim. The score is recorded post-(10-JOD) mapping for
+/// cvvdp backends and verbatim for butteraugli.
+#[cfg(feature = "std")]
+pub(crate) fn maybe_dump_diffmap_stats(
+    backend_name: &str,
+    compare_call_idx: u32,
+    width: usize,
+    height: usize,
+    diffmap: &[f32],
+    score: f64,
+) {
+    let path = match std::env::var("JXL_PHASE8B_DIFFMAP_DUMP") {
+        Ok(p) if !p.is_empty() => p,
+        _ => return,
+    };
+    // Compute stats. We allocate a sort buffer for percentiles —
+    // O(N log N) overhead but bench-only so it's tolerable.
+    if diffmap.is_empty() {
+        return;
+    }
+    let n = diffmap.len();
+    let mut sum = 0.0_f64;
+    let mut max = f32::NEG_INFINITY;
+    for &v in diffmap {
+        sum += v as f64;
+        if v > max {
+            max = v;
+        }
+    }
+    let mean = sum / n as f64;
+    let mut sorted: alloc::vec::Vec<f32> = diffmap.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+    let p25 = sorted[(n * 25 / 100).min(n - 1)];
+    let median = sorted[(n / 2).min(n - 1)];
+    let p75 = sorted[(n * 75 / 100).min(n - 1)];
+    let p95 = sorted[(n * 95 / 100).min(n - 1)];
+
+    use std::io::Write;
+    // O_APPEND atomic append on POSIX so multi-process safety is
+    // automatic. Header line is written by the harness on file creation
+    // (it knows the backend list); we always append data rows.
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path);
+    if let Ok(mut f) = file {
+        let _ = writeln!(
+            f,
+            "{backend}\t{idx}\t{w}\t{h}\t{n}\t{mean:.6e}\t{med:.6e}\t{p25:.6e}\t{p75:.6e}\t{p95:.6e}\t{max:.6e}\t{score:.6e}",
+            backend = backend_name,
+            idx = compare_call_idx,
+            w = width,
+            h = height,
+            mean = mean,
+            med = median,
+            p25 = p25,
+            p75 = p75,
+            p95 = p95,
+            max = max,
+            score = score,
+        );
+    }
+}
+
+#[cfg(not(feature = "std"))]
+#[inline]
+pub(crate) fn maybe_dump_diffmap_stats(
+    _backend_name: &str,
+    _compare_call_idx: u32,
+    _width: usize,
+    _height: usize,
+    _diffmap: &[f32],
+    _score: f64,
+) {
+}
+
 /// Pluggable backend for the buttloop's per-iter compare step.
 ///
 /// Implementors capture the reference image once via [`Self::set_reference`]
@@ -145,6 +303,11 @@ pub(crate) struct CpuButteraugliBackend {
     /// `libjxl_butteraugli_intensity_target` so callers don't need to know
     /// the dispatch matrix.
     params: butteraugli::ButteraugliParams,
+    /// Phase 8b: per-instance compare-call counter (bumped on each
+    /// successful `compare_with_reference`). Used only by the
+    /// `JXL_PHASE8B_DIFFMAP_DUMP` env-gated TSV dump. Zero production
+    /// cost when the env var is unset.
+    compare_call_count: u32,
 }
 
 #[cfg(feature = "butteraugli-loop")]
@@ -166,6 +329,7 @@ impl CpuButteraugliBackend {
         Self {
             reference: None,
             params,
+            compare_call_count: 0,
         }
     }
 }
@@ -247,7 +411,16 @@ impl PerceptualBackend for CpuButteraugliBackend {
             .compare_linear_planar_into(dist_r, dist_g, dist_b, padded_width, diffmap_out)
             .map_err(|e| crate::error::Error::InvalidInput(format!("butteraugli compare: {e}")))?;
         debug_assert_eq!(diffmap_out.len(), width * height);
-        let _ = (width, height);
+        // Phase 8b: optional diffmap distribution dump.
+        maybe_dump_diffmap_stats(
+            "B_CPU",
+            self.compare_call_count,
+            width,
+            height,
+            diffmap_out,
+            score,
+        );
+        self.compare_call_count = self.compare_call_count.saturating_add(1);
         Ok(BackendCompareResult { score })
     }
 }
@@ -797,6 +970,15 @@ pub(crate) mod gpu {
                 }
             }
 
+            // Phase 8b: optional diffmap distribution dump.
+            super::maybe_dump_diffmap_stats(
+                "B_GPU",
+                self.compare_call_count - 1,
+                width,
+                height,
+                diffmap_out,
+                gpu_score,
+            );
             Ok(BackendCompareResult { score: gpu_score })
         }
 

@@ -98,6 +98,10 @@ pub(crate) mod gpu {
         width: u32,
         height: u32,
         reference_warmed: bool,
+        /// Phase 8b: per-instance compare-call counter for the
+        /// `JXL_PHASE8B_DIFFMAP_DUMP` env-gated TSV dump (bench-only).
+        /// Zero production cost when the env var is unset.
+        compare_call_count: u32,
     }
 
     impl core::fmt::Debug for GpuCvvdpBackend {
@@ -150,6 +154,7 @@ pub(crate) mod gpu {
                 width,
                 height,
                 reference_warmed: false,
+                compare_call_count: 0,
             })
         }
 
@@ -299,6 +304,48 @@ pub(crate) mod gpu {
             let jod = score_obj.value as f64;
             let score = (10.0_f64 - jod).clamp(0.0, 10.0);
 
+            // Phase 8b: optional pre-renorm diffmap distribution dump.
+            // Captured BEFORE renormalization so the dump captures the
+            // raw cvvdp signal — Phase 8b's job is to compute the scale
+            // ratio against butteraugli's diffmap.
+            super::super::perceptual_backend::maybe_dump_diffmap_stats(
+                "C_GPU_PRE",
+                self.compare_call_count,
+                width,
+                height,
+                diffmap_out,
+                score,
+            );
+
+            // Phase 8c (2026-05-25): renormalize the cvvdp diffmap before
+            // returning to the buttloop. The W44 per-block reducer
+            // (`vardct/perceptual_loop.rs` 16th-power norm + `tile_dist /
+            // effective_metric_target_distance > 1` bad-block predicate)
+            // was calibrated for butteraugli's diffmap distribution; cvvdp's
+            // mean is structurally larger per Phase 8b measurement, so
+            // without this scale the bad-block set is over-populated and
+            // the loop over-allocates qac → 2-4× bytes vs butteraugli
+            // for ~equal cvvdp JOD (Phase 8a Pareto diagnosis: 40.3%
+            // vs 93.6% Pareto-front position).
+            let renorm = super::super::perceptual_backend::resolved_cvvdp_diffmap_renorm_scale();
+            if (renorm - 1.0).abs() > f32::EPSILON {
+                for v in diffmap_out.iter_mut() {
+                    *v *= renorm;
+                }
+            }
+
+            // Phase 8b: optional post-renorm dump for harnesses that want
+            // to confirm the rescaling lands in the right band.
+            super::super::perceptual_backend::maybe_dump_diffmap_stats(
+                "C_GPU_POST",
+                self.compare_call_count,
+                width,
+                height,
+                diffmap_out,
+                score,
+            );
+
+            self.compare_call_count = self.compare_call_count.saturating_add(1);
             Ok(BackendCompareResult { score })
         }
     }
@@ -387,6 +434,8 @@ pub(crate) mod cpu {
         width: u32,
         height: u32,
         reference_warmed: bool,
+        /// Phase 8b: per-instance compare-call counter (bench-only dump).
+        compare_call_count: u32,
     }
 
     impl core::fmt::Debug for CpuCvvdpBackend {
@@ -435,6 +484,7 @@ pub(crate) mod cpu {
                 width,
                 height,
                 reference_warmed: false,
+                compare_call_count: 0,
             })
         }
 
@@ -591,6 +641,37 @@ pub(crate) mod cpu {
             let jod = jod as f64;
             let score = (10.0_f64 - jod).clamp(0.0, 10.0);
 
+            // Phase 8b: pre-renorm dump (see GPU backend for full doc).
+            super::super::perceptual_backend::maybe_dump_diffmap_stats(
+                "C_CPU_PRE",
+                self.compare_call_count,
+                width,
+                height,
+                diffmap_out,
+                score,
+            );
+
+            // Phase 8c: same renormalization as GPU backend — keeps
+            // both cvvdp paths semantically equivalent at the
+            // perceptual-loop boundary.
+            let renorm = super::super::perceptual_backend::resolved_cvvdp_diffmap_renorm_scale();
+            if (renorm - 1.0).abs() > f32::EPSILON {
+                for v in diffmap_out.iter_mut() {
+                    *v *= renorm;
+                }
+            }
+
+            // Phase 8b: post-renorm dump.
+            super::super::perceptual_backend::maybe_dump_diffmap_stats(
+                "C_CPU_POST",
+                self.compare_call_count,
+                width,
+                height,
+                diffmap_out,
+                score,
+            );
+
+            self.compare_call_count = self.compare_call_count.saturating_add(1);
             Ok(BackendCompareResult { score })
         }
     }

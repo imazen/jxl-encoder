@@ -1434,6 +1434,27 @@ name = "cvvdp_loop_smoke_bench"
 path = "examples/cvvdp_loop_smoke_bench.rs"
 required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "ssim2-loop", "parallel"]
 
+# cvvdp-fork Phase 8b (2026-05-25): diffmap distribution capture
+# harness. Encodes 5 fixtures × 4 distances with both butteraugli + cvvdp
+# loops, dumping per-iter diffmap stats via the
+# `JXL_PHASE8B_DIFFMAP_DUMP` env hook in the backends. Output: scale
+# ratio TSV that seeds Phase 8c's `CVVDP_DIFFMAP_RENORM_SCALE` constant.
+[[example]]
+name = "cvvdp_phase8b_diffmap_distribution"
+path = "examples/cvvdp_phase8b_diffmap_distribution.rs"
+required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "ssim2-loop", "parallel"]
+
+# cvvdp-fork Phase 8c (2026-05-25): Pareto re-bench validating the
+# diffmap renormalization (scale 0.660). Encodes 5 fixtures × 4 distances
+# × 2 backends (B baseline + C_GPU_v2 post-renorm), scores each with
+# butteraugli + cvvdp-gpu + SSIMULACRA2 via jxl-oxide decode. Output
+# matches Phase 6 TSV schema for direct ingestion by
+# `scripts/cvvdp_pareto_diagnosis.py`.
+[[example]]
+name = "cvvdp_phase8c_pareto_rebench"
+path = "examples/cvvdp_phase8c_pareto_rebench.rs"
+required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "ssim2-loop", "parallel"]
+
 # cvvdp-fork Phase 5 (2026-05-24): 10-cell A/B bench comparing CPU
 # vs GPU CVVDP backends in the buttloop. Self-contained synthetic
 # fixtures; tolerates missing CUDA (falls back through
