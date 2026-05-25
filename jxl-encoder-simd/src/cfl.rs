@@ -1444,3 +1444,203 @@ mod tests {
         );
     }
 }
+
+/// Expanded scalar-vs-dispatch parity coverage for the CfL public surface
+/// using [`crate::test_helpers`]'s edge-value battery.
+///
+/// Post-W44-AUDIT-5 Phase 2 (Mode C) + SA-G Fix B (`c77a443c`), cfl.rs
+/// exposes four distinct chroma-multiplier dispatch paths:
+///
+/// 1. `find_best_multiplier` — LS-only (Zenjxl default).
+/// 2. `find_best_multiplier_newton(.., libjxl_parity=false,
+///    libjxl_math_with_ls_warm_start=false)` — Zenjxl-default Newton
+///    (`eps=1`, `iters=10`, LS warm-start, LS fallback).
+/// 3. `find_best_multiplier_newton(.., libjxl_parity=true, ..)` — Libjxl
+///    strategy bit-exact Newton (`eps=100`, `iters=20`, `x=0` start, no
+///    fallback). Post-Fix-B this path uses [`highway_sum_f32x8`] /
+///    [`highway_sum_f32x4`] inside the SIMD variants for byte-identity.
+/// 4. `find_best_multiplier_newton(.., libjxl_math_with_ls_warm_start=true)`
+///    — W44-AUDIT-5 Phase 2 Mode C (libjxl Newton math, LS warm-start).
+///
+/// Each battery test sweeps:
+/// - [`edge_case_sizes`] (0 … 1024 — covers SIMD tail boundaries at
+///   f32x4 / f32x8 / f32x16 widths).
+/// - [`f32_edge_battery`] (zeros, ones, ±denormals, alternating sign,
+///   ramp, two seeded random fields).
+/// - Three `base` settings (libjxl's typical 0.0 / -0.5 / 1.0).
+/// - Three `distance_mul` settings (1e-3 / 1.0 / 10.0 spanning the
+///   distance domain).
+///
+/// `large_pos` (1e20) is filtered on every test: at that magnitude the
+/// LS denominator `sum_aa + num * distance_mul * 0.5` is at the f32
+/// rounding floor and the lane-vs-serial summation order produces sub-ULP
+/// divergence in the final quantized i8. Same exception pattern documented
+/// in `quantize-001` / `dct64` / `idct32` / `entropy-001`.
+#[cfg(test)]
+mod expanded_coverage {
+    use super::*;
+    use crate::test_helpers::*;
+    use alloc::vec::Vec;
+
+    /// Canonical `base` × `distance_mul` configurations covering libjxl's
+    /// production parameter ranges.
+    fn cfg_grid() -> &'static [(f32, f32)] {
+        &[
+            (0.0, 1e-3),
+            (0.0, 1.0),
+            (0.0, 10.0),
+            (-0.5, 1e-3),
+            (-0.5, 1.0),
+            (1.0, 1e-3),
+            (1.0, 1.0),
+        ]
+    }
+
+    /// Generate matched (values_m, values_s) pairs.  `values_s` is
+    /// derived from `values_m` by a deterministic per-element shift so
+    /// the LS optimum is non-trivial AND finite (no all-zero
+    /// denominator).
+    fn make_pair(case_m: &F32Case, n: usize) -> (Vec<f32>, Vec<f32>) {
+        let m = case_m.data.clone();
+        // values_s = values_m * 0.5 + small deterministic delta.
+        // Using `gen_f32` with a fixed seed keeps the test reproducible
+        // across runs / platforms.
+        let delta = gen_f32(0x_1234_5678_ABCD_EF01_u64.wrapping_add(n as u64), n, 0.1);
+        let s: Vec<f32> = m
+            .iter()
+            .zip(delta.iter())
+            .map(|(&mv, &dv)| mv * 0.5 + dv)
+            .collect();
+        (m, s)
+    }
+
+    /// LS-only path (`find_best_multiplier`) — Zenjxl default.
+    #[test]
+    fn find_best_multiplier_scalar_vs_dispatch_edge_battery() {
+        for &n in edge_case_sizes() {
+            for case in f32_edge_battery(n) {
+                // Skip 1e20 magnitudes — ordering noise on LS denominator
+                // produces sub-ULP final-quantization divergence.
+                if case.label.starts_with("large_pos") {
+                    continue;
+                }
+                let (values_m, values_s) = make_pair(&case, n);
+                for &(base, dmul) in cfg_grid() {
+                    let ref_out = find_best_multiplier_scalar(&values_m, &values_s, n, base, dmul);
+                    run_dispatch_parity(|perm| {
+                        let act = find_best_multiplier(&values_m, &values_s, n, base, dmul);
+                        assert_eq!(
+                            ref_out, act,
+                            "find_best_multiplier divergence: ref={ref_out} act={act} \
+                             perm={perm} ctx={} base={base} dmul={dmul}",
+                            case.label
+                        );
+                    });
+                }
+            }
+        }
+    }
+
+    /// Zenjxl-default Newton path (libjxl_parity=false,
+    /// libjxl_math_with_ls_warm_start=false; LS warm-start, LS fallback,
+    /// `eps=1`, `iters=10`).
+    #[test]
+    fn find_best_multiplier_newton_zenjxl_scalar_vs_dispatch_edge_battery() {
+        let eps = NEWTON_EPS_DEFAULT;
+        let iters = NEWTON_MAX_ITERS_DEFAULT;
+        for &n in edge_case_sizes() {
+            for case in f32_edge_battery(n) {
+                if case.label.starts_with("large_pos") {
+                    continue;
+                }
+                let (values_m, values_s) = make_pair(&case, n);
+                for &(base, dmul) in cfg_grid() {
+                    let ref_out = find_best_multiplier_newton_scalar(
+                        &values_m, &values_s, n, base, dmul, eps, iters, false, false,
+                    );
+                    run_dispatch_parity(|perm| {
+                        let act = find_best_multiplier_newton(
+                            &values_m, &values_s, n, base, dmul, eps, iters, false, false,
+                        );
+                        assert_eq!(
+                            ref_out, act,
+                            "newton-zenjxl divergence: ref={ref_out} act={act} \
+                             perm={perm} ctx={} base={base} dmul={dmul}",
+                            case.label
+                        );
+                    });
+                }
+            }
+        }
+    }
+
+    /// Libjxl strategy bit-exact Newton path (libjxl_parity=true) —
+    /// post-SA-G Fix B uses [`highway_sum_f32x8`] / [`highway_sum_f32x4`]
+    /// to match cjxl Highway reduction order across scalar / AVX2 / NEON.
+    /// `eps` / `iters` args are dead on this path (replaced with
+    /// `NEWTON_EPS_LIBJXL` / `NEWTON_MAX_ITERS_LIBJXL`).
+    #[test]
+    fn find_best_multiplier_newton_libjxl_parity_scalar_vs_dispatch_edge_battery() {
+        // Dead args — pass arbitrary non-default values to exercise the
+        // "this branch ignores eps/iters" code path.
+        let eps = 7.0_f32;
+        let iters = 3_usize;
+        for &n in edge_case_sizes() {
+            for case in f32_edge_battery(n) {
+                if case.label.starts_with("large_pos") {
+                    continue;
+                }
+                let (values_m, values_s) = make_pair(&case, n);
+                for &(base, dmul) in cfg_grid() {
+                    let ref_out = find_best_multiplier_newton_scalar(
+                        &values_m, &values_s, n, base, dmul, eps, iters, true, false,
+                    );
+                    run_dispatch_parity(|perm| {
+                        let act = find_best_multiplier_newton(
+                            &values_m, &values_s, n, base, dmul, eps, iters, true, false,
+                        );
+                        assert_eq!(
+                            ref_out, act,
+                            "newton-libjxl_parity divergence: ref={ref_out} act={act} \
+                             perm={perm} ctx={} base={base} dmul={dmul}",
+                            case.label
+                        );
+                    });
+                }
+            }
+        }
+    }
+
+    /// W44-AUDIT-5 Phase 2 Mode C (libjxl_math_with_ls_warm_start=true) —
+    /// libjxl Newton math (eps=100, iters=20) with LS warm-start.
+    #[test]
+    fn find_best_multiplier_newton_mode_c_scalar_vs_dispatch_edge_battery() {
+        // Dead args on this path too.
+        let eps = 7.0_f32;
+        let iters = 3_usize;
+        for &n in edge_case_sizes() {
+            for case in f32_edge_battery(n) {
+                if case.label.starts_with("large_pos") {
+                    continue;
+                }
+                let (values_m, values_s) = make_pair(&case, n);
+                for &(base, dmul) in cfg_grid() {
+                    let ref_out = find_best_multiplier_newton_scalar(
+                        &values_m, &values_s, n, base, dmul, eps, iters, false, true,
+                    );
+                    run_dispatch_parity(|perm| {
+                        let act = find_best_multiplier_newton(
+                            &values_m, &values_s, n, base, dmul, eps, iters, false, true,
+                        );
+                        assert_eq!(
+                            ref_out, act,
+                            "newton-mode_c divergence: ref={ref_out} act={act} \
+                             perm={perm} ctx={} base={base} dmul={dmul}",
+                            case.label
+                        );
+                    });
+                }
+            }
+        }
+    }
+}
