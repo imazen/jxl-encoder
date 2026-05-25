@@ -1110,6 +1110,269 @@ pub(crate) fn init_mul_seeds(seeds: u8) -> &'static [f64] {
     &ALL[..n]
 }
 
+// ============================================================================
+// cvvdp-fork Phase 8g — per-block reducer constants (Intervention B, RFC §3.2)
+// ============================================================================
+//
+// The per-block reducer (`butteraugli_refine_quant_field_inner_seed`, around
+// the K_TILE_NORM literal at line ~2524 and the cur_pow / max_increase reads
+// at lines ~2664/2672) was calibrated against butteraugli's per-pixel diffmap
+// distribution (narrow-peak max-norm signal). cvvdp's per-pixel signal — even
+// AFTER Phase 8c's `CVVDP_DIFFMAP_RENORM_SCALE = 0.018` magnitude alignment —
+// retains a different DISTRIBUTION SHAPE (broader spatial support via the
+// Laplacian pyramid + per-band CSF + cross-channel masking). The Phase 8a
+// Pareto diagnosis (40.3% Pareto-front) → Phase 8c (60.0%) → Phase 8d (60.0%
+// binary; -55% continuous bytes-at-equal-cvvdp at cvvdp 9.99) sequence
+// confirmed magnitude alignment alone is insufficient.
+//
+// **What this struct ships**: a per-backend constants table consumed by the
+// per-block reducer. Production switches at runtime on
+// `self.cvvdp_loop && !use_vdp2 && feature("cvvdp-loop")`. When the
+// butteraugli backend is active OR cvvdp-loop is compiled-out, callers see
+// the [`BUTTER_BLOCK_CONSTANTS`] table whose values are EXACTLY the
+// pre-Phase-8g hardcoded literals (`K_TILE_NORM = 1.2`, etc.). Hash-locks
+// stay byte-identical at default features.
+//
+// **What this struct deliberately does NOT touch**:
+//  - The W44-105/W44-109/W44-117 cluster gate constants (RFC §6 explicit
+//    out-of-scope; multi-week re-calibration is a separate arc).
+//  - `cur_pow` / `max_increase` — these already have env hooks
+//    (`CUR_POW_X1000_{LOW,HIGH}`, `MAX_INCREASE_X1000_{LOW,HIGH}`) and
+//    distance-aware resolvers (`resolved_cur_pow`,
+//    `resolved_max_increase_with_class`). Per-backend dispatch goes through
+//    the same resolvers; see [`BlockReducerConstants::resolved_cur_pow`] /
+//    [`BlockReducerConstants::resolved_max_increase_for`] below.
+//  - `effective_metric_target_distance` — Phase 4 already picks
+//    `CVVDP_DISTANCE_TARGETS` lookup vs raw `target_distance` per backend.
+
+/// Per-backend block-reducer calibration constants.
+///
+/// Hot path: read once per outer call to
+/// `butteraugli_refine_quant_field_inner_seed` and pinned for the lifetime
+/// of the seed loop. The struct is `Copy` so the read is a single load
+/// per field.
+///
+/// **Active dispatch**: see
+/// [`block_reducer_constants_for_backend`]. Production sites should never
+/// construct this directly — go through the resolver so future backend
+/// kinds (e.g. cvvdp-cpu vs cvvdp-gpu split tuning) get picked up.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct BlockReducerConstants {
+    /// Pre-multiplier on the 16th-power-norm per-block tile distance.
+    /// The reducer computes
+    /// `tile_dist[block] = k_tile_norm * (Σ v^16 / pixels)^(1/16)`
+    /// where `v = diffmap[pixel]` (post any backend renormalization).
+    ///
+    /// libjxl's `TileDistMap` uses `K_TILE_NORM = 1.2` (matches butteraugli
+    /// distribution); cvvdp may want a different value once Phase 8g
+    /// calibration captures the post-renorm tile_dist distribution.
+    pub(crate) k_tile_norm: f32,
+}
+
+/// libjxl + butteraugli production constants. **Byte-identical to the
+/// pre-Phase-8g hardcoded literals.** This is the value
+/// [`block_reducer_constants_for_backend`] returns when cvvdp is not the
+/// active backend.
+pub(crate) const BUTTER_BLOCK_CONSTANTS: BlockReducerConstants = BlockReducerConstants {
+    // libjxl TileDistMap: enc_adaptive_quantization.cc, K_TILE_NORM = 1.2.
+    k_tile_norm: 1.2,
+};
+
+/// cvvdp-fork Phase 8g per-backend constants for the cvvdp loop. Compiled
+/// only when the `cvvdp-loop` cargo feature is on so the constants struct
+/// surface stays trivial outside the feature.
+///
+/// **Fit methodology**:
+///
+/// After Phase 8c (`CVVDP_DIFFMAP_RENORM_SCALE = 0.018`) the per-pixel
+/// diffmap magnitudes match butteraugli at the median. But the per-block
+/// 16th-power-norm reduction `(Σ v^16 / n)^(1/16)` is a near-max-norm
+/// operation; cvvdp's broader Laplacian-pyramid + cross-channel pooled
+/// signal has fewer extreme outliers than butteraugli's near-pointwise
+/// max-norm signal. Net effect: post-renorm cvvdp `tile_dist` ratios
+/// across blocks are MORE UNIFORM, but the per-block `diff_raw =
+/// tile_dist / effective_metric_target` predicate still over-fires
+/// because cvvdp's "moderate-magnitude many blocks" vs butteraugli's
+/// "high-magnitude few blocks" pushes more cells past the
+/// `diff > 1.0` bad-block threshold than the W44 calibration expects.
+///
+/// Phase 8g harness `examples/cvvdp_phase8g_tile_dist_capture.rs` measures
+/// per-iter `tile_dist` distribution + bad-block rate per backend; the
+/// linear-scale fit per Intervention A in the task spec sets
+/// `k_tile_norm` such that cvvdp's MEAN `tile_dist / target` ratio
+/// matches butteraugli's at the same nominal distance band. See the
+/// Phase 8g memo for the per-cell ratios that drove the value pick.
+///
+/// **Env override**: `JXL_CVVDP_K_TILE_NORM=<float>` replaces
+/// `k_tile_norm` for bench harnesses. Only consulted when the env var
+/// is present, parseable, finite, and > 0. Production callers must not
+/// set this in non-bench paths.
+#[cfg(feature = "cvvdp-loop")]
+pub(crate) const CVVDP_BLOCK_CONSTANTS: BlockReducerConstants = BlockReducerConstants {
+    // Phase 8g fit (2026-05-25, see
+    // `benchmarks/cvvdp_block_signal_distribution_2026-05-25.tsv`):
+    //
+    // The capture harness measured cvvdp's `tile_dist` distribution
+    // post-Phase-8c renorm vs butteraugli's on the same 5 fixtures × 4
+    // distances. Per-iter `bad_rate` (fraction of blocks where
+    // `tile_dist > effective_metric_target`) for cvvdp was 70-100% at
+    // every distance, vs butteraugli's 0-13%. This means the cvvdp loop
+    // was driving qac UP on ~80% of blocks per iter (bad-block
+    // tightening), while butteraugli was driving qac DOWN on ~90% of
+    // blocks (good-block loosening via `cur_pow=0.2`). Same nominal
+    // distance target → opposite per-iter dynamics → cvvdp's bytes-
+    // overhead vs butteraugli for the same achieved JOD.
+    //
+    // **Linear-scale fit per RFC §3.2 Intervention A**: scale
+    // `k_tile_norm` so cvvdp's `td_p95` falls near `effective_target`,
+    // matching butteraugli's near-zero `bad_rate` at iter=0.
+    //
+    // Per-distance scales needed to align td_p95 to target:
+    //   d=0.5: cvvdp_p95 = 0.028, target = 0.0029 → scale = 0.104
+    //   d=1.0: cvvdp_p95 = 0.105, target = 0.0238 → scale = 0.227
+    //   d=2.0: cvvdp_p95 = 0.49,  target = 0.0724 → scale = 0.148
+    //   d=3.0: cvvdp_p95 = 1.39,  target = 0.1336 → scale = 0.096
+    //
+    // Median across distances: ~0.13. We ship the median scaled value
+    // `1.2 * 0.13 = 0.156` rounded to **0.16**. The scale is not
+    // distance-independent (range 0.10-0.23), so this single-value fit
+    // is a Phase 8g starting point per RFC §3.2 Intervention A; per-
+    // distance refinement would be a follow-on chunk (Intervention BX
+    // RFC §3.4) if the Pareto re-bench shows the single value
+    // plateaus below 85%.
+    //
+    // Equivalent absolute value: cvvdp `k_tile_norm = 0.16` vs
+    // butteraugli's 1.2 (= 7.5× smaller). Documented in
+    // `docs/LIBJXL_DIVERGENCES.md` Section E.
+    k_tile_norm: 0.16,
+};
+
+/// Select the active per-backend block-reducer constants.
+///
+/// Production switch: returns [`CVVDP_BLOCK_CONSTANTS`] when the
+/// `cvvdp-loop` cargo feature is compiled AND `cvvdp_loop_active` is
+/// true (the inner-seed pass plumbs `self.cvvdp_loop && !use_vdp2` as
+/// this argument). Otherwise returns [`BUTTER_BLOCK_CONSTANTS`] — every
+/// pre-Phase-8g caller sees byte-identical behaviour.
+///
+/// The env hook `JXL_CVVDP_K_TILE_NORM` is honoured ONLY on the cvvdp
+/// branch (bench-only override; production code MUST NOT set it).
+#[inline]
+pub(crate) fn block_reducer_constants_for_backend(
+    cvvdp_loop_active: bool,
+) -> BlockReducerConstants {
+    #[cfg(feature = "cvvdp-loop")]
+    {
+        if cvvdp_loop_active {
+            let mut c = CVVDP_BLOCK_CONSTANTS;
+            if let Ok(s) = std::env::var("JXL_CVVDP_K_TILE_NORM")
+                && let Ok(v) = s.parse::<f32>()
+                && v.is_finite()
+                && v > 0.0
+            {
+                c.k_tile_norm = v;
+            }
+            return c;
+        }
+    }
+    #[cfg(not(feature = "cvvdp-loop"))]
+    {
+        let _ = cvvdp_loop_active; // silence unused on no-feature builds
+    }
+    BUTTER_BLOCK_CONSTANTS
+}
+
+/// Phase 8g (2026-05-25): env-gated per-iter `tile_dist` distribution
+/// dump. Activated via `JXL_PHASE8G_TILE_DIST_DUMP=<path>`; appends one
+/// TSV row per iter with summary stats sufficient to fit
+/// [`CVVDP_BLOCK_CONSTANTS::k_tile_norm`] empirically.
+///
+/// Columns: `backend\titer\teffective_target\ttarget_distance\tnblocks\
+/// tmin\tmax\tmedian\tp25\tp75\tp95\tmean\tbad_rate`.
+///
+/// `bad_rate` = fraction of blocks with `tile_dist > effective_target`
+/// (= the `diff > 1.0` predicate fire rate). This is the
+/// load-bearing metric for Intervention B calibration: at parity
+/// `bad_rate_c ≈ bad_rate_b` at the same nominal distance, then the
+/// per-block reducer's downstream bump magnitudes will fire equivalently.
+///
+/// Zero production cost when env unset (single `var_os` check).
+#[inline]
+pub(crate) fn maybe_dump_tile_dist_stats_phase8g(
+    cvvdp_loop_active: bool,
+    iter: usize,
+    effective_metric_target_distance: f32,
+    target_distance: f32,
+    tile_dist: &[f32],
+) {
+    // Fast-out: nothing to do if the env var isn't set.
+    let path = match std::env::var("JXL_PHASE8G_TILE_DIST_DUMP") {
+        Ok(p) if !p.is_empty() => p,
+        _ => return,
+    };
+
+    if tile_dist.is_empty() {
+        return;
+    }
+
+    let backend_tag = if cvvdp_loop_active { "cvvdp" } else { "butter" };
+
+    // Per-block bad-rate against the metric target.
+    let bad_count = tile_dist
+        .iter()
+        .filter(|&&d| d > effective_metric_target_distance)
+        .count();
+    let nblocks = tile_dist.len();
+    let bad_rate = bad_count as f64 / nblocks as f64;
+
+    // Summary stats.
+    let mut sorted: alloc::vec::Vec<f32> = tile_dist.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+    let pick = |frac: f64| -> f32 {
+        let idx = ((nblocks as f64 * frac).floor() as usize).min(nblocks - 1);
+        sorted[idx]
+    };
+    let min_v = sorted[0];
+    let max_v = sorted[nblocks - 1];
+    let median = pick(0.50);
+    let p25 = pick(0.25);
+    let p75 = pick(0.75);
+    let p95 = pick(0.95);
+    let mean: f64 = tile_dist.iter().map(|&v| v as f64).sum::<f64>() / nblocks as f64;
+
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+        // Write a header if file is new (empty length).
+        if let Ok(meta) = f.metadata()
+            && meta.len() == 0
+        {
+            let _ = writeln!(
+                f,
+                "backend\titer\teffective_target\ttarget_distance\tnblocks\ttd_min\ttd_max\ttd_median\ttd_p25\ttd_p75\ttd_p95\ttd_mean\tbad_rate"
+            );
+        }
+        let _ = writeln!(
+            f,
+            "{backend}\t{iter}\t{etgt}\t{tgt}\t{n}\t{minv}\t{maxv}\t{med}\t{p25}\t{p75}\t{p95}\t{mean:.6}\t{br:.6}",
+            backend = backend_tag,
+            iter = iter,
+            etgt = effective_metric_target_distance,
+            tgt = target_distance,
+            n = nblocks,
+            minv = min_v,
+            maxv = max_v,
+            med = median,
+            p25 = p25,
+            p75 = p75,
+            p95 = p95,
+            mean = mean,
+            br = bad_rate,
+        );
+    }
+}
+
 /// Outcome of one butteraugli-loop seed used by the multi-seed picker
 /// in [`VarDctEncoder::butteraugli_refine_quant_field`].
 #[derive(Clone)]
@@ -2520,8 +2783,18 @@ impl VarDctEncoder {
             // compare-only last iteration is included.
             last_score = iter_score;
 
-            // Step 6: Compute per-block tile distance (16th-power norm, matching libjxl TileDistMap)
-            const K_TILE_NORM: f32 = 1.2;
+            // Step 6: Compute per-block tile distance (16th-power norm,
+            // matching libjxl TileDistMap).
+            //
+            // cvvdp-fork Phase 8g (2026-05-25, RFC §3.2 Intervention B):
+            // `k_tile_norm` is now backend-switched via
+            // [`block_reducer_constants_for_backend`]. For butteraugli
+            // (production default), the value is 1.2 — byte-identical to
+            // the pre-Phase-8g hardcoded literal. For cvvdp, the value
+            // is fitted to cvvdp's post-renormalization per-block
+            // distribution (see CVVDP_BLOCK_CONSTANTS).
+            let block_constants = block_reducer_constants_for_backend(self.cvvdp_loop && !use_vdp2);
+            let k_tile_norm = block_constants.k_tile_norm;
             let diffmap_buf: &[f32] = &diffmap_vec;
             tile_dist.fill(0.0);
             for by in 0..ysize_blocks {
@@ -2554,7 +2827,7 @@ impl VarDctEncoder {
                     if pixels == 0.0 {
                         pixels = 1.0;
                     }
-                    let td = K_TILE_NORM * (dist_norm / pixels).sqrt().sqrt().sqrt().sqrt() as f32;
+                    let td = k_tile_norm * (dist_norm / pixels).sqrt().sqrt().sqrt().sqrt() as f32;
                     for sy in 0..covered_y {
                         for sx in 0..covered_x {
                             tile_dist[(by + sy) * xsize_blocks + (bx + sx)] = td;
@@ -2562,6 +2835,20 @@ impl VarDctEncoder {
                     }
                 }
             }
+
+            // cvvdp-fork Phase 8g (2026-05-25): env-gated per-iter
+            // tile_dist distribution dump. Used by the Phase 8g calibration
+            // harness (`examples/cvvdp_phase8g_tile_dist_capture.rs`) to
+            // measure per-backend `tile_dist` distribution + bad-block
+            // rate so the per-backend `k_tile_norm` value can be fitted
+            // empirically. Zero production cost when env unset.
+            maybe_dump_tile_dist_stats_phase8g(
+                self.cvvdp_loop && !use_vdp2,
+                iter,
+                effective_metric_target_distance,
+                target_distance,
+                tile_dist,
+            );
 
             // Log per-iteration summary
             {
@@ -4311,5 +4598,75 @@ mod tuning_tests {
             LIBJXL_BUTTERAUGLI_SDR_INTENSITY_TARGET, 80.0,
             "SDR intensity_target must match libjxl's hardcoded 80.0 cd/m²"
         );
+    }
+
+    // ========================================================================
+    // cvvdp-fork Phase 8g (2026-05-25) per-block reducer constants smoke tests
+    // ========================================================================
+    //
+    // Pure-read tests (no env mutation). The env-override tests live in
+    // `tests/cvvdp_block_constants_smoke.rs` (integration test) so the
+    // `unsafe { env::set_var }` calls don't violate the lib crate's
+    // `#![forbid(unsafe_code)]`.
+
+    #[test]
+    fn butter_block_constants_match_libjxl_literal() {
+        // libjxl TileDistMap: K_TILE_NORM = 1.2. This value must not
+        // move without a coordinated re-baseline of butteraugli-loop
+        // hash-locks and a libjxl-parity bench. Phase 8g is a cvvdp-only
+        // fit; we do not touch this value.
+        assert_eq!(
+            BUTTER_BLOCK_CONSTANTS.k_tile_norm, 1.2,
+            "BUTTER_BLOCK_CONSTANTS.k_tile_norm must stay at libjxl's 1.2"
+        );
+    }
+
+    #[cfg(feature = "cvvdp-loop")]
+    #[test]
+    fn cvvdp_block_constants_k_tile_norm_below_butter() {
+        // Phase 8g fit (2026-05-25): cvvdp's post-renorm tile_dist
+        // distribution requires a SMALLER k_tile_norm than butter's to
+        // bring `bad_rate` parity. The exact value may move chunk-to-
+        // chunk as we refine the fit, but it must always remain strictly
+        // below butter's 1.2 — otherwise Pareto-front-pct regresses
+        // toward Phase 8c's 60%.
+        assert!(
+            CVVDP_BLOCK_CONSTANTS.k_tile_norm < BUTTER_BLOCK_CONSTANTS.k_tile_norm,
+            "CVVDP_BLOCK_CONSTANTS.k_tile_norm = {} must be < BUTTER's {} (Phase 8g invariant)",
+            CVVDP_BLOCK_CONSTANTS.k_tile_norm,
+            BUTTER_BLOCK_CONSTANTS.k_tile_norm
+        );
+        // Sanity lower bound: too-aggressive scaling (< 0.05) would
+        // effectively disable bad-block firing entirely (cvvdp bad_rate
+        // ~ 0 always → no refinement work). 0.05 is the conservative
+        // lower bound; the production value should be in [0.10, 0.50].
+        assert!(
+            CVVDP_BLOCK_CONSTANTS.k_tile_norm >= 0.05,
+            "CVVDP_BLOCK_CONSTANTS.k_tile_norm = {} too small — bad_rate would saturate at 0",
+            CVVDP_BLOCK_CONSTANTS.k_tile_norm
+        );
+    }
+
+    #[test]
+    fn block_reducer_dispatch_butter_path() {
+        // When cvvdp is NOT the active backend, we always get the butter
+        // constants regardless of env hooks. This is the production-default
+        // path; hash-locks depend on byte-identity here.
+        let c = block_reducer_constants_for_backend(false);
+        assert_eq!(c.k_tile_norm, BUTTER_BLOCK_CONSTANTS.k_tile_norm);
+    }
+
+    #[cfg(feature = "cvvdp-loop")]
+    #[test]
+    fn block_reducer_dispatch_cvvdp_path_no_env() {
+        // When cvvdp IS the active backend and no env override is set,
+        // we get the cvvdp constants. We only check this if the env
+        // var isn't preset — otherwise we'd interfere with another
+        // test's setup.
+        if std::env::var("JXL_CVVDP_K_TILE_NORM").is_ok() {
+            return;
+        }
+        let c = block_reducer_constants_for_backend(true);
+        assert_eq!(c.k_tile_norm, CVVDP_BLOCK_CONSTANTS.k_tile_norm);
     }
 }

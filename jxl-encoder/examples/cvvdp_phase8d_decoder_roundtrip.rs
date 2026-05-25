@@ -112,8 +112,7 @@ fn main() {
     )
     .unwrap();
 
-    let limits =
-        jxl_encoder::api::Limits::default().with_max_memory_bytes(8 * 1024 * 1024 * 1024);
+    let limits = jxl_encoder::api::Limits::default().with_max_memory_bytes(8 * 1024 * 1024 * 1024);
     let mut total = 0usize;
     let mut total_fail = 0usize;
     for (corpus, name, distance) in FIXTURES {

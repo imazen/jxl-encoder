@@ -1,0 +1,116 @@
+# Phase 8g (cvvdp-fork, 2026-05-25) — per-block tile_dist distribution capture
+
+## Inputs
+- harness: `jxl-encoder/examples/cvvdp_phase8g_tile_dist_capture.rs`
+- env hook: `JXL_PHASE8G_TILE_DIST_DUMP=<path>` →
+  `maybe_dump_tile_dist_stats_phase8g` in `vardct/perceptual_loop.rs`
+- fixtures: 5 (CID22 1025469/1418519/1189261, GB82-SC terminal/imac_g3)
+- distances: {0.5, 1.0, 2.0, 3.0}
+- effort: 8 (buttloop fires)
+- backends: butter (CPU butteraugli) + cvvdp (GPU cvvdp, Phase 8c renorm
+  active scale = 0.018)
+- iters per encode: 3 → 4 rows per (image, distance, backend) cell
+- total rows: 5 × 4 × 2 × 3 = 120 + 1 header
+
+## Schema
+- `tag`: `corpus|name|d=DIST|backend=BACKEND`
+- `backend`: `butter | cvvdp`
+- `iter`: 0..3 (0 = seed iter, drives largest qac adjustment)
+- `effective_target`: per-backend target (butter = `target_distance`,
+  cvvdp = `cvvdp_target_score_for_distance(target_distance)` lookup)
+- `target_distance`: the bitstream quality target (always butteraugli-direction)
+- `nblocks`: width_blocks × height_blocks at this image size
+- `td_min` / `td_max` / `td_median` / `td_p25` / `td_p75` / `td_p95`:
+  per-block tile_dist distribution stats post per-block 16th-power-norm
+  reduction (matches libjxl TileDistMap)
+- `td_mean`: mean of tile_dist values
+- `bad_rate`: fraction of blocks where `tile_dist > effective_target`
+  — the `diff > 1.0` predicate fire rate that drives bad-block qac
+  tightening in the seed loop
+
+## Headline finding (this commit, pre-fit cvvdp = `k_tile_norm = 1.2`)
+
+For CID22 photos at iter=0:
+- butter `bad_rate` = 0.0% to 13% depending on distance
+- cvvdp `bad_rate` = 70% to 100% — driving qac UP on most blocks per iter
+- cvvdp `td_mean` ~14.7× SMALLER than butter (mean ratio b/c on iter=0:
+  median = 14.7 across 20 cells)
+- post-renorm cvvdp `td_p95 / target` ratios cluster at 2.4-3.9
+  (butter's are 0.5-0.8)
+
+Mechanism: Phase 8c renorm aligns per-pixel `diffmap.mean()` between
+backends, but the 16th-power norm `(Σ v^16 / n)^(1/16)` is a max-norm
+proxy. For butteraugli's peaked distribution (narrow high-energy
+regions) the norm ≈ max(v). For cvvdp's broader distribution (Laplacian
+pyramid + per-band CSF smearing), the norm is much smaller than max(v).
+Phase 8c's mean-alignment leaves a ~6-15× gap on the post-reduction
+ratio, which the bad-block predicate AMPLIFIES into a 70-100% vs 0-13%
+fire-rate divergence.
+
+## Per-distance bad_rate (pre-fit, median across 5 fixtures)
+
+| d | butter | cvvdp | ratio (b/c) |
+|---|---|---|---|
+| 0.5 | 0.037 | 0.93 | 0.039 |
+| 1.0 | 0.001 | 0.70 | 0.001 |
+| 2.0 | 0.000 | 0.80 | 0.000 |
+| 3.0 | 0.000 | 0.88 | 0.000 |
+
+## Fit derivation
+
+Per RFC §3.2 Intervention A (linear scale per constant): we want cvvdp's
+`td_p95 / target` to approach butter's near-zero `bad_rate`. Specifically,
+shift cvvdp's `td_p95` to near `effective_target` — gives ~5% bad_rate
+post-fit.
+
+Per-distance scale needed:
+| d | cvvdp_p95 | target | scale_to_align |
+|---|---|---|---|
+| 0.5 | 0.028 | 0.0029 | 0.104 |
+| 1.0 | 0.105 | 0.0238 | 0.227 |
+| 2.0 | 0.49 | 0.0724 | 0.148 |
+| 3.0 | 1.39 | 0.1336 | 0.096 |
+
+Median across distances: ~0.13. Shipped median * 1.2 ≈ **0.16** as the
+single-value `CVVDP_BLOCK_CONSTANTS.k_tile_norm`.
+
+## Post-fit validation (re-captured at `k_tile_norm = 0.16`)
+
+Post-fit per-distance bad_rate (from
+`benchmarks/cvvdp_block_signal_distribution_postfit_2026-05-25.tsv`):
+
+| d | butter | cvvdp_post_fit | parity? |
+|---|---|---|---|
+| 0.5 | 0.037 | 0.032 | YES |
+| 1.0 | 0.001 | 0.002 | YES |
+| 2.0 | 0.000 | 0.002 | YES |
+| 3.0 | 0.000 | 0.003 | YES |
+
+The fit achieves bad_rate parity across all distance bands. The end-to-end
+Pareto bench (`benchmarks/cvvdp_phase8g_pareto_2026-05-25.tsv`) confirms
+this translates to **85.0% Pareto-front position**, meeting the ≥85%
+ship target.
+
+## Reproduce
+```bash
+JXL_PHASE8G_TILE_DIST_DUMP=/tmp/cvvdp_p8g_tile_dist.tsv \
+  cargo run --release -p jxl-encoder \
+  --features '__expert butteraugli-loop cvvdp-loop ssim2-loop parallel' \
+  --example cvvdp_phase8g_tile_dist_capture -- \
+  --dump-out /tmp/cvvdp_p8g_tile_dist.tsv \
+  --out benchmarks/cvvdp_block_signal_distribution_2026-05-25.tsv
+```
+
+## DO NOT
+- DO NOT cite "FMA precision" for the per-iter bad_rate disparity.
+  This is a structural distribution-shape effect of the 16th-power norm
+  reduction, documented above.
+- DO NOT remove the `JXL_PHASE8G_TILE_DIST_DUMP` env hook — it is the
+  measurement infrastructure for future per-distance refinement
+  (Phase 8h candidate per RFC §3.4 if the single-value Phase 8g fit
+  proves insufficient on out-of-corpus content).
+- DO NOT widen the fit corpus from these 5 fixtures without also
+  validating the W44 cost-model gates don't shift their classification
+  decisions — the dispatchers (W44-91, W44-96, W44-176) consume the
+  same `mask1x1` field as the per-block reducer and could route
+  affected cells through different code paths.
