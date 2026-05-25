@@ -29,7 +29,7 @@
 #![cfg(all(feature = "butteraugli-loop", feature = "cvvdp-loop-tighten"))]
 
 use jxl_encoder::LossyConfig;
-use jxl_encoder::api::EncoderStrategy;
+use jxl_encoder::api::{EncoderStrategy, PerceptualMetric};
 
 #[test]
 fn test_cvvdp_bytes_tighten_default_is_none() {
@@ -126,15 +126,15 @@ fn test_cvvdp_bytes_tighten_libjxl_strategy_short_circuits() {
     let bytes_with_tighten = LossyConfig::new(2.0)
         .with_strategy(EncoderStrategy::Libjxl)
         .with_effort(8)
-        .with_cvvdp_loop(Some(true))
+        .with_perceptual_metric(PerceptualMetric::Cvvdp)
         .with_cvvdp_bytes_tighten(Some(true))
         .encode(&img, 48, 48, jxl_encoder::PixelLayout::Rgb8)
         .expect("Libjxl+tighten encode");
 
     assert_eq!(
         bytes_no_tighten, bytes_with_tighten,
-        "Libjxl strategy MUST short-circuit BOTH cvvdp_loop AND\n\
-         cvvdp_bytes_tighten regardless of caller intent. The W44-126\n\
-         strict-byte-parity invariant takes precedence."
+        "Libjxl strategy MUST short-circuit BOTH the perceptual metric\n\
+         choice AND cvvdp_bytes_tighten regardless of caller intent.\n\
+         The W44-126 strict-byte-parity invariant takes precedence."
     );
 }

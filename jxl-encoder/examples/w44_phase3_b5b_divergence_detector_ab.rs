@@ -162,7 +162,11 @@ fn encode_ours(
         let gpu = matches!(mode, Mode::Gpu | Mode::GpuDetector);
         let cfg = LossyConfig::new(distance)
             .with_effort(effort)
-            .with_gpu_butteraugli(gpu)
+            .with_perceptual_device(if gpu {
+                jxl_encoder::api::PerceptualDevice::Gpu
+            } else {
+                jxl_encoder::api::PerceptualDevice::Cpu
+            })
             .with_threads(1);
         let start = Instant::now();
         let bytes = cfg.encode(rgb, w, h, PixelLayout::Rgb8).ok()?;

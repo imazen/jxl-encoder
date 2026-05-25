@@ -234,8 +234,12 @@ fn encode_one(cell: &BenchCell, use_cpu: bool) -> (Vec<u8>, std::time::Duration)
     let start = Instant::now();
     let encoded = LossyConfig::new(cell.distance)
         .with_strategy(EncoderStrategy::Zenjxl)
-        .with_cvvdp_loop(Some(true))
-        .with_cvvdp_use_cpu(Some(use_cpu))
+        .with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp)
+        .with_perceptual_device(if use_cpu {
+            jxl_encoder::api::PerceptualDevice::Cpu
+        } else {
+            jxl_encoder::api::PerceptualDevice::Gpu
+        })
         .encode(&cell.pixels, cell.width, cell.height, cell.layout)
         .unwrap_or_else(|e| {
             panic!(

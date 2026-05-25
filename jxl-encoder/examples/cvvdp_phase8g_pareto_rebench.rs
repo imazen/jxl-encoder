@@ -116,7 +116,7 @@ fn encode_cell(
             // Pure butteraugli.
         }
         Mode::CvvdpRenormOnly => {
-            cfg = cfg.with_cvvdp_loop(Some(true));
+            cfg = cfg.with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp);
             // Don't try to set bytes_tighten here — different feature
             // configurations interact. Plain `with_cvvdp_loop(Some(true))`
             // gives us Phase 8c renorm + no tighten + Phase 8g constants.
@@ -125,7 +125,7 @@ fn encode_cell(
             // force butter-equivalent).
         }
         Mode::CvvdpConstantsRefit => {
-            cfg = cfg.with_cvvdp_loop(Some(true));
+            cfg = cfg.with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp);
         }
     }
     let limits = Limits::default().with_max_memory_bytes(8 * 1024 * 1024 * 1024);

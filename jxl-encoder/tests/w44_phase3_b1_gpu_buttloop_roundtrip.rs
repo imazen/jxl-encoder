@@ -20,7 +20,7 @@
 
 #![cfg(feature = "gpu-butteraugli")]
 
-use jxl_encoder::api::{LossyConfig, PixelLayout};
+use jxl_encoder::api::{LossyConfig, PerceptualDevice, PixelLayout};
 use std::io::Cursor;
 
 /// Tiny synthetic image — checkerboard with a soft gradient. Big enough to
@@ -142,7 +142,7 @@ fn gpu_backend_roundtrip_via_oxide_smoke() {
     let rgb = synth_rgb(256, 256);
     let cfg = LossyConfig::new(2.0)
         .with_effort(8) // e8 fires the buttloop
-        .with_gpu_butteraugli(true)
+        .with_perceptual_device(PerceptualDevice::Gpu)
         .with_threads(1);
     let bytes = cfg
         .encode(&rgb, 256, 256, PixelLayout::Rgb8)
@@ -162,7 +162,7 @@ fn gpu_backend_roundtrip_via_jxl_rs_smoke() {
     let rgb = synth_rgb(256, 256);
     let cfg = LossyConfig::new(2.0)
         .with_effort(8)
-        .with_gpu_butteraugli(true)
+        .with_perceptual_device(PerceptualDevice::Gpu)
         .with_threads(1);
     let bytes = cfg
         .encode(&rgb, 256, 256, PixelLayout::Rgb8)
@@ -193,7 +193,7 @@ fn gpu_backend_roundtrip_terminal_e8_d4_via_oxide() {
     let (w, h) = (rgb.width(), rgb.height());
     let cfg = LossyConfig::new(4.0)
         .with_effort(8)
-        .with_gpu_butteraugli(true)
+        .with_perceptual_device(PerceptualDevice::Gpu)
         .with_threads(1);
     let bytes = cfg
         .encode(rgb.as_raw(), w, h, PixelLayout::Rgb8)

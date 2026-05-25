@@ -50,7 +50,7 @@
 
 #![cfg(feature = "cvvdp-loop-cpu")]
 
-use jxl_encoder::api::EncoderStrategy;
+use jxl_encoder::api::{EncoderStrategy, PerceptualDevice, PerceptualMetric};
 use jxl_encoder::{LossyConfig, PixelLayout};
 
 // =============================================================================
@@ -174,23 +174,29 @@ fn smoke_cells() -> Vec<SmokeCell> {
 // (1) Public API surface check
 // =============================================================================
 
-/// `with_cvvdp_use_cpu` / `cvvdp_use_cpu` / `resolve_cvvdp_use_cpu`
-/// (where pub(crate)) round-trip via the public API surface. Guards
-/// against accidental `pub(crate)` regressions on the public setter
-/// and getter.
+/// Multi-metric Phase 0 (RFC #3): `with_perceptual_device` /
+/// `perceptual_device` round-trip via the public API surface.
+/// Guards against accidental `pub(crate)` regressions on the public
+/// setter and getter. Replaces the pre-Phase-0 `with_cvvdp_use_cpu`
+/// shape (the CPU-vs-GPU toggle is now metric-agnostic on
+/// `PerceptualDevice`).
 #[test]
 fn public_api_round_trip() {
     let cfg = LossyConfig::new(1.0);
-    assert!(cfg.cvvdp_use_cpu().is_none(), "default must be None");
+    assert_eq!(
+        cfg.perceptual_device(),
+        PerceptualDevice::Auto,
+        "default must be Auto"
+    );
 
-    let cfg = LossyConfig::new(1.0).with_cvvdp_use_cpu(Some(true));
-    assert_eq!(cfg.cvvdp_use_cpu(), Some(true));
-
-    let cfg = LossyConfig::new(1.0).with_cvvdp_use_cpu(Some(false));
-    assert_eq!(cfg.cvvdp_use_cpu(), Some(false));
-
-    let cfg = LossyConfig::new(1.0).with_cvvdp_use_cpu(None);
-    assert_eq!(cfg.cvvdp_use_cpu(), None);
+    for d in [
+        PerceptualDevice::Auto,
+        PerceptualDevice::Cpu,
+        PerceptualDevice::Gpu,
+    ] {
+        let cfg = LossyConfig::new(1.0).with_perceptual_device(d);
+        assert_eq!(cfg.perceptual_device(), d);
+    }
 }
 
 // =============================================================================
@@ -219,15 +225,15 @@ fn default_opt_out_byte_identical_to_default() {
 
         let opt_out_bytes = LossyConfig::new(d)
             .with_strategy(EncoderStrategy::Zenjxl)
-            .with_cvvdp_loop(None)
-            .with_cvvdp_use_cpu(None)
+            .with_perceptual_metric(PerceptualMetric::Butteraugli)
+            .with_perceptual_device(PerceptualDevice::Auto)
             .encode(&pixels, w, h, layout)
-            .unwrap_or_else(|e| panic!("[{name}] cvvdp_*=None encode failed: {e:?}"));
+            .unwrap_or_else(|e| panic!("[{name}] explicit Butteraugli+Auto encode failed: {e:?}"));
 
         assert_eq!(
             default_bytes,
             opt_out_bytes,
-            "[{name}] cvvdp_loop=None + cvvdp_use_cpu=None MUST be byte-identical \
+            "[{name}] explicit Butteraugli + Auto MUST be byte-identical \
              to default — default={} bytes, opt_out={} bytes",
             default_bytes.len(),
             opt_out_bytes.len()
@@ -235,13 +241,17 @@ fn default_opt_out_byte_identical_to_default() {
     }
 }
 
-/// `cvvdp_use_cpu = Some(true)` BUT `cvvdp_loop = None` (CPU opt-in
-/// without the outer cvvdp gate) must also stay byte-identical to
-/// default. This is the structural test that the CPU-vs-GPU selector
-/// is properly gated on `cvvdp_loop = true` upstream — flipping it
-/// alone should be a no-op on the actual dispatch.
+/// Multi-metric Phase 0: `PerceptualDevice::Cpu` on the
+/// `Butteraugli` metric (= "force CPU butteraugli") is the pre-Phase-0
+/// `with_cvvdp_use_cpu(Some(true))` minus the cvvdp opt-in. With
+/// `Butteraugli` as the metric (default), choosing `Cpu` should be
+/// byte-identical to default when the `gpu-butteraugli` cargo feature
+/// is OFF (the default feature set doesn't include it). With the
+/// feature ON, default device `Auto` resolves to GPU, so explicit `Cpu`
+/// here exercises the field's effect — this is the renamed
+/// "CPU-vs-GPU selector without the outer cvvdp opt-in" test.
 #[test]
-fn cvvdp_use_cpu_without_cvvdp_loop_is_noop() {
+fn perceptual_device_cpu_without_cvvdp_metric_resolves_butter_cpu() {
     for cell in smoke_cells() {
         let SmokeCell {
             name,
@@ -251,25 +261,36 @@ fn cvvdp_use_cpu_without_cvvdp_loop_is_noop() {
             layout,
             distance: d,
         } = cell;
-        let default_bytes = LossyConfig::new(d)
-            .with_strategy(EncoderStrategy::Zenjxl)
-            .encode(&pixels, w, h, layout)
-            .unwrap_or_else(|e| panic!("[{name}] default encode failed: {e:?}"));
+        // Default features: Auto = CPU butteraugli. Forcing Cpu
+        // explicitly must produce identical bytes (still butteraugli
+        // CPU under the hood).
+        #[cfg(not(feature = "gpu-butteraugli"))]
+        {
+            let default_bytes = LossyConfig::new(d)
+                .with_strategy(EncoderStrategy::Zenjxl)
+                .encode(&pixels, w, h, layout)
+                .unwrap_or_else(|e| panic!("[{name}] default encode failed: {e:?}"));
 
-        let cpu_only_bytes = LossyConfig::new(d)
-            .with_strategy(EncoderStrategy::Zenjxl)
-            .with_cvvdp_use_cpu(Some(true))
-            .encode(&pixels, w, h, layout)
-            .unwrap_or_else(|e| {
-                panic!("[{name}] cvvdp_use_cpu=Some(true) without cvvdp_loop encode failed: {e:?}")
-            });
+            let cpu_only_bytes = LossyConfig::new(d)
+                .with_strategy(EncoderStrategy::Zenjxl)
+                .with_perceptual_device(PerceptualDevice::Cpu)
+                .encode(&pixels, w, h, layout)
+                .unwrap_or_else(|e| panic!("[{name}] explicit Cpu device encode failed: {e:?}"));
 
-        assert_eq!(
-            default_bytes, cpu_only_bytes,
-            "[{name}] cvvdp_use_cpu=Some(true) alone (without cvvdp_loop=true) \
-             MUST be byte-identical to default — the CPU-vs-GPU selector is \
-             gated on cvvdp_loop being on upstream",
-        );
+            assert_eq!(
+                default_bytes, cpu_only_bytes,
+                "[{name}] PerceptualDevice::Cpu on default metric (Butteraugli) \
+                 must be byte-identical to default when gpu-butteraugli is OFF",
+            );
+        }
+        // With gpu-butteraugli ON, Auto = GPU; explicit Cpu would
+        // differ. The byte-identity check above only fires when GPU
+        // is unavailable. Skip the explicit assertion under the
+        // feature.
+        #[cfg(feature = "gpu-butteraugli")]
+        {
+            let _ = (name, pixels, w, h, layout, d);
+        }
     }
 }
 
@@ -300,26 +321,28 @@ fn libjxl_strategy_byte_identical_regardless_of_cvvdp_use_cpu() {
             .encode(&pixels, w, h, layout)
             .unwrap_or_else(|e| panic!("[{name}] Libjxl default encode failed: {e:?}"));
 
-        // Exhaustive 3x3 matrix over (cvvdp_loop, cvvdp_use_cpu)
-        // — all 9 cells must be byte-identical to default Libjxl.
-        for loop_opt in [Some(true), Some(false), None] {
-            for cpu_opt in [Some(true), Some(false), None] {
+        // Multi-metric Phase 0: exhaustive 2×3 matrix over
+        // (metric, device) — all 6 cells must be byte-identical to
+        // default Libjxl (strict cjxl-parity invariant).
+        for metric in [PerceptualMetric::Butteraugli, PerceptualMetric::Cvvdp] {
+            for device in [
+                PerceptualDevice::Auto,
+                PerceptualDevice::Cpu,
+                PerceptualDevice::Gpu,
+            ] {
                 let libjxl_with_opts = LossyConfig::new(d)
                     .with_strategy(EncoderStrategy::Libjxl)
-                    .with_cvvdp_loop(loop_opt)
-                    .with_cvvdp_use_cpu(cpu_opt)
+                    .with_perceptual_metric(metric)
+                    .with_perceptual_device(device)
                     .encode(&pixels, w, h, layout)
                     .unwrap_or_else(|e| {
-                        panic!(
-                            "[{name}] Libjxl with_cvvdp_loop({loop_opt:?}) + \
-                             with_cvvdp_use_cpu({cpu_opt:?}) encode failed: {e:?}"
-                        )
+                        panic!("[{name}] Libjxl + {metric:?}/{device:?} encode failed: {e:?}")
                     });
 
                 assert_eq!(
                     libjxl_default, libjxl_with_opts,
-                    "[{name}] EncoderStrategy::Libjxl with cvvdp_loop={loop_opt:?}, \
-                     cvvdp_use_cpu={cpu_opt:?} MUST be byte-identical to default \
+                    "[{name}] EncoderStrategy::Libjxl with metric={metric:?}, \
+                     device={device:?} MUST be byte-identical to default \
                      Libjxl — Libjxl invariant violated",
                 );
             }
@@ -353,12 +376,10 @@ fn cvvdp_cpu_encode_decode_roundtrip() {
         } = cell;
         let encoded = LossyConfig::new(d)
             .with_strategy(EncoderStrategy::Zenjxl)
-            .with_cvvdp_loop(Some(true))
-            .with_cvvdp_use_cpu(Some(true))
+            .with_perceptual_metric(PerceptualMetric::Cvvdp)
+            .with_perceptual_device(PerceptualDevice::Cpu)
             .encode(&pixels, w, h, layout)
-            .unwrap_or_else(|e| {
-                panic!("[{name}] cvvdp_loop+cvvdp_use_cpu=Some(true) encode failed: {e:?}")
-            });
+            .unwrap_or_else(|e| panic!("[{name}] Cvvdp + Cpu device encode failed: {e:?}"));
 
         assert!(
             !encoded.is_empty(),

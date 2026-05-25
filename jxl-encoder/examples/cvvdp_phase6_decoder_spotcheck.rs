@@ -60,10 +60,10 @@ impl Backend {
     }
     fn apply(self, cfg: LossyConfig) -> LossyConfig {
         match self {
-            Backend::CGpu => cfg.with_cvvdp_loop(Some(true)),
+            Backend::CGpu => cfg.with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp),
             Backend::CCpu => cfg
-                .with_cvvdp_loop(Some(true))
-                .with_cvvdp_use_cpu(Some(true)),
+                .with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp)
+                .with_perceptual_device(jxl_encoder::api::PerceptualDevice::Cpu),
         }
     }
 }

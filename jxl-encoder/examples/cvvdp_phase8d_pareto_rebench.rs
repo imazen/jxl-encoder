@@ -110,12 +110,12 @@ fn encode_cell(
         }
         Mode::CvvdpNoTighten => {
             cfg = cfg
-                .with_cvvdp_loop(Some(true))
+                .with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp)
                 .with_cvvdp_bytes_tighten(Some(false));
         }
         Mode::CvvdpFull => {
             cfg = cfg
-                .with_cvvdp_loop(Some(true))
+                .with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp)
                 .with_cvvdp_bytes_tighten(Some(true));
         }
     }

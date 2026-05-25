@@ -133,7 +133,7 @@ fn main() {
         // C_GPU_v4 = Phase 8f shipped stack:
         let cfg = LossyConfig::new(*distance)
             .with_effort(8)
-            .with_cvvdp_loop(Some(true))
+            .with_perceptual_metric(jxl_encoder::api::PerceptualMetric::Cvvdp)
             .with_cvvdp_bytes_tighten(Some(true));
         let t0 = Instant::now();
         let encode_res = cfg.encode(&src_u8, w, h, PixelLayout::Rgb8);
