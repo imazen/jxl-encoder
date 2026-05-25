@@ -89,7 +89,8 @@ use std::path::PathBuf;
 /// W44-AUDIT-6 Phase 1 added `high_colour_class_exclude` Section B gate → 28.
 /// W44-AUDIT-5 Phase 2 added `cfl_newton_libjxl_math_with_ls_warm_start` Section C gate → 29.
 /// W44-AUDIT-5 Phase 3 added `cfl_pass1_screenshot_x0_start` Section C gate → 30.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 30;
+/// W44-AUDIT-8 Phase 8 added `buttloop_ssim2_early_exit` Section B gate → 31.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 31;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -220,8 +221,23 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         if row_ref.contains("epf_dynamic_sharpness") {
             out.push("epf_dynamic_sharpness".to_string());
         }
+        // AUDIT-N codes (`W44-AUDIT-6`, `W44-AUDIT-8`, etc.) don't match
+        // the `W<digits>-<digits>` regex because of the `AUDIT` segment.
+        // Anchor on the bare `AUDIT-<n>` substring; the table consistently
+        // uses the same form. The fallback fires only when neither a
+        // W-code nor any of the earlier fallbacks matched.
+        for n in 1u8..=20 {
+            let needle = alloc_audit_anchor(n);
+            if row_ref.contains(&needle) {
+                out.push(needle);
+            }
+        }
     }
     out
+}
+
+fn alloc_audit_anchor(n: u8) -> String {
+    format!("AUDIT-{n}")
 }
 
 /// Acceptance gate (a) — macro-emitted divergence-entry count matches
