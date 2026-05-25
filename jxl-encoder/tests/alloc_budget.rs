@@ -558,3 +558,82 @@ fn w44_audit_2_e9_d4_large_screenshot_no_spurious_oom() {
         assert_eq!(&bytes[..2], &[0xFF, 0x0A], "JXL signature expected");
     }
 }
+
+/// Issue #54 regression: imac_g3.png (2940×1912 ≈ 5.62 MP) at e9 d∈{2, 4, 5, 6}
+/// must NOT spuriously OOM on the default 2 GiB budget.
+///
+/// W44-1 (`dd51c504`) cjxl_parity_ledger seed run caught 6 cells failing on
+/// imac_g3.png × e9 × d∈{2, 4, 5, 6} — 6 cells out of 600. Other distances
+/// and efforts on the same image succeeded. The failure mechanism is
+/// identical to W44-AUDIT-2 (EPF budget-accounting leak in `apply_epf` /
+/// `apply_epf_with_scratch`): each buttloop iter leaked ~200 MB of budget
+/// accounting on this 5.6 MP image (larger than the W44-AUDIT-2 codec_wiki
+/// cell at 4.26 MP, so the per-call leak was proportionally bigger),
+/// accumulating to >800 MB extra-charged across 4 buttloop iters at e9.
+/// W44-AUDIT-2 (commit `887cac54`, May 24) closed this issue as a
+/// side-effect by fixing the same `reserve_opt` vs `reserve_permanent_opt`
+/// shape in `vardct/epf.rs`.
+///
+/// This regression test exists alongside the W44-AUDIT-2 test because:
+/// 1. It exercises the LARGER image dimension (5.6 MP vs 4.26 MP) that
+///    issue #54 surfaced. The W44-AUDIT-2 test catches the leak at +51 MB
+///    above cap; this test catches it at +135 MB above cap (per repro
+///    logs at parent `a11fd0e2` with the fix reverted) — the per-call EPF
+///    leak scales linearly with pixel count, so any future re-introduction
+///    of the same shape of bug that happens to fit the 4.26 MP AUDIT-2 cell
+///    within cap would still blow past this 5.62 MP cell's headroom first.
+/// 2. It pins a known-real production cell (imac_g3.png screenshot
+///    dimensions) — a future leak that synthetic AUDIT-2 inputs happen to
+///    avoid would still trigger here if the dimension + content pattern
+///    matches a real production failure.
+/// 3. Uses d=4 because empirically d=2 on synthetic high-frequency content
+///    converges fast enough in the buttloop that the per-iter EPF leak
+///    doesn't compound past cap (encoder succeeds in ~3.5 min even with
+///    fix reverted). d=4 reliably reproduces the OOM in <15 s pre-fix on
+///    this dimension. The W44-1 ledger surfaced failures at d∈{2, 4, 5, 6}
+///    using the actual imac_g3.png pixels which engage EPF differently
+///    than synthetic; d=4 is the most reliable smoke gate for the
+///    budget-leak mechanism on synthetic-content tests.
+///
+/// Verified: pre-fix (4 `reserve_permanent_opt` sites in `vardct/epf.rs`)
+/// fails in ~9 s with `LimitExceeded { requested: 135210864 bytes on top
+/// of 2145893808 (cap 2147483648) }`. Post-fix passes in ~60 s.
+#[test]
+fn issue_54_imac_g3_e9_d4_no_spurious_oom() {
+    // imac_g3.png dimensions (per W44-1 seed surface).
+    let (w, h) = (2940u32, 1912u32);
+    let mut pixels = Vec::with_capacity((w as usize) * (h as usize) * 3);
+    // Same text-like high-frequency pattern as the W44-AUDIT-2 test —
+    // engages EPF, gaborish, and the buttloop fully so per-iter EPF
+    // budget reservation runs ≥ 4 times at e9.
+    for y in 0..h {
+        for x in 0..w {
+            let edge = ((x / 6) ^ (y / 6)) & 1;
+            let r = if edge == 0 { 240 } else { 16 };
+            let g = if edge == 0 { 200 } else { 32 };
+            let b = if edge == 0 { 160 } else { 48 };
+            pixels.push(r as u8);
+            pixels.push(g as u8);
+            pixels.push(b as u8);
+        }
+    }
+
+    let cfg = LossyConfig::new(4.0).with_effort(9);
+    // NOTE: NO `.with_limits()` — exercise the default 2 GiB cap path
+    // (the path that failed in the W44-1 ledger seed run).
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .unwrap_or_else(|e| {
+            panic!(
+                "issue #54 regression: e9 d=4 on imac_g3-sized (2940×1912 ≈ \
+                 5.6 MP) screenshot OOM'd under default 2 GiB cap: {e}"
+            )
+        });
+    assert!(
+        bytes.len() > 1000 && bytes.len() < (w as usize * h as usize),
+        "expected non-trivial JXL output, got {} bytes",
+        bytes.len()
+    );
+    assert_eq!(&bytes[..2], &[0xFF, 0x0A], "JXL signature expected");
+}
