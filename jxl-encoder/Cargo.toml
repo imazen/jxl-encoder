@@ -44,7 +44,18 @@ butteraugli = { version = "0.9", optional = true }
 imgref = { version = "1.12", optional = true }
 rgb = { version = "0.8", optional = true }
 fast-ssim2 = { version = "0.7.1", features = ["imgref"], optional = true }
-zensim = { version = "0.2", optional = true }
+zensim = { version = "0.3.0", optional = true }
+# zensim-fork Phase 3 (2026-05-25): GPU zensim backend for the perceptual
+# quantization loop (RFC `docs/RFC_ZENSIM_FORK_PLAN.md` §5). Opt-in via
+# the `zensim-loop-gpu` cargo feature; requires CUDA runtime at build +
+# load time. Path-patched in the workspace `[patch.crates-io]` to point
+# at `~/work/zen/zenmetrics/crates/zensim-gpu` because zensim-gpu 0.0.1
+# is `publish = false`. `cubecl-types` enables the
+# `score_from_linear_planes*` helpers we wrap; `cuda` selects the
+# CudaRuntime backend at build time. The `cubecl` direct dep is already
+# pulled in optionally for `gpu-butteraugli` / `cvvdp-loop` and is
+# reused here when `zensim-loop-gpu` is enabled.
+zensim-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types"], optional = true }
 # Ultra HDR gain map math + ISO 21496-1 serializer.
 # `default-features = false` skips the `tonemap` feature (which transitively
 # pulls zentone); we only need the gain-map compute path + the ISO 21496-1
@@ -167,7 +178,25 @@ cvvdp-loop-cpu = ["cvvdp-loop", "dep:cvvdp-cpu"]
 # `docs/RFC_CVVDP_PHASE8_PARETO_TARGETING.md` §3.3).
 cvvdp-loop-tighten = ["cvvdp-loop"]
 ssim2-loop = ["dep:fast-ssim2", "dep:imgref"]
-zensim-loop = ["dep:zensim"]
+zensim-loop = ["butteraugli-loop", "dep:zensim"]
+# zensim-fork Phase 3 (2026-05-25): GPU zensim backend for the perceptual
+# quantization loop. Implies `butteraugli-loop` (the `PerceptualBackend`
+# trait surface lives there). Opt-in only — when enabled the caller still
+# has to set
+# `LossyConfig::with_perceptual_metric(PerceptualMetric::Zensim)` AND
+# CUDA must be present at runtime; otherwise the buttloop silently falls
+# back to the CPU zensim backend (if `zensim-loop` is also compiled)
+# else the CPU butteraugli backend. See RFC
+# `docs/RFC_ZENSIM_FORK_PLAN.md` §5 + RFC `docs/RFC_ZENSIM_BUTTLOOP_AUDIT.md`
+# §3.1 (Phase 1 zensim-gpu surface that this wraps).
+#
+# Phase 3 ships the backend impl + dispatch only — the buttloop body
+# still consumes butteraugli-direction targets; Phase 4 will plumb the
+# zensim signal through `run_buttloop` via `vardct/zensim_targets.rs`.
+# Hash-locks stay byte-identical when this feature is OFF AND when
+# ON-but-no-caller-opts-in (`LossyConfig::perceptual_metric` defaults
+# to `PerceptualMetric::Butteraugli`).
+zensim-loop-gpu = ["butteraugli-loop", "dep:zensim-gpu", "dep:cubecl"]
 # Convenience encode functions that accept imgref::ImgRef with typed pixel formats.
 convenience = ["dep:imgref", "dep:rgb"]
 jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]

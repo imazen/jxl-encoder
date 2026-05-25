@@ -4703,9 +4703,10 @@ pub struct LossyConfig {
 /// diffmap. The metric choice is fixed for the full encode; per-iter
 /// switching is not supported.
 ///
-/// **Default**: [`Self::Butteraugli`]. The other metric is opt-in
-/// per its respective cargo features ([`Self::Cvvdp`] requires
-/// `cvvdp-loop` and/or `cvvdp-loop-cpu`).
+/// **Default**: [`Self::Butteraugli`]. The non-default metrics are
+/// opt-in per their respective cargo features ([`Self::Cvvdp`] requires
+/// `cvvdp-loop` and/or `cvvdp-loop-cpu`; [`Self::Zensim`] requires
+/// `zensim-loop` and/or `zensim-loop-gpu`).
 ///
 /// **`EncoderStrategy::Libjxl` invariant**: when the active strategy is
 /// [`EncoderStrategy::Libjxl`], the resolved metric is forced to
@@ -4726,6 +4727,21 @@ pub enum PerceptualMetric {
     /// `cvvdp-loop` (GPU) or `cvvdp-loop-cpu` (CPU) cargo features.
     /// See `docs/RFC_CVVDP_FORK.md`.
     Cvvdp,
+
+    /// zensim (multi-scale XYB SSIM + edge + HF + trained per-codec
+    /// affine; native score lives in [0, 100] with 100 = identical, so
+    /// the backend's trait boundary maps it to butteraugli-direction
+    /// via `(100.0 - score).clamp(0.0, 100.0)`). Opt-in via the
+    /// `zensim-loop` (CPU) or `zensim-loop-gpu` (GPU) cargo features.
+    /// See `docs/RFC_ZENSIM_FORK_PLAN.md` + `docs/RFC_ZENSIM_BUTTLOOP_AUDIT.md`.
+    ///
+    /// **Phase 3 ships the backend impl + dispatch only** — the per-distance
+    /// target table at `vardct/zensim_targets.rs` and per-block reducer
+    /// constants are Phase 4 follow-on work. Until Phase 4 lands, opting
+    /// into Zensim with `LossyConfig::with_perceptual_metric` constructs the
+    /// backend but the buttloop still consumes butteraugli-direction
+    /// targets; the resulting quality calibration is not Pareto-tuned.
+    Zensim,
 }
 
 /// Multi-metric Phase 0 (RFC #3, 2026-05-25): compute-device preference
@@ -6659,6 +6675,22 @@ impl LossyConfig {
                     PerceptualMetric::Cvvdp
                 }
                 #[cfg(not(any(feature = "cvvdp-loop", feature = "cvvdp-loop-cpu")))]
+                {
+                    PerceptualMetric::Butteraugli
+                }
+            }
+            PerceptualMetric::Zensim => {
+                // zensim-fork Phase 3 (RFC #3 / RFC_ZENSIM_FORK_PLAN.md §5,
+                // 2026-05-25): silent fallback to Butteraugli when neither
+                // zensim-loop nor zensim-loop-gpu was compiled in. The
+                // construct-backend dispatch emits a one-shot warning on
+                // the first silent downgrade so users can spot a missing
+                // cargo feature without breaking the encode.
+                #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+                {
+                    PerceptualMetric::Zensim
+                }
+                #[cfg(not(any(feature = "zensim-loop", feature = "zensim-loop-gpu")))]
                 {
                     PerceptualMetric::Butteraugli
                 }

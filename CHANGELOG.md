@@ -61,6 +61,47 @@
 
 ### Added
 
+- **zensim fork — opt-in zensim-driven quantization loop (Phase 3)**
+  (RFC [`docs/RFC_ZENSIM_FORK_PLAN.md`](docs/RFC_ZENSIM_FORK_PLAN.md) §5,
+  [`docs/RFC_ZENSIM_BUTTLOOP_AUDIT.md`](docs/RFC_ZENSIM_BUTTLOOP_AUDIT.md),
+  [`docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md`](docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md)).
+  Mirrors the cvvdp Phase 3 + 5 shape (commits `57757ff8` + `206b874e`)
+  for the third `PerceptualBackend` impl. **Phase 3 ships the backend
+  impl + opt-in dispatch only** — the buttloop body still consumes
+  butteraugli-direction targets; Phase 4 will plumb the zensim signal
+  through `run_buttloop` via `vardct/zensim_targets.rs` per-distance
+  calibration. Default OFF — opt-in via the unified Phase 0 API
+  `LossyConfig::with_perceptual_metric(PerceptualMetric::Zensim)`.
+  Surface:
+  - `--features zensim-loop` cargo feature (pure-Rust CPU backend; wraps
+    `zensim::Zensim::compute_with_ref_and_diffmap_linear_planar`). No
+    CUDA needed; runs anywhere. Always available.
+  - `--features zensim-loop-gpu` cargo feature (GPU backend wraps
+    `zensim_gpu::ZensimOpaque` via zenmetrics master Phase 1 commit
+    `1175b49` `score_from_linear_planes_with_warm_ref_diffmap`). Requires
+    CUDA at build + load time. **Phase 1 honest-stop carryover**: the
+    current GPU diffmap delegates to the canonical CPU pipeline (per
+    `crates/zensim-gpu/docs/DIFFMAP_DIVERGENCES.md`), +1006% wall vs
+    score-only GPU at 1024². Phase 1b (pure-GPU kernels) will close
+    this; until then prefer `PerceptualDevice::Cpu` for wall-time-
+    sensitive workloads.
+  - `PerceptualMetric::Zensim` variant on the Phase 0 enum (new).
+  - `vardct/zensim_backend.rs` (new ~700 LOC) hosts `CpuZensimBackend`
+    + `GpuZensimBackend` impls + 10 unit tests.
+  - `tests/zensim_backend_smoke.rs` (new) — 5 integration tests
+    including the load-bearing `EncoderStrategy::Libjxl` byte-identical
+    invariant under `PerceptualMetric::Zensim` (W44-126 strict cjxl
+    parity preserved; same short-circuit as cvvdp).
+  - Score-direction normalization at trait boundary:
+    `(100.0 - zensim_score).clamp(0.0, 100.0)`. Diffmap renorm scale
+    ships as placeholder `1.0` (no renorm) — Phase 4 fits the constant
+    via a Phase 8c-equivalent harness.
+  - Hash-locks 36/36 BYTE-IDENTICAL at default features AND with
+    `zensim-loop` compiled (caller has to explicitly opt in for the
+    backend to construct). `strategy_libjxl_byte_lock` 4/4
+    BYTE-IDENTICAL with zensim-loop compiled. `divergence_table_drift`
+    7/7 PASS.
+
 - **cvvdp fork — opt-in ColorVideoVDP-driven quantization loop**
   (RFC [`docs/RFC_CVVDP_FORK.md`](docs/RFC_CVVDP_FORK.md), Phase 6
   decision memo [`docs/CVVDP_FORK_DECISION.md`](docs/CVVDP_FORK_DECISION.md)).

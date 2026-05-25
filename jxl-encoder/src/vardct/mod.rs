@@ -74,10 +74,22 @@ pub(crate) mod cvvdp_backend;
 // See `docs/RFC_CVVDP_PHASE4_BRIEF.md` Step 3.
 #[cfg(feature = "cvvdp-loop")]
 pub(crate) mod cvvdp_targets;
+// zensim-fork Phase 3 (2026-05-25): zensim backend impl for the
+// perceptual quantization loop (RFC `docs/RFC_ZENSIM_FORK_PLAN.md` §5).
+// Gated on the zensim cargo features. Hosts `CpuZensimBackend` (feature
+// `zensim-loop`, wraps `zensim::Zensim` + linear-planar diffmap) and
+// `GpuZensimBackend` (feature `zensim-loop-gpu`, wraps
+// `zensim_gpu::ZensimOpaque` via Phase 1 commit `1175b49` on zenmetrics
+// master). Per-distance target table + per-block reducer constants are
+// Phase 4 follow-on work; Phase 3 ships the backend impl + dispatch
+// only. See `docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md` for the
+// trait + API surface.
 pub(crate) mod dc_coding;
 mod dc_tree_learn;
 pub mod dct;
 pub(crate) mod debug_log;
+#[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+pub(crate) mod zensim_backend;
 // libjxl enc_detect_dots.cc port (refs #19). Wired into encoder.rs at
 // effort >= 7, distance >= 3.0; dots get promoted to a fresh
 // PatchesData via from_dots() and travel through the regular patch
