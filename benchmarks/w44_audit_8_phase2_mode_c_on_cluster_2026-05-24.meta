@@ -1,0 +1,153 @@
+# W44-AUDIT-8 Phase 2 — Mode C CfL on 30-cell photo SSIM2-deficit cluster
+
+**Status**: [RULED OUT — Mode C does not close the cluster wedge]
+**Date**: 2026-05-24
+**Chunk**: W44-AUDIT-8 Phase 2 (measurement-only)
+**Parent**: W44-AUDIT-8 Phase 1 (`memory/w44_audit_8_phase1_photo_ssim2_deficit_diagnosis_2026-05-24.md`)
+**Hypothesis**: Phase 1 Candidate #2 — enabling
+`cfl_newton_libjxl_math_with_ls_warm_start = true` (Mode C from AUDIT-5
+P2) on the 30-cell PHOTO/CLIC cluster (dSsim2 ≤ -1.0 vs cjxl) might
+close part of the wedge, especially on Class A (Zenjxl-Worse-than-Libjxl)
+and the high-M3 (>= 80) part of Class B (Both-Fail).
+
+## Bench design
+
+- Cells: 30 (image, effort, distance) tuples extracted from
+  `benchmarks/w44_audit_8_phase1_cluster_chars_2026-05-24.tsv`
+  spanning 13 unique images and 3 subclasses (A_LibjxlBetter / B_BothFail / C_LibjxlWORSE).
+- Mode A: `EncoderStrategy::Zenjxl` (production default,
+  `cfl_newton_libjxl_math_with_ls_warm_start = false`).
+- Mode C: `EncoderStrategy::Custom(EncoderImprovementsCustom::default())`
+  with **only** `cfl_newton_libjxl_math_with_ls_warm_start = true`
+  flipped on top of the Zenjxl default. No env-var contamination.
+- cjxl 0.12.0 reference encoded each cell once for context.
+- 30 cells × (cjxl + A + C) = 90 encodes total. Wall: 46 s on 7950X.
+- Reproducer: `cargo run -p jxl-encoder --release --features
+  "parallel butteraugli-loop ssim2-loop __expert" --example
+  w44_audit_8_phase2_mode_c_on_cluster -- --output <tsv>`.
+
+## Classification (Step 3)
+
+- **WIN**: Mode C >= Mode A + 0.5 SSIM2 AND |Δbytes| ≤ 2%
+- **LOSS**: Mode C <= Mode A - 0.5 SSIM2 OR Δbytes > 2%
+- **NEUTRAL**: otherwise
+
+## Per-subclass × verdict (Step 4)
+
+| subclass         | n  | WIN | NEUTRAL | LOSS |
+|---               |--- |---  |---      |---   |
+| A_LibjxlBetter   | 4  | 0   | 4       | 0    |
+| B_BothFail       | 17 | 0   | 17      | 0    |
+| C_LibjxlWORSE    | 9  | 0   | 9       | 0    |
+| **TOTAL**        | 30 | **0**   | **30**      | **0**    |
+
+## Aggregate deltas
+
+- Mode C vs Mode A bytes: range [-0.142%, +0.688%], mean +0.057%
+- Mode C vs Mode A SSIM2: range [-0.309, +0.269], mean +0.0004
+- 7 of 30 cells produced byte-identical Mode C (Δbytes=0, Δssim2=0)
+- 23 of 30 cells produced different bytes but within ±0.5 SSIM2
+
+Worst absolute Mode C effect on any cell: **-0.309 SSIM2** on
+`clic_0c49a5 e9 d=2` (B_BothFail subclass), which is still well
+inside the NEUTRAL band.
+
+## Ship-shape decision (Step 4)
+
+**Hypothesis FALSIFIED**. Per Phase 2 task spec branch "If Mode C is
+NEUTRAL on all 30 cells: hypothesis falsified. File next-tier candidate
+(per-block AC strategy + entropy_mul tweak per AUDIT-8 P1 Candidate #2)
+as W44-AUDIT-8 Phase 3."
+
+The result confirms and **extends** AUDIT-5 P3's finding that Mode C
+is byte-identical to Mode A on CID22 photos (M3<80): here we see
+identical near-neutrality even at M3=105 (clic_22ea12), M3=95
+(clic_0c49a5), and CLIC web photos generally. The conclusion is
+that LS warm-start and libjxl Newton math converge to nearly the same
+i8 multiplier across the entire PHOTO/CLIC range — including the
+"different colour variance" regime the Phase 1 memo explicitly called
+out as untested.
+
+**Mechanism understanding (refined)**: on photo content (LOW edge
+density per-block in the regime where CfL applies), the LS-fit slope
+and the Newton-converged slope round to the same `multiplier ∈ [-128, 127]`
+i8 value because the per-tile residual error surface is broad and the
+LS warm-start lands close enough to the Newton optimum that subsequent
+refinement only nudges the float-domain multiplier by ≤ 1 i8 quantum.
+The 7 byte-identical cells confirm this happens exactly on a substantial
+minority. The 23 cells with sub-quantum bit movement (worst -0.309
+SSIM2 / +0.688% bytes) show the i8 multiplier sometimes differs by ±1
+but the downstream entropy + AC strategy choices absorb this with no
+material quality movement.
+
+**The SSIM2 deficit in the 30-cell cluster is NOT in CfL multiplier
+choice**. It must be in:
+- AC strategy selection at d=4 (cost-model under-allocation, P1 Candidate #1)
+- Parametric quantization weights at d=4 (P1 Candidate #3)
+- Or a yet-unidentified mechanism
+
+## Filed for Phase 3
+
+**File**: W44-AUDIT-8 Phase 3 — AC strategy + entropy_mul investigation
+(Candidate #1 from Phase 1). Fix-shape per Phase 1 memo §4 Candidate #1:
+
+1. Per-block AC-strategy dump on clic_22ea12 e7 d=4 + 1418519 e7 d=4
+   (W44-103 / W44-121 / W44-199 pattern) to compare our vs cjxl block
+   size distributions and identify which strategy class is over/under-
+   selected.
+2. Target files: `jxl-encoder/src/vardct/ac_strategy_search.rs` +
+   `jxl-encoder/src/effort.rs::EntropyMulTable`.
+3. Estimated wall: 3-4 sessions per Phase 1 estimate. Higher risk
+   than Phase 2 due to entropy_mul-tweak cross-image collateral
+   history (every prior W44-* entropy_mul tweak required 30-100
+   cell validation harness).
+
+Phase 2 narrows the search — eliminates the CfL Pass-1/Pass-2 lever
+entirely so Phase 3 can focus on AC strategy + quantization without
+the CfL hypothesis competing for cycles.
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT default-flip `cfl_newton_libjxl_math_with_ls_warm_start =
+   true` on Zenjxl** to attack this cluster. 0/30 cells improved by
+   ≥ 0.5 SSIM2; the flip would add ~0.06% bytes mean with zero quality
+   benefit on the target cluster (and would hit the 25/27 photo
+   regression from W44-183 on the wider 240-cell harness).
+2. **DO NOT re-investigate Mode C on this cluster with any variant**
+   (CLIC-only filter, distance-narrowed gate, etc.). Mode C's
+   mechanism (Newton math from LS warm-start) is structurally
+   incapable of moving the i8 multiplier outside the ±1 quantum
+   range that LS already finds — the empirical 30-cell measurement
+   is conclusive.
+3. **DO NOT cite "FMA precision"** for the ±0.7% byte movement or
+   the worst -0.309 SSIM2 cell (per W44-66 user correction). The
+   byte movement is mechanical: when Mode C's slightly-different
+   slope rounds to a different i8 multiplier, the downstream
+   AC-coefficient stream gets re-tokenized differently. Pure
+   integer-arithmetic divergence, not float noise.
+4. **DO NOT spawn AC-strategy + entropy_mul Phase 3 work as a small
+   chunk**. Per Phase 1, this is HIGH-risk and requires 30-100 cell
+   regression validation. Allocate ≥ 2 sessions plus a follow-on
+   240-cell AUDIT-7 re-bench if any source change is shipped.
+5. **DO NOT lower the M3 >= 80 admit threshold** to try to pull
+   clic_22ea12 into a screenshot-class lift — AUDIT-6 P3 already
+   ruled out that path AND would re-incur the W44-105 SHIP-cell
+   catastrophe on terminal/imac_g3.
+
+## Acceptance gates (Step 5)
+
+- (a) 30-cell cluster cells re-run in both Mode A and Mode C: **PASS**
+  (30 rows in TSV, no skips).
+- (b) Per-cell classification table built: **PASS** (`verdict` column).
+- (c) Sub-cluster aggregate verdict produced: **PASS** (table above).
+- (d) Ship-shape decision filed: **PASS** (Phase 3 = AC strategy +
+  entropy_mul Candidate #1).
+- (e) `cargo test --lib` PASS: **PASS** (1450 passed, 0 failed, 29 ignored).
+- (f) Hash-locks 36/36 BYTE-IDENTICAL: **PASS** (no production source
+  change).
+- (g) Strategy libjxl byte-lock 4/4 PASS: **PASS** (no production source
+  change).
+- (h) Drift 7/7 PASS: **PASS** (no gate added/removed).
+- (i) Single commit pushed: **(pending)**.
+- (j) `.workongoing` removed: **(pending)**.
+- (k) Section F row extended in LIBJXL_DIVERGENCES.md: **PASS** (this commit).

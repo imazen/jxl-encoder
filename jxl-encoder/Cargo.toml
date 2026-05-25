@@ -1298,6 +1298,15 @@ name = "w44_audit_7_wider_corpus"
 path = "examples/w44_audit_7_wider_corpus.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
 
+# W44-AUDIT-8 Phase 2 (2026-05-24): re-run the 30-cell PHOTO/CLIC SSIM2-deficit
+# cluster (from Phase 1 cluster TSV) in Mode A (default Zenjxl) vs Mode C
+# (Zenjxl + cfl_newton_libjxl_math_with_ls_warm_start=true via Custom strategy).
+# Tests Phase 1 Candidate #2 hypothesis: can CfL Mode C close any of the cluster?
+[[example]]
+name = "w44_audit_8_phase2_mode_c_on_cluster"
+path = "examples/w44_audit_8_phase2_mode_c_on_cluster.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
+
 # W44-AUDIT-3 (2026-05-24): focused 3-cell re-validation of codec_wiki d=4
 # post the W44-AUDIT-2 EPF budget-accounting OOM fix (commit 887cac54).
 # Re-runs JUST codec_wiki e5/e7/e9 d=4 with full bytes + butteraugli + SSIM2
