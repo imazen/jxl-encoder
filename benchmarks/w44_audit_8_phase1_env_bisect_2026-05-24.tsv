@@ -1,0 +1,28 @@
+# W44-AUDIT-8 Phase 1: env-disable bisect on clic_22ea12 e7 d=4 (worst SSIM2 deficit cell)
+# baseline (no env hook): zenjxl_bytes=36258, zenjxl_ssim2=67.99, cjxl_bytes=36614, cjxl_ssim2=71.83, dSsim2=-3.84
+# Generated 2026-05-25 by examples/w44_audit_7_wider_corpus --only clic_22ea12 with env vars set per run
+env_label	cell	zenjxl_bytes	zenjxl_ssim2	cjxl_bytes	cjxl_ssim2	dSsim2_vs_cjxl	verdict
+baseline	clic_22ea12_e7_d4	36258	67.99	36614	71.83	-3.84	BASELINE
+audit6_disable	clic_22ea12_e7_d4	36258	67.99	36614	71.83	-3.84	NO_EFFECT
+w44_117_disable	clic_22ea12_e7_d4	36258	67.99	36614	71.83	-3.84	NO_EFFECT
+w44_120_dist99	clic_22ea12_e7_d4	36258	67.99	36614	71.83	-3.84	NO_EFFECT
+w44_142_disable	clic_22ea12_e7_d4	36258	67.99	36614	71.83	-3.84	NO_EFFECT
+w44_143_dist99	clic_22ea12_e7_d4	36258	67.99	36614	71.83	-3.84	NO_EFFECT
+w44_152_disable	clic_22ea12_e7_d4	36258	67.99	36614	71.83	-3.84	NO_EFFECT
+w44_166_off	clic_22ea12_e7_d4	36258	67.99	36614	71.83	-3.84	NO_EFFECT
+w44_167_A	clic_22ea12_e7_d4	36258	67.99	36614	71.83	-3.84	NO_EFFECT
+w44_168_A	clic_22ea12_e7_d4	36258	67.99	36614	71.83	-3.84	NO_EFFECT
+w44_176_disable	clic_22ea12_e7_d4	36258	67.99	36614	71.83	-3.84	NO_EFFECT
+all_w44_disable	clic_22ea12_e7_d4	36258	67.99	36614	71.83	-3.84	NO_EFFECT
+baseline	clic_22ea12_e9_d4	32489	66.57	33676	70.11	-3.54	BASELINE
+audit6_disable	clic_22ea12_e9_d4	32489	66.57	33676	70.11	-3.54	NO_EFFECT
+w44_117_disable	clic_22ea12_e9_d4	32489	66.57	33676	70.11	-3.54	NO_EFFECT
+w44_120_dist99	clic_22ea12_e9_d4	32489	66.57	33676	70.11	-3.54	NO_EFFECT
+w44_142_disable	clic_22ea12_e9_d4	32489	66.57	33676	70.11	-3.54	NO_EFFECT
+w44_143_dist99	clic_22ea12_e9_d4	32489	66.57	33676	70.11	-3.54	NO_EFFECT
+w44_152_disable	clic_22ea12_e9_d4	32489	66.57	33676	70.11	-3.54	NO_EFFECT
+w44_166_off	clic_22ea12_e9_d4	32489	66.57	33676	70.11	-3.54	NO_EFFECT
+w44_167_A	clic_22ea12_e9_d4	32489	66.57	33676	70.11	-3.54	NO_EFFECT
+w44_168_A	clic_22ea12_e9_d4	32489	66.57	33676	70.11	-3.54	NO_EFFECT
+w44_176_disable	clic_22ea12_e9_d4	32489	66.57	33676	70.11	-3.54	NO_EFFECT
+all_w44_disable	clic_22ea12_e9_d4	32489	66.57	33676	70.11	-3.54	NO_EFFECT
