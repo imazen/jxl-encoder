@@ -1498,6 +1498,36 @@ required-features = [
     "parallel",
 ]
 
+# cvvdp-fork Phase 8g (2026-05-25): per-block tile_dist distribution
+# capture for Intervention B per-block reducer constants refit.
+# Uses `JXL_PHASE8G_TILE_DIST_DUMP` env hook
+# (`maybe_dump_tile_dist_stats_phase8g` in `vardct/perceptual_loop.rs`)
+# to record per-iter tile_dist distribution + bad-block rate per backend.
+# Output: `benchmarks/cvvdp_block_signal_distribution_<DATE>.tsv`.
+[[example]]
+name = "cvvdp_phase8g_tile_dist_capture"
+path = "examples/cvvdp_phase8g_tile_dist_capture.rs"
+required-features = [
+    "__expert",
+    "butteraugli-loop",
+    "cvvdp-loop",
+    "ssim2-loop",
+    "parallel",
+]
+
+# cvvdp-fork Phase 8g Pareto re-bench. Mirror of phase8d_pareto_rebench
+# but emits C_GPU_v4 backend tag for the per-block constants refit run.
+[[example]]
+name = "cvvdp_phase8g_pareto_rebench"
+path = "examples/cvvdp_phase8g_pareto_rebench.rs"
+required-features = [
+    "__expert",
+    "butteraugli-loop",
+    "cvvdp-loop",
+    "ssim2-loop",
+    "parallel",
+]
+
 # cvvdp-fork Phase 5 (2026-05-24): 10-cell A/B bench comparing CPU
 # vs GPU CVVDP backends in the buttloop. Self-contained synthetic
 # fixtures; tolerates missing CUDA (falls back through
@@ -2549,3 +2579,16 @@ path = "examples/w44_phase3_b7c_tls_pool_ab.rs"
 required-features = ["__expert", "butteraugli-loop", "parallel"]
 [lints]
 workspace = true
+
+# cvvdp-fork Phase 8g (2026-05-25): smoke encoder for multi-decoder
+# spot-check (3 cells × 3 decoders). Output JXL files at /tmp/p8g_check_*.jxl
+# verified via jxl-oxide (in-process), jxl-rs (in-process), and djxl (CLI).
+[[example]]
+name = "cvvdp_phase8g_smoke_encode"
+path = "examples/cvvdp_phase8g_smoke_encode.rs"
+required-features = [
+    "__expert",
+    "butteraugli-loop",
+    "cvvdp-loop",
+    "parallel",
+]
