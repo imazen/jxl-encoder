@@ -1328,6 +1328,27 @@ name = "w44_audit_8_phase6_bisect"
 path = "examples/w44_audit_8_phase6_bisect.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
 
+# W44-AUDIT-8 Phase 7 (2026-05-24): env-disable bisect on the worst e9 SSIM2
+# deficit cell (clic_22ea12 e9 d=4 = -3.54). Phase 5's extra_dc_precision=1
+# fix is gated at e≤7 so e9 cluster is untouched. Diagnostic-only: tests
+# whether any of W44-117/120/142/151/152/156/166/167/168/171/172/176/201/205
+# or AUDIT-5-P3/AUDIT-6/AUDIT-8-P6 env hooks moves SSIM2 meaningfully at
+# this cell, narrowing the root-cause hypothesis for Phase 8.
+[[example]]
+name = "w44_audit_8_phase7_e9_env_bisect"
+path = "examples/w44_audit_8_phase7_e9_env_bisect.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
+
+# W44-AUDIT-8 Phase 7 isolation: pin butteraugli_iters=0 at e9 to test if
+# the buttloop is the cliff source between e7 (+0.94 SSIM2) and e9 (-3.54).
+# Phase 7 env-bisect ruled out all W44-* discriminators (byte-identical
+# SSIM2 across 20 variants); the remaining structural difference is the
+# buttloop iter count (e7=0, e8=2, e9=4).
+[[example]]
+name = "w44_audit_8_phase7_e9_buttloop_isolate"
+path = "examples/w44_audit_8_phase7_e9_buttloop_isolate.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
+
 # W44-AUDIT-3 (2026-05-24): focused 3-cell re-validation of codec_wiki d=4
 # post the W44-AUDIT-2 EPF budget-accounting OOM fix (commit 887cac54).
 # Re-runs JUST codec_wiki e5/e7/e9 d=4 with full bytes + butteraugli + SSIM2

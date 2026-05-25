@@ -1,0 +1,57 @@
+W44-AUDIT-8 Phase 7 e9 env-disable bisect
+
+Run timestamp: 2026-05-24
+Encoder commit: 8110e04f (Phase 5b shipped — extra_dc_precision=1 at e≤7;
+                            Phase 6 QuantizeWP opt-in)
+Reference: cjxl 0.12.0 (libjxl main build)
+
+Worst e9 SSIM2-deficit cell: clic_22ea12 e9 d=4 (-3.54 SSIM2 vs cjxl).
+Phase 5 fix is gated at effort ≤ 7 (libjxl `nl_dc = speed_tier < kFalcon`
+parity), so the e9 cluster is structurally untouched by Phase 5.
+
+Variants tested (20 = 1 baseline + 19 env hooks toggled OFF / forced):
+
+  - BASELINE (no env)
+  - JXL_W44_117_DISABLE=1                       (EPF seed in buttloop)
+  - JXL_W44_120_EPF_SEED_MIN_DISTANCE=99        (W44-120 distance gate)
+  - JXL_W44_AUDIT_5_P3_DISABLE=1                (AUDIT-5 Mode D opt-in)
+  - JXL_W44_AUDIT_6_DISABLE=1                   (AUDIT-6 M3 gate)
+  - JXL_W44_156_DISABLE=1                       (variant Z distance-aware)
+  - JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP=1      (Phase 6 QuantizeWP shape)
+  - JXL_W44_176_DISABLE=1                       (buttloop iter-count tuning)
+  - JXL_W44_142_SUPPRESS_DISABLE=1              (W44-142 photo-suppress)
+  - JXL_W44_152_DISABLE=1                       (W44-152 narrow-band lift)
+  - JXL_W44_151_DISABLE=1                       (W44-151 high-mask gate)
+  - JXL_W44_166_VARIANT_Z_ADMIT_MODE=off        (W44-166 variant Z admit)
+  - JXL_W44_167_MODE=off                        (W44-167 per-m3 split)
+  - JXL_W44_168_MODE=off                        (W44-168 Mode D LC)
+  - JXL_W44_171_FORCE_TRIAL_ALL_EFFORTS=1       (DC tree trial all efforts)
+  - JXL_W44_172_FORCE_VARIABLE_AT_E8=1          (DC tree Variable at e8)
+  - __JXL_W44_57_FORCE_VARIABLE=1               (DC tree Variable forced)
+  - __JXL_W44_57_FORCE_FIXED=1                  (DC tree kWPFixedDC forced)
+  - JXL_W44_201_FORCE_LEGACY_LARGE_BUCKETS=1    (coeff-order legacy large)
+  - JXL_W44_205_FORCE_LEGACY_MEDIUM_BUCKETS=1   (coeff-order legacy medium)
+
+VERDICT (all 20 variants): SSIM2 is BYTE-IDENTICAL across every variant
+(ours_ssim2 = 66.5687 on every row). ours_bfly = 3.8689 on every row.
+ours_bytes differs on 3 hooks (W44_57_FORCE_FIXED: 33504, W44_201: 32941,
+W44_205: 32689 — all entropy-coding tweaks that don't change decoded pixels).
+
+CONCLUSION: NONE of the recent W44-* discriminator hooks are responsible
+for the e9 SSIM2 deficit cluster. The deficit must originate in pipeline
+machinery that fires uniformly across all our paths (and Phase 5's
+extra_dc_precision=1 lift is OFF at e≥8).
+
+Follow-on: the buttloop-isolation bench (sibling file
+`w44_audit_8_phase7_e9_buttloop_isolate_2026-05-24.tsv`) tests
+`with_butteraugli_iters(0)` at e9 to determine whether the buttloop
+itself is the cliff source.
+
+Reproducer:
+  cargo run -p jxl-encoder --release \
+    --features "parallel butteraugli-loop ssim2-loop __expert" \
+    --example w44_audit_8_phase7_e9_env_bisect
+
+Files:
+  jxl-encoder/examples/w44_audit_8_phase7_e9_env_bisect.rs
+  benchmarks/w44_audit_8_phase7_e9_env_bisect_2026-05-24.tsv (this dataset)
