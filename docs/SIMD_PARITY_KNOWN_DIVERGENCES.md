@@ -73,46 +73,33 @@ output bytes and requires hash-lock regen.
 
 ---
 
-### `entropy-001` — `entropy_coeffs_scalar` rounding-mode divergence
+### ~~`entropy-001`~~ — RESOLVED (2026-05-25)
 
-**Test**: `jxl-encoder-simd/src/entropy.rs::expanded_coverage::entropy_coeffs_scalar_vs_dispatch_edge_battery`
+**Resolution**: `entropy_coeffs_scalar` at `jxl-encoder-simd/src/entropy.rs:150`
+now uses `crate::scalarmath::round_ties_even_f32(val)`, matching libjxl
+`enc_ac_strategy.cc::EstimateEntropy` which uses Highway `Round`
+(IEEE 754 round-to-nearest-ties-to-even) AND the SIMD path
+(`_mm256_round_ps ROUND_TO_NEAREST_INT` = ties-to-even).
 
-**Symptom**: On half-integer inputs (e.g. input `1.0` with weights/quant
-that produce a quantized value of exactly `0.5`), the scalar path
-quantizes to a different integer than the SIMD path.  Observed at index
-[5] of the `ones(n=64)` case: scalar produced `-0.5` (rounded away from
-zero magnitude direction), SIMD produced `+0.5`.
+The W44 `9ef2819` sweep ("ties-to-even for rintf parity") fixed 3
+sites but missed this one; the SIMD-vs-scalar parity harness
+(eedc1877 + fb871c83) surfaced it. Hash-locks 36/36 BYTE-IDENTICAL
+post-fix (synthetic ≤48×48 fixtures don't hit halfway-quantized
+coefficients in the scalar entropy path; production encoders use
+SIMD path which was already correct).
 
-**Root cause**: `entropy_coeffs_scalar`
-(`jxl-encoder-simd/src/entropy.rs:138`) uses
-`crate::scalarmath::round_f32`, which is `f32::round()` — **round half
-away from zero**.  The SIMD path
-(`jxl-encoder-simd/src/entropy.rs:251`) uses `val.round()` on a
-magetypes vector, which lowers to `_mm512_roundscale_ps::<0x00>` /
-similar on other archs — **round half to even**.
+The edge-battery test (`entropy_coeffs_scalar_vs_dispatch_edge_battery`)
+filters the `large_pos` case (1e20 inputs producing ~3.3e12 entropy
+sums where 8-lane SIMD accumulator order vs scalar 1-element order
+diverges sub-ULP) — mirrors the existing `quantize-001`/`dct64`/`idct32`
+pattern.
 
-This is a known pattern in the encoder; CLAUDE.md notes elsewhere that
-Rust's `f32::round()` (ties away from zero) was replaced in 3 scalar
-quantization paths by `round_ties_even` to match SIMD (see W44 commit
-`9ef2819`).  The `entropy_coeffs_scalar` path was missed in that sweep.
-
-**Status**: Tolerated.  Existing fixed-input parity tests
-(`shannon_entropy_scalar_vs_dispatch`,
-`test_entropy_coeffs_scalar_vs_dispatch`) all use inputs that don't hit
-halfway cases, so they pass.  The new edge-battery test only fires
-because `ones(n=64)` happens to produce a halfway quantized value at
-one position.
-
-**Fix path**: Replace `crate::scalarmath::round_f32(val)` at
-`entropy.rs:138` with `crate::scalarmath::round_ties_even_f32(val)`,
-mirroring the W44 `9ef2819` sweep.  This will change encoder output
-bytes on cells that have halfway-quantized coefficients (rare in
-real photo content, more common in synthetic).  Requires hash-lock
-regen and `cargo test --workspace` validation.
-
-**Cite**: `jxl-encoder-simd/src/entropy.rs:138` (scalar `round_f32`
-call), `:251` (SIMD `.round()` lowering to round-to-even intrinsic),
-CLAUDE.md "Rounding mode mismatch" entry for the W44 `9ef2819` fix.
+Note for similar work: `cfl.rs:26` (`bias_and_quantize`) also uses
+`scalarmath::round_f32` (ties-away-from-zero). That site is CORRECT
+as-is — libjxl `enc_chroma_from_luma.cc::bias_and_quantize` uses C++
+`std::round` which is also ties-away. libjxl uses DIFFERENT rounding
+modes at different sites; do not "fix" the cfl site without checking
+libjxl's reference first.
 
 ---
 
