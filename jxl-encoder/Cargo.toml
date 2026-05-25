@@ -2462,6 +2462,15 @@ name = "w44_phase4_s2_validate"
 path = "examples/w44_phase4_s2_validate.rs"
 required-features = ["__expert", "tuning-override", "parallel", "butteraugli-loop", "ssim2-loop"]
 
+# Issue #25 retry: K_AC_QUANT (`k_ac_quant`) A/B vs default 0.765 → 0.65.
+# Validates picker oracle's claim (Hypothesis A) vs scaling-only theory
+# (Hypothesis B). Encodes 4 cells × 2 modes × 6 samples paired-interleaved
+# on `EncoderStrategy::Zenjxl`; emits per-(cell,mode,sample) TSV row.
+[[example]]
+name = "issue_25_k_ac_quant_retry"
+path = "examples/issue_25_k_ac_quant_retry.rs"
+required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
+
 # W44-PHASE4-S2-refit-c2: per-knob ablation harness. Takes an explicit
 # (k1, k2, k3, k4, k5) tuple via CLI flags and encodes ONE cell per process
 # invocation. Used to detect hidden cliffs in S2-refit per-stratum optima.
