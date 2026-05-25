@@ -164,6 +164,47 @@ We implement all 19 AC strategies that libjxl evaluates through effort 9, all en
 | `ToneMapping.intensity_target` / `min_nits` | `EncodeRequest::with_intensity_target(nits)` / `with_min_nits(nits)` (mirrors libjxl `cjxl --intensity_target`). |
 | HDR-aware perceptual loss in the butteraugli quantization loop | `LossyConfig::with_hdr_loss(HdrLoss::Auto \| Butteraugli \| Vdp2)`. **Default:** `HdrLoss::Auto` (chunk 4) — auto-dispatches to `Vdp2` on PQ / HLG content (via either `with_color_encoding` or the layout's implied transfer function) and to `Butteraugli` on everything else. SDR encodes stay byte-identical to pre-Auto releases. Validated on HDR-AIC-2025: -36.5% avg paper-faithful reference score improvement vs. butteraugli (chunk 3). Requires `butteraugli-loop` cargo feature. |
 
+## CVVDP-driven quantization loop (experimental opt-in)
+
+The quantization loop at effort ≥ 8 normally calls butteraugli once per iteration. This fork ships an opt-in path that drives the loop with **ColorVideoVDP** (cvvdp, Mantiuk et al. 2024) instead — a more recent perceptual metric with explicit DKL colour space, multi-band Laplacian pyramid, and cross-channel masking. Default OFF; butteraugli stays the production default.
+
+### Opt in
+
+GPU backend (requires CUDA at build + load time):
+
+```bash
+cargo build --release --features cvvdp-loop
+```
+
+Pure-Rust CPU backend (no CUDA, runs anywhere):
+
+```bash
+cargo build --release --features cvvdp-loop-cpu
+```
+
+```rust
+use jxl_encoder::{LossyConfig, PixelLayout};
+
+let jxl = LossyConfig::new(2.0)
+    .with_cvvdp_loop(Some(true))         // route buttloop through cvvdp
+    .with_cvvdp_use_cpu(Some(true))      // pin to CPU even if GPU compiled
+    .encode(&pixels, w, h, PixelLayout::Rgb8)?;
+```
+
+`EncoderStrategy::Libjxl` forces cvvdp OFF regardless of the field or cargo feature, so cjxl-parity byte-locks stay byte-identical.
+
+### When cvvdp wins, when butteraugli wins
+
+The Phase 6 sweep at `benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv` measured 4 backends across 1,134 cells (54 images × 7 distances × 3 efforts) on CID22 photos, GB82-SC screenshots, and W44-S1 mixed content. Headline: **on CID22 photos at e=8, 100% of cells score better on the cvvdp metric** with cvvdp-driven encodes (mean +0.005 to +0.31 JOD across distances). Butteraugli stays at 100% Pareto leader on every (corpus, metric) row when scoring with butteraugli or SSIMULACRA2.
+
+Wall time at e=8 (p50): butteraugli CPU 193 ms baseline; **cvvdp GPU 168 ms (13% faster)**; cvvdp CPU 298 ms (55% slower). Butteraugli GPU is fastest at 159 ms.
+
+### Why it's opt-in
+
+cvvdp ships with an **uncalibrated per-distance target table** (RFC §2.3 TBD), so at the same `distance` parameter it produces +155% to +286% larger files than butteraugli on CID22 photos (+45% to +328% on screenshots and mixed content). The cvvdp loop isn't doing worse work — the loop converges to a tighter perceptual target than the `distance` knob currently implies. Future work: re-derive `vardct/cvvdp_targets.rs` from the Phase 6 sweep data to bring cvvdp bytes within 5% of butteraugli at the same `distance`, then re-evaluate the default. Until then, callers asking for `distance = 1.0` get butteraugli's file-size semantics.
+
+Full data: [`docs/CVVDP_FORK_DECISION.md`](docs/CVVDP_FORK_DECISION.md). Architecture and ship-rule: [`docs/RFC_CVVDP_FORK.md`](docs/RFC_CVVDP_FORK.md).
+
 ## Building
 
 ```bash
