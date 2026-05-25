@@ -80,16 +80,26 @@ pub(crate) mod cvvdp_targets;
 // `zensim-loop`, wraps `zensim::Zensim` + linear-planar diffmap) and
 // `GpuZensimBackend` (feature `zensim-loop-gpu`, wraps
 // `zensim_gpu::ZensimOpaque` via Phase 1 commit `1175b49` on zenmetrics
-// master). Per-distance target table + per-block reducer constants are
-// Phase 4 follow-on work; Phase 3 ships the backend impl + dispatch
-// only. See `docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md` for the
-// trait + API surface.
+// master). Phase 4 (2026-05-25) added the per-distance target table at
+// `zensim_targets.rs`; per-block reducer constants reuse butter
+// defaults (Phase 8-zensim follow-on may refit if Pareto shows < 85%).
+// See `docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md` for the trait +
+// API surface and `docs/RFC_ZENSIM_FORK_PLAN.md` §6 for the Phase 4
+// brief.
+//
+// zensim-fork Phase 4 (2026-05-25): per-distance zensim calibration
+// table. Read by `perceptual_loop::run_buttloop` when the active
+// backend is zensim to scale `target_distance` (butteraugli units)
+// into a zensim butter-direction `target_score` via the seed table at
+// `zensim_targets.rs`. See `docs/RFC_ZENSIM_FORK_PLAN.md` §6 Step 3.
 pub(crate) mod dc_coding;
 mod dc_tree_learn;
 pub mod dct;
 pub(crate) mod debug_log;
 #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
 pub(crate) mod zensim_backend;
+#[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+pub(crate) mod zensim_targets;
 // libjxl enc_detect_dots.cc port (refs #19). Wired into encoder.rs at
 // effort >= 7, distance >= 3.0; dots get promoted to a fresh
 // PatchesData via from_dots() and travel through the regular patch

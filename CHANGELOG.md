@@ -61,6 +61,75 @@
 
 ### Added
 
+- **zensim fork — buttloop body wiring + per-distance calibration table (Phase 4)**
+  (RFC [`docs/RFC_ZENSIM_FORK_PLAN.md`](docs/RFC_ZENSIM_FORK_PLAN.md) §6,
+  mirrors cvvdp-fork Phase 4 (commit `32581839`)). Routes the zensim
+  signal through `run_buttloop` proper. The pre-Phase-4 buttloop body
+  consumed butteraugli-direction `target_distance` verbatim when zensim
+  was active (the Phase 3 dispatch flag short-circuited the metric-
+  target lookup); Phase 4 plumbs a zensim-native target through the
+  same `target > effective_metric_target_distance` predicate and per-
+  block bad-block math the cvvdp Phase 4 already exercises.
+  Surface:
+  - `vardct/zensim_targets.rs` (NEW) — `ZENSIM_DISTANCE_TARGETS`
+    static + `zensim_target_score_for_distance` linear-interp lookup
+    over a 7-entry table at d ∈ {0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0}.
+    Seed values measured by the new `zensim_calibration_seed` example
+    (3 images × 7 distances = 21 cells, post-hoc score over
+    butteraugli-default output). 7 unit tests.
+  - `vardct/perceptual_loop::ActiveMetric` enum
+    (`Butteraugli`/`Cvvdp`/`Zensim`) — generalises the cvvdp-only
+    bool dispatch.
+  - `vardct/perceptual_loop::ZENSIM_BLOCK_CONSTANTS` (`k_tile_norm =
+    1.2` butter-parity) consumed by the new
+    `block_reducer_constants_for_metric(metric)` dispatch at the
+    per-block tile-distance reducer. The pre-Phase-4 single-bool
+    `block_reducer_constants_for_backend` is retained as a thin
+    source-compat wrapper for the unit tests.
+  - 3-way `effective_metric_target_distance` lookup precedence
+    (zensim > cvvdp > butteraugli, matches the
+    `propagate_resolved_metric_to_encoder` invariant).
+  - `JXL_ZENSIM_K_TILE_NORM` env hook (bench-only override for the
+    Phase 8-zensim refit harness).
+  - `examples/zensim_calibration_seed.rs` (NEW) +
+    `scripts/zensim_calibration_seed.py` (NEW) +
+    `examples/zensim_loop_smoke_bench.rs` (NEW) — calibration
+    pipeline + 20-cell smoke bench. Outputs at
+    `benchmarks/zensim_calibration_seed_2026-05-25.{tsv,txt,meta}`
+    and `benchmarks/zensim_loop_smoke_2026-05-25.{tsv,meta}`.
+  - `tests/zensim_loop_smoke.rs` (NEW) — 4 active tests + 1 ignored:
+    `PerceptualMetric::Butteraugli` byte-identical-to-default,
+    default-byte-identical-to-Butteraugli+Auto,
+    `EncoderStrategy::Libjxl` byte-identical-regardless-of-metric
+    across 6 (metric, device) combos, public-API round-trip on the
+    new `Zensim` variant, and the `#[ignore]`-d
+    `metric_zensim_encodes_and_decodes` (5-cell jxl-oxide roundtrip
+    that requires the slow CPU zensim buttloop).
+
+  Hash-locks 36/36 BYTE-IDENTICAL at default features AND with
+  `zensim-loop` compiled. `strategy_libjxl_byte_lock` 4/4 BYTE-
+  IDENTICAL with all of `__expert`, `__expert butteraugli-loop`,
+  `__expert butteraugli-loop zensim-loop ssim2-loop parallel`.
+  `divergence_table_drift` 7/7 PASS. Multi-decoder roundtrip:
+  jxl-oxide 5/5 PASS on the smoke cells.
+
+  Per-distance seed table values (target_score = `(100 -
+  median_zensim_native) * 1.05`, butter-direction):
+  `(0.50, 6.6381), (1.00, 9.9958), (1.50, 13.2108), (2.00, 16.4704),
+  (3.00, 20.9812), (4.00, 24.5327), (5.00, 28.4359)`.
+
+  Phase 4 ships butter-parity `k_tile_norm`. The per-block reducer
+  refit (Phase 8-zensim equivalent of cvvdp Phase 8g) is conditional
+  on the Phase 6 6-backend tracking sweep verdict.
+
+  Follow-ons:
+  - **Phase 6** — 6-backend tracking sweep (B / B_GPU / C_GPU_v4 /
+    C_CPU / Z_GPU / Z_CPU) + RFC §5.4 Pareto decision per metric.
+  - **Phase 8-zensim** (conditional) — per-block reducer refit if
+    Phase 6 lands below 85% Pareto coverage.
+  - **Phase 1b** (zensim-gpu) — pure-GPU diffmap kernels to close the
+    +1006% wall gap vs score-only GPU at 1024².
+
 - **zensim fork — opt-in zensim-driven quantization loop (Phase 3)**
   (RFC [`docs/RFC_ZENSIM_FORK_PLAN.md`](docs/RFC_ZENSIM_FORK_PLAN.md) §5,
   [`docs/RFC_ZENSIM_BUTTLOOP_AUDIT.md`](docs/RFC_ZENSIM_BUTTLOOP_AUDIT.md),

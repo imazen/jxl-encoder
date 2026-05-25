@@ -1,0 +1,66 @@
+# zensim-fork Phase 4 20-cell smoke bench
+# Generated: 2026-05-25
+# Source example: jxl-encoder/examples/zensim_loop_smoke_bench.rs
+# Mirrors: cvvdp-fork Phase 4 cvvdp_loop_smoke_bench (cell shape + cell selection identical)
+
+## Methodology
+
+For each of 5 synthetic fixtures × 4 distances {0.5, 1.0, 2.0, 3.0}:
+- Encode with `LossyConfig::new(d).with_strategy(Zenjxl).with_effort(8).with_perceptual_metric(Butteraugli)` (default) → `backend = B`
+- Encode with `with_perceptual_metric(Zensim).with_perceptual_device(Cpu)` → `backend = Z_CPU`
+
+Effort 8 forces the buttloop to engage (gated at speed_tier <= kKitten in libjxl).
+Distances are the same 4 that cvvdp Phase 4 smoke used so the bench shape is
+directly comparable across the two fork arcs.
+
+## Fixtures (all synthetic, ≤128×128, no codec-corpus dependency)
+
+- gradient_64 (64×64 RGB linear gradient)
+- diagonal_128 (128×128 diagonal stripes + dither)
+- noisy_96 (96×96 radial brightness + high-frequency noise)
+- flat_grey_32 (32×32 constant gray, all 128)
+- checker_64 (64×64 binary 8×8 checker)
+
+## Headline observations (Z_CPU vs B byte delta)
+
+- gradient_64 / diagonal_128 / noisy_96 / checker_64: **Z_CPU produces smaller
+  files at every distance** (Δ ranges -10% to -78%).
+- flat_grey_32: ±~1-4% (essentially constant byte cost — no signal for either
+  metric to converge on; both produce ~93-99 bytes).
+
+The systematic Z_CPU < B byte delta on non-trivial fixtures indicates that the
+Phase 4 calibration seed (median over 3 images, with 1.05× tightening) is
+**LAX** relative to butteraugli at these distance points. This is expected and
+ACCEPTABLE for the Phase 4 baseline — the seed values are honestly derived
+from real measurement and the Phase 6 6-backend tracking sweep + Phase 8-zensim
+refit (conditional on Pareto < 85%) are queued to refine them against the full
+production corpus.
+
+## What this bench deliberately does NOT verify
+
+- That Z_CPU > B byte count (the Phase 4 calibration is intentionally aiming
+  for similar achieved zensim quality, not similar bytes).
+- Score deltas (NA columns) — Phase 4 scope is structural plumbing + initial
+  calibration seed, not score scaffolding.
+- Z_GPU backend (gated on `zensim-loop-gpu` + CUDA at runtime, out of Phase 4
+  scope).
+
+## Phase 6 follow-on
+
+The full 6-backend tracking sweep (`cvvdp_track_baseline`-style script
+extended with `score_zensim_{cpu,gpu}`) is the next chunk. It will:
+1. Score every existing tracking-TSV cell with zensim CPU + GPU.
+2. Re-rank the Pareto frontier using zensim as the metric.
+3. Decide via RFC §5.4 whether to keep the seeded calibration or refit.
+
+## Provenance
+
+- Encoder commit: 956cac4a7860 (zensim-phase4 working copy, on top of Phase 3 7ad7256c)
+- jj op: see `jj op log -l 5` in `~/work/zen/jxl-encoder--zensim-phase4/`
+- Run command:
+  ```
+  cargo run --release -p jxl-encoder \
+    --features "__expert butteraugli-loop zensim-loop ssim2-loop parallel" \
+    --example zensim_loop_smoke_bench -- \
+    --out benchmarks/zensim_loop_smoke_2026-05-25.tsv
+  ```

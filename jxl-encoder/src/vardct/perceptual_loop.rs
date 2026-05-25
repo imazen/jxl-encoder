@@ -1178,6 +1178,39 @@ pub(crate) const BUTTER_BLOCK_CONSTANTS: BlockReducerConstants = BlockReducerCon
     k_tile_norm: 1.2,
 };
 
+/// zensim-fork Phase 4 (2026-05-25): per-backend block-reducer
+/// constants for the zensim loop. Compiled only when a zensim cargo
+/// feature is on so the constants struct surface stays trivial outside
+/// the feature.
+///
+/// **Phase 4 initial values**: butter-parity (`k_tile_norm = 1.2`).
+/// The Phase 1 distribution data
+/// (`benchmarks/zensim_diffmap_distribution_2026-05-25.tsv`) shows
+/// zensim's per-pixel diffmap magnitudes vary by ~3 orders of magnitude
+/// across the synthetic-delta scale (mean ≈ 4e-5 at smallest delta to
+/// 0.12 at largest), whereas butteraugli's distribution shape is
+/// narrower at the median. A principled refit per the Phase 8g
+/// methodology (capture per-iter `tile_dist` distribution on a held-
+/// out corpus, scale `k_tile_norm` so cvvdp/zensim `td_p95` falls near
+/// `effective_target`) is queued as a Phase 8-zensim follow-on if the
+/// Phase 6 Pareto sweep shows the butter-default plateau below 85%.
+///
+/// Documented in source: "Zensim Phase 4 ships butter-parity constants;
+/// future Phase 8-zensim work may refit per zensim's distribution
+/// shape per Phase 8g pattern".
+///
+/// **Env override**: `JXL_ZENSIM_K_TILE_NORM=<float>` replaces
+/// `k_tile_norm` for bench harnesses. Only consulted when the env var
+/// is present, parseable, finite, and > 0. Production callers must
+/// not set this in non-bench paths.
+#[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+pub(crate) const ZENSIM_BLOCK_CONSTANTS: BlockReducerConstants = BlockReducerConstants {
+    // Phase 4 starts at butter-parity. Phase 8-zensim may refit per
+    // RFC §3.2 Intervention A using the same harness shape as
+    // `examples/cvvdp_phase8g_tile_dist_capture.rs`.
+    k_tile_norm: 1.2,
+};
+
 /// cvvdp-fork Phase 8g per-backend constants for the cvvdp loop. Compiled
 /// only when the `cvvdp-loop` cargo feature is on so the constants struct
 /// surface stays trivial outside the feature.
@@ -1247,23 +1280,57 @@ pub(crate) const CVVDP_BLOCK_CONSTANTS: BlockReducerConstants = BlockReducerCons
     k_tile_norm: 0.16,
 };
 
+/// Identifies which metric backend the perceptual loop is driving
+/// against for the purposes of selecting block-reducer constants. The
+/// `bool, bool` ctor pair is plumbed from the call site as
+/// `(self.cvvdp_loop && !use_vdp2, self.zensim_loop && !use_vdp2)` —
+/// the same dispatch invariant the metric-target lookup obeys. At most
+/// one flag may be true at a time (zensim wins if both are set, per
+/// the `propagate_resolved_metric_to_encoder` invariant).
+///
+/// zensim-fork Phase 4 (2026-05-25): added the `zensim` arm. The
+/// pre-Phase-4 single-bool `block_reducer_constants_for_backend` is
+/// preserved as a thin wrapper for source-compat with the test sites
+/// at line ~4686/~4700 that didn't carry a zensim flag.
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum ActiveMetric {
+    /// Butteraugli backend (CPU or GPU). The pre-Phase-8g production
+    /// default — every caller that doesn't opt into cvvdp or zensim
+    /// ends up here.
+    Butteraugli,
+    /// cvvdp backend (CPU or GPU). Fires when
+    /// `LossyConfig::with_perceptual_metric(PerceptualMetric::Cvvdp)`
+    /// is set AND the `cvvdp-loop` feature is compiled in AND the
+    /// active strategy is NOT `EncoderStrategy::Libjxl`.
+    #[cfg_attr(not(feature = "cvvdp-loop"), allow(dead_code))]
+    Cvvdp,
+    /// zensim backend (CPU or GPU). Fires when
+    /// `LossyConfig::with_perceptual_metric(PerceptualMetric::Zensim)`
+    /// is set AND a zensim cargo feature is compiled in AND the active
+    /// strategy is NOT `EncoderStrategy::Libjxl`.
+    #[cfg_attr(
+        not(any(feature = "zensim-loop", feature = "zensim-loop-gpu")),
+        allow(dead_code)
+    )]
+    Zensim,
+}
+
 /// Select the active per-backend block-reducer constants.
 ///
-/// Production switch: returns [`CVVDP_BLOCK_CONSTANTS`] when the
-/// `cvvdp-loop` cargo feature is compiled AND `cvvdp_loop_active` is
-/// true (the inner-seed pass plumbs `self.cvvdp_loop && !use_vdp2` as
-/// this argument). Otherwise returns [`BUTTER_BLOCK_CONSTANTS`] — every
-/// pre-Phase-8g caller sees byte-identical behaviour.
+/// zensim-fork Phase 4 (2026-05-25): generalised the cvvdp-only
+/// dispatch to a 3-way enum. The cvvdp branch still consults the
+/// `JXL_CVVDP_K_TILE_NORM` env override; the zensim branch consults
+/// `JXL_ZENSIM_K_TILE_NORM`. Butteraugli branch returns
+/// [`BUTTER_BLOCK_CONSTANTS`] verbatim (byte-identical to the
+/// pre-Phase-8g hardcoded literals).
 ///
-/// The env hook `JXL_CVVDP_K_TILE_NORM` is honoured ONLY on the cvvdp
-/// branch (bench-only override; production code MUST NOT set it).
+/// The env hooks are bench-only; production code MUST NOT set them.
 #[inline]
-pub(crate) fn block_reducer_constants_for_backend(
-    cvvdp_loop_active: bool,
-) -> BlockReducerConstants {
-    #[cfg(feature = "cvvdp-loop")]
-    {
-        if cvvdp_loop_active {
+pub(crate) fn block_reducer_constants_for_metric(metric: ActiveMetric) -> BlockReducerConstants {
+    match metric {
+        ActiveMetric::Butteraugli => BUTTER_BLOCK_CONSTANTS,
+        #[cfg(feature = "cvvdp-loop")]
+        ActiveMetric::Cvvdp => {
             let mut c = CVVDP_BLOCK_CONSTANTS;
             if let Ok(s) = std::env::var("JXL_CVVDP_K_TILE_NORM")
                 && let Ok(v) = s.parse::<f32>()
@@ -1272,14 +1339,46 @@ pub(crate) fn block_reducer_constants_for_backend(
             {
                 c.k_tile_norm = v;
             }
-            return c;
+            c
         }
+        #[cfg(not(feature = "cvvdp-loop"))]
+        ActiveMetric::Cvvdp => BUTTER_BLOCK_CONSTANTS,
+        #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+        ActiveMetric::Zensim => {
+            let mut c = ZENSIM_BLOCK_CONSTANTS;
+            if let Ok(s) = std::env::var("JXL_ZENSIM_K_TILE_NORM")
+                && let Ok(v) = s.parse::<f32>()
+                && v.is_finite()
+                && v > 0.0
+            {
+                c.k_tile_norm = v;
+            }
+            c
+        }
+        #[cfg(not(any(feature = "zensim-loop", feature = "zensim-loop-gpu")))]
+        ActiveMetric::Zensim => BUTTER_BLOCK_CONSTANTS,
     }
-    #[cfg(not(feature = "cvvdp-loop"))]
-    {
-        let _ = cvvdp_loop_active; // silence unused on no-feature builds
-    }
-    BUTTER_BLOCK_CONSTANTS
+}
+
+/// Pre-Phase-4 single-bool dispatch retained for source-compat with
+/// the unit tests at lines ~4686/~4700 and any external callers that
+/// didn't carry a zensim flag. Forwards to
+/// [`block_reducer_constants_for_metric`] picking Cvvdp when
+/// `cvvdp_loop_active` is true, Butteraugli otherwise.
+///
+/// New code SHOULD prefer [`block_reducer_constants_for_metric`] and
+/// the [`ActiveMetric`] enum — it disambiguates zensim from the legacy
+/// bool which would silently route zensim cells to the butter branch.
+#[allow(dead_code)]
+#[inline]
+pub(crate) fn block_reducer_constants_for_backend(
+    cvvdp_loop_active: bool,
+) -> BlockReducerConstants {
+    block_reducer_constants_for_metric(if cvvdp_loop_active {
+        ActiveMetric::Cvvdp
+    } else {
+        ActiveMetric::Butteraugli
+    })
 }
 
 /// Phase 8g (2026-05-25): env-gated per-iter `tile_dist` distribution
@@ -1297,9 +1396,14 @@ pub(crate) fn block_reducer_constants_for_backend(
 /// per-block reducer's downstream bump magnitudes will fire equivalently.
 ///
 /// Zero production cost when env unset (single `var_os` check).
+///
+/// zensim-fork Phase 4 (2026-05-25): added the `zensim_loop_active`
+/// flag so rows from the zensim loop tag as `zensim` rather than being
+/// silently bucketed as `butter`.
 #[inline]
 pub(crate) fn maybe_dump_tile_dist_stats_phase8g(
     cvvdp_loop_active: bool,
+    zensim_loop_active: bool,
     iter: usize,
     effective_metric_target_distance: f32,
     target_distance: f32,
@@ -1315,7 +1419,16 @@ pub(crate) fn maybe_dump_tile_dist_stats_phase8g(
         return;
     }
 
-    let backend_tag = if cvvdp_loop_active { "cvvdp" } else { "butter" };
+    // zensim wins over cvvdp wins over butter (matches
+    // `propagate_resolved_metric_to_encoder` invariant). At most one
+    // flag may be true at a time.
+    let backend_tag = if zensim_loop_active {
+        "zensim"
+    } else if cvvdp_loop_active {
+        "cvvdp"
+    } else {
+        "butter"
+    };
 
     // Per-block bad-rate against the metric target.
     let bad_count = tile_dist
@@ -2185,20 +2298,44 @@ impl VarDctEncoder {
         // is compiled in. Outside the feature, `cvvdp_loop` defaults to
         // `false` per the `VarDctEncoder::default()` initialiser, so
         // the branch is dead-code-eliminated.
-        let effective_metric_target_distance: f32 = {
+        // zensim-fork Phase 4 (2026-05-25): metric-target dispatch is
+        // now 3-way. Precedence (matches the
+        // `propagate_resolved_metric_to_encoder` dispatch invariant at
+        // metric backend construction): zensim > cvvdp > butteraugli.
+        // The flag-on branches only fire when (a) the corresponding
+        // field is true on `VarDctEncoder` AND (b) we're not on the
+        // VDP2 branch (VDP2-lite is a separate metric) AND (c) the
+        // feature is compiled in. Outside any feature, the matching
+        // field defaults to `false` per the
+        // `VarDctEncoder::default()` initialiser, so the branch is
+        // dead-code-eliminated.
+        #[allow(unused_labels)]
+        let effective_metric_target_distance: f32 = 'lookup: {
+            #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+            {
+                if self.zensim_loop && !use_vdp2 {
+                    break 'lookup super::zensim_targets::zensim_target_score_for_distance(
+                        target_distance,
+                    );
+                }
+            }
             #[cfg(feature = "cvvdp-loop")]
             {
                 if self.cvvdp_loop && !use_vdp2 {
-                    super::cvvdp_targets::cvvdp_target_score_for_distance(target_distance)
-                } else {
-                    target_distance
+                    break 'lookup super::cvvdp_targets::cvvdp_target_score_for_distance(
+                        target_distance,
+                    );
                 }
             }
-            #[cfg(not(feature = "cvvdp-loop"))]
+            #[cfg(not(any(
+                feature = "zensim-loop",
+                feature = "zensim-loop-gpu",
+                feature = "cvvdp-loop"
+            )))]
             {
                 let _ = use_vdp2; // silence unused on no-feature builds
-                target_distance
             }
+            target_distance
         };
 
         for &k_init_mul in seeds {
@@ -2819,12 +2956,36 @@ impl VarDctEncoder {
             //
             // cvvdp-fork Phase 8g (2026-05-25, RFC §3.2 Intervention B):
             // `k_tile_norm` is now backend-switched via
-            // [`block_reducer_constants_for_backend`]. For butteraugli
+            // [`block_reducer_constants_for_metric`]. For butteraugli
             // (production default), the value is 1.2 — byte-identical to
             // the pre-Phase-8g hardcoded literal. For cvvdp, the value
             // is fitted to cvvdp's post-renormalization per-block
-            // distribution (see CVVDP_BLOCK_CONSTANTS).
-            let block_constants = block_reducer_constants_for_backend(self.cvvdp_loop && !use_vdp2);
+            // distribution (see CVVDP_BLOCK_CONSTANTS). zensim-fork
+            // Phase 4 (2026-05-25): zensim branch added with butter-
+            // parity initial value (see ZENSIM_BLOCK_CONSTANTS — refit
+            // queued as Phase 8-zensim follow-on if the Phase 6 Pareto
+            // sweep shows the butter-default plateau below 85%).
+            let active_metric = {
+                #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+                {
+                    if self.zensim_loop && !use_vdp2 {
+                        ActiveMetric::Zensim
+                    } else if self.cvvdp_loop && !use_vdp2 {
+                        ActiveMetric::Cvvdp
+                    } else {
+                        ActiveMetric::Butteraugli
+                    }
+                }
+                #[cfg(not(any(feature = "zensim-loop", feature = "zensim-loop-gpu")))]
+                {
+                    if self.cvvdp_loop && !use_vdp2 {
+                        ActiveMetric::Cvvdp
+                    } else {
+                        ActiveMetric::Butteraugli
+                    }
+                }
+            };
+            let block_constants = block_reducer_constants_for_metric(active_metric);
             let k_tile_norm = block_constants.k_tile_norm;
             let diffmap_buf: &[f32] = &diffmap_vec;
             tile_dist.fill(0.0);
@@ -2873,8 +3034,21 @@ impl VarDctEncoder {
             // measure per-backend `tile_dist` distribution + bad-block
             // rate so the per-backend `k_tile_norm` value can be fitted
             // empirically. Zero production cost when env unset.
+            // zensim-fork Phase 4 (2026-05-25): zensim/cvvdp/butter
+            // 3-way tag at the bench dump site.
+            let zensim_active_now = {
+                #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+                {
+                    self.zensim_loop && !use_vdp2
+                }
+                #[cfg(not(any(feature = "zensim-loop", feature = "zensim-loop-gpu")))]
+                {
+                    false
+                }
+            };
             maybe_dump_tile_dist_stats_phase8g(
-                self.cvvdp_loop && !use_vdp2,
+                self.cvvdp_loop && !use_vdp2 && !zensim_active_now,
+                zensim_active_now,
                 iter,
                 effective_metric_target_distance,
                 target_distance,
