@@ -116,8 +116,10 @@ fn score_jxl(
     if dw != w as usize || dh != h as usize {
         return None;
     }
-    let dec_pixels: Vec<RGB<f32>> =
-        dec_lin.chunks_exact(3).map(|c| RGB::new(c[0], c[1], c[2])).collect();
+    let dec_pixels: Vec<RGB<f32>> = dec_lin
+        .chunks_exact(3)
+        .map(|c| RGB::new(c[0], c[1], c[2]))
+        .collect();
     let dec_lin_img: Img<Vec<RGB<f32>>> = Img::new(dec_pixels, dw, dh);
     let bfly = butteraugli_linear(
         orig_linear.as_ref(),
@@ -138,8 +140,7 @@ fn score_jxl(
         })
         .collect();
     let dec_srgb_img: Img<Vec<[u8; 3]>> = Img::new(dec_srgb, dw, dh);
-    let ssim2 =
-        fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
+    let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
 
     Some((bfly, ssim2))
 }
@@ -158,9 +159,14 @@ fn encode_with_dump(
     unsafe {
         std::env::set_var("JXL_W44_76_PER_BLOCK_DUMP", dump_dir);
     }
-    let cfg = LossyConfig::new(DISTANCE).with_effort(EFFORT).with_strategy(strategy);
+    let cfg = LossyConfig::new(DISTANCE)
+        .with_effort(EFFORT)
+        .with_strategy(strategy);
     let t0 = Instant::now();
-    let buf = cfg.encode_request(w, h, PixelLayout::Rgb8).encode(pixels).ok();
+    let buf = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(pixels)
+        .ok();
     let ms = t0.elapsed().as_millis();
     unsafe {
         std::env::remove_var("JXL_W44_76_PER_BLOCK_DUMP");
@@ -279,7 +285,12 @@ fn main() {
     );
 
     let (pixels, w, h) = load_png(Path::new(IMAGE_PATH)).expect("load codec_wiki");
-    eprintln!("  loaded {}×{} = {:.2} MP", w, h, (w as f64 * h as f64) / 1_000_000.0);
+    eprintln!(
+        "  loaded {}×{} = {:.2} MP",
+        w,
+        h,
+        (w as f64 * h as f64) / 1_000_000.0
+    );
     let (lin_img, srgb_img) = make_imgs(&pixels, w, h);
 
     // ── Re-bench (Step 1 — reproducibility) ──────────────────────────────
@@ -296,11 +307,9 @@ fn main() {
     );
 
     // Libjxl strategy WITH dump.
-    let (lib_b, lib_ms) =
-        encode_with_dump(&pixels, w, h, EncoderStrategy::Libjxl, LIBJXL_DUMP_DIR)
-            .expect("encode libjxl");
-    let (lib_bfly, lib_ssim2) =
-        score_jxl(&lib_b, &lin_img, &srgb_img, w, h).unwrap_or((0.0, 0.0));
+    let (lib_b, lib_ms) = encode_with_dump(&pixels, w, h, EncoderStrategy::Libjxl, LIBJXL_DUMP_DIR)
+        .expect("encode libjxl");
+    let (lib_bfly, lib_ssim2) = score_jxl(&lib_b, &lin_img, &srgb_img, w, h).unwrap_or((0.0, 0.0));
     let lib_dpct = (lib_b.len() as f64 - cjxl_b.len() as f64) / cjxl_b.len() as f64 * 100.0;
     eprintln!(
         "  libjxl  = {:7} B  bfly={:.3} ssim2={:.2}  ({} ms)  Δ={:+.2}% vs cjxl  ΔSSIM2={:+.2}",
@@ -313,11 +322,9 @@ fn main() {
     );
 
     // Zenjxl strategy WITH dump.
-    let (zen_b, zen_ms) =
-        encode_with_dump(&pixels, w, h, EncoderStrategy::Zenjxl, ZENJXL_DUMP_DIR)
-            .expect("encode zenjxl");
-    let (zen_bfly, zen_ssim2) =
-        score_jxl(&zen_b, &lin_img, &srgb_img, w, h).unwrap_or((0.0, 0.0));
+    let (zen_b, zen_ms) = encode_with_dump(&pixels, w, h, EncoderStrategy::Zenjxl, ZENJXL_DUMP_DIR)
+        .expect("encode zenjxl");
+    let (zen_bfly, zen_ssim2) = score_jxl(&zen_b, &lin_img, &srgb_img, w, h).unwrap_or((0.0, 0.0));
     let zen_dpct = (zen_b.len() as f64 - cjxl_b.len() as f64) / cjxl_b.len() as f64 * 100.0;
     eprintln!(
         "  zenjxl  = {:7} B  bfly={:.3} ssim2={:.2}  ({} ms)  Δ={:+.2}% vs cjxl  ΔSSIM2={:+.2}",
@@ -330,18 +337,21 @@ fn main() {
     );
 
     // ── Read per-block dumps and compute strategy histograms ─────────────
-    let lib_dump = read_dump(Path::new(&format!("{}/per_block_ours.tsv", LIBJXL_DUMP_DIR)))
-        .expect("read libjxl dump");
-    let zen_dump = read_dump(Path::new(&format!("{}/per_block_ours.tsv", ZENJXL_DUMP_DIR)))
-        .expect("read zenjxl dump");
+    let lib_dump = read_dump(Path::new(&format!(
+        "{}/per_block_ours.tsv",
+        LIBJXL_DUMP_DIR
+    )))
+    .expect("read libjxl dump");
+    let zen_dump = read_dump(Path::new(&format!(
+        "{}/per_block_ours.tsv",
+        ZENJXL_DUMP_DIR
+    )))
+    .expect("read zenjxl dump");
 
     // Aggregate over channels for the overall strategy histogram, then also
     // emit per-channel rows so we can see Y/X/B independently.
-    let all_strategies: std::collections::BTreeSet<(usize, u8)> = lib_dump
-        .keys()
-        .chain(zen_dump.keys())
-        .cloned()
-        .collect();
+    let all_strategies: std::collections::BTreeSet<(usize, u8)> =
+        lib_dump.keys().chain(zen_dump.keys()).cloned().collect();
 
     let out_path: PathBuf =
         PathBuf::from("benchmarks/w44_audit_5_phase1_per_block_dump_2026-05-24.tsv");
@@ -360,7 +370,13 @@ fn main() {
         EFFORT, DISTANCE
     )
     .unwrap();
-    writeln!(f, "# cjxl   bytes={}  ssim2={:.2}", cjxl_b.len(), cjxl_ssim2).unwrap();
+    writeln!(
+        f,
+        "# cjxl   bytes={}  ssim2={:.2}",
+        cjxl_b.len(),
+        cjxl_ssim2
+    )
+    .unwrap();
     writeln!(
         f,
         "# libjxl bytes={}  ssim2={:.2}  ({:+.2}% vs cjxl, ΔSSIM2={:+.2})",
@@ -393,12 +409,34 @@ fn main() {
     };
 
     for (channel, strategy) in &all_strategies {
-        let lib = lib_dump.get(&(*channel, *strategy)).cloned().unwrap_or((0, 0, 0));
-        let zen = zen_dump.get(&(*channel, *strategy)).cloned().unwrap_or((0, 0, 0));
-        let lib_mean_nz = if lib.0 > 0 { lib.1 as f64 / lib.0 as f64 } else { 0.0 };
-        let zen_mean_nz = if zen.0 > 0 { zen.1 as f64 / zen.0 as f64 } else { 0.0 };
-        let lib_mean_qac = if lib.0 > 0 { lib.2 as f64 / lib.0 as f64 } else { 0.0 };
-        let zen_mean_qac = if zen.0 > 0 { zen.2 as f64 / zen.0 as f64 } else { 0.0 };
+        let lib = lib_dump
+            .get(&(*channel, *strategy))
+            .cloned()
+            .unwrap_or((0, 0, 0));
+        let zen = zen_dump
+            .get(&(*channel, *strategy))
+            .cloned()
+            .unwrap_or((0, 0, 0));
+        let lib_mean_nz = if lib.0 > 0 {
+            lib.1 as f64 / lib.0 as f64
+        } else {
+            0.0
+        };
+        let zen_mean_nz = if zen.0 > 0 {
+            zen.1 as f64 / zen.0 as f64
+        } else {
+            0.0
+        };
+        let lib_mean_qac = if lib.0 > 0 {
+            lib.2 as f64 / lib.0 as f64
+        } else {
+            0.0
+        };
+        let zen_mean_qac = if zen.0 > 0 {
+            zen.2 as f64 / zen.0 as f64
+        } else {
+            0.0
+        };
         writeln!(
             f,
             "{}\t{}\t{}\t{}\t{}\t{:+}\t{:.2}\t{:.2}\t{:.2}\t{:.2}",
@@ -430,7 +468,10 @@ fn main() {
         })
         .collect();
     y_rows.sort_by_key(|(_, l, _)| std::cmp::Reverse(*l));
-    eprintln!("  {:<12} {:>10} {:>10} {:>10}", "strategy", "libjxl", "zenjxl", "delta");
+    eprintln!(
+        "  {:<12} {:>10} {:>10} {:>10}",
+        "strategy", "libjxl", "zenjxl", "delta"
+    );
     for (s, lib_n, zen_n) in &y_rows {
         eprintln!(
             "  {:<12} {:>10} {:>10} {:>+10}",

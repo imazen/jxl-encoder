@@ -168,7 +168,11 @@ const CELLS: &[Cell] = &[
 
 fn srgb_u8_to_linear_f32(x: u8) -> f32 {
     let x = x as f32 / 255.0;
-    if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
+    if x <= 0.04045 {
+        x / 12.92
+    } else {
+        ((x + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 fn linear_to_srgb_u8(x: f32) -> u8 {
@@ -187,11 +191,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb.into_raw(), w, h))
 }
 
-fn make_imgs(
-    pixels: &[u8],
-    w: u32,
-    h: u32,
-) -> (Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>) {
+fn make_imgs(pixels: &[u8], w: u32, h: u32) -> (Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>) {
     let lin: Vec<RGB<f32>> = pixels
         .chunks_exact(3)
         .map(|c| {
@@ -202,10 +202,7 @@ fn make_imgs(
             )
         })
         .collect();
-    let srgb: Vec<[u8; 3]> = pixels
-        .chunks_exact(3)
-        .map(|c| [c[0], c[1], c[2]])
-        .collect();
+    let srgb: Vec<[u8; 3]> = pixels.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
     let lin_img = Img::new(lin, w as usize, h as usize);
     let srgb_img = Img::new(srgb, w as usize, h as usize);
     (lin_img, srgb_img)
@@ -275,7 +272,11 @@ fn score_jxl(
     // ignoring alpha. Three-channel naive `chunks_exact(3)` would read RGBA
     // pixels as if RGB triples, producing garbage metrics (SSIM2 = -204).
     let n_pixels = dw * dh;
-    let channels = if n_pixels > 0 { dec_lin.len() / n_pixels } else { 0 };
+    let channels = if n_pixels > 0 {
+        dec_lin.len() / n_pixels
+    } else {
+        0
+    };
     if channels < 3 {
         return None;
     }
@@ -303,8 +304,7 @@ fn score_jxl(
         })
         .collect();
     let dec_srgb_img: Img<Vec<[u8; 3]>> = Img::new(dec_srgb, dw, dh);
-    let ssim2 =
-        fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
+    let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
 
     Some((bfly, ssim2))
 }
@@ -329,11 +329,7 @@ fn encode_zenjxl(
     Some((buf, ms))
 }
 
-fn encode_cjxl(
-    src_path: &Path,
-    effort: u8,
-    distance: f32,
-) -> Option<(Vec<u8>, u128)> {
+fn encode_cjxl(src_path: &Path, effort: u8, distance: f32) -> Option<(Vec<u8>, u128)> {
     let cjxl = "/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl";
     let tmp = std::env::temp_dir().join(format!(
         "cjxl_audit7_{}_{}_{}_{}.jxl",
@@ -389,8 +385,7 @@ struct Row {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mut out_path: PathBuf =
-        PathBuf::from("benchmarks/w44_audit_7_wider_corpus_2026-05-24.tsv");
+    let mut out_path: PathBuf = PathBuf::from("benchmarks/w44_audit_7_wider_corpus_2026-05-24.tsv");
     let mut filter_image: Option<String> = None;
     let mut i = 1;
     while i < args.len() {
@@ -419,7 +414,10 @@ fn main() {
     let mut done = 0;
 
     let cells: Vec<&Cell> = if let Some(ref filt) = filter_image {
-        CELLS.iter().filter(|c| c.image_id == filt.as_str()).collect()
+        CELLS
+            .iter()
+            .filter(|c| c.image_id == filt.as_str())
+            .collect()
     } else {
         CELLS.iter().collect()
     };
@@ -460,47 +458,32 @@ fn main() {
                     ..Default::default()
                 };
 
-                if let Some((c_bytes, c_ms)) =
-                    encode_cjxl(Path::new(cell.path), effort, distance)
-                {
+                if let Some((c_bytes, c_ms)) = encode_cjxl(Path::new(cell.path), effort, distance) {
                     row.cjxl_bytes = c_bytes.len();
                     row.cjxl_encode_ms = c_ms;
-                    if let Some((bfly, ss)) = score_jxl(&c_bytes, &lin_img, &srgb_img, w, h)
-                    {
+                    if let Some((bfly, ss)) = score_jxl(&c_bytes, &lin_img, &srgb_img, w, h) {
                         row.cjxl_bfly = bfly;
                         row.cjxl_ssim2 = ss;
                     }
                 }
 
-                if let Some((z_bytes, z_ms)) = encode_zenjxl(
-                    &pixels,
-                    w,
-                    h,
-                    effort,
-                    distance,
-                    EncoderStrategy::Zenjxl,
-                ) {
+                if let Some((z_bytes, z_ms)) =
+                    encode_zenjxl(&pixels, w, h, effort, distance, EncoderStrategy::Zenjxl)
+                {
                     row.zenjxl_bytes = z_bytes.len();
                     row.zenjxl_encode_ms = z_ms;
-                    if let Some((bfly, ss)) = score_jxl(&z_bytes, &lin_img, &srgb_img, w, h)
-                    {
+                    if let Some((bfly, ss)) = score_jxl(&z_bytes, &lin_img, &srgb_img, w, h) {
                         row.zenjxl_bfly = bfly;
                         row.zenjxl_ssim2 = ss;
                     }
                 }
 
-                if let Some((l_bytes, l_ms)) = encode_zenjxl(
-                    &pixels,
-                    w,
-                    h,
-                    effort,
-                    distance,
-                    EncoderStrategy::Libjxl,
-                ) {
+                if let Some((l_bytes, l_ms)) =
+                    encode_zenjxl(&pixels, w, h, effort, distance, EncoderStrategy::Libjxl)
+                {
                     row.libjxl_strat_bytes = l_bytes.len();
                     row.libjxl_strat_encode_ms = l_ms;
-                    if let Some((bfly, ss)) = score_jxl(&l_bytes, &lin_img, &srgb_img, w, h)
-                    {
+                    if let Some((bfly, ss)) = score_jxl(&l_bytes, &lin_img, &srgb_img, w, h) {
                         row.libjxl_strat_bfly = bfly;
                         row.libjxl_strat_ssim2 = ss;
                     }

@@ -25,15 +25,14 @@ use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const SRC: &str = "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png";
+const SRC: &str =
+    "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png";
 const CJXL_RS: &str = "/home/lilith/work/zen/jxl-encoder--sa-f-cross-test/target/release/cjxl-rs";
 const CJXL: &str = "/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl";
 const BUTTERAUGLI_MAIN: &str = "/home/lilith/work/jxl-efforts/libjxl/build/tools/butteraugli_main";
 const OUT_DIR: &str = "/tmp/sa_f";
-const BENCH_TSV: &str =
-    "/home/lilith/work/zen/jxl-encoder--sa-f-cross-test/jxl-encoder/benchmarks/sa_f_buttloop_cross_test_2026-05-25.tsv";
-const BENCH_META: &str =
-    "/home/lilith/work/zen/jxl-encoder--sa-f-cross-test/jxl-encoder/benchmarks/sa_f_buttloop_cross_test_2026-05-25.meta";
+const BENCH_TSV: &str = "/home/lilith/work/zen/jxl-encoder--sa-f-cross-test/jxl-encoder/benchmarks/sa_f_buttloop_cross_test_2026-05-25.tsv";
+const BENCH_META: &str = "/home/lilith/work/zen/jxl-encoder--sa-f-cross-test/jxl-encoder/benchmarks/sa_f_buttloop_cross_test_2026-05-25.meta";
 
 fn srgb_to_linear(v: u8) -> f32 {
     let f = v as f32 / 255.0;
@@ -72,8 +71,8 @@ fn decode_jxl_linear(jxl_path: &Path) -> (Vec<f32>, u32, u32) {
 /// as linear sRGB. PFM header: "PF\n<w> <h>\n-1.0\n" then raw f32 little-endian
 /// rows in bottom-up order.
 fn write_pfm(path: &Path, data: &[f32], w: u32, h: u32) {
-    let mut f =
-        std::fs::File::create(path).unwrap_or_else(|e| panic!("create pfm {}: {}", path.display(), e));
+    let mut f = std::fs::File::create(path)
+        .unwrap_or_else(|e| panic!("create pfm {}: {}", path.display(), e));
     // -1.0 = little-endian
     write!(f, "PF\n{} {}\n-1.0\n", w, h).unwrap();
     // PFM is bottom-up; write rows in reverse order.
@@ -131,12 +130,7 @@ fn run_libjxl_butteraugli(ref_pfm: &Path, dist_pfm: &Path) -> Option<(f64, f64)>
     Some((max_score?, pnorm?))
 }
 
-fn run_ours_butteraugli(
-    ref_lin: &[f32],
-    dist_lin: &[f32],
-    w: u32,
-    h: u32,
-) -> (f64, f64) {
+fn run_ours_butteraugli(ref_lin: &[f32], dist_lin: &[f32], w: u32, h: u32) -> (f64, f64) {
     let ref_pixels: Vec<RGB<f32>> = ref_lin
         .chunks(3)
         .map(|c| RGB::new(c[0], c[1], c[2]))
@@ -169,14 +163,28 @@ fn main() {
     // Encode if not already present (we ran this before, but be resilient).
     if !ours_jxl.exists() {
         let s = Command::new(CJXL_RS)
-            .args(["--effort", "9", "--distance", "4", SRC, ours_jxl.to_str().unwrap()])
+            .args([
+                "--effort",
+                "9",
+                "--distance",
+                "4",
+                SRC,
+                ours_jxl.to_str().unwrap(),
+            ])
             .status()
             .expect("cjxl-rs");
         assert!(s.success(), "cjxl-rs failed");
     }
     if !libjxl_jxl.exists() {
         let s = Command::new(CJXL)
-            .args(["--effort", "9", "--distance", "4", SRC, libjxl_jxl.to_str().unwrap()])
+            .args([
+                "--effort",
+                "9",
+                "--distance",
+                "4",
+                SRC,
+                libjxl_jxl.to_str().unwrap(),
+            ])
             .status()
             .expect("cjxl");
         assert!(s.success(), "cjxl failed");
@@ -214,29 +222,43 @@ fn main() {
     println!("[SA-F] running our butteraugli (ref, ours_recon)...");
     let (ours_score_on_ours, ours_pnorm_on_ours) =
         run_ours_butteraugli(&ref_lin, &ours_recon, w, h);
-    println!("[SA-F]   ours/ours_recon: score={:.4} pnorm3={:.4}", ours_score_on_ours, ours_pnorm_on_ours);
+    println!(
+        "[SA-F]   ours/ours_recon: score={:.4} pnorm3={:.4}",
+        ours_score_on_ours, ours_pnorm_on_ours
+    );
 
     println!("[SA-F] running libjxl butteraugli_main (ref, ours_recon)...");
     let (libjxl_score_on_ours, libjxl_pnorm_on_ours) =
         run_libjxl_butteraugli(&ref_pfm, &ours_pfm).expect("libjxl on ours_recon");
-    println!("[SA-F]   libjxl/ours_recon: score={:.4} pnorm3={:.4}", libjxl_score_on_ours, libjxl_pnorm_on_ours);
+    println!(
+        "[SA-F]   libjxl/ours_recon: score={:.4} pnorm3={:.4}",
+        libjxl_score_on_ours, libjxl_pnorm_on_ours
+    );
 
     println!("[SA-F] running our butteraugli (ref, libjxl_recon)...");
     let (ours_score_on_libjxl, ours_pnorm_on_libjxl) =
         run_ours_butteraugli(&ref_lin, &libjxl_recon, w, h);
-    println!("[SA-F]   ours/libjxl_recon: score={:.4} pnorm3={:.4}", ours_score_on_libjxl, ours_pnorm_on_libjxl);
+    println!(
+        "[SA-F]   ours/libjxl_recon: score={:.4} pnorm3={:.4}",
+        ours_score_on_libjxl, ours_pnorm_on_libjxl
+    );
 
     println!("[SA-F] running libjxl butteraugli_main (ref, libjxl_recon)...");
     let (libjxl_score_on_libjxl, libjxl_pnorm_on_libjxl) =
         run_libjxl_butteraugli(&ref_pfm, &libjxl_pfm).expect("libjxl on libjxl_recon");
-    println!("[SA-F]   libjxl/libjxl_recon: score={:.4} pnorm3={:.4}", libjxl_score_on_libjxl, libjxl_pnorm_on_libjxl);
+    println!(
+        "[SA-F]   libjxl/libjxl_recon: score={:.4} pnorm3={:.4}",
+        libjxl_score_on_libjxl, libjxl_pnorm_on_libjxl
+    );
 
     // Also: sanity check (ref vs ref) should produce 0.0.
     println!("[SA-F] sanity (ref, ref) both sides...");
     let (ours_self, _) = run_ours_butteraugli(&ref_lin, &ref_lin, w, h);
-    let (libjxl_self, _) =
-        run_libjxl_butteraugli(&ref_pfm, &ref_pfm).expect("libjxl ref vs ref");
-    println!("[SA-F]   ours(ref,ref)={:.4} libjxl(ref,ref)={:.4}", ours_self, libjxl_self);
+    let (libjxl_self, _) = run_libjxl_butteraugli(&ref_pfm, &ref_pfm).expect("libjxl ref vs ref");
+    println!(
+        "[SA-F]   ours(ref,ref)={:.4} libjxl(ref,ref)={:.4}",
+        ours_self, libjxl_self
+    );
 
     // Write TSV.
     let mut f = OpenOptions::new()
@@ -251,10 +273,10 @@ fn main() {
     )
     .unwrap();
     // For the rel_diff column: compare AA vs AB and BA vs BB.
-    let rel_aa_ab = (ours_score_on_ours - libjxl_score_on_ours).abs()
-        / libjxl_score_on_ours.max(1e-9);
-    let rel_ba_bb = (ours_score_on_libjxl - libjxl_score_on_libjxl).abs()
-        / libjxl_score_on_libjxl.max(1e-9);
+    let rel_aa_ab =
+        (ours_score_on_ours - libjxl_score_on_ours).abs() / libjxl_score_on_ours.max(1e-9);
+    let rel_ba_bb =
+        (ours_score_on_libjxl - libjxl_score_on_libjxl).abs() / libjxl_score_on_libjxl.max(1e-9);
     writeln!(
         f,
         "AA\tours_recon\tours\t{:.6}\t{:.6}\t{:.4}",
@@ -302,7 +324,11 @@ fn main() {
     writeln!(m, "# SA-F: butteraugli metric cross-test").unwrap();
     writeln!(m, "# Date: 2026-05-25").unwrap();
     writeln!(m, "# Source: {}", SRC).unwrap();
-    writeln!(m, "# Encoders: cjxl-rs (ours) AND cjxl (libjxl) at -e 9 -d 4").unwrap();
+    writeln!(
+        m,
+        "# Encoders: cjxl-rs (ours) AND cjxl (libjxl) at -e 9 -d 4"
+    )
+    .unwrap();
     writeln!(
         m,
         "# Decoder for both .jxl files: jxl-oxide 0.12.5 with srgb_linear request"

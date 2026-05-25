@@ -68,9 +68,7 @@ fn main() {
         ),
     ];
 
-    println!(
-        "name,blob_hex,p1,p2,p3,p4,p5,p6,k1,k2,k3,k4,k5"
-    );
+    println!("name,blob_hex,p1,p2,p3,p4,p5,p6,k1,k2,k3,k4,k5");
     for (name, knobs) in cases {
         let rt = knobs.expand_to_runtime_tuning();
         // Pack as 24-byte little-endian (the format the worker reads via

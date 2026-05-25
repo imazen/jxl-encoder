@@ -35,7 +35,11 @@ const EFFORTS: &[u8] = &[5, 7, 9];
 
 fn srgb_u8_to_linear_f32(x: u8) -> f32 {
     let x = x as f32 / 255.0;
-    if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
+    if x <= 0.04045 {
+        x / 12.92
+    } else {
+        ((x + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 fn linear_to_srgb_u8(x: f32) -> u8 {
@@ -54,11 +58,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb.into_raw(), w, h))
 }
 
-fn make_imgs(
-    pixels: &[u8],
-    w: u32,
-    h: u32,
-) -> (Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>) {
+fn make_imgs(pixels: &[u8], w: u32, h: u32) -> (Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>) {
     let lin: Vec<RGB<f32>> = pixels
         .chunks_exact(3)
         .map(|c| {
@@ -69,10 +69,7 @@ fn make_imgs(
             )
         })
         .collect();
-    let srgb: Vec<[u8; 3]> = pixels
-        .chunks_exact(3)
-        .map(|c| [c[0], c[1], c[2]])
-        .collect();
+    let srgb: Vec<[u8; 3]> = pixels.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
     let lin_img = Img::new(lin, w as usize, h as usize);
     let srgb_img = Img::new(srgb, w as usize, h as usize);
     (lin_img, srgb_img)
@@ -124,8 +121,7 @@ fn score_jxl(
         })
         .collect();
     let dec_srgb_img: Img<Vec<[u8; 3]>> = Img::new(dec_srgb, dw, dh);
-    let ssim2 =
-        fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
+    let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
 
     Some((bfly, ssim2))
 }
@@ -181,9 +177,8 @@ fn encode_cjxl(src_path: &Path, effort: u8, distance: f32) -> Option<(Vec<u8>, u
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mut out_path: PathBuf = PathBuf::from(
-        "benchmarks/cjxl_parity_2026-05-24_post_w44_audit_2_partial.tsv",
-    );
+    let mut out_path: PathBuf =
+        PathBuf::from("benchmarks/cjxl_parity_2026-05-24_post_w44_audit_2_partial.tsv");
     let mut i = 1;
     while i < args.len() {
         if args[i] == "--output" && i + 1 < args.len() {
@@ -202,8 +197,13 @@ fn main() {
             std::process::exit(1);
         }
     };
-    eprintln!("[bench] loaded {} ({}×{} = {:.2} MP)",
-        IMAGE_ID, w, h, (w as f64 * h as f64) / 1_000_000.0);
+    eprintln!(
+        "[bench] loaded {} ({}×{} = {:.2} MP)",
+        IMAGE_ID,
+        w,
+        h,
+        (w as f64 * h as f64) / 1_000_000.0
+    );
     let (lin_img, srgb_img) = make_imgs(&pixels, w, h);
 
     let bench_start = Instant::now();
@@ -248,7 +248,9 @@ fn main() {
             }
         }
 
-        if let Some((b, ms)) = encode_zenjxl(&pixels, w, h, effort, DISTANCE, EncoderStrategy::Zenjxl) {
+        if let Some((b, ms)) =
+            encode_zenjxl(&pixels, w, h, effort, DISTANCE, EncoderStrategy::Zenjxl)
+        {
             zen_bytes = b.len();
             zen_ms = ms;
             if let Some((bf, ss)) = score_jxl(&b, &lin_img, &srgb_img, w, h) {
@@ -257,7 +259,9 @@ fn main() {
             }
         }
 
-        if let Some((b, ms)) = encode_zenjxl(&pixels, w, h, effort, DISTANCE, EncoderStrategy::Libjxl) {
+        if let Some((b, ms)) =
+            encode_zenjxl(&pixels, w, h, effort, DISTANCE, EncoderStrategy::Libjxl)
+        {
             lib_bytes = b.len();
             lib_ms = ms;
             if let Some((bf, ss)) = score_jxl(&b, &lin_img, &srgb_img, w, h) {
@@ -269,9 +273,15 @@ fn main() {
         let elapsed_ms = t_cell.elapsed().as_millis();
         eprintln!(
             "z={}B/{:.3}/{:.2} l={}B/{:.3}/{:.2} c={}B/{:.3}/{:.2} ({}ms)",
-            zen_bytes, zen_bfly, zen_ssim2,
-            lib_bytes, lib_bfly, lib_ssim2,
-            cjxl_bytes, cjxl_bfly, cjxl_ssim2,
+            zen_bytes,
+            zen_bfly,
+            zen_ssim2,
+            lib_bytes,
+            lib_bfly,
+            lib_ssim2,
+            cjxl_bytes,
+            cjxl_bfly,
+            cjxl_ssim2,
             elapsed_ms
         );
 
@@ -298,12 +308,30 @@ fn main() {
              {}\t{:.4}\t{:.4}\t{}\t\
              {:.3}\t{:.3}\t{:.4}\t\
              {:.3}\t{:.3}\t{:.4}",
-            IMAGE_ID, CLASS, w, h, effort, DISTANCE,
-            cjxl_bytes, cjxl_bfly, cjxl_ssim2, cjxl_ms,
-            zen_bytes, zen_bfly, zen_ssim2, zen_ms,
-            lib_bytes, lib_bfly, lib_ssim2, lib_ms,
-            z_dbytes, z_dssim2, z_dbfly,
-            l_dbytes, l_dssim2, l_dbfly
+            IMAGE_ID,
+            CLASS,
+            w,
+            h,
+            effort,
+            DISTANCE,
+            cjxl_bytes,
+            cjxl_bfly,
+            cjxl_ssim2,
+            cjxl_ms,
+            zen_bytes,
+            zen_bfly,
+            zen_ssim2,
+            zen_ms,
+            lib_bytes,
+            lib_bfly,
+            lib_ssim2,
+            lib_ms,
+            z_dbytes,
+            z_dssim2,
+            z_dbfly,
+            l_dbytes,
+            l_dssim2,
+            l_dbfly
         )
         .unwrap();
     }

@@ -80,11 +80,19 @@ fn cjxl_bin() -> PathBuf {
 
 fn srgb_to_linear_f32(s: u8) -> f32 {
     let c = s as f32 / 255.0;
-    if c <= 0.040_45 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    if c <= 0.040_45 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
 }
 fn linear_to_srgb_u8(linear: f32) -> u8 {
     let c = linear.clamp(0.0, 1.0);
-    let s = if c <= 0.003_130_8 { 12.92 * c } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 };
+    let s = if c <= 0.003_130_8 {
+        12.92 * c
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    };
     (s * 255.0 + 0.5) as u8
 }
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
@@ -93,7 +101,9 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb.as_raw().clone(), rgb.width(), rgb.height()))
 }
 fn decode_jxl_linear(bytes: &[u8]) -> Option<(u32, u32, Vec<f32>)> {
-    let mut img = jxl_oxide::JxlImage::builder().read(Cursor::new(bytes)).ok()?;
+    let mut img = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(bytes))
+        .ok()?;
     img.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
         jxl_oxide::RenderingIntent::Relative,
     ));
@@ -157,8 +167,7 @@ fn encode_with_strategy(rgb: &[u8], w: u32, h: u32, strategy: EncoderStrategy) -
 
 fn encode_cjxl(src_png: &Path) -> Option<Vec<u8>> {
     let stem = src_png.file_stem()?.to_string_lossy().into_owned();
-    let out_path =
-        std::env::temp_dir().join(format!("w44_audit_5_p2_cjxl_{stem}_d{DISTANCE}.jxl"));
+    let out_path = std::env::temp_dir().join(format!("w44_audit_5_p2_cjxl_{stem}_d{DISTANCE}.jxl"));
     let status = Command::new(cjxl_bin())
         .arg(src_png)
         .arg(&out_path)
@@ -195,8 +204,7 @@ fn main() {
             // Mode A: Zenjxl with the Phase 2 default flipped OFF via env.
             // Caller MUST set JXL_W44_AUDIT_5_FORCE_LS_WARM_START=0 before
             // invoking; we assert here that the env is set correctly.
-            let env = std::env::var("JXL_W44_AUDIT_5_FORCE_LS_WARM_START")
-                .unwrap_or_default();
+            let env = std::env::var("JXL_W44_AUDIT_5_FORCE_LS_WARM_START").unwrap_or_default();
             assert_eq!(
                 env, "0",
                 "MODE=A requires JXL_W44_AUDIT_5_FORCE_LS_WARM_START=0 in env"
@@ -214,7 +222,10 @@ fn main() {
                 env == "1" || env.is_empty(),
                 "MODE=C requires JXL_W44_AUDIT_5_FORCE_LS_WARM_START=1 (or unset); got {env}"
             );
-            (EncoderStrategy::Zenjxl, "C_zenjxl_libjxl_math_with_ls_warm_start")
+            (
+                EncoderStrategy::Zenjxl,
+                "C_zenjxl_libjxl_math_with_ls_warm_start",
+            )
         }
         other => panic!("MODE must be A | B | C, got {other}"),
     };

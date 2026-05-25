@@ -28,9 +28,7 @@
 
 use butteraugli::{ButteraugliParams, butteraugli_linear};
 use imgref::Img;
-use jxl_encoder::api::{
-    EncoderImprovementsCustom, EncoderStrategy, LossyConfig, PixelLayout,
-};
+use jxl_encoder::api::{EncoderImprovementsCustom, EncoderStrategy, LossyConfig, PixelLayout};
 use rgb::RGB;
 use std::fs::File;
 use std::io::{Cursor, Write};
@@ -52,49 +50,263 @@ struct ClusterCell {
 
 const CLUSTER: &[ClusterCell] = &[
     // PHOTO_PORTRAIT
-    ClusterCell { image_id: "1418519", path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png", class: "PHOTO_PORTRAIT", effort: 5, distance: 4.0, subclass: "A_LibjxlBetter" },
-    ClusterCell { image_id: "1418519", path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png", class: "PHOTO_PORTRAIT", effort: 7, distance: 4.0, subclass: "B_BothFail" },
-    ClusterCell { image_id: "1418519", path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png", class: "PHOTO_PORTRAIT", effort: 9, distance: 4.0, subclass: "B_BothFail" },
-    ClusterCell { image_id: "1279330", path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1279330.png", class: "PHOTO_PORTRAIT", effort: 7, distance: 4.0, subclass: "B_BothFail" },
+    ClusterCell {
+        image_id: "1418519",
+        path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png",
+        class: "PHOTO_PORTRAIT",
+        effort: 5,
+        distance: 4.0,
+        subclass: "A_LibjxlBetter",
+    },
+    ClusterCell {
+        image_id: "1418519",
+        path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png",
+        class: "PHOTO_PORTRAIT",
+        effort: 7,
+        distance: 4.0,
+        subclass: "B_BothFail",
+    },
+    ClusterCell {
+        image_id: "1418519",
+        path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png",
+        class: "PHOTO_PORTRAIT",
+        effort: 9,
+        distance: 4.0,
+        subclass: "B_BothFail",
+    },
+    ClusterCell {
+        image_id: "1279330",
+        path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1279330.png",
+        class: "PHOTO_PORTRAIT",
+        effort: 7,
+        distance: 4.0,
+        subclass: "B_BothFail",
+    },
     // PHOTO_LANDSCAPE
-    ClusterCell { image_id: "1475938", path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1475938.png", class: "PHOTO_LANDSCAPE", effort: 7, distance: 2.0, subclass: "B_BothFail" },
-    ClusterCell { image_id: "1475938", path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1475938.png", class: "PHOTO_LANDSCAPE", effort: 7, distance: 4.0, subclass: "B_BothFail" },
-    ClusterCell { image_id: "1475938", path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1475938.png", class: "PHOTO_LANDSCAPE", effort: 9, distance: 4.0, subclass: "B_BothFail" },
+    ClusterCell {
+        image_id: "1475938",
+        path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1475938.png",
+        class: "PHOTO_LANDSCAPE",
+        effort: 7,
+        distance: 2.0,
+        subclass: "B_BothFail",
+    },
+    ClusterCell {
+        image_id: "1475938",
+        path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1475938.png",
+        class: "PHOTO_LANDSCAPE",
+        effort: 7,
+        distance: 4.0,
+        subclass: "B_BothFail",
+    },
+    ClusterCell {
+        image_id: "1475938",
+        path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1475938.png",
+        class: "PHOTO_LANDSCAPE",
+        effort: 9,
+        distance: 4.0,
+        subclass: "B_BothFail",
+    },
     // PHOTO_SMOOTH
-    ClusterCell { image_id: "1531677", path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png", class: "PHOTO_SMOOTH", effort: 5, distance: 4.0, subclass: "A_LibjxlBetter" },
-    ClusterCell { image_id: "1531677", path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png", class: "PHOTO_SMOOTH", effort: 7, distance: 4.0, subclass: "C_LibjxlWORSE" },
-    ClusterCell { image_id: "1531677", path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png", class: "PHOTO_SMOOTH", effort: 9, distance: 4.0, subclass: "C_LibjxlWORSE" },
-    ClusterCell { image_id: "1420710", path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png", class: "PHOTO_SMOOTH", effort: 7, distance: 4.0, subclass: "C_LibjxlWORSE" },
-    ClusterCell { image_id: "1544947", path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1544947.png", class: "PHOTO_SMOOTH", effort: 7, distance: 4.0, subclass: "C_LibjxlWORSE" },
-    ClusterCell { image_id: "1544947", path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1544947.png", class: "PHOTO_SMOOTH", effort: 9, distance: 4.0, subclass: "C_LibjxlWORSE" },
+    ClusterCell {
+        image_id: "1531677",
+        path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png",
+        class: "PHOTO_SMOOTH",
+        effort: 5,
+        distance: 4.0,
+        subclass: "A_LibjxlBetter",
+    },
+    ClusterCell {
+        image_id: "1531677",
+        path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png",
+        class: "PHOTO_SMOOTH",
+        effort: 7,
+        distance: 4.0,
+        subclass: "C_LibjxlWORSE",
+    },
+    ClusterCell {
+        image_id: "1531677",
+        path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1531677.png",
+        class: "PHOTO_SMOOTH",
+        effort: 9,
+        distance: 4.0,
+        subclass: "C_LibjxlWORSE",
+    },
+    ClusterCell {
+        image_id: "1420710",
+        path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png",
+        class: "PHOTO_SMOOTH",
+        effort: 7,
+        distance: 4.0,
+        subclass: "C_LibjxlWORSE",
+    },
+    ClusterCell {
+        image_id: "1544947",
+        path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1544947.png",
+        class: "PHOTO_SMOOTH",
+        effort: 7,
+        distance: 4.0,
+        subclass: "C_LibjxlWORSE",
+    },
+    ClusterCell {
+        image_id: "1544947",
+        path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1544947.png",
+        class: "PHOTO_SMOOTH",
+        effort: 9,
+        distance: 4.0,
+        subclass: "C_LibjxlWORSE",
+    },
     // CLIC2025_WEB — clic_097cb4
-    ClusterCell { image_id: "clic_097cb4", path: "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png", class: "CLIC2025_WEB", effort: 5, distance: 2.0, subclass: "B_BothFail" },
-    ClusterCell { image_id: "clic_097cb4", path: "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png", class: "CLIC2025_WEB", effort: 5, distance: 4.0, subclass: "A_LibjxlBetter" },
-    ClusterCell { image_id: "clic_097cb4", path: "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png", class: "CLIC2025_WEB", effort: 7, distance: 2.0, subclass: "C_LibjxlWORSE" },
-    ClusterCell { image_id: "clic_097cb4", path: "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png", class: "CLIC2025_WEB", effort: 7, distance: 4.0, subclass: "C_LibjxlWORSE" },
-    ClusterCell { image_id: "clic_097cb4", path: "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png", class: "CLIC2025_WEB", effort: 9, distance: 2.0, subclass: "C_LibjxlWORSE" },
-    ClusterCell { image_id: "clic_097cb4", path: "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png", class: "CLIC2025_WEB", effort: 9, distance: 4.0, subclass: "C_LibjxlWORSE" },
+    ClusterCell {
+        image_id: "clic_097cb4",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png",
+        class: "CLIC2025_WEB",
+        effort: 5,
+        distance: 2.0,
+        subclass: "B_BothFail",
+    },
+    ClusterCell {
+        image_id: "clic_097cb4",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png",
+        class: "CLIC2025_WEB",
+        effort: 5,
+        distance: 4.0,
+        subclass: "A_LibjxlBetter",
+    },
+    ClusterCell {
+        image_id: "clic_097cb4",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png",
+        class: "CLIC2025_WEB",
+        effort: 7,
+        distance: 2.0,
+        subclass: "C_LibjxlWORSE",
+    },
+    ClusterCell {
+        image_id: "clic_097cb4",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png",
+        class: "CLIC2025_WEB",
+        effort: 7,
+        distance: 4.0,
+        subclass: "C_LibjxlWORSE",
+    },
+    ClusterCell {
+        image_id: "clic_097cb4",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png",
+        class: "CLIC2025_WEB",
+        effort: 9,
+        distance: 2.0,
+        subclass: "C_LibjxlWORSE",
+    },
+    ClusterCell {
+        image_id: "clic_097cb4",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png",
+        class: "CLIC2025_WEB",
+        effort: 9,
+        distance: 4.0,
+        subclass: "C_LibjxlWORSE",
+    },
     // CLIC2025_WEB — clic_0c49a5
-    ClusterCell { image_id: "clic_0c49a5", path: "/home/lilith/work/codec-corpus/clic2025-1024/0c49a5cce349020bbba2f97ae41e90ba.png", class: "CLIC2025_WEB", effort: 7, distance: 2.0, subclass: "B_BothFail" },
-    ClusterCell { image_id: "clic_0c49a5", path: "/home/lilith/work/codec-corpus/clic2025-1024/0c49a5cce349020bbba2f97ae41e90ba.png", class: "CLIC2025_WEB", effort: 9, distance: 2.0, subclass: "B_BothFail" },
+    ClusterCell {
+        image_id: "clic_0c49a5",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/0c49a5cce349020bbba2f97ae41e90ba.png",
+        class: "CLIC2025_WEB",
+        effort: 7,
+        distance: 2.0,
+        subclass: "B_BothFail",
+    },
+    ClusterCell {
+        image_id: "clic_0c49a5",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/0c49a5cce349020bbba2f97ae41e90ba.png",
+        class: "CLIC2025_WEB",
+        effort: 9,
+        distance: 2.0,
+        subclass: "B_BothFail",
+    },
     // CLIC2025_WEB — clic_100a02
-    ClusterCell { image_id: "clic_100a02", path: "/home/lilith/work/codec-corpus/clic2025-1024/100a02c269c5948392f283b2aa3bb4da.png", class: "CLIC2025_WEB", effort: 5, distance: 4.0, subclass: "A_LibjxlBetter" },
-    ClusterCell { image_id: "clic_100a02", path: "/home/lilith/work/codec-corpus/clic2025-1024/100a02c269c5948392f283b2aa3bb4da.png", class: "CLIC2025_WEB", effort: 7, distance: 4.0, subclass: "B_BothFail" },
-    ClusterCell { image_id: "clic_100a02", path: "/home/lilith/work/codec-corpus/clic2025-1024/100a02c269c5948392f283b2aa3bb4da.png", class: "CLIC2025_WEB", effort: 9, distance: 4.0, subclass: "B_BothFail" },
+    ClusterCell {
+        image_id: "clic_100a02",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/100a02c269c5948392f283b2aa3bb4da.png",
+        class: "CLIC2025_WEB",
+        effort: 5,
+        distance: 4.0,
+        subclass: "A_LibjxlBetter",
+    },
+    ClusterCell {
+        image_id: "clic_100a02",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/100a02c269c5948392f283b2aa3bb4da.png",
+        class: "CLIC2025_WEB",
+        effort: 7,
+        distance: 4.0,
+        subclass: "B_BothFail",
+    },
+    ClusterCell {
+        image_id: "clic_100a02",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/100a02c269c5948392f283b2aa3bb4da.png",
+        class: "CLIC2025_WEB",
+        effort: 9,
+        distance: 4.0,
+        subclass: "B_BothFail",
+    },
     // CLIC2025_WEB — clic_22ea12
-    ClusterCell { image_id: "clic_22ea12", path: "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png", class: "CLIC2025_WEB", effort: 5, distance: 2.0, subclass: "B_BothFail" },
-    ClusterCell { image_id: "clic_22ea12", path: "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png", class: "CLIC2025_WEB", effort: 5, distance: 4.0, subclass: "B_BothFail" },
-    ClusterCell { image_id: "clic_22ea12", path: "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png", class: "CLIC2025_WEB", effort: 7, distance: 2.0, subclass: "B_BothFail" },
-    ClusterCell { image_id: "clic_22ea12", path: "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png", class: "CLIC2025_WEB", effort: 7, distance: 4.0, subclass: "B_BothFail" },
-    ClusterCell { image_id: "clic_22ea12", path: "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png", class: "CLIC2025_WEB", effort: 9, distance: 2.0, subclass: "B_BothFail" },
-    ClusterCell { image_id: "clic_22ea12", path: "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png", class: "CLIC2025_WEB", effort: 9, distance: 4.0, subclass: "B_BothFail" },
+    ClusterCell {
+        image_id: "clic_22ea12",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png",
+        class: "CLIC2025_WEB",
+        effort: 5,
+        distance: 2.0,
+        subclass: "B_BothFail",
+    },
+    ClusterCell {
+        image_id: "clic_22ea12",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png",
+        class: "CLIC2025_WEB",
+        effort: 5,
+        distance: 4.0,
+        subclass: "B_BothFail",
+    },
+    ClusterCell {
+        image_id: "clic_22ea12",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png",
+        class: "CLIC2025_WEB",
+        effort: 7,
+        distance: 2.0,
+        subclass: "B_BothFail",
+    },
+    ClusterCell {
+        image_id: "clic_22ea12",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png",
+        class: "CLIC2025_WEB",
+        effort: 7,
+        distance: 4.0,
+        subclass: "B_BothFail",
+    },
+    ClusterCell {
+        image_id: "clic_22ea12",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png",
+        class: "CLIC2025_WEB",
+        effort: 9,
+        distance: 2.0,
+        subclass: "B_BothFail",
+    },
+    ClusterCell {
+        image_id: "clic_22ea12",
+        path: "/home/lilith/work/codec-corpus/clic2025-1024/22ea12c903e41583b7c469cb86040157.png",
+        class: "CLIC2025_WEB",
+        effort: 9,
+        distance: 4.0,
+        subclass: "B_BothFail",
+    },
 ];
 
 // ── Helpers (shared with AUDIT-7) ───────────────────────────────────────────
 
 fn srgb_u8_to_linear_f32(x: u8) -> f32 {
     let x = x as f32 / 255.0;
-    if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
+    if x <= 0.04045 {
+        x / 12.92
+    } else {
+        ((x + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 fn linear_to_srgb_u8(x: f32) -> u8 {
@@ -113,11 +325,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb.into_raw(), w, h))
 }
 
-fn make_imgs(
-    pixels: &[u8],
-    w: u32,
-    h: u32,
-) -> (Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>) {
+fn make_imgs(pixels: &[u8], w: u32, h: u32) -> (Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>) {
     let lin: Vec<RGB<f32>> = pixels
         .chunks_exact(3)
         .map(|c| {
@@ -128,10 +336,7 @@ fn make_imgs(
             )
         })
         .collect();
-    let srgb: Vec<[u8; 3]> = pixels
-        .chunks_exact(3)
-        .map(|c| [c[0], c[1], c[2]])
-        .collect();
+    let srgb: Vec<[u8; 3]> = pixels.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
     let lin_img = Img::new(lin, w as usize, h as usize);
     let srgb_img = Img::new(srgb, w as usize, h as usize);
     (lin_img, srgb_img)
@@ -160,7 +365,11 @@ fn score_jxl(
         return None;
     }
     let n_pixels = dw * dh;
-    let channels = if n_pixels > 0 { dec_lin.len() / n_pixels } else { 0 };
+    let channels = if n_pixels > 0 {
+        dec_lin.len() / n_pixels
+    } else {
+        0
+    };
     if channels < 3 {
         return None;
     }
@@ -188,8 +397,7 @@ fn score_jxl(
         })
         .collect();
     let dec_srgb_img: Img<Vec<[u8; 3]>> = Img::new(dec_srgb, dw, dh);
-    let ssim2 =
-        fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
+    let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
 
     Some((bfly, ssim2))
 }
@@ -303,15 +511,21 @@ fn write_tsv(out_path: &Path, rows: &[Row]) {
     for r in rows {
         let mode_a_dbytes = if r.cjxl_bytes > 0 {
             (r.mode_a_bytes as f64 - r.cjxl_bytes as f64) / r.cjxl_bytes as f64 * 100.0
-        } else { f64::NAN };
+        } else {
+            f64::NAN
+        };
         let mode_a_dssim2 = r.mode_a_ssim2 - r.cjxl_ssim2;
         let mode_c_dbytes = if r.cjxl_bytes > 0 {
             (r.mode_c_bytes as f64 - r.cjxl_bytes as f64) / r.cjxl_bytes as f64 * 100.0
-        } else { f64::NAN };
+        } else {
+            f64::NAN
+        };
         let mode_c_dssim2 = r.mode_c_ssim2 - r.cjxl_ssim2;
         let delta_c_minus_a_bytes = if r.mode_a_bytes > 0 {
             (r.mode_c_bytes as f64 - r.mode_a_bytes as f64) / r.mode_a_bytes as f64 * 100.0
-        } else { f64::NAN };
+        } else {
+            f64::NAN
+        };
         let delta_c_minus_a_ssim2 = r.mode_c_ssim2 - r.mode_a_ssim2;
         let delta_c_minus_a_bfly = r.mode_c_bfly - r.mode_a_bfly;
         let verdict = classify(delta_c_minus_a_ssim2, delta_c_minus_a_bytes);
@@ -324,13 +538,31 @@ fn write_tsv(out_path: &Path, rows: &[Row]) {
              {:.3}\t{:.3}\t\
              {:.3}\t{:.3}\t\
              {:.3}\t{:.3}\t{:.4}\t{}",
-            r.image_id, r.class, r.subclass, r.width, r.height, r.effort, r.distance,
-            r.cjxl_bytes, r.cjxl_bfly, r.cjxl_ssim2,
-            r.mode_a_bytes, r.mode_a_bfly, r.mode_a_ssim2, r.mode_a_ms,
-            r.mode_c_bytes, r.mode_c_bfly, r.mode_c_ssim2, r.mode_c_ms,
-            mode_a_dbytes, mode_a_dssim2,
-            mode_c_dbytes, mode_c_dssim2,
-            delta_c_minus_a_bytes, delta_c_minus_a_ssim2, delta_c_minus_a_bfly,
+            r.image_id,
+            r.class,
+            r.subclass,
+            r.width,
+            r.height,
+            r.effort,
+            r.distance,
+            r.cjxl_bytes,
+            r.cjxl_bfly,
+            r.cjxl_ssim2,
+            r.mode_a_bytes,
+            r.mode_a_bfly,
+            r.mode_a_ssim2,
+            r.mode_a_ms,
+            r.mode_c_bytes,
+            r.mode_c_bfly,
+            r.mode_c_ssim2,
+            r.mode_c_ms,
+            mode_a_dbytes,
+            mode_a_dssim2,
+            mode_c_dbytes,
+            mode_c_dssim2,
+            delta_c_minus_a_bytes,
+            delta_c_minus_a_ssim2,
+            delta_c_minus_a_bfly,
             verdict,
         )
         .unwrap();
@@ -346,9 +578,8 @@ fn make_mode_c_strategy() -> EncoderStrategy {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mut out_path: PathBuf = PathBuf::from(
-        "benchmarks/w44_audit_8_phase2_mode_c_on_cluster_2026-05-24.tsv",
-    );
+    let mut out_path: PathBuf =
+        PathBuf::from("benchmarks/w44_audit_8_phase2_mode_c_on_cluster_2026-05-24.tsv");
     let mut i = 1;
     while i < args.len() {
         if args[i] == "--output" && i + 1 < args.len() {
@@ -359,8 +590,11 @@ fn main() {
         }
     }
     eprintln!("[bench] output: {}", out_path.display());
-    eprintln!("[bench] {} cluster cells × Mode A + Mode C + cjxl = {} encodes",
-        CLUSTER.len(), CLUSTER.len() * 3);
+    eprintln!(
+        "[bench] {} cluster cells × Mode A + Mode C + cjxl = {} encodes",
+        CLUSTER.len(),
+        CLUSTER.len() * 3
+    );
 
     let total = CLUSTER.len();
     let mut rows: Vec<Row> = Vec::with_capacity(total);
@@ -382,7 +616,13 @@ fn main() {
                 continue;
             }
         };
-        eprintln!("[bench] LOADED {} {}x{} ({} cluster cells)", image_id, w, h, cells.len());
+        eprintln!(
+            "[bench] LOADED {} {}x{} ({} cluster cells)",
+            image_id,
+            w,
+            h,
+            cells.len()
+        );
         let (lin_img, srgb_img) = make_imgs(&pixels, w, h);
 
         for cell in cells {
@@ -417,7 +657,12 @@ fn main() {
 
             // Mode A: default Zenjxl
             if let Some((a_bytes, a_ms)) = encode_with_strategy(
-                &pixels, w, h, cell.effort, cell.distance, EncoderStrategy::Zenjxl,
+                &pixels,
+                w,
+                h,
+                cell.effort,
+                cell.distance,
+                EncoderStrategy::Zenjxl,
             ) {
                 row.mode_a_bytes = a_bytes.len();
                 row.mode_a_ms = a_ms;
@@ -429,7 +674,12 @@ fn main() {
 
             // Mode C: Zenjxl default + cfl_newton_libjxl_math_with_ls_warm_start = true
             if let Some((c_bytes, c_ms)) = encode_with_strategy(
-                &pixels, w, h, cell.effort, cell.distance, make_mode_c_strategy(),
+                &pixels,
+                w,
+                h,
+                cell.effort,
+                cell.distance,
+                make_mode_c_strategy(),
             ) {
                 row.mode_c_bytes = c_bytes.len();
                 row.mode_c_ms = c_ms;
@@ -440,17 +690,25 @@ fn main() {
             }
 
             let dc_a_bytes = if row.mode_a_bytes > 0 {
-                (row.mode_c_bytes as f64 - row.mode_a_bytes as f64)
-                    / row.mode_a_bytes as f64 * 100.0
-            } else { f64::NAN };
+                (row.mode_c_bytes as f64 - row.mode_a_bytes as f64) / row.mode_a_bytes as f64
+                    * 100.0
+            } else {
+                f64::NAN
+            };
             let dc_a_ssim2 = row.mode_c_ssim2 - row.mode_a_ssim2;
             let verdict = classify(dc_a_ssim2, dc_a_bytes);
             let elapsed_ms = t_cell.elapsed().as_millis();
             eprintln!(
                 "A={}B/{:.2}/{:.2} C={}B/{:.2}/{:.2} (ΔbytesC-A={:+.2}% Δssim2C-A={:+.3}) [{}] ({}ms)",
-                row.mode_a_bytes, row.mode_a_bfly, row.mode_a_ssim2,
-                row.mode_c_bytes, row.mode_c_bfly, row.mode_c_ssim2,
-                dc_a_bytes, dc_a_ssim2, verdict,
+                row.mode_a_bytes,
+                row.mode_a_bfly,
+                row.mode_a_ssim2,
+                row.mode_c_bytes,
+                row.mode_c_bfly,
+                row.mode_c_ssim2,
+                dc_a_bytes,
+                dc_a_ssim2,
+                verdict,
                 elapsed_ms,
             );
             rows.push(row);
@@ -480,9 +738,10 @@ fn main() {
         for r in &rows {
             if r.subclass == *s {
                 let dc_a_bytes = if r.mode_a_bytes > 0 {
-                    (r.mode_c_bytes as f64 - r.mode_a_bytes as f64)
-                        / r.mode_a_bytes as f64 * 100.0
-                } else { 0.0 };
+                    (r.mode_c_bytes as f64 - r.mode_a_bytes as f64) / r.mode_a_bytes as f64 * 100.0
+                } else {
+                    0.0
+                };
                 let v = classify(r.mode_c_ssim2 - r.mode_a_ssim2, dc_a_bytes);
                 for (i, vlabel) in verdicts.iter().enumerate() {
                     if v == *vlabel {
@@ -504,13 +763,17 @@ fn main() {
     let mut worst_cell = String::new();
     for r in &rows {
         let dc_a_bytes = if r.mode_a_bytes > 0 {
-            (r.mode_c_bytes as f64 - r.mode_a_bytes as f64)
-                / r.mode_a_bytes as f64 * 100.0
-        } else { 0.0 };
+            (r.mode_c_bytes as f64 - r.mode_a_bytes as f64) / r.mode_a_bytes as f64 * 100.0
+        } else {
+            0.0
+        };
         let dc_a_ssim2 = r.mode_c_ssim2 - r.mode_a_ssim2;
         let v = classify(dc_a_ssim2, dc_a_bytes);
         for (i, vlabel) in verdicts.iter().enumerate() {
-            if v == *vlabel { total_counts[i] += 1; break; }
+            if v == *vlabel {
+                total_counts[i] += 1;
+                break;
+            }
         }
         if dc_a_ssim2 < worst_delta_ssim2 {
             worst_delta_ssim2 = dc_a_ssim2;
@@ -519,6 +782,12 @@ fn main() {
     }
     eprintln!();
     eprintln!("=== Overall (30 cells) ===");
-    eprintln!("  WIN={} NEUTRAL={} LOSS={}", total_counts[0], total_counts[1], total_counts[2]);
-    eprintln!("  Worst Mode C effect: {:+.3} SSIM2 on {}", worst_delta_ssim2, worst_cell);
+    eprintln!(
+        "  WIN={} NEUTRAL={} LOSS={}",
+        total_counts[0], total_counts[1], total_counts[2]
+    );
+    eprintln!(
+        "  Worst Mode C effect: {:+.3} SSIM2 on {}",
+        worst_delta_ssim2, worst_cell
+    );
 }

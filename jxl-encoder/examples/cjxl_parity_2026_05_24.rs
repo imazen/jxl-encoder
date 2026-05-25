@@ -74,7 +74,11 @@ const CELLS: &[Cell] = &[
 
 fn srgb_u8_to_linear_f32(x: u8) -> f32 {
     let x = x as f32 / 255.0;
-    if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
+    if x <= 0.04045 {
+        x / 12.92
+    } else {
+        ((x + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 fn linear_to_srgb_u8(x: f32) -> u8 {
@@ -93,11 +97,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb.into_raw(), w, h))
 }
 
-fn make_imgs(
-    pixels: &[u8],
-    w: u32,
-    h: u32,
-) -> (Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>) {
+fn make_imgs(pixels: &[u8], w: u32, h: u32) -> (Img<Vec<RGB<f32>>>, Img<Vec<[u8; 3]>>) {
     let lin: Vec<RGB<f32>> = pixels
         .chunks_exact(3)
         .map(|c| {
@@ -108,10 +108,7 @@ fn make_imgs(
             )
         })
         .collect();
-    let srgb: Vec<[u8; 3]> = pixels
-        .chunks_exact(3)
-        .map(|c| [c[0], c[1], c[2]])
-        .collect();
+    let srgb: Vec<[u8; 3]> = pixels.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
     let lin_img = Img::new(lin, w as usize, h as usize);
     let srgb_img = Img::new(srgb, w as usize, h as usize);
     (lin_img, srgb_img)
@@ -163,8 +160,7 @@ fn score_jxl(
         })
         .collect();
     let dec_srgb_img: Img<Vec<[u8; 3]>> = Img::new(dec_srgb, dw, dh);
-    let ssim2 =
-        fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
+    let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
 
     Some((bfly, ssim2))
 }
@@ -189,11 +185,7 @@ fn encode_zenjxl(
     Some((buf, ms))
 }
 
-fn encode_cjxl(
-    src_path: &Path,
-    effort: u8,
-    distance: f32,
-) -> Option<(Vec<u8>, u128)> {
+fn encode_cjxl(src_path: &Path, effort: u8, distance: f32) -> Option<(Vec<u8>, u128)> {
     let cjxl = "/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl";
     let tmp = std::env::temp_dir().join(format!(
         "cjxl_parity_{}_{}_{}_{}.jxl",
@@ -248,9 +240,8 @@ struct Row {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mut out_path: PathBuf = PathBuf::from(
-        "benchmarks/cjxl_parity_2026-05-24_post_w44_205_s2_refit_c2.tsv",
-    );
+    let mut out_path: PathBuf =
+        PathBuf::from("benchmarks/cjxl_parity_2026-05-24_post_w44_205_s2_refit_c2.tsv");
     let mut i = 1;
     while i < args.len() {
         if args[i] == "--output" && i + 1 < args.len() {
@@ -297,49 +288,34 @@ fn main() {
                 };
 
                 // cjxl
-                if let Some((c_bytes, c_ms)) =
-                    encode_cjxl(Path::new(cell.path), effort, distance)
-                {
+                if let Some((c_bytes, c_ms)) = encode_cjxl(Path::new(cell.path), effort, distance) {
                     row.cjxl_bytes = c_bytes.len();
                     row.cjxl_encode_ms = c_ms;
-                    if let Some((bfly, ss)) = score_jxl(&c_bytes, &lin_img, &srgb_img, w, h)
-                    {
+                    if let Some((bfly, ss)) = score_jxl(&c_bytes, &lin_img, &srgb_img, w, h) {
                         row.cjxl_bfly = bfly;
                         row.cjxl_ssim2 = ss;
                     }
                 }
 
                 // zenjxl (default strategy = Zenjxl)
-                if let Some((z_bytes, z_ms)) = encode_zenjxl(
-                    &pixels,
-                    w,
-                    h,
-                    effort,
-                    distance,
-                    EncoderStrategy::Zenjxl,
-                ) {
+                if let Some((z_bytes, z_ms)) =
+                    encode_zenjxl(&pixels, w, h, effort, distance, EncoderStrategy::Zenjxl)
+                {
                     row.zenjxl_bytes = z_bytes.len();
                     row.zenjxl_encode_ms = z_ms;
-                    if let Some((bfly, ss)) = score_jxl(&z_bytes, &lin_img, &srgb_img, w, h)
-                    {
+                    if let Some((bfly, ss)) = score_jxl(&z_bytes, &lin_img, &srgb_img, w, h) {
                         row.zenjxl_bfly = bfly;
                         row.zenjxl_ssim2 = ss;
                     }
                 }
 
                 // EncoderStrategy::Libjxl (strict cjxl-parity gate)
-                if let Some((l_bytes, l_ms)) = encode_zenjxl(
-                    &pixels,
-                    w,
-                    h,
-                    effort,
-                    distance,
-                    EncoderStrategy::Libjxl,
-                ) {
+                if let Some((l_bytes, l_ms)) =
+                    encode_zenjxl(&pixels, w, h, effort, distance, EncoderStrategy::Libjxl)
+                {
                     row.libjxl_strat_bytes = l_bytes.len();
                     row.libjxl_strat_encode_ms = l_ms;
-                    if let Some((bfly, ss)) = score_jxl(&l_bytes, &lin_img, &srgb_img, w, h)
-                    {
+                    if let Some((bfly, ss)) = score_jxl(&l_bytes, &lin_img, &srgb_img, w, h) {
                         row.libjxl_strat_bfly = bfly;
                         row.libjxl_strat_ssim2 = ss;
                     }
@@ -402,12 +378,30 @@ fn main() {
              {}\t{:.4}\t{:.4}\t{}\t\
              {:.3}\t{:.3}\t{:.4}\t\
              {:.3}\t{:.3}\t{:.4}",
-            r.image_id, r.class, r.width, r.height, r.effort, r.distance,
-            r.cjxl_bytes, r.cjxl_bfly, r.cjxl_ssim2, r.cjxl_encode_ms,
-            r.zenjxl_bytes, r.zenjxl_bfly, r.zenjxl_ssim2, r.zenjxl_encode_ms,
-            r.libjxl_strat_bytes, r.libjxl_strat_bfly, r.libjxl_strat_ssim2, r.libjxl_strat_encode_ms,
-            z_dbytes, z_dssim2, z_dbfly,
-            l_dbytes, l_dssim2, l_dbfly
+            r.image_id,
+            r.class,
+            r.width,
+            r.height,
+            r.effort,
+            r.distance,
+            r.cjxl_bytes,
+            r.cjxl_bfly,
+            r.cjxl_ssim2,
+            r.cjxl_encode_ms,
+            r.zenjxl_bytes,
+            r.zenjxl_bfly,
+            r.zenjxl_ssim2,
+            r.zenjxl_encode_ms,
+            r.libjxl_strat_bytes,
+            r.libjxl_strat_bfly,
+            r.libjxl_strat_ssim2,
+            r.libjxl_strat_encode_ms,
+            z_dbytes,
+            z_dssim2,
+            z_dbfly,
+            l_dbytes,
+            l_dssim2,
+            l_dbfly
         )
         .unwrap();
     }

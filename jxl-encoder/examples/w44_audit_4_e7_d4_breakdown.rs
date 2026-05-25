@@ -56,7 +56,11 @@ const CELLS: &[(u8, f32, bool, bool)] = &[
 
 fn srgb_u8_to_linear_f32(x: u8) -> f32 {
     let x = x as f32 / 255.0;
-    if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
+    if x <= 0.04045 {
+        x / 12.92
+    } else {
+        ((x + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 fn linear_to_srgb_u8(x: f32) -> u8 {
@@ -115,8 +119,10 @@ fn score_jxl(
     if dw != w as usize || dh != h as usize {
         return None;
     }
-    let dec_pixels: Vec<RGB<f32>> =
-        dec_lin.chunks_exact(3).map(|c| RGB::new(c[0], c[1], c[2])).collect();
+    let dec_pixels: Vec<RGB<f32>> = dec_lin
+        .chunks_exact(3)
+        .map(|c| RGB::new(c[0], c[1], c[2]))
+        .collect();
     let dec_lin_img: Img<Vec<RGB<f32>>> = Img::new(dec_pixels, dw, dh);
     let bfly = butteraugli_linear(
         orig_linear.as_ref(),
@@ -137,8 +143,7 @@ fn score_jxl(
         })
         .collect();
     let dec_srgb_img: Img<Vec<[u8; 3]>> = Img::new(dec_srgb, dw, dh);
-    let ssim2 =
-        fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
+    let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()).ok()?;
 
     Some((bfly, ssim2))
 }
@@ -166,9 +171,14 @@ fn encode_ours(
             std::env::remove_var("JXL_BUTTLOOP_INITIAL_QF_SCALE");
         }
     }
-    let cfg = LossyConfig::new(distance).with_effort(effort).with_strategy(strategy);
+    let cfg = LossyConfig::new(distance)
+        .with_effort(effort)
+        .with_strategy(strategy);
     let t0 = Instant::now();
-    let buf = cfg.encode_request(w, h, PixelLayout::Rgb8).encode(pixels).ok()?;
+    let buf = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(pixels)
+        .ok()?;
     let ms = t0.elapsed().as_millis();
     unsafe {
         std::env::remove_var("JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE");
@@ -207,8 +217,7 @@ fn encode_cjxl(src_path: &Path, effort: u8, distance: f32) -> Option<(Vec<u8>, u
 }
 
 fn main() {
-    let out_path: PathBuf =
-        PathBuf::from("benchmarks/w44_audit_4_e7_d4_breakdown_2026-05-24.tsv");
+    let out_path: PathBuf = PathBuf::from("benchmarks/w44_audit_4_e7_d4_breakdown_2026-05-24.tsv");
 
     let (pixels, w, h) = load_png(Path::new(IMAGE_PATH)).expect("load codec_wiki");
     eprintln!(
@@ -238,10 +247,7 @@ fn main() {
     let bench_start = Instant::now();
     for &(effort, dist, can109, can105) in CELLS {
         let t_cell = Instant::now();
-        eprint!(
-            "[bench] {} e{} d={} ...\n",
-            IMAGE_ID, effort, dist
-        );
+        eprint!("[bench] {} e{} d={} ...\n", IMAGE_ID, effort, dist);
 
         let (cjxl_b, cjxl_ms) = encode_cjxl(Path::new(IMAGE_PATH), effort, dist).unwrap();
         let (cjxl_bfly, cjxl_ssim2) =
@@ -254,9 +260,17 @@ fn main() {
             cjxl_ms
         );
 
-        let (lib_b, lib_ms) =
-            encode_ours(&pixels, w, h, effort, dist, EncoderStrategy::Libjxl, false, false)
-                .unwrap();
+        let (lib_b, lib_ms) = encode_ours(
+            &pixels,
+            w,
+            h,
+            effort,
+            dist,
+            EncoderStrategy::Libjxl,
+            false,
+            false,
+        )
+        .unwrap();
         let (lib_bfly, lib_ssim2) =
             score_jxl(&lib_b, &lin_img, &srgb_img, w, h).unwrap_or((0.0, 0.0));
         eprintln!(
@@ -268,9 +282,17 @@ fn main() {
             (lib_b.len() as f64 - cjxl_b.len() as f64) / cjxl_b.len() as f64 * 100.0,
         );
 
-        let (zen_b, zen_ms) =
-            encode_ours(&pixels, w, h, effort, dist, EncoderStrategy::Zenjxl, false, false)
-                .unwrap();
+        let (zen_b, zen_ms) = encode_ours(
+            &pixels,
+            w,
+            h,
+            effort,
+            dist,
+            EncoderStrategy::Zenjxl,
+            false,
+            false,
+        )
+        .unwrap();
         let (zen_bfly, zen_ssim2) =
             score_jxl(&zen_b, &lin_img, &srgb_img, w, h).unwrap_or((0.0, 0.0));
         eprintln!(
@@ -283,7 +305,17 @@ fn main() {
         );
 
         let (no109_b, no109_bfly, no109_ssim2) = if can109 {
-            let (b, _) = encode_ours(&pixels, w, h, effort, dist, EncoderStrategy::Zenjxl, true, false).unwrap();
+            let (b, _) = encode_ours(
+                &pixels,
+                w,
+                h,
+                effort,
+                dist,
+                EncoderStrategy::Zenjxl,
+                true,
+                false,
+            )
+            .unwrap();
             let (bf, ss) = score_jxl(&b, &lin_img, &srgb_img, w, h).unwrap_or((0.0, 0.0));
             eprintln!(
                 "  zenjxl_no109 = {:7} B  bfly={:.3} ssim2={:.2}  Δ={:+.2}% vs cjxl",
@@ -298,7 +330,17 @@ fn main() {
         };
 
         let (no_b, no_bfly, no_ss) = if can105 {
-            let (b, _) = encode_ours(&pixels, w, h, effort, dist, EncoderStrategy::Zenjxl, false, true).unwrap();
+            let (b, _) = encode_ours(
+                &pixels,
+                w,
+                h,
+                effort,
+                dist,
+                EncoderStrategy::Zenjxl,
+                false,
+                true,
+            )
+            .unwrap();
             let (bf, ss) = score_jxl(&b, &lin_img, &srgb_img, w, h).unwrap_or((0.0, 0.0));
             eprintln!(
                 "  zenjxl_no105 = {:7} B  bfly={:.3} ssim2={:.2}  Δ={:+.2}% vs cjxl",
@@ -312,10 +354,8 @@ fn main() {
             (0usize, 0.0, 0.0)
         };
 
-        let libpct =
-            (lib_b.len() as f64 - cjxl_b.len() as f64) / cjxl_b.len() as f64 * 100.0;
-        let zenpct =
-            (zen_b.len() as f64 - cjxl_b.len() as f64) / cjxl_b.len() as f64 * 100.0;
+        let libpct = (lib_b.len() as f64 - cjxl_b.len() as f64) / cjxl_b.len() as f64 * 100.0;
+        let zenpct = (zen_b.len() as f64 - cjxl_b.len() as f64) / cjxl_b.len() as f64 * 100.0;
         let no109pct = if no109_b > 0 {
             (no109_b as f64 - cjxl_b.len() as f64) / cjxl_b.len() as f64 * 100.0
         } else {

@@ -271,7 +271,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn main() {
-    let out_path: PathBuf = PathBuf::from("benchmarks/w44_audit_6_phase2c_w105_bisect_2026-05-24.tsv");
+    let out_path: PathBuf =
+        PathBuf::from("benchmarks/w44_audit_6_phase2c_w105_bisect_2026-05-24.tsv");
     if let Some(parent) = out_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

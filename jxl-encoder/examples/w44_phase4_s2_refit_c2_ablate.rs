@@ -100,10 +100,7 @@ fn compute_metrics(
     params: &ButteraugliParams,
 ) -> (f64, f64) {
     if let Some((dw, dh, dec)) = decode_jxl_linear(bytes) {
-        let dec_pixels: Vec<RGB<f32>> = dec
-            .chunks(3)
-            .map(|c| RGB::new(c[0], c[1], c[2]))
-            .collect();
+        let dec_pixels: Vec<RGB<f32>> = dec.chunks(3).map(|c| RGB::new(c[0], c[1], c[2])).collect();
         let dec_linear_img = Img::new(dec_pixels, dw, dh);
         let bfly = butteraugli_linear(orig_linear.as_ref(), dec_linear_img.as_ref(), params)
             .map(|r| r.score as f64)

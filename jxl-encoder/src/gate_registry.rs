@@ -1326,9 +1326,11 @@ mod tests {
         assert!(__CUSTOM_DIVERGENCE_EPF_DISPATCH.contains("section=E"));
         assert!(__CUSTOM_DIVERGENCE_CFL_TWO_PASS_MIN_EFFORT.contains("section=A"));
         // W44-AUDIT-5 Phase 2 (Mode C)
-        assert!(__CUSTOM_DIVERGENCE_CFL_NEWTON_LIBJXL_MATH_WITH_LS_WARM_START
-            .contains("section=C"));
-        assert!(__CUSTOM_DIVERGENCE_CFL_NEWTON_LIBJXL_MATH_WITH_LS_WARM_START
-            .contains("W44-AUDIT-5"));
+        assert!(
+            __CUSTOM_DIVERGENCE_CFL_NEWTON_LIBJXL_MATH_WITH_LS_WARM_START.contains("section=C")
+        );
+        assert!(
+            __CUSTOM_DIVERGENCE_CFL_NEWTON_LIBJXL_MATH_WITH_LS_WARM_START.contains("W44-AUDIT-5")
+        );
     }
 }

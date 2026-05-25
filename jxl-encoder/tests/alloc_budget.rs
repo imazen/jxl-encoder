@@ -544,10 +544,12 @@ fn w44_audit_2_e9_d4_large_screenshot_no_spurious_oom() {
         let bytes = cfg
             .encode_request(w, h, PixelLayout::Rgb8)
             .encode(&pixels)
-            .unwrap_or_else(|e| panic!(
-                "W44-AUDIT-2 regression: e9 d=4 on 4 MP screenshot OOM'd \
+            .unwrap_or_else(|e| {
+                panic!(
+                    "W44-AUDIT-2 regression: e9 d=4 on 4 MP screenshot OOM'd \
                  under default 2 GiB cap with strategy {strategy:?}: {e}"
-            ));
+                )
+            });
         assert!(
             bytes.len() > 1000 && bytes.len() < (w as usize * h as usize),
             "expected non-trivial JXL output, got {} bytes",

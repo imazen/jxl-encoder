@@ -381,12 +381,14 @@ mod tests {
             (0..xsize * ysize).map(|i| i as f32).collect(),
             vec![0.0; xsize * ysize],
         ];
-        let _changed = requantize_dc_group_wp(
-            &mut quant_dc, &float_dc, xsize, 0, 0, xsize, ysize, 1.0, 1,
-        );
+        let _changed =
+            requantize_dc_group_wp(&mut quant_dc, &float_dc, xsize, 0, 0, xsize, ysize, 1.0, 1);
         // Just check we didn't panic and Y channel got non-zero values
         // somewhere (input was 0..16, inv_factor = INV_DC_QUANT[1] * 1.0 * 2).
         let y_nonzero = quant_dc[C_Y].iter().flatten().any(|&v| v != 0);
-        assert!(y_nonzero, "Y channel should have some non-zero quantized values");
+        assert!(
+            y_nonzero,
+            "Y channel should have some non-zero quantized values"
+        );
     }
 }

@@ -241,7 +241,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn main() {
-    let out_path: PathBuf = PathBuf::from("benchmarks/w44_audit_6_phase2a_win_cluster_2026-05-24.tsv");
+    let out_path: PathBuf =
+        PathBuf::from("benchmarks/w44_audit_6_phase2a_win_cluster_2026-05-24.tsv");
     if let Some(parent) = out_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -321,7 +322,8 @@ fn main() {
                         continue;
                     }
                 };
-                let (bfly, ssim2) = score_jxl(&buf, &lin_img, &srgb_img, w, h).unwrap_or((0.0, 0.0));
+                let (bfly, ssim2) =
+                    score_jxl(&buf, &lin_img, &srgb_img, w, h).unwrap_or((0.0, 0.0));
                 let sha = sha256_hex(&buf);
                 let sha8 = &sha[..8];
                 let mut db_pct = String::new();
@@ -426,6 +428,9 @@ fn main() {
         for v in &violations {
             eprintln!("{}", v);
         }
-        eprintln!("  Phase 2A acceptance: FAIL ({} violations)", violations.len());
+        eprintln!(
+            "  Phase 2A acceptance: FAIL ({} violations)",
+            violations.len()
+        );
     }
 }

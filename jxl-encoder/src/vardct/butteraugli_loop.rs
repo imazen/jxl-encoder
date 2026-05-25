@@ -1616,10 +1616,9 @@ impl VarDctEncoder {
         // the same `high_colour_class_exclude` resolved field.
         let audit_6_env_e8e9 =
             std::env::var_os("JXL_W44_AUDIT_6_DISABLE").is_some_and(|v| v != "0" && v != "");
-        let high_colour_class_exclude_e8e9 =
-            self.resolved_improvements.high_colour_class_exclude
-                && !audit_6_env_e8e9
-                && w44_audit_6_is_high_colour_class(self.zenanalyze_proxies.as_ref());
+        let high_colour_class_exclude_e8e9 = self.resolved_improvements.high_colour_class_exclude
+            && !audit_6_env_e8e9
+            && w44_audit_6_is_high_colour_class(self.zenanalyze_proxies.as_ref());
         let auto_gate_fires = is_screenshot
             && !high_colour_class_exclude_e8e9
             && (target_distance >= buttloop_min_distance
@@ -2263,8 +2262,7 @@ impl VarDctEncoder {
         // env unset (mirrors W44-181/W44-200 diagnostic pattern).
         #[cfg(feature = "std")]
         if std::env::var("JXL_SA_B_DUMP").is_ok() {
-            let mut qf_sorted: alloc::vec::Vec<f32> =
-                quant_field_float.iter().copied().collect();
+            let mut qf_sorted: alloc::vec::Vec<f32> = quant_field_float.iter().copied().collect();
             qf_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
             let pct = |p: f64| -> f32 {
                 let i = (((qf_sorted.len() as f64) - 1.0) * p).round() as usize;
@@ -2288,8 +2286,7 @@ impl VarDctEncoder {
                 let _ = writeln!(
                     f,
                     "# ours: target={:.4} iters={} is_screenshot={} k_init_mul={:.4} qf_lower={:.6} qf_higher={:.6}",
-                    target_distance, iters, is_screenshot, k_init_mul,
-                    qf_lower, qf_higher,
+                    target_distance, iters, is_screenshot, k_init_mul, qf_lower, qf_higher,
                 );
                 let _ = writeln!(
                     f,
@@ -2750,8 +2747,7 @@ impl VarDctEncoder {
             if std::env::var("JXL_SA_B_DUMP").is_ok() {
                 let mut qf_sorted: alloc::vec::Vec<f32> =
                     quant_field_float.iter().copied().collect();
-                qf_sorted
-                    .sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+                qf_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
                 let pct = |p: f64| -> f32 {
                     let i = (((qf_sorted.len() as f64) - 1.0) * p).round() as usize;
                     qf_sorted[i.min(qf_sorted.len() - 1)]
@@ -2764,8 +2760,7 @@ impl VarDctEncoder {
                 let qf_sum: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
                 let qf_avg = qf_sum / quant_field_float.len() as f64;
                 let td_max = tile_dist.iter().copied().reduce(f32::max).unwrap_or(0.0);
-                let bad_blocks =
-                    tile_dist.iter().filter(|&&d| d > target_distance).count();
+                let bad_blocks = tile_dist.iter().filter(|&&d| d > target_distance).count();
                 let cur_pow_now = resolved_cur_pow(iter, target_distance as f64);
                 let max_inc =
                     resolved_max_increase_with_class(target_distance as f64, is_screenshot);
