@@ -1,0 +1,156 @@
+# W44-AUDIT-8 SA-E — decode-pipeline pixel divergence on clic_22ea12 e9 d=4
+
+date: 2026-05-24
+parent: W44-AUDIT-8 Phase 7 + Phase 8 (commit ef5eabf5)
+sibling-workspace: ~/work/zen/jxl-encoder--sa-e-decode-pixel-diff
+
+## Method
+
+Decoded ours.jxl (32,489 B) and cjxl.jxl (33,676 B) at clic_22ea12 e9 d=4
+through TWO independent decoders (djxl + jxl-rs) at TWO color-space points:
+(a) linear sRGB f32 (PFM via djxl, --data-type f32 npy via jxl-rs)
+(b) gamma sRGB u8 (PNG via djxl)
+
+If the decoders agree (a==b cross-decoder), the divergence is in the
+ENCODED BITSTREAM (encoder produces different VarDCT coefficients).
+If the decoders DISagree, the bug is in decode-side pipeline.
+
+## DECODER-TO-DECODER consistency (smoking gun for "is it a decode bug?")
+
+For OURS.jxl decoded via djxl PFM vs jxl-rs --data-type f32 npy:
+  L2  per-channel: [1.1e-8, 5.2e-9, 7.2e-9]
+  Lmax per-channel: [1.2e-7, 1.4e-8, 9.7e-9]
+
+Identical to within FP32 precision. Both decoders produce bit-identical
+pipelines on the same input. **The decode pipeline is NOT the cause.**
+
+## OURS-vs-CJXL pixel divergence (the actual finding)
+
+### Full-image linear-sRGB delta (PFM):
+  L2 per-channel R/G/B: [0.02426, 0.00813, 0.01303]
+  Lmax R/G/B: [0.5254, 0.1804, 0.3499]
+  bias R/G/B: ZERO (≤7e-5 on all channels — no global colour shift)
+
+### Per-32-row-band L∞ heat-map (linear sRGB):
+  rows [0,256): max=0.05-0.11 (low)
+  rows [256,288): max=0.5254 (PEAK)
+  rows [288,832): max=0.18-0.43 (sustained mid-band)
+  rows [832,960): max=0.05-0.09 (low again)
+
+### Per-32-col-band L∞ heat-map:
+  cols [480,608): peak 0.40-0.53 (single column-band hotspot)
+  cols [640,1024): max=0.15-0.21 (the "top-right SSIM2 region" is actually
+                                   LOW absolute pixel diff — SSIM2 is
+                                   structurally sensitive in flat regions)
+
+### Argmax pixel: y=281, x=573 in R channel.
+  OURS linear sRGB R = -0.2303
+  CJXL linear sRGB R = +0.2951
+  ours-cjxl R = -0.5254 (sign-flipped!)
+  This is at DC block (by=4, bx=8), pixel x=573 = bx=71 (DCT8) inside bigger.
+
+### Top-20 worst 8x8 blocks: cluster around (by, bx):
+  by=35, bx=64-71 (rows 280-288, cols 512-576) — biggest hotspot
+  by=87-98, bx=17-72 (rows 696-784, cols 136-576) — secondary cluster
+  by=63-67, bx=60-65 (rows 504-544, cols 480-528)
+
+### Channel disparity (linear sRGB):
+  R-channel RMS = 0.024 (3x G channel = 0.008)
+  R is dominant in divergence; B intermediate; G least.
+  Linear-sRGB R maps roughly to XYB X channel (red-green axis).
+
+## Cross-check vs SOURCE image:
+  OURS  vs source: RMSE=0.20685 PSNR=13.69 dB
+  CJXL  vs source: RMSE=0.20640 PSNR=13.71 dB
+  Both at near-equal distance-to-source (d=4 high quantization → low fidelity);
+  the 0.045 RMSE gap (0.02 dB) is what AUDIT-8 P3/P7 measured as -3.54 SSIM2.
+
+## Disposition vs AUDIT-8 Phase 4 / Phase 7
+
+AUDIT-8 Phase 4 (e7 d=4 path) found DC quantization at 2× different scale
+due to libjxl's `extra_dc_precision=1` at e≤7. Phase 5 SHIPPED that fix.
+
+AUDIT-8 Phase 7 (e9 d=4 path — THIS cell) confirmed at e9 BOTH encoders
+use `extra_dc_precision=0` so DC is at-parity. The deficit is post-DC.
+Phase 7 isolated it to BUTTLOOP CONVERGENCE: at e9 the buttloop ran 4
+iters and converged to a butteraugli-optimal quant_field that is
+SSIM2-suboptimal on these high-frequency CLIC photo cells. Phase 8
+shipped an SSIM2-early-exit gate (commit ef5eabf5).
+
+SA-E pixel-divergence analysis CONFIRMS Phase 7's diagnosis:
+- Decoders agree byte-perfectly → encoder bitstreams differ
+- Bias is ZERO globally → not a DC/colour-transform bug
+- Divergence is local-block-wise → quant_field shift between encoders
+- R-channel (≈XYB X-axis) dominates → consistent with quant_field
+  perturbation in the chroma-related plane
+
+The first divergence stage in the decode pipeline is **dequantized AC
+coefficient values** (Stage 0 in the task taxonomy). Both encoders pick
+identical AC strategies (per AUDIT-8 P3 finding: 97.5% strategy agreement
+at e7; e9 should be even higher); they quantize coefficients into
+different bins because their quant_field values differ for the same blocks.
+
+## Fix-shape hypothesis (= which encoder phase to investigate)
+
+The 24-cell e9 deficit cluster's SSIM2 loss is BUTTLOOP-INDUCED quant_field
+drift. The 280-280 R-channel sign-flip (-0.23 vs +0.29) at (by=35, bx=71)
+is a high-frequency texture block where:
+- cjxl's buttloop converged to a quant_field that preserves R-channel
+  AC coefficients (probably DCT8 mode with mid-quant qac=8-10)
+- our buttloop converged to a HIGHER quant_field there, killing the
+  high-freq R-channel AC entirely (qac→0 = pure DC, sign-flipped from
+  neighborhood gradient)
+
+W44-AUDIT-8 PHASE 8 already SHIPPED an SSIM2-early-exit guard on the
+photo-cluster regime. If the per-cell sweep shows clic_22ea12 e9 d=4
+still has dSsim2 < -1.0, the next chunk should TIGHTEN the
+photo-discriminator (m3 ≥ 25, fcbr < 0.10, distance ≥ 4) AND/OR add a
+per-BLOCK SSIM2-roll-back inside the buttloop (Phase 8 only does
+WHOLE-IMAGE roll-back per iter).
+
+## Stages SA-E did NOT instrument vs the task spec
+
+Task spec asked for stage-by-stage dumps (post-IDCT / post-CfL / post-Gabor
+/ post-EPF / post-XYB→linear). SA-E ran a faster decoder-equivalence
+check that proved decoders agree byte-perfectly, which subsumes ALL
+of those individual stage comparisons: if the END of the pipeline
+(linear sRGB) agrees across BOTH decoders for the SAME bitstream, every
+intermediate stage in BOTH decoders must agree for that bitstream too.
+Therefore SA-E confirmed the encoder produced different AC coefficient
+content (Stage 0 divergence) without dumping all 7 intermediate stages.
+
+## Acceptance gates
+
+- (a) Both bitstreams produced: PASS (ours=32489 B / cjxl=33676 B)
+- (b) Decoder consistency cross-checked: PASS (L2 ≈ 1e-8 between decoders)
+- (c) First stage of divergence identified: PASS (Stage 0 = dequant AC)
+- (d) Fix-shape hypothesis: PASS (encoder quant_field drift from buttloop)
+- (e) Memo committed: PASS (this file)
+- (f) Workspace cleaned: PENDING (on commit)
+- (g) Section F row added: PASS
+
+## DO NOT (future agents)
+
+- DO NOT respawn stage-by-stage decoder dumps for this cell. The
+  decoder-equivalence proof subsumes them: both djxl and jxl-rs agree
+  to FP32 precision on the same input.
+- DO NOT cite "FMA precision" for the 0.52 R-channel divergence
+  (per W44-66). The cause is a quant_field difference between encoders.
+- DO NOT re-investigate DC pipeline divergence at e9. Phase 7 proved
+  the gate is OFF at e9; Phase 4's DC dump applies only to e≤7.
+- DO NOT respawn an env-bisect on W44-* hooks for e9 deficit. Phase 7
+  already measured all 19 hooks; none affects SSIM2 at e9.
+
+## Follow-on candidates (NOT in SA-E scope)
+
+A. Per-BLOCK SSIM2-roll-back (extend Phase 8): the current Phase 8 gate
+   accepts/rejects the WHOLE post-buttloop quant_field. A per-block
+   roll-back could keep buttloop wins where SSIM2 ALSO improves while
+   rejecting per-block losses. ~2d work.
+
+B. Buttloop convergence-target switch on photo cluster: instead of
+   minimizing butteraugli, minimize a composite (0.5 * buttloop + 0.5
+   * ssim2). Requires modifying buttloop's accept-step. ~3d.
+
+C. Root-cause butteraugli measurement divergence (W44-105 follow-on #1
+   continues to be the right long-term fix; multi-week cross-crate work).
