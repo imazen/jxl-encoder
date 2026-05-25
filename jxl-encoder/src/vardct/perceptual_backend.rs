@@ -126,6 +126,101 @@ pub(crate) fn resolved_cvvdp_diffmap_renorm_scale() -> f32 {
     CVVDP_DIFFMAP_RENORM_SCALE
 }
 
+// ============================================================================
+// Phase 8d (2026-05-25): bytes-tighten exit pass constants.
+// ============================================================================
+//
+// Variant 1 (batched single-probe) per
+// `docs/RFC_CVVDP_PHASE8_PARETO_TARGETING.md` §3.3. After the cvvdp seed
+// loop converges, run up to `MAX_OUTER_ITERS` iters where we globally
+// bump `quant_field_float` by a multiplicative factor and re-score. If
+// the new score still satisfies `iter_score <= target * (1 + TOLERANCE_FRAC)`
+// we accept the loosened state (gives back bytes everywhere); else we
+// revert to the last accepted state and either halve the step or break.
+//
+// The tightening pass is gated TWICE:
+//  1. The `cvvdp-loop-tighten` cargo feature must be compiled in.
+//  2. The runtime field `VarDctEncoder.cvvdp_bytes_tighten` must be true
+//     AND `VarDctEncoder.cvvdp_loop` must be true.
+//
+// Both gates default OFF outside the feature so hash-locks stay
+// byte-identical regardless of feature compilation. The default INSIDE
+// the feature is "on when cvvdp_loop is on" — see
+// `LossyConfig::resolve_cvvdp_bytes_tighten` for the full dispatch
+// matrix.
+//
+// The pass NEVER fires on the butteraugli loop: the butteraugli
+// per-block reducer is already calibrated to the W44 cost-model gates;
+// loosening it post-convergence over-tightens the bytes/quality tradeoff
+// (the buttloop's seed-picker mean_qf criterion already encodes the
+// "biggest qf" preference among qualifying seeds, which is the natural
+// bytes-tightening surface for butteraugli — see
+// `vardct/perceptual_loop.rs` `accept_bound` block).
+
+/// Maximum number of post-convergence tighten outer iters. Each iter
+/// costs ~1 cvvdp score (transform + reconstruct + compare), so total
+/// wall hit is bounded by `MAX_OUTER_ITERS × per_iter_wall`. At the
+/// e=8 default (`butteraugli_iters = 3` → `iters + 1 = 4` seed iters),
+/// this caps the additive wall at ~125% of the seed loop in the worst
+/// case where every probe is accepted. Typical case is 1-2 iters before
+/// the first reject closes the loop.
+#[cfg(feature = "cvvdp-loop-tighten")]
+pub(crate) const CVVDP_BYTES_TIGHTEN_MAX_OUTER_ITERS: u32 = 5;
+
+/// Initial multiplicative bump applied to `quant_field_float` on each
+/// tighten outer iter. `qf *= 1.0 + STEP` increases qac → coarser
+/// quantization → fewer bytes. The step decays geometrically (halves
+/// after each successful accept) so the search converges on the
+/// largest-bump-that-still-passes within `MAX_OUTER_ITERS`.
+///
+/// 0.04 = 4% bytes-saving probe per iter (a few global qac steps).
+#[cfg(feature = "cvvdp-loop-tighten")]
+pub(crate) const CVVDP_BYTES_TIGHTEN_INITIAL_STEP: f32 = 0.04;
+
+/// Tolerance fraction relative to the metric target. The probe is
+/// accepted iff `iter_score <= target * (1.0 + TOLERANCE_FRAC)`. For
+/// cvvdp at d=1.0 (target ~0.0314 in metric direction), this is a
+/// ~0.5% slack — small enough to stay near the original convergence
+/// point but large enough that the seed loop's residual under-shoot
+/// (a typical seed converges slightly under target) provides room
+/// for the probe to fit.
+#[cfg(feature = "cvvdp-loop-tighten")]
+pub(crate) const CVVDP_BYTES_TIGHTEN_TOLERANCE_FRAC: f32 = 0.005;
+
+/// cvvdp-fork Phase 8d: env-overridable settings for bench harnesses.
+/// `JXL_CVVDP_BYTES_TIGHTEN_MAX_ITERS=<u32>` overrides the max iter cap;
+/// `JXL_CVVDP_BYTES_TIGHTEN_STEP=<float>` overrides the initial step;
+/// `JXL_CVVDP_BYTES_TIGHTEN_TOL=<float>` overrides the tolerance fraction.
+/// All three are checked once per call; production callers should treat
+/// them as bench-only.
+#[cfg(feature = "cvvdp-loop-tighten")]
+#[inline]
+pub(crate) fn resolved_cvvdp_bytes_tighten_settings() -> (u32, f32, f32) {
+    let mut max_iters = CVVDP_BYTES_TIGHTEN_MAX_OUTER_ITERS;
+    let mut step = CVVDP_BYTES_TIGHTEN_INITIAL_STEP;
+    let mut tol = CVVDP_BYTES_TIGHTEN_TOLERANCE_FRAC;
+    if let Ok(s) = std::env::var("JXL_CVVDP_BYTES_TIGHTEN_MAX_ITERS")
+        && let Ok(v) = s.parse::<u32>()
+    {
+        max_iters = v;
+    }
+    if let Ok(s) = std::env::var("JXL_CVVDP_BYTES_TIGHTEN_STEP")
+        && let Ok(v) = s.parse::<f32>()
+        && v.is_finite()
+        && v > 0.0
+    {
+        step = v;
+    }
+    if let Ok(s) = std::env::var("JXL_CVVDP_BYTES_TIGHTEN_TOL")
+        && let Ok(v) = s.parse::<f32>()
+        && v.is_finite()
+        && v >= 0.0
+    {
+        tol = v;
+    }
+    (max_iters, step, tol)
+}
+
 /// cvvdp-fork Phase 8b (2026-05-25): when env var
 /// `JXL_PHASE8B_DIFFMAP_DUMP` is set to a writable file path, every
 /// `compare_with_reference` call appends one TSV row capturing the

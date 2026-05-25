@@ -204,16 +204,21 @@ def main(path: str) -> int:
 
     # Equal-cvvdp bytes comparison: at same target cvvdp value, which backend produces fewer bytes?
     # Interpolate per-image (bytes, cvvdp) curve for each backend; sample at common cvvdp grid.
-    print("\n## Equal-cvvdp comparison: bytes ratio (C_GPU / B) at target cvvdp values")
-    print("# For each (image, e=8), interpolate bytes-at-target-cvvdp for both B and C_GPU.")
-    print("# Then ratio = C_GPU bytes / B bytes — < 1 means cvvdp uses fewer bytes for same cvvdp.")
+    # Phase 8d (2026-05-25): extended to also report C_GPU_v2 (Phase 8c renorm-only) and
+    # C_GPU_v3 (Phase 8c renorm + Phase 8d tighten). The Phase 8a baseline `C_GPU` is also
+    # picked up automatically if rows exist in the input.
+    print("\n## Equal-cvvdp comparison: bytes ratio (CVVDP_variant / B) at target cvvdp values")
+    print("# For each (image, e=8), interpolate bytes-at-target-cvvdp for B and each")
+    print("# cvvdp variant. Ratio = variant / B — < 1 means the variant uses fewer bytes")
+    print("# for the same cvvdp score.")
     print()
 
     targets_to_test = [9.5, 9.7, 9.8, 9.9, 9.95, 9.98, 9.99]
+    cvvdp_backends = ("C_GPU", "C_GPU_v2", "C_GPU_v3")
     by_image_backend: dict[tuple[str, str], list[tuple[float, float]]] = defaultdict(list)
     for (image, _), cells in e8_cells.items():
         for r in cells:
-            if r.backend in ("B", "C_GPU"):
+            if r.backend == "B" or r.backend in cvvdp_backends:
                 by_image_backend[(image, r.backend)].append((r.cvvdp_gpu, r.bytes))
 
     def bytes_at_cvvdp(curve: list[tuple[float, float]], target: float) -> float | None:
@@ -236,33 +241,42 @@ def main(path: str) -> int:
                 return by0 + t * (by1 - by0)
         return None
 
-    print("target_cvvdp\tn\tmedian_C/B_bytes_ratio\tp25\tp75\tcvvdp_wins\tbutter_wins")
     images = {img for (img, _), _ in e8_cells.items()}
-    for target in targets_to_test:
-        ratios = []
-        c_wins = 0
-        b_wins = 0
-        for image in images:
-            b_curve = by_image_backend.get((image, "B"), [])
-            c_curve = by_image_backend.get((image, "C_GPU"), [])
-            b_bytes = bytes_at_cvvdp(b_curve, target)
-            c_bytes = bytes_at_cvvdp(c_curve, target)
-            if b_bytes is None or c_bytes is None or b_bytes == 0:
+    # Only report variants that actually have data in the TSV.
+    active_variants = [
+        v for v in cvvdp_backends
+        if any(by_image_backend.get((img, v)) for img in images)
+    ]
+    if not active_variants:
+        print("# (no cvvdp backend rows in the input — skipping equal-cvvdp comparison)")
+    for variant in active_variants:
+        print(f"\n### variant = {variant}")
+        print(f"target_cvvdp\tn\tmedian_{variant}/B_bytes_ratio\tp25\tp75\tcvvdp_wins\tbutter_wins")
+        for target in targets_to_test:
+            ratios = []
+            c_wins = 0
+            b_wins = 0
+            for image in images:
+                b_curve = by_image_backend.get((image, "B"), [])
+                c_curve = by_image_backend.get((image, variant), [])
+                b_bytes = bytes_at_cvvdp(b_curve, target)
+                c_bytes = bytes_at_cvvdp(c_curve, target)
+                if b_bytes is None or c_bytes is None or b_bytes == 0:
+                    continue
+                ratio = c_bytes / b_bytes
+                ratios.append(ratio)
+                if ratio < 1.0:
+                    c_wins += 1
+                else:
+                    b_wins += 1
+            n = len(ratios)
+            if n == 0:
                 continue
-            ratio = c_bytes / b_bytes
-            ratios.append(ratio)
-            if ratio < 1.0:
-                c_wins += 1
-            else:
-                b_wins += 1
-        n = len(ratios)
-        if n == 0:
-            continue
-        ratios.sort()
-        med = statistics.median(ratios)
-        p25 = ratios[n // 4]
-        p75 = ratios[3 * n // 4]
-        print(f"{target:.3f}\t{n}\t{med:.3f}\t{p25:.3f}\t{p75:.3f}\t{c_wins}\t{b_wins}")
+            ratios.sort()
+            med = statistics.median(ratios)
+            p25 = ratios[n // 4]
+            p75 = ratios[3 * n // 4]
+            print(f"{target:.3f}\t{n}\t{med:.3f}\t{p25:.3f}\t{p75:.3f}\t{c_wins}\t{b_wins}")
 
     # Per-corpus split of the equal-cvvdp comparison
     print("\n## Per-corpus equal-cvvdp bytes ratio")

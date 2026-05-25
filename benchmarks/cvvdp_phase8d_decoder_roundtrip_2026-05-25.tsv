@@ -1,0 +1,7 @@
+corpus	image	distance	effort	backend	encoded_bytes	decode_oxide	decode_djxl	decode_jxl_rs	decode_notes
+CID22	1025469.png	1.0	8	C_GPU_v3	59463	PASS	PASS	PASS	encode_ms=1168.5
+CID22	1418519.png	1.0	8	C_GPU_v3	28814	PASS	PASS	PASS	encode_ms=306.3
+CID22	1189261.png	1.0	8	C_GPU_v3	93714	PASS	PASS	PASS	encode_ms=285.2
+GB82-SC	terminal.png	1.0	8	C_GPU_v3	62309	PASS	PASS	PASS	encode_ms=1640.7
+GB82-SC	terminal.png	3.0	8	C_GPU_v3	46789	PASS	PASS	PASS	encode_ms=1333.8
+GB82-SC	imac_g3.png	2.0	8	C_GPU_v3	211501	PASS	PASS	PASS	encode_ms=4657.2

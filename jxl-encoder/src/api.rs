@@ -4682,6 +4682,45 @@ pub struct LossyConfig {
     /// See [`Self::with_cvvdp_use_cpu`] for the full dispatch matrix.
     #[cfg(feature = "butteraugli-loop")]
     cvvdp_use_cpu: Option<bool>,
+
+    /// cvvdp-fork Phase 8d (2026-05-25, RFC
+    /// `docs/RFC_CVVDP_PHASE8_PARETO_TARGETING.md` §3.3 Intervention C):
+    /// post-convergence bytes-tighten exit pass on the cvvdp seed loop.
+    ///
+    /// After the inner seed loop converges quant_field to satisfy the
+    /// cvvdp metric target, run a batched multiplicative bump pass that
+    /// LOOSENS qac while the score still satisfies `target * (1 + ε)`.
+    /// Gives back bytes the converged state had headroom for.
+    ///
+    /// Tri-state:
+    /// - `None` (default): "on when both the `cvvdp-loop-tighten` cargo
+    ///   feature is compiled AND [`Self::cvvdp_loop`] resolves to true".
+    ///   When the feature is OFF or the cvvdp loop is OFF, this resolves
+    ///   to `false` (pass is skipped, byte-identical to pre-Phase-8d).
+    /// - `Some(true)`: explicit opt-in. Same effective behaviour as `None`
+    ///   when both the feature and cvvdp_loop are on; explicit kept for
+    ///   symmetry with [`Self::cvvdp_loop`] and for documentation in
+    ///   caller code.
+    /// - `Some(false)`: explicit opt-out. Skips the tighten pass even when
+    ///   the feature and cvvdp_loop are both on. Use for measuring the
+    ///   pre-Phase-8d byte-vs-quality tradeoff in benches.
+    ///
+    /// **NEVER fires on the butteraugli loop.** The butteraugli per-block
+    /// reducer is already calibrated to the W44 cost-model gates;
+    /// loosening it post-convergence over-tightens the bytes/quality
+    /// tradeoff. The accept-bound + mean_qf seed-picker already encodes
+    /// the natural "biggest qf among qualifying seeds" preference for
+    /// butteraugli.
+    ///
+    /// **Field always present** so hash-lock fixtures don't depend on
+    /// the `cvvdp-loop-tighten` cargo feature; consulted only inside
+    /// the cvvdp seed loop's post-convergence section, gated on both the
+    /// cargo feature AND [`Self::resolve_cvvdp_loop`] returning true.
+    ///
+    /// See [`Self::with_cvvdp_bytes_tighten`] and
+    /// [`Self::resolve_cvvdp_bytes_tighten`] for the dispatch matrix.
+    #[cfg(feature = "butteraugli-loop")]
+    cvvdp_bytes_tighten: Option<bool>,
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -4853,6 +4892,17 @@ impl LossyConfig {
             // dispatch chain).
             #[cfg(feature = "butteraugli-loop")]
             cvvdp_use_cpu: None,
+            // cvvdp-fork Phase 8d (2026-05-25): default `None` ≡ "on
+            // when both `cvvdp-loop-tighten` cargo feature is compiled
+            // AND `cvvdp_loop` resolves to true". When the feature is
+            // OFF or cvvdp_loop is OFF, this resolves to false and
+            // hash-locks stay byte-identical. The default of "on inside
+            // the feature gate" is deliberate: the Phase 8c renorm
+            // baseline sits at 60% Pareto-front; Phase 8d's role is to
+            // close the remaining gap to ≥85%, and the only way to
+            // measure that is to default-on when the feature is on.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_bytes_tighten: None,
         }
     }
 
@@ -6714,6 +6764,77 @@ impl LossyConfig {
     #[cfg(feature = "butteraugli-loop")]
     pub(crate) fn resolve_cvvdp_use_cpu(&self) -> bool {
         self.cvvdp_use_cpu.unwrap_or(false)
+    }
+
+    /// cvvdp-fork Phase 8d (2026-05-25): caller-supplied preference for
+    /// the post-convergence bytes-tighten exit pass on the cvvdp seed
+    /// loop. See [`Self::cvvdp_bytes_tighten`] field doc for the full
+    /// semantics. Brief:
+    ///
+    /// - `None` (default): "on when both the `cvvdp-loop-tighten` cargo
+    ///   feature is compiled AND [`Self::cvvdp_loop`] resolves to true".
+    /// - `Some(true)`: explicit opt-in. Same behaviour as `None` inside
+    ///   the feature gate.
+    /// - `Some(false)`: explicit opt-out. Skips the tighten pass even
+    ///   when the cargo feature is compiled and cvvdp_loop is on.
+    ///
+    /// The tighten pass NEVER fires on the butteraugli loop regardless
+    /// of this setting — see [`Self::resolve_cvvdp_bytes_tighten`].
+    ///
+    /// Requires the `butteraugli-loop` feature (the underlying buttloop
+    /// dispatch surface). The tighten pass itself further requires the
+    /// `cvvdp-loop-tighten` cargo feature (which transitively requires
+    /// `cvvdp-loop`).
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn with_cvvdp_bytes_tighten(mut self, enable: Option<bool>) -> Self {
+        self.cvvdp_bytes_tighten = enable;
+        self
+    }
+
+    /// Currently configured CVVDP bytes-tighten opt-in (cvvdp-fork
+    /// Phase 8d). May be `None` (default — auto-on inside the feature
+    /// gate when cvvdp_loop is true) — use
+    /// [`Self::resolve_cvvdp_bytes_tighten`] to see the effective bool
+    /// that actually drives the dispatch.
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn cvvdp_bytes_tighten(&self) -> Option<bool> {
+        self.cvvdp_bytes_tighten
+    }
+
+    /// cvvdp-fork Phase 8d: resolve the effective CVVDP bytes-tighten
+    /// preference. Returns `true` (run the tighten pass) iff ALL of:
+    ///
+    /// 1. [`Self::resolve_cvvdp_loop`] returns true (cvvdp is the active
+    ///    backend — the tighten pass NEVER fires on the butteraugli
+    ///    loop; see field doc for rationale).
+    /// 2. The `cvvdp-loop-tighten` cargo feature is compiled in.
+    /// 3. [`Self::cvvdp_bytes_tighten`] is `Some(true)` OR `None`
+    ///    (default-on inside the feature gate).
+    ///
+    /// Returns `false` (skip the tighten pass, byte-identical to
+    /// pre-Phase-8d) in every other case.
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub(crate) fn resolve_cvvdp_bytes_tighten(&self) -> bool {
+        // Outer gate: cvvdp must be the active backend.
+        if !self.resolve_cvvdp_loop() {
+            return false;
+        }
+        // Feature gate: cargo feature must be compiled.
+        #[cfg(not(feature = "cvvdp-loop-tighten"))]
+        {
+            return false;
+        }
+        #[cfg(feature = "cvvdp-loop-tighten")]
+        {
+            // Field gate: explicit None → default-on inside the feature
+            // gate. Some(true) is the explicit opt-in form (same effect
+            // as None). Some(false) is the explicit opt-out.
+            self.cvvdp_bytes_tighten.unwrap_or(true)
+        }
     }
 
     /// Resolve the configured [`HdrLoss`] into the concrete loss that
@@ -9181,6 +9302,13 @@ impl<'a> EncodeRequest<'a> {
             // in. The flag is only meaningful when `cvvdp_loop` is
             // also true; the construct_backend dispatch checks both.
             enc.cvvdp_use_cpu = cfg.resolve_cvvdp_use_cpu();
+            // cvvdp-fork Phase 8d (2026-05-25): propagate bytes-tighten
+            // opt-in (still-image path). `resolve_cvvdp_bytes_tighten`
+            // returns true ONLY when cvvdp_loop is also true AND the
+            // `cvvdp-loop-tighten` cargo feature is compiled AND the
+            // field is `None` or `Some(true)`. Defaults to false in
+            // every other case → hash-locks byte-identical.
+            enc.cvvdp_bytes_tighten = cfg.resolve_cvvdp_bytes_tighten();
         }
         #[cfg(feature = "ssim2-loop")]
         {
@@ -10373,6 +10501,10 @@ impl LossyEncoder {
                 // preference (streaming LossyEncoder path). Same
                 // semantics as the still-image site above.
                 enc.cvvdp_use_cpu = cfg.resolve_cvvdp_use_cpu();
+                // cvvdp-fork Phase 8d (2026-05-25): propagate
+                // bytes-tighten opt-in (streaming LossyEncoder path).
+                // Same semantics as the still-image site above.
+                enc.cvvdp_bytes_tighten = cfg.resolve_cvvdp_bytes_tighten();
             }
             #[cfg(feature = "ssim2-loop")]
             {
@@ -12331,6 +12463,10 @@ fn encode_animation_lossy(
         // preference (animation frame encoder path). Same semantics
         // as the still-image site above.
         enc.cvvdp_use_cpu = cfg.resolve_cvvdp_use_cpu();
+        // cvvdp-fork Phase 8d (2026-05-25): propagate bytes-tighten
+        // opt-in (animation frame encoder path). Same semantics as
+        // the still-image site above.
+        enc.cvvdp_bytes_tighten = cfg.resolve_cvvdp_bytes_tighten();
     }
     #[cfg(feature = "ssim2-loop")]
     {

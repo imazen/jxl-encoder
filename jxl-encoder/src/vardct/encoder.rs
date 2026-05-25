@@ -2044,6 +2044,22 @@ pub struct VarDctEncoder {
     /// Phase 5 brief at `docs/RFC_CVVDP_PHASE5_BRIEF.md`.
     #[cfg(feature = "butteraugli-loop")]
     pub cvvdp_use_cpu: bool,
+    /// cvvdp-fork Phase 8d (2026-05-25): opt-in post-convergence
+    /// bytes-tighten exit pass on the cvvdp seed loop. When `true`,
+    /// AND [`Self::cvvdp_loop`] is also true, AND the `cvvdp-loop-tighten`
+    /// cargo feature is compiled in, the inner seed loop's final
+    /// SetQuantField is preceded by a batched multiplicative bump pass
+    /// that loosens qac while the cvvdp score still satisfies
+    /// `target * (1 + ε)`. Gives back bytes the converged state had
+    /// headroom for. Default `false` keeps every hash-lock byte-identical
+    /// regardless of the `cvvdp-loop-tighten` cargo feature. NEVER fires
+    /// on the butteraugli loop (the butteraugli per-block reducer is
+    /// already calibrated to the W44 cost-model gates; loosening it
+    /// post-convergence breaks the tradeoff). See
+    /// [`crate::api::LossyConfig::with_cvvdp_bytes_tighten`] and the
+    /// Phase 8d brief in `docs/RFC_CVVDP_PHASE8_PARETO_TARGETING.md` §3.3.
+    #[cfg(feature = "butteraugli-loop")]
+    pub cvvdp_bytes_tighten: bool,
     /// Number of SSIM2 quantization loop iterations.
     /// Alternative to butteraugli loop: uses per-block linear RGB RMSE + full-image SSIM2.
     /// Requires the `ssim2-loop` feature.
@@ -2393,6 +2409,14 @@ impl Default for VarDctEncoder {
             // `cvvdp_loop = true` upstream.
             #[cfg(feature = "butteraugli-loop")]
             cvvdp_use_cpu: false,
+            // cvvdp-fork Phase 8d (2026-05-25): bytes-tighten exit pass
+            // defaults off. LossyConfig sets it via
+            // `with_cvvdp_bytes_tighten`. Hash-locks stay byte-identical
+            // regardless of the `cvvdp-loop-tighten` cargo feature
+            // because the field defaults to `false` AND the entire
+            // tighten branch is gated on `cvvdp_loop = true` upstream.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_bytes_tighten: false,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]
@@ -2507,6 +2531,14 @@ impl VarDctEncoder {
             // `cvvdp_loop = true` upstream.
             #[cfg(feature = "butteraugli-loop")]
             cvvdp_use_cpu: false,
+            // cvvdp-fork Phase 8d (2026-05-25): bytes-tighten exit pass
+            // defaults off. LossyConfig sets it via
+            // `with_cvvdp_bytes_tighten`. Hash-locks stay byte-identical
+            // regardless of the `cvvdp-loop-tighten` cargo feature
+            // because the field defaults to `false` AND the entire
+            // tighten branch is gated on `cvvdp_loop = true` upstream.
+            #[cfg(feature = "butteraugli-loop")]
+            cvvdp_bytes_tighten: false,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]
