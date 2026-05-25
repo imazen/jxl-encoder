@@ -89,7 +89,8 @@ use std::path::PathBuf;
 /// W44-AUDIT-6 Phase 1 added `high_colour_class_exclude` Section B gate → 28.
 /// W44-AUDIT-5 Phase 2 added `cfl_newton_libjxl_math_with_ls_warm_start` Section C gate → 29.
 /// W44-AUDIT-5 Phase 3 added `cfl_pass1_screenshot_x0_start` Section C gate → 30.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 30;
+/// W44-AUDIT-9 / SA-G Fix C added `cfl_zero_for_search` Section C gate → 31.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 31;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -219,6 +220,13 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         }
         if row_ref.contains("epf_dynamic_sharpness") {
             out.push("epf_dynamic_sharpness".to_string());
+        }
+        // W44-AUDIT-9 / SA-G Fix C: the row_ref carries an `AUDIT-N`
+        // suffix which the W-code parser doesn't recognise (digits-only
+        // grammar). The doc table row carries the verbatim string
+        // "W44-AUDIT-9 / SA-G Fix C" so anchor on that.
+        if row_ref.contains("SA-G Fix C") {
+            out.push("SA-G Fix C".to_string());
         }
     }
     out

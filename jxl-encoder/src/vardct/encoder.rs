@@ -4915,6 +4915,24 @@ impl VarDctEncoder {
         };
         let active_profile_for_search = profile_for_search.as_ref().unwrap_or(&self.profile);
 
+        // W44-AUDIT-9 / SA-G Fix C: when the active profile says so
+        // (`EncoderStrategy::Libjxl` only at the default), substitute a
+        // zero-filled cmap for the AC strategy SEARCH only. The actual
+        // emitted `cfl_map` (Pass-1 Newton-derived above + the optional
+        // Pass-2 refinement below) stays intact in the bitstream; only
+        // the consumption-during-search is zeroed. Mirrors libjxl
+        // `enc_ac_strategy.cc` at `speed_tier > kSquirrel`. SA-G report
+        // (`7d383785`) measured this brings clic_22ea12 e9 d=4 partial
+        // first-blocks 2,241 → 2,495 (vs cjxl 2,499 = +0.16% parity)
+        // and bytes -0.6% on the Libjxl strategy.
+        let zero_cfl_map_for_search;
+        let cfl_map_for_search: &CflMap = if active_profile_for_search.cfl_zero_for_search {
+            zero_cfl_map_for_search = CflMap::zeros(cfl_map.xsize_tiles, cfl_map.ysize_tiles);
+            &zero_cfl_map_for_search
+        } else {
+            &cfl_map
+        };
+
         #[allow(unused_mut)]
         let mut ac_strategy = if let Some(forced) = self.force_strategy {
             // Force a specific strategy for all blocks that fit
@@ -4933,7 +4951,7 @@ impl VarDctEncoder {
                 self.distance,
                 &quant_field_float,
                 &masking,
-                &cfl_map,
+                cfl_map_for_search,
                 mask1x1.as_deref(),
                 padded_width,
                 active_profile_for_search,

@@ -163,6 +163,14 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",
+        // W44-AUDIT-9 / SA-G Fix C (2026-05-25): size 3240 → 3219 (-21 B),
+        // hash drift. `cfl_zero_for_search = true` for Libjxl strategy
+        // forces a zero-CflMap into AC strategy SEARCH (the emitted
+        // cmap stays Newton-derived). On noise content the search now
+        // picks AC strategies as if there were no chroma decorrelation,
+        // which on this fixture happens to converge on slightly cheaper
+        // bytes (the change to a different partial/whole transform
+        // pick downstream of the SA-G partial-first-block divergence).
         // W44-AUDIT-8 Phase 5 (2026-05-24): size 3228 → 3240 (+12 B),
         // hash drift. extra_dc_precision=1 at effort<=7 doubles the DC
         // quantization integer range; on noise content the residual
@@ -180,8 +188,8 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // parity). At effort 7 (this fixture) the Libjxl strategy now
         // emits kWPFixedDC directly without the W44-57 trial-and-pick;
         // size dropped 3250 → 3249 bytes (-1 B).
-        size: 3240,
-        hash: 0x946894945fff10f2,
+        size: 3219,
+        hash: 0x0e0b58577ceac70f,
     },
 ];
 

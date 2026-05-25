@@ -2558,5 +2558,20 @@ name = "sa_f_buttloop_cross_test"
 path = "examples/sa_f_buttloop_cross_test.rs"
 required-features = ["butteraugli-loop"]
 
+# W44-AUDIT-9 / SA-G Fix C: A/B bench for `cfl_zero_for_search` gate.
+# Smoke cell on clic_22ea12 e9 d=4 + wider 9-cell corpus × 3 distances at e7
+# on Libjxl strategy. Default-OFF for Zenjxl preserves byte-identity.
+[[example]]
+name = "sa_g_fix_c_ab"
+path = "examples/sa_g_fix_c_ab.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
+# W44-AUDIT-9 / SA-G Fix C: multi-decoder roundtrip via jxl-rs +
+# jxl-oxide + djxl on 3 cells encoded with `EncoderStrategy::Libjxl`.
+[[example]]
+name = "sa_g_fix_c_decoder_check"
+path = "examples/sa_g_fix_c_decoder_check.rs"
+required-features = ["parallel"]
+
 [lints]
 workspace = true
