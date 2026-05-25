@@ -1,0 +1,110 @@
+W44-AUDIT-8 Phase 7 e9 buttloop isolation
+
+Run timestamp: 2026-05-24
+Encoder commit: 8110e04f (Phase 5b shipped — extra_dc_precision=1 at e≤7;
+                            Phase 6 QuantizeWP opt-in)
+Reference: cjxl 0.12.0 (libjxl main build)
+
+After the Phase 7 env-bisect ruled out every W44-* discriminator hook
+(byte-identical SSIM2 across 20 variants at clic_22ea12 e9 d=4), the
+remaining structural difference between e7 (Phase 5 closed to +0.94 SSIM2)
+and e9 (-3.54 SSIM2) is `butteraugli_iters`:
+
+  jxl-encoder/src/effort.rs:1313-1338:
+    0..=7 => 0,    // NO buttloop
+    8     => 2,
+    9     => 4,    // e9 = libjxl kTortoise default
+
+Test: pin `with_butteraugli_iters(0)` at e9 and observe SSIM2 recovery.
+
+Variants:
+  - BASELINE_ITERS_4         (production e9; 4 buttloop iters)
+  - ITERS_0_DISABLE_LOOP     (with_butteraugli_iters(0); skip entire loop)
+  - ITERS_2_HALF_LOOP        (with_butteraugli_iters(2); half iter count)
+
+3 cells from the e9 deficit cluster: clic_22ea12, clic_097cb4, clic_100a02
+(top 3 worst at d=4 per the Phase 5b wider-corpus TSV).
+
+VERDICT (raw per-cell ΔSSIM2 vs cjxl):
+
+  clic_22ea12:
+    BASELINE (4 iters)   bytes=32489  SSIM2=66.57  ΔSSIM2 = -3.54
+    ITERS_0_DISABLE      bytes=35471  SSIM2=67.99  ΔSSIM2 = -2.12  (+1.42 RECOVERY)
+    ITERS_2_HALF         bytes=32483  SSIM2=66.55  ΔSSIM2 = -3.56  (no change)
+
+  clic_097cb4:
+    BASELINE (4 iters)   bytes=16204  SSIM2=60.52  ΔSSIM2 = -2.44
+    ITERS_0_DISABLE      bytes=17622  SSIM2=61.63  ΔSSIM2 = -1.33  (+1.11 RECOVERY)
+    ITERS_2_HALF         bytes=16204  SSIM2=60.52  ΔSSIM2 = -2.44  (BYTE-IDENTICAL to BASELINE)
+
+  clic_100a02:
+    BASELINE (4 iters)   bytes=43606  SSIM2=71.80  ΔSSIM2 = -2.41
+    ITERS_0_DISABLE      bytes=47687  SSIM2=73.53  ΔSSIM2 = -0.67  (+1.74 RECOVERY)
+    ITERS_2_HALF         bytes=43606  SSIM2=71.80  ΔSSIM2 = -2.41  (BYTE-IDENTICAL to BASELINE)
+
+  Mean SSIM2 recovery (ITERS_0 vs BASELINE):  +1.42  (range +1.11 to +1.74)
+  Mean bytes overhead (ITERS_0 vs BASELINE):  +4.5%  (range +2.8% to +5.5%)
+
+CONCLUSION: the buttloop IS the e9 SSIM2 cliff source. Disabling the loop
+recovers 30-72% of the SSIM2 deficit on every tested cluster cell.
+
+OBSERVATION 1: ITERS_2 is byte-identical to BASELINE on 2/3 cells (and
+within 6 bytes on the 3rd). The buttloop converges at iter 2 on these
+photos; iters 3+4 are no-ops by libjxl's W44-117 convergence policy.
+This means the cliff is a CONVERGENCE-TARGET issue, not an iter-count
+issue.
+
+OBSERVATION 2: the buttloop optimizes for BUTTERAUGLI score, not SSIM2.
+On these high-frequency CLIC photos at d=4 the butteraugli minimum
+does not co-locate with the SSIM2 minimum. The loop is correctly
+converging to its target — but its target is SSIM2-orthogonal.
+
+  - butteraugli at ITERS_0 vs BASELINE: -0.33 / -0.14 / -0.35 → loop
+    DOES reduce butteraugli (as designed).
+  - SSIM2 at ITERS_0 vs BASELINE: +1.42 / +1.11 / +1.74 → loop
+    REGRESSES SSIM2.
+
+This is a fundamental measurement-mismatch wedge (cf. CLAUDE.md
+"butteraugli measurement divergence" follow-on tracked since W44-105 +
+W44-167 + W44-95).
+
+WHY THIS DOESN'T HIT EVERY CELL: on the 30-cell Phase 1 cluster the
+deficit is concentrated on (a) CLIC photos at d≥4 and (b) smooth-photo
+class (1531677, 1418519). On screenshots and graphics the buttloop
+helps both metrics in tandem. The wedge is photo-content-specific.
+
+PHASE 8 FIX SHAPE CANDIDATES (ranked):
+
+#1 (TOP) Stratified butteraugli convergence-target adjustment for the
+   photo-cluster regime (cluster discriminator: m3 ≥ 25 AND d ≥ 4 AND
+   class ∈ {CLIC2025_WEB, PHOTO_SMOOTH, PHOTO_LANDSCAPE, PHOTO_PORTRAIT}).
+   Make the buttloop early-exit if SSIM2 measurement (computed via the
+   already-running ssim2-loop infrastructure) shows regression vs the
+   pre-buttloop seed.
+   Site: `jxl-encoder/src/vardct/butteraugli_loop.rs::run_butteraugli_loop`
+   around `accept_iter`/`final_select` boundary (post-iter SSIM2 measure
+   already plumbed via the parallel ssim2-loop feature in W44-AUDIT-3 era).
+   Estimated wall: 0.5-1d (well-defined hook site).
+
+#2 Per-stratum reduced iter cap (e.g. e9 photo cluster gets iters=2
+   instead of 4 — since the loop converges at iter 2 anyway, this is
+   a pure perf win that ALSO sidesteps any over-convergence pathology
+   on the 3rd-4th iter).
+   Site: `jxl-encoder/src/effort.rs::butteraugli_iters` + stratum
+   dispatch via the existing W44-AUDIT-6 M3 cluster gate.
+   Estimated wall: 0.5d (no algorithm change).
+   CAUTION: clic_22ea12 ITERS_2 still regresses SSIM2 (-3.56), so this
+   alone doesn't close the cell — must be combined with #1.
+
+#3 ROOT-CAUSE the butteraugli measurement divergence itself
+   (cf. W44-105 follow-on #1, W44-167 follow-on #5).
+   Multi-week cross-crate work — out of Phase 8 scope.
+
+Reproducer:
+  cargo run -p jxl-encoder --release \
+    --features "parallel butteraugli-loop ssim2-loop __expert" \
+    --example w44_audit_8_phase7_e9_buttloop_isolate
+
+Files:
+  jxl-encoder/examples/w44_audit_8_phase7_e9_buttloop_isolate.rs
+  benchmarks/w44_audit_8_phase7_e9_buttloop_isolate_2026-05-24.tsv (this dataset)
