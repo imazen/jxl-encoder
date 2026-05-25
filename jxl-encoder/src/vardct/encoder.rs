@@ -1845,7 +1845,8 @@ pub(crate) fn w44_audit_5_p3_force_libjxl_parity_for_screenshot(
     // forces the route OFF, mirroring W44-176 / W44-AUDIT-6.
     #[cfg(feature = "std")]
     {
-        if std::env::var_os("JXL_W44_AUDIT_5_P3_DISABLE").is_some_and(|v| v != "0" && v != "") {
+        if std::env::var_os("JXL_W44_AUDIT_5_P3_DISABLE").is_some_and(|v| v != "0" && !v.is_empty())
+        {
             return false;
         }
     }
