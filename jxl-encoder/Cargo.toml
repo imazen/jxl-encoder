@@ -1318,6 +1318,16 @@ name = "w44_audit_8_phase5_cluster_validate"
 path = "examples/w44_audit_8_phase5_cluster_validate.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
 
+# W44-AUDIT-8 Phase 6 (2026-05-24): 2-cell bisect of `QuantizeWP` shape
+# (libjxl enc_modular.cc:1542-1559 — WP-relative residual + 0.62 deadzone +
+# snap-to-even). Targets clic_22ea12 e7 d=4 (Phase 5 closed to +0.94 SSIM2;
+# Phase 6 layers on top) AND e9 d=4 (Phase 5 untouched; Phase 6 gate also
+# OFF at e≥8 so should be structurally byte-identical).
+[[example]]
+name = "w44_audit_8_phase6_bisect"
+path = "examples/w44_audit_8_phase6_bisect.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__expert"]
+
 # W44-AUDIT-3 (2026-05-24): focused 3-cell re-validation of codec_wiki d=4
 # post the W44-AUDIT-2 EPF budget-accounting OOM fix (commit 887cac54).
 # Re-runs JUST codec_wiki e5/e7/e9 d=4 with full bytes + butteraugli + SSIM2

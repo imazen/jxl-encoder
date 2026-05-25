@@ -1,0 +1,176 @@
+# W44-AUDIT-8 Phase 6 bisect — QuantizeWP shape (OPT-IN ship, default-flip HONEST-STOPPED)
+
+Date: 2026-05-24 UTC
+Commit: (Phase 6 source-change commit, this commit)
+Wall: ~5 min
+Encoder: jxl-encoder release-build with `parallel butteraugli-loop ssim2-loop __expert`
+cjxl: /home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl (v0.12.0 build)
+Decoder: jxl-oxide 0.12.5
+Scorer: butteraugli (linear) + fast_ssim2 (sRGB u8)
+
+## Phase 6 source
+
+`vardct/quantize_wp.rs` (new, 228 lines + 7 unit tests passing):
+* Port of libjxl `enc_modular.cc::QuantizeWP` (lines 1542-1559).
+* Post-pass over `(float_dc, quant_dc)` after `transform_and_quantize_with_source` returns.
+* Walks DC in libjxl `{Y, X, B}` channel order with `WeightedPredictorState`.
+* Applies: 0.62 deadzone, WP-prediction-relative residual, snap-to-even for `|residual| > 2`.
+* CFL X/B pre-subtraction in inv_factor-scaled domain: `row[x]*inv_factor - quant_y * dc_cfl_factor`
+  matches libjxl line 1668's `(row[x] - quant_y * y_factor * cfl_factor) * inv_factor` algebraically.
+
+Wired at two `transform_and_quantize_with_source` call-sites in
+`vardct/encoder.rs:5538` + `:6527`, gated by the new
+`EffortProfile.use_libjxl_wp_dc_quant: bool` field OR env hook
+`JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP=1` (also requires `effort <= 7`
+to honour the Phase 5 / libjxl `nl_dc = speed_tier < kFalcon` gate
+even when env-forced).
+
+## Default-flip HONEST-STOP
+
+DEFAULT IS OFF — `EffortProfile.use_libjxl_wp_dc_quant = false` on every
+strategy. Reasoning: the static-codes path (`optimize_codes = false`) tokenizes
+DC residuals with `clamped_gradient` (`vardct/dc_coding.rs::write_dc_tokens_region`),
+while the dynamic-codes path uses WP (`kWPFixedDC` tree via
+`vardct/bitstream.rs:2765` else-branch at effort ≤ 7 with W44-171's
+`DC_TREE_VARIABLE_TRIAL_MIN_EFFORT = 8` keeping the trial-and-pick off).
+
+When the QuantizeWP gate fires, the `quant_dc[c][y][x]` integer distribution
+shifts (0.62 deadzone removes small residuals; snap-to-even pulls large
+residuals onto even integers). This shift destroys gradient-predictor
+compressibility on the static-codes path:
+
+* `tests/vardct.rs::test_optimize_codes_roundtrip_small` (16×16 saturated
+  red, distance=1.0, butteraugli_iters=0):
+  - Pre-Phase-6 (or with gate OFF): static = 97 B, dynamic = 97 B,
+    decoded pixels agree within 5e-6.
+  - With Phase-6 gate forced ON: static = 1098 B (!), dynamic = 98 B,
+    decoded pixels diverge by ~3e-4 between the two paths (tolerance
+    is 5e-6 — TEST FAILS).
+  - Mechanism: gradient predictor at static-codes tokenization can't
+    efficiently encode the QuantizeWP-shaped residual distribution; the
+    resulting 11× byte inflation also pushes a small bit-pattern divergence
+    that surfaces as the 3e-4 pixel delta.
+
+This breaks the structural invariant that static + dynamic codes
+encoders MUST decode to identical pixels (up to FP precision). Per
+CLAUDE.md "NEVER relax test expectations" this cannot ship as default-on.
+
+## 2-cell bisect results (gate forced ON via env hook)
+
+| image_id      | role        | effort | distance | ours_bytes | ours_bfly | ours_ssim2 | cjxl_bytes | cjxl_bfly | cjxl_ssim2 | dbytes_pct | dbfly  | dssim2  |
+|---            |---          |---     |---       |---         |---        |---         |---         |---        |---         |---         |---     |---      |
+| clic_22ea12   | PRIMARY_E7  | 7      | 4        | 37767      | 3.7302    | 72.0698    | 36614      | 3.7672    | 71.8307    | +3.149 %   | -0.037 | +0.239  |
+| clic_22ea12   | PRIMARY_E9  | 9      | 4        | 32489      | 3.8689    | 66.5687    | 33676      | 4.1421    | 70.1116    | -3.525 %   | -0.273 | -3.543  |
+| terminal      | PROTECT_E8  | 8      | 4        | 42322      | 1.8648    | 86.9084    | 56066      | 2.5179    | 87.5455    | -24.514 %  | -0.653 | -0.637  |
+| codec_wiki    | PROTECT_E8  | 8      | 4        | 57061      | 3.4288    | 80.3028    | 72960      | 3.5015    | 83.2739    | -21.791 %  | -0.073 | -2.971  |
+
+## Interpretation
+
+**PRIMARY_E7 (gate fires, QuantizeWP ON via env)**:
+- Phase 5 baseline: `bytes Δ +7.77 %, SSIM2 Δ +0.94 vs cjxl` (per Phase 5 finalize memo).
+- Phase 6 forced-ON: `bytes Δ +3.15 % (-4.62 pp), SSIM2 Δ +0.24 (-0.70)`.
+- Bytes get CLOSER to cjxl by 4.62 pp (libjxl-parity direction is correct).
+- SSIM2 drops 0.70 absolute — still BEATS cjxl by +0.24, but margin shrunk.
+- Net: a Pareto trade. Phase 6 IS libjxl-shape correct; the residual gap is
+  one of the "shape vs cost-model interplay" wedges that's been documented
+  across W44-* arc.
+
+**PRIMARY_E9 (gate does NOT fire — env `effort > 7` filter)**:
+- BYTE-IDENTICAL to Phase 5 baseline. Confirms env-hook gate-respects-effort
+  works correctly (mirrors libjxl `nl_dc = speed_tier < kFalcon = 7`).
+
+**PROTECT_E8 (gate does NOT fire)**:
+- `terminal e8 d=4` = 42,322 B / SSIM2 86.91 — BYTE-IDENTICAL to Phase 5
+  published value (verified in `w44_audit_8_phase5_cluster_validate_2026-05-24.tsv`).
+- `codec_wiki e8 d=4` = 57,061 B / SSIM2 80.30 — BYTE-IDENTICAL to Phase 5
+  baseline (W44-228c1 PROTECT chain holds).
+
+## Acceptance against Phase 6 task spec
+
+- (a) Source-edit compiles cleanly: **PASS** (1457 lib tests + 7 new unit
+  tests + 7 drift + 4 byte-lock + 4 hash-lock all PASS with default gate OFF).
+- (b) 2-cell bisect shows Phase 6 stacks on Phase 5 OR closes e9 gap:
+  **MIXED**. e9 gap NOT closed (gate intentionally OFF at e9 per design,
+  mirroring libjxl). e7 cell: bytes IMPROVED (-4.62 pp closer to cjxl)
+  but SSIM2 -0.70 from Phase 5 — outside ±0.5 budget.
+- (c) 30-cell cluster aggregate ≥ +0.0 mean SSIM2: **NOT MEASURED**
+  (scope reduced to 4-cell bisect due to wall budget; full cluster
+  follow-on in a future chunk).
+- (d) 4 PROTECT_E8 cells stay within ±0.5 SSIM2 + ±5 % bytes: **PASS**
+  (BYTE-IDENTICAL — gate doesn't fire at e8).
+- (e) `cargo test --lib` PASS: **PASS** (1457/1457).
+- (f) Hash-locks REGEN: **NOT NEEDED** at default (gate OFF → byte-identical).
+- (g) Strategy libjxl byte-lock REGEN: **NOT NEEDED** at default (gate OFF).
+- (h) Strategy libjxl hash-locks regen: **NOT NEEDED** at default.
+- (i) Drift 7/7 PASS: **PASS** (no new gate_registry entry — Phase 6 is
+  per-effort field on EffortProfile, same shape as Phase 5).
+- (j) Multi-decoder roundtrip djxl + jxl-rs + jxl-oxide: jxl-oxide PASS
+  on all 4 bisect cells (score_jxl decode succeeded; bench rows would
+  have NaN if decode failed). djxl + jxl-rs not run in this bisect — the
+  Phase 5 cluster bench already covered those decoders on the same image
+  set.
+- (k) 1-2 commits pushed: (next).
+- (l) `.workongoing` removed: (next).
+
+## DO NOT (binding for future agents)
+
+1. **DO NOT default-flip `EffortProfile.use_libjxl_wp_dc_quant = true`**
+   without first fixing the static-codes path. The test failure is real
+   and indicates a structural shape mismatch between the gradient predictor
+   used by static-codes DC tokenization and the WP-shaped quant_dc
+   distribution.
+
+2. **DO NOT cite "FMA precision"** for the 3e-4 pixel divergence between
+   static + dynamic outputs (per CLAUDE.md W44-66). The mechanism is
+   predictor-shape mismatch, not float-precision noise.
+
+3. **DO NOT widen the env hook** to fire at effort ≥ 8. libjxl's `nl_dc`
+   gate at `speed_tier < kFalcon = 7` is explicit, and Phase 5 measurement
+   showed e≥8 cells live on buttloop convergence ground that Phase 6 should
+   NOT touch.
+
+4. **DO NOT remove the env hook** — it's the only OPT-IN path until a
+   `LossyConfig::with_use_libjxl_wp_dc_quant(bool)` public API is added.
+   Future Phase 7 candidates may need to A/B this against the default.
+
+5. **DO NOT raise the test_optimize_codes_roundtrip_small tolerance** above
+   5e-6 to make Phase 6 default-flip "work". The static/dynamic invariant
+   is structural and must be preserved.
+
+## Phase 7 candidates (NOT in Phase 6 scope)
+
+A. **Static-codes path WP retrofit**: thread `Predictor::Weighted` through
+   `dc_coding::write_dc_tokens_region` so the static-codes path emits
+   WP-shaped residuals (matching the dynamic-codes path's `kWPFixedDC`
+   tree). Closes the test invariant. Risk: changes static-codes Huffman
+   table sizing; may require regen of static Huffman tree.
+
+B. **Per-effort/per-distance dispatch**: flip the Phase 6 gate ON only
+   on (effort, distance, content) tuples where the static-codes path
+   either (i) isn't used (because dynamic-codes path is mandatory) OR
+   (ii) gradient-vs-WP shape divergence is empirically acceptable.
+   Requires a small sweep on the static-codes content gate to identify
+   the safe envelope.
+
+C. **Dynamic-codes-only restriction**: skip the static-codes encode
+   entirely when `use_libjxl_wp_dc_quant = true`. Caller-visible API
+   change; requires `optimize_codes` to be promoted to `true` whenever
+   Phase 6 fires.
+
+D. **Combined Phase 6 + Phase 5 sweep on 30-cell cluster**: re-run the
+   Phase 5 cluster bench with `JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP=1`
+   to measure full cluster impact. Defer until one of A/B/C lands so
+   the measurement is on a default-flippable config.
+
+## Files
+
+- `jxl-encoder/src/vardct/quantize_wp.rs` (NEW — port + 7 unit tests passing)
+- `jxl-encoder/src/vardct/mod.rs` (registered new module)
+- `jxl-encoder/src/vardct/encoder.rs` (2 wire-up sites at L5538 + L6527, both
+  also honour env hook `JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP`)
+- `jxl-encoder/src/effort.rs` (new `EffortProfile.use_libjxl_wp_dc_quant`
+  field, default `false` on both lossy + lossless paths)
+- `jxl-encoder/examples/w44_audit_8_phase6_bisect.rs` (NEW, registered in
+  jxl-encoder/Cargo.toml)
+- `benchmarks/w44_audit_8_phase6_bisect_2026-05-24.{tsv,meta}` (this file)
+- `docs/LIBJXL_DIVERGENCES.md` Section A row 51 extended with Phase 6 narrative.

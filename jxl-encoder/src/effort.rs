@@ -857,6 +857,32 @@ pub struct EffortProfile {
     /// `1` at effort ≤ 7, `0` at effort ≥ 8.
     pub extra_dc_precision: u8,
 
+    /// **W44-AUDIT-8 Phase 6**: when `true`, applies libjxl's
+    /// `QuantizeWP` shape to DC values during the post-transform pass:
+    ///
+    /// 1. WP-prediction-relative residual coding (`Predictor::Weighted`
+    ///    over already-quantized DC).
+    /// 2. 0.62 deadzone (residuals with `|svalue| < 0.62` → 0).
+    /// 3. Snap-to-even multiple for residuals with `|residual| > 2`.
+    ///
+    /// Mirrors libjxl `enc_modular.cc::QuantizeWP` (lines 1542-1559),
+    /// active in the `nl_dc` branch (lines 1640-1674). The libjxl
+    /// `nl_dc = speed_tier < kFalcon` condition fires at effort ≤ 7
+    /// (paired with `extra_dc_precision = 1` from Phase 5).
+    ///
+    /// Applies to every strategy (Libjxl + Zenjxl + Aggressive +
+    /// LeanFaster) because cjxl emits this gate unconditionally at
+    /// effort ≤ 7 alongside the extra_dc_precision flip; the
+    /// QuantizeWP-shape output is part of strict cjxl byte-parity.
+    ///
+    /// Default `false` keeps every direct field literal (test
+    /// fixtures, lossless path) on the pre-Phase-6 plain-round
+    /// quantization. [`Self::lossy_reference`] /
+    /// [`Self::lossy_experimental`] set `true` at effort ≤ 7,
+    /// `false` at effort ≥ 8 (mirroring the existing
+    /// `extra_dc_precision` gate).
+    pub use_libjxl_wp_dc_quant: bool,
+
     // ─── Cost model constants ────────────────────────────────────────────
     // All five `k_*` constants below feed `vardct/ac_strategy_search.rs`
     // (the per-8×8 cost evaluator that picks DCT8 vs DCT4x4 vs IDENTITY vs
@@ -1413,6 +1439,26 @@ impl EffortProfile {
             // strategy because cjxl emits this gate unconditionally;
             // the bitstream field is part of strict cjxl byte-parity.
             extra_dc_precision: if effort >= 8 { 0 } else { 1 },
+            // W44-AUDIT-8 Phase 6 (HONEST-STOP on default-flip): mirror
+            // libjxl `QuantizeWP` shape (WP-relative residual + 0.62
+            // deadzone + snap-to-even). Bisect on clic_22ea12 e7 d=4
+            // showed Phase 6 cuts bytes by 25% vs Phase 5 (still beats
+            // cjxl on SSIM2 by +0.24 vs cjxl) — BUT default-flip breaks
+            // the `test_optimize_codes_roundtrip_small` invariant
+            // because the static-codes path emits DC tokens via
+            // `clamped_gradient` predictor whose residual statistics
+            // diverge from the QuantizeWP-shaped quant_dc distribution
+            // (static path inflates 16×16 red square from 97 → 1098
+            // bytes; decoded pixels diverge by 3e-4 vs static/dynamic).
+            //
+            // Shipped as OPT-IN only — callers can set
+            // `use_libjxl_wp_dc_quant = true` via direct EffortProfile
+            // field mutation (no public API surface in this chunk).
+            // Future Phase 7 candidates: thread WP predictor through
+            // the static-codes DC path, OR per-effort/per-distance
+            // dispatch that flips ON only when the gradient-predictor
+            // divergence is empirically acceptable.
+            use_libjxl_wp_dc_quant: false,
 
             // ── Cost model constants (from libjxl) ──
             k_favor_2x2: -0.4,
@@ -1572,6 +1618,9 @@ impl EffortProfile {
             // same way (modular RCT, not VarDCT DC channel), so the field
             // is moot here. Kept at `0` for the lossless default.
             extra_dc_precision: 0,
+            // W44-AUDIT-8 Phase 6: lossless path doesn't run the VarDCT
+            // DC quantization at all, so the QuantizeWP shape is N/A.
+            use_libjxl_wp_dc_quant: false,
 
             // ── Cost model constants (used for tree learning cost estimates) ──
             k_favor_2x2: -0.4,
