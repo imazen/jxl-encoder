@@ -692,6 +692,46 @@ pub struct EffortProfile {
     /// strategy preset.
     pub cfl_newton_libjxl_parity: bool,
 
+    /// **W44-AUDIT-5 Phase 2 (Mode C)**: when `true`, the CfL Newton call
+    /// sites pass `libjxl_math_with_ls_warm_start = true` into
+    /// [`jxl_simd::cfl_find_best_multiplier_newton`], which uses libjxl's
+    /// Newton math (eps=100, max_iters=20) BUT starts from `ls_x`
+    /// (least-squares warm-start) with the existing LS fallback on
+    /// non-convergence. `cfl_newton_libjxl_parity == true` takes priority
+    /// over this flag inside the SIMD kernel (the two are mutually-exclusive
+    /// even though encoded as two booleans).
+    ///
+    /// **Why this exists**: the W44-AUDIT-5 Phase 1 diagnosis
+    /// (`memory/w44_audit_5_phase1_structural_gap_diagnosis_2026-05-24.md`)
+    /// identified that on `codec_wiki.png e7 d=4` the `EncoderStrategy::Libjxl`
+    /// path is -5.51 SSIM2 vs cjxl despite +12% bytes overhead. The
+    /// SSIM2 deficit on screenshots traces to the LS-only refinement
+    /// `cfl_newton_libjxl_parity = false` produces (it picks a different
+    /// chroma multiplier than libjxl's Newton on high-detail screenshot
+    /// content). However the full libjxl-parity flip
+    /// (`cfl_newton_libjxl_parity = true`) regressed 25/27 W44-183 photo
+    /// cells by 0.25-13.02 SSIM2 — too damaging to ship on Zenjxl.
+    ///
+    /// Mode C is the in-between: libjxl Newton math (recovers screenshot
+    /// SSIM2) but with the LS warm-start (preserves the W44-29..W44-172
+    /// cost-model calibration tuned against LS solutions on photos).
+    ///
+    /// Default `false` everywhere (opt-in only). Libjxl strategy keeps
+    /// `libjxl_parity = true` (bit-exact, mutually-exclusive); Zenjxl /
+    /// Aggressive / LeanFaster ALSO keep this `false` after the
+    /// W44-AUDIT-5 Phase 2 HONEST-STOP — the 3-mode bisect on
+    /// codec_wiki e7 d=4 + 2 photo cells measured Mode C byte-identical
+    /// to Mode A (the pre-Phase-2 Zenjxl LS-only refinement), because
+    /// the i8 CfL multipliers round identically when both Newton paths
+    /// start from `ls_x` warm-start on these inputs. The codec_wiki
+    /// SSIM2 deficit (-5.51 Mode B vs cjxl) is NOT closed by Mode C on
+    /// Zenjxl — the deficit lives on Mode B (Libjxl strategy) which
+    /// MUST keep bit-exact parity per the byte-lock invariant. Mode C
+    /// ships as opt-in API surface for callers who want to A/B it via
+    /// env `JXL_W44_AUDIT_5_FORCE_LS_WARM_START={0,1}` or by setting
+    /// the field on `EncoderImprovementsCustom`.
+    pub cfl_newton_libjxl_math_with_ls_warm_start: bool,
+
     /// **W44-197 Candidate B**: enable CfL Pass-2 with LS-only solver at
     /// effort ∈ {5, 6} (matches libjxl `fast=true` dispatch at
     /// `speed_tier >= kWombat`). When `true` AND effort is 5 or 6, the
@@ -1267,6 +1307,14 @@ impl EffortProfile {
             // `apply_section_c_cfl_newton_libjxl_parity` when
             // `EncoderStrategy::Libjxl` is selected.
             cfl_newton_libjxl_parity: false,
+            // W44-AUDIT-5 Phase 2 (Mode C): default `false` — opt-in
+            // only after the HONEST-STOP (Mode C measured byte-identical
+            // to Mode A on the 3-cell bisect). Field flips ON only when
+            // caller explicitly opts in via env hook
+            // `JXL_W44_AUDIT_5_FORCE_LS_WARM_START=1` or by setting it
+            // on `EncoderImprovementsCustom`. Libjxl strategy keeps it
+            // `false` too (parity takes priority in the SIMD kernel).
+            cfl_newton_libjxl_math_with_ls_warm_start: false,
             // W44-197: default `false` — only flipped by
             // `apply_section_c_cfl_newton_libjxl_parity` when
             // `EncoderStrategy::Libjxl` is selected. See field doc on
@@ -1414,6 +1462,11 @@ impl EffortProfile {
             // W44-184: default `false` (Lossless mode never runs Newton
             // anyway since `cfl_newton: false`).
             cfl_newton_libjxl_parity: false,
+            // W44-AUDIT-5 Phase 2 (Mode C): default `false` for lossless
+            // — Newton never fires (cfl_newton: false) so this is moot
+            // on this path. Mirrors `cfl_newton_libjxl_parity`'s lossless
+            // default for the same reason.
+            cfl_newton_libjxl_math_with_ls_warm_start: false,
             // W44-197: default `false` — Lossless mode never runs Pass-2
             // anyway since `cfl_two_pass: false`.
             cfl_pass2_ls_at_low_effort: false,
@@ -2073,6 +2126,16 @@ impl EffortProfile {
         // want to clobber them.
         if resolved.cfl_newton_libjxl_parity {
             self.cfl_newton_libjxl_parity = true;
+        }
+        // W44-AUDIT-5 Phase 2 (Mode C): same NO-OP-when-false semantic.
+        // Set by Zenjxl / Aggressive presets after the AUDIT-5 default-flip.
+        // Mutually-exclusive with `cfl_newton_libjxl_parity` inside the
+        // SIMD kernel — Libjxl strategy keeps the bit-exact path
+        // (`libjxl_parity = true`, `libjxl_math_with_ls_warm_start = false`);
+        // Zenjxl / Aggressive ship Mode C (`libjxl_parity = false`,
+        // `libjxl_math_with_ls_warm_start = true`).
+        if resolved.cfl_newton_libjxl_math_with_ls_warm_start {
+            self.cfl_newton_libjxl_math_with_ls_warm_start = true;
         }
         // W44-197: same NO-OP semantic. Only `EncoderStrategy::Libjxl`
         // sets `cfl_pass2_ls_at_low_effort = true` in its
@@ -4027,9 +4090,15 @@ mod tests {
     }
 
     /// W44-184: `apply_section_c_cfl_newton_libjxl_parity` is a no-op
-    /// when the resolved field is `false` (preserves the W44-183-shipped
-    /// default-path behaviour byte-identically). Zenjxl / LeanFaster /
-    /// Aggressive / Custom-with-default-flag all produce false here.
+    /// on the `cfl_newton_libjxl_parity` flag when the resolved field
+    /// is `false` (preserves the W44-183-shipped default-path behaviour
+    /// byte-identically). Zenjxl / LeanFaster / Aggressive /
+    /// Custom-with-default-flag all produce `cfl_newton_libjxl_parity =
+    /// false` here. W44-AUDIT-5 Phase 2 (Mode C) DOES flip the
+    /// `cfl_newton_libjxl_math_with_ls_warm_start` bit on default
+    /// (because Zenjxl/Aggressive default-flipped that field to `true`),
+    /// so this test focuses on the `libjxl_parity` field which stays
+    /// false on the default path.
     #[test]
     fn test_apply_section_c_cfl_newton_libjxl_parity_default_is_noop() {
         let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
@@ -4040,6 +4109,47 @@ mod tests {
         assert!(
             !p.cfl_newton_libjxl_parity,
             "default resolved.cfl_newton_libjxl_parity must NOT flip the profile bit"
+        );
+    }
+
+    /// W44-AUDIT-5 Phase 2 (Mode C): HONEST-STOP — default Zenjxl
+    /// resolved keeps Mode C = `false` (opt-in only). The 3-mode bisect
+    /// measured Mode C byte-identical to Mode A on codec_wiki e7 d=4 +
+    /// 2 photos, so the default-flip was reverted. The bit remains
+    /// reachable via env hook `JXL_W44_AUDIT_5_FORCE_LS_WARM_START=1`
+    /// for A/B debugging on any strategy.
+    #[test]
+    fn test_apply_section_c_mode_c_default_off_zenjxl_path() {
+        let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
+        assert!(!p.cfl_newton_libjxl_math_with_ls_warm_start);
+        let resolved = crate::api::ResolvedImprovements::default();
+        assert!(
+            !resolved.cfl_newton_libjxl_math_with_ls_warm_start,
+            "Zenjxl-default resolved must keep Mode C = false (W44-AUDIT-5 Phase 2 HONEST-STOP)"
+        );
+        p.apply_section_c_cfl_newton_libjxl_parity(&resolved);
+        assert!(
+            !p.cfl_newton_libjxl_math_with_ls_warm_start,
+            "default resolved must NOT flip the profile's Mode C bit (opt-in only)"
+        );
+    }
+
+    /// W44-AUDIT-5 Phase 2 (Mode C): when the caller explicitly sets
+    /// the field on `EncoderImprovementsCustom`, the
+    /// `apply_section_c_cfl_newton_libjxl_parity` adapter flips the
+    /// profile bit. Mirrors the `_libjxl_flips` test for `cfl_newton_libjxl_parity`.
+    #[test]
+    fn test_apply_section_c_mode_c_explicit_opt_in_flips() {
+        let mut p = EffortProfile::lossy(7, EncoderMode::Reference);
+        assert!(!p.cfl_newton_libjxl_math_with_ls_warm_start);
+        let resolved = crate::api::ResolvedImprovements {
+            cfl_newton_libjxl_math_with_ls_warm_start: true,
+            ..Default::default()
+        };
+        p.apply_section_c_cfl_newton_libjxl_parity(&resolved);
+        assert!(
+            p.cfl_newton_libjxl_math_with_ls_warm_start,
+            "explicit Mode C opt-in must flip the profile bit"
         );
     }
 

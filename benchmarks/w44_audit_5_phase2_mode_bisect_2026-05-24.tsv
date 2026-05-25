@@ -1,0 +1,10 @@
+cell	class	w	h	effort	distance	mode	mode_name	bytes	ssim2	butteraugli	cjxl_bytes	cjxl_ssim2	cjxl_butteraugli	delta_bytes_pct_vs_cjxl	delta_ssim2_vs_cjxl
+gb82_codec_wiki	screenshot	2560	1664	7	4	A	A_pre_phase2_zenjxl_ls_only	63319	80.5521	3.2160	62710	84.8597	2.9915	0.9711	-4.3075
+cid22_1418519	photo	512	512	7	4	A	A_pre_phase2_zenjxl_ls_only	8747	71.3204	3.7806	9351	72.9955	4.1744	-6.4592	-1.6751
+cid22_1531677	photo	512	512	7	4	A	A_pre_phase2_zenjxl_ls_only	23378	56.5778	4.4325	24918	57.8301	4.0639	-6.1803	-1.2523
+gb82_codec_wiki	screenshot	2560	1664	7	4	B	B_libjxl_strategy_bit_exact	70217	79.3481	3.2092	62710	84.8597	2.9915	11.9710	-5.5116
+cid22_1418519	photo	512	512	7	4	B	B_libjxl_strategy_bit_exact	9813	70.2897	3.7613	9351	72.9955	4.1744	4.9406	-2.7058
+cid22_1531677	photo	512	512	7	4	B	B_libjxl_strategy_bit_exact	33967	48.5774	4.9998	24918	57.8301	4.0639	36.3151	-9.2527
+gb82_codec_wiki	screenshot	2560	1664	7	4	C	C_zenjxl_libjxl_math_with_ls_warm_start	63319	80.5521	3.2160	62710	84.8597	2.9915	0.9711	-4.3075
+cid22_1418519	photo	512	512	7	4	C	C_zenjxl_libjxl_math_with_ls_warm_start	8747	71.3204	3.7806	9351	72.9955	4.1744	-6.4592	-1.6751
+cid22_1531677	photo	512	512	7	4	C	C_zenjxl_libjxl_math_with_ls_warm_start	23378	56.5778	4.4325	24918	57.8301	4.0639	-6.1803	-1.2523

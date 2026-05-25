@@ -1,0 +1,244 @@
+# W44-AUDIT-5 Phase 2 — Mode C bisect — HONEST-STOP on default-flip
+## 2026-05-24
+
+## TL;DR
+
+Mode C (NEW: libjxl Newton math + LS warm-start + LS fallback) produces
+**byte-identical output to Mode A** (pre-Phase-2 Zenjxl LS-only refinement)
+on every cell of the 3-cell bisect (codec_wiki e7 d=4 + 1418519 + 1531677).
+The Mode C default-flip on Zenjxl/Aggressive/LeanFaster was REVERTED
+because Mode C is an algorithmic no-op on these inputs — both Newton
+paths converge to the same i8 CfL multipliers when starting from
+`ls_x` warm-start.
+
+Mode C SHIPS as opt-in API surface only. The W44-AUDIT-5 Phase 1
+codec_wiki SSIM2 deficit (-5.51 vs cjxl on `EncoderStrategy::Libjxl`)
+remains OPEN — Mode C cannot close it without breaking the Libjxl
+byte-lock invariant. Phase 3 would need an orthogonal mechanism (e.g.
+lift the screenshot-class discriminator before CfL Pass-1).
+
+## Run command
+
+For each MODE in {A, B, C}:
+```bash
+JXL_W44_AUDIT_5_FORCE_LS_WARM_START=0 MODE=A \
+  ./target/release/examples/w44_audit_5_phase2_mode_bisect
+MODE=B ./target/release/examples/w44_audit_5_phase2_mode_bisect
+MODE=C ./target/release/examples/w44_audit_5_phase2_mode_bisect
+```
+
+Each mode runs codec_wiki + 1418519 + 1531677 at e=7 d=4.0, single-thread,
+encode + decode (via jxl-oxide) + SSIM2 (fast_ssim2) + butteraugli
+(linear-RGB f32) + cjxl reference.
+
+## Definitions
+
+- **Mode A** (pre-Phase-2 Zenjxl baseline): LS warm-start + LS-only
+  refinement using user `eps=1.0 / max_iters=10` from `EffortProfile`
+  defaults (the W44-183-shipped path that the W44-29..W44-172
+  downstream cost model is calibrated against). Invoked via
+  `EncoderStrategy::Zenjxl` + `JXL_W44_AUDIT_5_FORCE_LS_WARM_START=0`
+  (forces the new Mode C field OFF).
+- **Mode B** (`EncoderStrategy::Libjxl`): bit-exact libjxl CfL Newton
+  (eps=100, max_iters=20, start `x=0`, no LS fallback — uses last `x`
+  even on non-convergence). Mirrors libjxl `enc_chroma_from_luma.cc:152-167`
+  exactly. Required for cjxl byte-parity.
+- **Mode C** (NEW Phase 2 hybrid): libjxl Newton math (eps=100,
+  max_iters=20) BUT starting from `ls_x` warm-start with LS fallback
+  on non-convergence. Encoded as a NEW
+  `cfl_newton_libjxl_math_with_ls_warm_start: bool` SIMD parameter +
+  matching `EffortProfile` field + matching `EncoderImprovementsCustom`
+  gate. `cfl_newton_libjxl_parity = true` (Mode B) takes priority
+  inside the SIMD kernel — Mode C only fires when `libjxl_parity =
+  false AND libjxl_math_with_ls_warm_start = true`.
+
+## Per-cell results
+
+| cell             | mode | bytes | SSIM2  | bfly  | Δbytes% vs cjxl | ΔSSIM2 vs cjxl |
+|---               |---   |---    |---     |---    |---              |---             |
+| gb82_codec_wiki  | A    | 63319 | 80.55  | 3.216 | +0.97%          | -4.31          |
+| gb82_codec_wiki  | B    | 70217 | 79.35  | 3.209 | +11.97%         | -5.51          |
+| gb82_codec_wiki  | C    | 63319 | 80.55  | 3.216 | +0.97%          | -4.31          |
+| cid22_1418519    | A    | 8747  | 71.32  | 3.781 | -6.46%          | -1.68          |
+| cid22_1418519    | B    | 9813  | 70.29  | 3.761 | +4.94%          | -2.71          |
+| cid22_1418519    | C    | 8747  | 71.32  | 3.781 | -6.46%          | -1.68          |
+| cid22_1531677    | A    | 23378 | 56.58  | 4.433 | -6.18%          | -1.25          |
+| cid22_1531677    | B    | 33967 | 48.58  | 5.000 | +36.32%         | -9.25          |
+| cid22_1531677    | C    | 23378 | 56.58  | 4.433 | -6.18%          | -1.25          |
+
+cjxl reference: codec_wiki 62710 B / 84.86 SSIM2; 1418519 9351 B / 73.00
+SSIM2; 1531677 24918 B / 57.83 SSIM2.
+
+## Mode C verdict — HONEST-STOP on default-flip
+
+**Mode C produces byte-identical output to Mode A on all 3 cells**:
+- codec_wiki e7 d=4: bytes 63319 = 63319 (0% delta), SSIM2 80.55 = 80.55,
+  butteraugli 3.216 = 3.216, all to 4 decimal places.
+- cid22_1418519 e7 d=4: byte-identical
+- cid22_1531677 e7 d=4: byte-identical
+
+**Why**: The i8 CfL multipliers (`ytox`, `ytob` in `CflMap`) round
+identically whether the Newton iteration uses (a) user `eps=1.0 / iters=10`
+with LS-only refinement vs (b) libjxl `eps=100 / iters=20` math both
+starting from `ls_x` warm-start. The two paths produce different
+internal float `x` values, but `bias_and_quantize(x)` rounds both to
+the same i8 on these inputs. Downstream the encoder's quantized
+coefficients are identical → bytes identical → metrics identical.
+
+**Acceptance gates** (per Phase 2 spec):
+- (a) codec_wiki e7 d=4 SSIM2 ≥ Mode B − 0.5 OR ≥ Mode A + 2.0: Mode C
+  SSIM2 80.55 vs Mode B 79.35 = +1.20 ≥ -0.5 ✓. (Mode C ≡ Mode A so
+  the "Mode A + 2.0" path is N/A — there's no closure.)
+- (b) codec_wiki e7 d=4 bytes within +5% of Mode A: 63319/63319 = 0% ✓.
+- Photos within ±1.0 SSIM2 and ±2% bytes of Mode A: 0/0 on both ✓.
+
+**Decision**: Mode C technically passes the acceptance gates (no
+regression) but does NOT close the gap. **HONEST-STOP on default-flip**
+— Mode C ships as opt-in API surface only.
+
+## Why the Phase 1 diagnosis was directionally correct but not actionable
+
+W44-AUDIT-5 Phase 1 correctly identified that the codec_wiki +12pp /
+-5.51 SSIM2 wedge LIVES on `EncoderStrategy::Libjxl`. Mode A
+(Zenjxl) is already at the better-on-this-cell SSIM2 — the Phase 1
+"Fix A" proposal (add Mode C, possibly flip Libjxl to it) was the right
+mechanism in principle, but:
+
+1. **The task spec explicitly forbids changing Libjxl strategy CfL
+   behavior** ("MUST stay on pure libjxl Newton for strict cjxl
+   parity"). The byte-lock test (`strategy_libjxl_byte_lock.rs`)
+   enforces this — flipping Libjxl to Mode C would break 4 cells of
+   the lock.
+2. **Mode C is byte-identical to Mode A on Zenjxl**, so flipping
+   Zenjxl to Mode C accomplishes nothing user-visible. It's pure code
+   churn.
+
+The structural issue: the screenshot SSIM2 deficit on Libjxl is caused
+by libjxl Newton's `x=0` start picking different CfL multipliers than
+LS-warm-start. Mode C uses LS warm-start, so by construction it
+produces the SAME multipliers as Mode A on these inputs. The
+**multiplier choice** is what differs between Mode B and Mode A/C —
+NOT the Newton math.
+
+## What ships
+
+- New SIMD parameter `libjxl_math_with_ls_warm_start: bool` on
+  `jxl_simd::cfl_find_best_multiplier_newton` + 3 SIMD variants
+  (scalar / AVX2 / NEON) — 3 new unit tests verify they agree
+  byte-for-byte across all SIMD tiers.
+- New `EffortProfile::cfl_newton_libjxl_math_with_ls_warm_start` field
+  + new `EncoderImprovementsCustom` gate (W44-193 macro slot) +
+  new `ResolvedImprovements` field + new `apply_section_c` branch.
+- New gate definition in `gate_registry.rs` `strategy_def!{}` macro
+  with `divergence_section = "C"` + `divergence_row_ref` + env hook
+  `JXL_W44_AUDIT_5_FORCE_LS_WARM_START` (extended parser
+  `parse_bool_zero_or_one` accepts BOTH `0` and `1` so post-Phase-2
+  opt-in flag can be flipped either direction without rebuild).
+- New `ALL_DIVERGENCE_ENTRIES` row in `gate_registry.rs`.
+- `EXPECTED_DIVERGENCE_GATE_COUNT` bumped 28 → 29.
+- Section C row in `docs/LIBJXL_DIVERGENCES.md` documenting the
+  OPT-IN-only status + the HONEST-STOP narrative.
+- This bench TSV + meta + sibling example
+  `examples/w44_audit_5_phase2_mode_bisect.rs`.
+- Investigation Notes entry in `CLAUDE.md` (W44-AUDIT-5 Phase 2
+  HONEST-STOP).
+
+## What does NOT ship
+
+- Default-flip of Mode C on Zenjxl/Aggressive/LeanFaster (REVERTED
+  after the bisect measurement).
+- Any change to `EncoderStrategy::Libjxl` (byte-lock preserved 4/4).
+- Any change to default Zenjxl encoding bytes (hash-locks 36/36
+  BYTE-IDENTICAL without regen).
+
+## Acceptance gates met
+
+- (a) New CfL mode compiles cleanly: ✓
+- (b) Mode bisect produces verdict: ✓ (OPT-IN ONLY — Mode C ≡ Mode A
+  byte-identical on bisect cells)
+- (c) 27-photo regression set re-bench: N/A (Mode C is opt-in only;
+  zero risk of FIXED→OPEN flips since default Zenjxl bytes are
+  byte-identical to pre-Phase-2)
+- (d) `cargo test --lib` PASS: 1444/1444
+- (e) Hash-locks 36/36 BYTE-IDENTICAL: ✓ (without regen — confirms
+  Mode C default-off preserves Zenjxl default-path bytes)
+- (f) Strategy libjxl byte-lock 4/4 PASS: ✓
+- (g) Strategy libjxl hash-locks 5/5 PASS: ✓
+- (h) divergence_table_drift 7/7 PASS: ✓
+- (i) 1-3 commits pushed: pending
+- (j) `.workongoing` removed: pending
+- (k) `docs/LIBJXL_DIVERGENCES.md` updated: ✓ (Section C, new row)
+- (l) `ALL_DIVERGENCE_ENTRIES` updated: ✓
+
+## Phase 3 candidates (NOT this chunk)
+
+Mode C is the wrong layer for the codec_wiki SSIM2 deficit. Future
+chunks would need:
+
+1. **Screenshot-class CfL discriminator** — admit a different Newton
+   start (e.g. mean-of-neighbor `ytox` instead of `0`) for blocks
+   classified as screenshot/text via the W22-1 mask1x1 discriminator
+   or similar Tier-1 features. Would close the Mode B SSIM2 deficit
+   while preserving strict libjxl byte-parity ON PHOTOS.
+2. **Lift the screenshot exclusion BEFORE CfL Pass-1** — current
+   W22-1 / W44-29 / W44-91 etc. discriminators fire AFTER CfL Pass-1.
+   Routing screenshot-class away from libjxl Newton's `x=0` start at
+   Pass-1 would let Mode B inherit Zenjxl's CfL behavior on
+   screenshots without changing photo behavior.
+3. **Accept the codec_wiki SSIM2 deficit as a Pareto-trade for
+   Libjxl-strategy users** — `EncoderStrategy::Libjxl` is documented
+   as "strict cjxl parity"; users requesting it explicitly accept
+   any quality differences from cjxl-equivalent behavior. Document
+   the deficit in the Libjxl strategy doc-comment.
+
+Mode C as opt-in stays a useful **diagnostic API surface** for future
+chunks investigating whether the libjxl Newton math itself (vs the
+multiplier choice) matters on any input class. The bench infrastructure
+(`examples/w44_audit_5_phase2_mode_bisect.rs`) is the regression
+harness.
+
+## DO NOT
+
+- DO NOT default-flip Mode C without first measuring against a wider
+  corpus where Mode C might NOT be byte-identical to Mode A. The
+  3-cell bisect is a smoke test — wider cells may diverge.
+- DO NOT cite "FMA precision" for the Mode C ≡ Mode A byte-identity
+  (per W44-66). The identity is structural — both paths converge to
+  the same i8 multiplier via `bias_and_quantize(x)` on these inputs.
+- DO NOT remove the SIMD `libjxl_math_with_ls_warm_start: bool`
+  parameter or the env hook even though Mode C ships as a structural
+  no-op on the bisect cells. The API surface is the regression
+  harness for future Phase 3 work.
+- DO NOT change `EncoderStrategy::Libjxl` to use Mode C (byte-lock
+  would break 4 cells; strict cjxl parity is the strategy's contract).
+
+## Files
+
+- `jxl-encoder-simd/src/cfl.rs` — new `libjxl_math_with_ls_warm_start`
+  parameter on scalar/AVX2/NEON Newton variants + 3 new unit tests.
+- `jxl-encoder/src/effort.rs` — new `EffortProfile.cfl_newton_libjxl_math_with_ls_warm_start`
+  field + `apply_section_c_cfl_newton_libjxl_parity` extended branch
+  + 2 new unit tests (default-off + explicit-opt-in-flips).
+- `jxl-encoder/src/gate_registry.rs` — new gate in `strategy_def!{}`
+  + new env hook parser `parse_bool_zero_or_one` + new
+  `ALL_DIVERGENCE_ENTRIES` row + 4 strategy preset value updates
+  (Libjxl + Zenjxl + Aggressive + LeanFaster all = false).
+- `jxl-encoder/src/vardct/encoder.rs` — Pass-1 + Pass-2 dispatch
+  threads `cfl_newton_libjxl_math_with_ls_warm_start` through both
+  still-image sites.
+- `jxl-encoder/src/vardct/chroma_from_luma.rs` — `compute_cfl_map`,
+  `compute_cfl_map_for_tiles`, `refine_cfl_map`, internal helper
+  `find_best_multiplier` all take the new bool.
+- `jxl-encoder/src/vardct/bitstream.rs` — animation Pass-1 + Pass-2
+  threading (same pattern as still-image).
+- `jxl-encoder/src/vardct/precomputed.rs` — per-DC-group CfL
+  precompute threading.
+- `jxl-encoder/tests/divergence_table_drift.rs` —
+  `EXPECTED_DIVERGENCE_GATE_COUNT` 28 → 29.
+- `docs/LIBJXL_DIVERGENCES.md` — Section C row with full HONEST-STOP
+  narrative.
+- `jxl-encoder/examples/w44_audit_5_phase2_mode_bisect.rs` (NEW) +
+  Cargo.toml registration.
+- `benchmarks/w44_audit_5_phase2_mode_bisect_2026-05-24.tsv` + this
+  meta.
+- `CLAUDE.md` Investigation Notes entry (this chunk).

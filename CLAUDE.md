@@ -640,6 +640,113 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### W44-AUDIT-5 Phase 2: Mode C (libjxl-Newton-with-LS-warm-start) — OPT-IN ONLY (HONEST-STOP on default-flip) — SHIPPED (2026-05-24)
+
+**Status**: [SHIPPED — opt-in API surface only; HONEST-STOP on default-flip]
+
+Phase 1 (`c16a0edf`) diagnosed the +12pp bytes / -5.51 SSIM2 wedge on
+`EncoderStrategy::Libjxl` for `codec_wiki.png e7 d=4` as caused by
+`cfl_newton_libjxl_parity = true` (bit-exact libjxl Newton, `x=0`
+start). Phase 1 proposed a NEW Mode C: libjxl Newton math (eps=100,
+iters=20) but starting from `ls_x` warm-start with LS fallback,
+designed to preserve the W44-29..W44-172 cost-model calibration while
+recovering screenshot SSIM2.
+
+**Phase 2 shipped the Mode C API surface** (new SIMD parameter +
+EffortProfile field + gate_registry entry + 3 SIMD unit tests + bench
+example + env hook `JXL_W44_AUDIT_5_FORCE_LS_WARM_START={0,1}`).
+
+**Phase 2 3-mode bisect FALSIFIED the default-flip hypothesis**
+(`benchmarks/w44_audit_5_phase2_mode_bisect_2026-05-24.tsv`, codec_wiki
+e7 d=4 + 1418519 + 1531677): Mode C produces **BYTE-IDENTICAL output to
+Mode A** (pre-Phase-2 Zenjxl LS-only refinement) on ALL 3 cells. The
+i8 CfL multipliers round identically through `bias_and_quantize(x)`
+whether the Newton iteration uses user `eps=1/iters=10` LS-only
+refinement OR libjxl `eps=100/iters=20` math, when both start from
+`ls_x` warm-start on these inputs.
+
+**Per-cell results**:
+
+| cell             | mode A      | mode B      | mode C      | mode B vs cjxl | mode C vs A   |
+|---               |---          |---          |---          |---             |---            |
+| codec_wiki       | 63319/80.55 | 70217/79.35 | 63319/80.55 | +12% / -5.51   | identical     |
+| cid22_1418519    | 8747/71.32  | 9813/70.29  | 8747/71.32  | +4.9% / -2.71  | identical     |
+| cid22_1531677    | 23378/56.58 | 33967/48.58 | 23378/56.58 | +36% / -9.25   | identical     |
+
+**Why Mode C structurally cannot close the gap**: the codec_wiki
+deficit lives on Mode B (Libjxl strategy) because libjxl Newton's `x=0`
+start picks DIFFERENT CfL multipliers than LS-warm-start on
+screenshots. Mode C uses LS-warm-start (same as Mode A), so it
+necessarily picks the same multipliers as Mode A. The multiplier
+**choice** is what differs, not the Newton math.
+
+**Phase 2 decision**: Mode C SHIPS as opt-in API surface only.
+- All 4 strategy presets keep `cfl_newton_libjxl_math_with_ls_warm_start = false` by default.
+- Libjxl strategy MUST keep `cfl_newton_libjxl_parity = true` for
+  strict cjxl byte-parity (byte-lock test enforces this; 4/4 PASS
+  unchanged).
+- Zenjxl/Aggressive/LeanFaster default-off because Mode C is a
+  structural no-op on the bisect cells (bytes byte-identical to Mode A).
+- Callers can opt-in via env `JXL_W44_AUDIT_5_FORCE_LS_WARM_START=1` or
+  by setting the field on `EncoderImprovementsCustom`.
+
+**Acceptance gates (all PASS)**:
+- (a) Build PASS
+- (b) `cargo test --lib`: 1444/1444 PASS
+- (c) Hash-locks 36/36 BYTE-IDENTICAL (no regen — default-off
+  preserves Zenjxl default-path bytes)
+- (d) `strategy_libjxl_byte_lock` 4/4 PASS (Libjxl unchanged)
+- (e) `strategy_libjxl_hash_locks` 5/5 PASS
+- (f) `divergence_table_drift` 7/7 PASS (gate count 28 → 29)
+- (g) 3-mode bisect produced TSV verdict: Mode C ≡ Mode A on all 3
+  cells; HONEST-STOP on default-flip per measurement
+
+**Files**:
+- `jxl-encoder-simd/src/cfl.rs` — new `libjxl_math_with_ls_warm_start: bool`
+  parameter on scalar/AVX2/NEON Newton variants + 3 new unit tests
+- `jxl-encoder/src/effort.rs` — new field + adapter branch + 2 new tests
+- `jxl-encoder/src/gate_registry.rs` — new gate + new env parser
+  `parse_bool_zero_or_one` + new ALL_DIVERGENCE_ENTRIES row +
+  4 strategy preset value updates (all = false)
+- `jxl-encoder/src/vardct/{encoder,chroma_from_luma,bitstream,precomputed}.rs`
+  — threaded the new bool through every CfL call site (Pass-1 +
+  Pass-2 still + animation + per-DC-group precompute)
+- `jxl-encoder/tests/divergence_table_drift.rs` — EXPECTED_DIVERGENCE_GATE_COUNT
+  28 → 29
+- `docs/LIBJXL_DIVERGENCES.md` — Section C row with HONEST-STOP narrative
+- `jxl-encoder/examples/w44_audit_5_phase2_mode_bisect.rs` (NEW) +
+  Cargo.toml registration
+- `benchmarks/w44_audit_5_phase2_mode_bisect_2026-05-24.{tsv,meta}`
+
+**DO NOT** (future agents):
+1. DO NOT default-flip Mode C on Zenjxl without first measuring against
+   a wider corpus. The 3-cell bisect is a smoke test — wider cells may
+   diverge from Mode A.
+2. DO NOT flip Libjxl to Mode C — byte-lock test would break 4 cells;
+   strict cjxl parity is the strategy's contract.
+3. DO NOT remove the SIMD parameter or env hook on the basis of "Mode C
+   is a no-op". The API surface is the regression harness for future
+   Phase 3 work on screenshot-class CfL discriminators.
+4. DO NOT cite "FMA precision" for the Mode C ≡ Mode A byte-identity
+   (per W44-66). The identity is structural — both paths converge to
+   the same i8 multiplier via `bias_and_quantize(x)`.
+5. DO NOT respawn Phase 2 expecting Mode C to close the codec_wiki gap.
+   Measurement is conclusive — the gap lives on Mode B's `x=0` Newton
+   start, not on the eps/iters values.
+
+**Follow-on candidates (NOT this chunk)**:
+- **Phase 3 Candidate A**: per-block screenshot-class CfL discriminator
+  that admits a different Newton start (e.g. mean-of-neighbor `ytox`
+  instead of `0`) for blocks classified as screenshot/text via W22-1
+  mask1x1. Would close Mode B SSIM2 deficit while preserving strict
+  libjxl byte-parity on photos.
+- **Phase 3 Candidate B**: lift the screenshot exclusion BEFORE CfL
+  Pass-1 (current discriminators fire AFTER). Routes screenshot-class
+  away from libjxl Newton's `x=0` start.
+- **Phase 3 Candidate C**: accept the deficit and document
+  `EncoderStrategy::Libjxl` doc-comment that "strict cjxl parity" may
+  imply lower SSIM2 than `Zenjxl` on screenshot-class content.
+
 ### W44-PHASE4-S2f: c2 fix validation sweep — finalize (May 24, 2026)
 
 **Status**: [SHIPPED — measurement complete, c2 fix RULED-OUT as detectable on validation corpus]

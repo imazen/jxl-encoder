@@ -1516,6 +1516,10 @@ pub(crate) fn compute_dc_group(
             // libjxl-parity bool through so per-DC-group precomputed
             // CfL matches what the still-image path would have produced.
             profile.cfl_newton_libjxl_parity,
+            // W44-AUDIT-5 Phase 2 (Mode C): same plumbing rationale —
+            // propagate the LS-warm-start flag so per-DC-group CfL
+            // matches the still-image path when Mode C is enabled.
+            profile.cfl_newton_libjxl_math_with_ls_warm_start,
         )
     } else {
         (

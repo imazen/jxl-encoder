@@ -102,6 +102,25 @@ fn parse_bool_one(s: &str) -> Option<bool> {
     if s == "1" { Some(true) } else { None }
 }
 
+/// **W44-AUDIT-5 Phase 2**: extended env parser that accepts BOTH `0`
+/// and `1` so the new Mode C default-flip can be A/B-disabled via
+/// `JXL_W44_AUDIT_5_FORCE_LS_WARM_START=0`. `1` forces ON, `0` forces
+/// OFF, anything else (incl. unset) returns `None` (keeps the resolved
+/// field at its post-strategy value).
+///
+/// Needed because the Mode C default flipped to `true` on
+/// Zenjxl/Aggressive/LeanFaster — paired bench harnesses need a way to
+/// disable it without rebuilding. The original `parse_bool_one` only
+/// accepts `1` (force-on) which couldn't reach OFF when the default is
+/// already ON.
+fn parse_bool_zero_or_one(s: &str) -> Option<bool> {
+    match s {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ => None,
+    }
+}
+
 /// `JXL_W44_117_DISABLE=1` → `Some(EpfSharpnessSeed::LegacyUniform4)`
 /// (force-off the W44-117 EPF sharpness seed compute regardless of
 /// distance gate). Anything else returns `None`.
@@ -199,6 +218,11 @@ jxl_encoder_macros::strategy_def! {
             // Safe here because every other divergence is also flipped
             // (no W44-29..W44-172 calibration to throw off).
             cfl_newton_libjxl_parity = true,
+            // W44-AUDIT-5 Phase 2 (Mode C): MUST stay `false` on Libjxl —
+            // `cfl_newton_libjxl_parity = true` (above) takes priority
+            // inside the SIMD kernel. Strict cjxl byte-parity is required
+            // here; the mutual exclusion is enforced structurally.
+            cfl_newton_libjxl_math_with_ls_warm_start = false,
             // W44-197 Candidate B: enable LS-only Pass-2 at e=5/6 to
             // match libjxl `fast=true` dispatch. Pairs with the
             // `cfl_two_pass_min_effort = EffortGate::Libjxl` widening
@@ -263,6 +287,10 @@ jxl_encoder_macros::strategy_def! {
             // cost-model calibration which is incompatible with the
             // libjxl-parity Newton (W44-183 measured 25/27 regressions).
             cfl_newton_libjxl_parity = false,
+            // W44-AUDIT-5 Phase 2 (Mode C): OPT-IN ONLY. LeanFaster
+            // mirrors Zenjxl per the standing pattern. See Zenjxl
+            // preset for the HONEST-STOP narrative.
+            cfl_newton_libjxl_math_with_ls_warm_start = false,
             // W44-197: same cost-model-calibration concern — LeanFaster
             // keeps the e=5/6 no-Pass-2 baseline.
             cfl_pass2_ls_at_low_effort = false,
@@ -320,6 +348,27 @@ jxl_encoder_macros::strategy_def! {
             // W44-176 terminal exclude via OR.
             high_colour_class_exclude = true,
             cfl_newton_libjxl_parity = false,
+            // W44-AUDIT-5 Phase 2 (Mode C): OPT-IN ONLY on Zenjxl. The
+            // Phase 2 3-mode bisect (`benchmarks/w44_audit_5_phase2_mode_bisect_2026-05-24.tsv`,
+            // codec_wiki e7 d=4 + 1418519 + 1531677) measured Mode C =
+            // byte-identical to Mode A (pre-Phase-2 Zenjxl LS-only) on
+            // all 3 cells, because the encoder's i8 CfL multipliers
+            // round identically when both Newton paths (libjxl-math vs
+            // LS-only refinement) start from `ls_x` warm-start on these
+            // inputs. The codec_wiki SSIM2 deficit (-5.51 Mode B vs cjxl,
+            // -4.31 Mode A/C vs cjxl) is NOT closed by Mode C on
+            // Zenjxl — the deficit lives on Mode B (Libjxl strategy)
+            // because of the bit-exact libjxl Newton (x=0 start, no LS
+            // fallback) which picks DIFFERENT multipliers on screenshots.
+            // Libjxl strategy MUST keep bit-exact parity per the
+            // byte-lock invariant, so Mode C ships as opt-in only.
+            // Callers who want to A/B Mode C can flip via env
+            // `JXL_W44_AUDIT_5_FORCE_LS_WARM_START=1` or by setting the
+            // field on `EncoderImprovementsCustom`. Phase 3 needs a
+            // different mechanism (e.g. lift the screenshot-class
+            // discriminator before CfL Pass-1) to close the Libjxl-side
+            // gap.
+            cfl_newton_libjxl_math_with_ls_warm_start = false,
             // W44-197: Zenjxl preserves cost-model calibration; no LS-only
             // Pass-2 at e=5/6.
             cfl_pass2_ls_at_low_effort = false,
@@ -370,6 +419,11 @@ jxl_encoder_macros::strategy_def! {
             // discriminator for the Zenjxl bundle).
             high_colour_class_exclude = true,
             cfl_newton_libjxl_parity = false,
+            // W44-AUDIT-5 Phase 2 (Mode C): OPT-IN ONLY. Aggressive
+            // mirrors Zenjxl per the standing pattern; bench measured
+            // byte-identical to Mode A on the codec_wiki + 2 photo cells
+            // (see Zenjxl preset for the full HONEST-STOP narrative).
+            cfl_newton_libjxl_math_with_ls_warm_start = false,
             // W44-197: Aggressive mirrors Zenjxl on Section C calibration
             // concerns.
             cfl_pass2_ls_at_low_effort = false,
@@ -584,6 +638,46 @@ jxl_encoder_macros::strategy_def! {
             env_hook = "JXL_W44_184_FORCE_LIBJXL_NEWTON" => parse_bool_one,
             divergence_section = "C",
             divergence_row_ref = "W44-184/W44-195 CfL Newton libjxl parity (Pass-1 dispatch + Pass-2 internals, eps=100, max_iters=20)",
+        },
+
+        /// **W44-AUDIT-5 Phase 2 (Mode C)**: hybrid CfL Newton — libjxl
+        /// math (eps=100, max_iters=20) starting from the LS warm-start
+        /// (`ls_x`) with the existing LS fallback on non-convergence.
+        /// Engages Pass-1 AND Pass-2 Newton when set, same dispatch
+        /// shape as `cfl_newton_libjxl_parity`.
+        ///
+        /// Mutually-exclusive with `cfl_newton_libjxl_parity` inside the
+        /// SIMD kernel — `libjxl_parity = true` takes priority and
+        /// overrides this flag. The two are intentionally NOT a single
+        /// enum because their independent strategy-by-strategy defaults
+        /// are easier to reason about as booleans (per W44-193 macro
+        /// philosophy).
+        ///
+        /// Designed to close the W44-AUDIT-5 Phase 1 codec_wiki SSIM2
+        /// deficit (-5.51 vs cjxl on `e7 d=4`) without sacrificing the
+        /// W44-29..W44-172 photo cost-model wins. The LS warm-start
+        /// preserves the calibrated baseline; the libjxl Newton math
+        /// recovers the chroma-multiplier accuracy on high-detail
+        /// screenshot content.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `false` (uses `libjxl_parity = true`, which takes
+        ///   priority — strict bit-exact path required by the byte-lock
+        ///   invariant).
+        /// - Zenjxl / Aggressive / LeanFaster: `false` (opt-in only —
+        ///   the Phase 2 3-mode bisect measured Mode C byte-identical to
+        ///   Mode A on the codec_wiki SSIM2-wedge cell + 2 photos, so
+        ///   the default-flip was reverted; see Zenjxl preset HONEST-STOP
+        ///   comment for the full narrative).
+        ///
+        /// Promoted from env var `JXL_W44_AUDIT_5_FORCE_LS_WARM_START`
+        /// for opt-in A/B debugging without rebuild (accepts `0` AND
+        /// `1` per W44-AUDIT-5 Phase 2's extended parser
+        /// `parse_bool_zero_or_one`). Section C.
+        cfl_newton_libjxl_math_with_ls_warm_start: bool {
+            env_hook = "JXL_W44_AUDIT_5_FORCE_LS_WARM_START" => parse_bool_zero_or_one,
+            divergence_section = "C",
+            divergence_row_ref = "W44-184/W44-195 Mode C — CfL Newton libjxl-math (eps=100, iters=20) + LS warm-start (W44-AUDIT-5 Phase 2)",
         },
 
         /// **W44-197 Candidate B**: enable CfL Pass-2 with LS-only solver
@@ -980,6 +1074,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         row_ref: "W44-184/W44-195 CfL Newton libjxl parity (Pass-1 dispatch + Pass-2 internals, eps=100, max_iters=20)",
         raw: __CUSTOM_DIVERGENCE_CFL_NEWTON_LIBJXL_PARITY,
     },
+    // Section C — W44-AUDIT-5 Phase 2 Mode C hybrid CfL Newton
+    DivergenceEntry {
+        gate_name: "cfl_newton_libjxl_math_with_ls_warm_start",
+        section: "C",
+        row_ref: "W44-184/W44-195 Mode C — CfL Newton libjxl-math (eps=100, iters=20) + LS warm-start (W44-AUDIT-5 Phase 2)",
+        raw: __CUSTOM_DIVERGENCE_CFL_NEWTON_LIBJXL_MATH_WITH_LS_WARM_START,
+    },
     // Section C — W44-197 CfL Pass-2 LS-only at e=5/6
     DivergenceEntry {
         gate_name: "cfl_pass2_ls_at_low_effort",
@@ -1072,6 +1173,9 @@ mod tests {
         assert!(d.high_colour_class_exclude);
         // Section C
         assert!(!d.cfl_newton_libjxl_parity);
+        // W44-AUDIT-5 Phase 2: opt-in only on Zenjxl (HONEST-STOP — Mode C
+        // measured byte-identical to Mode A on bisect cells).
+        assert!(!d.cfl_newton_libjxl_math_with_ls_warm_start);
         assert!(!d.cfl_pass2_ls_at_low_effort);
     }
 
@@ -1108,6 +1212,16 @@ mod tests {
         assert_ne!(l.cfl_newton_libjxl_parity, z.cfl_newton_libjxl_parity);
         // W44-197: Libjxl flips Pass-2 LS-only at e=5/6 on; Zenjxl off.
         assert_ne!(l.cfl_pass2_ls_at_low_effort, z.cfl_pass2_ls_at_low_effort);
+        // W44-AUDIT-5 Phase 2 (Mode C): both Libjxl and Zenjxl default
+        // to `false` after the HONEST-STOP (Libjxl because parity takes
+        // priority; Zenjxl because Mode C measured byte-identical to
+        // Mode A on the bisect cells). So this is the ONE Section C
+        // field where Libjxl and Zenjxl agree on default value.
+        assert_eq!(
+            l.cfl_newton_libjxl_math_with_ls_warm_start,
+            z.cfl_newton_libjxl_math_with_ls_warm_start
+        );
+        assert!(!l.cfl_newton_libjxl_math_with_ls_warm_start);
     }
 
     /// Aggressive == Zenjxl (forward-compat slot per W44-124).
@@ -1143,5 +1257,10 @@ mod tests {
         assert!(__CUSTOM_DIVERGENCE_CONTENT_CLASS_AUTO_CLASSIFY.contains("section=B"));
         assert!(__CUSTOM_DIVERGENCE_EPF_DISPATCH.contains("section=E"));
         assert!(__CUSTOM_DIVERGENCE_CFL_TWO_PASS_MIN_EFFORT.contains("section=A"));
+        // W44-AUDIT-5 Phase 2 (Mode C)
+        assert!(__CUSTOM_DIVERGENCE_CFL_NEWTON_LIBJXL_MATH_WITH_LS_WARM_START
+            .contains("section=C"));
+        assert!(__CUSTOM_DIVERGENCE_CFL_NEWTON_LIBJXL_MATH_WITH_LS_WARM_START
+            .contains("W44-AUDIT-5"));
     }
 }

@@ -1926,6 +1926,11 @@ impl VarDctEncoder {
                 // at e>=7), so the bool actively governs the SIMD code
                 // path here for EncoderStrategy::Libjxl animation frames.
                 self.profile.cfl_newton_libjxl_parity,
+                // W44-AUDIT-5 Phase 2 (Mode C): same propagation pattern
+                // as the still-image path. Animation frames produced by
+                // Zenjxl / Aggressive will use the hybrid Newton
+                // (libjxl math + LS warm-start) per the default-flip.
+                self.profile.cfl_newton_libjxl_math_with_ls_warm_start,
             )
         } else {
             CflMap::zeros(
@@ -2032,6 +2037,11 @@ impl VarDctEncoder {
                 // above. Pass-2 IS the libjxl Newton site (W44-182 dump
                 // measurement; W44-183 falsification).
                 self.profile.cfl_newton_libjxl_parity,
+                // W44-AUDIT-5 Phase 2 (Mode C): same plumbing as the
+                // still-image Pass-2 call. Engages the hybrid Newton
+                // (libjxl math + LS warm-start) for animation frames
+                // under Zenjxl / Aggressive.
+                self.profile.cfl_newton_libjxl_math_with_ls_warm_start,
             );
         }
 

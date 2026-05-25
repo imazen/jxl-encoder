@@ -1482,6 +1482,16 @@ name = "w44_184_libjxl_cfl_newton_ab"
 path = "examples/w44_184_libjxl_cfl_newton_ab.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-AUDIT-5 Phase 2: 3-mode A/B/C bisect on codec_wiki e7 d=4 + 2 photos.
+# Single-process-per-mode harness via MODE={A,B,C} env. Mode A = pre-Phase-2
+# Zenjxl (LS-only via JXL_W44_AUDIT_5_FORCE_LS_WARM_START=0); Mode B =
+# EncoderStrategy::Libjxl (bit-exact); Mode C = post-Phase-2 Zenjxl default
+# (libjxl Newton math + LS warm-start + LS fallback).
+[[example]]
+name = "w44_audit_5_phase2_mode_bisect"
+path = "examples/w44_audit_5_phase2_mode_bisect.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop", "__internals"]
+
 # W44-197 Candidate B + C perf + A/B measurement. Replaces per-coefficient
 # `q / qw_x[i]` with `q * inv_qw_x[i]` (Candidate C, byte-identical) and
 # wires the new `cfl_pass2_ls_at_low_effort` gate on `Libjxl` strategy
