@@ -1,0 +1,3 @@
+image	encoder	effort	distance	bytes	encode_ms	dump_dir
+clic_22ea12_WORST	ours	7	4	36258	537.61	/tmp/w44_audit_8_phase4_dc_dumps/clic_22ea12_WORST_e7_d4_ours
+clic_22ea12_WORST	cjxl	7	4	36614	387.28	/tmp/w44_audit_8_phase4_dc_dumps/clic_22ea12_WORST_e7_d4_cjxl

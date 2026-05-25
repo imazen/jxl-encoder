@@ -1099,6 +1099,30 @@ impl VarDctEncoder {
                     );
                 }
 
+                // W44-AUDIT-8 Phase 4 read-only DC probe (env-gated).
+                // After Step 7 completes the DC has been populated in
+                // float_dc + quant_dc for ALL channels and ALL strategies via
+                // the per-strategy `dc_from_dct_*` calls; the iteration shape
+                // (covered_y × covered_x) matches every match-arm above.
+                // Coordinates are absolute block indices (after rect origin).
+                // Zero overhead when JXL_W44_AUDIT_8_P4_DUMP env unset.
+                #[cfg(feature = "std")]
+                for iy in 0..covered_y {
+                    for ix in 0..covered_x {
+                        let dc_idx = (by - yoff + iy) * width + (bx - xoff + ix);
+                        for c in 0..3 {
+                            super::w44_audit_8_p4_dump::dump_dc(
+                                bx + ix,
+                                by + iy,
+                                c,
+                                raw_strategy,
+                                float_dc[c][dc_idx],
+                                quant_dc[c][dc_idx],
+                            );
+                        }
+                    }
+                }
+
                 // ── Step 8: Count non-zeros for all 3 channels ─────────────
                 let transpose_slots = covered_y > covered_x;
                 for c in 0..3 {

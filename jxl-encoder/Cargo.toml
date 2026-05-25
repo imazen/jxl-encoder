@@ -1993,6 +1993,17 @@ name = "w44_audit_8_phase3_clic_perblock_dump"
 path = "examples/w44_audit_8_phase3_clic_perblock_dump.rs"
 required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 
+# W44-AUDIT-8 Phase 4: per-DC-block dump on clic_22ea12 e7 d=4. P3 ruled
+# out AC strategy / qac (97.5 % agreement, 0/30 mismatches in worst region).
+# P4 instruments BOTH our DC pipeline and libjxl's DC quantize site
+# (enc_modular.cc::AddVarDCTDC Is444 branch) so per-block float DC and
+# quantized i16 DC can be joined on (bx, by, channel) for divergence
+# triage. Env: JXL_W44_AUDIT_8_P4_DUMP=<dir>.
+[[example]]
+name = "w44_audit_8_phase4_dc_dump"
+path = "examples/w44_audit_8_phase4_dc_dump.rs"
+required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+
 # W44-104: probe whether bypassing W44-65/W44-68 DCT32+DCT64 suppression
 # on terminal-class content (via `with_dct_suppress_hint(Some(false))`)
 # recovers SSIM2 vs cjxl. Background: W44-103 dump found ours emits 0
