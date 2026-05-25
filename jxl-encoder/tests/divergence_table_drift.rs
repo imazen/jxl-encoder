@@ -88,7 +88,8 @@ use std::path::PathBuf;
 /// W44-205 added `coeff_orders_disable_medium_buckets` Section D gate → 27.
 /// W44-AUDIT-6 Phase 1 added `high_colour_class_exclude` Section B gate → 28.
 /// W44-AUDIT-5 Phase 2 added `cfl_newton_libjxl_math_with_ls_warm_start` Section C gate → 29.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 29;
+/// W44-AUDIT-5 Phase 3 added `cfl_pass1_screenshot_x0_start` Section C gate → 30.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 30;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");

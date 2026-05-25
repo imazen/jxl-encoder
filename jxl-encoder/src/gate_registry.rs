@@ -223,6 +223,12 @@ jxl_encoder_macros::strategy_def! {
             // inside the SIMD kernel. Strict cjxl byte-parity is required
             // here; the mutual exclusion is enforced structurally.
             cfl_newton_libjxl_math_with_ls_warm_start = false,
+            // W44-AUDIT-5 Phase 3: moot on Libjxl — `cfl_newton_libjxl_parity
+            // = true` (above) forces `x=0` start for every tile, so this
+            // per-image route is structurally redundant. Kept `false` to
+            // preserve the byte-lock invariant (which asserts no
+            // per-image dispatch on Libjxl).
+            cfl_pass1_screenshot_x0_start = false,
             // W44-197 Candidate B: enable LS-only Pass-2 at e=5/6 to
             // match libjxl `fast=true` dispatch. Pairs with the
             // `cfl_two_pass_min_effort = EffortGate::Libjxl` widening
@@ -291,6 +297,9 @@ jxl_encoder_macros::strategy_def! {
             // mirrors Zenjxl per the standing pattern. See Zenjxl
             // preset for the HONEST-STOP narrative.
             cfl_newton_libjxl_math_with_ls_warm_start = false,
+            // W44-AUDIT-5 Phase 3: LeanFaster drops every per-image
+            // content gate (matches the W44-176 / W44-AUDIT-6 pattern).
+            cfl_pass1_screenshot_x0_start = false,
             // W44-197: same cost-model-calibration concern — LeanFaster
             // keeps the e=5/6 no-Pass-2 baseline.
             cfl_pass2_ls_at_low_effort = false,
@@ -369,6 +378,15 @@ jxl_encoder_macros::strategy_def! {
             // discriminator before CfL Pass-1) to close the Libjxl-side
             // gap.
             cfl_newton_libjxl_math_with_ls_warm_start = false,
+            // W44-AUDIT-5 Phase 3 (2026-05-24): Zenjxl default OFF
+            // initially while the bisect + 36-cell regression validation
+            // run. If the bisect passes (codec_wiki SSIM2 recovery
+            // ≥ Mode B − 0.3, bytes within +5% Mode A, photos
+            // byte-identical OR within ±1.0 SSIM2), the default flips
+            // to `true` in a follow-on commit. Until then, callers can
+            // opt in by setting the field directly OR via a future env
+            // hook. See the Phase 3 ship commit for the measured numbers.
+            cfl_pass1_screenshot_x0_start = false,
             // W44-197: Zenjxl preserves cost-model calibration; no LS-only
             // Pass-2 at e=5/6.
             cfl_pass2_ls_at_low_effort = false,
@@ -424,6 +442,10 @@ jxl_encoder_macros::strategy_def! {
             // byte-identical to Mode A on the codec_wiki + 2 photo cells
             // (see Zenjxl preset for the full HONEST-STOP narrative).
             cfl_newton_libjxl_math_with_ls_warm_start = false,
+            // W44-AUDIT-5 Phase 3: Aggressive mirrors Zenjxl. Same
+            // bisect/validation gate; the default-flip lands in the
+            // same follow-on commit.
+            cfl_pass1_screenshot_x0_start = false,
             // W44-197: Aggressive mirrors Zenjxl on Section C calibration
             // concerns.
             cfl_pass2_ls_at_low_effort = false,
@@ -678,6 +700,45 @@ jxl_encoder_macros::strategy_def! {
             env_hook = "JXL_W44_AUDIT_5_FORCE_LS_WARM_START" => parse_bool_zero_or_one,
             divergence_section = "C",
             divergence_row_ref = "W44-184/W44-195 Mode C — CfL Newton libjxl-math (eps=100, iters=20) + LS warm-start (W44-AUDIT-5 Phase 2)",
+        },
+
+        /// **W44-AUDIT-5 Phase 3**: per-image content-class CfL warm-start
+        /// route. When `true` AND the per-image
+        /// [`crate::vardct::encoder::ZenanalyzeProxies`] satisfy
+        /// `m3_colourfulness >= W44_AUDIT_6_HIGH_COLOUR_M3_MIN` (= 80.0),
+        /// the encoder routes CfL Pass-1 (and Pass-2 if it fires) through
+        /// the libjxl-bit-exact `x=0` start path for that single image.
+        /// Photos and non-sRGB-u8 layouts stay on the LS warm-start /
+        /// LS-only path (the W44-29..W44-172 cost-model calibration is
+        /// preserved).
+        ///
+        /// **Why this exists**: the W44-AUDIT-5 Phase 1 + Phase 2 chain
+        /// established that the codec_wiki-class SSIM2 deficit (-5.51 vs
+        /// cjxl on `e7 d=4`) is caused by the CfL warm-start choice
+        /// (`x=0` start vs `ls_x` warm-start), not the Newton math. Mode
+        /// C (libjxl-math + ls_x warm-start, Phase 2) was byte-identical
+        /// to Mode A (LS-only, the Zenjxl baseline) on screenshots:
+        /// both refinement paths land at the same `i8` multiplier when
+        /// started from `ls_x`. The deficit lives on the START position.
+        ///
+        /// Phase 3 routes by content class: the W44-AUDIT-6 Phase 1
+        /// discriminator (`m3 >= 80`) admits only mixed-content
+        /// screenshots (codec_wiki etc.) to the `x=0` start path.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `false` — moot (`libjxl_parity = true` already
+        ///   forces `x=0` for every tile).
+        /// - LeanFaster: `false` — drops per-image content gates per
+        ///   the standing pattern (W44-176 / W44-AUDIT-6).
+        /// - Zenjxl / Aggressive: `true` if Phase 3 bisect + regression
+        ///   validation pass; otherwise `false` (opt-in only).
+        ///
+        /// Promoted from env var `JXL_W44_AUDIT_5_P3_DISABLE` (negative
+        /// hook — `=1` forces OFF, mirrors W44-176 / W44-AUDIT-6 style).
+        /// Section C.
+        cfl_pass1_screenshot_x0_start: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W44-184/W44-195 Phase 3 — per-image M3>=80 CfL `x=0` start route (Pass-1 + Pass-2 dispatch, W44-AUDIT-5 Phase 3)",
         },
 
         /// **W44-197 Candidate B**: enable CfL Pass-2 with LS-only solver
@@ -1080,6 +1141,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "C",
         row_ref: "W44-184/W44-195 Mode C — CfL Newton libjxl-math (eps=100, iters=20) + LS warm-start (W44-AUDIT-5 Phase 2)",
         raw: __CUSTOM_DIVERGENCE_CFL_NEWTON_LIBJXL_MATH_WITH_LS_WARM_START,
+    },
+    // Section C — W44-AUDIT-5 Phase 3 per-image M3>=80 CfL x=0 route
+    DivergenceEntry {
+        gate_name: "cfl_pass1_screenshot_x0_start",
+        section: "C",
+        row_ref: "W44-184/W44-195 Phase 3 — per-image M3>=80 CfL `x=0` start route (Pass-1 + Pass-2 dispatch, W44-AUDIT-5 Phase 3)",
+        raw: __CUSTOM_DIVERGENCE_CFL_PASS1_SCREENSHOT_X0_START,
     },
     // Section C — W44-197 CfL Pass-2 LS-only at e=5/6
     DivergenceEntry {

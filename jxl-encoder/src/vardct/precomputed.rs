@@ -1515,6 +1515,17 @@ pub(crate) fn compute_dc_group(
             // `compute_cfl_map` site in `encoder.rs` — pass the
             // libjxl-parity bool through so per-DC-group precomputed
             // CfL matches what the still-image path would have produced.
+            //
+            // W44-AUDIT-5 Phase 3 (2026-05-24): the per-image M3>=80
+            // discriminator that elevates this to `libjxl_parity = true`
+            // for screenshot-class images on Zenjxl/Aggressive is NOT
+            // wired here — the precomputed path is a streaming/animation
+            // adjacent path that doesn't carry `ZenanalyzeProxies` on
+            // `EncoderPrecomputedGlobal` (same precedent as the W44-91
+            // proxy gate). The Phase 3 route is byte-identical on the
+            // still-image path and a no-op here; callers needing the
+            // route on the precomputed path can pre-set the strategy's
+            // `cfl_newton_libjxl_parity` field directly.
             profile.cfl_newton_libjxl_parity,
             // W44-AUDIT-5 Phase 2 (Mode C): same plumbing rationale —
             // propagate the LS-warm-start flag so per-DC-group CfL

@@ -1,0 +1,198 @@
+W44-AUDIT-5 Phase 3: 3-mode A/B/D bisect on codec_wiki e7 d=4 + 2 photo cells
+
+Status: HONEST-STOP — Mode D default-flip RULED OUT
+=====================================================
+
+Date: 2026-05-24
+Source: jxl-encoder commit (Phase 3 source ships as OPT-IN API only)
+Bench TSV: w44_audit_5_phase3_mode_bisect_2026-05-24.tsv
+Reproducer: jxl-encoder/examples/w44_audit_5_phase3_mode_bisect.rs
+
+Modes compared
+---------------
+  Mode A  - Current Zenjxl baseline. LS warm-start CfL + LS-only refinement.
+            Field: cfl_pass1_screenshot_x0_start = false (default).
+  Mode B  - EncoderStrategy::Libjxl, bit-exact cjxl-parity. libjxl Newton
+            (eps=100, max_iters=20, `x = 0` start, no LS fallback) ALWAYS,
+            on EVERY image. Strict cjxl-parity byte-lock invariant holds.
+  Mode D  - Zenjxl with cfl_pass1_screenshot_x0_start = true OPT-IN.
+            Per-image content-class router: when ZenanalyzeProxies indicate
+            `m3_colourfulness >= W44_AUDIT_6_HIGH_COLOUR_M3_MIN = 80.0`
+            (i.e. mixed-content screenshots like codec_wiki), the CfL
+            Pass-1 + Pass-2 SIMD calls flip `libjxl_parity = true` for
+            that single image only. Photos (M3 < 40 on CID22) stay on
+            the LS warm-start path.
+
+Per-cell results (bytes, SSIM2, Δ vs cjxl)
+-------------------------------------------
+  Cell                       Mode      bytes    SSIM2    Δbytes%   ΔSSIM2 (vs cjxl)
+  gb82_codec_wiki  e7 d=4    A         62850    80.53    +0.22     -4.33
+  gb82_codec_wiki  e7 d=4    B         70217    79.35    +11.97    -5.51
+  gb82_codec_wiki  e7 d=4    D         68330    78.73    +8.96     -6.13
+  cid22_1418519    e7 d=4    A          8747    71.35    -6.46     -1.65
+  cid22_1418519    e7 d=4    B          9813    70.29    +4.94     -2.71
+  cid22_1418519    e7 d=4    D          8747    71.35    -6.46     -1.65  ← byte-identical to A
+  cid22_1531677    e7 d=4    A         23375    56.57    -6.19     -1.26
+  cid22_1531677    e7 d=4    B         33967    48.58    +36.32    -9.25
+  cid22_1531677    e7 d=4    D         23375    56.57    -6.19     -1.26  ← byte-identical to A
+
+Mode D vs Mode A delta on codec_wiki
+-------------------------------------
+  bytes:  62850 → 68330   = +5480 B  = +8.72%   (target was within +5%)
+  SSIM2:  80.53 → 78.73   = -1.80    (target was ≥ Mode B − 0.3 = 79.05)
+  bfly:   3.216 → 3.212   = ~0.0     (no measurable change)
+
+Acceptance gates (Phase 3 Step 3, evaluated)
+----------------------------------------------
+  (a) Mode D codec_wiki SSIM2 ≥ Mode B − 0.3 (= 79.05)?
+      78.73 ≥ 79.05 → FAIL (-0.32 below threshold)
+  (b) Mode D codec_wiki bytes within +5% of Mode A (= 65993 ceiling)?
+      68330 > 65993 → FAIL (+8.72% vs +5% allowed)
+  (c) Photos byte-identical OR within ±1.0 SSIM2 AND ±2% bytes of Mode A?
+      Both photos BYTE-IDENTICAL → PASS
+
+Verdict
+--------
+  2 of 3 hard gates FAIL on codec_wiki — DEFAULT-FLIP RULED OUT.
+
+  Mode D produces WORSE SSIM2 (-1.80) and LARGER bytes (+8.72%) vs Mode A
+  on the codec_wiki SSIM2-wedge cell. The per-image route DID fire (bytes
+  changed, confirming the M3>=80 discriminator hit and CfL Pass-1 + Pass-2
+  routed through `libjxl_parity = true` for codec_wiki). But the
+  downstream Zenjxl cost model (W44-29..W44-172) was calibrated against
+  the LS-warm-start CfL output. Flipping JUST the CfL Pass-1 starting
+  point in isolation produces different chroma multipliers that the
+  strategy selector + entropy coder + buttloop all assume are LS-derived
+  — creating a mismatched pipeline.
+
+  Mode B (full EncoderStrategy::Libjxl) works because EVERY other gate
+  is ALSO Libjxl-aligned (Section A effort gates widen, Section B
+  content-aware gates disable, Section D KNOWN-BUGs re-enable). Flipping
+  ONLY the CfL gate from Zenjxl baseline creates the worst-of-both:
+  Libjxl chroma multipliers fed into a Zenjxl cost-model pipeline.
+
+  Photos correctly stay byte-identical to Mode A — the M3<80 discriminator
+  excludes them, so the calibration is undisturbed there.
+
+Disposition
+-----------
+  - Source code SHIPPED as opt-in API only:
+    * New field `EffortProfile::cfl_pass1_screenshot_x0_start: bool`
+      (default false on every strategy).
+    * New gate row in `strategy_def!{}` macro
+      (`cfl_pass1_screenshot_x0_start: bool`, Section C).
+    * Dispatch helper `w44_audit_5_p3_force_libjxl_parity_for_screenshot`
+      composing field + W44-AUDIT-6 Phase 1 `m3 >= 80` proxy predicate.
+    * Wired into 3 CfL Newton call sites in vardct/encoder.rs (Pass-1,
+      Pass-2, precomputed-mode patched Pass-1) + animation path in
+      vardct/bitstream.rs (Pass-1 + Pass-2; today no-op there since
+      `zenanalyze_proxies` is always None on streaming/animation paths
+      per W44-91 precedent).
+    * Env hook `JXL_W44_AUDIT_5_P3_DISABLE=1` forces OFF at every
+      dispatch site (mirrors W44-176 / W44-AUDIT-6 negative-hook
+      pattern).
+    * EXPECTED_DIVERGENCE_GATE_COUNT 29 → 30, new
+      ALL_DIVERGENCE_ENTRIES row.
+    * docs/LIBJXL_DIVERGENCES.md Section C row appended.
+
+  - Default-flip NOT shipped. Zenjxl/Aggressive presets keep
+    `cfl_pass1_screenshot_x0_start = false`. Callers who want the route
+    can opt in via:
+      EncoderStrategy::Custom(Box::new(EncoderImprovementsCustom {
+          cfl_pass1_screenshot_x0_start: true,
+          ..Default::default()
+      }))
+    OR by holding the env hook OFF (the route fires by default when
+    the field is on — env hook is the OFF override).
+
+  - 36-cell regression validation NOT executed (Step 4 conditional on
+    Step 3 bisect passing). Source-state default behaviour is
+    BYTE-IDENTICAL to pre-Phase-3 (hash-locks 36/36 BYTE-IDENTICAL
+    confirmed before-and-after dispatch wiring; the per-image route is
+    inert by default).
+
+  - Libjxl strategy byte-lock UNCHANGED (4/4 BYTE-IDENTICAL): the gate
+    is `false` on Libjxl per the strict cjxl-parity invariant.
+
+Why Mode D fails when Mode B succeeds
+--------------------------------------
+  The Phase 1 diagnostic narrative ("the deficit lives on the START
+  position, not the refinement math") was correct ABOUT THE LIBJXL
+  STRATEGY in isolation. Mode B applies `x = 0` AND every other Libjxl
+  cost-model alignment simultaneously, producing a self-consistent
+  pipeline that hits 79.35 SSIM2 on codec_wiki.
+
+  Mode D applies ONLY `x = 0` for the per-image admitted set, while
+  keeping Zenjxl's cost-model gates (which are tuned against LS
+  multipliers). The strategy selector picks DIFFERENT AC strategies
+  given the different multipliers, the entropy coder packs them with
+  Zenjxl's clustering choices, and the buttloop converges on a quant
+  field that doesn't match either Libjxl OR pure-Zenjxl behaviour.
+  Result: -1.80 SSIM2 + +8.72% bytes vs Mode A.
+
+  Cleanly closing the codec_wiki SSIM2 deficit on Zenjxl requires
+  either:
+  (1) A larger Phase 4 — re-calibrate the Zenjxl cost model AGAINST
+      a screenshot-class x=0 baseline (multi-week effort; risk of
+      regressing the W44-29..W44-172 photo wins it was tuned for).
+  (2) Lift more of the Libjxl pipeline simultaneously for the same
+      per-image admit class — but at that point we're approaching
+      Mode B for screenshots, which already exists and is strictly
+      better than Mode D (79.35 vs 78.73 SSIM2). The question becomes
+      whether to ROUTE codec_wiki-class to EncoderStrategy::Libjxl
+      via a per-image dispatcher at the API boundary. That's a much
+      bigger change than a single gate flip.
+  (3) Accept that the Zenjxl strategy is OPTIMIZED FOR PHOTOS at the
+      cost of -4.3 SSIM2 on codec_wiki-class screenshots, and document
+      the trade-off explicitly. Callers needing screenshot quality
+      should use Libjxl strategy (or a future hypothetical
+      EncoderStrategy::ScreenshotAware) for that workload.
+
+DO NOT
+-------
+- DO NOT default-flip `cfl_pass1_screenshot_x0_start` on Zenjxl or
+  Aggressive based on this bench. The Phase 3 mechanism IS structurally
+  insufficient — measurement is conclusive: Mode D loses both SSIM2 AND
+  bytes vs Mode A.
+
+- DO NOT lower the M3 threshold below 80 thinking that's the issue.
+  The codec_wiki M3 ≈ 145.73 (per W44-AUDIT-4 measurement) sits 1.8×
+  above the threshold; the discriminator correctly fires on this cell.
+  The route IS routing; the route is what's wrong, not the gate.
+
+- DO NOT raise the M3 threshold above 80. Photos in the bisect are
+  byte-identical to Mode A because their M3 < 80 — the discriminator
+  is doing its job. Raising it would only fail to fire on more
+  screenshots without fixing the bad route.
+
+- DO NOT cite "FMA precision" for the SSIM2 deficit (per W44-66
+  user correction). The deficit is from CfL multipliers picking
+  different `i8` values, which propagate through strategy selection
+  + entropy coding to byte-level changes. Pure dispatch-shape mechanism.
+
+- DO NOT remove the new field or unwire the dispatch sites. The OPT-IN
+  API surface IS a legitimate Phase 3 deliverable — callers and future
+  experimenters need it. The drift test + Libjxl byte-lock + hash-locks
+  all PASS at default-off, proving the API surface is structurally
+  inert until opted into.
+
+- DO NOT respawn Phase 3 with a "tighter" discriminator (e.g. M3 >=
+  100, or M3 >= 80 AND fcbr < 0.01). The mechanism failure mode is
+  CHROMA MULTIPLIER MISMATCH WITH ZENJXL COST MODEL — not a "wrong
+  cell admitted" issue. A tighter discriminator would just fire on
+  fewer screenshots without fixing the underlying mismatch.
+
+Phase 4 candidates
+-------------------
+  1. Route codec_wiki-class to Libjxl strategy at the API boundary
+     (per-image dispatch on EncoderStrategy). Big API change but
+     measurement-supported. Estimate: 1-2 days for the dispatcher +
+     bisect on 10-20 screenshots + photo regression sweep.
+  2. Per-stratum Zenjxl cost-model recalibration AGAINST a libjxl-CfL
+     baseline for screenshot-class inputs. Estimate: 2-3 weeks
+     (corpus sweep + per-strategy entropy_mul retune + photo
+     regression validation across the W44-29..W44-172 surface).
+  3. Accept the trade-off: document Zenjxl's codec_wiki SSIM2 deficit
+     as INTENTIONAL (cost-model optimized for photos, screenshots get
+     -4.3 SSIM2 trade-off). Mention EncoderStrategy::Libjxl as the
+     workaround for screenshot-heavy workloads.

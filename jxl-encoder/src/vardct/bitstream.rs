@@ -1907,6 +1907,20 @@ impl VarDctEncoder {
             )?;
         }
 
+        // W44-AUDIT-5 Phase 3: same per-image dispatch as the still-image
+        // path. Today `zenanalyze_proxies` is always `None` on the
+        // animation/streaming paths (per W44-91), so this is a no-op
+        // structural change today — composed value reduces to
+        // `self.profile.cfl_newton_libjxl_parity`. Wired now for parity
+        // when a future commit populates proxies on per-animation-frame
+        // inputs.
+        let anim_p3_force_libjxl_parity =
+            super::encoder::w44_audit_5_p3_force_libjxl_parity_for_screenshot(
+                &self.profile,
+                self.zenanalyze_proxies.as_ref(),
+            );
+        let anim_cfl_newton_libjxl_parity_effective =
+            self.profile.cfl_newton_libjxl_parity || anim_p3_force_libjxl_parity;
         let mut cfl_map = if self.cfl_enabled {
             super::chroma_from_luma::compute_cfl_map(
                 &xyb_x,
@@ -1919,13 +1933,14 @@ impl VarDctEncoder {
                 self.profile.cfl_newton,
                 self.profile.cfl_newton_eps,
                 self.profile.cfl_newton_max_iters,
-                // W44-184: threads the libjxl-parity bool through the
-                // animation path identically to the still-image path
-                // (encoder.rs:4090). Pass 1 in this branch invokes
-                // Newton when `cfl_newton` is true (animation default
-                // at e>=7), so the bool actively governs the SIMD code
-                // path here for EncoderStrategy::Libjxl animation frames.
-                self.profile.cfl_newton_libjxl_parity,
+                // W44-184 / W44-AUDIT-5 Phase 3: composed effective parity
+                // value — Phase 3 forces libjxl_parity ON for M3>=80
+                // screenshot-class images. Pass 1 in this branch invokes
+                // Newton when `cfl_newton` is true (animation default at
+                // e>=7), so the bool actively governs the SIMD code path
+                // here for both EncoderStrategy::Libjxl and Phase-3-
+                // admitted screenshot frames on Zenjxl/Aggressive.
+                anim_cfl_newton_libjxl_parity_effective,
                 // W44-AUDIT-5 Phase 2 (Mode C): same propagation pattern
                 // as the still-image path. Animation frames produced by
                 // Zenjxl / Aggressive will use the hybrid Newton
@@ -2033,10 +2048,12 @@ impl VarDctEncoder {
                 self.profile.cfl_newton,
                 self.profile.cfl_newton_eps,
                 self.profile.cfl_newton_max_iters,
-                // W44-184: same plumbing rationale as the pass-1 call
-                // above. Pass-2 IS the libjxl Newton site (W44-182 dump
-                // measurement; W44-183 falsification).
-                self.profile.cfl_newton_libjxl_parity,
+                // W44-184 / W44-AUDIT-5 Phase 3: same composed value as
+                // Pass-1 above. Pass-2 IS the libjxl Newton site (W44-182
+                // dump measurement; W44-183 falsification); Phase 3
+                // elevates per-image M3>=80 screenshot frames to the
+                // `x=0` start path.
+                anim_cfl_newton_libjxl_parity_effective,
                 // W44-AUDIT-5 Phase 2 (Mode C): same plumbing as the
                 // still-image Pass-2 call. Engages the hybrid Newton
                 // (libjxl math + LS warm-start) for animation frames
