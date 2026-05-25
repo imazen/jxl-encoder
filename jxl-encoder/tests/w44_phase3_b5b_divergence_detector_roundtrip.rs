@@ -23,7 +23,7 @@
 
 #![cfg(feature = "gpu-butteraugli")]
 
-use jxl_encoder::api::{LossyConfig, PixelLayout};
+use jxl_encoder::api::{LossyConfig, PerceptualDevice, PixelLayout};
 use jxl_encoder::vardct::__b5b_counters as b5b_counters;
 use std::io::Cursor;
 
@@ -150,7 +150,7 @@ fn b5b_detector_path_roundtrips_via_oxide() {
     let rgb = synth_rgb(256, 256);
     let cfg = LossyConfig::new(2.0)
         .with_effort(8) // e8 fires the buttloop
-        .with_gpu_butteraugli(true)
+        .with_perceptual_device(PerceptualDevice::Gpu)
         .with_threads(1);
     let bytes = cfg
         .encode(&rgb, 256, 256, PixelLayout::Rgb8)
@@ -203,7 +203,7 @@ fn b5b_detector_path_roundtrips_via_jxl_rs() {
     let rgb = synth_rgb(256, 256);
     let cfg = LossyConfig::new(2.0)
         .with_effort(8)
-        .with_gpu_butteraugli(true)
+        .with_perceptual_device(PerceptualDevice::Gpu)
         .with_threads(1);
     let bytes = cfg
         .encode(&rgb, 256, 256, PixelLayout::Rgb8)
@@ -229,6 +229,6 @@ fn b5b_detector_path_roundtrips_via_jxl_rs() {
 //     the env var entirely)
 //   - `b5b_counters_reset_zero_state` (reset clears counters)
 //   - `b5b_counters_record_round_trip` (record + snapshot round-trip)
-// — all in the in-source `vardct::butteraugli_backend::tests` module,
+// — all in the in-source `vardct::perceptual_backend::tests` module,
 // which is GPU-feature-gated but doesn't invoke the encoder at all so
 // is not subject to the env-var race.

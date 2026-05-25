@@ -80,6 +80,31 @@ butteraugli = { path = "../../butteraugli/butteraugli" }
 # at `crates/butteraugli-gpu`. `publish = false` so always path-pinned;
 # pulled in via the `gpu-butteraugli` cargo feature in `jxl-encoder/Cargo.toml`.
 butteraugli-gpu = { path = "../zenmetrics/crates/butteraugli-gpu" }
+# cvvdp-gpu lives in the same zenmetrics workspace. Only used by
+# `examples/cvvdp_track_baseline.rs` (RFC `docs/RFC_CVVDP_FORK.md` §5).
+# `publish = false` upstream; path-pinned here.
+cvvdp-gpu = { path = "../zenmetrics/crates/cvvdp-gpu" }
+# cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP backend. Path-pinned because
+# the crate is `publish = false` (zenmetrics workspace deliverable from
+# Agent A; commits `da81694` + `a177c89` + `c3c56ee` on master).
+# Wrapped in jxl-encoder via the `cvvdp-loop-cpu` cargo feature.
+cvvdp-cpu = { path = "../zenmetrics/crates/cvvdp-cpu" }
+# zensim-fork Phase 3 (2026-05-25): GPU zensim backend. Path-pinned
+# because zensim-gpu 0.0.1 is `publish = false` (zenmetrics workspace
+# deliverable; Phase 1 commit `1175b49` on zenmetrics master). Wrapped
+# in jxl-encoder via the `zensim-loop-gpu` cargo feature.
+zensim-gpu = { path = "../zenmetrics/crates/zensim-gpu" }
+# zensim 0.3.0 is required transitively by zensim-gpu (its Phase 1
+# `score_from_linear_planes_with_warm_ref_diffmap` delegates to the
+# 0.3-only CPU pipeline). crates.io still serves 0.2.7 as latest, so
+# path-pin to the workspace `~/work/zen/zensim/zensim` for the
+# zensim-loop / zensim-loop-gpu builds. The jxl-encoder CPU backend
+# (`zensim-loop` feature) also consumes this — APIs we use
+# (`compute_with_ref_and_diffmap_linear_planar`,
+# `precompute_reference_linear_planar`) are stable across 0.2.7 → 0.3,
+# but pinning to 0.3.x here keeps the dep tree consistent with
+# zensim-gpu.
+zensim = { path = "../zensim/zensim" }
 # cubecl is pinned to the lilith/cubecl `pr/pinned-v0.10.0` revision the
 # zenmetrics workspace uses (matches the cubecl rev butteraugli-gpu is
 # tested against). Required to keep the cubecl version consistent across

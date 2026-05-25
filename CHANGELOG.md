@@ -2,7 +2,253 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING — 2026-05-25)
+
+- **Multi-metric API refactor (RFC #3 Phase 0)**: the cvvdp-specific
+  builder methods `LossyConfig::with_cvvdp_loop` /
+  `LossyConfig::with_cvvdp_use_cpu` and the GPU butteraugli builder
+  `LossyConfig::with_gpu_butteraugli` have been **DELETED**. Use the
+  unified replacements:
+  - `LossyConfig::with_perceptual_metric(PerceptualMetric)` — pick the
+    metric: `Butteraugli` (default) or `Cvvdp`.
+  - `LossyConfig::with_perceptual_device(PerceptualDevice)` — pick the
+    device: `Auto` (default), `Cpu`, or `Gpu`.
+  - `LossyConfig::with_perceptual_target_score(Option<f32>)` — override
+    the metric's per-distance target table.
+
+  Migration cheat-sheet:
+  | pre-Phase-0                                  | Phase 0 replacement                                                                                     |
+  |---                                           |---                                                                                                      |
+  | `.with_gpu_butteraugli(true)`                | `.with_perceptual_device(PerceptualDevice::Gpu)`                                                        |
+  | `.with_gpu_butteraugli(false)`               | `.with_perceptual_device(PerceptualDevice::Cpu)`                                                        |
+  | `.with_cvvdp_loop(Some(true))`               | `.with_perceptual_metric(PerceptualMetric::Cvvdp)`                                                      |
+  | `.with_cvvdp_loop(Some(false))` / `None`     | `.with_perceptual_metric(PerceptualMetric::Butteraugli)` (or no call — that's the default)              |
+  | `.with_cvvdp_use_cpu(Some(true))`            | `.with_perceptual_device(PerceptualDevice::Cpu)` (independent of metric)                                |
+  | `.with_cvvdp_use_cpu(Some(false))` / `None`  | `.with_perceptual_device(PerceptualDevice::Auto)` (default) or `::Gpu`                                  |
+
+  `LossyConfig::with_cvvdp_bytes_tighten(Option<bool>)` is RETAINED —
+  it's a cvvdp-specific tuning knob (post-convergence bytes-tighten
+  exit pass), not a metric-selection setter. The resolver now keys off
+  `resolve_perceptual_metric() == Cvvdp` instead of the deleted
+  `resolve_cvvdp_loop`.
+
+  Cargo feature names UNCHANGED — `cvvdp-loop`, `cvvdp-loop-cpu`,
+  `cvvdp-loop-tighten`, and `gpu-butteraugli` all stay valid. Only the
+  runtime API changed.
+
+  Default behaviour is byte-identical to the pre-Phase-0
+  `LossyConfig::default()`: the default
+  `(PerceptualMetric::Butteraugli, PerceptualDevice::Auto)` resolves to
+  the same backend choice as the pre-Phase-0
+  `gpu_butteraugli = cfg!(feature = "gpu-butteraugli")` + `cvvdp_loop =
+  None` + `cvvdp_use_cpu = None` shape (verified hash-locks 36/36
+  BYTE-IDENTICAL on the default feature set).
+
+  `EncoderStrategy::Libjxl` strict cjxl-parity invariant preserved —
+  `resolve_perceptual_metric()` forces `Butteraugli` regardless of
+  caller selection (verified by the extended
+  `strategy_libjxl_byte_lock` test with the new
+  `(metric, device)` matrix).
+
+  Files: `jxl-encoder/src/api.rs` (new enums + setters + resolvers, old
+  setters deleted), `jxl-encoder/src/vardct/perceptual_backend.rs`
+  (new `MetricSelection` struct, `construct_backend` signature
+  collapsed from 7-arg to 5-arg + `propagate_resolved_metric_to_encoder`
+  helper), `jxl-encoder/src/vardct/perceptual_loop.rs` (call-site
+  update). 4 integration tests + 16 example files migrated. See
+  [`docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md`](docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md)
+  for the full design.
+
 ### Added
+
+- **zensim fork — buttloop body wiring + per-distance calibration table (Phase 4)**
+  (RFC [`docs/RFC_ZENSIM_FORK_PLAN.md`](docs/RFC_ZENSIM_FORK_PLAN.md) §6,
+  mirrors cvvdp-fork Phase 4 (commit `32581839`)). Routes the zensim
+  signal through `run_buttloop` proper. The pre-Phase-4 buttloop body
+  consumed butteraugli-direction `target_distance` verbatim when zensim
+  was active (the Phase 3 dispatch flag short-circuited the metric-
+  target lookup); Phase 4 plumbs a zensim-native target through the
+  same `target > effective_metric_target_distance` predicate and per-
+  block bad-block math the cvvdp Phase 4 already exercises.
+  Surface:
+  - `vardct/zensim_targets.rs` (NEW) — `ZENSIM_DISTANCE_TARGETS`
+    static + `zensim_target_score_for_distance` linear-interp lookup
+    over a 7-entry table at d ∈ {0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0}.
+    Seed values measured by the new `zensim_calibration_seed` example
+    (3 images × 7 distances = 21 cells, post-hoc score over
+    butteraugli-default output). 7 unit tests.
+  - `vardct/perceptual_loop::ActiveMetric` enum
+    (`Butteraugli`/`Cvvdp`/`Zensim`) — generalises the cvvdp-only
+    bool dispatch.
+  - `vardct/perceptual_loop::ZENSIM_BLOCK_CONSTANTS` (`k_tile_norm =
+    1.2` butter-parity) consumed by the new
+    `block_reducer_constants_for_metric(metric)` dispatch at the
+    per-block tile-distance reducer. The pre-Phase-4 single-bool
+    `block_reducer_constants_for_backend` is retained as a thin
+    source-compat wrapper for the unit tests.
+  - 3-way `effective_metric_target_distance` lookup precedence
+    (zensim > cvvdp > butteraugli, matches the
+    `propagate_resolved_metric_to_encoder` invariant).
+  - `JXL_ZENSIM_K_TILE_NORM` env hook (bench-only override for the
+    Phase 8-zensim refit harness).
+  - `examples/zensim_calibration_seed.rs` (NEW) +
+    `scripts/zensim_calibration_seed.py` (NEW) +
+    `examples/zensim_loop_smoke_bench.rs` (NEW) — calibration
+    pipeline + 20-cell smoke bench. Outputs at
+    `benchmarks/zensim_calibration_seed_2026-05-25.{tsv,txt,meta}`
+    and `benchmarks/zensim_loop_smoke_2026-05-25.{tsv,meta}`.
+  - `tests/zensim_loop_smoke.rs` (NEW) — 4 active tests + 1 ignored:
+    `PerceptualMetric::Butteraugli` byte-identical-to-default,
+    default-byte-identical-to-Butteraugli+Auto,
+    `EncoderStrategy::Libjxl` byte-identical-regardless-of-metric
+    across 6 (metric, device) combos, public-API round-trip on the
+    new `Zensim` variant, and the `#[ignore]`-d
+    `metric_zensim_encodes_and_decodes` (5-cell jxl-oxide roundtrip
+    that requires the slow CPU zensim buttloop).
+
+  Hash-locks 36/36 BYTE-IDENTICAL at default features AND with
+  `zensim-loop` compiled. `strategy_libjxl_byte_lock` 4/4 BYTE-
+  IDENTICAL with all of `__expert`, `__expert butteraugli-loop`,
+  `__expert butteraugli-loop zensim-loop ssim2-loop parallel`.
+  `divergence_table_drift` 7/7 PASS. Multi-decoder roundtrip:
+  jxl-oxide 5/5 PASS on the smoke cells.
+
+  Per-distance seed table values (target_score = `(100 -
+  median_zensim_native) * 1.05`, butter-direction):
+  `(0.50, 6.6381), (1.00, 9.9958), (1.50, 13.2108), (2.00, 16.4704),
+  (3.00, 20.9812), (4.00, 24.5327), (5.00, 28.4359)`.
+
+  Phase 4 ships butter-parity `k_tile_norm`. The per-block reducer
+  refit (Phase 8-zensim equivalent of cvvdp Phase 8g) is conditional
+  on the Phase 6 6-backend tracking sweep verdict.
+
+  Follow-ons:
+  - **Phase 6** — 6-backend tracking sweep (B / B_GPU / C_GPU_v4 /
+    C_CPU / Z_GPU / Z_CPU) + RFC §5.4 Pareto decision per metric.
+  - **Phase 8-zensim** (conditional) — per-block reducer refit if
+    Phase 6 lands below 85% Pareto coverage.
+  - **Phase 1b** (zensim-gpu) — pure-GPU diffmap kernels to close the
+    +1006% wall gap vs score-only GPU at 1024².
+
+- **zensim fork — opt-in zensim-driven quantization loop (Phase 3)**
+  (RFC [`docs/RFC_ZENSIM_FORK_PLAN.md`](docs/RFC_ZENSIM_FORK_PLAN.md) §5,
+  [`docs/RFC_ZENSIM_BUTTLOOP_AUDIT.md`](docs/RFC_ZENSIM_BUTTLOOP_AUDIT.md),
+  [`docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md`](docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md)).
+  Mirrors the cvvdp Phase 3 + 5 shape (commits `57757ff8` + `206b874e`)
+  for the third `PerceptualBackend` impl. **Phase 3 ships the backend
+  impl + opt-in dispatch only** — the buttloop body still consumes
+  butteraugli-direction targets; Phase 4 will plumb the zensim signal
+  through `run_buttloop` via `vardct/zensim_targets.rs` per-distance
+  calibration. Default OFF — opt-in via the unified Phase 0 API
+  `LossyConfig::with_perceptual_metric(PerceptualMetric::Zensim)`.
+  Surface:
+  - `--features zensim-loop` cargo feature (pure-Rust CPU backend; wraps
+    `zensim::Zensim::compute_with_ref_and_diffmap_linear_planar`). No
+    CUDA needed; runs anywhere. Always available.
+  - `--features zensim-loop-gpu` cargo feature (GPU backend wraps
+    `zensim_gpu::ZensimOpaque` via zenmetrics master Phase 1 commit
+    `1175b49` `score_from_linear_planes_with_warm_ref_diffmap`). Requires
+    CUDA at build + load time. **Phase 1 honest-stop carryover**: the
+    current GPU diffmap delegates to the canonical CPU pipeline (per
+    `crates/zensim-gpu/docs/DIFFMAP_DIVERGENCES.md`), +1006% wall vs
+    score-only GPU at 1024². Phase 1b (pure-GPU kernels) will close
+    this; until then prefer `PerceptualDevice::Cpu` for wall-time-
+    sensitive workloads.
+  - `PerceptualMetric::Zensim` variant on the Phase 0 enum (new).
+  - `vardct/zensim_backend.rs` (new ~700 LOC) hosts `CpuZensimBackend`
+    + `GpuZensimBackend` impls + 10 unit tests.
+  - `tests/zensim_backend_smoke.rs` (new) — 5 integration tests
+    including the load-bearing `EncoderStrategy::Libjxl` byte-identical
+    invariant under `PerceptualMetric::Zensim` (W44-126 strict cjxl
+    parity preserved; same short-circuit as cvvdp).
+  - Score-direction normalization at trait boundary:
+    `(100.0 - zensim_score).clamp(0.0, 100.0)`. Diffmap renorm scale
+    ships as placeholder `1.0` (no renorm) — Phase 4 fits the constant
+    via a Phase 8c-equivalent harness.
+  - Hash-locks 36/36 BYTE-IDENTICAL at default features AND with
+    `zensim-loop` compiled (caller has to explicitly opt in for the
+    backend to construct). `strategy_libjxl_byte_lock` 4/4
+    BYTE-IDENTICAL with zensim-loop compiled. `divergence_table_drift`
+    7/7 PASS.
+
+- **cvvdp fork — opt-in ColorVideoVDP-driven quantization loop**
+  (RFC [`docs/RFC_CVVDP_FORK.md`](docs/RFC_CVVDP_FORK.md), Phase 6
+  decision memo [`docs/CVVDP_FORK_DECISION.md`](docs/CVVDP_FORK_DECISION.md)).
+  Six-phase arc replaces the per-iteration butteraugli score+diffmap
+  inside the buttloop with cvvdp (Mantiuk et al. 2024) when the
+  caller opts in. **Default OFF** per Phase 6 verdict OPT_IN_ONLY —
+  cvvdp Pareto-wins on its own metric on CID22 photos (100% of e=8
+  cells score better on `cvvdp_gpu`, mean +0.005 to +0.31 JOD across
+  distances) but the uncalibrated distance-target table costs +155%
+  to +286% bytes at the same `distance` parameter (cvvdp targets
+  calibration left as future work per RFC §2.3 TBD). Surface:
+  - `--features cvvdp-loop` cargo feature (GPU backend, requires
+    CUDA at build + load time; wraps `cvvdp-gpu`) shipped in Phase 3
+    (`57757ff8`).
+  - `--features cvvdp-loop-cpu` cargo feature (pure-Rust CPU
+    backend, no CUDA, runs anywhere; wraps `cvvdp-cpu`) shipped in
+    Phase 5 (`206b874e`). ~1.55× wall vs butteraugli CPU at e=8;
+    output byte-identical to the GPU backend.
+  - `LossyConfig::with_cvvdp_loop(Option<bool>)` builder setter and
+    matching `cvvdp_loop()` getter shipped in Phase 3 (`57757ff8`).
+  - `LossyConfig::with_cvvdp_use_cpu(Option<bool>)` builder setter
+    and matching `cvvdp_use_cpu()` getter shipped in Phase 5
+    (`206b874e`). `Some(true)` pins the cvvdp buttloop to CPU even
+    when `cvvdp-loop` (GPU) is compiled in.
+  - Phase 4 wiring (`32581839`) routes the cvvdp backend through the
+    buttloop with the JOD calibration seed table at
+    `jxl-encoder/src/vardct/cvvdp_targets.rs` (`9c1cfa3e` seed).
+  - `EncoderStrategy::Libjxl` strict cjxl-parity invariant preserved
+    — the `resolve_cvvdp_loop` helper forces cvvdp OFF under Libjxl
+    regardless of caller field / cargo feature, so the W44 byte-lock
+    cells stay BYTE-IDENTICAL.
+
+### Changed
+
+- **Phase 2 refactor — `ButteraugliBackend` trait renamed to
+  `PerceptualBackend`** (`8c6e91cc`, shipped 2026-05-24). Trait shape
+  unchanged (still `name() / set_reference / compare_with_reference`);
+  the rename generalises the abstraction so the cvvdp backends slot in
+  alongside the existing CPU/GPU butteraugli backends from
+  W44-PHASE3-B1 (`c121c08e`). Crate-private trait (`pub(crate)`), no
+  public-API surface change.
+
+### Documentation
+
+- **`docs/RFC_CVVDP_FORK.md`** — 12-section RFC scoping the cvvdp fork
+  (architecture, calibration seeds, sweep design, RFC §5.4 ship-rule).
+  Status flipped from SCOPING → SHIPPED-OPT-IN with the full 6-phase
+  commit chain recorded in §9 (Phase 7 docs closeout this entry).
+- **`docs/CVVDP_FORK_DECISION.md`** — Phase 6 decision memo
+  (`8b5a13a7`). Per-corpus / per-metric Pareto wins, per-distance
+  bytes deltas, cvvdp_gpu score deltas, wall-time trade-offs, RFC §5.4
+  application, 11-point limitations + caveats. The OPT_IN_ONLY verdict
+  rests on this data.
+- **`docs/CVVDP_W44_GATE_TRANSFER.md`** — scoping audit of the W44
+  cost-model gate cluster (W44-91 / W44-96 / W44-105 / W44-117). Not
+  triggered in Phase 6; lives as forward-reference for a future
+  distance-table-calibration chunk that would re-enable the
+  default-flip discussion.
+- **Phase briefs**: `docs/RFC_CVVDP_PHASE3_BRIEF.md` through
+  `docs/RFC_CVVDP_PHASE7_OPTIN_BRIEF.md` archived alongside the RFC.
+
+### Measured
+
+- **`benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv`** — Phase 6
+  tracking benchmark (`8b5a13a7`). 4 backends × 54 images × 7 distances
+  × 3 efforts = 1,134 cells per backend (`B`, `B_GPU`, `C_GPU`,
+  `C_CPU`). Every encoded output decoded via jxl-oxide and scored
+  with butteraugli (CPU+GPU), cvvdp-gpu, and SSIMULACRA2.
+  4,536 rows total. Corpora: CID22 (photos, 41 images), GB82-SC
+  (screenshots, 11 images), W44-S1 (mixed, 2 images).
+- **`scripts/cvvdp_pareto_analysis.py`** + `_2026-05-24.tsv` +
+  `_2026-05-24.meta` — Pareto analyzer (`8b5a13a7`) computing
+  per-(corpus, metric) Pareto wins and applying the RFC §5.4
+  ship-rule. Verdict line: `VERDICT: OPT_IN_ONLY`.
+- **`benchmarks/cvvdp_phase6_decoder_spotcheck_2026-05-24.tsv`** —
+  60-check multi-decoder roundtrip on 20 cvvdp-encoded cells
+  (5 fixtures × 2 distances × 2 cvvdp backends) through jxl-oxide +
+  djxl + jxl-rs. **60/60 PASS.** REVERT branch of RFC §5.4 closed.
 
 - **W44-162 — HDR ToneMapping `relative_to_max_display` + `linear_below`
   surfaced through public API (issue #46 chunk 1a closed)**

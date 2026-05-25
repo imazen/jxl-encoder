@@ -1,0 +1,78 @@
+# zensim-fork Phase 4 calibration seed
+# Generated: 2026-05-25
+# Source example: jxl-encoder/examples/zensim_calibration_seed.rs
+# Post-process: scripts/zensim_calibration_seed.py
+# Mirrors: cvvdp-fork Phase 4 cvvdp_jod_calibration_seed_2026-05-24.txt
+
+## Methodology
+
+Mirror of the cvvdp Phase 4 methodology, adapted for zensim. The tracking
+TSV (`benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv`) does NOT have a
+`score_zensim` column — the cvvdp Phase 6 sweep ran before the zensim metric
+scaffold was wired through. The Phase 4 brief allows a small post-hoc scoring
+pass; we run that here.
+
+For each of 3 images × 7 distances = 21 cells:
+- Image: 1418519.png (CID22 photo), 1025469.png (CID22 photo),
+  codec_wiki.png (gb82-sc screenshot)
+- Distance: 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0
+- Encoder: `LossyConfig::new(d).with_strategy(Zenjxl).with_effort(8)`
+  (butteraugli buttloop, the default)
+- Decoder: jxl-oxide → sRGB u8
+- Score: `zensim::Zensim::new(ZensimProfile::PreviewV0_2).compute(source, decoded)`
+
+Per the cvvdp Phase 4 convention (and RFC #3 §1.1), the per-distance target
+is derived as:
+  target_butter_direction = (100 - median_zensim_native) * 1.05
+
+The 1.05× tightening biases the zensim loop to converge slightly more
+strictly than what butteraugli's loop achieves at the same nominal distance.
+
+## Per-distance medians (from `benchmarks/zensim_calibration_seed_2026-05-25.tsv`)
+
+distance  n  median_zensim_native  target_score (butter-direction)
+0.50      3  93.6780               6.6381
+1.00      3  90.4802               9.9958
+1.50      3  87.4183               13.2108
+2.00      3  84.3139               16.4704
+3.00      3  80.0179               20.9812
+4.00      3  76.6355               24.5327
+5.00      3  72.9182               28.4359
+
+These values are baked into `jxl-encoder/src/vardct/zensim_targets.rs`
+as `ZENSIM_DISTANCE_TARGETS`. Linear interpolation between table points;
+clamp outside [0.50, 5.00].
+
+## Sample size caveat
+
+n=3 per distance is INTENTIONALLY SMALL (the Phase 4 brief allows
+10-20 cells per distance). The seed values are a STARTING POINT for the
+production buttloop dispatch, not a finished calibration. Phase 6 produces
+the full 6-backend tracking sweep including `score_zensim_{cpu,gpu}` on
+the same 1,131-cell corpus that cvvdp Phase 4 used; Phase 8-zensim
+(conditional on Pareto < 85%) refits per RFC §3.2 Intervention A.
+
+The 3 images were picked to span the photo / screenshot content axis
+(CID22 1418519 = textured photo; CID22 1025469 = high-contrast indoor
+photo; gb82-sc codec_wiki = mixed-content tech page) so the median has
+some content diversity even at n=3. The d=4-5 codec_wiki rows show a
+notable RD-curve inflection (encoded bytes actually GROW from d=3 → d=4 →
+d=5 on codec_wiki because the butteraugli loop's qac saturates), which
+inflates the d=4 + d=5 max_zensim values vs median. This is captured in
+the seed honestly (max=89.19 at d=4, max=88.60 at d=5 vs median 76.64 / 72.92).
+
+## Provenance
+
+- Encoder commit: 956cac4a7860 (working copy on cvvdp-fork-rfc, on top of Phase 3 7ad7256c)
+- ZensimProfile: PreviewV0_2 (latest crates.io 0.2.7 as of 2026-05-25; V0_3
+  audit recommendation queued as Phase 5 follow-on once zensim 0.3+ ships)
+- Run commands:
+  ```
+  cargo run --release -p jxl-encoder \
+    --features "__expert butteraugli-loop zensim-loop ssim2-loop parallel" \
+    --example zensim_calibration_seed -- \
+    --output benchmarks/zensim_calibration_seed_2026-05-25.tsv
+  python3 scripts/zensim_calibration_seed.py \
+    benchmarks/zensim_calibration_seed_2026-05-25.tsv \
+    > benchmarks/zensim_calibration_seed_2026-05-25.txt
+  ```

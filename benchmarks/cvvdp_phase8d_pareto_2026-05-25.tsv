@@ -1,0 +1,61 @@
+image	corpus	effort	distance	backend	bytes	wall_ms	score_butter_cpu	score_butter_gpu	score_cvvdp_gpu	score_cvvdp_cpu	score_ssim2	notes
+1025469.png	CID22	8	0.50	B	62147	247.053	0.727548	NA	9.996107	NA	92.358291	phase8d_rebench
+1025469.png	CID22	8	0.50	C_GPU_v2	136137	295.486	0.443595	NA	10.000000	NA	94.703602	phase8d_rebench renorm=active tighten=off
+1025469.png	CID22	8	0.50	C_GPU_v3	129952	312.341	0.532493	NA	10.000000	NA	94.579602	phase8d_rebench renorm=active tighten=active
+1025469.png	CID22	8	1.00	B	35394	264.805	1.178900	NA	9.973068	NA	87.355225	phase8d_rebench
+1025469.png	CID22	8	1.00	C_GPU_v2	62266	253.998	0.992611	NA	9.993841	NA	90.767443	phase8d_rebench renorm=active tighten=off
+1025469.png	CID22	8	1.00	C_GPU_v3	59463	448.069	1.030653	NA	9.992985	NA	90.528088	phase8d_rebench renorm=active tighten=active
+1025469.png	CID22	8	2.00	B	20469	307.890	2.066167	NA	9.918421	NA	78.558496	phase8d_rebench
+1025469.png	CID22	8	2.00	C_GPU_v2	45573	257.016	1.699358	NA	9.978346	NA	86.089118	phase8d_rebench renorm=active tighten=off
+1025469.png	CID22	8	2.00	C_GPU_v3	43363	408.131	1.715056	NA	9.977159	NA	85.750427	phase8d_rebench renorm=active tighten=active
+1025469.png	CID22	8	3.00	B	14564	280.504	3.094816	NA	9.833785	NA	69.639887	phase8d_rebench
+1025469.png	CID22	8	3.00	C_GPU_v2	38262	275.184	2.445855	NA	9.957942	NA	81.517796	phase8d_rebench renorm=active tighten=off
+1025469.png	CID22	8	3.00	C_GPU_v3	36375	399.603	2.453621	NA	9.956158	NA	81.050679	phase8d_rebench renorm=active tighten=active
+1418519.png	CID22	8	0.50	B	36073	304.993	0.728461	NA	9.999292	NA	91.167550	phase8d_rebench
+1418519.png	CID22	8	0.50	C_GPU_v2	63769	195.466	0.609916	NA	10.000000	NA	92.904537	phase8d_rebench renorm=active tighten=off
+1418519.png	CID22	8	0.50	C_GPU_v3	60809	313.230	0.623074	NA	10.000000	NA	92.757730	phase8d_rebench renorm=active tighten=active
+1418519.png	CID22	8	1.00	B	21362	229.751	1.219866	NA	9.987411	NA	88.298680	phase8d_rebench
+1418519.png	CID22	8	1.00	C_GPU_v2	30247	246.195	1.020362	NA	9.994520	NA	90.197011	phase8d_rebench renorm=active tighten=off
+1418519.png	CID22	8	1.00	C_GPU_v3	28814	305.625	1.086486	NA	9.993793	NA	89.976563	phase8d_rebench renorm=active tighten=active
+1418519.png	CID22	8	2.00	B	13346	268.057	2.224091	NA	9.953289	NA	81.821375	phase8d_rebench
+1418519.png	CID22	8	2.00	C_GPU_v2	20508	273.492	1.772424	NA	9.979341	NA	85.893467	phase8d_rebench renorm=active tighten=off
+1418519.png	CID22	8	2.00	C_GPU_v3	19715	421.127	1.870682	NA	9.978448	NA	85.727602	phase8d_rebench renorm=active tighten=active
+1418519.png	CID22	8	3.00	B	10098	251.188	2.946505	NA	9.907758	NA	75.832243	phase8d_rebench
+1418519.png	CID22	8	3.00	C_GPU_v2	16248	282.572	2.130672	NA	9.957279	NA	81.843352	phase8d_rebench renorm=active tighten=off
+1418519.png	CID22	8	3.00	C_GPU_v3	15596	430.421	2.130672	NA	9.955941	NA	81.569601	phase8d_rebench renorm=active tighten=active
+1189261.png	CID22	8	0.50	B	106161	214.142	0.748263	NA	9.995854	NA	91.709357	phase8d_rebench
+1189261.png	CID22	8	0.50	C_GPU_v2	184363	172.311	0.675741	NA	9.999874	NA	94.182132	phase8d_rebench renorm=active tighten=off
+1189261.png	CID22	8	0.50	C_GPU_v3	177813	234.902	0.680736	NA	9.999833	NA	94.018655	phase8d_rebench renorm=active tighten=active
+1189261.png	CID22	8	1.00	B	64185	240.377	1.232544	NA	9.974498	NA	87.080888	phase8d_rebench
+1189261.png	CID22	8	1.00	C_GPU_v2	97579	199.001	1.015591	NA	9.993451	NA	90.456271	phase8d_rebench renorm=active tighten=off
+1189261.png	CID22	8	1.00	C_GPU_v3	93714	289.869	1.033718	NA	9.992211	NA	90.166019	phase8d_rebench renorm=active tighten=active
+1189261.png	CID22	8	2.00	B	38278	245.055	2.177850	NA	9.915347	NA	79.228480	phase8d_rebench
+1189261.png	CID22	8	2.00	C_GPU_v2	68171	312.978	1.713551	NA	9.976245	NA	85.763765	phase8d_rebench renorm=active tighten=off
+1189261.png	CID22	8	2.00	C_GPU_v3	65154	375.671	1.870063	NA	9.973827	NA	85.407581	phase8d_rebench renorm=active tighten=active
+1189261.png	CID22	8	3.00	B	26783	240.231	2.917902	NA	9.817786	NA	70.468060	phase8d_rebench
+1189261.png	CID22	8	3.00	C_GPU_v2	56905	253.033	2.089336	NA	9.954725	NA	82.385807	phase8d_rebench renorm=active tighten=off
+1189261.png	CID22	8	3.00	C_GPU_v3	54206	342.261	2.530180	NA	9.952915	NA	81.980271	phase8d_rebench renorm=active tighten=active
+terminal.png	GB82-SC	8	0.50	B	45262	1168.094	0.395302	NA	9.999862	NA	94.649876	phase8d_rebench
+terminal.png	GB82-SC	8	0.50	C_GPU_v2	71683	1367.613	0.445130	NA	9.999662	NA	95.599096	phase8d_rebench renorm=active tighten=off
+terminal.png	GB82-SC	8	0.50	C_GPU_v3	69293	1308.171	0.445257	NA	9.999630	NA	95.527086	phase8d_rebench renorm=active tighten=active
+terminal.png	GB82-SC	8	1.00	B	47066	1198.109	0.775142	NA	9.979781	NA	91.567443	phase8d_rebench
+terminal.png	GB82-SC	8	1.00	C_GPU_v2	63902	1228.663	0.778451	NA	9.973459	NA	92.890168	phase8d_rebench renorm=active tighten=off
+terminal.png	GB82-SC	8	1.00	C_GPU_v3	62309	1684.442	0.777789	NA	9.973706	NA	92.651543	phase8d_rebench renorm=active tighten=active
+terminal.png	GB82-SC	8	2.00	B	48252	1406.538	0.974954	NA	9.968291	NA	90.208774	phase8d_rebench
+terminal.png	GB82-SC	8	2.00	C_GPU_v2	62612	1243.902	0.966361	NA	9.971225	NA	91.595961	phase8d_rebench renorm=active tighten=off
+terminal.png	GB82-SC	8	2.00	C_GPU_v3	60744	1631.902	0.940790	NA	9.971412	NA	91.518878	phase8d_rebench renorm=active tighten=active
+terminal.png	GB82-SC	8	3.00	B	40969	1596.964	1.322282	NA	9.957966	NA	88.788649	phase8d_rebench
+terminal.png	GB82-SC	8	3.00	C_GPU_v2	48130	1118.144	1.592001	NA	9.966254	NA	90.126892	phase8d_rebench renorm=active tighten=off
+terminal.png	GB82-SC	8	3.00	C_GPU_v3	46789	1911.217	1.603574	NA	9.966357	NA	89.315537	phase8d_rebench renorm=active tighten=active
+imac_g3.png	GB82-SC	8	0.50	B	229569	3436.603	0.586102	NA	10.000000	NA	89.977168	phase8d_rebench
+imac_g3.png	GB82-SC	8	0.50	C_GPU_v2	291122	4031.002	0.517845	NA	10.000000	NA	90.439682	phase8d_rebench renorm=active tighten=off
+imac_g3.png	GB82-SC	8	0.50	C_GPU_v3	285372	3768.726	0.537965	NA	10.000000	NA	90.441854	phase8d_rebench renorm=active tighten=active
+imac_g3.png	GB82-SC	8	1.00	B	203381	4546.876	1.090153	NA	9.999425	NA	87.992622	phase8d_rebench
+imac_g3.png	GB82-SC	8	1.00	C_GPU_v2	226404	3972.709	1.103800	NA	9.999990	NA	88.935493	phase8d_rebench renorm=active tighten=off
+imac_g3.png	GB82-SC	8	1.00	C_GPU_v3	220933	5732.504	1.156646	NA	9.999961	NA	88.820168	phase8d_rebench renorm=active tighten=active
+imac_g3.png	GB82-SC	8	2.00	B	211128	4325.730	1.337534	NA	9.991858	NA	87.040735	phase8d_rebench
+imac_g3.png	GB82-SC	8	2.00	C_GPU_v2	217319	3303.043	1.454107	NA	9.991691	NA	87.361204	phase8d_rebench renorm=active tighten=off
+imac_g3.png	GB82-SC	8	2.00	C_GPU_v3	211501	5685.588	1.330219	NA	9.991726	NA	87.238570	phase8d_rebench renorm=active tighten=active
+imac_g3.png	GB82-SC	8	3.00	B	179039	5000.795	2.186930	NA	9.986680	NA	86.158346	phase8d_rebench
+imac_g3.png	GB82-SC	8	3.00	C_GPU_v2	192803	3653.645	2.467997	NA	9.986984	NA	86.383257	phase8d_rebench renorm=active tighten=off
+imac_g3.png	GB82-SC	8	3.00	C_GPU_v3	187500	5369.034	2.467988	NA	9.986992	NA	86.107056	phase8d_rebench renorm=active tighten=active

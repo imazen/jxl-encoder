@@ -7,7 +7,7 @@
 //!   - `gpu`   — `LossyConfig::with_gpu_butteraugli(true)`, detector OFF
 //!   - `gpu_d` — `LossyConfig::with_gpu_butteraugli(true)`, detector ON
 //!     (env `JXL_W44_PHASE3_B5B_DETECTOR=1` set per-cell; counters reset
-//!     between cells via [`butteraugli_backend::b5b_counters::reset`])
+//!     between cells via [`perceptual_backend::b5b_counters::reset`])
 //!
 //! Acceptance gates (per W44-PHASE3-B5b task spec):
 //!
@@ -162,7 +162,11 @@ fn encode_ours(
         let gpu = matches!(mode, Mode::Gpu | Mode::GpuDetector);
         let cfg = LossyConfig::new(distance)
             .with_effort(effort)
-            .with_gpu_butteraugli(gpu)
+            .with_perceptual_device(if gpu {
+                jxl_encoder::api::PerceptualDevice::Gpu
+            } else {
+                jxl_encoder::api::PerceptualDevice::Cpu
+            })
             .with_threads(1);
         let start = Instant::now();
         let bytes = cfg.encode(rgb, w, h, PixelLayout::Rgb8).ok()?;

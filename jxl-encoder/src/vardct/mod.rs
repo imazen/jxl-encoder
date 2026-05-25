@@ -22,10 +22,27 @@ mod afv;
 // `DC_TREE_VARIABLE_TRIAL_MIN_EFFORT` / `_PREDICTOR_FULL_MIN_EFFORT`.
 pub(crate) mod bitstream;
 mod block_extract;
+// The quantization-refinement loop (the "buttloop") was renamed from
+// `butteraugli_loop` → `perceptual_loop` in cvvdp-fork Phase 4
+// (2026-05-24 — see `docs/RFC_CVVDP_FORK.md` §2.1 and
+// `docs/RFC_CVVDP_PHASE4_BRIEF.md` §1). The historical function name
+// `run_buttloop` is preserved (load-bearing in W44-* commit messages and
+// docs); only the file/module name changes. A backward-compat alias
+// `butteraugli_loop` re-exports the new module so existing `use
+// crate::vardct::butteraugli_loop::...` import sites across the crate
+// keep working without a 30+ file touch.
 #[cfg(feature = "butteraugli-loop")]
-pub(crate) mod butteraugli_backend;
+pub(crate) mod perceptual_loop;
+/// Backward-compat alias for the pre-Phase-4 module name. New code SHOULD
+/// import from `crate::vardct::perceptual_loop`; this alias exists so
+/// existing call-sites compile unchanged. cvvdp-fork Phase 4 (2026-05-24).
 #[cfg(feature = "butteraugli-loop")]
-pub(crate) mod butteraugli_loop;
+pub(crate) use perceptual_loop as butteraugli_loop;
+// Pluggable perceptual-metric backend (renamed from `butteraugli_backend`
+// in cvvdp-fork Phase 2, 2026-05-24 — see docs/RFC_CVVDP_FORK.md §2.1).
+// Hosts `PerceptualBackend` trait + CPU/GPU butteraugli impls + (cvvdp-fork
+// Phase 3, 2026-05-24) routes to the cvvdp impls in `cvvdp_backend`
+// when the caller opts in via `LossyConfig::with_cvvdp_loop`.
 pub(crate) mod chroma_from_luma;
 /// Chroma subsampling helpers — RGB → YCbCr conversion and
 /// Sharp YUV 4:2:0 chroma downsample via the zenyuv crate.
@@ -38,10 +55,51 @@ pub(crate) mod cluster;
 pub(crate) mod coeff_order;
 pub(crate) mod common;
 pub(crate) mod context_tree;
+#[cfg(feature = "butteraugli-loop")]
+pub(crate) mod perceptual_backend;
+// cvvdp-fork Phase 3 (2026-05-24): cvvdp-based `PerceptualBackend`
+// implementations. Gated on the `cvvdp-loop` cargo feature (which
+// itself implies `butteraugli-loop` — the trait surface lives in
+// `perceptual_backend`). Hosts `GpuCvvdpBackend` (wraps
+// `cvvdp_gpu::CvvdpOpaque` via Agent B's `*_from_linear_planes_*` API,
+// zenmetrics master `8b658b4`) plus a stub `CpuCvvdpBackend` reserved
+// for Phase 5 `cvvdp-cpu` integration. See `docs/RFC_CVVDP_FORK.md` §2.1
+// and `docs/RFC_CVVDP_PHASE3_BRIEF.md` for the deliverable shape.
+#[cfg(feature = "cvvdp-loop")]
+pub(crate) mod cvvdp_backend;
+// cvvdp-fork Phase 4 (2026-05-24): per-distance JOD calibration table.
+// Read by `perceptual_loop::run_buttloop` when the active backend is
+// cvvdp to scale `target_distance` (butteraugli units) into a cvvdp-
+// direction `target_score` via the seed table at `cvvdp_targets.rs`.
+// See `docs/RFC_CVVDP_PHASE4_BRIEF.md` Step 3.
+#[cfg(feature = "cvvdp-loop")]
+pub(crate) mod cvvdp_targets;
+// zensim-fork Phase 3 (2026-05-25): zensim backend impl for the
+// perceptual quantization loop (RFC `docs/RFC_ZENSIM_FORK_PLAN.md` §5).
+// Gated on the zensim cargo features. Hosts `CpuZensimBackend` (feature
+// `zensim-loop`, wraps `zensim::Zensim` + linear-planar diffmap) and
+// `GpuZensimBackend` (feature `zensim-loop-gpu`, wraps
+// `zensim_gpu::ZensimOpaque` via Phase 1 commit `1175b49` on zenmetrics
+// master). Phase 4 (2026-05-25) added the per-distance target table at
+// `zensim_targets.rs`; per-block reducer constants reuse butter
+// defaults (Phase 8-zensim follow-on may refit if Pareto shows < 85%).
+// See `docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md` for the trait +
+// API surface and `docs/RFC_ZENSIM_FORK_PLAN.md` §6 for the Phase 4
+// brief.
+//
+// zensim-fork Phase 4 (2026-05-25): per-distance zensim calibration
+// table. Read by `perceptual_loop::run_buttloop` when the active
+// backend is zensim to scale `target_distance` (butteraugli units)
+// into a zensim butter-direction `target_score` via the seed table at
+// `zensim_targets.rs`. See `docs/RFC_ZENSIM_FORK_PLAN.md` §6 Step 3.
 pub(crate) mod dc_coding;
 mod dc_tree_learn;
 pub mod dct;
 pub(crate) mod debug_log;
+#[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+pub(crate) mod zensim_backend;
+#[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+pub(crate) mod zensim_targets;
 // libjxl enc_detect_dots.cc port (refs #19). Wired into encoder.rs at
 // effort >= 7, distance >= 3.0; dots get promoted to a fresh
 // PatchesData via from_dots() and travel through the regular patch
@@ -216,7 +274,7 @@ pub mod __buttloop_overrides {
 #[cfg(feature = "gpu-butteraugli")]
 #[doc(hidden)]
 pub mod __b5b_counters {
-    pub use super::butteraugli_backend::b5b_counters::{Snapshot, reset, snapshot};
+    pub use super::perceptual_backend::b5b_counters::{Snapshot, reset, snapshot};
 }
 
 #[cfg(test)]

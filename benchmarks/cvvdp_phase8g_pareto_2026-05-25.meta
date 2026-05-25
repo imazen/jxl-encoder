@@ -1,0 +1,124 @@
+# Phase 8g (cvvdp-fork, 2026-05-25) — Pareto re-bench: per-block reducer constants refit
+
+## Inputs
+- harness: `jxl-encoder/examples/cvvdp_phase8g_pareto_rebench.rs`
+- fixtures: 5 (CID22 1025469/1418519/1189261, GB82-SC terminal/imac_g3)
+- distances: {0.5, 1.0, 2.0, 3.0}
+- effort: 8 (buttloop fires)
+- 3 modes per cell: B (butteraugli baseline) + C_GPU_v2 (Phase 8c renorm
+  only, env-forced `JXL_CVVDP_K_TILE_NORM=1.2`) + C_GPU_v4 (Phase 8c renorm
+  + Phase 8g constants refit, committed `CVVDP_BLOCK_CONSTANTS.k_tile_norm
+  = 0.16`)
+- total rows: 5 × 4 × 3 = 60 + 1 header
+
+## Headline result
+
+Per `scripts/cvvdp_pareto_diagnosis.py benchmarks/cvvdp_phase8g_pareto_2026-05-25.tsv`:
+
+| Backend | Observations | Pareto wins | **Pareto-front position pct** |
+|---|---|---|---|
+| B | 20 | 9 | **45.0%** |
+| C_GPU_v2 | 20 | 9 | **45.0%** |
+| **C_GPU_v4 (Phase 8g)** | 20 | 17 | **85.0%** ✅ |
+
+Per-distance C_GPU_v4 wins:
+| d | wins | win pct |
+|---|---|---|
+| 0.5 | 4/5 | 80.0% |
+| 1.0 | 4/5 | 80.0% |
+| 2.0 | 4/5 | 80.0% |
+| 3.0 | 5/5 | **100.0%** |
+
+**Phase 8a → 8c → 8d → 8g progression**:
+- Phase 8a baseline `C_GPU`: 40.3%
+- Phase 8c `C_GPU_v2` (renorm 0.018): 60.0%
+- Phase 8d `C_GPU_v3` (renorm + tighten): 60.0% (binary)
+- **Phase 8g `C_GPU_v4` (renorm + per-block constants refit): 85.0%** ✅
+
+**MEETS the ≥85% Pareto-front position target.**
+
+## Per-cell bytes deltas
+
+C_GPU_v4 vs B (butter baseline):
+- min: −18.34% (GB82-SC imac_g3 d=2)
+- max: +7.49% (CID22 1025469 d=3)
+- 14/20 cells SAVE bytes vs butter (negative delta)
+- only 2/20 cells exceed +5%: terminal d=0.5 (+2.54%) and 1025469 d=3 (+7.49%)
+
+C_GPU_v4 vs C_GPU_v2 (renorm-only):
+- ALL 20/20 cells SAVE bytes
+- min: −59.08% (CID22 1025469 d=3)
+- max: −14.97% (GB82-SC imac_g3 d=1)
+- mean: −38.7%
+
+## Δcvvdp (v4 vs v2)
+
+- max +0.0240 (GB82-SC terminal d=1, virtually neutral)
+- min −0.1288 (CID22 1189261 d=3, within cvvdp loop noise)
+- median ≈ −0.02 JOD, well within the cvvdp loop's natural noise floor
+
+The cvvdp scores stay essentially equivalent while bytes drop substantially —
+exactly the Pareto-optimal direction we wanted.
+
+## Wall hit
+
+C_GPU_v4 vs C_GPU_v2:
+- min: −33.9% (FASTER on terminal d=0.5)
+- max: +12.1% (slower on imac_g3 d=1)
+- median: ≈ 0% (neutral)
+
+Phase 8g does NOT add wall time (in fact slightly faster on average because
+fewer bad blocks per iter → less per-iter work).
+
+## Decision per task spec
+
+- ≥85% Pareto-front position met ✅
+- Default-flip discussion deferred to Phase 8f (separate chunk).
+- This chunk ships behind the `cvvdp-loop` feature gate; production callers
+  opt in via `LossyConfig::with_cvvdp_loop(Some(true))`. Same opt-in surface
+  as Phase 8c/8d.
+
+## Reproduce
+```bash
+cargo run --release -p jxl-encoder \
+  --features '__expert butteraugli-loop cvvdp-loop ssim2-loop parallel' \
+  --example cvvdp_phase8g_pareto_rebench -- \
+  --out benchmarks/cvvdp_phase8g_pareto_2026-05-25.tsv
+
+python3 scripts/cvvdp_pareto_diagnosis.py \
+  benchmarks/cvvdp_phase8g_pareto_2026-05-25.tsv
+```
+
+## DO NOT
+
+1. **DO NOT flip `CVVDP_BLOCK_CONSTANTS.k_tile_norm` above 1.2** —
+   Pareto-front position regresses toward Phase 8c's 60% (per the
+   `cvvdp_block_constants_k_tile_norm_below_butter` invariant test).
+2. **DO NOT lower below 0.05** — bad_rate saturates at 0 which disables
+   refinement entirely.
+3. **DO NOT apply the Phase 8g constants table to the butteraugli
+   loop** — butter's bad_rate at iter=0 is already 0-13% (loop spends
+   bytes via cur_pow=0.2 LOOSENING good blocks); flipping butter would
+   lose the W44 cost-model gates.
+4. **DO NOT cite "FMA precision"** for the byte savings — they come
+   from the per-block reducer firing on the correct number of blocks
+   (cvvdp at parity with butter post-fit).
+5. **DO NOT apply per-distance scales** without first running a wider
+   sweep against out-of-corpus content. The single-value 0.16 fit works
+   at 85% on the calibration corpus; per-distance refinement is
+   Phase 8h follow-on (RFC §3.4) only if production callers see
+   regressions on novel content.
+
+## Follow-on candidates
+
+- **Phase 8f**: decision memo update — flip Phase 7 OPT_IN_ONLY verdict
+  to ALWAYS_ON-when-feature-compiled if subsequent broader sweep
+  confirms ≥85% on a larger corpus.
+- **Phase 8h** (if Phase 8g hits regressions on out-of-corpus content):
+  per-distance `k_tile_norm` lookup table (sibling to
+  `CVVDP_DISTANCE_TARGETS`). Single-value fit is in the 0.10-0.23 range;
+  a 4-entry per-distance table would give ~0.10-0.25 dynamic-fit
+  precision.
+- **Phase 8i** (if Phase 8h plateaus): replace the per-block reducer
+  with a cvvdp-shaped one (different reduction kernel, e.g. mean or
+  4th-power norm instead of 16th-power-norm).
