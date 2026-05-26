@@ -122,20 +122,44 @@ pub(crate) mod gpu {
         /// `catch_unwind` around the constructor so a missing CUDA
         /// driver never aborts the encode.
         ///
-        /// CVVDP doesn't expose an `intensity_target` knob the same way
-        /// butteraugli does — the metric internally targets ~80 cd/m²
-        /// for SDR (controlled via the underlying `CvvdpParams::display`
-        /// / `geometry` fields, both defaulted upstream). Callers that
-        /// need HDR-aware CVVDP scoring should re-bake the upstream
-        /// params, which is out of scope for this chunk (Phase 4
-        /// follow-on).
-        pub(crate) fn try_new(width: u32, height: u32) -> Option<Self> {
+        /// Phase 1 display-config backfill (2026-05-25): the
+        /// `target_display` parameter selects which
+        /// `cvvdp_gpu::params::DisplayModel` is plumbed into
+        /// `CvvdpParams.display`. Default
+        /// [`crate::api::DisplayConfig::WebSdr80`] maps to
+        /// `DisplayModel::STANDARD_4K` — bit-identical to the
+        /// pre-Phase-1 ctor behaviour.
+        ///
+        /// **Geometry caveat**: `CvvdpOpaque::new` does NOT expose
+        /// `DisplayGeometry` (only `DisplayModel` via
+        /// `CvvdpParams.display`). Phase 1 therefore ships display
+        /// dispatch on the photometric / EOTF / primaries / ambient
+        /// axes only; viewing geometry stays at the upstream
+        /// `STANDARD_4K` PPD ≈ 75.4 regardless of `target_display`.
+        /// A future cvvdp-gpu upstream PR + Phase 2 of the backfill
+        /// will close this gap. See `crate::api::DisplayConfig` for
+        /// the full caveat note.
+        pub(crate) fn try_new(
+            width: u32,
+            height: u32,
+            target_display: crate::api::DisplayConfig,
+        ) -> Option<Self> {
+            // Construct the CvvdpParams with the target display's
+            // DisplayModel. All other fields stay at PLACEHOLDER /
+            // default — the production cvvdp v0.5.4 numbers are
+            // inlined as `const`s in `kernels::pool` (BETA_*) and
+            // `kernels::masking`, so only the display field actually
+            // affects scoring.
+            let params = CvvdpParams {
+                display: target_display.display_model(),
+                ..CvvdpParams::default()
+            };
             // CubeCL panic-on-CUDA-missing protection. Mirror
             // `GpuButteraugliBackend::try_new` — wrap the entire
             // constructor in `catch_unwind` so the encode survives
             // even if CubeCL aborts mid-init.
             let inner = std::panic::catch_unwind(|| {
-                CvvdpOpaque::new(CvvdpBackend::Cuda, width, height, CvvdpParams::default())
+                CvvdpOpaque::new(CvvdpBackend::Cuda, width, height, params)
             });
             let inner = match inner {
                 Ok(Ok(c)) => c,
@@ -459,9 +483,26 @@ pub(crate) mod cpu {
         /// runtime — pure Rust + alloc). We still wrap in
         /// `catch_unwind` for defense-in-depth so a misbehaving
         /// transitive dep can't crash the encode.
-        pub(crate) fn try_new(width: u32, height: u32) -> Option<Self> {
+        ///
+        /// Phase 1 display-config backfill (2026-05-25): the
+        /// `target_display` parameter selects both the
+        /// `DisplayModel` AND the `DisplayGeometry` plumbed into
+        /// the underlying `cvvdp_cpu::Cvvdp` via
+        /// [`cvvdp_cpu::Cvvdp::with_geometry`]. Unlike the GPU backend,
+        /// the CPU backend CAN dispatch viewing geometry too — the
+        /// upstream `with_geometry` constructor accepts both fields.
+        pub(crate) fn try_new(
+            width: u32,
+            height: u32,
+            target_display: crate::api::DisplayConfig,
+        ) -> Option<Self> {
+            let params = CvvdpParams {
+                display: target_display.display_model(),
+                ..CvvdpParams::default()
+            };
+            let geometry = target_display.display_geometry();
             let inner =
-                std::panic::catch_unwind(|| Cvvdp::new(width, height, CvvdpParams::default()));
+                std::panic::catch_unwind(|| Cvvdp::with_geometry(width, height, params, geometry));
             let inner = match inner {
                 Ok(Ok(c)) => c,
                 Ok(Err(_)) => return None,
@@ -732,7 +773,9 @@ mod tests {
         // expectation explicit. `try_new` itself uses `catch_unwind`
         // internally; this test guards against accidental removal of
         // that safety net.
-        let result = std::panic::catch_unwind(|| gpu::GpuCvvdpBackend::try_new(32, 32));
+        let result = std::panic::catch_unwind(|| {
+            gpu::GpuCvvdpBackend::try_new(32, 32, crate::api::DisplayConfig::WebSdr80)
+        });
         assert!(
             result.is_ok(),
             "GpuCvvdpBackend::try_new MUST NOT panic; got: {:?}",
@@ -751,7 +794,7 @@ mod tests {
     #[cfg(feature = "cvvdp-loop-cpu")]
     #[test]
     fn cpu_cvvdp_try_new_constructs_on_32x32() {
-        let backend = cpu::CpuCvvdpBackend::try_new(32, 32);
+        let backend = cpu::CpuCvvdpBackend::try_new(32, 32, crate::api::DisplayConfig::WebSdr80);
         assert!(
             backend.is_some(),
             "CPU CVVDP backend must construct on 32×32 (≥ 8×8 minimum)"
@@ -764,7 +807,7 @@ mod tests {
     #[cfg(feature = "cvvdp-loop-cpu")]
     #[test]
     fn cpu_cvvdp_try_new_rejects_tiny() {
-        let backend = cpu::CpuCvvdpBackend::try_new(4, 4);
+        let backend = cpu::CpuCvvdpBackend::try_new(4, 4, crate::api::DisplayConfig::WebSdr80);
         assert!(
             backend.is_none(),
             "CPU CVVDP backend must reject 4×4 (cvvdp minimum is 8×8)"
@@ -777,7 +820,7 @@ mod tests {
     #[cfg(feature = "cvvdp-loop-cpu")]
     #[test]
     fn cpu_cvvdp_name_is_stable() {
-        let backend = cpu::CpuCvvdpBackend::try_new(32, 32)
+        let backend = cpu::CpuCvvdpBackend::try_new(32, 32, crate::api::DisplayConfig::WebSdr80)
             .expect("32×32 construct succeeds (no CUDA needed)");
         assert_eq!(backend.name(), "cvvdp-cpu");
     }
@@ -787,7 +830,9 @@ mod tests {
     #[cfg(feature = "cvvdp-loop-cpu")]
     #[test]
     fn cpu_cvvdp_compare_before_set_reference_errors() {
-        let mut backend = cpu::CpuCvvdpBackend::try_new(32, 32).expect("32×32 construct succeeds");
+        let mut backend =
+            cpu::CpuCvvdpBackend::try_new(32, 32, crate::api::DisplayConfig::WebSdr80)
+                .expect("32×32 construct succeeds");
         let n = 32 * 32;
         let r = alloc::vec![0.5f32; n];
         let g = alloc::vec![0.5f32; n];
@@ -814,7 +859,8 @@ mod tests {
         let g = alloc::vec![0.5f32; n];
         let b = alloc::vec![0.5f32; n];
         let mut backend =
-            cpu::CpuCvvdpBackend::try_new(w as u32, h as u32).expect("32×32 construct succeeds");
+            cpu::CpuCvvdpBackend::try_new(w as u32, h as u32, crate::api::DisplayConfig::WebSdr80)
+                .expect("32×32 construct succeeds");
         backend
             .set_reference(&r, &g, &b, w, h)
             .expect("set_reference on flat field must succeed");
@@ -857,7 +903,8 @@ mod tests {
             }
         }
         let mut backend =
-            cpu::CpuCvvdpBackend::try_new(w as u32, h as u32).expect("32×32 construct succeeds");
+            cpu::CpuCvvdpBackend::try_new(w as u32, h as u32, crate::api::DisplayConfig::WebSdr80)
+                .expect("32×32 construct succeeds");
         backend
             .set_reference(&r, &g, &b, w, h)
             .expect("set_reference must succeed");
@@ -905,7 +952,8 @@ mod tests {
             }
         }
         let mut backend =
-            cpu::CpuCvvdpBackend::try_new(w as u32, h as u32).expect("16×16 construct succeeds");
+            cpu::CpuCvvdpBackend::try_new(w as u32, h as u32, crate::api::DisplayConfig::WebSdr80)
+                .expect("16×16 construct succeeds");
         backend.set_reference(&r, &g, &b, w, h).unwrap();
         let mut diffmap = alloc::vec::Vec::new();
         let result = backend
@@ -936,7 +984,9 @@ mod tests {
     #[cfg(feature = "cvvdp-loop-cpu")]
     #[test]
     fn cpu_cvvdp_set_reference_dim_mismatch_errors() {
-        let mut backend = cpu::CpuCvvdpBackend::try_new(32, 32).expect("32×32 construct succeeds");
+        let mut backend =
+            cpu::CpuCvvdpBackend::try_new(32, 32, crate::api::DisplayConfig::WebSdr80)
+                .expect("32×32 construct succeeds");
         let r = alloc::vec![0.5f32; 16 * 16];
         let g = alloc::vec![0.5f32; 16 * 16];
         let b = alloc::vec![0.5f32; 16 * 16];

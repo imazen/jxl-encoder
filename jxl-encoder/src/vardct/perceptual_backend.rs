@@ -44,7 +44,7 @@
 
 use alloc::format;
 
-use crate::api::{PerceptualDevice, PerceptualMetric};
+use crate::api::{DisplayConfig, PerceptualDevice, PerceptualMetric};
 use crate::error::Result;
 
 /// Result of one perceptual-metric comparison: aggregated max-norm score over
@@ -84,6 +84,17 @@ pub(crate) struct MetricSelection {
     /// than consumed inside the backend ctor — included here so the
     /// selection struct is the single carrier from API → dispatch.
     pub(crate) target_score: Option<f32>,
+    /// Phase 1 display-config backfill (RFC
+    /// `docs/RFC_DISPLAY_CONFIG_BACKFILL.md`, 2026-05-25): the resolved
+    /// target display for cvvdp scoring. Already passed through the
+    /// `EncoderStrategy::Libjxl` strict-parity short-circuit in
+    /// [`crate::api::LossyConfig::resolve_target_display`].
+    ///
+    /// Has no effect on butteraugli / zensim dispatch (only consulted
+    /// by the cvvdp backend ctors to construct a matching
+    /// `CvvdpParams.display`); included on the bundled struct so the
+    /// metric + device + display selection travels together.
+    pub(crate) target_display: DisplayConfig,
 }
 
 /// Multi-metric Phase 0 (RFC #3, 2026-05-25): translate a resolved
@@ -124,6 +135,11 @@ pub(crate) fn propagate_resolved_metric_to_encoder(
     selection: MetricSelection,
     enc: &mut crate::vardct::VarDctEncoder,
 ) {
+    // Phase 1 display-config backfill (2026-05-25): the resolved
+    // display travels with the metric selection. Field propagates
+    // regardless of which metric is active; only the cvvdp backend
+    // ctor and the per-display target lookup actually consume it.
+    enc.target_display = selection.target_display;
     match selection.metric {
         PerceptualMetric::Butteraugli => {
             enc.cvvdp_loop = false;
@@ -1546,9 +1562,11 @@ pub(crate) fn construct_backend(
             #[cfg(feature = "cvvdp-loop-cpu")]
             {
                 if cvvdp_use_cpu_requested {
-                    if let Some(c) =
-                        crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend::try_new(width, height)
-                    {
+                    if let Some(c) = crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend::try_new(
+                        width,
+                        height,
+                        selection.target_display,
+                    ) {
                         if debug_log {
                             eprintln!(
                                 "[cvvdp-fork P5] CPU CVVDP backend ACTIVE @ {}×{} \
@@ -1577,6 +1595,7 @@ pub(crate) fn construct_backend(
             if let Some(c) = crate::vardct::cvvdp_backend::gpu::GpuCvvdpBackend::try_new(
                 width as u32,
                 height as u32,
+                selection.target_display,
             ) {
                 if debug_log {
                     eprintln!(
@@ -1595,9 +1614,11 @@ pub(crate) fn construct_backend(
             // rather than dropping all the way down to butteraugli.
             #[cfg(feature = "cvvdp-loop-cpu")]
             {
-                if let Some(c) =
-                    crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend::try_new(width, height)
-                {
+                if let Some(c) = crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend::try_new(
+                    width,
+                    height,
+                    selection.target_display,
+                ) {
                     eprintln!(
                         "[jxl-encoder cvvdp-fork P5] GPU CVVDP unavailable \
                          (CUDA missing/failed); falling back to CPU CVVDP @ {}×{}",
@@ -1636,9 +1657,11 @@ pub(crate) fn construct_backend(
                     width, height
                 );
             }
-            if let Some(c) =
-                crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend::try_new(width, height)
-            {
+            if let Some(c) = crate::vardct::cvvdp_backend::cpu::CpuCvvdpBackend::try_new(
+                width,
+                height,
+                selection.target_display,
+            ) {
                 if debug_log {
                     eprintln!(
                         "[cvvdp-fork P5] CPU CVVDP backend ACTIVE @ {}×{} \
@@ -1844,6 +1867,7 @@ mod tests {
                 metric: PerceptualMetric::Butteraugli,
                 device: PerceptualDevice::Cpu,
                 target_score: None,
+                target_display: DisplayConfig::WebSdr80,
             },
         );
         assert_eq!(backend.name(), "cpu");
@@ -1867,6 +1891,7 @@ mod tests {
                 metric: PerceptualMetric::Butteraugli,
                 device: PerceptualDevice::Cpu,
                 target_score: None,
+                target_display: DisplayConfig::WebSdr80,
             },
         );
         assert_eq!(backend.name(), "cpu");
@@ -1891,6 +1916,7 @@ mod tests {
                 metric: PerceptualMetric::Cvvdp,
                 device: PerceptualDevice::Cpu,
                 target_score: None,
+                target_display: DisplayConfig::WebSdr80,
             },
         );
         assert_eq!(
@@ -1923,6 +1949,7 @@ mod tests {
                 metric: PerceptualMetric::Cvvdp,
                 device: PerceptualDevice::Auto,
                 target_score: None,
+                target_display: DisplayConfig::WebSdr80,
             },
         );
         let name = backend.name();

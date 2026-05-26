@@ -4690,6 +4690,32 @@ pub struct LossyConfig {
     /// [`Self::resolve_cvvdp_bytes_tighten`] for the dispatch matrix.
     #[cfg(feature = "butteraugli-loop")]
     cvvdp_bytes_tighten: Option<bool>,
+
+    /// Phase 1 display-config backfill (RFC `docs/RFC_DISPLAY_CONFIG_BACKFILL.md`,
+    /// 2026-05-25): target display config for cvvdp scoring. See
+    /// [`DisplayConfig`] for variants + the Phase 1 geometry caveat.
+    ///
+    /// Default [`DisplayConfig::WebSdr80`] keeps every existing hash-lock
+    /// fixture byte-identical (the variant maps to
+    /// `cvvdp_gpu::params::DisplayModel::STANDARD_4K`, which is what
+    /// `CvvdpParams::default()` already used pre-Phase-1).
+    ///
+    /// **Has no effect** when the resolved [`PerceptualMetric`] is
+    /// [`PerceptualMetric::Butteraugli`] (default) or
+    /// [`PerceptualMetric::Zensim`] — display config only routes through
+    /// the cvvdp scoring path. The field is always present so callers
+    /// can set it ahead of switching the metric without needing a
+    /// re-construction step.
+    ///
+    /// **Strict cjxl-parity invariant**: when
+    /// [`Self::strategy`] is [`EncoderStrategy::Libjxl`], the resolved
+    /// target display is forced to `WebSdr80` regardless of this field
+    /// (matches the W44-126 pattern for `with_perceptual_metric`). See
+    /// [`Self::resolve_target_display`].
+    ///
+    /// Field always present so hash-lock fixtures don't depend on the
+    /// cvvdp cargo features.
+    target_display: DisplayConfig,
 }
 
 /// Multi-metric Phase 0 (RFC #3, 2026-05-25): which perceptual metric
@@ -4768,6 +4794,137 @@ pub enum PerceptualDevice {
     /// features) if CUDA is unavailable — the encoder never panics on
     /// missing CUDA driver.
     Gpu,
+}
+
+/// Target display configuration for CVVDP scoring (Phase 1 display-config
+/// backfill, RFC `docs/RFC_DISPLAY_CONFIG_BACKFILL.md`, 2026-05-25).
+///
+/// Different displays cause different perceived quality at the same
+/// encoded bytes — HDR TVs with high peak luminance amplify dark-region
+/// artifacts vs SDR monitors; phones with EDR boost render SDR content
+/// at higher absolute luminance than the encoder's default
+/// 200 cd/m² STANDARD_4K assumption.
+///
+/// When [`PerceptualMetric::Cvvdp`] is active AND a non-default
+/// `target_display` is set, the cvvdp backend constructs the matching
+/// [`cvvdp_gpu::params::DisplayModel`](https://docs.rs/cvvdp-gpu) for
+/// scoring AND the per-distance calibration table at
+/// `vardct/cvvdp_targets.rs` switches to the per-display row. Default
+/// behaviour ([`Self::WebSdr80`]) preserves backwards compatibility
+/// byte-for-byte on every existing hash-lock fixture.
+///
+/// **Phase 1 limitation**: the upstream `CvvdpOpaque::new` API does NOT
+/// expose `DisplayGeometry` (only `DisplayModel` is plumbed through
+/// `CvvdpParams.display`). Phase 1 therefore ships display-config
+/// dispatch on the photometric / EOTF / primaries / ambient axes only;
+/// viewing geometry stays at the upstream `STANDARD_4K` default
+/// (75.4 PPD, 30″ diagonal at 0.7472 m). Per-display PPD will land in a
+/// future cvvdp-gpu upstream PR + Phase 2 of this backfill.
+///
+/// **Has no effect** when [`PerceptualMetric::Butteraugli`] (default)
+/// or [`PerceptualMetric::Zensim`] is the active metric — display config
+/// only routes through the cvvdp scoring path.
+///
+/// **Strict cjxl-parity invariant**: when the active strategy is
+/// [`EncoderStrategy::Libjxl`], the resolved target display is forced
+/// to [`Self::WebSdr80`] regardless of this field (matches the W44-126
+/// pattern for `with_perceptual_metric`).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DisplayConfig {
+    /// SDR web content on a typical 4K desktop monitor (200 cd/m², sRGB
+    /// EOTF, BT.709 primaries, 250 lux ambient, 75 PPD at 30″ / 0.75 m).
+    /// Matches the pre-Phase-1 single-table baseline
+    /// (`cvvdp_gpu::params::DisplayModel::STANDARD_4K`). Used when no
+    /// explicit target is set.
+    ///
+    /// The variant name keeps the "SDR + 80-cd-target" framing used in
+    /// internet codec discussions even though the underlying upstream
+    /// preset is `STANDARD_4K` at 200 cd/m² — the perceptual model
+    /// effectively targets ~80 cd/m² mean signal level on diffuse
+    /// surfaces at this peak.
+    #[default]
+    WebSdr80,
+
+    /// 2025-flagship phone class viewing SDR content with EDR / HBM
+    /// auto-brightness boost (1000 cd/m² effective sustained peak,
+    /// sRGB EOTF since the signal is still SDR, Display-P3 primaries,
+    /// 200 lux indoor bright ambient).
+    ///
+    /// Captures the typical "user looking at a JXL photo on iPhone /
+    /// Samsung Galaxy / Pixel in a bright environment" case. The
+    /// custom 1000 cd/m² peak is below the panel's 1590-2000 nit HDR
+    /// peak because EDR sustained output for SDR content peaks around
+    /// 1000 nits, not at HDR-mode peak. Custom-built via
+    /// [`cvvdp_gpu::params::DisplayModel::compute_y_refl`] because the
+    /// upstream `IPHONE_14_PRO_HDR` preset uses HLG/BT.2020 (wrong shape
+    /// for SDR-on-HDR content).
+    Phone,
+
+    /// 2026 flagship HDR TV viewing HDR PQ content
+    /// ([`cvvdp_gpu::params::DisplayModel::LG_OLED_2026_HDR_PQ`]:
+    /// 3000 cd/m², PQ EOTF, BT.2020 primaries, OLED contrast,
+    /// 5 lux dim viewing). Represents LG G5/C5-class and Sony A95L-class
+    /// panels with native HDR content.
+    Tv,
+}
+
+impl DisplayConfig {
+    /// Construct the matching [`cvvdp_gpu::params::DisplayModel`] for
+    /// this display config. Used by the cvvdp backend to populate
+    /// `CvvdpParams.display` at construction.
+    ///
+    /// Requires the `cvvdp-loop` cargo feature.
+    #[cfg(feature = "cvvdp-loop")]
+    #[must_use]
+    pub fn display_model(self) -> cvvdp_gpu::params::DisplayModel {
+        use cvvdp_gpu::params::{DisplayModel, Eotf, Primaries};
+        match self {
+            DisplayConfig::WebSdr80 => DisplayModel::STANDARD_4K,
+            DisplayConfig::Phone => DisplayModel {
+                y_peak: 1000.0,
+                // OLED contrast — matches the IPHONE_14_PRO_HDR minimum
+                // (0.0004) bumped slightly for the sustained-EDR regime.
+                y_black: 0.0005,
+                // 200 lux ambient × 0.005 reflectivity / π — handheld
+                // bright-indoor (corridor / cafe / outdoor shade).
+                y_refl: DisplayModel::compute_y_refl(200.0, 0.005),
+                // SDR signal even though the panel is HDR-capable: phone
+                // OS tone-maps SDR content into the HDR pipeline.
+                eotf: Eotf::Srgb,
+                primaries: Primaries::DisplayP3,
+                e_ambient_lux: 200.0,
+                k_refl: 0.005,
+            },
+            DisplayConfig::Tv => DisplayModel::LG_OLED_2026_HDR_PQ,
+        }
+    }
+
+    /// Construct the matching [`cvvdp_gpu::params::DisplayGeometry`]
+    /// for this display config. Used by the CPU cvvdp backend via
+    /// [`cvvdp_cpu::Cvvdp::with_geometry`] (the GPU `CvvdpOpaque::new`
+    /// API does NOT expose `DisplayGeometry` yet — see [`Self`] doc for
+    /// the Phase 1 limitation note).
+    ///
+    /// Requires the `cvvdp-loop` cargo feature (transitively pulls in
+    /// `cvvdp_gpu::params::DisplayGeometry`).
+    #[cfg(feature = "cvvdp-loop")]
+    #[must_use]
+    pub fn display_geometry(self) -> cvvdp_gpu::params::DisplayGeometry {
+        use cvvdp_gpu::params::DisplayGeometry;
+        match self {
+            DisplayConfig::WebSdr80 => DisplayGeometry::STANDARD_4K,
+            DisplayConfig::Phone => {
+                // iPhone 16 Pro Max class (2868×1320), 30 cm handheld
+                // (~11.8″ viewing distance), 6.9″ diagonal. PPD ≈ 95
+                // at this geometry — represents the "user holding phone
+                // at arm's reach" case, NOT the upstream IPHONE_14_PRO
+                // 20″ viewing distance (more generous than typical).
+                DisplayGeometry::from_inches(2868, 1320, 11.8, 6.9)
+            }
+            DisplayConfig::Tv => DisplayGeometry::LG_OLED_2026,
+        }
+    }
 }
 
 /// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
@@ -4940,6 +5097,11 @@ impl LossyConfig {
             // resolves to false and hash-locks stay byte-identical.
             #[cfg(feature = "butteraugli-loop")]
             cvvdp_bytes_tighten: None,
+            // Phase 1 display-config backfill (2026-05-25): default
+            // `WebSdr80` maps to `cvvdp_gpu::params::DisplayModel::STANDARD_4K`
+            // — bit-identical to the pre-Phase-1 cvvdp scoring shape.
+            // Every existing hash-lock fixture stays byte-identical.
+            target_display: DisplayConfig::default(),
         }
     }
 
@@ -6727,6 +6889,11 @@ impl LossyConfig {
             metric: self.resolve_perceptual_metric(),
             device: self.resolve_perceptual_device(),
             target_score: self.perceptual_target_score,
+            // Phase 1 display-config backfill (2026-05-25): bundle the
+            // resolved display config into the selection struct so it
+            // travels alongside the metric + device through every
+            // downstream construct_backend / propagate site.
+            target_display: self.resolve_target_display(),
         }
     }
 
@@ -6811,6 +6978,51 @@ impl LossyConfig {
             // as None). Some(false) is the explicit opt-out.
             self.cvvdp_bytes_tighten.unwrap_or(true)
         }
+    }
+
+    /// Phase 1 display-config backfill (RFC
+    /// `docs/RFC_DISPLAY_CONFIG_BACKFILL.md`, 2026-05-25): set the
+    /// target display config for cvvdp scoring.
+    ///
+    /// See [`DisplayConfig`] for variants + the Phase 1 geometry caveat.
+    /// Default [`DisplayConfig::WebSdr80`] keeps every existing hash-lock
+    /// fixture byte-identical.
+    ///
+    /// Has no effect when the resolved [`PerceptualMetric`] is NOT
+    /// [`PerceptualMetric::Cvvdp`] — display config only routes through
+    /// the cvvdp scoring path. The field is always present so callers
+    /// can set it ahead of switching the metric.
+    ///
+    /// The setter is unconditional (no feature gate) because
+    /// [`DisplayConfig`] itself is feature-independent — only the
+    /// `display_model()` / `display_geometry()` conversion methods are
+    /// gated on `cvvdp-loop`.
+    pub fn with_target_display(mut self, display: DisplayConfig) -> Self {
+        self.target_display = display;
+        self
+    }
+
+    /// Currently configured target display (Phase 1). May differ from
+    /// the runtime-resolved value when [`Self::strategy`] is
+    /// [`EncoderStrategy::Libjxl`] (forces `WebSdr80` for strict
+    /// cjxl-parity) — call [`Self::resolve_target_display`] for the
+    /// effective value.
+    pub fn target_display(&self) -> DisplayConfig {
+        self.target_display
+    }
+
+    /// Phase 1 display-config backfill: resolve the effective target
+    /// display config, honouring the strict-parity invariant.
+    ///
+    /// Returns the display that will ACTUALLY drive the cvvdp scoring,
+    /// which may differ from [`Self::target_display`] when the active
+    /// strategy is [`EncoderStrategy::Libjxl`] (forces `WebSdr80` —
+    /// matches the W44-126 pattern for `with_perceptual_metric`).
+    pub(crate) fn resolve_target_display(&self) -> DisplayConfig {
+        if matches!(self.strategy, EncoderStrategy::Libjxl) {
+            return DisplayConfig::WebSdr80;
+        }
+        self.target_display
     }
 
     /// Resolve the configured [`HdrLoss`] into the concrete loss that
@@ -16557,6 +16769,62 @@ mod tests {
         assert_eq!(cfg.perceptual_target_score(), Some(0.05));
         let cfg = cfg.with_perceptual_target_score(None);
         assert_eq!(cfg.perceptual_target_score(), None);
+    }
+
+    /// Phase 1 display-config backfill (2026-05-25, RFC
+    /// `docs/RFC_DISPLAY_CONFIG_BACKFILL.md`): the `with_target_display`
+    /// setter + `target_display` getter round-trip via the public API.
+    /// Default is `WebSdr80`; explicit set to Phone / Tv pins the field.
+    #[test]
+    fn test_target_display_default_and_round_trip() {
+        // Default ≡ WebSdr80 (preserves pre-Phase-1 behaviour).
+        let cfg = LossyConfig::new(1.0);
+        assert_eq!(
+            cfg.target_display(),
+            DisplayConfig::WebSdr80,
+            "default target_display must be WebSdr80 for backwards compat"
+        );
+        for d in [
+            DisplayConfig::WebSdr80,
+            DisplayConfig::Phone,
+            DisplayConfig::Tv,
+        ] {
+            let cfg = LossyConfig::new(1.0).with_target_display(d);
+            assert_eq!(
+                cfg.target_display(),
+                d,
+                "field value must reflect the explicit setter"
+            );
+        }
+    }
+
+    /// Phase 1 display-config backfill: `EncoderStrategy::Libjxl`
+    /// MUST force `resolve_target_display()` to `WebSdr80` regardless
+    /// of the field value (strict cjxl-parity invariant — mirrors
+    /// W44-126 for `with_perceptual_metric`).
+    #[test]
+    fn test_resolve_target_display_libjxl_short_circuit() {
+        // Libjxl + explicit Tv setter: field reflects the setter, but
+        // resolver returns WebSdr80.
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Libjxl)
+            .with_target_display(DisplayConfig::Tv);
+        assert_eq!(
+            cfg.target_display(),
+            DisplayConfig::Tv,
+            "field value must reflect the explicit setter"
+        );
+        assert_eq!(
+            cfg.resolve_target_display(),
+            DisplayConfig::WebSdr80,
+            "Libjxl strategy MUST force resolved target_display to WebSdr80 \
+             — strict cjxl-parity invariant"
+        );
+        // Zenjxl + Phone: resolver returns Phone (no short-circuit).
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Zenjxl)
+            .with_target_display(DisplayConfig::Phone);
+        assert_eq!(cfg.resolve_target_display(), DisplayConfig::Phone);
     }
 
     /// Multi-metric Phase 0 (RFC #3 §1.3, 2026-05-25): the resolver

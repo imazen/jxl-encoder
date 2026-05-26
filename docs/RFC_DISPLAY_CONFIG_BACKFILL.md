@@ -349,7 +349,65 @@ Phase 4.
 
 ## §7. Phases (smallest demoable chunk first)
 
-### Phase 1 — sanity bench (SDR-200 vs HDR PQ 1000, 1 day)
+### Phase 1 — API surface + 3-preset opt-in (SHIPPED 2026-05-25)
+
+**Status**: **SHIPPED**. The Phase 1 deliverable evolved from the
+original "sanity bench" plan into a full API-surface ship: the user
+mandate from 2026-05-25 prioritised landing the `with_target_display`
+caller surface + a 3-preset (WebSdr80 / Phone / Tv) calibration table
+inside one chunk, so callers can opt-in to per-display CVVDP scoring
+immediately. Heuristic seeds for Phone + Tv ship in lieu of the
+1-day re-score sweep (deferred to Phase 2 + the cvvdp-gpu
+`new_with_geometry` upstream gap-close).
+
+What landed:
+
+- `crate::api::DisplayConfig` enum (`WebSdr80` / `Phone` / `Tv` —
+  3 Phase 1 presets, `#[non_exhaustive]` for future extension) with
+  `display_model()` + `display_geometry()` conversion methods (gated
+  on `cvvdp-loop` cargo feature).
+- `LossyConfig::with_target_display(DisplayConfig)` setter +
+  `target_display()` getter + `resolve_target_display()` resolver
+  (Libjxl strict-parity short-circuit forces `WebSdr80`).
+- Per-display calibration table in `vardct/cvvdp_targets.rs`:
+  3 rows × 7 distance bands. WebSdr80 row preserved bit-identical
+  from the Phase 4 single-table seed; Phone + Tv rows computed as
+  `WebSdr80 × {PHONE,TV}_TARGET_MULTIPLIER` (1.04 / 1.12) at
+  compile time via a `const fn` helper.
+- `MetricSelection` extended with `target_display` field;
+  `propagate_resolved_metric_to_encoder` writes the resolved
+  value to `VarDctEncoder.target_display`.
+- Both cvvdp backends (`GpuCvvdpBackend` + `CpuCvvdpBackend`)
+  extended to accept `target_display` at `try_new` and route the
+  matching `DisplayModel` through `CvvdpParams.display`. The CPU
+  backend ALSO routes `DisplayGeometry` via `Cvvdp::with_geometry`
+  (the GPU `CvvdpOpaque::new` API doesn't expose geometry — see
+  Phase 1 geometry caveat in `DisplayConfig` docstring).
+- New integration test `display_config_dispatch.rs`: 4-PASS
+  invariants (default byte-identity, butteraugli unaffected,
+  Libjxl strict-parity, multi-decoder roundtrip) + 1 ignored
+  CUDA-required test. New unit tests in `cvvdp_targets.rs`
+  (3 monotonicity + 1 legacy-wrapper byte-identity + helpers).
+- New row in `docs/LIBJXL_DIVERGENCES.md` Section E.
+- Hash-locks 36/36 BYTE-IDENTICAL, Libjxl byte-lock 4/4 PASS,
+  drift 7/7 PASS, library tests 1515/1515 PASS.
+
+What's deferred to Phase 1b / Phase 2:
+
+- **Per-display re-seed against local re-scoring** of
+  `cvvdp_vs_buttloop_tracking_2026-05-24.tsv` with the matching
+  `DisplayModel` per row. Phase 1 ships heuristic multipliers
+  derived from the §4 sensitivity estimates; the multipliers are
+  intentionally simple (one scalar per row) and acknowledged in
+  the cvvdp_targets module doc as "until a follow-on re-seed lands".
+- **GPU geometry dispatch** — `cvvdp-gpu` upstream PR to add a
+  `CvvdpOpaque::new_with_geometry` API. Phase 1 ships
+  display-model dispatch on the GPU path; geometry stays at the
+  `STANDARD_4K` upstream default until the upstream PR lands.
+- **CICP-derived auto-dispatch** (Phase 4 in the original plan) —
+  explicit-only API for Phase 1 per task spec.
+
+### Phase 1.original — sanity bench (SDR-200 vs HDR PQ 1000, 1 day) — REPLACED by Phase 1 SHIPPED above
 
 **Goal**: verify the §4 sensitivity estimate empirically before
 committing to API design.
@@ -482,3 +540,11 @@ input. Re-train cost ~$10-30.
 
 - 2026-05-25: RFC drafted; awaits user decisions in §8 before Phase 1
   spawn. No production source touched. No sweeps fired.
+- 2026-05-25 (later): Phase 1 SHIPPED — `with_target_display` API +
+  3-preset calibration table + cvvdp backend dispatch. Heuristic seeds
+  for Phone + Tv rows in lieu of the original "sanity bench" plan
+  (collapsed Phases 1+2 of the original §7 into one chunk per user
+  mandate). Phase 1b (per-display re-seed against measured shifts) +
+  cvvdp-gpu `new_with_geometry` upstream PR + CICP auto-dispatch
+  deferred to Phase 2+. See §7 "Phase 1 — API surface + 3-preset
+  opt-in (SHIPPED 2026-05-25)" for the full ship narrative.
