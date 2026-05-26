@@ -85,6 +85,62 @@ unless source PNGs are metadata-stripped first.**
 Rust butteraugli on both encoders' output, decoded via jxl-oxide in linear RGB. Completely
 immune to PNG metadata issues.
 
+## Multi-Metric Perceptual Backend (2026-05-25)
+
+The iterative quantization loop ("buttloop") is now **metric-agnostic**.
+It is driven by a pluggable `PerceptualBackend` trait (`vardct/perceptual_backend.rs`)
+with three selectable metrics, chosen explicitly by the caller:
+
+```rust
+LossyConfig::new(distance)
+    .with_perceptual_metric(PerceptualMetric::Butteraugli) // default
+    // or Cvvdp, or Zensim
+    .with_perceptual_device(PerceptualDevice::Auto)        // Auto | Cpu | Gpu
+```
+
+**Metrics + verdicts** (from the 7-backend × 1,134-cell tracking sweep,
+`benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv`):
+
+| Metric | Cargo features | Pareto-front | Verdict |
+|---|---|---|---|
+| **Butteraugli** | (default) | 67.7% | DEFAULT — Pareto-optimal, all W44 calibration built on it |
+| **CVVDP** | `cvvdp-loop` (+ `cvvdp-loop-cpu`, `cvvdp-loop-tighten`) | **95.4%** | OPT_IN (improved) — after Phase 8 refit; -7.4% bytes, -27% wall vs B |
+| **Zensim** | `zensim-loop` (+ `zensim-loop-gpu`) | 65.3% | OPT_IN — calibration over-loose; Phase 8-zensim refit pending |
+
+**Invariants** (binding, verified by tests on every change):
+- Default path (butteraugli, no opt-in) is BYTE-IDENTICAL regardless of
+  which metric cargo features are compiled (hash-locks 36/36).
+- `EncoderStrategy::Libjxl` ALWAYS forces Butteraugli via
+  `resolve_perceptual_metric()` — strict cjxl-parity (byte-lock 4/4),
+  regardless of `with_perceptual_metric()`.
+- Per-content-class auto-dispatch is intentionally OUT OF SCOPE — the
+  user explicitly selects the metric.
+
+**Score direction**: the trait normalizes every metric to butteraugli
+direction (smaller = better). CVVDP JOD → `(10 - jod).clamp(0, 10)`;
+zensim 0-100 → `(100 - score).clamp(0, 100)`.
+
+**Per-metric tuning**: each backend ships its own block-reducer constants.
+The critical one is `K_TILE_NORM` (the 16th-power-norm premultiplier in
+the per-block reducer): Butteraugli 1.2, CVVDP **0.16** (Phase 8g refit —
+the single change that took cvvdp 40%→95% Pareto), Zensim 1.2
+(butter-parity placeholder; Phase 8-zensim will refit). CVVDP also has
+`CVVDP_DIFFMAP_RENORM_SCALE = 0.018` (Phase 8c — derived as
+`(target_c/target_b) × (mean_b/mean_c)`, NOT `mean_b/mean_c`).
+
+**Reference docs**: `docs/RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md` (API),
+`docs/RFC_PERCEPTUAL_METRIC_REQUIREMENTS.md` (what a metric needs),
+`docs/CVVDP_FORK_DECISION.md` + `docs/ZENSIM_FORK_DECISION.md` (verdicts),
+`docs/CVVDP_W44_GATE_TRANSFER.md` (which W44 gates transfer vs need
+re-calibration per-metric). The metric CPU/GPU crates live in
+`~/work/zen/zenmetrics/crates/{cvvdp-gpu,cvvdp-cpu,zensim-gpu}` and
+`~/work/zen/zensim/`.
+
+**Queued follow-ons**: Phase 8-zensim (K_TILE_NORM refit, 65%→85%+),
+Phase 7-zensim (docs), zensim-gpu GPU-native diffmap kernels (currently
+CPU-fallback), cvvdp-cpu structural perf (strip-pipeline + f16 for
+150ms→50ms at 1024²).
+
 ## Current Status: Full libjxl Parametric Quantization Weights
 
 The VarDCT encoder (`jxl_encoder/src/vardct/`) now uses full libjxl's default parametric
@@ -616,7 +672,7 @@ This is the SINGLE SOURCE OF TRUTH for where our encoder diverges from libjxl re
 
 **Sub-agent prompt requirement**: When spawning a sub-agent for any code-change chunk, the prompt MUST include reading `docs/LIBJXL_DIVERGENCES.md` AND `jxl-encoder/src/gate_registry.rs` in "inputs to read FIRST" AND a requirement to update the relevant row(s) + macro metadata before commit. Sub-agents that ship without updating both are failing the chunk's acceptance. The W44-194 drift test will catch most omissions on the next CI run, but pre-commit awareness is still the right discipline.
 
-**Verification**: `git log --oneline -- docs/LIBJXL_DIVERGENCES.md jxl-encoder/src/gate_registry.rs` should show updates roughly synchronized with commits touching `effort.rs`, `vardct/encoder.rs`, `butteraugli_loop.rs`, `vardct/ac_strategy_search.rs`, `vardct/dc_tree_learn.rs`, `modular/tree_learn.rs`, or any cost-model constant table.
+**Verification**: `git log --oneline -- docs/LIBJXL_DIVERGENCES.md jxl-encoder/src/gate_registry.rs` should show updates roughly synchronized with commits touching `effort.rs`, `vardct/encoder.rs`, `vardct/perceptual_loop.rs` (formerly `butteraugli_loop.rs`), `vardct/ac_strategy_search.rs`, `vardct/dc_tree_learn.rs`, `modular/tree_learn.rs`, or any cost-model constant table.
 
 ## Research methodology (binding for tuning chunks)
 
@@ -3903,9 +3959,20 @@ jxl-encoder-rs/
 │   │   ├── image/             # Image buffer types
 │   │   ├── modular/           # Modular (lossless) encoder + FrameEncoder
 │   │   ├── vardct/            # VarDCT (lossy) encoder
+│   │   │   ├── perceptual_loop.rs      # Metric-agnostic quantization loop (was butteraugli_loop.rs)
+│   │   │   ├── perceptual_backend.rs   # PerceptualBackend trait + construct_backend dispatch
+│   │   │   ├── cvvdp_backend.rs        # Gpu/CpuCvvdpBackend (feature cvvdp-loop)
+│   │   │   ├── zensim_backend.rs       # Gpu/CpuZensimBackend (feature zensim-loop)
+│   │   │   ├── cvvdp_targets.rs        # CVVDP per-distance JOD calibration table
+│   │   │   └── zensim_targets.rs       # Zensim per-distance calibration table
 │   │   └── error.rs           # Error types
 └── jxl_encoder_cli/         # Command-line tool (cjxl-rs)
 ```
+
+**Note**: `vardct/butteraugli_loop.rs` was renamed to `perceptual_loop.rs`
+in the multi-metric refactor (2026-05-25). The historical Investigation
+Notes below still reference the old name — those are dated records, not
+live file paths.
 
 ## Porting Guidelines
 
