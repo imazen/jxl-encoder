@@ -441,3 +441,79 @@ Total: 10 commits, ~3,000 LOC, ≥85% Pareto-front-pct on the calibration corpus
 - Replacing the per-block 16th-power-norm reducer with a metric-shaped one (Phase 8i candidate per `cvvdp_fork_phase8g_block_constants_shipped:223-226`). The current dispatch via `BlockReducerConstants` is sufficient for cvvdp and likely sufficient for zensim.
 - W44 cost-model gate re-calibration per metric (`docs/CVVDP_W44_GATE_TRANSFER.md` audit). Each metric integration inherits the butteraugli-calibrated gates; per-metric refits are a separate multi-phase effort if needed.
 - Per-image / content-class metric dispatch (e.g. "use cvvdp for screenshots, butteraugli for photos"). The current architecture is per-encode-call; per-image is a future API surface (`RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md` §6 may surface this).
+
+## §11. Symmetric target-score handling (added 2026-05-26)
+
+> **Note on heading number**: The original task spec for this section
+> called it "§9", but §9 + §10 were already in use (Synthesis + Out of
+> scope) at the time this clause was appended. Renumbered to §11 to
+> preserve the prior section structure verbatim per the
+> RFC_BUTTERAUGLI_TARGET_SYMMETRY chunk's "do not rewrite earlier
+> sections" instruction. The content is the spec's literal §9.
+
+A metric's contract per §1-§8 is necessary but not sufficient for the
+multi-metric API per `RFC_MULTI_METRIC_PERCEPTUAL_BACKEND`. The
+`with_perceptual_target_score(Option<f32>)` builder requires every
+metric to provide an **inverse mapping**: given a target score in the
+metric's native units, return the effective `distance` parameter that
+produces that score Pareto-optimally.
+
+Three valid implementation shapes:
+
+1. **Static calibration table** — pre-computed `(target_score,
+   distance)` lookup with linear interp. Cheap, slight per-corpus
+   imprecision.
+2. **Outer binary-search wrapper** — encode at trial distance,
+   measure score, adjust. Exact but 4-6× wall cost.
+3. **Live inverse** — runtime stats compute distance from rolling
+   averages. Middle ground; not yet implemented for any metric.
+
+cvvdp uses #1 (`cvvdp_targets.rs`, Phase 4). zensim is queued for #1
+(zensim Phase 4). butteraugli is queued for #1 (`butteraugli_targets.rs`,
+see `RFC_BUTTERAUGLI_TARGET_SYMMETRY`).
+
+### §11.1. Why this is a baseline requirement, not a stretch goal
+
+When a caller sets `with_perceptual_target_score(Some(score))`, the
+buttloop's convergence target MUST become a function of `score` — not
+just the configured `distance`. Otherwise the setter is a no-op (which
+is what the multi-metric Phase 0 commit `23da77b1` shipped for ALL
+THREE metrics: the field was added to `LossyConfig`, plumbed into
+`MetricSelection`, then never consumed inside the buttloop body).
+
+The contract MUST hold for every metric whose default behaviour is
+identity (butteraugli) AND every metric with an explicit
+`<metric>_targets.rs` lookup (cvvdp, zensim). The dispatch site at
+`vardct/perceptual_loop.rs:2350-2386` is where every backend's
+score→distance inverse must be consulted; the trailing identity arm
+is butteraugli's degenerate case but identity is NOT exact (see
+`RFC_BUTTERAUGLI_TARGET_SYMMETRY` §1.3 — buttloop achieves median butter
+0.72 at d=0.5, not 0.5).
+
+### §11.2. Acceptance gate for every new metric integration
+
+Adding a metric backend to the multi-metric API per
+`RFC_MULTI_METRIC_PERCEPTUAL_BACKEND.md` requires the metric's Phase
+arc to land BOTH directions of the calibration:
+
+- **distance → score** lookup (the existing pattern; cvvdp Phase 4,
+  zensim Phase 4 queued).
+- **score → distance** lookup (the new requirement codified here;
+  butteraugli Phase 1 queued per `RFC_BUTTERAUGLI_FORK_PLAN.md`).
+
+The score→distance direction is what makes
+`with_perceptual_target_score` symmetric. Without it the caller-facing
+setter is a no-op on the metric in question.
+
+### §11.3. Strict-parity bypass requirement
+
+Every metric's score→distance lookup MUST also short-circuit under
+`EncoderStrategy::Libjxl` per W44-126 strict cjxl-parity. The
+short-circuit lives at the `LossyConfig` resolver level (
+`resolve_perceptual_target_score()` returns `None` regardless of the
+caller's setter when Libjxl is the active strategy). The byte-lock
+test matrix at `tests/strategy_libjxl_byte_lock.rs` (W44-194) extends
+to cover `with_perceptual_target_score`-{None, Some(values)} variants
+for every metric, multiplying the test matrix size by the number of
+distinct target_score values tested (typically 4× per metric: None +
+3 representative scores).
