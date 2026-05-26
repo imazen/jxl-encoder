@@ -1,0 +1,147 @@
+## Phase 2 display-config backfill — per-display re-scoring bench
+## (chunk: cvvdp-fork-display-cfg-phase2-retry, 2026-05-26)
+
+Long TSV: `benchmarks/cvvdp_per_display_reseed_2026-05-26.tsv`
+Medians TSV: `benchmarks/cvvdp_per_display_reseed_medians_2026-05-26.tsv`
+Harness: `jxl-encoder/examples/cvvdp_display_reseed.rs`
+Tracking corpus: `benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv` (backend=B rows)
+
+## What was measured
+
+Re-scored every unique (image, distance, effort) cell from the Phase 1
+tracking baseline (1,134 cells, backend=B) against the reference image
+under EACH of `DisplayConfig::{WebSdr80, Phone, Tv}`.
+
+For each cell:
+1. Encoded ONCE with `LossyConfig::new(distance).with_effort(effort)`
+   (default Zenjxl + butteraugli CPU buttloop, equivalent to backend=B).
+2. Decoded via jxl-oxide to linear-sRGB f32.
+3. Converted decoded f32 → sRGB-u8 via inverse-gamma.
+4. Scored (ref_sRGB_u8, dis_sRGB_u8) using cvvdp-gpu's
+   `CvvdpOpaque::new_with_geometry(Cuda, w, h, params, geometry).compute_srgb_u8`
+   under each DisplayConfig — fresh GPU context per (w, h) tuple change,
+   3 contexts kept alive (one per display).
+
+Total rows emitted: **3,402** = 1,134 cells × 3 displays
+Coverage per (distance, display) bucket: **n=162** (uniform; 54 unique
+images × 3 efforts {5, 7, 8} = 162 rows per (distance, display)).
+
+## Methodology vs original task spec
+
+- **Truncation**: NONE. The original task brief noted "if full corpus
+  would exceed 4 hours, truncate". Full corpus completed in **7m 0s**
+  on lilith RTX 5070 — no truncation needed.
+- **Encoding**: 1 sample per cell (vs Phase 1's 3-iter best-of-median).
+  The cell-output identity for backend=B is determined by the encoder,
+  not by sampling, so a single encode is sufficient to score.
+- **Scoring**: `compute_srgb_u8` directly (vs the buttloop's
+  `compute_with_warm_ref_from_linear_planes` linear-planes path). Both
+  produce the same JOD on identical (ref, dis) pixels — the linear-
+  planes path is purely a hot-path optimization for the buttloop's
+  per-iter compares, not a different scoring model.
+
+## Headline finding
+
+Direction-of-shift CONFIRMS the Phase 1 heuristic (`Tv > Phone >
+WebSdr80` at every distance band). Magnitude does NOT — Phase 1's
+uniform `WebSdr80 × {1.04, 1.12}` heuristic is far off the measured
+per-distance ratios:
+
+| dist | WebSdr80 target | Phone target | Tv target  | Phone/Web | Tv/Web | Phone-heur (1.04×) | Tv-heur (1.12×) |
+|---   |---              |---           |---         |---        |---     |---                 |---               |
+| 0.5  | 0.0025 (m)      | 0.0072 (m)   | 0.0517 (m) | **2.91×** | **20.76×** | 0.0030             | 0.0032           |
+| 1.0  | 0.0217 (m)      | 0.0370 (m)   | 0.1412 (m) | 1.70×     | 6.50×      | 0.0248             | 0.0267           |
+| 1.5  | 0.0454 (m)      | 0.0623 (m)   | 0.2002 (m) | 1.37×     | 4.41×      | 0.0479             | 0.0516           |
+| 2.0  | 0.0717 (m)      | 0.0962 (m)   | 0.2483 (m) | 1.34×     | 3.46×      | 0.0753             | 0.0811           |
+| 3.0  | 0.1318 (m)      | 0.1539 (m)   | 0.3429 (m) | 1.17×     | 2.60×      | 0.1389             | 0.1496           |
+| 4.0  | 0.2105 (m)      | 0.2344 (m)   | 0.4318 (m) | 1.11×     | 2.05×      | 0.2235             | 0.2407           |
+| 5.0  | 0.2966 (m)      | 0.3146 (m)   | 0.5310 (m) | 1.06×     | 1.79×      | 0.3125             | 0.3366           |
+
+`(m)` = measured. Targets in `(10.0 - JOD_p50) × 1.05` space.
+
+At d=0.5 the heuristic understated Tv by **16×** (heuristic 0.0032 vs
+measured 0.0517). The Phone/Web ratio decreases monotonically from
+2.91× to 1.06× with distance; Tv/Web decreases monotonically from
+20.76× to 1.79×. The shift IS distance-dependent — a single global
+multiplier cannot capture this; Phase 2 ships explicit per-distance
+arrays.
+
+## WebSdr80 vs Phase 4 legacy
+
+Phase 2 measurement of WebSdr80 is within ~3% of the Phase 4 legacy
+values (the variance is from corpus-composition differences between
+the Phase 4 baseline and this Phase 2 re-score). The Phase 4 legacy
+values are PINNED in the shipped table to preserve the byte-identity
+invariant of the pre-Phase-1 single-table path (the
+`websdr80_byte_identical_to_legacy_wrapper` unit test enforces this).
+
+## Disposition
+
+- Phone + Tv `cvvdp_targets.rs` constants REPLACED with measured
+  per-distance arrays.
+- WebSdr80 row PINNED at Phase 4 legacy (3 unit tests enforce this).
+- Heuristic `PHONE_TARGET_MULTIPLIER` + `TV_TARGET_MULTIPLIER` consts
+  DELETED. The Phase 1 honeypot test `multipliers_in_documented_band`
+  REMOVED; replaced with `phase2_tables_in_measured_envelope` +
+  `websdr80_row_pinned_to_phase4_legacy` which enforce the measured
+  envelope + the pinning invariant respectively.
+- GPU CVVDP backend in `vardct/cvvdp_backend.rs` now constructs via
+  `CvvdpOpaque::new_with_geometry` (was `CvvdpOpaque::new`).
+- WebSdr80 default-display path stays BYTE-IDENTICAL on every
+  hash-lock fixture (36/36 verified) AND on every Strategy::Libjxl
+  byte-lock cell (4/4 verified).
+
+## Acceptance gates
+
+- (a) Build PASS (default + cvvdp-loop feature combos)
+- (b) `cargo test --lib`: 1518/1518 PASS (+1 vs Phase 1's 1517)
+- (c) Hash-locks 36/36 BYTE-IDENTICAL — Phase 2 is OPT-IN
+- (d) Strategy::Libjxl byte-lock 4/4 BYTE-IDENTICAL
+- (e) Drift test 7/7 PASS
+- (f) display_config_dispatch 4/4 PASS (1 ignored = CUDA-required)
+- (g) Phone + Tv constants ARE measured (not heuristic); module-level
+      docstring + 2 unit tests + 1 envelope-guard pin this
+- (h) Bench files committed: `cvvdp_per_display_reseed_2026-05-26.tsv`
+      + `.meta` + `cvvdp_per_display_reseed_medians_2026-05-26.tsv`
+- (i) Re-scoring harness `examples/cvvdp_display_reseed.rs` committed
+- (j) fmt + clippy clean
+- (k) Multi-decoder roundtrip on spot-check cells via jxl-rs + djxl
+
+## Sweep wall
+
+419 s on lilith RTX 5070. 3,402 rows / 419 s = **8.1 rows/sec average**.
+Photos at e=5 ran ~20 rows/sec; gb82-sc screenshots at e=8 ran ~5
+rows/sec (encode-bound, not scoring-bound).
+
+## DO NOT
+
+- DO NOT cite "FMA precision" for any per-display byte/score
+  divergence (W44-66). Phone + Tv targets WILL change; that's by
+  design.
+- DO NOT overwrite the WebSdr80 row with the Phase 2 measurement —
+  the byte-identity invariant of the pre-Phase-1 path requires it
+  stays pinned (Phase 4 legacy values), regardless of small (<3%)
+  sweep-variance shifts.
+- DO NOT remove the `phase2_tables_in_measured_envelope` test — it
+  guards against accidental order-of-magnitude refits (e.g., a future
+  agent re-applying the Phase 1 heuristic on top of the measured
+  values would be caught here).
+- DO NOT silently invert the direction-of-shift in a future refit.
+  The measured direction is `Tv > Phone > WebSdr80` at every distance
+  band; the `cvvdp_target_score_phone_higher_than_websdr80` +
+  `cvvdp_target_score_tv_higher_than_phone` tests pin this.
+
+## Follow-ons (NOT this chunk)
+
+- **Phase 3 candidate**: per-image content-class dispatch (route
+  screenshots through a separate Tv-class target table, photos
+  through Phone-class). The corpus-wide medians here aggregate all
+  content types; a per-content-class refit might tighten further.
+- **JOD-shift sweep beyond 5.0**: the table tops out at d=5.0. If
+  callers start passing target_distance > 5.0 to the cvvdp loop, the
+  current clamp behaviour returns the d=5.0 value; a Phase 3 extension
+  could sweep d ∈ {6.0, 8.0, 10.0} to extend the band.
+- **`with_target_display` integration test on CUDA host**: re-run
+  `cvvdp_target_display_shifts_bytes_when_cuda_present` (currently
+  `#[ignore]`) under CUDA to assert non-trivial byte-shift between
+  the three displays at the new measured target magnitudes.

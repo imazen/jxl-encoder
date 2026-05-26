@@ -130,15 +130,15 @@ pub(crate) mod gpu {
         /// `DisplayModel::STANDARD_4K` — bit-identical to the
         /// pre-Phase-1 ctor behaviour.
         ///
-        /// **Geometry caveat**: `CvvdpOpaque::new` does NOT expose
-        /// `DisplayGeometry` (only `DisplayModel` via
-        /// `CvvdpParams.display`). Phase 1 therefore ships display
-        /// dispatch on the photometric / EOTF / primaries / ambient
-        /// axes only; viewing geometry stays at the upstream
-        /// `STANDARD_4K` PPD ≈ 75.4 regardless of `target_display`.
-        /// A future cvvdp-gpu upstream PR + Phase 2 of the backfill
-        /// will close this gap. See `crate::api::DisplayConfig` for
-        /// the full caveat note.
+        /// Phase 2 (2026-05-26): viewing geometry is now also plumbed
+        /// via [`CvvdpOpaque::new_with_geometry`] (upstream
+        /// `cvvdp_gpu` 0.0.1 master `a4994bb4` exposed the API).
+        /// `DisplayConfig::Phone` now drives PPD ≈ 95 (handheld 30 cm);
+        /// `DisplayConfig::Tv` drives `DisplayGeometry::LG_OLED_2026`;
+        /// `WebSdr80` drives `DisplayGeometry::STANDARD_4K` (bit-
+        /// identical PPD to the Phase 1 path because that was already
+        /// the upstream default). The earlier geometry caveat in the
+        /// docstring is resolved.
         pub(crate) fn try_new(
             width: u32,
             height: u32,
@@ -154,12 +154,14 @@ pub(crate) mod gpu {
                 display: target_display.display_model(),
                 ..CvvdpParams::default()
             };
+            // Phase 2 (2026-05-26): pull the matching DisplayGeometry too.
+            let geometry = target_display.display_geometry();
             // CubeCL panic-on-CUDA-missing protection. Mirror
             // `GpuButteraugliBackend::try_new` — wrap the entire
             // constructor in `catch_unwind` so the encode survives
             // even if CubeCL aborts mid-init.
             let inner = std::panic::catch_unwind(|| {
-                CvvdpOpaque::new(CvvdpBackend::Cuda, width, height, params)
+                CvvdpOpaque::new_with_geometry(CvvdpBackend::Cuda, width, height, params, geometry)
             });
             let inner = match inner {
                 Ok(Ok(c)) => c,
