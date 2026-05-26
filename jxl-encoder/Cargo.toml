@@ -1555,6 +1555,26 @@ path = "examples/cvvdp_track_baseline.rs"
 # zensim-loop directly; the api dispatch handles silent fallback.
 required-features = ["gpu-butteraugli", "butteraugli-loop", "cvvdp-loop", "cvvdp-loop-cpu", "cvvdp-loop-tighten", "zensim-loop", "zensim-loop-gpu", "ssim2-loop", "parallel"]
 
+# Phase 2 display-config backfill (2026-05-26): re-score the per-cell
+# tracking corpus under each DisplayConfig so the Phase 1 heuristic
+# multipliers in vardct/cvvdp_targets.rs can be replaced with measured
+# per-distance tables. Encodes ONCE per (image, distance, effort) and
+# scores 3× per cell (one per DisplayConfig). Reads
+# benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv to enumerate
+# cells.
+[[example]]
+name = "cvvdp_display_reseed"
+path = "examples/cvvdp_display_reseed.rs"
+required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "ssim2-loop", "parallel"]
+
+# Phase 2 multi-decoder spot-check (acceptance gate k): 3 cells × 3
+# DisplayConfigs × 3 decoders (jxl-oxide, djxl, jxl-rs) = 27 PASS
+# checks required.
+[[example]]
+name = "cvvdp_display_phase2_spotcheck"
+path = "examples/cvvdp_display_phase2_spotcheck.rs"
+required-features = ["__expert", "butteraugli-loop", "cvvdp-loop", "ssim2-loop", "parallel"]
+
 # cvvdp-fork Phase 6 (2026-05-24) multi-decoder spot-check (acceptance
 # gate (e)): encodes 20 cells with C_GPU and C_CPU at e8 d∈{1.0, 3.0}
 # and pipes each output through jxl-oxide + djxl + jxl-rs.

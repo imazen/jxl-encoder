@@ -4813,13 +4813,18 @@ pub enum PerceptualDevice {
 /// behaviour ([`Self::WebSdr80`]) preserves backwards compatibility
 /// byte-for-byte on every existing hash-lock fixture.
 ///
-/// **Phase 1 limitation**: the upstream `CvvdpOpaque::new` API does NOT
-/// expose `DisplayGeometry` (only `DisplayModel` is plumbed through
-/// `CvvdpParams.display`). Phase 1 therefore ships display-config
-/// dispatch on the photometric / EOTF / primaries / ambient axes only;
-/// viewing geometry stays at the upstream `STANDARD_4K` default
-/// (75.4 PPD, 30″ diagonal at 0.7472 m). Per-display PPD will land in a
-/// future cvvdp-gpu upstream PR + Phase 2 of this backfill.
+/// **Phase 2 (2026-05-26)** wires viewing geometry too. Upstream
+/// `cvvdp_gpu` master `a4994bb4`+ exposes `CvvdpOpaque::new_with_geometry`,
+/// so the GPU backend now constructs the underlying scorer with both
+/// `DisplayModel` AND `DisplayGeometry`. `Phone` drives PPD ≈ 95
+/// (handheld 30 cm); `Tv` drives `DisplayGeometry::LG_OLED_2026`;
+/// `WebSdr80` drives `DisplayGeometry::STANDARD_4K` (75.4 PPD —
+/// byte-identical to the pre-Phase-2 dispatch because that was already
+/// the upstream default). The Phase 2 per-distance target tables at
+/// `vardct/cvvdp_targets.rs` were re-measured against the 1,134-cell
+/// tracking corpus under each `DisplayConfig`; Phone+Tv now ship
+/// measured per-distance arrays rather than Phase 1's uniform
+/// multipliers.
 ///
 /// **Has no effect** when [`PerceptualMetric::Butteraugli`] (default)
 /// or [`PerceptualMetric::Zensim`] is the active metric — display config
@@ -4901,10 +4906,11 @@ impl DisplayConfig {
     }
 
     /// Construct the matching [`cvvdp_gpu::params::DisplayGeometry`]
-    /// for this display config. Used by the CPU cvvdp backend via
-    /// [`cvvdp_cpu::Cvvdp::with_geometry`] (the GPU `CvvdpOpaque::new`
-    /// API does NOT expose `DisplayGeometry` yet — see [`Self`] doc for
-    /// the Phase 1 limitation note).
+    /// for this display config. Used by both the CPU cvvdp backend
+    /// ([`cvvdp_cpu::Cvvdp::with_geometry`]) and, as of Phase 2
+    /// (2026-05-26), the GPU cvvdp backend via
+    /// `cvvdp_gpu::CvvdpOpaque::new_with_geometry` (upstream
+    /// `cvvdp_gpu` master `a4994bb4`+).
     ///
     /// Requires the `cvvdp-loop` cargo feature (transitively pulls in
     /// `cvvdp_gpu::params::DisplayGeometry`).
