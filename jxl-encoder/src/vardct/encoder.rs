@@ -2135,6 +2135,20 @@ pub struct VarDctEncoder {
     /// Phase 8d brief in `docs/RFC_CVVDP_PHASE8_PARETO_TARGETING.md` §3.3.
     #[cfg(feature = "butteraugli-loop")]
     pub cvvdp_bytes_tighten: bool,
+    /// Phase 1 display-config backfill (RFC
+    /// `docs/RFC_DISPLAY_CONFIG_BACKFILL.md`, 2026-05-25): target
+    /// display config for cvvdp scoring. Populated by
+    /// [`crate::vardct::perceptual_backend::propagate_resolved_metric_to_encoder`]
+    /// from [`crate::api::LossyConfig::resolve_target_display`].
+    ///
+    /// Default [`crate::api::DisplayConfig::WebSdr80`] keeps every
+    /// hash-lock fixture byte-identical (the variant maps to
+    /// `cvvdp_gpu::params::DisplayModel::STANDARD_4K`, which is the
+    /// pre-Phase-1 default). Field is always present (no feature gate)
+    /// because the enum itself is feature-independent — only the cvvdp
+    /// backend ctors and the per-display target lookup actually consume
+    /// it.
+    pub target_display: crate::api::DisplayConfig,
     /// Number of SSIM2 quantization loop iterations.
     /// Alternative to butteraugli loop: uses per-block linear RGB RMSE + full-image SSIM2.
     /// Requires the `ssim2-loop` feature.
@@ -2507,6 +2521,10 @@ impl Default for VarDctEncoder {
             // tighten branch is gated on `cvvdp_loop = true` upstream.
             #[cfg(feature = "butteraugli-loop")]
             cvvdp_bytes_tighten: false,
+            // Phase 1 display-config backfill (2026-05-25): default
+            // WebSdr80 maps to `cvvdp_gpu::params::DisplayModel::STANDARD_4K`
+            // — bit-identical to the pre-Phase-1 cvvdp scoring shape.
+            target_display: crate::api::DisplayConfig::WebSdr80,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]
@@ -2644,6 +2662,10 @@ impl VarDctEncoder {
             // tighten branch is gated on `cvvdp_loop = true` upstream.
             #[cfg(feature = "butteraugli-loop")]
             cvvdp_bytes_tighten: false,
+            // Phase 1 display-config backfill (2026-05-25): default
+            // WebSdr80 maps to `cvvdp_gpu::params::DisplayModel::STANDARD_4K`
+            // — bit-identical to the pre-Phase-1 cvvdp scoring shape.
+            target_display: crate::api::DisplayConfig::WebSdr80,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]

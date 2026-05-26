@@ -1797,6 +1797,13 @@ impl VarDctEncoder {
                     // buttloop body consumes it through the
                     // `effective_metric_target_distance` lookup below.
                     target_score: None,
+                    // Phase 1 display-config backfill (2026-05-25): the
+                    // resolved display is already on `VarDctEncoder` via
+                    // `propagate_resolved_metric_to_encoder` (set from
+                    // `LossyConfig::resolve_target_display`). Read it
+                    // back here so the cvvdp backend ctor receives the
+                    // matching DisplayConfig.
+                    target_display: self.target_display,
                 };
                 let mut b = super::perceptual_backend::construct_backend(
                     width as u32,
@@ -2352,9 +2359,19 @@ impl VarDctEncoder {
             #[cfg(feature = "cvvdp-loop")]
             {
                 if self.cvvdp_loop && !use_vdp2 {
-                    break 'lookup super::cvvdp_targets::cvvdp_target_score_for_distance(
-                        target_distance,
-                    );
+                    // Phase 1 display-config backfill (2026-05-25): route
+                    // through the per-display lookup. `self.target_display`
+                    // is populated by `propagate_resolved_metric_to_encoder`
+                    // from `LossyConfig::resolve_target_display` (which
+                    // already applied the EncoderStrategy::Libjxl
+                    // strict-parity short-circuit). Default
+                    // `DisplayConfig::WebSdr80` keeps the lookup byte-
+                    // identical to the pre-Phase-1 single-table path.
+                    break 'lookup
+                        super::cvvdp_targets::cvvdp_target_score_for_distance_and_display(
+                            target_distance,
+                            self.target_display,
+                        );
                 }
             }
             #[cfg(not(any(
@@ -4511,7 +4528,7 @@ mod tuning_tests {
             Some(13.85),
             crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
             Some(&p),
-            true, // terminal_class_exclude
+            true,  // terminal_class_exclude
             false, // high_colour_class_exclude
         );
         assert_eq!(
@@ -4565,7 +4582,7 @@ mod tuning_tests {
                 Some(m3),
                 crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
                 Some(&p),
-                true, // terminal_class_exclude ON
+                true,  // terminal_class_exclude ON
                 false, // high_colour_class_exclude
             );
             assert_eq!(
