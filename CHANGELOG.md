@@ -61,6 +61,31 @@
 
 ### Added
 
+- **scripts/zenjxl-tuning-sweep/lib/zen-r2-lib.sh — shared R2 boilerplate
+  (cross-repo dedup Chunk D, 2026-05-26)**: sourced shell helper that
+  extracts the R2/S3 endpoint + creds + `aws s3` / `s5cmd` wrappers
+  copy-pasted across 24 sweep scripts in this directory (see
+  `zen/zensim/benchmarks/dedup_inventory_master_2026-05-26.md` Cluster
+  A Class 4 for the inventory). Canonical home is
+  `zenmetrics/scripts/lib/zen-r2-lib.sh`; the byte-identical copy here
+  is the pragmatic-first sibling for cross-repo source duplication
+  (acceptable for a sourced shell lib per the dedup synthesis;
+  a future chunk may promote to a git submodule or shared install).
+  Env contract matches `zenmetrics/crates/vastai-fleet/src/worker/r2.rs`:
+  `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`, with
+  fallback source from `~/.config/cloudflare/r2-credentials`. Exposes
+  `zen_r2_init` (idempotent), `zen_r2_s3`, `zen_r2_s5`, `zen_r2_sync`
+  (3-retry), `zen_r2_verify` (head-object pre-flight, mirrors the
+  W44-PHASE4-S1h pattern), `zen_r2_hydrate_from_proc1environ` (vast.ai
+  onstart). Migrated 2 representative scripts as proof:
+  `launch_w44_216_fleet.sh` (replaced the 4-line creds-check +
+  endpoint-derive block) and `worker.sh` (added source for local
+  invocations; production bootstrap path unchanged because the launcher
+  pre-exports `AWS_*` + `S3_ENDPOINT_URL`). Follow-on chunks will
+  migrate the remaining 22 scripts in this directory (12 finalize +
+  janitor + launch + 5 build_*.py / merge_*.py + onstart.sh +
+  Dockerfile env-staging).
+
 - **zensim fork — buttloop body wiring + per-distance calibration table (Phase 4)**
   (RFC [`docs/RFC_ZENSIM_FORK_PLAN.md`](docs/RFC_ZENSIM_FORK_PLAN.md) §6,
   mirrors cvvdp-fork Phase 4 (commit `32581839`)). Routes the zensim

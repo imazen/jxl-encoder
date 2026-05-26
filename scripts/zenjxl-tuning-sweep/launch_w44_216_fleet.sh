@@ -41,11 +41,14 @@ if [[ "$LABEL_PREFIX" != claude-* ]]; then
     exit 1
 fi
 
-: "${R2_ACCOUNT_ID:?R2_ACCOUNT_ID missing}"
-: "${R2_ACCESS_KEY_ID:?R2_ACCESS_KEY_ID missing}"
-: "${R2_SECRET_ACCESS_KEY:?R2_SECRET_ACCESS_KEY missing}"
-
-R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+# Shared R2 helpers: validates R2_ACCOUNT_ID / R2_ACCESS_KEY_ID /
+# R2_SECRET_ACCESS_KEY and derives R2_ENDPOINT. Replaces the inline
+# 4-line block (creds check + endpoint derivation) that was repeated
+# across all 14 launch_w44_*.sh / janitor_w44_*.sh / finalize_w44_*.sh
+# scripts in this directory.
+# shellcheck source=lib/zen-r2-lib.sh
+source "$(dirname "$0")/lib/zen-r2-lib.sh"
+zen_r2_init
 
 GHCR_TOKEN="$(gh auth token)"
 [[ -n "$GHCR_TOKEN" ]] || { echo "ERROR: gh auth token empty" >&2; exit 1; }

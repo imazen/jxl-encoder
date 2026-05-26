@@ -26,6 +26,25 @@
 # genuinely not desired (integration tests, smoke runs).
 set -euo pipefail
 
+# Shared R2 helpers: handles env hydration + endpoint when worker.sh
+# is invoked outside the launcher bootstrap (e.g. local-replay runs).
+# In the production vast.ai bootstrap path the launcher pre-exports
+# AWS_*/S3_ENDPOINT_URL, so zen_r2_init is a no-op there — the
+# `_ZEN_R2_LIB_INITIALIZED` guard short-circuits the re-source.
+# Lib lives at /usr/local/lib/zen-r2-lib.sh in the production image,
+# and next to the script for local invocations.
+if [[ -r /usr/local/lib/zen-r2-lib.sh ]]; then
+    # shellcheck source=/dev/null
+    source /usr/local/lib/zen-r2-lib.sh
+else
+    # shellcheck source=lib/zen-r2-lib.sh
+    source "$(dirname "$0")/lib/zen-r2-lib.sh"
+fi
+# Best-effort: in production env is fully pre-staged; if zen_r2_init
+# fails locally we don't want to block the worker's existing s5cmd
+# call sites that rely on the ambient AWS_* env. So tolerate it.
+zen_r2_init 2>/dev/null || true
+
 SWEEP_ID="$1"
 CHUNK_FILE="$2"
 WORKER_ID="$3"
