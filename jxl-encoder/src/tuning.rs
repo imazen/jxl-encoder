@@ -168,31 +168,31 @@ pub mod entropy_mul_tables {
 /// W44-210-A row 3: butteraugli loop and adaptive-quant qf seed.
 #[allow(unused_imports)]
 pub mod buttloop {
-    pub(crate) use crate::vardct::butteraugli_loop::ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT;
-    pub(crate) use crate::vardct::butteraugli_loop::BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX;
-    pub(crate) use crate::vardct::butteraugli_loop::BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE;
-    pub(crate) use crate::vardct::butteraugli_loop::BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE;
-    pub(crate) use crate::vardct::butteraugli_loop::DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6;
-    pub(crate) use crate::vardct::butteraugli_loop::DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7;
-    pub(crate) use crate::vardct::butteraugli_loop::DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE;
-    pub(crate) use crate::vardct::butteraugli_loop::DEFAULT_CUR_POW_HIGH;
-    pub(crate) use crate::vardct::butteraugli_loop::DEFAULT_CUR_POW_LOW;
-    pub(crate) use crate::vardct::butteraugli_loop::DEFAULT_DISTANCE_SPLIT;
-    pub(crate) use crate::vardct::butteraugli_loop::DEFAULT_MAX_INCREASE_HIGH;
-    pub(crate) use crate::vardct::butteraugli_loop::DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT;
-    pub(crate) use crate::vardct::butteraugli_loop::DEFAULT_MAX_INCREASE_LOW;
-    pub(crate) use crate::vardct::butteraugli_loop::LIBJXL_INIT_MUL;
-    pub(crate) use crate::vardct::butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD;
-    pub(crate) use crate::vardct::butteraugli_loop::W44_120_EPF_SEED_MIN_DISTANCE;
-    pub(crate) use crate::vardct::butteraugli_loop::W44_140_EPF_SEED_FADE_MAX;
-    pub(crate) use crate::vardct::butteraugli_loop::W44_142_EPF_SEED_SUPPRESS_EDGE_DENSITY_MAX;
-    pub(crate) use crate::vardct::butteraugli_loop::W44_142_EPF_SEED_SUPPRESS_M3_MIN;
-    pub(crate) use crate::vardct::butteraugli_loop::W44_142_EPF_SEED_SUPPRESS_MAX_DISTANCE;
-    pub(crate) use crate::vardct::butteraugli_loop::W44_145_PER_BLOCK_MASK_HIGH;
-    pub(crate) use crate::vardct::butteraugli_loop::W44_145_PER_BLOCK_MASK_LOW;
-    pub(crate) use crate::vardct::butteraugli_loop::W44_176_TERMINAL_CLASS_FCBR_MIN;
-    pub(crate) use crate::vardct::butteraugli_loop::W44_176_TERMINAL_CLASS_LUMA_VAR_MAX;
-    pub(crate) use crate::vardct::butteraugli_loop::W44_176_TERMINAL_CLASS_LUMA_VAR_MIN;
+    pub(crate) use crate::vardct::perceptual_tuning::ADAPTIVE_QUANT_QF_SEED_SCALE_MAX_EFFORT;
+    pub(crate) use crate::vardct::perceptual_tuning::BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX;
+    pub(crate) use crate::vardct::perceptual_tuning::BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE;
+    pub(crate) use crate::vardct::perceptual_tuning::BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE;
+    pub(crate) use crate::vardct::perceptual_tuning::DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6;
+    pub(crate) use crate::vardct::perceptual_tuning::DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7;
+    pub(crate) use crate::vardct::perceptual_tuning::DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE;
+    pub(crate) use crate::vardct::perceptual_tuning::DEFAULT_CUR_POW_HIGH;
+    pub(crate) use crate::vardct::perceptual_tuning::DEFAULT_CUR_POW_LOW;
+    pub(crate) use crate::vardct::perceptual_tuning::DEFAULT_DISTANCE_SPLIT;
+    pub(crate) use crate::vardct::perceptual_tuning::DEFAULT_MAX_INCREASE_HIGH;
+    pub(crate) use crate::vardct::perceptual_tuning::DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT;
+    pub(crate) use crate::vardct::perceptual_tuning::DEFAULT_MAX_INCREASE_LOW;
+    pub(crate) use crate::vardct::perceptual_tuning::LIBJXL_INIT_MUL;
+    pub(crate) use crate::vardct::perceptual_tuning::SCREENSHOT_MEDIAN_THRESHOLD;
+    pub(crate) use crate::vardct::perceptual_tuning::W44_120_EPF_SEED_MIN_DISTANCE;
+    pub(crate) use crate::vardct::perceptual_tuning::W44_140_EPF_SEED_FADE_MAX;
+    pub(crate) use crate::vardct::perceptual_tuning::W44_142_EPF_SEED_SUPPRESS_EDGE_DENSITY_MAX;
+    pub(crate) use crate::vardct::perceptual_tuning::W44_142_EPF_SEED_SUPPRESS_M3_MIN;
+    pub(crate) use crate::vardct::perceptual_tuning::W44_142_EPF_SEED_SUPPRESS_MAX_DISTANCE;
+    pub(crate) use crate::vardct::perceptual_tuning::W44_145_PER_BLOCK_MASK_HIGH;
+    pub(crate) use crate::vardct::perceptual_tuning::W44_145_PER_BLOCK_MASK_LOW;
+    pub(crate) use crate::vardct::perceptual_tuning::W44_176_TERMINAL_CLASS_FCBR_MIN;
+    pub(crate) use crate::vardct::perceptual_tuning::W44_176_TERMINAL_CLASS_LUMA_VAR_MAX;
+    pub(crate) use crate::vardct::perceptual_tuning::W44_176_TERMINAL_CLASS_LUMA_VAR_MIN;
 }
 
 /// W44-210-A row 4: coefficient-order cost-gate + per-bucket skip

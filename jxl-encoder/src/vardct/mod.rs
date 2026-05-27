@@ -33,6 +33,11 @@ mod block_extract;
 // keep working without a 30+ file touch.
 #[cfg(feature = "butteraugli-loop")]
 pub(crate) mod perceptual_loop;
+// Always-compiled adaptive-quant qf-seed pre-scale tuning surface extracted
+// from `perceptual_loop` (which is gated behind `butteraugli-loop`). The core
+// encoder + the `tuning::buttloop` re-export reference these symbols
+// unconditionally, so this module must compile in encode-only builds.
+pub(crate) mod perceptual_tuning;
 /// Backward-compat alias for the pre-Phase-4 module name. New code SHOULD
 /// import from `crate::vardct::perceptual_loop`; this alias exists so
 /// existing call-sites compile unchanged. cvvdp-fork Phase 4 (2026-05-24).
@@ -265,11 +270,20 @@ pub mod __afv {
 #[cfg(feature = "butteraugli-loop")]
 #[doc(hidden)]
 pub mod __buttloop_overrides {
+    // The atomic sweep-override statics live in the `butteraugli-loop`-gated
+    // `perceptual_loop` (only meaningful when the loop runs).
     pub use super::butteraugli_loop::{
-        CUR_POW_X1000_HIGH, CUR_POW_X1000_LOW, DEFAULT_CUR_POW_HIGH, DEFAULT_CUR_POW_LOW,
-        DEFAULT_DISTANCE_SPLIT, DEFAULT_MAX_INCREASE_HIGH, DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT,
-        DEFAULT_MAX_INCREASE_LOW, DISTANCE_SPLIT_X1000, MAX_INCREASE_X1000_HIGH,
-        MAX_INCREASE_X1000_HIGH_SCREENSHOT, MAX_INCREASE_X1000_LOW, SCREENSHOT_MEDIAN_THRESHOLD,
+        CUR_POW_X1000_HIGH, CUR_POW_X1000_LOW, DISTANCE_SPLIT_X1000, MAX_INCREASE_X1000_HIGH,
+        MAX_INCREASE_X1000_HIGH_SCREENSHOT, MAX_INCREASE_X1000_LOW,
+    };
+    // The production-default constants moved to the always-compiled
+    // `perceptual_tuning`; re-export them from there so this `pub use`
+    // surfaces their true `pub` visibility (the `perceptual_loop` glob
+    // re-export is `pub(crate)`, which would cap them at crate-private).
+    pub use super::perceptual_tuning::{
+        DEFAULT_CUR_POW_HIGH, DEFAULT_CUR_POW_LOW, DEFAULT_DISTANCE_SPLIT,
+        DEFAULT_MAX_INCREASE_HIGH, DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT, DEFAULT_MAX_INCREASE_LOW,
+        SCREENSHOT_MEDIAN_THRESHOLD,
     };
 }
 

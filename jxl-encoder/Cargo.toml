@@ -177,7 +177,7 @@ cvvdp-loop-cpu = ["cvvdp-loop", "dep:cvvdp-cpu"]
 # tightening the butteraugli loop is a documented anti-pattern, see
 # `docs/RFC_CVVDP_PHASE8_PARETO_TARGETING.md` §3.3).
 cvvdp-loop-tighten = ["cvvdp-loop"]
-ssim2-loop = ["dep:fast-ssim2", "dep:imgref"]
+ssim2-loop = ["butteraugli-loop", "dep:fast-ssim2", "dep:imgref"]
 zensim-loop = ["butteraugli-loop", "dep:zensim"]
 # zensim-fork Phase 3 (2026-05-25): GPU zensim backend for the perceptual
 # quantization loop. Implies `butteraugli-loop` (the `PerceptualBackend`
