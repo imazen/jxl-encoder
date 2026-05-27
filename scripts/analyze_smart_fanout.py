@@ -22,9 +22,20 @@ Correlation:
 import csv
 import json
 import math
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
+
+# Route the Spearman rank correlation through the canonical Rust IQA
+# panel (zenstats). The shim lives at scripts/lib/zen_stats.py and
+# shells to the `panel` binary built from imazen/zensim. Put the repo
+# root on sys.path so `scripts.lib.zen_stats` resolves when this file
+# is run directly (python3 scripts/analyze_smart_fanout.py …).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from scripts.lib.zen_stats import panel as _zen_panel  # noqa: E402
 
 OUT = Path(sys.argv[1] if len(sys.argv) > 1 else "/mnt/v/output/jxl-encoder/smart-fanout-sweep-2026-05-17")
 SWEEP = OUT / "sweep.tsv"
@@ -78,18 +89,28 @@ def load_features(path):
 
 
 def spearman(xs, ys):
-    """Spearman rank correlation (ignoring None values; clamped to [-1, 1])."""
+    """Spearman rank correlation via canonical zenstats panel.
+
+    Drops paired-None entries (the previous hand-rolled tie-handling
+    used the same drop rule), and falls back to (0.0, 0) for n < 3 to
+    preserve the call-site contract.
+
+    POLARITY NOTE: zenstats reports SROCC as `abs(…)` per the IQA
+    convention (predicted vs MOS — polarity is a nuisance because
+    metric outputs can be distance- or score-shaped). The previous
+    in-tree `def spearman` returned a SIGNED rho. Direction is
+    therefore no longer reported here; callers that ranked features
+    by `abs(rho)` see unchanged ordering. If sign-of-correlation is
+    ever required, compute it from a slope diagnostic at the call
+    site (not via this function).
+    """
     paired = [(x, y) for x, y in zip(xs, ys) if x is not None and y is not None]
     if len(paired) < 3:
         return 0.0, 0
-    paired.sort(key=lambda p: p[0])
-    rx = {id(p): i + 1 for i, p in enumerate(paired)}
-    paired_y = sorted(paired, key=lambda p: p[1])
-    ry = {id(p): i + 1 for i, p in enumerate(paired_y)}
-    n = len(paired)
-    diffs2 = sum((rx[id(p)] - ry[id(p)]) ** 2 for p in paired)
-    rho = 1.0 - 6.0 * diffs2 / (n * (n * n - 1))
-    return rho, n
+    xs_p = [p[0] for p in paired]
+    ys_p = [p[1] for p in paired]
+    stats = _zen_panel(xs_p, ys_p)
+    return float(stats["srocc"]), len(paired)
 
 
 def main():
