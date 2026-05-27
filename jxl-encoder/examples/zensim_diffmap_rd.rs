@@ -41,17 +41,33 @@ use jxl_encoder::{LossyConfig, PixelLayout};
 const CID22_VAL_DIR: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/validation";
 const GB82_SC_DIR: &str = "/home/lilith/work/codec-corpus/gb82-sc";
 
-/// (name, corpus, absolute path). 2 CID22 photos + 1 screen — the same seed
-/// corpus the calibration uses, so the RD comparison shares its provenance.
-fn corpus() -> Vec<(&'static str, &'static str, String)> {
+/// (name, content-class, absolute path). Default = the 3 calibration-seed
+/// images; override with `--corpus-file <tsv>` (cols: path, name, class).
+fn default_corpus() -> Vec<(String, String, String)> {
     vec![
-        ("1418519", "CID22", format!("{CID22_VAL_DIR}/1418519.png")),
-        ("1025469", "CID22", format!("{CID22_VAL_DIR}/1025469.png")),
-        ("codec_wiki", "gb82-sc", format!("{GB82_SC_DIR}/codec_wiki.png")),
+        ("1418519".into(), "photo".into(), format!("{CID22_VAL_DIR}/1418519.png")),
+        ("1025469".into(), "photo".into(), format!("{CID22_VAL_DIR}/1025469.png")),
+        ("codec_wiki".into(), "screen".into(), format!("{GB82_SC_DIR}/codec_wiki.png")),
     ]
 }
 
-const DISTANCES: &[f32] = &[1.0, 2.0, 3.0];
+/// Parse a corpus TSV: each line `abs_path \t name \t class` (class optional,
+/// defaults to "image"). Blank lines + `#` comments skipped.
+fn corpus_from_file(path: &str) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for line in std::fs::read_to_string(path).expect("corpus file").lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') { continue; }
+        let mut f = line.split('\t');
+        let p = f.next().unwrap_or("").to_string();
+        let name = f.next().map(|s| s.to_string())
+            .unwrap_or_else(|| std::path::Path::new(&p).file_stem().unwrap().to_string_lossy().into_owned());
+        let class = f.next().unwrap_or("image").to_string();
+        if !p.is_empty() { out.push((name, class, p)); }
+    }
+    out
+}
+
 const EFFORT: u8 = 8;
 
 fn load_rgb8(path: &str) -> Result<(Vec<u8>, u32, u32), Box<dyn std::error::Error + Send + Sync>> {
@@ -109,6 +125,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // every DiffmapOptions/metric variant produces byte-identical output —
     // useless for a diffmap comparison. Default to 3 redistribution iters.
     let mut iters: u32 = 3;
+    let mut corpus_file: Option<String> = None;
+    let mut distances: Vec<f32> = vec![1.0, 2.0, 3.0];
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -116,9 +134,19 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "--label" => label = args.next().unwrap_or(label),
             "--out-dir" => out_dir = PathBuf::from(args.next().unwrap_or_default()),
             "--iters" => iters = args.next().and_then(|s| s.parse().ok()).unwrap_or(iters),
+            "--corpus-file" => corpus_file = args.next(),
+            "--distances" => {
+                if let Some(s) = args.next() {
+                    distances = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                }
+            }
             _ => {}
         }
     }
+    let corpus = match &corpus_file {
+        Some(f) => corpus_from_file(f),
+        None => default_corpus(),
+    };
     let metric = parse_metric(&metric_s);
     let decoded_dir = out_dir.join("decoded");
     let ref_dir = out_dir.join("ref");
@@ -135,8 +163,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         std::env::var("ZENSIM_EDGE_MSE").unwrap_or_else(|_| "default(1)".into()),
     );
 
-    for (name, corpus_name, path) in corpus() {
-        let (pixels, w, h) = load_rgb8(&path)?;
+    eprintln!("[diffmap_rd] corpus={} images, distances={:?}, iters={iters}", corpus.len(), distances);
+    for (name, corpus_name, path) in &corpus {
+        let (name, corpus_name) = (name.as_str(), corpus_name.as_str());
+        let (pixels, w, h) = load_rgb8(path)?;
         // Save the clean reference once (as PNG) for the external scorer.
         let ref_png = ref_dir.join(format!("{name}.png"));
         if !ref_png.exists() {
@@ -144,7 +174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .ok_or("ref from_raw")?
                 .save(&ref_png)?;
         }
-        for &d in DISTANCES {
+        for &d in &distances {
             let t = Instant::now();
             let mut cfg = LossyConfig::new(d)
                 .with_strategy(EncoderStrategy::Zenjxl)
