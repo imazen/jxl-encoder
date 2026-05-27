@@ -74,6 +74,17 @@ pub(crate) mod cvvdp_backend;
 // See `docs/RFC_CVVDP_PHASE4_BRIEF.md` Step 3.
 #[cfg(feature = "cvvdp-loop")]
 pub(crate) mod cvvdp_targets;
+// Phase 1 of RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md` (2026-05-26):
+// inverse-direction `target_score → effective_distance` calibration
+// table for the butteraugli arm of the multi-metric loop. Closes the
+// implicit-identity gap left by multi-metric Phase 0 commit `23da77b1`
+// (the `with_perceptual_target_score(Some(_))` setter was a no-op for
+// all three metrics because the dispatch site in `perceptual_loop.rs`
+// + `perceptual_backend.rs` ignored the field). Default
+// `perceptual_target_score = None` keeps the identity arm; hash-locks
+// 36/36 stay byte-identical on the default path.
+#[cfg(feature = "butteraugli-loop")]
+pub(crate) mod butteraugli_targets;
 // zensim-fork Phase 3 (2026-05-25): zensim backend impl for the
 // perceptual quantization loop (RFC `docs/RFC_ZENSIM_FORK_PLAN.md` §5).
 // Gated on the zensim cargo features. Hosts `CpuZensimBackend` (feature

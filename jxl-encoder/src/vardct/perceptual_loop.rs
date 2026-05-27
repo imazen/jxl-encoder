@@ -1792,11 +1792,23 @@ impl VarDctEncoder {
                 let selection = MetricSelection {
                     metric,
                     device,
-                    // Per-distance target override is plumbed via
-                    // `perceptual_target_score` on the API; the
-                    // buttloop body consumes it through the
-                    // `effective_metric_target_distance` lookup below.
-                    target_score: None,
+                    // Phase 1 of RFC
+                    // `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`
+                    // (2026-05-26): mirror the resolved
+                    // `self.perceptual_target_score` on the bundled
+                    // selection so the field stays coherent across
+                    // every site that inspects the `MetricSelection`.
+                    // The actual consumption is via
+                    // `self.perceptual_target_score` in the
+                    // `effective_metric_target_distance` dispatch
+                    // below — backend ctors themselves do NOT read
+                    // this field. The Libjxl strict-parity
+                    // short-circuit already fired in the resolver
+                    // (`LossyConfig::resolve_perceptual_target_score`),
+                    // so `self.perceptual_target_score` is `None` for
+                    // Libjxl-strategy encodes regardless of caller
+                    // input.
+                    target_score: self.perceptual_target_score,
                     // Phase 1 display-config backfill (2026-05-25): the
                     // resolved display is already on `VarDctEncoder` via
                     // `propagate_resolved_metric_to_encoder` (set from
@@ -2346,11 +2358,63 @@ impl VarDctEncoder {
         // field defaults to `false` per the
         // `VarDctEncoder::default()` initialiser, so the branch is
         // dead-code-eliminated.
+        // Phase 1 of RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`
+        // (2026-05-26): closes the implicit-identity gap in
+        // `with_perceptual_target_score`.
+        //
+        // Pre-Phase-1: the `target_score` field on
+        // `LossyConfig::perceptual_target_score` was stored on the
+        // config + plumbed through `MetricSelection.target_score` and
+        // then DROPPED at `perceptual_backend.rs::construct_backend`
+        // (the `let _ = selection.target_score;` no-op binding). The
+        // dispatch below never consulted it; all three metric arms
+        // returned a forward-direction `distance → score` lookup
+        // (cvvdp/zensim) or the identity (butteraugli).
+        //
+        // Phase 1: when the caller opts in via
+        // `LossyConfig::with_perceptual_target_score(Some(s))`:
+        // - butteraugli: invert via the new `butteraugli_targets.rs`
+        //   table (`score → effective_distance`). The buttloop's
+        //   `accept_bound = K_BUTTERAUGLI_ACCEPT_FACTOR * effective_distance`
+        //   then drives convergence to approximately the requested
+        //   butter score (corpus-median calibration; per-image
+        //   variance per RFC §1.3).
+        // - cvvdp: use the caller's `target_score` DIRECTLY as the
+        //   metric-native convergence target — bypasses the forward
+        //   distance-table because the caller already supplied a
+        //   cvvdp-direction score.
+        // - zensim: same as cvvdp — use the caller's score directly
+        //   as the zensim butter-direction convergence target.
+        //
+        // EncoderStrategy::Libjxl strict-parity invariant: the
+        // resolver `LossyConfig::resolve_perceptual_target_score`
+        // forces `None` for Libjxl, so `self.perceptual_target_score`
+        // is always `None` on that path (target_score override is
+        // silently dropped, preserving the W44-126 byte-lock).
+        //
+        // Default `perceptual_target_score = None` falls through to
+        // the existing forward-direction arm, preserving hash-locks
+        // 36/36 byte-identical.
+        #[cfg(feature = "butteraugli-loop")]
+        let caller_target_score = self.perceptual_target_score;
+        #[cfg(not(feature = "butteraugli-loop"))]
+        let caller_target_score: Option<f32> = None;
+
         #[allow(unused_labels)]
         let effective_metric_target_distance: f32 = 'lookup: {
             #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
             {
                 if self.zensim_loop && !use_vdp2 {
+                    // Phase 1: caller-supplied score is in zensim
+                    // butter-direction (already metric-native);
+                    // bypass the forward table. NaN-guard: fall back
+                    // to the seed table if the caller's value is
+                    // non-finite or non-positive.
+                    if let Some(score) = caller_target_score {
+                        if score.is_finite() && score > 0.0 {
+                            break 'lookup score;
+                        }
+                    }
                     break 'lookup super::zensim_targets::zensim_target_score_for_distance(
                         target_distance,
                     );
@@ -2359,6 +2423,16 @@ impl VarDctEncoder {
             #[cfg(feature = "cvvdp-loop")]
             {
                 if self.cvvdp_loop && !use_vdp2 {
+                    // Phase 1: caller-supplied score is in cvvdp
+                    // butter-direction (`10 - JOD`, smaller=better);
+                    // bypass the forward distance-table. NaN-guard:
+                    // fall back to the per-display table on
+                    // non-finite / non-positive values.
+                    if let Some(score) = caller_target_score {
+                        if score.is_finite() && score > 0.0 {
+                            break 'lookup score;
+                        }
+                    }
                     // Phase 1 display-config backfill (2026-05-25): route
                     // through the per-display lookup. `self.target_display`
                     // is populated by `propagate_resolved_metric_to_encoder`
@@ -2381,6 +2455,17 @@ impl VarDctEncoder {
             )))]
             {
                 let _ = use_vdp2; // silence unused on no-feature builds
+            }
+            // Butteraugli arm — Phase 1 inverts via
+            // `butteraugli_targets::butteraugli_effective_distance_for_target_score`
+            // when the caller opts in. Default `None` preserves the
+            // pre-Phase-1 identity arm (`effective_distance == target_distance`).
+            #[cfg(feature = "butteraugli-loop")]
+            if let Some(score) = caller_target_score {
+                break 'lookup
+                    super::butteraugli_targets::butteraugli_effective_distance_for_target_score(
+                        score,
+                    );
             }
             target_distance
         };

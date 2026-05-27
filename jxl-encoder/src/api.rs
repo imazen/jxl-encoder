@@ -6786,13 +6786,47 @@ impl LossyConfig {
         self.perceptual_device
     }
 
-    /// Multi-metric Phase 0 (RFC #3, 2026-05-25): override the metric's
-    /// per-distance target table.
+    /// Multi-metric Phase 0 (RFC #3, 2026-05-25) + RFC
+    /// `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md` Phase 1 (2026-05-26):
+    /// override the metric's per-distance target table with an
+    /// explicit per-image score target.
     ///
     /// When `None` (default), the metric's built-in calibration table
-    /// drives the loop's target. When `Some(score)`, the loop targets
-    /// that score directly in the metric's score-direction
-    /// (smaller=better).
+    /// drives the buttloop's effective convergence target via the
+    /// caller-supplied [`Self::distance`]. When `Some(score)`, the
+    /// per-metric inverse dispatch fires:
+    ///
+    /// - **butteraugli**: caller passes a butter-direction score
+    ///   (smaller=better). The buttloop converts via
+    ///   `vardct/butteraugli_targets.rs` (Phase 1 corpus-median table,
+    ///   seeded from
+    ///   `benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv`,
+    ///   n=162 cells per distance band) to an `effective_distance`
+    ///   value, and the loop's
+    ///   `accept_bound = K_BUTTERAUGLI_ACCEPT_FACTOR × effective_distance`
+    ///   drives convergence to approximately the requested butter
+    ///   score (corpus-median precision; per-image variance ±30-50%
+    ///   per RFC §1.3).
+    /// - **cvvdp**: caller passes a cvvdp butter-direction score
+    ///   (`10 - JOD`, smaller=better). The buttloop bypasses the
+    ///   forward distance-table and uses the caller's score directly
+    ///   as the metric-native convergence target.
+    /// - **zensim**: caller passes a zensim butter-direction score
+    ///   (`100 - native`, smaller=better). Same shape as cvvdp —
+    ///   used directly as convergence target.
+    ///
+    /// **EncoderStrategy::Libjxl invariant**:
+    /// [`EncoderStrategy::Libjxl`] FORCES the resolved target_score
+    /// back to `None` regardless of this field (W44-126 strict
+    /// cjxl-parity, enforced by
+    /// `tests/strategy_libjxl_byte_lock.rs`). See
+    /// [`Self::resolve_perceptual_target_score`].
+    ///
+    /// **Non-finite / non-positive guard**: `Some(f32::NAN)`,
+    /// `Some(f32::INFINITY)`, `Some(0.0)`, `Some(-1.0)` etc. are
+    /// silently dropped to `None` in the resolver. The metric-side
+    /// dispatch lookups also guard, so the value cannot propagate
+    /// into the loop arithmetic.
     ///
     /// Use for calibrating against a non-standard quality requirement
     /// (e.g. matching a specific reference encoder's output). Default
@@ -6813,6 +6847,54 @@ impl LossyConfig {
     #[cfg(feature = "butteraugli-loop")]
     pub fn perceptual_target_score(&self) -> Option<f32> {
         self.perceptual_target_score
+    }
+
+    /// Phase 1 of RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`
+    /// (2026-05-26): resolve the effective per-distance target-score
+    /// override, honouring the
+    /// [`EncoderStrategy::Libjxl`] strict-parity invariant.
+    ///
+    /// Returns the override that will ACTUALLY drive the buttloop,
+    /// which differs from [`Self::perceptual_target_score`] when:
+    ///
+    /// - The active strategy is [`EncoderStrategy::Libjxl`] → ALWAYS
+    ///   `None` (W44-126 byte-lock invariant: target_score is silently
+    ///   dropped on Libjxl-strategy encodes regardless of caller
+    ///   input).
+    /// - Future strategies may add additional short-circuits here.
+    ///
+    /// Pre-Phase-1 (commit `23da77b1` onwards) the
+    /// `LossyConfig::with_perceptual_target_score(Some(_))` setter was
+    /// a phantom no-op — the field stored on the config but the
+    /// `vardct::perceptual_loop::run_buttloop` dispatch never
+    /// consulted it. Phase 1 closes the wiring through
+    /// [`Self::resolve_perceptual_metric_selection`] →
+    /// [`crate::vardct::perceptual_backend::propagate_resolved_metric_to_encoder`]
+    /// → [`crate::vardct::VarDctEncoder::perceptual_target_score`].
+    ///
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub(crate) fn resolve_perceptual_target_score(&self) -> Option<f32> {
+        if matches!(self.strategy, EncoderStrategy::Libjxl) {
+            // Strict cjxl-parity (W44-126): EncoderStrategy::Libjxl
+            // forces target_score to None regardless of caller field.
+            // Same shape as `resolve_perceptual_metric` /
+            // `resolve_target_display` / `resolve_cvvdp_bytes_tighten`
+            // — the per-cell SHA256 byte-lock at
+            // `tests/strategy_libjxl_byte_lock.rs` enforces this.
+            return None;
+        }
+        // NaN/Inf/non-positive sanitation: a caller setting
+        // `with_perceptual_target_score(Some(f32::NAN))` should NOT
+        // propagate the NaN into the loop. Drop to `None` to fall
+        // back to the metric's forward calibration arm. The
+        // butteraugli inverse table and the cvvdp/zensim direct-use
+        // paths in the buttloop dispatch ALSO guard against these
+        // values, so this is defense-in-depth.
+        match self.perceptual_target_score {
+            Some(s) if !s.is_finite() || s <= 0.0 => None,
+            other => other,
+        }
     }
 
     /// Multi-metric Phase 0 (RFC #3, 2026-05-25): resolve the effective
@@ -6894,7 +6976,18 @@ impl LossyConfig {
         crate::vardct::perceptual_backend::MetricSelection {
             metric: self.resolve_perceptual_metric(),
             device: self.resolve_perceptual_device(),
-            target_score: self.perceptual_target_score,
+            // Phase 1 of RFC
+            // `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md` (2026-05-26):
+            // route through the resolver so the
+            // EncoderStrategy::Libjxl strict-parity short-circuit
+            // fires before the value reaches the buttloop. Pre-Phase-1
+            // this read `self.perceptual_target_score` directly,
+            // bypassing the short-circuit — that was safe at the time
+            // ONLY because the dispatch below
+            // (`construct_backend`'s `let _ = selection.target_score`)
+            // discarded the field. Now that the field is consumed,
+            // the resolver MUST gate it.
+            target_score: self.resolve_perceptual_target_score(),
             // Phase 1 display-config backfill (2026-05-25): bundle the
             // resolved display config into the selection struct so it
             // travels alongside the metric + device through every
@@ -16887,6 +16980,17 @@ mod tests {
     /// Multi-metric Phase 0: `resolve_perceptual_device` is a
     /// pass-through; the construct-backend dispatch consumes it via
     /// `resolve_perceptual_metric_selection`. Smoke for the bundling.
+    ///
+    /// Updated in Phase 1 of RFC
+    /// `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md` (2026-05-26):
+    /// `target_score` now routes through
+    /// [`LossyConfig::resolve_perceptual_target_score`], which forces
+    /// `None` for `EncoderStrategy::Libjxl` (matches the W44-126
+    /// strict-parity invariant). Pre-Phase-1 the field passed through
+    /// raw; that was safe because the backend dispatch discarded the
+    /// field at the `let _ = selection.target_score;` line in
+    /// `vardct/perceptual_backend.rs::construct_backend`. Phase 1
+    /// connects the wire, so the resolver MUST gate it here.
     #[cfg(feature = "butteraugli-loop")]
     #[test]
     fn test_resolve_perceptual_metric_selection_bundles_metric_and_device() {
@@ -16899,7 +17003,8 @@ mod tests {
 
         // Libjxl-forced Butteraugli + explicit device still flows the
         // device through (it's a no-op for the forced backend, but the
-        // selection struct is the carrier).
+        // selection struct is the carrier). Phase 1: target_score
+        // MUST drop to None under Libjxl strict-parity.
         let cfg = LossyConfig::new(1.0)
             .with_strategy(EncoderStrategy::Libjxl)
             .with_perceptual_metric(PerceptualMetric::Cvvdp)
@@ -16912,6 +17017,81 @@ mod tests {
             "Libjxl forces metric to Butteraugli in the bundle"
         );
         assert_eq!(sel.device, PerceptualDevice::Cpu);
-        assert_eq!(sel.target_score, Some(0.05));
+        assert_eq!(
+            sel.target_score, None,
+            "EncoderStrategy::Libjxl MUST force target_score to None \
+             (W44-126 strict-parity + RFC `RFC_BUTTERAUGLI_TARGET_SYMMETRY.md` §10)"
+        );
+
+        // Phase 1 short-circuit: with target_score set BUT a non-Libjxl
+        // strategy, the value MUST pass through.
+        let cfg = LossyConfig::new(1.0).with_perceptual_target_score(Some(1.2245));
+        let sel = cfg.resolve_perceptual_metric_selection();
+        assert_eq!(sel.target_score, Some(1.2245));
+
+        // Phase 1 NaN/Inf/non-positive guard: bogus inputs drop to
+        // None at the resolver layer (defense-in-depth — the buttloop
+        // dispatch also guards).
+        for bogus in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -1.0] {
+            let cfg = LossyConfig::new(1.0).with_perceptual_target_score(Some(bogus));
+            let sel = cfg.resolve_perceptual_metric_selection();
+            assert_eq!(
+                sel.target_score, None,
+                "bogus target_score {bogus} MUST drop to None at the resolver"
+            );
+        }
+    }
+
+    /// Phase 1 of RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`
+    /// (2026-05-26): the strict-parity short-circuit at
+    /// `resolve_perceptual_target_score` forces None for Libjxl.
+    /// Mirrors `test_resolve_perceptual_metric_libjxl_short_circuit`
+    /// + `test_resolve_target_display_libjxl_short_circuit`.
+    #[cfg(feature = "butteraugli-loop")]
+    #[test]
+    fn test_resolve_perceptual_target_score_libjxl_short_circuit() {
+        // Phase 1: Libjxl forces None regardless of caller field.
+        let cfg = LossyConfig::new(1.0)
+            .with_strategy(EncoderStrategy::Libjxl)
+            .with_perceptual_target_score(Some(1.2245));
+        assert_eq!(
+            cfg.resolve_perceptual_target_score(),
+            None,
+            "EncoderStrategy::Libjxl MUST force resolve_perceptual_target_score() to None"
+        );
+        // Non-Libjxl strategies pass the caller field through.
+        let cfg = LossyConfig::new(1.0).with_perceptual_target_score(Some(0.7223));
+        assert_eq!(cfg.resolve_perceptual_target_score(), Some(0.7223));
+        // Default is None.
+        let cfg = LossyConfig::new(1.0);
+        assert_eq!(cfg.resolve_perceptual_target_score(), None);
+    }
+
+    /// Phase 1 of RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`
+    /// (2026-05-26): NaN / Inf / non-positive caller inputs drop to
+    /// None at the resolver to guard the buttloop dispatch arithmetic.
+    /// Defense-in-depth — the metric-side lookups
+    /// (`butteraugli_targets.rs` + the cvvdp/zensim arms in
+    /// `perceptual_loop.rs`) ALSO guard.
+    #[cfg(feature = "butteraugli-loop")]
+    #[test]
+    fn test_resolve_perceptual_target_score_sanitises_bogus_inputs() {
+        for bogus in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -1.0] {
+            let cfg = LossyConfig::new(1.0).with_perceptual_target_score(Some(bogus));
+            assert_eq!(
+                cfg.resolve_perceptual_target_score(),
+                None,
+                "bogus target_score {bogus} MUST drop to None"
+            );
+        }
+        // Sanity: positive finite values pass through.
+        for good in [0.1_f32, 0.7223, 1.2245, 2.1936, 5.0] {
+            let cfg = LossyConfig::new(1.0).with_perceptual_target_score(Some(good));
+            assert_eq!(
+                cfg.resolve_perceptual_target_score(),
+                Some(good),
+                "good target_score {good} MUST pass through"
+            );
+        }
     }
 }

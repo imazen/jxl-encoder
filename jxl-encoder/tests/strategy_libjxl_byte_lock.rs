@@ -467,6 +467,66 @@ fn cell_names_are_unique() {
     }
 }
 
+/// Phase 1 of RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`
+/// (2026-05-26): `with_perceptual_target_score(Some(_))` MUST be a
+/// no-op under `EncoderStrategy::Libjxl` (strict cjxl-parity invariant
+/// per RFC §10 + W44-126). The resolver
+/// `LossyConfig::resolve_perceptual_target_score` short-circuits the
+/// caller's value back to `None` so the buttloop's
+/// `effective_metric_target_distance` dispatch consults the identity
+/// arm exactly as before.
+///
+/// Test matrix: every byte-lock cell × {None baseline, Some(0.5),
+/// Some(1.0), Some(2.0)} — 4× the original 10-cell coverage = 40
+/// encodes total. All non-None variants MUST produce SHA256 identical
+/// to the None baseline.
+#[test]
+fn libjxl_target_score_byte_identical_via_strict_parity_short_circuit() {
+    for cell in byte_lock_cells() {
+        let pixels = (cell.generator)();
+        let baseline = LossyConfig::new(cell.distance)
+            .with_effort(cell.effort)
+            .with_strategy(EncoderStrategy::Libjxl)
+            .encode(&pixels, cell.width, cell.height, cell.layout)
+            .unwrap_or_else(|e| panic!("`{}`: baseline Libjxl encode failed: {e:?}", cell.name));
+        let baseline_hash = sha256_hex(&baseline);
+        // Phase 1 target_score values span the Phase 1 calibration band
+        // (0.5..2.0); any of these would change the bytes under a non-
+        // Libjxl strategy (proven by `perceptual_target_score_drives_loop`
+        // in `tests/perceptual_target_score_drives_loop.rs`). Under
+        // Libjxl the resolver short-circuits them to None, so the bytes
+        // MUST be byte-identical to the baseline.
+        for target_score in [0.5_f32, 1.0, 2.0] {
+            let bytes = LossyConfig::new(cell.distance)
+                .with_effort(cell.effort)
+                .with_strategy(EncoderStrategy::Libjxl)
+                .with_perceptual_target_score(Some(target_score))
+                .encode(&pixels, cell.width, cell.height, cell.layout)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "`{}` + target_score={}: Libjxl encode failed: {e:?}",
+                        cell.name, target_score
+                    )
+                });
+            let hash = sha256_hex(&bytes);
+            assert_eq!(
+                hash,
+                baseline_hash,
+                "`{}`: with_perceptual_target_score(Some({})) MUST be byte-identical \
+                 to baseline under EncoderStrategy::Libjxl (RFC \
+                 `RFC_BUTTERAUGLI_TARGET_SYMMETRY.md` §10 strict-parity). \
+                 baseline size {} hash {}; observed size {} hash {}",
+                cell.name,
+                target_score,
+                baseline.len(),
+                baseline_hash,
+                bytes.len(),
+                hash,
+            );
+        }
+    }
+}
+
 /// Multi-decoder roundtrip on a representative subset of cells.
 /// Verifies that the `EncoderStrategy::Libjxl` output is decodable by
 /// jxl-oxide on a low-effort cell (`e3`), a high-effort cell (`e7`), and
