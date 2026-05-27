@@ -77,19 +77,27 @@
 /// Phase 6 + 8-zensim follow-ons will refit these once we have the
 /// full multi-metric tracking data.
 pub(crate) static ZENSIM_DISTANCE_TARGETS: &[(f32, f32)] = &[
-    // Seed values measured by `examples/zensim_calibration_seed.rs`
-    // on 3 images × 7 distances = 21 cells (2 CID22 photos +
-    // 1 gb82-sc screenshot), post-processed by
-    // `scripts/zensim_calibration_seed.py`. See
-    // `benchmarks/zensim_calibration_seed_2026-05-25.{tsv,txt}`.
+    // **RE-SEEDED 2026-05-27 against `ZensimProfile::A` = v47-strict-QAT-native**
+    // (the shipped codec-target metric). The prior seed scored with
+    // `PreviewV0_2` (the bounded squash) — which did NOT match the loop's
+    // profile (`A`), so the old table was mis-scaled for what the loop
+    // measures. Both the loop (`zensim_loop.rs`) and the seed example now pin
+    // `ZensimProfile::A`. v47-A scores butteraugli-default output lower than
+    // V0_2 did (it is more discriminating at low quality), so the targets are
+    // higher, especially at d >= 3.
+    //
+    // Seed values measured by `examples/zensim_calibration_seed.rs` on 3 images
+    // × 7 distances = 21 cells (2 CID22 photos + 1 gb82-sc screenshot),
+    // post-processed by `scripts/zensim_calibration_seed.py`. See
+    // `benchmarks/zensim_calibration_seed_2026-05-27.{tsv,txt}`.
     // target = (100 - median_zensim_native) * 1.05
-    (0.50, 6.6381),  // n=3, median zensim_native = 93.6780
-    (1.00, 9.9958),  // n=3, median zensim_native = 90.4802
-    (1.50, 13.2108), // n=3, median zensim_native = 87.4183
-    (2.00, 16.4704), // n=3, median zensim_native = 84.3139
-    (3.00, 20.9812), // n=3, median zensim_native = 80.0179
-    (4.00, 24.5327), // n=3, median zensim_native = 76.6355
-    (5.00, 28.4359), // n=3, median zensim_native = 72.9182
+    (0.50, 8.6913),  // n=3, median zensim_native = 91.7226
+    (1.00, 10.5677), // n=3, median zensim_native = 89.9355
+    (1.50, 13.3942), // n=3, median zensim_native = 87.2436
+    (2.00, 17.2829), // n=3, median zensim_native = 83.5401
+    (3.00, 24.6420), // n=3, median zensim_native = 76.5314
+    (4.00, 29.3951), // n=3, median zensim_native = 72.0047
+    (5.00, 36.6788), // n=3, median zensim_native = 65.0678
 ];
 
 /// Look up the zensim butter-direction target for a given butteraugli
@@ -104,22 +112,22 @@ pub(crate) static ZENSIM_DISTANCE_TARGETS: &[(f32, f32)] = &[
 /// # Examples
 ///
 /// ```ignore
-/// // Exact table point.
+/// // Exact table point (v47-A re-seed, 2026-05-27).
 /// let s = zensim_target_score_for_distance(1.0);
-/// assert!((s - 9.9958).abs() < 1e-3);
+/// assert!((s - 10.5677).abs() < 1e-3);
 ///
-/// // Interpolation: distance=1.25 is halfway between 1.0 (9.9958) and
-/// // 1.5 (13.2108) → expected ~11.6033.
+/// // Interpolation: distance=1.25 is halfway between 1.0 (10.5677) and
+/// // 1.5 (13.3942) → expected ~11.9810.
 /// let s = zensim_target_score_for_distance(1.25);
-/// assert!((s - 11.6033).abs() < 1e-3);
+/// assert!((s - 11.9810).abs() < 1e-3);
 ///
 /// // Below-band clamp: distance=0.25 → returns the d=0.5 value.
 /// let s = zensim_target_score_for_distance(0.25);
-/// assert!((s - 6.6381).abs() < 1e-3);
+/// assert!((s - 8.6913).abs() < 1e-3);
 ///
 /// // Above-band clamp: distance=10.0 → returns the d=5.0 value.
 /// let s = zensim_target_score_for_distance(10.0);
-/// assert!((s - 28.4359).abs() < 1e-3);
+/// assert!((s - 36.6788).abs() < 1e-3);
 /// ```
 pub(crate) fn zensim_target_score_for_distance(target_distance: f32) -> f32 {
     let table = ZENSIM_DISTANCE_TARGETS;
@@ -223,28 +231,30 @@ mod tests {
         assert!((zensim_target_score_for_distance(100.0) - last_v).abs() < 1e-4);
     }
 
-    /// Linear interpolation: midpoint of (1.0, 9.9958) and
-    /// (1.5, 13.2108) is (1.25, ~11.6033).
+    /// Linear interpolation. Expected values are DERIVED from the live table
+    /// (not hardcoded), so a re-seed of `ZENSIM_DISTANCE_TARGETS` cannot break
+    /// this test as long as the interp math is correct.
     #[test]
     fn lookup_interpolates_linearly() {
+        let table = ZENSIM_DISTANCE_TARGETS;
+        // Find the (1.0, 1.5) bracket and check the midpoint d=1.25.
+        let lo = table.iter().find(|e| (e.0 - 1.0).abs() < 1e-6).unwrap();
+        let hi = table.iter().find(|e| (e.0 - 1.5).abs() < 1e-6).unwrap();
         let s = zensim_target_score_for_distance(1.25);
-        let expected = (9.9958_f32 + 13.2108_f32) * 0.5;
+        let expected = (lo.1 + hi.1) * 0.5;
         assert!(
             (s - expected).abs() < 1e-3,
-            "interp at d=1.25: got {} expected {}",
-            s,
-            expected
+            "interp at d=1.25: got {s} expected {expected}"
         );
 
-        // Quarter-point between d=2.0 (16.4704) and d=3.0 (20.9812):
-        // d=2.25 → 16.4704 + 0.25 * (20.9812 - 16.4704) ≈ 17.5981.
+        // Quarter-point between d=2.0 and d=3.0.
+        let lo = table.iter().find(|e| (e.0 - 2.0).abs() < 1e-6).unwrap();
+        let hi = table.iter().find(|e| (e.0 - 3.0).abs() < 1e-6).unwrap();
         let s = zensim_target_score_for_distance(2.25);
-        let expected = 16.4704_f32 + 0.25 * (20.9812_f32 - 16.4704_f32);
+        let expected = lo.1 + 0.25 * (hi.1 - lo.1);
         assert!(
             (s - expected).abs() < 1e-3,
-            "interp at d=2.25: got {} expected {}",
-            s,
-            expected
+            "interp at d=2.25: got {s} expected {expected}"
         );
     }
 

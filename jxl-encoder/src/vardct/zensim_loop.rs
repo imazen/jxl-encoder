@@ -273,7 +273,12 @@ impl VarDctEncoder {
         // Defaults match the benchmark-validated configuration.
         let params = ZensimParams::from_env();
 
-        let z = zensim::Zensim::new(zensim::ZensimProfile::latest()).with_parallel(false);
+        // Pinned to `ZensimProfile::A` (the shipped codec-target metric, v47-strict
+        // as of 2026-05-27) rather than the deprecated `latest()` — the
+        // ZENSIM_DISTANCE_TARGETS calibration table is seeded against a SPECIFIC
+        // profile, so the scoring profile must be pinned to keep the loop and its
+        // calibration coherent across zensim releases.
+        let z = zensim::Zensim::new(zensim::ZensimProfile::A).with_parallel(false);
         // The deinterleaved planes are transient: only used to build the zensim
         // precomputed reference, then dropped.
         let precomputed = {
