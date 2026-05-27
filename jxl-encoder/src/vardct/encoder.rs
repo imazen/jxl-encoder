@@ -1822,7 +1822,7 @@ impl ZenanalyzeProxies {
 ///   (`profile.cfl_pass1_screenshot_x0_start`)
 /// - The encoder has [`ZenanalyzeProxies`] available (8-bit sRGB layouts)
 /// - The proxies match the high-colour-class predicate
-///   ([`crate::vardct::perceptual_loop::w44_audit_6_is_high_colour_class`])
+///   ([`crate::vardct::perceptual_tuning::w44_audit_6_is_high_colour_class`])
 ///
 /// When `true`, the CfL Newton dispatch flips `libjxl_parity = true` for
 /// that single call, routing Pass-1 through `x=0` start + Newton math
@@ -1850,7 +1850,7 @@ pub(crate) fn w44_audit_5_p3_force_libjxl_parity_for_screenshot(
             return false;
         }
     }
-    crate::vardct::perceptual_loop::w44_audit_6_is_high_colour_class(proxies)
+    crate::vardct::perceptual_tuning::w44_audit_6_is_high_colour_class(proxies)
 }
 
 /// Tiny JPEG XL encoder.
@@ -4214,7 +4214,7 @@ impl VarDctEncoder {
         {
             // W44-213: tuning-override-aware threshold lookup.
             let median_threshold = crate::runtime_or_default!(
-                super::perceptual_loop::SCREENSHOT_MEDIAN_THRESHOLD,
+                super::perceptual_tuning::SCREENSHOT_MEDIAN_THRESHOLD,
                 screenshot_median_threshold,
             );
             let is_screenshot =
@@ -4256,7 +4256,7 @@ impl VarDctEncoder {
             let terminal_class_exclude = self.resolved_improvements.terminal_class_exclude;
             let high_colour_class_exclude = self.resolved_improvements.high_colour_class_exclude;
             let qf_pre_scale =
-                super::perceptual_loop::resolved_adaptive_quant_qf_seed_scale_with_policy(
+                super::perceptual_tuning::resolved_adaptive_quant_qf_seed_scale_with_policy(
                     self.effort,
                     effective_buttloop_iters,
                     is_screenshot,
@@ -5431,7 +5431,7 @@ impl VarDctEncoder {
                 // faithful, byte-identical).
                 // W44-213: tuning-override-aware threshold lookup.
                 let median_threshold = crate::runtime_or_default!(
-                    super::perceptual_loop::SCREENSHOT_MEDIAN_THRESHOLD,
+                    super::perceptual_tuning::SCREENSHOT_MEDIAN_THRESHOLD,
                     screenshot_median_threshold,
                 );
                 let is_screenshot = mask1x1.as_deref().is_some_and(|m| {
