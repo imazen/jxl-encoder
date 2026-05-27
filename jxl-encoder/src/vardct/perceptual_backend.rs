@@ -78,11 +78,20 @@ pub(crate) struct MetricSelection {
     pub(crate) metric: PerceptualMetric,
     pub(crate) device: PerceptualDevice,
     /// Caller-supplied per-distance target override. `None` = use the
-    /// metric's built-in calibration table; `Some(score)` = converge
-    /// the buttloop against this score directly. Plumbed through to
-    /// `perceptual_loop.rs::effective_metric_target_distance` rather
-    /// than consumed inside the backend ctor — included here so the
-    /// selection struct is the single carrier from API → dispatch.
+    /// metric's built-in calibration table; `Some(score)` = drive the
+    /// buttloop against this score via the matching metric's inverse
+    /// lookup (butteraugli → `vardct/butteraugli_targets.rs`, cvvdp →
+    /// `vardct/cvvdp_targets.rs`, zensim → butteraugli's table after
+    /// score normalization). Propagated by
+    /// [`propagate_resolved_metric_to_encoder`] into
+    /// [`crate::vardct::VarDctEncoder::perceptual_target_score`]; the
+    /// buttloop body
+    /// [`crate::vardct::perceptual_loop::run_buttloop`] reads it at
+    /// the `effective_metric_target_distance` dispatch block.
+    ///
+    /// Phase 1 of RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`
+    /// (2026-05-26) closed the wiring; pre-Phase-1 this field was a
+    /// no-op for all three metrics.
     pub(crate) target_score: Option<f32>,
     /// Phase 1 display-config backfill (RFC
     /// `docs/RFC_DISPLAY_CONFIG_BACKFILL.md`, 2026-05-25): the resolved
@@ -140,6 +149,14 @@ pub(crate) fn propagate_resolved_metric_to_encoder(
     // regardless of which metric is active; only the cvvdp backend
     // ctor and the per-display target lookup actually consume it.
     enc.target_display = selection.target_display;
+    // Phase 1 of RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`
+    // (2026-05-26): propagate the resolved per-distance target-score
+    // override. `None` (the default) preserves the implicit-identity
+    // arm in `perceptual_loop::run_buttloop`. The Libjxl strict-parity
+    // short-circuit has already fired in
+    // `LossyConfig::resolve_perceptual_target_score` (which forces
+    // `None` for `EncoderStrategy::Libjxl` regardless of caller field).
+    enc.perceptual_target_score = selection.target_score;
     match selection.metric {
         PerceptualMetric::Butteraugli => {
             enc.cvvdp_loop = false;
@@ -1384,11 +1401,17 @@ pub(crate) fn construct_backend(
     // Cvvdp / Zensim).
     let zensim_requested = matches!(selection.metric, PerceptualMetric::Zensim);
     let zensim_use_cpu_requested = matches!(selection.device, PerceptualDevice::Cpu);
-    // The `target_score` field is plumbed through `perceptual_loop.rs`
-    // via `LossyConfig::perceptual_target_score`, not through the
-    // backend ctor. Silence the unused-field warning by binding to `_`
-    // here — the struct field stays for documentation + the
-    // single-carrier shape.
+    // Phase 1 of RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`
+    // (2026-05-26): the `target_score` field IS consumed by the
+    // buttloop body via `VarDctEncoder.perceptual_target_score`
+    // (propagated through `propagate_resolved_metric_to_encoder`).
+    // Backend ctors themselves do NOT read it — the per-distance
+    // dispatch happens in `perceptual_loop::run_buttloop` at the
+    // `effective_metric_target_distance` block. The bind below
+    // silences any unused-field warning on no-feature builds where
+    // the field is dead-stripped before propagation. The propagation
+    // path is exercised by the `perceptual_target_score_drives_loop`
+    // integration test.
     let _ = selection.target_score;
     // Debug hook: `JXL_W44_PHASE3_B1_DEBUG=1` logs which backend the
     // dispatch picks. Off by default to keep production logs clean.

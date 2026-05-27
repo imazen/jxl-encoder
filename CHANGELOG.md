@@ -61,6 +61,46 @@
 
 ### Added
 
+- **Phase 1 of butteraugli target symmetry (RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`,
+  2026-05-26)**: `LossyConfig::with_perceptual_target_score(Some(score))`
+  now drives the buttloop's `effective_metric_target_distance`
+  convergence target for all three metrics. **Pre-Phase-1 it was a
+  phantom no-op** — the field stored on the config and threaded
+  through `MetricSelection.target_score` but DISCARDED at
+  `vardct/perceptual_backend.rs::construct_backend` (the
+  `let _ = selection.target_score;` no-op binding). The buttloop's
+  dispatch in `vardct/perceptual_loop.rs` hard-coded each metric arm
+  with no reference to the caller field. Phase 1 closes the wiring:
+  - New `vardct/butteraugli_targets.rs` — inverse-direction
+    `target_score → effective_distance` calibration table (7
+    distance bands, seeded from
+    `benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv`, n=162
+    corpus-median per band). Mirrors `vardct/cvvdp_targets.rs` shape.
+  - butteraugli arm: caller's score → inverse-table lookup →
+    `effective_distance`; loop converges at that distance.
+  - cvvdp + zensim arms: caller's score used DIRECTLY as the
+    metric-native convergence target (bypasses the forward
+    distance-table; the score is already metric-native).
+  - New `LossyConfig::resolve_perceptual_target_score()` resolver
+    with `EncoderStrategy::Libjxl` strict-parity short-circuit
+    (forces `None` for Libjxl; W44-126 byte-lock invariant). Also
+    sanitises NaN/Inf/non-positive caller inputs back to `None`.
+  - New `VarDctEncoder::perceptual_target_score: Option<f32>` field
+    threaded via `propagate_resolved_metric_to_encoder`.
+  - New tests:
+    `tests/perceptual_target_score_smoke.rs` (6 tests including
+    jxl-rs primary roundtrip and jxl-oxide secondary roundtrip),
+    extended
+    `tests/strategy_libjxl_byte_lock.rs` with
+    `libjxl_target_score_byte_identical_via_strict_parity_short_circuit`
+    (40 byte-lock cells), 3 new api resolver tests, 10 unit tests
+    on the `butteraugli_targets` module (table monotonicity,
+    endpoint clamps, linear interp, NaN/negative guards,
+    inverse-at-canonical-bands, ±10% seed envelope honeypot).
+  - Default `perceptual_target_score = None` preserves
+    pre-Phase-1 behaviour byte-for-byte; hash-locks 36/36
+    BYTE-IDENTICAL. `EncoderStrategy::Libjxl` byte-lock 4/4
+    BYTE-IDENTICAL with target_score active.
 - **scripts/zenjxl-tuning-sweep/lib/zen-r2-lib.sh — shared R2 boilerplate
   (cross-repo dedup Chunk D, 2026-05-26)**: sourced shell helper that
   extracts the R2/S3 endpoint + creds + `aws s3` / `s5cmd` wrappers

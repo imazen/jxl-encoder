@@ -2149,6 +2149,28 @@ pub struct VarDctEncoder {
     /// backend ctors and the per-display target lookup actually consume
     /// it.
     pub target_display: crate::api::DisplayConfig,
+    /// Phase 1 of RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`
+    /// (2026-05-26): per-distance target-score override consumed by the
+    /// `effective_metric_target_distance` dispatch in
+    /// [`crate::vardct::perceptual_loop::run_buttloop`]. Populated by
+    /// [`crate::vardct::perceptual_backend::propagate_resolved_metric_to_encoder`]
+    /// from
+    /// [`crate::api::LossyConfig::resolve_perceptual_target_score`]
+    /// (which already applied the
+    /// [`crate::api::EncoderStrategy::Libjxl`] strict-parity
+    /// short-circuit that forces this field to `None`).
+    ///
+    /// Default `None` preserves the pre-Phase-1 implicit-identity
+    /// behaviour — the buttloop drives convergence using
+    /// `target_distance` directly. `Some(score)` activates the
+    /// per-metric inverse lookup (butteraugli via
+    /// [`crate::vardct::butteraugli_targets`], cvvdp via
+    /// [`crate::vardct::cvvdp_targets`], zensim via the butteraugli
+    /// table after score normalization — see
+    /// [`crate::vardct::perceptual_loop::run_buttloop`] dispatch block
+    /// for the wiring).
+    #[cfg(feature = "butteraugli-loop")]
+    pub perceptual_target_score: Option<f32>,
     /// Number of SSIM2 quantization loop iterations.
     /// Alternative to butteraugli loop: uses per-block linear RGB RMSE + full-image SSIM2.
     /// Requires the `ssim2-loop` feature.
@@ -2525,6 +2547,14 @@ impl Default for VarDctEncoder {
             // WebSdr80 maps to `cvvdp_gpu::params::DisplayModel::STANDARD_4K`
             // — bit-identical to the pre-Phase-1 cvvdp scoring shape.
             target_display: crate::api::DisplayConfig::WebSdr80,
+            // Phase 1 of RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`
+            // (2026-05-26): default None preserves the pre-Phase-1
+            // implicit-identity arm of `effective_metric_target_distance`.
+            // Set via `LossyConfig::with_perceptual_target_score(Some(_))`
+            // → `resolve_perceptual_target_score` → propagated by
+            // `propagate_resolved_metric_to_encoder`.
+            #[cfg(feature = "butteraugli-loop")]
+            perceptual_target_score: None,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]
@@ -2666,6 +2696,14 @@ impl VarDctEncoder {
             // WebSdr80 maps to `cvvdp_gpu::params::DisplayModel::STANDARD_4K`
             // — bit-identical to the pre-Phase-1 cvvdp scoring shape.
             target_display: crate::api::DisplayConfig::WebSdr80,
+            // Phase 1 of RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`
+            // (2026-05-26): default None preserves the pre-Phase-1
+            // implicit-identity arm of `effective_metric_target_distance`.
+            // Set via `LossyConfig::with_perceptual_target_score(Some(_))`
+            // → `resolve_perceptual_target_score` → propagated by
+            // `propagate_resolved_metric_to_encoder`.
+            #[cfg(feature = "butteraugli-loop")]
+            perceptual_target_score: None,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0, // Off by default. Set via LossyConfig.
             #[cfg(feature = "zensim-loop")]
