@@ -1620,6 +1620,15 @@ name = "zensim_calibration_seed"
 path = "examples/zensim_calibration_seed.rs"
 required-features = ["__expert", "butteraugli-loop", "zensim-loop", "ssim2-loop", "parallel"]
 
+# Diffmap RD harness (#38, 2026-05-27): encode a corpus with a chosen
+# perceptual-loop metric/diffmap, save decoded outputs + manifest for the
+# external independent panel (zen-metrics compare). `--metric cvvdp` needs
+# the cvvdp-loop-cpu feature too (the match arm is cfg-gated).
+[[example]]
+name = "zensim_diffmap_rd"
+path = "examples/zensim_diffmap_rd.rs"
+required-features = ["__expert", "butteraugli-loop", "zensim-loop", "ssim2-loop", "parallel"]
+
 # zensim-fork Phase 4 (2026-05-25): 20-cell smoke bench mirroring
 # `cvvdp_loop_smoke_bench`. Encodes 5 synthetic fixtures × 4 distances
 # × 2 backends (B + Z_CPU) and writes a TSV in the tracking schema.
