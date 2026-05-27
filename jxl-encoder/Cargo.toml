@@ -91,12 +91,13 @@ cubecl = { version = "0.10.0-pre.4", default-features = false, features = ["std"
 cvvdp-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types"], optional = true }
 # cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP backend for the perceptual
 # quantization loop. Opt-in via the `cvvdp-loop-cpu` cargo feature.
-# Pure Rust, no CUDA, no SIMD intrinsics — runs anywhere. Path-patched
-# in the workspace `[patch.crates-io]` to point at
-# `~/work/zen/zenmetrics/crates/cvvdp-cpu` (Agent A's deliverable,
-# `publish = false`). Default features include `std` + `parallel` for
+# Pure Rust, no CUDA, no SIMD intrinsics — runs anywhere. `publish = false`
+# so path-pinned directly here. 2026-05-27: zenmetrics renamed the crate
+# `cvvdp-cpu` → package `cvvdp` (dir + package); keep the jxl-encoder dep
+# NAME `cvvdp-cpu` (so `dep:cvvdp-cpu` + `cvvdp_cpu::` source are unchanged)
+# via `package = "cvvdp"`. Default features include `std` + `parallel` for
 # the rayon-backed per-band fan-out (matches the buttloop's rayon usage).
-cvvdp-cpu = { version = "0.1.0", default-features = false, features = ["std", "parallel"], optional = true }
+cvvdp-cpu = { package = "cvvdp", path = "../../zenmetrics/crates/cvvdp", default-features = false, features = ["std", "parallel"], optional = true }
 
 [features]
 std = ["thiserror/std", "archmage/std", "jxl_simd/std"]

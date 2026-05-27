@@ -84,11 +84,11 @@ butteraugli-gpu = { path = "../zenmetrics/crates/butteraugli-gpu" }
 # `examples/cvvdp_track_baseline.rs` (RFC `docs/RFC_CVVDP_FORK.md` §5).
 # `publish = false` upstream; path-pinned here.
 cvvdp-gpu = { path = "../zenmetrics/crates/cvvdp-gpu" }
-# cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP backend. Path-pinned because
-# the crate is `publish = false` (zenmetrics workspace deliverable from
-# Agent A; commits `da81694` + `a177c89` + `c3c56ee` on master).
-# Wrapped in jxl-encoder via the `cvvdp-loop-cpu` cargo feature.
-cvvdp-cpu = { path = "../zenmetrics/crates/cvvdp-cpu" }
+# cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP backend. 2026-05-27: zenmetrics
+# renamed `cvvdp-cpu` → package `cvvdp`. The jxl-encoder member now path-deps
+# it directly with `package = "cvvdp"` (keeping the dep NAME `cvvdp-cpu`), so
+# no `[patch.crates-io]` entry is needed — a patch can't rename a package
+# anyway. (Was: `cvvdp-cpu = { path = "../zenmetrics/crates/cvvdp-cpu" }`.)
 # zensim-fork Phase 3 (2026-05-25): GPU zensim backend. Path-pinned
 # because zensim-gpu 0.0.1 is `publish = false` (zenmetrics workspace
 # deliverable; Phase 1 commit `1175b49` on zenmetrics master). Wrapped
