@@ -154,10 +154,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             // active metric (iter 0 alone is compare-only → diffmap unused).
             // The quality loops are mutually exclusive — zero butteraugli's
             // default iters when driving with zensim/cvvdp.
+            // zensim has a SEPARATE zensim_iters (and butteraugli_iters must be
+            // 0 — mutually exclusive). cvvdp + butteraugli both drive the shared
+            // buttloop via butteraugli_iters (perceptual_loop resolves
+            // iters_override.unwrap_or(self.butteraugli_iters)); cvvdp is
+            // selected by the perceptual-metric, not a separate iters field.
             cfg = match metric_s.as_str() {
                 "zensim" => cfg.with_butteraugli_iters(0).with_zensim_iters(iters),
-                #[cfg(any(feature = "cvvdp-loop", feature = "cvvdp-loop-cpu"))]
-                "cvvdp" => cfg.with_butteraugli_iters(0).with_cvvdp_iters(iters),
                 _ => cfg.with_butteraugli_iters(iters),
             };
             let encoded = cfg.encode(&pixels, w, h, PixelLayout::Rgb8)?;
