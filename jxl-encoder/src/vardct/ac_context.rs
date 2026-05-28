@@ -324,8 +324,7 @@ impl BlockCtxMap {
     ) -> Self {
         // Reuse the libjxl-parity threshold derivation by calling the
         // primary function and inspecting its output.
-        let base =
-            Self::jpeg_dc_quantile(dc_counts, total_dc_luma, qt_ac_sum_0_to_4, is_grayscale);
+        let base = Self::jpeg_dc_quantile(dc_counts, total_dc_luma, qt_ac_sum_0_to_4, is_grayscale);
         let n = base.num_dc_ctxs;
         // Full-resolution chroma only when 3 * n <= 16. n in {1, 2, 3, 4, 5}.
         if n > 5 || is_grayscale {
@@ -874,7 +873,10 @@ mod tests {
         }
         let m = BlockCtxMap::jpeg_dc_quantile_ex_j15(&dc_counts, 1000, 4, false);
         let n = m.num_dc_ctxs;
-        assert!((1..=5).contains(&n), "n={n} should be in 1..=5 for this test");
+        assert!(
+            (1..=5).contains(&n),
+            "n={n} should be in 1..=5 for this test"
+        );
         // Y: 0..n. Cb: n..2n. Cr: 2n..3n.
         for i in 0..n {
             assert_eq!(m.ctx_map[i], i as u8, "Y bucket {i}");

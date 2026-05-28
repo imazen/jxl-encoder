@@ -431,6 +431,33 @@ fn ans_population_cost(h: &Histogram) -> f32 {
         return 0.0;
     }
 
+    // EX-J30 (2026-05-28): accurate libjxl-parity ANS population cost.
+    //
+    // libjxl `Histogram::ANSPopulationCost()` (enc_ans.cc:619-628) returns
+    // `ANSEncodingHistogram::ComputeBest(histo, kFast).Cost()` — the REAL
+    // normalized-table data bits (EstimateDataBits over the /4096 ANS table,
+    // always >= Shannon entropy) plus the REAL table-serialization header
+    // bits (shift selection + RLE bit-width coding). Our legacy estimate used
+    // raw Shannon entropy + a flat `alphabet_size * 5.0` header, which
+    // over-weights the header savings from merging (a sparse merged histogram
+    // RLE-encodes to far fewer than 5 bits/symbol), causing the kBest
+    // pair-merge to OVER-MERGE (e.g. 5445 JPEG-AC contexts -> only 64
+    // histograms) where libjxl keeps more histograms with a tighter data fit.
+    //
+    // Gated by `JXL_ACCURATE_ANS_COST=1` for A/B measurement; the legacy
+    // estimate is the default until the JPEG-path win is confirmed and the
+    // VarDCT/modular impact is measured (this fn is shared across all ANS
+    // clustering, so a default flip would touch hash-locks broadly).
+    #[cfg(feature = "std")]
+    if std::env::var_os("JXL_ACCURATE_ANS_COST").is_some() {
+        if let Ok(enc) = super::ans::ANSEncodingHistogram::from_histogram(
+            h,
+            super::ans::ANSHistogramStrategy::Fast,
+        ) {
+            return enc.cost;
+        }
+    }
+
     // Data cost (entropy)
     let data_cost = h.cached_entropy();
 

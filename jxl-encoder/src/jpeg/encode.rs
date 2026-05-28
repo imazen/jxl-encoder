@@ -552,12 +552,7 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
                 is_gray,
             )
         } else {
-            ac_context::BlockCtxMap::jpeg_dc_quantile(
-                &dc_counts,
-                total_dc_luma,
-                qt_ac_sum,
-                is_gray,
-            )
+            ac_context::BlockCtxMap::jpeg_dc_quantile(&dc_counts, total_dc_luma, qt_ac_sum, is_gray)
         }
     };
 
@@ -617,64 +612,77 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     // disabling via env hook produced +0.433% regression (-44118 bytes /
     // 50 files) on the paired bench. cjxl-e7 also uses sampled custom
     // orders for JPEG. Keep the env hook for future investigators.
-    let custom_orders_enabled =
-        std::env::var_os("JPEG_NO_CUSTOM_ORDERS").is_none();
-    let (custom_order_map, used_orders) = if custom_orders_enabled
-        && (xsize_blocks >= 5 || ysize_blocks >= 5)
-    {
-        let mut zero_counts: Vec<Vec<Vec<i64>>> = (0..NUM_ORDER_BUCKETS_JPEG)
-            .map(|_| vec![Vec::new(); 3])
-            .collect();
-        // Only bucket 0 (DCT8) is populated — every JPEG block is DCT8.
-        for ch in &mut zero_counts[0] {
-            *ch = vec![0i64; BLOCK_SIZE];
-        }
-        // libjxl xorshift128+ initial state (enc_coeff_order.cc:88-89).
-        let mut xs_state: [u64; 2] = [0x94D049BB133111EB, 0xBF58476D1CE4E5B9];
-        // block_fraction = 0.5 → threshold = (u64::MAX >> 32) * 0.5.
-        let threshold: u64 = (((u64::MAX) >> 32) as f64 * 0.5f64) as u64;
-        let mut use_sample = |state: &mut [u64; 2]| -> bool {
-            let s1 = state[0];
-            let s0 = state[1];
-            let bits = s1.wrapping_add(s0);
-            state[0] = s0;
-            let mut s1 = s1 ^ (s1 << 23);
-            s1 ^= s0 ^ (s1 >> 18) ^ (s0 >> 5);
-            state[1] = s1;
-            (bits >> 32) <= threshold
-        };
-        for c in 0..3 {
-            let plane = &quant_ac[c];
-            let cnt = &mut zero_counts[0][c];
-            for row in plane {
-                for block in row {
-                    if !use_sample(&mut xs_state) {
-                        continue;
-                    }
-                    // Skip k=0 (DC) — it lives in quant_dc and is always 0
-                    // in quant_ac; we set it to -1 below so it sorts to the
-                    // front of the permutation as the LLF position
-                    // (mirroring count_zero_coefficients's treatment for
-                    // DCT8 bucket 0, coeff_order.rs:328-333).
-                    for k in 1..BLOCK_SIZE {
-                        if block[k] == 0 {
-                            cnt[k] += 1;
+    let custom_orders_enabled = std::env::var_os("JPEG_NO_CUSTOM_ORDERS").is_none();
+    let (custom_order_map, used_orders) =
+        if custom_orders_enabled && (xsize_blocks >= 5 || ysize_blocks >= 5) {
+            let mut zero_counts: Vec<Vec<Vec<i64>>> = (0..NUM_ORDER_BUCKETS_JPEG)
+                .map(|_| vec![Vec::new(); 3])
+                .collect();
+            // Only bucket 0 (DCT8) is populated — every JPEG block is DCT8.
+            for ch in &mut zero_counts[0] {
+                *ch = vec![0i64; BLOCK_SIZE];
+            }
+            // libjxl xorshift128+ initial state (enc_coeff_order.cc:88-89).
+            let mut xs_state: [u64; 2] = [0x94D049BB133111EB, 0xBF58476D1CE4E5B9];
+            // block_fraction = 0.5 → threshold = (u64::MAX >> 32) * 0.5.
+            let threshold: u64 = (((u64::MAX) >> 32) as f64 * 0.5f64) as u64;
+            let mut use_sample = |state: &mut [u64; 2]| -> bool {
+                let s1 = state[0];
+                let s0 = state[1];
+                let bits = s1.wrapping_add(s0);
+                state[0] = s0;
+                let mut s1 = s1 ^ (s1 << 23);
+                s1 ^= s0 ^ (s1 >> 18) ^ (s0 >> 5);
+                state[1] = s1;
+                (bits >> 32) <= threshold
+            };
+            for c in 0..3 {
+                let plane = &quant_ac[c];
+                let cnt = &mut zero_counts[0][c];
+                for row in plane {
+                    for block in row {
+                        if !use_sample(&mut xs_state) {
+                            continue;
+                        }
+                        // Skip k=0 (DC) — it lives in quant_dc and is always 0
+                        // in quant_ac; we set it to -1 below so it sorts to the
+                        // front of the permutation as the LLF position
+                        // (mirroring count_zero_coefficients's treatment for
+                        // DCT8 bucket 0, coeff_order.rs:328-333).
+                        for k in 1..BLOCK_SIZE {
+                            if block[k] == 0 {
+                                cnt[k] += 1;
+                            }
                         }
                     }
                 }
+                // Mark LLF position (DC = index 0 for DCT8 bucket 0).
+                cnt[0] = -1;
             }
-            // Mark LLF position (DC = index 0 for DCT8 bucket 0).
-            cnt[0] = -1;
-        }
-        let (orders, used) = compute_custom_orders(&zero_counts);
-        if used != 0 {
-            (Some(orders), used)
+            // EX-J29 (2026-05-28): HONEST-STOP. Tested libjxl-EXACT custom-order
+            // admission (emit whenever nondefault, NO cost gate, matching
+            // enc_coeff_order.cc:198-237) vs our cost-benefit gate on the JPEG
+            // path. 50-file paired A/B: +239 bytes (49/50 tied, 1 worse). Our
+            // gate ALREADY admits the order on essentially every JPEG file — the
+            // gate decision savings>cost almost always passes for DCT8 bucket-0 —
+            // so the gate is at parity with libjxl on JPEG and is correct on the
+            // 1 file where it differs. Coefficient orders ARE NOT the gap.
+            // Keep the gated path as default; the unconditional libjxl-exact
+            // path stays available via env hook `JPEG_UNCONDITIONAL_ORDERS=1`
+            // as a regression harness.
+            let (orders, used) = if std::env::var_os("JPEG_UNCONDITIONAL_ORDERS").is_some() {
+                crate::vardct::coeff_order::compute_custom_orders_unconditional(&zero_counts)
+            } else {
+                compute_custom_orders(&zero_counts)
+            };
+            if used != 0 {
+                (Some(orders), used)
+            } else {
+                (None, 0u32)
+            }
         } else {
             (None, 0u32)
-        }
-    } else {
-        (None, 0u32)
-    };
+        };
 
     let mut ac_section_tokens: Vec<Vec<Token>> = Vec::with_capacity(num_groups);
     for group_idx in 0..num_groups {
@@ -788,8 +796,7 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     // to deliver -0.27% on the AC code on a 10-file corpus, and the
     // signaling overhead amortization is comparable on DC. Env hook
     // JPEG_DC_NO_CLUSTERING=1 forces kFast for A/B measurement.
-    let dc_enhanced_clustering = effort >= 7
-        && std::env::var_os("JPEG_DC_NO_CLUSTERING").is_none();
+    let dc_enhanced_clustering = effort >= 7 && std::env::var_os("JPEG_DC_NO_CLUSTERING").is_none();
     let dc_code = build_entropy_code_ans_with_options(
         &all_dc_tokens,
         dc_num_contexts,
@@ -1106,6 +1113,14 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
                 .map(|t| t.len())
                 .sum::<usize>(),
             ac_section_tokens.iter().map(|t| t.len()).sum::<usize>(),
+        );
+        eprintln!(
+            "JPEG_SECTION_DUMP: AC num_contexts(in)={} clustered_histograms(out)={} used_orders={} | DC num_contexts(in)={} clustered_histograms(out)={}",
+            ac_code.context_map.len(),
+            ac_code.histograms.len(),
+            used_orders,
+            dc_code.context_map.len(),
+            dc_code.histograms.len(),
         );
     }
 
@@ -1507,7 +1522,11 @@ fn write_dc_global_jpeg(
     // compact-only `write_block_context_map`, which was incorrect once
     // we wanted to populate `dc_thresholds`. The adaptive writer
     // handles both legacy (all-empty) and JPEG (luma DC) paths.
-    crate::vardct::context_tree::write_block_ctx_map_adaptive(block_ctx_map, writer)?;
+    crate::vardct::context_tree::write_block_ctx_map_adaptive_with_mode(
+        block_ctx_map,
+        /*jpeg_mode=*/ true,
+        writer,
+    )?;
 
     // LfChannelCorrelation (CfL DC params)
     // For YCbCr mode, base_correlation_b must be 0.0 (not the XYB default of 1.0).

@@ -218,7 +218,10 @@ impl<'a> BitReader<'a> {
         let mut value: u32 = 0;
         for i in 0..nbits {
             if self.byte_pos >= self.data.len() {
-                return Err(format!("EOF at byte {} after {i}/{nbits} bits", self.byte_pos));
+                return Err(format!(
+                    "EOF at byte {} after {i}/{nbits} bits",
+                    self.byte_pos
+                ));
             }
             let bit = ((self.data[self.byte_pos] >> self.bit_pos) & 1) as u32;
             value |= bit << i;

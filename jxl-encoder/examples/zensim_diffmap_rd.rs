@@ -45,9 +45,21 @@ const GB82_SC_DIR: &str = "/home/lilith/work/codec-corpus/gb82-sc";
 /// images; override with `--corpus-file <tsv>` (cols: path, name, class).
 fn default_corpus() -> Vec<(String, String, String)> {
     vec![
-        ("1418519".into(), "photo".into(), format!("{CID22_VAL_DIR}/1418519.png")),
-        ("1025469".into(), "photo".into(), format!("{CID22_VAL_DIR}/1025469.png")),
-        ("codec_wiki".into(), "screen".into(), format!("{GB82_SC_DIR}/codec_wiki.png")),
+        (
+            "1418519".into(),
+            "photo".into(),
+            format!("{CID22_VAL_DIR}/1418519.png"),
+        ),
+        (
+            "1025469".into(),
+            "photo".into(),
+            format!("{CID22_VAL_DIR}/1025469.png"),
+        ),
+        (
+            "codec_wiki".into(),
+            "screen".into(),
+            format!("{GB82_SC_DIR}/codec_wiki.png"),
+        ),
     ]
 }
 
@@ -57,13 +69,22 @@ fn corpus_from_file(path: &str) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
     for line in std::fs::read_to_string(path).expect("corpus file").lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
         let mut f = line.split('\t');
         let p = f.next().unwrap_or("").to_string();
-        let name = f.next().map(|s| s.to_string())
-            .unwrap_or_else(|| std::path::Path::new(&p).file_stem().unwrap().to_string_lossy().into_owned());
+        let name = f.next().map(|s| s.to_string()).unwrap_or_else(|| {
+            std::path::Path::new(&p)
+                .file_stem()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        });
         let class = f.next().unwrap_or("image").to_string();
-        if !p.is_empty() { out.push((name, class, p)); }
+        if !p.is_empty() {
+            out.push((name, class, p));
+        }
     }
     out
 }
@@ -96,8 +117,16 @@ fn decode_jxl_srgb_u8(
     let mut rgb = Vec::with_capacity(n_px * 3);
     for i in 0..n_px {
         let r = (f32buf[i * ch].clamp(0.0, 1.0) * 255.0).round() as u8;
-        let g = if ch >= 2 { (f32buf[i * ch + 1].clamp(0.0, 1.0) * 255.0).round() as u8 } else { r };
-        let b = if ch >= 3 { (f32buf[i * ch + 2].clamp(0.0, 1.0) * 255.0).round() as u8 } else { r };
+        let g = if ch >= 2 {
+            (f32buf[i * ch + 1].clamp(0.0, 1.0) * 255.0).round() as u8
+        } else {
+            r
+        };
+        let b = if ch >= 3 {
+            (f32buf[i * ch + 2].clamp(0.0, 1.0) * 255.0).round() as u8
+        } else {
+            r
+        };
         rgb.extend_from_slice(&[r, g, b]);
     }
     Ok(rgb)
@@ -154,7 +183,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     fs::create_dir_all(&ref_dir)?;
 
     let manifest_path = out_dir.join(format!("manifest_{label}.tsv"));
-    let mut manifest = String::from("ref_path\tdist_path\tlabel\timage\tcorpus\tdistance\tbytes\tencode_ms\n");
+    let mut manifest =
+        String::from("ref_path\tdist_path\tlabel\timage\tcorpus\tdistance\tbytes\tencode_ms\n");
     eprintln!(
         "[diffmap_rd] metric={metric_s} label={label} | ZENSIM_MASKING={} ZENSIM_SQRT={} ZENSIM_HF={} ZENSIM_EDGE_MSE={}",
         std::env::var("ZENSIM_MASKING").unwrap_or_else(|_| "default(8)".into()),
@@ -163,7 +193,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         std::env::var("ZENSIM_EDGE_MSE").unwrap_or_else(|_| "default(1)".into()),
     );
 
-    eprintln!("[diffmap_rd] corpus={} images, distances={:?}, iters={iters}", corpus.len(), distances);
+    eprintln!(
+        "[diffmap_rd] corpus={} images, distances={:?}, iters={iters}",
+        corpus.len(),
+        distances
+    );
     for (name, corpus_name, path) in &corpus {
         let (name, corpus_name) = (name.as_str(), corpus_name.as_str());
         let (pixels, w, h) = load_rgb8(path)?;

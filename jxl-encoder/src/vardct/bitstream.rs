@@ -2832,6 +2832,10 @@ impl VarDctEncoder {
                     // same libjxl-parity opt-out on Libjxl strategy.
                     self.resolved_improvements
                         .coeff_orders_disable_medium_buckets,
+                    // EX-J29: VarDCT path keeps the cost-benefit gate
+                    // (unconditional_emit=false). The libjxl-exact
+                    // unconditional admission is JPEG-transcode-only.
+                    false,
                 );
                 if used != 0 {
                     (Some(orders), used)
