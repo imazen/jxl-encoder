@@ -1,0 +1,18 @@
+event	commit	pos_vs_cjxl_e7	delta_pp	notes
+session_start	fb57425a	+2.21%	0	pre-session baseline
+#8_DC_quantile_block_ctx_map	164c3045	+2.21%	0	agent baseline was pre-#10
+#10_zenjpeg_JBRD_wire	ba676144	+2.73%	+0.52pp	reset_points bloat fixed in #12
+#11_has_zero_padding_bit	8f008cae	+2.73%	0	correctness only
+lever_3_HybridUint_kNone	d0372efc	+1.99%	-0.74pp	superseded by uint8opt fix
+lever_1_MTF_ctx_map	d70e7811	+1.99%	-0.0pp	HONEST-STOP
+#12_reset_points_fix	36ec0d3a	+1.52%	-0.47pp	consumed zenjpeg 0.8.7
+lever_5_xorshift_sampling	a53c9c46	+1.52%	+0.004pp	HONEST-STOP (noise)
+uint8opt_header_cost_fix	8b82128f	+1.37%	-0.15pp	add ANS header to picker
+kBest_AC_e7	dddebe2c	+1.18%	-0.18pp	
+brotli_q11	f144c7a7	+1.18%	-0.006pp	
+EX-J22_kBest_DC_e7	4193abc6	+1.118%	-0.066pp	this session's lever
+EX-J23_ANS_strat_Approx	ruled_out	-	0	+1979 bytes regression
+EX-J24_pixel_hint_cap	ruled_out	-	0	0 bytes (no effect)
+EX-J25_EPF_sharp_0	a070cde0	+1.118%	0	libjxl parity, 0 byte impact
+EX-J26_libjxl_uint_set	ruled_out	-	0	+133 bytes regression
+EX-J27_custom_order_hook	ac6b0952	+1.118%	0	regression harness env hook
