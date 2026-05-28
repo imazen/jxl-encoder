@@ -1,0 +1,51 @@
+EX-J31: Weighted Predictor for JPEG-transcode DC (2026-05-28)
+=============================================================
+
+THE lever. jxl-oxide `info --with-offset` section breakdown localized the
+entire JPEG-in-JXL size gap vs cjxl-e7 to the LfGroup (DC) section:
+
+  anton-sobotyak 3840x2160 progressive, per-section bytes:
+    section     cjxl     ours(gradient)  ours(WP-DC)
+    GroupPass   90826    91102 (+0.3%)   91102        (AC data — at parity)
+    LfGroup     25952    31952 (+23.1%)  26005 (+0.2%)  (DC — THE gap, now closed)
+    HfGlobal    2341     2375            2375
+    LfGlobal    406      404             427
+
+Root cause: libjxl encodes the JPEG-transcode DC stream with `kWPFixedDC`
+(Predictor::Weighted, fixed BSP tree splitting on wp_max_error / property 15)
+at speed_tier >= kSquirrel (cjxl effort 7) — `enc_modular.cc:1584-1589`,
+`enc_encoding.cc:533-540`. We used a clamped-gradient predictor. WP residuals
+are far smaller on DC coefficients (strong local correlation), so the
+gradient path produced ~+23% larger LfGroup sections.
+
+Fix: wire the existing WP machinery (build_wp_fixed_dc_tree +
+tree_tokens_with_ac_metadata_prefix + collect_dc_tokens_wp, used by the
+VarDCT W44-57 path) into the JPEG transcode DC path. New
+`collect_dc_tokens_wp_region_jpeg` adds per-channel chroma-subsampling
+support (the VarDCT collector assumes full-res; JPEG 4:2:0 chroma DC planes
+are subsampled). Default-ON; env hook `JPEG_GRADIENT_DC=1` restores gradient.
+
+Results:
+  50-file mixed (seed 11):  +1.085% -> +0.216% vs cjxl-e7  (-0.860pp, -87502 B)
+  200-file mixed (seed 11): +1.118% -> +0.190% vs cjxl-e7  (-0.928pp)
+    baseline (n=66):  +0.134%
+    progressive (n=134): +0.220%
+  Roundtrip: 200/200 byte-identical via djxl --reconstruct_jpeg
+  jxl-oxide: decodes WP-DC codestream cleanly (3840x2160)
+
+Gates: --lib 1478/0, hash_lock_features 36/36 (non-JPEG byte-identical —
+WP-DC only touches the JPEG path), strategy_libjxl_byte_lock 5/5,
+strategy_libjxl_hash_locks 5/5, divergence_table_drift 7/7,
+jpeg_transcode_roundtrip 6/6, jpeg_public_api 7/7, jpeg_reencoding 27/27.
+
+Net JPEG-in-JXL session trajectory: +2.21% (start) -> +0.190% (now),
+-2.02pp total. Remaining +0.19% is small per-file overhead (DC residual
++53 B/anton, dc_global +21 B) — next investigation target.
+
+DO NOT (future agents):
+- DO NOT revert to gradient DC for JPEG; WP is libjxl-parity and -0.93pp.
+- DO NOT cite "FMA precision" for byte movement — WP vs gradient is a
+  structural predictor change.
+- The `collect_dc_tokens_wp_region_jpeg` per-channel shift handling is
+  load-bearing for subsampled (4:2:0/4:2:2/4:4:0) JPEGs — do not replace
+  with the full-res `collect_dc_tokens_wp`.

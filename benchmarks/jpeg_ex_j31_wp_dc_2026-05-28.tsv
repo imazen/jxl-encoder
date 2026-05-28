@@ -1,0 +1,4 @@
+bench	n	cjxl_e7_bytes	ours_gradient_bytes	ours_wpdc_bytes	delta_gradient_pct	delta_wpdc_pct	roundtrip_ok
+50-file-mixed	50	10069483	10178736	10091234	+1.085	+0.216	50/50
+200-file-mixed	200	44802893	-	44887864	-	+0.190	200/200
+anton-3840x2160-prog	1	144722	151032	145107	+4.36	+0.27	1/1
