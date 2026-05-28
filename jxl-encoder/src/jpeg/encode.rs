@@ -32,11 +32,38 @@ use crate::vardct::coeff_order::{
 };
 use crate::vardct::common::*;
 use crate::vardct::dc_coding::{
-    NUM_DC_CONTEXTS, collect_ac_metadata_tokens_region, collect_dc_tokens_region,
+    NUM_DC_CONTEXTS, NUM_DC_CONTEXTS_JPEG_TRANSCODE, collect_ac_metadata_tokens_region,
+    collect_ac_metadata_tokens_region_jpeg_transcode, collect_dc_tokens_region,
+    collect_dc_tokens_region_jpeg_transcode,
 };
 use crate::vardct::frame::{
     assemble_frame_sections, write_dc_group_from_tokens, write_quant_scales,
 };
+
+/// Lever A (2026-05-28): when `true`, the JPEG path emits the libjxl-style
+/// `kJpegTranscodeACMeta` context tree shape (single `Leaf(Zero)` for the
+/// AC-metadata subtree, gradient-DC subtree unchanged) and emits all
+/// AC-metadata data tokens as raw values in a single context.
+///
+/// **HONEST-STOP — default OFF, OPT-IN ONLY.** A 200-file paired bench
+/// (`benchmarks/jpeg_bit_shaving_2026-05-28.tsv`) measured a **+10.7 %
+/// regression** vs the existing gradient-fixed AC-metadata path at N=20:
+/// 1.42 % → 10.71 % vs cjxl. Root cause: our CFL `i8` multipliers (range
+/// ~±30 around `kOffset=127`) compress far better as gradient/left
+/// residuals (typical |Δ| 1-5) than as raw values (|val| 10-50). The
+/// `dc_global` section shrinks ~29 B/file from the smaller tree, but the
+/// CFL data tokens in the DC groups balloon ~15 KB/file. Net regression
+/// of ~15 380 B/file (+6.3 % per file).
+///
+/// libjxl pays this same cost on its JPEG transcode path; we are
+/// *already* better than libjxl on the AC-metadata stream by using a
+/// richer tree. Keep the API surface so future investigators can A/B
+/// measure without re-implementing ~200 LOC of token collectors.
+///
+/// Set `JPEG_LEVER_A_ENABLE=1` to opt in.
+fn jpeg_transcode_tree_enabled() -> bool {
+    matches!(std::env::var_os("JPEG_LEVER_A_ENABLE"), Some(v) if v == "1")
+}
 
 /// Number of JXL quant tables (from libjxl quant_weights.h).
 const NUM_QUANT_TABLES: usize = 17;
@@ -365,6 +392,7 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
     // ── Pass 1: Collect all tokens ──
 
     // DC + AC metadata tokens per DC group
+    let use_lever_a = jpeg_transcode_tree_enabled();
     let mut dc_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
     let mut ac_metadata_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
     for dc_group_idx in 0..num_dc_groups {
@@ -377,25 +405,50 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
         let region_xsize = end_bx - start_bx;
         let region_ysize = end_by - start_by;
 
-        let dc_tokens = collect_dc_tokens_region(
-            &quant_dc,
-            start_bx,
-            start_by,
-            end_bx,
-            end_by,
-            &channel_shifts,
-        );
-        let md_tokens = collect_ac_metadata_tokens_region(
-            region_xsize,
-            region_ysize,
-            &quant_field,
-            xsize_blocks,
-            start_bx,
-            start_by,
-            &cfl_map,
-            &ac_strategy,
-            None, // no sharpness map for JPEG
-        );
+        let dc_tokens = if use_lever_a {
+            collect_dc_tokens_region_jpeg_transcode(
+                &quant_dc,
+                start_bx,
+                start_by,
+                end_bx,
+                end_by,
+                &channel_shifts,
+            )
+        } else {
+            collect_dc_tokens_region(
+                &quant_dc,
+                start_bx,
+                start_by,
+                end_bx,
+                end_by,
+                &channel_shifts,
+            )
+        };
+        let md_tokens = if use_lever_a {
+            collect_ac_metadata_tokens_region_jpeg_transcode(
+                region_xsize,
+                region_ysize,
+                &quant_field,
+                xsize_blocks,
+                start_bx,
+                start_by,
+                &cfl_map,
+                &ac_strategy,
+                None,
+            )
+        } else {
+            collect_ac_metadata_tokens_region(
+                region_xsize,
+                region_ysize,
+                &quant_field,
+                xsize_blocks,
+                start_bx,
+                start_by,
+                &cfl_map,
+                &ac_strategy,
+                None,
+            )
+        };
         dc_tokens_per_group.push(dc_tokens);
         ac_metadata_tokens_per_group.push(md_tokens);
     }
@@ -640,7 +693,11 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
 
     // ── Build entropy codes (ANS) ──
 
-    let dc_num_contexts = NUM_DC_CONTEXTS;
+    let dc_num_contexts = if use_lever_a {
+        NUM_DC_CONTEXTS_JPEG_TRANSCODE
+    } else {
+        NUM_DC_CONTEXTS
+    };
     let total_dc_tokens: usize = dc_tokens_per_group.iter().map(|t| t.len()).sum::<usize>()
         + ac_metadata_tokens_per_group
             .iter()
@@ -720,6 +777,7 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
         &dc_code,
         num_dc_groups,
         &block_ctx_map,
+        use_lever_a,
         &mut dc_global,
     )?;
 
@@ -769,6 +827,32 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
         let mut ac_group_writer = BitWriter::new();
         write_tokens_ans(ac_tokens, &ac_code, None, &mut ac_group_writer)?;
         ac_groups.push(ac_group_writer);
+    }
+
+    // Bit-shaving probe: dump per-section bytes when JPEG_SECTION_DUMP=1.
+    if std::env::var_os("JPEG_SECTION_DUMP").is_some() {
+        let dc_groups_total: usize = dc_groups.iter().map(|w| w.bytes_written()).sum();
+        let ac_groups_total: usize = ac_groups.iter().map(|w| w.bytes_written()).sum();
+        eprintln!(
+            "JPEG_SECTION_DUMP: file_hdr={} frame_hdr={}b dc_global={}B dc_groups[{}]={}B ac_global={}B ac_groups[{}]={}B total~{}B (dc_tokens={} ac_meta_tokens={} ac_tokens={})",
+            file_header_bytes,
+            writer.bytes_written() - file_header_bytes,
+            dc_global.bytes_written(),
+            num_dc_groups,
+            dc_groups_total,
+            ac_global.bytes_written(),
+            num_groups,
+            ac_groups_total,
+            file_header_bytes
+                + (writer.bytes_written() - file_header_bytes)
+                + dc_global.bytes_written()
+                + dc_groups_total
+                + ac_global.bytes_written()
+                + ac_groups_total,
+            dc_tokens_per_group.iter().map(|t| t.len()).sum::<usize>(),
+            ac_metadata_tokens_per_group.iter().map(|t| t.len()).sum::<usize>(),
+            ac_section_tokens.iter().map(|t| t.len()).sum::<usize>(),
+        );
     }
 
     // Assemble frame (shared single-group/multi-group assembly logic)
@@ -1124,11 +1208,17 @@ fn build_jpeg_frame_header(jpeg: &JpegData, jpeg_upsampling: [u8; 3]) -> FrameHe
 /// Unlike the normal VarDCT path, JPEG reencoding uses:
 /// - Custom DC dequantization values (not default)
 /// - global_scale=65536, quant_dc=1
+///
+/// When `use_lever_a == true` the smaller JPEG-transcode context tree
+/// (`kJpegTranscodeACMeta` + gradient-DC) is emitted in place of the
+/// 313-token libjxl-tiny tree; the caller MUST have collected DC and
+/// AC-metadata tokens with the matching `_jpeg_transcode` variants.
 fn write_dc_global_jpeg(
     dc_dequant: &[f32; 3],
     dc_code: &OwnedAnsEntropyCode,
     num_dc_groups: usize,
     block_ctx_map: &ac_context::BlockCtxMap,
+    use_lever_a: bool,
     writer: &mut BitWriter,
 ) -> Result<()> {
     // No noise params for JPEG reencoding
@@ -1164,8 +1254,15 @@ fn write_dc_global_jpeg(
     writer.write(8, 128)?; // x_factor_lf = 128 (signed 0)
     writer.write(8, 128)?; // b_factor_lf = 128 (signed 0)
 
-    // Context tree for modular DC header
-    crate::vardct::context_tree::write_context_tree(num_dc_groups, writer)?;
+    // Context tree for modular DC + AC-metadata streams. Lever A: the
+    // JPEG-transcode variant collapses the 11-leaf AC-metadata subtree
+    // into a single Leaf(Zero), dropping the static-tree token count
+    // 313 → 243 and the data-side context space 45 → 35.
+    if use_lever_a {
+        crate::vardct::context_tree::write_jpeg_transcode_context_tree(num_dc_groups, writer)?;
+    } else {
+        crate::vardct::context_tree::write_context_tree(num_dc_groups, writer)?;
+    }
 
     // LZ77: disabled
     writer.write(1, 0)?;

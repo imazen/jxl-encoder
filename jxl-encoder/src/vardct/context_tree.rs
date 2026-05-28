@@ -354,6 +354,61 @@ pub static COMPACT_BLOCK_CONTEXT_MAP: [u8; 39] = [
     2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, // B
 ];
 
+/// Number of tokens in the JPEG-transcode context tree.
+///
+/// Lever A (2026-05-28): mirror libjxl's JPEG-mode tree shape
+/// (`kJpegTranscodeACMeta` + WP/gradient-fixed DC). The AC metadata subtree
+/// shrinks from 11 leaves (4 Left + 5 Zero + 2 Gradient) to a single
+/// `Leaf(Zero)` (libjxl `enc_encoding.cc:475-477`); the DC subtree is the
+/// same 34-leaf gradient-fixed BSP we already use. Tokens drop 313 → 243
+/// (-70) and the data-side context count drops 45 → 35.
+pub const NUM_JPEG_TRANSCODE_CONTEXT_TREE_TOKENS: usize = 243;
+
+/// Context tree tokens for JPEG-mode lossless transcoding.
+///
+/// BFS-ordered. Same structure as [`CONTEXT_TREE_TOKENS`] except the
+/// AC-metadata subtree (11 leaves, 10 internal nodes) is replaced by a
+/// single `Leaf(Predictor::Zero)`. Token[1] is the root splitval —
+/// rewritten to `pack_signed(1 + num_dc_groups)` at write time so the
+/// decoder routes `stream_id > 1+num_dc_groups` (AC metadata streams) to
+/// the LEFT (single zero-context) leaf and `stream_id <= 1+num_dc_groups`
+/// (DC streams) to the RIGHT (gradient-DC) subtree, matching
+/// [`write_context_tree`].
+pub static JPEG_TRANSCODE_CONTEXT_TREE_TOKENS: [(u32, u32);
+    NUM_JPEG_TRANSCODE_CONTEXT_TREE_TOKENS] = [
+    (1, 2), (0, 2), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (1, 10),
+    (0, 0), (1, 10), (0, 94), (1, 10), (0, 61), (1, 10), (0, 382), (1, 10),
+    (0, 22), (1, 10), (0, 13), (1, 10), (0, 253), (1, 10), (0, 784), (1, 10),
+    (0, 190), (1, 10), (0, 46), (1, 10), (0, 10), (1, 10), (0, 5), (1, 10),
+    (0, 29), (1, 10), (0, 125), (1, 10), (0, 509), (1, 10), (0, 1000), (1, 10),
+    (0, 510), (1, 10), (0, 254), (1, 10), (0, 126), (1, 10), (0, 62), (1, 10),
+    (0, 30), (1, 10), (0, 14), (1, 10), (0, 6), (1, 10), (0, 1), (1, 10),
+    (0, 7), (1, 10), (0, 21), (1, 10), (0, 45), (1, 10), (0, 93), (1, 10),
+    (0, 189), (1, 10), (0, 381), (1, 10), (0, 783), (1, 0), (2, 5), (3, 0),
+    (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0),
+    (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0),
+    (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5),
+    (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0),
+    (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0),
+    (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0),
+    (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0),
+    (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5),
+    (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0),
+    (1, 10), (0, 2), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0),
+    (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0),
+    (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5),
+    (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0),
+    (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0),
+    (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0),
+    (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0),
+    (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5),
+    (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0),
+    (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 10), (0, 999), (1, 0),
+    (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0),
+    (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5),
+    (3, 0), (4, 0), (5, 0),
+];
+
 /// Build an optimized entropy code for the context tree tokens.
 ///
 /// This builds histograms from the tokens, clusters them, then creates Huffman codes.
@@ -414,6 +469,50 @@ fn build_context_tree_entropy_code(tokens: &[Token]) -> (Vec<u8>, Vec<PrefixCode
     }
 
     (context_map, prefix_codes)
+}
+
+/// Write the JPEG-transcode context tree for modular DC + AC-metadata streams.
+///
+/// Lever A (2026-05-28): same as [`write_context_tree`] but emits the
+/// shrunk-AC-metadata tree from [`JPEG_TRANSCODE_CONTEXT_TREE_TOKENS`].
+/// Mirrors libjxl `enc_modular.cc:1742` setting `tree_kind =
+/// kJpegTranscodeACMeta` for `ACMetadata` streams when `jpeg_transcode=true`,
+/// while keeping the DC streams' default tree shape.
+///
+/// The caller MUST emit AC-metadata data tokens with `context = 0` and
+/// `predictor = Zero` (raw values, no gradient/left/etc residuals); see
+/// `dc_coding::collect_ac_metadata_tokens_region_jpeg_transcode` for the
+/// paired collector. DC data tokens use `context = GRADIENT_CONTEXT_LUT[grad]
+/// - DC_CONTEXT_OFFSET_JPEG_TRANSCODE` (= LUT value − 10), matching the BFS
+/// context IDs the new tree produces.
+pub fn write_jpeg_transcode_context_tree(
+    num_dc_groups: usize,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    let mut tokens: Vec<Token> = JPEG_TRANSCODE_CONTEXT_TREE_TOKENS
+        .iter()
+        .map(|&(ctx, val)| Token::new(ctx, val))
+        .collect();
+
+    // Root splitval encodes (1 + num_dc_groups). Decoder routes:
+    //   stream_id >  (1 + num_dc_groups) → LEFT subtree (AC-metadata, single Zero leaf)
+    //   stream_id <= (1 + num_dc_groups) → RIGHT subtree (gradient-DC)
+    // Matches the [`write_context_tree`] root layout.
+    tokens[1].value = pack_signed(1 + num_dc_groups as i32);
+
+    let (context_map, prefix_codes) = build_context_tree_entropy_code(&tokens);
+
+    writer.write(1, 1)?; // not an empty tree
+    writer.write(1, 0)?; // no lz77
+
+    let code = EntropyCode::new(&context_map, &prefix_codes);
+    write_entropy_code(&code, writer)?;
+
+    for token in &tokens {
+        write_token(token, &code, None, writer)?;
+    }
+
+    Ok(())
 }
 
 /// Write the context tree for modular stream DC coding.
