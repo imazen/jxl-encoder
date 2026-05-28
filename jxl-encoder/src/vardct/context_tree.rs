@@ -376,37 +376,249 @@ pub const NUM_JPEG_TRANSCODE_CONTEXT_TREE_TOKENS: usize = 243;
 /// [`write_context_tree`].
 pub static JPEG_TRANSCODE_CONTEXT_TREE_TOKENS: [(u32, u32);
     NUM_JPEG_TRANSCODE_CONTEXT_TREE_TOKENS] = [
-    (1, 2), (0, 2), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (1, 10),
-    (0, 0), (1, 10), (0, 94), (1, 10), (0, 61), (1, 10), (0, 382), (1, 10),
-    (0, 22), (1, 10), (0, 13), (1, 10), (0, 253), (1, 10), (0, 784), (1, 10),
-    (0, 190), (1, 10), (0, 46), (1, 10), (0, 10), (1, 10), (0, 5), (1, 10),
-    (0, 29), (1, 10), (0, 125), (1, 10), (0, 509), (1, 10), (0, 1000), (1, 10),
-    (0, 510), (1, 10), (0, 254), (1, 10), (0, 126), (1, 10), (0, 62), (1, 10),
-    (0, 30), (1, 10), (0, 14), (1, 10), (0, 6), (1, 10), (0, 1), (1, 10),
-    (0, 7), (1, 10), (0, 21), (1, 10), (0, 45), (1, 10), (0, 93), (1, 10),
-    (0, 189), (1, 10), (0, 381), (1, 10), (0, 783), (1, 0), (2, 5), (3, 0),
-    (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0),
-    (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0),
-    (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5),
-    (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0),
-    (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0),
-    (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0),
-    (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0),
-    (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5),
-    (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0),
-    (1, 10), (0, 2), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0),
-    (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0),
-    (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5),
-    (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0),
-    (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0),
-    (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0),
-    (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0),
-    (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5),
-    (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0),
-    (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 10), (0, 999), (1, 0),
-    (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5), (3, 0), (4, 0),
-    (5, 0), (1, 0), (2, 5), (3, 0), (4, 0), (5, 0), (1, 0), (2, 5),
-    (3, 0), (4, 0), (5, 0),
+    (1, 2),
+    (0, 2),
+    (1, 0),
+    (2, 0),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 10),
+    (0, 0),
+    (1, 10),
+    (0, 94),
+    (1, 10),
+    (0, 61),
+    (1, 10),
+    (0, 382),
+    (1, 10),
+    (0, 22),
+    (1, 10),
+    (0, 13),
+    (1, 10),
+    (0, 253),
+    (1, 10),
+    (0, 784),
+    (1, 10),
+    (0, 190),
+    (1, 10),
+    (0, 46),
+    (1, 10),
+    (0, 10),
+    (1, 10),
+    (0, 5),
+    (1, 10),
+    (0, 29),
+    (1, 10),
+    (0, 125),
+    (1, 10),
+    (0, 509),
+    (1, 10),
+    (0, 1000),
+    (1, 10),
+    (0, 510),
+    (1, 10),
+    (0, 254),
+    (1, 10),
+    (0, 126),
+    (1, 10),
+    (0, 62),
+    (1, 10),
+    (0, 30),
+    (1, 10),
+    (0, 14),
+    (1, 10),
+    (0, 6),
+    (1, 10),
+    (0, 1),
+    (1, 10),
+    (0, 7),
+    (1, 10),
+    (0, 21),
+    (1, 10),
+    (0, 45),
+    (1, 10),
+    (0, 93),
+    (1, 10),
+    (0, 189),
+    (1, 10),
+    (0, 381),
+    (1, 10),
+    (0, 783),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 10),
+    (0, 2),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 10),
+    (0, 999),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 0),
+    (5, 0),
 ];
 
 /// Build an optimized entropy code for the context tree tokens.
@@ -803,6 +1015,19 @@ fn write_dc_threshold(value: i32, writer: &mut BitWriter) -> Result<()> {
 /// JPEG DC-quantile context model. Now serialises whatever counts the
 /// caller's `BlockCtxMap` carries.
 pub fn write_block_ctx_map_adaptive(ctx_map: &BlockCtxMap, writer: &mut BitWriter) -> Result<()> {
+    write_block_ctx_map_adaptive_with_mode(ctx_map, false, writer)
+}
+
+/// Like [`write_block_ctx_map_adaptive`] but `jpeg_mode` enables the EX-J28
+/// ANS+LZ77 candidate in the context-map encoding selector. The VarDCT path
+/// passes `false` to remain byte-identical; the JPEG transcode path passes
+/// `true` (its block_ctx_map is large/repetitive enough that ANS+LZ77 can
+/// beat Huffman, and the selector only picks it when strictly smaller).
+pub fn write_block_ctx_map_adaptive_with_mode(
+    ctx_map: &BlockCtxMap,
+    jpeg_mode: bool,
+    writer: &mut BitWriter,
+) -> Result<()> {
     #[cfg(feature = "debug-tokens")]
     let start_bits = writer.bits_written();
 
@@ -842,7 +1067,7 @@ pub fn write_block_ctx_map_adaptive(ctx_map: &BlockCtxMap, writer: &mut BitWrite
     }
 
     // Write context map using existing entropy-coded format
-    write_context_map_from_slice(&ctx_map.ctx_map, writer)?;
+    write_context_map_from_slice(&ctx_map.ctx_map, jpeg_mode, writer)?;
 
     #[cfg(feature = "debug-tokens")]
     {
@@ -966,7 +1191,7 @@ fn write_ctxmap_huffman_payload(
 /// no-MTF emission. As a result the 3-way comparison does NOT affect the
 /// 40-cell hash-lock corpus (synthetic 32×32/48×48 fixtures, default
 /// 4-context map).
-fn write_context_map_from_slice(map: &[u8], writer: &mut BitWriter) -> Result<()> {
+fn write_context_map_from_slice(map: &[u8], jpeg_mode: bool, writer: &mut BitWriter) -> Result<()> {
     // Check if all values are 0 (simple case, 0 bits per entry).
     let max_val = *map.iter().max().unwrap_or(&0);
     if max_val == 0 {
@@ -1012,7 +1237,10 @@ fn write_context_map_from_slice(map: &[u8], writer: &mut BitWriter) -> Result<()
     // the JPEG block_ctx_map with ~312 entries × small alphabet)
     // ANS+LZ77 can beat Huffman. Env hook
     // `JXL_NO_ANS_LZ77_CTXMAP=1` disables the candidate.
-    let ans_lz77_scratch = if std::env::var_os("JXL_NO_ANS_LZ77_CTXMAP").is_some() {
+    let ans_lz77_scratch = if !jpeg_mode || std::env::var_os("JXL_NO_ANS_LZ77_CTXMAP").is_some() {
+        // EX-J28 scoped to JPEG transcode only — the VarDCT path
+        // (jpeg_mode=false) keeps the Simple/Huffman/MTF selector to stay
+        // byte-identical (preserves hash-locks + strategy byte-locks).
         None
     } else {
         crate::entropy_coding::encode_ans::build_context_map_nonsimple_ans_lz77(map).ok()
@@ -1084,8 +1312,7 @@ fn write_context_map_from_slice(map: &[u8], writer: &mut BitWriter) -> Result<()
         Pick::AnsLz77 => {
             // ANS+LZ77 path emits its own selector + headers inside
             // build_context_map_nonsimple_ans_lz77. Copy bit-exact.
-            let buf = ans_lz77_scratch
-                .expect("Pick::AnsLz77 requires ans_lz77_scratch to be Some");
+            let buf = ans_lz77_scratch.expect("Pick::AnsLz77 requires ans_lz77_scratch to be Some");
             let bits_to_copy = buf.bits_written();
             let bytes = buf.finish_with_padding();
             crate::entropy_coding::encode_ans::copy_bits(&bytes, bits_to_copy, writer)?;
@@ -1233,7 +1460,7 @@ mod tests {
     fn test_write_context_map_from_slice_all_zeros_byte_identical() {
         let map = vec![0u8; 39];
         let mut writer = BitWriter::new();
-        write_context_map_from_slice(&map, &mut writer).unwrap();
+        write_context_map_from_slice(&map, false, &mut writer).unwrap();
         let bytes = writer.finish_with_padding();
         // 3 bits written + zero padding to byte = 1 byte. Value:
         // LSB-first bits 1, 0, 0 → 0b00000001 = 0x01.
@@ -1267,7 +1494,7 @@ mod tests {
 
         let mut writer_a = BitWriter::new();
         let mut writer_b = BitWriter::new();
-        write_context_map_from_slice(&map, &mut writer_a).unwrap();
+        write_context_map_from_slice(&map, false, &mut writer_a).unwrap();
         let bytes = writer_a.finish_with_padding();
         assert!(!bytes.is_empty());
 
@@ -1285,7 +1512,7 @@ mod tests {
         );
 
         // Encode again to verify writer is deterministic.
-        write_context_map_from_slice(&map, &mut writer_b).unwrap();
+        write_context_map_from_slice(&map, false, &mut writer_b).unwrap();
         let bytes_b = writer_b.finish_with_padding();
         assert_eq!(bytes, bytes_b, "writer must be deterministic");
     }
@@ -1298,7 +1525,7 @@ mod tests {
     fn test_write_context_map_from_slice_picks_simple_when_short() {
         let map: Vec<u8> = vec![0, 1, 2, 3];
         let mut writer = BitWriter::new();
-        write_context_map_from_slice(&map, &mut writer).unwrap();
+        write_context_map_from_slice(&map, false, &mut writer).unwrap();
         let bytes = writer.finish_with_padding();
         assert!(!bytes.is_empty());
         // Simple-flag bit must be 1 (simple mode picked, since Huffman
@@ -1347,7 +1574,7 @@ mod tests {
         );
 
         let mut writer = BitWriter::new();
-        write_context_map_from_slice(&map, &mut writer).unwrap();
+        write_context_map_from_slice(&map, false, &mut writer).unwrap();
         let bytes = writer.finish_with_padding();
         // First 3 bits must encode (simple=0, use_mtf=1, lz77=0) = 0b010 = 2.
         // LSB-first byte 0 has bits 0,1,2 = 0,1,0 → low nibble 0b???0010.

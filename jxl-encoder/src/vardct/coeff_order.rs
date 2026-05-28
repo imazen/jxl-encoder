@@ -348,7 +348,27 @@ pub fn count_zero_coefficients(
 /// go through the options variant with
 /// `resolved_improvements.coeff_orders_disable_{large,medium}_buckets`.
 pub fn compute_custom_orders(zero_counts: &[Vec<Vec<i64>>]) -> (Vec<Vec<Vec<u32>>>, u32) {
-    compute_custom_orders_with_options(zero_counts, false, false)
+    compute_custom_orders_with_options(zero_counts, false, false, false)
+}
+
+/// EX-J29 (2026-05-28): libjxl-EXACT custom-order admission for the JPEG
+/// transcode path.
+///
+/// libjxl `enc_coeff_order.cc:198-237` emits a custom coefficient order for a
+/// bucket whenever the computed order differs from the natural order at all
+/// (`is_nondefault`) — there is NO Lehmer cost-benefit gate. Our default
+/// [`compute_custom_orders`] applies such a gate, which was calibrated on
+/// VarDCT *lossy* cells (W44-82: the `1420710 e7 d=4` CID22 photo). On the
+/// JPEG transcode path (all-DCT8, lossless real-JPEG quantized coefficients)
+/// the statistics differ, and the gate can suppress bucket-0 custom orders
+/// that libjxl would emit — costing the per-channel AC savings on every block.
+///
+/// This wrapper sets `unconditional_emit=true`, replicating libjxl's
+/// `is_nondefault`-only decision. Used by the JPEG transcode encoder.
+pub fn compute_custom_orders_unconditional(
+    zero_counts: &[Vec<Vec<i64>>],
+) -> (Vec<Vec<Vec<u32>>>, u32) {
+    compute_custom_orders_with_options(zero_counts, false, false, true)
 }
 
 /// W44-201 + W44-205: extended entry that exposes the
@@ -376,6 +396,7 @@ pub fn compute_custom_orders_with_options(
     zero_counts: &[Vec<Vec<i64>>],
     disable_large_buckets: bool,
     disable_medium_buckets: bool,
+    unconditional_emit: bool,
 ) -> (Vec<Vec<Vec<u32>>>, u32) {
     let mut orders: Vec<Vec<Vec<u32>>> = (0..NUM_ORDER_BUCKETS)
         .map(|_| vec![Vec::new(); 3])
@@ -498,7 +519,12 @@ pub fn compute_custom_orders_with_options(
             }
         }
 
-        if bucket_has_custom {
+        if bucket_has_custom && unconditional_emit {
+            // EX-J29: libjxl-exact admission — emit the custom order whenever
+            // it differs from natural (enc_coeff_order.cc `is_nondefault`),
+            // with NO cost-benefit gate. Used by the JPEG transcode path.
+            used_orders |= 1 << bucket;
+        } else if bucket_has_custom {
             // Cost-benefit check: estimate whether the Lehmer code encoding
             // overhead is justified by AC savings from reordering.
             //
