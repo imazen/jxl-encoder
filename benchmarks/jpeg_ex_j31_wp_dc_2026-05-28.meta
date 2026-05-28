@@ -49,3 +49,14 @@ DO NOT (future agents):
 - The `collect_dc_tokens_wp_region_jpeg` per-channel shift handling is
   load-bearing for subsampled (4:2:0/4:2:2/4:4:0) JPEGs — do not replace
   with the full-res `collect_dc_tokens_wp`.
+
+--- EX-J30 follow-on: JPEG-scoped accurate ANS population cost (2026-05-28) ---
+After WP-DC landed, scoped the accurate libjxl-parity ANS population cost
+(ANSEncodingHistogram::ComputeBest, the real header+data, vs the crude
+entropy + 5*alphabet) to the JPEG transcode path via a thread-local
+AccurateAnsCostGuard set per-encode. Not global-default because it changes
+modular-lossless output (modular_knobs_palette test); VarDCT e<=8 uses kFast
+so it's unaffected there. `JPEG_CRUDE_ANS_COST=1` restores crude for A/B.
+  50-file:  +0.216% -> +0.147% (-0.069pp)
+  200-file: +0.190% -> +0.115% (-0.075pp)
+  Roundtrip 200/200 byte-identical; modular + VarDCT byte-identical (scoped).

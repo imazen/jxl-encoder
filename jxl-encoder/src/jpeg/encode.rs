@@ -836,6 +836,19 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
 
     // ── Build entropy codes (ANS) ──
 
+    // EX-J31 (2026-05-28): enable libjxl-parity accurate ANS population cost
+    // (real ComputeBest header+data, not the crude entropy + 5*alphabet
+    // estimate) for the kBest clustering in all entropy-code builds below.
+    // Scoped to the JPEG transcode path on this thread; default-ON, measured
+    // -0.069pp on the 50-file corpus on top of WP-DC. `JPEG_CRUDE_ANS_COST=1`
+    // restores the crude estimate for A/B. The guard lives to end of function,
+    // covering the DC code, AC code, and any coeff-order entropy builds.
+    let _accurate_ans_guard = if std::env::var_os("JPEG_CRUDE_ANS_COST").is_none() {
+        Some(crate::entropy_coding::cluster::AccurateAnsCostGuard::new())
+    } else {
+        None
+    };
+
     let dc_num_contexts = if let Some((_, _, total_ctx, _, _)) = wp_dc_state {
         // EX-J31: combined (kWPFixedDC DC subtree + AC-meta subtree) context
         // count from `tree_tokens_with_ac_metadata_prefix`.
