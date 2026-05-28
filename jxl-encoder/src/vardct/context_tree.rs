@@ -1000,7 +1000,24 @@ fn write_context_map_from_slice(map: &[u8], writer: &mut BitWriter) -> Result<()
         Simple,
         Huffman,
         HuffmanMtf,
+        AnsLz77,
     }
+
+    // EX-J28 (2026-05-28): add ANS+LZ77 candidate to the block_ctx_map
+    // encoding selector. The existing `write_context_map_from_slice`
+    // only compared Simple / Huffman / Huffman+MTF, while libjxl's
+    // `EncodeContextMap` (enc_context_map.cc:65-139) uses
+    // `BuildAndEncodeHistograms` which includes the ANS+LZ77 path with
+    // `HybridUintMethod::kContextMap`. On repetitive maps (especially
+    // the JPEG block_ctx_map with ~312 entries × small alphabet)
+    // ANS+LZ77 can beat Huffman. Env hook
+    // `JXL_NO_ANS_LZ77_CTXMAP=1` disables the candidate.
+    let ans_lz77_scratch = if std::env::var_os("JXL_NO_ANS_LZ77_CTXMAP").is_some() {
+        None
+    } else {
+        crate::entropy_coding::encode_ans::build_context_map_nonsimple_ans_lz77(map).ok()
+    };
+    let cost_ans_lz77 = ans_lz77_scratch.as_ref().map(|b| b.bits_written());
 
     let mut pick = Pick::Huffman;
     let mut best_cost = cost_raw;
@@ -1008,6 +1025,12 @@ fn write_context_map_from_slice(map: &[u8], writer: &mut BitWriter) -> Result<()
     if cost_mtf < best_cost {
         pick = Pick::HuffmanMtf;
         best_cost = cost_mtf;
+    }
+    if let Some(cost) = cost_ans_lz77 {
+        if cost < best_cost {
+            pick = Pick::AnsLz77;
+            best_cost = cost;
+        }
     }
     if let Some(sb) = simple_bits {
         if sb < best_cost {
@@ -1030,6 +1053,7 @@ fn write_context_map_from_slice(map: &[u8], writer: &mut BitWriter) -> Result<()
                 Pick::Simple => "simple",
                 Pick::Huffman => "huffman_no_mtf",
                 Pick::HuffmanMtf => "huffman_mtf",
+                Pick::AnsLz77 => "ans_lz77",
             }
         );
     }
@@ -1056,6 +1080,15 @@ fn write_context_map_from_slice(map: &[u8], writer: &mut BitWriter) -> Result<()
             // bit 2 = lz77 = 0 → integer 0b010 = 2).
             writer.write(3, 0b010)?;
             write_ctxmap_huffman_payload(&mtf_bytes, &code_mtf, writer)?;
+        }
+        Pick::AnsLz77 => {
+            // ANS+LZ77 path emits its own selector + headers inside
+            // build_context_map_nonsimple_ans_lz77. Copy bit-exact.
+            let buf = ans_lz77_scratch
+                .expect("Pick::AnsLz77 requires ans_lz77_scratch to be Some");
+            let bits_to_copy = buf.bits_written();
+            let bytes = buf.finish_with_padding();
+            crate::entropy_coding::encode_ans::copy_bits(&bytes, bits_to_copy, writer)?;
         }
     }
 
