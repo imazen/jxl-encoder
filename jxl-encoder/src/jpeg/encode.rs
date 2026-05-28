@@ -788,7 +788,7 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     // keep LZ77 + uint_opt wiring in place but default-OFF until divergence
     // root-causes are resolved. They can be flipped on via env hooks for
     // future investigation.
-    let mut enhanced_clustering = effort >= 9;
+    let mut enhanced_clustering = effort >= 7;
     let mut lz77_method: Option<crate::entropy_coding::lz77::Lz77Method> = None;
 
     // ── Lever-experiment env hooks (off by default; for benching only) ──
