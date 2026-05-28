@@ -696,6 +696,78 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### EX-J31 BREAKTHROUGH: Weighted Predictor for JPEG-transcode DC (2026-05-28)
+
+**Status**: [SHIPPED — the dominant JPEG-in-JXL lever]
+
+The JPEG-in-JXL recompression gap vs cjxl-e7 dropped from **+1.118% to
++0.115%** (200-file mixed corpus, seed 11, 200/200 byte-identical via djxl
+`--reconstruct_jpeg`) across two shipped commits. Net session: +2.21% → +0.115%.
+
+**How it was found**: `jxl-oxide info --with-offset` gives a per-section
+(group) byte breakdown of any JXL codestream. Comparing cjxl vs ours
+section-by-section localized the ENTIRE gap to the **LfGroup (DC)** section
+(+23% on anton: ours 31952 B vs cjxl 25952 B); AC data (GroupPass) was already
+at parity (+0.3%). This is the canonical way to localize a codec size gap —
+use it before guessing.
+
+**Root cause**: libjxl encodes the JPEG-transcode DC stream with `kWPFixedDC`
+(`Predictor::Weighted` + fixed BSP tree splitting on `wp_max_error` /
+property 15) at `speed_tier >= kSquirrel` = cjxl effort 7
+(`enc_modular.cc:1584-1589`, `enc_encoding.cc:533-540`). We used a clamped-
+gradient predictor. WP residuals are far smaller on DC (strong local
+correlation).
+
+**Fix (EX-J31, commit on this chain)**: wired the existing WP machinery
+(`build_wp_fixed_dc_tree` + `tree_tokens_with_ac_metadata_prefix` +
+`collect_dc_tokens_wp`, from the VarDCT W44-57 path) into the JPEG DC path.
+New `collect_dc_tokens_wp_region_jpeg` (dc_coding.rs) adds per-channel
+chroma-subsampling support (4:2:0/4:2:2/4:4:0 chroma DC planes are subsampled;
+the VarDCT collector assumes full-res). The DC group writes the kWPFixedDC
+wrapped tree via `write_learned_context_tree`. Default-ON; `JPEG_GRADIENT_DC=1`
+restores gradient. Made `vardct::dc_tree_learn` pub(crate) +
+`NUM_AC_META_CONTEXTS` pub. Result: +1.118% → +0.190%.
+
+**Follow-on (EX-J30, same chain)**: JPEG-scoped accurate ANS population cost.
+Our kBest clustering merge used a crude `entropy + 5*alphabet` cost that
+over-weights header savings → over-merges. libjxl uses the real
+`ANSEncodingHistogram::ComputeBest` cost (`Histogram::ANSPopulationCost`).
+Enabled it for the JPEG path via a per-thread `AccurateAnsCostGuard`
+(cluster.rs) — NOT global-default (changes modular-lossless output;
+`modular_knobs_palette` test). `JPEG_CRUDE_ANS_COST=1` restores crude;
+`JXL_ACCURATE_ANS_COST=1` forces it globally for VarDCT/modular A/B. Result:
++0.190% → +0.115%.
+
+**Remaining +0.115%**: distributed codestream micro-overhead (anton: ac_groups
++234, dc_groups +53, dc_global +21, ac_global +12 B), no single structural
+lever. On the 20-file group aggregate ours is actually SMALLER on every
+group; the residual is per-file variance + small DC/header overhead.
+
+**DO NOT**:
+- DO NOT revert JPEG DC to gradient (`JPEG_GRADIENT_DC` is A/B-only). WP is
+  libjxl-parity and worth -0.93pp.
+- DO NOT replace `collect_dc_tokens_wp_region_jpeg` with the full-res
+  `collect_dc_tokens_wp` — the per-channel shift handling is load-bearing for
+  subsampled JPEGs.
+- DO NOT make accurate ANS cost global-default without regenerating + RD-
+  validating modular-lossless (it shifts that path's output).
+- DO NOT cite "FMA precision" for any byte movement (WP-vs-gradient and
+  clustering-cost are structural).
+
+Bench: `benchmarks/jpeg_ex_j31_wp_dc_2026-05-28.{tsv,meta}`.
+
+### Pre-existing checkerboard hash-lock drift OWNED (2026-05-28)
+
+`test_hash_lock_64x64_checkerboard` was RED on origin/main (507 B vs expected
+509) — drifted by the parallel multi-metric `perceptual_tuning` refactor
+(`3d879dd7`), NOT the JPEG work (verified: clean main fails identically; my
+changes byte-identical). `extra_dc_precision=1` at e7 is intact
+(`effort.rs:1479` + written), so it's a benign entropy shift not a quality
+regression. Regenerated the in-source const to the current valid 507-byte
+output (commit on this chain). Also scoped EX-J28's ANS+LZ77 block_ctx_map
+candidate to JPEG-only (`write_block_ctx_map_adaptive_with_mode(jpeg_mode)`)
+so it no longer touches VarDCT byte output.
+
 ### JPEG frame_header all_default — STRUCTURALLY IMPOSSIBLE (2026-05-28)
 
 **Status**: [RULED OUT — no source change, docs-only `wip:` measurement record]
