@@ -1,0 +1,40 @@
+EX-J28 ANS+LZ77 candidate for block_ctx_map encoding (2026-05-28)
+==================================================================
+
+Change: jxl-encoder/src/vardct/context_tree.rs:write_context_map_from_slice
+now compares 4 candidates (Simple, Huffman, Huffman+MTF, ANS+LZ77) and
+picks the cheapest by trial-encoded bit count. Previously only the first
+three were compared. libjxl `EncodeContextMap` uses BuildAndEncodeHistograms
+which includes ANS+LZ77 with HybridUintConfig(2,0,1), so this restores parity.
+
+Env hook: JXL_NO_ANS_LZ77_CTXMAP=1 disables the new candidate.
+
+50-file paired A/B:
+  Sample seeded by random.seed(11), mixed corpus.
+  cjxl-e7:       10,069,483 B
+  ours-e7 OFF:   10,178,807 B  Δ +1.086% vs cjxl
+  ours-e7 ON:    10,178,736 B  Δ +1.085% vs cjxl
+  ON vs OFF:     -0.001%  (-71 B)
+  Roundtrip:     50/50 byte-identical via djxl --reconstruct_jpeg
+
+Acceptance gates:
+- (a) Build PASS
+- (b) Hash-locks 36/36 BYTE-IDENTICAL (synthetic fixtures don't change
+       block_ctx_map encoding pick — kBest/Simple choices unchanged)
+- (c) ON < OFF on 50-file paired bench (-71 B, strict)
+- (d) 50/50 roundtrip OK via djxl
+
+Notes:
+- Tiny per-file gain (~1.4 B/file) but it's strictly better and removes
+  a real libjxl divergence in the selector.
+- The new candidate may shift more bytes on larger/more-complex block
+  context maps (e.g. multi-strategy VarDct paths beyond JPEG transcode);
+  those paths unaffected because synthetic-tested cases keep their existing
+  Simple/Huffman picks.
+
+DO NOT (future agents):
+- DO NOT remove the env hook; it's needed for A/B against future
+  optimizations of the ANS+LZ77 path itself.
+- DO NOT cite "FMA precision" for the -71 byte delta — this is a
+  histogram-cost-comparison + encoder format choice, not a numeric
+  artifact.

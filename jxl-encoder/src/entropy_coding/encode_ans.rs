@@ -980,7 +980,7 @@ fn write_huffman_payload_no_selector(tokens: &[u8], writer: &mut BitWriter) -> R
 /// it). That gate matches libjxl: `ApplyLZ77` skips LZ77 for streams whose
 /// post-RLE token count is too short to make headers pay off, which is
 /// effectively the same constraint for the tiny contexts.
-fn build_context_map_nonsimple_ans_lz77(context_map: &[u8]) -> Result<BitWriter> {
+pub(crate) fn build_context_map_nonsimple_ans_lz77(context_map: &[u8]) -> Result<BitWriter> {
     use super::ans::ANSHistogramStrategy;
     use super::lz77::apply_lz77_rle;
 
@@ -1156,7 +1156,7 @@ fn build_context_map_nonsimple_ans_lz77(context_map: &[u8]) -> Result<BitWriter>
 }
 
 /// Copy `num_bits` from a byte slice into a BitWriter.
-fn copy_bits(src: &[u8], num_bits: usize, writer: &mut BitWriter) -> Result<()> {
+pub(crate) fn copy_bits(src: &[u8], num_bits: usize, writer: &mut BitWriter) -> Result<()> {
     let full_bytes = num_bits / 8;
     let remaining_bits = num_bits % 8;
 

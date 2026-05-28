@@ -12,7 +12,7 @@ pub mod ans_decode;
 pub(crate) mod cluster;
 pub(crate) mod context_map;
 pub(crate) mod encode;
-mod encode_ans;
+pub(crate) mod encode_ans;
 mod encode_huffman;
 pub mod histogram;
 pub(crate) mod huffman_tree;
