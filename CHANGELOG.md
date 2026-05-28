@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- JPEG-in-JXL recompression: byte-exact roundtrip for baseline JPEGs
+  whose source encoder pads the final partial byte of each entropy
+  segment with 0-bits instead of the spec-recommended 1-bits. The
+  `jpeg-reencoding` feature now reads zenjpeg 0.8.6's
+  `JbrdMetadata.has_zero_padding_bit` + `padding_bits` fields and
+  copies them into `JpegData` so the existing JBRD writer at
+  `jpeg/jbrd.rs:203-211` emits the source's exact pad bits.
+  djxl's `JumpToByteBoundary` then consumes those bits to produce
+  byte-identical reconstruction. Task #11. Closes the last residual
+  DIFF on the 200-file recompression bench — 200/200 byte-identical
+  via `djxl --reconstruct_jpeg`. See
+  `benchmarks/jpeg_zero_padding_bit_2026-05-28.{tsv,meta}`.
+
 ### Changed (BREAKING — 2026-05-25)
 
 - **Multi-metric API refactor (RFC #3 Phase 0)**: the cvvdp-specific
