@@ -696,6 +696,56 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### JPEG frame_header all_default — STRUCTURALLY IMPOSSIBLE (2026-05-28)
+
+**Status**: [RULED OUT — no source change, docs-only `wip:` measurement record]
+
+LEVERS_ROUND2 #1 hypothesised that JPEG frames could short-circuit to a 1-bit
+`all_default` flag. Tracing libjxl's `AllDefaultVisitor` (`fields.cc:116-153`)
+and the JPEG frame setup (`enc_frame.cc:349-507`) confirms libjxl ALSO writes
+explicit fields for every JPEG frame because:
+
+1. **`flags = 0x80` (kSkipAdaptiveDCSmoothing)** ≠ default `0`
+   (`enc_frame.cc:501-503`). Required for decode correctness — without it,
+   `dec_frame.cc:344-358` runs `AdaptiveDCSmoothing` on the DC plane in-place,
+   mutating reconstructed JPEG bytes (roundtrip break). Even on YCbCr 4:4:4
+   where `dec_frame.cc:206-212` doesn't enforce the flag, the smoothing pass
+   still runs.
+2. **`color_transform = kYCbCr`** for YCbCr/grayscale JPEGs ⇒ `alternate = true`
+   ≠ default `false` (`frame_header.cc:244-249` and
+   `enc_jpeg_data.cc:240-283`). Covers ~99% of real JPEGs (JFIF YCbCr is the
+   standard); only Adobe-RGB / explicit-R,G,B-id JPEGs land in `kNone`, and
+   they still fail (1).
+3. **`loop_filter.gab = false, epf_iters = 0`** for JPEG (defaults `true`,
+   `2` per `loop_filter.cc:27, 58`). Makes the nested loop_filter section
+   non-all-default; orthogonal to the OUTER frame_header all_default which is
+   already off by (1) and (2).
+
+Our current `is_all_default()` gate at `xyb_encoded == true`
+(`headers/frame_header.rs:712`) is correct as written. The bit budget if the
+lever WERE possible: 38 bits saved per frame × 200 files = ~1000 bytes
+≈ -0.0001% on a 5MB bench (task's "~10-20 bits per file" estimate was
+optimistic on per-file delta and the lever is unreachable anyway).
+
+**Verdict**: bench did NOT fire (no source change to measure). The
+honest-stop verdict makes encoder behaviour identical pre- and post-, so
+all measurement-driven acceptance gates collapse to N/A. Single docs-only
+`wip:` commit; full narrative + DO-NOT list at
+`benchmarks/jpeg_frame_alldef_2026-05-28.meta`.
+
+**DO NOT** (future agents):
+1. DO NOT experimentally set `flags = 0` on a JPEG frame_header — even on
+   4:4:4 the decoder's smoothing pass runs and breaks roundtrip.
+2. DO NOT lift the `xyb_encoded == true` gate in `is_all_default()` thinking
+   it's an oversight — no non-XYB JPEG profile matches `is_all_default()`.
+3. DO NOT cite "FMA precision" (per W44-66) — the lever fails structurally,
+   not numerically.
+4. DO NOT confuse with the other `not all_default` writes in
+   `jpeg/encode.rs:1426, 1447, 1491` — those are unrelated nested section
+   flags (Quantizer, LfChannelCorrelation, ColorEncoding), each correctly
+   non-default because the JPEG path needs explicit values different from
+   those sections' defaults.
+
 ### EX-J15: per-(channel × freq-band) ANS contexts for JPEG AC — HONEST-STOP (2026-05-28)
 
 **Status**: [RULED OUT — opt-in env hook + helper SHIPPED, default OFF]
