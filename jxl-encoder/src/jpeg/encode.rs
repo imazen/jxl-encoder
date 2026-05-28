@@ -14,7 +14,8 @@ use crate::BLOCK_SIZE;
 use crate::bit_writer::BitWriter;
 use crate::container::wrap_in_container_jxlp;
 use crate::entropy_coding::encode::{
-    OwnedAnsEntropyCode, build_entropy_code_ans, write_entropy_code_ans, write_tokens_ans,
+    OwnedAnsEntropyCode, build_entropy_code_ans_with_options, write_entropy_code_ans,
+    write_tokens_ans,
 };
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
@@ -624,7 +625,19 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
     for section in &ac_metadata_tokens_per_group {
         all_dc_tokens.extend_from_slice(section);
     }
-    let dc_code = build_entropy_code_ans(&all_dc_tokens, dc_num_contexts);
+    // Lever #3 (2026-05-28): match libjxl JPEG transcode path which sets
+    // `uint_method = kNone` for non-modular paths (`enc_ans.cc:1361-1366`). Our
+    // default helper uses kFast (4-config trial); disabling that for the JPEG
+    // transcode reduces header overhead at the AC stream's per-context level
+    // where the cluster pair-merge has already adapted the histograms.
+    let dc_code = build_entropy_code_ans_with_options(
+        &all_dc_tokens,
+        dc_num_contexts,
+        /*enhanced_clustering=*/ false,
+        /*optimize_uint_configs=*/ false,
+        /*lz77=*/ None,
+        /*total_pixel_hint=*/ Some(width * height),
+    );
 
     let ac_num_contexts = block_ctx_map.num_ac_contexts();
     let total_ac_tokens: usize = ac_section_tokens.iter().map(|t| t.len()).sum();
@@ -632,7 +645,14 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
     for section in &ac_section_tokens {
         all_ac_tokens.extend_from_slice(section);
     }
-    let ac_code = build_entropy_code_ans(&all_ac_tokens, ac_num_contexts);
+    let ac_code = build_entropy_code_ans_with_options(
+        &all_ac_tokens,
+        ac_num_contexts,
+        /*enhanced_clustering=*/ false,
+        /*optimize_uint_configs=*/ false,
+        /*lz77=*/ None,
+        /*total_pixel_hint=*/ Some(width * height),
+    );
 
     // ── Pass 2: Write bitstream ──
 
