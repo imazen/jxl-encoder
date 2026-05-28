@@ -1,0 +1,33 @@
+JPEG-in-JXL Recompression — WP-DC session result (2026-05-28, ultracode)
+========================================================================
+
+Headline: 200-file mixed corpus (seed 11), vs cjxl v0.12.0 -e7:
+  Session start (this segment): +1.118%
+  After EX-J31 (WP-DC):         +0.190%
+  After EX-J30 (accurate ANS):  +0.115%
+  Roundtrip: 200/200 byte-identical via djxl --reconstruct_jpeg.
+  Full-session arc (since fb57425a): +2.21% -> +0.115% (-2.10pp).
+
+The breakthrough was localization via `jxl-oxide info --with-offset`: the
+entire gap was in LfGroup (DC), traced to libjxl using kWPFixedDC
+(Weighted Predictor) for JPEG DC while we used clamped gradient. Wiring WP
+into the JPEG DC path (EX-J31) + JPEG-scoping the accurate ANS population
+cost (EX-J30) closed ~1.0pp.
+
+Remaining +0.115% (distributed codestream micro-overhead, no single lever;
+anton example: ac_groups +234, dc_groups +53, dc_global +21, ac_global +12):
+  - Candidate A: Zero-leaf AC-metadata subtree for subsampled JPEGs
+    (matches libjxl kJpegTranscodeACMeta; gate on !is_444 since our CfL is
+    only computed for 4:4:4, so no regression risk). ~-0.02pp; saves the
+    wrapped-tree AC-meta serialization in dc_global.
+  - Candidate B: separate DC (kWPFixedDC) and AC-metadata
+    (kJpegTranscodeACMeta) modular streams instead of one merged stream
+    with a wrapped tree — lets the DC stream cluster independently
+    (closes part of dc_groups +53). Multi-hour refactor, ~-0.05pp.
+  - Candidate C: per-file coeff-order cost-gate tuning (EX-J29 showed the
+    global gate is ~neutral; per-file it mis-gates on some). ~noise.
+  None crosses ≤0% individually; stacking A+B+C is the path if pursued,
+  with roundtrip risk on each.
+
+Commits (origin/main): f17f3b6f (scope EX-J28 + own checkerboard drift),
+3ab694fd (EX-J31 WP-DC), ca7c9c8d (EX-J30 accurate ANS), 25e61866 (docs).
