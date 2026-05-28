@@ -1,0 +1,51 @@
+JPEG-in-JXL Lossless Recompression — Session Summary (2026-05-28)
+================================================================
+
+Net session gain: -1.092pp (from +2.21% to +1.118% vs cjxl-e7 on
+200-file mixed corpus, random.seed(11), 200/200 byte-identical
+roundtrip via djxl --reconstruct_jpeg).
+
+Final position:
+- Source total:    54,738,069 bytes
+- cjxl-e7 total:   44,802,893 bytes  (81.85% of src)
+- ours-e7 total:   45,303,574 bytes  (82.76% of src)
+- Δ vs cjxl-e7:    +1.118%
+
+This session shipped:
+1. EX-J22: kBest histogram clustering on JPEG DC code at effort >= 7
+   (-0.066pp; previously hardcoded kFast). Mirrors the AC code path
+   gate. Env hook JPEG_DC_NO_CLUSTERING=1 for A/B.
+2. EX-J25: EPF sharpness default 0 (libjxl parity, 0 byte impact).
+3. EX-J27: JPEG_NO_CUSTOM_ORDERS env hook as regression harness.
+
+Ruled out via measurement (honest-stop comments in source):
+- EX-J23 ANS strategy Approximate on DC/AC codes (+1979 bytes regression
+  on AC; +20 bytes noise on DC).
+- EX-J24 total_pixel_hint cap removal (0 byte effect).
+- EX-J26 libjxl's exact 28-candidate HybridUint set port (+133 bytes
+  noise regression).
+
+Verified as working levers (env hooks document):
+- Custom coefficient orders (EX-J17a) saves -0.433% / -44118 bytes on
+  50-file paired bench when env JPEG_NO_CUSTOM_ORDERS=1 disables.
+
+Remaining +1.118% gap is in subtle libjxl-implementation divergences
+that are not closeable in single-turn investigation. Specifically:
+- Per-section ANS clustering implementation may differ slightly from
+  libjxl's `ClusterHistograms(kFast)` resulting in marginally larger
+  context map encoding.
+- AC token emission patterns may have small differences in nzeros
+  context prediction.
+- Per-AC-group histogram_idx selector encoding overhead.
+
+Multi-day investigation paths remain:
+1. Implement bit-exact libjxl `ClusterHistograms` pair-merge.
+2. Direct trace comparison of cjxl-e7 vs ours-e7 output to localize
+   the gap to a specific bit-emit site.
+3. Port libjxl's full `ChooseUintConfigs` heuristic-skipping logic.
+
+Coverage characterization:
+- 100% of valid 3-component baseline/progressive 8-bit JPEGs encode
+  + roundtrip byte-identically.
+- 0% of CMYK / 4-component JPEGs encode (libjxl spec-blocked).
+- 0% of 12-bit precision JPEGs encode (rare, out of scope).
