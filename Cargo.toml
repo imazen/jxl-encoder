@@ -68,11 +68,13 @@ jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4
 # zenjpeg 0.7.1 / 0.8.3 (latest crates.io) calls `magetypes::mf32x8::load_8x8(block)`
 # but magetypes 0.9.16+ requires the token-passing signature
 # `load_8x8(token, block)`. The local workspace at ~/work/zen/zenjpeg/zenjpeg
-# (version 0.8.5 unpublished) carries the fix plus the new
+# (version 0.8.7 unpublished) carries the magetypes fix plus the new
 # `decode_coefficients_with_jbrd_metadata` API used by `jpeg-reencoding`
-# (task #10, 2026-05-28). Path-patch until published.
+# (task #10, 2026-05-28) plus the task #12 reset_points / extra_zero_runs
+# libjxl-parity fix (commit 1ed960f4 on zenjpeg main). Path-patch until
+# published.
 # Required for the `jpeg-reencoding` feature to build.
-zenjpeg = { path = "../zenjpeg--reset-points-fix/zenjpeg" }
+zenjpeg = { path = "../zenjpeg/zenjpeg" }
 # Use local butteraugli workspace (not crates.io 0.9.2) so the buttloop +
 # Lock-Zenjxl regression-gate consume the latest unpublished fixes. Per user
 # direction 2026-05-23: "we should be using the local butteraugli and
