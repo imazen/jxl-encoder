@@ -297,6 +297,57 @@ impl BlockCtxMap {
             num_ctxs,
         }
     }
+
+    /// EX-J15: variant of [`Self::jpeg_dc_quantile`] that maps chroma at
+    /// FULL resolution (one context per luma DC bucket per channel) when
+    /// `num_dc_ctxs <= 5`. Falls back to libjxl half-resolution chroma
+    /// for `num_dc_ctxs > 5` (mandatory: 3 * 6 = 18 > 16, spec violation).
+    ///
+    /// Rationale: libjxl uses half-resolution chroma (`n + i/2`) because the
+    /// original VarDCT path produces strong (Y, chroma) correlation per
+    /// DC bucket and `+1` adjacent buckets generally cluster together. For
+    /// JPEG re-encode at low bitrates, chroma blocks are mostly empty
+    /// (nzeros=0 dominates), so the chroma context model is starved for
+    /// training data when it doesn't get its own bucket. Giving chroma a
+    /// full bucket axis SOMETIMES separates the (mostly-empty) chroma
+    /// distributions more cleanly. Net effect is corpus-dependent (small
+    /// images with num_dc_ctxs=2-3 see the biggest separation; larger
+    /// images with num_dc_ctxs=6-7 fall back to libjxl behaviour anyway).
+    ///
+    /// Default-OFF in production; gated by `EX_J15_FULL_CHROMA=1` env
+    /// hook in [`crate::jpeg::encode`].
+    pub fn jpeg_dc_quantile_ex_j15(
+        dc_counts: &[usize; 2048],
+        total_dc_luma: usize,
+        qt_ac_sum_0_to_4: u32,
+        is_grayscale: bool,
+    ) -> Self {
+        // Reuse the libjxl-parity threshold derivation by calling the
+        // primary function and inspecting its output.
+        let base =
+            Self::jpeg_dc_quantile(dc_counts, total_dc_luma, qt_ac_sum_0_to_4, is_grayscale);
+        let n = base.num_dc_ctxs;
+        // Full-resolution chroma only when 3 * n <= 16. n in {1, 2, 3, 4, 5}.
+        if n > 5 || is_grayscale {
+            // Fall back to libjxl mapping (already in `base`).
+            return base;
+        }
+        let mut ctx_map = vec![0u8; 3 * NUM_ORDER_BUCKETS * n];
+        for i in 0..n {
+            ctx_map[i] = i as u8;
+            ctx_map[NUM_ORDER_BUCKETS * n + i] = (n + i) as u8;
+            ctx_map[2 * NUM_ORDER_BUCKETS * n + i] = (2 * n + i) as u8;
+        }
+        let num_ctxs = (*ctx_map.iter().max().unwrap_or(&0)) as usize + 1;
+        debug_assert!(num_ctxs <= MAX_BLOCK_CTXS);
+        BlockCtxMap {
+            dc_thresholds: base.dc_thresholds,
+            qf_thresholds: vec![],
+            ctx_map,
+            num_dc_ctxs: n,
+            num_ctxs,
+        }
+    }
 }
 
 impl BlockCtxMap {
@@ -806,6 +857,84 @@ mod tests {
                 m.ctx_map[2 * NUM_ORDER_BUCKETS * n + i],
                 (n + (n - 1) / 2 + 1 + i / 2) as u8
             );
+        }
+    }
+
+    /// EX-J15: full-resolution chroma DC quantile mapping. For
+    /// `num_dc_ctxs <= 5`, each chroma channel gets its own block context
+    /// per luma DC bucket (no half-resolution collapse). For
+    /// `num_dc_ctxs > 5`, falls back to libjxl half-resolution
+    /// (verified by comparing against the primary function's ctx_map).
+    #[test]
+    fn test_block_ctx_map_jpeg_dc_quantile_ex_j15_full_chroma() {
+        // Construct a histogram producing num_dc_ctxs in {2, 3, 4}.
+        let mut dc_counts = [0usize; 2048];
+        for &(idx, n) in &[(1020usize, 100usize), (1024, 600), (1028, 200), (1032, 100)] {
+            dc_counts[idx] = n;
+        }
+        let m = BlockCtxMap::jpeg_dc_quantile_ex_j15(&dc_counts, 1000, 4, false);
+        let n = m.num_dc_ctxs;
+        assert!((1..=5).contains(&n), "n={n} should be in 1..=5 for this test");
+        // Y: 0..n. Cb: n..2n. Cr: 2n..3n.
+        for i in 0..n {
+            assert_eq!(m.ctx_map[i], i as u8, "Y bucket {i}");
+            assert_eq!(
+                m.ctx_map[NUM_ORDER_BUCKETS * n + i],
+                (n + i) as u8,
+                "Cb bucket {i}"
+            );
+            assert_eq!(
+                m.ctx_map[2 * NUM_ORDER_BUCKETS * n + i],
+                (2 * n + i) as u8,
+                "Cr bucket {i}"
+            );
+        }
+        assert!(m.num_ctxs <= MAX_BLOCK_CTXS);
+        // Should expand context count vs libjxl mapping for n in 2..=5.
+        let base = BlockCtxMap::jpeg_dc_quantile(&dc_counts, 1000, 4, false);
+        if n >= 2 {
+            assert!(
+                m.num_ctxs > base.num_ctxs,
+                "EX-J15 should expand ctx count for n={n}: got {} vs base {}",
+                m.num_ctxs,
+                base.num_ctxs
+            );
+        }
+    }
+
+    /// EX-J15: grayscale must fall back to libjxl half-resolution mapping
+    /// (chroma single context) because there's nothing for full-res to
+    /// expand.
+    #[test]
+    fn test_block_ctx_map_jpeg_dc_quantile_ex_j15_grayscale_falls_back() {
+        let mut dc_counts = [0usize; 2048];
+        for &(idx, n) in &[(1024usize, 500usize), (1028, 500)] {
+            dc_counts[idx] = n;
+        }
+        let m_ex_j15 = BlockCtxMap::jpeg_dc_quantile_ex_j15(&dc_counts, 1000, 4, true);
+        let m_base = BlockCtxMap::jpeg_dc_quantile(&dc_counts, 1000, 4, true);
+        assert_eq!(m_ex_j15.ctx_map, m_base.ctx_map);
+        assert_eq!(m_ex_j15.num_ctxs, m_base.num_ctxs);
+    }
+
+    /// EX-J15: when num_dc_ctxs > 5 the spec mandate (num_ctxs <= 16) forces
+    /// fallback to libjxl half-resolution chroma.
+    #[test]
+    fn test_block_ctx_map_jpeg_dc_quantile_ex_j15_large_n_falls_back() {
+        // Push num_thresholds to its maximum (7 → num_dc_ctxs = 8).
+        let mut dc_counts = [0usize; 2048];
+        // Uniform histogram → quantile cuts will be evenly spaced.
+        for i in 0..2048 {
+            dc_counts[i] = 1;
+        }
+        let total = 2048usize;
+        // Push qt_sum small to maximise num_thresholds via the log formula.
+        let m_ex_j15 = BlockCtxMap::jpeg_dc_quantile_ex_j15(&dc_counts, total, 1, false);
+        let m_base = BlockCtxMap::jpeg_dc_quantile(&dc_counts, total, 1, false);
+        if m_base.num_dc_ctxs > 5 {
+            // Falls back: ctx_map identical to libjxl mapping.
+            assert_eq!(m_ex_j15.ctx_map, m_base.ctx_map);
+            assert_eq!(m_ex_j15.num_ctxs, m_base.num_ctxs);
         }
     }
 

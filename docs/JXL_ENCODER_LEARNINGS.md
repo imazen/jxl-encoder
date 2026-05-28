@@ -61,13 +61,19 @@ Eight EX-J items from the original synthesis remain un-investigated as of 2026-0
 **Risk:** medium — current RDO has a single global λ; this requires API plumbing
 **Sketch:** estimate local λ per VarDCT block from `(texture complexity, color variance, edge proximity)` — use bins `λ ∈ {0.007, 0.013, 0.025, 0.05, 0.1}` matched to block-size tier. Complements W44-105 (buttloop qac bimodality on text content) but at a finer per-block granularity. Architectural similarity to the W44-145 per-block mask1x1 routing of the W44-109 qac scale — the same plumbing could carry per-block λ.
 
-### EX-J15 — Channel-conditional + freq-band ANS contexts
+### EX-J15 — Channel-conditional + freq-band ANS contexts [RULED OUT 2026-05-28]
 
 **Paper:** `/mnt/v/input/papers/35/357c6bbe…` Minnen 2020 (Channel-Wise Autoregressive)
 **Effort:** 4 d
 **Expected:** 2-4 % bpp at low bitrates (q ≤ 50 product range)
 **Risk:** medium
-**Sketch:** separate ANS context models per Y/Cb/Cr **and** per frequency band tier (LF/MF/HF). Currently single shared per-channel. Spec ALLOWS multiple per-symbol contexts (this is what `context_map` is for), so this is wire-compatible — unlike EX-J2 which the spec hardcoded to one. The W44-71/73/74 15-cluster BlockCtxMap port + W44-43 ANSHistogramStrategy::Approximate work touches the adjacent code path. May produce overlap.
+**Sketch:** separate ANS context models per Y/Cb/Cr **and** per frequency band tier (LF/MF/HF). Currently single shared per-channel. Spec ALLOWS multiple per-symbol contexts (this is what `context_map` is for), so this is wire-compatible — unlike EX-J2 which the spec hardcoded to one.
+
+**Status:** [RULED OUT — opt-in env hook + helper SHIPPED, default OFF]. 200-file paired A/B bench at -e 7 measured **+0.0505 % regression** vs base (loss/win bytes ratio 3.28x: 71 wins, 129 losses, 0 ties). Per `benchmarks/jpeg_exj15_freqband_2026-05-28.{tsv,meta}`.
+
+Wire-format analysis ruled out the "freq-band tier" interpretation as written: libjxl `ac_context.h:101-110` decoder formula has only four `block_ctx` axes (`c_swapped × order_id × qf_idx × dc_idx`); there is NO frequency-band axis available without a spec extension. The closest wire-format-safe analog is to give each chroma channel its own block context per luma DC bucket (instead of libjxl's half-resolution `n + i/2` collapse) — implemented as `BlockCtxMap::jpeg_dc_quantile_ex_j15()`. That ALSO regresses because every extra block context adds ~50-150 bits of ANS distribution-header cost, which exceeds the data savings on typical JPEG AC streams at q ≤ 50.
+
+**Do not respawn** without first validating the structural cost-vs-savings model. See the bench meta for the full DO-NOT list + follow-on candidates (#A: audit pair-merge header-cost weighting; #B: per-image discriminator for the 71-win subset; #C: pre-LZ77 token re-ordering).
 
 ### EX-J16 — 3-D cross-channel AC context
 

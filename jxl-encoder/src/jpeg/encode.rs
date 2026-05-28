@@ -530,7 +530,35 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
             .map(|&v| v.max(0) as u32)
             .sum::<u32>()
             .max(1);
-        ac_context::BlockCtxMap::jpeg_dc_quantile(&dc_counts, total_dc_luma, qt_ac_sum, is_gray)
+        // EX-J15 lever: full-resolution chroma DC quantile mapping (one
+        // context per luma DC bucket per channel) when num_dc_ctxs <= 5.
+        // Default-OFF; gated by `EX_J15_FULL_CHROMA=1` env hook for A/B
+        // measurement. Treats "0", "", "false", "off", "no" as OFF (so the
+        // bench can pass `EX_J15_FULL_CHROMA=0` for the baseline arm). Any
+        // other non-empty value triggers ON. Falls back to libjxl
+        // half-resolution chroma when env is OFF OR num_dc_ctxs > 5.
+        let use_ex_j15 = match std::env::var("EX_J15_FULL_CHROMA").ok() {
+            Some(v) => {
+                let v = v.trim().to_ascii_lowercase();
+                !(v.is_empty() || v == "0" || v == "false" || v == "off" || v == "no")
+            }
+            None => false,
+        };
+        if use_ex_j15 {
+            ac_context::BlockCtxMap::jpeg_dc_quantile_ex_j15(
+                &dc_counts,
+                total_dc_luma,
+                qt_ac_sum,
+                is_gray,
+            )
+        } else {
+            ac_context::BlockCtxMap::jpeg_dc_quantile(
+                &dc_counts,
+                total_dc_luma,
+                qt_ac_sum,
+                is_gray,
+            )
+        }
     };
 
     // Per-block DC bucket lookup table sized `xsize_blocks * ysize_blocks`.
