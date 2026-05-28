@@ -961,6 +961,12 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     //   more bytes than the header overhead it incurs. cjxl-e7's
     //   choice of Approximate is a speed tradeoff, not a compression
     //   win. Reverted, kept Precise.
+    //
+    // EX-J24 (2026-05-28): HONEST-STOP. Tested removing total_pixel_hint
+    // (the `min(num_contexts, total_pixels/2048)` cap) on the AC code:
+    // result was 0 bytes / 50 files difference. At typical JPEG corpus
+    // sizes the cap doesn't materially bind — kBest pair-merge converges
+    // organically below the cap. Kept the existing hint for stability.
     let ac_code = build_entropy_code_ans_with_options(
         &all_ac_tokens,
         ac_code_num_contexts,
