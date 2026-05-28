@@ -590,6 +590,12 @@ fn optimize_uint_configs_best_from_freqs(
 ) -> Vec<HybridUintConfig> {
     use crate::entropy_coding::ans::ANS_MAX_ALPHABET_SIZE;
 
+    // EX-J26 (2026-05-28): tested porting libjxl's exact 28-candidate
+    // set from `enc_ans.cc:748-774` for parity. Measurement on 50-file
+    // paired A/B: +133 bytes (noise-level regression). Our existing
+    // 28-candidate set is similarly effective — both converge to similar
+    // optima per histogram via brute-force. Reverted, kept our set
+    // (better-by-noise margin).
     #[rustfmt::skip]
     let candidates = [
         HybridUintConfig::new(0,0,0),  HybridUintConfig::new(1,0,0),
