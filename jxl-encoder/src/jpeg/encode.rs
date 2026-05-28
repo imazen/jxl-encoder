@@ -73,14 +73,43 @@ const NUM_QUANT_TABLES: usize = 17;
 /// The output JXL will decode to pixel-identical results as the original JPEG.
 /// This does NOT include the jbrd box — it produces a bare JXL codestream.
 /// For byte-exact JPEG reconstruction, wrap in a container with a jbrd box.
+///
+/// Uses the default effort level (7). For caller-supplied effort (which gates
+/// AC-stream LZ77 + pair-merge clustering at effort >= 8), use
+/// [`encode_jpeg_to_jxl_with_effort`].
 pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
-    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg)?;
+    encode_jpeg_to_jxl_with_effort(jpeg, 7)
+}
+
+/// Encode a parsed JPEG as a JXL codestream at the given effort level.
+///
+/// At `effort >= 9`, enables kBest pair-merge histogram clustering on the AC
+/// code (a partial port of libjxl's JPEG-mode VarDCT path at
+/// `speed_tier <= kTortoise`; `enc_frame.cc:1267-1271` +
+/// `enc_ans_params.h:60-75`). Measured -0.27 % avg vs the default-effort path
+/// on a 10-file product-images corpus (2026-05-28).
+///
+/// libjxl additionally enables `uint_method = kBest` and RLE LZ77 at e9; both
+/// are currently DEFAULT-OFF on our path because:
+/// - Our `optimize_uint_configs_best_from_freqs` diverges from libjxl on JPEG
+///   AC streams and regresses bytes by +0.5 % (measured). Filed for future
+///   investigation; env hook `JPEG_E9_FORCE_UINT_OPT=1` re-enables.
+/// - RLE LZ77's global savings threshold doesn't pass on the JPEG AC token
+///   streams we produce; the multi-section helper is wired but never accepted.
+///   Env hook `JPEG_E9_FORCE_LZ77=1` re-enables.
+///
+/// The DC code is left at the simple defaults regardless of effort — DC token
+/// counts are tiny and clustering / LZ77 overhead would dominate.
+///
+/// Effort 0-8 is byte-identical to [`encode_jpeg_to_jxl`] (which uses effort 7).
+pub fn encode_jpeg_to_jxl_with_effort(jpeg: &JpegData, effort: u8) -> Result<Vec<u8>> {
+    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort)?;
     Ok(codestream)
 }
 
 /// Inner function that returns both codestream bytes and the file header size
 /// (split point for jxlp box splitting when JBRD is needed).
-fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
+fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usize)> {
     let width = jpeg.width as usize;
     let height = jpeg.height as usize;
 
@@ -725,17 +754,130 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
     );
 
     let ac_num_contexts = block_ctx_map.num_ac_contexts();
-    let total_ac_tokens: usize = ac_section_tokens.iter().map(|t| t.len()).sum();
+
+    // ── Effort gates for the AC code (mirrors libjxl JPEG-mode VarDCT) ──
+    //
+    // libjxl `enc_frame.cc:1267-1271` constructs the AC code histogram params
+    // as `HistogramParams(speed_tier, num_ac_contexts)`. The constructor in
+    // `enc_ans_params.h:60-75` plus the per-frame override produce the
+    // following table, where lower speed_tier == higher effort:
+    //
+    //   effort 1-8 (speed_tier > kTortoise):
+    //     clustering = kFast, uint_method = kNone, lz77_method = kNone
+    //   effort 9+ (speed_tier <= kTortoise):
+    //     clustering = kBest, uint_method = kBest, lz77_method = kRLE
+    //
+    // ── Measurement on a 10-file corpus (2026-05-28, vs e7 baseline) ──
+    //
+    //   kBest clustering alone:                  -0.27 % avg, 10/10 win/tied
+    //   kBest clustering + RLE LZ77:             -0.27 % avg (LZ77 global
+    //                                            threshold never passes
+    //                                            on these JPEG AC streams)
+    //   kBest clustering + uint_method = kBest:  +0.51 % avg, REGRESSION
+    //   all three combined:                      +0.51 % avg, REGRESSION
+    //
+    // Our `optimize_uint_configs_best_from_freqs` (kBest equivalent) picks
+    // configs whose signaling overhead exceeds the data savings on JPEG AC
+    // streams. The divergence vs libjxl is unresolved — filed as
+    // jpeg-effort-cluster-lz77 follow-on. Our `apply_lz77_rle_multi_section`
+    // matches the libjxl algorithm but the global savings threshold
+    // (`total_symbols * 0.2 + 16`) doesn't pass on these JPEG AC streams in
+    // either implementation; cjxl's e9 wins are clustering-driven, not LZ77.
+    //
+    // Decision: ship kBest clustering at e9 (the measurably-correct lever);
+    // keep LZ77 + uint_opt wiring in place but default-OFF until divergence
+    // root-causes are resolved. They can be flipped on via env hooks for
+    // future investigation.
+    let mut enhanced_clustering = effort >= 9;
+    let mut lz77_method: Option<crate::entropy_coding::lz77::Lz77Method> = None;
+
+    // ── Lever-experiment env hooks (off by default; for benching only) ──
+    //
+    // `JPEG_E9_NO_CLUSTERING=1`: forces kFast clustering on the AC code at
+    //   effort >= 9 (default is kBest at e9).
+    // `JPEG_E9_FORCE_LZ77=1`: re-enables the libjxl-parity RLE LZ77 transform
+    //   on the AC code at effort >= 9. Default-off because the global
+    //   savings threshold doesn't pass on JPEG AC streams; the wiring is
+    //   retained so future investigations can A/B without re-implementing.
+    // `JPEG_E9_FORCE_UINT_OPT=1`: re-enables `optimize_uint_configs=true` on
+    //   the AC code at effort >= 9. Default-off (measured regression).
+    if std::env::var_os("JPEG_E9_NO_CLUSTERING").is_some() {
+        enhanced_clustering = false;
+    }
+    if effort >= 9 && std::env::var_os("JPEG_E9_FORCE_LZ77").is_some() {
+        lz77_method = Some(crate::entropy_coding::lz77::Lz77Method::Rle);
+    }
+
+    // Distance multiplier for LZ77 special distance symbols (mirrors libjxl
+    // `enc_ans.cc:1349` which uses `image_widths[stream] = xsize_blocks` for
+    // every AC stream on the JPEG transcode path).
+    let lz77_distance_multiplier = xsize_blocks as i32;
+
+    // Apply LZ77 across ALL sections with a SINGLE global savings gate
+    // (mirrors libjxl `ApplyLZ77_RLE` at `enc_lz77.cc:111-183`, which iterates
+    // the section vector and aggregates `bit_decrease` + `total_symbols`
+    // globally before thresholding once). The earlier per-section helper had
+    // every section pass its own threshold, which rejected JPEG AC streams
+    // even when libjxl accepts them — JPEG AC tokens are diverse per-group
+    // but the aggregate has enough runs to clear the global gate. Currently
+    // only RLE is wired here; greedy / optimal multi-section variants are
+    // available via the single-section `apply_lz77` if a future caller opts
+    // in (effort 10+ would be the natural home).
+    let ac_lz77_section_tokens: Vec<Vec<Token>>;
+    let ac_lz77_params: Option<crate::entropy_coding::lz77::Lz77Params>;
+    match lz77_method {
+        Some(crate::entropy_coding::lz77::Lz77Method::Rle) => {
+            let section_slices: Vec<&[Token]> =
+                ac_section_tokens.iter().map(|v| v.as_slice()).collect();
+            match crate::entropy_coding::lz77::apply_lz77_rle_multi_section(
+                &section_slices,
+                ac_num_contexts,
+                false, // force_huffman: ANS on the JPEG path
+                lz77_distance_multiplier,
+            ) {
+                Some((transformed_sections, params)) => {
+                    ac_lz77_section_tokens = transformed_sections;
+                    ac_lz77_params = Some(params);
+                }
+                None => {
+                    // Global gate failed — fall back to the un-transformed tokens.
+                    ac_lz77_section_tokens = ac_section_tokens.clone();
+                    ac_lz77_params = None;
+                }
+            }
+        }
+        Some(_) | None => {
+            // No LZ77 (effort < 9) or non-RLE method (not wired for the
+            // multi-section JPEG path) — pass-through.
+            ac_lz77_section_tokens = ac_section_tokens.clone();
+            ac_lz77_params = None;
+        }
+    }
+
+    // Merge the (post-LZ77) token streams into a single buffer for entropy-
+    // code construction. The merged stream is used only to build histograms /
+    // context map / distributions; we write the per-section tokens (in
+    // `ac_lz77_section_tokens`) at the end with the shared `ac_code`.
+    let total_ac_tokens: usize = ac_lz77_section_tokens.iter().map(|t| t.len()).sum();
     let mut all_ac_tokens = Vec::with_capacity(total_ac_tokens);
-    for section in &ac_section_tokens {
+    for section in &ac_lz77_section_tokens {
         all_ac_tokens.extend_from_slice(section);
     }
+
+    // Default-off at every effort: our `optimize_uint_configs_best_from_freqs`
+    // diverges from libjxl on JPEG AC streams (measured +0.5 % regression at
+    // e9). Env-hook lets future investigators A/B without re-wiring.
+    let mut optimize_uint_configs_ac = false;
+    if effort >= 9 && std::env::var_os("JPEG_E9_FORCE_UINT_OPT").is_some() {
+        optimize_uint_configs_ac = true;
+    }
+
     let ac_code = build_entropy_code_ans_with_options(
         &all_ac_tokens,
         ac_num_contexts,
-        /*enhanced_clustering=*/ false,
-        /*optimize_uint_configs=*/ false,
-        /*lz77=*/ None,
+        enhanced_clustering,
+        optimize_uint_configs_ac,
+        ac_lz77_params.as_ref(),
         /*total_pixel_hint=*/ Some(width * height),
     );
 
@@ -818,14 +960,20 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
         &ac_code,
         used_orders,
         coeff_order_tokens.as_deref(),
+        ac_lz77_params.as_ref(),
         &mut ac_global,
     )?;
 
     // AC Groups
     let mut ac_groups = Vec::with_capacity(num_groups);
-    for ac_tokens in &ac_section_tokens {
+    for ac_tokens in &ac_lz77_section_tokens {
         let mut ac_group_writer = BitWriter::new();
-        write_tokens_ans(ac_tokens, &ac_code, None, &mut ac_group_writer)?;
+        write_tokens_ans(
+            ac_tokens,
+            &ac_code,
+            ac_lz77_params.as_ref(),
+            &mut ac_group_writer,
+        )?;
         ac_groups.push(ac_group_writer);
     }
 
@@ -850,7 +998,10 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
                 + ac_global.bytes_written()
                 + ac_groups_total,
             dc_tokens_per_group.iter().map(|t| t.len()).sum::<usize>(),
-            ac_metadata_tokens_per_group.iter().map(|t| t.len()).sum::<usize>(),
+            ac_metadata_tokens_per_group
+                .iter()
+                .map(|t| t.len())
+                .sum::<usize>(),
             ac_section_tokens.iter().map(|t| t.len()).sum::<usize>(),
         );
     }
@@ -871,8 +1022,20 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
 ///
 /// A decoder with JPEG reconstruction support (e.g., djxl --reconstruct_jpeg)
 /// can produce a byte-exact copy of the original JPEG from this container.
+///
+/// Uses the default effort level (7). For caller-supplied effort, use
+/// [`encode_jpeg_to_jxl_container_with_effort`].
 pub fn encode_jpeg_to_jxl_container(jpeg: &JpegData) -> Result<Vec<u8>> {
-    let (codestream, file_header_size) = encode_jpeg_to_jxl_inner(jpeg)?;
+    encode_jpeg_to_jxl_container_with_effort(jpeg, 7)
+}
+
+/// Encode a JPEG as a JXL container at the given effort level.
+///
+/// See [`encode_jpeg_to_jxl_with_effort`] for the effort gates that affect the
+/// codestream side. Container wrapping (JBRD / Exif / XMP boxes) is
+/// effort-independent.
+pub fn encode_jpeg_to_jxl_container_with_effort(jpeg: &JpegData, effort: u8) -> Result<Vec<u8>> {
+    let (codestream, file_header_size) = encode_jpeg_to_jxl_inner(jpeg, effort)?;
     let jbrd = encode_jbrd(jpeg)?;
     let exif = extract_exif(jpeg);
     let xmp = extract_xmp(jpeg);
@@ -1276,12 +1439,18 @@ fn write_dc_global_jpeg(
 /// Write AC global section for JPEG reencoding.
 ///
 /// Unlike normal VarDCT, this writes RAW quant matrices (not all_default).
+///
+/// `ac_lz77`: if `Some`, writes an `lz77_enabled=1` header before the AC entropy
+/// code. Must match the params used to transform `ac_section_tokens`. At
+/// `effort >= 8` this is set by `encode_jpeg_to_jxl_with_effort` when the
+/// per-section LZ77 cost gate passes for every section.
 fn write_ac_global_jpeg(
     raw_qtables: &[i32],
     num_groups: usize,
     ac_code: &OwnedAnsEntropyCode,
     used_orders: u32,
     coeff_order_tokens: Option<&[Token]>,
+    ac_lz77: Option<&crate::entropy_coding::lz77::Lz77Params>,
     writer: &mut BitWriter,
 ) -> Result<()> {
     // RAW quant matrices with JPEG quant tables
@@ -1315,8 +1484,10 @@ fn write_ac_global_jpeg(
         build_and_write_coeff_orders(tokens, true, writer)?;
     }
 
-    // LZ77: disabled
-    writer.write(1, 0)?;
+    // LZ77 header — written here per the entropy code spec; if `ac_lz77` is
+    // `None`, this writes a single `0` bit (disabled), matching the legacy
+    // effort-7 path byte-for-byte.
+    crate::entropy_coding::lz77::write_lz77_header(ac_lz77, writer)?;
 
     // AC entropy code
     write_entropy_code_ans(ac_code, writer)?;

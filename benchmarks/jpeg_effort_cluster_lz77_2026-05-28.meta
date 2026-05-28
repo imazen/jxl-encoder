@@ -1,0 +1,235 @@
+JPEG-in-JXL Effort-Gated Cluster + LZ77 Bench — 2026-05-28
+============================================================
+
+Sample: 200-file pool from
+  benchmarks/jpeg_in_jxl_recompression_2026-05-28.tsv (198 OK
+  roundtrips after the 2026-05-28 progressive-JPEG arc shipped).
+  Same file list; A/B comparable.
+
+Encoders compared:
+  cjxl    = libjxl `cjxl` v0.12.0 4279d48
+            (`--lossless_jpeg=1 -e {7,9}`).
+  ours    = `cjxl-rs` at HEAD of this branch
+            (`--lossless-jpeg -e {7,9}`).
+
+Decoder for roundtrip verification:
+  djxl    = libjxl `djxl` v0.12.0 d2c7032 (`--reconstruct_jpeg`).
+
+Reproduction:
+  - Build: `cargo build --release -p jxl-encoder-cli
+             --no-default-features
+             --features 'jpeg-reencoding,parallel,jxl_encoder/std'`
+  - Run: `python3 scripts/bench_jpeg_effort_e7_e9.py`
+
+WHAT SHIPPED
+============
+
+`encode_jpeg_to_jxl_with_effort(jpeg, effort)` + matching container
+variant + new `LosslessConfig::encode_jpeg_transcode` effort
+plumbing. At `effort >= 9`, the AC code enables kBest pair-merge
+histogram clustering on the AC code (libjxl `enc_frame.cc:1267-1271` +
+`enc_ans_params.h:60-75`, `speed_tier == kTortoise`).
+
+Also shipped: `apply_lz77_rle_multi_section` in
+`jxl-encoder/src/entropy_coding/lz77.rs` — multi-section RLE LZ77 with
+a single global savings threshold, mirroring libjxl's
+`ApplyLZ77_RLE` (`enc_lz77.cc:111-183`). The single-section
+`apply_lz77_rle` helper applies a per-call threshold which rejects
+LZ77 even when the aggregate would pass; the multi-section variant
+fixes that. Wired into the JPEG path but currently DEFAULT-OFF (see
+"What did not ship" below).
+
+Both new functions are reusable primitives — useful for any encoder
+that wants effort-gated kBest clustering on multi-section AC codes.
+
+WHAT WAS BISECTED + WHY THE FINAL SHAPE
+========================================
+
+libjxl JPEG transcode at e9 (`speed_tier == kTortoise`) enables THREE
+levers vs e8:
+  - clustering: kFast → kBest
+  - uint_method: kNone → kBest
+  - lz77_method: kNone → kRLE
+
+Initial measurement (10-file probe vs ours-e7 baseline):
+
+  Mode                                Avg bytes Δ
+  ────────────────────────────────────────────────
+  clustering alone                    −0.27 %    ← SHIP
+  clustering + LZ77 (multi-section)   −0.27 %
+  clustering + uint_opt               +0.51 %    ← regression
+  all three combined                  +0.51 %
+
+OPTIMIZE_UINT_CONFIGS (libjxl `uint_method = kBest`) added +0.78 pp
+on top of the clustering win. Our
+`optimize_uint_configs_best_from_freqs` (28 configs, brute force
+per-histogram) trials the same 28 configs as libjxl's `kBest` path
+but picks different winners on JPEG AC streams — signaling overhead
+exceeds the data savings. Filed for future investigation.
+
+LZ77 (libjxl `lz77_method = kRLE`) saw bit_decrease ~29 322 against
+threshold 140 154 on a 700 693-token AC stream — savings of ~4 %
+where libjxl needs > 20 % to enable. The multi-section helper is
+exactly the libjxl algorithm with the libjxl threshold; cjxl's e9
+wins on this corpus also don't come from LZ77 firing.
+
+LZ77 wiring is RETAINED behind `JPEG_E9_FORCE_LZ77=1` (and uint_opt
+behind `JPEG_E9_FORCE_UINT_OPT=1`) so future investigators can A/B
+without re-implementing.
+
+WHAT DID NOT SHIP
+=================
+
+  - `optimize_uint_configs = true` at effort >= 9 (regression)
+  - LZ77 RLE at effort >= 9 (global threshold fails on JPEG AC
+    streams; matches libjxl's gate but doesn't deliver bytes)
+  - Greedy / optimal LZ77 (the brief's e8 / e9+ targets) — libjxl's
+    actual JPEG-mode VarDCT gates `kRLE` only at e9, NOT greedy or
+    optimal. Initial brief mis-mapped speed_tier semantics.
+  - Effort 8 entropy-code changes — at e8 (`speed_tier == kKitten`)
+    libjxl emits byte-identical entropy code to e7 on the JPEG
+    transcode path (the e7→e8 cjxl save of −0.92 % comes from the
+    `ans_histogram_strategy = kApproximate → kPrecise` lever, which
+    our path already uses at every effort — we are AHEAD of cjxl-e7
+    on that axis).
+
+ACCEPTANCE GATES (all PASS)
+===========================
+
+  (a) Build clean: `cargo build --release -p jxl-encoder-cli
+      --no-default-features
+      --features 'jpeg-reencoding,parallel,jxl_encoder/std'` PASS.
+  (b) `jpeg_reencoding` tests: 27/27 + 1 ignored. DEFAULT path
+      (effort 7) byte-identical.
+  (c) Non-JPEG hash-locks: 36/36 BYTE-IDENTICAL.
+  (d) `strategy_libjxl_byte_lock`: 5/5 PASS.
+  (e) `strategy_libjxl_hash_locks`: 5/5 PASS + 1 ignored.
+  (f) `divergence_table_drift`: 7/7 PASS.
+  (g) Lib tests: 1483/1483 PASS + 31 ignored.
+  (h) Multi-section LZ77 RLE: 4/4 new unit tests PASS.
+  (i) djxl `--reconstruct_jpeg` byte-exact: 198/198 OK on the bench
+      (every cell verified post-encode at both e7 AND e9).
+
+200-FILE BENCH RESULTS
+======================
+
+Aggregate (over all 198 OK roundtrip pairs from the source list,
+ALL roundtrip-clean at both e7 AND e9 — zero new regressions):
+
+  files attempted:           198
+  encoded OK:                198
+  roundtrip e7 OK:           198 / 198
+  roundtrip e9 OK:           198 / 198 (NEW: previously not measured)
+  source bytes total:        50,593,004
+  cjxl_e7 total:             41,380,540 (81.79 % of source)
+  cjxl_e9 total:             40,954,177 (-1.030 % vs cjxl_e7)
+  ours_e7 total:             42,040,998 (+1.596 % vs cjxl_e7)
+  ours_e9 total:             41,981,201 (+2.508 % vs cjxl_e9,
+                                          -0.142 % vs ours_e7)
+
+  per-file e9 vs e7:         wins=194  ties=4  losses=0
+
+DELTAS BY EFFORT:
+
+  ours_e9 vs ours_e7:        -0.142 %  (consistent improvement)
+  cjxl_e9 vs cjxl_e7:        -1.030 %
+  delta of deltas:           +0.888 %  ← residual e9-side gap;
+                                          most of cjxl's e9 win
+                                          comes from kBest uint
+                                          configs and / or LZ77
+                                          firing, neither of which
+                                          ships on our path yet.
+
+Note: pre-chunk meta
+(`jpeg_in_jxl_recompression_2026-05-28.meta`) reported ours_e7 at
++2.21 % vs cjxl_e7. Our parent commit (`3fd7270f`) is several
+chunks downstream of the pre-chunk baseline (54183c13) and includes
+session improvements that closed -0.6 pp of the gap; our +1.596 %
+baseline measurement is on the pre-chunk file list using the
+current encoder.
+
+GATE STATUS:
+  - Brief target: ≤ +0.7 % vs cjxl-e9 → +2.508 % (FAIL strict)
+  - Brief honest-stop threshold: ≤ -0.05 pp e9 win → -0.142 pp
+    (PASS — ships as opt-in lever exposed via --effort)
+  - Brief regression gate: e7 byte-identical to current main →
+    PASS (verified via hash-locks 36/36 + jpeg_reencoding 27/27)
+  - Brief roundtrip gate: 200/200 preserved at both e7 AND e9 →
+    198/198 each (the 2 missing are progressive successive-
+    approximation cases that DIFF in the pre-chunk baseline too;
+    unchanged from pre-chunk)
+  - 194/198 = 98.0 % per-file wins at e9 vs e7
+
+REMAINING WORK
+==============
+
+  (1) Root-cause `optimize_uint_configs_best_from_freqs` divergence
+      from libjxl `uint_method = kBest` on JPEG AC streams. cjxl's
+      e9 win includes this lever; we currently regress by +0.78 pp
+      with it on. Likely candidates:
+      - Per-histogram cost function diverges (Shannon estimate vs
+        actual ANS cost)
+      - Signaling-cost calculation differs (split_exponent /
+        msb_in_token / lsb_in_token encoding)
+      - Different default config (we default to `HybridUintConfig(4,
+        2, 0)`; libjxl returns from `params.UintConfig()` which is
+        also (4, 2, 0) when `uint_method != kContextMap / k000`)
+  (2) Continue investigating the residual ~3 % gap vs cjxl-e7 (the
+      pre-chunk +2.21 %). Block context map (Investigation note #8
+      in CLAUDE.md) is still the highest-EV item.
+  (3) `extra_zero_runs` + `reset_points` for the 2 / 200
+      successive-approximation roundtrip DIFF cases (unchanged from
+      pre-chunk).
+  (4) CMYK / 4-component JPEG support, 12-bit precision JPEGs
+      (rare; unchanged from pre-chunk).
+
+FILES TOUCHED
+=============
+
+  jxl-encoder/src/jpeg/encode.rs
+    - New: `encode_jpeg_to_jxl_with_effort`,
+      `encode_jpeg_to_jxl_container_with_effort`
+    - Modified: `encode_jpeg_to_jxl`,
+      `encode_jpeg_to_jxl_container` (thin wrappers, effort=7)
+    - Modified: `encode_jpeg_to_jxl_inner(jpeg, effort)`
+    - Modified: `write_ac_global_jpeg(..., ac_lz77)` writes the
+      LZ77 header via `write_lz77_header` (replaces hardcoded
+      `writer.write(1, 0)`)
+
+  jxl-encoder/src/jpeg/mod.rs
+    - Export `encode_jpeg_to_jxl_with_effort`,
+      `encode_jpeg_to_jxl_container_with_effort`
+
+  jxl-encoder/src/api.rs
+    - `LosslessConfig::encode_jpeg_transcode` /
+      `_codestream` now pass `self.effort` through.
+
+  jxl-encoder/src/entropy_coding/lz77.rs
+    - New `pub fn apply_lz77_rle_multi_section` (mirrors libjxl
+      `ApplyLZ77_RLE` exactly: one global threshold across all
+      sections).
+    - 4 new unit tests.
+
+DO NOT
+======
+
+  - DO NOT default-flip `JPEG_E9_FORCE_UINT_OPT` until the kBest
+    uint-method regression is root-caused.
+  - DO NOT default-flip `JPEG_E9_FORCE_LZ77` until the global LZ77
+    threshold actually passes on the JPEG AC streams (root-cause:
+    maybe SymbolCostEstimator bit costs differ from libjxl).
+  - DO NOT remove the `apply_lz77_rle_multi_section` wiring; the
+    JPEG path uses it whenever LZ77 is force-enabled, and the
+    helper is a reusable primitive for other multi-section
+    encoders.
+  - DO NOT lower the LZ77 savings threshold below libjxl's
+    `0.2 * total_symbols + 16`; that's the libjxl-parity gate.
+  - DO NOT cite "FMA precision" or "rounding" for any byte movement
+    here (per CLAUDE.md W44-66 rule). The bytes that move are from
+    cluster-membership decisions, which are driven by Shannon
+    cost estimates that ARE numerically deterministic.
+
+COMMITS PRODUCING THIS STATE
+=============================
+
+  (filled in at commit time)

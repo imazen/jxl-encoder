@@ -14,7 +14,10 @@ mod jbrd;
 mod parse;
 
 pub use data::JpegData;
-pub use encode::{encode_jpeg_to_jxl, encode_jpeg_to_jxl_container};
+pub use encode::{
+    encode_jpeg_to_jxl, encode_jpeg_to_jxl_container, encode_jpeg_to_jxl_container_with_effort,
+    encode_jpeg_to_jxl_with_effort,
+};
 pub use parse::{JpegError, read_jpeg};
 
 // Re-export for tests that need direct JBRD access.
