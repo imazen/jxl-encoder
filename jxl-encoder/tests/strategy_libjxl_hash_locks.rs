@@ -141,25 +141,44 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
     //   _d1_e3:        321 → 313 (-8 B)  hash drift (smaller — e3 fewer
     //                  DC tokens / smaller header overhead change)
     //   _noise_d1:     3245→3240 (-5 B)  hash drift
+    //
+    // **Lever #1 MTF (2026-05-28)**: re-pinned after porting libjxl's
+    // 3-way context-map cost comparison (simple / Huffman / Huffman+MTF)
+    // from `enc_context_map.cc::EncodeContextMap` into
+    // `vardct/context_tree.rs::write_context_map_from_slice`. The Libjxl
+    // 15-cluster ctx_map (7425 entries, values 0..14) goes through this
+    // writer; MTF clusters runs of repeated cluster ids at low symbol
+    // positions, shrinking the Huffman tree AND the data payload. All
+    // 5 fixtures touched, ALL WINS:
+    //   _d1   (e7):    217 → 213 (-4 B)  hash drift
+    //   _d4   (e7):    177 → 173 (-4 B)  hash drift
+    //   _d1_e5:        215 → 211 (-4 B)  hash drift
+    //   _d1_e3:        313 → 309 (-4 B)  hash drift
+    //   _noise_d1:     3219→3215 (-4 B)  hash drift
+    // The uniform -4B delta across cells is the MTF wire overhead diff
+    // (the new path tightens the post-selector Huffman header by ~32
+    // bits via MTF-induced symbol-distribution compaction). djxl,
+    // jxl-rs, and jxl-oxide all roundtrip cleanly (verified via
+    // `libjxl_output_decodes_via_jxl_rs_and_jxl_oxide`).
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1",
-        size: 217,
-        hash: 0x4ed266e4ff5b658b,
+        size: 213,
+        hash: 0x7ae1cf0273e95247,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
-        size: 177,
-        hash: 0xbbf100a458b3f18c,
+        size: 173,
+        hash: 0x67180590cd52bf00,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",
-        size: 215,
-        hash: 0x4adf8fe2098a5533,
+        size: 211,
+        hash: 0x5edd6bfed89e073d,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e3",
-        size: 313,
-        hash: 0x591346e9a21f0527,
+        size: 309,
+        hash: 0xae3d3cc1e9a3bcef,
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",
@@ -188,8 +207,11 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // parity). At effort 7 (this fixture) the Libjxl strategy now
         // emits kWPFixedDC directly without the W44-57 trial-and-pick;
         // size dropped 3250 → 3249 bytes (-1 B).
-        size: 3219,
-        hash: 0x0e0b58577ceac70f,
+        // Lever #1 MTF (2026-05-28): size 3219 → 3215 (-4 B), hash drift.
+        // 3-way ctx-map cost comparison adopts MTF for the 15-cluster
+        // ctx_map. See cluster comment-block at the top of LIBJXL_PINS.
+        size: 3215,
+        hash: 0xd8381016e12ee958,
     },
 ];
 

@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Performance
+
+- **JPEG-in-JXL recompression: port libjxl 3-way context-map cost
+  comparison (Lever #1 / MTF, 2026-05-28)**: extends the libjxl
+  `enc_context_map.cc::EncodeContextMap` 3-way comparison (simple /
+  Huffman / Huffman+MTF) to the writer used by the JPEG transcode
+  block-context-map path (`vardct/context_tree.rs::write_context_map_from_slice`)
+  AND replaces the Shannon-entropy proxy in the AC stream's
+  Huffman+MTF sub-decision with actual trial-encoding
+  (`entropy_coding/encode_ans.rs::write_context_map_nonsimple_huffman`).
+  Both candidates now share a `write_huffman_payload_no_selector`
+  helper so the cost comparison uses the SAME bit-count math as the
+  final emission. On the 200-file JPEG bench (seed 11): saves
+  -36 bytes total = -0.000079% (the dominant ctx_map gain was already
+  captured by `5a6b04c9 feat(entropy_coding): LZ77 in
+  write_context_map_nonsimple` / W44-73). HONEST-STOP on the bench
+  target. Decoder roundtrip preserved (djxl 3/3 byte-identical,
+  jxl-rs/jxl-oxide via the 27-test `jpeg_reencoding` suite).
+  Re-pinned `strategy_libjxl_byte_lock` golden (10 cells, -4 B each on
+  the Libjxl-strategy 15-cluster fixtures) + `strategy_libjxl_hash_locks`
+  LIBJXL_PINS (5 fixtures, -4 B each). Non-default lossy hash-locks
+  (36 cells) BYTE-IDENTICAL — the compact COMPACT_BLOCK_CONTEXT_MAP
+  path through `write_block_context_map` is deliberately unmodified.
+  See `benchmarks/jpeg_lever1_mtf_2026-05-28.{tsv,meta,notes.md}`.
+
 ### Fixed
 
 - JPEG-in-JXL recompression: byte-exact roundtrip for baseline JPEGs
