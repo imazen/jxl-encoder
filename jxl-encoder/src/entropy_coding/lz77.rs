@@ -1032,7 +1032,19 @@ pub fn apply_lz77_rle_multi_section(
     }
 
     // GLOBAL threshold check (mirrors libjxl `enc_lz77.cc:179-182`).
-    let threshold = total_symbols as f32 * 0.2 + 16.0;
+    //
+    // Bench-only env hook `JPEG_LZ77_THRESHOLD_BITS=<n>` overrides the
+    // default `total_symbols * 0.2 + 16` formula with a flat `n`-bit
+    // floor. Used to A/B the LZ77 path on JPEG AC streams where the
+    // default threshold rarely fires (bit_decrease ~4% of total_symbols,
+    // default threshold needs 20%). Default behavior unchanged.
+    let threshold = match std::env::var("JPEG_LZ77_THRESHOLD_BITS")
+        .ok()
+        .and_then(|s| s.parse::<f32>().ok())
+    {
+        Some(t) => t,
+        None => total_symbols as f32 * 0.2 + 16.0,
+    };
     #[cfg(feature = "debug-tokens")]
     eprintln!(
         "[LZ77-RLE-multi] bit_decrease={:.1}, threshold={:.1}, sections={}, total_symbols={}",
