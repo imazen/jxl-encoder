@@ -1,0 +1,203 @@
+JPEG-in-JXL multi-section LZ77 latent-bug fix — bench meta — 2026-05-28
+========================================================================
+
+Goal hook ACTIVE: "jpeg recompression file sizes matching or improving
+vs libjxl on a diverse corpus" — pre-fix: +1.184% above cjxl on the
+200-file 2026-05-28 baseline. This chunk closes two latent bugs in the
+`apply_lz77_rle_multi_section` helper that made the multi-section LZ77
+transform unusable on the JPEG transcode path. Helper was wired in but
+gated default-OFF; the gate masked the bugs because the global savings
+threshold (`total_symbols * 0.2 + 16`) doesn't fire on JPEG AC streams
+(bit_decrease ~4% measured, threshold needs ~20%).
+
+THE TWO BUGS (both in `jxl-encoder/src/jpeg/encode.rs`)
+=======================================================
+
+Bug #1 — `ac_num_contexts` missing `+1` increment.
+
+  When LZ77 is enabled the distance tokens use `context = num_contexts`
+  (one slot past the per-block contexts) — see `Lz77Params::new` at
+  `entropy_coding/lz77.rs:182`. Histogram accumulation in
+  `AccumulatedAnsData::add_token` short-circuits via `if ctx < self.num_contexts`
+  (`encode_ans.rs:92`), so distance tokens with `ctx = num_contexts`
+  were silently dropped. The emitted context map was one entry too short
+  — the decoder reads `num_contexts + 1` entries when `lz77.enabled = true`
+  (`zenjxl-decoder/src/entropy_coding/decode.rs:605-612`).
+
+  Canonical pattern (modular and VarDct AC both have this right):
+    modular/encode.rs:2158-2162
+      `ans_num_contexts = if lz77_params.is_some() { num_contexts + 1 } else { num_contexts };`
+    vardct/bitstream.rs:3268-3273
+      `ac_num_contexts = if ac_lz77_params_per_pass[pass].is_some() {
+           base_ac_num_contexts + 1 } else { base_ac_num_contexts };`
+
+  Fix:
+    let ac_code_num_contexts = if ac_lz77_params.is_some() {
+        ac_num_contexts + 1
+    } else {
+        ac_num_contexts
+    };
+    let ac_code = build_entropy_code_ans_with_options(
+        &all_ac_tokens,
+        ac_code_num_contexts,
+        ...
+    );
+
+Bug #2 — `lz77_distance_multiplier` set to `xsize_blocks` instead of 0.
+
+  AC tokens on the JPEG transcode path are VarDct-style coefficient
+  streams. The decoder reads them via the AC-group decode path
+  (`zenjxl-decoder/src/frame/group.rs:386` `SymbolReader::new(..., image_width: None)`),
+  giving `dist_multiplier = 0` decoder-side. With `distance_multiplier > 0`
+  the encoder emitted RLE distance symbol `1`; with decoder-side
+  `dist_multiplier = 0` that maps to `distance = 2`
+  (`decode.rs:115-129` `distance_sub_1 = distance_sym = 1` → `distance = 2`),
+  repeating the symbol from two positions back instead of the
+  immediately previous one — silently corrupting the decoded stream.
+
+  Matches the VarDct convention at `vardct/bitstream.rs:3051`:
+    `let ac_distance_multiplier = 0i32;`
+
+  Fix:
+    let lz77_distance_multiplier = 0i32;  // (was: xsize_blocks as i32)
+
+VERIFICATION
+============
+
+Before fix, with both env hooks set
+(`JPEG_E9_FORCE_LZ77=1` + `JPEG_LZ77_THRESHOLD_BITS=0`):
+  - djxl: `DecompressJxlToPackedPixelFile failed`
+  - jpeg_reencoding tests: 21/27 FAIL
+
+After fix, with both env hooks set:
+  - djxl decode + `--reconstruct_jpeg`: byte-identical JPEG roundtrip
+  - jpeg_reencoding tests: 27/27 + 1 ignored PASS
+  - Multi-decoder via jxl-rs (built into the test harness): all pass
+
+Invariants:
+  - hash-locks 36/36 BYTE-IDENTICAL at default (production gate default-OFF
+    means production output unchanged)
+  - `EncoderStrategy::Libjxl` byte-lock 5/5 PASS
+  - drift 7/7 PASS
+  - jpeg_reencoding 27/27 + 1 ignored PASS at default AND with LZ77 forced
+
+LZ77 GLOBAL THRESHOLD STILL DOESN'T FIRE ON JPEG AC STREAMS
+============================================================
+
+Even with the bug fixed, the libjxl global threshold
+(`total_symbols * 0.2 + 16`) doesn't pass on JPEG AC streams:
+
+  - Measured `bit_decrease ~4%` of total_symbols (matches `2f5e07a5`'s
+    measurement from the original jpeg-effort-cluster-lz77 chunk).
+  - Threshold needs > 20%.
+
+Forcing LZ77 with `JPEG_LZ77_THRESHOLD_BITS=0` shipped this commit
+demonstrates the path IS now functional, but the AC stream's RLE
+savings are STRUCTURALLY too low to justify the LZ77 header + length
+symbol overhead on this content class.
+
+REPRODUCTION
+=============
+
+Build:
+  cargo build --release -p jxl-encoder-cli --features jpeg-reencoding
+
+Spot-check (per-file):
+  # Default mode (LZ77 inactive — bytes identical to pre-fix)
+  ./target/release/cjxl-rs -e 9 --lossless-jpeg src.jpg out_default.jxl
+
+  # LZ77 forced (gate at threshold 0)
+  JPEG_E9_FORCE_LZ77=1 JPEG_LZ77_THRESHOLD_BITS=0 \
+    ./target/release/cjxl-rs -e 9 --lossless-jpeg src.jpg out_lz77.jxl
+
+  # Roundtrip
+  djxl --reconstruct_jpeg out_lz77.jxl recon.jpg
+  cmp src.jpg recon.jpg && echo OK
+
+Full bench (200 files):
+  python3 scripts/bench_jpeg_lz77_fix_2026-05-28.py
+
+BENCH RESULTS (198-file pool from jpeg_in_jxl_recompression_2026-05-28.tsv)
+==========================================================================
+
+198/198 roundtrips OK (`djxl --reconstruct_jpeg` byte-identical to source)
+under `JPEG_E9_FORCE_LZ77=1` + `JPEG_LZ77_THRESHOLD_BITS=0`. **Proves
+the bug fix is correct: every JPEG in the corpus encodes via the LZ77
+path AND decodes via djxl to byte-identical source JPEG.**
+
+Aggregate bytes Δ:
+  LZ77 vs cjxl-rs e9 default:   +2.264 %    (LZ77 ALWAYS larger)
+  LZ77 vs cjxl   e9:            +4.606 %
+  cjxl-rs e9 vs cjxl e9:        +2.291 %    (current production gap)
+
+Per-file split:
+  n = 198
+  LZ77 smaller (wins)  :   0
+  LZ77 byte-identical  :   0
+  LZ77 larger (losses) : 198
+  range: +1.192 % (smallest regression) to +5.819 % (largest)
+
+Spot-check (`81dvYOlXbZL.jpg`, 389,396-byte JPEG):
+  Default e9   : 337,854 bytes (LZ77 gate inactive — threshold not met)
+  LZ77 forced  : 342,397 bytes (+1.34 % vs default)
+  Roundtrip OK : YES
+
+**Conclusion: LZ77 on the JPEG AC stream is structurally a regression,
+not a lever.** Even at threshold=0 (max-aggressive LZ77), every cell
+in the 198-file corpus regresses. The libjxl default global threshold
+(`total_symbols * 0.2 + 16`) correctly REJECTS the transform — the
+threshold is doing its job. With this bug fix the helper is now
+provably correct (decoder agrees with encoder), but the path cannot
+be defaulted-on without first finding a content class where LZ77
+ACTUALLY saves bytes. JPEG transcode is NOT that class.
+
+The +1.184 % residual cjxl-parity gap on the goal-hook bench is NOT
+closable by LZ77 — measurement is conclusive.
+
+OPEN QUESTION (NOT closed by this chunk)
+=========================================
+
+Is LZ77 on the JPEG AC stream EVER beneficial? Both this measurement
+(threshold=0 → +1.34% bytes on one cell) and the W44-* historical
+measurements (`bit_decrease ~4%` of total_symbols) suggest the RLE
+savings on JPEG AC streams are structurally too small to compete with
+the per-section LZ77 header overhead.
+
+Future work:
+  1. Wider corpus sweep with threshold=0 to confirm "LZ77 ON
+     consistently REGRESSES bytes on JPEG AC streams". If yes,
+     `apply_lz77_rle_multi_section` is dead code on the JPEG path and
+     `JPEG_E9_FORCE_LZ77` env hook can be removed.
+  2. Investigate whether the libjxl cjxl encoder ACTUALLY engages LZ77
+     on JPEG transcodes at e9. If so, what's different about its AC
+     token stream that lets the threshold fire? (Hypothesis: cjxl
+     emits LZ77 length symbols even at low aggregate savings because
+     the per-stream threshold is looser per-stream — but libjxl
+     `enc_lz77.cc:179-182` shows the same global threshold).
+
+  Neither follow-on is goal-hook-critical for the +1.184% vs cjxl gap
+  since this fix did not enable a lever — it closed a latent bug that
+  would have surfaced if anyone ever flipped the gate.
+
+DO NOT
+======
+
+- DO NOT revert `lz77_distance_multiplier` to `xsize_blocks` — measured
+  wrong against the decoder. Per-file roundtrip fails on every JPEG.
+- DO NOT lower the LZ77 global threshold in production until a wider
+  corpus measurement confirms bytes Δ is negative.
+- DO NOT remove the multi-section helper or its callsite — it is now
+  a correctness-verified primitive available to any future caller
+  with a content class that has higher RLE redundancy.
+- DO NOT cite "FMA precision" for any byte movement here (per W44-66
+  rule). Both bugs are structural protocol mismatches.
+
+FILES
+======
+
+- jxl-encoder/src/jpeg/encode.rs              — both fixes + new env-hook doc
+- jxl-encoder/src/entropy_coding/lz77.rs      — new `JPEG_LZ77_THRESHOLD_BITS` hook
+- docs/LIBJXL_DIVERGENCES.md                  — Section G entry
+- benchmarks/jpeg_lz77_fix_2026-05-28.tsv     — 200-file bench output
+- benchmarks/jpeg_lz77_fix_2026-05-28.meta    — this file
+- scripts/bench_jpeg_lz77_fix_2026-05-28.py   — bench reproducer

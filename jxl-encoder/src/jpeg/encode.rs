@@ -836,10 +836,26 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
         lz77_method = Some(crate::entropy_coding::lz77::Lz77Method::Rle);
     }
 
-    // Distance multiplier for LZ77 special distance symbols (mirrors libjxl
-    // `enc_ans.cc:1349` which uses `image_widths[stream] = xsize_blocks` for
-    // every AC stream on the JPEG transcode path).
-    let lz77_distance_multiplier = xsize_blocks as i32;
+    // Distance multiplier for LZ77 special distance symbols.
+    //
+    // BUG FIX 2026-05-28: previously this was `xsize_blocks as i32`, which
+    // mirrors the libjxl `image_widths[stream]` value used for MODULAR
+    // subimage streams (DC, AC metadata). The JPEG-mode AC token stream is
+    // the VarDCT-style coefficient stream — the decoder reads it via the
+    // AC-group decode path which calls `SymbolReader::new(..., image_width: None)`
+    // (see `zenjxl-decoder/src/frame/group.rs:386`), giving
+    // `dist_multiplier = 0` decoder-side. The encoder must match: with
+    // `distance_multiplier > 0` the RLE distance symbol is `1`, which the
+    // decoder (dist_multiplier=0) interprets as distance=2 (`distance_sub_1
+    // = distance_sym = 1` → `distance = 2`), corrupting the decoded stream
+    // by repeating the symbol from two positions back instead of the
+    // immediately previous one. With `distance_multiplier = 0`, the RLE
+    // distance symbol is `0` → decoder reads `distance_sub_1 = 0` →
+    // `distance = 1` = repeat-previous as intended.
+    //
+    // This matches the VarDct-side convention at
+    // `vardct/bitstream.rs:3051` (`let ac_distance_multiplier = 0i32;`).
+    let lz77_distance_multiplier = 0i32;
 
     // Apply LZ77 across ALL sections with a SINGLE global savings gate
     // (mirrors libjxl `ApplyLZ77_RLE` at `enc_lz77.cc:111-183`, which iterates
@@ -906,9 +922,30 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
         optimize_uint_configs_ac = false;
     }
 
+    // BUG FIX 2026-05-28: when LZ77 is enabled the distance tokens use
+    // `context = ac_num_contexts` (one past the per-block contexts), so the
+    // entropy-code builder must accumulate histograms across
+    // `ac_num_contexts + 1` slots, and the encoded context map must have
+    // `ac_num_contexts + 1` entries (the decoder reads it that way at
+    // `zenjxl-decoder/src/entropy_coding/decode.rs:605-612`). Previously the
+    // call passed `ac_num_contexts`, which silently dropped every distance
+    // token from histogram accumulation (`AccumulatedAnsData::add_token`
+    // checks `if ctx < self.num_contexts`) and emitted a context map one
+    // entry too short, producing a bitstream that no spec-conformant
+    // decoder could parse.
+    //
+    // This mirrors the canonical pattern in the modular path at
+    // `modular/encode.rs:2158-2162` and the VarDct AC path at
+    // `vardct/bitstream.rs:3269-3273` (`ac_num_contexts = base + 1` when
+    // `lz77_params.is_some()`).
+    let ac_code_num_contexts = if ac_lz77_params.is_some() {
+        ac_num_contexts + 1
+    } else {
+        ac_num_contexts
+    };
     let ac_code = build_entropy_code_ans_with_options(
         &all_ac_tokens,
-        ac_num_contexts,
+        ac_code_num_contexts,
         enhanced_clustering,
         optimize_uint_configs_ac,
         ac_lz77_params.as_ref(),
