@@ -109,6 +109,12 @@ const GRAD_RANGE_MAX: i64 = 1023;
 #[allow(dead_code)]
 pub const NUM_DC_CONTEXTS: usize = 45;
 
+/// Number of DC contexts on the JPEG-transcode tree (lever A, 2026-05-28).
+///
+/// Mirrors libjxl's `kJpegTranscodeACMeta` + gradient-fixed-DC pair:
+/// 1 AC-metadata context (single `Leaf(Zero)`) + 34 DC gradient contexts.
+pub const NUM_DC_CONTEXTS_JPEG_TRANSCODE: usize = 35;
+
 /// Number of AC metadata contexts (contexts 0-10).
 /// These are used for: EPF (0), YtoB (1), YtoX (2), quant field (3-6), AC strategy (7-10).
 /// Used by dc_tree_learn.rs for tree structure.
@@ -120,6 +126,24 @@ pub const NUM_AC_METADATA_CONTEXTS: usize = 11;
 /// Used by dc_tree_learn.rs for context offset calculation.
 #[allow(dead_code)]
 pub const DC_CONTEXT_OFFSET: usize = NUM_AC_METADATA_CONTEXTS;
+
+/// Single AC-metadata context ID on the JPEG-transcode tree (lever A).
+///
+/// All AC-metadata tokens (CFL, ACS, QF, EPF) collapse to this one context
+/// when the JPEG-transcode tree is in use (see [`write_jpeg_transcode_context_tree`]).
+/// Predictor is `Zero` (raw values, no gradient/left residuals).
+///
+/// [`write_jpeg_transcode_context_tree`]: super::context_tree::write_jpeg_transcode_context_tree
+pub const JPEG_TRANSCODE_AC_META_CONTEXT: u32 = 0;
+
+/// First DC context ID on the JPEG-transcode tree (lever A).
+///
+/// DC values use contexts `JPEG_TRANSCODE_DC_CONTEXT_OFFSET .. +34` =
+/// `1..=34`, because the AC-metadata subtree shrinks from 11 leaves to 1
+/// and BFS shifts the DC leaf IDs down by 10. Computed as
+/// `GRADIENT_CONTEXT_LUT[grad] - 10` per the bit-identical mapping verified
+/// at generation time.
+pub const JPEG_TRANSCODE_DC_CONTEXT_OFFSET: u32 = 1;
 
 /// Encode DC coefficients using gradient predictor and entropy coding.
 ///
@@ -475,6 +499,81 @@ pub fn collect_dc_tokens_region(
     tokens
 }
 
+/// Collect DC tokens for a region using the JPEG-transcode context-tree's
+/// shifted context IDs (lever A, 2026-05-28).
+///
+/// Identical to [`collect_dc_tokens_region`] except every emitted context is
+/// shifted down by 10 to match the BFS leaf order of
+/// [`super::context_tree::JPEG_TRANSCODE_CONTEXT_TREE_TOKENS`] (DC leaves
+/// occupy `JPEG_TRANSCODE_DC_CONTEXT_OFFSET..=34` instead of the old
+/// `11..=44`).
+///
+/// The decoder reads exactly the same residuals — only the byte cost of
+/// the context-map and per-context histogram serialisation moves (smaller
+/// context space, ~one fewer cluster).
+#[allow(dead_code)]
+pub fn collect_dc_tokens_region_jpeg_transcode(
+    quant_dc: &[Vec<Vec<i16>>; 3],
+    start_bx: usize,
+    start_by: usize,
+    end_bx: usize,
+    end_by: usize,
+    channel_shifts: &[(usize, usize); 3],
+) -> Vec<Token> {
+    let region_width = end_bx - start_bx;
+    let region_height = end_by - start_by;
+
+    if region_width == 0 || region_height == 0 {
+        return Vec::new();
+    }
+
+    let mut tokens = Vec::with_capacity(region_width * region_height * 3);
+
+    for &c in &[1, 0, 2] {
+        let (hs, vs) = channel_shifts[c];
+        let ch_start_bx = start_bx >> hs;
+        let ch_start_by = start_by >> vs;
+        let ch_end_bx = (end_bx >> hs).min(quant_dc[c].first().map_or(0, |r| r.len()));
+        let ch_end_by = (end_by >> vs).min(quant_dc[c].len());
+
+        let channel = &quant_dc[c];
+        for y in ch_start_by..ch_end_by {
+            for x in ch_start_bx..ch_end_bx {
+                let left = if x > ch_start_bx {
+                    channel[y][x - 1] as i32
+                } else if y > ch_start_by {
+                    channel[y - 1][x] as i32
+                } else {
+                    0
+                };
+                let top = if y > ch_start_by {
+                    channel[y - 1][x] as i32
+                } else {
+                    left
+                };
+                let topleft = if x > ch_start_bx && y > ch_start_by {
+                    channel[y - 1][x - 1] as i32
+                } else {
+                    left
+                };
+                let guess = clamped_gradient(top, left, topleft);
+                let actual = channel[y][x] as i32;
+                let residual = actual - guess;
+                let grad_prop = (GRAD_RANGE_MID + top as i64 + left as i64 - topleft as i64)
+                    .clamp(GRAD_RANGE_MIN, GRAD_RANGE_MAX) as usize;
+                // Shift down by 10: old GRADIENT_CONTEXT_LUT values [11..=44]
+                // become new DC contexts [1..=34] on the JPEG-transcode tree.
+                let ctx_id = (GRADIENT_CONTEXT_LUT[grad_prop] as u32)
+                    .saturating_sub(NUM_AC_METADATA_CONTEXTS as u32)
+                    + JPEG_TRANSCODE_DC_CONTEXT_OFFSET;
+                tokens.push(Token::new(ctx_id, pack_signed(residual)));
+            }
+        }
+    }
+
+    tokens
+}
+
 /// Collect AC metadata tokens for a specific region (without writing).
 ///
 /// Same logic as `write_ac_metadata_tokens_region()` but returns a `Vec<Token>`.
@@ -633,6 +732,109 @@ const BLOCK_DIM: usize = 8;
 
 /// CFL tile dimension in blocks (64 / 8 = 8 blocks per tile).
 const TILES_IN_BLOCKS: usize = COLOR_TILE_DIM / BLOCK_DIM;
+
+/// Collect AC-metadata tokens for the JPEG-transcode tree (lever A,
+/// 2026-05-28).
+///
+/// Mirrors libjxl's `kJpegTranscodeACMeta` semantics: every emitted token
+/// uses `context = JPEG_TRANSCODE_AC_META_CONTEXT` (= 0) and a `Zero`
+/// predictor, so the value field carries the *raw* AC-metadata datum
+/// (CFL multiplier, ACS code, QF-1, EPF sharpness) packed via
+/// `pack_signed`. This sheds the per-token gradient/left/zero predictor
+/// machinery the multi-context [`collect_ac_metadata_tokens_region`]
+/// applies. Token emission order — channels 0 (YtoX), 1 (YtoB), 2 (ACS),
+/// 2 (QF), 3 (EPF) — matches the libjxl AC-metadata stream layout so the
+/// decoder can route tokens via the property-1 (channel) / property-2 (y)
+/// splits embedded in the tree.
+///
+/// Pair with [`super::context_tree::write_jpeg_transcode_context_tree`].
+#[allow(clippy::too_many_arguments)]
+pub fn collect_ac_metadata_tokens_region_jpeg_transcode(
+    region_xsize_blocks: usize,
+    region_ysize_blocks: usize,
+    quant_field: &[u8],
+    full_xsize_blocks: usize,
+    start_bx: usize,
+    start_by: usize,
+    cfl_map: &CflMap,
+    ac_strategy: &AcStrategyMap,
+    sharpness_map: Option<&[u8]>,
+) -> Vec<Token> {
+    let xsize_pixels = region_xsize_blocks * BLOCK_DIM;
+    let ysize_pixels = region_ysize_blocks * BLOCK_DIM;
+    let cfl_xsize = xsize_pixels.div_ceil(COLOR_TILE_DIM);
+    let cfl_ysize = ysize_pixels.div_ceil(COLOR_TILE_DIM);
+
+    let nblocks = region_xsize_blocks * region_ysize_blocks;
+    let capacity = 2 * cfl_xsize * cfl_ysize + 3 * nblocks;
+    let mut tokens = Vec::with_capacity(capacity);
+    let ctx = JPEG_TRANSCODE_AC_META_CONTEXT;
+
+    let global_tile_x0 = start_bx / TILES_IN_BLOCKS;
+    let global_tile_y0 = start_by / TILES_IN_BLOCKS;
+
+    // CfL (YtoX = channel 0, YtoB = channel 1): emit raw multipliers.
+    for c in 0..2 {
+        for y in 0..cfl_ysize {
+            for x in 0..cfl_xsize {
+                let global_tx = global_tile_x0 + x;
+                let global_ty = global_tile_y0 + y;
+                let actual = if c == 0 {
+                    cfl_map.ytox_at(global_tx, global_ty) as i32
+                } else {
+                    cfl_map.ytob_at(global_tx, global_ty) as i32
+                };
+                tokens.push(Token::new(ctx, pack_signed(actual)));
+            }
+        }
+    }
+
+    // AC strategy tokens — first blocks only, raw values.
+    for y in 0..region_ysize_blocks {
+        for x in 0..region_xsize_blocks {
+            let abs_bx = start_bx + x;
+            let abs_by = start_by + y;
+            if !ac_strategy.is_first(abs_bx, abs_by) {
+                continue;
+            }
+            let cur = ac_strategy.strategy_code(abs_bx, abs_by) as i32;
+            tokens.push(Token::new(ctx, pack_signed(cur)));
+        }
+    }
+
+    // Quant field tokens — first blocks only, raw `qf - 1` values
+    // (decoder adds 1 back). On the JPEG transcode path `qf == 1`
+    // everywhere → `qf - 1 == 0` → these compress to a single
+    // peak symbol in context 0's histogram.
+    for y in 0..region_ysize_blocks {
+        for x in 0..region_xsize_blocks {
+            let abs_by = start_by + y;
+            let abs_bx = start_bx + x;
+            if !ac_strategy.is_first(abs_bx, abs_by) {
+                continue;
+            }
+            let block_idx = abs_by * full_xsize_blocks + abs_bx;
+            let cur = (quant_field[block_idx] as i32) - 1;
+            tokens.push(Token::new(ctx, pack_signed(cur)));
+        }
+    }
+
+    // EPF tokens — per-block sharpness, raw values.
+    for by_local in 0..region_ysize_blocks {
+        for bx_local in 0..region_xsize_blocks {
+            let abs_by = start_by + by_local;
+            let abs_bx = start_bx + bx_local;
+            let sharpness = if let Some(sm) = sharpness_map {
+                sm[abs_by * full_xsize_blocks + abs_bx] as i32
+            } else {
+                4 // default EPF sharpness
+            };
+            tokens.push(Token::new(ctx, pack_signed(sharpness)));
+        }
+    }
+
+    tokens
+}
 
 /// Write AC metadata tokens (YtoX, YtoB, AC strategy, quant field, EPF) using gradient predictor.
 ///

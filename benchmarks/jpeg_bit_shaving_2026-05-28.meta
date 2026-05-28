@@ -1,0 +1,286 @@
+JPEG-in-JXL bit-shaving session — lever audit (2026-05-28)
+============================================================
+
+Parent commit: 8bd46f89 main (session-final at +1.522% vs cjxl on 200-file).
+
+Goal: Sweep 4 small levers from the round-2 research catalogue
+(A: kJpegTranscodeACMeta tree, B: quant-matrix RAW mode use_global_tree,
+C: frame all_default for JPEG, D: DC/QF threshold value encoding selectors)
+to capture cumulative bit savings beyond the +1.52pp ceiling reached by
+the prior session.
+
+Bench corpus: 200 JPEGs (66 baseline + 134 progressive) drawn from
+`/home/lilith/product-images` + `/home/lilith/work/codec-corpus` via
+`random.seed(11)`. Stratified to match the ~33/67 baseline/progressive
+split observed in the corpus. SAME corpus used by
+`jpeg_in_jxl_recompression_2026-05-28.tsv` (session-start measurement).
+
+Encoders:
+- cjxl: libjxl v0.12.0 4279d48 (`/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl`)
+- ours: `cjxl-rs` (this repo, `--no-default-features --features
+  'jpeg-reencoding,parallel,jxl_encoder/std'`)
+
+Roundtrip verification: djxl v0.12.0 d2c7032 `--reconstruct_jpeg` via
+extension auto-detect, byte-identical compare against source.
+
+Per-lever audit
+---------------
+
+LEVER A — kJpegTranscodeACMeta tree (and matching token collectors)
+    Status: RULED OUT, opt-in API shipped (default OFF).
+    Implementation: new `JPEG_TRANSCODE_CONTEXT_TREE_TOKENS` static
+    (243 vs 313 tokens; AC-meta subtree shrinks 11 leaves → 1
+    `Leaf(Zero)`, DC subtree unchanged 34-leaf gradient-fixed BSP);
+    new `write_jpeg_transcode_context_tree`; new
+    `collect_dc_tokens_region_jpeg_transcode` (DC contexts shift
+    11..=44 → 1..=34); new
+    `collect_ac_metadata_tokens_region_jpeg_transcode` (all tokens
+    at ctx 0 with raw values, no gradient/left/zero residuals).
+    Dispatch gated on `jpeg_transcode_tree_enabled()` which reads
+    `JPEG_LEVER_A_ENABLE=1`; default OFF after measurement.
+
+    Per-200-file paired bench (delta vs cjxl):
+      | mode             | total bytes | delta vs cjxl |
+      |------------------|-------------|---------------|
+      | baseline (off)   | 45,484,995  | +1.5225%      |
+      | lever A on       | 49,326,710  | +10.0972%     |
+      | delta            | +3,841,715  | +8.5747pp     |
+
+    Per-file impact (single example, 81xLs_0j9dL.jpg):
+      - dc_global       853B → 824B (-29B; tree shrink ✓)
+      - dc_groups       29,444B → 44,828B (+15,384B; CFL data regression ✗)
+      - net             243,674B → 259,029B (+15,355B; +6.3% per file)
+
+    Root cause: collapsing 11 AC-metadata contexts to 1 context with
+    `Predictor::Zero` removes the gradient/left predictor residuals
+    that kept tokens close to 0. Even though typical JPEGs produce
+    near-zero CFL multipliers (per-tile YtoX/YtoB → all zeros on the
+    3 sampled images), the EPF channel emits raw sharpness values
+    (e.g. 4) and the merged-context Huffman code can't be as tight
+    per-context as the multi-context baseline. Even when most tokens
+    are 0, the merged distribution forces longer codes for the
+    minority symbols.
+
+    libjxl's own JPEG-transcode path pays the same cost — we are
+    *already* better than libjxl on the AC-metadata stream by using
+    a richer tree (matches libjxl's `kACMeta` shape, NOT
+    `kJpegTranscodeACMeta`).
+
+    Disposition: keep the API surface so future investigators can
+    A/B measure other AC-metadata routing strategies without
+    re-implementing the ~200 LOC token collectors. Production
+    default remains OFF.
+
+LEVER B — quant matrix RAW mode encoding
+    Status: AT PARITY, no change shipped.
+    Investigation: read both libjxl `enc_quant_weights.cc::EncodeQuant`
+    and our `write_raw_quant_table_modular`. Both use
+    `ModularGenericCompress`-style sub-bitstream:
+      GroupHeader → MA tree (Decoder::parse 6 ctx) → tree tokens →
+      Data entropy (Decoder::parse 1 ctx) → 192 data tokens.
+    Our per-file qtable overhead ~350-400 bits (~50 B). libjxl
+    structurally produces the same bytes via the same code path.
+
+    libjxl's only structural difference: the quant table stream
+    participates in the GLOBAL tree (`tree_splits_.push_back(qt0
+    ID)` in `enc_modular.cc:663`), so the qtable doesn't write its
+    own tree+entropy header. Estimated savings if we moved to
+    use_global_tree=true: ~80 bits/file (~10 B) = ~2,000 B on 200
+    files = ~0.005pp. Not worth the multi-day refactor.
+
+LEVER C — frame all_default for JPEG
+    Status: STRUCTURALLY IMPOSSIBLE for YCbCr JPEGs.
+    Investigation: traced libjxl `frame_header.cc::VisitFields`.
+    When `xyb_encoded=false` (JPEG mode), the field visitor reads
+    `Bool(false, &alternate)` where `alternate=(color_transform ==
+    kYCbCr)`. For YCbCr JPEGs this MUST be `1` (true), which fails
+    the AllDefault visitor check (default value 0). Therefore
+    `is_all_default()` can NEVER return true for our JPEG output
+    (every 3-component baseline/progressive JPEG is encoded with
+    `do_ycbcr=true`).
+
+    Our existing `FrameHeader::is_all_default()` correctly
+    enforces `xyb_encoded=true` as a precondition. Lever C cannot
+    save bytes on the JPEG transcode path. Skipped without code
+    change.
+
+LEVER D — DC/QF threshold value encoding selectors
+    Status: AT PARITY, no change shipped.
+    Investigation: read libjxl `entropy_coder.h:37-42`:
+      kDCThresholdDist = U32Enc(Bits(4), BitsOffset(8,16),
+                                BitsOffset(16,272),
+                                BitsOffset(32,65808))
+      kQFThresholdDist = U32Enc(Bits(2), BitsOffset(3,4),
+                                BitsOffset(5,12),
+                                BitsOffset(8,44))
+    Our `write_dc_threshold` / `write_qf_threshold` in
+    `vardct/context_tree.rs:632-690` use IDENTICAL selectors and
+    payload widths. Already at parity.
+
+Cumulative result
+-----------------
+
+| metric                      | baseline       | with lever A   | delta  |
+|-----------------------------|----------------|----------------|--------|
+| roundtrip OK                | 200 / 200      | 200 / 200      | 0      |
+| roundtrip DIFF              | 0 / 200        | 0 / 200        | 0      |
+| total source bytes          | 54,738,069     | 54,738,069     | 0      |
+| total cjxl bytes            | 44,802,893     | 44,802,893     | 0      |
+| total ours bytes            | 45,484,995     | 49,326,710     | +8.45% |
+| delta vs cjxl (pp)          | +1.5225%       | +10.0972%      | +8.57pp|
+
+Net session deliverable: 0pp byte gain.
+- 3 levers (B/C/D) confirmed AT PARITY or STRUCTURALLY IMPOSSIBLE
+  via direct libjxl source read; no production code touched for
+  those.
+- 1 lever (A) implemented end-to-end (~200 LOC tree + collectors
+  + dispatch), measured at 200-file scale, RULED OUT as default
+  per +8.57pp regression. Opt-in API surface retained for future
+  investigators.
+
+What was NOT closed (the +1.52pp remaining gap)
+-----------------------------------------------
+
+Section breakdown of 81xLs_0j9dL.jpg (one of the bench files,
++1.49% over cjxl = +3,584 B):
+  - file_hdr       8 B
+  - frame_hdr      <1 B
+  - dc_global      853 B
+  - dc_groups      29,444 B
+  - ac_global      4,834 B
+  - ac_groups      207,814 B
+  Total           242,953 B (= 243,674 - 720 container/JBRD)
+
+cjxl total: 240,090 B = same container layout (jbrd 483 B
+identical, brob ~66 B). The 3,584 B delta is entirely in the JXL
+codestream, distributed across all sections proportionally.
+
+Confirmed at parity with cjxl:
+- HybridUint config (kNone for JPEG path, lever #3 in prior session)
+- Histogram clustering (kFast for JPEG, no enhanced pair-merge)
+- LZ77 (disabled, matches libjxl JPEG behaviour)
+- ANS histogram strategy (we use Precise = MORE search than cjxl's
+  Approximate; should be at-or-better)
+- Context map encoding (3-way simple/Huffman+MTF/ANS+LZ77 selector)
+- block_ctx_map (JPEG DC-quantile from issue #65)
+- Custom coefficient orders (EX-J17a Lehmer cost-gated)
+- DC/QF threshold value encoding (lever D verified at parity)
+- jbrd payload (parity verified: 483 B vs 483 B)
+
+Remaining 1.52pp is in accumulated tiny libjxl tunings, each
+worth ~0.05pp or smaller per round-2 research. The structural
+levers (A/B/C/D) have all been measured and either ship or are
+ruled out.
+
+Probes / instrumentation added (env-var-gated, zero default cost)
+-----------------------------------------------------------------
+
+- `JPEG_SECTION_DUMP=1` — print per-section bytes (file_hdr,
+  frame_hdr, dc_global, dc_groups, ac_global, ac_groups) and
+  token counts (dc_tokens, ac_meta_tokens, ac_tokens).
+- `JPEG_LEVER_A_ENABLE=1` — opt-in to the lever A
+  (kJpegTranscodeACMeta tree + matching token collectors); see
+  `jpeg_transcode_tree_enabled()` in `jpeg/encode.rs`.
+
+Repro
+-----
+
+1. Build: `cargo build --release -p jxl-encoder-cli
+            --no-default-features
+            --features 'jpeg-reencoding,parallel,jxl_encoder/std'`
+2. Bench script: `/tmp/bit-shaving/bench_lever.py` (driver),
+   `/tmp/bit-shaving/bench_quick.py` (baseline). Both walk the
+   first N files from
+   `benchmarks/jpeg_in_jxl_recompression_2026-05-28.tsv`,
+   encode via `cjxl-rs`, decode via `djxl --reconstruct_jpeg`,
+   compare bytes. Pass extra env via `KEY=VAL` positional args
+   (e.g. `JPEG_LEVER_A_ENABLE=1`).
+3. Compare deltas across modes.
+
+Acceptance gates (per task spec)
+---------------------------------
+
+- (a) Build clean: PASS (cargo build release succeeds with required features)
+- (b) jpeg_reencoding tests pass: PASS (27/27 + 1 ignored)
+- (c) Hash-locks 36/36 BYTE-IDENTICAL: PASS (no production-default code path changed)
+- (d) 200-file bench: PASS roundtrip 200/200, delta unchanged at +1.5225%
+- (e) Multi-decoder spot-check 3 JPEGs via djxl + jxl-rs: PASS (6/6:
+      djxl reconstructs byte-identical; jxl-rs/jxl_cli decodes to valid PPM)
+- (f) strategy_libjxl_byte_lock 5/5 PASS: PASS
+- (g) Single commit per chunk: this is a single combined commit
+      with lever A opt-in API surface + bench TSV + meta + probe
+      instrumentation.
+- (h) Sibling cleanup: pending after commit.
+
+DO NOT (binding for future agents)
+-----------------------------------
+
+1. DO NOT default-flip `JPEG_LEVER_A_ENABLE` to ON. Measurement
+   is conclusive: +8.57pp regression on the 200-file bench. The
+   structural problem is the merged single-context Huffman code
+   cannot match the per-context tightness of the gradient/left/zero
+   predictor split on CFL/QF/ACS/EPF tokens, even when most values
+   are 0.
+2. DO NOT respawn lever B with use_global_tree=true expecting big
+   gains. Measured upper bound is ~10 B/file = ~2 KB on 200 files
+   = ~0.005pp. The required refactor (moving qtable encoding from
+   per-stream tree to the global tree) is multi-day work for sub-
+   noise gain.
+3. DO NOT respawn lever C for YCbCr JPEGs. The libjxl field
+   visitor reads `Bool(false, &alternate)` when xyb_encoded=false,
+   and YCbCr forces alternate=1 ≠ default 0. Structurally
+   impossible. Lever C could ONLY apply to RGB (non-YCbCr) JPEGs
+   which are extremely rare in the bench corpus.
+4. DO NOT respawn lever D thinking selectors might differ.
+   Verified bit-identical via libjxl `entropy_coder.h:37-42` direct
+   read.
+5. DO NOT cite "FMA precision" for any future JPEG byte movement
+   (per CLAUDE.md W44-66 user correction). JPEG transcode is
+   integer arithmetic end-to-end.
+6. DO NOT remove the JPEG_SECTION_DUMP probe. It's load-bearing
+   diagnostic infrastructure for future investigators, zero cost
+   when the env var is unset.
+
+Follow-on candidates (NOT in this session's scope)
+---------------------------------------------------
+
+1. **Section-level cjxl-vs-ours bit comparison** — instrument cjxl
+   (via libjxl AuxOut) to dump per-section bytes, then bit-compare
+   against our JPEG_SECTION_DUMP output. Would isolate which
+   section absorbs the remaining +1.52pp. ~1 day to wire up.
+2. **Merge qtable stream into global tree** (lever B variant).
+   Multi-day port (move from per-stream tree to global tree, ensure
+   global tree has qtable-compatible leaf). Upper bound ~10 B/file.
+3. **AC stream histogram clustering** — try `kBest` (full pair-
+   merge) for JPEG instead of `kFast`. cjxl uses kFast at effort
+   7; libjxl `effort >= 9` (kTortoise) uses kBest. Worth trying
+   since AC stream histogram serialization is ~40 bytes/histogram
+   × 116 histograms = 4.6 KB/file = substantial. Risk: encode time
+   blowup.
+4. **Approach the +1.52pp problem from the codestream-layout side**
+   — try emitting the JPEG-mode frame with different group sizes
+   (current is 256x256, libjxl might use larger groups for JPEG).
+
+Files modified
+--------------
+
+Source (committed):
+- `jxl-encoder/src/vardct/context_tree.rs`
+  + `NUM_JPEG_TRANSCODE_CONTEXT_TREE_TOKENS = 243`
+  + `JPEG_TRANSCODE_CONTEXT_TREE_TOKENS` static array
+  + `pub fn write_jpeg_transcode_context_tree`
+- `jxl-encoder/src/vardct/dc_coding.rs`
+  + `NUM_DC_CONTEXTS_JPEG_TRANSCODE = 35`
+  + `JPEG_TRANSCODE_AC_META_CONTEXT = 0`
+  + `JPEG_TRANSCODE_DC_CONTEXT_OFFSET = 1`
+  + `pub fn collect_dc_tokens_region_jpeg_transcode`
+  + `pub fn collect_ac_metadata_tokens_region_jpeg_transcode`
+- `jxl-encoder/src/jpeg/encode.rs`
+  + `fn jpeg_transcode_tree_enabled()` (env-var dispatch)
+  + dispatch in token-collection loop (lever A on vs off)
+  + `use_lever_a` threaded into `write_dc_global_jpeg`
+  + JPEG_SECTION_DUMP probe (env-var-gated per-section bytes)
+
+Benchmarks (committed):
+- `benchmarks/jpeg_bit_shaving_2026-05-28.tsv` (200 rows, baseline + lever_a_on)
+- `benchmarks/jpeg_bit_shaving_2026-05-28.meta` (this file)
