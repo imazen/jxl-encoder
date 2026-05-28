@@ -1,0 +1,5 @@
+file	status	src_bytes	jxl_bytes	diff_bytes	decoder
+pete-walls-RaC2IyYYY4A-unsplash.jpg	OK	602634	527091	byte-identical	djxl
+filipp-romanovski-TPjt04_gXvk-unsplash.jpg	OK	5343191	4826585	byte-identical	djxl
+61_WcpJyRzL.jpg	OK	81963	51710	byte-identical	djxl
+20230706_124619.jpg	DIFF	4063102	3420758	3_bytes	djxl
