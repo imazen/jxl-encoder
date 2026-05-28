@@ -916,6 +916,139 @@ pub fn apply_lz77_rle(
     }
 }
 
+/// Apply RLE-based LZ77 compression to a vector of token sections, with a
+/// SINGLE global cost-vs-savings gate.
+///
+/// Mirrors libjxl `ApplyLZ77_RLE` (`enc_lz77.cc:111-183`): iterates the input
+/// sections, applies the same RLE transform per-section, accumulates
+/// `bit_decrease` and `total_symbols` GLOBALLY, and accepts the transformation
+/// only if `total_bit_decrease > total_symbols * 0.2 + 16`.
+///
+/// This is the multi-section analog of [`apply_lz77_rle`]. When applied to a
+/// JPEG transcode encode's AC group sections, the global aggregation matters:
+/// individual 256×256 AC groups often fall below the per-section threshold
+/// even though the aggregate savings clear it. The single-section
+/// [`apply_lz77_rle`] would reject every section individually.
+///
+/// Returns `Some((transformed_sections, params))` where
+/// `transformed_sections.len() == sections.len()` and each is the LZ77
+/// transformation of the matching input section, on success. Returns `None`
+/// if the global savings threshold is not met (in which case the caller should
+/// write the original sections with `Lz77Params::enabled = false`).
+pub fn apply_lz77_rle_multi_section(
+    sections: &[&[Token]],
+    num_contexts: usize,
+    force_huffman: bool,
+    distance_multiplier: i32,
+) -> Option<(Vec<Vec<Token>>, Lz77Params)> {
+    if sections.is_empty() {
+        return None;
+    }
+
+    let mut lz77 = Lz77Params::new(num_contexts, force_huffman);
+
+    // RLE distance symbol: same convention as the single-section variant.
+    let rle_distance_symbol: u32 = if distance_multiplier > 0 { 1 } else { 0 };
+
+    // libjxl builds ONE `SymbolCostEstimator` over the concatenated input
+    // tokens (`SymbolCostEstimator sce(num_contexts, params.force_huffman,
+    // tokens, lz77)` at `enc_lz77.cc:116` where `tokens` is the full
+    // `std::vector<std::vector<Token>>&`). The estimator's constructor walks
+    // every section and aggregates per-context histograms before computing
+    // bit costs. To mirror that exactly we concatenate the per-section
+    // token slices once and pass the result to `SymbolCostEstimator::new`.
+    let total_section_tokens: usize = sections.iter().map(|s| s.len()).sum();
+    let mut concat_tokens: Vec<Token> = Vec::with_capacity(total_section_tokens);
+    for section in sections {
+        concat_tokens.extend_from_slice(section);
+    }
+    let sce = SymbolCostEstimator::new(num_contexts, force_huffman, &concat_tokens, &lz77);
+
+    let mut output_sections: Vec<Vec<Token>> = Vec::with_capacity(sections.len());
+    let mut total_bit_decrease: f32 = 0.0;
+    let mut total_symbols: usize = 0;
+    let mut sym_cost: Vec<f32> = Vec::new();
+
+    for section in sections {
+        let tokens = *section;
+        total_symbols += tokens.len();
+        if tokens.is_empty() {
+            output_sections.push(Vec::new());
+            continue;
+        }
+
+        // Per-section cumulative bit costs (matches libjxl's per-stream
+        // `sym_cost.resize(in.size() + 1)` loop at `enc_lz77.cc:128-133`).
+        sym_cost.clear();
+        sym_cost.resize(tokens.len() + 1, 0.0);
+        for (i, token) in tokens.iter().enumerate() {
+            let e = UintCoder::encode(token.value);
+            let cost = sce.symbol_cost(token.context() as usize, e.token as usize) + e.nbits as f32;
+            sym_cost[i + 1] = sym_cost[i] + cost;
+        }
+
+        let mut out = Vec::with_capacity(tokens.len());
+        let mut i = 0usize;
+        while i < tokens.len() {
+            let mut num_to_copy = 0usize;
+            if i > 0 {
+                let prev_value = tokens[i - 1].value;
+                while i + num_to_copy < tokens.len() && tokens[i + num_to_copy].value == prev_value
+                {
+                    num_to_copy += 1;
+                }
+            }
+
+            if num_to_copy == 0 {
+                out.push(tokens[i]);
+                i += 1;
+                continue;
+            }
+
+            let literal_cost = sym_cost[i + num_to_copy] - sym_cost[i];
+            let lz77_cost = if num_to_copy >= lz77.min_length as usize {
+                let lz77_len = num_to_copy - lz77.min_length as usize;
+                ceil_log2_nonzero((lz77_len + 1) as u32) as f32 + 1.0
+            } else {
+                0.0
+            };
+
+            if num_to_copy < lz77.min_length as usize || literal_cost <= lz77_cost {
+                for j in 0..num_to_copy {
+                    out.push(tokens[i + j]);
+                }
+                i += num_to_copy;
+                continue;
+            }
+
+            let lz77_len = (num_to_copy - lz77.min_length as usize) as u32;
+            out.push(Token::lz77_length(tokens[i].context(), lz77_len));
+            out.push(Token::new(lz77.distance_context, rle_distance_symbol));
+            total_bit_decrease += literal_cost - lz77_cost;
+            i += num_to_copy;
+        }
+
+        output_sections.push(out);
+    }
+
+    // GLOBAL threshold check (mirrors libjxl `enc_lz77.cc:179-182`).
+    let threshold = total_symbols as f32 * 0.2 + 16.0;
+    #[cfg(feature = "debug-tokens")]
+    eprintln!(
+        "[LZ77-RLE-multi] bit_decrease={:.1}, threshold={:.1}, sections={}, total_symbols={}",
+        total_bit_decrease,
+        threshold,
+        sections.len(),
+        total_symbols
+    );
+    if total_bit_decrease > threshold {
+        lz77.enabled = true;
+        Some((output_sections, lz77))
+    } else {
+        None
+    }
+}
+
 /// CeilLog2Nonzero matching libjxl's implementation.
 fn ceil_log2_nonzero(x: u32) -> u32 {
     debug_assert!(x > 0);
@@ -1441,6 +1574,104 @@ mod tests {
         if let Some((best_tokens, params)) = best_result {
             assert!(params.enabled);
             assert!(best_tokens.len() < tokens.len());
+        }
+    }
+
+    #[test]
+    fn test_rle_multi_section_empty() {
+        let result = apply_lz77_rle_multi_section(&[], 1, false, 0);
+        assert!(result.is_none(), "empty sections must return None");
+    }
+
+    #[test]
+    fn test_rle_multi_section_below_threshold() {
+        // Each section has too few runs to pass the per-section threshold,
+        // AND in aggregate falls well below the global threshold. The
+        // single-section per-call gate WOULD have rejected each; verify the
+        // multi-section variant also correctly rejects when bit_decrease is
+        // genuinely too small.
+        let make_diverse = |ctx: u32| {
+            // 100 tokens with mostly unique values — no RLE opportunities.
+            (0..100u32).map(|v| Token::new(ctx, v)).collect::<Vec<_>>()
+        };
+        let s0 = make_diverse(0);
+        let s1 = make_diverse(0);
+        let sections: Vec<&[Token]> = vec![&s0, &s1];
+        let result = apply_lz77_rle_multi_section(&sections, 1, false, 0);
+        assert!(
+            result.is_none(),
+            "fully-diverse sections must not pass the global threshold"
+        );
+    }
+
+    #[test]
+    fn test_rle_multi_section_aggregate_passes() {
+        // Each section has SOME RLE runs but the per-section call might
+        // reject it; the multi-section aggregate sums savings and passes
+        // the single global threshold. Build sections that are mostly runs.
+        let make_runs = |ctx: u32| {
+            // 100 tokens, 10 runs of length 10 each — heavy RLE opportunity.
+            let mut t = Vec::new();
+            for v in 0..10u32 {
+                for _ in 0..10 {
+                    t.push(Token::new(ctx, v));
+                }
+            }
+            t
+        };
+        let s0 = make_runs(0);
+        let s1 = make_runs(0);
+        let s2 = make_runs(0);
+        let sections: Vec<&[Token]> = vec![&s0, &s1, &s2];
+        let result = apply_lz77_rle_multi_section(&sections, 1, false, 0);
+        let (transformed, params) =
+            result.expect("heavy-RLE multi-section must pass the global threshold");
+        assert!(params.enabled, "Lz77Params::enabled must be set on Some");
+        assert_eq!(transformed.len(), 3, "section count must be preserved");
+        // Each section should have shrunk: 10 runs * (lz77_length + distance)
+        // + the run-initial token = 30 tokens instead of 100.
+        for sec in &transformed {
+            assert!(
+                sec.len() < 100,
+                "each transformed section must shrink: got {}",
+                sec.len()
+            );
+            assert!(
+                sec.iter().any(|t| t.is_lz77_length()),
+                "transformed sections must contain LZ77 length tokens"
+            );
+        }
+    }
+
+    #[test]
+    fn test_rle_multi_section_preserves_section_boundaries() {
+        // Two sections each with a run of identical values. Mix in a couple
+        // of unique values so the histogram isn't degenerate (a single-value
+        // histogram has 0 bit cost per token, so RLE has nothing to save).
+        // Each section: unique seed → 50 identical → 50 identical → unique
+        // tail. RLE collapses each 50-run into a length+distance pair.
+        let mut s0: Vec<Token> = vec![Token::new(0, 0), Token::new(0, 1)];
+        s0.extend((0..50).map(|_| Token::new(0, 7)));
+        s0.extend((0..50).map(|_| Token::new(0, 11)));
+        s0.push(Token::new(0, 99));
+        let s1 = s0.clone();
+        let sections: Vec<&[Token]> = vec![&s0, &s1];
+        let result = apply_lz77_rle_multi_section(&sections, 1, false, 0);
+        let (transformed, _params) = result.expect("mixed-distribution multi-section must pass");
+        assert_eq!(transformed.len(), 2);
+        // Each transformed section must START with a literal token (not an
+        // LZ77 length): the first token has no prior tokens to match against.
+        for sec in &transformed {
+            assert!(
+                !sec.is_empty() && !sec[0].is_lz77_length(),
+                "first token in a section must be a literal"
+            );
+            // Each section should shrink: 103 → much less.
+            assert!(
+                sec.len() < s0.len(),
+                "section must shrink: got {}",
+                sec.len()
+            );
         }
     }
 

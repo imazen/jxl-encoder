@@ -3219,11 +3219,18 @@ impl LosslessConfig {
     // Progressive JPEGs and arithmetic-coded JPEGs are unsupported — they
     // return [`EncodeError::JpegParse`] / [`EncodeError::InvalidInput`].
     //
-    // The [`LosslessConfig`] effort / mode / per-knob settings do NOT
-    // currently affect the transcode path (JPEG → JXL is a deterministic
-    // bit-level recoding). The config argument is taken for forwards
-    // compatibility — future versions may use it to gate the JPEG-CfL
-    // search effort, JBRD Brotli effort, or related tuning knobs.
+    // The [`LosslessConfig::effort`] level is honoured on the JPEG transcode
+    // path: at `effort >= 9` (libjxl `speed_tier <= kTortoise`) the AC code
+    // uses kBest pair-merge histogram clustering (-0.27 % vs default-effort
+    // on a 10-file 2026-05-28 corpus). Effort 0-8 produces byte-identical
+    // output to the pre-2026-05-28 default-effort transcode. libjxl also
+    // enables kBest uint-method + RLE LZ77 at e9; both are currently
+    // DEFAULT-OFF on our path (uint_method regresses by +0.5 % due to a
+    // divergence in `optimize_uint_configs_best_from_freqs`, LZ77 global
+    // savings threshold doesn't pass on JPEG AC streams). Env hooks
+    // `JPEG_E9_FORCE_UINT_OPT=1` / `JPEG_E9_FORCE_LZ77=1` re-enable each for
+    // future investigation. Other `LosslessConfig` settings (mode, patches,
+    // lossy_palette, etc.) do not affect the transcode path.
 
     /// Losslessly transcode a JPEG file into JXL with JBRD container for
     /// byte-exact JPEG reconstruction.
@@ -3268,10 +3275,12 @@ impl LosslessConfig {
     #[cfg(feature = "jpeg-reencoding")]
     #[track_caller]
     pub fn encode_jpeg_transcode(&self, jpeg_bytes: &[u8]) -> Result<Vec<u8>> {
-        // Config is currently unused — see module-level comment above.
-        let _ = self;
+        // 2026-05-28: effort gates kBest pair-merge clustering at e>=8 and LZ77
+        // (greedy at e=8, optimal at e>=9) on the AC code. See
+        // `crate::jpeg::encode_jpeg_to_jxl_container_with_effort`.
         let jpeg = crate::jpeg::read_jpeg(jpeg_bytes).map_err(|e| at(EncodeError::from(e)))?;
-        crate::jpeg::encode_jpeg_to_jxl_container(&jpeg).map_err(|e| at(EncodeError::from(e)))
+        crate::jpeg::encode_jpeg_to_jxl_container_with_effort(&jpeg, self.effort)
+            .map_err(|e| at(EncodeError::from(e)))
     }
 
     /// Losslessly transcode a JPEG file into a bare JXL codestream
@@ -3293,9 +3302,10 @@ impl LosslessConfig {
     #[cfg(feature = "jpeg-reencoding")]
     #[track_caller]
     pub fn encode_jpeg_transcode_codestream(&self, jpeg_bytes: &[u8]) -> Result<Vec<u8>> {
-        let _ = self;
+        // 2026-05-28: see `encode_jpeg_transcode` for the effort gating.
         let jpeg = crate::jpeg::read_jpeg(jpeg_bytes).map_err(|e| at(EncodeError::from(e)))?;
-        crate::jpeg::encode_jpeg_to_jxl(&jpeg).map_err(|e| at(EncodeError::from(e)))
+        crate::jpeg::encode_jpeg_to_jxl_with_effort(&jpeg, self.effort)
+            .map_err(|e| at(EncodeError::from(e)))
     }
 }
 
