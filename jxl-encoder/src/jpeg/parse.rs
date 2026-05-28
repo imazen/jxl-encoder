@@ -516,13 +516,22 @@ fn skip_entropy_data(data: &[u8], pos: &mut usize) {
 }
 
 /// Extract DCT coefficients using zenjpeg's decoder.
+///
+/// As of zenjpeg 0.8.5 we use [`decode_coefficients_with_jbrd_metadata`]
+/// so we get the per-scan JBRD signals (`reset_points` and
+/// `extra_zero_runs`) for free in the same single decode pass. These are
+/// merged into the marker-scanner-built `scan_info` entries by matching
+/// on `(ss, se, ah, al)` in bitstream order — exactly the order both the
+/// marker scanner and zenjpeg traverse SOS markers.
+///
+/// [`decode_coefficients_with_jbrd_metadata`]: zenjpeg::decoder::DecodeConfig::decode_coefficients_with_jbrd_metadata
 fn extract_coefficients_zenjpeg(data: &[u8], jpeg: &mut JpegData) -> Result<()> {
     use zenjpeg::decoder::DecodeConfig;
     use zenjpeg::encoder::Unstoppable;
 
     let config = DecodeConfig::new();
-    let decoded = config
-        .decode_coefficients(data, Unstoppable)
+    let (decoded, jbrd_meta) = config
+        .decode_coefficients_with_jbrd_metadata(data, Unstoppable)
         .map_err(|e| JpegError::Decode(format!("{e}")))?;
 
     if decoded.components.len() != jpeg.components.len() {
@@ -548,6 +557,53 @@ fn extract_coefficients_zenjpeg(data: &[u8], jpeg: &mut JpegData) -> Result<()> 
                 comp.coeffs[dst_base + natural_idx] = zen_comp.coeffs[src_base + zigzag_idx];
             }
         }
+    }
+
+    // Merge zenjpeg's JBRD per-scan signals into our marker-scanner-built
+    // scan_info. zenjpeg only emits a tracked entry for scans it actually
+    // decodes (progressive scans + baseline scan). The marker scanner emits
+    // ONE entry per SOS marker in the same bitstream order, so the indexes
+    // align 1:1 for valid JPEGs.
+    //
+    // For baseline JPEGs zenjpeg currently routes the entropy decode through
+    // a path that does NOT call `decode_progressive_scan` and therefore does
+    // not push a JbrdScanInfo. That's fine — baseline JPEGs never emit EOB
+    // runs > 1 or ZRL-chains preceding EOB by construction (no compliant
+    // encoder ever does), so `reset_points` and `extra_zero_runs` are
+    // intrinsically empty there. The marker-scanner's default empty Vecs
+    // are correct as-is.
+    //
+    // For progressive JPEGs (the case the 2 known DIFF unsplash cases
+    // exercise), zenjpeg pushes one JbrdScanInfo per SOS in order. We
+    // pair by index; if for any reason counts disagree (e.g. truncated
+    // last scan), we simply skip the merge for the unmatched tail —
+    // the empty default is still safe.
+    for (scan, jbrd_scan) in jpeg.scan_info.iter_mut().zip(jbrd_meta.scans.iter()) {
+        // Sanity check: the spectral / approximation parameters must match.
+        // If they don't, the bitstream ordering between marker scanner and
+        // zenjpeg has diverged — bail with a descriptive error rather than
+        // silently emitting wrong JBRD data.
+        if scan.ss != jbrd_scan.ss as u32
+            || scan.se != jbrd_scan.se as u32
+            || scan.ah != jbrd_scan.ah as u32
+            || scan.al != jbrd_scan.al as u32
+        {
+            return Err(JpegError::Invalid(format!(
+                "JBRD scan-parameter mismatch: marker scanner saw \
+                 ss={}/se={}/ah={}/al={} but zenjpeg saw \
+                 ss={}/se={}/ah={}/al={}",
+                scan.ss,
+                scan.se,
+                scan.ah,
+                scan.al,
+                jbrd_scan.ss,
+                jbrd_scan.se,
+                jbrd_scan.ah,
+                jbrd_scan.al,
+            )));
+        }
+        scan.reset_points = jbrd_scan.reset_points.clone();
+        scan.extra_zero_runs = jbrd_scan.extra_zero_runs.clone();
     }
 
     Ok(())

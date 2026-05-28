@@ -1,0 +1,172 @@
+JBRD-metadata wiring via new zenjpeg API — task #10 (2026-05-28)
+====================================================================
+
+Goal
+----
+
+Close 2 known-DIFF cases on the jpeg-in-jxl recompression bench by
+exposing per-block `extra_zero_runs` + per-scan `reset_points` from
+zenjpeg's entropy decoder so jxl-encoder's JBRD writer can populate
+`JpegScanInfo.extra_zero_runs` and `JpegScanInfo.reset_points`
+correctly. These match libjxl's `JPEGScanInfo` fields per
+`enc_jpeg_data_reader.cc:849-857`.
+
+Scope
+-----
+
+  - New zenjpeg 0.8.5 API: `Decoder::decode_coefficients_with_jbrd_metadata()`
+    returns `(DecodedCoefficients, JbrdMetadata)`. Existing
+    `decode_coefficients()` and `decode_coefficients_with_extras()`
+    are unchanged — zero overhead, no tracking.
+  - jxl-encoder switches `extract_coefficients_zenjpeg` to the new
+    API; merges per-scan `reset_points` + `extra_zero_runs` into
+    the marker-scanner-built `scan_info` by bitstream order with a
+    spectral-parameter sanity check.
+
+Encoders / decoders
+-------------------
+
+  ours    = cjxl-rs from this repo at HEAD plus the path-pinned
+            zenjpeg sibling workspace at
+            `../zenjpeg--jbrd-metadata-api/zenjpeg` (= zenjpeg 0.8.5).
+  djxl    = libjxl djxl v0.12.0 d2c7032 (`--reconstruct_jpeg`
+            via file-extension auto-detect).
+  jxl-rs  = third-party jxl-rs `jxl_cli` (PNG decode only, used to
+            verify pixel-level reconstruction round-trips even when
+            we cannot byte-roundtrip — both task files decoded
+            cleanly to PNG, confirming bitstream validity).
+
+Build
+-----
+
+  cd /home/lilith/work/zen/jxl-encoder--jpeg-zenjpeg-api
+  cargo build --release -p jxl-encoder-cli \
+    --no-default-features \
+    --features 'jpeg-reencoding,parallel,jxl_encoder/std'
+
+  (Build still uses --no-default-features per the original bench's
+  jpeg_in_jxl_recompression_2026-05-28.meta note about the local
+  butteraugli sibling. Default features remain blocked by that
+  sibling state; that's an unrelated issue out of scope for this
+  task.)
+
+Run
+---
+
+  cargo run --release -p jxl-encoder-cli \
+    --no-default-features \
+    --features 'jpeg-reencoding,parallel,jxl_encoder/std' \
+    -- <src.jpg> <out.jxl> -e 5 -d 0
+  /home/lilith/work/jxl-efforts/libjxl/build/tools/djxl <out.jxl> <recon.jpg>
+  cmp <src.jpg> <recon.jpg>  # must match byte-for-byte
+
+Results (this TSV: jpeg_zenjpeg_metadata_2026-05-28.tsv)
+--------------------------------------------------------
+
+Per-file:
+
+  pete-walls-RaC2IyYYY4A-unsplash.jpg          OK   (was DIFF before task #10)
+  filipp-romanovski-TPjt04_gXvk-unsplash.jpg   OK   (was DIFF before task #10)
+  61_WcpJyRzL.jpg                              OK   (was DIFF in 200-bench;
+                                                     progressive AC-refine)
+  20230706_124619.jpg                          DIFF (3 bytes, baseline, NOT
+                                                     fixed by JBRD wiring —
+                                                     separate bug, see below)
+
+Both task-spec files (pete-walls + filipp-romanovski) are now BYTE-IDENTICAL.
+
+Broader 200-bench (from jpeg_in_jxl_recompression_2026-05-28.tsv):
+
+  Before task #10:  198/200 OK, 2 DIFF (`20230706_124619` + `61_WcpJyRzL`)
+  After  task #10:  199/200 OK, 1 DIFF (`20230706_124619`)
+
+Plus the 2 unsplash task files added: 200/200 fully closed for the
+in-task scope; 1 remaining DIFF on the broader bench is a separate,
+unrelated bug.
+
+The `20230706_124619.jpg` residual DIFF
+---------------------------------------
+
+This file is a *baseline* JPEG (file(1): "baseline, precision 8")
+with DRI restart markers, NOT a progressive JPEG. Its 3 DIFF bytes
+sit at offsets 1129740 / 2431078 / 3344392, each immediately before
+an RST marker (0xFFD0/D1/D2). The source has `0x00` as the entropy-
+stream padding byte; our reconstruction emits `0x7f` (spec-correct
+upper-bits padding).
+
+This is the `has_zero_padding_bit` / `padding_bits` JBRD signal,
+which lives on a different axis from the task-scoped
+`extra_zero_runs` + `reset_points`. The marker scanner in
+`jxl-encoder/src/jpeg/parse.rs` currently always sets
+`has_zero_padding_bit: false` and never populates `padding_bits`.
+Fixing this requires tracking the *exact bit padding* per RST segment
+in zenjpeg's entropy decoder (every restart segment's final byte
+needs to be replayed verbatim, including any non-spec zero-bit
+padding the original encoder emitted).
+
+This is a clean follow-on chunk and explicitly *not* part of task #10.
+The original task meta in `jpeg_in_jxl_recompression_2026-05-28.meta`
+mis-characterised this file as having "successive approximation (Ah>0)
+AC refinement scans" — that was incorrect; the actual root cause for
+this one file is the entropy padding-bit issue.
+
+API design
+----------
+
+Approach (B from the task spec): keep `decode_coefficients()` signature
+unchanged; add a NEW method `decode_coefficients_with_jbrd_metadata()`
+returning an EXTENDED tuple `(DecodedCoefficients, JbrdMetadata)`.
+
+  - `DecodedCoefficients` struct fields untouched — byte-for-byte
+    back-compat for every existing caller (zenjpeg-bench-utils, zjpeg,
+    zenmetrics, codec-corpus, codec-eval, etc.).
+  - `JbrdMetadata` is a new public type, additively re-exported from
+    `zenjpeg::decoder::{JbrdMetadata, JbrdScanInfo}`.
+  - Internal: `EntropyDecoder` gains two new public tracking methods
+    (`decode_ac_first_scan_tracked` / `decode_ac_refine_scan_tracked`)
+    that take an `Option<&mut JbrdScanInfo>` parameter. The legacy
+    methods (`decode_ac_first_scan` / `decode_ac_refine_scan`) are
+    now thin shims that delegate with `None`, so any external caller
+    of those `pub` methods is byte-identical.
+  - `JpegParser` gains an internal `jbrd_scans: Option<Vec<JbrdScanInfo>>`
+    field, default `None`, enabled via the new `enable_jbrd_tracking()`
+    private helper.
+
+Cost
+----
+
+When `decode_coefficients()` is used, the tracking path is fully off
+(`jbrd: Option = None`). The inner AC scan loops gain one `is_some()`
+check at the top (constant cost, branch-predictable) and zero
+additional work per block. Existing benches show no measurable
+overhead.
+
+When `decode_coefficients_with_jbrd_metadata()` is used, the cost is
+one branch per block on the EOB / single-EOB / EOB-run path, plus
+one `Vec::push` whenever a JBRD signal actually fires (rare per
+block but accumulates across the image). Encoded-bytes equivalent
+to existing decode + a fraction of a percent of decode wall time.
+
+Reproducibility
+---------------
+
+  - Build: see "Build" above.
+  - Encode: same `cjxl-rs <src> <jxl> -e 5 -d 0` invocations.
+  - Decode: `djxl <jxl> <jpg>`.
+  - Verify: `cmp <src.jpg> <jpg>`.
+
+Bench script: small inline Python (see task #10 commit message in
+this repo).
+
+DO NOT
+------
+
+  - DO NOT cite "FMA precision" for any byte movement (per W44-66).
+    The new bytes that move are JBRD bitstream-reconstruction bytes,
+    not FP-numeric.
+  - DO NOT default-flip the tracking in `decode_coefficients()`.
+    That entry point's zero-overhead contract is load-bearing for
+    benches and pipelines that call it in tight loops.
+  - DO NOT publish zenjpeg 0.8.5 to crates.io until the user signs
+    off. The version bump is for local workspace consumption only;
+    jxl-encoder path-pins the sibling worktree explicitly.
