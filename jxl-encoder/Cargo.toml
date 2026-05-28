@@ -2918,3 +2918,11 @@ required-features = [
     "cvvdp-loop",
     "parallel",
 ]
+
+# Diagnostic: extract & parse the JBRD box from a JXL file (typically cjxl
+# output) and dump per-scan reset_points / extra_zero_runs counts. Standalone
+# parser, no zenjxl-decoder dep. Used to verify task #12 (zenjpeg
+# reset_points fix) ground truth against cjxl.
+[[example]]
+name = "dump_cjxl_jbrd_reset_points"
+path = "examples/dump_cjxl_jbrd_reset_points.rs"

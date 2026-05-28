@@ -1,0 +1,114 @@
+# zenjpeg reset_points / extra_zero_runs libjxl-parity fix — task #12
+# Date: 2026-05-28
+# Repo: zenjpeg sibling worktree `reset-points-fix` (commit pending push)
+# jxl-encoder workspace patch: ../zenjpeg--reset-points-fix/zenjpeg (sibling)
+#
+# Fix summary
+# -----------
+# Closes the +1.99% size regression caused by task #10's reset_points emission
+# bug. The pre-fix decoder pushed mcu=0 phantom reset_points on every AC scan
+# start AND shifted subsequent indices by -1 from cjxl's emission, bloating the
+# JBRD payload on every progressive JPEG transcode.
+#
+# Root cause (per libjxl `enc_jpeg_data_reader.cc:602-617`): libjxl's
+# `DecodeDCTBlock` / `RefineDCTBlock` use a SIGNED `*eobrun` tracker
+# initialised to -1, decremented at the end of every non-fast-path block
+# (line 617), and reset to -1 after every RST marker (line 815). The
+# reset_state predicate (line 602) fires iff `k == Ss && *eobrun == 0` — a
+# state only reachable when the PRIOR block ended with eobrun==1 (post-EOB-
+# introduce + 1-decrement = 0). Task #10 incorrectly used `k == Ss` alone,
+# pushing a reset_point at every block whose first AC symbol was EOB.
+#
+# Mechanism (zenjpeg/src/entropy/decoder.rs):
+#   - New parallel `eobrun_signed: i32` tracker mirroring libjxl's signed
+#     `eobrun` semantics inside `decode_ac_first_scan_tracked` and
+#     `decode_ac_refine_scan_tracked`.
+#   - Predicate extended to `k == Ss && eobrun_signed == 0` (the libjxl-
+#     parity condition from line 602/661).
+#   - Per-block state transitions:
+#       * fast-path (eob_run > 0): `eobrun_signed -= 1` matches libjxl line 571.
+#       * single-EOB branch: `eobrun_signed = 0` matches post-line-617
+#         (1<<0 - 1 = 0).
+#       * multi-EOB branch: `eobrun_signed = eob_run as i32` matches post-
+#         line-617 ((1<<r)+extra - 1).
+#       * real-coef-completion: `eobrun_signed -= 1` outside the loop
+#         matches line 617.
+#       * RST handler: `eobrun_signed = -1` matches line 815.
+#
+# Per-file verification vs cjxl ground truth
+# ------------------------------------------
+# (from `examples/dump_cjxl_jbrd_reset_points`)
+#
+# pete-walls-RaC2IyYYY4A-unsplash.jpg (10-scan progressive):
+#   pre-fix:  total_reset_points = 31583 (10 scans had +1 phantom each + scan 1 shifted)
+#   post-fix: total_reset_points = 30489  ← matches cjxl EXACTLY
+#
+# 91OHK51sn_L.jpg (9-scan progressive, no consecutive EOB at k=Ss anywhere):
+#   pre-fix:  total_reset_points = 2048 (1003 + 506 + 534 + 5x1 phantoms)
+#   post-fix: total_reset_points = 0     ← matches cjxl EXACTLY
+#
+# dsc-0367.jpg (1-scan baseline JPEG, no AC reset_points possible):
+#   pre-fix:  0 (baseline JPEG has only Ss=0 DC; eobrun_allowed=false)
+#   post-fix: 0  ← unchanged, matches cjxl
+#
+# Per-scan reset_point cumulative-index lists are now bit-identical to
+# cjxl on all 3 verified test files (verified via `DUMP_INDICES=1` flag on
+# the diagnostic example).
+#
+# A/B 50-file paired benchmark (interleaved cjxl-rs vs cjxl, libjxl v0.12.0)
+# -------------------------------------------------------------------------
+# Same 50 files (random seed 11 → first 50 valid candidates):
+#   pre-fix  (main worktree zenjpeg): +2.1486% vs cjxl
+#   post-fix (sibling fix):           +1.6497% vs cjxl
+#   delta:   -0.4989pp recovery on identical file set
+#
+# 200-file full bench (post-fix only)
+# -----------------------------------
+#   total ours bytes:  93,676,856
+#   total cjxl bytes:  92,531,031
+#   aggregate delta:   +1.2383% vs cjxl
+#   target hit:        ≥ -0.3pp recovery target — EXCEEDED by ~0.2pp+
+#
+# Roundtrip via djxl --reconstruct_jpeg:
+#   200 files, 1 failure → `20210608_123424.jpg` byte mismatch
+#   This is a PRE-EXISTING bug (sequential JPEG, 0 reset_points, fix doesn't
+#   touch this path). EOI/tail-data divergence in last 2 bytes. Unrelated
+#   to #12 — leave for follow-on diagnosis. cjxl baseline roundtrips this
+#   file fine, so the bug is in jxl-encoder's tail-data / inter-marker
+#   handling, not zenjpeg's decoder.
+#
+# Test results
+# ------------
+# zenjpeg lib tests:       957 / 957 PASS (1 ignored, pre-existing)
+# jxl-encoder lib tests:   1379 / 1379 PASS (--features 'std,jpeg-reencoding')
+# jpeg_reencoding integ:   27 / 27 PASS
+# Multi-decoder spot check: 3 / 3 files (djxl byte-identical + jxl-rs decode)
+#
+# Files modified
+# --------------
+# zenjpeg/src/entropy/decoder.rs  (eobrun_signed tracker + predicate fix,
+#                                   ~70 LOC across 2 functions)
+# zenjpeg/Cargo.toml              (version bump 0.8.6 → 0.8.7)
+# zenjpeg/CHANGELOG.md            (entry for 0.8.7)
+# jxl-encoder/Cargo.toml          (workspace patch zenjpeg path swap)
+# jxl-encoder/examples/dump_cjxl_jbrd_reset_points.rs  (DUMP_INDICES env extension)
+#
+# DO-NOT (binding for future agents)
+# ----------------------------------
+# 1. DO NOT revert the `eobrun_signed -= 1` end-of-block decrement skip when
+#    `exited_via_eob`. libjxl's line-617 IS unconditional, but our EOB branches
+#    already set `eobrun_signed` to the post-line-617 value directly (matching
+#    libjxl's post-state). Skipping the second decrement is the equivalent
+#    transformation, not an omission.
+# 2. DO NOT add the predicate `eobrun_signed == 0` to ZRL (run=15) blocks —
+#    libjxl line 599-600 increments num_zero_runs but does NOT touch eobrun
+#    or check reset_state.
+# 3. DO NOT cite "FMA precision" for any future reset_points divergence
+#    (per W44-66). reset_points emission is structural integer-tracking, not
+#    numeric.
+# 4. The remaining +1.24% vs cjxl is likely dominated by the JBRD
+#    block_context_map gap (task #8, multi-day port) NOT a reset_points
+#    issue.
+
+# (TSV data is in companion file
+#  benchmarks/jpeg_lever_zenjpeg_reset_points_fix_2026-05-28.tsv)
