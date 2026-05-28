@@ -1,0 +1,117 @@
+JPEG-in-JXL Lossless Recompression Benchmark — 2026-05-28
+==========================================================
+
+Sample size: 200 JPEGs (3-component, precision 8) drawn from a
+mixed pool of ~204k product-images + 480 codec-corpus JPEGs.
+
+Stratified by SOF type (file(1)):
+  baseline:    66 / 200 (33%)
+  progressive: 134 / 200 (67%)
+
+(Population estimate from a 300-file file(1) sample of product-
+images: 33% baseline, 67% progressive. The benchmark intentionally
+samples to that population ratio.)
+
+Encoders compared:
+  cjxl    = libjxl `cjxl` v0.12.0 4279d48 (default flags →
+            `lossless_jpeg = true`, effort 7)
+  ours    = `cjxl-rs` from this repo at HEAD (54183c13).
+
+Decoder for roundtrip verification:
+  djxl    = libjxl `djxl` v0.12.0 d2c7032 (`--reconstruct_jpeg`
+            via file-extension auto-detect).
+
+Reproduction:
+  - Build: `cargo build --release -p jxl-encoder-cli
+             --no-default-features
+             --features 'jpeg-reencoding,parallel,jxl_encoder/std'`
+  - Run: see `scripts/bench_jpeg_in_jxl.py` (if added later) or
+    re-execute the inline Python from the `feat(jpeg): land
+    jpeg_in_jxl_recompression bench TSV` commit message.
+
+Notes on the workaround "--no-default-features":
+  - Default features include `butteraugli-loop`.
+  - On 2026-05-28 the local `butteraugli` sibling repo had
+    uncommitted in-progress changes referencing modules that
+    don't yet exist as files (blur_strip / malta_strip /
+    psycho_strip). Per CLAUDE.md hard rule we do not touch
+    sibling repos; building without default features lets the
+    JPEG-recompression CLI compile cleanly.
+  - For deterministic CI bench runs, fix the butteraugli repo
+    state (out of scope for this chunk).
+
+Result summary (see jpeg_in_jxl_recompression_2026-05-28.tsv for
+per-file rows):
+
+  Roundtrip via djxl on our output, byte-identical to source:
+    OK:   198 / 200   (99.0%)
+    DIFF:   2 / 200   (1.0%)
+    FAIL:   0 / 200   (0.0%)
+
+  Both DIFF files are progressive JPEGs with successive
+  approximation (Ah > 0) AC refinement scans where djxl
+  re-derives EOB-run boundaries differently because our
+  `JpegScanInfo.extra_zero_runs` is empty. The reconstructed
+  marker structure (10 SOS markers with matching Ss/Se/Ah/Al)
+  is preserved exactly; only the per-scan entropy data differs.
+  See encode.rs in commit 54183c13 for the deferral rationale.
+
+  Size (over the 198 OK pairs):
+    source bytes:    50,593,004
+    cjxl bytes:      41,380,540  (81.79% of source)
+    ours bytes:      42,295,787  (83.60% of source)
+    delta:           +2.21%  (cjxl smaller)
+
+  Per-stratum:
+    Baseline    (n=65):  delta +1.88%   ours 78.5% of source
+    Progressive (n=133): delta +2.36%   ours 86.1% of source
+
+Per-file headcount (over 198 OK pairs):
+  cjxl smaller: 195
+  ours smaller:   3
+  tied:           0
+
+Open work — gap attribution and ranked next chunks:
+  (1) Codestream entropy coding: ~+1.5% gap is in the `jxlp`
+      box (the VarDCT codestream itself). Investigated:
+      - Enhanced clustering (pair-merge) alone on the AC code:
+        no change on 30-file sample.
+      - Greedy LZ77 on the AC code: -0.09 percentage points
+        on a 30-file sample BUT introduced 2 byte-identical
+        roundtrip regressions on the same sample. Reverted —
+        correctness > 0.09 % savings. Re-investigate by
+        comparing token-level emissions to cjxl with smaller
+        fixture inputs to find the LZ77 wiring divergence.
+  (2) `extra_zero_runs` + `reset_points` population for
+      successive-approximation progressive JPEGs. Closes the
+      ~1 % of inputs that currently roundtrip DIFF.
+      Multi-day port; requires re-parsing the entropy
+      segments to derive RUN states (zenjpeg doesn't expose
+      them — its `decode_coefficients` returns final merged
+      coefficients only).
+  (3) Block context map: we use `BlockCtxMap::default()`
+      (4-cluster compact). For JPEG mode `compute_block_ctx_map`
+      could derive a better map from the actual coefficient
+      distribution, but it would also need to be signaled
+      bit-exactly. Risk: bitstream incompatibility on the
+      decoder side if cluster count differs from the
+      decoder's expectations.
+  (4) CMYK / 4-component JPEG support (rare; ~1.8% of
+      codec-corpus, near-zero on product-images).
+  (5) 12-bit precision JPEGs (rare; <0.5% of codec-corpus,
+      zero on product-images).
+
+Coverage improvement over pre-chunk state:
+  Before this session: ~33% of product-images would encode
+    (baseline only); the rest failed with "unsupported JPEG
+    feature: progressive JPEG (SOF2)".
+  After this session:  99% encode + byte-identical roundtrip
+    (1% DIFF on successive-approx edge cases).
+
+Commits that produced this state:
+  37dcf227  fix(jpeg): byte-exact roundtrip for RGB &
+            non-(1,2,3)-ID JPEGs.
+  160b6ab2  feat(jpeg): brob-compress Exif/XMP in
+            jpeg-reencoding container path.
+  54183c13  feat(jpeg): accept progressive (SOF2) JPEGs in
+            transcoding.
