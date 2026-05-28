@@ -2124,7 +2124,7 @@ mod tests {
 }
 
 /// Number of AC metadata contexts (EPF=1, CfL=2, QF=4, ACS=4).
-const NUM_AC_META_CONTEXTS: u32 = 11;
+pub const NUM_AC_META_CONTEXTS: u32 = 11;
 
 /// Create tree tokens for a merged MA tree with AC metadata routing and learned DC subtree.
 ///

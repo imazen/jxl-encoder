@@ -109,7 +109,7 @@ pub(crate) mod butteraugli_targets;
 // into a zensim butter-direction `target_score` via the seed table at
 // `zensim_targets.rs`. See `docs/RFC_ZENSIM_FORK_PLAN.md` §6 Step 3.
 pub(crate) mod dc_coding;
-mod dc_tree_learn;
+pub(crate) mod dc_tree_learn;
 pub mod dct;
 pub(crate) mod debug_log;
 #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]

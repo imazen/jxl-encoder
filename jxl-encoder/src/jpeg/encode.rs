@@ -422,6 +422,43 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
 
     // DC + AC metadata tokens per DC group
     let use_lever_a = jpeg_transcode_tree_enabled();
+    // EX-J31 (2026-05-28): default to the Weighted-Predictor DC path
+    // (kWPFixedDC), matching libjxl JPEG-transcode at speed_tier >= kSquirrel
+    // (cjxl effort 7). libjxl encodes the JPEG DC stream with
+    // `Predictor::Weighted` + a fixed BSP tree splitting on `wp_max_error`
+    // (`enc_modular.cc:1584-1589`, `enc_encoding.cc:533-540`). We previously
+    // used a clamped-gradient predictor, which produced ~+23% larger LfGroup
+    // (DC) sections — the entire measured JPEG-in-JXL size gap vs cjxl lives
+    // here (AC data is at parity). Env hook `JPEG_GRADIENT_DC=1` restores the
+    // gradient path for A/B; lever A (JPEG_LEVER_A_ENABLE) is unaffected.
+    let use_wp_dc = !use_lever_a && std::env::var_os("JPEG_GRADIENT_DC").is_none();
+
+    // Build the kWPFixedDC tree + its AC-metadata-prefixed wrapper ONCE.
+    // `dc_remap` maps the WP tree's leaf contexts into the combined
+    // (DC-subtree + AC-meta-subtree) context space; `ac_meta_ctx_map` maps the
+    // AC-metadata collector's contexts the same way. Mirrors the VarDCT
+    // W44-57 path (`vardct/bitstream.rs`).
+    let wp_dc_state: Option<(
+        crate::vardct::dc_tree_learn::DcTree,
+        Vec<(u32, u32)>,
+        u32,
+        Vec<u32>,
+        [u32; crate::vardct::dc_tree_learn::NUM_AC_META_CONTEXTS as usize],
+    )> = if use_wp_dc {
+        let total_dc_pixels = xsize_blocks * ysize_blocks * 3;
+        let (wp_tree, wp_num_ctx) =
+            crate::vardct::dc_tree_learn::build_wp_fixed_dc_tree(total_dc_pixels, 8);
+        let (wrapped, total_ctx, dc_remap, ac_map) =
+            crate::vardct::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
+                &wp_tree,
+                wp_num_ctx,
+                num_dc_groups,
+            );
+        Some((wp_tree, wrapped, total_ctx, dc_remap, ac_map))
+    } else {
+        None
+    };
+
     let mut dc_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
     let mut ac_metadata_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
     for dc_group_idx in 0..num_dc_groups {
@@ -434,7 +471,21 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
         let region_xsize = end_bx - start_bx;
         let region_ysize = end_by - start_by;
 
-        let dc_tokens = if use_lever_a {
+        let dc_tokens = if let Some((ref wp_tree, _, _, ref dc_remap, _)) = wp_dc_state {
+            let mut t = crate::vardct::dc_coding::collect_dc_tokens_wp_region_jpeg(
+                &quant_dc,
+                wp_tree,
+                start_bx,
+                start_by,
+                end_bx,
+                end_by,
+                &channel_shifts,
+            );
+            for tok in t.iter_mut() {
+                tok.set_context(dc_remap[tok.context() as usize]);
+            }
+            t
+        } else if use_lever_a {
             collect_dc_tokens_region_jpeg_transcode(
                 &quant_dc,
                 start_bx,
@@ -453,7 +504,26 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
                 &channel_shifts,
             )
         };
-        let md_tokens = if use_lever_a {
+        let md_tokens = if let Some((_, _, _, _, ref ac_map)) = wp_dc_state {
+            // WP-DC path uses the gradient-style AC-metadata collector (same
+            // as the non-lever-A path); contexts are remapped into the
+            // combined space via `ac_meta_ctx_map`.
+            let mut t = collect_ac_metadata_tokens_region(
+                region_xsize,
+                region_ysize,
+                &quant_field,
+                xsize_blocks,
+                start_bx,
+                start_by,
+                &cfl_map,
+                &ac_strategy,
+                None,
+            );
+            for tok in t.iter_mut() {
+                tok.set_context(ac_map[tok.context() as usize]);
+            }
+            t
+        } else if use_lever_a {
             collect_ac_metadata_tokens_region_jpeg_transcode(
                 region_xsize,
                 region_ysize,
@@ -766,7 +836,11 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
 
     // ── Build entropy codes (ANS) ──
 
-    let dc_num_contexts = if use_lever_a {
+    let dc_num_contexts = if let Some((_, _, total_ctx, _, _)) = wp_dc_state {
+        // EX-J31: combined (kWPFixedDC DC subtree + AC-meta subtree) context
+        // count from `tree_tokens_with_ac_metadata_prefix`.
+        total_ctx as usize
+    } else if use_lever_a {
         NUM_DC_CONTEXTS_JPEG_TRANSCODE
     } else {
         NUM_DC_CONTEXTS
@@ -1024,12 +1098,19 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
 
     // DC Global
     let mut dc_global = BitWriter::new();
+    // EX-J31: when WP-DC is active, write the kWPFixedDC wrapped tree
+    // (Predictor::Weighted DC subtree + AC-meta subtree) instead of the
+    // static gradient context tree.
+    let wp_dc_tree_tokens: Option<&[(u32, u32)]> = wp_dc_state
+        .as_ref()
+        .map(|(_, wrapped, _, _, _)| wrapped.as_slice());
     write_dc_global_jpeg(
         &dc_dequant,
         &dc_code,
         num_dc_groups,
         &block_ctx_map,
         use_lever_a,
+        wp_dc_tree_tokens,
         &mut dc_global,
     )?;
 
@@ -1500,6 +1581,7 @@ fn write_dc_global_jpeg(
     num_dc_groups: usize,
     block_ctx_map: &ac_context::BlockCtxMap,
     use_lever_a: bool,
+    wp_dc_tree_tokens: Option<&[(u32, u32)]>,
     writer: &mut BitWriter,
 ) -> Result<()> {
     // No noise params for JPEG reencoding
@@ -1539,11 +1621,19 @@ fn write_dc_global_jpeg(
     writer.write(8, 128)?; // x_factor_lf = 128 (signed 0)
     writer.write(8, 128)?; // b_factor_lf = 128 (signed 0)
 
-    // Context tree for modular DC + AC-metadata streams. Lever A: the
-    // JPEG-transcode variant collapses the 11-leaf AC-metadata subtree
-    // into a single Leaf(Zero), dropping the static-tree token count
-    // 313 → 243 and the data-side context space 45 → 35.
-    if use_lever_a {
+    // Context tree for modular DC + AC-metadata streams.
+    // EX-J31: WP-DC mode writes the kWPFixedDC wrapped tree (Predictor::Weighted
+    // DC subtree splitting on wp_max_error + AC-metadata subtree) produced by
+    // `tree_tokens_with_ac_metadata_prefix`. Lever A: the JPEG-transcode
+    // variant collapses the 11-leaf AC-metadata subtree into a single
+    // Leaf(Zero). Default (neither): the static 313-token gradient tree.
+    if let Some(tree_tokens) = wp_dc_tree_tokens {
+        crate::vardct::context_tree::write_learned_context_tree(
+            tree_tokens,
+            num_dc_groups,
+            writer,
+        )?;
+    } else if use_lever_a {
         crate::vardct::context_tree::write_jpeg_transcode_context_tree(num_dc_groups, writer)?;
     } else {
         crate::vardct::context_tree::write_context_tree(num_dc_groups, writer)?;

@@ -432,6 +432,125 @@ pub(crate) fn collect_dc_tokens_wp_with_budget(
     Ok(tokens)
 }
 
+/// Collect DC tokens using the Weighted Predictor + kWPFixedDC tree, with
+/// per-channel chroma-subsampling support (EX-J31, JPEG transcode path).
+///
+/// Mirrors [`collect_dc_tokens_wp`] (same WP prediction + kWPFixedDC context
+/// assignment) but applies `channel_shifts` like [`collect_dc_tokens_region`]
+/// so subsampled chroma DC planes (4:2:0 / 4:2:2 / 4:4:0) iterate at their
+/// native resolution. Each channel gets a fresh `WeightedPredictorState`
+/// sized to that channel's region width — matching how the decoder runs WP
+/// per modular channel at its declared dimension.
+///
+/// libjxl encodes the JPEG-transcode DC stream with `kWPFixedDC`
+/// (`Predictor::Weighted`, tree split on `wp_max_error` / property 15) at
+/// `speed_tier >= kSquirrel` (cjxl effort 7); this is the per-channel,
+/// subsampling-aware analog we wire into the JPEG path.
+pub fn collect_dc_tokens_wp_region_jpeg(
+    quant_dc: &[Vec<Vec<i16>>; 3],
+    wp_tree: &super::dc_tree_learn::DcTree,
+    start_bx: usize,
+    start_by: usize,
+    end_bx: usize,
+    end_by: usize,
+    channel_shifts: &[(usize, usize); 3],
+) -> Vec<Token> {
+    use crate::modular::predictor::{Neighbors, WeightedPredictorState};
+
+    let region_width = end_bx.saturating_sub(start_bx);
+    let region_height = end_by.saturating_sub(start_by);
+    if region_width == 0 || region_height == 0 {
+        return Vec::new();
+    }
+
+    let mut tokens = Vec::with_capacity(region_width * region_height * 3);
+
+    // Channel order Y(1), X(0), B(2) — matches collect_dc_tokens_region and
+    // collect_dc_tokens_wp.
+    for &c in &[1usize, 0, 2] {
+        let (hs, vs) = channel_shifts[c];
+        let channel = &quant_dc[c];
+        let ch_start_bx = start_bx >> hs;
+        let ch_start_by = start_by >> vs;
+        let ch_end_bx = (end_bx >> hs).min(channel.first().map_or(0, |r| r.len()));
+        let ch_end_by = (end_by >> vs).min(channel.len());
+        if ch_end_bx <= ch_start_bx || ch_end_by <= ch_start_by {
+            continue;
+        }
+        let ch_region_width = ch_end_bx - ch_start_bx;
+
+        // budget-less: this path is only used by the JPEG transcode encoder
+        // which encodes trusted, already-decoded coefficient data.
+        let mut wp_state = WeightedPredictorState::with_defaults(ch_region_width);
+
+        for y in ch_start_by..ch_end_by {
+            for x in ch_start_bx..ch_end_bx {
+                let actual = channel[y][x] as i32;
+
+                let w = if x > ch_start_bx {
+                    channel[y][x - 1] as i32
+                } else if y > ch_start_by {
+                    channel[y - 1][x] as i32
+                } else {
+                    0
+                };
+                let n = if y > ch_start_by {
+                    channel[y - 1][x] as i32
+                } else {
+                    w
+                };
+                let nw = if x > ch_start_bx && y > ch_start_by {
+                    channel[y - 1][x - 1] as i32
+                } else {
+                    w
+                };
+                let ne = if x + 1 < ch_end_bx && y > ch_start_by {
+                    channel[y - 1][x + 1] as i32
+                } else {
+                    n
+                };
+                let ww = if x > ch_start_bx + 1 {
+                    channel[y][x - 2] as i32
+                } else {
+                    w
+                };
+                let nn = if y > ch_start_by + 1 {
+                    channel[y - 2][x] as i32
+                } else {
+                    n
+                };
+                let nee = if x + 2 < ch_end_bx && y > ch_start_by {
+                    channel[y - 1][x + 2] as i32
+                } else {
+                    ne
+                };
+
+                let neighbors = Neighbors {
+                    n,
+                    w,
+                    nw,
+                    ne,
+                    nn,
+                    ww,
+                    nee,
+                };
+
+                let local_x = x - ch_start_bx;
+                let local_y = y - ch_start_by;
+
+                let (prediction, wp_max_error) =
+                    wp_state.predict_and_property(local_x, local_y, ch_region_width, &neighbors);
+                let residual = actual - prediction as i32;
+                let ctx_id = super::dc_tree_learn::get_wp_dc_context(wp_tree, wp_max_error);
+                tokens.push(Token::new(ctx_id, pack_signed(residual)));
+                wp_state.update_errors(actual, local_x, local_y, ch_region_width);
+            }
+        }
+    }
+
+    tokens
+}
+
 /// Collect DC tokens for a specific region (gradient predictor path).
 ///
 /// Same logic as `write_dc_tokens_region()` but returns a `Vec<Token>` instead
