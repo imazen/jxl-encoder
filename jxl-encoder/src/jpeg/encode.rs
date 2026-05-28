@@ -772,10 +772,20 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     // default helper uses kFast (4-config trial); disabling that for the JPEG
     // transcode reduces header overhead at the AC stream's per-context level
     // where the cluster pair-merge has already adapted the histograms.
+    // EX-J22 (2026-05-28): pair-merge histogram clustering on the
+    // combined DC + AC-metadata token stream at effort >= 7. Mirrors the
+    // AC code path (line ~912 below) which has used `enhanced_clustering
+    // = effort >= 7` since dddebe2c. The DC stream is small (a few
+    // thousand tokens vs millions on AC) but kBest at e9 was reported
+    // to deliver -0.27% on the AC code on a 10-file corpus, and the
+    // signaling overhead amortization is comparable on DC. Env hook
+    // JPEG_DC_NO_CLUSTERING=1 forces kFast for A/B measurement.
+    let dc_enhanced_clustering = effort >= 7
+        && std::env::var_os("JPEG_DC_NO_CLUSTERING").is_none();
     let dc_code = build_entropy_code_ans_with_options(
         &all_dc_tokens,
         dc_num_contexts,
-        /*enhanced_clustering=*/ false,
+        /*enhanced_clustering=*/ dc_enhanced_clustering,
         /*optimize_uint_configs=*/ true,
         /*lz77=*/ None,
         /*total_pixel_hint=*/ Some(width * height),

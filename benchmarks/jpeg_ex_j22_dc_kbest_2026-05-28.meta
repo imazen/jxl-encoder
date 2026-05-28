@@ -1,0 +1,50 @@
+EX-J22 DC kBest clustering at effort >= 7 (2026-05-28)
+======================================================
+
+Change: jxl-encoder/src/jpeg/encode.rs line 785, the entropy code build
+for the combined DC + AC-metadata token stream now uses
+enhanced_clustering = (effort >= 7), matching the AC code path (line ~919)
+which has used the same gate since dddebe2c.
+
+Previously the DC code clustering was hardcoded to false (kFast) per
+"lever #3 (2026-05-28) match libjxl JPEG transcode path which sets
+uint_method = kNone for non-modular paths". The comment was about
+uint_method, not the clustering primitive — they're independent levers.
+
+Env hook: JPEG_DC_NO_CLUSTERING=1 forces kFast on the DC code for A/B.
+
+50-file paired A/B (same binary, env-hook only):
+  Sample seeded by random.seed(11), stratified to mixed corpus
+  /home/lilith/product-images + /home/lilith/work/codec-corpus.
+  cjxl-e7:       10,069,483 B
+  ours-e7 OFF:   10,185,165 B  Δ +1.149%  vs cjxl
+  ours-e7 ON:    10,178,807 B  Δ +1.086%  vs cjxl
+  ON vs OFF:     -0.062%  (-6,358 B)
+  Roundtrip:     50/50 byte-identical
+
+200-file mixed corpus (same seed):
+  src total:     54,738,069 B
+  cjxl-e7:       44,802,893 B (81.85%)
+  ours-e7:       45,303,574 B (82.76%)
+  Δ vs cjxl:     +1.118%  (was +1.184% at previous bench, -0.066pp)
+  Roundtrip:     200/200 byte-identical
+
+Acceptance gates:
+- (a) Build PASS
+- (b) lib tests: hash-locks 36/36 BYTE-IDENTICAL, JPEG roundtrip 6/6 PASS,
+       jpeg_public_api 27 PASS
+- (c) 50-file A/B: ON strictly smaller than OFF (-0.062%)
+- (d) 50-file roundtrip: 50/50 OK
+- (e) 200-file roundtrip: 200/200 OK
+- (f) djxl --reconstruct_jpeg byte-exact on ON output: 250/250 verified
+
+DO NOT (future agents):
+- DO NOT remove the env hook (regression harness for the DC clustering decision).
+- DO NOT revert the gate to false; the measurement is conclusive (-127 bytes/file avg).
+- DO NOT cite "FMA precision" for the byte delta (this is histogram clustering choice
+  affecting ANS distribution headers; cjxl makes the same choice at e7+).
+
+Session trajectory update:
+- Pre-EX-J22 (a53c9c46+post-uint8opt+post-kBest-AC+post-brotli-11): +1.184% (200-file)
+- Post-EX-J22:                                                     +1.118% (200-file)
+- Session total since start fb57425a:                              -1.092pp
