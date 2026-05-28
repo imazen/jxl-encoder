@@ -534,8 +534,10 @@ fn optimize_uint_configs_fast_from_freqs(
 
             let inv_total = 1.0f32 / total as f32;
             let mut entropy_cost = 0.0f64;
+            let mut nonzero_count: usize = 0;
             for &count in &counts_buf[..capacity] {
                 if count > 0 {
+                    nonzero_count += 1;
                     let c = count as f32;
                     entropy_cost -= c as f64 * jxl_simd::fast_log2f(c * inv_total) as f64;
                 }
@@ -548,7 +550,24 @@ fn optimize_uint_configs_fast_from_freqs(
                     + ceil_log2_nonzero_usize((cfg.split_exponent - cfg.msb_in_token) as usize + 1)
                         as f64
             };
-            let cost = entropy_cost + extra_bits_total as f64 + signaling_cost;
+            // ANS distribution header cost: scales with the number of non-zero
+            // symbols in the per-config histogram. libjxl's `Histogram::ANS-
+            // PopulationCost()` (`enc_ans.cc:823-863`) ADDS this term; we were
+            // missing it, which caused the optimizer to UNDER-cost wide-alphabet
+            // configs like (0,0,0) (which can span up to 256 tokens) and pick
+            // them when (4,2,0)-style narrow-alphabet configs were actually
+            // smaller end-to-end. See `cluster.rs::ans_population_cost` for the
+            // companion estimate used in pair-merge cluster cost: `alphabet_size
+            // * 5.0`. Here we use `nonzero_count * 8.0` because the writer's
+            // RLE on zero runs (`ans.rs:1278-1313`) makes the per-zero-symbol
+            // cost negligible, so cost scales with non-zero entries (each
+            // costing ~3-6 bits logcount prefix + ~4-12 bits precision).
+            //
+            // Approximation: 8 bits per non-zero symbol. Calibrated against
+            // libjxl's actual `ANSPopulationCost()` differential between
+            // (0,0,0) and (4,2,0) on JPEG AC histograms.
+            let header_cost = nonzero_count as f64 * 8.0;
+            let cost = entropy_cost + extra_bits_total as f64 + signaling_cost + header_cost;
 
             if cost < best_cost {
                 best_cost = cost;
@@ -629,8 +648,10 @@ fn optimize_uint_configs_best_from_freqs(
 
             let inv_total = 1.0f32 / total as f32;
             let mut entropy_cost = 0.0f64;
+            let mut nonzero_count: usize = 0;
             for &count in &counts_buf[..capacity] {
                 if count > 0 {
+                    nonzero_count += 1;
                     let c = count as f32;
                     entropy_cost -= c as f64 * jxl_simd::fast_log2f(c * inv_total) as f64;
                 }
@@ -643,7 +664,13 @@ fn optimize_uint_configs_best_from_freqs(
                     + ceil_log2_nonzero_usize((cfg.split_exponent - cfg.msb_in_token) as usize + 1)
                         as f64
             };
-            let cost = entropy_cost + extra_bits_total as f64 + signaling_cost;
+            // ANS distribution header cost — same fix as in
+            // `optimize_uint_configs_fast_from_freqs`. See that function's
+            // comment block for the libjxl-parity rationale. 28 candidates
+            // in the kBest set include wide-alphabet configs like (12,0,0)
+            // which are even more bloat-prone than the kFast (0,0,0).
+            let header_cost = nonzero_count as f64 * 8.0;
+            let cost = entropy_cost + extra_bits_total as f64 + signaling_cost + header_cost;
 
             if cost < best_cost {
                 best_cost = cost;
