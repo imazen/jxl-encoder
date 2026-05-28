@@ -606,6 +606,20 @@ fn extract_coefficients_zenjpeg(data: &[u8], jpeg: &mut JpegData) -> Result<()> 
         scan.extra_zero_runs = jbrd_scan.extra_zero_runs.clone();
     }
 
+    // Copy entropy-segment padding-bit signals (zenjpeg 0.8.6+,
+    // `JbrdMetadata::has_zero_padding_bit` + `padding_bits`). Some JPEG
+    // encoders pad the final partial byte of each entropy segment with
+    // 0-bits instead of the spec-recommended 1-bits; byte-exact JPEG-XL
+    // transcoding (`djxl --reconstruct_jpeg`) needs the explicit bits to
+    // reproduce those bytes. `has_zero_padding_bit == false` means the
+    // standard 1-bit padding is used and djxl's default emitter produces
+    // the right bytes; `padding_bits` carries the explicit bit sequence
+    // only when `has_zero_padding_bit == true`. See libjxl
+    // `enc_jpeg_data_reader.cc:441-470` `FinishStream` for the source-side
+    // semantics that this mirrors.
+    jpeg.has_zero_padding_bit = jbrd_meta.has_zero_padding_bit;
+    jpeg.padding_bits = jbrd_meta.padding_bits.clone();
+
     Ok(())
 }
 

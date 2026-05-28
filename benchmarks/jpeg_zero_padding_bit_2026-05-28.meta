@@ -1,0 +1,179 @@
+Zero-padding-bit JBRD wiring — task #11 (2026-05-28)
+====================================================
+
+Goal
+----
+
+Close the last residual DIFF on the 200-file JPEG-in-JXL recompression
+bench (`jpeg_in_jxl_recompression_2026-05-28.tsv`): `20230706_124619.jpg`,
+a baseline (SOF0) JPEG with DRI restart markers. Source has `0x00`
+bytes as entropy-stream padding before its RST markers; our
+reconstruction previously emitted `0x7F` / `0x3F` (the spec-default
+"all-1-bit" padding), producing a 3-byte diff per file (one per RST
+boundary that had a non-byte-aligned entropy-segment end).
+
+This is the `JpegData.has_zero_padding_bit` + `JpegData.padding_bits`
+JBRD signal in libjxl, distinct from task #10's `reset_points` +
+`extra_zero_runs` work. libjxl tracks per-segment padding bits via
+`BitReaderState::FinishStream` (`enc_jpeg_data_reader.cc:441-470`)
+and replays them through `JumpToByteBoundary`
+(`dec_jpeg_data_writer.cc:139-159`) on the decode side. zenjpeg did
+not yet expose those bits; this chunk plumbs them through both
+crates.
+
+Scope
+-----
+
+Two repos changed:
+
+  zenjpeg (sibling worktree `zenjpeg--zero-padding-bit-zj/`, 0.8.6+):
+
+    - New `BitReader::partial_byte_padding_bits()` helper extracts
+      the current partial-byte unconsumed bits (MSB-first), without
+      mutating state. Mirrors libjxl `FinishStream`'s `npadbits`
+      extraction.
+    - New `EntropyDecoder::partial_byte_padding_bits()` forwards.
+    - `JbrdMetadata` extended with `has_zero_padding_bit: bool` and
+      `padding_bits: Vec<u8>` fields (libjxl-named, libjxl-semantic).
+    - `JpegParser` gains `jbrd_padding_bits: Option<Vec<u8>>` and
+      pad-bit append helpers; `enable_jbrd_tracking()` now also
+      enables pad-bit accumulation.
+    - Capture sites threaded:
+        * `decode_scan` (baseline / extended sequential): per-RST
+          and end-of-scan.
+        * `decode_dc_scan_non_interleaved` /
+          `decode_dc_scan_interleaved` (progressive DC scans):
+          per-RST.
+        * `decode_ac_first_scan_tracked` /
+          `decode_ac_refine_scan_tracked` (progressive AC scans):
+          per-RST.
+        * `decode_progressive_scan`: end-of-scan, mirrors the
+          baseline path.
+    - `decode_coefficients_with_jbrd_metadata()` takes the
+      accumulated bits, sets `has_zero_padding_bit` iff ANY bit is
+      0 (libjxl's `JPEGData::VisitFields` semantic at
+      `jpeg_data.cc:368-380`), and clears `padding_bits` when the
+      flag is false to keep the JBRD payload compact.
+    - 6 new bit-stream unit tests cover the helper (empty / all-0
+      / all-1 / mixed / read-only / counts).
+
+  jxl-encoder (sibling worktree `jxl-encoder--zero-padding-bit/`):
+
+    - `Cargo.toml` `[patch.crates-io].zenjpeg` re-points at the
+      zenjpeg sibling. Path-pin will revert once zenjpeg 0.8.6
+      lands on main.
+    - `jpeg/parse.rs::extract_coefficients_zenjpeg` reads the new
+      `JbrdMetadata.has_zero_padding_bit` / `padding_bits` and
+      copies them to `JpegData`. The JBRD writer at
+      `jpeg/jbrd.rs:203-211` already serialises both fields
+      correctly — only the parse-side population was missing.
+
+Build
+-----
+
+  cd /home/lilith/work/zen/jxl-encoder--zero-padding-bit
+  cargo build --release -p jxl-encoder-cli \
+    --no-default-features \
+    --features 'jpeg-reencoding,parallel,jxl_encoder/std'
+
+  Same `--no-default-features` requirement as the original bench
+  (the local butteraugli sibling has uncommitted in-progress
+  modules that block the default build). Out of scope here.
+
+Run
+---
+
+  cjxl-rs <src.jpg> <out.jxl> -e 5 -d 0
+  djxl <out.jxl> <recon.jpg>
+  cmp <src.jpg> <recon.jpg>     # must match byte-for-byte
+
+Bench script: see `/tmp/t11/bench_roundtrip.py` (200-file driver).
+
+Results (this TSV: jpeg_zero_padding_bit_2026-05-28.tsv)
+--------------------------------------------------------
+
+Specific target file:
+  20230706_124619.jpg                          OK   (was DIFF before
+                                                     task #11; 3 bytes
+                                                     pre-RST padding)
+
+Broader 200-bench:
+  Before task #11:   199/200 OK, 1 DIFF (`20230706_124619`)
+  After  task #11:   200/200 OK,   0 DIFF
+
+Per-file (full TSV):
+  All 200 files roundtrip BYTE-IDENTICAL via djxl `--reconstruct_jpeg`.
+
+Verification gates (all PASS)
+-----------------------------
+
+  (a) Build clean (`cargo build --release -p jxl-encoder-cli
+      --no-default-features --features 'jpeg-reencoding,parallel,
+      jxl_encoder/std'`)                                         OK
+  (b) `cargo test --release -p jxl-encoder --no-default-features
+      --features 'std,jpeg-reencoding' --test jpeg_reencoding`:
+      27 pass + 1 ignored                                        OK
+      Plus: jpeg_public_api 7 PASS, jpeg_transcode_roundtrip 6 PASS
+  (c) `20230706_124619.jpg` byte-identical via djxl              OK
+  (d) Other 199 byte-identical pairs preserved                   OK
+  (e) hash_lock_features (non-JPEG): 36/36 BYTE-IDENTICAL        OK
+  (f) Multi-decoder roundtrip: djxl + jxl-rs PASS on closed file OK
+  (g) Single commit per repo                                     OK
+  (h) Cleanup of jj sibling worktrees                            OK
+  (i) zenjpeg lib tests: 957/957 PASS                            OK
+  (j) jxl-encoder lib tests (default-feature subset):
+      1373/1373 PASS (with jpeg-reencoding)
+      1361/1361 PASS (without jpeg-reencoding)                   OK
+
+Root-cause walkthrough
+----------------------
+
+`20230706_124619.jpg` is a Samsung Galaxy S23 Ultra camera JPEG,
+4000x3000, 4063102 bytes, baseline (SOF0), 3-component YCbCr, with
+DRI restart markers.
+
+Three diff bytes pre-fix, all immediately before RST markers:
+
+  offset 1129739: src=0x00 ours=0x7F (before FFD0 / RST0)
+  offset 2431077: src=0x00 ours=0x3F (before FFD1 / RST1)
+  offset 3344390: src=0x00 ours=0x7F (before FFD2 / RST2)
+
+Mechanism: the entropy stream from the source camera encoder ends
+mid-byte at each RST boundary, with the partial byte padded by ZERO
+bits (non-spec-compliant but legal). The spec-recommended emitter
+(what djxl uses by default) pads with ONE bits, producing the
+shifted-form bytes our reconstruction emitted. The shifted-form
+roundtrip is BIT-EXACT for entropy correctness (decodes to identical
+pixels) but byte-INEXACT.
+
+The fix captures the source's actual pad bits at each entropy-segment
+terminator and replays them via the existing JBRD writer path. djxl's
+`JumpToByteBoundary` consumes the explicit bits when
+`jpg.has_zero_padding_bit == true`, producing the source's exact byte
+values.
+
+DO NOT
+------
+
+  - DO NOT cite "FMA precision" for any byte movement (per W44-66).
+    The bytes that move are JBRD entropy-pad-bit bytes, structurally
+    deterministic, not FP-numeric.
+  - DO NOT default-flip the tracking in `decode_coefficients()`
+    (zenjpeg's legacy entry point). Its zero-overhead contract is
+    load-bearing for tight-loop callers; only the new
+    `decode_coefficients_with_jbrd_metadata()` carries the tracking
+    cost.
+  - DO NOT mark `has_zero_padding_bit = true` unconditionally; libjxl
+    only sets it when at least one bit is actually 0, and the
+    optimisation matters (5-7 bits saved per JBRD header). The
+    `padding_bits` Vec must be DROPPED when the flag is false — see
+    `decode_coefficients_with_jbrd_metadata` in `decode/mod.rs` for
+    the canonical pattern.
+
+Provenance
+----------
+
+  Local zenjpeg sibling worktree: `zenjpeg--zero-padding-bit-zj/`
+  Local jxl-encoder sibling worktree: `jxl-encoder--zero-padding-bit/`
+  Both cleaned up post-commit per task #11 acceptance gate (h).
+  Date: 2026-05-28.
