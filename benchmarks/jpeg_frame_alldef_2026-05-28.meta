@@ -1,0 +1,165 @@
+# JPEG frame_header all_default lever: HONEST-STOP (2026-05-28)
+
+## Verdict: STRUCTURALLY IMPOSSIBLE — no source change ships.
+
+The lever (LEVERS_ROUND2 #1) hypothesised that JPEG frames could short-circuit
+the frame header to a 1-bit `all_default` flag, saving ~10-20 bits per file
+(~200-400 bytes across a 200-file bench at +1.184% above cjxl-e7).
+
+After tracing libjxl's `AllDefault` visitor (`fields.cc:116-153`), the
+frame_header field visitor (`frame_header.cc:215-220`), the JPEG frame setup
+(`enc_frame.cc:349-507`), and the decoder-side smoothing gate
+(`dec_frame.cc:344-358`), the lever is **structurally impossible** for ANY
+JPEG frame that libjxl itself can produce.
+
+## Why every JPEG frame is non-all-default
+
+`AllDefaultVisitor::Bits / U32 / U64 / Bool` (`fields.cc:120-141`) compares
+the current value of each visited field against the `default_value` literal
+passed at the visit site. For a JPEG frame, libjxl forces at least three
+fields off the default:
+
+1. **`flags = 0x80` (kSkipAdaptiveDCSmoothing)**, default `0`
+   - `enc_frame.cc:501-503`: `if (jpeg_data) { frame_header->UpdateFlag(true,
+     FrameHeader::kSkipAdaptiveDCSmoothing); }`
+   - Required for decode correctness: `dec_frame.cc:344-358` runs
+     `AdaptiveDCSmoothing` on `dc_storage` in-place when the flag is unset.
+     For JPEG reconstruction, DC coefficients are exact integers from the
+     source JPEG bitstream; smoothing them would mutate the reconstructed
+     JPEG bytes (roundtrip break). So `flags = 0` is not an option even as
+     an experimental override.
+   - libjxl's U64Coder costs 2+8=10 bits for `0x80` (selector 2: 17..272).
+
+2. **`color_transform = kYCbCr` for YCbCr / grayscale JPEGs** ⇒ visited
+   `alternate = true`, default `false` (`frame_header.cc:244-249`).
+   - `enc_frame.cc:376-377` ⇒ `SetColorTransformFromJpegData`
+     (`enc_jpeg_data.cc:240-283`) returns `kYCbCr` for 1-component (always)
+     and for 3-component without an Adobe APP14 transform=0 marker / R,G,B
+     component IDs. That covers ~99% of real JPEGs (YCbCr is the JFIF
+     standard).
+   - Only 3-component Adobe-RGB or explicit-RGB-ID JPEGs land in `kNone`
+     and survive THIS field, but they still fail (1) above.
+   - Costs 1 bit for the `alternate` flag.
+
+3. **`loop_filter.gab = false`, `epf_iters = 0`** for JPEG (defaults
+   `true`, `2` per `loop_filter.cc:27, 58`).
+   - `LoopFilterFromParams` (`enc_frame.cc:302-345`) sets `gab = false`
+     because `cparams.gaborish` is `kDefault` and
+     `cparams.butteraugli_distance == 0` ⇒ predicate evaluates false.
+     `epf_iters` defaults to 0 in the lossless branch (incl. JPEG, since
+     `cparams.IsLossless()` is true for transcoding).
+   - This makes `loop_filter` ITSELF non-all-default at the nested visitor
+     (`loop_filter.cc:21-25`). But the loop_filter section is still written
+     via its own nested all_default flag — irrelevant to the OUTER
+     frame_header all_default because the OUTER all_default is already
+     forced off by (1) and (2).
+
+## Why setting flags=0 anyway would break roundtrip
+
+For YCbCr 4:4:4 JPEGs, `dec_frame.cc:206-212` does NOT enforce
+kSkipAdaptiveDCSmoothing (only non-444 chroma requires it). So a 4:4:4
+JPEG with `flags=0` would DECODE without error — but `dec_frame.cc:349-353`
+would then run `AdaptiveDCSmoothing(quantizer.MulDC(), &dc_storage, ...)`,
+mutating the DC plane in place. AC decode and JPEG-coefficient
+reconstruction read from the mutated `dc_storage`, so the reconstructed
+JPEG bytes would diverge from the source. That's a roundtrip break.
+
+No code path is benefiting from this lever, in either libjxl or our
+encoder. The current `is_all_default()` gate at `xyb_encoded == true`
+(jxl-encoder `src/headers/frame_header.rs:712`) is correct as written.
+
+## What we currently write (YCbCr 4:4:4 JPEG, no animation, no crop)
+
+(Counted from `src/headers/frame_header.rs:328-487` and `:640-669`.)
+
+| field                | bits | notes                                            |
+| ---                  | ---: | ---                                              |
+| all_default          |    1 | =0                                               |
+| frame_type           |    2 | =Regular (0)                                     |
+| encoding             |    1 | =VarDct (0)                                      |
+| flags (U64 0x80)     |   10 | U64Coder selector 2: 2 selector + 8 payload      |
+| do_ycbcr             |    1 | =true                                            |
+| jpeg_upsampling (3x) |    6 | 3 × 2 bits, all zero for 4:4:4                   |
+| upsampling (U32 1)   |    2 | selector 0                                       |
+| num_passes (U32 1)   |    2 | selector 0                                       |
+| have_crop            |    1 | =false                                           |
+| blend mode           |    2 | =Replace (selector 0); source NOT written        |
+| is_last              |    1 | =true                                            |
+| name length          |    2 | selector 0 (length 0)                            |
+| lf_all_default       |    1 | =false                                           |
+| gab                  |    1 | =false                                           |
+| epf_iters            |    2 | =0                                               |
+| lf extensions (U64)  |    2 | =0                                               |
+| frame extensions     |    2 | =0                                               |
+| **total**            | **39** |                                                |
+
+If the lever were possible, savings would be 38 bits (~5 bytes) per frame.
+At 200 files × 5 bytes = ~1000 bytes ≈ -0.0001% on a 5MB bench. The task's
+"~10-20 bits" estimate was optimistic on the per-file delta and the lever
+is unreachable anyway. Total potential savings if the lever WERE possible:
+sub-percent of the residual +1.184% gap.
+
+## Acceptance gates (per task spec)
+
+- (a) Build clean: confirmed (`cargo build --release -p jxl-encoder-cli
+      --no-default-features --features 'jpeg-reencoding,parallel,jxl_encoder/std'`
+      finished in 44.07s with only pre-existing warnings).
+- (b) jpeg_reencoding 27/27 + 1 ignored: N/A (no source change).
+- (c) hash_lock_features 36/36: N/A (no source change).
+- (d) strategy_libjxl_byte_lock 5/5: N/A (no source change).
+- (e) 200-file bench: **DOES NOT FIRE** — bench not run because lever is
+      structurally impossible. The honest-stop verdict makes the bench a
+      null-op (no encoder behaviour difference to measure). Task spec
+      authorises docs-only `wip:` measurement record in this case.
+- (f) Multi-decoder spot check: N/A.
+- (g) Single commit pushed: yes (wip:, docs-only).
+- (h) Sibling cleanup: yes.
+
+## Files
+
+This .meta is the only artifact. No bench .tsv produced (no measurement
+exists — the encoder is unchanged).
+
+## DO-NOT (future agents)
+
+1. **DO NOT** experimentally set `flags=0` on the JPEG frame_header in an
+   attempt to fire the lever. dec_frame.cc:349-353 will mutate `dc_storage`
+   via AdaptiveDCSmoothing and break JPEG roundtrip. Even on 4:4:4 where
+   the decoder doesn't enforce the flag, the smoothing pass STILL runs.
+2. **DO NOT** lift the `xyb_encoded == true` gate in `is_all_default()`
+   thinking it's an oversight. It's correct as written — there is no
+   non-XYB JPEG profile that matches `is_all_default()`.
+3. **DO NOT** cite "FMA precision" (per W44-66 user correction). The
+   lever's failure is structural, not numeric.
+4. **DO NOT** respawn this lever expecting different results. The
+   measurement is conclusive at the spec level — no encoder-tuning chunk
+   can change libjxl's defaults or our smoothing semantics.
+5. **DO NOT** confuse this with the OTHER all_default flags inside the
+   JPEG path (Quantizer, LfChannelCorrelation, ColorEncoding) at
+   `jpeg/encode.rs:1426, 1447, 1491`. Those are unrelated section flags,
+   each correctly held at 0 because the JPEG path needs explicit values
+   different from those sections' defaults.
+
+## What COULD have been the lever (next-round candidates)
+
+- An **AUX section** all_default flag that we currently write explicitly
+  but is at libjxl's section-defaults. (None found in JPEG path on a grep
+  audit — all four `not all_default` writes in `jpeg/encode.rs` correspond
+  to genuinely non-default values per their comments.)
+- A SHARED-frame all_default for VarDCT XYB encodes. Out of scope here
+  (we're at +1.184% on JPEG-recompression specifically, not XYB lossy).
+- An optimisation to U64Coder of 0x80: selector 2 costs 10 bits. The 0x80
+  value is fixed by spec, no encoding-side choice. Not a lever.
+
+## References
+
+- libjxl `lib/jxl/fields.cc:116-153` (AllDefaultVisitor)
+- libjxl `lib/jxl/frame_header.cc:215-220` (frame all_default short-circuit)
+- libjxl `lib/jxl/loop_filter.cc:21-25` (loop_filter all_default)
+- libjxl `lib/jxl/enc_frame.cc:281-300, 302-345, 369-503` (JPEG frame setup)
+- libjxl `lib/jxl/enc_jpeg_data.cc:240-283` (SetColorTransformFromJpegData)
+- libjxl `lib/jxl/dec_frame.cc:206-212, 344-358` (kSkipAdaptiveDCSmoothing
+  enforcement and DC smoothing)
+- Our `jxl-encoder/src/headers/frame_header.rs:328-487` (frame write),
+  `:640-669` (loop_filter write), `:709-736` (is_all_default)
+- Our `jxl-encoder/src/jpeg/encode.rs:1383-1401` (build_jpeg_frame_header)
