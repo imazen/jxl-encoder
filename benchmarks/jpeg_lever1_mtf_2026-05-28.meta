@@ -1,0 +1,18 @@
+{
+  "commit": "",
+  "n_files": 200,
+  "roundtrip_failures": 0,
+  "encode_failures_cjxl_rs": 0,
+  "encode_failures_cjxl": 0,
+  "total_orig_bytes": 54738069,
+  "total_rs_bytes": 45695886,
+  "total_cjxl_bytes": 44802893,
+  "delta_pct": 1.9932,
+  "wins": 3,
+  "ties": 0,
+  "losses": 197,
+  "rng_seed": 11,
+  "cjxl_rs": "/home/lilith/work/zen/jxl-encoder--lever-1-mtf/target/release/cjxl-rs",
+  "cjxl": "/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl",
+  "djxl": "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl"
+}

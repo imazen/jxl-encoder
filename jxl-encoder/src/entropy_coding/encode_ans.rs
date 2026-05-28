@@ -836,11 +836,27 @@ fn write_context_map_nonsimple(context_map: &[u8], writer: &mut BitWriter) -> Re
 /// Retained as a fast fallback (and as one of the two candidates compared in
 /// [`write_context_map_nonsimple`]).
 fn write_context_map_nonsimple_huffman(context_map: &[u8], writer: &mut BitWriter) -> Result<()> {
-    // Try both direct and MTF, pick whichever has lower estimated cost.
+    // Lever #1: trial-encode both direct and MTF candidates to a scratch
+    // BitWriter and pick the strictly shorter one — matches libjxl
+    // `enc_context_map.cc::EncodeContextMap`'s `BuildAndEncodeHistograms`
+    // cost-measurement pass exactly.
+    //
+    // Previously this site used a Shannon entropy proxy
+    // (`estimate_context_map_cost`) which ignores Huffman tree
+    // serialisation overhead. On the 7425-entry libjxl-default 15-cluster
+    // map the proxy is close enough that picks line up with reality, but
+    // on smaller ctx_maps (typically 32-128 entries from cluster pair-merge
+    // on a JPEG AC stream) the tree overhead is comparable to the data
+    // bits, so the proxy can mispick. Direct trial-encoding closes the gap.
     let mtf_tokens = move_to_front_transform(context_map);
 
-    let direct_cost = estimate_context_map_cost(context_map);
-    let mtf_cost = estimate_context_map_cost(&mtf_tokens);
+    let mut direct_scratch = BitWriter::with_capacity(context_map.len() + 16);
+    let mut mtf_scratch = BitWriter::with_capacity(context_map.len() + 16);
+    write_huffman_payload_no_selector(context_map, &mut direct_scratch)?;
+    write_huffman_payload_no_selector(&mtf_tokens, &mut mtf_scratch)?;
+    let direct_cost = direct_scratch.bits_written();
+    let mtf_cost = mtf_scratch.bits_written();
+
     let use_mtf = mtf_cost < direct_cost;
     let tokens: &[u8] = if use_mtf { &mtf_tokens } else { context_map };
 
@@ -848,6 +864,16 @@ fn write_context_map_nonsimple_huffman(context_map: &[u8], writer: &mut BitWrite
     let header_bits = if use_mtf { 0b010u64 } else { 0b000u64 };
     writer.write(3, header_bits)?;
 
+    write_huffman_payload_no_selector(tokens, writer)
+}
+
+/// Write the post-selector Huffman payload for a non-simple context map:
+/// `use_prefix_code=1` | `HybridUint config` | `alphabet size` | `prefix code tree` | tokens.
+///
+/// Both the trial-encoding cost measurement and the real emission share this
+/// path so the cost comparison and the final bytes use the SAME bit-count
+/// (no Shannon-proxy mismatch).
+fn write_huffman_payload_no_selector(tokens: &[u8], writer: &mut BitWriter) -> Result<()> {
     // Now write a Huffman-encoded entropy code for the context map values.
     // Since num_contexts=1 for the context map's own entropy code, no inner context map.
 

@@ -8,7 +8,7 @@
 
 use super::ac_context::BlockCtxMap;
 use super::cluster::{Histogram, cluster_histograms};
-use super::common::pack_signed;
+use super::common::{ceil_log2_nonzero, pack_signed};
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
@@ -16,6 +16,7 @@ use crate::entropy_coding::encode::{
     ALPHABET_SIZE, EntropyCode, PrefixCode, convert_bit_depths_to_symbols, create_huffman_tree,
     write_entropy_code, write_prefix_codes, write_token,
 };
+use crate::entropy_coding::move_to_front_transform;
 use crate::entropy_coding::token::{Token, UintCoder};
 use crate::error::Result;
 
@@ -753,60 +754,210 @@ pub fn write_block_ctx_map_adaptive(ctx_map: &BlockCtxMap, writer: &mut BitWrite
     Ok(())
 }
 
-/// Write an entropy-coded context map from a byte slice.
+/// Build a Huffman prefix code from a slice of context-map bytes.
 ///
-/// Same format as `write_block_context_map` but works with any slice.
-fn write_context_map_from_slice(map: &[u8], writer: &mut BitWriter) -> Result<()> {
-    // Check if all values are 0 (simple case)
-    let max_val = *map.iter().max().unwrap_or(&0);
-    if max_val == 0 {
-        writer.write(3, 1)?; // simple code, 0 bits per entry
-        return Ok(());
-    }
-
-    // Not simple: write 0, no MTF, no LZ77
-    writer.write(3, 0)?;
-
-    // Build tokens from context map
-    let tokens: Vec<Token> = map.iter().map(|&v| Token::new(0, v as u32)).collect();
-
-    // Build histogram for context map values
+/// Returns `(prefix_code, total_data_bits)` where `total_data_bits` is the
+/// exact number of bits the token stream will consume given this code
+/// (sum of `count[i] * depth[i]` plus extra UintCoder bits per token).
+fn build_ctxmap_prefix_code(bytes: &[u8]) -> (PrefixCode, usize) {
     let mut histogram = [0u32; ALPHABET_SIZE];
-    for t in &tokens {
-        let encoded = UintCoder::encode(t.value);
+    let mut extra_bits_total: usize = 0;
+    for &v in bytes {
+        let encoded = UintCoder::encode(v as u32);
         histogram[encoded.token as usize] += 1;
+        extra_bits_total += encoded.nbits as usize;
     }
 
-    // Create a single prefix code for the context map
-    let mut ctxmap_depths = [0u8; ALPHABET_SIZE];
+    let mut depths = [0u8; ALPHABET_SIZE];
     let mut length = ALPHABET_SIZE;
     while length > 0 && histogram[length - 1] == 0 {
         length -= 1;
     }
-    create_huffman_tree(&histogram, length.max(1), 15, &mut ctxmap_depths);
+    create_huffman_tree(&histogram, length.max(1), 15, &mut depths);
 
-    let mut ctxmap_bits = [0u16; ALPHABET_SIZE];
-    convert_bit_depths_to_symbols(&ctxmap_depths, &mut ctxmap_bits);
+    let mut bits = [0u16; ALPHABET_SIZE];
+    convert_bit_depths_to_symbols(&depths, &mut bits);
 
-    let ctxmap_code = PrefixCode {
-        depths: ctxmap_depths,
-        bits: ctxmap_bits,
-    };
+    let code = PrefixCode { depths, bits };
 
-    // Write the prefix code for the context map
-    write_prefix_codes(&[ctxmap_code], writer)?;
+    // Sum count[i] * depth[i] using histogram + depth.
+    let mut data_bits: usize = extra_bits_total;
+    for (i, &count) in histogram.iter().enumerate() {
+        if count > 0 {
+            data_bits += (count as usize) * (depths[i] as usize);
+        }
+    }
 
-    // Write the context map tokens
-    for t in &tokens {
-        let encoded = UintCoder::encode(t.value);
+    (code, data_bits)
+}
+
+/// Trial-encode a Huffman-coded context-map candidate and return its cost
+/// in bits (header + data), exclusive of the leading 3-bit selector.
+///
+/// This matches libjxl `enc_context_map.cc::EncodeContextMap`'s
+/// `BuildAndEncodeHistograms` cost measurement pass: we actually write the
+/// prefix-code header to a scratch BitWriter and count the bits, then add
+/// the data-bit total. Using the real writer (not a Shannon proxy) is
+/// necessary because the simple/no-MTF/MTF decisions can hinge on small
+/// differences in the Huffman tree serialisation overhead.
+fn trial_ctxmap_huffman_cost(bytes: &[u8]) -> Result<(PrefixCode, usize)> {
+    let (code, data_bits) = build_ctxmap_prefix_code(bytes);
+    let mut scratch = BitWriter::with_capacity(64);
+    write_prefix_codes(&[code], &mut scratch)?;
+    let header_bits = scratch.bits_written();
+    Ok((code, header_bits + data_bits))
+}
+
+/// Emit Huffman-coded token stream for a context-map candidate.
+///
+/// Writes the prefix-code header followed by one token per byte, using the
+/// `(symbol_bits | extra_bits)` packing the decoder reads back via the
+/// inverse `UintCoder`.
+fn write_ctxmap_huffman_payload(
+    bytes: &[u8],
+    code: &PrefixCode,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    write_prefix_codes(&[*code], writer)?;
+    for &v in bytes {
+        let encoded = UintCoder::encode(v as u32);
         let tok = encoded.token as usize;
-        let depth = ctxmap_code.depths[tok] as usize;
-        let bits = ctxmap_code.bits[tok] as u64;
+        let depth = code.depths[tok] as usize;
+        let huff_bits = code.bits[tok] as u64;
 
-        let data = bits | ((encoded.bits as u64) << depth);
+        let data = huff_bits | ((encoded.bits as u64) << depth);
         let total_bits = depth + encoded.nbits as usize;
 
         writer.write(total_bits, data)?;
+    }
+    Ok(())
+}
+
+/// Write an entropy-coded context map from a byte slice.
+///
+/// Ports the 3-way cost comparison from libjxl
+/// `enc_context_map.cc::EncodeContextMap` (commit-hashed reference in
+/// `~/work/jxl-efforts/libjxl/lib/jxl/enc_context_map.cc`):
+///
+/// 1. **Simple mode** — only legal when `entry_bits < 4` (≤ 8 histograms).
+///    Cost = `entry_bits * map.len()` bits.
+/// 2. **Huffman no-MTF** — raw tokens, single Huffman tree.
+///    Cost = `header_bits + sum(count * depth)`.
+/// 3. **Huffman with MTF** — same shape, but tokens are first
+///    [`move_to_front_transform`]ed. MTF clusters repeated symbols at low
+///    indices, which usually shrinks the Huffman tree AND the data stream
+///    when the input has runs of identical values.
+///
+/// The 3-bit selector (`simple_flag : use_mtf : lz77`) is the same length
+/// for every candidate, so we compare post-selector costs and pick the
+/// minimum. Picking MTF when its data savings cover the extra `use_mtf`
+/// bit is automatic (the comparison is on total bits, not data alone).
+///
+/// The all-zeros fast path is preserved bit-exact for callers (legacy
+/// behaviour: `writer.write(3, 1)`).
+///
+/// **Wire-format note**: only the Huffman path writes a `use_mtf` bit;
+/// simple mode encodes the entry width directly. The 3-bit selector for
+/// simple is `(1, entry_bits[2])`, for Huffman it's `(0, use_mtf,
+/// lz77=0)`. Both are 3 bits, so the leading writer offset is the same.
+///
+/// **lossless / lossy hash-lock invariance**: this writer is only called
+/// via `write_block_ctx_map_adaptive`. The compact default lossy path
+/// uses [`write_block_context_map`] directly with a hardcoded Huffman
+/// no-MTF emission. As a result the 3-way comparison does NOT affect the
+/// 40-cell hash-lock corpus (synthetic 32×32/48×48 fixtures, default
+/// 4-context map).
+fn write_context_map_from_slice(map: &[u8], writer: &mut BitWriter) -> Result<()> {
+    // Check if all values are 0 (simple case, 0 bits per entry).
+    let max_val = *map.iter().max().unwrap_or(&0);
+    if max_val == 0 {
+        writer.write(3, 1)?; // simple_flag=1, entry_bits=0
+        return Ok(());
+    }
+
+    let n = map.len();
+
+    // Candidate A: simple mode (libjxl gate: entry_bits < 4).
+    // libjxl uses `CeilLog2Nonzero(num_histograms)` — `num_histograms` is
+    // typically `max_val + 1` since contexts are dense from 0..num_histograms-1.
+    let entry_bits = ceil_log2_nonzero(max_val as usize + 1) as usize;
+    let simple_bits: Option<usize> = if entry_bits < 4 {
+        Some(entry_bits * n)
+    } else {
+        None
+    };
+
+    // Candidate B: Huffman without MTF.
+    let (code_raw, cost_raw) = trial_ctxmap_huffman_cost(map)?;
+
+    // Candidate C: Huffman with MTF.
+    let mtf_bytes = move_to_front_transform(map);
+    let (code_mtf, cost_mtf) = trial_ctxmap_huffman_cost(&mtf_bytes)?;
+
+    // Pick the cheapest candidate. Ties prefer simple > no-MTF > MTF (lowest
+    // implementation/decode complexity first); the lever cares about strict
+    // less-than wins anyway.
+    enum Pick {
+        Simple,
+        Huffman,
+        HuffmanMtf,
+    }
+
+    let mut pick = Pick::Huffman;
+    let mut best_cost = cost_raw;
+
+    if cost_mtf < best_cost {
+        pick = Pick::HuffmanMtf;
+        best_cost = cost_mtf;
+    }
+    if let Some(sb) = simple_bits {
+        if sb < best_cost {
+            pick = Pick::Simple;
+            // best_cost unused after this branch but kept for clarity.
+            let _ = best_cost;
+        }
+    }
+
+    #[cfg(feature = "debug-tokens")]
+    {
+        debug_log!(
+            "  write_context_map_from_slice: n={} max_val={} simple_bits={:?} cost_raw={} cost_mtf={} picked={}",
+            n,
+            max_val,
+            simple_bits,
+            cost_raw,
+            cost_mtf,
+            match pick {
+                Pick::Simple => "simple",
+                Pick::Huffman => "huffman_no_mtf",
+                Pick::HuffmanMtf => "huffman_mtf",
+            }
+        );
+    }
+
+    match pick {
+        Pick::Simple => {
+            // Selector: simple_flag=1, entry_bits in 2 bits.
+            writer.write(1, 1)?;
+            writer.write(2, entry_bits as u64)?;
+            // Entry bits assumed to fit because entry_bits comes from
+            // ceil_log2(max+1); every entry is in [0, max].
+            for &v in map {
+                writer.write(entry_bits, v as u64)?;
+            }
+        }
+        Pick::Huffman => {
+            // Selector: simple_flag=0, use_mtf=0, lz77=0 -> 3-bit value 0.
+            writer.write(3, 0)?;
+            write_ctxmap_huffman_payload(map, &code_raw, writer)?;
+        }
+        Pick::HuffmanMtf => {
+            // Selector: simple_flag=0, use_mtf=1, lz77=0 -> 3-bit value 2
+            // (LSB-first: bit 0 = simple_flag = 0, bit 1 = use_mtf = 1,
+            // bit 2 = lz77 = 0 → integer 0b010 = 2).
+            writer.write(3, 0b010)?;
+            write_ctxmap_huffman_payload(&mtf_bytes, &code_mtf, writer)?;
+        }
     }
 
     Ok(())
@@ -940,5 +1091,138 @@ mod tests {
             let bits = writer.bits_written();
             assert!(bits >= 6 && bits <= 18, "v={} bits={}", v, bits);
         }
+    }
+
+    /// Lever #1: the all-zeros input must still write the legacy 3-bit
+    /// header `(3, 1)` byte-identical (simple_flag=1, entry_bits=0). This
+    /// is the fast path that lets callers with a literal-zero block
+    /// context map skip MTF entirely.
+    #[test]
+    fn test_write_context_map_from_slice_all_zeros_byte_identical() {
+        let map = vec![0u8; 39];
+        let mut writer = BitWriter::new();
+        write_context_map_from_slice(&map, &mut writer).unwrap();
+        let bytes = writer.finish_with_padding();
+        // 3 bits written + zero padding to byte = 1 byte. Value:
+        // LSB-first bits 1, 0, 0 → 0b00000001 = 0x01.
+        assert_eq!(
+            bytes,
+            vec![0x01],
+            "all-zeros must produce 1-byte simple header"
+        );
+    }
+
+    /// Lever #1 regression gate: the 3-way comparison must pick MTF on a
+    /// classic MTF-favourable input — alternating long runs of multiple
+    /// distinct values (the canonical MTF win pattern, mirrors the JPEG
+    /// `BlockCtxMap::libjxl_default` 15-cluster map structure where each
+    /// channel/order region carries one cluster id at a time).
+    #[test]
+    fn test_write_context_map_from_slice_mtf_wins_on_run_length_input() {
+        // Construct an input with multiple distinct runs:
+        //   AAAAAAAAAA BBBBBBBBBB CCCCCCCCCC DDDDDDDDDD AAAAAAAAAA ...
+        // Raw Huffman: 4 equally-likely tokens, ~2 bits/token.
+        // MTF: each run starts with a small index (0 after the first
+        // occurrence) then immediately becomes 0 — heavily skewed to 0,
+        // ~0.5 bits/token after MTF + small alphabet → smaller tree.
+        let mut map = Vec::new();
+        for cycle in 0..8 {
+            for v in 0u8..=4 {
+                let run_len = if cycle == 0 && v <= 2 { 1 } else { 15 };
+                map.extend(std::iter::repeat(v).take(run_len));
+            }
+        }
+
+        let mut writer_a = BitWriter::new();
+        let mut writer_b = BitWriter::new();
+        write_context_map_from_slice(&map, &mut writer_a).unwrap();
+        let bytes = writer_a.finish_with_padding();
+        assert!(!bytes.is_empty());
+
+        // For a sanity check, we also confirm the 3-way comparison does
+        // strictly prefer MTF over no-MTF for this input by trial-encoding
+        // both and comparing costs.
+        let (_, cost_raw) = trial_ctxmap_huffman_cost(&map).unwrap();
+        let mtf_bytes = move_to_front_transform(&map);
+        let (_, cost_mtf) = trial_ctxmap_huffman_cost(&mtf_bytes).unwrap();
+        assert!(
+            cost_mtf < cost_raw,
+            "MTF should be cheaper on run-length input: raw={} mtf={}",
+            cost_raw,
+            cost_mtf
+        );
+
+        // Encode again to verify writer is deterministic.
+        write_context_map_from_slice(&map, &mut writer_b).unwrap();
+        let bytes_b = writer_b.finish_with_padding();
+        assert_eq!(bytes, bytes_b, "writer must be deterministic");
+    }
+
+    /// Lever #1 regression gate: a SHORT input with HIGH symbol entropy
+    /// makes simple mode dominate (Huffman tree overhead > data savings).
+    /// Input: 4 random-ish bytes ≤ entry_bits=2 → simple=8 bits, Huffman
+    /// header alone is >30 bits.
+    #[test]
+    fn test_write_context_map_from_slice_picks_simple_when_short() {
+        let map: Vec<u8> = vec![0, 1, 2, 3];
+        let mut writer = BitWriter::new();
+        write_context_map_from_slice(&map, &mut writer).unwrap();
+        let bytes = writer.finish_with_padding();
+        assert!(!bytes.is_empty());
+        // Simple-flag bit must be 1 (simple mode picked, since Huffman
+        // tree header for 4 symbols dwarfs the 8-bit simple payload).
+        assert_eq!(
+            bytes[0] & 1,
+            1,
+            "simple_flag bit should be 1 for short fixture (Huffman header too costly)"
+        );
+    }
+
+    /// Lever #1 regression gate: confirm cost comparison correctness on the
+    /// classic libjxl JPEG-class input — 7425-entry 15-cluster ctx_map with
+    /// runs of same cluster id. Validates the lever's core claim: MTF wins
+    /// on the actual production input shape.
+    #[test]
+    fn test_write_context_map_from_slice_mtf_wins_on_libjxl_15cluster_shape() {
+        // Approximate the shape of libjxl's 15-cluster default ctx_map:
+        // ~7425 entries with strong per-segment clustering (each 39-byte
+        // segment carries 4-6 distinct cluster ids in runs).
+        let mut map = Vec::with_capacity(7425);
+        let palette = [0u8, 1, 5, 7, 11, 14, 3, 9, 2, 6, 8, 13, 4, 10, 12];
+        for seg in 0..(7425 / 39 + 1) {
+            for k in 0..39 {
+                if map.len() >= 7425 {
+                    break;
+                }
+                // Each row of 13 entries within a segment uses ~3 distinct
+                // values in runs of 3-4. The seed per row cycles slowly.
+                let row = k / 13;
+                let col = k % 13;
+                let pick = (seg + row * 5 + col / 4) % palette.len();
+                map.push(palette[pick]);
+            }
+        }
+        assert_eq!(map.len(), 7425);
+
+        let (_, cost_raw) = trial_ctxmap_huffman_cost(&map).unwrap();
+        let mtf_bytes = move_to_front_transform(&map);
+        let (_, cost_mtf) = trial_ctxmap_huffman_cost(&mtf_bytes).unwrap();
+        assert!(
+            cost_mtf < cost_raw,
+            "MTF must beat raw Huffman on 15-cluster shape: raw={} mtf={}",
+            cost_raw,
+            cost_mtf
+        );
+
+        let mut writer = BitWriter::new();
+        write_context_map_from_slice(&map, &mut writer).unwrap();
+        let bytes = writer.finish_with_padding();
+        // First 3 bits must encode (simple=0, use_mtf=1, lz77=0) = 0b010 = 2.
+        // LSB-first byte 0 has bits 0,1,2 = 0,1,0 → low nibble 0b???0010.
+        assert_eq!(
+            bytes[0] & 0b111,
+            0b010,
+            "selector should be (simple=0, use_mtf=1, lz77=0)"
+        );
     }
 }
