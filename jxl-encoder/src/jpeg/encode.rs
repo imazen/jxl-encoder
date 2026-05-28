@@ -953,6 +953,14 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     } else {
         ac_num_contexts
     };
+    // EX-J23 (2026-05-28): HONEST-STOP. Tested ANSHistogramStrategy::Approximate
+    // (libjxl-e7 default) on both DC and AC codes:
+    // - DC: +20 bytes / 50 files (noise; few histograms, no signal).
+    // - AC: +1979 bytes / 50 files (REGRESSION). On the AC stream the
+    //   12-shift Precise grid finds tighter normalization that saves
+    //   more bytes than the header overhead it incurs. cjxl-e7's
+    //   choice of Approximate is a speed tradeoff, not a compression
+    //   win. Reverted, kept Precise.
     let ac_code = build_entropy_code_ans_with_options(
         &all_ac_tokens,
         ac_code_num_contexts,
