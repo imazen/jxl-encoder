@@ -56,16 +56,27 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
     let width = jpeg.width as usize;
     let height = jpeg.height as usize;
 
-    // Channel mapping: JXL c0=Cb, c1=Y, c2=Cr for YCbCr
-    // JPEG components are typically: 0=Y, 1=Cb, 2=Cr
-    // For grayscale (1 component), all JXL channels map to the single component.
+    // Channel mapping: JXL c0=Cb, c1=Y, c2=Cr for YCbCr-flavored frames.
+    //   - For semantic-YCbCr (3-comp, libjxl `color_transform == kYCbCr`):
+    //     swap to put JPEG Y into the JXL c1 (luma) slot.
+    //   - For semantic-RGB (3-comp, `color_transform == kNone`):
+    //     identity — c0=R, c1=G, c2=B.
+    //   - For grayscale (1-comp): all JXL channels reference comp[0]
+    //     and chroma is zero-filled later.
+    //
+    // This MUST be driven by the semantic color transform (detected
+    // from JFIF / Adobe APP14 / component IDs) and NOT by the JBRD
+    // `component_type` tag, since the tag is purely a serialization
+    // shortcut (only fires when IDs are literally (1,2,3) or
+    // ('R','G','B')) and can be `Custom` for semantically-YCbCr
+    // JPEGs with non-(1,2,3) IDs.
+    let is_ycbcr_color_transform = detect_ycbcr_color_transform(jpeg);
     let jpeg_c_map: [usize; 3] = if jpeg.components.len() == 1 {
         [0, 0, 0] // grayscale: all channels reference component 0
+    } else if is_ycbcr_color_transform {
+        [1, 0, 2] // JXL c0←JPEG Cb, c1←JPEG Y, c2←JPEG Cr
     } else {
-        match jpeg.component_type {
-            JpegComponentType::YCbCr => [1, 0, 2], // JXL c0←JPEG Cb, c1←JPEG Y, c2←JPEG Cr
-            _ => [0, 1, 2],                        // RGB or other: identity mapping
-        }
+        [0, 1, 2] // RGB or other: identity mapping
     };
 
     let num_components = jpeg.components.len();
@@ -119,10 +130,22 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
     let xsize_blocks = div_ceil(width, 8 << max_hs) << max_hs;
     let ysize_blocks = div_ceil(height, 8 << max_vs) << max_vs;
 
+    // The DC offset is keyed on the wire-format `color_transform`
+    // value (`is_ycbcr_color_transform` above):
+    //   color_transform == kYCbCr → offset = 0
+    //   color_transform == kNone  → offset = 1024 / qt_dc[c]
+    // matching the decoder's `dcoff` (`dec_group.cc:244-247`,
+    // applied as `jpeg_pos[0] = dc_rows[c] - dcoff[c]` on reconstruct).
+    // libjxl forces grayscale to kYCbCr even with the kNone-style
+    // detection because the chroma planes are zero-filled (no offset
+    // matters) and the existing fast paths assume zero `dcoff`.
+    let is_ycbcr_for_dc_offset = is_ycbcr_color_transform || jpeg.components.len() == 1;
+    let dc_offset = compute_jpeg_dc_offset(jpeg, &jpeg_c_map, is_ycbcr_for_dc_offset);
+
     // Map JPEG coefficients to JXL data structures
     // Each channel uses its native block dimensions (may differ for subsampled chroma)
     let (mut quant_dc, mut quant_ac, mut nzeros, mut raw_nzeros) =
-        map_jpeg_coefficients(jpeg, &jpeg_c_map)?;
+        map_jpeg_coefficients(jpeg, &jpeg_c_map, &dc_offset)?;
 
     let is_gray = num_components == 1;
 
@@ -643,9 +666,112 @@ pub fn encode_jpeg_to_jxl_container(jpeg: &JpegData) -> Result<Vec<u8>> {
 /// Each channel uses its component's native block dimensions (which differ
 /// for subsampled chroma channels).
 #[allow(clippy::type_complexity)]
+/// Detect whether the frame's semantic color_transform is
+/// `kYCbCr` (true) or `kNone` (false).
+///
+/// Mirrors libjxl `SetColorTransformFromJpegData`
+/// (`lib/jxl/jpeg/enc_jpeg_data.cc:240-283`) exactly:
+///
+/// 1. **JFIF (APP0) present** → kYCbCr (always; even if Adobe APP14
+///    says transform=0, the JFIF marker wins). This is the most
+///    common case for camera / web JPEGs.
+/// 2. **No JFIF, but Adobe APP14 with payload "Adobe...transform=0"
+///    present** → kNone (RGB).
+/// 3. **No JFIF, no Adobe APP14**: if 3 components AND component IDs
+///    are literally ('R','G','B') = (82, 71, 66) → kNone (RGB).
+/// 4. Otherwise → kYCbCr (default).
+///
+/// Grayscale (1 component) is handled by the caller (the
+/// `nbcomp == 1` early-fast-path in libjxl's last line) — this
+/// function returns the semantic transform; the caller forces
+/// kYCbCr for grayscale separately.
+///
+/// Independent of the JBRD `component_type` tag (which is a
+/// serialization shortcut keyed on LITERAL ID matches). A JPEG with
+/// IDs (0, 1, 2) and the JFIF marker is semantically YCbCr but the
+/// JBRD tag will be `Custom` (because (0,1,2) doesn't match the
+/// (1,2,3) YCbCr ID-pattern).
+fn detect_ycbcr_color_transform(jpeg: &JpegData) -> bool {
+    // Rule 1: JFIF present → always kYCbCr
+    if jpeg.marker_order.contains(&0xE0) {
+        return true;
+    }
+    // Rule 2: Adobe APP14 → check transform byte
+    let mut app_idx = 0usize;
+    for &marker in &jpeg.marker_order {
+        if marker & 0xF0 == 0xE0 {
+            // APP marker — payload at app_data[app_idx]
+            if app_idx < jpeg.app_data.len() {
+                let data = &jpeg.app_data[app_idx];
+                // libjxl checks marker == 0xEE and data.size() == 15
+                //   (marker_byte + len_hi + len_lo + 'Adobe' + 7 bytes of payload).
+                // Our `app_data[i]` is `[marker, len_hi, len_lo, payload...]`,
+                // so total len 15 means payload is 12 bytes: 'Adobe'(5) + version(2)
+                // + flags0(2) + flags1(2) + transform(1).
+                // The transform byte is at app_data[14] in libjxl's layout
+                // (= our index 14 too since marker_byte is at [0]).
+                if marker == 0xEE
+                    && data.len() == 15
+                    && data.len() > 7
+                    && &data[3..8] == b"Adobe"
+                {
+                    let transform = data[14];
+                    return transform != 0; // kYCbCr unless transform=0
+                }
+            }
+            app_idx += 1;
+        }
+    }
+    // Rule 3: no JFIF, no Adobe — guess from component IDs
+    if jpeg.components.len() == 3
+        && jpeg.components[0].id == b'R' as u32
+        && jpeg.components[1].id == b'G' as u32
+        && jpeg.components[2].id == b'B' as u32
+    {
+        return false; // explicit RGB IDs → kNone
+    }
+    // Rule 4: default → kYCbCr
+    true
+}
+
+/// Compute the per-channel DC offset that the encoder must add to each
+/// stored quantized DC value so the decoder's reconstruction
+/// (`dc_value - dcoff[c]` in `dec_group.cc:417`) returns the original
+/// JPEG DC.
+///
+/// For `color_transform == kYCbCr` (3-component YCbCr; and our forced
+/// `is_ycbcr=true` grayscale path) → offset is 0.
+///
+/// For `color_transform == kNone` (3-component RGB; libjxl applies
+/// this to grayscale too but we differ — see callsite comment) →
+/// offset is `1024 / qt_dc[c]` per `enc_frame.cc:1005` mirrored by the
+/// decoder's `dec_group.cc:246`.
+fn compute_jpeg_dc_offset(jpeg: &JpegData, jpeg_c_map: &[usize; 3], is_ycbcr: bool) -> [i32; 3] {
+    let mut offsets = [0i32; 3];
+    if is_ycbcr {
+        return offsets;
+    }
+    for jxl_c in 0..3 {
+        let jpeg_c = jpeg_c_map[jxl_c];
+        // Grayscale's [0,0,0] map keeps all three offsets aligned to comp[0],
+        // but is_ycbcr is forced true for grayscale, so this branch is
+        // reachable only for non-gray inputs in practice.
+        if jpeg_c >= jpeg.components.len() {
+            continue;
+        }
+        let qt_idx = jpeg.components[jpeg_c].quant_idx as usize;
+        let qt_dc = jpeg.quant[qt_idx].values[0];
+        if qt_dc > 0 {
+            offsets[jxl_c] = 1024 / qt_dc;
+        }
+    }
+    offsets
+}
+
 fn map_jpeg_coefficients(
     jpeg: &JpegData,
     jpeg_c_map: &[usize; 3],
+    dc_offset: &[i32; 3],
 ) -> Result<(
     [Vec<Vec<i16>>; 3],
     [Vec<Vec<[i32; BLOCK_SIZE]>>; 3],
@@ -678,8 +804,21 @@ fn map_jpeg_coefficients(
                 let blk_idx = by * xb + bx;
                 let base = blk_idx * 64;
 
-                // DC coefficient (natural order position 0)
-                let dc = comp.coeffs[base];
+                // DC coefficient (natural order position 0).
+                //
+                // For `color_transform == kNone` (RGB JPEGs) the
+                // decoder subtracts `1024 / qt_dc[c]` from each DC
+                // value when reconstructing the original JPEG
+                // (dec_group.cc:417). Add the matching offset here so
+                // the round-trip closes byte-exactly. For YCbCr
+                // JPEGs `dc_offset[c]` is 0 and this is a no-op,
+                // preserving the existing YCbCr/grayscale paths.
+                //
+                // The offset is small (~128 for typical luma DC quant
+                // = 8) and the result still fits in i16 because JPEG
+                // quantized DC is in [-1024, 1023] and the max offset
+                // is `1024 / 1` = 1024.
+                let dc = (comp.coeffs[base] as i32 + dc_offset[jxl_c]).clamp(-32768, 32767) as i16;
                 dc_row.push(dc);
 
                 // AC coefficients with transposition: JXL block[x*8+y] = JPEG[y*8+x]
@@ -818,9 +957,11 @@ fn compute_jpeg_upsampling(jpeg: &JpegData, jpeg_c_map: &[usize; 3]) -> [u8; 3] 
 
 /// Build the JXL frame header for JPEG reencoding.
 fn build_jpeg_frame_header(jpeg: &JpegData, jpeg_upsampling: [u8; 3]) -> FrameHeader {
-    // libjxl always uses YCbCr for JPEG reencoding, including grayscale.
-    // For grayscale (1 component), kYCbCr is forced in SetColorTransformFromJpegData.
-    let is_ycbcr = jpeg.component_type == JpegComponentType::YCbCr || jpeg.components.len() == 1;
+    // Mirror libjxl `SetColorTransformFromJpegData`: 3-component RGB
+    // (Adobe APP14 transform=0 or explicit IDs (R,G,B), no JFIF) →
+    // kNone (do_ycbcr = false); everything else, including grayscale,
+    // → kYCbCr (do_ycbcr = true).
+    let is_ycbcr = detect_ycbcr_color_transform(jpeg) || jpeg.components.len() == 1;
     FrameHeader {
         encoding: Encoding::VarDct,
         xyb_encoded: false,

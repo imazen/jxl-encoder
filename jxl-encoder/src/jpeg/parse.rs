@@ -551,21 +551,32 @@ fn classify_app_marker(marker_byte: u8, payload: &[u8]) -> AppMarkerType {
 /// Classify components from IDs and markers.
 fn classify_components(
     jpeg: &JpegData,
-    seen_jfif: bool,
-    adobe_transform: Option<u8>,
+    _seen_jfif: bool,
+    _adobe_transform: Option<u8>,
 ) -> JpegComponentType {
-    if jpeg.components.len() == 1 {
+    // Mirror libjxl `JPEGData::VisitFields` (`lib/jxl/jpeg/jpeg_data.cc:158-167`)
+    // exactly. The wire-format `component_type` (2 bits) is a TAG that the
+    // decoder uses to RECONSTRUCT component IDs:
+    //   - Gray   → id[0] = 1
+    //   - YCbCr  → id[0..3] = (1, 2, 3)
+    //   - RGB    → id[0..3] = ('R', 'G', 'B') = (82, 71, 66)
+    //   - Custom → IDs are stored explicitly in the JBRD payload
+    // Picking a non-Custom tag when the source IDs don't match the tag's
+    // implied IDs corrupts roundtrip (decoder writes the implied IDs back to
+    // the SOF marker). libjxl IGNORES the JFIF / Adobe-APP14 markers when
+    // tagging; only literal ID equality matters. Adobe-transform=0 ("this is
+    // RGB") is still useful as a SEMANTIC color-space hint elsewhere (e.g.
+    // `do_ycbcr` / `color_transform` selection in the frame header), but it
+    // does NOT change the JBRD component_type tag.
+    let ids: Vec<u32> = jpeg.components.iter().map(|c| c.id).collect();
+    if ids.len() == 1 && ids[0] == 1 {
         return JpegComponentType::Gray;
     }
-    if let Some(0) = adobe_transform {
-        return JpegComponentType::Rgb;
-    }
-    let ids: Vec<u32> = jpeg.components.iter().map(|c| c.id).collect();
-    if ids == [b'R' as u32, b'G' as u32, b'B' as u32] {
-        return JpegComponentType::Rgb;
-    }
-    if seen_jfif || jpeg.components.len() == 3 {
+    if ids.len() == 3 && ids == [1, 2, 3] {
         return JpegComponentType::YCbCr;
+    }
+    if ids.len() == 3 && ids == [b'R' as u32, b'G' as u32, b'B' as u32] {
+        return JpegComponentType::Rgb;
     }
     JpegComponentType::Custom
 }
