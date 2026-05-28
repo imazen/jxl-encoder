@@ -17,6 +17,51 @@ use crate::error::{Error, Result};
 /// Minimum distance threshold for creating distinct clusters.
 const MIN_DISTANCE_FOR_DISTINCT: f32 = 48.0;
 
+#[cfg(feature = "std")]
+std::thread_local! {
+    /// EX-J31: when set, [`ans_population_cost`] uses the accurate
+    /// libjxl-parity `ANSEncodingHistogram::ComputeBest` cost in the kBest
+    /// pair-merge instead of the crude `entropy + 5*alphabet` estimate.
+    /// Scoped per-thread so the JPEG transcode path can opt in without
+    /// changing VarDCT/modular defaults.
+    static ACCURATE_ANS_COST: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+/// Returns whether accurate ANS population cost is enabled on this thread.
+#[cfg(feature = "std")]
+pub(crate) fn accurate_ans_cost_enabled() -> bool {
+    ACCURATE_ANS_COST.with(|c| c.get())
+}
+
+/// no_std stub: accurate cost is std-only (thread-local + the JPEG path that
+/// uses it are both std-gated).
+#[cfg(not(feature = "std"))]
+pub(crate) fn accurate_ans_cost_enabled() -> bool {
+    false
+}
+
+/// RAII guard enabling accurate ANS population cost on the current thread for
+/// its lifetime. Used by the JPEG transcode encoder around its DC + AC
+/// entropy-code builds (the clustering runs synchronously on the calling
+/// thread, so the thread-local reliably covers the kBest pair-merge).
+#[cfg(feature = "std")]
+pub(crate) struct AccurateAnsCostGuard(bool);
+
+#[cfg(feature = "std")]
+impl AccurateAnsCostGuard {
+    pub(crate) fn new() -> Self {
+        let prev = ACCURATE_ANS_COST.with(|c| c.replace(true));
+        AccurateAnsCostGuard(prev)
+    }
+}
+
+#[cfg(feature = "std")]
+impl Drop for AccurateAnsCostGuard {
+    fn drop(&mut self) {
+        ACCURATE_ANS_COST.with(|c| c.set(self.0));
+    }
+}
+
 /// Maximum number of histogram clusters.
 pub const CLUSTERS_LIMIT: usize = 256;
 
@@ -444,12 +489,19 @@ fn ans_population_cost(h: &Histogram) -> f32 {
     // pair-merge to OVER-MERGE (e.g. 5445 JPEG-AC contexts -> only 64
     // histograms) where libjxl keeps more histograms with a tighter data fit.
     //
-    // Gated by `JXL_ACCURATE_ANS_COST=1` for A/B measurement; the legacy
-    // estimate is the default until the JPEG-path win is confirmed and the
-    // VarDCT/modular impact is measured (this fn is shared across all ANS
-    // clustering, so a default flip would touch hash-locks broadly).
+    // EX-J31 (2026-05-28): accurate cost is DEFAULT-ON for the JPEG transcode
+    // path (via `AccurateAnsCostGuard`, set per-encode on the calling thread)
+    // — measured -0.069pp on the 50-file JPEG corpus on top of WP-DC. It is
+    // NOT global-default because it changes modular-lossless output
+    // (`modular_knobs_palette...` test) and would need broad regen/validation;
+    // VarDCT e<=8 uses kFast (no pair-merge) so this fn isn't reached there.
+    // `JXL_ACCURATE_ANS_COST=1` forces it on globally (for VarDCT/modular A/B).
     #[cfg(feature = "std")]
-    if std::env::var_os("JXL_ACCURATE_ANS_COST").is_some() {
+    let accurate =
+        accurate_ans_cost_enabled() || std::env::var_os("JXL_ACCURATE_ANS_COST").is_some();
+    #[cfg(not(feature = "std"))]
+    let accurate = accurate_ans_cost_enabled();
+    if accurate {
         if let Ok(enc) = super::ans::ANSEncodingHistogram::from_histogram(
             h,
             super::ans::ANSHistogramStrategy::Fast,
