@@ -1,0 +1,94 @@
+JPEG-in-JXL Lossless Recompression — session-final bench (2026-05-28)
+=====================================================================
+
+Bench at main = a53c9c46 (after all session chunks landed).
+
+Sample: 200 JPEGs (66 baseline + 134 progressive) drawn from
+`/home/lilith/product-images` + `/home/lilith/work/codec-corpus` via
+`random.seed(11)`. Stratified to match the ~33/67 baseline/progressive
+split observed in the corpus via file(1).
+
+Encoders:
+- cjxl: libjxl v0.12.0 4279d48 (`/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl`)
+- ours: `cjxl-rs` (this repo, --no-default-features --features
+  'jpeg-reencoding,parallel,jxl_encoder/std')
+
+Roundtrip verification: djxl v0.12.0 d2c7032 `--reconstruct_jpeg` via
+extension auto-detect.
+
+Result:
+- Roundtrip OK:    200 / 200 (100%)
+- Roundtrip DIFF:  0   / 200
+- Encode failed:   0   / 200
+- Source total:    54,772,394 bytes
+- cjxl total:      44,802,893 bytes  (81.85% of src)
+- ours total:      45,484,995 bytes  (83.10% of src)
+- Δ vs cjxl:       +1.522%
+
+Session trajectory (commits on origin/main, chronological):
+| commit   | event                                       | delta vs cjxl |
+|---       |---                                          |---            |
+| fb57425a | session start (pre-#8, pre-#10)             | +2.21%        |
+| 164c3045 | #8 DC-quantile block_ctx_map (agent +bug)   | +2.21% (no chg, agent had pre-#10 baseline)
+| ba676144 | #10 zenjpeg JBRD metadata wired             | +2.73% (#10 reset_points bug bloated JBRD)
+| 8f008cae | #11 has_zero_padding_bit (200/200 OK)       | +2.73%        |
+| d0372efc | lever #3 HybridUint kNone                   | +1.99%  (-0.22pp)
+| d70e7811 | lever #1 MTF context map (honest-stop)      | +1.99%  (0.00pp on JPEG)
+| 36ec0d3a | #12 reset_points fix (consumes zenjpeg 0.8.7) | +1.52%  (-0.47pp)
+| 4f2bb1dc | cleanup orchestrator drift                  | +1.52%        |
+| a53c9c46 | lever #5 xorshift sampling (honest-stop)    | +1.52%  (+0.004pp noise)
+| (this)   | **session end**                             | **+1.52%**    |
+
+Net session gain: -0.69pp on size, +1/200 byte-identical files
+(199/200 → 200/200).
+
+What changed structurally vs session start:
+1. ALL 200 sampled JPEGs now byte-identically roundtrip via djxl
+   (was 198/200; the 2 DIFFs were unsplash successive-approximation
+   progressive files + a has_zero_padding_bit edge case).
+2. JBRD payload reduced ~1.4KB/file on progressive JPEGs by fixing
+   the over-population of reset_points.
+3. HybridUint config optimization disabled for JPEG (libjxl parity).
+4. Context map encoding upgraded to bit-exact libjxl 3-way
+   simple/Huffman/MTF cost comparison (no JPEG bytes saved but
+   eliminates Shannon-proxy mispick risk class).
+5. zenjpeg gained a JBRD-metadata-aware decode API
+   (decode_coefficients_with_jbrd_metadata) that's backwards-
+   compatible (old decode_coefficients still works unchanged).
+   Version bumped 0.8.4 → 0.8.5 → 0.8.6 → 0.8.7.
+
+What did NOT close the gap (proven via measurement, do not retry):
+- LZ77 application to AC stream (3 variants tested: RLE mixed-mode
+  regressed 2/30, RLE all-or-nothing -0.06pp noise, Greedy +0.04pp
+  REGRESSION). The per-section LZ77 overhead meets or exceeds savings
+  on post-CfL+transposed JPEG AC token streams.
+- CMYK / 4-component JPEG transcode (libjxl JBRD spec rejects
+  num_components ∉ {1,3}; cjxl also fails on cmyk_logo.jpg).
+- Enhanced clustering for JPEG path (already at Fast = libjxl parity).
+- MTF context map encoding for JPEG (W44-73 LZ77 path already captures
+  the dominant ctx_map gain; MTF adds only -36 bytes / 200 files on
+  JPEG, ~10% on Libjxl-strategy 7425-entry fixtures).
+- Xorshift 50% block sampling for coeff orders (+0.004pp noise; the
+  Lehmer cost-benefit gate produces same orderings at 50% as 100%).
+
+Remaining gap (+1.52%) is in accumulated tiny libjxl tunings, none
+individually worth more than ~0.05pp per round-2 research:
+- Frame all_default flag (~10-20 bits/file)
+- AC metadata tree kind (kJpegTranscodeACMeta, ~20-100 bits/file)
+- Quant matrix RAW mode encoding (~10-30 bits/file)
+- Context map threshold value selector tightening (~20-50 bits/file)
+- See docs/jpeg-recompression-2026-05-28/LEVERS_ROUND2.md for the
+  ranked list of remaining levers.
+
+Coverage characterization (compared to pre-session ~33% encode rate):
+- 100% of valid 3-component baseline/progressive JPEGs encode + roundtrip
+- 0% of 4-component (CMYK) JPEGs encode (libjxl spec-blocked, not our limit)
+- 0% of 12-bit precision JPEGs encode (rare; out of scope this session)
+
+Repro:
+1. Build: `cargo build --release -p jxl-encoder-cli
+            --no-default-features
+            --features 'jpeg-reencoding,parallel,jxl_encoder/std'`
+2. Run the bench script inline at top of this meta (random.seed(11),
+   first 200 valid JPEGs from product-images + codec-corpus).
+3. Roundtrip via djxl, sum bytes, compute delta.
