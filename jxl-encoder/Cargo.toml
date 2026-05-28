@@ -200,7 +200,7 @@ zensim-loop = ["butteraugli-loop", "dep:zensim"]
 zensim-loop-gpu = ["butteraugli-loop", "dep:zensim-gpu", "dep:cubecl"]
 # Convenience encode functions that accept imgref::ImgRef with typed pixel formats.
 convenience = ["dep:imgref", "dep:rgb"]
-jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
+jpeg-reencoding = ["dep:zenjpeg", "dep:brotli", "brotli-metadata"]
 # Brotli-compressed metadata boxes (`brob`) for EXIF/XMP. Wraps each
 # metadata blob in a brob box that decompresses to the original
 # Exif/xml/jumb box, typically 2-4× smaller for XML / binary metadata.

@@ -438,14 +438,36 @@ pub fn wrap_in_container_jxlp_with_level(
     // Second jxlp box: frame data (counter = 1, last)
     write_jxlp_box(&mut out, 1, true, cs_part2);
 
-    // Exif box
+    // Exif box — try brob first, fall back to raw if brotli doesn't help.
+    //
+    // For XMP this is usually a big win (2-6× smaller — XMP is XML, very
+    // redundant). For Exif it's a marginal win because Exif is binary and
+    // already fairly compact, but `try_write_brob_box` only succeeds when
+    // brob is strictly smaller, so the worst case is "no change".
+    //
+    // libjxl's default `jpeg_compress_boxes = true` uses brotli quality 4
+    // — good ratio at low CPU. Matched here.
+    const JPEG_BROB_QUALITY: u32 = 4;
     if let Some(exif_data) = exif {
-        write_exif_box(&mut out, exif_data);
+        // Exif box on the JXL wire carries a 4-byte big-endian "TIFF offset"
+        // prefix before the actual TIFF payload (= 0 when the TIFF starts
+        // right after the prefix). We build that prefixed payload here so
+        // the brob's `inner` payload, after brotli-decompression, exactly
+        // matches what a non-brob `Exif` box would have stored — a clean
+        // round-trip through djxl.
+        let mut prefixed_exif = Vec::with_capacity(4 + exif_data.len());
+        prefixed_exif.extend_from_slice(&[0, 0, 0, 0]);
+        prefixed_exif.extend_from_slice(exif_data);
+        if !try_write_brob_box(&mut out, b"Exif", &prefixed_exif, JPEG_BROB_QUALITY) {
+            write_exif_box(&mut out, exif_data);
+        }
     }
 
-    // xml box
+    // xml box (XMP) — try brob first, fall back to raw if brotli is bigger.
     if let Some(xmp_data) = xmp {
-        write_box(&mut out, b"xml ", xmp_data);
+        if !try_write_brob_box(&mut out, b"xml ", xmp_data, JPEG_BROB_QUALITY) {
+            write_box(&mut out, b"xml ", xmp_data);
+        }
     }
 
     out
