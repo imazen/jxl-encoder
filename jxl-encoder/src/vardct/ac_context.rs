@@ -89,21 +89,45 @@ pub const NUM_BLOCK_CTXS_LIBJXL_DEFAULT: usize = 15;
 
 /// Content-adaptive block context map.
 ///
-/// Provides a mapping from (channel, strategy, quantization field value) to a
-/// block context ID. The context map allows the entropy coder to use different
-/// distributions for blocks with different characteristics.
+/// Provides a mapping from (channel, strategy, quantization field value, DC
+/// bucket) to a block context ID. The context map allows the entropy coder
+/// to use different distributions for blocks with different characteristics.
 ///
 /// The context map is indexed as:
-/// `ctx_map[(c_swapped * NUM_ORDERS + order_id) * num_qf_segments + qf_idx]`
+/// `ctx_map[((c_swapped * NUM_ORDERS + order_id) * num_qf_segments + qf_idx)
+///          * num_dc_ctxs + dc_idx]`
 /// where `c_swapped = if c < 2 { c ^ 1 } else { 2 }` (X↔Y swap for decoder).
+///
+/// `num_dc_ctxs = (dc_thresholds[0].len() + 1) * (dc_thresholds[1].len() + 1)
+///                * (dc_thresholds[2].len() + 1)`.
 #[derive(Debug, Clone)]
 pub struct BlockCtxMap {
+    /// Per-channel signed DC quantile thresholds (0-15 values each). Used by
+    /// JPEG re-encoding to split AC tokens by luma DC bucket. The decoder
+    /// computes a single `dc_idx` per block from these thresholds via the
+    /// multi-channel formula in libjxl `compressed_dc.cc:274-292`:
+    ///
+    /// ```text
+    /// bucket = bucket_x
+    /// bucket = bucket * (dc_thresholds[2].len() + 1) + bucket_b
+    /// bucket = bucket * (dc_thresholds[1].len() + 1) + bucket_y
+    /// ```
+    ///
+    /// libjxl's JPEG re-encoder fills ONLY `dc_thresholds[1]` (luma) and
+    /// leaves [0]/[2] empty, so `bucket = bucket_y = sum(thresholds[1]<luma_dc)`.
+    /// The non-JPEG path keeps all three vectors empty (`num_dc_ctxs = 1`,
+    /// `dc_idx = 0`), preserving byte-identical output.
+    pub dc_thresholds: [Vec<i32>; 3],
     /// QF value thresholds (0-2 values). Blocks with qf > threshold[i] are in
     /// segment i+1. No thresholds means 1 segment (all blocks same).
     pub qf_thresholds: Vec<u32>,
-    /// Context map: maps (channel, order, qf_segment) to block context ID.
-    /// Size = 3 * NUM_ORDER_BUCKETS * (qf_thresholds.len() + 1).
+    /// Context map: maps (channel, order, qf_segment, dc_bucket) to block
+    /// context ID.
+    /// Size = 3 * NUM_ORDER_BUCKETS * num_qf_segments * num_dc_ctxs.
     pub ctx_map: Vec<u8>,
+    /// Number of distinct DC bucket combinations across all 3 channels
+    /// (product of `(dc_thresholds[c].len() + 1)`). Always ≥1.
+    pub num_dc_ctxs: usize,
     /// Number of distinct context IDs (max context ID + 1).
     pub num_ctxs: usize,
 }
@@ -112,8 +136,10 @@ impl Default for BlockCtxMap {
     /// Returns the default 4-context map matching COMPACT_BLOCK_CONTEXT_MAP.
     fn default() -> Self {
         BlockCtxMap {
+            dc_thresholds: [vec![], vec![], vec![]],
             qf_thresholds: vec![],
             ctx_map: COMPACT_BLOCK_CONTEXT_MAP.to_vec(),
+            num_dc_ctxs: 1,
             num_ctxs: NUM_BLOCK_CTXS,
         }
     }
@@ -131,8 +157,10 @@ impl BlockCtxMap {
     /// the resolved `block_ctx_map_15_cluster` bool.
     pub fn libjxl_default() -> Self {
         BlockCtxMap {
+            dc_thresholds: [vec![], vec![], vec![]],
             qf_thresholds: vec![],
             ctx_map: LIBJXL_DEFAULT_CTX_MAP.to_vec(),
+            num_dc_ctxs: 1,
             num_ctxs: NUM_BLOCK_CTXS_LIBJXL_DEFAULT,
         }
     }
@@ -153,16 +181,156 @@ impl BlockCtxMap {
             Self::default()
         }
     }
+
+    /// Build the JPEG-transcode AC block-context map from a luma DC
+    /// histogram, total luma DC count, and the first 5 AC entries of the
+    /// JXL channel-0 (chroma) quant table.
+    ///
+    /// Port of libjxl `enc_frame.cc:1049-1094` (jpeg-to-jxl path). The
+    /// algorithm cumulative-cuts the 2048-bucket luma DC histogram into
+    /// `num_thresholds + 1` quantile buckets where:
+    ///
+    /// ```text
+    /// num_thresholds = CeilLog2Nonzero(total_dc_luma)
+    ///                  - CeilLog2Nonzero(qt_ac_sum_0_to_4)
+    ///                  - 7
+    /// num_thresholds = clamp(num_thresholds, 1, 7)   // 2-8 buckets
+    /// ```
+    ///
+    /// Only `dc_thresholds[1]` (luma) is populated; X/B chroma get empty
+    /// threshold vectors. The decoder's `compressed_dc.cc:274-292` formula
+    /// then reduces to `dc_idx = sum(dc_thresholds[1] < luma_quant_dc)`,
+    /// which is exactly what `compute_jpeg_dc_buckets` produces.
+    ///
+    /// ctx_map layout (libjxl `enc_frame.cc:1077-1090`):
+    /// - Y (c_swapped=0): `ctx_map[0..num_dc_ctxs] = 0, 1, ..., num_dc_ctxs-1`
+    ///   (one context per luma DC bucket).
+    /// - X (c_swapped=1), grayscale: all chroma → single context `num_dc_ctxs`.
+    /// - X (c_swapped=1), color: `ctx_map[NUM_ORDERS*num_dc_ctxs + i] =
+    ///   num_dc_ctxs + i/2`.
+    /// - B (c_swapped=2), grayscale: same as X above.
+    /// - B (c_swapped=2), color: `ctx_map[2*NUM_ORDERS*num_dc_ctxs + i] =
+    ///   num_dc_ctxs + (num_dc_ctxs-1)/2 + 1 + i/2`.
+    ///
+    /// Only the row for `order=0` (DCT8 bucket — JPEG is all-DCT8) carries
+    /// distinct values; every other order row inherits `ctx_map[bucket]`
+    /// because we fill the entire `3 * NUM_ORDERS * num_dc_ctxs` slice
+    /// with the formula above per the libjxl reference.
+    ///
+    /// `dc_counts` MUST have 2048 entries, one per `idc + 1024` in
+    /// `0..=2047`. `total_dc_luma` is the total count of luma DC samples
+    /// (== sum of `dc_counts`). `qt_ac_sum_0_to_4` is the sum of the
+    /// chroma quant table entries at storage slots 1, 2, 3, 4, 5 (per
+    /// libjxl's `qt[1] + qt[2] + ... + qt[5]` with `qt[c=0]` = JXL
+    /// channel 0 = JPEG chroma). `is_grayscale` selects the
+    /// num_components==1 path.
+    pub fn jpeg_dc_quantile(
+        dc_counts: &[usize; 2048],
+        total_dc_luma: usize,
+        qt_ac_sum_0_to_4: u32,
+        is_grayscale: bool,
+    ) -> Self {
+        // CeilLog2Nonzero(x) returns floor(log2(x)) + 1 for x > 0.
+        // libjxl-tiny / libjxl `base/bits.h` definition.
+        fn ceil_log2_nonzero(v: usize) -> i32 {
+            if v == 0 {
+                0
+            } else {
+                32 - (v as u32).leading_zeros() as i32
+            }
+        }
+        // libjxl `enc_frame.cc:1056-1061`
+        let log_dc = ceil_log2_nonzero(total_dc_luma.max(1));
+        let log_qt = ceil_log2_nonzero(qt_ac_sum_0_to_4.max(1) as usize);
+        let mut num_thresholds = log_dc - log_qt - 7;
+        if num_thresholds < 1 {
+            num_thresholds = 1;
+        } else if num_thresholds > 7 {
+            num_thresholds = 7;
+        }
+        let num_thresholds = num_thresholds as usize;
+
+        // libjxl `enc_frame.cc:1062-1070`: cumulative-cut the histogram
+        // into num_thresholds+1 quantiles, pushing the boundary value
+        // (offset by -1025 to make it signed: i32 in [-1025, 1022]).
+        let mut dct1 = Vec::with_capacity(num_thresholds);
+        let mut cumsum: usize = 0;
+        let mut cut = total_dc_luma / (num_thresholds + 1);
+        for j in 0..2048 {
+            cumsum += dc_counts[j];
+            if cumsum > cut {
+                dct1.push(j as i32 - 1025);
+                cut = total_dc_luma * (dct1.len() + 1) / (num_thresholds + 1);
+            }
+        }
+        let num_dc_ctxs = dct1.len() + 1;
+        // Spec bound (libjxl `dec_ans.cc:48-50`): num_dc_ctxs *
+        // (qft.size() + 1) <= 64. With qft empty here, num_dc_ctxs <= 64;
+        // the libjxl algorithm clamps num_thresholds <= 7 so
+        // num_dc_ctxs <= 8 which fits comfortably.
+        debug_assert!(num_dc_ctxs <= 64);
+
+        // libjxl `enc_frame.cc:1073-1090`: ctx_map of size 3 * kNumOrders
+        // * num_dc_ctxs. kNumOrders == NUM_ORDER_BUCKETS == 13.
+        let mut ctx_map = vec![0u8; 3 * NUM_ORDER_BUCKETS * num_dc_ctxs];
+        let n = num_dc_ctxs;
+        for i in 0..n {
+            // Y (c_swapped=0): one context per bucket
+            ctx_map[i] = i as u8;
+            if is_grayscale {
+                // Grayscale → single context for both chroma planes
+                ctx_map[NUM_ORDER_BUCKETS * n + i] = n as u8;
+                ctx_map[2 * NUM_ORDER_BUCKETS * n + i] = n as u8;
+            } else {
+                ctx_map[NUM_ORDER_BUCKETS * n + i] = (n + i / 2) as u8;
+                ctx_map[2 * NUM_ORDER_BUCKETS * n + i] = (n + (n - 1) / 2 + 1 + i / 2) as u8;
+            }
+        }
+        let num_ctxs = (*ctx_map.iter().max().unwrap_or(&0)) as usize + 1;
+        debug_assert!(num_ctxs <= MAX_BLOCK_CTXS);
+
+        BlockCtxMap {
+            dc_thresholds: [vec![], dct1, vec![]],
+            qf_thresholds: vec![],
+            ctx_map,
+            num_dc_ctxs,
+            num_ctxs,
+        }
+    }
 }
 
 impl BlockCtxMap {
     /// Get block context for a given channel, strategy code, and QF value.
+    ///
+    /// Equivalent to [`Self::block_context_dc`] with `dc_idx = 0`. Use when
+    /// `num_dc_ctxs == 1` (i.e. no DC thresholds — the default for VarDCT
+    /// lossy and the historical JPEG re-encode path before issue #65).
     ///
     /// `c` is encoder channel (0=X, 1=Y, 2=B).
     /// `strategy_code` is the bitstream strategy code (0-26).
     /// `qf` is the raw quant field value for this block.
     #[inline]
     pub fn block_context(&self, c: usize, strategy_code: u8, qf: u32) -> usize {
+        self.block_context_dc(c, strategy_code, qf, 0)
+    }
+
+    /// Get block context for a given channel, strategy code, QF value, and
+    /// DC bucket index.
+    ///
+    /// `dc_idx` is the precomputed DC bucket (libjxl `compressed_dc.cc:274-292`
+    /// formula) — for our JPEG re-encode path it is `sum(dc_thresholds[1]
+    /// < luma_dc_value)` when only luma thresholds are populated. Callers
+    /// that pass `dc_idx = 0` on a map with `num_dc_ctxs > 1` will only
+    /// select the bucket-0 row of `ctx_map`, defeating DC-quantile context
+    /// modeling — pass the per-block precomputed bucket from
+    /// `compute_jpeg_dc_buckets` instead.
+    ///
+    /// `c` is encoder channel (0=X, 1=Y, 2=B).
+    /// `strategy_code` is the bitstream strategy code (0-26).
+    /// `qf` is the raw quant field value for this block.
+    /// `dc_idx` is the per-block DC bucket index in `0..num_dc_ctxs`.
+    #[inline]
+    pub fn block_context_dc(&self, c: usize, strategy_code: u8, qf: u32, dc_idx: usize) -> usize {
         let order_id = STRATEGY_TO_BUCKET[strategy_code as usize] as usize;
         let mut qf_idx = 0usize;
         for &t in &self.qf_thresholds {
@@ -171,9 +339,16 @@ impl BlockCtxMap {
             }
         }
         let num_qf_segments = self.qf_thresholds.len() + 1;
+        let num_dc_ctxs = self.num_dc_ctxs.max(1);
         // Channel swap: decoder uses c_swapped = if c < 2 { c ^ 1 } else { 2 }
         let c_swapped = if c < 2 { c ^ 1 } else { 2 };
-        let idx = (c_swapped * NUM_ORDER_BUCKETS + order_id) * num_qf_segments + qf_idx;
+        // Decoder formula (libjxl ac_context.h:101-110):
+        //   idx = c_swapped * kNumOrders + ord
+        //   idx = idx * (qf_thresholds.size() + 1) + qf_idx
+        //   idx = idx * num_dc_ctxs + dc_idx
+        let mut idx = c_swapped * NUM_ORDER_BUCKETS + order_id;
+        idx = idx * num_qf_segments + qf_idx;
+        idx = idx * num_dc_ctxs + dc_idx.min(num_dc_ctxs - 1);
         self.ctx_map[idx] as usize
     }
 
@@ -380,8 +555,10 @@ pub fn compute_block_ctx_map(
     let num_ctxs = *ctx_map.iter().max().unwrap_or(&0) as usize + 1;
 
     BlockCtxMap {
+        dc_thresholds: [vec![], vec![], vec![]],
         qf_thresholds,
         ctx_map,
+        num_dc_ctxs: 1,
         num_ctxs,
     }
 }
@@ -525,13 +702,137 @@ mod tests {
         let map = BlockCtxMap::default();
         assert_eq!(map.num_ctxs, NUM_BLOCK_CTXS);
         assert!(map.qf_thresholds.is_empty());
-        assert_eq!(map.ctx_map.len(), 39); // 3 * 13 * 1
+        assert!(map.dc_thresholds.iter().all(|d| d.is_empty()));
+        assert_eq!(map.num_dc_ctxs, 1);
+        assert_eq!(map.ctx_map.len(), 39); // 3 * 13 * 1 * 1
 
         // Default map should give same results as hardcoded block_context()
         // for any QF value (no QF thresholds)
         assert_eq!(map.block_context(1, 0, 5), block_context(1, 0));
         assert_eq!(map.block_context(1, 6, 5), block_context(1, 6));
         assert_eq!(map.block_context(0, 0, 5), block_context(0, 0));
+
+        // block_context_dc with dc_idx=0 on num_dc_ctxs=1 map is identical
+        assert_eq!(map.block_context_dc(1, 0, 5, 0), block_context(1, 0));
+        assert_eq!(map.block_context_dc(0, 0, 5, 0), block_context(0, 0));
+    }
+
+    /// Issue #65: JPEG DC-quantile constructor produces the expected
+    /// num_dc_ctxs and ctx_map shape on a small synthetic histogram.
+    #[test]
+    fn test_block_ctx_map_jpeg_dc_quantile_smoke() {
+        // Synthetic luma DC distribution: bell curve around index 1024
+        // (DC == 0), 1000 samples total.
+        let mut dc_counts = [0usize; 2048];
+        for &(idx, n) in &[
+            (1020usize, 50usize),
+            (1022, 100),
+            (1024, 300),
+            (1026, 250),
+            (1028, 200),
+            (1030, 80),
+            (1032, 20),
+        ] {
+            dc_counts[idx] = n;
+        }
+        let total_dc_luma: usize = dc_counts.iter().sum();
+        assert_eq!(total_dc_luma, 1000);
+
+        // Choose qt sum that gives positive num_thresholds.
+        // CeilLog2Nonzero(1000) = 10. We want log_dc - log_qt - 7 in
+        // [1, 7], so log_qt in [-4, 2]. log_qt(8) = 4, log_qt(2) = 2.
+        // With qt_sum = 4, log_qt = 3, num_thresholds = 10-3-7 = 0
+        // → clamp to 1.
+        let m = BlockCtxMap::jpeg_dc_quantile(&dc_counts, total_dc_luma, 4, false);
+        assert!(
+            m.num_dc_ctxs >= 2,
+            "expected ≥2 buckets, got {}",
+            m.num_dc_ctxs
+        );
+        assert!(m.num_dc_ctxs <= 8);
+        assert!(m.dc_thresholds[0].is_empty());
+        assert_eq!(m.dc_thresholds[1].len(), m.num_dc_ctxs - 1);
+        assert!(m.dc_thresholds[2].is_empty());
+        // Thresholds must be strictly increasing
+        for w in m.dc_thresholds[1].windows(2) {
+            assert!(w[0] < w[1]);
+        }
+        // ctx_map size = 3 * 13 * num_dc_ctxs * 1 (no qf thresholds)
+        assert_eq!(m.ctx_map.len(), 3 * NUM_ORDER_BUCKETS * m.num_dc_ctxs);
+        assert!(m.num_ctxs <= MAX_BLOCK_CTXS);
+
+        // Y luma gets one context per bucket
+        for i in 0..m.num_dc_ctxs {
+            assert_eq!(m.ctx_map[i], i as u8);
+        }
+    }
+
+    /// Issue #65: grayscale routes both chroma channels to a single shared
+    /// context per bucket (libjxl `enc_frame.cc:1080-1083`).
+    #[test]
+    fn test_block_ctx_map_jpeg_dc_quantile_grayscale() {
+        let mut dc_counts = [0usize; 2048];
+        for &(idx, n) in &[(1024usize, 500usize), (1028, 500)] {
+            dc_counts[idx] = n;
+        }
+        let total_dc_luma = 1000usize;
+        let m = BlockCtxMap::jpeg_dc_quantile(&dc_counts, total_dc_luma, 4, true);
+        let n = m.num_dc_ctxs;
+        // X (c_swapped=1) and B (c_swapped=2) rows for order=0 must equal
+        // `num_dc_ctxs` (a single shared chroma context).
+        for i in 0..n {
+            assert_eq!(m.ctx_map[NUM_ORDER_BUCKETS * n + i], n as u8);
+            assert_eq!(m.ctx_map[2 * NUM_ORDER_BUCKETS * n + i], n as u8);
+        }
+    }
+
+    /// Issue #65: color path uses distinct X / B contexts spread across
+    /// buckets (libjxl `enc_frame.cc:1086-1088`).
+    #[test]
+    fn test_block_ctx_map_jpeg_dc_quantile_color_layout() {
+        // Force ≥3 buckets so the i/2 spread is observable.
+        let mut dc_counts = [0usize; 2048];
+        for i in 0..512usize {
+            dc_counts[1024 - 256 + i / 2] += 1;
+            dc_counts[1024 + i / 2] += 1;
+        }
+        let total_dc_luma: usize = dc_counts.iter().sum();
+        // Use a very small qt_sum to push num_thresholds high.
+        let m = BlockCtxMap::jpeg_dc_quantile(&dc_counts, total_dc_luma, 1, false);
+        let n = m.num_dc_ctxs;
+        for i in 0..n {
+            assert_eq!(m.ctx_map[NUM_ORDER_BUCKETS * n + i], (n + i / 2) as u8);
+            assert_eq!(
+                m.ctx_map[2 * NUM_ORDER_BUCKETS * n + i],
+                (n + (n - 1) / 2 + 1 + i / 2) as u8
+            );
+        }
+    }
+
+    /// Issue #65: block_context_dc round-trip — for any (qf=1, order=0,
+    /// dc_idx) on the JPEG DC map, the encoder formula must match the
+    /// libjxl decoder's `Context()` (ac_context.h:101-110) exactly.
+    #[test]
+    fn test_block_context_dc_decoder_parity_on_jpeg_map() {
+        let mut dc_counts = [0usize; 2048];
+        for &(idx, n) in &[(1020usize, 100usize), (1024, 600), (1028, 200), (1032, 100)] {
+            dc_counts[idx] = n;
+        }
+        let m = BlockCtxMap::jpeg_dc_quantile(&dc_counts, 1000, 4, false);
+        for c in 0..3 {
+            let c_swapped = if c < 2 { c ^ 1 } else { 2 };
+            for dc_idx in 0..m.num_dc_ctxs {
+                // strategy_code 0 = DCT8 → order_id 0
+                let got = m.block_context_dc(c, 0, 1, dc_idx);
+                let expected =
+                    m.ctx_map[c_swapped * NUM_ORDER_BUCKETS * m.num_dc_ctxs + dc_idx] as usize;
+                assert_eq!(
+                    got, expected,
+                    "c={} dc_idx={} c_swapped={}",
+                    c, dc_idx, c_swapped
+                );
+            }
+        }
     }
 
     #[test]

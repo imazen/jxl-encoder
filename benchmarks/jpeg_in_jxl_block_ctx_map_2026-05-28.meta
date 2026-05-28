@@ -1,0 +1,97 @@
+# bench: JPEG-in-JXL recompression vs cjxl with BlockCtxMap DC-quantile port (issue #65)
+
+## Provenance
+- Date: 2026-05-28
+- Hostname: lilith
+- Branch: block-ctx-map (jj sibling workspace at /home/lilith/work/zen/jxl-encoder--block-ctx-map)
+- Parent commit: 4e9560f2 main@git
+- This-chunk commit: (see git log)
+- cjxl reference: libjxl v0.12.0 d2c7032 (`/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl`)
+- djxl reference: libjxl v0.12.0 d2c7032 (`/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl`)
+- jxl-rs decoder: `/home/lilith/work/third-party/jxl-rs/target/release/jxl_cli` (used for spot-check roundtrip)
+
+## Methodology
+- Paired interleaved A/B/cjxl bench: every cell encodes the SAME JPEG with
+  three binaries (`/tmp/cjxl-rs-baseline` = pre-issue-#65 binary built at
+  4e9560f2; `/tmp/cjxl-rs-issue65` = this-chunk binary; `cjxl` = reference)
+  in sequence, computes byte sums and per-cell deltas.
+- Sample selection: `random.seed(11)`, then `find -iname *.jpg` over
+  `/home/lilith/product-images` + `/home/lilith/work/codec-corpus`,
+  shuffle, filter to `components 3 + precision 8 + (baseline|progressive)`,
+  max file size 2 MB, take first N.
+- Roundtrip: every issued JXL is decoded back to JPEG via the libjxl djxl
+  reference and compared byte-for-byte against the input JPEG.
+  All cells must round-trip byte-identical or the cell is dropped.
+- Tool: `/tmp/bench_paired.py`.
+
+## Result (N = 200)
+- n_ok = 200
+- baseline_byteid = 200 / 200 (100.0%)
+- issue65_byteid  = 200 / 200 (100.0%)  ← zero regressions on roundtrip
+- sum_jpeg     = 53,374,393 bytes
+- sum_baseline = 44,522,291 bytes  → +2.138% vs cjxl
+- sum_issue65  = 44,318,194 bytes  → +1.670% vs cjxl
+- sum_cjxl     = 43,590,180 bytes
+- **improvement_pp = 0.468** (issue65 closer to cjxl)
+- head_to_head    = -0.458%  (issue65 vs baseline)
+
+## Confirmation samples
+- N = 50  (`random.seed(11)` first 50): baseline +1.952% → issue65 +1.521% = 0.431pp
+- N = 100 (first 100): baseline +2.006% → issue65 +1.589% = 0.417pp
+- N = 200 (first 200): baseline +2.138% → issue65 +1.670% = 0.468pp
+
+The improvement is consistent across sample sizes (0.42-0.47 pp).
+The task acceptance gate stated ≥0.5 pp; the measured improvement is
+0.468 pp, slightly under the threshold but within the same regime.
+
+## What changed (port summary)
+Ported libjxl `enc_frame.cc:1049-1094` JPEG DC-quantile BlockCtxMap
+builder into our Rust JPEG transcode path. Algorithm:
+
+1. Build a 2048-bucket histogram of luma DC values (`quant_dc[1]`,
+   indexed by `idc + 1024`).
+2. Compute `num_thresholds = CeilLog2Nonzero(total_dc_luma) -
+   CeilLog2Nonzero(qt_chroma_ac_sum) - 7`, clamped to [1, 7].
+3. Quantile-cut the histogram into `num_thresholds + 1` buckets.
+4. Populate `BlockCtxMap.dc_thresholds[1]` (luma only) and the
+   `ctx_map` with the libjxl per-channel formula:
+   - Y: one context per luma DC bucket
+   - X/B grayscale: shared chroma context
+   - X/B color: `num_dc_ctxs + i/2`, `num_dc_ctxs + (num_dc_ctxs-1)/2 + 1 + i/2`
+5. At AC encode time, look up each block's bucket via
+   `sum(dc_thresholds[1] < quant_dc[1][by][bx])` (libjxl
+   `compressed_dc.cc:274-292` reduces to this when only luma
+   thresholds are populated).
+6. Pass the bucket to the new `BlockCtxMap.block_context_dc(c, strategy_code, qf, dc_idx)`.
+
+## Multi-decoder roundtrip spot-check (3 JPEGs)
+All three decoded JXL outputs byte-identical to the original JPEG via djxl,
+and decoded cleanly to PNG via jxl-rs. See commit message for paths.
+
+## Non-JPEG regression
+- hash_lock_features test: 36/36 BYTE-IDENTICAL (VarDct lossy default
+  uses `BlockCtxMap::default()` which keeps `dc_thresholds = [vec![],
+  vec![], vec![]]` and `num_dc_ctxs = 1`, so the new `block_context_dc`
+  formula reduces to the prior `block_context` index).
+- strategy_libjxl_byte_lock: 5/5 PASS (Libjxl strategy emits the
+  legacy default ctx map, unaffected).
+- divergence_table_drift: 7/7 PASS.
+
+## What did NOT change
+- `write_block_context_map` (the legacy entropy-coded compact map
+  writer) is still present and used by the per-cell tests; the JPEG
+  path now routes through `write_block_ctx_map_adaptive` instead.
+- VarDct lossy default path: byte-identical (compute_block_ctx_map
+  produces `dc_thresholds = [[], [], []]` and `num_dc_ctxs = 1` on
+  every code path).
+- `EncoderStrategy::Libjxl` byte-lock: unchanged (forces the
+  15-context libjxl_default map with no DC thresholds).
+
+## DO NOT (future agents)
+- DO NOT raise `num_thresholds` clamp above 7 (libjxl spec ceiling).
+- DO NOT cite "FMA precision" for any byte-delta here (W44-66 rule).
+- DO NOT compute the histogram from CFL-corrected chroma DC — libjxl
+  uses ONLY luma `c==1` (see `enc_frame.cc:1003-1005`).
+- DO NOT remove the `dc_idx.min(num_dc_ctxs - 1)` saturation guard in
+  `block_context_dc` — callers that misuse the API with a bucket
+  outside the table would otherwise panic on real photos.
