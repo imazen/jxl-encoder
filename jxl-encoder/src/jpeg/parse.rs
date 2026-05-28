@@ -113,7 +113,27 @@ fn scan_markers(data: &[u8]) -> Result<JpegData> {
                 parse_sof_marker(data, &mut pos, &mut jpeg)?;
             }
             0xC2 => {
-                return Err(JpegError::Unsupported("progressive JPEG (SOF2)".into()));
+                // SOF2: progressive JPEG. zenjpeg's `decode_coefficients()`
+                // accepts SOF2 sources and merges per-scan band updates into
+                // final 64-coefficient blocks before returning, so the
+                // downstream encoder (`encode_jpeg_to_jxl`) and JBRD writer
+                // (which already loops `for scan in scan_info`) see exactly
+                // the same shape as a baseline (SOF0) source.
+                //
+                // The two relevant differences from baseline parsing:
+                //   1. Multiple SOS markers (one per progressive scan); the
+                //      main loop already handles this — `parse_sos_header`
+                //      appends to `scan_info` on every visit.
+                //   2. The SOS markers carry non-default
+                //      `Ss / Se / Ah / Al`; `parse_sos_header` stores those
+                //      verbatim into the new scan_info entry, and `jbrd.rs`
+                //      already serializes them.
+                //
+                // `last_needed_pass` (per-scan field in JBRD) is the only
+                // value we currently hard-code to 0. For multi-scan inputs
+                // this needs the per-scan pass index — handled at the JBRD
+                // writer rather than in this branch.
+                parse_sof_marker(data, &mut pos, &mut jpeg)?;
             }
             0xDB => {
                 // DQT
