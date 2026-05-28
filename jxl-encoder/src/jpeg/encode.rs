@@ -613,7 +613,15 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     // natural). Uses the same xorshift128+ seeds + threshold derivation as
     // libjxl so the sample mask is bit-identical between Rust and C++ when
     // input dimensions match.
-    let (custom_order_map, used_orders) = if xsize_blocks >= 5 || ysize_blocks >= 5 {
+    // EX-J27 (2026-05-28): custom orders (EX-J17a) verified as a real win:
+    // disabling via env hook produced +0.433% regression (-44118 bytes /
+    // 50 files) on the paired bench. cjxl-e7 also uses sampled custom
+    // orders for JPEG. Keep the env hook for future investigators.
+    let custom_orders_enabled =
+        std::env::var_os("JPEG_NO_CUSTOM_ORDERS").is_none();
+    let (custom_order_map, used_orders) = if custom_orders_enabled
+        && (xsize_blocks >= 5 || ysize_blocks >= 5)
+    {
         let mut zero_counts: Vec<Vec<Vec<i64>>> = (0..NUM_ORDER_BUCKETS_JPEG)
             .map(|_| vec![Vec::new(); 3])
             .collect();
