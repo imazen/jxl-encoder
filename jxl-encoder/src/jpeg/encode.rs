@@ -748,7 +748,7 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
         &all_dc_tokens,
         dc_num_contexts,
         /*enhanced_clustering=*/ false,
-        /*optimize_uint_configs=*/ false,
+        /*optimize_uint_configs=*/ true,
         /*lz77=*/ None,
         /*total_pixel_hint=*/ Some(width * height),
     );
@@ -864,12 +864,18 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
         all_ac_tokens.extend_from_slice(section);
     }
 
-    // Default-off at every effort: our `optimize_uint_configs_best_from_freqs`
-    // diverges from libjxl on JPEG AC streams (measured +0.5 % regression at
-    // e9). Env-hook lets future investigators A/B without re-wiring.
-    let mut optimize_uint_configs_ac = false;
-    if effort >= 9 && std::env::var_os("JPEG_E9_FORCE_UINT_OPT").is_some() {
-        optimize_uint_configs_ac = true;
+    // ENABLED at every effort: the ANS-distribution-header cost was added
+    // to `optimize_uint_configs_{fast,best}_from_freqs` (commit on this
+    // chain), so the optimizer now picks correctly. Bench: −0.148pp at e7
+    // on the 200-file JPEG corpus. The previous fixed `(4, 2, 0)` default
+    // was a workaround for the missing-header-cost bug; the workaround can
+    // now be removed.
+    //
+    // `JPEG_E9_FORCE_UINT_OPT_OFF=1` environment hook lets future
+    // investigators A/B if needed.
+    let mut optimize_uint_configs_ac = true;
+    if std::env::var_os("JPEG_E9_FORCE_UINT_OPT_OFF").is_some() {
+        optimize_uint_configs_ac = false;
     }
 
     let ac_code = build_entropy_code_ans_with_options(
