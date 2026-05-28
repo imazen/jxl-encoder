@@ -992,3 +992,79 @@ fn test_jxlrs_420_real_icc() {
         "jxlrs_420_landscape2",
     );
 }
+
+// ── 4-component (CMYK/YCCK) JPEG: honest-stop ──
+//
+// libjxl rejects num_components ∈/∉ {1, 3} for JBRD JPEG reconstruction
+// (jpeg_data.cc:180-182). cjxl itself fails to encode 4-component JPEGs:
+//
+//     cjxl /path/to/cmyk.jpg out.jxl --lossless_jpeg=1
+//       → JPEG bitstream reconstruction data could not be created.
+//
+// Until either (a) the JXL spec is extended to support 4-component JBRD,
+// or (b) we add a non-JBRD CMYK→RGB conversion path that gives up
+// byte-identical roundtrip, the parser now accepts 4-component SOF
+// markers (so `read_jpeg` can introspect them) and the encoder fails
+// with a clearer spec-level error message.
+//
+// These two tests pin both halves of the contract.
+
+#[test]
+fn test_cmyk_parse_succeeds() {
+    // The parser MUST accept a 4-component SOF marker (was a hard reject
+    // at parse.rs:256 pre-task-6).
+    let path = format!(
+        "{}/jpeg-conformance/valid/cmyk_logo.jpg",
+        jxl_encoder::test_helpers::corpus_dir().display()
+    );
+    let data = std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
+    let jpeg = read_jpeg(&data).expect("parser must accept 4-component CMYK SOF");
+    assert_eq!(jpeg.components.len(), 4, "expected 4 components");
+    assert_eq!(jpeg.width, 1174);
+    assert_eq!(jpeg.height, 734);
+    // Each component should have a real sampling factor and quant index.
+    for (i, comp) in jpeg.components.iter().enumerate() {
+        assert!(
+            comp.h_samp_factor > 0 && comp.v_samp_factor > 0,
+            "comp {i}: zero sampling factor",
+        );
+        assert!(comp.quant_idx < 4, "comp {i}: quant_idx out of range",);
+    }
+}
+
+#[test]
+fn test_cmyk_encode_clear_error() {
+    // The encoder MUST fail with a clearer message than the old
+    // "{n} components" parser error. Mirrors libjxl's
+    // `encode.cc:2131`: "Unsupported JPEG feature (CMYK, ...)".
+    let path = format!(
+        "{}/jpeg-conformance/valid/cmyk_logo.jpg",
+        jxl_encoder::test_helpers::corpus_dir().display()
+    );
+    let data = std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
+    let jpeg = read_jpeg(&data).expect("CMYK SOF parse");
+    assert_eq!(jpeg.components.len(), 4);
+
+    let result = encode_jpeg_to_jxl(&jpeg);
+    let err = result.expect_err("4-component encode must fail");
+    let msg = format!("{err}");
+    // The message MUST mention spec-level constraint + CMYK keyword,
+    // not just "components".
+    assert!(
+        msg.contains("4-component") && msg.contains("CMYK"),
+        "error message lacks spec context: {msg}",
+    );
+    assert!(
+        msg.contains("JBRD") || msg.contains("jpeg_data.cc"),
+        "error message lacks libjxl reference: {msg}",
+    );
+
+    // Same with the container form (jbrd-wrapping path).
+    let result = encode_jpeg_to_jxl_container(&jpeg);
+    let err = result.expect_err("4-component container-encode must fail");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("4-component") && msg.contains("CMYK"),
+        "container error message lacks spec context: {msg}",
+    );
+}

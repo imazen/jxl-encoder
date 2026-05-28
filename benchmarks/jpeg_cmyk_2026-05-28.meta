@@ -1,0 +1,161 @@
+# jpeg_cmyk_2026-05-28.tsv — task #6 CMYK / 4-component JPEG transcoding HONEST-STOP
+
+## Status
+
+**HONEST-STOP** — spec-level blocker. Production change shipped:
+
+1. **parse.rs `parse_sof_marker`**: relaxed SOF `num_comp` accept from
+   `{1, 3}` to `1..=4`. The parser can now introspect CMYK/YCCK JPEGs
+   (read width/height/components/scan_info/marker metadata) without
+   bailing at parser level.
+2. **encode.rs `encode_jpeg_to_jxl_inner`**: rephrased the rejection
+   error message to cite the spec-level constraint and direct callers
+   at the libjxl reference (jpeg_data.cc:180-182) and the workaround
+   (decode CMYK → RGB before encoding). The encode path still fails,
+   but the failure is now informative.
+
+## Spec-level blocker (why this is honest-stop, not a partial implementation)
+
+libjxl itself REJECTS 4-component JPEGs in its lossless transcode path:
+
+- `lib/jxl/jpeg/jpeg_data.cc:180-182` (JBRD serialization):
+  ```cpp
+  visitor->U32(Val(1), Val(2), Val(3), Val(4), 3, &num_components);
+  if (num_components != 1 && num_components != 3) {
+    return JXL_FAILURE("Invalid number of components: %u", num_components);
+  }
+  ```
+- `lib/jxl/encode.cc:2131` (front-end error): "Unsupported JPEG
+  feature (CMYK, arithmetic coding, etc.)"
+
+Verified directly: `cjxl /path/to/cmyk_logo.jpg out.jxl --lossless_jpeg=1`
+fails with "JPEG bitstream reconstruction data could not be created".
+This means the JBRD format itself does not support num_components=4
+even though its U32 encoding lists `Val(4)`. The reference encoder
+emits the failure, the reference decoder cannot reconstruct.
+
+Pixel-domain CMYK encoding (XYB color + `kBlack` extra channel) IS in
+the spec for NEW CMYK sources, but:
+- It requires a CMYK→RGB color-managed conversion (lossy by
+  definition; we'd lose byte-identical roundtrip — the gate (c)
+  acceptance criterion).
+- libjxl's encoder also rejects CMYK in its pixel-domain path at
+  `enc_image_bundle.cc:57-65` unless the input ALREADY carries an
+  ICC profile that the CMS can convert (and the CMS warns "Conversion
+  to CMYK is not supported", `color_encoding_internal.h:332-333`).
+
+There is therefore no spec-compatible code path inside the
+JPEG-recompression family for 4-component JPEGs. The action shipped
+here ports the libjxl behaviour into our encoder: accept-and-introspect
+at parser level (so `read_jpeg` is usable for metadata inspection),
+fail-with-clear-message at encode level.
+
+## What ships (file-by-file)
+
+- `jxl-encoder/src/jpeg/parse.rs:251-265` — SOF accepts 1..=4 components.
+- `jxl-encoder/src/jpeg/encode.rs:82-100` — clearer error message with
+  spec reference. Kept the rejection because there is no JBRD path
+  capable of reconstructing the source bytes.
+- `jxl-encoder/tests/jpeg_reencoding.rs` — 2 new tests:
+  - `test_cmyk_parse_succeeds`: pins parser behaviour on CMYK input
+    (was a hard reject pre-task-6).
+  - `test_cmyk_encode_clear_error`: pins the spec-level error message
+    format so future agents do not lower it back to the parser.
+
+## 3-component byte-identical regression check (gate e)
+
+50 random 3-component JPEGs (random.seed(11)) drawn from
+`/home/lilith/work/codec-corpus`. `--lossless-jpeg` mode, 45/50
+files transcoded successfully (5 are deliberately broken/unsupported:
+e.g. `testorig12.jpg` is arithmetic-coded; some are fuzzed crash
+fixtures). Total JXL bytes:
+
+    BEFORE patch: 56,685,627 bytes  (commit 4e9560f2 main)
+    AFTER patch:  56,685,627 bytes
+    delta:        0 bytes (BYTE-IDENTICAL)
+
+`diff bench_before.tsv bench_after.tsv` is empty — every file's JXL
+output is byte-identical pre/post change. Gate (e) PASS.
+
+## 4-component clear-error spot-check (gate d)
+
+4 real CMYK JPEGs, all on disk:
+- `jpeg-conformance/valid/cmyk_logo.jpg` (1174x734 progressive)
+- `jpeg-conformance/valid/ycck.jpg` (500x333 baseline)
+- `jpeg-conformance/valid/cymk.jpg` (600x397 baseline)
+- `zune/test-images/jpeg/four_components.jpg` (1318x611 baseline)
+
+Each produces the same error message (verbatim):
+
+> JPEG transcode failed: invalid input: JPEG reencoding does not
+> support 4-component JPEGs (CMYK/YCCK): the JBRD reconstruction
+> format requires num_components ∈ {1, 3} per JXL spec (libjxl
+> jpeg_data.cc:180-182). Decode CMYK to RGB before encoding.
+
+(Pre-patch all 4 failed earlier with the cryptic "4 components" parser
+error from parse.rs:257.)
+
+## TSV column meaning
+
+    path        — source JPEG (absolute path)
+    orig_bytes  — original JPEG byte count
+    jxl_bytes   — encoded JXL byte count (or "FAIL" if --lossless-jpeg
+                  could not transcode, e.g. arithmetic-coded input)
+
+## Acceptance gates
+
+- (a) Build PASS  (`cargo build --release -p jxl-encoder-cli
+      --no-default-features --features 'jpeg-reencoding,parallel,
+      jxl_encoder/std'`)
+- (b) Existing 25-test suite PASS  (now 27 passed, 1 ignored,
+      0 failed — 2 new CMYK tests added)
+- (c) BYTE-IDENTICAL roundtrip of `cmyk_logo.jpg`: NOT POSSIBLE — spec
+      blocker per "Spec-level blocker" section above. HONEST-STOP per
+      task-6 brief clause.
+- (d) Spot-check 4 CMYK/YCCK JPEGs: all produce the new clear error
+      message. None encode (none CAN encode per spec).
+- (e) 3-component path byte-identical: PASS, 0 bytes delta over 50
+      random files.
+- (f) Multi-decoder roundtrip on the CMYK output: N/A — no CMYK output
+      is produced. 3-comp roundtrip is exercised by the 27-test suite
+      which uses jxl-rs + djxl.
+- (g) Single commit pushed to main: pending.
+- (h) Workspace cleanup: pending.
+
+## Reproducer
+
+    cd /home/lilith/work/zen/jxl-encoder
+    cargo build --release -p jxl-encoder-cli \
+      --no-default-features \
+      --features 'jpeg-reencoding,parallel,jxl_encoder/std'
+    cargo test --release -p jxl-encoder \
+      --no-default-features --features 'std,jpeg-reencoding' \
+      --test jpeg_reencoding
+
+## DO-NOT (for future agents)
+
+1. DO NOT add a 4-component JBRD encode path. The on-wire format
+   itself rejects num_components != 1 && != 3 — there is no
+   spec-valid bitstream we can emit that djxl will reconstruct.
+2. DO NOT add a pixel-domain CMYK→RGB conversion masquerading as
+   "lossless JPEG transcode" — the byte-identical roundtrip gate
+   would fail because CMYK pixel data crosses through a CMS color
+   transform.
+3. DO NOT remove the parser-side `1..=4` relaxation. A 4-component
+   parse is the foundation for any future legitimate CMYK→RGB
+   pipeline that DOES NOT need byte-identical JPEG reconstruction.
+4. DO NOT cite "FMA precision" for any byte movement here (per
+   W44-66 — there is no numerical drift; the only change is one
+   parser branch and one error string).
+
+## Follow-on candidates
+
+- **Lossy CMYK pixel-domain encode**: build a CMYK JPEG → RGB pixels
+  → VarDCT lossy JXL pipeline using zenpipe + zenpixels-convert for
+  the color conversion. Would NOT round-trip byte-identical (it's
+  lossy by construction); should ship under a distinct API like
+  `encode_jpeg_to_jxl_lossy_cmyk(jpeg, distance)` that explicitly
+  signals the precision loss.
+- **JXL spec issue**: file an upstream issue with libjxl asking
+  whether 4-component JBRD reconstruction is on any roadmap. The
+  `Val(4)` slot in the U32 encoding suggests it WAS considered.
