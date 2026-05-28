@@ -492,6 +492,17 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
     // We can't reuse `count_zero_coefficients` directly because chroma planes
     // are smaller than the luma grid under 4:2:0 / 4:2:2 / 4:4:0 subsampling;
     // count it manually per-channel using each channel's native dimensions.
+    //
+    // EX-J17b (lever #5): Sample 50% of blocks via xorshift128+ instead of
+    // counting every block. Mirrors libjxl `enc_coeff_order.cc::ComputeCoeffOrder`
+    // at speed >= kSquirrel with single strategy (DCT8). Every JPEG block is
+    // DCT8 so we're always in the `current_used_orders == 1` case. The reduced
+    // sample population is noisier per-position but admits cheaper orderings
+    // (Lehmer cost depends on permutation distance from natural order; sampling
+    // breaks tight ties that the all-blocks count would resolve in favour of
+    // natural). Uses the same xorshift128+ seeds + threshold derivation as
+    // libjxl so the sample mask is bit-identical between Rust and C++ when
+    // input dimensions match.
     let (custom_order_map, used_orders) = if xsize_blocks >= 5 || ysize_blocks >= 5 {
         let mut zero_counts: Vec<Vec<Vec<i64>>> = (0..NUM_ORDER_BUCKETS_JPEG)
             .map(|_| vec![Vec::new(); 3])
@@ -500,11 +511,28 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
         for ch in &mut zero_counts[0] {
             *ch = vec![0i64; BLOCK_SIZE];
         }
+        // libjxl xorshift128+ initial state (enc_coeff_order.cc:88-89).
+        let mut xs_state: [u64; 2] = [0x94D049BB133111EB, 0xBF58476D1CE4E5B9];
+        // block_fraction = 0.5 → threshold = (u64::MAX >> 32) * 0.5.
+        let threshold: u64 = (((u64::MAX) >> 32) as f64 * 0.5f64) as u64;
+        let mut use_sample = |state: &mut [u64; 2]| -> bool {
+            let s1 = state[0];
+            let s0 = state[1];
+            let bits = s1.wrapping_add(s0);
+            state[0] = s0;
+            let mut s1 = s1 ^ (s1 << 23);
+            s1 ^= s0 ^ (s1 >> 18) ^ (s0 >> 5);
+            state[1] = s1;
+            (bits >> 32) <= threshold
+        };
         for c in 0..3 {
             let plane = &quant_ac[c];
             let cnt = &mut zero_counts[0][c];
             for row in plane {
                 for block in row {
+                    if !use_sample(&mut xs_state) {
+                        continue;
+                    }
                     // Skip k=0 (DC) — it lives in quant_dc and is always 0
                     // in quant_ac; we set it to -1 below so it sorts to the
                     // front of the permutation as the LLF position
