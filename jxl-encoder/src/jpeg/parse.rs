@@ -253,7 +253,15 @@ fn parse_sof_marker(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result
     jpeg.width = u16::from_be_bytes([data[p + 5], data[p + 6]]) as u32;
     let num_comp = data[p + 7] as usize;
 
-    if num_comp != 1 && num_comp != 3 {
+    // Accept 1-4 components (libjxl `kMaxComponents = 4`,
+    // `enc_jpeg_data_reader.cc:83`). The JBRD on-wire `num_components`
+    // field encodes `Val(1), Val(2), Val(3), Val(4)`, but libjxl rejects
+    // any value other than 1 or 3 at `jpeg_data.cc:180-182`. The check
+    // is therefore moved to `encode_jpeg_to_jxl_inner` so callers that
+    // only need to PARSE a CMYK / 4-component JPEG (e.g. to inspect its
+    // metadata) succeed; callers that try to TRANSCODE one fail with a
+    // clearer spec-level error message.
+    if !(1..=4).contains(&num_comp) {
         return Err(JpegError::Unsupported(format!("{num_comp} components")));
     }
 

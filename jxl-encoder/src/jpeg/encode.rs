@@ -81,8 +81,24 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
 
     let num_components = jpeg.components.len();
     if num_components != 3 && num_components != 1 {
+        // The JXL spec's JBRD `num_components` U32 field encodes
+        // `Val(1), Val(2), Val(3), Val(4)` — but the reference libjxl
+        // decoder rejects any value other than 1 or 3 at
+        // `lib/jxl/jpeg/jpeg_data.cc:180-182` with the same wording.
+        // Encoding a 4-component (CMYK/YCCK) JPEG to JXL would produce
+        // a bitstream that libjxl `cjxl --lossless_jpeg=1` itself
+        // refuses to emit (`encode.cc:2131`: "Unsupported JPEG feature
+        // (CMYK, arithmetic coding, etc.)") AND that `djxl
+        // --reconstruct_jpeg` refuses to round-trip back. There is
+        // therefore no spec-compatible path for 4-component JPEG
+        // transcoding. Pixel-domain CMYK encoding (XYB + `kBlack`
+        // extra channel) IS in the spec for non-JPEG sources, but it
+        // requires a CMYK→RGB color-managed conversion that DOES NOT
+        // round-trip back to byte-identical JPEG.
         return Err(crate::error::Error::InvalidInput(format!(
-            "JPEG reencoding requires 1 or 3 components, got {num_components}"
+            "JPEG reencoding does not support {num_components}-component JPEGs (CMYK/YCCK): \
+             the JBRD reconstruction format requires num_components ∈ {{1, 3}} per JXL spec \
+             (libjxl jpeg_data.cc:180-182). Decode CMYK to RGB before encoding."
         )));
     }
 
@@ -710,11 +726,7 @@ fn detect_ycbcr_color_transform(jpeg: &JpegData) -> bool {
                 // + flags0(2) + flags1(2) + transform(1).
                 // The transform byte is at app_data[14] in libjxl's layout
                 // (= our index 14 too since marker_byte is at [0]).
-                if marker == 0xEE
-                    && data.len() == 15
-                    && data.len() > 7
-                    && &data[3..8] == b"Adobe"
-                {
+                if marker == 0xEE && data.len() == 15 && data.len() > 7 && &data[3..8] == b"Adobe" {
                     let transform = data[14];
                     return transform != 0; // kYCbCr unless transform=0
                 }
