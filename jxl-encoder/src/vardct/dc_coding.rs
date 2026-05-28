@@ -820,6 +820,15 @@ pub fn collect_ac_metadata_tokens_region_jpeg_transcode(
     }
 
     // EPF tokens — per-block sharpness, raw values.
+    //
+    // EX-J25 (2026-05-28): libjxl `enc_frame.cc:790` explicitly sets
+    // `FillImage(static_cast<uint8_t>(0), &shared.epf_sharpness)` for
+    // JPEG transcode. Our default was 4. Measurement on 50-file paired
+    // A/B: 0 bytes difference (both constants encode equally well by
+    // ANS). Kept sharpness=0 for libjxl parity even though it's a
+    // no-op on the byte count. Frame header `epf_iters=0` makes the
+    // value functionally irrelevant at decode time.
+    let default_sharpness = 0i32;
     for by_local in 0..region_ysize_blocks {
         for bx_local in 0..region_xsize_blocks {
             let abs_by = start_by + by_local;
@@ -827,7 +836,7 @@ pub fn collect_ac_metadata_tokens_region_jpeg_transcode(
             let sharpness = if let Some(sm) = sharpness_map {
                 sm[abs_by * full_xsize_blocks + abs_bx] as i32
             } else {
-                4 // default EPF sharpness
+                default_sharpness
             };
             tokens.push(Token::new(ctx, pack_signed(sharpness)));
         }
