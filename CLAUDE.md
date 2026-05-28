@@ -696,6 +696,94 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### EX-J15: per-(channel × freq-band) ANS contexts for JPEG AC — HONEST-STOP (2026-05-28)
+
+**Status**: [RULED OUT — opt-in env hook + helper SHIPPED, default OFF]
+
+EX-J15 was queued in `docs/JXL_ENCODER_LEARNINGS.md` as 2-4% bpp at low
+bitrates by "separating ANS context models per Y/Cb/Cr AND per frequency
+band tier (LF/MF/HF)". Investigation found two structural blockers:
+
+1. **The "freq-band tier" axis is WIRE-FORMAT-INCOMPATIBLE.** libjxl
+   `ac_context.h:101-110` decoder formula has only four `block_ctx`
+   axes (`c_swapped × order_id × qf_idx × dc_idx`). There is no fifth
+   axis for "this block's energy tier". Adding one would require a
+   spec extension and break every existing JXL decoder. The existing
+   per-coefficient `COEFF_FREQ_CONTEXT[k]` LUT (31 freq buckets) and
+   `COEFF_NUM_NONZERO_CONTEXT[nonzeros_left]` LUT (8 energy buckets)
+   already encode position-tier and remaining-energy information at
+   the ZeroDensityContext level — those are the spec-bound knobs.
+
+2. **The closest wire-format-safe analog REGRESSES.** Implemented as
+   `BlockCtxMap::jpeg_dc_quantile_ex_j15()` (new helper in
+   `jxl-encoder/src/vardct/ac_context.rs`): same DC quantile thresholds
+   as libjxl-parity `jpeg_dc_quantile()`, but maps each chroma channel
+   to its OWN block context per luma DC bucket (Y={0..n-1},
+   Cb={n..2n-1}, Cr={2n..3n-1}) instead of libjxl's half-resolution
+   `n + i/2` collapse. Only fires for num_dc_ctxs ≤ 5 (3*n ≤ 16
+   wire-format max); falls back to libjxl mapping for n > 5.
+
+   Env-gated by `EX_J15_FULL_CHROMA={1,true,on,yes}` in
+   `jxl-encoder/src/jpeg/encode.rs`. 3 unit tests covering full-chroma,
+   grayscale fallback, and large-n fallback. Hash-locks 36/36
+   BYTE-IDENTICAL with default (env unset). jpeg_reencoding 27/27 PASS.
+
+**Per-file results** (`benchmarks/jpeg_exj15_freqband_2026-05-28.tsv`,
+200 mixed baseline + progressive JPEGs, seed=11, both arms at -e 7):
+
+| Arm                     | Total bytes | vs cjxl-e7 |
+|---                      |---          |---         |
+| cjxl-e7                 | 17,096,177  | (baseline) |
+| ours-base               | 17,325,302  | +1.340 %   |
+| ours+EX_J15_FULL_CHROMA | 17,334,059  | +1.391 %   |
+
+EX-J15 vs base: **+0.0505 %** (+8,757 bytes; loss/win bytes ratio 3.28x).
+Per-file: 71 wins / 129 losses / 0 ties. Roundtrip 200/200 OK on BOTH
+arms via djxl --reconstruct_jpeg.
+
+Losses dominate in EVERY file-size bucket (<50KB, 50-100KB, 100-200KB,
+200-500KB). No file-size discriminator can rescue this.
+
+**Root cause** (post-hoc): clustering input grows from 3,960 (= 8 × 495)
+to 5,940 (= 12 × 495) input contexts, output cluster count grows by
+~30 %, each new cluster carries ~50-150 bits of ANS distribution-header
+cost. ~30 extra clusters × ~80 bits = ~300 bytes of header overhead per
+image, which exceeds the data savings on the majority of the corpus.
+On the 71 wins, the data savings happen to clear the header threshold
+(mostly larger files where header is amortized over more tokens).
+
+**DO NOT** (binding for future agents):
+1. DO NOT default-flip `EX_J15_FULL_CHROMA=1`. Measurement is
+   conclusive across 200 files.
+2. DO NOT respawn an EX-J15 variant that adds MORE block contexts
+   (e.g. populating `dc_thresholds[0]` and `dc_thresholds[2]` for
+   chroma DC quantiles). Same structural issue: more clusters →
+   more headers → cost > savings at q≤50.
+3. DO NOT cite "FMA precision" for the +0.0505 % regression. The
+   bytes change because the cluster count physically grows.
+4. DO NOT remove the `jpeg_dc_quantile_ex_j15` helper or env hook.
+   They are the regression harness for future A/B experiments.
+5. DO NOT respawn EX-J15 expecting the "2-4 % bpp at low bitrates"
+   number from JXL_ENCODER_LEARNINGS.md. That gain is theoretical
+   for Minnen 2020-style autoregressive contexts and is blocked by
+   the JXL 16-block-ctx cap + ANS per-cluster header cost.
+
+**Follow-on candidates (NOT in EX-J15 scope)**:
+- A) audit `compute_huffman_data_cost` / pair-merge cost weighting
+  to verify the ANS distribution-header cost is correctly counted
+  (reverse-direction lever — reduce input contexts to flat-compact).
+- B) per-image discriminator at the wire level (e.g. zenanalyze
+  colorfulness ≤ 30 proxy) to admit EX-J15 ONLY on the 71-win subset.
+- C) pre-LZ77 token re-ordering to improve the existing 8-ctx
+  histogram clustering.
+
+**Files**:
+- `jxl-encoder/src/vardct/ac_context.rs` — new
+  `BlockCtxMap::jpeg_dc_quantile_ex_j15()` + 3 unit tests
+- `jxl-encoder/src/jpeg/encode.rs` — env-gated dispatch
+- `benchmarks/jpeg_exj15_freqband_2026-05-28.{tsv,meta}`
+- `docs/JXL_ENCODER_LEARNINGS.md` — EX-J15 entry marked RULED OUT
+
 ### JPEG-in-JXL recompression: 10-agent Rust-vs-C++ diff (2026-05-28)
 
 **Status**: Investigation complete. Three feature/fix commits SHIPPED earlier in
