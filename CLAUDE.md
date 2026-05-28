@@ -696,6 +696,101 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### JPEG-in-JXL recompression: 10-agent Rust-vs-C++ diff (2026-05-28)
+
+**Status**: Investigation complete. Three feature/fix commits SHIPPED earlier in
+session (37dcf227, 160b6ab2, 54183c13) + 200-file bench TSV (fb57425a).
+Remaining +2.21% size gap vs cjxl is mostly in the `jxlp` codestream.
+
+10 parallel Explore agents (A1-A10) compared our `jxl-encoder/src/jpeg/*`
+pipeline against libjxl C++ reference end-to-end. Verified by direct
+libjxl source reads where claims looked load-bearing.
+
+**Confirmed at PARITY** (no source change needed):
+- **A6 channel routing + DC offset + frame header**: `jpeg_c_map`,
+  `JPEG_UPSAMPLING_H/V_SHIFT`, frame header defaults match libjxl
+  byte-for-byte after commit 37dcf227.
+- **A7 CfL search**: `scaled_qtable`, per-block subtraction loop,
+  rounding constants, `RatioJPEG`, `kZeroBiasDefault` all match
+  libjxl `enc_frame.cc:865-1037`.
+- **A10 frame assembly + TOC + section order**: matches libjxl.
+- **JBRD writer (A4, A5)**: at parity. Our jbrd payload is 5833 B
+  vs cjxl 5870 B on dsc-0367.jpg — we're slightly SMALLER.
+
+**Confirmed PRIMARY LEVER** for +1.0 to +1.5pp recovery (not shipped):
+- **A8 block context map** (verified: libjxl `enc_frame.cc:1049-1094`).
+  libjxl builds a per-image block_ctx_map from luma DC quantile thresholds.
+  Output: 1-8 luma buckets + chroma offsets → 8-16 total contexts
+  (asserted `≤ 16` at line 1094). We use `BlockCtxMap::default()` =
+  4-context COMPACT_BLOCK_CONTEXT_MAP. Stale in-source comment
+  ("adaptive context modeling provides no benefit") is WRONG — the
+  adaptation is via DC histogram, not QF/strategy.
+
+  Implementing requires:
+    (a) Add `dc_thresholds: [Vec<i32>; 3]` field to `BlockCtxMap`
+        (currently only `qf_thresholds` exists; bitstream layout
+        in `context_tree.rs::write_block_ctx_map_adaptive` already
+        emits the 3 DC-threshold count words as `4'd0` — needs
+        update to write actual values).
+    (b) Add a JPEG-mode builder fn that runs after CfL, computes the
+        luma DC histogram (2048 buckets), derives `num_thresholds` =
+        `clamp(CeilLog2(total_dc[1]) - CeilLog2(sum(qt[1..6])) - 7,
+        1, 7)`, and quantile-cuts to N segments.
+    (c) Update `BlockCtxMap::block_context(c, strategy_code, qf)`
+        signature to ALSO take a `dc_value: i32` parameter (or a
+        precomputed `dc_bucket`) and compute `(c, order, dc_bucket)`
+        index into the new ctx_map layout.
+    (d) Plumb the per-block DC value into all `block_context()`
+        callers (the AC-section token-emission loop in
+        `vardct/frame.rs` is where this fires).
+    (e) Verify on `BlockCtxMap::default()`-path: the existing 4-context
+        map must continue to work with `dc_value` argument ignored.
+
+  Multi-day port. High EV (-1.0 to -1.5pp on every JPEG).
+
+**Confirmed NOT a lever (do not attempt without new evidence):**
+- **A9 LZ77 wiring**: A9 agent claimed libjxl skips LZ77 for JPEG;
+  VERIFIED WRONG via direct read of `enc_ans.cc:1091-1093` — libjxl
+  unconditionally calls `ApplyLZ77` on JPEG tokens too. I tested
+  three LZ77 variants in this session: (1) RLE per-section,
+  mixed-mode allowed → +2.13% delta but 2/30 roundtrip regressions
+  (mixed-mode mode-confusion); (2) RLE per-section, all-or-nothing
+  gate → 50/50 OK, +2.15% delta (-0.06pp gain — within noise);
+  (3) Greedy per-section, all-or-nothing → 60/60 OK, +2.25% delta
+  (slight REGRESSION vs baseline +2.21%). The per-section LZ77
+  overhead (LZ77 length symbol re-encoding + lz77 header bits)
+  consistently meets or exceeds the savings on JPEG AC streams,
+  which after CfL+transposition have very few consecutive
+  identical tokens. RLE-with-gate is "safe but no win"; greedy is
+  worse. Skip.
+
+**Confirmed CORRECTNESS gap (cross-crate, deferred):**
+- **A3: 2/200 successive-approximation progressive JPEGs DIFF**
+  (pete-walls / filipp-romanovski, both unsplash high-quality). Cause:
+  zenjpeg's `decode_coefficients` doesn't expose per-block
+  `extra_zero_runs` or per-scan `reset_points`. libjxl populates
+  these from `DecodeDCTBlock` output (`enc_jpeg_data_reader.cc:838-857`).
+  Reconstructed JPEG has same marker structure (all 10 SOS markers
+  with correct Ss/Se/Ah/Al) but per-scan entropy data differs.
+  Fix requires extending zenjpeg's API surface OR re-parsing the
+  entropy data ourselves to derive these.
+
+**Speculative findings flagged for verification (NOT acted on):**
+- A4 claimed `jbrd.rs:187` `num_intermarkers = filter(==0xFF).count()`
+  is a bug — verified: our parser pushes only REAL markers into
+  `marker_order`, never the fake-0xFF tag libjxl uses for inter-marker
+  data. Empirical impact is near-zero (our 200-file bench shows the
+  same 2 DIFFs as the unsplash case, none from inter-marker data
+  mishandling). Real but extremely edge-case.
+
+**Tasks queued** (per `TaskList` IDs):
+- #6: CMYK / 4-component JPEG support (smaller gap, ~1.8% codec-corpus,
+  near-zero product-images)
+- #8: Port libjxl JPEG-mode DC-quantile block_ctx_map builder (PRIMARY
+  remaining lever)
+- #10: Extend zenjpeg to expose `extra_zero_runs` + `reset_points`
+  (correctness fix for 2 progressive edge cases)
+
 ### issue #42: owned-clone fallback for small images — HONEST-STOP (2026-05-25)
 
 **Status**: [RULED OUT — OPT-IN dispatch infrastructure SHIPPED, default-flip RULED OUT by paired A/B bench]
