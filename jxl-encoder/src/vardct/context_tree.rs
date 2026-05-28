@@ -655,13 +655,53 @@ fn write_qf_threshold(value: u32, writer: &mut BitWriter) -> Result<()> {
     Ok(())
 }
 
+/// Write a U32-coded signed DC threshold value.
+///
+/// Matches libjxl's `kDCThresholdDist` (entropy_coder.h:37-39):
+/// `U32Enc(Bits(4), BitsOffset(8, 16), BitsOffset(16, 272),
+///         BitsOffset(32, 65808))`.
+///
+/// The decoder applies `UnpackSigned` to recover the signed value, so the
+/// encoder PackSigned-encodes first, then U32-selects. Mirrors libjxl
+/// `enc_context_map.cc:160-163` `U32Coder::Write(kDCThresholdDist,
+/// PackSigned(i), writer)`.
+fn write_dc_threshold(value: i32, writer: &mut BitWriter) -> Result<()> {
+    let packed = pack_signed(value);
+    if packed < 16 {
+        // Selector 0: Bits(4)
+        writer.write(2, 0)?;
+        writer.write(4, packed as u64)?;
+    } else if packed < 272 {
+        // Selector 1: BitsOffset(8, 16) — value-16 in 8 bits
+        writer.write(2, 1)?;
+        writer.write(8, (packed - 16) as u64)?;
+    } else if packed < 65808 {
+        // Selector 2: BitsOffset(16, 272)
+        writer.write(2, 2)?;
+        writer.write(16, (packed - 272) as u64)?;
+    } else {
+        // Selector 3: BitsOffset(32, 65808). DC thresholds in the JPEG
+        // path are in [-1025, 1022], so packed in [0, 2049], well within
+        // selector 1. This branch is only reachable on user-constructed
+        // BlockCtxMap with extreme values; gracefully emit 32 raw bits.
+        writer.write(2, 3)?;
+        writer.write(32, (packed - 65808) as u64)?;
+    }
+    Ok(())
+}
+
 /// Write an adaptive block context map (non-default).
 ///
-/// This writes the full BlockCtxMap header:
+/// This writes the full BlockCtxMap header (libjxl `enc_context_map.cc:141-172`):
 /// 1. Non-default flag (0)
-/// 2. DC thresholds (all empty = 0 count each)
-/// 3. QF thresholds count + values
+/// 2. Per-channel DC threshold count (4 bits) + threshold values
+///    (kDCThresholdDist U32-coded, signed via PackSigned)
+/// 3. QF threshold count (4 bits) + values (kQFThresholdDist U32-coded)
 /// 4. Entropy-coded context map
+///
+/// Issue #65: previously hardcoded zero DC threshold counts, blocking the
+/// JPEG DC-quantile context model. Now serialises whatever counts the
+/// caller's `BlockCtxMap` carries.
 pub fn write_block_ctx_map_adaptive(ctx_map: &BlockCtxMap, writer: &mut BitWriter) -> Result<()> {
     #[cfg(feature = "debug-tokens")]
     let start_bits = writer.bits_written();
@@ -669,10 +709,20 @@ pub fn write_block_ctx_map_adaptive(ctx_map: &BlockCtxMap, writer: &mut BitWrite
     // Non-default BlockCtxMap
     writer.write(1, 0)?;
 
-    // DC thresholds: 3 channels, 0 thresholds each (4 bits per count)
-    writer.write(4, 0)?; // dc_threshold[0] count
-    writer.write(4, 0)?; // dc_threshold[1] count
-    writer.write(4, 0)?; // dc_threshold[2] count
+    // DC thresholds: 3 channels, each with count + values
+    for j in 0..3 {
+        let dct = &ctx_map.dc_thresholds[j];
+        debug_assert!(
+            dct.len() < 16,
+            "dc_thresholds[{}].len()={} >= 16",
+            j,
+            dct.len()
+        );
+        writer.write(4, dct.len() as u64)?;
+        for &v in dct {
+            write_dc_threshold(v, writer)?;
+        }
+    }
 
     // QF thresholds
     writer.write(4, ctx_map.qf_thresholds.len() as u64)?;
@@ -832,13 +882,63 @@ mod tests {
             *val = 3 + ((section_size + i) % 2) as u8;
         }
         let map = BlockCtxMap {
+            dc_thresholds: [vec![], vec![], vec![]],
             qf_thresholds: vec![10],
             ctx_map,
+            num_dc_ctxs: 1,
             num_ctxs: 5,
         };
         let mut writer = BitWriter::new();
         let result = write_block_ctx_map_adaptive(&map, &mut writer);
         assert!(result.is_ok());
         assert!(writer.bits_written() > 0);
+    }
+
+    /// Issue #65: a JPEG-shaped BlockCtxMap with luma DC thresholds
+    /// serialises cleanly via `write_block_ctx_map_adaptive`. The
+    /// resulting bitstream is round-tripped by the decoder's
+    /// `DecodeBlockCtxMap` (verified separately via roundtrip tests on
+    /// real JPEGs).
+    #[test]
+    fn test_write_block_ctx_map_adaptive_with_dc_thresholds() {
+        let map = BlockCtxMap::jpeg_dc_quantile(
+            &{
+                let mut h = [0usize; 2048];
+                for &(i, n) in &[(1020usize, 50usize), (1024, 600), (1028, 300), (1032, 50)] {
+                    h[i] = n;
+                }
+                h
+            },
+            1000,
+            4,
+            false,
+        );
+        assert!(!map.dc_thresholds[1].is_empty());
+        let mut writer = BitWriter::new();
+        let result = write_block_ctx_map_adaptive(&map, &mut writer);
+        assert!(result.is_ok());
+        assert!(writer.bits_written() > 0);
+    }
+
+    /// Issue #65: write_dc_threshold round-trip — every selector branch
+    /// produces a valid bit pattern (selector + payload widths match the
+    /// libjxl decoder's `U32Coder::Read(kDCThresholdDist, br)` —
+    /// `Bits(4), BitsOffset(8, 16), BitsOffset(16, 272),
+    /// BitsOffset(32, 65808)`).
+    #[test]
+    fn test_write_dc_threshold_selector_widths() {
+        for v in [-1025i32, -1024, -1, 0, 1, 7, -7, 1022, 200, -200] {
+            let mut writer = BitWriter::new();
+            // Should not panic / error
+            let r = write_dc_threshold(v, &mut writer);
+            assert!(r.is_ok(), "v={} failed", v);
+            // Each value: 2 bits selector + payload bits.
+            // PackSigned(v) is in [0, 2049] for v in [-1025, 1022].
+            // Selector 0 (Bits(4)): packed < 16 → 6 bits total
+            // Selector 1 (BitsOffset(8,16)): 16..272 → 10 bits total
+            // Selector 2 (BitsOffset(16,272)): 272..65808 → 18 bits total
+            let bits = writer.bits_written();
+            assert!(bits >= 6 && bits <= 18, "v={} bits={}", v, bits);
+        }
     }
 }

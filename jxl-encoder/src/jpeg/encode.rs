@@ -399,12 +399,82 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
         ac_metadata_tokens_per_group.push(md_tokens);
     }
 
-    // AC tokens per group — iterate blocks, call collect_ac_coefficients per block
-    // Use the default 4-cluster block context map matching what we write in DC global.
-    // JPEG reencoding has uniform QF=1 and all-DCT8, so adaptive context modeling
-    // provides no benefit and compute_block_ctx_map would produce a different cluster
-    // count than the hardcoded COMPACT_BLOCK_CONTEXT_MAP, causing decoder mismatch.
-    let block_ctx_map = ac_context::BlockCtxMap::default();
+    // Issue #65: port libjxl `enc_frame.cc:1049-1094` JPEG DC-quantile
+    // context map. Build a luma DC histogram from `quant_dc[1]`, the
+    // chroma quant table's first 5 AC entries (libjxl uses
+    // `qt[1] + qt[2] + qt[3] + qt[4] + qt[5]` where `qt` is indexed
+    // `kDCTBlockSize * c + 8*x + y` and `c=0` is the JXL X channel =
+    // JPEG chroma component), then quantile-cut into up to 8 buckets
+    // and emit a 3-channel ctx_map per the libjxl formula.
+    //
+    // JPEG reencoding still has uniform QF=1 and all-DCT8 so we don't
+    // populate `qf_thresholds`. The DC-bucket axis carries the entropy
+    // separation per the libjxl reference.
+    //
+    // dc_offset already pre-applied by `map_jpeg_coefficients` (it
+    // adds `1024 / qt_dc[c]` for `color_transform == kNone`), so
+    // `quant_dc[1][by][bx]` is the same value libjxl reads from
+    // `inputjpeg[base] + 1024/qt_dc[c]` at enc_frame.cc:1001 and
+    // bins via `dc_counts[clamp(idc + 1024, 0, 2047)]++` at line 1004.
+    //
+    // 4:2:0 subsampling: libjxl's loop only enters luma chroma-aligned
+    // positions (`by == sby << vshift`), but for luma vshift=0 every
+    // row is aligned, so `quant_dc[1]` covers every luma block once.
+    let block_ctx_map = {
+        let mut dc_counts = [0usize; 2048];
+        let mut total_dc_luma = 0usize;
+        // Histogram of luma DC (channel 1 in JXL = JPEG Y component).
+        // quant_dc[1] is sized `comp_y.height_in_blocks ×
+        // comp_y.width_in_blocks`; for the JPEG path luma stays at
+        // full block resolution under any subsampling.
+        for row in &quant_dc[1] {
+            for &dc_val in row {
+                let idx = (dc_val as i32 + 1024).clamp(0, 2047) as usize;
+                dc_counts[idx] += 1;
+                total_dc_luma += 1;
+            }
+        }
+        // libjxl `enc_frame.cc:1057-1058`:
+        // `qt[1] + qt[2] + qt[3] + qt[4] + qt[5]` with `qt` indexed
+        // `kDCTBlockSize * c + 8*x + y` (transposed storage). Our
+        // `raw_qtables` uses the same convention
+        // (`qtables[jxl_c*64 + x*8 + y] = quant[y*8 + x]`,
+        // `build_raw_qtables` line 875), so `raw_qtables[1..5]` is
+        // `qt[0*64 + 1..5]` = JXL channel 0 = JPEG chroma slots
+        // (x=0,y=1), (x=0,y=2), (x=0,y=3), (x=0,y=4), (x=0,y=5).
+        let qt_ac_sum: u32 = raw_qtables[1..=5]
+            .iter()
+            .map(|&v| v.max(0) as u32)
+            .sum::<u32>()
+            .max(1);
+        ac_context::BlockCtxMap::jpeg_dc_quantile(&dc_counts, total_dc_luma, qt_ac_sum, is_gray)
+    };
+
+    // Per-block DC bucket lookup table sized `xsize_blocks * ysize_blocks`.
+    // libjxl `compressed_dc.cc:274-292` reads `quant_dc` (an `ImageB`)
+    // populated only when `bctx.num_dc_ctxs > 1`. With only luma
+    // thresholds set, the formula reduces to
+    // `qdc_row[x] = sum(dc_thresholds[1] < quant_dc[1][by][bx])`
+    // (i.e. how many luma thresholds the value exceeds → the bucket).
+    let dc_buckets: Vec<u8> = if block_ctx_map.num_dc_ctxs > 1 {
+        let thresholds = &block_ctx_map.dc_thresholds[1];
+        let mut buckets = vec![0u8; xsize_blocks * ysize_blocks];
+        // quant_dc[1] is the FULL luma plane; xsize_blocks/ysize_blocks
+        // equal `comp_y.width/height_in_blocks` (luma is full-res).
+        for by in 0..ysize_blocks {
+            let row = &quant_dc[1].get(by);
+            if let Some(row) = row {
+                for bx in 0..xsize_blocks {
+                    let dc_val = row.get(bx).copied().unwrap_or(0) as i32;
+                    let bucket = thresholds.iter().filter(|&&t| dc_val > t).count() as u8;
+                    buckets[by * xsize_blocks + bx] = bucket;
+                }
+            }
+        }
+        buckets
+    } else {
+        vec![0u8; xsize_blocks * ysize_blocks]
+    };
 
     // EX-J17a: enable wire-format-safe per-channel custom coefficient orders.
     // The JPEG bridge is all-DCT8 so only bucket 0 can carry custom orders, but
@@ -509,7 +579,14 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
                         predict_from_top_and_left(row_top, &nzeros[c][ch_by], ch_bx, 32)
                     };
                     let qf_val = quant_field[by * xsize_blocks + bx] as u32;
-                    let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
+                    // Issue #65: DC bucket from luma DC (libjxl
+                    // `dec_group.cc:491` uses `qdc_row[lbx]` for ALL
+                    // channels, where `lbx` is the luma bx — i.e. the
+                    // chroma block shares the luma block's DC bucket
+                    // at the aligned luma position).
+                    let dc_idx = dc_buckets[by * xsize_blocks + bx] as usize;
+                    let block_ctx =
+                        block_ctx_map.block_context_dc(c, strategy_code, qf_val, dc_idx);
                     // EX-J17a: pass per-(bucket, channel) custom order if one was selected.
                     // raw_strategy is always 0 (DCT8) on the JPEG path, so this only
                     // consults bucket 0 of the orders map.
@@ -590,7 +667,13 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
 
     // DC Global
     let mut dc_global = BitWriter::new();
-    write_dc_global_jpeg(&dc_dequant, &dc_code, num_dc_groups, &mut dc_global)?;
+    write_dc_global_jpeg(
+        &dc_dequant,
+        &dc_code,
+        num_dc_groups,
+        &block_ctx_map,
+        &mut dc_global,
+    )?;
 
     // DC Groups (using shared function from frame.rs)
     let mut dc_groups = Vec::with_capacity(num_dc_groups);
@@ -997,6 +1080,7 @@ fn write_dc_global_jpeg(
     dc_dequant: &[f32; 3],
     dc_code: &OwnedAnsEntropyCode,
     num_dc_groups: usize,
+    block_ctx_map: &ac_context::BlockCtxMap,
     writer: &mut BitWriter,
 ) -> Result<()> {
     // No noise params for JPEG reencoding
@@ -1012,10 +1096,14 @@ fn write_dc_global_jpeg(
     // Quantizer params: global_scale=65536, quant_dc=1
     write_quant_scales(65536, 1, writer)?;
 
-    // BlockCtxMap: write default (non-default header, but default compact map)
-    writer.write(1, 0)?; // non-default BlockCtxMap
-    writer.write(16, 0)?; // no dc ctx, no qft
-    crate::vardct::context_tree::write_block_context_map(writer)?;
+    // Issue #65: emit the JPEG DC-quantile BlockCtxMap (non-default
+    // flag + DC threshold counts + threshold values + QF count +
+    // QF values + entropy-coded ctx_map). Previously this was a
+    // hardcoded `writer.write(16, 0)?` placeholder paired with the
+    // compact-only `write_block_context_map`, which was incorrect once
+    // we wanted to populate `dc_thresholds`. The adaptive writer
+    // handles both legacy (all-empty) and JPEG (luma DC) paths.
+    crate::vardct::context_tree::write_block_ctx_map_adaptive(block_ctx_map, writer)?;
 
     // LfChannelCorrelation (CfL DC params)
     // For YCbCr mode, base_correlation_b must be 0.0 (not the XYB default of 1.0).
