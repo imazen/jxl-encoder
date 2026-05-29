@@ -497,6 +497,18 @@ struct Args {
     #[arg(long)]
     no_lossless_jpeg: bool,
 
+    /// PreserveJxl: lossy JPEG → JXL by coefficient-domain coarsening.
+    /// Takes a `scale` > 1.0 (coarser = smaller; 1.0 = lossless transcode).
+    /// Re-quantizes the JPEG's own DCT coefficients to a coarser, same-family
+    /// scale of its quant tables (bundled deadzone + mild chroma lead — the
+    /// proven RD-frontier policy), then transcodes — no pixel round-trip, no
+    /// JBRD (lossy). Guaranteed not larger than the lossless transcode. Best
+    /// for gentle / near-lossless reduction, where it beats a full pixel
+    /// re-encode (see docs/JPEG_LOSSY_RECOMPRESSION.md). Requires the
+    /// `jpeg-reencoding` feature.
+    #[arg(long, value_name = "SCALE")]
+    jpeg_coarsen: Option<f32>,
+
     // ── A1 CLI passthrough — libjxl `cjxl` parity flags ──────────────
     //
     // These flags forward through to `LossyConfig` / `LosslessConfig`
@@ -847,6 +859,67 @@ fn main() {
     // than silently producing garbage.
     #[cfg(feature = "jpeg-reencoding")]
     {
+        // PreserveJxl lossy path: explicit `--jpeg-coarsen <scale>` on a JPEG
+        // input. Routes through the coefficient-domain coarsener (no JBRD).
+        if let Some(scale) = args.jpeg_coarsen {
+            let jpeg_bytes = match std::fs::read(&args.input) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("Error reading JPEG input: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            if !jxl_encoder::jpeg::is_jpeg_signature(&jpeg_bytes) {
+                eprintln!(
+                    "Error: --jpeg-coarsen requires a JPEG input; {} has no SOI marker.",
+                    args.input.display()
+                );
+                std::process::exit(1);
+            }
+            if !args.quiet {
+                println!(
+                    "PreserveJxl lossy JPEG → JXL (coarsen scale {:.3}, input {} bytes)",
+                    scale,
+                    jpeg_bytes.len()
+                );
+            }
+            let encoded = match jxl_encoder::jpeg::encode_jpeg_recompress_auto_codestream(
+                &jpeg_bytes,
+                scale,
+                args.effort,
+            ) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("PreserveJxl recompress failed: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let encode_time = start.elapsed();
+            if let Err(e) = write_output(&args.output, &encoded) {
+                eprintln!("Error writing output: {}", e);
+                std::process::exit(1);
+            }
+            if !args.quiet {
+                let input_size = jpeg_bytes.len() as u64;
+                let output_size = encoded.len() as u64;
+                println!();
+                println!("Input size:  {} bytes (JPEG)", input_size);
+                println!(
+                    "Output size: {} bytes (JXL codestream, lossy, no JBRD)",
+                    output_size
+                );
+                println!(
+                    "Ratio:       {:.2}x ({:.1}% of original JPEG)",
+                    output_size as f64 / input_size as f64,
+                    output_size as f64 / input_size as f64 * 100.0
+                );
+                println!("Time:        {:.2?}", encode_time);
+            } else {
+                println!("{}", args.output.display());
+            }
+            return;
+        }
+
         let want_jpeg_transcode = args.lossless_jpeg || (is_jpeg_ext && !args.no_lossless_jpeg);
         if want_jpeg_transcode {
             let jpeg_bytes = match std::fs::read(&args.input) {
