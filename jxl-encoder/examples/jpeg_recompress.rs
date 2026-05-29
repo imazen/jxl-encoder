@@ -1,7 +1,8 @@
 //! PreserveJxl driver: lossy JPEG → JXL by coefficient-domain coarsening.
 //!
-//! Usage: jpeg_recompress <input.jpg> <scale> <output.jxl>
-//!   scale > 1.0  → coarser (smaller, slightly lossy); 1.0 → lossless transcode.
+//! Usage: jpeg_recompress <input.jpg> <luma_scale> <output.jxl>
+//!                        [luma_dz] [chroma_scale] [chroma_dz]
+//!   luma_scale > 1.0 → coarser; 1.0 → lossless. chroma_* default to luma_*.
 //!
 //! Prints: in_bytes out_bytes ratio
 
@@ -11,19 +12,20 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 4 {
         eprintln!(
-            "usage: {} <input.jpg> <scale> <output.jxl> [deadzone=0.0]",
+            "usage: {} <input.jpg> <luma_scale> <output.jxl> [luma_dz] [chroma_scale] [chroma_dz]",
             args[0]
         );
         std::process::exit(2);
     }
     let bytes = fs::read(&args[1]).expect("read input");
-    let scale: f32 = args[2].parse().expect("scale must be a float");
-    let dz: f32 = args
-        .get(4)
-        .map(|s| s.parse().expect("dz must be a float"))
-        .unwrap_or(0.0);
-    let out = jxl_encoder::jpeg::encode_jpeg_recompress_codestream(&bytes, scale, dz, 7)
-        .expect("recompress");
+    let ls: f32 = args[2].parse().expect("luma_scale must be a float");
+    let p = |i: usize, d: f32| args.get(i).map(|s| s.parse().expect("float")).unwrap_or(d);
+    let ldz = p(4, 0.0);
+    let cs = p(5, ls);
+    let cdz = p(6, ldz);
+    let out =
+        jxl_encoder::jpeg::encode_jpeg_recompress_planar_codestream(&bytes, ls, ldz, cs, cdz, 7)
+            .expect("recompress");
     fs::write(&args[3], &out).expect("write output");
     println!(
         "{}\t{}\t{:.4}",
