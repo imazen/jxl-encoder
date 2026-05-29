@@ -171,11 +171,51 @@ From `benchmarks/jpeg_lossy_rd_frontier_2026-05-28` (10 files, all 3 metrics):
   measurable; the closed loop above bisects to it. This is the default.
 - **Inferred target** (quality vs the unknown original): not directly
   measurable. `zenjpeg::detect::probe` estimates the source's encode quality
-  (IJG / mozjpeg-Robidoux / jpegli-butteraugli-distance), encoder family, and
-  quant tables header-only (~500 bytes, <1µs). This anchors how much real
-  detail remains, lets an absolute target map to a relative coarsening, and
-  sets a source-aware floor so TunedJxl does not waste bits being near-lossless
-  of an already-lossy source (Finding 2). Calibration model: TBD.
+  header-only (~500 bytes, <1µs). The controlled calibration
+  (`benchmarks/jpeg_lossy_inferred_target_2026-05-28.py`: original PNG →
+  cjpeg@Q → recompress → measure vs the *original*) gives the key relationship:
+
+#### The quality floor: source quality caps achievable absolute quality
+
+The lossless transcode (scale 1.0) preserves the source's pixels exactly, so its
+absolute quality *vs the original* equals the source's own quality vs the
+original — the **floor**. You cannot recover detail the JPEG already discarded;
+coarsening only trades absolute quality *below* the floor for bytes. Measured
+floor by source quality (CID22, mean of 5, monotone — 0/15 non-monotone curves):
+
+| source Q | abs zensim-A | abs butteraugli (pnorm3) | abs cvvdp (JOD) | floor bytes |
+|----------|--------------|--------------------------|-----------------|-------------|
+| 92       | 88.2         | 0.668                    | 9.992           | 71,143      |
+| 82       | 76.5         | 1.291                    | 9.865           | 37,912      |
+| 72       | 70.1         | 1.477                    | 9.826           | 29,255      |
+
+(Per-content variance is real: at Q82 abs zensim ranged 68.7–79.1 across files,
+so a production floor prediction needs content too, or a conservative estimate.)
+
+#### Inferred-target algorithm
+
+Given an absolute target `T_abs` in metric M, with source quality `Q_src`
+(from `zenjpeg::detect`) → predicted `floor(Q_src, M)`:
+
+1. **Achievability clamp.** If `T_abs` is better than `floor` (e.g. asking for
+   abs zensim 85 from a Q72 source whose floor is ~70), it is **unachievable** —
+   ship the lossless transcode (the floor, the smallest output preserving all
+   the source has). Do NOT re-encode from pixels to chase it: a pixel re-encode
+   near the floor is *larger* than lossless (Finding 2) for no quality gain.
+   This clamp is the dominant inferred-target byte win.
+2. **Reachable target.** If `T_abs` is at or below the floor, coarsen to hit it:
+   run the relative closed loop, but converted — the relative quality needed is
+   the coarsening that brings absolute quality down to `T_abs` (the relative and
+   absolute curves are both monotone in scale, so the same bisection applies,
+   just scored vs the original in calibration / vs the predicted floor offset in
+   production).
+3. **Source-aware floor on the pixel path.** When TunedJxl is selected (deeper
+   targets), cap its distance no finer than the source warrants — encoding finer
+   than the source's effective distance spends bits reproducing JPEG noise.
+
+The relative-target loop is shipped and measured; the inferred path is this
+floor calibration plus the `zenjpeg::detect` source-quality estimate. Productizing
+the Q→floor predictor (with a content feature) is the remaining follow-on (#41).
 
 ## Router (the dominant RD lever)
 
