@@ -696,6 +696,78 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Investigation Notes
 
+### LOSSY JPEG → JXL recompression: two paths + a router (2026-05-28)
+
+**Status**: [SHIPPED — PreserveJxl path + CLI + closed-loop harness + strategy
+doc; predictive router + inferred targets are documented follow-ons]
+
+The lossy counterpart to the (now at-parity) lossless JPEG-in-JXL transcode.
+Full strategy + numbers: `docs/JPEG_LOSSY_RECOMPRESSION.md`. Harnesses:
+`benchmarks/jpeg_lossy_rd_frontier_2026-05-28.py` (knob frontier),
+`benchmarks/jpeg_lossy_closed_loop_2026-05-28.py` (per-metric target bisection
++ coeff-vs-pixel). All measured with `zen-metrics` GPU metrics
+(`zenmetrics/target/release/zen-metrics compare`) against a RELATIVE reference:
+the source JPEG's own decoded pixels (lossless transcode @ scale 1.0 decoded via
+jxl-oxide → metric ceiling = 100 / 10 / 0). "Quality" = generation loss vs
+source, not vs unknown original.
+
+**Two paths**:
+- **PreserveJxl** (`src/jpeg/lossy.rs`): re-quantize the JPEG's own quantized
+  DCT coefficients to a coarser *same-family* scale of its quant tables, then
+  losslessly transcode (no pixel round-trip, no JBRD). Entry:
+  `encode_jpeg_recompress_auto_codestream(bytes, scale, effort)` (bundled
+  policy) / `encode_jpeg_recompress_planar_codestream` (explicit luma/chroma).
+  CLI: `cjxl-rs <in.jpg> <out.jxl> --jpeg-coarsen <scale>`.
+- **TunedJxl** (pixel re-encode): decode JPEG → pixels → VarDCT (`cjxl-rs <png>`
+  / `cjxl --lossless_jpeg=0`).
+
+**Key findings (all MEASURED)**:
+1. **Crossover**: PreserveJxl wins at gentle / near-lossless targets (keeps
+   coefficients, avoids re-encode overhead); TunedJxl wins at medium/aggressive
+   (XYB + adaptive quant + big transforms + CfL beat uniform 8×8 scaling). The
+   crossover is **content-dependent** (correlates with lossless bpp, NOT nominal
+   source quality — N=3 hypothesis).
+2. **Oracle router** (min of both at matched quality) beats BOTH single-path
+   strategies on EVERY target metric: zensim-A oracle vs pixel-only −11.0%
+   (vs coeff-only −5.7%); cvvdp −14.7% / −19.9%; butteraugli −6.2% / −14.4%.
+   Path selection is the dominant RD lever.
+3. **cjxl offers only the pixel path** and it is *larger than lossless* at
+   gentle quality (389KB src: cjxl -d0 333.7KB, cjxl -d1 --lossless_jpeg=0
+   405.3KB). PreserveJxl fills that gap; our PJ+TunedJxl+router strictly
+   dominates cjxl's single option.
+4. **PreserveJxl knob policy** (`coarsen_policy`, from the RD frontier):
+   scale-proportional AC deadzone is a STRICT Pareto win (smaller AND higher
+   quality, 8/10 files — the ±1 AC residue is harmful noise; DC never
+   deadzoned) + mild chroma lead (chroma 1.4× the luma delta; aggressive chroma
+   ≥2.5× luma was on ZERO Pareto fronts of any metric).
+5. **Closed loop must encode-measure-adjust** (fixed scale → zensim 12.7–82.3);
+   verified-endpoint bisection converges in ~8–10 probes.
+
+**Per-metric caveats** (honest): crossover *direction* is consistent across
+metrics but its *location in each metric's units* differs (zensim-90 = gentle;
+butteraugli-1.0 = already past crossover; pick targets accordingly). **cvvdp
+JOD saturates** — the pixel path bottoms ~9.67–9.85 even at large distance on
+detailed images and cannot reach aggressive cvvdp targets; PreserveJxl coarsens
+without bound, so for deep cvvdp targets PJ is the only reachable path
+(`px_valid=CAPPED` cells excluded from the oracle table). butteraugli favors
+the pixel path widely (VarDCT cost model is butteraugli-derived).
+
+**DO NOT**:
+- DO NOT conclude PreserveJxl beats a pixel re-encode in general — it does NOT.
+  PJ beats JPEG→JPEG recompressors (Phase 0: −14% to −33%) and beats the pixel
+  path only at gentle targets. At medium/aggressive the pixel path wins.
+- DO NOT compare PJ-vs-pixel at aggressive targets without checking the
+  `px_valid` flag — the pixel path's distance range can fail to reach deep
+  targets (esp. cvvdp), faking a PJ win.
+- DO NOT push chroma scale above ~1.5× luma, or ship deadzone=0 — both
+  dominated on every metric.
+- DO NOT use a fixed scale to hit a quality target — it does not map.
+
+**Follow-ons** (tasks #40, #41): predictive router (lossless-bpp content
+feature → path, single encode; needs a 4-dim calibration sweep); inferred
+targets (zenjpeg::detect source quality → absolute-quality mapping +
+source-aware floor).
+
 ### EX-J31 BREAKTHROUGH: Weighted Predictor for JPEG-transcode DC (2026-05-28)
 
 **Status**: [SHIPPED — the dominant JPEG-in-JXL lever]
