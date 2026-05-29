@@ -772,17 +772,19 @@ the pixel path widely (VarDCT cost model is butteraugli-derived).
 - DO NOT use a fixed scale to hit a quality target — it does not map.
 
 **Follow-ons**: predictive router rule SETTLED (quality threshold; bpp refuted
-— see Finding 2). The remaining productization for ALL of this (relative +
-inferred target-quality control) shares ONE blocker: the in-encoder closed loop
-needs a perceptual metric AND a JXL decoder in-process to bisect to a target.
-jxl-encoder has neither (the VarDCT buttloop backends score XYB planes during
-encode, not decoded output; there is no decoder dep). Options: (a) optional
-`jpeg-lossy-target` feature pulling zenjxl-decoder + metric crates (heavy deps
-in a published crate); (b) a separate tool / the app layer (imageflow/zenpipe)
-that already has a decoder + metrics — this is where the closed-loop harness
-already lives. Architecture/dependency decision pending. The encoder ships the
-building blocks (PreserveJxl coeff path + `--jpeg-coarsen` + `coarsen_policy`);
-the harness proves the full loop + numbers.
+— see Finding 2). The remaining productization (relative + inferred
+target-quality control + the router) needs an encode→decode→score loop. Its
+HOME is **`zenjxl`** (the codec wrapper at `~/work/zen/zenjxl`), which already
+deps BOTH `jxl-encoder` (encode, incl. PreserveJxl) AND `zenjxl-decoder`
+(decode) + zencodec traits — it can do the full loop in-process. jxl-encoder
+itself stays a lean building-block (PreserveJxl coeff path + `--jpeg-coarsen` +
+`coarsen_policy`); do NOT add a decoder/metric dep to it. The only added concern
+in zenjxl is the perceptual metric — supply it via a **scorer callback**
+(`Fn(ref_pixels, dist_pixels) -> f32`) so zenjxl stays metric-agnostic (matches
+the "caller selects the metric" invariant), or behind an optional metric-crate
+feature. zenjxl needs a `jpeg-reencoding` feature-forward to reach the
+PreserveJxl functions. The closed-loop harness (`benchmarks/jpeg_lossy_*.py`)
+proves the full loop + numbers; the zenjxl impl ports it to Rust.
 
 ### EX-J31 BREAKTHROUGH: Weighted Predictor for JPEG-transcode DC (2026-05-28)
 
