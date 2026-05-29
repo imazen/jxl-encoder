@@ -11,6 +11,7 @@
 mod data;
 mod encode;
 mod jbrd;
+mod lossy;
 mod parse;
 
 pub use data::JpegData;
@@ -18,7 +19,29 @@ pub use encode::{
     encode_jpeg_to_jxl, encode_jpeg_to_jxl_container, encode_jpeg_to_jxl_container_with_effort,
     encode_jpeg_to_jxl_with_effort,
 };
+pub use lossy::coarsen_coefficients;
 pub use parse::{JpegError, read_jpeg};
+
+/// PreserveJxl: coefficient-domain lossy JPEG → bare JXL codestream.
+///
+/// Parses `jpeg_bytes`, coarsens its quantized DCT coefficients in the DCT
+/// domain by `scale` (> 1.0; near-uniform scale of the source's own quant
+/// tables — see [`coarsen_coefficients`]), then losslessly transcodes the
+/// coarsened coefficients to a YCbCr JXL codestream (no JBRD). The output
+/// decodes to the coarsened image; `scale <= 1.0` is identical to a lossless
+/// transcode.
+///
+/// Requires the `jpeg-reencoding` feature.
+pub fn encode_jpeg_recompress_codestream(
+    jpeg_bytes: &[u8],
+    scale: f32,
+    effort: u8,
+) -> Result<alloc::vec::Vec<u8>, crate::error::Error> {
+    let mut jpeg = read_jpeg(jpeg_bytes)
+        .map_err(|e| crate::error::Error::InvalidInput(alloc::format!("JPEG parse: {e:?}")))?;
+    coarsen_coefficients(&mut jpeg, scale);
+    encode_jpeg_to_jxl_with_effort(&jpeg, effort)
+}
 
 // Re-export for tests that need direct JBRD access.
 #[doc(hidden)]
