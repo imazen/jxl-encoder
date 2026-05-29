@@ -142,6 +142,20 @@ split, per CLAUDE.md ML/sweep discipline) — not a single-scalar fit. Until the
 ship the quality-threshold router (cheap, captures most of the win) with the
 oracle as the opt-in "max RD" mode (#40).
 
+### Productization home: `zenjxl`
+
+The closed loop + router live in **`zenjxl`** (`~/work/zen/zenjxl`), the codec
+wrapper that already deps both `jxl-encoder` (encode, incl. PreserveJxl) and
+`zenjxl-decoder` (decode) + zencodec traits — it can run the full
+encode→decode→score loop in-process. `jxl-encoder` stays a lean building block
+(PreserveJxl + `--jpeg-coarsen` + `coarsen_policy`); it gets no decoder/metric
+dep. zenjxl supplies the perceptual metric via a **scorer callback**
+(`Fn(ref_pixels, dist_pixels) -> f32`) so it stays metric-agnostic (caller picks
+zensim-A / cvvdp / butteraugli), or behind an optional metric-crate feature.
+zenjxl needs a `jpeg-reencoding` feature-forward to reach the PreserveJxl entries.
+The public types land as decided (`JpegRecompressMethod {Coarsen, Reencode,
+Auto}`, `QualityTarget {Relative, Inferred}`, reusing `PerceptualMetric`).
+
 ## Finding 2 — cjxl (libjxl) only offers the pixel path, and it is not even
 ## monotone vs lossless at gentle quality
 
