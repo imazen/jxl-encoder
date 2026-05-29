@@ -19,28 +19,47 @@ pub use encode::{
     encode_jpeg_to_jxl, encode_jpeg_to_jxl_container, encode_jpeg_to_jxl_container_with_effort,
     encode_jpeg_to_jxl_with_effort,
 };
-pub use lossy::coarsen_coefficients;
+pub use lossy::{coarsen_coefficients, coarsen_coefficients_dz};
 pub use parse::{JpegError, read_jpeg};
 
 /// PreserveJxl: coefficient-domain lossy JPEG → bare JXL codestream.
 ///
 /// Parses `jpeg_bytes`, coarsens its quantized DCT coefficients in the DCT
 /// domain by `scale` (> 1.0; near-uniform scale of the source's own quant
-/// tables — see [`coarsen_coefficients`]), then losslessly transcodes the
-/// coarsened coefficients to a YCbCr JXL codestream (no JBRD). The output
-/// decodes to the coarsened image; `scale <= 1.0` is identical to a lossless
-/// transcode.
+/// tables) with AC deadzone widening `dz` in `[0.0, 0.5]` (see
+/// [`coarsen_coefficients_dz`]), then losslessly transcodes the coarsened
+/// coefficients to a YCbCr JXL codestream (no JBRD). The output decodes to
+/// the coarsened image; `scale <= 1.0` is identical to a lossless transcode.
+///
+/// The result is **guaranteed ≤ the lossless transcode size**: if coarsening
+/// does not shrink the codestream (e.g. very gentle settings on an already-
+/// sparse source), the lossless transcode is returned instead — never a
+/// larger, quality-degraded file.
 ///
 /// Requires the `jpeg-reencoding` feature.
 pub fn encode_jpeg_recompress_codestream(
     jpeg_bytes: &[u8],
     scale: f32,
+    dz: f32,
     effort: u8,
 ) -> Result<alloc::vec::Vec<u8>, crate::error::Error> {
-    let mut jpeg = read_jpeg(jpeg_bytes)
+    let jpeg = read_jpeg(jpeg_bytes)
         .map_err(|e| crate::error::Error::InvalidInput(alloc::format!("JPEG parse: {e:?}")))?;
-    coarsen_coefficients(&mut jpeg, scale);
-    encode_jpeg_to_jxl_with_effort(&jpeg, effort)
+    // Lossless transcode is the "do no harm" floor.
+    let lossless = encode_jpeg_to_jxl_with_effort(&jpeg, effort)?;
+    if !(scale > 1.0) {
+        return Ok(lossless);
+    }
+    let mut coarsened = jpeg;
+    coarsen_coefficients_dz(&mut coarsened, scale, dz);
+    let lossy = encode_jpeg_to_jxl_with_effort(&coarsened, effort)?;
+    // No-size-regression guard (RECOMPRESSION_COMPENDIUM §10.6): never ship a
+    // larger, quality-degraded file than the lossless transcode.
+    if lossy.len() < lossless.len() {
+        Ok(lossy)
+    } else {
+        Ok(lossless)
+    }
 }
 
 // Re-export for tests that need direct JBRD access.
