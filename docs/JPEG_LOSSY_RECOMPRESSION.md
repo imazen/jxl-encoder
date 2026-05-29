@@ -114,16 +114,33 @@ target.
   encoder's cost model is butteraugli-derived. PJ wins on butteraugli only in
   the near-lossless band.
 
-### Predictive router signal (hypothesis, weak support — N=3)
+### Predictive router signal (N=12 calibration, 2026-05-28)
 
-The content-dependent crossover correlates with the source's **lossless-transcode
-bpp** (= PJ floor bytes / pixels, computed for free). Nominal source quality
-does *not* discriminate (3 product-image JPEGs all estimated IJG q≈81 yet
-crossed over at zensim 78–88); the low-bpp/compressible source crossed highest
-(PJ rarely wins), high-bpp/detailed sources crossed lower (PJ wins wider). A
-calibrated predictive router needs a proper 4-dim sweep (size × quality × mode ×
-content, per CLAUDE.md sweep discipline) to fit the boundary — documented
-follow-on, not fit from 3 points.
+A 12-file × 4-target zensim-A calibration
+(`benchmarks/jpeg_lossy_router_calib_zensim_2026-05-28.tsv` + `.fit.txt`,
+large photographic product-image JPEGs of unknown source quality) settles which
+feature predicts the crossover:
+
+- **Target quality (gentleness) is the dominant predictor.** Coarsen(PJ)-win
+  rate by target: t=91 → 91% (10/11), t=88 → 58% (7/12), t=85 → 33% (4/12),
+  t=82 → 33% (4/12). The crossover sits at **≈ zensim 88** for this content
+  class: use Coarsen above it, Reencode below. A simple quality-threshold router
+  (Coarsen when target ≳ 89) captures most of the win safely.
+- **Lossless bpp is a WEAK refinement, NOT a standalone predictor.** The earlier
+  N=3 "bpp predicts the crossover" hypothesis is **refuted at N=12**: Pearson
+  r = +0.34 (and even the sign is messy — 61mwEbjJTQL at bpp 0.22 wins wide
+  while 71VmfvrlNWL at bpp 0.15 loses everywhere). A single content feature does
+  not clean up the near-crossover band.
+- **The oracle stays the robust ceiling.** Over the 47 cells: oracle vs
+  pixel-only −12.0%, vs coeff-only −6.8% (consistent with the 13-cell result).
+  Near the crossover (t≈88, ~50% win-rate) the oracle beats *any* hard
+  threshold, so the threshold router trades a few % for skipping the 2× encode.
+
+A tighter predictive router would need a multi-feature trained model (the
+zenanalyze feature vector + a proper size×quality×content sweep with a held-out
+split, per CLAUDE.md ML/sweep discipline) — not a single-scalar fit. Until then:
+ship the quality-threshold router (cheap, captures most of the win) with the
+oracle as the opt-in "max RD" mode (#40).
 
 ## Finding 2 — cjxl (libjxl) only offers the pixel path, and it is not even
 ## monotone vs lossless at gentle quality

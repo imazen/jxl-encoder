@@ -68,26 +68,42 @@ def main():
         if b:
             pts.append((b, cross))
 
+    # PRIMARY signal: PJ-win rate by target quality (where the crossover lives).
+    byt = collections.defaultdict(lambda: [0, 0])
+    for r in rows:
+        a = f(r.get("pj_bytes"))
+        b = f(r.get("px_bytes"))
+        if a and b:
+            byt[r["target"]][0] += a < b
+            byt[r["target"]][1] += 1
+    print("\nPRIMARY signal — PJ-win rate by target quality (the crossover band):")
+    for t in sorted(byt, key=lambda x: -float(x)):
+        w, tot = byt[t]
+        print(f"  t={t}: Coarsen(PJ) wins {w}/{tot} ({100*w/tot:.0f}%)")
+    print("  => crossover ≈ the target where the win-rate passes 50%. Target quality")
+    print("     (gentleness) is the dominant predictor; use Coarsen above it, Reencode below.")
+
+    # SECONDARY: is bpp a useful refinement? (honest correlation)
     if len(pts) >= 3:
         bs = [p[0] for p in pts]
         cs = [p[1] for p in pts]
-        # simple least-squares line crossover = a + b*bpp
         n = len(pts)
         mb, mc = statistics.mean(bs), statistics.mean(cs)
         cov = sum((x - mb) * (y - mc) for x, y in pts)
         var = sum((x - mb) ** 2 for x in bs)
         slope = cov / var if var else 0.0
         inter = mc - slope * mb
-        # correlation
         sc = statistics.pstdev(cs)
         sbp = statistics.pstdev(bs)
         corr = (cov / n) / (sbp * sc) if sbp and sc else 0.0
-        print(f"\nfit: crossover ≈ {inter:.1f} + ({slope:.2f})·bpp   (Pearson r={corr:+.2f}, n={n})")
-        print("interpretation: lower bpp (compressible) -> higher crossover (PJ wins only")
-        print("very gentle); higher bpp (detailed) -> lower crossover (PJ wins wider).")
-        print("\nproduction rule: given target quality T and source bpp, use Coarsen (PJ)")
-        print("iff T >= crossover(bpp); else Reencode (pixel). Verify on a held-out split")
-        print("before baking constants (CLAUDE.md sweep discipline).")
+        verdict = "WEAK — not a reliable standalone predictor" if abs(corr) < 0.5 else "moderate"
+        print(f"\nSECONDARY — bpp refinement: crossover ≈ {inter:.1f} + ({slope:.2f})·bpp "
+              f"(Pearson r={corr:+.2f}, n={n}) [{verdict}]")
+        print("  A single content feature (bpp) does NOT cleanly predict the crossover.")
+        print("  A tighter predictive router needs a multi-feature trained model")
+        print("  (zenanalyze feature vector), per CLAUDE.md ML/sweep discipline — not a")
+        print("  single-scalar fit. The ORACLE (encode both, keep smaller) is the robust")
+        print("  baseline; near the crossover (~50% win-rate) it beats any hard threshold.")
 
 
 if __name__ == "__main__":
