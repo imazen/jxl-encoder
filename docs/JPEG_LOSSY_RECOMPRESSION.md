@@ -258,6 +258,17 @@ axis. These are NOT introduced yet — adding them before the router/target loop
 can consume them would be dead public API; the names are fixed here so the
 productization lands them directly.
 
+## Untested PreserveJxl avenue: rate-aware (trellis) coefficient selection
+
+The deadzone drops the cheap ±1 AC residue with a *fixed* magnitude threshold.
+A rate-distortion-optimal version would decide each coefficient's keep/round
+against the *actual JXL entropy cost* of coding it (the context-model + ANS bit
+cost) vs its distortion contribution — i.e. trellis quantization in the
+transcode domain. Expected marginal gain over the deadzone is modest (the
+deadzone already captures the dominant "drop cheap small coeffs" win) and it
+needs a JXL rate model wired into the coarsener, so it is a focused future
+effort, not a quick win. Recorded as a candidate, not yet measured.
+
 ## Avenue: deblock-before-reencode (splits on the relative/inferred axis)
 
 The user's "avoid wasting bits on what we can't reconstruct" goal is *already
