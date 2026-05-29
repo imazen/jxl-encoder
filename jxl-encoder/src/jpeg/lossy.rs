@@ -176,6 +176,37 @@ pub fn coarsen_coefficients_planar(
     }
 }
 
+/// The proven single-knob coarsening policy from the RD frontier
+/// (`benchmarks/jpeg_lossy_rd_frontier_2026-05-28`): given one `scale`, derive
+/// (luma_scale, luma_dz, chroma_scale, chroma_dz).
+///
+/// - **AC deadzone** grows with the scale (`0.30·(scale−1)`, capped 0.45). On
+///   the frontier this is a *strict Pareto win* — at a fixed scale, widening
+///   the deadzone is both smaller and higher quality on 8/10 files (the ±1 AC
+///   residue is perceptually harmful noise). DC is never deadzoned (handled by
+///   the coarsen routines).
+/// - **Mild chroma lead**: chroma coarsens `1.4×` the luma *delta*
+///   (`1 + (scale−1)·1.4`), so chroma is always slightly coarser than luma but
+///   never aggressively so — chroma ≥2.5× luma was dominated on *every* metric.
+///
+/// `scale ≤ 1.0` maps to a true lossless no-op `(1, 0, 1, 0)`.
+pub fn coarsen_policy(scale: f32) -> (f32, f32, f32, f32) {
+    if !(scale > 1.0) {
+        return (1.0, 0.0, 1.0, 0.0);
+    }
+    let luma_dz = (0.30 * (scale - 1.0)).min(0.45);
+    let chroma_scale = 1.0 + (scale - 1.0) * 1.4;
+    let chroma_dz = (luma_dz + 0.05).min(0.45);
+    (scale, luma_dz, chroma_scale, chroma_dz)
+}
+
+/// Coarsen with the bundled single-knob [`coarsen_policy`] (deadzone + mild
+/// chroma lead). The caller's quality loop only has to move one `scale` dial.
+pub fn coarsen_coefficients_auto(jpeg: &mut JpegData, scale: f32) {
+    let (ls, ldz, cs, cdz) = coarsen_policy(scale);
+    coarsen_coefficients_planar(jpeg, ls, ldz, cs, cdz);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,6 +293,23 @@ mod tests {
         coarsen_coefficients_dz(&mut j, 1.5, 0.2);
         assert_eq!(j.components[0].coeffs[1], 0, "small AC must be deadzoned");
         assert_ne!(j.components[0].coeffs[0], 0, "DC must never be deadzoned");
+    }
+
+    #[test]
+    fn policy_lossless_at_scale_one() {
+        assert_eq!(coarsen_policy(1.0), (1.0, 0.0, 1.0, 0.0));
+        assert_eq!(coarsen_policy(0.5), (1.0, 0.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn policy_chroma_leads_luma_mildly() {
+        let (ls, ldz, cs, cdz) = coarsen_policy(2.0);
+        assert_eq!(ls, 2.0);
+        assert!(ldz > 0.0, "deadzone must be on above scale 1.0");
+        // chroma leads luma but not aggressively: luma < chroma < 1.5x luma.
+        assert!(cs > ls, "chroma must lead luma");
+        assert!(cs < ls * 1.5, "chroma lead must be mild (<1.5x), got {cs}");
+        assert!(cdz >= ldz);
     }
 
     #[test]
