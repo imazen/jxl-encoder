@@ -1,73 +1,42 @@
-# zenjxl lossy-JPEG closed loop — validated, staged, gated on publish
+# zenjxl lossy-JPEG closed loop — LANDED (path-patched), publish-migration checklist
 
-This directory holds the **validated** productization of the lossy JPEG → JXL
-recompression closed loop, ready to drop into the `zenjxl` crate. It lives here
-(in jxl-encoder's repo) because it cannot be committed to `zenjxl` yet — see
-"Publish gate" below.
+The lossy JPEG → JXL recompression closed loop **shipped in `zenjxl`** (commit
+`ac6826f9`, 2026-05-28) as the opt-in `jpeg-lossy` feature + `zenjxl::jpeg_lossy`
+module. The live code lives in `zenjxl` (not here) — this dir is now just the
+publish-migration checklist.
 
-## Why it lives in zenjxl (not jxl-encoder, not the app layer)
+## What landed in zenjxl
 
-`zenjxl` already deps **both** `jxl-encoder` (encode, incl. the PreserveJxl
-coefficient-domain coarsener) **and** `zenjxl-decoder` (decode), plus zencodec
-traits. So it can run the full **encode → decode → score → bisect** loop
-in-process. `jxl-encoder` stays a lean building block (no decoder/metric dep);
-the app layer doesn't need to own the loop. The loop is metric-agnostic: the
-caller supplies a scorer callback over decoded RGB8, so it drives a
-zensim-A / cvvdp / butteraugli (or any) target.
+- `jpeg-lossy` feature = `["encode", "decode", "jxl-encoder/jpeg-reencoding"]`.
+- `zenjxl::jpeg_lossy::recompress_jpeg_lossy_relative(jpeg, target,
+  higher_is_better, scorer, effort)` — bisects the PreserveJxl coarsening scale
+  to a perceptual target, scoring each candidate in-process (encode → decode →
+  score) via a caller-supplied scorer over decoded RGB8 (metric-agnostic:
+  zensim-A / cvvdp / butteraugli). Falls back to the lossless floor when the
+  target is unreachable.
+- `zenjxl::jpeg_lossy::recompress_jpeg_coarsen(jpeg, scale, effort)` —
+  explicit-scale path.
+- `tests/jpeg_lossy.rs` (3/3) + `tests/fixtures/tiny.jpg`.
 
-## Validation (2026-05-28)
+## Dev-coupling (current state)
 
-Built and tested against local path-patched `jxl-encoder 0.3.2` + `zenjpeg 0.8.7`:
+zenjxl deps `jxl-encoder = "0.3.2"` with committed `[patch.crates-io]`
+redirecting `jxl-encoder` + `zenjpeg` to the local siblings (0.3.2 / 0.8.7 are
+unpublished). This matches jxl-encoder's own committed `zenjpeg` path-patch.
+**zenjxl now requires the sibling checkouts to build** (it no longer builds
+standalone against published deps) — the accepted tradeoff for landing without a
+release.
 
-```
-running 3 tests
-test coarsen_is_monotone_and_decodes ... ok
-test unreachable_target_returns_lossless_floor ... ok
-test relative_loop_looser_target_is_smaller ... ok
-test result: ok. 3 passed; 0 failed
-```
+## Publish-migration checklist (when the chain is published)
 
-The loop coarsens (PreserveJxl), decodes (zenjxl-decoder), scores (MSE callback),
-bisects to the target, and falls back to the lossless floor when the target is
-unreachable — all in-process.
+1. Publish `zenjpeg 0.8.7` (crates.io has 0.8.3 with a `magetypes` API
+   mismatch) — CI green + GitHub release + go-ahead.
+2. Publish `jxl-encoder 0.3.2` (lossy-JPEG API) — CI green + GitHub release +
+   go-ahead.
+3. In `zenjxl/Cargo.toml`: remove the `[patch.crates-io]` block (zenjxl then
+   builds standalone against the published 0.3.2). Keep the `jpeg-lossy` feature
+   and `jxl-encoder = "0.3.2"` dep as-is.
+4. `cargo test -p zenjxl --features jpeg-lossy --test jpeg_lossy` (expect 3/3).
 
-## Publish gate (why it isn't committed to zenjxl)
-
-`zenjxl` deps the **published** `jxl-encoder 0.3.1` from crates.io. The loop
-calls `jxl_encoder::jpeg::encode_jpeg_recompress_auto_codestream`, which is new
-in the unpublished `0.3.2`. The publish chain is:
-
-1. `zenjpeg 0.8.7` (jxl-encoder path-patches it today; crates.io has 0.8.3 with a
-   `magetypes` API mismatch) → publish.
-2. `jxl-encoder 0.3.2` (with the lossy-JPEG API: `encode_jpeg_recompress_auto_codestream`,
-   `encode_jpeg_recompress_planar_codestream`, `coarsen_policy`, …) → publish.
-3. `zenjxl`: bump dep to `jxl-encoder = "0.3.2"`, add the `jpeg-lossy` feature,
-   drop in these files. → publish.
-
-Each publish needs the standard release gate (CI green on all platforms, README
-review, GitHub release, user sign-off) per CLAUDE.md. This is a release-
-engineering decision, not a code task.
-
-## How to land (after the publish chain)
-
-1. `zenjxl/Cargo.toml` [features]: add
-   `jpeg-lossy = ["encode", "decode", "jxl-encoder/jpeg-reencoding"]`
-   and bump `jxl-encoder` dep to `"0.3.2"`.
-2. `zenjxl/src/lib.rs`: add
-   `#[cfg(feature = "jpeg-lossy")] pub mod jpeg_lossy;`
-3. Copy `jpeg_lossy.rs` → `zenjxl/src/jpeg_lossy.rs`.
-4. Copy `jpeg_lossy_test.rs` → `zenjxl/tests/jpeg_lossy.rs`,
-   `tiny.jpg` → `zenjxl/tests/fixtures/tiny.jpg`.
-5. `cargo test -p zenjxl --features jpeg-lossy --test jpeg_lossy` (expect 3/3).
-
-## Alternative (dev-coupled, no publish)
-
-`zenjxl` could commit `[patch.crates-io]` entries pointing `jxl-encoder` +
-`zenjpeg` at the local siblings — the same pattern jxl-encoder itself uses for
-its unpublished `zenjpeg` dep. This makes `jpeg-lossy` build in the sibling-
-checkout dev/CI environment WITHOUT publishing, but couples every `zenjxl` build
-to the sibling checkouts (it can no longer build standalone against published
-deps). Tradeoff is the user's call.
-
-See `../JPEG_LOSSY_RECOMPRESSION.md` for the full RD strategy and `QualityTarget`
-/ `JpegRecompressMethod` API naming this loop will grow into.
+See `../JPEG_LOSSY_RECOMPRESSION.md` for the RD strategy + the `QualityTarget` /
+`JpegRecompressMethod` API naming this loop grows into.

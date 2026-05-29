@@ -142,19 +142,27 @@ split, per CLAUDE.md ML/sweep discipline) — not a single-scalar fit. Until the
 ship the quality-threshold router (cheap, captures most of the win) with the
 oracle as the opt-in "max RD" mode (#40).
 
-### Productization home: `zenjxl`
+### Productization home: `zenjxl` — LANDED (2026-05-28)
 
-The closed loop + router live in **`zenjxl`** (`~/work/zen/zenjxl`), the codec
-wrapper that already deps both `jxl-encoder` (encode, incl. PreserveJxl) and
-`zenjxl-decoder` (decode) + zencodec traits — it can run the full
-encode→decode→score loop in-process. `jxl-encoder` stays a lean building block
-(PreserveJxl + `--jpeg-coarsen` + `coarsen_policy`); it gets no decoder/metric
-dep. zenjxl supplies the perceptual metric via a **scorer callback**
-(`Fn(ref_pixels, dist_pixels) -> f32`) so it stays metric-agnostic (caller picks
-zensim-A / cvvdp / butteraugli), or behind an optional metric-crate feature.
-zenjxl needs a `jpeg-reencoding` feature-forward to reach the PreserveJxl entries.
-The public types land as decided (`JpegRecompressMethod {Coarsen, Reencode,
-Auto}`, `QualityTarget {Relative, Inferred}`, reusing `PerceptualMetric`).
+The closed loop lives in **`zenjxl`** (the codec wrapper that deps both
+`jxl-encoder` and `zenjxl-decoder`), where it runs the full encode→decode→score
+loop in-process. **Shipped** as the opt-in `jpeg-lossy` feature +
+`zenjxl::jpeg_lossy` module (zenjxl commit `ac6826f9`):
+
+- `recompress_jpeg_lossy_relative(jpeg, target, higher_is_better, scorer, effort)`
+  — bisects the PreserveJxl coarsening scale to a perceptual target, scoring each
+  candidate via a caller-supplied **scorer callback** over decoded RGB8
+  (metric-agnostic: zensim-A / cvvdp / butteraugli), lossless-floor fallback.
+- `recompress_jpeg_coarsen(jpeg, scale, effort)` — explicit-scale path.
+- Tests 3/3 (`zenjxl/tests/jpeg_lossy.rs`).
+
+`jxl-encoder` stays a lean building block (PreserveJxl + `--jpeg-coarsen` +
+`coarsen_policy`); no decoder/metric dep. zenjxl currently path-patches
+`jxl-encoder 0.3.2` + `zenjpeg 0.8.7` (unpublished) — dev-coupled to the sibling
+checkouts; see `docs/zenjxl_jpeg_lossy/README.md` for the publish-migration
+checklist. The richer public types (`JpegRecompressMethod {Coarsen, Reencode,
+Auto}`, `QualityTarget {Relative, Inferred}`, reusing `PerceptualMetric`) +
+the Auto router land on top of this loop next.
 
 ## Finding 2 — cjxl (libjxl) only offers the pixel path, and it is not even
 ## monotone vs lossless at gentle quality
