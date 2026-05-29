@@ -281,12 +281,22 @@ This yields a clean, untested avenue with a metric-direction twist:
   target modes want *different pixel preprocessing*, not just a different scoring
   reference.
 
-Probe (future chunk, needs zenjpeg deblock-decode wired into the harness):
-`original PNG → cjpeg@Q → {decode, decode+deblock} → cjxl-rs → measure vs
-original`. Expect deblock to lower bytes AND raise absolute quality on
-block-prone sources (low-Q, flat regions); confirm it does NOT help (or hurts)
-relative-target scoring. Only relevant to the pixel path — PreserveJxl can't
-deblock (it never leaves the coefficient domain).
+**PROBED — refuted on photographic content** (`benchmarks/jpeg_lossy_deblock_probe_2026-05-28.tsv`,
+4 CID22 photos, cjpeg@Q72 → `zjpeg process --deblock on` → cjxl-rs -d1.5,
+measured vs the original): deblock saved 2–5% bytes but **lowered** absolute
+quality on every file (zensim −1.7 to −3.7, butteraugli worse). It is NOT a
+Pareto win — it just moves down the RD curve. The reasoning above was wrong for
+photo content: zenjpeg's content-aware deblocker smooths away **real texture
+detail that WAS in the original**, not just the block grid, so absolute quality
+drops more than the reduced blocking helps. (Caveat: the probe re-encodes the
+deblocked pixels through one extra high-quality JPEG round-trip via `zjpeg
+process`; a clean decode-deblock-to-pixels path might shift the magnitude, but
+the consistent direction across 4 files — smaller AND lower-quality — is the
+smoothing signature, not round-trip loss.) Deblock may still help at very low
+quality (Q≲30) where blocking dominates and there is little real detail to lose;
+that regime is untested and the only place worth re-probing. Do NOT deblock
+before the pixel re-encode for normal-quality inferred targets. Only ever
+relevant to the pixel path — PreserveJxl never leaves the coefficient domain.
 
 ## Router (the dominant RD lever)
 
