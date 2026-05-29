@@ -101,6 +101,30 @@
 
 ### Added
 
+- **Lossy JPEG → JXL recompression (PreserveJxl, coefficient-domain,
+  2026-05-28)**: re-compress an existing JPEG into a smaller JXL by
+  re-quantizing its own quantized DCT coefficients to a coarser
+  same-family scale of its quant tables, then losslessly transcoding —
+  no pixel round-trip, so no generation-loss artifacts and no JBRD
+  (lossy). New public entries on the `jpeg-reencoding` feature:
+  `jpeg::encode_jpeg_recompress_auto_codestream(bytes, scale, effort)`
+  (recommended — bundled `coarsen_policy`: scale-proportional AC
+  deadzone + mild chroma lead), `encode_jpeg_recompress_planar_codestream`
+  (explicit luma/chroma knobs), `coarsen_coefficients{,_auto,_dz,_planar}`,
+  `coarsen_policy`. CLI: `cjxl-rs <in.jpg> <out.jxl> --jpeg-coarsen <scale>`.
+  Output is guaranteed not larger than the lossless transcode (no-size-
+  regression guard). Measured RD findings, all three target metrics
+  (zensim-A / cvvdp / butteraugli), in `docs/JPEG_LOSSY_RECOMPRESSION.md`:
+  the AC deadzone is a strict Pareto win (smaller AND higher quality on
+  8/10 files); PreserveJxl wins at gentle/near-lossless targets while a
+  full pixel re-encode wins at aggressive (content-dependent crossover);
+  an oracle router (pick the smaller) beats the naive pixel-only default
+  (cjxl's only lossy-JPEG option, which is *larger than lossless* at
+  gentle quality) by −11.0% on zensim-A (−14.7% cvvdp, −6.2% butteraugli);
+  and an inferred-target floor calibration (source quality caps achievable
+  absolute quality). Decoder-validated (jxl-oxide + djxl). Benches:
+  `benchmarks/jpeg_lossy_{rd_frontier,closed_loop,crossover_*,inferred_target}_2026-05-28.*`.
+
 - **Phase 1 of butteraugli target symmetry (RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md`,
   2026-05-26)**: `LossyConfig::with_perceptual_target_score(Some(score))`
   now drives the buttloop's `effective_metric_target_distance`
