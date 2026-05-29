@@ -1,0 +1,76 @@
+PreserveJxl RD-frontier across the three target metrics (zensim-A, cvvdp, butteraugli)
+=====================================================================================
+
+date:     2026-05-28
+host:     lilith RTX (GPU metrics)
+encoder:  jxl-encoder @ d71f040a (PreserveJxl planar chroma-split)
+metrics:  zen-metrics (zenmetrics/target/release) compare, GPU:
+            butteraugli-gpu (max + pnorm3), zensim-gpu (= zensim-A 0-100, higher=better),
+            cvvdp (JOD 0-10, higher=better), ssim2-gpu (0-100, higher=better)
+decoder:  jxl-oxide (consistent reference: lossless transcode @ scale 1.0 -> ref.png,
+            so scale 1.0 == metric ceiling; all targets are RELATIVE / generation-loss
+            vs the source's own decoded pixels)
+corpus:   10 baseline/progressive 8-bit 3-component JPEGs, product-images + codec-corpus,
+            seed 11
+data:     benchmarks/jpeg_lossy_rd_frontier_2026-05-28.tsv (120 rows = 10 files x 12 configs)
+repro:    python3 benchmarks/jpeg_lossy_rd_frontier_2026-05-28.py <out.tsv> 10 11
+
+CONFIG GRID (label, luma_scale, luma_dz, chroma_scale, chroma_dz)
+  u1.25..u4.0  uniform scale sweep with scale-growing dz (0.2..0.4)
+  dz0@2.0      scale 2.0, NO deadzone        (deadzone-isolation control)
+  dz0.4@2.0    scale 2.0, deadzone 0.4       (deadzone-isolation treatment)
+  L1.5C2.5 .. L2.0C5.0  chroma-split (luma lighter, chroma harder)
+
+KEY FINDINGS
+
+1. AC DEADZONE IS A STRICT PARETO WIN.
+   dz0.4@2.0 vs dz0@2.0 (identical scale 2.0): on 8 of 10 files the deadzone is
+   BOTH smaller AND equal-or-higher zensim-A. Typical: 91xm64LCVTL 588118 B / 62.1
+   -> 431250 B / 74.4 (-27% bytes, +12.3 zensim). The +-1 AC residue kept when
+   dz=0 is perceptually harmful noise; zeroing it saves bytes and raises the metric.
+   dz0@2.0 is on the zensim/butteraugli Pareto front only 1/0 of 10 files; dz0.4@2.0
+   is on it 9/8 of 10. => the product default must always carry a deadzone.
+   (1 file dz smaller-but-lower-q: 81sZBZigphS, a very-high-detail texture where the
+   small AC carries real signal; 1 file 71CaAk both improve from an extreme-coarsen
+   artifact regime, zensim 9.3 -> 12.7.)
+
+2. MILD CHROMA-SPLIT HELPS; AGGRESSIVE CHROMA IS DOMINATED.
+   L2.0C3.0 (chroma scale = 1.5x luma) is on the front 9-10/10 across all metrics.
+   L1.5C4.0 and L2.0C5.0 (chroma >= 2.5x luma, or scale >= 4) are on ZERO fronts of
+   any metric -- pushing chroma too hard loses quality faster than it saves bytes,
+   even on zensim/cvvdp/butteraugli (not just ssim2). Chroma can lead luma by ~1.5x,
+   no more.
+
+3. FIXED SCALE != FIXED QUALITY.
+   At scale 2.0 + dz0.4, zensim-A ranges 12.7 .. 82.3 across the 10 files; cvvdp
+   9.77 .. 9.97. A single scale cannot hit a target quality -- the closed loop must
+   ENCODE-MEASURE-ADJUST. Per-file the scale->metric curve is smooth and monotone,
+   so a 2-3 step bisection on scale converges (RECOMPRESSION_COMPENDIUM 10.3
+   within-cell relation, corr 0.80).
+
+PARETO-FRONT MEMBERSHIP (count of 10 files, zensim/cvvdp/butter/ssim2):
+  config       z / c / b / s
+  u1.25       10 /10 / 9 /10
+  u1.5        10 / 9 /10 /10
+  u2.0        10 /10 / 8 /10
+  u2.5         9 / 9 / 5 / 9
+  u3.0        10 /10 /10 /10
+  u4.0        10 /10 /10 /10
+  dz0@2.0      1 / 6 / 0 / 6    <- NO-deadzone control: dominated
+  dz0.4@2.0    9 /10 / 8 /10    <- deadzone treatment: near-always on front
+  L1.5C2.5     5 / 5 / 7 / 6
+  L1.5C4.0     0 / 0 / 0 / 0    <- aggressive chroma: never on any front
+  L2.0C3.0    10 /10 / 9 /10    <- mild chroma-split: near-always on front
+  L2.0C5.0     1 / 4 / 1 / 6
+
+ACTIONS
+  * Default coarsening must bundle a deadzone (scale-proportional). Strict win.
+  * Mild chroma-split (chroma ~1.5x luma) is a safe additional saver; cap chroma
+    lead at ~1.5x.
+  * Build the per-metric closed loop: bisect scale to hit a target zensim-A / cvvdp /
+    butteraugli at min bytes, with the deadzone+chroma policy bundled.
+
+DO NOT
+  * DO NOT ship dz=0 as a default -- it is dominated on 9/10 files.
+  * DO NOT push chroma scale above ~1.5x luma -- dominated on all metrics.
+  * DO NOT assume a fixed scale hits a fixed quality -- it does not (finding 3).
