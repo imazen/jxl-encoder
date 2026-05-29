@@ -258,6 +258,36 @@ axis. These are NOT introduced yet — adding them before the router/target loop
 can consume them would be dead public API; the names are fixed here so the
 productization lands them directly.
 
+## Avenue: deblock-before-reencode (splits on the relative/inferred axis)
+
+The user's "avoid wasting bits on what we can't reconstruct" goal is *already
+fully realized by PreserveJxl* (it keeps only the source's surviving
+coefficients). The pixel path does NOT waste bits on the source's quantized-away
+frequencies either — the decoded pixels carry ~0 energy in those bins, so the
+VarDCT transform emits ~0 coefficients there for ~free. The one thing the pixel
+path *does* spend bits on that isn't original signal is the JPEG's **blocking /
+ringing artifacts**, which are real high-frequency energy in the decoded pixels.
+
+This yields a clean, untested avenue with a metric-direction twist:
+
+- **Deblock the decoded JPEG before the pixel re-encode** (zenjpeg has a
+  JPEG-aware deblocker). Removing blocking/ringing removes HF energy the encoder
+  would otherwise spend bits reproducing → likely **smaller** pixel-path output.
+- **It helps the INFERRED target and hurts the RELATIVE target.** Deblocking
+  moves the pixels *away* from the source (relative quality vs the blocked source
+  drops) but *toward* the original (absolute quality vs the un-blocked original
+  rises — the block grid was never in the original). So: deblock for inferred
+  targets, do NOT deblock for relative targets. This is a genuine reason the two
+  target modes want *different pixel preprocessing*, not just a different scoring
+  reference.
+
+Probe (future chunk, needs zenjpeg deblock-decode wired into the harness):
+`original PNG → cjpeg@Q → {decode, decode+deblock} → cjxl-rs → measure vs
+original`. Expect deblock to lower bytes AND raise absolute quality on
+block-prone sources (low-Q, flat regions); confirm it does NOT help (or hurts)
+relative-target scoring. Only relevant to the pixel path — PreserveJxl can't
+deblock (it never leaves the coefficient domain).
+
 ## Router (the dominant RD lever)
 
 Picking the right path per (source, target) is worth 10–30%. Decision (being
