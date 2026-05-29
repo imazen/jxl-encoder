@@ -1,0 +1,20 @@
+81k_ZeE5_mL.jpg            0.554      88.3  91:-25  88:+3  85:+13  82:+9
+81s4zYDXxpL.jpg            0.373      87.5  91:-27  88:-1  85:+8  82:+5
+81v6SeIThuL.jpg            0.901      81.0  91:-44  88:-19  85:-4  82:-4
+919POzlpOQL.jpg            0.595      89.7  91:-17  88:+21  85:+23  82:+21
+91ZKTzheJIL.jpg            0.512      87.3  91:-34  88:-4  85:+14  82:+28
+
+PRIMARY signal — PJ-win rate by target quality (the crossover band):
+  t=91.0: Coarsen(PJ) wins 10/11 (91%)
+  t=88.0: Coarsen(PJ) wins 7/12 (58%)
+  t=85.0: Coarsen(PJ) wins 4/12 (33%)
+  t=82.0: Coarsen(PJ) wins 4/12 (33%)
+  => crossover ≈ the target where the win-rate passes 50%. Target quality
+     (gentleness) is the dominant predictor; use Coarsen above it, Reencode below.
+
+SECONDARY — bpp refinement: crossover ≈ 85.0 + (3.43)·bpp (Pearson r=+0.34, n=12) [WEAK — not a reliable standalone predictor]
+  A single content feature (bpp) does NOT cleanly predict the crossover.
+  A tighter predictive router needs a multi-feature trained model
+  (zenanalyze feature vector), per CLAUDE.md ML/sweep discipline — not a
+  single-scalar fit. The ORACLE (encode both, keep smaller) is the robust
+  baseline; near the crossover (~50% win-rate) it beats any hard threshold.
