@@ -144,25 +144,36 @@ oracle as the opt-in "max RD" mode (#40).
 
 ### Productization home: `zenjxl` — LANDED (2026-05-28)
 
-The closed loop lives in **`zenjxl`** (the codec wrapper that deps both
-`jxl-encoder` and `zenjxl-decoder`), where it runs the full encode→decode→score
-loop in-process. **Shipped** as the opt-in `jpeg-lossy` feature +
-`zenjxl::jpeg_lossy` module (zenjxl commit `ac6826f9`):
+The closed loop + router live in **`zenjxl`** (the codec wrapper that deps both
+`jxl-encoder` and `zenjxl-decoder`), running the full encode→decode→score loop
+in-process. **Shipped** as the opt-in `jpeg-lossy` feature + `zenjxl::jpeg_lossy`
+module (zenjxl `ac6826f9` → `0b2de9e4` → `c2f9198f`):
 
-- `recompress_jpeg_lossy_relative(jpeg, target, higher_is_better, scorer, effort)`
-  — bisects the PreserveJxl coarsening scale to a perceptual target, scoring each
-  candidate via a caller-supplied **scorer callback** over decoded RGB8
-  (metric-agnostic: zensim-A / cvvdp / butteraugli), lossless-floor fallback.
-- `recompress_jpeg_coarsen(jpeg, scale, effort)` — explicit-scale path.
-- Tests 3/3 (`zenjxl/tests/jpeg_lossy.rs`).
+- **Paths + router** via `JpegRecompressMethod {Coarsen, Reencode, Auto}` —
+  `recompress_jpeg_lossy(jpeg, method, target, higher_is_better, scorer, effort)`:
+  `Coarsen` = PreserveJxl coeff-domain (gentle), `Reencode` = VarDCT pixel
+  re-encode reusing the lossless-transcode pixels as input (medium/aggressive),
+  `Auto` = run both to the target, keep the smaller (the dominant RD lever).
+- **Relative + inferred targets** via `QualityTarget {Relative, Inferred}` +
+  `recompress_jpeg_lossy_target`. `Inferred` applies the **achievability clamp**
+  (absolute target better than the source floor → ship lossless). Preliminary
+  helpers `predict_inferred_floor` (`zenjpeg::detect` IJG quality → N=5 floor
+  table per `InferredMetric`) + `QualityTarget::inferred_preliminary`
+  (detect → floor → additive relative_target), clearly marked NOT
+  production-calibrated.
+- Metric-agnostic via a **scorer callback** over decoded RGB8 (zensim-A / cvvdp /
+  butteraugli). Convenience: `recompress_jpeg_lossy_relative`,
+  `recompress_jpeg_coarsen`. Tests 8/8 (`zenjxl/tests/jpeg_lossy.rs`).
 
 `jxl-encoder` stays a lean building block (PreserveJxl + `--jpeg-coarsen` +
-`coarsen_policy`); no decoder/metric dep. zenjxl currently path-patches
-`jxl-encoder 0.3.2` + `zenjpeg 0.8.7` (unpublished) — dev-coupled to the sibling
-checkouts; see `docs/zenjxl_jpeg_lossy/README.md` for the publish-migration
-checklist. The richer public types (`JpegRecompressMethod {Coarsen, Reencode,
-Auto}`, `QualityTarget {Relative, Inferred}`, reusing `PerceptualMetric`) +
-the Auto router land on top of this loop next.
+`coarsen_policy`); no decoder/metric dep. zenjxl path-patches `jxl-encoder 0.3.2`
++ `zenjpeg 0.8.7` (unpublished) — dev-coupled to the sibling checkouts; see
+`docs/zenjxl_jpeg_lossy/README.md` for the publish-migration checklist.
+
+**Remaining (calibration, not code):** the `predict_inferred_floor` table (N=5
+→ proper size×quality×content sweep) and the abs↔relative additive map are
+preliminary; and the Auto router is the 2× oracle (a predictive single-encode
+router needs the multi-feature model, target-quality being the main signal).
 
 ## Finding 2 — cjxl (libjxl) only offers the pixel path, and it is not even
 ## monotone vs lossless at gentle quality

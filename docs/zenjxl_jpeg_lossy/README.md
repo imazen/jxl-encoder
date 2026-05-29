@@ -7,16 +7,20 @@ publish-migration checklist.
 
 ## What landed in zenjxl
 
-- `jpeg-lossy` feature = `["encode", "decode", "jxl-encoder/jpeg-reencoding"]`.
-- `zenjxl::jpeg_lossy::recompress_jpeg_lossy_relative(jpeg, target,
-  higher_is_better, scorer, effort)` — bisects the PreserveJxl coarsening scale
-  to a perceptual target, scoring each candidate in-process (encode → decode →
-  score) via a caller-supplied scorer over decoded RGB8 (metric-agnostic:
-  zensim-A / cvvdp / butteraugli). Falls back to the lossless floor when the
-  target is unreachable.
-- `zenjxl::jpeg_lossy::recompress_jpeg_coarsen(jpeg, scale, effort)` —
-  explicit-scale path.
-- `tests/jpeg_lossy.rs` (3/3) + `tests/fixtures/tiny.jpg`.
+- `jpeg-lossy` feature =
+  `["encode", "decode", "jxl-encoder/jpeg-reencoding", "dep:zenjpeg"]`.
+- Paths + router: `JpegRecompressMethod {Coarsen, Reencode, Auto}` +
+  `recompress_jpeg_lossy(jpeg, method, target, higher_is_better, scorer, effort)`.
+  Coarsen = PreserveJxl coeff-domain; Reencode = VarDCT pixel re-encode (reuses
+  the lossless-transcode pixels as input); Auto = run both, keep the smaller.
+- Relative + inferred targets: `QualityTarget {Relative, Inferred}` +
+  `recompress_jpeg_lossy_target`. Inferred = achievability clamp (unreachable
+  absolute target → lossless floor). Preliminary `predict_inferred_floor`
+  (`zenjpeg::detect` → N=5 floor table per `InferredMetric`) +
+  `QualityTarget::inferred_preliminary`.
+- Convenience: `recompress_jpeg_lossy_relative`, `recompress_jpeg_coarsen`.
+  Metric-agnostic scorer callback over decoded RGB8.
+- `tests/jpeg_lossy.rs` (8/8) + `tests/fixtures/tiny.jpg`.
 
 ## Dev-coupling (current state)
 
