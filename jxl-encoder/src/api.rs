@@ -371,7 +371,14 @@ impl EncodeStats {
     }
 }
 
-/// Encoding mode.
+/// The **compression kind**: lossy (VarDCT) vs lossless (modular).
+///
+/// This is the *what-format* axis. Do **not** confuse it with
+/// [`EncoderMode`] (`Reference` / `Experimental`), which is a different,
+/// orthogonal axis — *how libjxl-faithful* the encoder's algorithm choices
+/// are. The two names differ by one letter but mean unrelated things:
+/// `EncodeMode` = lossy/lossless; `EncoderMode` = reference/experimental
+/// (itself largely subsumed by [`EncoderStrategy`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EncodeMode {
     /// Lossy (VarDCT) encoding.
@@ -3311,12 +3318,20 @@ impl LosslessConfig {
 
 // ── EncoderMode ──────────────────────────────────────────────────────────────
 
-/// Controls whether the encoder matches libjxl's algorithm choices or uses
-/// its own improvements.
+/// The **divergence-policy** axis: whether the encoder matches libjxl's
+/// algorithm choices (`Reference`) or uses its own improvements
+/// (`Experimental`).
 ///
 /// Both modes produce valid JPEG XL bitstreams decodable by any conformant
 /// decoder. The difference is in *encoder-side* decisions: strategy selection
 /// heuristics, cost models, entropy coding parameters, tree learning, etc.
+///
+/// Do **not** confuse with [`EncodeMode`] (`Lossy` / `Lossless`) — that is the
+/// orthogonal *compression-kind* axis (the one-letter-apart names are an
+/// unfortunate historical clash). This coarse two-way policy is also largely
+/// subsumed by the finer [`EncoderStrategy`] bundle (`Reference` ≈
+/// [`EncoderStrategy::Libjxl`], `Experimental` ≈ [`EncoderStrategy::Zenjxl`]);
+/// prefer `EncoderStrategy` for new code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum EncoderMode {
     /// Match libjxl's algorithm choices at the configured effort level.

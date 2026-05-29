@@ -217,6 +217,30 @@ The relative-target loop is shipped and measured; the inferred path is this
 floor calibration plus the `zenjpeg::detect` source-quality estimate. Productizing
 the Q→floor predictor (with a content feature) is the remaining follow-on (#41).
 
+## Planned public API (naming decision, 2026-05-28)
+
+When the router + target modes are productized (follow-ons #40/#41), the public
+types are (decided — self-describing names; "PreserveJxl"/"TunedJxl" stay as
+doc nicknames only, never as identifiers):
+
+```rust
+pub enum JpegRecompressMethod {
+    Coarsen,   // coefficient-domain (doc nickname: PreserveJxl)
+    Reencode,  // pixel VarDCT re-encode (doc nickname: TunedJxl)
+    Auto,      // the router picks per (source, target)
+}
+
+pub enum QualityTarget {
+    Relative { metric: PerceptualMetric, level: f32 }, // distortion vs source
+    Inferred { metric: PerceptualMetric, level: f32 }, // quality vs unknown original
+}
+```
+
+`PerceptualMetric` (`Butteraugli` / `Cvvdp` / `Zensim`) is reused for the metric
+axis. These are NOT introduced yet — adding them before the router/target loop
+can consume them would be dead public API; the names are fixed here so the
+productization lands them directly.
+
 ## Router (the dominant RD lever)
 
 Picking the right path per (source, target) is worth 10–30%. Decision (being
