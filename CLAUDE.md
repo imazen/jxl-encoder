@@ -730,7 +730,15 @@ source, not vs unknown original.
 2. **Oracle router** (min of both at matched quality) beats BOTH single-path
    strategies on EVERY target metric: zensim-A oracle vs pixel-only −11.0%
    (vs coeff-only −5.7%); cvvdp −14.7% / −19.9%; butteraugli −6.2% / −14.4%.
-   Path selection is the dominant RD lever.
+   Path selection is the dominant RD lever. **Predictive-router calibration
+   (N=12, `benchmarks/jpeg_lossy_router_calib_zensim_2026-05-28.*`)**: TARGET
+   QUALITY (gentleness) is the dominant crossover predictor — Coarsen(PJ)-win
+   rate 91%/58%/33%/33% at zensim t=91/88/85/82 → crossover ≈ zensim 88 for
+   photographic JPEGs; a quality-threshold router (Coarsen when target ≳ 89)
+   captures most of the win. The N=3 "lossless-bpp predicts the crossover"
+   hypothesis is **REFUTED at N=12** (Pearson r=+0.34, sign messy) — DO NOT
+   ship a single-feature bpp router; a tighter one needs a multi-feature
+   trained model. Oracle stays the robust ceiling (−12% vs px over 47 cells).
 3. **cjxl offers only the pixel path** and it is *larger than lossless* at
    gentle quality (389KB src: cjxl -d0 333.7KB, cjxl -d1 --lossless_jpeg=0
    405.3KB). PreserveJxl fills that gap; our PJ+TunedJxl+router strictly
@@ -763,10 +771,18 @@ the pixel path widely (VarDCT cost model is butteraugli-derived).
   dominated on every metric.
 - DO NOT use a fixed scale to hit a quality target — it does not map.
 
-**Follow-ons** (tasks #40, #41): predictive router (lossless-bpp content
-feature → path, single encode; needs a 4-dim calibration sweep); inferred
-targets (zenjpeg::detect source quality → absolute-quality mapping +
-source-aware floor).
+**Follow-ons**: predictive router rule SETTLED (quality threshold; bpp refuted
+— see Finding 2). The remaining productization for ALL of this (relative +
+inferred target-quality control) shares ONE blocker: the in-encoder closed loop
+needs a perceptual metric AND a JXL decoder in-process to bisect to a target.
+jxl-encoder has neither (the VarDCT buttloop backends score XYB planes during
+encode, not decoded output; there is no decoder dep). Options: (a) optional
+`jpeg-lossy-target` feature pulling zenjxl-decoder + metric crates (heavy deps
+in a published crate); (b) a separate tool / the app layer (imageflow/zenpipe)
+that already has a decoder + metrics — this is where the closed-loop harness
+already lives. Architecture/dependency decision pending. The encoder ships the
+building blocks (PreserveJxl coeff path + `--jpeg-coarsen` + `coarsen_policy`);
+the harness proves the full loop + numbers.
 
 ### EX-J31 BREAKTHROUGH: Weighted Predictor for JPEG-transcode DC (2026-05-28)
 
