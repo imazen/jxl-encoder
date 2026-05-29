@@ -44,12 +44,13 @@ for i,src in enumerate(srcs):
     ref=f"{w}/ref.png"
     # PreserveJxl sweep
     pj=[]
-    for s in [1.1,1.25,1.4,1.6,1.8,2.0,2.25,2.5,3.0,4.0]:
-        o=f"{w}/pj_{s}.jxl"
-        subprocess.run([REC,src,str(s),o],capture_output=True,timeout=120)
+    grid=[(1.25,0.0),(1.5,0.0),(2.0,0.0),(1.25,0.3),(1.5,0.2),(1.5,0.35),(2.0,0.2),(2.0,0.4),(2.5,0.3),(3.0,0.3),(3.0,0.5),(4.0,0.5)]
+    for (s,dz) in grid:
+        o=f"{w}/pj_{s}_{dz}.jxl"
+        subprocess.run([REC,src,str(s),o,str(dz)],capture_output=True,timeout=120)
         if not os.path.exists(o): continue
-        if not decode_png(o,f"{w}/pj_{s}.png"): continue
-        q=ssim2(ref,f"{w}/pj_{s}.png")
+        if not decode_png(o,f"{w}/pj_{s}_{dz}.png"): continue
+        q=ssim2(ref,f"{w}/pj_{s}_{dz}.png")
         if q is not None: pj.append((q,os.path.getsize(o)))
     allpts['PreserveJxl'].append((src,pj))
     # zenjpeg targets

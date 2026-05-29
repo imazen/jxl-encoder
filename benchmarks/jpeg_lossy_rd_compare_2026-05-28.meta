@@ -36,3 +36,21 @@ Caveats / next:
   controllability).
 
 Repro: benchmarks/jpeg_lossy_rd_compare_2026-05-28.py
+
+--- Deadzone update (2026-05-28) ---
+Added AC deadzone widening (coarsen_coefficients_dz) + no-size-regression
+guard. The deadzone drops the perceptually-cheap ±1-AC residue (the JPEG's
+own quantization noise) gradually instead of all-at-once, fixing the
+uniform-scale cliff. On anton, scale 1.5 + dz 0.2 = 51,018 B at ssim2 83
+vs 105,634 B (no dz) at the same ssim2 — HALF the size.
+
+Re-run of the matched-quality RD comparison with a (scale × dz) grid
+(benchmarks/jpeg_lossy_rd_compare_dz_*.tsv): PreserveJxl now 67-80% of
+zenjpeg-recompress JPEG, biggest gains mid-range (ssim2 79: 76.1% -> 71.6%):
+  ssim2 88: 79.0%   ssim2 85: 77.2%   ssim2 82: 80.0%
+  ssim2 79: 71.6%   ssim2 76: 70.1%   ssim2 73: 67.4%   ssim2 70: 69.9%
+No-size-regression guard: encode_jpeg_recompress_codestream returns the
+lossless transcode whenever coarsening doesn't shrink it (never a larger,
+degraded file). 4 unit tests lock: scale<=1 no-op, dequant-value preserved,
+deadzone zeros small AC but never DC, shared chroma table scaled once
+(share-scale bug guard).
