@@ -1,0 +1,38 @@
+PreserveJxl vs zenjpeg-recompress JPEG — RD at matched quality (2026-05-28)
+==========================================================================
+
+12 real source JPEGs (seed 11, product-images + codec-corpus). Three methods
+swept and compared at matched SSIMULACRA2 (all decoded via jxl-oxide against
+a per-file consistent lossless reference = our lossless transcode decoded by
+jxl-oxide — eliminates cross-decoder bias):
+  - zenjpeg_JPEG:  zenjpeg-recompress recompress() output JPEG (the baseline).
+  - pipeline_JXL:  zenjpeg JPEG transcoded losslessly to JXL (same coeffs).
+  - PreserveJxl:   jxl-encoder coefficient-domain coarsen -> YCbCr JXL.
+
+Per-file Pareto lower-envelope interpolation to common ssim2 targets, summed
+over files reachable by ALL methods (n_common).
+
+Result — PreserveJxl is the smallest at EVERY quality level:
+  ssim2 88: 79.0% of zenjpeg-JPEG  (-21%)
+  ssim2 85: 78.5%                  (-21.5%)
+  ssim2 82: 79.3%                  (-20.7%)
+  ssim2 79: 76.1%                  (-23.9%)
+  ssim2 76: 73.1%                  (-26.9%)
+  ssim2 73: 69.9%                  (-30.1%)
+PreserveJxl also beats the zenjpeg->transcode pipeline by 2-5pp (coarsening
+directly to JXL skips the JPEG-Huffman re-quant intermediate).
+
+Conclusion: lossy JPEG->JXL recompression (PreserveJxl) is ~21-30% smaller
+than the best JPEG->JPEG recompressor at identical perceptual quality. This
+is the core "better than zenjpeg" result. Self-contained in jxl-encoder.
+
+Caveats / next:
+- Metric is ssim2; the compendium recommends calibrating final knobs on cvvdp
+  (closer to JOD). The relative win holds (both measured on the same metric).
+- n=12 real-world sources; win is large + monotone across all levels.
+- The uniform-scale knob is RD-lumpy (round-to-zero cliff at the +/-1-AC
+  scale); a deadzone / target-quality-calibrated knob is the next refinement
+  for smooth quality targeting (won't change the Pareto front, improves
+  controllability).
+
+Repro: benchmarks/jpeg_lossy_rd_compare_2026-05-28.py
