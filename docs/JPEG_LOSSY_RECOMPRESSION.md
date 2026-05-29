@@ -49,9 +49,38 @@ At matched perceptual quality (all three metrics agree on the *direction*):
   (same file, zensim-A target 85): PJ 45.4 KB vs pixel re-encode 36.9 KB
   (PJ +23%).
 
-The crossover sits in the high-quality regime. (Per-metric crossover table:
-filled from `benchmarks/jpeg_lossy_closed_loop_2026-05-28.tsv` when the dense
-sweep completes.)
+**The crossover is content-dependent.** Detailed / textured / high-frequency
+images favor PreserveJxl over a *wider* quality range, because TunedJxl can
+improve little on already-hard-to-compress content while still paying the
+re-encode overhead. Compressible images cross over at higher quality.
+zensim-A crossover (`benchmarks/jpeg_lossy_crossover_zensim_2026-05-28.tsv`,
+PJ-vs-pixel %, negative = PJ smaller at matched quality):
+
+| file (content)            | t=90 | t=85 | t=80 | t=75 | t=70 | crossover |
+|---------------------------|------|------|------|------|------|-----------|
+| 51BRTMdAYeL (compressible)| −13% | +23% | −0%  | +16% | +5%  | ~88       |
+| 81sZBZigphS (high-detail) | −33% | −3%  | +9%  | +23% | +25% | ~84       |
+| 81lKDgge (detailed)       | −25% | −1%  | −2%  |  —   |  —   | <80       |
+
+### Router value (zensim-A, 13 cells)
+
+Picking the right path per (image, target) — the **oracle router** = encode
+both, keep the smaller:
+
+| strategy                              | total bytes | vs oracle |
+|---------------------------------------|-------------|-----------|
+| always pixel re-encode (cjxl default) | 3,156,929   | +12.4%    |
+| always PreserveJxl                    | 2,977,386   | +6.0%     |
+| **oracle router (min of both)**       | **2,808,537** | —       |
+
+- **oracle vs naive pixel-only: −11.0%** (up to −32.5% at gentle targets).
+  This is the win over cjxl's only lossy-JPEG option.
+- **oracle vs coeff-only: −5.7%** (up to −19.7% at aggressive targets).
+
+Path selection is the dominant RD lever. The oracle (2× encode) is the robust
+baseline; a predictive router (content feature + target → path, single encode)
+is the optimization target. (cvvdp / butteraugli crossovers: lean run in
+flight; expected same direction, possibly different crossover points.)
 
 ## Finding 2 — cjxl (libjxl) only offers the pixel path, and it is not even
 ## monotone vs lossless at gentle quality
