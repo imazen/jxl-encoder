@@ -2926,3 +2926,7 @@ required-features = [
 [[example]]
 name = "dump_cjxl_jbrd_reset_points"
 path = "examples/dump_cjxl_jbrd_reset_points.rs"
+
+[[example]]
+name = "jpeg_recompress"
+required-features = ["jpeg-reencoding"]
