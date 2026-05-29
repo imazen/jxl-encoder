@@ -140,9 +140,11 @@ def bisect(metric, target, ref_png, w, kind, lo, hi, src_or_png, steps=8):
     if not meets(metric, a_sc, target):
         return (None, None, None, probes[0])  # even lightest can't reach target
     best = (lo, a_sz, a_sc)
-    # ensure hi actually fails; extend if it still meets (range too narrow)
+    # ensure hi actually fails; extend if it still meets (range too narrow).
+    # 6 extensions × 1.8 from hi=4 reaches ~120 — enough for cvvdp's saturated
+    # JOD scale where the pixel path needs large distances to drop below ~9.7.
     b = hi
-    for _ in range(3):
+    for _ in range(6):
         b_sz, b_sc = eval_knob(b)
         if not meets(metric, b_sc, target):
             break

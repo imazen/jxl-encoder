@@ -77,10 +77,53 @@ both, keep the smaller:
   This is the win over cjxl's only lossy-JPEG option.
 - **oracle vs coeff-only: −5.7%** (up to −19.7% at aggressive targets).
 
-Path selection is the dominant RD lever. The oracle (2× encode) is the robust
-baseline; a predictive router (content feature + target → path, single encode)
-is the optimization target. (cvvdp / butteraugli crossovers: lean run in
-flight; expected same direction, possibly different crossover points.)
+### Router value across all three target metrics
+
+The oracle router (min of both paths at matched quality) beats *both*
+single-path strategies on **every** target metric
+(`benchmarks/jpeg_lossy_crossover_{zensim,cvvdp,butter}_2026-05-28.tsv`):
+
+| metric       | cells | oracle vs pixel-only | oracle vs coeff-only |
+|--------------|-------|----------------------|----------------------|
+| zensim-A     | 13    | **−11.0%**           | −5.7%                |
+| cvvdp (JOD)  | 7¹    | **−14.7%**           | −19.9%               |
+| butteraugli  | 12    | **−6.2%**            | −14.4%               |
+
+¹ cvvdp valid cells only (see caveat). Path selection is the dominant RD lever
+on every metric. The oracle (2× encode) is the robust baseline; a predictive
+router (content feature + target → path, single encode) is the optimization
+target.
+
+### Per-metric nuances (honest caveats)
+
+- **Direction is consistent across all three metrics** (PJ wins gentle, pixel
+  re-encode wins as the target deepens), but the crossover's *location in each
+  metric's units differs*. zensim-90 is gentle (PJ territory); butteraugli
+  pnorm3 = 1.0 is already past the crossover (a real reduction, PJ scale ~1.3+,
+  pixel territory); to see PJ win on butteraugli the target must be more gentle
+  (~0.5). The metrics agree on the RD *structure*, not on where a given numeric
+  level sits relative to the crossover.
+- **cvvdp saturates.** On the JOD 0–10 scale, the pixel path bottoms out around
+  9.67–9.85 even at large distances on detailed images — it cannot reach
+  aggressive cvvdp targets within a practical distance range. PreserveJxl
+  coarsens without bound (scale → ∞), so for deep cvvdp targets **PJ is the only
+  path that reaches them at all**. The cvvdp aggressive cells where the pixel
+  path is "range-capped" (`px_valid=CAPPED` in the TSV) are excluded from the
+  oracle table above; they are PJ-only-reachable, not a fair PJ "win".
+- **butteraugli favors the pixel path widely** — unsurprising, since the VarDCT
+  encoder's cost model is butteraugli-derived. PJ wins on butteraugli only in
+  the near-lossless band.
+
+### Predictive router signal (hypothesis, weak support — N=3)
+
+The content-dependent crossover correlates with the source's **lossless-transcode
+bpp** (= PJ floor bytes / pixels, computed for free). Nominal source quality
+does *not* discriminate (3 product-image JPEGs all estimated IJG q≈81 yet
+crossed over at zensim 78–88); the low-bpp/compressible source crossed highest
+(PJ rarely wins), high-bpp/detailed sources crossed lower (PJ wins wider). A
+calibrated predictive router needs a proper 4-dim sweep (size × quality × mode ×
+content, per CLAUDE.md sweep discipline) to fit the boundary — documented
+follow-on, not fit from 3 points.
 
 ## Finding 2 — cjxl (libjxl) only offers the pixel path, and it is not even
 ## monotone vs lossless at gentle quality
