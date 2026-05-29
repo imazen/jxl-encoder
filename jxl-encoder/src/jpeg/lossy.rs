@@ -63,26 +63,76 @@ pub fn coarsen_coefficients(jpeg: &mut JpegData, scale: f32) {
 /// scaled) — zeroing DC causes blocking. Matches the mozjpeg/jpegli
 /// deadzone-widening idea, applied in the transcode domain.
 pub fn coarsen_coefficients_dz(jpeg: &mut JpegData, scale: f32, dz: f32) {
-    if !(scale > 1.0) || jpeg.quant.is_empty() {
+    coarsen_coefficients_planar(jpeg, scale, dz, scale, dz);
+}
+
+/// Coarsen with **separate luma and chroma** scale + deadzone.
+///
+/// Human vision is far less sensitive to chroma detail than luma, so chroma
+/// can be coarsened harder (larger `chroma_scale` / `chroma_dz`) for nearly
+/// free perceptual cost — a classic, large RD win. Each quant *table* is
+/// classified luma vs chroma by the components that use it (YCbCr: component 0
+/// is luma, the rest chroma; grayscale/RGB are all treated as luma), so the
+/// share-scale-safe per-table scaling naturally applies the right class. Both
+/// classes follow the same per-coefficient rule as [`coarsen_coefficients_dz`]
+/// (dequant-value-preserving requant + DC-protected AC deadzone).
+pub fn coarsen_coefficients_planar(
+    jpeg: &mut JpegData,
+    luma_scale: f32,
+    luma_dz: f32,
+    chroma_scale: f32,
+    chroma_dz: f32,
+) {
+    let any = luma_scale > 1.0 || chroma_scale > 1.0;
+    if !any || jpeg.quant.is_empty() {
         return;
     }
-    let dz = dz.clamp(0.0, 0.5);
-    let keep_threshold = 0.5 + dz;
+    let luma_dz = luma_dz.clamp(0.0, 0.5);
+    let chroma_dz = chroma_dz.clamp(0.0, 0.5);
 
-    // 1. Snapshot ORIGINAL weights per unique table, and compute the coarsened
-    //    target weights once each (share-scale-safe: one entry per table).
+    // Classify each quant table: chroma iff EVERY component using it is chroma
+    // (luma wins on a shared table — never over-coarsen luma). For YCbCr the
+    // first component is luma; grayscale/RGB/Custom have no chroma plane.
+    let is_ycbcr = matches!(jpeg.component_type, super::data::JpegComponentType::YCbCr)
+        && jpeg.components.len() >= 3;
+    let ntables = jpeg.quant.len();
+    let mut tbl_used_by_luma = vec![false; ntables];
+    let mut tbl_used_by_chroma = vec![false; ntables];
+    for (ci, comp) in jpeg.components.iter().enumerate() {
+        let qi = comp.quant_idx as usize;
+        if qi >= ntables {
+            continue;
+        }
+        let is_chroma = is_ycbcr && ci >= 1;
+        if is_chroma {
+            tbl_used_by_chroma[qi] = true;
+        } else {
+            tbl_used_by_luma[qi] = true;
+        }
+    }
+    let tbl_is_chroma: Vec<bool> = (0..ntables)
+        .map(|t| tbl_used_by_chroma[t] && !tbl_used_by_luma[t])
+        .collect();
+
+    // 1. Snapshot ORIGINAL weights; compute coarsened TARGET weights once per
+    //    table using that table's class scale (share-scale-safe).
     let orig: Vec<[i32; 64]> = jpeg.quant.iter().map(|t| t.values).collect();
     let mut target: Vec<[i32; 64]> = orig.clone();
-    for tbl in target.iter_mut() {
+    for (t, tbl) in target.iter_mut().enumerate() {
+        let s = if tbl_is_chroma[t] {
+            chroma_scale
+        } else {
+            luma_scale
+        };
+        if !(s > 1.0) {
+            continue;
+        }
         for v in tbl.iter_mut() {
-            let scaled = ((*v as f32) * scale).round() as i32;
-            *v = scaled.clamp(1, 65535);
+            *v = (((*v as f32) * s).round() as i32).clamp(1, 65535);
         }
     }
 
-    // 2. Re-quantize each component's coefficients using its table's ORIGINAL
-    //    and TARGET weights. coeffs are 64-per-block, natural (row-major)
-    //    order — same order as the quant tables.
+    // 2. Re-quantize each component's coefficients using its table's class.
     for comp in jpeg.components.iter_mut() {
         let qi = comp.quant_idx as usize;
         if qi >= orig.len() {
@@ -90,6 +140,12 @@ pub fn coarsen_coefficients_dz(jpeg: &mut JpegData, scale: f32, dz: f32) {
         }
         let qs = &orig[qi];
         let qt = &target[qi];
+        let class_dz = if tbl_is_chroma[qi] {
+            chroma_dz
+        } else {
+            luma_dz
+        };
+        let keep_threshold = 0.5 + class_dz as f64;
         for block in comp.coeffs.chunks_mut(64) {
             for (k, level) in block.iter_mut().enumerate() {
                 if *level == 0 {
@@ -97,27 +153,21 @@ pub fn coarsen_coefficients_dz(jpeg: &mut JpegData, scale: f32, dz: f32) {
                 }
                 let qsk = qs[k];
                 let qtk = qt[k];
-                // dequantized value preserved: new_level · qt ≈ level · qs.
                 let dequant = *level as f64 * qsk as f64;
                 let q = dequant / qtk as f64;
-                // AC deadzone: drop perceptually-cheap small-magnitude AC.
-                // DC (k==0) is only scaled, never deadzoned (avoids blocking).
-                if k > 0 && q.abs() < keep_threshold as f64 {
+                if k > 0 && q.abs() < keep_threshold {
                     *level = 0;
                     continue;
                 }
                 if qsk == qtk {
                     continue;
                 }
-                let new_level = q.round();
-                *level = new_level.clamp(i16::MIN as f64, i16::MAX as f64) as i16;
+                *level = q.round().clamp(i16::MIN as f64, i16::MAX as f64) as i16;
             }
         }
     }
 
-    // 3. Commit the coarsened tables. Bump precision to 16-bit where any
-    //    weight now exceeds the 8-bit ladder (the JXL RAW matrix stores i32,
-    //    so this is just metadata consistency).
+    // 3. Commit the coarsened tables.
     for (i, tbl) in jpeg.quant.iter_mut().enumerate() {
         tbl.values = target[i];
         if target[i].iter().any(|&v| v > 255) {
