@@ -4,6 +4,25 @@
 
 ### Performance
 
+- **FMA-ize the forward DCT-32 / DCT-64 B-transform butterflies
+  (newer-intrinsic survey #1, 2026-06-01)**: the
+  `s[0] = sqrt2 * s[0] + s[1]` B-transform step in `dct1d_32_batch`
+  and `dct1d_64_batch` (AVX2 + NEON + WASM128 variants in
+  `jxl-encoder-simd/dct32.rs` + `dct64.rs`) now uses
+  `sqrt2.mul_add(s[0], s[1])`, matching the established `dct8`/`dct16`
+  idiom. Each butterfly emits one fused `vfmaddps` (x86) / `vfmaq_f32`
+  (NEON) instead of a separate multiply+add — one fewer instruction
+  and one fewer rounding on the dependency chain (asm-confirmed: +1
+  vfmadd in each of the two AVX2 batch symbols). The forward DCT is
+  encoder-internal, so this has zero decoder-conformance / libjxl-
+  interop risk. Output is byte-identical to the prior build on all 12
+  zenjxl regression-gate cells (the ≤1 ULP nudge did not cross a
+  quantization boundary). The IDCT kernels (`idct16/32/64`) have no
+  `a*x+y` MAC patterns to fuse (pure add/sub + scale butterflies),
+  so they were intentionally left unchanged. Full suite green
+  (1876 passed). Bench + asm verification:
+  `jxl-encoder-simd/benchmarks/dct_fma_2026-06-01.md`.
+
 - **JPEG-in-JXL recompression: port libjxl 3-way context-map cost
   comparison (Lever #1 / MTF, 2026-05-28)**: extends the libjxl
   `enc_context_map.cc::EncodeContextMap` 3-way comparison (simple /
