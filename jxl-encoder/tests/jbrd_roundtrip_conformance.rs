@@ -12,11 +12,12 @@
 // derive the feature set and the expected outcome, so it works on any corpus.
 // Committed fixtures under tests/fixtures/jbrd/ always run; point
 // JBRD_CONFORMANCE_CORPUS at a directory to additionally sweep a larger set
-// (e.g. the /mnt/v conformance corpus). The committed set keeps every fixture
-// under 30 KB; the larger chunked-ICC (>64 KB profile, multi-marker) repro
-// lives at /mnt/v/output/jbrd-conformance/ and is reproducible via
-// zenjpeg/scripts/gen_jbrd_fixtures.sh. Single-marker extracted ICC is covered
-// hermetically by meta_a_all.jpg.
+// (e.g. the /mnt/v conformance corpus). Multi-marker (chunked) ICC is covered
+// hermetically by meta_a_iccsynth.jpg — a synthetic >64 KB ICC that is
+// mostly-zero, so it's 70 KB on disk but a ~0.8 KB git object (the only
+// committed fixture over 30 KB on disk; tiny in the repo). A realistic
+// LUT-based chunked-ICC repro (incompressible) lives at
+// /mnt/v/output/jbrd-conformance/. Single-marker ICC is covered by meta_a_all.
 //
 // Encode: jxl-encoder LosslessConfig::encode_jpeg_transcode (feature
 // `jpeg-reencoding`). Reconstruct: zenjxl-decoder reconstruct_jpeg (pure Rust),
