@@ -2934,3 +2934,9 @@ path = "examples/dump_cjxl_jbrd_reset_points.rs"
 [[example]]
 name = "jpeg_recompress"
 required-features = ["jpeg-reencoding"]
+
+# Debug helper for the JBRD round-trip gate: transcode + reconstruct (via
+# zenjxl-decoder dev-dep) and print the first diverging byte.
+[[example]]
+name = "jbrd_diff"
+required-features = ["jpeg-reencoding"]

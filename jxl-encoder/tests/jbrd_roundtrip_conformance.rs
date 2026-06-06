@@ -110,16 +110,11 @@ fn parse_jpeg(bytes: &[u8]) -> Option<JpegFeatures> {
 /// starts passing, the gate fails (XPASS) so the entry gets removed. This is
 /// xfail discipline, not relaxation: every entry is an open, issue-tracked bug.
 ///
-///  - Progressive (SOF2): zenjxl-decoder's JPEG writer does not yet emit
-///    progressive (spectral-selection + successive-approximation) scans —
-///    imazen/zenjxl-decoder#<prog>.
-///  - EXIF/ICC/XMP box re-stitching: app-marker placeholders are not filled
-///    from JXL container boxes during reconstruction —
+///  - EXIF/ICC/XMP box re-stitching: when the encoder extracts an APPn marker
+///    (EXIF) into a JXL container box, reconstruction leaves the APPn payload
+///    empty instead of stitching the box content back in —
 ///    imazen/zenjxl-decoder#<boxstitch>.
-fn known_failure(name: &str, f: &JpegFeatures) -> Option<&'static str> {
-    if f.sof_marker == 0xC2 {
-        return Some("progressive-reconstruction");
-    }
+fn known_failure(name: &str, _f: &JpegFeatures) -> Option<&'static str> {
     if name == "meta_a_exif.jpg" {
         return Some("exif-box-restitch");
     }
