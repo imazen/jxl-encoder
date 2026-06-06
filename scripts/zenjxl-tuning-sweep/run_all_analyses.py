@@ -679,7 +679,14 @@ def stage_stratum_pdps(df, out_dir: Path) -> dict[str, Any]:
         ax.legend(loc="upper right", fontsize=8)
         fig.colorbar(cf, ax=ax, label=outcome)
         plt.tight_layout()
-        safe_label = label.replace("/", "_").replace("=", "")
+        # Sanitize for cross-platform filenames: Windows forbids <>:"/\|?* in
+        # paths, so the d>=N band labels (e.g. "class=photo/d>=3") must not leak
+        # a '>' into the .png name — a committed plot with '>' breaks `git
+        # checkout` on Windows runners (exit 128, the whole job dies).
+        safe_label = label
+        for _ch in '<>:"/\\|?*':
+            safe_label = safe_label.replace(_ch, "_")
+        safe_label = safe_label.replace("=", "")
         outpng = out_dir / f"pdp_{PARAMS_SHORT[i]}_x_{PARAMS_SHORT[j]}_{safe_label}_{outcome}.png"
         plt.savefig(outpng, dpi=80)
         plt.close(fig)
