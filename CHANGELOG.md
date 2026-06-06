@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Fixed
+- **JPEG transcode: reject chroma sampling factors > 2 instead of panicking.**
+  A JPEG with H/V sampling > 2 (4:1:1, the odd 3×N, …) can't be represented in
+  the JXL `YCbCrChromaSubsampling` wire format (factors {1,2} only); cjxl
+  refuses these too. The transcode path silently mis-mapped them and then
+  panicked (OOB) in the coefficient/CfL path — now a clean `Unsupported` error
+  (874142dc).
+
+### Added
+- **JBRD round-trip conformance gate** (`tests/jbrd_roundtrip_conformance.rs`,
+  38 fixtures): transcode each JPEG → JXL and reconstruct it with zenjxl-decoder
+  (pure Rust, no external djxl), asserting the brunsli contract — every JPEG
+  either cleanly rejects or reconstructs byte-exact, never silent corruption.
+  Self-describing (derives the expected outcome from each header) so it runs on
+  any corpus via `JBRD_CONFORMANCE_CORPUS`. 31 round-trip + 6 clean-reject pass;
+  1 xfail (EXIF, imazen/zenjxl-decoder#19). zenjxl-decoder added as a
+  path-patched dev-dependency + clone-siblings CI entry (874142dc, d0183ed4).
+- `examples/jbrd_diff.rs`: transcode + reconstruct + first-diverging-byte
+  debug helper (d0183ed4).
+
 ### Performance
 
 - **FMA-ize the forward DCT-32 / DCT-64 B-transform butterflies
