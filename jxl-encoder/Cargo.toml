@@ -2940,3 +2940,9 @@ required-features = ["jpeg-reencoding"]
 [[example]]
 name = "jbrd_diff"
 required-features = ["jpeg-reencoding"]
+
+# Decode-only pixel parity for JPEG->JXL transcode + orientation/ICC
+# preservation (jxl-rs decode vs JPEG decode, byte-exact reconstruction check).
+[[example]]
+name = "jpeg_pixel_parity"
+required-features = ["jpeg-reencoding"]
