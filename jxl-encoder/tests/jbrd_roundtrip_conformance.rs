@@ -12,7 +12,11 @@
 // derive the feature set and the expected outcome, so it works on any corpus.
 // Committed fixtures under tests/fixtures/jbrd/ always run; point
 // JBRD_CONFORMANCE_CORPUS at a directory to additionally sweep a larger set
-// (e.g. the /mnt/v conformance corpus).
+// (e.g. the /mnt/v conformance corpus). The committed set keeps every fixture
+// under 30 KB; the larger chunked-ICC (>64 KB profile, multi-marker) repro
+// lives at /mnt/v/output/jbrd-conformance/ and is reproducible via
+// zenjpeg/scripts/gen_jbrd_fixtures.sh. Single-marker extracted ICC is covered
+// hermetically by meta_a_all.jpg.
 //
 // Encode: jxl-encoder LosslessConfig::encode_jpeg_transcode (feature
 // `jpeg-reencoding`). Reconstruct: zenjxl-decoder reconstruct_jpeg (pure Rust),
@@ -110,14 +114,9 @@ fn parse_jpeg(bytes: &[u8]) -> Option<JpegFeatures> {
 /// starts passing, the gate fails (XPASS) so the entry gets removed. This is
 /// xfail discipline, not relaxation: every entry is an open, issue-tracked bug.
 ///
-///  - EXIF/ICC/XMP box re-stitching: when the encoder extracts an APPn marker
-///    (EXIF) into a JXL container box, reconstruction leaves the APPn payload
-///    empty instead of stitching the box content back in —
-///    imazen/zenjxl-decoder#19.
-fn known_failure(name: &str, _f: &JpegFeatures) -> Option<&'static str> {
-    if name == "meta_a_exif.jpg" {
-        return Some("exif-box-restitch");
-    }
+/// (Empty — all corpus fixtures currently meet their contract. New entries go
+/// here with an issue reference if a supportable variant regresses.)
+fn known_failure(_name: &str, _f: &JpegFeatures) -> Option<&'static str> {
     None
 }
 

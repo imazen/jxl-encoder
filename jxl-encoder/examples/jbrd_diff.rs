@@ -10,6 +10,10 @@ fn main() {
     let jxl = jxl_encoder::LosslessConfig::new()
         .encode_jpeg_transcode(&orig)
         .expect("encode failed");
+    if let Ok(p) = std::env::var("JBRD_DUMP_JXL") {
+        std::fs::write(&p, &jxl).unwrap();
+        eprintln!("wrote jxl ({} bytes) to {p}", jxl.len());
+    }
     let recon = zenjxl_decoder::reconstruct_jpeg(&jxl)
         .expect("reconstruct errored")
         .expect("no JBRD in JXL");
