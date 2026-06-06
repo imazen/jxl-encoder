@@ -113,7 +113,7 @@ fn parse_jpeg(bytes: &[u8]) -> Option<JpegFeatures> {
 ///  - EXIF/ICC/XMP box re-stitching: when the encoder extracts an APPn marker
 ///    (EXIF) into a JXL container box, reconstruction leaves the APPn payload
 ///    empty instead of stitching the box content back in —
-///    imazen/zenjxl-decoder#<boxstitch>.
+///    imazen/zenjxl-decoder#19.
 fn known_failure(name: &str, _f: &JpegFeatures) -> Option<&'static str> {
     if name == "meta_a_exif.jpg" {
         return Some("exif-box-restitch");
