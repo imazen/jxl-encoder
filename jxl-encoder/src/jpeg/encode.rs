@@ -159,6 +159,34 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
         )));
     }
 
+    // The JXL `YCbCrChromaSubsampling` wire format encodes each channel's
+    // sampling as a 2-bit shift in {0, 1} — i.e. factors in {1, 2} only. A JPEG
+    // with any H or V sampling factor > 2 (4:1:1 h=4, 4:1:0, the odd 3×N, ...)
+    // cannot be represented byte-exactly; `cjxl --lossless_jpeg=1` refuses these
+    // too. Reject cleanly here: without this guard `compute_jpeg_upsampling`
+    // silently collapses factor 4 → the factor-2 mode and factor 3 (odd, so
+    // `trailing_zeros() == 0`) → the no-subsampling mode, producing mismatched
+    // plane geometry that panics (OOB) deep in the coefficient/CfL path.
+    let max_h = jpeg
+        .components
+        .iter()
+        .map(|c| c.h_samp_factor)
+        .max()
+        .unwrap_or(1);
+    let max_v = jpeg
+        .components
+        .iter()
+        .map(|c| c.v_samp_factor)
+        .max()
+        .unwrap_or(1);
+    if max_h > 2 || max_v > 2 {
+        return Err(crate::error::Error::InvalidInput(format!(
+            "JPEG reencoding does not support chroma sampling factors > 2 (got max \
+             {max_h}×{max_v}): the JXL YCbCrChromaSubsampling format only encodes \
+             factors in {{1, 2}} (cjxl refuses these too)."
+        )));
+    }
+
     // Compute per-channel upsampling modes from sampling factors
     let jpeg_upsampling = if num_components == 3 {
         compute_jpeg_upsampling(jpeg, &jpeg_c_map)

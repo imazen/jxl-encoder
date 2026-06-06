@@ -328,6 +328,10 @@ sha2 = "0.11.0"
 # (see workspace Cargo.toml line 62); use the registry coordinate here so
 # both refer to the same canonical source.
 zenjpeg = { version = "0.8.4", default-features = false, features = ["decoder", "trellis", "parallel"] }
+# zenjxl-decoder: pure-Rust JXL decoder used as the byte-exact reconstruction
+# oracle in the JBRD round-trip conformance gate. The `jpeg` feature enables
+# `take_jpeg_reconstruction()`. Path-patched via workspace `[patch.crates-io]`.
+zenjxl-decoder = { version = "0.3.8", features = ["jpeg"] }
 # Microbench harness for the chunk-1 SplitTreeSamples primitive (issue #40).
 # zenbench is the workspace-standard benchmarking tool — interleaved sampling
 # and paired statistics give cleaner signal than criterion's isolated rounds.

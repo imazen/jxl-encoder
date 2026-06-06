@@ -75,6 +75,13 @@ jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4
 # published.
 # Required for the `jpeg-reencoding` feature to build.
 zenjpeg = { path = "../zenjpeg/zenjpeg" }
+# zenjxl-decoder (our pure-Rust JXL decoder) is a DEV-dependency used only by
+# the JBRD round-trip conformance gate (`tests/jbrd_roundtrip_conformance.rs`):
+# transcode a JPEG -> JXL with jxl-encoder, reconstruct the original JPEG bytes
+# with zenjxl-decoder, and assert byte-exact. Path-patched to the local sibling
+# so the gate exercises the in-tree decoder, not a published snapshot. Not a
+# normal dependency — published jxl-encoder does not depend on it.
+zenjxl-decoder = { path = "../zenjxl-decoder/zenjxl-decoder" }
 # Use local butteraugli workspace (not crates.io 0.9.2) so the buttloop +
 # Lock-Zenjxl regression-gate consume the latest unpublished fixes. Per user
 # direction 2026-05-23: "we should be using the local butteraugli and

@@ -47,6 +47,11 @@ runs:
         }
         clone_if_missing https://github.com/imazen/zenjpeg "$parent/zenjpeg"
         clone_if_missing https://github.com/imazen/zenanalyze "$parent/zenanalyze"
+        # zenjxl-decoder is a DEV-dependency (path-patched) of the JBRD
+        # round-trip conformance gate (tests/jbrd_roundtrip_conformance.rs). It
+        # is self-contained (only its own workspace members), so cloning the
+        # repo is sufficient. Provides ../zenjxl-decoder/zenjxl-decoder.
+        clone_if_missing https://github.com/imazen/zenjxl-decoder "$parent/zenjxl-decoder"
 
     - name: Append sibling-clone pre-build hook to Cross.toml
       shell: bash
@@ -86,6 +91,7 @@ runs:
           '    "apt-get update && apt-get install -y --no-install-recommends git ca-certificates",' \
           '    "git clone --depth 1 https://github.com/imazen/zenjpeg /zenjpeg",' \
           '    "git clone --depth 1 https://github.com/imazen/zenanalyze /zenanalyze",' \
+          '    "git clone --depth 1 https://github.com/imazen/zenjxl-decoder /zenjxl-decoder",' \
           ']' \
           '# END clone-siblings pre-build hook' \
           >> "$cross_toml"
