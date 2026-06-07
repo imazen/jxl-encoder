@@ -73,3 +73,8 @@ __pycache__/
 jxl-encoder/benchmarks/*.tsv
 zenjxl-tuning-runner-bin
 zen-metrics-bin
+
+# Benchmark plot artifacts: PNGs don't compress in git and bloat history.
+# Regenerable via scripts/zenjxl-tuning-sweep/run_all_analyses.py — keep the
+# .tsv / .md / .json results, not the plot images.
+benchmarks/**/*.png
