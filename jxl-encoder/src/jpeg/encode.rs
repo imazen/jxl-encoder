@@ -25,7 +25,7 @@ use crate::headers::frame_header::{Encoding, FrameHeader};
 use crate::vardct::ac_context;
 use crate::vardct::ac_group::{collect_ac_coefficients_into, predict_from_top_and_left};
 use crate::vardct::ac_strategy::AcStrategyMap;
-use crate::vardct::chroma_from_luma::{CFL_FIXED_POINT_PRECISION, CflMap, DEFAULT_COLOR_FACTOR};
+use crate::vardct::chroma_from_luma::{CFL_FIXED_POINT_PRECISION, CflMap, ratio_jpeg};
 use crate::vardct::coeff_order::{
     NUM_ORDER_BUCKETS as NUM_ORDER_BUCKETS_JPEG, build_and_write_coeff_orders,
     compute_custom_orders, get_custom_order, tokenize_coeff_orders,
@@ -390,8 +390,8 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
                 // line 1016 with `cm` = the raw signed-byte tile
                 // value (kOffset already pre-applied by the decoder
                 // when it computes the YtoX/YtoB ratio).
-                let scale_x = (ytox * (1 << CFL_FIXED_POINT_PRECISION)) / DEFAULT_COLOR_FACTOR;
-                let scale_b = (ytob * (1 << CFL_FIXED_POINT_PRECISION)) / DEFAULT_COLOR_FACTOR;
+                let scale_x = ratio_jpeg(ytox);
+                let scale_b = ratio_jpeg(ytob);
                 let _ = cfl_offset_x; // kOffset=127 is applied by the search; map[] already stores the signed delta
                 for by in y0..y1 {
                     for bx in x0..x1 {
@@ -466,13 +466,7 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     // (DC-subtree + AC-meta-subtree) context space; `ac_meta_ctx_map` maps the
     // AC-metadata collector's contexts the same way. Mirrors the VarDCT
     // W44-57 path (`vardct/bitstream.rs`).
-    let wp_dc_state: Option<(
-        crate::vardct::dc_tree_learn::DcTree,
-        Vec<(u32, u32)>,
-        u32,
-        Vec<u32>,
-        [u32; crate::vardct::dc_tree_learn::NUM_AC_META_CONTEXTS as usize],
-    )> = if use_wp_dc {
+    let wp_dc_state: Option<WpDcTreeState> = if use_wp_dc {
         let total_dc_pixels = xsize_blocks * ysize_blocks * 3;
         let (wp_tree, wp_num_ctx) =
             crate::vardct::dc_tree_learn::build_wp_fixed_dc_tree(total_dc_pixels, 8);
@@ -724,7 +718,7 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
             let mut xs_state: [u64; 2] = [0x94D049BB133111EB, 0xBF58476D1CE4E5B9];
             // block_fraction = 0.5 → threshold = (u64::MAX >> 32) * 0.5.
             let threshold: u64 = (((u64::MAX) >> 32) as f64 * 0.5f64) as u64;
-            let mut use_sample = |state: &mut [u64; 2]| -> bool {
+            let use_sample = |state: &mut [u64; 2]| -> bool {
                 let s1 = state[0];
                 let s0 = state[1];
                 let bits = s1.wrapping_add(s0);
@@ -1398,16 +1392,35 @@ fn compute_jpeg_dc_offset(jpeg: &JpegData, jpeg_c_map: &[usize; 3], is_ycbcr: bo
     offsets
 }
 
-fn map_jpeg_coefficients(
-    jpeg: &JpegData,
-    jpeg_c_map: &[usize; 3],
-    dc_offset: &[i32; 3],
-) -> Result<(
+/// State bundle for the kWPFixedDC JPEG-transcode DC tree (EX-J31):
+/// `(wp_tree, wrapped_tree_tokens, total_ctx, dc_remap, ac_meta_ctx_map)`.
+/// `dc_remap` maps WP-tree leaf contexts into the combined
+/// (DC-subtree + AC-meta-subtree) context space; `ac_meta_ctx_map` does the
+/// same for the AC-metadata collector's contexts.
+type WpDcTreeState = (
+    crate::vardct::dc_tree_learn::DcTree,
+    Vec<(u32, u32)>,
+    u32,
+    Vec<u32>,
+    [u32; crate::vardct::dc_tree_learn::NUM_AC_META_CONTEXTS as usize],
+);
+
+/// Per-channel JPEG coefficient planes produced by [`map_jpeg_coefficients`]:
+/// `(quant_dc, quant_ac, nzeros, raw_nzeros)`, each indexed
+/// `[jxl_channel][by][bx]` at that channel's native (subsampled) block
+/// resolution.
+type JpegCoefficientPlanes = (
     [Vec<Vec<i16>>; 3],
     [Vec<Vec<[i32; BLOCK_SIZE]>>; 3],
     [Vec<Vec<u8>>; 3],
     [Vec<Vec<u16>>; 3],
-)> {
+);
+
+fn map_jpeg_coefficients(
+    jpeg: &JpegData,
+    jpeg_c_map: &[usize; 3],
+    dc_offset: &[i32; 3],
+) -> Result<JpegCoefficientPlanes> {
     let mut quant_dc: [Vec<Vec<i16>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut quant_ac: [Vec<Vec<[i32; BLOCK_SIZE]>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut nzeros: [Vec<Vec<u8>>; 3] = [Vec::new(), Vec::new(), Vec::new()];

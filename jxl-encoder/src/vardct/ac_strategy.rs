@@ -33,6 +33,7 @@ use super::dct::{
 };
 use super::quant::{dequant_weights, dequant_weights_full, quant_weights, quant_weights_full};
 use crate::effort::EffortProfile;
+#[cfg(feature = "__expert")]
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Process-wide override: when `true`, the fused-DCT8 + entropy path in
@@ -46,13 +47,21 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 ///
 /// Default is `false` (uses fused path) — flipping has zero effect on
 /// production callers. Only the example crate's harness flips it.
+///
+/// The whole apparatus (override flag, hit counters, accessors) is
+/// compiled only under `__expert`: the default-build read path folds to
+/// a constant `false`, so production pays neither the atomic load nor
+/// the per-call counter increments.
+#[cfg(feature = "__expert")]
 static FORCE_UNFUSED_DCT8: AtomicBool = AtomicBool::new(false);
 
 /// Counter for the unfused-fallback branch (W44-9 verification).
 /// Lets the example harness assert the override actually fired.
+#[cfg(feature = "__expert")]
 static UNFUSED_BRANCH_HITS: AtomicU64 = AtomicU64::new(0);
 
 /// Counter for the fused-path branch (W44-9 verification).
+#[cfg(feature = "__expert")]
 static FUSED_BRANCH_HITS: AtomicU64 = AtomicU64::new(0);
 
 /// Set the process-wide override; see [`FORCE_UNFUSED_DCT8`].
@@ -61,17 +70,20 @@ static FUSED_BRANCH_HITS: AtomicU64 = AtomicU64::new(0);
 /// A/B harness. Production code paths never call this — the default
 /// `false` preserves the fused-DCT8 path, which is byte-identical to
 /// the prior behaviour.
+#[cfg(feature = "__expert")]
 pub fn set_force_unfused_dct8_entropy(v: bool) {
     FORCE_UNFUSED_DCT8.store(v, Ordering::Relaxed);
 }
 
 /// Reset the per-branch hit counters (W44-9 verification).
+#[cfg(feature = "__expert")]
 pub fn reset_dct8_branch_counters() {
     FUSED_BRANCH_HITS.store(0, Ordering::Relaxed);
     UNFUSED_BRANCH_HITS.store(0, Ordering::Relaxed);
 }
 
 /// Returns `(fused_hits, unfused_hits)` since the last reset (W44-9).
+#[cfg(feature = "__expert")]
 pub fn dct8_branch_counters() -> (u64, u64) {
     (
         FUSED_BRANCH_HITS.load(Ordering::Relaxed),
@@ -80,6 +92,15 @@ pub fn dct8_branch_counters() -> (u64, u64) {
 }
 
 /// Read the process-wide override; see [`FORCE_UNFUSED_DCT8`].
+/// Default builds compile this to a constant `false`.
+#[cfg(not(feature = "__expert"))]
+#[inline(always)]
+fn force_unfused_dct8_entropy() -> bool {
+    false
+}
+
+/// Read the process-wide override; see [`FORCE_UNFUSED_DCT8`].
+#[cfg(feature = "__expert")]
 #[inline]
 fn force_unfused_dct8_entropy() -> bool {
     let v = FORCE_UNFUSED_DCT8.load(Ordering::Relaxed);
@@ -1618,53 +1639,53 @@ fn dump_cost_inputs(
             }
             Some(Mutex::new(f))
         });
-        if let Some(file_mutex) = slot.as_ref() {
-            if let Ok(mut f) = file_mutex.lock() {
-                let (mask_mean, _count) = if let Some(m) = mask1x1 {
-                    let mut sum = 0.0f32;
-                    let mut count = 0usize;
-                    for iy in 0..(cy * BLOCK_DIM) {
-                        for ix in 0..(cx * BLOCK_DIM) {
-                            let py = by * BLOCK_DIM + iy;
-                            let px = bx * BLOCK_DIM + ix;
-                            let idx = py * mask1x1_stride + px;
-                            if idx < m.len() {
-                                sum += m[idx];
-                                count += 1;
-                            }
+        if let Some(file_mutex) = slot.as_ref()
+            && let Ok(mut f) = file_mutex.lock()
+        {
+            let (mask_mean, _count) = if let Some(m) = mask1x1 {
+                let mut sum = 0.0f32;
+                let mut count = 0usize;
+                for iy in 0..(cy * BLOCK_DIM) {
+                    for ix in 0..(cx * BLOCK_DIM) {
+                        let py = by * BLOCK_DIM + iy;
+                        let px = bx * BLOCK_DIM + ix;
+                        let idx = py * mask1x1_stride + px;
+                        if idx < m.len() {
+                            sum += m[idx];
+                            count += 1;
                         }
                     }
-                    if count > 0 {
-                        (sum / count as f32, count)
-                    } else {
-                        (0.0, 0)
-                    }
+                }
+                if count > 0 {
+                    (sum / count as f32, count)
                 } else {
                     (0.0, 0)
-                };
-                let cmap_x = ytox_ratio(ytox);
-                let cmap_b = ytob_ratio(ytob);
-                let _ = writeln!(
-                    f,
-                    "{}\t{}\t{}\t{:.6}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}",
-                    raw_strategy,
-                    bx * BLOCK_DIM,
-                    by * BLOCK_DIM,
-                    entropy_mul,
-                    cx,
-                    cy,
-                    quant_norm16,
-                    cmap_x,
-                    cmap_b,
-                    mask_mean,
-                    entropy_pre_loss,
-                    loss_scalar_for_dump,
-                    k_info_loss_mul,
-                    k_cost_delta,
-                    k_zeros_mul,
-                    entropy,
-                );
-            }
+                }
+            } else {
+                (0.0, 0)
+            };
+            let cmap_x = ytox_ratio(ytox);
+            let cmap_b = ytob_ratio(ytob);
+            let _ = writeln!(
+                f,
+                "{}\t{}\t{}\t{:.6}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}",
+                raw_strategy,
+                bx * BLOCK_DIM,
+                by * BLOCK_DIM,
+                entropy_mul,
+                cx,
+                cy,
+                quant_norm16,
+                cmap_x,
+                cmap_b,
+                mask_mean,
+                entropy_pre_loss,
+                loss_scalar_for_dump,
+                k_info_loss_mul,
+                k_cost_delta,
+                k_zeros_mul,
+                entropy,
+            );
         }
     }
     // Suppress unused-variable warnings when std is disabled.
@@ -1771,15 +1792,15 @@ fn dump_afv_coeff_block(stage: &str, raw_strategy: u8, x: usize, y: usize, c: us
     #[cfg(feature = "std")]
     {
         use std::io::Write;
-        if let Some(mu) = afv_dump_file() {
-            if let Ok(mut f) = mu.lock() {
-                for (i, &v) in data.iter().enumerate() {
-                    let _ = writeln!(
-                        f,
-                        "{}\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
-                        stage, raw_strategy, x, y, c, i, v
-                    );
-                }
+        if let Some(mu) = afv_dump_file()
+            && let Ok(mut f) = mu.lock()
+        {
+            for (i, &v) in data.iter().enumerate() {
+                let _ = writeln!(
+                    f,
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
+                    stage, raw_strategy, x, y, c, i, v
+                );
             }
         }
     }
@@ -1802,29 +1823,29 @@ fn dump_afv_per_coeff(
     #[cfg(feature = "std")]
     {
         use std::io::Write;
-        if let Some(mu) = afv_dump_file() {
-            if let Ok(mut f) = mu.lock() {
-                let _ = writeln!(
-                    f,
-                    "per_coeff_val\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
-                    raw_strategy, x, y, c, i, val
-                );
-                let _ = writeln!(
-                    f,
-                    "per_coeff_rval\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
-                    raw_strategy, x, y, c, i, rval
-                );
-                let _ = writeln!(
-                    f,
-                    "per_coeff_diff\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
-                    raw_strategy, x, y, c, i, diff
-                );
-                let _ = writeln!(
-                    f,
-                    "per_coeff_weighted_diff\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
-                    raw_strategy, x, y, c, i, weighted_diff
-                );
-            }
+        if let Some(mu) = afv_dump_file()
+            && let Ok(mut f) = mu.lock()
+        {
+            let _ = writeln!(
+                f,
+                "per_coeff_val\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
+                raw_strategy, x, y, c, i, val
+            );
+            let _ = writeln!(
+                f,
+                "per_coeff_rval\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
+                raw_strategy, x, y, c, i, rval
+            );
+            let _ = writeln!(
+                f,
+                "per_coeff_diff\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
+                raw_strategy, x, y, c, i, diff
+            );
+            let _ = writeln!(
+                f,
+                "per_coeff_weighted_diff\t{}\t{}\t{}\t{}\t{}\t{:.8e}",
+                raw_strategy, x, y, c, i, weighted_diff
+            );
         }
     }
     let _ = (raw_strategy, x, y, c, i, val, rval, diff, weighted_diff);
@@ -1835,14 +1856,14 @@ fn dump_afv_aggregate(raw_strategy: u8, x: usize, y: usize, c: usize, name: &str
     #[cfg(feature = "std")]
     {
         use std::io::Write;
-        if let Some(mu) = afv_dump_file() {
-            if let Ok(mut f) = mu.lock() {
-                let _ = writeln!(
-                    f,
-                    "aggregate.{}\t{}\t{}\t{}\t{}\t0\t{:.8e}",
-                    name, raw_strategy, x, y, c, value
-                );
-            }
+        if let Some(mu) = afv_dump_file()
+            && let Ok(mut f) = mu.lock()
+        {
+            let _ = writeln!(
+                f,
+                "aggregate.{}\t{}\t{}\t{}\t{}\t0\t{:.8e}",
+                name, raw_strategy, x, y, c, value
+            );
         }
     }
     let _ = (raw_strategy, x, y, c, name, value);

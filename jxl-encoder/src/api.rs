@@ -3250,8 +3250,8 @@ impl LosslessConfig {
     ///    `djxl --reconstruct_jpeg out.jxl out.jpg` (or any decoder that
     ///    honors the JBRD reconstruction box).
     ///
-    /// Returns the complete JXL container bytes (signature box + codestream
-    /// + JBRD box). Typical ratio: ~80% of the original JPEG bytes for
+    /// Returns the complete JXL container bytes (signature box, codestream,
+    /// JBRD box). Typical ratio: ~80% of the original JPEG bytes for
     /// photographic content; gains depend on the source quantization
     /// quality and chroma subsampling shape.
     ///
@@ -7093,7 +7093,7 @@ impl LossyConfig {
         // Feature gate: cargo feature must be compiled.
         #[cfg(not(feature = "cvvdp-loop-tighten"))]
         {
-            return false;
+            false
         }
         #[cfg(feature = "cvvdp-loop-tighten")]
         {
@@ -8116,21 +8116,20 @@ impl<'a> EncodeRequest<'a> {
         // and skipped — keeps the no-override-installed fast path so
         // every existing hash-lock fixture stays byte-identical.
         #[cfg(feature = "tuning-override")]
-        if let ConfigRef::Lossy(cfg) = self.config {
-            if let Some(knobs) = cfg.tier2_knobs {
-                if knobs != crate::tuning::coupling::Tier2Knobs::default() {
-                    let rt = knobs.expand_to_runtime_tuning();
-                    crate::tuning::runtime::install_or_check_idempotent(rt).map_err(
-                        |_existing| EncodeError::InvalidConfig {
-                            message: "with_knobs: a different RuntimeTuning is already \
-                                      installed in this process; the runtime override \
-                                      is single-shot (see W44-222 known limitation, \
-                                      W44-227+ for thread-local follow-on)"
-                                .into(),
-                        },
-                    )?;
+        if let ConfigRef::Lossy(cfg) = self.config
+            && let Some(knobs) = cfg.tier2_knobs
+            && knobs != crate::tuning::coupling::Tier2Knobs::default()
+        {
+            let rt = knobs.expand_to_runtime_tuning();
+            crate::tuning::runtime::install_or_check_idempotent(rt).map_err(|_existing| {
+                EncodeError::InvalidConfig {
+                    message: "with_knobs: a different RuntimeTuning is already \
+                              installed in this process; the runtime override \
+                              is single-shot (see W44-222 known limitation, \
+                              W44-227+ for thread-local follow-on)"
+                        .into(),
                 }
-            }
+            })?;
         }
         if let Some(ref ce) = self.color_encoding {
             crate::vardct::xyb::validate_color_encoding(ce).map_err(EncodeError::from)?;

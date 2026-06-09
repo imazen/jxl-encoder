@@ -45,7 +45,7 @@ pub struct DistanceParams {
     /// (encoder multiplies `inv_factor` by `1 << extra_dc_precision`;
     /// decoder applies the symmetric `mul = 1.0 / (1 << extra_dc_precision)`
     /// dequant). Default `0` keeps every legacy [`Self::compute`] /
-    /// [`Self::compute_from_q`] / [`Self::compute_from_quant_field`]
+    /// [`Self::compute_from_quant_field`]
     /// caller at the pre-Phase-5 baseline (1× DC quant), so synthetic
     /// fixtures and the butteraugli-loop adaptive path stay byte-identical.
     /// [`Self::compute_for_profile`] / [`Self::compute_for_profile_with_original`]
@@ -322,16 +322,6 @@ impl DistanceParams {
             Some(quant_median - quant_median_absd),
             0,
         )
-    }
-
-    /// Compute distance-dependent parameters from a given `q` value.
-    ///
-    /// The `q` parameter determines global_scale: `global_scale = 65536 * q / 5.0`.
-    /// This is the core formula from libjxl quantizer.cc:ComputeGlobalScaleAndQuant
-    /// with quant_median_absd=0 (i.e. `q = quant_median - 0 = quant_median`).
-    fn compute_from_q(distance: f32, q: f32) -> Self {
-        // Test-only helper — no profile context, so extra_dc_precision = 0.
-        Self::compute_internal(distance, distance, Some(q), 0)
     }
 
     /// Internal implementation shared by all compute methods.

@@ -169,8 +169,11 @@ pub fn jpeg_cfl_search(
             let mut best_sum: i32 = 0;
             let mut offset_sum: i32 = 0;
             let mut running: i32 = 0;
-            for i in 0..256 {
-                running += d_num_zeros[i];
+            // NOTE: the histogram array has 257 slots (one spill slot at
+            // index 256 for the `hi` decrement of the last bucket); the
+            // libjxl scan covers exactly the 256 real buckets.
+            for (i, &dz) in d_num_zeros.iter().take(256).enumerate() {
+                running += dz;
                 if running > best_sum {
                     best_sum = running;
                     best_i = i as i32;

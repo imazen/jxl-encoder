@@ -998,8 +998,8 @@ pub(crate) fn w44_169_compute_iters_narrow(
     if !narrow_enabled {
         return base_iters;
     }
-    let in_band = target_distance >= W44_169_NARROW_MIN_DISTANCE
-        && target_distance <= W44_169_NARROW_MAX_DISTANCE;
+    let in_band =
+        (W44_169_NARROW_MIN_DISTANCE..=W44_169_NARROW_MAX_DISTANCE).contains(&target_distance);
     if !in_band {
         return base_iters;
     }
@@ -6783,9 +6783,10 @@ impl VarDctEncoder {
                 );
             }
         }
-        // Drop the source view — the underlying slices outlive it
-        // (held by `precomputed` / `patched_xyb`).
-        drop(precomputed_source);
+        // Release the source view — the underlying slices outlive it
+        // (held by `precomputed` / `patched_xyb`). A plain move-out is
+        // enough; the view holds only borrows.
+        let _ = precomputed_source;
         let _ms_xform = _t_xform.elapsed().as_secs_f64() * 1000.0;
         let quant_dc = &transform_out.quant_dc;
         let quant_ac = &transform_out.quant_ac;

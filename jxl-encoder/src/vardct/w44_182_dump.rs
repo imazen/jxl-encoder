@@ -89,19 +89,6 @@ pub fn dump_map(pass: u8, xsize_tiles: usize, ysize_tiles: usize, ytox: &[i8], y
     let _ = state.file.flush();
 }
 
-#[cfg(feature = "std")]
-pub fn flush() {
-    let mut guard = DUMP_STATE.lock().unwrap();
-    if let Some(state) = guard.as_mut() {
-        use std::io::Write;
-        let _ = state.file.flush();
-    }
-}
-
-#[cfg(not(feature = "std"))]
-#[inline(always)]
-pub fn flush() {}
-
 #[cfg(not(feature = "std"))]
 #[inline(always)]
 pub fn dump_map(_pass: u8, _xsize_tiles: usize, _ysize_tiles: usize, _ytox: &[i8], _ytob: &[i8]) {}

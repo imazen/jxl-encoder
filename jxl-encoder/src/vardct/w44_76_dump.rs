@@ -45,13 +45,13 @@ struct DumpState {
 #[cfg(feature = "std")]
 fn ensure_initialized(dir: &std::path::Path) {
     let mut guard = DUMP_STATE.lock().unwrap();
-    if let Some(state) = guard.as_ref() {
-        if state.dir == dir {
-            return;
-        }
-        // Dir changed — flush old handle and re-init for the new dir.
-        // We intentionally drop the old state below.
+    if let Some(state) = guard.as_ref()
+        && state.dir == dir
+    {
+        return;
     }
+    // Dir changed — flush old handle and re-init for the new dir.
+    // We intentionally drop the old state below.
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
@@ -101,21 +101,6 @@ pub fn dump_block(bx: usize, by: usize, raw_strategy: u8, channel: usize, nzeros
     // (Diagnostic build only; perf does not matter.)
     let _ = state.file.flush();
 }
-
-/// Explicitly flush + close the dump (call before exit if you want to be sure
-/// the file is complete).
-#[cfg(feature = "std")]
-pub fn flush() {
-    let mut guard = DUMP_STATE.lock().unwrap();
-    if let Some(state) = guard.as_mut() {
-        use std::io::Write;
-        let _ = state.file.flush();
-    }
-}
-
-#[cfg(not(feature = "std"))]
-#[inline(always)]
-pub fn flush() {}
 
 /// No-op when std is not available (dump requires std).
 #[cfg(not(feature = "std"))]
@@ -181,10 +166,10 @@ fn coeffs_target_channel() -> u8 {
 #[cfg(feature = "std")]
 fn ensure_coeffs_initialized(dir: &std::path::Path) {
     let mut guard = COEFFS_STATE.lock().unwrap();
-    if let Some(state) = guard.as_ref() {
-        if state.dir == dir {
-            return;
-        }
+    if let Some(state) = guard.as_ref()
+        && state.dir == dir
+    {
+        return;
     }
     if std::fs::create_dir_all(dir).is_err() {
         return;

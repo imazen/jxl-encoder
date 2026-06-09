@@ -365,7 +365,6 @@ mod tests {
 mod expanded_coverage {
     use super::*;
     use crate::test_helpers::*;
-    use alloc::format;
 
     /// Sweep block dimensions (width must be multiple of 8) + edge-value
     /// inputs.  The kernel computes loss = sum((mask+offset)^2 * err^2)^8

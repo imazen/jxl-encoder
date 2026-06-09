@@ -1696,7 +1696,6 @@ mod expanded_coverage {
     use super::*;
     use crate::test_helpers::*;
     use alloc::format;
-    use alloc::vec::Vec;
 
     /// Sweep all f32_edge_battery distributions through dct_16x16.  256-element
     /// fixed-array kernel; covers ramps, denormals, alternating sign, zeros.

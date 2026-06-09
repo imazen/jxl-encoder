@@ -1049,7 +1049,6 @@ mod tests {
 mod expanded_coverage {
     use super::*;
     use crate::test_helpers::*;
-    use alloc::format;
     use alloc::vec;
 
     /// quantize_block_dct8 across edge-value batteries.  Both scalar and SIMD

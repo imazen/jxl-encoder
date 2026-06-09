@@ -471,10 +471,10 @@ pub fn wrap_in_container_jxlp_with_level(
     }
 
     // xml box (XMP) — try brob first, fall back to raw if brotli is bigger.
-    if let Some(xmp_data) = xmp {
-        if !try_write_brob_box(&mut out, b"xml ", xmp_data, JPEG_BROB_QUALITY) {
-            write_box(&mut out, b"xml ", xmp_data);
-        }
+    if let Some(xmp_data) = xmp
+        && !try_write_brob_box(&mut out, b"xml ", xmp_data, JPEG_BROB_QUALITY)
+    {
+        write_box(&mut out, b"xml ", xmp_data);
     }
 
     out
@@ -552,8 +552,10 @@ pub(crate) fn try_write_brob_box(
 
     // Brotli params: quality 0-11, libjxl default 4. lgwin 22 (4 MiB
     // window) matches Brotli default; mode = generic.
-    let mut params = BrotliEncoderParams::default();
-    params.quality = quality.min(11) as i32;
+    let params = BrotliEncoderParams {
+        quality: quality.min(11) as i32,
+        ..Default::default()
+    };
     let mut compressed: Vec<u8> = Vec::with_capacity(payload.len() / 2);
     {
         let mut writer = brotli::CompressorWriter::with_params(&mut compressed, 4096, &params);

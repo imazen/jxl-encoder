@@ -78,6 +78,7 @@ fn ensure_initialized(dir: &std::path::Path) {
 /// Append a single DC sample. Cheap when dump_dir is None.
 #[cfg(feature = "std")]
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub fn dump_dc(
     bx: usize,
     by: usize,
@@ -103,19 +104,6 @@ pub fn dump_dc(
     state.rows += 1;
     let _ = state.file.flush();
 }
-
-#[cfg(feature = "std")]
-pub fn flush() {
-    let mut guard = DUMP_STATE.lock().unwrap();
-    if let Some(state) = guard.as_mut() {
-        use std::io::Write;
-        let _ = state.file.flush();
-    }
-}
-
-#[cfg(not(feature = "std"))]
-#[inline(always)]
-pub fn flush() {}
 
 #[cfg(not(feature = "std"))]
 #[inline(always)]

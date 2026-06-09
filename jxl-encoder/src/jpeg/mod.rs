@@ -50,7 +50,8 @@ pub fn encode_jpeg_recompress_codestream(
         .map_err(|e| crate::error::Error::InvalidInput(alloc::format!("JPEG parse: {e:?}")))?;
     // Lossless transcode is the "do no harm" floor.
     let lossless = encode_jpeg_to_jxl_with_effort(&jpeg, effort)?;
-    if !(scale > 1.0) {
+    // NaN-safe: NaN selects the lossless floor, same as scale <= 1.0.
+    if scale.is_nan() || scale <= 1.0 {
         return Ok(lossless);
     }
     let mut coarsened = jpeg;
@@ -82,7 +83,8 @@ pub fn encode_jpeg_recompress_auto_codestream(
     let jpeg = read_jpeg(jpeg_bytes)
         .map_err(|e| crate::error::Error::InvalidInput(alloc::format!("JPEG parse: {e:?}")))?;
     let lossless = encode_jpeg_to_jxl_with_effort(&jpeg, effort)?;
-    if !(scale > 1.0) {
+    // NaN-safe: NaN selects the lossless floor, same as scale <= 1.0.
+    if scale.is_nan() || scale <= 1.0 {
         return Ok(lossless);
     }
     let mut coarsened = jpeg;

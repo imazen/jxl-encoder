@@ -1043,7 +1043,9 @@ impl VarDctEncoder {
                     metric_intensity_target,
                     selection,
                 );
-                if let Err(_) = b.set_reference(&ref_r, &ref_g, &ref_b, width, height) {
+                if b.set_reference(&ref_r, &ref_g, &ref_b, width, height)
+                    .is_err()
+                {
                     return Ok(initial_params.clone());
                 }
                 Some(b)
@@ -1629,10 +1631,11 @@ impl VarDctEncoder {
                     // bypass the forward table. NaN-guard: fall back
                     // to the seed table if the caller's value is
                     // non-finite or non-positive.
-                    if let Some(score) = caller_target_score {
-                        if score.is_finite() && score > 0.0 {
-                            break 'lookup score;
-                        }
+                    if let Some(score) = caller_target_score
+                        && score.is_finite()
+                        && score > 0.0
+                    {
+                        break 'lookup score;
                     }
                     break 'lookup super::zensim_targets::zensim_target_score_for_distance(
                         target_distance,
@@ -2039,10 +2042,11 @@ impl VarDctEncoder {
             // W44-116: per-step XYB capture (FINAL iter only). The hook is
             // populated incrementally as each step runs; only built into a
             // StepXyb struct & stored once the full pipeline finishes.
+            // Every consumer below carries its own
+            // `#[cfg(feature = "__internal_recon_hook")]`, so the flag
+            // only exists when the hook is compiled in.
             #[cfg(feature = "__internal_recon_hook")]
             let capture_steps = iter == iters && recon_hook::steps_capture_enabled();
-            #[cfg(not(feature = "__internal_recon_hook"))]
-            let capture_steps = false;
 
             #[cfg(feature = "__internal_recon_hook")]
             let mut step_after_recon: Option<recon_hook::Xyb> = None;
@@ -2626,42 +2630,6 @@ impl VarDctEncoder {
                 }
             }
         }
-
-        // cvvdp-fork Phase 8d (2026-05-25): post-convergence bytes-tighten
-        // exit pass (Variant 1 batched single-probe per RFC §3.3
-        // Intervention C). After the inner seed loop converges
-        // quant_field_float to satisfy the cvvdp metric target, run a
-        // multiplicative bump pass that LOOSENS qac while the score still
-        // satisfies `target * (1 + ε)`. Each accepted bump gives back
-        // bytes everywhere; the bump step halves after each accept so the
-        // search converges on the maximal-still-passing global step.
-        //
-        // The pass is gated on:
-        //  1. The `cvvdp-loop-tighten` cargo feature being compiled in.
-        //  2. `self.cvvdp_bytes_tighten` being true (propagated from
-        //     `LossyConfig::resolve_cvvdp_bytes_tighten`).
-        //  3. `self.cvvdp_loop` being true (the pass is structurally
-        //     unsuitable for the butteraugli loop — see Phase 8d field
-        //     doc + RFC §3.3).
-        //  4. `backend.is_some()` AND `!use_vdp2` (the pass uses the
-        //     same backend trait as the inner loop; no VDP2-lite pathway).
-        //
-        // When any gate fails, the pass is skipped and the function falls
-        // through to the original final SetQuantField — byte-identical
-        // to pre-Phase-8d.
-        //
-        // Wall hit: ~`(max_iters + 1)` cvvdp scores in the worst case
-        // (every probe accepted + one final reject). At
-        // `MAX_OUTER_ITERS = 5` and 4 seed iters, this is ~125% additive
-        // wall on the inner seed loop. Production callers can opt out via
-        // `LossyConfig::with_cvvdp_bytes_tighten(Some(false))` or via the
-        // env var `JXL_CVVDP_BYTES_TIGHTEN_MAX_ITERS=0` (which disables
-        // the pass).
-        #[cfg(feature = "cvvdp-loop-tighten")]
-        let tighten_active =
-            self.cvvdp_bytes_tighten && self.cvvdp_loop && !use_vdp2 && backend.is_some();
-        #[cfg(not(feature = "cvvdp-loop-tighten"))]
-        let tighten_active = false;
 
         // Compute the converged final params from the seed loop's exit
         // state. We do this BEFORE the Phase 8d tighten pass so that

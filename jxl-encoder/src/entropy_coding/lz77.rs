@@ -935,6 +935,7 @@ pub fn apply_lz77_rle(
 /// transformation of the matching input section, on success. Returns `None`
 /// if the global savings threshold is not met (in which case the caller should
 /// write the original sections with `Lz77Params::enabled = false`).
+#[cfg(any(test, feature = "jpeg-reencoding"))]
 pub fn apply_lz77_rle_multi_section(
     sections: &[&[Token]],
     num_contexts: usize,

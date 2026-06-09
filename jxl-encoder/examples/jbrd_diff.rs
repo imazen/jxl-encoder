@@ -5,7 +5,9 @@
 
 #[cfg(feature = "jpeg-reencoding")]
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: jbrd_diff <file.jpg>");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: jbrd_diff <file.jpg>");
     let orig = std::fs::read(&path).unwrap();
     let jxl = jxl_encoder::LosslessConfig::new()
         .encode_jpeg_transcode(&orig)

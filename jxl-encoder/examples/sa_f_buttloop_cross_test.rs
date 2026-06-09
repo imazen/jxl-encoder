@@ -111,9 +111,6 @@ fn run_libjxl_butteraugli(ref_pfm: &Path, dist_pfm: &Path) -> Option<(f64, f64)>
     let mut pnorm: Option<f64> = None;
     for line in stdout.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_suffix("-norm:") {
-            // Skip; the value is on the same line after the suffix is awkward.
-        }
         if trimmed.contains("-norm:") {
             // e.g. "3-norm: 1.234"
             let parts: Vec<&str> = trimmed.split_whitespace().collect();

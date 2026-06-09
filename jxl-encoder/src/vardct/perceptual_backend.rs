@@ -473,6 +473,11 @@ pub(crate) fn maybe_dump_diffmap_stats(
 pub(crate) trait PerceptualBackend: core::fmt::Debug {
     /// Backend identifier (for logging). e.g. `"cpu"`, `"gpu-cuda"`,
     /// `"gpu-fallback-cpu"`.
+    ///
+    /// Consumed by the feature-gated GPU/cvvdp/zensim debug-log paths and
+    /// by backend unit tests; on a default (CPU-only, non-test) build no
+    /// caller remains, hence the targeted allow.
+    #[allow(dead_code)]
     fn name(&self) -> &'static str;
 
     /// Cache the reference image. After this returns `Ok(())`,
@@ -506,6 +511,7 @@ pub(crate) trait PerceptualBackend: core::fmt::Debug {
     /// errors the caller should treat as "use the previous iter's score and
     /// stop refining." The buttloop bails to a `SeedOutcome` carrying the
     /// previous iter's score on error.
+    #[allow(clippy::too_many_arguments)]
     fn compare_with_reference(
         &mut self,
         dist_r: &[f32],
@@ -523,6 +529,10 @@ pub(crate) trait PerceptualBackend: core::fmt::Debug {
     /// backend always returns `None`. The GPU backend returns `Some(_)`
     /// after the first `compare_with_reference` call when the detector
     /// was enabled at construction.
+    ///
+    /// Read by the `gpu-butteraugli` divergence-gate path and tests only;
+    /// dead on a default build, hence the targeted allow.
+    #[allow(dead_code)]
     fn divergence_status(&self) -> Option<(f64, bool)> {
         None
     }
@@ -1393,6 +1403,7 @@ pub(crate) fn construct_backend(
         || (matches!(selection.device, PerceptualDevice::Auto)
             && cfg!(feature = "gpu-butteraugli"));
     let cvvdp_requested = matches!(selection.metric, PerceptualMetric::Cvvdp);
+    #[cfg(feature = "cvvdp-loop")]
     let cvvdp_use_cpu_requested = matches!(selection.device, PerceptualDevice::Cpu);
     // zensim-fork Phase 3 (2026-05-25): zensim wins the dispatch over
     // both cvvdp and butteraugli when its cargo feature is compiled
@@ -1509,19 +1520,18 @@ pub(crate) fn construct_backend(
             // way down to butteraugli.
             #[cfg(feature = "zensim-loop")]
             {
-                if !zensim_use_cpu_requested {
-                    if let Some(c) =
+                if !zensim_use_cpu_requested
+                    && let Some(c) =
                         crate::vardct::zensim_backend::cpu::CpuZensimBackend::try_new(width, height)
-                    {
-                        eprintln!(
-                            "[jxl-encoder zensim-fork P3] GPU zensim unavailable \
+                {
+                    eprintln!(
+                        "[jxl-encoder zensim-fork P3] GPU zensim unavailable \
                              (CUDA missing/failed or `zensim-loop-gpu` off); \
                              falling back to CPU zensim @ {}×{}",
-                            width, height,
-                        );
-                        let _ = cpu_params;
-                        return alloc::boxed::Box::new(c);
-                    }
+                        width, height,
+                    );
+                    let _ = cpu_params;
+                    return alloc::boxed::Box::new(c);
                 }
             }
 

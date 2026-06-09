@@ -124,7 +124,9 @@ pub fn coarsen_coefficients_planar(
         } else {
             luma_scale
         };
-        if !(s > 1.0) {
+        // NaN-safe: a NaN scale must take the lossless path, exactly
+        // like s <= 1.0 (plain `s <= 1.0` would let NaN fall through).
+        if s.is_nan() || s <= 1.0 {
             continue;
         }
         for v in tbl.iter_mut() {
@@ -191,7 +193,8 @@ pub fn coarsen_coefficients_planar(
 ///
 /// `scale ≤ 1.0` maps to a true lossless no-op `(1, 0, 1, 0)`.
 pub fn coarsen_policy(scale: f32) -> (f32, f32, f32, f32) {
-    if !(scale > 1.0) {
+    // NaN-safe: NaN maps to the lossless no-op, same as scale <= 1.0.
+    if scale.is_nan() || scale <= 1.0 {
         return (1.0, 0.0, 1.0, 0.0);
     }
     let luma_dz = (0.30 * (scale - 1.0)).min(0.45);

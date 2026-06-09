@@ -78,7 +78,7 @@ const DC_CFL_FACTOR: [f32; 3] = [0.0, 0.0, 0.5];
 ///
 /// Returns the FINAL stored integer (= `pred + residual`), which is
 /// what gets written into `quant_dc[c][y][x]`.
-#[inline]
+#[cfg(test)]
 fn quantize_wp_one(value: f32, inv_factor: f32, pred: i32) -> i32 {
     quantize_wp_one_presvalued(value * inv_factor, pred)
 }
@@ -111,7 +111,7 @@ fn quantize_wp_one_presvalued(svalue_base: f32, pred: i32) -> i32 {
 
     // Snap-to-even for |residual| > 2 (line 1558).
     // `round(svalue * 0.5) * 2` produces the nearest even integer.
-    if residual > 2 || residual < -2 {
+    if !(-2..=2).contains(&residual) {
         residual = ((svalue * 0.5).round() as i32) * 2;
     }
 
@@ -196,6 +196,7 @@ fn wp_predict(
 ///
 /// Returns the number of values whose final integer differs from the
 /// pre-pass `quant_dc` value (diagnostic — used by tests / probes).
+#[allow(clippy::too_many_arguments)]
 pub fn requantize_dc_group_wp(
     quant_dc: &mut [Vec<Vec<i16>>; 3],
     float_dc: &[Vec<f32>; 3],
@@ -243,12 +244,7 @@ pub fn requantize_dc_group_wp(
             // the pass itself; under any plausible DC group size (≤256 blocks)
             // this is trivial relative to the f32 quantize work.
             let prev_row: Option<Vec<i16>> = if gy > start_by {
-                Some(
-                    quant_dc[c][gy - 1][start_bx..end_bx]
-                        .iter()
-                        .copied()
-                        .collect(),
-                )
+                Some(quant_dc[c][gy - 1][start_bx..end_bx].to_vec())
             } else {
                 None
             };
@@ -257,12 +253,7 @@ pub fn requantize_dc_group_wp(
             // subtraction. By the time we walk X (c=0) or B (c=2), the
             // Y channel has already been requantized for the whole image.
             let y_row: Option<Vec<i16>> = if c != C_Y {
-                Some(
-                    quant_dc[C_Y][gy][start_bx..end_bx]
-                        .iter()
-                        .copied()
-                        .collect(),
-                )
+                Some(quant_dc[C_Y][gy][start_bx..end_bx].to_vec())
             } else {
                 None
             };

@@ -344,9 +344,11 @@ pub fn count_zero_coefficients(
 /// - `used_orders` is a bitmask of buckets that have non-default orders
 ///
 /// Calls [`compute_custom_orders_with_options`] with both bucket-disable
-/// gates `false` for backwards-compatible behaviour. Production callers
-/// go through the options variant with
-/// `resolved_improvements.coeff_orders_disable_{large,medium}_buckets`.
+/// gates `false` for backwards-compatible behaviour. Production VarDCT
+/// callers go through the options variant with
+/// `resolved_improvements.coeff_orders_disable_{large,medium}_buckets`;
+/// the JPEG transcode encoder and unit tests use this entry.
+#[cfg(any(test, feature = "jpeg-reencoding"))]
 pub fn compute_custom_orders(zero_counts: &[Vec<Vec<i64>>]) -> (Vec<Vec<Vec<u32>>>, u32) {
     compute_custom_orders_with_options(zero_counts, false, false, false)
 }
@@ -365,6 +367,7 @@ pub fn compute_custom_orders(zero_counts: &[Vec<Vec<i64>>]) -> (Vec<Vec<Vec<u32>
 ///
 /// This wrapper sets `unconditional_emit=true`, replicating libjxl's
 /// `is_nondefault`-only decision. Used by the JPEG transcode encoder.
+#[cfg(feature = "jpeg-reencoding")]
 pub fn compute_custom_orders_unconditional(
     zero_counts: &[Vec<Vec<i64>>],
 ) -> (Vec<Vec<Vec<u32>>>, u32) {
@@ -505,8 +508,7 @@ pub fn compute_custom_orders_with_options(
             {
                 let _ = writeln!(f, "# bucket={} cx={} cy={} size={}", bucket, cx, cy, size);
                 let _ = writeln!(f, "# bucket\tchannel\tpos\tcustom_order\tnatural_order");
-                for c in 0..3usize {
-                    let order = &orders[bucket][c];
+                for (c, order) in orders[bucket].iter().enumerate() {
                     if order.is_empty() {
                         continue;
                     }

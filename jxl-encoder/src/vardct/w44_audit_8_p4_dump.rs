@@ -87,19 +87,6 @@ pub fn dump_dc(bx: usize, by: usize, channel: usize, raw_strategy: u8, dc_raw: f
     let _ = state.file.flush();
 }
 
-#[cfg(feature = "std")]
-pub fn flush() {
-    let mut guard = DUMP_STATE.lock().unwrap();
-    if let Some(state) = guard.as_mut() {
-        use std::io::Write;
-        let _ = state.file.flush();
-    }
-}
-
-#[cfg(not(feature = "std"))]
-#[inline(always)]
-pub fn flush() {}
-
 #[cfg(not(feature = "std"))]
 #[inline(always)]
 pub fn dump_dc(

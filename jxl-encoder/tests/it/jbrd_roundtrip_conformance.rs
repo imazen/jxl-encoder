@@ -125,8 +125,7 @@ fn known_failure(_name: &str, _f: &JpegFeatures) -> Option<&'static str> {
 /// refuses the same boundaries (4-component, arithmetic, 12-bit, sampling > 2).
 fn classify(f: &JpegFeatures) -> Expect {
     let arithmetic = matches!(f.sof_marker, 0xC9 | 0xCA | 0xCB);
-    let lossless_or_hier =
-        matches!(f.sof_marker, 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xCD | 0xCE | 0xCF);
+    let lossless_or_hier = matches!(f.sof_marker, 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xCD | 0xCE | 0xCF);
     let bad_components = !matches!(f.num_components, 1 | 3);
     let sampling_gt2 = f.max_h > 2 || f.max_v > 2;
     let not_8bit = f.precision != 8;
@@ -141,13 +140,13 @@ fn classify(f: &JpegFeatures) -> Expect {
 
 #[derive(Debug)]
 enum Outcome {
-    Rejected,                       // encoder returned Err — clean refusal
-    RoundTripped,                   // encoded + reconstructed byte-exact
+    Rejected,                              // encoder returned Err — clean refusal
+    RoundTripped,                          // encoded + reconstructed byte-exact
     Corrupted { got: usize, want: usize }, // encoded OK but reconstruction != original
-    NoReconstruction,               // encoded OK but JXL carried no JBRD
-    ReconError(String),             // encoded OK but the decoder errored
-    EncodePanic(String),            // encoder panicked — robustness bug
-    DecodePanic(String),            // decoder panicked — robustness bug
+    NoReconstruction,                      // encoded OK but JXL carried no JBRD
+    ReconError(String),                    // encoded OK but the decoder errored
+    EncodePanic(String),                   // encoder panicked — robustness bug
+    DecodePanic(String),                   // decoder panicked — robustness bug
 }
 
 fn panic_msg(e: Box<dyn std::any::Any + Send>) -> String {
@@ -161,7 +160,7 @@ fn panic_msg(e: Box<dyn std::any::Any + Send>) -> String {
 }
 
 fn run_one(bytes: &[u8]) -> Outcome {
-    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
     let enc = catch_unwind(AssertUnwindSafe(|| {
         jxl_encoder::LosslessConfig::new().encode_jpeg_transcode(bytes)
     }));
@@ -224,7 +223,11 @@ fn jbrd_roundtrip_conformance() {
     if let Ok(extra) = std::env::var("JBRD_CONFORMANCE_CORPUS") {
         files.extend(collect_jpegs(Path::new(&extra)));
     }
-    assert!(!files.is_empty(), "no JPEG fixtures found in {}", fixture_dir.display());
+    assert!(
+        !files.is_empty(),
+        "no JPEG fixtures found in {}",
+        fixture_dir.display()
+    );
 
     // Silence the default panic printer while we deliberately catch encoder /
     // decoder panics per fixture; they are reported in the table instead.
@@ -283,7 +286,10 @@ fn jbrd_roundtrip_conformance() {
     std::panic::set_hook(prev_hook);
 
     // Always print the full table so the gate doubles as a live capability map.
-    eprintln!("\n=== JBRD round-trip conformance ({} fixtures) ===", files.len());
+    eprintln!(
+        "\n=== JBRD round-trip conformance ({} fixtures) ===",
+        files.len()
+    );
     for line in &report {
         eprintln!("{line}");
     }

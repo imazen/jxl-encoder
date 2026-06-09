@@ -670,10 +670,9 @@ impl EncoderPrecomputed {
 /// processes the whole image (no DC-group boundaries are crossed). The
 /// fix-or-accept decision moves into chunk 3.
 pub(crate) struct EncoderPrecomputedGlobal {
-    /// Original image width in pixels.
-    pub width: usize,
-    /// Original image height in pixels.
-    pub height: usize,
+    // Original (unpadded) pixel dimensions intentionally absent: every
+    // consumer of the global state works in padded/block coordinates;
+    // `EncoderPrecomputed` carries the original dims for the API layer.
     /// Number of 8x8 blocks in x direction.
     pub xsize_blocks: usize,
     /// Number of 8x8 blocks in y direction.
@@ -934,8 +933,6 @@ impl EncoderPrecomputedGlobal {
         };
 
         Ok(Self {
-            width,
-            height,
             xsize_blocks,
             ysize_blocks,
             padded_width,
@@ -1320,11 +1317,10 @@ fn fill_dc_group_state_dispatch(
     let xsize_dc_groups = div_ceil(padded_width, DC_GROUP_DIM);
     let ysize_dc_groups = div_ceil(padded_height, DC_GROUP_DIM);
 
-    let mut cfl_map = if cfl_enabled {
-        CflMap::zeros(xsize_tiles, ysize_tiles)
-    } else {
-        CflMap::zeros(xsize_tiles, ysize_tiles)
-    };
+    // Zero-initialised either way: when CfL is enabled the per-DC-group
+    // fill overwrites the covered tiles; when disabled the zeros ARE the
+    // identity correlation (ytox = ytob = 0).
+    let mut cfl_map = CflMap::zeros(xsize_tiles, ysize_tiles);
     let mut ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
 
     for dc_y in 0..ysize_dc_groups {

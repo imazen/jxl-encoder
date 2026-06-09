@@ -171,6 +171,12 @@ pub const BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE: f32 = 3.5;
 /// BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE)` only when the image's
 /// `m3_colourfulness` proxy is below
 /// [`BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX`] — separating
+/// terminal/imac_g3/imac_dark (M3 ≈ 14..21, monochrome / low-colour
+/// screenshots) from codec_wiki (M3 ≈ 146, richly-coloured wiki page
+/// with photos). Below this d the buttloop's HIGH-regime tuning does
+/// not engage strongly enough to recover the W44-105 wins; above this
+/// d the full W44-107 gate (no m3 sub-check) already fires.
+pub const BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE: f32 = 2.0;
 
 /// W44-AUDIT-6 Phase 2C (2026-05-24): minimum m3_colourfulness for high-colour exclude.
 pub const W44_AUDIT_6_HIGH_COLOUR_M3_MIN: f32 = 80.0;
@@ -193,12 +199,6 @@ pub(crate) fn w44_audit_6_is_high_colour_class(
     p.flat_color_block_ratio >= W44_AUDIT_6_HIGH_COLOUR_FCBR_MIN
         || p.edge_density >= W44_AUDIT_6_HIGH_COLOUR_EDGE_DENSITY_MIN
 }
-/// terminal/imac_g3/imac_dark (M3 ≈ 14..21, monochrome / low-colour
-/// screenshots) from codec_wiki (M3 ≈ 146, richly-coloured wiki page
-/// with photos). Below this d the buttloop's HIGH-regime tuning does
-/// not engage strongly enough to recover the W44-105 wins; above this
-/// d the full W44-107 gate (no m3 sub-check) already fires.
-pub const BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE: f32 = 2.0;
 
 /// W44-108: upper bound on `ZenanalyzeProxies::m3_colourfulness` for the
 /// sub-discriminator that admits the d=2..3 fire-band. The probe
@@ -675,6 +675,7 @@ pub(crate) fn w44_176_is_terminal_class(
 /// gate for graph/imac_g3/imac_dark/gmessages/gui (which buy real
 /// SSIM2 with the +28-50% bytes overhead per W44-174 measurement).
 #[cfg_attr(not(feature = "std"), allow(unused_variables))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     effort: u8,
     butteraugli_iters: u32,
@@ -723,7 +724,8 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     // ABOVE cjxl SSIM2 — true wins) and are preserved.
     //
     // Env hook for A/B: `JXL_W44_176_DISABLE=1` forces the exclude OFF.
-    let exclude_env = std::env::var_os("JXL_W44_176_DISABLE").is_some_and(|v| v != "0" && v != "");
+    let exclude_env =
+        std::env::var_os("JXL_W44_176_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
     if terminal_class_exclude && !exclude_env && w44_176_is_terminal_class(proxies) {
         return 1.0;
     }

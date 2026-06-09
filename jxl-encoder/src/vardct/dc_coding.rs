@@ -113,6 +113,7 @@ pub const NUM_DC_CONTEXTS: usize = 45;
 ///
 /// Mirrors libjxl's `kJpegTranscodeACMeta` + gradient-fixed-DC pair:
 /// 1 AC-metadata context (single `Leaf(Zero)`) + 34 DC gradient contexts.
+#[cfg(feature = "jpeg-reencoding")]
 pub const NUM_DC_CONTEXTS_JPEG_TRANSCODE: usize = 35;
 
 /// Number of AC metadata contexts (contexts 0-10).
@@ -134,6 +135,7 @@ pub const DC_CONTEXT_OFFSET: usize = NUM_AC_METADATA_CONTEXTS;
 /// Predictor is `Zero` (raw values, no gradient/left residuals).
 ///
 /// [`write_jpeg_transcode_context_tree`]: super::context_tree::write_jpeg_transcode_context_tree
+#[cfg(feature = "jpeg-reencoding")]
 pub const JPEG_TRANSCODE_AC_META_CONTEXT: u32 = 0;
 
 /// First DC context ID on the JPEG-transcode tree (lever A).
@@ -446,6 +448,7 @@ pub(crate) fn collect_dc_tokens_wp_with_budget(
 /// (`Predictor::Weighted`, tree split on `wp_max_error` / property 15) at
 /// `speed_tier >= kSquirrel` (cjxl effort 7); this is the per-channel,
 /// subsampling-aware analog we wire into the JPEG path.
+#[cfg(feature = "jpeg-reencoding")]
 pub fn collect_dc_tokens_wp_region_jpeg(
     quant_dc: &[Vec<Vec<i16>>; 3],
     wp_tree: &super::dc_tree_learn::DcTree,
@@ -867,6 +870,7 @@ const TILES_IN_BLOCKS: usize = COLOR_TILE_DIM / BLOCK_DIM;
 /// splits embedded in the tree.
 ///
 /// Pair with [`super::context_tree::write_jpeg_transcode_context_tree`].
+#[cfg(feature = "jpeg-reencoding")]
 #[allow(clippy::too_many_arguments)]
 pub fn collect_ac_metadata_tokens_region_jpeg_transcode(
     region_xsize_blocks: usize,

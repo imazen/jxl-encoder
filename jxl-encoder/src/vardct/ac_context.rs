@@ -242,13 +242,7 @@ impl BlockCtxMap {
         // libjxl `enc_frame.cc:1056-1061`
         let log_dc = ceil_log2_nonzero(total_dc_luma.max(1));
         let log_qt = ceil_log2_nonzero(qt_ac_sum_0_to_4.max(1) as usize);
-        let mut num_thresholds = log_dc - log_qt - 7;
-        if num_thresholds < 1 {
-            num_thresholds = 1;
-        } else if num_thresholds > 7 {
-            num_thresholds = 7;
-        }
-        let num_thresholds = num_thresholds as usize;
+        let num_thresholds = (log_dc - log_qt - 7).clamp(1, 7) as usize;
 
         // libjxl `enc_frame.cc:1062-1070`: cumulative-cut the histogram
         // into num_thresholds+1 quantiles, pushing the boundary value
@@ -256,8 +250,8 @@ impl BlockCtxMap {
         let mut dct1 = Vec::with_capacity(num_thresholds);
         let mut cumsum: usize = 0;
         let mut cut = total_dc_luma / (num_thresholds + 1);
-        for j in 0..2048 {
-            cumsum += dc_counts[j];
+        for (j, &count) in dc_counts.iter().enumerate() {
+            cumsum += count;
             if cumsum > cut {
                 dct1.push(j as i32 - 1025);
                 cut = total_dc_luma * (dct1.len() + 1) / (num_thresholds + 1);

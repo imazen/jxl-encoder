@@ -362,6 +362,7 @@ pub static COMPACT_BLOCK_CONTEXT_MAP: [u8; 39] = [
 /// `Leaf(Zero)` (libjxl `enc_encoding.cc:475-477`); the DC subtree is the
 /// same 34-leaf gradient-fixed BSP we already use. Tokens drop 313 → 243
 /// (-70) and the data-side context count drops 45 → 35.
+#[cfg(feature = "jpeg-reencoding")]
 pub const NUM_JPEG_TRANSCODE_CONTEXT_TREE_TOKENS: usize = 243;
 
 /// Context tree tokens for JPEG-mode lossless transcoding.
@@ -374,6 +375,7 @@ pub const NUM_JPEG_TRANSCODE_CONTEXT_TREE_TOKENS: usize = 243;
 /// the LEFT (single zero-context) leaf and `stream_id <= 1+num_dc_groups`
 /// (DC streams) to the RIGHT (gradient-DC) subtree, matching
 /// [`write_context_tree`].
+#[cfg(feature = "jpeg-reencoding")]
 pub static JPEG_TRANSCODE_CONTEXT_TREE_TOKENS: [(u32, u32);
     NUM_JPEG_TRANSCODE_CONTEXT_TREE_TOKENS] = [
     (1, 2),
@@ -694,9 +696,10 @@ fn build_context_tree_entropy_code(tokens: &[Token]) -> (Vec<u8>, Vec<PrefixCode
 /// The caller MUST emit AC-metadata data tokens with `context = 0` and
 /// `predictor = Zero` (raw values, no gradient/left/etc residuals); see
 /// `dc_coding::collect_ac_metadata_tokens_region_jpeg_transcode` for the
-/// paired collector. DC data tokens use `context = GRADIENT_CONTEXT_LUT[grad]
-/// - DC_CONTEXT_OFFSET_JPEG_TRANSCODE` (= LUT value − 10), matching the BFS
-/// context IDs the new tree produces.
+/// paired collector. DC data tokens use
+/// `context = GRADIENT_CONTEXT_LUT[grad] - DC_CONTEXT_OFFSET_JPEG_TRANSCODE`
+/// (= LUT value − 10), matching the BFS context IDs the new tree produces.
+#[cfg(feature = "jpeg-reencoding")]
 pub fn write_jpeg_transcode_context_tree(
     num_dc_groups: usize,
     writer: &mut BitWriter,
@@ -1254,18 +1257,18 @@ fn write_context_map_from_slice(map: &[u8], jpeg_mode: bool, writer: &mut BitWri
         pick = Pick::HuffmanMtf;
         best_cost = cost_mtf;
     }
-    if let Some(cost) = cost_ans_lz77 {
-        if cost < best_cost {
-            pick = Pick::AnsLz77;
-            best_cost = cost;
-        }
+    if let Some(cost) = cost_ans_lz77
+        && cost < best_cost
+    {
+        pick = Pick::AnsLz77;
+        best_cost = cost;
     }
-    if let Some(sb) = simple_bits {
-        if sb < best_cost {
-            pick = Pick::Simple;
-            // best_cost unused after this branch but kept for clarity.
-            let _ = best_cost;
-        }
+    if let Some(sb) = simple_bits
+        && sb < best_cost
+    {
+        pick = Pick::Simple;
+        // best_cost unused after this branch but kept for clarity.
+        let _ = best_cost;
     }
 
     #[cfg(feature = "debug-tokens")]

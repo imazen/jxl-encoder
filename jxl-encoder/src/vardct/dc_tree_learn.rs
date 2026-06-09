@@ -42,7 +42,7 @@ use super::dc_coding::clamped_gradient;
 /// - 13: top - toptop (FFV1)
 /// - 14: left - leftleft (FFV1)
 /// - 15: wp_max_error (WeightedPredictor max abs error among teW/teN/teNW/teNE)
-///       — `kWPProp = kNumNonrefProperties - 1 = 15` (`context_predict.h:381`).
+///   — `kWPProp = kNumNonrefProperties - 1 = 15` (`context_predict.h:381`).
 const NUM_DC_PROPERTIES: usize = 16;
 
 /// Number of candidate predictors per sample in Variable mode.
@@ -250,8 +250,12 @@ impl DcTreeSamples {
     ) {
         if self.residual_tokens_per_predictor.is_empty() {
             // Lazy-init per-predictor arrays on first variable-mode sample.
-            self.residual_tokens_per_predictor =
-                vec![Vec::with_capacity(self.num_samples + 1); NUM_PREDICTORS_VARIABLE];
+            // NOTE: `vec![Vec::with_capacity(..); N]` clones the template,
+            // and a clone of an empty Vec does NOT retain capacity — every
+            // slot would start at capacity 0. Build each slot explicitly.
+            self.residual_tokens_per_predictor = (0..NUM_PREDICTORS_VARIABLE)
+                .map(|_| Vec::with_capacity(self.num_samples + 1))
+                .collect();
         }
         for (i, &r) in residuals.iter().enumerate() {
             let packed = pack_signed(r);
@@ -1017,18 +1021,18 @@ fn find_best_split_variable(
 ///
 /// libjxl reference: `enc_ma.cc:280-439` (`FindBestSplit`, the per-property
 /// `for prop in 0..num_properties` loop). The libjxl pattern:
-///   1. Pre-compute parent totals once: `counts[pred * max_symbols + tok]` and
-///      `tot_extra_bits[pred]` (one O(N · P) pass).
-///   2. For each property:
-///      a. Bucket samples by property value: `prop_value_used_count[i]`,
-///         `count_increase[i * max_symbols + sym]`,
-///         `extra_bits_increase[i]` per predictor (`enc_ma.cc:140-156`,
-///         `CollectExtraBitsIncrease`).
-///      b. Sweep i = first_used..last_used: transfer bucket `i` from
-///         `counts_above` → `counts_below`, then compute lcost / rcost
-///         from running histograms via `EstimateBits` (`enc_ma.cc:359-403`).
-///   3. The candidate split count is `last_used - first_used` (one per
-///      distinct property value), NOT a fixed quantile grid.
+/// 1. Pre-compute parent totals once: `counts[pred * max_symbols + tok]` and
+///    `tot_extra_bits[pred]` (one O(N · P) pass).
+/// 2. For each property:
+///    a. Bucket samples by property value: `prop_value_used_count[i]`,
+///    `count_increase[i * max_symbols + sym]`,
+///    `extra_bits_increase[i]` per predictor (`enc_ma.cc:140-156`,
+///    `CollectExtraBitsIncrease`).
+///    b. Sweep i = first_used..last_used: transfer bucket `i` from
+///    `counts_above` → `counts_below`, then compute lcost / rcost
+///    from running histograms via `EstimateBits` (`enc_ma.cc:359-403`).
+/// 3. The candidate split count is `last_used - first_used` (one per
+///    distinct property value), NOT a fixed quantile grid.
 ///
 /// **Byte-identical preservation strategy**: this Rust port keeps the SAME
 /// 32-quantile candidate set as the pre-W44-180 code (the `values[split_idx-1]`
@@ -1039,16 +1043,13 @@ fn find_best_split_variable(
 /// computation with the libjxl-style incremental pattern.
 ///
 /// Complexity:
-///   - Pre-W44-180: O(N · P · Q · 2)        — Q=32 quantiles × 2 sides ×
-///                                            re-scan
-///   - W44-180:     O(N · P + N log N + Q · S · P) — sort O(N log N) once,
-///                                            bucket O(N · P) once, then
-///                                            Q EstimateBits calls per side
-///                                            (S = histogram size, typically
-///                                            ≤ ~64 for DC tokens at e8+).
+/// - Pre-W44-180: O(N · P · Q · 2) — Q=32 quantiles × 2 sides × re-scan
+/// - W44-180: O(N · P + N log N + Q · S · P) — sort O(N log N) once,
+///   bucket O(N · P) once, then Q EstimateBits calls per side
+///   (S = histogram size, typically ≤ ~64 for DC tokens at e8+).
 ///
 /// On terminal e8 d=0.5 (W44-175 baseline), `estimate_subset_cost_per_predictor`
-/// + `partition` were 31 % of single-thread CPU. The incremental pattern
+/// plus `partition` were 31 % of single-thread CPU. The incremental pattern
 /// collapses both: histogram building is O(N · P) once per property (vs Q
 /// times in the old code), and partitioning happens only once at the end
 /// for the winning split.

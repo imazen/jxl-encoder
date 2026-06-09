@@ -45,7 +45,10 @@ fn decode_jxl_rs_rgb8(jxl: &[u8]) -> (u32, u32, Vec<u8>) {
         .into_raw(),
     )];
     loop {
-        match decoder.process(&mut input, &mut buffers).expect("jxl-rs decode") {
+        match decoder
+            .process(&mut input, &mut buffers)
+            .expect("jxl-rs decode")
+        {
             ProcessingResult::Complete { .. } => break,
             ProcessingResult::NeedsMoreInput { fallback, .. } => decoder = fallback,
         }
@@ -73,12 +76,16 @@ fn main() {
         let jpeg = std::fs::read(path).expect("read jpeg");
 
         // Byte-exact reconstruction => EXIF orientation + ICC + all metadata preserved.
-        let container = cfg.encode_jpeg_transcode(&jpeg).expect("transcode container");
+        let container = cfg
+            .encode_jpeg_transcode(&jpeg)
+            .expect("transcode container");
         let recon = zenjxl_decoder::reconstruct_jpeg(&container).expect("reconstruct");
         let byte_exact = recon.as_deref() == Some(jpeg.as_slice());
 
         // Reference: original JPEG decoded to raw sRGB8 (image crate).
-        let jref = image::load_from_memory(&jpeg).expect("decode jpeg").to_rgb8();
+        let jref = image::load_from_memory(&jpeg)
+            .expect("decode jpeg")
+            .to_rgb8();
         let (jw, jh) = jref.dimensions();
 
         // Decode-only: transcoded JXL codestream decoded to sRGB8 via jxl-rs.

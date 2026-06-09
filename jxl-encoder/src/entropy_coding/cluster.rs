@@ -44,10 +44,12 @@ pub(crate) fn accurate_ans_cost_enabled() -> bool {
 /// its lifetime. Used by the JPEG transcode encoder around its DC + AC
 /// entropy-code builds (the clustering runs synchronously on the calling
 /// thread, so the thread-local reliably covers the kBest pair-merge).
-#[cfg(feature = "std")]
+/// Only the `jpeg-reencoding` path constructs one, so the guard is gated
+/// with it (the thread-local + env override stay available regardless).
+#[cfg(all(feature = "std", feature = "jpeg-reencoding"))]
 pub(crate) struct AccurateAnsCostGuard(bool);
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "jpeg-reencoding"))]
 impl AccurateAnsCostGuard {
     pub(crate) fn new() -> Self {
         let prev = ACCURATE_ANS_COST.with(|c| c.replace(true));
@@ -55,7 +57,7 @@ impl AccurateAnsCostGuard {
     }
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "jpeg-reencoding"))]
 impl Drop for AccurateAnsCostGuard {
     fn drop(&mut self) {
         ACCURATE_ANS_COST.with(|c| c.set(self.0));
@@ -501,13 +503,13 @@ fn ans_population_cost(h: &Histogram) -> f32 {
         accurate_ans_cost_enabled() || std::env::var_os("JXL_ACCURATE_ANS_COST").is_some();
     #[cfg(not(feature = "std"))]
     let accurate = accurate_ans_cost_enabled();
-    if accurate {
-        if let Ok(enc) = super::ans::ANSEncodingHistogram::from_histogram(
+    if accurate
+        && let Ok(enc) = super::ans::ANSEncodingHistogram::from_histogram(
             h,
             super::ans::ANSHistogramStrategy::Fast,
-        ) {
-            return enc.cost;
-        }
+        )
+    {
+        return enc.cost;
     }
 
     // Data cost (entropy)

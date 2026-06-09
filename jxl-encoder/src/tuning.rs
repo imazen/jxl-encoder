@@ -676,6 +676,7 @@ pub mod coupling {
     /// reparameterises `(p1, p2)` along the linear ridge:
     /// - `p1(s) = DEFAULT_P1 + (P1_RIDGE_MAX - DEFAULT_P1) * (1 - 2s)`
     /// - `p2(s) = DEFAULT_P2 + (P2_RIDGE_MAX - DEFAULT_P2) * (1 - 2s)`
+    ///
     /// At `s = 0.5` → `(DEFAULT_P1, DEFAULT_P2) = (85, 95)` (default).
     /// At `s = 0.0` → `(192.86, 108.15)` — loosest (lowest smoothness
     /// bias, admit fewer images to screen path).
@@ -731,6 +732,7 @@ pub mod coupling {
     /// - `a_eff = 1 + (a - 1) * P3_P6_SATURATION_STRENGTH` for `a > 1.0`
     /// - `p3(a) = DEFAULT_P3 * a_eff`
     /// - `p6(a) = DEFAULT_P6 * a_eff`
+    ///
     /// At `a = 1.0` → `(4.0, 3.0)` (default). At `a = 0.0` → `(0, 0)`
     /// (zenjxl screen lifts disabled — but the original `RuntimeTuning`
     /// fields are physical seed scales, so callers should clamp `a ≥ 0`).
