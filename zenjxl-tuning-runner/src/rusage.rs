@@ -25,8 +25,10 @@
 //! - On macOS, `ru_maxrss` is in BYTES (we divide by 1024 * 1024).
 //!   We currently target Linux fleets only (Dockerfile is
 //!   `ubuntu:24.04`); macOS readings will be 1024× smaller.
-//! - Windows: not currently supported; `getrusage` doesn't exist
-//!   there. The Linux fleet is the only target for now.
+//! - Windows / other non-unix: `getrusage` doesn't exist there, so
+//!   `snapshot()` compiles to a stub returning all-zero readings.
+//!   The Linux fleet is the only measurement target; the stub exists
+//!   so `cargo check --workspace` stays green on every host.
 
 /// Snapshot of resource usage at one point in time.
 #[derive(Clone, Copy, Debug, Default)]
@@ -38,6 +40,16 @@ pub struct RUsageDelta {
 
 impl RUsageDelta {
     /// Capture the current `RUSAGE_SELF` reading.
+    ///
+    /// Non-unix targets have no `getrusage`; they get all-zero
+    /// readings (sweep columns render as 0, never garbage).
+    #[cfg(not(unix))]
+    pub fn snapshot() -> Self {
+        Self::default()
+    }
+
+    /// Capture the current `RUSAGE_SELF` reading.
+    #[cfg(unix)]
     #[allow(unsafe_code)] // single FFI call; see `# Safety` comment below
     pub fn snapshot() -> Self {
         // SAFETY: getrusage is a syscall wrapper; passing a valid
@@ -111,7 +123,9 @@ pub struct RUsageDeltaResolved {
     pub peak_rss_mb: u32,
 }
 
-#[cfg(test)]
+// The assertions require a real getrusage; the non-unix stub
+// legitimately returns zeros.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

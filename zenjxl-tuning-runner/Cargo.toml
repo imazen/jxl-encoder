@@ -72,9 +72,6 @@ arrow-array = "53"
 arrow-schema = "53"
 parquet = { version = "53", default-features = false, features = ["arrow", "zstd"] }
 
-# CPU-rusage timing.
-libc = "0.2"
-
 # Optional CPU metrics (only pulled in with --features cpu-metrics).
 # Pinned versions match what `jxl-encoder/Cargo.toml` dev-deps use so
 # `cargo update` doesn't have to resolve two trees.
@@ -89,6 +86,11 @@ fast-ssim2 = { version = "0.8.0", features = ["imgref"], optional = true }
 imgref = { version = "1.10", optional = true }
 rgb = { version = "0.8", optional = true }
 yuvxyb = { version = "0.5", optional = true }
+
+# CPU-rusage timing (unix-only syscall; non-unix gets a zero-reading
+# stub in src/rusage.rs so the workspace checks everywhere).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.180"
 
 [dev-dependencies]
 tempfile = "3"
