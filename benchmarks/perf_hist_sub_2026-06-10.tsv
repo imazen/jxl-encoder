@@ -1,0 +1,10 @@
+cell	image	args	mode	wall_ms_median_of_3	find_best_split_cpu_pct	find_best_predictor_cpu_pct	other_tree_learn_cpu_pct	perf_samples	gate_cell	verdict
+imac_dark_e5_d1.0	gb82-sc/imac_dark.png	-e 5 -d 1.0	lossy	892	3.31	0.02	-	14015	yes	max_win_lt_3.3pct
+terminal_e6_d6	gb82-sc/terminal.png	-e 6 -d 6	lossy	583	1.48	0.00	-	9544	yes	max_win_lt_1.5pct
+clic097_e7_d1.0	clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png	-e 7 -d 1.0	lossy	249	0.00	0.00	-	5565	yes	max_win_approx_0
+1418519_e8_d4.0	CID22/CID22-512/validation/1418519.png	-e 8 -d 4.0	lossy	225	0.00	0.00	-	4815	yes	max_win_approx_0
+windows95_e5_d0.5	gb82-sc/windows95.png	-e 5 -d 0.5	lossy	75	0.42	0.00	-	2969	yes	max_win_approx_0
+clic097_e7_lossless	clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png	--lossless -e 7	lossless	2005	27.19	0.07	collect_residuals=14.35 gather_samples=6.66 wp_predict=5.17	16020	yes	win_cell_12_to_17pct_plausible
+imac_dark_e7_lossless	gb82-sc/imac_dark.png	--lossless -e 7	lossless	3728	6.87	0.02	collect_residuals=22.65 gather_samples=15.93 wp_predict=13.09	53813	yes	max_win_lt_6.9pct
+terminal_e5_d1.0	gb82-sc/terminal.png	-e 5 -d 1.0	lossy	308	3.87	0.02	-	3921	brief_profile_cell	max_win_lt_3.9pct
+terminal_e7_lossless	gb82-sc/terminal.png	--lossless -e 7	lossless	865	1.43	0.00	collect_residuals=21.82 gather_samples=17.38 wp_predict=14.65	14447	context	max_win_lt_1.5pct

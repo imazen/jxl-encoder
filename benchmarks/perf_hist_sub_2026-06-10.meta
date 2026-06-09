@@ -1,0 +1,161 @@
+# PERF-HIST-SUB (issue #64 CHUNK 1) — honest-stop profiling, 2026-06-10
+#
+# Outcome: HONEST-STOP per the chunk brief's own trigger. No code change ships
+# in this chunk. The histogram-subtraction optimization is NOT dead — its
+# target has MOVED to the lossless-photo path (see "Next chunk" below).
+#
+# Base commit: 551eb7b8b1d9 (main@origin at time of measurement)
+# Hostname: lilith (AMD Ryzen 9 7950X, 128 GB, WSL2)
+# Binary: target/release/cjxl-rs, default CLI features
+#   (= jxl_encoder/std + butteraugli-loop + parallel; parallel-tree-learning
+#   NOT enabled — it is opt-in for both lib and CLI). No -C target-cpu=native.
+# Profiler: perf record (cycles:Pu, flat / no call graph), perf report
+#   --no-children self-percentages, perf annotate for intra-function split.
+# Wall: median of 3 runs per cell, date +%s%N bracketing, same binary.
+#
+# Commands (per cell):
+#   perf record -o <data> ./target/release/cjxl-rs <args> <corpus-image> out.jxl
+#   perf report -i <data> --stdio --no-children --percent-limit 0.01
+#   3x timed runs for wall_ms_median_of_3
+#
+# ── The brief's honest-stop trigger fired ──────────────────────────────────
+#
+# Brief: "profile e5 d=1.0 encodes of terminal.png and imac_dark.png to
+# confirm where histogram building actually costs. If its share is under
+# ~10% of wall, write the honest-stop finding."
+#
+#   terminal  e5 d=1.0 : find_best_split self = 3.87% of CPU samples
+#   imac_dark e5 d=1.0 : find_best_split self = 3.31% of CPU samples
+#
+# Both are far under 10%. Issue #64's motivating numbers (46-78% of CPU at
+# e5/e6/e7 on large screenshots) are the PRE-W44-171 profile: W44-171 gated
+# VarDCT DC kLearn to effort >= 8 (19x speedup on imac_dark e5) and W44-172
+# narrowed e8 to Predictor::Best. Post-fix, the modular tree learner at
+# e5-e7 lossy only runs for the patches reference frame, which is small.
+# find_best_predictor is <=0.07% everywhere (root-only call).
+#
+# ── Why gate (e) is unachievable on the 7-cell set ─────────────────────────
+#
+# Gate (e): ">=10% wall reduction on >=2 cells". Histogram subtraction only
+# removes work inside find_best_split (+ the per-split
+# compute_predictor_entropy pair, <0.5% everywhere). Its self-share is a
+# hard ceiling on the achievable whole-encode win per cell:
+#
+#   cell                     find_best_split self%   ceiling on wall win
+#   imac_dark  e5 d=1.0      3.31%                   < 3.3%
+#   terminal   e6 d=6        1.48%                   < 1.5%
+#   clic097    e7 d=1.0      0.00%                   ~0
+#   1418519    e8 d=4.0      0.00%  (buttloop-bound) ~0
+#   windows95  e5 d=0.5      0.42%                   ~0
+#   clic097    e7 lossless   27.19%                  12-17% realistic  <- ONLY win cell
+#   imac_dark  e7 lossless   6.87%                   < 6.9%
+#
+# Even at infinite speedup of the entire function, exactly ONE of the seven
+# gate cells can cross 10%. ">=10% on >=2 cells" cannot be met by ANY
+# tree_learn.rs change on this cell set. Shipping the implementation against
+# these gates would force either gate-relaxation or false-completion; the
+# brief prescribes honest-stop instead.
+#
+# Note on shares: percentages are CPU-sample shares summed across threads.
+# Without parallel-tree-learning the split search inside one tree is
+# serial while gather / dedup / collect are rayon-parallel (per-group tree
+# builds may still overlap each other via 8588e0c), so on the lossless
+# cells find_best_split's WALL share is likely >= its CPU share. Either
+# way the CPU share bounds the lossy cells: even x2 stays under 10%.
+#
+# ── Where the optimization actually lives now (the finding) ────────────────
+#
+# clic2025-1024/097cb426 e7 lossless (1024x1024 photo, default features):
+#   find_best_split self = 27.19% of CPU — by far the top symbol.
+#   perf annotate of find_best_split (flat_clic_lossless.data):
+#     ~81% of its samples in the per-(prop,pred) per-sample accumulate loop
+#       (tree_learn.rs:5990-5995: ci_slice[tok & MASK] += sc; eb_sum += ...;
+#        hottest insn: movzbl ebits[rel_off] at 42.66% — cache-missy
+#        bucket-scattered byte loads),
+#     ~6% in the per-property bmin/bmax scan + counting-sort prep
+#       (tree_learn.rs:5891-5938),
+#     remainder: sweep + jxl_simd::estimate_bits_u32 (shows separately,
+#       2.85% at terminal e5; not in clic-lossless top symbols).
+#   => ~87% of find_best_split is per-sample work that parent-histogram
+#      subtraction can remove for the larger child of every split
+#      (build smaller side, derive larger = parent - smaller; integer
+#      counts/sums, exact, byte-identical).
+#
+# Screenshots lossless are NOT split-bound: terminal e7 lossless has
+# find_best_split at 1.43%, imac_dark at 6.87% — heavy dedup collapses
+# unique-sample counts, so the cost lives in collect_residuals (21.8% /
+# 22.7%), gather_samples (17.4% / 15.9%), and WeightedPredictorState
+# (14.7% / 13.1%) instead. Photos dedup poorly (~1.4x), keeping n large.
+#
+# ── Next chunk (PERF-HIST-SUB-LOSSLESS) — plan with file:line specifics ────
+#
+# Same XGBoost/LightGBM trick, re-scoped to where it pays:
+#   bench set = lossless PHOTOS (e.g. 5x CLIC-1024 at e7 + e9, 1T and 8T
+#   with parallel-tree-learning), gate >=10% on >=2 of those cells; the
+#   7-cell lossy set above becomes the no-regression guard (>2% regression
+#   on any cell fails).
+# Implementation sketch validated against current code during this probe:
+#   1. Per-node tensor = per-(prop in params.properties, pred, ABSOLUTE
+#      bucket, token) u32 counts + per-(prop,pred,bucket) u64 ebit-sums +
+#      per-(prop,bucket) u32 weighted counts + u32 unique counts. All four
+#      are additive over disjoint sample sets => exact subtraction.
+#      Tight sizing: props x preds x max_buckets x histogram_size u32
+#      (e7 photo: 7 x 14 x 97 x ~48 x 4 B ~= 1.8 MB per cached level, NOT
+#      HISTO_PADDED-strided).
+#   2. find_best_split / find_best_split_borrowed (tree_learn.rs:5784 /
+#      :4339) gain an Option<&NodeTensor> input + optional tensor output;
+#      with a tensor, the per-sample loops (:5891-5938 counting sort,
+#      :5978-5997 accumulate) are skipped entirely — bmin/bmax from first/
+#      last nonzero unique count, bucket_starts by prefix sum, left_count
+#      from unique counts; sweep unchanged (reads tensor rows).
+#   3. Engines: sequential stack loop (compute_best_tree_with_budget
+#      :3338 while-let) + build_subtree_sequential_borrowed (:4777) carry a
+#      parent-tensor stack; build_subtree_recursive_parallel_borrowed
+#      (:4919) builds the smaller child's tensor before parallel_join and
+#      moves one tensor into each fork (clean per-branch ownership).
+#      Owned small-image fallback path (:3208): documented full-rebuild.
+#   4. Profitability gate per split: derive only when BOTH children have
+#      weighted_total >= 2048 (full pred set + full prop set at :5830/:5871,
+#      so parent/child tensor coverage is identical) AND n_larger x num_pred
+#      exceeds tensor_subtract cost (props x preds x buckets x histo ops);
+#      else children rebuild from samples (existing path, untouched).
+#      Memory bound: tensors live only while a node's children are pending
+#      (free parent immediately after deriving both children) => active-
+#      branch depth x ~2 MB, and the >=2048 gate caps effective depth at
+#      ~log2(n/2048) (e7 photo: ~8 levels, ~15 MB transient, vs the 12 MB
+#      SplitWorkspace already cached per thread).
+#   5. Free byte-identical rider: BestSplit (tree_learn.rs:5751) can carry
+#      best_l_cost/best_r_cost of the winning threshold; the caller's
+#      compute_predictor_entropy recompute (:3428-3443 sequential loop,
+#      :3163-3178 parallel root, :4867-4882 sequential borrowed,
+#      :5010-5025 recursive borrowed) returns bitwise-identical f64 (same
+#      u32 histogram, same u64 ebits, same estimate_bits) — saves
+#      2 x O(n_side) per split on every engine. NOTE: the comment at :3422
+#      ("eval subset ... scaled by cost_scale") is stale — cost_scale does
+#      not exist in the file; the sweep evaluates every sample in range.
+#      Verify with hash-locks before relying on the rider.
+#   6. Byte-identity proof obligations: u32/u64 integer subtraction is
+#      exact; estimate_bits consumes identical histograms => identical f64
+#      costs => identical splits. Hash-locks (36/36) + libjxl byte-locks +
+#      lossless roundtrip suite + a new unit test: random samples, build
+#      tensors for parent and both children from samples, assert
+#      child_derived == child_built elementwise.
+#
+# Estimated win for the re-scoped chunk: 12-17% wall on lossless photos at
+# 1T (find_best_split 27.2% x ~87% per-sample x >=50% removed, with the
+# wall-vs-CPU-share tailwind); this directly attacks the documented 1.16x
+# lossless wall gap vs cjxl e7 (CLAUDE.md "Lossless Compression Status").
+#
+# Raw perf data (not committed; regenerate with commands above):
+#   /tmp/histsub/flat_{terminal_e5,imac_dark_e5,terminal_e6d6,
+#   clic_e7d1_lossy,1418519_e8,windows95_e5d05,clic_lossless,
+#   imacdark_lossless,terminal_lossless}.data
+#   + dwarf call-graph recordings perf_{terminal,imac_dark}_e5.data
+#   + annotate dump /tmp/histsub/annotate_fbs.txt
+#
+# Peak RSS (context, /usr/bin/time -v during dwarf runs):
+#   terminal e5 d=1.0: 121.5 MB; imac_dark e5 d=1.0: 415.4 MB.
+#
+# W44-180 (dc_tree_learn.rs incremental sweep histograms) was NOT touched
+# and is orthogonal: it optimizes the threshold sweep within one node;
+# histogram subtraction reuses tensors across parent->child nodes.
