@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Changed
+- **Consolidated the 90 integration-test files into a single `it` binary** (693576ec).
+  Every former `tests/<name>.rs` moved to `tests/it/<name>.rs` and is now a submodule of
+  one `tests/it/main.rs` target instead of compiling+linking as 90 separate test binaries —
+  each former file linked the whole crate + dependency graph on its own, so this turns ~90
+  link steps into one. Measured `cargo test -p jxl-encoder --tests --no-run` (rebuild lib +
+  test binaries, 3-run median, default features): debug 61s → 38s (~38% faster), release
+  54s → 37s (~31% faster); test census identical (2075 debug / 2073 release listed tests,
+  `#[ignore]` count 223 unchanged). Feature-gated files keep their own `#![cfg(...)]`, so
+  they still compile to an empty module when off. Select a former target with a module-path
+  filter, e.g. `cargo test -p jxl-encoder --test it clic2025::test_rd_regression`; the
+  `--test <name>` selectors in `justfile`, `nightly.yml`, and operational docs were updated
+  to `--test it <name>`.
+
 ### Fixed
 - **JPEG transcode: reject chroma sampling factors > 2 instead of panicking.**
   A JPEG with H/V sampling > 2 (4:1:1, the odd 3×N, …) can't be represented in
