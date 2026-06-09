@@ -136,12 +136,15 @@ jobs:
 
       # Cross-compile uses no-default-features to avoid butteraugli's
       # linear-srgb dependency issues on some cross targets.
+      # zenjxl-tuning-runner is a Linux-fleet-only sweep binary; its
+      # parquet/zstd C deps don't build on the old cross images, so it
+      # is excluded here (native jobs still build + test it).
       - name: Build (cross)
-        run: cross build --workspace --release --no-default-features --features "std" --target ${{ matrix.target }}
+        run: cross build --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --target ${{ matrix.target }}
 
       - name: Test lib (cross/QEMU)
         if: matrix.run_tests
-        run: cross test --workspace --release --no-default-features --features "std" --lib --target ${{ matrix.target }}
+        run: cross test --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --lib --target ${{ matrix.target }}
 
   # ==========================================================================
   # WASM Runtime Tests (wasm32-wasip1 + simd128)
@@ -176,11 +179,13 @@ jobs:
           prefix-key: v1-rust
 
       # WASM uses no-default-features: butteraugli and other optional deps
-      # don't support wasm32 targets.
+      # don't support wasm32 targets. zenjxl-tuning-runner is excluded:
+      # its parquet dependency pulls zstd-sys (C), which has no
+      # wasm32-wasip1 build.
       - name: Build for WASM
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
-        run: cargo build --workspace --release --no-default-features --features "std" --target wasm32-wasip1
+        run: cargo build --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --target wasm32-wasip1
 
       - name: Test jxl-encoder-simd (SIMD-vs-scalar tests)
         env:
@@ -277,8 +282,19 @@ jobs:
         with:
           components: rustfmt
 
+      # NOT `cargo fmt --all`: --all also formats local path-dependency
+      # repos (the cloned siblings), which both fails on their layout
+      # quirks and gates our CI on their formatting state. Scope to this
+      # workspace's own members.
       - name: Format check
-        run: cargo fmt --all -- --check
+        run: >-
+          cargo fmt
+          -p jxl-encoder
+          -p jxl-encoder-cli
+          -p jxl-encoder-macros
+          -p jxl-encoder-simd
+          -p zenjxl-tuning-runner
+          -- --check
 
   msrv:
     name: MSRV

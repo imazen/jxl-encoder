@@ -1,37 +1,43 @@
 name: Clone sibling path-dep repos
 description: >
-  Clone the imazen sibling repos that the workspace Cargo.toml references via
-  local paths. Cargo refuses to even parse the workspace manifest unless every
-  path-dep manifest can be loaded — true even for --lib builds, `cargo fmt
-  --check`, and `cargo clippy`. Runs on Linux, macOS, and Windows via bash
-  (Git Bash on Windows). Also writes a Cross.toml override so builds invoked
-  through `cross` mount the sibling layout into the container.
+  Clone the sibling repos that the workspace Cargo.toml (and the workspaces it
+  path-references, transitively) need on disk. Cargo refuses to even parse the
+  workspace manifest unless every path-dep manifest can be loaded — true even
+  for --lib builds, `cargo fmt --check`, and `cargo clippy`. Worse, loading any
+  member of a sibling WORKSPACE (e.g. zenmetrics/crates/cvvdp) loads that whole
+  workspace, so every member of every referenced sibling workspace must also
+  resolve its own path deps. The list below is the transitive closure computed
+  from the local repo graph (2026-06-09); regenerate with a path-dep walk when
+  a sibling gains a new path dependency (the symptom is `cargo metadata` dying
+  with "failed to load manifest for workspace member <sibling>/crates/<x>").
 
-  Currently cloned (parent of the workspace unless noted):
-    - imazen/zenjpeg → ../zenjpeg (provides ../zenjpeg/zenjpeg referenced by
-      [patch.crates-io] in workspace Cargo.toml). Required because zenjpeg
-      0.7.1 / 0.8.3 on crates.io use the pre-magetypes-0.9.16 single-arg
-      `load_8x8(block)` signature and our magetypes ^0.9.23 floor requires
-      `load_8x8(token, block)`. The 0.8.4 fix is unpublished pending a
-      coordinated zenjpeg release.
-    - imazen/zenanalyze → ../zenanalyze (zenjpeg's workspace Cargo.toml
-      declares `zenanalyze = { path = "../zenanalyze", version = "0.1" }`,
-      so Cargo can't even parse zenjpeg's manifest without it on disk).
-    - imazen/zenjxl-decoder → ../zenjxl-decoder (DEV-dependency of the JBRD
-      round-trip conformance gate; provides ../zenjxl-decoder/zenjxl-decoder).
-    - imazen/zenmetrics → ../zenmetrics (multi-metric perceptual backend,
-      2026-05-25). The workspace [patch.crates-io] pins crates/{cvvdp-gpu,
-      butteraugli-gpu,zensim-gpu} and the jxl-encoder member directly path-deps
-      crates/cvvdp (optional `cvvdp-cpu`). cvvdp's manifest must load even for
-      --lib / clippy — this is the #66 CI failure this clone fixes.
-    - imazen/zensim → ../zensim (pinned by [patch.crates-io] `zensim =
-      ../zensim/zensim`; the patch manifest must load during resolution).
-    - imazen/zencodec → ../zencodec (pulled transitively — zenmetrics/zensim
-      members feature-pull zenjpeg/zenjxl with the `zencodec` feature, which
-      resolves to ../zencodec).
-    - imazen/butteraugli → ../../butteraugli (GRANDPARENT of the workspace).
-      Pinned at `../../butteraugli/butteraugli`, so it lives one level above
-      the others.
+  Runs on Linux, macOS, and Windows via bash (Git Bash on Windows). Also writes
+  a Cross.toml pre-build hook so builds invoked through `cross` re-clone the
+  sibling layout inside the container.
+
+  Direct dependencies of this workspace (parent of the workspace unless noted):
+    - imazen/zenjpeg → ../zenjpeg ([patch.crates-io] ../zenjpeg/zenjpeg;
+      crates.io zenjpeg predates the magetypes token-passing API we require).
+    - imazen/zenjxl-decoder → ../zenjxl-decoder (dev-dep of the JBRD
+      round-trip conformance gate).
+    - imazen/zenmetrics → ../zenmetrics (multi-metric perceptual backend:
+      [patch.crates-io] pins crates/{cvvdp-gpu,butteraugli-gpu,zensim-gpu};
+      jxl-encoder member path-deps crates/cvvdp — the #66 failure).
+    - imazen/zensim → ../zensim ([patch.crates-io] zensim = ../zensim/zensim).
+    - imazen/butteraugli → ../../butteraugli (GRANDPARENT level; pinned at
+      ../../butteraugli/butteraugli).
+
+  Transitive (needed only so the sibling WORKSPACES parse):
+    - imazen/zenanalyze → ../zenanalyze (zenjpeg + zenavif + zenmetrics)
+    - imazen/zencodec → ../zencodec (feature-pulled by zenmetrics/zensim)
+    - imazen/zenpng, imazen/zenwebp, imazen/zenavif, imazen/zenjxl
+      → ../{zenpng,zenwebp,zenavif,zenjxl} (zenmetrics + zensim workspaces)
+    - imazen/ultrahdr → ../ultrahdr (zenmetrics/crates/zenhdr-corpus)
+    - imazen/heic → ../heic (zenmetrics/crates/zenhdr-corpus)
+    - imazen/zentone → ../zentone (ultrahdr/ultrahdr-core)
+    - imazen/fast-ssim2 → ../fast-ssim2 (zenmetrics/crates/zen-metrics-cli)
+    - lilith/dssim → ../../dssim (GRANDPARENT level; zenmetrics workspace
+      pins ../../dssim/dssim-core)
 
 runs:
   using: composite
@@ -41,51 +47,36 @@ runs:
       run: |
         set -euxo pipefail
         # Layout (relative to GITHUB_WORKSPACE):
-        #   ../zenjpeg    -> imazen/zenjpeg (workspace Cargo.toml path-patches
-        #                                    ../zenjpeg/zenjpeg)
-        #   ../zenanalyze -> imazen/zenanalyze (zenjpeg's workspace Cargo.toml
-        #                                       declares a `path = "../zenanalyze"`
-        #                                       dep, required for Cargo to parse
-        #                                       zenjpeg's manifest)
+        #   parent      = sibling repos referenced as ../X
+        #   grandparent = repos referenced as ../../X (butteraugli, dssim)
         parent="$(dirname "$GITHUB_WORKSPACE")"
+        grandparent="$(dirname "$parent")"
         clone_if_missing() {
-          local url="$1" dst="$2" branch="${3:-}"
+          local url="$1" dst="$2"
           if [ -d "$dst/.git" ]; then
             echo "Already present: $dst"
             return 0
           fi
-          if [ -n "$branch" ]; then
-            git clone --depth 1 --branch "$branch" "$url" "$dst"
-          else
-            git clone --depth 1 "$url" "$dst"
-          fi
+          git clone --depth 1 "$url" "$dst"
         }
-        clone_if_missing https://github.com/imazen/zenjpeg "$parent/zenjpeg"
-        clone_if_missing https://github.com/imazen/zenanalyze "$parent/zenanalyze"
-        # zenjxl-decoder is a DEV-dependency (path-patched) of the JBRD
-        # round-trip conformance gate (tests/jbrd_roundtrip_conformance.rs). It
-        # is self-contained (only its own workspace members), so cloning the
-        # repo is sufficient. Provides ../zenjxl-decoder/zenjxl-decoder.
+        # Direct path deps of this workspace
+        clone_if_missing https://github.com/imazen/zenjpeg       "$parent/zenjpeg"
         clone_if_missing https://github.com/imazen/zenjxl-decoder "$parent/zenjxl-decoder"
-        # zenmetrics provides the multi-metric perceptual-backend crates the
-        # workspace [patch.crates-io] pins (crates/{cvvdp-gpu,butteraugli-gpu,
-        # zensim-gpu,zenmetrics-gpu-core}) AND crates/cvvdp, a direct optional
-        # dep of the jxl-encoder member. cvvdp's manifest must load even for a
-        # --lib/clippy build — without this the workspace manifest won't parse
-        # (the #66 CI failure). The GPU crates stay manifest-only on the default
-        # build (opt-in features), so cloning is enough; nothing extra compiles.
-        clone_if_missing https://github.com/imazen/zenmetrics "$parent/zenmetrics"
-        # zensim is pinned by [patch.crates-io] (`zensim = ../zensim/zensim`);
-        # its manifest must load during patch resolution even though the
-        # default build never compiles it.
-        clone_if_missing https://github.com/imazen/zensim "$parent/zensim"
-        # zencodec is pulled transitively (zenmetrics/zensim members feature-pull
-        # zenjpeg/zenjxl with the `zencodec` feature) and resolves to ../zencodec.
-        clone_if_missing https://github.com/imazen/zencodec "$parent/zencodec"
-        # butteraugli is pinned at ../../butteraugli/butteraugli — the GRANDPARENT
-        # of the workspace — so it goes one directory above the others.
-        grandparent="$(dirname "$parent")"
-        clone_if_missing https://github.com/imazen/butteraugli "$grandparent/butteraugli"
+        clone_if_missing https://github.com/imazen/zenmetrics    "$parent/zenmetrics"
+        clone_if_missing https://github.com/imazen/zensim        "$parent/zensim"
+        clone_if_missing https://github.com/imazen/butteraugli   "$grandparent/butteraugli"
+        # Transitive: sibling workspaces' own path deps
+        clone_if_missing https://github.com/imazen/zenanalyze    "$parent/zenanalyze"
+        clone_if_missing https://github.com/imazen/zencodec      "$parent/zencodec"
+        clone_if_missing https://github.com/imazen/zenpng        "$parent/zenpng"
+        clone_if_missing https://github.com/imazen/zenwebp       "$parent/zenwebp"
+        clone_if_missing https://github.com/imazen/zenavif       "$parent/zenavif"
+        clone_if_missing https://github.com/imazen/zenjxl        "$parent/zenjxl"
+        clone_if_missing https://github.com/imazen/ultrahdr      "$parent/ultrahdr"
+        clone_if_missing https://github.com/imazen/heic          "$parent/heic"
+        clone_if_missing https://github.com/imazen/zentone       "$parent/zentone"
+        clone_if_missing https://github.com/imazen/fast-ssim2    "$parent/fast-ssim2"
+        clone_if_missing https://github.com/lilith/dssim         "$grandparent/dssim"
 
     - name: Append sibling-clone pre-build hook to Cross.toml
       shell: bash
@@ -102,7 +93,8 @@ runs:
         # append a [build] pre-build hook that clones the siblings into the
         # paths the workspace Cargo.toml's [patch.crates-io] expects (the
         # workspace is mounted at /project, so `../zenjpeg/zenjpeg` resolves
-        # to `/zenjpeg/zenjpeg` inside the container).
+        # to `/zenjpeg/zenjpeg` and `../../dssim` to `/dssim` — both parent
+        # and grandparent levels collapse onto the container root).
         ws="$GITHUB_WORKSPACE"
         cross_toml="$ws/Cross.toml"
         marker="# BEGIN clone-siblings pre-build hook"
@@ -115,21 +107,29 @@ runs:
         printf '%s\n' '' \
           '# BEGIN clone-siblings pre-build hook' \
           '# Appended by .github/actions/clone-siblings during CI.' \
-          '# Clones the imazen sibling repos the workspace [patch.crates-io]'  \
-          '# expects. Workspace is mounted at /project, so `../X` resolves to'  \
-          '# `/X` and `../../butteraugli` resolves to `/butteraugli`. zenmetrics'  \
-          '# (cvvdp/cvvdp-gpu/...), zensim, zencodec and butteraugli were added'  \
-          '# for the multi-metric perceptual backend (fixes #66).'  \
+          '# Clones the sibling repos the workspace (and the sibling' \
+          '# workspaces it references) need on disk. Workspace is mounted' \
+          '# at /project, so `../X` and `../../X` both resolve under `/`.' \
           '[build]' \
           'pre-build = [' \
           '    "apt-get update && apt-get install -y --no-install-recommends git ca-certificates",' \
+          '    "ln -s /project /jxl-encoder",' \
           '    "git clone --depth 1 https://github.com/imazen/zenjpeg /zenjpeg",' \
-          '    "git clone --depth 1 https://github.com/imazen/zenanalyze /zenanalyze",' \
           '    "git clone --depth 1 https://github.com/imazen/zenjxl-decoder /zenjxl-decoder",' \
           '    "git clone --depth 1 https://github.com/imazen/zenmetrics /zenmetrics",' \
           '    "git clone --depth 1 https://github.com/imazen/zensim /zensim",' \
-          '    "git clone --depth 1 https://github.com/imazen/zencodec /zencodec",' \
           '    "git clone --depth 1 https://github.com/imazen/butteraugli /butteraugli",' \
+          '    "git clone --depth 1 https://github.com/imazen/zenanalyze /zenanalyze",' \
+          '    "git clone --depth 1 https://github.com/imazen/zencodec /zencodec",' \
+          '    "git clone --depth 1 https://github.com/imazen/zenpng /zenpng",' \
+          '    "git clone --depth 1 https://github.com/imazen/zenwebp /zenwebp",' \
+          '    "git clone --depth 1 https://github.com/imazen/zenavif /zenavif",' \
+          '    "git clone --depth 1 https://github.com/imazen/zenjxl /zenjxl",' \
+          '    "git clone --depth 1 https://github.com/imazen/ultrahdr /ultrahdr",' \
+          '    "git clone --depth 1 https://github.com/imazen/heic /heic",' \
+          '    "git clone --depth 1 https://github.com/imazen/zentone /zentone",' \
+          '    "git clone --depth 1 https://github.com/imazen/fast-ssim2 /fast-ssim2",' \
+          '    "git clone --depth 1 https://github.com/lilith/dssim /dssim",' \
           ']' \
           '# END clone-siblings pre-build hook' \
           >> "$cross_toml"
