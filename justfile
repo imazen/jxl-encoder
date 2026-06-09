@@ -2,11 +2,11 @@
 
 # Run RD regression test (encodes 6 images at d=0.25, d=0.5, d=1.0)
 rd-regression:
-    cargo test -p jxl-encoder --test clic2025 test_rd_regression -- --ignored --nocapture
+    cargo test -p jxl-encoder --test it clic2025::test_rd_regression -- --ignored --nocapture
 
 # Run high-distance RD regression test (d=2.0 and d=3.0, exercises DCT32x32/DCT64x64)
 rd-regression-hd:
-    cargo test -p jxl-encoder --test clic2025 test_rd_regression_high_distance -- --ignored --nocapture
+    cargo test -p jxl-encoder --test it clic2025::test_rd_regression_high_distance -- --ignored --nocapture
 
 # Compare cjxl-rs vs libwebp on CID22 validation set (41 images x 4 quality points)
 cid22-vs-webp:
@@ -95,11 +95,11 @@ rd-compare:
 # Regenerate hash lock sidecar file after intentional encoding changes
 update-hashes:
     rm -f jxl_encoder/tests/hash_lock_expected.txt
-    UPDATE_HASHES=1 cargo test --test hash_lock_features -- --test-threads=1
+    UPDATE_HASHES=1 cargo test --test it hash_lock_features -- --test-threads=1
 
 # Compare quality vs cjxl (uses committed reference CSV, ~2 min)
 quality-compare:
-    cargo test -p jxl-encoder --test quality_compare --release -- --ignored --nocapture
+    cargo test -p jxl-encoder --test it quality_compare --release -- --ignored --nocapture
 
 # Quick comparison: 10 CLIC + 5 CID22 + all screenshots (~5 min)
 rd-compare-quick:
@@ -109,7 +109,7 @@ rd-compare-quick:
 
 # Compare lossless compression vs cjxl (CSV-backed, ~1 min)
 lossless-compare:
-    cargo test -p jxl-encoder --test lossless_compare --release -- --ignored --nocapture
+    cargo test -p jxl-encoder --test it lossless_compare --release -- --ignored --nocapture
 
 # Generate cjxl lossless reference CSV (~10 min)
 generate-lossless-reference:

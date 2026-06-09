@@ -663,12 +663,12 @@ This is the SINGLE SOURCE OF TRUTH for where our encoder diverges from libjxl re
 1. The `strategy_def!{}` metadata in `gate_registry.rs` (per-gate `divergence_section` + `divergence_row_ref`, plus the per-strategy value blocks).
 2. The matching `ALL_DIVERGENCE_ENTRIES` row immediately below in `gate_registry.rs` (carries the gate-name → (section, row_ref, raw) tuple harvested by the W44-194 drift test).
 3. The matching row in `docs/LIBJXL_DIVERGENCES.md` (the W44-194 drift test enforces FINDABILITY: the chunk's W-code referenced by the macro must appear in the table; full auto-generation is deferred per W44-190 RFC §G5).
-4. Bump `EXPECTED_DIVERGENCE_GATE_COUNT` in [`jxl-encoder/tests/divergence_table_drift.rs`](jxl-encoder/tests/divergence_table_drift.rs) when adding/removing a gate.
+4. Bump `EXPECTED_DIVERGENCE_GATE_COUNT` in [`jxl-encoder/tests/it/divergence_table_drift.rs`](jxl-encoder/tests/it/divergence_table_drift.rs) when adding/removing a gate.
 
 **W44-194 (2026-05-22)**: two new CI gates enforce the maintenance rule end-to-end:
 
-- [`jxl-encoder/tests/divergence_table_drift.rs`](jxl-encoder/tests/divergence_table_drift.rs) — anchor-based drift test on the macro-emitted metadata vs the table. Run via `cargo test -p jxl-encoder --features "__expert __internals" --test divergence_table_drift`. Catches gate add/remove/rename without table sync.
-- [`jxl-encoder/tests/strategy_libjxl_byte_lock.rs`](jxl-encoder/tests/strategy_libjxl_byte_lock.rs) — per-cell SHA256 byte lock for 10 fixtures encoded with `EncoderStrategy::Libjxl`. Run via `cargo test -p jxl-encoder --features __expert --test strategy_libjxl_byte_lock`. Catches Libjxl-strategy byte drift on any gate-value flip with a per-cell diff message. Regen via `UPDATE_LIBJXL_BYTE_LOCK=1 cargo test --features __expert --test strategy_libjxl_byte_lock`.
+- [`jxl-encoder/tests/it/divergence_table_drift.rs`](jxl-encoder/tests/it/divergence_table_drift.rs) — anchor-based drift test on the macro-emitted metadata vs the table. Run via `cargo test -p jxl-encoder --features "__expert __internals" --test it divergence_table_drift`. Catches gate add/remove/rename without table sync.
+- [`jxl-encoder/tests/it/strategy_libjxl_byte_lock.rs`](jxl-encoder/tests/it/strategy_libjxl_byte_lock.rs) — per-cell SHA256 byte lock for 10 fixtures encoded with `EncoderStrategy::Libjxl`. Run via `cargo test -p jxl-encoder --features __expert --test it strategy_libjxl_byte_lock`. Catches Libjxl-strategy byte drift on any gate-value flip with a per-cell diff message. Regen via `UPDATE_LIBJXL_BYTE_LOCK=1 cargo test --features __expert --test it strategy_libjxl_byte_lock`.
 
 **Sub-agent prompt requirement**: When spawning a sub-agent for any code-change chunk, the prompt MUST include reading `docs/LIBJXL_DIVERGENCES.md` AND `jxl-encoder/src/gate_registry.rs` in "inputs to read FIRST" AND a requirement to update the relevant row(s) + macro metadata before commit. Sub-agents that ship without updating both are failing the chunk's acceptance. The W44-194 drift test will catch most omissions on the next CI run, but pre-commit awareness is still the right discipline.
 
@@ -1328,7 +1328,7 @@ wrong-shape for the chroma multipliers it now receives.
 - `jxl-encoder/src/vardct/bitstream.rs` — 2 animation CfL dispatch sites
   compose effective parity flag (no-op today on streaming/animation)
 - `jxl-encoder/src/vardct/precomputed.rs` — comment-only update
-- `jxl-encoder/tests/divergence_table_drift.rs` —
+- `jxl-encoder/tests/it/divergence_table_drift.rs` —
   `EXPECTED_DIVERGENCE_GATE_COUNT 29 → 30`
 - `jxl-encoder/examples/w44_audit_5_phase3_mode_bisect.rs` (NEW) +
   registered in Cargo.toml
@@ -1444,7 +1444,7 @@ necessarily picks the same multipliers as Mode A. The multiplier
 - `jxl-encoder/src/vardct/{encoder,chroma_from_luma,bitstream,precomputed}.rs`
   — threaded the new bool through every CfL call site (Pass-1 +
   Pass-2 still + animation + per-DC-group precompute)
-- `jxl-encoder/tests/divergence_table_drift.rs` — EXPECTED_DIVERGENCE_GATE_COUNT
+- `jxl-encoder/tests/it/divergence_table_drift.rs` — EXPECTED_DIVERGENCE_GATE_COUNT
   28 → 29
 - `docs/LIBJXL_DIVERGENCES.md` — Section C row with HONEST-STOP narrative
 - `jxl-encoder/examples/w44_audit_5_phase2_mode_bisect.rs` (NEW) +

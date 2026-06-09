@@ -28,7 +28,7 @@
 
 use jxl_encoder::{LossyConfig, PixelLayout};
 
-const TRIGGER_PNG: &[u8] = include_bytes!("images/lz77_oob_trigger_sz96.png");
+const TRIGGER_PNG: &[u8] = include_bytes!("../images/lz77_oob_trigger_sz96.png");
 
 fn decode_trigger() -> (Vec<u8>, u32, u32) {
     let img = image::load_from_memory(TRIGGER_PNG).expect("decode trigger PNG");

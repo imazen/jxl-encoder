@@ -82,5 +82,5 @@ jobs:
             --release \
             -p jxl-encoder \
             --features "parallel butteraugli-loop ssim2-loop zenjxl-regression-gate" \
-            --test zenjxl_regression_gate \
+            --test it zenjxl_regression_gate \
             -- --include-ignored --nocapture

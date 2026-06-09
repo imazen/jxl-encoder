@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-const CSV_DATA: &str = include_str!("../../reference/cjxl_lossless_reference.csv");
+const CSV_DATA: &str = include_str!("../../../reference/cjxl_lossless_reference.csv");
 
 #[derive(Clone)]
 struct CjxlLosslessEntry {
