@@ -26,17 +26,20 @@
 
 ### Added
 - **JBRD round-trip conformance gate** (`tests/jbrd_roundtrip_conformance.rs`,
-  52 fixtures): transcode each JPEG → JXL and reconstruct it with zenjxl-decoder
+  53 fixtures): transcode each JPEG → JXL and reconstruct it with zenjxl-decoder
   (pure Rust, no external djxl), asserting the brunsli contract — every JPEG
   either cleanly rejects or reconstructs byte-exact, never silent corruption.
   Self-describing (derives the expected outcome from each header) so it runs on
-  any corpus via `JBRD_CONFORMANCE_CORPUS`. 46 round-trip + 6 clean-reject pass,
+  any corpus via `JBRD_CONFORMANCE_CORPUS`. 47 round-trip + 6 clean-reject pass,
   0 failures (EXIF round-trip closed, imazen/zenjxl-decoder#19). Includes
   `meta_d_exif_orient_big.jpg` — a large-codestream EXIF-`Orientation` fixture
   that regression-guards trailing metadata-box reconstruction (small fixtures
   can't, since frame-decode read-ahead incidentally slurps their trailing
-  boxes). zenjxl-decoder is a path-patched dev-dependency + clone-siblings CI
-  entry (874142dc, d0183ed4).
+  boxes) — and `uhdr_gainmap_mpf.jpg`, an UltraHDR multi-picture (MPF) JPEG
+  whose trailing gain-map sub-image is preserved verbatim as JBRD `tail_data`:
+  the primary SDR image transcodes losslessly while the gain map survives
+  byte-exact with no recompression. zenjxl-decoder is a path-patched
+  dev-dependency + clone-siblings CI entry (874142dc, d0183ed4).
 - `examples/jbrd_diff.rs`: transcode + reconstruct + first-diverging-byte
   debug helper (d0183ed4).
 - `examples/jpeg_pixel_parity.rs`: decode-only pixel parity (jxl-rs decode of
