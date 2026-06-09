@@ -166,15 +166,6 @@ fn parse_pfm_f32(data: &[u8]) -> Option<Vec<f32>> {
     Some(out)
 }
 
-fn srgb_u8_to_linear(c: u8) -> f32 {
-    let v = (c as f32) / 255.0;
-    if v <= 0.04045 {
-        v / 12.92
-    } else {
-        ((v + 0.055) / 1.055).powf(2.4)
-    }
-}
-
 fn srgb_u8_to_srgb_f32(c: u8) -> f32 {
     (c as f32) / 255.0
 }

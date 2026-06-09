@@ -1362,7 +1362,7 @@ mod expanded_coverage {
     use alloc::format;
 
     #[test]
-    fn idct_32xN_scalar_vs_dispatch_edge_battery() {
+    fn idct_32xn_scalar_vs_dispatch_edge_battery() {
         for case in f32_edge_battery(1024) {
             if case.data.is_empty() || case.label.starts_with("large_pos") {
                 continue;

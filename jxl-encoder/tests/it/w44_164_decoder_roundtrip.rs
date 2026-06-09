@@ -45,7 +45,7 @@ const CELLS: &[(&str, &str, u8, f32)] = &[
 ];
 
 fn decode_oxide(bytes: &[u8]) -> Result<(u32, u32), String> {
-    let mut img = jxl_oxide::JxlImage::builder()
+    let img = jxl_oxide::JxlImage::builder()
         .read(std::io::Cursor::new(bytes))
         .map_err(|e| format!("oxide read: {}", e))?;
     let w = img.width();

@@ -1443,7 +1443,7 @@ mod expanded_coverage {
     use alloc::format;
 
     #[test]
-    fn idct_64xN_scalar_vs_dispatch_edge_battery() {
+    fn idct_64xn_scalar_vs_dispatch_edge_battery() {
         for case in f32_edge_battery(4096) {
             if case.data.is_empty()
                 || case.label.starts_with("rand_b")

@@ -1276,7 +1276,7 @@ mod expanded_coverage {
 
     /// dct_32x32 / dct_32x16 / dct_16x32 across the edge battery.
     #[test]
-    fn dct_32xN_scalar_vs_dispatch_edge_battery() {
+    fn dct_32xn_scalar_vs_dispatch_edge_battery() {
         // 32x32
         for case in f32_edge_battery(1024) {
             if case.data.is_empty() {

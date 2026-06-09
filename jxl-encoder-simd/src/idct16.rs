@@ -1650,7 +1650,7 @@ mod expanded_coverage {
 
     /// idct_16x16 / idct_16x8 / idct_8x16 across edge battery.
     #[test]
-    fn idct_16xN_scalar_vs_dispatch_edge_battery() {
+    fn idct_16xn_scalar_vs_dispatch_edge_battery() {
         for case in f32_edge_battery(256) {
             if case.data.is_empty() || case.label.starts_with("large_pos") {
                 continue;

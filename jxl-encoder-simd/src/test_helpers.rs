@@ -75,6 +75,7 @@ pub const fn edge_case_sizes() -> &'static [usize] {
 }
 
 /// Sizes ≥ 1 (skip empty for kernels that require non-empty input).
+#[allow(dead_code)] // complete parity-helper API; not every kernel uses every entry
 pub const fn edge_case_sizes_nonempty() -> &'static [usize] {
     &[
         1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 1023, 1024,
@@ -189,6 +190,7 @@ pub fn f32_nonfinite_battery(n: usize) -> Vec<F32Case> {
 ///
 /// On mismatch prints the diverging values, the permutation label, and the
 /// caller-supplied context.
+#[allow(dead_code)] // complete parity-helper API; not every kernel uses every entry
 #[track_caller]
 pub fn assert_f32_bit_eq(
     expected: f32,
@@ -284,6 +286,7 @@ pub fn assert_f32_slice_close_ulps_abs(
 
 /// Strict-ULP variant (no absolute floor).  Use when the kernel's output
 /// range is far from zero.
+#[allow(dead_code)] // complete parity-helper API; not every kernel uses every entry
 #[track_caller]
 pub fn assert_f32_slice_close_ulps(
     expected: &[f32],
