@@ -2,7 +2,29 @@
 
 ## [Unreleased]
 
+### Fixed (2026-06-09 CI repair)
+- **CI green again end-to-end.** Main had been red since 2026-05-19 (#66),
+  letting breakage accumulate: the sibling-clone set was missing the
+  transitive closure (heic/ultrahdr/zenpng/zenwebp/zenavif/zenjxl/fast-ssim2/
+  zentone/dssim — d45277b2), `cargo test` didn't compile (two
+  `compute_cfl_map` call sites missed the W44-AUDIT-5 P2 12th argument —
+  f4a6df03 + follow-up), `zenjxl-tuning-runner` used unix-only
+  `libc::getrusage` unconditionally breaking every Windows build (01c171e8),
+  wasm/cross builds pulled zstd-sys via the tuning-runner (excluded), and
+  ~83 clippy warnings gated `-D warnings` (9344bfc6). The fmt job is now
+  scoped to workspace members so cloned siblings can't fail it.
+- **Default-build perf nit**: the W44-9 dct8 A/B counters did two atomic ops
+  per strategy evaluation in production; the apparatus is now compiled only
+  under `__expert` (9344bfc6).
+
 ### Changed
+- **Documentation overhaul (2026-06-09)**: CLAUDE.md's 3,700-line dated
+  investigation archive and the Feb-2026 status/roadmap snapshots moved
+  verbatim to `docs/CODE-HISTORY.md`; CLAUDE.md keeps a distilled
+  binding-constraints index plus live follow-ons. Shipped cvvdp phase briefs
+  (3-6) moved to `docs/archive/`; `butteraugli_loop.rs` →
+  `perceptual_loop.rs` rename artifacts fixed in LIBJXL_DIVERGENCES.md and
+  TUNING_RELATIONS.md.
 - **Consolidated the 90 integration-test files into a single `it` binary** (693576ec).
   Every former `tests/<name>.rs` moved to `tests/it/<name>.rs` and is now a submodule of
   one `tests/it/main.rs` target instead of compiling+linking as 90 separate test binaries —
@@ -421,7 +443,7 @@
   triggered in Phase 6; lives as forward-reference for a future
   distance-table-calibration chunk that would re-enable the
   default-flip discussion.
-- **Phase briefs**: `docs/RFC_CVVDP_PHASE3_BRIEF.md` through
+- **Phase briefs**: `docs/archive/RFC_CVVDP_PHASE3_BRIEF.md` through
   `docs/RFC_CVVDP_PHASE7_OPTIN_BRIEF.md` archived alongside the RFC.
 
 ### Measured

@@ -65,7 +65,7 @@ into 14 submodules that mirror the W44-210-A section structure.
 |---|---|---|
 | `tuning::discriminator_thresholds` | `vardct/encoder.rs` + duplicates | per-image content discriminator thresholds (mask/m3/edge_density/fcbr/distance windows) |
 | `tuning::entropy_mul_tables` | `effort.rs` | `EntropyMulTable` per-strategy variants |
-| `tuning::buttloop` | `vardct/butteraugli_loop.rs` | buttloop QF seed, EPF sharpness seed, adaptive_quant qf pre-scale, kPow / max-increase deviation, terminal-class exclude |
+| `tuning::buttloop` | `vardct/perceptual_loop.rs` | buttloop QF seed, EPF sharpness seed, adaptive_quant qf pre-scale, kPow / max-increase deviation, terminal-class exclude |
 | `tuning::coeff_orders` | `vardct/coeff_order.rs` | order-bucket / permutation-context counts (W44-82 cost-gate constants stay inline) |
 | `tuning::epf` | `vardct/epf.rs` | EPF sharpness search constants |
 | `tuning::patches` | `vardct/patches.rs` | detection + cost-benefit guards |
@@ -141,10 +141,10 @@ encoded bytes change):
 |---|---|---|---|
 | `smart_zenjxl_photo_mask_p25_min` | W44_168_SMOOTH_MASK_P25_MIN, W44_151_HIGH_MASK_P25_MIN, W44_166_VARIANT_Z_PHOTO_MASK_P25_MIN (= 85.0 in 4 sites) | `vardct/encoder.rs:929, 2832, 2880, 2883, 4417, 4543, 4546` (5 hot-path sites: `w44_168_is_smooth`, W44-151 admit ×2, W44-166 admit ×4) | YES |
 | `screenshot_median_threshold` | CONTENT_AWARE_SCREENSHOT_MEDIAN_THRESHOLD, butteraugli_loop::SCREENSHOT_MEDIAN_THRESHOLD, W44_168_SCREENSHOT_MEDIAN_MIN (= 95.0 in 3 sites) | `vardct/encoder.rs:929, 2755, 3920, 4277, 5055` (5 hot-path sites: `w44_168_is_smooth`, W22-1 screenshot lift ×2, W44-109 adaptive_quant pre-scale, W39-2 buttloop HIGH-regime classify) | YES |
-| `buttloop_default_screenshot_qf_seed_scale` | DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE (= 4.0) | `vardct/butteraugli_loop.rs:1361` (W44-105 buttloop QF seed scale gate) | YES |
-| `buttloop_qf_seed_scale_min_distance` | BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE (= 3.5) | `vardct/butteraugli_loop.rs:758, 1348` (W44-107 distance gate × 2: adaptive_quant + buttloop) | YES |
-| `adaptive_quant_screenshot_qf_seed_scale_e5_e6` | DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6 (= 2.0) | `vardct/butteraugli_loop.rs:793` (W44-109 per-effort scale) | YES |
-| `adaptive_quant_screenshot_qf_seed_scale_e7` | DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7 (= 3.0) | `vardct/butteraugli_loop.rs:790` (W44-109 per-effort scale) | YES |
+| `buttloop_default_screenshot_qf_seed_scale` | DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE (= 4.0) | `vardct/perceptual_loop.rs:1361` (W44-105 buttloop QF seed scale gate) | YES |
+| `buttloop_qf_seed_scale_min_distance` | BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE (= 3.5) | `vardct/perceptual_loop.rs:758, 1348` (W44-107 distance gate × 2: adaptive_quant + buttloop) | YES |
+| `adaptive_quant_screenshot_qf_seed_scale_e5_e6` | DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E5_E6 (= 2.0) | `vardct/perceptual_loop.rs:793` (W44-109 per-effort scale) | YES |
+| `adaptive_quant_screenshot_qf_seed_scale_e7` | DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7 (= 3.0) | `vardct/perceptual_loop.rs:790` (W44-109 per-effort scale) | YES |
 
 **Verification**: with the wiring proof test running, doubling
 `buttloop_default_screenshot_qf_seed_scale` from 4.0 → 8.0 on a 512×512
@@ -226,7 +226,7 @@ Columns:
 | `PATCHES_DISPATCH_BLOCK_MASK_THRESHOLD` | 60.0 | W41-2 | NOT-IN-LIBJXL | high |
 | `PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD` | 80.0 | W44-90 | NOT-IN-LIBJXL | high |
 
-### 1.2 `vardct/butteraugli_loop.rs` — buttloop + EPF seed + adaptive_quant qf
+### 1.2 `vardct/perceptual_loop.rs` — buttloop + EPF seed + adaptive_quant qf
 
 | name | value | owner | bucket | room |
 |---|---|---|---|---|

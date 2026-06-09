@@ -4,7 +4,7 @@
 
 //! cvvdp-based [`PerceptualBackend`] implementations (cvvdp-fork Phase 3,
 //! 2026-05-24 — see `docs/RFC_CVVDP_FORK.md` §2.1 and
-//! `docs/RFC_CVVDP_PHASE3_BRIEF.md`).
+//! `docs/archive/RFC_CVVDP_PHASE3_BRIEF.md`).
 //!
 //! Phase 3 ships the backend impl + the opt-in API surface only. The
 //! buttloop body still consumes butteraugli; Phase 4 (separate chunk)

@@ -2071,7 +2071,7 @@ pub struct VarDctEncoder {
     /// `false` keeps every hash-lock byte-identical (including when
     /// the `cvvdp-loop` feature is compiled in but no caller opts in).
     /// See [`crate::api::LossyConfig::with_cvvdp_loop`] and the Phase 3
-    /// brief at `docs/RFC_CVVDP_PHASE3_BRIEF.md`.
+    /// brief at `docs/archive/RFC_CVVDP_PHASE3_BRIEF.md`.
     #[cfg(feature = "butteraugli-loop")]
     pub cvvdp_loop: bool,
     /// cvvdp-fork Phase 5 (2026-05-24): caller-supplied preference for
@@ -2084,7 +2084,7 @@ pub struct VarDctEncoder {
     /// explicit opt-in only" policy — the field is always present so
     /// hash-lock fixtures don't depend on the cvvdp cargo features.
     /// See [`crate::api::LossyConfig::with_cvvdp_use_cpu`] and the
-    /// Phase 5 brief at `docs/RFC_CVVDP_PHASE5_BRIEF.md`.
+    /// Phase 5 brief at `docs/archive/RFC_CVVDP_PHASE5_BRIEF.md`.
     #[cfg(feature = "butteraugli-loop")]
     pub cvvdp_use_cpu: bool,
     /// zensim-fork Phase 3 (RFC `docs/RFC_ZENSIM_FORK_PLAN.md` §5,

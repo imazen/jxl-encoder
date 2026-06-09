@@ -18,7 +18,7 @@
 //! ## File renaming history
 //!
 //! Was named `butteraugli_loop.rs` until cvvdp-fork Phase 4 (2026-05-24,
-//! see `docs/RFC_CVVDP_PHASE4_BRIEF.md`). The historical function names
+//! see `docs/archive/RFC_CVVDP_PHASE4_BRIEF.md`). The historical function names
 //! (`run_buttloop`, `BUTTLOOP_*` constants) are preserved — they're
 //! load-bearing in W44-* commit messages and in-source comments. A
 //! backward-compat alias `crate::vardct::butteraugli_loop = perceptual_loop`
@@ -1917,7 +1917,7 @@ impl VarDctEncoder {
         // `target_distance` (consumed by `DistanceParams::compute_from_quant_field`)
         // is NOT remapped — that's the quality target encoded into the
         // file, not the metric target. See
-        // `docs/RFC_CVVDP_PHASE4_BRIEF.md` Step 4.
+        // `docs/archive/RFC_CVVDP_PHASE4_BRIEF.md` Step 4.
         effective_metric_target_distance: f32,
     ) -> Result<SeedOutcome> {
         use super::epf;

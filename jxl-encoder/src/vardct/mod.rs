@@ -25,7 +25,7 @@ mod block_extract;
 // The quantization-refinement loop (the "buttloop") was renamed from
 // `butteraugli_loop` → `perceptual_loop` in cvvdp-fork Phase 4
 // (2026-05-24 — see `docs/RFC_CVVDP_FORK.md` §2.1 and
-// `docs/RFC_CVVDP_PHASE4_BRIEF.md` §1). The historical function name
+// `docs/archive/RFC_CVVDP_PHASE4_BRIEF.md` §1). The historical function name
 // `run_buttloop` is preserved (load-bearing in W44-* commit messages and
 // docs); only the file/module name changes. A backward-compat alias
 // `butteraugli_loop` re-exports the new module so existing `use
@@ -69,14 +69,14 @@ pub(crate) mod perceptual_backend;
 // `cvvdp_gpu::CvvdpOpaque` via Agent B's `*_from_linear_planes_*` API,
 // zenmetrics master `8b658b4`) plus a stub `CpuCvvdpBackend` reserved
 // for Phase 5 `cvvdp-cpu` integration. See `docs/RFC_CVVDP_FORK.md` §2.1
-// and `docs/RFC_CVVDP_PHASE3_BRIEF.md` for the deliverable shape.
+// and `docs/archive/RFC_CVVDP_PHASE3_BRIEF.md` for the deliverable shape.
 #[cfg(feature = "cvvdp-loop")]
 pub(crate) mod cvvdp_backend;
 // cvvdp-fork Phase 4 (2026-05-24): per-distance JOD calibration table.
 // Read by `perceptual_loop::run_buttloop` when the active backend is
 // cvvdp to scale `target_distance` (butteraugli units) into a cvvdp-
 // direction `target_score` via the seed table at `cvvdp_targets.rs`.
-// See `docs/RFC_CVVDP_PHASE4_BRIEF.md` Step 3.
+// See `docs/archive/RFC_CVVDP_PHASE4_BRIEF.md` Step 3.
 #[cfg(feature = "cvvdp-loop")]
 pub(crate) mod cvvdp_targets;
 // Phase 1 of RFC `docs/RFC_BUTTERAUGLI_TARGET_SYMMETRY.md` (2026-05-26):

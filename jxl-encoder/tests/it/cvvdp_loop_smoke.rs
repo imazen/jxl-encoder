@@ -3,7 +3,7 @@
 
 //! cvvdp-fork Phase 4 (2026-05-24) integration smoke test.
 //!
-//! See `docs/RFC_CVVDP_PHASE4_BRIEF.md` Step 5 (Multi-decoder smoke).
+//! See `docs/archive/RFC_CVVDP_PHASE4_BRIEF.md` Step 5 (Multi-decoder smoke).
 //!
 //! Phase 4 plumbed the CVVDP signal through the buttloop body proper —
 //! the rest of this test exercises the resulting behavioural matrix:

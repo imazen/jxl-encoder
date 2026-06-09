@@ -8,7 +8,7 @@
 //! Phase 4 (2026-05-24) shipped the single-display SDR-200 table
 //! (`vardct/cvvdp_targets.rs` initial commit — see
 //! `docs/RFC_CVVDP_FORK.md` §2.1, §4 Phase 4 and
-//! `docs/RFC_CVVDP_PHASE4_BRIEF.md` Step 3).
+//! `docs/archive/RFC_CVVDP_PHASE4_BRIEF.md` Step 3).
 //!
 //! Phase 1 display-config backfill (2026-05-25, RFC
 //! `docs/RFC_DISPLAY_CONFIG_BACKFILL.md`) extended the lookup to a
