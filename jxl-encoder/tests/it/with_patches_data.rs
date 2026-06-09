@@ -259,6 +259,7 @@ fn build_precomputed(
         profile.cfl_newton_eps,
         profile.cfl_newton_max_iters,
         profile.cfl_newton_libjxl_parity, // W44-184
+        profile.cfl_newton_libjxl_math_with_ls_warm_start,
     );
 
     // AC strategy on POST-gaborish patches-subtracted XYB.
