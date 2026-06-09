@@ -88,12 +88,13 @@ mod w44_169_decoder_roundtrip;
 mod w44_176_decoder_roundtrip;
 mod w44_180_decoder_roundtrip;
 mod w44_205_decoder_roundtrip;
-mod w44_213_runtime_tuning_wiring;
-mod w44_221_tier2_knob_expander;
-mod w44_221_tier2_knob_nondefault;
-mod w44_222_decoder_roundtrip;
-mod w44_222_with_knobs_builder;
-mod w44_228b_per_stratum_knobs;
+// NOT consolidated: the six tuning-override tests live as standalone test
+// targets (tests/w44_213_*.rs, w44_221_*.rs, w44_222_*.rs, w44_228b_*.rs).
+// `tuning::runtime::install` is single-shot per PROCESS (OnceLock); inside
+// this merged binary the first installer wins, every later installer fails,
+// and default-tuning byte-identity tests (including the hash-locks) become
+// order-dependent on whether an installer ran first. One process per
+// installer is the isolation contract those tests document in their headers.
 mod w44_63_decoder_roundtrip;
 mod w44_65_decoder_roundtrip;
 mod w44_78_decoder_roundtrip;
