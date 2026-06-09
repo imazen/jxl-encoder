@@ -23,7 +23,6 @@ use super::encoder::VarDctEncoder;
 /// Ported from libjxl-tiny's AdjustQuantBias. For +/-1 values, returns a
 /// channel-specific biased value. For larger values, applies a small
 /// reciprocal correction: `q - 0.145 / q`.
-#[allow(clippy::excessive_precision)]
 #[inline]
 pub(super) fn adjust_quant_bias(quantized: i32, channel: usize) -> f32 {
     // kDefaultQuantBias from libjxl-tiny enc_group.cc
@@ -278,7 +277,6 @@ impl VarDctEncoder {
 
         // (E) Large transform error correction
         {
-            #[allow(clippy::excessive_precision)]
             const K_MUL1: [[f64; 3]; 4] = [
                 [
                     0.22080615753848404,
@@ -301,7 +299,6 @@ impl VarDctEncoder {
                     0.088667407767185444,
                 ],
             ];
-            #[allow(clippy::excessive_precision)]
             const K_MUL2: [[f64; 3]; 4] = [
                 [0.27450281941822197, 1.1255766549984996, 0.98950459134128388],
                 [0.4652168675598285, 0.40945807983455818, 0.36581899811751367],

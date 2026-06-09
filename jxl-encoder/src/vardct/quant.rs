@@ -9,7 +9,6 @@
 //! signals `all_default=true`.
 
 // Ported float constants from C++ - exact values are intentional for parity.
-#![allow(clippy::excessive_precision)]
 
 use alloc::boxed::Box;
 use alloc::vec;

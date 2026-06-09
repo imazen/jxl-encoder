@@ -18,7 +18,6 @@ use crate::headers::color_encoding::Primaries;
 /// 3x3 matrix to convert linear Display P3 RGB to linear sRGB RGB.
 /// Derived from P3→XYZ→sRGB chromatic adaptation (both D65 white point).
 #[rustfmt::skip]
-#[allow(clippy::excessive_precision)]
 pub(crate) const P3_TO_SRGB: [[f32; 3]; 3] = [
     [ 1.2249401763, -0.2249401763,  0.0000000000],
     [-0.0420569547,  1.0420569547,  0.0000000000],
@@ -28,7 +27,6 @@ pub(crate) const P3_TO_SRGB: [[f32; 3]; 3] = [
 /// 3x3 matrix to convert linear BT.2020 RGB to linear sRGB RGB.
 /// Derived from BT.2020→XYZ→sRGB chromatic adaptation (both D65 white point).
 #[rustfmt::skip]
-#[allow(clippy::excessive_precision)]
 pub(crate) const BT2020_TO_SRGB: [[f32; 3]; 3] = [
     [ 1.6604910021, -0.5876411388, -0.0728498633],
     [-0.1245504745,  1.1328998971, -0.0083494226],
@@ -77,7 +75,6 @@ pub(crate) fn compute_primaries_to_srgb(
     ];
 
     // sRGB to XYZ (hardcoded for D65, BT.709 primaries)
-    #[allow(clippy::excessive_precision)]
     let srgb_to_xyz = [
         [0.4123907993, 0.3575843394, 0.1804807884],
         [0.2126390059, 0.7151686788, 0.0721923154],

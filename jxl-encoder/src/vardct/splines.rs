@@ -201,7 +201,6 @@ pub(crate) const NUM_POINTS_PER_SEGMENT: usize = 16;
 
 /// Fast error function approximation (max error ~6e-4).
 /// Ported from jxl-rs `fast_math.rs`.
-#[allow(clippy::excessive_precision)]
 #[inline]
 fn fast_erf(x: f32) -> f32 {
     let absx = x.abs();
@@ -216,7 +215,6 @@ fn fast_erf(x: f32) -> f32 {
 
 /// Fast cosine approximation (max error ~1e-4).
 /// Ported from jxl-rs `fast_math.rs`.
-#[allow(clippy::excessive_precision)]
 #[inline]
 fn fast_cos(x: f32) -> f32 {
     let pi2 = PI * 2.0;

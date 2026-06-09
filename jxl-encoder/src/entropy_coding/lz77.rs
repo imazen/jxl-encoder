@@ -55,7 +55,6 @@ fn special_distance(index: usize, multiplier: i32) -> i32 {
 /// Empirical cost table for LZ77 length encoding (from libjxl).
 /// Indexed by token value from HybridUintConfig(1, 0, 0).
 #[rustfmt::skip]
-#[allow(clippy::excessive_precision)]
 const LEN_COST_TABLE: [f32; 17] = [
     2.797667318563126,  3.213177690381199,  2.5706009246743737,
     2.408392498667534,  2.829649191872326,  3.3923087753324577,
@@ -68,7 +67,6 @@ const LEN_COST_TABLE: [f32; 17] = [
 /// Empirical cost table for LZ77 distance encoding (from libjxl).
 /// Indexed by token value from HybridUintConfig(7, 0, 0).
 #[rustfmt::skip]
-#[allow(clippy::excessive_precision)]
 const DIST_COST_TABLE: [f32; 139] = [
     6.368282626312716,  5.680793277090298,  8.347404197105247,
     7.641619201599141,  6.914328374119438,  7.959808291537444,

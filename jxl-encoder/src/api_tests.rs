@@ -1806,7 +1806,6 @@ mod decoder_validation {
         use crate::headers::color_encoding::{ColorEncoding, Primaries, TransferFunction};
 
         // P3→sRGB matrix (same values as in vardct/xyb.rs)
-        #[allow(clippy::excessive_precision)]
         const P3_TO_SRGB: [[f32; 3]; 3] = [
             [1.2249401763, -0.2249401763, 0.0000000000],
             [-0.0420569547, 1.0420569547, 0.0000000000],

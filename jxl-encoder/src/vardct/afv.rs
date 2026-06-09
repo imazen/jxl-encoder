@@ -3,7 +3,6 @@
 // Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
 
 #![allow(clippy::approx_constant)]
-#![allow(clippy::excessive_precision)]
 
 //! AFV (Adaptive Frequency Variable) transforms for corner DCT.
 //!

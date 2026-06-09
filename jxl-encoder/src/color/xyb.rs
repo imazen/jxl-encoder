@@ -16,25 +16,16 @@
 // Opsin absorbance matrix from libjxl cms/opsin_params.h
 // These are "frozen" and must not change.
 // The constants below are exact spec values; allow excessive precision for parity.
-#[allow(clippy::excessive_precision)]
 const K_M00: f32 = 0.30;
-#[allow(clippy::excessive_precision)]
 const K_M01: f32 = 1.0 - 0.078 - 0.30; // 0.622
-#[allow(clippy::excessive_precision)]
 const K_M02: f32 = 0.078;
 
-#[allow(clippy::excessive_precision)]
 const K_M10: f32 = 0.23;
-#[allow(clippy::excessive_precision)]
 const K_M11: f32 = 1.0 - 0.078 - 0.23; // 0.692
-#[allow(clippy::excessive_precision)]
 const K_M12: f32 = 0.078;
 
-#[allow(clippy::excessive_precision)]
 const K_M20: f32 = 0.24342268924547819;
-#[allow(clippy::excessive_precision)]
 const K_M21: f32 = 0.20476744424496821;
-#[allow(clippy::excessive_precision)]
 const K_M22: f32 = 1.0 - K_M20 - K_M21; // 0.55180986651
 
 /// Opsin absorbance matrix (linear RGB to LMS-like)
@@ -45,7 +36,6 @@ pub const OPSIN_ABSORBANCE_MATRIX: [[f32; 3]; 3] = [
 ];
 
 /// Opsin absorbance bias - added before cube root
-#[allow(clippy::excessive_precision)]
 pub const OPSIN_ABSORBANCE_BIAS: [f32; 3] = [
     0.0037930732552754493,
     0.0037930732552754493,
@@ -54,7 +44,6 @@ pub const OPSIN_ABSORBANCE_BIAS: [f32; 3] = [
 
 /// Cube root of bias - subtracted AFTER cube root (libjxl's CubeRootAndAdd pattern)
 /// This is the negative bias that gets added after taking the cube root.
-#[allow(clippy::excessive_precision)]
 pub const NEG_OPSIN_ABSORBANCE_BIAS_CBRT: [f32; 3] = [
     -0.15595420054, // -cbrt(OPSIN_ABSORBANCE_BIAS[0])
     -0.15595420054,

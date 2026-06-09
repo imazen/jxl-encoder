@@ -11,7 +11,6 @@
 //! (enc_transforms-inl.h).
 
 // Ported float constants from C++ - exact values are intentional for parity.
-#![allow(clippy::excessive_precision)]
 #![allow(clippy::approx_constant)]
 #![allow(dead_code)]
 

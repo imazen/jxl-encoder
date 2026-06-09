@@ -7,7 +7,6 @@
 //! Ported from full libjxl `enc_adaptive_quantization.cc`.
 
 // Ported float constants from C++ - exact values are intentional for parity.
-#![allow(clippy::excessive_precision)]
 #![allow(clippy::approx_constant)]
 //! Computes per-block quantization values based on perceptual masking.
 //!
