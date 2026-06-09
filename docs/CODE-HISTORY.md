@@ -371,6 +371,98 @@ Full dated investigation entries relocated verbatim from CLAUDE.md's
 "Investigation Notes" section. Each carries its mechanism, per-cell
 measurement tables, acceptance gates, and the binding DO-NOT list.
 CLAUDE.md keeps a distilled constraint index pointing here.
+
+### Issue #25 follow-on B: smooth-photo k_ac_quant=0.65 content-aware gate — HONEST-STOP (2026-06-10)
+
+**Status**: [RULED OUT — no production gate shipped; harness + probe + bench committed]
+
+Follow-on B from the 2026-05-25 default-flip honest-stop proposed a
+zenanalyze-proxy discriminator (W44-91 / W44-96 shape) routing
+"smooth-content photos" through `k_ac_quant = 0.65` while everything else
+keeps libjxl's 0.765. The hypothesis is **falsified by measurement**: the
+admit class is empty.
+
+**Setup** (`examples/kacq_smooth_photo_gate_ab.rs`): paired-interleaved A/B
+(`A = k_ac_quant 0.765`, `B = 0.65` via `LossyInternalParams`,
+`EncoderStrategy::Zenjxl`, 8 threads) over 11 images × efforts {5, 7, 8} ×
+distances {0.5, 1, 2, 3, 4, 5} = **198 cells**. Image set: 3 low-edge smooth
+photos (2389166, 1044329, 7062219 — the follow-on B candidate class),
+2 textured smooth photos (1531677, 1420710 — W44-96 class, 1531677 was the
+2026-05-25 catastrophic cell), 1 mid (1025469), 1 detailed (1418519 — the
+2026-05-25 borderline cell), 4 gb82-sc screenshots (codec_wiki, terminal,
+imac_g3, windows95). Per cell: bytes, butteraugli (Rust, linear), SSIM2,
+SHA256. Measurement pipeline cross-validated against the 2026-05-25 issue
+ground truth: 1418519 e7 d=1 reproduces A=22949 B / B=21082 B / ΔSSIM2
+−0.86 (prior: 22950 / 21084 / −0.86).
+
+**Budgets** (binding, from the chunk brief; same per-cell SSIM2 budget as
+W44-91/96): admitted cell ⇒ ΔSSIM2 ≥ −0.30 AND Δbutteraugli ≤ +2 %;
+admitted set mean bytes ≤ −3 %.
+
+**Result: 8/198 cells pass both budgets** (180 fail SSIM2, 141 fail
+butteraugli). Photos: **2/126** — `1418519 e8 d=0.5` (−0.20 SSIM2) and
+`7062219 e8 d=0.5` (−0.16). Screens: 6/72, scattered with no structure
+(codec_wiki e5/e7 d=0.5 + e8 d=5, imac_g3 e8 d=2, terminal e8 d=4,
+windows95 e7 d=3). Per-image pass counts: no image better than 3/18.
+Per-image worst ΔSSIM2: 1044329 −3.10, 2389166 −4.48, 7062219 −3.75,
+1025469 −4.42, 1420710 −2.82, 1531677 −4.15, 1418519 −2.18, windows95
+−4.82. Mean over all 198 cells: bytes −6.58 %, SSIM2 −1.53.
+
+**Why no discriminator exists**:
+
+1. **The candidate class itself fails.** The "smooth low-edge photo"
+   candidates (2389166 ed=0.44, 1044329 ed=0.55, 7062219 ed=0.63) fail
+   16-18 of 18 cells each — they are NOT more tolerant of the coarser
+   quant field than the textured/catastrophic class; at d ≥ 2 they fail
+   HARDER than 1531677 at e5/e7 (e.g. 2389166 e5 d=5: −4.16 vs 1531677
+   e5 d=5: −3.45).
+2. **The only photo-pass band (e8, d=0.5) has zero proxy separation.**
+   At e8 d=0.5 the two passers (1418519 −0.20, 7062219 −0.16) vs five
+   failers (1025469 −0.31, 1044329 −0.34, 2389166 −0.37, 1420710 −0.37,
+   1531677 −0.41) interleave on EVERY ZenanalyzeProxies axis:
+   edge_density pass {0.16, 0.63} vs fail {0.17, 0.44, 0.55, 0.88, 0.93};
+   m3 pass {36.8, 51.1} vs fail {12.3, 32.9, 45.4, 48.0, 65.0}; fcbr pass
+   {0.011, 0.098} vs fail {0.000, 0.000, 0.017, 0.122, 0.134}; luma_var
+   pass {1620, 4901} vs fail {1921, 2068, 2171, 2468, 3643}. The
+   pass/fail SSIM2 split (−0.20 vs −0.31) is a noise-width band, not a
+   class boundary. The W44-96 ship bar (thresholds mid-gap with 1.5-2×
+   margin between WANT and REJECT) is unreachable — there is no gap.
+3. **Mechanism is global, not content-gated.** Per the 2026-05-25
+   analysis, `quant_field_float` scales linearly with k_ac_quant and the
+   `inv_scale` reciprocal does NOT absorb it: 0.65 produces a uniformly
+   coarser field on every content class. The SSIM2 cost it buys is
+   structural; butteraugli at e < 8 inflates 3-34 % on most cells (the
+   e8 buttloop partially re-targets butteraugli, which is why the only
+   passes are at e8 — but SSIM2 still fails there at d ≥ 1).
+
+**Artifacts**: `benchmarks/kacq_smooth_photo_gate_2026-06-10.{tsv,meta}`
+(198-cell paired A/B), `benchmarks/kacq_smooth_photo_gate_probe_2026-06-10.tsv`
+(production ZenanalyzeProxies for all 17 probe images),
+`jxl-encoder/examples/kacq_smooth_photo_gate_ab.rs` (reproducer:
+`--probe` / `--bench --output <tsv>`).
+
+**DO NOT** (binding for future agents):
+
+1. DO NOT re-spawn a k_ac_quant content-discriminator chunk on proxy
+   axes (edge_density / m3_colourfulness / fcbr / luma_var / mask1x1
+   bands) hoping a different photo subset admits 0.65. 7 photos spanning
+   smooth/textured/mid/detailed all fail ≥ 17/18 cells at the ±0.30
+   SSIM2 / +2 % butteraugli budget; the failure is the lever's
+   mechanism, not the corpus.
+2. DO NOT ship an e8-d0.5-only micro-gate for {1418519, 7062219} — two
+   scattered cells with zero proxy margin is overfitting; the W44-96
+   1.5× threshold-margin bar is the ship bar.
+3. DO NOT relax the per-cell SSIM2 ±0.30 budget to manufacture an admit
+   class (the 2026-05-25 "DO NOT flip without Pareto-aware re-validation
+   excluding cells losing >0.3 SSIM2" rule stands).
+4. The remaining live routes for issue #25 are follow-on A (picker
+   oracle re-train with SSIM2 as a Pareto axis) and follow-on C
+   (per-image learned dispatch via the existing
+   `LossyInternalParams::k_ac_quant` opt-in API) — both per-image
+   LEARNED dispatch, not hardcoded proxy gates.
+
+---
+
 ### LOSSY JPEG → JXL recompression: two paths + a router (2026-05-28)
 
 **Status**: [SHIPPED — PreserveJxl path + CLI + closed-loop harness + strategy

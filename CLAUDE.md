@@ -500,6 +500,18 @@ measurement at equal or better coverage.
   route (Phase 3) is strictly worse under the Zenjxl cost model — opt-in only,
   don't default-flip either field. (W44-AUDIT-5 P2/P3)
 
+**Quantization / k_ac_quant**
+- `K_AC_QUANT` stays 0.765 (libjxl parity) on EVERY default path. The 0.65
+  default-flip is RULED OUT (2026-05-25, 29/36 cells fail ±0.30 SSIM2) AND
+  the issue #25 follow-on B content-aware smooth-photo gate is RULED OUT
+  (2026-06-10, 198-cell A/B: photos pass 2/126 cells, no ZenanalyzeProxies
+  threshold separates pass from fail at any margin). Don't re-spawn proxy-
+  discriminator chunks for k_ac_quant; the per-cell ±0.30 SSIM2 / +2 %
+  butteraugli budget is binding. Remaining routes: picker-oracle re-train
+  with SSIM2 axis (follow-on A) or learned per-image dispatch via the
+  `LossyInternalParams::k_ac_quant` opt-in (follow-on C). (issue #25,
+  CODE-HISTORY 2026-06-10)
+
 **Tier-2 knobs / sweeps**
 - Never default-flip `Tier2Knobs::auto_for_distance` or raw per-stratum optima
   on screen strata: `k1 < 0.5` or `k2 < 1.0` on screen/{very_high,high}
@@ -576,8 +588,10 @@ measurement at equal or better coverage.
 - **cvvdp-cpu structural perf**: strip-pipeline + f16 (150 ms → 50 ms at 1024²)
   in the zenmetrics repo.
 - Open issues: #64 (DC-tree hot-path closure), #43 (per-image dispatch
-  chunks 2+), #41 (streaming hash-dedup at gather), #25 (k_ac_quant 0.65 vs
-  0.765 RD win), #45 (e10/e11 smart modes), #24 (lossless e9 picker).
+  chunks 2+), #41 (streaming hash-dedup at gather), #25 (k_ac_quant —
+  follow-ons A/C only; default-flip AND the follow-on B smooth-photo proxy
+  gate are both RULED OUT, see "Quantization / k_ac_quant" above), #45
+  (e10/e11 smart modes), #24 (lossless e9 picker).
 
 ### Reference findings (stable)
 

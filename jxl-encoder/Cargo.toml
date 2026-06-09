@@ -2780,6 +2780,14 @@ name = "issue_25_k_ac_quant_retry"
 path = "examples/issue_25_k_ac_quant_retry.rs"
 required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
 
+# Issue #25 follow-on B: smooth-photo k_ac_quant=0.65 gate probe + paired
+# A/B bench (`--probe` prints production ZenanalyzeProxies; `--bench` runs
+# the 11-image × e{5,7,8} × d{0.5..5.0} grid, A=0.765 vs B=0.65).
+[[example]]
+name = "kacq_smooth_photo_gate_ab"
+path = "examples/kacq_smooth_photo_gate_ab.rs"
+required-features = ["__expert", "__pre_quantized", "parallel", "butteraugli-loop", "ssim2-loop"]
+
 # W44-PHASE4-S2-refit-c2: per-knob ablation harness. Takes an explicit
 # (k1, k2, k3, k4, k5) tuple via CLI flags and encodes ONE cell per process
 # invocation. Used to detect hidden cliffs in S2-refit per-stratum optima.

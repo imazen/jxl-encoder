@@ -1,0 +1,65 @@
+# kacq_smooth_photo_gate_2026-06-10 — issue #25 follow-on B A/B bench
+#
+# Verdict: HONEST-STOP / RULED OUT. No content-aware smooth-photo
+# k_ac_quant=0.65 gate ships. See docs/CODE-HISTORY.md entry
+# "Issue #25 follow-on B" (2026-06-10) and docs/HYPOTHESIS_LEDGER.md #22.
+#
+# Provenance
+# ----------
+# date:        2026-06-10 (run 2026-06-10T02:10..03:30 UTC)
+# host:        lilith (AMD Ryzen 9 7950X, 128 GB)
+# base commit: 551eb7b8b1d9 (main; harness committed in the same change as
+#              this TSV — see `git log -- benchmarks/kacq_smooth_photo_gate_2026-06-10.tsv`)
+# build:       cargo build -p jxl-encoder --release \
+#                --features '__expert __pre_quantized parallel butteraugli-loop ssim2-loop' \
+#                --example kacq_smooth_photo_gate_ab
+# command:     ./target/release/examples/kacq_smooth_photo_gate_ab --bench --output <tsv>
+# probe:       ./target/release/examples/kacq_smooth_photo_gate_ab --probe
+#              (production ZenanalyzeProxies; committed as
+#              kacq_smooth_photo_gate_probe_2026-06-10.tsv)
+#
+# Grid
+# ----
+# modes:     A = k_ac_quant 0.765 (libjxl default), B = 0.65 (candidate),
+#            paired-interleaved per cell via LossyInternalParams (__expert),
+#            EncoderStrategy::Zenjxl, 8 threads. Encoder is deterministic
+#            per (cell, mode) — single sample (2026-05-25 retry proved
+#            byte-identical output across 6 samples).
+# images:    11 = 7 CID22-512 validation photos (2389166, 1044329, 7062219
+#            low-edge candidates; 1531677, 1420710 textured; 1025469 mid;
+#            1418519 detailed) + 4 gb82-sc screenshots (codec_wiki,
+#            terminal, imac_g3, windows95)
+# efforts:   {5, 7, 8}
+# distances: {0.5, 1.0, 2.0, 3.0, 4.0, 5.0}
+# cells:     11 x 3 x 6 = 198 (x 2 modes = 396 rows)
+# metrics:   bytes, butteraugli (Rust butteraugli_linear on jxl-oxide
+#            srgb_linear output), SSIM2 (fast_ssim2 on sRGB u8), encode_ms,
+#            sha256 prefix
+#
+# Cross-validation vs 2026-05-25 issue #25 ground truth
+# -----------------------------------------------------
+# 1418519 e7 d=1.0: A=22949 B / B=21082 B / dSSIM2 -0.86
+#   (prior measurement: 22950 / 21084 / -0.86) — pipeline VALIDATED.
+#
+# Budgets (binding, from the chunk brief)
+# ---------------------------------------
+# admitted cell: dSSIM2 >= -0.30 AND dbutteraugli <= +2 %
+# admitted set:  mean dBytes <= -3 %
+#
+# Result summary (198 cells)
+# --------------------------
+# pass both budgets: 8/198 (180 fail SSIM2, 141 fail butteraugli)
+# photos:  2/126 pass — 1418519 e8 d=0.5 (-0.20), 7062219 e8 d=0.5 (-0.16)
+# screens: 6/72 pass — scattered, no structure (codec_wiki e5/e7 d=0.5 +
+#          e8 d=5, imac_g3 e8 d=2, terminal e8 d=4, windows95 e7 d=3)
+# no image passes more than 3/18 cells
+# mean over all cells: dBytes -6.58 %, dSSIM2 -1.53
+# per-image worst dSSIM2: 1044329 -3.10, 2389166 -4.48, 7062219 -3.75,
+#   1025469 -4.42, 1420710 -2.82, 1531677 -4.15, 1418519 -2.18,
+#   codec_wiki -2.32, imac_g3 -1.36, terminal -2.29, windows95 -4.82
+#
+# Why no discriminator exists: in the only photo-pass band (e8, d=0.5) the
+# 2 passers vs 5 failers interleave on EVERY ZenanalyzeProxies axis
+# (edge_density, m3_colourfulness, flat_color_block_ratio, luma_var — see
+# probe TSV) and the pass/fail SSIM2 split is -0.20 vs -0.31 (noise-width).
+# The W44-96 ship bar (1.5-2x mid-gap threshold margin) is unreachable.
