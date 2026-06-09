@@ -21,18 +21,8 @@
 use jxl_encoder::api::{EncoderStrategy, LossyConfig, PixelLayout};
 
 const CELLS: &[(&str, &str, u8, f32)] = &[
-    (
-        "terminal_e7_d4",
-        "/home/lilith/work/codec-corpus/gb82-sc/terminal.png",
-        7,
-        4.0,
-    ),
-    (
-        "terminal_e7_d5",
-        "/home/lilith/work/codec-corpus/gb82-sc/terminal.png",
-        7,
-        5.0,
-    ),
+    ("terminal_e7_d4", "gb82-sc/terminal.png", 7, 4.0),
+    ("terminal_e7_d5", "gb82-sc/terminal.png", 7, 5.0),
 ];
 
 fn decode_oxide(bytes: &[u8]) -> Result<(u32, u32), String> {
@@ -111,8 +101,10 @@ fn decode_jxl_rs(bytes: &[u8]) -> Result<(usize, usize), String> {
 }
 
 #[test]
+#[ignore = "needs codec-corpus (CODEC_CORPUS_DIR); nightly + local run with --include-ignored"]
 fn w44_176_zenjxl_default_decodes_cleanly() {
     for &(cell_name, path, effort, distance) in CELLS {
+        let path = &crate::corpus_file(path);
         let img = match image::open(path) {
             Ok(i) => i,
             Err(_) => panic!("W44-176 corpus missing: {}", path),
@@ -142,6 +134,7 @@ fn w44_176_zenjxl_default_decodes_cleanly() {
 }
 
 #[test]
+#[ignore = "needs codec-corpus (CODEC_CORPUS_DIR); nightly + local run with --include-ignored"]
 fn w44_176_libjxl_strategy_decodes_cleanly() {
     // Libjxl strategy disables `adaptive_quant_qf_seed` via the
     // `AdaptiveQuantQfSeedPolicy::Off` setting; the helper short-
@@ -151,6 +144,7 @@ fn w44_176_libjxl_strategy_decodes_cleanly() {
     // covers the byte-identical-to-pre-W44-176 invariant via its
     // pinned-fixture comparison).
     for &(cell_name, path, effort, distance) in CELLS {
+        let path = &crate::corpus_file(path);
         let img = match image::open(path) {
             Ok(i) => i,
             Err(_) => panic!("W44-176 corpus missing: {}", path),
@@ -183,6 +177,7 @@ fn w44_176_libjxl_strategy_decodes_cleanly() {
 /// force exclude OFF). Verifies the resulting bitstream still decodes
 /// cleanly when the W44-176 exclude is bypassed.
 #[test]
+#[ignore = "needs codec-corpus (CODEC_CORPUS_DIR); nightly + local run with --include-ignored"]
 fn w44_176_env_disable_decodes_cleanly() {
     // SAFETY: single-threaded test runner (`#[test]` runs sequentially
     // unless `--test-threads` set; this test toggles env once and
@@ -193,6 +188,7 @@ fn w44_176_env_disable_decodes_cleanly() {
     }
 
     let (cell_name, path, effort, distance) = CELLS[0];
+    let path = &crate::corpus_file(path);
     let img = match image::open(path) {
         Ok(i) => i,
         Err(_) => {

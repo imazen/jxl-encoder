@@ -27,19 +27,19 @@ use std::path::Path;
 const CELLS: &[(&str, &str, u8, f32)] = &[
     (
         "1418519_e8_d5",
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png",
+        "CID22/CID22-512/validation/1418519.png",
         8,
         5.0,
     ),
     (
         "1418519_e8_d6",
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png",
+        "CID22/CID22-512/validation/1418519.png",
         8,
         6.0,
     ),
     (
         "1418519_e9_d6",
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png",
+        "CID22/CID22-512/validation/1418519.png",
         9,
         6.0,
     ),
@@ -126,8 +126,10 @@ fn decode_jxl_rs(bytes: &[u8]) -> Result<(usize, usize), String> {
 /// (because `photo_variant_z_admit = false` on Libjxl disables the
 /// gate entirely). Single-threaded test serialises env var access.
 #[test]
+#[ignore = "needs codec-corpus (CODEC_CORPUS_DIR); nightly + local run with --include-ignored"]
 fn w44_166_libjxl_strategy_byte_identical_regardless_of_env() {
-    let path = "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1418519.png";
+    let path = "CID22/CID22-512/validation/1418519.png";
+    let path = &crate::corpus_file(path);
     assert!(
         Path::new(path).exists(),
         "[w44-166] corpus file 1418519.png not found at {}",
@@ -170,8 +172,10 @@ fn w44_166_libjxl_strategy_byte_identical_regardless_of_env() {
 /// Requires the CID22-512/validation corpus. Per repo "NO GRACEFUL
 /// SKIPS" rule, this test panics if the corpus is missing.
 #[test]
+#[ignore = "needs codec-corpus (CODEC_CORPUS_DIR); nightly + local run with --include-ignored"]
 fn w44_166_variant_z_photo_admit_decoders_clean() {
     for &(name, path, effort, distance) in CELLS {
+        let path = &crate::corpus_file(path);
         assert!(
             Path::new(path).exists(),
             "[w44-166] corpus file {} not found at {}",

@@ -29,28 +29,23 @@ use std::path::Path;
 const CELLS: &[(&str, &str, u8, f32)] = &[
     (
         "loser_3637739_d4",
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/3637739.png",
+        "CID22/CID22-512/validation/3637739.png",
         7,
         4.0,
     ),
     (
         "loser_297394_d5",
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/297394.png",
+        "CID22/CID22-512/validation/297394.png",
         7,
         5.0,
     ),
     (
         "loser_7062219_d4",
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/7062219.png",
+        "CID22/CID22-512/validation/7062219.png",
         7,
         4.0,
     ),
-    (
-        "scrn_codec_wiki_d4",
-        "/home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png",
-        7,
-        4.0,
-    ),
+    ("scrn_codec_wiki_d4", "gb82-sc/codec_wiki.png", 7, 4.0),
 ];
 
 fn decode_oxide(bytes: &[u8]) -> Result<(u32, u32), String> {
@@ -131,9 +126,11 @@ fn decode_jxl_rs(bytes: &[u8]) -> Result<(usize, usize), String> {
 /// Requires CID22 + GB82-SC corpora. Per repo "NO GRACEFUL SKIPS" rule,
 /// this test panics if the corpus is missing.
 #[test]
+#[ignore = "needs codec-corpus (CODEC_CORPUS_DIR); nightly + local run with --include-ignored"]
 fn w44_205_medium_buckets_decoders_clean() {
     let mut tested = 0;
     for &(name, path, effort, distance) in CELLS {
+        let path = &crate::corpus_file(path);
         assert!(
             Path::new(path).exists(),
             "[w44-205] corpus file {} not found at {}",

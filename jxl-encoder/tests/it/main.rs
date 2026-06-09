@@ -88,6 +88,22 @@ mod w44_169_decoder_roundtrip;
 mod w44_176_decoder_roundtrip;
 mod w44_180_decoder_roundtrip;
 mod w44_205_decoder_roundtrip;
+/// Resolve a codec-corpus relative path for corpus-dependent (ignored)
+/// tests: `$CODEC_CORPUS_DIR/<rel>` when the env var is set (the nightly
+/// workflow sparse-checks-out the needed files and sets it), else
+/// `$HOME/work/codec-corpus/<rel>` (the dev-machine layout). The tests
+/// using this are `#[ignore]` so the skip decision is the CALLER's
+/// (`--include-ignored` in nightly + local runs), never a silent runtime
+/// skip.
+#[allow(dead_code)] // only corpus-gated modules use it; feature sets vary
+pub(crate) fn corpus_file(rel: &str) -> String {
+    if let Ok(dir) = std::env::var("CODEC_CORPUS_DIR") {
+        return format!("{dir}/{rel}");
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
+    format!("{home}/work/codec-corpus/{rel}")
+}
+
 // NOT consolidated: the six tuning-override tests live as standalone test
 // targets (tests/w44_213_*.rs, w44_221_*.rs, w44_222_*.rs, w44_228b_*.rs).
 // `tuning::runtime::install` is single-shot per PROCESS (OnceLock); inside

@@ -11,9 +11,11 @@ description: >
   a sibling gains a new path dependency (the symptom is `cargo metadata` dying
   with "failed to load manifest for workspace member <sibling>/crates/<x>").
 
-  Runs on Linux, macOS, and Windows via bash (Git Bash on Windows). Also writes
-  a Cross.toml pre-build hook so builds invoked through `cross` re-clone the
-  sibling layout inside the container.
+  Runs on Linux, macOS, and Windows via bash (Git Bash on Windows). Also
+  exports the env vars named by Cross.toml's `[build.env] volumes` so builds
+  invoked through `cross` same-path-mount the host sibling layout into the
+  container (cross only mounts discovered package dirs by itself, which
+  orphans members of the sibling workspaces from their roots).
 
   Direct dependencies of this workspace (parent of the workspace unless noted):
     - imazen/zenjpeg → ../zenjpeg ([patch.crates-io] ../zenjpeg/zenjpeg;
@@ -78,59 +80,22 @@ runs:
         clone_if_missing https://github.com/imazen/fast-ssim2    "$parent/fast-ssim2"
         clone_if_missing https://github.com/lilith/dssim         "$grandparent/dssim"
 
-    - name: Append sibling-clone pre-build hook to Cross.toml
+    - name: Export sibling-layout volume paths for cross
       shell: bash
       run: |
         set -euxo pipefail
-        # cross-rs runs the build inside a Docker container with the workspace
-        # mounted at /project. The host sibling clones live at
-        # $GITHUB_WORKSPACE/.. and don't cross the container boundary unless
-        # we re-clone inside the container. cross-rs caches the resulting
-        # image layer so this only runs on the first build per cross-rs
-        # image refresh.
-        #
-        # The repo already has a checked-in Cross.toml for target metadata;
-        # append a [build] pre-build hook that clones the siblings into the
-        # paths the workspace Cargo.toml's [patch.crates-io] expects (the
-        # workspace is mounted at /project, so `../zenjpeg/zenjpeg` resolves
-        # to `/zenjpeg/zenjpeg` and `../../dssim` to `/dssim` — both parent
-        # and grandparent levels collapse onto the container root).
-        ws="$GITHUB_WORKSPACE"
-        cross_toml="$ws/Cross.toml"
-        marker="# BEGIN clone-siblings pre-build hook"
-        if [ -f "$cross_toml" ] && grep -q "$marker" "$cross_toml"; then
-          echo "Pre-build hook already present in $cross_toml; nothing to do"
-          exit 0
-        fi
-        # Use printf (not heredoc) — yaml's mandatory indentation would
-        # otherwise be preserved literally by the shell.
-        printf '%s\n' '' \
-          '# BEGIN clone-siblings pre-build hook' \
-          '# Appended by .github/actions/clone-siblings during CI.' \
-          '# Clones the sibling repos the workspace (and the sibling' \
-          '# workspaces it references) need on disk. Workspace is mounted' \
-          '# at /project, so `../X` and `../../X` both resolve under `/`.' \
-          '[build]' \
-          'pre-build = [' \
-          '    "apt-get update && apt-get install -y --no-install-recommends git ca-certificates",' \
-          '    "ln -s /project /jxl-encoder",' \
-          '    "git clone --depth 1 https://github.com/imazen/zenjpeg /zenjpeg",' \
-          '    "git clone --depth 1 https://github.com/imazen/zenjxl-decoder /zenjxl-decoder",' \
-          '    "git clone --depth 1 https://github.com/imazen/zenmetrics /zenmetrics",' \
-          '    "git clone --depth 1 https://github.com/imazen/zensim /zensim",' \
-          '    "git clone --depth 1 https://github.com/imazen/butteraugli /butteraugli",' \
-          '    "git clone --depth 1 https://github.com/imazen/zenanalyze /zenanalyze",' \
-          '    "git clone --depth 1 https://github.com/imazen/zencodec /zencodec",' \
-          '    "git clone --depth 1 https://github.com/imazen/zenpng /zenpng",' \
-          '    "git clone --depth 1 https://github.com/imazen/zenwebp /zenwebp",' \
-          '    "git clone --depth 1 https://github.com/imazen/zenavif /zenavif",' \
-          '    "git clone --depth 1 https://github.com/imazen/zenjxl /zenjxl",' \
-          '    "git clone --depth 1 https://github.com/imazen/ultrahdr /ultrahdr",' \
-          '    "git clone --depth 1 https://github.com/imazen/heic /heic",' \
-          '    "git clone --depth 1 https://github.com/imazen/zentone /zentone",' \
-          '    "git clone --depth 1 https://github.com/imazen/fast-ssim2 /fast-ssim2",' \
-          '    "git clone --depth 1 https://github.com/lilith/dssim /dssim",' \
-          ']' \
-          '# END clone-siblings pre-build hook' \
-          >> "$cross_toml"
-        echo "Appended pre-build hook to $cross_toml"
+        # cross-rs mounts the workspace and each discovered package dir into
+        # its container, but NOT the sibling workspace ROOTS those packages
+        # inherit from — cargo inside the container then fails with "failed
+        # to find a workspace root" for e.g. zenmetrics/crates/cvvdp. The
+        # checked-in Cross.toml declares [build.env] volumes naming the env
+        # vars below; cross mounts each var's path at the SAME path in the
+        # container, so the container sees the full host sibling layout the
+        # host clones above created.
+        parent="$(dirname "$GITHUB_WORKSPACE")"
+        grandparent="$(dirname "$parent")"
+        {
+          echo "JXL_CROSS_SIBLINGS_PARENT=$parent"
+          echo "JXL_CROSS_GP_BUTTERAUGLI=$grandparent/butteraugli"
+          echo "JXL_CROSS_GP_DSSIM=$grandparent/dssim"
+        } >> "$GITHUB_ENV"

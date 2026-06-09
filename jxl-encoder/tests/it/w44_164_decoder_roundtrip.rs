@@ -24,24 +24,9 @@ use std::path::Path;
 /// 3 spot-check screenshot cells where the auto-classifier flips
 /// `patches` on at e ∈ {5, 6}.
 const CELLS: &[(&str, &str, u8, f32)] = &[
-    (
-        "codec_wiki_e5",
-        "/home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png",
-        5,
-        1.0,
-    ),
-    (
-        "imac_g3_e6",
-        "/home/lilith/work/codec-corpus/gb82-sc/imac_g3.png",
-        6,
-        1.0,
-    ),
-    (
-        "terminal_e5",
-        "/home/lilith/work/codec-corpus/gb82-sc/terminal.png",
-        5,
-        1.0,
-    ),
+    ("codec_wiki_e5", "gb82-sc/codec_wiki.png", 5, 1.0),
+    ("imac_g3_e6", "gb82-sc/imac_g3.png", 6, 1.0),
+    ("terminal_e5", "gb82-sc/terminal.png", 5, 1.0),
 ];
 
 fn decode_oxide(bytes: &[u8]) -> Result<(u32, u32), String> {
@@ -122,9 +107,11 @@ fn decode_jxl_rs(bytes: &[u8]) -> Result<(usize, usize), String> {
 /// Requires the GB82-SC corpus. Per repo "NO GRACEFUL SKIPS" rule,
 /// this test panics if the corpus is missing.
 #[test]
+#[ignore = "needs codec-corpus (CODEC_CORPUS_DIR); nightly + local run with --include-ignored"]
 fn w44_164_auto_classify_decoders_clean() {
     let mut tested = 0;
     for &(name, path, effort, distance) in CELLS {
+        let path = &crate::corpus_file(path);
         assert!(
             Path::new(path).exists(),
             "[w44-164] corpus file {} not found at {}",

@@ -6,6 +6,22 @@ passthrough = [
     "RUST_BACKTRACE",
     "RUST_LOG",
 ]
+# Same-path volume mounts for the sibling path-dep repos. cross mounts the
+# workspace and each *discovered package dir* into the container, but NOT
+# the sibling WORKSPACE ROOTS those packages inherit from
+# (zenmetrics/Cargo.toml etc.) — cargo inside the container then fails with
+# "failed to find a workspace root" for e.g. zenmetrics/crates/cvvdp.
+# Mounting the parent dir (all ../X siblings) and the two grandparent-level
+# repos (../../butteraugli, ../../dssim) at their host paths gives the
+# container the complete host layout instead.
+# Each entry names an ENV VAR whose value is a host path; CI's
+# clone-siblings action exports them. Unset vars are skipped by cross, so
+# local cross builds without the vars behave exactly as before.
+volumes = [
+    "JXL_CROSS_SIBLINGS_PARENT",
+    "JXL_CROSS_GP_BUTTERAUGLI",
+    "JXL_CROSS_GP_DSSIM",
+]
 
 # i686 (32-bit x86 Linux)
 [target.i686-unknown-linux-gnu]

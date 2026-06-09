@@ -16,21 +16,9 @@ use jxl_encoder::api::{LossyConfig, PixelLayout};
 use std::path::Path;
 
 const CELLS: &[(&str, &str, f32)] = &[
-    (
-        "1420710",
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1420710.png",
-        3.0,
-    ),
-    (
-        "1044329",
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1044329.png",
-        3.0,
-    ),
-    (
-        "2389166",
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/2389166.png",
-        3.0,
-    ),
+    ("1420710", "CID22/CID22-512/validation/1420710.png", 3.0),
+    ("1044329", "CID22/CID22-512/validation/1044329.png", 3.0),
+    ("2389166", "CID22/CID22-512/validation/2389166.png", 3.0),
 ];
 
 fn decode_oxide(bytes: &[u8]) -> Result<(u32, u32), String> {
@@ -113,9 +101,11 @@ fn decode_jxl_rs(bytes: &[u8]) -> Result<(usize, usize), String> {
 /// is missing. CI environments must include codec-corpus, same as
 /// every other roundtrip test in this crate.
 #[test]
+#[ignore = "needs codec-corpus (CODEC_CORPUS_DIR); nightly + local run with --include-ignored"]
 fn w44_78_widened_gate_decoders_clean() {
     let mut tested = 0;
     for &(name, path, distance) in CELLS {
+        let path = &crate::corpus_file(path);
         assert!(
             Path::new(path).exists(),
             "[w44-78] corpus file {} not found at {}",
