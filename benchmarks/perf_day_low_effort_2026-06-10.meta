@@ -1,0 +1,20 @@
+# DAY-DELTA at low effort — 2026-06-10 (user question: e3/e4/e5 gains)
+# Endpoints: base = 34f0cde1 (pre-hist-sub, start of the 2026-06-10 perf
+# arc), ours = main d907e490 (arc end). Both built --locked --offline,
+# zencodec-0.1.21 lock, from $HOME. LOSSLESS, 1T, 8 iters/side,
+# bench_lossless_ab.py; bytes identical on all 12 cells.
+#
+#            e3       e4       e5
+# terminal  -0.33%   -2.16%   -9.31%
+# noaa      -1.51%   -2.57%  -12.08%
+# mobile    -2.14%   -0.77%  -12.26%
+# clic097   -3.62%   -0.44%  -11.05%
+#
+# Read: e3/e4 are -0.3..-3.6% (small/within-noise but uniformly
+# negative) — lossless below e5 runs nb_rcts_to_try=0 (no estimate_cost
+# trials) and lighter tree paths, so only the collect/gather/reserve
+# chunks partially apply. e5 jumps to -9.3..-12.3%: the 4-candidate RCT
+# search engages (estimate_cost LUT), plus dedup-sort cmp + reserves +
+# B1/B2 all on-path. Lossy e3-e5 is architecturally untouched by this
+# arc (modular tree-learn only runs for patches ref frames there).
+# Host: lilith (7950X, WSL2), loadavg ~2.6-4, post-reboot.
