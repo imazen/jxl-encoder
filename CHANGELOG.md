@@ -32,6 +32,19 @@
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
 ### Changed
+- **Tree learning: BestSplit side-costs rider (issue #64 follow-on,
+  byte-identical).** `BestSplit` now carries the winning threshold's
+  left/right entropy costs out of the split sweep; all six engine call
+  sites skip the 2×O(n_side) `compute_predictor_entropy` recompute per
+  split. Bitwise-identical by construction (same u32 histograms, same
+  `estimate_bits_u32` call shape; the sweep's `effective_histo ==
+  histogram_size`) and enforced by permanent debug-build asserts at every
+  consuming site. Proof: hash-locks 36/36 (default + parallel-tree-
+  learning), libjxl byte-locks 5/5, full suite, and base-vs-ours sha256
+  identity on 7 lossless cells + 2 lossy probes
+  (`benchmarks/perf_bestsplit_rider_2026-06-10.{tsv,meta}`). Wall deltas
+  from that grid are noise-dominated (other agents' un-niced jobs,
+  loadavg 5–20) — quiet-machine re-run queued before citing a number.
 - **Lossless tree learning: parent-histogram subtraction (issue #64 chunk 1,
   PERF-HIST-SUB-LOSSLESS).** `find_best_split` per-node aggregates
   (per-(prop,pred,bucket,token) counts, extra-bit sums, bucket weights) are

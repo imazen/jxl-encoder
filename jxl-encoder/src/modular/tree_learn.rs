@@ -3187,22 +3187,18 @@ pub(crate) fn compute_best_tree_with_budget(
                         true,
                     );
 
-                    // Compute per-side base bits before splitting (uses the
-                    // already-allocated entropy_counts and the immutable
-                    // samples view; cheap relative to subtree builds).
-                    let lb = compute_predictor_entropy(
+                    // Per-side base bits at the winning threshold, carried
+                    // out of the split sweep (issue #64 side-costs rider) —
+                    // bitwise-identical to the compute_predictor_entropy
+                    // recompute this replaces; debug builds re-derive + assert.
+                    let lb = split.left_bits;
+                    let rb = split.right_bits;
+                    debug_verify_carried_side_bits(
                         samples,
+                        &split,
                         root_candidate.start,
                         abs_mid,
-                        split.left_predictor,
-                        histogram_size,
-                        &mut entropy_counts,
-                    );
-                    let rb = compute_predictor_entropy(
-                        samples,
-                        abs_mid,
                         root_candidate.end,
-                        split.right_predictor,
                         histogram_size,
                         &mut entropy_counts,
                     );
@@ -3492,33 +3488,22 @@ pub(crate) fn compute_best_tree_with_budget(
                     ..Default::default()
                 };
 
-                // Compute each child's leaf cost (base_bits) for its stack
-                // entry. NOTE: the split sweep evaluated these exact
-                // histograms at the winning threshold (`find_best_split`
-                // scores every sample in range — there is no sampled "eval
-                // subset"), so `BestSplit` could carry `best_l_cost` /
-                // `best_r_cost` bitwise-identically and skip this recompute
-                // (issue #64 side-costs rider). This is O(N) per split —
-                // small next to the O(N*P*K) search.
-                let (left_bits, right_bits) = crate::profile_time!("tree/recompute_child_bits", {
-                    let lb = compute_predictor_entropy(
-                        samples,
-                        candidate.start,
-                        abs_mid,
-                        split.left_predictor,
-                        histogram_size,
-                        &mut entropy_counts,
-                    );
-                    let rb = compute_predictor_entropy(
-                        samples,
-                        abs_mid,
-                        candidate.end,
-                        split.right_predictor,
-                        histogram_size,
-                        &mut entropy_counts,
-                    );
-                    (lb, rb)
-                });
+                // Each child's leaf cost (base_bits) for its stack entry,
+                // carried out of the split sweep at the winning threshold
+                // (issue #64 side-costs rider — the sweep scores every
+                // sample in range, there is no sampled "eval subset", so the
+                // carried costs are bitwise-identical to the 2×O(N)
+                // recompute this replaces). Debug builds re-derive + assert.
+                let (left_bits, right_bits) = (split.left_bits, split.right_bits);
+                debug_verify_carried_side_bits(
+                    samples,
+                    &split,
+                    candidate.start,
+                    abs_mid,
+                    candidate.end,
+                    histogram_size,
+                    &mut entropy_counts,
+                );
 
                 // PERF-HIST-SUB-LOSSLESS: with this node's tensor in hand
                 // (arrived via derivation, or captured above), build the
@@ -3770,19 +3755,16 @@ fn build_subtree_sequential(
                     ..Default::default()
                 };
 
-                let lb = compute_predictor_entropy(
+                // Carried from the split sweep (issue #64 side-costs rider);
+                // debug builds re-derive + assert bitwise identity.
+                let lb = split.left_bits;
+                let rb = split.right_bits;
+                debug_verify_carried_side_bits(
                     samples,
+                    &split,
                     candidate.start,
                     abs_mid,
-                    split.left_predictor,
-                    histogram_size,
-                    &mut entropy_counts,
-                );
-                let rb = compute_predictor_entropy(
-                    samples,
-                    abs_mid,
                     candidate.end,
-                    split.right_predictor,
                     histogram_size,
                     &mut entropy_counts,
                 );
@@ -4103,20 +4085,16 @@ fn build_subtree_recursive_parallel(
         },
     );
 
-    // Recompute child base bits using the split's predictors.
-    let left_bits = compute_predictor_entropy(
+    // Child base bits carried from the split sweep (issue #64 side-costs
+    // rider); debug builds re-derive + assert bitwise identity.
+    let left_bits = split.left_bits;
+    let right_bits = split.right_bits;
+    debug_verify_carried_side_bits(
         &samples,
+        &split,
         0,
         abs_mid,
-        split.left_predictor,
-        histogram_size,
-        &mut entropy_counts,
-    );
-    let right_bits = compute_predictor_entropy(
-        &samples,
-        abs_mid,
         n,
-        split.right_predictor,
         histogram_size,
         &mut entropy_counts,
     );
@@ -4798,6 +4776,8 @@ fn find_best_split_borrowed(
                     right_predictor: best_r_pred[local_k],
                     total_bits: total,
                     left_count,
+                    left_bits: best_l_cost[local_k],
+                    right_bits: best_r_cost[local_k],
                 });
             }
         }
@@ -4822,6 +4802,48 @@ fn find_best_split_borrowed(
     }
 
     best
+}
+
+/// Borrowed-view counterpart to [`debug_verify_carried_side_bits`].
+#[cfg(feature = "parallel-tree-learning")]
+#[inline]
+fn debug_verify_carried_side_bits_borrowed(
+    samples: &BorrowedSamples<'_>,
+    split: &BestSplit,
+    start: usize,
+    mid: usize,
+    end: usize,
+    histogram_size: usize,
+    counts_buf: &mut [u32],
+) {
+    if cfg!(debug_assertions) {
+        let lb = compute_predictor_entropy_borrowed(
+            samples,
+            start,
+            mid,
+            split.left_predictor,
+            histogram_size,
+            counts_buf,
+        );
+        let rb = compute_predictor_entropy_borrowed(
+            samples,
+            mid,
+            end,
+            split.right_predictor,
+            histogram_size,
+            counts_buf,
+        );
+        assert_eq!(
+            split.left_bits.to_bits(),
+            lb.to_bits(),
+            "BestSplit.left_bits diverged from post-split recompute (borrowed)"
+        );
+        assert_eq!(
+            split.right_bits.to_bits(),
+            rb.to_bits(),
+            "BestSplit.right_bits diverged from post-split recompute (borrowed)"
+        );
+    }
 }
 
 /// Borrowed-view counterpart to [`compute_predictor_entropy`].
@@ -5117,19 +5139,16 @@ fn build_subtree_sequential_borrowed(
                     ..Default::default()
                 };
 
-                let lb = compute_predictor_entropy_borrowed(
+                // Carried from the split sweep (issue #64 side-costs rider);
+                // debug builds re-derive + assert bitwise identity.
+                let lb = split.left_bits;
+                let rb = split.right_bits;
+                debug_verify_carried_side_bits_borrowed(
                     samples,
+                    &split,
                     candidate.start,
                     abs_mid,
-                    split.left_predictor,
-                    histogram_size,
-                    &mut entropy_counts,
-                );
-                let rb = compute_predictor_entropy_borrowed(
-                    samples,
-                    abs_mid,
                     candidate.end,
-                    split.right_predictor,
                     histogram_size,
                     &mut entropy_counts,
                 );
@@ -5303,19 +5322,16 @@ fn build_subtree_recursive_parallel_borrowed(
         true,
     );
 
-    let left_bits = compute_predictor_entropy_borrowed(
+    // Carried from the split sweep (issue #64 side-costs rider); debug
+    // builds re-derive + assert bitwise identity.
+    let left_bits = split.left_bits;
+    let right_bits = split.right_bits;
+    debug_verify_carried_side_bits_borrowed(
         &samples,
+        &split,
         0,
         abs_mid,
-        split.left_predictor,
-        histogram_size,
-        &mut entropy_counts,
-    );
-    let right_bits = compute_predictor_entropy_borrowed(
-        &samples,
-        abs_mid,
         n,
-        split.right_predictor,
         histogram_size,
         &mut entropy_counts,
     );
@@ -5783,19 +5799,16 @@ pub fn compute_best_tree_with_multipliers(
                         (split.splitval + 1).max(rchild_range[split.property][0] as i32) as u32;
                 }
 
-                let left_bits = compute_predictor_entropy(
+                // Carried from the split sweep (issue #64 side-costs rider);
+                // debug builds re-derive + assert bitwise identity.
+                let left_bits = split.left_bits;
+                let right_bits = split.right_bits;
+                debug_verify_carried_side_bits(
                     samples,
+                    &split,
                     candidate.start,
                     abs_mid,
-                    split.left_predictor,
-                    histogram_size,
-                    &mut entropy_counts,
-                );
-                let right_bits = compute_predictor_entropy(
-                    samples,
-                    abs_mid,
                     candidate.end,
-                    split.right_predictor,
                     histogram_size,
                     &mut entropy_counts,
                 );
@@ -6621,6 +6634,20 @@ struct BestSplit {
     /// (= `bucket_starts[local_k + 1]`) so the caller can pass it directly as
     /// the `pos` argument to `split_tree_samples_in_place` without rescanning.
     left_count: usize,
+    /// Entropy cost (`estimate_bits_u32` + weighted extra bits) of the LEFT
+    /// side at the winning threshold under `left_predictor`, captured from
+    /// the sweep (issue #64 side-costs rider). Bitwise-identical to the
+    /// `compute_predictor_entropy` recompute over the partitioned left range:
+    /// same u32 histogram contents (integer accumulation, order-free), same
+    /// u64 `eb * count` sum, and the same `estimate_bits_u32` call shape —
+    /// both sweep and recompute pass `..histogram_size` slices
+    /// (`effective_histo == histogram_size` in both split fns). Engines
+    /// consume this directly and skip the 2×O(n_side) post-split recompute;
+    /// debug builds re-derive and assert via
+    /// `debug_verify_carried_side_bits`.
+    left_bits: f64,
+    /// Right-side counterpart of `left_bits` (under `right_predictor`).
+    right_bits: f64,
 }
 
 /// Find the best (property, threshold) split for the contiguous sample range
@@ -7118,6 +7145,8 @@ fn find_best_split(
                     right_predictor: best_r_pred[local_k],
                     total_bits: total,
                     left_count,
+                    left_bits: best_l_cost[local_k],
+                    right_bits: best_r_cost[local_k],
                 });
             }
         }
@@ -7461,6 +7490,53 @@ fn find_best_predictor(
 /// sample_counts). Callers maintain this contiguity via
 /// `split_tree_samples_in_place` at partition time, so this loop is now a
 /// pure linear scan over sequential memory instead of indexed random reads.
+/// Debug-build verifier for the issue-#64 side-costs rider: asserts the
+/// sweep-carried [`BestSplit::left_bits`] / [`BestSplit::right_bits`] are
+/// bitwise-identical to the post-partition [`compute_predictor_entropy`]
+/// recompute they replaced at the engine call sites. Uses `cfg!` (not
+/// `#[cfg]`/`debug_assert!`) so the arguments stay borrowed on every build
+/// profile (no unused-variable churn in release); the `if false` body is
+/// dead-code-eliminated in release builds.
+#[inline]
+fn debug_verify_carried_side_bits(
+    samples: &TreeSamples,
+    split: &BestSplit,
+    start: usize,
+    mid: usize,
+    end: usize,
+    histogram_size: usize,
+    counts_buf: &mut [u32],
+) {
+    if cfg!(debug_assertions) {
+        let lb = compute_predictor_entropy(
+            samples,
+            start,
+            mid,
+            split.left_predictor,
+            histogram_size,
+            counts_buf,
+        );
+        let rb = compute_predictor_entropy(
+            samples,
+            mid,
+            end,
+            split.right_predictor,
+            histogram_size,
+            counts_buf,
+        );
+        assert_eq!(
+            split.left_bits.to_bits(),
+            lb.to_bits(),
+            "BestSplit.left_bits diverged from post-split recompute"
+        );
+        assert_eq!(
+            split.right_bits.to_bits(),
+            rb.to_bits(),
+            "BestSplit.right_bits diverged from post-split recompute"
+        );
+    }
+}
+
 fn compute_predictor_entropy(
     samples: &TreeSamples,
     start: usize,

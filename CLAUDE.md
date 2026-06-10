@@ -444,7 +444,27 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
-(none currently)
+### 2026-06-10: `it` test binary — env-var runtime-override tests flake under parallelism
+
+`content_class_dispatch_roundtrip::content_class_dispatch_with_patches_false_respects_opt_out`
+failed in a full parallel `cargo test -p jxl-encoder` run, passes in
+isolation. 9 files in `tests/it/` mutate process env (`set_var`/`remove_var`:
+`dispatch_2c_afv_screenshot.rs`, `strategy_env_fallback.rs`, several
+`w44_*_decoder_roundtrip.rs`) and the dispatch-sensitive roundtrip tests read
+those overrides mid-encode — parallel cross-contamination. Fix direction:
+serialize the env-mutating tests (shared mutex or `--test-threads=1` group)
+per the runtime-override isolation contract. NOT related to encoder output.
+
+### 2026-06-10: `just rd-regression` red for environment reasons (predates any current change)
+
+Two causes, neither an encoding regression: (a)
+`~/work/codec-corpus/clic2025/validation/` no longer exists on disk (corpus
+reorganization) — 10-15 cells fail with "No such file or directory" and count
+as regressions; re-fetch via codec-corpus tooling. (b) frymire (the only cell
+that runs) drifted FAVORABLY vs the stored baseline (d=1.0: −2.3 % bytes,
+better SSIM2; d=3.0: −3.1 %) — consistent with the 2026-06-10 2c
+screenshot-class lift (ae62c219) whose rd baseline was never regenerated.
+Baseline regen needs user sign-off (test-expectation change).
 
 ## Investigation Notes
 
@@ -598,11 +618,12 @@ measurement at equal or better coverage.
   lossless bench set `benchmarks/lossless_bench_set_2026-06-10.tsv`
   (30 imazen-26 picks, 11 core; see its `.meta`) + the CLIC/gb82-sc
   continuity cells.
-- **BestSplit side-costs rider** (deferred from PERF-HIST-SUB-LOSSLESS;
-  recorded analysis says bitwise-safe): carry best_l/r_cost of the winning
-  threshold out of find_best_split, skip the caller's 2×O(n_side)
-  compute_predictor_entropy recompute at all four engine call sites.
-  Small free win on top of the shipped -20.7 %.
+- **BestSplit side-costs rider — SHIPPED 2026-06-10** (byte-identical;
+  six engine sites consume sweep-carried best_l/r_cost; permanent
+  debug-asserts verify carried == recomputed at every site). Wall effect
+  unresolved (grid ran under loadavg 5-20 from concurrent agents) —
+  quiet-machine re-run queued: `scripts/bench_lossless_ab.py`, cells in
+  `benchmarks/perf_bestsplit_rider_2026-06-10.meta`.
 - **Dispatch chunks 2b/2d** (issue #43): 2d = fine_grained_step at e9 on
   ≥4 MP (Pareto sweep first); 2b = DCT64 distance-gate expansion on medium
   (measure picks first). 2a + 2c shipped.

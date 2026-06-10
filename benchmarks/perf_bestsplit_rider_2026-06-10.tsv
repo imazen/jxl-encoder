@@ -1,0 +1,8 @@
+cell	image	effort	threads	wall_base_median_s	wall_ours_median_s	delta_pct	base_min_max	ours_min_max	bytes	bytes_identical	deterministic
+clic097_e7	/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png	7	1	1.434	1.427	-0.48	1.255/2.531	1.275/1.955	593141	True	True
+clic097_e9	/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png	9	1	7.451	7.523	+0.97	7.238/9.352	7.285/7.718	567383	True	True
+clic028_e7	/home/lilith/work/codec-corpus/clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	7	1	2.498	2.473	-1.01	2.349/2.728	2.230/2.507	1277383	True	True
+terminal_e7	/home/lilith/work/codec-corpus/gb82-sc/terminal.png	7	1	0.878	0.878	-0.05	0.810/1.777	0.778/1.483	38749	True	True
+noaa_leslie_e7	/home/lilith/work/codec-corpus/imazen-26/5300-noaa-hurricane-documents/5336_noaa_nhc-al132024-leslie_p05_2550x3300.png	7	1	4.061	4.193	+3.26	3.821/4.965	3.970/4.670	255415	True	True
+mobile_substack_e7	/home/lilith/work/codec-corpus/imazen-26/8000-lilith-mobile-screenshots/8021_mobile-screenshots_trump-pac-donation_screenshot-20260526-072032-substack_1080x2520.png	7	1	2.295	2.252	-1.90	2.161/2.570	2.187/2.528	498954	True	True
+clic097_e7_8t	/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png	7	8	0.960	0.975	+1.52	0.886/2.267	0.928/2.148	593141	True	True

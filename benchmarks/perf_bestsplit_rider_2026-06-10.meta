@@ -1,0 +1,81 @@
+# PERF-BESTSPLIT-RIDER A/B — 2026-06-10
+#
+# Change: BestSplit side-costs rider (issue #64 follow-on, deferred from
+# PERF-HIST-SUB-LOSSLESS). `find_best_split` / `find_best_split_borrowed`
+# already compute each threshold's left/right entropy cost during the
+# sweep; `BestSplit` now carries the winning threshold's `left_bits` /
+# `right_bits` out, and all six engine call sites consume them instead of
+# re-running `compute_predictor_entropy` twice per split (2 x O(n_side)):
+#   compute_best_tree (parallel root + sequential loop),
+#   build_subtree_sequential, build_subtree_recursive_parallel,
+#   build_subtree_{sequential,recursive_parallel}_borrowed,
+#   compute_best_tree_with_multipliers (split-predictor site only — its
+#   second site re-derives predictors independently and keeps the
+#   recompute; the test-side reference_greedy_tree_no_tensors also keeps
+#   the naive recompute deliberately, as an independent verifier).
+#
+# ── Bitwise-identity argument + proof ───────────────────────────────────────
+# Sweep and recompute both call jxl_simd::estimate_bits_u32 over a
+# `..histogram_size` slice (`effective_histo == histogram_size` in BOTH
+# split fns — the "max token narrowing" doc bullet was stale), on u32
+# histograms accumulated from the same weighted sample multiset (integer,
+# order-free) plus the same u64 `eb * count` sums. Identical inputs to the
+# same deterministic dispatch => identical f64.
+# Enforced permanently: `debug_verify_carried_side_bits{,_borrowed}` re-runs
+# the recompute and asserts bitwise equality at every consuming site in
+# debug builds (test/dev profiles keep debug-assertions on; release strips
+# the verify entirely via cfg!).
+# Proof runs (all on the rider tree):
+#   - cargo test -p jxl-encoder: 1870 passed (asserts silent on every split
+#     of every encode). 1 pre-existing parallel-suite env flake, see
+#     CLAUDE.md Known Bugs 2026-06-10 (passes in isolation; 9 it-files
+#     mutate process env).
+#   - hash_lock_features 36/36 default AND 36/36 --features
+#     parallel-tree-learning.
+#   - strategy_libjxl_byte_lock 5/5 (--features __expert).
+#   - Debug ptl encodes of clic097 + terminal at --lossless e7: asserts
+#     silent (borrowed engines on real content).
+#   - just rd-regression: RED for PRE-EXISTING environment reasons
+#     (clic2025/validation missing on disk; frymire baseline stale post-2c
+#     with FAVORABLE drift) — documented in CLAUDE.md Known Bugs; not
+#     caused by this change (asserts silent through those encodes, and the
+#     A/B below shows byte-identity against the true base binary).
+#
+# ── A/B grid (this file's .tsv) ─────────────────────────────────────────────
+# Binaries: BASE from git 98c5c713 (exported via git archive to a sibling
+# dir), OURS from the rider tree. BOTH sides built from $HOME with
+# --manifest-path + --locked --offline against the SAME Cargo.lock (the
+# repo's untracked on-disk lock, copied to the sibling), bypassing the
+# temporary ~/work/zen/.cargo/config.toml paths-override on BOTH sides —
+# identical dep sources and versions. default-features binaries for 1T
+# cells; +parallel-tree-learning for the 8T cell. 6 iters/side,
+# interleaved b,o,b,o..., 1 warmup/side, median reported
+# (scripts/bench_lossless_ab.py).
+#
+# BYTES: identical base-vs-ours on ALL 7 lossless cells (sha256, every
+# iteration, both sides also self-deterministic). Lossy probes byte-
+# identical too: frymire e5 d=1.0 and clic097 e7 d=1.0 (the clic probe was
+# re-run with the correct filename after the in-grid one hit a wrong-path
+# bug and compared stale files — the in-grid "LOSSY-IDENTICAL clic097"
+# line in the run log is void; the re-run stands).
+#
+# WALL: NOT RESOLVABLE in this grid — the box ran other agents' un-niced
+# jobs throughout (rustc 434%, zenpng 226%, then zenjxl_decoder ~2300%;
+# loadavg 5.3 -> 19.9 over the run). Interleaving keeps the deltas
+# unbiased but the spread (-1.90% .. +3.26%, control cell terminal at
+# -0.05%) is noise-dominated. The change strictly REMOVES release-build
+# work (two O(n_side) passes per split; adds 16 bytes to one per-node
+# struct and two f64 stores per best-threshold update), so a real
+# regression is not structurally plausible; queue a quiet-machine wall
+# re-run (same script, same cells) next time loadavg < 2 before citing
+# any wall number from this rider.
+#
+# Cells: clic097/clic028 (CLIC-1024 photos, e7+e9 1T; photos are the
+# split-bound class), terminal (gb82-sc screenshot control — not
+# split-bound, expected ~0), noaa_leslie 8.4MP doc + mobile_substack
+# 2.7MP (lossless_bench_set_2026-06-10 core picks), clic097 e7 8T (ptl,
+# borrowed engines).
+#
+# Host: lilith (7950X, 128 GB, WSL2). No -C target-cpu=native.
+# Reproduce: scripts/bench_lossless_ab.py --base <base-bin> --ours
+# <ours-bin> --iters 6 --out <tsv> --cell name:glob:effort:threads ...
