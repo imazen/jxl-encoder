@@ -1,10 +1,23 @@
 # lossless_bench_set_2026-06-10.tsv — k-means-stratified lossless bench set
 #
-# 30 images (11 tier=core) selected from the imazen-26 corpus to replace
-# ad-hoc lossless bench sets (5x CLIC-1024 photos + gb82-sc's 10 retro
-# screenshots) with stratified coverage of content classes no prior
-# lossless bench exercised: document scans, 1-bit patents, manuscripts,
-# plots/line-art, modern mobile+web screenshots, AI illustration classes.
+# v2 (same date): 43 images (13 tier=core) across 23 strata — the 30-pick
+# PNG v1 (docs, 1-bit patents, manuscripts, plots, mobile+web screenshots,
+# AI classes) plus 13 picks from the 10 JPEG photographic strata (general/
+# interiors/nature/food/people, renders, textures, both museum classes,
+# gray-rescan patents). v1's 30 picks reproduced identically under the
+# fixed seed (verified 30/30). Replaces ad-hoc lossless bench sets
+# (5x CLIC-1024 photos + gb82-sc's 10 retro screenshots).
+#
+# JPEG picks are PRE-DECODED to metadata-stripped 8-bit PNGs (ImageMagick
+# `convert -strip`, no auto-orient, ICC/EXIF dropped) under
+#   /mnt/v/input/jxl-encoder/lossless-bench-imazen26-png/
+# because default-features cjxl-rs reads only PNG and jpeg-reencoding
+# builds auto-route .jpg to the JPEG->JXL transcode path. The TSV's
+# bench_input column is the file a harness should feed (corpus path for
+# png picks, materialized path for jpg picks); bench_sha256 pins it.
+# CAVEAT: decoded-JPEG pixels carry 8x8 block structure + quantization
+# noise, not camera-native statistics — fine for perf benching photo-like
+# content, not a substitute for true lossless camera sources.
 #
 # Selected per the sweep-discipline stratification rule: per-stratum
 # k-means on zenanalyze content features, centroid-nearest member per
@@ -50,6 +63,7 @@
 # Versions: sklearn 1.7.2, numpy 2.2.6, pandas 2.3.3, python 3.12.
 #
 # ── K allocation (candidates -> picks) ──────────────────────────────────────
+# PNG strata (v1):
 #   web-screenshots    370 -> 5      plots             126 -> 3
 #   ai-products        711 -> 3      nps-brochures      37 -> 2
 #   ai-clipart          86 -> 2      noaa-documents     44 -> 2
@@ -58,14 +72,30 @@
 #   mobile-screenshots  31 -> 2      photos-png         10 -> 2
 #   epa-report          25 -> 1                       ----------
 #                                                      1603 -> 30
+# JPEG strata (v2, <=16 MP survivors; 348 candidates, 0 decode failures):
+#   photos-general      61 -> 2      photos-people      15 -> 1
+#   photos-interiors    45 -> 2      museum-aic         12 -> 1
+#   photos-nature       69 -> 2      renders             7 -> 1
+#   photos-food         39 -> 1      textures            2 -> 1
+#   museum-met          24 -> 1      patents-gray-jpg   74 -> 1
+#                                                      ----------
+#                                                       348 -> 13
+# Small-pool caveats: textures has only 2 candidates under the 16 MP cap
+# (class avg is 34.8 MP) and renders 7 — their single picks are
+# representative of the SURVIVING pool, not the full class.
 #
 # ── Tier rule ───────────────────────────────────────────────────────────────
-# tier=core (11 picks, fast A/B gate): first cluster (size-desc) per stratum
-# whose native px <= 8,500,000. Strata with NO core pick: epa-report
-# (11.40 MP) and manuscript-text (8.52 MP — 0.24% over the cap; lives in
-# full tier only). Recommended grids:
-#   fast gate:  core 11 x e{7,9} x {1T,8T} = 44 cells
-#   validation: full 30 x e{7,9} x {1T,8T} = 120 cells
+# tier=core (13 picks, fast A/B gate): first cluster (size-desc) per stratum
+# whose native px <= 8,500,000. v2 adds two photo-side cores:
+# patents-gray-jpg (8.01 MP) and museum-met (small museum repro). Most
+# photo strata exceed the core cap (11-13 MP) and live in full tier only;
+# fast-gate photo signal stays with the CLIC continuity cells. Strata with
+# NO core pick: epa-report (11.40 MP), manuscript-text (8.52 MP — 0.24%
+# over), photos-general/interiors/nature/food/people, renders, textures,
+# museum-aic. Recommended grids:
+#   fast gate:  core 13 x e{7,9} x {1T,8T} = 52 cells
+#   validation: full 43 x e{7,9} x {1T,8T} = 172 cells (mind RAM: the
+#   12-16 MP cells peak 4-7 GB RSS each at default threads)
 # Keep continuity cells alongside: 5x CLIC-1024 photos (hist-sub baseline,
 # benchmarks/perf_hist_sub_lossless_2026-06-10.meta) + gb82-sc
 # {terminal, imac_dark} (W44-era screenshot baselines).
@@ -82,11 +112,12 @@
 #   768x1024); the 2880x1800 retina class did not surface a centroid pick.
 #   The imazen-26 re-baselining follow-on should add retina cells
 #   explicitly when validating screenshot-class gates.
-# - Encode smoke (not a benchmark): all 3 riskiest picks encode clean at
-#   --lossless -e 7 (default threads): 1-bit patent 7.9 MP -> 100 KB in
+# - Encode smoke (not a benchmark): all 3 riskiest v1 picks encode clean
+#   at --lossless -e 7 (default threads): 1-bit patent 7.9 MP -> 100 KB in
 #   0.8 s; 15.6 MP brochure map -> 4.1 MB in 13.5 s with PEAK RSS ~7.0 GB
-#   (/usr/bin/time -v) — harnesses running full-tier cells concurrently
-#   must budget RAM accordingly (run-heavy --mem).
+#   (/usr/bin/time -v). v2 materialized smokes: 12 MP city photo 15.0 s /
+#   5.6 GB RSS; 9.1 MP bark texture 20.0 s / 4.1 GB. Harnesses running
+#   full-tier cells concurrently must budget RAM (run-heavy --mem).
 #
 # Set committed alongside: benchmarks/lossless_bench_set_2026-06-10.tsv
 # Selection script: scripts/select_lossless_bench_imazen26.py

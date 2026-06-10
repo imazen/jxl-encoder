@@ -7,16 +7,24 @@ content-class stratum using k-means on zenanalyze `feat_*` embeddings,
 instead of hand-picking or random-sampling (which over-represents the
 modal class — 8100-web-screenshots alone is 370 of 1603 candidates).
 
-Candidate pool is PNG-only: cjxl-rs auto-routes .jpg inputs to the
-JPEG->JXL transcode path (a different code path than the modular
-tree-learner the lossless bench measures), and HEIC/DNG don't decode in
-the extractor. Megapixel cap 16 MP keeps e9 1T bench cells tractable.
+Candidate pool is per-stratum PNG or JPEG, <=16 MP (keeps e9 1T bench
+cells tractable). HEIC/DNG classes are excluded — nothing in-pipeline
+decodes them. JPEG strata exist because the photographic classes are
+jpg-only; their *picks* are pre-decoded once to stripped PNGs (the
+`materialize` step) because default-features cjxl-rs reads only PNG, and
+jpeg-reencoding builds auto-route .jpg to the JPEG->JXL transcode path —
+a different code path than the modular tree-learner this bench measures.
+Caveat recorded in the .meta: decoded-JPEG pixels carry 8x8 block
+structure + quantization noise, not camera-native statistics.
 
-Pipeline (three subcommands, run in order):
+Pipeline (four subcommands, run in order):
 
-  1. prep    — read CORPUS-MANIFEST.tsv, filter (png, <=16 MP, known
-               folder), write candidates.tsv + N extractor manifest
-               shards for zenanalyze's extract_features_for_picker.
+  1. prep    — read CORPUS-MANIFEST.tsv, filter (per-stratum format,
+               <=16 MP, known folder), write candidates.tsv + N extractor
+               manifest shards for zenanalyze's
+               extract_features_for_picker. Incremental: candidates whose
+               features already exist in the workdir's features_*.tsv are
+               skipped (re-runs only shard NEW candidates).
   2. (run the extractor on each shard — see --print-extract-cmds)
   3. select  — concat shard features, append feat_zz_log2_mp (native
                megapixels; gives k-means a size axis inside strata with
@@ -24,6 +32,11 @@ Pipeline (three subcommands, run in order):
                strata), run cluster_sources.py per stratum, merge picks,
                compute sha256 of the chosen files, emit the set TSV +
                clusters JSON.
+  4. materialize — decode every jpg pick to a metadata-stripped 8-bit PNG
+               under /mnt/v/input/jxl-encoder/lossless-bench-imazen26-png/
+               (ImageMagick convert -strip, no auto-orient), fill the
+               bench_input + bench_sha256 columns in the set TSV. PNG
+               picks pass through with bench_input = corpus path.
 
 Reuses (does not modify):
   ~/work/zen/zenanalyze/examples/extract_features_for_picker.rs
@@ -48,31 +61,51 @@ MP_CAP_PX = 16_000_000
 CORE_MP_CAP_PX = 8_500_000  # tier=core picks must fit (fast A/B gate set)
 SEED = 42
 
-# stratum -> (corpus folders, K picks). Folders merged into one stratum
-# share one k-means pool (photos-png: the 10 stray PNGs in two photo
-# classes — too few to cluster separately).
+# stratum -> (corpus folders, K picks, source format). Folders merged into
+# one stratum share one k-means pool (photos-png: the 10 stray PNGs in two
+# photo classes — too few to cluster separately). A folder may appear in
+# one png stratum AND one jpg stratum (different candidate pools).
 STRATA = {
-    "photos-png": (["1200-lilith-interiors", "1400-lilith-nature"], 2),
-    "nps-brochures": (["5000-national-park-service-brochures"], 2),
-    "epa-report": (["5200-epa-climate-impact-2021-report"], 1),
-    "noaa-documents": (["5300-noaa-hurricane-documents"], 2),
-    "patents": (["6000-lilith-scans-public-patents"], 2),
-    "manuscript-illustrations": (["6600-ia-scans-manuscript-illustrations"], 2),
-    "manuscript-text": (["6800-ia-scans-manuscript-text"], 2),
-    "plots": (["7000-lilith-plots"], 3),
-    "mobile-screenshots": (["8000-lilith-mobile-screenshots"], 2),
-    "web-screenshots": (["8100-lilith-web-screenshots"], 5),
-    "ai-clipart": (["9000-lilith-ai-clipart"], 2),
-    "ai-illustrations": (["9094-lilith-ai-illustrations"], 2),
-    "ai-products": (["9226-lilith-ai-products"], 3),
+    # v1 strata (2026-06-10, PNG): docs / screens / plots / AI classes.
+    "photos-png": (["1200-lilith-interiors", "1400-lilith-nature"], 2, "png"),
+    "nps-brochures": (["5000-national-park-service-brochures"], 2, "png"),
+    "epa-report": (["5200-epa-climate-impact-2021-report"], 1, "png"),
+    "noaa-documents": (["5300-noaa-hurricane-documents"], 2, "png"),
+    "patents": (["6000-lilith-scans-public-patents"], 2, "png"),
+    "manuscript-illustrations": (["6600-ia-scans-manuscript-illustrations"], 2, "png"),
+    "manuscript-text": (["6800-ia-scans-manuscript-text"], 2, "png"),
+    "plots": (["7000-lilith-plots"], 3, "png"),
+    "mobile-screenshots": (["8000-lilith-mobile-screenshots"], 2, "png"),
+    "web-screenshots": (["8100-lilith-web-screenshots"], 5, "png"),
+    "ai-clipart": (["9000-lilith-ai-clipart"], 2, "png"),
+    "ai-illustrations": (["9094-lilith-ai-illustrations"], 2, "png"),
+    "ai-products": (["9226-lilith-ai-products"], 3, "png"),
+    # v2 strata (2026-06-10, JPEG): the photographic classes — jpg-only in
+    # the corpus; picks are PNG-materialized for the bench (see step 4).
+    "photos-general": (["1000-lilith-photos-general"], 2, "jpg"),
+    "photos-interiors": (["1200-lilith-interiors"], 2, "jpg"),
+    "photos-nature": (["1400-lilith-nature"], 2, "jpg"),
+    "photos-food": (["1600-lilith-food"], 1, "jpg"),
+    "photos-people": (["2000-unsplash-people"], 1, "jpg"),
+    "renders": (["2200-unsplash-renders"], 1, "jpg"),
+    "textures": (["2400-unsplash-textures"], 1, "jpg"),
+    "museum-aic": (["3000-art-institute-of-chicago-photos"], 1, "jpg"),
+    "museum-met": (["3300-met-museum-photos"], 1, "jpg"),
+    "patents-gray-jpg": (["6000-lilith-scans-public-patents"], 1, "jpg"),
 }
 
+MATERIALIZE_DIR = Path("/mnt/v/input/jxl-encoder/lossless-bench-imazen26-png")
 
-def folder_to_stratum():
+
+def stratum_assignments():
+    """(folder, format) -> stratum. A folder may appear in one png stratum
+    AND one jpg stratum; the (folder, format) pair must be unique."""
     m = {}
-    for stratum, (folders, _k) in STRATA.items():
+    for stratum, (folders, _k, fmt) in STRATA.items():
         for f in folders:
-            m[f] = stratum
+            key = (f, fmt)
+            assert key not in m, f"duplicate stratum assignment for {key}"
+            m[key] = stratum
     return m
 
 
@@ -82,13 +115,9 @@ def load_candidates():
     df["height"] = df["height"].astype(int)
     df["bytes"] = df["bytes"].astype(int)
     df["px"] = df["width"] * df["height"]
-    f2s = folder_to_stratum()
-    df = df[
-        (df["format"] == "png")
-        & (df["px"] <= MP_CAP_PX)
-        & (df["folder"].isin(f2s))
-    ].copy()
-    df["stratum"] = df["folder"].map(f2s)
+    m = stratum_assignments()
+    df["stratum"] = [m.get((f, fmt)) for f, fmt in zip(df["folder"], df["format"])]
+    df = df[(df["px"] <= MP_CAP_PX) & df["stratum"].notna()].copy()
     df["abs_path"] = df["path"].map(lambda p: str(CORPUS / p))
     return df
 
@@ -101,10 +130,19 @@ def cmd_prep(args):
     print(f"candidates: {len(df)} images, {df['bytes'].sum() / 1e6:.0f} MB", file=sys.stderr)
     print(df.groupby("stratum").size().to_string(), file=sys.stderr)
 
+    # Incremental: skip candidates whose features were already extracted in
+    # a prior run (matched on absolute path in any features_*.tsv).
+    done = set()
+    for p in sorted(out.glob("features_*.tsv")):
+        done.update(pd.read_csv(p, sep="\t", dtype=str, usecols=["image_path"])["image_path"])
+    todo = df[~df["abs_path"].isin(done)]
+    print(f"{len(done)} already extracted; {len(todo)} new to extract", file=sys.stderr)
+
     # Extractor manifest shards (columns read by name in the extractor).
+    tag = f"{args.tag}_" if args.tag else ""
     n = args.shards
     for i in range(n):
-        shard = df.iloc[i::n]
+        shard = todo.iloc[i::n]
         m = pd.DataFrame(
             {
                 "sha256": "",
@@ -114,13 +152,13 @@ def cmd_prep(args):
                 "path": shard["abs_path"],
             }
         )
-        m.to_csv(out / f"extract_manifest_{i}.tsv", sep="\t", index=False)
-    print(f"wrote {n} extractor manifest shards to {out}", file=sys.stderr)
+        m.to_csv(out / f"extract_manifest_{tag}{i}.tsv", sep="\t", index=False)
+    print(f"wrote {n} extractor manifest shards (tag={tag!r}) to {out}", file=sys.stderr)
     if args.print_extract_cmds:
         for i in range(n):
             print(
-                f"<extractor-binary> --manifest {out}/extract_manifest_{i}.tsv "
-                f"--output {out}/features_{i}.tsv --sizes 1024"
+                f"<extractor-binary> --manifest {out}/extract_manifest_{tag}{i}.tsv "
+                f"--output {out}/features_{tag}{i}.tsv --sizes 1024"
             )
 
 
@@ -180,7 +218,7 @@ def cmd_select(args):
     feats["feat_zz_log2_mp"] = feats["px"].map(lambda p: f"{log2(int(p) / 1e6):.6f}")
 
     rows = []
-    for stratum, (_folders, k) in STRATA.items():
+    for stratum, (_folders, k, fmt) in STRATA.items():
         sub = feats[feats["stratum"] == stratum].drop(columns=["abs_path", "stratum", "px"])
         if sub.empty:
             print(f"WARNING: stratum {stratum} has no feature rows — skipped", file=sys.stderr)
@@ -197,6 +235,7 @@ def cmd_select(args):
                 {
                     "stratum": stratum,
                     "corpus_rel_path": row["path"],
+                    "source_format": fmt,
                     "tier": "core" if is_core else "full",
                     "cluster_id": c["cluster"],
                     "cluster_size": c["size"],
@@ -223,18 +262,52 @@ def cmd_select(args):
     print(out[["stratum", "tier", "megapixels", "corpus_rel_path"]].to_string(index=False), file=sys.stderr)
 
 
+def cmd_materialize(args):
+    """Decode jpg picks to metadata-stripped PNGs; fill bench_input columns.
+
+    ImageMagick `convert <src> -strip <dst>`: no auto-orient (pixels stay in
+    sensor order), no ICC/EXIF carried into the PNG (the encoder's metadata
+    paths stay out of the measured encode). PNG picks pass through with
+    bench_input = the corpus file itself.
+    """
+    out = pd.read_csv(args.output, sep="\t", dtype=str)
+    MATERIALIZE_DIR.mkdir(parents=True, exist_ok=True)
+    bench_inputs, bench_shas = [], []
+    for _, r in out.iterrows():
+        src = CORPUS / r["corpus_rel_path"]
+        if r["source_format"] == "png":
+            bench_inputs.append(str(src))
+            bench_shas.append(r["sha256"])
+            continue
+        dst = MATERIALIZE_DIR / (Path(r["corpus_rel_path"]).stem + ".png")
+        if not dst.exists():
+            subprocess.run(["convert", str(src), "-strip", str(dst)], check=True)
+            print(f"materialized {dst.name}", file=sys.stderr)
+        bench_inputs.append(str(dst))
+        bench_shas.append(sha256_file(dst))
+    out["bench_input"] = bench_inputs
+    out["bench_sha256"] = bench_shas
+    out.to_csv(args.output, sep="\t", index=False)
+    n_jpg = (out["source_format"] != "png").sum()
+    print(f"materialized/verified {n_jpg} jpg picks into {MATERIALIZE_DIR}", file=sys.stderr)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     sp = ap.add_subparsers(dest="cmd", required=True)
     p = sp.add_parser("prep")
     p.add_argument("--workdir", required=True)
     p.add_argument("--shards", type=int, default=6)
+    p.add_argument("--tag", default="", help="suffix tag for shard filenames (incremental runs)")
     p.add_argument("--print-extract-cmds", action="store_true")
     p.set_defaults(fn=cmd_prep)
     p = sp.add_parser("select")
     p.add_argument("--workdir", required=True)
     p.add_argument("--output", required=True)
     p.set_defaults(fn=cmd_select)
+    p = sp.add_parser("materialize")
+    p.add_argument("--output", required=True, help="set TSV to update in place")
+    p.set_defaults(fn=cmd_materialize)
     args = ap.parse_args()
     args.fn(args)
 

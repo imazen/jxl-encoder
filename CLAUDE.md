@@ -616,8 +616,8 @@ measurement at equal or better coverage.
   #41 Phases 1-4). Attack order: gather_samples SIMD, collect_residuals,
   WP-state batching (issue #41 option C list). A/B on the k-means
   lossless bench set `benchmarks/lossless_bench_set_2026-06-10.tsv`
-  (30 imazen-26 picks, 11 core; see its `.meta`) + the CLIC/gb82-sc
-  continuity cells.
+  (43 imazen-26 picks, 13 core, feed `bench_input`; see its `.meta`) +
+  the CLIC/gb82-sc continuity cells, via `scripts/bench_lossless_ab.py`.
 - **BestSplit side-costs rider — SHIPPED 2026-06-10** (byte-identical;
   six engine sites consume sweep-carried best_l/r_cost; permanent
   debug-asserts verify carried == recomputed at every site). Wall effect
@@ -778,9 +778,12 @@ plots, renders, textures, AI illustrations. Keep gb82-sc cells in benches
 for continuity with the W44-era baselines; add imazen-26 strata for
 coverage. Stratify by folder, don't random-sample the modal class.
 For LOSSLESS perf benches use the pre-selected k-means set
-`benchmarks/lossless_bench_set_2026-06-10.tsv` (30 picks / 11 core across
-13 strata, PNG-only ≤16 MP; provenance + tier rule + caveats in its
-`.meta`; regenerate via `scripts/select_lossless_bench_imazen26.py`).
+`benchmarks/lossless_bench_set_2026-06-10.tsv` (43 picks / 13 core across
+23 strata ≤16 MP: PNG classes + the JPEG photo classes pre-decoded to
+stripped PNGs under `/mnt/v/input/jxl-encoder/lossless-bench-imazen26-png/`
+— feed the `bench_input` column, never raw .jpg; provenance + tier rule +
+caveats in its `.meta`; regenerate via
+`scripts/select_lossless_bench_imazen26.py`).
 
 **CRITICAL**: All roundtrip validation tests MUST include jxl-rs. Do not create tests
 that only use jxl-oxide or only use djxl - always include jxl-rs as well.
