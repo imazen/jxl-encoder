@@ -30,8 +30,10 @@
   (~87% of `find_best_split`, the top symbol at 27% CPU on lossless photos).
   Wall A/B (5 CLIC-1024 photos × e{7,9} × {1T,8T}): 20/20 cells faster,
   mean −20.7%, peaks −33.7% (e7 1T) / −38.1% (e9 8T); bytes identical on
-  every cell. Peak RSS +47.7 MB (+1.9%) on imac_dark e7 lossless —
-  bounded by active-branch depth, disclosed in the bench meta.
+  every cell. Peak RSS unchanged: an initial +47.7 MB single-sample
+  reading was root-caused to glibc adaptive-arena noise (±120 MB band
+  between runs of the SAME binary); with mmap_threshold pinned, ours
+  measures −2.2 MB vs base (537b8974 addendum in the bench meta).
   Byte-identical output by construction (hash-locks 36/36 unchanged, libjxl
   byte-locks pass, derived==built unit tests); full results in
   `benchmarks/perf_hist_sub_lossless_2026-06-10.{tsv,meta}`. Lossy paths and
