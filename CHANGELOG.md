@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added (2026-06-10 lossless bench set)
+- **k-means-stratified lossless benchmark set from imazen-26**
+  (`benchmarks/lossless_bench_set_2026-06-10.tsv` + `.meta`,
+  `scripts/select_lossless_bench_imazen26.py`): 30 picks (11 tier=core)
+  across 13 content strata — modern mobile/web screenshots, document
+  scans, 1-bit patents, manuscripts, plots, AI classes — selected by
+  per-stratum k-means on zenanalyze features (centroid-nearest, seed 42)
+  from 1,603 PNG ≤16 MP candidates. Replaces ad-hoc lossless bench sets;
+  CLIC-1024 photos + gb82-sc {terminal, imac_dark} stay as continuity
+  cells. Bilevel scans and document classes had zero prior coverage.
+
 ### Added (2026-06-10 issue #43 chunk 2c)
 - **Screenshot-class 8×8-transform lift at effort 5, d ∈ [1.0, 2.0]**
   (`adapt_to_image_content`): `Screenshot`-classified images (W44-164

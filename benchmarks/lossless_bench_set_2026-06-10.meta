@@ -1,0 +1,93 @@
+# lossless_bench_set_2026-06-10.tsv — k-means-stratified lossless bench set
+#
+# 30 images (11 tier=core) selected from the imazen-26 corpus to replace
+# ad-hoc lossless bench sets (5x CLIC-1024 photos + gb82-sc's 10 retro
+# screenshots) with stratified coverage of content classes no prior
+# lossless bench exercised: document scans, 1-bit patents, manuscripts,
+# plots/line-art, modern mobile+web screenshots, AI illustration classes.
+#
+# Selected per the sweep-discipline stratification rule: per-stratum
+# k-means on zenanalyze content features, centroid-nearest member per
+# cluster (NOT random sampling, which over-represents the modal class —
+# 8100-web-screenshots alone is 370/1603 candidates and 9226-ai-products
+# 711/1603).
+#
+# ── Candidate pool ──────────────────────────────────────────────────────────
+# Corpus: /home/lilith/work/codec-corpus/imazen-26 (repo commit dd0e0ae)
+#   CORPUS-MANIFEST.tsv sha256 = 5445bf0df2b6c64e0b3c34b994395dcf2aa3f4ef
+#                                efd2f06db2d561212d33ed7a
+# Filters: format == png AND width*height <= 16,000,000 px.
+#   PNG-only because cjxl-rs auto-routes .jpg inputs to the JPEG->JXL
+#   transcode path (different code path than the modular tree-learner this
+#   bench measures), and HEIC/DNG don't decode in the extractor. 16 MP cap
+#   keeps e9 1T cells tractable.
+# Result: 1603 candidates, 2.7 GB, 13 strata (folders; 1200+1400 photo-PNG
+# strays merged into one "photos-png" stratum).
+#
+# ── Pipeline (reproduce) ────────────────────────────────────────────────────
+#   scripts/select_lossless_bench_imazen26.py prep --workdir <W> --shards 6
+#   extract_features_for_picker --manifest <W>/extract_manifest_$i.tsv \
+#       --output <W>/features_$i.tsv --sizes 1024        # i = 0..5
+#   scripts/select_lossless_bench_imazen26.py select --workdir <W> \
+#       --output benchmarks/lossless_bench_set_2026-06-10.tsv
+# Workdir with intermediates (features, per-stratum cluster JSONs):
+#   /mnt/v/output/jxl-encoder/lossless-bench-select-2026-06-10/
+#
+# Feature extraction: zenanalyze examples/extract_features_for_picker.rs,
+#   built from the zenanalyze working copy whose package source equals
+#   main @ 6b98d4c (uncommitted WIP there was confined to zenpicker-train/,
+#   not in the example's dep graph). Built with external CARGO_TARGET_DIR +
+#   --locked, invoked from $HOME so the temporary ~/work/zen/.cargo/config
+#   paths-override (2026-06-08 codec-integration bridge) does not apply —
+#   zero writes into the zenanalyze repo. 33 FeatureSet::SUPPORTED features
+#   per image at maxdim-1024 (Lanczos3, no upscale). 1603/1603 decoded,
+#   0 failures.
+# Clustering: zenanalyze zenpicker-train/scripts/cluster_sources.py per
+#   stratum (NaN->col-median, zero-variance drop, z-score, KMeans n_init=10
+#   seed=42, centroid-nearest pick). One appended axis: feat_zz_log2_mp =
+#   log2(native megapixels), so mixed-size strata spread picks across sizes
+#   (auto-dropped as zero-variance on uniform-size strata).
+# Versions: sklearn 1.7.2, numpy 2.2.6, pandas 2.3.3, python 3.12.
+#
+# ── K allocation (candidates -> picks) ──────────────────────────────────────
+#   web-screenshots    370 -> 5      plots             126 -> 3
+#   ai-products        711 -> 3      nps-brochures      37 -> 2
+#   ai-clipart          86 -> 2      noaa-documents     44 -> 2
+#   ai-illustrations    75 -> 2      patents (png)      39 -> 2
+#   manuscript-text     33 -> 2      manuscript-illus.  16 -> 2
+#   mobile-screenshots  31 -> 2      photos-png         10 -> 2
+#   epa-report          25 -> 1                       ----------
+#                                                      1603 -> 30
+#
+# ── Tier rule ───────────────────────────────────────────────────────────────
+# tier=core (11 picks, fast A/B gate): first cluster (size-desc) per stratum
+# whose native px <= 8,500,000. Strata with NO core pick: epa-report
+# (11.40 MP) and manuscript-text (8.52 MP — 0.24% over the cap; lives in
+# full tier only). Recommended grids:
+#   fast gate:  core 11 x e{7,9} x {1T,8T} = 44 cells
+#   validation: full 30 x e{7,9} x {1T,8T} = 120 cells
+# Keep continuity cells alongside: 5x CLIC-1024 photos (hist-sub baseline,
+# benchmarks/perf_hist_sub_lossless_2026-06-10.meta) + gb82-sc
+# {terminal, imac_dark} (W44-era screenshot baselines).
+#
+# ── Caveats (read before drawing conclusions) ───────────────────────────────
+# - photos-png picks are gallery-app SCREENSHOTS of photos (the only PNGs
+#   in the 1200/1400 photo classes; filenames say screenshot-*-photos/
+#   gallery). Photo-like pixel statistics, possibly thin UI chrome. True
+#   natural-photo lossless coverage stays with the CLIC continuity cells.
+# - patents picks are 2 pages of the same 1-bit Lynn Conway scan series —
+#   that IS the whole PNG-patent pool (other 74 patent files are jpg).
+#   Bilevel scans are a distinct codec regime no prior bench covered.
+# - web-screenshots picks span 3/5 viewports (1440x900 x3, 375x667,
+#   768x1024); the 2880x1800 retina class did not surface a centroid pick.
+#   The imazen-26 re-baselining follow-on should add retina cells
+#   explicitly when validating screenshot-class gates.
+# - Encode smoke (not a benchmark): all 3 riskiest picks encode clean at
+#   --lossless -e 7 (default threads): 1-bit patent 7.9 MP -> 100 KB in
+#   0.8 s; 15.6 MP brochure map -> 4.1 MB in 13.5 s with PEAK RSS ~7.0 GB
+#   (/usr/bin/time -v) — harnesses running full-tier cells concurrently
+#   must budget RAM accordingly (run-heavy --mem).
+#
+# Set committed alongside: benchmarks/lossless_bench_set_2026-06-10.tsv
+# Selection script: scripts/select_lossless_bench_imazen26.py
+# Host: lilith (7950X, 128 GB, WSL2). Date: 2026-06-10.

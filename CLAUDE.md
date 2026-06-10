@@ -594,7 +594,10 @@ measurement at equal or better coverage.
   gather_samples 15.9-17.4 %, WeightedPredictorState 13.1-14.7 % of CPU —
   NOT split-bound (hist-sub doesn't apply; dedup attacks are the falsified
   #41 Phases 1-4). Attack order: gather_samples SIMD, collect_residuals,
-  WP-state batching (issue #41 option C list).
+  WP-state batching (issue #41 option C list). A/B on the k-means
+  lossless bench set `benchmarks/lossless_bench_set_2026-06-10.tsv`
+  (30 imazen-26 picks, 11 core; see its `.meta`) + the CLIC/gb82-sc
+  continuity cells.
 - **BestSplit side-costs rider** (deferred from PERF-HIST-SUB-LOSSLESS;
   recorded analysis says bitwise-safe): carry best_l/r_cost of the winning
   threshold out of find_best_split, skip the caller's 2×O(n_side)
@@ -606,6 +609,8 @@ measurement at equal or better coverage.
 - **imazen-26 re-baselining**: validate the 2c screenshot lift on the
   8000/8100 strata; longer-term re-baseline the screenshot-class gates
   (W44-105/107/108 thresholds were calibrated on gb82-sc's 10 images only).
+  The k-means lossless set covers 3/5 web-screenshot viewports — add
+  2880×1800 retina cells explicitly when validating screenshot gates.
 - **JPEG lossy productization** (relative/inferred quality targeting + the
   quality-threshold router): build in `~/work/zen/zenjxl` with a scorer
   callback; jxl-encoder keeps only the PreserveJxl coeff path +
@@ -751,6 +756,10 @@ prior bench covered: document scans (NPS/EPA/NOAA), patents, manuscripts,
 plots, renders, textures, AI illustrations. Keep gb82-sc cells in benches
 for continuity with the W44-era baselines; add imazen-26 strata for
 coverage. Stratify by folder, don't random-sample the modal class.
+For LOSSLESS perf benches use the pre-selected k-means set
+`benchmarks/lossless_bench_set_2026-06-10.tsv` (30 picks / 11 core across
+13 strata, PNG-only ≤16 MP; provenance + tier rule + caveats in its
+`.meta`; regenerate via `scripts/select_lossless_bench_imazen26.py`).
 
 **CRITICAL**: All roundtrip validation tests MUST include jxl-rs. Do not create tests
 that only use jxl-oxide or only use djxl - always include jxl-rs as well.
