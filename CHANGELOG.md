@@ -37,6 +37,14 @@
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
 ### Changed
+- **Tree learning: fused WP predict+update (issue #41 item 2,
+  byte-identical).** `predict_property_update` fuses the per-pixel WP
+  prediction and error update into one call at both hot sites (gather +
+  collect pass 1) — same values, same state sequence. The item's
+  original cross-pixel batching ask is semantics-blocked and documented
+  at the definition: WP prediction at x reads the current row's
+  transmission error at x−1 (`te_w`), a strict serial dependency
+  matching libjxl's WP. Walls join the consolidated quiet re-measure.
 - **Tree learning: lane-per-predictor gather (issue #41 item 1,
   byte-identical).** The gather hot loop computes all 14 canonical
   predictions in one straight-line pass (`predict_all_canonical`)

@@ -1792,11 +1792,10 @@ fn gather_channel_samples(
 
             let n = Neighbors::gather(channel, x, y);
 
-            // Compute WP prediction and max_error property
-            let (wp_pred, wp_max_error) = wp_state.predict_and_property(x, y, width, &n);
-
-            // Always update WP error tracking to maintain state continuity
-            wp_state.update_errors(pixel, x, y, width);
+            // Fused WP predict + error update (issue #41 item 2): same
+            // values/state sequence as the separate calls — the update
+            // always ran immediately after predict here.
+            let (wp_pred, wp_max_error) = wp_state.predict_property_update(pixel, x, y, width, &n);
 
             // Subsample: only gather every stride-th pixel
             if subsample_counter == 0 {
@@ -7978,8 +7977,11 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
                 let pixel = channel.get(x, y);
                 let n = Neighbors::gather(channel, x, y);
 
-                // Compute WP prediction and property
-                let (wp_pred, wp_max_error) = wp_state.predict_and_property(x, y, width, &n);
+                // Fused WP predict + error update (issue #41 item 2):
+                // nothing between the legacy predict(x) and update(x)
+                // read WP state, so fusing preserves the sequence.
+                let (wp_pred, wp_max_error) =
+                    wp_state.predict_property_update(pixel, x, y, width, &n);
 
                 let row_props = &mut props_row[x * prop_stride..x * prop_stride + prop_stride];
                 compute_spec_properties_into(
@@ -8027,11 +8029,6 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
                         }
                     }
                 }
-
-                // WP error update in the legacy per-pixel position:
-                // nothing between predict(x) and update(x) reads WP
-                // state, so the error-state sequence is unchanged.
-                wp_state.update_errors(pixel, x, y, width);
 
                 wp_pred_row[x] = wp_pred;
                 neigh_row[x] = n;
@@ -8164,6 +8161,10 @@ fn batch_traverse_row(tree: &Tree, props_row: &[i32], stride: usize, out: &mut [
 /// Traverse a tree using spec-matching property values (base 16 properties only).
 ///
 /// Our tree convention: lchild = property <= splitval, rchild = property > splitval.
+///
+/// Production traversal moved to [`batch_traverse_row`] (issue #41 chunk
+/// B2); this scalar walk stays as the test-side reference verifier.
+#[cfg(test)]
 fn traverse_with_spec_props<'a>(
     tree: &'a Tree,
     props: &[i32; NUM_PROPERTIES],
@@ -8187,6 +8188,11 @@ fn traverse_with_spec_props<'a>(
 ///
 /// Used when reference channel properties (indices >= 16) are present in the tree.
 /// Falls back to the same traversal logic but with a slice instead of a fixed array.
+///
+/// Production traversal moved to [`batch_traverse_row`] (issue #41 chunk
+/// B2); kept as a test-side reference verifier.
+#[cfg(test)]
+#[allow(dead_code)]
 fn traverse_with_props<'a>(tree: &'a Tree, props: &[i32]) -> &'a PropertyDecisionNode {
     let mut idx = 0;
     loop {

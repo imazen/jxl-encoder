@@ -764,6 +764,36 @@ impl WeightedPredictorState {
         let (pred, _) = self.predict_and_property(x, y, xsize, neighbors);
         pred as i32
     }
+
+    /// Issue #41 queue item 2 (decomposed): fused predict + error-update
+    /// for the gather/collect hot loops, which always call the two back
+    /// to back with nothing touching WP state in between. Identical
+    /// values and state sequence by construction (straight composition);
+    /// the fusion lets LLVM share the row-parity / position math and the
+    /// `add_bits` widening across the pair inside ONE non-inlined symbol
+    /// instead of two call edges per pixel.
+    ///
+    /// Cross-pixel BATCHING (the original item-2 ask) is
+    /// semantics-blocked, not just unimplemented: the prediction at `x`
+    /// reads the CURRENT row's transmission error at `x - 1` (`te_w`),
+    /// which is written by the update for `x - 1` — a strict
+    /// left-to-right serial dependency that matches libjxl's WP
+    /// definition. Any cross-`x` batching would change decoded-spec
+    /// semantics (different predictions), i.e. it is not an optimization
+    /// of this algorithm but a different algorithm.
+    #[inline]
+    pub fn predict_property_update(
+        &mut self,
+        actual: i32,
+        x: usize,
+        y: usize,
+        xsize: usize,
+        neighbors: &Neighbors,
+    ) -> (i64, i32) {
+        let r = self.predict_and_property(x, y, xsize, neighbors);
+        self.update_errors(actual, x, y, xsize);
+        r
+    }
 }
 
 impl Default for WeightedPredictorState {
