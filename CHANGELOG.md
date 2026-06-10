@@ -37,6 +37,13 @@
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
 ### Changed
+- **Modular: estimate_cost context LUT + hoisted rows (byte-identical).**
+  The RCT-trial cost estimator (7 calls/image at e7) replaces its
+  17-compare-per-pixel cutoff scan with a 501-entry LUT and its branchy
+  neighbor loads with row-hoisted edge/interior paths — exact same
+  contexts/tokens. All cells faster: noaa −4.7 %, imac_dark −3.8 %,
+  terminal/clic097 −1.3…−1.4 %
+  (`benchmarks/perf_estcost_lut_2026-06-10.{tsv,meta}`).
 - **Tree learning: inline dedup key comparator (issue #41 "radix" chunk
   1, byte-identical).** The packed-key sort's comparator is now an
   inline big-endian u64-word compare (identical ordering ⇒ identical

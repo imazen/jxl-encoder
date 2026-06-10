@@ -1,0 +1,19 @@
+# PERF-ESTCOST-LUT — 2026-06-10 (/goal perf hunt, post-radix lead 2)
+#
+# Change: estimate_cost (modular/encode.rs — the RCT-trial cost
+# estimator, 7 calls per image at e7; 11.4%/6.7% of CPU on terminal/
+# clic097 post-radix): (1) the 17-compare-per-pixel cutoff scan replaced
+# by a 501-entry context LUT indexed by min(max_diff,500) — exact same
+# ctx values (count of cutoffs > max_diff is constant 0 for >=500);
+# (2) row-pointer hoisting with explicit y==0 / x==0 edge paths — the
+# per-pixel neighbor bounds branches are gone, fallback semantics
+# reproduced verbatim (left->N at x==0/y>0, left/top/topleft->0 at
+# origin, top/topleft->left on row 0).
+#
+# Gates: bytes identical 4/4 A/B cells; hash-locks 36/36 default +
+# parallel-tree-learning; lib 1488/1488; it 81/81; clippy clean.
+#
+# A/B (8 iters/side, loadavg ~3-4.9; base = radix-chunk-1 binary):
+#   terminal -1.39%   imac_dark -3.82%   noaa -4.70%   clic097 -1.32%
+# Every cell faster; the doc/screen cells (where estimate_cost's share
+# is highest) move the most. Host: lilith (7950X, WSL2).

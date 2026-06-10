@@ -1367,9 +1367,46 @@ fn estimate_cost(image: &ModularImage) -> f64 {
     ];
     let nc = cutoffs.len() + 1; // 18 context buckets
 
+    // Context LUT (perf: this fn runs once per RCT trial — 7x per image
+    // at e7 — and the cutoff scan was a 17-compare loop per pixel,
+    // 11.4 % of CPU on terminal post-radix). ctx = number of cutoffs
+    // strictly greater than max_diff; constant for max_diff >= 500
+    // (= 0), so a 501-entry table indexed by min(max_diff, 500)
+    // reproduces the scan exactly — byte-identical.
+    let mut ctx_lut = [0u8; 501];
+    for (d, slot) in ctx_lut.iter_mut().enumerate() {
+        *slot = cutoffs.iter().filter(|&&c| (d as u32) < c).count() as u8;
+    }
+
     let mut total_bits: f64 = 0.0;
     let mut extra_bits: u64 = 0;
     let mut histograms: Vec<Vec<u32>> = vec![vec![]; nc];
+
+    // Per-pixel core, shared by the edge and interior paths. Identical
+    // math to the original scalar loop; only neighbor SELECTION moved to
+    // the callers (hoisted rows, no per-pixel bounds branches inside).
+    let mut tally = |val: i32,
+                     left: i32,
+                     top: i32,
+                     topleft: i32,
+                     histograms: &mut Vec<Vec<u32>>,
+                     extra_bits: &mut u64| {
+        let max_diff = (left.max(top).max(topleft) - left.min(top).min(topleft)) as u32;
+        let ctx = ctx_lut[(max_diff as usize).min(500)] as usize;
+
+        // Gradient prediction residual
+        let grad = left + top - topleft;
+        let pred = grad.max(left.min(top)).min(left.max(top)); // clamped gradient
+        let res = val - pred;
+        let packed = pack_signed(res);
+
+        let (token, _bits, nbits) = config.encode(packed);
+        if histograms[ctx].len() <= token as usize {
+            histograms[ctx].resize(token as usize + 1, 0);
+        }
+        histograms[ctx][token as usize] += 1;
+        *extra_bits += nbits as u64;
+    };
 
     for ch in &image.channels {
         let w = ch.width();
@@ -1378,50 +1415,41 @@ fn estimate_cost(image: &ModularImage) -> f64 {
             continue;
         }
 
-        for y in 0..h {
-            for x in 0..w {
-                let val = ch.data()[y * w + x];
-                let left = if x > 0 {
-                    ch.data()[y * w + x - 1]
-                } else if y > 0 {
-                    ch.data()[(y - 1) * w + x]
-                } else {
-                    0
-                };
-                let top = if y > 0 {
-                    ch.data()[(y - 1) * w + x]
-                } else {
-                    left
-                };
-                let topleft = if x > 0 && y > 0 {
-                    ch.data()[(y - 1) * w + x - 1]
-                } else {
-                    left
-                };
+        let data = ch.data();
 
-                let max_diff = left.max(top).max(topleft) - left.min(top).min(topleft);
-                let max_diff = max_diff as u32;
+        // Row y == 0: left = previous pixel (0 at x == 0), top = left,
+        // topleft = left — matches the original per-pixel fallbacks.
+        {
+            let row = &data[..w];
+            tally(row[0], 0, 0, 0, &mut histograms, &mut extra_bits);
+            for x in 1..w {
+                let left = row[x - 1];
+                tally(row[x], left, left, left, &mut histograms, &mut extra_bits);
+            }
+        }
 
-                // Find context bucket (count how many cutoffs are > max_diff)
-                let mut ctx = 0usize;
-                for &c in cutoffs {
-                    if max_diff < c {
-                        ctx += 1;
-                    }
-                }
-
-                // Gradient prediction residual
-                let grad = left + top - topleft;
-                let pred = grad.max(left.min(top)).min(left.max(top)); // clamped gradient
-                let res = val - pred;
-                let packed = pack_signed(res);
-
-                let (token, _bits, nbits) = config.encode(packed);
-                if histograms[ctx].len() <= token as usize {
-                    histograms[ctx].resize(token as usize + 1, 0);
-                }
-                histograms[ctx][token as usize] += 1;
-                extra_bits += nbits as u64;
+        for y in 1..h {
+            let row = &data[y * w..y * w + w];
+            let prev = &data[(y - 1) * w..y * w];
+            // x == 0: left = top = prev[0], topleft = left (original
+            // fallbacks: left -> N, top -> N, topleft -> left).
+            tally(
+                row[0],
+                prev[0],
+                prev[0],
+                prev[0],
+                &mut histograms,
+                &mut extra_bits,
+            );
+            for x in 1..w {
+                tally(
+                    row[x],
+                    row[x - 1],
+                    prev[x],
+                    prev[x - 1],
+                    &mut histograms,
+                    &mut extra_bits,
+                );
             }
         }
 
