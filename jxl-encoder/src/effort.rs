@@ -993,7 +993,11 @@ pub struct EffortProfile {
 
     // ─── RCT selection ───────────────────────────────────────────────────
     /// Number of Reversible Color Transform variants to evaluate before
-    /// committing to one (0 = skip search, use YCoCg unconditionally).
+    /// committing to one (0 = skip search, use `RctType::GBR_SUBGR`
+    /// unconditionally — the calibrated fallback since `99162a2a`; note
+    /// the default search often picks GBR_SUBGR too, so `0` can be
+    /// byte-identical to the default on some content — see
+    /// jxl-encoder#67 / W44-137 before using `0` as an A/B signal).
     ///
     /// Pipeline stage: modular pre-transform, before predictor + tree
     /// learning (`modular/encode.rs::select_best_rct`,
@@ -2829,7 +2833,12 @@ pub struct LossyInternalParams {
 #[derive(Default, Clone, Debug)]
 pub struct LosslessInternalParams {
     /// Number of Reversible Color Transform variants to evaluate before
-    /// committing (0 = skip search, use YCoCg unconditionally).
+    /// committing (0 = skip search, use `RctType::GBR_SUBGR`
+    /// unconditionally — NOT YCoCg; calibrated fallback since `99162a2a`).
+    /// Because the default search often picks GBR_SUBGR as the winner,
+    /// `Some(0)` can be byte-identical to the default on some content —
+    /// use `Some(1)` (identity-RCT-only) as an override-propagation test
+    /// signal instead (jxl-encoder#67, W44-137).
     /// Effort interaction: 0 at e<5, 4 at e5, 5 at e6, 7 at e7, 9 at e8,
     /// 19 at e9+ (libjxl `kSquirrel`/`kKitten`/`kTortoise` schedule).
     pub nb_rcts_to_try: Option<u8>,
