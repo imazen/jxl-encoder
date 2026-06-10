@@ -554,6 +554,24 @@ impl TreeSamples {
         Self::with_predictors_and_refs(CANDIDATE_PREDICTORS, 0)
     }
 
+    /// Reserve capacity for `additional` more samples in every SoA
+    /// column. Perf (/goal hunt): without this, the per-row bulk extends
+    /// grow each of the ~60 columns through doubling reallocs — libc
+    /// `__memmove` was 10.9 % of CPU on terminal — re-copying ~2× the
+    /// final bytes per column. Capacity is observationally invisible:
+    /// byte-identical.
+    pub(crate) fn reserve_additional(&mut self, additional: usize) {
+        for v in &mut self.residual_tokens {
+            v.reserve(additional);
+        }
+        for v in &mut self.extra_bits {
+            v.reserve(additional);
+        }
+        for v in &mut self.props {
+            v.reserve(additional);
+        }
+    }
+
     /// Creates an empty TreeSamples with reference channel properties.
     ///
     /// `num_ref_channels` is the maximum number of reference channels across all
@@ -1537,6 +1555,17 @@ fn gather_samples_strided_with_budget_inner_backend(
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     mut dedup_backend: Option<GatherDedupBackend<'_>>,
 ) -> crate::error::Result<()> {
+    // Upper-bound gathered-sample count: ceil(w*h / stride) per channel
+    // (dedup backends merge some pushes away — over-reserve is fine).
+    // Capacity only — byte-identical; kills the doubling-realloc
+    // memmoves in the per-row bulk extends.
+    let est: usize = image
+        .channels
+        .iter()
+        .map(|c| (c.width() * c.height()).div_ceil(stride.max(1)))
+        .sum();
+    samples.reserve_additional(est);
+
     for (ch_idx, channel) in image.channels.iter().enumerate() {
         // Find reference channels for this channel (preceding channels with matching dims)
         let ref_channel_indices = if samples.num_ref_channels > 0 {
@@ -7937,7 +7966,11 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
         .unwrap_or(0);
     let needs_ref_props = max_tree_prop >= NUM_PROPERTIES;
 
-    let mut tokens = Vec::new();
+    // Pre-size to the exact token count (one per pixel across channels):
+    // capacity only — byte-identical; the per-pixel pushes otherwise grow
+    // through doubling reallocs (part of the 10.9 % __memmove share).
+    let total_px: usize = image.channels.iter().map(|c| c.width() * c.height()).sum();
+    let mut tokens = Vec::with_capacity(total_px);
 
     // Width of one pixel's property record (row-major in `props_row`).
     let num_extended_props = if needs_ref_props {

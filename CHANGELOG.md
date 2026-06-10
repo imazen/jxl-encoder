@@ -37,6 +37,12 @@
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
 ### Changed
+- **Tree learning: exact capacity reservation (byte-identical).** Gather
+  reserves every SoA column to the known sample upper bound and collect
+  pre-sizes its token Vec to the pixel count — the doubling-realloc
+  `__memmove` (10.9 % of CPU on terminal) is gone. clic097 −6.98 %,
+  noaa −5.95 %, terminal −5.19 %, imac_dark −1.12 %
+  (`benchmarks/perf_reserve_sizing_2026-06-10.{tsv,meta}`).
 - **Modular: estimate_cost context LUT + hoisted rows (byte-identical).**
   The RCT-trial cost estimator (7 calls/image at e7) replaces its
   17-compare-per-pixel cutoff scan with a 501-entry LUT and its branchy

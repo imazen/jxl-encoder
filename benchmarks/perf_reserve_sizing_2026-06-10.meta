@@ -1,0 +1,17 @@
+# PERF-RESERVE-SIZING — 2026-06-10 (/goal perf hunt, memmove lead)
+#
+# Change: exact/upper-bound capacity reservation for the two growth
+# paths that dominated libc __memmove (10.9% of CPU on terminal):
+#   1. TreeSamples::reserve_additional — every SoA column reserved to
+#      sum(ceil(w*h/stride)) before gather (the ~60 columns previously
+#      doubled through reallocs, re-copying ~2x final bytes each).
+#   2. collect_residuals' token Vec — Vec::with_capacity(total pixels).
+# Capacity is observationally invisible: byte-identical.
+#
+# Gates: bytes identical 4/4 A/B cells; hash-locks 36/36 x2; lib
+# 1488/1488; it 81/81; clippy clean.
+#
+# A/B (8 iters/side, loadavg ~3.3-4.4; base = estcost-LUT binary):
+#   terminal -5.19%   imac_dark -1.12%   noaa -5.95%   clic097 -6.98%
+# Largest single-chunk win of the 2026-06-10 arc.
+# Host: lilith (7950X, WSL2).
