@@ -24,3 +24,15 @@
 # min is FASTER). Quiet-box confirmation queued before headline numbers.
 # Binaries: base /tmp/chunka_ours (= main e86a3e48+), ours this commit.
 # Host: lilith (7950X, WSL2), no target-cpu=native.
+#
+# ── ADDENDUM: quiet confirmation (10 iters/side, calm start; a burst
+#    arrived mid-run, loadavg 5.0 at end) ─────────────────────────────────────
+# medians: terminal -0.31%  imac_dark -1.24%  noaa -0.99%
+#          mobile -1.28%    clic097 +0.50%
+# mins:    terminal 0.713==0.713  imac_dark -2.3%  noaa -1.9%
+#          mobile -1.0%           clic097 1.110~1.111
+# VERDICT: CONFIRMED — modest consistent win on gather-heavy doc/screen
+# cells (-1.0..-1.3% median, -1.0..-2.3% mins); neutral on the photo
+# cell (gather is only ~7.5% of CPU there) and on terminal medians.
+# Matches the moderate-load grid's direction; claim stands at ~-1% wall
+# on screens/docs for the staging alone.
