@@ -23,13 +23,13 @@
 //!
 //! Zero overhead when env var is unset. `std`-gated.
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 use std::sync::Mutex;
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 static DUMP_HOOK_PRESENT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 fn dump_dir() -> Option<std::path::PathBuf> {
     // Perf: this gate is probed on the encode hot path; raw env::var_os
     // per probe (getenv + env RwLock + CStr scan) measured 25-35 % of
@@ -44,16 +44,16 @@ fn dump_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("JXL_W44_AUDIT_8_P4_DUMP").map(std::path::PathBuf::from)
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 static DUMP_STATE: Mutex<Option<DumpState>> = Mutex::new(None);
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 struct DumpState {
     file: std::io::BufWriter<std::fs::File>,
     rows: usize,
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 fn ensure_initialized(dir: &std::path::Path) {
     let mut guard = DUMP_STATE.lock().unwrap();
     if guard.is_some() {
@@ -83,7 +83,7 @@ fn ensure_initialized(dir: &std::path::Path) {
 /// Coordinates `(bx, by)` are absolute block indices (after adding any
 /// rect/group origin). `dc_raw` is the post-transform float DC; `dc_quant`
 /// is the rounded i16 that lands in the DC channel of the modular stream.
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 #[inline]
 pub fn dump_dc(bx: usize, by: usize, channel: usize, raw_strategy: u8, dc_raw: f32, dc_quant: i16) {
     let Some(dir) = dump_dir() else { return };
@@ -100,7 +100,7 @@ pub fn dump_dc(bx: usize, by: usize, channel: usize, raw_strategy: u8, dc_raw: f
     let _ = state.file.flush();
 }
 
-#[cfg(not(feature = "std"))]
+#[cfg(not(all(feature = "std", feature = "__env_var_diagnostics")))]
 #[inline(always)]
 pub fn dump_dc(
     _bx: usize,

@@ -57,6 +57,14 @@
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
 ### Changed
+- **`__env_var_diagnostics` feature: diagnostic dump env hooks compile
+  out by default.** All per-block/diagnostic dump hooks (six dump
+  modules, cost-input/AFV/coeff-order/EPF/CfL dumps, phase timing) now
+  exist only behind the opt-in feature; default binaries carry zero
+  hook strings, zero probes, zero gate branches. Behaviour-override
+  hooks stay runtime (test/bench contract). Hash-locks pass in default,
+  parallel-tree-learning, and feature-on configs; dump-driver examples
+  declare `required-features` and fail loud without it.
 - **VarDCT: skip the content-classifier sweep where nothing consumes it
   (byte-identical).** `ZenanalyzeProxies` (24 % of lossy e3 CPU) is now
   computed only when a consumer can fire (`effort ≥ 5 || distance ≥ 2`);

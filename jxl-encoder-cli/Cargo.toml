@@ -41,6 +41,8 @@ parallel = ["jxl_encoder/parallel"]
 # may fork further (depth-capped) until subtree size or budget exhaustion.
 # Default-off pending hash-lock verification on the broader test corpus.
 parallel-tree-learning = ["jxl_encoder/parallel-tree-learning", "parallel"]
+# Passthrough: compile-in the diagnostic dump env hooks (see jxl-encoder).
+__env_var_diagnostics = ["jxl_encoder/__env_var_diagnostics"]
 # Enable JPEG → JXL lossless transcoding. When this feature is on, the
 # CLI auto-detects `.jpg` / `.jpeg` input (or accepts `--lossless-jpeg`
 # to force the path) and routes through

@@ -20,13 +20,13 @@
 //! `pass=1` = `compute_cfl_map` result (forced DCT8 + Newton or fast).
 //! `pass=2` = `refine_cfl_map` result (real ac_strategy + raw_quant_field).
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 use std::sync::Mutex;
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 static DUMP_HOOK_PRESENT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 fn dump_dir() -> Option<std::path::PathBuf> {
     // Perf: this gate is probed on the encode hot path; raw env::var_os
     // per probe (getenv + env RwLock + CStr scan) measured 25-35 % of
@@ -41,17 +41,17 @@ fn dump_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("JXL_W44_182_DUMP_CFL").map(std::path::PathBuf::from)
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 static DUMP_STATE: Mutex<Option<DumpState>> = Mutex::new(None);
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 struct DumpState {
     file: std::io::BufWriter<std::fs::File>,
     rows: usize,
 }
 
 /// Initialize the dump (once per process) and write the TSV header.
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 fn ensure_initialized(dir: &std::path::Path) {
     let mut guard = DUMP_STATE.lock().unwrap();
     if guard.is_some() {
@@ -78,7 +78,7 @@ fn ensure_initialized(dir: &std::path::Path) {
 
 /// Dump an entire CfL map (pass 1 or pass 2) — called AFTER
 /// `compute_cfl_map` (pass=1) and AFTER `refine_cfl_map` (pass=2).
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 #[inline]
 pub fn dump_map(pass: u8, xsize_tiles: usize, ysize_tiles: usize, ytox: &[i8], ytob: &[i8]) {
     let Some(dir) = dump_dir() else { return };
@@ -102,6 +102,6 @@ pub fn dump_map(pass: u8, xsize_tiles: usize, ysize_tiles: usize, ytox: &[i8], y
     let _ = state.file.flush();
 }
 
-#[cfg(not(feature = "std"))]
+#[cfg(not(all(feature = "std", feature = "__env_var_diagnostics")))]
 #[inline(always)]
 pub fn dump_map(_pass: u8, _xsize_tiles: usize, _ysize_tiles: usize, _ytox: &[i8], _ytob: &[i8]) {}

@@ -53,3 +53,23 @@
 # classifier feeds active gates) — pinned as legitimate work; its f64
 # accumulation order is byte-relevant, so SIMD reassociation is not
 # byte-safe without re-locking.
+#
+# ── ADDENDUM 3: __env_var_diagnostics feature (user-proposed) ───────────────
+# All DIAGNOSTIC dump env hooks now compile out entirely by default:
+# the 4 dump modules (w44_76 block+coeffs, w44_181 DC, w44_182 CfL,
+# w44_audit_8_p4 DC), JXL_DUMP_POS, the ac_strategy cost-input/AFV
+# dumps, coeff_order W44-200/201 dumps, epf SA_C dump, cfl Newton dump,
+# and __JXL_ENC_PHASE_TIMING. Opt back in with
+# `--features __env_var_diagnostics` (CLI passthrough exists); the 15
+# dump-driver examples carry required-features so they fail LOUD
+# without it. Behaviour-override hooks (W44 gate fallbacks, dispatch
+# disables, buttloop scales) intentionally stay runtime — the override
+# test contract + A/B harnesses depend on them in production builds.
+# Proofs: hook-name strings count 0 in the default release binary;
+# hash-locks 36/36 in default AND parallel-tree-learning AND feature-on
+# configs (compiled-feature byte-invariance); libjxl byte-locks 5/5;
+# lib 1488 both combos; bytes identical 4/4 (lossless e7 + lossy e3,
+# terminal + clic097) vs the pre-feature binary; feature-on smoke dump
+# verified writing. Supersedes the runtime once-presence gates as the
+# default-path mechanism (the gates remain inside the feature for the
+# hook-set-but-unused case).

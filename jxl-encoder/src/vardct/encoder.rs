@@ -3555,7 +3555,10 @@ impl VarDctEncoder {
         // `__JXL_ENC_PHASE_TIMING` so default encodes are unaffected.
         // Mirrors the pattern already used in `encode_from_precomputed`
         // and `encode_two_pass_to_writer`.
+        #[cfg(feature = "__env_var_diagnostics")]
         let _phase_dbg = std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some();
+        #[cfg(not(feature = "__env_var_diagnostics"))]
+        let _phase_dbg = false;
         let _t_total = std::time::Instant::now();
 
         // Calculate dimensions
@@ -6885,7 +6888,9 @@ impl VarDctEncoder {
             None, // float_dc
         );
         let _ms_two = _t_two.elapsed().as_secs_f64() * 1000.0;
-        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+        if cfg!(feature = "__env_var_diagnostics")
+            && std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some()
+        {
             eprintln!(
                 "encode_from_precomputed: patches={_ms_patches:.1} ms, cfl={_ms_cfl:.1} ms, transform_and_quantize={_ms_xform:.1} ms, sharpness={_ms_sharp:.1} ms, encode_two_pass={_ms_two:.1} ms",
             );

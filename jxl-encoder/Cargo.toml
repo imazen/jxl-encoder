@@ -254,6 +254,20 @@ zenjxl-regression-gate = ["butteraugli-loop", "ssim2-loop", "parallel"]
 # enforces mode-correctness (lossy-only knobs cannot be passed to the
 # lossless setter, and vice versa). Not stable; field sets may grow
 # additively between minor versions.
+# Compile-IN the diagnostic dump env hooks (JXL_W44_76_PER_BLOCK_DUMP,
+# JXL_W44_201_COEFFS_*, JXL_W44_181_DUMP_DC, JXL_W44_182_DUMP_CFL,
+# JXL_W44_AUDIT_8_P4_DUMP, JXL_DUMP_POS, JXL_DUMP_COST_INPUTS_PATH,
+# JXL_DUMP_AFV_*, JXL_W44_200/201 coeff-order dumps, JXL_SA_C_EPF_DUMP,
+# JXL_SA_G_FIX_A_DUMP_NEWTON_PARAMS, __JXL_ENC_PHASE_TIMING). Default
+# builds compile these out entirely (zero env probes / branches / code on
+# the hot paths — the per-block probes were 25-35 % of lossy e3/e4 CPU
+# before the 2026-06-10 once-presence gates; this feature removes even
+# the gate branches). Behaviour-override env hooks (W44 gate fallbacks,
+# dispatch disables, buttloop scales) are NOT under this feature — the
+# runtime-override test contract and A/B harnesses rely on them in
+# production builds. Output bytes are identical with the feature on or
+# off when no hook is set (hash-lock-enforced).
+__env_var_diagnostics = []
 __expert = []
 # Re-exports private vardct internals (epf_step0_strip, adjust_quant_block_ac,
 # compute_scaled_constants, ytox_ratio, ytob_ratio, INV_DC_QUANT) under a
@@ -386,6 +400,7 @@ fastrand = "2.4.1"
 # Standard examples (autoexamples is disabled above; list each explicitly).
 [[example]]
 name = "lossy_phase_baseline"
+required-features = ["__env_var_diagnostics"]
 path = "examples/lossy_phase_baseline.rs"
 
 # W36-2: A/B sweep for the EpfDispatch adaptive policy
@@ -420,6 +435,7 @@ required-features = ["butteraugli-loop"]
 # and benchmarks/lossy_phase_low_effort_with_zenjpeg_2026-05-19.{tsv,meta}.
 [[example]]
 name = "lossy_low_effort_zenjpeg_compare"
+required-features = ["__env_var_diagnostics"]
 path = "examples/lossy_low_effort_zenjpeg_compare.rs"
 
 [[example]]
@@ -1357,6 +1373,7 @@ required-features = ["__expert"]
 # candidates. Requires a pre-built `target/release/cjxl-rs` binary.
 [[example]]
 name = "f_d_sub_i_cost_input_dump"
+required-features = ["__env_var_diagnostics"]
 path = "examples/f_d_sub_i_cost_input_dump.rs"
 
 # W43-2 chunk-7 magetypes consolidation (final): wall-clock A/B for the
@@ -1767,7 +1784,7 @@ required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
 [[example]]
 name = "w44_173_clic_097cb426_dump"
 path = "examples/w44_173_clic_097cb426_dump.rs"
-required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+required-features = ["__env_var_diagnostics", "parallel", "butteraugli-loop", "ssim2-loop"]
 
 # W44-173 mask1x1 probe — gets the mask1x1 percentiles + masking-field
 # median for clic_097cb426 via __pre_quantized, so we can place this image
@@ -1786,7 +1803,7 @@ required-features = ["__pre_quantized"]
 [[example]]
 name = "w44_178_recon_diff"
 path = "examples/w44_178_recon_diff.rs"
-required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+required-features = ["__env_var_diagnostics", "parallel", "butteraugli-loop", "ssim2-loop"]
 
 # W44-178 Phase 1.5: verify the W44-173 per-region SSIM2 finding by
 # computing both (ours-vs-source) AND (ours-vs-cjxl) SSIM2 for each
@@ -1823,7 +1840,7 @@ required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
 [[example]]
 name = "w44_181_dc_quant_probe"
 path = "examples/w44_181_dc_quant_probe.rs"
-required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+required-features = ["__env_var_diagnostics", "parallel", "butteraugli-loop", "ssim2-loop"]
 
 # W44-182: third hypothesis-falsification cycle for clic_097cb426
 # right-column structural recon bug. W44-178 falsified DCT64X64 IDCT.
@@ -1838,7 +1855,7 @@ required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 [[example]]
 name = "w44_182_cfl_tile_probe"
 path = "examples/w44_182_cfl_tile_probe.rs"
-required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+required-features = ["__env_var_diagnostics", "parallel", "butteraugli-loop", "ssim2-loop"]
 
 # W44-183: CfL Newton parameter port spot-check.
 # 9 images (5 CID22 photos + 3 GB82-SC screenshots + clic_097cb426 wedge)
@@ -2328,7 +2345,7 @@ required-features = ["parallel", "__expert", "butteraugli-loop", "ssim2-loop"]
 [[example]]
 name = "w44_103_terminal_ssim2_dump"
 path = "examples/w44_103_terminal_ssim2_dump.rs"
-required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+required-features = ["__env_var_diagnostics", "parallel", "butteraugli-loop", "ssim2-loop"]
 
 # W44-121: codec_wiki.png per-region + per-strategy SSIM2 attribution dump
 # at d=3 across effort 5..=7 (biggest remaining SSIM2 inferiority cluster
@@ -2338,7 +2355,7 @@ required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 [[example]]
 name = "w44_121_codec_wiki_d3_dump"
 path = "examples/w44_121_codec_wiki_d3_dump.rs"
-required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+required-features = ["__env_var_diagnostics", "parallel", "butteraugli-loop", "ssim2-loop"]
 
 # W44-199 Phase 1: 3637739 vs 1418519 per-block AC strategy + qac dump @
 # e7 d=4. W44-198 honest-stop ruled out discriminator-based fix for the
@@ -2351,7 +2368,7 @@ required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 [[example]]
 name = "w44_199_3637739_ac_dump"
 path = "examples/w44_199_3637739_ac_dump.rs"
-required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+required-features = ["__env_var_diagnostics", "parallel", "butteraugli-loop", "ssim2-loop"]
 
 # W44-AUDIT-8 Phase 3: per-block AC strategy dump on the worst CLIC cell.
 # AUDIT-8 P1 diagnosed a 30-cell PHOTO/CLIC SSIM2-deficit cluster at d=4
@@ -2361,7 +2378,7 @@ required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 [[example]]
 name = "w44_audit_8_phase3_clic_perblock_dump"
 path = "examples/w44_audit_8_phase3_clic_perblock_dump.rs"
-required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+required-features = ["__env_var_diagnostics", "parallel", "butteraugli-loop", "ssim2-loop"]
 
 # W44-AUDIT-8 Phase 4: per-DC-block dump on clic_22ea12 e7 d=4. P3 ruled
 # out AC strategy / qac (97.5 % agreement, 0/30 mismatches in worst region).
@@ -2372,7 +2389,7 @@ required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
 [[example]]
 name = "w44_audit_8_phase4_dc_dump"
 path = "examples/w44_audit_8_phase4_dc_dump.rs"
-required-features = ["parallel", "butteraugli-loop", "ssim2-loop"]
+required-features = ["__env_var_diagnostics", "parallel", "butteraugli-loop", "ssim2-loop"]
 
 # W44-104: probe whether bypassing W44-65/W44-68 DCT32+DCT64 suppression
 # on terminal-class content (via `with_dct_suppress_hint(Some(false))`)
@@ -2626,7 +2643,7 @@ required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 [[example]]
 name = "w44_200_section_audit"
 path = "examples/w44_200_section_audit.rs"
-required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+required-features = ["__env_var_diagnostics", "__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 
 # W44-201 per-position coefficient VALUE dump on 3637739 LOSER + 1418519
 # WINNER, Zenjxl vs Libjxl mode. Localizes the W44-200 DCT32x32 Y scan-order
@@ -2635,7 +2652,7 @@ required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 [[example]]
 name = "w44_201_coeffs_dump"
 path = "examples/w44_201_coeffs_dump.rs"
-required-features = ["__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
+required-features = ["__env_var_diagnostics", "__expert", "__internal_recon_hook", "butteraugli-loop", "ssim2-loop", "parallel"]
 
 # W44-201 Phase 2 A/B bench: disable specific buckets in custom coeff orders
 # and measure bytes on 9 CID22 photos including the 3637739 LOSER.
@@ -2892,7 +2909,7 @@ required-features = ["__pre_quantized"]
 [[example]]
 name = "w44_audit_5_phase1_per_block_dump"
 path = "examples/w44_audit_5_phase1_per_block_dump.rs"
-required-features = ["__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
+required-features = ["__env_var_diagnostics", "__expert", "butteraugli-loop", "ssim2-loop", "parallel"]
 
 # SA-F: butteraugli metric cross-test. Encodes clic_22ea12 e9 d=4 with both
 # cjxl-rs (ours) and cjxl (libjxl), decodes via jxl-oxide to linear-sRGB f32,

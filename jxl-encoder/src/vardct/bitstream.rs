@@ -2527,7 +2527,10 @@ impl VarDctEncoder {
         dc_quant_custom: Option<[f32; 3]>,
         writer: &mut BitWriter,
     ) -> Result<()> {
+        #[cfg(feature = "__env_var_diagnostics")]
         let _phase_dbg = std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some();
+        #[cfg(not(feature = "__env_var_diagnostics"))]
+        let _phase_dbg = false;
         let _t0 = std::time::Instant::now();
         // ── Pass 1: Collect tokens per DC group (chunk 8a refactor) ──
         //

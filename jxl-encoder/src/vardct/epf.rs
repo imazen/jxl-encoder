@@ -1048,7 +1048,10 @@ pub(crate) fn compute_epf_sharpness(
     let num_contexts = num_candidates * num_candidates; // top * left contexts
     let mut histo = vec![vec![0u32; num_candidates]; num_contexts];
     // SA-C dump: save Pass1 sharpness before Pass2 overwrites it.
+    #[cfg(feature = "__env_var_diagnostics")]
     let dump_path = std::env::var("JXL_SA_C_EPF_DUMP").ok();
+    #[cfg(not(feature = "__env_var_diagnostics"))]
+    let dump_path: Option<alloc::string::String> = None;
     let mut pass1_map: Vec<u8> = vec![4u8; nblocks];
 
     for by in 0..ysize_blocks {

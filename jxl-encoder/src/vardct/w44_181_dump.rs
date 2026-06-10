@@ -29,13 +29,13 @@
 //! Channel 1 (Y) is recorded with `y_dc = 0` and `dc_cfl_factor = 0.0` for
 //! schema uniformity — the Y channel has no CfL subtraction.
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 use std::sync::Mutex;
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 static DUMP_HOOK_PRESENT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 fn dump_dir() -> Option<std::path::PathBuf> {
     // Once-presence gate: probed per BLOCK from transform_blocks_into —
     // the raw env::var_os here was the residual ~12 % getenv share at
@@ -48,17 +48,17 @@ fn dump_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("JXL_W44_181_DUMP_DC").map(std::path::PathBuf::from)
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 static DUMP_STATE: Mutex<Option<DumpState>> = Mutex::new(None);
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 struct DumpState {
     file: std::io::BufWriter<std::fs::File>,
     rows: usize,
 }
 
 /// Initialize the dump (once per process) and write the TSV header.
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 fn ensure_initialized(dir: &std::path::Path) {
     let mut guard = DUMP_STATE.lock().unwrap();
     if guard.is_some() {
@@ -87,7 +87,7 @@ fn ensure_initialized(dir: &std::path::Path) {
 }
 
 /// Append a single DC sample. Cheap when dump_dir is None.
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn dump_dc(
@@ -116,7 +116,7 @@ pub fn dump_dc(
     let _ = state.file.flush();
 }
 
-#[cfg(not(feature = "std"))]
+#[cfg(not(all(feature = "std", feature = "__env_var_diagnostics")))]
 #[inline(always)]
 pub fn dump_dc(
     _bx: usize,

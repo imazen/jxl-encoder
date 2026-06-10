@@ -2592,7 +2592,7 @@ fn find_best_32x32_transform_impl(
     // W44-21 F-D Sub-I: env-var-driven per-position cost-input dump.
     // Set `JXL_DUMP_POS=bx,by` to dump all cost components at this 32x32 position
     // (bx, by are 8x8-block coordinates of the top-left of the 32x32 region).
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
     {
         // Once-presence gate: this probe runs per 32x32 evaluation; the
         // raw env::var was part of the 25-35 % getenv share at lossy

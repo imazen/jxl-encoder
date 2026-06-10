@@ -275,7 +275,7 @@ fn find_best_multiplier(
     // confirm whether `newton_libjxl_parity` reaches the SIMD kernel on
     // EncoderStrategy::Libjxl. Identifies which Pass + channel + Newton
     // variant fires by encoding `base` (0.0 = X channel, 1.0 = B channel).
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
     {
         if std::env::var_os("JXL_SA_G_FIX_A_DUMP_NEWTON_PARAMS").is_some() {
             let channel = if base == 0.0 { 'X' } else { 'B' };

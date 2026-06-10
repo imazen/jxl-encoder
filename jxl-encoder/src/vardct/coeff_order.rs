@@ -413,7 +413,7 @@ pub fn compute_custom_orders_with_options(
     //       in coefficient values), OR
     //   (b) identical per-position counts but different sort outcome
     //       (i.e. compute_custom_orders divergence).
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
     if let Ok(dump_path) = std::env::var("JXL_W44_201_ZEROCOUNTS_DUMP") {
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -498,7 +498,7 @@ pub fn compute_custom_orders_with_options(
 
         // W44-201: env-gated dump of the FINAL computed scan order per
         // bucket/channel, with natural order alongside for diff.
-        #[cfg(feature = "std")]
+        #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
         if let Ok(dump_path) = std::env::var("JXL_W44_201_ORDERS_DUMP") {
             use std::io::Write;
             if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -749,9 +749,15 @@ pub fn tokenize_coeff_orders(orders: &[Vec<Vec<u32>>], used_orders: u32) -> Vec<
     // W44-200: env-var-gated per-bucket per-channel token-count dump.
     // `JXL_W44_200_COEFFORDER_DUMP=<file>` captures end-llf (token count
     // proportional to Lehmer code length) per bucket+channel.
+    #[cfg(feature = "__env_var_diagnostics")]
     let w44_200_co_dump: Option<String> = std::env::var("JXL_W44_200_COEFFORDER_DUMP").ok();
+    #[cfg(not(feature = "__env_var_diagnostics"))]
+    let w44_200_co_dump: Option<String> = None;
+    #[cfg(feature = "__env_var_diagnostics")]
     let w44_200_label: String =
         std::env::var("JXL_W44_200_LABEL").unwrap_or_else(|_| "unlabeled".into());
+    #[cfg(not(feature = "__env_var_diagnostics"))]
+    let w44_200_label: String = String::from("unlabeled");
 
     for (bucket, bucket_orders) in orders.iter().enumerate().take(NUM_ORDER_BUCKETS) {
         if used_orders & (1 << bucket) == 0 {

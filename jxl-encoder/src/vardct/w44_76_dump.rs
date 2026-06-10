@@ -18,16 +18,16 @@
 //! via `STRATEGY_CODE_LUT[raw_strategy]` so joins against the libjxl
 //! reference dump (`acs.RawStrategy()` is the wire enum) are safe.
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 use std::sync::Mutex;
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 use super::ac_strategy::STRATEGY_CODE_LUT;
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 static DUMP_HOOK_PRESENT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 fn dump_dir() -> Option<std::path::PathBuf> {
     // Perf: this gate is probed on the encode hot path; raw env::var_os
     // per probe (getenv + env RwLock + CStr scan) measured 25-35 % of
@@ -42,10 +42,10 @@ fn dump_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("JXL_W44_76_PER_BLOCK_DUMP").map(std::path::PathBuf::from)
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 static DUMP_STATE: Mutex<Option<DumpState>> = Mutex::new(None);
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 struct DumpState {
     file: std::io::BufWriter<std::fs::File>,
     rows: usize,
@@ -55,7 +55,7 @@ struct DumpState {
 /// Initialize the dump (or re-init if the env var now points to a different
 /// directory than the last opened state — useful when an example driver
 /// encodes multiple images in the same process and wants per-image dumps).
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 fn ensure_initialized(dir: &std::path::Path) {
     let mut guard = DUMP_STATE.lock().unwrap();
     if let Some(state) = guard.as_ref()
@@ -96,7 +96,7 @@ fn ensure_initialized(dir: &std::path::Path) {
 /// AFV0=14, etc.) for safe join with libjxl-side dumps.
 ///
 /// `qac` is the per-block raw_quant (u8 from the quant_field).
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 pub fn dump_block(bx: usize, by: usize, raw_strategy: u8, channel: usize, nzeros: u16, qac: u8) {
     let Some(dir) = dump_dir() else { return };
     ensure_initialized(&dir);
@@ -116,7 +116,7 @@ pub fn dump_block(bx: usize, by: usize, raw_strategy: u8, channel: usize, nzeros
 }
 
 /// No-op when std is not available (dump requires std).
-#[cfg(not(feature = "std"))]
+#[cfg(not(all(feature = "std", feature = "__env_var_diagnostics")))]
 #[inline(always)]
 pub fn dump_block(
     _bx: usize,
@@ -143,10 +143,10 @@ pub fn dump_block(
 // `JXL_W44_201_COEFFS_CHANNEL=<c>` (default: 1 = Y). One TSV per
 // caller-invocation is overwritten; zero overhead when env var unset.
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 static COEFFS_STATE: Mutex<Option<CoeffsDumpState>> = Mutex::new(None);
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 struct CoeffsDumpState {
     file: std::io::BufWriter<std::fs::File>,
     rows: usize,
@@ -155,10 +155,10 @@ struct CoeffsDumpState {
     target_channel: u8,
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 static COEFFS_HOOK_PRESENT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 fn coeffs_dump_dir() -> Option<std::path::PathBuf> {
     // Same once-presence gate as `dump_dir` above — probed per block.
     if !*COEFFS_HOOK_PRESENT.get_or_init(|| std::env::var_os("JXL_W44_201_COEFFS_DUMP").is_some()) {
@@ -167,7 +167,7 @@ fn coeffs_dump_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("JXL_W44_201_COEFFS_DUMP").map(std::path::PathBuf::from)
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 fn coeffs_target_strategy_wire() -> u8 {
     std::env::var("JXL_W44_201_COEFFS_STRATEGY")
         .ok()
@@ -175,7 +175,7 @@ fn coeffs_target_strategy_wire() -> u8 {
         .unwrap_or(5) // DCT32X32 wire code
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 fn coeffs_target_channel() -> u8 {
     std::env::var("JXL_W44_201_COEFFS_CHANNEL")
         .ok()
@@ -183,7 +183,7 @@ fn coeffs_target_channel() -> u8 {
         .unwrap_or(1) // Y channel
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 fn ensure_coeffs_initialized(dir: &std::path::Path) {
     let mut guard = COEFFS_STATE.lock().unwrap();
     if let Some(state) = guard.as_ref()
@@ -228,7 +228,7 @@ fn ensure_coeffs_initialized(dir: &std::path::Path) {
 /// `full_block` is the assembled coefficient block (size = coverage *
 /// 64). `raw_strategy` is the INTERNAL Rust enum (DCT32X32 = 4); the
 /// dump converts to the libjxl-wire code for env comparison.
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 pub fn dump_coeffs(bx: usize, by: usize, raw_strategy: u8, channel: usize, full_block: &[i32]) {
     let Some(dir) = coeffs_dump_dir() else {
         return;
@@ -261,7 +261,7 @@ pub fn dump_coeffs(bx: usize, by: usize, raw_strategy: u8, channel: usize, full_
     let _ = state.file.flush();
 }
 
-#[cfg(not(feature = "std"))]
+#[cfg(not(all(feature = "std", feature = "__env_var_diagnostics")))]
 #[inline(always)]
 pub fn dump_coeffs(
     _bx: usize,

@@ -622,12 +622,18 @@ measurement at equal or better coverage.
   `benchmarks/lossless_bench_set_2026-06-10.tsv` (43 picks, feed
   `bench_input`). Remaining symbols are pinned core work — see
   `perf_gather_profile_2026-06-10.meta` addenda + the #41 close-out.
-- **Lossy-low hygiene rule (2026-06-10)**: per-block diagnostic hooks
-  MUST use the once-presence env-gate pattern (six dump modules now do);
-  pre-encode analysis passes MUST be gated/lazy on their consumers'
-  bands (ZenanalyzeProxies precedent: 24 % of e3 CPU computed-and-
-  discarded). New hooks that probe env or sweep pixels per block/image
-  need a profile cell at lossy e3 before landing.
+- **Lossy-low hygiene rule (2026-06-10)**: DIAGNOSTIC dump env hooks go
+  behind the `__env_var_diagnostics` cargo feature (compiled out of
+  default builds entirely — six dump modules + the inline dump sites now
+  are; dump-driver examples declare `required-features`). Inside the
+  feature, keep the once-presence OnceLock gate so set-but-unused hooks
+  stay cheap. BEHAVIOUR-override env hooks (gate fallbacks, dispatch
+  disables, buttloop scales) stay runtime — the override test contract
+  and A/B harnesses run against production builds. Pre-encode analysis
+  passes MUST be gated/lazy on their consumers' bands (ZenanalyzeProxies
+  precedent: 24 % of e3 CPU computed-and-discarded). New hooks that
+  probe env or sweep pixels per block/image need a profile cell at
+  lossy e3 before landing.
 - **BestSplit side-costs rider — SHIPPED 2026-06-10** (byte-identical;
   six engine sites consume sweep-carried best_l/r_cost; permanent
   debug-asserts verify carried == recomputed at every site). Quiet-machine

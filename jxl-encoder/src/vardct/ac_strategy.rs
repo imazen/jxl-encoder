@@ -1602,6 +1602,7 @@ fn estimate_entropy_full_impl(
 /// var unset (one getenv at first call per thread).
 #[allow(clippy::too_many_arguments)]
 #[inline]
+#[cfg_attr(not(feature = "__env_var_diagnostics"), allow(unused_variables))]
 fn dump_cost_inputs(
     raw_strategy: u8,
     bx: usize,
@@ -1621,7 +1622,7 @@ fn dump_cost_inputs(
     k_zeros_mul: f32,
     entropy: f32,
 ) {
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
     {
         use std::fs::OpenOptions;
         use std::io::Write;
@@ -1736,7 +1737,7 @@ fn dump_cost_inputs(
 #[inline(always)]
 #[allow(dead_code)]
 fn afv_coeff_dump_target(raw_strategy: u8, x: usize, y: usize) -> bool {
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
     {
         use std::sync::OnceLock;
         static TARGET: OnceLock<Option<(u8, usize, usize)>> = OnceLock::new();
@@ -1763,7 +1764,7 @@ fn afv_coeff_dump_target(raw_strategy: u8, x: usize, y: usize) -> bool {
 }
 
 #[allow(dead_code)]
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 fn afv_dump_file() -> Option<&'static std::sync::Mutex<std::fs::File>> {
     use std::fs::OpenOptions;
     use std::io::Write;
@@ -1788,8 +1789,9 @@ fn afv_dump_file() -> Option<&'static std::sync::Mutex<std::fs::File>> {
 }
 
 #[allow(dead_code)]
+#[cfg_attr(not(feature = "__env_var_diagnostics"), allow(unused_variables))]
 fn dump_afv_coeff_block(stage: &str, raw_strategy: u8, x: usize, y: usize, c: usize, data: &[f32]) {
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
     {
         use std::io::Write;
         if let Some(mu) = afv_dump_file()
@@ -1809,6 +1811,7 @@ fn dump_afv_coeff_block(stage: &str, raw_strategy: u8, x: usize, y: usize, c: us
 
 #[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(feature = "__env_var_diagnostics"), allow(unused_variables))]
 fn dump_afv_per_coeff(
     raw_strategy: u8,
     x: usize,
@@ -1820,7 +1823,7 @@ fn dump_afv_per_coeff(
     diff: f32,
     weighted_diff: f32,
 ) {
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
     {
         use std::io::Write;
         if let Some(mu) = afv_dump_file()
@@ -1852,8 +1855,9 @@ fn dump_afv_per_coeff(
 }
 
 #[allow(dead_code)]
+#[cfg_attr(not(feature = "__env_var_diagnostics"), allow(unused_variables))]
 fn dump_afv_aggregate(raw_strategy: u8, x: usize, y: usize, c: usize, name: &str, value: f32) {
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
     {
         use std::io::Write;
         if let Some(mu) = afv_dump_file()
