@@ -1,0 +1,11 @@
+# PERF-SORTLOC experiment — 2026-06-10 (/goal hunt, hook item 3)
+# Change tried: dedup sort over (first-word, index) 16B pairs — identical
+# ordering function (word 0 inline + tail compare), byte-identical by
+# construction (verified 4/4 cells). Walls: clic097 -0.14%, clic028
+# -0.33%, city12mp +1.77%, terminal +2.36% (8 iters, load 3.4-4.3).
+# VERDICT: REJECTED-NEUTRAL — pdqsort moves 4x the element bytes, which
+# offsets the avoided random key loads; the radix-chunk-1 inline
+# comparator already made loads cheap. Bare-index sort restored
+# byte-exact; decision documented at the sort site. Remaining sort cost
+# is pinned as: element movement + n log n compare structure, not
+# call/load overhead.

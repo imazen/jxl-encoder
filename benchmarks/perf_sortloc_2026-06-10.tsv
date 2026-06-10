@@ -1,0 +1,5 @@
+cell	image	effort	threads	wall_base_median_s	wall_ours_median_s	delta_pct	base_min_max	ours_min_max	bytes	bytes_identical	deterministic
+clic097_e7	/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png	7	1	1.061	1.060	-0.14	1.044/1.100	1.010/1.125	593141	True	True
+clic028_e7	/home/lilith/work/codec-corpus/clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	7	1	2.214	2.207	-0.33	2.134/2.396	2.119/2.308	1277383	True	True
+city12mp_e7	/mnt/v/input/jxl-encoder/lossless-bench-imazen26-png/1008_general_city-view-through-window_tokyo-skytree-sumida_s23u_iso50-f2p2_20230706-142333_4000x3000.png	7	1	14.056	14.305	+1.77	13.822/15.211	13.375/15.892	7814777	True	True
+terminal_e7	/home/lilith/work/codec-corpus/gb82-sc/terminal.png	7	1	0.665	0.681	+2.36	0.654/0.679	0.653/0.705	38749	True	True

@@ -2875,11 +2875,17 @@ fn dedup_samples_packed_sort(
         n <= u32::MAX as usize,
         "dedup_samples_packed_sort: n = {n} exceeds u32::MAX; widen key index type"
     );
+    // Using u32 indices halves the memory footprint vs Vec<usize>; the
+    // tree-learn sample cap (max_tree_samples_from_profile) tops out
+    // around 4 M entries, well within u32 range.
+    //
+    // Sort-shape experiments (perf_sortloc_2026-06-10.meta): sorting
+    // (first-word, index) PAIRS — identical ordering function, most
+    // compares resolving in-element — measured NEUTRAL-TO-WORSE
+    // (clic ~0 %, city12mp +1.8 %, terminal +2.4 %): the 4x element
+    // movement inside pdqsort offsets the avoided random key loads.
+    // Bare-index sort with the inline word comparator stands.
     let mut order: Vec<u32> = (0..n as u32).collect();
-    // Use rayon's par_sort_unstable_by when the parallel feature is on —
-    // dropping into the standard sort path otherwise. The cmp reads two
-    // adjacent 64-byte keys (sequential memory accesses, no shared
-    // mutable state) so rayon's pdqsort backend parallelizes cleanly.
     #[cfg(feature = "parallel")]
     {
         use rayon::slice::ParallelSliceMut;
