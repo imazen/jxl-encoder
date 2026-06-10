@@ -477,6 +477,12 @@ measurement at equal or better coverage.
   (W44-206)
 - Custom-order cost-gate stays for VarDCT; the JPEG path uses
   `compute_custom_orders_unconditional` (libjxl `is_nondefault`-only). (EX-J29)
+- `try_dct4x8_afv` is already default-on at e ≥ 6 for EVERY strategy
+  (libjxl parity; pin-probe byte-identical) — "enable AFV at e6+" specs are
+  structural no-ops. The 2c Screenshot 8×8-class lift at e5 is banded to
+  d ∈ [1.0, 2.0]: full-range mean missed the bytes bar (d=0.5 / d≥4 the
+  block buys quality, not bytes) — don't widen the band without re-running
+  the 2026-06-10 A/B. (issue #43 chunk 2c, ae62c219)
 
 **Perceptual loop / butteraugli**
 - Buttloop screenshot qf-seed scale: gate ≥ d=3.5 plus the W44-108 m3<30
@@ -566,6 +572,14 @@ measurement at equal or better coverage.
 - Owned-clone tree-learn fallback regresses at every measured size (the
   2026-05-17 audit numbers are stale); keep the dispatch infra as the A/B
   harness, default stays borrowed-view. (issue #42)
+- Parent-histogram subtraction (hist-sub, c19815ff) pays ONLY on the
+  lossless-photo split path: post-W44-171/172 the lossy cells' whole
+  find_best_split ceiling is 0-3.9 % of wall (don't respawn hist-sub-for-
+  lossy), and lossless SCREENSHOTS are not split-bound (1.4-6.9 % — their
+  cost is collect/gather/WP; see Live follow-ons). Single-sample RSS deltas
+  on WSL2 swing ±120 MB from glibc adaptive-arena policy — pin
+  `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072` for memory A/Bs.
+  (issue #64 chunk 1, benchmarks/perf_hist_sub{,_lossless}_2026-06-10.meta)
 
 **Process**
 - Gate changes: update `gate_registry.rs` macro metadata + ALL_DIVERGENCE_ENTRIES
@@ -575,6 +589,23 @@ measurement at equal or better coverage.
 
 ### Live follow-ons
 
+- **Lossless screenshots wall** (top measured lever, 2026-06-10 profile in
+  `benchmarks/perf_hist_sub_2026-06-10.meta`): collect_residuals 21.8-22.7 %,
+  gather_samples 15.9-17.4 %, WeightedPredictorState 13.1-14.7 % of CPU —
+  NOT split-bound (hist-sub doesn't apply; dedup attacks are the falsified
+  #41 Phases 1-4). Attack order: gather_samples SIMD, collect_residuals,
+  WP-state batching (issue #41 option C list).
+- **BestSplit side-costs rider** (deferred from PERF-HIST-SUB-LOSSLESS;
+  recorded analysis says bitwise-safe): carry best_l/r_cost of the winning
+  threshold out of find_best_split, skip the caller's 2×O(n_side)
+  compute_predictor_entropy recompute at all four engine call sites.
+  Small free win on top of the shipped -20.7 %.
+- **Dispatch chunks 2b/2d** (issue #43): 2d = fine_grained_step at e9 on
+  ≥4 MP (Pareto sweep first); 2b = DCT64 distance-gate expansion on medium
+  (measure picks first). 2a + 2c shipped.
+- **imazen-26 re-baselining**: validate the 2c screenshot lift on the
+  8000/8100 strata; longer-term re-baseline the screenshot-class gates
+  (W44-105/107/108 thresholds were calibrated on gb82-sc's 10 images only).
 - **JPEG lossy productization** (relative/inferred quality targeting + the
   quality-threshold router): build in `~/work/zen/zenjxl` with a scorer
   callback; jxl-encoder keeps only the PreserveJxl coeff path +
@@ -587,11 +618,14 @@ measurement at equal or better coverage.
   zensim-gpu GPU-native diffmap kernels (currently CPU-fallback).
 - **cvvdp-cpu structural perf**: strip-pipeline + f16 (150 ms → 50 ms at 1024²)
   in the zenmetrics repo.
-- Open issues: #64 (DC-tree hot-path closure), #43 (per-image dispatch
-  chunks 2+), #41 (streaming hash-dedup at gather), #25 (k_ac_quant —
-  follow-ons A/C only; default-flip AND the follow-on B smooth-photo proxy
-  gate are both RULED OUT, see "Quantization / k_ac_quant" above), #45
-  (e10/e11 smart modes), #24 (lossless e9 picker).
+- Open issues: #64 (DC-tree hot-path: hist-sub chunk 1 SHIPPED, -20.7 %
+  mean on lossless photos; remaining = the screenshots item above +
+  MABSplit), #43 (dispatch 2b/2d), #41 (gather/collect/WP — option C
+  list), #25 (k_ac_quant — follow-ons A/C only; default-flip AND the
+  follow-on B smooth-photo proxy gate are both RULED OUT, see
+  "Quantization / k_ac_quant" above), #45 (e10/e11 smart modes), #24
+  (lossless e9 picker — re-baseline EV after hist-sub dropped e9 walls
+  10-38 %).
 
 ### Reference findings (stable)
 
