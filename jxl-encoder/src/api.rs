@@ -12039,7 +12039,18 @@ impl LosslessConfig {
 ///
 /// - `threads == 0`: use the ambient rayon pool (caller controls via
 ///   `pool.install()` or the global default).
-/// - `threads == 1`: sequential — call `f()` on the current thread.
+/// - `threads == 1`: direct call — note the encode body's internal
+///   `parallel_map` / `par_sort` still target the AMBIENT pool, so `1`
+///   does NOT mean sequential internals (historic behaviour; output is
+///   thread-count byte-invariant — 4-way sha256 check, 2026-06-10).
+///   Two alternatives were measured and REJECTED
+///   (`benchmarks/perf_pool1t_2026-06-10.meta`): a true one-worker pool
+///   (+70..+195 % wall — the ambient-width parallelism dwarfs the
+///   per-call cold-bridge toll) and a `rayon::join` warm entry
+///   (+1.7..+3.7 % on 3 of 4 cells). The `Registry::in_worker_cold` /
+///   `LockLatch` frames in profiles are bridge FRAMES carrying the
+///   enclosed work's samples, not recoverable overhead — don't respawn
+///   this without new structure.
 /// - `threads >= 2`: create a dedicated pool with that many threads.
 #[cfg(feature = "parallel")]
 fn run_with_threads<T>(threads: usize, f: impl FnOnce() -> T + Send) -> T

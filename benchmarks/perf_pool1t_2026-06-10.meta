@@ -1,0 +1,32 @@
+# PERF-POOL-1T experiments — 2026-06-10 (/goal hunt, closure-attribution lead)
+#
+# Finding that motivated this: dwarf+disasm attribution resolved the two
+# hot LocalKey::with symbols (8.3% + 7.0% on terminal e7 at --threads 1)
+# to rayon Registry::in_worker_cold + LockLatch StackJobs — the
+# out-of-pool main thread cold-bridging every internal parallel_map /
+# par_sort into the AMBIENT global pool. KEY REALIZATION: `--threads 1`
+# has never meant sequential internals; run_with_threads(1) direct-calls
+# the encode body and its par-iters fan out to the default-width pool.
+#
+# Experiment 1 — true one-worker pool at threads<=1 (install):
+#   terminal +149%  imac_dark +136%  noaa +195%  clic097 +71%  (REJECTED
+#   — ambient-width parallelism dwarfs the bridge toll; .tsv alongside)
+# Experiment 2 — warm entry via rayon::join (one cold bridge per encode):
+#   terminal +2.22%  imac_dark +1.65%  noaa -1.32%  clic097 +3.67%
+#   (REJECTED — hosting the body on a worker loses more than the
+#   per-call bridges cost; perf_pool1t_warm_2026-06-10.tsv)
+#
+# VERDICT (pinned): the in_worker_cold/LocalKey frames carry the
+# enclosed bridged WORK's samples, not recoverable overhead. The
+# historic direct-call at threads<=1 stands; code reverted byte-exact,
+# doc updated with both rejections. Do not respawn without new
+# structure.
+#
+# BONUS FINDING (valuable, now recorded in the run_with_threads doc):
+# encoded output is THREAD-COUNT BYTE-INVARIANT — 4-way sha256 of
+# {base, 1-worker-pool build} x {--threads 1, --threads 8} on terminal
+# e7 lossless: all four identical (0ffba775...). Every parallel
+# reduction on the lossless path is order-insensitive in practice.
+#
+# Bytes identical 4/4 in BOTH experiments' A/B grids; hash-locks 36/36.
+# Host: lilith (7950X, WSL2), post-reboot quiet-ish (load 0.5-4.2).
