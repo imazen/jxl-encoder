@@ -7841,9 +7841,13 @@ impl<'a> EncodeRequest<'a> {
     ///
     /// Use this for HDR content (PQ, HLG) or non-sRGB primaries (BT.2020, Display P3).
     ///
-    /// Note: this only affects the signaled color encoding in the JXL header.
-    /// Pixel linearization for lossy encoding is still controlled by
-    /// `with_source_gamma()`. For float input, pixels are assumed already linear.
+    /// Besides signaling, the color encoding drives lossy pixel linearization
+    /// for integer (u8/u16, RGB(A)/Gray) input since #17: `TransferFunction::Pq`,
+    /// `::Hlg`, and `::Bt709` apply the matching inverse EOTF instead of the
+    /// default sRGB curve. [`with_source_gamma`](Self::with_source_gamma) still
+    /// wins when set (an explicit gamma overrides the encoding's TF), and the
+    /// dedicated f32 PQ/HLG/BT.709 layouts dispatch unconditionally. For the
+    /// plain linear f32 layouts, pixels are assumed already linear.
     pub fn with_color_encoding(
         mut self,
         ce: crate::headers::color_encoding::ColorEncoding,
@@ -9039,15 +9043,16 @@ impl<'a> EncodeRequest<'a> {
         let u16_max = self
             .bits_per_sample
             .map_or(65535.0_f32, |b| ((1u32 << b) - 1) as f32);
-        // PQ / HLG EOTF dispatch (closes PQ + HLG portions of #17).
-        // When the caller sets a color_encoding with
-        // TransferFunction::Pq or ::Hlg, the input pixels are
-        // PQ/HLG-encoded; we apply the matching inverse EOTF instead
-        // of the default sRGB linearization. source_gamma still wins
-        // (caller explicitly chose gamma over the encoding's TF).
-        // Currently wired only for the u16 RGB(A) layouts — broader
-        // coverage (u8 / Gray / BT.709, lossless) is the remainder
-        // of #17.
+        // PQ / HLG / BT.709 EOTF dispatch (#17, closed). When the caller
+        // sets a color_encoding with TransferFunction::Pq / ::Hlg /
+        // ::Bt709, the input pixels are coded in that transfer; we apply
+        // the matching inverse EOTF instead of the default sRGB
+        // linearization. source_gamma still wins (caller explicitly chose
+        // gamma over the encoding's TF). Wired for every integer layout
+        // arm below (u8/u16 × RGB(A)/Gray); the streaming push_rows path
+        // mirrors these predicates. Lossless needs no linearization —
+        // modular stores the original samples and the encoding is
+        // signaling-only there.
         //
         // A3 chunk 1b (issue #46): for the dedicated f32 PQ/HLG/BT.709
         // layouts the dispatch fires unconditionally inside the layout
