@@ -1,0 +1,29 @@
+# PERF-GATHER-ITEM1 lane-per-predictor — 2026-06-10 (issue #41 queue item 1)
+#
+# Change: gather_channel_samples' per-pixel predictor loop no longer
+# match-dispatches 14x per pixel; when the candidate list is the
+# canonical 14 (content equality, checked once per channel), the new
+# straight-line Predictor::predict_all_canonical computes all lanes in
+# CANDIDATE_PREDICTORS order (Weighted lane = true WP prediction) and
+# the residual+tokenize loop runs over the fixed array. Non-canonical
+# lists (squeeze [Zero], RFC#45 perms) keep the legacy dispatch loop.
+#
+# Gates: formulas copied verbatim; value-parity proven by
+# test_predict_all_canonical_matches_dispatch (10k LCG + domain-edge
+# battery, every lane vs dispatch — the battery stays within the real
+# neighbor domain |v|<=2^20 because full-i32 extremes overflow
+# `(w+n)/2` identically in BOTH impls). Bytes identical base-vs-ours on
+# all 5 A/B cells; hash-locks 36/36 default + parallel-tree-learning;
+# lib 1488/1488; lossless/modular/tree/dedup it 81/81.
+#
+# WALL: NOT RESOLVABLE this grid — loadavg 8-10.6 throughout (concurrent
+# agent storm; terminal min/max 0.79/1.83 s). Medians +0.8..+4.0% are
+# tail noise (imac_dark ours-min FASTER than base-min). Quiet-box
+# re-measure queued; expectation is modest-to-neutral (chunk-A lesson:
+# dispatch/copy removal can be below wall resolution) — the change is
+# strictly-less-work groundwork either way, and the byte gate is the
+# shipping gate. Byte-base: /tmp/chunkb2_ours (old zencodec 0.1.20 lock;
+# valid byte-comparator because the 0.1.21 bump was hash-lock-proven
+# byte-neutral). Quiet wall rerun must rebuild base from 13020395 with
+# the current lock for dep-parity.
+# Host: lilith (7950X, WSL2), no target-cpu=native.

@@ -1757,6 +1757,13 @@ fn gather_channel_samples(
     // call `try_merge_last` without re-asking for the option.
     let mut dedup_backend = dedup_backend;
 
+    // Issue #41 queue item 1: when the candidate list is the canonical
+    // 14-predictor set (content equality — covers the default and any
+    // identical-order alias), the per-pixel predictor loop uses the
+    // straight-line [`Predictor::predict_all_canonical`] instead of 14
+    // match dispatches. Checked once per channel, not per pixel.
+    let canonical_preds = samples.candidate_predictors == CANDIDATE_PREDICTORS;
+
     // Issue #41 chunk B1: row staging on the default (no-dedup) path —
     // see [`GatherRowStaging`]. ~0.3 MB scratch at width 4096.
     let mut staging = if dedup_backend.is_none() {
@@ -1809,18 +1816,33 @@ fn gather_channel_samples(
                 // Stack scratch for predictor outputs. Filled below.
                 let mut local_tokens = [0u8; MAX_CAND_PRED];
                 let mut local_ebits = [0u8; MAX_CAND_PRED];
-                // Compute residual for each candidate predictor
-                for (pred_idx, &predictor) in samples.candidate_predictors.iter().enumerate() {
-                    let prediction = if predictor == Predictor::Weighted {
-                        wp_pred as i32
-                    } else {
-                        predictor.predict_from_neighbors(&n)
-                    };
-                    let residual = pixel - prediction;
-                    let packed = pack_signed(residual);
-                    let (token, _extra_bits, num_extra) = GATHER_HYBRID_UINT.encode(packed);
-                    local_tokens[pred_idx] = token as u8;
-                    local_ebits[pred_idx] = num_extra as u8;
+                if canonical_preds {
+                    // Straight-line all-14 predictions (issue #41 item 1):
+                    // identical formulas, no per-predictor match dispatch;
+                    // the residual+tokenize loop runs over a fixed array.
+                    let mut preds = [0i32; MAX_CAND_PRED];
+                    Predictor::predict_all_canonical(&n, wp_pred as i32, &mut preds);
+                    for (pred_idx, &prediction) in preds[..num_pred].iter().enumerate() {
+                        let residual = pixel - prediction;
+                        let packed = pack_signed(residual);
+                        let (token, _extra_bits, num_extra) = GATHER_HYBRID_UINT.encode(packed);
+                        local_tokens[pred_idx] = token as u8;
+                        local_ebits[pred_idx] = num_extra as u8;
+                    }
+                } else {
+                    // Compute residual for each candidate predictor
+                    for (pred_idx, &predictor) in samples.candidate_predictors.iter().enumerate() {
+                        let prediction = if predictor == Predictor::Weighted {
+                            wp_pred as i32
+                        } else {
+                            predictor.predict_from_neighbors(&n)
+                        };
+                        let residual = pixel - prediction;
+                        let packed = pack_signed(residual);
+                        let (token, _extra_bits, num_extra) = GATHER_HYBRID_UINT.encode(packed);
+                        local_tokens[pred_idx] = token as u8;
+                        local_ebits[pred_idx] = num_extra as u8;
+                    }
                 }
 
                 // Compute reference channel properties into a local

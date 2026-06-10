@@ -37,6 +37,15 @@
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
 ### Changed
+- **Tree learning: lane-per-predictor gather (issue #41 item 1,
+  byte-identical).** The gather hot loop computes all 14 canonical
+  predictions in one straight-line pass (`predict_all_canonical`)
+  instead of 14 per-pixel match dispatches; legacy loop retained for
+  squeeze/permuted candidate lists. Value-parity unit test + bytes
+  identical 5/5 A/B cells + hash-locks both feature sets. Walls pending
+  a quiet box (`benchmarks/perf_gather_item1_lanes_2026-06-10.{tsv,meta}`).
+  Also bumps the lock to zencodec 0.1.21 (published 2026-06-10,
+  hash-lock-proven byte-neutral).
 - **Tree learning: batched MA-tree traversal in collect_residuals (issue
   #41 chunk B2, byte-identical).** 3-pass row restructure: properties/WP
   in legacy order into row buffers, then a K=8 interleaved tree walk

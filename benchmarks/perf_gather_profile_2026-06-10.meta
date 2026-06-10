@@ -59,3 +59,18 @@
 # predictor math. Row-buffered bulk extends (amortize the SoA pushes)
 # and a vectorized/branchless traverse_with_props matter alongside the
 # lane-per-predictor residual+tokenize from the #41 brief.
+#
+# ── ADDENDUM 2: post-B1+B2 re-profile (chunkb2 binary, loadavg 0.18) ────────
+#                 terminal   clic097   city12mp
+# collect_residuals  18.2      11.7       9.5     (B2 landed; was 20.4/14.0/11.9)
+# gather_samples     12.7       5.1       6.2     (B1 landed; was 17.2/7.5/7.9)
+# memmove (extends)  11.6       —         4.1     (B1/B2 bulk-extend cost face)
+# estimate_cost      11.3       6.8       4.7     (RCT trials, rising share)
+# WP predict_&_prop   9.7       —         4.5
+# find_best_split     —        18.2      11.1     (photos still split-heavy)
+# memcmp (dedup)      —        10.0      17.7     (+ from_iter 5.3/11.3)
+# FnMut closures      12.3      8.8       —       (parallel_map workers, unattributed)
+# Queue re-rank by EV: (1) >=8MP inline-dedup re-bench [top cluster at
+# 12MP ~29%, and 1MP photo now 15% combined], (2) gather lane-per-
+# predictor [~half of 12.7/5-6% remaining], (3) WP [9.7% ceiling,
+# x-serial dependency suspected].

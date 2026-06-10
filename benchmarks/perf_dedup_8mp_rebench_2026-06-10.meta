@@ -1,0 +1,23 @@
+# DEDUP >=8MP RE-BENCH — 2026-06-10 (issue #41 queue item 3)
+#
+# Question (from the step-0 profile): at >=8 MP photos the post-gather
+# packed-key-sort dedup cluster is the TOP cost (city12mp: __memcmp
+# 16.9-17.7% + Vec::from_iter 11.2-11.3%) — does the opt-in inline
+# gather-time dedup (Phase 2 cuckoo / Phase 3 fingerprint-cuckoo), which
+# LOST at 1024^2 (W44-137 triage), win at these sizes?
+#
+# Harnesses: examples/gather_dedup_ab.rs (default-OFF vs Phase 2) and
+# examples/gather_dedup_phase3_ab.rs (Phase 2 vs Phase 3), both paired
+# interleaved, GD_EFFORTS=7 GD_SAMPLES=8 GD_THREADS=1 GD_WARMUP=2.
+# Cells: 4.19 MP clic2025/final-test 8426ed22, 12 MP city (1008_general,
+# bench-set materialized PNG), 12 MP nature (1469_nature).
+#
+# ── OFF vs Phase 2 (a=default sort, b=Phase2 inline; delta>0 = P2 slower)
+# image      MP     a_med_ms  b_med_ms  paired-delta  bytes
+# 8426ed22   4.19    9342.9    9596.4    +4.20%       identical
+# city       12.00  27202.9   26766.0    +0.00%       identical
+# nature     12.00  33369.5   31581.9    +1.40%       identical
+# VERDICT (this half): the >=8MP crossover does NOT materialize for
+# OFF->P2 — inline probing costs match/exceed the sort+compact savings
+# even where memcmp is ~17% of CPU; best case is a TIE at city12mp.
+# (P2-vs-P3 half appended below when the run lands.)

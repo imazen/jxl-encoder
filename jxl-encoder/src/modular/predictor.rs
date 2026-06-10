@@ -154,6 +154,50 @@ impl Predictor {
             }
         }
     }
+
+    /// Issue #41 queue item 1: all 14 canonical predictions in one
+    /// straight-line pass, written in `CANDIDATE_PREDICTORS` order
+    /// (Zero, Left, Top, Average0, Select, Gradient, Weighted, TopRight,
+    /// TopLeft, LeftLeft, Average1, Average2, Average3, Average4).
+    ///
+    /// Replaces 14 per-pixel `match` dispatches in the gather hot loop
+    /// with branch-free-ish straight-line code (Select/Gradient compile
+    /// to cmovs) so the formulas' ILP overlaps. The expressions are
+    /// copied VERBATIM from [`Predictor::predict_from_neighbors`] —
+    /// byte-identical results, proven by
+    /// `test_predict_all_canonical_matches_dispatch` plus the gather
+    /// hash-locks. Lane 6 (Weighted) takes the caller's true WP
+    /// prediction (the dispatch loop never used the placeholder arm).
+    #[inline]
+    pub fn predict_all_canonical(n: &Neighbors, wp_pred: i32, out: &mut [i32; 16]) {
+        out[0] = 0; // Zero
+        out[1] = n.w; // Left
+        out[2] = n.n; // Top
+        out[3] = (n.w + n.n) / 2; // Average0
+        out[4] = if n.n.abs_diff(n.nw) < n.w.abs_diff(n.nw) {
+            n.w
+        } else {
+            n.n
+        }; // Select
+        let gradient = n.w.saturating_add(n.n).saturating_sub(n.nw);
+        out[5] = gradient.clamp(n.w.min(n.n), n.w.max(n.n)); // Gradient
+        out[6] = wp_pred; // Weighted (true WP prediction)
+        out[7] = n.ne; // TopRight
+        out[8] = n.nw; // TopLeft
+        out[9] = n.ww; // LeftLeft
+        out[10] = (n.w + n.nw) / 2; // Average1
+        out[11] = (n.n + n.nw) / 2; // Average2
+        out[12] = (n.n + n.ne) / 2; // Average3
+        out[13] = ((6i64 * n.n as i64 - 2 * n.nn as i64
+            + 7 * n.w as i64
+            + n.ww as i64
+            + n.nee as i64
+            + 3 * n.ne as i64
+            + 8)
+            / 16) as i32; // Average4
+        out[14] = 0;
+        out[15] = 0;
+    }
 }
 
 /// Neighbor values for prediction.
@@ -1035,5 +1079,97 @@ mod tests {
         assert_eq!(step(&mut rng, &mut state), (110, -60), "step 2");
         assert_eq!(step(&mut rng, &mut state), (165, 0), "step 3");
         assert_eq!(step(&mut rng, &mut state), (153, -60), "step 4");
+    }
+}
+
+#[cfg(test)]
+mod predict_all_canonical_tests {
+    use super::*;
+
+    /// Issue #41 item 1 proof: the straight-line all-14 computation is
+    /// value-identical to the per-predictor dispatch for every canonical
+    /// lane, across random and saturation-edge neighbor values.
+    #[test]
+    fn test_predict_all_canonical_matches_dispatch() {
+        const CANONICAL: [Predictor; 14] = [
+            Predictor::Zero,
+            Predictor::Left,
+            Predictor::Top,
+            Predictor::Average0,
+            Predictor::Select,
+            Predictor::Gradient,
+            Predictor::Weighted,
+            Predictor::TopRight,
+            Predictor::TopLeft,
+            Predictor::LeftLeft,
+            Predictor::Average1,
+            Predictor::Average2,
+            Predictor::Average3,
+            Predictor::Average4,
+        ];
+        // Deterministic LCG + edge battery over the REAL neighbor domain
+        // (pixel-derived values, |v| <= ~2^20 — channel data plus RCT
+        // headroom; full-i32 extremes overflow `(w + n) / 2` identically
+        // in BOTH implementations, which is out-of-domain by design).
+        let edge = [
+            0i32,
+            1,
+            -1,
+            255,
+            -255,
+            65535,
+            -65536,
+            (1 << 20) - 1,
+            -(1 << 20),
+        ];
+        let mut state = 0x2545F491u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (((state >> 33) as i32) & 0x1F_FFFF) - 0x10_0000
+        };
+        let mut cases: Vec<Neighbors> = Vec::new();
+        for _ in 0..10_000 {
+            cases.push(Neighbors {
+                n: next(),
+                w: next(),
+                nw: next(),
+                ne: next(),
+                nn: next(),
+                ww: next(),
+                nee: next(),
+            });
+        }
+        for &a in &edge {
+            for &b in &edge {
+                cases.push(Neighbors {
+                    n: a,
+                    w: b,
+                    nw: a ^ b,
+                    ne: b,
+                    nn: a,
+                    ww: b,
+                    nee: a,
+                });
+            }
+        }
+        for (ci, n) in cases.iter().enumerate() {
+            let wp_pred = next();
+            let mut out = [0i32; 16];
+            Predictor::predict_all_canonical(n, wp_pred, &mut out);
+            for (lane, &pred) in CANONICAL.iter().enumerate() {
+                let expected = if pred == Predictor::Weighted {
+                    wp_pred
+                } else {
+                    pred.predict_from_neighbors(n)
+                };
+                assert_eq!(
+                    out[lane], expected,
+                    "case {ci} lane {lane} ({pred:?}) diverged: {} vs {}",
+                    out[lane], expected
+                );
+            }
+        }
     }
 }
