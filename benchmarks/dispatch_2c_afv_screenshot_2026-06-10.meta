@@ -1,0 +1,117 @@
+# Issue #43 chunk 2c — AFV/8×8-class lift on screenshots (e5)
+#
+# Companion to:
+#   benchmarks/dispatch_2c_afv_screenshot_pin_probe_2026-06-10.tsv  (phase 1)
+#   benchmarks/dispatch_2c_afv_screenshot_2026-06-10.tsv            (phase 2)
+#
+# Host: lilith (AMD Ryzen 9 7950X, 128 GB), WSL2. Concurrent-agent load
+# 4-9 during runs; wall numbers use min-over-samples per (cell, arm).
+# Harness: jxl-encoder/examples/dispatch_2c_afv_screenshot_ab.rs (this
+# repo, committed alongside this meta — `git log --follow` this file).
+# Driver: scripts/run_dispatch_2c_afv_ab.sh; analyzer:
+# scripts/analyze_dispatch_2c_afv_ab.py.
+# Base: main@origin 31346cd8 + the chunk-2c gate commit.
+#
+# ── Context: why the chunk was re-scoped from the spec ──
+#
+# The chunk-2c spec ("AFV evaluation is opt-in via with_evaluate_afv;
+# auto-enable when Screenshot at effort >= 6") had a stale premise:
+# `with_evaluate_afv` does not exist, and `EffortProfile.try_dct4x8_afv`
+# (the flag gating the DCT4X8/DCT8X4/DCT4X4/AFV0-3 evaluation block in
+# AC strategy search) is already `effort >= 6` for EVERY strategy —
+# exact libjxl parity (AFV enters at e6/Wombat). No strategy, tuning, or
+# env path flips it off. The specced gate is therefore a structural
+# no-op; the only residual dispatch surface is e5.
+#
+# ── Phase 1: pin-probe (PIN_OFF vs PIN_ON, __expert override) ──
+#
+# Grid: 7 gb82-sc screenshots × e{5,6,7} × d{1.0,2.0}; arms pin
+# try_dct4x8_afv Some(false) / Some(true); both arms skip the per-image
+# dispatch adapters identically (override-respect), isolating the block.
+# At e7, a DEF arm (production default, no pin) is added.
+#
+# Findings (benchmarks/dispatch_2c_afv_screenshot_pin_probe_2026-06-10.tsv):
+#   * Specced-gate no-op PROOF: 13/14 e7 cells DEF == PIN_ON
+#     BYTE-IDENTICAL (sha256 match). The single divergent cell
+#     (windows95 e7 d=1.0) is the documented issue-#43 chunk-1
+#     try_dct64 adapter firing in DEF (307,200 px < 500k AND d < 2.0)
+#     — unrelated to AFV; at d=2.0 the same image is byte-identical.
+#     Production at e >= 6 already evaluates the 8×8-class block;
+#     "auto-enable at e >= 6 on screenshots" cannot change any bit.
+#   * e6 liveness: all 7 images differ PIN_OFF vs PIN_ON at e6
+#     (the block is consequential where it is on).
+#   * e5 residual value: all 14 e5 pairs differ. Mean bytes -1.16%
+#     (range -0.20% .. -2.19%), mean butteraugli -0.023 (better),
+#     mean ssim2 +0.011 (equal). Worst cell windows95 e5 d=1.0
+#     ssim2 -0.82 — the SAME magnitude drop exists in the e6 pinned
+#     pair (-0.83) where production already has the block on, i.e. it
+#     is inherent to the block on that pixel-art outlier, not
+#     lift-specific.
+#
+# ── Phase 2: production-context paired A/B (the acceptance run) ──
+#
+# Grid: 7 gb82-sc screenshots × e{5,6} × d{0.5,1,2,4} + 4 CID22-512
+# validation photos (1418519, 1025469, 2389166, 297394 — the last is
+# the highest-fcbr photo = closest-to-threshold classifier guard);
+# photos trimmed to d=1.0 at e6. 3 samples per (cell, arm),
+# process-level sample-major interleave via the driver script.
+#   Arm A: JXL_DISPATCH_AFV_SCREENSHOT_DISABLE=1 (gate off = pre-chunk
+#          production path, W44-164 auto-classify + patches lift intact)
+#   Arm B: env unset (gate fires on Screenshot at e5)
+# EncoderStrategy::Zenjxl, 1 thread, Limits 8 GiB.
+#
+# Acceptance gates (from the chunk brief, transposed e6→e5):
+#   * screenshots e5 mean bytes <= -1% at equal-or-better mean
+#     SSIM2/butteraugli
+#   * photo cells BYTE-IDENTICAL (classifier no-fire)
+#   * e6 screenshot cells BYTE-IDENTICAL (gate scope = e5 only)
+#   * screenshots e5 wall (min-ms) <= +8%
+#
+# ── Results (scripts/analyze_dispatch_2c_afv_ab.py on the TSV) ──
+#
+#   Full e5 range (n=28): mean bytes -0.660% (MISSES the -1% gate),
+#   mean d_ssim2 +0.039 (better), mean d_bfly -0.045 (better),
+#   wall +0.1%. Byte regressions cluster at d=0.5 / d=4.0 (worst
+#   terminal e5 d=4 +2.45% bytes for -0.22 butteraugli — the block
+#   buys quality, not bytes, at high d).
+#
+#   IN-BAND d∈[1.0,2.0] (n=14): bytes wins 14/14, mean -1.207%
+#   (PASSES <= -1%), mean d_bfly -0.015 (better), mean d_ssim2
+#   -0.039 (windows95-driven: -0.95/-0.41 at d=1/2 while its
+#   butteraugli IMPROVES; the e6+ default makes the identical
+#   trade — pinned e6 pair ssim2 -0.83; other 12 cells mean
+#   +0.067). Wall +0.5% (PASSES <= +8%).
+#   e6 screenshots 28/28 BYTE-IDENTICAL; photos 20/20 BYTE-IDENTICAL.
+#
+# ── SHIPPED verdict ──
+#
+#   Gate shipped distance-banded to the measured win region:
+#   AFV_SCREENSHOT_LIFT_MIN_DISTANCE = 1.0,
+#   AFV_SCREENSHOT_LIFT_MAX_DISTANCE = 2.0 (both inclusive),
+#   per the W44-135 ship-the-measured-band precedent.
+#
+#   Band spot-check (post-band rebuild, --sample 9): in-band e5
+#   cells byte-match the bench arm-B shas (gui d=1 6bf40edc…,
+#   gui d=2 6d63b986…, graph d=1 7b49fe0d…, graph d=2 2e2bc2a9…);
+#   out-of-band e5 cells byte-match arm-A bytes (gui d=0.5 45269,
+#   gui d=4 27119, graph d=0.5 28811, graph d=4 18692) — the bench
+#   table fully characterizes the shipped gate.
+#
+# ── Verification ──
+#
+#   * djxl 9/9 gated in-band bitstreams decode (gui d1/d2, graph
+#     d1/d2, codec_wiki d1, windows95 d2, gmessages d1, terminal d2,
+#     imac_g3 d1; djxl v0.12.0 d2c7032).
+#   * jxl-oxide decoded every bench encode in-process for metrics
+#     (456/456 non-NaN rows).
+#   * jxl-rs (PRIMARY): library-route roundtrip on a gated encode in
+#     tests/it/dispatch_2c_afv_screenshot.rs (runs in CI).
+#   * Encoded bitstreams persisted (152 files, both arms × 76 cells):
+#     /mnt/v/output/jxl-encoder/dispatch_2c_afv_2026-06-10/
+#   * hash-locks 36/36, libjxl byte-lock 5/5, divergence drift 7/7,
+#     lib tests 1482/1482, rd-regression PASS (CID22-512 d=0.25/0.5/1.0,
+#     all cells; photos are class-None → gate-silent).
+#
+# Caveat: passes 1-2 of the bench overlapped a concurrent rd-regression
+# run + agent load 4-9; min-of-3 wall absorbs most of it, and the
+# headline wall delta (+0.5% in-band) is far inside the +8% gate.

@@ -2792,6 +2792,15 @@ name = "kacq_smooth_photo_gate_ab"
 path = "examples/kacq_smooth_photo_gate_ab.rs"
 required-features = ["__expert", "__pre_quantized", "parallel", "butteraugli-loop", "ssim2-loop"]
 
+# Issue #43 chunk 2c: AFV/8x8-class lift on screenshots — pinned probe
+# (`--pin-probe`: try_dct4x8_afv Some(false)/Some(true) pairs at e{5,6,7})
+# + production-context env-toggled paired A/B (`--bench`, arm selected per
+# process via JXL_DISPATCH_AFV_SCREENSHOT_DISABLE).
+[[example]]
+name = "dispatch_2c_afv_screenshot_ab"
+path = "examples/dispatch_2c_afv_screenshot_ab.rs"
+required-features = ["__expert", "parallel", "butteraugli-loop", "ssim2-loop"]
+
 # W44-PHASE4-S2-refit-c2: per-knob ablation harness. Takes an explicit
 # (k1, k2, k3, k4, k5) tuple via CLI flags and encodes ONE cell per process
 # invocation. Used to detect hidden cliffs in S2-refit per-stratum optima.

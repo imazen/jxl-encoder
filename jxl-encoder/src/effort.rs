@@ -2417,21 +2417,41 @@ impl EffortProfile {
     /// identical (those fixtures are all sub-256² synthetic test images,
     /// well below the `CONTENT_CLASS_MIN_PIXELS` gate).
     ///
+    /// **Current dispatch rule (issue #43 chunk 2c)** — `Screenshot`-class
+    /// content at lossy effort 5 with `pixels >= CONTENT_CLASS_MIN_PIXELS`
+    /// and `distance` inside the measured win band
+    /// [[`AFV_SCREENSHOT_LIFT_MIN_DISTANCE`] (1.0),
+    /// [`AFV_SCREENSHOT_LIFT_MAX_DISTANCE`] (2.0)] (inclusive) flips
+    /// `self.try_dct4x8_afv = true`, enabling the DCT4X8 / DCT8X4 /
+    /// DCT4X4 / AFV0-3 evaluation block in AC strategy search one effort
+    /// level below its libjxl-parity entry point (`effort >= 6`,
+    /// e6/Wombat). The chunk's original premise ("AFV is opt-in,
+    /// auto-enable at e >= 6") was stale — the block is already
+    /// default-on at e >= 6 for every strategy, so e5 is the only
+    /// residual dispatch surface. Note this changes only **which images**
+    /// evaluate the 8×8-class block (per W44-60: AFV evaluation policy
+    /// itself stays at libjxl parity), and it lifts the whole
+    /// `try_dct4x8_afv` block — AFV is not separable from DCT4X8 / DCT8X4
+    /// / DCT4X4 without restructuring the search. Env hook
+    /// `JXL_DISPATCH_AFV_SCREENSHOT_DISABLE=1` suppresses the lift
+    /// (diagnostic A/B + emergency rollback; no-op in `no_std` builds).
+    ///
     /// All other content classes / effort levels are no-ops; the dispatch
     /// surface is extensible and future chunks can add more rules
-    /// (per-class `tree_max_buckets`, per-class `try_dct4x8_afv`, etc.)
-    /// without breaking callers.
+    /// (per-class `tree_max_buckets`, etc.) without breaking callers.
     ///
     /// **Spec-compliance**: every dispatched change leaves the bitstream
-    /// 100 % spec-valid (patches is a normal encoder feature, libjxl
-    /// decoder reads it natively).
+    /// 100 % spec-valid (patches and all 8×8-class transforms are normal
+    /// encoder features, libjxl decoder reads them natively).
     ///
-    /// **Effort gate rationale**: the dispatch fires at e ∈ {5, 6} because
-    /// (a) e7 already has patches on by default and (b) e ≤ 4 disables
-    /// most VarDCT machinery that patches piggybacks on (AC strategy
-    /// search). The pixel gate excludes synthetic fixtures (the largest
-    /// hash-lock fixture is 48 × 48 = 2 304 px, three orders of magnitude
-    /// below 65 536).
+    /// **Effort gate rationale**: the patches dispatch fires at e ∈ {5, 6}
+    /// because (a) e7 already has patches on by default and (b) e ≤ 4
+    /// disables most VarDCT machinery that patches piggybacks on (AC
+    /// strategy search). The AFV/8×8-class dispatch fires at e == 5 only
+    /// because `try_dct4x8_afv` is already `true` at e >= 6 and the same
+    /// e ≤ 4 machinery argument applies below. The pixel gate excludes
+    /// synthetic fixtures (the largest hash-lock fixture is 48 × 48 =
+    /// 2 304 px, three orders of magnitude below 65 536).
     pub fn adapt_to_image_content(
         &mut self,
         pixels: u64,
@@ -2447,6 +2467,25 @@ impl EffortProfile {
             && !self.patches
         {
             self.patches = true;
+        }
+        // Issue #43 chunk 2c: extend the e6+ default-on 8×8-class
+        // transform set (DCT4X8/DCT8X4/DCT4X4/AFV0-3) down to e5 on
+        // Screenshot-class content, distance-banded to the measured
+        // win region (see Section B row in docs/LIBJXL_DIVERGENCES.md
+        // + benchmarks/dispatch_2c_afv_screenshot_2026-06-10.{tsv,meta}).
+        // In-band, 14/14 gb82-sc cells win bytes (mean -1.21 %) at
+        // better mean butteraugli; out-of-band (d = 0.5 / 4.0) the
+        // block trades bytes FOR quality instead (terminal e5 d=4
+        // +2.45 % bytes for -0.22 butteraugli), so the band keeps the
+        // chunk's bytes-win contract. W44-135 distance-band precedent.
+        if content_class == ImageContentClass::Screenshot
+            && (AFV_SCREENSHOT_LIFT_MIN_DISTANCE..=AFV_SCREENSHOT_LIFT_MAX_DISTANCE)
+                .contains(&distance)
+            && self.effort == 5
+            && !self.try_dct4x8_afv
+            && !afv_screenshot_lift_disabled_by_env()
+        {
+            self.try_dct4x8_afv = true;
         }
     }
 
@@ -2525,6 +2564,56 @@ impl EffortProfile {
             self.tree_sample_fraction = 0.0;
         }
     }
+}
+
+/// Issue #43 chunk 2c: inclusive distance band for the Screenshot-class
+/// `try_dct4x8_afv` lift at effort 5. The 7-image × 4-distance gb82-sc
+/// production-context A/B (`benchmarks/dispatch_2c_afv_screenshot_2026-06-10.tsv`)
+/// wins bytes on 14/14 cells inside d ∈ [1.0, 2.0] (mean -1.21 %) but is
+/// mixed-to-regressive at d = 0.5 (windows95 +0.59 %) and d = 4.0
+/// (terminal +2.45 % — the block buys butteraugli instead of bytes
+/// there). Band = the measured win region, nothing wider (W44-135
+/// precedent: ship the measured band, not the extrapolated one).
+pub const AFV_SCREENSHOT_LIFT_MIN_DISTANCE: f32 = 1.0;
+
+/// Issue #43 chunk 2c: upper edge (inclusive) of the distance band for
+/// the Screenshot-class `try_dct4x8_afv` lift at effort 5. See
+/// [`AFV_SCREENSHOT_LIFT_MIN_DISTANCE`].
+pub const AFV_SCREENSHOT_LIFT_MAX_DISTANCE: f32 = 2.0;
+
+/// Issue #43 chunk 2c env hook: `JXL_DISPATCH_AFV_SCREENSHOT_DISABLE=1`
+/// suppresses the Screenshot-class `try_dct4x8_afv` lift at effort 5 in
+/// [`EffortProfile::adapt_to_image_content`] (diagnostic A/B + emergency
+/// rollback). Mirrors the `#[cfg(feature = "std")]` guard pattern from
+/// `gate_registry::apply_w44_120_min_distance_env_fallback` — always
+/// `false` (lift active) when env vars are unreadable in `no_std`.
+#[must_use]
+fn afv_screenshot_lift_disabled_by_env() -> bool {
+    #[cfg(feature = "std")]
+    {
+        afv_screenshot_lift_disable_value(
+            std::env::var("JXL_DISPATCH_AFV_SCREENSHOT_DISABLE")
+                .ok()
+                .as_deref(),
+        )
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
+/// Pure predicate behind [`afv_screenshot_lift_disabled_by_env`], split
+/// out so the value-parsing contract (`"1"` disables; anything else —
+/// including empty / `"0"` / unset — keeps the lift active) is unit-
+/// testable without process-env mutation (which requires `unsafe` in
+/// edition 2024; the lib crate forbids unsafe). The env-mutation path is
+/// covered by the integration test in
+/// `tests/it/dispatch_2c_afv_screenshot.rs`.
+#[cfg(any(feature = "std", test))]
+#[must_use]
+fn afv_screenshot_lift_disable_value(v: Option<&str>) -> bool {
+    v == Some("1")
 }
 
 /// Coarse content class used by [`EffortProfile::adapt_to_image_content`].
@@ -4379,6 +4468,123 @@ mod tests {
         // 7. Default ImageContentClass is Unknown.
         let default_class: ImageContentClass = Default::default();
         assert_eq!(default_class, ImageContentClass::Unknown);
+    }
+
+    /// Issue #43 chunk 2c — `adapt_to_image_content` must flip
+    /// `try_dct4x8_afv = true` on Screenshot-class content at e == 5 with
+    /// `pixels >= CONTENT_CLASS_MIN_PIXELS` and `distance` inside the
+    /// measured win band [1.0, 2.0] (inclusive both ends). All other
+    /// (class, effort, pixels, distance) tuples must leave the
+    /// effort-derived value untouched. Composes with the chunk-1 patches
+    /// rule (both fire on in-band e5 Screenshot input).
+    ///
+    /// The env-disable hook (`JXL_DISPATCH_AFV_SCREENSHOT_DISABLE=1`) is
+    /// covered by `tests/it/dispatch_2c_afv_screenshot.rs` (env mutation
+    /// requires `unsafe` in edition 2024 — not allowed in the lib crate).
+    #[test]
+    fn test_adapt_to_image_content_screenshot_afv_lift_e5_chunk2c() {
+        // 1. Screenshot at e5, above pixel floor, distance in band:
+        //    fires (and the patches rule fires alongside).
+        for &pixels in &[CONTENT_CLASS_MIN_PIXELS, 262_144, 1_048_576, 4_194_304] {
+            for &distance in &[
+                AFV_SCREENSHOT_LIFT_MIN_DISTANCE,
+                1.5_f32,
+                AFV_SCREENSHOT_LIFT_MAX_DISTANCE,
+            ] {
+                let mut p = EffortProfile::lossy(5, EncoderMode::Reference);
+                assert!(
+                    !p.try_dct4x8_afv,
+                    "baseline e5: try_dct4x8_afv must be false (gate is e>=6)"
+                );
+                p.adapt_to_image_content(pixels, distance, ImageContentClass::Screenshot);
+                assert!(
+                    p.try_dct4x8_afv,
+                    "e5 pixels={pixels} d={distance} Screenshot: \
+                     try_dct4x8_afv must flip to true"
+                );
+                assert!(p.patches, "chunk-1 patches rule must still fire");
+            }
+        }
+
+        // 1b. Out-of-band distances: no fire (the band IS the measured
+        //     win region — d=0.5 and d=4.0 measured mixed-to-regressive
+        //     bytes on gb82-sc; see the 2026-06-10 bench).
+        for &distance in &[0.0_f32, 0.5, 0.99, 2.01, 4.0, 5.0] {
+            let mut p = EffortProfile::lossy(5, EncoderMode::Reference);
+            p.adapt_to_image_content(262_144, distance, ImageContentClass::Screenshot);
+            assert!(
+                !p.try_dct4x8_afv,
+                "e5 d={distance} Screenshot: out-of-band must not fire"
+            );
+        }
+
+        // 2. e6+: the effort-derived default is already true; the adapter
+        //    must leave it true (the `!self.try_dct4x8_afv` guard makes
+        //    the rule a structural no-op — this is also why the original
+        //    chunk-2c spec "auto-enable at e>=6" had no effect to add).
+        for effort in 6u8..=10 {
+            let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert!(
+                p.try_dct4x8_afv,
+                "baseline e{effort}: try_dct4x8_afv must be true (e>=6 default)"
+            );
+            p.adapt_to_image_content(262_144, 1.0, ImageContentClass::Screenshot);
+            assert!(
+                p.try_dct4x8_afv,
+                "e{effort} Screenshot: try_dct4x8_afv must remain true"
+            );
+        }
+
+        // 3. Effort < 5: must NOT enable (AC strategy machinery limited).
+        for effort in 1u8..=4 {
+            let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert!(!p.try_dct4x8_afv, "baseline e{effort}");
+            p.adapt_to_image_content(262_144, 1.0, ImageContentClass::Screenshot);
+            assert!(
+                !p.try_dct4x8_afv,
+                "e{effort} Screenshot: must respect the e==5 scope"
+            );
+        }
+
+        // 4. Other content classes at e5: no fire.
+        for class in [
+            ImageContentClass::Unknown,
+            ImageContentClass::Photo,
+            ImageContentClass::Other,
+        ] {
+            let mut p = EffortProfile::lossy(5, EncoderMode::Reference);
+            p.adapt_to_image_content(262_144, 1.0, class);
+            assert!(
+                !p.try_dct4x8_afv,
+                "e5 class={class:?}: try_dct4x8_afv must stay false"
+            );
+        }
+
+        // 5. Below pixel threshold: no fire even on Screenshot (this is
+        //    the hash-lock fixture guard — largest fixture is 48x48).
+        for &pixels in &[0u64, 1, 2_304, 65_535] {
+            let mut p = EffortProfile::lossy(5, EncoderMode::Reference);
+            p.adapt_to_image_content(pixels, 1.0, ImageContentClass::Screenshot);
+            assert!(!p.try_dct4x8_afv, "pixels={pixels}: pixel gate must hold");
+        }
+
+        // 6. distance == 0.0: no fire.
+        let mut p = EffortProfile::lossy(5, EncoderMode::Reference);
+        p.adapt_to_image_content(262_144, 0.0, ImageContentClass::Screenshot);
+        assert!(!p.try_dct4x8_afv, "distance=0.0: must stay false");
+    }
+
+    /// Issue #43 chunk 2c — pure env-value contract for the disable hook:
+    /// only the exact string `"1"` disables; unset / empty / `"0"` /
+    /// anything else keeps the lift active.
+    #[test]
+    fn test_afv_screenshot_lift_disable_value_chunk2c() {
+        assert!(afv_screenshot_lift_disable_value(Some("1")));
+        assert!(!afv_screenshot_lift_disable_value(None));
+        assert!(!afv_screenshot_lift_disable_value(Some("")));
+        assert!(!afv_screenshot_lift_disable_value(Some("0")));
+        assert!(!afv_screenshot_lift_disable_value(Some("true")));
+        assert!(!afv_screenshot_lift_disable_value(Some("11")));
     }
 
     /// W44-133 Chunk G: `EffortProfile::apply_section_a_effort_gates`

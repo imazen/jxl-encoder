@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added (2026-06-10 issue #43 chunk 2c)
+- **Screenshot-class 8×8-transform lift at effort 5, d ∈ [1.0, 2.0]**
+  (`adapt_to_image_content`): `Screenshot`-classified images (W44-164
+  auto-classifier on `EncoderStrategy::Zenjxl`/`Aggressive`, or explicit
+  `with_content_class`) now evaluate the DCT4X8/DCT8X4/DCT4X4/AFV0-3
+  block at effort 5 — one effort level below its libjxl-parity entry
+  (e6/Wombat) — inside the measured distance win band. gb82-sc
+  production-context paired A/B
+  (`benchmarks/dispatch_2c_afv_screenshot_2026-06-10.{tsv,meta}`):
+  in-band 14/14 cells win bytes, mean −1.21 % at better mean butteraugli,
+  wall +0.5 %; photos 20/20 and e6 cells 28/28 byte-identical. Env hook
+  `JXL_DISPATCH_AFV_SCREENSHOT_DISABLE=1` suppresses. The issue's
+  original "auto-enable AFV at e ≥ 6" spec was a structural no-op —
+  `try_dct4x8_afv` is already default-on at e ≥ 6 for every strategy
+  (proven byte-identical: pin-probe e7 DEF == PIN_ON,
+  `benchmarks/dispatch_2c_afv_screenshot_pin_probe_2026-06-10.tsv`).
+  Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
+
 ### Fixed (2026-06-10 CI repair, round 2)
 - **aarch64 NEON `compute_pre_erosion` read past the row/buffer on the last
   image column.** The NEON and WASM128 ports of the pre-erosion kernel were

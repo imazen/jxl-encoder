@@ -35,6 +35,7 @@ mod cvvdp_bytes_tighten_smoke;
 mod cvvdp_cpu_backend_smoke;
 mod cvvdp_loop_smoke;
 mod dct4x8_diagnostic;
+mod dispatch_2c_afv_screenshot;
 mod display_config_dispatch;
 mod divergence_table_drift;
 mod e9_hang_repro;
