@@ -27,3 +27,15 @@
 # byte-neutral). Quiet wall rerun must rebuild base from 13020395 with
 # the current lock for dep-parity.
 # Host: lilith (7950X, WSL2), no target-cpu=native.
+#
+# ── ADDENDUM: consolidated items 1+2 wall grid (base = 13020395 + current
+#    lock, dep-parity rebuild; 10 iters/side; loadavg 2.8 -> 7.1) ───────────
+# medians: terminal +0.65%  imac_dark +1.81%  noaa -0.04%
+#          mobile +0.25%    clic097 -2.21%
+# mins:    terminal ==      imac_dark +0.1%   noaa -1.6%
+#          mobile +1.6%     clic097 -2.7%
+# VERDICT: wall-NEUTRAL on screens/docs (mixed sub-noise signals under a
+# rising-load grid); the one consistent mover is the PHOTO cell at
+# -2.2% median / -2.7% min. Both items ship on byte-gates as strictly-
+# less-work; treat the photo signal as indicative, not headline, until
+# a sub-2-load grid exists. (.quiet.tsv alongside.)
