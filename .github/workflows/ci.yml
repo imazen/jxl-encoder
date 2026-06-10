@@ -21,6 +21,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CI: true
+  # Public-API snapshot regen (tests/public_api_doc.rs) needs nightly rustdoc
+  # + cargo-public-api; only the clippy job carries them and runs the check.
+  ZEN_API_DOC: off
 
 jobs:
   # ==========================================================================
@@ -264,6 +267,21 @@ jobs:
 
       - name: Clippy (zensim-loop)
         run: cargo clippy --workspace --features zensim-loop -- -D warnings
+
+      # Public-API snapshot check — x64 leg only (one gate run is enough).
+      - uses: dtolnay/rust-toolchain@nightly # rustdoc JSON for cargo-public-api
+        if: matrix.name == 'x64'
+      - uses: dtolnay/rust-toolchain@stable # restore stable as default
+        if: matrix.name == 'x64'
+      - uses: taiki-e/install-action@v2
+        if: matrix.name == 'x64'
+        with:
+          tool: cargo-public-api
+      - name: Public-API snapshot is current
+        if: matrix.name == 'x64'
+        run: cargo test -p jxl-encoder --test public_api_doc
+        env:
+          ZEN_API_DOC: check
 
   # ==========================================================================
   # Format check

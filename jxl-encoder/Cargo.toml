@@ -340,6 +340,8 @@ zenjxl-decoder = { version = "0.3.8", features = ["jpeg"] }
 # zenbench is the workspace-standard benchmarking tool — interleaved sampling
 # and paired statistics give cleaner signal than criterion's isolated rounds.
 zenbench = "0.1.8"
+# Parses `cargo metadata` in tests/public_api_doc.rs (feature-list discovery).
+serde_json = "1.0.150"
 # archmage is already a regular dep (`default-features = false, features = ["macros"]`);
 # the test suite needs `std` for `archmage::testing::for_each_token_permutation`
 # (used by `tests/nonfinite_xyb_repro.rs` to exercise scalar / SSE / AVX2 / etc.

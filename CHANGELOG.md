@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- Versioned public-API surface snapshots at `docs/public-api/{jxl-encoder,
+  jxl-encoder-simd,jxl-encoder-macros}.txt`, regenerated on every
+  `cargo test` by `jxl-encoder/tests/public_api_doc.rs` (`ZEN_API_DOC=check`
+  verifies in CI's clippy x64 leg, `=off` skips); justfile recipes
+  `fmt` / `api-doc` / `api-doc-check`. jxl-encoder itself is snapshotted
+  default-features-only (the GPU-loop feature union does not compile —
+  cubecl git pin vs zenforks-cubecl registry crates).
+
 ### Changed
 - **rate-control decodes via zenjxl-decoder; jxl-oxide is dev-only.** The
   library's only production jxl-oxide use (the `rate-control` feature's
@@ -48,6 +57,14 @@
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
 ### Changed
+- **Tree learning: MSD radix bucketing for the dedup sort
+  (byte-identical, proof-unblocked).** Equal-key representative choice
+  was PROVEN byte-irrelevant (representative-flip probe: hash-locks +
+  3 real cells identical), dissolving the earlier radix blocker; the
+  sort is now 16-bit-prefix counting buckets + parallel per-bucket
+  pdqsort. Bytes identical 5/5 through a different algorithm; walls
+  lean-positive (noaa −2.4 %, city12mp −1.6 %), quiet confirm pending
+  (`benchmarks/perf_radix2_msd_2026-06-10.{tsv,meta}`).
 - **Tree learning: exact capacity reservation (byte-identical).** Gather
   reserves every SoA column to the known sample upper bound and collect
   pre-sizes its token Vec to the pixel count — the doubling-realloc

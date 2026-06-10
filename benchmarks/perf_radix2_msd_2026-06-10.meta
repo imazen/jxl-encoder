@@ -1,0 +1,28 @@
+# PERF-RADIX-2 MSD bucketing — 2026-06-10 ("try radix" chunk 2, unblocked
+# by empiricism)
+#
+# THE PROOF THAT UNBLOCKED THIS (load-bearing finding): equal-key-run
+# representative choice is byte-IRRELEVANT. Probe: merge walk flipped to
+# pick the LAST index of each equal run (a maximally different
+# representative) — hash-locks 36/36 AND terminal/clic097/noaa e7
+# lossless bytes identical. The packed dedup key covers every
+# downstream-read field, so ANY sort producing lexicographic key order
+# with arbitrary equal-run internal order is byte-safe. This dissolves
+# the radix-chunk-1 theoretical blocker.
+#
+# Change: dedup sort for n >= 16384 is now MSD counting-sort by the
+# 16-bit BE key prefix into 65536 buckets (one count pass + one
+# scatter), then per-bucket pdqsort with the full-key comparator,
+# parallel across buckets (disjoint &mut ranges). Concatenation is full
+# lexicographic order; small n keeps the plain index sort.
+#
+# Gates: bytes identical 5/5 A/B cells (DIFFERENT algorithm, same
+# bytes — the proof in action); hash-locks 36/36 x2; lib 1488; it 81.
+#
+# A/B (8 iters/side, loadavg 4.2-6.5 — moderate-busy):
+#   noaa -2.39%  city12mp -1.64%  terminal -0.68%  clic097 -0.40%
+#   clic028 +1.47%
+# Lean-positive 4/5; magnitudes within the busy-box envelope — treat as
+# indicative until a quiet grid; structurally superior (smaller sorts,
+# bucket-parallel, no rayon merge passes).
+# Host: lilith (7950X, WSL2).

@@ -1,5 +1,19 @@
 # jxl-encoder-rs task runner
 
+# Format workspace members (NOT --all: that recurses into cloned sibling
+# path-dep repos) and refresh the public-API surface snapshots
+fmt:
+    cargo fmt -p jxl-encoder -p jxl-encoder-cli -p jxl-encoder-macros -p jxl-encoder-simd -p zenjxl-tuning-runner
+    cargo test -p jxl-encoder --test public_api_doc
+
+# Regenerate the public-API surface snapshots only
+api-doc:
+    cargo test -p jxl-encoder --test public_api_doc
+
+# Verify the committed snapshots are current (what CI runs)
+api-doc-check:
+    ZEN_API_DOC=check cargo test -p jxl-encoder --test public_api_doc
+
 # Run RD regression test (encodes 6 images at d=0.25, d=0.5, d=1.0)
 rd-regression:
     cargo test -p jxl-encoder --test it clic2025::test_rd_regression -- --ignored --nocapture

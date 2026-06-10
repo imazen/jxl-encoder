@@ -1,0 +1,6 @@
+cell	image	effort	threads	wall_base_median_s	wall_ours_median_s	delta_pct	base_min_max	ours_min_max	bytes	bytes_identical	deterministic
+clic097_e7	/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png	7	1	1.091	1.086	-0.40	1.047/1.128	1.035/1.164	593141	True	True
+clic028_e7	/home/lilith/work/codec-corpus/clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png	7	1	2.460	2.496	+1.47	2.285/2.703	2.256/2.561	1277383	True	True
+city12mp_e7	/mnt/v/input/jxl-encoder/lossless-bench-imazen26-png/1008_general_city-view-through-window_tokyo-skytree-sumida_s23u_iso50-f2p2_20230706-142333_4000x3000.png	7	1	14.535	14.297	-1.64	13.539/17.020	14.144/15.519	7814777	True	True
+terminal_e7	/home/lilith/work/codec-corpus/gb82-sc/terminal.png	7	1	0.711	0.706	-0.68	0.700/0.729	0.683/0.714	38749	True	True
+noaa_leslie_e7	/home/lilith/work/codec-corpus/imazen-26/5300-noaa-hurricane-documents/5336_noaa_nhc-al132024-leslie_p05_2550x3300.png	7	1	2.982	2.911	-2.39	2.973/3.057	2.841/2.954	255415	True	True
