@@ -37,6 +37,15 @@
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
 ### Changed
+- **Tree learning: gather row staging (issue #41 chunk B1,
+  byte-identical).** Default-path `gather_channel_samples` stages each
+  row's samples in flat column-major scratch and flushes once per row
+  via per-column `extend_from_slice`, replacing ~45–60 per-sample
+  `Vec::push` calls (the 22 %-of-gather store path from the step-0
+  annotate). Dedup-backend paths unchanged. Mins-based A/B: all 5 cells
+  ≤ base, −0.5…−2.0 % on gather-heavy document/screenshot cells; quiet
+  confirmation queued
+  (`benchmarks/perf_gather_b1_staging_2026-06-10.{tsv,meta}`).
 - **Tree learning: collect_residuals chunk A (issue #41, byte-identical).**
   Spec properties write directly into the extended property buffer
   (`compute_spec_properties_into`), replacing a measured-hot per-pixel
