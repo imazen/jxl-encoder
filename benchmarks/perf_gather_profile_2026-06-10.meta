@@ -43,3 +43,19 @@
 #
 # Raw data: /tmp/gprof/{clic097,city12mp,noaa,mobile,terminal,imac_dark}
 # .data (regenerate with the commands above; not committed).
+#
+# ── ADDENDUM: intra-function split (perf annotate + addr2line) ──────────────
+# collect_residuals (terminal cell): 8.68% of CPU at the inlined
+#   traverse_with_props (tree_learn.rs:7939) — per-pixel MA-tree walk
+#   (property-compare branches); ~7.8% in copy_from_slice /
+#   copy_nonoverlapping at :7849 + :7806 — per-pixel property-array
+#   copies into the collection buffers.
+# gather_samples (noaa cell): 22.2% of the function on ONE insn —
+#   movdqu 0x3c0(%rsp) reload (stack scratch -> SoA push copies of
+#   local_tokens/local_ebits/props), +14.6% on two loop-counter incs
+#   (per-predictor / per-prop push loops).
+# DESIGN CONSEQUENCE for the SIMD chunk: the wall is per-pixel DATA
+# MOVEMENT (scratch->SoA copies, tree-walk branches) at least as much as
+# predictor math. Row-buffered bulk extends (amortize the SoA pushes)
+# and a vectorized/branchless traverse_with_props matter alongside the
+# lane-per-predictor residual+tokenize from the #41 brief.
