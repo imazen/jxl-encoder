@@ -610,15 +610,24 @@ measurement at equal or better coverage.
 
 ### Live follow-ons
 
-- **Lossless screenshots wall** (top measured lever, 2026-06-10 profile in
-  `benchmarks/perf_hist_sub_2026-06-10.meta`): collect_residuals 21.8-22.7 %,
-  gather_samples 15.9-17.4 %, WeightedPredictorState 13.1-14.7 % of CPU —
-  NOT split-bound (hist-sub doesn't apply; dedup attacks are the falsified
-  #41 Phases 1-4). Attack order: gather_samples SIMD, collect_residuals,
-  WP-state batching (issue #41 option C list). A/B on the k-means
-  lossless bench set `benchmarks/lossless_bench_set_2026-06-10.tsv`
-  (43 imazen-26 picks, 13 core, feed `bench_input`; see its `.meta`) +
-  the CLIC/gb82-sc continuity cells, via `scripts/bench_lossless_ab.py`.
+- **Lossless screenshots wall — ARC COMPLETE 2026-06-10** (#41 closing
+  ledgers on the issue): B1 gather row staging, B2 batched traversal,
+  lane-per-predictor, WP fusion, radix cmp + MSD bucketing, estimate_cost
+  LUT, capacity reserves all SHIPPED byte-identical; WP batching /
+  inline-dedup-≥8MP / pair-sort / rayon-entry variants measured-REJECTED
+  with committed data. Day deltas: lossless e7 −8…−12 % on screens/docs
+  (more on photos with hist-sub), e5 −9…−12 %, lossy e3/e4 ≈ −25 %
+  (dump env-hook gates + classifier skip). Bench via
+  `scripts/bench_lossless_ab.py` on
+  `benchmarks/lossless_bench_set_2026-06-10.tsv` (43 picks, feed
+  `bench_input`). Remaining symbols are pinned core work — see
+  `perf_gather_profile_2026-06-10.meta` addenda + the #41 close-out.
+- **Lossy-low hygiene rule (2026-06-10)**: per-block diagnostic hooks
+  MUST use the once-presence env-gate pattern (six dump modules now do);
+  pre-encode analysis passes MUST be gated/lazy on their consumers'
+  bands (ZenanalyzeProxies precedent: 24 % of e3 CPU computed-and-
+  discarded). New hooks that probe env or sweep pixels per block/image
+  need a profile cell at lossy e3 before landing.
 - **BestSplit side-costs rider — SHIPPED 2026-06-10** (byte-identical;
   six engine sites consume sweep-carried best_l/r_cost; permanent
   debug-asserts verify carried == recomputed at every site). Quiet-machine
