@@ -21,3 +21,24 @@
 # OFF->P2 — inline probing costs match/exceed the sort+compact savings
 # even where memcmp is ~17% of CPU; best case is a TIE at city12mp.
 # (P2-vs-P3 half appended below when the run lands.)
+#
+# ── Phase 2 vs Phase 3 (a=P2, b=P3; delta<0 = P3 faster; same cells,
+#    parallel-tree-learning build, GD_THREADS=1, zencodec 0.1.21 lock) ──────
+# 8426ed22   4.19   -0.71%   bytes identical
+# city       12.00  -1.27%   bytes identical
+# nature     12.00  +1.10%   bytes identical
+#
+# ── ITEM-3 VERDICT ──────────────────────────────────────────────────────────
+# P2->P3 is noise-grade (+-1.3%). Chained OFF->P3 estimate:
+#   4.19MP ~+3.5%   city12mp ~-1.3%   nature12mp ~+2.5%
+# The >=8MP crossover does NOT materialize: inline gather-time dedup
+# (either phase) loses or ties against the packed-key sort even where
+# the sort's memcmp+from_iter cluster is ~29% of CPU (city12mp). The
+# probe-per-sample overhead scales with the same n that the sort does.
+# Both knobs STAY OPT-IN; do not respawn inline-dedup default-flip
+# chunks on size arguments without new structure.
+# SURVIVING LEAD (recorded, not attempted here): make the SORT cheaper —
+# the packed-key comparison sort spends its time in __memcmp; a radix
+# sort over the fixed-width packed keys would remove comparison calls
+# entirely and directly attack the 17%/10% memcmp share on 12MP/1MP
+# photos. That is a new chunk, independent of dedup architecture.
