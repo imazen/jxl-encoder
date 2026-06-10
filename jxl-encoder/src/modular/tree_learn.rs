@@ -1122,6 +1122,36 @@ fn compute_spec_properties(
     wp_max_error: i32,
 ) -> [i32; NUM_PROPERTIES] {
     let mut props = [0i32; NUM_PROPERTIES];
+    compute_spec_properties_into(
+        &mut props,
+        channel_idx,
+        group_id,
+        x,
+        y,
+        n,
+        prev_gradient,
+        wp_max_error,
+    );
+    props
+}
+
+/// [`compute_spec_properties`] writing into a caller-provided buffer —
+/// lets `collect_residuals_with_tree*` fill the prefix of its extended
+/// property buffer directly instead of copying a returned array per
+/// pixel (the copy was a measured hot spot,
+/// `benchmarks/perf_gather_profile_2026-06-10.meta` addendum).
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn compute_spec_properties_into(
+    props: &mut [i32; NUM_PROPERTIES],
+    channel_idx: u32,
+    group_id: u32,
+    x: usize,
+    y: usize,
+    n: &Neighbors,
+    prev_gradient: i32,
+    wp_max_error: i32,
+) {
     props[0] = channel_idx as i32;
     props[1] = group_id as i32;
     props[2] = y as i32;
@@ -1140,7 +1170,6 @@ fn compute_spec_properties(
     props[13] = n.n.wrapping_sub(n.nn);
     props[14] = n.w.wrapping_sub(n.ww);
     props[15] = wp_max_error;
-    props
 }
 
 /// Gather samples from all channels in an image for tree learning (no subsampling).
@@ -7781,6 +7810,17 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
         let mut wp_state = WeightedPredictorState::new_with_budget(wp_params, width, budget)?;
         let mut prev_gradient: i32;
 
+        // The unused ref-prop tail [16 + 4*num_refs ..] is invariant across
+        // this channel's pixels (the per-pixel ref writes never touch it) —
+        // zero it once here instead of per pixel. Covers leftovers from a
+        // previous channel that had more reference channels; byte-identical
+        // (traverse sees the same zeros the per-pixel fill produced).
+        if needs_ref_props {
+            let tail_start =
+                (NUM_PROPERTIES + 4 * ref_channel_indices.len()).min(num_extended_props);
+            extended_props[tail_start..].fill(0);
+        }
+
         for y in 0..height {
             prev_gradient = 0;
             for x in 0..width {
@@ -7790,20 +7830,23 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
                 // Compute WP prediction and property
                 let (wp_pred, wp_max_error) = wp_state.predict_and_property(x, y, width, &n);
 
-                let base_props = compute_spec_properties(
-                    ch_idx as u32 + channel_offset,
-                    group_id,
-                    x,
-                    y,
-                    &n,
-                    prev_gradient,
-                    wp_max_error,
-                );
-                prev_gradient = base_props[9];
-
                 let leaf = if needs_ref_props {
-                    // Copy base properties into extended buffer
-                    extended_props[..NUM_PROPERTIES].copy_from_slice(&base_props);
+                    // Spec properties written straight into the extended
+                    // buffer's prefix — replaces a measured-hot per-pixel
+                    // copy_from_slice (perf_gather_profile_2026-06-10.meta).
+                    compute_spec_properties_into(
+                        (&mut extended_props[..NUM_PROPERTIES])
+                            .try_into()
+                            .expect("prefix is exactly NUM_PROPERTIES wide"),
+                        ch_idx as u32 + channel_offset,
+                        group_id,
+                        x,
+                        y,
+                        &n,
+                        prev_gradient,
+                        wp_max_error,
+                    );
+                    prev_gradient = extended_props[9];
 
                     // Compute reference channel properties
                     for (r, &ref_ch_idx) in ref_channel_indices.iter().enumerate() {
@@ -7834,21 +7877,19 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
                             extended_props[base + 3] = v.wrapping_sub(ref_predicted);
                         }
                     }
-                    // Zero-fill for channels with fewer ref channels
-                    let num_ref_slots = (num_extended_props - NUM_PROPERTIES) / 4;
-                    for r in ref_channel_indices.len()..num_ref_slots {
-                        let base = NUM_PROPERTIES + r * 4;
-                        if base + 3 < num_extended_props {
-                            extended_props[base] = 0;
-                            extended_props[base + 1] = 0;
-                            extended_props[base + 2] = 0;
-                            extended_props[base + 3] = 0;
-                        }
-                    }
-
                     traverse_with_props(tree, &extended_props)
                 } else {
                     // Fast path: no ref properties needed
+                    let base_props = compute_spec_properties(
+                        ch_idx as u32 + channel_offset,
+                        group_id,
+                        x,
+                        y,
+                        &n,
+                        prev_gradient,
+                        wp_max_error,
+                    );
+                    prev_gradient = base_props[9];
                     traverse_with_spec_props(tree, &base_props)
                 };
 

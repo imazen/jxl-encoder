@@ -1,0 +1,26 @@
+# PERF-COLLECT-CHUNK-A — 2026-06-10 (issue #41 chunk A)
+#
+# Change (collect_residuals_with_tree_offset_with_budget):
+#   1. Ref-prop tail zero-fill hoisted out of the pixel loop (invariant
+#      per channel; was re-stored every pixel).
+#   2. compute_spec_properties_into: spec props written directly into the
+#      extended buffer's prefix, replacing the measured-hot per-pixel
+#      copy_from_slice (perf_gather_profile_2026-06-10.meta addendum);
+#      the non-ref fast path keeps the array-returning call.
+#
+# Gates: bytes identical base-vs-ours on all 5 cells (sha256 every iter,
+# .tsv alongside); hash-locks 36/36 default AND parallel-tree-learning;
+# clippy clean; lossless/modular/tree it-suite 81/81. asm check: nm finds
+# NO out-of-line compute_spec_properties* symbol — both fns fully inlined
+# at every call site (gather included), so the wrapper split caused no
+# call-boundary regression.
+#
+# WALL: NOT RESOLVABLE this grid — loadavg 3.4-4.3 mid-run (concurrent
+# agent bursts again). Medians swung -0.70%..+2.69% but ours-min == base-
+# min on the worst cell (noaa 3.096 vs 3.097 s) with a long ours tail —
+# scheduling noise, not signal. Expected effect is small (+collect is
+# 12-23% of CPU; the removed work is a 64B copy + tail stores per pixel).
+# QUEUED: quiet-box re-run (loadavg<2, 10 iters) via
+# scripts/bench_lossless_ab.py, same cells, before citing any number.
+# Binaries: base = main pre-chunk (= rider build), ours = this commit.
+# Host: lilith (7950X, WSL2), no target-cpu=native.
