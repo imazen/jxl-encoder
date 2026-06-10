@@ -2759,6 +2759,30 @@ fn dedup_samples(
 /// `Vec<Vec<u8>>` bytes per side, dropping dedup wall-clock on a 4 MP photo
 /// from 8.4 s to 2.4 s (-72 %) vs the pre-packed-key closure path — issue #40
 /// follow-on (commit 61129874).
+/// Lexicographic compare of two packed dedup keys as big-endian u64
+/// words — the identical ordering function to `<[u8; 64]>::cmp`
+/// (byte-wise memcmp) but inline with early exit on the first differing
+/// word, no libc call. Issue #41 "radix" chunk 1: `__memcmp` from this
+/// sort's comparator was 17.7 % / 10.0 % of CPU on the 12 MP / 1 MP
+/// photo cells (`perf_gather_profile_2026-06-10.meta` addendum 2).
+/// Byte-identity is structural: same ordering function => pdqsort
+/// produces the same permutation => identical downstream bytes. (A true
+/// radix sort is NOT order-safe here: the sort is unstable and the
+/// equal-key representative choice would change.)
+#[inline(always)]
+fn cmp_packed_key(a: &[u8; DEDUP_KEY_BYTES], b: &[u8; DEDUP_KEY_BYTES]) -> core::cmp::Ordering {
+    let mut i = 0;
+    while i < DEDUP_KEY_BYTES {
+        let wa = u64::from_be_bytes(a[i..i + 8].try_into().unwrap());
+        let wb = u64::from_be_bytes(b[i..i + 8].try_into().unwrap());
+        if wa != wb {
+            return wa.cmp(&wb);
+        }
+        i += 8;
+    }
+    core::cmp::Ordering::Equal
+}
+
 fn dedup_samples_packed_sort(
     samples: &mut TreeSamples,
     pq: &mut PreQuantizedProps,
@@ -2830,19 +2854,11 @@ fn dedup_samples_packed_sort(
     #[cfg(feature = "parallel")]
     {
         use rayon::slice::ParallelSliceMut;
-        order.par_sort_unstable_by(|&a, &b| {
-            let ka = &keys[a as usize];
-            let kb = &keys[b as usize];
-            ka.cmp(kb)
-        });
+        order.par_sort_unstable_by(|&a, &b| cmp_packed_key(&keys[a as usize], &keys[b as usize]));
     }
     #[cfg(not(feature = "parallel"))]
     {
-        order.sort_unstable_by(|&a, &b| {
-            let ka = &keys[a as usize];
-            let kb = &keys[b as usize];
-            ka.cmp(kb)
-        });
+        order.sort_unstable_by(|&a, &b| cmp_packed_key(&keys[a as usize], &keys[b as usize]));
     }
 
     // Walk sorted order, merge consecutive identical samples.
@@ -2856,7 +2872,7 @@ fn dedup_samples_packed_sort(
     for &curr_idx in &order[1..] {
         let curr = curr_idx as usize;
         let weight = preexisting_counts.as_ref().map(|c| c[curr]).unwrap_or(1);
-        if keys[curr] == keys[prev_key_idx] {
+        if cmp_packed_key(&keys[curr], &keys[prev_key_idx]) == core::cmp::Ordering::Equal {
             *counts.last_mut().unwrap() += weight;
         } else {
             unique_indices.push(curr);

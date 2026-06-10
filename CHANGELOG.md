@@ -37,6 +37,13 @@
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
 ### Changed
+- **Tree learning: inline dedup key comparator (issue #41 "radix" chunk
+  1, byte-identical).** The packed-key sort's comparator is now an
+  inline big-endian u64-word compare (identical ordering ⇒ identical
+  pdqsort permutation ⇒ identical bytes) instead of libc `__memcmp` per
+  comparison. Photos −2.9…−3.1 %, terminal −1.8 % at moderate load;
+  true radix honest-stopped (unstable-sort representative choice is
+  byte-relevant) — `benchmarks/perf_radix1_cmp_2026-06-10.{tsv,meta}`.
 - **Tree learning: fused WP predict+update (issue #41 item 2,
   byte-identical).** `predict_property_update` fuses the per-pixel WP
   prediction and error update into one call at both hot sites (gather +

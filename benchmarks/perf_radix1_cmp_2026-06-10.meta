@@ -1,0 +1,32 @@
+# PERF-RADIX-1 inline key comparator — 2026-06-10 (issue #41 "try radix")
+#
+# Change: dedup_samples_packed_sort's comparator + merge-walk equality
+# replaced with cmp_packed_key — big-endian u64-word lexicographic
+# compare, inline, early-exit on the first differing word. The ORDERING
+# FUNCTION is identical to <[u8;64]>::cmp (byte-wise memcmp), so pdqsort
+# produces the identical permutation => byte-identical downstream,
+# structurally. Kills the per-comparison libc __memcmp call (was
+# 17.7%/10.0% of CPU on 12MP/1MP photos).
+#
+# Gates: bytes identical 4/4 A/B cells; hash-locks 36/36 default +
+# parallel-tree-learning; lib 1488/1488; it 81/81; clippy clean.
+#
+# A/B (6 iters/side, loadavg 4.5 start / 3.8 end; base = item-2 binary,
+# same lock):
+#   clic097  -2.87% (min -1.5%)    city12mp -3.10% (mins ~equal)
+#   terminal -1.84% (min -2.6%)    clic028 -12.03% — NOT citable: both
+#   sides' spreads are bimodal (2.2-4.3 s); direction-only evidence.
+# Read: consistent win, ~1/3 of the memcmp share recovered (the word
+# loads remain; only call overhead + tail byte work removed).
+#
+# TRUE-RADIX (chunk 2) HONEST-STOP: an LSD/MSD radix produces a
+# DIFFERENT permutation among equal keys; the sort is UNSTABLE and the
+# equal-run representative's raw (unkeyed) fields flow into compaction,
+# so representative choice is byte-relevant — a radix swap is NOT
+# byte-safe without first proving the key covers every downstream-read
+# field (or switching the walk to pick min-original-index
+# representatives AND re-locking). Remaining sort cost is now dominated
+# by the random-access key loads (keys[order[i]] indirection), which
+# radix passes would multiply, not remove. Don't respawn without a
+# locality redesign (e.g. sort (prefix, idx) pairs).
+# Host: lilith (7950X, WSL2), no target-cpu=native.
