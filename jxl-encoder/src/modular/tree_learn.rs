@@ -2915,6 +2915,12 @@ struct SplitCandidate {
     base_bits: f64,
     /// Multiplier for this leaf (set by lossy modular quantization).
     multiplier: Option<u32>,
+    /// PERF-HIST-SUB-LOSSLESS: this node's pre-computed aggregate tensor
+    /// (built for the smaller sibling, derived by subtraction for the
+    /// larger). `None` on engines/paths without tensor support and below
+    /// the profitability gates. Dropped (freeing the buffers) whenever the
+    /// node leaf-finalizes without splitting.
+    tensor: Option<NodeTensor>,
 }
 
 /// Learn an optimal MA tree from gathered samples.
@@ -3055,6 +3061,7 @@ pub(crate) fn compute_best_tree_with_budget(
         best_predictor: root_predictor,
         base_bits: root_bits,
         multiplier: None,
+        tensor: None,
     });
 
     // The workspace lives in the thread-local cache (see
@@ -3062,6 +3069,13 @@ pub(crate) fn compute_best_tree_with_budget(
     // the parallel path. The cache grows in place; subsequent calls on the
     // same worker thread are allocation-free.
     let max_buckets = params.max_property_values + 1;
+
+    // PERF-HIST-SUB-LOSSLESS: shared tensor layout for this tree build.
+    // Cheap to construct (one entry per property); the capture/derive gates
+    // decide per-node whether tensors actually materialise.
+    let tensor_layout = TensorLayout::new(params, samples.num_predictors(), histogram_size, |p| {
+        pq.num_thresholds(p)
+    });
 
     // ── Parallel tree learning (chunk-1 POC, issue #41 follow-on) ────────────
     //
@@ -3116,6 +3130,18 @@ pub(crate) fn compute_best_tree_with_budget(
         if n >= parallel_root_threshold && max_nodes >= 4 && root_bits > threshold {
             // Pop the root candidate and try its split.
             let root_candidate = stack.pop().expect("root candidate just pushed");
+            // PERF-HIST-SUB-LOSSLESS: capture the root's tensor while its
+            // per-sample loops run anyway, so the two subtree roots can be
+            // derived (smaller built + larger subtracted) without a second
+            // full pass. Skipped on the owned small-image fallback — that
+            // path keeps the documented full-rebuild.
+            let mut root_capture: Option<NodeTensor> = if !params.parallel_small_image_fallback
+                && tensor_capture_pays(&tensor_layout, n)
+            {
+                Some(NodeTensor::zeroed(&tensor_layout))
+            } else {
+                None
+            };
             let best_split = with_workspace_dispatched(
                 params.parallel_small_image_fallback,
                 n,
@@ -3133,6 +3159,10 @@ pub(crate) fn compute_best_tree_with_budget(
                         threshold,
                         &pq,
                         workspace,
+                        match root_capture.as_mut() {
+                            Some(t) => TensorMode::Capture(&tensor_layout, t),
+                            None => TensorMode::Off,
+                        },
                     )
                 },
             );
@@ -3176,6 +3206,28 @@ pub(crate) fn compute_best_tree_with_budget(
                         histogram_size,
                         &mut entropy_counts,
                     );
+
+                    // PERF-HIST-SUB-LOSSLESS: derive the two subtree-root
+                    // tensors from the captured root tensor. Must happen
+                    // before the borrowed views are formed (the build pass
+                    // reads `samples` + `pq` directly).
+                    let (left_tensor, right_tensor) = match root_capture.take() {
+                        Some(parent_t) => derive_child_tensors(
+                            samples,
+                            &pq,
+                            params,
+                            &tensor_layout,
+                            histogram_size,
+                            root_candidate.start,
+                            abs_mid,
+                            root_candidate.end,
+                            parent_t,
+                            lb,
+                            rb,
+                            threshold,
+                        ),
+                        None => (None, None),
+                    };
 
                     // Set the root split node in the parent tree.
                     // Children indices are filled in after stitching.
@@ -3287,6 +3339,8 @@ pub(crate) fn compute_best_tree_with_budget(
                                     left_predictor,
                                     lb,
                                     max_parallel_depth,
+                                    &tensor_layout,
+                                    left_tensor,
                                 )
                             },
                             || {
@@ -3299,6 +3353,8 @@ pub(crate) fn compute_best_tree_with_budget(
                                     right_predictor,
                                     rb,
                                     max_parallel_depth,
+                                    &tensor_layout,
+                                    right_tensor,
                                 )
                             },
                         )
@@ -3335,7 +3391,7 @@ pub(crate) fn compute_best_tree_with_budget(
         }
     }
 
-    while let Some(candidate) = stack.pop() {
+    while let Some(mut candidate) = stack.pop() {
         if tree.len() + 2 > max_nodes {
             finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
             continue;
@@ -3358,7 +3414,19 @@ pub(crate) fn compute_best_tree_with_budget(
         // Workspace lives in a per-thread cache (12 MB at large n) — the
         // outer loop runs on the main thread so this is one calloc per
         // encode (first iter) and zero on subsequent iters.
+        //
+        // PERF-HIST-SUB-LOSSLESS: a node arriving with a tensor reads its
+        // bucket stats + (prop, pred) rows from it (per-sample loops
+        // skipped); a big-enough node without one captures its tensor while
+        // the loops run, re-seeding derivation for its children.
         let n_node = candidate.end - candidate.start;
+        let node_tensor_in = candidate.tensor.take();
+        let mut capture_tensor: Option<NodeTensor> =
+            if node_tensor_in.is_none() && tensor_capture_pays(&tensor_layout, n_node) {
+                Some(NodeTensor::zeroed(&tensor_layout))
+            } else {
+                None
+            };
         let best_split = crate::profile_time!("tree/find_best_split", {
             with_workspace_dispatched(
                 params.parallel_small_image_fallback,
@@ -3377,6 +3445,11 @@ pub(crate) fn compute_best_tree_with_budget(
                         threshold,
                         &pq,
                         workspace,
+                        match (&node_tensor_in, capture_tensor.as_mut()) {
+                            (Some(t), _) => TensorMode::Use(&tensor_layout, t),
+                            (None, Some(t)) => TensorMode::Capture(&tensor_layout, t),
+                            (None, None) => TensorMode::Off,
+                        },
                     )
                 },
             )
@@ -3419,11 +3492,14 @@ pub(crate) fn compute_best_tree_with_budget(
                     ..Default::default()
                 };
 
-                // Recompute child costs from ALL samples (not the eval subset).
-                // The eval subset's costs are scaled by cost_scale which introduces
-                // error at high strides. Re-scoring with full samples prevents error
-                // accumulation down the tree. This is O(N) per split — negligible
-                // compared to the O(N*P*K) search.
+                // Compute each child's leaf cost (base_bits) for its stack
+                // entry. NOTE: the split sweep evaluated these exact
+                // histograms at the winning threshold (`find_best_split`
+                // scores every sample in range — there is no sampled "eval
+                // subset"), so `BestSplit` could carry `best_l_cost` /
+                // `best_r_cost` bitwise-identically and skip this recompute
+                // (issue #64 side-costs rider). This is O(N) per split —
+                // small next to the O(N*P*K) search.
                 let (left_bits, right_bits) = crate::profile_time!("tree/recompute_child_bits", {
                     let lb = compute_predictor_entropy(
                         samples,
@@ -3444,6 +3520,30 @@ pub(crate) fn compute_best_tree_with_budget(
                     (lb, rb)
                 });
 
+                // PERF-HIST-SUB-LOSSLESS: with this node's tensor in hand
+                // (arrived via derivation, or captured above), build the
+                // smaller child's tensor and derive the larger child's by
+                // subtraction. The parent tensor is consumed here either
+                // way — at most two child tensors stay live per stack level.
+                let node_tensor = node_tensor_in.or(capture_tensor.take());
+                let (left_tensor, right_tensor) = match node_tensor {
+                    Some(parent_t) => derive_child_tensors(
+                        samples,
+                        &pq,
+                        params,
+                        &tensor_layout,
+                        histogram_size,
+                        candidate.start,
+                        abs_mid,
+                        candidate.end,
+                        parent_t,
+                        left_bits,
+                        right_bits,
+                        threshold,
+                    ),
+                    None => (None, None),
+                };
+
                 stack.push(SplitCandidate {
                     node_idx: rchild_idx,
                     start: abs_mid,
@@ -3451,6 +3551,7 @@ pub(crate) fn compute_best_tree_with_budget(
                     best_predictor: split.right_predictor,
                     base_bits: right_bits,
                     multiplier: None,
+                    tensor: right_tensor,
                 });
 
                 stack.push(SplitCandidate {
@@ -3460,6 +3561,7 @@ pub(crate) fn compute_best_tree_with_budget(
                     best_predictor: split.left_predictor,
                     base_bits: left_bits,
                     multiplier: None,
+                    tensor: left_tensor,
                 });
             }
             _ => {
@@ -3595,6 +3697,7 @@ fn build_subtree_sequential(
         best_predictor: seed_predictor,
         base_bits: seed_base_bits,
         multiplier: None,
+        tensor: None,
     });
 
     while let Some(candidate) = stack.pop() {
@@ -3612,6 +3715,10 @@ fn build_subtree_sequential(
             continue;
         }
 
+        // PERF-HIST-SUB-LOSSLESS: TensorMode::Off — the owned small-image
+        // fallback keeps the documented full-rebuild (issue #42 / the
+        // `.meta` plan point 3): it only runs on inputs small enough that
+        // the tensor profitability gates would not fire.
         let best_split = with_workspace_dispatched(
             params.parallel_small_image_fallback,
             count,
@@ -3629,6 +3736,7 @@ fn build_subtree_sequential(
                     threshold,
                     pq,
                     workspace,
+                    TensorMode::Off,
                 )
             },
         );
@@ -3686,6 +3794,7 @@ fn build_subtree_sequential(
                     best_predictor: split.right_predictor,
                     base_bits: rb,
                     multiplier: None,
+                    tensor: None,
                 });
                 stack.push(SplitCandidate {
                     node_idx: lchild_idx,
@@ -3694,6 +3803,7 @@ fn build_subtree_sequential(
                     best_predictor: split.left_predictor,
                     base_bits: lb,
                     multiplier: None,
+                    tensor: None,
                 });
             }
             _ => {
@@ -3918,6 +4028,7 @@ fn build_subtree_recursive_parallel(
             best_predictor: seed_predictor,
             base_bits: seed_base_bits,
             multiplier: None,
+            tensor: None,
         };
         tree.push(PropertyDecisionNode::default());
         finalize_leaf(&mut tree, &leaf_candidate, samples.candidate_predictors);
@@ -3929,6 +4040,8 @@ fn build_subtree_recursive_parallel(
     // small-image fallback flag is set, bypass the thread-local cache (per the
     // `with_workspace_dispatched` doc — `RefCell::borrow_mut` indirection
     // outpaces the calloc savings on small inputs).
+    // PERF-HIST-SUB-LOSSLESS: TensorMode::Off — owned small-image fallback
+    // keeps the documented full-rebuild (`.meta` plan point 3).
     let max_buckets = params.max_property_values + 1;
     let mut entropy_counts = alloc::vec![0u32; histogram_size];
 
@@ -3949,6 +4062,7 @@ fn build_subtree_recursive_parallel(
                 threshold,
                 &pq,
                 workspace,
+                TensorMode::Off,
             )
         },
     ) {
@@ -3963,6 +4077,7 @@ fn build_subtree_recursive_parallel(
                 best_predictor: seed_predictor,
                 base_bits: seed_base_bits,
                 multiplier: None,
+                tensor: None,
             };
             tree.push(PropertyDecisionNode::default());
             finalize_leaf(&mut tree, &leaf_candidate, samples.candidate_predictors);
@@ -4346,6 +4461,7 @@ fn find_best_split_borrowed(
     parent_predictor: usize,
     threshold: f64,
     ws: &mut SplitWorkspace,
+    tensor_mode: TensorMode<'_>,
 ) -> Option<BestSplit> {
     let count = end - start;
     if count < 2 {
@@ -4359,6 +4475,22 @@ fn find_best_split_borrowed(
     let sample_counts = &samples.sample_counts[start..end];
 
     let weighted_total: u32 = sample_counts.iter().sum();
+
+    // See `find_best_split` for the tensor-mode mechanics; this is the same
+    // decomposition with the borrowed access path.
+    let (tensor_in, mut capture) = match tensor_mode {
+        TensorMode::Off => (None, None),
+        TensorMode::Use(l, t) => (Some((l, t)), None),
+        TensorMode::Capture(l, t) => (None, Some((l, t))),
+    };
+    debug_assert!(
+        (tensor_in.is_none() && capture.is_none()) || weighted_total >= TENSOR_MIN_CHILD_WEIGHT,
+        "tensor modes require full predictor/property coverage (weighted_total >= 2048)"
+    );
+    let mut cap_totals: Vec<u32> = Vec::new();
+    let mut cap_total_ebits: Vec<u64> = Vec::new();
+    let mut cap_totals_done = false;
+    let mut cap_single_bucket: Vec<(usize, usize)> = Vec::new();
 
     let change_pred_penalty = 800.0 / (100.0 + threshold);
 
@@ -4388,6 +4520,11 @@ fn find_best_split_borrowed(
         return None;
     }
 
+    if capture.is_some() {
+        cap_totals = vec![0u32; num_pred * effective_histo];
+        cap_total_ebits = vec![0u64; num_pred];
+    }
+
     let count_increase = ws.count_increase.as_mut_slice();
     let extra_bits_increase = ws.extra_bits_increase.as_mut_slice();
     let bucket_counts = ws.bucket_counts.as_mut_slice();
@@ -4411,7 +4548,7 @@ fn find_best_split_borrowed(
         params.properties.len().min(2)
     };
 
-    for &prop_idx in &params.properties[..num_props] {
+    for (prop_pos, &prop_idx) in params.properties[..num_props].iter().enumerate() {
         let num_thresholds = samples.num_thresholds(prop_idx);
         if num_thresholds == 0 {
             continue;
@@ -4420,43 +4557,89 @@ fn find_best_split_borrowed(
         let pq_buckets = &samples.bucket_indices[prop_idx][start..end];
         let threshold_set = &samples.threshold_sets[prop_idx];
 
-        let mut bmin: u8 = u8::MAX;
-        let mut bmax: u8 = 0;
-        for &b in pq_buckets {
-            if b < bmin {
-                bmin = b;
+        let (bmin, bmax) = if let Some((layout, tensor)) = tensor_in {
+            let entry = &layout.prop_entries[prop_pos];
+            debug_assert_eq!(entry.prop_idx, prop_idx);
+            let uni = &tensor.unique[entry.bucket_base..entry.bucket_base + entry.num_buckets];
+            let Some(first) = uni.iter().position(|&c| c != 0) else {
+                continue;
+            };
+            let last = uni
+                .iter()
+                .rposition(|&c| c != 0)
+                .expect("nonzero unique count exists");
+            (first, last)
+        } else {
+            let mut bmin: u8 = u8::MAX;
+            let mut bmax: u8 = 0;
+            for &b in pq_buckets {
+                if b < bmin {
+                    bmin = b;
+                }
+                if b > bmax {
+                    bmax = b;
+                }
             }
-            if b > bmax {
-                bmax = b;
-            }
-        }
+            (bmin as usize, bmax as usize)
+        };
         if bmin == bmax {
+            if let Some((layout, tensor)) = capture.as_mut() {
+                let entry = &layout.prop_entries[prop_pos];
+                debug_assert_eq!(entry.prop_idx, prop_idx);
+                tensor.unique[entry.bucket_base + bmin] = count as u32;
+                tensor.weighted[entry.bucket_base + bmin] = weighted_total;
+                cap_single_bucket.push((prop_pos, bmin));
+            }
             continue;
         }
-        let bmin = bmin as usize;
-        let bmax = bmax as usize;
 
         let local_num_buckets = bmax - bmin + 1;
         let local_num_thresholds = bmax - bmin;
 
-        let mut unique_per_bucket = [0u32; 256];
-        bucket_counts[..local_num_buckets].fill(0);
-        for (offset, &b) in pq_buckets.iter().enumerate() {
-            let local_b = (b as usize) - bmin;
-            unique_per_bucket[local_b] += 1;
-            bucket_counts[local_b] += sample_counts[offset];
-        }
+        if let Some((layout, tensor)) = tensor_in {
+            let entry = &layout.prop_entries[prop_pos];
+            bucket_counts[..local_num_buckets].copy_from_slice(
+                &tensor.weighted
+                    [entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets],
+            );
+            let uni = &tensor.unique
+                [entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets];
+            bucket_starts[0] = 0;
+            for b in 0..local_num_buckets {
+                bucket_starts[b + 1] = bucket_starts[b] + uni[b] as usize;
+            }
+        } else {
+            let mut unique_per_bucket = [0u32; 256];
+            bucket_counts[..local_num_buckets].fill(0);
+            for (offset, &b) in pq_buckets.iter().enumerate() {
+                let local_b = (b as usize) - bmin;
+                unique_per_bucket[local_b] += 1;
+                bucket_counts[local_b] += sample_counts[offset];
+            }
 
-        bucket_starts[0] = 0;
-        for b in 0..local_num_buckets {
-            bucket_starts[b + 1] = bucket_starts[b] + unique_per_bucket[b] as usize;
-        }
+            bucket_starts[0] = 0;
+            for b in 0..local_num_buckets {
+                bucket_starts[b + 1] = bucket_starts[b] + unique_per_bucket[b] as usize;
+            }
 
-        bucket_write_pos[..local_num_buckets].copy_from_slice(&bucket_starts[..local_num_buckets]);
-        for (offset, &b) in pq_buckets.iter().enumerate() {
-            let local_b = (b as usize) - bmin;
-            sorted_by_bucket[bucket_write_pos[local_b]] = offset;
-            bucket_write_pos[local_b] += 1;
+            bucket_write_pos[..local_num_buckets]
+                .copy_from_slice(&bucket_starts[..local_num_buckets]);
+            for (offset, &b) in pq_buckets.iter().enumerate() {
+                let local_b = (b as usize) - bmin;
+                sorted_by_bucket[bucket_write_pos[local_b]] = offset;
+                bucket_write_pos[local_b] += 1;
+            }
+
+            if let Some((layout, tensor)) = capture.as_mut() {
+                let entry = &layout.prop_entries[prop_pos];
+                debug_assert_eq!(entry.prop_idx, prop_idx);
+                tensor.unique
+                    [entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets]
+                    .copy_from_slice(&unique_per_bucket[..local_num_buckets]);
+                tensor.weighted
+                    [entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets]
+                    .copy_from_slice(&bucket_counts[..local_num_buckets]);
+            }
         }
 
         best_l_cost[..local_num_thresholds].fill(f64::MAX);
@@ -4467,9 +4650,6 @@ fn find_best_split_borrowed(
         best_r_pred[..local_num_thresholds].fill(0);
 
         for pred in 0..num_pred {
-            let tokens = &samples.residual_tokens[pred][start..end];
-            let ebits = &samples.extra_bits[pred][start..end];
-
             let mut penalty: f64 = 0.0;
             if pred != parent_predictor && parent_predictor != weighted_idx {
                 penalty = change_pred_penalty;
@@ -4480,24 +4660,52 @@ fn find_best_split_borrowed(
                 penalty -= 1e-8;
             }
 
-            for b in 0..local_num_buckets {
-                count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo].fill(0);
-            }
-            extra_bits_increase[..local_num_buckets].fill(0);
-
-            for local_bucket in 0..local_num_buckets {
-                let bs = bucket_starts[local_bucket];
-                let be = bucket_starts[local_bucket + 1];
-                let ci_base = local_bucket * HISTO_PADDED;
-                let ci_slice = &mut count_increase[ci_base..ci_base + HISTO_PADDED];
-                let mut eb_sum: u64 = 0;
-                for &rel_off in &sorted_by_bucket[bs..be] {
-                    let tok = tokens[rel_off];
-                    let sc = sample_counts[rel_off];
-                    ci_slice[tok as usize & HISTO_MASK] += sc;
-                    eb_sum += ebits[rel_off] as u64 * sc as u64;
+            if let Some((layout, tensor)) = tensor_in {
+                let entry = &layout.prop_entries[prop_pos];
+                let nb = entry.num_buckets;
+                for b in 0..local_num_buckets {
+                    let src = entry.token_base + (pred * nb + bmin + b) * effective_histo;
+                    count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo]
+                        .copy_from_slice(&tensor.token_counts[src..src + effective_histo]);
+                    extra_bits_increase[b] =
+                        tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b];
                 }
-                extra_bits_increase[local_bucket] = eb_sum;
+            } else {
+                let tokens = &samples.residual_tokens[pred][start..end];
+                let ebits = &samples.extra_bits[pred][start..end];
+
+                for b in 0..local_num_buckets {
+                    count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo].fill(0);
+                }
+                extra_bits_increase[..local_num_buckets].fill(0);
+
+                for local_bucket in 0..local_num_buckets {
+                    let bs = bucket_starts[local_bucket];
+                    let be = bucket_starts[local_bucket + 1];
+                    let ci_base = local_bucket * HISTO_PADDED;
+                    let ci_slice = &mut count_increase[ci_base..ci_base + HISTO_PADDED];
+                    let mut eb_sum: u64 = 0;
+                    for &rel_off in &sorted_by_bucket[bs..be] {
+                        let tok = tokens[rel_off];
+                        let sc = sample_counts[rel_off];
+                        ci_slice[tok as usize & HISTO_MASK] += sc;
+                        eb_sum += ebits[rel_off] as u64 * sc as u64;
+                    }
+                    extra_bits_increase[local_bucket] = eb_sum;
+                }
+
+                if let Some((layout, tensor)) = capture.as_mut() {
+                    let entry = &layout.prop_entries[prop_pos];
+                    let nb = entry.num_buckets;
+                    for b in 0..local_num_buckets {
+                        let dst = entry.token_base + (pred * nb + bmin + b) * effective_histo;
+                        tensor.token_counts[dst..dst + effective_histo].copy_from_slice(
+                            &count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo],
+                        );
+                        tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b] =
+                            extra_bits_increase[b];
+                    }
+                }
             }
 
             right_counts[..effective_histo].fill(0);
@@ -4513,6 +4721,12 @@ fn find_best_split_borrowed(
                     *rc += ci;
                 }
                 right_extra += eb;
+            }
+
+            if capture.is_some() && !cap_totals_done {
+                cap_totals[pred * effective_histo..(pred + 1) * effective_histo]
+                    .copy_from_slice(&right_counts[..effective_histo]);
+                cap_total_ebits[pred] = right_extra;
             }
 
             left_counts[..effective_histo].fill(0);
@@ -4562,6 +4776,10 @@ fn find_best_split_borrowed(
             }
         }
 
+        if capture.is_some() {
+            cap_totals_done = true;
+        }
+
         for local_k in 0..local_num_thresholds {
             if best_l_cost[local_k] == f64::MAX || best_r_cost[local_k] == f64::MAX {
                 continue;
@@ -4582,6 +4800,24 @@ fn find_best_split_borrowed(
                     left_count,
                 });
             }
+        }
+    }
+
+    if let Some((layout, tensor)) = capture.as_mut() {
+        if cap_totals_done {
+            for &(prop_pos, bucket) in &cap_single_bucket {
+                let entry = &layout.prop_entries[prop_pos];
+                let nb = entry.num_buckets;
+                for pred in 0..num_pred {
+                    let dst = entry.token_base + (pred * nb + bucket) * effective_histo;
+                    tensor.token_counts[dst..dst + effective_histo].copy_from_slice(
+                        &cap_totals[pred * effective_histo..(pred + 1) * effective_histo],
+                    );
+                    tensor.ebit_sums[entry.ebit_base + pred * nb + bucket] = cap_total_ebits[pred];
+                }
+            }
+        } else {
+            debug_assert!(best.is_none());
         }
     }
 
@@ -4782,6 +5018,8 @@ fn build_subtree_sequential_borrowed(
     histogram_size: usize,
     seed_predictor: usize,
     seed_base_bits: f64,
+    tensor_layout: &TensorLayout,
+    root_tensor: Option<NodeTensor>,
 ) -> Tree {
     let n = samples.len;
     let max_buckets = params.max_property_values + 1;
@@ -4798,9 +5036,10 @@ fn build_subtree_sequential_borrowed(
         best_predictor: seed_predictor,
         base_bits: seed_base_bits,
         multiplier: None,
+        tensor: root_tensor,
     });
 
-    while let Some(candidate) = stack.pop() {
+    while let Some(mut candidate) = stack.pop() {
         if tree.len() + 2 > max_nodes_budget {
             finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
             continue;
@@ -4815,6 +5054,15 @@ fn build_subtree_sequential_borrowed(
             continue;
         }
 
+        // PERF-HIST-SUB-LOSSLESS: same Use/Capture/Off dispatch as the main
+        // sequential loop in `compute_best_tree_with_budget`.
+        let node_tensor_in = candidate.tensor.take();
+        let mut capture_tensor: Option<NodeTensor> =
+            if node_tensor_in.is_none() && tensor_capture_pays(tensor_layout, count) {
+                Some(NodeTensor::zeroed(tensor_layout))
+            } else {
+                None
+            };
         let best_split = with_workspace_dispatched(
             params.parallel_small_image_fallback,
             count,
@@ -4831,6 +5079,11 @@ fn build_subtree_sequential_borrowed(
                     candidate.best_predictor,
                     threshold,
                     workspace,
+                    match (&node_tensor_in, capture_tensor.as_mut()) {
+                        (Some(t), _) => TensorMode::Use(tensor_layout, t),
+                        (None, Some(t)) => TensorMode::Capture(tensor_layout, t),
+                        (None, None) => TensorMode::Off,
+                    },
                 )
             },
         );
@@ -4881,6 +5134,26 @@ fn build_subtree_sequential_borrowed(
                     &mut entropy_counts,
                 );
 
+                // PERF-HIST-SUB-LOSSLESS: build smaller child / derive
+                // larger child from this node's tensor (see the main loop).
+                let node_tensor = node_tensor_in.or(capture_tensor.take());
+                let (left_tensor, right_tensor) = match node_tensor {
+                    Some(parent_t) => derive_child_tensors_borrowed(
+                        samples,
+                        params,
+                        tensor_layout,
+                        histogram_size,
+                        candidate.start,
+                        abs_mid,
+                        candidate.end,
+                        parent_t,
+                        lb,
+                        rb,
+                        threshold,
+                    ),
+                    None => (None, None),
+                };
+
                 stack.push(SplitCandidate {
                     node_idx: rchild_idx,
                     start: abs_mid,
@@ -4888,6 +5161,7 @@ fn build_subtree_sequential_borrowed(
                     best_predictor: split.right_predictor,
                     base_bits: rb,
                     multiplier: None,
+                    tensor: right_tensor,
                 });
                 stack.push(SplitCandidate {
                     node_idx: lchild_idx,
@@ -4896,6 +5170,7 @@ fn build_subtree_sequential_borrowed(
                     best_predictor: split.left_predictor,
                     base_bits: lb,
                     multiplier: None,
+                    tensor: left_tensor,
                 });
             }
             _ => {
@@ -4925,6 +5200,8 @@ fn build_subtree_recursive_parallel_borrowed(
     seed_predictor: usize,
     seed_base_bits: f64,
     parallel_budget: u32,
+    tensor_layout: &TensorLayout,
+    tensor: Option<NodeTensor>,
 ) -> Tree {
     let n = samples.len;
 
@@ -4937,6 +5214,8 @@ fn build_subtree_recursive_parallel_borrowed(
             histogram_size,
             seed_predictor,
             seed_base_bits,
+            tensor_layout,
+            tensor,
         );
     }
 
@@ -4949,6 +5228,7 @@ fn build_subtree_recursive_parallel_borrowed(
             best_predictor: seed_predictor,
             base_bits: seed_base_bits,
             multiplier: None,
+            tensor: None,
         };
         tree.push(PropertyDecisionNode::default());
         finalize_leaf(&mut tree, &leaf_candidate, samples.candidate_predictors);
@@ -4958,6 +5238,16 @@ fn build_subtree_recursive_parallel_borrowed(
     let max_buckets = params.max_property_values + 1;
     let mut entropy_counts = alloc::vec![0u32; histogram_size];
 
+    // PERF-HIST-SUB-LOSSLESS: same Use/Capture/Off dispatch as the
+    // sequential engines; this node's tensor (input or captured) seeds the
+    // per-fork child tensors below.
+    let node_tensor_in = tensor;
+    let mut capture_tensor: Option<NodeTensor> =
+        if node_tensor_in.is_none() && tensor_capture_pays(tensor_layout, n) {
+            Some(NodeTensor::zeroed(tensor_layout))
+        } else {
+            None
+        };
     let split = match with_workspace_dispatched(
         params.parallel_small_image_fallback,
         n,
@@ -4974,6 +5264,11 @@ fn build_subtree_recursive_parallel_borrowed(
                 seed_predictor,
                 threshold,
                 workspace,
+                match (&node_tensor_in, capture_tensor.as_mut()) {
+                    (Some(t), _) => TensorMode::Use(tensor_layout, t),
+                    (None, Some(t)) => TensorMode::Capture(tensor_layout, t),
+                    (None, None) => TensorMode::Off,
+                },
             )
         },
     ) {
@@ -4987,6 +5282,7 @@ fn build_subtree_recursive_parallel_borrowed(
                 best_predictor: seed_predictor,
                 base_bits: seed_base_bits,
                 multiplier: None,
+                tensor: None,
             };
             tree.push(PropertyDecisionNode::default());
             finalize_leaf(&mut tree, &leaf_candidate, samples.candidate_predictors);
@@ -5026,6 +5322,28 @@ fn build_subtree_recursive_parallel_borrowed(
 
     drop(entropy_counts);
 
+    // PERF-HIST-SUB-LOSSLESS: derive the child tensors BEFORE the view is
+    // consumed by `split_at_mut` (the smaller child's build pass reads the
+    // whole view); each fork then owns exactly one child tensor — clean
+    // per-branch ownership across `parallel_join`.
+    let node_tensor = node_tensor_in.or(capture_tensor.take());
+    let (left_tensor, right_tensor) = match node_tensor {
+        Some(parent_t) => derive_child_tensors_borrowed(
+            &samples,
+            params,
+            tensor_layout,
+            histogram_size,
+            0,
+            abs_mid,
+            n,
+            parent_t,
+            left_bits,
+            right_bits,
+            threshold,
+        ),
+        None => (None, None),
+    };
+
     // Split the borrowed view into two non-overlapping child views at
     // abs_mid. Zero allocations beyond the per-side Vec<&mut [_]> containers
     // (small: one entry per predictor/property, ~30 total).
@@ -5056,6 +5374,8 @@ fn build_subtree_recursive_parallel_borrowed(
                     left_predictor,
                     left_bits,
                     next_parallel_budget,
+                    tensor_layout,
+                    left_tensor,
                 )
             },
             || {
@@ -5068,6 +5388,8 @@ fn build_subtree_recursive_parallel_borrowed(
                     right_predictor,
                     right_bits,
                     next_parallel_budget,
+                    tensor_layout,
+                    right_tensor,
                 )
             },
         )
@@ -5081,6 +5403,8 @@ fn build_subtree_recursive_parallel_borrowed(
             left_predictor,
             left_bits,
             next_parallel_budget,
+            tensor_layout,
+            left_tensor,
         );
         let r = build_subtree_recursive_parallel_borrowed(
             right_samples,
@@ -5091,6 +5415,8 @@ fn build_subtree_recursive_parallel_borrowed(
             right_predictor,
             right_bits,
             next_parallel_budget,
+            tensor_layout,
+            right_tensor,
         );
         (l, r)
     };
@@ -5409,6 +5735,10 @@ pub fn compute_best_tree_with_multipliers(
                     threshold,
                     &pq,
                     workspace,
+                    // Lossy modular quantization path — full-rebuild (the
+                    // forced-split structure rarely produces tensor-sized
+                    // nodes; out of PERF-HIST-SUB-LOSSLESS scope).
+                    TensorMode::Off,
                 )
             },
         );
@@ -5554,6 +5884,538 @@ pub fn compute_best_tree_with_multipliers(
 /// by the bump to 256 (security audit H3).
 const HISTO_PADDED: usize = 256;
 const HISTO_MASK: usize = HISTO_PADDED - 1;
+
+// ───────────────────────────────────────────────────────────────────────────
+// PERF-HIST-SUB-LOSSLESS (issue #64 chunk 1, plan in
+// `benchmarks/perf_hist_sub_2026-06-10.meta`): parent-histogram subtraction.
+//
+// `find_best_split` spends ~87% of its time in per-sample loops (the
+// counting sort + the per-(prop,pred) token/extra-bits accumulate). All of
+// those loops compute *additive integer aggregates* over the node's sample
+// rows: per-(prop, pred, bucket, token) u32 counts, per-(prop, pred, bucket)
+// u64 extra-bit sums, and per-(prop, bucket) u32 weighted / unique counts.
+// Additivity over disjoint row sets means a child node's aggregates can be
+// derived exactly: `larger_child = parent − smaller_child` (u32/u64 integer
+// subtraction — no rounding, no float). The engines build the smaller
+// child's tensor from its samples and derive the larger child's by
+// subtraction, so the larger child's `find_best_split` skips its per-sample
+// loops entirely.
+//
+// Byte-identity argument: `estimate_bits_u32` consumes the per-bucket u32
+// histograms + u32 totals + u64 extra-bit sums. Derived tensors contain
+// bit-identical integers to from-scratch tensors (proven by
+// `test_node_tensor_*` below + hash-locks), so every f64 cost — and hence
+// every split decision — is identical. Speed-only change.
+//
+// Scope: the Vec-based sequential engine (`compute_best_tree_with_budget`),
+// the borrowed sequential engine (`build_subtree_sequential_borrowed`) and
+// the borrowed recursive-parallel engine
+// (`build_subtree_recursive_parallel_borrowed`). The owned small-image
+// fallback path (issue #42, `build_subtree_{sequential,recursive_parallel}`)
+// keeps the documented full-rebuild: it only runs on small inputs where the
+// tensors never pass the profitability gate. `compute_best_tree_with_
+// multipliers` (lossy modular quantization) is also full-rebuild.
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Minimum *weighted* sample count for a child to receive a tensor.
+///
+/// At `weighted_total >= 2048`, `find_best_split` uses the FULL predictor
+/// set and (since 2048 ≥ 256) the FULL property set, so a parent at
+/// ≥ 2·2048 and both children at ≥ 2048 evaluate identical (prop, pred)
+/// coverage — the precondition for tensor capture/use to be exhaustive.
+const TENSOR_MIN_CHILD_WEIGHT: u32 = 2048;
+
+/// Per-property addressing for [`NodeTensor`] storage. Entries are indexed
+/// by *position* in `params.properties` (the same order `find_best_split`
+/// iterates), not by raw property index.
+struct TensorPropEntry {
+    /// Raw property index (== `params.properties[pos]`); for debug asserts.
+    prop_idx: usize,
+    /// `num_thresholds + 1` absolute buckets, or 0 when the property has no
+    /// thresholds at all (globally degenerate — skipped by every engine
+    /// before any tensor access, so zero cells are reserved).
+    num_buckets: usize,
+    /// Base offset into [`NodeTensor::token_counts`]; the row for
+    /// `(pred, bucket)` starts at `token_base + (pred*num_buckets + bucket)*histo`.
+    token_base: usize,
+    /// Base offset into [`NodeTensor::ebit_sums`]: `+ pred*num_buckets + bucket`.
+    ebit_base: usize,
+    /// Base offset into [`NodeTensor::weighted`] / [`NodeTensor::unique`]: `+ bucket`.
+    bucket_base: usize,
+}
+
+/// Storage layout for [`NodeTensor`]s — computed once per tree build and
+/// shared (by reference) by every tensor of that build. Token rows are
+/// `histogram_size`-strided (tight), NOT `HISTO_PADDED`-strided.
+struct TensorLayout {
+    /// One entry per position in `params.properties`, same order.
+    prop_entries: Vec<TensorPropEntry>,
+    num_preds: usize,
+    histo: usize,
+    /// Total u32 cells in `token_counts` = Σ_p num_preds × nb_p × histo.
+    /// This is also the cost model for one tensor build/subtract pass.
+    token_cells: usize,
+    /// Total u64 cells in `ebit_sums` = Σ_p num_preds × nb_p.
+    ebit_cells: usize,
+    /// Total u32 cells in `weighted` / `unique` = Σ_p nb_p.
+    bucket_cells: usize,
+}
+
+impl TensorLayout {
+    fn new(
+        params: &TreeLearningParams,
+        num_preds: usize,
+        histo: usize,
+        num_thresholds_of: impl Fn(usize) -> usize,
+    ) -> Self {
+        let mut prop_entries = Vec::with_capacity(params.properties.len());
+        let mut token_base = 0usize;
+        let mut ebit_base = 0usize;
+        let mut bucket_base = 0usize;
+        for &prop_idx in &params.properties {
+            let nt = num_thresholds_of(prop_idx);
+            let num_buckets = if nt == 0 { 0 } else { nt + 1 };
+            prop_entries.push(TensorPropEntry {
+                prop_idx,
+                num_buckets,
+                token_base,
+                ebit_base,
+                bucket_base,
+            });
+            token_base += num_preds * num_buckets * histo;
+            ebit_base += num_preds * num_buckets;
+            bucket_base += num_buckets;
+        }
+        Self {
+            prop_entries,
+            num_preds,
+            histo,
+            token_cells: token_base,
+            ebit_cells: ebit_base,
+            bucket_cells: bucket_base,
+        }
+    }
+}
+
+/// Additive per-node aggregates of everything `find_best_split`'s per-sample
+/// loops compute. All four arrays are sums over the node's rows, so tensors
+/// of disjoint row sets add — and a child can be derived from its parent by
+/// exact integer subtraction ([`NodeTensor::subtract_in_place`]).
+struct NodeTensor {
+    /// Per-(prop, pred, absolute bucket, token) dedup-weighted counts.
+    token_counts: Vec<u32>,
+    /// Per-(prop, pred, absolute bucket) `Σ ebits·count` sums.
+    ebit_sums: Vec<u64>,
+    /// Per-(prop, absolute bucket) weighted row counts (`Σ sample_counts`).
+    weighted: Vec<u32>,
+    /// Per-(prop, absolute bucket) unique row counts.
+    unique: Vec<u32>,
+}
+
+impl NodeTensor {
+    fn zeroed(layout: &TensorLayout) -> Self {
+        Self {
+            token_counts: vec![0u32; layout.token_cells],
+            ebit_sums: vec![0u64; layout.ebit_cells],
+            weighted: vec![0u32; layout.bucket_cells],
+            unique: vec![0u32; layout.bucket_cells],
+        }
+    }
+
+    /// `self = self − smaller`, elementwise. Exact for tensors over nested
+    /// row sets (every count in `smaller` ≤ the matching count in `self`);
+    /// debug builds panic on underflow (which would mean the two tensors
+    /// were not built over parent/child row sets of the same layout).
+    fn subtract_in_place(&mut self, smaller: &NodeTensor) {
+        debug_assert_eq!(self.token_counts.len(), smaller.token_counts.len());
+        debug_assert_eq!(self.ebit_sums.len(), smaller.ebit_sums.len());
+        debug_assert_eq!(self.weighted.len(), smaller.weighted.len());
+        debug_assert_eq!(self.unique.len(), smaller.unique.len());
+        for (a, b) in self
+            .token_counts
+            .iter_mut()
+            .zip(smaller.token_counts.iter())
+        {
+            *a -= b;
+        }
+        for (a, b) in self.ebit_sums.iter_mut().zip(smaller.ebit_sums.iter()) {
+            *a -= b;
+        }
+        for (a, b) in self.weighted.iter_mut().zip(smaller.weighted.iter()) {
+            *a -= b;
+        }
+        for (a, b) in self.unique.iter_mut().zip(smaller.unique.iter()) {
+            *a -= b;
+        }
+    }
+}
+
+/// Tensor participation of one `find_best_split` call.
+enum TensorMode<'a> {
+    /// No tensor involvement — byte-for-byte the pre-chunk behaviour.
+    Off,
+    /// The node's tensor already exists (built or derived): bucket stats and
+    /// per-(prop,pred) rows are read from it and the per-sample loops are
+    /// skipped. Requires `weighted_total >= TENSOR_MIN_CHILD_WEIGHT` (full
+    /// predictor + property coverage), which the engines guarantee.
+    Use(&'a TensorLayout, &'a NodeTensor),
+    /// The per-sample loops run as normal AND their aggregates are copied
+    /// into the (pre-zeroed) tensor, making this node a future subtraction
+    /// parent without a second pass over its rows. Same coverage
+    /// requirement as `Use`. The captured tensor is only complete when at
+    /// least one property produced a populated bucket range — which is
+    /// implied whenever a split is found, the only case the engines consume
+    /// the capture.
+    Capture(&'a TensorLayout, &'a mut NodeTensor),
+}
+
+/// Profitability gate for deriving children at one split: the larger
+/// child's skipped per-sample work (≈ `larger_unique × num_preds` row
+/// visits across the property loop) must exceed one tensor-sized pass
+/// (`token_cells` ops ≈ the subtraction + the row copies). Mirrors the
+/// `.meta` plan's "n_larger × num_pred exceeds tensor_subtract cost".
+fn tensor_derive_pays(layout: &TensorLayout, larger_unique: usize) -> bool {
+    (larger_unique as u64).saturating_mul(layout.num_preds as u64) > layout.token_cells as u64
+}
+
+/// Capture gate for a node without a tensor: both children can only reach
+/// [`TENSOR_MIN_CHILD_WEIGHT`] if the node has ≥ 2× that weight
+/// (`unique_count` lower-bounds the weighted total), and capturing is
+/// pointless unless a child split could pass [`tensor_derive_pays`].
+fn tensor_capture_pays(layout: &TensorLayout, unique_count: usize) -> bool {
+    layout.token_cells > 0
+        && unique_count >= (2 * TENSOR_MIN_CHILD_WEIGHT) as usize
+        && tensor_derive_pays(layout, unique_count)
+}
+
+/// Builds a node's [`NodeTensor`] from its sample rows `[start..end)`.
+/// `out` MUST be zeroed (fresh from [`NodeTensor::zeroed`]).
+///
+/// Populates EVERY property in `params.properties` with `num_buckets > 0`
+/// and EVERY predictor, regardless of per-node pruning or single-bucket
+/// collapse — full population is what makes parent − smaller-child
+/// subtraction exact for every field a descendant may read.
+///
+/// Loop structure mirrors `find_best_split`'s counting-sort + per-(pred,
+/// bucket) accumulate so the memory-access pattern (and the produced
+/// integers) match the capture path exactly.
+#[allow(clippy::too_many_arguments)]
+fn build_node_tensor(
+    samples: &TreeSamples,
+    pq: &PreQuantizedProps,
+    params: &TreeLearningParams,
+    layout: &TensorLayout,
+    histogram_size: usize,
+    start: usize,
+    end: usize,
+    out: &mut NodeTensor,
+) {
+    let count = end - start;
+    let num_pred = samples.num_predictors();
+    debug_assert_eq!(num_pred, layout.num_preds);
+    debug_assert_eq!(histogram_size, layout.histo);
+    let sample_counts = &samples.sample_counts[start..end];
+    let max_buckets = params.max_property_values + 1;
+    with_workspace_dispatched(
+        params.parallel_small_image_fallback,
+        count,
+        histogram_size,
+        max_buckets,
+        |ws| {
+            let sorted_by_bucket = ws.sorted_by_bucket.as_mut_slice();
+            let bucket_starts = ws.bucket_starts.as_mut_slice();
+            let bucket_write_pos = ws.bucket_write_pos.as_mut_slice();
+            for (prop_pos, &prop_idx) in params.properties.iter().enumerate() {
+                let entry = &layout.prop_entries[prop_pos];
+                debug_assert_eq!(entry.prop_idx, prop_idx);
+                let nb = entry.num_buckets;
+                if nb == 0 {
+                    continue;
+                }
+                let pq_buckets = &pq.bucket_indices[prop_idx][start..end];
+
+                // Bucket stats accumulate straight into the zeroed tensor,
+                // in ABSOLUTE bucket space.
+                {
+                    let uni = &mut out.unique[entry.bucket_base..entry.bucket_base + nb];
+                    let wei = &mut out.weighted[entry.bucket_base..entry.bucket_base + nb];
+                    for (offset, &b) in pq_buckets.iter().enumerate() {
+                        uni[b as usize] += 1;
+                        wei[b as usize] += sample_counts[offset];
+                    }
+                    bucket_starts[0] = 0;
+                    for b in 0..nb {
+                        bucket_starts[b + 1] = bucket_starts[b] + uni[b] as usize;
+                    }
+                }
+                bucket_write_pos[..nb].copy_from_slice(&bucket_starts[..nb]);
+                for (offset, &b) in pq_buckets.iter().enumerate() {
+                    sorted_by_bucket[bucket_write_pos[b as usize]] = offset;
+                    bucket_write_pos[b as usize] += 1;
+                }
+
+                for pred in 0..num_pred {
+                    let tokens = &samples.residual_tokens[pred][start..end];
+                    let ebits = &samples.extra_bits[pred][start..end];
+                    for b in 0..nb {
+                        let bs = bucket_starts[b];
+                        let be = bucket_starts[b + 1];
+                        if bs == be {
+                            continue;
+                        }
+                        let row_base = entry.token_base + (pred * nb + b) * histogram_size;
+                        let row = &mut out.token_counts[row_base..row_base + histogram_size];
+                        let mut eb_sum: u64 = 0;
+                        for &rel_off in &sorted_by_bucket[bs..be] {
+                            let tok = tokens[rel_off] as usize;
+                            let sc = sample_counts[rel_off];
+                            debug_assert!(tok < histogram_size);
+                            row[tok] += sc;
+                            eb_sum += ebits[rel_off] as u64 * sc as u64;
+                        }
+                        out.ebit_sums[entry.ebit_base + pred * nb + b] = eb_sum;
+                    }
+                }
+            }
+        },
+    );
+}
+
+/// Borrowed-view counterpart to [`build_node_tensor`]. Identical algorithm;
+/// only the data access path differs.
+#[cfg(feature = "parallel-tree-learning")]
+#[allow(clippy::too_many_arguments)]
+fn build_node_tensor_borrowed(
+    samples: &BorrowedSamples<'_>,
+    params: &TreeLearningParams,
+    layout: &TensorLayout,
+    histogram_size: usize,
+    start: usize,
+    end: usize,
+    out: &mut NodeTensor,
+) {
+    let count = end - start;
+    let num_pred = samples.num_predictors();
+    debug_assert_eq!(num_pred, layout.num_preds);
+    debug_assert_eq!(histogram_size, layout.histo);
+    let sample_counts = &samples.sample_counts[start..end];
+    let max_buckets = params.max_property_values + 1;
+    with_workspace_dispatched(
+        params.parallel_small_image_fallback,
+        count,
+        histogram_size,
+        max_buckets,
+        |ws| {
+            let sorted_by_bucket = ws.sorted_by_bucket.as_mut_slice();
+            let bucket_starts = ws.bucket_starts.as_mut_slice();
+            let bucket_write_pos = ws.bucket_write_pos.as_mut_slice();
+            for (prop_pos, &prop_idx) in params.properties.iter().enumerate() {
+                let entry = &layout.prop_entries[prop_pos];
+                debug_assert_eq!(entry.prop_idx, prop_idx);
+                let nb = entry.num_buckets;
+                if nb == 0 {
+                    continue;
+                }
+                let pq_buckets = &samples.bucket_indices[prop_idx][start..end];
+
+                {
+                    let uni = &mut out.unique[entry.bucket_base..entry.bucket_base + nb];
+                    let wei = &mut out.weighted[entry.bucket_base..entry.bucket_base + nb];
+                    for (offset, &b) in pq_buckets.iter().enumerate() {
+                        uni[b as usize] += 1;
+                        wei[b as usize] += sample_counts[offset];
+                    }
+                    bucket_starts[0] = 0;
+                    for b in 0..nb {
+                        bucket_starts[b + 1] = bucket_starts[b] + uni[b] as usize;
+                    }
+                }
+                bucket_write_pos[..nb].copy_from_slice(&bucket_starts[..nb]);
+                for (offset, &b) in pq_buckets.iter().enumerate() {
+                    sorted_by_bucket[bucket_write_pos[b as usize]] = offset;
+                    bucket_write_pos[b as usize] += 1;
+                }
+
+                for pred in 0..num_pred {
+                    let tokens = &samples.residual_tokens[pred][start..end];
+                    let ebits = &samples.extra_bits[pred][start..end];
+                    for b in 0..nb {
+                        let bs = bucket_starts[b];
+                        let be = bucket_starts[b + 1];
+                        if bs == be {
+                            continue;
+                        }
+                        let row_base = entry.token_base + (pred * nb + b) * histogram_size;
+                        let row = &mut out.token_counts[row_base..row_base + histogram_size];
+                        let mut eb_sum: u64 = 0;
+                        for &rel_off in &sorted_by_bucket[bs..be] {
+                            let tok = tokens[rel_off] as usize;
+                            let sc = sample_counts[rel_off];
+                            debug_assert!(tok < histogram_size);
+                            row[tok] += sc;
+                            eb_sum += ebits[rel_off] as u64 * sc as u64;
+                        }
+                        out.ebit_sums[entry.ebit_base + pred * nb + b] = eb_sum;
+                    }
+                }
+            }
+        },
+    );
+}
+
+/// Shared per-split derivation gate + smaller/larger bookkeeping. Returns
+/// `Some((smaller_is_left, smaller_range))` when deriving pays, else `None`.
+///
+/// Gates (all speed-only; never affect tree topology or bytes):
+/// - either child immediately leafs (`bits <= threshold`) → its
+///   `find_best_split` never runs, so skip the whole derivation;
+/// - the larger child's skipped loops must outweigh a tensor pass
+///   ([`tensor_derive_pays`]);
+/// - both children need `weighted >= TENSOR_MIN_CHILD_WEIGHT` so their
+///   `find_best_split` runs with full (prop, pred) coverage, keeping
+///   tensor contents exhaustive for *their* descendants.
+#[allow(clippy::too_many_arguments)]
+fn tensor_split_plan(
+    layout: &TensorLayout,
+    sample_counts: &[u32],
+    start: usize,
+    mid: usize,
+    end: usize,
+    left_bits: f64,
+    right_bits: f64,
+    threshold: f64,
+) -> Option<(bool, usize, usize)> {
+    if left_bits <= threshold || right_bits <= threshold {
+        return None;
+    }
+    let left_unique = mid - start;
+    let right_unique = end - mid;
+    let larger_unique = left_unique.max(right_unique);
+    if !tensor_derive_pays(layout, larger_unique) {
+        return None;
+    }
+    let left_w: u32 = sample_counts[start..mid].iter().sum();
+    let right_w: u32 = sample_counts[mid..end].iter().sum();
+    if left_w < TENSOR_MIN_CHILD_WEIGHT || right_w < TENSOR_MIN_CHILD_WEIGHT {
+        return None;
+    }
+    if left_unique <= right_unique {
+        Some((true, start, mid))
+    } else {
+        Some((false, mid, end))
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only: counts successful child-tensor derivations on THIS thread.
+    /// Thread-local (not atomic) so concurrent tests in the same binary
+    /// can't bump a measurement that belongs to another test — only the
+    /// sequential engine (which derives on the calling thread) is observed.
+    pub(crate) static TENSOR_DERIVE_COUNT: core::cell::Cell<usize> =
+        const { core::cell::Cell::new(0) };
+}
+
+/// Derive child tensors for an accepted split of a node owning `parent`:
+/// build the smaller child's tensor from its rows, derive the larger child
+/// in place (`parent −= smaller`), return `(left, right)` tensors. The
+/// parent tensor is consumed either way (freed here when gates fail —
+/// the meta's "parent freed after deriving" memory bound).
+#[allow(clippy::too_many_arguments)]
+fn derive_child_tensors(
+    samples: &TreeSamples,
+    pq: &PreQuantizedProps,
+    params: &TreeLearningParams,
+    layout: &TensorLayout,
+    histogram_size: usize,
+    start: usize,
+    mid: usize,
+    end: usize,
+    parent: NodeTensor,
+    left_bits: f64,
+    right_bits: f64,
+    threshold: f64,
+) -> (Option<NodeTensor>, Option<NodeTensor>) {
+    let Some((smaller_is_left, s_start, s_end)) = tensor_split_plan(
+        layout,
+        &samples.sample_counts,
+        start,
+        mid,
+        end,
+        left_bits,
+        right_bits,
+        threshold,
+    ) else {
+        return (None, None);
+    };
+    let mut small = NodeTensor::zeroed(layout);
+    build_node_tensor(
+        samples,
+        pq,
+        params,
+        layout,
+        histogram_size,
+        s_start,
+        s_end,
+        &mut small,
+    );
+    let mut large = parent;
+    large.subtract_in_place(&small);
+    #[cfg(test)]
+    TENSOR_DERIVE_COUNT.with(|c| c.set(c.get() + 1));
+    if smaller_is_left {
+        (Some(small), Some(large))
+    } else {
+        (Some(large), Some(small))
+    }
+}
+
+/// Borrowed-view counterpart to [`derive_child_tensors`].
+#[cfg(feature = "parallel-tree-learning")]
+#[allow(clippy::too_many_arguments)]
+fn derive_child_tensors_borrowed(
+    samples: &BorrowedSamples<'_>,
+    params: &TreeLearningParams,
+    layout: &TensorLayout,
+    histogram_size: usize,
+    start: usize,
+    mid: usize,
+    end: usize,
+    parent: NodeTensor,
+    left_bits: f64,
+    right_bits: f64,
+    threshold: f64,
+) -> (Option<NodeTensor>, Option<NodeTensor>) {
+    let Some((smaller_is_left, s_start, s_end)) = tensor_split_plan(
+        layout,
+        samples.sample_counts,
+        start,
+        mid,
+        end,
+        left_bits,
+        right_bits,
+        threshold,
+    ) else {
+        return (None, None);
+    };
+    let mut small = NodeTensor::zeroed(layout);
+    build_node_tensor_borrowed(
+        samples,
+        params,
+        layout,
+        histogram_size,
+        s_start,
+        s_end,
+        &mut small,
+    );
+    let mut large = parent;
+    large.subtract_in_place(&small);
+    if smaller_is_left {
+        (Some(small), Some(large))
+    } else {
+        (Some(large), Some(small))
+    }
+}
 
 /// Pre-allocated workspace for find_best_split, reused across calls.
 /// Avoids per-call Vec allocation and resize overhead.
@@ -5792,6 +6654,7 @@ fn find_best_split(
     threshold: f64,
     pq: &PreQuantizedProps,
     ws: &mut SplitWorkspace,
+    tensor_mode: TensorMode<'_>,
 ) -> Option<BestSplit> {
     let count = end - start;
     if count < 2 {
@@ -5808,6 +6671,31 @@ fn find_best_split(
     // Compute weighted total: sum of sample_counts for this node's samples.
     // After dedup, each unique sample represents `count` original samples.
     let weighted_total: u32 = sample_counts.iter().sum();
+
+    // Decompose the tensor mode into its two orthogonal capabilities so the
+    // borrows stay disjoint inside the loops below.
+    let (tensor_in, mut capture) = match tensor_mode {
+        TensorMode::Off => (None, None),
+        TensorMode::Use(l, t) => (Some((l, t)), None),
+        TensorMode::Capture(l, t) => (None, Some((l, t))),
+    };
+    debug_assert!(
+        (tensor_in.is_none() && capture.is_none()) || weighted_total >= TENSOR_MIN_CHILD_WEIGHT,
+        "tensor modes require full predictor/property coverage (weighted_total >= 2048)"
+    );
+
+    // Capture scratch: per-pred whole-node histograms + extra-bit totals,
+    // snapshotted from the FIRST populated property's right-init (they are
+    // property-independent — every row lands in exactly one bucket of any
+    // property). Used to fill single-bucket properties' tensor rows at the
+    // end, keeping captured tensors fully populated (subtraction-exact)
+    // without an extra per-sample pass.
+    let mut cap_totals: Vec<u32> = Vec::new();
+    let mut cap_total_ebits: Vec<u64> = Vec::new();
+    let mut cap_totals_done = false;
+    // (prop position, absolute bucket) of properties whose rows collapsed to
+    // a single bucket in this node — deferred until totals are known.
+    let mut cap_single_bucket: Vec<(usize, usize)> = Vec::new();
 
     // Predictor change penalty matching libjxl's enc_ma.cc:303
     let change_pred_penalty = 800.0 / (100.0 + threshold);
@@ -5848,6 +6736,11 @@ fn find_best_split(
         return None;
     }
 
+    if capture.is_some() {
+        cap_totals = vec![0u32; num_pred * effective_histo];
+        cap_total_ebits = vec![0u64; num_pred];
+    }
+
     // Pre-slice workspace buffers to avoid repeated Vec deref overhead.
     // Each Vec deref goes through raw_vec.ptr() + from_raw_parts() (~434M overhead
     // in profile). Slicing once here gives &mut [T] for all subsequent access.
@@ -5876,7 +6769,7 @@ fn find_best_split(
         params.properties.len().min(2)
     };
 
-    for &prop_idx in &params.properties[..num_props] {
+    for (prop_pos, &prop_idx) in params.properties[..num_props].iter().enumerate() {
         let num_thresholds = pq.num_thresholds(prop_idx);
         if num_thresholds == 0 {
             continue;
@@ -5885,56 +6778,113 @@ fn find_best_split(
         let pq_buckets = &pq.bucket_indices[prop_idx][start..end];
         let threshold_set = &pq.threshold_sets[prop_idx];
 
-        // Bucket range narrowing: find min/max bucket for this node's samples.
-        // Contiguous scan now that the SoA is kept aligned by
-        // `split_tree_samples_in_place` (issue #40 chunk 2).
-        let mut bmin: u8 = u8::MAX;
-        let mut bmax: u8 = 0;
-        for &b in pq_buckets {
-            if b < bmin {
-                bmin = b;
+        // Bucket range narrowing: find min/max bucket for this node's
+        // samples. With a tensor, the per-bucket unique counts already
+        // carry the range (nonzero exactly where this node has rows) —
+        // the O(n) scan is skipped.
+        let (bmin, bmax) = if let Some((layout, tensor)) = tensor_in {
+            let entry = &layout.prop_entries[prop_pos];
+            debug_assert_eq!(entry.prop_idx, prop_idx);
+            let uni = &tensor.unique[entry.bucket_base..entry.bucket_base + entry.num_buckets];
+            let Some(first) = uni.iter().position(|&c| c != 0) else {
+                continue;
+            };
+            let last = uni
+                .iter()
+                .rposition(|&c| c != 0)
+                .expect("nonzero unique count exists");
+            (first, last)
+        } else {
+            // Contiguous scan now that the SoA is kept aligned by
+            // `split_tree_samples_in_place` (issue #40 chunk 2).
+            let mut bmin: u8 = u8::MAX;
+            let mut bmax: u8 = 0;
+            for &b in pq_buckets {
+                if b < bmin {
+                    bmin = b;
+                }
+                if b > bmax {
+                    bmax = b;
+                }
             }
-            if b > bmax {
-                bmax = b;
-            }
-        }
+            (bmin as usize, bmax as usize)
+        };
         if bmin == bmax {
-            continue; // All samples in same bucket — no useful split
+            // All samples in same bucket — no useful split. When capturing,
+            // record the bucket stats now (trivial: everything in one
+            // bucket) and defer the per-(pred, token) rows until the
+            // whole-node totals are known (end of the property loop).
+            if let Some((layout, tensor)) = capture.as_mut() {
+                let entry = &layout.prop_entries[prop_pos];
+                debug_assert_eq!(entry.prop_idx, prop_idx);
+                tensor.unique[entry.bucket_base + bmin] = count as u32;
+                tensor.weighted[entry.bucket_base + bmin] = weighted_total;
+                cap_single_bucket.push((prop_pos, bmin));
+            }
+            continue;
         }
-        let bmin = bmin as usize;
-        let bmax = bmax as usize;
 
         // Effective number of buckets for this node
         let local_num_buckets = bmax - bmin + 1;
 
         let local_num_thresholds = bmax - bmin;
 
-        // Counting sort: group unique samples by bucket. Stored as RELATIVE
-        // offsets into `[start..end)` so the per-bucket access pattern in the
-        // pred loop stays inside the contiguous SoA slice (good cache locality
-        // vs the old absolute-index path).
-        // bucket_counts tracks the NUMBER OF UNIQUE SAMPLES per bucket (for sorted_by_bucket sizing).
-        // We compute weighted counts separately for the sweep.
-        let mut unique_per_bucket = [0u32; 256];
-        bucket_counts[..local_num_buckets].fill(0); // weighted counts for sweep
-        for (offset, &b) in pq_buckets.iter().enumerate() {
-            let local_b = (b as usize) - bmin;
-            unique_per_bucket[local_b] += 1;
-            bucket_counts[local_b] += sample_counts[offset];
-        }
+        if let Some((layout, tensor)) = tensor_in {
+            // Tensor path: bucket stats are read straight from the node's
+            // tensor — the O(n) counting sort and the `sorted_by_bucket`
+            // population are skipped (the per-(pred, bucket) rows come from
+            // the tensor too, below).
+            let entry = &layout.prop_entries[prop_pos];
+            bucket_counts[..local_num_buckets].copy_from_slice(
+                &tensor.weighted
+                    [entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets],
+            );
+            let uni = &tensor.unique
+                [entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets];
+            bucket_starts[0] = 0;
+            for b in 0..local_num_buckets {
+                bucket_starts[b + 1] = bucket_starts[b] + uni[b] as usize;
+            }
+        } else {
+            // Counting sort: group unique samples by bucket. Stored as RELATIVE
+            // offsets into `[start..end)` so the per-bucket access pattern in the
+            // pred loop stays inside the contiguous SoA slice (good cache locality
+            // vs the old absolute-index path).
+            // bucket_counts tracks the NUMBER OF UNIQUE SAMPLES per bucket (for sorted_by_bucket sizing).
+            // We compute weighted counts separately for the sweep.
+            let mut unique_per_bucket = [0u32; 256];
+            bucket_counts[..local_num_buckets].fill(0); // weighted counts for sweep
+            for (offset, &b) in pq_buckets.iter().enumerate() {
+                let local_b = (b as usize) - bmin;
+                unique_per_bucket[local_b] += 1;
+                bucket_counts[local_b] += sample_counts[offset];
+            }
 
-        bucket_starts[0] = 0;
-        for b in 0..local_num_buckets {
-            bucket_starts[b + 1] = bucket_starts[b] + unique_per_bucket[b] as usize;
-        }
+            bucket_starts[0] = 0;
+            for b in 0..local_num_buckets {
+                bucket_starts[b + 1] = bucket_starts[b] + unique_per_bucket[b] as usize;
+            }
 
-        bucket_write_pos[..local_num_buckets].copy_from_slice(&bucket_starts[..local_num_buckets]);
-        for (offset, &b) in pq_buckets.iter().enumerate() {
-            let local_b = (b as usize) - bmin;
-            // Store RELATIVE offset; downstream loops add `start` when
-            // indexing the parent SoA arrays.
-            sorted_by_bucket[bucket_write_pos[local_b]] = offset;
-            bucket_write_pos[local_b] += 1;
+            bucket_write_pos[..local_num_buckets]
+                .copy_from_slice(&bucket_starts[..local_num_buckets]);
+            for (offset, &b) in pq_buckets.iter().enumerate() {
+                let local_b = (b as usize) - bmin;
+                // Store RELATIVE offset; downstream loops add `start` when
+                // indexing the parent SoA arrays.
+                sorted_by_bucket[bucket_write_pos[local_b]] = offset;
+                bucket_write_pos[local_b] += 1;
+            }
+
+            if let Some((layout, tensor)) = capture.as_mut() {
+                let entry = &layout.prop_entries[prop_pos];
+                debug_assert_eq!(entry.prop_idx, prop_idx);
+                tensor.unique
+                    [entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets]
+                    .copy_from_slice(&unique_per_bucket[..local_num_buckets]);
+                tensor.weighted
+                    [entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets]
+                    .copy_from_slice(&bucket_counts[..local_num_buckets]);
+            }
         }
 
         // Initialize per-threshold best costs
@@ -5946,12 +6896,6 @@ fn find_best_split(
         best_r_pred[..local_num_thresholds].fill(0);
 
         for pred in 0..num_pred {
-            // Slice into the contiguous range [start..end) — sequential token
-            // and extra-bits reads, no per-index pointer chase across the
-            // whole SoA.
-            let tokens = &samples.residual_tokens[pred][start..end];
-            let ebits = &samples.extra_bits[pred][start..end];
-
             // Predictor change penalty: applied when choosing best predictor per side,
             // but NOT included in the final split decision (matching libjxl enc_ma.cc:375-390).
             // This biases predictor selection toward keeping the parent's predictor
@@ -5968,32 +6912,71 @@ fn find_best_split(
                 penalty -= 1e-8;
             }
 
-            // Clear only effective_histo entries per bucket (HISTO_PADDED stride
-            // leaves gaps that are never read). Same total bytes as original code.
-            for b in 0..local_num_buckets {
-                count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo].fill(0);
-            }
-            extra_bits_increase[..local_num_buckets].fill(0);
-
-            for local_bucket in 0..local_num_buckets {
-                let bs = bucket_starts[local_bucket];
-                let be = bucket_starts[local_bucket + 1];
-                let ci_base = local_bucket * HISTO_PADDED;
-                let ci_slice = &mut count_increase[ci_base..ci_base + HISTO_PADDED];
-                let mut eb_sum: u64 = 0;
-                // Inner loop: uses sorted_by_bucket RELATIVE offsets directly into
-                // the contiguous token/ebit/sample_counts slices. Reads stay inside
-                // the small `[start..end)` window — even when scattered by bucket
-                // sort, each cache line covers ~64 contiguous samples.
-                // ci_slice[tok & HISTO_MASK]: bitmask guarantees < HISTO_PADDED = ci_slice.len()
-                // Each unique sample contributes its count (dedup weight).
-                for &rel_off in &sorted_by_bucket[bs..be] {
-                    let tok = tokens[rel_off];
-                    let sc = sample_counts[rel_off];
-                    ci_slice[tok as usize & HISTO_MASK] += sc;
-                    eb_sum += ebits[rel_off] as u64 * sc as u64;
+            if let Some((layout, tensor)) = tensor_in {
+                // Tensor path: this (prop, pred)'s per-bucket rows + extra-bit
+                // sums are copied out of the node's tensor — replacing BOTH
+                // the fill(0) below (same bytes written) and the O(n)
+                // per-sample accumulate (skipped entirely).
+                let entry = &layout.prop_entries[prop_pos];
+                let nb = entry.num_buckets;
+                for b in 0..local_num_buckets {
+                    let src = entry.token_base + (pred * nb + bmin + b) * effective_histo;
+                    count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo]
+                        .copy_from_slice(&tensor.token_counts[src..src + effective_histo]);
+                    extra_bits_increase[b] =
+                        tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b];
                 }
-                extra_bits_increase[local_bucket] = eb_sum;
+            } else {
+                // Slice into the contiguous range [start..end) — sequential token
+                // and extra-bits reads, no per-index pointer chase across the
+                // whole SoA.
+                let tokens = &samples.residual_tokens[pred][start..end];
+                let ebits = &samples.extra_bits[pred][start..end];
+
+                // Clear only effective_histo entries per bucket (HISTO_PADDED stride
+                // leaves gaps that are never read). Same total bytes as original code.
+                for b in 0..local_num_buckets {
+                    count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo].fill(0);
+                }
+                extra_bits_increase[..local_num_buckets].fill(0);
+
+                for local_bucket in 0..local_num_buckets {
+                    let bs = bucket_starts[local_bucket];
+                    let be = bucket_starts[local_bucket + 1];
+                    let ci_base = local_bucket * HISTO_PADDED;
+                    let ci_slice = &mut count_increase[ci_base..ci_base + HISTO_PADDED];
+                    let mut eb_sum: u64 = 0;
+                    // Inner loop: uses sorted_by_bucket RELATIVE offsets directly into
+                    // the contiguous token/ebit/sample_counts slices. Reads stay inside
+                    // the small `[start..end)` window — even when scattered by bucket
+                    // sort, each cache line covers ~64 contiguous samples.
+                    // ci_slice[tok & HISTO_MASK]: bitmask guarantees < HISTO_PADDED = ci_slice.len()
+                    // Each unique sample contributes its count (dedup weight).
+                    for &rel_off in &sorted_by_bucket[bs..be] {
+                        let tok = tokens[rel_off];
+                        let sc = sample_counts[rel_off];
+                        ci_slice[tok as usize & HISTO_MASK] += sc;
+                        eb_sum += ebits[rel_off] as u64 * sc as u64;
+                    }
+                    extra_bits_increase[local_bucket] = eb_sum;
+                }
+
+                if let Some((layout, tensor)) = capture.as_mut() {
+                    // Copy this (prop, pred)'s freshly-accumulated rows into
+                    // the node tensor (absolute bucket space). Pure extra
+                    // writes — the workspace contents and control flow are
+                    // untouched, so the split search below is unaffected.
+                    let entry = &layout.prop_entries[prop_pos];
+                    let nb = entry.num_buckets;
+                    for b in 0..local_num_buckets {
+                        let dst = entry.token_base + (pred * nb + bmin + b) * effective_histo;
+                        tensor.token_counts[dst..dst + effective_histo].copy_from_slice(
+                            &count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo],
+                        );
+                        tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b] =
+                            extra_bits_increase[b];
+                    }
+                }
             }
 
             // Build initial right histogram (all local buckets on the right
@@ -6031,6 +7014,16 @@ fn find_best_split(
                     *rc += ci;
                 }
                 right_extra += eb;
+            }
+
+            if capture.is_some() && !cap_totals_done {
+                // The fully-initialized right histogram == the whole-node
+                // histogram for this predictor (property-independent).
+                // Snapshot it before the sweep mutates it; consumed by the
+                // single-bucket-property fill after the property loop.
+                cap_totals[pred * effective_histo..(pred + 1) * effective_histo]
+                    .copy_from_slice(&right_counts[..effective_histo]);
+                cap_total_ebits[pred] = right_extra;
             }
 
             left_counts[..effective_histo].fill(0);
@@ -6093,6 +7086,12 @@ fn find_best_split(
             }
         }
 
+        if capture.is_some() {
+            // All predictors of the first populated property have snapshotted
+            // their whole-node histograms.
+            cap_totals_done = true;
+        }
+
         // Find best threshold across all predictors for this property.
         // Split decision uses RAW costs (no penalty), matching libjxl enc_ma.cc:424.
         // The penalty only influenced which predictor was chosen for each side above.
@@ -6121,6 +7120,30 @@ fn find_best_split(
                     left_count,
                 });
             }
+        }
+    }
+
+    if let Some((layout, tensor)) = capture.as_mut() {
+        if cap_totals_done {
+            // Fill the rows of single-bucket properties from the whole-node
+            // per-predictor totals: with every row in one bucket, that
+            // bucket's (pred, token) histogram IS the node histogram.
+            for &(prop_pos, bucket) in &cap_single_bucket {
+                let entry = &layout.prop_entries[prop_pos];
+                let nb = entry.num_buckets;
+                for pred in 0..num_pred {
+                    let dst = entry.token_base + (pred * nb + bucket) * effective_histo;
+                    tensor.token_counts[dst..dst + effective_histo].copy_from_slice(
+                        &cap_totals[pred * effective_histo..(pred + 1) * effective_histo],
+                    );
+                    tensor.ebit_sums[entry.ebit_base + pred * nb + bucket] = cap_total_ebits[pred];
+                }
+            }
+        } else {
+            // No property produced a populated bucket range, so the capture
+            // is incomplete — but then no split exists either, the engines
+            // leaf-finalize, and the captured tensor is dropped unused.
+            debug_assert!(best.is_none());
         }
     }
 
@@ -9219,5 +10242,622 @@ mod tests {
             collect_residuals_with_tree_offset_with_budget(&image, &tree, 0, 0, &wp_params, None)
                 .expect("valid 8-bit input must not trip the overflow guard");
         assert_eq!(tokens.len(), 4);
+    }
+
+    // ── PERF-HIST-SUB-LOSSLESS tests (issue #64 chunk 1) ─────────────────
+    //
+    // Byte-identity proof obligations from
+    // `benchmarks/perf_hist_sub_2026-06-10.meta` point 6: derived child
+    // tensors equal from-scratch child tensors elementwise; captured
+    // tensors equal built tensors; `find_best_split` with a tensor input
+    // returns a bit-identical split to the per-sample path; the engine's
+    // tensor path produces an identical tree to the full-rebuild reference.
+
+    fn hist_sub_xorshift(state: &mut u32) -> u32 {
+        let mut s = *state;
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        *state = s;
+        s
+    }
+
+    /// Deterministic noise+gradient image → gathered, pre-quantized,
+    /// deduped samples. Noise dedups poorly (photo-like — the chunk's
+    /// lossless-photo target), so `n` stays close to the pixel count.
+    fn hist_sub_test_samples(
+        seed: u32,
+        w: usize,
+        h: usize,
+        params: &TreeLearningParams,
+    ) -> (TreeSamples, PreQuantizedProps, usize) {
+        let mut image = ModularImage {
+            channels: Vec::new(),
+            bit_depth: 8,
+            is_grayscale: false,
+            has_alpha: false,
+        };
+        let mut state = seed.wrapping_mul(0x9E37_79B9) | 1;
+        let mut ch0 = Channel::new(w, h).unwrap();
+        for y in 0..h {
+            for x in 0..w {
+                // Structured gradient with seeded noise — non-degenerate
+                // residuals for every predictor.
+                let noise = (hist_sub_xorshift(&mut state) >> 24) & 0x3F;
+                ch0.set(x, y, (((x * 3 + y * 7) as u32 + noise) & 0xFF) as i32);
+            }
+        }
+        image.channels.push(ch0);
+        let mut ch1 = Channel::new(w, h).unwrap();
+        for y in 0..h {
+            for x in 0..w {
+                let v = hist_sub_xorshift(&mut state) & 0xFF;
+                ch1.set(x, y, v as i32);
+            }
+        }
+        image.channels.push(ch1);
+
+        let mut samples = TreeSamples::new();
+        gather_samples(&mut samples, &image, 0);
+        let mut pq = samples.pre_quantize(params);
+        dedup_samples(&mut samples, &mut pq, params);
+        let max_token = samples
+            .residual_tokens
+            .iter()
+            .flat_map(|v| v.iter())
+            .copied()
+            .max()
+            .unwrap_or(0) as usize;
+        (samples, pq, max_token + 1)
+    }
+
+    fn assert_tensors_identical(a: &NodeTensor, b: &NodeTensor, ctx: &str) {
+        assert_eq!(a.token_counts, b.token_counts, "{ctx}: token_counts");
+        assert_eq!(a.ebit_sums, b.ebit_sums, "{ctx}: ebit_sums");
+        assert_eq!(a.weighted, b.weighted, "{ctx}: weighted");
+        assert_eq!(a.unique, b.unique, "{ctx}: unique");
+    }
+
+    /// Meta point 6 core: random samples → parent tensor + split → derived
+    /// child tensor == from-scratch child tensor, EXACT equality, several
+    /// seeds + sizes including weighted totals above/below the 2048 gate
+    /// (the math is gate-independent; the gate itself is tested separately).
+    #[test]
+    fn test_node_tensor_derived_equals_built() {
+        let params = TreeLearningParams::for_effort(7);
+        // (seed, w, h): 96×96×2ch ≈ 18K weighted (far above 2·2048);
+        // 48×40×2ch = 3840 (between 2048 and 4096); 24×20×2ch = 960
+        // (below the 2048 child gate).
+        for &(seed, w, h) in &[(1u32, 96usize, 96usize), (2, 48, 40), (3, 24, 20)] {
+            let (samples, pq, histogram_size) = hist_sub_test_samples(seed, w, h, &params);
+            let n = samples.num_samples;
+            let layout =
+                TensorLayout::new(&params, samples.num_predictors(), histogram_size, |p| {
+                    pq.num_thresholds(p)
+                });
+            let mut parent = NodeTensor::zeroed(&layout);
+            build_node_tensor(
+                &samples,
+                &pq,
+                &params,
+                &layout,
+                histogram_size,
+                0,
+                n,
+                &mut parent,
+            );
+
+            for &(num, den) in &[(1usize, 3usize), (1, 2), (7, 8)] {
+                let mid = (n * num / den).max(1).min(n - 1);
+                let mut left = NodeTensor::zeroed(&layout);
+                build_node_tensor(
+                    &samples,
+                    &pq,
+                    &params,
+                    &layout,
+                    histogram_size,
+                    0,
+                    mid,
+                    &mut left,
+                );
+                let mut right = NodeTensor::zeroed(&layout);
+                build_node_tensor(
+                    &samples,
+                    &pq,
+                    &params,
+                    &layout,
+                    histogram_size,
+                    mid,
+                    n,
+                    &mut right,
+                );
+
+                // Derived larger (right) = parent − built smaller (left).
+                let mut derived_right = NodeTensor::zeroed(&layout);
+                build_node_tensor(
+                    &samples,
+                    &pq,
+                    &params,
+                    &layout,
+                    histogram_size,
+                    0,
+                    n,
+                    &mut derived_right,
+                );
+                derived_right.subtract_in_place(&left);
+                assert_tensors_identical(
+                    &derived_right,
+                    &right,
+                    &format!("seed={seed} {w}x{h} mid={mid} parent-left"),
+                );
+
+                // And the mirror: parent − right == left.
+                let mut derived_left = NodeTensor::zeroed(&layout);
+                build_node_tensor(
+                    &samples,
+                    &pq,
+                    &params,
+                    &layout,
+                    histogram_size,
+                    0,
+                    n,
+                    &mut derived_left,
+                );
+                derived_left.subtract_in_place(&right);
+                assert_tensors_identical(
+                    &derived_left,
+                    &left,
+                    &format!("seed={seed} {w}x{h} mid={mid} parent-right"),
+                );
+            }
+            // Sanity: the parent tensor is non-trivial.
+            assert!(parent.token_counts.iter().any(|&c| c != 0));
+        }
+    }
+
+    /// The capture path inside `find_best_split` must produce the exact
+    /// tensor `build_node_tensor` produces (single producer-pair
+    /// consistency — what makes engine-level subtraction exact).
+    #[test]
+    fn test_node_tensor_capture_equals_built() {
+        let params = TreeLearningParams::for_effort(7);
+        for seed in [11u32, 12, 13] {
+            let (samples, pq, histogram_size) = hist_sub_test_samples(seed, 96, 96, &params);
+            let n = samples.num_samples;
+            let layout =
+                TensorLayout::new(&params, samples.num_predictors(), histogram_size, |p| {
+                    pq.num_thresholds(p)
+                });
+            let max_buckets = params.max_property_values + 1;
+            let mut entropy_counts = vec![0u32; histogram_size];
+            let root_pred =
+                find_best_predictor(&samples, 0, n, histogram_size, &mut entropy_counts);
+            let root_bits = compute_predictor_entropy(
+                &samples,
+                0,
+                n,
+                root_pred,
+                histogram_size,
+                &mut entropy_counts,
+            );
+            let required_cost = params.pixel_fraction * 0.9 + 0.1;
+            let threshold = params.split_threshold * required_cost;
+
+            let mut captured = NodeTensor::zeroed(&layout);
+            let mut ws = SplitWorkspace::new(n, histogram_size, max_buckets);
+            let split = find_best_split(
+                &samples,
+                0,
+                n,
+                histogram_size,
+                root_bits,
+                &params,
+                root_pred,
+                threshold,
+                &pq,
+                &mut ws,
+                TensorMode::Capture(&layout, &mut captured),
+            );
+            // Capture completeness is only guaranteed when a split exists —
+            // which it must on this noise+gradient input.
+            assert!(split.is_some(), "seed={seed}: expected a split");
+
+            let mut built = NodeTensor::zeroed(&layout);
+            build_node_tensor(
+                &samples,
+                &pq,
+                &params,
+                &layout,
+                histogram_size,
+                0,
+                n,
+                &mut built,
+            );
+            assert_tensors_identical(&captured, &built, &format!("seed={seed} capture-vs-build"));
+        }
+    }
+
+    /// `find_best_split` with `TensorMode::Use` must return a bit-identical
+    /// split to `TensorMode::Off` — same property, splitval, predictors,
+    /// left_count, and bit-equal f64 cost.
+    #[test]
+    fn test_find_best_split_tensor_use_matches_off() {
+        let params = TreeLearningParams::for_effort(7);
+        for seed in [21u32, 22] {
+            let (samples, pq, histogram_size) = hist_sub_test_samples(seed, 96, 96, &params);
+            let n = samples.num_samples;
+            let layout =
+                TensorLayout::new(&params, samples.num_predictors(), histogram_size, |p| {
+                    pq.num_thresholds(p)
+                });
+            let max_buckets = params.max_property_values + 1;
+            let mut entropy_counts = vec![0u32; histogram_size];
+            let required_cost = params.pixel_fraction * 0.9 + 0.1;
+            let threshold = params.split_threshold * required_cost;
+
+            // Full range + an interior subrange (both ≥ 2048 weighted).
+            let ranges = [
+                (0usize, n),
+                (n / 4, n / 4 + (n / 2).max(4096).min(n - n / 4)),
+            ];
+            for &(start, end) in &ranges {
+                let count = end - start;
+                let weighted: u32 = samples.sample_counts[start..end].iter().sum();
+                assert!(weighted >= TENSOR_MIN_CHILD_WEIGHT, "test range too small");
+                let root_pred =
+                    find_best_predictor(&samples, start, end, histogram_size, &mut entropy_counts);
+                let base_bits = compute_predictor_entropy(
+                    &samples,
+                    start,
+                    end,
+                    root_pred,
+                    histogram_size,
+                    &mut entropy_counts,
+                );
+
+                let mut ws = SplitWorkspace::new(count, histogram_size, max_buckets);
+                let split_off = find_best_split(
+                    &samples,
+                    start,
+                    end,
+                    histogram_size,
+                    base_bits,
+                    &params,
+                    root_pred,
+                    threshold,
+                    &pq,
+                    &mut ws,
+                    TensorMode::Off,
+                );
+
+                let mut tensor = NodeTensor::zeroed(&layout);
+                build_node_tensor(
+                    &samples,
+                    &pq,
+                    &params,
+                    &layout,
+                    histogram_size,
+                    start,
+                    end,
+                    &mut tensor,
+                );
+                let mut ws2 = SplitWorkspace::new(count, histogram_size, max_buckets);
+                let split_use = find_best_split(
+                    &samples,
+                    start,
+                    end,
+                    histogram_size,
+                    base_bits,
+                    &params,
+                    root_pred,
+                    threshold,
+                    &pq,
+                    &mut ws2,
+                    TensorMode::Use(&layout, &tensor),
+                );
+
+                match (split_off, split_use) {
+                    (None, None) => {}
+                    (Some(a), Some(b)) => {
+                        assert_eq!(a.property, b.property, "seed={seed} [{start},{end})");
+                        assert_eq!(a.splitval, b.splitval, "seed={seed} [{start},{end})");
+                        assert_eq!(a.left_predictor, b.left_predictor, "seed={seed}");
+                        assert_eq!(a.right_predictor, b.right_predictor, "seed={seed}");
+                        assert_eq!(a.left_count, b.left_count, "seed={seed}");
+                        assert_eq!(
+                            a.total_bits.to_bits(),
+                            b.total_bits.to_bits(),
+                            "seed={seed} [{start},{end}): total_bits must be BIT-identical"
+                        );
+                    }
+                    (a, b) => panic!(
+                        "seed={seed} [{start},{end}): Off={:?} Use={:?} disagree on Some/None",
+                        a.map(|s| s.property),
+                        b.map(|s| s.property)
+                    ),
+                }
+            }
+        }
+    }
+
+    /// The 2048-weighted child gate of `tensor_split_plan`, just above and
+    /// just below (meta point 6's gate-boundary requirement).
+    #[test]
+    fn test_tensor_split_plan_2048_gate() {
+        // Tiny synthetic layout where derive always pays: 1 property,
+        // 1 predictor, 2 buckets, histo 1 → token_cells = 2.
+        let params = TreeLearningParams {
+            properties: vec![0],
+            ..TreeLearningParams::for_effort(7)
+        };
+        let layout = TensorLayout::new(&params, 1, 1, |_| 1);
+        assert_eq!(layout.token_cells, 2);
+
+        let n = 8192usize;
+        let counts = vec![1u32; n];
+        let above = threshold_gate_case(&layout, &counts, 2048);
+        assert!(above.is_some(), "left_w=2048 must pass the >= 2048 gate");
+        let below = threshold_gate_case(&layout, &counts, 2047);
+        assert!(below.is_none(), "left_w=2047 must fail the >= 2048 gate");
+        // Right side just below: mid = n-2047 → right_w = 2047.
+        let right_below = threshold_gate_case(&layout, &counts, n - 2047);
+        assert!(right_below.is_none(), "right_w=2047 must fail the gate");
+        let right_above = threshold_gate_case(&layout, &counts, n - 2048);
+        assert!(right_above.is_some(), "right_w=2048 must pass the gate");
+
+        // Leaf-bound children skip derivation outright.
+        assert!(
+            tensor_split_plan(&layout, &counts, 0, 4096, n, 0.5, 1e9, 1.0).is_none(),
+            "left child below threshold must skip derivation"
+        );
+    }
+
+    fn threshold_gate_case(
+        layout: &TensorLayout,
+        counts: &[u32],
+        mid: usize,
+    ) -> Option<(bool, usize, usize)> {
+        tensor_split_plan(layout, counts, 0, mid, counts.len(), 1e9, 1e9, 1.0)
+    }
+
+    /// Reference implementation of the greedy stack engine with
+    /// `TensorMode::Off` everywhere — byte-for-byte the pre-PERF-HIST-SUB
+    /// algorithm (find_best_split → partition → recompute child bits →
+    /// push), independent of the parallel-tree-learning feature.
+    fn reference_greedy_tree_no_tensors(
+        samples: &mut TreeSamples,
+        params: &TreeLearningParams,
+    ) -> Tree {
+        let mut pq = samples.pre_quantize(params);
+        dedup_samples(samples, &mut pq, params);
+        let required_cost = params.pixel_fraction * 0.9 + 0.1;
+        let threshold = params.split_threshold * required_cost;
+        let n = samples.num_samples;
+        let max_token = samples
+            .residual_tokens
+            .iter()
+            .flat_map(|v| v.iter())
+            .copied()
+            .max()
+            .unwrap_or(0) as usize;
+        let histogram_size = max_token + 1;
+        let max_buckets = params.max_property_values + 1;
+        let mut entropy_counts = vec![0u32; histogram_size];
+        let root_pred = find_best_predictor(samples, 0, n, histogram_size, &mut entropy_counts);
+        let root_bits = compute_predictor_entropy(
+            samples,
+            0,
+            n,
+            root_pred,
+            histogram_size,
+            &mut entropy_counts,
+        );
+
+        let mut tree: Tree = Vec::new();
+        tree.push(PropertyDecisionNode::default());
+        let mut stack: Vec<SplitCandidate> = Vec::new();
+        stack.push(SplitCandidate {
+            node_idx: 0,
+            start: 0,
+            end: n,
+            best_predictor: root_pred,
+            base_bits: root_bits,
+            multiplier: None,
+            tensor: None,
+        });
+        while let Some(candidate) = stack.pop() {
+            let count = candidate.end - candidate.start;
+            if tree.len() + 2 > params.max_nodes || count < 2 || candidate.base_bits <= threshold {
+                finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+                continue;
+            }
+            let mut ws = SplitWorkspace::new(count, histogram_size, max_buckets);
+            let best_split = find_best_split(
+                samples,
+                candidate.start,
+                candidate.end,
+                histogram_size,
+                candidate.base_bits,
+                params,
+                candidate.best_predictor,
+                threshold,
+                &pq,
+                &mut ws,
+                TensorMode::Off,
+            );
+            match best_split {
+                Some(split) if candidate.base_bits - split.total_bits > threshold => {
+                    let bucket_split =
+                        bucket_for_splitval(&pq.threshold_sets[split.property], split.splitval);
+                    let abs_mid = partition_node_in_place_with(
+                        samples,
+                        &mut pq,
+                        candidate.start,
+                        candidate.end,
+                        split.left_count,
+                        tree_learn_split::PartitionKey::Bucket {
+                            prop_idx: split.property,
+                            val: bucket_split as u8,
+                        },
+                        true,
+                    );
+                    let lchild_idx = tree.len();
+                    let rchild_idx = tree.len() + 1;
+                    tree.push(PropertyDecisionNode::default());
+                    tree.push(PropertyDecisionNode::default());
+                    tree[candidate.node_idx] = PropertyDecisionNode {
+                        property: split.property as i32,
+                        splitval: split.splitval,
+                        lchild: lchild_idx,
+                        rchild: rchild_idx,
+                        ..Default::default()
+                    };
+                    let lb = compute_predictor_entropy(
+                        samples,
+                        candidate.start,
+                        abs_mid,
+                        split.left_predictor,
+                        histogram_size,
+                        &mut entropy_counts,
+                    );
+                    let rb = compute_predictor_entropy(
+                        samples,
+                        abs_mid,
+                        candidate.end,
+                        split.right_predictor,
+                        histogram_size,
+                        &mut entropy_counts,
+                    );
+                    stack.push(SplitCandidate {
+                        node_idx: rchild_idx,
+                        start: abs_mid,
+                        end: candidate.end,
+                        best_predictor: split.right_predictor,
+                        base_bits: rb,
+                        multiplier: None,
+                        tensor: None,
+                    });
+                    stack.push(SplitCandidate {
+                        node_idx: lchild_idx,
+                        start: candidate.start,
+                        end: abs_mid,
+                        best_predictor: split.left_predictor,
+                        base_bits: lb,
+                        multiplier: None,
+                        tensor: None,
+                    });
+                }
+                _ => {
+                    finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+                }
+            }
+        }
+        assign_sequential_contexts(&mut tree);
+        tree
+    }
+
+    /// Engine-level proof: the sequential stack engine WITH the tensor path
+    /// active (capture + derive fire — asserted via the thread-local derive
+    /// counter) produces a token-identical tree to the owned full-rebuild
+    /// engine (`build_subtree_sequential`, TensorMode::Off).
+    #[test]
+    fn test_engine_tensor_path_tree_identical_to_full_rebuild() {
+        use crate::modular::tree::collect_tree_tokens;
+
+        // Shrink the per-tensor cost so capture/derive gates fire at test
+        // sizes: 4 properties × ≤9 buckets → token_cells ≈ 25K, so
+        // derive_pays needs larger_unique > ~1.8K (96×96×2ch ≈ 18K rows).
+        let mut params = TreeLearningParams::for_effort(7);
+        params.properties.truncate(4);
+        params.max_property_values = 8;
+        // Force the sequential stack loop even with parallel-tree-learning
+        // compiled in (the parallel root path is exercised by
+        // `test_parallel_tree_matches_sequential`).
+        params.parallel_root_threshold = usize::MAX;
+
+        let mut image = ModularImage {
+            channels: Vec::new(),
+            bit_depth: 8,
+            is_grayscale: false,
+            has_alpha: false,
+        };
+        let mut state = 0xC0FF_EE01u32;
+        let mut ch0 = Channel::new(96, 96).unwrap();
+        for y in 0..96 {
+            for x in 0..96 {
+                let noise = (hist_sub_xorshift(&mut state) >> 26) & 0x1F;
+                ch0.set(x, y, (((x * 5 + y * 3) as u32 + noise) & 0xFF) as i32);
+            }
+        }
+        image.channels.push(ch0);
+        let mut ch1 = Channel::new(96, 96).unwrap();
+        for y in 0..96 {
+            for x in 0..96 {
+                ch1.set(x, y, (hist_sub_xorshift(&mut state) & 0xFF) as i32);
+            }
+        }
+        image.channels.push(ch1);
+
+        // Tensor-path tree via the production engine.
+        TENSOR_DERIVE_COUNT.with(|c| c.set(0));
+        let mut samples_tensor = TreeSamples::new();
+        gather_samples(&mut samples_tensor, &image, 0);
+        let tensor_tree = compute_best_tree(&mut samples_tensor, &params);
+        let derives = TENSOR_DERIVE_COUNT.with(|c| c.get());
+        assert!(
+            derives > 0,
+            "tensor derivation must actually fire in this test (gates mis-tuned?)"
+        );
+
+        // Full-rebuild reference: the pre-chunk greedy loop, replicated
+        // with TensorMode::Off (cfg-independent — `build_subtree_sequential`
+        // only exists under parallel-tree-learning).
+        let mut samples_ref = TreeSamples::new();
+        gather_samples(&mut samples_ref, &image, 0);
+        let ref_tree = reference_greedy_tree_no_tensors(&mut samples_ref, &params);
+
+        assert!(
+            tensor_tree.len() >= 3,
+            "tensor tree must split at least once"
+        );
+        let a = collect_tree_tokens(&tensor_tree);
+        let b = collect_tree_tokens(&ref_tree);
+        assert_eq!(a.len(), b.len(), "tree token count differs");
+        for (i, (p, s)) in a.iter().zip(b.iter()).enumerate() {
+            assert_eq!(
+                (p.context, p.value, p.is_signed),
+                (s.context, s.value, s.is_signed),
+                "token #{i} differs between tensor path and full rebuild"
+            );
+        }
+    }
+
+    /// Borrowed-view tensor build must equal the owned build (same rows).
+    #[cfg(feature = "parallel-tree-learning")]
+    #[test]
+    fn test_node_tensor_borrowed_build_matches_owned() {
+        let params = TreeLearningParams::for_effort(7);
+        let (mut samples, mut pq, histogram_size) = hist_sub_test_samples(31, 64, 64, &params);
+        let n = samples.num_samples;
+        let layout = TensorLayout::new(&params, samples.num_predictors(), histogram_size, |p| {
+            pq.num_thresholds(p)
+        });
+
+        let mut owned = NodeTensor::zeroed(&layout);
+        build_node_tensor(
+            &samples,
+            &pq,
+            &params,
+            &layout,
+            histogram_size,
+            0,
+            n,
+            &mut owned,
+        );
+
+        let view = BorrowedSamples::from_owned(&mut samples, &mut pq);
+        let mut borrowed = NodeTensor::zeroed(&layout);
+        build_node_tensor_borrowed(&view, &params, &layout, histogram_size, 0, n, &mut borrowed);
+        assert_tensors_identical(&owned, &borrowed, "borrowed-vs-owned build");
     }
 }
