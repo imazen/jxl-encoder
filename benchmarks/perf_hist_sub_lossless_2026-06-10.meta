@@ -30,3 +30,45 @@
 #   cost is structural-bounded (parent tensors freed at derivation,
 #   active-branch depth only). If +48 MB is unacceptable, raising the
 #   weighted_total >= 2048 profitability gate shrinks cached depth.
+#
+# ── ADDENDUM (2026-06-10, post-landing): RSS overage ROOT-CAUSED — it is
+#    glibc adaptive-arena measurement noise, NOT live tensor memory. ──────
+#
+# The single-sample +47.7 MB above sits inside a ±120 MB run-to-run band.
+# Same binaries, same cell (imac_dark e7 lossless), /usr/bin/time -v:
+#
+#   Unpinned glibc (default), n=8/side alternating, sorted KB:
+#     base: 2432720 2472020 2500808 2517208 2577480 2602492 2652916 2684204
+#     ours: 2466916 2495920 2501280 2587292 2619164 2623668 2639184 2681820
+#     medians: base 2,547,344 / ours 2,603,228 (+54.6 MB) — but the
+#     distributions overlap almost entirely (base max 2,684,204 KB is
+#     ABOVE ours max 2,681,820 KB); per-binary spread is ±120 MB.
+#
+#   GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072 (adaptive threshold
+#   growth disabled), n=4/side alternating, KB:
+#     base: 1934644 1939040 1934112 1910252   (median 1,934,378)
+#     ours: 1938924 1923600 1931556 1932696   (median 1,932,126)
+#     => OURS is -2.2 MB vs BASE, and noise collapses to ±10 MB. Both
+#     binaries also drop ~600 MB of arena retention.
+#
+# Mechanism: the whole encoder (base included) churns multi-MB buffers;
+# glibc's adaptive mmap_threshold reacts by retaining freed arena pages,
+# so unpinned peak RSS is dominated by allocator policy, varying ±120 MB
+# between runs of the SAME binary. With the policy pinned, the tensor
+# live set is invisible at MB scale — consistent with the structural
+# bound (~2.3 MB/tensor on this cell x the 2-3 chained levels its
+# derive_pays gate permits; parents freed at derivation).
+#
+# Consequence: gate (g) "+20 MB" PASSES on the apples-to-apples
+# measurement (-2.2 MB median, pinned). Do NOT raise the
+# weighted_total >= 2048 gate for memory reasons — there is no memory
+# cost to shrink, and raising it would cut the wall win.
+#
+# (Count nit, same TSV data: 18/20 cells are >= 10.0% — the -10.38% e9
+# 1T cell qualifies; only -9.91% and -5.61% fall short.)
+#
+# Commands (addendum):
+#   for r in 1..8: /usr/bin/time -v {base,ours} imac_dark.png out.jxl --lossless -e 7   # alternating
+#   GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072 <same loop, n=4/side>
+# Addendum host: lilith (7950X, 128 GB, WSL2), binaries from c19815ff-
+# equivalent tree (276c94dd) vs its base, identical to the table above.
