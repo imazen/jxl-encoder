@@ -9583,7 +9583,21 @@ impl<'a> EncodeRequest<'a> {
         // proxy is well-defined on; for everything else (16-bit, linear-f32,
         // grayscale, HDR) the proxy stays `None` and the W44-91 gate
         // cannot fire — the W44-29 mask1x1<50 gate retains full coverage.
-        enc.zenanalyze_proxies = compute_w44_91_zenanalyze_proxies(pixels, w, h, self.layout);
+        //
+        // Perf (/goal hunt 2026-06-10): every proxy consumer is banded to
+        // effort >= 5 (the W44-164 classifier / 2c dispatch paths) or
+        // distance >= 2.0 (the W44-91/96/98/124 discriminators), so at
+        // e3/e4 with d < 2 the full-resolution classifier sweep
+        // (`compute_srgb_u8`, 24 % of e3 d=1 CPU) was computed and
+        // discarded. Skip it there — bytes A/B-verified identical across
+        // e3/e4/e5 × d1.0/d3.0. If a future consumer fires below this
+        // band, widen the predicate (the gate registry rows carry the
+        // bands).
+        enc.zenanalyze_proxies = if cfg.effort >= 5 || cfg.distance >= 2.0 {
+            compute_w44_91_zenanalyze_proxies(pixels, w, h, self.layout)
+        } else {
+            None
+        };
         // Streaming refactor #11 chunk 6: thread the caller-selected
         // [`Buffering`] policy into VarDctEncoder so the per-region
         // precompute dispatch (precomputed.rs:compute_with_budget_and_buffering)

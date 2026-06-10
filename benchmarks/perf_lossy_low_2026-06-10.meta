@@ -34,3 +34,22 @@
 # uncontended getenv below the noise floor. Shipped as byte-identical
 # consistency hygiene (all six dump modules now share the gate pattern);
 # bytes identical 6/6, env-fallback/dispatch override tests 20/20.
+#
+# ── ADDENDUM 2: proxy-skip at e<5 && d<2 ───────────────────────────────────
+# ZenanalyzeProxies::compute_srgb_u8 (the W44 content-classifier full-res
+# RGB sweep) was 24% of e3 d=1 CPU yet every consumer is banded to
+# effort>=5 (W44-164/2c classifier) or distance>=2.0 (W44-91/96/98/124
+# discriminators) — computed-and-discarded at e3/e4 d<2. Skip predicate
+# `effort >= 5 || distance >= 2.0` at the api.rs assignment site.
+# Bytes identical 12/12 across e{3,4,5} x d{1.0,3.0} (both sides of
+# every band edge); hash-locks x2 + libjxl byte-locks 5/5. The two
+# co-scheduled it-failures during gating were the DOCUMENTED env-
+# parallel flake (Known Bugs 2026-06-10) — both pass in isolation.
+# Walls (8 iters/side, load 2.6, -d 1.0):
+#   e3: terminal -20.44%  clic097 -19.82%  mobile -18.06%
+#   e4: terminal -17.41%  clic097 -19.84%  mobile -18.87%
+# Combined with the env-gates: lossy e3/e4 day delta ~ -25%.
+# Remaining at e5+/d>=2: compute_srgb_u8 is REAL consumer cost (the
+# classifier feeds active gates) — pinned as legitimate work; its f64
+# accumulation order is byte-relevant, so SIMD reassociation is not
+# byte-safe without re-locking.

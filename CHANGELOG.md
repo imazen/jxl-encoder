@@ -57,6 +57,12 @@
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
 ### Changed
+- **VarDCT: skip the content-classifier sweep where nothing consumes it
+  (byte-identical).** `ZenanalyzeProxies` (24 % of lossy e3 CPU) is now
+  computed only when a consumer can fire (`effort ≥ 5 || distance ≥ 2`);
+  bytes identical 12/12 across both sides of every band edge. Lossy
+  e3/e4 walls −17…−20 % on top of the env-gate wins (~−25 % combined)
+  (`benchmarks/perf_lossy_low_2026-06-10.meta` addendum 2).
 - **VarDCT: once-per-process gates on the diagnostic dump env hooks
   (byte-identical).** Five W44-era dump hooks probed `std::env::var`
   per BLOCK — 25–35 % of CPU at lossy e3/e4 (getenv + env RwLock + CStr
