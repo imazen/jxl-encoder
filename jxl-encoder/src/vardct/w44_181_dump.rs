@@ -33,7 +33,18 @@
 use std::sync::Mutex;
 
 #[cfg(feature = "std")]
+static DUMP_HOOK_PRESENT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+#[cfg(feature = "std")]
 fn dump_dir() -> Option<std::path::PathBuf> {
+    // Once-presence gate: probed per BLOCK from transform_blocks_into —
+    // the raw env::var_os here was the residual ~12 % getenv share at
+    // lossy e3/e4 after the first five hooks were gated
+    // (perf_lossy_low_2026-06-10.meta addendum). Absent at first probe
+    // => permanently disabled; present => legacy per-call re-reads.
+    if !*DUMP_HOOK_PRESENT.get_or_init(|| std::env::var_os("JXL_W44_181_DUMP_DC").is_some()) {
+        return None;
+    }
     std::env::var_os("JXL_W44_181_DUMP_DC").map(std::path::PathBuf::from)
 }
 

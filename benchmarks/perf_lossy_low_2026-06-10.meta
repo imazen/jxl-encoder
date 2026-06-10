@@ -23,3 +23,14 @@
 #   e4: terminal -8.40%  clic097 -7.50%  mobile -7.71%
 #   e5: terminal -3.03%  clic097 -1.42%  mobile -0.36%
 # Host: lilith (7950X, WSL2).
+#
+# ── ADDENDUM: sixth hook (w44_181_dump::dump_dc, JXL_W44_181_DUMP_DC) ──────
+# The post-fix profile showed residual getenv 6.7% + RwLock 5.3% at e3;
+# dwarf callgraph attributed it to w44_181_dump::dump_dc probing per
+# block from transform_blocks_into (missed by the first sweep — sixth
+# module). Same once-presence gate applied. Walls: ~NEUTRAL
+# (-0.65..+0.29% on 0.14-0.21s cells) — the env-RwLock contention had
+# already collapsed once the other five hooks stopped hammering, leaving
+# uncontended getenv below the noise floor. Shipped as byte-identical
+# consistency hygiene (all six dump modules now share the gate pattern);
+# bytes identical 6/6, env-fallback/dispatch override tests 20/20.
