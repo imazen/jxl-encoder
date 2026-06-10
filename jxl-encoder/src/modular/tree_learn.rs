@@ -2884,17 +2884,73 @@ fn dedup_samples_packed_sort(
     // compares resolving in-element — measured NEUTRAL-TO-WORSE
     // (clic ~0 %, city12mp +1.8 %, terminal +2.4 %): the 4x element
     // movement inside pdqsort offsets the avoided random key loads.
-    // Bare-index sort with the inline word comparator stands.
-    let mut order: Vec<u32> = (0..n as u32).collect();
-    #[cfg(feature = "parallel")]
-    {
-        use rayon::slice::ParallelSliceMut;
-        order.par_sort_unstable_by(|&a, &b| cmp_packed_key(&keys[a as usize], &keys[b as usize]));
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
+    //
+    // MSD radix bucketing (/goal hunt, "try radix" chunk 2):
+    // counting-sort the indices by the keys' 16-bit big-endian prefix
+    // into 65536 buckets (one count pass + one scatter), then sort each
+    // bucket independently with the full-key comparator. Buckets are
+    // prefix-ordered, so the concatenation is in full lexicographic key
+    // order; only the internal order of EQUAL keys can differ from the
+    // global pdqsort — and equal-key representative choice is PROVEN
+    // byte-irrelevant (representative-flip probe 2026-06-10: hash-locks
+    // 36/36 + terminal/clic097/noaa bytes identical — the packed key
+    // covers every downstream-read field). Per-bucket sorts are smaller
+    // (n log(n/65536) total) and parallelize across buckets without
+    // rayon's sort merge passes.
+    let order: Vec<u32> = if n < (1 << 14) {
+        // Small n: the 65536-entry tables would dominate — plain sort.
+        let mut order: Vec<u32> = (0..n as u32).collect();
         order.sort_unstable_by(|&a, &b| cmp_packed_key(&keys[a as usize], &keys[b as usize]));
-    }
+        order
+    } else {
+        const NB: usize = 1 << 16;
+        let mut starts = vec![0u32; NB + 1];
+        for k in &keys {
+            starts[(((k[0] as usize) << 8) | k[1] as usize) + 1] += 1;
+        }
+        for b in 0..NB {
+            starts[b + 1] += starts[b];
+        }
+        let mut order = vec![0u32; n];
+        let mut cursors: Vec<u32> = starts[..NB].to_vec();
+        for (i, k) in keys.iter().enumerate() {
+            let b = ((k[0] as usize) << 8) | k[1] as usize;
+            order[cursors[b] as usize] = i as u32;
+            cursors[b] += 1;
+        }
+
+        // Carve per-bucket &mut slices (disjoint by construction) so the
+        // bucket sorts can run independently.
+        let mut ranges: Vec<&mut [u32]> = Vec::new();
+        {
+            let mut rest: &mut [u32] = &mut order;
+            let mut prev = 0u32;
+            for b in 1..=NB {
+                let len = (starts[b] - prev) as usize;
+                prev = starts[b];
+                let (head, tail) = rest.split_at_mut(len);
+                if head.len() > 1 {
+                    ranges.push(head);
+                }
+                rest = tail;
+            }
+        }
+        let sort_bucket = |bucket: &mut [u32]| {
+            bucket.sort_unstable_by(|&a, &b| cmp_packed_key(&keys[a as usize], &keys[b as usize]));
+        };
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            ranges.into_par_iter().for_each(sort_bucket);
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            for bucket in ranges {
+                sort_bucket(bucket);
+            }
+        }
+        order
+    };
 
     // Walk sorted order, merge consecutive identical samples.
     let mut unique_indices: Vec<usize> = Vec::with_capacity(n / 2);
