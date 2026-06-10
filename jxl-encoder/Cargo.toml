@@ -344,6 +344,10 @@ archmage = { version = "0.9.15", default-features = false, features = ["macros",
 # cvvdp-vs-buttloop tracking baseline harness (docs/RFC_CVVDP_FORK.md §5).
 # Path-pinned via workspace [patch.crates-io] to the sibling zenmetrics
 # checkout. Only consumed by `examples/cvvdp_track_baseline.rs`.
+# 64-bit-only: cvvdp-gpu sizes an 8 GiB VRAM budget in usize, which does
+# not compile on 32-bit targets (i686/armv7 cross). The example is only
+# built by 64-bit `cargo test` runs, so nothing is lost on 32-bit.
+[target.'cfg(target_pointer_width = "64")'.dev-dependencies]
 cvvdp-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types"] }
 
 # codec-corpus uses fd-lock which doesn't compile on WASM

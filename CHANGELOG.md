@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Fixed (2026-06-10 CI repair, round 2)
+- **aarch64 NEON `compute_pre_erosion` read past the row/buffer on the last
+  image column.** The NEON and WASM128 ports of the pre-erosion kernel were
+  missing the AVX2 variant's `interior_end` right-edge guard: the 4-wide
+  `right`-neighbour load could cover the final column, reading the next
+  row's first pixel (wrong masking input) or running off the buffer on the
+  last row (panic — caught by `test_per_region_quant_field_matches_whole_image`
+  on the ubuntu-24.04-arm runner). The default whole-image path pads its
+  buffers and was unaffected; only the per-DC-group region path (#11
+  streaming work) on aarch64/wasm could observe it. All three vector
+  variants now cap the vector interior one column short of the image edge
+  and let the clamping scalar tail finish the row. Verified: aarch64 QEMU
+  suite passes, x86 hash-locks 36/36 byte-identical, 185 SIMD parity tests.
+- **32-bit cross builds**: `cvvdp-gpu` (dev-dep for one tracking example)
+  doesn't compile on 32-bit (8 GiB VRAM budget overflows usize — filed
+  imazen/zenmetrics#26); the dev-dep is now gated to
+  `cfg(target_pointer_width = "64")`.
+- **Corpus-gated decoder roundtrips + cross sibling mounts** (551eb7b8):
+  the 8 decoder-roundtrip tests that hardcoded the dev machine's corpus
+  path are now CODEC_CORPUS_DIR-resolved and `#[ignore]`-gated, run daily
+  by nightly with a sparse corpus checkout; cross containers now same-path
+  mount the host sibling layout via Cross.toml `[build.env] volumes`.
+
 ### Fixed (2026-06-09 CI repair)
 - **CI green again end-to-end.** Main had been red since 2026-05-19 (#66),
   letting breakage accumulate: the sibling-clone set was missing the

@@ -599,6 +599,14 @@ pub fn compute_pre_erosion_avx2(
         } else {
             diff_width
         };
+        // The last image column must stay scalar: its right neighbour
+        // clamps (`x2 = min(x+1, max_x)`), which the contiguous vector
+        // load cannot express — it would read the next row's first pixel
+        // (wrong value) or run off the buffer end on the last row
+        // (panic). Whole-image callers pad their buffers so this never
+        // fired there; the per-DC-group region path passes unpadded
+        // full-width tiles and exposed it on the 4-wide NEON port.
+        let interior_end = interior_end.min((width - 1).saturating_sub(x0));
 
         // Process scalar edges at start
         for local_x in 0..interior_start.min(diff_width) {
@@ -908,6 +916,19 @@ pub fn compute_pre_erosion_neon(
         let y1 = if y > 0 { (y - 1).min(max_y) } else { 0 };
 
         let interior_start = if x0 == 0 { 1 } else { 0 };
+        // Mirror the AVX2 interior bound: vector lanes may only cover
+        // columns whose left AND right neighbours are unclamped in-row
+        // reads. The last image column (right neighbour clamps) and any
+        // x1 > width overhang must go through the scalar tail — the
+        // 4-wide `right` load would otherwise read the next row (wrong
+        // value) or run past the buffer on the last row (the aarch64
+        // per-region panic this guard fixes).
+        let interior_end = if x1 > width {
+            diff_width.saturating_sub(1)
+        } else {
+            diff_width
+        };
+        let interior_end = interior_end.min((width - 1).saturating_sub(x0));
 
         // Scalar edges
         for local_x in 0..interior_start.min(diff_width) {
@@ -924,8 +945,8 @@ pub fn compute_pre_erosion_neon(
         }
 
         let mut local_x = interior_start;
-        let simd_end = if diff_width > 4 + interior_start {
-            diff_width - 3
+        let simd_end = if interior_end > 4 + interior_start {
+            interior_end - 3
         } else {
             interior_start
         };
@@ -1211,6 +1232,19 @@ pub fn compute_pre_erosion_wasm128(
         let y1 = if y > 0 { (y - 1).min(max_y) } else { 0 };
 
         let interior_start = if x0 == 0 { 1 } else { 0 };
+        // Mirror the AVX2 interior bound: vector lanes may only cover
+        // columns whose left AND right neighbours are unclamped in-row
+        // reads. The last image column (right neighbour clamps) and any
+        // x1 > width overhang must go through the scalar tail — the
+        // 4-wide `right` load would otherwise read the next row (wrong
+        // value) or run past the buffer on the last row (the aarch64
+        // per-region panic this guard fixes).
+        let interior_end = if x1 > width {
+            diff_width.saturating_sub(1)
+        } else {
+            diff_width
+        };
+        let interior_end = interior_end.min((width - 1).saturating_sub(x0));
 
         // Scalar edges
         for local_x in 0..interior_start.min(diff_width) {
@@ -1227,8 +1261,8 @@ pub fn compute_pre_erosion_wasm128(
         }
 
         let mut local_x = interior_start;
-        let simd_end = if diff_width > 4 + interior_start {
-            diff_width - 3
+        let simd_end = if interior_end > 4 + interior_start {
+            interior_end - 3
         } else {
             interior_start
         };
