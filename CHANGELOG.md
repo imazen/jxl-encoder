@@ -37,6 +37,14 @@
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
 ### Changed
+- **Tree learning: collect_residuals chunk A (issue #41, byte-identical).**
+  Spec properties write directly into the extended property buffer
+  (`compute_spec_properties_into`), replacing a measured-hot per-pixel
+  `copy_from_slice`, and the invariant ref-prop tail zero-fill is hoisted
+  out of the pixel loop. Bytes identical on the A/B grid + hash-locks
+  both feature sets; both property fns stay fully inlined (nm-verified).
+  Wall re-measure queued for a quiet box
+  (`benchmarks/perf_collect_chunka_2026-06-10.{tsv,meta}`).
 - **Tree learning: BestSplit side-costs rider (issue #64 follow-on,
   byte-identical).** `BestSplit` now carries the winning threshold's
   left/right entropy costs out of the split sweep; all six engine call
