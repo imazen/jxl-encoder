@@ -134,10 +134,10 @@ fn test_clic2025_first_5() {
     eprintln!("\n=== CLIC 2025 Multi-Group Quality Test ===\n");
 
     let corpus = jxl_encoder::test_helpers::corpus_dir();
-    let validation_dir = corpus.join("clic2025/validation");
+    let validation_dir = corpus.join("clic2025/training");
 
     let entries: Vec<_> = std::fs::read_dir(&validation_dir)
-        .expect("Could not read clic2025 validation directory")
+        .expect("Could not read clic2025 training directory")
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .take(5)
@@ -178,10 +178,10 @@ fn test_clic2025_all() {
     eprintln!("\n=== CLIC 2025 Full Validation Set Test (32 images) ===\n");
 
     let corpus = jxl_encoder::test_helpers::corpus_dir();
-    let validation_dir = corpus.join("clic2025/validation");
+    let validation_dir = corpus.join("clic2025/training");
 
     let mut entries: Vec<_> = std::fs::read_dir(&validation_dir)
-        .expect("Could not read clic2025 validation directory")
+        .expect("Could not read clic2025 training directory")
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .collect();
@@ -233,10 +233,10 @@ fn test_clic2025_small_crop() {
     eprintln!("\n=== CLIC 2025 Single-Group Quality Test (200x200 crop) ===\n");
 
     let corpus = jxl_encoder::test_helpers::corpus_dir();
-    let validation_dir = corpus.join("clic2025/validation");
+    let validation_dir = corpus.join("clic2025/training");
 
     let first_png = std::fs::read_dir(&validation_dir)
-        .expect("Could not read clic2025 validation directory")
+        .expect("Could not read clic2025 training directory")
         .filter_map(|e| e.ok())
         .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
@@ -326,11 +326,11 @@ fn test_save_multigroup_comparison() {
     eprintln!("\n=== Multi-Group Visual Comparison ===\n");
 
     let corpus = jxl_encoder::test_helpers::corpus_dir();
-    let validation_dir = corpus.join("clic2025/validation");
+    let validation_dir = corpus.join("clic2025/training");
     let output_dir = jxl_encoder::test_helpers::output_dir("clic2025");
 
     let first_png = std::fs::read_dir(&validation_dir)
-        .expect("Could not read clic2025 validation directory")
+        .expect("Could not read clic2025 training directory")
         .filter_map(|e| e.ok())
         .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
@@ -498,7 +498,7 @@ fn test_exact_multiples() {
     eprintln!("\n=== Testing Exact Multiples of 256 ===\n");
 
     let corpus = jxl_encoder::test_helpers::corpus_dir();
-    let validation_dir = corpus.join("clic2025/validation");
+    let validation_dir = corpus.join("clic2025/training");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -583,10 +583,10 @@ fn test_multigroup_sizes() {
     eprintln!("\n=== Multi-Group Size Scaling Test ===\n");
 
     let corpus = jxl_encoder::test_helpers::corpus_dir();
-    let validation_dir = corpus.join("clic2025/validation");
+    let validation_dir = corpus.join("clic2025/training");
 
     let first_png = std::fs::read_dir(&validation_dir)
-        .expect("Could not read clic2025 validation directory")
+        .expect("Could not read clic2025 training directory")
         .filter_map(|e| e.ok())
         .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
@@ -686,7 +686,7 @@ fn test_djxl_vs_jxl_oxide() {
     eprintln!("\n=== Comparing djxl vs jxl-oxide Decoding ===\n");
 
     let corpus = jxl_encoder::test_helpers::corpus_dir();
-    let validation_dir = corpus.join("clic2025/validation");
+    let validation_dir = corpus.join("clic2025/training");
     let output_dir = jxl_encoder::test_helpers::output_dir("clic2025");
 
     let first_png = std::fs::read_dir(&validation_dir)
@@ -848,7 +848,7 @@ fn test_section_sizes() {
     eprintln!("\n=== Section Size Analysis ===\n");
 
     let corpus = jxl_encoder::test_helpers::corpus_dir();
-    let validation_dir = corpus.join("clic2025/validation");
+    let validation_dir = corpus.join("clic2025/training");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -909,7 +909,7 @@ fn test_compare_working_vs_broken() {
     eprintln!("\n=== Comparing Working (512) vs Broken (768) ===\n");
 
     let corpus = jxl_encoder::test_helpers::corpus_dir();
-    let validation_dir = corpus.join("clic2025/validation");
+    let validation_dir = corpus.join("clic2025/training");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -989,7 +989,7 @@ fn test_nzeros_by_group() {
     eprintln!("\n=== Checking nzeros distribution by group ===\n");
 
     let corpus = jxl_encoder::test_helpers::corpus_dir();
-    let validation_dir = corpus.join("clic2025/validation");
+    let validation_dir = corpus.join("clic2025/training");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -1071,7 +1071,7 @@ fn test_per_group_corruption() {
     eprintln!("\n=== Per-Group Corruption Analysis ===\n");
 
     let corpus = jxl_encoder::test_helpers::corpus_dir();
-    let validation_dir = corpus.join("clic2025/validation");
+    let validation_dir = corpus.join("clic2025/training");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -1178,7 +1178,7 @@ fn test_real_photo_value_stats() {
     eprintln!("Checking decoded value ranges for real photos.\n");
 
     let corpus = jxl_encoder::test_helpers::corpus_dir();
-    let validation_dir = corpus.join("clic2025/validation");
+    let validation_dir = corpus.join("clic2025/training");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -1993,7 +1993,7 @@ fn test_analyze_clic_photo() {
     eprintln!("\n=== Analyzing CLIC Photo Properties ===\n");
 
     let corpus = jxl_encoder::test_helpers::corpus_dir();
-    let validation_dir = corpus.join("clic2025/validation");
+    let validation_dir = corpus.join("clic2025/training");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")

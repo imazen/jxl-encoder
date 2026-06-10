@@ -8,7 +8,7 @@ fn main() {
 
     // Load and crop a CLIC image to 256x256 (single group)
     let img_path = jxl_encoder::test_helpers::corpus_dir()
-        .join("clic2025/validation/a36713f1943dac6bc74dea50cadaee6f.png")
+        .join("clic2025/training/a36713f1943dac6bc74dea50cadaee6f.png")
         .to_string_lossy()
         .to_string();
 

@@ -3918,7 +3918,7 @@ mod dual_decoder_butteraugli_tests {
     #[ignore = "Visual comparison test"]
     fn test_save_broken_image() {
         let original_path = format!(
-            "{}/clic2025/validation/097cb426910ba8ce2525dd8bb7fb1777.png",
+            "{}/clic2025/training/097cb426910ba8ce2525dd8bb7fb1777.png",
             crate::test_helpers::corpus_dir().display()
         );
 

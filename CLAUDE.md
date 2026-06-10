@@ -455,16 +455,17 @@ those overrides mid-encode — parallel cross-contamination. Fix direction:
 serialize the env-mutating tests (shared mutex or `--test-threads=1` group)
 per the runtime-override isolation contract. NOT related to encoder output.
 
-### 2026-06-10: `just rd-regression` red for environment reasons (predates any current change)
+### RESOLVED 2026-06-10: `just rd-regression` red — was a one-time CID22 auto-download
 
-Two causes, neither an encoding regression: (a)
-`~/work/codec-corpus/clic2025/validation/` no longer exists on disk (corpus
-reorganization) — 10-15 cells fail with "No such file or directory" and count
-as regressions; re-fetch via codec-corpus tooling. (b) frymire (the only cell
-that runs) drifted FAVORABLY vs the stored baseline (d=1.0: −2.3 % bytes,
-better SSIM2; d=3.0: −3.1 %) — consistent with the 2026-06-10 2c
-screenshot-class lift (ae62c219) whose rd baseline was never regenerated.
-Baseline regen needs user sign-off (test-expectation change).
+The red run's "failed to open" cells were the 5 CID22-512 images, which
+`codec_corpus::Corpus::get("CID22/CID22-512/training")` downloaded DURING
+that first failing run; the immediate re-run is green 2/2 (13.9 s warm).
+frymire's post-2c drift is FAVORABLE and within tolerances — no baseline
+regen needed. (The initial diagnosis blaming a missing
+`clic2025/validation/` dir was wrong for rd-regression — that path was only
+referenced by ignored/visual tests + the fresh_encode example; the corpus
+renamed it to `clic2025/training/`, and all 15 stale refs were re-pointed
+the same day.)
 
 ## Investigation Notes
 

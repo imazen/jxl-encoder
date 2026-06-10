@@ -35,11 +35,15 @@
 #   - strategy_libjxl_byte_lock 5/5 (--features __expert).
 #   - Debug ptl encodes of clic097 + terminal at --lossless e7: asserts
 #     silent (borrowed engines on real content).
-#   - just rd-regression: RED for PRE-EXISTING environment reasons
-#     (clic2025/validation missing on disk; frymire baseline stale post-2c
-#     with FAVORABLE drift) — documented in CLAUDE.md Known Bugs; not
-#     caused by this change (asserts silent through those encodes, and the
-#     A/B below shows byte-identity against the true base binary).
+#   - just rd-regression: RED on the first run for a PRE-EXISTING
+#     environment reason — ADDENDUM (same day): root cause was the 5
+#     CID22-512 images, which codec-corpus auto-DOWNLOADED during that
+#     first failing run; the re-run is GREEN 2/2 with frymire's favorable
+#     post-2c drift inside tolerances. No baseline change was needed and
+#     none was made. (The meta's original "clic2025/validation missing"
+#     attribution was wrong for rd-regression — that dir was renamed to
+#     clic2025/training and only ignored/visual tests referenced it;
+#     refs re-pointed same day.) Not caused by this change either way.
 #
 # ── A/B grid (this file's .tsv) ─────────────────────────────────────────────
 # Binaries: BASE from git 98c5c713 (exported via git archive to a sibling
