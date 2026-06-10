@@ -706,6 +706,18 @@ Key files to port from `libjxl/lib/jxl/`:
 5. Parity tests: compare byte output with libjxl reference
 6. Use test images from `~/work/codec-corpus/`
 
+**Corpus note (2026-06-10)**: `~/work/codec-corpus/imazen-26/` is the new
+stratified 21-class corpus (6.6 GB, per-folder `MANIFEST.tsv` + unified
+`CORPUS-MANIFEST.tsv` with dims/format/license/provenance). For
+SCREENSHOT-class measurement prefer it over gb82-sc's 10 retro images:
+`8000-lilith-mobile-screenshots/` (32 modern mobile captures, 1080×2520
+class) + `8100-lilith-web-screenshots/<viewport>/` (370 web captures at 5
+viewport sizes, 375×667 → 2880×1800). It also adds content classes no
+prior bench covered: document scans (NPS/EPA/NOAA), patents, manuscripts,
+plots, renders, textures, AI illustrations. Keep gb82-sc cells in benches
+for continuity with the W44-era baselines; add imazen-26 strata for
+coverage. Stratify by folder, don't random-sample the modal class.
+
 **CRITICAL**: All roundtrip validation tests MUST include jxl-rs. Do not create tests
 that only use jxl-oxide or only use djxl - always include jxl-rs as well.
 
