@@ -24,3 +24,18 @@
 # scripts/bench_lossless_ab.py, same cells, before citing any number.
 # Binaries: base = main pre-chunk (= rider build), ours = this commit.
 # Host: lilith (7950X, WSL2), no target-cpu=native.
+#
+# ── ADDENDUM: quiet-box re-run (loadavg 0.71 start, 10 iters/side) ──────────
+# terminal +0.20%  imac_dark -0.23%  noaa -0.33%  mobile -0.67%
+# clic097 +1.61% — but base-min == ours-min EXACTLY (1.086 s both): the
+# median delta is tail noise. VERDICT: WALL-NEUTRAL within measurement
+# resolution (+-0.7% on mins). No regression (the noisy grid's +2.7%
+# does not reproduce), no claimable win. Change kept: byte-identical,
+# strictly-less-work, and the in-place property layout is the base
+# chunk B builds on.
+# LESSON for chunk B: the per-pixel copy was NOT load-bearing despite
+# its ~8% instruction-level attribution — inline-smeared addr2line
+# attribution overstates costs near copies. The verified targets remain
+# traverse_with_props branches, gather's scratch->SoA stores (its 22%
+# movdqu is a *reload feeding pushes*, i.e. store-side), and WP.
+# Quiet TSV: perf_collect_chunka_2026-06-10.quiet.tsv
