@@ -43,8 +43,10 @@
   `copy_from_slice`, and the invariant ref-prop tail zero-fill is hoisted
   out of the pixel loop. Bytes identical on the A/B grid + hash-locks
   both feature sets; both property fns stay fully inlined (nm-verified).
-  Wall re-measure queued for a quiet box
-  (`benchmarks/perf_collect_chunka_2026-06-10.{tsv,meta}`).
+  Quiet-box verdict: wall-neutral (±0.7 % on mins; base-min == ours-min
+  on the only positive-median cell) — kept as strictly-less-work
+  groundwork for the chunk-B restructure
+  (`benchmarks/perf_collect_chunka_2026-06-10.{tsv,quiet.tsv,meta}`).
 - **Tree learning: BestSplit side-costs rider (issue #64 follow-on,
   byte-identical).** `BestSplit` now carries the winning threshold's
   left/right entropy costs out of the split sweep; all six engine call
