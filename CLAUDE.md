@@ -621,10 +621,9 @@ measurement at equal or better coverage.
   the CLIC/gb82-sc continuity cells, via `scripts/bench_lossless_ab.py`.
 - **BestSplit side-costs rider — SHIPPED 2026-06-10** (byte-identical;
   six engine sites consume sweep-carried best_l/r_cost; permanent
-  debug-asserts verify carried == recomputed at every site). Wall effect
-  unresolved (grid ran under loadavg 5-20 from concurrent agents) —
-  quiet-machine re-run queued: `scripts/bench_lossless_ab.py`, cells in
-  `benchmarks/perf_bestsplit_rider_2026-06-10.meta`.
+  debug-asserts verify carried == recomputed at every site). Quiet-machine
+  wall: lossless photos -1.3..-1.8 % at 1T (e7+e9), -0.8 % 8T; controls
+  within noise (`benchmarks/perf_bestsplit_rider_2026-06-10.quiet.tsv`).
 - **Dispatch chunks 2b/2d** (issue #43): 2d = fine_grained_step at e9 on
   ≥4 MP (Pareto sweep first); 2b = DCT64 distance-gate expansion on medium
   (measure picks first). 2a + 2c shipped.

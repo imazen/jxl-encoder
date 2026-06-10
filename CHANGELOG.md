@@ -47,9 +47,9 @@
   consuming site. Proof: hash-locks 36/36 (default + parallel-tree-
   learning), libjxl byte-locks 5/5, full suite, and base-vs-ours sha256
   identity on 7 lossless cells + 2 lossy probes
-  (`benchmarks/perf_bestsplit_rider_2026-06-10.{tsv,meta}`). Wall deltas
-  from that grid are noise-dominated (other agents' un-niced jobs,
-  loadavg 5–20) — quiet-machine re-run queued before citing a number.
+  (`benchmarks/perf_bestsplit_rider_2026-06-10.{tsv,meta}`). Quiet-machine
+  re-run (`.quiet.tsv`, loadavg 0.7): lossless photos −1.3…−1.8 % wall at
+  1T (e7 and e9), −0.8 % at 8T; non-split-bound controls within noise.
 - **Lossless tree learning: parent-histogram subtraction (issue #64 chunk 1,
   PERF-HIST-SUB-LOSSLESS).** `find_best_split` per-node aggregates
   (per-(prop,pred,bucket,token) counts, extra-bit sums, bucket weights) are

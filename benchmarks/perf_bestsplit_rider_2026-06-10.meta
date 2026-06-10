@@ -74,6 +74,19 @@
 # re-run (same script, same cells) next time loadavg < 2 before citing
 # any wall number from this rider.
 #
+# ── ADDENDUM (same day): QUIET-MACHINE RE-RUN — wall resolved ──────────────
+# Same script, same cells, same binaries; loadavg 0.74 at start, 2.28 at
+# end (perf_bestsplit_rider_2026-06-10.quiet.tsv):
+#   clic097_e7  1T  -1.84%   clic097_e9 1T  -1.48%   clic028_e7 1T -1.34%
+#   clic097_e7  8T  -0.80%   (photos = the split-bound class)
+#   terminal_e7 1T  +1.27%   mobile_substack +0.57%  noaa_leslie -0.07%
+#   (controls — not split-bound; within run-to-run noise on sub-second /
+#   document cells. The noisy grid's noaa +3.26% collapsed to -0.07%,
+#   confirming it was load noise.)
+# Verdict: small consistent wall win exactly where the removed work
+# lives — lossless photos -1.3..-1.8% at 1T (e7 AND e9), -0.8% at 8T —
+# and no effect elsewhere. Bytes identical 7/7 again on the quiet grid.
+#
 # Cells: clic097/clic028 (CLIC-1024 photos, e7+e9 1T; photos are the
 # split-bound class), terminal (gb82-sc screenshot control — not
 # split-bound, expected ~0), noaa_leslie 8.4MP doc + mobile_substack
