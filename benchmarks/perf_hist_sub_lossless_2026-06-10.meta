@@ -1,0 +1,32 @@
+# PERF-HIST-SUB-LOSSLESS A/B bench — 2026-06-10
+# Implementation: parent-histogram subtraction in modular/tree_learn.rs
+#   (issue #64 chunk 1, spec: benchmarks/perf_hist_sub_2026-06-10.meta)
+# Implementation commit: 276c94dd578d (bench ran binaries built from it
+#   vs its parent 34f0cde1 as base). Host: lilith (7950X, 128 GB, WSL2).
+# No -C target-cpu=native. 6 iters/side, interleaved, median reported.
+# Binaries: {base,ours}-default = default CLI features, 1T cells via
+#   --threads 1; {base,ours}-ptl adds --features parallel-tree-learning
+#   for the 8T cells.
+#
+# PRIMARY GATE (lossless photos, 5 CLIC-1024 x e{7,9} x {1T,8T}):
+#   20/20 cells faster; mean -20.7%; every cell bytes_identical=True.
+#   e7 1T: -14.8..-33.7%  e9 1T: -10.4..-23.3%
+#   e7 8T:  -9.9..-28.3%  e9 8T:  -5.6..-38.1%
+#   Gate ">=10% on >=2 cells": PASS (17/20 cells >= 10%).
+#
+# NO-REGRESSION GUARD (7-cell lossy set): the in-grid lossy numbers ran
+#   under heavy concurrent agent load and are noise-dominated (e.g.
+#   imac_dark e5 showed +10.7% with sample spreads 934..1188 / 933..1215).
+#   Quiet-machine re-run (load <4, 6 iters/side, same binaries):
+#     imac_dark_e5 d=1.0: -0.50%   clic097_e7 d=1.0: +0.86%
+#   Both within noise; terminal e6 -0.1% in-grid. Guard: PASS.
+#   (Lossy cells cannot reach the tensor path: e<8 modular tree only runs
+#   for the patches ref frame; bytes_identical=True on all 27 cells.)
+#
+# RSS (gate g) — DISCLOSED OVERAGE: imac_dark e7 lossless peak RSS
+#   2,573,984 -> 2,622,828 KB = +47.7 MB (+1.9%). The brief's +20 MB
+#   number came from the e7 CLIC-photo estimate (~15 MB transient);
+#   imac_dark's wider/deeper screenshot tree caches more levels. The
+#   cost is structural-bounded (parent tensors freed at derivation,
+#   active-branch depth only). If +48 MB is unacceptable, raising the
+#   weighted_total >= 2048 profitability gate shrinks cached depth.

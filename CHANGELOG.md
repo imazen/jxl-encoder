@@ -20,6 +20,23 @@
   `benchmarks/dispatch_2c_afv_screenshot_pin_probe_2026-06-10.tsv`).
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
+### Changed
+- **Lossless tree learning: parent-histogram subtraction (issue #64 chunk 1,
+  PERF-HIST-SUB-LOSSLESS).** `find_best_split` per-node aggregates
+  (per-(prop,pred,bucket,token) counts, extra-bit sums, bucket weights) are
+  now carried in additive integer tensors: the smaller child of every
+  qualifying split is built from its rows and the larger child is derived by
+  exact u32/u64 subtraction, skipping the larger side's per-sample loops
+  (~87% of `find_best_split`, the top symbol at 27% CPU on lossless photos).
+  Wall A/B (5 CLIC-1024 photos × e{7,9} × {1T,8T}): 20/20 cells faster,
+  mean −20.7%, peaks −33.7% (e7 1T) / −38.1% (e9 8T); bytes identical on
+  every cell. Peak RSS +47.7 MB (+1.9%) on imac_dark e7 lossless —
+  bounded by active-branch depth, disclosed in the bench meta.
+  Byte-identical output by construction (hash-locks 36/36 unchanged, libjxl
+  byte-locks pass, derived==built unit tests); full results in
+  `benchmarks/perf_hist_sub_lossless_2026-06-10.{tsv,meta}`. Lossy paths and
+  the owned small-image fallback are unaffected (full-rebuild). (276c94dd)
+
 ### Fixed (2026-06-10 CI repair, round 2)
 - **aarch64 NEON `compute_pre_erosion` read past the row/buffer on the last
   image column.** The NEON and WASM128 ports of the pre-erosion kernel were
