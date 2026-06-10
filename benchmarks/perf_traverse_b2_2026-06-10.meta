@@ -1,0 +1,25 @@
+# PERF-TRAVERSE-B2 — 2026-06-10 (issue #41 chunk B2)
+#
+# Change: 3-pass row restructure of collect_residuals_with_tree_offset_
+# with_budget + batch_traverse_row. Pass 1 computes neighbors/WP/props
+# per pixel in the exact legacy order into row buffers; pass 2 resolves
+# all leaf indices with a K=8 interleaved tree walk (overlapping 8
+# dependent-load chains — the serial walk was 8.7% of CPU per the step-0
+# annotate); pass 3 emits tokens in legacy order. Leaf selection is a
+# pure function of (tree, props); props/WP sequences are order-identical
+# => byte-identical output.
+#
+# Gates: bytes identical on all 7 A/B cells (sha256 every iter);
+# hash-locks 36/36 default + parallel-tree-learning; lib 1487/1487;
+# lossless/modular/tree/dedup it 81/81; clippy clean.
+#
+# A/B vs B1 binary (8-10 iters/side, loadavg 1.25 — quiet; base binary
+# bit-identical to the B1-confirmation binary, cmp-verified after a
+# sibling zensim manifest drift forced a lock-edge add):
+#   terminal  -1.34%   imac_dark -1.72%   noaa -0.87%
+#   mobile    -1.74%   clic097   -2.06%*  clic028 -1.65%*
+#   (*focused 10-iter run; the 8-iter grid's clic097 +2.49% median had a
+#    FASTER min — tail noise, resolved by the focused run.)
+# Mins favor ours on all cells. VERDICT: -0.9..-2.1% wall across every
+# content class, stacking on B1's ~-1% on screens/docs.
+# Host: lilith (7950X, WSL2), no target-cpu=native.

@@ -37,6 +37,14 @@
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
 ### Changed
+- **Tree learning: batched MA-tree traversal in collect_residuals (issue
+  #41 chunk B2, byte-identical).** 3-pass row restructure: properties/WP
+  in legacy order into row buffers, then a K=8 interleaved tree walk
+  (`batch_traverse_row`) overlapping eight dependent-load chains, then
+  legacy-order token emission. Quiet A/B: −0.9…−2.1 % wall across every
+  content class (photos −1.7…−2.1 %, screens −1.3…−1.7 %, docs −0.9 %),
+  stacking on chunk B1
+  (`benchmarks/perf_traverse_b2_2026-06-10.{tsv,meta}`).
 - **Tree learning: gather row staging (issue #41 chunk B1,
   byte-identical).** Default-path `gather_channel_samples` stages each
   row's samples in flat column-major scratch and flushes once per row

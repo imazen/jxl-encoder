@@ -7902,13 +7902,12 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
 
     let mut tokens = Vec::new();
 
-    // Pre-allocated extended property buffer (reused per pixel)
+    // Width of one pixel's property record (row-major in `props_row`).
     let num_extended_props = if needs_ref_props {
         max_tree_prop + 1
     } else {
         NUM_PROPERTIES
     };
-    let mut extended_props = vec![0i32; num_extended_props];
 
     for (ch_idx, channel) in image.channels.iter().enumerate() {
         let width = channel.width();
@@ -7927,19 +7926,32 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
         let mut wp_state = WeightedPredictorState::new_with_budget(wp_params, width, budget)?;
         let mut prev_gradient: i32;
 
-        // The unused ref-prop tail [16 + 4*num_refs ..] is invariant across
-        // this channel's pixels (the per-pixel ref writes never touch it) —
-        // zero it once here instead of per pixel. Covers leftovers from a
-        // previous channel that had more reference channels; byte-identical
-        // (traverse sees the same zeros the per-pixel fill produced).
-        if needs_ref_props {
-            let tail_start =
-                (NUM_PROPERTIES + 4 * ref_channel_indices.len()).min(num_extended_props);
-            extended_props[tail_start..].fill(0);
-        }
+        // ── Issue #41 chunk B2: 3-pass row restructure ──────────────────
+        // Pass 1 walks the row in the exact legacy per-pixel order
+        // (neighbors → WP predict/property → spec(+ref) properties → WP
+        // error update) storing per-pixel state into row buffers; pass 2
+        // resolves all leaf indices with an ILP-friendly interleaved tree
+        // walk ([`batch_traverse_row`] — the serial dependent-load walk
+        // was 8.7 % of CPU per the step-0 annotate); pass 3 emits tokens
+        // in the legacy order. Leaf choice is a pure function of (tree,
+        // props), and props/WP state are produced in the identical
+        // per-pixel order, so the output is byte-identical.
+        //
+        // Buffers are fresh per channel: width varies, and a zeroed
+        // buffer gives the ref-prop tail its invariant zeros (per-pixel
+        // writes only touch [..16 + 4*num_refs)).
+        let prop_stride = num_extended_props;
+        let mut props_row: Vec<i32> = vec![0; prop_stride * width];
+        let mut wp_pred_row: Vec<i64> = vec![0; width];
+        let mut neigh_row: Vec<Neighbors> = vec![Neighbors::default(); width];
+        let mut pixel_row: Vec<i32> = vec![0; width];
+        let mut leaf_row: Vec<u32> = vec![0; width];
 
         for y in 0..height {
             prev_gradient = 0;
+
+            // Pass 1: neighbors + WP + properties, in the legacy
+            // per-pixel order, stored into the row buffers.
             for x in 0..width {
                 let pixel = channel.get(x, y);
                 let n = Neighbors::gather(channel, x, y);
@@ -7947,24 +7959,22 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
                 // Compute WP prediction and property
                 let (wp_pred, wp_max_error) = wp_state.predict_and_property(x, y, width, &n);
 
-                let leaf = if needs_ref_props {
-                    // Spec properties written straight into the extended
-                    // buffer's prefix — replaces a measured-hot per-pixel
-                    // copy_from_slice (perf_gather_profile_2026-06-10.meta).
-                    compute_spec_properties_into(
-                        (&mut extended_props[..NUM_PROPERTIES])
-                            .try_into()
-                            .expect("prefix is exactly NUM_PROPERTIES wide"),
-                        ch_idx as u32 + channel_offset,
-                        group_id,
-                        x,
-                        y,
-                        &n,
-                        prev_gradient,
-                        wp_max_error,
-                    );
-                    prev_gradient = extended_props[9];
+                let row_props = &mut props_row[x * prop_stride..x * prop_stride + prop_stride];
+                compute_spec_properties_into(
+                    (&mut row_props[..NUM_PROPERTIES])
+                        .try_into()
+                        .expect("prefix is exactly NUM_PROPERTIES wide"),
+                    ch_idx as u32 + channel_offset,
+                    group_id,
+                    x,
+                    y,
+                    &n,
+                    prev_gradient,
+                    wp_max_error,
+                );
+                prev_gradient = row_props[9];
 
+                if needs_ref_props {
                     // Compute reference channel properties
                     for (r, &ref_ch_idx) in ref_channel_indices.iter().enumerate() {
                         let ref_ch = &image.channels[ref_ch_idx];
@@ -7987,34 +7997,37 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
                         );
 
                         let base = NUM_PROPERTIES + r * 4;
-                        if base + 3 < num_extended_props {
-                            extended_props[base] = v.wrapping_abs();
-                            extended_props[base + 1] = v;
-                            extended_props[base + 2] = v.wrapping_sub(ref_predicted).wrapping_abs();
-                            extended_props[base + 3] = v.wrapping_sub(ref_predicted);
+                        if base + 3 < prop_stride {
+                            row_props[base] = v.wrapping_abs();
+                            row_props[base + 1] = v;
+                            row_props[base + 2] = v.wrapping_sub(ref_predicted).wrapping_abs();
+                            row_props[base + 3] = v.wrapping_sub(ref_predicted);
                         }
                     }
-                    traverse_with_props(tree, &extended_props)
-                } else {
-                    // Fast path: no ref properties needed
-                    let base_props = compute_spec_properties(
-                        ch_idx as u32 + channel_offset,
-                        group_id,
-                        x,
-                        y,
-                        &n,
-                        prev_gradient,
-                        wp_max_error,
-                    );
-                    prev_gradient = base_props[9];
-                    traverse_with_spec_props(tree, &base_props)
-                };
+                }
+
+                // WP error update in the legacy per-pixel position:
+                // nothing between predict(x) and update(x) reads WP
+                // state, so the error-state sequence is unchanged.
+                wp_state.update_errors(pixel, x, y, width);
+
+                wp_pred_row[x] = wp_pred;
+                neigh_row[x] = n;
+                pixel_row[x] = pixel;
+            }
+
+            // Pass 2: resolve every pixel's leaf with the interleaved walk.
+            batch_traverse_row(tree, &props_row, prop_stride, &mut leaf_row);
+
+            // Pass 3: emit tokens in the legacy order.
+            for x in 0..width {
+                let leaf = &tree[leaf_row[x] as usize];
 
                 // Predict using leaf's predictor
                 let prediction = if leaf.predictor == Predictor::Weighted {
-                    wp_pred as i32
+                    wp_pred_row[x] as i32
                 } else {
-                    leaf.predictor.predict_from_neighbors(&n)
+                    leaf.predictor.predict_from_neighbors(&neigh_row[x])
                 };
                 // Fuzz-hardening: reject i32-overflowing residuals before
                 // they corrupt token stream. Mirrors libjxl `SubOverflow`
@@ -8023,7 +8036,7 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
                 // Valid input never trips this (predictor range is
                 // bounded by channel range), so the fast path is one
                 // branch on success.
-                let residual = super::fuzz_safety::checked_residual(pixel, prediction)?;
+                let residual = super::fuzz_safety::checked_residual(pixel_row[x], prediction)?;
 
                 // Divide by multiplier for lossy modular quantization.
                 // When multiplier > 1, pixels have been pre-quantized to multiples of q
@@ -8047,9 +8060,6 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
                 };
                 let packed = pack_signed(divided);
 
-                // Update WP error tracking
-                wp_state.update_errors(pixel, x, y, width);
-
                 // Store raw packed residual — UintCoder (HybridUint {4,2,0}) encoding
                 // is applied by build_entropy_code_ans and write_tokens_ans
                 tokens.push(AnsToken::new(leaf.context_id, packed));
@@ -8058,6 +8068,75 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
     }
 
     Ok(tokens)
+}
+
+/// Issue #41 chunk B2: resolve a whole row's MA-tree leaves with an
+/// interleaved K-lane walk.
+///
+/// The scalar traversal is a serial dependent-load chain per pixel
+/// (node → property value → compare → child index → next node), measured
+/// at 8.7 % of CPU inlined into `collect_residuals_with_tree*`
+/// (`benchmarks/perf_gather_profile_2026-06-10.meta` addendum). Walking
+/// K pixels at once overlaps K independent chains: each loop iteration
+/// advances every still-active lane one level; lanes that reached a leaf
+/// idle on the `property < 0` check until the slowest lane finishes.
+/// Identical leaf selection to the scalar walk — same compares, same
+/// child links — just a different evaluation order across pixels.
+///
+/// `props_row` is row-major: pixel `x`'s properties live at
+/// `[x * stride .. (x + 1) * stride)`. Leaf node INDICES are written to
+/// `out` (callers re-borrow the node — indices avoid aliasing the tree
+/// borrow across the pass boundary).
+fn batch_traverse_row(tree: &Tree, props_row: &[i32], stride: usize, out: &mut [u32]) {
+    const K: usize = 8;
+    let w = out.len();
+    debug_assert!(props_row.len() >= w * stride);
+
+    let mut x = 0;
+    while x + K <= w {
+        let mut idxs = [0usize; K];
+        loop {
+            let mut active = false;
+            for (k, idx) in idxs.iter_mut().enumerate() {
+                let node = &tree[*idx];
+                if node.property >= 0 {
+                    active = true;
+                    let pval = props_row[(x + k) * stride + node.property as usize];
+                    *idx = if pval <= node.splitval {
+                        node.lchild
+                    } else {
+                        node.rchild
+                    };
+                }
+            }
+            if !active {
+                break;
+            }
+        }
+        for (k, &idx) in idxs.iter().enumerate() {
+            out[x + k] = idx as u32;
+        }
+        x += K;
+    }
+
+    // Scalar tail (row % K pixels) — same walk, one lane.
+    while x < w {
+        let mut idx = 0usize;
+        loop {
+            let node = &tree[idx];
+            if node.property < 0 {
+                break;
+            }
+            let pval = props_row[x * stride + node.property as usize];
+            idx = if pval <= node.splitval {
+                node.lchild
+            } else {
+                node.rchild
+            };
+        }
+        out[x] = idx as u32;
+        x += 1;
+    }
 }
 
 /// Traverse a tree using spec-matching property values (base 16 properties only).
