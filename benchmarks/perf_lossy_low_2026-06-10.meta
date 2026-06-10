@@ -1,0 +1,25 @@
+# PERF-LOSSY-LOW env-gate — 2026-06-10 (/goal hunt, lossy e3/e4/e5 landscape)
+#
+# The profile that found it (radix2 binary, -d 1.0 1T, terminal+clic097):
+#   e3/e4: std::env getenv 14.3-17.2% + env-RwLock read_contended
+#   5.9-12.2% + CStr::from_bytes_with_nul 5.5-7.6% — 25-35% of CPU in
+#   std::env::var machinery. Cause: the W44-era diagnostic dump hooks
+#   probe their env vars PER BLOCK on the bitstream/AC paths.
+#
+# Fix: once-per-process PRESENCE gate (OnceLock<bool>) on all five
+# per-call dump-hook reads — JXL_W44_76_PER_BLOCK_DUMP,
+# JXL_W44_201_COEFFS_DUMP, JXL_W44_182_DUMP_CFL,
+# JXL_W44_AUDIT_8_P4_DUMP, JXL_DUMP_POS. Absent at first probe =>
+# permanently disabled, zero further env reads; present => per-call
+# re-reads keep the documented repoint-between-images behaviour.
+# SEMANTICS NOTE: hooks must now be set before the process's first
+# encode (all known drivers already do).
+#
+# Gates: lossy bytes identical 9/9 (terminal/clic097/mobile x e3/e4/e5,
+# -d 1.0); hash-locks 36/36 x2; libjxl byte-locks 5/5; lib 1488; it 58.
+#
+# Walls (8 iters/side interleaved, loadavg ~4.4):
+#   e3: terminal -6.40%  clic097 -6.03%  mobile -6.79%
+#   e4: terminal -8.40%  clic097 -7.50%  mobile -7.71%
+#   e5: terminal -3.03%  clic097 -1.42%  mobile -0.36%
+# Host: lilith (7950X, WSL2).

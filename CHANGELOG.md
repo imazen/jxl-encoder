@@ -57,6 +57,14 @@
   Photos and sub-65,536-px inputs (all hash-lock fixtures) are untouched.
 
 ### Changed
+- **VarDCT: once-per-process gates on the diagnostic dump env hooks
+  (byte-identical).** Five W44-era dump hooks probed `std::env::var`
+  per BLOCK — 25–35 % of CPU at lossy e3/e4 (getenv + env RwLock + CStr
+  scan). Presence is now cached at first probe (absent ⇒ permanently
+  off; present ⇒ legacy re-read semantics). Lossy walls: e3 −6…−6.8 %,
+  e4 −7.5…−8.4 %, e5 −0.4…−3 %; bytes identical 9/9 + all locks. Hooks
+  must be set before the process's first encode
+  (`benchmarks/perf_lossy_low_2026-06-10.meta`).
 - **Tree learning: MSD radix bucketing for the dedup sort
   (byte-identical, proof-unblocked).** Equal-key representative choice
   was PROVEN byte-irrelevant (representative-flip probe: hash-locks +

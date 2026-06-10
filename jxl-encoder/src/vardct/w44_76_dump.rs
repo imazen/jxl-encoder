@@ -25,7 +25,20 @@ use std::sync::Mutex;
 use super::ac_strategy::STRATEGY_CODE_LUT;
 
 #[cfg(feature = "std")]
+static DUMP_HOOK_PRESENT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+#[cfg(feature = "std")]
 fn dump_dir() -> Option<std::path::PathBuf> {
+    // Perf: this gate is probed on the encode hot path; raw env::var_os
+    // per probe (getenv + env RwLock + CStr scan) measured 25-35 % of
+    // CPU at lossy e3/e4 (perf_lossy_low_2026-06-10.meta). The OnceLock
+    // caches PRESENCE at first probe: absent => permanently disabled for
+    // this process (zero further env reads); present => per-call
+    // re-reads keep the documented repoint-between-images behaviour.
+    // The hook must therefore be set before the process's first encode.
+    if !*DUMP_HOOK_PRESENT.get_or_init(|| std::env::var_os("JXL_W44_76_PER_BLOCK_DUMP").is_some()) {
+        return None;
+    }
     std::env::var_os("JXL_W44_76_PER_BLOCK_DUMP").map(std::path::PathBuf::from)
 }
 
@@ -143,7 +156,14 @@ struct CoeffsDumpState {
 }
 
 #[cfg(feature = "std")]
+static COEFFS_HOOK_PRESENT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+#[cfg(feature = "std")]
 fn coeffs_dump_dir() -> Option<std::path::PathBuf> {
+    // Same once-presence gate as `dump_dir` above — probed per block.
+    if !*COEFFS_HOOK_PRESENT.get_or_init(|| std::env::var_os("JXL_W44_201_COEFFS_DUMP").is_some()) {
+        return None;
+    }
     std::env::var_os("JXL_W44_201_COEFFS_DUMP").map(std::path::PathBuf::from)
 }
 
