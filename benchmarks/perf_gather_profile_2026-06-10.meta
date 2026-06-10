@@ -1,0 +1,45 @@
+# Issue-#41 step-0 re-profile — lossless e7 1T symbol shares post-hist-sub
+# + post-rider (2026-06-10, loadavg 1.4-1.9, quiet box)
+#
+# Binary: /tmp/rider_ours_default == main 50d6e676 build (release,
+# debug=true, no target-cpu=native; later main commits are docs/bench
+# only). perf record -e cycles:Pu, 1 run per cell, --threads 1,
+# perf report --no-children self-shares. Cells: bench-set picks
+# (lossless_bench_set_2026-06-10.tsv bench_input) + gb82-sc continuity.
+#
+# self % of CPU          clic097  city12mp  noaa   mobile  terminal  imac_dark
+#                        (1MP ph) (12MP ph) (8.4MP) (2.7MP) (1.6MP)  (3.5MP)
+# collect_residuals_*      14.0     11.9    20.0    19.3    20.4     22.7
+# gather_samples_*          7.5      7.9    19.2    14.6    17.2     16.7
+# WP::predict_and_property  7.0      6.1    14.5    10.9    14.8     12.6
+# find_best_split          15.1      9.8    <1.5     9.5    <1.5      5.0
+# __memcmp (dedup sort)    10.8     16.9     2.2     3.8     1.7      2.3
+# estimate_cost (RCT sel)   5.9      4.5     8.9     7.2     9.0      7.9
+# Vec::from_iter            5.3     11.2     —       2.3     —        —
+# build_node_tensor clo.    3.5      5.9     —       1.6     —        —
+# Neighbors::gather         —        —       2.3     1.8     2.3      2.0
+#
+# ── Findings (vs the screenshot-derived #41 option-C ranking) ───────────────
+# 1. collect_residuals is the #1 symbol on EVERY content class (12-23%) —
+#    the universal target. Ranking upgrade: collect first or jointly with
+#    gather (they share the per-pixel WP + residual+tokenize shape).
+# 2. gather_samples: 15-19% on screens/docs, only ~7.5-7.9% on photos
+#    (photos use 50% sampling stride; screens/docs gather more relative
+#    work). Confirms the SIMD chunk pays most on screenshots/documents.
+# 3. WP predict_and_property 6-15% everywhere — third member of the same
+#    per-pixel loop family; batching candidate per option-C item 3.
+# 4. NEW: large-photo regime has a DIFFERENT #1 — dedup packed-key-sort
+#    memcmp at 16.9% + Vec::from_iter 11.2% on the 12MP photo (~28%
+#    combined). This is the predicted O(n log n) crossover from the
+#    W44-137 triage of #41 Phase 1: inline hash-dedup, which lost at
+#    1024^2, should be re-evaluated specifically at >=8MP photo sizes.
+#    At 1MP photo memcmp is already 10.8%.
+# 5. find_best_split residual: 15.1% on clic097 / 9.8% on city12mp even
+#    post-hist-sub+rider (photos remain partially split-bound); screens/
+#    docs 1.4-5.0% as established.
+# 6. estimate_cost (select_best_rct trials) is a steady 4.5-9.0%
+#    everywhere — previously untracked; worth a look after the top items
+#    (it re-tokenizes the image per RCT candidate).
+#
+# Raw data: /tmp/gprof/{clic097,city12mp,noaa,mobile,terminal,imac_dark}
+# .data (regenerate with the commands above; not committed).
