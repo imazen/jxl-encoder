@@ -1,0 +1,26 @@
+# PERF-GATHER-B1 row staging — 2026-06-10 (issue #41 chunk B1)
+#
+# Change: GatherRowStaging in gather_channel_samples — on the default
+# (no-dedup) path each gathered sample writes into flat column-major row
+# scratch (plain indexed stores), flushed once per row as per-column
+# extend_from_slice memcpys. Replaces ~(2*num_pred + total_props) ≈ 45-60
+# Vec::push calls (each with capacity check + len update) per sample —
+# the store path that step-0 annotate showed as 22% of gather's cycles.
+# Dedup-backend paths (opt-in) keep per-sample pushes (inline probe needs
+# last-row interaction). Byte-identical: same values, same append order.
+#
+# Gates: bytes identical 5/5 cells (sha256 every iter); hash-locks 36/36
+# default + parallel-tree-learning; lib 1487/1487 (incl. dedup units);
+# lossless/modular/tree/dedup it 81/81; clippy clean.
+#
+# A/B (8 iters/side, loadavg 3.3 start — moderate; base = chunk-A build):
+#   medians: terminal -0.72%  imac_dark +1.02%  noaa -1.81%
+#            mobile -2.32%    clic097 -1.79%
+#   MINS (load-robust): ALL 5 ours-min <= base-min —
+#            terminal -0.9%  imac_dark -0.5%  noaa -2.0%
+#            mobile -1.5%    clic097 -0.1%
+# Read: consistent modest win on gather-heavy doc/screen cells
+# (-0.5..-2.0% on mins); imac_dark's +1.02% median is tail noise (its
+# min is FASTER). Quiet-box confirmation queued before headline numbers.
+# Binaries: base /tmp/chunka_ours (= main e86a3e48+), ours this commit.
+# Host: lilith (7950X, WSL2), no target-cpu=native.

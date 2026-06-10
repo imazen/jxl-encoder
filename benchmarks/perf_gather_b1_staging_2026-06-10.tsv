@@ -1,0 +1,6 @@
+cell	image	effort	threads	wall_base_median_s	wall_ours_median_s	delta_pct	base_min_max	ours_min_max	bytes	bytes_identical	deterministic
+terminal_e7	/home/lilith/work/codec-corpus/gb82-sc/terminal.png	7	1	0.701	0.696	-0.72	0.691/0.774	0.685/0.712	38749	True	True
+imac_dark_e7	/home/lilith/work/codec-corpus/gb82-sc/imac_dark.png	7	1	2.875	2.904	+1.02	2.845/3.120	2.830/3.231	430949	True	True
+noaa_leslie_e7	/home/lilith/work/codec-corpus/imazen-26/5300-noaa-hurricane-documents/5336_noaa_nhc-al132024-leslie_p05_2550x3300.png	7	1	3.278	3.219	-1.81	3.145/3.652	3.083/3.504	255415	True	True
+mobile_substack_e7	/home/lilith/work/codec-corpus/imazen-26/8000-lilith-mobile-screenshots/8021_mobile-screenshots_trump-pac-donation_screenshot-20260526-072032-substack_1080x2520.png	7	1	1.864	1.820	-2.32	1.782/2.083	1.756/2.045	498954	True	True
+clic097_e7	/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png	7	1	1.164	1.143	-1.79	1.133/1.195	1.132/1.211	593141	True	True

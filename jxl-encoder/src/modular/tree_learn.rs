@@ -1601,6 +1601,93 @@ pub fn compute_gather_stride_from_profile(
     }
 }
 
+/// Issue #41 chunk B1: flat column-major row staging for the no-dedup
+/// gather path.
+///
+/// The per-sample SoA push block costs `2*num_pred + total_props`
+/// (~45-60) individual `Vec::push` calls per gathered sample — each with
+/// its own capacity check and length update; the step-0 annotate showed
+/// 22% of `gather_samples`' cycles on the scratch->SoA store path
+/// (`benchmarks/perf_gather_profile_2026-06-10.meta`). Staging writes
+/// each sample into a flat per-column scratch (plain indexed stores, no
+/// branches) and flushes once per row as per-column
+/// `extend_from_slice` memcpys. Byte-identical: the same values are
+/// appended to the same columns in the same order.
+///
+/// Dedup-backend paths keep the per-sample pushes — the inline probe
+/// needs per-sample interaction with the last unique row.
+struct GatherRowStaging {
+    cap: usize,
+    n: usize,
+    num_pred: usize,
+    total_props: usize,
+    tokens: Vec<u8>,
+    ebits: Vec<u8>,
+    props: Vec<i32>,
+}
+
+impl GatherRowStaging {
+    fn new(cap: usize, num_pred: usize, total_props: usize) -> Self {
+        Self {
+            cap,
+            n: 0,
+            num_pred,
+            total_props,
+            tokens: vec![0; num_pred * cap],
+            ebits: vec![0; num_pred * cap],
+            props: vec![0; total_props * cap],
+        }
+    }
+
+    #[inline]
+    fn stage(
+        &mut self,
+        local_tokens: &[u8],
+        local_ebits: &[u8],
+        base_props: &[i32; NUM_PROPERTIES],
+        local_ref_props: &[i32],
+        max_refs: usize,
+    ) {
+        let i = self.n;
+        let cap = self.cap;
+        debug_assert!(i < cap);
+        for (p, (&t, &e)) in local_tokens.iter().zip(local_ebits.iter()).enumerate() {
+            self.tokens[p * cap + i] = t;
+            self.ebits[p * cap + i] = e;
+        }
+        for (prop, &v) in base_props.iter().enumerate() {
+            self.props[prop * cap + i] = v;
+        }
+        for r in 0..max_refs {
+            let col = NUM_PROPERTIES + r * 4;
+            let off = r * 4;
+            self.props[col * cap + i] = local_ref_props[off];
+            self.props[(col + 1) * cap + i] = local_ref_props[off + 1];
+            self.props[(col + 2) * cap + i] = local_ref_props[off + 2];
+            self.props[(col + 3) * cap + i] = local_ref_props[off + 3];
+        }
+        self.n = i + 1;
+    }
+
+    fn flush(&mut self, samples: &mut TreeSamples) {
+        let n = self.n;
+        if n == 0 {
+            return;
+        }
+        let cap = self.cap;
+        debug_assert_eq!(samples.props.len(), self.total_props);
+        for p in 0..self.num_pred {
+            samples.residual_tokens[p].extend_from_slice(&self.tokens[p * cap..p * cap + n]);
+            samples.extra_bits[p].extend_from_slice(&self.ebits[p * cap..p * cap + n]);
+        }
+        for c in 0..self.total_props {
+            samples.props[c].extend_from_slice(&self.props[c * cap..c * cap + n]);
+        }
+        samples.num_samples += n;
+        self.n = 0;
+    }
+}
+
 /// Gather samples from a single channel with stride-based subsampling.
 ///
 /// When `stride > 1`, only every `stride`-th pixel in scan order is sampled.
@@ -1669,6 +1756,14 @@ fn gather_channel_samples(
     // Detach the optional borrow so each `add` step can decide whether to
     // call `try_merge_last` without re-asking for the option.
     let mut dedup_backend = dedup_backend;
+
+    // Issue #41 chunk B1: row staging on the default (no-dedup) path —
+    // see [`GatherRowStaging`]. ~0.3 MB scratch at width 4096.
+    let mut staging = if dedup_backend.is_none() {
+        Some(GatherRowStaging::new(width, num_pred, total_props))
+    } else {
+        None
+    };
 
     // Stack scratch for accumulating per-sample fields before the SoA
     // push. Lets the dedup hash read from registers / L1 instead of
@@ -1761,6 +1856,22 @@ fn gather_channel_samples(
                     }
                     // Slots beyond ref_channel_indices.len() stay 0 by
                     // local_ref_props initialisation.
+                }
+
+                // Chunk B1 fast path: stage into flat row scratch; the
+                // per-row flush does the heap appends as per-column
+                // memcpys. Same values, same append order — byte-
+                // identical to the per-sample push block below.
+                if let Some(st) = staging.as_mut() {
+                    st.stage(
+                        &local_tokens[..num_pred],
+                        &local_ebits[..num_pred],
+                        &props,
+                        &local_ref_props,
+                        max_refs,
+                    );
+                    subsample_counter = stride - 1;
+                    continue;
                 }
 
                 // Probe the dedup backend BEFORE pushing to SoA columns.
@@ -1898,6 +2009,12 @@ fn gather_channel_samples(
 
                 subsample_counter -= 1;
             }
+        }
+
+        // Row boundary: bulk-flush this row's staged samples (no-op when
+        // a dedup backend is active or the row staged nothing).
+        if let Some(st) = staging.as_mut() {
+            st.flush(samples);
         }
     }
     Ok(())
