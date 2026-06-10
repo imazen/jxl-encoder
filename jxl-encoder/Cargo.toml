@@ -38,8 +38,12 @@ brotli = { version = "8.0", default-features = false, features = ["std"], option
 # helpers in `vardct::chroma_subsampling`. Gated `chroma-subsampling`
 # so callers that don't ship YCbCr paths don't pull the extra binary.
 zenyuv = { version = "0.1.3", default-features = false, optional = true }
-# Optional dependencies for butteraugli-loop and rate-control features
-jxl-oxide = { version = "0.12.5", default-features = false, optional = true }
+# Optional dependencies for butteraugli-loop and rate-control features.
+# rate-control decodes via zenjxl-decoder (in-org, buttloop-tunable) — its
+# F32 output path yields linear sRGB directly. jxl-oxide remains a DEV
+# dependency only (secondary roundtrip-validation decoder; jxl-rs + djxl
+# stay primary per CLAUDE.md).
+zenjxl-decoder = { version = "0.3.8", optional = true }
 butteraugli = { version = "0.9", optional = true }
 imgref = { version = "1.12", optional = true }
 rgb = { version = "0.8", optional = true }
@@ -126,8 +130,8 @@ debug-w44-65 = []
 # Spatial decision logging — writes sidecar CSV with per-rect decisions
 debug-rect = []
 # Iterative rate control for improved distance targeting.
-# Requires jxl-oxide for decoding and butteraugli for quality measurement.
-rate-control = ["dep:jxl-oxide", "dep:butteraugli", "dep:imgref", "dep:rgb"]
+# Requires zenjxl-decoder for decoding and butteraugli for quality measurement.
+rate-control = ["dep:zenjxl-decoder", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 # Butteraugli quantization loop: iteratively refines quant field using butteraugli distmap.
 butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
 # W44-phase3-B1: GPU butteraugli backend for the buttloop. Implies

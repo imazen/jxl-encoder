@@ -1385,12 +1385,12 @@ fn estimate_cost(image: &ModularImage) -> f64 {
     // Per-pixel core, shared by the edge and interior paths. Identical
     // math to the original scalar loop; only neighbor SELECTION moved to
     // the callers (hoisted rows, no per-pixel bounds branches inside).
-    let mut tally = |val: i32,
-                     left: i32,
-                     top: i32,
-                     topleft: i32,
-                     histograms: &mut Vec<Vec<u32>>,
-                     extra_bits: &mut u64| {
+    let tally = |val: i32,
+                 left: i32,
+                 top: i32,
+                 topleft: i32,
+                 histograms: &mut Vec<Vec<u32>>,
+                 extra_bits: &mut u64| {
         let max_diff = (left.max(top).max(topleft) - left.min(top).min(topleft)) as u32;
         let ctx = ctx_lut[(max_diff as usize).min(500)] as usize;
 

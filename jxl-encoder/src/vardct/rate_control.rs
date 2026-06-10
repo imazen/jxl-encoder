@@ -253,33 +253,71 @@ fn adjust_quant_field(
     }
 }
 
-/// Decode JXL to linear RGB.
+/// Decode JXL to linear sRGB f32, interleaved, 3 channels.
 ///
-/// Returns None if decoding fails.
+/// Decodes via zenjxl-decoder (in-org — freely tunable for the
+/// perceptual loop, unlike an external decoder): the F32 output path
+/// yields linear sRGB directly, no color-encoding request dance. Color
+/// channels only — alpha/extra channels are skipped, because the
+/// consumer contract (`compute_butteraugli_diffmap` against
+/// `precomputed.linear_rgb`) is 3-channel interleaved RGB; grayscale
+/// decodes are replicated to RGB. (The previous jxl-oxide
+/// `image_all_channels()` would have interleaved alpha into the buffer
+/// and broken the 3-channel diffmap stride on alpha inputs.)
+///
+/// Returns None on any decode failure (the caller keeps the encoded
+/// bytes from the last iteration, same as before).
 fn decode_jxl_to_linear(data: &[u8]) -> Option<Vec<f32>> {
-    // Use jxl-oxide for decoding as it's available as a dev dependency
-    // In production, this could use jxl-rs or any other decoder
-    use std::io::Cursor;
-
-    let cursor = Cursor::new(data);
-    let mut img = match jxl_oxide::JxlImage::builder().read(cursor) {
-        Ok(img) => img,
-        Err(_) => return None,
+    use zenjxl_decoder::api::{
+        JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat,
+        ProcessingResult, states,
     };
 
-    // Request linear sRGB output for butteraugli comparison
-    img.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
-        jxl_oxide::RenderingIntent::Relative,
-    ));
-
-    let render = match img.render_frame(0) {
-        Ok(r) => r,
-        Err(_) => return None,
+    let mut input: &[u8] = data;
+    let decoder = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
+    let mut dwi = match decoder.process(&mut input) {
+        Ok(ProcessingResult::Complete { result }) => result,
+        _ => return None,
     };
+    let (w, h) = dwi.basic_info().size;
+    if w == 0 || h == 0 {
+        return None;
+    }
 
-    let buf = render.image_all_channels();
-    let pixels = buf.buf().to_vec();
+    let cpf = dwi.current_pixel_format().clone();
+    let fmt = JxlPixelFormat {
+        color_type: cpf.color_type,
+        color_data_format: Some(JxlDataFormat::f32()),
+        extra_channel_format: cpf.extra_channel_format.iter().map(|_| None).collect(),
+    };
+    dwi.set_pixel_format(fmt.clone());
+    let n = fmt.color_type.samples_per_pixel();
 
+    let mut pixels = vec![0f32; w * h * n];
+    loop {
+        let dfi = match dwi.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => result,
+            _ => return None,
+        };
+        let bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut pixels);
+        let mut bufs = [JxlOutputBuffer::new(bytes, h, w * n * 4)];
+        dwi = match dfi.process(&mut input, &mut bufs) {
+            Ok(ProcessingResult::Complete { result }) => result,
+            _ => return None,
+        };
+        if !dwi.has_more_frames() {
+            break;
+        }
+    }
+
+    if n == 1 {
+        // Grayscale: replicate to the 3-channel layout the diffmap expects.
+        let mut rgb = Vec::with_capacity(w * h * 3);
+        for &v in &pixels {
+            rgb.extend_from_slice(&[v, v, v]);
+        }
+        return Some(rgb);
+    }
     Some(pixels)
 }
 

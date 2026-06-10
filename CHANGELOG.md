@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed
+- **rate-control decodes via zenjxl-decoder; jxl-oxide is dev-only.** The
+  library's only production jxl-oxide use (the `rate-control` feature's
+  decode-to-linear) now uses zenjxl-decoder's F32 output path (linear
+  sRGB directly, color channels only — the old `image_all_channels()`
+  would have interleaved alpha into the 3-channel diffmap stride).
+  jxl-oxide remains a dev-dependency for secondary roundtrip validation
+  (jxl-rs + djxl stay primary). Zero jxl-oxide-family crates left in the
+  normal dependency graph; rate-control integration tests (encode →
+  decode → butteraugli convergence) pass on the new decoder.
+
 ### Added (2026-06-10 lossless bench set)
 - **k-means-stratified lossless benchmark set from imazen-26**
   (`benchmarks/lossless_bench_set_2026-06-10.tsv` + `.meta`,
