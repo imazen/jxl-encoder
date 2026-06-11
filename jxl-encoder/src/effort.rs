@@ -953,6 +953,12 @@ pub struct EffortProfile {
     /// `vardct/precomputed.rs` and `vardct/encoder.rs`. Lower values
     /// produce a coarser initial field (less rate, more distortion);
     /// higher refines.
+    ///
+    /// **MEASURED: the 0.65 global flip is RULED OUT** — 29/36 cells
+    /// fail the ±0.30 SSIM2 / +2 % butteraugli budget (2026-05-25), and
+    /// the smooth-photo proxy gate for it is also ruled out (2026-06-10
+    /// 198-cell A/B, issue #25). Only per-image learned dispatch via the
+    /// `LossyInternalParams` override remains a sanctioned route.
     pub k_ac_quant: f32,
 
     // ─── Coefficient-domain multiplier constants ─────────────────────────
@@ -1100,6 +1106,15 @@ pub struct EffortProfile {
     /// pass would have collapsed bucket-equivalent rows that gather-time
     /// kept separate). Callers opt in via the `__expert` lossless
     /// override; sweep harnesses re-bake hash-locks when they do.
+    ///
+    /// **MEASURED: ALWAYS WORSE OR TIE — do not enable for performance.**
+    /// End-to-end it loses to the default packed-key sort at every
+    /// measured size: 1024² photos (W44-137 triage, the Phase-1/2 arc)
+    /// and the ≥8 MP re-bench (+4.2 % at 4.19 MP, tie at 12 MP city,
+    /// +1.4 % at 12 MP nature —
+    /// `benchmarks/perf_dedup_8mp_rebench_2026-06-10.meta`). The
+    /// per-sample probe cost scales with the same `n` the sort does.
+    /// Kept as A/B infrastructure only.
     pub gather_dedup: bool,
     /// Phase 3 of issue #41 — switch gather-time dedup to the
     /// inline-fingerprint cuckoo table
@@ -1119,10 +1134,16 @@ pub struct EffortProfile {
     /// override (`LosslessInternalParams::gather_dedup_phase3`).
     ///
     /// The microbench (`benches/dedup_samples_strategies.rs`,
-    /// `benchmarks/inline_dedup_microbench_2026-05-17.txt`) shows
+    /// `benchmarks/inline_dedup_microbench_2026-05-17.txt`) showed
     /// +36 %-53 % gather-throughput vs Phase 1 on high-duplication
-    /// streams; real-photo gather payoff depends on spatial duplication
-    /// ratios and is decided by Chunk 2's end-to-end A/B at e7 / 1.05 MP.
+    /// streams — but the end-to-end verdicts are in and negative:
+    ///
+    /// **MEASURED: ALWAYS WORSE OR TIE — do not enable for performance.**
+    /// Phase 3 vs Phase 2 is noise (±1.3 %), and the whole inline-dedup
+    /// family loses to the default packed-key sort at 1024² (W44-137)
+    /// AND at ≥8 MP (`perf_dedup_8mp_rebench_2026-06-10.meta` — the
+    /// size-crossover hypothesis was tested and does NOT materialize).
+    /// Kept as A/B infrastructure only.
     pub gather_dedup_phase3: bool,
 
     // ─── Parallel tree-learning tuning ────────────────────────────────────
@@ -2808,6 +2829,11 @@ pub struct LossyInternalParams {
     /// quant field (libjxl 0.765, `enc_adaptive_quantization.cc`). Lower
     /// values produce a coarser initial field (less rate, more distortion);
     /// higher values refine.
+    ///
+    /// **MEASURED: `Some(0.65)` as a global setting is RULED OUT**
+    /// (29/36 cells fail the ±0.30 SSIM2 budget; the smooth-photo proxy
+    /// gate variant also ruled out — issue #25). Sanctioned use is
+    /// per-image learned dispatch only.
     pub k_ac_quant: Option<f32>,
 
     /// Override the number of butteraugli-loop seeds (RFC#45 pick #1
@@ -2910,6 +2936,10 @@ pub struct LosslessInternalParams {
     /// later), so the surviving unique set is a strict superset of the
     /// bucket-equivalence set the sort path collapses to. Hash-locks must
     /// be re-baked when sweep harnesses enable this.
+    ///
+    /// **MEASURED: ALWAYS WORSE OR TIE** at 1024² (W44-137) and ≥8 MP
+    /// (`perf_dedup_8mp_rebench_2026-06-10.meta`) — A/B infrastructure
+    /// only, never a perf win. See [`EffortProfile::gather_dedup`].
     pub gather_dedup: Option<bool>,
 
     /// Phase 3 of issue #41 — when [`Self::gather_dedup`] is `Some(true)`,
@@ -2930,6 +2960,10 @@ pub struct LosslessInternalParams {
     /// switch on top of an already-enabled `gather_dedup` does NOT require
     /// re-baking hash_lock sidecars — but it DOES change end-to-end
     /// wall-clock, which is the only reason to use it.
+    /// **MEASURED: noise vs Phase 2, and the inline-dedup family is
+    /// ALWAYS WORSE OR TIE end-to-end at every size**
+    /// (`perf_dedup_8mp_rebench_2026-06-10.meta`) — A/B infrastructure
+    /// only. See [`EffortProfile::gather_dedup_phase3`].
     pub gather_dedup_phase3: Option<bool>,
 
     /// Maximum depth of parallel recursion in the tree learner

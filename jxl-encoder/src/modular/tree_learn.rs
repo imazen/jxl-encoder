@@ -272,6 +272,10 @@ pub struct TreeLearningParams {
     /// [`crate::api::LosslessConfig`] `__expert` overrides and re-bake
     /// the hash-lock sidecars; the sort path remains the byte-identical
     /// default.
+    ///
+    /// **MEASURED: ALWAYS WORSE OR TIE** at every size (W44-137 at
+    /// 1024²; `perf_dedup_8mp_rebench_2026-06-10.meta` at 4-12 MP) —
+    /// A/B infrastructure only.
     pub gather_dedup: bool,
     /// Phase 3 of issue #41 — when [`Self::gather_dedup`] is also `true`,
     /// route the gather-time dedup table through
@@ -281,6 +285,10 @@ pub struct TreeLearningParams {
     /// gather-dedup baseline.
     ///
     /// Default `false`. Has no effect when `gather_dedup` is `false`.
+    ///
+    /// **MEASURED: P2↔P3 is noise (±1.3 %) and the inline-dedup family
+    /// loses end-to-end at every size** — A/B infrastructure only
+    /// (`perf_dedup_8mp_rebench_2026-06-10.meta`).
     pub gather_dedup_phase3: bool,
     /// Maximum depth of parallel recursion in the borrowed-view subtree
     /// builder (`build_subtree_recursive_parallel_borrowed`).

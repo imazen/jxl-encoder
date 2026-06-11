@@ -150,6 +150,10 @@ quantization pipeline, the butteraugli quantization loop at e8+, and the
 modular (lossless) path beats cjxl e7 on CLIC photos. JPEG-in-JXL transcode
 sits at +0.115 % vs cjxl e7 with 200/200 byte-exact reconstruction.
 
+Expert knobs measured ALWAYS-WORSE are tabled in
+[docs/EXPERT_KNOBS_MEASURED_WORSE.md](docs/EXPERT_KNOBS_MEASURED_WORSE.md)
+(same verdicts carried as **MEASURED** warnings on the field rustdocs).
+
 Where we intentionally diverge from libjxl, the row lives in
 [docs/LIBJXL_DIVERGENCES.md](docs/LIBJXL_DIVERGENCES.md) (single source of
 truth, drift-tested in CI). Measure current RD with `just quality-compare`

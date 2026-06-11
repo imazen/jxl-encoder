@@ -2725,6 +2725,11 @@ impl LosslessConfig {
     /// Squeeze is disabled by default because tree learning provides better
     /// compression on both photos and screenshots. Squeeze can still be
     /// enabled via `.with_squeeze(true)` for experimentation.
+    ///
+    /// **MEASURED: ALWAYS LARGER OUTPUT** — squeeze+tree vs tree-only:
+    /// +14.7 % on 1024² CLIC photos, +62 % on screenshots (imac_dark).
+    /// Its purpose is progressive decoding, not compression; enable only
+    /// when progressive lossless decode is the requirement.
     pub fn with_squeeze(mut self, enable: bool) -> Self {
         self.squeeze = enable;
         self
@@ -5384,6 +5389,13 @@ impl LossyConfig {
     ///
     /// Gated on `tuning-override`; the underlying types only exist
     /// under that feature.
+    ///
+    /// **MEASURED DANGER REGION**: raw per-stratum sweep optima with
+    /// `k1 < 0.5` or `k2 < 1.0` on screen/{very_high,high} strata
+    /// re-incur the W44-105 SHIP-cell catastrophe (−4.9 to −5.1 SSIM2;
+    /// W44-228c1 validation). Knob sets must be Pareto-validated on
+    /// SHIP cells (bytes AND SSIM2) before install — see the
+    /// "Tier-2 knobs / sweeps" binding constraints in CLAUDE.md.
     #[cfg(feature = "tuning-override")]
     pub fn with_knobs(mut self, knobs: crate::tuning::coupling::Tier2Knobs) -> Self {
         self.tier2_knobs = Some(knobs);

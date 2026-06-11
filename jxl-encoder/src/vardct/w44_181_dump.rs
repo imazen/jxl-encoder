@@ -118,6 +118,7 @@ pub fn dump_dc(
 
 #[cfg(not(all(feature = "std", feature = "__env_var_diagnostics")))]
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 pub fn dump_dc(
     _bx: usize,
     _by: usize,
