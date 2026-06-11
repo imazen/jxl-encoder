@@ -15,3 +15,17 @@
 # The cliff is e6->e7 (7.41x, tree learning enables); e7..e11 steps are
 # 2.1-2.7x each. Post-hist-sub e10/e11 budgets for the #45 RFC's
 # wall-bounded tiers should anchor on these, not the pre-c19815ff tables.
+#
+# ── LOAD CAVEAT (user directive 2026-06-11) ────────────────────────────────
+# These walls were captured while the box hosted overnight background
+# activity (remote-orchestration ssh sessions, earlier capture tails;
+# loadavg 1-4 across the window). Per the user: DO NOT use these numbers
+# to dispose decisions. Status: INDICATIVE ONLY — anchor-quality requires
+# a quiet-box re-run (loadavg < 1, nothing concurrent) of the same grid.
+# The RATIO structure (e6->e7 cliff, ~2.2x/tier, e9/e7 ~5.5x) is likely
+# robust (same-load A/B within each cell), the ABSOLUTE seconds are not.
+# Same caveat applies to the step-0 perf SHARES in
+# perf_gather_profile_2026-06-10.meta ADDENDUM 4 (the 15.1%->25.3%
+# find_best_split swing may itself be load contamination): the gather
+# REJECTION rests on ranking (never top on photos), which is robust, but
+# absolute shares await quiet confirmation.
