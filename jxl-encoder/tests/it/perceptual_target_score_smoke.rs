@@ -380,7 +380,8 @@ fn target_score_multi_decoder_roundtrip_via_jxl_oxide() {
     // gradient (smooth) and noise (high-frequency) content. Sizes
     // chosen to stay in the synthetic-only regime (avoid corpus-corpus
     // dep).
-    let fixtures: &[(fn() -> Vec<u8>, u32, u32, &str)] = &[
+    type Fixture = (fn() -> Vec<u8>, u32, u32, &'static str);
+    let fixtures: &[Fixture] = &[
         (gradient_rgb_64x64, 64, 64, "gradient_64x64"),
         (noise_rgb_96x96, 96, 96, "noise_96x96"),
     ];

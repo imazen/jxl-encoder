@@ -12,6 +12,10 @@
 //! intentionally still lossless at all `alpha_distance` values for this
 //! chunk; see the doc on [`LossyConfig::with_alpha_distance`]).
 
+// `EncoderImprovementsCustom` is #[non_exhaustive]: Default-then-assign is
+// the only construction available outside the crate, so the clippy
+// field_reassign_with_default suggestion (struct literal) cannot compile.
+#![allow(clippy::field_reassign_with_default)]
 use jxl_encoder::{EpfDispatch, LossyConfig, PixelLayout, PixelLossDispatch};
 
 fn rgb8_buf(w: u32, h: u32) -> Vec<u8> {
@@ -626,7 +630,7 @@ fn lossless_keep_invisible_false_jxl_rs_roundtrip() {
 
 // ─── W36-2: EpfDispatch wiring ─────────────────────────────────────────────
 
-/// `LossyConfig::with_epf_dispatch` round-trips via `epf_dispatch()`.
+// `LossyConfig::with_epf_dispatch` round-trips via `epf_dispatch()`.
 // W44-130 Chunk D: `with_epf_dispatch` / `epf_dispatch()` setters
 // deleted; behavioral coverage is now via the bytes-vary tests below
 // (`epf_dispatch_always_default_changes_bytes_on_textured` +

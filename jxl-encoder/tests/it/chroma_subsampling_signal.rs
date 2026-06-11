@@ -96,8 +96,8 @@ fn decode_via_jxl_rs(bytes: &[u8]) {
         }
     }
 
-    assert_eq!(width as usize, W);
-    assert_eq!(height as usize, H);
+    assert_eq!(width, W);
+    assert_eq!(height, H);
 }
 
 fn assert_invalid_config_with_tag(err: &EncodeError, tag: &str) {

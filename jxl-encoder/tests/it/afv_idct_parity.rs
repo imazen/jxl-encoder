@@ -22,6 +22,10 @@
 //! If this test FAILS: identify the divergence (basis transcription /
 //! sign flip / quadrant orientation / DC-packing math), ship the fix.
 
+// Reference tables below are copied VERBATIM from libjxl's AFV basis
+// (enc_transforms-inl.h) — keep the literal digits, including values that
+// happen to equal mathematical constants (clippy::approx_constant).
+#![allow(clippy::approx_constant)]
 use jxl_encoder::vardct::__afv::{afv_transform_from_pixels, inverse_afv_transform};
 
 /// Hand-ported `k4x4AFVBasis[16][16]` from libjxl
@@ -286,13 +290,13 @@ fn afv_dc_packing_parity() {
         libjxl_afv_idct_4x4_reference(&afv_in, &mut afv_block);
 
         // The DC-only IDCT for AFV is `pixel[i] = dc_afv * K4X4_AFV_BASIS[0][i] = dc_afv * 0.25`
-        for i in 0..16 {
+        for (i, &px) in afv_block.iter().enumerate() {
             assert!(
-                (afv_block[i] - dc_afv * 0.25).abs() < 1e-5,
+                (px - dc_afv * 0.25).abs() < 1e-5,
                 "AFV{} DC-only block[{}] = {} should be dc*0.25 = {}",
                 afv_kind,
                 i,
-                afv_block[i],
+                px,
                 dc_afv * 0.25
             );
         }
@@ -403,7 +407,7 @@ fn afv_forward_inverse_roundtrip_gradient() {
 /// Constant-pixel roundtrip: every kind should preserve a constant.
 #[test]
 fn afv_constant_roundtrip() {
-    let pixels = [3.14f32; 64];
+    let pixels = [3.5f32; 64];
     for afv_kind in 0..4usize {
         let mut coeffs = [0.0f32; 64];
         afv_transform_from_pixels(&pixels, afv_kind, &mut coeffs);

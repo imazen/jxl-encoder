@@ -1001,14 +1001,14 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
 
     // Per-seed diagnostics are emitted inside the loop via the
     // `MULTI_SEED_TREE_PICK` trace; here we just summarise the picked tree.
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "DIAG tree: {} nodes, {} contexts, {} total_tokens (seeds={})",
         tree.len(),
         num_contexts,
         all_tokens.len(),
         seeds,
     );
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "DIAG code: {} histograms (from {} contexts), rct={:?}, compact={}",
         code.histograms.len(),
         ans_num_contexts,
@@ -1025,7 +1025,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     // Write the learned tree
     let bits_before_tree = writer.bits_written();
     write_tree(writer, &tree)?;
-    let tree_bits = writer.bits_written() - bits_before_tree;
+    let _tree_bits = writer.bits_written() - bits_before_tree;
 
     // Write LZ77 header + ANS data histogram.
     let bits_before_histo = writer.bits_written();
@@ -1035,7 +1035,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     } else {
         write_ans_modular_header(writer, &code)?;
     }
-    let histo_bits = writer.bits_written() - bits_before_histo;
+    let _histo_bits = writer.bits_written() - bits_before_histo;
 
     // GroupHeader (global modular group)
     writer.write(1, 1)?; // use_global_tree = true
@@ -1056,17 +1056,17 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     let meta_token_slice = &all_tokens[..nb_meta_tokens];
     write_tokens_ans(meta_token_slice, &code, lz77_params.as_ref(), writer)?;
 
-    let total_lf_global_bits = writer.bits_written() - bits_before;
-    eprintln!(
+    let _total_lf_global_bits = writer.bits_written() - bits_before;
+    crate::trace::debug_eprintln!(
         "DIAG LfGlobal: tree={} bits ({} B), histo={} bits ({} B), \
          meta_tokens={}, total={} bits ({} B)",
-        tree_bits,
-        tree_bits / 8,
-        histo_bits,
-        histo_bits / 8,
+        _tree_bits,
+        _tree_bits / 8,
+        _histo_bits,
+        _histo_bits / 8,
         nb_meta_tokens,
-        total_lf_global_bits,
-        total_lf_global_bits / 8,
+        _total_lf_global_bits,
+        _total_lf_global_bits / 8,
     );
 
     writer.zero_pad_to_byte();

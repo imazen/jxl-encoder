@@ -13,7 +13,7 @@
 //! - `idct_8x8` (the dominant strategy)
 //! - `idct_16x16`, `idct_16x8`, `idct_8x16`
 //! - `idct_4x4` (DCT4X4 strategy inner kernel — covers 4 sub-blocks
-//!    of the full 8x8 in `idct_4x4_full`)
+//!   of the full 8x8 in `idct_4x4_full`)
 //! - `idct_4x8`, `idct_8x4` (DCT4X8/DCT8X4 inner kernels)
 //! - `idct_4x4_full`, `idct_4x8_full`, `idct_8x4_full`
 //!   (the actual reconstruction paths called from `reconstruct.rs`)
