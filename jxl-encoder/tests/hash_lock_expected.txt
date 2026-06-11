@@ -37,3 +37,4 @@ lossy_with_error_diffusion 202 0x3ba5403031c1499f 0xee82f83f9d995c79
 lossy_with_lz77_greedy 3219 0xb81c2f58aebac4b3 0x52244006ebf18181
 lossy_with_lz77_rle 3219 0xb81c2f58aebac4b3 0x52244006ebf18181
 lossy_with_noise 3219 0xb81c2f58aebac4b3 0x52244006ebf18181
+lossless_mg_rgb_512x512_tiled_e8@aarch64 70947 0x7b20624a484734c6 0xe82dc3459e4a4d1e

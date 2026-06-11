@@ -215,13 +215,28 @@ fn assert_hashes(
     }
 
     let expected = load_expected();
-    let exp = expected.get(name).unwrap_or_else(|| {
-        panic!(
-            "{name}: no expected hashes in sidecar. Run:\n  \
+    // Per-arch override: `name@<arch>` lines in the sidecar take
+    // precedence over the bare name. Used ONLY where a platform's libm
+    // produces a different (equally valid) encode — e.g. enhanced
+    // clustering's f32 log2 hits a near-tie merge decision that flips
+    // between glibc x86_64 and aarch64 (first seen on the 512x512
+    // tiled-noise e8 cell: identical tree + identical LZ77 stream, 34 vs
+    // 35 histograms). Override lines are added MANUALLY with the values
+    // measured on that platform — regen (UPDATE_HASHES) always writes
+    // bare names from the canonical x86_64 dev box. The lock stays
+    // byte-exact on every platform; the divergence is documented, not
+    // tolerated away.
+    let arch_key = format!("{name}@{}", std::env::consts::ARCH);
+    let exp = expected
+        .get(&arch_key)
+        .or_else(|| expected.get(name))
+        .unwrap_or_else(|| {
+            panic!(
+                "{name}: no expected hashes in sidecar. Run:\n  \
              rm -f jxl_encoder/tests/hash_lock_expected.txt && \
              UPDATE_HASHES=1 cargo test --test hash_lock_features -- --test-threads=1"
-        );
-    });
+            );
+        });
 
     assert_eq!(
         data.len(),
