@@ -7987,8 +7987,20 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
     let mut tokens = Vec::with_capacity(total_px);
 
     // Width of one pixel's property record (row-major in `props_row`).
+    //
+    // #68: round the ref-property tail up to a WHOLE 4-slot ref-group.
+    // The per-pixel writer fills ref groups four-at-a-time behind a
+    // `base + 3 < prop_stride` guard; with the stride cut at
+    // `max_tree_prop + 1`, a tree whose maximum property id lands
+    // mid-group (id % 4 != 3 — only reachable at e9+, where the learner
+    // may split on slots 0..2) made that guard skip the ENTIRE top
+    // group, so the walk read zeros where every decoder computes real
+    // values: context desync → truncated-section EOF in zenjxl-decoder
+    // / jxl-oxide / djxl. e≤8 trees only ever split on slot 3, whose
+    // group is always complete — which is why this was e9+-only.
     let num_extended_props = if needs_ref_props {
-        max_tree_prop + 1
+        let ref_tail = max_tree_prop + 1 - NUM_PROPERTIES;
+        NUM_PROPERTIES + ref_tail.div_ceil(4) * 4
     } else {
         NUM_PROPERTIES
     };

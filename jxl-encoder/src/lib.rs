@@ -594,8 +594,8 @@ mod tests;
 mod api_tests;
 
 #[cfg(test)]
-#[path = "issue68_bisect_tests.rs"]
-mod issue68_bisect_tests;
+#[path = "issue68_regression_tests.rs"]
+mod issue68_regression_tests;
 
 #[cfg(all(test, feature = "__expert"))]
 #[path = "effort_expert_tests.rs"]
