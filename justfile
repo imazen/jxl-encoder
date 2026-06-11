@@ -1,18 +1,20 @@
 # jxl-encoder-rs task runner
 
 # Format workspace members (NOT --all: that recurses into cloned sibling
-# path-dep repos) and refresh the public-API surface snapshots
+# path-dep repos) and refresh the public-API surface snapshots.
+# The snapshot runner lives in the workspace-excluded apidoc/ package, so it
+# is never built or run by plain `cargo test` or any CI job.
 fmt:
     cargo fmt -p jxl-encoder -p jxl-encoder-cli -p jxl-encoder-macros -p jxl-encoder-simd -p zenjxl-tuning-runner
-    cargo test -p jxl-encoder --test public_api_doc
+    cargo test --manifest-path apidoc/Cargo.toml
 
 # Regenerate the public-API surface snapshots only
 api-doc:
-    cargo test -p jxl-encoder --test public_api_doc
+    cargo test --manifest-path apidoc/Cargo.toml
 
-# Verify the committed snapshots are current (what CI runs)
+# Verify the committed snapshots are current
 api-doc-check:
-    ZEN_API_DOC=check cargo test -p jxl-encoder --test public_api_doc
+    ZEN_API_DOC=check cargo test --manifest-path apidoc/Cargo.toml
 
 # Run RD regression test (encodes 6 images at d=0.25, d=0.5, d=1.0)
 rd-regression:
