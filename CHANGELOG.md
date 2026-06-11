@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Fixed
+- **#68: e9+ lossless emitted undecodable bitstreams** on content whose
+  learned tree split on a mid-group reference-channel property.
+  `collect_residuals_with_tree*` sized the per-pixel property record at
+  `max_tree_prop + 1` while the ref-property writer fills whole 4-slot
+  groups behind a `base + 3 < prop_stride` guard — a tree whose max
+  property id landed mid-group (only reachable at e9+, where the learner
+  may split on slots 0..2) had its entire top ref-group skipped: the
+  encode-side walk read zeros where every decoder computes real values,
+  desyncing contexts (`SectionTooShort` / entropy EOF in zenjxl-decoder,
+  jxl-oxide AND djxl). Stride now rounds up to whole ref-groups;
+  byte-neutral for e<=8 (slot-3-only trees always had complete groups).
+  Regression gate: `src/issue68_regression_tests.rs` (512^2 LCG noise,
+  e8+e9, jxl-oxide decode-verified). Found by zenjxl's sweep_validate
+  lossless-roundtrip-exactness harness.
+
+### Changed
+- **#69: lossless knob setter docs now state real consumption semantics**
+  (doc-only, byte-neutral): `with_lz77`/`with_lz77_method` are
+  deliberately dropped by the lossless multi-group section writer
+  (global-tree ANS vs per-group histogram mismatch — the effort
+  schedule's Greedy@e8/Optimal@e9 is aspirational there);
+  `with_tree_learning_sample_fraction` is stride-quantized (f rounds
+  down to nearest 1/k; (0.5,1.0) is byte-identical to 0.5);
+  `with_patches`/`with_modular_palette_colors` are stored pending
+  lossless-side detection. Issue #69 rescoped to the actual wiring work.
+
 ### Added
 - Versioned public-API surface snapshots at `docs/public-api/{jxl-encoder,
   jxl-encoder-simd,jxl-encoder-macros}.txt`, regenerated on every

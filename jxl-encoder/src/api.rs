@@ -2708,7 +2708,13 @@ impl LosslessConfig {
     }
 
     /// Enable/disable patches (dictionary-based repeated pattern detection).
-    /// Default: true at effort >= 5. Huge wins on screenshots, zero cost on photos.
+    /// Default per the effort schedule: true at effort >= 5.
+    ///
+    /// **Not yet consumed by the lossless modular path** (jxl-encoder#69):
+    /// the patch-dictionary search currently runs only on the VarDCT
+    /// pipeline, so this flag is stored for API-surface parity and takes
+    /// effect the day lossless patch detection lands. Toggling it does
+    /// not change lossless output bytes today.
     pub fn with_patches(mut self, enable: bool) -> Self {
         self.patches = enable;
         self
@@ -2786,6 +2792,13 @@ impl LosslessConfig {
     /// Range `[0.0, 1.0]`; `f.clamp(0.0, 1.0)` is applied so a stray
     /// caller can't trip the validator. No-op when `tree_learning` is
     /// disabled.
+    ///
+    /// Effective sampling is **stride-quantized**: the gather walks
+    /// every k-th pixel with `k = ceil(1 / f)`, so `f` rounds down to
+    /// the nearest `1/k` — 0.65 and 0.55 sample 1-in-2 exactly like
+    /// 0.5, and 0.4 samples 1-in-3 like 1/3. Every fraction in the
+    /// table above lands on a distinct stride; overrides in
+    /// `(0.5, 1.0)` are byte-identical to 0.5 (jxl-encoder#69).
     pub fn with_tree_learning_sample_fraction(mut self, f: f32) -> Self {
         self.tree_sample_fraction_override = Some(f.clamp(0.0, 1.0));
         self
@@ -2825,13 +2838,27 @@ impl LosslessConfig {
         self.forced_rct
     }
 
-    /// Enable/disable LZ77 backward references (default: false).
+    /// Enable/disable LZ77 backward references on modular token streams.
+    /// Default follows the effort schedule (on at effort >= 7).
+    ///
+    /// **Currently inert on the lossless modular path** (jxl-encoder#69):
+    /// the global-tree + per-group-section design cannot apply LZ77 to
+    /// the combined stream without a histogram mismatch — the global ANS
+    /// code would include LZ77 symbols the per-group sections don't emit
+    /// (see the deliberate drop in `modular/section.rs`) — so the section
+    /// writer ignores the flag. ICC payload compression and the squeeze
+    /// multi-group path do honor LZ77. Toggling this does not change
+    /// lossless output bytes today.
     pub fn with_lz77(mut self, enable: bool) -> Self {
         self.lz77 = enable;
         self
     }
 
-    /// Set LZ77 method (default: Greedy). Only effective when LZ77 is enabled.
+    /// Set the LZ77 match-search method. Default follows the effort
+    /// schedule (Rle at effort <= 7, Greedy at e8, Optimal at e9+).
+    /// Only meaningful where LZ77 is actually applied — see
+    /// [`Self::with_lz77`] for the lossless-path caveat
+    /// (jxl-encoder#69): on that path this is stored but unused today.
     pub fn with_lz77_method(mut self, method: Lz77Method) -> Self {
         self.lz77_method = method;
         self
