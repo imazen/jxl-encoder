@@ -62,6 +62,11 @@ use std::time::Instant;
 
 const CID22: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/validation";
 const GB82: &str = "/home/lilith/work/codec-corpus/gb82-sc";
+/// imazen-26 modern screenshot strata (#43 2c revalidation, 2026-06-11):
+/// per-viewport web captures + mobile captures. The W44-164 classifier +
+/// gate were calibrated on gb82-sc's 10 retro images; these cells answer
+/// whether the in-band win generalizes to modern captures.
+const IMAZEN26: &str = "/home/lilith/work/codec-corpus/imazen-26";
 
 struct ImageSpec {
     class: &'static str,
@@ -130,13 +135,76 @@ const BENCH_IMAGES: &[ImageSpec] = &[
         name: "297394",
         path: "297394.png",
     },
+
+    ImageSpec {
+        class: "SCREENSHOT_I26",
+        name: "web1440_wayback",
+        path: "8100-lilith-web-screenshots/1440x900/8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.png",
+    },
+    ImageSpec {
+        class: "SCREENSHOT_I26",
+        name: "web1440_exhibits",
+        path: "8100-lilith-web-screenshots/1440x900/8101_web-screenshots_archives-exhibits_dpr1_page1_1440x900.png",
+    },
+    ImageSpec {
+        class: "SCREENSHOT_I26",
+        name: "web1920_wayback",
+        path: "8100-lilith-web-screenshots/1920x1080/8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.png",
+    },
+    ImageSpec {
+        class: "SCREENSHOT_I26",
+        name: "web1920_exhibits",
+        path: "8100-lilith-web-screenshots/1920x1080/8160_web-screenshots_archives-exhibits_dpr1_page1_1920x1080.png",
+    },
+    ImageSpec {
+        class: "SCREENSHOT_I26",
+        name: "web2880_wayback",
+        path: "8100-lilith-web-screenshots/2880x1800/8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.png",
+    },
+    ImageSpec {
+        class: "SCREENSHOT_I26",
+        name: "web2880_exhibits",
+        path: "8100-lilith-web-screenshots/2880x1800/8220_web-screenshots_archives-exhibits_dpr2_page1_2880x1800.png",
+    },
+    ImageSpec {
+        class: "SCREENSHOT_I26",
+        name: "web375_wayback",
+        path: "8100-lilith-web-screenshots/375x667/8271_web-screenshots_archive-wayback-search_dpr1_page1_375x667.png",
+    },
+    ImageSpec {
+        class: "SCREENSHOT_I26",
+        name: "web375_exhibits",
+        path: "8100-lilith-web-screenshots/375x667/8272_web-screenshots_archives-exhibits_dpr1_page1_375x667.png",
+    },
+    ImageSpec {
+        class: "SCREENSHOT_I26",
+        name: "web768_wayback",
+        path: "8100-lilith-web-screenshots/768x1024/8330_web-screenshots_archive-wayback-search_dpr1_page1_768x1024.png",
+    },
+    ImageSpec {
+        class: "SCREENSHOT_I26",
+        name: "web768_exhibits",
+        path: "8100-lilith-web-screenshots/768x1024/8331_web-screenshots_archives-exhibits_dpr1_page1_768x1024.png",
+    },
+    ImageSpec {
+        class: "SCREENSHOT_I26",
+        name: "mobile_imageflow",
+        path: "8000-lilith-mobile-screenshots/8000_mobile-screenshots_imageflow-server_screenshot-20260526-065435-brave_1968x2184.png",
+    },
+    ImageSpec {
+        class: "SCREENSHOT_I26",
+        name: "mobile_brave1080",
+        path: "8000-lilith-mobile-screenshots/8002_mobile-screenshots_imageflow-server_screenshot-20260526-065522-brave_1080x2520.png",
+    },
 ];
 
 /// Gate-relevant distances per the chunk-2c brief.
 const DISTANCES: &[f32] = &[0.5, 1.0, 2.0, 4.0];
 
 fn full_path(spec: &ImageSpec) -> PathBuf {
-    if spec.class == "SCREENSHOT" {
+    if spec.class == "SCREENSHOT_I26" {
+        PathBuf::from(IMAZEN26).join(spec.path)
+    } else if spec.class == "SCREENSHOT" {
         PathBuf::from(GB82).join(spec.path)
     } else {
         PathBuf::from(CID22).join(spec.path)

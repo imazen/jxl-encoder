@@ -1,0 +1,16 @@
+# dispatch_2c_revalidation_2026-06-11.tsv — issue #43 2c imazen-26 revalidation
+# harness: examples/dispatch_2c_afv_screenshot_ab.rs (+12 SCREENSHOT_I26
+# cells this commit: 2 per web viewport x 5 viewports + 2 mobile), driver
+# scripts/run_dispatch_2c_afv_ab.sh, 2 samples, current main lineage.
+# bitstreams: /mnt/v/output/jxl-encoder/dispatch_2c_afv_2026-06-11/.
+#
+# VERDICT (bytes + ssim2 only — wall/encode_ms columns are FLAGGED per
+# benchmarks/REVISIT_QUEUE_2026-06-11.md #6, busy box):
+#   gb82-sc continuity: -1.207% bytes in-band (e5, d in [1,2]) — matches
+#     the original 2c verdict (-1.21%).
+#   imazen-26 modern strata: -0.892% bytes in-band, W44-164 classifier
+#     FIRED 24/24 cells (all five web viewports incl. 375x667 and
+#     2880x1800 retina, both mobile captures) — the gate GENERALIZES.
+#   ssim2 class mean -0.066 (worst cell web375_wayback d=2: -0.637;
+#     gb82's windows95 d=1 -0.951 pre-exists from the original ship).
+#   Guards: photos 0/8 fired, e6 byte-identical, 0 violations.
