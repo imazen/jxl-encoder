@@ -1,0 +1,31 @@
+# zenjxl regression gate rebaseline — 2026-06-11 (user-approved: "investigate first")
+#
+# FINDING: the gate was BORN RED. The in-repo test landed 2026-06-09
+# (b2475e9b, CI-green-repair session) carrying constants from the
+# 2026-05-22 W44-202 TSV — but the source had already moved on
+# 2026-05-24. Every nightly since the test existed failed it; nothing
+# from 2026-06-10/11 caused or worsened it (clean-archive probes:
+# 6b7b0924 fails identically; b2475e9b itself produces 15,433 B on the
+# worst cell — today's exact value).
+#
+# ATTRIBUTION (clean-archive byte bisect, 235-commit window May 22 -> Jun 9,
+# probe = 1418519.png e6 d=2 bytes, /tmp/bisect_commits.txt order):
+#   pos 1   349bccd0 (May 22 18:09): 14,266 B   <- locked-era regime
+#   pos 101 cc440e1d              : 14,266 B
+#   pos 102 bbaa12a9 (May 24 21:31): 15,434 B   <- THE drift commit
+#   gate-intro b2475e9b (Jun 9)   : 15,433 B    (-1 B residual, 133 commits)
+#
+# bbaa12a9 = W44-AUDIT-8 Phase 5: extra_dc_precision=1 at effort<=7
+# (libjxl nl_dc parity). 2x DC integer precision costs bytes at e<=7
+# (+1.9..+7.8pp on the gate's 5 violating cells) and was shipped
+# deliberately to close the CLIC/photo SSIM2-deficit cluster (Phase 4
+# diagnosis: worst cell -3.84 SSIM2 vs cjxl). The gate's own aggregates
+# confirm the trade: delta_ssim2 -0.287 -> +0.293 (BETTER than cjxl on
+# the 12-cell set now), delta_bfly -4.25 -> -4.07 (still better), bytes
+# -6.57 -> -5.27 (still 5.3% smaller than cjxl). That commit re-baked
+# hash-locks + libjxl byte-locks in-tree but the zenjxl TSV/gate numbers
+# were never refreshed — and the gate didn't exist yet to complain.
+#
+# NOT refreshed: base_ours_ms (debug-only, no assertion) — current-run
+# walls were measured under load (REVISIT_QUEUE_2026-06-11.md).
+# cjxl reference columns unchanged (same cjxl 0.12.0 baseline run).
