@@ -1,0 +1,39 @@
+# lz77_{baseline,postfix}_bytes_2026-06-10.tsv — issue #69 item 1 A/B
+#
+# Question: does enabling per-section LZ77 on the lossless multi-group
+# tree-learned path (the fix that makes the e7-RLE / e8-Greedy / e9-Optimal
+# schedule real — it was silently dropped before) move bytes on natural
+# content?
+#
+# baseline binary: origin/main 2e6a5caf (pre-fix), release, --locked lock of the day
+# postfix  binary: workspace jxl-encoder--lz77ps (fix commit, parent 2e6a5caf)
+# host: 7950X WSL2, encodes nice -n19, --threads 8 (bytes are thread-invariant)
+# corpus: benchmarks/lossless_bench_set_2026-06-10.tsv (43 k-means picks,
+#         bench_input column; row-32 descriptor repaired this run — was empty,
+#         which shifted the capture loop's field parsing; both sides' rows for
+#         that cell re-run cleanly and patched in)
+# grid: 43 images x effort {7,8,9} = 129 cells, lossless
+#
+# VERDICT (scripts/lz77_ab_compare.py):
+#   129/129 cells BYTE-IDENTICAL (sha256), every class x effort mean +0.000%.
+#   The libjxl 20% benefit floor inside apply_lz77 (bit_decrease >
+#   total_symbols*0.2+16, costs from SymbolCostEstimator over the learned
+#   multi-context ANS) declines on every natural-content section: the
+#   tree-learned predictors turn value-runs into near-free zero residuals,
+#   so RLE/greedy matches save almost nothing per symbol. This is the same
+#   gate libjxl uses — declining is parity behaviour, not a wiring failure.
+#
+# Wiring proof (the fix IS live):
+#   - tests/it/lossless_multigroup_lz77.rs: e8/e9 fire on tile-repeated
+#     LCG noise (with < without), all efforts pixel-exact via jxl-rs +
+#     jxl-oxide; identity on non-repetitive noise (bytes equal on/off).
+#   - CLI cell: 512^2 64-px-tiled noise at e8 = 584,559 B (pre-fix) ->
+#     71,089 B (post-fix), -87.8%.
+#   - terminal.png e8 lossless context: ours 38,511 B vs cjxl 0.12.0
+#     80,815 B — we are far ahead of cjxl on screenshot-class regardless.
+#
+# Conclusion: capability unlock with zero RD movement on natural content;
+# the win surface is genuinely repetitive content (sprite sheets, tiled
+# textures, generated imagery). Decode-verify sweep: 43 cells e7 + the
+# synthetic firing cells e7/8/9, djxl + jxl-rs (jxl_cli) + jxl-oxide, all
+# pixel-exact (see commit message / issue #69 for the run record).
