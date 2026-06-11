@@ -17,6 +17,13 @@ Usage:
 Cell spec: name:image_glob:effort:threads (threads passed via --threads).
 Each binary invocation is prefixed nice -n19. One unmeasured warmup run
 per side per cell primes the page cache.
+
+Pass --decode-verify /path/to/djxl to additionally decode each cell's
+output and pixel-compare against the source (requires PIL; fails loud if
+missing). Byte-equality alone passes when BOTH sides emit the same broken
+bitstream — issue #68 hid behind exactly that for a full day of A/B runs.
+One decode per cell suffices: per-side determinism and base==ours byte
+identity are already asserted, so one valid output proves all of them.
 """
 
 import argparse
@@ -54,7 +61,13 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--cell", action="append", required=True,
                     help="name:image_glob:effort:threads")
+    ap.add_argument("--decode-verify", metavar="DJXL",
+                    help="decode each cell's output with this djxl binary and "
+                         "pixel-compare against the source (requires PIL)")
     args = ap.parse_args()
+
+    if args.decode_verify:
+        from PIL import Image  # hard dep when verification requested; no silent skip
 
     load1 = os.getloadavg()[0]
     if load1 > 4.0:
@@ -82,6 +95,25 @@ def main():
                 walls[side].append(w)
                 shas[side].add(sha)
                 bytes_[side] = n
+
+        roundtrip = None  # not requested
+        if args.decode_verify:
+            dec = f"/tmp/ab_{name}_{os.getpid()}_dec.png"
+            r = subprocess.run(
+                ["nice", "-n19", args.decode_verify, tmp, dec],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            if r.returncode != 0:
+                roundtrip = "DECODE-FAIL"
+            else:
+                from PIL import Image
+                src_px = Image.open(image).convert("RGB")
+                dec_px = Image.open(dec).convert("RGB")
+                roundtrip = ("pixel-exact"
+                             if src_px.size == dec_px.size
+                             and list(src_px.getdata()) == list(dec_px.getdata())
+                             else "PIXEL-DIFF")
+                os.unlink(dec)
         os.unlink(tmp)
 
         det_base = len(shas["base"]) == 1
@@ -98,8 +130,11 @@ def main():
             "ours_min_max": f"{min(walls['ours']):.3f}/{max(walls['ours']):.3f}",
             "bytes": bytes_["ours"],
             "bytes_identical": identical, "deterministic": det_base and det_ours,
+            "roundtrip": roundtrip if roundtrip is not None else "unchecked",
         })
         flag = "OK " if identical else "BYTES-DIFFER!"
+        if roundtrip not in (None, "pixel-exact"):
+            flag = roundtrip + "!"
         print(f"{flag} {name:24s} e{effort} {threads}T  base {mb:.3f}s  ours {mo:.3f}s  {delta:+.2f}%",
               file=sys.stderr)
 
@@ -110,7 +145,10 @@ def main():
             f.write("\t".join(str(r[c]) for c in cols) + "\n")
     if not all(r["bytes_identical"] for r in rows):
         sys.exit("FAIL: bytes differ on at least one cell")
-    print(f"wrote {args.out}; all cells bytes-identical", file=sys.stderr)
+    if args.decode_verify and not all(r["roundtrip"] == "pixel-exact" for r in rows):
+        sys.exit("FAIL: decode-verify failed on at least one cell")
+    verified = " + decode-verified pixel-exact" if args.decode_verify else ""
+    print(f"wrote {args.out}; all cells bytes-identical{verified}", file=sys.stderr)
 
 
 if __name__ == "__main__":
