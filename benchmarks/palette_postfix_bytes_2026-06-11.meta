@@ -1,0 +1,28 @@
+# palette_postfix_bytes_2026-06-11.tsv — issue #69 item 2 A/B (post side)
+#
+# Question: does the full-image palette transform on the lossless
+# multi-group path (dd6b393f) move bytes on natural content?
+#
+# baseline: benchmarks/lz77_postfix_bytes_2026-06-10.tsv — produced by the
+#   b6004d45-equivalent binary; byte-identical to the pre-palette encoder
+#   for every cell (the lz77 fix moved nothing on this set; verified
+#   129/129 vs its own baseline).
+# postfix binary: workspace jxl-encoder--palmg (palette commit dd6b393f
+#   lineage; capture binary predates the nc>=2 restriction, which is
+#   byte-relevant ONLY for Gray8 inputs where ChannelCompact's density
+#   filter declines — zero gray cells moved, so the capture equals the
+#   shipped binary's output on every cell).
+# host: 7950X WSL2, nice -n19, --threads 8 (bytes thread-invariant)
+# grid: 43 images x e{7,8,9} = 129 cells, lossless
+#
+# VERDICT: 3 moved / 126 byte-identical.
+#   7026_plots_line-00081 (aliased-polygons, 14 distinct colours):
+#     e7 9,798 -> 6,845 (-30.1%); e8 9,397 -> 6,796 (-27.7%);
+#     e9 8,863 -> 6,064 (-31.6%). 3/3 decoders pixel-exact per effort
+#     (djxl + jxl_cli/jxl-rs + jxl-oxide).
+#   Everything else declines correctly: >1024 colour tuples (photos,
+#   ai-art, screenshots at full colour), or single-channel content
+#   already covered by ChannelCompact (patents bilevel: full-palette and
+#   ChannelCompact are bitstream-identical for nc=1).
+# Synthetic floor: 17-colour blocky 512^2 e7 = 3,424 B vs 6,083 B
+#   pre-change (-43.7%); locked as hash cell lossless_mg_rgb_512x512_palette_e7.
