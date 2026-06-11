@@ -19,10 +19,12 @@ samples).
   - `/mnt/v/output/jxl-encoder/oracle-2026-06-11/arm-zen-256/`
     `lossy_pareto_256_2026-06-11.tsv` (21,710,921 B,
     sha256 f6f7ea3e1a057857…), `lossy_pareto_features_256_2026-06-11.tsv`.
-- **arm-big, `--sizes native` axis: IN FLIGHT** at collection time
-  (40/100 images, ETA ~08:20 local) — lands at
-  `arm-big:~/oracle/lossy_pareto_native_2026-06-11.tsv`; collect with
-  `rsync -a arm-big:oracle/ /mnt/v/output/jxl-encoder/oracle-2026-06-11/arm-big-native/`.
+- **arm-big, `--sizes native` axis: COMPLETE** (9.26 h) — 134,400 rows +
+  feature sidecar at
+  `/mnt/v/output/jxl-encoder/oracle-2026-06-11/arm-big-native/`.
+- **Integrity**: both axes 134,400 rows × 100 images × 14 distances ×
+  16 cells (perfectly symmetric). **Tower mirror sha-verified 4/4** at
+  `/mnt/tower/output/jxl-encoder/oracle-2026-06-11/`.
 
 ## Caveats (binding)
 
@@ -32,5 +34,3 @@ samples).
 - aarch64 bytes may differ ±tiny from x86_64 on clustering near-ties
   (issue #70): keep A/B comparisons within-box; rank-based training is
   unaffected at the measured 6-byte scale.
-- Tower mirror queued (rsync to /mnt/tower/output/jxl-encoder/ before any
-  cleanup of the /mnt/v copies).

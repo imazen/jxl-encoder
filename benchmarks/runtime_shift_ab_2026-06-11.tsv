@@ -1,0 +1,10 @@
+cell	image	effort	threads	wall_base_median_s	wall_ours_median_s	delta_pct	base_min_max	ours_min_max	bytes	bytes_identical	deterministic	roundtrip
+sunset_e7	/home/lilith/work/codec-corpus/imazen-26/1400-lilith-nature/1550_nature_sunset-clouds-over-parkinglot_screenshot-20260526-073143-photos_1079x1439.png	7	8	1.397	1.442	+3.23	1.374/1.408	1.397/1.522	1009464	True	True	unchecked
+npsa_e7	/home/lilith/work/codec-corpus/imazen-26/5000-national-park-service-brochures/color/5020_nps_npsa-area-map_color_p02_6300x2475.png	7	8	12.671	12.736	+0.52	12.269/13.122	12.621/13.106	4144048	True	True	unchecked
+bearfence_e7	/home/lilith/work/codec-corpus/imazen-26/5000-national-park-service-brochures/grayscale/5056_nps_shen-bearfence-roadtrail_gray_p02_2550x3300.png	7	8	3.445	3.430	-0.41	3.386/3.481	3.412/3.486	204180	True	True	unchecked
+tokyo_e7	/mnt/v/input/jxl-encoder/lossless-bench-imazen26-png/1008_general_city-view-through-window_tokyo-skytree-sumida_s23u_iso50-f2p2_20230706-142333_4000x3000.png	7	8	15.317	14.847	-3.07	14.587/16.576	14.692/15.036	7814777	True	True	unchecked
+terminal_e7	/home/lilith/work/codec-corpus/gb82-sc/terminal.png	7	8	0.711	0.706	-0.76	0.703/0.720	0.684/0.716	38749	True	True	unchecked
+terminal_e8	/home/lilith/work/codec-corpus/gb82-sc/terminal.png	8	8	1.055	1.056	+0.15	1.053/1.056	1.049/1.070	38511	True	True	unchecked
+sunset_e8	/home/lilith/work/codec-corpus/imazen-26/1400-lilith-nature/1550_nature_sunset-clouds-over-parkinglot_screenshot-20260526-073143-photos_1079x1439.png	8	8	5.131	5.176	+0.88	5.036/5.592	5.014/5.545	1006388	True	True	unchecked
+terminal_e9	/home/lilith/work/codec-corpus/gb82-sc/terminal.png	9	8	3.034	3.009	-0.83	2.947/3.078	2.994/3.026	35228	True	True	unchecked
+sunset_e9	/home/lilith/work/codec-corpus/imazen-26/1400-lilith-nature/1550_nature_sunset-clouds-over-parkinglot_screenshot-20260526-073143-photos_1079x1439.png	9	8	12.248	12.058	-1.55	12.059/12.310	11.952/12.151	975172	True	True	unchecked
