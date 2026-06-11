@@ -55,6 +55,7 @@ fn with_env_locked<R>(value: Option<&str>, f: impl FnOnce() -> R) -> R {
 /// than `"1"` keep the lift active.
 #[test]
 fn afv_lift_env_disable_hook() {
+    let _env_serial = crate::env_serial();
     // Unset → lift fires.
     with_env_locked(None, || {
         let mut p = EffortProfile::lossy(5, EncoderMode::Reference);
@@ -183,6 +184,7 @@ fn decode_jxl_oxide_smoke(data: &[u8]) -> (u32, u32) {
 /// gate at the bitstream level, not just the profile level.
 #[test]
 fn afv_lift_e5_screenshot_gated_encode_roundtrips() {
+    let _env_serial = crate::env_serial();
     let w = 256u32;
     let h = 256u32;
     let rgb = synth_screenshot_rgb8(w, h);

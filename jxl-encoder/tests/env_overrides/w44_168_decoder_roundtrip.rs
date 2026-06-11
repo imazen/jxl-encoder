@@ -62,6 +62,7 @@ fn encode_with_env(
 #[test]
 #[ignore = "requires CID22 corpus on local disk; run with `--ignored`"]
 fn w44_168_libjxl_strategy_byte_identical_regardless_of_env() {
+    let _env_serial = crate::env_serial();
     let (w, h, rgb) = load_image("1418519.png");
     // Pick an effort/distance where the buttloop normally fires (e8 at d=5):
     // - Mode A: iters=2 (e8 baseline)
@@ -92,6 +93,7 @@ fn w44_168_libjxl_strategy_byte_identical_regardless_of_env() {
 #[test]
 #[ignore = "requires CID22 corpus on local disk; run with `--ignored`"]
 fn w44_168_zenjxl_all_modes_decode_clean() {
+    let _env_serial = crate::env_serial();
     use std::io::Cursor;
     let (w, h, rgb) = load_image("1418519.png");
     for mode in &["A", "B", "C", "D"] {
@@ -115,6 +117,7 @@ fn w44_168_zenjxl_all_modes_decode_clean() {
 #[test]
 #[ignore = "requires CID22 corpus on local disk; run with `--ignored`"]
 fn w44_168_mode_b_does_not_fire_at_e7() {
+    let _env_serial = crate::env_serial();
     let (w, h, rgb) = load_image("1189261.png");
     let a = encode_with_env(&rgb, w, h, 7, 4.0, EncoderStrategy::Zenjxl, Some("A"));
     let b = encode_with_env(&rgb, w, h, 7, 4.0, EncoderStrategy::Zenjxl, Some("B"));

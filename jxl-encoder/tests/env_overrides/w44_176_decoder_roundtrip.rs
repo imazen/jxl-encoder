@@ -103,6 +103,7 @@ fn decode_jxl_rs(bytes: &[u8]) -> Result<(usize, usize), String> {
 #[test]
 #[ignore = "needs codec-corpus (CODEC_CORPUS_DIR); nightly + local run with --include-ignored"]
 fn w44_176_zenjxl_default_decodes_cleanly() {
+    let _env_serial = crate::env_serial();
     for &(cell_name, path, effort, distance) in CELLS {
         let path = &crate::corpus_file(path);
         let img = match image::open(path) {
@@ -136,6 +137,7 @@ fn w44_176_zenjxl_default_decodes_cleanly() {
 #[test]
 #[ignore = "needs codec-corpus (CODEC_CORPUS_DIR); nightly + local run with --include-ignored"]
 fn w44_176_libjxl_strategy_decodes_cleanly() {
+    let _env_serial = crate::env_serial();
     // Libjxl strategy disables `adaptive_quant_qf_seed` via the
     // `AdaptiveQuantQfSeedPolicy::Off` setting; the helper short-
     // circuits before evaluating the W44-176 discriminator. This
@@ -179,6 +181,7 @@ fn w44_176_libjxl_strategy_decodes_cleanly() {
 #[test]
 #[ignore = "needs codec-corpus (CODEC_CORPUS_DIR); nightly + local run with --include-ignored"]
 fn w44_176_env_disable_decodes_cleanly() {
+    let _env_serial = crate::env_serial();
     // SAFETY: single-threaded test runner (`#[test]` runs sequentially
     // unless `--test-threads` set; this test toggles env once and
     // restores).

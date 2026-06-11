@@ -106,6 +106,7 @@ jobs:
             -p jxl-encoder \
             --features "parallel butteraugli-loop" \
             --test it \
+            --test env_overrides \
             -- --include-ignored \
             w44_164_decoder_roundtrip w44_166_decoder_roundtrip \
             w44_176_decoder_roundtrip w44_205_decoder_roundtrip \

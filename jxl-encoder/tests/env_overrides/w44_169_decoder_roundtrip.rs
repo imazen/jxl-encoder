@@ -66,6 +66,7 @@ fn zenjxl_strategy(narrow: bool) -> EncoderStrategy {
 #[test]
 #[ignore = "requires CID22 corpus on local disk; run with `--ignored`"]
 fn w44_169_libjxl_strategy_byte_identical_regardless_of_field() {
+    let _env_serial = crate::env_serial();
     let (w, h, rgb) = load_image("1418519.png");
     // e8 d=4 sits in the W44-169 narrow band on a smooth photo —
     // would fire if Libjxl honored the field.
@@ -83,6 +84,7 @@ fn w44_169_libjxl_strategy_byte_identical_regardless_of_field() {
 #[test]
 #[ignore = "requires CID22 corpus on local disk; run with `--ignored`"]
 fn w44_169_narrow_does_not_fire_at_d_eq_6() {
+    let _env_serial = crate::env_serial();
     let (w, h, rgb) = load_image("1418519.png");
     let off = encode_with_field(&rgb, w, h, 8, 6.0, zenjxl_strategy(false));
     let on = encode_with_field(&rgb, w, h, 8, 6.0, zenjxl_strategy(true));
@@ -97,6 +99,7 @@ fn w44_169_narrow_does_not_fire_at_d_eq_6() {
 #[test]
 #[ignore = "requires CID22 corpus on local disk; run with `--ignored`"]
 fn w44_169_narrow_on_target_band_decodes_clean() {
+    let _env_serial = crate::env_serial();
     use std::io::Cursor;
     let (w, h, rgb) = load_image("1418519.png");
     for &d in &[4.0_f32, 5.0] {
@@ -118,6 +121,7 @@ fn w44_169_narrow_on_target_band_decodes_clean() {
 #[test]
 #[ignore = "requires CID22 corpus on local disk; run with `--ignored`"]
 fn w44_169_narrow_does_not_fire_below_d_eq_4() {
+    let _env_serial = crate::env_serial();
     let (w, h, rgb) = load_image("1418519.png");
     let off = encode_with_field(&rgb, w, h, 8, 3.0, zenjxl_strategy(false));
     let on = encode_with_field(&rgb, w, h, 8, 3.0, zenjxl_strategy(true));

@@ -128,6 +128,7 @@ fn decode_jxl_rs(bytes: &[u8]) -> Result<(usize, usize), String> {
 #[test]
 #[ignore = "needs codec-corpus (CODEC_CORPUS_DIR); nightly + local run with --include-ignored"]
 fn w44_166_libjxl_strategy_byte_identical_regardless_of_env() {
+    let _env_serial = crate::env_serial();
     let path = "CID22/CID22-512/validation/1418519.png";
     let path = &crate::corpus_file(path);
     assert!(
@@ -174,6 +175,7 @@ fn w44_166_libjxl_strategy_byte_identical_regardless_of_env() {
 #[test]
 #[ignore = "needs codec-corpus (CODEC_CORPUS_DIR); nightly + local run with --include-ignored"]
 fn w44_166_variant_z_photo_admit_decoders_clean() {
+    let _env_serial = crate::env_serial();
     for &(name, path, effort, distance) in CELLS {
         let path = &crate::corpus_file(path);
         assert!(

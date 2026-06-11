@@ -61,6 +61,7 @@ fn encode_with_env(
 #[test]
 #[ignore = "requires CID22 corpus on local disk; run with `--ignored`"]
 fn w44_167_libjxl_strategy_byte_identical_regardless_of_env() {
+    let _env_serial = crate::env_serial();
     let (w, h, rgb) = load_image("1420710.png");
     let a = encode_with_env(&rgb, w, h, 7, 5.0, EncoderStrategy::Libjxl, Some("A"));
     let b = encode_with_env(&rgb, w, h, 7, 5.0, EncoderStrategy::Libjxl, Some("B"));
@@ -85,6 +86,7 @@ fn w44_167_libjxl_strategy_byte_identical_regardless_of_env() {
 #[test]
 #[ignore = "requires CID22 corpus on local disk; run with `--ignored`"]
 fn w44_167_non_firing_photo_byte_identical_all_modes() {
+    let _env_serial = crate::env_serial();
     let (w, h, rgb) = load_image("1189261.png");
     let a = encode_with_env(&rgb, w, h, 7, 5.0, EncoderStrategy::Zenjxl, Some("A"));
     let b = encode_with_env(&rgb, w, h, 7, 5.0, EncoderStrategy::Zenjxl, Some("B"));
@@ -105,6 +107,7 @@ fn w44_167_non_firing_photo_byte_identical_all_modes() {
 #[test]
 #[ignore = "requires CID22 corpus on local disk; run with `--ignored`"]
 fn w44_167_zenjxl_mode_d_decoders_clean() {
+    let _env_serial = crate::env_serial();
     use std::io::Cursor;
     let (w, h, rgb) = load_image("1420710.png");
     let bytes = encode_with_env(&rgb, w, h, 7, 5.0, EncoderStrategy::Zenjxl, Some("D"));

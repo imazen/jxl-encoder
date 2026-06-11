@@ -448,16 +448,33 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
-### 2026-06-10: `it` test binary — env-var runtime-override tests flake under parallelism
+### 2026-06-10: `gpu-butteraugli` feature does not compile (pre-existing sibling drift)
 
-`content_class_dispatch_roundtrip::content_class_dispatch_with_patches_false_respects_opt_out`
-failed in a full parallel `cargo test -p jxl-encoder` run, passes in
-isolation. 9 files in `tests/it/` mutate process env (`set_var`/`remove_var`:
-`dispatch_2c_afv_screenshot.rs`, `strategy_env_fallback.rs`, several
-`w44_*_decoder_roundtrip.rs`) and the dispatch-sensitive roundtrip tests read
-those overrides mid-encode — parallel cross-contamination. Fix direction:
-serialize the env-mutating tests (shared mutex or `--test-threads=1` group)
-per the runtime-override isolation contract. NOT related to encoder output.
+`cargo check -p jxl-encoder --lib --features gpu-butteraugli` fails with 10
+errors on origin/main (`329f207d`): `CudaRuntime:
+cubecl_runtime::runtime::Runtime` trait bound not satisfied →
+`Butteraugli<CudaRuntime>::{new_multires, set_reference_from_linear_planes
+_with_options, compute_with_reference_from_linear_planes}` unusable. Two
+cubecl versions in the graph (the butteraugli-gpu path dep in
+`~/work/zen/zenmetrics` compiled against a different cubecl than this
+lock resolves). Discovered 2026-06-10 while compile-checking the
+`env_overrides` test split; unrelated to that change (lib-only errors).
+Fix lives in dep-graph alignment (zenmetrics ↔ this repo's cubecl pins),
+NOT in this repo's source — coordinate with zenmetrics before touching.
+
+### RESOLVED 2026-06-10: env-var runtime-override tests flaked the `it` binary under parallelism
+
+`content_class_dispatch_with_patches_false_respects_opt_out` failed in
+full parallel runs, passed in isolation: 9 files mutated process env
+(`set_var`/`remove_var`) while dispatch-sensitive roundtrip tests read
+those overrides live mid-encode. Fixed structurally: the 9 mutator
+modules moved to the separate `env_overrides` test binary
+(`tests/env_overrides/`, process-isolated — cargo runs test binaries
+serially, nextest gives one process per test) with an in-binary
+`env_serial()` mutex taken by every `#[test]` (42 fns). Same isolation
+contract as the standalone tuning-override targets. New env-mutating
+tests go in `env_overrides`, never in `it`. nightly.yml corpus-gate
+invocation carries `--test env_overrides` alongside `--test it`.
 
 ### RESOLVED 2026-06-10: `just rd-regression` red — was a one-time CID22 auto-download
 

@@ -140,6 +140,7 @@ fn decode_jxl_rs(bytes: &[u8]) -> Result<(usize, usize), String> {
 #[test]
 #[ignore = "requires CUDA at /usr/local/cuda; run via cargo test --release --features 'gpu-butteraugli butteraugli-loop parallel __expert' -- --ignored"]
 fn b5b_detector_path_roundtrips_via_oxide() {
+    let _env_serial = crate::env_serial();
     // Reset counters BEFORE setting the env so the snapshot reflects
     // only this encode.
     b5b_counters::reset();
@@ -197,6 +198,7 @@ fn b5b_detector_path_roundtrips_via_oxide() {
 #[test]
 #[ignore = "requires CUDA at /usr/local/cuda; run via cargo test --release --features 'gpu-butteraugli butteraugli-loop parallel __expert' -- --ignored"]
 fn b5b_detector_path_roundtrips_via_jxl_rs() {
+    let _env_serial = crate::env_serial();
     b5b_counters::reset();
     unsafe { std::env::set_var("JXL_W44_PHASE3_B5B_DETECTOR", "1") };
 

@@ -112,6 +112,7 @@ fn env_restore(snapshot: [(&'static str, Option<String>); 4]) {
 /// "field equals default but env-var unset" code path.
 #[test]
 fn no_env_vars_default_passthrough() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     let (qf, aq, epf) = resolve_strategy_for_test(&EncoderStrategy::Zenjxl);
     assert_eq!(qf, ButtloopQfSeedPolicy::AutoScale4);
@@ -124,6 +125,7 @@ fn no_env_vars_default_passthrough() {
 /// `AutoScale4` to `AutoScale(2.0)`.
 #[test]
 fn env_buttloop_qf_scale_promotes() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_BUTTLOOP_INITIAL_QF_SCALE", "2.0") };
@@ -137,6 +139,7 @@ fn env_buttloop_qf_scale_promotes() {
 /// The single env value replaces BOTH per-effort scales.
 #[test]
 fn env_adaptive_quant_qf_scale_promotes() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE", "2.5") };
@@ -156,6 +159,7 @@ fn env_adaptive_quant_qf_scale_promotes() {
 /// uniform-4 EPF sharpness seed).
 #[test]
 fn env_epf_seed_disable_promotes_to_legacy() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_W44_117_DISABLE", "1") };
@@ -169,6 +173,7 @@ fn env_epf_seed_disable_promotes_to_legacy() {
 /// min_distance: 2.5 }`.
 #[test]
 fn env_epf_seed_min_distance_promotes() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_W44_120_EPF_SEED_MIN_DISTANCE", "2.5") };
@@ -182,6 +187,7 @@ fn env_epf_seed_min_distance_promotes() {
 /// off entirely, making the distance gate moot.
 #[test]
 fn env_epf_disable_wins_over_min_distance() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_W44_117_DISABLE", "1") };
@@ -199,6 +205,7 @@ fn env_epf_disable_wins_over_min_distance() {
 /// `field == default` check entirely.
 #[test]
 fn env_caller_custom_value_wins_over_env() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_BUTTLOOP_INITIAL_QF_SCALE", "2.0") };
@@ -222,6 +229,7 @@ fn env_caller_custom_value_wins_over_env() {
 /// Libjxl values.
 #[test]
 fn env_libjxl_strategy_wins_over_all_envs() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_W44_117_DISABLE", "1") };
@@ -249,6 +257,7 @@ fn env_libjxl_strategy_wins_over_all_envs() {
 /// as the env-var is set with a parseable value.
 #[test]
 fn env_qf_scale_4_0_promotes_but_is_runtime_equivalent() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_BUTTLOOP_INITIAL_QF_SCALE", "4.0") };
@@ -262,6 +271,7 @@ fn env_qf_scale_4_0_promotes_but_is_runtime_equivalent() {
 /// its default.
 #[test]
 fn env_unparseable_value_ignored() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_BUTTLOOP_INITIAL_QF_SCALE", "not-a-number") };
@@ -281,6 +291,7 @@ fn env_unparseable_value_ignored() {
 /// call-site check `v == "1"` semantics preserved verbatim).
 #[test]
 fn env_disable_only_fires_on_literal_one() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_W44_117_DISABLE", "0") };
@@ -293,6 +304,7 @@ fn env_disable_only_fires_on_literal_one() {
 /// promote. The check is strictly literal `"1"`.
 #[test]
 fn env_disable_true_string_does_not_fire() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_W44_117_DISABLE", "true") };
@@ -307,6 +319,7 @@ fn env_disable_true_string_does_not_fire() {
 /// monolithic switch.
 #[test]
 fn env_multiple_promote_independently() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_BUTTLOOP_INITIAL_QF_SCALE", "3.0") };
@@ -333,6 +346,7 @@ fn env_multiple_promote_independently() {
 /// independent (not a strategy-wide all-or-nothing gate).
 #[test]
 fn env_custom_partial_default_fields_take_env() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_BUTTLOOP_INITIAL_QF_SCALE", "3.0") };

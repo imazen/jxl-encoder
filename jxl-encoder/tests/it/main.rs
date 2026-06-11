@@ -35,7 +35,6 @@ mod cvvdp_bytes_tighten_smoke;
 mod cvvdp_cpu_backend_smoke;
 mod cvvdp_loop_smoke;
 mod dct4x8_diagnostic;
-mod dispatch_2c_afv_screenshot;
 mod display_config_dispatch;
 mod divergence_table_drift;
 mod e9_hang_repro;
@@ -74,19 +73,12 @@ mod perceptual_target_score_smoke;
 mod quality_compare;
 mod rate_control;
 mod sixteenbit_metadata;
-mod strategy_def_prototype_env_fallback;
-mod strategy_env_fallback;
 mod strategy_libjxl_byte_lock;
 mod strategy_libjxl_hash_locks;
 mod streaming_dim_limits;
 mod streaming_noise_gate;
 mod transform_oob_repro;
 mod w44_164_decoder_roundtrip;
-mod w44_166_decoder_roundtrip;
-mod w44_167_decoder_roundtrip;
-mod w44_168_decoder_roundtrip;
-mod w44_169_decoder_roundtrip;
-mod w44_176_decoder_roundtrip;
 mod w44_180_decoder_roundtrip;
 mod w44_205_decoder_roundtrip;
 /// Resolve a codec-corpus relative path for corpus-dependent (ignored)
@@ -105,6 +97,14 @@ pub(crate) fn corpus_file(rel: &str) -> String {
     format!("{home}/work/codec-corpus/{rel}")
 }
 
+// NOT consolidated: the env-override tests (set_var/remove_var on the
+// runtime-override fallbacks) live in the separate `env_overrides` test
+// binary (tests/env_overrides/). Overrides are read live during encode, so
+// any encode-running test in this binary is a reader; process isolation
+// (cargo runs test binaries serially; nextest gives one process per test)
+// is the contract. 2026-06-10 flake: content_class_dispatch_with_patches_
+// false_respects_opt_out failed under full parallelism from exactly this
+// cross-contamination.
 // NOT consolidated: the six tuning-override tests live as standalone test
 // targets (tests/w44_213_*.rs, w44_221_*.rs, w44_222_*.rs, w44_228b_*.rs).
 // `tuning::runtime::install` is single-shot per PROCESS (OnceLock); inside
@@ -116,7 +116,6 @@ mod w44_63_decoder_roundtrip;
 mod w44_65_decoder_roundtrip;
 mod w44_78_decoder_roundtrip;
 mod w44_phase3_b1_gpu_buttloop_roundtrip;
-mod w44_phase3_b5b_divergence_detector_roundtrip;
 mod with_patches_data;
 mod zenjxl_regression_gate;
 mod zensim_backend_smoke;

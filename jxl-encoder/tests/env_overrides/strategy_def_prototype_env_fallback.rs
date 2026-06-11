@@ -81,6 +81,7 @@ fn env_restore(snapshot: [(&'static str, Option<String>); 2]) {
 /// measured.
 #[test]
 fn no_env_vars_default_passthrough() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
 
     let (cfl, cca, iters) = resolve_prototype_strategy_named_for_test("Libjxl");
@@ -111,6 +112,7 @@ fn no_env_vars_default_passthrough() {
 /// `bool::default()`) to `true`.
 #[test]
 fn env_cfl_newton_promotes_on_zenjxl() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held.
     unsafe { std::env::set_var("JXL_W44_184_FORCE_LIBJXL_NEWTON", "1") };
@@ -130,6 +132,7 @@ fn env_cfl_newton_promotes_on_zenjxl() {
 /// `bool::default()`). Documents the W44-132 short-circuit contract.
 #[test]
 fn env_cfl_newton_noop_on_libjxl() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held.
     unsafe { std::env::set_var("JXL_W44_184_FORCE_LIBJXL_NEWTON", "1") };
@@ -143,6 +146,7 @@ fn env_cfl_newton_noop_on_libjxl() {
 /// preset value. Documents the parser contract.
 #[test]
 fn env_cfl_newton_zero_does_not_flip() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held.
     unsafe { std::env::set_var("JXL_W44_184_FORCE_LIBJXL_NEWTON", "0") };
@@ -158,6 +162,7 @@ fn env_cfl_newton_zero_does_not_flip() {
 /// `IterMode::default()`) promotes the field to `TexturedExtend`.
 #[test]
 fn env_iter_mode_promotes_on_libjxl() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held.
     unsafe { std::env::set_var("JXL_W44_168_MODE", "C") };
@@ -174,6 +179,7 @@ fn env_iter_mode_promotes_on_libjxl() {
 /// already sets `SmoothSkip` (≠ `IterMode::default()`).
 #[test]
 fn env_iter_mode_noop_on_zenjxl() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held.
     unsafe { std::env::set_var("JXL_W44_168_MODE", "C") };
@@ -190,6 +196,7 @@ fn env_iter_mode_noop_on_zenjxl() {
 /// `None`, so the field stays at the preset (Off for Libjxl).
 #[test]
 fn env_iter_mode_invalid_value_noop() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held.
     unsafe { std::env::set_var("JXL_W44_168_MODE", "ZZ") };
@@ -206,6 +213,7 @@ fn env_iter_mode_invalid_value_noop() {
 /// `Libjxl` (preset = `Off` = default).
 #[test]
 fn env_iter_mode_all_letters_parse() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     for (letter, expected) in [
         ("A", PrototypeIterMode::Off),
@@ -228,6 +236,7 @@ fn env_iter_mode_all_letters_parse() {
 /// own gate.
 #[test]
 fn env_both_vars_independent() {
+    let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held.
     unsafe { std::env::set_var("JXL_W44_184_FORCE_LIBJXL_NEWTON", "1") };
