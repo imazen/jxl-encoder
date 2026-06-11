@@ -382,6 +382,7 @@ fn encode_lf_frame_multi_group(
         profile.lz77_method,
         Some(factors.dc_quant),
         None, // no ChannelCompact meta-channels for LfFrame
+        crate::modular::section::modular_hf_stream_id_base(num_lf_groups as u32),
     )?;
     let lf_global_data = lf_global_writer.finish();
 
@@ -399,7 +400,10 @@ fn encode_lf_frame_multi_group(
             write_group_modular_section_idx(
                 group_image,
                 &global_state,
-                group_idx as u32,
+                // Spec stream id = property-1 value the decoder evaluates
+                // (#68): must match the gather/apply ids above.
+                crate::modular::section::modular_hf_stream_id_base(num_lf_groups as u32)
+                    + group_idx as u32,
                 &GroupTransforms::none(),
                 &mut group_writer,
             )?;

@@ -307,6 +307,24 @@ pub fn write_global_modular_section_with_predictor(
 /// - lz77.enabled = 0
 /// - Multi-context ANS data histogram (write_entropy_code_ans)
 /// - GroupHeader (use_global_tree=1, wp_header.all_default=1, num_transforms=0)
+/// Number of quant-table modular streams in the spec stream numbering
+/// (libjxl `DequantMatrices::kNum`; zenjxl-decoder
+/// `quantizer::NUM_QUANT_TABLES`).
+pub(crate) const NUM_QUANT_TABLE_STREAMS: u32 = 17;
+
+/// First ModularHF stream id (pass 0, group 0) in the spec's modular
+/// stream numbering — the value decoders feed into tree property 1
+/// (`group_id`) when decoding a pass-group section: stream 0 is
+/// GlobalData, then `num_lf_groups` each of VarDCT-LF / ModularLF /
+/// LFMeta, then the 17 quant-table streams. (#68 second cause: the
+/// encoder used ad-hoc `meta_offset + group_idx` ids for gather/apply,
+/// which desynced every decoder whenever an e9+ tree split on property
+/// 1 — only reachable on multi-group images, since a single group makes
+/// the property constant and unsplittable.)
+pub(crate) fn modular_hf_stream_id_base(num_lf_groups: u32) -> u32 {
+    1 + 3 * num_lf_groups + NUM_QUANT_TABLE_STREAMS
+}
+
 #[allow(dead_code)] // public wrapper retained for API stability;
 // internal callers route through `write_global_modular_section_with_tree_knobs`
 pub fn write_global_modular_section_with_tree(
@@ -317,6 +335,7 @@ pub fn write_global_modular_section_with_tree(
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     meta_image: Option<&ModularImage>,
+    hf_stream_id_base: u32,
 ) -> Result<GlobalModularState> {
     write_global_modular_section_with_tree_dc_quant_knobs(
         images,
@@ -328,6 +347,7 @@ pub fn write_global_modular_section_with_tree(
         None,
         meta_image,
         &super::palette::ModularKnobs::default(),
+        hf_stream_id_base,
     )
 }
 
@@ -357,6 +377,7 @@ pub fn write_global_modular_section_with_tree_knobs(
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     meta_image: Option<&ModularImage>,
     knobs: &super::palette::ModularKnobs,
+    hf_stream_id_base: u32,
 ) -> Result<GlobalModularState> {
     write_global_modular_section_with_tree_dc_quant_knobs(
         images,
@@ -368,6 +389,7 @@ pub fn write_global_modular_section_with_tree_knobs(
         None,
         meta_image,
         knobs,
+        hf_stream_id_base,
     )
 }
 
@@ -382,6 +404,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     dc_quant_custom: Option<[f32; 3]>,
     meta_image: Option<&ModularImage>,
+    hf_stream_id_base: u32,
 ) -> Result<GlobalModularState> {
     write_global_modular_section_with_tree_dc_quant_knobs(
         images,
@@ -393,6 +416,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         dc_quant_custom,
         meta_image,
         &super::palette::ModularKnobs::default(),
+        hf_stream_id_base,
     )
 }
 
@@ -411,6 +435,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     dc_quant_custom: Option<[f32; 3]>,
     meta_image: Option<&ModularImage>,
     knobs: &super::palette::ModularKnobs,
+    hf_stream_id_base: u32,
 ) -> Result<GlobalModularState> {
     use super::encode::write_tree;
     use super::encode::write_wp_header;
@@ -466,7 +491,12 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         }
         mr
     };
-    let per_group_id_offset = if meta_image.is_some() { 1u32 } else { 0u32 };
+    // Property-1 (`group_id`) values MUST be the spec stream ids the
+    // decoder evaluates (#68 second cause): pass-group g (single pass)
+    // is `hf_stream_id_base + g`. The meta/global channels use stream 0
+    // (GlobalData). The old ad-hoc `meta_offset + group_idx` numbering
+    // desynced any e9+ tree that split on property 1.
+    let per_group_id_offset = hf_stream_id_base;
     // Phase 2 of issue #41: when the profile asks for gather-time dedup,
     // every per-group task gets its own `GatherDedupTable`. Concatenation
     // via `append_from` joins the per-task sample_counts; the post-gather

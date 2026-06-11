@@ -89,3 +89,59 @@ fn e9_lossless_decodes_on_noise() {
     let e9 = encode_lossless_e(9, &px, w, h);
     decode_ok(&e9).unwrap_or_else(|e| panic!("e9 lossless must decode (#68): {e}"));
 }
+
+/// #68 second cause: property-1 (`group_id`) values must be the spec
+/// stream ids the decoder evaluates. Only e9+ trees may split on
+/// group_id, and only multi-group images make it non-constant — this
+/// 512² content gives each 256² group a distinct character (smooth
+/// gradient / LCG noise / bars / checker) so group_id is strongly
+/// predictive and the learner reliably splits on it. Under the old
+/// ad-hoc ids (`meta_offset + group_idx` vs the decoder's
+/// `1 + 3*num_lf_groups + 17 + g`) this desynced and failed to decode.
+#[test]
+fn e9_lossless_decodes_on_group_distinct_content() {
+    let (w, h) = (512u32, 512u32);
+    let mut px = Vec::with_capacity((w * h * 3) as usize);
+    let mut state: u64 = 7;
+    for y in 0..h {
+        for x in 0..w {
+            let (gx, gy) = (x / 256, y / 256);
+            let rgb: [u8; 3] = match (gx, gy) {
+                (0, 0) => {
+                    // Smooth diagonal gradient.
+                    let v = ((x + y) / 4) as u8;
+                    [v, v.wrapping_add(13), v.wrapping_sub(9)]
+                }
+                (1, 0) => {
+                    // glibc-LCG noise (compressible-but-noisy).
+                    let mut n = [0u8; 3];
+                    for c in &mut n {
+                        state = (1103515245u64.wrapping_mul(state).wrapping_add(12345)) % (1 << 31);
+                        *c = ((state >> 16) & 0xFF) as u8;
+                    }
+                    n
+                }
+                (0, 1) => {
+                    // Vertical bars.
+                    let v = if (x / 8) % 2 == 0 { 40 } else { 210 };
+                    [v, v, (x % 251) as u8]
+                }
+                _ => {
+                    // 4px checker.
+                    let v = if ((x / 4) + (y / 4)) % 2 == 0 {
+                        25
+                    } else {
+                        230
+                    };
+                    [v, (y % 247) as u8, v]
+                }
+            };
+            px.extend_from_slice(&rgb);
+        }
+    }
+    let e9 = encode_lossless_e(9, &px, w, h);
+    decode_ok(&e9)
+        .unwrap_or_else(|e| panic!("e9 multi-group lossless must decode (#68 cause 2): {e}"));
+    let e8 = encode_lossless_e(8, &px, w, h);
+    decode_ok(&e8).expect("e8 must decode");
+}

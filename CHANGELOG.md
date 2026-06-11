@@ -17,6 +17,23 @@
   Regression gate: `src/issue68_regression_tests.rs` (512^2 LCG noise,
   e8+e9, jxl-oxide decode-verified). Found by zenjxl's sweep_validate
   lossless-roundtrip-exactness harness.
+- **#68 second cause: property-1 (`group_id`) used ad-hoc stream ids.**
+  The multi-group lossless gather/apply/write paths numbered pass-group
+  streams `meta_offset + group_idx`, while every decoder evaluates tree
+  property 1 as the spec ModularStreamId
+  (`1 + 3*num_lf_groups + 17 quant tables + group`). Internally
+  consistent, spec-divergent: any e9+ tree that split on group_id (the
+  e9 property order keeps it; below e9 it is erased, and single-group
+  images make it constant) desynced on photo-class content even after
+  the stride fix — the photo encodes were byte-identical pre/post that
+  fix, which is how the harness re-run exposed the second cause. All
+  three sites (section.rs gather+apply, frame.rs writer, vardct
+  lf_frame) now derive ids from `modular_hf_stream_id_base()`.
+  Byte-neutral below e9 (group_id is not a candidate property there;
+  e8 encodes verified byte-identical). New corpus-free regression gate
+  `e9_lossless_decodes_on_group_distinct_content` (quadrant-distinct
+  512^2 content makes group_id predictive; verified to FAIL under the
+  old ids).
 
 ### Changed
 - **#69: lossless knob setter docs now state real consumption semantics**

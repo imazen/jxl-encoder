@@ -828,6 +828,7 @@ impl FrameEncoder {
                 self.options.dc_quant_custom,
                 meta_image.as_ref(),
                 &self.options.modular_knobs,
+                super::section::modular_hf_stream_id_base(self.num_lf_groups() as u32),
             )?
         } else if self.options.use_tree_learning && self.options.use_ans {
             // Tree learning path: gather samples, learn tree, build multi-context ANS.
@@ -844,6 +845,7 @@ impl FrameEncoder {
                 self.options.lz77_method,
                 meta_image.as_ref(),
                 &self.options.modular_knobs,
+                super::section::modular_hf_stream_id_base(self.num_lf_groups() as u32),
             )?
         } else {
             // Standard path: collect residuals using the requested predictor
@@ -903,10 +905,18 @@ impl FrameEncoder {
         // Step 5: Write each PassGroup's data (GroupHeader + pixel data)
         // Use the pre-extracted group_images to ensure residual consistency
         //
-        // When ChannelCompact meta-channels exist in the global section (group_id=0),
-        // per-group channels use group_id = 1 + group_idx to avoid collision.
-        // This must match the offset used during tree learning in section.rs.
-        let per_group_id_offset: u32 = if meta_image.is_some() { 1 } else { 0 };
+        // Property-1 (`group_id`) values MUST be the spec stream ids the
+        // decoder evaluates when walking the tree (#68 second cause):
+        // pass-group g at pass 0 is `1 + 3*num_lf_groups +
+        // NUM_QUANT_TABLE_STREAMS + g` (the global/meta channels are
+        // stream 0). The old `1 + group_idx` collision-avoidance ids
+        // matched section.rs's tree learning but not the decoders, so
+        // any e9+ tree splitting on property 1 desynced. num_passes is
+        // 1 today; the pass term is `num_groups * pass` when that
+        // changes. Must stay in lockstep with the gather/apply ids in
+        // section.rs (both now derive from `modular_hf_stream_id_base`).
+        let per_group_id_offset: u32 =
+            super::section::modular_hf_stream_id_base(num_lf_groups as u32);
         // PassGroup sections — parallelizable (each group writes to its own BitWriter)
         let pass_group_data: Vec<Vec<u8>> =
             crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
