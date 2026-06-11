@@ -1,0 +1,17 @@
+# ev_wall_tables_2026-06-11.tsv — overnight items 5+6 (#24 EV + #45 walls)
+# binary: current main acec55a8 lineage (release, no target-cpu=native),
+# threads 8, nice -n19, local 7950X (wall-clock = local-only rule).
+# ev24 rows: 13 core bench-set cells x e{7,9} x 3 iters (median of 3).
+# walls45 rows: first 5 core cells x e1..e11 x 2 iters (median of 2).
+#
+# #24 EV headline: e9 = 5.49x e7 total wall (208.3s vs 38.0s) for
+# +0.5%..+18.9% bytes, median ~+5.3%. Best e9 payers: patents-gray-jpg
+# +18.9%, ai-clipart +14.6%, plots +9.5%. Worst: ai-illustrations +0.48%,
+# patents-1bit +0.75% — picker EV is concentrated; a class-aware skip of
+# the bottom tercile forfeits <1% bytes for ~the full e9 surcharge there.
+#
+# #45 walls headline (5-cell totals): e1 0.8 / e3 1.4 / e5 2.1 /
+# e7 15.7 / e8 35.3 / e9 95.7 / e10 210.7 / e11 446.5 s.
+# The cliff is e6->e7 (7.41x, tree learning enables); e7..e11 steps are
+# 2.1-2.7x each. Post-hist-sub e10/e11 budgets for the #45 RFC's
+# wall-bounded tiers should anchor on these, not the pre-c19815ff tables.
