@@ -305,6 +305,48 @@ fn noise_rgb_48x48() -> Vec<u8> {
     out
 }
 
+/// 512x512 RGB noise (deterministic PRNG) — MULTI-GROUP (2x2 groups of
+/// 256x256). Locks the multi-group lossless layout end-to-end: learned
+/// tree + per-group sections + (since #69 item 1) the per-section LZ77
+/// evaluation, which declines on noise (lz77.enabled=0 layout). The
+/// single-group fixtures above never exercise any of that path — #68's
+/// e9 desync and the #69 LZ77 drop both lived in exactly this blind
+/// spot. Procedural like every other lock fixture: zero committed bytes.
+fn noise_rgb_512x512() -> Vec<u8> {
+    let (w, h) = (512, 512);
+    let mut out = vec![0u8; w * h * 3];
+    let mut seed = 1337u64;
+    for val in &mut out {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        *val = (seed >> 56) as u8;
+    }
+    out
+}
+
+/// 512x512 RGB built from a 64-px-wide PRNG noise tile repeated across
+/// the image — MULTI-GROUP content where per-section LZ77 (e8 greedy)
+/// clears the libjxl 20 % benefit floor. Locks the lz77.enabled=1
+/// multi-group layout (num_contexts + 1 entropy code, per-section
+/// dist_multiplier) that no other fixture reaches.
+fn tiled_noise_rgb_512x512() -> Vec<u8> {
+    let (w, h, tile) = (512usize, 512usize, 64usize);
+    let mut tile_px = vec![0u8; tile * tile * 3];
+    let mut seed = 4242u64;
+    for val in &mut tile_px {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        *val = (seed >> 56) as u8;
+    }
+    let mut out = vec![0u8; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let src = ((y % tile) * tile + (x % tile)) * 3;
+            let dst = (y * w + x) * 3;
+            out[dst..dst + 3].copy_from_slice(&tile_px[src..src + 3]);
+        }
+    }
+    out
+}
+
 /// 13x17 RGB noise (non-multiple-of-8 dimensions).
 fn noise_rgb_13x17() -> Vec<u8> {
     let (w, h) = (13, 17);
@@ -735,6 +777,66 @@ fn lossless_defaults_rgb_48x48_noise() {
         &data,
         48,
         48,
+        false,
+        false,
+        false,
+        false,
+    );
+}
+
+/// Multi-group lossless at the e7 default: 2x2 groups, learned tree,
+/// per-section LZ77 evaluated (declines on noise -> lz77.enabled=0).
+#[test]
+fn lossless_mg_rgb_512x512_noise_e7() {
+    let data = LosslessConfig::new()
+        .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossless_mg_rgb_512x512_noise_e7",
+        &data,
+        512,
+        512,
+        false,
+        false,
+        false,
+        false,
+    );
+}
+
+/// Multi-group lossless at e8 on tile-repeated noise: per-section LZ77
+/// FIRES (greedy backrefs clear the 20 % floor) — locks the
+/// lz77.enabled=1 multi-group layout (#69 item 1).
+#[test]
+fn lossless_mg_rgb_512x512_tiled_e8() {
+    let data = LosslessConfig::new()
+        .with_effort(8)
+        .encode(&tiled_noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossless_mg_rgb_512x512_tiled_e8",
+        &data,
+        512,
+        512,
+        false,
+        false,
+        false,
+        false,
+    );
+}
+
+/// Multi-group lossless at e9: ref-properties offered to the learner
+/// (slots 0..2), the exact configuration where #68's two desyncs hid.
+#[test]
+fn lossless_mg_rgb_512x512_noise_e9() {
+    let data = LosslessConfig::new()
+        .with_effort(9)
+        .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossless_mg_rgb_512x512_noise_e9",
+        &data,
+        512,
+        512,
         false,
         false,
         false,
