@@ -135,7 +135,6 @@ const BENCH_IMAGES: &[ImageSpec] = &[
         name: "297394",
         path: "297394.png",
     },
-
     ImageSpec {
         class: "SCREENSHOT_I26",
         name: "web1440_wayback",

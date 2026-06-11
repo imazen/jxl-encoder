@@ -338,6 +338,41 @@ fn noise_rgb_512x512() -> Vec<u8> {
     out
 }
 
+/// 512x512 RGBA: 17-colour blocky RGB + a few-valued alpha pattern —
+/// MULTI-GROUP with an extra channel (alpha defers to PassGroups) AND the
+/// full-image palette engaging on the colour channels. Locks the
+/// palette+alpha multi-group layout.
+fn blocky17_rgba_512x512() -> Vec<u8> {
+    let rgb = blocky17_rgb_512x512();
+    let (w, h) = (512usize, 512usize);
+    let mut out = vec![0u8; w * h * 4];
+    for i in 0..w * h {
+        out[i * 4..i * 4 + 3].copy_from_slice(&rgb[i * 3..i * 3 + 3]);
+        out[i * 4 + 3] = if (i / 8 + i / (w * 8)) % 3 == 0 {
+            200
+        } else {
+            255
+        };
+    }
+    out
+}
+
+/// 512x512 bilevel grayscale (text-like strokes) — MULTI-GROUP
+/// single-channel: locks the ChannelCompact (nc=1 palette) multi-group
+/// layout that document scans hit.
+fn bilevel_gray_512x512() -> Vec<u8> {
+    let (w, h) = (512usize, 512usize);
+    let mut out = vec![255u8; w * h];
+    for y in (0..h).step_by(7) {
+        for x in 0..w {
+            if (x / 5 + y / 7) % 3 != 0 {
+                out[y * w + x] = 0;
+            }
+        }
+    }
+    out
+}
+
 /// 512x512 RGB of 8x8 blocks in 17 PRNG colours — MULTI-GROUP content
 /// where the full-image palette transform (issue #69 item 2) engages:
 /// locks the palette-meta-in-global + per-group index-channel layout
@@ -882,6 +917,85 @@ fn lossless_mg_rgb_512x512_palette_e7() {
         false,
         false,
         false,
+        false,
+    );
+}
+
+/// Multi-group LOSSY VarDCT at the e5 default path (2x2 DC groups of
+/// AC groups; dispatch, CfL, per-group AC streams) — no lossy multi-group
+/// cell existed before 2026-06-11 (all lossy fixtures were <=48x48).
+#[test]
+fn lossy_mg_rgb_512x512_noise_e5_d1() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(5)
+        .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossy_mg_rgb_512x512_noise_e5_d1",
+        &data,
+        512,
+        512,
+        true,
+        false,
+        false,
+        false,
+    );
+}
+
+/// Multi-group LOSSY VarDCT at e7 (cfl_two_pass, patches default-on,
+/// content-adaptive block context map — the production web path).
+#[test]
+fn lossy_mg_rgb_512x512_noise_e7_d1() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(7)
+        .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossy_mg_rgb_512x512_noise_e7_d1",
+        &data,
+        512,
+        512,
+        true,
+        false,
+        false,
+        false,
+    );
+}
+
+/// Multi-group lossless RGBA: alpha extra channel splits per-group while
+/// the full-image palette engages on the RGB channels.
+#[test]
+fn lossless_mg_rgba_512x512_blocky_e7() {
+    let data = LosslessConfig::new()
+        .encode(&blocky17_rgba_512x512(), 512, 512, PixelLayout::Rgba8)
+        .unwrap();
+    assert_hashes(
+        "lossless_mg_rgba_512x512_blocky_e7",
+        &data,
+        512,
+        512,
+        false,
+        true,
+        false,
+        false,
+    );
+}
+
+/// Multi-group lossless single-channel (document-scan class): bilevel
+/// gray through ChannelCompact on the multi-group path.
+#[test]
+fn lossless_mg_gray_512x512_bilevel_e7() {
+    let data = LosslessConfig::new()
+        .encode(&bilevel_gray_512x512(), 512, 512, PixelLayout::Gray8)
+        .unwrap();
+    assert_hashes(
+        "lossless_mg_gray_512x512_bilevel_e7",
+        &data,
+        512,
+        512,
+        false,
+        false,
+        true,
         false,
     );
 }

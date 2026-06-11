@@ -823,6 +823,17 @@ caveats in its `.meta`; regenerate via
 **CRITICAL**: All roundtrip validation tests MUST include jxl-rs. Do not create tests
 that only use jxl-oxide or only use djxl - always include jxl-rs as well.
 
+**CRITICAL: multi-group variants are REQUIRED in every tested path** (user
+directive 2026-06-11). Every lock/roundtrip surface that exercises an
+encode path MUST include a >256px (multi-group) cell alongside any
+single-group fixtures — the entire multi-group lossless path had ZERO
+byte-lock coverage until 2026-06-11, which is exactly where #68's two e9
+desyncs and the #69 LZ77/palette drops hid. Procedural PRNG fixtures keep
+committed bytes at zero (see `hash_lock_features.rs`'s 512x512 cells:
+lossless noise e7/e9, LZ77-firing tiled e8, palette blocky e7, lossy
+VarDCT e5/e7, RGBA-with-alpha, bilevel gray). New paths get a multi-group
+cell in the same commit that adds the path.
+
 **CRITICAL: jxl-oxide linear output**: When using jxl-oxide for metric computation
 (butteraugli, SSIM2), ALWAYS request linear output:
 ```rust

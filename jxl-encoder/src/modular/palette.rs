@@ -467,16 +467,31 @@ pub fn analyze_palette(
     let width = image.width();
     let height = image.height();
 
-    // Collect unique colors
+    // Collect unique colors — with an early exit the moment the cap is
+    // exceeded. Without it this pass BTreeMap-counted EVERY unique tuple
+    // of the whole image (a Vec allocation per pixel) before checking
+    // `max_colors`, which on multi-megapixel photos is millions of
+    // entries discarded by the very next branch — measured +15 % mean /
+    // up to +150 % per-cell e7 wall on the 43-pick set once the
+    // multi-group path started calling this (issue #69 item 2). Crossing
+    // `max_colors` makes rejection certain, so stopping early is exact.
     let mut color_counts: BTreeMap<Vec<i32>, u32> = BTreeMap::new();
     let mut color_buf: Vec<i32> = vec![0; num_c];
+    let cap_plus_one = max_colors.saturating_add(1);
 
-    for y in 0..height {
+    'scan: for y in 0..height {
         for x in 0..width {
             for (i, c) in (begin_c..begin_c + num_c).enumerate() {
                 color_buf[i] = image.channels[c].get(x, y);
             }
-            *color_counts.entry(color_buf.clone()).or_insert(0) += 1;
+            if let Some(n) = color_counts.get_mut(color_buf.as_slice()) {
+                *n += 1;
+            } else {
+                color_counts.insert(color_buf.clone(), 1);
+                if color_counts.len() >= cap_plus_one {
+                    break 'scan;
+                }
+            }
         }
     }
 

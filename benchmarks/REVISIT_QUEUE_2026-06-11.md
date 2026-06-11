@@ -22,6 +22,19 @@ load-immune and NOT flagged.
 | 5 | **Oracle `encode_ms` columns** (arm-zen/arm-big TSVs) | self-contended ARM boxes, 4–7 worker threads on 4–8 cores | Bytes + butteraugli/ssim2 are sound (deterministic); encode_ms must not feed any wall model. aarch64 bytes additionally carry the ±tiny cross-ISA caveat (#70). | n/a for training (drop the column); local quiet re-measure if a wall model ever needs it. |
 | 6 | **2c revalidation wall columns** (`/tmp/2c_revalidation.tsv` → benchmarks) | min-per-(cell,arm) of 2 process-serial passes, busy box | The 2c verdict consumes BYTES + SSIM2 (sound). Ignore its wall/encode_ms columns entirely. | only if a wall claim is ever attached to 2c. |
 
+## RESOLVED by quiet paired re-runs (2026-06-11 morning)
+
+- **The implied LZ77/palette runtime regression** (busy-box capture deltas:
+  e7 +15 % mean / e8 +31 % / worst cell +150 %): quiet paired A/B
+  (`runtime_shift_ab_2026-06-11.{tsv,meta}`, 9 cells × e7/8/9, bytes
+  sha-asserted) shows pre-change vs current within ±3 % everywhere, and
+  pre-change vs unfixed-main NEGATIVE (−2…−5.4 %) on the worst busy-box
+  offenders. Load contamination confirmed. The analyze_palette early-exit
+  shipped as a defensive bound, not a speedup claim.
+- Items 2/3's RATIO concerns soften accordingly; their ABSOLUTE wall
+  anchors (EV 5.49×, tier walls) remain flagged below until a quiet
+  zenbench-grade grid re-run.
+
 ## NOT flagged (byte/deterministic evidence, load-immune)
 
 - #69 item 1 LZ77 verdict (129/129 byte-identical; −87.8 % synthetic cell).
