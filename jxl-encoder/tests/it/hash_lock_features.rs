@@ -55,9 +55,9 @@ struct ExpectedHash {
     frm_hash: u64,
 }
 
-static EXPECTED: OnceLock<HashMap<String, ExpectedHash>> = OnceLock::new();
+static EXPECTED: OnceLock<HashMap<String, Vec<ExpectedHash>>> = OnceLock::new();
 
-fn load_expected() -> &'static HashMap<String, ExpectedHash> {
+fn load_expected() -> &'static HashMap<String, Vec<ExpectedHash>> {
     EXPECTED.get_or_init(|| {
         let content = match std::fs::read_to_string(SIDECAR_PATH) {
             Ok(c) => c,
@@ -75,14 +75,11 @@ fn load_expected() -> &'static HashMap<String, ExpectedHash> {
                 let size: usize = parts[1].parse().unwrap();
                 let hdr: u64 = u64::from_str_radix(parts[2].trim_start_matches("0x"), 16).unwrap();
                 let frm: u64 = u64::from_str_radix(parts[3].trim_start_matches("0x"), 16).unwrap();
-                map.insert(
-                    name,
-                    ExpectedHash {
-                        size,
-                        hdr_hash: hdr,
-                        frm_hash: frm,
-                    },
-                );
+                map.entry(name).or_insert_with(Vec::new).push(ExpectedHash {
+                    size,
+                    hdr_hash: hdr,
+                    frm_hash: frm,
+                });
             }
         }
         map
@@ -227,40 +224,49 @@ fn assert_hashes(
     // byte-exact on every platform; the divergence is documented, not
     // tolerated away.
     let arch_key = format!("{name}@{}", std::env::consts::ARCH);
-    let exp = expected
-        .get(&arch_key)
-        .or_else(|| expected.get(name))
-        .unwrap_or_else(|| {
-            panic!(
-                "{name}: no expected hashes in sidecar. Run:\n  \
+    let mut variants: Vec<&ExpectedHash> = Vec::new();
+    if let Some(v) = expected.get(&arch_key) {
+        variants.extend(v.iter());
+    }
+    if let Some(v) = expected.get(name) {
+        variants.extend(v.iter());
+    }
+    if variants.is_empty() {
+        panic!(
+            "{name}: no expected hashes in sidecar. Run:\n  \
              rm -f jxl_encoder/tests/hash_lock_expected.txt && \
              UPDATE_HASHES=1 cargo test --test hash_lock_features -- --test-threads=1"
-            );
-        });
+        );
+    }
 
-    assert_eq!(
-        data.len(),
-        exp.size,
-        "{name}: SIZE mismatch: got {}, expected {}",
-        data.len(),
-        exp.size,
-    );
-    assert_eq!(
-        hdr,
-        exp.hdr_hash,
-        "{name}: HEADER hash mismatch: got {hdr:#018x}, expected {:#018x} \
-         (total_size={}, header_len={})",
-        exp.hdr_hash,
-        data.len(),
-        measure_file_header_len(width, height, xyb_encoded, has_alpha, is_gray, bit_depth_16),
-    );
-    assert_eq!(
-        frm,
-        exp.frm_hash,
-        "{name}: FRAME hash mismatch: got {frm:#018x}, expected {:#018x} (total_size={})",
-        exp.frm_hash,
-        data.len(),
-    );
+    // Any-of exact match: the output must equal one RECORDED fingerprint.
+    // Multiple lines with the same name are enumerated platform variants
+    // (libm near-ties differ across glibc versions / ISAs — issue #70);
+    // each is measured on its platform and added MANUALLY. Drift to an
+    // unrecorded fingerprint still fails, and the panic prints the got-
+    // fingerprint in sidecar-line format so a new platform's variant can
+    // be lifted directly from its CI failure log.
+    let matched = variants
+        .iter()
+        .any(|e| e.size == data.len() && e.hdr_hash == hdr && e.frm_hash == frm);
+    if !matched {
+        let known: Vec<String> = variants
+            .iter()
+            .map(|e| {
+                format!(
+                    "(size {}, hdr {:#018x}, frm {:#018x})",
+                    e.size, e.hdr_hash, e.frm_hash
+                )
+            })
+            .collect();
+        panic!(
+            "{name}: output matches NO recorded fingerprint.\n  got sidecar line: \
+             {name} {} {hdr:#018x} {frm:#018x}\n  known variants: {}\n  (header_len={})",
+            data.len(),
+            known.join(", "),
+            measure_file_header_len(width, height, xyb_encoded, has_alpha, is_gray, bit_depth_16),
+        );
+    }
 }
 
 // ── Synthetic image generators ──────────────────────────────────────────────
